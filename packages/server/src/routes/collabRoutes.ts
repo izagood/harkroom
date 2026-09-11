@@ -5,6 +5,7 @@ import { httpAvcsClient } from '../avcs/client.js';
 import { ProposalReader } from '../avcs/proposalReader.js';
 import type { Proposal } from '../avcs/proposals.js';
 import { listBoundRepos } from '../services/channels.js';
+import { ensureRepo, resolveRepoBaseUrl, type RepoRow } from '../services/repos.js';
 
 /**
  * 협업 탭이 읽는 표면(`docs/hub-seat.md` 0단계, `docs/desktop-collab.html`).
@@ -29,10 +30,9 @@ export async function registerCollabRoutes(
   reader: ProposalReader = new ProposalReader(httpAvcsClient),
 ): Promise<void> {
   app.get('/collab/proposals', { preHandler: app.requireAccount }, async (): Promise<CollabProposalsView> => {
-    const baseUrl = projection?.currentUrl() ?? null;
-    // 보고 있는 서버가 없으면 제안도 없다 — `/leases` 와 같은 논리다. 빈 목록과 "설정되지
-    // 않았다" 를 화면이 구분할 수 있게 `baseUrl` 을 함께 준다.
-    if (baseUrl === null) return { baseUrl: null, repos: [] };
+    // 전역 주소는 이제 **기본값**이다. 저장소가 자기 주소를 들고 있으면 그것이 이긴다
+    // (051 · `resolveRepoBaseUrl`). 판정은 그 함수 하나에만 둔다.
+    const fallback = projection?.currentUrl() ?? null;
 
     const bound = await listBoundRepos(pool);
     // 한 저장소가 채널 둘에 걸릴 수 있다. 그때 avcs 를 두 번 읽을 이유는 없다 — 저장소로
@@ -45,22 +45,42 @@ export async function registerCollabRoutes(
       else byRepo.set(repo, [channelId]);
     }
 
+    // 바인딩된 저장소의 행을 보장한다 — 채널에 `repo` 를 걸자마자 협업 탭에 보여야지,
+    // 설정 화면에서 행을 만들 때까지 안 보이면 사람은 바인딩이 안 걸린 줄 안다.
+    const rows = new Map<string, RepoRow>();
+    for (const slug of byRepo.keys()) rows.set(slug, await ensureRepo(pool, slug));
+
+    // 전역도 없고 저장소별 주소도 하나도 없으면 **아직 설정되지 않은 것**이다. 이때만
+    // 빈 목록으로 답한다 — "제안이 없다" 와 "볼 서버가 없다" 는 화면에서 다른 말이다.
+    if (fallback === null && ![...rows.values()].some((r) => r.baseUrl !== null)) {
+      return { baseUrl: null, repos: [] };
+    }
+
     const keyIds = new Set<string>();
     const repos = [];
     for (const [repo, channelIds] of [...byRepo].sort(([a], [b]) => a.localeCompare(b))) {
+      const row = rows.get(repo) ?? null;
+      const mode = row?.mode ?? 'linked';
+      const url = resolveRepoBaseUrl(row, fallback);
+      const head = { repo, channelIds, mode, baseUrl: url };
+      if (url === null) {
+        // 주소가 없는 것은 못 읽은 것과 다르다 — 사람이 할 일이 '고치기' 가 아니라 '정하기' 다.
+        repos.push({ ...head, error: 'no-server' as const, proposals: [], reducedAt: null });
+        continue;
+      }
       try {
-        const view = await reader.read(baseUrl, repo);
+        const view = await reader.read(url, repo);
         for (const p of view.proposals) collectKeyIds(p, keyIds);
-        repos.push({ repo, channelIds, error: null, ...view });
+        repos.push({ ...head, error: null, ...view });
       } catch (err) {
         // 저장소 하나가 죽었다고 목록 전체를 비우지 않는다. 어느 저장소가 안 보이는지
         // 화면이 말할 수 있어야 하고, 나머지는 그대로 서야 한다.
         app.log.warn({ repo, err }, 'collab: repo read failed');
-        repos.push({ repo, channelIds, error: 'unreachable', proposals: [], reducedAt: null });
+        repos.push({ ...head, error: 'unreachable' as const, proposals: [], reducedAt: null });
       }
     }
 
-    return { baseUrl, repos, actors: await resolveActors(pool, keyIds) };
+    return { baseUrl: fallback, repos, actors: await resolveActors(pool, keyIds) };
   });
 }
 
