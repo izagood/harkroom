@@ -204,7 +204,21 @@ export function looksReadyForPrompt(rawOutput: string, pattern: RegExp = DEFAULT
  * **판본에 기대는 값이다.** 표시가 바뀌면 관문을 못 보고, 그 턴은 정지 시계에 걸려 접힌다 —
  * 그 실패가 이 상수를 고쳐야 한다는 신호다(`DEFAULT_READY_PATTERN` 과 같은 계약).
  */
-const DEFAULT_GATE_PATTERN = /Do you want to (?:proceed|continue)\?|requires confirmation|^\s*❯\s*\d+\.\s/m;
+
+/*
+ * **`›` 와 `Press enter to continue` 가 왜 여기 있나(2026-09-11 실측).**
+ *
+ * 준비 패턴은 `[❯›]` 로 두 글자를 다 보는데 이 패턴은 `❯` 하나만 봤다. 그래서 codex 의
+ * 선택 화면이 관문으로 보이지 않았고, 러너가 그 위에 붙여넣고 `\r` 를 쳤다. 그 화면은
+ * 업데이트 선택지였고 기본값이 **"Update now (runs `curl … | sh`)"** 였다 — 러너의 Enter
+ * 하나가 설치 명령을 실행했다(codex-cli 0.153.0 → 0.154.0). fixture:
+ * `test/fixtures/codex-tui-update-prompt.txt`.
+ *
+ * 그 사고가 말하는 것은 패턴 하나가 아니다: **모르는 화면에는 아무것도 치지 않는다** 가
+ * 규칙이어야 한다. 그래서 `runPtyTurn` 이 주입 **직전에** 이 판정을 한 번 더 한다.
+ */
+const DEFAULT_GATE_PATTERN =
+  /Do you want to (?:proceed|continue)\?|requires confirmation|Press enter to continue|^\s*[❯›]\s*\d+\.\s/m;
 
 /** 패턴이 **마지막으로** 맞은 위치. 없으면 -1. */
 function lastMatchIndex(text: string, pattern: RegExp): number {
@@ -507,6 +521,11 @@ export interface RunPtyTurnOptions {
     readyPattern?: RegExp;
     /** 준비 상한. 넘기면 `PromptNotDeliveredError`. 생략하면 60초. */
     readyTimeoutMs?: number;
+    /**
+     * 관문으로 볼 패턴. 생략하면 기본. **주입 직전에** 이것으로 화면을 한 번 더 보고,
+     * 물음이면 넣지 않고 사람을 부른다(`DEFAULT_GATE_PATTERN` 주석의 사고).
+     */
+    gatePattern?: RegExp;
     /**
      * 준비 신호를 본 뒤 **화면이 이만큼 잠잠해지면** 넣는다(2026-09-09). 생략하면 300ms.
      *
@@ -828,8 +847,19 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
     // ── 프롬프트 주입(2026-09-08). **준비 신호를 본 뒤에만** 쓴다.
     if (opts.injectPrompt) {
       const { text, readyPattern = DEFAULT_READY_PATTERN, readyTimeoutMs = 60_000,
-              readyQuietMs = 300, readyQuietMaxMs = 2_000, onAttention } = opts.injectPrompt;
+              readyQuietMs = 300, readyQuietMaxMs = 2_000, gatePattern = DEFAULT_GATE_PATTERN,
+              onAttention } = opts.injectPrompt;
       let injected = false;
+      /**
+       * **관문 때문에 주입을 미루고 있는가**(2026-09-11).
+       *
+       * 이 상태가 필요한 이유는 아래 `readyTimer` 의 이른 반환 때문이다 — 준비를 본 뒤에는
+       * 그 시계가 남의 일이라고 보고 물러나는데, 관문에 막혀 영영 못 넣는 턴은 그 시계마저
+       * 물러나면 **아무도 끝내지 않는다**. 막혀 있는 동안에는 그 시계가 다시 제 일을 한다.
+       */
+      let gateBlocked = false;
+      /** 이 부팅에서 관문으로 사람을 이미 불렀나. 한 관문에 한 번만 부른다. */
+      let gateCalled = false;
       const startedAt = Date.now();
       let readyProbe: NodePty.IDisposable | null = null;
       /** 준비 표시를 **처음** 본 시각. 정적 대기의 상한을 여기서 잰다. */
@@ -839,7 +869,9 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         // **준비를 이미 본 뒤라면 이 상한은 남의 일이다**: 정적 대기가 돌고 있고, 그것은
         // 반드시 주입으로 끝난다(정적이 오거나 상한에 닿는다). 여기서 부르거나 죽이면
         // 준비를 본 화면을 관문으로 오진한다.
-        if (injected || settled || readySeenAt !== null) return;
+        // `gateBlocked` 면 준비를 봤더라도 이 시계가 제 일을 한다 — 관문에 막힌 턴은
+        // 정적 대기가 주입으로 끝나지 않으므로, 물러나면 아무도 이 턴을 끝내지 않는다.
+        if (injected || settled || (readySeenAt !== null && !gateBlocked)) return;
         const screen = decodeTailText(tail.snapshot());
         if (onAttention) {
           // **여기서 아무것도 정착시키지 않는다.** `readyProbe` 를 그대로 살려 두므로,
@@ -866,6 +898,32 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
        */
       const inject = (): void => {
         if (injected || settled) return;
+
+        /**
+         * **관문 위에는 쓰지 않는다(2026-09-11 실측).**
+         *
+         * 준비 표시를 본 것만으로는 부족하다 — 그 표시는 모달이 덮기 **전**의 자리표시자일
+         * 수 있고, 실제로 그랬다: codex 가 부팅 직후 업데이트 선택 화면을 띄웠는데 우리는
+         * 0.2초에 본 `Ask … to do anything` 을 근거로 붙여넣고 `\r` 를 쳤다. 그 Enter 가
+         * 기본 선택지 **"Update now (runs `curl … | sh`)"** 를 눌러 설치를 실행했다.
+         *
+         * 그러니 재는 시점이 **쓰기 직전**이어야 한다. 화면이 물음이면 넣지 않고 사람을
+         * 부르며, PTY 는 그대로 살려 둔다 — 사람이 지나면 화면이 준비로 돌아오고 그때
+         * 넣는다. 끝내 안 지나면 `readyTimeoutMs` 가 이 턴을 실패로 접는다(위 시계).
+         */
+        const beforeWrite = decodeTailText(tail.snapshot());
+        if (looksLikeGate(beforeWrite, gatePattern, readyPattern)) {
+          gateBlocked = true;
+          if (onAttention && !gateCalled) { gateCalled = true; onAttention(beforeWrite, 'startup'); }
+          // 화면이 멈춰 있으면 새 데이터가 안 와서 `readyProbe` 가 다시 안 깨운다 —
+          // 그래서 여기서 직접 다시 볼 시각을 잡는다. 상한은 위 `readyTimer` 가 쥔다.
+          if (quietTimer) clearTimeout(quietTimer);
+          quietTimer = setTimeout(inject, readyQuietMs);
+          quietTimer.unref?.();
+          return;
+        }
+        gateBlocked = false;
+
         injected = true;
         clearTimeout(readyTimer);
         if (quietTimer) clearTimeout(quietTimer);

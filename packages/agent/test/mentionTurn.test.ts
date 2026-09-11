@@ -3093,6 +3093,42 @@ describe('하네스 정지 감지 (2026-09-09)', () => {
     expect(err?.message).not.toContain('무발화');
   }, 20_000);
 
+  /**
+   * **읽을 줄 모르는 기록으로 정지를 판정하지 않는다(2026-09-11).**
+   *
+   * 위 테스트와 **같은 조건**(기록이 없다)인데 하네스만 codex 다. claude 는 접히고 codex 는
+   * 안 접혀야 한다 — 그 차이가 이 테스트의 전부다.
+   *
+   * 왜: codex 의 rollout 은 아직 해석하지 않아 mtime 이 **늘** `null` 이다. 그러면 기준점이
+   * 영영 갱신되지 않아 **건강하게 일하는 턴도** 한도에 닿는 순간 "멈췄다"로 접힌다. codex 를
+   * TUI 로 올리면서(#774) 탐침이 돌기 시작해 이 자리가 열렸다 — 그전에는 `exec` 이라 탐침
+   * 자체가 없었다. 판정할 수 없으면 재지 않는다(`sessionTranscriptGrewSince` 의 같은 판례).
+   */
+  it('기록을 읽을 줄 모르는 하네스는 정지로 접지 않는다 — 일하는 턴이 10분에 죽는다', async () => {
+    const fake = new FakeMurmur(defOf({ harness: 'codex' }));
+    fake.seedFrom('human-1', '@forge 안녕');
+    let killed: string | null = null;
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5,
+      harnessStallMs: 10,
+      turnTimeoutMs: 10 * 60_000,
+      readTranscriptMtime: async () => null,
+    });
+    runTurn.script = async (_plan: TurnPlan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+    }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      // 한도(10ms)의 수십 배를 돈다 — 접을 생각이었다면 이 안에 접혔다.
+      for (let i = 0; i < 60 && killed === null; i += 1) await new Promise((r) => setTimeout(r, 10));
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })
+      .catch(() => undefined);
+
+    expect(killed).toBeNull();
+  }, 20_000);
+
   it('문구에 **실측** 유휴시간이 실린다 — 한도만 남기면 사람이 되짚어야 한다', async () => {
     // 2026-09-09 진단이 여기서 산수를 했다: 통지에 한도(600000ms)만 있어서 "정말 10분
     // 서 있었나"를 통지 시각 − 한도로 되짚어 턴 시작 시점을 추정해야 했다. 잰 값을 그대로
