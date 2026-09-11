@@ -28,6 +28,11 @@ export async function registerCollabRoutes(
   pool: Pool,
   projection?: { currentUrl(): string | null },
   reader: ProposalReader = new ProposalReader(httpAvcsClient),
+  /**
+   * murmur 가 직접 띄우는 avcs 서버(`avcs/host.ts`). **없어도 된다** — `hosted` 저장소가 없는
+   * 워크스페이스에서는 이 표면이 그것을 부를 일도 없다.
+   */
+  avcsHost?: { ensure(): Promise<string | null>; startError(): unknown },
 ): Promise<void> {
   app.get('/collab/proposals', { preHandler: app.requireAccount }, async (): Promise<CollabProposalsView> => {
     // 전역 주소는 이제 **기본값**이다. 저장소가 자기 주소를 들고 있으면 그것이 이긴다
@@ -50,10 +55,22 @@ export async function registerCollabRoutes(
     const rows = new Map<string, RepoRow>();
     for (const slug of byRepo.keys()) rows.set(slug, await ensureRepo(pool, slug));
 
-    // 전역도 없고 저장소별 주소도 하나도 없으면 **아직 설정되지 않은 것**이다. 이때만
-    // 빈 목록으로 답한다 — "제안이 없다" 와 "볼 서버가 없다" 는 화면에서 다른 말이다.
-    if (fallback === null && ![...rows.values()].some((r) => r.baseUrl !== null)) {
-      return { baseUrl: null, repos: [] };
+    // 전역도 없고, 자기 주소를 든 저장소도, 호스팅하는 저장소도 없으면 **아직 설정되지 않은
+    // 것**이다. 이때만 빈 목록으로 답한다 — "제안이 없다" 와 "볼 서버가 없다" 는 다른 말이다.
+    const anySource = fallback !== null
+      || [...rows.values()].some((r) => r.baseUrl !== null || r.mode === 'hosted');
+    if (!anySource) return { baseUrl: null, repos: [] };
+
+    // 호스트는 **필요할 때만** 띄운다(`avcs/host.ts`): hosted 저장소가 없는 워크스페이스에서
+    // 포트와 데이터 루트를 잡으면, 쓰지도 않는 상태가 백업 대상에 올라간다.
+    let hostedUrl: string | null = null;
+    if ([...rows.values()].some((r) => r.mode === 'hosted')) {
+      hostedUrl = (await avcsHost?.ensure()) ?? null;
+      if (hostedUrl === null) {
+        // 못 띄운 사유는 로그에 남긴다 — 화면에는 `no-server` 만 서고, 그 줄만으로는
+        // "설정을 안 했다" 와 "띄우다 실패했다" 를 구분할 수 없다.
+        app.log.warn({ err: avcsHost?.startError() }, 'collab: hosted avcs server unavailable');
+      }
     }
 
     const keyIds = new Set<string>();
@@ -61,7 +78,7 @@ export async function registerCollabRoutes(
     for (const [repo, channelIds] of [...byRepo].sort(([a], [b]) => a.localeCompare(b))) {
       const row = rows.get(repo) ?? null;
       const mode = row?.mode ?? 'linked';
-      const url = resolveRepoBaseUrl(row, fallback);
+      const url = resolveRepoBaseUrl(row, fallback, hostedUrl);
       const head = { repo, channelIds, mode, baseUrl: url };
       if (url === null) {
         // 주소가 없는 것은 못 읽은 것과 다르다 — 사람이 할 일이 '고치기' 가 아니라 '정하기' 다.

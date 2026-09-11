@@ -53,13 +53,21 @@ describe('repo 레코드', () => {
     expect(resolveRepoBaseUrl(row, null)).toBeNull();
   });
 
-  it('mode 는 저장되지만 아직 아무것도 바꾸지 않는다 — hosted 도 전역으로 떨어진다', async () => {
+  it('hosted 는 murmur 자신의 주소를 쓴다 — 전역이 있어도 그쪽을 보지 않는다', async () => {
     await ensureRepo(pool, 'acme/web');
     const row = await updateRepo(pool, 'acme/web', { mode: 'hosted' });
 
     expect(row?.mode).toBe('hosted');
-    // 임베디드 서버가 뜨는 다음 단계에서 murmur 자신의 주소가 여기로 들어온다.
-    expect(resolveRepoBaseUrl(row, 'http://global.avcs.test:4000')).toBe('http://global.avcs.test:4000');
+    expect(resolveRepoBaseUrl(row, 'http://global.avcs.test:4000', 'http://127.0.0.1:1234'))
+      .toBe('http://127.0.0.1:1234');
+  });
+
+  it('hosted 인데 호스트가 안 떴으면 읽을 곳이 없다 — 조용히 전역으로 떨어지지 않는다', async () => {
+    await ensureRepo(pool, 'acme/web');
+    const row = await updateRepo(pool, 'acme/web', { mode: 'hosted' });
+
+    // 떨어지면 hosted 로 바꾼 저장소가 계속 바깥 서버를 읽고, 화면은 그 사실을 말할 수 없다.
+    expect(resolveRepoBaseUrl(row, 'http://global.avcs.test:4000', null)).toBeNull();
   });
 
   it('모르는 mode 는 DB 가 거절한다', async () => {

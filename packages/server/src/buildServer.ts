@@ -99,6 +99,11 @@ export interface ServerDeps {
      */
     currentUrl(): string | null;
   };
+  /**
+   * murmur 가 직접 띄우는 avcs 서버(`avcs/host.ts`, `repo.mode = 'hosted'`).
+   * 없으면 hosted 저장소는 읽을 주소가 없는 것으로 다뤄진다 — 조용히 바깥 서버로 떨어지지 않는다.
+   */
+  avcsHost?: { ensure(): Promise<string | null>; startError(): unknown };
   /** 종료 시 in-flight long-poll을 정상 마감시키는 창구. main이 SIGTERM에서 beginDrain을 부른다. */
   lifecycle?: Lifecycle;
   /** null·미지정이면 모든 origin 을 반영한다. 목록이면 CORS 와 WS 핸드셰이크에 함께 적용된다. */
@@ -430,7 +435,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // 아바타는 같은 스토리지를 쓴다 — 파일 저장소를 하나로 유지하기 위해서다(avatarRoutes 주석).
   await registerAvatarRoutes(app, deps.pool, storage);
   await registerDirectoryRoutes(app, deps.pool, deps.projection);
-  await registerCollabRoutes(app, deps.pool, deps.projection);
+  await registerCollabRoutes(app, deps.pool, deps.projection, undefined, deps.avcsHost);
   await registerAuditRoutes(app, deps.pool);
   await registerSettingsRoutes(app, deps.pool, deps.projection);
   await registerHandleGroupRoutes(app, deps.pool);
