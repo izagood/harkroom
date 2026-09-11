@@ -106,6 +106,42 @@ added as a third compose service. Until then the stack is two services, in both 
 between "no work" and "projection is off", is listed in one place:
 [docs/operations.md](docs/operations.md) §6.**
 
+### Prebuilt server image
+
+Every push to `main` publishes the server image to GitHub Container Registry, so
+you do not have to build it yourself:
+
+```sh
+docker pull ghcr.io/izagood/harkroom-server:latest
+```
+
+| Tag | What it points at |
+|-----|-------------------|
+| `:latest`, `:0.1.204` | the commit a release was cut from — the same code as that release's `.dmg` |
+| `:main` | the newest commit on `main` |
+| `:sha-<7 chars>` | one exact commit; never moves |
+
+The image is `linux/amd64` + `linux/arm64`, runs as **uid 1000** (not root), and
+defaults `ATTACHMENT_ROOT` to `/var/lib/harkroom/attachments`. `docker compose`
+keeps building from source (`packages/server/Dockerfile`) — the published image is
+for deployments that are not this repo, such as Kubernetes.
+
+Two things that image alone cannot fix, and that a deployment must respect:
+
+- **Run exactly one replica.** Real-time fan-out is an in-process `EventEmitter`
+  and WebSocket tickets, presence and typing state live in that process's memory.
+  A second replica does not share any of it, so half the clients silently stop
+  receiving events.
+- **Attachments are a directory on disk** (`packages/server/src/storage/local.ts`
+  is the only backend). Give the pod a `ReadWriteOnce` volume at
+  `ATTACHMENT_ROOT` and `fsGroup: 1000`, and roll with `Recreate` — a rolling
+  update would need two pods holding the same volume.
+
+Migrations run at startup under an advisory lock, so no separate job is needed.
+Probes: readiness `GET /readyz` (checks Postgres), liveness `GET /healthz`
+(always 200 — it reports AVCS connectivity in the body rather than failing, so a
+dead AVCS server never restarts the pod).
+
 ## Environment Variables
 
 ### Server (`packages/server/src/config.ts`)
@@ -118,7 +154,7 @@ between "no work" and "projection is off", is listed in one place:
 | `CORS_ORIGINS` | Allowed CORS origins (comma-separated) | All origins | No |
 | `LOG_LEVEL` | Server log level (`debug`, `info`, `warn`, `error`) | `info` | No |
 | `TRUST_PROXY` | Trust `X-Forwarded-For` header (`1` or `true`) | `false` | No |
-| `ATTACHMENT_ROOT` | File system path for uploaded attachments | `./.attachments` | No |
+| `ATTACHMENT_ROOT` | File system path for uploaded attachments | `./.attachments` (the published image sets `/var/lib/harkroom/attachments`) | No |
 | `ATTACHMENT_MAX_BYTES` | Maximum attachment size in bytes | `26214400` (25MB) | No |
 | `MURMUR_NEW_PASSWORD` | New password read by `packages/server/scripts/reset-password.ts`; only set for that one command | - | No |
 | `MURMUR_COMMIT` | Commit sha stamped at image build time; served by `GET /healthz` so operators can tell which build is running. Pass it as a Docker build arg (`MURMUR_COMMIT=$(git rev-parse --short HEAD) docker compose build server`). Reported as `null` when unset | - | No |

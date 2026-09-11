@@ -1,0 +1,183 @@
+# 서버 컨테이너 이미지를 ghcr 에 올린다.
+#
+# ## 왜 `release.yml` 안이 아니라 **따로** 있는가
+#
+# 릴리즈 워크플로는 macOS 러너에서 `.dmg` 를 만들고 서명·공증까지 한다(전체 6~12분). 이미지
+# 빌드를 그 안에 잡으로 끼워 넣으면 둘이 한 줄로 서고 — `release` 는 `concurrency: group:
+# release, cancel-in-progress: false` 로 **전역 직렬화**되어 있으므로 — 앱 배포가 이미지
+# 빌드만큼 느려진다. 두 산출물은 서로를 기다릴 이유가 없다: 같은 커밋을 보고 각자 나간다.
+#
+# 그래서 같은 `push: main` 이벤트에 **두 워크플로가 동시에** 뜬다. 앱이 늦어도 이미지는
+# 나가고, 이미지가 실패해도 앱 릴리즈는 그대로 간다.
+#
+# ## 왜 태그 푸시(`v*`)를 트리거로 쓰지 않았는가
+#
+# `release.yml` 이 미는 태그는 `GITHUB_TOKEN` 으로 밀린다. GitHub 의 재귀 방지 정책상
+# **그 푸시는 다른 워크플로를 트리거하지 않는다**(release.yml 상단에 같은 근거가 적혀 있다).
+# 태그를 기다렸다면 이 워크플로는 조용히 한 번도 안 돌았을 것이다.
+#
+# ## 버전 태그는 **버전 bump 커밋에서만** 붙인다
+#
+# 릴리즈 버전의 정본은 `packages/desktop/src-tauri/tauri.conf.json` 이고, 그 숫자는
+# `release.yml` 이 미는 `chore(release): vX.Y.Z` 커밋에서 올라간다. 그래서 보통의 머지
+# 커밋에서 그 파일을 읽으면 **직전 릴리즈의 숫자**가 나온다 — 거기에 `:0.1.204` 를 붙이면
+# 이미 나간 `0.1.204` 태그가 그 뒤의 코드를 가리키게 된다. 태그가 가리키는 코드가 조용히
+# 바뀌는 것은 배포에서 제일 나쁜 종류의 거짓말이라, 버전·`latest` 태그는 bump 커밋에서만
+# 붙이고 나머지 커밋은 `:main` 과 `:sha-<7자>` 로만 나간다.
+name: 서버 이미지
+
+on:
+  push:
+    branches: [main]
+  # 브랜치에서 이미지가 빌드되는지 확인할 수 있어야 한다(`gh workflow run "서버 이미지"
+  # --ref <브랜치>`). main 이 아니면 `:sha-<7자>` 태그 하나만 나간다 — 아래 "태그를 정한다".
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # ghcr 에 밀기 위한 것. `GITHUB_TOKEN` 으로 충분하고 PAT 이 필요 없다.
+  packages: write
+
+# 같은 브랜치의 앞 실행을 끊지 않는다 — main 의 커밋마다 `:sha-<7자>` 가 하나씩 나가는 것이
+# 이 워크플로의 계약이고, 끊으면 그 커밋의 이미지가 영영 없어진다.
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/harkroom-server
+
+jobs:
+  # ## 왜 아키텍처마다 **다른 러너**인가
+  #
+  # 한 러너에서 `--platform linux/amd64,linux/arm64` 로 한 번에 내려면 QEMU 에뮬레이션이
+  # 필요하다. 이 이미지는 `argon2`(네이티브 애드온)를 musl 에서 **소스로 컴파일**하므로
+  # 에뮬레이션 아래에서는 그 단계가 몇 배로 늘어난다. GitHub 가 arm64 러너를 주므로
+  # (공개 저장소에서 무료) 각자 네이티브로 빌드하고 아래 `merge` 가 둘을 하나의 매니페스트
+  # 리스트로 묶는다.
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      # 한쪽 아키텍처가 깨져도 다른 쪽 로그는 봐야 한다.
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            slug: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            slug: arm64
+    steps:
+      # 액션은 40자 커밋 SHA 로 핀한다(ci.yml 상단의 같은 근거). 뒤 주석이 사람이 읽는 버전이다.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 태그 없이 **다이제스트로만** 민다. 두 러너가 같은 태그를 밀면 나중에 끝난 쪽이 앞의
+      # 것을 덮어 한 아키텍처만 남는다 — `merge` 가 두 다이제스트를 묶는 것이 그래서다.
+      - id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: packages/server/Dockerfile
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            MURMUR_COMMIT=${{ github.sha }}
+          # provenance 첨부는 다이제스트 하나에 매니페스트를 더 얹어 `push-by-digest` 와
+          # 어긋난다. 출처는 아래 `merge` 가 만드는 리스트 수준에서 다룬다.
+          provenance: false
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.slug }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.slug }}
+
+      - name: 다이제스트를 파일 이름으로 남긴다
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: digests-${{ matrix.slug }}
+          path: /tmp/digests/*
+          # 빈 채로 지나가면 `merge` 가 아키텍처 하나짜리 리스트를 조용히 만든다.
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: 매니페스트 리스트를 만든다
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # 태그를 정하려면 커밋 제목과 `tauri.conf.json` 이 필요하다.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 태그를 정한다
+        id: tags
+        run: |
+          set -euo pipefail
+          short="${GITHUB_SHA:0:7}"
+          tags="--tag ${IMAGE}:sha-${short}"
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            tags="$tags --tag ${IMAGE}:main"
+          fi
+          # 파일 상단 "버전 태그는 버전 bump 커밋에서만" 참고.
+          subject="$(git log -1 --pretty=%s)"
+          if [[ "$subject" =~ ^chore\(release\):\ v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            version="${BASH_REMATCH[1]}"
+            # 정본과 대조한다. 커밋 제목과 파일이 어긋났다면 둘 중 하나가 잘못된 것이고,
+            # 그 상태로 `:latest` 를 옮기는 것보다 여기서 서는 편이 낫다.
+            in_file="$(node -p "require('./packages/desktop/src-tauri/tauri.conf.json').version")"
+            if [ "$version" != "$in_file" ]; then
+              echo "::error::커밋 제목의 버전($version)과 tauri.conf.json($in_file)이 다르다"
+              exit 1
+            fi
+            tags="$tags --tag ${IMAGE}:${version} --tag ${IMAGE}:latest"
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "ref=${IMAGE}:sha-${short}" >> "$GITHUB_OUTPUT"
+          echo "붙일 태그: $tags"
+
+      - name: 두 아키텍처를 하나로 묶어 민다
+        working-directory: /tmp/digests
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create ${{ steps.tags.outputs.tags }} \
+            $(printf "${IMAGE}@sha256:%s " *)
+
+      # 밀고 나서 **실제로 두 플랫폼이 들어갔는지** 확인한다. 한쪽 러너가 조용히 빠지면
+      # 이미지는 정상으로 보이고 그 아키텍처에서만 `exec format error` 가 난다.
+      - name: 리스트를 확인한다
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "${{ steps.tags.outputs.ref }}"
+          got="$(docker buildx imagetools inspect "${{ steps.tags.outputs.ref }}" --raw \
+            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+                const m=JSON.parse(s).manifests||[];
+                console.log(m.map(x=>`${x.platform.os}/${x.platform.architecture}`).sort().join(","));
+              })')"
+          echo "플랫폼: $got"
+          [ "$got" = "linux/amd64,linux/arm64" ] || { echo "::error::플랫폼이 둘이 아니다"; exit 1; }
