@@ -15,6 +15,7 @@ import type { Me } from './murmur.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, gateNotice, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts } from './prompt.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type TurnPlan } from './turn.js';
+import { discoversSessionIdAfterTurn, hasAccountPool, usesTuiForMention } from './adapters/index.js';
 import { acceptsPtyInput } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
@@ -711,7 +712,7 @@ export async function runMentionTurn(
   //
   // - claude: TUI 로 뜨고 프롬프트는 PTY 에 주입한다 → `stdinFile: null` → 입력이 열린다.
   // - codex: 아직 `exec` 이라 지시문 + 본문을 합쳐 stdin 파일로 준다(P5 전까지 두 세계가 함께 산다).
-  const usesTui = def.harness === 'claude-code';
+  const usesTui = usesTuiForMention(def.harness);
   let stdinFile: string | null = null;
   if (!usesTui) {
     const combined = [systemPrompt, prompt].filter((s) => s.length > 0).join('\n\n');
@@ -870,8 +871,8 @@ export async function runMentionTurn(
     // **claude 턴에만 싣는다.** 계정 축은 claude 계정 풀이므로, codex·gemini 턴에 이
     // 이름을 실으면 화면이 그 턴과 아무 상관 없는 계정을 가리키게 된다 — 생략은 "모른다"
     // 이고, 모르는 것으로 남기는 편이 틀린 것을 단언하는 것보다 낫다.
-    claudeAccount: def.harness === 'claude-code' ? deps.claudeAccount : undefined,
-    claudePool: def.harness === 'claude-code' ? (deps.claudePool ?? null) : undefined,
+    claudeAccount: hasAccountPool(def.harness) ? deps.claudeAccount : undefined,
+    claudePool: hasAccountPool(def.harness) ? (deps.claudePool ?? null) : undefined,
     onViewerCount,
     /*
       **사람이 [중단] 을 눌렀다**(3단계). 죽이는 것은 릴레이가 아니라 여기다 —
@@ -1215,7 +1216,7 @@ export async function runMentionTurn(
   // 실패하고, codex 스레드가 매 턴 새 세션으로 시작한다(에러 없이) — 브리프가 짚은 함정.
   const sinceMs = turnStartMs;
 
-  if (def.harness === 'codex' && rec.sessionId === null) {
+  if (discoversSessionIdAfterTurn(def.harness) && rec.sessionId === null) {
     // codex 는 세션 id 를 사전 할당할 수 없다 — 방금 끝난 턴이 만든 rollout 파일에서
     // 사후 발견한다. 못 찾아도(null) 예외로 죽이지는 않는다 — 다음 턴이 새 세션으로 다시
     // 시작한다(spec §8, isFirstTurn 계산이 sessionId===null 도 보므로 실제로 그렇게 된다).
