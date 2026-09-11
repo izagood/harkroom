@@ -239,6 +239,26 @@ if (mode === 'gatekeeper') {
 }
 
 // 2026-09-08 프로덕션의 무발화 30분 모양. 준비 신호를 찍고, 주입을 받고, **그 뒤로
+if (mode === 'gate-covers-ready') {
+  // **준비 표시를 먼저 내고, 그 위를 관문이 덮는다**(2026-09-11 실물 재현).
+  //
+  // codex 가 부팅 직후 한 일이 이것이다: 입력 자리표시자를 잠깐 보여 준 뒤 업데이트 선택
+  // 화면으로 덮었다. 러너는 앞의 것을 보고 "준비됐다"고 판정해 붙여넣고 Enter 를 쳤고,
+  // 그 Enter 가 기본 선택지(`curl … | sh`)를 눌렀다. 그래서 이 픽스처의 순서가 사고다.
+  //
+  // 받은 것은 **그대로 되뱉는다** — 테스트가 "아무것도 안 썼다"를 화면으로 확인한다.
+  // **두 화면의 간격이 이 픽스처의 전부다.** 준비 표시 뒤 곧바로 모달이 덮어야 사고가
+  // 재현된다 — 간격이 정적 대기(`readyQuietMs`)보다 길면 주입이 **정당하게** 먼저 나가고,
+  // 그건 다른 이야기다(그 경우는 `ready-then-echo` 가 잰다).
+  setTimeout(() => process.stdout.write('READY\n\u276f\u00a0'), 150);
+  setTimeout(() => process.stdout.write(
+    '\nhttps://example.invalid/releases/latest\n\u203a 1. Update now\n  2. Skip\nPress enter to continue\n',
+  ), 200);
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (d) => process.stdout.write(`GOT:${d}`));
+  setTimeout(() => process.exit(22), 8_000); // 안전망
+}
+
 // 아무것도 하지 않는다** — 죽지도 않는다. 'ready-then-echo' 로는 이 상태를 못 만든다:
 // 그쪽은 주입을 받자마자 종료해서 턴이 정착하고, 정착한 턴에는 부를 이유가 없다.
 if (mode === 'ready-then-silent') {

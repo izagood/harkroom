@@ -15,7 +15,7 @@ import type { Me } from './murmur.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, gateNotice, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts } from './prompt.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type TurnPlan } from './turn.js';
-import { discoversSessionIdAfterTurn, hasAccountPool, usesTuiForMention } from './adapters/index.js';
+import { discoversSessionIdAfterTurn, hasAccountPool, readsSessionTranscript, usesTuiForMention } from './adapters/index.js';
 import { acceptsPtyInput } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
@@ -932,6 +932,21 @@ export async function runMentionTurn(
    * 다음 주기에 다시 본다 — 진짜로 안 생기면 시계가 그대로 흘러 잡힌다.
    */
   const probeStall = async (): Promise<boolean> => {
+    /**
+     * **읽을 줄 모르는 기록으로 정지를 판정하지 않는다(2026-09-11).**
+     *
+     * 이 판정은 "세션 기록이 자라는가" 하나로 선다. 그런데 기록을 해석하지 못하는 하네스는
+     * `sessionTranscriptMtimeMs` 가 **늘 `null`** 이라 기준점(`lastLifeMs`)이 영영 갱신되지
+     * 않는다 — 그러면 **건강하게 일하는 턴도** 한도(기본 10분)에 닿는 순간 "멈췄다"로 접혀
+     * SIGTERM 을 맞는다. 10분 안에 끝나는 턴만 살아남는다.
+     *
+     * codex 를 TUI 로 올리면서(#774) 이 자리가 열렸다: 그전에는 `exec` 이라 탐침 자체가 안
+     * 돌았는데, TUI 가 되면서 돌기 시작했고 codex 의 rollout 은 아직 해석하지 않는다.
+     *
+     * 판정할 수 없으면 **재지 않는다** — 이 저장소가 같은 자리에서 이미 내린 결론이다
+     * (`sessionTranscriptGrewSince` 의 "판정 불가는 참이다"). 그 턴은 무발화 시계만 갖는다.
+     */
+    if (!readsSessionTranscript(def.harness)) return false;
     const limit = deps.harnessStallMs ?? 10 * 60_000;
     // 기준점이 아직 안 잡혔으면(턴 시작 직전) 재지 않는다 — 0 을 기준으로 빼면
     // 첫 주기가 곧바로 한도를 넘는다.
