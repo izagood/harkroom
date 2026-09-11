@@ -121,7 +121,7 @@ function CodeBlock({ code, lang }: { code: string; lang: string | null }) {
 }
 
 /**
- * 링크를 누르면 어디로 가는가. `murmur://` 는 OS 를 거치지 않고 앱 안에서 이동한다 —
+ * 링크를 누르면 어디로 가는가. `harkroom://` 는 OS 를 거치지 않고 앱 안에서 이동한다 —
  * murmur 를 모르는 OS 로 보내면 아무 일도 일어나지 않는다.
  *
  * 여는 데 실패하면 반드시 사람에게 보인다. 조용히 삼키면 사람은 앱이 멈춘 것으로 본다.

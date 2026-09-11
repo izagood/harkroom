@@ -48,10 +48,10 @@ describe('링크 안의 @handle', () => {
     expect(callsOf('https://x.com/a, @forge 봐 줘')).toEqual([FORGE]);
   });
 
-  it('`murmur://` 는 uuid 까지 맞아야 주소다 — 그리는 쪽과 같은 판정이다', () => {
+  it('`harkroom://` 는 uuid 까지 맞아야 주소다 — 그리는 쪽과 같은 판정이다', () => {
     // `parseMessagePermalink` 는 형식까지 본다. 화면도 이것을 링크로 칠하지 않으므로
     // 여기서도 평문이고, 그래서 이름은 부름으로 남는다.
-    expect(callsOf('murmur://message/@forge')).toEqual([FORGE]);
-    expect(callsOf('murmur://message/4021ad85-3a2f-41dc-8f39-a8a0bff0687d 봐 @forge')).toEqual([FORGE]);
+    expect(callsOf('harkroom://message/@forge')).toEqual([FORGE]);
+    expect(callsOf('harkroom://message/4021ad85-3a2f-41dc-8f39-a8a0bff0687d 봐 @forge')).toEqual([FORGE]);
   });
 });

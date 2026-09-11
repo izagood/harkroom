@@ -760,7 +760,7 @@ export const MAX_MESSAGE_BODY_CHARS = 8000;
  * 다르고, 그래서 링크에 호스트를 넣지 않는다 — 이 문자열은 앱 안에서 붙여넣어 여는
  * 좌표이지 브라우저가 넘겨 주는 주소가 아니다.
  */
-export const MESSAGE_PERMALINK_PREFIX = 'murmur://message/';
+export const MESSAGE_PERMALINK_PREFIX = 'harkroom://message/';
 
 /**
  * uuid 판정. `parseMessagePermalink` 가 **형식까지** 보게 하는 것이 요점이다 —

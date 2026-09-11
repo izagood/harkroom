@@ -237,14 +237,14 @@ describe('daemonSpawner 는 daemon 에게 러너를 띄우라고 시킨다 (#431
     expect(call!.args).toEqual({ agentId: 'agent-1', incarnationId: 'inc-7' });
   });
 
-  it('이벤트를 `murmur://runner-exit` 이름으로 듣는다 — Rust 와 같은 이름이어야 한다', async () => {
+  it('이벤트를 `harkroom://runner-exit` 이름으로 듣는다 — Rust 와 같은 이름이어야 한다', async () => {
     await daemonSpawner.spawn({
       agentId: 'a', env: { MURMUR_PAT: 'p', MURMUR_URL: 'u', PATH: '/bin' }, onExit: () => {},
     });
     const listen = tauri.calls.find((c) => c.cmd === 'plugin:event|listen');
     expect(listen!.args!.event).toBe(RUNNER_EXIT_EVENT);
     // 리터럴로도 못박는다 — 상수만 비교하면 구현이 이름을 바꿔도 함께 움직여 초록이 된다.
-    expect(RUNNER_EXIT_EVENT).toBe('murmur://runner-exit');
+    expect(RUNNER_EXIT_EVENT).toBe('harkroom://runner-exit');
   });
 });
 

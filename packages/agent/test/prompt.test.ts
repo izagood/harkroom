@@ -779,9 +779,9 @@ describe('앵커 밖 발화 관측 (2026-09-08)', () => {
     const posts = [inThread(41, 'a1', 'T2'), inThread(42, 'a1', 'T2'), inThread(43, 'a1', 'T3')];
     const n = offAnchorNotice(posts)!;
     expect(n).toContain('3건');
-    expect(n).toContain('murmur://message/T2');
-    expect(n).toContain('murmur://message/T3');
-    expect(n.match(/murmur:\/\/message\/T2/g)).toHaveLength(1);
+    expect(n).toContain('harkroom://message/T2');
+    expect(n).toContain('harkroom://message/T3');
+    expect(n.match(/harkroom:\/\/message\/T2/g)).toHaveLength(1);
   });
 
   it('통지는 단정하지 않는다 — 같은 계정의 다른 턴일 수도 있다', () => {

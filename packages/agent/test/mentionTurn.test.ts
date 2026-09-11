@@ -381,7 +381,7 @@ describe('runMentionTurn', () => {
     expect(notice, '침묵 통지가 있어야 한다').toBeDefined();
     expect(notice!.threadRootId).toBeNull(); // 통지는 **내 앵커**에 남는다
     expect(notice!.body).toContain('다른 스레드에');
-    expect(notice!.body).toContain('murmur://message/other-root');
+    expect(notice!.body).toContain('harkroom://message/other-root');
   });
 
   it('앵커 안에서만 말한 침묵 턴에는 앵커 밖 문단이 붙지 않는다 — 없는 사고를 지어내지 않는다', async () => {

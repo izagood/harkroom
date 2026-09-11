@@ -146,7 +146,7 @@ export function moveClaudeAccount(account: string, toPool: string): Promise<{ lo
 }
 
 /** Rust 가 쓰는 이벤트 이름. `main.rs::CLAUDE_LOGIN_EVENT` 와 **같은 값**이어야 한다. */
-export const CLAUDE_LOGIN_EVENT = 'murmur://claude-login';
+export const CLAUDE_LOGIN_EVENT = 'harkroom://claude-login';
 
 /**
  * 로그인 진행을 듣는다. 반환값은 해제 함수다.

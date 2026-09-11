@@ -3,7 +3,7 @@ import type { MessagePart } from './mention';
 
 /**
  * 본문 안의 링크가 눌렸을 때 **어디로 가는가**. 두 갈래뿐인 이유가 요점이다:
- * `murmur://` 는 OS 가 모르는 스킴이라 셸로 보내면 아무 일도 일어나지 않는다(#178).
+ * `harkroom://` 는 OS 가 모르는 스킴이라 셸로 보내면 아무 일도 일어나지 않는다(#178).
  */
 export type LinkTarget =
   /** OS 브라우저로 넘긴다. `href` 는 정규화된 절대 URL 이다. */

@@ -330,7 +330,7 @@ describe('정규화와 추출', () => {
   });
 
   it('http/https 아닌 후보는 집지 않는다', () => {
-    expect(extractUrls('javascript:alert(1) murmur://message/x mailto:a@b.io')).toEqual([]);
+    expect(extractUrls('javascript:alert(1) harkroom://message/x mailto:a@b.io')).toEqual([]);
   });
 
   it('isBlockedAddress·isBlockedHost 는 판정할 수 없는 값을 막는다(fail-closed)', () => {

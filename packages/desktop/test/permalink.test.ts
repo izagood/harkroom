@@ -19,11 +19,11 @@ describe('messagePermalink', () => {
 describe('parseMessagePermalink', () => {
   // 접두사만 보고 통과시키면 사람이 붙여넣은 아무 문자열이 그대로 서버 질의가 된다.
   it('rejects anything that is not a uuid', () => {
-    expect(parseMessagePermalink('murmur://message/not-a-uuid')).toBeNull();
-    expect(parseMessagePermalink('murmur://message/')).toBeNull();
-    expect(parseMessagePermalink(`murmur://message/${ID}extra`)).toBeNull();
+    expect(parseMessagePermalink('harkroom://message/not-a-uuid')).toBeNull();
+    expect(parseMessagePermalink('harkroom://message/')).toBeNull();
+    expect(parseMessagePermalink(`harkroom://message/${ID}extra`)).toBeNull();
     // 자릿수가 하나 모자란 uuid 도 uuid 가 아니다.
-    expect(parseMessagePermalink('murmur://message/3f1c8a24-9b2e-4d6f-8a71-2c5e0b9d4f1')).toBeNull();
+    expect(parseMessagePermalink('harkroom://message/3f1c8a24-9b2e-4d6f-8a71-2c5e0b9d4f1')).toBeNull();
   });
 
   it('rejects text that is not a message link at all', () => {
