@@ -34,6 +34,18 @@ const isAgent = (id: string): boolean => AGENTS.has(id);
 /** 슬롯으로 감싸는 헬퍼 — 실제 화면과 같은 순서(진행 먼저, 주고받기 나중)를 탄다. */
 const slots = (messages: MessageRow[]) => groupAgentExchanges(groupProgress(messages), isAgent);
 
+/**
+ * 위임 메시지 하나(050). `to` 가 있어야 `readDelegationMeta` 가 알아본다 — 배열이 아니면
+ * 평문으로 흘러 이 판정이 조용히 꺼진다.
+ */
+const delegateMsg = (id: string, authorId: string, to: string[]): MessageRow =>
+  msg(id, 'c1', 2, '이렇게 나눴다', authorId, {
+    meta: {
+      kind: 'delegation',
+      delegation: { to, unreachable: [], deadlineAt: '2026-09-11T00:00:00.000Z' },
+    } as unknown as Record<string, unknown>,
+  });
+
 const askTo = (
   id: string, authorId: string, to: AskMeta['ask']['to'], answered = false,
 ): MessageRow => {
@@ -396,5 +408,79 @@ describe('AgentExchange — 접힌 한 줄', () => {
     // 다시 접힌다 — 펼침은 기기의 속성이라 되돌릴 수 있어야 한다.
     fireEvent.click(screen.getByTestId('agent-exchange-toggle'));
     expect(screen.getByTestId('agent-exchange').dataset.open).toBe('false');
+  });
+});
+
+/**
+ * **위임 뒤는 팀 안의 이야기다**(050 · 3-2).
+ *
+ * 예외 ②("사람이 말한 뒤 각 에이전트의 첫 발화는 접지 않는다")가 위임에서는 반대로
+ * 작동한다: 팀장이 둘에게 넘기면 그 둘의 보고가 **저마다 사람 뒤의 첫 발화**라 하나도
+ * 접히지 않고, 그러면 창구를 팀장 하나로 좁힌 뜻이 화면에서 사라진다.
+ *
+ * 되돌려 RED: `groupAgentExchanges` 의 위임 분기를 지우면 1번이 빨개진다(보고 둘이 각각
+ * 제 줄로 선다).
+ */
+describe('위임은 사람의 차례를 닫는다 (050)', () => {
+  it('1. 팀장이 나눈 뒤 팀원들의 보고는 접힌다', () => {
+    const out = slots([
+      msg('m1', 'c1', 1, '@release 배포 준비해라', ME),
+      delegateMsg('m2', FORGE, ['codex', 'scribe']),
+      msg('m3', 'c1', 3, '서버 쪽 끝났다', CODEX),
+      msg('m4', 'c1', 4, '화면 쪽 끝났다', SCRIBE),
+    ]);
+
+    // 사람의 말 · 팀장의 위임 · 접힌 보고 구간.
+    expect(out.map((s) => s.kind)).toEqual(['message', 'message', 'exchange']);
+    const folded = out[2] as { kind: 'exchange'; messages: MessageRow[] };
+    expect(folded.messages.map((m) => m.id)).toEqual(['m3', 'm4']);
+  });
+
+  it('2. 위임 메시지 자신은 접히지 않는다 — 사람에게 하는 답이다', () => {
+    const out = slots([
+      msg('m1', 'c1', 1, '@release 해줘', ME),
+      delegateMsg('m2', FORGE, ['codex']),
+      msg('m3', 'c1', 3, '보고', CODEX),
+      msg('m4', 'c1', 4, '보고 둘', CODEX),
+    ]);
+    // "이렇게 나눴다"는 사람이 봐야 하는 말이다 — 접히면 사람은 무엇이 넘어갔는지 모른다.
+    expect(out[1]).toMatchObject({ kind: 'message', message: { id: 'm2' } });
+  });
+
+  it('3. 팀장의 최종 답과 팀원의 실패는 여전히 펼쳐진다', () => {
+    const fail = msg('m4', 'c1', 4, '못 했다', CODEX, {
+      meta: { kind: 'failure', failure: { retryable: false } } as unknown as Record<string, unknown>,
+    });
+    const out = slots([
+      msg('m1', 'c1', 1, '@release 해줘', ME_UUID),
+      delegateMsg('m2', FORGE_UUID, ['codex', 'scribe']),
+      msg('m3', 'c1', 3, '보고다', CODEX),
+      // 접힘은 **둘 이상**일 때만 생긴다(혼잣말은 주고받기가 아니다) — 그래서 보고를 둘 둔다.
+      msg('m3b', 'c1', 4, '나도 보고다', SCRIBE),
+      fail,
+      // 팀장이 사람을 부르며 최종 답을 쓴다 — `addressesHuman` 의 멘션 갈래.
+      msg('m5', 'c1', 5, `<@${ME_UUID}> 취합하면 이렇다`, FORGE_UUID),
+    ]);
+    const kinds = out.map((s) => s.kind);
+    // 실패와 최종 답은 접힌 구간 **밖**에 선다.
+    expect(kinds.filter((k) => k === 'exchange')).toHaveLength(1);
+    const ids = out.flatMap((s) => (s.kind === 'message' ? [s.message.id] : []));
+    expect(ids).toContain('m4');
+    expect(ids).toContain('m5');
+  });
+
+  it('4. 사람이 다시 말하면 기준선이 열린다', () => {
+    const out = slots([
+      msg('m1', 'c1', 1, '@release 해줘', ME),
+      delegateMsg('m2', FORGE, ['codex']),
+      msg('m3', 'c1', 3, '보고', CODEX),
+      msg('m4', 'c1', 4, '하나 더 물어보자', ME),
+      msg('m5', 'c1', 5, '답', CODEX),
+      msg('m6', 'c1', 6, '답 둘', SCRIBE),
+    ]);
+    // 사람이 말한 뒤의 첫 답들은 예외 ② 그대로 펼쳐진다 — 위임 분기가 그 규칙을 지우지 않는다.
+    const ids = out.flatMap((s) => (s.kind === 'message' ? [s.message.id] : []));
+    expect(ids).toContain('m5');
+    expect(ids).toContain('m6');
   });
 });

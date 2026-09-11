@@ -306,6 +306,29 @@ describe('050 위임 왕복', () => {
     await oneClient.close(); await leadClient.close();
   });
 
+  it('8. 넘겨받은 팀원의 항목에 팀장과 기한이 실린다', async () => {
+    const rootId = await openThread('@delegteam 맥락');
+    const leadClient = await mcpClient(leadPat);
+    const oneClient = await mcpClient(onePat);
+
+    const res = text(await leadClient.callTool({
+      name: 'message.delegate',
+      arguments: { channelId, threadRootId: rootId, body: '서버를 봐라', to: ['done1'], deadlineSec: 600 },
+    }));
+    const messageId = (res.message as { id: string }).id;
+
+    // 러너는 이것으로 *"최종 답은 팀장이 쓴다"* 블록을 만든다 — 팀장이 누구인지 모르면
+    // 그 문장을 쓸 수 없고, 기한을 모르면 자기 답이 언제 무응답으로 닫히는지 모른다.
+    const inbox = text(await oneClient.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 0 } }));
+    const entry = (inbox.entries as Array<{ messageId: string; reason: string; delegatedBy?: unknown }>)
+      .find((e) => e.messageId === messageId);
+    expect(entry?.reason).toBe('team_delegated');
+    expect(entry?.delegatedBy).toMatchObject({ leadHandle: 'dlead', teamName: 'delegteam' });
+    expect(typeof (entry?.delegatedBy as { deadlineAt: string }).deadlineAt).toBe('string');
+
+    await oneClient.close(); await leadClient.close();
+  });
+
   it('7. 라운드 상한에 걸리고, 사람이 말하면 리셋된다', async () => {
     const rootId = await openThread('@delegteam 라운드');
     const leadClient = await mcpClient(leadPat);

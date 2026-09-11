@@ -6,7 +6,7 @@
 // 세션이 이미 아는 것까지 다시 넘길 필요가 없다 — 그 경계가 `lastFedSeq` 다. 그리고 예전엔
 // 러너가 모델 응답을 파싱해 대신 올렸지만, 이제 에이전트가 murmur MCP `message.post` 로
 // 스스로 올린다 — 그래서 시스템 프롬프트가 "어디에 쓸지"까지 알려줘야 한다.
-import { messagePermalink, type MessageRow, type InboxTeamCall, type InboxDelegationOutcome } from '@murmur/shared';
+import { messagePermalink, type MessageRow, type InboxTeamCall, type InboxDelegationOutcome, type InboxDelegatedBy } from '@murmur/shared';
 
 /** 서버의 메시지 본문 상한(`POST /channels/:id/messages` 의 zod `max(8000)`). 넘기면 발화가 실패한다. */
 export const BODY_LIMIT = 8000;
@@ -636,6 +636,49 @@ function delegationSection(outcome: InboxDelegationOutcome): string[] {
   ];
 }
 
+/**
+ * **넘겨받은 일**의 블록(3-2) — 팀원의 턴이 *"내 발화는 팀장에게 오는 보고다"* 를 알게 한다.
+ *
+ * ## 이 블록이 화면을 조용하게 만든다
+ *
+ * jaebin 의 최초 진단은 *"에이전트들이 모두 이야기하니까 정신없다"* 였다. 서버가 창구를
+ * 팀장 하나로 좁혀도(047) 넘겨받은 팀원이 **요청자에게** 답하면 화면은 그대로 시끄럽다 —
+ * 데스크탑은 에이전트끼리의 구간을 접는데(`agentExchange`), 그 판정이 *"이 말이 사람에게
+ * 오는가"* 를 보고 **사람을 `@handle` 로 부른 말은 접지 않기** 때문이다.
+ *
+ * 그래서 이 블록은 두 가지를 한다: 보고 대상을 팀장으로 못 박고, **요청자를 부르지 말라**고
+ * 말한다. 그 둘이 화면의 접힘 규칙과 한 쌍이다.
+ *
+ * ## 기한을 말한다
+ *
+ * 이 팀원이 답하지 않으면 그 의무는 기한에 **무응답으로 닫히고** 팀장이 그 사실을 받는다.
+ * 그때 팀장은 직접 하거나 다른 팀원에게 돌린다 — 즉 늦은 답은 버려지는 것이 아니라 **이미
+ * 다른 사람이 하고 있는 일**이 된다. 그 시각을 모르면 팀원은 자기가 얼마나 여유가 있는지
+ * 판단할 수 없고, 오래 걸리는 일에서 `turn.wake` 를 걸어야 할지도 알 수 없다.
+ *
+ * ## 실패는 예외라고 적는다
+ *
+ * "요청자를 부르지 마라"를 그대로 두면 막혔을 때도 침묵한다. 실패(`message.fail`)는 화면이
+ * **언제나 펼치는** 말이고(`addressesHuman` 의 첫 조건), 그것이 맞다 — 막힌 것은 사람이
+ * 봐야 한다. 그래서 그 하나를 명시적으로 열어 둔다.
+ */
+function handedSection(handed: InboxDelegatedBy): string[] {
+  return [
+    `(넘겨받은 일 — 팀 @${handed.teamName} 의 팀장 @${handed.leadHandle} 가 너에게 넘겼다)`,
+    '',
+    `**최종 답은 팀장이 쓴다.** 네 발화는 @${handed.leadHandle} 에게 오는 **보고**다 —`,
+    '요청자(사람)를 `@handle` 로 부르지 마라. 네 보고까지 사람에게 직접 오면 창구가 둘이 되고,',
+    '그것이 지금 고치고 있는 바로 그 시끄러움이다.',
+    '',
+    `기한은 ${handed.deadlineAt} 까지다. 그 안에 답하지 않으면 이 일은 **무응답**으로 닫히고`,
+    '팀장이 직접 하거나 다른 팀원에게 돌린다 — 오래 걸릴 것 같으면 지금 아는 것을 먼저 보고해라.',
+    '',
+    '**막혔으면 `message.fail` 을 써라.** 실패는 사람에게도 보이는 유일한 예외다 — 막힌 것을',
+    '조용히 두는 것이 가장 나쁘다.',
+    '',
+  ];
+}
+
 /** 한 줄로 렌더링한다. handles 에 없는 작성자는 알 수 없는 사용자로 표시한다(reply.ts 의 기존 정책 계승) —
  * avcs 투영이 만드는 system 메시지 등, 호출 시점에 handles 맵이 못 따라온 작성자가 있을 수 있다. */
 function renderLine(m: MessageRow, handles: Record<string, string>): string {
@@ -741,9 +784,15 @@ export function buildTurnPrompt(opts: {
    * 만든 이유이고, 여기서도 같다.
    */
   delegation?: InboxDelegationOutcome;
+  /**
+   * 이 턴이 **넘겨받은 일**이면 넘긴 팀장과 기한(3-2). 사람의 새 발화가 있는 위에 덧붙는
+   * 맥락이라 `team` 과 같은 성격이고, 델타를 대신하지 않는다.
+   */
+  delegatedBy?: InboxDelegatedBy;
 }): { prompt: string; fedSeq: number } {
   const {
     messages, lastFedSeq, meId, handles, channelId, threadRootId, murmurUrl, wake, team, delegation,
+    delegatedBy,
   } = opts;
   const isFirstTurn = lastFedSeq === 0;
 
@@ -774,13 +823,14 @@ export function buildTurnPrompt(opts: {
   const wakeLines = wake === undefined ? [] : [`(예약된 후속 턴 — 사유: ${wake.reason})`, ''];
   const teamLines = team === undefined ? [] : teamSection(team, meId, handles);
   const delegationLines = delegation === undefined ? [] : delegationSection(delegation);
+  const handedLines = delegatedBy === undefined ? [] : handedSection(delegatedBy);
   // 안내는 첨부 줄 **뒤**에 선다 — 먼저 무엇이 왔는지 보고 그다음 어떻게 여는지 읽는 순서다.
   // `toShow` 로 판정한다: 보여주지 않은 메시지의 첨부는 프롬프트에 id 가 없어 열 수도 없다.
   const howTo = toShow.some((m) => m.attachments.length) ? attachmentHowTo(murmurUrl) : [];
   // 팀 블록은 **델타 앞**이다 — 사람의 말을 읽기 전에 "너는 이 팀의 창구다"를 알아야
   // 그 말을 팀의 일로 읽는다. `wakeLines` 뒤에 두는 이유: 그 줄은 이 턴이 왜 떴는지이고,
   // 팀 블록은 이 턴이 무엇인지다(둘이 함께 오는 경우는 예약이 걸린 팀 턴이다).
-  const prompt = [head, '', ...wakeLines, ...teamLines, ...delegationLines, ...lines, ...howTo].join('\n');
+  const prompt = [head, '', ...wakeLines, ...teamLines, ...delegationLines, ...handedLines, ...lines, ...howTo].join('\n');
 
   return { prompt, fedSeq };
 }

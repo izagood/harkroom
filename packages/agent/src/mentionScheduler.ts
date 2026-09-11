@@ -196,6 +196,8 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
     team?: InboxBatch['entries'][number]['team'],
     /** 넘긴 일의 결말(050). 같은 이유로 사유와 함께 넘긴다. */
     delegation?: InboxBatch['entries'][number]['delegation'],
+    /** 넘겨받은 일의 팀장·기한(3-2). */
+    delegatedBy?: InboxBatch['entries'][number]['delegatedBy'],
   ): Promise<void> {
     const target: MentionTarget = {
       channelId: mention.channelId, threadRootId: anchor, mentionId: mention.id,
@@ -243,6 +245,11 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
        * 그리면 팀장에게 "결말 없음"을 알리는 셈이고, 그것은 사실이 아니라 조회 결과의 부재다.
        */
       ...(reason === 'delegation_done' && delegation ? { delegation } : {}),
+      /**
+       * **넘겨받은 일**(3-2). 사유와 함께 보는 이유는 팀 명단과 같다 — 위임이 그 사이
+       * 지워지면 서버가 맥락 없이 사유만 준다. 그때는 블록 없이 평범한 부름처럼 돈다.
+       */
+      ...(reason === 'team_delegated' && delegatedBy ? { delegatedBy } : {}),
     };
     try {
       const turn = await withAccountFailover(
@@ -490,7 +497,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         // entry 당 1회라는 약속이 깨진다.
         attempts.set(entry.id, { tried, notBefore: 0, noticed: prior?.noticed });
 
-        const task: Promise<void> = runOne(entry.id, mention, anchor, threadKey, ctx, tried, entry.reason, entry.team, entry.delegation)
+        const task: Promise<void> = runOne(entry.id, mention, anchor, threadKey, ctx, tried, entry.reason, entry.team, entry.delegation, entry.delegatedBy)
           .catch((err: unknown) => {
             console.error(`  ${entry.messageId} 턴 실패:`, err instanceof Error ? err.message : err);
           })

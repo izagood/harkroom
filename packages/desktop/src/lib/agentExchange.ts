@@ -1,5 +1,6 @@
 import {
-  mentionedIds, mentionScanText, readAskMeta, readFailureMeta, readReportMeta, type MessageRow,
+  mentionedIds, mentionScanText, readAskMeta, readDelegationMeta, readFailureMeta, readReportMeta,
+  type MessageRow,
 } from '@murmur/shared';
 import type { Slot } from './progressGroup';
 
@@ -107,6 +108,32 @@ export function groupAgentExchanges(slots: Slot[], isAgent: IsAgent): ExchangeSl
     if (!isAgent(m.authorId)) {
       flush();
       turnOpen = true;
+      answered.clear();
+      out.push(slot);
+      continue;
+    }
+
+    /**
+     * **위임은 사람의 차례를 닫는다**(050 · 3-2).
+     *
+     * 예외 ②("사람이 말한 뒤 각 에이전트의 첫 발화는 접지 않는다")가 위임에서는 반대로
+     * 작동한다: 팀장이 셋에게 넘기면 그 셋의 보고가 **저마다 "사람 뒤의 첫 발화"** 라서
+     * 하나도 접히지 않는다. 그러면 창구를 팀장 하나로 좁힌 뜻이 화면에서 사라진다 —
+     * jaebin 의 최초 진단(*"에이전트들이 모두 이야기하니까 정신없다"*)이 그대로 남는다.
+     *
+     * 위임 메시지 **자신**은 접지 않는다(팀장이 사람에게 하는 답이다 — "이렇게 나눴다").
+     * 그 뒤부터가 팀 안의 이야기이므로 기준선을 닫는다. 다시 열리는 자리는 둘이다:
+     * 사람이 말하거나(위 분기), 누군가 사람을 부르거나(`addressesHuman` — 팀장의 최종
+     * 답과 팀원의 실패가 그것이다).
+     *
+     * **예외 ②를 지우지 않고 이 자리만 닫는 이유**: 그 예외는 위임이 아닌 스레드에서
+     * 여전히 옳다(사람이 넷을 부르면 넷의 답은 전부 사람에게 온 것이다). 판정을 뒤집는
+     * 것이 아니라 *"위임 뒤는 사람의 차례가 아니다"* 라는 사실 하나를 더하는 것이다.
+     */
+    const delegation = readDelegationMeta(m.meta);
+    if (delegation) {
+      flush();
+      turnOpen = false;
       answered.clear();
       out.push(slot);
       continue;

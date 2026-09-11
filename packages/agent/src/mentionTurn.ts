@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { AgentHarness, AgentView, InboxDelegationOutcome, InboxTeamCall, MessageRow } from '@murmur/shared';
+import type { AgentHarness, AgentView, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, gateNotice, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts } from './prompt.js';
 import { SessionStore } from './sessions.js';
@@ -384,6 +384,8 @@ export interface MentionTarget {
    * 경우엔 팀원이 아무 말도 하지 않았으므로 새 메시지가 없다.
    */
   delegation?: InboxDelegationOutcome;
+  /** 이 턴이 **넘겨받은 일**이면 넘긴 팀장과 기한(3-2). 서버가 inbox 항목에 실어 준다. */
+  delegatedBy?: InboxDelegatedBy;
 }
 
 /**
@@ -646,6 +648,7 @@ export async function runMentionTurn(
     ...(target.wake ? { wake: target.wake } : {}),
     ...(target.team ? { team: target.team } : {}),
     ...(target.delegation ? { delegation: target.delegation } : {}),
+    ...(target.delegatedBy ? { delegatedBy: target.delegatedBy } : {}),
   });
 
   if (!prompt) {

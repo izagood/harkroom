@@ -1500,6 +1500,11 @@ export interface InboxEntry {
    * 무응답인가), 읽는 쪽이 다시 하면 두 판정이 갈라진다.
    */
   delegation?: InboxDelegationOutcome;
+  /**
+   * **넘겨받은 일**의 맥락. `reason === 'team_delegated'` 일 때만 있다(050 · 3-2).
+   * 러너가 이것으로 *"최종 답은 팀장이 쓴다"* 블록을 만든다.
+   */
+  delegatedBy?: InboxDelegatedBy;
 }
 
 /**
@@ -1545,6 +1550,41 @@ export interface DelegationMeta {
     unreachable: string[];
     deadlineAt: string;
   };
+}
+
+/**
+ * 위임 메시지인가. **모르는 `meta` 는 평문으로 흘린다**(이 저장소의 불변 규약) —
+ * 형식을 못 알아보면 `null` 이고, 읽는 쪽은 평범한 말로 다룬다.
+ *
+ * `to` 를 검사하는 이유: 화면이 이 값으로 *"이 말 뒤는 팀 안의 이야기다"* 를 판정하므로
+ * (`agentExchange`), 배열이 아닌 값이 들어오면 그 판정이 조용히 틀린다.
+ */
+export function readDelegationMeta(
+  meta: Record<string, unknown> | null | undefined,
+): DelegationMeta['delegation'] | null {
+  if (!meta || meta.kind !== 'delegation') return null;
+  const delegation = meta.delegation as DelegationMeta['delegation'] | undefined;
+  if (!delegation || typeof delegation !== 'object') return null;
+  if (!Array.isArray(delegation.to)) return null;
+  return delegation;
+}
+
+/**
+ * **넘겨받은 일**의 맥락(050 · 3-2). `reason === 'team_delegated'` 인 항목에만 있다.
+ *
+ * 러너가 이것으로 그 팀원의 프롬프트를 다르게 조립한다 — *"최종 답은 팀장이 쓴다"* 를
+ * 말하려면 **팀장이 누구인지** 알아야 하고, 기한을 말하려면 그 시각을 알아야 한다.
+ * 둘 다 서버가 이미 아는 사실이라(위임을 만든 것이 서버다) 여기서 실어 준다.
+ *
+ * 위임이 그 사이 지워졌으면(메시지 삭제 → cascade) 없다. 그때 그 팀원의 턴은 팀 블록 없이
+ * 평범한 부름처럼 돈다 — 팀 명단이 빈 경우와 같은 관용이다.
+ */
+export interface InboxDelegatedBy {
+  /** 넘긴 팀장의 handle. 보고를 누구에게 하는지가 이 값 하나로 정해진다. */
+  leadHandle: string;
+  teamName: string;
+  /** 이 시각까지 답하지 않으면 무응답으로 닫힌다. */
+  deadlineAt: string;
 }
 
 /**
