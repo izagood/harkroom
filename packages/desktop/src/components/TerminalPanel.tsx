@@ -3,7 +3,7 @@ import type { AgentSessionState, WriterDeniedReason } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { connectAgentAttach, type AttachHandle } from '../lib/agentTerminal';
-import { getTerminalSinkFactory, type TerminalSink } from '../lib/terminalSink';
+import { getTerminalSinkFactory, type TerminalSink, type TerminalDiagnostics } from '../lib/terminalSink';
 import { PaneResizer } from './PaneResizer';
 import { paneStorage, paneMaxWidth, MIN_TERMINAL_WIDTH, MAX_TERMINAL_WIDTH, MIN_CHANNEL_WIDTH, MIN_THREAD_WIDTH } from '../lib/prefs';
 import { useT } from '../i18n/useT';
@@ -94,6 +94,13 @@ export function TerminalPanel() {
    */
   const [writerReason, setWriterReason] = useState<WriterDeniedReason | null>(null);
   /**
+   * **화면에서 실제로 벌어지는 일**(2026-09-12). 두 사실이 지금까지 아무 데도 안 보였다:
+   * 렌더러가 WebGL 로 켜졌는지(못 켜면 조용히 DOM 으로 남는다)와, IME 조합 이벤트가 오기는
+   * 하는지. 둘 다 실패를 삼키는 자리라 사람이 "빠른 것 같지 않다"·"한글이 안 된다"를 느낌
+   * 으로만 말할 수밖에 없었다 — 이 줄이 그 느낌을 사실로 바꾼다.
+   */
+  const [diagnostics, setDiagnostics] = useState<TerminalDiagnostics | null>(null);
+  /**
    * `onInput` 콜백이 읽는 최신 writer 값. state 만 쓰면 sink 생성 시점의 클로저에 옛
    * 값이 얼어붙어, 승격·강등이 입력 가드에 반영되지 않는다.
    */
@@ -161,6 +168,7 @@ export function TerminalPanel() {
           if (!resizeRef.current) return;
           attach?.sendResize(cols, rows);
         },
+        onDiagnostics: setDiagnostics,
       });
       // **차례를 받기 전에는 접어 둔다**(#369). sink 는 `onInput` 이 배선돼 있어 xterm 의
       // stdin 이 켜진 채로 뜨는데, 서버의 첫 `writer` 프레임은 소켓이 붙은 **뒤에** 온다 —
@@ -359,6 +367,20 @@ export function TerminalPanel() {
             {writerDeniedText(writerReason, t)}
           </p>
         </div>
+      )}
+      {/* 실제로 무엇이 도는지 한 줄. 위 `diagnostics` 주석에 이 줄이 있는 이유가 있다. */}
+      {phase === 'attached' && diagnostics && (
+        <p
+          className="px-3 pb-1 text-meta text-fg-subtle"
+          data-testid="terminal-diagnostics"
+          data-renderer={diagnostics.renderer}
+          data-compositions={diagnostics.compositions}
+        >
+          {t('terminal.diagnostics', {
+            renderer: t(`terminal.renderer.${diagnostics.renderer}` as MessageKey),
+            compositions: String(diagnostics.compositions),
+          })}
+        </p>
       )}
       {/* 이 자리는 항상 렌더한다 — 조건부로 만들면 세션을 찾은 순간 ref 가 아직 null 이라
           xterm 을 붙일 곳이 없다. */}

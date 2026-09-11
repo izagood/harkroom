@@ -98,6 +98,21 @@ describe('한글 입력 — 조합은 xterm 이 아니라 sink 가 받는다', (
     sink.dispose();
   });
 
+  /**
+   * **가드가 너무 넓었던 자리**(2026-09-12 수정). 처음엔 `keyCode === 229` 하나만으로도
+   * 키를 막았는데, 그러면 *조합이 시작조차 안 한* 경우까지 삼킨다: 웹뷰가
+   * `compositionstart` 를 안 쏘면서 키에 229 만 실어 보내면 **아무것도 안 들어간다**.
+   * 엉뚱한 글자가 들어가던 것보다 나쁘다 — 조용해서 원인을 못 짚는다.
+   */
+  it('조합이 시작되지 않았으면 keyCode 229 만으로는 막지 않는다', async () => {
+    const sink = getTerminalSinkFactory()(host(), { onInput: () => {} });
+    await settle();
+
+    helperTextarea!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, keyCode: 229, key: 'Process' } as KeyboardEventInit));
+    expect(xtermSaw).toEqual(['keydown:Process']);
+    sink.dispose();
+  });
+
   it('조합 밖의 평범한 키는 그대로 xterm 이 받는다 — 영문·화살표·Ctrl-C 를 막으면 안 된다', async () => {
     const sink = getTerminalSinkFactory()(host(), { onInput: () => {} });
     await settle();
@@ -159,6 +174,37 @@ describe('한글 입력 — 조합은 xterm 이 아니라 sink 가 받는다', (
     const sink = getTerminalSinkFactory()(host(), { onInput: () => {} });
     await settle();
     expect(focused).toBe(0);
+    sink.dispose();
+  });
+});
+
+/**
+ * 진단 줄이 **사실을 밖으로 내보내는지**. 이 둘은 실패를 삼키는 자리라 화면에 안 나오면
+ * 사람은 "빠른 것 같지 않다"·"한글이 안 된다"를 느낌으로만 말할 수밖에 없다.
+ */
+describe('진단 — 렌더러와 조합 이벤트를 밖으로 알린다', () => {
+  it('렌더러가 실제로 무엇인지 알린다', async () => {
+    const seen: string[] = [];
+    const sink = getTerminalSinkFactory()(host(), {
+      onInput: () => {},
+      onDiagnostics: (d) => seen.push(d.renderer),
+    });
+    await vi.waitFor(() => expect(seen).toContain('webgl'));
+    sink.dispose();
+  });
+
+  it('조합이 시작될 때마다 센다 — 한글을 쳤는데 0 이면 웹뷰가 조합을 안 쏜다는 사실이다', async () => {
+    let last = 0;
+    const sink = getTerminalSinkFactory()(host(), {
+      onInput: () => {},
+      onDiagnostics: (d) => { last = d.compositions; },
+    });
+    await settle();
+    sink.setReadOnly!(false);
+
+    compose(helperTextarea!, '한');
+    compose(helperTextarea!, '글');
+    expect(last).toBe(2);
     sink.dispose();
   });
 });

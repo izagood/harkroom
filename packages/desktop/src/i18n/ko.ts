@@ -1001,6 +1001,10 @@ export const ko = {
   /** `#384` 의 정직성 전부 — 그 침묵을 이 줄이 메운다. */
 
   /** 보이는 글자. 접근 이름은 아래가 따로 진다 — 짧음이 스크린리더에서 뜻을 잃는다. */
+  'terminal.diagnostics': '렌더러 {renderer} · 조합 이벤트 {compositions}회',
+  'terminal.renderer.webgl': 'WebGL(GPU)',
+  'terminal.renderer.dom': 'DOM(대체 — WebGL 을 못 켰다)',
+  'terminal.renderer.pending': '켜는 중…',
   'terminal.header.close': '닫기',
   'terminal.header.closeAction': '터미널 닫기',
   'terminal.header.resize': '터미널 너비 조절',
