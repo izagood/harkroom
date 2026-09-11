@@ -1,6 +1,7 @@
-import type { ReactElement } from 'react';
+import { useState, type ReactElement } from 'react';
 import type { CollabProposal, CollabProposalState, CollabRepoView } from '@harkroom/shared';
 import { useT } from '../i18n/useT';
+import type { Translate } from '../i18n';
 import { countFor, filterRepos, type CollabFilter, type CollabSnapshot } from '../lib/collabProposals';
 
 /**
@@ -192,11 +193,48 @@ const STATE_DOT: Record<CollabProposalState, string> = {
   unknown: 'text-fg-subtle',
 };
 
+/**
+ * op 의 상태를 사람 말로. **모르는 상태는 avcs 가 쓴 말 그대로 보인다** — 프로토콜이 상태를
+ * 하나 더하는 날 화면이 빈칸을 그리는 대신, 번역이 없다는 사실이 그대로 드러나는 편이 낫다.
+ */
+const OP_STATUS = {
+  proposed: 'collab.opStatus.proposed',
+  validating: 'collab.opStatus.validating',
+  accepted: 'collab.opStatus.accepted',
+  rejected: 'collab.opStatus.rejected',
+  superseded: 'collab.opStatus.superseded',
+  needs_decision: 'collab.opStatus.needs_decision',
+  quarantined: 'collab.opStatus.quarantined',
+} as const;
+
+function opStatusLabel(t: Translate, status: string | null): string | null {
+  if (!status) return null;
+  const key = OP_STATUS[status as keyof typeof OP_STATUS] as Parameters<Translate>[0] | undefined;
+  return key ? t(key) : status;
+}
+
+/**
+ * 제안 한 줄. **누르면 펼쳐진다**(`docs/desktop-collab.html`: "제안을 열면 트리가 보인다").
+ *
+ * ## 왜 새 화면이 아니라 그 자리에서 펼치는가
+ *
+ * 목록이 답하는 물음은 "내가 무엇을 막고 있나" 이고, 상세가 답하는 것은 "그래서 무엇을
+ * 골라야 하나" 다. 둘은 **같은 판단의 두 단계**라, 화면을 갈아 끼우면 사람이 목록의 자리를
+ * 잃고 돌아와서 다시 찾는다. 펼치면 옆 줄이 그대로 보인다 — 충돌은 대개 **이웃한 두 제안**
+ * 사이의 일이므로 그 이웃이 화면에 남아 있어야 한다.
+ *
+ * ## 펼친 상태는 줄이 들고 있는다
+ *
+ * 목록은 20초마다 새로 온다(`useCollabProposals`). 펼침을 위에서 들면 그 갱신마다 어느 줄이
+ * 열렸는지를 다시 맞춰야 하고, 제안이 사라지면 그 상태도 손으로 지워야 한다. 줄이 들고 있으면
+ * React 가 키(`intentOid`)로 알아서 따라간다.
+ */
 function Row({ proposal, actorLabel }: {
   proposal: CollabProposal;
   actorLabel: (actorKeyId: string) => string;
 }): ReactElement {
   const t = useT();
+  const [open, setOpen] = useState(false);
   const blocked = proposal.ops.map((o) => o.blockedReason).find((r) => r);
 
   return (
@@ -207,13 +245,19 @@ function Row({ proposal, actorLabel }: {
          날 이유 없이 빨개진다(`agentTurns.test` 가 적어 둔 규칙). */
       data-state={proposal.state}
     >
-      <div className="flex items-center gap-2 px-2 py-1">
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 px-2 py-1 text-left"
+        data-testid={`collab-toggle-${proposal.intentOid}`}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
         <span aria-hidden="true" className={`shrink-0 text-meta ${STATE_DOT[proposal.state]}`}>●</span>
         <span className="truncate text-meta font-medium text-fg">{proposal.title}</span>
         <span className="ml-auto shrink-0 text-meta text-fg-subtle">
           {proposal.ownerKeyId ? actorLabel(proposal.ownerKeyId) : t('collab.ownerUnknown')}
         </span>
-      </div>
+      </button>
       <div className="flex flex-wrap items-center gap-1 px-2 pb-1">
         <span className="text-meta text-fg-subtle" data-testid={`collab-state-${proposal.intentOid}`}>
           {t(`collab.state.${proposal.state}`)}
@@ -241,6 +285,99 @@ function Row({ proposal, actorLabel }: {
       </div>
       {blocked && (
         <div className="px-2 pb-1 text-meta text-fg-subtle break-words">{blocked}</div>
+      )}
+      {open && <Detail proposal={proposal} actorLabel={actorLabel} />}
+    </div>
+  );
+}
+
+/**
+ * 펼친 제안 — `intent` 아래의 **op → evidence**, 그리고 결정과 충돌.
+ *
+ * 여기서 **avcs 를 다시 부르지 않는다.** 목록이 이미 트리를 통째로 들고 있다(서버가
+ * `buildProposals` 로 접어서 준다) — 펼칠 때마다 다시 물으면 같은 값을 두 번 받고, 그 사이에
+ * 값이 달라지면 접힌 줄과 펼친 속이 서로 다른 시점을 말하게 된다.
+ */
+function Detail({ proposal, actorLabel }: {
+  proposal: CollabProposal;
+  actorLabel: (actorKeyId: string) => string;
+}): ReactElement {
+  const t = useT();
+
+  return (
+    <div
+      className="flex flex-col gap-2 border-t border-border px-2 py-2"
+      data-testid={`collab-detail-${proposal.intentOid}`}
+    >
+      <div className="flex flex-col gap-1">
+        <div className="text-meta font-medium tracking-wide text-fg-subtle uppercase">
+          {t('collab.detail.ops')}
+        </div>
+        {/* op 이 없는 intent 는 **열어만 둔 제안**이다. 빈칸 대신 그 사실을 적는다. */}
+        {!proposal.ops.length && (
+          <div className="text-meta text-fg-subtle" data-testid={`collab-detail-noops-${proposal.intentOid}`}>
+            {t('collab.detail.noOps')}
+          </div>
+        )}
+        {proposal.ops.map((op) => (
+          <div key={op.oid} className="flex flex-col gap-0.5" data-testid={`collab-op-${op.oid}`}>
+            <div className="flex items-baseline gap-2">
+              <span className="min-w-0 flex-1 text-meta text-fg break-words">{op.purpose}</span>
+              {op.status && (
+                <span className="shrink-0 text-meta text-fg-subtle" data-testid={`collab-op-status-${op.oid}`}>
+                  {opStatusLabel(t, op.status)}
+                </span>
+              )}
+            </div>
+            <div className="text-meta text-fg-subtle">
+              {op.actorKeyId ? actorLabel(op.actorKeyId) : t('collab.ownerUnknown')}
+            </div>
+            {op.blockedReason && (
+              <div className="text-meta text-danger break-words">{op.blockedReason}</div>
+            )}
+            {/* 증거는 op 밑에 붙는다 — 어느 검증이 어느 변경을 향한 것인지가 그 자리로 말해진다. */}
+            {op.evidence.map((e) => (
+              <div key={e.oid} className="pl-3 text-meta text-fg-subtle" data-testid={`collab-evidence-${e.oid}`}>
+                {e.summary}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+
+      {proposal.conflicts.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <div className="text-meta font-medium tracking-wide text-danger uppercase">
+            {t('collab.detail.conflicts')}
+          </div>
+          {proposal.conflicts.map((c) => (
+            <div key={c.id} className="text-meta text-fg-subtle break-words" data-testid={`collab-detail-conflict-${c.id}`}>
+              <span className="text-fg">{c.key}</span>
+              {c.reason ? ` — ${c.reason}` : ''}
+            </div>
+          ))}
+          {/*
+            **고를 자리는 아직 없다.** 충돌의 선택지(어느 op 을 고를지)는 서버가 아직 내주지
+            않고, 고르는 것은 승인과 함께 오는 2단계다(`docs/hub-seat.md` §4). 여기서는
+            "무엇이 다투는가" 까지만 말한다 — 없는 문을 그리지 않는다.
+          */}
+        </div>
+      )}
+
+      {proposal.decisions.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <div className="text-meta font-medium tracking-wide text-fg-subtle uppercase">
+            {t('collab.detail.decisions')}
+          </div>
+          {proposal.decisions.map((d) => (
+            <div key={d.oid} className="text-meta text-fg-subtle break-words" data-testid={`collab-decision-${d.oid}`}>
+              <span className="text-fg">
+                {d.decidedByKeyId ? actorLabel(d.decidedByKeyId) : t('collab.ownerUnknown')}
+              </span>
+              {d.reason ? ` — ${d.reason}` : ''}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
