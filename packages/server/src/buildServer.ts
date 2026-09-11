@@ -393,10 +393,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
    * 돌려주는 이유는 `preemptWakesForThread` 와 같다: 이벤트는 커밋 뒤여야 하고, 그 순서를
    * 지키는 자리를 한 곳(호출부)으로 모은다.
    */
-  const delegationSweeper = createDelegationDeadlineSweeper(deps.pool, {
-    onWake: (accountId) => emitEvent({ type: 'inbox.updated', accountId }),
-  });
-  delegationSweeper.startSweep(app);
+
 
   await registerWs(app, deps.pool, {
     onSocketCount: (read) => { socketCount = read; },
@@ -440,7 +437,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // `@fastify/websocket` 이 등록된 뒤에만 만들어질 수 있고, 그 등록은 registerWs 안에서
   // 일어난다. `registerAuth` 뒤여야 하는 이유는 `/metrics` 와 같다: `app.requireAccount`
   // 가 아직 undefined 면 preHandler 가 통째로 사라져 러너 소켓이 인증 없이 열린다.
-  await registerAgentRelayRoutes(app, deps.pool, {
+  const relay = await registerAgentRelayRoutes(app, deps.pool, {
     attachTicketTtlMs: deps.attachTicketTtlMs,
     interactiveOpenTimeoutMs: deps.interactiveOpenTimeoutMs,
     // 뷰어 소켓의 수명 규칙은 `/ws` 와 **같은 값**을 받아야 한다 — 갈라지면 더 민감한
@@ -450,6 +447,25 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // 러너 프레임도 생존 신호다 — 턴 중에는 이것이 **유일한** 신호다(폴이 안 나간다).
     agentPresence,
   });
+
+  /**
+   * 위임 기한 스위퍼(050·2026-09-12) — **아무 신호도 오지 않는 경우의 유일한 출구다.**
+   * 팀원이 죽으면 의무는 열린 채 남고 팀장은 기다리는 것이 아니라 없다(위임하고 턴이 끝나면
+   * 프로세스가 죽는다). 이 시계가 안 돌면 그 스레드는 영영 조용하다.
+   *
+   * **릴레이 등록 뒤에 시작한다** — `runningTurns` 가 그 허브의 것이기 때문이다. 기한이
+   * 지났어도 그 팀원의 턴이 그 스레드에서 아직 돌면 무응답이 아니다(턴 예산은 30분이라
+   * 10분 넘는 일이 정상이다).
+   *
+   * 깨운 팀장에게 이벤트를 치는 것은 여기다 — 서비스가 `emitEvent` 를 부르지 않고 콜백으로
+   * 돌려주는 이유는 `preemptWakesForThread` 와 같다: 이벤트는 커밋 뒤여야 하고, 그 순서를
+   * 지키는 자리를 한 곳(호출부)으로 모은다.
+   */
+  const delegationSweeper = createDelegationDeadlineSweeper(deps.pool, {
+    onWake: (accountId) => emitEvent({ type: 'inbox.updated', accountId }),
+    runningTurns: () => relay.listSessions('all'),
+  });
+  delegationSweeper.startSweep(app);
 
   // **registerAuth 뒤에 등록해야 한다.** `app.requireAccount` 는 registerAuth 가 데코레이트하므로,
   // 앞에서 등록하면 preHandler 가 undefined 로 박혀 인증 없이 열린다(테스트가 이걸 잡았다).
