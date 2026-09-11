@@ -64,6 +64,22 @@ export interface TerminalSinkOptions {
    * 서버 쪽 절반은 허브의 writer 판정이다(#346 — 진짜 게이트는 그쪽이다).
    */
   onResize?: (cols: number, rows: number) => void;
+  /**
+   * **지금 화면에서 무엇이 실제로 벌어지는지**를 밖으로 알린다(2026-09-12).
+   *
+   * 두 사실이 지금까지 아무 데도 안 보였다: ① WebGL 렌더러가 정말 켜졌는지(못 켜면
+   * 조용히 DOM 으로 남는다 — 그게 "빨라진 것 같지 않다"의 후보다) ② IME 조합 이벤트가
+   * 오기는 하는지(안 오면 한글은 무엇을 고쳐도 안 된다). 실패를 삼키는 설계라 사람이
+   * 느낌으로만 말할 수밖에 없었다 — 그 느낌을 사실로 바꾸는 통로다.
+   */
+  onDiagnostics?: (d: TerminalDiagnostics) => void;
+}
+
+export interface TerminalDiagnostics {
+  /** 실제로 그리고 있는 것. `dom` 이면 WebGL 을 못 켰다는 뜻이다(원인은 삼켜졌다). */
+  renderer: 'webgl' | 'dom' | 'pending';
+  /** 붙은 뒤 관찰한 조합 시작 횟수. 한글을 쳤는데 0 이면 웹뷰가 조합을 아예 안 쏜다. */
+  compositions: number;
 }
 
 /**
@@ -172,10 +188,12 @@ function attachCompositionBridge(el: HTMLElement, io: {
   send: (text: string) => void;
   /** 지금 이 창이 못 치는 상태인가(읽기 전용·관찰 전용). 조합 결과도 같은 게이트를 탄다. */
   blocked: () => boolean;
+  /** 조합이 **시작됐다**. 진단 줄이 이것을 센다 — 0 이면 웹뷰가 조합을 안 쏜다는 사실이다. */
+  onCompositionStart?: () => void;
 }): () => void {
   let composing = false;
   const swallow = (ev: Event): void => { ev.stopImmediatePropagation(); };
-  const onStart = (ev: Event): void => { composing = true; swallow(ev); };
+  const onStart = (ev: Event): void => { composing = true; io.onCompositionStart?.(); swallow(ev); };
   const onEnd = (ev: Event): void => {
     composing = false;
     swallow(ev);
@@ -188,10 +206,15 @@ function attachCompositionBridge(el: HTMLElement, io: {
     io.send(text);
   };
   const onKeyDown = (ev: KeyboardEvent): void => {
-    // 조합 중의 키는 IME 의 것이다. `isComposing` 은 표준 신호이고, `keyCode === 229` 는
-    // macOS IME 가 조합 중 모든 키에 실어 보내는 "조합 문자" 코드다. **조합 밖의 키는
-    // 건드리지 않는다** — 영문·화살표·Ctrl-C 는 그대로 xterm 이 처리해야 한다.
-    if (composing || ev.isComposing || ev.keyCode === 229) ev.stopImmediatePropagation();
+    // 조합 중의 키는 IME 의 것이다 — 그 키가 xterm 에 닿으면 원문자가 한 번 더 들어간다.
+    //
+    // **`keyCode === 229` 하나만으로는 막지 않는다**(2026-09-12 수정). 처음엔 그것도
+    // 조건에 넣었는데, 그러면 *조합이 시작조차 안 한* 경우까지 삼킨다: 웹뷰가
+    // `compositionstart` 를 안 쏘면서 키에 229 만 실어 보내면 우리가 키를 먹어 버려
+    // **아무것도 안 들어가는** 상태가 된다(엉뚱한 글자가 들어가던 것보다 나쁘다 — 조용해서
+    // 원인을 못 짚는다). 그래서 **조합이 실제로 시작된 뒤**(`composing`)나 표준 신호
+    // (`isComposing`)가 있을 때만 막는다. 조합 밖의 키(영문·화살표·Ctrl-C)는 건드리지 않는다.
+    if (composing || ev.isComposing) ev.stopImmediatePropagation();
   };
   el.addEventListener('compositionstart', onStart, true);
   el.addEventListener('compositionupdate', swallow, true);
@@ -238,6 +261,9 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
   let readOnly = !opts?.onInput;
   /** 조합 브리지 해제. `dispose` 가 이것을 부른다 — 안 부르면 죽은 호스트에 리스너가 남는다. */
   let detachComposition: (() => void) | null = null;
+  /** 밖으로 알리는 사실(위 `onDiagnostics`). 바뀔 때마다 통째로 보낸다 — 값이 둘뿐이다. */
+  const diagnostics: TerminalDiagnostics = { renderer: 'pending', compositions: 0 };
+  const reportDiagnostics = (): void => { opts?.onDiagnostics?.({ ...diagnostics }); };
   /** 마지막으로 보낸 크기. 같은 값을 다시 보내지 않는다 — 드래그 한 번이 수십 프레임이다. */
   let sent: { cols: number; rows: number } | null = null;
 
@@ -282,6 +308,7 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
     detachComposition = attachCompositionBridge(el, {
       send: (text) => opts?.onInput?.(text),
       blocked: () => readOnly || !opts?.onInput,
+      onCompositionStart: () => { diagnostics.compositions += 1; reportDiagnostics(); },
     });
     // 패널을 열었으면 **바로 칠 수 있어야 한다** — 지금까지는 한 번 클릭해야 키가 갔다.
     // 단 사람이 다른 입력칸에서 쓰고 있으면 **빼앗지 않는다**: 컴포저에 글을 쓰는 중에
@@ -309,6 +336,8 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
     // 얹으면 아무도 그것을 버리지 않는다(그리고 얹는 것 자체가 해체된 내부를 만진다).
     if (disposed) return;
     webgl = await enableWebglRenderer(t);
+    diagnostics.renderer = webgl ? 'webgl' : 'dom';
+    reportDiagnostics();
     // 애드온을 받는 동안 닫혔을 수도 있다 — 그때는 여기서 바로 버린다. `dispose` 는 이미
     // 지나갔으므로 이 자리가 마지막 기회다.
     if (disposed) {
