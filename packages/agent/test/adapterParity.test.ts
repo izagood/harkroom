@@ -403,14 +403,28 @@ describe('P2 가 옮겨야 할 목록 — 하네스 이름 비교의 예산', ()
    * 옮길 때마다 숫자가 줄어든다. **늘리려면 이 테이블을 고쳐야 하고, 그 diff 가 리뷰에
    * 보인다** — 그것이 이 테스트의 전부다. 0 이 되면 eslint 규칙으로 바꾸고 지운다.
    */
+  /**
+   * **하네스 이름과 비교하는 자리**만 센다. 리터럴을 `AGENT_HARNESSES` 에서 만들어 붙이는
+   * 이유는 그래야 이 정규식이 하네스가 늘어도 계속 맞기 때문이고, 동시에 **비교처럼
+   * 생겼지만 이름 비교가 아닌 것**을 걸러 내기 때문이다. 앞 판본(`harness\s*(===|!==)`)은
+   * 셋을 잘못 세고 있었다:
+   *   - `rec.harness !== def.harness` (mentionTurn·interactiveTurn) — 값끼리 비교다
+   *   - `typeof harness === 'string'` (sessions.ts) — 타입 가드다
+   * 그래서 20 이던 숫자가 17 이 됐다. **줄어든 3은 이설한 것이 아니라 애초에 목록에 들 게
+   * 아니었던 것들이다** — 이설로 줄어든 것과 섞이지 않게 여기 적어 둔다.
+   */
+  const NAME_COMPARISON = new RegExp(`harness\\s*(===|!==)\\s*'(${AGENT_HARNESSES.join('|')})'`, 'g');
+
   const BUDGET: Record<string, number> = {
-    'mentionTurn.ts': 5,
-    'interactiveTurn.ts': 4,
+    'mentionTurn.ts': 4,
+    'interactiveTurn.ts': 3,
+    // 이설했지만 **옛 분기가 살아 있어** 숫자가 그대로다(스위치가 꺼지면 그 분기가 답한다).
+    // 이 숫자는 옛 분기를 지울 때 줄어든다 — 그 순서가 이 작업의 안전장치다.
     'workspaceTrust.ts': 3,
     'turn.ts': 3,
-    'harnessErrors.ts': 3,
-    'sessions.ts': 1,
-    'claudeSessions.ts': 1,
+    // `harnessErrors.ts` 3 · `claudeSessions.ts` 1 이 여기 있었다(이설 2/N). 넷이 각자
+    // 묻던 같은 질문을 `adapters/index.ts::readsSessionTranscript` 하나로 모았고, 옛 비교는
+    // 그 함수 **안에** 스위치와 함께 산다 — 그래서 이 표에서는 사라졌다.
   };
 
   function countIn(dir: string, acc: Record<string, number>): Record<string, number> {
@@ -419,7 +433,7 @@ describe('P2 가 옮겨야 할 목록 — 하네스 이름 비교의 예산', ()
       // `adapters/` 는 이름을 알아도 되는 유일한 자리다 — 표가 사는 곳이다.
       if (entry.isDirectory()) { if (entry.name !== 'adapters') countIn(full, acc); continue; }
       if (!entry.name.endsWith('.ts')) continue;
-      const hits = readFileSync(full, 'utf8').match(/harness\s*(===|!==)/g);
+      const hits = readFileSync(full, 'utf8').match(NAME_COMPARISON);
       if (hits) acc[entry.name] = (acc[entry.name] ?? 0) + hits.length;
     }
     return acc;

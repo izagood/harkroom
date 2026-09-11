@@ -38,6 +38,30 @@ export const ADAPTERS: Record<AgentHarness, HarnessAdapter | 'unsupported'> = {
 };
 
 /**
+ * **이 하네스의 세션 기록을 우리가 읽을 수 있는가.**
+ *
+ * 네 자리(`readLastApiError` · `sessionTranscriptMtimeMs` · `sessionTranscriptGrewSince` ·
+ * `sessionMaterialized`)가 각자 `harness !== 'claude-code'` 로 묻던 **같은 질문 하나**다.
+ * 넷이 따로 물으면 네 번째 하네스가 올 때 네 곳을 다 찾아야 하고, 그중 하나를 놓치면
+ * "읽었다"는 거짓 신호가 생겨 아직 정상 동작하는 폴백을 가린다.
+ *
+ * ## 이설 중이다 — 옛 답을 그대로 돌려준다
+ *
+ * 스위치가 꺼져 있으면 **옛 비교를 그대로** 한다(`harness === 'claude-code'`). 켜면 표를
+ * 읽는다: 기록이 파일이고(`kind: 'files'`) 그 형식을 **해석하는 코드가 있을 때**(`parsed`)만
+ * 참이다. 두 답이 같다는 것은 `test/harnessErrorsParity.test.ts` 가 양쪽을 실제로 돌려
+ * 지킨다. 옛 비교는 스위치가 기본 켜짐이 되고 한 판 돌려 본 뒤에 지운다.
+ *
+ * `'cli'` 갈래(opencode)가 거짓인 이유: 명령이 있다는 것만 알고 출력 형식을 읽는 코드는
+ * 없다. 물어볼 수 있다는 것과 읽을 줄 안다는 것은 다른 사실이다.
+ */
+export function readsSessionTranscript(harness: AgentHarness): boolean {
+  if (!harnessAdaptersEnabled()) return harness === 'claude-code';
+  const transcript = ADAPTERS[harness] === 'unsupported' ? null : adapterFor(harness).transcript;
+  return transcript !== null && transcript.kind === 'files' && transcript.parsed;
+}
+
+/**
  * 이 하네스의 어댑터. 구현이 없으면 **던진다** — 호출자가 `RUNNABLE_HARNESSES` 를 확인하지
  * 않은 결함이라는 뜻이고, 조용히 기본값을 지어내면 그 결함이 엉뚱한 자리에서 드러난다
  * (`turn.ts::buildTurnCommand` 가 같은 규율을 쓴다).

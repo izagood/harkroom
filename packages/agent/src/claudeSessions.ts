@@ -19,6 +19,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentHarness } from '@murmur/shared';
 
+import { readsSessionTranscript } from './adapters/index.js';
+
 /**
  * **경로는 `CLAUDE_CONFIG_DIR` 를 따라간다(2026-09-07).** 계정별 config 디렉터리로 claude 를
  * 띄우면 세션 파일도 `<configDir>/projects` 아래로 옮겨간다(실측). 이 판정이 계속 홈만 보면
@@ -91,6 +93,8 @@ export function claudeSessionMaterialized(
   //
   // 기본값이 `null`(시스템 기본)인 이유: 계정 풀을 안 만든 러너와 이 인자를 모르는 옛
   // 호출부가 지금 동작을 그대로 유지해야 한다.
-  if (harness === 'claude-code') return claudeSessionFileExists(sessionId, { configDir: claudeConfigDir });
+  // 기록을 읽을 줄 아는 하네스만 실재를 확인한다 — 나머지는 "모른다"가 아니라 **참**이다
+  // (없다고 단정하면 그 턴들이 매번 새 세션으로 떨어진다). 판단은 어댑터가 한다.
+  if (readsSessionTranscript(harness)) return claudeSessionFileExists(sessionId, { configDir: claudeConfigDir });
   return Promise.resolve(true);
 }

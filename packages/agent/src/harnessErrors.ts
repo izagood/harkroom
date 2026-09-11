@@ -15,6 +15,8 @@
 // 이유로 러너의 파싱 금지 원칙에 어긋나지 않는다.
 import { readFile, stat } from 'node:fs/promises';
 import type { AgentHarness } from '@murmur/shared';
+
+import { readsSessionTranscript } from './adapters/index.js';
 import { claudeSessionFilePath } from './claudeSessions.js';
 
 export interface HarnessApiError {
@@ -63,9 +65,9 @@ export async function readLastApiError(
     sinceMs?: number;
   } = {},
 ): Promise<HarnessApiError | null> {
-  // codex 의 rollout 은 형식이 다르다 — P5 에서 다룬다. 지금 억지로 읽으면 "읽었다"는 거짓
-  // 신호가 생기고, 그것이 아직 정상 동작하는 tail 폴백을 가린다.
-  if (harness !== 'claude-code') return null;
+  // 기록을 읽을 줄 모르는 하네스는 여기서 멈춘다. 억지로 읽으면 "읽었다"는 거짓 신호가
+  // 생기고, 그것이 아직 정상 동작하는 tail 폴백을 가린다. 판단은 어댑터가 한다.
+  if (!readsSessionTranscript(harness)) return null;
   if (!sessionId) return null;
 
   const path = await claudeSessionFilePath(sessionId, opts);
@@ -124,8 +126,8 @@ export async function sessionTranscriptMtimeMs(
   sessionId: string | null,
   opts: { projectsDir?: string; configDir?: string | null } = {},
 ): Promise<number | null> {
-  // codex 의 rollout 은 형식도 위치도 다르다(P5) — 판정할 수 없으면 재지 않는다.
-  if (harness !== 'claude-code') return null;
+  // 판정할 수 없으면 재지 않는다(`readsSessionTranscript`).
+  if (!readsSessionTranscript(harness)) return null;
   if (!sessionId) return null;
   try {
     const path = await claudeSessionFilePath(sessionId, opts);
@@ -164,7 +166,7 @@ export async function sessionTranscriptGrewSince(
 ): Promise<boolean> {
   // 판정 불가 두 자리는 참이다(위 주석). `sessionTranscriptMtimeMs` 는 이 둘과
   // "파일이 없다"를 다 `null` 로 뭉치므로, 여기서 먼저 가른다.
-  if (harness !== 'claude-code') return true;
+  if (!readsSessionTranscript(harness)) return true;
   if (!sessionId) return true;
   const mtime = await sessionTranscriptMtimeMs(harness, sessionId, opts);
   return mtime !== null && mtime > sinceMs;
