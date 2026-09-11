@@ -154,6 +154,63 @@ describe('an agent reading its own definition', () => {
   });
 });
 
+describe('실행 경로 — 하네스 이설의 손잡이 (2026-09-12)', () => {
+  /**
+   * 러너에는 코드 경로가 둘이다(옛 하네스별 분기 · 새 어댑터 표). 전환의 안전은 **한
+   * 에이전트만 새 경로로 돌려 보고 나머지는 그대로 두는 것**에 걸려 있는데, 스위치가
+   * 러너의 환경변수뿐이면 그러려고 데몬 전체를 재시작해야 한다 — 그러면 남의 도는 턴까지
+   * 같이 죽는다. 그래서 값이 **정의에 실려** 러너가 턴마다 읽는다.
+   */
+  it('기본은 null 이다 — 고르지 않으면 러너 기본값을 따른다', async () => {
+    const made = (await create({ handle: 'eppath', displayName: 'EP' })).json();
+    expect(made.executionPath).toBeNull();
+  });
+
+  it('고른 값이 저장되고 명시적 null 로 되돌아온다', async () => {
+    const made = (await create({ handle: 'eppatch', displayName: 'EP2' })).json();
+
+    expect((await patch(made.id, { executionPath: 'adapters' })).json().executionPath).toBe('adapters');
+    // **되돌리는 길이 있어야 한다** — 사고가 났을 때 실제로 쓰는 손잡이가 이쪽이다.
+    expect((await patch(made.id, { executionPath: 'legacy' })).json().executionPath).toBe('legacy');
+    expect((await patch(made.id, { executionPath: null })).json().executionPath).toBeNull();
+  });
+
+  it('모르는 값은 거절한다 — 오타가 조용히 "기본값"이 되면 안 된다', async () => {
+    const made = (await create({ handle: 'epbad', displayName: 'EP3' })).json();
+    const res = await patch(made.id, { executionPath: 'adapter' });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('러너가 자기 정의에서 이 값을 읽는다 — 여기 없으면 손잡이가 아무것도 안 한다', async () => {
+    const made = (await create({ handle: 'epself', displayName: 'EP4' })).json();
+    await patch(made.id, { executionPath: 'adapters' });
+    const patRes = await app.inject({
+      method: 'POST', url: `/accounts/${made.id}/pats`, headers: admin(), payload: { label: 'runner' },
+    });
+
+    const res = await app.inject({
+      method: 'GET', url: '/agent/config',
+      headers: { authorization: `Bearer ${patRes.json().token}` },
+    });
+
+    expect(res.json().executionPath).toBe('adapters');
+  });
+
+  it('admin 이 아니면 못 바꾼다 — 소유자에게도 잠근다', async () => {
+    // `ADMIN_ONLY_FIELDS` 에 있다. 이 값은 러너의 코드 경로를 바꾸므로 틀리면 그 에이전트가
+    // 답을 못 한다 — 운영자의 판단이어야 한다.
+    const made = (await create({ handle: 'epguard', displayName: 'EP5' })).json();
+    const { pat } = await createAgent(app, adminToken, 'epintruder');
+
+    const res = await app.inject({
+      method: 'PATCH', url: `/accounts/agents/${made.id}`,
+      headers: { authorization: `Bearer ${pat}` }, payload: { executionPath: 'adapters' },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+});
+
 describe('멘션 턴 권한과 러너 소유자', () => {
   it('에이전트 생성 시 mentionPermission 기본 auto, 생성자가 owner 가 된다', async () => {
     const res = await create({ handle: 'permtest', displayName: 'P' });

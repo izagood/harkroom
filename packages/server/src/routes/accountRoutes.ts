@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { newToken } from '../auth/tokens.js';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
-import { ACCOUNT_STATUSES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@harkroom/shared';
+import { ACCOUNT_STATUSES, AGENT_EXECUTION_PATHS, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@harkroom/shared';
 import {
   ackAgentStop, createAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
   revokeAllPats, undoAgentStopRequest, updateAgent,
@@ -156,9 +156,12 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     workingDir: z.string().max(512).nullable().optional(),
     mentionPermission: z.enum(MENTION_PERMISSIONS).optional(),
     ownerAccountId: z.string().uuid().nullable().optional(),
+    // 어느 코드 경로로 도는가(2026-09-12). `null` 은 '러너 기본값을 따른다' 이므로
+    // nullable 이어야 한다 — 고른 것을 **되돌릴** 방법이 없으면 시험이 한 방향이 된다.
+    executionPath: z.enum(AGENT_EXECUTION_PATHS).nullable().optional(),
   };
 
-  const ADMIN_ONLY_FIELDS = ['ownerAccountId', 'disabled', 'mentionPermission'] as const;
+  const ADMIN_ONLY_FIELDS = ['ownerAccountId', 'disabled', 'mentionPermission', 'executionPath'] as const;
 
   /**
    * 감사에 남길 에이전트 설정 필드와, 값을 그대로 남겨도 되는지의 표.
@@ -182,6 +185,10 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
   const AUDITED_FIELDS = {
     mentionPermission: 'value', workingDir: 'value', ownerAccountId: 'value',
     harness: 'value', instructions: 'changed',
+    // `executionPath`: 이 에이전트의 턴이 **어느 코드 경로**로 도는지를 가른다. 하네스가
+    // 무엇인지(`harness`)와 같은 층의 사실이고, 무엇이 잘못 돌았을 때 가장 먼저 물어볼
+    // 값이라 감사에 남는다.
+    executionPath: 'value',
   } as const;
 
   type AuditedField = keyof typeof AUDITED_FIELDS;

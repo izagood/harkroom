@@ -373,6 +373,12 @@ export const ko = {
   'agents.run.harnessDefault': 'harness 기본값',
   'agents.run.poolNotForHarness': '이 에이전트는 {harness} 로 도는데 그 하네스에는 계정 풀이 없다 — 하네스가 로그인한 계정 하나를 쓴다.',
   'agents.run.harnessPlanned': '{harness} (지원 예정)',
+  // 실행 경로(2026-09-12) — admin 전용. 하네스 이설을 **한 에이전트씩** 재 보기 위한 손잡이다.
+  'agents.run.executionPath': '실행 경로',
+  'agents.run.executionPathNote': '이 에이전트의 턴이 러너의 어느 코드 경로로 도는가. 다음 턴부터 적용된다 — 러너를 다시 띄우지 않아도 된다.',
+  'agents.run.executionPathDefault': '러너 기본값을 따른다',
+  'agents.run.executionPathLegacy': 'legacy (하네스별 분기)',
+  'agents.run.executionPathAdapters': 'adapters (하네스 사실표)',
   'agents.run.note': '무엇으로 도는가.',
   'agents.run.title': '실행',
 

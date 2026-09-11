@@ -23,6 +23,7 @@ import type { Me } from './murmur.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, type TurnPlan } from './turn.js';
 import { discoversSessionIdAfterTurn, hasAccountPool } from './adapters/index.js';
+import { runWithExecutionPath } from './executionPath.js';
 import { acceptsPtyInput } from './pty.js';
 import type { PtyControls, TurnResult } from './pty.js';
 import type { Exec } from './workspace.js';
@@ -224,6 +225,15 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
   const spawn = async (key: string, req: InteractiveOpenRequest): Promise<InteractiveOpenResult> => {
     // 정의는 매번 새로 읽는다(멘션 턴과 같은 이유 — 하네스·모델이 UI 에서 바뀐다).
     const def = await deps.murmur.definition();
+    // 실행 경로도 이 정의에서 나온다 — 이유는 mentionTurn.ts 의 같은 자리에 적혀 있다.
+    // 인터랙티브 턴도 감싸는 이유: 사람이 여는 터미널에서 새 경로를 확인하지 못하면
+    // "새 경로로 넘어가도 되는가"의 절반(사람이 직접 보는 쪽)을 못 잰다.
+    return runWithExecutionPath(def.executionPath, () => spawnInPath(key, req, def));
+  };
+
+  const spawnInPath = async (
+    key: string, req: InteractiveOpenRequest, def: AgentView,
+  ): Promise<InteractiveOpenResult> => {
     let rec = deps.store.get(key);
     if (rec && rec.harness !== def.harness) {
       // 멘션 턴의 하네스 전환과 같은 판단(mentionTurn.ts): 세션 기억만 버리고

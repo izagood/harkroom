@@ -163,6 +163,7 @@ interface Draft {
   workingDir: string;
   mentionPermission: MentionPermission;
   ownerAccountId: string | null;
+  executionPath: AgentConfig['executionPath'];
 }
 
 /**
@@ -175,6 +176,8 @@ const emptyDraft = (defaults: AgentDefaults): Draft => ({
   harness: defaults.harness as AgentConfig['harness'],
   model: defaults.model ?? '', effort: defaults.effort ?? '', workingDir: '',
   mentionPermission: 'auto', ownerAccountId: null,
+  // 새 에이전트는 러너 기본값으로 시작한다 — 만드는 사람이 이설의 사정을 알 이유가 없다.
+  executionPath: null,
 });
 
 const draftOf = (a: AgentView): Draft => ({
@@ -186,6 +189,7 @@ const draftOf = (a: AgentView): Draft => ({
   workingDir: a.workingDir ?? '',
   mentionPermission: a.mentionPermission,
   ownerAccountId: a.ownerAccountId,
+  executionPath: a.executionPath,
 });
 
 export function AgentsSettings({ targetId }: { targetId?: string }) {
@@ -606,7 +610,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     model: customized && d.model ? d.model : null,
     effort: customized && d.effort ? d.effort : null,
     workingDir: d.workingDir || null,
-    ...(isAdmin ? { mentionPermission: d.mentionPermission, ownerAccountId: d.ownerAccountId } : {}),
+    ...(isAdmin
+      ? { mentionPermission: d.mentionPermission, ownerAccountId: d.ownerAccountId, executionPath: d.executionPath }
+      : {}),
   });
 
   const submit = async () => {
@@ -1240,6 +1246,40 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 ))}
               </select>
             </label>
+
+            {/* 실행 경로 — 하네스 이설의 손잡이다(2026-09-12).
+
+                **admin 전용이고, 고르지 않는 것이 기본이다.** 이 값은 러너의 코드 경로를
+                바꾸므로 틀리면 그 에이전트가 답을 못 한다. 그래서 `null`(러너 기본값)을
+                맨 위에 두고, 고른 사람만 그 에이전트를 가진다.
+
+                **왜 이 손잡이가 필요한가:** 이설의 안전은 "옛 경로를 남겨 두고 한
+                에이전트만 새 경로로 돌려 본다"에 걸려 있다. 스위치가 환경변수뿐이면 그
+                비교를 하려고 데몬 전체를 재시작해야 하고, 그러면 **다른 에이전트의 도는
+                턴까지 같이 죽는다.** 값이 정의에 실려 오므로 다음 턴부터 바로 바뀐다.
+
+                이설이 끝나 옛 경로를 지우는 날 이 칸도 함께 사라진다 — 임시 손잡이다. */}
+            {isAdmin && (
+              <label className={label}>
+                {t('agents.run.executionPath')}
+                <select
+                  className={field}
+                  aria-label={t('agents.run.executionPath')}
+                  value={draft.executionPath ?? ''}
+                  onChange={(e) => setDraft({
+                    ...draft,
+                    executionPath: (e.target.value || null) as AgentConfig['executionPath'],
+                  })}
+                >
+                  <option value="">{t('agents.run.executionPathDefault')}</option>
+                  <option value="legacy">{t('agents.run.executionPathLegacy')}</option>
+                  <option value="adapters">{t('agents.run.executionPathAdapters')}</option>
+                </select>
+                <span className="mt-1 block text-meta text-fg-subtle">
+                  {t('agents.run.executionPathNote')}
+                </span>
+              </label>
+            )}
 
             {/* 계정 풀 — **이 기기에만 저장된다.** 위 필드들과 저장 경로가 다르므로
                 (서버 PATCH 가 아니라 로컬 데몬) 고르는 즉시 쓰고, 그 사실을 적는다.

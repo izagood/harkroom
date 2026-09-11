@@ -135,7 +135,7 @@ const agentView = (id: string, handle: string, extra: Partial<AgentView> = {}): 
   id, handle, displayName: handle, kind: 'agent', isAdmin: false,
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
-  claudeLane: null,
+  claudeLane: null, executionPath: null,
   stopRequestedAt: null, stopAckedAt: null, lastTurnAt: null,
   status: 'available', statusText: null, avatarAttachmentId: null, ...extra,
 });

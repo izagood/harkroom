@@ -13,7 +13,7 @@ const agent = (handle: string, over: Partial<AgentView> = {}): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
-  claudeLane: null,
+  claudeLane: null, executionPath: null,
   stopRequestedAt: null, stopAckedAt: null, lastTurnAt: null,
   status: 'available', statusText: null, avatarAttachmentId: null, ...over,
 });
@@ -1085,7 +1085,7 @@ describe('AgentGrid — 사이드바는 한 픽셀도 안 바뀐다', () => {
   const sidebar = (over: Partial<Parameters<typeof AgentGrid>[0]> = {}) => grid({
     agents: [agent('alpha', {
       harness: 'claude-code', model: 'sonnet-4.6', runnerVersion: 'v0.1.1',
-      claudeLane: null,
+      claudeLane: null, executionPath: null,
       lastTurnAt: '2026-09-08T10:12:00.000Z',
       stopRequestedAt: '2026-09-08T10:23:00.000Z', stopAckedAt: null,
     })],
