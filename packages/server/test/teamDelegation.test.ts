@@ -6,7 +6,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
-import { createDelegationDeadlineSweeper } from '../src/services/delegations.js';
+import { cancelDelegationsFor, createDelegationDeadlineSweeper } from '../src/services/delegations.js';
 
 /**
  * 위임 왕복(050) — **팀장이 넘긴 일이 끝나면 팀장이 다시 깬다.**
@@ -373,6 +373,80 @@ describe('050 위임 왕복', () => {
       name: 'message.post', arguments: { channelId, threadRootId: rootId, body: '나도 끝났다' },
     });
     expect(await openIds()).toEqual([]);
+
+    await oneClient.close(); await twoClient.close(); await leadClient.close();
+  });
+
+  /**
+   * 중단이 의무를 닫는다(051). **깨울지가 방향에 따라 정반대**라 두 갈래를 함께 잰다.
+   *
+   * 이것이 없으면 중단된 턴의 의무는 기한이 지나야 `timeout` 으로 닫히고, 팀장은 10분 뒤에
+   * "무응답"을 받아 **사람이 일부러 멈춘 일을 다시 하려 든다.**
+   */
+  it('10. 팀원을 중단하면 취소로 닫히고 팀장이 깨어난다', async () => {
+    const rootId = await openThread('@delegteam 중단');
+    const leadClient = await mcpClient(leadPat);
+    const oneClient = await mcpClient(onePat);
+
+    const res = text(await leadClient.callTool({
+      name: 'message.delegate',
+      arguments: { channelId, threadRootId: rootId, body: '하나에게', to: ['done1'] },
+    }));
+    const messageId = (res.message as { id: string }).id;
+
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+      const woke = await cancelDelegationsFor(client, { threadRootId: rootId, accountId: oneId });
+      await client.query('commit');
+      // 사람은 그 팀원의 일을 멈춘 것이고 팀 전체를 멈춘 것이 아니다 — 팀장이 다음을 정한다.
+      expect(woke).toEqual([leadId]);
+    } finally { client.release(); }
+
+    expect(await outcomes(messageId)).toEqual({ done1: 'canceled' });
+    expect(await inboxReasons(leadId, messageId)).toEqual(['delegation_done']);
+
+    // 결말이 `취소` 로 온다 — 프롬프트가 "다시 시작하지 마라"를 말하는 근거다.
+    const inbox = text(await leadClient.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 0 } }));
+    const entry = (inbox.entries as Array<{ messageId: string; delegation?: { items: Array<{ outcome: string }> } }>)
+      .find((e) => e.messageId === messageId);
+    expect(entry?.delegation?.items[0]!.outcome).toBe('canceled');
+
+    await oneClient.close(); await leadClient.close();
+  });
+
+  it('11. 팀장을 중단하면 의무가 닫히고 팀장은 깨지 않는다', async () => {
+    const rootId = await openThread('@delegteam 팀장 중단');
+    const leadClient = await mcpClient(leadPat);
+    const oneClient = await mcpClient(onePat);
+    const twoClient = await mcpClient(twoPat);
+
+    const res = text(await leadClient.callTool({
+      name: 'message.delegate',
+      arguments: { channelId, threadRootId: rootId, body: '둘에게', to: ['done1', 'dtwo'] },
+    }));
+    const messageId = (res.message as { id: string }).id;
+
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+      const woke = await cancelDelegationsFor(client, { threadRootId: rootId, accountId: leadId });
+      await client.query('commit');
+      // **깨우지 않는다** — 깨우면 사람이 멈춘 그 턴이 곧바로 되살아나고 중단의 뜻이 사라진다.
+      expect(woke).toEqual([]);
+    } finally { client.release(); }
+
+    expect(await outcomes(messageId)).toEqual({ done1: 'canceled', dtwo: 'canceled' });
+    expect(await inboxReasons(leadId, messageId)).toEqual([]);
+
+    // 사슬에서도 사라진다(meta 의 open 이 비었다) — 멈춘 일이 "기다리는 중"으로 남지 않는다.
+    const open = await pool.query(`select meta->'delegation'->'open' as open from message where id = $1`, [messageId]);
+    expect(open.rows[0]!.open).toEqual([]);
+
+    // 기한 스위퍼도 이 위임을 다시 건드리지 않는다 — `notified_at` 이 찍혀 있다.
+    await pool.query(`update team_delegation set deadline_at = now() - interval '1 second' where message_id = $1`, [messageId]);
+    await createDelegationDeadlineSweeper(pool).sweep();
+    expect(await inboxReasons(leadId, messageId)).toEqual([]);
 
     await oneClient.close(); await twoClient.close(); await leadClient.close();
   });

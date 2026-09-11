@@ -233,6 +233,84 @@ export async function closeDelegationsForReply(
 }
 
 /**
+ * **사람이 중단한 턴의 의무를 닫는다**(051). 중단 라우트가 같은 트랜잭션으로 부른다.
+ *
+ * 이것이 없으면 중단된 턴의 의무는 **기한이 지나야** `timeout` 으로 닫히고, 팀장은 10분 뒤에
+ * *"무응답"* 을 받아 **사람이 일부러 멈춘 일을 다시 하려 든다.** 사람의 중단이 10분 뒤에
+ * 되돌려지는 셈이다.
+ *
+ * ## 두 방향을 갈라 다룬다 — 깨울지가 정반대다
+ *
+ * **① 중단된 것이 팀원이면** 그 의무만 닫고, 그것이 마지막이었으면 **팀장을 깨운다.** 사람은
+ * 그 팀원의 일을 멈춘 것이고 팀 전체를 멈춘 것이 아니므로, 팀장이 다음을 정해야 한다
+ * (프롬프트가 *"취소는 다시 시작하지 마라"* 를 말한다).
+ *
+ * **② 중단된 것이 팀장이면** 그 팀장이 낸 위임을 전부 닫고 **깨우지 않는다.** 깨우면 사람이
+ * 멈춘 그 턴이 곧바로 되살아난다 — 중단의 뜻이 사라진다. 그래서 `notified_at` 을 찍되
+ * inbox 항목은 만들지 않는다(그 컬럼이 "한 번만 깨운다"를 지키는 자리이므로, 찍어 두면
+ * 기한 스위퍼도 나중에 이 위임을 건드리지 않는다).
+ *
+ * 한 계정이 같은 스레드에서 둘 다일 수 있다(어느 위임의 팀원이면서 다른 위임의 팀장).
+ * 그래서 두 방향을 순서대로 모두 본다.
+ *
+ * 돌려주는 것은 **깨운 팀장의 id 들**이다 — `closeDelegationsForReply` 와 같은 규약이고,
+ * 이유도 같다(이벤트는 커밋 뒤에 친다).
+ */
+export async function cancelDelegationsFor(
+  client: PoolClient,
+  args: { threadRootId: string; accountId: string },
+): Promise<string[]> {
+  const woke: string[] = [];
+
+  // ① 이 계정이 **팀원**인 미결 의무.
+  const asDelegate = await client.query<{ delegation_id: string }>(
+    `select i.delegation_id
+       from team_delegation_item i
+       join team_delegation d on d.id = i.delegation_id
+      where i.delegate_account_id = $1 and i.outcome is null and d.thread_root_id = $2
+      order by d.created_at
+      for update of d`,
+    [args.accountId, args.threadRootId],
+  );
+  for (const row of asDelegate.rows) {
+    const closed = await client.query(
+      `update team_delegation_item set outcome = 'canceled', closed_at = now()
+        where delegation_id = $1 and delegate_account_id = $2 and outcome is null`,
+      [row.delegation_id, args.accountId],
+    );
+    if (!closed.rowCount) continue;
+    const lead = await notifyIfSettled(client, row.delegation_id);
+    if (lead) woke.push(lead);
+  }
+
+  // ② 이 계정이 **팀장**인 미결 위임. 깨우지 않는다(위 문단 ②).
+  const asLead = await client.query<{ id: string }>(
+    `select id from team_delegation
+      where lead_account_id = $1 and thread_root_id = $2 and notified_at is null
+      for update`,
+    [args.accountId, args.threadRootId],
+  );
+  for (const row of asLead.rows) {
+    await client.query(
+      `update team_delegation_item set outcome = 'canceled', closed_at = now()
+        where delegation_id = $1 and outcome is null`,
+      [row.id],
+    );
+    // `notifyIfSettled` 를 쓰지 않는다 — 그 함수는 깨우는 것이 일이다. 여기서는 meta 를
+    // 비우고 깃발만 찍는다(깨움 없이 닫는 유일한 자리다).
+    await client.query(
+      `update message m set meta = jsonb_set(m.meta::jsonb, '{delegation,open}', '[]'::jsonb)
+         from team_delegation d
+        where d.id = $1 and m.id = d.message_id and m.meta->>'kind' = 'delegation'`,
+      [row.id],
+    );
+    await client.query(`update team_delegation set notified_at = now() where id = $1`, [row.id]);
+  }
+
+  return woke;
+}
+
+/**
  * 미결이 0 이면 팀장을 깨운다 — **한 번만.** 깨웠으면 그 팀장의 id, 아니면 `null`.
  *
  * **부분 취합을 하지 않는 이유**가 이 함수의 존재 이유다. 하나 닫힐 때마다 깨우면 스케줄러가

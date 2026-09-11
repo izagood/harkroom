@@ -30,6 +30,7 @@ import type { Pool } from 'pg';
 import type { AgentSessionView, AgentWakeView } from '@murmur/shared';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { actorOf, recordAudit } from '../audit.js';
+import { cancelDelegationsFor } from '../services/delegations.js';
 import { createAttachTicketStore } from '../ws/tickets.js';
 import { emitEvent } from '../events.js';
 import { createRelayHub } from '../ws/relay.js';
@@ -301,6 +302,40 @@ export async function registerAgentRelayRoutes(
         },
       });
     }
+    /**
+     * **중단은 위임 의무도 닫는다**(051). 이것이 없으면 중단된 턴의 의무는 기한이 지나야
+     * `timeout` 으로 닫히고, 팀장은 10분 뒤에 "무응답"을 받아 **사람이 일부러 멈춘 일을
+     * 다시 하려 든다** — 사람의 중단이 10분 뒤에 되돌려지는 셈이다.
+     *
+     * 깨울지는 방향에 따라 갈린다(그 판정은 `cancelDelegationsFor` 가 갖는다): 팀원을
+     * 멈췄으면 팀장이 다음을 정해야 하므로 깨우고, **팀장을 멈췄으면 깨우지 않는다.**
+     *
+     * 스레드가 없으면 할 일이 없다 — 위임은 언제나 스레드에 걸린다(050).
+     *
+     * **중단 자체를 이 실패로 막지 않는다.** 러너에게는 이미 신호가 갔고(위 `cancelSession`),
+     * 사람이 원한 것은 그 턴이 멈추는 것이다. 의무를 못 닫았으면 기한이 그 자리를 메운다 —
+     * 늦은 대신 틀리지 않는다.
+     */
+    const wokeByCancel: string[] = [];
+    if (session.threadRootId) {
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        wokeByCancel.push(...await cancelDelegationsFor(client, {
+          threadRootId: session.threadRootId, accountId: session.agentAccountId,
+        }));
+        await client.query('commit');
+      } catch (err) {
+        await client.query('rollback').catch(() => {});
+        console.error('[cancel] 위임 의무를 닫지 못했다(중단은 이미 보냈다):', err);
+      } finally {
+        client.release();
+      }
+      // 이벤트는 커밋 뒤다 — 러너는 이것을 보고 즉시 폴하므로, 앞에서 치면 아직 안 보이는
+      // inbox 를 읽고 빈손으로 돌아간다(`postMessage` 가 같은 순서를 지킨다).
+      for (const accountId of wokeByCancel) emitEvent({ type: 'inbox.updated', accountId });
+    }
+
     // 감사에는 사건과 세션만(파일 머리 주석). 중단은 사람이 남의 일을 멈춘 것이라
     // attach 와 같은 무게로 남긴다.
     await recordAudit(pool, {
