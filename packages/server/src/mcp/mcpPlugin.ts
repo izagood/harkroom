@@ -5,15 +5,19 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import {
   ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, MAX_MESSAGE_BODY_CHARS,
-  MODEL_ID_MAX, REPORT_MAX_ITEMS, REPORT_MAX_NEXT,
-  type AccountView, type AskAudience, type AskMeta, type FailureMeta, type ModelMeta,
-  type ReportMeta,
+  MODEL_ID_MAX, REPORT_MAX_ITEMS, REPORT_MAX_NEXT, TEAM_ROUND_LIMIT,
+  type AccountView, type AskAudience, type AskMeta, type DelegationMeta, type FailureMeta,
+  type ModelMeta, type ReportMeta,
 } from '@murmur/shared';
 import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js';
 import { emitEvent, emitPosted, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '../services/channels.js';
 import { listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
+import {
+  createDelegation, leadTeamFor, roundsUsed,
+  DELEGATION_DEADLINE_DEFAULT_SEC, DELEGATION_DEADLINE_MAX_SEC, DELEGATION_DEADLINE_MIN_SEC,
+} from '../services/delegations.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { getMemory, listMemory, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, setMemory } from '../services/memory.js';
 import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
@@ -97,6 +101,13 @@ function buildMcpServer(
   account: AccountView,
   lifecycle: Lifecycle,
   storage: StorageBackend,
+  /**
+   * 러너가 붙어 있는 에이전트들(050 의 층 0). `message.delegate` 가 **도달 불가한 팀원에는
+   * 의무를 만들지 않으려고** 본다 — 만들면 아무도 닫지 않는 의무가 되어 팀장은 기한까지
+   * 아무 것도 모른다. 여기까지 넘기는 이유는 그 판정의 정본이 인메모리라는 것이다
+   * (`presence.ts`: *"지금 붙어 있나"는 이 표가 답하지 않는다*).
+   */
+  presence: Pick<AgentPresence, 'online'>,
 ): McpServer {
   const server = new McpServer({ name: 'murmur', version: '0.1.0' });
 
@@ -355,6 +366,156 @@ function buildMcpServer(
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
     return jsonResult({ message, notified });
+  });
+
+  /**
+   * **위임** — 팀장이 팀원에게 일을 넘긴다(050). 결말이 나면 팀장이 다시 깨어난다.
+   *
+   * ## 왜 `@handle` 멘션이 아닌 새 도구인가
+   *
+   * 두 가지를 서버가 알아야 한다: **이것이 위임이라는 것**과 **누구를 기다리는지**. 멘션으로는
+   * 둘 다 알 수 없다 — "이 작성자가 지금 팀장으로 도는 중인가"는 러너의 턴에 있는 사실이고
+   * 메시지에는 없다. 그리고 `to` 가 명시되면 *"본문 맨 앞에 이름을 둬야 턴이 뜬다"* 는 함정이
+   * 사라진다: 인용·코드 블록 안이든 문장 가운데든 결과가 같다.
+   *
+   * ## 층 0 — 도달 불가한 팀원에는 의무를 만들지 않는다
+   *
+   * 러너가 붙어 있지 않거나 비활성인 팀원은 `unreachable` 로 돌려주고 **의무를 만들지
+   * 않는다.** 만들면 아무도 닫지 않는 의무가 되어 팀장은 기한까지 아무 것도 모른다. 요점은
+   * 이때 팀장이 **아직 자기 턴 안**이라는 것이다 — 그 자리에서 직접 하거나 다른 팀원을 고를
+   * 수 있다. 복구보다 예방이 싸다.
+   *
+   * 전원이 도달 불가면 **메시지도 만들지 않는다.** 위임 메시지만 남으면 사람은 넘어간 줄
+   * 알고 기다리는데 기다릴 것이 없다.
+   *
+   * ## 스레드가 필수다
+   *
+   * `threadRootId` 를 옵셔널로 두지 않는다: 위임은 라운드를 스레드 단위로 세고(무한 왕복을
+   * 막는 유일한 장치다) 닫힘도 *"이 스레드에서 이 팀원이 답했는가"* 로 판정한다. 채널
+   * 최상위에 걸면 그 둘이 성립하지 않는다.
+   */
+  server.registerTool('message.delegate', {
+    description: '팀원에게 일을 넘긴다(팀장만). 전부 끝나거나 기한이 지나면 다시 깨어난다',
+    inputSchema: {
+      channelId: z.string().uuid(),
+      threadRootId: z.string().uuid(),
+      body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
+      to: z.array(z.string().min(1).max(64)).min(1).max(8),
+      deadlineSec: z.number().int()
+        .min(DELEGATION_DEADLINE_MIN_SEC).max(DELEGATION_DEADLINE_MAX_SEC).optional(),
+      model: MODEL_ARG,
+    },
+  }, async ({ channelId, threadRootId, body, to, deadlineSec, model }) => {
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    if (to.some((h) => h.toLowerCase() === account.handle.toLowerCase())) {
+      return jsonResult({ error: { code: 'self_delegation', message: 'you cannot delegate to yourself' } });
+    }
+
+    const team = await leadTeamFor(pool, account.id, to);
+    if (!team) {
+      // 사유를 갈라 말한다 — 팀장이 아닌 것과 그 팀원들이 내 팀에 없는 것은 다음 행동이
+      // 다르다(전자는 사람에게 말해야 하고, 후자는 `to` 를 고치면 된다).
+      const anyTeam = await leadTeamFor(pool, account.id, []);
+      return jsonResult({
+        error: anyTeam
+          ? { code: 'not_team_members', message: 'every handle in `to` must be a member of your team' }
+          : { code: 'not_a_lead', message: 'only a team lead can delegate' },
+      });
+    }
+
+    const used = await roundsUsed(pool, { threadRootId, leadAccountId: account.id });
+    if (used >= TEAM_ROUND_LIMIT) {
+      // 상한을 넘으면 **사람이 봐야 하는 상태**다. 그 판단을 서버가 대신 하지 않고 사유를
+      // 돌려준다 — 팀장이 `message.fail(retryable: true)` 로 사람에게 넘기는 것이 올바른 종료다.
+      return jsonResult({
+        error: {
+          code: 'round_limit',
+          message: `이 스레드에서 이미 ${used}번 넘겼다(상한 ${TEAM_ROUND_LIMIT}) — 직접 하거나 사람에게 넘겨라`,
+        },
+      });
+    }
+
+    const online = new Set(presence.online());
+    const delegates: { handle: string; accountId: string }[] = [];
+    const unreachable: string[] = [];
+    for (const handle of to) {
+      const member = team.members.get(handle.toLowerCase())!;
+      if (member.disabled || !online.has(member.accountId)) unreachable.push(handle);
+      else delegates.push({ handle, accountId: member.accountId });
+    }
+    if (!delegates.length) {
+      return jsonResult({ delegated: [], unreachable, message: null });
+    }
+
+    const deadlineAt = new Date(Date.now() + (deadlineSec ?? DELEGATION_DEADLINE_DEFAULT_SEC) * 1000);
+    const meta: DelegationMeta & Partial<ModelMeta> = {
+      kind: 'delegation',
+      delegation: {
+        to: delegates.map((d) => d.handle),
+        unreachable,
+        deadlineAt: deadlineAt.toISOString(),
+      },
+      ...(await reportedModelMeta(pool, account.id, model)),
+    };
+    const posted = await postMessage(pool, {
+      channelId, authorId: account.id, body, threadRootId,
+      meta: meta as unknown as Record<string, unknown>,
+    });
+    if (posted.failure || !posted.message) {
+      return jsonResult({ error: { code: 'post_failed', message: posted.failure ?? 'could not post' } });
+    }
+
+    /**
+     * **발화와 의무가 한 커밋이 아니다.** `postMessage` 는 자기 커넥션에서 커밋하므로 여기
+     * 아래가 실패하면 위임 메시지만 남고 아무도 불리지 않는다. 그 창을 없애려면 `postMessage`
+     * 가 외부 트랜잭션을 받아야 하는데, 그것은 이 도구가 정할 수 있는 계약이 아니다(예약 발송
+     * sweeper 도 같은 창을 갖고 `idempotencyKey` 로 감수한다).
+     *
+     * 그래서 창을 없애는 대신 **사람이 읽을 수 있게** 만든다: 실패하면 그 사실을 그대로
+     * 돌려주므로 팀장은 다시 넘기거나 직접 할 수 있다. 조용히 성공으로 답하는 것이 가장 나쁘다.
+     */
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+      await createDelegation(client, {
+        messageId: posted.message.id,
+        channelId,
+        threadRootId,
+        teamId: team.teamId,
+        leadAccountId: account.id,
+        delegateIds: delegates.map((d) => d.accountId),
+        deadlineAt,
+      });
+      await client.query('commit');
+    } catch (err) {
+      await client.query('rollback').catch(() => {});
+      console.error('[message.delegate] 의무를 만들지 못했다(메시지는 남았다):', err);
+      return jsonResult({
+        error: {
+          code: 'delegation_failed',
+          message: '위임 메시지는 올라갔지만 의무를 만들지 못했다 — 팀원은 부르지 않았다',
+        },
+      });
+    } finally {
+      client.release();
+    }
+
+    const channelAudience = await audienceFor(pool, channelId);
+    emitPosted(posted, channelAudience);
+    for (const accountId of posted.notified ?? []) emitEvent({ type: 'inbox.updated', accountId });
+    // 넘겨받은 팀원의 부름은 `createDelegation` 이 직접 만들었으므로 위 `notified` 에 없다 —
+    // 그들의 러너가 즉시 폴하도록 여기서 따로 친다(치지 않으면 다음 롱폴까지 최대 25초 늦다).
+    for (const d of delegates) emitEvent({ type: 'inbox.updated', accountId: d.accountId });
+
+    return jsonResult({
+      message: posted.message,
+      delegated: delegates.map((d) => d.handle),
+      unreachable,
+      deadlineAt: deadlineAt.toISOString(),
+      roundsLeft: Math.max(0, TEAM_ROUND_LIMIT - used - 1),
+    });
   });
 
   /**
@@ -790,7 +951,7 @@ export async function registerMcp(
      * 진행 메시지를 올리는 것도, 메모리를 읽는 것도 전부 "나 여기 있다"다.
      */
     agentPresence.mark(req.account.id);
-    const server = buildMcpServer(pool, req.account, lifecycle, storage);
+    const server = buildMcpServer(pool, req.account, lifecycle, storage, agentPresence);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     reply.hijack();
     reply.raw.on('close', () => {

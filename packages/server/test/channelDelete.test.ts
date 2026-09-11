@@ -459,8 +459,21 @@ describe('channel delete — 참조 테이블 전부 (#155)', () => {
       'inbox', 'idempotency_key', 'saved_message', 'message', 'channel',
     ]);
 
+    /**
+     * **`SET NULL` 도 안전하다**(마이그레이션 050 이 이 판정을 넓혔다).
+     *
+     * 이 시험이 막는 것은 *"삭제가 FK 위반으로 터지는 것"* 이고, `SET NULL` 은 원리적으로
+     * 그것을 일으키지 않는다 — 참조하던 열이 null 이 될 뿐이다. 050 의
+     * `team_delegation_item.closed_by_message_id` 가 그 갈래다(어느 발화가 이 의무를
+     * 닫았는지를 가리키는데, 그 메시지가 지워져도 의무 자체는 남아야 한다).
+     *
+     * 그 행이 남지 않는지는 **부모의 cascade** 가 답한다: `team_delegation` 이 channel 에
+     * cascade 로 매달려 있고 `team_delegation_item` 은 그 위임에 cascade 로 매달려 있다.
+     * 즉 채널을 지우면 둘 다 함께 사라지므로 고아가 생기지 않는다.
+     */
     const unhandled = refs.rows
-      .filter((r) => r.delete_rule !== 'CASCADE' && !explicit.has(r.table_name))
+      .filter((r) => r.delete_rule !== 'CASCADE' && r.delete_rule !== 'SET NULL'
+        && !explicit.has(r.table_name))
       .map((r) => r.table_name);
 
     expect(unhandled).toEqual([]);

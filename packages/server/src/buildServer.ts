@@ -32,7 +32,9 @@ import { createRateLimiter, type RateLimitRule } from './rateLimit.js';
 import { createMetrics } from './metrics.js';
 import { createScheduledMessageSweeper } from './services/scheduledMessages.js';
 import { createAgentWakeSweeper } from './services/agentWakes.js';
+import { emitEvent } from './events.js';
 import { createStaleRequestSweeper } from './services/staleRequests.js';
+import { createDelegationDeadlineSweeper } from './services/delegations.js';
 
 /**
  * 인증 표면 기본 리밋.
@@ -381,6 +383,20 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     startupGraceMs: deps.staleRequestGraceMs,
   });
   staleSweeper.startSweep(app);
+
+  /**
+   * 위임 기한 스위퍼(050) — **아무 신호도 오지 않는 경우의 유일한 출구다.** 팀원이 죽으면
+   * 의무는 열린 채 남고 팀장은 기다리는 것이 아니라 없다(위임하고 턴이 끝나면 프로세스가
+   * 죽는다). 이 시계가 안 돌면 그 스레드는 영영 조용하다.
+   *
+   * 깨운 팀장에게 이벤트를 치는 것은 여기다 — 서비스가 `emitEvent` 를 부르지 않고 콜백으로
+   * 돌려주는 이유는 `preemptWakesForThread` 와 같다: 이벤트는 커밋 뒤여야 하고, 그 순서를
+   * 지키는 자리를 한 곳(호출부)으로 모은다.
+   */
+  const delegationSweeper = createDelegationDeadlineSweeper(deps.pool, {
+    onWake: (accountId) => emitEvent({ type: 'inbox.updated', accountId }),
+  });
+  delegationSweeper.startSweep(app);
 
   await registerWs(app, deps.pool, {
     onSocketCount: (read) => { socketCount = read; },

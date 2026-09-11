@@ -110,6 +110,18 @@ describe('줄이 갈린다 — reason 만으로는 못 하던 것', () => {
     expect(team.rank).toBe(mention.rank);
   });
 
+  /** 위임 사유 둘(050)도 갈린다 — 넘겨받은 일과 결말이 온 것은 다음에 할 일이 다르다. */
+  it('위임과 결말이 서로 다른 글자를 받되 순위는 부름과 같다', () => {
+    const handed = inboxRow(entry({ reason: 'team_delegated' }), ME, ko);
+    const done = inboxRow(entry({ reason: 'delegation_done' }), ME, ko);
+    const mention = inboxRow(entry({ reason: 'mention' }), ME, ko);
+    expect(handed.label).toBe('넘겨받았다');
+    expect(done.label).toBe('결말이 났다');
+    expect(new Set([handed.label, done.label, mention.label]).size).toBe(3);
+    expect(handed.rank).toBe(mention.rank);
+    expect(done.rank).toBe(mention.rank);
+  });
+
   it('네 종류가 서로 다른 글자를 받는다 — 이것이 이 작업의 전부다', () => {
     const labels = [
       inboxRow(entry({ meta: ask({ kind: 'account', accountId: ME }) }), ME, ko).label,

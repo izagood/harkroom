@@ -1221,6 +1221,8 @@ export const ko = {
   'inbox.label.askOther': '고르는 중',
   'inbox.label.failure': '막혔다',
   'inbox.label.report': '끝냈다',
+  'inbox.label.delegated': '넘겨받았다',
+  'inbox.label.delegationDone': '결말이 났다',
   'inbox.label.mention': '불렀다',
   'inbox.label.teamMention': '팀을 불렀다',
   'inbox.label.reply': '답글',

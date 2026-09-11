@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { AgentHarness, AgentView, InboxTeamCall, MessageRow } from '@murmur/shared';
+import type { AgentHarness, AgentView, InboxDelegationOutcome, InboxTeamCall, MessageRow } from '@murmur/shared';
 import type { Me } from './murmur.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, gateNotice, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts } from './prompt.js';
 import { SessionStore } from './sessions.js';
@@ -376,6 +376,14 @@ export interface MentionTarget {
    * 오지 않으므로(서버 폴백), 이 값이 있다는 것은 곧 창구가 하나라는 뜻이다.
    */
   team?: InboxTeamCall;
+  /**
+   * 이 턴이 **넘긴 일의 결말로 깨어난 턴**이면 그 결말(050). 서버가 inbox 항목에 실어 주고
+   * (`InboxEntry.delegation`) 스케줄러가 그대로 옮긴다.
+   *
+   * `wake` 와 같은 성격이라 프롬프트에서 **델타를 대신할 수 있다** — 기한이 지나 깨어난
+   * 경우엔 팀원이 아무 말도 하지 않았으므로 새 메시지가 없다.
+   */
+  delegation?: InboxDelegationOutcome;
 }
 
 /**
@@ -637,6 +645,7 @@ export async function runMentionTurn(
     murmurUrl: deps.murmurUrl,
     ...(target.wake ? { wake: target.wake } : {}),
     ...(target.team ? { team: target.team } : {}),
+    ...(target.delegation ? { delegation: target.delegation } : {}),
   });
 
   if (!prompt) {

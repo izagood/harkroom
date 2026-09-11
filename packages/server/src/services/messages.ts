@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from 'pg';
 import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_CHAIN_LIMIT, mentionedHandles, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type MessageRow } from '@murmur/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { preemptWakesForThread } from './agentWakes.js';
+import { closeDelegationsForReply, outcomesFor } from './delegations.js';
 import { channelVisibleSql } from './channels.js';
 import { emitEvent } from '../events.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
@@ -940,11 +941,35 @@ export async function postMessage(
       })
       : [];
 
+    /**
+     * **팀원의 답이 자기 의무를 닫는다**(050). 판정과 "정확히 한 번 깨우기"는
+     * `delegations.ts::closeDelegationsForReply` 가 갖고, 여기서 하는 일은 위 깨움과
+     * 똑같이 **같은 커밋 안에서** 부르는 것뿐이다 — 답은 남았는데 의무가 열려 있으면
+     * 팀장은 기한이 될 때까지 그 답을 모른다.
+     *
+     * 스레드 밖(채널 최상위)에서는 하지 않는다: 위임은 언제나 스레드에 걸린다.
+     *
+     * 실패인지 여기서 판정해 넘긴다 — `meta` 의 모양을 아는 것은 이 자리이고
+     * (`readAskMeta` 계열이 여기 산다), 그 판정이 `delegations.ts` 로 새면 meta 규약이
+     * 두 곳에 살게 된다.
+     */
+    const wokeByDelegation = input.threadRootId
+      ? await closeDelegationsForReply(client, {
+        threadRootId: input.threadRootId,
+        authorId: input.authorId,
+        messageId: message.id,
+        kind: input.kind ?? 'user',
+        isFailure: (input.meta as { kind?: unknown } | undefined)?.kind === 'failure',
+      })
+      : [];
+
     await client.query('commit');
 
     // 이벤트는 **커밋 뒤**다 — 러너는 이것을 보고 즉시 폴하므로, 앞에서 치면 아직 안 보이는
     // inbox 를 읽고 빈손으로 돌아간다(sweep 이 같은 순서를 지키는 이유와 같다).
     for (const accountId of wokeByPost) emitEvent({ type: 'inbox.updated', accountId });
+    // 결말이 난 팀장도 같은 자리에서 깨운다(위 주석의 이유가 그대로 적용된다).
+    for (const accountId of wokeByDelegation) emitEvent({ type: 'inbox.updated', accountId });
 
     /**
      * 되돌아온 머리를 **돌려준다** — 여기서 직접 내지 않는다. 부른 쪽이 `message.created`
@@ -1538,6 +1563,21 @@ export async function listInbox(
       if (call) row.team = call;
     }
   }
+  /**
+   * 결말이 난 위임에는 **결말 목록을 붙인다**(050). 명단(`team`)과 같은 판단이다 — 서버는
+   * 이미 그 판정을 했고(누가 끝냈고 누가 무응답인가), 읽는 쪽이 다시 하면 갈라진다.
+   *
+   * 가리키는 메시지가 **위임 자신**이므로(043 의 "물음 자신"과 같은 규약) 그 id 로 되찾는다.
+   */
+  const doneIds = rows.filter((r) => r.reason === 'delegation_done').map((r) => r.messageId);
+  if (doneIds.length) {
+    const outcomes = await outcomesFor(pool, [...new Set(doneIds)]);
+    for (const row of rows) {
+      const found = row.reason === 'delegation_done' ? outcomes.get(row.messageId) : undefined;
+      if (found) row.delegation = found;
+    }
+  }
+
   // `teamId` 는 계약이 아니다(`InboxEntry` 에 없다) — 명단으로 옮긴 뒤 지운다. 남겨 두면
   // 화면·러너가 그 값을 읽기 시작하고, 그러면 명단과 id 라는 두 출처가 생긴다.
   for (const row of rows) delete row.teamId;
