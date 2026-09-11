@@ -13,11 +13,29 @@ import { ChannelDocPanel } from './ChannelDocPanel';
 import { ChannelEmptyState } from './ChannelEmptyState';
 import { RunnerStatusLine } from './RunnerStatus';
 import { dayLabel, localDayKey } from '../lib/day';
-import { isNearBottom, isNearTop } from '../lib/stickyBottom';
+import { distanceFromBottom, isNearBottom, isNearTop } from '../lib/stickyBottom';
 import { useLocale, useT } from '../i18n/useT';
 import { displayBody } from '../lib/mention';
 import { mentionedHandles, mentionedIds } from '@murmur/shared';
 import type { SectionId } from './settings/sections';
+
+/**
+ * 채널을 연 직후 **바닥에 붙여 두는 정착 창**(ms).
+ *
+ * 왜 창이 필요한가(jaebin 보고 2026-09-11: "채널 열면 항상 채널의 가장 최신 채팅이 보이도록"):
+ * 채널을 열 때 바닥으로 내려가는 길은 이미 셋이지만(채널이 바뀔 때 한 번, 줄 수가 바뀔 때,
+ * 바닥 표식이 상자를 벗어날 때) 셋 모두 **어떤 사건이 오기를 기다린다.** 여는 순간의 1초는
+ * 사건이 가장 많이 몰리는 구간이다 — 첫 페이지가 도착하고, 그림과 링크 카드가 붙고, 글꼴이
+ * 늦게 오고, 작성창·입력 중 줄이 높이를 바꾼다. 그 중 하나라도 신호를 놓치면(교차 관찰자는
+ * 경계에 걸친 1px 표식을 브라우저마다 다르게 판정하고, WKWebView 에는 스크롤 앵커링이
+ * 없다) 사람은 어중간한 자리에서 채널을 만난다.
+ *
+ * 그래서 이 창 동안에는 **사건을 기다리지 않고** 매 프레임 "바닥에서 떨어졌는가"를 직접
+ * 보고 떨어져 있으면 붙인다. 창은 짧고, 사람이 손을 대면(휠·터치, 또는 바닥이 아닌 자리를
+ * 알리는 스크롤 이벤트) 그 즉시 닫힌다 — 읽던 자리를 빼앗지 않는다는 규율
+ * (`jumpToBottom.test.tsx`)이 이 창보다 위에 있다.
+ */
+const OPEN_SETTLE_MS = 1200;
 
 interface ChannelPaneProps {
   /**
@@ -78,6 +96,13 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * 없다**(macOS 앱은 WKWebView 다). 그래서 자란 높이만큼 우리가 되돌린다.
    */
   const olderAnchorRef = useRef<{ height: number; top: number } | null>(null);
+  /**
+   * 정착 창이 **끝나는 시각**(`Date.now()` 기준 ms). 0 이면 창은 닫혀 있다 —
+   * 사람이 손을 댔거나, 아직 채널을 열지 않았다는 뜻이다.
+   */
+  const settleUntilRef = useRef(0);
+  /** 도는 프레임의 손잡이. null 이면 정착 루프가 돌고 있지 않다. */
+  const settleFrameRef = useRef<number | null>(null);
   /** "아래로 내려가기" 버튼을 세울지. 목록이 늘었지만 사람이 위를 보고 있을 때만 참이다. */
   const [jumpVisible, setJumpVisible] = useState(false);
   // 파일 색인(#232)은 채널 안에서 열고 닫는 패널이다 — 새 최상위 화면이 아니다. 그래서
@@ -224,6 +249,48 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   };
 
   /**
+   * 정착 창을 **닫는다.** 사람이 손을 댄 순간이 곧 이 창의 끝이다 — 여기서부터는 화면을
+   * 건드리지 않고, 기존 판정(`atBottomRef`·`stickyRef`)만 남는다.
+   */
+  const endSettle = () => { settleUntilRef.current = 0; };
+
+  /**
+   * 정착 창을 **연다**(또는 이미 열려 있으면 끝 시각을 미룬다).
+   *
+   * 루프가 하나만 돌게 손잡이를 둔다 — 채널을 열면 layout 효과와 줄 수 효과가 같은 커밋에서
+   * 둘 다 이것을 부르므로, 확인 없이 걸면 프레임마다 두 번 도는 루프가 생긴다.
+   *
+   * `stickyRef` 가 거짓이면(사람이 위로 올렸다) 붙이지 않는다. 판정을 `atBottomRef` 로 하지
+   * 않는 이유는 그 ref 의 주석에 있다 — 내용이 자라 바닥이 멀어진 것은 사람이 한 일이 아니고,
+   * 이 창이 있는 이유가 정확히 그 경우다.
+   */
+  const startSettle = () => {
+    settleUntilRef.current = Date.now() + OPEN_SETTLE_MS;
+    if (settleFrameRef.current !== null) return;
+    // 프레임이 없는 환경(테스트·서버 렌더)에서는 이 보정만 빠진다 — `scrollIntoView?.()` 와
+    // `IntersectionObserver` 의 `typeof` 확인과 같은 태도다.
+    if (typeof requestAnimationFrame === 'undefined') return;
+    const tick = () => {
+      settleFrameRef.current = null;
+      const el = listRef.current;
+      if (!el || Date.now() >= settleUntilRef.current) return;
+      // 이미 바닥이면 아무것도 하지 않는다 — 붙일 것이 있을 때만 손을 댄다.
+      if (stickyRef.current && distanceFromBottom(el) > 0) scrollToBottom();
+      settleFrameRef.current = requestAnimationFrame(tick);
+    };
+    settleFrameRef.current = requestAnimationFrame(tick);
+  };
+
+  // 떠날 때 도는 프레임을 거둔다. 안 거두면 컴포넌트가 사라진 뒤에도 최대 한 창 동안
+  // 콜백이 살아 남는다(테스트에서는 그것이 다음 테스트의 화면을 건드린다).
+  useEffect(() => () => {
+    if (settleFrameRef.current !== null && typeof cancelAnimationFrame !== 'undefined') {
+      cancelAnimationFrame(settleFrameRef.current);
+    }
+    settleFrameRef.current = null;
+  }, []);
+
+  /**
    * 목록이 한 줄 늘었을 때 **따라 내려갈지 버튼을 세울지** 가르는 자리다(2026-09-09).
    *
    * 예전에는 조건이 없었다 — 늘면 무조건 바닥으로 갔다. 그래서 위쪽을 읽는 중에 남이 한 줄
@@ -237,7 +304,12 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * 없다). 바닥 여부와 마지막 작성자는 이 렌더의 값을 클로저로 읽으므로 딸림값이 아니다.
    */
   useEffect(() => {
-    if (atBottomRef.current || roots[roots.length - 1]?.authorId === me?.id) scrollToBottom();
+    if (atBottomRef.current || roots[roots.length - 1]?.authorId === me?.id) {
+      scrollToBottom();
+      // 첫 페이지가 정착 창보다 늦게 올 수 있다(느린 서버·찬 채널). 도착한 줄과 **함께**
+      // 자라는 그림·링크 카드가 같은 보정을 필요로 하므로 창을 다시 연다.
+      startSettle();
+    }
     // 목록이 늘었는데 사람이 위를 보고 있다 — 화면은 그대로 두고 내려갈 길만 준다.
     else setJumpVisible(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -257,6 +329,8 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     // 대기 중인 앵커는 **떠난 채널의 자리**다 — 들고 가면 새 채널에서 엉뚱한 곳을 잡는다.
     olderAnchorRef.current = null;
     scrollToBottom();
+    // 여는 순간부터 짧게 바닥에 붙여 둔다 — 근거는 `OPEN_SETTLE_MS` 의 주석.
+    startSettle();
   }, [activeChannelId]);
 
   /**
@@ -372,6 +446,13 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       return;
     }
     /**
+     * **정착 창은 여기서 닫는다.** 우리가 스스로 붙인 자리는 늘 바닥이므로, "바닥이 아니다"를
+     * 알리는 스크롤 이벤트는 우리가 낸 것이 아니다 — 사람이 움직였다는 뜻이다. 창을 시각만으로
+     * 닫으면 그 1.2초 동안 사람의 스크롤과 다투게 된다.
+     */
+    endSettle();
+
+    /**
      * 바닥에서 떨어져 있다 — 그런데 **누가 떨어뜨렸는지**가 갈린다.
      *
      * 사람이 위로 올렸으면 `scrollTop` 이 **줄어든다.** 반면 내용이 자라서 멀어진 경우에는
@@ -483,6 +564,10 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       <div
         ref={listRef}
         onScroll={onListScroll}
+        /* 휠·터치는 **의도 그 자체**다. 스크롤 이벤트로 사람의 뜻을 추론하는 것보다 정확하고,
+           손을 대는 순간 정착 창이 닫히므로 여는 직후에 위로 올리는 사람과 다투지 않는다. */
+        onWheel={endSettle}
+        onTouchMove={endSettle}
         /* 회귀선(`jumpToBottom.test.tsx`)이 이 상자의 스크롤 수치를 가짜로 세워야 한다 —
            jsdom 은 레이아웃을 재지 않아 `scrollHeight` 가 늘 0 이다. 글자로는 잡을 수
            없는 상자다(안에 대화가 다 들어 있다). */
