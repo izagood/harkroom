@@ -33,6 +33,19 @@ const ask = (id: string, seq: number, author: string, to: string | null, answere
   },
 );
 
+/** 위임 하나(050 · 3-3). `open` 이 아직 답하지 않은 팀원들이다. */
+const delegate = (id: string, seq: number, lead: string, open: string[]): MessageRow => msg(
+  id, 'c1', seq, '이렇게 나눴다', lead,
+  {
+    meta: {
+      kind: 'delegation',
+      delegation: {
+        to: open, open, unreachable: [], deadlineAt: '2026-09-11T09:00:00.000Z',
+      },
+    } as unknown as Record<string, unknown>,
+  },
+);
+
 const chain = (messages: MessageRow[], live: Liveness = ALIVE) =>
   waitChain({ messages, myAccountId: ME, live });
 
@@ -298,5 +311,75 @@ describe('waitChainFromLinks — 스레드를 열지 않고 낸다', () => {
     const c = from([link(CODEX, FORGE), link(LINT, FORGE), link(FORGE, ME)])!;
     expect(c.end).toBe('me');
     expect(c.unblocks).toBe(3);
+  });
+});
+
+/**
+ * **위임도 마디다**(050 · 3-3).
+ *
+ * 이것이 없으면 사람은 *"왜 조용한지"* 를 볼 수 없다: 팀원이 죽어 기한(기본 10분)을
+ * 기다리는 동안 스레드에는 팀장의 "이렇게 나눴다" 한 줄뿐이고, 그 침묵이 정상인지 막힌
+ * 것인지 구별되지 않는다.
+ *
+ * 되돌려 RED: `waitChain` 의 위임 분기를 지우면 1번이 `none` 이 된다.
+ */
+describe('waitChain — 위임 마디 (3-3)', () => {
+  it('1. 팀장이 팀원을 기다리면 사슬이 선다 — 나를 막지는 않는다', () => {
+    const c = chain([delegate('d1', 1, FORGE, [CODEX])]);
+    expect(c.links).toHaveLength(1);
+    expect(c.links[0]).toMatchObject({ waiter: FORGE, blockedBy: CODEX });
+    // 남을 기다리는 것은 내 차례가 아니다(규칙 04) — 그래도 진행은 막혀 있다.
+    expect(c.end).toBe('other');
+  });
+
+  /**
+   * **사슬은 경로이고 부채꼴이 아니다.** 팀원 둘을 기다려도 화면에 서는 것은 그중 하나다 —
+   * `walk()` 의 `pendingByWaiter` 가 계정마다 **가장 최근 하나**만 남기기 때문이다.
+   *
+   * 이것은 위임이 만든 한계가 아니라 이 계산이 원래 갖고 있던 모양이다: 한 에이전트가
+   * 미답 물음을 둘 내도 사슬은 하나만 보여 준다. 그 모양을 바꾸는 것(예: "codex 외 1명")은
+   * 화면의 어휘를 늘리는 일이라 이 PR 의 범위가 아니고, **틀린 말을 하지는 않는다** —
+   * 팀장은 그 팀원도 정말로 기다리고 있다.
+   */
+  it('2. 팀원 둘을 기다리면 사슬은 그중 하나를 보여 준다 — 경로이기 때문이다', () => {
+    const c = chain([delegate('d1', 1, FORGE, [CODEX, LINT])]);
+    expect(c.links).toHaveLength(1);
+    expect([CODEX, LINT]).toContain(c.links[0]!.blockedBy);
+    expect(c.links[0]!.waiter).toBe(FORGE);
+  });
+
+  it('3. 다 답한 위임은 사슬에 들지 않는다', () => {
+    // 서버가 닫을 때마다 `open` 을 줄인다 — 전부 닫히면 빈 배열이다.
+    expect(chain([delegate('d1', 1, FORGE, [])]).end).toBe('none');
+  });
+
+  it('4. 죽은 팀원을 기다리면 교착이다 — 이 판정이 공짜로 따라온다', () => {
+    const c = chain([delegate('d1', 1, FORGE, [CODEX])], new Set([FORGE]));
+    expect(c.end).toBe('deadlock');
+    expect(c.deadlockReason).toBe('dead-runner');
+  });
+
+  it('5. 모르는 생존에는 교착이라 말하지 않는다', () => {
+    // `live === null` 은 "모른다"다 — 모른다는 이유로 붉게 칠하는 것도 거짓말이다.
+    expect(chain([delegate('d1', 1, FORGE, [CODEX])], null).end).toBe('other');
+  });
+
+  it('6. 위임과 물음이 이어진다 — 팀원이 나에게 묻고 있으면 내 차례다', () => {
+    // 팀장 → 팀원 → 나. 한 번 답하면 둘이 풀린다: 사람을 움직이는 것은 그 수다(규칙 05).
+    const c = chain([delegate('d1', 1, FORGE, [CODEX]), ask('a1', 2, CODEX, ME)]);
+    expect(c.end).toBe('me');
+    expect(c.unblocks).toBe(2);
+  });
+
+  it('7. `open` 이 없는 옛 위임 메시지는 마디를 만들지 않는다', () => {
+    // 3-3 이전에 만들어진 위임에는 그 배열이 없다. "전부 미결"로 읽으면 이미 끝난 옛
+    // 위임이 영원히 사슬에 선다(`readDelegationMeta` 가 빈 배열로 읽는 이유).
+    const old = msg('d1', 'c1', 1, '옛 위임', FORGE, {
+      meta: {
+        kind: 'delegation',
+        delegation: { to: ['codex'], unreachable: [], deadlineAt: '2026-09-11T09:00:00.000Z' },
+      } as unknown as Record<string, unknown>,
+    });
+    expect(chain([old]).end).toBe('none');
   });
 });
