@@ -147,6 +147,65 @@ async function enableWebglRenderer(t: WebglTarget): Promise<LoadedAddon | null> 
 }
 
 /**
+ * **조합(IME) 입력을 우리가 받는다** — 한글·일본어·중국어 입력이 xterm 을 통과하지 못한다.
+ *
+ * xterm 의 IME 지원은 macOS/WKWebView 에서 **알려진 채로 깨져 있다**: 조합 이벤트를
+ * 자기 `CompositionHelper` 로 처리하는데, 그 경로가 첫 글자만 받거나(xtermjs/xterm.js#1939)
+ * 조합 대신 **영문 자모를 그대로 보내거나**(#124) IME 가 `keyCode 229` 를 모든 키에 실어
+ * 보내면 글자를 흘린다(#5887, #5894 는 WKWebView 전용). 실측으로도 이 앱에서 한글 입력이
+ * 처음부터 안 됐다(2026-09-11, 사람 확인) — 우리가 만든 회귀가 아니라 그 위에 얹혀 있던
+ * 결함이다.
+ *
+ * 그래서 **xterm 에 닿기 전에** 가로챈다(캡처 단계):
+ * - `compositionstart/update/end` 를 멈춰 세워 xterm 의 깨진 경로를 아예 타지 않게 한다.
+ * - **조합 중의 `keydown` 도 멈춘다.** 이것이 "한글을 쳤는데 영문 자모가 들어가는" 증상을
+ *   막는 자리다 — 그 키는 IME 의 것이고 터미널의 것이 아니다.
+ * - 확정된 문자열(`compositionend.data`)만 **정확히 한 번** 보낸다. xterm 은 조합을 못 봤
+ *   으므로 중복 전송이 원천적으로 없다.
+ *
+ * 조합 중 화면 표시(밑줄 글자)는 **아직 그리지 않는다.** xterm 의 `.composition-view` 는
+ * 위 경로와 함께 죽었고, 대신 우리가 그리려면 셀 좌표를 우리 손으로 계산해야 한다 —
+ * 하네스(claude TUI)는 확정 텍스트만 받으면 되므로 그 표시는 다음 판으로 남긴다.
+ */
+function attachCompositionBridge(el: HTMLElement, io: {
+  /** 확정된 문자열을 PTY 로 보낸다(xterm 의 `onData` 와 같은 자리로 들어간다). */
+  send: (text: string) => void;
+  /** 지금 이 창이 못 치는 상태인가(읽기 전용·관찰 전용). 조합 결과도 같은 게이트를 탄다. */
+  blocked: () => boolean;
+}): () => void {
+  let composing = false;
+  const swallow = (ev: Event): void => { ev.stopImmediatePropagation(); };
+  const onStart = (ev: Event): void => { composing = true; swallow(ev); };
+  const onEnd = (ev: Event): void => {
+    composing = false;
+    swallow(ev);
+    // `data` 가 비면 조합을 **취소**한 것이다(Esc·지우기) — 보낼 것이 없다.
+    const text = (ev as CompositionEvent).data;
+    if (!text) return;
+    // 읽기 전용 창에서 친 것은 여기서 버린다. `disableStdin` 은 xterm 의 문이고, 이 경로는
+    // 그 문을 지나지 않으므로 **같은 판정을 여기서 한 번 더** 해야 한다.
+    if (io.blocked()) return;
+    io.send(text);
+  };
+  const onKeyDown = (ev: KeyboardEvent): void => {
+    // 조합 중의 키는 IME 의 것이다. `isComposing` 은 표준 신호이고, `keyCode === 229` 는
+    // macOS IME 가 조합 중 모든 키에 실어 보내는 "조합 문자" 코드다. **조합 밖의 키는
+    // 건드리지 않는다** — 영문·화살표·Ctrl-C 는 그대로 xterm 이 처리해야 한다.
+    if (composing || ev.isComposing || ev.keyCode === 229) ev.stopImmediatePropagation();
+  };
+  el.addEventListener('compositionstart', onStart, true);
+  el.addEventListener('compositionupdate', swallow, true);
+  el.addEventListener('compositionend', onEnd, true);
+  el.addEventListener('keydown', onKeyDown, true);
+  return () => {
+    el.removeEventListener('compositionstart', onStart, true);
+    el.removeEventListener('compositionupdate', swallow, true);
+    el.removeEventListener('compositionend', onEnd, true);
+    el.removeEventListener('keydown', onKeyDown, true);
+  };
+}
+
+/**
  * xterm 을 붙이는 실제 구현. `import()` 가 끝나기 전에 도착한 바이트는 **큐에 담고
  * 도착 순서 그대로** 쓴다.
  *
@@ -171,6 +230,14 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
   let webgl: LoadedAddon | null = null;
   let disposed = false;
   let observer: ResizeObserver | null = null;
+  /**
+   * 지금 이 창이 못 치는 상태인가. xterm 쪽 문은 `options.disableStdin` 이지만, 조합 경로는
+   * 그 문을 지나지 않으므로(`attachCompositionBridge`) **같은 사실을 여기서도 들고 있어야**
+   * 한다. 초기값은 생성자와 같은 규칙이다: `onInput` 이 없으면 처음부터 못 친다.
+   */
+  let readOnly = !opts?.onInput;
+  /** 조합 브리지 해제. `dispose` 가 이것을 부른다 — 안 부르면 죽은 호스트에 리스너가 남는다. */
+  let detachComposition: (() => void) | null = null;
   /** 마지막으로 보낸 크기. 같은 값을 다시 보내지 않는다 — 드래그 한 번이 수십 프레임이다. */
   let sent: { cols: number; rows: number } | null = null;
 
@@ -211,6 +278,18 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
     });
     t.open(el);
     if (opts?.onInput) t.onData(opts.onInput);
+    // 조합은 xterm 에 맡기지 않는다(위 `attachCompositionBridge` 주석).
+    detachComposition = attachCompositionBridge(el, {
+      send: (text) => opts?.onInput?.(text),
+      blocked: () => readOnly || !opts?.onInput,
+    });
+    // 패널을 열었으면 **바로 칠 수 있어야 한다** — 지금까지는 한 번 클릭해야 키가 갔다.
+    // 단 사람이 다른 입력칸에서 쓰고 있으면 **빼앗지 않는다**: 컴포저에 글을 쓰는 중에
+    // 패널이 뜨는 경우가 있고, 그때 포커스를 가져가면 치던 문장이 터미널로 들어간다.
+    const active = document.activeElement as HTMLElement | null;
+    const typingElsewhere = !!active
+      && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
+    if (opts?.onInput && !typingElsewhere) t.focus?.();
     term = t;
     for (const chunk of pending) t.write(chunk);
     pending.length = 0;
@@ -243,10 +322,13 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
       if (term) term.write(bytes);
       else pending.push(bytes);
     },
-    setReadOnly(readOnly) {
+    setReadOnly(next) {
+      // 조합 경로의 게이트(위 `readOnly`)를 먼저 맞춘다 — xterm 이 아직 안 떴어도
+      // 이 사실은 유효하다.
+      readOnly = next;
       // 아직 xterm 이 안 떴으면 생성자의 `disableStdin` 이 이미 옳은 값을 잡고 있다
       // (`onInput` 이 없으면 처음부터 꺼진다) — 뜬 뒤의 차례 변동만 여기서 반영한다.
-      if (term) term.options.disableStdin = readOnly;
+      if (term) term.options.disableStdin = next;
     },
     refit() {
       // "마지막으로 보낸 크기"를 지워 applyFit 의 중복 억제를 한 번 우회한다 — writer
@@ -269,6 +351,10 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
       // cleanup 에서 불린다 — 여기서 새는 예외는 React 가 트리를 걷어내는 것으로 갚아지고,
       // 사람에게는 **앱 화면 전체가 꺼진 것**으로 보인다(실측 사고, 모듈 머리 주석). 터미널
       // 하나를 못 닫은 것이 앱을 닫는 일이 되어서는 안 된다.
+      // 조합 리스너를 먼저 뗀다 — 남겨 두면 죽은 호스트에서 조합이 끝날 때 이미 닫힌
+      // 소켓으로 글자를 보낸다.
+      detachComposition?.();
+      detachComposition = null;
       try { webgl?.dispose(); } catch { /* 렌더러 해체 실패가 화면을 끄지 않는다 */ }
       webgl = null;
       try { term?.dispose(); } catch { /* 같은 규율 — 여기서 새면 패널이 아니라 앱이 죽는다 */ }
