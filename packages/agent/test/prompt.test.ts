@@ -364,6 +364,61 @@ describe('buildTurnPrompt — 넘긴 일의 결말(050)', () => {
   });
 });
 
+/**
+ * 넘겨받은 일의 블록(3-2) — **화면이 조용해지는 자리**.
+ *
+ * 서버가 창구를 팀장 하나로 좁혀도 넘겨받은 팀원이 요청자에게 답하면 화면은 그대로
+ * 시끄럽다: 데스크탑의 접힘 판정이 *"사람을 `@handle` 로 부른 말"* 을 펼치기 때문이다.
+ * 그래서 이 블록이 보고 대상을 팀장으로 못 박고 요청자를 부르지 말라고 말한다 —
+ * 그 둘이 화면의 접힘 규칙과 한 쌍이다.
+ */
+describe('buildTurnPrompt — 넘겨받은 일(3-2)', () => {
+  const handles = { u1: 'jaebin', a1: 'forge', a2: 'scout' };
+  const handed = {
+    leadHandle: 'forge', teamName: 'release', deadlineAt: '2026-09-11T09:00:00.000Z',
+  };
+  const call = () => buildTurnPrompt({
+    messages: [msg(10, 'a1', '@scout 는 서버를 봐라')],
+    lastFedSeq: 9, meId: 'a2', handles, channelId: 'c', threadRootId: 't',
+    murmurUrl: 'http://localhost:3400', delegatedBy: handed,
+  });
+
+  it('누가 넘겼는지와 보고 대상을 말한다', () => {
+    const { prompt } = call();
+    expect(prompt).toContain('@release');
+    expect(prompt).toContain('@forge');
+    expect(prompt).toContain('보고');
+  });
+
+  it('요청자를 부르지 말라고 말한다 — 이 한 줄이 화면의 접힘과 한 쌍이다', () => {
+    expect(call().prompt).toContain('요청자(사람)를 `@handle` 로 부르지 마라');
+  });
+
+  it('기한을 말한다 — 답하지 않으면 무응답으로 닫힌다', () => {
+    const { prompt } = call();
+    expect(prompt).toContain('2026-09-11T09:00:00.000Z');
+    expect(prompt).toContain('무응답');
+  });
+
+  it('실패는 예외라고 열어 둔다 — 막힌 것을 조용히 두는 것이 가장 나쁘다', () => {
+    // "요청자를 부르지 마라"만 두면 막혔을 때도 침묵한다. 실패는 화면이 언제나 펼치는 말이다.
+    expect(call().prompt).toContain('message.fail');
+  });
+
+  it('넘긴 사람의 말이 함께 실린다 — 블록은 델타를 지우지 않는다', () => {
+    expect(call().prompt).toContain('forge: @scout 는 서버를 봐라');
+  });
+
+  it('넘겨받은 일이 아니면 블록이 없다', () => {
+    const { prompt } = buildTurnPrompt({
+      messages: [msg(10, 'u1', '@scout 이거 봐줘')],
+      lastFedSeq: 9, meId: 'a2', handles, channelId: 'c', threadRootId: 't',
+      murmurUrl: 'http://localhost:3400',
+    });
+    expect(prompt).not.toContain('넘겨받은 일');
+  });
+});
+
 describe('buildSystemPrompt', () => {
   it('지시문과 guide 를 싣고 8000자 규칙을 명시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '친절하게', guide: 'G규칙', memory: { core: null, slugs: [] } });

@@ -1578,6 +1578,39 @@ export async function listInbox(
     }
   }
 
+  /**
+   * **넘겨받은 일**에는 팀장과 기한을 붙인다(3-2). 러너가 그것으로 *"최종 답은 팀장이
+   * 쓴다"* 블록을 만든다 — 팀장이 누구인지 모르면 그 문장을 쓸 수 없고, 기한을 모르면
+   * 그 팀원은 자기 답이 언제 무응답으로 닫히는지 알 수 없다.
+   *
+   * 명단(`team`)·결말(`delegation`)과 같은 판단이다: 서버는 이미 안다(위임을 만든 것이
+   * 서버다). 읽는 쪽이 다시 찾으면 두 출처가 생긴다.
+   */
+  const handedIds = rows.filter((r) => r.reason === 'team_delegated').map((r) => r.messageId);
+  if (handedIds.length) {
+    const handed = await pool.query<{
+      message_id: string; leadHandle: string; teamName: string; deadlineAt: string;
+    }>(
+      `select d.message_id, a.handle as "leadHandle", t.name as "teamName",
+              d.deadline_at as "deadlineAt"
+         from team_delegation d
+         join account a on a.id = d.lead_account_id
+         join agent_team t on t.id = d.team_id
+        where d.message_id = any($1)`,
+      [[...new Set(handedIds)]],
+    );
+    const byMessage = new Map(handed.rows.map((r) => [r.message_id, r]));
+    for (const row of rows) {
+      const found = row.reason === 'team_delegated' ? byMessage.get(row.messageId) : undefined;
+      if (found) {
+        row.delegatedBy = {
+          leadHandle: found.leadHandle, teamName: found.teamName,
+          deadlineAt: new Date(found.deadlineAt).toISOString(),
+        };
+      }
+    }
+  }
+
   // `teamId` 는 계약이 아니다(`InboxEntry` 에 없다) — 명단으로 옮긴 뒤 지운다. 남겨 두면
   // 화면·러너가 그 값을 읽기 시작하고, 그러면 명단과 id 라는 두 출처가 생긴다.
   for (const row of rows) delete row.teamId;
