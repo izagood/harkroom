@@ -609,8 +609,18 @@ function delegationSection(outcome: InboxDelegationOutcome): string[] {
     done: '끝남',
     failed: '실패 — 그 일은 아직 남아 있다',
     timeout: '무응답 — 기한이 지났다(살아 있는지 알 수 없다)',
+    canceled: '취소 — **사람이 멈췄다**',
   };
-  const unresolved = outcome.items.some((i) => i.outcome !== 'done');
+  const unresolved = outcome.items.some((i) => i.outcome !== 'done' && i.outcome !== 'canceled');
+  /**
+   * 취소는 **다시 시작하면 안 되는 결말**이라 따로 말한다(051).
+   *
+   * 무응답과 실패에는 *"직접 하거나 다시 넘겨라"* 가 맞다. 취소는 반대다 — 사람이 그것을
+   * 원하지 않았으므로 다시 시작하면 **사람의 결정을 무르는 것**이다. 그 구별을 적지 않으면
+   * 팀장은 셋을 같은 눈으로 보고, 중단한 일을 곧바로 되살린다(이 결말을 `timeout` 과 가른
+   * 이유가 그것이다).
+   */
+  const canceled = outcome.items.filter((i) => i.outcome === 'canceled').map((i) => `@${i.handle}`);
   return [
     outcome.timedOut
       ? '(넘긴 일의 기한이 지났다 — 결말은 아래와 같다)'
@@ -618,6 +628,13 @@ function delegationSection(outcome: InboxDelegationOutcome): string[] {
     '',
     ...outcome.items.map((i) => `- @${i.handle} — ${label[i.outcome]}`),
     '',
+    ...(canceled.length
+      ? [
+        `${canceled.join(' · ')} 의 일은 **사람이 멈춘 것**이다 — 다시 시작하지 마라. 무엇을 왜`,
+        '멈췄는지 모르겠으면 최종 답에서 사람에게 확인해라.',
+        '',
+      ]
+      : []),
     ...(unresolved
       ? [
         '끝나지 않은 것이 있다. **셋 중 하나를 골라라**:',

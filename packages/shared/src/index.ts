@@ -1552,8 +1552,14 @@ export interface InboxDelegationOutcome {
   roundsLeft: number;
   items: {
     handle: string;
-    /** `null` 은 없다 — 결말이 난 뒤에만 이 목록이 만들어진다. */
-    outcome: 'done' | 'failed' | 'timeout';
+    /**
+     * `null` 은 없다 — 결말이 난 뒤에만 이 목록이 만들어진다.
+     *
+     * `'canceled'` 는 **사람이 그 턴을 멈췄다**(마이그레이션 051). `'timeout'` 과 가르는
+     * 이유는 팀장이 할 일이 정반대이기 때문이다: 무응답은 다시 넘기거나 직접 하는 것이
+     * 맞지만, 취소는 **사람이 원하지 않았다**는 뜻이라 다시 시작하면 그 결정을 무른다.
+     */
+    outcome: 'done' | 'failed' | 'timeout' | 'canceled';
   }[];
 }
 

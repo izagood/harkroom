@@ -344,6 +344,26 @@ describe('buildTurnPrompt — 넘긴 일의 결말(050)', () => {
     expect(prompt).toContain('다시 넘길 수 없다');
   });
 
+  it('취소는 다시 시작하지 말라고 말한다 — 무응답과 반대다', () => {
+    const { prompt } = call({
+      timedOut: false, roundsLeft: 2, items: [{ handle: 'scout', outcome: 'canceled' }],
+    });
+    expect(prompt).toContain('@scout — 취소');
+    expect(prompt).toContain('다시 시작하지 마라');
+    // 취소만 있으면 세 갈래(직접/다시 넘김/사람에게)를 내밀지 않는다 — 고를 것이 없다.
+    expect(prompt).not.toContain('셋 중 하나를 골라라');
+  });
+
+  it('취소와 실패가 섞이면 둘 다 말한다', () => {
+    const { prompt } = call({
+      timedOut: false, roundsLeft: 1,
+      items: [{ handle: 'scout', outcome: 'canceled' }, { handle: 'codex', outcome: 'failed' }],
+    });
+    // 멈춘 것은 되살리지 말고, 실패한 것은 어떻게든 해야 한다 — 두 지시가 함께 선다.
+    expect(prompt).toContain('다시 시작하지 마라');
+    expect(prompt).toContain('셋 중 하나를 골라라');
+  });
+
   it('전부 끝났으면 취합해서 최종 답 하나를 쓰라고 말한다', () => {
     const { prompt } = call({
       timedOut: false, roundsLeft: 3,
