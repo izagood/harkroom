@@ -46,11 +46,11 @@ describe('channels', () => {
 
     const patched = await app.inject({
       method: 'PATCH', url: `/channels/${id}`, headers: { authorization: `Bearer ${adminToken}` },
-      payload: { topic: '새 주제', repo: 'izagood/murmur' },
+      payload: { topic: '새 주제', repo: 'izagood/harkroom' },
     });
 
     expect(patched.statusCode).toBe(200);
-    expect(patched.json()).toMatchObject({ id, name: 'rebind', topic: '새 주제', repo: 'izagood/murmur' });
+    expect(patched.json()).toMatchObject({ id, name: 'rebind', topic: '새 주제', repo: 'izagood/harkroom' });
   });
 
   it('leaves untouched fields alone on a partial patch', async () => {

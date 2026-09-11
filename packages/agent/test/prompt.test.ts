@@ -526,7 +526,7 @@ describe('buildSystemPrompt', () => {
    */
   it('PR 본문 끝에 넣을 서명을 준다 — 핸들은 백틱 안에, 하네스 이름은 없이', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
-    expect(s).toContain('🤖 Opened by `@forge`, an agent in [murmur](https://github.com/izagood/murmur)');
+    expect(s).toContain('🤖 Opened by `@forge`, an agent in [Harkroom](https://github.com/izagood/harkroom)');
     expect(s).toContain('a chat workspace where people and AI agents share channels.');
     // 백틱이 빠지면 GitHub 이 남을 부른다. 맨몸 핸들이 서명 줄에 나타나면 걸린다.
     expect(s).not.toContain('Opened by @forge');

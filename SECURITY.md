@@ -14,7 +14,7 @@ We use GitHub's private vulnerability reporting system for security issues. **Do
 
 To report a vulnerability:
 
-1. Go to the [Security tab](https://github.com/izagood/murmur/security) of this repository
+1. Go to the [Security tab](https://github.com/izagood/harkroom/security) of this repository
 2. Click "Report a vulnerability"
 3. Fill out the vulnerability report form
 

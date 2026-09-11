@@ -20,7 +20,7 @@ import { ConnectionSettings } from '../src/components/settings/ConnectionSetting
 import { usePrefsStore } from '../src/state/prefsStore';
 
 const status = (over: Partial<ProjectionStatus>): ProjectionStatus => ({
-  state: 'ok', configured: true, repo: 'izagood/murmur', lastLogIndex: 0,
+  state: 'ok', configured: true, repo: 'izagood/harkroom', lastLogIndex: 0,
   lastPolledAt: Date.now(), lastAdvancedAt: null, lastError: null, ...over,
 });
 
@@ -51,7 +51,7 @@ describe('Connection 설정의 투영 행', () => {
   it('돌고 있으면 무엇을 보고 있는지 말한다', () => {
     useActiveStore.getState().set({ projectionStatus: status({ state: 'ok' }) });
     render(<ConnectionSettings onSignOut={vi.fn()} />);
-    expect(row()).toContain('izagood/murmur');
+    expect(row()).toContain('izagood/harkroom');
     expect(row()).not.toContain(PROJECTION_UNCONFIGURED_HEADLINE);
   });
 

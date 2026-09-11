@@ -168,14 +168,14 @@ describe('강조가 강조로 그려진다', () => {
 
 describe('[글자](주소) 는 링크가 되지만, 열 수 있는 것만 된다', () => {
   it('http(s) 는 링크가 되고 보이는 글자는 라벨이다', () => {
-    show('[murmur 저장소](https://github.com/izagood/murmur) 를 봐');
+    show('[harkroom 저장소](https://github.com/izagood/harkroom) 를 봐');
 
     const a = screen.getByTestId('body-link');
-    expect(a.textContent).toBe('murmur 저장소');
-    expect(a.getAttribute('href')).toBe('https://github.com/izagood/murmur');
+    expect(a.textContent).toBe('harkroom 저장소');
+    expect(a.getAttribute('href')).toBe('https://github.com/izagood/harkroom');
     expect(a.getAttribute('data-link-kind')).toBe('external');
     // 문법은 남지 않는다.
-    expect(bodyText()).toBe('murmur 저장소 를 봐');
+    expect(bodyText()).toBe('harkroom 저장소 를 봐');
   });
 
   it('열 수 없는 스킴은 **누를 것이 생기지 않는다** — 막는 것이 아니다', () => {

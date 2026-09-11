@@ -5,7 +5,7 @@
 
   쓰는 법:
     sed -e 's|@HANDLE@|fizz|g' \
-        -e 's|@REPO@|/절대/경로/murmur|g' \
+        -e 's|@REPO@|/절대/경로/harkroom|g' \
         -e 's|@PAT@|murp_...|g' \
         -e 's|@URL@|http://localhost:3400|g' \
         ops/agent-runner.plist.template > ~/Library/LaunchAgents/dev.harkroom.agent.fizz.plist

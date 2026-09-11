@@ -58,7 +58,7 @@ describe('협업 탭', () => {
   it('서버가 준 순서 그대로 줄을 세운다 — 막는 것이 위다', () => {
     show(view({
       repos: [repo({
-        repo: 'izagood/murmur',
+        repo: 'izagood/harkroom',
         proposals: [
           proposal({ intentOid: 'i_need', state: 'needs_decision', title: '인덱스를 다시 깐다' }),
           proposal({ intentOid: 'i_quar', state: 'check_failed', title: '첨부 미리보기' }),
@@ -99,7 +99,7 @@ describe('협업 탭', () => {
     show(view({
       repos: [
         repo({ repo: 'izagood/avcs', error: 'unreachable', reducedAt: null }),
-        repo({ repo: 'izagood/murmur', proposals: [proposal({ intentOid: 'i1' })] }),
+        repo({ repo: 'izagood/harkroom', proposals: [proposal({ intentOid: 'i1' })] }),
       ],
     }));
 
