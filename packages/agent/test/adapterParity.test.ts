@@ -342,12 +342,24 @@ describe('T3 — 스킬 자리', () => {
 });
 
 describe('잠금 — 호출부가 표를 읽게 되면 지운다', () => {
-  it('executionModel.mention 이 mentionTurn 의 usesTui 와 같다', () => {
-    // `mentionTurn.ts` 의 `const usesTui = def.harness === 'claude-code'` 를 그대로 옮긴 것이다.
-    // 표만 고치고 호출부를 안 고치면 여기서 걸린다. 호출부가 표를 읽게 되는 조각에서 이
-    // 테스트는 "codex 멘션 플랜의 stdinFile 이 null 이다" 같은 행동 테스트로 바뀐다.
-    for (const [harness, adapter] of PAIRS) {
-      expect(adapter.executionModel.mention === 'tui').toBe(harness === 'claude-code');
+  it('executionModel.mention 이 호출부의 실제 동작을 정한다 — 잠금을 지웠다', () => {
+    // **앞 판본은 `usesTui === (harness === 'claude-code')` 를 잠그고 있었다.** 그 잠금의
+    // 목적은 "표만 고치고 호출부를 안 고치는 것"을 막는 것이었고, 호출부가 표를 읽게 되면
+    // 지운다고 그때 적어 뒀다. 지금이 그 순간이다 — `mentionTurn` 이
+    // `usesTuiForMention` 을 읽고, 그 함수가 표를 읽는다.
+    //
+    // 대신 재는 것: **표를 고치면 argv 가 따라 움직인다.** codex 의 멘션이 TUI 이므로
+    // 새 경로의 argv 에 `exec` 가 없어야 한다. 표와 argv 가 어긋나면 여기서 걸린다.
+    const saved = process.env.MURMUR_HARNESS_ADAPTERS;
+    process.env.MURMUR_HARNESS_ADAPTERS = '1';
+    try {
+      expect(adapterFor('codex').executionModel.mention).toBe('tui');
+      expect(plan('codex').args).not.toContain('exec');
+      // claude 는 원래 TUI 였고 그대로다.
+      expect(adapterFor('claude-code').executionModel.mention).toBe('tui');
+    } finally {
+      if (saved === undefined) delete process.env.MURMUR_HARNESS_ADAPTERS;
+      else process.env.MURMUR_HARNESS_ADAPTERS = saved;
     }
   });
 
