@@ -451,6 +451,85 @@ describe('050 위임 왕복', () => {
     await oneClient.close(); await twoClient.close(); await leadClient.close();
   });
 
+  /**
+   * **기한은 "끝내라"가 아니라 "이만큼 조용하면 죽은 것"이다**(2026-09-12).
+   *
+   * 한 턴의 예산은 30분인데 기한 기본값은 10분이라, 고치기 전에는 10분 넘는 일이
+   * **구조적으로** 거짓 무응답이 됐다 — 팀장이 깨어나 같은 일을 다시 시키고, 뒤늦게 온
+   * 진짜 보고는 이미 닫힌 의무를 열지 못했다.
+   */
+  it('12. 진행 한 줄이 기한을 뒤로 민다 — 일하는 중은 무응답이 아니다', async () => {
+    const rootId = await openThread('@delegteam 오래 걸리는 일');
+    const leadClient = await mcpClient(leadPat);
+    const oneClient = await mcpClient(onePat);
+
+    const res = text(await leadClient.callTool({
+      name: 'message.delegate',
+      arguments: { channelId, threadRootId: rootId, body: '오래 걸린다', to: ['done1'] },
+    }));
+    const messageId = (res.message as { id: string }).id;
+
+    // 기한이 지났다(시간을 기다리지 않고 과거로 옮긴다).
+    await pool.query(
+      `update team_delegation set deadline_at = now() - interval '1 second' where message_id = $1`,
+      [messageId],
+    );
+
+    // 그런데 팀원이 **살아 있다는 신호**를 보낸다. 진행은 의무를 닫지 않지만(시험 5)
+    // 이제 기한은 민다.
+    await oneClient.callTool({
+      name: 'message.progress', arguments: { channelId, threadRootId: rootId, body: '아직 보는 중' },
+    });
+
+    await createDelegationDeadlineSweeper(pool).sweep();
+    // 닫히지 않았다 — 팀장도 안 깨어난다.
+    expect(await outcomes(messageId)).toEqual({ done1: null });
+    expect(await inboxReasons(leadId, messageId)).toEqual([]);
+
+    await oneClient.close(); await leadClient.close();
+  });
+
+  it('13. 그 스레드에서 턴이 돌고 있으면 기한이 지나도 닫지 않는다', async () => {
+    const rootId = await openThread('@delegteam 도는 턴');
+    const leadClient = await mcpClient(leadPat);
+    const oneClient = await mcpClient(onePat);
+
+    const res = text(await leadClient.callTool({
+      name: 'message.delegate',
+      arguments: { channelId, threadRootId: rootId, body: '긴 작업', to: ['done1'] },
+    }));
+    const messageId = (res.message as { id: string }).id;
+    await pool.query(
+      `update team_delegation set deadline_at = now() - interval '1 second' where message_id = $1`,
+      [messageId],
+    );
+
+    /**
+     * 진행 발화보다 **강한 신호**다: 진행은 모델이 올려 줘야 하지만 이것은 러너가 그
+     * 스레드에 붙어 있다는 사실 자체다. 허브의 목록을 흉내 내어 그 판정만 잰다.
+     */
+    const running = [{ agentAccountId: oneId, threadRootId: rootId }];
+    await createDelegationDeadlineSweeper(pool, { runningTurns: () => running }).sweep();
+    expect(await outcomes(messageId)).toEqual({ done1: null });
+
+    // **건너뛰는 것이 아니라 민다.** 건너뛰면 이 행이 매 스윕(15초)마다 다시 잡힌다.
+    const due = await pool.query(
+      `select deadline_at > now() as pushed from team_delegation where message_id = $1`, [messageId],
+    );
+    expect(due.rows[0]!.pushed).toBe(true);
+
+    // **다른 스레드**에서 도는 턴은 이 기다림과 무관하다 — 기한이 다시 지나면 닫힌다.
+    await pool.query(
+      `update team_delegation set deadline_at = now() - interval '1 second' where message_id = $1`,
+      [messageId],
+    );
+    const elsewhere = [{ agentAccountId: oneId, threadRootId: 'other-thread' }];
+    await createDelegationDeadlineSweeper(pool, { runningTurns: () => elsewhere }).sweep();
+    expect(await outcomes(messageId)).toEqual({ done1: 'timeout' });
+
+    await oneClient.close(); await leadClient.close();
+  });
+
   it('7. 라운드 상한에 걸리고, 사람이 말하면 리셋된다', async () => {
     const rootId = await openThread('@delegteam 라운드');
     const leadClient = await mcpClient(leadPat);

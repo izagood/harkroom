@@ -33,7 +33,7 @@ import { actorOf, recordAudit } from '../audit.js';
 import { cancelDelegationsFor } from '../services/delegations.js';
 import { createAttachTicketStore } from '../ws/tickets.js';
 import { emitEvent } from '../events.js';
-import { createRelayHub } from '../ws/relay.js';
+import { createRelayHub, type RelayHub } from '../ws/relay.js';
 import type { AgentPresence } from '../mcp/presence.js';
 import { createCredentialSweep, DEFAULT_REVALIDATE_MS, originAllowed } from '../ws/socketLifetime.js';
 
@@ -91,9 +91,16 @@ export interface AgentRelayDeps {
   agentPresence: AgentPresence;
 }
 
+/**
+ * 릴레이 라우트를 단다. **허브를 돌려준다** — 도는 턴 목록(`listSessions`)이 이 라우트 밖에서도
+ * 필요하기 때문이다(위임 기한 스위퍼가 *"그 팀원의 턴이 아직 도는가"* 를 묻는다).
+ *
+ * 허브를 `buildServer` 로 끌어올리지 않는 이유: 허브의 수명과 배선(`onAttention`·소켓 훅)이
+ * 전부 이 파일의 것이다. 밖에서 만들면 그 배선이 두 파일로 갈린다 — 돌려주는 것으로 충분하다.
+ */
 export async function registerAgentRelayRoutes(
   app: FastifyInstance, pool: Pool, deps: AgentRelayDeps,
-): Promise<void> {
+): Promise<{ listSessions: RelayHub['listSessions'] }> {
   /**
    * 에이전트가 사람 손을 기다린다(2026-09-08). 허브는 세션의 좌표만 주고, 소유자와
    * handle 을 붙여 이벤트로 만드는 것은 여기다 — 그 둘은 DB 에 있고, 허브는 DB 를 모른다.
@@ -528,4 +535,7 @@ export async function registerAgentRelayRoutes(
       });
     });
   });
+
+  // 도는 턴 목록만 내준다 — 허브 전체를 내주면 밖에서 소켓을 만질 수 있게 된다.
+  return { listSessions: hub.listSessions };
 }
