@@ -240,12 +240,29 @@ export async function closeDelegationsForReply(
  * **순차로 여러 번** 돌아 최종 답을 여러 번 쓴다 — 지금 증상보다 나쁘다.
  */
 async function notifyIfSettled(client: PoolClient, delegationId: string): Promise<string | null> {
-  const still = await client.query<{ n: number }>(
-    `select count(*)::int as n from team_delegation_item
-      where delegation_id = $1 and outcome is null`,
+  /**
+   * **남은 미결을 메시지 meta 에 되쓴다**(3-3). 화면은 표를 못 읽는다 — 대기 사슬과 채널
+   * 목록의 집계는 둘 다 메시지 meta 를 본다(`ask.answeredWith` 가 그렇게 쓰인다).
+   *
+   * 통째로 다시 쓰는 것이 안전한 이유: 이 함수를 부르는 두 경로(답으로 닫힘·기한으로 닫힘)는
+   * **이미 위임 행을 `for update` 로 잡고 있다.** 그래서 두 닫힘이 서로의 배열을 덮지 않는다.
+   * 배열에서 한 원소를 빼는 SQL 대신 **지금 열린 것 전부**를 다시 쓰는 이유도 그것이다:
+   * 표가 정본이고 이 값은 그 파생이라, 어긋날 여지를 남기지 않는다.
+   */
+  const still = await client.query<{ delegate_account_id: string }>(
+    `select delegate_account_id from team_delegation_item
+      where delegation_id = $1 and outcome is null
+      order by delegate_account_id`,
     [delegationId],
   );
-  if ((still.rows[0]?.n ?? 0) > 0) return null;
+  await client.query(
+    `update message m
+        set meta = jsonb_set(m.meta::jsonb, '{delegation,open}', $2::jsonb)
+       from team_delegation d
+      where d.id = $1 and m.id = d.message_id and m.meta->>'kind' = 'delegation'`,
+    [delegationId, JSON.stringify(still.rows.map((r) => r.delegate_account_id))],
+  );
+  if (still.rowCount) return null;
 
   const marked = await client.query<{ lead_account_id: string; message_id: string }>(
     `update team_delegation set notified_at = now()

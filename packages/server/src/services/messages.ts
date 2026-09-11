@@ -218,6 +218,23 @@ const THREAD_STATE_FACTS = `LEFT JOIN LATERAL (
         AND (t.meta->'ask'->'to'->>'kind' = 'human'
           OR (t.meta->'ask'->'to'->>'kind' = 'account'
             AND t.meta->'ask'->'to'->>'accountId' IS NOT NULL))
+    ), '[]'::jsonb)
+    -- 위임 마디(3-3). 팀장이 기다리는 팀원 하나마다 한 마디다.
+    --
+    -- 물음과 같은 목록에 넣는 이유: 사슬을 잇는 walk() 는 마디의 출처를 묻지 않는다 —
+    -- 누가 누구를 기다리는가 하나만 본다. 목록을 갈라 두 벌로 내면 화면이 그 둘을 합치는
+    -- 코드를 또 쓰게 되고, 그 합치기가 스레드 안(메시지에서 만든 사슬)과 갈라진다.
+    --
+    -- 위임 하나가 여러 마디가 되므로(팀원 N 명) jsonb_array_elements_text 로 펼친다.
+    -- ask 는 상대가 하나라 그 펼침이 없었고, 그래서 별도 집계가 필요하다.
+    || COALESCE((
+      SELECT JSONB_AGG(
+        JSONB_BUILD_OBJECT('waiter', d.author_id::text, 'blockedBy', o.id, 'askedAt', d.created_at)
+        ORDER BY d.seq
+      )
+      FROM message d, LATERAL JSONB_ARRAY_ELEMENTS_TEXT(d.meta->'delegation'->'open') AS o(id)
+      WHERE (d.id = m.id OR d.thread_root_id = m.id) AND d.deleted_at IS NULL
+        AND d.meta->>'kind' = 'delegation' AND d.author_id IS NOT NULL
     ), '[]'::jsonb) as open_ask_links
   FROM message t
   WHERE (t.id = m.id OR t.thread_root_id = m.id) AND t.deleted_at IS NULL

@@ -454,6 +454,9 @@ function buildMcpServer(
       kind: 'delegation',
       delegation: {
         to: delegates.map((d) => d.handle),
+        // **아직 답하지 않은 팀원**(3-3). 만들 때는 전원이다. 의무가 닫힐 때마다 서버가
+        // 줄이고, 화면은 이 값으로 대기 사슬을 세운다 — 표는 어느 화면에도 닿지 않는다.
+        open: delegates.map((d) => d.accountId),
         unreachable,
         deadlineAt: deadlineAt.toISOString(),
       },

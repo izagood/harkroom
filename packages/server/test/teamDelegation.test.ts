@@ -329,6 +329,54 @@ describe('050 위임 왕복', () => {
     await oneClient.close(); await leadClient.close();
   });
 
+  it('9. 의무가 닫히면 메시지 meta 의 open 이 줄고, 채널 목록이 그 마디를 싣는다', async () => {
+    const rootId = await openThread('@delegteam 사슬');
+    const leadClient = await mcpClient(leadPat);
+    const oneClient = await mcpClient(onePat);
+    const twoClient = await mcpClient(twoPat);
+
+    const res = text(await leadClient.callTool({
+      name: 'message.delegate',
+      arguments: { channelId, threadRootId: rootId, body: '둘에게', to: ['done1', 'dtwo'] },
+    }));
+    const messageId = (res.message as { id: string }).id;
+
+    const openIds = async (): Promise<string[]> => {
+      const r = await pool.query(`select meta->'delegation'->'open' as open from message where id = $1`, [messageId]);
+      return (r.rows[0]!.open ?? []) as string[];
+    };
+
+    // **화면은 표를 못 읽는다** — 대기 사슬과 채널 목록 집계는 둘 다 메시지 meta 를 본다.
+    expect((await openIds()).sort()).toEqual([oneId, twoId].sort());
+
+    /**
+     * 채널 목록의 `openAskLinks` 에 위임 마디가 실린다. 물음과 **같은 목록**인 것이 요점이다 —
+     * 사슬을 잇는 `walk()` 는 마디의 출처를 묻지 않으므로, 목록을 갈라 두면 화면이 그 둘을
+     * 합치는 코드를 또 써야 하고 그것이 스레드 안의 사슬과 갈라진다.
+     */
+    const list = await app.inject({
+      method: 'GET', url: `/channels/${channelId}/messages`, headers: auth(adminToken),
+    });
+    const root = (list.json().messages as Array<{ id: string; openAskLinks?: Array<{ waiter: string; blockedBy: string }> }>)
+      .find((m) => m.id === rootId);
+    const blocked = (root?.openAskLinks ?? []).filter((l) => l.waiter === leadId).map((l) => l.blockedBy);
+    expect(blocked.sort()).toEqual([oneId, twoId].sort());
+
+    // 하나가 답하면 그 하나만 빠진다.
+    await oneClient.callTool({
+      name: 'message.post', arguments: { channelId, threadRootId: rootId, body: '끝났다' },
+    });
+    expect(await openIds()).toEqual([twoId]);
+
+    // 전부 닫히면 빈 배열이다 — 사슬에서도 사라진다.
+    await twoClient.callTool({
+      name: 'message.post', arguments: { channelId, threadRootId: rootId, body: '나도 끝났다' },
+    });
+    expect(await openIds()).toEqual([]);
+
+    await oneClient.close(); await twoClient.close(); await leadClient.close();
+  });
+
   it('7. 라운드 상한에 걸리고, 사람이 말하면 리셋된다', async () => {
     const rootId = await openThread('@delegteam 라운드');
     const leadClient = await mcpClient(leadPat);

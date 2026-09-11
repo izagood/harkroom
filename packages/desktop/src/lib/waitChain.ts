@@ -1,4 +1,4 @@
-import { readAskMeta, type MessageRow, type OpenAskLink } from '@murmur/shared';
+import { readAskMeta, readDelegationMeta, type MessageRow, type OpenAskLink } from '@murmur/shared';
 import type { Liveness } from './threadState';
 import type { Translate } from '../i18n';
 
@@ -80,14 +80,37 @@ export function waitChain(input: WaitChainInput): WaitChain {
 
   for (const m of messages) {
     const ask = readAskMeta(m.meta);
-    if (!ask || ask.answeredWith != null) continue;
-    const link: WaitLink = {
-      waiter: m.authorId,
-      blockedBy: ask.to.kind === 'human' ? null : ask.to.accountId,
-      message: m,
-      askedAt: m.createdAt,
-    };
-    links.push(link);
+    if (ask && ask.answeredWith == null) {
+      links.push({
+        waiter: m.authorId,
+        blockedBy: ask.to.kind === 'human' ? null : ask.to.accountId,
+        message: m,
+        askedAt: m.createdAt,
+      });
+      continue;
+    }
+
+    /**
+     * **위임도 마디다**(050 · 3-3). 팀장이 기다리는 팀원 하나마다 하나다.
+     *
+     * 이것이 없으면 사람은 *"왜 조용한지"* 를 볼 수 없다: 팀원이 죽어 기한(기본 10분)을
+     * 기다리는 동안 스레드에는 팀장의 *"이렇게 나눴다"* 한 줄만 있고, 그 뒤는 아무 것도
+     * 없다. 물음과 달리 위임은 **본문이 아니라 상태**라 그 침묵이 정상인지 막힌 것인지
+     * 구별되지 않는다.
+     *
+     * 마디로 만들면 그 판정이 공짜로 따라온다 — `walk()` 가 사슬의 끝이 **죽었다고 아는**
+     * 에이전트면 `deadlock('dead-runner')` 을 내고, 화면은 그것을 실패와 같은 무게로
+     * 그린다(규칙 04). 팀장이 죽은 경우도 같은 길로 잡힌다.
+     *
+     * `message` 를 싣는 이유는 물음과 같다 — 사람이 그 줄을 눌러 무엇을 넘겼는지 읽을 수
+     * 있어야 한다.
+     */
+    const delegation = readDelegationMeta(m.meta);
+    if (delegation) {
+      for (const blockedBy of delegation.open) {
+        links.push({ waiter: m.authorId, blockedBy, message: m, askedAt: m.createdAt });
+      }
+    }
   }
 
   return walk(links, myAccountId, live);

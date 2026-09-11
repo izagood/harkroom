@@ -1546,6 +1546,26 @@ export interface DelegationMeta {
   delegation: {
     /** 의무가 만들어진 팀원의 handle 들. */
     to: string[];
+    /**
+     * **아직 답하지 않은 팀원의 계정 id 들**(3-3). 의무가 닫힐 때마다 서버가 줄인다.
+     *
+     * ## 왜 표가 아니라 메시지에도 두는가
+     *
+     * 화면은 표를 못 읽는다. 대기 사슬(`waitChain`)은 **메시지에서** 마디를 만들고
+     * (`ask.answeredWith` 가 그렇게 쓰인다), 채널 목록의 집계도 메시지 meta 를 훑는
+     * SQL 이다. 이 값이 없으면 사람은 *"왜 조용한지"* 를 볼 방법이 없다 — 위임은 표에만
+     * 있고, 표는 아무 화면에도 닿지 않는다.
+     *
+     * **표를 대신하는 것이 아니다.** 판정과 경합 제어는 여전히 표가 한다(`ask` 와 달리
+     * 상대가 N 명이라 jsonb 로는 lost update 가 난다 — 050 의 그 문단). 이 배열은 그
+     * 트랜잭션이 **이미 직렬화된 상태에서** 통째로 다시 쓰는 파생값이다: 닫는 쪽이
+     * 위임 행을 `for update` 로 잡고 있으므로 두 닫힘이 서로를 덮지 않는다.
+     *
+     * **handle 이 아니라 계정 id 인 이유**: 사슬의 `blockedBy` 가 계정 id 다. handle 로
+     * 두면 화면이 그것을 다시 계정으로 풀어야 하고, 그 풀이가 실패하는 순간(이름이 바뀐
+     * 계정) 마디가 조용히 사라진다.
+     */
+    open: string[];
     /** 러너가 없어 넘기지 못한 팀원의 handle 들. 없으면 빈 배열이다. */
     unreachable: string[];
     deadlineAt: string;
@@ -1566,6 +1586,9 @@ export function readDelegationMeta(
   const delegation = meta.delegation as DelegationMeta['delegation'] | undefined;
   if (!delegation || typeof delegation !== 'object') return null;
   if (!Array.isArray(delegation.to)) return null;
+  // `open` 은 3-3 에서 더해졌다. 그 전에 만들어진 위임 메시지에는 없으므로 **빈 배열로
+  // 읽는다** — 없는 것을 "전부 미결"로 읽으면 이미 끝난 옛 위임이 영원히 사슬에 선다.
+  if (!Array.isArray(delegation.open)) return { ...delegation, open: [] };
   return delegation;
 }
 
