@@ -75,21 +75,21 @@ export function createMetrics(): Metrics {
 
     render() {
       const lines: string[] = [];
-      lines.push('# HELP murmur_http_requests_total total http requests');
-      lines.push('# TYPE murmur_http_requests_total counter');
+      lines.push('# HELP harkroom_http_requests_total total http requests');
+      lines.push('# TYPE harkroom_http_requests_total counter');
       for (const [labels, count] of counters) {
-        lines.push(`murmur_http_requests_total{${labels}} ${count}`);
+        lines.push(`harkroom_http_requests_total{${labels}} ${count}`);
       }
-      lines.push('# HELP murmur_http_request_duration_seconds request duration');
-      lines.push('# TYPE murmur_http_request_duration_seconds histogram');
+      lines.push('# HELP harkroom_http_request_duration_seconds request duration');
+      lines.push('# TYPE harkroom_http_request_duration_seconds histogram');
       for (const [labels, h] of histograms) {
         // 버킷은 누적이다. 마지막에 +Inf 와 sum·count 가 와야 형식이 유효하다.
         for (let i = 0; i < BUCKETS.length; i += 1) {
-          lines.push(`murmur_http_request_duration_seconds_bucket{${labels},le="${BUCKETS[i]}"} ${h.counts[i]}`);
+          lines.push(`harkroom_http_request_duration_seconds_bucket{${labels},le="${BUCKETS[i]}"} ${h.counts[i]}`);
         }
-        lines.push(`murmur_http_request_duration_seconds_bucket{${labels},le="+Inf"} ${h.total}`);
-        lines.push(`murmur_http_request_duration_seconds_sum{${labels}} ${h.sum}`);
-        lines.push(`murmur_http_request_duration_seconds_count{${labels}} ${h.total}`);
+        lines.push(`harkroom_http_request_duration_seconds_bucket{${labels},le="+Inf"} ${h.total}`);
+        lines.push(`harkroom_http_request_duration_seconds_sum{${labels}} ${h.sum}`);
+        lines.push(`harkroom_http_request_duration_seconds_count{${labels}} ${h.total}`);
       }
       return `${lines.join('\n')}\n`;
     },

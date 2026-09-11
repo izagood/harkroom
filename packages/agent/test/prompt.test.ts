@@ -738,6 +738,12 @@ describe('harnessTailNotice — 버려지던 마지막 출력', () => {
     // 러너 PAT 가 아닌 다른 murp_ 토큰도 가린다 — 그 모양 자체가 비밀이다.
     const other = harnessTailNotice('murp_m_other_agent_token', 'murp_x');
     expect(other).not.toContain('murp_m_other_agent_token');
+
+    // **새 접두사(`hrkp_`)도 같이 가린다.** 접두사를 바꾼 뒤에도 옛 PAT 는 서버에서 계속
+    // 유효하므로(토큰은 해시로 조회된다), 둘 중 하나만 가리면 그 순간 한쪽이 새기 시작한다.
+    const next = harnessTailNotice('HARKROOM_PAT=hrkp_new_value 로 붙었다', 'hrkp_new_value');
+    expect(next).not.toContain('hrkp_new_value');
+    expect(next).toContain('(가림)');
   });
 
   it('길면 뒤를 남기고 잘렸음을 밝힌다 — 사람이 "이게 전부"로 읽으면 안 된다', () => {

@@ -134,7 +134,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
   });
 
   app.post('/invites', { preHandler: app.requireAdmin }, async (req, reply) => {
-    const { token, hash } = newToken('muri');
+    const { token, hash } = newToken('hrki');
     await pool.query(`insert into invite (token_hash, created_by) values ($1, $2)`, [hash, req.account!.id]);
     await recordAudit(pool, {
       action: 'invite.created', actorId: req.account!.id, actorHandle: req.account!.handle,
@@ -554,7 +554,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
         error: { code: 'label_in_use', message: 'a live token already uses this label — revoke it first or pick another' },
       });
     }
-    const { token, hash } = newToken('murp');
+    const { token, hash } = newToken('hrkp');
     await pool.query(`insert into pat (token_hash, account_id, label) values ($1, $2, $3)`, [hash, id, body.label]);
     // pat 행은 토큰을 받은 에이전트만 가리킨다 — 누가 그 권한을 줬는지는 어디에도 없었다.
     // 토큰도 해시도 남기지 않는다: 라벨과 대상만으로 추적에 충분하다.

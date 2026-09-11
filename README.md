@@ -259,7 +259,7 @@ take a turn. The runner checks the executable *before* spawning (`pty.ts::resolv
 harness 실행 파일을 찾을 수 없다. 러너를 멈춘다.
   실행 파일: claude
   자식에게 넘긴 PATH: …
-murmur-agent: harness executable not found; exiting
+harkroom-agent: harness executable not found; exiting
 ```
 
 **One caveat worth knowing.** That exit uses code `78`, the same code the runner uses when a

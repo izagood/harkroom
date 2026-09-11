@@ -43,7 +43,7 @@ function createOneShotStore<C>(ttlMs: number) {
       for (const [key, entry] of live) {
         if (entry.expiresAt <= now) live.delete(key);
       }
-      const { token } = newToken('murt');
+      const { token } = newToken('hrkt');
       live.set(token, { claim, expiresAt: now + ttlMs });
       return token;
     },

@@ -56,7 +56,7 @@ describe('PAT management', () => {
 
     const dump = JSON.stringify(body);
     expect(dump).not.toContain('token');
-    expect(dump).not.toContain('murp');
+    expect(dump).not.toContain('hrkp');
     expect(dump).not.toContain('hash');
   });
 

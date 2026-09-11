@@ -2829,14 +2829,14 @@ export const EX_CONFIG = 78;
 export const DAEMON_RETIRING_TOKEN = 'retiring:';
 
 export const CREDENTIAL_REJECTED_LINE =
-  'murmur-agent: credential rejected (revoked or rotated); exiting';
+  'harkroom-agent: credential rejected (revoked or rotated); exiting';
 
 /**
  * 하네스 실행 파일 부재(#340)로 러너가 물러날 때 stderr 의 **마지막 줄**.
  * 위 `CREDENTIAL_REJECTED_LINE` 과 같은 규율이다 — 그 주석의 표를 보라.
  */
 export const EXECUTABLE_NOT_FOUND_LINE =
-  'murmur-agent: harness executable not found; exiting';
+  'harkroom-agent: harness executable not found; exiting';
 
 /**
  * **하네스 로그인**이 풀려(만료·폐기) 러너가 물러날 때 stderr 의 마지막 줄.
@@ -2852,7 +2852,7 @@ export const EXECUTABLE_NOT_FOUND_LINE =
  * 있었다 — 갈라지지 않은 곳은 앱이 읽을 수 있는 유일한 것, 이 마커뿐이었다.
  */
 export const HARNESS_LOGIN_REQUIRED_LINE =
-  'murmur-agent: harness login required (expired or revoked); exiting';
+  'harkroom-agent: harness login required (expired or revoked); exiting';
 
 /** 78 로 죽은 러너가 로그로 밝힌 사유. 못 가리면 `null` 이다 — 지어내지 않는다. */
 export type RunnerExitReason =
