@@ -206,6 +206,42 @@ describe('T0 — 화면 계약', () => {
   });
 });
 
+describe('세 번째 하네스 실측 — opencode (2026-09-11)', () => {
+  /**
+   * **어댑터가 아직 없는데 fixture 와 테스트가 먼저 있는 이유.**
+   *
+   * 계약이 옳은지는 세 번째 하네스를 붙여 봐야 안다(둘로는 우연히 맞는다). 그래서 실행
+   * 경로를 열기 **전에** 화면만 먼저 재 뒀다 — `AgentHarness` 에 이름을 더하는 것은 shared
+   * 를 건드려 다섯 패키지를 함께 움직이는 일이라 별 조각으로 나눈다.
+   *
+   * 아래 상수는 실물 화면에서 읽은 값이고(`opencode 1.18.24`, `opencode <dir>` TUI),
+   * opencode 어댑터가 생기면 **그 표로 옮기고 이 상수를 지운다.**
+   * 근거와 측정 전문: `docs/specs/2026-09-11-opencode-measurement.md`.
+   */
+  const OPENCODE_READY = /Ask anything…/;
+  const screen = readFileSync(new URL('./fixtures/opencode-tui-ready.txt', import.meta.url), 'utf8');
+
+  it('측정한 준비 신호가 실물 화면을 잡는다', () => {
+    expect(looksReadyForPrompt(screen, OPENCODE_READY)).toBe(true);
+  });
+
+  it('지금 패턴으로는 **못 잡는다** — 하네스별로 갈라야 하는 근거다', () => {
+    // 프로덕션의 기본 패턴은 claude 의 `❯`+U+00A0 와 codex 의 `Ask … to do anything` 둘만
+    // 안다. opencode 의 자리표시자는 그 어느 쪽도 아니다 — 합쳐진 정규식 하나로 계속 가면
+    // 세 번째 하네스의 첫 턴은 준비 신호를 못 보고 상한에서 실패한다.
+    expect(looksReadyForPrompt(screen)).toBe(false);
+  });
+
+  it('반대로 opencode 패턴이 앞의 두 하네스를 잡지도 않는다', () => {
+    // 신호가 서로 겹치지 않는다는 것까지 확인해 둔다 — 겹치면 어느 하네스의 화면인지
+    // 구분하지 못하고, 그때는 표가 아니라 판정 자체를 다시 설계해야 한다.
+    for (const file of ['claude-tui-ready-real.txt', 'codex-tui-ready.txt']) {
+      const other = readFileSync(new URL(`./fixtures/${file}`, import.meta.url), 'utf8');
+      expect(looksReadyForPrompt(other, OPENCODE_READY)).toBe(false);
+    }
+  });
+});
+
 describe('T0 — 신뢰 장부', () => {
   it('어댑터가 말한 파일이 실제로 적히는 파일이다', async () => {
     for (const [harness, adapter] of PAIRS) {
@@ -262,10 +298,21 @@ describe('T1 — 세션 기록', () => {
 
   it('claude 기록의 자리 규칙이 표와 같다', () => {
     const t = adapterFor('claude-code').transcript;
-    expect(t).not.toBeNull();
+    // 갈래를 먼저 좁힌다 — `'cli'` 갈래에는 파일 자리가 없다(opencode 가 그렇다).
+    expect(t?.kind).toBe('files');
+    if (t?.kind !== 'files') throw new Error('claude 는 파일 기록이어야 한다');
     // `claudeSessionFilePath` 가 `<configDir>/projects/**/<id>.jsonl` 를 찾는다.
-    expect(t?.dirUnderConfig).toBe('projects');
-    expect(t?.fileName).toBe('<id>.jsonl');
+    expect(t.dirUnderConfig).toBe('projects');
+    expect(t.fileName).toBe('<id>.jsonl');
+  });
+
+  it('계정 축의 환경변수는 비어 있지 않다 — 반쪽 격리가 조용한 사고를 낸다', () => {
+    // 배열로 바꾼 뒤 생긴 새 실패 모양: 빈 목록이면 아무것도 격리되지 않는데 표는
+    // "축이 있다"고 말한다. 목록으로 적는 이상 그 목록이 비지 않는 것이 계약이다.
+    for (const [, adapter] of PAIRS) {
+      if (adapter.account === null) continue;
+      expect(adapter.account.configDirEnv.length).toBeGreaterThan(0);
+    }
   });
 });
 

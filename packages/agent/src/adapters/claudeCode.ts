@@ -38,10 +38,10 @@ export const CLAUDE_CODE_ADAPTER: HarnessAdapter = {
   // `<CLAUDE_CONFIG_DIR>/projects/<프로젝트>/<세션id>.jsonl`. `harnessErrors.ts` 가 이
   // JSONL 을 읽어 마지막 API 에러·기록 성장(정지 판정)을 재고, `claudeUsage.ts`(데몬)가
   // 같은 파일에서 5시간 창의 토큰과 `quotaLimits` 를 센다.
-  transcript: { dirUnderConfig: 'projects', layout: 'flat', fileName: '<id>.jsonl', parsed: true },
+  transcript: { kind: 'files', dirUnderConfig: 'projects', layout: 'flat', fileName: '<id>.jsonl', parsed: true },
 
   // 계정 하나 = `CLAUDE_CONFIG_DIR` 하나. 목록·로그인·사용량·페일오버 표면이 다 있다.
-  account: { configDirEnv: 'CLAUDE_CONFIG_DIR', pooled: true },
+  account: { configDirEnv: ['CLAUDE_CONFIG_DIR'], pooled: true },
 
   effort: { via: 'flag', flag: '--effort' },
   // claude 는 `.claude/skills/<slug>/SKILL.md` 를 읽는다. 지금 `syncSkills` 는 하네스를 보지
