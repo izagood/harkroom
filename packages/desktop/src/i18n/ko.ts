@@ -117,7 +117,7 @@ export const ko = {
   'defaults.field.harness': '기본 harness',
   'defaults.field.harnessDefault': 'harness 기본값',
   'defaults.field.model': '기본 model',
-  'defaults.field.modelHint': '비우면 하네스가 고른다 — murmur 는 그 선택을 발화에 실린 모델로만 안다',
+  'defaults.field.modelHint': '비우면 하네스가 고른다 — harkroom 는 그 선택을 발화에 실린 모델로만 안다',
   'defaults.field.applyScope': '다음에 만드는 에이전트에만 적용된다. 이미 있는 에이전트는 바뀌지 않는다.',
   'defaults.field.loadFailed': '기본값을 불러오지 못했다',
   'defaults.field.loading': '불러오는 중…',
@@ -402,13 +402,13 @@ export const ko = {
   'agents.runner.startFailed': '러너를 띄우지 못했다: {reason}',
   /** `#` 는 셸 주석 기호다 — 이 값이 통째로 클립보드에 실린다(`en.ts` 의 그 주석). */
   'agents.runner.commandBundledNote': '# 앱을 설치해 쓰는 경우 (설치 위치가 다르면 경로를 바꾼다)',
-  'agents.runner.commandDevNote': '# murmur 저장소를 클론한 개발 환경',
+  'agents.runner.commandDevNote': '# harkroom 저장소를 클론한 개발 환경',
   'agents.runner.templateHeading': '러너 실행',
   'agents.runner.templateNote': '토큰은 발급 순간에만 보인다. 잃었으면 새로 발급한다.',
   'agents.runner.whoStarts':
-    'murmur {strongServer}는 러너를 띄우지 않는다. 이 데스크탑 앱은 {strongOwn} 에이전트만 띄운다 — '
+    'harkroom {strongServer}는 러너를 띄우지 않는다. 이 데스크탑 앱은 {strongOwn} 에이전트만 띄운다 — '
     + '남이 소유했거나 소유자가 없는 에이전트는 {strongNoAnswer}(멘션은 쌓이기만 한다). '
-    + '러너는 앱과 함께 배포되므로 murmur 앱이 설치된 머신이면 된다 — 저장소는 아래 개발용 갈래에만 필요하다.',
+    + '러너는 앱과 함께 배포되므로 harkroom 앱이 설치된 머신이면 된다 — 저장소는 아래 개발용 갈래에만 필요하다.',
   'agents.runner.whoStartsNoAnswer': '위 명령을 직접 실행해 러너를 붙이기 전까지 멘션에 답하지 않는다',
   'agents.runner.whoStartsOwn': '내가 소유한',
   'agents.runner.whoStartsServer': '서버',
@@ -416,7 +416,7 @@ export const ko = {
   'agents.stale.allCurrent': '도는 러너가 전부 이 번들이다.',
   'agents.stale.elsewhere': {
     other: '이 기기가 띄운 러너는 전부 이 번들이다. 뒤처진 러너 {count}대는 다른 기기의 것이라 '
-      + '여기서 재기동할 수 없다 — 그 기기의 murmur 에서 눌러야 한다.',
+      + '여기서 재기동할 수 없다 — 그 기기의 harkroom 에서 눌러야 한다.',
   },
   'agents.stale.note': '재기동은 {strong} — 턴을 마친 뒤 새 번들로 다시 뜬다.',
   'agents.stale.noteStrong': '진행 중인 턴을 끊지 않는다',
@@ -436,7 +436,7 @@ export const ko = {
 
   'agents.stop.acked':
     '러너가 요청을 읽어 갔다 (중지 {requestedAt} · 수령 {ackedAt}). 진행 중이던 턴을 마치고 '
-    + '종료한다 — 실제로 종료했는지는 murmur 가 알 수 없다.',
+    + '종료한다 — 실제로 종료했는지는 harkroom 가 알 수 없다.',
   'agents.stop.ackedResume': ' 실행을 누르면 다음 기동부터 다시 자동 기동 대상이 된다.',
   'agents.stop.heading': '러너 실행 · 중지',
   'agents.stop.note':

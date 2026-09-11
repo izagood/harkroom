@@ -1,8 +1,8 @@
 # @murmur/agent
 
-murmur 에이전트 러너. 멘션을 기다리다 깨어나 답하는 **상주 프로세스**다.
+harkroom 에이전트 러너. 멘션을 기다리다 깨어나 답하는 **상주 프로세스**다.
 
-이것이 있어야 murmur가 "사람과 에이전트가 함께 일하는 워크스페이스"가 된다. 서버의 MCP 표면
+이것이 있어야 harkroom가 "사람과 에이전트가 함께 일하는 워크스페이스"가 된다. 서버의 MCP 표면
 (`/mcp`)만으로는 에이전트가 *호출될 수* 있을 뿐, `@handle`을 불렀을 때 *찾아오지* 않는다 —
 Claude Code나 Cursor는 사람이 프롬프트할 때만 움직이기 때문이다. 이 러너가 그 자리를 채운다.
 
@@ -11,14 +11,14 @@ Claude Code나 Cursor는 사람이 프롬프트할 때만 움직이기 때문이
 
 ## 실행
 
-**대개는 손으로 띄우지 않는다.** murmur 데스크탑 앱이 **내가 소유한** 에이전트의 러너를
+**대개는 손으로 띄우지 않는다.** harkroom 데스크탑 앱이 **내가 소유한** 에이전트의 러너를
 daemon 을 통해 띄운다(`#431` 2단계, [`docs/operations.md`](../../docs/operations.md) §8-0).
 아래는 그것이 닿지 않는 경우 — 남이 소유한 에이전트, 소유자가 없는 에이전트, **이 앱이 안
 도는 머신** — 에 사람이 밟는 절차다.
 
-1. **murmur 데스크탑 앱에서 에이전트를 만든다** — 사이드바의 `+ Add or edit agents`.
+1. **harkroom 데스크탑 앱에서 에이전트를 만든다** — 사이드바의 `+ Add or edit agents`.
    이름·지시문·harness를 넣으면 PAT가 한 번 표시된다.
-2. **러너를 띄운다.** 두 갈래이고, 고르는 기준은 **murmur 저장소가 그 머신에 있는가**다:
+2. **러너를 띄운다.** 두 갈래이고, 고르는 기준은 **harkroom 저장소가 그 머신에 있는가**다:
 
 ```sh
 # 앱을 설치해 쓰는 경우 — 러너는 앱과 함께 배포된다 (설치 위치가 다르면 경로를 바꾼다)
@@ -37,7 +37,7 @@ MURMUR_URL=<서버 주소> MURMUR_PAT=murp_... pnpm --filter @murmur/agent start
 에이전트 화면이 PAT 를 채워 그대로 복사할 수 있게 내민다. 아래 예시들은 짧게 쓰려고
 개발 갈래(`pnpm`)로 적었다 — 배포판에서는 그 자리에 사이드카 경로를 넣는다.
 
-이제 murmur에서 `@이름 이거 봐줘`라고 쓰면 답이 온다.
+이제 harkroom에서 `@이름 이거 봐줘`라고 쓰면 답이 온다.
 
 **지시문·모델·effort·작업 디렉터리·권한은 러너가 아니라 서버에 있다.** UI에서 바꾸면 러너를
 재시작하지 않아도 다음 답변부터 반영된다 — 프로세스가 멘션마다 새로 뜨고 지시문을 매번
@@ -47,7 +47,7 @@ MURMUR_URL=<서버 주소> MURMUR_PAT=murp_... pnpm --filter @murmur/agent start
 | 환경변수 | 기본값 | 뜻 |
 |---|---|---|
 | `MURMUR_PAT` | (필수) | 에이전트 PAT. 이 계정으로 발화한다 |
-| `MURMUR_URL` | `http://localhost:3400` | murmur 서버 |
+| `MURMUR_URL` | `http://localhost:3400` | harkroom 서버 |
 | `MURMUR_AGENT_INSTANCE` | (없음) | 에이전트 인스턴스 ID. 같은 에이전트를 여러 개 돌릴 때 구분한다 ([a-z0-9-]{1,32}) |
 | `AGENT_POLL_TIMEOUT_MS` | `25000` | 서버의 `inbox.poll` 상한 |
 | `AGENT_TURN_TIMEOUT_MS` | `1800000`(30분) | 한 턴(PTY 실행)의 최대 대기 시간. 넘기면 SIGTERM → 5초 → SIGKILL |
@@ -105,14 +105,14 @@ MURMUR_PAT=murp_... MURMUR_AGENT_INSTANCE=b pnpm --filter @murmur/agent start
 
 ## Claude Code · Cursor에 붙이기 (러너와 별개)
 
-러너 없이 **사람이 운전하는** 에이전트로 쓸 수도 있다. 이쪽은 murmur를 MCP 서버로 등록하는 것이다:
+러너 없이 **사람이 운전하는** 에이전트로 쓸 수도 있다. 이쪽은 harkroom를 MCP 서버로 등록하는 것이다:
 
 ```sh
 claude mcp add --transport http murmur http://localhost:3400/mcp \
   --header "Authorization: Bearer murp_..."
 ```
 
-`claude mcp list`에 `✔ Connected`가 뜨면 Claude Code가 murmur의 도구 9종을 쓸 수 있다.
+`claude mcp list`에 `✔ Connected`가 뜨면 Claude Code가 harkroom의 도구 9종을 쓸 수 있다.
 차이는 이렇다 — **등록은 사람이 부를 때만 움직이고, 러너는 멘션에 스스로 깨어난다.** 둘은 함께 쓸 수 있다.
 
 ## 왜 MCP인가
@@ -133,7 +133,7 @@ MCP `inbox.poll`에만 있고 REST `/inbox`에는 없다. 이 러너를 만들�
 ```
 
 - `workspaceDir` — 이 스레드×에이전트 전용 [avcs](https://www.npmjs.com/package/@izagood/avcs)
-  워크스페이스. git worktree가 아니라 avcs workspace인 이유: murmur의 코드 협업 기층 자체가
+  워크스페이스. git worktree가 아니라 avcs workspace인 이유: harkroom의 코드 협업 기층 자체가
   avcs이지 git이 아니다.
 - `sessionId` — harness 세션 id. claude는 러너가 UUID를 미리 발급해 `--session-id`로
   넘기고, codex는 사전 할당이 안 돼 첫 턴이 끝난 뒤 rollout 파일에서 찾아 채운다
@@ -155,7 +155,7 @@ MCP `inbox.poll`에만 있고 REST `/inbox`에는 없다. 이 러너를 만들�
 
 ```
 sessions.json      # 스레드별 세션 (위)
-mcp/mcp.json        # murmur + avcs만 담은 MCP 설정 — 기동 시 한 번 쓰고 재사용
+mcp/mcp.json        # harkroom + avcs만 담은 MCP 설정 — 기동 시 한 번 쓰고 재사용
 workspaces/         # avcs 워크스페이스들. murmur-<handle>-<threadKey 해시8자>
 ```
 
@@ -190,7 +190,7 @@ workspaces/         # avcs 워크스페이스들. murmur-<handle>-<threadKey 해
 ## 발화는 에이전트가 스스로 한다
 
 러너는 더 이상 하네스 stdout을 파싱해 대신 채팅에 올리지 않는다. 시스템 프롬프트가 에이전트
-에게 murmur MCP의 `message.post`를 스스로 호출하라고 지시하고(`prompt.ts`), 에이전트가 PTY
+에게 harkroom MCP의 `message.post`를 스스로 호출하라고 지시하고(`prompt.ts`), 에이전트가 PTY
 안에서 그 도구를 부른다. 프로세스가 exit 0으로 끝났는데 턴 시작 이후 자기 발화가 없으면,
 러너가 에이전트 계정으로 스레드에 "(답 없이 턴을 끝냈습니다 — 프로세스는 정상 종료, 발화
 없음)"을 남긴다 — 침묵을 침묵으로 두지 않는다.
@@ -239,7 +239,7 @@ export const RUNNABLE_HARNESSES = [/* ... */] as const satisfies readonly AgentH
 모양인지는 spec §4에 있다 — 여기서 되풀이하지 않는다.
 
 UI에서 아직 못 고르는 harness는 '지원 예정'으로 비활성이다. 없는 것은 사용자의 CLI가 아니라
-murmur의 harness 구현이다.
+harkroom의 harness 구현이다.
 
 Codex는 러너 상태 디렉터리의 `codex-home`을 `CODEX_HOME`으로 사용한다. 기존 사용자
 `auth.json`만 연결하고 config·sessions·logs는 에이전트별로 분리해, 직접 터미널에서도 개인
@@ -256,17 +256,17 @@ MCP 설정을 상속하지 않는다. 승인된 Codex 스킬은 공식 저장소
 | 사람 인터랙티브 (Phase 2) | 있음 | 플래그를 아예 안 준다 — 하네스 기본(묻는다), 사람이 직접 답한다 |
 
 권한은 **매 턴 CLI 플래그로만** 준다 — `codex mcp add`처럼 하네스의 영구 설정 파일을 바꾸는
-명령은 쓰지 않는다. murmur 밖에 정책이 쌓이면 UI 스위치가 장식이 된다.
+명령은 쓰지 않는다. harkroom 밖에 정책이 쌓이면 UI 스위치가 장식이 된다.
 
 ## 자격증명
 
-- **모델 자격증명은 murmur를 통과하지 않는다.** 하네스가 사람의 로컬 로그인을 그대로 쓴다.
+- **모델 자격증명은 harkroom를 통과하지 않는다.** 하네스가 사람의 로컬 로그인을 그대로 쓴다.
 - **PAT는 env로만 간다.** MCP 설정 파일에는 `${MURMUR_PAT}` 플레이스홀더만 있고(파일 자체는
   비밀이 아니다), 실값은 PTY 자식 프로세스의 env로만 넘어간다 — argv에는 절대 오르지 않는다
   (`ps`에는 다른 사용자에게도 argv가 보이지만 env는 안 보인다).
 - **`--strict-mcp-config`를 항상 쓴다**(claude). 없으면 하네스가 이 세션을 띄운 사람의
   전역 MCP 목록 전체(Slack·Gmail·Drive 등)를 상속한다 — 채널에서 `@handle`을 부를 수 있는
-  사람이면 누구나 그 경로로 운영자 개인 계정에 도달한다. 러너가 생성하는 설정에는 murmur와
+  사람이면 누구나 그 경로로 운영자 개인 계정에 도달한다. 러너가 생성하는 설정에는 harkroom와
   avcs 둘만 넣는다.
 - **API 키·OAuth 토큰 env는 자식에게 넘어가지 않는다** — `ANTHROPIC_API_KEY`,
   `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `AWS_BEARER_TOKEN_BEDROCK`. claude는
@@ -414,7 +414,7 @@ CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/work/aria claude auth status -
 | 코드 | 뜻 |
 |---|---|
 | 0 | 정상 종료 — SIGTERM/SIGINT 또는 원격 종료 요청(#129)을 받고 진행 중인 턴을 마친 뒤 물러났다 |
-| 78 | **자격증명 실패**(`sysexits.h` 의 `EX_CONFIG`) — murmur PAT 가 만료·폐기·회전됐거나 harness 로그인이 없다. 새 PAT 로 재시작해야 한다 |
+| 78 | **자격증명 실패**(`sysexits.h` 의 `EX_CONFIG`) — harkroom PAT 가 만료·폐기·회전됐거나 harness 로그인이 없다. 새 PAT 로 재시작해야 한다 |
 | 1 | 그 외 오류 |
 
 자격증명 실패는 재시도로 해결되지 않는다. 조용히 재시도하면 로그만 쌓이고 "왜 답이 없지"의
@@ -441,7 +441,7 @@ murmur-agent: credential rejected (revoked or rotated); exiting
 프리빌드가 있어 대개 컴파일이 필요 없지만, 그 밖의 플랫폼은 `node-gyp`로 소스 빌드가
 떨어지므로 C++ 빌드 도구(Python, 컴파일러)가 있어야 한다.
 
-두 가지 함정을 미리 적어 둔다 — murmur는 셀프호스트로 배포되므로 클론한 사람이 아니라
+두 가지 함정을 미리 적어 둔다 — harkroom는 셀프호스트로 배포되므로 클론한 사람이 아니라
 설치하는 사람이 그대로 밟는다:
 
 - **`pnpm-workspace.yaml`의 `allowBuilds`에 `node-pty`가 있어야 한다.** 없으면 pnpm이

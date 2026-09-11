@@ -202,9 +202,9 @@
 - ~~**harness 다양성**~~ — **2026-09-04 실물로 닫혔다.** codex 로 실제 멘션 첫 턴과 같은
   세션의 resume 두 턴을 완주했고, 격리 `CODEX_HOME`에서 대화형 resume도 확인했다.
   — 상세는 `packages/agent/README.md`의 harness 절과 spec §4/§10 을 근거로 삼되, 이 항목엔
-  실측 결과만 남긴다. **첫 턴은 성공했다**(murmur MCP 연결·`message.post`·발화 확인까지 실제로
+  실측 결과만 남긴다. **첫 턴은 성공했다**(harkroom MCP 연결·`message.post`·발화 확인까지 실제로
   완주). 이 과정에서 `turn.ts` 의 진짜 결함 두 개를 실물로 찾아 고쳤다 — PTY 자식 프로세스
-  env 가 부모를 상속하지 못해 harness 실행 파일 자체를 못 찾던 것, codex 의 murmur MCP URL 에
+  env 가 부모를 상속하지 못해 harness 실행 파일 자체를 못 찾던 것, codex 의 harkroom MCP URL 에
   `/mcp` 가 안 붙어 있던 것(둘 다 단위 테스트가 프로덕션과 다른 fixture 로 이 결함들을 가리고
   있었다 — 테스트도 함께 고쳤다). 당시 막혔던 개인 후크는 격리 홈에서 로드되지 않았고,
   `RUNNABLE_HARNESSES`에 `codex`를 추가했다. 자세한 명령 형태와 보안 경계는 위 활성화 기록에

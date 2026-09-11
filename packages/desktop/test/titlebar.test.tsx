@@ -439,7 +439,7 @@ describe('브랜드 줄은 로고와 글자를 함께 둔다', () => {
   it('앱 이름을 글자로 적는다', () => {
     renderWorkspace({ sidebarCollapsed: false });
     const brand = screen.getByTestId('sidebar-brand');
-    expect(brand.textContent).toContain('murmur');
+    expect(brand.textContent).toContain('harkroom');
   });
 
   /**

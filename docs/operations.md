@@ -6,12 +6,12 @@
 
 ## 1. 무엇이 어디에 사는가
 
-백업 계획은 상태의 위치에서 시작한다. murmur의 상태는 세 곳에 있고, **성격이 다르다.**
+백업 계획은 상태의 위치에서 시작한다. harkroom의 상태는 세 곳에 있고, **성격이 다르다.**
 
 | 상태 | 어디에 | 백업 대상인가 |
 |---|---|---|
 | 채팅·멤버십·inbox·투영 커서·idempotency·세션/PAT 해시·**감사 추적** | Postgres 볼륨 `pgdata` | **필수.** 이것만 잃으면 워크스페이스가 사라진다 |
-| avcs 오브젝트(intent·operation·decision·lease) | **avcs 서버의 저장소** (별도 프로세스) | 필수지만 **murmur의 책임이 아니다.** murmur는 그 로그의 관찰자다(§3 참조) |
+| avcs 오브젝트(intent·operation·decision·lease) | **avcs 서버의 저장소** (별도 프로세스) | 필수지만 **harkroom의 책임이 아니다.** harkroom는 그 로그의 관찰자다(§3 참조) |
 | 에이전트 세션·avcs 워크스페이스 | `<AGENT_STATE_DIR>/<handle>/` (로컬 디스크) | 권장. `sessions.json` (스레드별 세션 레코드)과 각 스레드의 avcs 워크스페이스가 포함된다. 이 디렉터리를 정기적으로 백업하거나 복제하면, 러너 재설치 시 스레드별 대화·avcs 상태를 그대로 이어받을 수 있다 |
 | 첨부 파일 *(계획)* | 로컬 볼륨 `attachments` | 도입되면 필수. `pgdata`와 **함께** 떠야 한다(§4) |
 
@@ -46,7 +46,7 @@ docker run --rm -v murmur_attachments:/data -v "$PWD":/backup alpine \
 docker compose start server
 ```
 
-avcs 서버는 자기 절차를 따른다. murmur 덤프만 있으면 채팅은 온전하지만, **작업 층(avcs)은
+avcs 서버는 자기 절차를 따른다. harkroom 덤프만 있으면 채팅은 온전하지만, **작업 층(avcs)은
 복구되지 않는다** — 투영된 시스템 메시지는 남고 그것이 가리키는 오브젝트는 사라진 상태가 된다.
 
 에이전트 세션·avcs 워크스페이스는 `AGENT_STATE_DIR` (기본 `~/.murmur-agent`) 를 백업한다.
@@ -71,7 +71,7 @@ docker compose start server        # 부팅 시 누락 마이그레이션이 적
 `schema_migrations`로 판정한다. **오래된 스키마의 덤프를 새 서버로 복구해도 부팅이 그 차이를
 메운다.** 반대 방향(새 스키마 덤프 → 오래된 서버)은 지원하지 않는다.
 
-### 3-A. murmur만 되돌린 경우 — 안전하다
+### 3-A. harkroom만 되돌린 경우 — 안전하다
 
 투영 커서가 과거로 가고, 워커가 이미 접었던 구간을 다시 읽는다. 같은 구간을 다시 접어도
 `active_lease` 는 `(repo, avcs_base_url, path, actor_key_id)` upsert(042) 라서 행이 늘지
@@ -88,7 +88,7 @@ lease upsert 하나다.
 성질이고 결함이 아니다. 리플레이로 되돌아오지 않는 것이 하나 더 있다: **과거에 투영된
 시스템 메시지.** 커서를 0 으로 내려도 그것은 다시 만들어지지 않는다(§1 참조).
 
-### 3-B. avcs를 murmur 커서보다 오래된 상태로 되돌린 경우 — 위험하다
+### 3-B. avcs를 harkroom 커서보다 오래된 상태로 되돌린 경우 — 위험하다
 
 커서가 로그보다 앞서면 `fetchSince`가 줄 것이 없고, 커서는 후퇴하지 않는다. 크래시는 없지만
 **avcs 로그가 커서를 다시 넘어설 때까지 그 사이의 객체가 조용히 건너뛰어진다.** 채널에는
@@ -108,10 +108,10 @@ update projection_cursor set last_log_index = 0
 ```
 
 **avcs 데이터가 아예 사라진 경우도 같다.** 개발·도그푸딩에서 avcs 서버의 데이터 디렉터리가
-스크래치패드처럼 휘발성 위치에 있으면 정리 한 번으로 로그가 빈 상태가 되는데, murmur 커서는
+스크래치패드처럼 휘발성 위치에 있으면 정리 한 번으로 로그가 빈 상태가 되는데, harkroom 커서는
 그대로 남아 있다 — 위와 같은 사일런트 스킵이다. 커서를 0으로 내리면 복구된다.
 
-원칙: **avcs와 murmur를 되돌릴 때는 avcs를 murmur보다 뒤로 두지 않는다.** 어쩔 수 없다면
+원칙: **avcs와 harkroom를 되돌릴 때는 avcs를 harkroom보다 뒤로 두지 않는다.** 어쩔 수 없다면
 커서를 함께 내린다.
 
 ### 3-C. 감사 추적은 복구되지만 되돌려지지 않는다
@@ -141,7 +141,7 @@ update projection_cursor set last_log_index = 0
 
 ## 6. AVCS_BASE_URL — 투영 활성화와 그 상태 읽기
 
-murmur 는 avcs 서버를 폴링해 **`lease` 객체를 `active_lease` 상태로** 투영한다. 이 투영을
+harkroom 는 avcs 서버를 폴링해 **`lease` 객체를 `active_lease` 상태로** 투영한다. 이 투영을
 켜는 값에는 **두 출처**가 있다: 데스크탑 앱 `설정 › Connection` 에서 admin 이 저장한 값과,
 환경변수 하나:
 
@@ -169,7 +169,7 @@ AVCS_BASE_URL=https://your-avcs-server.example.com
 
 **예전에는 이 워커가 avcs 객체를 채널 메시지로도 만들었다.** `intent` 를 스레드 뿌리로
 세우고 `operation`·`decision`·`evidence` 를 그 아래 답글로, `checkpoint`·`release`·finalize
-를 채널 메시지로 붙였다. #534 가 그것을 걷어냈다 — murmur 의 자리는 제안을 **보는 화면**
+를 채널 메시지로 붙였다. #534 가 그것을 걷어냈다 — harkroom 의 자리는 제안을 **보는 화면**
 (협업 탭)이고, 제안을 대화로 바꿔 흘려보내는 것은 그 자리가 아니었다. 근거는
 [`desktop-collab.html`](desktop-collab.html) 에 있다.
 
@@ -310,7 +310,7 @@ AVCS_BASE_URL=https://your-avcs-server.example.com
 
 투영이 켜져 있어도 브리지 쪽에서 `.avcs` 디렉터리가 지워지면 로그가 흐르지 않는다.
 이것은 이 저장소 밖(avcs 브리지)의 일이라 여기서 고치지 않는다 — 위 표시가 그때
-`stalled` 로 보이게 하는 것이 murmur 쪽의 몫이다.
+`stalled` 로 보이게 하는 것이 harkroom 쪽의 몫이다.
 
 ## 7. 관측 지점
 
@@ -439,7 +439,7 @@ from account a left join agent_config c on c.account_id = a.id
 where a.kind = 'agent';
 ```
 
-`harness`가 비어 있으면 murmur가 실행할 수 없는 계정이다. 답은 지표를 고치는 것이 아니라
+`harness`가 비어 있으면 harkroom가 실행할 수 없는 계정이다. 답은 지표를 고치는 것이 아니라
 그 계정을 정리하거나 정의를 붙이는 것이다(UI의 Add/Edit agent).
 
 ## 8-0. 데스크탑 앱이 띄우게 하는 러너 (#250, `#431` 로 구조가 바뀌었다)
@@ -457,7 +457,7 @@ where a.kind = 'agent';
 |---|---|---|
 | 러너 실행 파일 | `pnpm --filter @murmur/agent start`(소스) | **단일 번들**을 Tauri 사이드카(`externalBin`)로 앱과 함께 배포 |
 | 러너의 부모 프로세스 | 앱 | **daemon**(앱은 소켓으로 "띄워라"라고 말할 뿐이다) |
-| 사람이 정하던 설정 | murmur repository path · pnpm path | **없어졌다** — 물음 자체가 사라졌다 |
+| 사람이 정하던 설정 | harkroom repository path · pnpm path | **없어졌다** — 물음 자체가 사라졌다 |
 
 사이드카는 앱 실행 파일과 **같은 디렉터리**에 놓인다(macOS `.app` 이면
 `Contents/MacOS/murmur-runner`). 그래서 앱도 daemon 도 러너를 `PATH` 에서 찾지 않고 자기
@@ -490,7 +490,7 @@ daemon 을 앞에 세운 것은 `#430` 의 실측 때문이다: 앱이 러너의
 # 앱을 설치해 쓰는 경우 (설치 위치가 다르면 경로를 바꾼다)
 MURMUR_URL=<서버 주소> MURMUR_PAT=<발급한 토큰> /Applications/murmur.app/Contents/MacOS/murmur-runner
 
-# murmur 저장소를 클론한 개발 환경
+# harkroom 저장소를 클론한 개발 환경
 MURMUR_URL=<서버 주소> MURMUR_PAT=<발급한 토큰> pnpm --filter @murmur/agent start
 ```
 

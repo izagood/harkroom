@@ -275,7 +275,7 @@ describe('키보드 단축키', () => {
     // 컴포저에서 대괄호를 치는 동안 채널이 바뀌거나 사이드바가 접히면 안 된다.
     expect(c.goBack).not.toHaveBeenCalled();
     expect(c.goForward).not.toHaveBeenCalled();
-    expect(screen.getByText('murmur')).toBeTruthy();
+    expect(screen.getByText('harkroom')).toBeTruthy();
 
     document.body.removeChild(input);
   });
