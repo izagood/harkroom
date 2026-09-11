@@ -30,8 +30,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { connect } from 'node:net';
 
-import { DAEMON_PROTOCOL_VERSION, daemonEndpointPaths } from '@murmur/shared/daemonEndpoint';
-import { NdjsonDecoder, encodeLine } from '@murmur/shared/daemonProtocol';
+import { DAEMON_PROTOCOL_VERSION, daemonEndpointPaths } from '@harkroom/shared/daemonEndpoint';
+import { NdjsonDecoder, encodeLine } from '@harkroom/shared/daemonProtocol';
 
 import { judgeCandidate, planAdoption, type ProcessIdentityProbe } from '../src/adopt.js';
 import {

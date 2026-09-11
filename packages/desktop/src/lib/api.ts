@@ -1,5 +1,5 @@
 import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView,
-  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@murmur/shared';
+  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
 export class ApiError extends Error {

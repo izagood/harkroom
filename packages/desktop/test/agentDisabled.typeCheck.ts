@@ -1,4 +1,4 @@
-import type { AgentConfig } from '@murmur/shared';
+import type { AgentConfig } from '@harkroom/shared';
 import { ApiClient } from '../src/lib/api';
 
 /**

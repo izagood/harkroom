@@ -26,7 +26,7 @@
 // 값이 지금 프로덕션이 쓰는 값과 **같은 답을 내는지** 하네스×모드 전수로 대조한다. 그래서
 // 이 파일이 들어와도 claude 경로는 글자 하나 바뀌지 않는다. 호출부를 옮기는 것은 다음
 // 조각이고, 그때도 `harnessAdaptersEnabled()`(index.ts) 뒤에서 켠다.
-import type { AgentHarness, MentionPermission } from '@murmur/shared';
+import type { AgentHarness, MentionPermission } from '@harkroom/shared';
 
 /**
  * 하네스를 **어떤 모드로 띄우는가**. 하네스의 성질이 아니라 실행 방식이다 — 같은 codex 가

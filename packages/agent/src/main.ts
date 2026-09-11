@@ -1,6 +1,6 @@
 // murmur 에이전트 러너. 멘션을 기다리다 깨어나 답한다.
 //
-// 실행(저장소 안): MURMUR_URL=... MURMUR_PAT=murp_... pnpm --filter @murmur/agent start
+// 실행(저장소 안): MURMUR_URL=... MURMUR_PAT=murp_... pnpm --filter @harkroom/agent start
 // 배포판에서는 이 소스가 아니라 **단일 번들**이 돈다 — `#431` 1단계가 러너를 Tauri
 // 사이드카(`externalBin`)로 만들어 앱과 함께 배포하고, `.app` 안
 // `Contents/MacOS/harkroom-runner` 로 놓인다. 즉 위 pnpm 명령은 죽지 않았지만 **개발 환경
@@ -27,7 +27,7 @@ import { resolveAgentStateDir } from './stateDir.js';
 import { assertHarnessContract, writeMcpConfigOnce } from './turn.js';
 import type { Exec } from './workspace.js';
 import { isCredentialFailure, nextBackoffMs } from './policy.js';
-import { harnessBinaryName } from '@murmur/shared';
+import { harnessBinaryName } from '@harkroom/shared';
 import { runnerExitPlan } from './exit.js';
 import { stopRequestedForRunner } from './stop.js';
 import { harnessLoginNotice } from './prompt.js';

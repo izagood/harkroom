@@ -12,12 +12,12 @@ import {
   EX_CONFIG,
   EXECUTABLE_NOT_FOUND_LINE,
   HARNESS_LOGIN_REQUIRED_LINE,
-} from '@murmur/shared';
+} from '@harkroom/shared';
 
 import { ExecutableNotFoundError, isCredentialFailure, isExecutableNotFound } from './policy.js';
 
 /**
- * ## 이 셋은 이제 `@murmur/shared` 에 산다 — **앱도 읽기 때문이다** (`#473`)
+ * ## 이 셋은 이제 `@harkroom/shared` 에 산다 — **앱도 읽기 때문이다** (`#473`)
  *
  * 초판의 주석은 이렇게 적혀 있었다:
  *
@@ -32,7 +32,7 @@ import { ExecutableNotFoundError, isCredentialFailure, isExecutableNotFound } fr
  * "로케일에 흔들린다"는 걱정은 이 두 줄에는 해당하지 않는다: **영어 리터럴이고 절대
  * 번역하지 않는다.** 그것이 이 상수들이 다른 안내문과 달리 한국어가 아닌 이유다.
  *
- * 그래서 값을 `@murmur/shared` 로 옮기고 여기서 **다시 낸다.** 러너와 앱이 각자 사본을
+ * 그래서 값을 `@harkroom/shared` 로 옮기고 여기서 **다시 낸다.** 러너와 앱이 각자 사본을
  * 들면 한쪽만 바뀌는 날이 오고, 그날 앱은 조용히 "구분자를 못 봤다"로 떨어진다.
  * `packages/agent/*` 의 기존 import 는 그대로 둔다 — 이 재수출이 그 경로를 유지한다.
  */

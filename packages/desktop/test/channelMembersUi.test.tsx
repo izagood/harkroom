@@ -5,7 +5,7 @@ import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { acc, chan } from './helpers/fakeApi';
-import type { ChannelMemberRow } from '@murmur/shared';
+import type { ChannelMemberRow } from '@harkroom/shared';
 
 /**
  * 채널 멤버 화면의 회귀선(#183).

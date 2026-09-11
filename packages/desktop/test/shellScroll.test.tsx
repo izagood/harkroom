@@ -30,7 +30,7 @@
 // **다음에 또 abspos 가 새면 같은 증상이 그대로 돌아온다**는 구조다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import type { InboxEntry } from '@murmur/shared';
+import type { InboxEntry } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Workspace } from '../src/components/Workspace';

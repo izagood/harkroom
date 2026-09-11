@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { AccountView } from '@murmur/shared';
+import type { AccountView } from '@harkroom/shared';
 import { Identity } from '../Identity';
 import type { RunnerState } from '../../lib/runnerLauncher';
 // B1 의 세 얼굴 규칙은 `lib/faceState.ts` 하나가 낸다 — DM 목록도 같은 판정을 쓴다

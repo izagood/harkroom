@@ -6,7 +6,7 @@
 // 세션이 이미 아는 것까지 다시 넘길 필요가 없다 — 그 경계가 `lastFedSeq` 다. 그리고 예전엔
 // 러너가 모델 응답을 파싱해 대신 올렸지만, 이제 에이전트가 murmur MCP `message.post` 로
 // 스스로 올린다 — 그래서 시스템 프롬프트가 "어디에 쓸지"까지 알려줘야 한다.
-import { messagePermalink, type MessageRow, type InboxTeamCall, type InboxDelegationOutcome, type InboxDelegatedBy } from '@murmur/shared';
+import { messagePermalink, type MessageRow, type InboxTeamCall, type InboxDelegationOutcome, type InboxDelegatedBy } from '@harkroom/shared';
 
 /** 서버의 메시지 본문 상한(`POST /channels/:id/messages` 의 zod `max(8000)`). 넘기면 발화가 실패한다. */
 export const BODY_LIMIT = 8000;

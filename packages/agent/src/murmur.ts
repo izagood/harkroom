@@ -5,7 +5,7 @@
 // 멘션에 영원히 반복 응답했다. `inbox.read` 를 추가해 닫았고, 그래서 여기 REST 호출이 없다.
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { AccountView, AgentView, InboxEntry, MessageRow } from '@murmur/shared';
+import type { AccountView, AgentView, InboxEntry, MessageRow } from '@harkroom/shared';
 import { mcpUrl } from './turn.js';
 import { MURMUR_ERROR_SOURCE } from './policy.js';
 import { VERSION } from './version.js';

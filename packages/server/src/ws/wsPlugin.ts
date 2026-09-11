@@ -1,7 +1,7 @@
 import websocket from '@fastify/websocket';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
-import type { WsServerEvent } from '@murmur/shared';
+import type { WsServerEvent } from '@harkroom/shared';
 
 import { emitEvent, onEvent, type WorkspaceEvent } from '../events.js';
 import { createTicketStore } from './tickets.js';

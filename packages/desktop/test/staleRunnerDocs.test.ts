@@ -15,7 +15,7 @@
  * 문서는 산문이라 "옳게 서술했는가"를 기계가 못 본다. 그래서 **사라진 것의 이름**과
  * **살아 있어야 할 사실**만 잡는다:
  *
- * - ① 맨 `pnpm --filter @murmur/agent start` 가 **유일한 길**로 적히지 않는다.
+ * - ① 맨 `pnpm --filter @harkroom/agent start` 가 **유일한 길**로 적히지 않는다.
  *   그 명령을 금지하지 않는다 — 저장소 안에서는 지금도 돈다(`packages/agent/package.json`
  *   의 `start`). 막는 것은 **사이드카 갈래 없이 그것만** 내미는 것이다. `#503` 의 ①과
  *   같은 계약이고, 재는 자리만 DOM 에서 문서로 바뀐다.
@@ -74,7 +74,7 @@ function currentGuidanceBlocks(text: string, needle: string): string[] {
 }
 
 describe('낡은 러너 구조 문서 회귀선 (#431 사이드카·daemon · #482 adopted)', () => {
-  it('① `pnpm --filter @murmur/agent start` 를 유일한 실행 방법으로 적지 않는다', () => {
+  it('① `pnpm --filter @harkroom/agent start` 를 유일한 실행 방법으로 적지 않는다', () => {
     for (const rel of GUIDE_DOCS) {
       const text = read(rel);
       if (!text.includes(RUNNER_DEV_COMMAND)) continue;

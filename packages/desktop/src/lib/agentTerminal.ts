@@ -7,7 +7,7 @@
 // `ws.ts` 처럼 **재접속하지 않는다.** 이 소켓은 사람이 패널을 열어 둔 동안만 살고, 티켓은
 // 1회용이라 재접속에는 새 attach 인가가 필요하다 — 조용히 다시 붙으면 그 인가를 건너뛴다.
 // 끊기면 패널이 그 사실을 그리고, 다시 보려면 사람이 다시 연다.
-import type { AgentSessionState, AttachClientFrame, AttachServerFrame, WriterDeniedReason } from '@murmur/shared';
+import type { AgentSessionState, AttachClientFrame, AttachServerFrame, WriterDeniedReason } from '@harkroom/shared';
 
 export interface AttachCallbacks {
   /**

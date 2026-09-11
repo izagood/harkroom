@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
-import type { MessageRow } from '@murmur/shared';
-import { readWakeMeta } from '@murmur/shared';
+import type { MessageRow } from '@harkroom/shared';
+import { readWakeMeta } from '@harkroom/shared';
 import { WakeRow } from '../src/components/WakeRow';
 import { MessageItem } from '../src/components/MessageItem';
 import { useActiveStore as useAppStore } from '../src/state/communities';

@@ -7,7 +7,7 @@
 // 대신 `data-for-me` 로 **판정**을 고정하고, 누를 수 있는지(`disabled`)로 대접을 고정한다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import type { AskMeta, MessageRow } from '@murmur/shared';
+import type { AskMeta, MessageRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';

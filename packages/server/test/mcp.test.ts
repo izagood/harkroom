@@ -7,7 +7,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 import { onEvent } from '../src/events.js';
-import { readAskMeta, readFailureMeta, readModelMeta, readReportMeta } from '@murmur/shared';
+import { readAskMeta, readFailureMeta, readModelMeta, readReportMeta } from '@harkroom/shared';
 import { recordAskAnswer } from '../src/services/messages.js';
 
 let app: FastifyInstance;

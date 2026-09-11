@@ -28,7 +28,7 @@
  * 같은 문제다. 칸이 답해야 하는 것은 *"기다리는 것이 있나"* 뿐이고 그 답은 숫자다 —
  * 사유·채널·남은 시간은 본문 폭에서 읽는다.
  */
-import type { AgentWakeView } from '@murmur/shared';
+import type { AgentWakeView } from '@harkroom/shared';
 import type { AgentWakesSnapshot } from '../lib/agentTurns';
 import { waitLabel } from '../lib/time';
 import { useLocale, useT } from '../i18n/useT';

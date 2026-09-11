@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import type { WorkspaceSkillView } from '@murmur/shared';
-import { skillGroupOf } from '@murmur/shared';
+import type { WorkspaceSkillView } from '@harkroom/shared';
+import { skillGroupOf } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { Controller, setController, type Controller as ControllerType } from '../src/state/controller';

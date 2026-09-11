@@ -1,4 +1,4 @@
-import { readFailureMeta, type MessageRow } from '@murmur/shared';
+import { readFailureMeta, type MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { TerminalChip } from './TerminalChip';
 import { useT } from '../i18n/useT';

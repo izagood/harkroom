@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import type { ChannelAutoMentionMode, ChannelAutoMentionRow } from '@murmur/shared';
+import type { ChannelAutoMentionMode, ChannelAutoMentionRow } from '@harkroom/shared';
 
 /**
  * 채널의 자동 멘션 에이전트(#173).

@@ -18,7 +18,7 @@
 // 티켓을 발급해야 하고 사람은 그 티켓으로 attach 한다. 턴의 끝은 둘이다(스펙 §5-2 결정 5):
 // 1차 exit(사람이 하네스 안에서 종료), 2차 고아 회수(viewer 0 → 유예 → SIGTERM→SIGKILL).
 import { randomUUID } from 'node:crypto';
-import type { AgentHarness, AgentView, MessageRow } from '@murmur/shared';
+import type { AgentHarness, AgentView, MessageRow } from '@harkroom/shared';
 import type { Me } from './murmur.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, type TurnPlan } from './turn.js';

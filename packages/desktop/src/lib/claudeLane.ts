@@ -17,7 +17,7 @@
  * 페일오버는 턴 단위로 머리를 옮기고 그 사실은 러너 메모리에만 있다 — 이 행은 "무엇을
  * 읽고 떴나"까지이고, **지금 무엇으로 도는지는 턴 줄(#694)이 답한다.**
  */
-import type { ClaudeLaneView } from '@murmur/shared';
+import type { ClaudeLaneView } from '@harkroom/shared';
 
 import type { Translate } from '../i18n';
 

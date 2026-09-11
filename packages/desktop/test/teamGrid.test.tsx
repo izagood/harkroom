@@ -6,7 +6,7 @@
 // 말하려는 사실 전부다.
 import { describe, it, expect, afterEach, vi, beforeEach} from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import type { AccountView, AgentTeamMemberRow } from '@murmur/shared';
+import type { AccountView, AgentTeamMemberRow } from '@harkroom/shared';
 import type { RunnerState } from '../src/lib/runnerLauncher';
 import { TeamGrid, type TeamCardSubject } from '../src/components/settings/TeamGrid';
 import { acc } from './helpers/fakeApi';

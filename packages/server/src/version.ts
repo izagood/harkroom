@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import type { ServerVersion } from '@murmur/shared';
+import type { ServerVersion } from '@harkroom/shared';
 
 /**
  * 서버가 자기 버전을 말한다(#693).

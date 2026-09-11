@@ -5,7 +5,7 @@
 // 둘뿐이다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import type { AgentView } from '@murmur/shared';
+import type { AgentView } from '@harkroom/shared';
 import { AgentGrid } from '../src/components/settings/AgentGrid';
 import { usePrefsStore } from '../src/state/prefsStore';
 

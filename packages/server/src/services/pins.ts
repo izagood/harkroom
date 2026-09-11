@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import type { MessageRow, PinRow } from '@murmur/shared';
+import type { MessageRow, PinRow } from '@harkroom/shared';
 import { COLS as MESSAGE_COLS, type MutationRefusal } from './messages.js';
 
 /** 핀 질의가 돌려주는 평평한 행. 메시지 컬럼 옆에 핀 두 컬럼이 붙어 온다. */

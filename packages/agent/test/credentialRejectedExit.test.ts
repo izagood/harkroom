@@ -25,7 +25,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { CREDENTIAL_REJECTED_LINE, EX_CONFIG } from '@murmur/shared';
+import { CREDENTIAL_REJECTED_LINE, EX_CONFIG } from '@harkroom/shared';
 
 const agentRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 

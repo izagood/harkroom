@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import {
   PROJECTION_UNCONFIGURED_DETAIL, PROJECTION_UNCONFIGURED_HEADLINE, type ProjectionStatus,
-} from '@murmur/shared';
+} from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { LeasePanel } from '../src/components/LeasePanel';
 import { usePrefsStore } from '../src/state/prefsStore';

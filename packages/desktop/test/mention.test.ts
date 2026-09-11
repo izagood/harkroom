@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mentionedHandles } from '@murmur/shared';
+import { mentionedHandles } from '@harkroom/shared';
 import { bodyWithHandles, displayBody, mentionQueryAt, applyMention, splitMentions } from '../src/lib/mention';
 
 describe('mentionQueryAt', () => {

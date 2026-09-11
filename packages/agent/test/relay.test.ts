@@ -1,7 +1,7 @@
 // #141 Phase 2 — 러너 쪽 릴레이 회귀선. 소켓 없이 검증한다(dialer 주입) — 재접속 순서와
 // 백오프 곡선은 네트워크를 태우면 "느리다"로만 보이고 무엇이 깨졌는지 알려 주지 않는다.
 import { describe, it, expect, vi } from 'vitest';
-import type { RelayRunnerFrame } from '@murmur/shared';
+import type { RelayRunnerFrame } from '@harkroom/shared';
 import { createRelayClient, relayUrl, RING_CAP_BYTES, type RelayHandlers, type RelayTransport } from '../src/relay.js';
 import { nextBackoffMs } from '../src/policy.js';
 

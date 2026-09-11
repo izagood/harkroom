@@ -34,7 +34,7 @@ import { AgentGrid } from '../src/components/settings/AgentGrid';
 import { Workspace } from '../src/components/Workspace';
 import { acc, chan, fakeApi } from './helpers/fakeApi';
 import type { RunnerState } from '../src/lib/runnerLauncher';
-import type { AgentView, DmView } from '@murmur/shared';
+import type { AgentView, DmView } from '@harkroom/shared';
 
 const fakeController = () => {
   const c = {

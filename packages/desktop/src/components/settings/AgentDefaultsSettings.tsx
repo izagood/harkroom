@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AgentDefaults } from '@murmur/shared';
+import type { AgentDefaults } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { Button, Field, Segmented, Select, SettingsGroup, SettingsPage, TextInput } from './primitives';

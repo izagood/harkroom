@@ -1,4 +1,4 @@
-import type { ChannelRow } from '@murmur/shared';
+import type { ChannelRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { useT } from '../i18n/useT';
 

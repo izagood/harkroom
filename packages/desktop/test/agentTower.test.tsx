@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import { fireEvent } from '@testing-library/react';
-import type { AgentSessionView } from '@murmur/shared';
+import type { AgentSessionView } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';

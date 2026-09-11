@@ -1,4 +1,4 @@
-import type { AccountView } from '@murmur/shared';
+import type { AccountView } from '@harkroom/shared';
 
 /**
  * **이 사람이 이 에이전트의 설정을 볼 수 있는가.**

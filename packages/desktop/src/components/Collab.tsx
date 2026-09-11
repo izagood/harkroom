@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react';
-import type { CollabProposal, CollabProposalState, CollabRepoView } from '@murmur/shared';
+import type { CollabProposal, CollabProposalState, CollabRepoView } from '@harkroom/shared';
 import { useT } from '../i18n/useT';
 import { countFor, filterRepos, type CollabFilter, type CollabSnapshot } from '../lib/collabProposals';
 

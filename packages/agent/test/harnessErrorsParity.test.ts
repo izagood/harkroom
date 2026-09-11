@@ -19,7 +19,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { RUNNABLE_HARNESSES, type AgentHarness } from '@murmur/shared';
+import { RUNNABLE_HARNESSES, type AgentHarness } from '@harkroom/shared';
 
 import { readLastApiError, sessionTranscriptMtimeMs, sessionTranscriptGrewSince } from '../src/harnessErrors.js';
 import { claudeSessionMaterialized } from '../src/claudeSessions.js';

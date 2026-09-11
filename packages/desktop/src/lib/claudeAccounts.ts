@@ -14,11 +14,11 @@
  * `session.ts`, `notify.ts` 가 모두 그렇다). 그 관례를 따른다 — 여기만 다른 경로를 쓰면
  * 표면 부재 판정(`hasTauri`)도 두 가지가 된다.
  */
-import type { ClaudePoolsConfig } from '@murmur/shared/claudePools';
+import type { ClaudePoolsConfig } from '@harkroom/shared/claudePools';
 // **사용량 타입은 베끼지 않는다.** 아래 `ClaudeAccountsSnapshot` 은 데몬의 선언을 손으로
 // 베낀 것인데(이 파일이 생긴 순서 때문이다) 그 결과 필드가 늘면 두 곳을 고쳐야 한다.
 // 새 말은 프로토콜의 한 벌을 그대로 쓴다.
-import type { ClaudeUsageSnapshot } from '@murmur/shared/daemonProtocol';
+import type { ClaudeUsageSnapshot } from '@harkroom/shared/daemonProtocol';
 
 /** `claude auth status --json` 에서 UI 가 쓰는 것만. **비밀값은 이 출력에 없다.** */
 export interface ClaudeAuthStatus {
@@ -50,7 +50,7 @@ export interface ClaudeAccountsSnapshot {
   strays: string[];
 }
 
-export type { ClaudeAccountUsage, ClaudeUsageSnapshot } from '@murmur/shared/daemonProtocol';
+export type { ClaudeAccountUsage, ClaudeUsageSnapshot } from '@harkroom/shared/daemonProtocol';
 
 /** 로그인 진행 통지. 필드가 상황마다 다르다 — url 만, 또는 done+status. */
 export interface ClaudeLoginEvent {

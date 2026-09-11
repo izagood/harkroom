@@ -21,7 +21,7 @@
 // 달라진 것(codex 의 `usesTui`)은 ①이 한 일이고, 스위치는 그것을 건드리지 않는다.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { RUNNABLE_HARNESSES, type AgentHarness } from '@murmur/shared';
+import { RUNNABLE_HARNESSES, type AgentHarness } from '@harkroom/shared';
 
 import {
   discoversSessionIdAfterTurn,

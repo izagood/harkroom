@@ -1,4 +1,4 @@
-import { readWakeMeta, type MessageRow } from '@murmur/shared';
+import { readWakeMeta, type MessageRow } from '@harkroom/shared';
 import { displayBody } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { stampLabel } from '../lib/day';

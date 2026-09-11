@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import type { ChannelPrefRow, InboxEntry } from '@murmur/shared';
+import type { ChannelPrefRow, InboxEntry } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController } from '../src/state/controller';
 import { usePrefsStore } from '../src/state/prefsStore';

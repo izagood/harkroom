@@ -1,5 +1,5 @@
 {
-  "name": "@murmur/daemon",
+  "name": "@harkroom/daemon",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -8,7 +8,7 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@murmur/shared": "workspace:*"
+    "@harkroom/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

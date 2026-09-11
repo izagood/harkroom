@@ -10,7 +10,7 @@
 // claude 는 `--strict-mcp-config` 를 항상 받는다, gemini 는 이번 범위에서 미지원.
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { RUNNABLE_HARNESSES, type AgentHarness, type MentionPermission } from '@murmur/shared';
+import { RUNNABLE_HARNESSES, type AgentHarness, type MentionPermission } from '@harkroom/shared';
 
 import { executionModelFor } from './adapters/index.js';
 

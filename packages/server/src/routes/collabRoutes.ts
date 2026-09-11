@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import type { CollabProposalsView } from '@murmur/shared';
+import type { CollabProposalsView } from '@harkroom/shared';
 import type { Pool } from 'pg';
 import { httpAvcsClient } from '../avcs/client.js';
 import { ProposalReader } from '../avcs/proposalReader.js';

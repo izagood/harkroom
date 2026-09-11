@@ -215,8 +215,8 @@ Tests require Docker because the server tests use testcontainers to spin up a Po
 pnpm test
 
 # Run tests for a specific package
-pnpm --filter @murmur/server test
-pnpm --filter @murmur/agent test
+pnpm --filter @harkroom/server test
+pnpm --filter @harkroom/agent test
 ```
 
 ## Regression Testing Convention

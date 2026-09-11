@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { CollabProposal, CollabProposalsView, CollabRepoView } from '@murmur/shared';
+import type { CollabProposal, CollabProposalsView, CollabRepoView } from '@harkroom/shared';
 import { getController } from '../state/controller';
 
 /**

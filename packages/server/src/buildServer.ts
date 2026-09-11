@@ -4,7 +4,7 @@ import fastifyMultipart from '@fastify/multipart';
 import type { Pool } from 'pg';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, projectionState, type ProjectionRuntime, type ProjectionStatus, type ServerHealth } from '@murmur/shared';
+import { NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, projectionState, type ProjectionRuntime, type ProjectionStatus, type ServerHealth } from '@harkroom/shared';
 import { serverVersion } from './version.js';
 import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';

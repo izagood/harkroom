@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Identity } from './Identity';
 import { WaitChainSection } from './WaitChainSection';
-import type { InboxEntry } from '@murmur/shared';
+import type { InboxEntry } from '@harkroom/shared';
 import { inboxRow, matchesFilter, type InboxFilter } from '../lib/inboxRow';
 import { bodyWithHandles } from '../lib/mention';
 import { inboxStorage } from '../lib/prefs';

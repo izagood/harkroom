@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import type { AgentTeamRow, AgentTeamMemberRow } from '@murmur/shared';
+import type { AgentTeamRow, AgentTeamMemberRow } from '@harkroom/shared';
 // 멤버십 삽입·조회는 **`#156` 의 것 하나**를 그대로 쓴다. 여기서 다시 쓰지 않는다.
 import { addChannelMember, isChannelMember } from './channels.js';
 

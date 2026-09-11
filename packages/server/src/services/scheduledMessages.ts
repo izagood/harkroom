@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import type { ScheduledMessageView } from '@murmur/shared';
+import type { ScheduledMessageView } from '@harkroom/shared';
 import { postMessage } from './messages.js';
 import { channelPostGate } from './channels.js';
 

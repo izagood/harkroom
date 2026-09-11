@@ -1,5 +1,5 @@
-import { PROJECTION_UNCONFIGURED_DETAIL, PROJECTION_UNCONFIGURED_HEADLINE } from '@murmur/shared';
-import type { ProjectionStatus } from '@murmur/shared';
+import { PROJECTION_UNCONFIGURED_DETAIL, PROJECTION_UNCONFIGURED_HEADLINE } from '@harkroom/shared';
+import type { ProjectionStatus } from '@harkroom/shared';
 import type { Translate } from '../i18n';
 
 /**

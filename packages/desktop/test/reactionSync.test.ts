@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { MessageRow } from '@murmur/shared';
+import type { MessageRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller } from '../src/state/controller';
 import { acc, accountsResult, fakeApi, msg } from './helpers/fakeApi';

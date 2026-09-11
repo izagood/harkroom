@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, within, waitFor } from '@testing-library/react';
-import type { ChannelAutoMentionRow } from '@murmur/shared';
+import type { ChannelAutoMentionRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';

@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import type { ChannelFileRow } from '@murmur/shared';
+import type { ChannelFileRow } from '@harkroom/shared';
 import { basename } from 'node:path';
 import { assertChannelVisible } from './channels.js';
 

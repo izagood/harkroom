@@ -4,7 +4,7 @@
 // 형식이고, 형식을 안 지키면 **조용히 사라진다** — 빈 상자는 거짓 신호다.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import type { MessageRow, ReportMeta } from '@murmur/shared';
+import type { MessageRow, ReportMeta } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { MessageItem } from '../src/components/MessageItem';

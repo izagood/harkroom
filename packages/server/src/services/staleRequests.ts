@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import type { FailureMeta } from '@murmur/shared';
+import type { FailureMeta } from '@harkroom/shared';
 import { postMessage } from './messages.js';
 import { audienceFor } from './channels.js';
 import { emitEvent, emitPosted } from '../events.js';

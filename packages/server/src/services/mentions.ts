@@ -11,7 +11,7 @@
 // 세 사본이 각각 `account` 를 통째로 읽으면서 그중 둘은 존재하지 않는 컬럼(`disabled`)을
 // 봐서 조용히 500 이 됐다. 규칙이 한 곳에 있으면 그런 어긋남이 생길 자리가 없다.
 import type { Pool, PoolClient } from 'pg';
-import { denormalizeMentions, mentionedHandles, MENTION_TOKEN_PATTERN, normalizeMentions } from '@murmur/shared';
+import { denormalizeMentions, mentionedHandles, MENTION_TOKEN_PATTERN, normalizeMentions } from '@harkroom/shared';
 
 type Queryable = Pool | PoolClient;
 

@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
-import { resolveProjectionUrl } from '@murmur/shared';
+import { resolveProjectionUrl } from '@harkroom/shared';
 import { startTestDb } from './helpers/testDb.js';
 import { createFakeAvcs } from './helpers/fakeAvcs.js';
 import type { AvcsServerClient } from '../src/avcs/client.js';

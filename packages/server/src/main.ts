@@ -5,7 +5,7 @@ import { buildServer } from './buildServer.js';
 import { warnIfProjectionDisabled } from './avcs/projection.js';
 import { ProjectionSupervisor } from './avcs/supervisor.js';
 import { getProjectionConfig } from './services/projectionConfig.js';
-import { resolveProjectionUrl } from '@murmur/shared';
+import { resolveProjectionUrl } from '@harkroom/shared';
 import { Lifecycle } from './lifecycle.js';
 
 const config = loadConfig();

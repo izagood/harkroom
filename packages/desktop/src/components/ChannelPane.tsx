@@ -16,7 +16,7 @@ import { dayLabel, localDayKey } from '../lib/day';
 import { distanceFromBottom, isNearBottom, isNearTop } from '../lib/stickyBottom';
 import { useLocale, useT } from '../i18n/useT';
 import { displayBody } from '../lib/mention';
-import { mentionedHandles, mentionedIds } from '@murmur/shared';
+import { mentionedHandles, mentionedIds } from '@harkroom/shared';
 import type { SectionId } from './settings/sections';
 
 /**

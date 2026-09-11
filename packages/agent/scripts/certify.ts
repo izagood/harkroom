@@ -1,6 +1,6 @@
 // `certify` — 하네스 하나가 **계약을 실제로 만족하는지 실물로 재는** 명령.
 //
-//     pnpm --filter @murmur/agent certify -- <harness> [--turn] [--isolated]
+//     pnpm --filter @harkroom/agent certify -- <harness> [--turn] [--isolated]
 //
 // ## 왜 이것이 필요한가
 //
@@ -36,7 +36,7 @@ import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { AGENT_HARNESSES, type AgentHarness } from '@murmur/shared';
+import { AGENT_HARNESSES, type AgentHarness } from '@harkroom/shared';
 
 import { adapterFor } from '../src/adapters/index.js';
 import { looksReadyForPrompt, runPtyTurn, type PtyControls } from '../src/pty.js';

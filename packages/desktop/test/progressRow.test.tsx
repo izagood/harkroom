@@ -5,7 +5,7 @@
 // 자리다. 이 파일은 그 구멍이 다시 열리지 않게 잠근다.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import type { MessageRow } from '@murmur/shared';
+import type { MessageRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { ProgressRow } from '../src/components/ProgressRow';
 import { groupProgress, elapsedMs } from '../src/lib/progressGroup';

@@ -32,7 +32,7 @@ function findSidecar(name: string): string | null {
   return hit ? path.join(BINARIES_DIR, hit) : null;
 }
 
-const SKIP_HINT = '먼저 `pnpm --filter @murmur/desktop build:sidecar` 를 돌려라';
+const SKIP_HINT = '먼저 `pnpm --filter @harkroom/desktop build:sidecar` 를 돌려라';
 
 describe('tauri.conf.json — daemon 이 externalBin 에 있다 (#431 2단계-a)', () => {
   /**

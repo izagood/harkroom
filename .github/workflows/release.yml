@@ -330,7 +330,7 @@ jobs:
       - name: 사이드카를 먼저 만든다 (#441)
         env:
           MURMUR_RUNNER_TARGET_TRIPLE: ${{ matrix.triple }}
-        run: pnpm --filter @murmur/desktop build:sidecar
+        run: pnpm --filter @harkroom/desktop build:sidecar
 
       # ## `bundle.targets` 는 `["app", "dmg"]` 그대로다 — **넓힐 자리가 아니었다**
       #
@@ -367,7 +367,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm --filter @murmur/desktop tauri build --target ${{ matrix.triple }}
+        run: pnpm --filter @harkroom/desktop tauri build --target ${{ matrix.triple }}
 
       # ## 서명 — 이미 실물로 통과한 스크립트를 부른다
       #
@@ -429,7 +429,7 @@ jobs:
         env:
           MURMUR_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           MURMUR_APP_PATH: ${{ github.workspace }}/packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app
-        run: pnpm --filter @murmur/desktop sign
+        run: pnpm --filter @harkroom/desktop sign
 
       # ## 공증 — `.p8` 을 **파일로** 푼다
       #
@@ -447,7 +447,7 @@ jobs:
           (umask 077; echo "$APPLE_NOTARY_KEY" | base64 --decode > "$key")
           MURMUR_NOTARY_KEY="$key" \
             MURMUR_APP_PATH="${{ github.workspace }}/packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app" \
-            pnpm --filter @murmur/desktop notarize
+            pnpm --filter @harkroom/desktop notarize
 
       - name: 공증 키를 지운다
         # **`always()`** — 공증이 실패해도 키는 지운다. 이 단계가 조건부면 실패 경로에서
@@ -570,7 +570,7 @@ jobs:
           # minisign 서명. 키가 없으면 여기서 **실패한다** — 서명 없는 업데이터 산출물은
           # 앱이 거부하므로(공개키가 `tauri.conf.json` 에 박혀 있다) 올려 봐야 쓸모가 없고,
           # 조용히 넘기면 그 사실이 릴리즈가 나간 뒤에야 드러난다.
-          pnpm --filter @murmur/desktop exec tauri signer sign "$out"
+          pnpm --filter @harkroom/desktop exec tauri signer sign "$out"
           test -f "$out.sig" || { echo "::error::updater 서명(.sig)이 만들어지지 않았다"; exit 1; }
 
           echo "UPDATER_TARBALL=$out" >> "$GITHUB_ENV"

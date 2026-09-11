@@ -4,7 +4,7 @@
 // 가장 위험한 부분은 순환이다 — 방문 집합이 없으면 렌더에서 무한 루프가 터진다.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import type { AskMeta, MessageRow, OpenAskLink } from '@murmur/shared';
+import type { AskMeta, MessageRow, OpenAskLink } from '@harkroom/shared';
 import { waitChain, waitChainFromLinks } from '../src/lib/waitChain';
 import type { Liveness } from '../src/lib/threadState';
 import { msg, acc } from './helpers/fakeApi';

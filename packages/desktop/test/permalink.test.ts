@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { MESSAGE_PERMALINK_PREFIX, messagePermalink, parseMessagePermalink } from '@murmur/shared';
+import { MESSAGE_PERMALINK_PREFIX, messagePermalink, parseMessagePermalink } from '@harkroom/shared';
 
 // #178 — 링크 문자열의 형식. 만드는 쪽과 읽는 쪽이 같은 규칙을 봐야 자기가 만든 링크를
 // 자기가 열 수 있다. `mention.test.ts` 가 같은 이유로 shared 의 멘션 규칙을 여기서 지킨다.

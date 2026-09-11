@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AccountStatus, AccountView, AgentTeamRow, HandleGroupRow } from '@murmur/shared';
+import type { AccountStatus, AccountView, AgentTeamRow, HandleGroupRow } from '@harkroom/shared';
 import { getController } from '../state/controller';
 import { useT } from '../i18n/useT';
 import type { MessageKey } from '../i18n';

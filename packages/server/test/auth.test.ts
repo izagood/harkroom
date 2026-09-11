@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
-import { CHANNEL_NAME_PATTERN } from '@murmur/shared';
+import { CHANNEL_NAME_PATTERN } from '@harkroom/shared';
 import { DEFAULT_CHANNEL_NAME } from '../src/routes/authRoutes.js';
 
 let app: FastifyInstance;

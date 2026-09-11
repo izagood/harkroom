@@ -14,7 +14,7 @@
 // `waitChain.test.tsx` 에 있고, 여기서 그것을 또 재면 같은 판정이 두 벌이 된다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import type { OpenAskLink } from '@murmur/shared';
+import type { OpenAskLink } from '@harkroom/shared';
 import { useActiveStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';

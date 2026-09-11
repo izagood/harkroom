@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import type { MessageRow } from '@murmur/shared';
+import type { MessageRow } from '@harkroom/shared';
 import { displayBody } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';

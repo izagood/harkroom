@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 import type {
-  InboxEntry, AccountView, AgentSessionView, AgentTeamRow, ChannelRow, HandleGroupRow, MessageRow, PinRow } from '@murmur/shared';
+  InboxEntry, AccountView, AgentSessionView, AgentTeamRow, ChannelRow, HandleGroupRow, MessageRow, PinRow } from '@harkroom/shared';
 import type { ApiClient } from '../../src/lib/api';
 
 // #186: 상태는 옵셔널이 아니라 **필수 필드**다 — fixture 도 그것을 적어야 한다.

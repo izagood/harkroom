@@ -19,7 +19,7 @@
 // 하네스가 화면에 그린 모든 것(토큰, 환경변수, 사람이 붙여 넣은 비밀)이 들어간다. 프로세스가
 // 죽으면 스크롤백도 같이 사라지는 것이 이 설계의 결과이고, 그것이 의도다.
 import { randomUUID } from 'node:crypto';
-import type { AgentHarness, AgentSessionView, RelayRunnerFrame, RelayServerFrame, RunnerCap } from '@murmur/shared';
+import type { AgentHarness, AgentSessionView, RelayRunnerFrame, RelayServerFrame, RunnerCap } from '@harkroom/shared';
 import { RingBuffer, type PtyWriter } from './pty.js';
 import { nextBackoffMs } from './policy.js';
 

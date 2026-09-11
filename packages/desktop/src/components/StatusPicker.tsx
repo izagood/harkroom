@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ACCOUNT_STATUSES, type AccountStatus } from '@murmur/shared';
+import { ACCOUNT_STATUSES, type AccountStatus } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { useT } from '../i18n/useT';

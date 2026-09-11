@@ -4,7 +4,7 @@ import type { Pool } from 'pg';
 import WebSocket from 'ws';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { WsServerEvent } from '@murmur/shared';
+import type { WsServerEvent } from '@harkroom/shared';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';

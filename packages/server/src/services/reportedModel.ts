@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { MODEL_ID_MAX, type ModelMeta, modelsDisagree } from '@murmur/shared';
+import { MODEL_ID_MAX, type ModelMeta, modelsDisagree } from '@harkroom/shared';
 
 /**
  * 발화가 실어 온 모델 ID 를 `meta.model` 로 바꾼다(#600).

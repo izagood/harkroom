@@ -6,7 +6,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import WebSocket from 'ws';
-import type { AgentSessionView, AttachServerFrame, RelayRunnerFrame, RelayServerFrame } from '@murmur/shared';
+import type { AgentSessionView, AttachServerFrame, RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';

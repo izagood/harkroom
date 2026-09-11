@@ -32,7 +32,7 @@
  * 그리면** 사람은 폭주가 멈춘 줄 안다.
  */
 import { useState } from 'react';
-import type { AgentSessionView } from '@murmur/shared';
+import type { AgentSessionView } from '@harkroom/shared';
 import type { AgentTurnsSnapshot } from '../lib/agentTurns';
 import { groupTurnsByThread } from '../lib/agentTurns';
 import { ConfirmDialog } from './ConfirmDialog';

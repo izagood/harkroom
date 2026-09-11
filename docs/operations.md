@@ -455,7 +455,7 @@ where a.kind = 'agent';
 
 | 무엇 | 예전 | 지금 |
 |---|---|---|
-| 러너 실행 파일 | `pnpm --filter @murmur/agent start`(소스) | **단일 번들**을 Tauri 사이드카(`externalBin`)로 앱과 함께 배포 |
+| 러너 실행 파일 | `pnpm --filter @harkroom/agent start`(소스) | **단일 번들**을 Tauri 사이드카(`externalBin`)로 앱과 함께 배포 |
 | 러너의 부모 프로세스 | 앱 | **daemon**(앱은 소켓으로 "띄워라"라고 말할 뿐이다) |
 | 사람이 정하던 설정 | harkroom repository path · pnpm path | **없어졌다** — 물음 자체가 사라졌다 |
 
@@ -491,7 +491,7 @@ daemon 을 앞에 세운 것은 `#430` 의 실측 때문이다: 앱이 러너의
 MURMUR_URL=<서버 주소> MURMUR_PAT=<발급한 토큰> /Applications/Harkroom.app/Contents/MacOS/harkroom-runner
 
 # harkroom 저장소를 클론한 개발 환경
-MURMUR_URL=<서버 주소> MURMUR_PAT=<발급한 토큰> pnpm --filter @murmur/agent start
+MURMUR_URL=<서버 주소> MURMUR_PAT=<발급한 토큰> pnpm --filter @harkroom/agent start
 ```
 
 **아래쪽(pnpm)을 지우지 않은 이유**: `packages/agent/package.json` 의 `start` 는 그대로 있고
@@ -679,7 +679,7 @@ macOS·Windows 의 Docker Desktop 에서는 프록시 없이 실제 주소를 �
 # 비밀번호는 argv 로 전달하지 않는다 — `ps` 로 다른 로컬 사용자에게 보인다.
 # 셸 히스토리에도 남으니 필요하면 앞에 공백을 두거나 히스토리를 끄고 실행한다.
 MURMUR_NEW_PASSWORD=<새 비밀번호> DATABASE_URL=<...> \
-  pnpm --filter @murmur/server exec tsx scripts/reset-password.ts <handle>
+  pnpm --filter @harkroom/server exec tsx scripts/reset-password.ts <handle>
 ```
 
 이 도구는 다음을 수행한다:

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { normalizePreviewUrl } from '@murmur/shared';
+import { normalizePreviewUrl } from '@harkroom/shared';
 import { getLinkPreviewByUrl } from '../services/linkPreviewDb.js';
 import { isStale, queueLinkPreviewFetch, defaultPreviewNet, type PreviewNet } from '../services/linkPreview.js';
 

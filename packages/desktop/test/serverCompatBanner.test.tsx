@@ -10,7 +10,7 @@
 // **하한보다 낮을 때 하나뿐**이고, '뒤처졌다'·'모른다'로는 서지 않는다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import { MIN_SERVER_VERSION } from '@murmur/shared';
+import { MIN_SERVER_VERSION } from '@harkroom/shared';
 import { useActiveStore } from '../src/state/communities';
 import type { SectionId } from '../src/components/settings/sections';
 import { ServerCompatBanner } from '../src/components/ServerCompatBanner';

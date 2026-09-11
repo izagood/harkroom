@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
-import { MAX_MESSAGE_BODY_CHARS, type ChannelAutoMentionRow } from '@murmur/shared';
+import { MAX_MESSAGE_BODY_CHARS, type ChannelAutoMentionRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { Composer } from '../src/components/Composer';

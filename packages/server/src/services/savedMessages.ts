@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import type { MessageRow, SavedMessageRow } from '@murmur/shared';
+import type { MessageRow, SavedMessageRow } from '@harkroom/shared';
 import { COLS as MESSAGE_COLS } from './messages.js';
 import { channelVisibleSql } from './channels.js';
 

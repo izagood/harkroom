@@ -12,7 +12,7 @@ import { Resolver } from 'node:dns';
 import * as https from 'node:https';
 import * as http from 'node:http';
 import { isIP } from 'node:net';
-import { normalizePreviewUrl } from '@murmur/shared';
+import { normalizePreviewUrl } from '@harkroom/shared';
 import { emitEvent } from '../events.js';
 import { getLinkPreviewByUrl } from './linkPreviewDb.js';
 
@@ -207,7 +207,7 @@ export function isBlockedHost(hostname: string): boolean {
 }
 
 export { normalizePreviewUrl as normalizeUrl };
-export { extractPreviewUrls as extractUrls } from '@murmur/shared';
+export { extractPreviewUrls as extractUrls } from '@harkroom/shared';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 네트워크 경계 — 테스트가 갈아끼운다

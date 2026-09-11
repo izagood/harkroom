@@ -9,7 +9,7 @@
 // 도그푸딩 중에 투영이 끊긴 것을 **아무도 모른다** — 화면이 평소와 똑같기 때문이다.
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import type { ProjectionStatus } from '@murmur/shared';
+import type { ProjectionStatus } from '@harkroom/shared';
 import { useActiveStore } from '../src/state/communities';
 import type { SectionId } from '../src/components/settings/sections';
 import { ProjectionBanner } from '../src/components/ProjectionBanner';

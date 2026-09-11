@@ -117,7 +117,7 @@ const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 로그인 셸의 `PATH` 를 못 얻었을 때 쓰는 기본 디렉터리들.
 ///
-/// **`@murmur/shared` 의 `SYSTEM_PATH_FALLBACK` 과 같은 값이어야 한다.** 두 곳에 있는
+/// **`@harkroom/shared` 의 `SYSTEM_PATH_FALLBACK` 과 같은 값이어야 한다.** 두 곳에 있는
 /// 것은 언어가 갈려서다(Rust ↔ TS) — `test/runnerLoginPath.test.tsx` 가 이 파일을 읽어
 /// 두 값을 대조한다(`daemonEndpointContract` 가 프로토콜 버전에 하는 것과 같은 방식).
 ///

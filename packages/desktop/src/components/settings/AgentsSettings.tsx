@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import {
   AGENT_HARNESSES, HANDLE_PATTERN, RUNNABLE_HARNESSES,
   type AgentConfig, type AgentDefaults, type AgentTeamMemberRow, type AgentTeamRow,
-  type AgentView, type MentionPermission, type PatView, harnessHasAccountPool } from '@murmur/shared';
+  type AgentView, type MentionPermission, type PatView, harnessHasAccountPool } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { staleRunners } from '../../lib/runnerVersions';
@@ -1781,7 +1781,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
                     **명령 자체는 `runnerCommand.ts` 가 만든다**(`#431` 1단계·`#494`). 여기서
                     문자열을 짓지 않는 이유는 이 자리가 정확히 그렇게 낡았기 때문이다 — 러너가
-                    사이드카 배포로 바뀌었는데 화면에는 `pnpm --filter @murmur/agent start` 가
+                    사이드카 배포로 바뀌었는데 화면에는 `pnpm --filter @harkroom/agent start` 가
                     남아, 저장소를 클론하지 않은 사람에게 **붙여넣는 순간 실패하는 명령**을
                     복사시키고 있었다. 근거 전문은 그 파일 머리말에 있다. */}
                 <div className="mt-2 flex flex-col gap-1 break-all font-mono text-meta text-warning">

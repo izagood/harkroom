@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getController } from '../state/controller';
 import { useActiveStore } from '../state/communities';
-import type { LinkPreviewView } from '@murmur/shared';
+import type { LinkPreviewView } from '@harkroom/shared';
 
 /**
  * 본문 아래 붙는 링크 카드(#215).

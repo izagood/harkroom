@@ -12,8 +12,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { DAEMON_PROTOCOL_VERSION, daemonEndpointPaths } from '@murmur/shared/daemonEndpoint';
-import { NdjsonDecoder, encodeLine } from '@murmur/shared/daemonProtocol';
+import { DAEMON_PROTOCOL_VERSION, daemonEndpointPaths } from '@harkroom/shared/daemonEndpoint';
+import { NdjsonDecoder, encodeLine } from '@harkroom/shared/daemonProtocol';
 
 import { startDaemon, EXIT_OCCUPIED, appDataDirFromSocket } from '../src/run.js';
 import { runnerLedgerPath } from '../src/runnerLedger.js';

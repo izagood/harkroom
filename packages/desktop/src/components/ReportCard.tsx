@@ -1,4 +1,4 @@
-import { readReportMeta, type MessageRow } from '@murmur/shared';
+import { readReportMeta, type MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { durationLabel } from '../lib/time';
 import { useLocale, useT } from '../i18n/useT';

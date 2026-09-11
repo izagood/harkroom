@@ -1,4 +1,4 @@
-import { MIN_SERVER_VERSION, compareRelease, serverCompat, type ServerVersion } from '@murmur/shared';
+import { MIN_SERVER_VERSION, compareRelease, serverCompat, type ServerVersion } from '@harkroom/shared';
 import type { Translate } from '../i18n';
 
 /**

@@ -1,4 +1,4 @@
-import type { AccountView } from '@murmur/shared';
+import type { AccountView } from '@harkroom/shared';
 import type { Translate } from '../i18n';
 import type { SectionId } from '../components/settings/sections';
 import { canSeeAgentConfig } from './agentConfigGate';

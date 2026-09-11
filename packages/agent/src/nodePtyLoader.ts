@@ -133,7 +133,7 @@ export function loadNodePty(sidecarDir: string): typeof NodePty {
         nodePtyCandidates(sidecarDir)
           .map((c) => `  ${c}`)
           .join('\n') +
-        `\n개발 빌드면 \`pnpm --filter @murmur/desktop build:sidecar\` 를 돌려라. ` +
+        `\n개발 빌드면 \`pnpm --filter @harkroom/desktop build:sidecar\` 를 돌려라. ` +
         `배포 번들이면 \`tauri.conf.json\` 의 \`bundle.resources\` 가 ` +
         `\`binaries/node_modules/node-pty\` 를 싣는지 확인하라.`,
     );

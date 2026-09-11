@@ -17,7 +17,7 @@
 import { readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { AgentHarness } from '@murmur/shared';
+import type { AgentHarness } from '@harkroom/shared';
 
 import { readsSessionTranscript } from './adapters/index.js';
 

@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import type { HandleGroupRow } from '@murmur/shared';
-import { HANDLE_PATTERN } from '@murmur/shared';
+import type { HandleGroupRow } from '@harkroom/shared';
+import { HANDLE_PATTERN } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { GroupBadge } from '../Identity';

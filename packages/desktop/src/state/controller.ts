@@ -1,5 +1,5 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@murmur/shared';
-import { countsAsReply, notifyLevelOf } from '@murmur/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
+import { countsAsReply, notifyLevelOf } from '@harkroom/shared';
 import { ApiClient, ApiError } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
@@ -1551,7 +1551,7 @@ export class Controller {
     if (threadRootId === messageId) this.store.getState().set({ threadRootId: null });
   }
 
-  listAgents(): Promise<import('@murmur/shared').AgentView[]> {
+  listAgents(): Promise<import('@harkroom/shared').AgentView[]> {
     return this.api.listAgents();
   }
 
@@ -1561,9 +1561,9 @@ export class Controller {
    * 그대로 돌려준다 — 화면이 "생성 실패"라고 거짓말하거나 유일한 PAT 를 잃으면 안 된다.
    */
   async createAgent(
-    input: { handle: string; displayName: string } & Partial<import('@murmur/shared').AgentConfig>,
+    input: { handle: string; displayName: string } & Partial<import('@harkroom/shared').AgentConfig>,
     opts?: { claudePool?: string },
-  ): Promise<{ agent: import('@murmur/shared').AgentView; pat: string; poolError: string | null }> {
+  ): Promise<{ agent: import('@harkroom/shared').AgentView; pat: string; poolError: string | null }> {
     const agent = await this.api.createAgent(input);
     const pat = await this.api.mintPat(agent.id, 'runner');
     /**
@@ -1603,13 +1603,13 @@ export class Controller {
   }
 
   updateAgent(
-    id: string, patch: Partial<import('@murmur/shared').AgentConfig> & { displayName?: string },
-  ): Promise<import('@murmur/shared').AgentView> {
+    id: string, patch: Partial<import('@harkroom/shared').AgentConfig> & { displayName?: string },
+  ): Promise<import('@harkroom/shared').AgentView> {
     return this.api.updateAgent(id, patch);
   }
 
   /** #129: 러너 종료 요청. 실패를 삼키지 않는다 — 요청이 갔는지 화면이 말해야 한다. */
-  requestAgentStop(agentId: string): Promise<import('@murmur/shared').AgentView> {
+  requestAgentStop(agentId: string): Promise<import('@harkroom/shared').AgentView> {
     return this.api.requestAgentStop(agentId);
   }
 
@@ -1622,7 +1622,7 @@ export class Controller {
    * "지금 띄워라"가 아니라 "더 이상 막지 마라"이고, 둘을 섞으면 서버 정의와 앱 동작이
    * 갈릴 때(예: 되돌리기는 성공했는데 기동은 실패) 화면이 무엇을 말해야 할지 모른다.
    */
-  undoAgentStopRequest(agentId: string): Promise<import('@murmur/shared').AgentView> {
+  undoAgentStopRequest(agentId: string): Promise<import('@harkroom/shared').AgentView> {
     return this.api.undoAgentStopRequest(agentId);
   }
 
@@ -1642,7 +1642,7 @@ export class Controller {
    */
   async setAgentDisabled(
     agentId: string, disabled: boolean,
-  ): Promise<import('@murmur/shared').AgentView> {
+  ): Promise<import('@harkroom/shared').AgentView> {
     const updated = await this.api.setAgentDisabled(agentId, disabled);
     const store = this.store.getState();
     store.set({ accounts: { ...store.accounts, [updated.id]: updated } });
@@ -1650,24 +1650,24 @@ export class Controller {
   }
 
   /** #171: 새 에이전트의 기본값. 실패를 삼키지 않는다 — 화면이 실패를 그려야 한다. */
-  agentDefaults(): Promise<import('@murmur/shared').AgentDefaults> {
+  agentDefaults(): Promise<import('@harkroom/shared').AgentDefaults> {
     return this.api.agentDefaults();
   }
 
   updateAgentDefaults(
-    patch: Partial<import('@murmur/shared').AgentDefaults>,
-  ): Promise<import('@murmur/shared').AgentDefaults> {
+    patch: Partial<import('@harkroom/shared').AgentDefaults>,
+  ): Promise<import('@harkroom/shared').AgentDefaults> {
     return this.api.updateAgentDefaults(patch);
   }
 
   /** 투영 설정. admin 전용이라 실패를 삼키지 않는다 — 화면이 실패를 그려야 한다. */
-  projectionConfig(): Promise<import('@murmur/shared').ProjectionConfigView> {
+  projectionConfig(): Promise<import('@harkroom/shared').ProjectionConfigView> {
     return this.api.projectionConfig();
   }
 
   setProjectionConfig(
     url: string | null,
-  ): Promise<import('@murmur/shared').ProjectionConfigView> {
+  ): Promise<import('@harkroom/shared').ProjectionConfigView> {
     return this.api.setProjectionConfig(url);
   }
 
@@ -1694,7 +1694,7 @@ export class Controller {
     return this.api.deleteAgentMemory(agentId, slug);
   }
 
-  listPats(accountId: string): Promise<import('@murmur/shared').PatView[]> {
+  listPats(accountId: string): Promise<import('@harkroom/shared').PatView[]> {
     return this.api.listPats(accountId);
   }
 

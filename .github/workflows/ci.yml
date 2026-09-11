@@ -79,7 +79,7 @@ jobs:
       #
       # 에이전트 패키지만 다시 돈다(30초 남짓). 스위치를 기본 켜짐으로 돌리고 옛 분기를
       # 지우는 날 이 단계도 함께 지운다 — 그때는 `pnpm test` 하나가 곧 새 경로다.
-      - run: pnpm --filter @murmur/agent test
+      - run: pnpm --filter @harkroom/agent test
         env:
           MURMUR_HARNESS_ADAPTERS: '1'
 
@@ -138,7 +138,7 @@ jobs:
       # `binaries/harkroom-runner`·`binaries/harkroom-daemon` 둘 다 요구하고, 없으면 번들 단계가
       # `resource path … doesn't exist` 로 죽는다(#441). 사람이 기억해야 하는 순서를 여기에
       # 못박는 것이 이 잡이 #441 을 닫는 방식이다.
-      - run: pnpm --filter @murmur/desktop build:sidecar
+      - run: pnpm --filter @harkroom/desktop build:sidecar
 
       # `--bundles app` — `.app` 만 만든다. dmg 는 이 잡의 질문("빌드가 되는가")에 아무것도
       # 더하지 않으면서 시간만 쓴다.
@@ -166,7 +166,7 @@ jobs:
       # **이 잡의 검증은 그대로 산다**: 위 오류는 `.app` 번들링이 **끝난 뒤** 나던 것이라
       # 끄더라도 아래 산출물 검사(#441 사이드카 · #470 심볼릭 링크)의 입력은 달라지지 않는다.
       - run: >
-          pnpm --filter @murmur/desktop tauri build --bundles app
+          pnpm --filter @harkroom/desktop tauri build --bundles app
           --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       # ## exit 0 으로 끝내지 않는다 — 산출물을 연다

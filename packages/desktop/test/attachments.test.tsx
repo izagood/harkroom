@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import * as path from 'node:path';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import type { AttachmentRow, MessageRow } from '@murmur/shared';
+import type { AttachmentRow, MessageRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { Controller, setController } from '../src/state/controller';

@@ -1,5 +1,5 @@
 {
-  "name": "@murmur/desktop",
+  "name": "@harkroom/desktop",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,7 +14,7 @@
     "notarize": "node scripts/notarize-app.mjs"
   },
   "dependencies": {
-    "@murmur/shared": "workspace:*",
+    "@harkroom/shared": "workspace:*",
     "@tauri-apps/plugin-notification": "^2.4.0",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-shell": "^2.3.6",
@@ -26,7 +26,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
-    "@murmur/agent": "workspace:*",
+    "@harkroom/agent": "workspace:*",
     "@tailwindcss/vite": "^4.0.0",
     "@tauri-apps/cli": "^2.0.0",
     "@testing-library/react": "^16.0.0",

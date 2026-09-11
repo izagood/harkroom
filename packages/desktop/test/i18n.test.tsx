@@ -28,7 +28,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, waitFor, act } from '@testing-library/react';
 import type {
   AgentDefaults, AgentTeamRow, AgentView, AskMeta, InboxEntry, MessageRow, OpenAskLink, PatView,
-} from '@murmur/shared';
+} from '@harkroom/shared';
 import { CATALOGS, LOCALES, translator, detectLocale, isLocale, type Locale } from '../src/i18n';
 import { LOCALE_NAMES } from '../src/i18n';
 import { AppearanceSettings } from '../src/components/settings/AppearanceSettings';
@@ -68,7 +68,7 @@ import {
   RunnerLauncher, STRANGER_ATTACHED,
   type LaunchableAgent, type RunnerSpawner,
 } from '../src/lib/runnerLauncher';
-import { CREDENTIAL_REJECTED_LINE, EXECUTABLE_NOT_FOUND_LINE, EX_CONFIG, HARNESS_LOGIN_REQUIRED_LINE } from '@murmur/shared';
+import { CREDENTIAL_REJECTED_LINE, EXECUTABLE_NOT_FOUND_LINE, EX_CONFIG, HARNESS_LOGIN_REQUIRED_LINE } from '@harkroom/shared';
 import { fakeDaemon } from './helpers/fakeDaemon';
 import type { Translate } from '../src/i18n';
 import { acc, chan, msg, tm, inboxEntry, fakeApi, fakeWsFactory } from './helpers/fakeApi';
@@ -81,10 +81,10 @@ import { runnerCommandClipboardText } from '../src/lib/runnerCommand';
 import { ProjectionBanner } from '../src/components/ProjectionBanner';
 import { ProjectionUrl } from '../src/components/settings/ProjectionUrl';
 import { writerDeniedText } from '../src/components/TerminalPanel';
-import type { WriterDeniedReason } from '@murmur/shared';
+import type { WriterDeniedReason } from '@harkroom/shared';
 import type { RunnerState, RunnerStatus } from '../src/lib/runnerLauncher';
-import type { ProjectionStatus } from '@murmur/shared';
-import { PROJECTION_UNCONFIGURED_HEADLINE } from '@murmur/shared';
+import type { ProjectionStatus } from '@harkroom/shared';
+import { PROJECTION_UNCONFIGURED_HEADLINE } from '@harkroom/shared';
 import { SidebarFind } from '../src/components/SidebarFind';
 import { StatusPicker } from '../src/components/StatusPicker';
 import { StatusMark } from '../src/components/Identity';

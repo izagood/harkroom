@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { AgentHarness, AgentView, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow } from '@murmur/shared';
+import type { AgentHarness, AgentView, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow } from '@harkroom/shared';
 import type { Me } from './murmur.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, gateNotice, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts } from './prompt.js';
 import { SessionStore } from './sessions.js';

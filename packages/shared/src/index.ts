@@ -2776,9 +2776,9 @@ export const EX_CONFIG = 78;
  * 깨진다 — 앱이 이 상수를 그대로 비교하므로(`runnerExitReason`), 러너와 앱이 서로 다른
  * 사본을 들면 앱은 영원히 "구분자를 못 봤다"로 떨어지고 `#473` 이 되돌아온다.
  *
- * ## 왜 `@murmur/agent` 가 아니라 여기인가
+ * ## 왜 `@harkroom/agent` 가 아니라 여기인가
  *
- * `@murmur/agent` 는 데스크탑의 **devDependency** 다 — 테스트는 그것을 import 할 수
+ * `@harkroom/agent` 는 데스크탑의 **devDependency** 다 — 테스트는 그것을 import 할 수
  * 있지만 웹뷰 번들은 못 한다(그리고 그 패키지는 `node-pty` 같은 네이티브 의존을 끌고
  * 온다). 이 파일은 Node 의존이 없는 순수 타입·상수이고 웹뷰가 이미 import 한다.
  * `packages/agent/src/exit.ts` 는 이제 여기서 다시 낸다 — **값은 하나뿐이다.**
@@ -2882,7 +2882,7 @@ export function runnerExitReason(
  * ## 왜 `turn.ts` 의 `PRESETS` 를 안 쓰는가
  *
  * 그 표가 진실의 원천인 것은 맞다 — 러너가 실제로 실행하는 명령이 거기서 나온다.
- * 그런데 그것은 `@murmur/agent` 안에 있고 웹뷰는 그 패키지를 못 들인다(위
+ * 그런데 그것은 `@harkroom/agent` 안에 있고 웹뷰는 그 패키지를 못 들인다(위
  * `CREDENTIAL_REJECTED_LINE` 주석의 같은 사정). 그래서 **이름만** 여기 둔다.
  *
  * 두 곳이 갈릴 위험은 있다. 그 위험을 회귀선으로 막는다 —

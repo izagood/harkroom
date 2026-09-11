@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import type { ChannelDoc, ChannelMemberRow, ChannelRow, NotifyLevel } from '@murmur/shared';
+import type { ChannelDoc, ChannelMemberRow, ChannelRow, NotifyLevel } from '@harkroom/shared';
 
 // #180: `created_at` 도 싣는다. 채널 디렉터리의 "생성순" 정렬을 클라이언트가 하는데,
 // 목록 질의는 `order by name` 이라 순서 자체로는 생성 시각을 알 수 없다. 컬럼은 001 부터
@@ -376,7 +376,7 @@ export interface ChannelPrefRow {
   sortOrder: number | null;
   /**
    * 이 채널을 사이드바에서 치운 시각(#376). null 이면 보인다. 보관·나가기와 어떻게 다른지는
-   * `@murmur/shared` 의 같은 이름 필드 주석에 있다 — 여기 옮겨 적으면 한쪽만 고쳐진다.
+   * `@harkroom/shared` 의 같은 이름 필드 주석에 있다 — 여기 옮겨 적으면 한쪽만 고쳐진다.
    */
   hiddenAt: string | null;
 }

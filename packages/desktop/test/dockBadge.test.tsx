@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, cleanup, act, waitFor } from '@testing-library/react';
-import type { InboxEntry } from '@murmur/shared';
+import type { InboxEntry } from '@harkroom/shared';
 import { useCommunityRegistry, resetCommunityRegistry, useActiveStore as useAppStore } from '../src/state/communities';
 import { useDockBadge, resetDockBadgeForTest } from '../src/lib/useDockBadge';
 import { createBadger, BADGE_COUNT_COMMAND, BADGE_LABEL_COMMAND, BADGE_DOT_LABEL, type Badge } from '../src/lib/badge';

@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import type { ProjectionConfigView } from '@murmur/shared';
+import type { ProjectionConfigView } from '@harkroom/shared';
 import { useActiveStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';

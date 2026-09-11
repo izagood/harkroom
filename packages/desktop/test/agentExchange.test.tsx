@@ -4,7 +4,7 @@
 // 주고받으면 그 열 번이 그대로 흐르고, 사람이 읽어야 할 말이 그 사이에 묻힌다.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import type { AskMeta, MessageRow, ReportMeta } from '@murmur/shared';
+import type { AskMeta, MessageRow, ReportMeta } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';

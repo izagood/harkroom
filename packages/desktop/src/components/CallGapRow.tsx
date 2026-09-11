@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { MessageRow } from '@murmur/shared';
+import type { MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { callGap, type CallGapDetail } from '../lib/callGap';
 import type { MessageKey } from '../i18n';

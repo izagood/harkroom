@@ -12,8 +12,8 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import { PROJECTION_UNCONFIGURED_DETAIL, PROJECTION_UNCONFIGURED_HEADLINE } from '@murmur/shared';
-import type { ProjectionStatus } from '@murmur/shared';
+import { PROJECTION_UNCONFIGURED_DETAIL, PROJECTION_UNCONFIGURED_HEADLINE } from '@harkroom/shared';
+import type { ProjectionStatus } from '@harkroom/shared';
 import { useActiveStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { ConnectionSettings } from '../src/components/settings/ConnectionSettings';

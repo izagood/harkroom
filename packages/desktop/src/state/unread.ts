@@ -1,4 +1,4 @@
-import type { InboxEntry } from '@murmur/shared';
+import type { InboxEntry } from '@harkroom/shared';
 
 /**
  * 미읽음을 **두 가지 신호**로 읽는 규칙. 사이드바가 이미 이 둘을 나눠 그리고 있고

@@ -40,7 +40,7 @@ avcs objects are **not** turned into chat messages. Chat is where people and age
   [What you need installed to run the app](#what-you-need-installed-to-run-the-app).
 - **pnpm**: 11.x (the version CI installs; the lockfile is `lockfileVersion: 9.0`)
 - **Docker**: For running the compose stack and tests
-- **Rust toolchain**: Only required for building the desktop app (`pnpm --filter @murmur/desktop tauri build`)
+- **Rust toolchain**: Only required for building the desktop app (`pnpm --filter @harkroom/desktop tauri build`)
 
 ## Quick Start (Self-Host)
 
@@ -164,7 +164,7 @@ use depends on whether that machine has the harkroom repository:
 MURMUR_URL=<server url> MURMUR_PAT=murp_... /Applications/Harkroom.app/Contents/MacOS/harkroom-runner
 
 # Development checkout of this repository
-MURMUR_URL=<server url> MURMUR_PAT=murp_... pnpm --filter @murmur/agent start
+MURMUR_URL=<server url> MURMUR_PAT=murp_... pnpm --filter @harkroom/agent start
 ```
 
 **Register with Claude Code / Cursor (human-driven):**
@@ -183,10 +183,10 @@ See [packages/agent/README.md](packages/agent/README.md) for detailed documentat
 pnpm install
 pnpm test        # Requires Docker (tests spawn a Postgres container)
 pnpm typecheck   # Type check all packages
-pnpm --filter @murmur/server dev
+pnpm --filter @harkroom/server dev
 ```
 
-`pnpm install` builds `@murmur/agent`'s `node-pty` (this repository's first native dependency). Prebuilt binaries exist for `linux-x64`, `linux-arm64`, and `darwin`, so most platforms don't need compilation. Other platforms require C++ build tools for `node-gyp` source builds. The `allowBuilds` in `pnpm-workspace.yaml` must include `node-pty` for postinstall to run — this repository already has it, so you won't encounter this issue unless removed.
+`pnpm install` builds `@harkroom/agent`'s `node-pty` (this repository's first native dependency). Prebuilt binaries exist for `linux-x64`, `linux-arm64`, and `darwin`, so most platforms don't need compilation. Other platforms require C++ build tools for `node-gyp` source builds. The `allowBuilds` in `pnpm-workspace.yaml` must include `node-pty` for postinstall to run — this repository already has it, so you won't encounter this issue unless removed.
 
 See [packages/agent/README.md](packages/agent/README.md#네이티브-의존성--node-pty) for details
 (that document, like everything under `docs/`, is in Korean).
@@ -194,9 +194,9 @@ See [packages/agent/README.md](packages/agent/README.md#네이티브-의존성--
 ## Desktop App
 
 ```sh
-pnpm --filter @murmur/desktop dev      # Browser dev mode (Vite)
-pnpm --filter @murmur/desktop tauri dev    # Native window (requires Rust toolchain)
-pnpm --filter @murmur/desktop tauri build  # Distributable binary
+pnpm --filter @harkroom/desktop dev      # Browser dev mode (Vite)
+pnpm --filter @harkroom/desktop tauri dev    # Native window (requires Rust toolchain)
+pnpm --filter @harkroom/desktop tauri build  # Distributable binary
 ```
 
 On first launch, enter your server URL and sign in (or create the first admin account on a fresh server).

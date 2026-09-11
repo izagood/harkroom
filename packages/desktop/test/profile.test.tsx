@@ -4,7 +4,7 @@
 // 없었다 — 문서가 "흐름에서 표시를 빼면 그 정보가 어디에도 없게 된다"고 경계한 자리다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import type { AgentView } from '@murmur/shared';
+import type { AgentView } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';

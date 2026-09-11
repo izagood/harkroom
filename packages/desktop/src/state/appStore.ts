@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { draftsStorage, stickyMentionsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, AgentTeamRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus, ServerVersion } from '@murmur/shared';
+import type { AccountStatus, AccountView, AgentTeamRow, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus, ServerVersion } from '@harkroom/shared';
 import type { ObservedRunner, RunnerState } from '../lib/runnerLauncher';
 import type { NotifiedSummary } from '../lib/notified';
 

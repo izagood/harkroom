@@ -8,7 +8,7 @@ import { Rail, type RailPanel } from '../src/components/Rail';
 import { Sidebar } from '../src/components/Sidebar';
 import type { SectionId } from '../src/components/settings/sections';
 import { acc, chan } from './helpers/fakeApi';
-import type { InboxEntry } from '@murmur/shared';
+import type { InboxEntry } from '@harkroom/shared';
 import { usePrefsStore } from '../src/state/prefsStore';
 
 /**

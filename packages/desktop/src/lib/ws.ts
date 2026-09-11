@@ -1,4 +1,4 @@
-import type { WsServerEvent } from '@murmur/shared';
+import type { WsServerEvent } from '@harkroom/shared';
 
 /**
  * 연결이 끊긴 **이유**. 기다리면 낫는 것과 그렇지 않은 것을 갈라야 한다 —

@@ -23,7 +23,7 @@ tauri-plugin-process = "2"
 # apple-native / windows-native / linux-native-sync-persistent 로 각 OS 의 기본 저장소를 쓴다.
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 # daemon 과 주고받는 NDJSON 을 만들고 판다(#431 2단계-b 3/3). 프로토콜 정의 자체는
-# `@murmur/shared/daemonProtocol` 에 있고, 여기는 그 절반(클라이언트)을 Rust 로 구현한다 —
+# `@harkroom/shared/daemonProtocol` 에 있고, 여기는 그 절반(클라이언트)을 Rust 로 구현한다 —
 # 웹뷰는 unix 소켓을 열 수 없어서 소켓을 쥐는 쪽이 Rust 일 수밖에 없다.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

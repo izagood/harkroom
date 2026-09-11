@@ -1,4 +1,4 @@
-import { readAskMeta, readFailureMeta, readReportMeta, type InboxEntry } from '@murmur/shared';
+import { readAskMeta, readFailureMeta, readReportMeta, type InboxEntry } from '@harkroom/shared';
 import type { Translate } from '../i18n';
 
 /**

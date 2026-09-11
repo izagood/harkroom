@@ -1,7 +1,7 @@
 import {
   mentionedIds, mentionScanText, readAskMeta, readDelegationMeta, readFailureMeta, readReportMeta,
   type MessageRow,
-} from '@murmur/shared';
+} from '@harkroom/shared';
 import type { Slot } from './progressGroup';
 
 /**

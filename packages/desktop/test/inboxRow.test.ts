@@ -6,7 +6,7 @@
 //
 // 이 파일이 지키는 것은 **줄이 갈리는 것**과 **막는 순 정렬**이다.
 import { describe, it, expect } from 'vitest';
-import type { AskMeta, FailureMeta, InboxEntry, ReportMeta } from '@murmur/shared';
+import type { AskMeta, FailureMeta, InboxEntry, ReportMeta } from '@harkroom/shared';
 import { inboxRow, matchesFilter } from '../src/lib/inboxRow';
 import { translator } from '../src/i18n';
 

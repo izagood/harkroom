@@ -14,7 +14,7 @@
 //
 // **스위치를 1단계에 함께 넣는 이유**: 나중에 넣으면 그 커밋이 "표를 읽게 바꾸는 것"과
 // "스위치를 만드는 것" 두 변경을 겹치게 되고, 문제가 났을 때 어느 쪽 탓인지 가릴 수 없다.
-import type { AgentHarness } from '@murmur/shared';
+import type { AgentHarness } from '@harkroom/shared';
 
 import { CLAUDE_CODE_ADAPTER } from './claudeCode.js';
 import { CODEX_ADAPTER } from './codex.js';

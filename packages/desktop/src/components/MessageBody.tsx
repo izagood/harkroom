@@ -4,7 +4,7 @@ import { useActiveStore } from '../state/communities';
 import { NO_TEAMS } from '../state/appStore';
 import { splitMentions } from '../lib/mention';
 import { splitLinks, type LinkTarget, type BodyPart } from '../lib/link';
-import { extractPreviewUrls, renderMentions } from '@murmur/shared';
+import { extractPreviewUrls, renderMentions } from '@harkroom/shared';
 import { splitCode } from '../lib/code';
 import { parseBlocks, type Align, type Block, type Emphasis, type Inline } from '../lib/markdown';
 import { getExternalOpener } from '../lib/openExternal';

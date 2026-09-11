@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import {
   RUNNABLE_HARNESSES, resolveProjectionUrl, canonicalAvcsBaseUrl, type ProjectionConfigView,
-} from '@murmur/shared';
+} from '@harkroom/shared';
 import { getAgentDefaults, updateAgentDefaults } from '../services/agentDefaults.js';
 import { getProjectionConfig, setProjectionConfig } from '../services/projectionConfig.js';
 import { recordAudit } from '../audit.js';

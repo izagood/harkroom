@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { skillGroupOf, type SkillGroupId, type WorkspaceSkillView } from '@murmur/shared';
+import { skillGroupOf, type SkillGroupId, type WorkspaceSkillView } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { SettingsPage } from './primitives';

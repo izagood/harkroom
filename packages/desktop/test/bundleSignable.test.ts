@@ -34,7 +34,7 @@ const MAIN_RS = path.join(DESKTOP_DIR, 'src-tauri', 'src', 'main.rs');
 const ENTITLEMENTS = path.join(DESKTOP_DIR, 'src-tauri', 'entitlements.plist');
 
 const BUILD_HINT =
-  '먼저 `pnpm --filter @murmur/desktop build:sidecar` 와 ' +
+  '먼저 `pnpm --filter @harkroom/desktop build:sidecar` 와 ' +
   '`cd packages/desktop && npx tauri build --bundles app` 을 돌려라';
 
 /** 디렉터리 아래 **모든** 심볼릭 링크(링크를 따라가지 않는다). */

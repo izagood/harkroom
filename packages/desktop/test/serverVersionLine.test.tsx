@@ -13,7 +13,7 @@
 // 경고가 상시로 켜지고, 상시로 켜지는 경고는 아무도 안 본다. 사람이 답해야 하는 질문은
 // "다른가"가 아니라 **"이 서버에서 이 앱이 도는가"** 다.
 import { describe, it, expect } from 'vitest';
-import { MIN_SERVER_VERSION, type ServerVersion } from '@murmur/shared';
+import { MIN_SERVER_VERSION, type ServerVersion } from '@harkroom/shared';
 import { serverVersionLine } from '../src/lib/serverVersionLine';
 import { translator } from '../src/i18n';
 

@@ -5,7 +5,7 @@ import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { acc, chan } from './helpers/fakeApi';
-import type { InboxEntry } from '@murmur/shared';
+import type { InboxEntry } from '@harkroom/shared';
 
 /**
  * 사이드바 `Inbox` 줄의 미읽음 표시(2026-09-11 신고: *"새로운 알림이 왔을 때 Inbox 에도

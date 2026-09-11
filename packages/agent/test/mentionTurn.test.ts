@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AgentHarness, AgentView, MessageRow } from '@murmur/shared';
+import type { AgentHarness, AgentView, MessageRow } from '@harkroom/shared';
 import { mentionAnchor, runMentionTurn, syncSkills, type MentionTurnDeps, type MentionTurnMurmur, type RunTurn } from '../src/mentionTurn.js';
 import { BODY_LIMIT, NO_REPLY_NOTICE } from '../src/prompt.js';
 import { MurmurAgentClient } from '../src/murmur.js';
@@ -21,7 +21,7 @@ import { workspaceName, type Exec } from '../src/workspace.js';
 import type { TurnPlan } from '../src/turn.js';
 import { acceptsPtyInput, composeSpawn, runPtyTurn } from '../src/pty.js';
 import type { PtyWriter, TurnResult } from '../src/pty.js';
-import type { RelayRunnerFrame } from '@murmur/shared';
+import type { RelayRunnerFrame } from '@harkroom/shared';
 import { createRelayClient, type RelayHandlers } from '../src/relay.js';
 
 // PTY 계약 테스트가 쓰는 가짜 하네스(#369) — 이 파일에서는 `claude` 라는 이름의 shim 뒤에

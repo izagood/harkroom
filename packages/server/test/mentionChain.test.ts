@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { MENTION_CHAIN_LIMIT } from '@murmur/shared';
+import { MENTION_CHAIN_LIMIT } from '@harkroom/shared';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';

@@ -16,12 +16,12 @@
  *
  * ## 이 파일이 재는 것 — 판정과 문구, 그리고 그 문구가 닿는 자리
  *
- * 구분자는 **러너 로그의 마지막 줄**이고(`@murmur/shared` 의 두 상수), 그것이 여기까지
+ * 구분자는 **러너 로그의 마지막 줄**이고(`@harkroom/shared` 의 두 상수), 그것이 여기까지
  * 오는 경로는 `#434` 가 놓았다: 러너의 출력이 파일로 가고 → daemon 이 exit 순간 꼬리를
  * 읽어 `runnerExit` 에 싣고 → 앱이 `onExit(code, tailLines)` 로 받는다.
  *
  * **문자열을 손으로 적어 대조하지 않는다.** 꼬리에 넣는 구분자도, 화면에서 찾는 실행
- * 파일 이름도 전부 `@murmur/shared` 의 진실 원천에서 가져온다 — 테스트가 자기 사본을
+ * 파일 이름도 전부 `@harkroom/shared` 의 진실 원천에서 가져온다 — 테스트가 자기 사본을
  * 들면 상수가 바뀔 때 이 파일만 초록으로 남고, 그때 앱은 다시 사유를 지어낸다.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -32,7 +32,7 @@ import {
   EXECUTABLE_NOT_FOUND_LINE,
   HARNESS_LOGIN_REQUIRED_LINE,
   harnessBinaryName,
-} from '@murmur/shared';
+} from '@harkroom/shared';
 import {
   RunnerLauncher,
   type LaunchableAgent,

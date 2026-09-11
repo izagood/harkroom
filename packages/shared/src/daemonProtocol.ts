@@ -10,7 +10,7 @@
  *
  * `index.ts` 는 **Node 의존이 없는 순수 타입**이고 데스크탑 웹뷰가 직접 import 한다.
  * 이 모듈은 `node:crypto` 를 쓴다. 기본 진입점에 얹으면 브라우저 번들이 깨진다 —
- * 2단계-a 가 `daemonEndpoint` 를 `@murmur/shared/daemonEndpoint` 로 낸 것과 같은 이유다.
+ * 2단계-a 가 `daemonEndpoint` 를 `@harkroom/shared/daemonEndpoint` 로 낸 것과 같은 이유다.
  *
  * ## 왜 자체 스키마인가 (JSON-RPC 가 아니라)
  *

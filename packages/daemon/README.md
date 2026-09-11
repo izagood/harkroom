@@ -1,4 +1,4 @@
-# @murmur/daemon
+# @harkroom/daemon
 
 harkroom daemon. 앱이 아니라 이쪽이 러너를 소유하게 만드는 상주 프로세스다(`#431` 2단계).
 
@@ -102,10 +102,10 @@ daemon 은 stdout 에 적고, 앱이 그것을 `daemon-v<N>.log` 로 돌린다(`
 
 ## 왜 `packages/agent/` 안이 아니라 별도 패키지인가
 
-daemon 을 `@murmur/agent` 안에 두 번째 엔트리로 넣는 것이 더 짧은 길이었다. 그렇게 하지
+daemon 을 `@harkroom/agent` 안에 두 번째 엔트리로 넣는 것이 더 짧은 길이었다. 그렇게 하지
 않은 이유는 **의존 경계 하나** 때문이다.
 
-`@murmur/agent` 는 `node-pty` 를 dependency 로 가진다 — 러너가 하네스를 PTY 로 돌려야 하기
+`@harkroom/agent` 는 `node-pty` 를 dependency 로 가진다 — 러너가 하네스를 PTY 로 돌려야 하기
 때문이다. **daemon 은 PTY 가 필요 없다.** daemon 이 하는 일은 러너 프로세스를 spawn 하고
 unix 소켓으로 말하는 것이고, 그 어느 것도 네이티브 애드온을 요구하지 않는다.
 
@@ -148,7 +148,7 @@ unix 소켓으로 말하는 것이고, 그 어느 것도 네이티브 애드온�
 ## 빌드
 
 ```sh
-pnpm --filter @murmur/desktop build:sidecar
+pnpm --filter @harkroom/desktop build:sidecar
 ```
 
 러너와 daemon 사이드카를 **함께** 낸다(같은 디렉터리로 나가므로 청소 지점이 하나여야 한다 —

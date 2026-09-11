@@ -5,7 +5,7 @@ import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { acc, chan } from './helpers/fakeApi';
-import { PROJECTION_UNCONFIGURED_NOTICE, type ChannelPrefRow, type ProjectionStatus } from '@murmur/shared';
+import { PROJECTION_UNCONFIGURED_NOTICE, type ChannelPrefRow, type ProjectionStatus } from '@harkroom/shared';
 
 const fakeController = () => {
   const c = {

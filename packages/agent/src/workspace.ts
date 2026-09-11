@@ -19,7 +19,7 @@ export type Exec = (
  * threadKey(`channelId/threadRootId` 형태, sessions.ts 의 SessionStore.threadKey 참고)를
  * 그대로 디렉터리 이름에 쓰지 않는 이유: 슬래시를 포함하고 길이도 일정하지 않다. sha256
  * 앞 8자로 줄이면 길이가 고정되고 충돌 확률은 무시할 만큼 낮다. handle 은 HANDLE_PATTERN
- * (`[a-zA-Z0-9_-]{2,32}`, @murmur/shared)으로 이미 디렉터리 이름에 안전한 문자만 허용되므로
+ * (`[a-zA-Z0-9_-]{2,32}`, @harkroom/shared)으로 이미 디렉터리 이름에 안전한 문자만 허용되므로
  * 별도로 다듬지 않는다.
  */
 export function workspaceName(handle: string, threadKey: string): string {
