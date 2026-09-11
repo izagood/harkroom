@@ -112,7 +112,7 @@ describe('허용 목록 밖의 스킴은 링크가 되지 않는다', () => {
   });
 });
 
-describe('murmur:// 는 OS 로 보내지 않는다', () => {
+describe('harkroom:// 는 OS 로 보내지 않는다', () => {
   const id = '11111111-2222-4333-8444-555555555555';
 
   it('앱 안에서 openMessage 로 연다', async () => {
@@ -127,8 +127,8 @@ describe('murmur:// 는 OS 로 보내지 않는다', () => {
     expect(open).not.toHaveBeenCalled();
   });
 
-  it('uuid 가 아닌 murmur:// 는 링크가 되지 않는다', () => {
-    show('murmur://message/not-a-uuid 와 murmur://open/whatever');
+  it('uuid 가 아닌 harkroom:// 는 링크가 되지 않는다', () => {
+    show('harkroom://message/not-a-uuid 와 harkroom://open/whatever');
 
     expect(screen.queryByTestId('body-link')).toBeNull();
   });

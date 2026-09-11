@@ -1574,7 +1574,7 @@ export const tauriSecretStore: RunnerSecretStore = {
  * `runnerExit` 이벤트가 웹뷰로 오는 이름. **Rust 의 `RUNNER_EXIT_EVENT` 와 같아야 한다** —
  * 다르면 exit 통지가 영영 안 와서 죽은 러너가 화면에 계속 `running` 으로 남는다.
  */
-export const RUNNER_EXIT_EVENT = 'murmur://runner-exit';
+export const RUNNER_EXIT_EVENT = 'harkroom://runner-exit';
 
 /** daemon 이 보낸 exit 통지. **`incarnationId` 가 이 이벤트의 핵심 필드다.** */
 export interface DaemonRunnerExit {

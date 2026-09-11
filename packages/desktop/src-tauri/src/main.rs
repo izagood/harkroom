@@ -294,14 +294,14 @@ fn detached_command(program: &std::path::Path) -> std::process::Command {
 /// 웹뷰가 러너 exit 을 듣는 이벤트 이름. **`incarnationId` 를 그대로 실어 보낸다** —
 /// 세대를 가리는 것은 앱 쪽(`runnerLauncher.handleExit`)의 일이고, Rust 는 daemon 이
 /// 말한 사실을 옮기기만 한다(`#419` 의 계약이 소켓 너머로 이어지는 자리).
-pub const RUNNER_EXIT_EVENT: &str = "murmur://runner-exit";
+pub const RUNNER_EXIT_EVENT: &str = "harkroom://runner-exit";
 
 /// 계정 로그인 진행 통지(2026-09-08). **`RUNNER_EXIT_EVENT` 와 같은 길로 간다** — 데몬이
 /// 소켓에 이벤트를 쓰고, `daemon_client` 가 그것을 받아 이 이름으로 웹뷰에 emit 한다.
 ///
 /// 응답이 아니라 이벤트인 이유: `claude auth login` 은 URL 을 찍고 사람이 브라우저를
 /// 다녀오는 동안 기다린다 — 요청 하나에 대한 답으로 담을 수 없는 길이의 시간이다.
-pub const CLAUDE_LOGIN_EVENT: &str = "murmur://claude-login";
+pub const CLAUDE_LOGIN_EVENT: &str = "harkroom://claude-login";
 
 /// 자식에게 넘길 `PATH` 를 웹뷰에 **알려 준다** — 만들어 주는 것이 아니다(`#513`).
 ///
