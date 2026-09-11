@@ -2,6 +2,7 @@ import { chmod, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+
 import { HARNESS_ENV_DENYLIST, assertHarnessContract, buildTurnCommand, preassignsSessionId, writeMcpConfigOnce, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
 
 // murmurUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
@@ -139,13 +140,16 @@ describe('buildTurnCommand — codex', () => {
   it('첫 턴은 sessionId 없이도 조립된다 — codex 는 id 를 사전 할당할 수 없다', () => {
     const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true });
     expect(p.command).toBe('codex');
-    expect(p.args[0]).toBe('exec');
+    // **TUI 다(2026-09-11).** `exec` 서브커맨드가 아니라 맨 `codex` 로 뜬다 — 첫 토큰이
+    // 플래그다. 재는 것은 "resume 이 아니다"이고, 그것은 실행 방식과 무관한 사실이다.
+    expect(p.args).not.toContain('exec');
     expect(p.args).not.toContain('resume');
   });
 
-  it('resume 턴은 exec resume <id>', () => {
+  it('resume 턴은 resume <id> — TUI 이므로 exec 가 앞에 붙지 않는다', () => {
     const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 'sid-9', isFirstTurn: false });
-    expect(p.args.slice(0, 3)).toEqual(['exec', 'resume', 'sid-9']);
+    expect(p.args.slice(0, 2)).toEqual(['resume', 'sid-9']);
+    expect(p.args).not.toContain('exec');
   });
 
   // `-s workspace-write` 는 `codex exec resume <id>` 에서 실제로 죽는다(실물 CLI 재현:
@@ -201,14 +205,20 @@ describe('buildTurnCommand — codex', () => {
   // avcs workspace 는 git 저장소가 아니다 — codex 가 "신뢰되지 않은 디렉터리"로 거부한다.
   // --skip-git-repo-check 로 이 검사를 건너뛰게 한다(avcs workspace 가 murmur 의 격리 경로라는
   // spec §3 설계 결정에 따른다). exec·resume 양쪽에 모두 필요하므로, 첫 턴·resume 턴 모두 확인한다.
-  it('첫 멘션 턴 argv 에 --skip-git-repo-check 가 들어간다 — avcs workspace 가 git repo 가 아니다', () => {
+  it('첫 멘션 턴 argv 에 --skip-git-repo-check 를 **못 받는다** — TUI 에는 그 플래그가 없다', () => {
     const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true });
-    expect(p.args).toContain('--skip-git-repo-check');
+    expect(p.args).not.toContain('--skip-git-repo-check');
+    // 실측(codex-cli 0.153.0): `codex --help`·`codex resume --help` 에 `--skip-git-repo-check` 가 없다.
+    // git 저장소가 아닌 워크스페이스는 `trustForCodex` 가 적는 `trust_level = "trusted"` 로 통과한다
+    // (거부 문구가 "Not inside a trusted directory **and** --skip-git-repo-check was not
+    // specified" 이므로 신뢰가 적혀 있으면 조건이 이미 만족된다).
   });
 
-  it('resume 턴 argv 에도 --skip-git-repo-check 가 들어간다', () => {
+  it('resume 턴 argv 에도 --skip-git-repo-check 를 **못 받는다** — TUI 에는 그 플래그가 없다', () => {
     const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false });
-    expect(p.args).toContain('--skip-git-repo-check');
+    expect(p.args).not.toContain('--skip-git-repo-check');
+    // 실측(codex-cli 0.153.0): `codex --help`·`codex resume --help` 에 `--skip-git-repo-check` 가 없다.
+    // 위와 같은 이유.
   });
 
   it('codex 인터랙티브 첫 턴과 resume 을 조립하고 격리 CODEX_HOME 을 넘긴다', () => {
@@ -229,14 +239,18 @@ describe('buildTurnCommand — codex', () => {
   // 멘션할 수 있는 사람이 운영자 개인 계정에 도달한다. 이 플래그는 codex exec·exec resume 에만
   // 있고 codex resume(인터랙티브)에는 **없다** — 그걸로 인해 인터랙티브 턴이 파싱 오류로
   // 깨지는 것을 막는다.
-  it('첫 멘션 턴 argv 에 --ignore-user-config 가 들어간다 — 운영자 전역 MCP 무시', () => {
+  it('첫 멘션 턴 argv 에 --ignore-user-config 를 **못 받는다** — TUI 에는 그 플래그가 없다', () => {
     const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true });
-    expect(p.args).toContain('--ignore-user-config');
+    expect(p.args).not.toContain('--ignore-user-config');
+    // 실측(codex-cli 0.153.0): `codex --help`·`codex resume --help` 에 `--ignore-user-config` 가 없다.
+    // 운영자 개인 config 격리는 러너별 `CODEX_HOME`(`ensureCodexHome`)이 한다.
   });
 
-  it('resume 턴 argv 에도 --ignore-user-config 가 들어간다', () => {
+  it('resume 턴 argv 에도 --ignore-user-config 를 **못 받는다** — TUI 에는 그 플래그가 없다', () => {
     const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false });
-    expect(p.args).toContain('--ignore-user-config');
+    expect(p.args).not.toContain('--ignore-user-config');
+    // 실측(codex-cli 0.153.0): `codex --help`·`codex resume --help` 에 `--ignore-user-config` 가 없다.
+    // 위와 같은 이유.
   });
 
   // claude 는 자체 --strict-mcp-config 로 처리하므로 codex 용 --ignore-user-config 가
@@ -661,8 +675,11 @@ describe('실행 모델 교체 — 멘션 턴도 TUI 다 (2026-09-08)', () => {
     expect(p.args).not.toContain('bypassPermissions');
   });
 
-  it('codex 는 그대로 exec 다 — P5 전까지 두 세계가 함께 산다', () => {
+  it('codex 도 TUI 다 — 멘션 턴이 exec 로 조립되지 않는다 (2026-09-11)', () => {
+    // 이 테스트는 반대를 못 박고 있었다("codex 는 그대로 exec 다 — P5 전까지"). 그 P5 가
+    // 왔다. 전환 기준이 **codex 가 TUI 로 도는 것**이므로 여기서 재는 것도 뒤집힌다.
     const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true });
-    expect(p.args).toContain('exec');
+    expect(p.args).not.toContain('exec');
+    expect(p.stdinFile).toBeNull();
   });
 });

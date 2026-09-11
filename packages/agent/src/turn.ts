@@ -12,6 +12,8 @@ import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { RUNNABLE_HARNESSES, type AgentHarness, type MentionPermission } from '@murmur/shared';
 
+import { executionModelFor } from './adapters/index.js';
+
 /**
  * `murmurUrl` 은 서버 베이스 URL(`http://localhost:3400`)이고, MCP 엔드포인트는 `/mcp` 다.
  * claude(`writeMcpConfigOnce`)와 codex(`CODEX_PRESET.mcp`) 양쪽이 이 정규화를 거쳐야 한다 —
@@ -207,7 +209,11 @@ const CLAUDE_PRESET: HarnessPreset = {
 const CODEX_PRESET: HarnessPreset = {
   command: 'codex',
   session(sessionId, isFirstTurn, mode) {
-    if (mode === 'interactive') {
+    // **모드가 아니라 실행 방식으로 갈린다(2026-09-11).** 멘션 턴이 TUI 로 올라가면
+    // 그 턴의 argv 도 TUI 의 것이어야 한다 — `codex exec` 가 아니라 `codex`/`codex resume`.
+    // 스위치가 꺼져 있으면 `executionModelFor` 가 옛 답('exec')을 주므로 아래 분기는
+    // 지금까지와 똑같이 돈다.
+    if (executionModelFor('codex', mode) === 'tui') {
       // 실제 codex-cli 0.153.2 에서 첫 턴은 맨 `codex`, 이후 턴은 `codex resume <id>` 다.
       // 개인 config 격리는 지원되지 않는 --ignore-user-config 대신 CODEX_HOME 으로 보장한다.
       return sessionId === null ? [] : ['resume', sessionId];
@@ -305,7 +311,16 @@ const CODEX_PRESET: HarnessPreset = {
   //
   // 인터랙티브 턴(codex resume)은 이 플래그를 못 받는다. 대신 자식 프로세스의 CODEX_HOME 을
   // 러너 상태 디렉터리로 격리하므로 개인 config.toml 을 상속하지 않는다.
-  alwaysArgs: (mode) => (mode === 'mention' ? ['--skip-git-repo-check', '--ignore-user-config'] : []),
+  //
+  // **실행 방식으로 갈린다 — 모드가 아니다.** 이 두 플래그는 `exec` 계열에만 있다(실측,
+  // codex-cli 0.153.0: `codex --help` · `codex resume --help` 에 둘 다 없다). 모드로
+  // 판단하면 멘션 턴을 TUI 로 올리는 순간 그대로 붙어 `unexpected argument` 로 죽는다.
+  //
+  // TUI 에서 두 플래그가 하던 일은 다른 수단이 이미 대신한다 — git 저장소 아님은
+  // `trustForCodex` 가 적는 `trust_level = "trusted"` 가, 개인 config 격리는 러너별
+  // `CODEX_HOME` 이 한다. 근거 전문은 `adapters/codex.ts` 의 `executionModel` 주석에 있다.
+  alwaysArgs: (mode) =>
+    (executionModelFor('codex', mode) === 'exec' ? ['--skip-git-repo-check', '--ignore-user-config'] : []),
   // codex 도 stdin 파일을 통해 프롬프트를 받는다(#117). 원래는 PTY stdin 리다이렉션이
   // 불가능하다고 생각했으나 실측 결과 두 하네스 모두 exec/print 모드에서 stdin 에 TTY 를
   // 요구하지 않음이 확인됐다. 그래서 argv 로 나가던 지시문+본문을 stdin 파일로 옮기고,

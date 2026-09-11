@@ -19,7 +19,7 @@ import type { AgentHarness } from '@murmur/shared';
 import { CLAUDE_CODE_ADAPTER } from './claudeCode.js';
 import { CODEX_ADAPTER } from './codex.js';
 import { OPENCODE_ADAPTER } from './opencode.js';
-import type { HarnessAdapter } from './contract.js';
+import type { ExecutionModel, HarnessAdapter } from './contract.js';
 
 export type { HarnessAdapter, ExecutionModel, TrustLedger, TranscriptSource, AccountAxis } from './contract.js';
 export { GATE_PATTERN } from './gate.js';
@@ -76,8 +76,40 @@ export function readsSessionTranscript(harness: AgentHarness): boolean {
  * 바꾸는 날 고칠 곳은 어댑터 표 한 줄이고, 그때 이 함수는 안 고친다.
  */
 export function usesTuiForMention(harness: AgentHarness): boolean {
-  if (!harnessAdaptersEnabled()) return harness === 'claude-code';
-  return adapterFor(harness).executionModel.mention === 'tui';
+  return executionModelFor(harness, 'mention') === 'tui';
+}
+
+/**
+ * **이 하네스를 이 모드에서 어떤 실행 방식으로 띄우는가.**
+ *
+ * `usesTuiForMention` 이 이것의 멘션 전용 얼굴이다. 갈라 둔 이유는 **argv 의 모양이 모드가
+ * 아니라 실행 방식을 따라야** 하기 때문이다 — `turn.ts` 의 codex 프리셋이 그것을 읽는다.
+ * 같은 codex 가 `codex exec` 로 뜰 때와 `codex`(TUI)로 뜰 때 **받는 플래그 집합이 다르다**
+ * (실측, codex-cli 0.153.0): `--skip-git-repo-check` 와 `--ignore-user-config` 는 `exec`
+ * 계열에만 있고 TUI(`codex`·`codex resume`)에는 **없다**. 모드로 판단하면 멘션 턴을 TUI 로
+ * 올리는 순간 그 플래그들이 그대로 붙어 `unexpected argument` 로 죽는다.
+ *
+ * 스위치가 꺼져 있으면 **옛 답을 그대로** 준다(claude 는 양쪽 TUI, codex 는 멘션만 exec).
+ * 켜면 표를 읽는다 — 그리고 표에서 codex 의 멘션이 이제 `'tui'` 다. **이것이 이 이설의
+ * "추가" 다**: 새 경로는 claude 에 대해 옛 경로와 같고, codex 에 대해 TUI 로 올라간다.
+ */
+export function executionModelFor(harness: AgentHarness, mode: 'mention' | 'interactive'): ExecutionModel {
+  /**
+   * **스위치를 보지 않는다(2026-09-11, jaebin 의 순서).**
+   *
+   * 두 가지를 한 커밋에 겹치지 않기 위해서다:
+   *   ① 기존 경로에서 codex 를 headless → TUI 로 올린다  ← 이 커밋
+   *   ② 그다음 기존 경로 → 새 경로로 옮긴다(순수 리팩터)
+   *
+   * 앞 판본은 codex TUI 를 **새 경로에만** 넣었다. 그러면 스위치를 켜는 순간 *경로*와
+   * *실행 방식*이 **동시에** 바뀌고, codex 턴이 깨졌을 때 어느 쪽 탓인지 가릴 수 없다.
+   * 실행 방식을 스위치 밖으로 빼면 스위치는 **아무 동작도 바꾸지 않는 리팩터**가 되고,
+   * 그 사실을 패리티 테스트가 증명할 수 있다.
+   *
+   * 그래서 이 함수에는 옛/새 갈림이 **없다.** 실행 방식은 하나뿐이고 표가 그것을 말한다 —
+   * 다른 사실들(계정 풀·기록 판정·신뢰 장부)은 여전히 스위치 뒤에서 갈린다.
+   */
+  return adapterFor(harness).executionModel[mode];
 }
 
 /**

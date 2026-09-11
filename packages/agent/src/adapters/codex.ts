@@ -8,20 +8,36 @@ export const CODEX_ADAPTER: HarnessAdapter = {
   command: 'codex',
 
   /**
-   * **`mention: 'exec'` 은 목표가 아니라 현재 상태다.**
+   * **멘션 턴도 TUI 다(2026-09-11).** 이것이 이 이설의 "추가" 이고, 전환의 기준이다 —
+   * TUI 캡슐화가 murmur 의 전제이고 `exec` 는 개발 과정의 산물이었다.
    *
-   * TUI 캡슐화가 murmur 의 전제이고 codex 의 exec 는 개발 과정의 산물이다. 이 값이 `'tui'`
-   * 로 바뀌는 데 필요한 것은 이미 대체로 갖춰져 있다:
-   * - 신뢰 대화상자 — `workspaceTrust.ts::trustForCodex` 가 격리된 `<CODEX_HOME>/config.toml`
-   *   에 `trust_level = "trusted"` 를 적고, `ensureWorkspaceTrusted` 가 codex 에도 배선돼 있다.
-   *   (이것이 없어서 P5 를 보류했다는 판단이 한때 있었는데, 그 사이 구현됐다.)
-   * - 준비 신호 — 아래 `screen.ready` 가 실물 화면 fixture(`codex-tui-ready.txt`)로 고정돼 있다.
+   * `exec` 로 뜬 턴은 `sh -c '… < 파일'` 로 감싸여 fd 0 이 일반 파일이 된다. 그러면
+   * `acceptsPtyInput` 이 거짓이라 **사람이 그 턴에 끼어들 수 없다**(관찰 전용). 터미널을
+   * 보여 주는 이유가 개입인데 그 제약을 받아들일 근거가 없다.
    *
-   * 남은 것은 **실물 왕복 확인**뿐이다(부팅 → 준비 → 주입 → 발화 → resume → 중단). 그
-   * 확인이 끝나기 전에 이 값을 바꾸면 안 된다 — 켜는 것은 이 표 한 줄이지만, 그 한 줄이
-   * 프로덕션의 모든 codex 멘션 턴을 동시에 바꾼다.
+   * 이 한 줄이 바뀌면 턴의 네 가지가 함께 바뀐다(`usesTuiForMention` 을 읽는 자리들):
+   * 프롬프트가 stdin 파일이 아니라 **PTY 주입**이 되고, 사람이 칠 수 있게 되고, 시간 한도를
+   * **무발화**로 재고(프로세스 수명이 아니라), 정지·에러 탐침이 돌기 시작한다.
+   *
+   * **argv 도 함께 바뀐다 — 그쪽이 실제 일이었다.** `turn.ts` 의 이 프리셋은 모드가 아니라
+   * `executionModelFor` 를 읽어 argv 를 조립한다: TUI 는 `codex` / `codex resume <id>` 이고
+   * `--skip-git-repo-check`·`--ignore-user-config` 를 **못 받는다**(실측, 0.153.0 —
+   * `codex --help` 와 `codex resume --help` 둘 다에 그 두 플래그가 없다).
+   *
+   * 그 둘이 하던 일은 다른 수단이 이미 대신한다:
+   * - git 저장소 아님 → `workspaceTrust.ts::trustForCodex` 가 격리 홈의 `config.toml` 에
+   *   `[projects."<경로>"] trust_level = "trusted"` 를 적는다. codex 가 거부하던 문구가
+   *   *"Not inside a trusted directory and --skip-git-repo-check was not specified"* 였으니
+   *   **신뢰가 적혀 있으면 그 조건이 이미 만족된다.**
+   * - 운영자 개인 config 격리 → 러너별 `CODEX_HOME`(`ensureCodexHome`)이 한다.
+   *
+   * **아직 못 잰 것**: `codex exec` 가 만든 세션을 TUI `codex resume <id>` 가 이어받는지.
+   * `--include-non-interactive` 는 "resume 피커와 `--last` 선택에 비대화형 세션을 포함"
+   * 이라 명시돼 있어(실측) **명시적 id 로 이어받는 길과는 다른 축**으로 보이지만, 확인한
+   * 것은 아니다. 스위치를 켠 첫 codex 턴이 **이미 exec 세션을 가진 스레드**일 때가 그
+   * 위험이 드러나는 자리다 — 기본값이 꺼짐인 이유가 여기에도 있다.
    */
-  executionModel: { mention: 'exec', interactive: 'tui' },
+  executionModel: { mention: 'tui', interactive: 'tui' },
 
   screen: {
     // `Ask <이름> to do anything` 자리표시자. fixture: `test/fixtures/codex-tui-ready.txt`.

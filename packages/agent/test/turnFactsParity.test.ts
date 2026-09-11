@@ -1,4 +1,4 @@
-// **옛 경로와 새 경로가 같은 답을 내는가** — 턴이 하네스에 대해 묻는 세 사실(이설 3/N).
+// **새 경로가 옛 경로와 무엇이 같고 무엇이 달라야 하는가** — 턴의 세 사실(2026-09-11 개정).
 //
 // `mentionTurn` 4자리 + `interactiveTurn` 3자리가 실은 **세 질문**이었다:
 //
@@ -6,15 +6,20 @@
 //   2. 계정 풀 표면이 있는가            (`hasAccountPool`)
 //   3. 첫 턴 뒤 세션 id 를 발견하는가   (`discoversSessionIdAfterTurn`)
 //
-// 세 함수가 스위치를 품고 있으므로 **그 함수들이 곧 갈림길**이다. 여기서 양쪽을 돌려
-// 답을 맞추는 것이 이 이설의 패리티다.
+// 세 함수가 스위치를 품고 있으므로 **그 함수들이 곧 갈림길**이다.
 //
-// ## 값을 맞추는 것만으로는 부족하다
+// ## 스위치는 실행 방식을 바꾸지 않는다 (2026-09-11, jaebin 의 순서)
 //
-// 두 경로가 같은 답을 낸다는 것과 **그 답이 옳다**는 것은 다른 문제다. 표의 값을 잘못
-// 적으면 양쪽이 나란히 틀리는 것은 아니지만(옛 경로는 이름을 보므로), 새 경로만 틀린 채
-// "같다" 를 재면 그 차이가 드러난다 — 그래서 하네스별 기대값을 따로 못 박는다. 그 표가
-// 곧 "지금 프로덕션이 이렇게 돈다"의 기록이다.
+// 앞 판본은 "codex 는 `usesTui` 만 다르다"를 재고 있었다 — 실행 방식을 **새 경로에만** 넣었기
+// 때문이다. 그러면 스위치를 켜는 순간 *경로*와 *실행 방식*이 동시에 바뀌고, codex 턴이
+// 깨졌을 때 어느 쪽 탓인지 가릴 수 없다. 그래서 순서를 갈랐다:
+//
+//   ① 기존 경로에서 codex 를 headless → TUI 로 올린다   ← 실행 방식은 스위치 **밖**이다
+//   ② 그다음 기존 경로 → 새 경로로 옮긴다               ← 스위치는 순수 리팩터가 된다
+//
+// 그래서 이 파일은 다시 **두 경로가 모든 하네스에서 같은 답을 내는지**를 잰다. 값이 옛것과
+// 달라진 것(codex 의 `usesTui`)은 ①이 한 일이고, 스위치는 그것을 건드리지 않는다.
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { RUNNABLE_HARNESSES, type AgentHarness } from '@murmur/shared';
 
@@ -44,21 +49,22 @@ function facts(harness: AgentHarness, enabled: boolean) {
   };
 }
 
-describe('턴의 세 사실 — 옛 경로와 새 경로가 같다', () => {
+describe('턴의 세 사실 — 스위치는 아무것도 바꾸지 않는다', () => {
   for (const harness of RUNNABLE) {
-    it(`${harness}: 세 답이 모두 같다`, () => {
+    it(`${harness}: 세 답이 두 경로에서 같다`, () => {
       expect(facts(harness, true)).toEqual(facts(harness, false));
     });
   }
 
   /**
-   * 지금 프로덕션이 도는 모양. **`codex.usesTui: false` 는 목표가 아니라 현재 상태다** —
-   * 새 경로가 먼저 "같아야" 하고, codex 를 TUI 로 바꾸는 것은 그다음 결정이다. 바꾸는 날
-   * 고칠 곳은 어댑터 표 한 줄이고 이 기대값도 함께 바뀐다(그 diff 가 리뷰에 보인다).
+   * 지금 프로덕션이 도는 모양 — **두 경로가 같으므로 경로를 나누지 않는다.**
+   *
+   * `codex.usesTui: true` 가 ①(headless → TUI)이 한 일이다. 되돌릴 일이 생기면 이 기대값의
+   * diff 가 리뷰에 보인다.
    */
   const EXPECTED: Record<string, { usesTui: boolean; pooled: boolean; discovers: boolean }> = {
     'claude-code': { usesTui: true, pooled: true, discovers: false },
-    codex: { usesTui: false, pooled: false, discovers: true },
+    codex: { usesTui: true, pooled: false, discovers: true },
   };
 
   for (const harness of RUNNABLE) {
@@ -69,20 +75,19 @@ describe('턴의 세 사실 — 옛 경로와 새 경로가 같다', () => {
     });
   }
 
-  it('세 사실이 서로 독립이다 — 한 하네스에서 셋이 같은 값이면 이 테스트가 헐렁하다', () => {
-    // claude 는 (true, true, false), codex 는 (false, false, true) 다. 세 질문이 같은
-    // 비교에서 나왔으므로, 실수로 한 함수를 다른 함수로 부르면 값이 겹쳐 드러난다.
+  it('세 사실이 서로 독립이다 — 셋이 같은 값이면 이 테스트가 헐렁하다', () => {
+    // claude (true,true,false) / codex (true,false,true). 실수로 한 함수를 다른 함수로
+    // 부르면 값이 겹쳐 드러난다.
     const claude = facts('claude-code', true);
-    expect(claude.discovers).not.toBe(claude.usesTui);
     const codex = facts('codex', true);
-    expect(codex.discovers).not.toBe(codex.usesTui);
+    expect(claude.pooled).not.toBe(codex.pooled);
+    expect(claude.discovers).not.toBe(codex.discovers);
   });
 
-  it('opencode 는 셋 다 표에서 나온다 — 새 경로에서만 뜻이 있는 값이다', () => {
-    // 옛 경로는 이름을 보므로 `usesTui:false, pooled:false, discovers:false` 를 준다.
-    // 새 경로는 표를 읽어 `discovers:true` 를 준다(세션 사전 할당이 불가하다는 실측).
-    // **이것이 두 경로가 갈리는 유일한 자리이고, 그래도 안전하다** — opencode 는
-    // `RUNNABLE_HARNESSES` 에 없어 러너가 그 턴을 만들지 않는다.
+  it('opencode 는 계정·세션 사실만 스위치로 갈린다 — 실행 방식은 갈리지 않는다', () => {
+    // 실행 방식은 스위치 밖이므로 두 경로가 같다. 계정 축·세션 발견은 아직 스위치 뒤에 있어
+    // 갈리는데, RUNNABLE 이 아니라 러너가 그 턴을 만들지 않으므로 안전하다.
+    expect(facts('opencode', true).usesTui).toBe(facts('opencode', false).usesTui);
     expect(facts('opencode', false).discovers).toBe(false);
     expect(facts('opencode', true).discovers).toBe(true);
   });
