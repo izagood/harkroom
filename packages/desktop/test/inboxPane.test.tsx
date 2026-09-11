@@ -7,6 +7,12 @@
 // 몫이다). 여기서 재는 것은 딱 하나다 — **인박스와 스레드가 같은 화면에 동시에 서는가.**
 // 껍데기가 다시 모달로 돌아가면 이 파일이 빨개진다.
 //
+// **2026-09-11: 자리가 왼쪽 열에서 본문으로 옮겼다.** 다섯 열(레일·사이드바·인박스·채널·
+// 스레드)이 서면 맨 오른쪽이 잘렸고, 하필 잘리는 것이 함께 보여야 할 그 스레드였다. 위
+// 문장("동시에 선다")은 그대로 지킨다 — 바뀐 것은 **무엇을 내주고 그것을 지키는가**이고,
+// 이제 내주는 것은 채널 타임라인이다. 그래서 이 파일의 축 하나가 뒤집힌다: 인박스가 열리면
+// `channel-pane` 은 **없어야 한다**(예전에는 그 왼쪽에 나란히 서 있어야 했다).
+//
 // `Workspace` 를 **통째로** 띄운다. `mentionClick.test.tsx` 가 같은 이유로 그렇게 한다:
 // 인박스를 단독으로 렌더하면 "모달이 아니다"를 증명할 수 없다 — 모달이 막는 것은 자기
 // 자신이 아니라 **옆에 선 것**이고, 그 옆이 있는 곳이 이 화면이다.
@@ -19,9 +25,17 @@ import { setController, type Controller } from '../src/state/controller';
 import { Workspace } from '../src/components/Workspace';
 import { acc, chan, fakeApi, msg } from './helpers/fakeApi';
 
-const entry = (id: number, reason: InboxEntry['reason'], channelId: string): InboxEntry => ({
+/**
+ * `threadRootId` 가 **축이 되었다**(2026-09-11). 인박스가 본문을 차지하므로 줄을 눌렀을 때
+ * 인박스가 남는지 접히는지를 그 값이 정한다 — 답글이면 스레드가 오른쪽에 서서 둘이 함께
+ * 보이고, 본문의 말이면 목적지가 인박스 뒤에 숨으므로 자리를 내준다(`Inbox.openEntry`).
+ * 그래서 인자로 받는다: 전에는 늘 `null` 이라 `thread_reply` 줄도 실제 데이터와 달랐다.
+ */
+const entry = (
+  id: number, reason: InboxEntry['reason'], channelId: string, threadRootId: string | null = null,
+): InboxEntry => ({
   id, messageId: `m${id}`, reason, readAt: null, channelId, authorId: 'u2', body: '이거 봐줘',
-  meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null,
+  meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId,
 });
 
 /**
@@ -93,6 +107,23 @@ describe('인박스는 자리다 — 모달이 아니다 (#488 C2)', () => {
     // **둘 다** 있다. 하나가 다른 하나를 밀어내지 않는다.
     expect(screen.getByTestId('thread-pane')).toBeTruthy();
     expect(screen.getByTestId('inbox-pane')).toBeTruthy();
+    // 그리고 자리를 내준 것은 **채널**이다 — 열이 늘지 않아야 스레드가 잘리지 않는다.
+    expect(screen.queryByTestId('channel-pane')).toBeNull();
+  });
+
+  /**
+   * 접으면 채널이 **돌아온다.** 자리를 내주는 것과 빼앗는 것은 다르다 — 돌아오지 않으면
+   * 인박스를 한 번 연 뒤로 보던 대화가 사라진 앱이 된다.
+   */
+  it('인박스를 접으면 채널이 그 자리로 돌아온다', async () => {
+    mount([entry(1, 'mention', 'c1')]);
+
+    openInbox();
+    await screen.findByTestId('inbox-pane');
+    expect(screen.queryByTestId('channel-pane')).toBeNull();
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.getByTestId('channel-pane')).toBeTruthy());
   });
 
   /**
@@ -102,8 +133,8 @@ describe('인박스는 자리다 — 모달이 아니다 (#488 C2)', () => {
    * `openMessage` 는 목이라 스레드를 실제로 열지 않으므로, 그 뒤 스토어를 세워 스레드가
    * 떴을 때를 만든다. 재는 것은 **인박스가 그때까지 살아 있는가**다.
    */
-  it('인박스에서 항목을 눌러 스레드로 들어가도 인박스가 닫히지 않는다', async () => {
-    const c = mount([entry(7, 'thread_reply', 'c1')]);
+  it('인박스에서 답글을 눌러 스레드로 들어가도 인박스가 닫히지 않는다', async () => {
+    const c = mount([entry(7, 'thread_reply', 'c1', 'm1')]);
 
     openInbox();
     await waitFor(() => expect(screen.getByTestId('inbox-entry-7')).toBeTruthy());
@@ -118,6 +149,26 @@ describe('인박스는 자리다 — 모달이 아니다 (#488 C2)', () => {
     useAppStore.getState().set({ threadRootId: 'm1' });
     await waitFor(() => expect(screen.getByTestId('thread-pane')).toBeTruthy());
     expect(screen.getByTestId('inbox-pane')).toBeTruthy();
+  });
+
+  /**
+   * **본문의 말은 반대다**(2026-09-11). 인박스가 본문 자리를 쓰므로, 목적지가 채널이면
+   * 남는 것이 곧 **누른 것을 가리는 것**이다 — 사람은 클릭이 먹지 않았다고 읽는다.
+   *
+   * 이것이 모달로의 회귀가 아닌 이유: 모달은 목적지와 무관하게 늘 닫혔다. 여기서 닫히는
+   * 것은 **그 자리가 목적지일 때**뿐이고, 답글(위 테스트)에서는 그대로 남는다.
+   */
+  it('채널 본문의 말을 누르면 인박스가 자리를 내준다', async () => {
+    const c = mount([entry(9, 'mention', 'c1')]);
+
+    openInbox();
+    await waitFor(() => expect(screen.getByTestId('inbox-entry-9')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('inbox-entry-9'));
+
+    expect(c.openMessage).toHaveBeenCalledWith('m9');
+    // 인박스가 접히고 채널이 그 자리에 선다 — 누른 것이 보인다.
+    await waitFor(() => expect(screen.queryByTestId('inbox-pane')).toBeNull());
+    expect(screen.getByTestId('channel-pane')).toBeTruthy();
   });
 
   /**
@@ -139,29 +190,28 @@ describe('인박스는 자리다 — 모달이 아니다 (#488 C2)', () => {
   });
 
   /**
-   * 자리는 **형제**여야 한다. 채널·스레드와 같은 가로줄에 서지 않으면 폭을 나눠 갖지 못하고,
+   * 자리는 **형제**여야 한다. 스레드와 같은 가로줄에 서지 않으면 폭을 나눠 갖지 못하고,
    * 그 순간 다시 무언가를 덮는 것이 된다.
    *
-   * 축까지 함께 잰다 — 인박스는 채널의 **왼쪽**이다(근거는 `Workspace.tsx` 주석). 스레드가
-   * 채널 오른쪽에 서므로 인박스가 같은 쪽에 서면 스레드와 자리를 다투게 된다(#141 에서
-   * 터미널이 이미 스레드와 그 자리를 다툰다 — 셋째를 더 넣지 않는다).
+   * **열의 개수까지 잰다**(2026-09-11). 이 작업이 고친 것이 그것이라 "스레드 왼쪽에 있다"
+   * 만으로는 부족하다 — 인박스가 다시 자기 열을 만들면 그 축은 그대로 초록인 채로 스레드가
+   * 화면 밖으로 나간다. 그래서 **채널과 같은 칸을 쓴다**는 것을 직접 본다: 인박스가 서 있는
+   * 동안 그 가로줄의 자식은 인박스와 스레드 둘뿐이다.
    */
-  it('채널·스레드와 같은 가로줄의 형제이고, 채널 왼쪽에 선다', async () => {
+  it('스레드와 같은 가로줄의 형제이고, 채널과 같은 칸을 쓴다', async () => {
     mount([entry(1, 'mention', 'c1')], { threadRootId: 'm1' });
 
     openInbox();
     const pane = await screen.findByTestId('inbox-pane');
     const kids = Array.from(pane.parentElement!.children);
 
-    const channel = screen.getByTestId('channel-pane');
     const thread = screen.getByTestId('thread-pane');
-    // 셋이 한 줄에 있다 — 부모가 같다.
-    expect(kids).toContain(channel);
     expect(kids).toContain(thread);
-
-    // 인박스가 채널보다 앞(= 왼쪽)이고, 스레드는 채널보다 뒤(= 오른쪽)다.
-    expect(kids.indexOf(pane)).toBeLessThan(kids.indexOf(channel));
-    expect(kids.indexOf(thread)).toBeGreaterThan(kids.indexOf(channel));
+    // 인박스가 스레드보다 앞(= 왼쪽)이다.
+    expect(kids.indexOf(pane)).toBeLessThan(kids.indexOf(thread));
+    // 그리고 채널은 **그 줄에 없다** — 열이 늘지 않았다는 뜻이고, 그것이 이 작업의 요지다.
+    expect(screen.queryByTestId('channel-pane')).toBeNull();
+    expect(kids.length).toBe(2);
   });
 });
 
@@ -290,18 +340,24 @@ describe('인박스 자리 — 좁은 창 (#488 C2)', () => {
   });
 
   /**
-   * 자리는 **줄어들되 사라지지 않는다.** `min-width` 없이 `flex` 에 맡기면 좁은 창에서
-   * 폭이 0 에 가까워지고, 사람은 그것을 "인박스가 안 열렸다"로 읽는다 — 되돌릴 손잡이
-   * (닫기 버튼)도 그 사라진 자리에 있으니 빠져나올 길이 없다. `MIN_CHANNEL_WIDTH` 의
-   * 주석이 채널에 대해 같은 것을 적어 뒀다: 이 값이 지키는 것은 편안함이 아니라
-   * **되돌릴 수 있음**이다.
+   * **폭을 스스로 정하지 않는다**(2026-09-11). 400px 고정과 `MIN_INBOX_PANE_WIDTH` 가
+   * 여기 있었고, 그 둘은 인박스가 **자기 열**이던 시절의 값이다. 본문이 된 지금 고정 폭을
+   * 남기면 열 하나를 없앤 의미가 사라진다 — 오른쪽에 남는 폭이 다시 줄어든다.
+   *
+   * 하한은 오른쪽 패널들이 이미 지킨다(`ThreadPanel` 이 `MIN_CHANNEL_WIDTH` 를 남기고
+   * 자기 최대 폭을 정한다). 그래서 여기서 재는 것은 **인라인 폭이 없다는 것**과
+   * `min-w-0` 이다 — 후자가 없으면 긴 본문 한 줄이 flex 기본 `min-width: auto` 를 밀어
+   * 올려 오른쪽 패널을 화면 밖으로 내보낸다(고치려던 그 증상 그대로다).
    */
-  it('최소 폭을 갖는다 — 좁은 창에서 폭 0 으로 사라지지 않는다', async () => {
+  it('본문 폭을 채운다 — 자기 폭을 못 박지 않는다', async () => {
     mount([entry(1, 'mention', 'c1')]);
 
     openInbox();
     const pane = await screen.findByTestId('inbox-pane');
-    // jsdom 에는 레이아웃이 없어 실제 폭을 잴 수 없다 — 인라인 스타일로 선언됐는지 본다.
-    expect(parseInt(pane.style.minWidth, 10)).toBeGreaterThan(0);
+    // jsdom 에는 레이아웃이 없다 — 선언을 본다.
+    expect(pane.style.width).toBe('');
+    expect(pane.style.minWidth).toBe('');
+    expect(pane.className).toContain('flex-1');
+    expect(pane.className).toContain('min-w-0');
   });
 });

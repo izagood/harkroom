@@ -319,24 +319,6 @@ export function Workspace({ onLogout, onOpenSettings }: {
             갈라 두면 사람이 화면의 두 곳을 봐야 한다. */}
         <ServerCompatBanner onOpenSettings={onOpenSettings} />
         <div className="flex flex-1 overflow-hidden">
-          {/*
-            인박스는 **모달이 아니라 자리**다(정본 문서 `docs/desktop-remaining-gaps.html`
-            C2). 그래서 화면 맨 아래 오버레이 묶음이 아니라 **이 가로줄의 형제**로 선다 —
-            아래 `SearchPalette`·`Directory` 들과 자리가 갈린 것이 이번 작업의 요지다.
-
-            **채널의 왼쪽이다.** 문서가 *"막는 말을 확인하면서 그 스레드를 여는 것이 기본
-            동작"* 이라 했으므로 인박스와 스레드가 **동시에** 보여야 하는데, 오른쪽은
-            `ThreadPanel` 과 `TerminalPanel` 이 이미 같은 자리를 다투는 곳이다(아래 #141
-            주석). 셋째를 그 자리에 넣으면 "동시에 보인다"가 창 폭에 따라 참이 되었다
-            거짓이 된다.
-
-            왼쪽에 세우면 **읽는 순서가 일의 순서와 같아진다**: 인박스(나를 막는 것) →
-            채널 → 스레드(내가 답하는 곳). 인박스에서 줄을 눌러 열린 스레드는 화면의 반대쪽
-            끝에 서므로, 방금 누른 줄이 밀려나지 않는다.
-
-            껍데기의 나머지 결정(Esc·닫기·포커스·좁은 창)은 `Inbox.tsx` 의 주석에 있다.
-          */}
-          <Inbox open={inboxOpen} onClose={() => setInboxOpen(false)} />
           {/* 멘션 이동(#279)의 배선은 **여기**다. 초판이 이 두 줄을 빼먹어 앱에서 모든
               멘션이 눌러도 아무 일이 없는 버튼이었다 — 단위 테스트는 props 를 손으로
               넘겨 그 사실을 볼 수 없었다. `test/mentionClick.test.tsx` 가 이 화면을
@@ -351,6 +333,36 @@ export function Workspace({ onLogout, onOpenSettings }: {
             `ThreadPanel`·`TerminalPanel` 은 **형제로 그대로** 남는다 — 관제탑에서 문을
             열면 그 오른쪽에 서므로, 목록에서 방금 누른 줄이 밀려나지 않는다.
           */}
+          {/*
+            **본문 자리를 누가 갖는가.** 셋이 같은 칸을 쓰고, 순서가 곧 규칙이다.
+
+            ## 인박스는 열이 아니라 **본문**이다 (2026-09-11)
+
+            인박스는 오래 채널의 **왼쪽 열**이었다(#488 C2). 그 자리를 고른 이유는 지금도
+            옳다 — 문서가 *"막는 말을 확인하면서 그 스레드를 여는 것이 기본 동작"* 이라
+            했으므로 인박스와 스레드가 **동시에** 보여야 한다. 틀린 것은 자리가 아니라
+            **열을 하나 더 만든 것**이다: 레일·사이드바·인박스·채널·스레드 다섯이 서면
+            1440px 에서 맨 오른쪽이 잘리고, 하필 잘리는 것이 함께 보여야 할 그 스레드였다
+            (2026-09-11 신고, 스크린샷의 `Thr…`).
+
+            그래서 인박스가 **채널 열을 대신** 차지한다. 열이 하나 줄어 스레드가 온전히
+            서고, 인박스는 400px 에서 본문 폭으로 넓어진다. "동시에 보인다"는 잃지 않는다 —
+            잃는 것은 **그 뒤의 채널 타임라인**이고, 인박스를 훑는 동안 사람이 보는 것은
+            인박스와 그 줄이 여는 스레드지 뒤의 타임라인이 아니다.
+
+            선례가 이 파일에 이미 있다: Agents 칸이 똑같이 본문을 갈아 끼우고 스레드·
+            터미널은 형제로 남긴다. 새 규칙이 아니라 **있는 규칙을 인박스에도 적용**한 것이다.
+
+            ## Agents 칸이 인박스보다 앞이다
+
+            인박스를 여는 줄은 **홈 칸**에만 있다. 인박스를 열어 둔 채 Agents 칸을 누르면
+            관제탑이 서야 한다 — 인박스가 이 판정을 이기면 그 클릭이 **아무 일도 하지
+            않는다**. 인박스 상태는 그대로 남으므로 홈으로 돌아오면 보던 목록이 그대로 있다
+            (인박스는 홈 칸의 자리다).
+
+            목적지가 본문인 줄을 누르면 인박스가 스스로 접힌다 — 그 판정은 `Inbox.tsx` 의
+            `openEntry` 에 있다(누른 것이 반드시 보여야 하기 때문이다).
+          */}
           {railPanel === 'agents' ? (
             <AgentTower
               onOpenThread={(rootId) => {
@@ -361,6 +373,8 @@ export function Workspace({ onLogout, onOpenSettings }: {
                 void getController().openMessage(rootId);
               }}
             />
+          ) : inboxOpen ? (
+            <Inbox open onClose={() => setInboxOpen(false)} />
           ) : (
             <ChannelPane
               onOpenSearch={handleOpenSearch}

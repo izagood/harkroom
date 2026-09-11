@@ -4,7 +4,7 @@ import { WaitChainSection } from './WaitChainSection';
 import type { InboxEntry } from '@murmur/shared';
 import { inboxRow, matchesFilter, type InboxFilter } from '../lib/inboxRow';
 import { bodyWithHandles } from '../lib/mention';
-import { INBOX_PANE_WIDTH, inboxStorage, MIN_INBOX_PANE_WIDTH } from '../lib/prefs';
+import { inboxStorage } from '../lib/prefs';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { useT } from '../i18n/useT';
@@ -49,22 +49,30 @@ interface DraftItem {
  * 그래서 `Overlay` 를 벗었다. 여는 입구는 그대로다 — 사이드바 홈 **맨 위 한 줄**
  * (`docs/desktop-rail.html`). 바뀐 것은 **열린 뒤**다.
  *
- * ### 어느 축인가 — 채널의 왼쪽
+ * ### 어느 축인가 — **채널 열을 대신한다** (2026-09-11)
  *
- * 스레드가 채널의 오른쪽에 서고, 터미널이 **이미 그 자리를 스레드와 다툰다**(`#141`).
- * 인박스를 그쪽에 세우면 셋째 경쟁자가 되고, 그러면 문서가 요구한 "인박스와 스레드가
- * 동시에 보인다"가 창 폭에 따라 참이 되었다 거짓이 된다.
+ * 오래 **채널의 왼쪽 열**이었다. 그 자리가 고른 것은 옳았고(인박스와 스레드가 동시에
+ * 보여야 한다), 틀린 것은 **열을 하나 더 만든 것**이다 — 레일·사이드바·인박스·채널·스레드
+ * 다섯이 서면 맨 오른쪽이 잘리고, 하필 잘리는 것이 함께 보여야 할 그 스레드였다
+ * (2026-09-11 신고). 지금은 인박스가 **본문 자리**를 차지한다(배선은 `Workspace.tsx`).
  *
- * 왼쪽에 세우면 **읽는 순서가 일이 흐르는 순서와 같아진다**: 인박스(나를 막는 것) → 채널
- * → 스레드(내가 답하는 곳). 인박스에서 줄을 눌러 스레드가 열릴 때, 그 스레드는 인박스의
- * 반대쪽 끝에서 열린다 — 방금 누른 줄이 화면에서 밀려나지 않는다.
+ * 그래서 폭이 사라졌다. 400px 고정이 아니라 **본문 폭을 채운다**(`flex-1`) — 좁아져도
+ * 사라지지 않게 막던 `MIN_INBOX_PANE_WIDTH` 도 함께 지웠다: 본문 열의 하한은 이제
+ * 오른쪽 패널들이 지킨다(`ThreadPanel` 의 `paneMaxWidth(..., MIN_CHANNEL_WIDTH)`).
+ *
+ * ### 누른 것은 반드시 보인다
+ *
+ * 본문을 차지하면 **줄이 여는 목적지가 인박스 뒤에 숨을 수 있다.** 그래서 규칙 하나를
+ * 둔다 — 목적지가 스레드면 인박스는 남고(스레드는 오른쪽에 서므로 둘이 함께 보인다,
+ * 문서가 말한 기본 동작 그대로), 목적지가 채널·DM 본문이면 인박스가 **자리를 내준다**.
+ * 판정은 `openEntry`·`openDraft` 에 있다.
  *
  * ### Esc·닫기·포커스 — `Overlay` 가 주던 것을 무엇으로 대신했나
  *
  * | `Overlay` 가 주던 것 | 자리가 된 뒤 |
  * |---|---|
  * | 스크림 | **버린다.** 덮지 않는 것이 이 작업의 요지다. |
- * | 바깥 클릭으로 닫기 | **버린다.** 자리는 옆에 선 것이라 "바깥"이 곧 채널·스레드다 — 스레드를 읽으려 누른 클릭이 인박스를 닫으면 문서가 말한 기본 동작이 불가능해진다. |
+ * | 바깥 클릭으로 닫기 | **버린다.** 자리는 옆에 선 것이라 "바깥"이 곧 사이드바·스레드다 — 스레드를 읽으려 누른 클릭이 인박스를 닫으면 문서가 말한 기본 동작이 불가능해진다. 인박스가 스스로 접히는 경우는 **하나**이고 그것은 바깥 클릭이 아니라 목적지 판정이다(위 "누른 것은 반드시 보인다"). |
  * | Esc | **남긴다**(아래 `useEffect`). 뜻이 "덮은 것을 걷는다"에서 "이 자리를 접는다"로 바뀐다 — `⌘\` 와 같은 종류다. |
  * | `role="dialog"` + 이름 | `role="complementary"`(`<aside>`) + `aria-label`. 랜드마크로 남아 스크린리더가 이 자리를 찾을 수 있다. |
  * | 포커스 트랩 | **일부러 두지 않는다.** 트랩은 정확히 이 작업이 걷어내려는 것이다(스레드로 탭해 갈 수 없게 된다). 대신 **열 때 포커스를 이 자리로 옮긴다** — 열었는데 포커스가 사이드바에 남아 있으면 키보드 사용자에게는 아무 일도 일어나지 않은 것이다. |
@@ -78,7 +86,7 @@ interface DraftItem {
  * *"좁은 창에서는 레일만 남기고 패널을 접는 단계가 하나 더 필요하다"* — `Workspace` 가
  * 그 단계를 `⌘\`(사이드바 접기)로 이미 얹었다. 인박스가 Esc 를 document 에서 받으므로
  * **`⌘\` 를 삼키지 않는 것**이 여기서 지켜야 할 것이고, `inboxPane.test.tsx` 가 그것을
- * 잰다. 폭이 0 으로 무너지지 않게 `MIN_INBOX_PANE_WIDTH` 를 깐다(그 상수의 주석).
+ * 잰다.
  *
  * **서버 표면을 새로 만들지 않는다** — `GET /inbox` 가 이미 전체를 준다. 필터는 전부
  * 클라이언트에서 한다. 없던 것은 질의 능력이 아니라 목록 자체였다.
@@ -376,16 +384,31 @@ export function Inbox({ open, onClose }: Props) {
     // #178·#228 이 이미 만든 이동 경로다. 채널을 열고, 답글이면 스레드까지 열고, 강조를
     // 건다. 실패도 그 안에서 사람에게 보인다.
     //
-    // **여기서 닫지 않는다**(#488 C2). 모달 시절에는 `onClose()` 가 붙어 있었는데, 그것이
-    // 문서가 지적한 결함의 절반이었다 — *"막는 말을 확인하면서 그 스레드를 여는 것이 기본
-    // 동작"* 인데 여는 순간 확인하던 목록이 사라졌다. 자리가 된 지금은 남는 것이 맞고,
-    // 남기 때문에 다음 줄로 바로 넘어갈 수 있다(막는 말이 하나뿐인 경우는 드물다).
+    // **닫는가는 목적지가 정한다**(2026-09-11, 위 머리말 "누른 것은 반드시 보인다").
+    //
+    // 모달 시절에는 무조건 `onClose()` 였고 그것이 문서가 지적한 결함의 절반이었다 —
+    // *"막는 말을 확인하면서 그 스레드를 여는 것이 기본 동작"* 인데 여는 순간 확인하던
+    // 목록이 사라졌다. 그래서 왼쪽 열 시절에는 **무조건 남겼다.**
+    //
+    // 인박스가 본문을 차지하게 된 지금은 둘 다 틀렸다. 답글은 스레드 패널이 **오른쪽에**
+    // 서므로 남는 것이 맞다(둘이 함께 보인다 — 문서의 기본 동작 그대로). 채널이나 DM
+    // 본문의 말은 목적지가 **본문**이라, 남으면 방금 누른 것이 인박스 뒤에 숨는다 —
+    // 누른 것이 안 보이는 이동은 아무 일도 안 한 것과 구별되지 않는다.
+    //
+    // 판정에 `threadRootId` 를 쓰는 이유: `openMessage` 가 스레드 패널을 여는 조건이
+    // **정확히 그것**이다(`controller.openMessage`: *"답글은 스레드 패널까지 연다"*).
+    // 여기서 다른 술어를 세우면 둘이 갈리는 날 인박스만 엉뚱하게 접히거나 남는다.
     //
     // **읽음은 여기서 화면에 반영한다.** 이동하는 길에 `openChannel` 이 그 채널의 안 읽은
     // 인박스 항목을 읽음으로 바꾸는데(`api.markRead`), 이 화면은 자기 목록을 따로 들고
     // 있어 그 사실을 모른다 — 그래서 누른 줄이 계속 '안 읽음'이라고 말하고, 인박스를
     // 닫았다 열면 그때서야 사라졌다(2026-09-09 보고).
     markChannelReadLocally(e.channelId);
+    // 자리를 내주는 것은 **이 한 줄**이고, 나머지 길은 목적지와 무관하게 같다. 아래 재조회를
+    // 접었을 때도 그대로 거는 이유: 읽음 표시를 서버 사실로 맞추는 것은 이 화면이 보이느냐와
+    // 다른 문제다(호출부가 접힌 인박스를 언마운트하지 않을 수도 있다). 갈린 표시를 들고
+    // 접혀 있다가 다시 펴는 것이 이 안전장치가 막는 것이다.
+    if (!e.threadRootId) onClose();
     void getController().openMessage(e.messageId).then(() => {
       // 낙관적 표시를 서버 사실로 맞춘다. **못 연 메시지**(지워짐·권한 없음·연결 실패)면
       // 읽음 처리도 없었으므로 이 재조회가 방금 걷은 표시를 되돌린다 — 낙관적 표시가
@@ -398,9 +421,12 @@ export function Inbox({ open, onClose }: Props) {
     // 스레드 초안의 scopeKey 에 든 rootId 는 **메시지 id 다.** 그래서 채널을 몰라도
     // openMessage 가 알아서 채널을 열고 스레드를 편다 — 새 이동 경로를 만들 이유가 없다.
     //
-    // 초안도 `openEntry` 와 같은 이유로 닫지 않는다 — 쓰다 만 것이 여럿이면 하나씩 훑는다.
-    if (d.threadRootId) void getController().openMessage(d.threadRootId);
-    else void getController().openChannel(d.scopeKey);
+    // 닫는가도 `openEntry` 와 같은 규칙이다 — 목적지가 본문(채널 초안)이면 자리를 내주고,
+    // 스레드 초안이면 남는다. 쓰다 만 것이 여럿이면 스레드 쪽은 하나씩 훑을 수 있다.
+    if (d.threadRootId) { void getController().openMessage(d.threadRootId); return; }
+    onClose();
+    void getController().openChannel(d.scopeKey);
+    // (초안에는 낙관적 읽음 표시가 없다 — 되돌릴 것이 없으므로 재조회도 없다.)
   };
 
   /**
@@ -540,10 +566,14 @@ export function Inbox({ open, onClose }: Props) {
         `tabIndex={-1}`: 탭 순서에는 들어가지 않고 스크립트로만 포커스를 받는다(열 때 한 번).
         `0` 으로 두면 채널·스레드를 오가는 탭 경로에 뜻 없는 정류장이 하나 생긴다.
 
-        폭은 **고정**이고 최소 폭을 깐다 — 근거는 `prefs.ts` 의 `INBOX_PANE_WIDTH` 주석
-        (끌 수 있는 손잡이는 고를 것이 있다는 뜻이고, 목록에는 고를 것이 없다).
-        `border-r` 은 오른쪽이다: 이 자리는 채널의 **왼쪽**이라 경계선도 그쪽에 선다
-        (스레드·터미널의 `border-l` 과 대칭이다).
+        폭은 **본문 열 그대로**다(`flex-1`). 400px 고정과 `MIN_INBOX_PANE_WIDTH` 가
+        여기 있었는데, 그 둘은 **열이 하나 더 있던 시절**의 값이다 — 이제 이 자리가 본문이라
+        하한은 오른쪽 패널들이 이미 지킨다(`ThreadPanel` 의 `paneMaxWidth`). `min-w-0` 은
+        `ChannelPane` 이 같은 자리에서 쓰는 것과 같다: 없으면 긴 본문 한 줄이 flex 기본
+        `min-width: auto` 를 밀어 올려 **오른쪽 패널을 화면 밖으로 내보낸다**(고치려던 그것이다).
+
+        `border-r` 이 여기 있었다 — 채널의 왼쪽에 설 때의 경계선이다. 본문이 된 지금은
+        오른쪽에 스레드의 `border-l` 이 이미 서 있어, 남겨 두면 선이 두 겹으로 보인다.
 
         `outline-none` 뒤에 `focus-visible` 을 두는 것은 앱 전체 규칙이다(규칙 03: 포커스
         링은 시스템 파랑이 아니라 앱의 강조색). 뿌리가 포커스를 받는 것은 **여는 순간**뿐이라
@@ -551,8 +581,7 @@ export function Inbox({ open, onClose }: Props) {
       */
       tabIndex={-1}
       aria-label={t('inbox.pane.title')}
-      style={{ width: INBOX_PANE_WIDTH, minWidth: MIN_INBOX_PANE_WIDTH }}
-      className="flex flex-col overflow-hidden border-r border-border bg-surface-raised
+      className="flex min-w-0 flex-1 flex-col overflow-hidden bg-surface-raised
                  text-fg outline-none focus-visible:outline-solid focus-visible:outline-2
                  focus-visible:outline-accent focus-visible:-outline-offset-2"
     >
