@@ -421,7 +421,7 @@ CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/work/aria claude auth status -
 원인이 묻히므로 즉시 78 로 종료하고, stderr 마지막 줄에 이 한 줄을 남긴다:
 
 ```
-murmur-agent: credential rejected (revoked or rotated); exiting
+harkroom-agent: credential rejected (revoked or rotated); exiting
 ```
 
 **78 이 왜 따로 있나.** 데스크탑 앱이 러너를 띄울 때 PAT 회전은 "새 PAT 발급 → 옛 PAT 폐기 →

@@ -57,7 +57,7 @@ export function harnessTailNotice(tail: string, pat: string): string | null {
   // 비밀 가리기. **정확한 PAT 를 먼저** 지운다 — 아래 모양 규칙이 못 잡는 형태여도 이건 잡힌다.
   if (pat.length > 0) text = text.split(pat).join('(가림)');
   text = text
-    .replace(/murp_[A-Za-z0-9_-]+/g, '(가림)')
+    .replace(/(?:hrkp|murp)_[A-Za-z0-9_-]+/g, '(가림)')
     .replace(/(Bearer\s+)\S+/gi, '$1(가림)');
 
   text = text.trim();
@@ -194,7 +194,7 @@ export function stallNotice(stallMs: number): string {
  */
 export function retryReason(message: string): string | null {
   const text = message
-    .replace(/murp_[A-Za-z0-9_-]+/g, '(가림)')
+    .replace(/(?:hrkp|murp)_[A-Za-z0-9_-]+/g, '(가림)')
     .replace(/(Bearer\s+)\S+/gi, '$1(가림)')
     .replace(/\s+/g, ' ')
     .trim();

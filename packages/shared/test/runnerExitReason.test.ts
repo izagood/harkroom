@@ -111,7 +111,7 @@ describe('상수 — 러너가 실제로 찍는 값이다', () => {
    */
   it('구분자는 영어 리터럴이다 — 로케일에 흔들리지 않는다', () => {
     for (const line of [CREDENTIAL_REJECTED_LINE, EXECUTABLE_NOT_FOUND_LINE]) {
-      expect(line.startsWith('murmur-agent: ')).toBe(true);
+      expect(line.startsWith('harkroom-agent: ')).toBe(true);
       // 한글이 섞이면 어딘가에서 번역됐다는 뜻이다.
       expect(/[가-힣]/.test(line)).toBe(false);
     }

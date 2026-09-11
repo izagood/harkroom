@@ -13,7 +13,7 @@ let adminToken: string;
 let botPat: string;
 let baseUrl: string;
 
-// `murmur_projection_cursor` 가 지금 서버로 거르므로(042_projection_state_per_server.sql),
+// `harkroom_projection_cursor` 가 지금 서버로 거르므로(042_projection_state_per_server.sql),
 // 커서 시드도 이 URL로 심어야 게이지에 보인다.
 const AVCS_URL = 'http://avcs.metrics-test';
 
@@ -56,7 +56,7 @@ describe('GET /metrics', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toContain('text/plain');
-    expect(res.body).toContain('# TYPE murmur_http_requests_total counter');
+    expect(res.body).toContain('# TYPE harkroom_http_requests_total counter');
   });
 
   it('counts requests under the route pattern, not the concrete path', async () => {
@@ -80,7 +80,7 @@ describe('GET /metrics', () => {
 
     const text = await scrape();
 
-    expect(text).toMatch(/murmur_http_requests_total\{method="POST",route="\/auth\/login",status="401"\} \d+/);
+    expect(text).toMatch(/harkroom_http_requests_total\{method="POST",route="\/auth\/login",status="401"\} \d+/);
   });
 
   it('reports live websocket connections as a gauge', async () => {
@@ -95,10 +95,10 @@ describe('GET /metrics', () => {
       });
     });
 
-    expect(await scrape()).toMatch(/murmur_ws_connections 1/);
+    expect(await scrape()).toMatch(/harkroom_ws_connections 1/);
 
     ws.close();
-    await waitFor(async () => /murmur_ws_connections 0/.test(await scrape()));
+    await waitFor(async () => /harkroom_ws_connections 0/.test(await scrape()));
   });
 
   // #48 이 테스트로 고정한 결함: avcs 를 murmur 커서 뒤로 되돌리면 조용히 건너뛴다.
@@ -110,7 +110,7 @@ describe('GET /metrics', () => {
       [AVCS_URL],
     );
 
-    expect(await scrape()).toContain('murmur_projection_cursor{repo="metrics/repo"} 42');
+    expect(await scrape()).toContain('harkroom_projection_cursor{repo="metrics/repo"} 42');
   });
 
   // /metrics 자체가 카운터를 올리면 스크레이프 주기가 곧 트래픽으로 보인다.
@@ -128,7 +128,7 @@ describe('GET /metrics', () => {
 // (투영이 조용히 멈춘 것을 커서 게이지로 보이게 한 것과 같은 종류다.)
 describe('에이전트 백로그 게이지', () => {
   const oldestFor = (text: string, handle: string): number | null => {
-    const m = new RegExp(`murmur_agent_oldest_unread_seconds\\{handle="${handle}"\\} ([0-9.]+)`).exec(text);
+    const m = new RegExp(`harkroom_agent_oldest_unread_seconds\\{handle="${handle}"\\} ([0-9.]+)`).exec(text);
     return m ? Number(m[1]) : null;
   };
 
@@ -136,7 +136,7 @@ describe('에이전트 백로그 게이지', () => {
     const text = await scrape();
 
     // 이 파일의 다른 테스트가 만든 에이전트에게는 미처리 부름이 없다.
-    expect(text).not.toContain('murmur_agent_oldest_unread_seconds{handle="metricsbot"}');
+    expect(text).not.toContain('harkroom_agent_oldest_unread_seconds{handle="metricsbot"}');
   });
 
   it('reports how long an agent has left a call unhandled', async () => {
@@ -203,7 +203,7 @@ describe('에이전트 백로그 게이지', () => {
 // 사람을 뺀 논리(늦게 읽는 것은 장애가 아니다)가 에이전트 안에 한 겹 더 있었다.
 describe('백로그 게이지는 답할 의무가 있는 에이전트만 센다', () => {
   const seriesFor = (text: string, handle: string): boolean =>
-    text.includes(`murmur_agent_oldest_unread_seconds{handle="${handle}"}`);
+    text.includes(`harkroom_agent_oldest_unread_seconds{handle="${handle}"}`);
 
   const callInChannel = async (handle: string): Promise<void> => {
     const ch = await app.inject({

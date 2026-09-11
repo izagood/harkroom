@@ -81,7 +81,7 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
       }, req);
       return reply.code(401).send({ error: { code: 'invalid_credentials', message: 'wrong login ID or password' } });
     }
-    const { token, hash } = newToken('murs');
+    const { token, hash } = newToken('hrks');
     await pool.query(
       `insert into session (token_hash, account_id, expires_at)
        values ($1, $2, now() + interval '${SESSION_TTL_DAYS} days')`,

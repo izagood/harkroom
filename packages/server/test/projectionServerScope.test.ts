@@ -323,7 +323,7 @@ describe('/leases 가 현재 서버로 스코프된다', () => {
 });
 
 describe('커서 메트릭이 repo 라벨을 중복하지 않는다', () => {
-  it('같은 repo 가 두 서버 아래 있어도 /metrics 의 murmur_projection_cursor 행은 하나뿐이다', async () => {
+  it('같은 repo 가 두 서버 아래 있어도 /metrics 의 harkroom_projection_cursor 행은 하나뿐이다', async () => {
     const { pool: mPool, stop: mStop } = await startTestDb();
     try {
       await mPool.query(
@@ -340,7 +340,7 @@ describe('커서 메트릭이 repo 라벨을 중복하지 않는다', () => {
         const res = await app.inject({
           method: 'GET', url: '/metrics', headers: { authorization: `Bearer ${token}` },
         });
-        const lines = res.body.split('\n').filter((l) => l.startsWith('murmur_projection_cursor{'));
+        const lines = res.body.split('\n').filter((l) => l.startsWith('harkroom_projection_cursor{'));
         // 되돌리기 실험: buildServer 의 게이지 쿼리에서 `where avcs_base_url = $1` 을 빼면
         // 이 repo 가 두 줄로 나와 Prometheus 텍스트가 깨진다.
         expect(lines).toHaveLength(1);

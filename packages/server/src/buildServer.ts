@@ -254,12 +254,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   const metrics = createMetrics();
   let socketCount: () => number = () => 0;
-  metrics.registerGauge('murmur_ws_connections', 'live websocket connections', () => socketCount());
+  metrics.registerGauge('harkroom_ws_connections', 'live websocket connections', () => socketCount());
   // 투영 커서를 스크레이프 시점에 읽는다. #48 이 고정한 결함(avcs 를 커서 뒤로 되돌리면
   // 조용히 건너뛴다)은 **관측되지 않기 때문에** 위험하다 — 채널에는 아무 일도 없어 보인다.
   // 커서가 숫자로 보이면 그 침묵이 눈에 띈다.
   metrics.registerLabeledGauge(
-    'murmur_projection_cursor', 'last projected avcs log index per repo', 'repo',
+    'harkroom_projection_cursor', 'last projected avcs log index per repo', 'repo',
     async () => {
       // `projection_cursor` 는 이제 (repo, avcs_base_url)로 키가 잡힌다 — 같은 repo 이름이
       // 여러 avcs 서버 아래 있을 수 있어서다. 걸러 읽지 않으면 같은 repo 라벨의 행이
@@ -297,7 +297,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
    * 같아진다.
    */
   metrics.registerLabeledGauge(
-    'murmur_agent_oldest_unread_seconds',
+    'harkroom_agent_oldest_unread_seconds',
     'age of the oldest unhandled inbox entry per agent — a dead runner shows up here',
     'handle',
     async () => {

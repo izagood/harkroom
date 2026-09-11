@@ -318,7 +318,7 @@ describe('꼬리 읽기 — exit 통지에 실을 재료 (#473)', () => {
         command: '/bin/sh',
         args: [
           '-c',
-          "echo 'murmur-agent: harness executable not found; exiting' 1>&2; exit 78",
+          "echo 'harkroom-agent: harness executable not found; exiting' 1>&2; exit 78",
         ],
       },
       nodeRunnerHost,
@@ -333,7 +333,7 @@ describe('꼬리 읽기 — exit 통지에 실을 재료 (#473)', () => {
     await 조건까지(() => 통지.length > 0);
     expect(통지[0]!.code).toBe(78);
     expect(통지[0]!.tailLines.join('\n')).toContain(
-      'murmur-agent: harness executable not found; exiting',
+      'harkroom-agent: harness executable not found; exiting',
     );
   });
 

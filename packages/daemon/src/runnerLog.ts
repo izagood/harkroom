@@ -37,8 +37,8 @@
  * `#473` 이 이 판단의 근거다. 러너는 두 실패를 **로그의 마지막 줄**로 가른다:
  *
  * ```
- * murmur-agent: credential rejected (revoked or rotated); exiting   ← PAT 를 재발급해라
- * murmur-agent: harness executable not found; exiting               ← 하네스를 설치해라
+ * harkroom-agent: credential rejected (revoked or rotated); exiting   ← PAT 를 재발급해라
+ * harkroom-agent: harness executable not found; exiting               ← 하네스를 설치해라
  * ```
  *
  * 둘 다 종료 코드 78 이므로(`packages/agent/src/exit.ts`) **그 줄이 유일한 구분자**다.

@@ -135,7 +135,7 @@ describe('#337-1 열기 성공 — opened 응답이 티켓·세션으로 돌아�
 
     const res = await openReq(ownerToken);
     expect(res.statusCode).toBe(200);
-    expect(res.json().ticket).toMatch(/^murt_/);
+    expect(res.json().ticket).toMatch(/^hrkt_/);
     expect((res.json().session as AgentSessionView).sessionId).toBe('sess-new');
     expect((res.json().session as AgentSessionView).mode).toBe('interactive');
 

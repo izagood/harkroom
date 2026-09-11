@@ -171,10 +171,10 @@ describe('daemonSpawner 는 daemon 에게 러너를 띄우라고 시킨다 (#431
       incarnationId: 'inc-NEW',
       code: 78,
       signal: null,
-      tailLines: ['murmur-agent: harness executable not found; exiting'],
+      tailLines: ['harkroom-agent: harness executable not found; exiting'],
     });
     expect(onExit).toHaveBeenCalledWith(78, [
-      'murmur-agent: harness executable not found; exiting',
+      'harkroom-agent: harness executable not found; exiting',
     ]);
   });
 
