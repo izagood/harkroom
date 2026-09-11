@@ -417,7 +417,7 @@ export const en = {
    * 안다"* — 그 한계를 적어 두지 않으면 빈 칸이 고장으로 읽힌다.
    */
   'defaults.field.modelHint':
-    'Leave it empty and the harness picks — murmur only learns that choice from the model carried on a message',
+    'Leave it empty and the harness picks — harkroom only learns that choice from the model carried on a message',
   'defaults.field.applyScope': 'It applies only to agents created after this. Agents that already exist do not change.',
   'defaults.field.loadFailed': 'The defaults did not arrive',
   'defaults.field.loading': 'Loading…',
@@ -924,7 +924,7 @@ export const en = {
    */
   'agents.runner.commandBundledNote': '# If you installed the app (change the path if you installed it elsewhere)',
   /** 저장소를 클론한 사람만의 길이다 — 배포판에는 이 소스가 없다(그 파일 머리말). */
-  'agents.runner.commandDevNote': '# A checkout of the murmur repository',
+  'agents.runner.commandDevNote': '# A checkout of the harkroom repository',
   'agents.runner.templateHeading': 'Run a runner',
   /** 토큰을 잃었을 때 갈 곳. **글로만 두면 발급 자리를 찾아야 한다**(`#177`). */
   'agents.runner.templateNote': 'A token is visible only when it is minted. If you lost it, mint a new one.',
@@ -934,9 +934,9 @@ export const en = {
    * 멘션은 쌓인다. 마지막을 자르면 사람은 "부르면 언젠가 오겠지"로 읽는다.
    */
   'agents.runner.whoStarts':
-    'The murmur {strongServer} does not start runners. This desktop app starts only the agents '
+    'The harkroom {strongServer} does not start runners. This desktop app starts only the agents '
     + '{strongOwn} — an agent someone else owns, or one with no owner, {strongNoAnswer} '
-    + '(the mentions just pile up). The runner ships with the app, so any machine with murmur '
+    + '(the mentions just pile up). The runner ships with the app, so any machine with harkroom '
     + 'installed will do — a checkout is only needed for the development branch below.',
   'agents.runner.whoStartsNoAnswer': 'does not answer mentions until you run the command above to attach a runner',
   'agents.runner.whoStartsOwn': 'I own',
@@ -950,9 +950,9 @@ export const en = {
    */
   'agents.stale.elsewhere': {
     one: 'Every runner this device started is on this bundle. {count} outdated runner belongs to '
-      + 'another device and cannot be restarted from here — press it in the murmur on that device.',
+      + 'another device and cannot be restarted from here — press it in the harkroom on that device.',
     other: 'Every runner this device started is on this bundle. {count} outdated runners belong to '
-      + 'another device and cannot be restarted from here — press it in the murmur on that device.',
+      + 'another device and cannot be restarted from here — press it in the harkroom on that device.',
   },
   /**
    * 재기동이 무엇을 안 하는지. **누르기 전에** 있어야 한다 — 진행 중인 턴이 끊기지
@@ -1005,7 +1005,7 @@ export const en = {
 
   'agents.stop.acked':
     'The runner picked the request up (stop {requestedAt} · acknowledged {ackedAt}). It finishes '
-    + 'the turn it was on and exits — whether it actually exited, murmur cannot know.',
+    + 'the turn it was on and exits — whether it actually exited, harkroom cannot know.',
   /** 이미 읽어 간 뒤가 오히려 다시 켤 일이 생기는 자리다 — 그 뒤로는 자동 기동이 건너뛴다. */
   'agents.stop.ackedResume': ' Press Start and it is back in the auto-start set from the next start.',
   'agents.stop.heading': 'Start · stop the runner',

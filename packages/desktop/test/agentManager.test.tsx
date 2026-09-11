@@ -150,7 +150,7 @@ describe('AgentsSettings', () => {
     // 문구를 느슨한 정규식으로 잡으면 관계없는 문장에 우연히 걸린다 — 이 안내가 반드시
     // 말해야 하는 두 가지를 각각 확인한다: murmur 가 러너를 띄우지 않는다는 것과,
     // 붙이기 전까지 답하지 않는다는 것.
-    expect(await screen.findByText(/murmur 는 러너를 띄우지 않는다/)).toBeTruthy();
+    expect(await screen.findByText(/harkroom 는 러너를 띄우지 않는다/)).toBeTruthy();
     expect(screen.getByText(/멘션에 답하지 않는다/)).toBeTruthy();
   });
 
@@ -682,7 +682,7 @@ describe('러너 실행·중지 (#129, #493)', () => {
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
-    expect((await stopPanel()).textContent).toContain('실제로 종료했는지는 murmur 가 알 수 없다');
+    expect((await stopPanel()).textContent).toContain('실제로 종료했는지는 harkroom 가 알 수 없다');
   });
 });
 

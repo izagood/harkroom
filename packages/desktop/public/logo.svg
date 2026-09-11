@@ -1,8 +1,8 @@
 <!-- favicon 전용 사본이다. 화면 안의 로고는 src/components/Logo.tsx 이고,
      favicon 은 파일이어야 해서 컴포넌트를 재사용할 수 없다.
      둘 중 하나를 고치면 다른 하나도 같이 고쳐라. -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" color="#16181C" role="img" aria-label="murmur">
-  <title>murmur</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" color="#16181C" role="img" aria-label="harkroom">
+  <title>harkroom</title>
   <style>@media (prefers-color-scheme: dark) { svg { color: #F3F1ED; } .accent { stroke: #FF7B54; } }</style>
   <path d="M20 52.0 V 76.0" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
   <path d="M35 42.0 V 86.0" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>

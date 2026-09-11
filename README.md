@@ -1,21 +1,21 @@
-# murmur
+# harkroom
 
-murmur is an open-source workspace where humans and agents work together in channels. The collaboration foundation is [avcs](https://www.npmjs.com/package/@izagood/avcs), not git.
+harkroom is an open-source workspace where humans and agents work together in channels. The collaboration foundation is [avcs](https://www.npmjs.com/package/@izagood/avcs), not git.
 
-<img src="packages/desktop/public/logo.svg" alt="murmur logo" width="96">
+<img src="packages/desktop/public/logo.svg" alt="harkroom logo" width="96">
 
 <!-- TODO: replace with a screenshot of the desktop app (channel view with an
      agent turn in progress). Put the image in docs/images/ and link it here. -->
 
-## Why murmur?
+## Why harkroom?
 
-Existing tools separate human chat from agent execution. Git-based code collaboration doesn't provide real-time ownership, structured intents, or conflict resolution records that multi-agent workflows need. murmur puts humans and agents in the same channels, and puts the avcs work they do — intents, operations, decisions, and who currently holds which path — on screen next to that conversation instead of behind a separate web console.
+Existing tools separate human chat from agent execution. Git-based code collaboration doesn't provide real-time ownership, structured intents, or conflict resolution records that multi-agent workflows need. harkroom puts humans and agents in the same channels, and puts the avcs work they do — intents, operations, decisions, and who currently holds which path — on screen next to that conversation instead of behind a separate web console.
 
-avcs objects are **not** turned into chat messages. Chat is where people and agents talk; avcs is where the work is recorded; murmur shows both without translating one into the other. (An earlier version did project intents and operations into channel threads. It was removed in #534 — see [docs/design.md](docs/design.md) §3 for what changed and why.)
+avcs objects are **not** turned into chat messages. Chat is where people and agents talk; avcs is where the work is recorded; harkroom shows both without translating one into the other. (An earlier version did project intents and operations into channel threads. It was removed in #534 — see [docs/design.md](docs/design.md) §3 for what changed and why.)
 
 ## Maturity
 
-**Pre-1.0, self-hosted dogfooding.** murmur is actively used for its own development.
+**Pre-1.0, self-hosted dogfooding.** harkroom is actively used for its own development.
 
 ### What works
 - Channel/thread/DM chat with real-time WebSocket updates
@@ -44,7 +44,7 @@ avcs objects are **not** turned into chat messages. Chat is where people and age
 
 ## Quick Start (Self-Host)
 
-murmur runs in one of **two modes**. The compose stack is the same **two services**
+harkroom runs in one of **two modes**. The compose stack is the same **two services**
 (`postgres` + `server`) either way — what differs is whether an AVCS server is
 reachable. Start the stack, then pick a mode below.
 
@@ -74,7 +74,7 @@ way to add users later.
 `docker compose up -d` with no `AVCS_BASE_URL` gives a working chat workspace:
 channels, threads and DMs with real-time WebSocket updates, attachments, agent
 runners answering @mentions, and the MCP surface. The projection worker is never
-constructed, so murmur never learns any AVCS lease state.
+constructed, so harkroom never learns any AVCS lease state.
 
 The server says so once at startup:
 
@@ -85,13 +85,13 @@ avcs projection is disabled — set AVCS_BASE_URL to enable it
 ### Mode 2 — AVCS lease projection
 
 Run an AVCS server as a **separate process** — it is deliberately not part of the
-compose stack — and point murmur at it:
+compose stack — and point harkroom at it:
 
 ```sh
 AVCS_BASE_URL=https://your-avcs-server.example.com docker compose up -d
 ```
 
-Then bind a `repo` to a channel. murmur follows that repo's AVCS object log and
+Then bind a `repo` to a channel. harkroom follows that repo's AVCS object log and
 folds its `lease` objects into live state: the sidebar shows who currently holds
 which path, so overlapping work is visible before it becomes a conflict.
 
@@ -150,14 +150,14 @@ The desktop app does not use environment variables. It connects to a configured 
 
 ## Connect an Agent
 
-murmur requires agent participation to function fully. Two options:
+harkroom requires agent participation to function fully. Two options:
 
 **Runner (responds to mentions automatically):**
 
 Normally you do not start one by hand — the desktop app starts runners for agents you own
 (via its daemon). Start one yourself for an agent you do not own, or on a machine where the
 app is not running. The runner ships with the app as a Tauri sidecar, so which command you
-use depends on whether that machine has the murmur repository:
+use depends on whether that machine has the harkroom repository:
 
 ```sh
 # Installed app — the runner ships inside the bundle (adjust the path if installed elsewhere)

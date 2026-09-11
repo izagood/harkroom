@@ -1,4 +1,4 @@
-# murmur — 설계 문서
+# harkroom — 설계 문서
 
 - 날짜: 2026-08-31
 - 상태: 초안
@@ -8,7 +8,7 @@
 - 나머지 여덟 곳: [`desktop-remaining-gaps.html`](desktop-remaining-gaps.html) ([PDF](desktop-remaining-gaps.pdf)) — 위 두 문서를 적용한 뒤 남는 사이드바 · 앱 전체 규칙 · 화면 제안
 - 레일: [`desktop-rail.html`](desktop-rail.html) ([PDF](desktop-rail.pdf)) — 사이드바 옆에 좁은 레일을 내고 DM · 에이전트를 옮긴다
 - 설정 › 에이전트 카드와 팀: [`desktop-agent-cards.html`](desktop-agent-cards.html) ([PDF](desktop-agent-cards.pdf)) — 세로 카드 · 러너 버전 · 팀을 같은 카드로
-- 협업 탭: [`desktop-collab.html`](desktop-collab.html) — murmur 가 avcs hub 자리에 선다(제안 트리 · 상태 · 결정). 상태는 avcs-server 의 `GET /reduced` 가 준다(0.7.0)
+- 협업 탭: [`desktop-collab.html`](desktop-collab.html) — harkroom 가 avcs hub 자리에 선다(제안 트리 · 상태 · 결정). 상태는 avcs-server 의 `GET /reduced` 가 준다(0.7.0)
 - 허브 자리(제안 · 승인 · 배달): [`hub-seat.md`](hub-seat.md) — 위 문서가 "범위 밖"으로 남긴 칸. `repo` 레코드(`linked`/`hosted`) · 서명된 decision → `POST /integrate` · 배달 대상 N개, 그리고 네 서비스 도그푸딩 루프
 
 ## 0. 이 문서가 말하는 시점 — 목표 설계와 현재 구현
@@ -35,7 +35,7 @@
 
 ## 1. 정의
 
-**murmur**는 사람과 에이전트가 채널에서 함께 일하는 오픈소스 워크스페이스다.
+**harkroom**는 사람과 에이전트가 채널에서 함께 일하는 오픈소스 워크스페이스다.
 코드 협업 기층이 git이 아니라 **avcs**이며, 셀프호스트 시 docker compose 2서비스(server + postgres)로 띄우고 AVCS 서버는 별도 프로세스로 연결한다.
 
 - MVP 핵심 경험: **채팅 워크스페이스** — 채널/스레드/DM이 1차 표면이고, avcs
@@ -57,7 +57,7 @@
     막는 대신 사유 한 줄로만 남는다.
 - 존재 이유: 동시 다중 에이전트 협업에서 git이 주지 못하는 것 — 실시간 작업
   점유(lease), 구조화된 의도(intent), 충돌 해결 기록(decision) — 을 avcs가 주고,
-  murmur는 그것을 대화 UI로 드러낸다
+  harkroom는 그것을 대화 UI로 드러낸다
 
 ## 2. 아키텍처
 
@@ -156,7 +156,7 @@ daemon 이 중계하면 되지 않나"* 라는 물음이 반복됐다. 그 답�
 
 1. **닿는 범위가 다르다.** unix 소켓은 그 기계 안이다. 스레드에서 기다리는 사람은 다른
    사람·다른 기계일 수 있고, 그 사람의 앱은 이 daemon 을 볼 수 없다.
-2. **어휘가 다르다.** daemon 이 스레드에 말하려면 murmur 클라이언트·PAT·채널/스레드 개념을
+2. **어휘가 다르다.** daemon 이 스레드에 말하려면 harkroom 클라이언트·PAT·채널/스레드 개념을
    가져야 하고, 그러면 *"누가 불렸나"* 의 진실이 두 곳에 산다. `daemonProtocol.ts` 가 같은
    이유로 세션 상태를 그 소켓에 싣지 않기로 못 박아 뒀다 — *"daemon 이 소유하는 것은
    프로세스이지 세션이 아니다."*
@@ -213,7 +213,7 @@ repo 바인딩 채널마다 투영 워커가 avcs 서버의 object-log를 커서
 | ~~`intent`~~ / ~~`operation`~~ / ~~`decision`~~ / ~~`evidence`~~ | **투영하지 않는다**(#534). intent 를 스레드 뿌리로 세우고 나머지를 그 아래 답글로 붙였다 |
 | ~~`integration`~~ / ~~`checkpoint`~~ / ~~`release`~~ / ~~finalize~~ | **투영하지 않는다**(#534). 채널 레벨 공지 메시지였다 |
 
-**왜 걷어냈나.** murmur 의 자리는 `avcs ↔ avcs-server ↔ avcshub` 에서 **avcshub 자리**다
+**왜 걷어냈나.** harkroom 의 자리는 `avcs ↔ avcs-server ↔ avcshub` 에서 **avcshub 자리**다
 (§2 결정 1 의 "관찰자 서버"가 곧 이 뜻이다). hub 를 대신한다는 것은 제안을 **보는 화면**을
 갖는 것인데, 위 투영은 제안을 **대화로 바꿔** 흘려보냈다. 셋이 어긋난다: ① 스레드는 avcs 의
 단위가 아니다(avcs 의 단위는 `intent` 를 뿌리로 한 제안 트리인데 스레드에 풀면 평평한 답글
@@ -241,7 +241,7 @@ avcs 로그를 처음부터 접어야 알 수 있는 **상태값**이고, 그 �
   만들지 않으면 저자로 세울 것이 없다. 같은 이유로 `murmur` 핸들의 시스템 계정을 만들던
   `ensureSystemAccount` 도 사라졌다(계정 **행**은 남는다 — 이 절 끝 참조).
   `account_key` 의 남은 용도는 인증과 `active_lease.actor_key_id` 다.
-- **사람→avcs 방향은 MVP에 없음**: 채팅은 논의 층, avcs는 작업 층. 지금 murmur 는 avcs 를
+- **사람→avcs 방향은 MVP에 없음**: 채팅은 논의 층, avcs는 작업 층. 지금 harkroom 는 avcs 를
   **읽기만** 한다(`fetchSince`).
 
 **운영 중인 DB 에는 과거에 투영된 `system` 메시지가 그대로 남아 있다.** 한 행도 지우지
@@ -258,7 +258,7 @@ avcs 로그를 처음부터 접어야 알 수 있는 **상태값**이고, 그 �
 | 저장소 상태 변경 (코드 수정·파일 추가/삭제·통합·릴리스) | avcs 필수 (intent → session → operations) |
 | 회색지대 (조사·분석) | 산출물이 repo에 들어가면 avcs, 채팅 답변으로 끝나면 채팅만 |
 
-강제는 avcs 스스로 한다(intent/session 없이 operation push 불가). murmur의 역할은
+강제는 avcs 스스로 한다(intent/session 없이 operation push 불가). harkroom의 역할은
 반대쪽 — MCP `workspace.guide`에 이 규칙을 명시해 읽기 전용 요청에 intent를
 만드는 과잉을 막는다.
 
@@ -348,8 +348,8 @@ intent 를 **기존 대화 스레드에 묶어** 그 스레드를 작업 스레�
 터진다(포커스 분기가 이미 쓰는 수법과 같다). 미리보기를 끄면 본문만 빼고 제목(누가·어디서)은
 남긴다 — 가려야 할 것은 대화 내용이지 발신자가 아니다.
 
-Buzz 의 "Agent runtimes 탐지 + Install" 목록은 **의도적으로 베끼지 않았다.** murmur 에서
-목록에 없는 harness 의 원인은 사용자 머신에 CLI 가 없어서가 아니라 murmur 가 아직 구현하지
+Buzz 의 "Agent runtimes 탐지 + Install" 목록은 **의도적으로 베끼지 않았다.** harkroom 에서
+목록에 없는 harness 의 원인은 사용자 머신에 CLI 가 없어서가 아니라 harkroom 가 아직 구현하지
 않아서다(`AGENT_HARNESSES`). 탐지 UI 는 그 사실을 거짓으로 표시한다.
 
 ### 에이전트 MCP 표면 (Streamable HTTP `/mcp`) — 도구 17개
@@ -375,12 +375,12 @@ Buzz 의 "Agent runtimes 탐지 + Install" 목록은 **의도적으로 베끼지
 이 목록에 **`work.link` 가 있었다**(intent ↔ 스레드 승격). 스레드 투영의 배선이었으므로
 #534 에서 함께 없앴다 — 위 §3 「~~스레드 분열 방지~~」 참조.
 
-에이전트는 murmur MCP(대화) + avcs MCP(작업) 두 개를 물고 들어온다. murmur는
+에이전트는 harkroom MCP(대화) + avcs MCP(작업) 두 개를 물고 들어온다. harkroom는
 에이전트 런타임을 모른다.
 
 **표면이 있다는 것과 에이전트가 온다는 것은 다르다.** MCP 서버로 등록하면(예:
 `claude mcp add --transport http murmur .../mcp --header "Authorization: Bearer <PAT>"`)
-에이전트가 murmur의 도구를 쓸 수 있지만, 그것은 **사람이 프롬프트할 때만** 움직인다.
+에이전트가 harkroom의 도구를 쓸 수 있지만, 그것은 **사람이 프롬프트할 때만** 움직인다.
 `@handle` 을 불렀을 때 찾아오게 하려면 `inbox.poll` 을 물고 대기하는 프로세스가 필요하다 —
 `packages/agent` 가 그 참조 구현이며, 사용자가 직접 실행하는 외부 프로세스다(§6의 "상주형
 에이전트(서버 호스팅)" 제외와 모순되지 않는다: 서버는 여전히 에이전트 런타임을 모른다).
@@ -583,8 +583,8 @@ Buzz 의 "Agent runtimes 탐지 + Install" 목록은 **의도적으로 베끼지
   그것을 화면에서 어떻게 알아보는지는 한 곳에만 적는다 — [`operations.md`](operations.md)
   §6.** 여기서 그 목록을 되풀이하지 않는다: 두 곳에 적으면 한 곳만 낡는다.
 - **백업·복구 절차는 [`operations.md`](operations.md)**. 요지: 필수 대상은 `pgdata` 하나이고
-  (인메모리 상태는 재구성된다), 복구는 `server`를 멈춘 뒤 하고, **murmur만 되돌리는 것은
-  안전하지만**(투영이 멱등) **avcs를 murmur 커서보다 뒤로 되돌리면 그 사이 객체가 조용히
+  (인메모리 상태는 재구성된다), 복구는 `server`를 멈춘 뒤 하고, **harkroom만 되돌리는 것은
+  안전하지만**(투영이 멱등) **avcs를 harkroom 커서보다 뒤로 되돌리면 그 사이 객체가 조용히
   건너뛰어진다** — 그때는 커서를 함께 내린다. 두 성질 모두 `projection.test.ts`가 지킨다.
 - 데스크탑: Tauri 릴리스 바이너리.
 
@@ -620,8 +620,8 @@ workspace-server 교체가 안전한 이유를 구체적으로:
 남은 한계(의도적): compose는 `server` 1개라 교체 창(수 초) 동안 REST는 거절된다 — 무중단이
 아니라 **끊겨도 이어진다**가 보장 범위다. 데스크탑은 WS 백오프 재연결 + `since=` 리컨실로,
 에이전트는 위 poll 계약으로 그 창을 건넌다.
-- **개발 자체가 첫 도그푸딩**: murmur를 avcs로 버전관리하고, 첫 워크스페이스
-  인스턴스가 murmur 개발 워크스페이스가 된다.
+- **개발 자체가 첫 도그푸딩**: harkroom를 avcs로 버전관리하고, 첫 워크스페이스
+  인스턴스가 harkroom 개발 워크스페이스가 된다.
 
 ## 6. 스코프 제외 (v2 이후)
 
@@ -653,7 +653,7 @@ workspace-server 교체가 안전한 이유를 구체적으로:
 
 ## 8. 성공 기준 (MVP 완료 정의)
 
-murmur 개발 워크스페이스를 murmur 자신으로 운영할 수 있다:
+harkroom 개발 워크스페이스를 harkroom 자신으로 운영할 수 있다:
 
 1. 사람 1명 + 에이전트 2개 이상이 한 채널에 참여한다
 2. 사람이 스레드에서 에이전트를 멘션해 작업을 요청하면, 에이전트가

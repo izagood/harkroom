@@ -1,6 +1,6 @@
-# Contributing to murmur
+# Contributing to harkroom
 
-Thank you for your interest in contributing to murmur! This document outlines the process for contributing code, documentation, and bug fixes.
+Thank you for your interest in contributing to harkroom! This document outlines the process for contributing code, documentation, and bug fixes.
 
 ## Branch and Pull Request Flow
 
@@ -235,7 +235,7 @@ A test that passes both before and after your change does not prove anything abo
 
 ## When your change needs a newer server
 
-The desktop app and the murmur server ship as **separate artifacts**. The app auto-updates;
+The desktop app and the harkroom server ship as **separate artifacts**. The app auto-updates;
 the server is redeployed by hand. So a released app is routinely talking to a server that is
 several releases behind — and that is normally fine.
 

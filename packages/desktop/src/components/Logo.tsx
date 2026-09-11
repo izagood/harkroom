@@ -23,7 +23,7 @@ export function Logo({
 }) {
   const a11y = decorative
     ? ({ 'aria-hidden': true } as const)
-    : ({ role: 'img', 'aria-label': 'murmur' } as const);
+    : ({ role: 'img', 'aria-label': 'harkroom' } as const);
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -34,7 +34,7 @@ export function Logo({
       data-testid="murmur-logo"
       {...a11y}
     >
-      {!decorative && <title>murmur</title>}
+      {!decorative && <title>harkroom</title>}
       <path d="M20 52.0 V 76.0" stroke="currentColor" strokeWidth="9" strokeLinecap="round" />
       <path d="M35 42.0 V 86.0" stroke="currentColor" strokeWidth="9" strokeLinecap="round" />
       <path d="M50 31.0 V 97.0" stroke="currentColor" strokeWidth="9" strokeLinecap="round" />
