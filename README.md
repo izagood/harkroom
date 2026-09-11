@@ -141,6 +141,7 @@ between "no work" and "projection is off", is listed in one place:
 | `MURMUR_CLAUDE_ACCOUNTS_DIR` | Root of the claude account pool; one subdirectory per account, each used as that account's `CLAUDE_CONFIG_DIR` | `~/.murmur-agent/claude-accounts` | No |
 | `MURMUR_CLAUDE_ACCOUNTS` | Comma-separated account names setting failover order and subset (e.g. `plum,lime`). A name missing from the pool fails startup. Unset means alphabetical order over the whole pool | - | No |
 | `MURMUR_CLAUDE_POOL` | Forces which account pool this runner uses, overriding both the per-agent assignment and the default pool in `pools.json`. A name with no matching pool directory fails startup. Unset means: per-agent assignment, then default pool, then the pool root itself | - | No |
+| `MURMUR_HARNESS_ADAPTERS` | Routes harness-specific facts through the adapter table (`packages/agent/src/adapters/`) instead of the hardcoded per-harness branches. Only `1` or `true` enable it; anything else keeps the existing path. Off by default until the new path is verified on a real machine | - | No |
 | `CLAUDE_CONFIG_DIR` | Not read by the runner — **set on the child** `claude` process to the selected account's directory. Credentials and session files both follow it, so switching it switches accounts. Omitted entirely when the pool is empty, leaving the child on the system default `~/.claude` | - | No |
 
 ### Desktop
