@@ -266,6 +266,32 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
+  # ## 서버 이미지 — **`.dmg` 와 같은 ref 에서 굽는다**
+  #
+  # 이미지 워크플로(`image.yml`)는 `push: main` 으로도 돌지만 그때 굽는 것은 **버전이
+  # 오르기 전 커밋**이라, 이미지 안 `tauri.conf.json` 의 숫자가 한 릴리즈 뒤진다.
+  # 그것을 고치려면 bump 커밋(또는 그 위의 태그)에서 구워야 하는데, 그 커밋과 태그는
+  # `GITHUB_TOKEN` 으로 밀리므로 **아무 워크플로도 트리거하지 못한다**(위 "왜 태그 푸시가
+  # 아니라 한 워크플로 안에서 다 하는가" 절과 같은 정책). 릴리즈가 직접 부르는 것 말고는
+  # 그 ref 를 구울 방법이 없다.
+  #
+  # 실측(2026-09-14)으로 무엇이 어긋나 있었는지: `:latest` 가 사흘·두 릴리즈 낡아 있었고,
+  # 제일 새 이미지는 0.1.208 이 된 코드인데 안에 구워진 version 이 0.1.206 이었다.
+  #
+  # **이 잡이 릴리즈를 느리게 하지 않는다.** `build`(.dmg)와 병렬로 돌고, `finalize` 는
+  # 이 잡을 `needs` 에 넣지 않는다 — 이미지가 실패해도 `.dmg` 는 그대로 공개된다.
+  # (이미지 전체가 1분 38초다. 그동안 `build` 는 아직 공증 왕복 중이다.)
+  image:
+    needs: prepare
+    if: needs.prepare.outputs.tag != ''
+    # **불려 가는 워크플로의 권한은 호출자가 정한다.** 여기서 안 주면 ghcr 푸시가 403 이다.
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/image.yml
+    with:
+      release_tag: ${{ needs.prepare.outputs.tag }}
+
   build:
     name: .dmg 를 만들고 서명·공증한다
     needs: prepare

@@ -355,6 +355,19 @@ MURMUR_COMMIT=$(git rev-parse --short HEAD) \
   docker compose -p <프로젝트> build server
 ```
 
+**아니면 손으로 빌드하지 말고 공식 이미지를 당겨라.** 그쪽은 CI 가 커밋을 **항상** 심고,
+버전도 릴리스 태그에서 구운 것이라 둘 다 어긋날 자리가 없다. 넘기는 것을 한 번 잊으면
+`commit: null` 이 되고, 그 배포는 "지금 도는 게 무슨 코드인가"에 답하지 못한다
+(2026-09-14 에 실제로 그 상태였다):
+
+```
+HARKROOM_SERVER_TAG=<릴리스 번호> docker compose -p <프로젝트> pull server
+HARKROOM_SERVER_TAG=<릴리스 번호> docker compose -p <프로젝트> up -d --no-deps server
+```
+
+`--no-deps` 를 빼지 마라 — 없으면 compose 가 postgres 까지 손댈 수 있다. 되돌리기는 그
+숫자를 전 릴리스로 바꿔 두 줄을 다시 돌리는 것이다.
+
 데스크탑 앱은 이것을 **설정 → Communities** 의 각 줄에 그린다. **`version` 이 아예 안 오는
 서버**는 이 필드가 생기기 전 판이므로 그 자체가 재배포 신호다.
 
