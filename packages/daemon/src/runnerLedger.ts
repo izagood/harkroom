@@ -26,7 +26,7 @@
  *
  * ## 왜 러너가 아니라 daemon 이 쓰는가 (D5 의 단일 writer)
  *
- * 스펙(D5)은 "러너가 `~/.murmur-agent/<agent>-<instance>/` 에 자기 pid 를 남긴다"를
+ * 스펙(D5)은 "러너가 `~/.harkroom-agent/<agent>-<instance>/` 에 자기 pid 를 남긴다"를
  * 제안했다. **채택하지 않았다.** 근거 셋:
  *
  * 1. **러너는 자기 `agentId` 를 늦게 안다.** `murmur.me()` 라는 네트워크 왕복이 끝나야
@@ -34,7 +34,7 @@
  *    서버가 느릴수록 넓어진다 — 정확히 고아가 잘 생기는 상황이다
  * 2. **daemon 은 spawn 하는 순간 다 안다** — `agentId`(앱이 줬다)·pid(커널이 줬다)·
  *    `incarnationId`. 늦게 아는 것이 없다
- * 3. **디렉터리의 writer 를 늘리지 않는다.** `~/.murmur-agent/<…>/` 는 러너의 영역이고
+ * 3. **디렉터리의 writer 를 늘리지 않는다.** `~/.harkroom-agent/<…>/` 는 러너의 영역이고
  *    `sessions.json` 이 거기 산다. daemon 이 그 트리에 파일을 만들면 "daemon 은 러너의
  *    상태 디렉터리를 건드리지 않는다"는 경계가 흐려지고, 다음 사람이 `sessions.json` 을
  *    읽는 것도 같은 정도의 일로 본다. **경계는 파일 단위가 아니라 디렉터리 단위로
