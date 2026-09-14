@@ -25,7 +25,8 @@
 // 로그인 상태 판정은 실제 `claude auth status --json` 을 돌려야 한다. 테스트가 그것을 부르면
 // 그 머신의 로그인 상태에 달리고 CI 에는 로그인이 없다 — 그러면 "미로그인" 경로만 초록이
 // 된다. 구조를 읽고 쓰는 일은 상태와 무관하므로 그 경계를 갈라 둔다.
-import { renamedEnv } from '@harkroom/shared';
+import { existsSync } from 'node:fs';
+import { pickRenamedDir, renamedEnv } from '@harkroom/shared';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
@@ -138,7 +139,11 @@ export interface ClaudeAccountsPort {
 
 /** 계정 풀 뿌리. 러너의 `claudeAccountsRoot()` 와 **같은 값**이어야 한다. */
 export function claudeAccountsRoot(env: NodeJS.ProcessEnv = process.env): string {
-  return renamedEnv(env, 'HARKROOM_CLAUDE_ACCOUNTS_DIR') ?? join(homedir(), '.murmur-agent', 'claude-accounts');
+  return renamedEnv(env, 'HARKROOM_CLAUDE_ACCOUNTS_DIR') ?? pickRenamedDir(
+    join(homedir(), '.harkroom-agent', 'claude-accounts'),
+    join(homedir(), '.murmur-agent', 'claude-accounts'),
+    existsSync,
+  );
 }
 
 /**
