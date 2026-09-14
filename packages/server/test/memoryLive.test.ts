@@ -161,6 +161,11 @@ describe('memory MCP tools', () => {
 
       const noPrefix = await callTool(client, 'memory.set', { slug: 'random', value: 'test' });
       expect(noPrefix.error?.code).toBe('invalid_slug');
+      // **거절은 문법을 함께 준다.** 문구가 `invalid slug format` 뿐이던 동안, 접두사를
+      // 빼고 두어 번 시도한 에이전트가 "이 도구는 core 하나만 받는다"고 결론짓고 기억을
+      // 다른 데(사라지는 곳)에 넣었다 — 그 결론을 막는 것이 이 문장이다.
+      expect(noPrefix.error?.message).toContain('mem/');
+      expect(noPrefix.error?.message).toContain('core');
 
       const longSlug = await callTool(client, 'memory.set', { slug: 'a'.repeat(256), value: 'test' });
       expect(longSlug.error?.code).toBe('invalid_slug');
