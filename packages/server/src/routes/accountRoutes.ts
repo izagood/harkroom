@@ -346,7 +346,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
   /**
    * 러너에게 **종료를 요청한다**(#129). 재시작 버튼이 아니다.
    *
-   * murmur 는 러너를 띄우지 않는다(docs/design.md §1 외부 접속형, §6 스코프 제외) — 그
+   * harkroom 는 러너를 띄우지 않는다(docs/design.md §1 외부 접속형, §6 스코프 제외) — 그
    * 머신에도, harness 로그인 세션에도, 파일시스템에도 닿지 못한다. 여기서 하는 일은
    * 정의에 시각을 하나 남기는 것뿐이고, 러너가 다음에 자기 정의를 읽을 때 그것을 보고
    * **지금 턴을 끝낸 뒤** 스스로 물러난다. 다시 띄우는 것은 사람(또는 그 사람의

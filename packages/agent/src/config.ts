@@ -39,7 +39,7 @@ export function runnerLabel(handle: string, instance: string | undefined): strin
   return `@${handle}[${instance ?? 'default'}]`;
 }
 
-/** 러너 자체의 설정. 모델·effort·지시문은 서버의 에이전트 정의에 있다(murmur UI 로 바꾼다). */
+/** 러너 자체의 설정. 모델·effort·지시문은 서버의 에이전트 정의에 있다(harkroom UI 로 바꾼다). */
 export interface RunnerConfig {
   murmurUrl: string;
   murmurPat: string;

@@ -469,7 +469,7 @@ export function createAppStore() {
      * 쓰지 않는 죽은 코드였고 로그아웃이 그쪽을 비우지 않았다).
      *
      * 맵이 이미 메모리에 있으므로 키 입력마다 보관소를 **읽지** 않는다. 초판은 매
-     * 글자마다 load() 로 JSON 을 파싱했다 — murmur 메시지는 길다는 것이 이 기능의
+     * 글자마다 load() 로 JSON 을 파싱했다 — harkroom 메시지는 길다는 것이 이 기능의
      * 전제인데 그 전제와 정면으로 어긋난다.
      */
     setDraft: (scopeKey, draft) => {

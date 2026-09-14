@@ -8,7 +8,7 @@ import { setAppUpdater, type AppUpdater } from '../../lib/appUpdater';
  *
  * ## 왜 "못 한다고 적지 않는다"만으로는 부족한가
  *
- * 이 화면은 기능이 없을 때 **정직하게** "murmur cannot update itself yet" 이라고 적고
+ * 이 화면은 기능이 없을 때 **정직하게** "harkroom cannot update itself yet" 이라고 적고
  * 있었다. 기능을 넣으면서 그 문구를 안 고치면 그때부터 화면이 거짓말을 한다 — 이
  * 저장소가 `#443`·`#476` 에서 반복해 겪은 실패다.
  *

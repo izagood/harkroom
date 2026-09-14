@@ -9,7 +9,7 @@ export const CODEX_ADAPTER: HarnessAdapter = {
 
   /**
    * **멘션 턴도 TUI 다(2026-09-11).** 이것이 이 이설의 "추가" 이고, 전환의 기준이다 —
-   * TUI 캡슐화가 murmur 의 전제이고 `exec` 는 개발 과정의 산물이었다.
+   * TUI 캡슐화가 harkroom 의 전제이고 `exec` 는 개발 과정의 산물이었다.
    *
    * `exec` 로 뜬 턴은 `sh -c '… < 파일'` 로 감싸여 fd 0 이 일반 파일이 된다. 그러면
    * `acceptsPtyInput` 이 거짓이라 **사람이 그 턴에 끼어들 수 없다**(관찰 전용). 터미널을

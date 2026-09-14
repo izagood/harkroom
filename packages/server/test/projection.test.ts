@@ -129,8 +129,8 @@ describe('projection', () => {
   });
 
   /**
-   * 복구 시나리오 A: murmur DB 를 더 오래된 스냅샷으로 되돌린 경우. 커서가 뒤로 가고 이미
-   * 투영된 구간을 다시 읽는데, 결과가 중복되지 않아야 한다 — 이게 "murmur 를 되돌려도
+   * 복구 시나리오 A: harkroom DB 를 더 오래된 스냅샷으로 되돌린 경우. 커서가 뒤로 가고 이미
+   * 투영된 구간을 다시 읽는데, 결과가 중복되지 않아야 한다 — 이게 "harkroom 를 되돌려도
    * 안전하다"의 근거다.
    *
    * **멱등성의 근거가 바뀌었다.** 예전에는 `message_avcs_oid` 유니크 인덱스(투영 전용)가
@@ -152,10 +152,10 @@ describe('projection', () => {
     expect(await messages()).toHaveLength(0); // 재적용이 메시지를 되살리지도 않는다
   });
 
-  // 복구 시나리오 B(위험한 쪽): **avcs 서버**를 murmur 커서보다 오래된 상태로 되돌린 경우.
+  // 복구 시나리오 B(위험한 쪽): **avcs 서버**를 harkroom 커서보다 오래된 상태로 되돌린 경우.
   // 커서가 로그보다 앞서면 fetchSince 가 줄 게 없고, 커서는 후퇴하지 않는다 — 크래시는 없지만
   // avcs 로그가 커서를 다시 넘어설 때까지 **그 사이 객체가 조용히 건너뛰어진다.** 복구 절차
-  // (docs/operations.md)가 "avcs 를 murmur 커서 뒤로 되돌리지 말라"고 말하는 근거를 고정한다.
+  // (docs/operations.md)가 "avcs 를 harkroom 커서 뒤로 되돌리지 말라"고 말하는 근거를 고정한다.
   it('stalls without crashing when the cursor is ahead of the avcs log', async () => {
     const repo = 'avcs-rollback-repo';
     await createChannel(pool, { name: 'avcs-rollback', repo });

@@ -1,4 +1,4 @@
-// murmur 접속 표면. 스펙(§4)이 지정한 에이전트 표면은 MCP 이므로 그것만 쓴다 — inbox 롱폴은
+// harkroom 접속 표면. 스펙(§4)이 지정한 에이전트 표면은 MCP 이므로 그것만 쓴다 — inbox 롱폴은
 // MCP `inbox.poll` 에만 있고 REST `/inbox` 에는 없다.
 //
 // 이 러너를 만들면서 MCP 표면에 구멍이 하나 드러났다: 미읽음을 소비하는 도구가 없어서 같은
@@ -21,7 +21,7 @@ export interface InboxBatch {
  * 이 클라이언트가 던지는 에러에 출처와 HTTP status 를 붙인다.
  *
  * `policy.ts::isCredentialFailure` 는 `main.ts` 에서 턴 **전체**를 감싸는 catch 에 쓰이므로,
- * 하네스 실패와 murmur 호출 실패가 같은 자리로 들어온다. 태그가 없으면 murmur PAT 만료를
+ * 하네스 실패와 harkroom 호출 실패가 같은 자리로 들어온다. 태그가 없으면 harkroom PAT 만료를
  * "claude CLI 로 로그인해라"로 안내하게 된다(#87).
  *
  * status 를 함께 싣는 이유: 태그만 있으면 판정이 다시 문구 매칭으로 내려간다. status 가

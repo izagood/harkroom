@@ -7,8 +7,8 @@ import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 /**
  * **부름과 지칭**(2026-09-09). 규칙과 근거는 `shared/splitMentionCalls` 에 있다.
  *
- * 사고의 모양: murmur 가 사람에게 하는 보고 한가운데 "구현은 `@forge` 것이고" 라고 적었을
- * 뿐인데 forge 의 턴이 떴고, forge 의 답이 다시 murmur 를 가리켜 5분에 네 턴이 오갔다.
+ * 사고의 모양: harkroom 가 사람에게 하는 보고 한가운데 "구현은 `@forge` 것이고" 라고 적었을
+ * 뿐인데 forge 의 턴이 떴고, forge 의 답이 다시 harkroom 를 가리켜 5분에 네 턴이 오갔다.
  * 그날 dev DB 의 에이전트→에이전트 멘션 122건 중 47건이 부를 뜻 없는 지칭이었다.
  *
  * 이 회귀선은 **서버를 통과한다** — `inbox` 행을 센다(`mentionChain.test.ts` 와 같은 이유:

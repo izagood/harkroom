@@ -127,7 +127,7 @@ export function createStaleRequestSweeper(pool: Pool, opts: {
    *
    * `agent_config` 를 join 하는 이유: 정의가 있는 에이전트만 러너가 뜬다 —
    * `harkroom_agent_oldest_unread_seconds` 메트릭이 같은 join 을 쓰고, 그것이
-   * "murmur 가 실행할 수 있는 에이전트"의 정의다.
+   * "harkroom 가 실행할 수 있는 에이전트"의 정의다.
    */
   async function candidates(online: string[]): Promise<Candidate[]> {
     const res = await pool.query<Candidate>(

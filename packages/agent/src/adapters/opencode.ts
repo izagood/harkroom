@@ -16,7 +16,7 @@ export const OPENCODE_ADAPTER: HarnessAdapter = {
   command: 'opencode',
 
   // **TUI 가 기본 커맨드다** — `opencode [project]` 가 곧 TUI 이고, `run` 이 오히려 별
-  // 서브커맨드다. murmur 의 전제(TUI 캡슐화)에 셋 중 가장 잘 맞는다.
+  // 서브커맨드다. harkroom 의 전제(TUI 캡슐화)에 셋 중 가장 잘 맞는다.
   executionModel: { mention: 'tui', interactive: 'tui' },
 
   screen: {
@@ -57,7 +57,7 @@ export const OPENCODE_ADAPTER: HarnessAdapter = {
    * 키일 수도 있는데 어느 쪽인지 모른다.
    *
    * **이 목록이 불완전한 것이 지금 opencode 가 `RUNNABLE_HARNESSES` 에 없는 이유 중 하나다** —
-   * `mentionPermission: 'readonly'` 로 만든 에이전트를 돌릴 수 없으면 그 하네스는 murmur 의
+   * `mentionPermission: 'readonly'` 로 만든 에이전트를 돌릴 수 없으면 그 하네스는 harkroom 의
    * 권한 모델을 절반만 만족한다.
    */
   supportedMentionPermissions: ['auto'],
@@ -90,7 +90,7 @@ export const OPENCODE_ADAPTER: HarnessAdapter = {
     pooled: false,
   },
 
-  // `--variant`("provider-specific reasoning effort, e.g. high, max, minimal"). murmur 의
+  // `--variant`("provider-specific reasoning effort, e.g. high, max, minimal"). harkroom 의
   // 다섯 값과 어떻게 맞물리는지는 미측정 — codex 의 `model_reasoning_effort` 와 같은 상태다.
   effort: { via: 'flag', flag: '--variant' },
   // `opencode debug skill` 로 목록은 보이지만 **링크할 자리를 아직 못 쟀다**. 빈 목록은

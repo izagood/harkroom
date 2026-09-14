@@ -131,7 +131,7 @@ describe('ensureWorkspaceTrusted — 실패해도 던지지 않는다', () => {
 
 // ── 관문 ③: bypassPermissions 수락(2026-09-08 실측)
 //
-// **이것이 없으면 기본 설정의 모든 첫 턴이 1초 만에 죽는다.** `turn.ts:156` 이 murmur 의
+// **이것이 없으면 기본 설정의 모든 첫 턴이 1초 만에 죽는다.** `turn.ts:156` 이 harkroom 의
 // `auto` 를 `--permission-mode bypassPermissions` 로 번역하고, TUI 는 그 모드로 뜰 때마다
 // 계정이 한 번도 수락한 적 없으면 경고 화면을 띄운다 — 기본 선택이 `❯ No, exit` 라서
 // 러너가 답을 못 하면 그 선택으로 끝난다(실측: exitCode 1, 경과 ~1초).

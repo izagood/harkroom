@@ -203,7 +203,7 @@ describe('buildTurnCommand — codex', () => {
   });
 
   // avcs workspace 는 git 저장소가 아니다 — codex 가 "신뢰되지 않은 디렉터리"로 거부한다.
-  // --skip-git-repo-check 로 이 검사를 건너뛰게 한다(avcs workspace 가 murmur 의 격리 경로라는
+  // --skip-git-repo-check 로 이 검사를 건너뛰게 한다(avcs workspace 가 harkroom 의 격리 경로라는
   // spec §3 설계 결정에 따른다). exec·resume 양쪽에 모두 필요하므로, 첫 턴·resume 턴 모두 확인한다.
   it('첫 멘션 턴 argv 에 --skip-git-repo-check 를 **못 받는다** — TUI 에는 그 플래그가 없다', () => {
     const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true });
@@ -260,8 +260,8 @@ describe('buildTurnCommand — codex', () => {
     expect(p.args).not.toContain('--ignore-user-config');
   });
 
-  // 러너는 더 이상 하네스 출력을 파싱하지 않는다 — 에이전트가 답하는 유일한 경로가 murmur
-  // MCP 의 `message.post` 다(prompt.ts). murmur MCP 가 안 붙은 codex 턴은 에러 없이 그냥
+  // 러너는 더 이상 하네스 출력을 파싱하지 않는다 — 에이전트가 답하는 유일한 경로가 harkroom
+  // MCP 의 `message.post` 다(prompt.ts). harkroom MCP 가 안 붙은 codex 턴은 에러 없이 그냥
   // 돌다가 답을 못 하고, 러너는 "답 없이 턴을 끝냈습니다"만 남긴다 — 원인 단서가 없는 조용한
   // 실패다. 그래서 murmurUrl 은 선택이 아니라 필수이고, codex 의 모든 턴에 반드시 붙는다.
   it('codex 턴의 argv 에는 murmur MCP 등록이 항상 들어 있다 — PAT 값 자체는 여전히 안 붙는다', () => {
@@ -664,7 +664,7 @@ describe('실행 모델 교체 — 멘션 턴도 TUI 다 (2026-09-08)', () => {
     expect(buildTurnCommand({ ...common, mode: 'interactive' }).args).not.toContain('--permission-mode');
   });
 
-  // **`bypassPermissions` 로 되돌리지 마라**(2026-09-09). murmur 의 `auto` 는 "판단이
+  // **`bypassPermissions` 로 되돌리지 마라**(2026-09-09). harkroom 의 `auto` 는 "판단이
   // 필요하면 사람에게 묻는다"이고, 그 자리가 앱에 이미 있다(`message.ask` 의 선택 카드).
   // `bypassPermissions` 는 아무것도 묻지 않으며, TUI 로 뜰 때마다 경고 화면을 띄워
   // 기본 선택('No, exit')으로 턴을 1초에 죽인다(2026-09-08 프로덕션 사고).
