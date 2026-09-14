@@ -1569,6 +1569,8 @@ export const en = {
 
   'sidebar.edit.cancel': 'Cancel',
   'sidebar.edit.failed': 'The channel was not saved',
+  'sidebar.edit.namePlaceholder': 'channel name',
+  'sidebar.edit.nameTaken': 'Another channel already uses this name',
   'sidebar.edit.repoPlaceholder': 'repo (empty unbinds)',
   'sidebar.edit.save': 'Save',
   'sidebar.edit.title': 'Edit {name}',

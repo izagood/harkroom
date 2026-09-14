@@ -103,14 +103,23 @@ export async function createChannel(
  * archived 는 archived_at 과 archived_by 를 함께 갱신한다 — archived_at = now() / null,
  * archived_by = actorId / null.
  * visibility 도 같은 규칙이다 — 키가 없으면 손대지 않는다. 여기서 public 을 기본값으로
- * 흘리면 admin 이 topic 만 고칠 때 private 채널이 조용히 전원에게 열린다. */
+ * 흘리면 admin 이 topic 만 고칠 때 private 채널이 조용히 전원에게 열린다.
+ *
+ * name 도 같은 규칙이다(키가 없으면 손대지 않는다). 다만 `channel.name` 은 **유니크**라
+ * 이 UPDATE 가 23505 로 터질 수 있다 — 여기서 삼키지 않고 라우트까지 올린다. 이름 충돌은
+ * "갱신 실패"가 아니라 사용자에게 돌려줄 409 이고, 그 판정은 HTTP 를 아는 자리에서 한다.
+ * `where ... kind = 'standard'` 가 DM 을 이미 막는다 — DM 에는 이름이 없다. */
 export async function updateChannel(
   pool: Pool, id: string, actorId: string,
-  patch: { topic?: string; repo?: string | null; archived?: boolean; visibility?: 'public' | 'private' },
+  patch: {
+    name?: string; topic?: string; repo?: string | null; archived?: boolean;
+    visibility?: 'public' | 'private';
+  },
 ): Promise<ChannelRow | null> {
   const hasArchived = patch.archived !== undefined;
   const res = await pool.query(
     `update channel set
+       name  = case when $10::bool then $11::text else name  end,
        topic = case when $2::bool then $3::text else topic end,
        repo  = case when $4::bool then $5::text else repo  end,
        archived_at = case when $6 is true then now() when $6 is false then null else archived_at end,
@@ -124,6 +133,7 @@ export async function updateChannel(
       patch.repo !== undefined, patch.repo ?? null,
       hasArchived ? patch.archived : null, patch.archived ? actorId : null,
       patch.visibility !== undefined, patch.visibility ?? null,
+      patch.name !== undefined, patch.name ?? null,
     ],
   );
   return res.rowCount ? res.rows[0] : null;

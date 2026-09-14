@@ -148,14 +148,18 @@ export class ApiClient {
   /**
    * 채널을 편집한다.
    *
-   * `topic` 은 간단한 옵션 값이다 — 값을 넣으면 갱신, 안 넣으면 기존 그대로.
+   * `name` 과 `topic` 은 간단한 옵션 값이다 — 값을 넣으면 갱신, 안 넣으면 기존 그대로.
+   * 이름은 유니크라 이미 쓰는 이름이면 서버가 409 `channel_name_taken` 을 준다.
    * `repo` 는 `null` (바인딩 해제)과 키 부재 (기존 그대로)를 **반드시 구분**해야 한다.
    * 호출자가 이 구분을 잃으면(빈 문자열을 보내거나 항상 두 필드를 다 보내면) 운영자가 topic 만
    * 고치려다 avcs 바인딩이 조용히 끊긴다.
    */
   updateChannel(
     id: string,
-    input: { topic?: string; repo?: string | null; archived?: boolean; visibility?: 'public' | 'private' },
+    input: {
+      name?: string; topic?: string; repo?: string | null; archived?: boolean;
+      visibility?: 'public' | 'private';
+    },
   ): Promise<ChannelRow> {
     return this.req('PATCH', `/channels/${id}`, input);
   }

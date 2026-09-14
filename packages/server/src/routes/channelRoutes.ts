@@ -79,6 +79,10 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
   app.patch('/channels/:id', { preHandler: app.requireAdmin }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const patch = z.object({
+      // 이름 규칙은 만드는 경로(`POST /channels`)와 **같은 상수**다 — 사본을 두면
+      // "만들 수는 있는데 그 이름으로 바꿀 수는 없는" 이름이 생긴다(섹션 이름이 겪은 것과
+      // 같은 사고다). 정본은 shared 의 `CHANNEL_NAME_PATTERN`.
+      name: z.string().regex(new RegExp(CHANNEL_NAME_PATTERN)).optional(),
       topic: z.string().max(256).optional(),
       // null은 바인딩 해제, 키 부재는 그대로 두기 — zod에서도 이 둘을 구분해야 한다.
       repo: z.string().max(128).nullable().optional(),
@@ -87,13 +91,28 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     }).parse(req.body);
 
     // 비공개화 전환을 판정하려면 바꾸기 **전** 의 visibility 를 읽어야 한다 — 갱신 뒤에는
-    // 'private' 만 남아 "원래도 private 이었나"를 구분할 수 없다.
-    const oldChannel = patch.visibility !== undefined
-      ? await pool.query(`select visibility from channel where id = $1`, [id])
+    // 'private' 만 남아 "원래도 private 이었나"를 구분할 수 없다. 이름도 같은 이유로 함께
+    // 읽는다: 감사 로그의 from/to 는 옛 이름이 있어야 쓸 수 있고, 갱신 뒤에는 사라진다.
+    const oldChannel = patch.visibility !== undefined || patch.name !== undefined
+      ? await pool.query(`select name, visibility from channel where id = $1`, [id])
       : null;
     const wasPublic = oldChannel?.rows[0]?.visibility === 'public';
+    const oldName = oldChannel?.rows[0]?.name as string | undefined;
 
-    const channel = await updateChannel(pool, id, req.account!.id, patch);
+    let channel;
+    try {
+      channel = await updateChannel(pool, id, req.account!.id, patch);
+    } catch (err) {
+      // `channel.name` 은 유니크다. **미리 조회해서 막지 않는 이유**: 조회와 UPDATE 사이에
+      // 남이 그 이름을 가져가는 창이 열린다(핸들 변경은 그 창을 안고 있다). 여기서는 DB 가
+      // 판정하게 두고 그 위반을 409 로 옮긴다 — 창이 없다.
+      if ((err as { code?: string }).code === '23505') {
+        return reply.code(409).send({
+          error: { code: 'channel_name_taken', message: 'this channel name is already taken' },
+        });
+      }
+      throw err;
+    }
     if (!channel) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
     }
@@ -119,6 +138,16 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
         target: id, detail: { visibility: patch.visibility },
       }, req);
     }
+    // 이름 변경도 별도 항목이다 — **from/to 를 갖는 유일한 필드**라서 'channel.updated' 의
+    // 필드 목록(`{ fields: ['name'] }`)으로 뭉개면 "언제 무엇에서 무엇으로 바뀌었나"가
+    // 사라진다. 채널 이름은 과거 대화를 찾을 때 사람이 기억하는 것이라 그 이력이 값이다.
+    // 같은 이름으로 저장한 요청은 기록하지 않는다(아무것도 바뀌지 않았다).
+    if (patch.name !== undefined && patch.name !== oldName) {
+      await recordAudit(pool, {
+        action: 'channel.renamed', actorId: req.account!.id, actorHandle: req.account!.handle,
+        target: id, detail: { from: oldName, to: patch.name },
+      }, req);
+    }
     const isArchive = patch.archived === true;
     const isUnarchive = patch.archived === false;
     if (isArchive) {
@@ -132,9 +161,10 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
         target: id, detail: {},
       }, req);
     } else {
-      const fields = Object.keys(patch).filter((k) => k !== 'archived' && k !== 'visibility');
-      // visibility 만 온 요청은 위에서 이미 기록했다 — 빈 필드 목록의 'channel.updated' 를
-      // 덧붙이면 감사 로그에 아무것도 안 바뀐 항목이 하나 더 생긴다.
+      const fields = Object.keys(patch)
+        .filter((k) => k !== 'archived' && k !== 'visibility' && k !== 'name');
+      // visibility·name 만 온 요청은 위에서 이미 기록했다 — 빈 필드 목록의 'channel.updated'
+      // 를 덧붙이면 감사 로그에 아무것도 안 바뀐 항목이 하나 더 생긴다.
       if (fields.length) {
         await recordAudit(pool, {
           action: 'channel.updated', actorId: req.account!.id, actorHandle: req.account!.handle,
