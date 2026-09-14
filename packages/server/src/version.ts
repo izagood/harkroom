@@ -49,7 +49,7 @@ const TAURI_CONF = new URL('../../desktop/src-tauri/tauri.conf.json', import.met
 function readReleaseVersion(): string | null {
   // 환경변수를 **먼저** 본다. 이 저장소 밖에서(다른 빌드 파이프라인·셀프호스트) 띄우는
   // 사람에게 파일을 강요하지 않기 위한 탈출구다.
-  const fromEnv = process.env.MURMUR_VERSION?.trim();
+  const fromEnv = process.env.HARKROOM_VERSION?.trim();
   if (fromEnv) return fromEnv;
   try {
     const conf = JSON.parse(readFileSync(TAURI_CONF, 'utf8')) as { version?: unknown };
@@ -60,7 +60,7 @@ function readReleaseVersion(): string | null {
 }
 
 const version = readReleaseVersion();
-const commit = process.env.MURMUR_COMMIT?.trim() || null;
+const commit = process.env.HARKROOM_COMMIT?.trim() || null;
 
 /** 이 서버의 버전 사실. 값은 프로세스가 사는 동안 바뀌지 않는다. */
 export function serverVersion(): ServerVersion {

@@ -255,8 +255,8 @@ const CODEX_PRESET: HarnessPreset = {
     '-c', 'mcp_servers.avcs.args=["mcp"]',
     // murmur 도 항상 등록한다 — 이게 빠지면 에이전트가 답할 방법이 없다(위 murmurUrl 주석).
     // `bearer_token_env_var` 는 env 변수 "이름"만 담는다 — PAT 값 자체는 절대 argv 에 오르지
-    // 않는다(spec §7, task-1 실측: `-c mcp_servers.murmur.bearer_token_env_var="MURMUR_PAT"`).
-    // 실값은 buildTurnCommand 가 돌려주는 env.MURMUR_PAT 로만 간다.
+    // 않는다(spec §7, task-1 실측: `-c mcp_servers.murmur.bearer_token_env_var="HARKROOM_PAT"`).
+    // 실값은 buildTurnCommand 가 돌려주는 env.HARKROOM_PAT 로만 간다.
     //
     // **`/mcp` 를 붙여야 한다 — 실물 검증에서 드러난 회귀다.** `murmurUrl` 은 서버 베이스
     // URL(`http://localhost:3400`)이지 MCP 엔드포인트가 아니다. claude 쪽은
@@ -272,7 +272,7 @@ const CODEX_PRESET: HarnessPreset = {
     // claude 와 정규화 지점을 하나로 합쳐, 다음에 엔드포인트 경로가 바뀌어도 한 곳만 고치면
     // 되게 한다.
     '-c', `mcp_servers.murmur.url="${mcpUrl(murmurUrl)}"`,
-    '-c', 'mcp_servers.murmur.bearer_token_env_var="MURMUR_PAT"',
+    '-c', 'mcp_servers.murmur.bearer_token_env_var="HARKROOM_PAT"',
   ],
   model: (model) => (model ? ['--model', model] : []),
   // codex 에 `--effort` 플래그는 없다 — spec §4 표에도 이 항목은 없다(측정 대상 밖). 키
@@ -469,8 +469,8 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
  * 안에서 뜨고, 그 셸에는 이 마커가 실제로 들어 있다(2026-09-04 실측). 러너 env 가 무엇인지
  * 우리가 고를 수 없으므로, 자식에게 넘기지 않는 쪽을 이 함수가 보장한다.
  *
- * 앱 경로도 막히지 않는다: `runnerLauncher.ts::tauriSpawner` 는 러너에 `MURMUR_PAT`·
- * `MURMUR_URL`·`PATH` 만 넘기지만, `@tauri-apps/plugin-shell` 의 `env` 는 **덮어쓰기가
+ * 앱 경로도 막히지 않는다: `runnerLauncher.ts::tauriSpawner` 는 러너에 `HARKROOM_PAT`·
+ * `HARKROOM_URL`·`PATH` 만 넘기지만, `@tauri-apps/plugin-shell` 의 `env` 는 **덮어쓰기가
  * 아니라 추가**다(`index.d.ts`: "Environment variables. set to `null` to clear the process
  * env" — `null` 을 줘야 지워진다). 즉 앱의 env 가 러너에 그대로 상속되고, 앱을 터미널에서
  * 띄웠다면 그 터미널의 마커가 앱 → 러너 → 하네스까지 3단으로 흘러간다.
@@ -493,7 +493,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
  * **조용히** 무력해진다 — 계정을 바꿨는데 안 바뀌는 이번 결함의 다른 얼굴이다.
  *
  * 러너는 데몬 env 전체를 상속하고(`desktop/src/lib/runnerLauncher.ts` 의
- * `daemon_spawn_runner` 는 `MURMUR_PAT`·`MURMUR_URL`·`PATH` 만 넘긴다) 데몬은 자기를 띄운
+ * `daemon_spawn_runner` 는 `HARKROOM_PAT`·`HARKROOM_URL`·`PATH` 만 넘긴다) 데몬은 자기를 띄운
  * 셸의 env 를 상속한다 — 즉 이 키가 어디서 들어올지 우리가 통제할 수 없다. 그래서 상속을
  * 막는 쪽이 맞다.
  *
@@ -513,12 +513,12 @@ export const HARNESS_ENV_DENYLIST = [
 ] as const;
 
 /**
- * PTY 자식에 넘길 env. 부모(러너) 전체를 물려주고 `MURMUR_PAT` 만 덮어쓴다.
+ * PTY 자식에 넘길 env. 부모(러너) 전체를 물려주고 `HARKROOM_PAT` 만 덮어쓴다.
  *
  * **실물 검증에서 발견된 회귀다.** `pty.spawn` 은 `env` 를 넘기면 부모 env 와 **병합하지
  * 않고 그 값으로 완전히 대체한다**(node-pty `unixTerminal.js`: `opt.env = opt.env ||
  * process.env` — 넘겼다 하면 그걸로 끝, 상속은 opt.env 를 아예 안 줬을 때뿐이다). 이 함수가
- * 전에는 `{ MURMUR_PAT: opts.pat }` 하나만 돌려줬는데, 그 결과 자식은 `PATH`·`HOME` 이 통째로
+ * 전에는 `{ HARKROOM_PAT: opts.pat }` 하나만 돌려줬는데, 그 결과 자식은 `PATH`·`HOME` 이 통째로
  * 없는 채로 떴다 — `claude`/`codex` 실행 파일을 못 찾거나(PATH), Keychain·`~/.codex/auth.json`
  * 같은 로그인 자격증명을 못 읽어(HOME) 모든 실물 턴이 즉시 실패했다(`harness 종료 1`, 출력
  * 없음). 단위 테스트는 이걸 못 잡았다 — `test/pty.test.ts` 가 가짜 plan 을 만들 때
@@ -547,7 +547,7 @@ function childEnv(
   // 부모에 있어도 자식에는 없어야 하는 키를 뺀다(#374). 복사 뒤에 지우는 이유: 복사 루프에
   // 조건을 섞으면 '전체 상속'이라는 규칙과 그 예외가 한 줄에 엉켜 둘 다 읽기 어려워진다.
   for (const key of HARNESS_ENV_DENYLIST) delete env[key];
-  env.MURMUR_PAT = pat;
+  env.HARKROOM_PAT = pat;
   if (homes.codexHome !== null) env.CODEX_HOME = homes.codexHome;
   // **`null` 이면 키 자체를 넣지 않는다.** 빈 문자열을 넣으면 claude 가 그것을 경로로 읽어
   // 엉뚱한 자리에 설정을 만든다 — "계정 지정 없음"은 부재로 표현해야 시스템 기본으로 떨어진다.
@@ -558,9 +558,9 @@ function childEnv(
 
 /**
  * murmur + avcs 만 담은 MCP 설정 파일을 dir 아래 고정 이름(`mcp.json`)으로 쓴다. PAT 는
- * 실값이 아니라 `${MURMUR_PAT}` 플레이스홀더 문자열로만 들어간다 — 그래서 파일 자체는
+ * 실값이 아니라 `${HARKROOM_PAT}` 플레이스홀더 문자열로만 들어간다 — 그래서 파일 자체는
  * 비밀이 아니고(spec §7), claude 자식 프로세스가 이 플레이스홀더를 자기 env 의
- * MURMUR_PAT 로 확장해 읽는다(실측 확인: 리스너에 실제로 `Bearer <실값>` 헤더가 도착).
+ * HARKROOM_PAT 로 확장해 읽는다(실측 확인: 리스너에 실제로 `Bearer <실값>` 헤더가 도착).
  *
  * 이름의 "once" 는 "세션 하나에 한 번만 쓰면 충분하다"는 뜻이지 "두 번 부르면 안 된다"가
  * 아니다 — 재시도 경로 등에서 두 번 불려도 같은 결과를 내고 에러 없이 그냥 덮어쓴다
@@ -573,7 +573,7 @@ export async function writeMcpConfigOnce(dir: string, murmurUrl: string): Promis
       murmur: {
         type: 'http' as const,
         url: mcpUrl(murmurUrl),
-        headers: { Authorization: 'Bearer ${MURMUR_PAT}' },
+        headers: { Authorization: 'Bearer ${HARKROOM_PAT}' },
       },
       avcs: { type: 'stdio' as const, command: 'avcs', args: ['mcp'] },
     },

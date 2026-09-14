@@ -102,7 +102,7 @@ function hostTargetTriple() {
 }
 
 /**
- * 이번 빌드가 겨냥하는 플랫폼을 정한다. `MURMUR_RUNNER_TARGET_TRIPLE` 로 덮어쓸 수 있다
+ * 이번 빌드가 겨냥하는 플랫폼을 정한다. `HARKROOM_RUNNER_TARGET_TRIPLE` 로 덮어쓸 수 있다
  * (이름은 러너 시절부터 쓰던 것을 유지한다 — 이미 있는 환경·문서를 깨지 않는다. 두
  * 사이드카는 같은 호스트로 함께 나가므로 triple 이 갈릴 이유가 없다).
  *
@@ -116,7 +116,7 @@ function hostTargetTriple() {
  * 물려받는다. 나중에 Windows 런처가 들어오면 고칠 자리도 여기 하나다.
  */
 export function resolveTarget() {
-  const triple = process.env.MURMUR_RUNNER_TARGET_TRIPLE ?? hostTargetTriple();
+  const triple = process.env.HARKROOM_RUNNER_TARGET_TRIPLE ?? hostTargetTriple();
   const nodePlatform = TRIPLE_TO_NODE_PLATFORM[triple];
   if (!nodePlatform) {
     throw new Error(

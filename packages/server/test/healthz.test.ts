@@ -48,11 +48,11 @@ describe('healthz', () => {
   });
 
   /**
-   * 커밋은 빌드가 심는다(`MURMUR_COMMIT`). **안 심었으면 `null`** — 이 회귀선이 막는 것은
+   * 커밋은 빌드가 심는다(`HARKROOM_COMMIT`). **안 심었으면 `null`** — 이 회귀선이 막는 것은
    * 빈 문자열이 화면까지 올라가 '빌드 ' 라는 반쪽 문구가 뜨는 것이다.
    */
   it('commit is null when the build did not stamp one', async () => {
-    expect(process.env.MURMUR_COMMIT ?? '').toBe('');
+    expect(process.env.HARKROOM_COMMIT ?? '').toBe('');
     expect(healthBody(await app.inject({ method: 'GET', url: '/healthz' })).commit).toBeNull();
   });
   it('GET /readyz checks db', async () => {

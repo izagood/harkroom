@@ -20,7 +20,7 @@
  *
  * ## 왜 러너에는 그것이 없었나
  *
- * 앱이 `{ MURMUR_PAT, MURMUR_URL, PATH }` 세 개를 만들어 daemon 에 넘기고
+ * 앱이 `{ HARKROOM_PAT, HARKROOM_URL, PATH }` 세 개를 만들어 daemon 에 넘기고
  * (`desktop/src/lib/runnerLauncher.ts::spawnRunner`), daemon 이 그것을 그대로
  * `spawn(cmd, args, { env })` 에 넘겼다. **Node 의 `spawn` 은 `env` 를 주면 환경을 합치지
  * 않고 통째로 대체한다.** 그래서 러너는 세 변수만 가진 환경에서 돌았고, `USER`·`HOME`·
@@ -132,7 +132,7 @@ describe('러너 환경 — daemon 의 사용자 환경을 물려준다', () => 
     const { host, envs } = 엿보는host();
     const registry = new RunnerRegistry(SLEEPER, host);
 
-    await registry.spawnRunner('a1', { MURMUR_PAT: 'p', MURMUR_URL: 'u', PATH: '/usr/bin' });
+    await registry.spawnRunner('a1', { HARKROOM_PAT: 'p', HARKROOM_URL: 'u', PATH: '/usr/bin' });
 
     expect(envs).toHaveLength(1);
     expect(envs[0]!.USER).toBe(process.env.USER);
@@ -143,22 +143,22 @@ describe('러너 환경 — daemon 의 사용자 환경을 물려준다', () => 
     const { host, envs } = 엿보는host();
     const registry = new RunnerRegistry(SLEEPER, host);
 
-    await registry.spawnRunner('a1', { MURMUR_PAT: 'p', MURMUR_URL: 'u', PATH: '/앱이/정한/경로' });
+    await registry.spawnRunner('a1', { HARKROOM_PAT: 'p', HARKROOM_URL: 'u', PATH: '/앱이/정한/경로' });
 
     expect(envs[0]!.PATH).toBe('/앱이/정한/경로');
-    expect(envs[0]!.MURMUR_PAT).toBe('p');
-    expect(envs[0]!.MURMUR_URL).toBe('u');
+    expect(envs[0]!.HARKROOM_PAT).toBe('p');
+    expect(envs[0]!.HARKROOM_URL).toBe('u');
   });
 
   it('물려주는 것은 전체다 — 화이트리스트를 두면 다음 하네스가 읽는 것을 또 빠뜨린다', async () => {
     const { host, envs } = 엿보는host();
     const registry = new RunnerRegistry(SLEEPER, host);
-    process.env.MURMUR_TEST_CANARY = '카나리아';
+    process.env.HARKROOM_TEST_CANARY = '카나리아';
     try {
       await registry.spawnRunner('a1', { PATH: '/usr/bin' });
-      expect(envs[0]!.MURMUR_TEST_CANARY).toBe('카나리아');
+      expect(envs[0]!.HARKROOM_TEST_CANARY).toBe('카나리아');
     } finally {
-      delete process.env.MURMUR_TEST_CANARY;
+      delete process.env.HARKROOM_TEST_CANARY;
     }
   });
 });

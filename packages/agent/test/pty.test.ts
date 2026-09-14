@@ -10,7 +10,7 @@ import { ExecutableNotFoundError } from '../src/policy.js';
 const fake = join(dirname(fileURLToPath(import.meta.url)), 'helpers/fake-harness.mjs');
 // **부모 env 를 펼치지 않는다 — 프로덕션 plan 의 실제 모양과 같아야 한다.** 예전엔
 // `{ ...process.env, FAKE_MODE: mode }` 로 이 테스트가 직접 부모 env 를 물려줬는데, 그
-// 우회가 `buildTurnCommand`(turn.ts)의 실제 반환값(한때 `{ MURMUR_PAT }` 하나뿐이라 PATH·
+// 우회가 `buildTurnCommand`(turn.ts)의 실제 반환값(한때 `{ HARKROOM_PAT }` 하나뿐이라 PATH·
 // HOME 이 없었다)과 이 계약 테스트 사이의 간극을 가려 실물 검증에서야 드러난 회귀를 놓쳤다
 // (turn.ts::childEnv 참고). `process.execPath` 는 절대경로라 PATH 없이도 그대로 실행되고,
 // 가짜 하네스(fake-harness.mjs)는 FAKE_MODE 말고 다른 env 를 읽지 않는다 — 이 시나리오에서

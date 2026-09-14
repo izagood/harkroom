@@ -37,7 +37,7 @@ services:
         # **손으로 빌드해 배포하면 이것을 빠뜨리기 쉽다**(2026-09-14 실측: 도는 배포가
         # `commit: null` 이었다). 공식 이미지는 CI 가 항상 심어 준다 — 이것도 `pull` 쪽을
         # 권하는 이유다.
-        MURMUR_COMMIT: ${MURMUR_COMMIT:-}
+        HARKROOM_COMMIT: ${HARKROOM_COMMIT:-}
     environment:
       DATABASE_URL: postgres://murmur:murmur@postgres:5432/murmur
       AVCS_BASE_URL: ${AVCS_BASE_URL:-}

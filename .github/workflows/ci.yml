@@ -81,7 +81,7 @@ jobs:
       # 지우는 날 이 단계도 함께 지운다 — 그때는 `pnpm test` 하나가 곧 새 경로다.
       - run: pnpm --filter @harkroom/agent test
         env:
-          MURMUR_HARNESS_ADAPTERS: '1'
+          HARKROOM_HARNESS_ADAPTERS: '1'
 
   macos-build:
     # ## 왜 이 잡이 있는가 — `cargo check` 도 `pnpm test` 도 못 잡는 것이 있다

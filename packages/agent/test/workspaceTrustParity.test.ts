@@ -2,7 +2,7 @@
 //
 // 러너의 실행 경로는 깨지면 murmur 자체를 못 쓰게 만드는 자리다. 그래서 이설은 옛 분기를
 // 남긴 채 새 경로를 스위치 뒤에 두고, **전환 전에 둘이 같음을 증명한다.** 이 파일이 그
-// 증명이고, `MURMUR_HARNESS_ADAPTERS` 가 기본 켜짐이 된 뒤 옛 분기를 지울 때 함께 정리한다.
+// 증명이고, `HARKROOM_HARNESS_ADAPTERS` 가 기본 켜짐이 된 뒤 옛 분기를 지울 때 함께 정리한다.
 //
 // ## 잰 방법 — 바이트를 비교한다
 //
@@ -26,12 +26,12 @@ let savedFlag: string | undefined;
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'trust-parity-'));
-  savedFlag = process.env.MURMUR_HARNESS_ADAPTERS;
+  savedFlag = process.env.HARKROOM_HARNESS_ADAPTERS;
 });
 afterEach(async () => {
   // 플래그를 원상복구한다 — 남기면 **이 파일 뒤에 도는 다른 테스트가 새 경로로 돈다.**
-  if (savedFlag === undefined) delete process.env.MURMUR_HARNESS_ADAPTERS;
-  else process.env.MURMUR_HARNESS_ADAPTERS = savedFlag;
+  if (savedFlag === undefined) delete process.env.HARKROOM_HARNESS_ADAPTERS;
+  else process.env.HARKROOM_HARNESS_ADAPTERS = savedFlag;
   await rm(root, { recursive: true, force: true });
 });
 
@@ -48,8 +48,8 @@ async function runOnce(harness: AgentHarness, enabled: boolean): Promise<Record<
   const workspaceDir = join(base, 'workspace');
   await mkdir(workspaceDir, { recursive: true });
 
-  if (enabled) process.env.MURMUR_HARNESS_ADAPTERS = '1';
-  else delete process.env.MURMUR_HARNESS_ADAPTERS;
+  if (enabled) process.env.HARKROOM_HARNESS_ADAPTERS = '1';
+  else delete process.env.HARKROOM_HARNESS_ADAPTERS;
 
   await ensureWorkspaceTrusted({ harness, workspaceDir, claudeConfigDir: configDir, codexHome });
 

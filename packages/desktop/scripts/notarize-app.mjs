@@ -48,7 +48,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 /**
- * 서명할 `.app`. **`MURMUR_APP_PATH` 로 덮을 수 있다.**
+ * 서명할 `.app`. **`HARKROOM_APP_PATH` 로 덮을 수 있다.**
  *
  * ## 왜 덮을 수 있어야 하나 — `--target` 이 경로를 옮긴다
  *
@@ -62,7 +62,7 @@ const here = dirname(fileURLToPath(import.meta.url));
  * 넘기는 것이고, 스크립트가 그것을 추측하지 않는다.
  */
 const APP =
-  process.env.MURMUR_APP_PATH ||
+  process.env.HARKROOM_APP_PATH ||
   join(here, '..', 'src-tauri', 'target', 'release', 'bundle', 'macos', 'Harkroom.app');
 /**
  * 공증 자격증명을 고른다. **로컬은 키체인, CI 는 환경변수.**
@@ -74,34 +74,34 @@ const APP =
  * 풀어놔야 하므로 **한 단계 도는 것**이 된다. `notarytool` 은 API 키를 직접도 받는다.
  *
  * CI 에서 줄 것(GitHub Secrets → 환경변수):
- *   MURMUR_NOTARY_KEY      — `.p8` 파일 경로 (워크플로가 시크릿을 파일로 푼다)
- *   MURMUR_NOTARY_KEY_ID   — Key ID
- *   MURMUR_NOTARY_ISSUER   — Issuer UUID
+ *   HARKROOM_NOTARY_KEY      — `.p8` 파일 경로 (워크플로가 시크릿을 파일로 푼다)
+ *   HARKROOM_NOTARY_KEY_ID   — Key ID
+ *   HARKROOM_NOTARY_ISSUER   — Issuer UUID
  *
  * **`.p8` 내용을 환경변수로 받지 않는다** — `notarytool` 이 경로만 받고, 값을 프로세스
  * 환경에 두면 `ps` 로 보일 수 있다. 워크플로가 임시 파일로 풀고 `if: always()` 로 지운다.
  */
 function notaryArgs() {
-  const key = process.env.MURMUR_NOTARY_KEY;
-  const keyId = process.env.MURMUR_NOTARY_KEY_ID;
-  const issuer = process.env.MURMUR_NOTARY_ISSUER;
+  const key = process.env.HARKROOM_NOTARY_KEY;
+  const keyId = process.env.HARKROOM_NOTARY_KEY_ID;
+  const issuer = process.env.HARKROOM_NOTARY_ISSUER;
 
   if (key || keyId || issuer) {
     // **셋 다 있어야 한다.** 하나만 빠지면 `notarytool` 이 키체인으로 조용히 물러나
     // "왜 로컬 프로필을 쓰지"가 되고, CI 에서는 그것이 곧 실패다.
     const missing = [
-      ['MURMUR_NOTARY_KEY', key],
-      ['MURMUR_NOTARY_KEY_ID', keyId],
-      ['MURMUR_NOTARY_ISSUER', issuer],
+      ['HARKROOM_NOTARY_KEY', key],
+      ['HARKROOM_NOTARY_KEY_ID', keyId],
+      ['HARKROOM_NOTARY_ISSUER', issuer],
     ].filter(([, v]) => !v).map(([n]) => n);
     if (missing.length > 0) {
       throw new Error(`API 키 자격증명이 불완전하다 — 빠진 것: ${missing.join(', ')}`);
     }
-    if (!existsSync(key)) throw new Error(`MURMUR_NOTARY_KEY 가 가리키는 파일이 없다: ${key}`);
+    if (!existsSync(key)) throw new Error(`HARKROOM_NOTARY_KEY 가 가리키는 파일이 없다: ${key}`);
     return { args: ['--key', key, '--key-id', keyId, '--issuer', issuer], how: 'API 키(환경변수)' };
   }
 
-  const profile = process.env.MURMUR_NOTARY_PROFILE ?? 'harkroom';
+  const profile = process.env.HARKROOM_NOTARY_PROFILE ?? 'harkroom';
   return { args: ['--keychain-profile', profile], how: `키체인 프로필 ${profile}` };
 }
 

@@ -30,7 +30,7 @@ If you are self-hosting harkroom, please observe the following security practice
 - Rotate PATs periodically
 - Use the minimum required permissions when creating PATs
 - harkroom has no per-token IP allowlist; restrict network access at the reverse proxy or firewall instead
-- Keep secrets out of `argv`. Anything passed on a command line is visible to every local user via `ps` and is written to shell history — this is why the bootstrap example in the README posts a `0600` request body file instead of `-d '{...}'`, and why `packages/server/scripts/reset-password.ts` reads `MURMUR_NEW_PASSWORD` from the environment rather than from an argument
+- Keep secrets out of `argv`. Anything passed on a command line is visible to every local user via `ps` and is written to shell history — this is why the bootstrap example in the README posts a `0600` request body file instead of `-d '{...}'`, and why `packages/server/scripts/reset-password.ts` reads `HARKROOM_NEW_PASSWORD` from the environment rather than from an argument
 
 ### Attachment Storage
 

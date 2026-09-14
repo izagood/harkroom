@@ -137,7 +137,7 @@ buzz 온보딩 3번째 화면이 "Meet your starter team" — Fizz/Honey/Pollen 
 계정 생성 흐름 안에서 기본 제공된다.
 
 harkroom는 에이전트 **정의**를 등록·수정하는 표면은 갖췄지만(`AgentManager.tsx`,
-`agent_config` 마이그레이션), 러너는 여전히 `MURMUR_PAT` + `ANTHROPIC_API_KEY`를
+`agent_config` 마이그레이션), 러너는 여전히 `HARKROOM_PAT` + `ANTHROPIC_API_KEY`를
 환경변수로 받아 별도 기동해야 한다(README "에이전트 붙이기"). 즉 설정 UI는 있고
 **기동은 수동**이다.
 

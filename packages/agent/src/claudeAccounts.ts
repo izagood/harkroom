@@ -10,7 +10,7 @@
 // **이 모듈이 있는 이유는 러너가 시스템 기본 계정에 묶여 있었다는 것이다.** 러너는
 // `CLAUDE_CONFIG_DIR` 를 설정하지 않아 언제나 `~/.claude` 를 썼고, 계정 전환을 그 경로로
 // 하지 않는 도구(Orca 등은 `CLAUDE_CONFIG_DIR` 주입으로 전환한다)에서는 사람이 계정을 바꿔도
-// 러너에 닿지 않았다. 러너 env 는 데몬 env 를 통째로 상속하고 `MURMUR_PAT`·`MURMUR_URL`·
+// 러너에 닿지 않았다. 러너 env 는 데몬 env 를 통째로 상속하고 `HARKROOM_PAT`·`HARKROOM_URL`·
 // `PATH` 만 덮어쓰므로(`desktop/src/lib/runnerLauncher.ts`), 그 자리에 계정이 들어올 길이
 // 아예 없었다.
 //
@@ -21,6 +21,7 @@
 // **목록의 진실은 디스크다.** 별도 설정 파일을 두지 않는다. 파일을 두면 파일과 디스크가
 // 갈리는 날이 오고, 그날 러너는 없는 계정을 가리킨다(`ensureCodexHome` 이 `auth.json` 의
 // 존재로 판정하는 것과 같은 규율).
+import { renamedEnv } from '@harkroom/shared';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -46,16 +47,16 @@ export interface ClaudeAccount {
   configDir: string;
 }
 
-/** 계정 풀의 뿌리. `MURMUR_CLAUDE_ACCOUNTS_DIR` 로 옮길 수 있다(테스트와 다른 볼륨용). */
+/** 계정 풀의 뿌리. `HARKROOM_CLAUDE_ACCOUNTS_DIR` 로 옮길 수 있다(테스트와 다른 볼륨용). */
 export function claudeAccountsRoot(env: NodeJS.ProcessEnv = process.env): string {
-  return env.MURMUR_CLAUDE_ACCOUNTS_DIR ?? join(homedir(), '.murmur-agent', 'claude-accounts');
+  return renamedEnv(env, 'HARKROOM_CLAUDE_ACCOUNTS_DIR') ?? join(homedir(), '.murmur-agent', 'claude-accounts');
 }
 
 /**
  * 계정 풀을 읽는다. **빈 배열은 정상이다** — 풀을 안 만든 러너는 `CLAUDE_CONFIG_DIR` 주입
  * 없이 시스템 기본(`~/.claude`)을 쓴다. 하위 호환이 그 한 줄에 걸려 있다.
  *
- * `order` 는 `MURMUR_CLAUDE_ACCOUNTS`(쉼표 구분)다. 순서와 부분집합을 동시에 정한다.
+ * `order` 는 `HARKROOM_CLAUDE_ACCOUNTS`(쉼표 구분)다. 순서와 부분집합을 동시에 정한다.
  * 없는 이름이 오면 **던진다**: 조용히 무시하면 운영자가 계정 B 라고 믿고 띄운 러너가 A 로
  * 돌고, 그 사고는 화면에 아무 흔적을 남기지 않는다(`config.ts::validateInstance` 판례).
  */
@@ -99,7 +100,7 @@ export async function loadClaudeAccounts(
   const missing = order.filter((name) => !found.includes(name));
   if (missing.length) {
     throw new Error(
-      `MURMUR_CLAUDE_ACCOUNTS 에 없는 계정이 있다: ${missing.join(', ')}. ` +
+      `HARKROOM_CLAUDE_ACCOUNTS 에 없는 계정이 있다: ${missing.join(', ')}. ` +
       `${root} 아래에 있는 계정은 ${found.length ? found.join(', ') : '(없음)'} 이다.`,
     );
   }
@@ -235,7 +236,7 @@ async function listPoolNames(root: string): Promise<string[]> {
 /**
  * 한 풀 안의 계정을 페일오버 순서로.
  *
- * `order`(= `MURMUR_CLAUDE_ACCOUNTS`)가 있으면 그것에 맡긴다 — 그 경로는 없는 이름에 던지고
+ * `order`(= `HARKROOM_CLAUDE_ACCOUNTS`)가 있으면 그것에 맡긴다 — 그 경로는 없는 이름에 던지고
  * (사람이 타이핑한 의도다) 그 동작을 유지한다. 없으면 `pools.json` 의 순서를 쓴다.
  */
 async function accountsIn(
@@ -265,9 +266,9 @@ export async function loadClaudeAccountLane(opts: {
   root?: string;
   /** 에이전트 계정 id(UUID). handle 이 아닌 이유는 `stateDir.ts` 판단과 같다. */
   agentId: string;
-  /** `MURMUR_CLAUDE_POOL`. */
+  /** `HARKROOM_CLAUDE_POOL`. */
   forcedPool?: string | undefined;
-  /** `MURMUR_CLAUDE_ACCOUNTS`. */
+  /** `HARKROOM_CLAUDE_ACCOUNTS`. */
   order?: string | undefined;
 }): Promise<{ pool: string | null; accounts: ClaudeAccount[] }> {
   const root = opts.root ?? claudeAccountsRoot();
@@ -283,7 +284,7 @@ export async function loadClaudeAccountLane(opts: {
   if (opts.forcedPool) {
     if (!pools.includes(opts.forcedPool)) {
       throw new Error(
-        `MURMUR_CLAUDE_POOL 이 없는 풀을 가리킨다: ${opts.forcedPool}. ` +
+        `HARKROOM_CLAUDE_POOL 이 없는 풀을 가리킨다: ${opts.forcedPool}. ` +
         `${root} 아래에 있는 풀은 ${pools.length ? pools.join(', ') : '(없음)'} 이다.`,
       );
     }

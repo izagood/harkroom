@@ -908,7 +908,7 @@ function buildMcpServer(
         // 셸이 없는 하네스에는 이 경로가 **막힌 길**이라는 것을 말해 준다. 그러지 않으면
         // 에이전트는 이 안내를 만족시키려 시도했다가 조용히 실패하고 같은 자리를 돈다 —
         // 못 여는 것을 아는 것이 사람에게 물어볼 근거가 된다.
-        download: `GET /attachments/${id} (Authorization: Bearer $MURMUR_PAT) — needs shell/HTTP access; if you have neither, say so and ask the human instead of guessing`,
+        download: `GET /attachments/${id} (Authorization: Bearer $HARKROOM_PAT) — needs shell/HTTP access; if you have neither, say so and ask the human instead of guessing`,
       });
     }
 
@@ -920,7 +920,7 @@ function buildMcpServer(
         return jsonResult({
           attachment: meta,
           note: `file is larger than its recorded size and exceeds ${IMAGE_MAX_BYTES}B`,
-          download: `GET /attachments/${id} (Authorization: Bearer $MURMUR_PAT)`,
+          download: `GET /attachments/${id} (Authorization: Bearer $HARKROOM_PAT)`,
         });
       }
       if (err instanceof AttachmentMissingError) {

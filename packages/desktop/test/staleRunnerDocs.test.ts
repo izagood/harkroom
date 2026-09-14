@@ -115,7 +115,7 @@ describe('낡은 러너 구조 문서 회귀선 (#431 사이드카·daemon · #4
     for (const rel of ['docs/operations.md', 'packages/agent/README.md', 'README.md']) {
       const text = read(rel);
       expect(text, `${rel}: 사이드카 실행 경로가 없다`).toContain(RUNNER_SIDECAR_PATH);
-      expect(text, `${rel}: PAT 환경변수 안내가 없다`).toContain('MURMUR_PAT');
+      expect(text, `${rel}: PAT 환경변수 안내가 없다`).toContain('HARKROOM_PAT');
     }
     const ops = read('docs/operations.md');
     // 상태 표가 산다 — 이 표가 없으면 ②는 "표를 지웠다"로도 통과한다.

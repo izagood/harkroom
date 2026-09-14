@@ -59,16 +59,16 @@ function plan(harness: AgentHarness, over: Partial<BuildTurnCommandOptions> = {}
 
 describe('스위치는 기본으로 꺼져 있다', () => {
   // 이 조각의 안전이 이 한 줄에 걸려 있다 — claude 경로를 남기는 것이 결정이었다.
-  it('MURMUR_HARNESS_ADAPTERS 가 없으면 꺼짐', () => {
+  it('HARKROOM_HARNESS_ADAPTERS 가 없으면 꺼짐', () => {
     expect(harnessAdaptersEnabled({})).toBe(false);
   });
 
   it('오타로는 켜지지 않는다', () => {
     for (const raw of ['0', 'yes', 'on', 'TRUE', '']) {
-      expect(harnessAdaptersEnabled({ MURMUR_HARNESS_ADAPTERS: raw })).toBe(false);
+      expect(harnessAdaptersEnabled({ HARKROOM_HARNESS_ADAPTERS: raw })).toBe(false);
     }
     for (const raw of ['1', 'true']) {
-      expect(harnessAdaptersEnabled({ MURMUR_HARNESS_ADAPTERS: raw })).toBe(true);
+      expect(harnessAdaptersEnabled({ HARKROOM_HARNESS_ADAPTERS: raw })).toBe(true);
     }
   });
 });
@@ -350,16 +350,16 @@ describe('잠금 — 호출부가 표를 읽게 되면 지운다', () => {
     //
     // 대신 재는 것: **표를 고치면 argv 가 따라 움직인다.** codex 의 멘션이 TUI 이므로
     // 새 경로의 argv 에 `exec` 가 없어야 한다. 표와 argv 가 어긋나면 여기서 걸린다.
-    const saved = process.env.MURMUR_HARNESS_ADAPTERS;
-    process.env.MURMUR_HARNESS_ADAPTERS = '1';
+    const saved = process.env.HARKROOM_HARNESS_ADAPTERS;
+    process.env.HARKROOM_HARNESS_ADAPTERS = '1';
     try {
       expect(adapterFor('codex').executionModel.mention).toBe('tui');
       expect(plan('codex').args).not.toContain('exec');
       // claude 는 원래 TUI 였고 그대로다.
       expect(adapterFor('claude-code').executionModel.mention).toBe('tui');
     } finally {
-      if (saved === undefined) delete process.env.MURMUR_HARNESS_ADAPTERS;
-      else process.env.MURMUR_HARNESS_ADAPTERS = saved;
+      if (saved === undefined) delete process.env.HARKROOM_HARNESS_ADAPTERS;
+      else process.env.HARKROOM_HARNESS_ADAPTERS = saved;
     }
   });
 

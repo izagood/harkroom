@@ -32,16 +32,16 @@ import {
 const RUNNABLE = RUNNABLE_HARNESSES as readonly AgentHarness[];
 
 let savedFlag: string | undefined;
-beforeEach(() => { savedFlag = process.env.MURMUR_HARNESS_ADAPTERS; });
+beforeEach(() => { savedFlag = process.env.HARKROOM_HARNESS_ADAPTERS; });
 afterEach(() => {
   // 플래그를 되돌린다 — 남기면 이 파일 뒤에 도는 테스트가 새 경로로 돈다.
-  if (savedFlag === undefined) delete process.env.MURMUR_HARNESS_ADAPTERS;
-  else process.env.MURMUR_HARNESS_ADAPTERS = savedFlag;
+  if (savedFlag === undefined) delete process.env.HARKROOM_HARNESS_ADAPTERS;
+  else process.env.HARKROOM_HARNESS_ADAPTERS = savedFlag;
 });
 
 function facts(harness: AgentHarness, enabled: boolean) {
-  if (enabled) process.env.MURMUR_HARNESS_ADAPTERS = '1';
-  else delete process.env.MURMUR_HARNESS_ADAPTERS;
+  if (enabled) process.env.HARKROOM_HARNESS_ADAPTERS = '1';
+  else delete process.env.HARKROOM_HARNESS_ADAPTERS;
   return {
     usesTui: usesTuiForMention(harness),
     pooled: hasAccountPool(harness),

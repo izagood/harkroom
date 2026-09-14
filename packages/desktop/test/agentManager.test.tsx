@@ -134,7 +134,7 @@ describe('AgentsSettings', () => {
     // 명령 힌트에 토큰이 **잘리지 않은 채** 들어 있어야 복사해서 바로 쓸 수 있다.
     const panel = await screen.findByText(/이 토큰은 지금만 보인다/);
     const panelContent = panel.parentElement?.textContent ?? '';
-    expect(panelContent).toMatch(/MURMUR_PAT=murp_secret/);
+    expect(panelContent).toMatch(/HARKROOM_PAT=murp_secret/);
   });
 
   // 에이전트는 러너 프로세스가 붙어야 멘션에 답할 수 있다 — 그 사실을 알려주어야 한다.

@@ -16,7 +16,7 @@ const CEILING_MS = 60_000;
  * catch 에 쓰인다. 그래서 err 는 하네스 실행 실패뿐 아니라 murmur 서버 호출(readThread·post)
  * 실패에서도 온다. 출처를 못 가리면 murmur PAT 만료를 "claude CLI 로 로그인해라"로 안내한다.
  */
-export const MURMUR_ERROR_SOURCE = 'murmur-client';
+export const HARKROOM_ERROR_SOURCE = 'murmur-client';
 
 /** 자격증명 실패의 출처. 'other' 는 자격증명 실패가 아니라는 뜻이다. */
 export type CredentialFailureType = 'harness-credential' | 'murmur-credential' | 'other';
@@ -219,7 +219,7 @@ export function isCredentialFailure(err: unknown): CredentialFailureType {
   // murmur 클라이언트가 붙인 태그가 있으면 그쪽이다. 판정은 **HTTP status 로만** 한다 —
   // murmur.ts 가 status 를 항상 실어 주므로 문구 매칭이 필요 없다(문구로 판정하면 "401"
   // 같은 숫자가 본문에 우연히 들어간 에러까지 자격증명 실패로 오인한다).
-  if ((err as { source?: string } | null)?.source === MURMUR_ERROR_SOURCE) {
+  if ((err as { source?: string } | null)?.source === HARKROOM_ERROR_SOURCE) {
     return status === 401 || status === 403 ? 'murmur-credential' : 'other';
   }
 

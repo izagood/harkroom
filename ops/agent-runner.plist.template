@@ -33,8 +33,8 @@
 
   <key>EnvironmentVariables</key>
   <dict>
-    <key>MURMUR_URL</key><string>@URL@</string>
-    <key>MURMUR_PAT</key><string>@PAT@</string>
+    <key>HARKROOM_URL</key><string>@URL@</string>
+    <key>HARKROOM_PAT</key><string>@PAT@</string>
     <!-- launchd 는 로그인 셸의 PATH 를 물려받지 않는다. 이것이 없으면 러너는 살아 있는데
          claude 를 못 찾아 답을 못 하는 조용한 실패가 된다. 실제 경로에 맞게 고친다. -->
     <key>PATH</key><string>/Users/@USER@/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
