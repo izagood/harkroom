@@ -20,20 +20,20 @@ const { Pool } = pg;
 const passwordRule = z.string().min(8).max(128);
 
 const USAGE = [
-  '사용법: MURMUR_NEW_PASSWORD=<새 비밀번호> DATABASE_URL=<...> tsx packages/server/scripts/reset-password.ts <handle>',
+  '사용법: HARKROOM_NEW_PASSWORD=<새 비밀번호> DATABASE_URL=<...> tsx packages/server/scripts/reset-password.ts <handle>',
   '',
   '비밀번호는 argv 가 아니라 환경변수로 받는다 — argv 는 `ps` 로 다른 로컬 사용자에게 보인다.',
 ].join('\n');
 
 async function main(): Promise<void> {
   const handle = process.argv[2];
-  const newPassword = process.env.MURMUR_NEW_PASSWORD;
+  const newPassword = process.env.HARKROOM_NEW_PASSWORD;
   const databaseUrl = process.env.DATABASE_URL;
 
   if (!handle || !newPassword || !databaseUrl) {
     console.error(USAGE);
     if (!handle) console.error('\n오류: handle 인자가 없다.');
-    if (!newPassword) console.error('\n오류: MURMUR_NEW_PASSWORD 가 비어 있다.');
+    if (!newPassword) console.error('\n오류: HARKROOM_NEW_PASSWORD 가 비어 있다.');
     if (!databaseUrl) console.error('\n오류: DATABASE_URL 이 비어 있다.');
     process.exit(1);
   }

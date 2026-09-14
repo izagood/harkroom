@@ -198,7 +198,7 @@ same environment variable the release signer uses:
 
 ```sh
 security find-identity -v -p codesigning   # pick a name from the list
-export MURMUR_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+export HARKROOM_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 pnpm -C packages/desktop tauri dev
 ```
 

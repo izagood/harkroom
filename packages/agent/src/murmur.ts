@@ -7,7 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { AccountView, AgentView, InboxEntry, MessageRow } from '@harkroom/shared';
 import { mcpUrl } from './turn.js';
-import { MURMUR_ERROR_SOURCE } from './policy.js';
+import { HARKROOM_ERROR_SOURCE } from './policy.js';
 import { VERSION } from './version.js';
 
 export interface Me { id: string; handle: string }
@@ -29,7 +29,7 @@ export interface InboxBatch {
  */
 function murmurError(message: string, status?: number): Error {
   const err = new Error(message) as Error & { source: string; status?: number };
-  err.source = MURMUR_ERROR_SOURCE;
+  err.source = HARKROOM_ERROR_SOURCE;
   if (status !== undefined) err.status = status;
   return err;
 }

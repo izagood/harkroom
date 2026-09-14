@@ -78,7 +78,7 @@ export function parseClaudePoolsConfig(raw: unknown): ClaudePoolsConfig {
 /**
  * 이 에이전트가 쓸 풀 이름. `null` 은 "지정 없음"이고 호출자가 암묵 풀로 떨어진다.
  *
- * `forced` 는 `MURMUR_CLAUDE_POOL` 이다 — **운영자가 방금 타이핑한 의도라 가장 세다.**
+ * `forced` 는 `HARKROOM_CLAUDE_POOL` 이다 — **운영자가 방금 타이핑한 의도라 가장 세다.**
  * 그 값이 실재하는 풀인지는 여기서 모른다(디스크를 안 본다). 호출자가 잰다.
  *
  * **러너는 이 함수를 직접 쓰지 않는다.** 러너는 없는 풀을 만나면 다음 단계로 떨어져야 하는데

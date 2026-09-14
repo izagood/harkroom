@@ -84,7 +84,7 @@ describe('daemonSpawner 는 daemon 에게 러너를 띄우라고 시킨다 (#431
   it('`daemon_spawn_runner` 로 agentId 와 env 값만 넘긴다 — 경로도 프로그램도 넘기지 않는다', async () => {
     await daemonSpawner.spawn({
       agentId: 'agent-1',
-      env: { MURMUR_PAT: 'pat-1', MURMUR_URL: 'http://x', PATH: '/usr/bin' },
+      env: { HARKROOM_PAT: 'pat-1', HARKROOM_URL: 'http://x', PATH: '/usr/bin' },
       onExit: () => {},
     });
 
@@ -115,7 +115,7 @@ describe('daemonSpawner 는 daemon 에게 러너를 띄우라고 시킨다 (#431
   it('`env.AGENT_VERSION` 을 `agentVersion` 으로 넘긴다 — 이 값이 러너 버전 보고의 유일한 근거다', async () => {
     await daemonSpawner.spawn({
       agentId: 'agent-1',
-      env: { MURMUR_PAT: 'p', MURMUR_URL: 'u', PATH: '/bin', AGENT_VERSION: '0.1.80' },
+      env: { HARKROOM_PAT: 'p', HARKROOM_URL: 'u', PATH: '/bin', AGENT_VERSION: '0.1.80' },
       onExit: () => {},
     });
 
@@ -132,7 +132,7 @@ describe('daemonSpawner 는 daemon 에게 러너를 띄우라고 시킨다 (#431
   it('`AGENT_VERSION` 이 없으면 `null` 을 넘긴다 — 빈 값을 지어내지 않는다', async () => {
     await daemonSpawner.spawn({
       agentId: 'agent-1',
-      env: { MURMUR_PAT: 'p', MURMUR_URL: 'u', PATH: '/bin' },
+      env: { HARKROOM_PAT: 'p', HARKROOM_URL: 'u', PATH: '/bin' },
       onExit: () => {},
     });
 
@@ -155,7 +155,7 @@ describe('daemonSpawner 는 daemon 에게 러너를 띄우라고 시킨다 (#431
     const onExit = vi.fn();
     await daemonSpawner.spawn({
       agentId: 'agent-1',
-      env: { MURMUR_PAT: 'p', MURMUR_URL: 'u', PATH: '/bin' },
+      env: { HARKROOM_PAT: 'p', HARKROOM_URL: 'u', PATH: '/bin' },
       onExit,
     });
 
@@ -186,7 +186,7 @@ describe('daemonSpawner 는 daemon 에게 러너를 띄우라고 시킨다 (#431
     tauri.spawnResult = { agentId: 'agent-1', pid: 1, incarnationId: 'inc-1' };
     const onExit = vi.fn();
     await daemonSpawner.spawn({
-      agentId: 'agent-1', env: { MURMUR_PAT: 'p', MURMUR_URL: 'u', PATH: '/bin' }, onExit,
+      agentId: 'agent-1', env: { HARKROOM_PAT: 'p', HARKROOM_URL: 'u', PATH: '/bin' }, onExit,
     });
 
     tauri.emit({ agentId: 'agent-1', incarnationId: 'inc-1', code: 78, signal: null });
@@ -199,7 +199,7 @@ describe('daemonSpawner 는 daemon 에게 러너를 띄우라고 시킨다 (#431
     tauri.spawnResult = { agentId: 'agent-1', pid: 1, incarnationId: 'inc-1' };
     const onExit = vi.fn();
     await daemonSpawner.spawn({
-      agentId: 'agent-1', env: { MURMUR_PAT: 'p', MURMUR_URL: 'u', PATH: '/bin' }, onExit,
+      agentId: 'agent-1', env: { HARKROOM_PAT: 'p', HARKROOM_URL: 'u', PATH: '/bin' }, onExit,
     });
     tauri.emit({ agentId: 'agent-2', incarnationId: 'inc-1', code: 0, signal: null });
     expect(onExit).not.toHaveBeenCalled();
@@ -209,7 +209,7 @@ describe('daemonSpawner 는 daemon 에게 러너를 띄우라고 시킨다 (#431
     tauri.spawnResult = { agentId: 'agent-1', pid: 1, incarnationId: 'inc-1' };
     const onExit = vi.fn();
     await daemonSpawner.spawn({
-      agentId: 'agent-1', env: { MURMUR_PAT: 'p', MURMUR_URL: 'u', PATH: '/bin' }, onExit,
+      agentId: 'agent-1', env: { HARKROOM_PAT: 'p', HARKROOM_URL: 'u', PATH: '/bin' }, onExit,
     });
     const event: DaemonRunnerExit = {
       agentId: 'agent-1', incarnationId: 'inc-1', code: 0, signal: null,
@@ -228,7 +228,7 @@ describe('daemonSpawner 는 daemon 에게 러너를 띄우라고 시킨다 (#431
   it('`kill()` 이 세대를 함께 보낸다 — 옛 명령이 새 러너를 데려가지 않는다', async () => {
     tauri.spawnResult = { agentId: 'agent-1', pid: 1, incarnationId: 'inc-7' };
     const child = await daemonSpawner.spawn({
-      agentId: 'agent-1', env: { MURMUR_PAT: 'p', MURMUR_URL: 'u', PATH: '/bin' },
+      agentId: 'agent-1', env: { HARKROOM_PAT: 'p', HARKROOM_URL: 'u', PATH: '/bin' },
       onExit: () => {},
     });
     await child.kill();
@@ -239,7 +239,7 @@ describe('daemonSpawner 는 daemon 에게 러너를 띄우라고 시킨다 (#431
 
   it('이벤트를 `harkroom://runner-exit` 이름으로 듣는다 — Rust 와 같은 이름이어야 한다', async () => {
     await daemonSpawner.spawn({
-      agentId: 'a', env: { MURMUR_PAT: 'p', MURMUR_URL: 'u', PATH: '/bin' }, onExit: () => {},
+      agentId: 'a', env: { HARKROOM_PAT: 'p', HARKROOM_URL: 'u', PATH: '/bin' }, onExit: () => {},
     });
     const listen = tauri.calls.find((c) => c.cmd === 'plugin:event|listen');
     expect(listen!.args!.event).toBe(RUNNER_EXIT_EVENT);
@@ -264,7 +264,7 @@ describe('daemon 기동 실패는 조용히 넘어가지 않는다 (#431 · #368
       'daemon 사이드카를 찾지 못했다: `/Applications/Harkroom.app/Contents/MacOS/harkroom-daemon`',
     );
     await expect(daemonSpawner.spawn({
-      agentId: 'a', env: { MURMUR_PAT: 'p', MURMUR_URL: 'u', PATH: '/bin' }, onExit: () => {},
+      agentId: 'a', env: { HARKROOM_PAT: 'p', HARKROOM_URL: 'u', PATH: '/bin' }, onExit: () => {},
     })).rejects.toThrow('daemon 사이드카를 찾지 못했다');
 
     // **옛 경로를 부르지 않았다** — 폴백이 없다는 것이 이 줄의 뜻이다.
@@ -277,7 +277,7 @@ describe('daemon 기동 실패는 조용히 넘어가지 않는다 (#431 · #368
     // 지어내지 않고 **그대로** 사람에게 올린다(`#368`).
     tauri.spawnError = new Error('소켓 경로가 115바이트로 커널 상한 104바이트를 넘는다: `/…`');
     await expect(daemonSpawner.spawn({
-      agentId: 'a', env: { MURMUR_PAT: 'p', MURMUR_URL: 'u', PATH: '/bin' }, onExit: () => {},
+      agentId: 'a', env: { HARKROOM_PAT: 'p', HARKROOM_URL: 'u', PATH: '/bin' }, onExit: () => {},
     })).rejects.toThrow('커널 상한 104바이트를 넘는다');
   });
 
@@ -285,14 +285,14 @@ describe('daemon 기동 실패는 조용히 넘어가지 않는다 (#431 · #368
     // 세대 없이 성공한 척하면 exit 통지를 영영 못 거른다 — 조용히 지나가면 안 된다.
     tauri.spawnResult = { agentId: 'a', pid: 1 };
     await expect(daemonSpawner.spawn({
-      agentId: 'a', env: { MURMUR_PAT: 'p', MURMUR_URL: 'u', PATH: '/bin' }, onExit: () => {},
+      agentId: 'a', env: { HARKROOM_PAT: 'p', HARKROOM_URL: 'u', PATH: '/bin' }, onExit: () => {},
     })).rejects.toThrow(/계약과 다르다/);
   });
 
   it('Tauri 표면이 없으면 그 사실을 실패로 올린다 — 브라우저에서는 러너를 못 띄운다', async () => {
     delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__;
     await expect(daemonSpawner.spawn({
-      agentId: 'a', env: { MURMUR_PAT: 'p', MURMUR_URL: 'u', PATH: '/bin' }, onExit: () => {},
+      agentId: 'a', env: { HARKROOM_PAT: 'p', HARKROOM_URL: 'u', PATH: '/bin' }, onExit: () => {},
     })).rejects.toThrow('Tauri invoke 표면이 없다');
   });
 });

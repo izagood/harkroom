@@ -58,7 +58,7 @@ describe('개발 빌드 서명 훅', () => {
   it('인증서가 없어도 빌드를 깨뜨리지 않는다', () => {
     const out = execFileSync('sh', [join(here, 'scripts/sign-dev.sh'), '/bin/echo'], {
       encoding: 'utf8',
-      env: { ...process.env, MURMUR_SIGN_IDENTITY: '존재하지-않는-인증서-이름' },
+      env: { ...process.env, HARKROOM_SIGN_IDENTITY: '존재하지-않는-인증서-이름' },
     });
     // 아무 일도 하지 않고 성공으로 끝난다(위 호출이 던지지 않는 것이 곧 그 확인이다).
     expect(out).not.toContain('서명했다');
@@ -71,7 +71,7 @@ describe('개발 빌드 서명 훅', () => {
   it('릴리즈 스크립트와 같은 환경변수로 신원을 덮는다', () => {
     const dev = readFileSync(join(here, 'scripts/sign-dev.sh'), 'utf8');
     const rel = readFileSync(join(here, 'scripts/sign-app.mjs'), 'utf8');
-    expect(dev).toContain('MURMUR_SIGN_IDENTITY');
-    expect(rel).toContain('MURMUR_SIGN_IDENTITY');
+    expect(dev).toContain('HARKROOM_SIGN_IDENTITY');
+    expect(rel).toContain('HARKROOM_SIGN_IDENTITY');
   });
 });

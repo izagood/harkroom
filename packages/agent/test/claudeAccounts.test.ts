@@ -19,8 +19,8 @@ describe('claudeAccountsRoot', () => {
     expect(claudeAccountsRoot({} as NodeJS.ProcessEnv)).toMatch(/\.murmur-agent\/claude-accounts$/);
   });
 
-  it('MURMUR_CLAUDE_ACCOUNTS_DIR 로 뿌리를 옮길 수 있다', () => {
-    expect(claudeAccountsRoot({ MURMUR_CLAUDE_ACCOUNTS_DIR: '/tmp/pool' } as NodeJS.ProcessEnv))
+  it('HARKROOM_CLAUDE_ACCOUNTS_DIR 로 뿌리를 옮길 수 있다', () => {
+    expect(claudeAccountsRoot({ HARKROOM_CLAUDE_ACCOUNTS_DIR: '/tmp/pool' } as NodeJS.ProcessEnv))
       .toBe('/tmp/pool');
   });
 });
@@ -79,19 +79,19 @@ describe('loadClaudeAccounts', () => {
     expect((await loadClaudeAccounts({ root })).map((a) => a.name)).toEqual(['cedar']);
   });
 
-  it('MURMUR_CLAUDE_ACCOUNTS 가 순서와 부분집합을 정한다', async () => {
+  it('HARKROOM_CLAUDE_ACCOUNTS 가 순서와 부분집합을 정한다', async () => {
     const root = await fixture(['aria', 'personal', 'cedar']);
     const accounts = await loadClaudeAccounts({ root, order: 'cedar,aria' });
     expect(accounts.map((a) => a.name)).toEqual(['cedar', 'aria']);
   });
 
-  it('MURMUR_CLAUDE_ACCOUNTS 의 공백을 무시한다', async () => {
+  it('HARKROOM_CLAUDE_ACCOUNTS 의 공백을 무시한다', async () => {
     const root = await fixture(['aria', 'cedar']);
     expect((await loadClaudeAccounts({ root, order: ' cedar , aria ' })).map((a) => a.name))
       .toEqual(['cedar', 'aria']);
   });
 
-  it('MURMUR_CLAUDE_ACCOUNTS 에 없는 계정이 오면 기동을 실패시킨다', async () => {
+  it('HARKROOM_CLAUDE_ACCOUNTS 에 없는 계정이 오면 기동을 실패시킨다', async () => {
     // 조용히 무시하면 운영자가 계정 B 라고 믿고 띄운 러너가 A 로 돈다 —
     // config.ts::validateInstance 와 같은 판단이다.
     const root = await fixture(['aria']);
@@ -99,7 +99,7 @@ describe('loadClaudeAccounts', () => {
       .rejects.toThrow(/ghost/);
   });
 
-  it('MURMUR_CLAUDE_ACCOUNTS 가 빈 문자열이면 지정이 없는 것으로 본다', async () => {
+  it('HARKROOM_CLAUDE_ACCOUNTS 가 빈 문자열이면 지정이 없는 것으로 본다', async () => {
     const root = await fixture(['aria', 'cedar']);
     expect((await loadClaudeAccounts({ root, order: '' })).map((a) => a.name))
       .toEqual(['aria', 'cedar']);
@@ -147,7 +147,7 @@ describe('loadClaudeAccountLane — 풀 축', () => {
     expect((await loadClaudeAccountLane({ root, agentId: 'a2' })).pool).toBe('work');
   });
 
-  it('MURMUR_CLAUDE_POOL 이 가장 세다', async () => {
+  it('HARKROOM_CLAUDE_POOL 이 가장 세다', async () => {
     const root = await poolFixture(
       { work: ['aria'], personal: ['gmail'] },
       { defaultPool: 'work', agents: { a1: 'work' } },
@@ -157,7 +157,7 @@ describe('loadClaudeAccountLane — 풀 축', () => {
     expect(lane.accounts.map((a) => a.name)).toEqual(['gmail']);
   });
 
-  it('MURMUR_CLAUDE_POOL 이 없는 풀을 가리키면 던진다 — 사람이 타이핑한 의도다', async () => {
+  it('HARKROOM_CLAUDE_POOL 이 없는 풀을 가리키면 던진다 — 사람이 타이핑한 의도다', async () => {
     const root = await poolFixture({ work: ['aria'] }, { defaultPool: 'work' });
     await expect(loadClaudeAccountLane({ root, agentId: 'a1', forcedPool: 'ghost' }))
       .rejects.toThrow(/ghost/);
@@ -187,7 +187,7 @@ describe('loadClaudeAccountLane — 풀 축', () => {
       .toEqual(['cedar', 'aria', 'zebra']);
   });
 
-  it('MURMUR_CLAUDE_ACCOUNTS 가 풀 안 순서를 덮는다', async () => {
+  it('HARKROOM_CLAUDE_ACCOUNTS 가 풀 안 순서를 덮는다', async () => {
     const root = await poolFixture(
       { work: ['aria', 'cedar'] },
       { defaultPool: 'work', order: { work: ['aria', 'cedar'] } },

@@ -111,7 +111,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 /**
- * 서명할 `.app`. **`MURMUR_APP_PATH` 로 덮을 수 있다.**
+ * 서명할 `.app`. **`HARKROOM_APP_PATH` 로 덮을 수 있다.**
  *
  * ## 왜 덮을 수 있어야 하나 — `--target` 이 경로를 옮긴다
  *
@@ -125,7 +125,7 @@ const here = dirname(fileURLToPath(import.meta.url));
  * 넘기는 것이고, 스크립트가 그것을 추측하지 않는다.
  */
 const APP =
-  process.env.MURMUR_APP_PATH ||
+  process.env.HARKROOM_APP_PATH ||
   join(here, '..', 'src-tauri', 'target', 'release', 'bundle', 'macos', 'Harkroom.app');
 /** `tauri.conf.json` 의 `identifier` 와 **같아야 한다** — 그것이 번들 ID 다. */
 const IDENTIFIER = 'app.harkroom.desktop';
@@ -238,10 +238,10 @@ export function machOFilesDeepestFirst(root) {
  * **`Apple Distribution` 은 쓰지 않는다** — App Store·TestFlight 전용이라 직접 배포하는
  * `.app` 에는 맞지 않는다. 이 기계에 그것만 있는 상태를 실측했다(2026-09-06).
  *
- * 환경변수로 강제할 수 있다(`MURMUR_SIGN_IDENTITY`) — CI 나 특정 인증서를 골라야 할 때.
+ * 환경변수로 강제할 수 있다(`HARKROOM_SIGN_IDENTITY`) — CI 나 특정 인증서를 골라야 할 때.
  */
 function pickIdentity() {
-  const forced = process.env.MURMUR_SIGN_IDENTITY;
+  const forced = process.env.HARKROOM_SIGN_IDENTITY;
   if (forced) return { id: forced, kind: '환경변수 지정' };
 
   const found = spawnSync('security', ['find-identity', '-v', '-p', 'codesigning'], {

@@ -14,6 +14,7 @@
 //
 // **스위치를 1단계에 함께 넣는 이유**: 나중에 넣으면 그 커밋이 "표를 읽게 바꾸는 것"과
 // "스위치를 만드는 것" 두 변경을 겹치게 되고, 문제가 났을 때 어느 쪽 탓인지 가릴 수 없다.
+import { renamedEnv } from '@harkroom/shared';
 import type { AgentHarness } from '@harkroom/shared';
 
 import { currentExecutionPath } from '../executionPath.js';
@@ -154,7 +155,7 @@ export function adapterFor(harness: AgentHarness): HarnessAdapter {
 /**
  * 러너가 **어댑터 표를 읽어 동작할 것인가**. 기본값은 **꺼짐**이다.
  *
- * 켜는 방법은 `MURMUR_HARNESS_ADAPTERS=1`(러너 env). 데몬이 러너 env 를 통째로 상속시키므로
+ * 켜는 방법은 `HARKROOM_HARNESS_ADAPTERS=1`(러너 env). 데몬이 러너 env 를 통째로 상속시키므로
  * 운영자가 데몬 환경에 넣으면 그 기계의 모든 러너가 새 경로로 돈다 — 한 기계에서 먼저
  * 켜 보고 넘어가는 것이 이 설계가 의도한 검증 순서다.
  *
@@ -175,6 +176,6 @@ export function harnessAdaptersEnabled(env: NodeJS.ProcessEnv = process.env): bo
    */
   const chosen = currentExecutionPath();
   if (chosen !== null) return chosen === 'adapters';
-  const raw = env.MURMUR_HARNESS_ADAPTERS;
+  const raw = renamedEnv(env, 'HARKROOM_HARNESS_ADAPTERS');
   return raw === '1' || raw === 'true';
 }

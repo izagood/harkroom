@@ -94,7 +94,7 @@ export function runnerExitPlan(err: unknown): RunnerExitPlan | null {
   ];
   if (credType === 'murmur-credential') {
     lines.push('  Murmur API 의 PAT 가 만료·폐기됐는지 확인해라.');
-    lines.push('  MURMUR_PAT 환경변수를 새 PAT 로 교체하고 러너를 재시작한다.');
+    lines.push('  HARKROOM_PAT 환경변수를 새 PAT 로 교체하고 러너를 재시작한다.');
     lines.push('  데스크탑 앱이 띄운 러너라면 설정 → 에이전트에서 "PAT 재발급"을 누른다.');
   } else {
     lines.push('  claude-code harness 는 claude CLI 의 로그인을 쓴다 — `claude` 를 한 번 실행해 로그인해라.');

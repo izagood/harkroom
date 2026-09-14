@@ -310,13 +310,13 @@ describe('entitlements — 본체에만, 필요한 것만', () => {
    * **`target/<triple>/release/`** 에 놓는다. 서명·공증 스크립트의 경로가 고정이면
    * CI 에서 `서명할 .app 이 없다` 로 죽는다 — 첫 릴리즈가 정확히 그 자리에서 실패했다.
    *
-   * **되돌려 RED**: `MURMUR_APP_PATH` 갈래를 지우면 이 둘이 빨개진다.
+   * **되돌려 RED**: `HARKROOM_APP_PATH` 갈래를 지우면 이 둘이 빨개진다.
    */
-  it('서명·공증 스크립트가 MURMUR_APP_PATH 로 경로를 덮을 수 있다', () => {
+  it('서명·공증 스크립트가 HARKROOM_APP_PATH 로 경로를 덮을 수 있다', () => {
     for (const script of [SIGN_SCRIPT, NOTARIZE_SCRIPT]) {
       const source = readFileSync(script, 'utf8');
       expect(source, `${script}: --target 빌드의 자리를 받을 수 없다`)
-        .toContain('process.env.MURMUR_APP_PATH');
+        .toContain('process.env.HARKROOM_APP_PATH');
     }
   });
 
@@ -341,13 +341,13 @@ describe('entitlements — 본체에만, 필요한 것만', () => {
    *
    * **되돌려 RED**: `${{ github.workspace }}/` 를 지우면 빨개진다.
    */
-  it('릴리즈 워크플로가 MURMUR_APP_PATH 를 절대 경로로 넘긴다', () => {
+  it('릴리즈 워크플로가 HARKROOM_APP_PATH 를 절대 경로로 넘긴다', () => {
     const wf = readFileSync(
       path.join(DESKTOP_DIR, '..', '..', '.github', 'workflows', 'release.yml'),
       'utf8',
     );
-    const uses = wf.match(/MURMUR_APP_PATH[:=]"?([^\n"\\]+)/g) ?? [];
-    expect(uses.length, 'MURMUR_APP_PATH 를 넘기는 자리가 사라졌다').toBeGreaterThan(0);
+    const uses = wf.match(/HARKROOM_APP_PATH[:=]"?([^\n"\\]+)/g) ?? [];
+    expect(uses.length, 'HARKROOM_APP_PATH 를 넘기는 자리가 사라졌다').toBeGreaterThan(0);
     for (const u of uses) {
       expect(u, `상대 경로다 — pnpm --filter 의 cwd 에서 안 풀린다: ${u}`)
         .toContain('github.workspace');

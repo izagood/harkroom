@@ -276,7 +276,7 @@ export interface RunnerLogSink {
  * ## 왜 합쳐야 하는가
  *
  * Node 의 `spawn` 은 `env` 를 주면 환경을 합치지 않고 **통째로 대체한다.** 앱이 넘기는
- * 것은 `{ MURMUR_PAT, MURMUR_URL, PATH }` 세 개뿐이므로(`desktop/src/lib/runnerLauncher.ts`),
+ * 것은 `{ HARKROOM_PAT, HARKROOM_URL, PATH }` 세 개뿐이므로(`desktop/src/lib/runnerLauncher.ts`),
  * 러너는 `USER`·`HOME`·`LANG` 조차 없는 환경에서 돌았다 — daemon 자신은 그것들을 갖고
  * 있는데도.
  *

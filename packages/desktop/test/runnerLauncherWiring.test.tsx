@@ -113,7 +113,7 @@ describe('컨트롤러 → 실행기 배선', () => {
     const { spawner } = await boot([agentView('rusalka'), agentView('theirs', { ownerAccountId: 'u9' })]);
 
     expect(spawner.spawns).toHaveLength(1);
-    expect(spawner.spawns[0]!.env.MURMUR_PAT).toBeTruthy();
+    expect(spawner.spawns[0]!.env.HARKROOM_PAT).toBeTruthy();
     expect(useAppStore.getState().runnerStates.rusalka!.status).toBe('running');
   });
 
@@ -255,8 +255,8 @@ describe('컨트롤러 → 실행기 배선', () => {
     expect(result.agent.id).toBe('created-codex');
     expect(secrets.map.get('created-codex')).toEqual({ label: 'runner', token: result.pat });
     expect(spawner.spawns).toHaveLength(2);
-    expect(spawner.spawns[1]!.env.MURMUR_PAT).toBe(result.pat);
-    expect(spawner.spawns[1]!.env.MURMUR_PAT).not.toBe(spawner.spawns[0]!.env.MURMUR_PAT);
+    expect(spawner.spawns[1]!.env.HARKROOM_PAT).toBe(result.pat);
+    expect(spawner.spawns[1]!.env.HARKROOM_PAT).not.toBe(spawner.spawns[0]!.env.HARKROOM_PAT);
     expect(useAppStore.getState().runnerStates['created-codex']!.status).toBe('running');
   });
 });

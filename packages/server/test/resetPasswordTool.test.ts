@@ -50,7 +50,7 @@ describe('reset-password 운영 도구', () => {
     const oldToken = before.json().token as string;
 
     await run(tsx, [script, HANDLE], {
-      env: { ...process.env, DATABASE_URL: uri, MURMUR_NEW_PASSWORD: NEW },
+      env: { ...process.env, DATABASE_URL: uri, HARKROOM_NEW_PASSWORD: NEW },
       timeout: 60_000,
     });
 
@@ -79,22 +79,22 @@ describe('reset-password 운영 도구', () => {
     expect(dump).not.toContain('argon2');
   }, 90_000);
 
-  it('handle 이나 MURMUR_NEW_PASSWORD 가 없으면 사용법을 내고 실패한다', async () => {
+  it('handle 이나 HARKROOM_NEW_PASSWORD 가 없으면 사용법을 내고 실패한다', async () => {
     const noHandle = await run(tsx, [script], {
-      env: { ...process.env, DATABASE_URL: uri, MURMUR_NEW_PASSWORD: NEW },
+      env: { ...process.env, DATABASE_URL: uri, HARKROOM_NEW_PASSWORD: NEW },
     }).then(() => null, (e: { code?: number; stderr?: string }) => e);
     expect(noHandle?.code).toBe(1);
     expect(noHandle?.stderr).toContain('사용법');
 
     const noPassword = await run(tsx, [script, HANDLE], {
-      env: { ...process.env, DATABASE_URL: uri, MURMUR_NEW_PASSWORD: '' },
+      env: { ...process.env, DATABASE_URL: uri, HARKROOM_NEW_PASSWORD: '' },
     }).then(() => null, (e: { code?: number; stderr?: string }) => e);
     expect(noPassword?.code).toBe(1);
   }, 90_000);
 
   it('규칙을 어기는 비밀번호를 거절한다 — 서버와 같은 규칙이다', async () => {
     const tooShort = await run(tsx, [script, HANDLE], {
-      env: { ...process.env, DATABASE_URL: uri, MURMUR_NEW_PASSWORD: 'short' },
+      env: { ...process.env, DATABASE_URL: uri, HARKROOM_NEW_PASSWORD: 'short' },
     }).then(() => null, (e: { code?: number; stderr?: string }) => e);
     expect(tooShort?.code).toBe(1);
     expect(tooShort?.stderr).toContain('8~128');
@@ -102,7 +102,7 @@ describe('reset-password 운영 도구', () => {
 
   it('없는 handle 은 거절한다', async () => {
     const missing = await run(tsx, [script, 'nobody-here'], {
-      env: { ...process.env, DATABASE_URL: uri, MURMUR_NEW_PASSWORD: NEW },
+      env: { ...process.env, DATABASE_URL: uri, HARKROOM_NEW_PASSWORD: NEW },
     }).then(() => null, (e: { code?: number; stderr?: string }) => e);
     expect(missing?.code).toBe(1);
   }, 90_000);

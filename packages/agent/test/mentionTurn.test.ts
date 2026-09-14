@@ -547,7 +547,7 @@ describe('runMentionTurn', () => {
       exitCode: 0,
       timedOut: false,
       // 하네스가 자기 env 를 찍은 상황. PTY 는 stdout·stderr 를 한 스트림으로 낸다.
-      tail: `MURMUR_PAT=${plan.env.MURMUR_PAT} 로 붙었다`,
+      tail: `HARKROOM_PAT=${plan.env.HARKROOM_PAT} 로 붙었다`,
     });
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });

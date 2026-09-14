@@ -536,7 +536,7 @@ describe('재시도 통지 (2026-09-09)', () => {
   it('사유에서 PAT 를 가린다 — 통지는 스레드에 영구히 남는다', async () => {
     // 실패 문구에는 tail 이 섞일 수 있고(`harness 종료 N: …`), tail 은 PTY 원문이다.
     const { scheduler, posted } = harness({
-      runTurn: () => Promise.reject(new Error('harness 종료 1: MURMUR_PAT=murp_deadbeefcafe 로 붙는다')),
+      runTurn: () => Promise.reject(new Error('harness 종료 1: HARKROOM_PAT=murp_deadbeefcafe 로 붙는다')),
     });
 
     await scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);

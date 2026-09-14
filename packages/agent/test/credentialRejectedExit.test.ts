@@ -63,10 +63,10 @@ async function runRunner(murmurUrl: string): Promise<RunnerOutcome> {
     cwd: agentRoot,
     env: {
       ...process.env,
-      MURMUR_URL: murmurUrl,
-      MURMUR_PAT: 'murp_revoked_by_reissue',
+      HARKROOM_URL: murmurUrl,
+      HARKROOM_PAT: 'murp_revoked_by_reissue',
       // 풀을 비워 둔다 — 계정 축은 이 계약과 무관하고, 여기서 뜨면 실패 사유가 섞인다.
-      MURMUR_CLAUDE_ACCOUNTS: '',
+      HARKROOM_CLAUDE_ACCOUNTS: '',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -118,6 +118,6 @@ describe('폐기된 PAT 로 뜬 러너는 78 로 물러난다 (수용)', () => {
     const { stderr } = await runRunner(url);
 
     expect(stderr).not.toContain('StreamableHTTPError:');
-    expect(stderr).toContain('MURMUR_PAT');
+    expect(stderr).toContain('HARKROOM_PAT');
   }, 60_000);
 });
