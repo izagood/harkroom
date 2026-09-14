@@ -375,10 +375,14 @@ export function TerminalPanel() {
           data-testid="terminal-diagnostics"
           data-renderer={diagnostics.renderer}
           data-compositions={diagnostics.compositions}
+          data-ime-keys={diagnostics.imeKeys}
+          data-hangul-keys={diagnostics.hangulKeys}
         >
           {t('terminal.diagnostics', {
             renderer: t(`terminal.renderer.${diagnostics.renderer}` as MessageKey),
             compositions: String(diagnostics.compositions),
+            imeKeys: String(diagnostics.imeKeys),
+            hangulKeys: String(diagnostics.hangulKeys),
           })}
         </p>
       )}
