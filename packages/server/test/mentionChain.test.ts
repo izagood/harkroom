@@ -124,6 +124,51 @@ describe(`연쇄 깊이 상한 ${MENTION_CHAIN_LIMIT} (4단계)`, () => {
     expect(await metaOf(revived)).not.toHaveProperty('mentionChainCapped');
   });
 
+  /**
+   * **다른 스레드의 옛 부름이 새 대화의 앞 고리가 되면 안 된다**(2026-09-14 실측).
+   *
+   * 깊이 스캔은 `thread_root_id` 로 좁히는데, 최상위 발화(`threadRootId` 없음)에서는 그
+   * 조건이 통째로 비어 채널 전체 최근 50개를 훑었다. 그래서 한 스레드에서 에이전트가
+   * 나를 부른 답(깊이 3)이 있으면, **같은 채널에 새로 여는 대화**가 깊이 4로 시작해
+   * 곧바로 막혔다 — 사람이 새 턴을 띄워 줘도 깊이는 채널 이력에서 오므로 소용없었다.
+   *
+   * 실제로 이것 때문에 e2e 가 멈췄다: 한 에이전트를 시험한 채널에서 다른 에이전트를
+   * 부르지 못했다.
+   */
+  it('다른 스레드에서 쌓인 깊이가 새 최상위 대화를 막지 않는다', async () => {
+    // 스레드 하나에서 상한 직전까지 쌓는다 — **마지막 발화가 ada 를 깊이 3 으로 부른다.**
+    // 이 깊이가 중요하다: 3 이어야 옛 코드가 새 대화를 4(상한)로 시작해 막는다. 2 면
+    // 옛 코드로도 통과해 이 회귀선에 이빨이 없다(실제로 그렇게 썼다가 뮤테이션 검사에서
+    // 드러났다 — 고치기 전 코드로도 초록이었다).
+    const root = await post(adminToken, '@ada 깊은 스레드');          // 0
+    await post(agents.ada!.pat, '@bob 이어서', root);                  // 1
+    await post(agents.bob!.pat, '@cid 이어서', root);                  // 2
+    const deep = await post(agents.cid!.pat, '@ada 다시 너에게', root); // 3
+    expect(await inboxFor(agents.ada!.pat, deep)).toEqual(['mention']);
+
+    // 이제 ada 가 **같은 채널에 새 대화**를 연다(스레드가 아니라 최상위). 위 스레드와
+    // 아무 상관이 없으므로 깊이는 0 에서 시작해야 하고, eve 는 불려야 한다.
+    const fresh = await post(agents.ada!.pat, '@eve 새 대화다');
+    expect(await inboxFor(agents.eve!.pat, fresh)).toEqual(['mention']);
+    expect(await metaOf(fresh)).not.toHaveProperty('mentionChainCapped');
+  });
+
+  it('최상위끼리의 연쇄는 그대로 막힌다 — 스레드를 안 쓰면 빠져나가는 길이 되면 안 된다', async () => {
+    // 위 수정이 "최상위는 늘 깊이 0" 이었다면 폭주를 최상위로 옮기기만 하면 되는 셈이다.
+    // 그래서 **최상위 발화들끼리는** 여전히 고리로 이어지는지 따로 못 박는다.
+    const a = await post(adminToken, '@ada 최상위 시작');      // 0
+    expect(await inboxFor(agents.ada!.pat, a)).toEqual(['mention']);
+    const b = await post(agents.ada!.pat, '@bob 최상위로 넘긴다');   // 1
+    expect(await inboxFor(agents.bob!.pat, b)).toEqual(['mention']);
+    const c = await post(agents.bob!.pat, '@cid 최상위로 넘긴다');   // 2
+    expect(await inboxFor(agents.cid!.pat, c)).toEqual(['mention']);
+    const d = await post(agents.cid!.pat, '@dee 최상위로 넘긴다');   // 3
+    expect(await inboxFor(agents.dee!.pat, d)).toEqual(['mention']);
+    const capped = await post(agents.dee!.pat, '@eve 최상위로 넘긴다'); // 4 — 상한
+    expect(await inboxFor(agents.eve!.pat, capped)).toEqual([]);
+    expect((await metaOf(capped)).mentionChainCapped).toEqual(['eve']);
+  });
+
   it('사람의 발화는 몇 번째든 상한에 걸리지 않는다 — 사람은 연쇄의 고리가 아니다', async () => {
     const root = await post(adminToken, '@ada 네 번째 시작');
     for (const [author, next] of [['ada', 'bob'], ['bob', 'cid'], ['cid', 'dee']] as Array<[string, string]>) {

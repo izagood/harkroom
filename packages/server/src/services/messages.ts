@@ -497,7 +497,19 @@ async function mentionDepthFor(
     `select m.body, m.mention_depth as depth, (a.kind = 'agent') as author_is_agent
        from message m join account a on a.id = m.author_id
       where m.channel_id = $1
-        and ($2::uuid is null or m.thread_root_id = $2 or m.id = $2)
+        -- **스레드 경계를 양쪽 다 지킨다**(2026-09-14).
+        --
+        -- 앞 판본은 두 번째 인자가 null 이면 이 조건을 통째로 비웠다 — 그래서 **새 채널
+        -- 최상위** 발화가 채널의 다른 스레드에서 나를 부른 답을 앞 고리로 물려받았다.
+        -- 무관한 새 대화인데 깊이가 3~4로 시작해 곧바로 상한에 걸렸고, 사람이 새 턴을
+        -- 띄워 줘도 소용없었다(깊이가 내 턴이 아니라 채널 이력에서 왔으므로).
+        --
+        -- 최상위 발화는 **최상위 발화들끼리만** 고리로 본다. A·B 가 최상위로 서로를
+        -- 부르며 도는 폭주는 그대로 잡히고(그 발화들도 최상위다), 다른 스레드의 옛
+        -- 부름은 더 이상 새 대화의 앞 고리가 아니다.
+        and (case when $2::uuid is null
+                  then m.thread_root_id is null
+                  else m.thread_root_id = $2 or m.id = $2 end)
         and m.deleted_at is null
       order by m.seq desc
       limit ${DEPTH_SCAN_LIMIT}`,
