@@ -10,20 +10,30 @@
 # 그래서 같은 `push: main` 이벤트에 **두 워크플로가 동시에** 뜬다. 앱이 늦어도 이미지는
 # 나가고, 이미지가 실패해도 앱 릴리즈는 그대로 간다.
 #
-# ## 왜 태그 푸시(`v*`)를 트리거로 쓰지 않았는가
+# 릴리즈가 이 워크플로를 **부르는** 경로가 하나 더 있다(아래 절). 그때도 그 잡은 `.dmg`
+# 빌드와 병렬이고 `finalize` 가 그것을 기다리지 않으므로, 위 성질은 그대로다.
 #
-# `release.yml` 이 미는 태그는 `GITHUB_TOKEN` 으로 밀린다. GitHub 의 재귀 방지 정책상
-# **그 푸시는 다른 워크플로를 트리거하지 않는다**(release.yml 상단에 같은 근거가 적혀 있다).
-# 태그를 기다렸다면 이 워크플로는 조용히 한 번도 안 돌았을 것이다.
-#
-# ## 버전 태그는 **버전 bump 커밋에서만** 붙인다
+# ## 버전 태그는 **릴리즈가 불러야** 붙는다 (2026-09-14 정정)
 #
 # 릴리즈 버전의 정본은 `packages/desktop/src-tauri/tauri.conf.json` 이고, 그 숫자는
 # `release.yml` 이 미는 `chore(release): vX.Y.Z` 커밋에서 올라간다. 그래서 보통의 머지
-# 커밋에서 그 파일을 읽으면 **직전 릴리즈의 숫자**가 나온다 — 거기에 `:0.1.204` 를 붙이면
-# 이미 나간 `0.1.204` 태그가 그 뒤의 코드를 가리키게 된다. 태그가 가리키는 코드가 조용히
-# 바뀌는 것은 배포에서 제일 나쁜 종류의 거짓말이라, 버전·`latest` 태그는 bump 커밋에서만
-# 붙이고 나머지 커밋은 `:main` 과 `:sha-<7자>` 로만 나간다.
+# 커밋에서 그 파일을 읽으면 **직전 릴리즈의 숫자**가 나온다 — 거기에 `:0.1.208` 을 붙이면
+# 이미 나간 태그가 그 뒤의 코드를 가리키게 된다.
+#
+# 처음에는 "커밋 제목이 `chore(release): vX.Y.Z` 이면 버전 태그를 붙인다"로 짰다.
+# **그 조건은 한 번도 성립하지 않았다.** 그 커밋은 `GITHUB_TOKEN` 으로 밀리고, GitHub 의
+# 재귀 방지 정책상 그 푸시는 **어떤 워크플로도 트리거하지 않기** 때문이다(태그 푸시만
+# 그런 것이 아니라 브랜치 푸시도 같다 — release.yml 상단에 같은 근거가 적혀 있다).
+# 실측(2026-09-14): `:latest` 가 사흘·두 릴리즈 낡은 채로 멈춰 있었고, 제일 새 이미지인
+# `:sha-fe0ab44` 는 **0.1.208 이 된 코드인데 안에 구워진 version 은 0.1.206** 이었다.
+#
+# 그래서 **릴리즈가 이 워크플로를 직접 부른다**(`workflow_call`, release.yml 의 `image` 잡).
+# 릴리즈가 넘겨 주는 것은 자기 태그(`v0.1.209`)이고, 이 워크플로는 그 태그를 체크아웃해
+# 굽는다 — `.dmg` 와 **완전히 같은 ref** 다. 그래야 이미지 안의 version 과 `/healthz` 가
+# 릴리즈 번호와 맞는다.
+#
+# 불려서 도는 것이 릴리즈를 느리게 하지 않는다: release.yml 에서 그 잡은 `.dmg` 빌드와
+# **병렬**이고, 릴리즈 공개(`finalize`)는 그것을 기다리지 않는다.
 name: 서버 이미지
 
 on:
@@ -32,6 +42,14 @@ on:
   # 브랜치에서 이미지가 빌드되는지 확인할 수 있어야 한다(`gh workflow run "서버 이미지"
   # --ref <브랜치>`). main 이 아니면 `:sha-<7자>` 태그 하나만 나간다 — 아래 "태그를 정한다".
   workflow_dispatch:
+  # 릴리즈가 부른다(위 "버전 태그는 릴리즈가 불러야 붙는다"). 부르는 쪽은
+  # `.github/workflows/release.yml` 의 `image` 잡 하나뿐이다.
+  workflow_call:
+    inputs:
+      release_tag:
+        description: 릴리즈 태그(`v0.1.209`). 이 ref 를 체크아웃해 굽고 버전·latest 태그를 붙인다.
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -40,8 +58,10 @@ permissions:
 
 # 같은 브랜치의 앞 실행을 끊지 않는다 — main 의 커밋마다 `:sha-<7자>` 가 하나씩 나가는 것이
 # 이 워크플로의 계약이고, 끊으면 그 커밋의 이미지가 영영 없어진다.
+# 불려 온 실행은 `github.ref` 가 부른 쪽(main)이라 그대로 두면 방금 push 로 뜬 실행 뒤에
+# 줄을 선다. 대상이 다르므로(머지 커밋 vs 릴리즈 태그) 줄도 나눈다.
 concurrency:
-  group: image-${{ github.ref }}
+  group: image-${{ inputs.release_tag || github.ref }}
   cancel-in-progress: false
 
 env:
@@ -72,7 +92,12 @@ jobs:
             slug: arm64
     steps:
       # 액션은 40자 커밋 SHA 로 핀한다(ci.yml 상단의 같은 근거). 뒤 주석이 사람이 읽는 버전이다.
+      #
+      # **불렸을 때는 넘겨받은 릴리즈 태그를 굽는다.** 그냥 두면 `github.sha` 가 부른 쪽의
+      # 커밋(버전이 오르기 **전**)이라, 이 워크플로가 존재하는 이유 자체가 사라진다.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.release_tag || github.sha }}
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
@@ -120,8 +145,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # 태그를 정하려면 커밋 제목과 `tauri.conf.json` 이 필요하다.
+      # 태그를 정하려면 `tauri.conf.json` 과 커밋 sha 가 필요하다. **build 와 같은 ref 를
+      # 봐야 한다** — 다른 것을 보면 붙는 태그가 구워진 내용과 어긋난다.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.release_tag || github.sha }}
 
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
@@ -137,22 +165,25 @@ jobs:
 
       - name: 태그를 정한다
         id: tags
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-          short="${GITHUB_SHA:0:7}"
+          # **체크아웃한 커밋**에서 잰다. `GITHUB_SHA` 는 불려 왔을 때 부른 쪽의 커밋이라
+          # 지금 구운 것과 다르다.
+          short="$(git rev-parse --short=7 HEAD)"
           tags="--tag ${IMAGE}:sha-${short}"
           if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
             tags="$tags --tag ${IMAGE}:main"
           fi
-          # 파일 상단 "버전 태그는 버전 bump 커밋에서만" 참고.
-          subject="$(git log -1 --pretty=%s)"
-          if [[ "$subject" =~ ^chore\(release\):\ v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            version="${BASH_REMATCH[1]}"
-            # 정본과 대조한다. 커밋 제목과 파일이 어긋났다면 둘 중 하나가 잘못된 것이고,
+          # 버전·latest 는 릴리즈가 불렀을 때만 붙는다(파일 상단 참고).
+          if [ -n "${RELEASE_TAG}" ]; then
+            version="${RELEASE_TAG#v}"
+            # 정본과 대조한다. 릴리즈 태그와 파일이 어긋났다면 둘 중 하나가 잘못된 것이고,
             # 그 상태로 `:latest` 를 옮기는 것보다 여기서 서는 편이 낫다.
             in_file="$(node -p "require('./packages/desktop/src-tauri/tauri.conf.json').version")"
             if [ "$version" != "$in_file" ]; then
-              echo "::error::커밋 제목의 버전($version)과 tauri.conf.json($in_file)이 다르다"
+              echo "::error::릴리즈 태그의 버전($version)과 tauri.conf.json($in_file)이 다르다"
               exit 1
             fi
             tags="$tags --tag ${IMAGE}:${version} --tag ${IMAGE}:latest"
@@ -165,6 +196,8 @@ jobs:
         working-directory: /tmp/digests
         run: |
           set -euo pipefail
+          # 다이제스트 파일 이름들이 인자 여러 개로 갈라지는 것이 의도다.
+          # shellcheck disable=SC2046
           docker buildx imagetools create ${{ steps.tags.outputs.tags }} \
             $(printf "${IMAGE}@sha256:%s " *)
 
@@ -174,6 +207,8 @@ jobs:
         run: |
           set -euo pipefail
           docker buildx imagetools inspect "${{ steps.tags.outputs.ref }}"
+          # 작은따옴표 안은 셸이 아니라 node 가 읽는 스크립트다.
+          # shellcheck disable=SC2016
           got="$(docker buildx imagetools inspect "${{ steps.tags.outputs.ref }}" --raw \
             | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
                 const m=JSON.parse(s).manifests||[];

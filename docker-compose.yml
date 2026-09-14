@@ -16,12 +16,27 @@ services:
   # avcs 서버는 별도 프로세스로 구동하고 AVCS_BASE_URL로 연결한다. 프로토콜 스펙 구현 서버가
   # 공개되면 세 번째 서비스로 추가 예정.
   server:
+    # **공식 이미지를 가리킨다**(2026-09-14). 태그를 안 주면 `latest` 이고, 배포에서는
+    # 버전으로 핀하는 것이 맞다 — 되돌리기가 "이 숫자를 전 릴리스로 바꿔 다시 올린다"가
+    # 되기 때문이다. `rollback-<날짜>` 같은 로컬 태그를 손으로 만들어 두는 것보다 튼튼하다.
+    #
+    #   HARKROOM_SERVER_TAG=0.1.209 docker compose -p <프로젝트> pull server
+    #   HARKROOM_SERVER_TAG=0.1.209 docker compose -p <프로젝트> up -d --no-deps server
+    #
+    # **`build:` 를 지우지 않는 이유**: 개발에서는 여전히 여기서 빌드한다. 둘이 함께 있으면
+    # `docker compose build` 가 **이 이름으로 태그**하므로 그 뒤의 `up` 은 방금 만든 로컬
+    # 것을 쓴다(레지스트리를 보지 않는다). 공식 이미지를 원하면 `pull` 을 먼저 부른다 —
+    # 위 두 줄이 그것이다. 이미지가 로컬에 아예 없으면 `up` 이 알아서 빌드한다.
+    image: ghcr.io/izagood/harkroom-server:${HARKROOM_SERVER_TAG:-latest}
     build:
       context: .
       dockerfile: packages/server/Dockerfile
       args:
         # 도는 서버가 정확히 무슨 코드인지를 `/healthz` 가 말하게 한다(#693). 비워 두면
         # 버전·기동 시각만 뜨고 커밋은 `null` 이다 — 빌드가 실패하지는 않는다.
+        # **손으로 빌드해 배포하면 이것을 빠뜨리기 쉽다**(2026-09-14 실측: 도는 배포가
+        # `commit: null` 이었다). 공식 이미지는 CI 가 항상 심어 준다 — 이것도 `pull` 쪽을
+        # 권하는 이유다.
         MURMUR_COMMIT: ${MURMUR_COMMIT:-}
     environment:
       DATABASE_URL: postgres://murmur:murmur@postgres:5432/murmur
