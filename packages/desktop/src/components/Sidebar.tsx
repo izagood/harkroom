@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { sidebarStorage, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from '../lib/prefs';
+import { ApiError } from '../lib/api';
 // `isMacOS`·`MAC_TRAFFIC_LIGHT_PL` 이 여기 있었다 — 신호등 여백은 이제 레일이 진다(아래 주석).
 import { TOP_BAR_BG, TOP_BAR_H } from '../lib/platform';
 import { LeasePanel } from './LeasePanel';
@@ -307,6 +308,7 @@ export function Sidebar({
   const [hiddenOpen, setHiddenOpen] = useState(false);
 
   const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
   const [editTopic, setEditTopic] = useState('');
   const [editRepo, setEditRepo] = useState('');
   const [editError, setEditError] = useState<string | null>(null);
@@ -546,6 +548,7 @@ export function Sidebar({
 
   const closeEdit = (): void => {
     setEditingChannelId(null);
+    setEditName('');
     setEditTopic('');
     setEditRepo('');
     setEditError(null);
@@ -553,6 +556,7 @@ export function Sidebar({
 
   const startEdit = (channel: ChannelRow): void => {
     setEditingChannelId(channel.id);
+    setEditName(channel.name ?? '');
     setEditTopic(channel.topic);
     setEditRepo(channel.repo ?? '');
     setEditError(null);
@@ -561,7 +565,24 @@ export function Sidebar({
   const submitEdit = async (): Promise<void> => {
     if (!editingChannelId) return;
     const original = useActiveStore.getState().channels.find((c) => c.id === editingChannelId);
-    const input: { topic?: string; repo?: string | null } = {};
+    const input: { name?: string; topic?: string; repo?: string | null } = {};
+    /**
+     * 이름은 **바뀐 경우에만** 싣는다. 안 바꾸고 저장할 때마다 이름을 같이 보내면 서버가
+     * 그때마다 유니크 검사와 감사 기록의 대상으로 삼고, 무엇보다 이 채널이 자기 이름으로
+     * 유니크 위반을 낼 여지를 만든다.
+     *
+     * 규칙은 만들기와 **같은 상수**로 미리 거른다(`submitNewChannel` 과 같은 이유) — 서버
+     * 왕복 없이 안내하되 최종 판정은 서버다. 빈 이름은 해제 의사가 아니다: 이름 없는 채널은
+     * 없으므로 패턴이 이미 걸러 낸다.
+     */
+    const nextName = editName.trim();
+    if (nextName !== original?.name) {
+      if (!new RegExp(CHANNEL_NAME_PATTERN).test(nextName)) {
+        setEditError(t('sidebar.channel.createInvalidName'));
+        return;
+      }
+      input.name = nextName;
+    }
     if (editTopic !== original?.topic) {
       input.topic = editTopic;
     }
@@ -581,6 +602,13 @@ export function Sidebar({
       await getController().updateChannel(editingChannelId, input);
       closeEdit();
     } catch (err) {
+      // 이름 충돌은 **코드로** 가른다(`ProfileSettings` 의 handle 과 같은 판단) — 문구를
+      // 문자열로 뒤지면 서버가 문구를 다듬는 순간 조용히 "편집에 실패했다" 로 뭉개진다.
+      // 이건 사용자가 고칠 수 있는 유일한 실패라 그렇게 말해 줘야 한다.
+      if (err instanceof ApiError && err.code === 'channel_name_taken') {
+        setEditError(t('sidebar.edit.nameTaken'));
+        return;
+      }
       setEditError(err instanceof Error ? err.message : t('sidebar.edit.failed'));
     }
   };
@@ -1018,6 +1046,20 @@ export function Sidebar({
             글자를 다시 읽는 자리다. `SidebarFind.tsx` 에 그 근거를 적어 뒀다.
           */}
           <div className="mb-1 text-meta text-fg-muted">{t('sidebar.edit.title', { name: `#${ch.name}` })}</div>
+          {/*
+            이름이 맨 위다 — 이 폼에서 **바꿨을 때 가장 눈에 띄는 값**이고, 제목 줄이
+            `#옛이름` 으로 무엇을 고치는 중인지 이미 말하고 있다. `#` 는 붙여서 그리지 않는다:
+            저장되는 값에는 `#` 가 없고, 칸 안에 넣어 두면 사람이 그것까지 이름으로 친다.
+          */}
+          <input
+            type="text"
+            aria-label="Channel name"
+            data-testid="channel-edit-name"
+            className="mb-1 w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
+            placeholder={t('sidebar.edit.namePlaceholder')}
+            value={editName}
+            onChange={(e) => { setEditName(e.target.value); setEditError(null); }}
+          />
           <input
             type="text"
             aria-label="Topic"
