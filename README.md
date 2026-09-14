@@ -183,11 +183,11 @@ dead AVCS server never restarts the pod).
 | `AGENT_TURN_TIMEOUT_MS` | Maximum wait for one turn (PTY execution) | `1800000` (30min) | No |
 | `AGENT_HARNESS_STALL_MS` | Idle time after which a harness whose transcript stopped growing is treated as stalled and the turn is folded (`0` disables) | `600000` (10min) | No |
 | `AGENT_INTERACTIVE_ORPHAN_MS` | Grace before an interactive PTY with zero viewers is reclaimed (SIGTERM → SIGKILL) | `60000` (60s) | No |
-| `AGENT_STATE_DIR` | Directory for sessions.json, MCP config, AVCS workspace | `~/.murmur-agent` | No |
+| `AGENT_STATE_DIR` | Directory for sessions.json, MCP config, AVCS workspace | `~/.harkroom-agent` | No |
 | `CODEX_HOME` | Source Codex home whose `auth.json` is linked into the runner-isolated Codex home; child Codex processes always use the isolated home under `AGENT_STATE_DIR` | `~/.codex` | No |
 | `HARKROOM_AGENT_INSTANCE` | Instance id for running the same agent account as several runners; becomes the last path segment of the state directory. Must match `[a-z0-9-]{1,32}` — an invalid value fails startup. Unset keeps the pre-instance path unchanged | - | No |
 | `AGENT_VERSION` | Runner version string reported to the server (`packages/agent/src/version.ts`). Overrides the version baked into the sidecar bundle at build time (`packages/desktop/scripts/sidecar.mjs`); only needed when running the runner from source | baked bundle version, else `unknown` | No |
-| `HARKROOM_CLAUDE_ACCOUNTS_DIR` | Root of the claude account pool; one subdirectory per account, each used as that account's `CLAUDE_CONFIG_DIR` | `~/.murmur-agent/claude-accounts` | No |
+| `HARKROOM_CLAUDE_ACCOUNTS_DIR` | Root of the claude account pool; one subdirectory per account, each used as that account's `CLAUDE_CONFIG_DIR` | `~/.harkroom-agent/claude-accounts` | No |
 | `HARKROOM_CLAUDE_ACCOUNTS` | Comma-separated account names setting failover order and subset (e.g. `plum,lime`). A name missing from the pool fails startup. Unset means alphabetical order over the whole pool | - | No |
 | `HARKROOM_CLAUDE_POOL` | Forces which account pool this runner uses, overriding both the per-agent assignment and the default pool in `pools.json`. A name with no matching pool directory fails startup. Unset means: per-agent assignment, then default pool, then the pool root itself | - | No |
 | `HARKROOM_HARNESS_ADAPTERS` | Routes harness-specific facts through the adapter table (`packages/agent/src/adapters/`) instead of the hardcoded per-harness branches. Only `1` or `true` enable it; anything else keeps the existing path. Off by default until the new path is verified on a real machine | - | No |
