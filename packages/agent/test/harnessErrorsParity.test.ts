@@ -41,18 +41,18 @@ beforeEach(async () => {
     join(projectsDir, 'proj', `${SESSION_ID}.jsonl`),
     `${JSON.stringify({ isApiErrorMessage: true, timestamp: new Date().toISOString(), message: { content: 'rate limit' } })}\n`,
   );
-  savedFlag = process.env.MURMUR_HARNESS_ADAPTERS;
+  savedFlag = process.env.HARKROOM_HARNESS_ADAPTERS;
 });
 afterEach(async () => {
   // 플래그를 되돌린다 — 남기면 이 파일 뒤에 도는 테스트가 새 경로로 돈다.
-  if (savedFlag === undefined) delete process.env.MURMUR_HARNESS_ADAPTERS;
-  else process.env.MURMUR_HARNESS_ADAPTERS = savedFlag;
+  if (savedFlag === undefined) delete process.env.HARKROOM_HARNESS_ADAPTERS;
+  else process.env.HARKROOM_HARNESS_ADAPTERS = savedFlag;
   await rm(dir, { recursive: true, force: true });
 });
 
 function setFlag(enabled: boolean): void {
-  if (enabled) process.env.MURMUR_HARNESS_ADAPTERS = '1';
-  else delete process.env.MURMUR_HARNESS_ADAPTERS;
+  if (enabled) process.env.HARKROOM_HARNESS_ADAPTERS = '1';
+  else delete process.env.HARKROOM_HARNESS_ADAPTERS;
 }
 
 /** 네 함수의 답을 한 번에 모은다 — 하나만 맞추면 나머지가 갈려도 초록이다. */

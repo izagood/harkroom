@@ -116,7 +116,7 @@ jobs:
           file: packages/server/Dockerfile
           platforms: ${{ matrix.platform }}
           build-args: |
-            MURMUR_COMMIT=${{ github.sha }}
+            HARKROOM_COMMIT=${{ github.sha }}
           # provenance 첨부는 다이제스트 하나에 매니페스트를 더 얹어 `push-by-digest` 와
           # 어긋난다. 출처는 아래 `merge` 가 만드는 리스트 수준에서 다룬다.
           provenance: false

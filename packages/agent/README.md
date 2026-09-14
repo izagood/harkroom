@@ -22,10 +22,10 @@ daemon 을 통해 띄운다(`#431` 2단계, [`docs/operations.md`](../../docs/op
 
 ```sh
 # 앱을 설치해 쓰는 경우 — 러너는 앱과 함께 배포된다 (설치 위치가 다르면 경로를 바꾼다)
-MURMUR_URL=<서버 주소> MURMUR_PAT=murp_... /Applications/Harkroom.app/Contents/MacOS/harkroom-runner
+HARKROOM_URL=<서버 주소> HARKROOM_PAT=murp_... /Applications/Harkroom.app/Contents/MacOS/harkroom-runner
 
 # 이 저장소를 클론한 개발 환경
-MURMUR_URL=<서버 주소> MURMUR_PAT=murp_... pnpm --filter @harkroom/agent start
+HARKROOM_URL=<서버 주소> HARKROOM_PAT=murp_... pnpm --filter @harkroom/agent start
 ```
 
 위쪽이 있는 이유: `#431` 1단계가 러너를 **단일 번들**로 만들어 Tauri 사이드카
@@ -46,9 +46,9 @@ MURMUR_URL=<서버 주소> MURMUR_PAT=murp_... pnpm --filter @harkroom/agent sta
 
 | 환경변수 | 기본값 | 뜻 |
 |---|---|---|
-| `MURMUR_PAT` | (필수) | 에이전트 PAT. 이 계정으로 발화한다 |
-| `MURMUR_URL` | `http://localhost:3400` | harkroom 서버 |
-| `MURMUR_AGENT_INSTANCE` | (없음) | 에이전트 인스턴스 ID. 같은 에이전트를 여러 개 돌릴 때 구분한다 ([a-z0-9-]{1,32}) |
+| `HARKROOM_PAT` | (필수) | 에이전트 PAT. 이 계정으로 발화한다 |
+| `HARKROOM_URL` | `http://localhost:3400` | harkroom 서버 |
+| `HARKROOM_AGENT_INSTANCE` | (없음) | 에이전트 인스턴스 ID. 같은 에이전트를 여러 개 돌릴 때 구분한다 ([a-z0-9-]{1,32}) |
 | `AGENT_POLL_TIMEOUT_MS` | `25000` | 서버의 `inbox.poll` 상한 |
 | `AGENT_TURN_TIMEOUT_MS` | `1800000`(30분) | 한 턴(PTY 실행)의 최대 대기 시간. 넘기면 SIGTERM → 5초 → SIGKILL |
 | `AGENT_STATE_DIR` | `~/.murmur-agent` | 세션 파일·MCP 설정·avcs 워크스페이스가 사는 곳 (아래 "상태 디렉터리") |
@@ -56,22 +56,22 @@ MURMUR_URL=<서버 주소> MURMUR_PAT=murp_... pnpm --filter @harkroom/agent sta
 API 키는 필요 없다 — 모든 harness가 사람의 로컬 로그인(claude: Keychain, codex: `~/.codex/auth.json`)을 쓴다.
 
 **에이전트를 여러 대 운영하려면 러너도 여러 프로세스다.** 러너 하나는 자기 PAT의 계정 하나로만
-붙는다 — 두 에이전트를 동시에 돌리려면 각자 다른 `MURMUR_PAT`로 **위 명령을 두 번** 띄운다
+붙는다 — 두 에이전트를 동시에 돌리려면 각자 다른 `HARKROOM_PAT`로 **위 명령을 두 번** 띄운다
 (어느 갈래든 상관없다). `AGENT_STATE_DIR`은 **같아도 된다** — 상태 경로 전체가 `me.handle`로
 스코프되므로(아래 "상태 디렉터리") 같은 머신·같은 `AGENT_STATE_DIR`에서 동시에 떠도 서로의
 세션·workspace가 겹치지 않는다.
 
 ### 같은 에이전트를 여러 인스턴스로 돌리기 (#174)
 
-같은 에이전트 계정으로 **병렬로 throughput 을 높이려면** `MURMUR_AGENT_INSTANCE` 환경변수를
+같은 에이전트 계정으로 **병렬로 throughput 을 높이려면** `HARKROOM_AGENT_INSTANCE` 환경변수를
 쓴다:
 
 ```sh
 # 인스턴스 A
-MURMUR_PAT=murp_... MURMUR_AGENT_INSTANCE=a pnpm --filter @harkroom/agent start
+HARKROOM_PAT=murp_... HARKROOM_AGENT_INSTANCE=a pnpm --filter @harkroom/agent start
 
 # 인스턴스 B (같은 PAT, 다른 인스턴스 ID)
-MURMUR_PAT=murp_... MURMUR_AGENT_INSTANCE=b pnpm --filter @harkroom/agent start
+HARKROOM_PAT=murp_... HARKROOM_AGENT_INSTANCE=b pnpm --filter @harkroom/agent start
 ```
 
 이렇게 하면 상태 디렉터리가 `<AGENT_STATE_DIR>/<handle>-<id>/a/` 처럼 나뉘어,
@@ -79,7 +79,7 @@ MURMUR_PAT=murp_... MURMUR_AGENT_INSTANCE=b pnpm --filter @harkroom/agent start
 `@handle[default]` 또는 `@handle[a]` 로 적히고 그 다음 줄에 실제 상태 디렉터리가 나와,
 `ps` 로 어느 프로세스가 누구인지 알 수 있다.
 
-`MURMUR_AGENT_INSTANCE` 값이 문법(`[a-z0-9-]{1,32}`)에 어긋나면 **러너가 뜨지 않는다.**
+`HARKROOM_AGENT_INSTANCE` 값이 문법(`[a-z0-9-]{1,32}`)에 어긋나면 **러너가 뜨지 않는다.**
 조용히 무시하면 인스턴스 B 라고 믿고 띄운 러너가 기본 경로에서 A 의 세션 파일을 밟는데,
 그 사고는 화면에 아무 흔적을 남기지 않는다.
 
@@ -166,7 +166,7 @@ workspaces/         # avcs 워크스페이스들. murmur-<handle>-<threadKey 해
 에이전트 둘이 멘션되면 스레드 이름만으로는 둘째 에이전트의 `avcs workspace project`가
 실패하거나, 최악의 경우 첫째 에이전트의 디렉터리를 그대로 넘겨받아 격리가 조용히 사라진다.
 
-`MURMUR_AGENT_INSTANCE`를 설정하면 `<handle>-<id>/<instance>/`로 한 겹 더 나뉜다(#174).
+`HARKROOM_AGENT_INSTANCE`를 설정하면 `<handle>-<id>/<instance>/`로 한 겹 더 나뉜다(#174).
 같은 에이전트를 여러 인스턴스로 동시에 돌릴 때 필요하며, 없으면 `<handle>-<id>/`가 그대로다
 — **하위 호환이다.** 지금 돌고 있는 러너가 재시작에 상태를 잃으면 안 된다.
 
@@ -261,7 +261,7 @@ MCP 설정을 상속하지 않는다. 승인된 Codex 스킬은 공식 저장소
 ## 자격증명
 
 - **모델 자격증명은 harkroom를 통과하지 않는다.** 하네스가 사람의 로컬 로그인을 그대로 쓴다.
-- **PAT는 env로만 간다.** MCP 설정 파일에는 `${MURMUR_PAT}` 플레이스홀더만 있고(파일 자체는
+- **PAT는 env로만 간다.** MCP 설정 파일에는 `${HARKROOM_PAT}` 플레이스홀더만 있고(파일 자체는
   비밀이 아니다), 실값은 PTY 자식 프로세스의 env로만 넘어간다 — argv에는 절대 오르지 않는다
   (`ps`에는 다른 사용자에게도 argv가 보이지만 env는 안 보인다).
 - **`--strict-mcp-config`를 항상 쓴다**(claude). 없으면 하네스가 이 세션을 띄운 사람의
@@ -313,7 +313,7 @@ MCP 설정을 상속하지 않는다. 승인된 Codex 스킬은 공식 저장소
 
 러너가 쓸 풀은 이 순서로 정해진다.
 
-1. `MURMUR_CLAUDE_POOL` — 운영자 강제. 없는 풀이면 **기동 실패**다.
+1. `HARKROOM_CLAUDE_POOL` — 운영자 강제. 없는 풀이면 **기동 실패**다.
 2. `pools.json`의 `agents[<이 에이전트의 계정 id>]` — 에이전트별 지정.
 3. `pools.json`의 `defaultPool` — 기본 풀.
 4. 없으면 뿌리 자체(평평한 구조).
@@ -366,9 +366,9 @@ JSON
 CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/work/aria claude auth status --json
 ```
 
-- `MURMUR_CLAUDE_ACCOUNTS_DIR` — 뿌리를 옮긴다.
-- `MURMUR_CLAUDE_POOL` — 쓸 풀을 강제한다(배정·기본 풀을 덮는다). 없는 풀이면 기동 실패다.
-- `MURMUR_CLAUDE_ACCOUNTS` — 쉼표로 순서와 부분집합을 정한다(예: `cedar,aria`). 없는 이름을
+- `HARKROOM_CLAUDE_ACCOUNTS_DIR` — 뿌리를 옮긴다.
+- `HARKROOM_CLAUDE_POOL` — 쓸 풀을 강제한다(배정·기본 풀을 덮는다). 없는 풀이면 기동 실패다.
+- `HARKROOM_CLAUDE_ACCOUNTS` — 쉼표로 순서와 부분집합을 정한다(예: `cedar,aria`). 없는 이름을
   적으면 **러너가 뜨지 않는다** — 조용히 무시하면 계정 B라고 믿고 띄운 러너가 A로 돈다.
 
 지정이 없으면 이름 사전순이다. 기동 로그에 계정 이름 목록이 남는다(이메일·토큰은 안 남는다).

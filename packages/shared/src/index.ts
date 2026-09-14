@@ -3031,3 +3031,33 @@ export interface CollabProposalsView {
   /** avcs actor 키 → murmur 계정 id. 모르는 키는 **없다**(그것이 외부 작업자다). */
   actors?: Record<string, string>;
 }
+
+/**
+ * 이름이 바뀐 환경변수를 읽는다(`HARKROOM_*` → `HARKROOM_*`).
+ *
+ * ## 왜 폴백이 필요한가 — env 를 넣는 쪽이 저장소 밖에 있다
+ *
+ * 앱이 띄우는 러너는 데스크탑 → 데몬 → 러너로 **env 를 내부에서 넘기므로** 같은 릴리즈면
+ * 저절로 맞는다. 문제는 밖에서 넣는 자리다: 사람이 손으로 만든 **LaunchAgent plist**,
+ * 손으로 치는 `pnpm … start`. 그것들은 앱과 같이 갱신되지 않는다 — 폴백이 없으면 개명하는
+ * 순간 그 러너들이 **PAT 가 없다며 뜨지 않는다.**
+ *
+ * 그래서 **읽기만** 두 이름을 본다. 넣는 쪽은 늘 새 이름 하나다.
+ * 이 폴백은 사람이 plist 를 고칠 시간을 주는 **한시적인 것**이고 `5d` 에서 걷어낸다.
+ */
+export function renamedEnv(
+  env: Record<string, string | undefined>,
+  name: string,
+): string | undefined {
+  const found = env[name];
+  if (found !== undefined) return found;
+  // 옛 접두사가 **글자 그대로 남는 유일한 자리**다. 여기서만 남기는 이유가 둘 있다:
+  // `5d` 에서 걷어낼 때 `git grep MURMUR_` 한 번으로 찾히고, 지우면 이 함수만 사라진다.
+  //
+  // **한 번 데였다**: 일괄 치환(`MURMUR_` → `HARKROOM_`)이 이 줄까지 먹어서 폴백이 자기
+  // 자신을 찾는 no-op 이 됐다. 아래 회귀선이 그것을 잡았다 — 문자열을 쪼개 숨기는 대신
+  // 그대로 두고 테스트로 지킨다(숨기면 5d 에서 못 찾는다).
+  return name.startsWith('HARKROOM_')
+    ? env[`MURMUR_${name.slice('HARKROOM_'.length)}`]
+    : undefined;
+}

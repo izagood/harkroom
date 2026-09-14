@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { switchesAccount, withAccountFailover } from '../src/claudeAccounts.js';
 import type { ClaudeAccount } from '../src/claudeAccounts.js';
-import { ExecutableNotFoundError, MURMUR_ERROR_SOURCE } from '../src/policy.js';
+import { ExecutableNotFoundError, HARKROOM_ERROR_SOURCE } from '../src/policy.js';
 import { PromptNotDeliveredError } from '../src/pty.js';
 
 /**
@@ -47,7 +47,7 @@ describe('계정 전환 방아쇠', () => {
   it('murmur PAT 실패는 계정을 바꾸지 않는다', () => {
     // 계정과 무관하다 — 바꿔도 같은 자리에서 실패하고, 러너는 물러나야 한다(#250).
     const err = Object.assign(new Error('unauthorized'), {
-      source: MURMUR_ERROR_SOURCE, status: 401,
+      source: HARKROOM_ERROR_SOURCE, status: 401,
     });
     expect(switchesAccount(err)).toBe(false);
   });
@@ -171,8 +171,8 @@ describe('main.ts 의 풀 배선', () => {
   });
 
   it('강제 지정과 순서를 env 에서 읽는다', () => {
-    expect(source).toContain('MURMUR_CLAUDE_POOL');
-    expect(source).toContain('MURMUR_CLAUDE_ACCOUNTS');
+    expect(source).toContain('HARKROOM_CLAUDE_POOL');
+    expect(source).toContain('HARKROOM_CLAUDE_ACCOUNTS');
   });
 
   it('기동 로그에 풀 이름이 실린다 — 어느 풀로 도는지 운영자가 알아야 한다', () => {

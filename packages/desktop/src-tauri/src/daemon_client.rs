@@ -129,7 +129,7 @@ pub fn check_socket_path_length(socket_path: &Path) -> Result<(), String> {
 /// 이 뿌리 밑에 있는 것을 보라: 소켓·**토큰**·pid·장부·로그. 환경변수로 뿌리를 옮길 수
 /// 있으면, 앱을 띄우는 자리에 변수 하나를 심은 쪽이 **자기가 준비한 토큰 파일과 소켓**을
 /// 앱에게 보게 만들 수 있다. 그러면 앱은 그쪽을 daemon 으로 알고 붙고, `spawnRunner` 에
-/// 실리는 `MURMUR_PAT` 가 그리로 간다.
+/// 실리는 `HARKROOM_PAT` 가 그리로 간다.
 ///
 /// 이것은 모듈 주석의 표가 **"소켓·토큰·pid 경로는 Rust 가 정한다"**로 못박은 그 성질을
 /// 정확히 뒤집는 것이다 — 그 표가 웹뷰를 막은 이유("자기가 아는 토큰이 든 파일을 가리키면
@@ -140,7 +140,7 @@ pub fn check_socket_path_length(socket_path: &Path) -> Result<(), String> {
 /// 심을 수 있는 쪽은 이미 `target/debug/` 의 실행 파일 자체를 바꿀 수 있다 — 새로 여는
 /// 문이 없다. 그래서 `cfg!(debug_assertions)` 로 가른다. **런타임 플래그가 아니라 컴파일
 /// 타임 갈래인 것이 요점이다**: 릴리즈 바이너리에는 이 변수를 읽는 코드가 아예 없다.
-const DEV_DATA_DIR_ENV: &str = "MURMUR_DEV_DATA_DIR";
+const DEV_DATA_DIR_ENV: &str = "HARKROOM_DEV_DATA_DIR";
 
 /// 개발 구획 디렉터리 이름에 붙는 해시의 길이(16진 문자 수).
 ///
@@ -213,7 +213,7 @@ const DEV_DIR_PREFIX: &str = "dev-";
 ///   부딪힌 결함을 미리 적어 둔 자리였다: 로컬 `tauri build` 번들과 설치본이 소켓 하나를
 ///   만나 `EXIT_OCCUPIED`(10) 교착이 났다(2026-09-07). 그래서 갈래를 프로파일에서
 ///   **설치 자리**로 옮겼다 — `BuildSite::is_installed`)
-/// - **`MURMUR_DEV_DATA_DIR` 를 두 워크트리에 같은 값으로 주면 합쳐진다** — 그것이 그
+/// - **`HARKROOM_DEV_DATA_DIR` 를 두 워크트리에 같은 값으로 주면 합쳐진다** — 그것이 그
 ///   변수의 용도이기도 하다(둘을 일부러 한자리에 모으는 것)
 /// - **같은 워크트리를 지우고 같은 경로에 다시 만들면 같은 구획이다** — 위 "같은 경로를
 ///   재사용하면"이 그것이고, 그때 앞선 빌드의 daemon 이 남아 있으면 그대로 만난다
@@ -266,7 +266,7 @@ pub fn dev_partition_name(source: &str) -> String {
 ///
 /// ## 왜 환경변수가 아니라 실행 파일 경로인가
 ///
-/// `MURMUR_DEV_DATA_DIR` 를 릴리즈에서 막은 이유(그 주석: 변수를 심은 쪽이 **자기가 준비한
+/// `HARKROOM_DEV_DATA_DIR` 를 릴리즈에서 막은 이유(그 주석: 변수를 심은 쪽이 **자기가 준비한
 /// 토큰 파일과 소켓**을 앱에게 보게 만들 수 있다)가 여기에는 없다. 실행 파일 경로는
 /// **프로세스가 스스로 아는 값**이고 웹뷰가 못 고치며, 그 경로를 바꿀 수 있는 쪽은 이미
 /// 그 실행 파일 자체를 바꿀 수 있다 — 새로 여는 문이 없다.
@@ -390,7 +390,7 @@ fn resolve_app_data_root(
     dev_app_data_root(app_data_dir, source, override_dir)
 }
 
-/// `MURMUR_DEV_DATA_DIR` 는 **개발 프로파일에서만** 읽는다.
+/// `HARKROOM_DEV_DATA_DIR` 는 **개발 프로파일에서만** 읽는다.
 ///
 /// 이 게이트가 `app_data_root` 의 갈래와 **분리돼 있어야 한다.** 앞 판본은 갈래 자체가
 /// `cfg!(debug_assertions)` 라 변수 읽기도 자동으로 개발 전용이었다. 갈래가 설치 자리로
@@ -429,7 +429,7 @@ fn dev_app_data_root(
     override_dir: Option<std::ffi::OsString>,
 ) -> PathBuf {
     if let Some(raw) = override_dir {
-        // **빈 값은 안 준 것으로 친다.** `MURMUR_DEV_DATA_DIR=` 로 지운 흔적이 남았을 때
+        // **빈 값은 안 준 것으로 친다.** `HARKROOM_DEV_DATA_DIR=` 로 지운 흔적이 남았을 때
         // 뿌리가 `""` 가 되어 상대 경로로 떨어지는 것을 막는다.
         if !raw.is_empty() {
             return PathBuf::from(raw);
@@ -497,7 +497,7 @@ const KEYCHAIN_SERVICE_RELEASE: &str = "app.harkroom.desktop";
 ///
 /// ## 환경변수 탈출구가 여기엔 없다
 ///
-/// `MURMUR_DEV_DATA_DIR` 는 뿌리를 통째로 옮기는 값이라 키체인 이름에 대응이 없다.
+/// `HARKROOM_DEV_DATA_DIR` 는 뿌리를 통째로 옮기는 값이라 키체인 이름에 대응이 없다.
 /// 억지로 대응시키면(예: 그 경로를 해시) **같은 변수로 뿌리를 모은 두 빌드가 키체인은
 /// 각자 쓰는** 어긋남이 생긴다. 그 변수의 용도는 "둘을 일부러 한자리에 모으는 것"인데
 /// 키체인은 안 모이면 목적이 절반만 선다. 지금은 대응을 **안 만들어** 두 빌드가 같은
@@ -2451,7 +2451,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         assert_eq!(got, PathBuf::from("/tmp/mmr-elsewhere"));
     }
 
-    /// 빈 값은 **안 준 것**이다. `MURMUR_DEV_DATA_DIR=` 로 지운 흔적이 남았을 때
+    /// 빈 값은 **안 준 것**이다. `HARKROOM_DEV_DATA_DIR=` 로 지운 흔적이 남았을 때
     /// 뿌리가 `""` 가 되어 상대 경로로 떨어지는 것을 막는다.
     #[test]
     fn 빈_환경변수는_안_준_것으로_친다() {
@@ -3016,9 +3016,9 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         // 러너가 무엇을 하는가가 아니라 **그 종료가 여기까지 오는가**다. 자격증명이
         // 틀렸으니 러너는 곧 스스로 물러나고, 그 종료가 곧 우리가 기다리는 이벤트다.
         let mut env = HashMap::new();
-        env.insert("MURMUR_PAT".to_string(), "murp_회귀선".to_string());
+        env.insert("HARKROOM_PAT".to_string(), "hrkp_회귀선".to_string());
         env.insert(
-            "MURMUR_URL".to_string(),
+            "HARKROOM_URL".to_string(),
             "http://127.0.0.1:1/".to_string(), // 아무도 안 듣는 포트 — 러너가 빨리 물러난다
         );
         env.insert(

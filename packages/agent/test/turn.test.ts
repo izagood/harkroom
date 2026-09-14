@@ -28,17 +28,17 @@ const base = {
 
 // 실물 검증에서 드러난 회귀 — pty.spawn 에 env 를 넘기면 node-pty 가 부모 env 와 **병합하지
 // 않고 대체**한다(unixTerminal.js: `opt.env = opt.env || process.env`). buildTurnCommand 가
-// `{ MURMUR_PAT }` 하나만 돌려주던 때는 이 값이 그대로 자식의 전체 env 가 되어 PATH·HOME 이
+// `{ HARKROOM_PAT }` 하나만 돌려주던 때는 이 값이 그대로 자식의 전체 env 가 되어 PATH·HOME 이
 // 사라지고 harness 를 못 찾거나 로그인 자격증명을 못 읽어 모든 실물 턴이 즉시 실패했다
-// (turn.ts::childEnv). 이 테스트는 그 반환값 자체(생성자 출력)를 겨눈다 — `p.env.MURMUR_PAT`
-// 만 보던 예전 단언들은 `{ MURMUR_PAT: 'x' }` 하나짜리 env 로도 통과했으므로 이 결함을 못
+// (turn.ts::childEnv). 이 테스트는 그 반환값 자체(생성자 출력)를 겨눈다 — `p.env.HARKROOM_PAT`
+// 만 보던 예전 단언들은 `{ HARKROOM_PAT: 'x' }` 하나짜리 env 로도 통과했으므로 이 결함을 못
 // 잡았다.
 describe('buildTurnCommand — env 는 부모를 물려받는다 (실물 검증에서 드러난 회귀)', () => {
-  it('PATH·HOME 등 부모 env 를 물려주고 MURMUR_PAT 만 덮어쓴다', () => {
+  it('PATH·HOME 등 부모 env 를 물려주고 HARKROOM_PAT 만 덮어쓴다', () => {
     const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true });
     expect(p.env.PATH).toBe(process.env.PATH);
     if (process.env.HOME) expect(p.env.HOME).toBe(process.env.HOME);
-    expect(p.env.MURMUR_PAT).toBe('murp_x');
+    expect(p.env.HARKROOM_PAT).toBe('murp_x');
   });
 });
 
@@ -55,7 +55,7 @@ describe('buildTurnCommand — claude', () => {
     expect(p.args).toContain('--append-system-prompt-file');
     expect(p.args).toContain(filePath);
     expect(p.args).not.toContain('-r');
-    expect(p.env.MURMUR_PAT).toBe('murp_x');
+    expect(p.env.HARKROOM_PAT).toBe('murp_x');
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -268,7 +268,7 @@ describe('buildTurnCommand — codex', () => {
     const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, murmurUrl: 'http://localhost:3401' });
     expect(p.args.join(' ')).toContain('mcp_servers.avcs.command');
     expect(p.args.join(' ')).toContain('mcp_servers.murmur.url="http://localhost:3401/mcp"');
-    expect(p.args.join(' ')).toContain('mcp_servers.murmur.bearer_token_env_var="MURMUR_PAT"');
+    expect(p.args.join(' ')).toContain('mcp_servers.murmur.bearer_token_env_var="HARKROOM_PAT"');
     expect(p.args.join(' ')).not.toContain('murp_x');
   });
 
@@ -365,7 +365,7 @@ describe('writeMcpConfigOnce', () => {
     const path = await writeMcpConfigOnce(dir, 'http://localhost:3401');
     const config = JSON.parse(await readFile(path, 'utf8'));
     expect(config.mcpServers.murmur).toEqual({
-      type: 'http', url: 'http://localhost:3401/mcp', headers: { Authorization: 'Bearer ${MURMUR_PAT}' },
+      type: 'http', url: 'http://localhost:3401/mcp', headers: { Authorization: 'Bearer ${HARKROOM_PAT}' },
     });
     expect(config.mcpServers.avcs).toEqual({ type: 'stdio', command: 'avcs', args: ['mcp'] });
     expect(Object.keys(config.mcpServers)).toHaveLength(2); // murmur + avcs 만 — strict-mcp-config 와 짝
@@ -377,7 +377,7 @@ describe('writeMcpConfigOnce', () => {
     dir = await mkdtemp(join(tmpdir(), 'mcp-cfg-'));
     const path = await writeMcpConfigOnce(dir, 'http://localhost:3401');
     const raw = await readFile(path, 'utf8');
-    expect(raw).toContain('${MURMUR_PAT}');
+    expect(raw).toContain('${HARKROOM_PAT}');
     expect(raw).not.toMatch(/murp_[a-zA-Z0-9]/);
   });
 
@@ -607,7 +607,7 @@ describe('계정별 CLAUDE_CONFIG_DIR 주입', () => {
 });
 
 // CLAUDE_CONFIG_DIR 격리는 이 키들 앞에서 무력하다 — claude 는 이것을 자격증명보다 먼저
-// 쓴다. 러너는 데몬 env 전체를 상속하므로(runnerLauncher 는 MURMUR_PAT·MURMUR_URL·PATH 만
+// 쓴다. 러너는 데몬 env 전체를 상속하므로(runnerLauncher 는 HARKROOM_PAT·HARKROOM_URL·PATH 만
 // 덮어쓴다) 이 키가 어디서 들어올지 통제할 수 없다. 계정을 바꿨는데 안 바뀌는 이번 결함의
 // 다른 얼굴이라 여기서 끊는다.
 describe('인증 주입 env 를 자식에게 넘기지 않는다', () => {

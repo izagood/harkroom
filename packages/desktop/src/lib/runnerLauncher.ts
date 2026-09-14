@@ -4,7 +4,7 @@
  *
  * ## 운영자 결정 (다시 정하지 마라)
  *
- * 1. PAT 는 앱이 서버에서 발급받아 **OS 키체인**에 보관하고, 러너에 `MURMUR_PAT` 로 넘긴다.
+ * 1. PAT 는 앱이 서버에서 발급받아 **OS 키체인**에 보관하고, 러너에 `HARKROOM_PAT` 로 넘긴다.
  *    러너는 PAT 를 저장하지 않는다.
  * 2. **기동마다 재발급하지 않는다.** 앱 재시작·업데이트 뒤에는 키체인의 PAT 를 그대로 다시
  *    쓴다 — 재발급하면 그 PAT 로 돌던 러너가 401 을 받고 물러나며 진행 중인 작업이 날아간다.
@@ -1124,8 +1124,8 @@ export class RunnerLauncher {
         // 영원히 알 수 없다 — 뒤처짐 판정 전체가 이 값에 걸려 있다. 얻지 못했으면
         // **넣지 않는다**: 거짓 버전을 심는 것보다 '모른다'가 낫다(design.md §4).
         env: {
-          MURMUR_PAT: token,
-          MURMUR_URL: this.api.baseUrl,
+          HARKROOM_PAT: token,
+          HARKROOM_URL: this.api.baseUrl,
           PATH: path,
           ...(version === null ? {} : { AGENT_VERSION: version }),
         },
@@ -1639,8 +1639,8 @@ export const daemonSpawner: RunnerSpawner = {
     // `'unknown'` 으로 보고했다. 키를 늘릴 때는 이 자리도 같이 본다.
     const result = await invoke('daemon_spawn_runner', {
       agentId: req.agentId,
-      murmurPat: req.env.MURMUR_PAT,
-      murmurUrl: req.env.MURMUR_URL,
+      murmurPat: req.env.HARKROOM_PAT,
+      murmurUrl: req.env.HARKROOM_URL,
       path: req.env.PATH,
       // 앱 버전을 얻지 못하면 위층이 `env` 에 키를 아예 넣지 않는다
       // (`spawnRunner` 주석). 그 '없음'을 `null` 로 그대로 넘긴다 — Rust 쪽

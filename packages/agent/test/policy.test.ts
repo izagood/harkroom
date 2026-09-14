@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ExecutableNotFoundError, isCredentialFailure, isExecutableNotFound, isQuotaExhausted, isSessionIdConflict, nextBackoffMs, quotaFromText, MAX_ATTEMPTS, exhausted } from '../src/policy.js';
-import { MURMUR_ERROR_SOURCE } from '../src/policy.js';
+import { HARKROOM_ERROR_SOURCE } from '../src/policy.js';
 import { MurmurAgentClient } from '../src/murmur.js';
 
 /**
@@ -89,19 +89,19 @@ describe('isCredentialFailure', () => {
 
   describe('출처 구분 (#87)', () => {
     it('murmur 클라이언트의 401 은 murmur 자격증명 실패다', () => {
-      const err = Object.assign(new Error('accounts 실패: 401'), { source: MURMUR_ERROR_SOURCE, status: 401 });
+      const err = Object.assign(new Error('accounts 실패: 401'), { source: HARKROOM_ERROR_SOURCE, status: 401 });
       expect(isCredentialFailure(err)).toBe('murmur-credential');
     });
 
     it('murmur 클라이언트의 403 도 murmur 자격증명 실패다', () => {
-      const err = Object.assign(new Error('accounts 실패: 403'), { source: MURMUR_ERROR_SOURCE, status: 403 });
+      const err = Object.assign(new Error('accounts 실패: 403'), { source: HARKROOM_ERROR_SOURCE, status: 403 });
       expect(isCredentialFailure(err)).toBe('murmur-credential');
     });
 
     // 판정은 status 로만 한다 — 문구에 "401" 이 우연히 들어간 murmur 에러를 자격증명
     // 실패로 오인하면 러너가 멀쩡한 상황에서 멈춘다.
     it('murmur 에러 문구에 401 이 있어도 status 가 없으면 자격증명 실패가 아니다', () => {
-      const err = Object.assign(new Error('message.post: bad_request 401 은 본문에 있을 뿐'), { source: MURMUR_ERROR_SOURCE });
+      const err = Object.assign(new Error('message.post: bad_request 401 은 본문에 있을 뿐'), { source: HARKROOM_ERROR_SOURCE });
       expect(isCredentialFailure(err)).toBe('other');
     });
 
