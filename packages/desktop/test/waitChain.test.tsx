@@ -5,11 +5,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import type { AskMeta, MessageRow, OpenAskLink } from '@harkroom/shared';
-import { waitChain, waitChainFromLinks } from '../src/lib/waitChain';
+import { waitChain, waitChainFromLinks, chainSentences } from '../src/lib/waitChain';
 import type { Liveness } from '../src/lib/threadState';
 import { msg, acc } from './helpers/fakeApi';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
+import { translator } from '../src/i18n';
 import { WaitChainLine } from '../src/components/WaitChain';
 
 const ME = 'u-me';
@@ -333,19 +334,19 @@ describe('waitChain — 위임 마디 (3-3)', () => {
   });
 
   /**
-   * **사슬은 경로이고 부채꼴이 아니다.** 팀원 둘을 기다려도 화면에 서는 것은 그중 하나다 —
-   * `walk()` 의 `pendingByWaiter` 가 계정마다 **가장 최근 하나**만 남기기 때문이다.
+   * **여럿을 기다리면 수로 말한다**(2026-09-14 · 나무로 바꾸기 전에는 하나만 서고 나머지는
+   * 아예 사라졌다).
    *
-   * 이것은 위임이 만든 한계가 아니라 이 계산이 원래 갖고 있던 모양이다: 한 에이전트가
-   * 미답 물음을 둘 내도 사슬은 하나만 보여 준다. 그 모양을 바꾸는 것(예: "codex 외 1명")은
-   * 화면의 어휘를 늘리는 일이라 이 PR 의 범위가 아니고, **틀린 말을 하지는 않는다** —
-   * 팀장은 그 팀원도 정말로 기다리고 있다.
+   * 사슬은 화면에서 한 줄로 읽히므로 갈래를 전부 그리면 명단이 된다 — 그래서 고른 갈래
+   * 하나를 그리되 `siblings` 로 나머지가 **있다는 사실**을 남긴다.
    */
-  it('2. 팀원 둘을 기다리면 사슬은 그중 하나를 보여 준다 — 경로이기 때문이다', () => {
+  it('2. 팀원 둘을 기다리면 한 갈래를 그리고 나머지는 수로 남는다', () => {
     const c = chain([delegate('d1', 1, FORGE, [CODEX, LINT])]);
     expect(c.links).toHaveLength(1);
     expect([CODEX, LINT]).toContain(c.links[0]!.blockedBy);
     expect(c.links[0]!.waiter).toBe(FORGE);
+    // 가려진 갈래가 하나 있다 — 화면은 이 수로 "외 1명" 을 말한다.
+    expect(c.links[0]!.siblings).toBe(1);
   });
 
   it('3. 다 답한 위임은 사슬에 들지 않는다', () => {
@@ -381,5 +382,54 @@ describe('waitChain — 위임 마디 (3-3)', () => {
       } as unknown as Record<string, unknown>,
     });
     expect(chain([old]).end).toBe('none');
+  });
+});
+
+/**
+ * **나무 판정**(2026-09-14) — 한 가지가 죽었다고 교착이 아니다.
+ *
+ * 전에는 `pendingByWaiter` 가 계정마다 **마디 하나**만 남겨서, 덮여서 남은 그 하나가 죽은
+ * 러너이면 다른 갈래가 멀쩡해도 교착이라고 말했다. 화면이 사람에게 "손쓸 수 없다"고
+ * 거짓말하는 쪽이라 가장 나쁜 방향이다.
+ */
+describe('waitChain — 갈래가 여럿일 때의 판정', () => {
+  it('한 가지가 죽어도 다른 가지가 나에게 닿으면 내 차례다', () => {
+    // forge 는 둘을 기다린다: codex(죽었다)와 lint(나에게 묻고 있다).
+    const c = chain(
+      [delegate('d1', 1, FORGE, [CODEX, LINT]), ask('a1', 2, LINT, ME)],
+      new Set([FORGE, LINT]),
+    );
+    expect(c.end).toBe('me');
+    // 내가 답하면 lint 가 풀리고 forge 도 풀린다.
+    expect(c.unblocks).toBeGreaterThanOrEqual(2);
+  });
+
+  it('모든 가지가 죽어야 교착이다', () => {
+    const c = chain([delegate('d1', 1, FORGE, [CODEX, LINT])], new Set([FORGE]));
+    expect(c.end).toBe('deadlock');
+    expect(c.deadlockReason).toBe('dead-runner');
+  });
+
+  it('한 가지가 죽고 다른 가지가 살아 있으면 남을 기다리는 것이다', () => {
+    // codex 는 죽었고 lint 는 살아서 일하는 중이다(아무것도 안 기다린다) — 나를 막지
+    // 않으므로 `other` 다. 교착이라고 말하면 사람에게 "손쓸 수 없다"는 거짓말이 된다.
+    const c = chain([delegate('d1', 1, FORGE, [CODEX, LINT])], new Set([FORGE, LINT]));
+    expect(c.end).toBe('other');
+    // 그린 갈래는 살아 있는 쪽이다 — 죽은 쪽을 골라 놓고 "기다리는 중" 이라 하면 안 된다.
+    expect(c.links[0]!.blockedBy).toBe(LINT);
+  });
+
+  it('순환은 여전히 끊는다 — 갈래가 여럿이어도', () => {
+    // forge → codex → forge. 렌더에서 무한 루프가 터지는 자리라 갈래가 늘어도 지켜야 한다.
+    const c = chain([ask('a1', 1, FORGE, CODEX), ask('a2', 2, CODEX, FORGE)]);
+    expect(c.end).toBe('deadlock');
+    expect(c.deadlockReason).toBe('cycle');
+  });
+
+  it('문장이 "외 N명" 으로 나온다', () => {
+    const c = chain([delegate('d1', 1, FORGE, [CODEX, LINT])]);
+    const names = (id: string | null) => (id === null ? '사람' : id);
+    const sentences = chainSentences(c, names, translator('ko'));
+    expect(sentences[0]).toContain('외 1명');
   });
 });
