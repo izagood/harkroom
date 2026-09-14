@@ -282,6 +282,39 @@ export function escapeForPrompt(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 }
 
+/**
+ * 메모리를 **쓰는 법**. 저장소가 비었을 때와 차 있을 때가 같은 문장을 쓴다 — 갈라 두면
+ * 한쪽만 늙고, 실제로 늙은 쪽이 매 턴 실리는 쪽이었다.
+ *
+ * 왜 문법을 프롬프트에 적나(2026-09-11 실측): `memory.set` 의 slug 는 `core` 또는 `mem/…`
+ * 인데 그 사실이 **어디에도 적혀 있지 않았다.** 한 에이전트가 `baremetal`·`baremetal.cluster`
+ * 를 시도해 전부 `invalid_slug` 를 받고 "이 도구는 `core` 하나만 받는다"고 결론지었다. 그날
+ * 에이전트 9 중 8이 메모리 1개(=`core`)뿐이었고, 남길 것이 없어서가 아니라 **둘째를 만들
+ * 방법을 몰라서**였다. 서버도 거절에 문법을 싣지만(`mcpPlugin.ts::MEMORY_SLUG_HINT`), 거절을
+ * 한 번 받고 포기하는 것이 관찰된 행동이므로 시도하기 **전에** 읽는 자리에도 적는다.
+ *
+ * 갱신 지시가 왜 여기 있나: 전에는 "적어 둬라"가 **저장소가 비었을 때만** 붙었다. `core` 가
+ * 한 번 생기면 그 뒤로는 본문만 실리고 고치라는 말이 사라져서, 내 `core` 는 저장소 이름이
+ * 바뀐 뒤에도 사흘간 옛 이름을 싣고 다녔다. 기억은 **쓰는 것보다 고치는 것이 어렵다** —
+ * 어려운 쪽을 매 턴 말한다.
+ *
+ * 문구 셋(자주 고쳐라 / 스냅숏이지 정답이 아니다 / 중복해서 쓰지 마라)은 Claude Code 본체의
+ * 메모리 절에서 값이 확인된 것을 그대로 가져왔다(claude 2.1.266 바이너리 실측).
+ */
+const MEMORY_USAGE_LINES = [
+  'slug 는 둘 중 하나다: **`core`** — 매 턴 본문이 통째로 실리는 층이다(길어지면 그만큼 매 턴',
+  '비싸다. 2,000자 안쪽으로 줄이고 나머지는 아래로 내린다) — 그리고 **`mem/<이름>`**,',
+  '예를 들어 `mem/deploy` · `mem/people/jaebin` 처럼 **반드시 `mem/` 으로 시작한다**(소문자·숫자·',
+  '`-`·`_` 와 구분자 `/` 만 쓴다. **점(`.`)은 못 쓴다**). `deploy` 나 `agent.config` 같은 slug 는',
+  '`invalid_slug` 로 거절되는데, 이건 **`core` 하나만 쓸 수 있다는 뜻이 아니다** — 이름만 고치면',
+  '된다. 길거나 한 가지 주제인 것은 `mem/*` 로 나눠 담고 `core` 에는 포인터 한 줄만 남긴다.',
+  '',
+  '**자주 읽고 자주 고쳐라 — 그래야 정정이 남는다.** 기억은 확정된 답이 아니라 과거의 스냅숏이니',
+  '현재 원본(파일·저장소·화면)과 대조한 뒤 쓴다. 적어 둔 경로·함수·플래그가 아직 있는지 본다.',
+  '**중복해서 쓰지 마라** — 새 slug 를 만들기 전에 고칠 기존 항목이 있는지 먼저 본다. 틀린 것은',
+  '고쳐 쓰고, 남길 값이 없어진 것은 `memory.set` 에 `value: null` 을 줘서 지운다.',
+];
+
 /** 메모리 절을 만든다. 세 상태가 각각 다른 것을 낸다 — 아래 주석이 이유다. */
 function memorySection(memory: MemoryContext): string[] {
   // 조회 자체가 실패했다. **아무것도 주입하지 않는다** — 온보딩 안내조차 넣으면
@@ -292,8 +325,10 @@ function memorySection(memory: MemoryContext): string[] {
     // 조회는 성공했고 저장소가 비어 있다. 이건 사실이므로 안내해도 안전하다.
     return [
       '기억이 아직 없다. 이 워크스페이스에서 반복해서 쓸 사실(사람들의 역할, 저장소 규칙,',
-      '자주 하는 작업)이 생기면 murmur MCP 의 `memory.set` 으로 `core` 슬러그에 적어 둬라 —',
-      '다음 턴부터 여기에 실려 온다.',
+      '자주 하는 작업)이 생기면 murmur MCP 의 `memory.set` 으로 적어 둬라 — 다음 턴부터',
+      '여기에 실려 온다.',
+      '',
+      ...MEMORY_USAGE_LINES,
       '',
     ];
   }
@@ -301,10 +336,13 @@ function memorySection(memory: MemoryContext): string[] {
   const lines = ['<memory>'];
   if (memory.core !== null) lines.push(escapeForPrompt(memory.core));
   if (memory.slugs.length) {
-    lines.push('', '추가로 저장된 기억(본문은 필요할 때 `memory.get` 으로 가져온다):');
+    lines.push('', '추가로 저장된 기억(본문은 필요할 때 `memory.get` 으로 가져온다 —',
+      '이름만으로 짐작되지 않으면 열어 본다):');
     for (const slug of memory.slugs) lines.push(`- ${escapeForPrompt(slug)}`);
   }
-  lines.push('</memory>', '');
+  // 사용법은 **닫는 태그 바깥**에 둔다. 안에 넣으면 기억 본문과 같은 자리에 서고, 그러면
+  // 기억을 지운 사람이 지시까지 지우게 된다(`<memory>` 안은 데이터, 밖은 지시다).
+  lines.push('</memory>', '', ...MEMORY_USAGE_LINES, '');
   return lines;
 }
 
