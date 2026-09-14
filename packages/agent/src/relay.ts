@@ -156,7 +156,7 @@ export interface OpenSession {
 }
 
 export interface RelayClientOptions {
-  /** murmur 서버의 http(s) 베이스 URL. ws(s) 로 바꿔 `/agent-relay` 에 붙는다. */
+  /** harkroom 서버의 http(s) 베이스 URL. ws(s) 로 바꿔 `/agent-relay` 에 붙는다. */
   murmurUrl: string;
   pat: string;
   dial?: RelayDialer;

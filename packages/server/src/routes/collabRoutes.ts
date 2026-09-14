@@ -74,7 +74,7 @@ function collectKeyIds(p: Proposal, into: Set<string>): void {
 }
 
 /**
- * avcs 의 actor 키를 murmur 계정으로 되짚는다 — 줄이 말하는 넷 중 **"누가"** 이고, 얼굴
+ * avcs 의 actor 키를 harkroom 계정으로 되짚는다 — 줄이 말하는 넷 중 **"누가"** 이고, 얼굴
  * (`Identity.tsx`)이 여기서 온다.
  *
  * **모르는 키는 목록에 없다.** 그것이 곧 "외부 작업자" 이고, 화면은 그때 키를 그대로 보여

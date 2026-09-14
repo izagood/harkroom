@@ -11,7 +11,7 @@ import type { AvcsLogEntry, AvcsReduced } from './client.js';
  * evidence.forOps, decision.chosenOps), 그건 순수 함수로 할 수 있다 — 그래서 여기 있다.
  *
  * **상태·충돌은 조립하지 않는다.** `statuses`·`conflicts`·`blockedReasons` 는 avcs-server 의
- * `GET /reduced` 가 준 것을 그대로 얹는다. 같은 값을 murmur 가 두 번째로 계산하면 두 구현이
+ * `GET /reduced` 가 준 것을 그대로 얹는다. 같은 값을 harkroom 가 두 번째로 계산하면 두 구현이
  * 갈라지고, 그 순간 화면은 avcs 가 말하지 않은 판정을 말하게 된다.
  *
  * ## 왜 `null` 인 reduced 를 허용하는가

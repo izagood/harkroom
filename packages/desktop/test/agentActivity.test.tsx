@@ -6,7 +6,7 @@
 // 활동이 두 시간 전인 것은 정상이고(아무도 부르지 않았다), 그 반대도 봐야 하는 사실이다.
 //
 // 그리고 화면은 **모르는 것을 안다고 말하지 않는다**(docs/design.md §4): 활동 기록이 없으면
-// '활동 없음'이고 '죽었다'가 아니며, 오래된 값도 '멈췄다'가 아니다. murmur 는 러너 프로세스를
+// '활동 없음'이고 '죽었다'가 아니며, 오래된 값도 '멈췄다'가 아니다. harkroom 는 러너 프로세스를
 // 보지 못한다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
@@ -120,7 +120,7 @@ describe('마지막 활동 표시 (#176)', () => {
     expect((await screen.findByTestId(`agent-last-turn-${fresh.id}`)).textContent).toBe('활동 없음');
     // 온라인 표시는 그대로 살아 있다 — 활동 기록이 없는 것이 러너가 없다는 뜻은 아니다.
     expect(screen.getByTestId(`agent-presence-${fresh.id}`).textContent).toBe('온라인');
-    // murmur 는 러너 프로세스를 보지 못하므로 이 문구들은 화면이 알 수 없는 것을 단정하는 말이다.
+    // harkroom 는 러너 프로세스를 보지 못하므로 이 문구들은 화면이 알 수 없는 것을 단정하는 말이다.
     for (const forbidden of ['죽었', '멈췄', '멈춤', '중단됨', '응답 없음']) {
       expect(document.body.textContent).not.toContain(forbidden);
     }

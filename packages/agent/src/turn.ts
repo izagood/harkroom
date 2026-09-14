@@ -64,20 +64,20 @@ export interface BuildTurnCommandOptions {
   /** stdin 리다이렉션용 파일 경로. null 이면 PTY stdin 을 그대로 쓴다(인터랙티브·resume). */
   stdinFile?: string | null;
   /**
-   * codex 의 `-c mcp_servers.murmur.url=...` 오버라이드에 필요한 실제 murmur URL. claude 는
+   * codex 의 `-c mcp_servers.murmur.url=...` 오버라이드에 필요한 실제 harkroom URL. claude 는
    * 이 값을 쓰지 않는다 — `writeMcpConfigOnce` 가 이미 `mcpConfigPath` 파일 안에 실제 URL 을
    * 구워 넣었고 claude 는 그 경로만 넘기면 된다. 반면 codex 는 그 파일을 읽지 않고 턴마다
    * `-c` 로 값을 직접 준다(spec §4·§6 — `codex mcp add` 는 영구 기록이라 금지).
    *
    * **필수다 — 선택 인자로 두지 않는다.** 러너는 더 이상 하네스 출력을 파싱하지 않으므로
-   * 에이전트가 답하는 유일한 경로가 murmur MCP 의 `message.post` 다(prompt.ts 의 시스템
-   * 프롬프트가 그렇게 지시한다). murmur MCP 없이 뜬 codex 턴은 에러 없이 그냥 돌다가 답을
+   * 에이전트가 답하는 유일한 경로가 harkroom MCP 의 `message.post` 다(prompt.ts 의 시스템
+   * 프롬프트가 그렇게 지시한다). harkroom MCP 없이 뜬 codex 턴은 에러 없이 그냥 돌다가 답을
    * 못 하고, 러너는 "답 없이 턴을 끝냈습니다"만 남긴다 — 원인이 "MCP 가 안 붙었다"라는
    * 단서가 어디에도 안 남는 조용한 실패다. 그래서 이 값을 생략해 조용히 넘어가는 경로 자체를
    * 두지 않는다: 호출자가 안 채우면 여기서 타입 에러로, 넘겼는데 비어 있으면 즉시 예외로 죽는다.
    */
   murmurUrl: string;
-  /** 개인 config.toml/MCP 를 상속하지 않는 Murmur 전용 Codex 상태 루트. */
+  /** 개인 config.toml/MCP 를 상속하지 않는 Harkroom 전용 Codex 상태 루트. */
   codexHome: string;
   /**
    * 이 턴을 돌릴 claude 계정의 `CLAUDE_CONFIG_DIR`(`claudeAccounts.ts`). **`null` 은 '계정
@@ -157,14 +157,14 @@ const CLAUDE_PRESET: HarnessPreset = {
   permission: {
     /**
      * **`auto` 는 claude 의 `auto` 다**(2026-09-09 정정). 예전에는 `bypassPermissions` 로
-     * 번역했는데, 그것은 murmur 의 `auto` 가 뜻하는 것과 다르다:
+     * 번역했는데, 그것은 harkroom 의 `auto` 가 뜻하는 것과 다르다:
      *
      * - `auto`: *"위험으로 판정된 것은 차단되고 Claude 가 다른 방법을 시도한다. 장시간
      *   작업에 이상적"* — 판단이 필요하면 사람에게 묻는다.
      * - `bypassPermissions`: *"harmful commands to run … only use in isolated
      *   environments"* — 아무것도 묻지 않는다.
      *
-     * murmur 는 사람이 개입할 자리를 이미 갖고 있다(`message.ask` 의 선택 카드, 앱의
+     * harkroom 는 사람이 개입할 자리를 이미 갖고 있다(`message.ask` 의 선택 카드, 앱의
      * 터미널 패널). 그 자리를 두고 아무것도 안 묻는 모드로 도는 것은 설계와 어긋난다.
      *
      * **덤으로 관문 하나가 사라진다**: `bypassPermissions` 는 TUI 로 뜰 때마다 계정이
@@ -228,7 +228,7 @@ const CODEX_PRESET: HarnessPreset = {
   allowsNullSessionOnFirstTurn: true,
   // `message.post` 는 쓰기 MCP라 Codex 기본 도구 승인 모드에서는 승인 요청이 난다.
   // 멘션 턴은 비대화형이고 approval policy가 never라 그 요청을 받을 사람이 없어, 답을
-  // 모두 만든 뒤에도 발화만 실패한다(#404 실물 재현). auto 권한에서는 **murmur 서버만**
+  // 모두 만든 뒤에도 발화만 실패한다(#404 실물 재현). auto 권한에서는 **harkroom 서버만**
   // 승인 없이 실행한다. 공식 Codex 설정 키는 서버별 `default_tools_approval_mode` 이고,
   // `approve` 가 이 서버의 도구를 사전 승인한다. `approval_mode="never"` 는 서버 설정 키가
   // 아니므로 조용히 무시된다(#404 실앱 재검증). 전체 sandbox/승인을 우회하는
@@ -253,7 +253,7 @@ const CODEX_PRESET: HarnessPreset = {
     // avcs 는 항상 등록한다(실측 shape: stdio, command 'avcs', args ['mcp'], env 없음).
     '-c', 'mcp_servers.avcs.command="avcs"',
     '-c', 'mcp_servers.avcs.args=["mcp"]',
-    // murmur 도 항상 등록한다 — 이게 빠지면 에이전트가 답할 방법이 없다(위 murmurUrl 주석).
+    // harkroom 도 항상 등록한다 — 이게 빠지면 에이전트가 답할 방법이 없다(위 murmurUrl 주석).
     // `bearer_token_env_var` 는 env 변수 "이름"만 담는다 — PAT 값 자체는 절대 argv 에 오르지
     // 않는다(spec §7, task-1 실측: `-c mcp_servers.murmur.bearer_token_env_var="HARKROOM_PAT"`).
     // 실값은 buildTurnCommand 가 돌려주는 env.HARKROOM_PAT 로만 간다.
@@ -262,7 +262,7 @@ const CODEX_PRESET: HarnessPreset = {
     // URL(`http://localhost:3400`)이지 MCP 엔드포인트가 아니다. claude 쪽은
     // `writeMcpConfigOnce` 가 `${murmurUrl}/mcp` 로 정규화해서 파일에 굽는데, 여기는 그 정규화
     // 없이 murmurUrl 을 그대로 썼다 — codex 가 `POST /`(베이스 URL)를 때려 서버가
-    // `404 route not found: POST /` 를 던지고, MCP 자체가 안 붙어 murmur 도구가 하나도 안
+    // `404 route not found: POST /` 를 던지고, MCP 자체가 안 붙어 harkroom 도구가 하나도 안
     // 보였다. 실제 실패 증상은 조용했다: codex 는 exit 0 으로 끝났지만 message.post 를 못 불러
     // "(답 없이 턴을 끝냈습니다)" 만 남았다 — 원인이 이 URL 하나였다는 단서가 로그 어디에도
     // 없었다. 단위 테스트가 못 잡은 이유도 같은 패턴이다: `test/turn.test.ts` 의 fixture 가
@@ -279,7 +279,7 @@ const CODEX_PRESET: HarnessPreset = {
   // `model_reasoning_effort` 자체는 **실재를 확인했다**: 이 머신의 실제
   // `~/.codex/config.toml:2` 에 `model_reasoning_effort = "xhigh"` 가 그대로 들어있다(사용자가
   // 직접 쓰던 키). 그래서 MCP 와 같은 턴별 `-c` 오버라이드로 그 키를 재사용한다.
-  // **절반만 확인됐다: 키는 실측, 값 집합은 미확인.** murmur 의 effort 값은
+  // **절반만 확인됐다: 키는 실측, 값 집합은 미확인.** harkroom 의 effort 값은
   // `low|medium|high|xhigh|max` 다섯인데 codex 가 그 다섯을 다 받는지는 `xhigh` 하나만
   // 실물로 봤을 뿐 나머지는 모른다. 값이 틀려도 조용하지 않다 — codex 가 알 수 없는 값이면
   // 턴 시작 자체가 크게 실패하므로(무시된 채 다른 값으로 도는 조용한 오동작이 아니다) 이
@@ -421,7 +421,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
   assertValidSession(opts, preset);
   if (!opts.murmurUrl) {
     // 타입은 필수(string)로 강제하지만, 빈 문자열은 타입 체크를 통과하고도 같은 조용한
-    // 실패(murmur MCP 미등록 → 답 못 함 → "답 없이 턴을 끝냈습니다")로 이어진다 — 여기서 막는다.
+    // 실패(harkroom MCP 미등록 → 답 못 함 → "답 없이 턴을 끝냈습니다")로 이어진다 — 여기서 막는다.
     throw new Error('buildTurnCommand: murmurUrl 이 비어 있다 — murmur MCP 없이는 에이전트가 답할 방법이 없다');
   }
   if (opts.harness === 'codex' && !opts.codexHome) {
@@ -557,7 +557,7 @@ function childEnv(
 }
 
 /**
- * murmur + avcs 만 담은 MCP 설정 파일을 dir 아래 고정 이름(`mcp.json`)으로 쓴다. PAT 는
+ * harkroom + avcs 만 담은 MCP 설정 파일을 dir 아래 고정 이름(`mcp.json`)으로 쓴다. PAT 는
  * 실값이 아니라 `${HARKROOM_PAT}` 플레이스홀더 문자열로만 들어간다 — 그래서 파일 자체는
  * 비밀이 아니고(spec §7), claude 자식 프로세스가 이 플레이스홀더를 자기 env 의
  * HARKROOM_PAT 로 확장해 읽는다(실측 확인: 리스너에 실제로 `Bearer <실값>` 헤더가 도착).

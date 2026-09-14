@@ -1,7 +1,7 @@
-// 통합 테스트 — 인메모리 murmur 클라이언트 + 가짜 하네스(runTurn 주입)로 main.ts 의 폴
+// 통합 테스트 — 인메모리 harkroom 클라이언트 + 가짜 하네스(runTurn 주입)로 main.ts 의 폴
 // 루프에서 분리된 조립 함수(runMentionTurn)를 프로세스 경계·네트워크 없이 검증한다.
 //
-// "에이전트가 스스로 발화한다"는 실제로는 하네스 프로세스 안에서 murmur MCP 를 불러
+// "에이전트가 스스로 발화한다"는 실제로는 하네스 프로세스 안에서 harkroom MCP 를 불러
 // 일어나는 일이라 이 테스트(프로세스 경계 밖)에서 직접 재현할 수 없다 — 그래서 runTurn
 // 스텁이 하네스 대신 fakeMurmur.post 를 호출해 "턴 도중 에이전트가 답을 올렸다"를
 // 흉내낸다(task-9 브리프 시나리오 1 주석 그대로).
@@ -879,7 +879,7 @@ describe('runMentionTurn', () => {
       expect(rec.turnsRun).toBe(0); // turnsRun 은 여전히 올리지 않는다
     });
 
-    // 발화 확인 자체가 실패하면(murmur 네트워크 끊김) 전진시키지 않는다 —
+    // 발화 확인 자체가 실패하면(harkroom 네트워크 끊김) 전진시키지 않는다 —
     // "한 번 더 시도한다"가 "중복 발화"보다 회복 가능한 쪽이다.
     it('실패 턴의 발화 확인이 던지면 lastFedSeq 를 전진시키지 않는다', async () => {
       const fake = new FakeMurmur(defOf());
@@ -1098,7 +1098,7 @@ describe('runMentionTurn', () => {
   });
 
   // fix round 1 — 리뷰 Important: store.put 이 관측(readThread)·통보(post) 보다 뒤에 있으면,
-  // 하네스는 정상 종료했는데 그 둘 중 하나가 예외를 던졌을 때(예: murmur 네트워크 순간
+  // 하네스는 정상 종료했는데 그 둘 중 하나가 예외를 던졌을 때(예: harkroom 네트워크 순간
   // 끊김) 실제로 돌아간 턴이 디스크에 기록되지 않는다 — workspace 는 이미 만들어졌고
   // claude 세션도 이미 생겼는데 turnsRun 이 0 인 채로 남아, 다음 재시도가 새 uuid 를
   // 발급해 세션을 고아로 만들거나 이미 먹인 메시지를 다시 먹인다. 두 실패 지점(post,

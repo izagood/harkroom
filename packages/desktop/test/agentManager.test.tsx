@@ -148,7 +148,7 @@ describe('AgentsSettings', () => {
     fireEvent.click(screen.getByRole('button', { name: '에이전트 만들기' }));
 
     // 문구를 느슨한 정규식으로 잡으면 관계없는 문장에 우연히 걸린다 — 이 안내가 반드시
-    // 말해야 하는 두 가지를 각각 확인한다: murmur 가 러너를 띄우지 않는다는 것과,
+    // 말해야 하는 두 가지를 각각 확인한다: harkroom 가 러너를 띄우지 않는다는 것과,
     // 붙이기 전까지 답하지 않는다는 것.
     expect(await screen.findByText(/Harkroom 는 러너를 띄우지 않는다/)).toBeTruthy();
     expect(screen.getByText(/멘션에 답하지 않는다/)).toBeTruthy();
@@ -165,8 +165,8 @@ describe('AgentsSettings', () => {
     expect(c.createAgent).not.toHaveBeenCalled();
   });
 
-  // murmur 가 실행할 수 없는 harness 를 고를 수 있으면 안 된다. 없는 것은 사용자의 CLI 가
-  // 아니라 murmur 의 구현이므로 '지원 예정'이라고 적는다.
+  // harkroom 가 실행할 수 없는 harness 를 고를 수 있으면 안 된다. 없는 것은 사용자의 CLI 가
+  // 아니라 harkroom 의 구현이므로 '지원 예정'이라고 적는다.
   it('offers only the harness murmur can actually run', async () => {
     fakeController();
     render(<AgentsSettings />);
@@ -579,7 +579,7 @@ describe('새 에이전트 기본값', () => {
 /**
  * 러너 실행·중지(#129, 어휘는 #493). 화면이 말할 수 있는 것은 **세 가지**뿐이다:
  * 중지 없음 / 중지했고 러너가 아직 못 봄 / 러너가 읽어 감.
- * 넷째("멈췄다")는 murmur 가 알 수 없는 사실이라 절대 쓰지 않는다 — 러너가 종료하면
+ * 넷째("멈췄다")는 harkroom 가 알 수 없는 사실이라 절대 쓰지 않는다 — 러너가 종료하면
  * 다음 GET /agent/config 자체가 오지 않으므로 서버는 프로세스의 생사를 관측하지 못한다.
  *
  * `#493` 이 버튼 자리를 하나로 접었어도 **이 세 상태는 그대로 그린다** — 접힌 것은 버튼이지
@@ -623,7 +623,7 @@ describe('러너 실행·중지 (#129, #493)', () => {
   });
 
   it('어느 상태에서도 멈췄다고 단정하지 않는다', async () => {
-    // 세 상태를 모두 그려 보고, 셋 다 murmur 가 관측할 수 없는 사실을 주장하지 않는지 본다.
+    // 세 상태를 모두 그려 보고, 셋 다 harkroom 가 관측할 수 없는 사실을 주장하지 않는지 본다.
     const states: Partial<AgentView>[] = [
       {},
       { stopRequestedAt: '2026-09-03T10:00:00.000Z', stopAckedAt: null },
@@ -637,7 +637,7 @@ describe('러너 실행·중지 (#129, #493)', () => {
 
       /**
        * 프로세스의 생사를 단정하는 문구를 막는다. **이 가드는 `#493` 뒤에도 그대로다** —
-       * 버튼이 "중지"가 되어도 murmur 는 여전히 프로세스의 생사를 모른다(러너가 종료하면
+       * 버튼이 "중지"가 되어도 harkroom 는 여전히 프로세스의 생사를 모른다(러너가 종료하면
        * 다음 GET /agent/config 자체가 오지 않는다).
        *
        * `재시작` 은 계속 막는다. `#493` 이 허용한 것은 **"실행"** 이지 "재시작"이 아니다 —

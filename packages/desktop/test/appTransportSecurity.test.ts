@@ -77,7 +77,7 @@ describe('Info.plist — 평문 http 를 막지 않는다 (사내 self-host 가 
    * 대조군 — **웹뷰 밖의 ATS 는 그대로 둔다.** 위 검사만 있으면 `NSAllowsArbitraryLoads`
    * 로 앱 전체의 ATS 를 끄는 변경도 통과한다.
    *
-   * 앱이 평문으로 말해야 하는 상대는 사용자가 세운 murmur 서버 하나이고, 그 통신은 전부
+   * 앱이 평문으로 말해야 하는 상대는 사용자가 세운 harkroom 서버 하나이고, 그 통신은 전부
    * 웹뷰의 `fetch`/WebSocket 이다(`src/lib/api.ts`, `src/state/controller.ts`). 반면
    * 네이티브 쪽(업데이터 → GitHub)은 https 로만 말한다. 그쪽 보호까지 걷어낼 이유가 없다.
    */

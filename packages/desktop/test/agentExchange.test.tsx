@@ -174,7 +174,7 @@ describe('groupAgentExchanges — 사람을 막는 말은 접지 않는다', () 
  *
  * 사람이 한 스레드에서 에이전트 넷을 불러 정밀 검토를 시켰다. 넷이 각자 답을 올렸는데,
  * 그 답들이 연속이고 저자가 전부 에이전트라 `groupAgentExchanges` 가 통째로 접었다 —
- * 화면에 남은 글자가 `avcs ↔ avcs-server ↔ avcshub ↔ murmur · 12번 주고받음` 이었고,
+ * 화면에 남은 글자가 `avcs ↔ avcs-server ↔ avcshub ↔ harkroom · 12번 주고받음` 이었고,
  * 사람이 본 것은 문자 그대로 "에이전트끼리 대화만 했다" 였다.
  *
  * 원인은 판정에 **수신자가 없었다**는 것이다. 저자만 보면 "나에게 온 답"과 "자기들끼리 한

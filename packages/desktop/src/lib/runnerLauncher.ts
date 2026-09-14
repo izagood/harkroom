@@ -33,7 +33,7 @@
  *
  * 또한 러너는 더 이상 `pnpm --filter @harkroom/agent start` 로 소스를 실행하지 않는다 —
  * 단일 번들로 만들어 Tauri sidecar(`externalBin`)로 앱과 함께 배포한다. 그래서
- * `runnerRepoPath`(murmur 소스가 어디 있나) 자체가 사라졌다 — 그 역할은 이미 에이전트별
+ * `runnerRepoPath`(harkroom 소스가 어디 있나) 자체가 사라졌다 — 그 역할은 이미 에이전트별
  * `workingDir`(DB)이 한다. `cwd` 도 이 실행기 표면에서 사라졌다: sidecar 는 자기 위치를
  * 스스로 알고, 러너가 일할 저장소는 `mentionTurn.ts` 가 `workingDir` 로 따로 정한다
  * (`process.cwd()`는 애초에 그 판단에 쓰인 적이 없다).
@@ -1431,7 +1431,7 @@ function exitStateFor78(
     // 문장이 눈으로 안 갈린다.
     const what = binary ? `\`${binary}\`` : subjectHarness(agent, t);
     // **어떻게 설치하는지까지 말한다**(`#476`). `#473` 이 이름을 넣어 "무엇이 없는가"는
-    // 답했지만 "어떻게 채우는가"는 여전히 사람이 검색해야 했다. murmur 는 하네스를
+    // 답했지만 "어떻게 채우는가"는 여전히 사람이 검색해야 했다. harkroom 는 하네스를
     // 동봉하지 않기로 했으므로(2026-09-06 방침) **어디서 받는지 알려 주는 것이
     // 이 앱이 할 수 있는 전부**다 — 그것마저 안 하면 사람이 할 수 있는 일이 없다.
     //

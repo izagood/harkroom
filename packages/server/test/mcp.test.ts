@@ -141,7 +141,7 @@ describe('mcp surface', () => {
     await client.close();
   });
 
-  // 에이전트 런타임은 murmur 밖에 있어서 서버가 재시도를 강제할 수 없다. 그래서 "재시작은
+  // 에이전트 런타임은 harkroom 밖에 있어서 서버가 재시도를 강제할 수 없다. 그래서 "재시작은
   // 정상 이벤트이니 백오프로 다시 걸어라"는 계약을 guide가 문서로 들고 있어야 한다.
   it('states the inbox.poll retry contract in workspace.guide', async () => {
     const client = await mcpClient(botPat);

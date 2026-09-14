@@ -179,7 +179,7 @@ export async function updateAgent(
 }
 
 /**
- * 러너에게 종료를 요청한다(#129). **재시작이 아니다** — murmur 는 러너를 다시 띄우지 못한다.
+ * 러너에게 종료를 요청한다(#129). **재시작이 아니다** — harkroom 는 러너를 다시 띄우지 못한다.
  *
  * `agent_config` 행이 없을 수도 있어 upsert 다: 에이전트는 정의 없이도 만들어질 수 있고
  * (`listAgents` 가 left join 인 이유가 그것이다), 그런 에이전트에도 러너는 붙는다.

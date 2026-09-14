@@ -28,8 +28,8 @@ export interface ProjectionDeps {
 /**
  * ## 이 워커가 더 이상 하지 않는 일 — avcs 객체를 채널 메시지·스레드로 만드는 것
  *
- * murmur 의 자리는 `avcs ↔ avcs-server ↔ avcshub` 에서 avcshub 자리다. 코드 관리·협업은
- * avcs 를 통해서 하고, murmur 는 그 제안·충돌·결정을 **보는 자리**다.
+ * harkroom 의 자리는 `avcs ↔ avcs-server ↔ avcshub` 에서 avcshub 자리다. 코드 관리·협업은
+ * avcs 를 통해서 하고, harkroom 는 그 제안·충돌·결정을 **보는 자리**다.
  *
  * 그런데 이 워커는 다른 것을 했다: `intent` 를 스레드 뿌리로 세우고 `operation`·`decision`·
  * `evidence` 를 그 아래 답글로, `checkpoint`·`release`·`finalize` 를 채널 메시지로 붙였다.

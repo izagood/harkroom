@@ -6,7 +6,7 @@
 //
 // 여기 있는 것은 조립뿐이다: Task 3~8 이 만든 부품(sessions, workspace, prompt, turn, pty,
 // codexSessions) 을 순서대로 부르고, 그 결과로 무엇을 저장·발화·실패 처리할지 판단한다.
-// 하네스 출력은 파싱하지 않는다 — 에이전트가 스스로 murmur MCP 로 답을 올린다(spec §4).
+// 하네스 출력은 파싱하지 않는다 — 에이전트가 스스로 harkroom MCP 로 답을 올린다(spec §4).
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -29,7 +29,7 @@ import { codexSessionsDir } from './codexHome.js';
 import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
 
-/** runMentionTurn 이 요구하는 murmur 표면. MurmurAgentClient 의 부분집합이라 실제 클래스를
+/** runMentionTurn 이 요구하는 harkroom 표면. MurmurAgentClient 의 부분집합이라 실제 클래스를
  * 그대로 넘겨도 되고, 테스트는 인메모리 fake 를 넘긴다(프로세스 경계·네트워크 없이 검증). */
 export interface MentionTurnMurmur {
   definition(): Promise<AgentView>;
@@ -401,7 +401,7 @@ export interface MentionTarget {
  * 러너가 호출 횟수를 세어 **막지는** 못한다: 그러려면 PTY 출력에서 tool-call 흔적을
  * 파싱해야 하고, 그건 "러너는 하네스 출력을 해석하지 않는다"(pty.ts)와 정면으로 부딪친다.
  * 그래서 예방은 시스템 프롬프트(prompt.ts)가 하고, 이 함수는 그것이 지켜졌는지를
- * murmur 데이터로만 관측한다 — 설계 경계를 넘지 않는 유일한 관측 지점이다.
+ * harkroom 데이터로만 관측한다 — 설계 경계를 넘지 않는 유일한 관측 지점이다.
  */
 /**
  * 이 턴이 자기 앵커 밖에 남긴 발화를 관측해 통지에 실을 문단으로 만든다(없으면 `null`).
@@ -1306,7 +1306,7 @@ async function runMentionTurnBody(
     // 답한다**(#90 과 같은 결의 중복 발화). `timedOut` 을 대리 신호로 쓰지 않는 이유는,
     // 발화 여부가 진짜 신호이고 우리는 이미 그걸 관측할 수단(countOwnPostsSince)을 갖고 있어서다.
     //
-    // 관측 자체가 실패하면(murmur 로 가는 네트워크가 잠깐 끊김) 전진시키지 않는다 —
+    // 관측 자체가 실패하면(harkroom 로 가는 네트워크가 잠깐 끊김) 전진시키지 않는다 —
     // "한 번 더 시도한다"가 "중복 발화"보다 회복 가능한 쪽이다.
     let answered = false;
     try {

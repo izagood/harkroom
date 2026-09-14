@@ -60,8 +60,8 @@ describe('isCredentialFailure', () => {
     });
   });
 
-  // #87: 이 함수는 main.ts 에서 턴 **전체**를 감싸는 catch 에 쓰이므로 murmur 호출 실패도
-  // 같은 자리로 들어온다. 출처를 못 가리면 murmur PAT 만료를 "claude CLI 로 로그인해라"로
+  // #87: 이 함수는 main.ts 에서 턴 **전체**를 감싸는 catch 에 쓰이므로 harkroom 호출 실패도
+  // 같은 자리로 들어온다. 출처를 못 가리면 harkroom PAT 만료를 "claude CLI 로 로그인해라"로
   // 안내한다 — 운영자가 엉뚱한 곳을 확인하러 간다.
   /**
    * 2026-09-07 16:06·16:09 실측(forge 러너 로그). claude CLI 가 실제로 낸 문구는
@@ -98,7 +98,7 @@ describe('isCredentialFailure', () => {
       expect(isCredentialFailure(err)).toBe('murmur-credential');
     });
 
-    // 판정은 status 로만 한다 — 문구에 "401" 이 우연히 들어간 murmur 에러를 자격증명
+    // 판정은 status 로만 한다 — 문구에 "401" 이 우연히 들어간 harkroom 에러를 자격증명
     // 실패로 오인하면 러너가 멀쩡한 상황에서 멈춘다.
     it('murmur 에러 문구에 401 이 있어도 status 가 없으면 자격증명 실패가 아니다', () => {
       const err = Object.assign(new Error('message.post: bad_request 401 은 본문에 있을 뿐'), { source: HARKROOM_ERROR_SOURCE });

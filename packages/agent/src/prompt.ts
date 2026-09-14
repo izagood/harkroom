@@ -4,7 +4,7 @@
 // reply.ts 의 후신이다(spec §4). 다른 점: 예전에는 멘션마다 프로세스를 새로 띄워 스레드
 // 전체를 매번 넘겼지만, 이제 스레드마다 하네스 세션이 디스크에 살아남아 resume 되므로
 // 세션이 이미 아는 것까지 다시 넘길 필요가 없다 — 그 경계가 `lastFedSeq` 다. 그리고 예전엔
-// 러너가 모델 응답을 파싱해 대신 올렸지만, 이제 에이전트가 murmur MCP `message.post` 로
+// 러너가 모델 응답을 파싱해 대신 올렸지만, 이제 에이전트가 harkroom MCP `message.post` 로
 // 스스로 올린다 — 그래서 시스템 프롬프트가 "어디에 쓸지"까지 알려줘야 한다.
 import { messagePermalink, type MessageRow, type InboxTeamCall, type InboxDelegationOutcome, type InboxDelegatedBy } from '@harkroom/shared';
 
@@ -33,7 +33,7 @@ const TAIL_NOTICE_MAX_CHARS = 1000;
  * `pty.ts` 가 그은 금지선은 **출력을 해석해 답으로 삼는 것**이다(옛 `reply.ts::extractReply`
  * 가 하던 일이고, 발화를 에이전트의 자율로 옮기며 걷어냈다). 여기서 하는 것은 판정이 아니라
  * **증거 첨부**다: 무슨 뜻인지 정하지 않고, 마지막에 무엇이 찍혔는지를 그대로 보인다.
- * 그래서 발화 판정(`countOwnPostsSince`)은 여전히 murmur 데이터만 본다.
+ * 그래서 발화 판정(`countOwnPostsSince`)은 여전히 harkroom 데이터만 본다.
  *
  * ## 새니타이즈가 선택이 아닌 이유
  *
@@ -150,7 +150,7 @@ export function retryNotice(tried: number, max: number, reason: string | null): 
  * 이 사실의 수신자는 언제나 사람이고, 사람이 손을 대야만 풀린다 — 그것이 `failure` 어휘의
  * 정의이고 화면의 `stuck`("사람만이 풀 수 있으므로 실패와 같은 대접")이 가리키는 상태다.
  *
- * **선택 카드(`message.ask`)로 내지 않는다.** 카드의 선택지를 murmur 에서 눌러도 관문은
+ * **선택 카드(`message.ask`)로 내지 않는다.** 카드의 선택지를 harkroom 에서 눌러도 관문은
  * 그대로 서 있다 — 답을 받아야 하는 것은 이 스레드가 아니라 **그 터미널**이다. 누를 수
  * 있는데 아무 일도 안 일어나는 단추는 없는 문을 그리는 것이다(규칙 06).
  *
@@ -398,7 +398,7 @@ function skillSection(memory: MemoryContext): string[] {
 }
 
 /**
- * PR 본문 서명이 가리키는 곳. **인스턴스 주소가 아니라 프로젝트 저장소다** — murmur 는
+ * PR 본문 서명이 가리키는 곳. **인스턴스 주소가 아니라 프로젝트 저장소다** — harkroom 는
  * 셀프호스트라 인스턴스 주소는 저마다 다르고(`messagePermalink` 주석), 그래서 링크에
  * 호스트를 박지 않는 것이 이 저장소의 규율이다. 여기 박아도 되는 이유는 이 값이
  * 인스턴스의 주소가 아니라 **프로젝트 자체의 상류 주소**이기 때문이다.
@@ -459,7 +459,7 @@ export function buildSystemPrompt(opts: {
     // 도달하므로(codex 는 지시문 주입 플래그가 없어 프롬프트 앞에 붙는다 — `turn.ts`)
     // 서명이 하네스와 무관해지고, gemini 가 러너블이 되는 날에도 따라온다.
     //
-    // 문장에 하네스 이름을 쓰지 않는 것도 같은 결정이다: 하네스는 murmur 가 에이전트 설정에
+    // 문장에 하네스 이름을 쓰지 않는 것도 같은 결정이다: 하네스는 harkroom 가 에이전트 설정에
     // 이미 갖고 있고, PR 을 나중에 읽는 사람에게 중요한 것은 **어느 에이전트가 열었는가**다.
     // 하네스를 굳이 남기려면 문장 가운데가 아니라 뒤에 따로 붙여야 갈아끼울 수 있다.
     '저장소에 PR 을 열면 본문 **맨 끝**에 이 줄을 넣는다:',
@@ -467,7 +467,7 @@ export function buildSystemPrompt(opts: {
     `🤖 Opened by \`@${handle}\`, an agent in [Harkroom](${HARKROOM_REPO_URL}) — a chat workspace where people and AI agents share channels.`,
     '',
     // 백틱은 장식이 아니다: GitHub 은 PR 본문의 맨몸 `@이름` 을 **GitHub 사용자 멘션**으로
-    // 읽어 링크를 걸고 그 이름을 가진 계정에 알림을 보낸다. murmur 핸들과 GitHub 계정은
+    // 읽어 링크를 걸고 그 이름을 가진 계정에 알림을 보낸다. harkroom 핸들과 GitHub 계정은
     // 아무 관계가 없으므로, 백틱을 빼면 이 서명이 매번 남의 알림함을 울린다.
     '핸들의 백틱을 빼지 마라 — GitHub 은 맨몸 `@이름` 을 GitHub 사용자 멘션으로 읽어 그 이름을',
     '가진 **남의 계정**을 부른다. 하네스 이름은 이 줄에 적지 않는다.',
@@ -488,7 +488,7 @@ export function buildSystemPrompt(opts: {
     // #600: 어느 모델이 답했는지. **에이전트만 알 수 있다** — 러너가 넘기는 `--model` 은
     // 설정값이고, 설정이 비면(`agent_config.model === null`) 러너는 플래그를 아예 안 붙여
     // 하네스가 고른다. 그 선택은 하네스 출력에만 있고, 러너는 출력을 해석하지 않는다(pty.ts).
-    // 그래서 이 한 줄이 murmur 가 실제 모델을 아는 유일한 길이다. 표시는 hover 뿐이므로
+    // 그래서 이 한 줄이 harkroom 가 실제 모델을 아는 유일한 길이다. 표시는 hover 뿐이므로
     // (`desktop/src/components/MessageItem.tsx`) 이 값을 실어도 화면이 시끄러워지지 않는다.
     '발화할 때(`message.post`·`report`·`fail`·`ask`·`progress`) `model` 인자에 **네가 지금 쓰는',
     '모델 ID** 를 그대로 실어라 — 환경 설명에 적힌 정확한 ID 를 쓴다(예: `claude-opus-5[1m]`).',
@@ -498,8 +498,8 @@ export function buildSystemPrompt(opts: {
     '누구에게 답하는지를 잊지 마라 — **이 스레드를 연 사람에게 답하는 것**이 목적이다.',
     '동료 에이전트에게만 말하고 끝내지 말고, 최종 답은 요청자를 `@handle` 로 부르며 쓴다.',
     '',
-    // 2026-09-09 실측: murmur 가 보고 한가운데 "구현은 `@forge` 것이고" 라고 **지칭**했더니
-    // forge 의 턴이 떴고, forge 의 답이 다시 murmur 를 지칭해 5분에 네 턴이 오갔다. 그날
+    // 2026-09-09 실측: harkroom 가 보고 한가운데 "구현은 `@forge` 것이고" 라고 **지칭**했더니
+    // forge 의 턴이 떴고, forge 의 답이 다시 harkroom 를 지칭해 5분에 네 턴이 오갔다. 그날
     // dev DB 의 에이전트→에이전트 멘션 122건 중 47건(39%)이 부를 뜻 없는 지칭이었다.
     //
     // 이제 서버가 자리로 그것을 가른다(`shared/splitMentionCalls`) — 그래서 이 문단은 규칙을

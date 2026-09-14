@@ -1,4 +1,4 @@
-// murmur 에이전트 러너. 멘션을 기다리다 깨어나 답한다.
+// harkroom 에이전트 러너. 멘션을 기다리다 깨어나 답한다.
 //
 // 실행(저장소 안): HARKROOM_URL=... HARKROOM_PAT=murp_... pnpm --filter @harkroom/agent start
 // 배포판에서는 이 소스가 아니라 **단일 번들**이 돈다 — `#431` 1단계가 러너를 Tauri
@@ -10,7 +10,7 @@
 //
 // 옛 구조(reply.ts + harness/claudeCode.ts)는 멘션마다 `claude -p` 를 새로 띄워 stdout 의
 // json 을 파싱해 대신 발화했다. 지금은 스레드마다 하네스 세션이 디스크에 살아남아
-// resume 되고(sessions.ts), 발화는 에이전트 자신이 murmur MCP `message.post` 로 한다
+// resume 되고(sessions.ts), 발화는 에이전트 자신이 harkroom MCP `message.post` 로 한다
 // (prompt.ts) — 이 파일은 더 이상 하네스 출력을 파싱하지 않는다. 조립 흐름 자체는
 // mentionTurn.ts::runMentionTurn 에 있다: main.ts 는 top-level await 로 접속·설정 파일
 // 쓰기 같은 부작용을 곧바로 일으키므로, 그 흐름을 여기 두면 테스트가 import 하는 순간
@@ -189,7 +189,7 @@ const {
 } = resolveAgentStateDir(config.stateDir, me.handle, me.id, config.agentInstance);
 
 // 대화형 `codex resume` 은 --ignore-user-config 를 받지 않는다. 개인 config.toml/MCP 를
-// 물려주지 않으면서 기존 로그인은 재사용하도록 Murmur 전용 CODEX_HOME 을 준비한다.
+// 물려주지 않으면서 기존 로그인은 재사용하도록 Harkroom 전용 CODEX_HOME 을 준비한다.
 const codexHome = await ensureCodexHome(codexHomeDir);
 
 // claude 계정 풀. **비어 있는 것이 정상이다** — 그때는 `CLAUDE_CONFIG_DIR` 를 주입하지 않아

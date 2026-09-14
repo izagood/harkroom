@@ -83,7 +83,7 @@ export interface AdmitOutcome {
 }
 
 /**
- * 이 모듈이 murmur 에서 실제로 쓰는 것만. `MurmurAgentClient` 를 통째로 받지 않는 이유는
+ * 이 모듈이 harkroom 에서 실제로 쓰는 것만. `MurmurAgentClient` 를 통째로 받지 않는 이유는
  * `mentionTurn.ts` 의 `TurnRelay` 와 같다 — 좁게 받아야 테스트가 소켓·MCP 를 세우지 않는다.
  */
 export interface SchedulerMurmur {

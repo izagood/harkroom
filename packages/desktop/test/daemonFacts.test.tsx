@@ -236,7 +236,7 @@ describe('판정 — 규칙 06: 없는 것을 그리지 않는다', () => {
     const dead = daemonFactRows({ agentId: 'f', alive: false, adopted: false }, noStop);
 
     // `kill(pid, 0)` 이 값에 있어야 한다. 없으면 사람은 이 생사를 서버가 아는 사실로
-    // 오해하고, 그 오해가 `#428` 의 "murmur 가 알 수 없다"와 정면으로 어긋난다.
+    // 오해하고, 그 오해가 `#428` 의 "harkroom 가 알 수 없다"와 정면으로 어긋난다.
     expect(alive.find((r) => r.key === 'liveness')!.value).toContain('kill(pid, 0)');
     expect(dead.find((r) => r.key === 'liveness')!.value).toContain('kill(pid, 0)');
     expect(dead.find((r) => r.key === 'liveness')!.value).toContain('dead');

@@ -49,7 +49,7 @@ beforeAll(async () => {
     `insert into channel (name, topic, kind, repo, visibility) values ('collab', '', 'standard', $1, 'public')`,
     [REPO],
   );
-  // avcs 의 actor 키가 murmur 계정으로 되짚어지는 자리(줄이 말하는 넷 중 "누가").
+  // avcs 의 actor 키가 harkroom 계정으로 되짚어지는 자리(줄이 말하는 넷 중 "누가").
   await pool.query(
     `insert into account_key (key_id, account_id, public_key_pem) values ('human:jaebin', $1, 'pem')`,
     [adminId],

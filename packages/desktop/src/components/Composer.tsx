@@ -95,7 +95,7 @@ const TYPING_THROTTLE_MS = 3_000;
  */
 const MAX_GROUP_SUGGESTIONS = MAX_SUGGESTIONS / 2;
 
-/** 에이전트를 먼저 세운다 — murmur 에서 @ 를 치는 주된 이유다. 그 안에서는 이름순. */
+/** 에이전트를 먼저 세운다 — harkroom 에서 @ 를 치는 주된 이유다. 그 안에서는 이름순. */
 function rank(a: AccountView, b: AccountView): number {
   if (a.kind !== b.kind) return a.kind === 'agent' ? -1 : 1;
   return a.handle.localeCompare(b.handle);

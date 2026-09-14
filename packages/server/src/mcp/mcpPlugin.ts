@@ -35,7 +35,7 @@ const MEMORY_SLUG_REGEX = /^core$|^mem\/[a-z0-9][a-z0-9_-]{0,63}((\/[a-z0-9][a-z
 /**
  * 거절할 때 **문법을 함께 준다.** 원래 문구는 `invalid slug format` 한 마디였고, 그것이
  * 실제로 기능 하나를 죽였다(2026-09-11 실측): 한 에이전트가 `baremetal`·`baremetal.cluster`
- * 를 차례로 시도해 전부 거절당한 뒤 "murmur 는 slug `core` 하나만 받는다"고 결론짓고,
+ * 를 차례로 시도해 전부 거절당한 뒤 "harkroom 는 slug `core` 하나만 받는다"고 결론짓고,
  * 남겨야 할 런북을 하네스의 파일 메모리에 넣었다 — 그쪽은 cwd(=스레드)로 키가 잡혀 다음
  * 스레드에서 사라진다. 당시 에이전트 9 중 8이 `core` 하나뿐이었고, 이 한 줄이 없는 것이
  * 그 분포의 이유다. 문법은 프롬프트(`prompt.ts::memorySection`)에도 적지만, 거절이 오는

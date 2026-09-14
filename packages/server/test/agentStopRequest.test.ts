@@ -1,4 +1,4 @@
-// 러너 종료 요청(#129 두 번째 절반). **재시작이 아니다** — murmur 는 러너를 띄우지 않으므로
+// 러너 종료 요청(#129 두 번째 절반). **재시작이 아니다** — harkroom 는 러너를 띄우지 않으므로
 // 서버가 할 수 있는 것은 정의에 시각을 남기고, 러너가 그것을 읽어 갔는지까지 관측하는 것뿐이다.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';

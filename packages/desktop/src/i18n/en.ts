@@ -328,7 +328,7 @@ export const en = {
   // 보인다. 사전에 있으면 번역자는 그것을 **옮겨야 할 것**으로 읽는다.
   //
   // 그래서 영어로 이 화면을 열면 **설명은 영어, 카드 속 대화는 한국어**다. 어색해 보이지만
-  // 그것이 정직한 상태다 — 저 대화는 murmur 가 하는 말이 아니라 예시로 박아 둔 남의 말이다.
+  // 그것이 정직한 상태다 — 저 대화는 harkroom 가 하는 말이 아니라 예시로 박아 둔 남의 말이다.
   //
   // **덩어리는 화면의 구획을 따른다.**
   //
@@ -413,7 +413,7 @@ export const en = {
   'defaults.field.harnessDefault': 'harness default',
   'defaults.field.model': 'Default model',
   /**
-   * **비워 두는 것이 선택지다.** murmur 가 모델을 모르는 것이 아니라 *"발화에 실린 것으로만
+   * **비워 두는 것이 선택지다.** harkroom 가 모델을 모르는 것이 아니라 *"발화에 실린 것으로만
    * 안다"* — 그 한계를 적어 두지 않으면 빈 칸이 고장으로 읽힌다.
    */
   'defaults.field.modelHint':
@@ -605,11 +605,11 @@ export const en = {
   // |---|---|---|
   // | 중지 / 실행 | `Stop` / `Start` | `#493` 이 「종료 요청」·「요청 되돌리기」를 이 한 쌍으로 접었고 그 근거가 *"사람은 내가 보낸 요청을 취소한다고 생각하지 않는다"* 였다. `Resume` 은 멈춘 것이 이어진다는 뜻이라 거짓이다 — 이 버튼이 하는 일은 **자동 기동 대상에 다시 넣기**뿐이고 러너는 다음 기동에 뜬다 |
   // | 연결 끊김 — 알 수 없음 | `Disconnected — its presence is unknown` | `sidebar.brand.disconnected` 와 같은 규율이다. `Disconnected` 만 두면 **그래서 이 에이전트가 살았는지 모른다**가 사라지고, 사람은 그것을 '오프라인'으로 읽는다 |
-  // | 활동 없음 | `No activity yet` | `yet` 이 진다. `No activity` 는 '죽었다'로도 읽히는데, `lastTurn.ts` 가 적어 둔 대로 murmur 는 한 번도 안 돈 것과 죽은 것을 **구분할 수단이 없다** |
+  // | 활동 없음 | `No activity yet` | `yet` 이 진다. `No activity` 는 '죽었다'로도 읽히는데, `lastTurn.ts` 가 적어 둔 대로 harkroom 는 한 번도 안 돈 것과 죽은 것을 **구분할 수단이 없다** |
   // | 기억 | `Memory` | 화면이 이미 `기억 (memory)` 로 원어를 병기하고 있었다 — 영어에서는 그 병기가 같은 말의 반복이라 하나로 둔다 |
   // | 두기 | `Keep it` | 지우기 확인의 반대짝이다. `Cancel` 은 **무엇이 남는지**를 안 말한다 — 여기서 사람이 고르는 것은 '취소'가 아니라 '그 기억을 남긴다'다 |
   // | 뒤처진 러너 전체 재기동 | `Restart all outdated runners ({count})` | `Outdated` 는 위 표(`뒤처짐`)에서 이미 정한 낱말이다. 개수를 이름에 넣는 이유는 원래 주석이 적었다 — **개수가 곧 영향 범위**다 |
-  // | 지원 예정 | `planned` | `not supported` 가 아니다. 원래 주석이 가른 그대로다: *"없는 것은 사용자의 CLI 가 아니라 murmur 의 구현이므로 '설치 안 됨'이 아니라 '지원 예정'이다"* |
+  // | 지원 예정 | `planned` | `not supported` 가 아니다. 원래 주석이 가른 그대로다: *"없는 것은 사용자의 CLI 가 아니라 harkroom 의 구현이므로 '설치 안 됨'이 아니라 '지원 예정'이다"* |
   // | attach | `attach` | **번역하지 않는다.** 사람이 터미널에서 실제로 하는 조작의 이름이고, 이 제품의 고유어다(`admin`·`PAT`·`harness` 와 같다) |
   //
   // ## 사전에 **안** 넣은 것 — 각각 이유가 다르다
@@ -710,7 +710,7 @@ export const en = {
   /** 사유가 붙을 때. 사유 문구는 러너가 준 것이라 사전이 지지 않는다. */
   'agents.detail.launchFailedReason': 'Did not start — {reason}',
   /**
-   * 한 번도 안 돈 에이전트. **`yet` 이 진다** — `lastTurn.ts` 가 적은 대로 murmur 는
+   * 한 번도 안 돈 에이전트. **`yet` 이 진다** — `lastTurn.ts` 가 적은 대로 harkroom 는
    * '한 번도 안 돌았다'와 '죽었다'를 구분할 수단이 없고, `No activity` 만 두면 사람이
    * 뒤엣것으로 읽는다.
    */
@@ -860,7 +860,7 @@ export const en = {
   'agents.run.defaultsLoading': 'Loading the defaults…',
   'agents.run.defaultsNotAdmin': 'Only an admin can create an agent',
   'agents.run.harnessDefault': 'harness default',
-  /** 아직 못 돌리는 harness. **`not supported` 가 아니다** — 없는 것은 murmur 의 구현이다. */
+  /** 아직 못 돌리는 harness. **`not supported` 가 아니다** — 없는 것은 harkroom 의 구현이다. */
   /** 계정 풀 표면이 없는 하네스. **`not supported` 가 아니다** — 그 하네스는 계정 하나로 돈다. */
   'agents.run.poolNotForHarness': 'This agent runs on {harness}, which has no account pools — it uses the single account that harness is logged into.',
   'agents.run.harnessPlanned': '{harness} (planned)',
@@ -1327,7 +1327,7 @@ export const en = {
   // |---|---|
   // | `exit.notFound` | 하네스를 **설치**한다 (그리고 어디서 받는지까지 말한다) |
   // | `exit.loginRequired` | 그 CLI 로 **로그인**한다 |
-  // | `exit.credentialRejected` | murmur 설정에서 PAT 를 **재발급**한다 |
+  // | `exit.credentialRejected` | harkroom 설정에서 PAT 를 **재발급**한다 |
   // | `exit.unknown*` | **아무것도 단정하지 않는다** — 로그를 보여 주고 사람이 판단한다 |
   //
   // 앞 셋을 `Configuration problem` 같은 한 문구로 접으면 사람은 셋 다에 대해 같은
@@ -2699,7 +2699,7 @@ export const en = {
   // | 종류 · 사람 · 에이전트 | `Kind` · `Person` · `Agent` | `sidebar.members.kindHuman`/`kindAgent` 가 **이미 그 두 낱말**이고 뜻도 같다. 아래 `common` 판단 참고 |
   // | 연결 — 알 수 없음 / 온라인 / 응답 없음 | `Presence` — `Unknown` / `Online` / `Not responding` | 행 이름이 `Connection` 이면 소켓 상태로 읽힌다. 이 행이 말하는 것은 **그 에이전트가 지금 답하는가**이고 그 말이 `presence` 다(코드가 이미 `online`·`presence` 로 부른다). `응답 없음` 은 `waitChain.deadlockDeadRunner` 의 `is not responding` 과 같은 사실이라 같은 낱말을 쓴다 |
   // | 비활성 | `Disabled` | `sidebar.members.agentDisabled` 와 같은 말이다 |
-  // | 하네스 기본값 — 실제 모델은 발화 이름줄 hover 로 본다 | `harness default — hover a message byline for the model that actually answered` | **뒤 절반이 요점이다**(`#600`): `null` 은 '모델 없음'이 아니라 '이 설정이 정하지 않는다'이고, 그러면 murmur 는 실제 모델을 **모른다**. 어디서 볼 수 있는지를 자르면 사람은 이 행을 "실제로 쓰는 모델"로 읽는다 |
+  // | 하네스 기본값 — 실제 모델은 발화 이름줄 hover 로 본다 | `harness default — hover a message byline for the model that actually answered` | **뒤 절반이 요점이다**(`#600`): `null` 은 '모델 없음'이 아니라 '이 설정이 정하지 않는다'이고, 그러면 harkroom 는 실제 모델을 **모른다**. 어디서 볼 수 있는지를 자르면 사람은 이 행을 "실제로 쓰는 모델"로 읽는다 |
   // | 스레드마다 새로 만든다 | `a fresh directory for each thread` | `agents.permissions.workingDirPlaceholder` 가 이미 `a fresh empty directory for each thread` 로 같은 사실을 적었다 |
   // | 버전을 모른다 — 재기동하면 채워진다 | `Version unknown — restart it once and it fills in` | **원인을 가르지 않는다**(원래 주석): 환경변수를 못 받았든 보고가 없었든 사람이 할 일은 하나다 |
   // | (앱 {v}) | `(app {version})` | **비교 대상이 함께 있어야 한다**(원래 주석) — 러너 버전만 알면 뒤처졌는지를 스스로 확인할 수 없다 |
@@ -3525,7 +3525,7 @@ export const en = {
   'collab.state.rejected': 'Rejected',
   'collab.state.unknown': 'State unknown',
   // ---------------------------------------------------------------------------
-  // 커뮤니티가 붙어 있는 **서버의 버전**(#693). murmur 는 하루에도 여러 번 릴리스되고
+  // 커뮤니티가 붙어 있는 **서버의 버전**(#693). harkroom 는 하루에도 여러 번 릴리스되고
   // 배포된 서버는 조용히 낡는다 — 이 줄이 없으면 사람이 `docker inspect` 를 쳐야
   // "재배포해야 하나"에 답할 수 있다.
   //
