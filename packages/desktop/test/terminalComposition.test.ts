@@ -272,3 +272,59 @@ describe('숨은 입력칸을 화면 안으로 끌어온다', () => {
     sink.dispose();
   });
 });
+
+/**
+ * 화면 안으로 옮긴 것만으로는 조합이 시작되지 않았다(2026-09-14 실측: «조합 이벤트 0»).
+ * 남아 있던 두 가지 — **캔버스가 덮는 z-index** 와 **완전 투명** — 을 벗긴 자리의 회귀선.
+ */
+describe('입력칸을 캔버스 위로 올리고 완전 투명을 벗긴다', () => {
+  it('z-index 를 캔버스 위로 올린다 — 덮인 입력칸은 IME 후보가 아니다', async () => {
+    const sink = getTerminalSinkFactory()(host(), { onInput: () => {} });
+    await settle();
+    expect(helperTextarea!.style.zIndex).toBe('5');
+    sink.dispose();
+  });
+
+  it('완전 투명을 벗기되 커서는 감춘다 — 화면에는 아무것도 안 보인다', async () => {
+    const sink = getTerminalSinkFactory()(host(), { onInput: () => {} });
+    await settle();
+    expect(Number(helperTextarea!.style.opacity)).toBeGreaterThan(0);
+    expect(Number(helperTextarea!.style.opacity)).toBeLessThan(0.1);
+    expect(helperTextarea!.style.caretColor).toBe('transparent');
+    sink.dispose();
+  });
+});
+
+/**
+ * 진단이 **무엇이 들어오는지** 가른다. 조합이 0 인데 이 숫자들이 오르면 웹뷰가 조합 없이
+ * 키만 흘린다는 뜻이고, "한글을 쳤는데 ㅎㄱ 만 들어간다"가 그 모양이다.
+ */
+describe('진단 — 조합이 아니라 키로 들어오는 경우를 센다', () => {
+  it('IME 신호를 단 키(keyCode 229)를 센다', async () => {
+    let last = { imeKeys: 0, hangulKeys: 0 };
+    const sink = getTerminalSinkFactory()(host(), {
+      onInput: () => {},
+      onDiagnostics: (d) => { last = { imeKeys: d.imeKeys, hangulKeys: d.hangulKeys }; },
+    });
+    await settle();
+
+    helperTextarea!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, keyCode: 229, key: 'Process' } as KeyboardEventInit));
+    expect(last.imeKeys).toBe(1);
+    sink.dispose();
+  });
+
+  it('한글 자모가 키로 오면 센다 — 조합 없이 자모가 들어오는 세상', async () => {
+    let last = { imeKeys: 0, hangulKeys: 0 };
+    const sink = getTerminalSinkFactory()(host(), {
+      onInput: () => {},
+      onDiagnostics: (d) => { last = { imeKeys: d.imeKeys, hangulKeys: d.hangulKeys }; },
+    });
+    await settle();
+
+    helperTextarea!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ㅎ' }));
+    helperTextarea!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: '한' }));
+    helperTextarea!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'a' }));
+    expect(last.hangulKeys).toBe(2);
+    sink.dispose();
+  });
+});
