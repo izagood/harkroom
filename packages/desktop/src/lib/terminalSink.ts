@@ -80,6 +80,16 @@ export interface TerminalDiagnostics {
   renderer: 'webgl' | 'dom' | 'pending';
   /** 붙은 뒤 관찰한 조합 시작 횟수. 한글을 쳤는데 0 이면 웹뷰가 조합을 아예 안 쏜다. */
   compositions: number;
+  /**
+   * 조합 신호를 달고 온 키(`keyCode 229` 또는 `isComposing`). 조합 이벤트는 0 인데 이 값이
+   * 오르면, 웹뷰가 **조합을 시작하지 않은 채 IME 키만** 흘려보낸다는 뜻이다.
+   */
+  imeKeys: number;
+  /**
+   * `key` 자체가 **한글 자모/음절**인 키. 이 값이 오르면 웹뷰가 조합 없이 **자모를 그대로**
+   * 키로 준다는 사실이고, "한글을 쳤는데 ㅎㄱ 만 들어간다"가 정확히 그 모양이다.
+   */
+  hangulKeys: number;
 }
 
 /**
@@ -150,6 +160,16 @@ function trackHelperTextarea(el: HTMLElement, term: {
   // 크기는 한 번만 정한다. **0×0 이 아니어야 한다**(위 주석).
   textarea.style.width = '1px';
   textarea.style.height = '1px';
+  // **화면 안으로 옮긴 것만으로는 부족했다**(2026-09-14 실측: 조합 이벤트 여전히 0).
+  // 남아 있던 두 가지를 마저 벗긴다:
+  //  - `z-index: -5` — xterm.css 의 값이다. WebGL 캔버스가 이 입력칸을 **덮고** 있었다.
+  //    WebKit 이 IME 를 걸 자리를 hit-test 로 고른다면 덮인 입력칸은 후보가 아니다.
+  //    `.xterm-helpers` 가 쓰는 5 로 올린다(그 CSS 주석도 *"IME 가 캔버스 위에 오도록"* 이다).
+  //  - `opacity: 0` — 완전 투명한 요소를 "보이지 않는다"고 보는 구현이 있다. 0.01 이면
+  //    사람 눈에는 없는 것과 같고(1×1 이다) 합성에는 존재한다. 커서는 따로 감춘다.
+  textarea.style.zIndex = '5';
+  textarea.style.opacity = '0.01';
+  textarea.style.caretColor = 'transparent';
   const place = (): void => {
     const cell = measureCell(el);
     // 못 재는 세상(레이아웃 전·jsdom)에서도 **화면 밖으로는 두지 않는다** — 좌상단이면
@@ -228,6 +248,16 @@ async function enableWebglRenderer(t: WebglTarget): Promise<LoadedAddon | null> 
  * 위 경로와 함께 죽었고, 대신 우리가 그리려면 셀 좌표를 우리 손으로 계산해야 한다 —
  * 하네스(claude TUI)는 확정 텍스트만 받으면 되므로 그 표시는 다음 판으로 남긴다.
  */
+/**
+ * 이 키가 **한글 자모·음절**인가. 조합 없이 자모가 키로 오는 세상을 진단에서 세기 위한 것이다.
+ * 범위는 한글 자모(U+1100–11FF) · 호환 자모(U+3130–318F) · 음절(U+AC00–D7A3).
+ */
+function isHangul(key: string): boolean {
+  if (key.length !== 1) return false;
+  const c = key.codePointAt(0) ?? 0;
+  return (c >= 0x1100 && c <= 0x11ff) || (c >= 0x3130 && c <= 0x318f) || (c >= 0xac00 && c <= 0xd7a3);
+}
+
 function attachCompositionBridge(el: HTMLElement, io: {
   /** 확정된 문자열을 PTY 로 보낸다(xterm 의 `onData` 와 같은 자리로 들어간다). */
   send: (text: string) => void;
@@ -235,6 +265,8 @@ function attachCompositionBridge(el: HTMLElement, io: {
   blocked: () => boolean;
   /** 조합이 **시작됐다**. 진단 줄이 이것을 센다 — 0 이면 웹뷰가 조합을 안 쏜다는 사실이다. */
   onCompositionStart?: () => void;
+  /** 조합 신호를 단 키(`229`·`isComposing`)와 한글 자모 키를 각각 센다(진단). */
+  onKeyObserved?: (kind: 'ime' | 'hangul') => void;
 }): () => void {
   let composing = false;
   const swallow = (ev: Event): void => { ev.stopImmediatePropagation(); };
@@ -260,6 +292,9 @@ function attachCompositionBridge(el: HTMLElement, io: {
     // 원인을 못 짚는다). 그래서 **조합이 실제로 시작된 뒤**(`composing`)나 표준 신호
     // (`isComposing`)가 있을 때만 막는다. 조합 밖의 키(영문·화살표·Ctrl-C)는 건드리지 않는다.
     if (composing || ev.isComposing) ev.stopImmediatePropagation();
+    // **여기서 세는 것은 막는 것과 무관하다** — 무엇이 들어오는지 알기 위한 관측이다.
+    if (ev.keyCode === 229 || ev.isComposing) io.onKeyObserved?.('ime');
+    if (isHangul(ev.key)) io.onKeyObserved?.('hangul');
   };
   el.addEventListener('compositionstart', onStart, true);
   el.addEventListener('compositionupdate', swallow, true);
@@ -309,7 +344,9 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
   /** 숨은 입력칸 추적 해제(`trackHelperTextarea`). */
   let detachHelper: (() => void) | null = null;
   /** 밖으로 알리는 사실(위 `onDiagnostics`). 바뀔 때마다 통째로 보낸다 — 값이 둘뿐이다. */
-  const diagnostics: TerminalDiagnostics = { renderer: 'pending', compositions: 0 };
+  const diagnostics: TerminalDiagnostics = {
+    renderer: 'pending', compositions: 0, imeKeys: 0, hangulKeys: 0,
+  };
   const reportDiagnostics = (): void => { opts?.onDiagnostics?.({ ...diagnostics }); };
   /** 마지막으로 보낸 크기. 같은 값을 다시 보내지 않는다 — 드래그 한 번이 수십 프레임이다. */
   let sent: { cols: number; rows: number } | null = null;
@@ -358,6 +395,11 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
       send: (text) => opts?.onInput?.(text),
       blocked: () => readOnly || !opts?.onInput,
       onCompositionStart: () => { diagnostics.compositions += 1; reportDiagnostics(); },
+      onKeyObserved: (kind) => {
+        if (kind === 'ime') diagnostics.imeKeys += 1;
+        else diagnostics.hangulKeys += 1;
+        reportDiagnostics();
+      },
     });
     // 패널을 열었으면 **바로 칠 수 있어야 한다** — 지금까지는 한 번 클릭해야 키가 갔다.
     // 단 사람이 다른 입력칸에서 쓰고 있으면 **빼앗지 않는다**: 컴포저에 글을 쓰는 중에
