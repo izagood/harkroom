@@ -90,7 +90,7 @@ function claudeSettingsFile(configDir: string | null): string {
 /**
  * bypassPermissions 경고 화면을 미리 지나 둔다(2026-09-08 실측).
  *
- * **더는 기본 경로가 아니다**(2026-09-09). `turn.ts` 가 murmur 의 `auto` 를 claude 의
+ * **더는 기본 경로가 아니다**(2026-09-09). `turn.ts` 가 harkroom 의 `auto` 를 claude 의
  * `auto` 로 번역하도록 고쳤고, 그 모드에는 이 경고가 없다(실측). 남겨 두는 이유는 사람이
  * 터미널에서 `shift+tab` 으로 bypass 까지 올려 쓸 수 있기 때문이다 — 그때 이 기록이 없으면
  * 그 세션이 경고 화면에서 멈춘다.
@@ -186,7 +186,7 @@ export async function ensureWorkspaceTrusted(opts: {
   try {
     // ── 이설 중이다. 두 경로가 함께 산다(2026-09-11) ────────────────────────────
     //
-    // 이 경로가 깨지면 에이전트가 안 돌고, 그러면 murmur 자체를 못 쓴다. 그래서 옛 분기를
+    // 이 경로가 깨지면 에이전트가 안 돌고, 그러면 harkroom 자체를 못 쓴다. 그래서 옛 분기를
     // **그대로 두고** 새 경로를 스위치 뒤에 둔다. 기본값은 꺼짐이므로 켜지 않은 러너는
     // 지금까지와 한 글자도 다르지 않게 돈다.
     //

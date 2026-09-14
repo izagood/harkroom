@@ -303,7 +303,7 @@ async function readPidRecord(pidPath: string): Promise<DaemonPidRecord | null> {
  * 치울 자격이 아무에게도 없다. 무해하지만 디렉터리가 영원히 자란다(실측: `daemon-v33.sock`·
  * `daemon-v34.sock`).
  *
- * murmur 는 조건을 붙여 허용한다: connect 가 `refused`(파일은 있는데 아무도 안 듣는다)
+ * harkroom 는 조건을 붙여 허용한다: connect 가 `refused`(파일은 있는데 아무도 안 듣는다)
  * **이고** 동일 버전 pid 레코드가 없거나 그 pid 가 죽었음이 확인되면 회수한다.
  *
  * 두 조건을 **모두** 요구하는 이유: connect 만 보면 daemon 이 bind 는 했는데 아직 listen

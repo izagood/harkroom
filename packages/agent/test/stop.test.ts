@@ -21,7 +21,7 @@ describe('stopRequestedForRunner', () => {
   });
 
   it('읽을 수 없는 값으로는 물러나지 않는다', () => {
-    // 종료는 사람이 손으로 되돌려야 하는 동작이다(murmur 는 러너를 띄우지 못한다).
+    // 종료는 사람이 손으로 되돌려야 하는 동작이다(harkroom 는 러너를 띄우지 못한다).
     expect(stopRequestedForRunner('언젠가', STARTED)).toBe(false);
   });
 });

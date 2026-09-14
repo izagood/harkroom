@@ -170,7 +170,7 @@ export function keepMentioned(sticky: string[], body: string, known: Set<string>
  *
  * 왜 필요한가: 정본이 `<@id>` 가 된 뒤로 `message.body` 를 그대로 수정창에 넣으면 사람이
  * `<@0f3c…>` 를 보게 된다. 복사도 같다 — 그 문자열을 다른 곳에 붙여넣으면 아무 뜻이 없고,
- * murmur 에 다시 붙여넣어도 그 사람을 부르지 못한다(`normalizeMentions` 는 `@handle` 만 본다).
+ * harkroom 에 다시 붙여넣어도 그 사람을 부르지 못한다(`normalizeMentions` 는 `@handle` 만 본다).
  */
 export function bodyAsHandles(body: string, accounts: Record<string, { id: string; handle: string }>): string {
   const idToHandle = new Map<string, string>();

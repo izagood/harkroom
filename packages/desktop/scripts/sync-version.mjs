@@ -7,7 +7,7 @@
 //
 // ## 정본은 `tauri.conf.json` 이다 — 이 저장소가 이미 그렇게 정해 뒀다
 //
-// synapse 는 루트 `package.json` 이 정본이지만 **murmur 는 다르고, 그 차이에 근거가 있다.**
+// synapse 는 루트 `package.json` 이 정본이지만 **harkroom 는 다르고, 그 차이에 근거가 있다.**
 //
 //   1. **`vite.config.ts` 가 이미 그렇게 적어 뒀다.** 화면에 뜨는 버전
 //      (`__APP_VERSION__` → 설정 화면·Updates 화면)은 `tauri.conf.json` 을 읽어서 만든다:

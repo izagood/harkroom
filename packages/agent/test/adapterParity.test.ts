@@ -380,7 +380,7 @@ describe('잠금 — 호출부가 표를 읽게 되면 지운다', () => {
 describe('표에 있는 것과 러너가 돌리는 것은 다른 질문이다', () => {
   it('RUNNABLE 은 전부 어댑터가 있고 권한 갈래가 완전하다', () => {
     // `RUNNABLE_HARNESSES` 에 들어가는 기준은 "실물 왕복을 봤는가"인데, 그 왕복에는
-    // murmur 가 쓰는 권한 갈래가 **둘 다** 도는 것이 포함된다. 하나만 되는 하네스를
+    // harkroom 가 쓰는 권한 갈래가 **둘 다** 도는 것이 포함된다. 하나만 되는 하네스를
     // 돌리면 `mentionPermission: 'readonly'` 로 만든 에이전트가 조용히 auto 로 돈다.
     for (const [, adapter] of PAIRS) {
       expect([...adapter.supportedMentionPermissions].sort()).toEqual([...MENTION_PERMISSIONS].sort());

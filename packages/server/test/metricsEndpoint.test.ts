@@ -101,7 +101,7 @@ describe('GET /metrics', () => {
     await waitFor(async () => /harkroom_ws_connections 0/.test(await scrape()));
   });
 
-  // #48 이 테스트로 고정한 결함: avcs 를 murmur 커서 뒤로 되돌리면 조용히 건너뛴다.
+  // #48 이 테스트로 고정한 결함: avcs 를 harkroom 커서 뒤로 되돌리면 조용히 건너뛴다.
   // 채널에는 아무 일도 없어 보이므로, 그 침묵이 숫자로 보여야 한다.
   it('exposes the projection cursor per repo so a silent stall is visible', async () => {
     await pool.query(

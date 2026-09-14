@@ -11,7 +11,7 @@ import { useUpdateCheck } from '../lib/useUpdateCheck';
  *
  *   서버에 못 붙는다 → 업데이트해야 한다 → 업데이트는 로그인 뒤에 있다 → 못 붙는다
  *
- * 업데이터는 GitHub releases 만 보고 murmur 서버와 무관하다(`appUpdater.ts` 에
+ * 업데이터는 GitHub releases 만 보고 harkroom 서버와 무관하다(`appUpdater.ts` 에
  * `baseUrl`·`token` 참조가 없다). 로그인 뒤에만 있어야 할 이유가 애초에 없었다.
  *
  * 확인·설치는 `useUpdateCheck` 가 한다 — 이 파일이 정하는 것은 **그 상태를 어떻게

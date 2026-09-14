@@ -55,7 +55,7 @@ export interface AccountView {
   avatarAttachmentId: string | null;
 }
 
-/** murmur 가 스키마·설정 차원에서 아는 harness 이름 전체. 실제 실행 가능 여부는 `RUNNABLE_HARNESSES` 를 본다. */
+/** harkroom 가 스키마·설정 차원에서 아는 harness 이름 전체. 실제 실행 가능 여부는 `RUNNABLE_HARNESSES` 를 본다. */
 export const AGENT_HARNESSES = ['claude-code', 'codex', 'gemini', 'opencode'] as const;
 export type AgentHarness = (typeof AGENT_HARNESSES)[number];
 
@@ -79,7 +79,7 @@ export const RUNNABLE_HARNESSES = ['claude-code', 'codex'] as const satisfies re
 /**
  * **이 하네스에 계정 풀 표면이 있는가.**
  *
- * 계정은 murmur 의 개념이 아니라 **하네스의 디렉터리 하나**다(claude 는 `CLAUDE_CONFIG_DIR`,
+ * 계정은 harkroom 의 개념이 아니라 **하네스의 디렉터리 하나**다(claude 는 `CLAUDE_CONFIG_DIR`,
  * codex 는 `CODEX_HOME`). 그 위에 목록·로그인·사용량·페일오버를 얹은 **풀 관리 표면**은
  * 지금 claude 것만 있다 — 데몬 RPC 이름이 그 사실을 그대로 말한다(`claudeAccountsList`,
  * `claudeAccountLoginStart`, `claudeAccountsUsage` …).
@@ -153,7 +153,7 @@ export interface AgentConfig {
   /**
    * 러너에게 종료를 요청한 시각(#129). null 은 '요청 없음'이다.
    *
-   * **재시작이 아니다.** murmur 는 러너를 띄우지 않으므로 다시 띄우는 것은 사람의 몫이고,
+   * **재시작이 아니다.** harkroom 는 러너를 띄우지 않으므로 다시 띄우는 것은 사람의 몫이고,
    * 이 값이 뜻하는 것은 "지금 턴을 끝내고 스스로 물러나 달라고 부탁했다"까지다.
    * `runnerVersion` 과 마찬가지로 읽기 전용이다 — PATCH 로는 바꿀 수 없고
    * `POST /accounts/agents/:id/stop` 하나만 이 값을 쓴다.
@@ -782,7 +782,7 @@ export const MAX_MESSAGE_BODY_CHARS = 8000;
  * 메시지 하나를 가리키는 링크의 스킴(#178). 문자열을 여기저기서 조립하지 않는다 —
  * 만드는 쪽과 읽는 쪽이 갈라지면 자기가 만든 링크를 자기가 못 여는 상태가 된다.
  *
- * **OS 에 등록하는 URL 스킴이 아니다.** murmur 는 셀프호스트라 호스트가 인스턴스마다
+ * **OS 에 등록하는 URL 스킴이 아니다.** harkroom 는 셀프호스트라 호스트가 인스턴스마다
  * 다르고, 그래서 링크에 호스트를 넣지 않는다 — 이 문자열은 앱 안에서 붙여넣어 여는
  * 좌표이지 브라우저가 넘겨 주는 주소가 아니다.
  */
@@ -1314,7 +1314,7 @@ export function readReportMeta(
 /**
  * 발화에 실린 **모델**. 에이전트가 자기 입으로 신고한다(#600).
  *
- * **왜 자기 신고인가.** murmur 는 실제로 쓰인 모델을 알 방법이 없다 — 아는 것은 설정값
+ * **왜 자기 신고인가.** harkroom 는 실제로 쓰인 모델을 알 방법이 없다 — 아는 것은 설정값
  * (`agent_config.model` → `agent_defaults.model`)뿐이고, 그것이 `null` 이면 러너는
  * `--model` 플래그를 아예 붙이지 않아(`agent/src/turn.ts`) 결정이 하네스로 넘어간다.
  * 러너는 하네스 출력을 해석하지 않는다는 경계(pty.ts)가 있어 stream-json 의 init 에서
@@ -2082,7 +2082,7 @@ export interface ProjectionStatus extends ProjectionRuntime {
 /**
  * 서버가 자기에 대해 말하는 것 — `/healthz` 가 싣는다(#693).
  *
- * **왜 필요한가:** murmur 는 하루에도 여러 번 릴리스되는데, 배포된 서버는 **조용히 낡는다.**
+ * **왜 필요한가:** harkroom 는 하루에도 여러 번 릴리스되는데, 배포된 서버는 **조용히 낡는다.**
  * 화면에는 `Connected` 만 떠서 "지금 도는 서버가 어제 것인지" 를 알 방법이 없었고, 실제로
  * 머지 10분 전에 빌드된 이미지가 34시간을 돈 적이 있다(2026-09-10 멘션 폭주). 사람이
  * 재배포 여부를 판단하려면 **서버가 자기 버전을 말해야** 한다.
@@ -2939,7 +2939,7 @@ export function harnessBinaryName(harness: string | undefined | null): string | 
  * **무엇이** 없는지 알게 됐지만 **어떻게** 채우는지는 여전히 몰랐다 — 이름을 들고 검색을
  * 해야 했고, 검색 결과가 맞는 것인지도 스스로 판단해야 했다.
  *
- * murmur 는 이 셋을 **동봉하지 않는다**(2026-09-06 사용자 방침): *"murmur 는 자기 것만
+ * harkroom 는 이 셋을 **동봉하지 않는다**(2026-09-06 사용자 방침): *"harkroom 는 자기 것만
  * 배포하고, 남의 것은 사용자가 설치한다."* 라이선스도 크기도 부차적 이유이고, 진짜 이유는
  * **그것이 우리 것이 아니라는 것**이다. 동봉하지 않기로 한 이상 **어디서 받는지 알려 주는
  * 것이 남은 전부**이고, 그것이 이 표다.
@@ -2973,7 +2973,7 @@ export function installHint(binary: string | undefined | null): string | null {
       return 'OpenAI Codex CLI 를 설치하면 함께 깔린다: https://developers.openai.com/codex/cli';
     case 'node':
       // 사이드카가 셔뱅(`#!/usr/bin/env node`)이라 **`node` 가 없으면 러너 자체가 안 뜬다.**
-      // murmur 가 동봉하지 않는 것 셋 중 하나다.
+      // harkroom 가 동봉하지 않는 것 셋 중 하나다.
       return 'Node.js 를 설치하라(LTS 판이면 된다): https://nodejs.org/en/download';
     default:
       return null;
@@ -3028,7 +3028,7 @@ export interface CollabProposalsView {
   /** 투영이 보고 있는 avcs 서버. `null` 이면 **설정되지 않은 것**이지 제안이 없는 것이 아니다. */
   baseUrl: string | null;
   repos: CollabRepoView[];
-  /** avcs actor 키 → murmur 계정 id. 모르는 키는 **없다**(그것이 외부 작업자다). */
+  /** avcs actor 키 → harkroom 계정 id. 모르는 키는 **없다**(그것이 외부 작업자다). */
   actors?: Record<string, string>;
 }
 

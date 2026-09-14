@@ -1750,7 +1750,7 @@ fn node_missing_reason(program: &Path, tail: &str) -> String {
 /// `ENOENT` 는 두 가지 뜻을 갖는데, 앞의 것(사이드카 부재)은 이미 배제돼 있으므로
 /// **남은 뜻은 하나다.**
 ///
-/// murmur 는 `node` 를 동봉하지 않는다(2026-09-06 방침: *"자기 것만 배포하고 남의 것은
+/// harkroom 는 `node` 를 동봉하지 않는다(2026-09-06 방침: *"자기 것만 배포하고 남의 것은
 /// 사용자가 설치한다"*). 그래서 **`.dmg` 를 받은 사람의 기본 상태가 이것**일 수 있고,
 /// 그때 화면이 아무 말도 안 하면 사람이 할 수 있는 일이 없다.
 ///
@@ -3215,7 +3215,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     /// 앞 판본은 `daemon 을 띄우지 못했다: No such file or directory (os error 2)` 였고,
     /// 그 문구를 받은 사람은 사이드카를 찾으러 갔다. **사이드카는 거기 있다** — 바로 위
     /// `is_file()` 검사가 이미 통과했기 때문이다. 없는 것은 셔뱅이 가리키는 `node` 이고,
-    /// murmur 는 그것을 동봉하지 않는다(2026-09-06 방침).
+    /// harkroom 는 그것을 동봉하지 않는다(2026-09-06 방침).
     ///
     /// 되돌려 RED: `spawn_failure_reason` 의 `NotFound` 분기를 지우면 설치 주소가 사라져
     /// 빨개진다.
