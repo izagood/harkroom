@@ -2,7 +2,7 @@
 //
 // ## 왜 이 파일이 있는가
 //
-// murmur 는 하네스의 **출력을 파싱하지 않는다.** 발화·진행·중단·질문은 에이전트가 murmur
+// harkroom 는 하네스의 **출력을 파싱하지 않는다.** 발화·진행·중단·질문은 에이전트가 harkroom
 // MCP 도구로 직접 한다. 그래서 하네스에 요구할 것은 넷뿐이다: TUI 로 뜬다 / 준비 신호를
 // 화면에 낸다 / bracketed paste 로 프롬프트를 받는다 / MCP 서버 하나를 붙일 수 있다.
 // 그 넷이 이 계약의 T0 이고, 나머지(관측·계정·부가)는 **없어도 도는** 층이다.
@@ -36,7 +36,7 @@ import type { AgentHarness, MentionPermission } from '@harkroom/shared';
  *   자식의 fd 0 이 PTY 라서 **사람이 그 턴에 끼어들 수 있다**(`pty.ts::acceptsPtyInput`).
  * - `'exec'` — 프롬프트를 stdin 파일로 주고 `sh -c '… < 파일'` 로 감싼다. 그 순간 fd 0 이
  *   일반 파일이 되어 사람이 칠 수 없다(관찰 전용). **본선이 아니다** — TUI 캡슐화가
- *   murmur 의 전제이고, 이 갈래는 준비 신호를 아직 측정하지 못한 하네스의 임시 발판이다.
+ *   harkroom 의 전제이고, 이 갈래는 준비 신호를 아직 측정하지 못한 하네스의 임시 발판이다.
  */
 export type ExecutionModel = 'tui' | 'exec';
 

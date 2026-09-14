@@ -448,7 +448,7 @@ describe('buildSystemPrompt', () => {
     expect(s).toMatch(new RegExp(String(BODY_LIMIT)));
   });
 
-  // 발화가 자율이 됐으므로, "어디에 쓸지"(murmur MCP message.post)를 지시문이 명시하지
+  // 발화가 자율이 됐으므로, "어디에 쓸지"(harkroom MCP message.post)를 지시문이 명시하지
   // 않으면 턴이 조용히 끝난다 — 회귀를 막는 핵심 문구.
   it('message.post 로 스스로 발화하라고 지시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });

@@ -678,7 +678,7 @@ export class RunnerRegistry {
    *
    * 자식 핸들의 `exitCode` 를 보지 않는 이유: 그것은 Node 가 `SIGCHLD` 를 처리한 뒤에야
    * 채워지고, 그 사이 창에서 "아직 살아 있다"고 말한다. 커널에 직접 물으면 그 창이 없다.
-   * 서버가 못 하는 말(`#428` 의 *"실제로 종료했는지는 murmur 가 알 수 없다"*)을 daemon 이
+   * 서버가 못 하는 말(`#428` 의 *"실제로 종료했는지는 harkroom 가 알 수 없다"*)을 daemon 이
    * 할 수 있는 이유가 이 한 줄이다 — 자기가 spawn 했으므로 pid 를 안다.
    */
   listRunners(): RunnerInfo[] {

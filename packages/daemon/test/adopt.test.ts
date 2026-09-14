@@ -20,7 +20,7 @@
  * ## 도그푸딩 스택과의 격리
  *
  * 모든 daemon 이 `mkdtemp` 로 만든 임시 `appDataDir` 를 쓴다. 장부도 소켓도 거기 산다 —
- * 이 회귀선이 이 기계의 다른 murmur 스택(앱·daemon·러너)을 볼 방법이 없다.
+ * 이 회귀선이 이 기계의 다른 harkroom 스택(앱·daemon·러너)을 볼 방법이 없다.
  */
 import { execFileSync, spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';

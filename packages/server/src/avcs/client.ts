@@ -1,6 +1,6 @@
 // avcs-server 프로토콜(docs/26)에 대한 wire 가정은 이 파일에만 둔다.
 //
-// 서버가 내보내는 것은 content-addressed 객체의 append-only 로그(objlog)이고, murmur가
+// 서버가 내보내는 것은 content-addressed 객체의 append-only 로그(objlog)이고, harkroom가
 // 필요한 것은 채널에 문장으로 붙일 수 있는 의미론적 이벤트다. 그 환원이 이 파일의 일이다:
 //   GET /<org>/<repo>/sync?since=N   → { oids, cursor }
 //   POST /<org>/<repo>/objects/fetch → { objects, truncated }
@@ -27,7 +27,7 @@ export interface AvcsLogEntry {
 
 /**
  * `GET /reduced?view=` 가 주는 파생 상태(avcs `docs/26` §6-4). **직접 reduce 하지 않는 이유**가
- * 이 타입의 존재 이유다 — 같은 값을 murmur 가 두 번째로 계산하면 두 구현이 갈라지고, 화면이
+ * 이 타입의 존재 이유다 — 같은 값을 harkroom 가 두 번째로 계산하면 두 구현이 갈라지고, 화면이
  * avcs 와 다른 판정을 말하게 된다.
  *
  * `cursor`·`materializer` 를 함께 싣는 것은 화면이 **"어느 시점의, 어느 환원기의 판정인가"** 를
@@ -93,7 +93,7 @@ function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
 }
 
-/** murmur는 actorKeyId를 account_key.key_id로 되짚는다. 객체가 들고 있는 신원은 Actor.id다. */
+/** harkroom는 actorKeyId를 account_key.key_id로 되짚는다. 객체가 들고 있는 신원은 Actor.id다. */
 function actorId(actor: unknown): string | null {
   if (typeof actor !== 'object' || actor === null) return null;
   return str((actor as { id?: unknown }).id) || null;
@@ -111,7 +111,7 @@ function referencedOp(obj: AvcsObject): string | null {
   return null;
 }
 
-/** 하나의 avcs 객체를 murmur 로그 엔트리로 환원한다. lease는 스코프당 하나씩 나오므로 배열이다. */
+/** 하나의 avcs 객체를 harkroom 로그 엔트리로 환원한다. lease는 스코프당 하나씩 나오므로 배열이다. */
 function toEntries(
   obj: AvcsObject,
   oid: string,

@@ -123,7 +123,7 @@ describe('mention autocomplete', () => {
     expect(within(bot).queryByText('에이전트')).toBeNull();
   });
 
-  // 에이전트를 부르는 것이 murmur 의 목적이지만, 사람도 멘션 대상이다.
+  // 에이전트를 부르는 것이 harkroom 의 목적이지만, 사람도 멘션 대상이다.
   it('offers humans too', () => {
     render(<Composer onSend={vi.fn()} />);
 
@@ -291,7 +291,7 @@ describe('mention autocomplete', () => {
     expect(onSend).toHaveBeenCalledWith('@zzzz', []);
   });
 
-  // murmur 에서 @ 를 치는 주된 이유가 에이전트 호출이다. 사람이 먼저 오면 매번 화살표를
+  // harkroom 에서 @ 를 치는 주된 이유가 에이전트 호출이다. 사람이 먼저 오면 매번 화살표를
   // 눌러야 한다.
   it('puts agents above humans in the list', () => {
     useAppStore.getState().set({

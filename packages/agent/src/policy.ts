@@ -1,5 +1,5 @@
 // 실패를 어떻게 다룰지에 대한 판단만 모았다. 순수 함수라 루프 없이 검증된다.
-// **여기서 다른 모듈을 import 하지 않는다** — murmur 클라이언트를 끌어오면 이 파일이
+// **여기서 다른 모듈을 import 하지 않는다** — harkroom 클라이언트를 끌어오면 이 파일이
 // MCP 전송·네트워크 의존까지 물게 되고, "순수 함수라 루프 없이 검증된다"가 깨진다.
 // 그래서 출처 태그의 값도 여기서 정의하고, 태그를 붙이는 쪽(murmur.ts)이 이것을 읽어 간다.
 
@@ -9,12 +9,12 @@ export const MAX_ATTEMPTS = 3;
 const CEILING_MS = 60_000;
 
 /**
- * murmur 클라이언트에서 온 에러임을 표시하는 값. `murmur.ts` 가 자기가 던지는 에러의
+ * harkroom 클라이언트에서 온 에러임을 표시하는 값. `murmur.ts` 가 자기가 던지는 에러의
  * `source` 에 이것을 넣고, `isCredentialFailure` 가 그것을 읽어 출처를 가린다.
  *
  * 왜 필요한가: `isCredentialFailure` 는 `main.ts` 에서 `runMentionTurn` **전체**를 감싸는
- * catch 에 쓰인다. 그래서 err 는 하네스 실행 실패뿐 아니라 murmur 서버 호출(readThread·post)
- * 실패에서도 온다. 출처를 못 가리면 murmur PAT 만료를 "claude CLI 로 로그인해라"로 안내한다.
+ * catch 에 쓰인다. 그래서 err 는 하네스 실행 실패뿐 아니라 harkroom 서버 호출(readThread·post)
+ * 실패에서도 온다. 출처를 못 가리면 harkroom PAT 만료를 "claude CLI 로 로그인해라"로 안내한다.
  */
 export const HARKROOM_ERROR_SOURCE = 'murmur-client';
 
@@ -210,13 +210,13 @@ export function isHarnessStall(err: unknown): { stallMs: number } | null {
  * 운영자가 개입해야 하는 실패인가(자격증명). 재시도로 낫지 않으므로 러너는 즉시 크게 실패해야
  * 한다 — 무한 재시도로 감추면 로그만 쌓이고 "왜 답이 없지"의 원인이 묻힌다.
  *
- * 출처를 가려서 돌려준다: murmur PAT 문제와 harness 로그인 문제는 운영자가 확인할 곳이
+ * 출처를 가려서 돌려준다: harkroom PAT 문제와 harness 로그인 문제는 운영자가 확인할 곳이
  * 서로 다르다(`main.ts` 가 이 값으로 안내를 나눈다).
  */
 export function isCredentialFailure(err: unknown): CredentialFailureType {
   const status = (err as { status?: number } | null)?.status;
 
-  // murmur 클라이언트가 붙인 태그가 있으면 그쪽이다. 판정은 **HTTP status 로만** 한다 —
+  // harkroom 클라이언트가 붙인 태그가 있으면 그쪽이다. 판정은 **HTTP status 로만** 한다 —
   // murmur.ts 가 status 를 항상 실어 주므로 문구 매칭이 필요 없다(문구로 판정하면 "401"
   // 같은 숫자가 본문에 우연히 들어간 에러까지 자격증명 실패로 오인한다).
   if ((err as { source?: string } | null)?.source === HARKROOM_ERROR_SOURCE) {

@@ -123,7 +123,7 @@ describe('harkroom:// 는 OS 로 보내지 않는다', () => {
     fireEvent.click(screen.getByTestId('body-link'));
 
     await waitFor(() => expect(c.openMessage).toHaveBeenCalledWith(id));
-    // OS 는 murmur 를 모른다 — 셸로 넘기면 아무 일도 일어나지 않는다.
+    // OS 는 harkroom 를 모른다 — 셸로 넘기면 아무 일도 일어나지 않는다.
     expect(open).not.toHaveBeenCalled();
   });
 

@@ -15,7 +15,7 @@ const releaseVersion = (JSON.parse(readFileSync(
 )) as { version: string }).version;
 
 describe('compareRelease', () => {
-  // **문자열 비교로 때우면 여기서 죽는다**: `'0.1.9' > '0.1.100'` 이 참이다. murmur 는
+  // **문자열 비교로 때우면 여기서 죽는다**: `'0.1.9' > '0.1.100'` 이 참이다. harkroom 는
   // 이미 세 자리 patch 를 쓰므로(v0.1.174) 이것은 이론이 아니라 지금 일이다.
   it('세 자리 patch 를 숫자로 견준다', () => {
     expect(compareRelease('0.1.9', '0.1.100')).toBe(-1);

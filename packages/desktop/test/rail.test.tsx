@@ -578,7 +578,7 @@ describe('Inbox 는 홈 맨 위, 북마크는 레일에만', () => {
 /**
  * **메뉴 머리의 굵은 줄은 `displayName` 이다**(실측 2026-09-07, 사용자가 화면에서 발견).
  *
- * 두 줄이 **똑같이 `handle` 을 쓰고 있어** `jaebin / @jaebin · murmur` 처럼 같은 값이
+ * 두 줄이 **똑같이 `handle` 을 쓰고 있어** `jaebin / @jaebin · harkroom` 처럼 같은 값이
  * 두 번 섰다. 필드는 이미 있었고(`AccountView.displayName`) 화면이 안 쓴 것이다 —
  * "이름이 없어서"가 아니었다.
  *

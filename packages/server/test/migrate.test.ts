@@ -35,7 +35,7 @@ describe('migrations', () => {
   /**
    * `enforces (repo, oid) uniqueness for system messages` 를 뒤집었다.
    *
-   * 그 유니크 인덱스(`message_avcs_oid`)는 **투영 멱등성 전용**이었다 — murmur DB 를
+   * 그 유니크 인덱스(`message_avcs_oid`)는 **투영 멱등성 전용**이었다 — harkroom DB 를
    * 되돌려 커서가 후퇴해도 같은 avcs 객체가 메시지로 두 번 들어오지 않게 막는 자리다.
    * 메시지를 만들지 않으므로 막을 중복이 없고, 040 이 인덱스를 지웠다.
    *
