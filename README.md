@@ -108,23 +108,36 @@ between "no work" and "projection is off", is listed in one place:
 
 ### Prebuilt server image
 
-Every push to `main` publishes the server image to GitHub Container Registry, so
-you do not have to build it yourself:
+The server image is published to GitHub Container Registry, so you do not have to
+build it yourself:
 
 ```sh
-docker pull ghcr.io/izagood/harkroom-server:latest
+docker pull ghcr.io/izagood/harkroom-server:0.1.208
 ```
 
-| Tag | What it points at |
-|-----|-------------------|
-| `:latest`, `:0.1.204` | the commit a release was cut from — the same code as that release's `.dmg` |
-| `:main` | the newest commit on `main` |
-| `:sha-<7 chars>` | one exact commit; never moves |
+| Tag | What it points at | Published by |
+|-----|-------------------|--------------|
+| `:latest`, `:0.1.208` | the release tag — **the same commit the `.dmg` was built from**, so `GET /healthz` reports that exact release number | the release workflow, once per release |
+| `:main` | the newest commit on `main` | every push to `main` |
+| `:sha-<7 chars>` | one exact commit; never moves | every push to `main` |
 
-The image is `linux/amd64` + `linux/arm64`, runs as **uid 1000** (not root), and
-defaults `ATTACHMENT_ROOT` to `/var/lib/harkroom/attachments`. `docker compose`
-keeps building from source (`packages/server/Dockerfile`) — the published image is
-for deployments that are not this repo, such as Kubernetes.
+Deploy a pinned version with the compose stack — `HARKROOM_SERVER_TAG` selects the
+tag, and `pull` is what makes it come from the registry rather than a local build:
+
+```sh
+HARKROOM_SERVER_TAG=0.1.208 docker compose pull server
+HARKROOM_SERVER_TAG=0.1.208 docker compose up -d --no-deps server
+```
+
+Pin the version rather than tracking `:latest`: rolling back is then editing that
+one number and running the two commands again. Development is unchanged —
+`docker compose build` still builds `packages/server/Dockerfile` and tags the
+result with that same name, so a later `up` uses what you just built.
+
+The image is `linux/amd64` + `linux/arm64`, runs as **uid 1000** (not root),
+defaults `ATTACHMENT_ROOT` to `/var/lib/harkroom/attachments`, and always carries
+the commit it was built from (`GET /healthz` reports it — a hand-built image
+reports `null` unless you remember to pass `MURMUR_COMMIT`).
 
 Two things that image alone cannot fix, and that a deployment must respect:
 
