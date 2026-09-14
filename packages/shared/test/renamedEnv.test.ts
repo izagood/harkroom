@@ -10,7 +10,7 @@
  * 빨개진다.
  */
 import { describe, it, expect } from 'vitest';
-import { renamedEnv } from '../src/index';
+import { renamedEnv } from '../src/index.js';
 
 describe('renamedEnv', () => {
   it('새 이름이 있으면 그것을 읽는다', () => {
