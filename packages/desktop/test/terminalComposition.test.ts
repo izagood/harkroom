@@ -13,6 +13,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const xtermSaw: string[] = [];
 /** 가짜 xterm 의 helper textarea — 진짜처럼 호스트 **안쪽**에 있고, 이벤트의 과녁이다. */
 let helperTextarea: HTMLTextAreaElement | null = null;
+/** 마지막으로 뜬 가짜 터미널 — 커서를 옮겨 보는 데 쓴다. */
+let lastTerm: { moveCursor(x: number, y: number): void } | null = null;
 let focused = 0;
 
 vi.mock('@xterm/addon-webgl', () => ({
@@ -27,14 +29,33 @@ vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     options: { disableStdin?: boolean };
     constructor(opts: { disableStdin?: boolean }) { this.options = { ...opts }; }
+    /** 진짜 xterm 과 같은 모양의 커서 좌표. 테스트가 직접 옮긴다. */
+    buffer = { active: { cursorX: 0, cursorY: 0 } };
+    private cursorHandlers: (() => void)[] = [];
+    onCursorMove(handler: () => void): { dispose(): void } {
+      this.cursorHandlers.push(handler);
+      return { dispose: () => { this.cursorHandlers = []; } };
+    }
+    /** 커서가 움직였다고 알린다(테스트 손잡이). */
+    moveCursor(x: number, y: number): void {
+      this.buffer.active.cursorX = x;
+      this.buffer.active.cursorY = y;
+      for (const h of this.cursorHandlers) h();
+    }
     open(el: HTMLElement): void {
       // 진짜 xterm 처럼 호스트 안에 textarea 를 만들고, 그것에 리스너를 건다.
       const ta = document.createElement('textarea');
+      // **xterm.css 가 두는 자리 그대로** — 화면 밖 0×0. 이것이 고치려는 상태다.
+      ta.className = 'xterm-helper-textarea';
+      ta.style.left = '-9999em';
+      ta.style.width = '0';
+      ta.style.height = '0';
       ta.addEventListener('keydown', (e) => { xtermSaw.push(`keydown:${(e as KeyboardEvent).key}`); });
       ta.addEventListener('compositionstart', () => { xtermSaw.push('compositionstart'); });
       ta.addEventListener('compositionend', () => { xtermSaw.push('compositionend'); });
       el.appendChild(ta);
       helperTextarea = ta;
+      lastTerm = this as unknown as { moveCursor(x: number, y: number): void };
     }
     focus(): void { focused += 1; }
     write(): void {}
@@ -72,6 +93,7 @@ function compose(target: EventTarget, text: string, opts: { cancel?: boolean } =
 beforeEach(() => {
   xtermSaw.length = 0;
   helperTextarea = null;
+  lastTerm = null;
   focused = 0;
   document.body.innerHTML = '';
 });
@@ -205,6 +227,48 @@ describe('진단 — 렌더러와 조합 이벤트를 밖으로 알린다', () =
     compose(helperTextarea!, '한');
     compose(helperTextarea!, '글');
     expect(last).toBe(2);
+    sink.dispose();
+  });
+});
+
+/**
+ * **조합이 시작될 수 있게 하는 자리.** xterm 은 IME 용 textarea 를 `left:-9999em` 에 0×0 으로
+ * 두는데, WebKit 은 그런 입력칸에서 조합을 걸지 않는다 — 그러면 `compositionstart` 자체가
+ * 오지 않아 위 브리지도 돌 기회가 없다. 그래서 커서 자리에 1×1 로 세운다.
+ */
+describe('숨은 입력칸을 화면 안으로 끌어온다', () => {
+  it('화면 밖 0×0 을 벗어난다 — 이것이 조합이 시작되는 전제다', async () => {
+    const sink = getTerminalSinkFactory()(host(), { onInput: () => {} });
+    await settle();
+
+    expect(helperTextarea!.style.left).not.toBe('-9999em');
+    expect(helperTextarea!.style.width).toBe('1px');
+    expect(helperTextarea!.style.height).toBe('1px');
+    sink.dispose();
+  });
+
+  it('셀을 못 재는 세상에서도 화면 밖으로 두지 않는다 — 좌상단이면 조합은 시작된다', async () => {
+    const sink = getTerminalSinkFactory()(host(), { onInput: () => {} });
+    await settle();
+
+    // jsdom 은 레이아웃이 없어 셀을 못 잰다(측정이 0 이다).
+    expect(helperTextarea!.style.left).toBe('0px');
+    expect(helperTextarea!.style.top).toBe('0px');
+    sink.dispose();
+  });
+
+  it('커서를 따라간다 — 후보창이 치는 자리에 뜬다', async () => {
+    // 셀 하나가 8x16 인 세상을 만든다(`fitDimensions` 와 같은 자).
+    const rectSpy = vi.spyOn(HTMLSpanElement.prototype, 'getBoundingClientRect')
+      .mockReturnValue({ width: 800, height: 16 } as DOMRect);
+    const sink = getTerminalSinkFactory()(host(), { onInput: () => {} });
+    await settle();
+
+    lastTerm!.moveCursor(3, 2);
+    expect(helperTextarea!.style.left).toBe('24px');
+    expect(helperTextarea!.style.top).toBe('32px');
+
+    rectSpy.mockRestore();
     sink.dispose();
   });
 });
