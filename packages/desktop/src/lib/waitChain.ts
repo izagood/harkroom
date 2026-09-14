@@ -20,6 +20,15 @@ export interface WaitLink {
   message?: MessageRow;
   /** 이 마디가 생긴 시각(ISO). 메시지가 없어도 경과를 말할 수 있어야 한다. */
   askedAt: string;
+  /**
+   * **같은 사람이 동시에 기다리는 다른 마디의 수**(2026-09-14). 0 이면 하나만 기다린다.
+   *
+   * 사슬은 화면에서 **한 줄**로 읽히므로 갈래를 전부 그리면 명단이 된다(`chainEnds` 의
+   * 그 문단과 같은 걱정이다). 그래서 고른 갈래 하나를 그리고 나머지는 **수**로 말한다 —
+   * *"forge 가 scout 외 1명을 기다린다"*. 이름은 양 끝에만 쓴다는 규율을 지키면서도
+   * "하나만 기다린다"는 거짓을 말하지 않는다.
+   */
+  siblings?: number;
 }
 
 /**
@@ -147,12 +156,20 @@ export function waitChainFromLinks(input: {
  * 마디들을 이어 사슬 하나를 낸다. **두 진입점이 공유하는 유일한 판정**이다.
  */
 function walk(links: WaitLink[], myAccountId: string | null, live: Liveness): WaitChain {
-  /** 계정 → 그 계정이 지금 내고 답을 못 받은 물음. 뒤엣것이 이긴다(가장 최근 물음). */
-  const pendingByWaiter = new Map<string, WaitLink>();
+  /**
+   * 계정 → 그 계정이 지금 내고 답을 못 받은 마디들. **배열이다**(2026-09-14).
+   *
+   * 전에는 `Map<waiter, 마디 하나>` 라 뒤엣것이 앞엣것을 덮었다. 그래서 팀장이 팀원 둘에게
+   * 넘기면 화면에는 **하나만** 섰고, 더 나쁜 것은 판정이었다: 덮여서 남은 그 하나가 죽은
+   * 러너이면 다른 갈래가 멀쩡해도 **교착**이라고 말했다.
+   */
+  const pendingByWaiter = new Map<string, WaitLink[]>();
   /** 답해야 하는 쪽 → 그를 기다리는 마디들. **사슬을 거꾸로 타기 위한 색인이다.** */
   const waitersOf = new Map<string, WaitLink[]>();
   for (const link of links) {
-    pendingByWaiter.set(link.waiter, link);
+    const mine = pendingByWaiter.get(link.waiter) ?? [];
+    mine.push(link);
+    pendingByWaiter.set(link.waiter, mine);
     if (link.blockedBy !== null) {
       const bucket = waitersOf.get(link.blockedBy) ?? [];
       bucket.push(link);
@@ -162,41 +179,79 @@ function walk(links: WaitLink[], myAccountId: string | null, live: Liveness): Wa
 
   if (links.length === 0) return { links: [], end: 'none', unblocks: 0 };
 
+  interface Branch { end: ChainEnd; path: WaitLink[]; reason?: WaitChain['deadlockReason'] }
+
   /**
-   * 사슬을 따라간다. 시작은 **가장 최근 물음** — 지금 무엇이 멈춰 있는지를 묻는 것이므로
-   * 마지막에 난 물음에서 출발하는 것이 맞다.
+   * 갈래 고르기의 **순서**다. 낮을수록 이긴다: `me` → `other` → `deadlock`.
+   *
+   * 이 순서가 곧 "한 가지가 죽었다고 교착이 아니다"라는 규칙이다. 팀장이 둘을 기다리는데
+   * 하나는 죽고 하나는 나에게 닿으면 그것은 **내 차례**이지 교착이 아니다 — 내가 답하면
+   * 무언가 풀린다. 반대로 뒤집으면 화면이 사람에게 "손쓸 수 없다"고 거짓말한다.
+   *
+   * 교착이 마지막인 이유도 같다: 모든 갈래가 막혔을 때만 그 말을 할 수 있다.
    */
-  const chain: WaitLink[] = [];
-  const seen = new Set<string>();
-  let cursor: WaitLink | undefined = links[links.length - 1];
-  let end: ChainEnd | null = null;
-  let reason: WaitChain['deadlockReason'];
+  const rank: Record<ChainEnd, number> = { me: 0, other: 1, deadlock: 2, none: 3 };
 
-  while (cursor) {
-    // **순환 방지.** 이 줄이 없으면 A→B→A 에서 무한 루프가 돈다.
-    if (seen.has(cursor.waiter)) { end = 'deadlock'; reason = 'cycle'; break; }
-    seen.add(cursor.waiter);
-    chain.push(cursor);
-
-    const next: string | null = cursor.blockedBy;
+  /**
+   * 한 마디에서 시작해 **그 아래 가장 좋은 갈래**를 찾는다.
+   *
+   * `seen` 은 **이 경로에서** 이미 지난 사람들이다(전역 방문 집합이 아니다) — 전역으로 두면
+   * 갈래 둘이 같은 계정을 지날 때 뒤에 본 갈래가 순환으로 오판된다. 이 줄이 없으면 A→B→A
+   * 에서 렌더가 무한 루프로 터진다(그것이 이 계산에서 가장 위험한 부분이다).
+   */
+  const explore = (link: WaitLink, seen: ReadonlySet<string>): Branch => {
+    if (seen.has(link.waiter)) return { end: 'deadlock', reason: 'cycle', path: [link] };
+    const next = link.blockedBy;
     // 사람 아무나를 기다린다 — 내가 사람이면 여기가 내 차례다.
-    if (next === null) { end = myAccountId ? 'me' : 'other'; break; }
-    if (next === myAccountId) { end = 'me'; break; }
-    // 답해야 하는 쪽이 죽었다고 **알면** 사슬이 아무 데도 닿지 않는다.
-    if (live !== null && !live.has(next)) { end = 'deadlock'; reason = 'dead-runner'; break; }
-    // 그 계정도 무언가를 기다리고 있으면 사슬이 이어진다.
-    cursor = pendingByWaiter.get(next);
+    if (next === null) return { end: myAccountId ? 'me' : 'other', path: [link] };
+    if (next === myAccountId) return { end: 'me', path: [link] };
+    // 답해야 하는 쪽이 죽었다고 **알면** 이 갈래는 아무 데도 닿지 않는다.
+    if (live !== null && !live.has(next)) return { end: 'deadlock', reason: 'dead-runner', path: [link] };
+
+    const branches = pendingByWaiter.get(next) ?? [];
+    // 그 계정이 아무것도 안 기다린다 — 그 사람이/에이전트가 답할 차례다(나는 아니다).
+    if (!branches.length) return { end: 'other', path: [link] };
+
+    const deeper = new Set(seen).add(link.waiter);
+    let best: Branch | null = null;
+    for (const b of branches) {
+      const found = explore(b, deeper);
+      if (!best || rank[found.end] < rank[best.end]) best = found;
+    }
+    return { end: best!.end, reason: best!.reason, path: [link, ...best!.path] };
+  };
+
+  /**
+   * 시작은 **가장 최근 마디를 낸 사람**이다 — 지금 무엇이 멈춰 있는지를 묻는 것이므로.
+   * 그 사람이 여럿을 기다리면 **그 갈래들도 함께 본다**(뿌리에서부터 나무다).
+   */
+  const root = links[links.length - 1]!;
+  const rootBranches = pendingByWaiter.get(root.waiter) ?? [root];
+  let best: Branch | null = null;
+  for (const b of rootBranches) {
+    const found = explore(b, new Set());
+    if (!best || rank[found.end] < rank[best.end]) best = found;
   }
 
-  if (end === 'deadlock') return { links: chain, end, unblocks: 0, deadlockReason: reason };
+  /** 고른 경로의 각 마디에 **가려진 갈래 수**를 붙인다(화면이 "외 N명"으로 말한다). */
+  const chain = best!.path.map((l) => {
+    const siblings = (pendingByWaiter.get(l.waiter)?.length ?? 1) - 1;
+    return siblings > 0 ? { ...l, siblings } : l;
+  });
+  const end = best!.end;
+
+  if (end === 'deadlock') {
+    return { links: chain, end, unblocks: 0, deadlockReason: best!.reason };
+  }
   if (end === 'me') {
     /**
      * **내가 답하면 몇 개가 풀리는가.** 사슬을 앞으로 탄 것(`chain`)만 세면 부족하다 —
      * 내가 답할 그 계정을 *기다리고 있던* 쪽들도 함께 풀리기 때문이다.
-     * 그래서 답할 지점에서 **거꾸로** 훑어 도달 가능한 마디를 전부 센다.
+     * 그래서 답할 지점에서 **거꾸로** 훑어 도달 가능한 마디를 전부 센다. 나무가 되어도
+     * 이 셈은 그대로다: `waitersOf` 는 원래 갈래를 전부 담고 있었다.
      */
     const answerTarget = chain[chain.length - 1]!;
-    const counted = new Set<WaitLink>(chain);
+    const counted = new Set<WaitLink>(best!.path);
     const queue = [answerTarget.waiter];
     const visited = new Set<string>();
     while (queue.length) {
@@ -210,9 +265,6 @@ function walk(links: WaitLink[], myAccountId: string | null, live: Liveness): Wa
     }
     return { links: chain, end, unblocks: counted.size };
   }
-  if (end === 'other') return { links: chain, end, unblocks: 0 };
-
-  // 사슬 끝이 아무것도 안 기다린다 — 그 사람이/에이전트가 답할 차례다(나는 아니다).
   return { links: chain, end: 'other', unblocks: 0 };
 }
 
@@ -277,14 +329,25 @@ export type NameOf = (accountId: string | null) => string;
  * 아니라 **사람이 읽는 문구**를 재고, 키만 내면 그 의도를 잃는다.
  */
 export function chainSentences(chain: WaitChain, name: NameOf, t: Translate): string[] {
-  return chain.links.map((l) => (
-    l.blockedBy === null
+  return chain.links.map((l) => {
+    if (l.blockedBy === null) {
       // '사람 아무나'는 특정인을 기다리는 것과 **다른 문장**이다. 한국어에서는 이름
       // 자리에 보통명사를 끼우면 조사가 어긋나서 갈랐고(실측 회귀선), 영어에서도
       // `waiting for someone to answer` 가 `waiting for someone` 보다 곧다.
-      ? t('waitChain.linkAnyone', { waiter: name(l.waiter) })
-      : t('waitChain.link', { waiter: name(l.waiter), blockedBy: name(l.blockedBy) })
-  ));
+      return t('waitChain.linkAnyone', { waiter: name(l.waiter) });
+    }
+    /**
+     * **여럿을 기다리면 수로 말한다**(2026-09-14). 이름을 전부 적으면 그것이 명단이고,
+     * 이 줄의 규율은 *"이름은 양 끝일 때만"* 이다(`chainEnds` 의 그 문단). 그래도
+     * "하나만 기다린다"는 거짓을 말하지 않으려면 나머지가 **있다는 사실**은 나와야 한다.
+     */
+    if (l.siblings) {
+      return t('waitChain.linkMany', {
+        waiter: name(l.waiter), blockedBy: name(l.blockedBy), count: l.siblings,
+      });
+    }
+    return t('waitChain.link', { waiter: name(l.waiter), blockedBy: name(l.blockedBy) });
+  });
 }
 
 /**
