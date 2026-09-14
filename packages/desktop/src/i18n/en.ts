@@ -1804,6 +1804,11 @@ export const en = {
    * 동사 앞), 영어는 `A is waiting for B`(동사 뒤). 조각(`'가'` + 이름 + `'의 답을'`)
    * 으로 두면 영어에서 그 조각들이 갈 자리가 없다.
    */
+  /**
+   * 여럿을 기다릴 때(2026-09-14). 이름은 하나만 쓰고 나머지는 수로 — 전부 적으면
+   * 그것이 명단이고, 이 줄의 규율은 *"이름은 양 끝일 때만"* 이다.
+   */
+  'waitChain.linkMany': '{waiter} is waiting for {blockedBy} and {count} more',
   'waitChain.link': '{waiter} is waiting for {blockedBy}',
   /**
    * 사람 아무나를 기다리는 마디. 한국어 쪽 주석이 적어 둔 사정이 그대로다 —
