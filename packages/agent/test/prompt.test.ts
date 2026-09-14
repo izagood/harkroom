@@ -558,6 +558,33 @@ describe('메모리 주입 (#139)', () => {
     expect(s).toContain('core');
   });
 
+  /**
+   * **기억이 이미 있을 때도 쓰는 법이 실려야 한다.** 전에는 `core` 가 한 번 생기면 그 뒤로
+   * 본문만 실리고 "적어 둬라"가 사라졌다 — 그래서 한 번 쓴 `core` 가 저장소 이름이 바뀐
+   * 뒤에도 옛 이름을 싣고 다녔다. 비었을 때만 가르치면 아무도 고치지 않는다.
+   */
+  it('기억이 이미 있어도 쓰는 법과 갱신 지시가 매 턴 실린다', () => {
+    const s = build({ core: '재빈은 러너를 담당한다', slugs: [] });
+    expect(s).toContain('memory.set');
+    expect(s).toContain('고쳐');
+  });
+
+  /**
+   * slug 문법을 프롬프트가 말하는지. 이 줄이 없던 동안 에이전트들은 접두사 없는 이름으로
+   * 시도하고 `invalid_slug` 를 받은 뒤 `core` 하나만 쓰고 살았다(2026-09-11 실측: 9 중 8).
+   */
+  it('slug 문법(`mem/` 접두사)을 적는다', () => {
+    const s = build({ core: '무엇이든', slugs: [] });
+    expect(s).toContain('mem/');
+    expect(s).toContain('invalid_slug');
+  });
+
+  // 사용법은 `</memory>` **바깥**에 선다 — 안은 데이터, 밖은 지시다.
+  it('사용법은 memory 블록 바깥에 있다', () => {
+    const s = build({ core: '본문', slugs: [] });
+    expect(s.indexOf('</memory>')).toBeLessThan(s.indexOf('invalid_slug'));
+  });
+
   // **이 작업의 핵심 회귀선.** 조회 실패를 "기억 없음" 으로 읽으면 에이전트가 진짜
   // 기억을 새 프로필로 덮어쓴다. 온보딩 안내가 들어가는지까지 단정해야 그 구분이
   // 실제로 검사된다 — "아무것도 안 들어간다" 만 보면 빈 값 삼키기가 우연히 통과한다.
