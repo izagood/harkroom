@@ -3051,5 +3051,13 @@ export function renamedEnv(
 ): string | undefined {
   const found = env[name];
   if (found !== undefined) return found;
-  return name.startsWith('HARKROOM_') ? env[`HARKROOM_${name.slice('HARKROOM_'.length)}`] : undefined;
+  // 옛 접두사가 **글자 그대로 남는 유일한 자리**다. 여기서만 남기는 이유가 둘 있다:
+  // `5d` 에서 걷어낼 때 `git grep MURMUR_` 한 번으로 찾히고, 지우면 이 함수만 사라진다.
+  //
+  // **한 번 데였다**: 일괄 치환(`MURMUR_` → `HARKROOM_`)이 이 줄까지 먹어서 폴백이 자기
+  // 자신을 찾는 no-op 이 됐다. 아래 회귀선이 그것을 잡았다 — 문자열을 쪼개 숨기는 대신
+  // 그대로 두고 테스트로 지킨다(숨기면 5d 에서 못 찾는다).
+  return name.startsWith('HARKROOM_')
+    ? env[`MURMUR_${name.slice('HARKROOM_'.length)}`]
+    : undefined;
 }
