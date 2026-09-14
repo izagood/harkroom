@@ -1840,7 +1840,8 @@ export class Controller {
    * 편집 결과를 반영하려면 목록을 다시 받아야 한다. `createChannel` 과 같은 이유다.
    */
   async updateChannel(
-    id: string, input: { topic?: string; repo?: string | null; visibility?: 'public' | 'private' },
+    id: string,
+    input: { name?: string; topic?: string; repo?: string | null; visibility?: 'public' | 'private' },
   ): Promise<ChannelRow> {
     const updated = await this.api.updateChannel(id, input);
     this.store.getState().set({ channels: await this.api.channels() });

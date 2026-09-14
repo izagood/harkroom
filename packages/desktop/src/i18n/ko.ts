@@ -664,6 +664,8 @@ export const ko = {
 
   'sidebar.edit.cancel': '취소',
   'sidebar.edit.failed': '채널 편집에 실패했다',
+  'sidebar.edit.namePlaceholder': '채널 이름',
+  'sidebar.edit.nameTaken': '같은 이름을 쓰는 채널이 이미 있다',
   'sidebar.edit.repoPlaceholder': 'repo (비우면 해제)',
   'sidebar.edit.save': '저장',
   'sidebar.edit.title': '{name} 편집',
