@@ -97,7 +97,7 @@ describe('러너 실행 명령 (#177)', () => {
     render(<AgentsSettings />);
     await openAgent('test-agent');
 
-    expect(screen.getByText(/MURMUR_PAT=<발급한 토큰>/)).toBeTruthy();
+    expect(screen.getByText(/HARKROOM_PAT=<발급한 토큰>/)).toBeTruthy();
   });
 
   it('1b. PAT 가 0 개인 에이전트에서도 틀은 보인다 — 발급 직후만이 아니다', async () => {
@@ -105,7 +105,7 @@ describe('러너 실행 명령 (#177)', () => {
     render(<AgentsSettings />);
     await openAgent('test-agent');
 
-    expect(screen.getByText(/MURMUR_PAT=<발급한 토큰>/)).toBeTruthy();
+    expect(screen.getByText(/HARKROOM_PAT=<발급한 토큰>/)).toBeTruthy();
   });
 
   it('2. 틀에는 토큰이 없고 자리표시 문구가 있다', async () => {
@@ -113,7 +113,7 @@ describe('러너 실행 명령 (#177)', () => {
     render(<AgentsSettings />);
     await openAgent('test-agent');
 
-    const commandText = screen.getByText(/MURMUR_PAT=<발급한 토큰>/).textContent ?? '';
+    const commandText = screen.getByText(/HARKROOM_PAT=<발급한 토큰>/).textContent ?? '';
     expect(commandText).toContain('<발급한 토큰>');
     expect(commandText).not.toContain('murp_');
   });
@@ -172,7 +172,7 @@ describe('러너 실행 명령 (#177)', () => {
     render(<AgentsSettings />);
     await openAgent('test-agent');
 
-    const command = screen.getByText(/MURMUR_PAT=<발급한 토큰>/);
+    const command = screen.getByText(/HARKROOM_PAT=<발급한 토큰>/);
     fireEvent.click(within(sectionOf(RUNNER_SECTION)).getByRole('button', { name: '명령 복사' }));
 
     // 오류가 보이는 자리에 있다 — `sr-only` 나 콘솔이 아니라 사람이 읽는 텍스트다.
@@ -185,7 +185,7 @@ describe('러너 실행 명령 (#177)', () => {
     const selection = window.getSelection();
     expect(selection?.rangeCount).toBe(1);
     expect(command.contains(selection!.getRangeAt(0).startContainer)).toBe(true);
-    expect(selection?.toString()).toContain('MURMUR_PAT');
+    expect(selection?.toString()).toContain('HARKROOM_PAT');
   });
 });
 

@@ -402,7 +402,7 @@ describe('3. 키체인의 PAT 를 재사용한다 (기동마다 재발급하지 
     expect(api.mintPat).not.toHaveBeenCalled();
     expect(api.revokePat).not.toHaveBeenCalled();
     expect(api.listPats).not.toHaveBeenCalled();
-    expect(spawner.spawns[0]!.env.MURMUR_PAT).toBe('murp_old');
+    expect(spawner.spawns[0]!.env.HARKROOM_PAT).toBe('murp_old');
   });
 
   it('키체인을 못 읽으면 발급하지 않는다 — 돌고 있는 러너를 죽이지 않는다', async () => {
@@ -428,7 +428,7 @@ describe('4. 첫 발급', () => {
     const label = patLabelPrefix(DEVICE);
     expect(api.mintPat).toHaveBeenCalledWith('a', label);
     expect(secrets.map.get('a')).toEqual({ label, token: `murp_${label}` });
-    expect(spawner.spawns[0]!.env.MURMUR_PAT).toBe(`murp_${label}`);
+    expect(spawner.spawns[0]!.env.HARKROOM_PAT).toBe(`murp_${label}`);
   });
 
   it('같은 라벨이 서버에 살아 있으면 **먼저 폐기하고** 발급한다', async () => {
@@ -467,7 +467,7 @@ describe('4-1. 앱 실행 뒤 만든 에이전트', () => {
     expect(secrets.map.get('codex')).toEqual(createdPat);
     expect(api.mintPat).not.toHaveBeenCalled();
     expect(spawner.spawns).toHaveLength(1);
-    expect(spawner.spawns[0]!.env.MURMUR_PAT).toBe('murp_created');
+    expect(spawner.spawns[0]!.env.HARKROOM_PAT).toBe('murp_created');
     expect(launcher.getStates()[0]!.status).toBe('running');
   });
 
@@ -515,7 +515,7 @@ describe('5. 재발급 — 새 발급 → 옛 폐기 → 재실행', () => {
     expect(api.calls).toEqual([`mint:${newLabel}`, `revoke:${oldLabel}`]);
     // 그리고 재실행이 일어났고, 새 토큰으로 떴다.
     expect(spawner.spawns).toHaveLength(2);
-    expect(spawner.spawns[1]!.env.MURMUR_PAT).toBe(`murp_${newLabel}`);
+    expect(spawner.spawns[1]!.env.HARKROOM_PAT).toBe(`murp_${newLabel}`);
     // 옛 자식은 죽였다 — 같은 에이전트에 러너가 둘이면 안 된다.
     expect(spawner.kills).toEqual([0]);
     expect(secrets.map.get('a')).toEqual({ label: newLabel, token: `murp_${newLabel}` });
@@ -805,7 +805,7 @@ describe('7. 한 에이전트가 못 떠도 나머지는 뜬다', () => {
     spawner.failNext = new Error('program not allowed');
     await startAll(launcher, [agent('a'), agent('b')]);
 
-    expect(spawner.spawns.map((s) => s.env.MURMUR_PAT)).toHaveLength(1);
+    expect(spawner.spawns.map((s) => s.env.HARKROOM_PAT)).toHaveLength(1);
     const byId = Object.fromEntries(launcher.getStates().map((s) => [s.agentId, s]));
     expect(byId.a!.status).toBe('failed');
     expect(byId.a!.message).toContain('program not allowed');
@@ -836,15 +836,15 @@ describe('7. 한 에이전트가 못 떠도 나머지는 뜬다', () => {
  * 위치를 스스로 안다, `main.rs::sidecar_path()`). 옛 "8. 저장소 경로"·
  * "10. 전역 저장소(#425)" 스위트가 여기 있었다 — 이 자리는 그 제거의 흔적이다.
  *
- * 남는 것은 `MURMUR_URL`(서버 주소)뿐이고, 그것은 "3. 키체인의 PAT 를 재사용한다" 등
+ * 남는 것은 `HARKROOM_URL`(서버 주소)뿐이고, 그것은 "3. 키체인의 PAT 를 재사용한다" 등
  * 다른 스위트가 이미 `spawner.spawns[0]!.env` 로 확인하고 있다.
  */
-describe('8. MURMUR_URL 은 서버 주소 그대로 넘어간다', () => {
-  it('env.MURMUR_URL 이 api.baseUrl 과 같다', async () => {
+describe('8. HARKROOM_URL 은 서버 주소 그대로 넘어간다', () => {
+  it('env.HARKROOM_URL 이 api.baseUrl 과 같다', async () => {
     const { launcher, spawner } = make();
     await startAll(launcher, [agent('a')]);
 
-    expect(spawner.spawns[0]!.env.MURMUR_URL).toBe('https://murmur.example');
+    expect(spawner.spawns[0]!.env.HARKROOM_URL).toBe('https://murmur.example');
   });
 });
 

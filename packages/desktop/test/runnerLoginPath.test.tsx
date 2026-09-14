@@ -220,7 +220,7 @@ describe('2. 얻은 PATH 가 자식 env 에 들어간다', () => {
     expect(spawner.spawns).toHaveLength(1);
     expect(spawner.spawns[0]!.env.PATH).toBe(login);
     // 다른 env 를 밀어내지 않는다.
-    expect(spawner.spawns[0]!.env.MURMUR_URL).toBe('https://murmur.example');
+    expect(spawner.spawns[0]!.env.HARKROOM_URL).toBe('https://murmur.example');
   });
 
   it('프로세스 생애 동안 한 번만 읽는다 — 러너 수만큼 셸을 띄우지 않는다', async () => {

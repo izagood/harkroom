@@ -478,8 +478,8 @@ fn daemon_spawn_runner(
     let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
 
     let mut env = HashMap::new();
-    env.insert("MURMUR_PAT".to_string(), murmur_pat);
-    env.insert("MURMUR_URL".to_string(), murmur_url);
+    env.insert("HARKROOM_PAT".to_string(), murmur_pat);
+    env.insert("HARKROOM_URL".to_string(), murmur_url);
     env.insert("PATH".to_string(), path);
     // `agent_version` 만 `Option` 인 이유: 나머지 셋은 없으면 러너가 아예 못 뜨지만
     // 이것은 **없을 수 있는 값**이다(`AppVersionReader` 가 `null` 을 돌려주는 경우).
@@ -700,10 +700,10 @@ mod tests {
         );
 
         let child = std::process::Command::new(&program)
-            .env("MURMUR_PAT", "test-fake-pat")
+            .env("HARKROOM_PAT", "test-fake-pat")
             // 접속하지 않는 포트 — node-pty 로딩 이후 단계(서버 접속)에서 무엇이 나든
             // 이 테스트가 관심 있는 것은 그 전 단계(모듈 해석)뿐이다.
-            .env("MURMUR_URL", "http://127.0.0.1:1")
+            .env("HARKROOM_URL", "http://127.0.0.1:1")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

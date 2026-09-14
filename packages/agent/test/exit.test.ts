@@ -7,10 +7,10 @@
  */
 import { describe, it, expect } from 'vitest';
 import { CREDENTIAL_REJECTED_LINE, EX_CONFIG, EXECUTABLE_NOT_FOUND_LINE, HARNESS_LOGIN_REQUIRED_LINE, runnerExitPlan } from '../src/exit.js';
-import { ExecutableNotFoundError, MURMUR_ERROR_SOURCE } from '../src/policy.js';
+import { ExecutableNotFoundError, HARKROOM_ERROR_SOURCE } from '../src/policy.js';
 
 const murmurErr = (status: number) =>
-  Object.assign(new Error(`murmur ${status}`), { status, source: MURMUR_ERROR_SOURCE });
+  Object.assign(new Error(`murmur ${status}`), { status, source: HARKROOM_ERROR_SOURCE });
 
 /**
  * 하네스가 자기 세션 파일에 남긴 에러(2026-09-08). 자격증명 판정의 재료가 PTY tail 에서
@@ -41,7 +41,7 @@ describe('자격증명 실패는 78 로 물러난다', () => {
   });
 
   it('murmur PAT 문제와 하네스 로그인 문제를 다르게 안내한다 — 볼 곳이 다르다', () => {
-    expect(runnerExitPlan(murmurErr(401))!.lines.join('\n')).toContain('MURMUR_PAT');
+    expect(runnerExitPlan(murmurErr(401))!.lines.join('\n')).toContain('HARKROOM_PAT');
     expect(runnerExitPlan(harnessErr('x-api-key'))!.lines.join('\n')).toContain('claude CLI');
   });
 

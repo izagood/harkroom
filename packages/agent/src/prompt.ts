@@ -38,7 +38,7 @@ const TAIL_NOTICE_MAX_CHARS = 1000;
  * ## 새니타이즈가 선택이 아닌 이유
  *
  * PTY 안에서는 stdout·stderr 가 한 스트림으로 섞이고 프롬프트 에코까지 남는다(`pty.ts`
- * 주석의 실측). 러너 env 에는 `MURMUR_PAT` 가 있으므로 하네스가 `env` 를 찍는 순간 그것이
+ * 주석의 실측). 러너 env 에는 `HARKROOM_PAT` 가 있으므로 하네스가 `env` 를 찍는 순간 그것이
  * tail 에 들어온다 — 걸러내지 않으면 이 통지가 **비밀을 대화에 흘리는 경로**가 된다.
  * 그래서 러너 자신의 PAT(정확한 문자열), `murp_` 모양의 다른 토큰, `Bearer <값>` 을 가린다.
  *
@@ -758,7 +758,7 @@ function renderLine(m: MessageRow, handles: Record<string, string>): string {
  * 추측해** 고쳤다. 추측이 맞았지만 그것은 운이다.
  *
  * 정작 바이트는 그때도 닿을 수 있었다. 막힌 것은 통로가 아니라 **아는 것**이었다:
- *   - 하네스는 러너 env 를 통째로 물려받아 `MURMUR_PAT` 을 들고 있다(turn.ts::childEnv).
+ *   - 하네스는 러너 env 를 통째로 물려받아 `HARKROOM_PAT` 을 들고 있다(turn.ts::childEnv).
  *   - 서버에는 `GET /attachments/:id` 가 계정 인가로 열려 있다(attachmentRoutes.ts).
  *   - 그런데 프롬프트는 파일명만 줬고(위 renderLine 의 옛 코드), 이 통로를 아무도 말해
  *     주지 않았다. 셋 중 어느 하나가 아니라 **id + 통로 안내**가 빠져 있었다.
@@ -778,7 +778,7 @@ function attachmentHowTo(murmurUrl: string): string[] {
     '',
     '(위 `[첨부: …]` 의 id 로 첨부 바이트를 직접 받을 수 있다 — 파일명만 보고 내용을 짐작하지 마라.',
     '셸이 있으면:',
-    `  curl -fsS -H "Authorization: Bearer $MURMUR_PAT" ${murmurUrl}/attachments/<id> -o /tmp/<파일명>`,
+    `  curl -fsS -H "Authorization: Bearer $HARKROOM_PAT" ${murmurUrl}/attachments/<id> -o /tmp/<파일명>`,
     '받은 파일을 열어서 봐라 — 이미지도 그대로 읽힌다.',
     '셸이 없으면 murmur MCP 의 `attachment.fetch` 를 attachmentId 로 불러라 — 이미지는 그 응답에',
     '그림으로 실려 온다. 받기가 실패했을 때만 "못 봤다"고 말하고, 못 본 것을 본 것처럼 쓰지 마라.)',
@@ -807,7 +807,7 @@ export function buildTurnPrompt(opts: {
   /**
    * 서버 베이스 URL(`config.murmurUrl`). 첨부 안내에 실을 실값이다.
    *
-   * 옵셔널이 아니라 필수인 이유: 여기서 `$MURMUR_URL` 같은 env 참조로 때우면 그 변수가
+   * 옵셔널이 아니라 필수인 이유: 여기서 `$HARKROOM_URL` 같은 env 참조로 때우면 그 변수가
    * 없는 러너(`config.ts` 는 없으면 기본값으로 넘어간다)에서 curl 이 조용히 실패한다.
    * 러너는 자기가 붙은 URL 을 이미 알고 있으므로 그 값을 받는다 — 두 번째 진실 원천을
    * 만들지 않는다. 첨부가 없는 턴에는 쓰이지 않지만 그렇다고 옵셔널로 두면 새 호출자가

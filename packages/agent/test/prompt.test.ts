@@ -62,7 +62,7 @@ describe('buildTurnPrompt', () => {
 
   // 2026-09-08 실측 회귀선: 파일명만 실려 있던 동안, 스크린샷을 받은 에이전트가 "첨부를
   // 열지 못했습니다"라고 답한 뒤 코드만 보고 어느 화면인지 **추측해서** 고쳤다. 바이트는
-  // 그때도 `GET /attachments/:id` 로 닿을 수 있었고(하네스 env 에 MURMUR_PAT 이 있다),
+  // 그때도 `GET /attachments/:id` 로 닿을 수 있었고(하네스 env 에 HARKROOM_PAT 이 있다),
   // 빠져 있던 것은 그 열쇠인 **id** 와 통로 안내였다. 파일명만 재는 단언으로는 그 회귀가
   // 다시 들어와도 통과하므로, id 를 함께 잰다.
   it('첨부가 있는 메시지는 파일명과 함께 id·타입·크기를 싣는다 — id 가 바이트를 받는 유일한 열쇠다', () => {
@@ -79,7 +79,7 @@ describe('buildTurnPrompt', () => {
   });
 
   // id 만 실어도 그것으로 무엇을 할 수 있는지 모르면 아무 일도 일어나지 않는다 — 통로를
-  // 함께 말해야 한다. URL 은 러너가 아는 실값이어야 한다: `$MURMUR_URL` 로 때우면 그 변수가
+  // 함께 말해야 한다. URL 은 러너가 아는 실값이어야 한다: `$HARKROOM_URL` 로 때우면 그 변수가
   // 없는 러너(config.ts 가 기본값으로 넘어가는 경우)에서 curl 이 조용히 실패한다.
   it('첨부가 있으면 바이트를 받는 방법을 실제 서버 URL 과 함께 알려준다', () => {
     const r = buildTurnPrompt({
@@ -90,7 +90,7 @@ describe('buildTurnPrompt', () => {
       murmurUrl: 'http://murmur.example:3400',
     });
     expect(r.prompt).toContain('http://murmur.example:3400/attachments/');
-    expect(r.prompt).toContain('$MURMUR_PAT');
+    expect(r.prompt).toContain('$HARKROOM_PAT');
     // 토큰 실값은 프롬프트에 굽지 않는다 — env 이름만 적는다(#92·#117 과 같은 이유).
     expect(r.prompt).not.toContain('Bearer eyJ');
     // **셸이 없는 하네스의 통로도 함께 적는다.** curl 만 적으면 셸이 없는 에이전트는 이
@@ -751,11 +751,11 @@ describe('harnessTailNotice — 버려지던 마지막 출력', () => {
   /**
    * **이것이 없으면 이 기능을 넣을 수 없다.** PTY 안에서는 stdout·stderr 가 한 스트림으로
    * 섞이고 프롬프트 에코까지 남는다(`pty.ts` 주석의 실측). 러너 env 에는 PAT 가 있으므로
-   * (`MURMUR_PAT`) 하네스가 `env` 를 찍는 순간 그것이 tail 에 들어온다 — 새니타이즈 없이
+   * (`HARKROOM_PAT`) 하네스가 `env` 를 찍는 순간 그것이 tail 에 들어온다 — 새니타이즈 없이
    * 올리면 통지가 **비밀을 대화에 흘리는 경로**가 된다.
    */
   it('PAT 와 Bearer 토큰을 가린다', () => {
-    const n = harnessTailNotice('MURMUR_PAT=murp_secret_value 로 붙었다', 'murp_secret_value');
+    const n = harnessTailNotice('HARKROOM_PAT=murp_secret_value 로 붙었다', 'murp_secret_value');
     expect(n).not.toContain('murp_secret_value');
     expect(n).toContain('(가림)');
 

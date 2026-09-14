@@ -91,10 +91,10 @@ USER 1000:1000
 #
 # `.git` 은 빌드 컨텍스트에서 빠져 있어(`.dockerignore`) 이미지가 스스로 sha 를 알 수 없다.
 # 그래서 빌드하는 쪽이 심어 준다:
-#   MURMUR_COMMIT=$(git rev-parse --short HEAD) docker compose build server
+#   HARKROOM_COMMIT=$(git rev-parse --short HEAD) docker compose build server
 # 안 심으면 `null` 로 말한다 — 빌드는 그대로 된다(docs/operations.md).
-ARG MURMUR_COMMIT=""
-ENV MURMUR_COMMIT=$MURMUR_COMMIT
+ARG HARKROOM_COMMIT=""
+ENV HARKROOM_COMMIT=$HARKROOM_COMMIT
 
 EXPOSE 3400
 

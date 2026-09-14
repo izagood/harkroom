@@ -17,15 +17,15 @@ import { harnessAdaptersEnabled } from '../src/adapters/index.js';
 import { currentExecutionPath, runWithExecutionPath } from '../src/executionPath.js';
 
 let saved: string | undefined;
-beforeEach(() => { saved = process.env.MURMUR_HARNESS_ADAPTERS; });
+beforeEach(() => { saved = process.env.HARKROOM_HARNESS_ADAPTERS; });
 afterEach(() => {
-  if (saved === undefined) delete process.env.MURMUR_HARNESS_ADAPTERS;
-  else process.env.MURMUR_HARNESS_ADAPTERS = saved;
+  if (saved === undefined) delete process.env.HARKROOM_HARNESS_ADAPTERS;
+  else process.env.HARKROOM_HARNESS_ADAPTERS = saved;
 });
 
 function setEnv(on: boolean): void {
-  if (on) process.env.MURMUR_HARNESS_ADAPTERS = '1';
-  else delete process.env.MURMUR_HARNESS_ADAPTERS;
+  if (on) process.env.HARKROOM_HARNESS_ADAPTERS = '1';
+  else delete process.env.HARKROOM_HARNESS_ADAPTERS;
 }
 
 describe('실행 경로 — 에이전트가 고른 것이 먼저다', () => {

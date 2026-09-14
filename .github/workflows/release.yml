@@ -348,14 +348,14 @@ jobs:
       # `ci.yml` 이 PR 경로에서 이 순서를 못박았고, **릴리즈 경로에서도 같아야 한다** —
       # 한쪽만 자동이면 릴리즈에서 사이드카 없는 앱이 나간다.
       #
-      # `MURMUR_RUNNER_TARGET_TRIPLE` 을 명시하는 이유: 이 값이 `node-pty` 의 **어느 아키텍처
+      # `HARKROOM_RUNNER_TARGET_TRIPLE` 을 명시하는 이유: 이 값이 `node-pty` 의 **어느 아키텍처
       # prebuild 를 곁들일지**를 정한다(`scripts/sidecar.mjs` 가 `prebuilds/<platform>-<arch>`
       # 중 이것 하나만 남긴다). 지정하지 않으면 `rustc` 의 host 를 쓰는데, 그것이 아래
       # `tauri build --target` 과 갈리는 순간 **아키텍처가 안 맞는 `pty.node` 가 실린다**.
       # 지금은 러너도 타깃도 arm64 라 우연히 같지만, 매트릭스를 늘리는 순간 갈린다.
       - name: 사이드카를 먼저 만든다 (#441)
         env:
-          MURMUR_RUNNER_TARGET_TRIPLE: ${{ matrix.triple }}
+          HARKROOM_RUNNER_TARGET_TRIPLE: ${{ matrix.triple }}
         run: pnpm --filter @harkroom/desktop build:sidecar
 
       # ## `bundle.targets` 는 `["app", "dmg"]` 그대로다 — **넓힐 자리가 아니었다**
@@ -440,7 +440,7 @@ jobs:
           fi
           rm -f "$cert"
 
-      # 스크립트는 `MURMUR_SIGN_IDENTITY` 로 서명 주체를 강제받는다. 키체인을 뒤지게 두면
+      # 스크립트는 `HARKROOM_SIGN_IDENTITY` 로 서명 주체를 강제받는다. 키체인을 뒤지게 두면
       # 러너에 인증서가 여러 개일 때 엉뚱한 것을 고를 수 있다.
       #
       # **절대 경로여야 한다.** `pnpm --filter` 는 그 패키지 디렉터리에서 스크립트를 돌리므로
@@ -448,13 +448,13 @@ jobs:
       # `packages/desktop/packages/desktop/...` 을 찾는다(실측 2026-09-06, 두 번째 시도).
       # 첫 시도는 경로가 아예 안 넘어가서, 두 번째는 넘겼지만 상대라서 죽었다.
       #
-      # `MURMUR_APP_PATH` 를 넘기는 이유: `--target` 을 준 빌드는 산출물을
+      # `HARKROOM_APP_PATH` 를 넘기는 이유: `--target` 을 준 빌드는 산출물을
       # `target/<triple>/release/` 에 놓는데 스크립트의 기본 경로는 `target/release/` 다.
       # 안 넘기면 **`서명할 .app 이 없다`** 로 죽는다(실측 2026-09-06, 첫 릴리즈).
       - name: 앱을 서명한다
         env:
-          MURMUR_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          MURMUR_APP_PATH: ${{ github.workspace }}/packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app
+          HARKROOM_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          HARKROOM_APP_PATH: ${{ github.workspace }}/packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app
         run: pnpm --filter @harkroom/desktop sign
 
       # ## 공증 — `.p8` 을 **파일로** 푼다
@@ -464,15 +464,15 @@ jobs:
       - name: 앱을 공증한다
         env:
           APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
-          MURMUR_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          MURMUR_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
+          HARKROOM_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          HARKROOM_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
         run: |
           set -euo pipefail
           key="$RUNNER_TEMP/notary-key.p8"
           # `umask` 로 만들어지자마자 남이 못 읽게 한다.
           (umask 077; echo "$APPLE_NOTARY_KEY" | base64 --decode > "$key")
-          MURMUR_NOTARY_KEY="$key" \
-            MURMUR_APP_PATH="${{ github.workspace }}/packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app" \
+          HARKROOM_NOTARY_KEY="$key" \
+            HARKROOM_APP_PATH="${{ github.workspace }}/packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app" \
             pnpm --filter @harkroom/desktop notarize
 
       - name: 공증 키를 지운다

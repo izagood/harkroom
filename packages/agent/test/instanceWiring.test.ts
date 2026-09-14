@@ -78,7 +78,7 @@ describe('#174 인스턴스 값이 턴 로직에 닿지 않는다', () => {
       if (ALLOWED.has(rel)) continue;
       const text = await readFile(join(entry.parentPath, entry.name), 'utf8');
       // 주석의 언급은 괜찮다 — 값이 흐르는 것만 문제다. 그래서 식별자 형태만 본다.
-      if (/\bagentInstance\b|MURMUR_AGENT_INSTANCE/.test(stripComments(text))) leaked.push(rel);
+      if (/\bagentInstance\b|HARKROOM_AGENT_INSTANCE/.test(stripComments(text))) leaked.push(rel);
     }
     expect(leaked).toEqual([]);
   });

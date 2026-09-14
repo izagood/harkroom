@@ -1,6 +1,6 @@
 // murmur 에이전트 러너. 멘션을 기다리다 깨어나 답한다.
 //
-// 실행(저장소 안): MURMUR_URL=... MURMUR_PAT=murp_... pnpm --filter @harkroom/agent start
+// 실행(저장소 안): HARKROOM_URL=... HARKROOM_PAT=murp_... pnpm --filter @harkroom/agent start
 // 배포판에서는 이 소스가 아니라 **단일 번들**이 돈다 — `#431` 1단계가 러너를 Tauri
 // 사이드카(`externalBin`)로 만들어 앱과 함께 배포하고, `.app` 안
 // `Contents/MacOS/harkroom-runner` 로 놓인다. 즉 위 pnpm 명령은 죽지 않았지만 **개발 환경
@@ -15,6 +15,7 @@
 // mentionTurn.ts::runMentionTurn 에 있다: main.ts 는 top-level await 로 접속·설정 파일
 // 쓰기 같은 부작용을 곧바로 일으키므로, 그 흐름을 여기 두면 테스트가 import 하는 순간
 // 진짜 서버에 붙으려 든다.
+import { renamedEnv } from '@harkroom/shared';
 import { execFile } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -177,7 +178,7 @@ const [me, guide] = await (async () => {
 // 아니라 id 인지는 stateDir.ts 주석에 있다.
 //
 // #174: 같은 에이전트를 여러 인스턴스로 동시에 돌리기 위해 인스턴스 축을 하나 더한다.
-// MURMUR_AGENT_INSTANCE 가 없으면 기존 경로가 그대로(하위 호환). 있으면 마지막
+// HARKROOM_AGENT_INSTANCE 가 없으면 기존 경로가 그대로(하위 호환). 있으면 마지막
 // 세그먼트로 붙는다.
 //
 // **세션 파일·MCP 설정·avcs 워크스페이스 경로를 여기서 이어 붙이지 않는다** — 그 셋을
@@ -198,9 +199,9 @@ const codexHome = await ensureCodexHome(codexHomeDir);
 // 묶여 있었고, 계정 전환을 그 경로로 하는 도구에서 사람이 계정을 바꿔도 러너에 닿지 않았다
 // (`claudeAccounts.ts` 모듈 주석).
 //
-// `MURMUR_CLAUDE_ACCOUNTS` 에 없는 계정이 오면 이 호출이 던지고 러너는 뜨지 않는다 —
+// `HARKROOM_CLAUDE_ACCOUNTS` 에 없는 계정이 오면 이 호출이 던지고 러너는 뜨지 않는다 —
 // 조용히 무시하면 운영자가 계정 B 라고 믿고 띄운 러너가 A 로 돈다.
-// 풀 축(다중 계정 2단계): 어느 풀을 쓸지는 `MURMUR_CLAUDE_POOL` → `pools.json` 의 이
+// 풀 축(다중 계정 2단계): 어느 풀을 쓸지는 `HARKROOM_CLAUDE_POOL` → `pools.json` 의 이
 // 에이전트 배정 → 기본 풀 → 암묵 풀(뿌리 자체) 순으로 정해진다.
 //
 // **키는 `me.id`** 다 — handle 이 아닌 이유는 `stateDir.ts` 판단과 같다: handle 은 바뀔 수
@@ -211,8 +212,8 @@ const codexHome = await ensureCodexHome(codexHomeDir);
 // `sessions.json` 에 대해 적은 것과 같은 근거).
 const lane = await loadClaudeAccountLane({
   agentId: me.id,
-  forcedPool: process.env.MURMUR_CLAUDE_POOL,
-  order: process.env.MURMUR_CLAUDE_ACCOUNTS,
+  forcedPool: renamedEnv(process.env, 'HARKROOM_CLAUDE_POOL'),
+  order: renamedEnv(process.env, 'HARKROOM_CLAUDE_ACCOUNTS'),
 });
 const claudeAccounts = lane.accounts;
 // **이름만 적는다** — 이메일·토큰·Keychain 서비스명은 적지 않는다(PAT 규율과 같다).

@@ -1,3 +1,4 @@
+import { renamedEnv } from '@harkroom/shared';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -19,7 +20,7 @@ function validateInstance(instance: string | undefined): string | undefined {
   if (!instance) return undefined;
   if (!INSTANCE_PATTERN.test(instance)) {
     throw new Error(
-      `MURMUR_AGENT_INSTANCE 가 유효하지 않다: "${instance}". ` +
+      `HARKROOM_AGENT_INSTANCE 가 유효하지 않다: "${instance}". ` +
       `문자 집합은 [a-z0-9-]{1,32} 이다.`,
     );
   }
@@ -64,7 +65,7 @@ export interface RunnerConfig {
 }
 
 function required(env: NodeJS.ProcessEnv, key: string): string {
-  const v = env[key];
+  const v = renamedEnv(env, key);
   if (!v) throw new Error(`${key} 가 필요하다`);
   return v;
 }
@@ -73,8 +74,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
   // 모델·effort 는 여기 없다 — 서버 정의에 있어야 UI 수정이 반영된다.
   // claude-code harness 는 claude CLI 의 자격증명을 쓰므로 API 키도 필요 없다.
   return {
-    murmurUrl: (env.MURMUR_URL ?? 'http://localhost:3400').replace(/\/$/, ''),
-    murmurPat: required(env, 'MURMUR_PAT'),
+    murmurUrl: (renamedEnv(env, 'HARKROOM_URL') ?? 'http://localhost:3400').replace(/\/$/, ''),
+    murmurPat: required(env, 'HARKROOM_PAT'),
     // 서버의 inbox.poll 상한은 25초다.
     pollTimeoutMs: Number(env.AGENT_POLL_TIMEOUT_MS ?? 25_000),
     // 코딩 에이전트 한 턴은 도구 호출을 여러 번 거칠 수 있다 — 30분을 기본값으로 둔다.
@@ -83,7 +84,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
     // 정지(30분 내내 한 줄도 안 자랐다)와는 멀리 떨어져 있다. 0 이면 재지 않는다.
     harnessStallMs: Number(env.AGENT_HARNESS_STALL_MS ?? 10 * 60_000),
     stateDir: env.AGENT_STATE_DIR ?? join(homedir(), '.murmur-agent'),
-    agentInstance: validateInstance(env.MURMUR_AGENT_INSTANCE),
+    agentInstance: validateInstance(renamedEnv(env, 'HARKROOM_AGENT_INSTANCE')),
     // 60초 — 사람이 티켓을 받고 attach 하기까지, 또는 잠깐 끊긴 소켓이 재-attach 하기까지의
     // 여유다. 더 짧으면 네트워크 순단이 곧 턴 종료가 되고, 더 길면 닫은 터미널이 그만큼 산다.
     interactiveOrphanMs: Number(env.AGENT_INTERACTIVE_ORPHAN_MS ?? 60_000),

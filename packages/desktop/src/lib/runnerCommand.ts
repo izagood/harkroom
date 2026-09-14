@@ -6,7 +6,7 @@
  * 설정 → 에이전트 화면은 오랫동안 이렇게 안내했다:
  *
  * ```
- * MURMUR_PAT=<발급한 토큰> pnpm --filter @harkroom/agent start
+ * HARKROOM_PAT=<발급한 토큰> pnpm --filter @harkroom/agent start
  * ```
  *
  * **그 명령은 이제 대부분의 사람에게 실패한다.** `#431` 1단계가 러너를 단일 번들로 만들어
@@ -49,7 +49,7 @@
  * 앱 이름은 `tauri.conf.json` 의 `productName`(`murmur`)이 정한다. 사람이 앱을 어디에
  * 설치했는지는 앱이 알 수 없으므로 `/Applications` 를 **예시로만** 적는다.
  *
- * ## `MURMUR_URL` 을 함께 적는 이유
+ * ## `HARKROOM_URL` 을 함께 적는 이유
  *
  * 러너의 기본 서버 주소는 `http://localhost:3400` 이다(`packages/agent/src/config.ts`).
  * 다른 머신에서 손으로 띄우는 사람에게 그 기본값은 거의 항상 틀리다 — 빠뜨리면 러너가
@@ -108,7 +108,7 @@ export function runnerCommands(pat: string): {
   /** 저장소를 클론한 개발 환경 전용. */
   dev: string;
 } {
-  const env = `MURMUR_URL=${SERVER_URL_PLACEHOLDER} MURMUR_PAT=${pat}`;
+  const env = `HARKROOM_URL=${SERVER_URL_PLACEHOLDER} HARKROOM_PAT=${pat}`;
   return {
     bundled: `${env} ${RUNNER_SIDECAR_PATH}`,
     dev: `${env} ${RUNNER_DEV_COMMAND}`,
