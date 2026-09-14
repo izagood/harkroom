@@ -11,7 +11,12 @@ describe('loadConfig — HARKROOM_AGENT_INSTANCE (#174)', () => {
   it('HARKROOM_AGENT_INSTANCE 가 없으면 인스턴스는 undefined 이고 stateDir 기본값이 그대로다', () => {
     const config = loadConfig({ HARKROOM_PAT: 'murp_test' });
     expect(config.agentInstance).toBeUndefined();
-    expect(config.stateDir).toBe(join(homedir(), '.murmur-agent'));
+    // **둘 중 하나다** — 개명(`~/.murmur-agent` → `~/.harkroom-agent`) 뒤로 이 값은
+    // 기계에 무엇이 있느냐로 갈린다(`pickRenamedDir`). 어느 쪽이 나올지는 이 테스트가
+    // 정할 수 없으므로 **고르는 규칙 자체는 `shared/test/renamedDir.test.ts` 가 재고**,
+    // 여기서는 "홈 아래 그 둘 중 하나"까지만 고정한다.
+    expect([join(homedir(), '.harkroom-agent'), join(homedir(), '.murmur-agent')])
+      .toContain(config.stateDir);
   });
 
   /**

@@ -78,10 +78,10 @@ daemon 이 소유하는 것은 **프로세스**이지 세션이 아니다. 세�
 난다.
 
 2-c 가 디스크에 파일 하나(장부)를 더하지만 **그 파일도 writer 가 daemon 하나**이고,
-`<appDataDir>/daemon/` 안에 산다 — 러너의 상태 디렉터리(`~/.murmur-agent/…`)를 열지
+`<appDataDir>/daemon/` 안에 산다 — 러너의 상태 디렉터리(`~/.harkroom-agent/…`)를 열지
 않는다. 스펙 D5 가 제안한 자리가 그 트리였는데 채택하지 않은 근거는
 `src/runnerLedger.ts` 모듈 주석에 있다. 회귀선(`test/adopt.test.ts`)이 daemon 소스에
-`sessions.json`·`SessionStore`·`.murmur-agent` 가 나타나지 않는 것을 고정한다.
+`sessions.json`·`SessionStore`·`.harkroom-agent` 가 나타나지 않는 것을 고정한다.
 
 ## 로그 — 판정을 남긴다 (`#456` ②)
 

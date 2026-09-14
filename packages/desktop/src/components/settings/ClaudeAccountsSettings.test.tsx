@@ -14,7 +14,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { ClaudeAccountsSettings } from './ClaudeAccountsSettings';
 
 const POOLS_SNAPSHOT = {
-  root: '/home/u/.murmur-agent/claude-accounts',
+  root: '/home/u/.harkroom-agent/claude-accounts',
   mode: 'pools' as const,
   defaultPool: 'work',
   agents: { a1: 'personal' },

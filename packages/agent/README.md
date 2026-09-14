@@ -51,7 +51,7 @@ HARKROOM_URL=<서버 주소> HARKROOM_PAT=murp_... pnpm --filter @harkroom/agent
 | `HARKROOM_AGENT_INSTANCE` | (없음) | 에이전트 인스턴스 ID. 같은 에이전트를 여러 개 돌릴 때 구분한다 ([a-z0-9-]{1,32}) |
 | `AGENT_POLL_TIMEOUT_MS` | `25000` | 서버의 `inbox.poll` 상한 |
 | `AGENT_TURN_TIMEOUT_MS` | `1800000`(30분) | 한 턴(PTY 실행)의 최대 대기 시간. 넘기면 SIGTERM → 5초 → SIGKILL |
-| `AGENT_STATE_DIR` | `~/.murmur-agent` | 세션 파일·MCP 설정·avcs 워크스페이스가 사는 곳 (아래 "상태 디렉터리") |
+| `AGENT_STATE_DIR` | `~/.harkroom-agent` | 세션 파일·MCP 설정·avcs 워크스페이스가 사는 곳 (아래 "상태 디렉터리") |
 
 API 키는 필요 없다 — 모든 harness가 사람의 로컬 로그인(claude: Keychain, codex: `~/.codex/auth.json`)을 쓴다.
 
@@ -151,7 +151,7 @@ MCP `inbox.poll`에만 있고 REST `/inbox`에는 없다. 이 러너를 만들�
 
 ## 상태 디렉터리
 
-`<AGENT_STATE_DIR>/<handle>-<id>/`(기본 `~/.murmur-agent/<handle>-<id>/`) 아래:
+`<AGENT_STATE_DIR>/<handle>-<id>/`(기본 `~/.harkroom-agent/<handle>-<id>/`) 아래:
 
 ```
 sessions.json      # 스레드별 세션 (위)
@@ -288,7 +288,7 @@ MCP 설정을 상속하지 않는다. 승인된 Codex 스킬은 공식 저장소
 풀 하나만 쓴다.
 
 ```
-~/.murmur-agent/claude-accounts/
+~/.harkroom-agent/claude-accounts/
   pools.json          기본 풀·순서·에이전트 배정
   work/               풀
     aria/             계정 = CLAUDE_CONFIG_DIR 하나
@@ -344,15 +344,15 @@ UI가 쓴 뒤 사람이 파인더에서 디렉터리를 지울 수 있고 그때
 등록은 계정마다 한 번, 사람이 해야 한다 — OAuth는 브라우저를 요구한다.
 
 ```sh
-mkdir -p ~/.murmur-agent/claude-accounts/work/aria
-CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/work/aria claude auth login
+mkdir -p ~/.harkroom-agent/claude-accounts/work/aria
+CLAUDE_CONFIG_DIR=~/.harkroom-agent/claude-accounts/work/aria claude auth login
 # 뜬 URL 을 브라우저에서 열고 로그인 → 코드를 붙여 넣는다
 ```
 
 풀을 쓰려면 `pools.json`도 만든다(앱이 대신 쓴다).
 
 ```sh
-cat > ~/.murmur-agent/claude-accounts/pools.json <<'JSON'
+cat > ~/.harkroom-agent/claude-accounts/pools.json <<'JSON'
 { "defaultPool": "work", "order": {}, "agents": {} }
 JSON
 ```
@@ -363,7 +363,7 @@ JSON
 확인:
 
 ```sh
-CLAUDE_CONFIG_DIR=~/.murmur-agent/claude-accounts/work/aria claude auth status --json
+CLAUDE_CONFIG_DIR=~/.harkroom-agent/claude-accounts/work/aria claude auth status --json
 ```
 
 - `HARKROOM_CLAUDE_ACCOUNTS_DIR` — 뿌리를 옮긴다.

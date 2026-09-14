@@ -21,7 +21,8 @@
 // **목록의 진실은 디스크다.** 별도 설정 파일을 두지 않는다. 파일을 두면 파일과 디스크가
 // 갈리는 날이 오고, 그날 러너는 없는 계정을 가리킨다(`ensureCodexHome` 이 `auth.json` 의
 // 존재로 판정하는 것과 같은 규율).
-import { renamedEnv } from '@harkroom/shared';
+import { existsSync } from 'node:fs';
+import { pickRenamedDir, renamedEnv } from '@harkroom/shared';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -49,7 +50,11 @@ export interface ClaudeAccount {
 
 /** 계정 풀의 뿌리. `HARKROOM_CLAUDE_ACCOUNTS_DIR` 로 옮길 수 있다(테스트와 다른 볼륨용). */
 export function claudeAccountsRoot(env: NodeJS.ProcessEnv = process.env): string {
-  return renamedEnv(env, 'HARKROOM_CLAUDE_ACCOUNTS_DIR') ?? join(homedir(), '.murmur-agent', 'claude-accounts');
+  return renamedEnv(env, 'HARKROOM_CLAUDE_ACCOUNTS_DIR') ?? pickRenamedDir(
+    join(homedir(), '.harkroom-agent', 'claude-accounts'),
+    join(homedir(), '.murmur-agent', 'claude-accounts'),
+    existsSync,
+  );
 }
 
 /**

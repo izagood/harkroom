@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from '../src/workspaceTrust.js';
 
-const WS = '/Users/someone/.murmur-agent/agent-x/workspaces/murmur-forge-abc';
+const WS = '/Users/someone/.harkroom-agent/agent-x/workspaces/murmur-forge-abc';
 
 describe('ensureWorkspaceTrusted — claude', () => {
   it('.claude.json 의 projects 에 신뢰를 적는다', async () => {

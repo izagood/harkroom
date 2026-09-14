@@ -637,8 +637,16 @@ describe('채택 판정이 로그에 남는다 (#456 ②)', () => {
  * `.murmur-agent` 금지의 **유일한 예외**를 지운다 — 계정 풀 뿌리
  * (`join(..., '.murmur-agent', 'claude-accounts')`). 그 조합만 지우고 나머지는 남긴다.
  */
+const 상태트리이름 = ['.harkroom-agent', '.murmur-agent'] as const;
+
 function 계정풀예외제거(code: string): string {
-  return code.replace(/['"]\.murmur-agent['"]\s*,\s*['"]claude-accounts['"]/g, '');
+  return 상태트리이름.reduce(
+    (acc, 이름) => acc.replace(
+      new RegExp(`['"]\\${이름}['"]\\s*,\\s*['"]claude-accounts['"]`, 'g'),
+      '',
+    ),
+    code,
+  );
 }
 
 describe('D5 — daemon 은 세션을 읽지도 쓰지도 않는다 (#431)', () => {
@@ -669,7 +677,7 @@ describe('D5 — daemon 은 세션을 읽지도 쓰지도 않는다 (#431)', () 
    * 오는 경우만 허용하고 나머지는 여전히 빨개진다. 데몬이 `~/.murmur-agent/<agent>/` 로
    * 손을 뻗으면 이 회귀선은 그대로 잡는다(아래 자기 검사가 그것을 고정한다).
    */
-  it('daemon 소스에 sessions.json·SessionStore·.murmur-agent 가 없다 (claude-accounts 제외)', async () => {
+  it('daemon 소스에 sessions.json·SessionStore·상태 트리 경로가 없다 (claude-accounts 제외)', async () => {
     const { readdir } = await import('node:fs/promises');
     const srcDir = new URL('../src/', import.meta.url).pathname;
     const 파일들 = (await readdir(srcDir)).filter((f) => f.endsWith('.ts'));
@@ -687,7 +695,10 @@ describe('D5 — daemon 은 세션을 읽지도 쓰지도 않는다 (#431)', () 
       // `.murmur-agent` 는 계정 풀 뿌리만 예외다(위 주석). 그 조합을 먼저 지운 뒤 남은
       // 것을 본다 — 지우지 않고 통째로 허용하면 러너 상태 트리로 손을 뻗는 코드가
       // 조용히 통과한다.
-      if (계정풀예외제거(code).includes('.murmur-agent')) 걸린것.push(`${f}: .murmur-agent`);
+      const 남은것 = 계정풀예외제거(code);
+      for (const 이름 of 상태트리이름) {
+        if (남은것.includes(이름)) 걸린것.push(`${f}: ${이름}`);
+      }
     }
     expect(걸린것).toEqual([]);
   });
@@ -696,14 +707,14 @@ describe('D5 — daemon 은 세션을 읽지도 쓰지도 않는다 (#431)', () 
    * **위 좁히기가 이빨을 잃지 않았는가.** 예외를 넣은 뒤에 그 예외가 금지 전체를 통째로
    * 열어 버리는 것이 이 종류 변경의 전형적인 사고다 — 그래서 그 사고를 여기서 잰다.
    */
-  it('좁힌 금지가 러너 상태 트리는 여전히 잡는다', () => {
-    // 허용: 계정 풀 뿌리.
-    expect(계정풀예외제거(`join(homedir(), '.murmur-agent', 'claude-accounts')`))
-      .not.toContain('.murmur-agent');
-    // 금지: 에이전트별 상태 트리 — sessions.json 이 사는 자리다.
-    expect(계정풀예외제거(`join(homedir(), '.murmur-agent', handleId)`))
-      .toContain('.murmur-agent');
-    expect(계정풀예외제거(`'~/.murmur-agent/' + agent`)).toContain('.murmur-agent');
+  it('좁힌 금지가 러너 상태 트리는 여전히 잡는다 — 새 이름·옛 이름 둘 다', () => {
+    for (const 이름 of 상태트리이름) {
+      // 허용: 계정 풀 뿌리.
+      expect(계정풀예외제거(`join(homedir(), '${이름}', 'claude-accounts')`)).not.toContain(이름);
+      // 금지: 에이전트별 상태 트리 — sessions.json 이 사는 자리다.
+      expect(계정풀예외제거(`join(homedir(), '${이름}', handleId)`)).toContain(이름);
+      expect(계정풀예외제거(`'~/${이름}/' + agent`)).toContain(이름);
+    }
   });
 
   /** 장부는 **daemon 디렉터리 안**에 산다 — 러너의 상태 트리를 안 건드린다. */

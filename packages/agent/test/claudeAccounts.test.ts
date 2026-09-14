@@ -16,7 +16,8 @@ describe('claudeAccountsRoot', () => {
   it('기본 뿌리는 러너 상태 디렉터리 밖의 공용 경로다', () => {
     // 계정은 에이전트·인스턴스·서버를 가로지르는 자산이다 — 러너 상태 디렉터리 안에
     // 두면 에이전트마다 다시 로그인해야 한다(codexHome 과 목적이 반대다).
-    expect(claudeAccountsRoot({} as NodeJS.ProcessEnv)).toMatch(/\.murmur-agent\/claude-accounts$/);
+    expect(claudeAccountsRoot({} as NodeJS.ProcessEnv))
+      .toMatch(/\.(harkroom|murmur)-agent\/claude-accounts$/);
   });
 
   it('HARKROOM_CLAUDE_ACCOUNTS_DIR 로 뿌리를 옮길 수 있다', () => {

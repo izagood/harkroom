@@ -1,4 +1,5 @@
-import { renamedEnv } from '@harkroom/shared';
+import { existsSync } from 'node:fs';
+import { pickRenamedDir, renamedEnv } from '@harkroom/shared';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -83,7 +84,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
     // 10분 — 멀쩡히 도는 세션들의 기록 간격 최대치(390초)보다 넉넉히 위이고, 실측된
     // 정지(30분 내내 한 줄도 안 자랐다)와는 멀리 떨어져 있다. 0 이면 재지 않는다.
     harnessStallMs: Number(env.AGENT_HARNESS_STALL_MS ?? 10 * 60_000),
-    stateDir: env.AGENT_STATE_DIR ?? join(homedir(), '.murmur-agent'),
+    stateDir: env.AGENT_STATE_DIR
+      ?? pickRenamedDir(
+        join(homedir(), '.harkroom-agent'),
+        join(homedir(), '.murmur-agent'),
+        existsSync,
+      ),
     agentInstance: validateInstance(renamedEnv(env, 'HARKROOM_AGENT_INSTANCE')),
     // 60초 — 사람이 티켓을 받고 attach 하기까지, 또는 잠깐 끊긴 소켓이 재-attach 하기까지의
     // 여유다. 더 짧으면 네트워크 순단이 곧 턴 종료가 되고, 더 길면 닫은 터미널이 그만큼 산다.

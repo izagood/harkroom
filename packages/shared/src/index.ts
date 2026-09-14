@@ -3045,6 +3045,31 @@ export interface CollabProposalsView {
  * 그래서 **읽기만** 두 이름을 본다. 넣는 쪽은 늘 새 이름 하나다.
  * 이 폴백은 사람이 plist 를 고칠 시간을 주는 **한시적인 것**이고 `5d` 에서 걷어낸다.
  */
+/**
+ * 이름이 바뀐 **디렉터리**를 고른다(`~/.murmur-agent` → `~/.harkroom-agent`).
+ *
+ * ## 왜 옮기지 않고 고르기만 하나
+ *
+ * 이 디렉터리에는 **claude 계정 자격증명**과 에이전트 메모리가 산다. 코드가 그것을 말없이
+ * 옮기면, 옮기다 만 상태(권한·심볼릭 링크·다른 볼륨)를 사람이 나중에 발견하게 된다.
+ * 그래서 **옮기는 것은 사람 몫**이고 코드는 **있는 것을 쓴다**.
+ *
+ * - 새 경로가 있으면 새 경로 (사람이 이미 옮겼다)
+ * - 새 경로가 없고 옛 경로가 있으면 **옛 경로** (아직 안 옮겼다 — 그래도 돌아야 한다)
+ * - 둘 다 없으면 새 경로 (첫 기동이니 새 이름으로 만든다)
+ *
+ * `exists` 를 받는 이유: `@harkroom/shared` 는 **웹뷰에도 실린다.** 여기서 `node:fs` 를
+ * import 하면 데스크탑 번들이 깨진다 — 부르는 쪽(러너·데몬)이 `existsSync` 를 넘긴다.
+ */
+export function pickRenamedDir(
+  next: string,
+  legacy: string,
+  exists: (path: string) => boolean,
+): string {
+  if (exists(next)) return next;
+  return exists(legacy) ? legacy : next;
+}
+
 export function renamedEnv(
   env: Record<string, string | undefined>,
   name: string,
