@@ -137,7 +137,7 @@ result with that same name, so a later `up` uses what you just built.
 The image is `linux/amd64` + `linux/arm64`, runs as **uid 1000** (not root),
 defaults `ATTACHMENT_ROOT` to `/var/lib/harkroom/attachments`, and always carries
 the commit it was built from (`GET /healthz` reports it — a hand-built image
-reports `null` unless you remember to pass `MURMUR_COMMIT`).
+reports `null` unless you remember to pass `HARKROOM_COMMIT`).
 
 Two things that image alone cannot fix, and that a deployment must respect:
 
