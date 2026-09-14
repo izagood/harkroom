@@ -782,6 +782,8 @@ export const ko = {
   'time.took': '{duration}',
 
   // 조사 표기(`:이가`)가 붙는다 — 위 머리말 참고. 영어 원본에는 이런 표기가 없다.
+  /** `en.ts` 의 그 주석이 근거다. 조사는 이름 뒤에 붙으므로 `{blockedBy}` 자리는 그대로 둔다. */
+  'waitChain.linkMany': '{waiter:이가} {blockedBy} 외 {count}명의 답을 기다린다',
   'waitChain.link': '{waiter:이가} {blockedBy}의 답을 기다린다',
   'waitChain.linkAnyone': '{waiter:이가} 사람의 답을 기다린다',
 
