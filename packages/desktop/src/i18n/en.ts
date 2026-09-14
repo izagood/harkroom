@@ -2549,7 +2549,7 @@ export const en = {
    * 머리띠의 다른 것들과 나란히 서는 꼬리표라 짧아야 하고, 그 짧음이 스크린리더에서는
    * 무엇을 닫는지를 잃는다. `grid.version.staleAction` 이 같은 이유로 갈라져 있다.
    */
-  'terminal.diagnostics': 'Renderer: {renderer} · IME compositions seen: {compositions}',
+  'terminal.diagnostics': 'Renderer: {renderer} · IME compositions: {compositions} · IME keys: {imeKeys} · Hangul keys: {hangulKeys}',
   'terminal.renderer.webgl': 'WebGL (GPU)',
   'terminal.renderer.dom': 'DOM (fallback — WebGL did not start)',
   'terminal.renderer.pending': 'starting…',
