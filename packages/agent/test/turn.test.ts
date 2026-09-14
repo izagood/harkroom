@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -681,5 +682,29 @@ describe('실행 모델 교체 — 멘션 턴도 TUI 다 (2026-09-08)', () => {
     const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true });
     expect(p.args).not.toContain('exec');
     expect(p.stdinFile).toBeNull();
+  });
+});
+
+/**
+ * **되돌려 RED**: `writeSystemPromptFile` 의 ENOENT 갈래를 지우면 이 검사가 빨개진다.
+ *
+ * 왜 이 회귀선이 있나(2026-09-14 실측): 러너가 도는 채로
+ * `mv ~/.murmur-agent ~/.harkroom-agent` 를 했더니 로그에 남은 것이
+ * `답변 실패 (3/3): ENOENT … system-prompt.txt` 뿐이었다. 사람은 그걸로 원인도 할 일도
+ * 알 수 없었고, 에이전트는 그냥 답을 안 했다. **경로가 사라졌다는 사실과 "앱을 재시작하라"가
+ * 메시지에 있어야 한다.**
+ */
+describe('상태 디렉터리가 도는 중에 사라졌을 때 (2026-09-14)', () => {
+  it('무슨 일인지와 할 일을 말한다 — 날 ENOENT 를 그대로 올리지 않는다', async () => {
+    const 없는디렉터리 = join(tmpdir(), `harkroom-없는디렉터리-${Date.now()}`);
+    await expect(writeSystemPromptFile(없는디렉터리, '지시문')).rejects.toThrow(/상태 디렉터리가 사라졌다/);
+    await expect(writeSystemPromptFile(없는디렉터리, '지시문')).rejects.toThrow(/재시작/);
+  });
+
+  // 디렉터리를 말없이 다시 만들면 옮겨 간 상태와 갈라진 빈 디렉터리가 남는다.
+  it('디렉터리를 대신 만들어 주지 않는다', async () => {
+    const 없는디렉터리 = join(tmpdir(), `harkroom-안만든다-${Date.now()}`);
+    await writeSystemPromptFile(없는디렉터리, '지시문').catch(() => {});
+    expect(existsSync(없는디렉터리)).toBe(false);
   });
 });
