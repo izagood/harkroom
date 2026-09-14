@@ -101,7 +101,7 @@ const FONT_FAMILY = 'courier-new, courier, monospace';
  *
  * 잴 수 없으면(레이아웃 전, jsdom) `null` 이다 — 0 으로 계산해 1x1 을 보내지 않는다.
  */
-function fitDimensions(el: HTMLElement): { cols: number; rows: number } | null {
+function measureCell(el: HTMLElement): { width: number; height: number } | null {
   const probe = document.createElement('span');
   probe.style.cssText = `position:absolute;visibility:hidden;white-space:pre;font:${FONT_SIZE}px ${FONT_FAMILY}`;
   // 한 글자만 재면 반올림 오차가 폭 전체에 곱해진다 — 100 글자를 재서 나눈다.
@@ -109,14 +109,59 @@ function fitDimensions(el: HTMLElement): { cols: number; rows: number } | null {
   el.appendChild(probe);
   const rect = probe.getBoundingClientRect();
   el.removeChild(probe);
-  const cellWidth = rect.width / 100;
-  const cellHeight = rect.height;
-  if (!(cellWidth > 0) || !(cellHeight > 0)) return null;
+  const width = rect.width / 100;
+  const height = rect.height;
+  if (!(width > 0) || !(height > 0)) return null;
+  return { width, height };
+}
+
+function fitDimensions(el: HTMLElement): { cols: number; rows: number } | null {
+  const cell = measureCell(el);
+  if (!cell) return null;
   if (!(el.clientWidth > 0) || !(el.clientHeight > 0)) return null;
   return {
-    cols: Math.max(1, Math.floor(el.clientWidth / cellWidth)),
-    rows: Math.max(1, Math.floor(el.clientHeight / cellHeight)),
+    cols: Math.max(1, Math.floor(el.clientWidth / cell.width)),
+    rows: Math.max(1, Math.floor(el.clientHeight / cell.height)),
   };
+}
+
+/**
+ * **조합용 숨은 입력칸을 화면 안으로 끌어온다** — 한글 입력의 뿌리로 의심되는 자리다.
+ *
+ * xterm 은 IME 용 textarea 를 `xterm.css` 에서 이렇게 둔다:
+ * `position:absolute; opacity:0; left:-9999em; top:0; width:0; height:0`.
+ * 즉 **화면 밖에 0×0** 이다. Chromium 은 그래도 조합을 시작하지만, **WebKit(=WKWebView,
+ * 우리 앱)은 화면 밖 0크기 입력칸에서 IME 를 걸지 않는다** — 그러면 `compositionstart`
+ * 자체가 오지 않고, 그 뒤의 어떤 처리(우리 브리지 포함)도 돌 기회가 없다.
+ *
+ * 웃기는 것은 xterm 도 이 사실을 안다는 점이다 — `CompositionHelper` 에 *"Ensure the text
+ * area is at least 1x1, otherwise certain IMEs may break"* 라고 적고 크기를 키운다. 다만 그
+ * 코드는 **조합이 시작된 뒤에만** 돈다(닭과 달걀).
+ *
+ * 그래서 시작 전부터 **커서 자리에 1×1 투명**으로 세워 둔다. 이것은 웹 에디터들이 쓰는
+ * 표준 수법이고(캐럿 자리의 투명 입력칸), 보이지 않으므로 화면은 그대로다.
+ */
+function trackHelperTextarea(el: HTMLElement, term: {
+  buffer: { active: { cursorX: number; cursorY: number } };
+  onCursorMove(handler: () => void): { dispose(): void };
+}): () => void {
+  const textarea = el.querySelector<HTMLTextAreaElement>('textarea.xterm-helper-textarea');
+  if (!textarea) return () => { /* 붙일 곳이 없다 — xterm 이 아직 안 그렸거나 가짜다 */ };
+  // 크기는 한 번만 정한다. **0×0 이 아니어야 한다**(위 주석).
+  textarea.style.width = '1px';
+  textarea.style.height = '1px';
+  const place = (): void => {
+    const cell = measureCell(el);
+    // 못 재는 세상(레이아웃 전·jsdom)에서도 **화면 밖으로는 두지 않는다** — 좌상단이면
+    // 조합은 시작된다. 위치가 커서와 어긋나면 후보창이 엉뚱한 데 뜨는 것뿐이다.
+    const left = cell ? Math.round(term.buffer.active.cursorX * cell.width) : 0;
+    const top = cell ? Math.round(term.buffer.active.cursorY * cell.height) : 0;
+    textarea.style.left = `${left}px`;
+    textarea.style.top = `${top}px`;
+  };
+  place();
+  const sub = term.onCursorMove(place);
+  return () => sub.dispose();
 }
 
 export type TerminalSinkFactory = (el: HTMLElement, opts?: TerminalSinkOptions) => TerminalSink;
@@ -261,6 +306,8 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
   let readOnly = !opts?.onInput;
   /** 조합 브리지 해제. `dispose` 가 이것을 부른다 — 안 부르면 죽은 호스트에 리스너가 남는다. */
   let detachComposition: (() => void) | null = null;
+  /** 숨은 입력칸 추적 해제(`trackHelperTextarea`). */
+  let detachHelper: (() => void) | null = null;
   /** 밖으로 알리는 사실(위 `onDiagnostics`). 바뀔 때마다 통째로 보낸다 — 값이 둘뿐이다. */
   const diagnostics: TerminalDiagnostics = { renderer: 'pending', compositions: 0 };
   const reportDiagnostics = (): void => { opts?.onDiagnostics?.({ ...diagnostics }); };
@@ -304,6 +351,8 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
     });
     t.open(el);
     if (opts?.onInput) t.onData(opts.onInput);
+    // 조합이 **시작될 수 있게** 숨은 입력칸을 화면 안으로 끌어온다(위 주석).
+    detachHelper = trackHelperTextarea(el, t);
     // 조합은 xterm 에 맡기지 않는다(위 `attachCompositionBridge` 주석).
     detachComposition = attachCompositionBridge(el, {
       send: (text) => opts?.onInput?.(text),
@@ -384,6 +433,8 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
       // 소켓으로 글자를 보낸다.
       detachComposition?.();
       detachComposition = null;
+      detachHelper?.();
+      detachHelper = null;
       try { webgl?.dispose(); } catch { /* 렌더러 해체 실패가 화면을 끄지 않는다 */ }
       webgl = null;
       try { term?.dispose(); } catch { /* 같은 규율 — 여기서 새면 패널이 아니라 앱이 죽는다 */ }
