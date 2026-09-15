@@ -64,7 +64,7 @@ export interface BuildTurnCommandOptions {
   /** stdin 리다이렉션용 파일 경로. null 이면 PTY stdin 을 그대로 쓴다(인터랙티브·resume). */
   stdinFile?: string | null;
   /**
-   * codex 의 `-c mcp_servers.murmur.url=...` 오버라이드에 필요한 실제 harkroom URL. claude 는
+   * codex 의 `-c mcp_servers.harkroom.url=...` 오버라이드에 필요한 실제 harkroom URL. claude 는
    * 이 값을 쓰지 않는다 — `writeMcpConfigOnce` 가 이미 `mcpConfigPath` 파일 안에 실제 URL 을
    * 구워 넣었고 claude 는 그 경로만 넘기면 된다. 반면 codex 는 그 파일을 읽지 않고 턴마다
    * `-c` 로 값을 직접 준다(spec §4·§6 — `codex mcp add` 는 영구 기록이라 금지).
@@ -245,7 +245,7 @@ const CODEX_PRESET: HarnessPreset = {
   permission: {
     auto: [
       '-c', 'sandbox_mode="workspace-write"',
-      '-c', 'mcp_servers.murmur.default_tools_approval_mode="approve"',
+      '-c', 'mcp_servers.harkroom.default_tools_approval_mode="approve"',
     ],
     readonly: ['-c', 'sandbox_mode="read-only"'],
   },
@@ -270,7 +270,7 @@ const CODEX_PRESET: HarnessPreset = {
     '-c', 'mcp_servers.avcs.args=["mcp"]',
     // harkroom 도 항상 등록한다 — 이게 빠지면 에이전트가 답할 방법이 없다(위 murmurUrl 주석).
     // `bearer_token_env_var` 는 env 변수 "이름"만 담는다 — PAT 값 자체는 절대 argv 에 오르지
-    // 않는다(spec §7, task-1 실측: `-c mcp_servers.murmur.bearer_token_env_var="HARKROOM_PAT"`).
+    // 않는다(spec §7, task-1 실측: `-c mcp_servers.harkroom.bearer_token_env_var="HARKROOM_PAT"`).
     // 실값은 buildTurnCommand 가 돌려주는 env.HARKROOM_PAT 로만 간다.
     //
     // **`/mcp` 를 붙여야 한다 — 실물 검증에서 드러난 회귀다.** `murmurUrl` 은 서버 베이스
@@ -286,8 +286,8 @@ const CODEX_PRESET: HarnessPreset = {
     // 실제로 주는 값(베이스 URL, `/mcp` 없음)과 다른 입력으로 검증한 것이다. `mcpUrl()` 로
     // claude 와 정규화 지점을 하나로 합쳐, 다음에 엔드포인트 경로가 바뀌어도 한 곳만 고치면
     // 되게 한다.
-    '-c', `mcp_servers.murmur.url="${mcpUrl(murmurUrl)}"`,
-    '-c', 'mcp_servers.murmur.bearer_token_env_var="HARKROOM_PAT"',
+    '-c', `mcp_servers.harkroom.url="${mcpUrl(murmurUrl)}"`,
+    '-c', 'mcp_servers.harkroom.bearer_token_env_var="HARKROOM_PAT"',
   ],
   model: (model) => (model ? ['--model', model] : []),
   // codex 에 `--effort` 플래그는 없다 — spec §4 표에도 이 항목은 없다(측정 대상 밖). 키
@@ -585,7 +585,7 @@ function childEnv(
 export async function writeMcpConfigOnce(dir: string, murmurUrl: string): Promise<string> {
   const config = {
     mcpServers: {
-      murmur: {
+      harkroom: {
         type: 'http' as const,
         url: mcpUrl(murmurUrl),
         headers: { Authorization: 'Bearer ${HARKROOM_PAT}' },

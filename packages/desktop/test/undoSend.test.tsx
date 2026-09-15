@@ -190,7 +190,7 @@ describe('보냄 취소와 채널', () => {
 
 describe('#274 회귀 테스트', () => {
   it('저장값이 없으면 loadWindowMs() 가 0 이다', () => {
-    localStorage.removeItem('murmur.undoSendMs');
+    localStorage.removeItem('harkroom.undoSendMs');
     expect(undoSendStorage.loadWindowMs()).toBe(0);
   });
 
@@ -202,7 +202,7 @@ describe('#274 회귀 테스트', () => {
   });
 
   it('기본 상태의 컴포저는 Enter 즉시 dispatch 하고 보류 UI 를 거치지 않는다', () => {
-    localStorage.removeItem('murmur.undoSendMs');
+    localStorage.removeItem('harkroom.undoSendMs');
     const onSend = vi.fn();
     render(<Composer onSend={onSend} scopeKey="c1" />);
 
