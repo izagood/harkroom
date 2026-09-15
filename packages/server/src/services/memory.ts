@@ -1,7 +1,10 @@
 import type { Pool } from 'pg';
 
-export const MAX_MEMORY_VALUE_LENGTH = 8000;
-export const MAX_MEMORY_ITEMS_PER_ACCOUNT = 200;
+// 두 한도의 정본은 `@harkroom/shared` 다 — 설정 화면이 같은 값을 그려야 하는데
+// 데스크탑은 이 패키지를 import 할 수 없다. 여기서는 다시 내보내기만 한다.
+import { MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH } from '@harkroom/shared';
+
+export { MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH };
 
 export interface MemoryEntry {
   slug: string;

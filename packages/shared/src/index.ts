@@ -3086,3 +3086,17 @@ export function renamedEnv(
     ? env[`MURMUR_${name.slice('HARKROOM_'.length)}`]
     : undefined;
 }
+
+/**
+ * 기억(memory)의 두 한도. **서버에만 두면 화면이 그 값을 다시 적게 된다.**
+ *
+ * 설정 화면이 `core` 의 길이 게이지와 `81 / 200` 을 그리려면 이 두 수가 필요하다.
+ * 데스크탑은 `packages/server` 를 import 할 수 없으므로 그 자리에서 `8000` 을 다시
+ * 적는 길밖에 없는데, 그러면 한도를 올리는 날 화면만 낡은 값을 말한다 — 그 결함이
+ * 이 저장소가 "같은 판정이 두 벌"이라고 부르는 것이다.
+ *
+ * `services/memory.ts` 는 이것을 **다시 내보내기만** 한다. 서버 안의 기존 import 는
+ * 그대로 두고(거기서 쓰는 쪽은 저장 규칙이고 여기는 값일 뿐이다), 정본만 이리로 옮겼다.
+ */
+export const MAX_MEMORY_VALUE_LENGTH = 8000;
+export const MAX_MEMORY_ITEMS_PER_ACCOUNT = 200;

@@ -791,17 +791,42 @@ export const en = {
   'agents.grid.tablist': 'Agents and teams',
   'agents.grid.tabTeams': 'Teams',
 
+  /** 접힌 줄을 펼치고 접는 손잡이. 글자는 없고 삼각형만 서므로 이름은 여기서 준다. */
+  'agents.memory.collapse': 'Collapse {slug}',
+  'agents.memory.chars': '{n} chars',
+  'agents.memory.charsOfMax': '{n} / {max} chars',
+  /**
+   * `core` 는 **매 턴 통째로 프롬프트에 실린다** — 길이가 곧 비용이다. 나머지는 필요할
+   * 때만 열린다. 그 차이를 화면이 말하지 않으면 목록의 한 줄로만 보인다.
+   */
+  'agents.memory.coreNote': 'These characters ride in the prompt every turn. The rest open only when the agent needs them.',
+  'agents.memory.coreTag': 'Every turn',
+  /** 남은 자리. 차면 새 기억이 조용히 거절되므로 늘 띄워 둔다. */
+  'agents.memory.count': '{n} / {max}',
   'agents.memory.deleteAction': 'Forget {slug}',
   'agents.memory.deleteConfirm': 'Forget it',
   'agents.memory.deleteFailed': 'The memory was not forgotten',
   'agents.memory.deleteStart': 'Forget',
   'agents.memory.empty': 'Nothing remembered yet',
+  'agents.memory.expand': 'Expand {slug}',
   /** **못 읽은 것과 없는 것은 다르다**(design.md §4) — 그래서 위 `empty` 와 갈라 둔다. */
   'agents.memory.failed': 'The memory did not arrive',
+  'agents.memory.groupCollapse': 'Collapse the {key} group',
+  'agents.memory.groupCount': '{n}',
+  'agents.memory.groupExpand': 'Expand the {key} group',
   'agents.memory.heading': 'Memory',
   /** 지우기 확인의 반대짝. **`Cancel` 이 아니다** — 사람이 고르는 것은 '남긴다'다. */
   'agents.memory.keep': 'Keep it',
+  /** 한도에 가까울 때만 뜬다 — 차고 나서 알면 늦다. */
+  'agents.memory.limitNote': 'Near the limit — once it is full, new memories are refused',
   'agents.memory.loading': 'Loading…',
+  /** **`empty` 와 다르다** — 없는 것이 아니라 이 검색어에 걸리는 것이 없다. */
+  'agents.memory.noMatch': 'No memory matches',
+  'agents.memory.search': 'Search slug and body',
+  'agents.memory.sortLabel': 'Sort',
+  'agents.memory.sortName': 'Name',
+  /** 기본. 이 화면을 여는 대부분의 이유가 *"방금 무엇을 기억했나"* 다. */
+  'agents.memory.sortRecent': 'Recent',
 
   /** 토큰 **자체**를 복사하는 버튼. 버튼 글자는 `agents.runner.copy` 를 쓰고
    *  (`Copy` 하나를 두 벌로 두지 않는다) 무엇을 복사하는지는 이 이름이 가른다. */
