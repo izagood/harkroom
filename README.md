@@ -169,6 +169,7 @@ dead AVCS server never restarts the pod).
 | `TRUST_PROXY` | Trust `X-Forwarded-For` header (`1` or `true`) | `false` | No |
 | `ATTACHMENT_ROOT` | File system path for uploaded attachments | `./.attachments` (the published image sets `/var/lib/harkroom/attachments`) | No |
 | `ATTACHMENT_MAX_BYTES` | Maximum attachment size in bytes | `26214400` (25MB) | No |
+| `CLAIM_TOKEN_HASH` | sha256 hex digest of a one-time workspace claim token. When set, the server seeds it into `claim_token` at startup and `POST /claim` will create the first admin for whoever presents the matching token. Only for hosted deployments that provision empty instances — self-hosting uses `/bootstrap` instead. Pass the **digest**, never the token itself | - | No |
 | `HARKROOM_NEW_PASSWORD` | New password read by `packages/server/scripts/reset-password.ts`; only set for that one command | - | No |
 | `HARKROOM_COMMIT` | Commit sha stamped at image build time; served by `GET /healthz` so operators can tell which build is running. Pass it as a Docker build arg (`HARKROOM_COMMIT=$(git rev-parse --short HEAD) docker compose build server`). Reported as `null` when unset | - | No |
 | `HARKROOM_VERSION` | Overrides the release number `GET /healthz` reports. Normally unset — the server reads `packages/desktop/src-tauri/tauri.conf.json`, which is this repo's version source of truth. Set it only when building outside this repo's layout | from `tauri.conf.json` | No |
