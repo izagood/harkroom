@@ -30,6 +30,23 @@ export interface AgentPresence {
   startSweep(app: SweepHost): void;
   /** 스윕을 강제로 한 번 돌린다(테스트용). */
   sweep(): void;
+  /**
+   * **오프라인이 된 시각**(ms). 온라인이거나 이 서버가 그 에이전트를 한 번도 못 봤으면
+   * `null` 이다.
+   *
+   * 왜 필요한가(2026-09-15): "지금 오프라인인가" 만으로는 **죽은 러너**와 **교대 중인
+   * 러너**를 못 가른다. 앱을 업데이트하면 옛 러너가 폴을 멈추고 물러나는 수십 초 동안
+   * 오프라인으로 보이는데, 그 창에 걸린 요청에 "운영자 확인이 필요합니다" 를 남기면
+   * 20초 뒤 스스로 처리될 일을 사람에게 떠넘기게 된다(실측: 그 통지 11건이 11건 다
+   * 나중에 처리됐다).
+   *
+   * **없음(`null`)과 방금(작은 값)을 가르는 것이 요점이다.** 한 번도 못 본 에이전트는
+   * 러너가 아예 안 뜬 것이므로 말해야 하고, 방금까지 있던 에이전트는 기다려 봐야 한다.
+   *
+   * 기준점은 **만료 시각**이다(마지막 폴이 아니다) — 폴이 끊긴 뒤 TTL 만큼은 아직 온라인
+   * 으로 셌으므로, 여기서 재는 것은 "오프라인으로 확정된 뒤 얼마나 지났나" 다.
+   */
+  offlineSince(accountId: string): number | null;
   /** 보관 중인 에이전트 수. 만료 정리가 실제로 도는지 확인하는 데만 쓴다. */
   size(): number;
 }
@@ -53,6 +70,12 @@ export function createAgentPresence(opts: { ttlMs: number; now?: () => number })
   const now = opts.now ?? Date.now;
   // accountId → 만료 시각
   const byAgent = new Map<string, number>();
+  /**
+   * accountId → **오프라인으로 확정된 시각**. 만료될 때 찍고 다시 폴이 오면 지운다.
+   * 한 번이라도 본 에이전트만 들어오므로, 이 맵에 없다는 것은 "이 서버가 못 봤다" 는 뜻이다
+   * (그 둘을 가르는 이유는 `offlineSince` 주석에 있다).
+   */
+  const offlineAt = new Map<string, number>();
   let sweepInterval: ReturnType<typeof setInterval> | null = null;
 
   /**
@@ -65,6 +88,9 @@ export function createAgentPresence(opts: { ttlMs: number; now?: () => number })
     for (const [accountId, expires] of seen) {
       if (expires <= t) {
         seen.delete(accountId);
+        // **만료 시각으로 찍는다, 지금이 아니라.** 스윕은 최대 TTL/2 늦게 오므로 `t` 로
+        // 찍으면 그만큼 오프라인이 짧아 보이고, 그 오차가 곧 유예의 오차가 된다.
+        offlineAt.set(accountId, expires);
         expired.push(accountId);
       }
     }
@@ -89,6 +115,7 @@ export function createAgentPresence(opts: { ttlMs: number; now?: () => number })
     mark(accountId) {
       const wasPresent = byAgent.has(accountId);
       byAgent.set(accountId, now() + opts.ttlMs);
+      offlineAt.delete(accountId);
       if (!wasPresent) {
         emitEvent({ type: 'presence.changed', accountId, online: true });
       }
@@ -120,6 +147,13 @@ export function createAgentPresence(opts: { ttlMs: number; now?: () => number })
 
     sweep() {
       sweep();
+    },
+
+    offlineSince(accountId) {
+      // 온라인이면(아직 안 만료) 오프라인인 적이 없다 — 만료 정리는 `online()` 이 한다.
+      const expires = byAgent.get(accountId);
+      if (expires !== undefined && expires > now()) return null;
+      return offlineAt.get(accountId) ?? expires ?? null;
     },
 
     size() {

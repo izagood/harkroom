@@ -49,6 +49,24 @@ export const STALE_AFTER_MS = 2 * 60_000;
  */
 export const STALE_STARTUP_GRACE_MS = 60_000;
 
+/**
+ * **오프라인이 된 지 이만큼은 기다린다.** 그 전에는 아무 말도 하지 않는다.
+ *
+ * 왜(2026-09-15 실측): 앱을 업데이트하면 러너가 교대한다 — 옛 러너가 폴을 멈추고 진행 중
+ * 턴을 접으며 물러나고, 그다음 새 러너가 뜬다. 그 사이 presence 는 오프라인이고, 읽음은
+ * **턴이 끝날 때** 찍히므로 그때 미읽음 항목이 남아 있다. 두 사실이 겹치면 이 스위퍼가
+ * "운영자 확인이 필요합니다" 를 남기는데, 그 요청은 20초 뒤 새 러너가 그대로 집는다.
+ *
+ * 실측이 그것을 말한다: 이 통지가 나간 **11건이 11건 다** 나중에 처리됐고, 그날 두 건은
+ * 통지 **14초**·**147초** 만에 처리됐다. 즉 지금 이 장치는 "러너가 없다" 가 아니라
+ * "러너가 교대 중이다" 까지 잡고 있었다.
+ *
+ * 90초인 이유: 교대는 수십 초다(실측 러너 재기동 간격은 20초 남짓이고, 턴을 접느라 늦어도
+ * 그 배를 넘지 않았다). 반대로 정말 러너가 없으면 90초는 그대로 흘러 통지가 나간다 —
+ * 이 유예가 미루는 것은 **말하는 시점**이지 판정이 아니다.
+ */
+export const STALE_OFFLINE_GRACE_MS = 90_000;
+
 /** 스윕 주기. `read_at`·presence 둘 다 초 단위로 움직이므로 30초면 충분하다. */
 export const STALE_SWEEP_INTERVAL_MS = 30_000;
 
@@ -60,6 +78,15 @@ const REQUEST_REASONS = ['mention', 'team_mention', 'thread_reply', 'dm'] as con
 
 export interface SweepHost {
   addHook(hook: 'onClose', fn: () => void | Promise<void>): void;
+}
+
+/**
+ * 이 스위퍼가 presence 에게 묻는 것 둘. **지금 온라인인가**(후보에서 뺀다) 와
+ * **오프라인이 된 지 얼마나 됐나**(교대 중이면 기다린다).
+ */
+export interface StalePresence {
+  online(): string[];
+  offlineSince(accountId: string): number | null;
 }
 
 interface Candidate {
@@ -104,17 +131,19 @@ function failureFor(handle: string): { body: string; meta: FailureMeta } {
  * 여러 곳에 넘기는 것과 같은 이유다).
  */
 export function createStaleRequestSweeper(pool: Pool, opts: {
-  presence: { online(): string[] };
+  presence: StalePresence;
   now?: () => number;
   /** 기동 시각. 유예의 기준점이다 — 테스트가 과거로 주어 유예를 지나게 한다. */
   startedAt?: number;
   staleAfterMs?: number;
   startupGraceMs?: number;
+  offlineGraceMs?: number;
 }): { startSweep(app: SweepHost): void; sweep(): Promise<void> } {
   const now = opts.now ?? Date.now;
   const startedAt = opts.startedAt ?? now();
   const staleAfterMs = opts.staleAfterMs ?? STALE_AFTER_MS;
   const graceMs = opts.startupGraceMs ?? STALE_STARTUP_GRACE_MS;
+  const offlineGraceMs = opts.offlineGraceMs ?? STALE_OFFLINE_GRACE_MS;
   let sweepInterval: ReturnType<typeof setInterval> | null = null;
   let running = false;
 
@@ -226,7 +255,19 @@ export function createStaleRequestSweeper(pool: Pool, opts: {
     if (now() - startedAt < graceMs) return;
     running = true;
     try {
-      const rows = await candidates(opts.presence.online());
+      const all = await candidates(opts.presence.online());
+      /**
+       * **교대 중인 러너는 없는 러너가 아니다.** 오프라인이 된 지 얼마 안 된 에이전트는
+       * 이번 스윕에서 건너뛴다 — 표시(`stale_notified_at`)도 안 찍으므로 다음 스윕이 다시
+       * 본다. 그때까지 새 러너가 떴으면 온라인이라 후보에서 아예 빠지고, 여전히 없으면
+       * 유예가 지나 통지가 나간다.
+       *
+       * `null` 은 **한 번도 못 본 에이전트**다 — 러너가 아예 안 뜬 경우이므로 말해야 한다.
+       */
+      const rows = all.filter((row) => {
+        const since = opts.presence.offlineSince(row.account_id);
+        return since === null || now() - since >= offlineGraceMs;
+      });
       // **에이전트 하나 × 스레드 하나**로 묶는다. 한 스레드에 미읽음이 셋이어도 줄은 하나이고
       // (사람이 읽을 문장은 하나다) 표시는 셋 다에 찍힌다.
       const groups = new Map<string, Candidate[]>();

@@ -31,7 +31,11 @@ let channelId: string;
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 
 /** 오프라인 presence — 아무도 폴하고 있지 않다. */
-const offline = { online: () => [] as string[] };
+/**
+ * 러너가 **한 번도 뜬 적 없는** 상태. `offlineSince: null` 이 그 뜻이고, 그때는 유예가
+ * 없다(말해야 한다 — 기다려 봐야 올 러너가 없다). 교대 중인 경우는 아래 따로 잰다.
+ */
+const offline = { online: () => [] as string[], offlineSince: () => null };
 
 async function post(body: string): Promise<string> {
   const res = await app.inject({
@@ -99,7 +103,7 @@ describe('049 아무도 집지 않은 요청', () => {
 
     // 폴하고 있는 러너다. 읽음이 아직 안 찍힌 것은 **턴이 끝나지 않았기 때문**이고,
     // 그 사실을 presence 하나가 가른다.
-    await sweeper({ presence: { online: () => [agentId] }, staleAfterMs: 0, startupGraceMs: 0 }).sweep();
+    await sweeper({ presence: { online: () => [agentId], offlineSince: () => null }, staleAfterMs: 0, startupGraceMs: 0 }).sweep();
 
     expect(await failuresIn(messageId)).toHaveLength(0);
     // 표시도 찍히지 않는다 — 찍혔으면 러너가 죽은 뒤에도 영영 말하지 못한다.
@@ -108,6 +112,46 @@ describe('049 아무도 집지 않은 요청', () => {
       [agentId, messageId],
     );
     expect(marked.rowCount).toBe(0);
+  });
+
+  /**
+   * **러너 교대는 러너 없음이 아니다**(2026-09-15 실측).
+   *
+   * 앱을 업데이트하면 옛 러너가 폴을 멈추고 진행 중 턴을 접으며 물러나고, 그다음 새 러너가
+   * 뜬다. 그 사이 presence 는 오프라인이고 읽음은 **턴이 끝날 때** 찍히므로 미읽음 항목이
+   * 남아 있다 — 두 사실이 겹쳐 "운영자 확인이 필요합니다" 가 나갔고, 그 요청은 14초 뒤
+   * 새 러너가 그대로 집었다. 통지 11건이 11건 다 그랬다.
+   *
+   * 그래서 오프라인이 **된 지 얼마나 됐는지**를 함께 본다.
+   */
+  it('4. 방금 오프라인이 된 러너에는 말하지 않는다 — 교대 중일 수 있다', async () => {
+    const messageId = await post(`@${agentHandle} 앱을 올리는 중이다`);
+    const justNow = Date.now() - 10_000; // 10초 전에 오프라인
+
+    await sweeper({
+      presence: { online: () => [], offlineSince: () => justNow },
+      staleAfterMs: 0, startupGraceMs: 0,
+    }).sweep();
+
+    expect(await failuresIn(messageId)).toHaveLength(0);
+    // **표시도 안 찍는다** — 찍으면 유예가 지난 뒤에도 영영 말하지 못한다.
+    const marked = await pool.query(
+      `select 1 from inbox where account_id = $1 and message_id = $2 and stale_notified_at is not null`,
+      [agentId, messageId],
+    );
+    expect(marked.rowCount).toBe(0);
+  });
+
+  it('5. 유예가 지나도 안 돌아오면 그때는 말한다 — 미루는 것은 시점이지 판정이 아니다', async () => {
+    const messageId = await post(`@${agentHandle} 러너가 정말 없다`);
+    const longAgo = Date.now() - 5 * 60_000;
+
+    await sweeper({
+      presence: { online: () => [], offlineSince: () => longAgo },
+      staleAfterMs: 0, startupGraceMs: 0,
+    }).sweep();
+
+    expect(await failuresIn(messageId)).toHaveLength(1);
   });
 
   it('3. 기동 유예 안에는 조용하다', async () => {
