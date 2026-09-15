@@ -68,6 +68,117 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
     return reply.code(201).send({ id: accountId });
   });
 
+  /**
+   * **호스팅 배포(`*.harkroom.com`)의 첫 관리자 생성.** `/bootstrap` 과 하는 일이 같고
+   * (첫 관리자 + 기본 채널을 한 트랜잭션으로) **관문이 하나 더 있다**: 일회용 클레임 토큰.
+   *
+   * ## 왜 `/bootstrap` 에 토큰을 얹지 않고 라우트를 나눴는가
+   *
+   * "토큰이 설정돼 있으면 요구하고 아니면 말고" 를 한 라우트에 넣으면 그 라우트가 **두 가지
+   * 보안 모델**을 갖고, 분기는 env 하나로 조용히 뒤집힌다 — 설정 실수가 곧 인증 없는 계정
+   * 생성이 된다. 나누면 `/claim` 은 **항상** 토큰을 요구하고, `/bootstrap` 은 셀프호스트가
+   * 쓰던 그대로 남는다(README 의 Quick Start 가 그것이다).
+   *
+   * ## 왜 토큰이 필요한가
+   *
+   * `/bootstrap` 에는 인증이 없다. 셀프호스트에서는 주소를 아는 사람이 곧 설치한 사람이라
+   * 그것으로 충분하지만, 공개된 `*.harkroom.com` 에서는 인스턴스가 뜬 뒤 주인이 가져가기
+   * 전까지 **누구나 첫 관리자가 될 수 있는 창**이 열린다. 서브도메인 이름은 비밀이 아니다.
+   *
+   * ## 비밀번호는 여기서 처음 정해진다
+   *
+   * 워크스페이스를 만드는 쪽(harkroom-gate)은 토큰만 심고 **비밀번호를 보지 않는다.** 이
+   * 요청은 사용자의 기계에서 자기 인스턴스로 직행하므로, 제3자가 평문을 거치는 구간이 없다.
+   */
+  app.post('/claim', async (req, reply) => {
+    const body = credentials.extend({ claimToken: z.string() }).parse(req.body);
+
+    const client = await pool.connect();
+    let accountId: string;
+    let channelId: string;
+    try {
+      await client.query('begin');
+
+      /**
+       * 관문 1 — 토큰. `for update` 로 **행을 잠근 채** 검사한다(`/auth/register` 의 invite
+       * 처리와 같은 이유): 없으면 같은 토큰을 든 두 요청이 동시에 통과해 둘 다 계정을
+       * 만들려 든다.
+       *
+       * `used_at is null` 을 조건에 두므로 **이미 쓴 토큰은 여기서 걸린다.**
+       */
+      const tok = await client.query(
+        `select token_hash from claim_token where token_hash = $1 and used_at is null for update`,
+        [hashToken(body.claimToken)],
+      );
+      if (!tok.rowCount) {
+        await client.query('rollback');
+        // **404 다.** 400 은 "토큰은 맞는데 뭔가 틀렸다" 로 읽혀 사용자가 같은 토큰을 계속
+        // 다시 보낸다. 없는 토큰과 쓴 토큰을 구별해 주지 않는 것이기도 하다 — 구별해 주면
+        // 유효한 토큰을 찾는 탐색에 답이 된다.
+        return reply.code(404).send({ error: { code: 'invalid_claim', message: 'claim token invalid or already used' } });
+      }
+
+      /**
+       * 관문 2 — `/bootstrap` 과 같은 것. 사람 계정이 이미 있으면 이 워크스페이스는 이미
+       * 누군가의 것이다. **토큰을 통과했어도 막는다**: 토큰이 어떤 이유로 되살아나도
+       * (운영 실수로 같은 해시를 다시 심는 등) 남의 워크스페이스에 관리자가 하나 더 생기는
+       * 일은 없어야 한다.
+       *
+       * 이 검사도 트랜잭션 안에서 같은 `client` 로 한다 — pool 로 읽으면 다른 커넥션의
+       * 스냅샷을 보게 되어, 잠금이 지켜 주는 범위 밖이 된다.
+       */
+      const existing = await client.query(`select 1 from account where kind = 'human' limit 1`);
+      if (existing.rowCount) {
+        await client.query('rollback');
+        return reply.code(409).send({ error: { code: 'already_bootstrapped', message: 'workspace already has a human account' } });
+      }
+
+      // 집합과 같은 이름의 계정은 만들 수 없다(`/auth/register` 와 같은 근거, #230 결정 3).
+      const group = await getHandleGroupByHandle(client, body.handle);
+      if (group) {
+        await client.query('rollback');
+        return reply.code(400).send({
+          error: { code: 'handle_taken', message: 'a group with this handle already exists' },
+        });
+      }
+
+      const hash = await argon2.hash(body.password);
+      // 계정과 기본 채널은 **한 트랜잭션이어야 한다** — `/bootstrap` 과 같은 이유다.
+      // 채널 생성이 실패해 계정만 남으면 다음 시도는 409 로 막히고 워크스페이스가 채널
+      // 0 개로 굳는다. 토큰도 같은 트랜잭션에서 소진되므로, 무엇이 실패하든 **토큰은
+      // 되돌아간다** — 사용자가 같은 토큰으로 다시 시도할 수 있다.
+      const res = await client.query(
+        `insert into account (handle, login_id, display_name, kind, is_admin, password_hash)
+         values ($1, $2, $3, 'human', true, $4) returning id`,
+        [body.handle, body.loginId, body.displayName, hash],
+      );
+      accountId = res.rows[0].id;
+      channelId = (await createChannel(client, { name: DEFAULT_CHANNEL_NAME })).id;
+      await client.query(
+        `update claim_token set used_at = now(), used_by = $1 where token_hash = $2`,
+        [accountId, tok.rows[0].token_hash],
+      );
+      await client.query('commit');
+    } catch (err) {
+      await client.query('rollback');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    // 감사 기록은 커밋 뒤에(`/bootstrap` 과 같은 근거). `via: 'claim'` 이 이 계정이 호스팅
+    // 경로로 만들어졌음을 남긴다 — `/bootstrap` 으로 만든 것과 구별된다.
+    await recordAudit(pool, {
+      action: 'account.created', actorId: accountId, actorHandle: body.handle,
+      target: accountId, detail: { via: 'claim', isAdmin: true },
+    }, req);
+    await recordAudit(pool, {
+      action: 'channel.created', actorId: accountId, actorHandle: body.handle,
+      target: channelId, detail: { via: 'claim' },
+    }, req);
+    return reply.code(201).send({ id: accountId });
+  });
+
   app.post('/auth/login', async (req, reply) => {
     const body = z.object({ loginId: z.string(), password: z.string() }).parse(req.body);
     const res = await pool.query(
