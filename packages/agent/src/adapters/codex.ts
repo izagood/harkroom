@@ -46,6 +46,14 @@ export const CODEX_ADAPTER: HarnessAdapter = {
     // **재 보지 않았다.** 같은 구조가 적용될 것으로 보지만 실물 화면이 없다
     // (`docs/specs/2026-09-08-tui-attention-design.md` §"codex 의 관문").
     gateMeasured: false,
+    /**
+     * 실측(2026-09-14): 0.3초 주입 → Enter 가 삼켜짐, 2초 → 정상. 부팅이 끝나기 전의
+     * 자리표시자에 쓰면 안 된다. 2.5초는 측정값(2초)에 여유를 붙인 것이다 — 프로덕션
+     * 부팅 실측도 2.5초 언저리였다.
+     */
+    readyMinMs: 2_500,
+    /** 입력창에 글이 남아 있을 때 codex 가 띄우는 줄. 성공한 턴에는 나오지 않는다. */
+    unsentHint: /tab to queue message/,
   },
 
   // `<CODEX_HOME>/config.toml` 의 `[projects."<경로>"] trust_level = "trusted"`.

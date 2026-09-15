@@ -251,6 +251,21 @@ const CODEX_PRESET: HarnessPreset = {
   },
   mcp: ({ murmurUrl }) => [
     // avcs 는 항상 등록한다(실측 shape: stdio, command 'avcs', args ['mcp'], env 없음).
+    //
+    // **`transport` 를 반드시 적는다(2026-09-15 실측).** codex 0.154 는 이 갈래 표시가 없는
+    // stdio 항목을 거절하는데, 그 거절이 그 항목 하나로 끝나지 않는다 — **MCP 설정 전체가
+    // 로드에 실패해 murmur 서버까지 함께 사라진다**:
+    //
+    //   failed to load configuration: invalid transport in `mcp_servers.avcs` (code -32600)
+    //
+    // 그 상태의 codex 는 에러를 화면에 띄우지 않고 그냥 도구가 없는 채로 돈다. 물어보면
+    // "message.post 도구가 제공되지 않아 호출하지 못했다"고 답한다 — 그리고 러너에게는
+    // "답 없이 턴을 끝냈습니다" 만 남는다. codex-dev 가 이 워크스페이스에서 **한 번도**
+    // 말하지 못한 이유가 이것이었다.
+    //
+    // 실물 확인: 이 한 줄을 넣으면 avcs 를 등록한 채로 codex 가 murmur MCP 로 스레드에
+    // 글을 올린다(같은 조건에서 이 줄만 빼면 못 올린다).
+    '-c', 'mcp_servers.avcs.transport="stdio"',
     '-c', 'mcp_servers.avcs.command="avcs"',
     '-c', 'mcp_servers.avcs.args=["mcp"]',
     // harkroom 도 항상 등록한다 — 이게 빠지면 에이전트가 답할 방법이 없다(위 murmurUrl 주석).
