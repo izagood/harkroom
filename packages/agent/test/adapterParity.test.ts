@@ -57,17 +57,21 @@ function plan(harness: AgentHarness, over: Partial<BuildTurnCommandOptions> = {}
   });
 }
 
-describe('스위치는 기본으로 꺼져 있다', () => {
-  // 이 조각의 안전이 이 한 줄에 걸려 있다 — claude 경로를 남기는 것이 결정이었다.
-  it('HARKROOM_HARNESS_ADAPTERS 가 없으면 꺼짐', () => {
-    expect(harnessAdaptersEnabled({})).toBe(false);
+describe('스위치는 기본으로 켜져 있다 — 끄는 길만 남긴다', () => {
+  // **전환했다(2026-09-15).** 켜고 끄는 것이 동작을 바꾸지 않는다는 것을 세 패리티 파일과
+  // CI 의 양쪽 런이 증명했고, 그 위에서 codex 가 TUI 로 실제로 답하는 것까지 봤다
+  // (#808·#807). 근거 전문은 `harnessAdaptersEnabled` 주석에 있다.
+  it('값이 없으면 켜짐 — 표가 기본 경로다', () => {
+    expect(harnessAdaptersEnabled({})).toBe(true);
   });
 
-  it('오타로는 켜지지 않는다', () => {
-    for (const raw of ['0', 'yes', 'on', 'TRUE', '']) {
+  it('끄는 것은 0·false 뿐이다 — 오타로 꺼지지 않는다', () => {
+    // 방향이 뒤집혔다: 이제 **꺼지는 쪽**이 명시적이어야 한다. 오타로 옛 경로에 떨어지면
+    // 그 사실이 조용하고, 조용한 것이 위험한 쪽이다.
+    for (const raw of ['0', 'false']) {
       expect(harnessAdaptersEnabled({ HARKROOM_HARNESS_ADAPTERS: raw })).toBe(false);
     }
-    for (const raw of ['1', 'true']) {
+    for (const raw of ['1', 'true', 'off', 'no', 'FALSE', '']) {
       expect(harnessAdaptersEnabled({ HARKROOM_HARNESS_ADAPTERS: raw })).toBe(true);
     }
   });

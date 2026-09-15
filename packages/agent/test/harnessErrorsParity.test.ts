@@ -24,6 +24,7 @@ import { RUNNABLE_HARNESSES, type AgentHarness } from '@harkroom/shared';
 import { readLastApiError, sessionTranscriptMtimeMs, sessionTranscriptGrewSince } from '../src/harnessErrors.js';
 import { claudeSessionMaterialized } from '../src/claudeSessions.js';
 import { readsSessionTranscript } from '../src/adapters/index.js';
+import { runWithExecutionPath } from '../src/executionPath.js';
 
 const RUNNABLE = RUNNABLE_HARNESSES as readonly AgentHarness[];
 const SESSION_ID = '33333333-3333-4333-8333-333333333333';
@@ -41,31 +42,30 @@ beforeEach(async () => {
     join(projectsDir, 'proj', `${SESSION_ID}.jsonl`),
     `${JSON.stringify({ isApiErrorMessage: true, timestamp: new Date().toISOString(), message: { content: 'rate limit' } })}\n`,
   );
-  savedFlag = process.env.HARKROOM_HARNESS_ADAPTERS;
 });
 afterEach(async () => {
-  // 플래그를 되돌린다 — 남기면 이 파일 뒤에 도는 테스트가 새 경로로 돈다.
-  if (savedFlag === undefined) delete process.env.HARKROOM_HARNESS_ADAPTERS;
-  else process.env.HARKROOM_HARNESS_ADAPTERS = savedFlag;
   await rm(dir, { recursive: true, force: true });
 });
 
-function setFlag(enabled: boolean): void {
-  if (enabled) process.env.HARKROOM_HARNESS_ADAPTERS = '1';
-  else delete process.env.HARKROOM_HARNESS_ADAPTERS;
-}
+/**
+ * 켬·끔을 **턴 컨텍스트로** 표현한다(2026-09-15). env 를 지우고 넣는 방법은 기본값이
+ * 켜짐으로 바뀐 순간 **같은 경로를 두 번 재는 것**이 된다 — "지웠으니 옛 경로겠지" 가
+ * 조용히 거짓이 되고, 패리티 테스트는 그대로 초록이다. `executionPath`(#790)는 그
+ * 기본값이 무엇이든 두 경로를 **직접** 가리키므로 그 함정이 없다.
+ */
+const onPath = <T>(enabled: boolean, fn: () => T): T =>
+  runWithExecutionPath(enabled ? 'adapters' : 'legacy', fn);
 
 /** 네 함수의 답을 한 번에 모은다 — 하나만 맞추면 나머지가 갈려도 초록이다. */
 async function snapshot(harness: AgentHarness, enabled: boolean) {
-  setFlag(enabled);
-  return {
+  return onPath(enabled, async () => ({
     reads: readsSessionTranscript(harness),
     apiError: await readLastApiError(harness, SESSION_ID, { projectsDir }),
     mtime: (await sessionTranscriptMtimeMs(harness, SESSION_ID, { projectsDir })) !== null,
     grew: await sessionTranscriptGrewSince(harness, SESSION_ID, 0, { projectsDir }),
     // 이 함수는 projectsDir 을 안 받고 configDir 을 받는다 — 없는 자리를 줘서 "못 찾음"을 만든다.
     materialized: await claudeSessionMaterialized(harness, SESSION_ID, join(dir, 'no-such-config')),
-  };
+  }));
 }
 
 describe('세션 기록 판정 — 옛 경로와 새 경로가 같다', () => {
@@ -101,9 +101,7 @@ describe('세션 기록 판정 — 옛 경로와 새 경로가 같다', () => {
 
   it('opencode 는 CLI 갈래라 거짓이다 — 물어볼 수 있는 것과 읽을 줄 아는 것은 다르다', () => {
     // 새 경로에서만 뜻이 있는 값이다(옛 경로는 이름으로 갈라 역시 거짓). 둘 다 확인한다.
-    setFlag(false);
-    expect(readsSessionTranscript('opencode')).toBe(false);
-    setFlag(true);
-    expect(readsSessionTranscript('opencode')).toBe(false);
+    expect(onPath(false, () => readsSessionTranscript('opencode'))).toBe(false);
+    expect(onPath(true, () => readsSessionTranscript('opencode'))).toBe(false);
   });
 });

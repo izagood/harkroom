@@ -18,22 +18,25 @@ import { RUNNABLE_HARNESSES, type AgentHarness } from '@harkroom/shared';
 
 import { ensureWorkspaceTrusted } from '../src/workspaceTrust.js';
 import { adapterFor } from '../src/adapters/index.js';
+import { runWithExecutionPath } from '../src/executionPath.js';
 
 const RUNNABLE = RUNNABLE_HARNESSES as readonly AgentHarness[];
 
 let root: string;
-let savedFlag: string | undefined;
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'trust-parity-'));
-  savedFlag = process.env.HARKROOM_HARNESS_ADAPTERS;
 });
 afterEach(async () => {
-  // 플래그를 원상복구한다 — 남기면 **이 파일 뒤에 도는 다른 테스트가 새 경로로 돈다.**
-  if (savedFlag === undefined) delete process.env.HARKROOM_HARNESS_ADAPTERS;
-  else process.env.HARKROOM_HARNESS_ADAPTERS = savedFlag;
   await rm(root, { recursive: true, force: true });
 });
+
+/**
+ * 켬·끔을 **턴 컨텍스트로** 표현한다(2026-09-15). env 를 지우고 넣는 방법은 기본값이
+ * 켜짐으로 바뀐 순간 **같은 경로를 두 번 재는 것**이 된다 — "지웠으니 옛 경로겠지" 가
+ * 조용히 거짓이 되고, 패리티 테스트는 그대로 초록이다. `executionPath`(#790)는 그
+ * 기본값이 무엇이든 두 경로를 **직접** 가리키므로 그 함정이 없다.
+ */
 
 /**
  * 한쪽 경로로 신뢰를 적고, **적힌 파일 전부**를 `상대경로 → 내용` 으로 돌려준다.
@@ -48,10 +51,8 @@ async function runOnce(harness: AgentHarness, enabled: boolean): Promise<Record<
   const workspaceDir = join(base, 'workspace');
   await mkdir(workspaceDir, { recursive: true });
 
-  if (enabled) process.env.HARKROOM_HARNESS_ADAPTERS = '1';
-  else delete process.env.HARKROOM_HARNESS_ADAPTERS;
-
-  await ensureWorkspaceTrusted({ harness, workspaceDir, claudeConfigDir: configDir, codexHome });
+  await runWithExecutionPath(enabled ? 'adapters' : 'legacy', () =>
+    ensureWorkspaceTrusted({ harness, workspaceDir, claudeConfigDir: configDir, codexHome }));
 
   // 두 뿌리 아래에서 우리가 적을 수 있는 이름만 본다. 경로에 workspaceDir 이 들어가므로
   // 그 부분은 비교 전에 지운다(옛/새 실행이 서로 다른 임시 디렉터리에서 돌기 때문이다).

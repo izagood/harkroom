@@ -20,7 +20,7 @@
 // 그래서 이 파일은 다시 **두 경로가 모든 하네스에서 같은 답을 내는지**를 잰다. 값이 옛것과
 // 달라진 것(codex 의 `usesTui`)은 ①이 한 일이고, 스위치는 그것을 건드리지 않는다.
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { RUNNABLE_HARNESSES, type AgentHarness } from '@harkroom/shared';
 
 import {
@@ -28,25 +28,22 @@ import {
   hasAccountPool,
   usesTuiForMention,
 } from '../src/adapters/index.js';
+import { runWithExecutionPath } from '../src/executionPath.js';
 
 const RUNNABLE = RUNNABLE_HARNESSES as readonly AgentHarness[];
 
-let savedFlag: string | undefined;
-beforeEach(() => { savedFlag = process.env.HARKROOM_HARNESS_ADAPTERS; });
-afterEach(() => {
-  // 플래그를 되돌린다 — 남기면 이 파일 뒤에 도는 테스트가 새 경로로 돈다.
-  if (savedFlag === undefined) delete process.env.HARKROOM_HARNESS_ADAPTERS;
-  else process.env.HARKROOM_HARNESS_ADAPTERS = savedFlag;
-});
-
+/**
+ * 켬·끔을 **턴 컨텍스트로** 표현한다(2026-09-15). env 를 지우고 넣는 방법은 기본값이
+ * 켜짐으로 바뀐 순간 **같은 경로를 두 번 재는 것**이 된다 — "지웠으니 옛 경로겠지" 가
+ * 조용히 거짓이 되고, 패리티 테스트는 그대로 초록이다. `executionPath`(#790)는 그
+ * 기본값이 무엇이든 두 경로를 **직접** 가리키므로 그 함정이 없다.
+ */
 function facts(harness: AgentHarness, enabled: boolean) {
-  if (enabled) process.env.HARKROOM_HARNESS_ADAPTERS = '1';
-  else delete process.env.HARKROOM_HARNESS_ADAPTERS;
-  return {
+  return runWithExecutionPath(enabled ? 'adapters' : 'legacy', () => ({
     usesTui: usesTuiForMention(harness),
     pooled: hasAccountPool(harness),
     discovers: discoversSessionIdAfterTurn(harness),
-  };
+  }));
 }
 
 describe('턴의 세 사실 — 스위치는 아무것도 바꾸지 않는다', () => {
