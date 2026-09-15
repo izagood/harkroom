@@ -2266,6 +2266,51 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     expect(r.opened[0]!.claudePool).toBeUndefined();
   });
 
+  /*
+    **지시문이 하네스에 실제로 닿는가**(2026-09-14 프로덕션 회귀).
+
+    codex 를 TUI 로 올린 뒤, 지시문 접두가 `if (!usesTui)` 안에만 남아 codex 턴이 지시문
+    없이 돌았다. codex 에는 `--append-system-prompt-file` 같은 플래그가 없으므로 접두가
+    **유일한 길**인데, 그 자리가 exec 경로에만 있었던 것이다. 증상은 조용했다: 요청한
+    파일은 만들고 `message.post` 는 부르지 않아 "답 없이 턴을 끝냈습니다"만 남았다 —
+    도구가 없어서가 아니라 발화해야 한다는 것을 몰라서였다.
+
+    그래서 이 회귀선은 **주입 텍스트의 내용**을 본다. 계획(argv)만 보면 codex 는 어차피
+    프롬프트가 argv 에 없어(#117) 늘 초록이다.
+  */
+  it('codex 턴은 지시문을 프롬프트 앞에 접두해 주입한다 — 플래그로 받을 길이 없다', async () => {
+    const fake = new FakeMurmur(defOf({ harness: 'codex' }));
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, plans, turnOpts } = await makeDeps(fake);
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    const [sent] = await getPlanContent(plans, turnOpts);
+    // 지시문(에이전트별 문구 + 워크스페이스 안내)과 본문이 **한 덩어리로** 간다.
+    expect(sent).toContain('친절하게 답한다');
+    expect(sent).toContain('워크스페이스 규칙');
+    expect(sent).toContain('@forge 안녕');
+    // argv 로는 새지 않는다(#92·#117) — 붙는 자리는 주입 텍스트 하나다.
+    expect(plans[0]!.args.join(' ')).not.toContain('친절하게 답한다');
+  });
+
+  /*
+    **claude 는 접두하지 않는다.** 전용 플래그로 파일을 받으므로, 여기에 또 붙이면 같은
+    지시문이 한 턴에 두 번 실린다. `systemPromptDelivery` 표를 읽는다는 것이 곧 이 대칭이다.
+  */
+  it('claude 턴의 주입 텍스트에는 지시문이 없다 — 전용 플래그로 파일을 받는다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, plans, turnOpts } = await makeDeps(fake);
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    const [sent] = await getPlanContent(plans, turnOpts);
+    expect(sent).toContain('@forge 안녕');
+    expect(sent).not.toContain('워크스페이스 규칙');
+    expect(plans[0]!.args).toContain('--append-system-prompt-file');
+  });
+
   it('스레드 안 멘션이면 세션 스코프가 그 스레드 루트다', async () => {
     // 위 테스트가 `null` 로 통과하는 것만으로는 "앵커를 그대로 쓴다"를 확인하지 못한다 —
     // 하드코딩된 null 도 초록이다. 앵커가 실제 값일 때 그 값이 세션에 실리는지를 본다.
