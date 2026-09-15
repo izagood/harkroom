@@ -267,6 +267,10 @@ describe('buildTurnCommand — codex', () => {
   it('codex 턴의 argv 에는 murmur MCP 등록이 항상 들어 있다 — PAT 값 자체는 여전히 안 붙는다', () => {
     const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, murmurUrl: 'http://localhost:3401' });
     expect(p.args.join(' ')).toContain('mcp_servers.avcs.command');
+    // **transport 가 빠지면 murmur 도 같이 죽는다**(2026-09-15 실측). codex 0.154 는 갈래
+    // 표시 없는 stdio 항목에서 MCP 설정 **전체**를 버린다 — 그러면 이 턴은 답할 수단이
+    // 없는 채로 돌다가 조용히 끝난다. 그래서 이 한 줄이 murmur 등록만큼 중요하다.
+    expect(p.args.join(' ')).toContain('mcp_servers.avcs.transport="stdio"');
     expect(p.args.join(' ')).toContain('mcp_servers.murmur.url="http://localhost:3401/mcp"');
     expect(p.args.join(' ')).toContain('mcp_servers.murmur.bearer_token_env_var="HARKROOM_PAT"');
     expect(p.args.join(' ')).not.toContain('murp_x');

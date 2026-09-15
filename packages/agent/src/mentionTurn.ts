@@ -15,7 +15,7 @@ import type { Me } from './murmur.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, gateNotice, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts } from './prompt.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type TurnPlan } from './turn.js';
-import { discoversSessionIdAfterTurn, hasAccountPool, readsSessionTranscript, usesTuiForMention } from './adapters/index.js';
+import { discoversSessionIdAfterTurn, hasAccountPool, injectionFactsFor, readsSessionTranscript, usesTuiForMention } from './adapters/index.js';
 import { runWithExecutionPath } from './executionPath.js';
 import { acceptsPtyInput } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
@@ -835,6 +835,11 @@ async function runMentionTurnBody(
     /** 하네스 기록이 마지막으로 자란 것을 본 시각(ms). 정지 판정의 기준점이다. */
     lastLifeMs: number;
     /**
+     * 화면에 마지막으로 바이트가 온 시각. **기록을 못 읽는 하네스의 유일한 생존 신호**다
+     * (2026-09-14). 0 은 아직 한 바이트도 안 왔다는 뜻이고, 그때는 재지 않는다.
+     */
+    lastDataAtMs: number;
+    /**
      * 정지로 접을 때 **실제로 잰** 유휴시간(ms). 0 은 "정지가 아니다"다.
      *
      * 한도(`harnessStallMs`)와 갈라 두는 이유: 스레드에 남는 문장이 한도를 찍으면 사람은
@@ -846,7 +851,7 @@ async function runMentionTurnBody(
   } = {
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
     apiError: null, canceledBy: null, stalled: false, awaitingHuman: false, gateNoticed: false,
-    lastLifeMs: 0, stalledIdleMs: 0,
+    lastLifeMs: 0, lastDataAtMs: 0, stalledIdleMs: 0,
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
   };
 
@@ -968,8 +973,27 @@ async function runMentionTurnBody(
      * 판정할 수 없으면 **재지 않는다** — 이 저장소가 같은 자리에서 이미 내린 결론이다
      * (`sessionTranscriptGrewSince` 의 "판정 불가는 참이다"). 그 턴은 무발화 시계만 갖는다.
      */
-    if (!readsSessionTranscript(def.harness)) return false;
     const limit = deps.harnessStallMs ?? 10 * 60_000;
+    /**
+     * **기록을 못 읽으면 화면으로 잰다(2026-09-14).**
+     *
+     * 위 결론("판정할 수 없으면 재지 않는다")은 건강한 턴을 지켰지만, 대가로 **정말 멈춘
+     * 턴을 아무도 접지 않게** 됐다. 실물에서 codex 턴이 26분·5분씩 매달렸고 실패 통지 한
+     * 줄도 남지 않았다 — 사람이 프로세스를 죽여야 끝났다.
+     *
+     * 그래서 판정을 포기하는 대신 **다른 증거**를 쓴다: PTY 화면에 바이트가 흐르는가.
+     * 이것은 하네스와 무관하고(모든 TUI 가 화면을 그린다), 일하는 동안 codex 는 경과
+     * 시계와 진행 줄을 계속 그리므로 건강한 턴은 이 시계를 계속 되돌린다. 사람이 보고
+     * 있거나(`viewers`) 관문을 기다리는 턴은 아래 공통 규칙이 이미 빼 준다.
+     */
+    if (!readsSessionTranscript(def.harness)) {
+      if (limit <= 0 || end.awaitingHuman || end.exited || end.spoke) return false;
+      if (end.viewers > 0 || end.lastDataAtMs === 0) return false;
+      const quietMs = (deps.now?.() ?? Date.now()) - end.lastDataAtMs;
+      if (quietMs < limit) return false;
+      end.stalledIdleMs = quietMs;
+      return true;
+    }
     // 기준점이 아직 안 잡혔으면(턴 시작 직전) 재지 않는다 — 0 을 기준으로 빼면
     // 첫 주기가 곧바로 한도를 넘는다.
     if (limit <= 0 || end.awaitingHuman || end.lastLifeMs === 0) return false;
@@ -1074,6 +1098,9 @@ async function runMentionTurnBody(
       ...(usesTui ? {
         injectPrompt: {
           text: prompt,
+          // 언제 넣을지·갔는지 어떻게 볼지는 **하네스의 성질**이다(어댑터 표).
+          // codex 는 입력창이 보여도 한동안 Enter 를 삼킨다 — 근거는 그 표의 주석에 있다.
+          ...injectionFactsFor(def.harness),
           // 아래 두 필드는 **함께 켜지고 함께 꺼진다**: `confirmDelivery` 는 `onAttention`
           // 이 있어야 할 일이 있고(부를 곳이 없으면 확인해도 소용없다), `onAttention` 은
           // 축의 마지막에서만 열린다. 앞 계정에서는 준비 실패가 그대로 던져져
@@ -1165,7 +1192,12 @@ async function runMentionTurnBody(
         },
       } : {}),
       // 릴레이가 없으면 탭도 없다 — `undefined` 를 넘겨 pty 쪽 호출을 아예 안 만든다.
-      onData: session ? (chunk) => session.push(chunk) : undefined,
+      onData: (chunk) => {
+        // **화면이 흐른다 = 하네스가 살아 있다.** 기록을 못 읽는 하네스는 이것 말고
+        // 생존을 말해 주는 것이 없다(`probeStall` 의 갈림길).
+        end.lastDataAtMs = deps.now?.() ?? Date.now();
+        session?.push(chunk);
+      },
       // 반대 방향(#315): 사람이 attach 해서 친 바이트가 이 PTY 로 들어온다. 릴레이가
       // 없으면 그 바이트를 나를 길 자체가 없으므로 통로도 만들지 않는다.
       //

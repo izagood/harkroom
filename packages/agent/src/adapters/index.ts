@@ -142,6 +142,23 @@ export function discoversSessionIdAfterTurn(harness: AgentHarness): boolean {
  * 않은 결함이라는 뜻이고, 조용히 기본값을 지어내면 그 결함이 엉뚱한 자리에서 드러난다
  * (`turn.ts::buildTurnCommand` 가 같은 규율을 쓴다).
  */
+/**
+ * 프롬프트를 **언제 넣고, 갔는지 어떻게 아는가** — 화면에 관한 두 사실(2026-09-14).
+ *
+ * `executionModelFor` 와 같은 규율으로 **스위치를 보지 않는다.** 이것은 경로의 차이가
+ * 아니라 하네스의 성질이고(codex 는 어느 경로에서도 부팅 0.2초에 자리표시자를 그린다),
+ * 실제로 옛 경로·새 경로가 같은 자리에서 똑같이 넘어졌다. 경로 뒤에 숨기면 한쪽만 고쳐진다.
+ *
+ * 표에 없으면 빈 값이다 — 그 하네스에는 이 그물을 치지 않는다는 뜻이고, claude 가 그렇다
+ * (준비 표시가 실제 준비와 같고, 제출 확인은 세션 기록으로 이미 된다).
+ */
+export function injectionFactsFor(
+  harness: AgentHarness,
+): { readyMinMs?: number; unsentHint?: RegExp } {
+  const { readyMinMs, unsentHint } = adapterFor(harness).screen;
+  return { ...(readyMinMs ? { readyMinMs } : {}), ...(unsentHint ? { unsentHint } : {}) };
+}
+
 export function adapterFor(harness: AgentHarness): HarnessAdapter {
   const adapter = ADAPTERS[harness];
   if (adapter === 'unsupported') {

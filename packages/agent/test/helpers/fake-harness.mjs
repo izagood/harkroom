@@ -57,6 +57,41 @@ if (mode === 'ready-then-echo') {
   setTimeout(() => process.exit(21), 8_000); // 안전망
 }
 
+// **입력창은 곧 보이지만 한동안 Enter 를 삼킨다** — codex 0.154 의 실측 성질(2026-09-14).
+//
+// 실물에서 이것이 턴을 두 번 매달았다: 러너가 0.2초에 자리표시자를 보고 붙여넣고 `\r` 를
+// 치면 본문만 입력창에 남고 제출은 안 된다. 화면에는 `tab to queue message` 가 뜬다.
+//
+// 이 픽스처가 그 성질을 그대로 갖는다: 준비 표시는 **즉시**, 제출은 `FAKE_SUBMIT_AT_MS`
+// (기본 2초) 전에는 받지 않는다. 그 전에 온 개행은 **버린다**(실물이 삼키는 것과 같다).
+if (mode === 'ready-early-submit-late') {
+  const submitAt = Number(process.env.FAKE_SUBMIT_AT_MS ?? 2_000);
+  const startedAt = Date.now();
+  process.stdout.write('READY\n\u276f\u00a0');
+  process.stdin.setEncoding('utf8');
+  let composer = '';      // 입력창에 들어온 본문
+  let hinted = false;
+  process.stdin.on('data', (d) => {
+    for (const ch of d) {
+      if (ch === '\r' || ch === '\n') {
+        // 부팅 전이면 삼킨다. 그것이 이 사건의 전부다.
+        if (Date.now() - startedAt < submitAt) continue;
+        if (composer.length === 0) continue;   // 빈 입력창의 개행은 아무 일도 아니다
+        process.stdout.write(`\nSUBMITTED:${composer.length}\n`);
+        process.exit(0);
+      } else {
+        composer += ch;
+      }
+    }
+    // 입력창에 글이 남아 있으면 실물처럼 힌트를 띄운다 — 러너의 그물이 이것을 읽는다.
+    if (composer.includes('[201~') && !hinted) {
+      hinted = true;
+      process.stdout.write('\n  tab to queue message\n');
+    }
+  });
+  setTimeout(() => process.exit(23), 12_000); // 안전망: 끝내 제출이 없으면 이 코드로 죽는다
+}
+
 // 아무 신호도 안 찍고 버틴다 — 미로그인 화면·디렉터리 신뢰 대화상자가 이 모양이다.
 if (mode === 'hang-silent') { setInterval(() => {}, 1_000); }
 

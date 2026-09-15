@@ -536,6 +536,21 @@ export interface RunPtyTurnOptions {
      */
     readyQuietMs?: number;
     /**
+     * **준비 표시를 봐도 스폰 후 이 시간 전에는 넣지 않는다**(ms). 기본 0(기다리지 않음).
+     *
+     * 근거는 `adapters/contract.ts` 의 같은 이름 필드에 있다 — 요약하면 codex 는 부팅
+     * 0.2초에 입력창 자리표시자를 그리지만 그때 Enter 는 삼켜진다.
+     */
+    readyMinMs?: number;
+    /**
+     * **넣었는데 제출되지 않았다**를 화면에서 읽는 정규식. 주면 주입 뒤에 확인하고,
+     * 보이면 개행을 다시 친다(본문은 다시 보내지 않는다 — 두 번 서면 같은 일을 두 번 한다).
+     */
+    unsentHint?: RegExp;
+    /** `unsentHint` 를 확인할 간격(ms, 기본 1500)과 최대 재시도 횟수(기본 3). */
+    unsentProbeMs?: number;
+    unsentRetries?: number;
+    /**
      * 정적 대기의 상한(2026-09-09). 생략하면 2초.
      *
      * 스피너처럼 **쉬지 않고 그리는** 화면에서 정적이 영영 오지 않을 수 있다. 그때는
@@ -848,6 +863,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
     if (opts.injectPrompt) {
       const { text, readyPattern = DEFAULT_READY_PATTERN, readyTimeoutMs = 60_000,
               readyQuietMs = 300, readyQuietMaxMs = 2_000, gatePattern = DEFAULT_GATE_PATTERN,
+              readyMinMs = 0, unsentHint, unsentProbeMs = 1_500, unsentRetries = 3,
               onAttention } = opts.injectPrompt;
       let injected = false;
       /**
@@ -911,6 +927,25 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
          * 부르며, PTY 는 그대로 살려 둔다 — 사람이 지나면 화면이 준비로 돌아오고 그때
          * 넣는다. 끝내 안 지나면 `readyTimeoutMs` 가 이 턴을 실패로 접는다(위 시계).
          */
+        /**
+         * **입력창이 보인다 ≠ 입력을 받는다**(2026-09-14 실측).
+         *
+         * codex 는 뜨자마자 자리표시자를 그리지만 그때 Enter 는 삼켜진다 — 붙여넣기만
+         * 입력창에 남고 턴이 영원히 선다(실물에서 두 번). 그래서 준비 표시 위에 **스폰
+         * 기준 하한**을 하나 더 얹는다. 얼마인지는 하네스마다 다르므로 어댑터 표가 말한다.
+         *
+         * 관문 검사보다 **앞**에 둔다: 부팅 중 화면은 관문으로도 준비로도 보일 수 있는데,
+         * 어느 쪽이든 아직 쓰면 안 되는 화면이다. 여기서 물러나도 `readyTimer` 가 상한을
+         * 쥐고 있으므로 이 대기가 턴을 영원히 붙잡지 않는다.
+         */
+        const sinceSpawn = Date.now() - startedAt;
+        if (readyMinMs > 0 && sinceSpawn < readyMinMs) {
+          if (quietTimer) clearTimeout(quietTimer);
+          quietTimer = setTimeout(inject, readyMinMs - sinceSpawn);
+          quietTimer.unref?.();
+          return;
+        }
+
         const beforeWrite = decodeTailText(tail.snapshot());
         if (looksLikeGate(beforeWrite, gatePattern, readyPattern)) {
           gateBlocked = true;
@@ -934,6 +969,32 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
           proc.write(`\u001b[200~${text}\u001b[201~`);
           proc.write('\r');
         } catch { /* 그 사이에 죽었으면 exit 리스너가 결과를 정한다 */ }
+
+        /**
+         * **삼켜진 Enter 를 화면으로 보고 다시 친다**(2026-09-14).
+         *
+         * 이 그물이 왜 따로 필요한가: 기존 확인(`confirmDelivery`)은 세션 기록이 자랐는지로
+         * 재는데, 기록을 읽을 수 없는 하네스에서는 그 판정이 **늘 참**이라(그래야 건강한
+         * 턴이 안 죽는다) 한 번도 돌지 않는다. codex 가 정확히 그 자리였고, 그래서 삼켜진
+         * Enter 를 되살릴 수단이 아무것도 없었다.
+         *
+         * **본문은 다시 보내지 않는다.** 입력창에 이미 들어 있으므로 개행만 치면 된다 —
+         * 다시 붙여넣으면 같은 프롬프트가 두 번 서고 하네스가 같은 일을 두 번 한다.
+         */
+        if (unsentHint) {
+          let left = unsentRetries;
+          const nudge = setInterval(() => {
+            if (settled || left <= 0) { clearInterval(nudge); return; }
+            if (!unsentHint.test(stripAnsi(decodeTailText(tail.snapshot())))) {
+              // 갔다. 더 칠 이유가 없다 — 남은 시도를 태우지 않는다.
+              clearInterval(nudge);
+              return;
+            }
+            left -= 1;
+            try { proc.write('\r'); } catch { clearInterval(nudge); }
+          }, unsentProbeMs);
+          nudge.unref?.();
+        }
 
         // ── 턴 **도중**의 관문을 계속 지켜본다(2026-09-09 실측).
         //
