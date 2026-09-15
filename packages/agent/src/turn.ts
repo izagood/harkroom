@@ -609,13 +609,53 @@ export async function writeMcpConfigOnce(dir: string, murmurUrl: string): Promis
  * 퍼미션 0600 으로 유지되어 world-readable 이 아니다 — argv 에서 뺀 이유가 이거다.
  * 지시문은 최대 8000자고, 파일 경로는 호출자가 이미 mkdir 로 디렉터리를 만들었다고 가정한다.
  */
+/**
+ * 상태 디렉터리가 **도는 중에 사라졌을 때** 사람에게 할 말(2026-09-14 실측).
+ *
+ * ## 무슨 일이 있었나
+ *
+ * `~/.murmur-agent` → `~/.harkroom-agent` 개명 중, 러너가 도는 채로 디렉터리를 옮겼다.
+ * 로그에 남은 것은 이것뿐이었다:
+ *
+ *     답변 실패 (3/3): ENOENT: no such file or directory,
+ *     open '/Users/…/.murmur-agent/forge-…/system-prompt.txt'
+ *
+ * 사람은 이걸 보고 **원인도 할 일도 알 수 없다.** 에이전트는 그냥 답을 안 한다.
+ *
+ * ## 왜 여기서 디렉터리를 다시 만들지 않나
+ *
+ * `mkdir -p` 한 줄이면 이 턴은 살아난다. 그런데 그러면 **옮겨 간 상태와 갈라진 빈
+ * 디렉터리**가 옛 경로에 생기고, 러너는 세션 기록이 사라진 채로 계속 돈다 — 사람은
+ * 그것을 한참 뒤에, 훨씬 이해하기 어려운 모양으로 발견한다. 조용히 반쯤 고치는 것보다
+ * **무엇이 일어났는지 말하고 멈추는 것**이 낫다.
+ *
+ * ## 왜 폴백이 못 막나
+ *
+ * `pickRenamedDir` 은 러너가 **뜰 때 한 번** 돈다(`config.ts` 의 `loadConfig` 는
+ * `main.ts` 모듈 최상위에서 불린다). 그 뒤에 경로를 옮기면 이미 도는 러너는 정해진
+ * 경로를 그대로 붙잡는다 — 폴백이 고칠 수 있는 순간이 이미 지났다.
+ */
+function 상태디렉터리사라짐(dir: string): string {
+  return [
+    `상태 디렉터리가 사라졌다: ${dir}`,
+    '러너는 뜰 때 이 경로를 한 번 정하고 사는 동안 그대로 쓴다. 도는 중에 그 디렉터리를',
+    '옮기면(예: `mv ~/.murmur-agent ~/.harkroom-agent`) 이 러너는 없는 경로를 계속 붙잡는다.',
+    '**앱을 재시작하면** 새 경로로 다시 잡는다.',
+  ].join('\n');
+}
+
 export async function writeSystemPromptFile(dir: string, systemPrompt: string): Promise<string> {
   const filePath = join(dir, 'system-prompt.txt');
   // mode 와 chmod 를 **둘 다** 한다. `writeFile` 의 mode 는 파일을 새로 만들 때만 적용되므로
   // 두 번째 턴부터는(파일이 이미 있다) 아무 일도 하지 않는다 — 그때는 chmod 가 지킨다.
   // 반대로 chmod 만 하면 첫 생성과 chmod 사이에 umask 퍼미션으로 존재하는 창이 생긴다.
-  await writeFile(filePath, systemPrompt, { encoding: 'utf8', mode: 0o600 });
-  await chmod(filePath, 0o600);
+  try {
+    await writeFile(filePath, systemPrompt, { encoding: 'utf8', mode: 0o600 });
+    await chmod(filePath, 0o600);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException | null)?.code === 'ENOENT') throw new Error(상태디렉터리사라짐(dir));
+    throw err;
+  }
   return filePath;
 }
 

@@ -153,6 +153,14 @@ MCP `inbox.poll`에만 있고 REST `/inbox`에는 없다. 이 러너를 만들�
 
 `<AGENT_STATE_DIR>/<handle>-<id>/`(기본 `~/.harkroom-agent/<handle>-<id>/`) 아래:
 
+> ⚠️ **이 디렉터리를 옮길 때는 러너를 먼저 세운다.** 경로는 러너가 **뜰 때 한 번** 정해지고
+> (`config.ts` 의 `loadConfig` 는 `main.ts` 모듈 최상위에서 불린다) 프로세스가 사는 동안
+> 그대로다. 도는 채로 옮기면 러너는 없는 경로를 계속 붙잡고, 모든 턴이
+> `ENOENT … system-prompt.txt` 로 죽는다 — **에이전트가 그냥 답을 안 하는 것처럼 보인다**
+> (2026-09-14 실측: `mv ~/.murmur-agent ~/.harkroom-agent` 를 앱이 도는 채로 했다).
+>
+> 순서: **앱 종료 → `mv` → 앱 실행.**
+
 ```
 sessions.json      # 스레드별 세션 (위)
 mcp/mcp.json        # harkroom + avcs만 담은 MCP 설정 — 기동 시 한 번 쓰고 재사용
