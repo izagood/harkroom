@@ -19,7 +19,7 @@ import { runMigrations } from '../../src/db/migrate.js';
 import { createPool } from '../../src/db/pool.js';
 
 /** 마이그레이션이 끝난 원본. 파일별 DB 는 이걸 복제해서 만든다(testDb.ts). */
-export const TEMPLATE_DB = 'murmur_tpl';
+export const TEMPLATE_DB = 'harkroom_tpl';
 
 let container: StartedPostgreSqlContainer | null = null;
 

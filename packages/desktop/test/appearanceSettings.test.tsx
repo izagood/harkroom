@@ -72,14 +72,14 @@ describe('요구 1 — 기본값과 기본값 병합', () => {
    * 적고 그 사본에 단언해, `prefs.ts` 에서 병합을 빼도 초록이었다 — 아무것도 지키지 않는다.
    */
   it('colorMode 가 없는 옛 저장본을 불러도 system 이다', () => {
-    localStorage.setItem('murmur.prefs', JSON.stringify({
+    localStorage.setItem('harkroom.prefs', JSON.stringify({
       notifications: { enabled: false }, sidebarWidth: 300,
     }));
     expect(prefsStorage.load().colorMode).toBe('system');
   });
 
   it('저장된 값이 있으면 그 값을 쓴다 — 위 단언이 항상 system 을 돌려주는 구현을 통과시키지 않는다', () => {
-    localStorage.setItem('murmur.prefs', JSON.stringify({ colorMode: 'light' }));
+    localStorage.setItem('harkroom.prefs', JSON.stringify({ colorMode: 'light' }));
     expect(prefsStorage.load().colorMode).toBe('light');
   });
 });
