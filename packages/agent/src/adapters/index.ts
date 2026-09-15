@@ -83,6 +83,30 @@ export function usesTuiForMention(harness: AgentHarness): boolean {
 }
 
 /**
+ * **이 하네스는 지시문을 프롬프트 앞에 붙여야만 받는가.**
+ *
+ * `systemPromptDelivery` 는 처음부터 표에 있었고 `adapterParity.test.ts` 가 실제 argv 와
+ * 대조까지 하고 있었는데, **그 값을 읽어 무엇을 보낼지 정하는 곳이 없었다.** 그 구멍이
+ * 프로덕션에서 값을 치렀다(2026-09-14 실측, `codex-dev`): codex 를 TUI 로 올린 뒤
+ * `mentionTurn` 은 주입 텍스트에 본문만 실었고 — 지시문은 `--append-system-prompt-file`
+ * 이 있는 claude 만 받는 길이었다 — codex 턴은 **지시문 없이** 돌았다. 요청한 파일은
+ * 만들어 놓고 `message.post` 는 부르지 않아 "답 없이 턴을 끝냈습니다"만 남았다.
+ * 도구가 없어서가 아니다: 그 턴의 codex 로그에 harkroom MCP 가 정상 등록돼 있다.
+ * 발화해야 한다는 것도, channelId·threadRootId 도 전부 지시문에 있었을 뿐이다.
+ *
+ * **실행 방식과 무관한 사실이다.** exec 이든 TUI 든 codex 는 지시문을 받을 플래그가 없다 —
+ * 달라지는 것은 접두한 본문이 stdin 파일로 가느냐 PTY 로 주입되느냐뿐이다. 그래서
+ * `usesTuiForMention` 과 갈라 둔다: 둘을 한 조건으로 묶으면 codex 를 exec 으로 되돌리는
+ * 날 지시문이 다시 사라진다.
+ *
+ * 스위치를 보지 않는 이유는 `executionModelFor` 와 같다 — 여기에는 보존할 "옛 답"이 없다.
+ * 옛 답이 곧 위의 버그다.
+ */
+export function prefixesSystemPrompt(harness: AgentHarness): boolean {
+  return adapterFor(harness).systemPromptDelivery === 'prompt-prefix';
+}
+
+/**
  * **이 하네스를 이 모드에서 어떤 실행 방식으로 띄우는가.**
  *
  * `usesTuiForMention` 이 이것의 멘션 전용 얼굴이다. 갈라 둔 이유는 **argv 의 모양이 모드가

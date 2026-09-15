@@ -15,7 +15,7 @@ import type { Me } from './murmur.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, gateNotice, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts } from './prompt.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type TurnPlan } from './turn.js';
-import { discoversSessionIdAfterTurn, hasAccountPool, injectionFactsFor, readsSessionTranscript, usesTuiForMention } from './adapters/index.js';
+import { discoversSessionIdAfterTurn, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readsSessionTranscript, usesTuiForMention } from './adapters/index.js';
 import { runWithExecutionPath } from './executionPath.js';
 import { acceptsPtyInput } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
@@ -733,12 +733,26 @@ async function runMentionTurnBody(
   // 결정한다(스펙 §5-3: 판정은 fd 0 의 정체 하나로 한다).
   //
   // - claude: TUI 로 뜨고 프롬프트는 PTY 에 주입한다 → `stdinFile: null` → 입력이 열린다.
-  // - codex: 아직 `exec` 이라 지시문 + 본문을 합쳐 stdin 파일로 준다(P5 전까지 두 세계가 함께 산다).
+  // - codex: TUI 로 뜨지만 지시문을 받을 플래그가 없어, 주입 텍스트 앞에 지시문을 접두한다.
   const usesTui = usesTuiForMention(def.harness);
+  /**
+   * **지시문이 이 하네스에 닿는 길은 둘뿐이다**(2026-09-14 실측으로 다시 배웠다).
+   *
+   * 전용 플래그(`--append-system-prompt-file`)가 있는 하네스는 그 길로 받고, 없는 하네스는
+   * **프롬프트 앞에 붙는 것 말고 길이 없다**(`prefixesSystemPrompt`). 표는 그 사실을
+   * `systemPromptDelivery` 로 처음부터 알고 있었는데 이 자리가 묻지 않았다 — 그래서 codex 를
+   * TUI 로 올린 뒤 접두가 `!usesTui` 안에만 남아, codex 턴이 지시문 없이 돌았다.
+   *
+   * 매 턴 다시 붙인다. exec 경로가 그랬고(`combined` 는 턴마다 새로 만들었다) 이유도 같다 —
+   * UI 로 지시문을 바꾸면 다음 턴부터 반영돼야 하고, 기억·채널 이름이 턴마다 다르다.
+   * 되살린 세션이 앞 턴의 지시문을 들고 있다고 해서 **그 내용이 지금 것이라는 보장은 없다.**
+   */
+  const promptForHarness = prefixesSystemPrompt(def.harness)
+    ? [systemPrompt, prompt].filter((s) => s.length > 0).join('\n\n')
+    : prompt;
   let stdinFile: string | null = null;
   if (!usesTui) {
-    const combined = [systemPrompt, prompt].filter((s) => s.length > 0).join('\n\n');
-    stdinFile = await writePromptFile(deps.stateDir, combined);
+    stdinFile = await writePromptFile(deps.stateDir, promptForHarness);
   }
 
   const plan = buildTurnCommand({
@@ -1097,7 +1111,8 @@ async function runMentionTurnBody(
       // 주입은 `runPtyTurn` 이 준비 신호를 본 뒤에 한다(pty.ts::injectPrompt).
       ...(usesTui ? {
         injectPrompt: {
-          text: prompt,
+          // 지시문이 필요한 하네스에는 여기가 **유일한 길**이다(위 `promptForHarness`).
+          text: promptForHarness,
           // 언제 넣을지·갔는지 어떻게 볼지는 **하네스의 성질**이다(어댑터 표).
           // codex 는 입력창이 보여도 한동안 Enter 를 삼킨다 — 근거는 그 표의 주석에 있다.
           ...injectionFactsFor(def.harness),
