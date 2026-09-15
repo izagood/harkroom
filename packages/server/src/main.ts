@@ -7,6 +7,7 @@ import { ProjectionSupervisor } from './avcs/supervisor.js';
 import { getProjectionConfig } from './services/projectionConfig.js';
 import { resolveProjectionUrl } from '@harkroom/shared';
 import { Lifecycle } from './lifecycle.js';
+import { seedClaimToken } from './services/claimToken.js';
 
 const config = loadConfig();
 // 가드 없는 Pool 을 만들지 않는다 — pg 는 유휴 클라이언트 에러를 리스너 없으면 uncaught
@@ -15,6 +16,11 @@ const pool = createPool(config.databaseUrl, (err) => {
   console.error('postgres pool error (idle client):', err.message);
 });
 await runMigrations(pool);
+
+// 클레임 토큰을 심는다(053). 마이그레이션 **뒤**라야 한다 — 그때 테이블이 생긴다.
+// 값이 없으면 아무 일도 하지 않는다: 셀프호스트는 `/bootstrap` 을 쓰고 이 경로를 모른다.
+const seeded = await seedClaimToken(pool, process.env.CLAIM_TOKEN_HASH);
+if (seeded) console.log('claim token seeded — this workspace can be claimed once via POST /claim');
 
 // 워커를 쥐는 자리가 supervisor 로 옮겨갔다(#537 후속). 이 파일에 `let worker` 를 두면
 // 그것을 갈아 끼우는 판정도 여기 남고, 이 파일은 임포트만으로 포트를 잡아 시험할 수 없다.

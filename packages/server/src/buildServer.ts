@@ -58,6 +58,10 @@ const LIMITED_ROUTES: { method: string; url: string; rule: keyof typeof DEFAULT_
   { method: 'POST', url: '/auth/login', rule: 'login' },
   { method: 'POST', url: '/auth/register', rule: 'signup' },
   { method: 'POST', url: '/bootstrap', rule: 'signup' },
+  // `/claim` 은 **인증 없는 계정 생성 표면**이고, 그 위에 추측 가능한 비밀(클레임 토큰)을
+  // 맞히는 시도를 받는 자리다. 리밋이 없으면 토큰을 무차별 대입할 수 있다 — 토큰이 128비트
+  // 난수라 현실적으로 맞지는 않지만, 그 사실에 기대는 것과 시도 자체를 좁히는 것은 다르다.
+  { method: 'POST', url: '/claim', rule: 'signup' },
   { method: 'POST', url: '/ws-ticket', rule: 'ticket' },
   { method: 'POST', url: '/uploads', rule: 'upload' },
 ];
