@@ -379,7 +379,7 @@ select token_hash from claim_token where used_at is null for update
 | 계정+채널 한 트랜잭션 | `/bootstrap`(41-50행) | 채널 없이 계정만 남으면 **워크스페이스가 굳는다** |
 | 감사 기록은 커밋 뒤 | `/bootstrap`(57-66행) | 롤백돼도 로그가 남아 거짓을 말하지 않게 |
 
-토큰은 **env 가 아니라 DB 에 둔다**(`claim_token` 테이블, 마이그레이션 054). env 로 심으면
+토큰은 **env 가 아니라 DB 에 둔다**(`claim_token` 테이블, 마이그레이션 053). env 로 심으면
 소진 여부를 기록할 곳이 없어 재시작마다 다시 유효해진다.
 
 `CLAIM_TOKEN_HASH` env 로 초기값을 주고 기동 시 테이블에 한 번 넣는 방식이면 SealedSecret
@@ -632,7 +632,7 @@ gate 가 자동화할 **대상**이 먼저 검증돼야 한다. 6장의 1~7 단�
 |---|---|
 | 1 | private 레포 `harkroom-gate` 생성, grant/job 스키마 |
 | 2 | 초대 코드 발급 CLI (내가 쓰는 것, UI 없음) |
-| 3 | **harkroom 서버에 `POST /claim`** + 마이그레이션 054 + 레이트 리밋(4-2). 이것만 따로 PR |
+| 3 | ~~**harkroom 서버에 `POST /claim`** + 마이그레이션 053 + 레이트 리밋(4-2)~~ **완료** (#812, v0.1.223) |
 | 4 | `POST /api/workspaces` — 검증·선점·이메일 저장·토큰 생성·커밋까지 |
 | 5 | 상태 폴링 + ArgoCD 대기 + `ready` 응답에 클레임 토큰 |
 | 6 | 되돌리기(4-6) · 만료 회수(4-2-4) · 쿼터(4-8) |
@@ -668,12 +668,39 @@ gate 가 만든 인스턴스를 아무도 가져갈 수 없다. 5번까지 하�
 | 1 | ~~Cloudflare `harkroom.com` 등록 + external-dns 로 apex·와일드카드 레코드~~ **완료** (homelab #115) | — |
 | 2 | ~~플랫폼 스택 확인(istio·external-dns·sealed-secrets·local-path·cloudflared)~~ **완료** | 1 |
 | 3 | ~~`harkroom-app/` 매니페스트 작성~~ **완료** (homelab `izagood/harkroom-app`) | 2 |
-| 4 | 머지 → ArgoCD 싱크 → 파드 기동 확인. 이관 전이면 **replicas 0** 으로 내린다 | 3 |
-| 5 | **기존 데이터 이관** (3장) | 4 |
-| 6 | `replicas 1` → `/healthz`·첨부 확인 | 5 |
+| 4 | ~~머지 → ArgoCD 싱크 → 파드 기동~~ **완료** (homelab #116·#117) | 3 |
+| 5 | **기존 데이터 이관** (3장) — **미룸.** 새 워크스페이스는 빈 상태로 만드는 것이 기본이고, 이관은 이 인스턴스 한 번뿐이다 | 4 |
+| 6 | ~~`/healthz`·감사로그 IP 확인~~ **완료** — 아래 | 4 |
 | 7 | 두 번째 워크스페이스(`harkroom-alice/`)를 복사로 만들어 검증 | 6 |
 | 8 | **CNPG `backup:` 블록**(R2) — 실사용자 전에 | 7 |
 | 9 | 홈랩 레포 `README.md` 갱신 — 토폴로지·앱 목록·절차 | 전부 |
+
+### 6-1. 배포 확인 (2026-09-15)
+
+`app.harkroom.com` 이 실제로 응답한다 — #115 이후의 404 가 사라졌다.
+
+```
+$ curl https://app.harkroom.com/healthz
+{"ok":true,"avcs":{"connected":false},"version":"0.1.223",
+ "commit":"...","startedAt":"..."}
+$ curl -o /dev/null -w "%{http_code}" https://app.harkroom.com/readyz   # 200
+```
+
+**1-4 가 남긴 숙제가 풀렸다.** Istio 의 `numTrustedProxies` 가 cloudflared 한 겹을
+고려하지 못하면 모든 요청이 cloudflared 파드 IP 로 보이는데 — 화면에 드러나지 않는
+종류라 눈으로 확인해야 했다 — 감사 로그에 **실제 공인 IP** 가 찍혔다. 손댈 것이 없다.
+
+```sql
+select action, ip from audit_log order by at desc limit 1;
+-- login.failed | <요청한 기계의 공인 IP>
+```
+
+`/claim` 도 프로덕션에서 의도대로 막는다. 이 인스턴스에는 `CLAIM_TOKEN_HASH` 가 없으므로
+`claim_token` 이 비어 있고, 아무 토큰이나 보내면 404 다 — **토큰 없이는 이 워크스페이스를
+가져갈 수 없다.**
+
+> ⚠️ 이미지는 **0.1.223 이상**이어야 한다. `053_claim_token` 이 그 릴리즈에 들어 있어
+> 0.1.222 로는 `claim_token` 테이블 자체가 생기지 않는다(실측으로 확인해 #117 로 올렸다).
 
 9번은 선택이 아니다: homelab-infra 원칙 6 이 "코드만 바꾸고 README 를 두고 가는 것은 작업
 미완료"로 규정한다.
