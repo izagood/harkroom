@@ -2,7 +2,8 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import {
   AGENT_HARNESSES, HANDLE_PATTERN, RUNNABLE_HARNESSES,
   type AgentConfig, type AgentDefaults, type AgentTeamMemberRow, type AgentTeamRow,
-  type AgentView, type MentionPermission, type PatView, harnessHasAccountPool } from '@harkroom/shared';
+  type AgentView, type MentionPermission, type PatView, harnessHasAccountPool,
+  MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { staleRunners } from '../../lib/runnerVersions';
@@ -13,6 +14,12 @@ import type { ObservedRunner } from '../../lib/runnerLauncher';
 // 경과 계산은 `lib/` 한 벌이다 — 카드도 같은 값을 쓰는데 그쪽은 이 파일을 import 할 수
 // 없다(순환). `lastTurnLabel` 은 그 위에 접두만 붙인다(아래 그 함수 주석).
 import { lastTurnAgo } from '../../lib/lastTurn';
+import { agoLabel } from '../../lib/time';
+// 기억 목록의 판정(접기·검색·묶기)은 `lib/` 한 벌이다 — 그 파일 머리말에 화면에서 떼어
+// 낸 이유가 있다. 회귀선은 `test/memoryList.test.ts`.
+import {
+  memoryRows, memorySummary, splitCore, type MemoryEntry, type MemorySort,
+} from '../../lib/memoryList';
 // 화면은 `useT`, 화면 밖에서 쓰이는 순수 함수(`lastTurnLabel`)는 `Translate` 를 인자로
 // 받는다 — 그 갈림의 근거는 `i18n/index.ts::Translate` 머리말에 있다.
 import { useT, useLocale } from '../../i18n/useT';
@@ -288,9 +295,18 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   // #139: 메모리는 **세 상태**다 — null(아직 안 읽음) / 'error'(못 읽음) / 목록.
   // 실패를 빈 배열로 삼키면 "기억이 없다" 와 "못 읽었다" 가 구분되지 않는다
   // (docs/design.md 4절). 러너 쪽 MemoryContext 가 같은 이유로 세 상태다.
-  type MemoryEntry = { slug: string; value: string; updatedAt: string };
   const [memories, setMemories] = useState<MemoryEntry[] | 'error' | null>(null);
   const [confirmingSlug, setConfirmingSlug] = useState<string | null>(null);
+  /**
+   * **접힌 줄이 기본이다** — 펼친 것만 센다(#139 4단계).
+   *
+   * 여럿을 함께 펼칠 수 있게 둔 이유: 이 화면의 일은 기억을 견주며 지울 것을 고르는
+   * 것이고, 하나만 열리는 방식이면 다음을 열 때마다 앞의 것이 닫혀 비교가 끊긴다.
+   */
+  const [openSlugs, setOpenSlugs] = useState<string[]>([]);
+  const [openGroups, setOpenGroups] = useState<string[]>([]);
+  const [memQuery, setMemQuery] = useState('');
+  const [memSort, setMemSort] = useState<MemorySort>('recent');
   // #251: 비활성화는 되돌릴 수 없는 작업이므로 확인 단계를 거친다.
   const [confirmingDisable, setConfirmingDisable] = useState(false);
   // 라벨을 하드코딩하면 재발급이 막힌다 — 라벨은 살아 있는 토큰 안에서 유일하고
@@ -538,6 +554,110 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   };
 
   /**
+   * 목록을 그리기 **전에** 줄로 편다. 묶고 고르는 판정은 `lib/memoryList.ts` 한 벌이고
+   * 여기서는 그 결과를 받기만 한다 — 화면이 제 손으로 묶으면 회귀선이 닿지 않는 자리가
+   * 생긴다(그 파일 머리말).
+   */
+  const memoryAll = Array.isArray(memories) ? memories : null;
+  const memorySplit = memoryAll ? splitCore(memoryAll) : null;
+  const memoryVisible = memorySplit
+    ? memoryRows(memorySplit.rest, { query: memQuery, sort: memSort })
+    : [];
+  /**
+   * 한도가 차면 **새 기억이 조용히 거절된다**(`services/memory.ts` 의 `too_many`). 그때
+   * 사람이 할 수 있는 일은 지우는 것뿐인데 앞판 화면에는 몇 개인지조차 없었다. 9할에서
+   * 색을 바꾼다 — 차고 나서 알면 늦다.
+   */
+  const memoryNearLimit = memoryAll !== null
+    && memoryAll.length >= Math.floor(MAX_MEMORY_ITEMS_PER_ACCOUNT * 0.9);
+  /** 검색 중에는 묶음을 연 채로 둔다 — 걸린 것을 접어 두면 찾은 보람이 없다. */
+  const memorySearching = memQuery.trim() !== '';
+
+  const toggleIn = (list: string[], key: string): string[] =>
+    (list.includes(key) ? list.filter((k) => k !== key) : [...list, key]);
+
+  /**
+   * 지우기의 확인 한 쌍. **`core` 카드와 목록 줄이 같은 것을 쓴다** — 두 벌로 두면
+   * 한쪽만 고치는 날이 온다. 되돌릴 수 없으니 한 번 더 묻는 규칙은 `MessageItem` 과 같다.
+   */
+  const memoryDelete = (slug: string, agentId: string) => (
+    confirmingSlug === slug ? (
+      <span className="flex flex-none gap-1">
+        <button
+          className="rounded border border-danger-border bg-danger-surface px-1.5 text-meta text-danger"
+          onClick={() => {
+            setConfirmingSlug(null);
+            void getController().deleteAgentMemory(agentId, slug)
+              .then(() => { if (selected) loadMemories(selected); })
+              .catch(() => setError(t('agents.memory.deleteFailed')));
+          }}
+        >
+          {t('agents.memory.deleteConfirm')}
+        </button>
+        <button
+          className="rounded border border-border px-1.5 text-meta text-fg-muted"
+          onClick={() => setConfirmingSlug(null)}
+        >
+          {t('agents.memory.keep')}
+        </button>
+      </span>
+    ) : (
+      <button
+        className="flex-none rounded border border-border px-1.5 text-meta text-fg-muted"
+        aria-label={t('agents.memory.deleteAction', { slug })}
+        onClick={() => setConfirmingSlug(slug)}
+      >
+        {t('agents.memory.deleteStart')}
+      </button>
+    )
+  );
+
+  /**
+   * 기억 한 줄. **접힌 것이 기본**이고 누르면 그 자리에서 펼친다.
+   *
+   * 묶음 안과 밖을 **같은 함수**가 그린다 — 두 벌로 두면 묶음 안의 줄만 낡는 날이 온다.
+   * 지우기를 펼친 뒤에만 보이게 두지 않은 이유: 한도에 닿았을 때 사람이 하는 일이 바로
+   * 훑으며 지우는 것이고, 그때마다 펼치게 만들면 접은 값이 도로 사라진다.
+   */
+  const memoryRow = (m: MemoryEntry, agentId: string, inGroup: boolean) => {
+    const open = openSlugs.includes(m.slug);
+    return (
+      <div
+        key={m.slug}
+        data-testid={`memory-row-${m.slug}`}
+        className="border-t border-border first:border-t-0"
+      >
+        <div className={`flex items-baseline gap-2 px-2 py-1 ${inGroup ? 'pl-6' : ''}`}>
+          <button
+            className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
+            aria-expanded={open}
+            aria-label={t(open ? 'agents.memory.collapse' : 'agents.memory.expand', { slug: m.slug })}
+            onClick={() => setOpenSlugs((prev) => toggleIn(prev, m.slug))}
+          >
+            <span aria-hidden="true" className="flex-none text-meta text-fg-subtle">{open ? '▾' : '▸'}</span>
+            <span className="flex-none text-meta font-medium">{m.slug}</span>
+            {/* 첫 줄을 제목처럼 쓴다(`memorySummary`). 넘치면 잘린다 — 펼치면 원문이 있다. */}
+            <span className="min-w-0 flex-1 truncate text-meta text-fg-subtle">{memorySummary(m.value)}</span>
+          </button>
+          <span
+            className="flex-none text-meta text-fg-subtle"
+            title={new Date(m.updatedAt).toLocaleString(locale)}
+          >
+            {agoLabel(new Date(m.updatedAt).getTime(), Date.now(), locale, t)}
+          </span>
+          {memoryDelete(m.slug, agentId)}
+        </div>
+        {open && (
+          /* 값은 최대 8,000자다 — 펼쳐도 이 상자 안에서만 자란다. */
+          <pre className={`mb-1 max-h-64 overflow-auto whitespace-pre-wrap break-words px-2 text-meta text-fg-muted ${inGroup ? 'pl-6' : ''}`}>
+            {m.value}
+          </pre>
+        )}
+      </div>
+    );
+  };
+
+  /**
    * 고친 것이 있는가. **서버가 준 값과 지금 초안을 견준다** — 별도 플래그를 두면 어느
    * 시점에 내려야 하는지가 저장·재조회·전환 세 곳에 흩어지고, 그중 하나를 잊는다.
    */
@@ -573,6 +693,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     setError(null);
     setConfirmingSlug(null);
     setConfirmingDisable(false);
+    // 앞 에이전트에서 펼쳐 둔 줄·검색어가 남으면 다음 에이전트의 목록이 남의 상태로 열린다.
+    setOpenSlugs([]);
+    setOpenGroups([]);
+    setMemQuery('');
+    setMemSort('recent');
     loadPats(a);
     loadMemories(a);
   };
@@ -1436,7 +1561,20 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
             {selected && (isAdmin || isOwner) && (
               <div className="rounded border border-border p-3">
-                <div className="text-meta font-medium text-fg-muted">{t('agents.memory.heading')}</div>
+                <div className="flex items-baseline justify-between gap-2">
+                  <div className="text-meta font-medium text-fg-muted">{t('agents.memory.heading')}</div>
+                  {memoryAll !== null && memoryAll.length > 0 && (
+                    <div
+                      data-testid="memory-count"
+                      title={memoryNearLimit ? t('agents.memory.limitNote') : undefined}
+                      className={`text-meta ${memoryNearLimit ? 'text-warning' : 'text-fg-subtle'}`}
+                    >
+                      {t('agents.memory.count', {
+                        n: memoryAll.length, max: MAX_MEMORY_ITEMS_PER_ACCOUNT,
+                      })}
+                    </div>
+                  )}
+                </div>
                 {/* 읽기·삭제만이다. 편집을 넣지 않는 이유(#139): 사람이 고쳐도 에이전트가
                     다음 턴에 덮어쓰면 **사람은 자기 수정이 왜 사라졌는지 알 수 없다.** */}
                 <div className="mt-2 space-y-2">
@@ -1444,50 +1582,137 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   {memories === 'error' && (
                     <div role="alert" className="text-meta text-danger">{t('agents.memory.failed')}</div>
                   )}
-                  {Array.isArray(memories) && memories.length === 0 && (
+                  {memoryAll !== null && memoryAll.length === 0 && (
                     <div className="text-meta text-fg-muted">{t('agents.memory.empty')}</div>
                   )}
-                  {Array.isArray(memories) && memories.map((m) => (
-                    <div key={m.slug} className="rounded bg-surface px-2 py-1.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-meta font-medium">{m.slug}</span>
-                        {confirmingSlug === m.slug ? (
-                          <span className="flex gap-1">
-                            {/* 되돌릴 수 없으니 한 번 더 묻는다 — MessageItem 의 삭제 확인과 같은 규칙. */}
-                            <button
-                              className="rounded border border-danger-border bg-danger-surface px-1.5 text-meta text-danger"
-                              onClick={() => {
-                                setConfirmingSlug(null);
-                                void getController().deleteAgentMemory(selected.id, m.slug)
-                                  .then(() => loadMemories(selected))
-                                  .catch(() => setError(t('agents.memory.deleteFailed')));
-                              }}
-                            >
-                              {t('agents.memory.deleteConfirm')}
-                            </button>
-                            <button
-                              className="rounded border border-border px-1.5 text-meta text-fg-muted"
-                              onClick={() => setConfirmingSlug(null)}
-                            >
-                              {t('agents.memory.keep')}
-                            </button>
+
+                  {/*
+                    `core` 는 목록에 서지 않는다. **매 턴 통째로 프롬프트에 실리는 것은
+                    이것뿐**이고 나머지는 필요할 때만 열리므로, 같은 줄에 두면 화면이 그
+                    차이를 말하지 않게 된다. 강조색을 쓰지 않는 이유(#488 B2): 이 카드는
+                    나를 막지 않는다 — 에이전트의 것을 가리키는 축(`surface-agent`)이 제자리다.
+                  */}
+                  {memorySplit?.core && (
+                    <div
+                      data-testid="memory-core"
+                      className="rounded border border-border-agent bg-surface-agent px-2 py-1.5"
+                    >
+                      <div className="flex items-baseline gap-2">
+                        <button
+                          className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
+                          aria-expanded={openSlugs.includes(memorySplit.core.slug)}
+                          aria-label={t(
+                            openSlugs.includes(memorySplit.core.slug)
+                              ? 'agents.memory.collapse' : 'agents.memory.expand',
+                            { slug: memorySplit.core.slug },
+                          )}
+                          onClick={() => setOpenSlugs((prev) => toggleIn(prev, 'core'))}
+                        >
+                          <span aria-hidden="true" className="flex-none text-meta text-fg-agent">
+                            {openSlugs.includes(memorySplit.core.slug) ? '▾' : '▸'}
                           </span>
-                        ) : (
-                          <button
-                            className="rounded border border-border px-1.5 text-meta text-fg-muted"
-                            aria-label={t('agents.memory.deleteAction', { slug: m.slug })}
-                            onClick={() => setConfirmingSlug(m.slug)}
-                          >
-                            {t('agents.memory.deleteStart')}
-                          </button>
-                        )}
+                          <span className="flex-none text-meta font-medium">{memorySplit.core.slug}</span>
+                          <span className="flex-none rounded-full border border-border-agent px-1.5 text-meta text-fg-agent">
+                            {t('agents.memory.coreTag')}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-meta text-fg-subtle">
+                            {memorySummary(memorySplit.core.value)}
+                          </span>
+                        </button>
+                        {memoryDelete(memorySplit.core.slug, selected.id)}
                       </div>
-                      {/* 값은 최대 8000자다 — 설정 화면이 그것 때문에 무한히 길어지면 안 된다. */}
-                      <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-meta text-fg-muted">
-                        {m.value}
-                      </pre>
+                      {/* 길이가 곧 매 턴의 비용이다 — 게이지가 그것을 수가 아니라 자리로 말한다. */}
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <div className="h-1 flex-1 overflow-hidden rounded-full bg-border">
+                          <div
+                            className={`h-full rounded-full ${
+                              memorySplit.core.value.length >= MAX_MEMORY_VALUE_LENGTH * 0.9
+                                ? 'bg-warning' : 'bg-fg-agent'
+                            }`}
+                            style={{
+                              width: `${Math.min(100, Math.round(
+                                (memorySplit.core.value.length / MAX_MEMORY_VALUE_LENGTH) * 100,
+                              ))}%`,
+                            }}
+                          />
+                        </div>
+                        <span className="flex-none text-meta text-fg-subtle">
+                          {t('agents.memory.charsOfMax', {
+                            n: memorySplit.core.value.length.toLocaleString(locale),
+                            max: MAX_MEMORY_VALUE_LENGTH.toLocaleString(locale),
+                          })}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-meta text-fg-subtle">{t('agents.memory.coreNote')}</div>
+                      {openSlugs.includes(memorySplit.core.slug) && (
+                        <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words text-meta text-fg-muted">
+                          {memorySplit.core.value}
+                        </pre>
+                      )}
                     </div>
-                  ))}
+                  )}
+
+                  {memorySplit && memorySplit.rest.length > 0 && (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          className="min-w-0 flex-1 rounded border border-border bg-field px-2 py-1 text-meta"
+                          value={memQuery}
+                          placeholder={t('agents.memory.search')}
+                          aria-label={t('agents.memory.search')}
+                          onChange={(e) => setMemQuery(e.target.value)}
+                        />
+                        {/* 두 축뿐이라 고르는 자리를 접지 않는다 — 셀렉트로 두면 지금 무엇으로
+                            정렬돼 있는지를 누르기 전에는 알 수 없다. */}
+                        <div className="flex flex-none overflow-hidden rounded border border-border" role="group" aria-label={t('agents.memory.sortLabel')}>
+                          {(['recent', 'name'] as const).map((k) => (
+                            <button
+                              key={k}
+                              aria-pressed={memSort === k}
+                              className={`px-2 py-1 text-meta ${
+                                memSort === k ? 'bg-surface-sunken font-medium' : 'text-fg-muted'
+                              }`}
+                              onClick={() => setMemSort(k)}
+                            >
+                              {t(k === 'recent' ? 'agents.memory.sortRecent' : 'agents.memory.sortName')}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="overflow-hidden rounded border border-border">
+                        {/* **"없다" 와 다르다** — 이 검색어에 걸리는 것이 없을 뿐이다. */}
+                        {memoryVisible.length === 0 && (
+                          <div className="px-2 py-1 text-meta text-fg-muted">{t('agents.memory.noMatch')}</div>
+                        )}
+                        {memoryVisible.map((row) => {
+                          if (row.kind === 'item') return memoryRow(row.item, selected.id, false);
+                          const openGroup = memorySearching || openGroups.includes(row.group.key);
+                          return (
+                            <div key={row.group.key} className="border-t border-border first:border-t-0">
+                              <button
+                                data-testid={`memory-group-${row.group.key}`}
+                                className="flex w-full items-baseline gap-2 bg-surface-agent px-2 py-1 text-left text-fg-agent"
+                                aria-expanded={openGroup}
+                                aria-label={t(
+                                  openGroup ? 'agents.memory.groupCollapse' : 'agents.memory.groupExpand',
+                                  { key: row.group.key },
+                                )}
+                                onClick={() => setOpenGroups((prev) => toggleIn(prev, row.group.key))}
+                              >
+                                <span aria-hidden="true" className="flex-none text-meta">{openGroup ? '▾' : '▸'}</span>
+                                <span className="text-meta font-medium">{`${row.group.key}…`}</span>
+                                <span className="ml-auto flex-none text-meta">
+                                  {t('agents.memory.groupCount', { n: row.group.items.length })}
+                                </span>
+                              </button>
+                              {openGroup && row.group.items.map((m) => memoryRow(m, selected.id, true))}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             )}

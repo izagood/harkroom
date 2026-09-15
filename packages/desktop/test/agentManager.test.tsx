@@ -513,8 +513,12 @@ describe('에이전트 기억 (#139 3단계)', () => {
     await screen.findByText('core');
 
     expect(screen.queryByLabelText(/기억.*편집|edit.*memory/i)).toBeNull();
-    // 값은 pre 로 그린다 — 입력 필드가 아니다.
-    expect(screen.getByText('값').tagName).toBe('PRE');
+    // 접힌 줄이 기본이므로(#139 4단계) 펼쳐야 값이 선다. **펼친 뒤에도 입력이 아니다** —
+    // 그것이 이 단정이 지키는 것이고, 접기가 그 자리를 가리지 않는지도 함께 잰다.
+    fireEvent.click(screen.getByRole('button', { name: 'core 펼치기' }));
+    // 접힌 줄에도 첫 줄 요약이 서므로 `값` 은 둘이다 — 펼쳐서 나온 쪽이 `pre` 인지를 잰다.
+    expect(screen.getByText('값', { selector: 'pre' })).toBeTruthy();
+    expect(screen.queryByRole('textbox', { name: /core/ })).toBeNull();
   });
 });
 
