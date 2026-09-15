@@ -12,7 +12,7 @@
 #
 # ## 왜 서명해야 하는가
 #
-# 러너 기동은 에이전트마다 PAT 를 따로 읽으므로(`murmur.runner.pat.<agentId>`),
+# 러너 기동은 에이전트마다 PAT 를 따로 읽으므로(`harkroom.runner.pat.<agentId>`),
 # 키체인 승인이 다시 걸리면 **러너 수만큼** 대화상자가 뜬다. 그리고 링커의 ad-hoc
 # 서명은 designated requirement 가 **내용 해시**라 재빌드마다 반드시 바뀐다.
 # 자세한 것은 `scripts/sign-dev.sh` 주석에 있다.

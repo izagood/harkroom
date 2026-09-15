@@ -109,7 +109,7 @@ export interface InteractiveRelay {
 }
 
 export interface InteractiveTurnDeps {
-  murmur: {
+  harkroom: {
     definition(): Promise<AgentView>;
     readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]>;
   };

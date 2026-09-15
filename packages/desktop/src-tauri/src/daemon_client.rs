@@ -505,11 +505,11 @@ const KEYCHAIN_SERVICE_RELEASE: &str = "app.harkroom.desktop";
 ///
 /// ## 이미 쌓인 개발 항목 — **지우는 코드를 만들지 않았다**
 ///
-/// 이 변경 뒤 `app.harkroom.desktop` 아래 남는 `murmur.runner.pat.*`·`murmur.runner.device`
+/// 이 변경 뒤 `app.harkroom.desktop` 아래 남는 `harkroom.runner.pat.*`·`harkroom.runner.device`
 /// 개발 항목들은 아무도 안 읽는 고아가 된다. 그것을 코드로 지우지 않는다:
 ///
 /// - **같은 이름 아래에 배포된 사용자의 진짜 세션이 있다.** 개발 부스러기와 실제
-///   자격증명을 이름만 보고 가를 방법이 없다 — `murmur.runner.pat.<uuid>` 는 양쪽이
+///   자격증명을 이름만 보고 가를 방법이 없다 — `harkroom.runner.pat.<uuid>` 는 양쪽이
 ///   같은 모양이다. 잘못 지우면 되돌릴 수 없다
 /// - **지우려면 먼저 읽어야 하고, 읽기는 승인 대화상자를 띄운다**(`#450`). 사람이
 ///   자기가 만든 적 없는 것에 승인을 하게 되는데, 그것이 `#515` 가 문제 삼은 동작이다

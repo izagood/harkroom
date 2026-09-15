@@ -69,7 +69,7 @@ describe('세션 보관 — 키체인이 있을 때', () => {
   });
 
   it('falls back to localStorage when the keychain read fails', async () => {
-    localStorage.setItem('murmur.sessions', JSON.stringify(sessions));
+    localStorage.setItem('harkroom.sessions', JSON.stringify(sessions));
     (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
       invoke: vi.fn(async () => { throw new Error('keychain locked'); }),
     };
@@ -99,7 +99,7 @@ describe('세션 보관 — 키체인이 없을 때(브라우저 개발)', () =>
   });
 
   it('ignores a corrupt entry instead of throwing', async () => {
-    localStorage.setItem('murmur.sessions', '{not json');
+    localStorage.setItem('harkroom.sessions', '{not json');
 
     expect(await sessionStore.load()).toBeNull();
   });
