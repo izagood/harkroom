@@ -23,14 +23,21 @@ afterEach(() => {
   else process.env.HARKROOM_HARNESS_ADAPTERS = saved;
 });
 
+/**
+ * 러너 기본값을 세운다. **끔을 `delete` 로 표현하지 않는다**(2026-09-15 전환) — 기본값이
+ * 켜짐이 된 뒤로 '값이 없음'은 곧 **켜짐**이다. 지우기로 끄려 하면 "기본값이 이길 때와
+ * 고른 값이 이길 때"를 비교한다고 믿으면서 실은 양쪽 다 켜짐을 재게 된다.
+ */
 function setEnv(on: boolean): void {
-  if (on) process.env.HARKROOM_HARNESS_ADAPTERS = '1';
-  else delete process.env.HARKROOM_HARNESS_ADAPTERS;
+  process.env.HARKROOM_HARNESS_ADAPTERS = on ? '1' : '0';
 }
 
 describe('실행 경로 — 에이전트가 고른 것이 먼저다', () => {
   it('턴 밖에서는 환경변수가 답한다 — certify 같은 스크립트가 이 길로 온다', () => {
     expect(currentExecutionPath()).toBeNull();
+    // 값이 아예 없으면 러너 기본값 = 켜짐(전환 뒤). 그 사실도 여기서 함께 고정한다.
+    delete process.env.HARKROOM_HARNESS_ADAPTERS;
+    expect(harnessAdaptersEnabled()).toBe(true);
     setEnv(false);
     expect(harnessAdaptersEnabled()).toBe(false);
     setEnv(true);

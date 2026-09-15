@@ -212,11 +212,28 @@ export function harnessAdaptersEnabled(env: NodeJS.ProcessEnv = process.env): bo
    * 이설의 안전이 바로 그 비교에 걸려 있다. 그래서 에이전트 설정(`executionPath`)이 이
    * 판정의 첫 입력이고, 러너가 **턴마다** 읽으므로 재시작이 필요 없다.
    *
-   * 고르지 않았으면(`null`) 이 러너의 기본값 — 환경변수가 답한다. 턴 밖에서 부르는 자리
-   * (`certify` 같은 스크립트)도 그 길로 떨어진다.
+   * 고르지 않았으면(`null`) 이 러너의 기본값 — 환경변수가 답하고, 그 기본은 이제 **켜짐**
+   * 이다(2026-09-15 전환). 턴 밖에서 부르는 자리(`certify` 같은 스크립트)도 그 길로 떨어진다.
+   *
+   * ## 전환한 근거
+   *
+   * - 세 패리티 파일이 양쪽을 **실제로 돌려** 행동을 맞춘다(파일 바이트·반환값·argv).
+   * - CI 가 에이전트 스위트를 **양쪽에서** 돈다(실측: 실패 집합까지 동일).
+   * - codex 의 실행 방식(headless → TUI)은 이 스위치와 **무관하게** 먼저 올렸다 — 이
+   *   전환에는 실행 방식 변화가 섞여 있지 않다.
+   * - `executionPath`(#790)로 에이전트 하나씩 새 경로에 올려 실물로 돌렸고, codex 가
+   *   릴리스에서 실제로 답하는 것까지 봤다(#808·#807).
+   *
+   * ## 끄는 길은 남는다
+   *
+   * 러너 하나를 통째로 되돌리는 `HARKROOM_HARNESS_ADAPTERS=0`, 에이전트 하나만 되돌리는
+   * `executionPath: 'legacy'`(더 좁고 재시작도 없다). 값 판정은 **끄는 쪽만** 명시적으로
+   * 본다 — 오타로 옛 경로에 떨어지는 것이 조용한 쪽이라서다.
+   *
+   * **다음 릴리스에서 이 함수와 옛 분기를 함께 지운다.**
    */
   const chosen = currentExecutionPath();
   if (chosen !== null) return chosen === 'adapters';
   const raw = renamedEnv(env, 'HARKROOM_HARNESS_ADAPTERS');
-  return raw === '1' || raw === 'true';
+  return !(raw === '0' || raw === 'false');
 }
