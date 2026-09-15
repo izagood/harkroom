@@ -162,10 +162,10 @@ Kustomize 로 두고 `kustomization.yaml` 의 `namePrefix`·`images`·패치만 
 | 파일 | 메모 |
 |---|---|
 | `server.yaml` | Deployment + Service + 첨부 PVC. `ghcr.io/izagood/harkroom-server:0.1.206`(amd64+arm64 확인). `strategy: Recreate` — 첨부 PVC 가 RWO 라 RollingUpdate 면 새 파드가 Pending 으로 선다 |
-| `postgres.yaml` | **CNPG `Cluster`**. DB·owner 이름은 `murmur`(기존 덤프의 롤과 같아야 `pg_restore --no-owner` 가 맞는다). `Prune=false` 로 GitOps 사고 방어 |
+| `postgres.yaml` | **CNPG `Cluster`**. DB·owner 는 `harkroom_<테넌트>` — 테넌트마다 다르게 둬 psql 프롬프트에 어느 테넌트인지 드러나게 한다(구분자는 `_`). `Prune=false` 로 GitOps 사고 방어 |
 | `virtualservice.yaml` | `hosts: [app.harkroom.com]`, `gateways: [istio-system/external-gateway]`. **`timeout` 을 적지 않는다**(1-3) |
 | `harkroom-secret-sealed.yaml` | `DATABASE_URL`. gate 가 채울 `CLAIM_TOKEN_HASH` 도 여기로 들어온다(`optional: true` 라 이 인스턴스에는 없어도 된다) |
-| `db-app-sealed.yaml` | CNPG bootstrap 자격증명(`basic-auth`, username=`murmur`) |
+| `db-app-sealed.yaml` | CNPG bootstrap 자격증명(`basic-auth`, username=`harkroom_<테넌트>`) |
 | `networkpolicy.yaml` | 1-4 의 근거. **`podSelector: {}`**(ns 전체) 이고 `cnpg-operator`·`monitoring` 을 함께 연다 — 막으면 operator 가 인스턴스 상태를 못 읽어 `Instance Status Extraction Error` 가 난다(avcshub-dev 가 겪은 실제 사고) |
 | `resourcequota.yaml`·`limitrange.yaml` | 테넌트가 노드를 독점하지 못하게. LimitRange 가 없으면 리소스를 안 적은 initContainer 때문에 파드 생성이 거부된다 |
 
@@ -239,12 +239,18 @@ PG=$(kubectl -n harkroom-app get pod -l cnpg.io/cluster=postgres,role=primary -o
 
 # public 스키마를 비운다(= 빈 DB 와 같은 상태로 만든다)
 kubectl -n harkroom-app exec -i "$PG" -- \
-  psql -U murmur -d murmur -c 'drop schema public cascade; create schema public;'
+  psql -U harkroom_app -d harkroom_app -c 'drop schema public cascade; create schema public;'
 
-# 덤프를 푼다. 기존 compose 와 롤/DB 이름(murmur)이 같으므로 --no-owner 로 충분하다
+# 덤프를 푼다. **--no-owner 가 필수다** — 아래 참고
 kubectl -n harkroom-app exec -i "$PG" -- \
-  pg_restore -U murmur -d murmur --no-owner < murmur.dump
+  pg_restore -U harkroom_app -d harkroom_app --no-owner < murmur.dump
 ```
+
+**`--no-owner` 를 빠뜨리면 실패한다.** 기존 compose 는 롤·DB 가 모두 `murmur` 였고 새
+인스턴스는 `harkroom_app` 이다(테넌트마다 이름을 다르게 두기로 했다 — postgres.yaml 주석).
+덤프 안의 `OWNER TO murmur` 는 없는 롤을 가리키므로, 그것을 무시하고 **접속한 롤이 전부
+갖게** 해야 한다. 스키마가 롤 이름을 하드코딩하지 않으므로(마이그레이션에 `OWNER` 구문이
+없다) 그 외에 이름 차이로 걸리는 것은 없다.
 
 첨부는 PVC 를 붙인 임시 파드로 넣는다:
 
