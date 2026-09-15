@@ -625,8 +625,16 @@ gate 도 자기 DB 가 필요하다(grant·job). 같은 클러스터의 `harkroo
 
 ### 4-10. 단계
 
-gate 가 자동화할 **대상**이 먼저 검증돼야 한다. 6장의 1~7 단계(템플릿 + 두 번째 워크스페이스
-수동 검증)를 마친 뒤 시작한다 — 손으로 두어 번 밟아 봐야 무엇을 커밋해야 하는지가 확정된다.
+**그 선행조건이 끝났다**(6-2). 6장 1~7 이 완료됐고, gate 가 자동화할 다섯 가지가 추측이
+아니라 실제로 밟아 본 절차로 확정됐다:
+
+1. 디렉터리 이름 (= ns = `harkroom-<테넌트>`)
+2. 각 파일의 `namespace:`
+3. `virtualservice.yaml` 의 `hosts:`
+4. `postgres.yaml` 의 `database:`·`owner:` 와 `server.yaml` 의 `pg_isready` 인자 (`harkroom_<테넌트>`)
+5. SealedSecret 두 개 재봉인 — **ns 이름에 묶이므로 복사로는 안 된다**
+
+gate 가 커밋할 것이 곧 이 다섯의 치환 결과다.
 
 | # | 무엇 |
 |---|---|
@@ -671,7 +679,7 @@ gate 가 만든 인스턴스를 아무도 가져갈 수 없다. 5번까지 하�
 | 4 | ~~머지 → ArgoCD 싱크 → 파드 기동~~ **완료** (homelab #116·#117) | 3 |
 | 5 | **기존 데이터 이관** (3장) — **미룸.** 새 워크스페이스는 빈 상태로 만드는 것이 기본이고, 이관은 이 인스턴스 한 번뿐이다 | 4 |
 | 6 | ~~`/healthz`·감사로그 IP 확인~~ **완료** — 아래 | 4 |
-| 7 | 두 번째 워크스페이스(`harkroom-alice/`)를 복사로 만들어 검증 | 6 |
+| 7 | ~~두 번째 워크스페이스를 복사로 만들어 검증~~ **완료** (`harkroom-jaebin`, homelab #118) — 6-2 | 6 |
 | 8 | **CNPG `backup:` 블록**(R2) — 실사용자 전에 | 7 |
 | 9 | 홈랩 레포 `README.md` 갱신 — 토폴로지·앱 목록·절차 | 전부 |
 
@@ -701,6 +709,32 @@ select action, ip from audit_log order by at desc limit 1;
 
 > ⚠️ 이미지는 **0.1.223 이상**이어야 한다. `053_claim_token` 이 그 릴리즈에 들어 있어
 > 0.1.222 로는 `claim_token` 테이블 자체가 생기지 않는다(실측으로 확인해 #117 로 올렸다).
+
+### 6-2. 템플릿 복사와 `/claim` 이 프로덕션에서 돈다 (2026-09-15)
+
+`harkroom-app/` 을 복사해 `jaebin.harkroom.com` 을 만들었다(homelab #118). **4장 전체의
+전제가 여기서 검증됐다.**
+
+**복사 절차(5단계)가 실제로 맞다.** `harkroom-app/kustomization.yaml` 이 적어 둔 그대로 —
+디렉터리·`namespace:`·`hosts:`·DB 이름·SealedSecret 재봉인 — 밟으니 렌더 결과에 앞 테넌트의
+잔재가 **0개**였다. gate 가 자동화할 것이 정확히 이 다섯이고, 이제 그 목록이 추측이 아니다.
+
+**DNS·Gateway 는 손대지 않았다.** 와일드카드와 external-gateway 의 `hosts` 가 이미 있어
+(#115) VirtualService 하나로 붙었다 — 테넌트가 늘어도 유지되는 성질이다.
+
+**`/claim` 전체 흐름이 돈다:**
+
+| 단계 | 결과 |
+|---|---|
+| 기동 시 토큰 주입 | 로그: `claim token seeded — this workspace can be claimed once` |
+| 틀린 토큰 | **404** — 아무나 가져갈 수 없다 |
+| 맞는 토큰 | **201**, 관리자 계정 + `general` 채널 |
+| **같은 토큰 재사용** | **404** — 소진됐다 (`used_at` 이 찍히고 `used_by` 가 남는다) |
+| 로그인 → `/auth/me` | `isAdmin: true` |
+
+**테넌트 격리도 대조했다.** `harkroom-jaebin` 에 사람 계정이 하나 생긴 시점에
+`harkroom-app` 의 사람 계정은 **0개**다 — DB 가 갈려 있으니 당연하지만, 1장이 그 격리를
+근거로 인스턴스를 나눈 것이므로 한 번은 눈으로 봐 둔다.
 
 9번은 선택이 아니다: homelab-infra 원칙 6 이 "코드만 바꾸고 README 를 두고 가는 것은 작업
 미완료"로 규정한다.
