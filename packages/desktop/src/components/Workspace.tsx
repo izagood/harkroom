@@ -34,6 +34,8 @@ export function Workspace({ onLogout, onOpenSettings }: {
 }) {
   const t = useT();
   const threadRootId = useActiveStore((s) => s.threadRootId);
+  /** 본문을 채널에게 돌려 달라는 요구. 올라갈 때마다 아래 `useEffect` 가 자리를 비운다. */
+  const channelRevealSeq = useActiveStore((s) => s.channelRevealSeq);
   const terminalTarget = useActiveStore((s) => s.terminalTarget);
   const history = useActiveStore((s) => s.history);
   const historyIndex = useActiveStore((s) => s.historyIndex);
@@ -56,6 +58,28 @@ export function Workspace({ onLogout, onOpenSettings }: {
    * 기억해 둘 값이라는 근거가 실제로 생기면 `prefs` 에 넣는다(지금 넣으면 추측이다).
    */
   const [railPanel, setRailPanel] = useState<RailPanel>('home');
+
+  /**
+   * **누른 것은 반드시 보인다** — 본문 자리에 대한 그 규칙의 정본이다(2026-09-16).
+   *
+   * 신고: *"채널이랑 Inbox 를 누르면 ... 기존에 있던 창을 닫아야만 보인다."* 인박스를 열어
+   * 둔 채 사이드바에서 채널을 누르면 채널이 인박스 **뒤로** 열렸다 — 화면에는 아무 일도
+   * 일어나지 않아, 사람은 클릭이 먹지 않았다고 읽는다. 관제탑도 같다.
+   *
+   * 여기서 듣는 이유: 채널로 가는 길은 이 앱에 스무 곳이 넘고(사이드바·검색·링크·대기
+   * 줄·뒤로/앞으로 …), 그 전부가 `controller.openChannel` 하나로 모인다. 그 자리에서 난
+   * 신호 하나를 **본문을 쥐고 있는 이 화면**이 받는다(`channelRevealSeq` 주석).
+   *
+   * 답글로 가는 이동은 이 수를 올리지 않는다 — 스레드 패널은 오른쪽에 **형제로** 서므로
+   * 인박스가 접힐 이유가 없다(#783 이 세운 기본 동작).
+   *
+   * 마운트에도 한 번 돈다. 두 `set` 이 그때의 값과 같아(닫힘·홈) 아무 일도 일어나지 않으므로
+   * 첫 실행을 따로 건너뛰지 않는다 — 건너뛰는 장치(ref)가 하나 더 있는 편이 더 틀리기 쉽다.
+   */
+  useEffect(() => {
+    setInboxOpen(false);
+    setRailPanel((p) => (p === 'agents' ? 'home' : p));
+  }, [channelRevealSeq]);
 
   const canGoBack = historyIndex > 0;
   const canGoForward = historyIndex < history.length - 1;
