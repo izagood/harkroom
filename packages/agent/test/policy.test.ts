@@ -343,8 +343,8 @@ describe('#340 isExecutableNotFound', () => {
  * 보고 무엇을 확인할지 모른 채, 실제로는 **아무것도 하지 않고 기다리면 되는** 상황에서
  * 로그인이나 PAT 를 뒤진다.
  */
-describe('isQuotaExhausted — 구조화 필드 우선(2026-09-08)', () => {
-  it('harnessApiError 를 tail 보다 먼저 본다 — tail 이 잘려 시각이 없어도 읽는다', () => {
+describe('isQuotaExhausted — 하네스가 스스로 적은 것만 본다(2026-09-16)', () => {
+  it('harnessApiError 로 읽는다 — tail 이 잘려 시각이 없어도', () => {
     // 2026-09-07 19:03 사건의 모양: 세션 파일에는 시각이 있었고 tail 에는 없었다.
     const err = Object.assign(new Error('harness 종료 1: ...hit your session limit'), {
       harnessApiError: "You've hit your session limit \u00b7 resets 10:50pm (Asia/Seoul)",
@@ -352,16 +352,31 @@ describe('isQuotaExhausted — 구조화 필드 우선(2026-09-08)', () => {
     expect(isQuotaExhausted(err)).toEqual({ resetsAt: '10:50pm (Asia/Seoul)' });
   });
 
-  it('구조화 필드가 없으면 기존 tail 판정으로 간다', () => {
+  /**
+   * **화면 꼬리로는 판정하지 않는다.** 턴이 TUI 로 돌면서 우리가 넣은 프롬프트가 화면에
+   * 그대로 에코되고, 그 프롬프트에는 사람이 스레드에 쓴 문장이 들어 있다. 그래서 tail 은
+   * 더 이상 하네스만의 말이 아니다.
+   */
+  it('구조화 필드가 없으면 한도가 아니다 — tail 에 그 문구가 있어도', () => {
     const err = new Error("harness 종료 1: You've hit your session limit \u00b7 resets 4:10pm (Asia/Seoul)");
-    expect(isQuotaExhausted(err)).toEqual({ resetsAt: '4:10pm (Asia/Seoul)' });
+    expect(isQuotaExhausted(err)).toBeNull();
   });
 
-  it('구조화 필드가 한도가 아니면 tail 로 폴백한다 — 앞 턴의 다른 에러가 이번 한도를 가리면 안 된다', () => {
+  it('**사람이 쓴 문장이 화면에 에코돼도 한도가 아니다** — 이것이 이 판정을 좁힌 이유다', () => {
+    // 실제로 일어날 수 있는 모양: 누군가 스레드에 그 문구를 쓰면 프롬프트에 실려 화면에
+    // 그려지고, 그것이 tail 에 남는다. 옛 판정은 이 자리에서 참이었다 — 그러면 멀쩡한
+    // 계정을 갈아타고(`switchesAccount`), 그 요청을 재시도 없이 끝낸다(`mentionScheduler`).
+    const err = new Error(
+      "harness 종료 1: > @forge 로그에 You've hit your session limit 이라고 찍혀 있던데 왜 그래?",
+    );
+    expect(isQuotaExhausted(err)).toBeNull();
+  });
+
+  it('구조화 필드가 한도가 아니면 한도가 아니다 — 그 값이 이 턴의 사실이다', () => {
     const err = Object.assign(new Error("harness 종료 1: You've hit your session limit \u00b7 resets 9:00pm"), {
       harnessApiError: 'API Error: overloaded_error',
     });
-    expect(isQuotaExhausted(err)).toEqual({ resetsAt: '9:00pm' });
+    expect(isQuotaExhausted(err)).toBeNull();
   });
 
   it('quotaFromText 는 한도가 아닌 문구에 null 을 준다', () => {
@@ -375,18 +390,21 @@ describe('isQuotaExhausted — 구조화 필드 우선(2026-09-08)', () => {
 });
 
 describe('isQuotaExhausted', () => {
+  /** 하네스가 자기 기록에 적은 문구. 러너는 이것을 `harnessApiError` 로 실어 준다. */
+  const quotaErr = (text: string) =>
+    Object.assign(new Error('harness 종료 1: (화면 꼬리는 판정에 안 쓴다)'), { harnessApiError: text });
+
   it('사용량 한도 문구에서 풀리는 시각을 읽어 준다', () => {
-    expect(isQuotaExhausted(new Error(
-      "harness 종료 1: You've hit your session limit · resets 4:10pm (Asia/Seoul)",
-    ))).toEqual({ resetsAt: '4:10pm (Asia/Seoul)' });
+    expect(isQuotaExhausted(quotaErr("You've hit your session limit · resets 4:10pm (Asia/Seoul)")))
+      .toEqual({ resetsAt: '4:10pm (Asia/Seoul)' });
   });
 
   it('시각을 못 읽어도 한도인 것은 알아본다 — 한도라는 사실이 시각보다 크다', () => {
-    expect(isQuotaExhausted(new Error('harness 종료 1: You have hit your session limit')))
-      .toEqual({ resetsAt: null });
+    expect(isQuotaExhausted(quotaErr('You have hit your session limit'))).toEqual({ resetsAt: null });
   });
 
   it('한도와 무관한 실패는 null 이다', () => {
+    expect(isQuotaExhausted(quotaErr('boom'))).toBeNull();
     expect(isQuotaExhausted(new Error('harness 종료 1: boom'))).toBeNull();
     expect(isQuotaExhausted(new Error('Failed to authenticate: OAuth session expired'))).toBeNull();
   });
@@ -437,21 +455,26 @@ describe('isSessionIdConflict', () => {
 // **그 뒤에 붙는 바이트가 정확히 무엇인지는 모른다** — 한도 경로가 tail 을 로그에 남기지
 // 않았기 때문이다(그 한 줄은 이번에 추가했다). 그래서 테스트를 미지의 바이트에 맞추지
 // 않고, 그것에 **의존하지 않는 계약**으로 쓴다: resets 뒤에 무엇이 오든 시각을 읽는다.
-describe('isQuotaExhausted — tail 끝에 무엇이 붙어도 시각을 읽는다 (2026-09-07 19:03)', () => {
+/**
+ * 시각 추출은 **끝을 앵커로 삼지 않는다**(2026-09-07 19:03 사건). 그 사건의 재료는 tail
+ * 이었지만, 고친 것은 `quotaFromText` 의 정규식이고 그 성질은 지금도 지켜야 한다 — 하네스가
+ * 기록에 적는 문구에도 색 코드나 뒷줄이 붙을 수 있다.
+ *
+ * 그래서 이 묶음은 `isQuotaExhausted`(재료를 고르는 판정) 가 아니라 **`quotaFromText`**
+ * (문구를 읽는 함수)를 겨눈다. 재료 선택은 위 묶음이 따로 잰다.
+ */
+describe('quotaFromText — 문구 끝에 무엇이 붙어도 시각을 읽는다 (2026-09-07 19:03)', () => {
   const LIMIT = "You've hit your session limit · resets 10:50pm (Asia/Seoul)";
 
   it('뒤에 커서 복원 시퀀스가 붙어도 읽는다', () => {
-    expect(isQuotaExhausted(new Error(`harness 종료 1: ${LIMIT}\n\u001b[?25h\n`)))
-      .toEqual({ resetsAt: '10:50pm (Asia/Seoul)' });
+    expect(quotaFromText(`${LIMIT}\n\u001b[?25h\n`)).toEqual({ resetsAt: '10:50pm (Asia/Seoul)' });
   });
 
   it('시각 바로 뒤에 색 리셋 코드가 붙어도 읽는다', () => {
-    expect(isQuotaExhausted(new Error(`harness 종료 1: ${LIMIT}\u001b[0m`)))
-      .toEqual({ resetsAt: '10:50pm (Asia/Seoul)' });
+    expect(quotaFromText(`${LIMIT}\u001b[0m`)).toEqual({ resetsAt: '10:50pm (Asia/Seoul)' });
   });
 
   it('뒤에 다른 줄이 더 있어도 읽는다', () => {
-    expect(isQuotaExhausted(new Error(`harness 종료 1: ${LIMIT}\n프롬프트가 돌아왔다\n`)))
-      .toEqual({ resetsAt: '10:50pm (Asia/Seoul)' });
+    expect(quotaFromText(`${LIMIT}\n프롬프트가 돌아왔다\n`)).toEqual({ resetsAt: '10:50pm (Asia/Seoul)' });
   });
 });
