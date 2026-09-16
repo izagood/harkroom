@@ -235,6 +235,28 @@ export interface AppState {
    * 다음 이동 때 갈아탄다(`openChannel` 이 지우고 `openMessage` 가 다시 건다).
    */
   highlightedMessageId: string | null;
+  /**
+   * **본문 자리를 채널에게 돌려 달라는 요구**를 센 수(2026-09-16).
+   *
+   * 본문 칸은 셋이 나눠 쓴다 — 관제탑(`AgentTower`) · 인박스 · 채널(`Workspace.tsx` 의
+   * 판정). 앞의 둘이 서 있는 동안 채널로 가는 이동이 일어나면, 목적지가 그 뒤에 숨어
+   * **누른 것이 아무 일도 안 한 것처럼 보인다**(2026-09-16 신고: *"기존에 있던 창을
+   * 닫아야만 보인다"*). 그래서 이동하는 쪽이 "이제 본문은 채널의 것이다"를 말하고, 화면은
+   * 그 말을 듣고 자리를 비운다.
+   *
+   * **이동을 부르는 자리마다 손으로 접지 않는 이유:** 채널로 가는 길은 이 앱에 스무 곳이
+   * 넘는다(사이드바 · 검색 · 링크 · 대기 줄 · 관제탑 · 뒤로/앞으로 …). 그 전부에 같은
+   * 한 줄을 붙이면 다음에 하나 더 생길 때 또 빠지고, 빠진 곳만 조용히 고장 난다.
+   * 이동의 정본은 `controller.openChannel` 하나이므로 신호도 거기서 난다.
+   *
+   * **값이 아니라 세는 수인 이유는 `inboxRevision` 과 같다:** 보던 채널을 사이드바에서 다시
+   * 누르면 `activeChannelId` 가 그대로라, 값을 지켜보는 화면은 그 클릭을 못 본다.
+   *
+   * **모든 이동이 올리지는 않는다.** 답글로 가는 이동(`openThread`, 그리고 스레드에 있는
+   * 메시지를 여는 `openMessage`)은 목적지가 **오른쪽 스레드 패널**이라 본문을 뺏을 이유가
+   * 없다 — 인박스를 훑으며 스레드를 여는 기본 동작이 그것으로 산다(#783).
+   */
+  channelRevealSeq: number;
   /** 에이전트별 러너 실행 상태. agentId → state */
   runnerStates: Record<string, RunnerState>;
   /**
@@ -349,7 +371,7 @@ const initial = {
   projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, drafts: {}, stickyMentions: {},
   history: [], historyIndex: -1, notice: null, notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,
-  highlightedMessageId: null,
+  highlightedMessageId: null, channelRevealSeq: 0,
   runnerStates: {}, daemonRunners: {}, appVersion: null, savedIds: [], savedCount: 0,
   linkPreviewReadyAt: {}, skillsRevision: 0,
 };
