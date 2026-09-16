@@ -132,21 +132,37 @@ export function quotaFromText(text: string): { resetsAt: string | null } | null 
 }
 
 /**
- * **구조화 필드를 먼저 본다(2026-09-08).** `mentionTurn` 이 세션 JSONL 에서 읽은 하네스 자신의
- * 에러 문구를 `harnessApiError` 로 실어 준다. 그 재료가 tail 보다 나은 이유는
- * `harnessErrors.ts` 머리에 있다 — 앞이 안 잘리고, 사람의 프롬프트가 섞이지 않는다.
+ * **한도 판정은 하네스가 스스로 적은 것만 본다(2026-09-16).**
  *
- * 못 읽었으면(파일 부재·codex) 필드가 없고 그때는 기존 tail 판정 그대로다. 필드가 **있는데
- * 한도가 아닌** 경우에도 tail 로 폴백한다: 그 값은 "그 세션의 마지막 API 에러"이지 "이 턴이
- * 실패한 이유"라는 보장이 아니라서, 앞 턴의 다른 에러가 이번 한도를 가리면 안 된다.
+ * 재료는 `harnessApiError` 하나다 — `mentionTurn` 이 세션 기록(JSONL)에서 읽어 실어 주는
+ * 하네스 자신의 API 에러 문구다. 앞이 안 잘리고, **사람이 쓴 글자가 섞이지 않는다**.
+ *
+ * ## 화면 꼬리(tail) 폴백을 걷어낸 이유
+ *
+ * 전에는 구조화 필드가 없거나 거기서 한도를 못 찾으면 `err.message`(= PTY 화면 끝 2KB)로
+ * 폴백했다. 그 재료는 **더 이상 하네스만의 것이 아니다**: 턴이 TUI 로 돌면서 우리가 넣은
+ * 프롬프트가 화면에 그대로 에코되고, 그 프롬프트에는 **사람이 스레드에 쓴 문장**이 들어 있다.
+ * 즉 누군가 대화에 `You've hit your session limit` 이라고 쓰기만 해도 이 판정이 참이 된다.
+ *
+ * 그 오탐은 조용하지 않다 — 두 곳이 이 값을 보고 **행동**한다:
+ * - `claudeAccounts.ts::switchesAccount` — 멀쩡한 계정을 한도로 보고 **옮겨 탄다**.
+ * - `mentionScheduler.ts` — 재시도 없이 "사용량 한도" 통지를 남기고 **그 요청을 읽음 처리**한다.
+ *   사람이 기다리던 답이 거기서 끝난다.
+ *
+ * 기록을 못 읽는 하네스(codex)에서는 폴백이 **늘** 적용됐으므로, 그쪽이 특히 위험했다.
+ *
+ * ## 무엇을 잃는가 — 밝혀 둔다
+ *
+ * 기록을 못 읽는 하네스의 **진짜** 한도는 이제 한도로 안 보이고 평범한 실패로 떨어진다
+ * (재시도 회계 → 실패 통지). 사람이 보는 문장이 덜 정확해지는 대신, 멀쩡한 계정을 태우거나
+ * 남의 요청을 조용히 끝내는 일이 없어진다. **모르는 것을 아는 척하지 않는 쪽**을 고른다.
+ *
+ * 되살리는 길은 폴백이 아니라 **그 하네스의 기록을 읽는 것**이다(어댑터 표의 `transcript`).
  */
 export function isQuotaExhausted(err: unknown): { resetsAt: string | null } | null {
   const structured = (err as { harnessApiError?: unknown } | null)?.harnessApiError;
-  if (typeof structured === 'string') {
-    const hit = quotaFromText(structured);
-    if (hit) return hit;
-  }
-  return quotaFromText(err instanceof Error ? err.message : String(err ?? ''));
+  if (typeof structured !== 'string') return null;
+  return quotaFromText(structured);
 }
 
 /**
