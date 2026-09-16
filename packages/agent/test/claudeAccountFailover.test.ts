@@ -20,9 +20,18 @@ describe('계정 전환 방아쇠', () => {
   it('사용량 한도는 계정을 바꾼다', () => {
     // policy.ts::isQuotaExhausted 주석은 "여기서 할 일은 기다리는 것뿐"이라 적었는데,
     // 계정이 여러 개면 그 말이 더는 참이 아니다 — 기다리지 않고 옮겨 탈 수 있다.
+    // 한도는 **하네스가 자기 기록에 적은 것**으로만 판정한다(2026-09-16) — 화면 꼬리에는
+    // 우리가 넣은 프롬프트가 에코되고 거기엔 사람이 쓴 글자가 섞인다.
+    expect(switchesAccount(Object.assign(new Error('harness 종료 1: …'), {
+      harnessApiError: "You've hit your session limit · resets 4:10pm (Asia/Seoul)",
+    }))).toBe(true);
+  });
+
+  it('화면 꼬리에만 그 문구가 있으면 계정을 바꾸지 않는다 — 사람이 쓴 말일 수 있다', () => {
+    // 옛 판정은 여기서 참이었다: 누가 스레드에 그 문구를 쓰기만 해도 멀쩡한 계정을 갈아탔다.
     expect(switchesAccount(new Error(
-      "harness 종료 1: You've hit your session limit · resets 4:10pm (Asia/Seoul)",
-    ))).toBe(true);
+      "harness 종료 1: > @forge 로그에 You've hit your session limit 이라고 찍혀 있어",
+    ))).toBe(false);
   });
 
   it('harness 자격증명 실패는 계정을 바꾼다', () => {
@@ -83,7 +92,14 @@ describe('계정 전환 방아쇠', () => {
 // 향하게 되어 조용히 멘션 루프를 못 벗어난다. 함수 경계로 끊고, 그 덕에 루프 없이 검증된다.
 describe('withAccountFailover', () => {
   const acct = (name: string): ClaudeAccount => ({ name, configDir: `/pool/${name}` });
-  const QUOTA = () => new Error("harness 종료 1: You've hit your session limit · resets 4:10pm");
+  /**
+   * 실물 모양 그대로: 화면 꼬리에도 그 문구가 있고(하네스가 화면에도 찍는다), **판정에 쓰는
+   * 것은 기록에서 읽은 `harnessApiError` 다**(2026-09-16). 꼬리만 있는 경우는 위 묶음이 따로 잰다.
+   */
+  const QUOTA = () => Object.assign(
+    new Error("harness 종료 1: You've hit your session limit · resets 4:10pm"),
+    { harnessApiError: "You've hit your session limit · resets 4:10pm" },
+  );
   const OTHER = () => new Error('harness 종료 1: unrelated failure');
 
   it('첫 계정이 성공하면 나머지를 시도하지 않는다', async () => {
@@ -190,7 +206,14 @@ describe('main.ts 의 풀 배선', () => {
 // 부른다. 그러려면 시도 함수가 자기가 마지막인지 알아야 한다.
 describe('withAccountFailover 의 마지막 계정 표시', () => {
   const acct = (name: string): ClaudeAccount => ({ name, configDir: `/pool/${name}` });
-  const QUOTA = () => new Error("harness 종료 1: You've hit your session limit · resets 4:10pm");
+  /**
+   * 실물 모양 그대로: 화면 꼬리에도 그 문구가 있고(하네스가 화면에도 찍는다), **판정에 쓰는
+   * 것은 기록에서 읽은 `harnessApiError` 다**(2026-09-16). 꼬리만 있는 경우는 위 묶음이 따로 잰다.
+   */
+  const QUOTA = () => Object.assign(
+    new Error("harness 종료 1: You've hit your session limit · resets 4:10pm"),
+    { harnessApiError: "You've hit your session limit · resets 4:10pm" },
+  );
 
   it('마지막 계정에서만 isLast 가 참이다', async () => {
     const 본것: { name: string | null; isLast: boolean }[] = [];
