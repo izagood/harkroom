@@ -974,57 +974,63 @@ async function runMentionTurnBody(
    */
   const probeStall = async (): Promise<boolean> => {
     /**
-     * **읽을 줄 모르는 기록으로 정지를 판정하지 않는다(2026-09-11).**
+     * **살아 있음의 증거는 둘이다 — 기록이 자라거나, 화면이 흐르거나.**
      *
-     * 이 판정은 "세션 기록이 자라는가" 하나로 선다. 그런데 기록을 해석하지 못하는 하네스는
-     * `sessionTranscriptMtimeMs` 가 **늘 `null`** 이라 기준점(`lastLifeMs`)이 영영 갱신되지
-     * 않는다 — 그러면 **건강하게 일하는 턴도** 한도(기본 10분)에 닿는 순간 "멈췄다"로 접혀
-     * SIGTERM 을 맞는다. 10분 안에 끝나는 턴만 살아남는다.
+     * 처음에는 기록 하나로 쟀다. 그러면 기록을 해석하지 못하는 하네스는 기준점이 영영
+     * 갱신되지 않아 **건강한 턴도** 한도에서 접혔고(2026-09-11), 그래서 그 하네스만 화면
+     * 바이트로 재게 했다(2026-09-14). 그런데 그 갈래가 **기록을 읽을 줄 아는 하네스의
+     * 같은 구멍**을 남겨 뒀다:
      *
-     * codex 를 TUI 로 올리면서(#774) 이 자리가 열렸다: 그전에는 `exec` 이라 탐침 자체가 안
-     * 돌았는데, TUI 가 되면서 돌기 시작했고 codex 의 rollout 은 아직 해석하지 않는다.
+     * > 긴 셸 명령 하나를 돌리는 동안에는 세션 기록이 자라지 않는다.
      *
-     * 판정할 수 없으면 **재지 않는다** — 이 저장소가 같은 자리에서 이미 내린 결론이다
-     * (`sessionTranscriptGrewSince` 의 "판정 불가는 참이다"). 그 턴은 무발화 시계만 갖는다.
+     * CI 기다리기(`gh pr checks --watch` 는 5~10분이다)·빌드 대기가 전부 그 모양이다.
+     * 실측(2026-09-16): 하루에 6건이 그렇게 접혔고, 정지 화면은 하나같이 `Ran 1 shell
+     * command` 에서 멈춰 있었다. 사람이 기다리던 답이 그만큼 날아갔고, 그 턴들은
+     * "다시 시도하지 않는다" 로 끝난다.
+     *
+     * 그래서 두 증거를 **함께** 본다. 기록은 하네스가 무엇을 했는지를 말하고, 화면은 그것이
+     * 아직 살아 있는지를 말한다 — 긴 명령은 기록을 멈추지만 화면은 계속 그린다(경과 시계·
+     * 진행 줄·명령 출력). 둘 다 멈춰야 정지다.
+     *
+     * 기록을 못 읽는 하네스는 자연히 화면 하나로 재게 된다(그 갈래가 이제 따로 필요 없다).
      */
     const limit = deps.harnessStallMs ?? 10 * 60_000;
-    /**
-     * **기록을 못 읽으면 화면으로 잰다(2026-09-14).**
-     *
-     * 위 결론("판정할 수 없으면 재지 않는다")은 건강한 턴을 지켰지만, 대가로 **정말 멈춘
-     * 턴을 아무도 접지 않게** 됐다. 실물에서 codex 턴이 26분·5분씩 매달렸고 실패 통지 한
-     * 줄도 남지 않았다 — 사람이 프로세스를 죽여야 끝났다.
-     *
-     * 그래서 판정을 포기하는 대신 **다른 증거**를 쓴다: PTY 화면에 바이트가 흐르는가.
-     * 이것은 하네스와 무관하고(모든 TUI 가 화면을 그린다), 일하는 동안 codex 는 경과
-     * 시계와 진행 줄을 계속 그리므로 건강한 턴은 이 시계를 계속 되돌린다. 사람이 보고
-     * 있거나(`viewers`) 관문을 기다리는 턴은 아래 공통 규칙이 이미 빼 준다.
-     */
-    if (!readsSessionTranscript(def.harness)) {
-      if (limit <= 0 || end.awaitingHuman || end.exited || end.spoke) return false;
-      if (end.viewers > 0 || end.lastDataAtMs === 0) return false;
-      const quietMs = (deps.now?.() ?? Date.now()) - end.lastDataAtMs;
-      if (quietMs < limit) return false;
-      end.stalledIdleMs = quietMs;
-      return true;
+    if (limit <= 0 || end.awaitingHuman || end.exited || end.spoke) return false;
+
+    // 읽을 줄 아는 하네스만 기록을 본다. 자랐으면 기준점을 민다 — 여기서 접을지는 아래가 정한다.
+    if (readsSessionTranscript(def.harness)) {
+      const read = deps.readTranscriptMtime ?? sessionTranscriptMtimeMs;
+      const mtime = await read(def.harness, sessionIdForProbe, {
+        configDir: deps.claudeConfigDir,
+      }).catch(() => null);
+      // 기다리는 사이에 끝났거나 말했을 수 있다 — 그러면 잴 것이 없다.
+      if (end.exited || end.spoke || end.awaitingHuman) return false;
+      if (mtime !== null && mtime > end.lastLifeMs) end.lastLifeMs = mtime;
     }
-    // 기준점이 아직 안 잡혔으면(턴 시작 직전) 재지 않는다 — 0 을 기준으로 빼면
-    // 첫 주기가 곧바로 한도를 넘는다.
-    if (limit <= 0 || end.awaitingHuman || end.lastLifeMs === 0) return false;
-    const read = deps.readTranscriptMtime ?? sessionTranscriptMtimeMs;
-    const mtime = await read(def.harness, sessionIdForProbe, {
-      configDir: deps.claudeConfigDir,
-    }).catch(() => null);
-    if (end.exited || end.spoke || end.awaitingHuman) return false;
-    if (mtime !== null && mtime > end.lastLifeMs) { end.lastLifeMs = mtime; return false; }
+
     // 관찰자가 있으면 재지 않는다 — 무발화 시계와 같은 규칙이다(사람이 보고 있으면
     // 러너는 끼어들지 않는다). 사람이 그 터미널에서 직접 치고 있을 수 있다.
     if (end.viewers > 0) return false;
-    const idleMs = (deps.now?.() ?? Date.now()) - end.lastLifeMs;
+
+    /**
+     * **기록을 못 읽는 하네스는 화면을 한 번이라도 봐야 잰다**(2026-09-11 의 결론을 지킨다).
+     *
+     * 그런 하네스에서 `lastLifeMs`(턴 시작 시각)는 아무것도 증명하지 않는다 — 기준점이
+     * 아니라 그냥 시작점이다. 그것으로 재면 "판정할 수 없으면 접지 않는다" 가 깨지고,
+     * 부팅이 느린 하네스의 건강한 턴이 한도에서 죽는다.
+     */
+    if (!readsSessionTranscript(def.harness) && end.lastDataAtMs === 0) return false;
+
+    // 두 증거 중 **늦은 것**이 마지막 생존 신호다. 0 은 아직 아무 기준점도 없다는 뜻이고
+    // (턴 시작 직전), 그때 재면 첫 주기가 곧바로 한도를 넘는다.
+    const life = Math.max(end.lastLifeMs, end.lastDataAtMs);
+    if (life === 0) return false;
+    const idleMs = (deps.now?.() ?? Date.now()) - life;
     if (idleMs < limit) return false;
+
     end.stalled = true;
     end.stalledIdleMs = idleMs;
-    console.error(`[mentionTurn] ${key}: 하네스가 멈췄다 — 기록이 ${idleMs}ms 째 자라지 않는다`);
+    console.error(`[mentionTurn] ${key}: 하네스가 멈췄다 — 기록도 화면도 ${idleMs}ms 째 그대로다`);
     reclaim();
     return true;
   };
