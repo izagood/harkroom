@@ -934,14 +934,26 @@ export class Controller {
     store.set({ unread: entries, inboxRevision: store.inboxRevision + 1 });
   }
 
-  async openChannel(channelId: string): Promise<void> {
+  /**
+   * @param opts.reveal 본문 자리를 채널에게 돌려 달라고 **요구할지**(기본 `true`).
+   *   `false` 는 *"채널은 바꾸지만 사람이 볼 곳은 채널이 아니다"* 라는 뜻이고, 그렇게
+   *   부르는 곳은 둘뿐이다 — `openThread` 와 답글을 여는 `openMessage`. 목적지가 오른쪽
+   *   스레드 패널이면 본문에 서 있는 인박스를 접을 이유가 없다(`channelRevealSeq` 주석).
+   */
+  async openChannel(channelId: string, opts: { reveal?: boolean } = {}): Promise<void> {
     const store = this.store.getState();
     // 채널·스레드 열림은 이력에 추가한다. 뒤로/앞으로 이동은 pushHistory 를 안 부른다.
     store.pushHistory({ channelId, threadRootId: null });
     // 다른 곳으로 움직이면 이전 링크 강조는 뜻을 잃는다 — 남겨 두면 엉뚱한 메시지가 계속 빛난다.
     // 펼쳐 둔 긴 메시지도 같이 접는다(#217) — 나갔다 돌아온 채널에서 긴 메시지가 여전히
     // 펼쳐져 있으면, 애초에 접기가 막으려던 상태(하나가 화면을 다 먹는 것)로 되돌아간다.
-    store.set({ activeChannelId: channelId, threadRootId: null, highlightedMessageId: null });
+    //
+    // 자리 요구는 **활성 채널과 같은 `set` 에 실어** 즉시 전한다 — 아래 조회를 기다린 뒤에
+    // 올리면 사람은 누른 뒤 한 박자 동안 여전히 옛 화면을 본다.
+    store.set({
+      activeChannelId: channelId, threadRootId: null, highlightedMessageId: null,
+      ...(opts.reveal === false ? {} : { channelRevealSeq: store.channelRevealSeq + 1 }),
+    });
     // 투영된 system 메시지는 사용자가 그 채널을 보고 있지 않아도 WS로 들어와 maxSeq를 올린다.
     // 그 상태에서 증분 조회를 하면 backlog 전체가 건너뛰어져 채널이 거의 비어 보인다 —
     // 그래서 처음 여는 채널은 히스토리를 통째로 받는다(since=0 → 서버가 최신 N개를 준다).
@@ -1036,7 +1048,8 @@ export class Controller {
     if (!channelId) return;
     // 다른 채널의 스레드면 채널을 먼저 옮긴다 — 스레드 패널은 **활성 채널의** 목록에서
     // 그 뿌리를 찾으므로(`ThreadPanel`), 채널을 두고 뿌리만 세우면 찾을 것이 없다.
-    if (this.store.getState().activeChannelId !== channelId) await this.openChannel(channelId);
+    // 목적지는 **오른쪽 스레드 패널**이다 — 본문(인박스·관제탑)을 뺏지 않는다.
+    if (this.store.getState().activeChannelId !== channelId) await this.openChannel(channelId, { reveal: false });
     this.store.getState().pushHistory({ channelId, threadRootId: rootId });
     this.store.getState().set({ threadRootId: rootId });
     let page;
@@ -1129,7 +1142,11 @@ export class Controller {
       });
       return;
     }
-    await this.openChannel(target.channelId);
+    // **자리를 요구하는가는 목적지가 정한다.** 답글이면 아래에서 스레드 패널이 서므로
+    // 본문은 그대로 둔다 — 인박스를 훑으며 답글을 여는 기본 동작이 그것이다(#783, 그
+    // 판정이 `Inbox.openEntry` 와 같은 술어여야 한다는 것도 거기 적혀 있다). 본문의 말이면
+    // 목적지가 채널 타임라인이라, 인박스·관제탑이 서 있으면 방금 누른 것이 그 뒤에 숨는다.
+    await this.openChannel(target.channelId, { reveal: !target.threadRootId });
     /**
      * 옛 메시지는 `openChannel` 이 불러온 **최신 페이지에 없다** — 강조할 DOM 이 없으니
      * 강조도 스크롤도 일어나지 않는다(검색 결과를 눌러도 아무 일이 없던 이유다). 그래서
@@ -2055,6 +2072,8 @@ export class Controller {
         st.dms.some((d) => d.id === entry.channelId);
       if (!exists) continue;
       st.set({ historyIndex: i });
+      // 뒤로·앞으로도 이동이다 — 목적지가 본문이면 본문을 되찾는다(`openChannel` 의 `reveal`).
+      if (!entry.threadRootId) st.set({ channelRevealSeq: st.channelRevealSeq + 1 });
       await this.openChannelWithoutHistory(entry.channelId);
       if (entry.threadRootId) this.store.getState().set({ threadRootId: entry.threadRootId });
       return true;
