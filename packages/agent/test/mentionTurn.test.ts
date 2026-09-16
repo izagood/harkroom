@@ -3139,6 +3139,77 @@ describe('하네스 정지 감지 (2026-09-09)', () => {
   }, 20_000);
 
   /**
+   * **긴 셸 명령 하나는 기록을 멈추지만 화면은 멈추지 않는다**(2026-09-16 실측).
+   *
+   * 하루에 6건이 이렇게 접혔다(`rcms` 5 · `udc-k8s` 1). 정지 화면은 하나같이
+   * `Ran 1 shell command` 에서 멈춰 있었다 — CI 를 기다리거나(`gh pr checks --watch` 는
+   * 5~10분이다) 빌드를 기다리는 동안 세션 기록이 자라지 않는다. 그 턴들은 **일하는 중**
+   * 이었는데 SIGTERM 을 맞았고, 통지는 "다시 시도하지 않는다" 로 끝났다.
+   *
+   * 여기서 재는 것: **기록이 멈춰도 화면이 흐르면 접지 않는다.** 이 테스트의 가짜는 기록을
+   * 영영 안 내놓으면서(`readTranscriptMtime: null`) 화면 바이트만 계속 보낸다 — 실물에서
+   * 긴 셸 명령이 하는 일이 정확히 그것이다.
+   */
+  it('기록이 멈춰도 화면이 흐르면 접지 않는다 — 긴 셸 명령이 도는 중이다', async () => {
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    let killed: string | null = null;
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5,
+      harnessStallMs: 50,
+      turnTimeoutMs: 10 * 60_000,
+      readTranscriptMtime: async () => null,
+    });
+    runTurn.script = async (_plan: TurnPlan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+      onData?: (chunk: Buffer) => void;
+    }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      // 한도(50ms)의 여러 배를 도는 동안 **화면만** 흐른다. 접을 생각이었다면 이 안에 접혔다.
+      for (let i = 0; i < 40 && killed === null; i += 1) {
+        opts.onData?.(Buffer.from('.'));
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })
+      .catch(() => undefined);
+
+    expect(killed).toBeNull();
+  }, 20_000);
+
+  it('화면까지 멈추면 그때는 접는다 — 유예가 넓어진 것이지 사라진 것이 아니다', async () => {
+    // 위 테스트의 대조군. 같은 조건에서 **화면을 한 번 보낸 뒤 멈춘다** — 기준점이 생겼으므로
+    // 그때부터 한도를 재고, 한도가 지나면 접는다.
+    const fake = new FakeMurmur(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    let killed: string | null = null;
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5,
+      harnessStallMs: 50,
+      turnTimeoutMs: 10 * 60_000,
+      readTranscriptMtime: async () => null,
+    });
+    runTurn.script = async (_plan: TurnPlan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+      onData?: (chunk: Buffer) => void;
+    }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      opts.onData?.(Buffer.from('boot'));
+      for (let i = 0; i < 400 && killed === null; i += 1) await new Promise((r) => setTimeout(r, 10));
+      return { exitCode: killed ? 143 : 0, timedOut: false, tail: '' };
+    };
+
+    const err = await runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+    }).then(() => null, (e: unknown) => e as Error);
+
+    expect(killed).toBe('SIGTERM');
+    expect(err?.message).toContain('정지');
+  }, 20_000);
+
+  /**
    * **읽을 줄 모르는 기록으로 정지를 판정하지 않는다(2026-09-11).**
    *
    * 위 테스트와 **같은 조건**(기록이 없다)인데 하네스만 codex 다. claude 는 접히고 codex 는
