@@ -231,3 +231,92 @@ export async function writeRunnerLedger(
     log(`러너 장부를 쓰지 못했다: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
+
+/** 한 줄씩 줄 세워 쓰는 장부 쓰기 창구. `createRunnerLedgerWriter` 가 만든다. */
+export interface RunnerLedgerWriter {
+  /**
+   * 스냅샷을 예약한다. **기다리지 않는다** — 부르는 쪽(`RunnerRegistry`)은 표가 바뀔
+   * 때마다 부르고, 그 자리에서 디스크를 기다리면 `spawnRunner` 응답이 늦어진다.
+   */
+  save(entries: readonly RunnerLedgerEntry[]): void;
+  /** 예약된 쓰기가 전부 끝날 때까지 기다린다 — 회귀선이 결과를 보는 자리다. */
+  drain(): Promise<void>;
+}
+
+/**
+ * 장부 쓰기를 **줄 세우는** 창구 — 2026-09-18 의 main CI 실패가 근거다.
+ *
+ * ## 무엇이 깨졌나
+ *
+ * `writeRunnerLedger` 는 fire-and-forget 으로 불린다(아래 `save` 주석과 같은 이유다).
+ * 두 쓰기가 겹치면 임시 이름이 달라 서로를 안 망가뜨리지만(위 "임시 이름에 난수"),
+ * **어느 `rename` 이 나중에 도착하는지는 아무도 정하지 않는다.** 그래서 먼저 부른
+ * 쓰기가 나중에 착지하면 **낡은 스냅샷이 새 스냅샷을 덮는다.**
+ *
+ * 실제로 이렇게 났다(`adopt.test.ts` 의 "러너가 끝나면 장부에서 빠진다", main
+ * `d1cae41`):
+ *
+ * ```
+ * spawnRunner: await bootTimeSec(pid)   ← `ps` 를 띄운다. 부하가 걸린 CI 에서 수백 ms
+ *   → saveLedger([러너])                 ← 쓰기 A 출발
+ * 러너(sleep 0.2)가 끝난다
+ *   → exit 핸들러: saveLedger([])        ← 쓰기 B 출발 (A 와 거의 동시)
+ * B 가 먼저 rename, A 가 나중에 rename  → 장부에 **끝난 러너가 남는다**
+ * ```
+ *
+ * 테스트에서는 15초를 기다려도 장부가 안 줄어 빨개졌다. 제품에서는 더 나쁜 쪽으로도
+ * 난다: spawn 스냅샷이 지고 **빈 장부가 남으면** 다음 daemon 이 그 고아를 못 찾아
+ * 러너를 하나 더 띄운다 — `#430` 이 관측한 중복 그 자체다.
+ *
+ * ## 어떻게 고치나
+ *
+ * 쓰기를 **한 번에 하나씩** 돌리고, 기다리는 동안 새 스냅샷이 오면 **앞의 것을
+ * 버린다**(합친다). 장부는 증분이 아니라 **스냅샷 전체**라서 중간 것을 건너뛰어도
+ * 잃는 사실이 없고, 마지막으로 `save` 된 것이 마지막으로 디스크에 앉는 것이 보장된다.
+ *
+ * 왜 `writeRunnerLedger` 안에 안 넣나: 그 함수는 "이 목록을 지금 쓴다" 하나만 하는
+ * 순수한 도구이고 회귀선이 그렇게 쓴다(겹친 쓰기 자체를 재는 테스트가 있다). 줄 세우기는
+ * **호출자 하나(daemon)의 정책**이므로 창구를 따로 둔다 — daemon 이 둘이면 이 창구도
+ * 둘이지만, 그때는 소켓이 이미 한쪽을 물러나게 했다(모듈 주석).
+ *
+ * `write` 를 주입으로 받는 이유: 겹침은 **느린 쓰기**에서만 드러나는데, 실제 디스크는
+ * 그 순간을 시키는 대로 만들어 주지 않는다. 회귀선이 첫 쓰기를 늦춰야 RED 가 선다.
+ */
+export function createRunnerLedgerWriter(
+  appDataDir: string,
+  log: (line: string) => void = () => undefined,
+  write: (
+    appDataDir: string,
+    entries: readonly RunnerLedgerEntry[],
+    log: (line: string) => void,
+  ) => Promise<void> = writeRunnerLedger,
+): RunnerLedgerWriter {
+  /** 아직 디스크에 안 앉은 **최신** 스냅샷. 하나만 들고 있는 것이 합치기다. */
+  let pending: readonly RunnerLedgerEntry[] | null = null;
+  let running: Promise<void> | null = null;
+
+  const pump = async (): Promise<void> => {
+    while (pending !== null) {
+      const next = pending;
+      pending = null;
+      // `writeRunnerLedger` 는 던지지 않는다. 그래도 감싸는 이유: 주입된 write 가
+      // 던지면 이 루프가 끊기고 그 뒤의 스냅샷이 **영영 안 써진다** — 조용히.
+      try {
+        await write(appDataDir, next, log);
+      } catch (err) {
+        log(`러너 장부를 쓰지 못했다: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    running = null;
+  };
+
+  return {
+    save(entries) {
+      pending = entries;
+      running ??= pump();
+    },
+    drain() {
+      return running ?? Promise.resolve();
+    },
+  };
+}

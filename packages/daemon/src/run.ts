@@ -20,9 +20,9 @@ import type { AdoptRunnerResult, DaemonIdentity } from '@harkroom/shared/daemonP
 import type { DaemonArgs } from './args.js';
 import { describeVerdict, planAdoption, psIdentityProbe, type ProcessIdentityProbe } from './adopt.js';
 import {
+  createRunnerLedgerWriter,
   readRunnerLedger,
   runnerLedgerPath,
-  writeRunnerLedger,
   type RunnerLedgerEntry,
 } from './runnerLedger.js';
 import { openRunnerLog, readRunnerLogTail, runnerLogPath } from './runnerLog.js';
@@ -189,6 +189,11 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   //
   // `sessions.json` 은 여기 등장하지 않는다 — 그 파일의 writer 는 러너이고, daemon 이
   // 두 번째 writer 가 되면 조용히 lost update 가 난다(`runners.ts` 모듈 주석).
+  //
+  // 쓰기는 **창구 하나를 거쳐 줄 선다**(`createRunnerLedgerWriter`). writer 가 하나인 것과
+  // 쓰기가 순서대로 앉는 것은 다른 이야기다 — 겹쳐 출발한 두 쓰기의 `rename` 순서는
+  // 아무도 정하지 않아서, 낡은 스냅샷이 새 것을 덮는 일이 실제로 났다(그 창구의 주석).
+  const ledgerWriter = createRunnerLedgerWriter(appDataDir, log);
   const ledgerSink = {
     save: (records: readonly { agentId: string; pid: number; incarnationId: string; startedAtMs: number; bootTimeSec: number | null }[]) => {
       const entries: RunnerLedgerEntry[] = records.map((r) => ({
@@ -204,7 +209,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       }));
       // **기다리지 않는다.** 장부 쓰기가 `spawnRunner` 응답을 늦추면 앱이 그만큼 멈춘다.
       // 실패해도 던지지 않고 로그로 올린다(`writeRunnerLedger` 주석).
-      void writeRunnerLedger(appDataDir, entries, log);
+      ledgerWriter.save(entries);
     },
   };
 
@@ -394,6 +399,10 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       //
       // 회귀선: `test/adopt.test.ts` 의 "daemon 이 죽고 새로 떠도 그 러너를 안다".
       await server.close();
+      // 예약된 장부 쓰기는 **여기서 끝을 본다.** 쓰기는 fire-and-forget 이라 프로세스가
+      // 먼저 빠지면 마지막 스냅샷이 디스크에 못 앉고, 그 스냅샷이 바로 다음 daemon 이
+      // 고아를 찾는 근거다. 기다리는 값은 최대 한 번의 쓰기다(창구가 합쳐 준다).
+      await ledgerWriter.drain();
       await releaseDaemonEndpoint(outcome.paths, {
         token: outcome.token,
         launchNonce: outcome.pidRecord.launchNonce,
