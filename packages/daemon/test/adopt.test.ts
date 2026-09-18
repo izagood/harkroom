@@ -35,6 +35,7 @@ import { NdjsonDecoder, encodeLine } from '@harkroom/shared/daemonProtocol';
 
 import { judgeCandidate, planAdoption, type ProcessIdentityProbe } from '../src/adopt.js';
 import {
+  createRunnerLedgerWriter,
   readRunnerLedger,
   runnerLedgerPath,
   writeRunnerLedger,
@@ -820,6 +821,98 @@ describe('러너 장부 (#431 2-c)', () => {
     const { readdir } = await import('node:fs/promises');
     const 남은 = (await readdir(join(dir, 'daemon'))).filter((n) => n.includes('.tmp-'));
     expect(남은).toEqual([]);
+  });
+
+  /**
+   * **낡은 스냅샷이 새 스냅샷을 덮지 않는다** — 2026-09-18 main CI 가 잡은 결함이다.
+   *
+   * 겹친 쓰기가 서로를 안 망가뜨리는 것(위 테스트)과 **순서대로 앉는 것**은 다른
+   * 이야기다. 둘 다 임시 파일에 쓰고 `rename` 하는데, 어느 `rename` 이 나중에 도착할지는
+   * 아무도 정하지 않는다. main `d1cae41` 에서 이렇게 났다:
+   *
+   * ```
+   * spawnRunner 가 `ps` 를 기다린다 → saveLedger([러너])  ← 쓰기 A
+   * 러너가 끝난다                    → saveLedger([])      ← 쓰기 B (거의 동시)
+   * B 가 먼저, A 가 나중에 rename → 끝난 러너가 장부에 남는다
+   * ```
+   *
+   * 아래 "러너가 끝나면 장부에서 빠진다" 가 15초를 기다려도 안 줄어 빨개졌다. 제품에서는
+   * 반대 방향이 더 나쁘다 — spawn 스냅샷이 지면 다음 daemon 이 고아를 못 찾아 러너를
+   * 하나 더 띄운다(`#430` 의 중복).
+   *
+   * 실물 디스크로는 그 순간을 시킬 수 없어 **쓰기를 주입해 첫 착지를 늦춘다.**
+   *
+   * 되돌려 RED: `createRunnerLedgerWriter` 의 줄 세우기를 빼고 `void write(...)` 로
+   * 바꾸면 겹침이 2가 되고 마지막에 앉는 것이 낡은 스냅샷이 된다.
+   */
+  it('장부 쓰기는 줄을 선다 — 늦게 착지한 낡은 스냅샷이 새 것을 덮지 않는다', async () => {
+    const dir = await 임시앱디렉터리();
+    const 항목 = (pid: number): RunnerLedgerEntry => ({
+      agentId: 'a1',
+      pid,
+      incarnationId: `inc-${pid}`,
+      startedAtMs: pid,
+      bootTimeSec: pid,
+      spawnedByNonce: 'n1',
+    });
+
+    const 착지: number[][] = []; // 디스크에 앉은 순서
+    let 지금겹침 = 0;
+    let 최대겹침 = 0;
+    let 첫쓰기 = true;
+    const 느린쓰기 = async (
+      _dir: string,
+      entries: readonly RunnerLedgerEntry[],
+    ): Promise<void> => {
+      지금겹침 += 1;
+      최대겹침 = Math.max(최대겹침, 지금겹침);
+      // **첫 쓰기만 늦게 착지시킨다** — CI 에서 난 순서가 정확히 이것이다.
+      const 늦춤 = 첫쓰기 ? 50 : 0;
+      첫쓰기 = false;
+      await new Promise((r) => setTimeout(r, 늦춤));
+      착지.push(entries.map((e) => e.pid));
+      지금겹침 -= 1;
+    };
+
+    const writer = createRunnerLedgerWriter(dir, () => undefined, 느린쓰기);
+    writer.save([항목(1001)]); // 러너가 떴다
+    writer.save([]); // 그 러너가 끝났다
+    await writer.drain();
+
+    expect(최대겹침).toBe(1); // 두 쓰기가 겹쳐 돌지 않았다.
+    expect(착지.at(-1)).toEqual([]); // **마지막에 앉은 것이 최신 사실이다.**
+  });
+
+  /**
+   * 중간 스냅샷은 **건너뛴다** — 장부는 증분이 아니라 스냅샷이라 잃는 사실이 없다.
+   *
+   * 합치지 않으면 표가 바쁠 때 쓰기가 그만큼 쌓이고, 마지막 사실이 디스크에 앉는 시각이
+   * 그 줄만큼 밀린다. daemon 이 그 사이 죽으면 남는 것은 낡은 장부다.
+   */
+  it('기다리는 동안 온 스냅샷은 합쳐진다 — 마지막 것만 쓴다', async () => {
+    const dir = await 임시앱디렉터리();
+    const 쓴것: number[] = [];
+    const 쓰기 = async (_dir: string, entries: readonly RunnerLedgerEntry[]): Promise<void> => {
+      await new Promise((r) => setTimeout(r, 10));
+      쓴것.push(entries.length);
+    };
+    const writer = createRunnerLedgerWriter(dir, () => undefined, 쓰기);
+    const 항목 = (pid: number): RunnerLedgerEntry => ({
+      agentId: `a${pid}`,
+      pid,
+      incarnationId: `inc-${pid}`,
+      startedAtMs: pid,
+      bootTimeSec: pid,
+      spawnedByNonce: 'n1',
+    });
+
+    writer.save([항목(1)]);
+    writer.save([항목(1), 항목(2)]);
+    writer.save([항목(1), 항목(2), 항목(3)]);
+    await writer.drain();
+
+    // 첫 쓰기는 이미 출발했으므로 쓰인다. 그 뒤 둘은 하나로 합쳐진다.
+    expect(쓴것).toEqual([1, 3]);
   });
 
   /** 정상 종료한 러너는 장부에서 **빠진다** — 다음 daemon 의 후보로 남기지 않는다. */
