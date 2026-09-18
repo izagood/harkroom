@@ -62,7 +62,6 @@
 // **`@tauri-apps/plugin-shell` 을 더 이상 안 부른다**(`#513`). 마지막 남은 사용처가
 // 로그인 `PATH` 조회(`#305`)였고, 그것이 Rust 로 옮겨가며(`login_path.rs`) 이 파일에서
 // 웹뷰가 프로그램을 실행하는 자리가 하나도 안 남았다.
-import { deleteRenamedSecret, getRenamedLocal, getRenamedSecret, removeRenamedLocal } from './renamedKey';
 import { DAEMON_RETIRING_TOKEN, EX_CONFIG, harnessBinaryName, installHint, runnerExitReason } from '@harkroom/shared';
 // 문구는 사전이 진다(`#619`). **이 파일은 타입만 가져온다** — `translator` 를 여기서
 // 부르면 판정이 언어를 스스로 고르게 되고, 그것이 `(c) 전역 번역기`(그 인터페이스 주석이
@@ -1513,14 +1512,14 @@ export const tauriSecretStore: RunnerSecretStore = {
     const key = PAT_KEY(agentId);
     if (!invoke) {
       try {
-        const raw = getRenamedLocal(key);
+        const raw = localStorage.getItem(key);
         return { ok: true, value: raw ? (JSON.parse(raw) as StoredRunnerPat) : null };
       } catch (err) {
         return { ok: false, error: errText(err) };
       }
     }
     try {
-      const raw = await getRenamedSecret(invoke, key);
+      const raw = await invoke('secret_get', { key: key });
       if (typeof raw !== 'string' || !raw) return { ok: true, value: null };
       return { ok: true, value: JSON.parse(raw) as StoredRunnerPat };
     } catch (err) {
@@ -1538,8 +1537,8 @@ export const tauriSecretStore: RunnerSecretStore = {
   async clear(agentId) {
     const invoke = tauriInvoke();
     const key = PAT_KEY(agentId);
-    if (!invoke) { removeRenamedLocal(key); return; }
-    await deleteRenamedSecret(invoke, key);
+    if (!invoke) { localStorage.removeItem(key); return; }
+    await invoke('secret_delete', { key: key });
   },
 
   /**
@@ -1556,8 +1555,8 @@ export const tauriSecretStore: RunnerSecretStore = {
   async deviceId() {
     const invoke = tauriInvoke();
     const read = async (): Promise<string | null> => {
-      if (!invoke) return getRenamedLocal(DEVICE_KEY);
-      const raw = await getRenamedSecret(invoke, DEVICE_KEY);
+      if (!invoke) return localStorage.getItem(DEVICE_KEY);
+      const raw = await invoke('secret_get', { key: DEVICE_KEY });
       return typeof raw === 'string' && raw ? raw : null;
     };
     const existing = await read();

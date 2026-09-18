@@ -2,13 +2,13 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: murmur
-      POSTGRES_PASSWORD: murmur
-      POSTGRES_DB: murmur
+      POSTGRES_USER: harkroom
+      POSTGRES_PASSWORD: harkroom
+      POSTGRES_DB: harkroom
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U murmur -d murmur"]
+      test: ["CMD-SHELL", "pg_isready -U harkroom -d harkroom"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -39,7 +39,7 @@ services:
         # 권하는 이유다.
         HARKROOM_COMMIT: ${HARKROOM_COMMIT:-}
     environment:
-      DATABASE_URL: postgres://murmur:murmur@postgres:5432/murmur
+      DATABASE_URL: postgres://harkroom:harkroom@postgres:5432/harkroom
       AVCS_BASE_URL: ${AVCS_BASE_URL:-}
       # ATTACHMENT_ROOT 는 **이미지 기본값**(/var/lib/harkroom/attachments)을 쓴다. 여기서
       # 다시 적으면 이미지가 uid 1000 소유로 만들어 둔 그 디렉터리와 어긋날 수 있다.

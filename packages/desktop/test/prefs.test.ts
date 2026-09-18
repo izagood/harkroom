@@ -20,14 +20,14 @@ describe('prefsStorage', () => {
   // 앱 업데이트로 키가 추가되면 옛 저장본에는 그 키가 없다. 병합하지 않으면 undefined 가
   // falsy 로 읽혀 새 알림 종류가 처음부터 꺼진 채로 시작한다 — 사용자는 끈 적이 없다.
   it('fills in keys missing from an older stored shape', () => {
-    localStorage.setItem('murmur.prefs', JSON.stringify({ notifications: { enabled: false } }));
+    localStorage.setItem('harkroom.prefs', JSON.stringify({ notifications: { enabled: false } }));
     const p = prefsStorage.load();
     expect(p.notifications.enabled).toBe(false);
     expect(p.notifications.showPreview).toBe(true);
   });
 
   it('recovers to defaults from corrupt json', () => {
-    localStorage.setItem('murmur.prefs', '{not json');
+    localStorage.setItem('harkroom.prefs', '{not json');
     expect(prefsStorage.load()).toEqual(DEFAULT_PREFS);
   });
 
@@ -56,7 +56,7 @@ describe('inboxStorage', () => {
   });
 
   it('모르는 값이 저장돼 있으면 기본 칩으로 떨어진다', () => {
-    localStorage.setItem('murmur.inboxFilter', 'mentions-only');
+    localStorage.setItem('harkroom.inboxFilter', 'mentions-only');
     expect(inboxStorage.loadFilter()).toBe(DEFAULT_INBOX_FILTER);
   });
 

@@ -194,7 +194,7 @@ describe('요청 4 — 타이틀바 한 줄이 한 색이다', () => {
    */
   it('세 조각이 모두 `TOP_BAR_BG` 를 쓴다', () => {
     pretendMac();
-    localStorage.setItem('murmur.sidebarCollapsed', 'false');
+    localStorage.setItem('harkroom.sidebarCollapsed', 'false');
     render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 
     for (const id of ['rail-titlebar', 'sidebar-brand', 'app-header']) {

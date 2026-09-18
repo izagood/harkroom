@@ -323,14 +323,14 @@ describe('paneStorage', () => {
   });
 
   it('범위를 벗어난 저장값은 읽을 때 clamp 된다', () => {
-    localStorage.setItem('murmur.threadWidth', '99999');
-    localStorage.setItem('murmur.terminalWidth', '1');
+    localStorage.setItem('harkroom.threadWidth', '99999');
+    localStorage.setItem('harkroom.terminalWidth', '1');
     expect(paneStorage.loadThreadWidth()).toBe(MAX_THREAD_WIDTH);
     expect(paneStorage.loadTerminalWidth()).toBe(MIN_TERMINAL_WIDTH);
   });
 
   it('깨진 저장값은 기본값으로 되돌린다', () => {
-    localStorage.setItem('murmur.threadWidth', 'wide');
+    localStorage.setItem('harkroom.threadWidth', 'wide');
     expect(paneStorage.loadThreadWidth()).toBe(DEFAULT_THREAD_WIDTH);
   });
 });

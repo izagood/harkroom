@@ -16,7 +16,7 @@ const CEILING_MS = 60_000;
  * catch 에 쓰인다. 그래서 err 는 하네스 실행 실패뿐 아니라 harkroom 서버 호출(readThread·post)
  * 실패에서도 온다. 출처를 못 가리면 harkroom PAT 만료를 "claude CLI 로 로그인해라"로 안내한다.
  */
-export const HARKROOM_ERROR_SOURCE = 'murmur-client';
+export const HARKROOM_ERROR_SOURCE = 'harkroom-client';
 
 /** 자격증명 실패의 출처. 'other' 는 자격증명 실패가 아니라는 뜻이다. */
 export type CredentialFailureType = 'harness-credential' | 'murmur-credential' | 'other';
