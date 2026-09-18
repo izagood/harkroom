@@ -241,8 +241,8 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
     expect(params.sort()).toEqual([
       'agent_id: String',
       'agent_version: Option<String>',
-      'murmur_pat: String',
-      'murmur_url: String',
+      'harkroom_pat: String',
+      'harkroom_url: String',
       'path: String',
     ]);
   });

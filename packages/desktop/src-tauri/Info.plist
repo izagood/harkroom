@@ -23,7 +23,7 @@
   ## 왜 웹뷰 범위로만 여는가
 
   `NSAllowsArbitraryLoadsInWebContent` 는 **웹뷰가 내는 요청**에 대해서만 ATS 를 끈다.
-  이 앱이 평문으로 말해야 하는 상대는 사용자가 세운 murmur 서버뿐이고, 그 통신은 전부
+  이 앱이 평문으로 말해야 하는 상대는 사용자가 세운 harkroom 서버뿐이고, 그 통신은 전부
   웹뷰에서 나간다(`src/lib/api.ts` 의 `fetch`, `src/state/controller.ts` 의 WebSocket).
   네이티브 쪽에서 나가는 것은 업데이터의 GitHub 호출이고 그것은 https 다 — 그쪽 보호까지
   걷어낼 이유가 없으므로 앱 전체를 여는 키(ArbitraryLoads 쪽)는 쓰지 않는다.

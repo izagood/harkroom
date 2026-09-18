@@ -48,7 +48,7 @@ export const MAX_FIELD_LENGTH = 200;
 export const TTL_OK_MS = 7 * 24 * 60 * 60 * 1000;
 export const TTL_FAILED_MS = 60 * 60 * 1000;
 
-const USER_AGENT = 'murmur-link-preview';
+const USER_AGENT = 'harkroom-link-preview';
 
 /**
  * 이 미리보기 행이 만료되었는가.

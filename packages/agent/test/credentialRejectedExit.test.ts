@@ -16,7 +16,7 @@
  * 경계를 재려면 프로세스를 띄워야 한다. 그래서 이 층은 러너를 실제로 spawn 하고, 401 만
  * 내는 최소 서버를 붙여 **종료 코드와 마커 한 줄**을 본다 — 앱이 읽는 것이 정확히 그 둘이다.
  *
- * 하네스(claude/codex)는 필요 없다: 기동의 첫 호출(`murmur.me()`)에서 401 이 나므로 러너는
+ * 하네스(claude/codex)는 필요 없다: 기동의 첫 호출(`harkroom.me()`)에서 401 이 나므로 러너는
  * 상태 디렉터리도 만들기 전에 물러난다.
  */
 import { createServer, type Server } from 'node:http';
@@ -58,12 +58,12 @@ interface RunnerOutcome {
 }
 
 /** 러너를 띄우고 스스로 물러나기를 기다린다. */
-async function runRunner(murmurUrl: string): Promise<RunnerOutcome> {
+async function runRunner(harkroomUrl: string): Promise<RunnerOutcome> {
   const child = spawn('pnpm', ['exec', 'tsx', 'src/main.ts'], {
     cwd: agentRoot,
     env: {
       ...process.env,
-      HARKROOM_URL: murmurUrl,
+      HARKROOM_URL: harkroomUrl,
       HARKROOM_PAT: 'murp_revoked_by_reissue',
       // 풀을 비워 둔다 — 계정 축은 이 계약과 무관하고, 여기서 뜨면 실패 사유가 섞인다.
       HARKROOM_CLAUDE_ACCOUNTS: '',

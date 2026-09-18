@@ -275,16 +275,16 @@ describe('#172 팀을 채널에 추가', () => {
     // 만든 사람이 이미 멤버라(#156) 개수 조건은 첫 삽입부터 걸려 아무것도 안 들어가고,
     // 그러면 롤백이 없어도 테스트가 초록이 된다.
     await pool.query(`
-      create or replace function murmur_test_fail_second() returns trigger as $$
+      create or replace function harkroom_test_fail_second() returns trigger as $$
       begin
         if new.account_id = '${agent2Id}'::uuid then
-          raise exception 'murmur test: second insert fails';
+          raise exception 'harkroom test: second insert fails';
         end if;
         return new;
       end;
       $$ language plpgsql;
-      create trigger murmur_test_fail_second_trg before insert on channel_member
-        for each row execute function murmur_test_fail_second();
+      create trigger harkroom_test_fail_second_trg before insert on channel_member
+        for each row execute function harkroom_test_fail_second();
     `);
     try {
       const res = await app.inject({
@@ -292,8 +292,8 @@ describe('#172 팀을 채널에 추가', () => {
       });
       expect(res.statusCode).toBe(500);
     } finally {
-      await pool.query(`drop trigger murmur_test_fail_second_trg on channel_member`);
-      await pool.query(`drop function murmur_test_fail_second()`);
+      await pool.query(`drop trigger harkroom_test_fail_second_trg on channel_member`);
+      await pool.query(`drop function harkroom_test_fail_second()`);
     }
 
     // 절반도 남지 않았다.

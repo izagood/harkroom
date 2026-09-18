@@ -50,7 +50,7 @@ function plan(harness: AgentHarness, over: Partial<BuildTurnCommandOptions> = {}
     mentionPermission: 'auto',
     mcpConfigPath: join(dir, 'mcp.json'),
     pat: 'pat-value',
-    murmurUrl: 'http://localhost:3400',
+    harkroomUrl: 'http://localhost:3400',
     codexHome: join(dir, 'codex-home'),
     claudeConfigDir: null,
     ...over,

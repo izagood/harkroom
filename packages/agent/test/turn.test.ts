@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { HARNESS_ENV_DENYLIST, assertHarnessContract, buildTurnCommand, preassignsSessionId, writeMcpConfigOnce, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
 
-// murmurUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
+// harkroomUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
 // 실제로 주는 값(`http://localhost:3400` 류, `/mcp` 없음)과 맞춘다. 예전엔 여기 이미
 // `/mcp` 가 붙은 값을 fixture 로 썼는데, 그러면 CODEX_PRESET.mcp 가 `/mcp` 를 안 붙이는
 // 결함이 있어도(실물 검증에서 발견 — turn.ts::mcpUrl 참고) 값이 우연히 맞아떨어져 테스트가
@@ -14,7 +14,7 @@ import { HARNESS_ENV_DENYLIST, assertHarnessContract, buildTurnCommand, preassig
 const base = {
   systemPrompt: 'SYS', promptCtx: 'CTX', model: null, effort: null,
   mentionPermission: 'auto' as const, mcpConfigPath: '/mcp.json', pat: 'murp_x',
-  murmurUrl: 'http://localhost:3401',
+  harkroomUrl: 'http://localhost:3401',
   codexHome: '/state/codex-home',
   // 프로덕션(`mentionTurn.ts`)은 매 턴 `writeSystemPromptFile` 로 파일을 쓰고 그 경로를
   // 반드시 넘긴다 — fixture 가 null 로 두면 프로덕션이 절대 타지 않는 경로를 검증하게 된다.
@@ -70,7 +70,7 @@ describe('buildTurnCommand — claude', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  // argv 폴백을 남기지 않는다 — `murmurUrl` 과 같은 처우다. 조용히 넘어가는 경로를 두면 그
+  // argv 폴백을 남기지 않는다 — `harkroomUrl` 과 같은 처우다. 조용히 넘어가는 경로를 두면 그
   // 경로가 결국 쓰이고, 여기서는 그게 곧 지시문이 `ps` 로 새는 것이다(#92).
   it('지시문이 있는데 파일 경로가 없으면 조립 자체가 실패한다', () => {
     expect(() => buildTurnCommand({
@@ -178,7 +178,7 @@ describe('buildTurnCommand — codex', () => {
     expect(resumeTurn.args).not.toContain('-s');
   });
 
-  it('auto 멘션 턴은 murmur MCP만 승인 없이 실행한다 — 답을 만들고도 message.post가 막히지 않는다', () => {
+  it('auto 멘션 턴은 harkroom MCP만 승인 없이 실행한다 — 답을 만들고도 message.post가 막히지 않는다', () => {
     const first = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true });
     const resumed = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false });
     for (const plan of [first, resumed]) {
@@ -188,7 +188,7 @@ describe('buildTurnCommand — codex', () => {
     }
   });
 
-  it('readonly 멘션 턴은 murmur 쓰기 MCP의 승인을 우회하지 않는다', () => {
+  it('readonly 멘션 턴은 harkroom 쓰기 MCP의 승인을 우회하지 않는다', () => {
     const plan = buildTurnCommand({
       ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false,
       mentionPermission: 'readonly',
@@ -264,36 +264,36 @@ describe('buildTurnCommand — codex', () => {
   // 러너는 더 이상 하네스 출력을 파싱하지 않는다 — 에이전트가 답하는 유일한 경로가 harkroom
   // MCP 의 `message.post` 다(prompt.ts). harkroom MCP 가 안 붙은 codex 턴은 에러 없이 그냥
   // 돌다가 답을 못 하고, 러너는 "답 없이 턴을 끝냈습니다"만 남긴다 — 원인 단서가 없는 조용한
-  // 실패다. 그래서 murmurUrl 은 선택이 아니라 필수이고, codex 의 모든 턴에 반드시 붙는다.
-  it('codex 턴의 argv 에는 murmur MCP 등록이 항상 들어 있다 — PAT 값 자체는 여전히 안 붙는다', () => {
-    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, murmurUrl: 'http://localhost:3401' });
+  // 실패다. 그래서 harkroomUrl 은 선택이 아니라 필수이고, codex 의 모든 턴에 반드시 붙는다.
+  it('codex 턴의 argv 에는 harkroom MCP 등록이 항상 들어 있다 — PAT 값 자체는 여전히 안 붙는다', () => {
+    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, harkroomUrl: 'http://localhost:3401' });
     expect(p.args.join(' ')).toContain('mcp_servers.avcs.command');
-    // **transport 가 빠지면 murmur 도 같이 죽는다**(2026-09-15 실측). codex 0.154 는 갈래
+    // **transport 가 빠지면 harkroom 도 같이 죽는다**(2026-09-15 실측). codex 0.154 는 갈래
     // 표시 없는 stdio 항목에서 MCP 설정 **전체**를 버린다 — 그러면 이 턴은 답할 수단이
-    // 없는 채로 돌다가 조용히 끝난다. 그래서 이 한 줄이 murmur 등록만큼 중요하다.
+    // 없는 채로 돌다가 조용히 끝난다. 그래서 이 한 줄이 harkroom 등록만큼 중요하다.
     expect(p.args.join(' ')).toContain('mcp_servers.avcs.transport="stdio"');
     expect(p.args.join(' ')).toContain('mcp_servers.harkroom.url="http://localhost:3401/mcp"');
     expect(p.args.join(' ')).toContain('mcp_servers.harkroom.bearer_token_env_var="HARKROOM_PAT"');
     expect(p.args.join(' ')).not.toContain('murp_x');
   });
 
-  // 실물 검증에서 드러난 회귀 — murmurUrl 은 서버 베이스 URL 이지 MCP 엔드포인트가 아닌데
+  // 실물 검증에서 드러난 회귀 — harkroomUrl 은 서버 베이스 URL 이지 MCP 엔드포인트가 아닌데
   // codex 쪽 조립이 `/mcp` 를 안 붙여, codex 가 `POST /`(베이스 URL)를 때려 서버의
   // `404 route not found` 로 MCP 연결 자체가 안 됐다. 증상은 조용했다 — exit 0, message.post
-  // 못 부름, "(답 없이 턴을 끝냈습니다)"만 남았다. 위 테스트는 murmurUrl 에 이미 `/mcp` 가
+  // 못 부름, "(답 없이 턴을 끝냈습니다)"만 남았다. 위 테스트는 harkroomUrl 에 이미 `/mcp` 가
   // 붙은 값을 넘겨 이 결함을 가렸다 — 이 테스트는 **베이스 URL 만 주고** 조립된 값이 실제
   // 엔드포인트(`/mcp`)와 같은지를 겨눈다.
-  it('murmurUrl 에 이미 트레일링 슬래시가 있어도 /mcp 가 정확히 한 번만 붙는다', () => {
-    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, murmurUrl: 'http://localhost:3401/' });
+  it('harkroomUrl 에 이미 트레일링 슬래시가 있어도 /mcp 가 정확히 한 번만 붙는다', () => {
+    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, harkroomUrl: 'http://localhost:3401/' });
     expect(p.args.join(' ')).toContain('mcp_servers.harkroom.url="http://localhost:3401/mcp"');
     expect(p.args.join(' ')).not.toContain('http://localhost:3401//mcp');
   });
 
-  // murmurUrl 을 빈 문자열로 넘기면 타입 체크는 통과하지만(string), 그대로 두면
+  // harkroomUrl 을 빈 문자열로 넘기면 타입 체크는 통과하지만(string), 그대로 두면
   // `mcp_servers.harkroom.url=""` 같은 값이 조용히 조립돼 위와 같은 조용한 실패로 이어진다 —
   // 런타임에서도 막는다.
-  it('murmurUrl 이 빈 문자열이면 던진다 — 조용히 틀린 URL 을 조립하지 않는다', () => {
-    expect(() => buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, murmurUrl: '' })).toThrow();
+  it('harkroomUrl 이 빈 문자열이면 던진다 — 조용히 틀린 URL 을 조립하지 않는다', () => {
+    expect(() => buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, harkroomUrl: '' })).toThrow();
   });
 });
 
@@ -365,7 +365,7 @@ describe('writeMcpConfigOnce', () => {
     if (dir) await rm(dir, { recursive: true, force: true });
   });
 
-  it('murmur(http, 플레이스홀더 PAT) + avcs(stdio, avcs mcp) 둘만 담은 파일을 쓴다', async () => {
+  it('harkroom(http, 플레이스홀더 PAT) + avcs(stdio, avcs mcp) 둘만 담은 파일을 쓴다', async () => {
     dir = await mkdtemp(join(tmpdir(), 'mcp-cfg-'));
     const path = await writeMcpConfigOnce(dir, 'http://localhost:3401');
     const config = JSON.parse(await readFile(path, 'utf8'));

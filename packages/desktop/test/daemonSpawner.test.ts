@@ -93,7 +93,7 @@ describe('daemonSpawner 는 daemon 에게 러너를 띄우라고 시킨다 (#431
     // **인자 목록 자체를 단언한다.** "경로가 없다"를 `not.toHaveProperty` 로 재면 이름만
     // 바꾼 경로 인자가 통과한다 — 있는 것을 전부 적어야 새로 생긴 것이 걸린다.
     expect(Object.keys(call!.args!).sort()).toEqual([
-      'agentId', 'agentVersion', 'murmurPat', 'murmurUrl', 'path',
+      'agentId', 'agentVersion', 'harkroomPat', 'harkroomUrl', 'path',
     ]);
     // `path` 는 자식의 `PATH` 환경변수이지 실행 파일 경로가 아니다 — 값이지 실행 표면이 아니다.
     expect(call!.args!.path).toBe('/usr/bin');

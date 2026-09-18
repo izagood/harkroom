@@ -6,7 +6,7 @@ create table agent_config (
   account_id uuid primary key references account(id) on delete cascade,
   -- 이 에이전트가 무엇을 하는 사람인지. harness 의 시스템 프롬프트에 덧붙는다.
   instructions text not null default '',
-  -- murmur 가 실제로 실행할 수 있는 harness 이름. 값 검증은 애플리케이션이 한다
+  -- harkroom 가 실제로 실행할 수 있는 harness 이름. 값 검증은 애플리케이션이 한다
   -- (harness 목록은 코드와 함께 늘어나므로 스키마 제약으로 굳히지 않는다).
   harness text not null default 'claude-code',
   -- null 이면 harness 기본값을 쓴다 ('Use harness defaults').

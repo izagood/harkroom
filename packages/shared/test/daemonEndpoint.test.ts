@@ -78,7 +78,7 @@ async function killedSocketDebris(path: string): Promise<number> {
 }
 
 function deps(bind: (p: string) => Promise<Server | void>) {
-  return { bindTemporary: bind, appVersion: '1.2.3', entryPath: '/opt/murmur/daemon.js' };
+  return { bindTemporary: bind, appVersion: '1.2.3', entryPath: '/opt/harkroom/daemon.js' };
 }
 
 /** 실제 unix 소켓을 임시 이름에 bind 하는 기본 주입. */
@@ -253,7 +253,7 @@ describe('회귀선 3 — 죽은 소켓은 3중 증거 후 회수한다', () => 
 
     expect((await stat(out.paths.socketPath)).isSocket()).toBe(true);
     const rec: unknown = JSON.parse(await readFile(out.paths.pidPath, 'utf8'));
-    expect(rec).toMatchObject({ pid: process.pid, appVersion: '1.2.3', entryPath: '/opt/murmur/daemon.js' });
+    expect(rec).toMatchObject({ pid: process.pid, appVersion: '1.2.3', entryPath: '/opt/harkroom/daemon.js' });
     expect((await readFile(out.paths.tokenPath, 'utf8')).trim()).toBe(out.token);
   });
 

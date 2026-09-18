@@ -11,7 +11,7 @@ let hub: { url: string; close: () => Promise<void> };
 let dataDir: string;
 
 beforeAll(async () => {
-  dataDir = await mkdtemp(join(tmpdir(), 'murmur-avcs-'));
+  dataDir = await mkdtemp(join(tmpdir(), 'harkroom-avcs-'));
   hub = await startAvcsServer({ dataDir, host: '127.0.0.1' });
 });
 

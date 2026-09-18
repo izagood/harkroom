@@ -59,7 +59,7 @@ describe('agent definition', () => {
     expect(res.json().instructions).toBe('');
   });
 
-  it('refuses a harness murmur cannot run', async () => {
+  it('refuses a harness harkroom cannot run', async () => {
     const res = await create({ handle: 'nope', displayName: 'Nope', harness: 'devin' });
 
     expect(res.statusCode).toBe(400);

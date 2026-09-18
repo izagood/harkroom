@@ -467,8 +467,8 @@ fn daemon_spawn_runner(
     app: tauri::AppHandle,
     state: tauri::State<daemon_client::DaemonState>,
     agent_id: String,
-    murmur_pat: String,
-    murmur_url: String,
+    harkroom_pat: String,
+    harkroom_url: String,
     path: String,
     agent_version: Option<String>,
 ) -> Result<daemon_client::SpawnRunnerResult, String> {
@@ -478,8 +478,8 @@ fn daemon_spawn_runner(
     let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
 
     let mut env = HashMap::new();
-    env.insert("HARKROOM_PAT".to_string(), murmur_pat);
-    env.insert("HARKROOM_URL".to_string(), murmur_url);
+    env.insert("HARKROOM_PAT".to_string(), harkroom_pat);
+    env.insert("HARKROOM_URL".to_string(), harkroom_url);
     env.insert("PATH".to_string(), path);
     // `agent_version` 만 `Option` 인 이유: 나머지 셋은 없으면 러너가 아예 못 뜨지만
     // 이것은 **없을 수 있는 값**이다(`AppVersionReader` 가 `null` 을 돌려주는 경우).

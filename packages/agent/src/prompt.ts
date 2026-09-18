@@ -226,7 +226,7 @@ export function controlledNotice(handle: string, pending: number): string {
  * 평문이 아닌 이유: 유예에는 상한이 없고 대기 통지는 entry 당 1회라, 조종이 풀리지 않으면
  * 그 스레드는 **아무 신호도 없이** 영구 정지한다. 실측된 사건에서 남은 흔적은 대기 수가
  * 1→2→3 으로 늘어난 것뿐이었고, 스레드 머리는 그동안 `끝남` 이었다. 사람이 손을 대야
- * 풀리는 것은 스레드 상태에 `막힘`으로 서야 한다(`murmur.ts::fail` 주석).
+ * 풀리는 것은 스레드 상태에 `막힘`으로 서야 한다(`harkroom.ts::fail` 주석).
  *
  * 유예 자체는 **유지한다** — 멘션은 inbox 에 살아 있고(그것이 큐다), PTY 가 그 하네스
  * 세션을 쥐고 있는 동안 턴을 억지로 띄우면 한 세션을 두 프로세스가 밟는다(스펙 §1 금지).
@@ -325,7 +325,7 @@ function memorySection(memory: MemoryContext): string[] {
     // 조회는 성공했고 저장소가 비어 있다. 이건 사실이므로 안내해도 안전하다.
     return [
       '기억이 아직 없다. 이 워크스페이스에서 반복해서 쓸 사실(사람들의 역할, 저장소 규칙,',
-      '자주 하는 작업)이 생기면 murmur MCP 의 `memory.set` 으로 적어 둬라 — 다음 턴부터',
+      '자주 하는 작업)이 생기면 harkroom MCP 의 `memory.set` 으로 적어 둬라 — 다음 턴부터',
       '여기에 실려 온다.',
       '',
       ...MEMORY_USAGE_LINES,
@@ -381,7 +381,7 @@ function skillSection(memory: MemoryContext): string[] {
     : '아니라 `memory.set` 이다.';
   return [
     '이 워크스페이스에는 **스킬**이 있다 — 승인되면 모든 에이전트의 스킬 디렉터리에 `SKILL.md`',
-    '로 깔려서, 다음부터는 누구든 그 절차를 읽고 그대로 한다. 만드는 길은 murmur MCP 의',
+    '로 깔려서, 다음부터는 누구든 그 절차를 읽고 그대로 한다. 만드는 길은 harkroom MCP 의',
     '`skill.propose`(slug·body·channelId) 하나이고 **제안만 할 수 있다** — 사람이 승인해야',
     '깔린다. 같은 slug 를 다시 제안하면 본문을 덮고 승인은 버려진다(다시 승인받아야 한다).',
     '',
@@ -422,7 +422,7 @@ export function buildSystemPrompt(opts: {
   const { handle, channelName, instructions, guide, memory, turnBudgetMs } = opts;
   const budgetMinutes = turnBudgetMs === undefined ? null : Math.floor(turnBudgetMs / 60_000);
   return [
-    `너는 murmur 워크스페이스의 에이전트 @${handle} 이고, 지금 #${channelName} 에서 말한다.`,
+    `너는 harkroom 워크스페이스의 에이전트 @${handle} 이고, 지금 #${channelName} 에서 말한다.`,
     '',
     '이 에이전트에 대한 지시문:',
     instructions,
@@ -435,7 +435,7 @@ export function buildSystemPrompt(opts: {
     // 발화가 러너의 책임에서 에이전트의 자율로 넘어갔다(spec §4 발화 경로) — 어디에 쓸지를
     // 명시하지 않으면 턴이 조용히 끝나고, 러너는 그걸 프로세스 종료 후에나(hasOwnPostSince)
     // 알아챈다. 이 지시가 이 프롬프트에서 가장 중요한 한 줄이다.
-    '답은 화면에 출력하는 것으로 끝나지 않는다 — 이 프로세스가 끝나기 전에 네가 직접 murmur',
+    '답은 화면에 출력하는 것으로 끝나지 않는다 — 이 프로세스가 끝나기 전에 네가 직접 harkroom',
     'MCP 의 `message.post` 도구를 불러 이 스레드에 남겨라. channelId 와 threadRootId 는',
     '대화 프롬프트 맨 위에 준다 — 그대로 넣어 호출한다(threadRootId 가 "채널 최상위(없음)"으로',
     '적혀 있으면 그 인자는 생략하고 channelId 만 넘긴다).',
@@ -552,7 +552,7 @@ export function buildSystemPrompt(opts: {
       `이 턴의 예산은 ${budgetMinutes}분이다. 그 안에 끝나는 기다림은 포그라운드에서 기다려도 된다.`,
       '',
     ]),
-    '더 기다려야 하면 **지금 아는 것을 `message.post` 로 남기고**, murmur MCP 의 `turn.wake` 로',
+    '더 기다려야 하면 **지금 아는 것을 `message.post` 로 남기고**, harkroom MCP 의 `turn.wake` 로',
     '다시 볼 시각을 예약하고 끝낸다(예: CI 결과 확인 — 5분 뒤). 예약은 스레드에 대기 줄로',
     '보이고, 시각이 되면 **이 세션이 그대로 이어져** 다시 시작한다 — 조사한 것을 다시 조사할',
     '필요가 없다. 예약을 건 턴은 결과 발화 없이 끝내도 된다.',
@@ -778,17 +778,17 @@ function renderLine(m: MessageRow, handles: Record<string, string>): string {
  *
  * 첨부가 있는 턴에만 붙인다 — 대부분의 턴은 첨부가 없고, 그때 이 여덟 줄은 순전한 낭비다.
  *
- * URL 은 러너가 아는 실값(`config.murmurUrl`)을 그대로 굽고 토큰은 **env 이름으로만** 적는다.
+ * URL 은 러너가 아는 실값(`config.harkroomUrl`)을 그대로 굽고 토큰은 **env 이름으로만** 적는다.
  * 실값을 프롬프트 파일에 넣지 않는 이유는 #92·#117 과 같다 — 그 파일은 디스크에 남는다.
  */
-function attachmentHowTo(murmurUrl: string): string[] {
+function attachmentHowTo(harkroomUrl: string): string[] {
   return [
     '',
     '(위 `[첨부: …]` 의 id 로 첨부 바이트를 직접 받을 수 있다 — 파일명만 보고 내용을 짐작하지 마라.',
     '셸이 있으면:',
-    `  curl -fsS -H "Authorization: Bearer $HARKROOM_PAT" ${murmurUrl}/attachments/<id> -o /tmp/<파일명>`,
+    `  curl -fsS -H "Authorization: Bearer $HARKROOM_PAT" ${harkroomUrl}/attachments/<id> -o /tmp/<파일명>`,
     '받은 파일을 열어서 봐라 — 이미지도 그대로 읽힌다.',
-    '셸이 없으면 murmur MCP 의 `attachment.fetch` 를 attachmentId 로 불러라 — 이미지는 그 응답에',
+    '셸이 없으면 harkroom MCP 의 `attachment.fetch` 를 attachmentId 로 불러라 — 이미지는 그 응답에',
     '그림으로 실려 온다. 받기가 실패했을 때만 "못 봤다"고 말하고, 못 본 것을 본 것처럼 쓰지 마라.)',
   ];
 }
@@ -813,7 +813,7 @@ export function buildTurnPrompt(opts: {
   channelId: string;
   threadRootId: string | null;
   /**
-   * 서버 베이스 URL(`config.murmurUrl`). 첨부 안내에 실을 실값이다.
+   * 서버 베이스 URL(`config.harkroomUrl`). 첨부 안내에 실을 실값이다.
    *
    * 옵셔널이 아니라 필수인 이유: 여기서 `$HARKROOM_URL` 같은 env 참조로 때우면 그 변수가
    * 없는 러너(`config.ts` 는 없으면 기본값으로 넘어간다)에서 curl 이 조용히 실패한다.
@@ -821,7 +821,7 @@ export function buildTurnPrompt(opts: {
    * 만들지 않는다. 첨부가 없는 턴에는 쓰이지 않지만 그렇다고 옵셔널로 두면 새 호출자가
    * 잊었을 때 **첨부가 있는 턴에서만** 조용히 망가진다.
    */
-  murmurUrl: string;
+  harkroomUrl: string;
   /**
    * 이 턴이 **깨어난 턴**이면 그 사유(마이그레이션 040). 있으면 사람의 새 발화가 없어도
    * 프롬프트가 비지 않는다 — 깨움에는 부른 사람이 없고, 예약 줄을 쓴 것도 자기라서
@@ -854,7 +854,7 @@ export function buildTurnPrompt(opts: {
   delegatedBy?: InboxDelegatedBy;
 }): { prompt: string; fedSeq: number } {
   const {
-    messages, lastFedSeq, meId, handles, channelId, threadRootId, murmurUrl, wake, team, delegation,
+    messages, lastFedSeq, meId, handles, channelId, threadRootId, harkroomUrl, wake, team, delegation,
     delegatedBy,
   } = opts;
   const isFirstTurn = lastFedSeq === 0;
@@ -889,7 +889,7 @@ export function buildTurnPrompt(opts: {
   const handedLines = delegatedBy === undefined ? [] : handedSection(delegatedBy);
   // 안내는 첨부 줄 **뒤**에 선다 — 먼저 무엇이 왔는지 보고 그다음 어떻게 여는지 읽는 순서다.
   // `toShow` 로 판정한다: 보여주지 않은 메시지의 첨부는 프롬프트에 id 가 없어 열 수도 없다.
-  const howTo = toShow.some((m) => m.attachments.length) ? attachmentHowTo(murmurUrl) : [];
+  const howTo = toShow.some((m) => m.attachments.length) ? attachmentHowTo(harkroomUrl) : [];
   // 팀 블록은 **델타 앞**이다 — 사람의 말을 읽기 전에 "너는 이 팀의 창구다"를 알아야
   // 그 말을 팀의 일로 읽는다. `wakeLines` 뒤에 두는 이유: 그 줄은 이 턴이 왜 떴는지이고,
   // 팀 블록은 이 턴이 무엇인지다(둘이 함께 오는 경우는 예약이 걸린 팀 턴이다).

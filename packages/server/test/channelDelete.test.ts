@@ -355,7 +355,7 @@ describe('channel delete — 참조 테이블 전부 (#155)', () => {
     });
     const channelId = created.json().id as string;
 
-    const boundary = '----murmurdelete';
+    const boundary = '----harkroomdelete';
     const body = Buffer.concat([
       Buffer.from(
         `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="note.txt"\r\n` +
