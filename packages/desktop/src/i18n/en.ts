@@ -621,7 +621,7 @@ export const en = {
   // - **경과·시각 표기** — `Intl` 이 이미 아는 것이다. `en.ts` 머리말의 '남은 것' 표가
   //   *"사전에 넣기 전에 `Intl.RelativeTimeFormat` 으로 옮길지 먼저 정해야 한다"* 고
   //   적어 뒀고, 그 판단은 이 PR 의 것이 아니다. `toLocaleString()` 은 이미 로케일을 따른다
-  // - **`admin` · `PAT` · `harness` · `daemon` · `attach` · `murmur`** — 이 제품의 고유어다.
+  // - **`admin` · `PAT` · `harness` · `daemon` · `attach` · `harkroom`** — 이 제품의 고유어다.
   //   옮기면 사람이 문서·터미널·서버 오류에서 보는 말과 화면의 말이 갈라진다
   // - **`auto` · `readonly`** — `MentionPermission` 의 **저장·전송용 값**이다. 옵션 라벨이
   //   `auto — …` 로 값을 앞에 세우는 것은 그 값이 API·설정 파일에도 그대로 나오기 때문이다

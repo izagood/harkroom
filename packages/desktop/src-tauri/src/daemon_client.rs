@@ -1654,7 +1654,7 @@ fn occupied_reason(occupant: Option<&PidRecord>) -> String {
     let known = occupant.filter(|r| !r.entry_path.is_empty());
     let Some(record) = known else {
         return "이미 다른 daemon 이 엔드포인트를 쥐고 있다(pid 레코드를 못 읽어 어느 앱인지는 \
-                모른다) — 실행 중인 murmur 를 모두 종료하고 다시 시도하라"
+                모른다) — 실행 중인 harkroom 를 모두 종료하고 다시 시도하라"
             .to_string();
     };
     // 앱 버전은 옛 daemon 이 안 적었을 수 있다 — 없으면 그 자리를 비운다.
@@ -1664,7 +1664,7 @@ fn occupied_reason(occupant: Option<&PidRecord>) -> String {
         format!(", 앱 {}", record.app_version)
     };
     format!(
-        "이미 다른 murmur 가 daemon 을 쥐고 있다: `{}` (pid {}{version}) — 그 앱을 \
+        "이미 다른 harkroom 가 daemon 을 쥐고 있다: `{}` (pid {}{version}) — 그 앱을 \
          종료하고 다시 시도하라",
         app_bundle_of(&record.entry_path),
         record.pid,
@@ -1723,7 +1723,7 @@ fn looks_like_missing_node(line: &str) -> bool {
 fn node_missing_reason(program: &Path, tail: &str) -> String {
     format!(
         "daemon 이 뜨자마자 끝났다 — 사이드카(`{}`)는 있는데 그것을 실행할 `node` 를 찾지 못했다. \
-         murmur 는 Node.js 를 동봉하지 않는다. \
+         harkroom 는 Node.js 를 동봉하지 않는다. \
          Node.js 를 설치하라(LTS 판이면 된다): https://nodejs.org/en/download \
          (daemon 로그: {tail} / 이때 쓴 PATH: {})",
         program.display(),
@@ -1764,7 +1764,7 @@ fn spawn_failure_reason(program: &Path, e: &std::io::Error) -> String {
     if e.kind() == std::io::ErrorKind::NotFound {
         return format!(
             "daemon 을 띄우지 못했다 — 사이드카(`{}`)는 있는데 그것을 실행할 `node` 를 찾지 못했다. \
-             murmur 는 Node.js 를 동봉하지 않는다. \
+             harkroom 는 Node.js 를 동봉하지 않는다. \
              Node.js 를 설치하라(LTS 판이면 된다): https://nodejs.org/en/download (원문: {e})",
             program.display()
         );

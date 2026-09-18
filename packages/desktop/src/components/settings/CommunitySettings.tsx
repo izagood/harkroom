@@ -119,7 +119,7 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
   return (
     <SettingsPage
       title="Communities"
-      description="The murmur servers this device knows. Each one keeps its own channels, messages and connection."
+      description="The harkroom servers this device knows. Each one keeps its own channels, messages and connection."
     >
       <SettingsGroup>
         {entries.map((entry) => (
@@ -150,7 +150,7 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
           <span className="min-w-0 flex-1">
             <span className="block font-medium text-fg">Add a community</span>
             <span className="mt-0.5 block text-fg-subtle">
-              Sign in to another murmur server. The communities you are already in stay connected.
+              Sign in to another harkroom server. The communities you are already in stay connected.
             </span>
           </span>
           <button

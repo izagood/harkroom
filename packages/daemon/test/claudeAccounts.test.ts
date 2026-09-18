@@ -92,7 +92,7 @@ describe('list', () => {
   });
 
   it('뿌리가 없으면 빈 스냅샷이다 — 오류가 아니다', async () => {
-    const snap = await port('/nonexistent/murmur/pool').list();
+    const snap = await port('/nonexistent/harkroom/pool').list();
     expect(snap.pools).toEqual([]);
     expect(snap.mode).toBe('flat');
   });

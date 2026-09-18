@@ -29,7 +29,7 @@
  * 스펙(D5)은 "러너가 `~/.harkroom-agent/<agent>-<instance>/` 에 자기 pid 를 남긴다"를
  * 제안했다. **채택하지 않았다.** 근거 셋:
  *
- * 1. **러너는 자기 `agentId` 를 늦게 안다.** `murmur.me()` 라는 네트워크 왕복이 끝나야
+ * 1. **러너는 자기 `agentId` 를 늦게 안다.** `harkroom.me()` 라는 네트워크 왕복이 끝나야
  *    안다(`packages/agent/src/main.ts`). 그 전에 죽으면 기록이 아예 없고, 그 창은
  *    서버가 느릴수록 넓어진다 — 정확히 고아가 잘 생기는 상황이다
  * 2. **daemon 은 spawn 하는 순간 다 안다** — `agentId`(앱이 줬다)·pid(커널이 줬다)·

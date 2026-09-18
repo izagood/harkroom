@@ -24,7 +24,7 @@ export type Exec = (
  */
 export function workspaceName(handle: string, threadKey: string): string {
   const hash = createHash('sha256').update(threadKey).digest('hex').slice(0, 8);
-  return `murmur-${handle}-${hash}`;
+  return `harkroom-${handle}-${hash}`;
 }
 
 /**

@@ -53,7 +53,7 @@ describe('계정 전환 방아쇠', () => {
     expect(switchesAccount(new PromptNotDeliveredError(60_000, '(승인 화면)'))).toBe(true);
   });
 
-  it('murmur PAT 실패는 계정을 바꾸지 않는다', () => {
+  it('harkroom PAT 실패는 계정을 바꾸지 않는다', () => {
     // 계정과 무관하다 — 바꿔도 같은 자리에서 실패하고, 러너는 물러나야 한다(#250).
     const err = Object.assign(new Error('unauthorized'), {
       source: HARKROOM_ERROR_SOURCE, status: 401,

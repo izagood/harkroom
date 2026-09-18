@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 
-const SRC = readFileSync(path.resolve(__dirname, '../src/murmur.ts'), 'utf8');
+const SRC = readFileSync(path.resolve(__dirname, '../src/harkroom.ts'), 'utf8');
 
 /**
  * 2026-09-08 앵커 이탈 사고의 배선 회귀선.

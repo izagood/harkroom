@@ -33,15 +33,15 @@ Postgres는 논리 덤프로 뜬다. `-Fc`(custom format)는 **단일 트랜잭�
 ```bash
 # 서비스를 멈추지 않고 뜬다(pg_dump는 읽기 일관 스냅샷을 잡는다)
 docker compose exec -T postgres \
-  pg_dump -U murmur -Fc murmur > "murmur-$(date -u +%Y%m%dT%H%M%SZ).dump"
+  pg_dump -U harkroom -Fc harkroom > "harkroom-$(date -u +%Y%m%dT%H%M%SZ).dump"
 ```
 
 첨부 볼륨이 도입되면 **두 대상을 가깝게** 뜬다(순서 위험은 §4):
 
 ```bash
 docker compose stop server                      # 쓰기를 멈춘다
-docker compose exec -T postgres pg_dump -U murmur -Fc murmur > murmur.dump
-docker run --rm -v murmur_attachments:/data -v "$PWD":/backup alpine \
+docker compose exec -T postgres pg_dump -U harkroom -Fc harkroom > harkroom.dump
+docker run --rm -v harkroom_attachments:/data -v "$PWD":/backup alpine \
   tar czf /backup/attachments.tgz -C /data .
 docker compose start server
 ```
@@ -61,9 +61,9 @@ avcs 서버는 자기 절차를 따른다. harkroom 덤프만 있으면 채팅�
 
 ```bash
 docker compose stop server
-docker compose exec -T postgres dropdb -U murmur --if-exists murmur
-docker compose exec -T postgres createdb -U murmur murmur
-docker compose exec -T postgres pg_restore -U murmur -d murmur --no-owner < murmur.dump
+docker compose exec -T postgres dropdb -U harkroom --if-exists harkroom
+docker compose exec -T postgres createdb -U harkroom harkroom
+docker compose exec -T postgres pg_restore -U harkroom -d harkroom --no-owner < harkroom.dump
 docker compose start server        # 부팅 시 누락 마이그레이션이 적용된다
 ```
 
@@ -180,8 +180,8 @@ AVCS_BASE_URL=https://your-avcs-server.example.com
   답글·inbox 항목이 FK 를 타고 연쇄로 사라진다.
 - **그래서 채널에서 avcs 시스템 메시지를 보는 것은 "투영이 아직 돈다"는 뜻이 아니다.**
   새 avcs 객체가 채널 메시지가 되는 일은 더 이상 없다. 지금 워커가 돌고 있는지는
-  아래 `GET /projection/status` 와 `murmur_projection_cursor` 메트릭으로 판정한다.
-- 같은 이유로 `murmur` 시스템 계정 **행**도 운영 DB 에 남는다(과거 메시지의 저자다).
+  아래 `GET /projection/status` 와 `harkroom_projection_cursor` 메트릭으로 판정한다.
+- 같은 이유로 `harkroom` 시스템 계정 **행**도 운영 DB 에 남는다(과거 메시지의 저자다).
   다만 새로 만드는 코드(`ensureSystemAccount`)는 사라졌으므로 **새로 붓는 DB 에는 애초에
   생기지 않는다.** 둘 다 맞는 상태다.
 - 과거 투영 메시지의 `meta` 에 있던 `(repo, oid)` 유니크 인덱스(`message_avcs_oid`)도
@@ -207,11 +207,11 @@ AVCS_BASE_URL=https://your-avcs-server.example.com
 | 기능 | 워커가 없을 때 | 그렇게 되는 근거 |
 |---|---|---|
 | 사이드바 ACTIVE WORK 의 리스 목록 | `GET /leases` 가 늘 `{leases: []}` | `active_lease` 의 유일한 작성자가 `projection.ts` 의 `runOnce` |
-| `murmur_projection_cursor` 메트릭 | 시계열이 **아예 없다**(0 이 아니라 없음) | `projection_cursor` 의 유일한 작성자가 같은 `runOnce` |
+| `harkroom_projection_cursor` 메트릭 | 시계열이 **아예 없다**(0 이 아니라 없음) | `projection_cursor` 의 유일한 작성자가 같은 `runOnce` |
 | `GET /healthz` 의 `avcs.connected` | 항상 `false` | `main.ts` 의 `getAvcsStatus` 가 `DISABLED_PROJECTION_STATUS` 로 답한다 |
 | 채팅 전부 — 채널·스레드·DM·검색·첨부·반응·WS·PAT·MCP·러너 릴레이 | **그대로 동작한다** | `buildServer.ts` 가 라우트 모듈에 avcs 클라이언트를 넘기지 않는다 |
 
-이 표에 **두 줄이 더 있었다.** "avcs 객체 → 채널 시스템 메시지 투영"과 "`murmur` 시스템
+이 표에 **두 줄이 더 있었다.** "avcs 객체 → 채널 시스템 메시지 투영"과 "`harkroom` 시스템
 계정"이다. 둘 다 스레드 투영과 함께 사라졌으므로 이제 `AVCS_BASE_URL` 이 있어도 **켜지지
 않는다** — 즉 워커의 유무와 무관한 항목이 됐다. 위 「먼저 알아야 할 것」 참조.
 
@@ -318,10 +318,10 @@ AVCS_BASE_URL=https://your-avcs-server.example.com
 
 | 무엇 | 어디 |
 |---|---|
-| 요청 실패율·지연 | `GET /metrics` → `murmur_http_requests_total{status=...}`, `murmur_http_request_duration_seconds` |
-| 지금 몇 명이 붙어 있나 | `murmur_ws_connections` |
-| **투영이 멈췄나** | `murmur_projection_cursor{repo=...}` — 값이 오르지 않으면 §3-B의 사일런트 스킵을 의심한다 |
-| **에이전트가 답하지 않나** | `murmur_agent_oldest_unread_seconds{handle=...}` — 값이 커지면 그 에이전트의 **러너 프로세스가 죽었을 가능성이 가장 크다**. 서버는 정상이고 다른 지표도 정상인 채로 사용자만 답을 못 받는 상태다(2026-09-01 실제 발생). **답할 의무가 있는 계정만 센다** — 사람과, 정의(`agent_config`)가 없는 에이전트 계정은 없다(아래 §7) |
+| 요청 실패율·지연 | `GET /metrics` → `harkroom_http_requests_total{status=...}`, `harkroom_http_request_duration_seconds` |
+| 지금 몇 명이 붙어 있나 | `harkroom_ws_connections` |
+| **투영이 멈췄나** | `harkroom_projection_cursor{repo=...}` — 값이 오르지 않으면 §3-B의 사일런트 스킵을 의심한다 |
+| **에이전트가 답하지 않나** | `harkroom_agent_oldest_unread_seconds{handle=...}` — 값이 커지면 그 에이전트의 **러너 프로세스가 죽었을 가능성이 가장 크다**. 서버는 정상이고 다른 지표도 정상인 채로 사용자만 답을 못 받는 상태다(2026-09-01 실제 발생). **답할 의무가 있는 계정만 센다** — 사람과, 정의(`agent_config`)가 없는 에이전트 계정은 없다(아래 §7) |
 | avcs 연결 상태 | `GET /healthz` → `avcs.connected` |
 | **지금 도는 서버가 무슨 코드인가** | `GET /healthz` → `version`·`commit`·`startedAt` (아래 §7-A) |
 | 누가 무엇을 바꿨나 | `GET /audit` (admin) |
@@ -410,13 +410,13 @@ curl -fsS http://localhost:3400/healthz | python3 -c 'import json,sys; print(jso
 | 데스크탑 | **아무것도.** 부른 상대가 조용한 것만 보인다 — 러너가 죽었다는 신호가 UI에 없다 |
 | 사이드바 presence | 에이전트는 WS를 물지 않으므로 **원래부터 회색**이다. 살았는지 죽었는지 구분되지 않는다 |
 | `GET /healthz`·`/metrics` 기본 지표 | 전부 정상 |
-| **`murmur_agent_oldest_unread_seconds`** | **값이 계속 커진다** ← 유일한 신호 |
+| **`harkroom_agent_oldest_unread_seconds`** | **값이 계속 커진다** ← 유일한 신호 |
 
 ### 지표에 없는 계정 — 그것이 의도다
 
 `kind='agent'` 라도 **정의(`agent_config` 행)가 없는 계정은 이 지표에 나오지 않는다.** 둘이 있다:
 
-- `murmur` — avcs 투영용 시스템 계정. 투영 워커가 만들고 러너가 없다.
+- `harkroom` — avcs 투영용 시스템 계정. 투영 워커가 만들고 러너가 없다.
 - 정의 없이 만들어진 계정(옛 테스트 계정 등) — 답할 러너가 없고 앞으로도 없다.
 
 사용자는 사이드바에 보이니 자연스럽게 부른다. 그 미처리를 지표에 넣으면 **영원히 쌓이며 절대
@@ -438,7 +438,7 @@ curl -fsS http://localhost:3400/healthz | python3 -c 'import json,sys; print(jso
 
 ### 답할 러너가 없는 계정 (지표에는 안 나온다)
 
-`kind='agent'`이지만 정의(harness)가 없는 계정이 있다 — `murmur`(avcs 투영용 시스템 계정)과
+`kind='agent'`이지만 정의(harness)가 없는 계정이 있다 — `harkroom`(avcs 투영용 시스템 계정)과
 과거 검증에 쓴 테스트 계정들. 사이드바에 DM으로 보이므로 사용자가 자연스럽게 부르지만
 답할 주체가 없다.
 

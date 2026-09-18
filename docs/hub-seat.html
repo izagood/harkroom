@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="murmur 가 avcshub 자리에 선다 — 제안 · 승인 · 배달, 그리고 네 서비스 도그푸딩 루프">
+<meta name="description" content="harkroom 가 avcshub 자리에 선다 — 제안 · 승인 · 배달, 그리고 네 서비스 도그푸딩 루프">
 
 <style>
   *, *::before, *::after { box-sizing: border-box; }
@@ -11,7 +11,7 @@
   img { max-width: 100%; }
   [hidden] { display: none !important; }
 </style>
-<title>murmur가 허브가 된다</title>
+<title>harkroom가 허브가 된다</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
@@ -230,15 +230,15 @@
 <div class="wrap">
 
   <header class="masthead">
-    <div class="eyebrow">murmur 설계안 · 2026-09-10</div>
-    <h1>murmur가 허브가 된다</h1>
+    <div class="eyebrow">harkroom 설계안 · 2026-09-10</div>
+    <h1>harkroom가 허브가 된다</h1>
     <p class="lede">
-      지금은 저장소에 <strong>avcshub 링크만</strong> 걸 수 있다. 링크를 걸지 않은 경우 murmur가
+      지금은 저장소에 <strong>avcshub 링크만</strong> 걸 수 있다. 링크를 걸지 않은 경우 harkroom가
       그 자리에 서서 — 제안을 받고, 화면에서 승인하고, 승인된 것을 GitHub로 내보낸다.
-      작업이 끝나면 GitHub를 열어 확인하는 대신, murmur 안에 제안이 올라온다.
+      작업이 끝나면 GitHub를 열어 확인하는 대신, harkroom 안에 제안이 올라온다.
     </p>
     <div class="meta">
-      <span>대상: murmur · avcs · avcs-server</span>
+      <span>대상: harkroom · avcs · avcs-server</span>
       <span>상태: 설계 제안 (코드 변경 없음)</span>
       <span>선행: 협업 탭 읽기 자리</span>
     </div>
@@ -248,23 +248,23 @@
   <section>
     <div class="sec-head">
       <div class="eyebrow">1 — 자리</div>
-      <h2>murmur는 avcshub를 <em>보는</em> 것이 아니라 <em>대신한다</em></h2>
+      <h2>harkroom는 avcshub를 <em>보는</em> 것이 아니라 <em>대신한다</em></h2>
     </div>
     <div class="col">
       <p>
-        지금 murmur는 avcs-server를 <strong>읽기만</strong> 한다(<code>fetchSince</code>), 그 결과로 남기는 것은
+        지금 harkroom는 avcs-server를 <strong>읽기만</strong> 한다(<code>fetchSince</code>), 그 결과로 남기는 것은
         <code>lease</code> 하나다. 제안을 보고 결정하는 일은 avcshub 웹에서, 코드가 실제로 나가는 일은
         GitHub에서 일어난다. 사람은 화면을 세 개 연다.
       </p>
       <p>
-        바꾸려는 것은 한 줄이다: <strong>avcs-server를 murmur 안에 두고, 승인과 배달을 murmur가 맡는다.</strong>
+        바꾸려는 것은 한 줄이다: <strong>avcs-server를 harkroom 안에 두고, 승인과 배달을 harkroom가 맡는다.</strong>
         외부 저장소를 쓰는 팀을 위해 지금의 링크 방식(<code>linked</code>)은 그대로 남는다.
       </p>
     </div>
 
     <figure class="fig">
       <div class="fig-body">
-        <svg viewBox="0 0 1040 410" role="img" aria-label="지금은 murmur가 avcs-server를 읽기만 하고 avcshub 링크를 열어 주지만, 앞으로는 murmur가 avcs-server를 내장하고 승인과 배달까지 맡아 GitHub로 PR을 내보낸다">
+        <svg viewBox="0 0 1040 410" role="img" aria-label="지금은 harkroom가 avcs-server를 읽기만 하고 avcshub 링크를 열어 주지만, 앞으로는 harkroom가 avcs-server를 내장하고 승인과 배달까지 맡아 GitHub로 PR을 내보낸다">
           <defs>
             <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M0,1 L10,5 L0,9 z" class="head"></path>
@@ -298,7 +298,7 @@
           <text x="737" y="82" text-anchor="middle" font-size="10.5" class="t-lbl">승인 → PR</text>
 
           <rect x="480" y="170" width="160" height="44" rx="3" class="box"></rect>
-          <text x="560" y="197" text-anchor="middle" font-size="13" class="t-strong">murmur</text>
+          <text x="560" y="197" text-anchor="middle" font-size="13" class="t-strong">harkroom</text>
 
           <polyline points="330,114 330,192 474,192" class="ln-dash" marker-end="url(#ar)"></polyline>
           <text x="340" y="184" font-size="10.5" class="t-lbl">읽기만 · lease</text>
@@ -314,7 +314,7 @@
           <text x="100" y="337" text-anchor="middle" font-size="13" class="t-strong">에이전트 · avcs</text>
 
           <rect x="250" y="280" width="470" height="110" rx="5" class="frame"></rect>
-          <text x="250" y="272" font-size="11" letter-spacing="1.4" fill="currentColor" class="t-lbl">MURMUR</text>
+          <text x="250" y="272" font-size="11" letter-spacing="1.4" fill="currentColor" class="t-lbl">HARKROOM</text>
 
           <rect x="264" y="310" width="130" height="44" rx="3" class="box"></rect>
           <text x="329" y="331" text-anchor="middle" font-size="11.5" class="t-strong">avcs-server</text>
@@ -350,7 +350,7 @@
         </svg>
       </div>
       <figcaption>
-        바뀌는 것은 화살표 두 개다. <strong>avcshub로 나가던 sync</strong>가 murmur 안으로 들어오고,
+        바뀌는 것은 화살표 두 개다. <strong>avcshub로 나가던 sync</strong>가 harkroom 안으로 들어오고,
         <strong>사람이 웹으로 열던 링크</strong>가 협업 탭의 승인 버튼이 된다. 에이전트가 <code>push</code>하는
         방식은 그대로이고(같은 프로토콜), 밖으로 나가는 길은 하나가 아니라 저장소마다 붙이는 <em>배달 대상</em>이 된다.
       </figcaption>
@@ -365,7 +365,7 @@
     </div>
     <div class="col">
       <p>
-        “murmur가 avcshub를 대체한다”를 기능 하나로 잡으면 첫 릴리스가 나오지 않는다.
+        “harkroom가 avcshub를 대체한다”를 기능 하나로 잡으면 첫 릴리스가 나오지 않는다.
         쓰기 · 판정 · 배달은 서로 다른 시점에 켤 수 있고, 각각 따로 쓸모가 있다.
       </p>
     </div>
@@ -376,8 +376,8 @@
         <p>
           전역 URL 한 칸(<code>projection_config</code>)을 <strong>repo 레코드</strong>로 올린다.
           <code>linked</code>는 지금 그대로 외부 서버를 읽고, <code>hosted</code>는
-          <code>@izagood/avcs-server</code>를 murmur 안에서 띄운다 — 이미 의존성에 들어 있다.
-          에이전트의 <code>origin</code>이 murmur가 된다.
+          <code>@izagood/avcs-server</code>를 harkroom 안에서 띄운다 — 이미 의존성에 들어 있다.
+          에이전트의 <code>origin</code>이 harkroom가 된다.
         </p>
       </div>
       <div class="layer">
@@ -471,7 +471,7 @@
     <div class="tbl-wrap">
       <table>
         <thead>
-          <tr><th>판정</th><th>코드</th><th>뜻</th><th>murmur 화면</th></tr>
+          <tr><th>판정</th><th>코드</th><th>뜻</th><th>harkroom 화면</th></tr>
         </thead>
         <tbody>
           <tr>
@@ -480,7 +480,7 @@
           </tr>
           <tr>
             <td class="code">queued</td><td class="code">202</td>
-            <td>다른 티켓이 진행 중 — 같은 티켓으로 재시도</td><td>“대기 중” · murmur가 알아서 재시도</td>
+            <td>다른 티켓이 진행 중 — 같은 티켓으로 재시도</td><td>“대기 중” · harkroom가 알아서 재시도</td>
           </tr>
           <tr>
             <td class="code verdict-stop">conflict</td><td class="code">409</td>
@@ -499,8 +499,8 @@
     </div>
     <div class="col">
       <p>
-        <strong>승인 권한의 정본은 murmur의 role이 아니라 avcs의 view 정책이다.</strong>
-        murmur는 그것을 읽어 버튼을 흐리게 할 뿐이다 — 권한을 두 곳에 두면 반드시 갈라진다.
+        <strong>승인 권한의 정본은 harkroom의 role이 아니라 avcs의 view 정책이다.</strong>
+        harkroom는 그것을 읽어 버튼을 흐리게 할 뿐이다 — 권한을 두 곳에 두면 반드시 갈라진다.
       </p>
     </div>
   </section>
@@ -564,7 +564,7 @@
       <div class="story-body">
         <ol class="steps">
           <li>채널에서 에이전트를 부른다. <b>“008 마이그레이션을 되돌려 줘”</b></li>
-          <li>에이전트가 intent를 열고 작업한다. push 주소는 GitHub가 아니라 <b>murmur</b>다.</li>
+          <li>에이전트가 intent를 열고 작업한다. push 주소는 GitHub가 아니라 <b>harkroom</b>다.</li>
           <li>작업이 끝나면 협업 탭에 <b>제안 한 줄</b>이 선다 — 누가 · 무슨 제안 · 무엇을 건드리나 · 언제.</li>
           <li>제안을 열면 <code>intent → operations → evidence</code> 트리와 검증 결과가 보인다.</li>
           <li class="key">jaebin이 <b>승인</b>을 누른다. 데스크탑이 리뷰어 키로 서명한다.</li>
@@ -579,7 +579,7 @@
                 <span class="ui-tab on">열림 3</span><span class="ui-tab">승인됨 1</span><span class="ui-tab">전부</span>
               </div>
             </div>
-            <div class="ui-repo">izagood/murmur</div>
+            <div class="ui-repo">izagood/harkroom</div>
             <div class="ui-row">
               <div class="ui-title"><span class="dot"></span>008 마이그레이션을 되돌린다<span class="ui-when">alpha · 3분 전</span></div>
               <div class="chips">
@@ -621,7 +621,7 @@
               협업
               <div class="ui-tabs"><span class="ui-tab on">열림 4</span><span class="ui-tab">승인됨 1</span><span class="ui-tab">전부</span></div>
             </div>
-            <div class="ui-repo">izagood/murmur</div>
+            <div class="ui-repo">izagood/harkroom</div>
             <div class="ui-row">
               <div class="ui-title"><span class="dot"></span>인덱스를 다시 깐다<span class="ui-when">codex · 1시간 전</span></div>
               <div class="chips">
@@ -648,8 +648,8 @@
       <div class="story-body">
         <ol class="steps">
           <li>회사 avcshub에 이미 있는 저장소는 <code>linked</code>로 둔다. 화면은 <b>똑같다</b>.</li>
-          <li>승인하면 murmur가 판정하지 않고 <b>원격 <code>/integrate</code>에 릴레이</b>한다.</li>
-          <li>판정도 배달도 원격이 한다. murmur는 그 결과를 같은 줄에 그린다.</li>
+          <li>승인하면 harkroom가 판정하지 않고 <b>원격 <code>/integrate</code>에 릴레이</b>한다.</li>
+          <li>판정도 배달도 원격이 한다. harkroom는 그 결과를 같은 줄에 그린다.</li>
           <li class="key">hosted 저장소에서 GitHub 토큰이 만료돼 배달이 실패한다.</li>
           <li>승인은 <b>그대로 남는다</b>. 줄에는 <span class="mono">배달 실패 · 재시도 3회</span> 칩이 붙는다.</li>
           <li>실패 통지가 스레드로 온다(이미 있는 <code>message.fail</code> 경로).</li>
@@ -661,7 +661,7 @@
               협업
               <div class="ui-tabs"><span class="ui-tab">열림 2</span><span class="ui-tab on">승인됨 3</span><span class="ui-tab">전부</span></div>
             </div>
-            <div class="ui-repo">izagood/murmur <span class="chip">hosted</span></div>
+            <div class="ui-repo">izagood/harkroom <span class="chip">hosted</span></div>
             <div class="ui-row">
               <div class="ui-title"><span class="dot done"></span>답글 수를 진행과 가른다<span class="ui-when">승인 12분 전</span></div>
               <div class="chips">
@@ -685,19 +685,19 @@
   <section>
     <div class="sec-head">
       <div class="eyebrow">6 — 도그푸딩</div>
-      <h2>네 서비스가 다 내 것이라면, murmur는 그 넷의 계측기다</h2>
+      <h2>네 서비스가 다 내 것이라면, harkroom는 그 넷의 계측기다</h2>
     </div>
     <div class="col">
       <p>
-        <code>avcs</code> · <code>avcs-server</code> · <code>avcshub</code> · <code>murmur</code>를
-        한 사람이 만든다면, murmur를 쓰는 모든 순간이 나머지 셋의 테스트다.
+        <code>avcs</code> · <code>avcs-server</code> · <code>avcshub</code> · <code>harkroom</code>를
+        한 사람이 만든다면, harkroom를 쓰는 모든 순간이 나머지 셋의 테스트다.
         그런데 <strong>지금 그 테스트 결과가 아무 데도 안 남는다.</strong> 증거는 저장소 안에 이미 있다.
       </p>
     </div>
 
     <div class="tbl-wrap">
       <table>
-        <thead><tr><th>서비스</th><th>실제 버전</th><th>murmur가 물고 있는 것</th><th>결과</th></tr></thead>
+        <thead><tr><th>서비스</th><th>실제 버전</th><th>harkroom가 물고 있는 것</th><th>결과</th></tr></thead>
         <tbody>
           <tr>
             <td class="code">avcs</td><td class="code">0.49.4</td>
@@ -714,7 +714,7 @@
     <div class="col">
       <p class="cap" style="font-size:13.5px">
         <code>packages/server/package.json</code>에서 확인한 값이다. 설계 1단계가 “avcs-server 0.7.0 선행”이라고
-        적혀 있는데 정작 murmur에 깔린 것은 0.3.0 — <strong>도그푸딩이 돌고 있지 않다는 증거가 이미 코드에 있다.</strong>
+        적혀 있는데 정작 harkroom에 깔린 것은 0.3.0 — <strong>도그푸딩이 돌고 있지 않다는 증거가 이미 코드에 있다.</strong>
       </p>
     </div>
 
@@ -731,7 +731,7 @@
 
     <figure class="fig">
       <div class="fig-body">
-        <svg viewBox="0 0 1000 250" role="img" aria-label="murmur를 쓰다가 실패하면 실패 카드가 증거와 버전 네 쌍을 담고, 한 번의 동작으로 대상 저장소에 결함 intent가 열리고, 고침 제안이 승인·배달·릴리스를 거쳐 그 결함을 연 스레드로 되돌아온다">
+        <svg viewBox="0 0 1000 250" role="img" aria-label="harkroom를 쓰다가 실패하면 실패 카드가 증거와 버전 네 쌍을 담고, 한 번의 동작으로 대상 저장소에 결함 intent가 열리고, 고침 제안이 승인·배달·릴리스를 거쳐 그 결함을 연 스레드로 되돌아온다">
           <defs>
             <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M0,1 L10,5 L0,9 z" class="head"></path>
@@ -742,7 +742,7 @@
           </defs>
 
           <rect x="16" y="46" width="172" height="52" rx="3" class="box"></rect>
-          <text x="102" y="70" text-anchor="middle" font-size="12.5" class="t-strong">murmur를 쓴다</text>
+          <text x="102" y="70" text-anchor="middle" font-size="12.5" class="t-strong">harkroom를 쓴다</text>
           <text x="102" y="86" text-anchor="middle" font-size="10.5" class="t-lbl">턴이 돈다</text>
 
           <rect x="218" y="46" width="172" height="52" rx="3" class="box"></rect>
@@ -811,18 +811,18 @@
         <h3>어느 저장소인지는 러너가 고른다</h3>
         <p>
           MCP 도구 호출 실패 → <code>avcs</code>, <code>/sync</code>·<code>/integrate</code>의 4xx·5xx →
-          <code>avcs-server</code>, 대시보드 → <code>avcshub</code>, 화면·턴 → <code>murmur</code>.
+          <code>avcs-server</code>, 대시보드 → <code>avcshub</code>, 화면·턴 → <code>harkroom</code>.
           기본값을 러너가 제안하고 사람은 틀렸을 때만 바꾼다.
         </p>
       </div>
       <div class="layer">
         <div class="n">장치 5</div>
-        <h3>적합성 스위트를 murmur CI가 돈다</h3>
+        <h3>적합성 스위트를 harkroom CI가 돈다</h3>
         <p>
-          hosted 모드가 avcs-server를 내장하는 순간, murmur CI에서 avcs의
+          hosted 모드가 avcs-server를 내장하는 순간, harkroom CI에서 avcs의
           <code>npm run conformance</code>를 그 내장 서버에 물릴 수 있다.
           avcs-server는 <em>“스위트 통과가 곧 지원의 정의”</em>라고 선언해 뒀으니 판정 기준이 이미 있다 —
-          murmur가 avcs-server의 회귀 탐지기가 된다.
+          harkroom가 avcs-server의 회귀 탐지기가 된다.
         </p>
       </div>
       <div class="layer">
@@ -844,9 +844,9 @@
       </p>
       <h3>자기를 고치는 저장소의 두 가지 조심</h3>
       <ul class="plain">
-        <li><b>murmur의 배달은 자동 머지 금지.</b> main 머지가 곧 릴리스라(6~12분) 지금 쓰고 있는 앱이 바뀐다.
+        <li><b>harkroom의 배달은 자동 머지 금지.</b> main 머지가 곧 릴리스라(6~12분) 지금 쓰고 있는 앱이 바뀐다.
           되돌릴 수 없는 것은 권한이 있어도 사람 판단으로 남긴다.</li>
-        <li><b>murmur 저장소는 두 곳에 둔다.</b> hosted로 자기 소스를 담으면, murmur가 죽었을 때 그 소스에 못 간다.
+        <li><b>harkroom 저장소는 두 곳에 둔다.</b> hosted로 자기 소스를 담으면, harkroom가 죽었을 때 그 소스에 못 간다.
           배달 대상이 N개라는 설계가 여기서 값을 한다 — hosted + GitHub 미러를 항상 함께 건다.</li>
       </ul>
     </div>
@@ -881,7 +881,7 @@
         <div class="what">
           <b>repo 레코드 + hosted 모드</b>
           <span>전역 URL 한 칸을 repo 테이블로. <code>@izagood/avcs-server</code>를 서버 안에서 띄우고
-          데이터 루트를 murmur가 관리한다. <code>linked</code>는 손대지 않는다.</span>
+          데이터 루트를 harkroom가 관리한다. <code>linked</code>는 손대지 않는다.</span>
         </div>
       </div>
       <div class="step">
@@ -889,14 +889,14 @@
         <div class="what">
           <b>승인 = 서명된 decision → integrate</b>
           <span>hosted는 큐를 직접 돌고, linked는 원격에 릴레이한다. 판정 5종을 화면에 그린다.
-          여기까지면 “승인이 murmur 안에서” 끝난다.</span>
+          여기까지면 “승인이 harkroom 안에서” 끝난다.</span>
         </div>
       </div>
       <div class="step">
         <div class="idx"><b>3</b>배달</div>
         <div class="what">
           <b>어댑터 <code>github-pr</code> 하나 + 큐·재시도·멱등</b>
-          <span>여기서 한 바퀴가 돈다: murmur에서 작업 → 제안 → 승인 → GitHub PR.</span>
+          <span>여기서 한 바퀴가 돈다: harkroom에서 작업 → 제안 → 승인 → GitHub PR.</span>
         </div>
       </div>
       <div class="step">
@@ -919,16 +919,16 @@
       <div class="q">
         <h3>서명은 서버 키로 한다</h3>
         <div class="opt"><em>왜</em> 사람 키는 개인키를 쥔 클라이언트에서만 승인이 된다 — 데스크탑은 되지만 모바일·웹 앱에서는 영영 안 된다. 확장을 막는 쪽을 버렸다.</div>
-        <div class="opt"><em>값</em> 잃는 것은 암호학적 귀속 하나다. <code>decision.decidedBy</code> 에 사람을 적고, 감사 기록에 누가 눌렀는지 남기고, 버튼은 로그인 뒤에만 선다 — 신뢰의 뿌리가 개인키에서 murmur 인증으로 옮겨간다.</div>
+        <div class="opt"><em>값</em> 잃는 것은 암호학적 귀속 하나다. <code>decision.decidedBy</code> 에 사람을 적고, 감사 기록에 누가 눌렀는지 남기고, 버튼은 로그인 뒤에만 선다 — 신뢰의 뿌리가 개인키에서 harkroom 인증으로 옮겨간다.</div>
       </div>
       <div class="q">
         <h3>hosted + 미러 상시</h3>
-        <div class="opt"><em>왜</em> murmur 는 파일 보관소가 아니다. 디스크가 사라져도 파일은 미러에 남고, 잃는 것이 제안 그래프로 한정된다.</div>
+        <div class="opt"><em>왜</em> harkroom 는 파일 보관소가 아니다. 디스크가 사라져도 파일은 미러에 남고, 잃는 것이 제안 그래프로 한정된다.</div>
         <div class="opt"><em>범위</em> 미러는 원격지면 무엇이든 되고 여럿이어도 된다(GitHub · avcshub · 다른 avcs-server). 다만 <strong>한 방향</strong>이다 — 되돌아오는 길을 열면 라인 충돌이 그 경계에서 되살아난다.</div>
       </div>
       <div class="q">
         <h3>GitHub App</h3>
-        <div class="opt"><em>왜</em> PR 작성자가 <code>murmur[bot]</code> 이라 "봇이 냈다" 가 분명하고, 권한이 저장소 단위이며 사람의 재직과 수명이 분리된다.</div>
+        <div class="opt"><em>왜</em> PR 작성자가 <code>harkroom[bot]</code> 이라 "봇이 냈다" 가 분명하고, 권한이 저장소 단위이며 사람의 재직과 수명이 분리된다.</div>
         <div class="opt"><em>값</em> 앱 등록 · private key 보관 · installation 토큰 교환(반나절). 인증은 "토큰 하나 얻기" 함수라 늦어지면 그 함수만 임시로 PAT 를 물릴 수 있다.</div>
       </div>
     </div>
@@ -942,8 +942,8 @@
     </div>
     <div class="col">
       <ul class="plain">
-        <li><b>murmur</b> — <code>packages/server/src/avcs/{client,projection,supervisor}.ts</code>(읽기 전용, <code>lease</code>만 투영), <code>projection_config</code>(041·042), 설정의 <code>ProjectionUrl.tsx</code>. <code>packages/server</code>는 이미 <code>@izagood/avcs</code>·<code>@izagood/avcs-server</code>를 의존성으로 갖고 있다(현재는 테스트에서만 사용).</li>
-        <li><b>협업 탭</b> — <code>docs/desktop-collab.html</code>. 레일 다섯째 칸 · 줄이 말하는 넷 · 막는 순 정렬 · “잠금은 그리지 않는다”. 그 문서가 <em>“murmur에서 제안을 만들고 결정하는 것은 범위 밖”</em>이라고 적어 둔 칸이 이 설계다.</li>
+        <li><b>harkroom</b> — <code>packages/server/src/avcs/{client,projection,supervisor}.ts</code>(읽기 전용, <code>lease</code>만 투영), <code>projection_config</code>(041·042), 설정의 <code>ProjectionUrl.tsx</code>. <code>packages/server</code>는 이미 <code>@izagood/avcs</code>·<code>@izagood/avcs-server</code>를 의존성으로 갖고 있다(현재는 테스트에서만 사용).</li>
+        <li><b>협업 탭</b> — <code>docs/desktop-collab.html</code>. 레일 다섯째 칸 · 줄이 말하는 넷 · 막는 순 정렬 · “잠금은 그리지 않는다”. 그 문서가 <em>“harkroom에서 제안을 만들고 결정하는 것은 범위 밖”</em>이라고 적어 둔 칸이 이 설계다.</li>
         <li><b>avcs 프로토콜</b> — <code>docs/26-hub-protocol.md §6</code>: <code>POST /finalize</code>(head CAS), <code>POST /integrate</code>(판정 5종, <code>ticketId</code> 멱등), <code>GET /events</code>. <code>integration</code> 객체는 <strong>허브만</strong> 쓸 수 있다 — 그것이 “허브 자리”의 정의다.</li>
         <li><b>avcshub</b> — <code>packages/api/src/integration/gitPort.ts</code>·<code>gitProjection.ts</code>(승인→git 푸시, <code>--force</code> 금지 테스트 포함), <code>packages/shared/src/proposal.ts</code>(<code>decisionMessage</code>, 제안 트리 조립).</li>
       </ul>

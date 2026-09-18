@@ -21,7 +21,7 @@ beforeAll(async () => {
   const db = await startTestDb();
   stop = db.stop;
   pool = db.pool;
-  storageRoot = await mkdtemp(join(tmpdir(), 'murmur-att-'));
+  storageRoot = await mkdtemp(join(tmpdir(), 'harkroom-att-'));
   app = await buildServer({ pool: db.pool, storage: { root: storageRoot, maxBytes: MAX } });
   ({ token: adminToken } = await bootstrapAdmin(app));
   const ch = await app.inject({
@@ -39,7 +39,7 @@ const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 
 /** multipart 본문을 손으로 만든다 — 테스트가 실제 wire 형식을 지나가야 한다. */
 function multipart(filename: string, content: string | Buffer, contentType = 'text/plain') {
-  const boundary = '----murmurtest';
+  const boundary = '----harkroomtest';
   const head = Buffer.from(
     `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\n` +
     `Content-Type: ${contentType}\r\n\r\n`,

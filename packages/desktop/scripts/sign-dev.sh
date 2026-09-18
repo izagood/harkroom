@@ -32,7 +32,7 @@ set -eu
 
 # 이름은 `sign-app.mjs` 와 **같은 환경변수**로 덮을 수 있다 — 서명 신원을 고르는 자리가
 # 개발과 릴리즈에서 갈라지면, 한쪽만 고쳐 놓고 다른 쪽이 왜 안 되는지 찾게 된다.
-IDENTITY="${HARKROOM_SIGN_IDENTITY:-murmur-dev}"
+IDENTITY="${HARKROOM_SIGN_IDENTITY:-harkroom-dev}"
 BIN="${1:-src-tauri/target/debug/harkroom-desktop}"
 
 [ -f "$BIN" ] || exit 0

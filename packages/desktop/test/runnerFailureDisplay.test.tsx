@@ -73,7 +73,7 @@ const failedState = (agentId: string, message: string): RunnerState =>
  */
 async function launchWithRealFailure(): Promise<RunnerState> {
   const api: RunnerApi = {
-    baseUrl: 'https://murmur.example',
+    baseUrl: 'https://harkroom.example',
     listPats: vi.fn(async () => [] as { label: string; revokedAt: string | null }[]),
     mintPat: vi.fn(async (_id: string, label: string) => `murp_${label}`),
     revokePat: vi.fn(async () => ({ revoked: 0 })),

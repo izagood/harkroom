@@ -10,7 +10,7 @@
  *
  * 무엇이 깨져 있었나: 폐기된 PAT 로 도는 러너는 거의 항상 **롱폴**에 park 돼 있고, 앞선
  * 판본은 자격증명 판정을 멘션 턴의 catch 에만 걸었다. 폴 루프의 catch 는 401 을
- * "poll 루프 오류, 재접속" 으로 삼켜 무한 재시도했고, 기동의 첫 호출(`murmur.me()`)은
+ * "poll 루프 오류, 재접속" 으로 삼켜 무한 재시도했고, 기동의 첫 호출(`harkroom.me()`)은
  * 아예 감싸이지 않아 top-level rejection 으로 종료 코드 1 로 죽었다. 두 경우 모두 앱은
  * "PAT 를 재발급하면 된다"를 말할 수 없다 — 78 이 오지 않으니까.
  */
@@ -45,7 +45,7 @@ const guardedNear = (anchor: string, within = 12): boolean => {
 
 describe('종료 판정이 세 자리에 다 걸려 있다', () => {
   it('기동의 첫 호출(me/guide)', () => {
-    expect(guardedNear('return [await murmur.me(), await murmur.guide()] as const;')).toBe(true);
+    expect(guardedNear('return [await harkroom.me(), await harkroom.guide()] as const;')).toBe(true);
   });
 
   it('멘션 턴의 catch (mentionScheduler 로 이동)', () => {

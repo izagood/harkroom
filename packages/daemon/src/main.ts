@@ -24,7 +24,7 @@ import { EXIT_INCONCLUSIVE, EXIT_OCCUPIED, startDaemon } from './run.js';
 async function main(): Promise<void> {
   const args = parseDaemonArgs(process.argv.slice(2));
   // stdout 으로 적는다 — 앱이 사이드카를 spawn 하면 이 줄이 그대로 파이프로 온다.
-  console.log(`murmur daemon 기동 ${describeArgs(args)}`);
+  console.log(`harkroom daemon 기동 ${describeArgs(args)}`);
 
   const outcome = await startDaemon({ args });
 

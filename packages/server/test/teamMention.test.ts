@@ -209,7 +209,7 @@ describe('#172 `@팀` 멘션', () => {
     });
     expect(res.statusCode).toBe(201);
     // 팀원 넷 중 둘만 깬다(blind 는 못 보고, off 는 비활성).
-    expect(res.headers['x-murmur-notified-count']).toBe('2');
+    expect(res.headers['x-harkroom-notified-count']).toBe('2');
   });
 
   /**

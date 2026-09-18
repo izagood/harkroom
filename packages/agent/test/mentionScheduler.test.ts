@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { createMentionScheduler, type BatchContext } from '../src/mentionScheduler.js';
 import { TurnRegistry } from '../src/turnRegistry.js';
 import { MentionQueue } from '../src/mentionQueue.js';
-import type { InboxBatch } from '../src/murmur.js';
+import type { InboxBatch } from '../src/harkroom.js';
 import type { MentionTurnResult } from '../src/mentionTurn.js';
 
 const CH = 'ch-1';
@@ -47,7 +47,7 @@ function harness(opts: { runTurn: () => Promise<MentionTurnResult>; now?: () => 
   const failed: { body: string; retryable: boolean }[] = [];
   const registry = new TurnRegistry();
   const scheduler = createMentionScheduler({
-    murmur: {
+    harkroom: {
       markRead: async (ids) => { markedRead.push(...ids); return ids.length; },
       post: async (channelId, body, anchor) => { posted.push({ channelId, body, anchor }); return 1; },
       // 실패 발화도 `posted` 에 담는다 — 회귀선이 보는 것은 "그 스레드에 무슨 말이
@@ -157,7 +157,7 @@ describe('mentionScheduler 승인 관문', () => {
   it('resumeHandoff 가 던져도 인플라이트 장부를 비운다', async () => {
     const registry = new TurnRegistry();
     const scheduler = createMentionScheduler({
-      murmur: { markRead: async (ids) => ids.length, post: async () => 1, fail: async () => 1 },
+      harkroom: { markRead: async (ids) => ids.length, post: async () => 1, fail: async () => 1 },
       registry,
       queue: new MentionQueue(),
       accountLane: [null],
@@ -261,7 +261,7 @@ describe('mentionScheduler 승인 관문', () => {
     const registry = new TurnRegistry();
     let calls = 0;
     const scheduler = createMentionScheduler({
-      murmur: {
+      harkroom: {
         markRead: async (ids) => ids.length,
         post: async () => { throw new Error('발화 실패'); },
         fail: async () => 1,
@@ -291,7 +291,7 @@ describe('mentionScheduler 승인 관문', () => {
     let calls = 0;
     let now = 1_000;
     const scheduler = createMentionScheduler({
-      murmur: { markRead: async (ids) => ids.length, post: async () => 1, fail: async () => 1 },
+      harkroom: { markRead: async (ids) => ids.length, post: async () => 1, fail: async () => 1 },
       registry: new TurnRegistry(),
       queue: new MentionQueue(),
       accountLane: [null],
@@ -326,7 +326,7 @@ describe('mentionScheduler 승인 관문', () => {
     const started: string[] = [];
     const now = 1_000;
     const scheduler = createMentionScheduler({
-      murmur: { markRead: async (ids) => ids.length, post: async () => 1, fail: async () => 1 },
+      harkroom: { markRead: async (ids) => ids.length, post: async () => 1, fail: async () => 1 },
       registry: new TurnRegistry(),
       queue: new MentionQueue(),
       accountLane: [null],
@@ -370,7 +370,7 @@ describe('mentionScheduler 승인 관문', () => {
     const 발화: { body: string; retryable: boolean }[] = [];
     let 시도 = 0;
     const scheduler = createMentionScheduler({
-      murmur: {
+      harkroom: {
         markRead: async (ids) => { markedRead.push(...ids); return ids.length; },
         post: async () => 1,
         fail: async (_c, body, _a, o) => { 발화.push({ body, retryable: o.retryable }); return 1; },
@@ -428,7 +428,7 @@ describe('mentionScheduler 승인 관문', () => {
     const markedRead: number[] = [];
     const posted: string[] = [];
     const scheduler = createMentionScheduler({
-      murmur: {
+      harkroom: {
         markRead: async (ids) => { markedRead.push(...ids); return ids.length; },
         post: async (_c, body) => { posted.push(body); return 1; },
         // 재시도 통지와 최종 실패 통지는 이제 `fail` 로 나간다(스레드 머리가 `끝남` 으로

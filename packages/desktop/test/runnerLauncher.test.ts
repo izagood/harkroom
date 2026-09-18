@@ -104,7 +104,7 @@ const startInput = (ids: string[] = []) => ({
 function fakeApi(calls: string[] = []) {
   return {
     calls,
-    baseUrl: 'https://murmur.example',
+    baseUrl: 'https://harkroom.example',
     listPats: vi.fn(async () => { calls.push('listPats'); return [] as { label: string; revokedAt: string | null }[]; }),
     mintPat: vi.fn(async (_id: string, label: string) => { calls.push(`mint:${label}`); return `murp_${label}`; }),
     revokePat: vi.fn(async (_id: string, label: string) => { calls.push(`revoke:${label}`); return { revoked: 1 }; }),
@@ -844,7 +844,7 @@ describe('8. HARKROOM_URL 은 서버 주소 그대로 넘어간다', () => {
     const { launcher, spawner } = make();
     await startAll(launcher, [agent('a')]);
 
-    expect(spawner.spawns[0]!.env.HARKROOM_URL).toBe('https://murmur.example');
+    expect(spawner.spawns[0]!.env.HARKROOM_URL).toBe('https://harkroom.example');
   });
 });
 

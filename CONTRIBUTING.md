@@ -189,7 +189,7 @@ Two builds then match character for character, and one approval holds.
 `packages/desktop/scripts/sign-dev.sh` already does this — it runs as a cargo `runner`
 hook before the binary starts, and it **exits quietly when the identity is absent** so
 that machines without a certificate keep working exactly as before. It defaults to an
-identity named `murmur-dev`, which you would create yourself in Keychain Access; the
+identity named `harkroom-dev`, which you would create yourself in Keychain Access; the
 private key cannot live in the repository.
 
 **You do not need to create one if you already have an Apple developer certificate.** Any

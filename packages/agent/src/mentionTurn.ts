@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AgentHarness, AgentView, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow } from '@harkroom/shared';
-import type { Me } from './murmur.js';
+import type { Me } from './harkroom.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, gateNotice, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts } from './prompt.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type TurnPlan } from './turn.js';
@@ -29,13 +29,13 @@ import { codexSessionsDir } from './codexHome.js';
 import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
 
-/** runMentionTurn 이 요구하는 harkroom 표면. MurmurAgentClient 의 부분집합이라 실제 클래스를
+/** runMentionTurn 이 요구하는 harkroom 표면. HarkroomAgentClient 의 부분집합이라 실제 클래스를
  * 그대로 넘겨도 되고, 테스트는 인메모리 fake 를 넘긴다(프로세스 경계·네트워크 없이 검증). */
-export interface MentionTurnMurmur {
+export interface MentionTurnHarkroom {
   definition(): Promise<AgentView>;
   /**
    * 관문에 걸린 사실을 스레드에 남긴다(`gateNotice`). **평문이 아니라 실패여야 한다** —
-   * 이유는 `murmur.ts::fail` 주석에 있다.
+   * 이유는 `harkroom.ts::fail` 주석에 있다.
    */
   fail(
     channelId: string,
@@ -157,12 +157,12 @@ export interface TurnRelay {
 }
 
 export interface MentionTurnDeps {
-  murmur: MentionTurnMurmur;
+  harkroom: MentionTurnHarkroom;
   store: SessionStore;
   exec: Exec;
   runTurn: RunTurn;
   me: Me;
-  /** 기동 시 한 번 받아 두는 워크스페이스 규칙 원문(murmur.guide()). */
+  /** 기동 시 한 번 받아 두는 워크스페이스 규칙 원문(harkroom.guide()). */
   guide: string;
   channelName: string;
   /** accountId → handle. 배치 단위로 한 번 채운다(main.ts, GET /accounts) — 매 턴 새로
@@ -198,7 +198,7 @@ export interface MentionTurnDeps {
    * 호출부의 턴은 그대로 돌고 화면만 풀을 말하지 못한다.
    */
   claudePool?: string | null;
-  murmurUrl: string;
+  harkroomUrl: string;
   pat: string;
   turnTimeoutMs: number;
   /**
@@ -420,7 +420,7 @@ async function offAnchorEvidence(
 ): Promise<string | null> {
   try {
     // limit 를 넉넉히 준다 — 기본 30 은 바쁜 채널에서 내 발화를 창 밖으로 밀어낸다.
-    const channelWide = await deps.murmur.readChannelSince(channelId, turnStartSeq, 200);
+    const channelWide = await deps.harkroom.readChannelSince(channelId, turnStartSeq, 200);
     const strays = offAnchorPosts(channelWide, deps.me.id, anchor, turnStartSeq);
     if (strays.length === 0) return null;
     console.warn(
@@ -448,7 +448,7 @@ function warnOnDuplicatePosts(key: string, postCount: number): void {
 /**
  * 턴 하나가 끝난 뒤 호출자(main.ts 의 폴 루프)에게 돌려주는 사실.
  *
- * 종료 요청을 여기 실어 보내는 이유(#129): 러너는 이미 매 턴 `deps.murmur.definition()`
+ * 종료 요청을 여기 실어 보내는 이유(#129): 러너는 이미 매 턴 `deps.harkroom.definition()`
  * 으로 자기 정의를 다시 읽는다 — 요청은 그 응답에 얹혀 온다. 별도 채널을 두면 러너가
  * 서버를 보는 경로가 둘이 되고, 두 경로가 서로 다른 시점의 사실을 말할 수 있다.
  *
@@ -574,14 +574,14 @@ export async function runMentionTurn(
   //
   // best-effort 다. 리액션 실패로 턴을 멈추지 않되 조용히 삼키지도 않는다 — 삼키면
   // "왜 신호가 없었지"의 원인이 사라진다.
-  void deps.murmur.addReaction(channelId, mentionId, '👀').catch((err: unknown) => {
+  void deps.harkroom.addReaction(channelId, mentionId, '👀').catch((err: unknown) => {
     console.error(
       `[mentionTurn] ${channelId}/${mentionId}: 리액션(받았음) 실패(턴은 계속한다) — ${err instanceof Error ? err.message : String(err)}`,
     );
   });
 
   // 정의는 매 턴 새로 읽는다 — UI 로 지시문을 바꾸면 다음 턴부터 바로 반영된다(spec §3).
-  const def = await deps.murmur.definition();
+  const def = await deps.harkroom.definition();
 
   /**
    * **이 턴의 실행 경로를 여기서 깐다**(2026-09-12).
@@ -646,7 +646,7 @@ async function runMentionTurnBody(
   // #80: 이 턴에 새로 먹일 것만 정확히 읽기 위해 lastFedSeq 로 커서를 찍는다.
   // 첫 턴(lastFedSeq=0)에서는 since=0 이라 서버가 최신 N 개를 반환하므로,
   // buildTurnPrompt 가 전체 맥락을 보여주는 동작이 유지된다.
-  const thread = await deps.murmur.readThread(channelId, anchor, rec.lastFedSeq);
+  const thread = await deps.harkroom.readThread(channelId, anchor, rec.lastFedSeq);
 
   // isFirstTurn 은 원칙적으로 turnsRun 에서 유도한다 — lastFedSeq 는 "무엇을 봤는지"의
   // 경계일 뿐 "하네스를 실제로 돌렸는지"의 증거가 아니다(sessions.ts::SessionRecord.turnsRun
@@ -667,7 +667,7 @@ async function runMentionTurnBody(
     channelId,
     threadRootId: anchor,
     // 첨부 안내에 실을 실값(#첨부 열기). 러너는 자기가 붙은 URL 을 이미 안다.
-    murmurUrl: deps.murmurUrl,
+    harkroomUrl: deps.harkroomUrl,
     ...(target.wake ? { wake: target.wake } : {}),
     ...(target.team ? { team: target.team } : {}),
     ...(target.delegation ? { delegation: target.delegation } : {}),
@@ -695,7 +695,7 @@ async function runMentionTurnBody(
   // 기억이 없다" 고 믿고 진짜 기억을 새 프로필로 덮어쓴다.
   let memory: MemoryContext;
   try {
-    memory = await deps.murmur.readMemory();
+    memory = await deps.harkroom.readMemory();
   } catch (err: unknown) {
     memory = 'unavailable';
     console.error(
@@ -723,7 +723,7 @@ async function runMentionTurnBody(
   // #140: 승인된 스킬 동기화 — 하네스가 뜨기 **전에** 끝나야 한다. await 을 빼면 이 턴의
   // 하네스는 아직 없는 스킬 디렉터리를 읽고, 스킬은 항상 한 턴 늦게 붙는다.
   // 실패는 syncSkills 안에서 삼키고 stderr 로 남긴다 — 그래서 턴은 그대로 진행한다.
-  await syncSkills(deps.stateDir, rec.workspaceDir, () => deps.murmur.listApprovedSkills());
+  await syncSkills(deps.stateDir, rec.workspaceDir, () => deps.harkroom.listApprovedSkills());
 
   // **프롬프트가 하네스에 닿는 길은 하네스마다 다르다(2026-09-08 실행 모델 교체).**
   //
@@ -769,7 +769,7 @@ async function runMentionTurnBody(
     mentionPermission: def.mentionPermission,
     mcpConfigPath: deps.mcpConfigPath,
     pat: deps.pat,
-    murmurUrl: deps.murmurUrl,
+    harkroomUrl: deps.harkroomUrl,
     codexHome: deps.codexHome,
     claudeConfigDir: deps.claudeConfigDir,
   });
@@ -786,7 +786,7 @@ async function runMentionTurnBody(
   //
   // **추가 프라미스를 붙잡아 둔다.** 턴이 아주 짧으면 아래 제거가 이 추가를 앞질러
   // 서버에 닿아 💬 가 영구히 남는다 — 같은 파일의 ackInFlight 가 이미 이 함정을 기록한다.
-  const workingInFlight = deps.murmur.addReaction(channelId, mentionId, '💬').catch((err: unknown) => {
+  const workingInFlight = deps.harkroom.addReaction(channelId, mentionId, '💬').catch((err: unknown) => {
     console.error(
       `[mentionTurn] ${key}: 리액션(진행 중) 실패(턴은 계속한다) — ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -1037,7 +1037,7 @@ async function runMentionTurnBody(
 
   const probeUtterance = (): void => {
     if (end.exited || end.spoke) return;
-    void deps.murmur.readThread(channelId, anchor, turnStartSeq)
+    void deps.harkroom.readThread(channelId, anchor, turnStartSeq)
       .then(async (after) => {
         if (end.exited || end.spoke) return;
         if (countOwnPostsSince(after, deps.me.id, turnStartSeq) > 0) {
@@ -1179,7 +1179,7 @@ async function runMentionTurnBody(
                 end.gateNoticed = true;
                 // 이 콜백은 `void` 다(pty.ts) — 던지면 PTY 쪽으로 새어 나가므로 삼킨다.
                 // 말하지 못한 것으로 턴을 죽이지 않는다: 사람은 여전히 터미널로 닿을 수 있다.
-                void deps.murmur.fail(channelId, gateNotice(label), anchor, {
+                void deps.harkroom.fail(channelId, gateNotice(label), anchor, {
                   retryable: false,
                   what: '하네스가 사람의 확인을 기다린다',
                   reason: '그 터미널에서 화면의 물음에 답하면 이 턴이 그 자리에서 이어진다',
@@ -1272,7 +1272,7 @@ async function runMentionTurnBody(
     // 거짓 신호가 되고, 그것이 docs/design.md 4절 "없는 것을 있다고 표시하지 않는다" 다.
     // 추가가 끝난 뒤에 제거한다(순서가 뒤집히면 💬 가 남는다).
     await workingInFlight;
-    await deps.murmur.removeReaction(channelId, mentionId, '💬').catch((err: unknown) => {
+    await deps.harkroom.removeReaction(channelId, mentionId, '💬').catch((err: unknown) => {
       console.error(
         `[mentionTurn] ${key}: 리액션(진행 중) 제거 실패 — ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -1295,7 +1295,7 @@ async function runMentionTurnBody(
   // 못 준 것은 아니다 — 이 호출로 던지면 아래의 세션 상태 저장·발화 확인까지 건너뛰게 되고,
   // 그러면 다음 턴이 같은 메시지를 다시 먹인다. 조용히 삼키지는 않는다: 화면의 "마지막
   // 활동"이 왜 멈춰 있는지 답할 수 있는 자리가 이 로그뿐이다.
-  await deps.murmur.reportActivity().catch((err: unknown) => {
+  await deps.harkroom.reportActivity().catch((err: unknown) => {
     console.error(
       `[mentionTurn] ${key}: 활동 보고 실패(턴은 계속한다) — ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -1364,7 +1364,7 @@ async function runMentionTurnBody(
     let answered = false;
     try {
       // #80: 턴 시작 이후의 메시지만 읽으면 turnStartSeq 이후 발화가 있는지 정확히 판정한다.
-      const after = await deps.murmur.readThread(channelId, anchor, turnStartSeq);
+      const after = await deps.harkroom.readThread(channelId, anchor, turnStartSeq);
       // #144: progress 메시지는 결과 발화로 세지 않는다 — 에이전트가 message.progress 로 올린
       // 진행 설명은 .kind='progress'로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
       // 따라서 "progress 메시지만 있고 결과가 없는 턴"은 NO_REPLY_NOTICE 로 처리된다.
@@ -1492,7 +1492,7 @@ async function runMentionTurnBody(
   // 안 남았지"의 원인이 사라지므로 러너 로그에는 남긴다.
   try {
     // #80: 턴 시작 이후의 메시지만 읽으면 turnStartSeq 이후 발화가 있는지 정확히 판정한다.
-    const after = await deps.murmur.readThread(channelId, anchor, turnStartSeq);
+    const after = await deps.harkroom.readThread(channelId, anchor, turnStartSeq);
     // #144: progress 메시지는 결과 발화로 세지 않는다 — 에이전트가 message.progress 로 올린
     // 진행 설명은 .kind='progress'로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
     // 따라서 "progress 메시지만 있고 결과가 없는 턴"은 NO_REPLY_NOTICE 로 처리된다.
@@ -1528,7 +1528,7 @@ async function runMentionTurnBody(
       // 상한을 넘기면 서버가 거절해 **통지 자체가 사라진다** — 이 기능이 막으려던 것과
       // 같은 결과다. `harnessTailNotice` 가 이미 1000자로 줄이지만, 상한 판정을 그 함수의
       // 상수에 맡기지 않는다: 여기가 서버 계약을 아는 자리다.
-      await deps.murmur.post(channelId, body.slice(0, BODY_LIMIT), anchor);
+      await deps.harkroom.post(channelId, body.slice(0, BODY_LIMIT), anchor);
     }
   } catch (err) {
     console.error(

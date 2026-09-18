@@ -126,7 +126,7 @@ describe.skipIf(!macOS)('Mach-O 를 내용으로 찾는다 (`--deep` 이 놓친 
    * 있는 `/bin/sh` 를 이름만 바꿔 복사한다.
    */
   it('확장자가 없는 이름의 Mach-O 도 찾는다', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'murmur-macho-'));
+    const dir = mkdtempSync(path.join(tmpdir(), 'harkroom-macho-'));
     try {
       // 확장자도 없고, 옛 이름 목록(`*.node`·`spawn-helper`)에도 안 걸리는 이름.
       const disguised = path.join(dir, 'totally-unrelated-name');
@@ -148,7 +148,7 @@ describe.skipIf(!macOS)('Mach-O 를 내용으로 찾는다 (`--deep` 이 놓친 
    * Mach-O 가 아니고, 서명 대상이 아닌 것이 맞다.
    */
   it('셔뱅 스크립트는 Mach-O 가 아니다 (사이드카가 이 경우다)', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'murmur-macho-'));
+    const dir = mkdtempSync(path.join(tmpdir(), 'harkroom-macho-'));
     try {
       const script = path.join(dir, 'harkroom-runner');
       writeFileSync(script, '#!/usr/bin/env node\nconsole.log("hi");\n');
@@ -167,7 +167,7 @@ describe.skipIf(!macOS)('Mach-O 를 내용으로 찾는다 (`--deep` 이 놓친 
    * 절반이지만, 있더라도 밖으로 새지는 않아야 한다.
    */
   it('심볼릭 링크는 목록에 넣지 않는다', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'murmur-macho-'));
+    const dir = mkdtempSync(path.join(tmpdir(), 'harkroom-macho-'));
     try {
       const link = path.join(dir, 'linked-binary');
       symlinkSync('/bin/sh', link);
@@ -183,7 +183,7 @@ describe.skipIf(!macOS)('Mach-O 를 내용으로 찾는다 (`--deep` 이 놓친 
    * (`a sealed resource is missing or invalid`). 순서가 곧 정확성이다.
    */
   it('깊은 것이 먼저 나온다', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'murmur-macho-'));
+    const dir = mkdtempSync(path.join(tmpdir(), 'harkroom-macho-'));
     try {
       const shallow = path.join(dir, 'outer');
       const deepDir = path.join(dir, 'a', 'b', 'c');

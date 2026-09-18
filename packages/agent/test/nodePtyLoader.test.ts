@@ -45,7 +45,7 @@ describe('node-pty 후보 경로 (#433)', () => {
    * 통째로 죽는다.
    */
   it('사이드카 옆에 있으면 그것을 고른다 (개발 빌드)', () => {
-    const root = mkdtempSync(path.join(tmpdir(), 'murmur-pty-dev-'));
+    const root = mkdtempSync(path.join(tmpdir(), 'harkroom-pty-dev-'));
     try {
       const expected = placeStub(root, []);
       expect(findNodePtyDir(root)).toBe(expected);
@@ -59,7 +59,7 @@ describe('node-pty 후보 경로 (#433)', () => {
    * `Contents/Resources` 에만 있다. 예전에는 이 간극을 심볼릭 링크가 메웠다.
    */
   it('Contents/Resources 에만 있으면 그것을 고른다 (배포 번들)', () => {
-    const root = mkdtempSync(path.join(tmpdir(), 'murmur-pty-bundle-'));
+    const root = mkdtempSync(path.join(tmpdir(), 'harkroom-pty-bundle-'));
     try {
       const contents = path.join(root, 'Contents');
       const macos = path.join(contents, 'MacOS');
@@ -82,7 +82,7 @@ describe('node-pty 후보 경로 (#433)', () => {
    * 실패한 복사를 집으면 `createRequire` 가 훨씬 뒤에서 알아보기 어려운 이유로 죽는다.
    */
   it('package.json 이 없는 빈 디렉터리는 고르지 않는다', () => {
-    const root = mkdtempSync(path.join(tmpdir(), 'murmur-pty-empty-'));
+    const root = mkdtempSync(path.join(tmpdir(), 'harkroom-pty-empty-'));
     try {
       mkdirSync(path.join(root, 'node_modules', 'node-pty'), { recursive: true });
       expect(findNodePtyDir(root)).toBeNull();
@@ -104,7 +104,7 @@ describe('node-pty 후보 경로 (#433)', () => {
    * 이 폴백이 그것을 덮지 못하고 아래 테스트의 오류가 그대로 난다.
    */
   it('후보가 비어도 워크스페이스 의존으로 해석된다 (소스에서 돌 때)', () => {
-    const root = mkdtempSync(path.join(tmpdir(), 'murmur-pty-fallback-'));
+    const root = mkdtempSync(path.join(tmpdir(), 'harkroom-pty-fallback-'));
     try {
       // 후보 두 자리는 비어 있다 — 그래도 통상 해석이 워크스페이스의 node-pty 를 집는다.
       expect(findNodePtyDir(root)).toBeNull();

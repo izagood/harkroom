@@ -3,7 +3,7 @@ import { BODY_LIMIT, buildSystemPrompt, harnessTailNotice, buildTurnPrompt, coun
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
-    seq, authorId, body, id: `m${seq}`, channelId: 'c', threadRootId: null, murmurUrl: 'http://localhost:3400', kind: 'user',
+    seq, authorId, body, id: `m${seq}`, channelId: 'c', threadRootId: null, harkroomUrl: 'http://localhost:3400', kind: 'user',
     meta: {}, createdAt: '', editedAt: null, reactions: [], attachments: [], ...extra,
   }) as never;
 
@@ -13,7 +13,7 @@ describe('buildTurnPrompt', () => {
   it('첫 턴(lastFedSeq 0)은 자기 발화 포함 전체를 넘긴다', () => {
     const r = buildTurnPrompt({
       messages: [msg(1, 'u1', '안녕'), msg(2, 'a1', '넵')], lastFedSeq: 0, meId: 'a1', handles,
-      channelId: 'c', threadRootId: null, murmurUrl: 'http://localhost:3400',
+      channelId: 'c', threadRootId: null, harkroomUrl: 'http://localhost:3400',
     });
     expect(r.prompt).toContain('jaebin: 안녕');
     expect(r.prompt).toContain('forge: 넵'); // 세션 이전 역사는 자기 것도 알려준다
@@ -23,7 +23,7 @@ describe('buildTurnPrompt', () => {
   it('resume 턴은 경계 이후만, 자기 발화는 뺀다 — 세션이 이미 아는 말', () => {
     const r = buildTurnPrompt({
       messages: [msg(1, 'u1', '옛말'), msg(2, 'a1', '내 답'), msg(3, 'a2', '동료가 한 일'), msg(4, 'u1', '@forge 이어서')],
-      lastFedSeq: 1, meId: 'a1', handles, channelId: 'c', threadRootId: null, murmurUrl: 'http://localhost:3400',
+      lastFedSeq: 1, meId: 'a1', handles, channelId: 'c', threadRootId: null, harkroomUrl: 'http://localhost:3400',
     });
     expect(r.prompt).not.toContain('옛말');
     expect(r.prompt).not.toContain('내 답');
@@ -33,7 +33,7 @@ describe('buildTurnPrompt', () => {
 
   it('넘길 게 없으면(새 메시지가 전부 자기 발화) 빈 prompt — 그래도 fedSeq 는 전진한다', () => {
     const r = buildTurnPrompt({
-      messages: [msg(2, 'a1', '내 답')], lastFedSeq: 1, meId: 'a1', handles, channelId: 'c', threadRootId: null, murmurUrl: 'http://localhost:3400',
+      messages: [msg(2, 'a1', '내 답')], lastFedSeq: 1, meId: 'a1', handles, channelId: 'c', threadRootId: null, harkroomUrl: 'http://localhost:3400',
     });
     expect(r.prompt).toBe('');
     expect(r.fedSeq).toBe(2);
@@ -45,7 +45,7 @@ describe('buildTurnPrompt', () => {
   // 코드 경로로 잘못 합쳐 놓고도 테스트가 통과해 버릴 수 있다.
   it('애초에 새 메시지가 없으면 fedSeq 는 그대로다 — 볼 것 자체가 없었으니 전진할 근거가 없다', () => {
     const r = buildTurnPrompt({
-      messages: [msg(1, 'u1', '예전 메시지')], lastFedSeq: 5, meId: 'a1', handles, channelId: 'c', threadRootId: null, murmurUrl: 'http://localhost:3400',
+      messages: [msg(1, 'u1', '예전 메시지')], lastFedSeq: 5, meId: 'a1', handles, channelId: 'c', threadRootId: null, harkroomUrl: 'http://localhost:3400',
     });
     expect(r.prompt).toBe('');
     expect(r.fedSeq).toBe(5);
@@ -55,7 +55,7 @@ describe('buildTurnPrompt', () => {
   // 확인한다 — avcs 투영이 만드는 system 메시지의 작성자가 handles 에 없을 수 있다.
   it('handles 맵에 없는 작성자는 "알 수 없는 사용자" 로 표시한다', () => {
     const r = buildTurnPrompt({
-      messages: [msg(1, 'ghost', '누구세요')], lastFedSeq: 0, meId: 'a1', handles, channelId: 'c', threadRootId: null, murmurUrl: 'http://localhost:3400',
+      messages: [msg(1, 'ghost', '누구세요')], lastFedSeq: 0, meId: 'a1', handles, channelId: 'c', threadRootId: null, harkroomUrl: 'http://localhost:3400',
     });
     expect(r.prompt).toContain('알 수 없는 사용자: 누구세요');
   });
@@ -70,7 +70,7 @@ describe('buildTurnPrompt', () => {
       attachments: [{ id: 'att1', filename: 'error.png', contentType: 'image/png', sizeBytes: 100 }],
     });
     const r = buildTurnPrompt({
-      messages: [withAttachment], lastFedSeq: 0, meId: 'a1', handles, channelId: 'c', threadRootId: null, murmurUrl: 'http://localhost:3400',
+      messages: [withAttachment], lastFedSeq: 0, meId: 'a1', handles, channelId: 'c', threadRootId: null, harkroomUrl: 'http://localhost:3400',
     });
     expect(r.prompt).toContain('error.png');
     expect(r.prompt).toContain('att1');
@@ -87,9 +87,9 @@ describe('buildTurnPrompt', () => {
         attachments: [{ id: 'att1', filename: 'error.png', contentType: 'image/png', sizeBytes: 100 }],
       })],
       lastFedSeq: 0, meId: 'a1', handles, channelId: 'c', threadRootId: null,
-      murmurUrl: 'http://murmur.example:3400',
+      harkroomUrl: 'http://harkroom.example:3400',
     });
-    expect(r.prompt).toContain('http://murmur.example:3400/attachments/');
+    expect(r.prompt).toContain('http://harkroom.example:3400/attachments/');
     expect(r.prompt).toContain('$HARKROOM_PAT');
     // 토큰 실값은 프롬프트에 굽지 않는다 — env 이름만 적는다(#92·#117 과 같은 이유).
     expect(r.prompt).not.toContain('Bearer eyJ');
@@ -103,7 +103,7 @@ describe('buildTurnPrompt', () => {
   it('첨부가 없는 턴에는 첨부 안내를 붙이지 않는다', () => {
     const r = buildTurnPrompt({
       messages: [msg(1, 'u1', '첨부 없음')], lastFedSeq: 0, meId: 'a1', handles,
-      channelId: 'c', threadRootId: null, murmurUrl: 'http://localhost:3400',
+      channelId: 'c', threadRootId: null, harkroomUrl: 'http://localhost:3400',
     });
     expect(r.prompt).not.toContain('/attachments/');
     expect(r.prompt).not.toContain('curl');
@@ -117,7 +117,7 @@ describe('buildTurnPrompt', () => {
     const r = buildTurnPrompt({
       messages: [msg(1, 'u1', '메시지 자신의 threadRootId 는 null')],
       lastFedSeq: 0, meId: 'a1', handles,
-      channelId: 'real-channel', threadRootId: 'real-thread-root', murmurUrl: 'http://localhost:3400',
+      channelId: 'real-channel', threadRootId: 'real-thread-root', harkroomUrl: 'http://localhost:3400',
     });
     expect(r.prompt).toContain('channelId: real-channel');
     expect(r.prompt).toContain('threadRootId: real-thread-root');
@@ -129,7 +129,7 @@ describe('buildTurnPrompt', () => {
   it('채널 최상위(threadRootId null)는 머리에 "null" 이 아니라 읽을 수 있는 문구로 실린다', () => {
     const r = buildTurnPrompt({
       messages: [msg(1, 'u1', '채널에 바로 씀')], lastFedSeq: 0, meId: 'a1', handles,
-      channelId: 'c', threadRootId: null, murmurUrl: 'http://localhost:3400',
+      channelId: 'c', threadRootId: null, harkroomUrl: 'http://localhost:3400',
     });
     expect(r.prompt).not.toContain('threadRootId: null');
     expect(r.prompt).toContain('threadRootId: 채널 최상위(없음)');
@@ -189,7 +189,7 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
   it('깨어난 턴은 넘길 사람 발화가 없어도 프롬프트가 비지 않는다', () => {
     const r = buildTurnPrompt({
       messages: [msg(10, 'a1', 'CI 결과 확인', { kind: 'wake' })],
-      lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't', murmurUrl: 'http://localhost:3400',
+      lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't', harkroomUrl: 'http://localhost:3400',
       wake: { reason: 'CI 결과 확인' },
     });
     expect(r.prompt).not.toBe('');
@@ -199,7 +199,7 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
 
   it('깨어난 턴임을 프롬프트가 밝힌다 — 사람이 새로 말한 것으로 착각하면 안 된다', () => {
     const r = buildTurnPrompt({
-      messages: [], lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't', murmurUrl: 'http://localhost:3400',
+      messages: [], lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't', harkroomUrl: 'http://localhost:3400',
       wake: { reason: 'CI 결과 확인' },
     });
     expect(r.prompt).toContain('예약');
@@ -211,7 +211,7 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
   it('깨어난 턴에 사람의 새 발화가 있으면 둘 다 실린다', () => {
     const r = buildTurnPrompt({
       messages: [msg(10, 'u1', '아 그거 취소해'), msg(11, 'a1', 'CI 결과 확인', { kind: 'wake' })],
-      lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't', murmurUrl: 'http://localhost:3400',
+      lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't', harkroomUrl: 'http://localhost:3400',
       wake: { reason: 'CI 결과 확인' },
     });
     expect(r.prompt).toContain('예약');
@@ -239,7 +239,7 @@ describe('buildTurnPrompt — 팀 호출(047)', () => {
   const call = () => buildTurnPrompt({
     messages: [msg(10, 'u1', '@release 배포 준비해라')],
     lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
-    murmurUrl: 'http://localhost:3400', team,
+    harkroomUrl: 'http://localhost:3400', team,
   });
 
   it('팀 이름과 명단을 싣고, 팀장이라는 것을 말한다', () => {
@@ -309,7 +309,7 @@ describe('buildTurnPrompt — 팀 호출(047)', () => {
     const { prompt } = buildTurnPrompt({
       messages: [msg(10, 'u1', '@forge 이거 봐줘')],
       lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
-      murmurUrl: 'http://localhost:3400',
+      harkroomUrl: 'http://localhost:3400',
     });
     expect(prompt).not.toContain('팀 호출');
     expect(prompt).toContain('jaebin: @forge 이거 봐줘');
@@ -329,7 +329,7 @@ describe('buildTurnPrompt — 넘긴 일의 결말(050)', () => {
   const call = (delegation: Parameters<typeof buildTurnPrompt>[0]['delegation'], messages = [] as never[]) =>
     buildTurnPrompt({
       messages, lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
-      murmurUrl: 'http://localhost:3400', delegation,
+      harkroomUrl: 'http://localhost:3400', delegation,
     });
 
   it('결말을 팀원마다 글자로 적는다', () => {
@@ -425,7 +425,7 @@ describe('buildTurnPrompt — 넘겨받은 일(3-2)', () => {
   const call = () => buildTurnPrompt({
     messages: [msg(10, 'a1', '@scout 는 서버를 봐라')],
     lastFedSeq: 9, meId: 'a2', handles, channelId: 'c', threadRootId: 't',
-    murmurUrl: 'http://localhost:3400', delegatedBy: handed,
+    harkroomUrl: 'http://localhost:3400', delegatedBy: handed,
   });
 
   it('누가 넘겼는지와 보고 대상을 말한다', () => {
@@ -458,7 +458,7 @@ describe('buildTurnPrompt — 넘겨받은 일(3-2)', () => {
     const { prompt } = buildTurnPrompt({
       messages: [msg(10, 'u1', '@scout 이거 봐줘')],
       lastFedSeq: 9, meId: 'a2', handles, channelId: 'c', threadRootId: 't',
-      murmurUrl: 'http://localhost:3400',
+      harkroomUrl: 'http://localhost:3400',
     });
     expect(prompt).not.toContain('넘겨받은 일');
   });

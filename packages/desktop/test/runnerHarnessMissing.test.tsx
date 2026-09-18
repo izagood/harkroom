@@ -108,7 +108,7 @@ function fakeSpawner() {
 
 function fakeApi() {
   return {
-    baseUrl: 'https://murmur.example',
+    baseUrl: 'https://harkroom.example',
     listPats: vi.fn(async () => [] as { label: string; revokedAt: string | null }[]),
     mintPat: vi.fn(async (_id: string, label: string) => `murp_${label}`),
     revokePat: vi.fn(async () => ({ revoked: 1 })),
@@ -147,8 +147,8 @@ const 하네스부재꼬리 = [
 ];
 
 const 자격증명거부꼬리 = [
-  'Murmur 자격증명을 해결할 수 없다. 러너를 멈춘다.',
-  '  Murmur API 의 PAT 가 만료·폐기됐는지 확인해라.',
+  'Harkroom 자격증명을 해결할 수 없다. 러너를 멈춘다.',
+  '  Harkroom API 의 PAT 가 만료·폐기됐는지 확인해라.',
   CREDENTIAL_REJECTED_LINE,
 ];
 
