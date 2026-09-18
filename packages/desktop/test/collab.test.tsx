@@ -32,6 +32,8 @@ const proposal = (over: Partial<CollabProposal> & { intentOid: string }): Collab
 
 const repo = (over: Partial<CollabRepoView> & { repo: string }): CollabRepoView => ({
   channelIds: ['c1'],
+  mode: 'linked',
+  baseUrl: 'http://avcs.test',
   error: null,
   proposals: [],
   reducedAt: { cursor: 42, materializer: 'avcs-reduce/1', treeHash: 'tree_a' },

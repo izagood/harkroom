@@ -3015,10 +3015,17 @@ export interface CollabProposal {
 
 export interface CollabRepoView {
   repo: string;
+  /** `linked`(바깥 서버를 읽는다) / `hosted`(murmur 가 띄운다 — 다음 단계). 051 의 `repo.mode`. */
+  mode: 'linked' | 'hosted';
+  /** 이 저장소를 **실제로 읽은** 주소. 저장소가 자기 주소를 안 들고 있으면 전역 값이 들어온다. */
+  baseUrl: string | null;
   /** 이 저장소에 바인딩된 채널들. 화면이 "여기서 이어 말하기" 를 걸 자리다. */
   channelIds: string[];
-  /** avcs 를 못 읽었으면 `'unreachable'`. 그 저장소만 접히고 나머지는 그대로 선다. */
-  error: string | null;
+  /**
+   * 그 저장소만 접힌 이유. `'unreachable'` 은 주소는 있는데 못 읽은 것이고, `'no-server'` 는
+   * **읽을 주소 자체가 없는 것**이다 — 사람이 할 일이 다르므로(고치기 vs 설정하기) 갈라 둔다.
+   */
+  error: 'unreachable' | 'no-server' | null;
   proposals: CollabProposal[];
   /** 어느 시점·어느 환원기의 판정인가. 환원 평면이 없으면 `null`. */
   reducedAt: { cursor: number; materializer: string; treeHash: string } | null;
