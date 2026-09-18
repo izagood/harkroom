@@ -69,7 +69,7 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
   });
 
   /**
-   * **호스팅 배포(`*.harkroom.com`)의 첫 관리자 생성.** `/bootstrap` 과 하는 일이 같고
+   * **호스팅 배포의 첫 관리자 생성.** `/bootstrap` 과 하는 일이 같고
    * (첫 관리자 + 기본 채널을 한 트랜잭션으로) **관문이 하나 더 있다**: 일회용 클레임 토큰.
    *
    * ## 왜 `/bootstrap` 에 토큰을 얹지 않고 라우트를 나눴는가
@@ -82,7 +82,7 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
    * ## 왜 토큰이 필요한가
    *
    * `/bootstrap` 에는 인증이 없다. 셀프호스트에서는 주소를 아는 사람이 곧 설치한 사람이라
-   * 그것으로 충분하지만, 공개된 `*.harkroom.com` 에서는 인스턴스가 뜬 뒤 주인이 가져가기
+   * 그것으로 충분하지만, 공개된 호스팅에서는 인스턴스가 뜬 뒤 주인이 가져가기
    * 전까지 **누구나 첫 관리자가 될 수 있는 창**이 열린다. 서브도메인 이름은 비밀이 아니다.
    *
    * ## 비밀번호는 여기서 처음 정해진다

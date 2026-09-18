@@ -99,10 +99,6 @@ describe('repo hygiene', () => {
       /^schema\.tauri\.app$/i,
       /^developers\.openai\.com$/i,
       /^engineering\.block\.xyz$/i,
-      // 이 프로젝트의 **공개 도메인**. 호스팅 배포가 워크스페이스마다 서브도메인을 하나씩
-      // 쓰므로(`<테넌트>.harkroom.com`) 와일드카드로 둔다. 사설 주소가 아니라 공개된
-      // 서비스 주소이고, 클러스터 내부 이름·IP 는 여전히 이 목록에 없다.
-      /^(?:[a-z0-9-]+\.)?harkroom\.com$/i,
     ];
 
     /** 도메인이 아닌 것들. IP 리터럴은 SSRF 회귀선이 10진·16진 표기까지 쓴다. */
