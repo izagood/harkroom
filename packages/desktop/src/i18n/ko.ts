@@ -226,7 +226,7 @@ export const ko = {
   // 말인지가 말투 차이로 잘못 읽힌다. 단정을 바꾼 곳은 없다.
   //
   // **번역하지 않은 것**은 `en.ts` 의 agents 머리말에 표로 적었다 — `admin`·`PAT`·
-  // `harness`·`daemon`·`attach`·`murmur`, `auto`/`readonly` 값, 경로·이름 예시, 종료 코드.
+  // `harness`·`daemon`·`attach`·`harkroom`, `auto`/`readonly` 값, 경로·이름 예시, 종료 코드.
   // ---------------------------------------------------------------------------
 
   // --- Agents 칸의 관제 구획(`AgentTurns`) — 근거는 `en.ts` 의 같은 묶음에 있다 --------

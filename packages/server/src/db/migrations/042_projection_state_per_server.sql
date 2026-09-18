@@ -2,7 +2,7 @@
 --
 -- `last_log_index` 는 **그 avcs 서버의** append-only 로그 안 위치다. `repo` 는
 -- `"org/repo"` 두 조각짜리 이름일 뿐이고, 같은 이름이 avcs 서버마다 따로 있을 수
--- 있다(로컬에도 izagood/murmur, VM 에도 izagood/murmur). repo 하나만으로 행을 잡으면
+-- 있다(로컬에도 izagood/harkroom, VM 에도 izagood/harkroom). repo 하나만으로 행을 잡으면
 -- 서버 A(커서 5000)에서 서버 B(로그 120건)로 URL 을 바꿨을 때 새 워커가 B 에게
 -- `waitForChange(repo, 5000)` 을 묻고 B 는 영원히 "5000 이후엔 없다"를 답한다 — 커서는
 -- 얼어붙는데 `lastPolledAt` 은 계속 갱신되어 상태는 `ok` 로 남고, A 의 낡은 리스가

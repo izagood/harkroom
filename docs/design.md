@@ -130,7 +130,7 @@ compose 밖에서 따로 띄우고 `AVCS_BASE_URL` 로 가리킨다(§0, §5):
 ### monorepo 구성 (pnpm, Apache-2.0)
 
 ```
-murmur/
+harkroom/
   packages/server     # Fastify: REST + WS + MCP + avcs lease 투영
   packages/agent      # 멘션 러너: PTY 안에서 harness CLI 를 돌린다
   packages/daemon     # 러너 프로세스의 소유자 (기계마다 하나, 앱과 unix 소켓으로 말한다)
@@ -238,7 +238,7 @@ avcs 로그를 처음부터 접어야 알 수 있는 **상태값**이고, 그 �
   없이 지나간다. `next === since` 여야 진짜 새 게 없는 것이다.
 - ~~**actor 매핑**~~: 서명 키를 `account_key`로 역참조해 시스템 메시지에 저자를 붙이고
   미등록 키를 "외부 작업자"로 적던 `actorLabel` 은 **함수째 사라졌다**(#534) — 메시지를
-  만들지 않으면 저자로 세울 것이 없다. 같은 이유로 `murmur` 핸들의 시스템 계정을 만들던
+  만들지 않으면 저자로 세울 것이 없다. 같은 이유로 `harkroom` 핸들의 시스템 계정을 만들던
   `ensureSystemAccount` 도 사라졌다(계정 **행**은 남는다 — 이 절 끝 참조).
   `account_key` 의 남은 용도는 인증과 `active_lease.actor_key_id` 다.
 - **사람→avcs 방향은 MVP에 없음**: 채팅은 논의 층, avcs는 작업 층. 지금 harkroom 는 avcs 를
@@ -246,7 +246,7 @@ avcs 로그를 처음부터 접어야 알 수 있는 **상태값**이고, 그 �
 
 **운영 중인 DB 에는 과거에 투영된 `system` 메시지가 그대로 남아 있다.** 한 행도 지우지
 않았다 — 잘못 만든 구조를 없애는 것과 그 구조가 만든 기록을 없애는 것은 다른 결정이고,
-#534 는 앞의 것만 했다. 그 메시지의 저자인 `murmur` 계정 행도 같은 이유로 남는다
+#534 는 앞의 것만 했다. 그 메시지의 저자인 `harkroom` 계정 행도 같은 이유로 남는다
 (`message.author_id` 가 `not null references account(id)` 라서 지우면 FK 위반이다).
 그래서 **채널에서 과거 투영 메시지를 보는 것은 투영이 아직 돌고 있다는 뜻이 아니다.**
 
@@ -379,7 +379,7 @@ Buzz 의 "Agent runtimes 탐지 + Install" 목록은 **의도적으로 베끼지
 에이전트 런타임을 모른다.
 
 **표면이 있다는 것과 에이전트가 온다는 것은 다르다.** MCP 서버로 등록하면(예:
-`claude mcp add --transport http murmur .../mcp --header "Authorization: Bearer <PAT>"`)
+`claude mcp add --transport http harkroom .../mcp --header "Authorization: Bearer <PAT>"`)
 에이전트가 harkroom의 도구를 쓸 수 있지만, 그것은 **사람이 프롬프트할 때만** 움직인다.
 `@handle` 을 불렀을 때 찾아오게 하려면 `inbox.poll` 을 물고 대기하는 프로세스가 필요하다 —
 `packages/agent` 가 그 참조 구현이며, 사용자가 직접 실행하는 외부 프로세스다(§6의 "상주형
@@ -512,7 +512,7 @@ Buzz 의 "Agent runtimes 탐지 + Install" 목록은 **의도적으로 베끼지
 
 - **메트릭**: `GET /metrics`(인증 필요, Prometheus 텍스트 형식). 요청 수·지연 히스토그램·
   WS 연결 수, **repo별 투영 커서**, 그리고 **에이전트별 미처리 부름의 나이**
-  (`murmur_agent_oldest_unread_seconds` — 러너가 죽으면 이것만 커진다. 사람은 제외한다:
+  (`harkroom_agent_oldest_unread_seconds` — 러너가 죽으면 이것만 커진다. 사람은 제외한다:
   늦게 읽는 것은 장애가 아니고, 섞으면 경보가 신호를 잃는다). 커서를 노출하는 이유는 §3-B의 사일런트 스킵이
   관측되지 않기 때문이다 — 채널에는 아무 일도 없어 보이므로 숫자로 보여야 한다. 라벨은 반드시
   **라우트 패턴**(`/channels/:id/messages`)을 쓴다: 구체 경로를 넣으면 채널·메시지 id마다

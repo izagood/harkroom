@@ -157,7 +157,7 @@ describe('#270 드래그 손잡이', () => {
     pretendMac();
     renderWorkspace({ sidebarCollapsed: false });
 
-    const logo = screen.getByTestId('murmur-logo');
+    const logo = screen.getByTestId('harkroom-logo');
     expect(logo.closest('[data-tauri-drag-region]')).toBeTruthy();
   });
 });
@@ -389,7 +389,7 @@ describe('#359 띠 높이', () => {
 /**
  * **손잡이 위의 글자는 고를 대상이 아니다**(실측 2026-09-07, 사용자가 화면에서 발견).
  *
- * `sidebar-brand` 는 창을 끄는 손잡이(`data-tauri-drag-region`)인데 안의 `murmur` 는
+ * `sidebar-brand` 는 창을 끄는 손잡이(`data-tauri-drag-region`)인데 안의 `harkroom` 는
  * 그냥 텍스트 노드라, 끌면 **창이 움직이는 대신 글자가 선택**됐다. 복사할 값이 아니라
  * 앱 이름이므로 고를 이유가 없다.
  */
@@ -450,7 +450,7 @@ describe('브랜드 줄은 로고와 글자를 함께 둔다', () => {
   it('로고와 글자를 감싼 자리도 창 손잡이다', () => {
     renderWorkspace({ sidebarCollapsed: false });
     const brand = screen.getByTestId('sidebar-brand');
-    const wrap = brand.querySelector('[data-testid="murmur-logo"]')!.parentElement!;
+    const wrap = brand.querySelector('[data-testid="harkroom-logo"]')!.parentElement!;
     expect(wrap.hasAttribute('data-tauri-drag-region')).toBe(true);
   });
 

@@ -39,7 +39,7 @@ beforeAll(async () => {
   const db = await startTestDb();
   stop = db.stop;
   pool = db.pool;
-  storageRoot = await mkdtemp(join(tmpdir(), 'murmur-mcp-att-'));
+  storageRoot = await mkdtemp(join(tmpdir(), 'harkroom-mcp-att-'));
   app = await buildServer({ pool: db.pool, storage: { root: storageRoot, maxBytes: 8 * 1024 * 1024 } });
   ({ token: adminToken } = await bootstrapAdmin(app));
   ({ pat: botPat, accountId: botAccountId } = await createAgent(app, adminToken, 'attbot'));
@@ -67,7 +67,7 @@ async function mcpClient(token: string): Promise<Client> {
 }
 
 function multipart(filename: string, content: Buffer, contentType: string) {
-  const boundary = '----murmurtest';
+  const boundary = '----harkroomtest';
   const head = Buffer.from(
     `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\n` +
     `Content-Type: ${contentType}\r\n\r\n`,

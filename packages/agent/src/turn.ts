@@ -15,19 +15,19 @@ import { RUNNABLE_HARNESSES, type AgentHarness, type MentionPermission } from '@
 import { executionModelFor } from './adapters/index.js';
 
 /**
- * `murmurUrl` 은 서버 베이스 URL(`http://localhost:3400`)이고, MCP 엔드포인트는 `/mcp` 다.
+ * `harkroomUrl` 은 서버 베이스 URL(`http://localhost:3400`)이고, MCP 엔드포인트는 `/mcp` 다.
  * claude(`writeMcpConfigOnce`)와 codex(`CODEX_PRESET.mcp`) 양쪽이 이 정규화를 거쳐야 한다 —
- * 한쪽만 하고 다른 쪽을 murmurUrl 그대로 쓰면 그쪽 harness 는 베이스 URL 에 `POST /` 를
+ * 한쪽만 하고 다른 쪽을 harkroomUrl 그대로 쓰면 그쪽 harness 는 베이스 URL 에 `POST /` 를
  * 때려 `404 route not found` 로 MCP 연결 자체가 안 된다(실물 검증에서 codex 가 이렇게
  * 실패했다 — 아래 CODEX_PRESET.mcp 참고).
  *
- * export 하는 이유: `murmur.ts::MurmurAgentClient` 도 같은 `/mcp` 엔드포인트에 붙는데, 그
+ * export 하는 이유: `harkroom.ts::HarkroomAgentClient` 도 같은 `/mcp` 엔드포인트에 붙는데, 그
  * 파일이 이 정규화를 따로(`new URL(\`${baseUrl}/mcp\`)`) 다시 구현하면 값이 두 곳에서
  * 유도되는 모양이 된다 — 그 자체가 이 함수를 만든 계기(claude/codex 사이 이중 구현)와
  * 같은 종류의 결함이라 리뷰에서 지적됐다. 진실 원천을 여기 하나로 둔다.
  */
-export function mcpUrl(murmurUrl: string): string {
-  return `${murmurUrl.replace(/\/$/, '')}/mcp`;
+export function mcpUrl(harkroomUrl: string): string {
+  return `${harkroomUrl.replace(/\/$/, '')}/mcp`;
 }
 
 export type TurnMode = 'mention' | 'interactive';
@@ -76,7 +76,7 @@ export interface BuildTurnCommandOptions {
    * 단서가 어디에도 안 남는 조용한 실패다. 그래서 이 값을 생략해 조용히 넘어가는 경로 자체를
    * 두지 않는다: 호출자가 안 채우면 여기서 타입 에러로, 넘겼는데 비어 있으면 즉시 예외로 죽는다.
    */
-  murmurUrl: string;
+  harkroomUrl: string;
   /** 개인 config.toml/MCP 를 상속하지 않는 Harkroom 전용 Codex 상태 루트. */
   codexHome: string;
   /**
@@ -109,7 +109,7 @@ interface HarnessPreset {
   allowsNullSessionOnFirstTurn: boolean;
   /** mentionPermission → 멘션 턴 전용 권한 플래그. 인터랙티브에선 아예 쓰지 않는다. */
   permission: Record<MentionPermission, string[]>;
-  mcp(args: { mcpConfigPath: string; murmurUrl: string }): string[];
+  mcp(args: { mcpConfigPath: string; harkroomUrl: string }): string[];
   model(model: string | null): string[];
   effort(effort: string | null): string[];
   /**
@@ -181,7 +181,7 @@ const CLAUDE_PRESET: HarnessPreset = {
   model: (model) => (model ? ['--model', model] : []),
   effort: (effort) => (effort ? ['--effort', effort] : []),
   // 지시문은 **파일로만** 넘긴다. 경로는 호출자가 미리 `writeSystemPromptFile()` 로 써 두고
-  // 넘긴다(0600). argv 폴백을 남기지 않는 이유는 `murmurUrl` 과 같다 — 조용히 넘어가는 경로를
+  // 넘긴다(0600). argv 폴백을 남기지 않는 이유는 `harkroomUrl` 과 같다 — 조용히 넘어가는 경로를
   // 두면 그 경로가 결국 쓰이고, 여기서는 그게 곧 대화 내용이 `ps` 로 새는 것이다(#92).
   //
   // **대화 본문(promptCtx)도 stdin 파일로 이동한다(#117).** argv 에 있으면 같은 머신의 다른
@@ -249,12 +249,12 @@ const CODEX_PRESET: HarnessPreset = {
     ],
     readonly: ['-c', 'sandbox_mode="read-only"'],
   },
-  mcp: ({ murmurUrl }) => [
+  mcp: ({ harkroomUrl }) => [
     // avcs 는 항상 등록한다(실측 shape: stdio, command 'avcs', args ['mcp'], env 없음).
     //
     // **`transport` 를 반드시 적는다(2026-09-15 실측).** codex 0.154 는 이 갈래 표시가 없는
     // stdio 항목을 거절하는데, 그 거절이 그 항목 하나로 끝나지 않는다 — **MCP 설정 전체가
-    // 로드에 실패해 murmur 서버까지 함께 사라진다**:
+    // 로드에 실패해 harkroom 서버까지 함께 사라진다**:
     //
     //   failed to load configuration: invalid transport in `mcp_servers.avcs` (code -32600)
     //
@@ -263,30 +263,30 @@ const CODEX_PRESET: HarnessPreset = {
     // "답 없이 턴을 끝냈습니다" 만 남는다. codex-dev 가 이 워크스페이스에서 **한 번도**
     // 말하지 못한 이유가 이것이었다.
     //
-    // 실물 확인: 이 한 줄을 넣으면 avcs 를 등록한 채로 codex 가 murmur MCP 로 스레드에
+    // 실물 확인: 이 한 줄을 넣으면 avcs 를 등록한 채로 codex 가 harkroom MCP 로 스레드에
     // 글을 올린다(같은 조건에서 이 줄만 빼면 못 올린다).
     '-c', 'mcp_servers.avcs.transport="stdio"',
     '-c', 'mcp_servers.avcs.command="avcs"',
     '-c', 'mcp_servers.avcs.args=["mcp"]',
-    // harkroom 도 항상 등록한다 — 이게 빠지면 에이전트가 답할 방법이 없다(위 murmurUrl 주석).
+    // harkroom 도 항상 등록한다 — 이게 빠지면 에이전트가 답할 방법이 없다(위 harkroomUrl 주석).
     // `bearer_token_env_var` 는 env 변수 "이름"만 담는다 — PAT 값 자체는 절대 argv 에 오르지
     // 않는다(spec §7, task-1 실측: `-c mcp_servers.harkroom.bearer_token_env_var="HARKROOM_PAT"`).
     // 실값은 buildTurnCommand 가 돌려주는 env.HARKROOM_PAT 로만 간다.
     //
-    // **`/mcp` 를 붙여야 한다 — 실물 검증에서 드러난 회귀다.** `murmurUrl` 은 서버 베이스
+    // **`/mcp` 를 붙여야 한다 — 실물 검증에서 드러난 회귀다.** `harkroomUrl` 은 서버 베이스
     // URL(`http://localhost:3400`)이지 MCP 엔드포인트가 아니다. claude 쪽은
-    // `writeMcpConfigOnce` 가 `${murmurUrl}/mcp` 로 정규화해서 파일에 굽는데, 여기는 그 정규화
-    // 없이 murmurUrl 을 그대로 썼다 — codex 가 `POST /`(베이스 URL)를 때려 서버가
+    // `writeMcpConfigOnce` 가 `${harkroomUrl}/mcp` 로 정규화해서 파일에 굽는데, 여기는 그 정규화
+    // 없이 harkroomUrl 을 그대로 썼다 — codex 가 `POST /`(베이스 URL)를 때려 서버가
     // `404 route not found: POST /` 를 던지고, MCP 자체가 안 붙어 harkroom 도구가 하나도 안
     // 보였다. 실제 실패 증상은 조용했다: codex 는 exit 0 으로 끝났지만 message.post 를 못 불러
     // "(답 없이 턴을 끝냈습니다)" 만 남았다 — 원인이 이 URL 하나였다는 단서가 로그 어디에도
     // 없었다. 단위 테스트가 못 잡은 이유도 같은 패턴이다: `test/turn.test.ts` 의 fixture 가
-    // `murmurUrl: 'http://localhost:3401/mcp'` 로 **이미 `/mcp` 가 붙은 값을 직접 줘서** 이
-    // 함수가 값을 그대로 돌려주기만 해도 통과했다 — 프로덕션(main.ts→config.murmurUrl)이
+    // `harkroomUrl: 'http://localhost:3401/mcp'` 로 **이미 `/mcp` 가 붙은 값을 직접 줘서** 이
+    // 함수가 값을 그대로 돌려주기만 해도 통과했다 — 프로덕션(main.ts→config.harkroomUrl)이
     // 실제로 주는 값(베이스 URL, `/mcp` 없음)과 다른 입력으로 검증한 것이다. `mcpUrl()` 로
     // claude 와 정규화 지점을 하나로 합쳐, 다음에 엔드포인트 경로가 바뀌어도 한 곳만 고치면
     // 되게 한다.
-    '-c', `mcp_servers.harkroom.url="${mcpUrl(murmurUrl)}"`,
+    '-c', `mcp_servers.harkroom.url="${mcpUrl(harkroomUrl)}"`,
     '-c', 'mcp_servers.harkroom.bearer_token_env_var="HARKROOM_PAT"',
   ],
   model: (model) => (model ? ['--model', model] : []),
@@ -434,10 +434,10 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     );
   }
   assertValidSession(opts, preset);
-  if (!opts.murmurUrl) {
+  if (!opts.harkroomUrl) {
     // 타입은 필수(string)로 강제하지만, 빈 문자열은 타입 체크를 통과하고도 같은 조용한
     // 실패(harkroom MCP 미등록 → 답 못 함 → "답 없이 턴을 끝냈습니다")로 이어진다 — 여기서 막는다.
-    throw new Error('buildTurnCommand: murmurUrl 이 비어 있다 — murmur MCP 없이는 에이전트가 답할 방법이 없다');
+    throw new Error('buildTurnCommand: harkroomUrl 이 비어 있다 — harkroom MCP 없이는 에이전트가 답할 방법이 없다');
   }
   if (opts.harness === 'codex' && !opts.codexHome) {
     throw new Error('buildTurnCommand: codexHome 이 비어 있다 — 개인 Codex 설정을 격리할 수 없다');
@@ -447,7 +447,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     ...preset.session(opts.sessionId, opts.isFirstTurn, opts.mode),
     ...preset.alwaysArgs(opts.mode),
     ...(opts.mode === 'mention' ? preset.permission[opts.mentionPermission] : []),
-    ...preset.mcp({ mcpConfigPath: opts.mcpConfigPath, murmurUrl: opts.murmurUrl }),
+    ...preset.mcp({ mcpConfigPath: opts.mcpConfigPath, harkroomUrl: opts.harkroomUrl }),
     ...preset.model(opts.model),
     ...preset.effort(opts.effort),
     ...preset.prompt(opts.systemPrompt, opts.mode === 'mention' ? opts.promptCtx : '', opts.mode, opts.systemPromptFile ?? null),
@@ -579,15 +579,15 @@ function childEnv(
  *
  * 이름의 "once" 는 "세션 하나에 한 번만 쓰면 충분하다"는 뜻이지 "두 번 부르면 안 된다"가
  * 아니다 — 재시도 경로 등에서 두 번 불려도 같은 결과를 내고 에러 없이 그냥 덮어쓴다
- * (workspace.ts::ensureWorkspace 처럼 존재 검사로 건너뛰지는 않는다: murmurUrl 이 바뀌었는데
+ * (workspace.ts::ensureWorkspace 처럼 존재 검사로 건너뛰지는 않는다: harkroomUrl 이 바뀌었는데
  * 옛 파일이 그대로 남는 사고를 피한다).
  */
-export async function writeMcpConfigOnce(dir: string, murmurUrl: string): Promise<string> {
+export async function writeMcpConfigOnce(dir: string, harkroomUrl: string): Promise<string> {
   const config = {
     mcpServers: {
       harkroom: {
         type: 'http' as const,
-        url: mcpUrl(murmurUrl),
+        url: mcpUrl(harkroomUrl),
         headers: { Authorization: 'Bearer ${HARKROOM_PAT}' },
       },
       avcs: { type: 'stdio' as const, command: 'avcs', args: ['mcp'] },

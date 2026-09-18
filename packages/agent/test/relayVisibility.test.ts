@@ -46,7 +46,7 @@ describe('붙지 못하는 릴레이', () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     const d = fakeDialer();
     createRelayClient({
-      murmurUrl: 'http://x', pat: 'p', dial: d.dial, schedule: () => {},
+      harkroomUrl: 'http://x', pat: 'p', dial: d.dial, schedule: () => {},
     }).start();
 
     d.fail('Dynamic require of "events" is not supported');
@@ -60,7 +60,7 @@ describe('붙지 못하는 릴레이', () => {
     const d = fakeDialer();
     // 예약을 즉시 터뜨려 재시도가 실제로 여러 번 돌게 한다.
     createRelayClient({
-      murmurUrl: 'http://x', pat: 'p', dial: d.dial, schedule: (fn) => { fn(); },
+      harkroomUrl: 'http://x', pat: 'p', dial: d.dial, schedule: (fn) => { fn(); },
     }).start();
 
     d.fail('boom', 0);
@@ -76,7 +76,7 @@ describe('붙지 못하는 릴레이', () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     const d = fakeDialer();
     createRelayClient({
-      murmurUrl: 'http://x', pat: 'p', dial: d.dial, schedule: () => {},
+      harkroomUrl: 'http://x', pat: 'p', dial: d.dial, schedule: () => {},
     }).start();
 
     d.open();          // 한 번 붙었다

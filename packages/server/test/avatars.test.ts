@@ -38,9 +38,9 @@ const SVG = Buffer.from(
 beforeAll(async () => {
   const db = await startTestDb();
   stop = db.stop;
-  storageRoot = await mkdtemp(join(tmpdir(), 'murmur-avatar-'));
+  storageRoot = await mkdtemp(join(tmpdir(), 'harkroom-avatar-'));
   app = await buildServer({ pool: db.pool, storage: { root: storageRoot, maxBytes: 4096 } });
-  bigStorageRoot = await mkdtemp(join(tmpdir(), 'murmur-avatar-big-'));
+  bigStorageRoot = await mkdtemp(join(tmpdir(), 'harkroom-avatar-big-'));
   bigApp = await buildServer({ pool: db.pool, storage: { root: bigStorageRoot, maxBytes: SVG_MAX_BYTES * 4 } });
   ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
 
@@ -70,7 +70,7 @@ const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 
 /** multipart 본문을 손으로 만든다 — 테스트가 실제 wire 형식을 지나가야 한다. */
 function multipart(filename: string, content: Buffer, contentType: string) {
-  const boundary = '----murmurtest';
+  const boundary = '----harkroomtest';
   const head = Buffer.from(
     `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\n` +
     `Content-Type: ${contentType}\r\n\r\n`,

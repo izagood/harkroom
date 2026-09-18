@@ -19,7 +19,7 @@
 // 1차 exit(사람이 하네스 안에서 종료), 2차 고아 회수(viewer 0 → 유예 → SIGTERM→SIGKILL).
 import { randomUUID } from 'node:crypto';
 import type { AgentHarness, AgentView, MessageRow } from '@harkroom/shared';
-import type { Me } from './murmur.js';
+import type { Me } from './harkroom.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, type TurnPlan } from './turn.js';
 import { discoversSessionIdAfterTurn, hasAccountPool } from './adapters/index.js';
@@ -109,7 +109,7 @@ export interface InteractiveRelay {
 }
 
 export interface InteractiveTurnDeps {
-  murmur: {
+  harkroom: {
     definition(): Promise<AgentView>;
     readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]>;
   };
@@ -119,7 +119,7 @@ export interface InteractiveTurnDeps {
   me: Me;
   workspaceBaseDir: string;
   mcpConfigPath: string;
-  murmurUrl: string;
+  harkroomUrl: string;
   pat: string;
   codexHome: string;
   /**
@@ -224,7 +224,7 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
    */
   const spawn = async (key: string, req: InteractiveOpenRequest): Promise<InteractiveOpenResult> => {
     // 정의는 매번 새로 읽는다(멘션 턴과 같은 이유 — 하네스·모델이 UI 에서 바뀐다).
-    const def = await deps.murmur.definition();
+    const def = await deps.harkroom.definition();
     // 실행 경로도 이 정의에서 나온다 — 이유는 mentionTurn.ts 의 같은 자리에 적혀 있다.
     // 인터랙티브 턴도 감싸는 이유: 사람이 여는 터미널에서 새 경로를 확인하지 못하면
     // "새 경로로 넘어가도 되는가"의 절반(사람이 직접 보는 쪽)을 못 잰다.
@@ -277,7 +277,7 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       mentionPermission: def.mentionPermission,
       mcpConfigPath: deps.mcpConfigPath,
       pat: deps.pat,
-      murmurUrl: deps.murmurUrl,
+      harkroomUrl: deps.harkroomUrl,
       codexHome: deps.codexHome,
       claudeConfigDir: deps.claudeConfigDir,
     });
@@ -444,7 +444,7 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
         // 스레드에 쌓인 것만 당긴다(스펙 §4). 단 **대기 멘션의 min seq − 1 로 클램프한다**
         // (§5-2 결정 7): 클램프 없이 전진하면 유예됐다 풀려나는 멘션 턴의 델타 프롬프트가
         // 비어(그 멘션이 이미 "먹인 것"으로 계산된다) 그 부름이 조용히 소실된다.
-        const thread = await deps.murmur.readThread(req.channelId, req.threadRootId, current.lastFedSeq);
+        const thread = await deps.harkroom.readThread(req.channelId, req.threadRootId, current.lastFedSeq);
         const maxSeq = thread.reduce((max, m) => Math.max(max, m.seq), current.lastFedSeq);
         const minPending = deps.queue.minSeq(key);
         const advanced = minPending !== null ? Math.min(maxSeq, minPending - 1) : maxSeq;

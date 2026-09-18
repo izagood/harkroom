@@ -66,7 +66,7 @@ afterEach(async () => {
 });
 
 async function 임시앱디렉터리(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'murmur-adopt-'));
+  const dir = await mkdtemp(join(tmpdir(), 'harkroom-adopt-'));
   임시들.push(dir);
   return dir;
 }

@@ -9,7 +9,7 @@ describe('workspaceName', () => {
     const a = workspaceName('forge', 'ch1/m9');
     const b = workspaceName('scout', 'ch1/m9');
     expect(a).not.toBe(b);
-    expect(a).toMatch(/^murmur-forge-[0-9a-f]{8}$/);
+    expect(a).toMatch(/^harkroom-forge-[0-9a-f]{8}$/);
   });
 
   // 이름이 호출마다 달라지면 매 턴 새 워크스페이스가 생겨 세션 연속성(sessions.ts 의
@@ -34,7 +34,7 @@ describe('ensureWorkspace', () => {
     });
     expect(calls[0]![0]).toBe('avcs');
     expect(calls[0]).toContain('project');
-    expect(dir).toContain('murmur-forge-');
+    expect(dir).toContain('harkroom-forge-');
   });
 
   // 브리프가 요구하는 판단: "이미 있으면 project 를 다시 부르지 않는다"는 경로가 반환한

@@ -1637,7 +1637,7 @@ export function Sidebar({
           data-tauri-drag-region
           /*
             **`select-none` 이 있어야 한다**(실측 2026-09-07). 이 줄은 창을 끄는 손잡이
-            (`data-tauri-drag-region`)인데, 안의 `murmur` 는 그냥 텍스트 노드라 끌면
+            (`data-tauri-drag-region`)인데, 안의 `harkroom` 는 그냥 텍스트 노드라 끌면
             **창이 움직이는 대신 글자가 선택**됐다. 손잡이로 쓰는 자리의 글자는 고를
             대상이 아니다 — 복사할 값이 아니라 앱 이름이다.
           */
@@ -1660,7 +1660,7 @@ export function Sidebar({
             사람만 안다. 앱 이름을 적는 자리는 이 창에 여기 하나뿐이다.
 
             **이름을 지는 쪽은 글자다.** 그래서 로고는 `decorative` 로 둔다 — `#191` 의
-            회귀선(`test/logo.test.tsx`)이 지키는 것은 *"접근 가능한 이름 murmur 는 하나뿐"*
+            회귀선(`test/logo.test.tsx`)이 지키는 것은 *"접근 가능한 이름 harkroom 는 하나뿐"*
             이고, 로고와 글자가 둘 다 이름을 내면 스크린리더가 앱 이름을 두 번 읽는다.
           */}
           <span data-tauri-drag-region className="flex items-center gap-1.5">
@@ -2039,7 +2039,7 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
             filter={collabFilter}
             onFilterChange={setCollabFilter}
             /*
-              avcs actor 키 → murmur 계정 → handle. 계정을 모르면 **키를 그대로** 보인다
+              avcs actor 키 → harkroom 계정 → handle. 계정을 모르면 **키를 그대로** 보인다
               (서버가 모르는 키를 `actors` 에 넣지 않는다 — 그것이 외부 작업자다).
             */
             handleOf={(accountId) => accounts[accountId]?.handle ?? accountId}

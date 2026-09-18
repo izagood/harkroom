@@ -46,7 +46,7 @@
  * 부모를 그대로 쓰는 것과 **같은 규칙**이고, daemon 의 `defaultRunnerCommand()`(러너를
  * daemon 실행 파일 옆에서 찾는다)도 같은 자리를 가리킨다.
  *
- * 앱 이름은 `tauri.conf.json` 의 `productName`(`murmur`)이 정한다. 사람이 앱을 어디에
+ * 앱 이름은 `tauri.conf.json` 의 `productName`(`harkroom`)이 정한다. 사람이 앱을 어디에
  * 설치했는지는 앱이 알 수 없으므로 `/Applications` 를 **예시로만** 적는다.
  *
  * ## `HARKROOM_URL` 을 함께 적는 이유
@@ -68,7 +68,7 @@ export const RUNNER_SIDECAR_NAME = 'harkroom-runner';
 
 /**
  * `.app` 안 러너 사이드카의 경로. 설치 위치는 사람마다 다르므로 `/Applications` 는 예시다.
- * `productName` 이 `murmur` 이라 번들 이름이 `Harkroom.app` 이 된다.
+ * `productName` 이 `harkroom` 이라 번들 이름이 `Harkroom.app` 이 된다.
  */
 export const RUNNER_SIDECAR_PATH =
   `/Applications/Harkroom.app/Contents/MacOS/${RUNNER_SIDECAR_NAME}`;

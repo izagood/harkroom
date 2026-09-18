@@ -167,7 +167,7 @@ describe('AgentsSettings', () => {
 
   // harkroom 가 실행할 수 없는 harness 를 고를 수 있으면 안 된다. 없는 것은 사용자의 CLI 가
   // 아니라 harkroom 의 구현이므로 '지원 예정'이라고 적는다.
-  it('offers only the harness murmur can actually run', async () => {
+  it('offers only the harness harkroom can actually run', async () => {
     fakeController();
     render(<AgentsSettings />);
     // Task 15: 그리드가 먼저 뜬다 — 폼은 `+` 를 눌러야 열린다.

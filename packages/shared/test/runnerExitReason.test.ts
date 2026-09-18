@@ -26,7 +26,7 @@ describe('runnerExitReason — 로그 꼬리가 78 의 두 사유를 가른다',
    * 앱은 **하네스 로그인이 풀린 사람에게 "PAT 를 재발급하라"고 말했다** — `#473` 이 하네스
    * 부재에서 고친 것과 정확히 같은 결함이 자격증명 안에서 되풀이됐다.
    *
-   * `policy.ts` 는 이미 둘을 갈라 놓고 있었다(`murmur-credential`·`harness-credential`).
+   * `policy.ts` 는 이미 둘을 갈라 놓고 있었다(`harkroom-credential`·`harness-credential`).
    * 갈라지지 않은 곳은 **로그 마커**뿐이었고, 앱이 볼 수 있는 것은 그 마커뿐이다.
    */
   it('하네스 로그인 마커를 세 번째 사유로 가른다', () => {

@@ -81,7 +81,7 @@ describe('#340 실행 파일 부재는 한 번 만에 러너를 세운다', () =
   // 자격증명 실패(#250)의 기존 동작이 그대로다 — 같은 자리에서 나란히 판정되므로, 새 판정이
   // 앞에 붙으면서 이쪽 안내문을 가로챌 수 있었다.
   it('자격증명 실패도 그대로 1회 만에 물러난다 — 안내문은 자격증명 쪽이다', async () => {
-    const cred = Object.assign(new Error('murmur 401'), { status: 401, source: HARKROOM_ERROR_SOURCE });
+    const cred = Object.assign(new Error('harkroom 401'), { status: 401, source: HARKROOM_ERROR_SOURCE });
     const r = await runUntilStop(() => Promise.reject(cred));
     expect(r.attempts).toBe(1);
     expect(r.exited).toBe(true);

@@ -29,7 +29,7 @@ describe('#337 claudeSessionFileExists', () => {
       // 이 판정이 계속 ~/.claude/projects 를 보면, 계정 디렉터리로 돌린 세션을 "없음"으로
       // 읽어 다음 턴을 첫 턴으로 조립하고, claude 는 이미 쓰인 id 를 --session-id 로 다시
       // 받아 `Session ID <uuid> is already in use.` 로 즉사한다.
-      const configDir = await mkdtemp(join(tmpdir(), 'murmur-cfg-'));
+      const configDir = await mkdtemp(join(tmpdir(), 'harkroom-cfg-'));
       const projectDir = join(configDir, 'projects', '-tmp-work');
       await mkdir(projectDir, { recursive: true });
       await writeFile(join(projectDir, `${UUID}.jsonl`), '{"type":"session"}\n');
@@ -42,7 +42,7 @@ describe('#337 claudeSessionFileExists', () => {
     it('configDir 가 없으면 시스템 기본을 본다 — 계정 풀을 안 만든 러너의 경로', async () => {
       // 아래 파일은 홈이 아니라 임시 디렉터리에 있다. configDir 를 안 주면 못 본다 —
       // 이 동작이 바뀌면 하위 호환이 깨진다.
-      const configDir = await mkdtemp(join(tmpdir(), 'murmur-cfg-unused-'));
+      const configDir = await mkdtemp(join(tmpdir(), 'harkroom-cfg-unused-'));
       const projectDir = join(configDir, 'projects', '-tmp-work');
       await mkdir(projectDir, { recursive: true });
       await writeFile(join(projectDir, `${UUID}.jsonl`), '{"type":"session"}\n');

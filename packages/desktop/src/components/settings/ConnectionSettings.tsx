@@ -55,7 +55,7 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
   const baseUrl = getController().api.baseUrl || '—';
 
   return (
-    <SettingsPage title="Connection" description="The murmur server this app talks to.">
+    <SettingsPage title="Connection" description="The harkroom server this app talks to.">
       <SettingsGroup>
         {/* #165: 이 행은 계속 **활성 커뮤니티**를 보여 준다. 이 기기가 아는 서버 전부를
             보는 자리는 Communities 다 — 여기서 목록을 또 그리면 같은 사실이 두 곳에 산다. */}
@@ -102,7 +102,7 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
           </button>
         </div>
         {/* 저장소 경로·pnpm 경로 칸은 `#431` 1단계에서 없앴다 — 러너가 Tauri sidecar 로
-            바뀌면서 "murmur 소스가 어디 있나"·"pnpm 이 어디 있나"라는 물음 자체가
+            바뀌면서 "harkroom 소스가 어디 있나"·"pnpm 이 어디 있나"라는 물음 자체가
             사라졌다(sidecar 는 자기 위치를 스스로 알고 pnpm 을 거치지 않는다). 에이전트가
             **일할 저장소**는 에이전트 설정의 `workingDir` 이 맡는다 — 이 화면의 것이 아니다. */}
       </SettingsGroup>

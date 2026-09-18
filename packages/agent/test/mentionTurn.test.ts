@@ -3,7 +3,7 @@
 //
 // "에이전트가 스스로 발화한다"는 실제로는 하네스 프로세스 안에서 harkroom MCP 를 불러
 // 일어나는 일이라 이 테스트(프로세스 경계 밖)에서 직접 재현할 수 없다 — 그래서 runTurn
-// 스텁이 하네스 대신 fakeMurmur.post 를 호출해 "턴 도중 에이전트가 답을 올렸다"를
+// 스텁이 하네스 대신 fakeHarkroom.post 를 호출해 "턴 도중 에이전트가 답을 올렸다"를
 // 흉내낸다(task-9 브리프 시나리오 1 주석 그대로).
 import { lstat, mkdir, mkdtemp, readFile, readlink, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -12,9 +12,9 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentHarness, AgentView, MessageRow } from '@harkroom/shared';
-import { mentionAnchor, runMentionTurn, syncSkills, type MentionTurnDeps, type MentionTurnMurmur, type RunTurn } from '../src/mentionTurn.js';
+import { mentionAnchor, runMentionTurn, syncSkills, type MentionTurnDeps, type MentionTurnHarkroom, type RunTurn } from '../src/mentionTurn.js';
 import { BODY_LIMIT, NO_REPLY_NOTICE } from '../src/prompt.js';
-import { MurmurAgentClient } from '../src/murmur.js';
+import { HarkroomAgentClient } from '../src/harkroom.js';
 import { SessionStore } from '../src/sessions.js';
 import { isQuotaExhausted } from '../src/policy.js';
 import { workspaceName, type Exec } from '../src/workspace.js';
@@ -71,8 +71,8 @@ function defOf(overrides: Partial<AgentView> = {}): AgentView {
   };
 }
 
-/** MentionTurnMurmur 표면의 인메모리 fake. 스레드 하나(channelId 고정)만 다룬다. */
-class FakeMurmur implements MentionTurnMurmur {
+/** MentionTurnHarkroom 표면의 인메모리 fake. 스레드 하나(channelId 고정)만 다룬다. */
+class FakeHarkroom implements MentionTurnHarkroom {
   messages: MessageRow[] = [];
   posts: { channelId: string; body: string; threadRootId: string | null }[] = [];
   fails: { channelId: string; body: string; threadRootId: string | null; retryable: boolean }[] = [];
@@ -80,7 +80,7 @@ class FakeMurmur implements MentionTurnMurmur {
   def: AgentView;
   /** #80 테스트를 위해 readThread 호출 기록 */
   readThreadCalls: { channelId: string; threadRootId: string | null; since?: number }[] = [];
-  /** 프로덕션 클라이언트(`murmur.ts::readThread`)의 기본값은 30 이다. 테스트는 창 밖으로
+  /** 프로덕션 클라이언트(`harkroom.ts::readThread`)의 기본값은 30 이다. 테스트는 창 밖으로
    *  밀려나는 상황을 작은 수로 만들기 위해 이 값을 낮춘다. */
   limit = 30;
   /** 리액션 호출 기록 */
@@ -226,7 +226,7 @@ class FakeMurmur implements MentionTurnMurmur {
   }
 }
 
-async function makeDeps(fake: FakeMurmur, overrides: Partial<MentionTurnDeps> = {}): Promise<{
+async function makeDeps(fake: FakeHarkroom, overrides: Partial<MentionTurnDeps> = {}): Promise<{
   deps: MentionTurnDeps;
   execCalls: string[][];
   plans: TurnPlan[];
@@ -269,7 +269,7 @@ async function makeDeps(fake: FakeMurmur, overrides: Partial<MentionTurnDeps> = 
   );
 
   const deps: MentionTurnDeps = {
-    murmur: fake,
+    harkroom: fake,
     store,
     exec,
     runTurn,
@@ -284,7 +284,7 @@ async function makeDeps(fake: FakeMurmur, overrides: Partial<MentionTurnDeps> = 
     // 기본은 계정 지정 없음(시스템 기본) — 계정을 재는 테스트가 overrides 로 넘긴다.
     claudeAccount: null,
     claudeConfigDir: null,
-    murmurUrl: 'http://localhost:3400',
+    harkroomUrl: 'http://localhost:3400',
     pat: 'murp_test',
     turnTimeoutMs: 10_000,
     ...overrides,
@@ -315,12 +315,12 @@ async function getPlanContent(
 describe('runMentionTurn', () => {
   // 시나리오 1
   it('첫 멘션: ensureWorkspace 1회 + 세션 생성 + 에이전트가 스스로 답을 올리면 NO_REPLY 없음', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const { deps, execCalls, plans, runTurn, turnOpts } = await makeDeps(fake);
     runTurn.script = async () => {
       // 하네스가 아니라 이 테스트가 "에이전트가 message.post 를 불렀다"를 흉내낸다
-      // (프로세스 경계 밖이라 실제로 fakeMurmur.post 를 부를 수 없다).
+      // (프로세스 경계 밖이라 실제로 fakeHarkroom.post 를 부를 수 없다).
       await fake.post(CHANNEL, '안녕하세요!', null);
       return { exitCode: 0, timedOut: false, tail: '' };
     };
@@ -349,7 +349,7 @@ describe('runMentionTurn', () => {
   // 경우 다 같은 NO_REPLY_NOTICE 경로로 들어와야 한다. 이 경로가 없으면 사람 눈에는
   // 에이전트가 조용히 죽은 것과 똑같아 보인다(옛 reply.ts::extractReply 가 막던 바로 그것).
   it('발화 없는 턴(쓸 말 없음 또는 안전 거부, 둘 다 exit 0): NO_REPLY_NOTICE 가 남는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 뭐라도 답해줘');
     const { deps } = await makeDeps(fake); // 기본 스크립트: exit 0, 발화 없음
 
@@ -368,7 +368,7 @@ describe('runMentionTurn', () => {
    * 턴에는 통지 자체가 없으므로 붙일 자리도 없다.
    */
   it('침묵한 턴이 다른 스레드에 발화했으면 NO_REPLY_NOTICE 가 그 스레드를 함께 알린다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 이 스레드의 일을 해줘');
     const { deps } = await makeDeps(fake);
     // 하네스가 자기 앵커(채널 최상위)가 아니라 옆 스레드에 답을 올렸다.
@@ -385,7 +385,7 @@ describe('runMentionTurn', () => {
   });
 
   it('앵커 안에서만 말한 침묵 턴에는 앵커 밖 문단이 붙지 않는다 — 없는 사고를 지어내지 않는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 답해줘');
     const { deps } = await makeDeps(fake);
     // 발화는 없고, 채널에는 **동료의** 다른 스레드 발화만 있다.
@@ -403,7 +403,7 @@ describe('runMentionTurn', () => {
    * 턴은 30분 중 4분만 쓰고 스스로 물러났다.
    */
   it('시스템 프롬프트에 턴 예산과 turn.wake 지시가 실려 간다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 오래 걸리는 일');
     const { deps, plans, turnOpts } = await makeDeps(fake);
 
@@ -424,7 +424,7 @@ describe('runMentionTurn', () => {
    * CI 를 10분 기다리는 동안 "발화 없음" 이 열 줄 쌓인다.
    */
   it('턴 중에 깨움을 예약했으면 NO_REPLY_NOTICE 를 내지 않는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge PR 올리고 CI 통과하면 머지해');
     const { deps, runTurn } = await makeDeps(fake);
 
@@ -442,7 +442,7 @@ describe('runMentionTurn', () => {
   });
 
   it('깨움 줄만 있고 예약이 아닌 침묵은 여전히 NO_REPLY_NOTICE 다 — 턴 시작 전의 옛 예약은 근거가 아니다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     // 턴이 시작되기 **전에** 이미 있던 깨움 줄. 이번 턴이 기다림을 표현한 것이 아니다.
     const old = fake.seedFrom(ME.id, '옛 예약', null);
     old.kind = 'wake';
@@ -460,7 +460,7 @@ describe('runMentionTurn', () => {
    * **걸어 둔 기다림이 조용히 사라진다** — 예약의 존재 이유가 무너지는 지점이다.
    */
   it('깨어난 턴은 사람의 새 발화가 없어도 하네스를 돌리고, 프롬프트에 사유가 실린다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge PR 올리고 CI 통과하면 머지해');
     const { deps, runTurn, plans, turnOpts } = await makeDeps(fake);
 
@@ -494,7 +494,7 @@ describe('runMentionTurn', () => {
    * 있었다 — 성공 경로가 쓰지 않았을 뿐이다.
    */
   it('발화 없이 끝나면 하네스의 마지막 출력을 통지에 붙인다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge PR 올려줘');
     const { deps, runTurn } = await makeDeps(fake);
 
@@ -513,7 +513,7 @@ describe('runMentionTurn', () => {
   });
 
   it('남길 출력이 없으면 통지만 남는다 — 빈 상자를 덧붙이지 않는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 뭐라도');
     const { deps } = await makeDeps(fake); // 기본 스크립트: exit 0, tail ''
 
@@ -527,7 +527,7 @@ describe('runMentionTurn', () => {
    * 침묵이 침묵으로 남는다 — 이 기능이 막으려던 것과 정확히 같은 결과다.
    */
   it('통지가 서버 상한을 넘지 않는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 긴 출력');
     const { deps, runTurn } = await makeDeps(fake);
 
@@ -539,7 +539,7 @@ describe('runMentionTurn', () => {
   });
 
   it('PAT 가 tail 에 섞여 있어도 대화로 새지 않는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge env 를 찍어봐');
     const { deps, runTurn } = await makeDeps(fake);
 
@@ -557,12 +557,12 @@ describe('runMentionTurn', () => {
 
   // #90: 한 턴에서 두 번 이상 발화하면 경고가 나지만 채널에는 통보하지 않는다.
   it('한 턴에 두 번 이상 발화하면 경고가 나고, NO_REPLY_NOTICE 는 안 난다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 질문');
     const { deps, runTurn } = await makeDeps(fake);
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    // 하네스가 두 번 발화하도록 조립 — FakeMurmur.post 가 불릴 때마다 실제 메시지가 남는다
+    // 하네스가 두 번 발화하도록 조립 — FakeHarkroom.post 가 불릴 때마다 실제 메시지가 남는다
     runTurn.script = async () => {
       await fake.post(CHANNEL, '첫 번째 답', null);
       await fake.post(CHANNEL, '두 번째 답', null);
@@ -580,7 +580,7 @@ describe('runMentionTurn', () => {
   // 실패한 턴에서도 중복 발화는 일어난다 — 답을 두 번 올리고 나서 죽는 경우다.
   // 성공 경로만 관측하면 "실패했으니 안 보였다"가 되어 #90 의 관측이 반쪽이 된다.
   it('실패한 턴에서도 두 번 발화하면 경고가 난다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 질문');
     const { deps, runTurn } = await makeDeps(fake);
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -598,7 +598,7 @@ describe('runMentionTurn', () => {
   });
 
   it('한 턴에 한 번만 발화하면 경고 없고 NO_REPLY_NOTICE 도 안 난다(회귀)', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 질문');
     const { deps, runTurn } = await makeDeps(fake);
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -618,7 +618,7 @@ describe('runMentionTurn', () => {
 
   describe('같은 threadKey 두 번째 멘션', () => {
     it('ensureWorkspace 재호출 없음 + isFirstTurn=false 로 -r 조립', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '첫 질문');
       const { deps, execCalls, plans, runTurn, turnOpts } = await makeDeps(fake);
       runTurn.script = async () => {
@@ -644,7 +644,7 @@ describe('runMentionTurn', () => {
 
     // 시나리오 4
     it('lastFedSeq 전진: 두 번째 턴의 promptCtx 에 첫 턴 메시지가 없다', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '첫번째메시지고유문구');
       const { deps, plans, runTurn, turnOpts } = await makeDeps(fake);
       runTurn.script = async () => {
@@ -667,7 +667,7 @@ describe('runMentionTurn', () => {
 
   // task-9 브리프 수정 항목 — harness 변경은 세션을 무효화한다.
   it('harness 를 바꾸면 다음 턴이 isFirstTurn: true 로 조립되고 옛 sessionId 가 남지 않는다', async () => {
-    const fake = new FakeMurmur(defOf({ harness: 'claude-code' }));
+    const fake = new FakeHarkroom(defOf({ harness: 'claude-code' }));
     fake.seedFrom('human-1', '첫 질문');
     const { deps, execCalls, plans, runTurn, turnOpts } = await makeDeps(fake);
     runTurn.script = async () => {
@@ -705,7 +705,7 @@ describe('runMentionTurn', () => {
   // prompt.ts 의 isFirstTurn(lastFedSeq 0)이 자기 발화를 포함한 스레드 전체를 다시
   // 먹인다 — 하네스 내부 컨텍스트는 잃지만 스레드의 사실은 남는다.
   it('계정이 바뀌면 세션을 버리고 첫 턴으로 다시 시작한다', async () => {
-    const fake = new FakeMurmur(defOf({ harness: 'claude-code' }));
+    const fake = new FakeHarkroom(defOf({ harness: 'claude-code' }));
     fake.seedFrom('human-1', '첫 질문');
     const { deps, execCalls, plans, runTurn, turnOpts } = await makeDeps(fake, {
       claudeAccount: 'cedar', claudeConfigDir: '/pool/cedar',
@@ -743,7 +743,7 @@ describe('runMentionTurn', () => {
   });
 
   it('계정이 같으면 세션을 유지한다', async () => {
-    const fake = new FakeMurmur(defOf({ harness: 'claude-code' }));
+    const fake = new FakeHarkroom(defOf({ harness: 'claude-code' }));
     fake.seedFrom('human-1', '첫 질문');
     const { deps, plans, runTurn, turnOpts } = await makeDeps(fake, {
       claudeAccount: 'aria', claudeConfigDir: '/pool/aria',
@@ -766,7 +766,7 @@ describe('runMentionTurn', () => {
 
   // 풀을 안 만든 러너(계정 지정 없음)가 이 필드 때문에 세션을 잃지 않아야 한다.
   it('옛 레코드(계정 필드 없음)를 계정 지정 없는 러너가 읽어도 세션을 버리지 않는다', async () => {
-    const fake = new FakeMurmur(defOf({ harness: 'claude-code' }));
+    const fake = new FakeHarkroom(defOf({ harness: 'claude-code' }));
     fake.seedFrom('human-1', '첫 질문');
     const { deps, plans, runTurn, turnOpts } = await makeDeps(fake);
     runTurn.script = async () => {
@@ -791,7 +791,7 @@ describe('runMentionTurn', () => {
   // #92: 지시문이 argv 로 새지 않는지는 **프로덕션 경로**에서 봐야 한다. buildTurnCommand 만
   // 단위 테스트하면 "파일을 쓰는 호출자가 아무도 없다"는 상태를 놓친다(실제로 그랬다).
   it('지시문을 argv 가 아니라 파일로 넘긴다 (#92)', async () => {
-    const fake = new FakeMurmur(defOf({ instructions: '절대-argv에-없어야-하는-지시문' }));
+    const fake = new FakeHarkroom(defOf({ instructions: '절대-argv에-없어야-하는-지시문' }));
     fake.seedFrom('human-1', '@forge 안녕');
     const { deps, plans, turnOpts } = await makeDeps(fake);
 
@@ -813,7 +813,7 @@ describe('runMentionTurn', () => {
   // 지시문 파일은 러너의 상태 디렉터리에 있어야 한다 — 에이전트 워크스페이스 안에 두면
   // mentionPermission:'auto'(bypassPermissions) 에이전트가 자기 지시문을 고칠 수 있다.
   it('지시문 파일은 에이전트 워크스페이스 밖에 쓴다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const { deps, plans, turnOpts } = await makeDeps(fake);
 
@@ -829,7 +829,7 @@ describe('runMentionTurn', () => {
   // 재시도 시점이 델타가 비어있어도 하네스가 다시 떠야 하기 때문이다.
   describe('실패한 턴의 상태 저장 (#81 수정)', () => {
     it('실패 시 lastFedSeq 와 turnsRun 은 전진하지 않는다', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '@forge 안녕');
       const { deps, runTurn } = await makeDeps(fake);
       runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: 'some error' });
@@ -845,7 +845,7 @@ describe('runMentionTurn', () => {
     });
 
     it('타임아웃 시 lastFedSeq 와 turnsRun 도 전진하지 않는다', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '@forge 안녕');
       const { deps, runTurn } = await makeDeps(fake);
       runTurn.script = async () => ({ exitCode: 0, timedOut: true, tail: 'timeout' });
@@ -862,7 +862,7 @@ describe('runMentionTurn', () => {
     // (답을 올린 뒤 계속 일하다 SIGTERM 을 맞는다). 전진시키지 않으면 재시도가 같은
     // 메시지를 다시 먹여 같은 질문에 두 번 답한다.
     it('실패했어도 이미 발화했다면 lastFedSeq 는 전진한다 (중복 발화 방지)', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '@forge 안녕');
       const { deps, runTurn } = await makeDeps(fake);
       runTurn.script = async () => {
@@ -882,15 +882,15 @@ describe('runMentionTurn', () => {
     // 발화 확인 자체가 실패하면(harkroom 네트워크 끊김) 전진시키지 않는다 —
     // "한 번 더 시도한다"가 "중복 발화"보다 회복 가능한 쪽이다.
     it('실패 턴의 발화 확인이 던지면 lastFedSeq 를 전진시키지 않는다', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '@forge 안녕');
       const { deps, runTurn } = await makeDeps(fake);
       runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: 'boom' });
-      const original = deps.murmur.readThread.bind(deps.murmur);
+      const original = deps.harkroom.readThread.bind(deps.harkroom);
       let calls = 0;
-      deps.murmur.readThread = async (...args: Parameters<typeof original>) => {
+      deps.harkroom.readThread = async (...args: Parameters<typeof original>) => {
         calls += 1;
-        if (calls > 1) throw new Error('murmur 연결 끊김');
+        if (calls > 1) throw new Error('harkroom 연결 끊김');
         return original(...args);
       };
 
@@ -902,7 +902,7 @@ describe('runMentionTurn', () => {
     });
 
     it('실패 후 재시도에서 델타가 비어있어도 하네스가 다시 실행된다 (#81 핵심 재현)', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '첫 번째 질문');
       const { deps, plans, runTurn, turnOpts } = await makeDeps(fake);
       let callCount = 0;
@@ -944,7 +944,7 @@ describe('runMentionTurn', () => {
     const QUOTA_TAIL = "You've hit your session limit · resets 10:50pm (Asia/Seoul)";
 
     it('세션 파일이 실재하면 실패해도 turnsRun 을 1 로 올린다', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '@forge 안녕');
       const { deps, runTurn } = await makeDeps(fake, { sessionMaterialized: async () => true });
       runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: QUOTA_TAIL });
@@ -960,7 +960,7 @@ describe('runMentionTurn', () => {
     // 못 했으므로(lastFedSeq) 다음 턴은 같은 델타를 다시 먹여야 한다 — 여기서 커서를 함께
     // 전진시키면 사람의 질문이 답 없이 소실된다.
     it('세션이 실재해도 답이 없었으면 lastFedSeq 는 전진하지 않는다', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '@forge 안녕');
       const { deps, runTurn } = await makeDeps(fake, { sessionMaterialized: async () => true });
       runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: QUOTA_TAIL });
@@ -975,7 +975,7 @@ describe('runMentionTurn', () => {
     // 이 테스트가 실측 결함 자체다. 수정 전에는 두 번째 턴이 `--session-id` 로 조립되어
     // claude 가 거부했다.
     it('세션이 실재하면 다음 턴은 같은 id 로 resume 한다', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '@forge 안녕');
       const { deps, plans, runTurn, turnOpts } = await makeDeps(fake, { sessionMaterialized: async () => true });
       let calls = 0;
@@ -1000,7 +1000,7 @@ describe('runMentionTurn', () => {
     // "세션이 실재하는가"다 — 열었다 아무 말 없이 죽은 턴은 이어받을 것이 없으므로
     // 같은 uuid 로 첫 턴을 다시 시도해야 한다.
     it('세션 파일이 없으면 실패 턴은 turnsRun 을 올리지 않는다', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '@forge 안녕');
       const { deps, runTurn } = await makeDeps(fake, { sessionMaterialized: async () => false });
       runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: 'boom' });
@@ -1020,7 +1020,7 @@ describe('runMentionTurn', () => {
   // 나지만, turnsRun 이 건너뛴 턴을 거치고도 세션 진행 상태를 정확히 지키는지는 별개로
   // 고정해 둘 가치가 있다.)
   it('건너뛴 턴(전부 자기 발화) 이후에도 세션은 그대로 이어진다 — turnsRun 유지, 같은 sessionId 로 resume', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '첫 질문');
     const { deps, plans, runTurn, turnOpts } = await makeDeps(fake);
     runTurn.script = async () => {
@@ -1053,7 +1053,7 @@ describe('runMentionTurn', () => {
 
   // task-9 브리프 수정 항목 — handles 맵이 배치 단위로 채워져야 동료 발화가 handle 로 렌더된다.
   it('handles 맵에 있는 다른 계정의 메시지는 handle 로 렌더된다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 이 스레드 좀 봐줘');
     const { deps, plans, turnOpts } = await makeDeps(fake, { handles: { [ME.id]: ME.handle, 'human-1': 'jaebin' } });
 
@@ -1066,7 +1066,7 @@ describe('runMentionTurn', () => {
   });
 
   it('handles 맵에 없는 작성자는 여전히 "알 수 없는 사용자"로 표시된다 — 회귀 대조', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('ghost-1', '@forge 나 누군지 모를걸');
     const { deps, plans, turnOpts } = await makeDeps(fake, { handles: { [ME.id]: ME.handle } });
 
@@ -1078,7 +1078,7 @@ describe('runMentionTurn', () => {
   });
 
   it('하네스가 비정상 종료하면 던진다 — tail 을 담아 policy.ts::isCredentialFailure 가 판단할 수 있게 한다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const { deps, runTurn } = await makeDeps(fake);
     runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: 'Could not resolve authentication method' });
@@ -1105,7 +1105,7 @@ describe('runMentionTurn', () => {
   // readThread) 을 각각 재현해 store.put 이 이미 끝나 있음을 고정한다.
   describe('세션 상태는 관측·통보보다 먼저 저장된다 (fix round 1)', () => {
     it('발화 확인 뒤 post 가 던져도 세션은 이미 저장돼 있다', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '@forge 안녕');
       const { deps } = await makeDeps(fake); // 기본 스크립트: exit 0, 발화 없음 → NO_REPLY 시도
       vi.spyOn(fake, 'post').mockRejectedValueOnce(new Error('network blip'));
@@ -1122,7 +1122,7 @@ describe('runMentionTurn', () => {
     });
 
     it('발화 확인용 readThread 가 던져도 세션은 이미 저장돼 있다', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '@forge 안녕');
       const { deps } = await makeDeps(fake);
       const original = fake.readThread.bind(fake);
@@ -1153,7 +1153,7 @@ describe('runMentionTurn', () => {
   // 재시도 한도까지 영원히 실패한다(리뷰가 실물로 재현). 테스트 환경엔 실제 rollout 파일이
   // 없어 findCodexSessionId 가 항상 null 을 돌려주므로, 이 시나리오를 그대로 재현할 수 있다.
   it('codex 세션 발견이 실패해도(turnsRun>=1, sessionId 여전히 null) 다음 턴은 isFirstTurn:true 로 다시 시작한다 — 영구 벽돌 방지', async () => {
-    const fake = new FakeMurmur(defOf({ harness: 'codex' }));
+    const fake = new FakeHarkroom(defOf({ harness: 'codex' }));
     fake.seedFrom('human-1', '@forge 첫 질문');
     const { deps, plans, runTurn, turnOpts } = await makeDeps(fake);
     runTurn.script = async () => {
@@ -1192,7 +1192,7 @@ describe('runMentionTurn', () => {
   // 디렉터리만 만든다.
   describe('workingDir 이 지정되지 않았을 때', () => {
     it('avcs 를 시도하지 않고 평범한 mkdir 로 스레드 전용 디렉터리를 실제로 만든다', async () => {
-      const fake = new FakeMurmur(defOf({ workingDir: null }));
+      const fake = new FakeHarkroom(defOf({ workingDir: null }));
       fake.seedFrom('human-1', '@forge 안녕');
       const { deps, execCalls } = await makeDeps(fake);
 
@@ -1209,7 +1209,7 @@ describe('runMentionTurn', () => {
     // 쓴다(폴백 유지) — 사용자가 그 파일들에서 일하라고 지정한 것이라 빈 디렉터리로
     // 갈아치우면 설정이 장식이 된다.
     it('workingDir 이 명시됐지만 avcs repo 가 아니면 지정된 디렉터리를 그대로 쓴다', async () => {
-      const fake = new FakeMurmur(defOf({ workingDir: '/some/explicit/repo' }));
+      const fake = new FakeHarkroom(defOf({ workingDir: '/some/explicit/repo' }));
       fake.seedFrom('human-1', '@forge 안녕');
       const notAvcsExec: Exec = async () => ({
         code: 1, stdout: '', stderr: 'error: not an AVCS repo: /some/explicit/repo',
@@ -1226,7 +1226,7 @@ describe('runMentionTurn', () => {
   // #80 테스트: since 커서 wiring
   describe('readThread 에 since 가 실려 간다 (#80 수정)', () => {
     it('첫 턴에서 since=0 으로 읽으면 전체 맥락이 반환된다(회귀 방지)', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '메시지1');
       fake.seedFrom('human-1', '메시지2');
       fake.seedFrom('human-1', '메시지3');
@@ -1241,7 +1241,7 @@ describe('runMentionTurn', () => {
     });
 
     it('재시도 턴에서 lastFedSeq 로 since 를 건다', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '첫 질문');
       const { deps, runTurn } = await makeDeps(fake);
       runTurn.script = async () => {
@@ -1268,7 +1268,7 @@ describe('runMentionTurn', () => {
     // 이 테스트는 그 경계를 사실로 못 박는다 — 아래 회귀 테스트가 무엇을 보장하고
     // 무엇을 보장하지 않는지가 여기서 갈린다.
     it('첫 턴은 창 안의 최신 N 개만 본다 (그 앞은 이력으로 남는다)', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.limit = 3;
       for (const b of ['옛1', '옛2', '최근1', '최근2', '최근3']) fake.seedFrom('human-1', b);
       const { deps, plans, turnOpts } = await makeDeps(fake);
@@ -1300,7 +1300,7 @@ describe('runMentionTurn', () => {
     // #117 수정: 이 테스트는 prompt content 가 stdin 파일로 이동하면서 same content 를
     // 포함해야 한다. fake.limit=3 이라 3 개만 표시되므로, limit 를 높여서 모두 확인한다.
     it('커서가 생긴 뒤에는 창보다 많이 쌓여도 건너뛰는 메시지가 없다', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.limit = 10; // #117: limit 를 높여 모든 메시지가 포함되도록 한다
       fake.seedFrom('human-1', '첫 질문');
       const { deps, plans, turnOpts } = await makeDeps(fake);
@@ -1332,7 +1332,7 @@ describe('runMentionTurn', () => {
     });
 
     it('발화 확인 읽기에서 turnStartSeq 로 since 를 건다', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '@forge 안녕');
       const { deps, runTurn } = await makeDeps(fake);
       runTurn.script = async () => {
@@ -1357,7 +1357,7 @@ describe('runMentionTurn', () => {
     // 수정 전: 같은 `_root` 로 뭉쳐 실패
     // 수정 후: 각 멘션의 messageId 로 다른 키를 갖는다
     it('채널 최상위 멘션 두 건이 서로 다른 세션 키를 갖는다', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       const m1 = fake.seedFrom('human-1', '@forge 첫 번째 질문');
       const m2 = fake.seedFrom('human-2', '@forge 두 번째 질문');
       const { deps, runTurn } = await makeDeps(fake);
@@ -1390,7 +1390,7 @@ describe('runMentionTurn', () => {
 
     // 시나리오 2: 채널 최상위 멘션의 답이 그 멘션을 루트로 하는 스레드
     it('채널 최상위 멘션의 답이 멘션 messageId 를 루트로 하는 스레드로 간다', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       const mentionMsg = fake.seedFrom('human-1', '@forge 안녕');
       mentionMsg.threadRootId = mentionMsg.id;
       const { deps, runTurn } = await makeDeps(fake);
@@ -1408,7 +1408,7 @@ describe('runMentionTurn', () => {
 
     // 시나리오 3: 스레드 안의 멘션은 기존 대 로 그 스레드에 답한다 (회귀)
     it('스레드 안의 멘션은 기존대로 그 스레드의 루트를 쓴다 (회귀)', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       const rootMsg = fake.seedFrom('human-1', '첫 메시지');
       rootMsg.threadRootId = rootMsg.id;
       fake.seedFrom('human-1', '@forge 스레드 안 질문', rootMsg.id);
@@ -1428,7 +1428,7 @@ describe('runMentionTurn', () => {
 
     // 시나리오 4: 같은 스레드의 두 번째 멘션이 첫 턴의 세션을 이어받는다 (회귀)
     it('같은 스레드의 두 번째 멘션이 첫 턴의 세션을 이어받는다 (회귀)', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       const rootMsg = fake.seedFrom('human-1', '첫 질문');
       rootMsg.threadRootId = rootMsg.id;
       const { deps, runTurn } = await makeDeps(fake);
@@ -1459,14 +1459,14 @@ describe('runMentionTurn', () => {
 // countOwnPostsSince에서 자동으로 제외된다.
 describe('진행 설명 메시지 (#144)', () => {
   // runTurn 스텁 안에서 에이전트가 progress 메서드를 호출하는 것을 흉내낸다.
-  // FakeMurmur.progress()는 kind='progress' 메시지를 생성한다.
+  // FakeHarkroom.progress()는 kind='progress' 메시지를 생성한다.
   const withProgress = (body: () => Promise<void>) => async () => {
     await body();
     return { exitCode: 0, timedOut: false, tail: '' };
   };
 
   it('progress 메시지만 있으면 NO_REPLY_NOTICE가 나간다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 질문');
     const { deps, runTurn } = await makeDeps(fake, {});
     // 에이전트가 progress 메시지만 올림 (결과 없음)
@@ -1485,7 +1485,7 @@ describe('진행 설명 메시지 (#144)', () => {
   });
 
   it('progress + 결과 메시지가 있으면 NO_REPLY_NOTICE가 나가지 않는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 질문');
     const { deps, runTurn } = await makeDeps(fake, {});
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -1504,7 +1504,7 @@ describe('진행 설명 메시지 (#144)', () => {
   });
 
   it('결과 메시지만 있으면 NO_REPLY_NOTICE가 나가지 않는다 (기존 회귀선)', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 질문');
     const { deps, runTurn } = await makeDeps(fake, {});
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -1521,7 +1521,7 @@ describe('진행 설명 메시지 (#144)', () => {
   });
 
   it('결과 메시지 2건이면 중복 발화 경고가 난다 (#90 관측)', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 질문');
     const { deps, runTurn } = await makeDeps(fake, {});
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -1541,7 +1541,7 @@ describe('진행 설명 메시지 (#144)', () => {
   // #126: 턴 시작/종료 로그
   describe('턴 시작/종료 로그 (#126 수정)', () => {
     it('턴 시작 로그가 남는다', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '@forge 질문');
       const { deps } = await makeDeps(fake);
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -1558,7 +1558,7 @@ describe('진행 설명 메시지 (#144)', () => {
     });
 
     it('턴 종료 로그가 남는다', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '@forge 질문');
       const { deps } = await makeDeps(fake);
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -1578,7 +1578,7 @@ describe('진행 설명 메시지 (#144)', () => {
     });
 
     it('타임아웃 시 종료 로그에 timeout 이 포함된다', async () => {
-      const fake = new FakeMurmur(defOf());
+      const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '@forge 질문');
       const { deps, runTurn } = await makeDeps(fake);
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -1599,7 +1599,7 @@ describe('진행 설명 메시지 (#144)', () => {
 // 👀 💬 리액션 신호 회귀 테스트
 describe('리액션 신호 (👀 💬)', () => {
   it('👀 가 runTurn 호출 전에 걸린다 (순서 검증)', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     const mentionMsg = fake.seedFrom('human-1', '@forge 안녕');
     mentionMsg.threadRootId = mentionMsg.id; // 채널 최상위 멘션을 스레드로 만든다
     const { deps, runTurn } = await makeDeps(fake);
@@ -1624,7 +1624,7 @@ describe('리액션 신호 (👀 💬)', () => {
   // 두 값이 같은 테스트만 있으면 앵커를 대상으로 쓰는 회귀가 통과해 버린다 — 실제로
   // main.ts 가 mentionId 를 넘기지 않아 앵커가 대상이 되던 결함이 그렇게 숨어 있었다.
   it('리액션 대상은 앵커가 아니라 멘션 메시지다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     const root = fake.seedFrom('human-1', '스레드 루트');
     root.threadRootId = root.id;
     const mentionMsg = fake.seedFrom('human-1', '@forge 이것 좀', root.id);
@@ -1640,7 +1640,7 @@ describe('리액션 신호 (👀 💬)', () => {
   // 턴이 아주 짧으면 제거가 추가를 앞질러 서버에 닿아 💬 가 영구히 남는다. 같은 파일의
   // ackInFlight 가 이미 이 함정을 기록한다 — 리액션에서 같은 실수를 반복했다.
   it('추가가 늦어도 제거가 추가를 앞지르지 않는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     const mentionMsg = fake.seedFrom('human-1', '@forge 안녕');
     mentionMsg.threadRootId = mentionMsg.id;
     const { deps, runTurn } = await makeDeps(fake);
@@ -1657,7 +1657,7 @@ describe('리액션 신호 (👀 💬)', () => {
   });
 
   it('💬 가 턴 시작 시 걸리고 턴 종료 후 제거된다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     const mentionMsg = fake.seedFrom('human-1', '@forge 안녕');
     mentionMsg.threadRootId = mentionMsg.id;
     const { deps, runTurn } = await makeDeps(fake);
@@ -1678,7 +1678,7 @@ describe('리액션 신호 (👀 💬)', () => {
   });
 
   it('runTurn 이 던져도 💬 가 제거된다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     const mentionMsg = fake.seedFrom('human-1', '@forge 안녕');
     mentionMsg.threadRootId = mentionMsg.id;
     const { deps, runTurn } = await makeDeps(fake);
@@ -1698,7 +1698,7 @@ describe('리액션 신호 (👀 💬)', () => {
   });
 
   it('runTurn 이 타임아웃이어도 💬 가 제거된다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     const mentionMsg = fake.seedFrom('human-1', '@forge 안녕');
     mentionMsg.threadRootId = mentionMsg.id;
     const { deps, runTurn } = await makeDeps(fake);
@@ -1716,7 +1716,7 @@ describe('리액션 신호 (👀 💬)', () => {
   });
 
   it('리액션 호출이 실패해도 턴이 정상 완료된다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     const mention = fake.seedFrom('human-1', '@forge 질문');
     mention.threadRootId = mention.id;
     const { deps, runTurn } = await makeDeps(fake);
@@ -1739,7 +1739,7 @@ describe('리액션 신호 (👀 💬)', () => {
   });
 
   it('리액션을 추가해도 post 호출 횟수가 늘지 않는다 (리액션 != 발화)', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     const mentionMsg = fake.seedFrom('human-1', '@forge 안녕');
     mentionMsg.threadRootId = mentionMsg.id;
     const { deps } = await makeDeps(fake);
@@ -1779,7 +1779,7 @@ describe('메모리 주입 (#139)', () => {
   // 프롬프트 내용은 buildSystemPrompt 단위 테스트가 덮는다(#117 이후 지시문은 파일로
   // 나가므로 plan.systemPrompt 로는 볼 수 없다). 여기서 지킬 것은 **읽는 횟수**다.
   it('턴마다 메모리를 다시 읽는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     const mentionMsg = fake.seedFrom('human-1', '@forge 안녕');
     mentionMsg.threadRootId = mentionMsg.id;
     const { deps } = await makeDeps(fake);
@@ -1795,7 +1795,7 @@ describe('메모리 주입 (#139)', () => {
 
   // 조회가 실패해도 턴은 돈다 — 기억이 없다고 응답을 못 하게 만들면 장애가 침묵이 된다.
   it('메모리 조회가 실패해도 턴이 정상 진행된다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     const mentionMsg = fake.seedFrom('human-1', '@forge 안녕');
     mentionMsg.threadRootId = mentionMsg.id;
     fake.memory = new Error('db down');
@@ -1819,7 +1819,7 @@ describe('종료 요청 (#129)', () => {
   // 호출자(main.ts 의 폴 루프)가 턴이 끝난 뒤에 정한다.
   it('종료 요청이 와 있어도 턴을 끝까지 마치고, 요청은 반환값으로만 알린다', async () => {
     const REQUESTED_AT = '2026-09-03T10:00:00.000Z';
-    const fake = new FakeMurmur(defOf({ stopRequestedAt: REQUESTED_AT }));
+    const fake = new FakeHarkroom(defOf({ stopRequestedAt: REQUESTED_AT }));
     fake.seedFrom('human-1', '@forge 안녕');
     const { deps, plans, runTurn, turnOpts } = await makeDeps(fake);
     runTurn.script = async () => {
@@ -1844,7 +1844,7 @@ describe('활동 보고 (#176)', () => {
   // 이 값이 화면의 "마지막 활동: N분 전"이 되는 유일한 원천이다 — 러너가 부르지 않으면
   // 화면은 영원히 '활동 없음'을 그린다(서버는 러너 프로세스를 보지 못한다).
   it('턴이 끝나면 보고한다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const { deps, runTurn } = await makeDeps(fake);
     runTurn.script = async () => {
@@ -1863,7 +1863,7 @@ describe('활동 보고 (#176)', () => {
   // 발화 없이 끝나는 턴(도구만 쓰고 끝난다)도 활동이다 — 발화를 활동으로 삼으면 그런 턴이
   // 화면에서 사라진다. 그래서 보고는 발화 여부와 무관하다.
   it('발화가 없는 턴도 보고한다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const { deps } = await makeDeps(fake);
 
@@ -1878,7 +1878,7 @@ describe('활동 보고 (#176)', () => {
   // 활동 보고가 안 됐다고 사람이 기다리는 답을 못 준 것은 아니다. 여기서 던지면 세션 상태
   // 저장·발화 확인까지 건너뛰고, 다음 턴이 같은 메시지를 다시 먹인다.
   it('보고가 실패해도 턴은 성공으로 끝난다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     fake.activityError = new Error('agent/activity 실패: 503');
     const { deps, runTurn } = await makeDeps(fake);
@@ -1902,7 +1902,7 @@ describe('활동 보고 (#176)', () => {
   // 이것이 없으면 계속 실패하는 러너가 화면에서 '활동 없음'으로 보여, 운영자는 러너가 아예
   // 안 붙었다고 오해한다.
   it('턴이 실패해도 활동은 보고한다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const { deps, runTurn } = await makeDeps(fake);
     runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: 'boom' });
@@ -1932,7 +1932,7 @@ describe('runMentionTurn: 스킬 동기화(#140)', () => {
 
   // 요구 6.
   it('승인된 스킬을 상태 디렉터리에 쓰고 하네스 디렉터리로 심볼릭 링크한다 — 복사가 아니다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     fake.skills = [{ slug: 'deploy-runbook', body: BODY }];
     const { deps, execCalls, runTurn } = await makeDeps(fake);
@@ -1963,7 +1963,7 @@ describe('runMentionTurn: 스킬 동기화(#140)', () => {
   });
 
   it('Codex 공식 .agents/skills 디렉터리에도 같은 링크가 걸린다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     fake.skills = [{ slug: 'deploy-runbook', body: BODY }];
     const { deps, execCalls } = await makeDeps(fake);
@@ -1975,7 +1975,7 @@ describe('runMentionTurn: 스킬 동기화(#140)', () => {
   });
 
   it('예전의 잘못된 .codex/skills 링크는 공식 경로로 옮기며 사용자 파일은 건드리지 않는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.skills = [{ slug: 'deploy-runbook', body: BODY }];
     fake.seedFrom('human-1', '@forge 배포');
     const { deps } = await makeDeps(fake);
@@ -1995,7 +1995,7 @@ describe('runMentionTurn: 스킬 동기화(#140)', () => {
 
   // 요구 7.
   it('목록에서 사라진 스킬(비활성·삭제)은 파일과 링크가 함께 사라진다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     fake.skills = [{ slug: 'keep-me', body: '남는다' }, { slug: 'drop-me', body: '사라진다' }];
     const { deps, execCalls } = await makeDeps(fake);
@@ -2019,7 +2019,7 @@ describe('runMentionTurn: 스킬 동기화(#140)', () => {
 
   // 요구 8.
   it('스킬 조회가 실패해도 턴은 진행되고 실패가 stderr 에 한 줄 남는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     fake.skills = new Error('skills 실패: 503');
     const { deps, runTurn } = await makeDeps(fake);
@@ -2048,7 +2048,7 @@ describe('runMentionTurn: 스킬 동기화(#140)', () => {
   // 조회 실패를 빈 목록으로 삼키면 "승인된 스킬이 없다"와 같아져, 동기화가 이미 붙어 있는
   // 스킬을 '사라진 것'으로 보고 지운다. 그 삼킴을 되돌리면 이 테스트가 빨개진다.
   it('조회가 실패하면 이미 실체화된 스킬을 지우지 않는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     fake.skills = [{ slug: 'deploy-runbook', body: BODY }];
     const { deps, execCalls } = await makeDeps(fake);
@@ -2117,10 +2117,10 @@ describe('syncSkills 단독(#140)', () => {
   });
 });
 
-// 위 시나리오들은 FakeMurmur 를 태운다 — 그것만으로는 **프로덕션 클라이언트**가 실패를
+// 위 시나리오들은 FakeHarkroom 를 태운다 — 그것만으로는 **프로덕션 클라이언트**가 실패를
 // 빈 배열로 삼켜도 전부 초록이다(가짜가 대신 던져 주기 때문이다). 그래서 실제 클라이언트를
 // 스텁 fetch 로 한 번 태운다: 러너가 stderr 에 한 줄 남길 수 있는지는 여기서 갈린다.
-describe('MurmurAgentClient.listApprovedSkills(#140)', () => {
+describe('HarkroomAgentClient.listApprovedSkills(#140)', () => {
   it('승인된 것만 요청한다 — 미승인 스킬을 실체화하면 승인 게이트가 없는 것과 같다', async () => {
     const original = globalThis.fetch;
     let seen = '';
@@ -2129,7 +2129,7 @@ describe('MurmurAgentClient.listApprovedSkills(#140)', () => {
       return new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } });
     }) as typeof fetch;
     try {
-      await new MurmurAgentClient('http://localhost:3400', 'murp_t').listApprovedSkills();
+      await new HarkroomAgentClient('http://localhost:3400', 'murp_t').listApprovedSkills();
       expect(seen).toContain('/skills?state=approved');
     } finally {
       globalThis.fetch = original;
@@ -2140,7 +2140,7 @@ describe('MurmurAgentClient.listApprovedSkills(#140)', () => {
     const original = globalThis.fetch;
     globalThis.fetch = (async () => new Response('nope', { status: 503 })) as typeof fetch;
     try {
-      const client = new MurmurAgentClient('http://localhost:3400', 'murp_t');
+      const client = new HarkroomAgentClient('http://localhost:3400', 'murp_t');
       await expect(client.listApprovedSkills()).rejects.toThrow(/503/);
     } finally {
       globalThis.fetch = original;
@@ -2189,7 +2189,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
   }
 
   it('턴을 세션으로 감싸고 PTY 바이트를 흘린다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const r = fakeRelay();
     const { deps, runTurn } = await makeDeps(fake, { relay: r.relay });
@@ -2238,7 +2238,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     화면이 그것을 말할 수 있는 유일한 근거가 이 세션에 실리는 값이다.
   */
   it('claude 턴은 지금 쓰는 계정과 풀을 세션에 싣는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const r = fakeRelay();
     const { deps } = await makeDeps(fake, { relay: r.relay, claudeAccount: 'lime', claudePool: 'work' });
@@ -2254,7 +2254,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     으로 남기는 편이 틀린 것을 단언하는 것보다 낫다(`mode`·`acceptsInput` 과 같은 규율).
   */
   it('codex 턴에는 claude 계정을 싣지 않는다 — 모르는 것으로 남긴다', async () => {
-    const fake = new FakeMurmur(defOf({ harness: 'codex' }));
+    const fake = new FakeHarkroom(defOf({ harness: 'codex' }));
     fake.seedFrom('human-1', '@forge 안녕');
     const r = fakeRelay();
     const { deps } = await makeDeps(fake, { relay: r.relay, claudeAccount: 'lime', claudePool: 'work' });
@@ -2279,7 +2279,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     프롬프트가 argv 에 없어(#117) 늘 초록이다.
   */
   it('codex 턴은 지시문을 프롬프트 앞에 접두해 주입한다 — 플래그로 받을 길이 없다', async () => {
-    const fake = new FakeMurmur(defOf({ harness: 'codex' }));
+    const fake = new FakeHarkroom(defOf({ harness: 'codex' }));
     fake.seedFrom('human-1', '@forge 안녕');
     const { deps, plans, turnOpts } = await makeDeps(fake);
 
@@ -2299,7 +2299,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     지시문이 한 턴에 두 번 실린다. `systemPromptDelivery` 표를 읽는다는 것이 곧 이 대칭이다.
   */
   it('claude 턴의 주입 텍스트에는 지시문이 없다 — 전용 플래그로 파일을 받는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const { deps, plans, turnOpts } = await makeDeps(fake);
 
@@ -2315,7 +2315,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     // 위 테스트가 `null` 로 통과하는 것만으로는 "앵커를 그대로 쓴다"를 확인하지 못한다 —
     // 하드코딩된 null 도 초록이다. 앵커가 실제 값일 때 그 값이 세션에 실리는지를 본다.
     const root = 'thread-root';
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '루트', root);
     fake.seedFrom('human-1', '@forge 안녕', root);
     const r = fakeRelay();
@@ -2327,7 +2327,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
   });
 
   it('턴이 실패해도 세션은 닫힌다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const r = fakeRelay();
     const { deps, runTurn } = await makeDeps(fake, { relay: r.relay });
@@ -2349,7 +2349,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     const sent: RelayRunnerFrame[] = [];
     let handlers: RelayHandlers | null = null;
     const client = createRelayClient({
-      murmurUrl: 'http://x', pat: 'p',
+      harkroomUrl: 'http://x', pat: 'p',
       dial: (_url, _pat, h) => {
         handlers = h;
         h.onOpen({ send: (data) => sent.push(JSON.parse(data) as RelayRunnerFrame), close: () => {} });
@@ -2374,7 +2374,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     // 운영자 결정: `mention_permission` 은 **에이전트가 스스로 넘지 못하는 선이지 사람이
     // 넘지 못하는 선이 아니다.** readonly 로 도는 턴의 프롬프트에 사람이 "yes" 를 칠 수
     // 있어야 원 요청("터미널에 들어가서 작업하는 것과 동일하게")이 온전히 성립한다.
-    const fake = new FakeMurmur(defOf({ mentionPermission: 'readonly' }));
+    const fake = new FakeHarkroom(defOf({ mentionPermission: 'readonly' }));
     fake.seedFrom('human-1', '@forge 안녕');
     const r = realRelay();
     const { deps, runTurn, plans, turnOpts } = await makeDeps(fake, { relay: r.relay });
@@ -2407,7 +2407,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     // plan 을 비교한다: 입력을 여는 것은 턴 모드를 바꾸는 것이 아니고, 바뀌는 것은 그
     // PTY 에 바이트를 넣을 수 있는 주체뿐이라는 문장이 여기서 성립한다.
     const runOnce = async (r?: ReturnType<typeof realRelay>) => {
-      const fake = new FakeMurmur(defOf({ mentionPermission: 'readonly' }));
+      const fake = new FakeHarkroom(defOf({ mentionPermission: 'readonly' }));
       fake.seedFrom('human-1', '@forge 안녕');
       const { deps, plans, runTurn, turnOpts } = await makeDeps(fake, r ? { relay: r.relay } : {});
       if (r) {
@@ -2527,10 +2527,10 @@ describe('진행 중인 멘션 턴에 사람이 칠 수 있다 (진짜 PTY 배�
     try {
       // `workingDir: null` 이어야 한다 — 다른 테스트의 기본값 '/repo' 는 이 기계에 없는
       // 경로이고, 진짜 spawn 은 그 디렉터리로 chdir 한다.
-      const fakeMurmur = new FakeMurmur(defOf({ workingDir: null }));
-      fakeMurmur.seedFrom('human-1', '@forge 안녕');
+      const fakeHarkroom = new FakeHarkroom(defOf({ workingDir: null }));
+      fakeHarkroom.seedFrom('human-1', '@forge 안녕');
       const r = probeRelay();
-      const { deps } = await makeDeps(fakeMurmur, { relay: r.relay, runTurn: r.capture(runPtyTurn) });
+      const { deps } = await makeDeps(fakeHarkroom, { relay: r.relay, runTurn: r.capture(runPtyTurn) });
 
       await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
@@ -2559,9 +2559,9 @@ describe('진행 중인 멘션 턴에 사람이 칠 수 있다 (진짜 PTY 배�
    * 본문을 그대로 보여 준다.
    */
   it('프롬프트 본문이 argv 에 없다 — 파일 경로만 있다', async () => {
-    const fakeMurmur = new FakeMurmur(defOf());
-    fakeMurmur.seedFrom('human-1', '@forge 비밀번호는 hunter2 다');
-    const { deps, plans, turnOpts } = await makeDeps(fakeMurmur);
+    const fakeHarkroom = new FakeHarkroom(defOf());
+    fakeHarkroom.seedFrom('human-1', '@forge 비밀번호는 hunter2 다');
+    const { deps, plans, turnOpts } = await makeDeps(fakeHarkroom);
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
@@ -2582,7 +2582,7 @@ describe('진행 중인 멘션 턴에 사람이 칠 수 있다 (진짜 PTY 배�
 describe('하네스 API 에러를 세션 JSONL 에서 함께 싣는다 (2026-09-08)', () => {
   it('실패한 턴이 세션 파일의 isApiErrorMessage 를 에러에 싣는다 — tail 에 시각이 없어도', async () => {
     // 2026-09-07 19:03 사건의 모양: tail 은 잘려 시각이 없고 세션 파일에는 있다.
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
 
     const configDir = await mkdtemp(join(tmpdir(), 'mention-turn-cfg-'));
@@ -2615,7 +2615,7 @@ describe('하네스 API 에러를 세션 JSONL 에서 함께 싣는다 (2026-09-
   });
 
   it('세션 파일이 없으면 필드 없이 던진다 — 읽기 실패가 실패 처리를 무너뜨리지 않는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const { deps, runTurn } = await makeDeps(fake);
     runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: 'some error' });
@@ -2631,7 +2631,7 @@ describe('하네스 API 에러를 세션 JSONL 에서 함께 싣는다 (2026-09-
 
 describe('실행 모델 교체 — 멘션 턴이 TUI 로 뜬다 (2026-09-08)', () => {
   it('claude 멘션 턴은 stdinFile 없이 뜨고 프롬프트는 주입으로 간다 — 사람이 칠 수 있다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕하세요');
     const { deps, plans, runTurn, turnOpts } = await makeDeps(fake);
     let injected: string | undefined;
@@ -2651,7 +2651,7 @@ describe('실행 모델 교체 — 멘션 턴이 TUI 로 뜬다 (2026-09-08)', (
   });
 
   it('codex 멘션 턴도 주입이다 — stdinFile 이 없고 사람이 칠 수 있다 (2026-09-11)', async () => {
-    const fake = new FakeMurmur(defOf({ harness: 'codex' }));
+    const fake = new FakeHarkroom(defOf({ harness: 'codex' }));
     fake.seedFrom('human-1', '@forge 안녕하세요');
     const { deps, plans, runTurn, turnOpts } = await makeDeps(fake);
     let injected: string | undefined;
@@ -2711,7 +2711,7 @@ describe('중단 — 사람이 도는 턴을 멈춘다 (3단계)', () => {
   }
 
   it('[중단] 은 그 턴의 PTY 에 SIGTERM 을 보낸다 — 유예 뒤 SIGKILL 승격은 PtyControls.kill 이 갖는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const h = cancelHarness();
     const { deps, runTurn } = await makeDeps(fake, { relay: h.relay });
@@ -2723,7 +2723,7 @@ describe('중단 — 사람이 도는 턴을 멈춘다 (3단계)', () => {
   });
 
   it('실패 문구가 누른 사람을 가리킨다 — 하네스 종료 코드로 적지 않는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const h = cancelHarness();
     const { deps, runTurn } = await makeDeps(fake, { relay: h.relay });
@@ -2745,7 +2745,7 @@ describe('중단 — 사람이 도는 턴을 멈춘다 (3단계)', () => {
    * 세션이 열리는 그 순간에 누르는 것으로 그 창을 만든다.
    */
   it('스폰 전에 온 중단은 하네스를 아예 띄우지 않는다 — 목록엔 이미 [중단] 이 달린 줄로 서 있다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const relay = {
       openSession(input: { onCancel?: (byHandle: string) => void }) {
@@ -2766,7 +2766,7 @@ describe('중단 — 사람이 도는 턴을 멈춘다 (3단계)', () => {
   });
 
   it('스폰 도중에 온 중단은 손잡이를 잡은 그 순간 쓴다 — 중단은 다시 오지 않는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const h = cancelHarness();
     const { deps, runTurn } = await makeDeps(fake, { relay: h.relay });
@@ -2786,7 +2786,7 @@ describe('중단 — 사람이 도는 턴을 멈춘다 (3단계)', () => {
   });
 
   it('중단이 없으면 문구는 그대로 하네스를 가리킨다 — 두 실패를 뭉치지 않는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const h = cancelHarness();
     const { deps, runTurn } = await makeDeps(fake, { relay: h.relay });
@@ -2823,7 +2823,7 @@ describe('턴의 끝 — 발화 + 관찰자 없음 (2026-09-08)', () => {
   }
 
   it('발화하면 회수한다 — TUI 는 답하고도 안 죽으므로 러너가 끝을 정한다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const h = endHarness();
     const { deps, runTurn } = await makeDeps(fake, {
@@ -2836,7 +2836,7 @@ describe('턴의 끝 — 발화 + 관찰자 없음 (2026-09-08)', () => {
   });
 
   it('관찰자가 있으면 발화해도 회수하지 않는다 — 사람이 보고 있으면 러너는 끼어들지 않는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const h = endHarness();
     const { deps, runTurn } = await makeDeps(fake, {
@@ -2852,7 +2852,7 @@ describe('턴의 끝 — 발화 + 관찰자 없음 (2026-09-08)', () => {
   });
 
   it('보던 사람이 창을 닫으면 그때 회수한다 — 유예는 뷰어 소멸부터 흐른다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const h = endHarness();
     const { deps, runTurn } = await makeDeps(fake, {
@@ -2870,7 +2870,7 @@ describe('턴의 끝 — 발화 + 관찰자 없음 (2026-09-08)', () => {
   });
 
   it('발화가 없으면 회수하지 않는다 — 아직 일하는 중이다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const h = endHarness();
     const { deps, runTurn } = await makeDeps(fake, {
@@ -2885,7 +2885,7 @@ describe('턴의 끝 — 발화 + 관찰자 없음 (2026-09-08)', () => {
 
 describe('타임아웃이 무발화 경과를 잰다 (2026-09-08)', () => {
   it('답 없이 한도를 넘기면 회수하고 실패로 끝난다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     let killed: string | null = null;
     const { deps, runTurn } = await makeDeps(fake, { utteranceProbeMs: 5, turnTimeoutMs: 30 });
@@ -2908,7 +2908,7 @@ describe('타임아웃이 무발화 경과를 잰다 (2026-09-08)', () => {
   });
 
   it('관찰자가 있으면 무발화 한도를 재지 않는다 — 사람이 보고 있으면 끼어들지 않는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     let killed: string | null = null;
     let notifyViewers: ((n: number) => void) | undefined;
@@ -2935,7 +2935,7 @@ describe('타임아웃이 무발화 경과를 잰다 (2026-09-08)', () => {
   });
 
   it('TUI 턴은 PTY 시계를 안 쓴다 — timeoutMs 0 으로 뜬다(무기한)', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const { deps, turnOpts, runTurn } = await makeDeps(fake, { turnTimeoutMs: 12_345 });
     runTurn.script = async () => ({ exitCode: 0, timedOut: false, tail: '' });
@@ -2949,7 +2949,7 @@ describe('타임아웃이 무발화 경과를 잰다 (2026-09-08)', () => {
     // 그대로 썼다(`timeoutMs: 12_345`). TUI 는 답하고도 살아 있으므로 프로세스 수명으로
     // 재면 정상 턴이 시간 한도에 걸린다 — 그래서 `timeoutMs: 0`(무기한)으로 띄우고
     // 한도는 러너가 **무발화 경과**로 잰다. claude 가 이미 그렇게 돈다.
-    const fake = new FakeMurmur(defOf({ harness: 'codex' }));
+    const fake = new FakeHarkroom(defOf({ harness: 'codex' }));
     fake.seedFrom('human-1', '@forge 안녕');
     const { deps, turnOpts, runTurn } = await makeDeps(fake, { turnTimeoutMs: 12_345 });
     runTurn.script = async () => ({ exitCode: 0, timedOut: false, tail: '' });
@@ -2998,7 +2998,7 @@ describe('회수로 끝난 턴의 성패 (2026-09-08)', () => {
   }
 
   it('발화한 뒤 회수된 턴은 성공이다 — 143 을 실패로 읽지 않는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const h = killedHarness();
     const { deps, runTurn } = await makeDeps(fake, {
@@ -3016,7 +3016,7 @@ describe('회수로 끝난 턴의 성패 (2026-09-08)', () => {
   it('발화 없이 죽은 143 은 여전히 실패다 — 무발화를 성공으로 뭉개지 않는다', async () => {
     // 회수는 발화한 턴에만 예약되지만, 무발화 시계도 같은 SIGTERM 을 쓴다. 그 둘을
     // 종료 코드로 못 가르므로 **발화 여부**로 가른다.
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const h = killedHarness();
     const { deps, runTurn } = await makeDeps(fake, {
@@ -3043,7 +3043,7 @@ describe('회수로 끝난 턴의 성패 (2026-09-08)', () => {
 // 보는 것**뿐이었다: 그 코드는 턴 종료 뒤에 있었고, TUI 턴은 스스로 끝나지 않는다.
 describe('턴 도중 한도 감지 (2026-09-09)', () => {
   it('한도 에러를 보면 그 턴을 끝내고, 계정 전환이 붙을 오류로 던진다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     let killed: string | null = null;
     const { deps, runTurn } = await makeDeps(fake, {
@@ -3074,7 +3074,7 @@ describe('턴 도중 한도 감지 (2026-09-09)', () => {
   it('이미 발화한 턴은 한도 에러가 보여도 성공이다 — 답은 이미 갔다', async () => {
     // 답을 올린 뒤 후속 작업에서 한도를 만나는 경우다. 그 턴을 실패로 읽으면 재시도가
     // 같은 질문에 두 번 답한다.
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     let killed: string | null = null;
     const { deps, runTurn } = await makeDeps(fake, {
@@ -3108,7 +3108,7 @@ describe('턴 도중 한도 감지 (2026-09-09)', () => {
 // 멀쩡히 도는 세션 8개의 기록 간격 최대치는 390초였고, 정지한 턴은 30분 내내 0줄이었다.
 describe('하네스 정지 감지 (2026-09-09)', () => {
   it('기록이 안 자라면 무발화 한도를 기다리지 않고 접는다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     let killed: string | null = null;
     const { deps, runTurn } = await makeDeps(fake, {
@@ -3151,7 +3151,7 @@ describe('하네스 정지 감지 (2026-09-09)', () => {
    * 긴 셸 명령이 하는 일이 정확히 그것이다.
    */
   it('기록이 멈춰도 화면이 흐르면 접지 않는다 — 긴 셸 명령이 도는 중이다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     let killed: string | null = null;
     const { deps, runTurn } = await makeDeps(fake, {
@@ -3182,7 +3182,7 @@ describe('하네스 정지 감지 (2026-09-09)', () => {
   it('화면까지 멈추면 그때는 접는다 — 유예가 넓어진 것이지 사라진 것이 아니다', async () => {
     // 위 테스트의 대조군. 같은 조건에서 **화면을 한 번 보낸 뒤 멈춘다** — 기준점이 생겼으므로
     // 그때부터 한도를 재고, 한도가 지나면 접는다.
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     let killed: string | null = null;
     const { deps, runTurn } = await makeDeps(fake, {
@@ -3221,7 +3221,7 @@ describe('하네스 정지 감지 (2026-09-09)', () => {
    * 자체가 없었다. 판정할 수 없으면 재지 않는다(`sessionTranscriptGrewSince` 의 같은 판례).
    */
   it('기록을 읽을 줄 모르는 하네스는 정지로 접지 않는다 — 일하는 턴이 10분에 죽는다', async () => {
-    const fake = new FakeMurmur(defOf({ harness: 'codex' }));
+    const fake = new FakeHarkroom(defOf({ harness: 'codex' }));
     fake.seedFrom('human-1', '@forge 안녕');
     let killed: string | null = null;
     const { deps, runTurn } = await makeDeps(fake, {
@@ -3249,7 +3249,7 @@ describe('하네스 정지 감지 (2026-09-09)', () => {
     // 2026-09-09 진단이 여기서 산수를 했다: 통지에 한도(600000ms)만 있어서 "정말 10분
     // 서 있었나"를 통지 시각 − 한도로 되짚어 턴 시작 시점을 추정해야 했다. 잰 값을 그대로
     // 남기면 그 산수가 없다. 한도도 함께 남긴다 — 그 값은 손잡이(AGENT_HARNESS_STALL_MS)다.
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     let killed: string | null = null;
     const { deps, runTurn } = await makeDeps(fake, {
@@ -3279,7 +3279,7 @@ describe('하네스 정지 감지 (2026-09-09)', () => {
   it('기록이 자라는 동안에는 접지 않는다 — 조용한 것과 멈춘 것은 다르다', async () => {
     // 이것이 이 시계의 존재 이유다. 오래 걸리는 턴(빌드·CI 대기)은 답도 없고 화면도
     // 조용하지만 기록은 계속 자란다. 그 턴까지 접으면 무발화 한도를 줄인 것과 다를 게 없다.
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     let killed: string | null = null;
     const { deps, runTurn } = await makeDeps(fake, {
@@ -3304,7 +3304,7 @@ describe('하네스 정지 감지 (2026-09-09)', () => {
   }, 20_000);
 
   it('0 이면 재지 않는다 — 끄는 손잡이가 있어야 한다', async () => {
-    const fake = new FakeMurmur(defOf());
+    const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     let read = 0;
     const { deps, runTurn } = await makeDeps(fake, {

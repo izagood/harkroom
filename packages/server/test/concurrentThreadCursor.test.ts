@@ -3,7 +3,7 @@
 // 기준 10 은 "한 스레드에 에이전트 둘이 각자 세션·workspace 로 **동시에** 답하고, 다음
 // 턴에 서로의 발화를 안다"이다. 그 중 "서로의 발화를 안다"는 러너가 스레드를 어떻게
 // 읽느냐에 달려 있고, 러너의 읽기는 커서 하나다 —
-// `murmur.ts::readThread(channelId, threadRootId, since)` → `message.read` →
+// `harkroom.ts::readThread(channelId, threadRootId, since)` → `message.read` →
 // `listMessages` 의 `m.seq > $since`(services/messages.ts:591).
 //
 // **왜 단위 테스트가 이것을 못 잡는가**(스펙 §10 이 경고한 자리 그대로다). 러너의 큐잉·

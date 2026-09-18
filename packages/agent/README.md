@@ -108,7 +108,7 @@ HARKROOM_PAT=murp_... HARKROOM_AGENT_INSTANCE=b pnpm --filter @harkroom/agent st
 러너 없이 **사람이 운전하는** 에이전트로 쓸 수도 있다. 이쪽은 harkroom를 MCP 서버로 등록하는 것이다:
 
 ```sh
-claude mcp add --transport http murmur http://localhost:3400/mcp \
+claude mcp add --transport http harkroom http://localhost:3400/mcp \
   --header "Authorization: Bearer murp_..."
 ```
 
@@ -164,7 +164,7 @@ MCP `inbox.poll`에만 있고 REST `/inbox`에는 없다. 이 러너를 만들�
 ```
 sessions.json      # 스레드별 세션 (위)
 mcp/mcp.json        # harkroom + avcs만 담은 MCP 설정 — 기동 시 한 번 쓰고 재사용
-workspaces/         # avcs 워크스페이스들. murmur-<handle>-<threadKey 해시8자>
+workspaces/         # avcs 워크스페이스들. harkroom-<handle>-<threadKey 해시8자>
 ```
 
 전체 경로가 `<handle>-<id>` 로 스코프된다 — `sessions.json`·`mcp/mcp.json`·`workspaces/` 전부
@@ -402,7 +402,7 @@ CLAUDE_CONFIG_DIR=~/.harkroom-agent/claude-accounts/work/aria claude auth status
 | `src/prompt.ts` | 스레드 델타 → 턴 프롬프트, 발화 판정(`hasOwnPostSince`). **순수 로직이고 테스트 대상이다** |
 | `src/policy.ts` | 실패 정책(자격증명은 즉시 종료, 나머지는 백오프) |
 | `src/claudeAccounts.ts` | claude 계정 풀(계정 하나 = `CLAUDE_CONFIG_DIR` 하나) + 계정 축 페일오버. `policy.ts`의 세 판정을 조합하는 `switchesAccount`가 여기 있는 이유는 그 파일이 아무것도 import하지 않는다는 규율이다 |
-| `src/murmur.ts` | MCP 클라이언트 + `GET /agent/config`·`GET /accounts`(MCP에 없는 표면) |
+| `src/harkroom.ts` | MCP 클라이언트 + `GET /agent/config`·`GET /accounts`(MCP에 없는 표면) |
 | `src/config.ts` | 환경변수 |
 
 ## poll 루프 계약
@@ -439,7 +439,7 @@ harkroom-agent: credential rejected (revoked or rotated); exiting
 코드를 그대로 보여 준다.
 
 판정은 `src/exit.ts::runnerExitPlan` 하나가 갖고 **세 자리**에서 불린다: 기동의 첫 호출
-(`murmur.me()`), 멘션 턴의 catch, 그리고 **폴 루프의 catch**. 셋 중 폴 루프가 가장 중요하다 —
+(`harkroom.me()`), 멘션 턴의 catch, 그리고 **폴 루프의 catch**. 셋 중 폴 루프가 가장 중요하다 —
 앱이 PAT 를 회전할 때 옛 러너는 거의 항상 롱폴에 park 돼 있어 401 이 그 catch 로 오고, 거기서
 "재접속하면 된다"로 삼키면 러너는 영원히 물러나지 않는다.
 

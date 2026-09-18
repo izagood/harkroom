@@ -199,7 +199,7 @@ describe('daemon 사이드카 산출물 (#431 2단계-a)', () => {
       console.warn(`건너뜀: 사이드카가 ${BINARIES_DIR} 에 없다 — ${SKIP_HINT}`);
       return;
     }
-    const triple = (p: string) => path.basename(p).replace(/^murmur-(runner|daemon)-/, '');
+    const triple = (p: string) => path.basename(p).replace(/^harkroom-(runner|daemon)-/, '');
     expect(triple(daemon)).toBe(triple(runner));
   });
 });

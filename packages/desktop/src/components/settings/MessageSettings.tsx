@@ -33,7 +33,7 @@ export function MessageSettings() {
         <div className="px-4 py-3">
           <p className="font-medium text-fg">Hold a message before it goes out</p>
           <p className="mt-0.5 text-fg-subtle">
-            murmur keeps the message on this device for that long. Undo it and nothing was ever
+            harkroom keeps the message on this device for that long. Undo it and nothing was ever
             sent — no message, no mention, no agent woken. Once the window closes there is no
             way back.
           </p>

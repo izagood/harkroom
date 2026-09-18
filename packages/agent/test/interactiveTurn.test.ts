@@ -76,7 +76,7 @@ interface Harness {
     /** 세션마다 러너가 신고한 "입력을 받을 수 있는가"(#369). 인터랙티브 턴은 true 여야 한다. */
     acceptsInput: boolean[];
   };
-  murmur: { definition: () => Promise<AgentView>; readThread: ReturnType<typeof vi.fn> };
+  harkroom: { definition: () => Promise<AgentView>; readThread: ReturnType<typeof vi.fn> };
 }
 
 async function makeHarness(
@@ -126,15 +126,15 @@ async function makeHarness(
     },
   };
 
-  const murmur = {
+  const harkroom = {
     definition: () => Promise.resolve(def),
     readThread: vi.fn(async () => [] as MessageRow[]),
   };
 
   const deps: InteractiveTurnDeps = {
-    murmur, store, exec: async () => ({ code: 0, stdout: '', stderr: '' }),
+    harkroom, store, exec: async () => ({ code: 0, stdout: '', stderr: '' }),
     runTurn, me: ME, workspaceBaseDir,
-    mcpConfigPath: '/tmp/mcp.json', murmurUrl: 'http://localhost:3400', pat: 'murp_fake',
+    mcpConfigPath: '/tmp/mcp.json', harkroomUrl: 'http://localhost:3400', pat: 'murp_fake',
     codexHome: join(stateDir, 'codex-home'),
     // 이 스위트는 계정 지정 없음(시스템 기본)을 전제로 돈다.
     claudeConfigDir: null,
@@ -147,7 +147,7 @@ async function makeHarness(
   };
 
   return {
-    deps, registry, queue, store, plans, turnOpts, controls, sched, relayLog, murmur,
+    deps, registry, queue, store, plans, turnOpts, controls, sched, relayLog, harkroom,
     endTurn: (result = { exitCode: 0, timedOut: false, tail: '' }) => { resolveTurn?.(result); },
   };
 }
@@ -385,7 +385,7 @@ describe('#337 턴의 끝 — 레지스트리 해제·클램프·turnsRun (§5-2
 
   it('대기 멘션이 없으면 lastFedSeq 가 스레드 끝까지 전진한다', async () => {
     const h = await makeHarness();
-    h.murmur.readThread.mockResolvedValue([msg(4), msg(5), msg(6)]);
+    h.harkroom.readThread.mockResolvedValue([msg(4), msg(5), msg(6)]);
     const manager = createInteractiveManager(h.deps);
     await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
 
@@ -396,7 +396,7 @@ describe('#337 턴의 끝 — 레지스트리 해제·클램프·turnsRun (§5-2
 
   it('대기 멘션이 있으면 min seq − 1 로 클램프한다 — 안 하면 그 부름의 델타가 비어 소실된다', async () => {
     const h = await makeHarness();
-    h.murmur.readThread.mockResolvedValue([msg(4), msg(5), msg(6)]);
+    h.harkroom.readThread.mockResolvedValue([msg(4), msg(5), msg(6)]);
     const manager = createInteractiveManager(h.deps);
     await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
     // 조종 중에 멘션 둘이 유예됐다(seq 5, 6). min 은 5 — 커서는 4 까지만 간다.
@@ -413,7 +413,7 @@ describe('#337 턴의 끝 — 레지스트리 해제·클램프·turnsRun (§5-2
   it('클램프가 커서를 되돌리지는 않는다 — 이미 먹인 것을 다시 먹이면 중복 발화다', async () => {
     const h = await makeHarness();
     await h.store.put(KEY, { workspaceDir: '/tmp/ws', sessionId: 'uuid-known', harness: 'claude-code', lastFedSeq: 9, turnsRun: 1 });
-    h.murmur.readThread.mockResolvedValue([]);
+    h.harkroom.readThread.mockResolvedValue([]);
     const manager = createInteractiveManager(h.deps);
     await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
     // 유예 멘션의 seq(5)가 이미 먹인 구간(lastFedSeq 9)보다 뒤에 있다 — min−1(4)로

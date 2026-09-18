@@ -149,7 +149,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
               <Row label={t('profile.rows.harness')} value={agent.harness} />
               {/* **`null` 은 '모델 없음'이 아니라 '이 설정이 정하지 않는다'다**(#600).
                   그냥 `하네스 기본값` 이라고만 적으면 사람은 이 행을 "실제로 쓰는 모델"로
-                  읽는데, 그 경우 murmur 는 실제 모델을 **모른다** — 러너가 `--model` 을
+                  읽는데, 그 경우 harkroom 는 실제 모델을 **모른다** — 러너가 `--model` 을
                   아예 붙이지 않아 하네스가 고르고, 러너는 하네스 출력을 해석하지 않는다.
                   실제로 무엇이 답했는지는 발화 이름줄 hover 에 있다(`meta.model`). */}
               <Row
