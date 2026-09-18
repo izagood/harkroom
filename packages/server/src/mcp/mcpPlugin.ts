@@ -124,7 +124,7 @@ function buildMcpServer(
    */
   presence: Pick<AgentPresence, 'online'>,
 ): McpServer {
-  const server = new McpServer({ name: 'murmur', version: '0.1.0' });
+  const server = new McpServer({ name: 'harkroom', version: '0.1.0' });
 
   /**
    * 워크스페이스 규칙. `mode` 로 독자를 가른다(`guide.ts` 머리의 실측 참고) — 러너가 띄운

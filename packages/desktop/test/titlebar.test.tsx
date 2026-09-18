@@ -59,7 +59,7 @@ const pretendWindows = () => vi.stubGlobal('navigator', {
 
 /** 사이드바 접힘 여부는 `Workspace` 가 마운트할 때 저장소에서 한 번 읽는다. */
 const renderWorkspace = (opts: { sidebarCollapsed: boolean }) => {
-  localStorage.setItem('murmur.sidebarCollapsed', String(opts.sidebarCollapsed));
+  localStorage.setItem('harkroom.sidebarCollapsed', String(opts.sidebarCollapsed));
   return render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 };
 

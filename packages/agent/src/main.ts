@@ -15,7 +15,6 @@
 // mentionTurn.ts::runMentionTurn 에 있다: main.ts 는 top-level await 로 접속·설정 파일
 // 쓰기 같은 부작용을 곧바로 일으키므로, 그 흐름을 여기 두면 테스트가 import 하는 순간
 // 진짜 서버에 붙으려 든다.
-import { renamedEnv } from '@harkroom/shared';
 import { execFile } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -212,8 +211,8 @@ const codexHome = await ensureCodexHome(codexHomeDir);
 // `sessions.json` 에 대해 적은 것과 같은 근거).
 const lane = await loadClaudeAccountLane({
   agentId: me.id,
-  forcedPool: renamedEnv(process.env, 'HARKROOM_CLAUDE_POOL'),
-  order: renamedEnv(process.env, 'HARKROOM_CLAUDE_ACCOUNTS'),
+  forcedPool: process.env.HARKROOM_CLAUDE_POOL,
+  order: process.env.HARKROOM_CLAUDE_ACCOUNTS,
 });
 const claudeAccounts = lane.accounts;
 // **이름만 적는다** — 이메일·토큰·Keychain 서비스명은 적지 않는다(PAT 규율과 같다).

@@ -182,7 +182,7 @@ describe('buildTurnCommand — codex', () => {
     const first = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true });
     const resumed = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false });
     for (const plan of [first, resumed]) {
-      expect(plan.args.join(' ')).toContain('mcp_servers.murmur.default_tools_approval_mode="approve"');
+      expect(plan.args.join(' ')).toContain('mcp_servers.harkroom.default_tools_approval_mode="approve"');
       expect(plan.args.join(' ')).not.toContain('mcp_servers.Harkroom.approval_mode=');
       expect(plan.args).not.toContain('--dangerously-bypass-approvals-and-sandbox');
     }
@@ -193,7 +193,7 @@ describe('buildTurnCommand — codex', () => {
       ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false,
       mentionPermission: 'readonly',
     });
-    expect(plan.args.join(' ')).not.toContain('mcp_servers.murmur.default_tools_approval_mode="approve"');
+    expect(plan.args.join(' ')).not.toContain('mcp_servers.harkroom.default_tools_approval_mode="approve"');
   });
 
   it('MCP 는 턴별 -c 오버라이드다 — codex mcp add 는 config.toml 을 영구 변경한다 (spec §6)', () => {
@@ -272,8 +272,8 @@ describe('buildTurnCommand — codex', () => {
     // 표시 없는 stdio 항목에서 MCP 설정 **전체**를 버린다 — 그러면 이 턴은 답할 수단이
     // 없는 채로 돌다가 조용히 끝난다. 그래서 이 한 줄이 murmur 등록만큼 중요하다.
     expect(p.args.join(' ')).toContain('mcp_servers.avcs.transport="stdio"');
-    expect(p.args.join(' ')).toContain('mcp_servers.murmur.url="http://localhost:3401/mcp"');
-    expect(p.args.join(' ')).toContain('mcp_servers.murmur.bearer_token_env_var="HARKROOM_PAT"');
+    expect(p.args.join(' ')).toContain('mcp_servers.harkroom.url="http://localhost:3401/mcp"');
+    expect(p.args.join(' ')).toContain('mcp_servers.harkroom.bearer_token_env_var="HARKROOM_PAT"');
     expect(p.args.join(' ')).not.toContain('murp_x');
   });
 
@@ -285,12 +285,12 @@ describe('buildTurnCommand — codex', () => {
   // 엔드포인트(`/mcp`)와 같은지를 겨눈다.
   it('murmurUrl 에 이미 트레일링 슬래시가 있어도 /mcp 가 정확히 한 번만 붙는다', () => {
     const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, murmurUrl: 'http://localhost:3401/' });
-    expect(p.args.join(' ')).toContain('mcp_servers.murmur.url="http://localhost:3401/mcp"');
+    expect(p.args.join(' ')).toContain('mcp_servers.harkroom.url="http://localhost:3401/mcp"');
     expect(p.args.join(' ')).not.toContain('http://localhost:3401//mcp');
   });
 
   // murmurUrl 을 빈 문자열로 넘기면 타입 체크는 통과하지만(string), 그대로 두면
-  // `mcp_servers.murmur.url=""` 같은 값이 조용히 조립돼 위와 같은 조용한 실패로 이어진다 —
+  // `mcp_servers.harkroom.url=""` 같은 값이 조용히 조립돼 위와 같은 조용한 실패로 이어진다 —
   // 런타임에서도 막는다.
   it('murmurUrl 이 빈 문자열이면 던진다 — 조용히 틀린 URL 을 조립하지 않는다', () => {
     expect(() => buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, murmurUrl: '' })).toThrow();
@@ -369,11 +369,11 @@ describe('writeMcpConfigOnce', () => {
     dir = await mkdtemp(join(tmpdir(), 'mcp-cfg-'));
     const path = await writeMcpConfigOnce(dir, 'http://localhost:3401');
     const config = JSON.parse(await readFile(path, 'utf8'));
-    expect(config.mcpServers.murmur).toEqual({
+    expect(config.mcpServers.harkroom).toEqual({
       type: 'http', url: 'http://localhost:3401/mcp', headers: { Authorization: 'Bearer ${HARKROOM_PAT}' },
     });
     expect(config.mcpServers.avcs).toEqual({ type: 'stdio', command: 'avcs', args: ['mcp'] });
-    expect(Object.keys(config.mcpServers)).toHaveLength(2); // murmur + avcs 만 — strict-mcp-config 와 짝
+    expect(Object.keys(config.mcpServers)).toHaveLength(2); // harkroom + avcs 만 — strict-mcp-config 와 짝
   });
 
   // 실값이 아니라 플레이스홀더이므로 파일 자체는 비밀이 아니다(spec §7) — 그래도 실수로
