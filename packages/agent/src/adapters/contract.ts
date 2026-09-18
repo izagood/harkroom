@@ -22,10 +22,9 @@
 //
 // ## 검증 전략 — 옛 경로를 남긴다
 //
-// 이 표는 **아직 아무 호출부도 읽지 않는다.** 대신 `test/adapterParity.test.ts` 가 표의 각
-// 값이 지금 프로덕션이 쓰는 값과 **같은 답을 내는지** 하네스×모드 전수로 대조한다. 그래서
-// 이 파일이 들어와도 claude 경로는 글자 하나 바뀌지 않는다. 호출부를 옮기는 것은 다음
-// 조각이고, 그때도 `harnessAdaptersEnabled()`(index.ts) 뒤에서 켠다.
+// **호출부는 이제 이 표만 읽는다**(2026-09-18 — 옛 분기와 스위치를 지웠다).
+// `test/adapterParity.test.ts` 가 표의 각 값이 실제 동작과 같은지 하네스×모드 전수로
+// 대조한다 — 값을 고치면 argv·파일 바이트가 따라 움직이는지까지 본다.
 import type { AgentHarness, MentionPermission } from '@harkroom/shared';
 
 /**
