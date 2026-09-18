@@ -18,7 +18,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { adapterFor, harnessAdaptersEnabled } from './adapters/index.js';
+import { adapterFor } from './adapters/index.js';
 import type { AgentHarness } from '@harkroom/shared';
 
 /**
@@ -184,18 +184,9 @@ export async function ensureWorkspaceTrusted(opts: {
   codexHome: string;
 }): Promise<void> {
   try {
-    // ── 이설 중이다. 두 경로가 함께 산다(2026-09-11) ────────────────────────────
-    //
-    // 이 경로가 깨지면 에이전트가 안 돌고, 그러면 harkroom 자체를 못 쓴다. 그래서 옛 분기를
-    // **그대로 두고** 새 경로를 스위치 뒤에 둔다. 기본값은 꺼짐이므로 켜지 않은 러너는
-    // 지금까지와 한 글자도 다르지 않게 돈다.
-    //
-    // 두 경로가 같은 답을 내는지는 `test/workspaceTrustParity.test.ts` 가 **양쪽을 실제로
-    // 돌려 파일 바이트를 비교**해서 지킨다. 옛 분기는 스위치가 기본 켜짐이 되고 한 판
-    // 돌려 본 뒤에 지운다.
-    if (harnessAdaptersEnabled()) await trustViaAdapter(opts);
-    else if (opts.harness === 'claude-code') await trustForClaude(opts.workspaceDir, claudeConfigFile(opts.claudeConfigDir));
-    else if (opts.harness === 'codex') await trustForCodex(opts.workspaceDir, join(opts.codexHome, 'config.toml'));
+    // **장부는 어댑터 표가 말한다.** 하네스 이름으로 갈리던 옛 분기는 지웠다(2026-09-18) —
+    // 그 둘이 같은 답을 낸다는 것을 패리티 테스트가 증명했고, 기본 경로로 며칠 돌았다.
+    await trustViaAdapter(opts);
   } catch (err) {
     // 위 주석의 이유로 삼킨다 — 다만 조용히는 아니다.
     console.error(
