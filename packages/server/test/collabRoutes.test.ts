@@ -208,6 +208,76 @@ describe('GET /collab/proposals — 저장소마다 다른 서버(051)', () => {
   });
 });
 
+describe('GET /collab/proposals — hosted 저장소', () => {
+  it('murmur 가 띄운 서버에서 읽는다 — 전역이 있어도 그쪽을 보지 않는다', async () => {
+    const { AvcsHost } = await import('../src/avcs/host.js');
+    const dir = await mkdtemp(join(tmpdir(), 'murmur-hostmode-'));
+    const host = new AvcsHost({ dataDir: dir });
+    const slug = 'acme/hosted';
+    const hosted = await buildServer({
+      pool,
+      projection: { envBaseUrl: null, reconfigure: async () => {}, currentUrl: () => hub.url },
+      avcsHost: host,
+    });
+    try {
+      // 호스트를 먼저 띄워 주소를 안 뒤, **그 서버에만** 제안을 넣는다. 화면에 그것이 서면
+      // hosted 저장소가 전역이 아니라 murmur 자신을 읽었다는 뜻이다.
+      const url = await host.ensure();
+      expect(url).not.toBeNull();
+      const res = await fetch(`${url}/${slug}/objects`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          type: 'intent', title: 'murmur 안에서 올린 제안', owner: 'human:jaebin', kind: 'feature',
+          priority: 'normal', constraints: [], successCriteria: ['x'],
+          allowedScopes: ['file:packages/'], createdAt: new Date().toISOString(),
+        }),
+      });
+      expect(res.ok).toBe(true);
+
+      await pool.query(
+        `insert into channel (name, topic, kind, repo, visibility) values ('hosted', '', 'standard', $1, 'public')`,
+        [slug],
+      );
+      await pool.query(`insert into repo (slug, mode) values ($1, 'hosted')`, [slug]);
+
+      const out = await hosted.inject({ method: 'GET', url: '/collab/proposals', headers: auth(adminToken) });
+      const mine = out.json().repos.find((r: { repo: string }) => r.repo === slug);
+
+      expect(mine.mode).toBe('hosted');
+      expect(mine.baseUrl).toBe(url);
+      expect(mine.proposals[0].title).toBe('murmur 안에서 올린 제안');
+    } finally {
+      await hosted.close();
+      await host.stop();
+      await pool.query(`delete from channel where repo = $1`, [slug]);
+      await pool.query(`delete from repo where slug = $1`, [slug]);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('호스트가 없으면 그 저장소만 no-server 다 — 나머지는 그대로 선다', async () => {
+    const slug = 'acme/nohost';
+    await pool.query(
+      `insert into channel (name, topic, kind, repo, visibility) values ('nohost', '', 'standard', $1, 'public')`,
+      [slug],
+    );
+    await pool.query(`insert into repo (slug, mode) values ($1, 'hosted')`, [slug]);
+    try {
+      // 이 앱에는 `avcsHost` 를 주지 않았다(기본 인스턴스). hosted 저장소는 읽을 곳이 없다.
+      const out = await app.inject({ method: 'GET', url: '/collab/proposals', headers: auth(adminToken) });
+      const body = out.json();
+
+      expect(body.repos.find((r: { repo: string }) => r.repo === slug).error).toBe('no-server');
+      // 전역을 쓰는 저장소는 멀쩡하다.
+      expect(body.repos.find((r: { repo: string }) => r.repo === REPO).error).toBeNull();
+    } finally {
+      await pool.query(`delete from channel where repo = $1`, [slug]);
+      await pool.query(`delete from repo where slug = $1`, [slug]);
+    }
+  });
+});
+
 describe('GET /collab/proposals — 투영 URL 이 없을 때', () => {
   it('빈 목록과 baseUrl:null 을 준다 — "제안이 없다" 와 "보고 있는 서버가 없다" 는 다르다', async () => {
     const off = await buildServer({
