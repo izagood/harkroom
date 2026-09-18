@@ -14,7 +14,6 @@
 //
 // **스위치를 1단계에 함께 넣는 이유**: 나중에 넣으면 그 커밋이 "표를 읽게 바꾸는 것"과
 // "스위치를 만드는 것" 두 변경을 겹치게 되고, 문제가 났을 때 어느 쪽 탓인지 가릴 수 없다.
-import { renamedEnv } from '@harkroom/shared';
 import type { AgentHarness } from '@harkroom/shared';
 
 import { currentExecutionPath } from '../executionPath.js';
@@ -234,6 +233,6 @@ export function harnessAdaptersEnabled(env: NodeJS.ProcessEnv = process.env): bo
    */
   const chosen = currentExecutionPath();
   if (chosen !== null) return chosen === 'adapters';
-  const raw = renamedEnv(env, 'HARKROOM_HARNESS_ADAPTERS');
+  const raw = env.HARKROOM_HARNESS_ADAPTERS;
   return !(raw === '0' || raw === 'false');
 }

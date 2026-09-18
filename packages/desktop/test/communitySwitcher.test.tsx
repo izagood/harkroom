@@ -104,7 +104,7 @@ const twoCommunities = async () => ({
 });
 
 const storeSessions = (communities: { accountId: string; baseUrl: string; handle: string }[]) =>
-  localStorage.setItem('murmur.sessions', JSON.stringify({
+  localStorage.setItem('harkroom.sessions', JSON.stringify({
     active: communities[0]?.accountId ?? null,
     communities: communities.map((c) => ({ ...c, token: `t-${c.accountId}`, label: null })),
   }));

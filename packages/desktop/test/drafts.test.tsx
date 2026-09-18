@@ -122,7 +122,7 @@ describe('초안 보관', () => {
   it('앱 재시작(보관소에서 복원)에도 초안이 남는다', async () => {
     const onSend = vi.fn();
     
-    localStorage.setItem('murmur.drafts', JSON.stringify({ 'channel-A': 'persisted draft' }));
+    localStorage.setItem('harkroom.drafts', JSON.stringify({ 'channel-A': 'persisted draft' }));
 
     // 보관소 읽기는 **앱 기동 시점**이다(controller.start 가 부른다) — 컴포저가 보관소를
     // 직접 뒤지지 않는다. 그래서 재시작을 흉내내려면 하이드레이션을 명시적으로 부른다.
@@ -135,7 +135,7 @@ describe('초안 보관', () => {
   it('로그아웃하면 보관된 초안이 전부 사라진다', async () => {
     const onSend = vi.fn();
     
-    localStorage.setItem('murmur.drafts', JSON.stringify({
+    localStorage.setItem('harkroom.drafts', JSON.stringify({
       'channel-A': 'draft A',
       'channel-B': 'draft B',
       'thread:123': 'thread draft',
