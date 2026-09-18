@@ -72,9 +72,9 @@ export function UpdatesSettings() {
           <span className="min-w-0 flex-1">
             <span className="block font-medium text-fg">Check for updates</span>
             <span className="mt-0.5 block text-fg-subtle" role="status">
-              {status.kind === 'idle' && 'murmur has not checked yet in this session.'}
+              {status.kind === 'idle' && 'harkroom has not checked yet in this session.'}
               {status.kind === 'checking' && 'Checking…'}
-              {status.kind === 'uptodate' && `murmur is up to date at ${__APP_VERSION__}.`}
+              {status.kind === 'uptodate' && `harkroom is up to date at ${__APP_VERSION__}.`}
               {status.kind === 'available' && `Version ${status.version} is available.`}
               {status.kind === 'installing' && 'Downloading and installing…'}
               {/* 실패는 실패라고 적는다. 원문을 붙여 사람이 원인을 직접 볼 수 있게 한다. */}
@@ -113,8 +113,8 @@ export function UpdatesSettings() {
         `localStorage` 에 넣지 않는다(`state/appStore.ts`).
       */}
       <p className="text-fg-subtle">
-        Installing an update restarts murmur. That does not disturb your agents: they are owned
-        by a background daemon that outlives the app, and murmur re-attaches to it on launch.
+        Installing an update restarts harkroom. That does not disturb your agents: they are owned
+        by a background daemon that outlives the app, and harkroom re-attaches to it on launch.
         Unsent drafts are kept across a restart; which thread you had open is not.
       </p>
     </SettingsPage>

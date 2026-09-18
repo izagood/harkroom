@@ -178,7 +178,7 @@ dead AVCS server never restarts the pod).
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
-| `HARKROOM_URL` | murmur server URL | `http://localhost:3400` | No |
+| `HARKROOM_URL` | harkroom server URL | `http://localhost:3400` | No |
 | `HARKROOM_PAT` | Personal Access Token for authentication | - | Yes |
 | `AGENT_POLL_TIMEOUT_MS` | Inbox polling timeout | `25000` (25s) | No |
 | `AGENT_TURN_TIMEOUT_MS` | Maximum wait for one turn (PTY execution) | `1800000` (30min) | No |
@@ -219,7 +219,7 @@ HARKROOM_URL=<server url> HARKROOM_PAT=murp_... pnpm --filter @harkroom/agent st
 
 **Register with Claude Code / Cursor (human-driven):**
 ```sh
-claude mcp add --transport http murmur http://localhost:3400/mcp \
+claude mcp add --transport http harkroom http://localhost:3400/mcp \
   --header "Authorization: Bearer murp_..."
 ```
 

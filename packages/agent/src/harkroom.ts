@@ -27,7 +27,7 @@ export interface InboxBatch {
  * status 를 함께 싣는 이유: 태그만 있으면 판정이 다시 문구 매칭으로 내려간다. status 가
  * 있으면 `isCredentialFailure` 가 401/403 만 보고 끝낸다.
  */
-function murmurError(message: string, status?: number): Error {
+function harkroomError(message: string, status?: number): Error {
   const err = new Error(message) as Error & { source: string; status?: number };
   err.source = HARKROOM_ERROR_SOURCE;
   if (status !== undefined) err.status = status;
@@ -56,19 +56,19 @@ function murmurError(message: string, status?: number): Error {
  */
 function tagTransportError(err: unknown): never {
   if (err instanceof StreamableHTTPError) {
-    throw murmurError(err.message, err.code);
+    throw harkroomError(err.message, err.code);
   }
   throw err;
 }
 
-export class MurmurAgentClient {
+export class HarkroomAgentClient {
   private mcp: Client | null = null;
 
   constructor(private baseUrl: string, private pat: string) {}
 
   private async connected(): Promise<Client> {
     if (this.mcp) return this.mcp;
-    const client = new Client({ name: 'murmur-agent', version: VERSION });
+    const client = new Client({ name: 'harkroom-agent', version: VERSION });
     const transport = new StreamableHTTPClientTransport(new URL(mcpUrl(this.baseUrl)), {
       requestInit: { headers: { authorization: `Bearer ${this.pat}` } },
     });
@@ -96,13 +96,13 @@ export class MurmurAgentClient {
     }
     const first = (res.content as { type: string; text?: string }[] | undefined)?.[0];
     if (!first || first.type !== 'text' || !first.text) {
-      throw murmurError(`${name}: 텍스트 결과가 없다`);
+      throw harkroomError(`${name}: 텍스트 결과가 없다`);
     }
     const parsed = JSON.parse(first.text) as T & { error?: { code: string; message: string } };
     if (parsed.error) {
       // 도구 **결과**의 에러에는 HTTP status 가 없다 — code 로만 온다. HTTP status 로 오는
       // 실패(자격증명 포함)는 위 `tagTransportError` 가 잡는다.
-      throw murmurError(`${name}: ${parsed.error.code} ${parsed.error.message}`);
+      throw harkroomError(`${name}: ${parsed.error.code} ${parsed.error.message}`);
     }
     return parsed;
   }
@@ -117,7 +117,7 @@ export class MurmurAgentClient {
       headers: { authorization: `Bearer ${this.pat}` },
     });
     if (!res.ok) {
-      throw murmurError(`agent/config 실패: ${res.status}`, res.status);
+      throw harkroomError(`agent/config 실패: ${res.status}`, res.status);
     }
     return (await res.json()) as AgentView;
   }
@@ -139,7 +139,7 @@ export class MurmurAgentClient {
       headers: { authorization: `Bearer ${this.pat}` },
     });
     if (!res.ok) {
-      throw murmurError(`agent/activity 실패: ${res.status}`, res.status);
+      throw harkroomError(`agent/activity 실패: ${res.status}`, res.status);
     }
   }
 
@@ -171,7 +171,7 @@ export class MurmurAgentClient {
       headers: { authorization: `Bearer ${this.pat}` },
     });
     if (!res.ok) {
-      throw murmurError(`accounts 실패: ${res.status}`, res.status);
+      throw harkroomError(`accounts 실패: ${res.status}`, res.status);
     }
     const body = (await res.json()) as { accounts: AccountView[] };
     return body.accounts;
@@ -210,7 +210,7 @@ export class MurmurAgentClient {
       headers: { authorization: `Bearer ${this.pat}` },
     });
     if (!res.ok) {
-      throw murmurError(`skills 실패: ${res.status}`, res.status);
+      throw harkroomError(`skills 실패: ${res.status}`, res.status);
     }
     return (await res.json()) as { slug: string; body: string }[];
   }

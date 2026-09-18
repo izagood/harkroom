@@ -157,7 +157,7 @@ export interface OpenSession {
 
 export interface RelayClientOptions {
   /** harkroom 서버의 http(s) 베이스 URL. ws(s) 로 바꿔 `/agent-relay` 에 붙는다. */
-  murmurUrl: string;
+  harkroomUrl: string;
   pat: string;
   dial?: RelayDialer;
   /** 재접속 예약. 테스트가 시간을 직접 돌리려고 뽑아 뒀다. */
@@ -184,8 +184,8 @@ export interface RelayClient {
 }
 
 /** http(s) → ws(s). 경로는 `/agent-relay` 하나뿐이다. */
-export function relayUrl(murmurUrl: string): string {
-  return `${murmurUrl.replace(/\/$/, '').replace(/^http/, 'ws')}/agent-relay`;
+export function relayUrl(harkroomUrl: string): string {
+  return `${harkroomUrl.replace(/\/$/, '').replace(/^http/, 'ws')}/agent-relay`;
 }
 
 export function createRelayClient(opts: RelayClientOptions): RelayClient {
@@ -329,7 +329,7 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
 
   const connect = (): void => {
     if (stopped) return;
-    dial(relayUrl(opts.murmurUrl), opts.pat, {
+    dial(relayUrl(opts.harkroomUrl), opts.pat, {
       onOpen: (t) => {
         transport = t;
         opened = true;

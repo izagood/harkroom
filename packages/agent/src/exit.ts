@@ -53,7 +53,7 @@ export interface RunnerExitPlan {
  * 원래 흐름(재시도·백오프)을 그대로 잇는다. 지금 그 부류는 둘이다: 자격증명 실패(#250)와
  * 하네스 실행 파일 부재(#340).
  *
- * **자격증명 실패는 세 자리에서 온다**: 기동 시점의 첫 호출(`murmur.me()`), 멘션 턴,
+ * **자격증명 실패는 세 자리에서 온다**: 기동 시점의 첫 호출(`harkroom.me()`), 멘션 턴,
  * 그리고 **폴 루프**. 폴 루프가 가장 중요하다 — 앱이 PAT 를 회전할 때 옛 러너는 거의 항상
  * 롱폴에 park 돼 있고, 거기서 온 401 을 "재접속하면 된다"로 삼키면 러너는 영원히 물러나지
  * 않는다(회전이 약속한 것이 그 반대다).
@@ -90,10 +90,10 @@ export function runnerExitPlan(err: unknown): RunnerExitPlan | null {
   if (credType === 'other') return null;
 
   const lines = [
-    `\n${credType === 'murmur-credential' ? 'Murmur' : 'Harness'} 자격증명을 해결할 수 없다. 러너를 멈춘다.`,
+    `\n${credType === 'harkroom-credential' ? 'Harkroom' : 'Harness'} 자격증명을 해결할 수 없다. 러너를 멈춘다.`,
   ];
-  if (credType === 'murmur-credential') {
-    lines.push('  Murmur API 의 PAT 가 만료·폐기됐는지 확인해라.');
+  if (credType === 'harkroom-credential') {
+    lines.push('  Harkroom API 의 PAT 가 만료·폐기됐는지 확인해라.');
     lines.push('  HARKROOM_PAT 환경변수를 새 PAT 로 교체하고 러너를 재시작한다.');
     lines.push('  데스크탑 앱이 띄운 러너라면 설정 → 에이전트에서 "PAT 재발급"을 누른다.');
   } else {
@@ -103,6 +103,6 @@ export function runnerExitPlan(err: unknown): RunnerExitPlan | null {
   // 마커도 갈라진다 — 앱이 읽는 것은 이 한 줄뿐이고, 하나로 두면 안내문을 갈라 놓은
   // 위의 분기가 러너 로그 안에서 끝난다(2026-09-07 16:09 실측: 하네스 로그인이 풀린
   // 사람에게 앱이 "PAT 재발급"을 시켰다).
-  lines.push(credType === 'murmur-credential' ? CREDENTIAL_REJECTED_LINE : HARNESS_LOGIN_REQUIRED_LINE);
+  lines.push(credType === 'harkroom-credential' ? CREDENTIAL_REJECTED_LINE : HARNESS_LOGIN_REQUIRED_LINE);
   return { code: EX_CONFIG, lines };
 }

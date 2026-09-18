@@ -1638,8 +1638,8 @@ export const daemonSpawner: RunnerSpawner = {
     // `'unknown'` 으로 보고했다. 키를 늘릴 때는 이 자리도 같이 본다.
     const result = await invoke('daemon_spawn_runner', {
       agentId: req.agentId,
-      murmurPat: req.env.HARKROOM_PAT,
-      murmurUrl: req.env.HARKROOM_URL,
+      harkroomPat: req.env.HARKROOM_PAT,
+      harkroomUrl: req.env.HARKROOM_URL,
       path: req.env.PATH,
       // 앱 버전을 얻지 못하면 위층이 `env` 에 키를 아예 넣지 않는다
       // (`spawnRunner` 주석). 그 '없음'을 `null` 로 그대로 넘긴다 — Rust 쪽

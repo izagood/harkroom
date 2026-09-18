@@ -52,7 +52,7 @@ const app = await buildServer({
 });
 await app.listen({ port: config.port, host: '0.0.0.0' });
 console.log(
-  `murmur server on :${config.port} `
+  `harkroom server on :${config.port} `
   + `(avcs: ${boot.url ?? 'disabled'}${boot.source ? ` via ${boot.source}` : ''})`,
 );
 

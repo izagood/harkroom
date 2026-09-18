@@ -11,7 +11,7 @@ export function NotificationSettings() {
   return (
     <SettingsPage
       title="Notifications"
-      description="murmur only notifies you while its window is in the background."
+      description="harkroom only notifies you while its window is in the background."
     >
       {!hasNotificationSurface() && (
         <p data-testid="no-notification-surface"

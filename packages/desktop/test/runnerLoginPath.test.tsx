@@ -79,7 +79,7 @@ function fakeSpawner() {
 }
 
 const fakeApi = () => ({
-  baseUrl: 'https://murmur.example',
+  baseUrl: 'https://harkroom.example',
   listPats: vi.fn(async () => [] as { label: string; revokedAt: string | null }[]),
   mintPat: vi.fn(async (_id: string, label: string) => `murp_${label}`),
   revokePat: vi.fn(async () => ({ revoked: 1 })),
@@ -220,7 +220,7 @@ describe('2. 얻은 PATH 가 자식 env 에 들어간다', () => {
     expect(spawner.spawns).toHaveLength(1);
     expect(spawner.spawns[0]!.env.PATH).toBe(login);
     // 다른 env 를 밀어내지 않는다.
-    expect(spawner.spawns[0]!.env.HARKROOM_URL).toBe('https://murmur.example');
+    expect(spawner.spawns[0]!.env.HARKROOM_URL).toBe('https://harkroom.example');
   });
 
   it('프로세스 생애 동안 한 번만 읽는다 — 러너 수만큼 셸을 띄우지 않는다', async () => {
@@ -314,7 +314,7 @@ describe('7. daemon 이 node 를 못 찾은 사유가 화면에 온다 (#513)', 
   /** Rust `node_missing_reason` 이 만드는 문구 그대로. */
   const NODE_MISSING =
     'daemon 이 뜨자마자 끝났다 — 사이드카(`/A/harkroom-daemon`)는 있는데 그것을 실행할 `node` 를 ' +
-    '찾지 못했다. murmur 는 Node.js 를 동봉하지 않는다. ' +
+    '찾지 못했다. harkroom 는 Node.js 를 동봉하지 않는다. ' +
     'Node.js 를 설치하라(LTS 판이면 된다): https://nodejs.org/en/download ' +
     '(daemon 로그: env: node: No such file or directory / 이때 쓴 PATH: /usr/bin:/bin)';
 

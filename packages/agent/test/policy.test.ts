@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ExecutableNotFoundError, isCredentialFailure, isExecutableNotFound, isQuotaExhausted, isSessionIdConflict, nextBackoffMs, quotaFromText, MAX_ATTEMPTS, exhausted } from '../src/policy.js';
 import { HARKROOM_ERROR_SOURCE } from '../src/policy.js';
-import { MurmurAgentClient } from '../src/murmur.js';
+import { HarkroomAgentClient } from '../src/harkroom.js';
 
 /**
  * 하네스가 **자기 세션 파일에** 남긴 에러를 흉내낸다(2026-09-08 실행 모델 교체).
@@ -88,19 +88,19 @@ describe('isCredentialFailure', () => {
   });
 
   describe('출처 구분 (#87)', () => {
-    it('murmur 클라이언트의 401 은 murmur 자격증명 실패다', () => {
+    it('harkroom 클라이언트의 401 은 harkroom 자격증명 실패다', () => {
       const err = Object.assign(new Error('accounts 실패: 401'), { source: HARKROOM_ERROR_SOURCE, status: 401 });
-      expect(isCredentialFailure(err)).toBe('murmur-credential');
+      expect(isCredentialFailure(err)).toBe('harkroom-credential');
     });
 
-    it('murmur 클라이언트의 403 도 murmur 자격증명 실패다', () => {
+    it('harkroom 클라이언트의 403 도 harkroom 자격증명 실패다', () => {
       const err = Object.assign(new Error('accounts 실패: 403'), { source: HARKROOM_ERROR_SOURCE, status: 403 });
-      expect(isCredentialFailure(err)).toBe('murmur-credential');
+      expect(isCredentialFailure(err)).toBe('harkroom-credential');
     });
 
     // 판정은 status 로만 한다 — 문구에 "401" 이 우연히 들어간 harkroom 에러를 자격증명
     // 실패로 오인하면 러너가 멀쩡한 상황에서 멈춘다.
-    it('murmur 에러 문구에 401 이 있어도 status 가 없으면 자격증명 실패가 아니다', () => {
+    it('harkroom 에러 문구에 401 이 있어도 status 가 없으면 자격증명 실패가 아니다', () => {
       const err = Object.assign(new Error('message.post: bad_request 401 은 본문에 있을 뿐'), { source: HARKROOM_ERROR_SOURCE });
       expect(isCredentialFailure(err)).toBe('other');
     });
@@ -130,15 +130,15 @@ describe('isCredentialFailure', () => {
     });
 
     // 태그를 손으로 붙인 객체가 아니라 **프로덕션 클라이언트가 실제로 던지는 에러**를 태운다.
-    // 손으로 만들면 murmur.ts 가 태그·status 를 붙이는 것을 그만둬도 이 테스트가 초록이다.
-    it('MurmurAgentClient 가 던지는 401 에러가 실제로 murmur 로 판정된다', async () => {
+    // 손으로 만들면 harkroom.ts 가 태그·status 를 붙이는 것을 그만둬도 이 테스트가 초록이다.
+    it('HarkroomAgentClient 가 던지는 401 에러가 실제로 harkroom 로 판정된다', async () => {
       const original = globalThis.fetch;
       globalThis.fetch = (async () => new Response('nope', { status: 401 })) as typeof fetch;
       try {
-        const client = new MurmurAgentClient('http://localhost:3400', 'murp_dead');
+        const client = new HarkroomAgentClient('http://localhost:3400', 'murp_dead');
         const err = await client.accounts().then(() => null, (e: unknown) => e);
         expect(err).toBeInstanceOf(Error);
-        expect(isCredentialFailure(err)).toBe('murmur-credential');
+        expect(isCredentialFailure(err)).toBe('harkroom-credential');
       } finally {
         globalThis.fetch = original;
       }
@@ -160,26 +160,26 @@ describe('isCredentialFailure', () => {
      * 대고 던지는 `StreamableHTTPError` 는 `status` 도 `source` 도 없이(가진 것은
      * 숫자 `code` 뿐이다) 그대로 올라온다.
      *
-     * `murmur.ts` 의 그 자리 주석은 틀린 전제를 명시적으로 적어 뒀다 — *"자격증명
+     * `harkroom.ts` 의 그 자리 주석은 틀린 전제를 명시적으로 적어 뒀다 — *"자격증명
      * 문제라면 서버가 401/403 을 내는 fetch 경로(definition·accounts)에서 먼저
      * 드러난다."* **폴 루프는 MCP 전용이고, 롱턴에 park 된 러너는 fetch 경로를 아예
      * 타지 않는다.**
      *
      * 그래서 손으로 만든 객체가 아니라 **프로덕션 클라이언트의 MCP 경로**를 태운다 —
-     * `murmur.ts` 가 트랜스포트 에러에 태그를 붙이는 것을 그만두면 이 테스트가 붉어진다.
+     * `harkroom.ts` 가 트랜스포트 에러에 태그를 붙이는 것을 그만두면 이 테스트가 붉어진다.
      */
-    it('MCP 트랜스포트가 낸 401 도 murmur 자격증명 실패다 (2026-09-08 실측)', async () => {
+    it('MCP 트랜스포트가 낸 401 도 harkroom 자격증명 실패다 (2026-09-08 실측)', async () => {
       const original = globalThis.fetch;
       globalThis.fetch = (async () => new Response(
         '{"error":{"code":"agent_only","message":"MCP surface requires an agent PAT"}}',
         { status: 401 },
       )) as typeof fetch;
       try {
-        const client = new MurmurAgentClient('http://localhost:3400', 'murp_revoked');
+        const client = new HarkroomAgentClient('http://localhost:3400', 'murp_revoked');
         // `me()` 는 MCP 도구(`account.me`)다 — REST 경로를 거치지 않는다.
         const err = await client.me().then(() => null, (e: unknown) => e);
         expect(err).toBeInstanceOf(Error);
-        expect(isCredentialFailure(err)).toBe('murmur-credential');
+        expect(isCredentialFailure(err)).toBe('harkroom-credential');
       } finally {
         globalThis.fetch = original;
       }
@@ -191,7 +191,7 @@ describe('isCredentialFailure', () => {
       const original = globalThis.fetch;
       globalThis.fetch = (async () => new Response('bad gateway', { status: 502 })) as typeof fetch;
       try {
-        const client = new MurmurAgentClient('http://localhost:3400', 'murp_live');
+        const client = new HarkroomAgentClient('http://localhost:3400', 'murp_live');
         const err = await client.me().then(() => null, (e: unknown) => e);
         expect(err).toBeInstanceOf(Error);
         expect(isCredentialFailure(err)).toBe('other');

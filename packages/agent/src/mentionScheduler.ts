@@ -9,7 +9,7 @@
 // **admit 의 계약 한 줄: 턴 길이의 일을 절대 await 하지 않는다.** 유예 통지와 고아 entry 의
 // markRead 만 await 한다. 이 계약이 깨지면 폴 루프가 다시 턴에 묶여, 이 모듈이 존재하는
 // 이유 자체가 사라진다.
-import type { InboxBatch } from './murmur.js';
+import type { InboxBatch } from './harkroom.js';
 import { mentionAnchor, type MentionTarget, type MentionTurnDeps, type MentionTurnResult } from './mentionTurn.js';
 import { SessionStore } from './sessions.js';
 import type { TurnRegistry } from './turnRegistry.js';
@@ -83,16 +83,16 @@ export interface AdmitOutcome {
 }
 
 /**
- * 이 모듈이 harkroom 에서 실제로 쓰는 것만. `MurmurAgentClient` 를 통째로 받지 않는 이유는
+ * 이 모듈이 harkroom 에서 실제로 쓰는 것만. `HarkroomAgentClient` 를 통째로 받지 않는 이유는
  * `mentionTurn.ts` 의 `TurnRelay` 와 같다 — 좁게 받아야 테스트가 소켓·MCP 를 세우지 않는다.
  */
-export interface SchedulerMurmur {
+export interface SchedulerHarkroom {
   markRead(ids: number[]): Promise<number>;
   post(channelId: string, body: string, threadRootId: string | null): Promise<number>;
   /**
    * 실패로 남긴다(`message.fail`). 평문(`post`)과 갈라 쓰는 자리가 있다 — 사람이 손을 대야
    * 풀리는 것은 스레드 상태에 `막힘`으로 남아야 하고, 그것을 정하는 것은 본문이 아니라
-   * `meta.kind` 다(`murmur.ts::fail` 주석).
+   * `meta.kind` 다(`harkroom.ts::fail` 주석).
    */
   fail(
     channelId: string,
@@ -103,7 +103,7 @@ export interface SchedulerMurmur {
 }
 
 export interface MentionSchedulerDeps {
-  murmur: SchedulerMurmur;
+  harkroom: SchedulerHarkroom;
   registry: TurnRegistry;
   queue: MentionQueue;
   /** 계정 축. 비어 있으면 안 된다 — 호출자가 최소 `[null]` 을 넘긴다(claudeAccounts.ts). */
@@ -261,7 +261,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
           `  ${mention.id} 계정 전환: ${from?.name ?? '(기본)'} → ${to?.name ?? '(기본)'}`,
         ),
       );
-      await deps.murmur.markRead([entryId]);
+      await deps.harkroom.markRead([entryId]);
       attempts.delete(entryId);
       if (turn.stopRequestedAt) deps.hooks.stopRequested(turn.stopRequestedAt);
     } catch (err) {
@@ -286,15 +286,15 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         console.error(`  ${mention.id} 사용량 한도 — 재시도하지 않는다 (풀림: ${quota.resetsAt ?? '알 수 없음'}) tail: ${err instanceof Error ? err.message : String(err)}`);
         // **평문이 아니라 실패로 남긴다**(2026-09-09) — 아래 세 통지가 모두 같은 이유로
         // 바뀌었다: 러너가 답을 못 낸 사실을 평문으로 올리면 스레드 머리는 `끝남` 이 된다
-        // (`murmur.ts::fail` 주석의 실측). 한도는 풀린 뒤 다시 부르면 되므로 retryable 이다.
-        await deps.murmur.fail(mention.channelId, quotaNotice(quota.resetsAt), anchor, {
+        // (`harkroom.ts::fail` 주석의 실측). 한도는 풀린 뒤 다시 부르면 되므로 retryable 이다.
+        await deps.harkroom.fail(mention.channelId, quotaNotice(quota.resetsAt), anchor, {
           retryable: true,
           what: '사용량 한도로 답하지 못했다',
           reason: quota.resetsAt === null ? '한도가 풀리는 시각을 읽지 못했다' : `${quota.resetsAt} 에 풀린다`,
         }).catch((e: unknown) => {
           console.error(`  ${mention.id} 한도 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);
         });
-        await deps.murmur.markRead([entryId]);
+        await deps.harkroom.markRead([entryId]);
         attempts.delete(entryId);
         return;
       }
@@ -304,14 +304,14 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       // 멀쩡하다. 죽으면 다른 스레드의 대기 멘션까지 함께 잃는다.
       if (isSessionIdConflict(err)) {
         console.error(`  ${mention.id} 하네스 세션 충돌 — 재시도하지 않는다 (러너의 세션 상태와 하네스 디스크가 어긋났다): ${err instanceof Error ? err.message : String(err)}`);
-        await deps.murmur.fail(mention.channelId, sessionConflictNotice(), anchor, {
+        await deps.harkroom.fail(mention.channelId, sessionConflictNotice(), anchor, {
           retryable: false,
           what: '하네스 세션 상태가 어긋나 답하지 못했다',
           reason: '운영자가 러너 로그를 확인해야 한다 — 다시 불러도 같은 자리에서 실패한다',
         }).catch((e: unknown) => {
           console.error(`  ${mention.id} 세션 충돌 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);
         });
-        await deps.murmur.markRead([entryId]);
+        await deps.harkroom.markRead([entryId]);
         attempts.delete(entryId);
         return;
       }
@@ -330,16 +330,16 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       const stall = isHarnessStall(err);
       if (stall) {
         console.error(`  ${mention.id} 하네스 정지 — 재시도하지 않는다 (사람이 그 터미널을 봐야 한다): ${err instanceof Error ? err.message : String(err)}`);
-        // **평문이 아니라 실패로 남긴다**(`murmur.ts::fail`). 이 스레드는 사람이 손을 대야
+        // **평문이 아니라 실패로 남긴다**(`harkroom.ts::fail`). 이 스레드는 사람이 손을 대야
         // 풀리므로 화면에 `막힘` 으로 서 있어야 한다 — 평문으로 올리면 배지는 `끝남` 이다.
-        await deps.murmur.fail(mention.channelId, stallNotice(stall.stallMs), anchor, {
+        await deps.harkroom.fail(mention.channelId, stallNotice(stall.stallMs), anchor, {
           retryable: false,
           what: '하네스가 서 있어 답하지 못했다',
           reason: '그 터미널을 열어 화면을 확인해야 한다 — 확인을 기다리는 물음이 서 있을 수 있다',
         }).catch((e: unknown) => {
           console.error(`  ${mention.id} 정지 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);
         });
-        await deps.murmur.markRead([entryId]);
+        await deps.harkroom.markRead([entryId]);
         attempts.delete(entryId);
         return;
       }
@@ -348,14 +348,14 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       if (exhausted(tried)) {
         // 한도까지 실패하면 읽음 처리해 흘려보낸다 — 안 그러면 이 항목이 큐를 막는다.
         console.error(`  ${mention.id} 포기하고 읽음 처리한다`);
-        await deps.murmur.fail(mention.channelId, FAILURE_NOTICE, anchor, {
+        await deps.harkroom.fail(mention.channelId, FAILURE_NOTICE, anchor, {
           retryable: false,
           what: `${MAX_ATTEMPTS}회 시도 끝에 답하지 못했다`,
           reason: retryReason(err instanceof Error ? err.message : String(err)) ?? undefined,
         }).catch((e: unknown) => {
           console.error(`  ${mention.id} 실패 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);
         });
-        await deps.murmur.markRead([entryId]);
+        await deps.harkroom.markRead([entryId]);
         attempts.delete(entryId);
         return;
       }
@@ -386,7 +386,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
          * `retryable: true` 인 이유: 러너가 실제로 다시 부를 것이고, 그것이 화면이 그리는
          * '다시 부르기' 경로와 어긋나지 않는다.
          */
-        await deps.murmur.fail(
+        await deps.harkroom.fail(
           mention.channelId,
           retryNotice(tried, MAX_ATTEMPTS, retryReason(err instanceof Error ? err.message : String(err))),
           anchor,
@@ -445,7 +445,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
           if (shouldNotify) {
             // 통지는 entry 당 1회 — 재폴링마다 올리면 조종이 길수록 스레드가 도배된다.
             try {
-              await deps.murmur.post(mention.channelId, controlledNotice(handle, pending), anchor);
+              await deps.harkroom.post(mention.channelId, controlledNotice(handle, pending), anchor);
             } catch (err) {
               // 통지는 관측이고 큐는 inbox 다 — 실패해도 유예는 유지된다.
               console.error(`  ${entry.messageId} 대기 통지 발화 실패(유예는 유지된다):`,
@@ -463,7 +463,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
             // 관측이고 관측의 실패는 유예를 바꾸지 않는다.
             deps.queue.markWarned(threadKey);
             try {
-              await deps.murmur.fail(
+              await deps.harkroom.fail(
                 mention.channelId,
                 controlHeldNotice(handle, pending, heldMs),
                 anchor,
@@ -505,7 +505,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         running.add(task);
       }
 
-      if (orphans.length) await deps.murmur.markRead(orphans);
+      if (orphans.length) await deps.harkroom.markRead(orphans);
       return out;
     },
 

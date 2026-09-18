@@ -19,7 +19,7 @@ import { execFile } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadConfig, runnerLabel } from './config.js';
-import { MurmurAgentClient } from './murmur.js';
+import { HarkroomAgentClient } from './harkroom.js';
 import { runMentionTurn, type MentionTurnDeps } from './mentionTurn.js';
 import { runPtyTurn } from './pty.js';
 import { SessionStore } from './sessions.js';
@@ -41,7 +41,7 @@ import { ensureCodexHome } from './codexHome.js';
 import { createMentionScheduler, type BatchContext } from './mentionScheduler.js';
 
 const config = loadConfig();
-const murmur = new MurmurAgentClient(config.murmurUrl, config.murmurPat);
+const harkroom = new HarkroomAgentClient(config.harkroomUrl, config.harkroomPat);
 
 // RUNNABLE_HARNESSES 가 실제로 PRESETS 에 구현돼 있는지 기동 시점에 검사한다.
 // 불일치가 있으면 여기서 크게 실패한다 — 멘션마다 개별적으로 실패하는 대신.
@@ -77,7 +77,7 @@ function acceptStopRequest(at: string): void {
   console.log(`[main] 종료 요청을 받았다 (요청 시각: ${at}) — 진행 중인 턴을 마쳤으므로 물러난다.`);
   // #250: 데스크탑 앱이 띄운 러너라면 앱이 다시 띄운다(내가 소유한 에이전트인 경우).
   // 그 밖에는 여전히 사람(또는 감독)의 몫이다 — 서버는 러너를 띄우지 않는다(design.md §1).
-  console.log('  murmur 서버는 러너를 띄우지 않는다 — 다시 띄우는 것은 데스크탑 앱(소유한 에이전트) 또는 사람/launchd/systemd 감독의 몫이다.');
+  console.log('  harkroom 서버는 러너를 띄우지 않는다 — 다시 띄우는 것은 데스크탑 앱(소유한 에이전트) 또는 사람/launchd/systemd 감독의 몫이다.');
 }
 
 /**
@@ -143,8 +143,8 @@ async function noticeIfHarnessLogin(
   try {
     // 하네스 이름은 정의에서 읽는다 — 지어내지 않는다(#368). 사람이 실행할 명령이
     // 에이전트마다 다르므로(`claude-code` → `claude`) 이름이 없으면 문구가 명령을 뺀다.
-    const def = await murmur.definition();
-    await murmur.post(channelId, harnessLoginNotice(harnessBinaryName(def.harness)), anchor);
+    const def = await harkroom.definition();
+    await harkroom.post(channelId, harnessLoginNotice(harnessBinaryName(def.harness)), anchor);
   } catch (notifyErr) {
     console.error(`  ${messageId} 로그인 통지 발화 실패(물러남은 계속):`,
       notifyErr instanceof Error ? notifyErr.message : notifyErr);
@@ -158,7 +158,7 @@ async function noticeIfHarnessLogin(
  */
 const [me, guide] = await (async () => {
   try {
-    return [await murmur.me(), await murmur.guide()] as const;
+    return [await harkroom.me(), await harkroom.guide()] as const;
   } catch (err) {
     exitIfUnrecoverable(err);
     throw err;
@@ -237,7 +237,7 @@ const claudeLaneReport = { pool: lane.pool ?? null, accounts: claudeAccounts.map
 const hasLegacyPath = await access(legacyPath).then(() => true, () => false);
 if (hasLegacyPath) {
   console.warn(`[main] 서버별로 갈리기 전 상태 디렉터리가 있다: ${legacyPath}`);
-  console.warn(`  이 디렉터리가 이 서버(${config.murmurUrl})의 @${me.handle} 것이 확실하면 옮겨라:`);
+  console.warn(`  이 디렉터리가 이 서버(${config.harkroomUrl})의 @${me.handle} 것이 확실하면 옮겨라:`);
   console.warn(`    mv ${legacyPath} ${agentStateDir}`);
   console.warn('  확실하지 않으면 옮기지 마라 — 다른 커뮤니티의 세션을 접수한다.');
 }
@@ -256,7 +256,7 @@ await store.load();
 // MCP 설정 파일은 기동 시 한 번만 쓴다 — PAT 는 실값이 아니라 플레이스홀더로 들어가므로
 // 파일 자체는 비밀이 아니다(turn.ts::writeMcpConfigOnce). stateDir/handle 아래 고정 경로에
 // 둬서 러너가 재시작돼도 같은 경로를 그대로 재사용한다.
-const mcpConfigPath = await writeMcpConfigOnce(mcpDir, config.murmurUrl);
+const mcpConfigPath = await writeMcpConfigOnce(mcpDir, config.harkroomUrl);
 
 /**
  * `node:child_process` 의 `execFile` 을 workspace.ts::Exec 계약으로 감싼 얇은 어댑터.
@@ -282,9 +282,9 @@ const exec: Exec = (cmd, args, opts) =>
 
 // 기동 로그에 handle 과 인스턴스를 함께 적는다(#174) — 운영자가 `ps` 로 구분해야 한다.
 // 형식은 `runnerLabel` 하나가 갖는다: 여기서 직접 조립하면 로그와 문서가 갈린다.
-console.log(`${runnerLabel(me.handle, config.agentInstance)} 로 붙었다 — ${config.murmurUrl}`);
+console.log(`${runnerLabel(me.handle, config.agentInstance)} 로 붙었다 — ${config.harkroomUrl}`);
 console.log(`상태 디렉터리: ${agentStateDir}`);
-console.log('정의는 서버에서 읽는다 (murmur UI 의 Add/Edit agent 로 바꾼다)');
+console.log('정의는 서버에서 읽는다 (harkroom UI 의 Add/Edit agent 로 바꾼다)');
 
 // #141 Phase 2: 진행 중인 턴의 PTY 바이트를 서버로 중계하는 상시 outbound WS. 여기서
 // 시작하고, 끊기면 스스로 백오프로 다시 붙는다(`relay.ts` — `policy.ts::nextBackoffMs`
@@ -294,8 +294,8 @@ console.log('정의는 서버에서 읽는다 (murmur UI 의 Add/Edit agent 로 
 // attach 를 지원하지 않는 구버전이거나 릴레이가 막혀 있어도 멘션에는 답해야 한다.
 // 그래서 여기에 await 도, 성공 확인도 없다.
 const relay = createRelayClient({
-  murmurUrl: config.murmurUrl,
-  pat: config.murmurPat,
+  harkroomUrl: config.harkroomUrl,
+  pat: config.harkroomPat,
   // #337: 서버의 interactive.open 은 매니저가 처리한다. 매니저가 relay 를 필요로 해서
   // (세션 열기) 상호 참조가 생기므로 늦게 배선한다 — 매니저가 아직 없으면 릴레이가
   // 스스로 interactive.error 로 답한다(relay.ts 의 훅 부재 처리).
@@ -315,7 +315,7 @@ const mentionQueue = new MentionQueue();
 // 매번 처음이 되어 사람이 같은 승인을 스레드 수만큼 반복하게 된다.
 const attentionLedger = createAttentionLedger();
 interactive = createInteractiveManager({
-  murmur, store, exec, runTurn: runPtyTurn, me,
+  harkroom, store, exec, runTurn: runPtyTurn, me,
   workspaceBaseDir, mcpConfigPath, codexHome,
   // **인터랙티브 턴은 페일오버하지 않는다.** 사람이 앉아 있고, 계정을 바꾸면 그 사람이
   // 보던 세션이 사라진다(세션 파일이 계정 디렉터리 안에 있다) — 관찰 도중에 화면을 갈아
@@ -325,7 +325,7 @@ interactive = createInteractiveManager({
   // 위의 configDir 와 갈리면 화면이 도는 계정과 다른 이름을 단언한다.
   claudeAccount: accountLane[0]?.name ?? null,
   claudePool: lane.pool ?? null,
-  murmurUrl: config.murmurUrl, pat: config.murmurPat,
+  harkroomUrl: config.harkroomUrl, pat: config.harkroomPat,
   relay, registry, queue: mentionQueue,
   orphanMs: config.interactiveOrphanMs,
 });
@@ -337,12 +337,12 @@ interactive = createInteractiveManager({
 // 스케줄러가 그것을 직접 읽으면 테스트가 그 환경을 전부 세워야 한다. 스케줄러는 "무엇을
 // 언제 띄우는가"만 알고, "무엇으로 띄우는가"는 이 함수가 넘긴다.
 const scheduler = createMentionScheduler({
-  murmur, registry, queue: mentionQueue, accountLane,
+  harkroom, registry, queue: mentionQueue, accountLane,
   runMentionTurn,
   // 계정별로 갈리는 두 필드(`claudeAccount`·`claudeConfigDir`)만 계정 축이 채운다 —
   // 나머지는 계정과 무관하므로 매번 같은 값이다.
   buildTurnDeps: ({ ctx, mention, account, isLastAccount }) => ({
-    murmur, store, exec, runTurn: runPtyTurn, me, guide,
+    harkroom, store, exec, runTurn: runPtyTurn, me, guide,
     channelName: ctx.channelName(mention.channelId),
     handles: ctx.handles, workspaceBaseDir, mcpConfigPath,
     // 지시문 파일이 여기 쓰인다(#92) — 에이전트 워크스페이스가 아니라 러너의 상태
@@ -363,7 +363,7 @@ const scheduler = createMentionScheduler({
     // 살아남아 전환 자체가 일어나지 않는다 — 부르는 경로는 던지지 않기 때문이다.
     attentionLedger: isLastAccount ? attentionLedger : undefined,
     callsForHuman: isLastAccount,
-    murmurUrl: config.murmurUrl, pat: config.murmurPat,
+    harkroomUrl: config.harkroomUrl, pat: config.harkroomPat,
     turnTimeoutMs: config.turnTimeoutMs,
     harnessStallMs: config.harnessStallMs,
     relay,
@@ -388,14 +388,14 @@ let backoffMs = 1_000;
 
 while (running) {
   try {
-    const batch = await murmur.pollInbox(config.pollTimeoutMs, claudeLaneReport);
+    const batch = await harkroom.pollInbox(config.pollTimeoutMs, claudeLaneReport);
     if (!batch.entries.length) {
       backoffMs = 1_000;
       // 멘션이 없어도 종료 요청은 봐야 한다. 턴 안에서만 정의를 읽으면 **조용한 러너는
       // 영원히 물러나지 않는다** — 낡은 코드로 도는 러너가 마침 한가한 경우가 정확히
       // 운영자가 세우고 싶어 하는 경우다. 새 채널을 만드는 것이 아니라 러너가 이미 매 턴
       // 읽는 그 정의를 한 번 더 읽는 것이다(빈 폴은 pollTimeoutMs 만큼 park 된 뒤라 잦지 않다).
-      const idleDef = await murmur.definition();
+      const idleDef = await harkroom.definition();
       if (stopRequestedForRunner(idleDef.stopRequestedAt, startedAtMs)) {
         acceptStopRequest(idleDef.stopRequestedAt!);
       }
@@ -403,12 +403,12 @@ while (running) {
     }
 
     // 채널 이름·계정 handle 은 턴마다 바뀌지 않으니 배치 단위로 한 번만 받는다.
-    const channels = await murmur.channels();
+    const channels = await harkroom.channels();
     const byId = new Map(channels.map((c) => [c.id, c.name]));
     // GET /accounts — MCP 에는 이 표면이 없다. 이게 없으면 handles 맵에 나(me) 하나만
     // 남아 동료 에이전트·사람의 발화가 전부 "알 수 없는 사용자"로 렌더된다(브리프 지적,
     // 다중 에이전트 협업의 핵심 값이 여기 걸려 있다).
-    const accounts = await murmur.accounts();
+    const accounts = await harkroom.accounts();
     const handles = Object.fromEntries(accounts.map((a) => [a.id, a.handle]));
 
     const ctx: BatchContext = {
@@ -439,7 +439,7 @@ while (running) {
     // 서버 재시작이면 poll 이 빈 결과로 끝나거나 transport 오류가 난다 — 둘 다 정상이고
     // 재접속하면 된다(workspace.guide 의 poll 루프 계약).
     console.error('poll 루프 오류, 재접속:', err instanceof Error ? err.message : err);
-    murmur.reset();
+    harkroom.reset();
     await sleep(backoffMs);
     backoffMs = nextBackoffMs(backoffMs);
   }

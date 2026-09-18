@@ -9,8 +9,8 @@ import { describe, it, expect } from 'vitest';
 import { CREDENTIAL_REJECTED_LINE, EX_CONFIG, EXECUTABLE_NOT_FOUND_LINE, HARNESS_LOGIN_REQUIRED_LINE, runnerExitPlan } from '../src/exit.js';
 import { ExecutableNotFoundError, HARKROOM_ERROR_SOURCE } from '../src/policy.js';
 
-const murmurErr = (status: number) =>
-  Object.assign(new Error(`murmur ${status}`), { status, source: HARKROOM_ERROR_SOURCE });
+const harkroomErr = (status: number) =>
+  Object.assign(new Error(`harkroom ${status}`), { status, source: HARKROOM_ERROR_SOURCE });
 
 /**
  * 하네스가 자기 세션 파일에 남긴 에러(2026-09-08). 자격증명 판정의 재료가 PTY tail 에서
@@ -22,14 +22,14 @@ function harnessErr(text: string): Error & { harnessApiError: string } {
 }
 
 describe('자격증명 실패는 78 로 물러난다', () => {
-  it('murmur 401 → 78', () => {
-    const plan = runnerExitPlan(murmurErr(401));
+  it('harkroom 401 → 78', () => {
+    const plan = runnerExitPlan(harkroomErr(401));
     expect(plan?.code).toBe(78);
     expect(EX_CONFIG).toBe(78);
   });
 
-  it('murmur 403 → 78', () => {
-    expect(runnerExitPlan(murmurErr(403))?.code).toBe(78);
+  it('harkroom 403 → 78', () => {
+    expect(runnerExitPlan(harkroomErr(403))?.code).toBe(78);
   });
 
   it('하네스 로그인 실패도 78 — 재시도로 낫지 않는 것이 같다', () => {
@@ -37,11 +37,11 @@ describe('자격증명 실패는 78 로 물러난다', () => {
   });
 
   it('마지막 줄이 앱과 사람이 찾는 그 한 줄이다', () => {
-    expect(runnerExitPlan(murmurErr(401))!.lines.at(-1)).toBe(CREDENTIAL_REJECTED_LINE);
+    expect(runnerExitPlan(harkroomErr(401))!.lines.at(-1)).toBe(CREDENTIAL_REJECTED_LINE);
   });
 
-  it('murmur PAT 문제와 하네스 로그인 문제를 다르게 안내한다 — 볼 곳이 다르다', () => {
-    expect(runnerExitPlan(murmurErr(401))!.lines.join('\n')).toContain('HARKROOM_PAT');
+  it('harkroom PAT 문제와 하네스 로그인 문제를 다르게 안내한다 — 볼 곳이 다르다', () => {
+    expect(runnerExitPlan(harkroomErr(401))!.lines.join('\n')).toContain('HARKROOM_PAT');
     expect(runnerExitPlan(harnessErr('x-api-key'))!.lines.join('\n')).toContain('claude CLI');
   });
 
@@ -51,7 +51,7 @@ describe('자격증명 실패는 78 로 물러난다', () => {
    * 실제로 해야 할 일은 `claude` 재로그인이었다. 안내문(위 테스트)은 이미 갈라져
    * 있었지만 **앱이 읽는 마커가 하나**여서 그 구분이 러너 로그 안에서 끝났다.
    */
-  it('하네스 로그인 실패는 murmur PAT 와 다른 마커를 낸다 — 앱이 읽는 것은 마커뿐이다', () => {
+  it('하네스 로그인 실패는 harkroom PAT 와 다른 마커를 낸다 — 앱이 읽는 것은 마커뿐이다', () => {
     // 재료가 구조화 필드로 옮겨갔다(2026-09-08) — 판정 자체와 78 계약은 그대로다.
     const plan = runnerExitPlan(Object.assign(new Error('harness 종료 1'), {
       harnessApiError: 'Failed to authenticate: OAuth session expired and could not be refreshed',
@@ -62,7 +62,7 @@ describe('자격증명 실패는 78 로 물러난다', () => {
   });
 
   it('앱이 띄운 러너에게는 재발급 버튼을 가리킨다 — 환경변수를 손으로 바꾸라는 안내만으로는 길이 없다', () => {
-    expect(runnerExitPlan(murmurErr(401))!.lines.join('\n')).toContain('PAT 재발급');
+    expect(runnerExitPlan(harkroomErr(401))!.lines.join('\n')).toContain('PAT 재발급');
   });
 });
 
@@ -71,8 +71,8 @@ describe('자격증명 실패가 아니면 물러나지 않는다', () => {
     expect(runnerExitPlan(new Error('ECONNREFUSED'))).toBeNull();
   });
 
-  it('murmur 500 은 null', () => {
-    expect(runnerExitPlan(murmurErr(500))).toBeNull();
+  it('harkroom 500 은 null', () => {
+    expect(runnerExitPlan(harkroomErr(500))).toBeNull();
   });
 
   it('본문에 401 이라는 숫자가 우연히 든 오류는 null', () => {

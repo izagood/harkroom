@@ -1053,7 +1053,7 @@ export interface MessageRow {
  * MCP 쪽은 응답이 이미 `{ message }` **봉투**라 사정이 다르다 — 거기서는 `notified` 를
  * 형제 키로 둔다(`MessageRow` 를 오염시키지 않으면서 JSON 하나로 끝난다).
  */
-export const NOTIFIED_HEADER = 'x-murmur-notified';
+export const NOTIFIED_HEADER = 'x-harkroom-notified';
 
 /**
  * 부른 사람의 **총수**를 싣는 헤더. `NOTIFIED_HEADER` 가 잘렸을 때 화면이 "외 N 명"을 말할
@@ -1064,7 +1064,7 @@ export const NOTIFIED_HEADER = 'x-murmur-notified';
  * 깨지고, uuid 하나가 37 바이트라 수백 명이면 그 선에 닿는다. **명단을 자르되 수는 정확히**
  * 두는 것이 이 두 헤더의 분업이다 — 잘린 명단만 있으면 화면이 조용히 적은 수를 말한다.
  */
-export const NOTIFIED_COUNT_HEADER = 'x-murmur-notified-count';
+export const NOTIFIED_COUNT_HEADER = 'x-harkroom-notified-count';
 
 /**
  * `NOTIFIED_HEADER` 에 실을 id 의 최대 개수. 37 바이트 × 100 ≈ 3.7KB 로, 다른 헤더와 합쳐도
@@ -2848,7 +2848,7 @@ export const EXECUTABLE_NOT_FOUND_LINE =
  *
  * `#473` 이 하네스 부재에서 고친 결함("하네스가 없는 사람에게 PAT 를 재발급하라고
  * 말한다")과 **정확히 같은 모양**이 자격증명 안에서 되풀이된 것이다. `policy.ts` 는 이미
- * 두 출처를 갈라 놓고 있었고(`murmur-credential`·`harness-credential`) 안내문도 갈라져
+ * 두 출처를 갈라 놓고 있었고(`harkroom-credential`·`harness-credential`) 안내문도 갈라져
  * 있었다 — 갈라지지 않은 곳은 앱이 읽을 수 있는 유일한 것, 이 마커뿐이었다.
  */
 export const HARNESS_LOGIN_REQUIRED_LINE =

@@ -197,7 +197,7 @@ describe('에이전트 백로그 게이지', () => {
 });
 
 // 실사용에서 드러난 거짓 경보(2026-09-01, 병렬 세션 발견): `kind='agent'` 이지만 **러너가 없는**
-// 계정이 있다 — avcs 투영용 시스템 계정(`murmur`)과 정의 없이 만들어진 계정들이다. 사용자는
+// 계정이 있다 — avcs 투영용 시스템 계정(`harkroom`)과 정의 없이 만들어진 계정들이다. 사용자는
 // 사이드바에 보이니 자연스럽게 부르고, 그 미처리는 **영원히 쌓이며 절대 내려오지 않는다.**
 // 경보가 몇 번 반복되면 사람이 경보를 무시하게 되고, 그때 진짜 러너가 죽으면 아무도 안 본다.
 // 사람을 뺀 논리(늦게 읽는 것은 장애가 아니다)가 에이전트 안에 한 겹 더 있었다.
@@ -215,7 +215,7 @@ describe('백로그 게이지는 답할 의무가 있는 에이전트만 센다'
     });
   };
 
-  it('counts an agent that murmur can actually run', async () => {
+  it('counts an agent that harkroom can actually run', async () => {
     await createAgent(app, adminToken, 'runnablebot');
     await callInChannel('runnablebot');
 
@@ -238,10 +238,10 @@ describe('백로그 게이지는 답할 의무가 있는 에이전트만 센다'
   /**
    * 러너가 붙지 않는 agent 계정은 지표에서 빠진다.
    *
-   * 예전에는 `ensureSystemAccount()` 로 avcs 투영용 `murmur` 계정을 만들어 이 성질을
+   * 예전에는 `ensureSystemAccount()` 로 avcs 투영용 `harkroom` 계정을 만들어 이 성질을
    * 확인했다. 스레드 투영을 걷어내며 그 함수가 사라졌고, 지키려던 성질은 그 계정에
    * 대한 것이 아니라 **러너 없는 agent 계정 전부**에 대한 것이었으므로 계정만 직접
-   * 만들어 같은 것을 본다 — 성질에 `murmur` 라는 이름이 필요하지 않았다.
+   * 만들어 같은 것을 본다 — 성질에 `harkroom` 라는 이름이 필요하지 않았다.
    */
   it('leaves out an agent account that has no runner', async () => {
     await pool.query(

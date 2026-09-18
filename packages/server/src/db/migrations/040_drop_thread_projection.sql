@@ -1,7 +1,7 @@
 -- avcs 객체를 채널 메시지·스레드로 투영하던 자리를 걷어낸다.
 --
--- murmur 의 원래 지형은 `avcs ↔ avcs-server ↔ avcshub` 에서 avcshub 자리를 murmur 가
--- 대신하는 것이었다. 코드 관리·협업은 avcs 를 통해서 하고 murmur 는 그 제안·충돌·결정을
+-- harkroom 의 원래 지형은 `avcs ↔ avcs-server ↔ avcshub` 에서 avcshub 자리를 harkroom 가
+-- 대신하는 것이었다. 코드 관리·협업은 avcs 를 통해서 하고 harkroom 는 그 제안·충돌·결정을
 -- **보는 자리**다. 그런데 001 이 만든 이 두 스키마 조각은 다른 것을 했다 — intent 를
 -- 스레드 뿌리로 세우고 operation·decision·evidence 를 그 아래 답글로 붙여, avcs 거버넌스
 -- 객체를 채팅 대화로 **번역**했다. 협업은 별도 탭이 맡는 일이고, 그 탭은 lease 와
@@ -19,7 +19,7 @@
 drop table if exists work_thread;
 
 -- message_avcs_oid: (meta->>'repo', meta->>'oid') 유니크. **투영 멱등성 전용**이었다 —
--- murmur DB 를 오래된 스냅샷으로 되돌려 커서가 후퇴해도 같은 avcs 객체가 메시지로 두 번
+-- harkroom DB 를 오래된 스냅샷으로 되돌려 커서가 후퇴해도 같은 avcs 객체가 메시지로 두 번
 -- 들어오지 않게 막는 자리다. 메시지를 만들지 않으면 막을 중복이 없다.
 --
 -- 남아 있는 과거 투영 메시지의 meta 는 그대로 둔다(위 참조). 인덱스만 사라지므로 그
