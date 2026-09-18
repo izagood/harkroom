@@ -2,21 +2,18 @@
 //
 // ## 옛 경로를 남긴다 (2026-09-10 결정)
 //
-// claude-code 가 안 돌면 harkroom 앱 자체를 쓸 수 없다. 그래서 이 표를 들이는 것과 호출부를
-// 이 표로 옮기는 것을 **분리한다**:
+// **이 표가 유일한 경로다**(2026-09-18). 하네스 이름으로 갈리던 옛 분기도, 그것을 켜고 끄던
+// 스위치(`harnessAdaptersEnabled` · `HARKROOM_HARNESS_ADAPTERS` · 에이전트별 `executionPath`)도
+// 이 릴리스에서 지웠다.
 //
-// 1. (이 커밋) 표를 만들고, 표의 값이 지금 프로덕션과 **같은 답을 내는지** 패리티 테스트로
-//    대조한다. 호출부는 하나도 바뀌지 않는다 — claude 경로는 글자 하나 안 바뀐다.
-// 2. (다음) 호출부를 하나씩 `harnessAdaptersEnabled()` 뒤로 옮긴다. 기본값이 꺼짐이므로
-//    켜지 않은 러너는 계속 옛 경로로 돈다.
-// 3. 실물 검증(멘션 턴 왕복·인터랙티브·중단·계정 전환)이 끝난 뒤 기본값을 켜고, 그다음
-//    릴리스에서 옛 분기를 걷는다.
+// 그 이설은 세 걸음이었다: ① 표를 만들고 패리티 테스트로 값을 대조 ② 호출부를 스위치 뒤로
+// 옮기고 에이전트 하나씩 실물로 확인 ③ 기본값 전환 → 며칠 → 옛 분기 삭제. 그 순서를 지킨
+// 이유와 각 걸음에서 데인 것은 스킬 `runner-harness-work` 에 적혀 있다.
 //
-// **스위치를 1단계에 함께 넣는 이유**: 나중에 넣으면 그 커밋이 "표를 읽게 바꾸는 것"과
-// "스위치를 만드는 것" 두 변경을 겹치게 되고, 문제가 났을 때 어느 쪽 탓인지 가릴 수 없다.
+// 새 하네스를 붙이는 사람에게 남기는 말: **이름으로 갈리는 분기를 다시 심지 마라.** 그 예산은
+// `test/adapterParity.test.ts` 가 파일별로 세고 있고, 늘어나면 거기서 걸린다.
 import type { AgentHarness } from '@harkroom/shared';
 
-import { currentExecutionPath } from '../executionPath.js';
 
 import { CLAUDE_CODE_ADAPTER } from './claudeCode.js';
 import { CODEX_ADAPTER } from './codex.js';
@@ -58,7 +55,6 @@ export const ADAPTERS: Record<AgentHarness, HarnessAdapter | 'unsupported'> = {
  * 없다. 물어볼 수 있다는 것과 읽을 줄 안다는 것은 다른 사실이다.
  */
 export function readsSessionTranscript(harness: AgentHarness): boolean {
-  if (!harnessAdaptersEnabled()) return harness === 'claude-code';
   const transcript = ADAPTERS[harness] === 'unsupported' ? null : adapterFor(harness).transcript;
   return transcript !== null && transcript.kind === 'files' && transcript.parsed;
 }
@@ -145,7 +141,6 @@ export function executionModelFor(harness: AgentHarness, mode: 'mention' | 'inte
  * "모른다"이고, 모르는 것으로 남기는 편이 틀린 것을 단언하는 것보다 낫다(릴레이 주석).
  */
 export function hasAccountPool(harness: AgentHarness): boolean {
-  if (!harnessAdaptersEnabled()) return harness === 'claude-code';
   return adapterFor(harness).account?.pooled === true;
 }
 
@@ -156,7 +151,6 @@ export function hasAccountPool(harness: AgentHarness): boolean {
  * 갖고 있다. 옛 비교(`harness === 'codex'`)는 "codex 만 그렇다"를 하드코딩한 것이었다.
  */
 export function discoversSessionIdAfterTurn(harness: AgentHarness): boolean {
-  if (!harnessAdaptersEnabled()) return harness === 'codex';
   return adapterFor(harness).allowsNullSessionOnFirstTurn;
 }
 
@@ -192,47 +186,3 @@ export function adapterFor(harness: AgentHarness): HarnessAdapter {
   return adapter;
 }
 
-/**
- * 러너가 **어댑터 표를 읽어 동작할 것인가**. 기본값은 **꺼짐**이다.
- *
- * 켜는 방법은 `HARKROOM_HARNESS_ADAPTERS=1`(러너 env). 데몬이 러너 env 를 통째로 상속시키므로
- * 운영자가 데몬 환경에 넣으면 그 기계의 모든 러너가 새 경로로 돈다 — 한 기계에서 먼저
- * 켜 보고 넘어가는 것이 이 설계가 의도한 검증 순서다.
- *
- * `'1'`·`'true'` 만 켜짐으로 읽는다. 오타로 켜지지 않게 하려는 것이다 — 이 스위치가
- * 실수로 켜지면 claude 경로가 통째로 바뀐다.
- */
-export function harnessAdaptersEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  /**
-   * **에이전트가 고른 것이 먼저다(2026-09-12).**
-   *
-   * 스위치가 환경변수뿐이었을 때는 한 에이전트만 새 경로로 돌려 보려 해도 데몬 전체를 그
-   * 값으로 다시 띄워야 했다 — 그러면 "나머지는 옛 경로로 두고 하나만 재 본다" 가 안 되고,
-   * 이설의 안전이 바로 그 비교에 걸려 있다. 그래서 에이전트 설정(`executionPath`)이 이
-   * 판정의 첫 입력이고, 러너가 **턴마다** 읽으므로 재시작이 필요 없다.
-   *
-   * 고르지 않았으면(`null`) 이 러너의 기본값 — 환경변수가 답하고, 그 기본은 이제 **켜짐**
-   * 이다(2026-09-15 전환). 턴 밖에서 부르는 자리(`certify` 같은 스크립트)도 그 길로 떨어진다.
-   *
-   * ## 전환한 근거
-   *
-   * - 세 패리티 파일이 양쪽을 **실제로 돌려** 행동을 맞춘다(파일 바이트·반환값·argv).
-   * - CI 가 에이전트 스위트를 **양쪽에서** 돈다(실측: 실패 집합까지 동일).
-   * - codex 의 실행 방식(headless → TUI)은 이 스위치와 **무관하게** 먼저 올렸다 — 이
-   *   전환에는 실행 방식 변화가 섞여 있지 않다.
-   * - `executionPath`(#790)로 에이전트 하나씩 새 경로에 올려 실물로 돌렸고, codex 가
-   *   릴리스에서 실제로 답하는 것까지 봤다(#808·#807).
-   *
-   * ## 끄는 길은 남는다
-   *
-   * 러너 하나를 통째로 되돌리는 `HARKROOM_HARNESS_ADAPTERS=0`, 에이전트 하나만 되돌리는
-   * `executionPath: 'legacy'`(더 좁고 재시작도 없다). 값 판정은 **끄는 쪽만** 명시적으로
-   * 본다 — 오타로 옛 경로에 떨어지는 것이 조용한 쪽이라서다.
-   *
-   * **다음 릴리스에서 이 함수와 옛 분기를 함께 지운다.**
-   */
-  const chosen = currentExecutionPath();
-  if (chosen !== null) return chosen === 'adapters';
-  const raw = env.HARKROOM_HARNESS_ADAPTERS;
-  return !(raw === '0' || raw === 'false');
-}

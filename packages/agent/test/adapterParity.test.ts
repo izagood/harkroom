@@ -19,7 +19,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AGENT_HARNESSES, RUNNABLE_HARNESSES, MENTION_PERMISSIONS, type AgentHarness } from '@harkroom/shared';
 
-import { ADAPTERS, adapterFor, harnessAdaptersEnabled, type HarnessAdapter } from '../src/adapters/index.js';
+import {ADAPTERS, adapterFor, type HarnessAdapter } from '../src/adapters/index.js';
 import { buildTurnCommand, type BuildTurnCommandOptions } from '../src/turn.js';
 import { looksLikeGate, looksReadyForPrompt } from '../src/pty.js';
 import { readLastApiError } from '../src/harnessErrors.js';
@@ -57,25 +57,6 @@ function plan(harness: AgentHarness, over: Partial<BuildTurnCommandOptions> = {}
   });
 }
 
-describe('스위치는 기본으로 켜져 있다 — 끄는 길만 남긴다', () => {
-  // **전환했다(2026-09-15).** 켜고 끄는 것이 동작을 바꾸지 않는다는 것을 세 패리티 파일과
-  // CI 의 양쪽 런이 증명했고, 그 위에서 codex 가 TUI 로 실제로 답하는 것까지 봤다
-  // (#808·#807). 근거 전문은 `harnessAdaptersEnabled` 주석에 있다.
-  it('값이 없으면 켜짐 — 표가 기본 경로다', () => {
-    expect(harnessAdaptersEnabled({})).toBe(true);
-  });
-
-  it('끄는 것은 0·false 뿐이다 — 오타로 꺼지지 않는다', () => {
-    // 방향이 뒤집혔다: 이제 **꺼지는 쪽**이 명시적이어야 한다. 오타로 옛 경로에 떨어지면
-    // 그 사실이 조용하고, 조용한 것이 위험한 쪽이다.
-    for (const raw of ['0', 'false']) {
-      expect(harnessAdaptersEnabled({ HARKROOM_HARNESS_ADAPTERS: raw })).toBe(false);
-    }
-    for (const raw of ['1', 'true', 'off', 'no', 'FALSE', '']) {
-      expect(harnessAdaptersEnabled({ HARKROOM_HARNESS_ADAPTERS: raw })).toBe(true);
-    }
-  });
-});
 
 describe('표의 범위가 turn.ts::PRESETS 와 같다', () => {
   it('AGENT_HARNESSES 전부에 항목이 있다', () => {
@@ -354,17 +335,11 @@ describe('잠금 — 호출부가 표를 읽게 되면 지운다', () => {
     //
     // 대신 재는 것: **표를 고치면 argv 가 따라 움직인다.** codex 의 멘션이 TUI 이므로
     // 새 경로의 argv 에 `exec` 가 없어야 한다. 표와 argv 가 어긋나면 여기서 걸린다.
-    const saved = process.env.HARKROOM_HARNESS_ADAPTERS;
-    process.env.HARKROOM_HARNESS_ADAPTERS = '1';
-    try {
-      expect(adapterFor('codex').executionModel.mention).toBe('tui');
-      expect(plan('codex').args).not.toContain('exec');
-      // claude 는 원래 TUI 였고 그대로다.
-      expect(adapterFor('claude-code').executionModel.mention).toBe('tui');
-    } finally {
-      if (saved === undefined) delete process.env.HARKROOM_HARNESS_ADAPTERS;
-      else process.env.HARKROOM_HARNESS_ADAPTERS = saved;
-    }
+    // (스위치는 지웠다 — 경로가 하나뿐이라 켜고 끌 것이 없다, 2026-09-18)
+    expect(adapterFor('codex').executionModel.mention).toBe('tui');
+    expect(plan('codex').args).not.toContain('exec');
+    // claude 는 원래 TUI 였고 그대로다.
+    expect(adapterFor('claude-code').executionModel.mention).toBe('tui');
   });
 
   it('account.pooled 가 지금 풀 표면이 있는 하네스와 같다', () => {
@@ -434,10 +409,14 @@ describe('P2 가 옮겨야 할 목록 — 하네스 이름 비교의 예산', ()
   const BUDGET: Record<string, number> = {
     // `mentionTurn.ts` 4 · `interactiveTurn.ts` 3 이 여기 있었다(이설 3/N). 일곱 자리가
     // 실은 세 질문이었고(`usesTuiForMention`·`hasAccountPool`·
-    // `discoversSessionIdAfterTurn`), 옛 비교는 그 세 함수 안에 스위치와 함께 산다.
-    // 이설했지만 **옛 분기가 살아 있어** 숫자가 그대로다(스위치가 꺼지면 그 분기가 답한다).
-    // 이 숫자는 옛 분기를 지울 때 줄어든다 — 그 순서가 이 작업의 안전장치다.
-    'workspaceTrust.ts': 3,
+    // `discoversSessionIdAfterTurn`), 옛 비교는 그 세 함수 안에 스위치와 함께 살았다.
+    //
+    // **옛 분기를 지우면서 `workspaceTrust.ts` 가 3 → 1 로 줄었다**(2026-09-18). 남은 하나는
+    // 신뢰 장부가 아니라 **위험 모드 수락**(claude 의 `settings.json`)이라 표의 축이 아니다.
+    // 이 숫자가 줄어드는 것이 이설이 끝났다는 증거이고, 늘어나면 새 이름 비교가 심긴 것이다.
+    'workspaceTrust.ts': 1,
+    // `turn.ts` 의 셋은 codex 홈·claude config 디렉터리를 **어느 하네스에 넘길지**를 정하는
+    // 자리다 — 계정·경로의 소유 문제라 어댑터 표로 옮길 축이 아직 없다.
     'turn.ts': 3,
     // `harnessErrors.ts` 3 · `claudeSessions.ts` 1 이 여기 있었다(이설 2/N). 넷이 각자
     // 묻던 같은 질문을 `adapters/index.ts::readsSessionTranscript` 하나로 모았고, 옛 비교는

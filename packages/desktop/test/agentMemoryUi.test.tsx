@@ -24,7 +24,7 @@ const agent = (handle: string): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
-  claudeLane: null, executionPath: null,
+  claudeLane: null,
   stopRequestedAt: null, stopAckedAt: null, lastTurnAt: null,
   status: 'available', statusText: null, avatarAttachmentId: null,
 });
