@@ -12,7 +12,7 @@ let storage: ReturnType<typeof createLocalStorage>;
 const stream = (chunks: string[]) => Readable.from(chunks.map((c) => Buffer.from(c)));
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'murmur-storage-'));
+  root = await mkdtemp(join(tmpdir(), 'harkroom-storage-'));
   storage = createLocalStorage({ root, maxBytes: 1024 });
 });
 afterEach(async () => { await rm(root, { recursive: true, force: true }); });
@@ -132,11 +132,11 @@ describe('reading a key that is not there', () => {
 
   // 키가 경로로 해석되면 스토리지 밖의 파일을 읽는 통로가 된다.
   it('refuses a key that tries to climb out of the root', async () => {
-    await writeFile(join(root, '..', 'murmur-secret.txt'), 'secret');
+    await writeFile(join(root, '..', 'harkroom-secret.txt'), 'secret');
 
-    await expect(storage.read('../murmur-secret.txt')).rejects.toThrow();
+    await expect(storage.read('../harkroom-secret.txt')).rejects.toThrow();
 
-    await rm(join(root, '..', 'murmur-secret.txt'), { force: true });
+    await rm(join(root, '..', 'harkroom-secret.txt'), { force: true });
   });
 
   it('refuses an absolute key', async () => {

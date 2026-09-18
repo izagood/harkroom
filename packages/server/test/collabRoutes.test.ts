@@ -36,7 +36,7 @@ async function put(obj: Record<string, unknown>): Promise<string> {
 const ALPHA = { kind: 'ai_agent' as const, id: 'ai:alpha', model: 'opus' };
 
 beforeAll(async () => {
-  dataDir = await mkdtemp(join(tmpdir(), 'murmur-collab-'));
+  dataDir = await mkdtemp(join(tmpdir(), 'harkroom-collab-'));
   hub = await startAvcsServer({ dataDir, host: '127.0.0.1' });
   ({ pool, stop } = await startTestDb());
   app = await buildServer({

@@ -16,7 +16,7 @@ export function Logo({
   size?: number;
   className?: string;
   /**
-   * 옆에 텍스트 `murmur` 가 함께 있는 자리에서는 true 로 둔다. 같은 이름이 둘이면
+   * 옆에 텍스트 `harkroom` 가 함께 있는 자리에서는 true 로 둔다. 같은 이름이 둘이면
    * 스크린리더가 같은 것을 두 번 읽는다.
    */
   decorative?: boolean;
@@ -31,7 +31,7 @@ export function Logo({
       width={size}
       height={size}
       className={className}
-      data-testid="murmur-logo"
+      data-testid="harkroom-logo"
       {...a11y}
     >
       {!decorative && <title>Harkroom</title>}

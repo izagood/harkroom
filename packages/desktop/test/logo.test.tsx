@@ -9,10 +9,10 @@ import { ConnectScreen } from '../src/screens/ConnectScreen';
 import { acc, chan } from './helpers/fakeApi';
 
 /**
- * 접근 가능한 이름으로 `murmur` 를 노출하는 자리의 수. 로고와 그 옆 텍스트가 둘 다
+ * 접근 가능한 이름으로 `harkroom` 를 노출하는 자리의 수. 로고와 그 옆 텍스트가 둘 다
  * 이름을 내면 스크린리더가 같은 것을 두 번 읽는다(#191) — 그 회귀를 여기서 잡는다.
  */
-const murmurNameCount = () =>
+const harkroomNameCount = () =>
   // 같은 요소가 role 로도 텍스트로도 잡히므로(예: `<h1>harkroom</h1>`) 요소 단위로 센다.
   //
   // **`<title>` 은 세지 않는다**(실측 2026-09-07). 로고 `<svg>` 가 접근성 이름을 낼 때
@@ -46,7 +46,7 @@ afterEach(() => {
 const sidebar = () =>
   render(<Sidebar panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
 
-describe('murmur 로고 (#191)', () => {
+describe('harkroom 로고 (#191)', () => {
   /**
    * **글자와 로고가 함께 선다**(실측 2026-09-08, 사용자가 화면에서 지적 — "harkroom
    * 텍스트가 안 나와").
@@ -58,9 +58,9 @@ describe('murmur 로고 (#191)', () => {
    *
    * `getByText` 는 직접 텍스트 노드만 보므로(`getNodeText`) 조상 `div` 는 걸리지 않는다.
    */
-  it('사이드바 브랜드 줄에 로고와 murmur 글자가 함께 있다', () => {
+  it('사이드바 브랜드 줄에 로고와 harkroom 글자가 함께 있다', () => {
     sidebar();
-    expect(screen.getByTestId('murmur-logo')).toBeTruthy();
+    expect(screen.getByTestId('harkroom-logo')).toBeTruthy();
     expect(screen.getByText('Harkroom')).toBeTruthy();
   });
 
@@ -71,22 +71,22 @@ describe('murmur 로고 (#191)', () => {
    */
   it('글자가 이름을 지므로 로고는 장식이다', () => {
     sidebar();
-    expect(screen.getByTestId('murmur-logo').getAttribute('aria-hidden')).toBe('true');
+    expect(screen.getByTestId('harkroom-logo').getAttribute('aria-hidden')).toBe('true');
   });
 
-  it('사이드바에서 접근 가능한 이름 murmur 는 하나뿐이다', () => {
+  it('사이드바에서 접근 가능한 이름 harkroom 는 하나뿐이다', () => {
     sidebar();
-    expect(murmurNameCount()).toBe(1);
+    expect(harkroomNameCount()).toBe(1);
   });
 
   it('접속 화면에도 로고가 있다', () => {
     render(<ConnectScreen onConnected={vi.fn()} />);
-    expect(screen.getByTestId('murmur-logo')).toBeTruthy();
+    expect(screen.getByTestId('harkroom-logo')).toBeTruthy();
   });
 
-  it('접속 화면에서도 접근 가능한 이름 murmur 는 하나뿐이다', () => {
+  it('접속 화면에서도 접근 가능한 이름 harkroom 는 하나뿐이다', () => {
     render(<ConnectScreen onConnected={vi.fn()} />);
-    expect(murmurNameCount()).toBe(1);
+    expect(harkroomNameCount()).toBe(1);
   });
 
   /**
@@ -98,7 +98,7 @@ describe('murmur 로고 (#191)', () => {
   it('가운데 막대의 색이 하드코딩이 아니라 강조 토큰이다', () => {
     sidebar();
     const strokes = Array.from(
-      screen.getByTestId('murmur-logo').querySelectorAll('path')
+      screen.getByTestId('harkroom-logo').querySelectorAll('path')
     ).map((path) => path.getAttribute('stroke') ?? '');
 
     expect(strokes.some((stroke) => stroke.includes('--color-accent-brand'))).toBe(true);
@@ -126,7 +126,7 @@ describe('murmur 로고 (#191)', () => {
    */
   it('상단 바 로고가 바 높이의 절반보다 크다', () => {
     sidebar();
-    const size = Number(screen.getByTestId('murmur-logo').getAttribute('width'));
+    const size = Number(screen.getByTestId('harkroom-logo').getAttribute('width'));
     expect(size).toBeGreaterThan(18);
     expect(size).toBeLessThanOrEqual(32);
   });

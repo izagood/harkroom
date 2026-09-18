@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="murmur 데스크탑 — 사이드바 옆에 레일을 내고 DM·에이전트를 옮긴다">
-<title>murmur · 레일</title>
+<meta name="description" content="harkroom 데스크탑 — 사이드바 옆에 레일을 내고 DM·에이전트를 옮긴다">
+<title>harkroom · 레일</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap">
@@ -337,7 +337,7 @@
     <p class="eyebrow">문제</p>
     <h2>세로 하나로는 안 된다</h2>
     <p>
-      한 열에 쌓는 구조는 <b>목록이 하나일 때만</b> 성립한다. murmur 는 목록이 셋이다 —
+      한 열에 쌓는 구조는 <b>목록이 하나일 때만</b> 성립한다. harkroom 는 목록이 셋이다 —
       채널 · DM · 에이전트. 셋 중 하나가 길어지면 나머지 둘이 화면 밖으로 나가고,
       <b>스크롤해야 보이는 것은 없는 것과 같다</b>.
     </p>
@@ -420,7 +420,7 @@
     <h2>커뮤니티</h2>
     <p>
       설정 목차에 <code>Communities</code> 가 이미 있는데, <b>앱 화면 어디에도 지금 어느 커뮤니티에 있는지 나오지 않는다</b> —
-      타이틀바의 <code>murmur</code> 는 앱 이름이지 커뮤니티가 아니다.
+      타이틀바의 <code>harkroom</code> 는 앱 이름이지 커뮤니티가 아니다.
       레일 맨 위 마크가 그 답이고, 누르면 <b>옮겨 다니는 자리</b>가 된다.
     </p>
     <div class="panel">
@@ -507,7 +507,7 @@
     </div>
   </section>
 
-  <footer>murmur · 레일 · 실행 중인 앱 사이드바 확인</footer>
+  <footer>harkroom · 레일 · 실행 중인 앱 사이드바 확인</footer>
 </div>
 
 <script>
@@ -669,8 +669,8 @@
     if(right){ const k=el('span','cm__k'+(right.badge?' bd2':'')); k.textContent=right.text; r.appendChild(k); }
     cm.appendChild(r);
   }
-  cmRow('M','#C24A22','murmur','murmur.dev',{text:'⌘1'},true);
-  cmRow('A','#2F6F5E','avcs','avcs.murmur.dev',{text:'3',badge:true});
+  cmRow('M','#C24A22','murmur','harkroom.dev',{text:'⌘1'},true);
+  cmRow('A','#2F6F5E','avcs','avcs.harkroom.dev',{text:'3',badge:true});
   cmRow('S','#3B5BA5','side-project','',{text:'⌘3'});
   cm.appendChild(el('div','cm__hr'));
   const add=el('div','cm__i');

@@ -50,10 +50,10 @@ export interface ProjectionDeps {
  * 되돌리려면 `work_thread` 테이블과 `message_avcs_oid` 유니크 인덱스를 되살려야 한다
  * (`040_drop_thread_projection.sql` 이 지운다).
  *
- * **`ensureSystemAccount` 을 함께 지운 판단:** 그 함수는 `murmur` 핸들의 agent 계정을
+ * **`ensureSystemAccount` 을 함께 지운 판단:** 그 함수는 `harkroom` 핸들의 agent 계정을
  * 만들어 투영 메시지의 `author_id` 로 쓰는 것이 유일한 용도였고, 다른 호출자는 없었다
  * (유일하게 남은 언급은 `metricsEndpoint.test.ts` 인데, 그것은 "러너 없는 agent 계정은
- * 지표에서 빠진다"를 확인하려고 마침 손에 있던 계정을 쓴 것이라 그 성질에 `murmur` 라는
+ * 지표에서 빠진다"를 확인하려고 마침 손에 있던 계정을 쓴 것이라 그 성질에 `harkroom` 라는
  * 이름이 필요하지 않다). 메시지를 만들지 않으면 작성자로 세울 것이 없으므로 계정을
  * 만들 이유가 사라진다.
  *

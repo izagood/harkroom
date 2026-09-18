@@ -30,7 +30,7 @@ import { checkAll, readAll, readVersion, writeAll } from '../scripts/sync-versio
  * 테스트가 통과해도 실물에서 깨진다.
  */
 function makeFixture(version: string): string {
-  const dir = mkdtempSync(path.join(tmpdir(), 'murmur-sync-version-'));
+  const dir = mkdtempSync(path.join(tmpdir(), 'harkroom-sync-version-'));
 
   writeFileSync(
     path.join(dir, 'tauri.conf.json'),

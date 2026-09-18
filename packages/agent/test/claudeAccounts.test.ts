@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { claudeAccountsRoot, loadClaudeAccountLane, loadClaudeAccounts } from '../src/claudeAccounts.js';
 
 async function fixture(names: string[]): Promise<string> {
-  const root = mkdtempSync(join(tmpdir(), 'murmur-claude-accounts-'));
+  const root = mkdtempSync(join(tmpdir(), 'harkroom-claude-accounts-'));
   for (const name of names) await mkdir(join(root, name), { recursive: true });
   return root;
 }
@@ -17,7 +17,7 @@ describe('claudeAccountsRoot', () => {
     // 계정은 에이전트·인스턴스·서버를 가로지르는 자산이다 — 러너 상태 디렉터리 안에
     // 두면 에이전트마다 다시 로그인해야 한다(codexHome 과 목적이 반대다).
     expect(claudeAccountsRoot({} as NodeJS.ProcessEnv))
-      .toMatch(/\.(harkroom|murmur)-agent\/claude-accounts$/);
+      .toMatch(/\.(harkroom|harkroom)-agent\/claude-accounts$/);
   });
 
   it('HARKROOM_CLAUDE_ACCOUNTS_DIR 로 뿌리를 옮길 수 있다', () => {
@@ -37,7 +37,7 @@ describe('loadClaudeAccounts', () => {
 
   it('뿌리가 없으면 빈 배열이다 — 오류가 아니다', async () => {
     // 풀을 안 만든 사람이 압도적으로 많다. 그 경우가 정상 경로여야 기존 동작이 유지된다.
-    expect(await loadClaudeAccounts({ root: '/nonexistent/murmur/pool' })).toEqual([]);
+    expect(await loadClaudeAccounts({ root: '/nonexistent/harkroom/pool' })).toEqual([]);
   });
 
   it('디렉터리가 아닌 것은 계정이 아니다', async () => {
@@ -59,7 +59,7 @@ describe('loadClaudeAccounts', () => {
   // 방법이고, `codexHome.ts` 도 auth.json 을 링크로 재사용한다.
   it('디렉터리를 가리키는 심볼릭 링크도 계정이다', async () => {
     const root = await fixture(['cedar']);
-    const real = mkdtempSync(join(tmpdir(), 'murmur-real-account-'));
+    const real = mkdtempSync(join(tmpdir(), 'harkroom-real-account-'));
     await symlink(real, join(root, 'aria'));
     expect((await loadClaudeAccounts({ root })).map((a) => a.name)).toEqual(['aria', 'cedar']);
   });
@@ -68,13 +68,13 @@ describe('loadClaudeAccounts', () => {
     // 가리키는 곳이 없으면 claude 가 그 경로에 새 설정을 만들어 미로그인으로 뜬다 —
     // 계정 축이 한 칸 헛돈다. 링크가 살아 있는지까지 봐야 한다.
     const root = await fixture(['cedar']);
-    await symlink(join(tmpdir(), 'murmur-no-such-target-xyz'), join(root, 'aria'));
+    await symlink(join(tmpdir(), 'harkroom-no-such-target-xyz'), join(root, 'aria'));
     expect((await loadClaudeAccounts({ root })).map((a) => a.name)).toEqual(['cedar']);
   });
 
   it('파일을 가리키는 심볼릭 링크는 계정이 아니다', async () => {
     const root = await fixture(['cedar']);
-    const file = join(mkdtempSync(join(tmpdir(), 'murmur-file-')), 'f.txt');
+    const file = join(mkdtempSync(join(tmpdir(), 'harkroom-file-')), 'f.txt');
     await writeFile(file, 'x');
     await symlink(file, join(root, 'aria'));
     expect((await loadClaudeAccounts({ root })).map((a) => a.name)).toEqual(['cedar']);
@@ -112,7 +112,7 @@ async function poolFixture(
   pools: Record<string, string[]>,
   cfg?: unknown,
 ): Promise<string> {
-  const root = mkdtempSync(join(tmpdir(), 'murmur-pools-'));
+  const root = mkdtempSync(join(tmpdir(), 'harkroom-pools-'));
   for (const [pool, accounts] of Object.entries(pools)) {
     await mkdir(join(root, pool), { recursive: true });
     for (const a of accounts) await mkdir(join(root, pool, a), { recursive: true });
@@ -207,7 +207,7 @@ describe('loadClaudeAccountLane — 풀 축', () => {
   it('깨진 pools.json 은 없는 것이 아니라 빈 설정이다', async () => {
     // **파일의 존재가 풀 모드의 스위치**이므로, 깨진 파일을 "없음"으로 읽으면 풀 모드였던
     // 러너가 조용히 암묵 풀로 되돌아가 **계정을 풀로 읽는다.**
-    const root = mkdtempSync(join(tmpdir(), 'murmur-pools-broken-'));
+    const root = mkdtempSync(join(tmpdir(), 'harkroom-pools-broken-'));
     await mkdir(join(root, 'aria'), { recursive: true });
     await writeFile(join(root, 'pools.json'), '{ not json');
     const lane = await loadClaudeAccountLane({ root, agentId: 'a1' });

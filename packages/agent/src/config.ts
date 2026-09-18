@@ -39,8 +39,8 @@ export function runnerLabel(handle: string, instance: string | undefined): strin
 
 /** 러너 자체의 설정. 모델·effort·지시문은 서버의 에이전트 정의에 있다(harkroom UI 로 바꾼다). */
 export interface RunnerConfig {
-  murmurUrl: string;
-  murmurPat: string;
+  harkroomUrl: string;
+  harkroomPat: string;
   pollTimeoutMs: number;
   /** 한 턴(PTY 실행)의 최대 대기 시간. 코딩 에이전트는 도구 호출을 여러 번 거치므로 넉넉히 잡는다. */
   turnTimeoutMs: number;
@@ -73,8 +73,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
   // 모델·effort 는 여기 없다 — 서버 정의에 있어야 UI 수정이 반영된다.
   // claude-code harness 는 claude CLI 의 자격증명을 쓰므로 API 키도 필요 없다.
   return {
-    murmurUrl: (env.HARKROOM_URL ?? 'http://localhost:3400').replace(/\/$/, ''),
-    murmurPat: required(env, 'HARKROOM_PAT'),
+    harkroomUrl: (env.HARKROOM_URL ?? 'http://localhost:3400').replace(/\/$/, ''),
+    harkroomPat: required(env, 'HARKROOM_PAT'),
     // 서버의 inbox.poll 상한은 25초다.
     pollTimeoutMs: Number(env.AGENT_POLL_TIMEOUT_MS ?? 25_000),
     // 코딩 에이전트 한 턴은 도구 호출을 여러 번 거칠 수 있다 — 30분을 기본값으로 둔다.

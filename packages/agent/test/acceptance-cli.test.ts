@@ -138,7 +138,7 @@ async function planFor(combo: Combo, dir: string): Promise<TurnPlan> {
     mentionPermission: 'auto',
     mcpConfigPath,
     pat: 'murp_fake_never_sent',
-    murmurUrl: 'http://localhost:3401',
+    harkroomUrl: 'http://localhost:3401',
     codexHome: join(dir, 'codex-home'),
     claudeConfigDir: null,
   });
@@ -147,7 +147,7 @@ async function planFor(combo: Combo, dir: string): Promise<TurnPlan> {
 describe('수용 — 조립한 argv 의 플래그가 그 서브커맨드에 실제로 존재하는가 (spec §10)', () => {
   for (const combo of COMBOS) {
     it(`[${combo.harness}] ${combo.label}`, async () => {
-      const dir = await mkdtemp(join(tmpdir(), 'murmur-acceptance-'));
+      const dir = await mkdtemp(join(tmpdir(), 'harkroom-acceptance-'));
       try {
         const plan = await planFor(combo, dir);
         if (!(await hasCli(plan.command))) {

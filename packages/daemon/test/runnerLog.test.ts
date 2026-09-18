@@ -260,7 +260,7 @@ describe('로그 경로 — 소켓에서 온 문자열이 경로가 되지 않�
    * 벗어나 이 단언이 빨개진다.
    */
   it('경로 조각이 섞인 agentId 도 daemon 디렉터리를 벗어나지 못한다', () => {
-    const appDataDir = '/tmp/murmur-test-appdata';
+    const appDataDir = '/tmp/harkroom-test-appdata';
     const 나쁜값 = ['../../../etc/passwd', 'a/b/c', './..', '..'];
     for (const id of 나쁜값) {
       const path = runnerLogPath(appDataDir, id);
@@ -271,7 +271,7 @@ describe('로그 경로 — 소켓에서 온 문자열이 경로가 되지 않�
   });
 
   it('에이전트마다 파일이 다르다 — 구분자가 뒤섞이지 않는다', () => {
-    const appDataDir = '/tmp/murmur-test-appdata';
+    const appDataDir = '/tmp/harkroom-test-appdata';
     expect(runnerLogPath(appDataDir, 'a1')).not.toBe(runnerLogPath(appDataDir, 'a2'));
   });
 });
@@ -301,7 +301,7 @@ describe('꼬리 읽기 — exit 통지에 실을 재료 (#473)', () => {
   });
 
   it('파일이 없으면 빈 배열이다 — 던지지 않는다', async () => {
-    expect(await readRunnerLogTail('/tmp/murmur-없는파일-9999.log')).toEqual([]);
+    expect(await readRunnerLogTail('/tmp/harkroom-없는파일-9999.log')).toEqual([]);
   });
 
   /**

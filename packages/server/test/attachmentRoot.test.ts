@@ -68,7 +68,7 @@ describe('#257 첨부 저장 루트', () => {
 
     // **cwd 를 실제로 바꾼다.** 이것 없이는 절대경로 단언만 남고, 그것은 결함이 있는
     // `resolve('./.attachments')` 도 통과시킨다.
-    const elsewhere = await mkdtemp(join(tmpdir(), 'murmur-cwd-'));
+    const elsewhere = await mkdtemp(join(tmpdir(), 'harkroom-cwd-'));
     try {
       process.chdir(elsewhere);
       const there = await rootOf();
@@ -102,7 +102,7 @@ describe('#257 첨부 저장 루트', () => {
   });
 
   it('2b. ATTACHMENT_ROOT 가 절대경로면 그대로 쓴다', async () => {
-    const absolute = await mkdtemp(join(tmpdir(), 'murmur-absroot-'));
+    const absolute = await mkdtemp(join(tmpdir(), 'harkroom-absroot-'));
     try {
       process.env.ATTACHMENT_ROOT = absolute;
       const { root } = await rootOf();
@@ -113,7 +113,7 @@ describe('#257 첨부 저장 루트', () => {
   });
 
   it('4. 기동 로그에 실제로 쓰는 절대경로가 한 줄 찍힌다', async () => {
-    const absolute = await mkdtemp(join(tmpdir(), 'murmur-logroot-'));
+    const absolute = await mkdtemp(join(tmpdir(), 'harkroom-logroot-'));
     try {
       process.env.ATTACHMENT_ROOT = absolute;
       const log = capture();
@@ -127,7 +127,7 @@ describe('#257 첨부 저장 루트', () => {
 
   it('4b. deps.storage 가 주어지면 로그는 기본값이 아니라 그것을 가리킨다', async () => {
     // 로그가 "계산해 봤지만 쓰지 않는 경로" 를 가리키면 이 사고를 로그로 추적할 수 없다.
-    const injected = await mkdtemp(join(tmpdir(), 'murmur-injected-'));
+    const injected = await mkdtemp(join(tmpdir(), 'harkroom-injected-'));
     try {
       delete process.env.ATTACHMENT_ROOT;
       const log = capture();

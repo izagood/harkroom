@@ -1713,7 +1713,7 @@ describe('러너 사유 — 판정이 두 언어로 말한다', () => {
     };
     const launcher = new RunnerLauncher(
       {
-        baseUrl: 'https://murmur.example',
+        baseUrl: 'https://harkroom.example',
         listPats: async () => [],
         mintPat: async (_id: string, label: string) => `murp_${label}`,
         revokePat: async () => ({ revoked: 1 }),

@@ -93,7 +93,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
         <div className="flex flex-col items-center gap-1 text-fg">
           <Logo size={48} decorative />
           {/* 제목이 이 화면이 무엇을 하는 중인지 말한다. `add` 에서 'murmur' 라고만 적으면
-              이미 murmur 안에 있는 사람에게 아무것도 알려 주지 않는다. */}
+              이미 harkroom 안에 있는 사람에게 아무것도 알려 주지 않는다. */}
           {/* **화면 제목단 17px.** 18px(`text-lg`)이었고 4단 중 아무것도 아니었다. 이 자리는
               화면 하나가 무엇을 하는 중인지 말하는 유일한 줄이라 맨 윗단이 맞다 —
               `SettingsPage` 의 제목과 같은 단이다(그 파일에 근거를 적어 뒀다). */}

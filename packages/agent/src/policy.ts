@@ -1,7 +1,7 @@
 // 실패를 어떻게 다룰지에 대한 판단만 모았다. 순수 함수라 루프 없이 검증된다.
 // **여기서 다른 모듈을 import 하지 않는다** — harkroom 클라이언트를 끌어오면 이 파일이
 // MCP 전송·네트워크 의존까지 물게 되고, "순수 함수라 루프 없이 검증된다"가 깨진다.
-// 그래서 출처 태그의 값도 여기서 정의하고, 태그를 붙이는 쪽(murmur.ts)이 이것을 읽어 간다.
+// 그래서 출처 태그의 값도 여기서 정의하고, 태그를 붙이는 쪽(harkroom.ts)이 이것을 읽어 간다.
 
 /** 한 항목을 몇 번까지 시도할지. 영원히 실패하는 한 건이 나머지 멘션을 가로막지 않게 한다. */
 export const MAX_ATTEMPTS = 3;
@@ -9,7 +9,7 @@ export const MAX_ATTEMPTS = 3;
 const CEILING_MS = 60_000;
 
 /**
- * harkroom 클라이언트에서 온 에러임을 표시하는 값. `murmur.ts` 가 자기가 던지는 에러의
+ * harkroom 클라이언트에서 온 에러임을 표시하는 값. `harkroom.ts` 가 자기가 던지는 에러의
  * `source` 에 이것을 넣고, `isCredentialFailure` 가 그것을 읽어 출처를 가린다.
  *
  * 왜 필요한가: `isCredentialFailure` 는 `main.ts` 에서 `runMentionTurn` **전체**를 감싸는
@@ -19,7 +19,7 @@ const CEILING_MS = 60_000;
 export const HARKROOM_ERROR_SOURCE = 'harkroom-client';
 
 /** 자격증명 실패의 출처. 'other' 는 자격증명 실패가 아니라는 뜻이다. */
-export type CredentialFailureType = 'harness-credential' | 'murmur-credential' | 'other';
+export type CredentialFailureType = 'harness-credential' | 'harkroom-credential' | 'other';
 
 /** 실행 파일 부재 실패의 출처. 'other' 는 실행 파일 부재가 아니라는 뜻이다. */
 export type ExecutableNotFoundType = 'executable-not-found' | 'other';
@@ -233,10 +233,10 @@ export function isCredentialFailure(err: unknown): CredentialFailureType {
   const status = (err as { status?: number } | null)?.status;
 
   // harkroom 클라이언트가 붙인 태그가 있으면 그쪽이다. 판정은 **HTTP status 로만** 한다 —
-  // murmur.ts 가 status 를 항상 실어 주므로 문구 매칭이 필요 없다(문구로 판정하면 "401"
+  // harkroom.ts 가 status 를 항상 실어 주므로 문구 매칭이 필요 없다(문구로 판정하면 "401"
   // 같은 숫자가 본문에 우연히 들어간 에러까지 자격증명 실패로 오인한다).
   if ((err as { source?: string } | null)?.source === HARKROOM_ERROR_SOURCE) {
-    return status === 401 || status === 403 ? 'murmur-credential' : 'other';
+    return status === 401 || status === 403 ? 'harkroom-credential' : 'other';
   }
 
   if (status === 401 || status === 403) return 'harness-credential';
