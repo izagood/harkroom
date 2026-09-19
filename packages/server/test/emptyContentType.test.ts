@@ -57,6 +57,42 @@ describe('본문이 없으면 content-type 을 따지지 않는다', () => {
     });
   }
 
+  /**
+   * **터널은 본문이 0 바이트여도 `transfer-encoding: chunked` 를 붙인다.**
+   *
+   * 처음 고칠 때 chunked 를 "본문 있음" 으로 보고 건너뛰게 했는데, 그 예외가 곧 고치려던
+   * 경우 전부였다 — 배포하고 나서야 증상이 그대로인 것으로 드러났다. chunked 는 "길이를
+   * 미리 모른다" 는 뜻이지 "본문이 있다" 는 뜻이 아니다.
+   */
+  for (const ct of injected) {
+    it(`routes a chunked bodyless POST with ${JSON.stringify(ct)}`, async () => {
+      for (const url of bodyless) {
+        const res = await app.inject({
+          method: 'POST', url,
+          headers: { ...auth(), 'content-type': ct, 'transfer-encoding': 'chunked' },
+        });
+        expect(res.statusCode, `${url} chunked with ${JSON.stringify(ct)}`).not.toBe(415);
+      }
+    });
+  }
+
+  /**
+   * **`content-type` 이 아예 없고 `transfer-encoding: chunked` 만 오는 경우.**
+   *
+   * 실측(2026-09-20)에서 415 가 난 바로 그 요청이다. 헤더가 없으니 헤더를 지우는 훅은
+   * 손댈 것이 없고, fastify 는 chunked 만 보고 본문이 있다고 판단해 파서를 찾다가 415 를
+   * 낸다. `*` 파서가 이 경우를 받아야 한다.
+   */
+  it('routes a chunked bodyless POST with no content-type at all', async () => {
+    for (const url of bodyless) {
+      const res = await app.inject({
+        method: 'POST', url,
+        headers: { ...auth(), 'transfer-encoding': 'chunked' },
+      });
+      expect(res.statusCode, `${url} chunked, no content-type`).not.toBe(415);
+    }
+  });
+
   it('still works with no header at all', async () => {
     for (const url of bodyless) {
       const res = await app.inject({ method: 'POST', url, headers: auth() });
