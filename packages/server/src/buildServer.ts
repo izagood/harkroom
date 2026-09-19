@@ -228,38 +228,45 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   /**
-   * **빈 `content-type` 을 헤더가 없는 것과 같게 본다** (2026-09-20 실측).
+   * **본문이 없는 요청에서는 `content-type` 을 무시한다** (2026-09-20 실측).
    *
    * ## 무엇이 깨졌나
    *
-   * 앱과 러너는 본문이 없는 POST 를 몇 군데 쓴다 — `/ws-ticket`·`/auth/logout`·
-   * `/invites`·`/agent/activity`. 본문이 없으니 `content-type` 도 붙이지 않는다
-   * (`desktop/src/lib/api.ts`: 본문이 있을 때만 헤더를 넣는다).
+   * 앱과 러너는 본문 없는 POST 를 쓴다 — `/ws-ticket`·`/auth/logout`·`/invites`·
+   * `/agent/activity`. 본문이 없으니 `content-type` 도 붙이지 않는다
+   * (`desktop/src/lib/api.ts` 가 본문이 있을 때만 넣는다).
    *
-   * 직접 연결에서는 그것이 맞다 — fastify 는 헤더가 **없으면** 본문 파싱을 건너뛴다.
-   * 그런데 앞단 프록시를 거치면 그 헤더가 **빈 문자열로 채워져** 도착하는 경우가 있고,
-   * fastify 는 그것을 "알 수 없는 미디어 타입" 으로 읽어 **415 로 라우트 밖에서 거절한다**:
+   * 직접 연결에서는 그것이 맞다 — fastify 는 헤더가 없으면 본문 파싱을 건너뛴다.
+   * 그런데 **앞단이 그 헤더를 채워서** 보낸다. 실측한 경로(Cloudflare 터널)는 빈 POST 에
+   * `application/x-www-form-urlencoded` 를 붙였고, 이 서버에는 그 파서가 없으므로
+   * fastify 가 **415 로 라우트 밖에서** 거절했다:
    *
-   *   POST /ws-ticket (헤더 없음)      → 200
-   *   POST /ws-ticket (content-type:'') → 415  fst_err_ctp_invalid_media_type
+   *   클러스터 안에서 직접   POST /ws-ticket → 401 (라우트까지 감)
+   *   같은 요청, 터널 경유   POST /ws-ticket → 415 fst_err_ctp_invalid_media_type
    *
-   * 증상이 고약하다. 앱에는 **"Disconnected"** 로만 보이고(티켓을 못 받아 WS 를 못 연다),
-   * 러너는 `agent/activity 실패: 415` 를 남기며 아무 일도 못 한다. 서버는 멀쩡해 보이고
-   * `/healthz` 도 200 이라, 원인이 앞단에 있다는 단서가 어디에도 없다 — 실제로 이것을
-   * "서버 버전이 낡았다" 로 오진하고 이미지를 올렸다가 증상이 그대로인 것을 보고 갈렸다.
+   * 증상은 앱의 **"Disconnected"**(티켓을 못 받아 WS 를 못 연다)와 러너의
+   * `agent/activity 실패: 415` 였다. 서버는 `/healthz` 200 으로 멀쩡해 보였다.
    *
-   * ## 왜 여기서 고치나
+   * ## 왜 타입이 아니라 **본문 유무**로 판정하나
    *
-   * 프록시를 고쳐도 되지만, **빈 문자열은 어느 미디어 타입도 아니므로** 그것을 "없음" 으로
-   * 읽는 것이 서버 쪽에서도 옳다. 셀프호스트가 어떤 앞단을 두든(nginx·Caddy·터널·
-   * 서비스 메시) 같은 자리에서 막히지 않는다.
+   * 이 자리를 두 번 틀렸다. 처음에는 "서버 버전이 낡았다" 로 읽고 이미지를 올렸고
+   * (증상 그대로), 다음에는 "빈 문자열이 온다" 로 읽고 빈 값만 지웠다(역시 그대로).
+   * 실제로 오는 값은 앞단이 정하는 것이라 **무엇이 올지 서버가 알 수 없다.**
    *
-   * 본문이 실제로 있는데 타입만 빈 경우는 그대로 파싱을 시도하지 않는다 — 아래는 헤더를
-   * **지우기만** 하고, 본문이 있으면 fastify 가 평소대로 판단한다.
+   * 그래서 값을 열거하지 않는다. **본문이 없으면 파싱할 것이 없으므로 타입을 따질
+   * 이유도 없다** — 그것이 프록시가 무엇을 붙이든 깨지지 않는 유일한 판정이다.
+   *
+   * 본문이 있으면 헤더를 그대로 둔다. 파싱은 평소대로 fastify 가 판단하고, 알 수 없는
+   * 타입은 여전히 415 다 — 그 방어를 없애는 것이 아니다.
    */
   app.addHook('onRequest', async (req) => {
-    const ct = req.headers['content-type'];
-    if (typeof ct === 'string' && ct.trim() === '') delete req.headers['content-type'];
+    if (req.headers['content-type'] === undefined) return;
+    // `content-length: 0` 이거나 아예 없고 청크 전송도 아니면 본문이 없는 요청이다.
+    const len = req.headers['content-length'];
+    const chunked = (req.headers['transfer-encoding'] ?? '').includes('chunked');
+    if (!chunked && (len === undefined || len === '0')) {
+      delete req.headers['content-type'];
+    }
   });
 
   await app.register(cors, {
