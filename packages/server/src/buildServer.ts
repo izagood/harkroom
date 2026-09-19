@@ -228,18 +228,17 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   /**
-   * **본문이 없는 요청에서는 `content-type` 을 무시한다** (2026-09-20 실측).
+   * **본문이 비었으면 어떤 `content-type` 이든 통과시킨다** (2026-09-20 실측).
    *
    * ## 무엇이 깨졌나
    *
    * 앱과 러너는 본문 없는 POST 를 쓴다 — `/ws-ticket`·`/auth/logout`·`/invites`·
-   * `/agent/activity`. 본문이 없으니 `content-type` 도 붙이지 않는다
-   * (`desktop/src/lib/api.ts` 가 본문이 있을 때만 넣는다).
+   * `/agent/activity`. 본문이 없으니 `content-type` 도 붙이지 않는다.
    *
-   * 직접 연결에서는 그것이 맞다 — fastify 는 헤더가 없으면 본문 파싱을 건너뛴다.
-   * 그런데 **앞단이 그 헤더를 채워서** 보낸다. 실측한 경로(Cloudflare 터널)는 빈 POST 에
-   * `application/x-www-form-urlencoded` 를 붙였고, 이 서버에는 그 파서가 없으므로
-   * fastify 가 **415 로 라우트 밖에서** 거절했다:
+   * 직접 연결에서는 그것이 맞다. 그런데 **앞단이 그 헤더를 채워서** 보낸다. 실측한
+   * 경로(Cloudflare 터널)는 빈 POST 에 `application/x-www-form-urlencoded` 와
+   * `transfer-encoding: chunked` 를 함께 붙였고, 이 서버에 그 파서가 없으므로 fastify 가
+   * **415 로 라우트 밖에서** 거절했다:
    *
    *   클러스터 안에서 직접   POST /ws-ticket → 401 (라우트까지 감)
    *   같은 요청, 터널 경유   POST /ws-ticket → 415 fst_err_ctp_invalid_media_type
@@ -247,26 +246,35 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
    * 증상은 앱의 **"Disconnected"**(티켓을 못 받아 WS 를 못 연다)와 러너의
    * `agent/activity 실패: 415` 였다. 서버는 `/healthz` 200 으로 멀쩡해 보였다.
    *
-   * ## 왜 타입이 아니라 **본문 유무**로 판정하나
+   * ## 왜 헤더를 지우는 것으로는 안 되는가
    *
-   * 이 자리를 두 번 틀렸다. 처음에는 "서버 버전이 낡았다" 로 읽고 이미지를 올렸고
-   * (증상 그대로), 다음에는 "빈 문자열이 온다" 로 읽고 빈 값만 지웠다(역시 그대로).
-   * 실제로 오는 값은 앞단이 정하는 것이라 **무엇이 올지 서버가 알 수 없다.**
+   * 이 자리를 세 번 틀렸다. "서버 버전이 낡았다"(아님), "빈 문자열이 온다"(값은 앞단이
+   * 정한다), 그리고 `onRequest` 에서 **헤더를 지우는 방법**(이것도 아님) 이다.
    *
-   * 그래서 값을 열거하지 않는다. **본문이 없으면 파싱할 것이 없으므로 타입을 따질
-   * 이유도 없다** — 그것이 프록시가 무엇을 붙이든 깨지지 않는 유일한 판정이다.
+   * 마지막 것이 실패한 이유: `transfer-encoding: chunked` 가 함께 오면 fastify 는
+   * content-type 이 없어도 **본문이 있다고 보고 파서를 찾는다.** 훅이 헤더를 지워도
+   * 415 는 그대로였다.
    *
-   * 본문이 있으면 헤더를 그대로 둔다. 파싱은 평소대로 fastify 가 판단하고, 알 수 없는
-   * 타입은 여전히 415 다 — 그 방어를 없애는 것이 아니다.
+   * ## 그래서 파서로 받는다
+   *
+   * 알 수 없는 타입(`*`)에 파서를 하나 둔다. **본문이 비었으면 통과시키고, 내용이 있으면
+   * 그대로 415 로 거절한다.** 판정이 헤더가 아니라 **실제로 읽은 바이트**에 달리므로
+   * 앞단이 무엇을 붙이든(타입·chunked·길이) 깨지지 않는다.
+   *
+   * 알 수 없는 타입에 **본문이 실려 오면 여전히 415 다** — 그 방어를 없애는 것이 아니다.
+   * JSON 은 fastify 의 기본 파서가 먼저 잡으므로 이 파서에 오지 않는다.
    */
+  //
+  // 빈 문자열·공백만 있는 `content-type` 은 **파서 매칭 자체가 되지 않아** 아래 `*` 에도
+  // 걸리지 않는다. 그런 값은 어느 미디어 타입도 아니므로 헤더를 지워 '없음' 으로 만든다.
   app.addHook('onRequest', async (req) => {
-    if (req.headers['content-type'] === undefined) return;
-    // `content-length: 0` 이거나 아예 없고 청크 전송도 아니면 본문이 없는 요청이다.
-    const len = req.headers['content-length'];
-    const chunked = (req.headers['transfer-encoding'] ?? '').includes('chunked');
-    if (!chunked && (len === undefined || len === '0')) {
-      delete req.headers['content-type'];
-    }
+    const ct = req.headers['content-type'];
+    if (typeof ct === 'string' && ct.trim() === '') delete req.headers['content-type'];
+  });
+
+  app.addContentTypeParser('*', { parseAs: 'string' }, (_req, body: string, done) => {
+    if (body === '') return done(null, undefined);
+    done(Object.assign(new Error('Unsupported Media Type'), { statusCode: 415 }));
   });
 
   await app.register(cors, {
