@@ -227,6 +227,41 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     reply.code(404).send({ error: { code: 'not_found', message: `route not found: ${req.method} ${req.url}` } });
   });
 
+  /**
+   * **빈 `content-type` 을 헤더가 없는 것과 같게 본다** (2026-09-20 실측).
+   *
+   * ## 무엇이 깨졌나
+   *
+   * 앱과 러너는 본문이 없는 POST 를 몇 군데 쓴다 — `/ws-ticket`·`/auth/logout`·
+   * `/invites`·`/agent/activity`. 본문이 없으니 `content-type` 도 붙이지 않는다
+   * (`desktop/src/lib/api.ts`: 본문이 있을 때만 헤더를 넣는다).
+   *
+   * 직접 연결에서는 그것이 맞다 — fastify 는 헤더가 **없으면** 본문 파싱을 건너뛴다.
+   * 그런데 앞단 프록시를 거치면 그 헤더가 **빈 문자열로 채워져** 도착하는 경우가 있고,
+   * fastify 는 그것을 "알 수 없는 미디어 타입" 으로 읽어 **415 로 라우트 밖에서 거절한다**:
+   *
+   *   POST /ws-ticket (헤더 없음)      → 200
+   *   POST /ws-ticket (content-type:'') → 415  fst_err_ctp_invalid_media_type
+   *
+   * 증상이 고약하다. 앱에는 **"Disconnected"** 로만 보이고(티켓을 못 받아 WS 를 못 연다),
+   * 러너는 `agent/activity 실패: 415` 를 남기며 아무 일도 못 한다. 서버는 멀쩡해 보이고
+   * `/healthz` 도 200 이라, 원인이 앞단에 있다는 단서가 어디에도 없다 — 실제로 이것을
+   * "서버 버전이 낡았다" 로 오진하고 이미지를 올렸다가 증상이 그대로인 것을 보고 갈렸다.
+   *
+   * ## 왜 여기서 고치나
+   *
+   * 프록시를 고쳐도 되지만, **빈 문자열은 어느 미디어 타입도 아니므로** 그것을 "없음" 으로
+   * 읽는 것이 서버 쪽에서도 옳다. 셀프호스트가 어떤 앞단을 두든(nginx·Caddy·터널·
+   * 서비스 메시) 같은 자리에서 막히지 않는다.
+   *
+   * 본문이 실제로 있는데 타입만 빈 경우는 그대로 파싱을 시도하지 않는다 — 아래는 헤더를
+   * **지우기만** 하고, 본문이 있으면 fastify 가 평소대로 판단한다.
+   */
+  app.addHook('onRequest', async (req) => {
+    const ct = req.headers['content-type'];
+    if (typeof ct === 'string' && ct.trim() === '') delete req.headers['content-type'];
+  });
+
   await app.register(cors, {
     // 인증은 Origin 이 아니라 Bearer 토큰이 한다. 목록은 브라우저 클라이언트를 좁히는 추가 방어이고,
     // 미설정 시 반영(true)이 기본인 이유는 셀프호스트가 어떤 origin 으로 뜰지 서버가 모르기 때문이다.
