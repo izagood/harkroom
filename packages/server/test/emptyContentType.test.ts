@@ -76,6 +76,23 @@ describe('본문이 없으면 content-type 을 따지지 않는다', () => {
     });
   }
 
+  /**
+   * **`content-type` 이 아예 없고 `transfer-encoding: chunked` 만 오는 경우.**
+   *
+   * 실측(2026-09-20)에서 415 가 난 바로 그 요청이다. 헤더가 없으니 헤더를 지우는 훅은
+   * 손댈 것이 없고, fastify 는 chunked 만 보고 본문이 있다고 판단해 파서를 찾다가 415 를
+   * 낸다. `*` 파서가 이 경우를 받아야 한다.
+   */
+  it('routes a chunked bodyless POST with no content-type at all', async () => {
+    for (const url of bodyless) {
+      const res = await app.inject({
+        method: 'POST', url,
+        headers: { ...auth(), 'transfer-encoding': 'chunked' },
+      });
+      expect(res.statusCode, `${url} chunked, no content-type`).not.toBe(415);
+    }
+  });
+
   it('still works with no header at all', async () => {
     for (const url of bodyless) {
       const res = await app.inject({ method: 'POST', url, headers: auth() });
