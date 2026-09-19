@@ -76,6 +76,21 @@ export class ApiClient {
   register(loginId: string, handle: string, displayName: string, password: string, inviteToken: string): Promise<{ id: string }> {
     return this.req('POST', '/auth/register', { loginId, handle, displayName, password, inviteToken });
   }
+  /**
+   * **호스팅으로 만들어진 워크스페이스의 첫 관리자.** `bootstrap` 과 하는 일이 같고 관문이
+   * 하나 더 있다 — 일회용 클레임 토큰.
+   *
+   * 왜 `bootstrap` 을 쓰지 않는가: 그쪽은 인증이 없다("사람 계정이 없으면 만든다"). 셀프
+   * 호스트에서는 주소를 아는 사람이 곧 설치한 사람이라 그것으로 충분하지만, 공개된 호스팅에
+   * 서는 인스턴스가 뜬 뒤 주인이 가져가기 전까지 **누구나 첫 관리자가 될 수 있는 창**이
+   * 열린다. 서브도메인 이름은 비밀이 아니다.
+   *
+   * 세션을 돌려주지 않는다(`{ id }` 만) — `bootstrap`·`register` 와 같은 모양이라 호출자가
+   * 곧바로 `login` 을 이어 부른다.
+   */
+  claim(claimToken: string, loginId: string, handle: string, displayName: string, password: string): Promise<{ id: string }> {
+    return this.req('POST', '/claim', { claimToken, loginId, handle, displayName, password });
+  }
   me(): Promise<AccountView> { return this.req('GET', '/auth/me'); }
   /**
    * 내 handle 을 바꾼다(#271).
