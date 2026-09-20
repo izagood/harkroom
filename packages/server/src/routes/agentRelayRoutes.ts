@@ -36,6 +36,7 @@ import { emitEvent } from '../events.js';
 import { createRelayHub, type RelayHub } from '../ws/relay.js';
 import type { AgentPresence } from '../mcp/presence.js';
 import { createCredentialSweep, DEFAULT_REVALIDATE_MS, originAllowed } from '../ws/socketLifetime.js';
+import { createHeartbeat } from '../ws/heartbeat.js';
 
 /**
  * 러너 소켓의 인증. `requireAccount` 뒤에 붙어 **에이전트 계정인지**까지 본다.
@@ -72,6 +73,11 @@ export interface AgentRelayDeps {
   allowedOrigins?: readonly string[] | null;
   /** 자격증명 재검증 주기(ms). `/ws` 와 같은 값을 쓴다. 테스트가 짧게 준다. */
   revalidateMs?: number;
+  /**
+   * 러너 소켓 하트비트 주기(ms). `/ws` 와 **같은 값**이어야 한다 — 갈라지면 더 민감한
+   * 쪽(PTY 바이트가 흐르는 소켓)이 더 느슨해진다(`socketLifetime.ts` 머리 주석의 원칙).
+   */
+  heartbeatMs?: number;
   /** interactive.open 응답 대기 한도(ms, #337). 기본 10초 — 테스트가 짧게 준다. */
   interactiveOpenTimeoutMs?: number;
   /**
@@ -155,6 +161,21 @@ export async function registerAgentRelayRoutes(
   app.addHook('onClose', async () => { sweep.stop(); });
 
   /**
+   * 러너 소켓의 하트비트. **`socket.on('close')` 만으로는 부족하다**(2026-09-20 실측):
+   * 경로 중간의 프록시가 연결을 걷어가면 close 가 오지 않고, 서버는 죽은 소켓을
+   * 레지스트리에 들고 있다가 `interactive.open` 을 그리로 던진다 — 사람 화면에는
+   * 10초 뒤 원인 없는 504 가 뜬다. pong 부재가 그 상태를 아는 **유일한** 신호다.
+   *
+   * 판정은 `heartbeat.ts` 가 하고(직전 ping 에 pong 이 없으면 끊는다) 여기서는 주기만
+   * 돌린다 — 끊으면 close 핸들러가 돌아 `detach` 가 레지스트리를 비운다. `/ws` 와
+   * 같은 배선이고, 같은 값을 받는다.
+   */
+  const heartbeat = createHeartbeat();
+  const beat = setInterval(() => heartbeat.tick(), deps.heartbeatMs ?? 30_000);
+  beat.unref?.(); // 이 타이머가 프로세스 종료를 붙잡지 않게 한다
+  app.addHook('onClose', async () => { clearInterval(beat); });
+
+  /**
    * 러너의 상시 outbound WS. 재접속은 러너가 백오프로 한다(`packages/agent/src/policy.ts`
    * 의 `nextBackoffMs` — inbox.poll 루프와 같은 정책을 쓴다). 서버는 소켓이 끊기면 그
    * 러너의 세션 레지스트리를 버리고, 재접속 시 러너가 보내는 `announce` 로 다시 채운다 —
@@ -166,13 +187,18 @@ export async function registerAgentRelayRoutes(
   }, (socket, req) => {
     const agentAccountId = req.account!.id;
     const detach = hub.addRunner(agentAccountId, socket);
+    // 정상 ws 클라이언트는 ping 에 자동으로 pong 한다. 서버는 그 답을 기록만 한다.
+    heartbeat.track(socket);
+    socket.on('pong', () => heartbeat.pong(socket));
     socket.on('message', (raw) => {
       // 프레임이 왔다 = 이 러너가 살아 있다. `hub` 앞에 두는 이유: 허브가 모르는
       // 프레임 종류(구·신 러너의 차이)도 생존 증거로는 똑같이 유효하다.
       deps.agentPresence.mark(agentAccountId);
       hub.onRunnerMessage(agentAccountId, String(raw));
     });
-    socket.on('close', detach);
+    // 추적에서 빼는 것을 잊으면 죽은 소켓이 매 tick 마다 ping 을 받는다(`heartbeat.ts`
+    // 는 스스로 정리하지 않는다 — 누가 그 소켓의 주인인지 모르기 때문이다).
+    socket.on('close', () => { heartbeat.untrack(socket); detach(); });
   });
 
   /**
