@@ -20,6 +20,12 @@ export interface AccountView {
   kind: 'human' | 'agent';
   isAdmin: boolean;
   /**
+   * 역할 — 누가 권한을 줄 수 있나만 정한다(스펙 2026-09-20 §6 (1)). `isAdmin` 은
+   * `role in owner|admin` 과 항상 같다(마이그레이션 055 의 check). 행위 자체는 역할이 아니라
+   * grant·소유가 정한다.
+   */
+  role: Role;
+  /**
    * 에이전트를 소유한 계정의 ID. **null 이 정상이다** — backfill 없이 컬럼이 추가됐고
    * "추측 소유자는 소유자가 아니다"라는 원칙(#181)에 따라 null 이면 운영자가 없는 것이다.
    * 사람 계정에서는 항상 null 이다.
@@ -2173,6 +2179,12 @@ export type WsServerEvent =
   | { type: 'agent_team.changed'; teamId: string; audience: 'all' | string[] }
   // 담기/해제/상태 변경(#219). 본인의 소켓에만 온다.
   | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string }
+  /** 오퍼레이터가 등록·폐기·접속·단절됐다(스펙 2026-09-20 §4). 목록을 다시 읽으라는 신호다. */
+  | { type: 'operator.changed'; operatorId: string; audience: 'all' | string[] }
+  /** 에이전트의 배정이 바뀌었다(§3). 화면은 그 에이전트 하나만 다시 읽는다. */
+  | { type: 'agent_assignment.changed'; agentId: string; audience: 'all' }
+  /** grant 나 역할이 바뀌었다(§6). 그 계정의 화면 게이트가 다시 서야 한다. */
+  | { type: 'grant.changed'; accountId: string; audience: 'all' | string[] }
   /**
    * 링크 미리보기가 준비됐다(#215). 가져오기는 비동기라 메시지가 먼저 뜨고 카드가 뒤에
    * 온다 — 이 이벤트가 없으면 카드는 **다음에 그 메시지를 다시 그릴 때까지** 안 보인다.
@@ -3019,3 +3031,6 @@ export interface CollabProposalsView {
  */
 export const MAX_MEMORY_VALUE_LENGTH = 8000;
 export const MAX_MEMORY_ITEMS_PER_ACCOUNT = 200;
+
+export * from './permissions.js';
+import type { Role } from './permissions.js';

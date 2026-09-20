@@ -21,6 +21,7 @@ export async function registerDirectoryRoutes(
       // 자동완성 후보에서 빼는 것은 `disabled` 를 보는 화면의 몫이다.
       // ownerAccountId(#181) 도 함께 반환한다 — 에이전트에만 값이 있다.
       `select a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admin as "isAdmin",
+              a.role,
               a.disabled_at is not null as disabled,
               a.status, a.status_text as "statusText",
               -- 아바타는 id 만 싣는다(#159) — 바이트를 실으면 디렉터리 한 번에 모든 사진이

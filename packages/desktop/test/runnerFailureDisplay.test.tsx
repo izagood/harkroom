@@ -132,7 +132,7 @@ const sidebarProps = {
 };
 
 const agentView = (id: string, handle: string, extra: Partial<AgentView> = {}): AgentView => ({
-  id, handle, displayName: handle, kind: 'agent', isAdmin: false,
+  id, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member',
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
   claudeLane: null,

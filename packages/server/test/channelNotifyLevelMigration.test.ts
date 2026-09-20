@@ -31,8 +31,8 @@ beforeAll(async () => {
 
   const acc = await pool.query(
     // 사람 계정은 login_id 가 필수다(#271, 033).
-    `insert into account (handle, login_id, display_name, kind, password_hash, is_admin)
-     values ('migrator', 'migrator', 'Migrator', 'human', 'x', true) returning id`,
+    `insert into account (handle, login_id, display_name, kind, password_hash, is_admin, role)
+     values ('migrator', 'migrator', 'Migrator', 'human', 'x', true, 'admin') returning id`,
   );
   accountId = acc.rows[0].id;
   const muted = await pool.query(

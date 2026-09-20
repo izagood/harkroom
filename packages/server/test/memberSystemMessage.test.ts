@@ -219,7 +219,8 @@ describe('멤버 입·퇴장 시스템 메시지 (#322)', () => {
     // 두 층을 실제로 가르는 것은 **멤버가 아닌 admin** 이다(`#300` 7번 절과 같은 이유).
     // 평범한 비멤버로만 확인하면 두 함수가 같은 답을 내므로 층을 바꿔도 초록으로 남는다.
     const outsider = await createUser('audience-outsider');
-    await pool.query(`update account set is_admin = true where id = $1`, [outsider.accountId]);
+    // role 도 함께 — 055 의 check 가 is_admin 과 role 의 어긋남을 막는다.
+    await pool.query(`update account set is_admin = true, role = 'admin' where id = $1`, [outsider.accountId]);
 
     const seen: Array<{ body: string; audience: 'all' | string[] }> = [];
     const off = onEvent((e) => {

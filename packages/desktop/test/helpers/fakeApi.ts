@@ -9,7 +9,7 @@ import type { ApiClient } from '../../src/lib/api';
 // #159: 아바타도 필수 필드다. 기본은 null(사진 없음)이고, 아바타를 보는 테스트가 extra 로 덮어쓴다.
 export const acc = (id: string, handle: string, kind: 'human' | 'agent' = 'human', isAdmin = false,
   extra: Partial<AccountView> = {}): AccountView =>
-  ({ id, handle, displayName: handle, kind, isAdmin, disabled: false, status: 'available', statusText: null,
+  ({ id, handle, displayName: handle, kind, isAdmin, role: isAdmin ? 'admin' : 'member', disabled: false, status: 'available', statusText: null,
     ownerAccountId: null, avatarAttachmentId: null, ...extra });
 
 // #285: 구성원 수도 **필수 필드**다 — fixture 가 그것을 적어야 한다. 기본은 0(빈 집합)이고,
