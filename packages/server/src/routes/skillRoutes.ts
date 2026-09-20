@@ -46,7 +46,7 @@ export async function registerSkillRoutes(app: FastifyInstance, pool: Pool): Pro
     };
   });
 
-  app.post('/skills/:slug/approve', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.post('/skills/:slug/approve', { preHandler: app.requireCap('agent.privileged') }, async (req, reply) => {
     const { slug } = z.object({ slug: z.string() }).parse(req.params);
     const result = await approveSkill(pool, { slug, approvedBy: req.account!.id });
     if ('error' in result) {
@@ -71,7 +71,7 @@ export async function registerSkillRoutes(app: FastifyInstance, pool: Pool): Pro
     };
   });
 
-  app.delete('/skills/:slug', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.delete('/skills/:slug', { preHandler: app.requireCap('agent.privileged') }, async (req, reply) => {
     const { slug } = z.object({ slug: z.string() }).parse(req.params);
     const result = await disableSkill(pool, { slug });
     if ('error' in result) {

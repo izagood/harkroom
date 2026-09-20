@@ -133,7 +133,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     return { handle: body.handle };
   });
 
-  app.post('/invites', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.post('/invites', { preHandler: app.requireCap('member.invite') }, async (req, reply) => {
     const { token, hash } = newToken('hrki');
     await pool.query(`insert into invite (token_hash, created_by) values ($1, $2)`, [hash, req.account!.id]);
     await recordAudit(pool, {
@@ -216,7 +216,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     return { agents: await listAgents(pool, ownerId) };
   });
 
-  app.post('/accounts/agents', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.post('/accounts/agents', { preHandler: app.requireCap('agent.create') }, async (req, reply) => {
     const body = z.object({
       handle: z.string().regex(/^[a-z0-9_-]{2,32}$/),
       displayName: z.string().min(1).max(64),
@@ -348,7 +348,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
    * 가드가 `requireAdmin` 인 이유: 이 파일의 에이전트 관리 라우트가 전부 그렇고, 남의
    * 러너를 세우는 것은 그중에서도 도달 범위가 큰 조작이다.
    */
-  app.post('/accounts/agents/:id/stop', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.post('/accounts/agents/:id/stop', { preHandler: app.requireCap('agent.manage', { kind: 'agent', param: 'id' }) }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const updated = await requestAgentStop(pool, id, req.account!.id);
     // 존재 확인은 서비스가 한다 — 없는 에이전트에 감사만 남는 모양(위 PATCH 주석)을 피한다.
@@ -387,7 +387,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
    * 어느 쪽이 더 위험한 조작인지를 따질 자리가 아니라 **한 쌍이 같은 문을 써야 하는**
    * 자리다 — 문이 갈리면 그 쌍은 더 이상 대칭이 아니다.
    */
-  app.post('/accounts/agents/:id/stop/undo', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.post('/accounts/agents/:id/stop/undo', { preHandler: app.requireCap('agent.manage', { kind: 'agent', param: 'id' }) }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     // 되돌린 뒤에는 정의에서 사라지므로 **먼저** 읽는다 — 감사에 "무엇을 되돌렸나"를
     // 남길 수 있는 마지막 순간이다.
