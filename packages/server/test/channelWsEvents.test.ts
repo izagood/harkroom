@@ -571,7 +571,8 @@ describe('멤버십·집합 이벤트의 수신자 층 (#300)', () => {
     // 두 번째 admin 을 만든다. admin 은 부트스트랩으로만 생기므로 직접 승격시킨다 —
     // 이 테스트가 필요로 하는 것은 "멤버가 아닌 admin" 이라는 상태 하나뿐이다.
     const { accountId: adminTwoId, pat: adminTwoPat } = await createAgent(app, adminToken, 'admin-two');
-    await pool.query(`update account set is_admin = true where id = $1`, [adminTwoId]);
+    // role 도 함께 — 055 의 check 가 is_admin 과 role 의 어긋남을 막는다.
+    await pool.query(`update account set is_admin = true, role = 'admin' where id = $1`, [adminTwoId]);
 
     // admin-two 가 멤버가 아닌 private 채널.
     const channelId = await createChannel('layer-check', 'private');

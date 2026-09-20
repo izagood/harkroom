@@ -4,6 +4,7 @@ import { getAgentDefaults } from './agentDefaults.js';
 import { getHandleGroupByHandle } from './handleGroups.js';
 
 const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admin as "isAdmin",
+  a.role,
   coalesce(c.instructions, '') as instructions,
   coalesce(c.harness, 'claude-code') as harness,
   c.model, c.effort, c.working_dir as "workingDir",

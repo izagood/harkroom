@@ -29,7 +29,7 @@ import { acc } from './helpers/fakeApi';
 const ko = translator('ko');
 
 const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
-  id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
+  id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member',
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
   claudeLane: null,

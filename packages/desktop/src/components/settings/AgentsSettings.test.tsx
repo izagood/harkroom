@@ -61,7 +61,7 @@ const ME: AccountView = {
   handle: 'admin',
   displayName: 'admin',
   kind: 'human',
-  isAdmin: true,
+  isAdmin: true, role: 'admin',
   ownerAccountId: null,
   disabled: false,
   status: 'available',

@@ -19,7 +19,7 @@ const KEY = SessionStore.threadKey(CHANNEL, ROOT);
 
 function defOf(overrides: Partial<AgentView> = {}): AgentView {
   return {
-    id: ME.id, handle: ME.handle, displayName: 'forge', kind: 'agent', isAdmin: false,
+    id: ME.id, handle: ME.handle, displayName: 'forge', kind: 'agent', isAdmin: false, role: 'member',
     instructions: '친절하게 답한다', harness: 'claude-code', model: null, effort: null,
     // workingDir null — 인터랙티브 열기는 avcs 없이도 성립해야 한다(resolveWorkspaceDir 의
     // mkdir 경로). avcs 경로 자체는 mentionTurn 테스트가 지킨다 — 같은 함수를 쓴다.

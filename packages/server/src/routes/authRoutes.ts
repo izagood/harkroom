@@ -41,8 +41,8 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
     try {
       await client.query('begin');
       const res = await client.query(
-        `insert into account (handle, login_id, display_name, kind, is_admin, password_hash)
-         values ($1, $2, $3, 'human', true, $4) returning id`,
+        `insert into account (handle, login_id, display_name, kind, is_admin, role, password_hash)
+         values ($1, $2, $3, 'human', true, 'owner', $4) returning id`,
         [body.handle, body.loginId, body.displayName, hash],
       );
       accountId = res.rows[0].id;
@@ -148,8 +148,8 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
       // 0 개로 굳는다. 토큰도 같은 트랜잭션에서 소진되므로, 무엇이 실패하든 **토큰은
       // 되돌아간다** — 사용자가 같은 토큰으로 다시 시도할 수 있다.
       const res = await client.query(
-        `insert into account (handle, login_id, display_name, kind, is_admin, password_hash)
-         values ($1, $2, $3, 'human', true, $4) returning id`,
+        `insert into account (handle, login_id, display_name, kind, is_admin, role, password_hash)
+         values ($1, $2, $3, 'human', true, 'owner', $4) returning id`,
         [body.handle, body.loginId, body.displayName, hash],
       );
       accountId = res.rows[0].id;
