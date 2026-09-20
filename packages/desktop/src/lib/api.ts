@@ -1,5 +1,5 @@
 import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView,
-  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
+  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, MeView, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
 export class ApiError extends Error {
@@ -91,7 +91,7 @@ export class ApiClient {
   claim(claimToken: string, loginId: string, handle: string, displayName: string, password: string): Promise<{ id: string }> {
     return this.req('POST', '/claim', { claimToken, loginId, handle, displayName, password });
   }
-  me(): Promise<AccountView> { return this.req('GET', '/auth/me'); }
+  me(): Promise<MeView> { return this.req('GET', '/auth/me'); }
   /**
    * 내 handle 을 바꾼다(#271).
    */
