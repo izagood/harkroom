@@ -1,8 +1,8 @@
 # 오퍼레이터와 권한 — 데스크탑을 프론트로 되돌리고 데몬을 실행의 유일한 접점으로 세운다
 
 2026-09-20. 대상: `packages/daemon`(→ `packages/operator`), `packages/server`, `packages/agent`,
-`packages/desktop`. 검토용 정리는 [아티팩트](https://claude.ai/artifact/LF6e1V7fs6KyGyeM4XTfZQ)
-(그림 6장)에 있고 이 문서가 그 확정본이다. 2026-09-21 승인 — §11 의 결정 9개는 전부 제안대로.
+`packages/desktop`. 검토는 그림 6장짜리 별도 페이지(jaebin 의 아티팩트, 저장소 밖)로 했고
+이 문서가 그 확정본이다. 2026-09-21 승인 — §11 의 결정 9개는 전부 제안대로.
 
 `design.md` §2 「daemon 과 server 의 경계 — 두 층은 붙지 않는다」를 **뒤집는다.** 그 결정의
 근거 셋에 §8 에서 각각 답한다. 권한 부분은 murmur 의 2026-09-19 제안(`harkroom://message/c5932bb4-8d9c-4f94-aa42-334b8cf5c258`)을
@@ -10,7 +10,7 @@
 
 ## 1. 왜 — 서버를 옮겼는데 에이전트가 흔들린 이유는 역할 배분이다
 
-2026-09-20 실측. 서버를 `http://localhost:3400` 에서 `https://jaebin.harkroom.com`(Cloudflare
+2026-09-20 실측. 서버를 `http://localhost:3400` 에서 `https://<host>`(Cloudflare
 프록시 뒤)으로 옮기자 터미널 관찰·개입이 깨졌다. 러너 로그에 `520`·`ECONNRESET`·`503 no
 healthy upstream` 이 남았고, 릴레이 소켓(`/agent-relay`)에 heartbeat 가 없어 끊긴 사실을 양쪽
 모두 몰랐다(그 방어는 `b485b9d8` 로 먼저 넣었다). 그런데 그것은 증상이다. 원인은 이렇다:
@@ -124,7 +124,7 @@ create table operator (
 // <app data>/app.harkroom.operator/operator.json
 {
   "communities": {
-    "https://jaebin.harkroom.com": {
+    "https://<host>": {
       "agents": {
         "4527ba9a-…": { "workingDir": "~/dev/harkroom", "claudePool": "work" },
         "fbccf9f8-…": { "workingDir": "~/dev/rcms" }

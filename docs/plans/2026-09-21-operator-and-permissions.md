@@ -1599,7 +1599,7 @@ import { createServerLink, operatorUrl, type LinkDialer } from '../src/serverLin
 
 describe('serverLink', () => {
   it('operatorUrl 은 http→ws + /operator', () => {
-    expect(operatorUrl('https://x.harkroom.com/')).toBe('wss://x.harkroom.com/operator');
+    expect(operatorUrl('https://example.com/')).toBe('wss://example.com/operator');
   });
   it('열리면 hello 를 보낸다', () => {
     const sent: string[] = [];
