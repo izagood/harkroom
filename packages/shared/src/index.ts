@@ -3033,4 +3033,13 @@ export const MAX_MEMORY_VALUE_LENGTH = 8000;
 export const MAX_MEMORY_ITEMS_PER_ACCOUNT = 200;
 
 export * from './permissions.js';
-import type { Role } from './permissions.js';
+import type { Capability, Role } from './permissions.js';
+
+/**
+ * `/auth/me` 의 응답 — 내 계정에 **전역으로** 유효한 capability 목록이 붙는다. 화면은 이것으로
+ * 버튼을 그리거나 감춘다(게이트의 근거는 서버가 준다; 화면이 역할에서 추론하지 않는다).
+ * 대상 한정 grant 는 여기 없다 — 대상이 있을 때 서버에 물어야 정확하다.
+ */
+export interface MeView extends AccountView {
+  capabilities: Capability[];
+}
