@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
-import type { AccountView } from '@harkroom/shared';
+import type { AccountView, Capability, PermissionTarget } from '@harkroom/shared';
 import { hashToken } from './tokens.js';
+import { can } from './permissions.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -13,6 +14,12 @@ declare module 'fastify' {
     requireAccount: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
     requireAdmin: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
     requireOwnerOrAdmin: (paramName: string) => (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
+    /**
+     * capability 관문(스펙 2026-09-20 §6). 판정은 `permissions.ts::can` 이 한다 — 소유 ∨ grant ∨
+     * 역할. `target` 을 주면 그 라우트 파라미터가 가리키는 대상의 소유자도 통과한다.
+     */
+    requireCap: (cap: Capability, target?: { kind: PermissionTarget['kind']; param: string }) =>
+      (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
   }
 }
 
@@ -50,6 +57,20 @@ export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<vo
       await reply.code(403).send({ error: { code: 'forbidden', message: 'admin required' } });
     }
   });
+
+  app.decorate('requireCap', (cap: Capability, target?: { kind: PermissionTarget['kind']; param: string }) =>
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      if (!req.account) {
+        await reply.code(401).send({ error: { code: 'unauthorized', message: 'authentication required' } });
+        return;
+      }
+      const id = target ? (req.params as Record<string, string>)[target.param] : undefined;
+      const ok = await can(pool, req.account, cap, target && id ? { kind: target.kind, id } : undefined);
+      if (!ok) {
+        // 코드는 `requireAdmin` 과 같은 'forbidden' 이다 — 화면이 두 관문을 다르게 그릴 이유가 없다.
+        await reply.code(403).send({ error: { code: 'forbidden', message: `${cap} 권한이 필요하다` } });
+      }
+    });
 
   app.decorate('requireOwnerOrAdmin', (paramName: string) => async (req: FastifyRequest, reply: FastifyReply) => {
     if (!req.account) {

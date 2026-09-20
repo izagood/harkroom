@@ -61,7 +61,7 @@ function memberSystemMessage(
 }
 
 export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, storage?: StorageBackend): Promise<void> {
-  app.post('/channels', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.post('/channels', { preHandler: app.requireCap('channel.create') }, async (req, reply) => {
     const body = z.object({
       name: z.string().regex(new RegExp(CHANNEL_NAME_PATTERN)),
       topic: z.string().max(256).optional(),
@@ -76,7 +76,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     return reply.code(201).send(channel);
   });
 
-  app.patch('/channels/:id', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.patch('/channels/:id', { preHandler: app.requireCap('channel.manage', { kind: 'channel', param: 'id' }) }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const patch = z.object({
       // 이름 규칙은 만드는 경로(`POST /channels`)와 **같은 상수**다 — 사본을 두면
@@ -624,7 +624,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
    * 모든 글에 불린다. 비활성 에이전트는 400 `agent_disabled` — 깨어나지 못하는 상대를 매
    * 메시지에 붙이면 본문마다 죽은 handle 이 남는다.
    */
-  app.put('/channels/:id/auto-mentions/:agentId', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.put('/channels/:id/auto-mentions/:agentId', { preHandler: app.requireCap('channel.auto_mention', { kind: 'channel', param: 'id' }) }, async (req, reply) => {
     const { id, agentId } = autoMentionParam.parse(req.params);
     /**
      * 모드(마이그레이션 048)는 **본문이 없으면 `always`** 다. 이 라우트를 이미 쓰고 있던
@@ -679,7 +679,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
   });
 
   /** 푼다. admin 전용. 없던 것을 풀면 404 — 조용히 204 를 주면 호출부는 있었다고 믿는다. */
-  app.delete('/channels/:id/auto-mentions/:agentId', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.delete('/channels/:id/auto-mentions/:agentId', { preHandler: app.requireCap('channel.auto_mention', { kind: 'channel', param: 'id' }) }, async (req, reply) => {
     const { id, agentId } = autoMentionParam.parse(req.params);
     // handle 은 지우기 **전에** 읽는다 — 지운 뒤에는 조인할 행이 없다.
     const before = await pool.query<{ handle: string }>(
@@ -803,7 +803,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
    *
    * 확인 문구에 지울 메시지 수를 보여 준다.
    */
-  app.delete('/channels/:id', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.delete('/channels/:id', { preHandler: app.requireCap('channel.manage', { kind: 'channel', param: 'id' }) }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     // 삭제 전 수신자를 미리 구한다 — 삭제 후에는 채널 행이 없어 수신자 계산이 'all' 로
     // 넓어진다(존재하지 않는 채널의 규약). 발행은 아래 삭제가 커밋된 뒤다.
@@ -833,7 +833,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
    * 채널 삭제 전 확인용 메시지 수 조회(#155). 보관된 표준 채널만 가능하고 admin 만 할 수 있다.
    * 이 수치는 확인 문구에 "이 채널과 메시지 N개를 영구히 지운다"로 표시된다.
    */
-  app.get('/channels/:id/delete-info', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.get('/channels/:id/delete-info', { preHandler: app.requireCap('channel.manage', { kind: 'channel', param: 'id' }) }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const channel = await pool.query(
       `select id, name, kind, archived_at from channel where id = $1`,

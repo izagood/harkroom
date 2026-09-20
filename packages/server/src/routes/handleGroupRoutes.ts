@@ -21,11 +21,11 @@ import {
 const handleSchema = z.string().regex(new RegExp(`^${HANDLE_PATTERN}$`));
 
 export async function registerHandleGroupRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
-  app.get('/handle-groups', { preHandler: app.requireAdmin }, async () => ({
+  app.get('/handle-groups', { preHandler: app.requireCap('channel.manage') }, async () => ({
     groups: await listHandleGroups(pool),
   }));
 
-  app.post('/handle-groups', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.post('/handle-groups', { preHandler: app.requireCap('channel.manage') }, async (req, reply) => {
     const body = z.object({
       handle: handleSchema,
       displayName: z.string().min(1).max(64),
@@ -58,7 +58,7 @@ export async function registerHandleGroupRoutes(app: FastifyInstance, pool: Pool
     return reply.code(201).send(created);
   });
 
-  app.get('/handle-groups/:id', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.get('/handle-groups/:id', { preHandler: app.requireCap('channel.manage') }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const group = await getHandleGroup(pool, id);
     if (!group) {
@@ -68,7 +68,7 @@ export async function registerHandleGroupRoutes(app: FastifyInstance, pool: Pool
     return { group, members: members.map((m) => m.accountId) };
   });
 
-  app.patch('/handle-groups/:id', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.patch('/handle-groups/:id', { preHandler: app.requireCap('channel.manage') }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const patch = z.object({
       displayName: z.string().min(1).max(64),
@@ -86,7 +86,7 @@ export async function registerHandleGroupRoutes(app: FastifyInstance, pool: Pool
     return updated;
   });
 
-  app.delete('/handle-groups/:id', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.delete('/handle-groups/:id', { preHandler: app.requireCap('channel.manage') }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const deleted = await deleteHandleGroup(pool, id);
     if (!deleted) {
@@ -101,7 +101,7 @@ export async function registerHandleGroupRoutes(app: FastifyInstance, pool: Pool
     return reply.code(204).send();
   });
 
-  app.post('/handle-groups/:id/members', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.post('/handle-groups/:id/members', { preHandler: app.requireCap('channel.manage') }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({
       // 빈 배열은 거절한다 — 아무것도 하지 않는 요청이 200 으로 돌아오면 부른 쪽은
@@ -146,7 +146,7 @@ export async function registerHandleGroupRoutes(app: FastifyInstance, pool: Pool
     return { members: members.map((m) => m.accountId) };
   });
 
-  app.delete('/handle-groups/:id/members', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.delete('/handle-groups/:id/members', { preHandler: app.requireCap('channel.manage') }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({
       accountIds: z.array(z.string().uuid()).min(1),
