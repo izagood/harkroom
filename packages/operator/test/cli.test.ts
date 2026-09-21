@@ -48,6 +48,13 @@ describe('runArgs — 앱이 넘기던 인자를 데이터 디렉터리에서 �
   });
 });
 
+describe('runArgs — 소켓 경로 상한', () => {
+  it('데이터 디렉터리가 길어 소켓 경로가 상한을 넘으면 뜨기 전에 사유와 함께 던진다', () => {
+    const long = '/tmp/' + 'a'.repeat(120);
+    expect(() => runArgs(long, '/opt/harkroom/harkroom-operator')).toThrow(/소켓 경로가 너무 길다[\s\S]*HARKROOM_DATA_DIR/);
+  });
+});
+
 describe('register', () => {
   it('claim 으로 토큰을 받아 secrets 에 두고, 설정에 커뮤니티 자리를 만든다', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'op-cli-'));
