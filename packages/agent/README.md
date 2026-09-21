@@ -40,7 +40,8 @@ env 넷을 오퍼레이터가 심어 주듯 직접 줘야 하고, 그 값들은 
 | `HARKROOM_OPERATOR_SOCKET` | (필수) | 이 머신의 오퍼레이터 unix 소켓. 러너의 PTY 릴레이·MCP·REST 전부 이리로 간다 — 서버 주소는 러너가 모른다 |
 | `HARKROOM_RUNNER_ID` | (필수) | 오퍼레이터가 spawn 때 준 러너 id. 서버는 이 id 로 프레임을 다중화한다 |
 | `HARKROOM_RUNNER_SECRET` | (필수) | 링크 인증 secret. spawn 마다 새로 만들어지고 이 프로세스의 env 에만 산다 |
-| `HARKROOM_OPERATOR_BIN` | (필수) | `harkroom-operator` 실행 파일. 하네스의 harkroom MCP 항목이 `<이 값> mcp-bridge` 다 |
+| `HARKROOM_OPERATOR_BIN` | (필수) | `harkroom-operator` 실행 파일. codex 의 harkroom MCP 항목이 `<이 값> mcp-bridge` 다 |
+| `HARKROOM_MCP_CONFIG` | (필수) | 오퍼레이터가 spawn 전에 써 둔 하네스 MCP 설정 파일. harkroom 브릿지·avcs·에이전트의 `mcpServers`(이 머신의 `<appDataDir>/operator/mcp-servers.json` → `~/.claude.json` 순으로 정의를 찾는다)가 합쳐져 있다. 러너는 만들지 않는다 |
 | `HARKROOM_AGENT_INSTANCE` | (없음) | 에이전트 인스턴스 ID. 같은 에이전트를 여러 개 돌릴 때 구분한다 ([a-z0-9-]{1,32}) |
 | `AGENT_POLL_TIMEOUT_MS` | `25000` | 서버의 `inbox.poll` 상한 |
 | `AGENT_TURN_TIMEOUT_MS` | `1800000`(30분) | 한 턴(PTY 실행)의 최대 대기 시간. 넘기면 SIGTERM → 5초 → SIGKILL |
@@ -159,11 +160,11 @@ MCP `inbox.poll`에만 있고 REST `/inbox`에는 없다. 이 러너를 만들�
 
 ```
 sessions.json      # 스레드별 세션 (위)
-mcp/mcp.json        # harkroom + avcs만 담은 MCP 설정 — 기동 시 한 번 쓰고 재사용
+mcp/                # (비어 있다) MCP 설정은 오퍼레이터가 쓴다 — `HARKROOM_MCP_CONFIG`
 workspaces/         # avcs 워크스페이스들. harkroom-<handle>-<threadKey 해시8자>
 ```
 
-전체 경로가 `<handle>-<id>` 로 스코프된다 — `sessions.json`·`mcp/mcp.json`·`workspaces/` 전부
+전체 경로가 `<handle>-<id>` 로 스코프된다 — `sessions.json`·`workspaces/` 전부
 그 아래에 있다. 그래서 **같은 `AGENT_STATE_DIR`을 공유해도 러너 여러 대가 서로의 상태를
 건드리지 않는다**(위 "여러 대 운영" 참고) — handle·id 가 다르면 애초에 다른 서브디렉터리다.
 `workspaces/` 안의 디렉터리 이름에도 handle이 들어가는 이유는 한 겹 더 있다: 같은 스레드에
@@ -393,7 +394,7 @@ CLAUDE_CONFIG_DIR=~/.harkroom-agent/claude-accounts/work/aria claude auth status
 | `src/mentionTurn.ts` | 멘션 하나를 세션 확보 → 프롬프트 조립 → 턴 실행 → 저장 → 발화 확인으로 엮는 조립 함수. **main.ts에서 분리한 이유는 테스트 가능성이다** — main.ts를 import하면 진짜 서버에 붙으려 든다 |
 | `src/sessions.ts` | 세션 상태를 디스크에 원자적으로 읽고 쓴다(손상 파일 격리, 쓰기 직렬화) |
 | `src/workspace.ts` | 스레드×에이전트당 avcs 워크스페이스를 확보한다 |
-| `src/turn.ts` | harness별 CLI 플래그 표(`PRESETS`) + `buildTurnCommand` 조립 + `writeMcpConfigOnce` |
+| `src/turn.ts` | harness별 CLI 플래그 표(`PRESETS`) + `buildTurnCommand` 조립 + `readExtraMcpServers`(codex 용 추가 MCP 항목) |
 | `src/pty.ts` | `node-pty`로 한 턴을 실행하고 종료를 기다린다. 출력은 tail 2KB(자격증명 실패 판정용)만 해석하고 나머지는 불투명하게 다룬다 |
 | `src/codexSessions.ts` | codex 전용 — 첫 턴이 끝난 뒤 rollout 파일에서 세션 id를 사후 발견한다 |
 | `src/prompt.ts` | 스레드 델타 → 턴 프롬프트, 발화 판정(`hasOwnPostSince`). **순수 로직이고 테스트 대상이다** |

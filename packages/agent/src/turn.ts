@@ -8,7 +8,7 @@
 // 옮긴 것이다 — 스파이크(task-1)가 실측으로 확정했고, 초판의 추정 네 곳을 여기서 뒤집는다:
 // codex 에 `-a` 가 없다(sandbox 단독), codex MCP 는 파일이 아니라 턴별 `-c` 오버라이드,
 // claude 는 `--strict-mcp-config` 를 항상 받는다, gemini 는 이번 범위에서 미지원.
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { RUNNABLE_HARNESSES, type AgentHarness, type MentionPermission } from '@harkroom/shared';
 
@@ -51,6 +51,11 @@ export interface BuildTurnCommandOptions {
   effort: string | null;
   mentionPermission: MentionPermission;
   mcpConfigPath: string;
+  /**
+   * `mcpConfigPath` 파일의 harkroom·avcs 를 뺀 나머지(`readExtraMcpServers`). claude 는 파일로 다
+   * 받으므로 안 쓰고, codex 만 `-c mcp_servers.<name>.*` 로 받는다. 없으면 추가 항목 없음.
+   */
+  extraMcpServers?: Record<string, McpServerEntry>;
   /** systemPrompt 를 파일로 전달할 때 그 경로. null 이면 argv 에 직접 전달(하위 호환). */
   systemPromptFile?: string | null;
   /** stdin 리다이렉션용 파일 경로. null 이면 PTY stdin 을 그대로 쓴다(인터랙티브·resume). */
@@ -98,7 +103,7 @@ interface HarnessPreset {
   allowsNullSessionOnFirstTurn: boolean;
   /** mentionPermission → 멘션 턴 전용 권한 플래그. 인터랙티브에선 아예 쓰지 않는다. */
   permission: Record<MentionPermission, string[]>;
-  mcp(args: { mcpConfigPath: string; operatorBin: string }): string[];
+  mcp(args: { mcpConfigPath: string; operatorBin: string; extraMcpServers: Record<string, McpServerEntry> }): string[];
   model(model: string | null): string[];
   effort(effort: string | null): string[];
   /**
@@ -238,7 +243,7 @@ const CODEX_PRESET: HarnessPreset = {
     ],
     readonly: ['-c', 'sandbox_mode="read-only"'],
   },
-  mcp: ({ operatorBin }) => [
+  mcp: ({ operatorBin, extraMcpServers }) => [
     // avcs 는 항상 등록한다(실측 shape: stdio, command 'avcs', args ['mcp'], env 없음).
     //
     // **`transport` 를 반드시 적는다(2026-09-15 실측).** codex 0.154 는 이 갈래 표시가 없는
@@ -265,6 +270,8 @@ const CODEX_PRESET: HarnessPreset = {
     '-c', 'mcp_servers.harkroom.transport="stdio"',
     '-c', `mcp_servers.harkroom.command=${JSON.stringify(operatorBin)}`,
     '-c', `mcp_servers.harkroom.args=${JSON.stringify([...MCP_BRIDGE_ARGS])}`,
+    // 에이전트의 mcpServers(스펙 §6) — 오퍼레이터가 이 머신의 정의로 합쳐 파일에 넣은 것을 codex 문법으로.
+    ...Object.entries(extraMcpServers).flatMap(([name, entry]) => codexMcpFlags(name, entry)),
   ],
   model: (model) => (model ? ['--model', model] : []),
   // codex 에 `--effort` 플래그는 없다 — spec §4 표에도 이 항목은 없다(측정 대상 밖). 키
@@ -424,7 +431,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     ...preset.session(opts.sessionId, opts.isFirstTurn, opts.mode),
     ...preset.alwaysArgs(opts.mode),
     ...(opts.mode === 'mention' ? preset.permission[opts.mentionPermission] : []),
-    ...preset.mcp({ mcpConfigPath: opts.mcpConfigPath, operatorBin: opts.operatorBin }),
+    ...preset.mcp({ mcpConfigPath: opts.mcpConfigPath, operatorBin: opts.operatorBin, extraMcpServers: opts.extraMcpServers ?? {} }),
     ...preset.model(opts.model),
     ...preset.effort(opts.effort),
     ...preset.prompt(opts.systemPrompt, opts.mode === 'mention' ? opts.promptCtx : '', opts.mode, opts.systemPromptFile ?? null),
@@ -548,30 +555,50 @@ function childEnv(
   return env;
 }
 
+/** 오퍼레이터가 쓴 MCP 설정 파일의 항목 하나(`operator/mcpConfig.ts` 와 같은 모양). */
+export type McpServerEntry =
+  | { type?: 'stdio'; command: string; args?: string[]; env?: Record<string, string> }
+  | { type: 'http' | 'sse'; url: string; headers?: Record<string, string> };
+
 /**
- * harkroom + avcs 만 담은 MCP 설정 파일을 dir 아래 고정 이름(`mcp.json`)으로 쓴다. PAT 는
- * 실값이 아니라 `${HARKROOM_PAT}` 플레이스홀더 문자열로만 들어간다 — 그래서 파일 자체는
- * 비밀이 아니고(spec §7), claude 자식 프로세스가 이 플레이스홀더를 자기 env 의
- * HARKROOM_PAT 로 확장해 읽는다(실측 확인: 리스너에 실제로 `Bearer <실값>` 헤더가 도착).
+ * `HARKROOM_MCP_CONFIG` 파일에서 **codex 에 `-c` 로 넘길 추가 항목**을 읽는다(스펙 2026-09-20 §6).
+ * claude 는 파일을 `--mcp-config` 로 통째로 받으므로 이 함수가 필요 없다. harkroom·avcs 는 codex
+ * 프리셋이 이미 굽는다 — 둘을 빼고 돌려준다.
  *
- * 이름의 "once" 는 "세션 하나에 한 번만 쓰면 충분하다"는 뜻이지 "두 번 부르면 안 된다"가
- * 아니다 — 재시도 경로 등에서 두 번 불려도 같은 결과를 내고 에러 없이 그냥 덮어쓴다
- * (workspace.ts::ensureWorkspace 처럼 존재 검사로 건너뛰지는 않는다: harkroomUrl 이 바뀌었는데
- * 옛 파일이 그대로 남는 사고를 피한다).
+ * 파일이 없거나 깨졌으면 **던진다.** 도구 없이 뜬 에이전트는 에러 없이 돌다가 "못 하겠다"고만
+ * 답한다(codex `invalid transport` 사고와 같은 종류) — 기동에서 죽는 편이 낫다.
  */
-export async function writeMcpConfigOnce(dir: string, operatorBin: string): Promise<string> {
-  const config = {
-    mcpServers: {
-      // stdio 브릿지(스펙 2026-09-20 §5). 인증 재료는 하네스 env 에서 브릿지가 읽는다 — 이 파일에는
-      // 명령만 있고 비밀이 없다(앞 판본의 `${HARKROOM_PAT}` 플레이스홀더조차 없다).
-      harkroom: { type: 'stdio' as const, command: operatorBin, args: [...MCP_BRIDGE_ARGS] },
-      avcs: { type: 'stdio' as const, command: 'avcs', args: ['mcp'] },
-    },
-  };
-  await mkdir(dir, { recursive: true });
-  const filePath = join(dir, 'mcp.json');
-  await writeFile(filePath, JSON.stringify(config, null, 2), 'utf8');
-  return filePath;
+export async function readExtraMcpServers(path: string): Promise<Record<string, McpServerEntry>> {
+  let parsed: { mcpServers?: Record<string, McpServerEntry> };
+  try {
+    parsed = JSON.parse(await readFile(path, 'utf8')) as { mcpServers?: Record<string, McpServerEntry> };
+  } catch (err) {
+    throw new Error(`HARKROOM_MCP_CONFIG 를 읽을 수 없다(${path}): ${err instanceof Error ? err.message : String(err)} — 오퍼레이터가 spawn 전에 쓰는 파일이다`);
+  }
+  const out: Record<string, McpServerEntry> = {};
+  for (const [name, entry] of Object.entries(parsed.mcpServers ?? {})) {
+    if (name === 'harkroom' || name === 'avcs') continue;
+    out[name] = entry;
+  }
+  return out;
+}
+
+/** codex 의 `-c mcp_servers.<name>.*` 조각. transport 를 반드시 적는다(프리셋 주석의 2026-09-15 실측). */
+function codexMcpFlags(name: string, entry: McpServerEntry): string[] {
+  const key = `mcp_servers.${name}`;
+  if ('url' in entry) {
+    return [
+      '-c', `${key}.transport=${JSON.stringify(entry.type === 'sse' ? 'sse' : 'streamable_http')}`,
+      '-c', `${key}.url=${JSON.stringify(entry.url)}`,
+      ...(entry.headers ? ['-c', `${key}.http_headers=${JSON.stringify(entry.headers)}`] : []),
+    ];
+  }
+  return [
+    '-c', `${key}.transport="stdio"`,
+    '-c', `${key}.command=${JSON.stringify(entry.command)}`,
+    '-c', `${key}.args=${JSON.stringify(entry.args ?? [])}`,
+    ...(entry.env ? ['-c', `${key}.env=${JSON.stringify(entry.env)}`] : []),
+  ];
 }
 
 /**

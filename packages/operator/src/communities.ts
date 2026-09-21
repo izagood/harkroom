@@ -14,6 +14,8 @@ import { readLoginPath } from './loginPath.js';
 import type { RunnerLinkServer } from './runnerLink.js';
 import type { RunnerRegistry, RunnerHost } from './runners.js';
 import { fileSecrets, type OperatorSecrets } from './secrets.js';
+import { buildMcpConfig, claudeConfigPath, readLocalMcpDefinitions, writeAgentMcpConfig } from './mcpConfig.js';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 export interface StartCommunitiesDeps {
@@ -62,6 +64,16 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
     link: deps.runnerLink,
     socketPath: deps.socketPath,
     operatorBin: deps.operatorBin,
+    operatorOwnerId: () => community.current?.ownerAccountId() ?? Promise.resolve(null),
+    async mcpConfig(definition) {
+      const definitions = await readLocalMcpDefinitions({
+        registryPath: join(deps.appDataDir, 'operator', 'mcp-servers.json'),
+        claudeConfigPath: claudeConfigPath(process.env, homedir()),
+      });
+      const built = buildMcpConfig({ operatorBin: deps.operatorBin, names: definition.mcpServers, definitions });
+      if (built.missing.length) return { missing: built.missing };
+      return { path: await writeAgentMcpConfig(join(deps.appDataDir, 'operator', 'mcp'), definition.agentId, built.mcpServers) };
+    },
     schedule: (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return () => clearTimeout(t); },
     log: deps.log,
   });
@@ -75,7 +87,7 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
     const reconciler = createAssignmentReconciler(runnerDeps(ref));
     const community = createCommunity({
       baseUrl, token, agents: section.agents, reconciler, log: deps.log,
-      runnerLink: deps.runnerLink, forwarder,
+      runnerLink: deps.runnerLink, forwarder, fetchImpl: deps.fetchImpl,
     });
     ref.current = community;
     community.start();

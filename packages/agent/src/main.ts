@@ -25,7 +25,7 @@ import { runMentionTurn, type MentionTurnDeps } from './mentionTurn.js';
 import { runPtyTurn } from './pty.js';
 import { SessionStore } from './sessions.js';
 import { resolveAgentStateDir } from './stateDir.js';
-import { assertHarnessContract, writeMcpConfigOnce } from './turn.js';
+import { assertHarnessContract, readExtraMcpServers } from './turn.js';
 import type { Exec } from './workspace.js';
 import { isCredentialFailure, nextBackoffMs } from './policy.js';
 import { harnessBinaryName } from '@harkroom/shared';
@@ -207,7 +207,7 @@ const [me, guide] = await (async () => {
 // `resolveAgentStateDir` 이 함께 돌려준다. 여기서 각자 조립하면 하나를 옛 뿌리에 두는
 // 실수가 타입에 걸리지 않고, 그 파일 하나만 두 인스턴스가 밟는다(그러면 격리는 없다).
 const {
-  agentStateDir, legacyPath, sessionsPath, mcpDir, workspaceBaseDir, codexHomeDir,
+  agentStateDir, legacyPath, sessionsPath, workspaceBaseDir, codexHomeDir,
 } = resolveAgentStateDir(config.stateDir, me.handle, me.id, config.agentInstance);
 
 // 대화형 `codex resume` 은 --ignore-user-config 를 받지 않는다. 개인 config.toml/MCP 를
@@ -276,10 +276,11 @@ if (hasLegacySessions) {
 const store = new SessionStore(sessionsPath);
 await store.load();
 
-// MCP 설정 파일은 기동 시 한 번만 쓴다 — PAT 는 실값이 아니라 플레이스홀더로 들어가므로
-// 파일 자체는 비밀이 아니다(turn.ts::writeMcpConfigOnce). stateDir/handle 아래 고정 경로에
-// 둬서 러너가 재시작돼도 같은 경로를 그대로 재사용한다.
-const mcpConfigPath = await writeMcpConfigOnce(mcpDir, config.operatorBin);
+// MCP 설정 파일은 **오퍼레이터가** spawn 전에 썼다(스펙 2026-09-20 §6) — harkroom 브릿지·avcs·
+// 에이전트의 mcpServers 가 이 머신의 정의로 합쳐져 있다. 러너는 만들지 않고 경로만 쓴다. codex 는
+// 파일을 못 받으므로 추가 항목을 여기서 한 번 읽어 `-c` 로 넘긴다(없거나 깨졌으면 여기서 죽는다).
+const mcpConfigPath = config.mcpConfigPath;
+const extraMcpServers = await readExtraMcpServers(mcpConfigPath);
 
 /**
  * `node:child_process` 의 `execFile` 을 workspace.ts::Exec 계약으로 감싼 얇은 어댑터.
@@ -320,7 +321,7 @@ const mentionQueue = new MentionQueue();
 const attentionLedger = createAttentionLedger();
 interactive = createInteractiveManager({
   harkroom, store, exec, runTurn: runPtyTurn, me,
-  workspaceBaseDir, mcpConfigPath, codexHome,
+  workspaceBaseDir, mcpConfigPath, extraMcpServers, codexHome,
   // **인터랙티브 턴은 페일오버하지 않는다.** 사람이 앉아 있고, 계정을 바꾸면 그 사람이
   // 보던 세션이 사라진다(세션 파일이 계정 디렉터리 안에 있다) — 관찰 도중에 화면을 갈아
   // 치우는 것보다 그 계정의 한도를 그대로 보여 주는 편이 낫다. 그래서 첫 계정에 고정한다.
@@ -348,7 +349,7 @@ const scheduler = createMentionScheduler({
   buildTurnDeps: ({ ctx, mention, account, isLastAccount }) => ({
     harkroom, store, exec, runTurn: runPtyTurn, me, guide,
     channelName: ctx.channelName(mention.channelId),
-    handles: ctx.handles, workspaceBaseDir, mcpConfigPath,
+    handles: ctx.handles, workspaceBaseDir, mcpConfigPath, extraMcpServers,
     // 지시문 파일이 여기 쓰인다(#92) — 에이전트 워크스페이스가 아니라 러너의 상태
     // 디렉터리다. 워크스페이스 안에 두면 에이전트가 자기 지시문을 고칠 수 있다.
     stateDir: agentStateDir,

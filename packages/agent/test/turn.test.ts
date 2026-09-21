@@ -1,10 +1,10 @@
 import { existsSync } from 'node:fs';
-import { chmod, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { HARNESS_ENV_DENYLIST, assertHarnessContract, buildTurnCommand, preassignsSessionId, writeMcpConfigOnce, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
+import { HARNESS_ENV_DENYLIST, assertHarnessContract, buildTurnCommand, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
 
 // harkroomUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
 // 실제로 주는 값(`http://localhost:3400` 류, `/mcp` 없음)과 맞춘다. 예전엔 여기 이미
@@ -350,43 +350,40 @@ describe('preassignsSessionId', () => {
   });
 });
 
-describe('writeMcpConfigOnce', () => {
+describe('readExtraMcpServers — 오퍼레이터가 합쳐 준 파일에서 codex 에 넘길 추가 항목을 읽는다', () => {
   let dir: string;
+  afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });
 
-  afterEach(async () => {
-    if (dir) await rm(dir, { recursive: true, force: true });
-  });
-
-  it('harkroom(stdio, mcp-bridge) + avcs(stdio, avcs mcp) 둘만 담은 파일을 쓴다', async () => {
+  it('harkroom·avcs 는 프리셋이 이미 굽는다 — 그 둘을 뺀 나머지만 돌려준다', async () => {
     dir = await mkdtemp(join(tmpdir(), 'mcp-cfg-'));
-    const path = await writeMcpConfigOnce(dir, '/opt/harkroom/harkroom-operator');
-    const config = JSON.parse(await readFile(path, 'utf8'));
-    expect(config.mcpServers.harkroom).toEqual({
-      type: 'stdio', command: '/opt/harkroom/harkroom-operator', args: ['mcp-bridge'],
+    const path = join(dir, 'mcp.json');
+    await writeFile(path, JSON.stringify({ mcpServers: {
+      harkroom: { type: 'stdio', command: '/opt/harkroom/harkroom-operator', args: ['mcp-bridge'] },
+      avcs: { type: 'stdio', command: 'avcs', args: ['mcp'] },
+      github: { type: 'stdio', command: 'gh-mcp', args: ['serve'], env: { GH_TOKEN: 'x' } },
+    } }));
+    expect(await readExtraMcpServers(path)).toEqual({ github: { type: 'stdio', command: 'gh-mcp', args: ['serve'], env: { GH_TOKEN: 'x' } } });
+  });
+  it('파일이 없거나 깨졌으면 던진다 — 도구 없이 뜬 에이전트는 조용히 실패한다', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'mcp-cfg-'));
+    await expect(readExtraMcpServers(join(dir, 'none.json'))).rejects.toThrow(/HARKROOM_MCP_CONFIG/);
+    await writeFile(join(dir, 'bad.json'), '{');
+    await expect(readExtraMcpServers(join(dir, 'bad.json'))).rejects.toThrow(/HARKROOM_MCP_CONFIG/);
+  });
+  it('codex 는 추가 항목을 -c mcp_servers.<name>.* 로 받는다 — transport 를 반드시 적는다', () => {
+    const plan = buildTurnCommand({
+      harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true, systemPrompt: '', promptCtx: 'x',
+      model: null, effort: null, mentionPermission: 'auto', mcpConfigPath: '/m.json', operatorBin: '/opt/harkroom/harkroom-operator',
+      codexHome: '/codex', claudeConfigDir: null,
+      extraMcpServers: { github: { type: 'stdio', command: 'gh-mcp', args: ['serve'], env: { GH_TOKEN: 'x' } } },
     });
-    expect(config.mcpServers.avcs).toEqual({ type: 'stdio', command: 'avcs', args: ['mcp'] });
-    expect(Object.keys(config.mcpServers)).toHaveLength(2); // harkroom + avcs 만 — strict-mcp-config 와 짝
-  });
-
-  // 파일에는 명령만 있고 비밀이 없다(스펙 2026-09-20 §5) — 앞 판본의 `${HARKROOM_PAT}`
-  // 플레이스홀더조차 없다. 실수로 토큰·URL 이 섞여 들어가는 회귀를 여기서 잡는다.
-  it('생성된 파일에 토큰도 서버 URL 도 없다', async () => {
-    dir = await mkdtemp(join(tmpdir(), 'mcp-cfg-'));
-    const path = await writeMcpConfigOnce(dir, '/opt/harkroom/harkroom-operator');
-    const raw = await readFile(path, 'utf8');
-    expect(raw).not.toContain('HARKROOM_');
-    expect(raw).not.toMatch(/https?:\/\//);
-    expect(raw).not.toMatch(/murp_[a-zA-Z0-9]/);
-  });
-
-  // 러너가 세션마다 한 번씩만 부르는 게 이상적이지만, main.ts 가 실수로 두 번 불러도(예:
-  // 재시도 경로) 깨지면 안 된다 — 두 번째 호출도 같은 결과를 내고 에러를 던지지 않는다.
-  it('두 번 불러도 에러 없이 같은 내용을 낸다 — 멱등', async () => {
-    dir = await mkdtemp(join(tmpdir(), 'mcp-cfg-'));
-    const first = await writeMcpConfigOnce(dir, '/opt/harkroom/harkroom-operator');
-    const second = await writeMcpConfigOnce(dir, '/opt/harkroom/harkroom-operator');
-    expect(second).toBe(first);
-    expect(await readFile(first, 'utf8')).toBe(await readFile(second, 'utf8'));
+    const flags = plan.args.filter((_, i) => plan.args[i - 1] === '-c');
+    expect(flags).toContain('mcp_servers.github.transport="stdio"');
+    expect(flags).toContain('mcp_servers.github.command="gh-mcp"');
+    expect(flags).toContain('mcp_servers.github.args=["serve"]');
+    expect(flags).toContain('mcp_servers.github.env={"GH_TOKEN":"x"}');
+    // 기존 둘은 그대로다.
+    expect(flags).toContain('mcp_servers.harkroom.transport="stdio"');
   });
 });
 

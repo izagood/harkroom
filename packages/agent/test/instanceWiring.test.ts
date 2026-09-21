@@ -31,7 +31,9 @@ describe('#174 러너가 인스턴스 경로를 실제로 쓴다', () => {
   it('세션 파일·MCP 설정·워크스페이스 뿌리를 러너가 직접 이어 붙이지 않는다', async () => {
     const main = await readSrc('main.ts');
     expect(main).toContain('new SessionStore(sessionsPath)');
-    expect(main).toContain('writeMcpConfigOnce(mcpDir');
+    // MCP 설정 파일은 오퍼레이터가 쓴다(스펙 2026-09-20 §6) — 러너는 env 의 경로를 그대로 쓴다.
+    expect(main).toContain('config.mcpConfigPath');
+    expect(main).not.toContain('writeMcpConfigOnce');
     expect(main).toMatch(/workspaceBaseDir,/);
     // 상태 경로를 여기서 조립하는 흔적이 없어야 한다. `join(config.stateDir, ...)` 은
     // **레거시 경로 한 곳**만 허용한다 — 그것은 옛 파일의 존재를 경고하기 위한 것이고

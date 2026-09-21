@@ -7,6 +7,7 @@ import { loadConfig } from '../src/config.js';
 const LINK_ENV = {
   HARKROOM_OPERATOR_SOCKET: '/tmp/op.sock', HARKROOM_RUNNER_ID: 'r-1', HARKROOM_RUNNER_SECRET: 's',
   HARKROOM_OPERATOR_BIN: '/opt/harkroom/harkroom-operator',
+  HARKROOM_MCP_CONFIG: '/tmp/mcp/a-1.json',
 };
 
 describe('loadConfig — HARKROOM_AGENT_INSTANCE (#174)', () => {
@@ -81,5 +82,8 @@ describe('loadConfig — 오퍼레이터 링크 (스펙 2026-09-20 §5)', () => 
   });
   it('오퍼레이터 실행 파일이 없어도 기동 실패다 — 하네스가 harkroom MCP 에 닿을 길이 없다', () => {
     expect(() => loadConfig({ ...LINK_ENV, HARKROOM_OPERATOR_BIN: '' })).toThrow(/HARKROOM_OPERATOR_BIN/);
+    // MCP 설정은 오퍼레이터가 쓴다(스펙 §6) — 러너는 경로만 받고, 없으면 만들지 않고 죽는다.
+    expect(() => loadConfig({ ...LINK_ENV, HARKROOM_MCP_CONFIG: '' })).toThrow(/HARKROOM_MCP_CONFIG/);
+    expect(loadConfig(LINK_ENV).mcpConfigPath).toBe('/tmp/mcp/a-1.json');
   });
 });

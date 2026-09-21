@@ -9,6 +9,7 @@
  * 이 객체가 해석하는 프레임은 `assign`·`unassign` 둘뿐이다. 나머지(러너 프레임)는 단계 3 이
  * `onFrame` 으로 릴레이 다중화기에 넘긴다 — 여기서 해석하면 스펙 §8 근거 ②(어휘)가 깨진다.
  */
+import { randomUUID } from 'node:crypto';
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
 import type { AgentDefinition, ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
@@ -36,6 +37,8 @@ export interface CommunityDeps {
   forwarder?: Forwarder;
   dial?: LinkDialer;
   schedule?: (fn: () => void, ms: number) => void;
+  /** `/operators/self` 를 읽는 데 쓴다(교차 불변식의 재료). 없으면 전역 fetch. */
+  fetchImpl?: typeof fetch;
   log: (line: string) => void;
 }
 
@@ -56,6 +59,11 @@ export interface CommunityInstance {
   notifyRunnerExited(runnerId: string, code: number | null): void;
   /** 러너 대신 서버에 말한다 — 인증만 이 커뮤니티의 오퍼레이터 토큰 + 그 에이전트로 바꿔서. */
   forward(agentId: string, req: RunnerLinkRequest): Promise<RunnerLinkResponse>;
+  /**
+   * 이 커뮤니티에서 이 오퍼레이터의 소유자 id — 붙을 때마다 `/operators/self` 로 새로 읽는다.
+   * 못 읽으면 null(조정기는 그때 personal 배정을 거절한다).
+   */
+  ownerAccountId(): Promise<string | null>;
 }
 
 export function createCommunity(deps: CommunityDeps): CommunityInstance {
@@ -68,6 +76,21 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
     send: (frame) => linkRef.current?.send(frame) ?? false,
     log: deps.log,
   });
+
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const readSelf = async (): Promise<string | null> => {
+    try {
+      const res = await fetchImpl(`${deps.baseUrl}/operators/self`, { headers: { authorization: `Bearer ${deps.token}` } });
+      if (!res.ok) { deps.log(`/operators/self 실패(${res.status}) — personal 배정은 거절된다: ${deps.baseUrl}`); return null; }
+      const body = (await res.json()) as { ownerAccountId?: unknown };
+      return typeof body.ownerAccountId === 'string' ? body.ownerAccountId : null;
+    } catch (err) {
+      deps.log(`/operators/self 실패 — personal 배정은 거절된다: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  };
+  // 붙을 때마다 다시 읽는다 — assign 은 hello 직후에 오므로, 그 처리가 이 약속을 기다린다.
+  let selfOwner: Promise<string | null> | null = null;
 
   const link = createServerLink({
     baseUrl: deps.baseUrl,
@@ -83,6 +106,7 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
     }),
     onOpen: () => {
       deps.log(`서버에 붙었다: ${deps.baseUrl}`);
+      selfOwner = readSelf();
       // 서버는 소켓이 끊기면 러너의 세션을 버린다 — hello 의 목록 뒤에 러너별 announce 로 능력까지 다시 낸다.
       mux.resync();
     },
@@ -98,6 +122,13 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
         }
         assignments.set(frame.agentId, frame.definition);
         void deps.reconciler.onAssign(deps.baseUrl, frame.definition, local)
+          .then((outcome) => {
+            if (typeof outcome !== 'object') return;
+            // 거절은 조용히 안 뜨는 것이 아니다 — 서버(와 배정한 사람)가 사유를 본다. 러너가 없었으니
+            // runnerId 는 이 통지만을 위한 새 값이다.
+            assignments.delete(frame.agentId);
+            link.send({ type: 'runner.exited', runnerId: randomUUID(), code: null, reason: outcome.refused });
+          })
           .catch((err: unknown) => deps.log(`배정 처리 실패: ${err instanceof Error ? err.message : String(err)}`));
         return;
       }
@@ -131,6 +162,7 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
       mux.forget(runnerId);
       link.send({ type: 'runner.exited', runnerId, code });
     },
+    ownerAccountId: () => selfOwner ?? (selfOwner = readSelf()),
     forward: async (agentId, req) => {
       if (!deps.forwarder) {
         return req.type === 'mcp.request'
