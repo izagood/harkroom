@@ -25,7 +25,7 @@ const agent = (overrides: Partial<AgentView> = {}): AgentView => ({
   ...(acc(AGENT_ID, 'alpha', 'agent', false, { ownerAccountId: ME_ID }) as unknown as AgentView),
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', runnerVersion: null, stopRequestedAt: null, stopAckedAt: null,
-  lastTurnAt: null, claudeLane: null, assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [], ...overrides,
+  lastTurnAt: null, claudeLane: null, assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [], mcpServers: [], ...overrides,
 });
 
 const op = (id: string, name: string): OperatorView => ({

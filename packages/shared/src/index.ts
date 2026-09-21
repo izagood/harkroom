@@ -214,6 +214,16 @@ export interface AgentView extends AccountView, AgentConfig {
   assignment: AgentAssignmentView | null;
   /** `invokeScope === 'list'` 의 명단(계정 id). 다른 스코프에서는 비어 있다 — 명단은 남지만 판정에 안 쓰인다. */
   invokers: string[];
+  /** 이 에이전트에 붙는 MCP 서버 **이름**들 — `mcp_server` 레지스트리의 부분집합(스펙 §6). 정의는 오퍼레이터 머신에 있다. */
+  mcpServers: string[];
+}
+
+/** MCP 레지스트리 한 줄(스펙 2026-09-20 §6). 이름과 자격증명 종류뿐이다 — 정의·토큰은 여기 없다. */
+export interface McpServerRow {
+  name: string;
+  credentialKind: 'community' | 'personal';
+  createdBy: string | null;
+  createdAt: string;
 }
 
 /**

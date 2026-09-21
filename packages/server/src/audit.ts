@@ -35,6 +35,8 @@ export type AuditAction =
   | 'operator.registered' | 'operator.revoked' | 'agent.assigned' | 'agent.unassigned'
   // 호출 명단(스펙 2026-09-20 §6).
   | 'agent.invoker.added' | 'agent.invoker.removed'
+  // MCP 레지스트리(스펙 §6).
+  | 'mcp_server.set' | 'mcp_server.deleted'
   | 'password.changed'
   | 'channel.created' | 'channel.updated' | 'channel.archived' | 'channel.unarchived' | 'channel.deleted' | 'message.deleted'
   // #218: 메시지 고정·해제. 채널 전역 상태를 바꾸는 조작이라 남는 기록이 있어야 한다.
