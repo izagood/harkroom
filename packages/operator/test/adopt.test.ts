@@ -295,6 +295,45 @@ describe('고아 재발견 — daemon 이 죽고 새로 떠도 그 러너를 안
   }, 30_000);
 
   /**
+   * **회귀선 1-c — 회수한 옛 세대 러너의 링크도 받는다** (#838, 실측 2026-09-21). 세대가 바뀌어
+   * 채택하지 않은 러너에 SIGTERM 을 보내고 턴이 끝나길 기다리는데, 그 러너는 새 오퍼레이터에
+   * 링크할 수 없어(secret 미등록) 진행 중이던 턴을 끝낼 길이 없었다 — 무발화 30분까지 에이전트가
+   * 비어 있었다. 장부의 secret 으로 그 hello 도 받아들이면 턴이 새 오퍼레이터를 통해 끝난다.
+   */
+  it('세대가 바뀌어 회수한 러너의 hello 도 장부의 secret 으로 받아들인다', async () => {
+    const dir = await 임시앱디렉터리();
+    // SIGTERM 을 무시하는 자식 — 실제 러너처럼 "턴을 끝내는 중"으로 살아남는다(정리는 SIGKILL).
+    const 첫daemon = await daemon띄우기(dir, { runnerArgs: ['-c', 'trap "" TERM; sleep 120'], args: {
+      socket: daemonEndpointPaths(dir).socketPath, launchNonce: 'test-nonce',
+      entryPath: join(dir, 'harkroom-operator'), appVersion: '0.1.26', unknown: [],
+    } });
+    if (첫daemon.kind !== 'running') throw new Error('daemon 이 안 떴다');
+    const 러너 = await 첫daemon.daemon.registry.spawnRunner('a1', { PATH: process.env.PATH ?? '', HARKROOM_RUNNER_SECRET: 'sec-retire-1' });
+    정리할pid.push(러너.pid);
+    await 조건까지장부(dir, 1);
+    await 첫daemon.daemon.shutdown();
+
+    const 로그: string[] = [];
+    const 새daemon = await daemon띄우기(dir, { log: (l) => 로그.push(l), args: {
+      socket: daemonEndpointPaths(dir).socketPath, launchNonce: 'test-nonce-2',
+      entryPath: join(dir, 'harkroom-operator'), appVersion: '0.1.27', unknown: [],
+    } });
+    if (새daemon.kind !== 'running') throw new Error('새 daemon 이 안 떴다');
+    expect(새daemon.daemon.adoptedAtStartup.adopted).toHaveLength(0);
+    // 회수 중인 러너를 id 로 안다 — announce 에 실릴 근거.
+    expect(새daemon.daemon.registry.retiringRunners()).toEqual([{ agentId: 'a1', pid: 러너.pid, incarnationId: 러너.incarnationId }]);
+
+    const { connect } = await import('node:net');
+    const { encodeLine } = await import('@harkroom/shared/daemonProtocol');
+    const socket = connect(새daemon.daemon.paths.socketPath);
+    await new Promise<void>((resolve, reject) => { socket.once('connect', () => resolve()); socket.once('error', reject); });
+    socket.write(encodeLine({ type: 'hello', version: 1, role: 'runner', runnerId: 러너.incarnationId, secret: 'sec-retire-1' }));
+    await 조건까지(() => 로그.some((l) => l.includes('러너 링크 연결')), 3000).catch(() => undefined);
+    socket.destroy();
+    expect(로그.some((l) => l.includes(`러너 링크 연결(relay): runnerId=${러너.incarnationId} agent=a1`))).toBe(true);
+  }, 30_000);
+
+  /**
    * **회귀선 2.** 채택한 러너에 `spawnRunner` 가 와도 **새로 띄우지 않는다.**
    *
    * 이것이 `#430` 이 관측한 중복의 정확한 자리다: daemon 이 재시작하면 표가 비어 있고,
