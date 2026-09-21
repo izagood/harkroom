@@ -73,6 +73,13 @@ function secretsMatch(expected: string, received: string): boolean {
 export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
   const expected = new Map<string, { agentId: string; secret: string }>();
   const linked = new Map<string, LinkSocket>();
+  /**
+   * 받아들인 소켓 전부 — relay 와 bridge. `linked` 는 relay 만 담는다(러너당 하나, send 의 대상).
+   * bridge 는 하네스 프로세스가 여는 것이라 러너보다 오래 살 수 있고, `close` 가 이것을
+   * 안 끊으면 `net.Server.close()` 가 마지막 연결이 닫히길 영영 기다린다 — 앱 갱신 때
+   * 옛 오퍼레이터가 종료 중에 멈춰 새 오퍼레이터가 엔드포인트를 얻지 못하던 원인(2026-09-21).
+   */
+  const accepted = new Set<LinkSocket>();
 
   const drop = (runnerId: string, socket: LinkSocket): void => {
     if (linked.get(runnerId) !== socket) return;
@@ -132,6 +139,8 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
           handleLine(runnerId, entry.agentId, socket, kind, line.value);
         }
       });
+      accepted.add(socket);
+      socket.on('close', () => accepted.delete(socket));
       if (kind === 'relay') {
         socket.on('close', () => drop(runnerId, socket));
         socket.on('error', () => drop(runnerId, socket));
@@ -154,6 +163,8 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
 
     close() {
       for (const [runnerId, socket] of linked) { linked.delete(runnerId); socket.destroy(); }
+      // bridge 도 끊는다 — 하네스의 MCP 호출은 끊긴 소켓에서 오류를 받고, 러너는 재접속한다.
+      for (const socket of accepted) { accepted.delete(socket); socket.destroy(); }
     },
   };
 }

@@ -56,11 +56,20 @@ export interface AssignmentDeps {
    */
   respawnBackoffMs?: number;
   respawnCeilingMs?: number;
+  /**
+   * spawn 이 `retiring`(앞 세대 러너가 아직 물러나는 중)으로 거절됐을 때 다시 띄워 보는 간격.
+   * 레지스트리는 그 러너가 죽어야 자리를 내주는데, 그 러너는 우리 표에 없어 exit 통지가 없다 —
+   * 그래서 묻는 쪽이 되풀이해 물어야 한다. 배정이 살아 있는 동안만이다.
+   */
+  retiringRetryMs?: number;
   now?: () => number;
 }
 
-/** `refused` 는 띄우지 않았고 다시 띄우지도 않는다는 뜻 — 커뮤니티가 서버에 `runner.exited{reason}` 으로 알린다. */
-export type AssignOutcome = 'spawned' | 'already' | { refused: string };
+/**
+ * `refused` 는 띄우지 않았고 다시 띄우지도 않는다는 뜻 — 커뮤니티가 서버에 `runner.exited{reason}` 으로 알린다.
+ * `retiring` 은 아직 안 띄웠지만 곧 띄운다는 뜻 — 앞 세대 러너가 물러나면 조정기가 스스로 다시 시도한다.
+ */
+export type AssignOutcome = 'spawned' | 'already' | 'retiring' | { refused: string };
 
 export interface AssignmentReconciler {
   onAssign(baseUrl: string, definition: AgentDefinition, local: LocalAgentConfig | undefined): Promise<AssignOutcome>;
@@ -79,6 +88,7 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
   const killGraceMs = deps.killGraceMs ?? 5_000;
   const respawnBackoffMs = deps.respawnBackoffMs ?? 1_000;
   const respawnCeilingMs = deps.respawnCeilingMs ?? 60_000;
+  const retiringRetryMs = deps.retiringRetryMs ?? 5_000;
   const now = deps.now ?? Date.now;
   /** "한동안 살았다"의 기준 — 이보다 오래 살았으면 다음 죽음의 백오프는 처음부터다. */
   const STABLE_MS = 5 * 60_000;
@@ -131,7 +141,25 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
         ...(local?.workingDir ? { HARKROOM_WORKING_DIR: local.workingDir } : {}),
         ...(local?.claudePool ? { HARKROOM_CLAUDE_POOL: local.claudePool } : {}),
       };
-      const result = await deps.spawn(agentId, env, runnerId);
+      let result: Awaited<ReturnType<AssignmentDeps['spawn']>>;
+      try {
+        result = await deps.spawn(agentId, env, runnerId);
+      } catch (err) {
+        deps.link.forget(runnerId);
+        if ((err as { code?: unknown }).code !== 'retiring') throw err;
+        // 앞 세대 러너가 진행 중인 턴을 끝내길 기다린다(`runners.ts` 의 retiring). 그 러너는 우리
+        // 표에 없어 죽어도 통지가 없다 — 여기서 되풀이해 물어야 자리가 비었을 때 띄울 수 있다.
+        // 앱이 대신 띄워 주던 시절의 가정("앱이 새로 띄우게 둔다")은 이제 없다: 띄우는 것은 오퍼레이터다.
+        deps.log(`${err instanceof Error ? err.message : String(err)} — ${Math.round(retiringRetryMs / 1000)}초 뒤 다시 띄워 본다: agent=${definition.handle}`);
+        respawns.get(agentId)?.();
+        respawns.set(agentId, deps.schedule(() => {
+          respawns.delete(agentId);
+          if (!assigned.has(agentId)) return;
+          void self.onAssign(baseUrl, definition, local)
+            .catch((e: unknown) => deps.log(`다시 띄우기 실패: ${e instanceof Error ? e.message : String(e)}`));
+        }, retiringRetryMs));
+        return 'retiring';
+      }
       if (result.spawned) lastSpawnAt.set(agentId, now());
       // 안 띄웠으면 방금 적은 secret 은 아무 러너도 안 쓴다 — 남겨 두면 장부가 자라기만 한다.
       else deps.link.forget(runnerId);
