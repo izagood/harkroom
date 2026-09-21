@@ -180,6 +180,9 @@ dead AVCS server never restarts the pod).
 |----------|-------------|---------|----------|
 | `HARKROOM_URL` | harkroom server URL | `http://localhost:3400` | No |
 | `HARKROOM_PAT` | Personal Access Token for authentication | - | Yes |
+| `HARKROOM_OPERATOR_SOCKET` | Unix socket of the operator that spawned this runner; with the two below, the runner attaches its PTY relay there instead of the server (set by the operator, not by hand) | - | No |
+| `HARKROOM_RUNNER_ID` | Runner id the operator assigned at spawn; the server multiplexes this runner's frames by it | - | No |
+| `HARKROOM_RUNNER_SECRET` | One-time secret for the operator link; set by the operator at spawn together with the two above | - | No |
 | `AGENT_POLL_TIMEOUT_MS` | Inbox polling timeout | `25000` (25s) | No |
 | `AGENT_TURN_TIMEOUT_MS` | Maximum wait for one turn (PTY execution) | `1800000` (30min) | No |
 | `AGENT_HARNESS_STALL_MS` | Idle time after which a harness whose transcript stopped growing is treated as stalled and the turn is folded (`0` disables) | `600000` (10min) | No |

@@ -1,4 +1,5 @@
-// 러너 릴레이 소켓(`/agent-relay`)의 하트비트 회귀선.
+// 러너 프레임이 흐르는 소켓의 하트비트 회귀선. 단계 3 뒤로 그 소켓은 `/agent-relay` 가 아니라
+// **오퍼레이터 채널**(`/operator`)이다 — 러너 세션의 수명이 그 소켓의 수명을 따른다.
 //
 // **왜 이 파일이 생겼나**(2026-09-20 실측): 원격 서버(Cloudflare 프록시 뒤)로 옮긴 뒤,
 // 릴레이가 경로 중간에서 끊겨도 **양쪽 모두 그 사실을 모르는** 상태가 생겼다. 러너는
@@ -16,17 +17,18 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import WebSocket from 'ws';
-import type { AgentSessionView, RelayRunnerFrame } from '@harkroom/shared';
+import type { AgentSessionView } from '@harkroom/shared';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { operatorRunnerFactory } from './helpers/operatorRunner.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
 let adminToken: string;
-let agentPat: string;
 let agentId: string;
 let baseUrl: string;
+let runners: ReturnType<typeof operatorRunnerFactory>;
 
 /** `/ws` 와 **같은 값**을 쓴다(buildServer 의 `wsHeartbeatMs`). 갈라 두면 두 소켓의
  *  수명이 갈라지고, 그것이 이 결함의 모양이었다. */
@@ -39,34 +41,13 @@ beforeAll(async () => {
   stop = db.stop;
   app = await buildServer({ pool: db.pool as Pool, wsHeartbeatMs: HEARTBEAT_MS });
   ({ token: adminToken } = await bootstrapAdmin(app));
-  ({ pat: agentPat, accountId: agentId } = await createAgent(app, adminToken, 'wedgedrunner'));
+  ({ accountId: agentId } = await createAgent(app, adminToken, 'wedgedrunner'));
   await app.listen({ port: 0, host: '127.0.0.1' });
   const addr = app.server.address();
   baseUrl = typeof addr === 'object' && addr ? `127.0.0.1:${addr.port}` : '';
+  runners = operatorRunnerFactory(app, () => baseUrl, adminToken);
 });
 afterAll(async () => { await app.close(); await stop(); });
-
-interface FakeRunner {
-  socket: WebSocket;
-  send(frame: RelayRunnerFrame): void;
-  /** 소켓 읽기를 멈춘다 — ping 이 도착해도 처리되지 않아 pong 이 나가지 않는다.
-   *  케이블이 뽑힌 피어와 서버에게 구분되지 않는 상태다. */
-  wedge(): void;
-}
-
-async function connectRunner(pat: string): Promise<FakeRunner> {
-  const socket = new WebSocket(`ws://${baseUrl}/agent-relay`, { headers: auth(pat) });
-  await new Promise<void>((resolve, reject) => {
-    socket.on('open', () => resolve());
-    socket.on('error', reject);
-    socket.on('unexpected-response', (_req, res) => reject(new Error(`http ${res.statusCode}`)));
-  });
-  return {
-    socket,
-    send: (frame) => socket.send(JSON.stringify(frame)),
-    wedge: () => (socket as unknown as { _socket: { pause(): void } })._socket.pause(),
-  };
-}
 
 function session(sessionId: string): AgentSessionView {
   return {
@@ -98,7 +79,7 @@ describe('러너 릴레이는 하트비트를 받는다', () => {
   // 정상 러너를 끊으면 안 된다. ping 을 보내기만 하고 답을 안 보는 구현도 이 테스트는
   // 통과하지만, 아래 테스트와 **짝으로** 두면 그 구현이 걸린다.
   it('keeps a responsive runner across several heartbeat periods', async () => {
-    const runner = await connectRunner(agentPat);
+    const runner = await runners.connect(agentId);
     runner.send({ type: 'announce', sessions: [session('alive-1')] });
     await waitForAsync(() => listed('alive-1'));
 
@@ -114,7 +95,7 @@ describe('러너 릴레이는 하트비트를 받는다', () => {
   // 죽은 TCP 연결은 close 를 주지 않는다. 그래서 pong 부재가 **유일한** 신호다 —
   // 이것이 없으면 서버는 그 러너를 영원히 살아 있다고 믿는다.
   it('drops a wedged runner and forgets its sessions', async () => {
-    const runner = await connectRunner(agentPat);
+    const runner = await runners.connect(agentId);
     runner.send({ type: 'announce', sessions: [session('wedged-1')] });
     await waitForAsync(() => listed('wedged-1'));
 

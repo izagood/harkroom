@@ -28,6 +28,7 @@ import type { WsServerEvent } from '@harkroom/shared';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { operatorRunnerFactory } from './helpers/operatorRunner.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -96,19 +97,14 @@ describe('일하는 중인 에이전트의 presence', () => {
 
   it('relay 프레임이 도착하면 온라인이 된다', async () => {
     const agent = await createAgent(app, adminToken, 'busy-relay-agent');
-    const ws = new WebSocket(`ws://${base}/agent-relay`, {
-      headers: { authorization: `Bearer ${agent.pat}` },
-    });
-    await new Promise<void>((resolve, reject) => {
-      ws.on('open', () => resolve());
-      ws.on('error', reject);
-    });
+    // 단계 3: 러너 프레임은 오퍼레이터 채널로 온다 — 생존 신호라는 사실은 같다.
+    const runner = await operatorRunnerFactory(app, () => base, adminToken).connect(agent.accountId);
     // 러너가 붙자마자 보내는 첫 프레임. 세션이 없어도 '나 여기 있다'는 사실은 같다.
-    ws.send(JSON.stringify({ type: 'announce', sessions: [], caps: [] }));
+    runner.send({ type: 'announce', sessions: [], caps: [] });
 
     // 프레임 처리는 소켓 이벤트라 send 반환과 순서가 보장되지 않는다.
     const online = await waitForOnline(agent.accountId);
-    ws.close();
+    await runner.close();
 
     expect(online).toContain(agent.accountId);
   });

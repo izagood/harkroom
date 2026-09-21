@@ -171,7 +171,7 @@ export interface OpenSession {
 }
 
 export interface RelayClientOptions {
-  /** harkroom 서버의 http(s) 베이스 URL. ws(s) 로 바꿔 `/agent-relay` 에 붙는다. */
+  /** harkroom 서버의 http(s) 베이스 URL. `link` 가 없을 때만 — ws(s) 로 바꿔 옛 `/agent-relay` 에 붙는다(단계 4 에서 사라진다). */
   harkroomUrl: string;
   pat: string;
   /** 있으면 서버 WS 대신 오퍼레이터 소켓으로 건다(단계 3). 없으면 옛 경로 — 단계 4 에서 사라진다. */
@@ -201,7 +201,7 @@ export interface RelayClient {
   connected(): boolean;
 }
 
-/** http(s) → ws(s). 경로는 `/agent-relay` 하나뿐이다. */
+/** http(s) → ws(s). 옛 경로 `/agent-relay` — 오퍼레이터 없이 도는 러너의 폴백이고 단계 4 에서 사라진다. */
 export function relayUrl(harkroomUrl: string): string {
   return `${harkroomUrl.replace(/\/$/, '').replace(/^http/, 'ws')}/agent-relay`;
 }

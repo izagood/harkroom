@@ -35,6 +35,11 @@ import type {
 export interface RelaySocket {
   send(data: string): void;
   close(code?: number, reason?: string): void;
+  /**
+   * 러너 쪽 자리에만 있다(단계 3): 러너는 이제 소켓이 아니라 **오퍼레이터 채널 위의 한 줄기**라,
+   * 프레임을 문자열로 만들기 전에 `runnerId` 를 달아야 한다. 있으면 `send` 대신 이것을 쓴다.
+   */
+  sendFrame?(frame: RelayServerFrame): boolean;
 }
 
 interface Viewer {
@@ -93,6 +98,8 @@ export interface RelayHub {
   addRunner(agentAccountId: string, socket: RelaySocket): () => void;
   /** 러너가 보낸 원문 프레임 한 개를 처리한다. 파싱 실패·모르는 타입은 조용히 버린다. */
   onRunnerMessage(agentAccountId: string, raw: string): void;
+  /** 이미 풀린 프레임 — 오퍼레이터 채널에서 `runnerId` 를 뗀 것이 이리로 온다(단계 3). */
+  onRunnerFrame(agentAccountId: string, frame: RelayRunnerFrame): void;
 
   /** 이 계정이 볼 수 있는 세션들. `agentAccountIds` 가 'all' 이면 admin 이다. */
   listSessions(agentAccountIds: readonly string[] | 'all'): AgentSessionView[];
@@ -239,8 +246,10 @@ export function createRelayHub(hooks: RelayHubHooks = {}): RelayHub {
    * 어긋난다.**
    */
   const sendToRunner = (runner: Runner, frame: RelayServerFrame): boolean => {
-    try { runner.socket.send(JSON.stringify(frame)); return true; }
-    catch { return false; /* 끊긴 러너는 close 가 정리한다 */ }
+    try {
+      if (runner.socket.sendFrame) return runner.socket.sendFrame(frame);
+      runner.socket.send(JSON.stringify(frame)); return true;
+    } catch { return false; /* 끊긴 러너는 close 가 정리한다 */ }
   };
 
   /**
@@ -392,8 +401,10 @@ export function createRelayHub(hooks: RelayHubHooks = {}): RelayHub {
       // 러너는 무엇이든 보낼 수 있다 — 파싱 실패로 서버가 죽지 않아야 한다.
       try { parsed = JSON.parse(raw); } catch { return; }
       if (typeof parsed !== 'object' || parsed === null) return;
-      const frame = parsed as RelayRunnerFrame;
+      this.onRunnerFrame(agentAccountId, parsed as RelayRunnerFrame);
+    },
 
+    onRunnerFrame(agentAccountId, frame) {
       switch (frame.type) {
         case 'announce': {
           if (!Array.isArray(frame.sessions)) return;

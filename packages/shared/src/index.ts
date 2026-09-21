@@ -2377,7 +2377,8 @@ export const MENTION_CHAIN_LIMIT = 4;
 export type RunnerCap = 'input' | 'interactive' | 'attention' | 'cancel';
 
 /**
- * 러너 → 서버 프레임. `GET /agent-relay` 소켓에 실린다.
+ * 러너 → 서버 프레임. 러너는 이것을 오퍼레이터 unix 링크에 싣고(`runnerLink.ts`), 오퍼레이터가
+ * `runnerId` 를 달아 `/operator` 채널로 나른다 — 옛 `GET /agent-relay` 소켓은 단계 3 에서 사라졌다.
  *
  * `announce` 가 재접속마다 다시 오는 것이 중요하다 — 서버는 소켓이 끊기면 그 러너의
  * 세션 레지스트리를 버리므로(살아 있는지 알 방법이 없다), 재접속 후 announce 가

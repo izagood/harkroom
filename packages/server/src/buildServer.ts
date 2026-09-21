@@ -515,8 +515,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // 쪽(PTY 바이트)이 더 느슨해진다.
     allowedOrigins: deps.corsOrigins ?? null,
     revalidateMs: deps.wsRevalidateMs,
-    // 러너 소켓의 하트비트도 **같은 값**이다 — 뷰어 소켓과 같은 이유다(위 주석).
-    heartbeatMs: deps.wsHeartbeatMs,
+    // 러너 프레임은 오퍼레이터 채널로 온다(단계 3). 그 소켓의 하트비트는 operatorRoutes 의 것이다.
+    operatorHub,
     // 러너 프레임도 생존 신호다 — 턴 중에는 이것이 **유일한** 신호다(폴이 안 나간다).
     agentPresence,
   });
