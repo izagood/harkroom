@@ -34,6 +34,8 @@ export interface CommunityInstance {
   readonly assignments: Map<string, AgentDefinition>;
   start(): void;
   stop(): void;
+  /** 레지스트리의 exit 통지를 조정기에 넘긴다 — 배정이 살아 있으면 다시 띄운다. */
+  onRunnerExit(agentId: string, code: number | null): void;
 }
 
 export function createCommunity(deps: CommunityDeps): CommunityInstance {
@@ -83,5 +85,10 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
     assignments,
     start: () => link.start(),
     stop: () => link.stop(),
+    onRunnerExit: (agentId, code) => {
+      // 이 커뮤니티의 배정이 아니면 남의 exit 이다 — 조정기가 assigned 로 다시 거르지만
+      // 여기서 먼저 거르면 로그가 커뮤니티마다 한 줄씩 찍히지 않는다.
+      if (assignments.has(agentId)) deps.reconciler.onRunnerExit(agentId, code);
+    },
   };
 }

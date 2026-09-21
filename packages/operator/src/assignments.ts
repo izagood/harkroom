@@ -34,6 +34,14 @@ export interface AssignmentDeps {
   drainTimeoutMs?: number;
   /** drain 이 아닐 때 SIGTERM → SIGKILL 유예. pty.ts 의 타임아웃 경로와 같은 5초. */
   killGraceMs?: number;
+  /**
+   * 러너가 죽었을 때 다시 띄우기까지의 첫 지연과 상한. 데스크탑 `pursueRespawn` 이 하던
+   * 일이다 — 배정이 살아 있는 동안 러너가 없는 상태를 오퍼레이터가 스스로 메운다.
+   * 연속으로 죽으면 두 배씩 늘고, 한동안 살아 있었으면 처음으로 돌아간다.
+   */
+  respawnBackoffMs?: number;
+  respawnCeilingMs?: number;
+  now?: () => number;
 }
 
 export type AssignOutcome = 'spawned' | 'already' | 'failed';
@@ -41,6 +49,11 @@ export type AssignOutcome = 'spawned' | 'already' | 'failed';
 export interface AssignmentReconciler {
   onAssign(baseUrl: string, definition: AgentDefinition, local: LocalAgentConfig | undefined): Promise<AssignOutcome>;
   onUnassign(baseUrl: string, agentId: string, drain: boolean): Promise<void>;
+  /**
+   * 러너가 죽었다(레지스트리의 exit 통지). 배정이 살아 있으면 백오프 뒤 다시 띄운다 —
+   * 회수 중(unassign)이거나 배정이 없으면 아무것도 안 한다.
+   */
+  onRunnerExit(agentId: string, code: number | null): void;
   /** 살아 있는 러너 전부 — hello 의 announce 에 실린다. */
   announce(): RunnerAnnounce[];
 }
@@ -48,12 +61,24 @@ export interface AssignmentReconciler {
 export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReconciler {
   const drainTimeoutMs = deps.drainTimeoutMs ?? 10 * 60_000;
   const killGraceMs = deps.killGraceMs ?? 5_000;
+  const respawnBackoffMs = deps.respawnBackoffMs ?? 1_000;
+  const respawnCeilingMs = deps.respawnCeilingMs ?? 60_000;
+  const now = deps.now ?? Date.now;
+  /** "한동안 살았다"의 기준 — 이보다 오래 살았으면 다음 죽음의 백오프는 처음부터다. */
+  const STABLE_MS = 5 * 60_000;
   /** 진행 중인 회수. 같은 에이전트에 두 번 오면 앞의 예약을 놓는다. */
   const reclaims = new Map<string, () => void>();
+  /** 살아 있는 배정 — 죽은 러너를 다시 띄울지의 근거. */
+  const assigned = new Map<string, { baseUrl: string; definition: AgentDefinition; local: LocalAgentConfig | undefined }>();
+  const lastSpawnAt = new Map<string, number>();
+  const backoff = new Map<string, number>();
+  const respawns = new Map<string, () => void>();
 
-  return {
+  const self: AssignmentReconciler = {
     async onAssign(baseUrl, definition, local) {
       const { agentId } = definition;
+      assigned.set(agentId, { baseUrl, definition, local });
+      respawns.get(agentId)?.(); respawns.delete(agentId);
       let pat = await deps.secrets.getAgentPat(baseUrl, agentId);
       if (!pat) {
         try {
@@ -78,6 +103,7 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
         ...(local?.claudePool ? { HARKROOM_CLAUDE_POOL: local.claudePool } : {}),
       };
       const result = await deps.spawn(agentId, env);
+      if (result.spawned) lastSpawnAt.set(agentId, now());
       deps.log(result.spawned
         ? `러너 spawn: agent=${definition.handle} pid=${result.pid}`
         : `러너가 이미 있다 — 새로 안 띄운다: agent=${definition.handle} pid=${result.pid}`);
@@ -85,6 +111,8 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
     },
 
     async onUnassign(_baseUrl, agentId, drain) {
+      assigned.delete(agentId);
+      respawns.get(agentId)?.(); respawns.delete(agentId);
       if (!deps.isAlive(agentId)) return;
       reclaims.get(agentId)?.();
       // SIGTERM 이 1차다 — 러너는 진행 중인 턴을 끝내고 물러난다(drain). drain 이 아니어도
@@ -100,6 +128,24 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
       reclaims.set(agentId, cancel);
     },
 
+    onRunnerExit(agentId, code) {
+      const entry = assigned.get(agentId);
+      // 배정이 없거나 회수 중이면 죽는 것이 맞다 — 다시 띄우면 unassign 이 무의미해진다.
+      if (!entry || reclaims.has(agentId)) return;
+      const stable = now() - (lastSpawnAt.get(agentId) ?? 0) > STABLE_MS;
+      const delay = stable ? respawnBackoffMs : (backoff.get(agentId) ?? respawnBackoffMs);
+      backoff.set(agentId, Math.min(delay * 2, respawnCeilingMs));
+      deps.log(`러너가 죽었다: agent=${entry.definition.handle} code=${code ?? 'signal'} — ${Math.round(delay / 1000)}초 뒤 다시 띄운다`);
+      respawns.get(agentId)?.();
+      respawns.set(agentId, deps.schedule(() => {
+        respawns.delete(agentId);
+        if (!assigned.has(agentId)) return;
+        void self.onAssign(entry.baseUrl, entry.definition, entry.local)
+          .catch((err: unknown) => deps.log(`다시 띄우기 실패: ${err instanceof Error ? err.message : String(err)}`));
+      }, delay));
+    },
+
     announce: () => deps.listRunners(),
   };
+  return self;
 }

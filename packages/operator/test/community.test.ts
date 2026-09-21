@@ -12,6 +12,7 @@ function fakeReconciler() {
   const reconciler: AssignmentReconciler = {
     onAssign: async (baseUrl, def, local) => { calls.push(`assign ${baseUrl} ${def.agentId} ${local?.workingDir ?? '-'}`); return 'spawned'; },
     onUnassign: async (baseUrl, agentId, drain) => { calls.push(`unassign ${baseUrl} ${agentId} ${drain}`); },
+    onRunnerExit: (agentId, code) => { calls.push(`exit ${agentId} ${code}`); },
     announce: () => [{ agentId: 'a-1', runnerId: 'r-1', pid: 7 }],
   };
   return { reconciler, calls };

@@ -174,6 +174,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   // exit 통지는 레지스트리 → 서버로 흐르는데 서버는 레지스트리를 필요로 한다. 그 순환을
   // 한 칸짜리 참조로 끊는다 — 레지스트리가 먼저 만들어지고, 통지는 서버가 선 뒤에만 온다.
   const serverRef: { current: DaemonServer | null } = { current: null };
+  let communities: CommunityInstance[] = [];
 
   const probe = options.identityProbe ?? psIdentityProbe;
 
@@ -242,7 +243,11 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       args: options.runnerArgs ?? [],
     },
     options.host ?? nodeRunnerHost,
-    (notice) => serverRef.current?.broadcastRunnerExit(notice),
+    (notice) => {
+      serverRef.current?.broadcastRunnerExit(notice);
+      // 배정이 살아 있으면 오퍼레이터가 스스로 다시 띄운다(assignments.ts::onRunnerExit).
+      for (const c of communities) c.onRunnerExit(notice.agentId, notice.code ?? null);
+    },
     ledgerSink,
     options.logs === undefined ? logSink : options.logs,
   );
@@ -382,7 +387,6 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   // 서버에 붙는다(스펙 2026-09-20 §3·§4). **고아 입양 뒤**다 — hello 의 announce 에 살아 있는
   // 러너가 실려야 서버가 그 세션을 안다. 실패해도 소켓 서비스는 뜬다: 앱이 붙어 등록·설정을
   // 고칠 수 있어야 하므로 기동의 전제가 아니다.
-  let communities: CommunityInstance[] = [];
   if (options.communities !== false) {
     try {
       communities = await startCommunities({
