@@ -41,6 +41,7 @@ import { emitEvent } from '../events.js';
 import { createRelayHub, type RelayHub } from '../ws/relay.js';
 import type { AgentPresence } from '../mcp/presence.js';
 import { createCredentialSweep, DEFAULT_REVALIDATE_MS, originAllowed } from '../ws/socketLifetime.js';
+import { createHeartbeat } from '../ws/heartbeat.js';
 import type { OperatorHub } from '../ws/operatorHub.js';
 
 /** 내가 소유한 에이전트 계정들. admin 은 이 질의를 타지 않는다('all' 이다). */
@@ -63,6 +64,15 @@ export interface AgentRelayDeps {
   allowedOrigins?: readonly string[] | null;
   /** 자격증명 재검증 주기(ms). `/ws` 와 같은 값을 쓴다. 테스트가 짧게 준다. */
   revalidateMs?: number;
+  /**
+   * 뷰어 소켓(`/agent-attach`)의 ping 주기(ms). `/ws`·`/operator` 와 **같은 값**을 받는다.
+   *
+   * 실측(2026-09-21, 원격지에서 터미널 열기): 이 소켓만 ping 이 없었다. 사람이 입력을 기다리는
+   * 동안 PTY 바이트가 없으면 Cloudflare 가 ~100초 뒤 소켓을 조용히 걷어가고, 서버는 close 를
+   * 보고 뷰어 0 을 러너에 알리며, 러너는 60초 유예 뒤 하네스를 회수했다 — 원격 패널은 "러너
+   * 연결 끊김"이 됐다. 2026-09-20 의 릴레이 결함(`heartbeat.ts` 머리 주석)과 같은 부류다.
+   */
+  heartbeatMs?: number;
   /**
    * 오퍼레이터 채널(단계 3). 러너 프레임은 이 허브의 `hello`·`runner.started`·`runner.announce`…
    * 로 온다. 하트비트는 그 채널의 것이다(`operatorRoutes.ts`) — 이 파일이 따로 돌리지 않는다.
@@ -154,7 +164,11 @@ export async function registerAgentRelayRoutes(
    * 들어 있으므로, 이벤트 소켓보다 느슨해서는 안 된다.
    */
   const sweep = createCredentialSweep(pool, deps.revalidateMs ?? DEFAULT_REVALIDATE_MS);
-  app.addHook('onClose', async () => { sweep.stop(); });
+  // 뷰어 소켓 하트비트(`heartbeatMs` 주석). 판정은 `heartbeat.ts` 하나가 한다 — `/ws`·`/operator` 와 같은 규칙.
+  const heartbeat = createHeartbeat();
+  const beat = setInterval(() => heartbeat.tick(), deps.heartbeatMs ?? 30_000);
+  beat.unref?.();
+  app.addHook('onClose', async () => { sweep.stop(); clearInterval(beat); });
 
   /**
    * 오퍼레이터 채널 위의 러너들(단계 3, 스펙 2026-09-20 §5).
@@ -570,6 +584,9 @@ export async function registerAgentRelayRoutes(
     const viewer = hub.addViewer(claim.sessionId, socket);
     // 자격증명이 죽으면 이 소켓도 닫힌다(위 `sweep` 주석).
     const untrack = sweep.track(socket, claim.credentialHash);
+    // 유휴 뷰어를 프록시가 걷어가지 않게, 그리고 케이블 뽑힌 뷰어가 영원히 붙어 있지 않게(`heartbeatMs` 주석).
+    heartbeat.track(socket);
+    socket.on('pong', () => heartbeat.pong(socket));
 
     // 파싱·writer 판정·포워딩·바이트 누계·resize 값 검증 전부 허브의 몫이다 — "누가
     // 지금 쓰는가"의 진실을 두 곳에 두지 않는다(#335 의 resize 도 같은 핸들을 탄다).
@@ -580,6 +597,7 @@ export async function registerAgentRelayRoutes(
       const inputBytes = viewer.inputBytes();
       viewer.close();
       untrack();
+      heartbeat.untrack(socket);
       // detach 도 남긴다 — attach 만 남기면 감사 조회에서 "지금 붙어 있는 사람"과
       // "붙었다 떠난 사람"이 구분되지 않는다.
       //
