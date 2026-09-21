@@ -54,6 +54,8 @@ export interface RunnerRecord {
   pid: number;
   incarnationId: IncarnationId;
   startedAtMs: number;
+  /** 러너 링크 secret — 장부에 실려 다음 오퍼레이터가 채택한 러너를 다시 받는다(`runnerLedger.ts`). */
+  linkSecret?: string;
   /** SIGTERM 을 보낸 때. 안 보냈으면 `null`. **관측이지 판단이 아니다.** */
   termSentAtMs: number | null;
   /**
@@ -465,6 +467,7 @@ export class RunnerRegistry {
       pid,
       incarnationId: incarnationId ?? newIncarnationId(),
       startedAtMs: this.host.now(),
+      ...(env.HARKROOM_RUNNER_SECRET ? { linkSecret: env.HARKROOM_RUNNER_SECRET } : {}),
       termSentAtMs: null,
       child,
       exited: false,
@@ -543,6 +546,7 @@ export class RunnerRegistry {
     incarnationId: IncarnationId;
     startedAtMs: number;
     bootTimeSec: number | null;
+    linkSecret?: string;
   }): RunnerRecord | null {
     const existing = this.byAgent.get(entry.agentId);
     if (existing && !existing.exited && this.host.kill(existing.pid, 0)) return null;
@@ -552,6 +556,8 @@ export class RunnerRegistry {
       pid: entry.pid,
       incarnationId: entry.incarnationId,
       startedAtMs: entry.startedAtMs,
+      // secret 도 함께 잇는다 — 다음 장부 쓰기가 이 값을 빠뜨리면 두 번째 재시작에서 다시 잃는다.
+      ...(entry.linkSecret ? { linkSecret: entry.linkSecret } : {}),
       // **`null` 이다** — 이 daemon 은 그 러너에 SIGTERM 을 보낸 적이 없다. 앞선 daemon 이
       // 보냈을 수는 있지만 그 사실은 어디에도 안 남는다(장부는 spawn 순간만 담는다).
       // 여기에 추측으로 값을 넣으면 화면이 "N초 전에 보냈다"고 거짓말한다.

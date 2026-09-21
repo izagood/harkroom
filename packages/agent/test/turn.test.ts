@@ -381,7 +381,8 @@ describe('readExtraMcpServers — 오퍼레이터가 합쳐 준 파일에서 cod
     expect(flags).toContain('mcp_servers.github.transport="stdio"');
     expect(flags).toContain('mcp_servers.github.command="gh-mcp"');
     expect(flags).toContain('mcp_servers.github.args=["serve"]');
-    expect(flags).toContain('mcp_servers.github.env={"GH_TOKEN":"x"}');
+    // env 는 TOML 인라인 표다 — JSON 표기(`{"K":"v"}`)는 codex 가 거절한다(실측 2026-09-21).
+    expect(flags).toContain('mcp_servers.github.env={ "GH_TOKEN" = "x" }');
     // 기존 둘은 그대로다.
     expect(flags).toContain('mcp_servers.harkroom.transport="stdio"');
   });

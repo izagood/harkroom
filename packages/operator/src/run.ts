@@ -227,13 +227,15 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   // 아무도 정하지 않아서, 낡은 스냅샷이 새 것을 덮는 일이 실제로 났다(그 창구의 주석).
   const ledgerWriter = createRunnerLedgerWriter(appDataDir, log);
   const ledgerSink = {
-    save: (records: readonly { agentId: string; pid: number; incarnationId: string; startedAtMs: number; bootTimeSec: number | null }[]) => {
+    save: (records: readonly { agentId: string; pid: number; incarnationId: string; startedAtMs: number; bootTimeSec: number | null; linkSecret?: string }[]) => {
       const entries: RunnerLedgerEntry[] = records.map((r) => ({
         agentId: r.agentId,
         pid: r.pid,
         incarnationId: r.incarnationId,
         startedAtMs: r.startedAtMs,
         bootTimeSec: r.bootTimeSec,
+        // 링크 secret(스펙 §5) — 채택한 러너가 다시 붙는 근거다(`RunnerLedgerEntry.linkSecret`).
+        ...(r.linkSecret ? { linkSecret: r.linkSecret } : {}),
         spawnedByNonce: identity.launchNonce,
         // 세대를 함께 적는다 — 다음 daemon 이 "내 세대의 러너인가"를 이 값으로 판정한다
         // (`adopt.ts::planAdoption`). 없으면 그 판정 자체가 성립하지 않는다.
@@ -300,6 +302,9 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     const adopted = [];
     for (const entry of plan.adopt) {
       const record = registry.adopt(entry);
+      // 채택한 러너의 링크를 다시 받는다. 러너는 같은 소켓 경로에 같은 id·secret 으로 재접속을
+      // 계속 시도한다(`relay.ts`) — 여기서 적어 두지 않으면 그 hello 는 영영 거절이다.
+      if (record && entry.linkSecret) runnerLink.expect(record.incarnationId, record.agentId, entry.linkSecret);
       if (!record) {
         // 그 에이전트에 이미 살아 있는 표가 있었다 — 채택하면 그것을 밀어내 고아를
         // 만든다(`RunnerRegistry.adopt` 주석). 안 한 사실을 사유로 남긴다.

@@ -258,6 +258,43 @@ describe('고아 재발견 — daemon 이 죽고 새로 떠도 그 러너를 안
   }, 30_000);
 
   /**
+   * **회귀선 1-b — 채택한 러너의 링크가 다시 붙는다**(실측 2026-09-21). 러너는 살아남았지만
+   * secret 이 앞 오퍼레이터의 메모리에만 있어 새 오퍼레이터가 그 hello 를 영영 거절했고,
+   * 에이전트는 살아 있는데 답을 못 했다. 장부가 secret 을 함께 실어 채택 때 `expect` 한다.
+   *
+   * 되돌려 RED: `run.ts` 의 `runnerLink.expect(...)` 한 줄, 또는 장부의 `linkSecret` 을 빼면
+   * 아래 hello 가 거절돼 로그에 "러너 링크 연결" 이 안 찍힌다.
+   */
+  it('새 daemon 이 채택한 러너의 링크 secret 을 장부에서 받아 재접속을 받아들인다', async () => {
+    const dir = await 임시앱디렉터리();
+    const 첫daemon = await daemon띄우기(dir);
+    if (첫daemon.kind !== 'running') throw new Error('daemon 이 안 떴다');
+    const 러너 = await 첫daemon.daemon.registry.spawnRunner('a1', { PATH: process.env.PATH ?? '', HARKROOM_RUNNER_SECRET: 'sec-adopt-1' });
+    정리할pid.push(러너.pid);
+    const 장부 = await 조건까지장부(dir, 1);
+    expect(장부[0]?.linkSecret).toBe('sec-adopt-1');
+    await 첫daemon.daemon.shutdown();
+
+    const 로그: string[] = [];
+    const 새daemon = await daemon띄우기(dir, { log: (l) => 로그.push(l) });
+    if (새daemon.kind !== 'running') throw new Error('새 daemon 이 안 떴다');
+    expect(새daemon.daemon.adoptedAtStartup.adopted).toHaveLength(1);
+
+    // 러너가 하듯 같은 소켓에 같은 id·secret 으로 hello 한다.
+    const { connect } = await import('node:net');
+    const { encodeLine } = await import('@harkroom/shared/daemonProtocol');
+    const socket = connect(새daemon.daemon.paths.socketPath);
+    await new Promise<void>((resolve, reject) => { socket.once('connect', () => resolve()); socket.once('error', reject); });
+    socket.write(encodeLine({ type: 'hello', version: 1, role: 'runner', runnerId: 러너.incarnationId, secret: 'sec-adopt-1' }));
+    await 조건까지(() => 로그.some((l) => l.includes('러너 링크 연결')), 3000).catch(() => undefined);
+    socket.destroy();
+    expect(로그.some((l) => l.includes(`러너 링크 연결(relay): runnerId=${러너.incarnationId} agent=a1`))).toBe(true);
+    // 장부를 다시 써도 secret 이 남는다 — 두 번째 재시작에서도 같은 길이 통한다.
+    const 다시 = await 조건까지장부(dir, 1);
+    expect(다시[0]?.linkSecret).toBe('sec-adopt-1');
+  }, 30_000);
+
+  /**
    * **회귀선 2.** 채택한 러너에 `spawnRunner` 가 와도 **새로 띄우지 않는다.**
    *
    * 이것이 `#430` 이 관측한 중복의 정확한 자리다: daemon 이 재시작하면 표가 비어 있고,
