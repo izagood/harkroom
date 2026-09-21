@@ -29,7 +29,6 @@ import { AgentWaits } from './AgentWaits';
 import { useAgentTurns, useAgentWakes, useThreadRoots, threadTitle } from '../lib/agentTurns';
 import { useCollabProposals, type CollabFilter } from '../lib/collabProposals';
 // 띄울 권한 판정은 `lib/` 하나가 낸다 — 설정 › 에이전트가 같은 판정을 쓴다.
-import { canRelaunchAgent } from '../lib/relaunchGate';
 // 설정 문의 판정도 한 벌이다(`lib/agentConfigGate.ts`) — 프로필·본문 멘션이 같은 함수를
 // 쓴다. 세 곳이 같은 문을 여는데 술어가 세 벌이면 한쪽만 고친 날 문이 어긋난다.
 import { canSeeAgentConfig } from '../lib/agentConfigGate';
@@ -2161,18 +2160,10 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
             onCreate={() => { throw new Error('사이드바에서는 에이전트를 만들지 않는다 — 설정의 일이다'); }}
             canCreate={false}
             /*
-              **멈춘 것은 ▶ 로 여기서 바로 켠다**(문서). 이 칸이 3단계에서 얻는 새 능력이다 —
-              옛 목록에서는 사유를 읽을 수는 있어도 켤 수는 없었다.
-
-              권한 판정은 **설정 화면과 같은 것**이다(`canRelaunchAgent`): 관리자이거나
-              내가 소유한 에이전트. 다만 그쪽은 콜백 **안에서** 걸러 눌러도 아무 일이 없게
-              두는데, 여기서는 `canRelaunch` 술어로 **그 자리를 아예 그리지 않는다** —
-              `AgentGrid` 주석이 정한 규칙이 그것이다(*"권한 없는 사람에게는 문이 없다"*).
-              누를 수 없는 것을 그리지 않는 쪽이 이 저장소의 규율이고(design.md §4),
-              설정 화면의 모양은 그 술어를 안 넘김으로써 그대로 둔다.
+              앞 판본은 여기 ▶(다시 띄우기)가 있었다. 러너를 띄우는 것은 오퍼레이터의 일이
+              됐으므로(스펙 2026-09-20 §2) 사이드바에서 켤 손잡이가 없다 — 멈춘 에이전트를
+              살리는 길은 설정의 배정이다.
             */
-            onRelaunch={(a) => void getController().reissueRunnerPat(a.id)}
-            canRelaunch={(a) => canRelaunchAgent(a, me)}
             place="sidebar"
           />
         )}

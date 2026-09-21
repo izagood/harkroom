@@ -28,8 +28,6 @@ const grid = (props: Partial<Parameters<typeof AgentGrid>[0]> = {}) => render(
     onPick={props.onPick ?? vi.fn()}
     onCreate={props.onCreate ?? vi.fn()}
     canCreate={props.canCreate ?? true}
-    onRelaunch={props.onRelaunch}
-    canRelaunch={props.canRelaunch}
     onStop={props.onStop}
     appVersion={props.appVersion}
     place={props.place}
@@ -104,56 +102,15 @@ describe('AgentGrid — 검색', () => {
  * 카드에 줄이 늘지 않는다.
  */
 describe('AgentGrid — 아바타 세 얼굴', () => {
-  it('정상은 그냥 사진이다 — 정상이 기본값이므로 표시를 붙이지 않는다', () => {
-    grid({ agents: [agent('alpha')], online: ['id-alpha'], onRelaunch: vi.fn() });
-    expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('ok');
-    expect(screen.queryByTestId('agent-relaunch-alpha')).toBeNull();
-  });
-
-  it('멈추면 ▶ 가 뜨고, 그것은 카드와 다른 동작이다', () => {
-    const onPick = vi.fn();
-    const onRelaunch = vi.fn();
-    grid({ agents: [agent('alpha')], online: [], onPick, onRelaunch });
-
-    expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('stopped');
-    fireEvent.click(screen.getByTestId('agent-relaunch-alpha'));
-    // 실행이 우연히 눌리지 않도록 카드 클릭(=설정 열기)과 갈라 둔다.
-    expect(onRelaunch).toHaveBeenCalledTimes(1);
-    expect(onPick).not.toHaveBeenCalled();
-  });
 
   it('실패는 ↻ 를 받고 사유가 글자로 남는다 — 유일하게 글자가 느는 상태다', () => {
     grid({
       agents: [agent('alpha')],
       runnerStates: { 'id-alpha': { agentId: 'id-alpha', status: 'failed', exitCode: 1, message: '노드를 못 찾았다' } },
-      onRelaunch: vi.fn(),
     });
     expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('failed');
     // 사유가 title 툴팁에만 있으면 사람은 그것을 찾지 못한다(#368).
     expect(screen.getByTestId('agent-runner-failed-id-alpha').textContent).toContain('노드를 못 찾았다');
-  });
-
-  /**
-   * **`#443` 이 이 단언을 뒤집었다.**
-   *
-   * 앞 판본은 `toBe('ok')` 였고, 그 근거가 이 이름에 남아 있다 — *"40개가 전부 회색이
-   * 되면 그것도 거짓말이다"*. **그 문장은 여전히 옳다.** 틀린 것은 그 다음 걸음이다:
-   * 회색이 거짓말이라고 해서 `ok`(정상 얼굴)가 참이 되지는 않는다.
-   *
-   * 실측(2026-09-06, 릴리즈 `.app`)이 그 대가를 보여 줬다 — 서버가 죽어 타이틀 옆 점이
-   * 빨강인 그 순간, 에이전트 여섯이 **전부 초록**이었다. 사람은 화면 두 곳에서 서로
-   * 반대되는 말을 듣고 아래쪽을 믿었다.
-   *
-   * 그래서 값이 하나 늘었다. 두 거짓말 중 하나를 고르는 문제가 아니라 **모른다고 말할
-   * 값이 없었던 것**이 문제였다(`#368` 의 규율).
-   */
-  it('생존을 모르면 초록도 회색도 아니다 — 모른다고 말한다 (#443)', () => {
-    grid({ agents: [agent('alpha')], online: [], connected: false, onRelaunch: vi.fn() });
-    expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('unknown');
-    // 얼굴 색만 바꾸면 사람은 `stopped`(꺼짐)와 구분하지 못한다. **글자로도 말한다.**
-    expect(screen.getByTestId('agent-presence-unknown').textContent).toContain('알 수 없다');
-    // **▶ 를 달지 않는다.** 지금 도는지 모르는 것을 켜라고 권하면 `#430` 의 중복이 된다.
-    expect(screen.queryByTestId('agent-relaunch-alpha')).toBeNull();
   });
 
   /**
@@ -164,7 +121,7 @@ describe('AgentGrid — 아바타 세 얼굴', () => {
    * 이 저장소가 반복해서 겪은 실패 모드라 명시한다(`#482` 의 회귀선 ⑦과 같은 자리).
    */
   it('대조군 — 붙어 있으면 초록이다 (#443)', () => {
-    grid({ agents: [agent('alpha')], online: ['id-alpha'], connected: true, onRelaunch: vi.fn() });
+    grid({ agents: [agent('alpha')], online: ['id-alpha'], connected: true });
     expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('ok');
     // 모른다는 줄이 서지 않는다 — 그 줄이 늘 있으면 사람이 곧 읽지 않게 된다.
     expect(screen.queryByTestId('agent-presence-unknown')).toBeNull();
@@ -187,7 +144,6 @@ describe('AgentGrid — 아바타 세 얼굴', () => {
         online: [],
         connected: false,
         runnerStates: { 'id-alpha': { agentId: 'id-alpha', status, exitCode: null, message: null } },
-        onRelaunch: vi.fn(),
       });
       expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('ok');
       cleanup();
@@ -215,7 +171,6 @@ describe('AgentGrid — 아바타 세 얼굴', () => {
           message: '`claude` 를 찾을 수 없다 — 설치하고 PATH 에 있는지 확인하라. Claude Code 를 설치하면 함께 깔린다: https://claude.com/product/claude-code',
         },
       },
-      onRelaunch: vi.fn(),
     });
     expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('failed');
     // **설치 주소가 화면에 글자로 온다.** 이름만으로는 사람이 무엇을 어떻게 할지 모른다.
@@ -224,11 +179,6 @@ describe('AgentGrid — 아바타 세 얼굴', () => {
     expect(line.textContent).toContain('https://claude.com/product/claude-code');
   });
 
-  it('띄울 수 없는 사람에게는 ▶ 자체가 없다', () => {
-    // `onRelaunch` 를 안 넘기면 문이 없다 — 눌러도 안 되는 버튼을 그리지 않는다.
-    grid({ agents: [agent('alpha')], online: [] });
-    expect(screen.queryByTestId('agent-relaunch-alpha')).toBeNull();
-  });
 });
 
 /**
@@ -318,42 +268,6 @@ describe('AgentGrid — 목업의 모양', () => {
   });
 
   /**
-   * **실패한 카드는 상자 테두리가 색을 받는다**(목업 2쪽 `forge`).
-   *
-   * 그리고 **얼굴의 링은 걷어낸다.** 화면으로 확인한 판단이다(720px, 8장) — 상자 테두리와
-   * 얼굴 링을 둘 다 칠하면 같은 사실을 두 겹으로 말하면서 붉은 것이 카드 하나에 두 개가
-   * 되고, 그 카드가 격자에서 **고장 그 자체보다 시끄러워졌다.** 문서가 격자에 세운 규율이
-   * 정확히 그 반대다(*"정보를 더하는 쪽이 항상 지는 쪽"*).
-   *
-   * 남기는 쪽을 상자로 고른 이유: 상자가 **사유 글자까지 감싼다.** 실패는 이 격자에서
-   * 유일하게 글자가 늘어나는 상태이므로(`AgentGrid` 주석), 테두리가 그 글자와 얼굴을 한
-   * 묶음으로 잡아 주는 것이 얼굴만 두르는 것보다 많은 일을 한다. `↻` 손잡이는 그대로
-   * 얼굴에 남아 색을 갖는다 — 무엇을 누르는지는 여전히 얼굴이 말한다.
-   *
-   * 되돌려 RED: 상자에서 `border-danger-border` 를 빼면 첫 단언이, 얼굴에
-   * `ring-state-stuck` 을 되돌리면 둘째 단언이 빨개진다.
-   */
-  it('실패는 상자 테두리가 색을 받고, 얼굴 링은 겹치지 않는다', () => {
-    grid({
-      agents: [agent('forge')],
-      online: [],
-      runnerStates: {
-        'id-forge': {
-          agentId: 'id-forge', status: 'failed', exitCode: 1, message: 'PAT 가 폐기되었다',
-        },
-      },
-      onRelaunch: vi.fn(),
-    });
-    const box = screen.getByTestId('agent-box-forge');
-    expect(box.className).toContain('border-danger-border');
-    expect(box.className).not.toContain('border-border');
-    // 붉은 것이 카드 하나에 둘이 되지 않는다 — 얼굴 링은 상자로 옮겨졌다.
-    expect(screen.getByTestId('agent-card-forge').querySelector('.ring-state-stuck')).toBeNull();
-    // 손잡이는 얼굴에 남고 색도 그대로다 — 무엇을 누르는지는 얼굴이 말한다.
-    expect(screen.getByTestId('agent-relaunch-forge').className).toContain('text-state-stuck');
-  });
-
-  /**
    * **선택 링과 상자 테두리가 겹쳐 보이지 않는다** (화면 확인 2026-09-08).
    *
    * 둘이 같은 축에 있으면 선택한 카드에 선이 두 겹으로 서고, 그 카드는 "선택됐다"보다
@@ -375,21 +289,6 @@ describe('AgentGrid — 목업의 모양', () => {
   });
 
   /**
-   * **이 글리프는 사이드바에만 남았다** (2026-09-09). 설정에서는 손잡이가 상태 칩으로
-   * 내려갔다 — 얼굴을 덮던 88px 히트 영역이 결함이었기 때문이고, 그 판단은
-   * `AgentGrid.StateChip` 주석에 있다. 사이드바가 예외인 이유도 거기 있다: 64px 트랙에
-   * 칩이 들어갈 자리가 없고, 그 자리의 동작은 재기동뿐이라 되돌릴 수 있다.
-   *
-   * 옅게 뜨는 규율 자체는 그대로다 — 26개가 깔린 화면에서 26개의 진한 글리프는 소음이다.
-   */
-  it('실행 글리프는 사이드바에서 평소 옅고 호버에서 또렷해진다', () => {
-    grid({ agents: [agent('alpha')], online: [], onRelaunch: vi.fn(), place: 'sidebar' });
-    const glyph = screen.getByTestId('agent-relaunch-alpha');
-    expect(glyph.className).toContain('opacity-50');
-    expect(glyph.className).toContain('group-hover:opacity-100');
-  });
-
-  /**
    * **결함 자체의 회귀선** — 이 파일에서 가장 중요한 한 줄이다.
    *
    * 설정의 카드에는 **얼굴을 덮는 버튼이 없다.** 있던 것은 `PLACE.settings.glyph` 가
@@ -406,7 +305,6 @@ describe('AgentGrid — 목업의 모양', () => {
       agents: [agent('alpha'), agent('beta')],
       online: ['id-alpha'],
       onStop: vi.fn(),
-      onRelaunch: vi.fn(),
     });
     for (const handle of ['alpha', 'beta']) {
       const box = screen.getByTestId(`agent-box-${handle}`);
@@ -621,7 +519,6 @@ describe('AgentGrid — 카드가 올리는 셋 (설정)', () => {
       agents: [agent('alpha', { runnerVersion: 'v0.1.3' })],
       appVersion: 'v0.1.3',
       online: ['id-alpha'],
-      onRelaunch: vi.fn(),
       onStop: vi.fn(),
     });
     const buttons = screen.getByTestId('agent-grid').querySelectorAll('button');
@@ -647,7 +544,6 @@ describe('AgentGrid — 러너 버전 칩 3종', () => {
       agents: [agent('alpha', { runnerVersion: 'v0.1.3' })],
       appVersion: 'v0.1.3',
       online: ['id-alpha'],
-      onRelaunch: vi.fn(),
     });
     const chip = screen.getByTestId('agent-version-alpha');
     expect(chip.dataset.version).toBe('current');
@@ -673,42 +569,8 @@ describe('AgentGrid — 러너 버전 칩 3종', () => {
       agents: [agent('alpha', { runnerVersion: 'v0.1.1' })],
       appVersion: 'v0.1.3',
       online: ['id-alpha'],
-      onRelaunch: vi.fn(),
     });
     expect(screen.getByTestId('agent-version-alpha').className).toContain('whitespace-nowrap');
-  });
-
-  /**
-   * **뒤처짐은 칩 자체가 눌린다.** 문서: *"얼굴에 붙이면 `↻` 가 실패와 뒤처짐 두 가지를
-   * 뜻하게 되고, 도는 것을 멈출 방법이 사라진다."* 뒤처진 러너는 잘 돌고 있으므로 얼굴은
-   * `ok` 이고 그 자리는 `■` 가 쓴다.
-   *
-   * 되돌려 RED: 칩의 `button` 을 `span` 으로 바꾸면 `tagName`·클릭 단언이 빨개진다.
-   */
-  it('뒤처짐은 주의색 칩이고 칩 자체가 재기동이다', () => {
-    const onRelaunch = vi.fn();
-    const onPick = vi.fn();
-    grid({
-      agents: [agent('alpha', { runnerVersion: 'v0.1.1' })],
-      appVersion: 'v0.1.3',
-      online: ['id-alpha'],
-      onRelaunch,
-      onPick,
-    });
-    const chip = screen.getByTestId('agent-version-alpha');
-    expect(chip.dataset.version).toBe('stale');
-    expect(chip.tagName).toBe('BUTTON');
-    expect(chip.textContent).toContain('v0.1.1');
-    expect(chip.textContent).toContain('뒤처짐');
-
-    fireEvent.click(chip);
-    expect(onRelaunch).toHaveBeenCalledTimes(1);
-    // 카드 클릭(=상세 열기)과 갈라 둔다 — 겹치면 재기동이 우연히 상세를 연다.
-    expect(onPick).not.toHaveBeenCalled();
-
-    // 얼굴은 `ok` 그대로다: 뒤처진 러너는 **잘 돌고 있다**. 그래서 `↻` 가 얼굴에 안 선다.
-    expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('ok');
-    expect(screen.queryByTestId('agent-relaunch-alpha')).toBeNull();
   });
 
   /**
@@ -720,7 +582,6 @@ describe('AgentGrid — 러너 버전 칩 3종', () => {
       agents: [agent('alpha', { runnerVersion: 'v0.1.1' })],
       appVersion: 'v0.1.3',
       online: ['id-alpha'],
-      onRelaunch: vi.fn(),
     });
     const chip = screen.getByTestId('agent-version-alpha');
     expect(chip.className).not.toContain('accent');
@@ -743,7 +604,6 @@ describe('AgentGrid — 러너 버전 칩 3종', () => {
         agents: [agent('alpha', { runnerVersion })],
         appVersion: 'v0.1.3',
         online: ['id-alpha'],
-        onRelaunch: vi.fn(),
       });
       const chip = screen.getByTestId('agent-version-alpha');
       expect(chip.dataset.version).toBe('unknown');
@@ -766,39 +626,12 @@ describe('AgentGrid — 러너 버전 칩 3종', () => {
       agents: [agent('alpha', { runnerVersion: 'v0.1.1' })],
       appVersion: null,
       online: ['id-alpha'],
-      onRelaunch: vi.fn(),
     });
     const chip = screen.getByTestId('agent-version-alpha');
     expect(chip.dataset.version).toBe('unknown');
     expect(chip.dataset.version).not.toBe('stale');
   });
 
-  /**
-   * **권한 없는 사람에게는 문이 없다**(`AgentGrid` 주석). 사실은 남고 문만 없어진다 —
-   * `docs/design.md` §4: 눌러도 아무 일이 없는 버튼을 그리지 않는다.
-   */
-  it('띄울 수 없는 사람에게는 뒤처진 칩도 안 눌린다 — 사실은 남는다', () => {
-    grid({
-      agents: [agent('alpha', { runnerVersion: 'v0.1.1' })],
-      appVersion: 'v0.1.3',
-      online: ['id-alpha'],
-      // 문이 아예 없는 경우.
-    });
-    const chip = screen.getByTestId('agent-version-alpha');
-    expect(chip.tagName).toBe('SPAN');
-    expect(chip.textContent).toContain('뒤처짐');
-    cleanup();
-
-    // 콜백은 있지만 이 카드에는 권한이 없는 경우 — `canRelaunch` 가 그것을 가른다.
-    grid({
-      agents: [agent('alpha', { runnerVersion: 'v0.1.1' })],
-      appVersion: 'v0.1.3',
-      online: ['id-alpha'],
-      onRelaunch: vi.fn(),
-      canRelaunch: () => false,
-    });
-    expect(screen.getByTestId('agent-version-alpha').tagName).toBe('SPAN');
-  });
 });
 
 /**
@@ -893,21 +726,6 @@ describe('AgentGrid — `■` 는 평소 없는 것과 같다', () => {
     expect(stop.className).not.toContain('focus-visible:opacity-100');
   });
 
-  /**
-   * **버튼이 아닌 칩이 있다.** `unknown` 에는 손잡이를 달지 않는다(`#443`: 모르는 것에
-   * ▶ 를 권하면 이미 도는 러너를 하나 더 띄운다). 그럴 때 칩은 `span` 이다 —
-   * `button` 에 `disabled` 만 거는 것과 다르다: 누를 수 없는 것에 손가락 커서와 포커스
-   * 순서를 주지 않는다.
-   */
-  it('모를 때는 칩이 버튼이 아니다', () => {
-    grid({ agents: [agent('alpha')], online: [], connected: false, onStop: vi.fn(), onRelaunch: vi.fn() });
-    expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('unknown');
-    const chip = screen.getByTestId('agent-state-alpha');
-    expect(chip.tagName).toBe('SPAN');
-    expect(screen.queryByTestId('agent-stop-alpha')).toBeNull();
-    expect(screen.queryByTestId('agent-relaunch-alpha')).toBeNull();
-  });
-
   it('카드와 다른 동작이다 — 누르면 멈추고 상세는 안 열린다', () => {
     const onStop = vi.fn();
     const onPick = vi.fn();
@@ -923,16 +741,6 @@ describe('AgentGrid — `■` 는 평소 없는 것과 같다', () => {
     expect(screen.queryByTestId('agent-stop-alpha')).toBeNull();
   });
 
-  /**
-   * `▶`·`↻` 와 **배타적**이다: `■` 는 `face === 'ok'` 일 때만 서고 그쪽은 `face !== 'ok'`
-   * 다. 한 카드에 둘이 함께 서면 사람은 무엇이 지금 상태인지 알 수 없다.
-   */
-  it('멈춘 카드에는 ■ 가 없다 — 없는 것을 멈추라고 권하지 않는다', () => {
-    grid({ agents: [agent('alpha')], online: [], onStop: vi.fn(), onRelaunch: vi.fn() });
-    expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('stopped');
-    expect(screen.queryByTestId('agent-stop-alpha')).toBeNull();
-    expect(screen.getByTestId('agent-relaunch-alpha')).toBeTruthy();
-  });
 });
 
 /**
@@ -970,21 +778,6 @@ describe('AgentGrid — 종료 요청 중은 도는 것도 멈춘 것도 아니�
     // **예외에만 글자를 쓴다** — 이것이 그 예외 둘 중 하나다.
     expect(screen.getByTestId('agent-stopping-alpha').textContent)
       .toContain('멈추는 중 · 러너가 아직 못 봤다');
-  });
-
-  /**
-   * **손잡이가 없다**(목업 2쪽 하단 세 번째 칸). 문서: *"지금 할 수 있는 일이 기다리는
-   * 것뿐이다."* 이미 요청한 것을 한 번 더 요청하는 버튼은 아무 일도 하지 않으면서 사람에게
-   * "안 먹었나" 를 묻게 만든다.
-   *
-   * 되돌려 RED: `canStop` 에서 `&& !stopping` 을 지우면 `■` 가 서서 빨개진다.
-   */
-  it('손잡이가 하나도 없다 — 기다리는 것 말고 할 일이 없다', () => {
-    grid({
-      agents: [stopping()], online: ['id-alpha'], onStop: vi.fn(), onRelaunch: vi.fn(),
-    });
-    expect(screen.queryByTestId('agent-stop-alpha')).toBeNull();
-    expect(screen.queryByTestId('agent-relaunch-alpha')).toBeNull();
   });
 
   /**
@@ -1032,7 +825,6 @@ describe('AgentGrid — 종료 요청 중은 도는 것도 멈춘 것도 아니�
         },
       },
       onStop: vi.fn(),
-      onRelaunch: vi.fn(),
     });
     expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('failed');
     expect(screen.getByTestId('agent-card-alpha').dataset.stopping).toBeUndefined();
@@ -1090,7 +882,6 @@ describe('AgentGrid — 사이드바는 한 픽셀도 안 바뀐다', () => {
       stopRequestedAt: '2026-09-08T10:23:00.000Z', stopAckedAt: null,
     })],
     online: ['id-alpha'],
-    onRelaunch: vi.fn(),
     // 사이드바는 이 둘을 안 넘긴다. 그래도 **넘겨 보고** 자리 분기가 막는지 본다.
     onStop: vi.fn(),
     appVersion: 'v0.1.3',
@@ -1115,26 +906,6 @@ describe('AgentGrid — 사이드바는 한 픽셀도 안 바뀐다', () => {
     expect(screen.queryByTestId('agent-version-alpha')).toBeNull();
     // 구분선도 없다: 사이드바 카드는 얼굴과 이름 한 줄뿐이다.
     expect(g.querySelector('.border-t')).toBeNull();
-  });
-
-  /**
-   * **사이드바에는 오늘 `▶`·`↻` 만 있다**(실측: `Sidebar.tsx` 의 호출부가 `onRelaunch`·
-   * `canRelaunch` 만 넘긴다). `■` 가 새면 폭 164px 짜리 카드에 얼굴을 덮는 손잡이가 하나
-   * 더 생기고, 그 자리에서 *"멈출 것은 이미 고른 다음에 찾는다"* 는 전제가 성립하지 않는다 —
-   * 사이드바는 정확히 **훑는 자리**다.
-   *
-   * 되돌려 RED: `canStop` 에서 `place === 'settings'` 를 지우면 이 단언이 빨개진다.
-   */
-  it('카드에 ■ 손잡이가 없다 — 사이드바는 ▶·↻ 만 갖는다', () => {
-    // 도는 중이고 `onStop` 을 넘겼는데도 `■` 가 없어야 한다.
-    sidebar({ agents: [agent('alpha', { stopRequestedAt: null, stopAckedAt: null })] });
-    expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('ok');
-    expect(screen.queryByTestId('agent-stop-alpha')).toBeNull();
-    cleanup();
-
-    // 멈춘 카드의 `▶` 는 **그대로 있다** — 없애는 것이 아니라 새 것이 안 새는 것이다.
-    sidebar({ agents: [agent('alpha')], online: [] });
-    expect(screen.getByTestId('agent-relaunch-alpha')).toBeTruthy();
   });
 
   /**
@@ -1277,16 +1048,6 @@ describe('물러나는 중 — 다섯 번째 얼굴 (2026-09-08 실측)', () => 
     connected: true,
   };
 
-  /**
-   * **이 단언 하나가 그날의 클릭 경로를 닫는다.** ▶ 는 "눌러서 켜라"인데, 지금 그 러너는
-   * 일하고 있다 — 켜라고 권할 것이 없다(`#443` 이 `unknown` 에 ▶ 를 안 단 것과 같은 근거).
-   */
-  it('▶ 를 달지 않는다 — 일하고 있는 러너를 켜라고 권하지 않는다', () => {
-    grid({ ...retiring, onRelaunch: vi.fn() });
-
-    expect(screen.queryByTestId('agent-relaunch-alpha')).toBeNull();
-  });
-
   it('생사를 모른다고 적지 않는다 — 끊기지 않았고 우리가 알고 있다', () => {
     grid(retiring);
 
@@ -1306,15 +1067,4 @@ describe('물러나는 중 — 다섯 번째 얼굴 (2026-09-08 실측)', () => 
     expect(screen.getByTestId('agent-retiring-alpha').textContent).toContain('턴');
   });
 
-  /**
-   * **대조군.** 위 셋만 있으면 `faceState` 가 무조건 `retiring` 을 돌려줘도 초록이다 —
-   * 그러면 멈춘 러너를 켤 길이 사라진다.
-   */
-  it('정말 멈춘 러너는 여전히 ▶ 를 받는다', () => {
-    grid({ agents: [agent('alpha')], online: [], connected: true, onRelaunch: vi.fn() });
-
-    expect(screen.getByTestId('agent-card-alpha').dataset.face).toBe('stopped');
-    expect(screen.getByTestId('agent-relaunch-alpha')).toBeTruthy();
-    expect(screen.queryByTestId('agent-retiring-alpha')).toBeNull();
-  });
 });

@@ -38,8 +38,6 @@ export interface Prefs {
   sidebarWidth: number;
   sidebarCollapsed: boolean;
   colorMode: ColorMode;
-  /** 앱 시작 시 내가 소유한 에이전트의 러너를 자동으로 띄울지(#250). */
-  runnerAutoStart: boolean;
   /** 화면 언어. 기본은 `'system'` — 브라우저가 말하는 것을 따른다. */
   locale: LocalePref;
   /**
@@ -147,7 +145,6 @@ export const DEFAULT_PREFS: Prefs = {
   sidebarWidth: 240,
   sidebarCollapsed: false,
   colorMode: 'system',
-  runnerAutoStart: true,
   locale: 'system',
   zoom: DEFAULT_ZOOM,
 };
@@ -165,7 +162,7 @@ export const prefsStorage = {
         sidebarWidth: parsed.sidebarWidth ?? DEFAULT_PREFS.sidebarWidth,
         sidebarCollapsed: parsed.sidebarCollapsed ?? DEFAULT_PREFS.sidebarCollapsed,
         colorMode: parsed.colorMode ?? DEFAULT_PREFS.colorMode,
-        runnerAutoStart: parsed.runnerAutoStart ?? DEFAULT_PREFS.runnerAutoStart,
+        // `runnerAutoStart`(#250)는 저장본에 남아 있어도 읽지 않는다 — 앱은 러너를 띄우지 않는다.
         locale: parsed.locale ?? DEFAULT_PREFS.locale,
         // 배율만 `??` 로 끝내지 않는다 — 이 값은 웹뷰에 그대로 나가는 숫자라, 손으로
         // 고친 저장본이나 표 밖의 옛 값이 들어오면 화면이 읽을 수 없는 크기로 선다.

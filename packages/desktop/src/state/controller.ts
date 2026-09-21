@@ -6,8 +6,7 @@ import { sessionStore } from '../lib/session';
 import { silentNotifier, type NotificationTarget, type Notifier } from '../lib/notify';
 import { bodyRecipients, displayBody } from '../lib/mention';
 import { calledGroups, notifiedSummary, type NotifiedResult } from '../lib/notified';
-import { RunnerLauncher, tauriDaemonObserver, tauriLoginPathReader, tauriSecretStore, daemonSpawner, tauriAppVersionReader, type AppVersionReader, type DaemonObserver, type LoginPathReader, type RunnerSecretStore, type RunnerSpawner } from '../lib/runnerLauncher';
-import { staleRunners } from '../lib/runnerVersions';
+import { RunnerLauncher, tauriDaemonObserver, tauriAppVersionReader, type AppVersionReader, type DaemonObserver } from '../lib/runnerLauncher';
 // 만들기 흐름이 러너를 띄우기 **전에** 풀 배정을 쓴다 — 근거는 `createAgent` 안에 있다.
 import { assignAgentPool } from '../lib/claudeAccounts';
 import type { AppStore } from './appStore';
@@ -74,8 +73,6 @@ export class Controller {
    */
   private notifiedMessages = new Set<string>();
   private runnerLauncher: RunnerLauncher;
-  /** 이번 `start()` 에서 러너 자동 기동을 이미 했는가(#250). */
-  private runnerAutoStartDone = false;
   /** 비동기 부트스트랩 도중 교체·해제된 컨트롤러가 뒤늦게 살아나는 것을 막는다. */
   private stopped = false;
 
@@ -89,11 +86,6 @@ export class Controller {
      * #164: accountId 파라미터가 추가되어 어느 커뮤니티의 세션이 죽었는지 알 수 있다.
      */
     private onSessionLost: (message: string, accountId: string) => void = () => {},
-    /** 테스트가 키체인·자식 프로세스를 목으로 바꿔 끼우는 자리(#250). */
-    secrets: RunnerSecretStore = tauriSecretStore,
-    spawner: RunnerSpawner = daemonSpawner,
-    /** 로그인 셸 `PATH` 조회(#305). 테스트가 조회 실패를 만들 수 있게 주입한다. */
-    loginPath: LoginPathReader = tauriLoginPathReader,
     /**
      * 이 컨트롤러가 쓰는 커뮤니티의 스토어(#166). 예전에는 모듈 최상위 싱글턴을 직접
      * 읽었다 — 그러면 보고 있지 않은 커뮤니티의 이벤트가 **활성 커뮤니티의 스토어**로
@@ -106,34 +98,15 @@ export class Controller {
      */
     private store: AppStore = getActiveStore(),
     /**
-     * daemon 에게 "무엇이 돌고 있나"를 묻는 표면(`#431` 2단계 A). 테스트가 장부를
-     * 만들 수 있게 주입한다 — `spawner`·`secrets` 와 같은 이유다.
+     * 이 머신의 오퍼레이터에게 "무엇이 돌고 있나"를 묻는 표면(`#431` 2단계 A). 테스트가
+     * 장부를 만들 수 있게 주입한다. **앱은 러너를 띄우지 않는다**(스펙 2026-09-20 §2) —
+     * 앞 판본이 여기서 받던 키체인·spawner·로그인 PATH 는 전부 오퍼레이터의 것이 됐다.
      */
     daemonObserver: DaemonObserver = tauriDaemonObserver,
-    /**
-     * 이 앱 번들의 버전을 읽는 표면. 러너에 심는 `AGENT_VERSION` 과 뒤처짐 판정이
-     * **같은 값**을 써야 하므로 한 곳에서 읽는다(`AppVersionReader` 주석).
-     */
+    /** 이 앱 번들의 버전을 읽는 표면 — 화면의 뒤처짐 판정 기준(`AppVersionReader` 주석). */
     appVersion: AppVersionReader = tauriAppVersionReader,
   ) {
-    this.runnerLauncher = new RunnerLauncher(
-      {
-        baseUrl: api.baseUrl,
-        mintPat: (accountId, label) => api.mintPat(accountId, label),
-        listPats: (accountId) => api.listPats(accountId),
-        revokePat: (accountId, label) => api.revokePat(accountId, label),
-      },
-      secrets,
-      spawner,
-      loginPath,
-      undefined, // now — 재발급 라벨의 시각. 기본값(Date.now)을 그대로 쓴다.
-      daemonObserver,
-      appVersion,
-      undefined, // restartWait — 실제 종료를 기다리는 방식. 기본값을 그대로 쓴다.
-      // 러너 사유의 번역기(`#619`). **감싸서 넘기는 것이 요점이다** — `this.t()` 를
-      // 그대로 넘기면 지금의 언어로 굳는다(그 메서드 주석).
-      (key, args) => this.t()(key, args),
-    );
+    this.runnerLauncher = new RunnerLauncher(daemonObserver, appVersion);
     // 앱 버전을 **스토어로 밀어 넣는다** — 화면이 컨트롤러에게 묻지 않게(`appVersion`
     // 필드 주석). 실패해도 앱은 떠야 하므로 fire-and-forget 이고, 못 얻으면 `null` 로
     // 남아 화면이 "판정할 수 없다"고 말한다.
@@ -160,116 +133,9 @@ export class Controller {
     });
   }
 
-  /**
-   * 설정 화면의 "PAT 재발급" 이 부르는 자리. 실행기를 화면에 직접 노출하지 않는다.
-   *
-   * 대상을 **여기서 다시 조회한다** — 실행기가 자동 기동 때 본 것을 기억해 두고 그것에
-   * 기대면, 자동 기동을 끄고 쓰는 사람에게는 이 버튼이 영원히 죽어 있다(누를 수는 있고
-   * 아무 일도 일어나지 않는다).
-   */
-  async reissueRunnerPat(agentId: string): Promise<void> {
-    const agents = await this.api.listAgents();
-    const agent = agents.find((a) => a.id === agentId);
-    if (!agent) throw new Error('에이전트를 찾지 못했다 — 목록을 다시 읽어라');
-    await this.runnerLauncher.reissue({ agent });
-  }
-
-  /**
-   * 내가 소유한 에이전트의 러너를 띄운다(#250). presence 를 받은 뒤에 불린다.
-   *
-   * 토글이 꺼져 있으면 아무것도 하지 않는다 — 상태도 만들지 않는다: 안 띄우기로 한 것에
-   * '꺼짐' 배지를 달면 뭔가 잘못된 것처럼 보인다.
-   */
-  private async startRunners(): Promise<void> {
-    const prefs = usePrefsStore.getState();
-    if (!prefs.runnerAutoStart) return;
-    const input = await this.launchInput();
-    if (!input) return;
-    await this.runnerLauncher.startAll(input);
-  }
-
-  /**
-   * 러너를 띄울 때 쓰는 입력. 자동 기동과 재기동이 **같은 판정**을 쓰게 한 곳에 둔다 —
-   * 갈라지면 "전체 재기동"이 고른 대상과 자동 기동이 고르는 대상이 어긋난다.
-   */
-  private async launchInput(): Promise<{
-    agents: AgentView[]; myAccountId: string; liveAccountIds: Set<string> | null;
-  } | null> {
-    const store = this.store.getState();
-    const myId = store.me?.id;
-    if (!myId) return null;
-    const agents = await this.api.listAgents();
-    return {
-      agents,
-      myAccountId: myId,
-      // `connected` 가 false 면 presence 는 '모른다'다 — 빈 배열이 '아무도 없다'가 아니다.
-      liveAccountIds: store.connected ? new Set(store.online) : null,
-    };
-  }
-
   /** 이 앱 번들의 버전. 화면이 뒤처짐을 말할 때 쓰는 기준값. */
   appVersion(): Promise<string | null> {
     return this.runnerLauncher.currentAppVersion();
-  }
-
-  /**
-   * 이 에이전트의 러너를 **새 번들로 갈아 띄운다.** 실제 순서(죽이라고 말하고, 종료를
-   * 확인하고, 띄운다)는 실행기가 갖는다 — 컨트롤러가 하는 일은 대상과 입력을 대는 것뿐이다.
-   */
-  async restartRunner(agentId: string): Promise<void> {
-    const input = await this.launchInput();
-    if (!input) return;
-    const target = input.agents.find((a) => a.id === agentId);
-    // 서버 목록에 없는 에이전트는 재기동할 대상이 아니다 — 지어내지 않는다.
-    if (!target) return;
-    // 소유자만 띄운다(`startAll` 의 술어와 같다). admin 이라도 남의 러너를 이 기기로
-    // 가져오지 않는다 — 그것은 재기동이 아니라 소유 이전이다.
-    if (target.ownerAccountId !== input.myAccountId) return;
-    await this.runnerLauncher.restart(target, input);
-  }
-
-  /**
-   * 뒤처진 러너를 **전부** 새 번들로 갈아 띄운다. 고르는 것은
-   * `runnerVersions.ts::staleRunners` 하나이고(화면과 같은 판정), 돌려주는 것은
-   * 실제로 예약한 목록이다 — 화면이 "N대 재기동했다"를 지어내지 않게.
-   *
-   * **동시에 예약한다(순차가 아니다).** 순차로 돌면 첫 러너의 턴이 끝날 때까지 나머지는
-   * `running` 으로 남고, 사람은 "한 대만 재기동 중"으로 읽는다 — 실측 5분 넘는 턴도
-   * 있으므로 그 오독은 길다. 예약은 전부에게 **지금** 걸려야 하고, 그 뒤의 기다림은 각자의
-   * 턴 길이만큼이면 된다.
-   *
-   * 동시에 걸어도 안전한 이유: `observe()` 는 읽기이고, 종료 판정은 러너마다 자기
-   * `agentId` 만 본다(`awaitRunnerExit`). 서로의 확인을 헷갈릴 자리가 없다.
-   */
-  async restartStaleRunners(): Promise<string[]> {
-    const input = await this.launchInput();
-    if (!input) return [];
-    const appVersion = await this.appVersion();
-    const states = this.store.getState().runnerStates;
-    const live = new Set(
-      input.agents
-        .filter((a) => {
-          const status = states[a.id]?.status;
-          return status === 'running' || status === 'adopted';
-        })
-        .map((a) => a.id),
-    );
-    // `startAll` 과 **같은 술어**로 좁힌다 — 러너를 띄우는 것은 소유자의 일이고
-    // (`startAll` 의 대상 선별), 남의 에이전트를 재기동하면 그 러너의 PAT·소유가 이
-    // 기기로 옮겨 온다. 화면은 `runnerStates`(소유한 것만 든다)로 이미 좁혀져 있지만,
-    // 판정을 데이터의 우연에 맡기지 않는다.
-    const mine = input.agents.filter((a) => a.ownerAccountId === input.myAccountId);
-    const { stale } = staleRunners({ agents: mine, live, appVersion });
-    await Promise.all(stale.map((agentId) => {
-      const target = mine.find((a) => a.id === agentId);
-      return target ? this.runnerLauncher.restart(target, input) : Promise.resolve();
-    }));
-    return stale;
-  }
-
-  /** 재기동 예약을 취소한다 — **뜨는 것만** 취소된다(실행기 주석 참조). */
-  cancelRestart(agentId: string): void {
-    this.runnerLauncher.cancelRestart(agentId);
   }
 
   /**
@@ -376,13 +242,7 @@ export class Controller {
     // fire-and-forget 인 이유: daemon 확보는 기동의 **전제가 아니다.** 실패해도 앱은 떠야
     // 하고(채팅은 daemon 없이도 된다), 그 실패는 러너를 띄우려 할 때 러너 상태에 사유로
     // 오른다(`RunnerLauncher.startAll`). 여기서 await 하면 소켓 왕복이 창 표시를 늦춘다.
-    this.swallow(this.runnerLauncher.ensureDaemon());
-
-    // 러너 자동 기동은 **presence 를 받은 뒤**에 한다 — 여기서 바로 부르면 `online` 이
-    // 아직 빈 배열이고, presence 는 이제 판정을 안 하지만 어긋남을 말하는 데 쓰인다
-    // (`StartAllInput.liveAccountIds`). 중복 기동을 막는 것은 daemon 장부다.
-    // 이 플래그는 start() 마다 초기화된다.
-    this.runnerAutoStartDone = false;
+    this.swallow(this.runnerLauncher.ensureOperator());
   }
 
   stop(): void {
@@ -549,13 +409,8 @@ export class Controller {
         break;
       case 'presence.snapshot':
         store.set({ online: e.online });
-        // #250: 러너 자동 기동은 **여기서** 시작한다. presence 가 도착한 이 순간이
-        // "누가 이미 붙어 있는가"를 처음 아는 시점이고, 그것을 모른 채 띄우면 중복 러너가
-        // 생긴다. 재접속마다 다시 하지 않는다(플래그) — 재접속은 러너의 생사와 무관하다.
-        if (!this.runnerAutoStartDone) {
-          this.runnerAutoStartDone = true;
-          this.swallow(this.startRunners());
-        }
+        // 앞 판본은 여기서 러너 자동 기동을 시작했다(#250). 지금은 오퍼레이터가 서버의
+        // 배정을 받아 띄운다 — presence 는 화면이 읽을 뿐이다(스펙 2026-09-20 §2).
         break;
       case 'agent.attention': {
         // 관문에 걸린 턴은 화면에 아무 신호도 남기지 않는다 — 답이 안 올 뿐이다. 사람은
@@ -1580,25 +1435,16 @@ export class Controller {
   async createAgent(
     input: { handle: string; displayName: string } & Partial<import('@harkroom/shared').AgentConfig>,
     opts?: { claudePool?: string },
-  ): Promise<{ agent: import('@harkroom/shared').AgentView; pat: string; poolError: string | null }> {
+  ): Promise<{ agent: import('@harkroom/shared').AgentView; poolError: string | null }> {
     const agent = await this.api.createAgent(input);
-    const pat = await this.api.mintPat(agent.id, 'runner');
     /**
-     * 계정 풀 배정은 **러너가 뜨기 전에** 쓴다.
+     * 계정 풀 배정은 이 기기의 로컬 값이다(`useAgentPool` 머리말) — 서버로 가지 않으므로
+     * `input` 에 실을 수 없고, 별도 인자로 받는다. 러너는 오퍼레이터가 배정을 받아 띄우며
+     * 풀은 그때 읽힌다(단계 2 뒤로 `HARKROOM_CLAUDE_POOL` 은 오퍼레이터의 로컬 설정이다).
      *
-     * 러너는 자기 풀을 시작할 때 한 번만 읽는다(`ClaudeAccountsSettings` 의 안내:
-     * *"A runner reads its pool once at startup"*). 아래 `startCreated` 가 `autoStart`
-     * 에서 러너를 띄우므로, 배정을 그 뒤에 쓰면 **방금 만든 에이전트의 첫 러너는 기본
-     * 풀로 돈다** — 만들기 화면에서 풀을 고른 사람에게 그 선택은 재시작 전까지 아무 일도
-     * 하지 않고, 화면에는 고른 값이 그대로 보이므로 그 어긋남을 알 방법이 없다.
-     *
-     * 서버로 가지 않는 값이라 `input` 에 실을 수 없다(`useAgentPool` 머리말: 풀은 이
-     * 기기에만 존재하는 자원이다). 그래서 별도 인자로 받는다.
-     *
-     * **실패가 생성을 되돌리지 않는다.** 계정과 PAT 는 이미 만들어졌고 PAT 원문은 지금
-     * 놓치면 다시 볼 수 없다 — 여기서 던지면 화면이 "만들지 못했다"를 그리며 유일한
-     * 토큰을 버린다(이 메서드 머리말이 러너 준비 실패에 대해 정한 것과 같은 규율).
-     * 대신 사유를 돌려주고, 화면이 "만들어졌지만 풀은 배정하지 못했다"를 말한다.
+     * **실패가 생성을 되돌리지 않는다.** 계정은 이미 만들어졌다 — 여기서 던지면 화면이
+     * "만들지 못했다"를 그린다. 대신 사유를 돌려주고, 화면이 "만들어졌지만 풀은 배정하지
+     * 못했다"를 말한다.
      */
     let poolError: string | null = null;
     if (opts?.claudePool) {
@@ -1608,15 +1454,7 @@ export class Controller {
         poolError = err instanceof Error ? err.message : String(err);
       }
     }
-    const prefs = usePrefsStore.getState();
-    const store = this.store.getState();
-    await this.runnerLauncher.startCreated({
-      agent,
-      pat: { label: 'runner', token: pat },
-      autoStart: prefs.runnerAutoStart,
-      liveAccountIds: store.connected ? new Set(store.online) : null,
-    });
-    return { agent, pat, poolError };
+    return { agent, poolError };
   }
 
   updateAgent(
@@ -2126,6 +1964,28 @@ export class Controller {
     return this.api.createInvite();
   }
 
+  // --- 오퍼레이터·배정(스펙 2026-09-20 §3). 화면은 컨트롤러를 거친다 — `ApiClient` 를 직접 잡지 않는다. ---
+
+  operators(): Promise<import('@harkroom/shared').OperatorView[]> {
+    return this.api.operators();
+  }
+
+  operatorRegisterCode(): Promise<{ code: string; expiresAt: string }> {
+    return this.api.operatorRegisterCode();
+  }
+
+  revokeOperator(id: string): Promise<void> {
+    return this.api.revokeOperator(id);
+  }
+
+  assignAgent(agentId: string, operatorId: string): Promise<import('@harkroom/shared').AgentAssignmentView> {
+    return this.api.assignAgent(agentId, operatorId);
+  }
+
+  unassignAgent(agentId: string): Promise<void> {
+    return this.api.unassignAgent(agentId);
+  }
+
   /**
    * 담긴 목록 한 탭. **스토어에 쓰지 않고 그대로 돌려준다** — 패널의 지역 상태다.
    * 여기서 전역에 쓰면 '완료' 탭을 본 뒤 `⋯` 메뉴가 open 인 메시지를 담기지 않은 것으로 읽는다.
@@ -2281,9 +2141,6 @@ export async function startCommunitySession(opts: {
     opts.makeWs ?? connectWs,
     opts.notifier ?? silentNotifier,
     opts.onSessionLost ?? (() => {}),
-    undefined,
-    undefined,
-    undefined,
     entry.store,
   );
   useCommunityRegistry.getState().attachController(entry.id, controller);

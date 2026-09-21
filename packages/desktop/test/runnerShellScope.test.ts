@@ -35,7 +35,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
-import { LOGIN_PATH_COMMAND } from '../src/lib/runnerLauncher';
 
 /**
  * Rust 함수 파라미터 목록을 쉼표로 쪼갠다 — 단, `<...>` 안의 쉼표(`tauri::State<'_, T>`
@@ -122,15 +121,8 @@ describe('웹뷰가 프로그램을 실행할 수 있는 표면이 없다 (#513)
     expect(shellPermissions).toEqual(['shell:allow-open']);
   });
 
-  it('`PATH` 를 묻는 것은 invoke 커맨드다 — 셸 이름도 인자도 없다', () => {
-    expect(LOGIN_PATH_COMMAND).toBe('login_path');
-    // 실행기가 부르는 이름과 Rust 가 등록한 이름이 어긋나면 앱에서만 죽는다.
-    const mainRs = readFileSync(
-      path.resolve(__dirname, '../src-tauri/src/main.rs'), 'utf8',
-    );
-    expect(mainRs).toMatch(/#\[tauri::command\]\s*\n\s*fn login_path\(\)\s*->\s*String/);
-    expect(mainRs).toMatch(/generate_handler!\[[\s\S]*?\blogin_path\b[\s\S]*?\]/);
-  });
+  // `PATH` 를 묻던 invoke(`login_path`)는 웹뷰에서 사라졌다 — 로그인 셸의 PATH 는
+  // 러너를 띄우는 쪽이 필요한 값이고, 그것은 오퍼레이터다(`packages/operator/src/loginPath.ts`).
 });
 
 describe('어떤 스코프 항목에도 와일드카드가 없다', () => {

@@ -211,6 +211,14 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     // #250: 러너 실행기가 부르는 표면. 베이스가 덮어야 `Controller.start` 뒤의 자동 기동이
     // 조용히 던지지 않고, "발급을 부르지 않았다" 도 단언할 수 있다.
     listAgents: vi.fn(async () => []),
+    // 스펙 2026-09-20 §3: 오퍼레이터·배정 표면. 기본은 "등록된 것이 없다"다.
+    operators: vi.fn(async () => []),
+    operatorRegisterCode: vi.fn(async () => ({ code: 'hkreg_base', expiresAt: new Date(0).toISOString() })),
+    operatorCapabilities: vi.fn(async () => ({ agentIds: [], harnesses: {} })),
+    revokeOperator: vi.fn(async () => undefined),
+    assignAgent: vi.fn(async (agentId: string, operatorId: string) =>
+      ({ agentId, operatorId, assignedBy: 'u1', assignedAt: new Date(0).toISOString() })),
+    unassignAgent: vi.fn(async () => undefined),
     listPats: vi.fn(async () => []),
     mintPat: vi.fn(async (_id: string, label: string) => `murp_${label}`),
     revokePat: vi.fn(async () => ({ revoked: 1 })),
