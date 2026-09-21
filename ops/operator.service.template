@@ -1,0 +1,33 @@
+# 오퍼레이터를 systemd(user) 감독 하에 둔다 (docs/operations.md §8-1, 스펙 2026-09-20 단계 6).
+# macOS 의 ops/operator.plist.template 과 같은 내용이다 — 머신에 하나, 러너는 오퍼레이터가 띄운다.
+#
+# 쓰는 법:
+#   harkroom-operator register https://<host> <코드>
+#   sed -e 's|@BIN@|/opt/harkroom/harkroom-operator|g' ops/operator.service.template \
+#       > ~/.config/systemd/user/harkroom-operator.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now harkroom-operator
+#   loginctl enable-linger $USER          # 로그아웃해도 user 유닛이 살게
+#
+# 확인 — 죽여서 다시 뜨는지:
+#   systemctl --user kill -s KILL harkroom-operator && sleep 12 && systemctl --user status harkroom-operator
+#
+# 로그: journalctl --user -u harkroom-operator -f
+[Unit]
+Description=harkroom operator — runs the agents assigned to this machine
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# 실행 파일 그 자체를 감독한다(중간 프로세스 없이). 러너는 detached 라 이 유닛의 재시작에 죽지 않는다.
+ExecStart=@BIN@ run
+Restart=always
+RestartSec=10
+# 로그인 셸의 PATH 가 없다 — 사이드카(셔뱅 스크립트)를 실행할 node 와, 러너가 부를 하네스가 있는 자리를 적는다.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# 앱과 다른 자리에 두려면: Environment=HARKROOM_DATA_DIR=%h/.local/share/app.harkroom.desktop
+# 러너가 유닛과 함께 죽지 않게 — 오퍼레이터만 재시작된다(러너는 장부로 다시 소유된다).
+KillMode=process
+
+[Install]
+WantedBy=default.target
