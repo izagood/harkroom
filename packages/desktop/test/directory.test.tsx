@@ -30,7 +30,7 @@ const fakeController = (refreshAccounts = vi.fn(async () => undefined)) => {
  */
 const agentWithSecrets = (id: string, handle: string): AgentView => ({
   ...acc(id, handle, 'agent'),
-  assignment: null,
+  assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [],
   instructions: '비밀 지시문',
   harness: 'claude-code',
   model: 'opus-secret',

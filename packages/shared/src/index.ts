@@ -114,9 +114,27 @@ export const MENTION_PERMISSIONS = ['auto', 'readonly'] as const;
 export type MentionPermission = (typeof MENTION_PERMISSIONS)[number];
 
 /** UI 에서 등록·수정하는 에이전트의 정의. null 은 'harness 기본값 사용'이다. */
+/** 누가 이 에이전트를 깨울 수 있나(스펙 2026-09-20 §6). 좁히기는 자유, 넓히기는 일방통행으로 막힌다. */
+export const INVOKE_SCOPES = ['owner', 'list', 'channel', 'community'] as const;
+export type InvokeScope = typeof INVOKE_SCOPES[number];
+/** 무슨 자격증명을 쥐나. `personal` ⟺ `invokeScope === 'owner'` (양방향 불변식). */
+export const CREDENTIAL_SCOPES = ['personal', 'community', 'none'] as const;
+export type CredentialScope = typeof CREDENTIAL_SCOPES[number];
+
 export interface AgentConfig {
   instructions: string;
   harness: AgentHarness;
+  /**
+   * 누가 깨울 수 있나(스펙 2026-09-20 §6). `owner_account_id` 는 설정·터미널·배정의 소유이고,
+   * 이것은 **호출**의 범위다 — 둘을 한 컬럼이 겸하던 것이 요구 4(내 에이전트는 실행 쪽에선
+   * 사실이고 호출 쪽에선 아직 아니다)의 뿌리였다. 기본 `community` 가 현행 동작이다.
+   */
+  invokeScope: InvokeScope;
+  /**
+   * 무슨 자격증명을 쥐나. `personal` 이면 소유자만 부를 수 있어야 하고(불변식), 소유자 자신의
+   * 오퍼레이터에만 배정된다(§7 교차 불변식). 기본 `none`.
+   */
+  credentialScope: CredentialScope;
   model: string | null;
   effort: string | null;
   workingDir: string | null;
@@ -194,6 +212,8 @@ export interface ClaudeLaneView {
 export interface AgentView extends AccountView, AgentConfig {
   /** 어느 오퍼레이터가 이 에이전트를 돌리는가(스펙 2026-09-20 §3). null 은 미배정 — 첫 판의 기본값이다. */
   assignment: AgentAssignmentView | null;
+  /** `invokeScope === 'list'` 의 명단(계정 id). 다른 스코프에서는 비어 있다 — 명단은 남지만 판정에 안 쓰인다. */
+  invokers: string[];
 }
 
 /**

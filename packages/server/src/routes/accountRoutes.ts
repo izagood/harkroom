@@ -3,12 +3,12 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { newToken } from '../auth/tokens.js';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
-import { ACCOUNT_STATUSES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@harkroom/shared';
+import { ACCOUNT_STATUSES, CREDENTIAL_SCOPES, INVOKE_SCOPES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@harkroom/shared';
 import {
   ackAgentStop, createAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
-  revokeAllPats, undoAgentStopRequest, updateAgent,
+  revokeAllPats, setInvoker, undoAgentStopRequest, updateAgent, validateScopeChange,
 } from '../services/agents.js';
-import { recordAudit } from '../audit.js';
+import { actorOf, recordAudit } from '../audit.js';
 import { mintPat } from '../services/pats.js';
 import { emitEvent } from '../events.js';
 import { deleteMemory, listMemoryEntries } from '../services/memory.js';
@@ -157,6 +157,10 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     workingDir: z.string().max(512).nullable().optional(),
     mentionPermission: z.enum(MENTION_PERMISSIONS).optional(),
     ownerAccountId: z.string().uuid().nullable().optional(),
+    // 스코프(스펙 2026-09-20 §6). 소유자도 고친다 — 좁히는 것은 자기 에이전트의 일이다. 불변식·넓히기
+    // 금지는 `validateScopeChange` 가 생성·PATCH 양쪽에서 판정한다.
+    invokeScope: z.enum(INVOKE_SCOPES).optional(),
+    credentialScope: z.enum(CREDENTIAL_SCOPES).optional(),
   };
 
   const ADMIN_ONLY_FIELDS = ['ownerAccountId', 'disabled', 'mentionPermission'] as const;
@@ -223,6 +227,10 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
       displayName: z.string().min(1).max(64),
       ...configFields,
     }).parse(req.body);
+    const scopeError = validateScopeChange(null, {
+      invokeScope: body.invokeScope ?? 'community', credentialScope: body.credentialScope ?? 'none',
+    });
+    if (scopeError) return reply.code(400).send({ error: scopeError });
     try {
       const created = await createAgentAccount(pool, body, req.account!.id);
       await recordAudit(pool, {
@@ -251,6 +259,30 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
    * 필드를 섞어 보내면 403 이고 **아무것도 바꾸지 않는다**(부분 적용 금지). 일부만 적용하면
    * 사람은 전부 됐다고 믿는다 — 그리고 안 된 쪽이 하필 권한 필드다.
    */
+  /**
+   * `invokeScope === 'list'` 의 명단(스펙 2026-09-20 §6). 소유자·admin 이 관리한다 — 누가 내
+   * 에이전트를 부를 수 있는지는 그 에이전트를 가진 사람이 정한다. 명단은 스코프가 list 가 아니어도
+   * 남는다(판정에만 안 쓰인다) — 스코프를 잠깐 바꿨다 되돌릴 때 명단을 다시 짜지 않게.
+   */
+  const invokerParams = z.object({ id: z.string().uuid(), accountId: z.string().uuid() });
+  for (const [method, present] of [['PUT', true], ['DELETE', false]] as const) {
+    app.route<{ Params: { id: string; accountId: string } }>({
+      method, url: '/accounts/agents/:id/invokers/:accountId',
+      preHandler: app.requireOwnerOrAdmin('id'),
+      handler: async (req, reply) => {
+        const { id, accountId } = invokerParams.parse(req.params);
+        const target = await pool.query(`select 1 from account where id = $1`, [accountId]);
+        if (!target.rowCount) return reply.code(404).send({ error: { code: 'not_found', message: 'no such account' } });
+        const view = await setInvoker(pool, id, accountId, present);
+        if (!view) return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+        await recordAudit(pool, {
+          action: present ? 'agent.invoker.added' : 'agent.invoker.removed', ...actorOf(req), target: id, detail: { accountId },
+        }, req);
+        return view;
+      },
+    });
+  }
+
   app.patch('/accounts/agents/:id', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const patch = z.object({
@@ -281,6 +313,13 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     // (같은 이유로 설정 변경 감사도 404 에서는 남기지 않는다.)
     if (!before) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+    }
+    if (patch.invokeScope !== undefined || patch.credentialScope !== undefined) {
+      const scopeError = validateScopeChange(before, {
+        invokeScope: patch.invokeScope ?? before.invokeScope,
+        credentialScope: patch.credentialScope ?? before.credentialScope,
+      });
+      if (scopeError) return reply.code(400).send({ error: scopeError });
     }
 
     let revokedLabels: string[] = [];
