@@ -6,7 +6,7 @@ import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { ACCOUNT_STATUSES, CREDENTIAL_SCOPES, INVOKE_SCOPES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@harkroom/shared';
 import {
   ackAgentStop, createAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
-  revokeAllPats, setInvoker, undoAgentStopRequest, updateAgent, validateScopeChange,
+  revokeAllPats, setAgentMcpServers, setInvoker, undoAgentStopRequest, updateAgent, validateMcpServers, validateScopeChange,
 } from '../services/agents.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { mintPat } from '../services/pats.js';
@@ -289,6 +289,9 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
       displayName: z.string().min(1).max(64).optional(),
       disabled: z.boolean().optional(),
       ...configFields,
+      // MCP 이름 목록(스펙 2026-09-20 §6). 레지스트리의 부분집합이어야 하고, personal 이름은
+      // credentialScope=personal 을 요구한다 — `validateMcpServers`.
+      mcpServers: z.array(z.string().regex(/^[a-z0-9-]{1,32}$/)).max(32).optional(),
     }).parse(req.body);
 
     const account = req.account!;
@@ -321,6 +324,14 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
       });
       if (scopeError) return reply.code(400).send({ error: scopeError });
     }
+    // MCP 목록은 스코프가 바뀌는 PATCH 와 같이 와도, 스코프만 바뀌어도 다시 본다 — personal 이름을
+    // 단 채로 credentialScope 를 넓히는 길을 막는다.
+    if (patch.mcpServers !== undefined || patch.credentialScope !== undefined) {
+      const mcpError = await validateMcpServers(
+        pool, patch.mcpServers ?? before.mcpServers, patch.credentialScope ?? before.credentialScope);
+      if (mcpError) return reply.code(400).send({ error: mcpError });
+    }
+    if (patch.mcpServers !== undefined) await setAgentMcpServers(pool, id, patch.mcpServers);
 
     let revokedLabels: string[] = [];
     if (patch.disabled !== undefined && patch.disabled !== before.disabled) {

@@ -22,6 +22,7 @@ const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admi
   coalesce(c.invoke_scope, 'community') as "invokeScope",
   coalesce(c.credential_scope, 'none') as "credentialScope",
   coalesce((select json_agg(i.account_id order by i.account_id) from agent_invoker i where i.agent_id = a.id), '[]'::json) as invokers,
+  coalesce((select json_agg(m.name order by m.name) from agent_mcp_server m where m.agent_id = a.id), '[]'::json) as "mcpServers",
   a.disabled_at is not null as disabled,
   -- 에이전트는 상태를 고를 수 없다(서버가 거절한다). 기본값 그대로지만 AccountView 의
   -- 필수 필드라 형태를 맞춰 준다 — 화면은 사람 계정에만 이 값을 그린다.
@@ -141,6 +142,37 @@ export function validateScopeChange(
   }
   if (before && before.invokeScope === 'owner' && after.invokeScope !== 'owner') {
     return { code: 'scope_widening', message: '소유자 전용이던 에이전트는 넓힐 수 없다 — 넓히려면 새 에이전트를 만든다' };
+  }
+  return null;
+}
+
+/**
+ * 에이전트의 MCP 이름 목록을 **통째로** 바꾼다(스펙 2026-09-20 §6). 부분집합 검사와 personal
+ * 불변식은 호출자(PATCH)가 `validateMcpServers` 로 먼저 한다 — 여기는 쓰기뿐이다.
+ */
+export async function setAgentMcpServers(db: Pool | PoolClient, agentId: string, names: string[]): Promise<void> {
+  await db.query(`delete from agent_mcp_server where agent_id = $1 and not (name = any($2::text[]))`, [agentId, names]);
+  for (const name of names) {
+    await db.query(`insert into agent_mcp_server (agent_id, name) values ($1, $2) on conflict do nothing`, [agentId, name]);
+  }
+}
+
+/**
+ * MCP 이름 목록의 두 규칙. 모르는 이름은 거절한다 — 조용히 버리면 오퍼레이터가 정의를 못 찾는
+ * 이름이 남아 "MCP 가 안 붙는다"로 나타난다. personal 이름이 하나라도 있으면 에이전트의
+ * credential_scope 가 personal 이어야 한다(그 불변식이 다시 invokeScope=owner 를 요구한다).
+ */
+export async function validateMcpServers(
+  db: Pool | PoolClient, names: string[], credentialScope: CredentialScope,
+): Promise<{ code: 'unknown_mcp_server' | 'scope_invariant'; message: string } | null> {
+  if (!names.length) return null;
+  const rows = await db.query<{ name: string; credential_kind: string }>(
+    `select name, credential_kind from mcp_server where name = any($1::text[])`, [names]);
+  const known = new Map(rows.rows.map((r) => [r.name, r.credential_kind]));
+  const unknown = names.filter((n) => !known.has(n));
+  if (unknown.length) return { code: 'unknown_mcp_server', message: `레지스트리에 없는 MCP 이름: ${unknown.join(', ')}` };
+  if (credentialScope !== 'personal' && [...known.values()].includes('personal')) {
+    return { code: 'scope_invariant', message: 'personal 자격증명의 MCP 를 붙이려면 credentialScope 가 personal 이어야 한다' };
   }
   return null;
 }
@@ -399,7 +431,7 @@ export async function revokeAllPats(db: Pool | PoolClient, accountId: string): P
  * 없다** — 실제 작업 디렉터리·계정 풀은 오퍼레이터 로컬 설정이 준다. `workingDir` 은
  * 로컬 설정이 비었을 때의 기본값으로만 실린다.
  *
- * `credentialScope` 는 059 의 실제 값이다. `mcpServers` 는 5.2 가 채운다 — 그 전엔 [] 이다.
+ * `credentialScope`(059)·`mcpServers`(060)는 실제 값이다.
  */
 export async function definitionFor(pool: Pool, agentId: string): Promise<AgentDefinition | null> {
   const res = await pool.query(
@@ -407,7 +439,8 @@ export async function definitionFor(pool: Pool, agentId: string): Promise<AgentD
             coalesce(c.instructions, '') as instructions, c.model, c.effort,
             coalesce(c.mention_permission, 'auto') as "mentionPermission",
             c.working_dir as "workingDirDefault", c.owner_account_id as "ownerAccountId",
-            coalesce(c.credential_scope, 'none') as "credentialScope"
+            coalesce(c.credential_scope, 'none') as "credentialScope",
+            coalesce((select json_agg(m.name order by m.name) from agent_mcp_server m where m.agent_id = a.id), '[]'::json) as "mcpServers"
        from account a left join agent_config c on c.account_id = a.id
       where a.id = $1 and a.kind = 'agent'`, [agentId]);
   if (!res.rowCount) return null;
@@ -416,7 +449,7 @@ export async function definitionFor(pool: Pool, agentId: string): Promise<AgentD
     agentId: r.id, handle: r.handle, harness: r.harness, instructions: r.instructions,
     model: r.model, effort: r.effort, mentionPermission: r.mentionPermission,
     workingDirDefault: r.workingDirDefault, ownerAccountId: r.ownerAccountId,
-    credentialScope: r.credentialScope, mcpServers: [],
+    credentialScope: r.credentialScope, mcpServers: r.mcpServers,
   };
 }
 

@@ -45,7 +45,7 @@ const member = (accountId: string, handle: string, disabled = false): AgentTeamM
 
 /** 후보 격자가 그리는 에이전트. `listAgents()` 가 주는 모양이다. */
 const agentView = (id: string, handle: string, over: Partial<AgentView> = {}): AgentView => ({
-  id, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member', assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [],
+  id, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member', assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [], mcpServers: [],
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
   claudeLane: null,
