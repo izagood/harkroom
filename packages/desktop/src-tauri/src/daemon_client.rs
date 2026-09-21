@@ -1218,17 +1218,27 @@ fn retire_daemon(paths: &EndpointPaths, pid: u32) -> bool {
         log_line(&format!("낡은 daemon 에 SIGTERM 을 못 보냈다: pid {pid}"));
         return false;
     }
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    // **30초다** — 실측(2026-09-21, 0.2.12→0.2.13 자동 갱신): 옛 daemon 의 정리(서버 링크·러너
+    // 링크·장부 flush)가 5초를 넘겼고, 그 사이 띄운 새 daemon 은 "점유 중"으로 물러났으며 앱은
+    // 다시 띄우지 않았다 — 오퍼레이터가 하나도 없는 채로 러너만 링크를 기다렸다. 기다리는 값은
+    // 정리 시간이지 러너 회수가 아니라(러너는 데려가지 않는다) 넉넉히 잡아도 잃는 것이 없다.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
     while std::time::Instant::now() < deadline {
         // 세 파일 중 소켓·토큰이 사라지면 엔드포인트가 빈 것이다 — 그 둘이 붙기의 조건이다.
         if !paths.socket.exists() && !paths.token.exists() {
             log_line(&format!("낡은 daemon 이 물러났다: pid {pid}"));
             return true;
         }
+        // 프로세스가 먼저 죽고 파일이 남았으면 잔해다 — 새 daemon 의 claim 이 3중 증거로 회수한다.
+        // SAFETY: signal 0 은 존재 확인일 뿐이다.
+        if unsafe { libc::kill(pid as libc::pid_t, 0) } != 0 {
+            log_line(&format!("낡은 daemon 프로세스가 끝났다(파일은 잔해): pid {pid}"));
+            return true;
+        }
         std::thread::sleep(Duration::from_millis(50));
     }
     log_line(&format!(
-        "낡은 daemon 이 5초 안에 물러나지 않았다: pid {pid} — 그대로 띄워 본다"
+        "낡은 daemon 이 30초 안에 물러나지 않았다: pid {pid} — 그대로 띄워 본다"
     ));
     false
 }
@@ -1237,8 +1247,10 @@ fn ensure_at(
     paths: &EndpointPaths,
     my_entry: &Path,
     on_event: impl Fn(&str, Value) + Send + Clone + 'static,
-    launch: impl FnOnce() -> Result<DaemonExitWatch, String>,
+    mut launch: impl FnMut() -> Result<DaemonExitWatch, String>,
 ) -> Result<(Arc<DaemonConnection>, EnsureKind), String> {
+    // 물러나게 한 daemon 이 있었는가 — 그때만 "점유 중" 종료를 재시도로 읽는다(아래 2번).
+    let mut retired_one = false;
     // ── 1. 붙어 본다 — 다만 **내 빌드의 daemon 에만** ──────────────────────────
     if paths.socket.exists() && paths.token.exists() {
         // **붙기 전에 pid 레코드를 읽는다.** 소켓·토큰은 워크트리를 가로질러 공유되므로
@@ -1276,6 +1288,7 @@ fn ensure_at(
                 env!("CARGO_PKG_VERSION"),
             ));
             retire_daemon(paths, their_pid);
+            retired_one = true;
         } else {
             match open_connection(paths, on_event.clone()) {
                 Ok(conn) => return Ok((conn, EnsureKind::Attached)),
@@ -1290,6 +1303,14 @@ fn ensure_at(
     }
 
     // ── 2. 띄운다 ───────────────────────────────────────────────────────────
+    //
+    // **물러나게 한 뒤에는 최대 세 번 띄운다.** 옛 daemon 이 파일을 걷어내는 도중에 우리 것이
+    // 뜨면 3중 증거가 "점유 중"을 보고 `EXIT_OCCUPIED` 로 물러난다 — 그것은 실패가 아니라
+    // 순서다(실측 2026-09-21). 그때 엔드포인트가 비기를 기다렸다가 다시 띄운다. 물러나게 한
+    // 적이 없는 점유(남의 daemon 이 살아 있다)는 전처럼 한 번에 사유로 끝난다.
+    let mut attempt = 0u32;
+    loop {
+    attempt += 1;
     let watch = launch()?;
 
     // daemon 이 소켓·토큰을 올릴 때까지 기다린다. **폴링이지 고정 대기가 아니다** —
@@ -1304,6 +1325,18 @@ fn ensure_at(
         // 그렇게 기다려 얻은 문구가 *"소켓을 올리지 않았다"* 였다 — 진짜 사유가 daemon
         // 로그에만 남고 화면에는 안 오던 그 침묵이다(`#443`·`#476` 계열).
         if let Some(reason) = watch.death_reason() {
+            if retired_one && attempt < 3 && watch.exited_occupied() {
+                log_line(&format!(
+                    "물러나게 한 daemon 이 아직 파일을 쥐고 있어 우리 것이 점유로 물러났다 — 비기를 기다려 다시 띄운다({attempt}/3)"
+                ));
+                let free_by = std::time::Instant::now() + Duration::from_secs(20);
+                while std::time::Instant::now() < free_by
+                    && (paths.socket.exists() || paths.token.exists())
+                {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                break;
+            }
             return Err(reason);
         }
         if paths.socket.exists() && paths.token.exists() {
@@ -1328,14 +1361,18 @@ fn ensure_at(
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    // 10초를 다 썼는데도 자식이 그 사이에 죽었을 수 있다(마지막 `sleep` 동안). 한 번 더 본다.
-    if let Some(reason) = watch.death_reason() {
-        return Err(reason);
+    // 다시 띄우러 가는 길(위 `break`)이 아니면 여기서 끝낸다.
+    if !(retired_one && attempt < 3 && watch.exited_occupied()) {
+        // 10초를 다 썼는데도 자식이 그 사이에 죽었을 수 있다(마지막 `sleep` 동안). 한 번 더 본다.
+        if let Some(reason) = watch.death_reason() {
+            return Err(reason);
+        }
+        return Err(format!(
+            "daemon 을 띄웠지만 10초 안에 붙지 못했다: {last_err} — 소켓 `{}`",
+            paths.socket.display()
+        ));
     }
-    Err(format!(
-        "daemon 을 띄웠지만 10초 안에 붙지 못했다: {last_err} — 소켓 `{}`",
-        paths.socket.display()
-    ))
+    }
 }
 
 fn open_connection(
@@ -1565,6 +1602,15 @@ impl DaemonExitWatch {
             tail: tail.map(str::to_string),
         });
         watch
+    }
+
+    /// 점유(`EXIT_OCCUPIED`)로 물러났는가 — 물러나게 한 뒤의 재시도 판정에 쓴다.
+    fn exited_occupied(&self) -> bool {
+        self.slot
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|e| e.code == Some(EXIT_OCCUPIED)))
+            .unwrap_or(false)
     }
 
     /// 자식이 죽었으면 그 사유를, 아직 살아 있으면 `None`.
