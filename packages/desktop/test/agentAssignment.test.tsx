@@ -84,3 +84,15 @@ describe('에이전트 배정', () => {
     expect(screen.queryByLabelText('오퍼레이터 배정')).toBeNull();
   });
 });
+
+describe('오퍼레이터의 배정 거절 사유', () => {
+  it('서버가 붙여 준 runnerRefusal 을 배정 절에 사람 말로 보인다', async () => {
+    setup(agent({ assignment: { agentId: AGENT_ID, operatorId: 'op-1', assignedBy: ME_ID, assignedAt: '2026-09-21T00:00:00Z' },
+      runnerRefusal: { reason: 'mcp_server_missing:ghost', at: '2026-09-21T00:00:00Z' } }), [op('op-1', 'jaebin-mbp')]);
+    render(<AgentsSettings />);
+    (await screen.findByRole('button', { name: /alpha/ })).click();
+    const line = await screen.findByTestId('agent-assignment-refused');
+    expect(line.textContent).toContain('ghost');
+    expect(line.textContent).toContain('거절했다');
+  });
+});

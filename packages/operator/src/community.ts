@@ -134,7 +134,7 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
             // 거절은 조용히 안 뜨는 것이 아니다 — 서버(와 배정한 사람)가 사유를 본다. 러너가 없었으니
             // runnerId 는 이 통지만을 위한 새 값이다.
             assignments.delete(frame.agentId);
-            link.send({ type: 'runner.exited', runnerId: randomUUID(), code: null, reason: outcome.refused });
+            link.send({ type: 'runner.exited', runnerId: randomUUID(), code: null, reason: outcome.refused, agentId: frame.agentId });
           })
           .catch((err: unknown) => deps.log(`배정 처리 실패: ${err instanceof Error ? err.message : String(err)}`));
         return;

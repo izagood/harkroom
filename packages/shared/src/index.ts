@@ -212,6 +212,11 @@ export interface ClaudeLaneView {
 export interface AgentView extends AccountView, AgentConfig {
   /** 어느 오퍼레이터가 이 에이전트를 돌리는가(스펙 2026-09-20 §3). null 은 미배정 — 첫 판의 기본값이다. */
   assignment: AgentAssignmentView | null;
+  /**
+   * 오퍼레이터가 마지막으로 배정을 **거절한** 사유(스펙 §7 재검사·§6 MCP 정의 부재). 러너가 뜨면
+   * 지워진다. 서버 메모리의 사실이라 재시작하면 없다 — 없음과 null 을 가르지 않는다.
+   */
+  runnerRefusal?: { reason: string; at: string } | null;
   /** `invokeScope === 'list'` 의 명단(계정 id). 다른 스코프에서는 비어 있다 — 명단은 남지만 판정에 안 쓰인다. */
   invokers: string[];
   /** 이 에이전트에 붙는 MCP 서버 **이름**들 — `mcp_server` 레지스트리의 부분집합(스펙 §6). 정의는 오퍼레이터 머신에 있다. */
