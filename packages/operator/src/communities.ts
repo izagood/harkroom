@@ -36,8 +36,19 @@ export interface StartCommunitiesDeps {
   operatorBin: string;
 }
 
-export async function startCommunities(deps: StartCommunitiesDeps): Promise<CommunityInstance[]> {
-  const config = await readConfig(join(deps.appDataDir, 'operator', 'operator.json'));
+export interface CommunityRuntime {
+  /** 살아 있는 인스턴스들. `startOne` 이 같은 배열에 더한다 — run.ts 가 이 참조를 든다. */
+  communities: CommunityInstance[];
+  /**
+   * 설정·토큰을 다시 읽어 그 커뮤니티를 띄운다(앱의 `operatorRegister` 뒤). 이미 떠 있으면 그것,
+   * 토큰이 없으면 null. 오퍼레이터를 다시 띄우지 않고 등록을 반영하는 유일한 길이다.
+   */
+  startOne(baseUrl: string): Promise<CommunityInstance | null>;
+}
+
+export async function startCommunities(deps: StartCommunitiesDeps): Promise<CommunityRuntime> {
+  const configPath = join(deps.appDataDir, 'operator', 'operator.json');
+  const config = await readConfig(configPath);
   const secrets = deps.secrets ?? fileSecrets(join(deps.appDataDir, 'operator', 'secrets'));
   const forwarder = createForwarder({ fetchImpl: deps.fetchImpl });
   const loginPath = await readLoginPath();
@@ -88,21 +99,26 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
   });
 
   const started: CommunityInstance[] = [];
-  for (const [rawUrl, section] of Object.entries(config.communities)) {
+  const startOne = async (rawUrl: string, section?: { agents: Record<string, import('./config.js').LocalAgentConfig> }): Promise<CommunityInstance | null> => {
     const baseUrl = communityKey(rawUrl);
+    const existing = started.find((c) => c.baseUrl === baseUrl);
+    if (existing) return existing;
+    const agents = section?.agents ?? (await readConfig(configPath)).communities[baseUrl]?.agents ?? {};
     const token = await secrets.getToken(baseUrl);
-    if (!token) { deps.log(`커뮤니티 건너뜀(토큰 없음 — 등록이 필요하다): ${baseUrl}`); continue; }
+    if (!token) { deps.log(`커뮤니티 건너뜀(토큰 없음 — 등록이 필요하다): ${baseUrl}`); return null; }
     const ref: { current: CommunityInstance | null } = { current: null };
     const reconciler = createAssignmentReconciler(runnerDeps(ref));
     const community = createCommunity({
-      baseUrl, token, agents: section.agents, reconciler, log: deps.log,
+      baseUrl, token, agents, reconciler, log: deps.log,
       runnerLink: deps.runnerLink, forwarder, fetchImpl: deps.fetchImpl,
       harnesses: () => { refreshHarnesses(); return harnesses; },
     });
     ref.current = community;
     community.start();
     started.push(community);
-  }
+    return community;
+  };
+  for (const [rawUrl, section] of Object.entries(config.communities)) await startOne(rawUrl, section);
   deps.log(`커뮤니티 ${started.length}곳에 붙는다`);
-  return started;
+  return { communities: started, startOne };
 }
