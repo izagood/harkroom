@@ -31,6 +31,7 @@ import { RunnerRegistry, nodeRunnerHost, type RunnerHost, type RunnerLogSink } f
 import { DaemonServer } from './server.js';
 import { createClaudeAccountsPort } from './claudeAccounts.js';
 import { startCommunities } from './communities.js';
+import { createRunnerLinkServer } from './runnerLink.js';
 import type { CommunityInstance } from './community.js';
 
 /**
@@ -176,6 +177,15 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   const serverRef: { current: DaemonServer | null } = { current: null };
   let communities: CommunityInstance[] = [];
 
+  // 러너 링크(스펙 2026-09-20 §5). 러너 프레임은 그 에이전트를 아는 커뮤니티로 간다 — 에이전트
+  // id 는 서버별 UUID 라 두 커뮤니티가 같은 id 를 알 일은 없다.
+  const runnerLink = createRunnerLinkServer({
+    onFrame: (runnerId, agentId, frame) => {
+      for (const c of communities) if (c.knowsAgent(agentId)) c.onRunnerFrame(runnerId, frame);
+    },
+    log,
+  });
+
   const probe = options.identityProbe ?? psIdentityProbe;
 
   // identity 는 claim 이 끝나야 완성된다(pid 레코드가 nonce 를 만든다). 서버 객체는
@@ -313,6 +323,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     adoptOrphans,
     claudeAccounts,
     log,
+    runnerLink,
   });
 
   // 로그인 진행을 소켓 이벤트로 흘린다. **러너 종료 통지와 같은 길**이다 — 앱은 이미 그
@@ -392,6 +403,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       communities = await startCommunities({
         appDataDir, registry, host: options.host ?? nodeRunnerHost,
         appVersion: args.appVersion ?? null, log,
+        runnerLink, socketPath: outcome.paths.socketPath,
       });
     } catch (err) {
       log(`커뮤니티 기동 실패(소켓 서비스는 계속): ${err instanceof Error ? err.message : String(err)}`);
@@ -410,6 +422,9 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       // 서버 링크를 먼저 끊는다 — 러너는 데려가지 않는다(이 파일 머리 주석). 링크가 살아
       // 있으면 종료 중에 assign 이 와서 새 러너를 띄울 수 있다.
       for (const c of communities) c.stop();
+      // 러너 링크도 끊는다 — 러너 프로세스는 그대로다(다음 오퍼레이터에 다시 붙지는 못한다:
+      // secret 은 이 프로세스의 메모리에만 있었다. 그 러너는 채택되고, 링크 없이 산다).
+      runnerLink.close();
       // ── 러너는 살리지만 **로그인은 회수한다** ─────────────────────────────────
       // 아래 문단이 적은 "러너는 산다"의 근거는 진행 중인 턴이 사람이 기다리는 답을
       // 들고 있다는 것이다. 로그인은 그 반대다: 우리가 죽으면 코드를 받을 stdin 이

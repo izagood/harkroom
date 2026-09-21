@@ -81,6 +81,12 @@ export interface DaemonServerDeps {
   claudeAccounts?: ClaudeAccountsPort;
   /** 로그 한 줄. 기본은 stdout — 앱이 사이드카 파이프로 그대로 본다. */
   log?: (line: string) => void;
+  /**
+   * 러너 링크(스펙 2026-09-20 §5). 첫 줄이 `hello{role:'runner'}` 면 이 소켓은 앱이 아니라
+   * 러너의 것이다 — 접속을 통째로 넘기고 이 서버는 더 보지 않는다. 없으면 그런 hello 는
+   * 앱 hello 검사(`checkHello`)가 `bad-payload` 로 거절한다.
+   */
+  runnerLink?: { accept(socket: Socket, hello: unknown, pending: unknown[]): boolean };
 }
 
 /** 접속 하나의 상태. **`hello` 전에는 아무 요청도 받지 않는다.** */
@@ -200,7 +206,9 @@ export class DaemonServer {
   }
 
   private onData(conn: Connection, chunk: Buffer): void {
-    for (const line of conn.decoder.push(chunk)) {
+    const lines = conn.decoder.push(chunk);
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i]!;
       if (!line.ok) {
         // 상한 초과는 **연결을 끊을 사건**이다(프로토콜 주석: 정상 트래픽이 아니라 사고).
         this.sendError(conn, null, line.error);
@@ -208,6 +216,17 @@ export class DaemonServer {
         continue;
       }
       if (!conn.authenticated) {
+        // 러너의 hello 면 접속을 링크에 넘긴다 — 같은 청크에 이미 풀린 뒷줄도 함께. 여기서
+        // 넘기지 않으면 첫 announce(hello 바로 뒤에 온다)가 이 서버의 `handleRequest` 로 새어
+        // `unknown-request` 가 된다.
+        const role = (line.value as { role?: unknown } | null)?.role;
+        if (role === 'runner' && this.deps.runnerLink) {
+          this.connections.delete(conn);
+          conn.socket.removeAllListeners('data');
+          const rest = lines.slice(i + 1).filter((l) => l.ok).map((l) => (l as { value: unknown }).value);
+          this.deps.runnerLink.accept(conn.socket, line.value, rest);
+          return;
+        }
         this.handleHello(conn, line.value);
         continue;
       }

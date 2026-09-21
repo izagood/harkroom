@@ -55,6 +55,51 @@ describe('community', () => {
     expect(c.assignments.has('a-1')).toBe(false);
   });
 
+  it('러너 프레임은 runnerId 를 달고 서버로, 서버의 러너 프레임은 runnerId 의 러너로 간다(스펙 §5)', () => {
+    const sent: string[] = [];
+    let handlers: Parameters<LinkDialer>[2] | null = null;
+    const dial: LinkDialer = (_u, _t, h) => { handlers = h; h.onOpen({ send: (d) => sent.push(d), close: () => {} }); };
+    const { reconciler } = fakeReconciler();
+    const toRunner: { runnerId: string; frame: unknown }[] = [];
+    const c = createCommunity({
+      baseUrl: 'https://example.com', token: 'hkop_x', agents: { 'a-1': {} },
+      reconciler, dial, schedule: () => {}, log: () => {},
+      runnerLink: { send: (r, f) => { toRunner.push({ runnerId: r, frame: f }); return true; }, isLinked: () => true },
+    });
+    c.start();
+    c.onRunnerFrame('r-1', { type: 'output', sessionId: 's1', data: 'AA==' });
+    expect(JSON.parse(sent.at(-1)!)).toEqual({ type: 'pty.output', runnerId: 'r-1', sessionId: 's1', bytes: 'AA==' });
+    handlers!.onMessage(JSON.stringify({ type: 'pty.resize', runnerId: 'r-1', sessionId: 's1', cols: 80, rows: 24 }));
+    expect(toRunner).toEqual([{ runnerId: 'r-1', frame: { type: 'resize', sessionId: 's1', cols: 80, rows: 24 } }]);
+  });
+
+  it('러너의 생사를 서버에 알리고, 재접속 hello 에는 붙어 있는 러너의 세션이 실린다', () => {
+    const sent: string[] = [];
+    let handlers: Parameters<LinkDialer>[2] | null = null;
+    const dial: LinkDialer = (_u, _t, h) => { handlers = h; h.onOpen({ send: (d) => sent.push(d), close: () => {} }); };
+    const { reconciler } = fakeReconciler();
+    const c = createCommunity({
+      baseUrl: 'https://example.com', token: 'hkop_x', agents: { 'a-1': {} },
+      reconciler, dial, schedule: () => {}, log: () => {},
+      runnerLink: { send: () => true, isLinked: () => true },
+    });
+    c.start();
+    c.notifyRunnerStarted('a-1', 'r-1');
+    expect(JSON.parse(sent.at(-1)!)).toEqual({ type: 'runner.started', agentId: 'a-1', runnerId: 'r-1' });
+    const session = { sessionId: 's1', agentAccountId: 'a-1', channelId: 'c', threadRootId: null, harness: 'claude-code' as const, startedAt: 't', acceptsInput: true };
+    c.onRunnerFrame('r-1', { type: 'announce', sessions: [session], caps: ['input'] });
+    // 서버가 끊겼다 다시 붙는다 — hello 에 세션이 실리고, 그 뒤 runner.announce 로 목록을 다시 낸다.
+    sent.length = 0;
+    handlers!.onClose('끊김');
+    handlers!.onOpen({ send: (d) => sent.push(d), close: () => {} });
+    const frames = sent.map((d) => JSON.parse(d) as { type: string; sessions?: unknown[] });
+    expect(frames[0]!.type).toBe('hello');
+    expect(frames[0]!.sessions).toEqual([session]);
+    expect(frames.some((f) => f.type === 'runner.announce')).toBe(true);
+    c.notifyRunnerExited('r-1', 0);
+    expect(JSON.parse(sent.at(-1)!)).toEqual({ type: 'runner.exited', runnerId: 'r-1', code: 0 });
+  });
+
   it('로컬 설정에 없는 에이전트의 assign 은 거절한다 — 양쪽 동의', async () => {
     let handlers: Parameters<LinkDialer>[2] | null = null;
     const dial: LinkDialer = (_u, _t, h) => { handlers = h; h.onOpen({ send: () => {}, close: () => {} }); };

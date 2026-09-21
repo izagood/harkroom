@@ -13,7 +13,7 @@
  * 버린다: 구·신 세대가 섞여도 한쪽이 죽지 않는다(`daemonProtocol` 의 `unknown-request` 와
  * 같은 판단).
  */
-import type { AgentSessionView, OperatorCapabilities } from './index.js';
+import type { AgentSessionView, OperatorCapabilities, RunnerCap } from './index.js';
 
 /** 오퍼레이터가 spawn 마다 만드는 러너 식별자. 데몬의 `incarnationId` 와 같은 것이다 — 이름만 통일한다. */
 export interface RunnerAnnounce { agentId: string; runnerId: string; pid: number }
@@ -43,17 +43,26 @@ export type OperatorToServerFrame =
       runners: RunnerAnnounce[]; sessions: AgentSessionView[] }
   | { type: 'runner.started'; agentId: string; runnerId: string }
   | { type: 'runner.exited'; runnerId: string; code: number | null; reason?: string }
+  /**
+   * 러너가 링크에 붙을 때마다(재접속 포함) 자기 세션·능력을 다시 선언한다 — 옛 릴레이의
+   * `announce` 그대로다(`runnerLink.ts`). 서버는 이 목록으로 그 러너의 세션을 **교체**한다.
+   */
+  | { type: 'runner.announce'; runnerId: string; sessions: AgentSessionView[]; caps?: RunnerCap[] }
   | { type: 'session.started'; runnerId: string; session: AgentSessionView }
   | { type: 'session.updated'; runnerId: string; session: AgentSessionView }
   | { type: 'session.ended'; runnerId: string; sessionId: string }
   | { type: 'pty.output'; runnerId: string; sessionId: string; bytes: string }
+  /** attach 의 ring 재생 — `pty.replay.request` 의 답. `bytes` 는 base64 그대로다(불투명 우체국). */
+  | { type: 'pty.replay'; runnerId: string; sessionId: string; bytes: string }
   | { type: 'interactive.opened'; runnerId: string; requestId: string; sessionId: string; created: boolean }
-  | { type: 'interactive.error'; runnerId: string; requestId: string; message: string };
+  | { type: 'interactive.error'; runnerId: string; requestId: string; message: string }
+  | { type: 'attention.required'; runnerId: string; sessionId: string; accountLabel: string; screen: string };
 
 export type ServerToOperatorFrame =
   | { type: 'assign'; agentId: string; definition: AgentDefinition }
   | { type: 'unassign'; agentId: string; drain: boolean }
   | { type: 'runner.kill'; runnerId: string }
+  | { type: 'pty.replay.request'; runnerId: string; sessionId: string }
   | { type: 'pty.input'; runnerId: string; sessionId: string; bytes: string }
   | { type: 'pty.resize'; runnerId: string; sessionId: string; cols: number; rows: number }
   | { type: 'viewer.count'; runnerId: string; sessionId: string; count: number }
@@ -62,11 +71,11 @@ export type ServerToOperatorFrame =
       threadRootId: string; openedByHandle: string; cols?: number; rows?: number };
 
 const OPERATOR_TYPES = new Set<OperatorToServerFrame['type']>([
-  'hello', 'runner.started', 'runner.exited', 'session.started', 'session.updated', 'session.ended',
-  'pty.output', 'interactive.opened', 'interactive.error',
+  'hello', 'runner.started', 'runner.exited', 'runner.announce', 'session.started', 'session.updated', 'session.ended',
+  'pty.output', 'pty.replay', 'interactive.opened', 'interactive.error', 'attention.required',
 ]);
 const SERVER_TYPES = new Set<ServerToOperatorFrame['type']>([
-  'assign', 'unassign', 'runner.kill', 'pty.input', 'pty.resize', 'viewer.count', 'session.cancel', 'interactive.open',
+  'assign', 'unassign', 'runner.kill', 'pty.replay.request', 'pty.input', 'pty.resize', 'viewer.count', 'session.cancel', 'interactive.open',
 ]);
 
 /** `hello` 와 배정 둘(`assign`·`unassign`)만 러너 밖의 말이다 — 나머지는 전부 `runnerId` 가 있어야 한다. */
