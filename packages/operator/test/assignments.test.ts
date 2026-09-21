@@ -157,6 +157,54 @@ describe('러너가 죽으면 — 배정이 살아 있는 동안은 다시 띄�
     await new Promise((res) => setTimeout(res, 0));
     expect(h.spawned).toHaveLength(2);
   });
+  it('spawn 이 retiring 으로 거절되면 잠시 뒤 다시 띄워 본다 — 앞 세대 러너가 물러난 자리를 아무도 채우지 않으면 에이전트는 돌아오지 않는다', async () => {
+    const h = harness();
+    let retiring = true;
+    const base = h.deps.spawn;
+    const r = createAssignmentReconciler({
+      ...h.deps,
+      retiringRetryMs: 50,
+      spawn: async (agentId, env, runnerId) => {
+        if (retiring) throw Object.assign(new Error('retiring: 앞 세대 러너(pid 9)가 아직 물러나는 중이다'), { code: 'retiring' as const });
+        return base(agentId, env, runnerId);
+      },
+    });
+    await expect(r.onAssign('https://example.com', def(), undefined)).resolves.toBe('retiring');
+    expect(h.spawned).toHaveLength(0);
+    // 안 띄웠으니 방금 적은 secret 은 잊는다.
+    expect(h.forgotten).toEqual([h.expected[0]!.runnerId]);
+    const retry = h.timers.at(-1)!;
+    expect(retry.ms).toBe(50);
+    // 아직 물러나는 중이면 또 기다린다.
+    retry.fn();
+    await new Promise((res) => setTimeout(res, 0));
+    expect(h.spawned).toHaveLength(0);
+    expect(h.timers.at(-1)!.ms).toBe(50);
+    // 자리가 비면 띄운다.
+    retiring = false;
+    h.timers.at(-1)!.fn();
+    await new Promise((res) => setTimeout(res, 0));
+    expect(h.spawned).toHaveLength(1);
+  });
+  it('retiring 대기 중에 unassign 이 오면 다시 띄우지 않는다', async () => {
+    const h = harness();
+    const r = createAssignmentReconciler({
+      ...h.deps,
+      retiringRetryMs: 50,
+      spawn: async () => { throw Object.assign(new Error('retiring'), { code: 'retiring' as const }); },
+    });
+    await r.onAssign('https://example.com', def(), undefined);
+    const retry = h.timers.at(-1)!;
+    await r.onUnassign('https://example.com', 'a-1', true);
+    expect(retry.cancelled).toBe(true);
+  });
+  it('retiring 이 아닌 spawn 실패는 그대로 던진다', async () => {
+    const h = harness();
+    const r = createAssignmentReconciler({ ...h.deps, spawn: async () => { throw new Error('ENOENT'); } });
+    await expect(r.onAssign('https://example.com', def(), undefined)).rejects.toThrow('ENOENT');
+    expect(h.timers).toHaveLength(0);
+  });
+
   it('unassign 된 뒤의 exit 은 다시 띄우지 않는다', async () => {
     const h = harness();
     const r = createAssignmentReconciler({ ...h.deps, respawnBackoffMs: 100 });

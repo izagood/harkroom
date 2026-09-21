@@ -135,6 +135,18 @@ describe('runnerLink 서버', () => {
     expect(s.lines()).toMatchObject([{ type: 'mcp.error', id: 'q1', status: 0 }]);
   });
 
+  it('close 는 bridge 소켓도 끊는다 — 남겨 두면 net.Server.close 가 영영 안 끝나 오퍼레이터가 종료 중에 멈춘다', () => {
+    const link = createRunnerLinkServer({ onFrame: () => {}, log: () => {} });
+    link.expect('r-1', 'agent-a', 'sec');
+    const relay = fakeSocket();
+    const bridge = fakeSocket();
+    link.accept(relay.socket, hello('r-1', 'sec'), []);
+    link.accept(bridge.socket, { ...hello('r-1', 'sec'), kind: 'bridge' }, []);
+    link.close();
+    expect(relay.destroyed()).toBe(true);
+    expect(bridge.destroyed()).toBe(true);
+  });
+
   it('forget 하면 그 runnerId 는 다시 붙을 수 없다 — 죽은 러너의 secret 을 남기지 않는다', () => {
     const link = createRunnerLinkServer({ onFrame: () => {}, log: () => {} });
     link.expect('r-1', 'agent-a', 'sec');
