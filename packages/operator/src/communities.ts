@@ -10,6 +10,7 @@ import { createAssignmentReconciler, type AssignmentDeps } from './assignments.j
 import { createCommunity, type CommunityInstance } from './community.js';
 import { communityKey, readConfig } from './config.js';
 import { readLoginPath } from './loginPath.js';
+import type { RunnerLinkServer } from './runnerLink.js';
 import type { RunnerRegistry, RunnerHost } from './runners.js';
 import { fileSecrets, type OperatorSecrets } from './secrets.js';
 import { join } from 'node:path';
@@ -23,6 +24,12 @@ export interface StartCommunitiesDeps {
   /** 테스트가 바꿔 끼운다. 기본은 `<appDataDir>/operator/secrets/` 의 0600 파일. */
   secrets?: OperatorSecrets;
   fetchImpl?: typeof fetch;
+  /**
+   * 러너 링크(스펙 §5)와 그 소켓 경로. 둘 다 있어야 러너가 unix 링크로 붙는다 — 하나라도
+   * 없으면 러너는 옛 방식(서버 WS)으로 붙는다.
+   */
+  runnerLink?: RunnerLinkServer;
+  socketPath?: string;
 }
 
 export async function startCommunities(deps: StartCommunitiesDeps): Promise<CommunityInstance[]> {
@@ -32,11 +39,16 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
   const loginPath = await readLoginPath();
   if (!loginPath) deps.log('로그인 셸 PATH 를 못 읽었다 — 러너가 하네스를 못 찾을 수 있다');
 
-  const runnerDeps = (baseUrl: string, token: string): AssignmentDeps => ({
-    async spawn(agentId, env) {
+  const linked = deps.runnerLink && deps.socketPath ? { link: deps.runnerLink, socketPath: deps.socketPath } : null;
+
+  const runnerDeps = (baseUrl: string, token: string, community: { current: CommunityInstance | null }): AssignmentDeps => ({
+    async spawn(agentId, env, runnerId) {
       const before = deps.registry.currentIncarnation(agentId);
-      const record = await deps.registry.spawnRunner(agentId, env);
-      return { spawned: before !== record.incarnationId, pid: record.pid, runnerId: record.incarnationId };
+      const record = await deps.registry.spawnRunner(agentId, env, runnerId);
+      const spawned = before !== record.incarnationId;
+      // 서버는 hello 의 announce 사이에 뜬 러너를 이것으로 안다 — 없으면 그 러너의 프레임을 버린다.
+      if (spawned) community.current?.notifyRunnerStarted(agentId, record.incarnationId);
+      return { spawned, pid: record.pid, runnerId: record.incarnationId };
     },
     signal(agentId, signal) {
       if (signal === 'SIGTERM') return deps.registry.killRunner(agentId) !== null;
@@ -58,6 +70,7 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
     },
     loginPath,
     appVersion: deps.appVersion,
+    ...(linked ? { link: linked.link, socketPath: linked.socketPath } : {}),
     schedule: (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return () => clearTimeout(t); },
     log: deps.log,
   });
@@ -67,8 +80,13 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
     const baseUrl = communityKey(rawUrl);
     const token = await secrets.getToken(baseUrl);
     if (!token) { deps.log(`커뮤니티 건너뜀(토큰 없음 — 등록이 필요하다): ${baseUrl}`); continue; }
-    const reconciler = createAssignmentReconciler(runnerDeps(baseUrl, token));
-    const community = createCommunity({ baseUrl, token, agents: section.agents, reconciler, log: deps.log });
+    const ref: { current: CommunityInstance | null } = { current: null };
+    const reconciler = createAssignmentReconciler(runnerDeps(baseUrl, token, ref));
+    const community = createCommunity({
+      baseUrl, token, agents: section.agents, reconciler, log: deps.log,
+      ...(linked ? { runnerLink: linked.link } : {}),
+    });
+    ref.current = community;
     community.start();
     started.push(community);
   }

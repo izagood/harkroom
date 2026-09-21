@@ -9,12 +9,16 @@
  * spawn·kill·시계·PAT 을 전부 주입받는다 — 결정을 프로세스 없이 재려고(`assignments.test.ts`).
  * 실제 프로세스 소유는 `runners.ts`(RunnerRegistry)가 그대로 맡는다.
  */
+import { randomBytes, randomUUID } from 'node:crypto';
 import type { AgentDefinition, RunnerAnnounce } from '@harkroom/shared/operatorProtocol';
 import type { LocalAgentConfig } from './config.js';
 
 export interface AssignmentDeps {
-  /** 이미 살아 있으면 `spawned: false` 로 기존 것을 돌려준다(RunnerRegistry 의 멱등성). */
-  spawn(agentId: string, env: Record<string, string>): Promise<{ spawned: boolean; pid: number; runnerId: string }>;
+  /**
+   * 이미 살아 있으면 `spawned: false` 로 **기존** 것을 돌려준다(RunnerRegistry 의 멱등성) —
+   * 그때 돌아오는 `runnerId` 는 여기서 준 것이 아니다. 새로 띄우면 준 id 그대로다.
+   */
+  spawn(agentId: string, env: Record<string, string>, runnerId: string): Promise<{ spawned: boolean; pid: number; runnerId: string }>;
   /** 시그널을 보냈는가. 러너가 없으면 false. SIGTERM 은 러너가 drain 으로 받는다(#551). */
   signal(agentId: string, signal: 'SIGTERM' | 'SIGKILL'): boolean;
   isAlive(agentId: string): boolean;
@@ -27,6 +31,13 @@ export interface AssignmentDeps {
   fetchAgentPat(baseUrl: string, agentId: string): Promise<string>;
   loginPath: string | null;
   appVersion: string | null;
+  /**
+   * 러너 링크(스펙 §5). spawn 직전에 `expect` 로 id·secret 을 적어야 러너의 hello 가 통한다.
+   * 없으면 러너는 옛 방식(서버 WS)으로 붙는다 — 단계 3 전환기의 배선이다.
+   */
+  link?: { expect(runnerId: string, agentId: string, secret: string): void; forget(runnerId: string): void };
+  /** 오퍼레이터 소켓 경로 — 러너 env 에 실린다. `link` 와 함께여야 뜻이 있다. */
+  socketPath?: string | null;
   /** 취소 손잡이를 돌려준다. */
   schedule(fn: () => void, ms: number): () => void;
   log(line: string): void;
@@ -92,9 +103,20 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
       // 회수 중이던 에이전트가 다시 배정됐다 — 예약된 SIGKILL 을 놓는다.
       reclaims.get(agentId)?.(); reclaims.delete(agentId);
 
+      // 러너 id 와 secret 은 **spawn 마다** 새로 만든다 — id 는 서버가 다중화에 쓰는 키이고
+      // (`RunnerAnnounce.runnerId` = 레지스트리의 incarnationId), secret 은 그 러너만 아는 값이다.
+      const runnerId = randomUUID();
+      const secret = randomBytes(24).toString('base64url');
+      const linked = Boolean(deps.link && deps.socketPath);
+      if (linked) deps.link!.expect(runnerId, agentId, secret);
       const env: Record<string, string> = {
         HARKROOM_URL: baseUrl,
         HARKROOM_PAT: pat,
+        ...(linked ? {
+          HARKROOM_OPERATOR_SOCKET: deps.socketPath!,
+          HARKROOM_RUNNER_ID: runnerId,
+          HARKROOM_RUNNER_SECRET: secret,
+        } : {}),
         ...(deps.loginPath ? { PATH: deps.loginPath } : {}),
         // 없으면 넣지 않는다 — 거짓 버전을 심는 것보다 '모른다'가 낫다(design.md §4).
         ...(deps.appVersion ? { AGENT_VERSION: deps.appVersion } : {}),
@@ -102,8 +124,10 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
         ...(local?.workingDir ? { HARKROOM_WORKING_DIR: local.workingDir } : {}),
         ...(local?.claudePool ? { HARKROOM_CLAUDE_POOL: local.claudePool } : {}),
       };
-      const result = await deps.spawn(agentId, env);
+      const result = await deps.spawn(agentId, env, runnerId);
       if (result.spawned) lastSpawnAt.set(agentId, now());
+      // 안 띄웠으면 방금 적은 secret 은 아무 러너도 안 쓴다 — 남겨 두면 장부가 자라기만 한다.
+      else if (linked) deps.link!.forget(runnerId);
       deps.log(result.spawned
         ? `러너 spawn: agent=${definition.handle} pid=${result.pid}`
         : `러너가 이미 있다 — 새로 안 띄운다: agent=${definition.handle} pid=${result.pid}`);

@@ -9,9 +9,11 @@
  * 이 객체가 해석하는 프레임은 `assign`·`unassign` 둘뿐이다. 나머지(러너 프레임)는 단계 3 이
  * `onFrame` 으로 릴레이 다중화기에 넘긴다 — 여기서 해석하면 스펙 §8 근거 ②(어휘)가 깨진다.
  */
+import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
 import type { AgentDefinition, ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
 import type { AssignmentReconciler } from './assignments.js';
 import type { LocalAgentConfig } from './config.js';
+import { createRelayMux } from './relayMux.js';
 import { createServerLink, type LinkDialer, type ServerLink } from './serverLink.js';
 
 export interface CommunityDeps {
@@ -20,7 +22,13 @@ export interface CommunityDeps {
   /** 이 커뮤니티에서 이 머신이 돌릴 수 있는 에이전트(로컬 설정). 키는 에이전트 id. */
   agents: Record<string, LocalAgentConfig>;
   reconciler: AssignmentReconciler;
-  /** 배정 밖의 프레임(러너 프레임)을 받는 자리. 단계 3 이 채운다. */
+  /**
+   * 러너 링크(스펙 §5). 서버의 러너 프레임을 이리로 내려보내고, 러너의 프레임은
+   * `onRunnerFrame` 으로 받아 서버에 올린다. 없으면 러너 프레임은 어디로도 가지 않는다
+   * (단계 3 전환기 — 러너가 아직 서버 WS 로 직접 붙는 배선).
+   */
+  runnerLink?: { send(runnerId: string, frame: RelayServerFrame): boolean; isLinked(runnerId: string): boolean };
+  /** 배정도 러너 프레임도 아닌 것(`runner.kill`)을 받는 자리. */
   onFrame?: (frame: ServerToOperatorFrame) => void;
   dial?: LinkDialer;
   schedule?: (fn: () => void, ms: number) => void;
@@ -36,10 +44,24 @@ export interface CommunityInstance {
   stop(): void;
   /** 레지스트리의 exit 통지를 조정기에 넘긴다 — 배정이 살아 있으면 다시 띄운다. */
   onRunnerExit(agentId: string, code: number | null): void;
+  /** 이 커뮤니티의 로컬 설정에 있는 에이전트인가 — 러너 프레임을 어느 커뮤니티로 보낼지의 근거. */
+  knowsAgent(agentId: string): boolean;
+  /** 러너 링크에서 온 프레임 — runnerId 를 달아 서버로. */
+  onRunnerFrame(runnerId: string, frame: RelayRunnerFrame): void;
+  notifyRunnerStarted(agentId: string, runnerId: string): void;
+  notifyRunnerExited(runnerId: string, code: number | null): void;
 }
 
 export function createCommunity(deps: CommunityDeps): CommunityInstance {
   const assignments = new Map<string, AgentDefinition>();
+  const noLink = { send: () => false, isLinked: () => false };
+  // 링크가 서버 링크를 필요로 하고 서버 링크의 훅이 다중화기를 필요로 한다 — 늦게 묶는다.
+  const linkRef: { current: ServerLink | null } = { current: null };
+  const mux = createRelayMux({
+    link: deps.runnerLink ?? noLink,
+    send: (frame) => linkRef.current?.send(frame) ?? false,
+    log: deps.log,
+  });
 
   const link = createServerLink({
     baseUrl: deps.baseUrl,
@@ -51,9 +73,13 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
       type: 'hello', protocol: 1,
       capabilities: { agentIds: Object.keys(deps.agents), harnesses: {} },
       runners: deps.reconciler.announce(),
-      sessions: [],
+      sessions: mux.sessions(),
     }),
-    onOpen: () => deps.log(`서버에 붙었다: ${deps.baseUrl}`),
+    onOpen: () => {
+      deps.log(`서버에 붙었다: ${deps.baseUrl}`);
+      // 서버는 소켓이 끊기면 러너의 세션을 버린다 — hello 의 목록 뒤에 러너별 announce 로 능력까지 다시 낸다.
+      mux.resync();
+    },
     onClose: (reason) => deps.log(`서버와 끊겼다: ${deps.baseUrl}${reason ? ` — ${reason}` : ''}`),
     onFrame: (frame) => {
       if (frame.type === 'assign') {
@@ -75,9 +101,11 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
           .catch((err: unknown) => deps.log(`해제 처리 실패: ${err instanceof Error ? err.message : String(err)}`));
         return;
       }
-      deps.onFrame?.(frame);
+      // 러너 프레임이면 다중화기가 runnerId 로 러너를 골라 내린다. 아니면(runner.kill) 밖으로.
+      if (!mux.onServerFrame(frame)) deps.onFrame?.(frame);
     },
   });
+  linkRef.current = link;
 
   return {
     baseUrl: deps.baseUrl,
@@ -89,6 +117,13 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
       // 이 커뮤니티의 배정이 아니면 남의 exit 이다 — 조정기가 assigned 로 다시 거르지만
       // 여기서 먼저 거르면 로그가 커뮤니티마다 한 줄씩 찍히지 않는다.
       if (assignments.has(agentId)) deps.reconciler.onRunnerExit(agentId, code);
+    },
+    knowsAgent: (agentId) => agentId in deps.agents,
+    onRunnerFrame: (runnerId, frame) => mux.onRunnerFrame(runnerId, frame),
+    notifyRunnerStarted: (agentId, runnerId) => { link.send({ type: 'runner.started', agentId, runnerId }); },
+    notifyRunnerExited: (runnerId, code) => {
+      mux.forget(runnerId);
+      link.send({ type: 'runner.exited', runnerId, code });
     },
   };
 }

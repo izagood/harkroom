@@ -401,7 +401,11 @@ export class RunnerRegistry {
    * 같은 에이전트에 러너가 둘이면 서버의 멘션을 나눠 집어 가고, 그러면 답이 반쪽씩
    * 갈린다(`#431` D5 의 중복 러너 금지와 같은 자리).
    */
-  async spawnRunner(agentId: string, env: Record<string, string>): Promise<RunnerRecord> {
+  /**
+   * `incarnationId` 를 밖에서 줄 수 있다(스펙 2026-09-20 §5): 러너는 자기 id 를 env 로 받아
+   * 오퍼레이터 링크에 hello 하므로, spawn **전에** 정해져 있어야 한다. 안 주면 여기서 만든다.
+   */
+  async spawnRunner(agentId: string, env: Record<string, string>, incarnationId?: IncarnationId): Promise<RunnerRecord> {
     const existing = this.byAgent.get(agentId);
     if (existing && !existing.exited && this.host.kill(existing.pid, 0)) {
       // ── 중복을 안 띄운다 — **채택한 러너도 여기서 걸린다**(`#431` 2-c) ──────────
@@ -459,7 +463,7 @@ export class RunnerRegistry {
     const record: RunnerRecord = {
       agentId,
       pid,
-      incarnationId: newIncarnationId(),
+      incarnationId: incarnationId ?? newIncarnationId(),
       startedAtMs: this.host.now(),
       termSentAtMs: null,
       child,

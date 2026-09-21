@@ -9,6 +9,7 @@
     "./daemonProtocol": "./src/daemonProtocol.ts",
     "./operatorEndpoint": "./src/operatorEndpoint.ts",
     "./operatorProtocol": "./src/operatorProtocol.ts",
+    "./runnerLink": "./src/runnerLink.ts",
     "./claudePools": "./src/claudePools.ts"
   },
   "scripts": { "test": "vitest run", "typecheck": "tsc -p ." },
