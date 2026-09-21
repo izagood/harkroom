@@ -330,7 +330,7 @@ export class RunnerRegistry {
    * 표(`byAgent`)와 **다른 자리**인 이유는 `retire` 주석에 있다. 프로세스가 사라지면
    * `retiringAlive` 가 지운다 — 그때부터 교체가 허용된다.
    */
-  private readonly retiring = new Map<string, number>();
+  private readonly retiring = new Map<string, { pid: number; incarnationId: IncarnationId | null }>();
 
   /** 지금 표 전체. 장부에 쓰기 위해서만 쓰인다. */
   /**
@@ -348,13 +348,26 @@ export class RunnerRegistry {
    * `SIGTERM` 이고 `SIGKILL` 이 아니다: 러너는 이 시그널을 받아 진행 중인 턴을 마무리할
    * 기회를 갖는다. 회수는 업데이트 직후 한 번뿐이므로 여기서 굳이 서두를 이유가 없다.
    */
-  retire(agentId: string, pid: number): boolean {
-    // **표가 아니라 별도 자리에 적는다.** `byAgent` 에 넣으면 앱에게 "이 에이전트는
-    // 러너가 있다"로 보여 교체가 아예 안 일어나고, 물러난 뒤에도 아무도 새로 띄우지
-    // 않는다(앱의 자동 기동은 세션당 한 번이다). 여기 적는 것은 **순서를 지키기 위한
+  retire(agentId: string, pid: number, incarnationId?: IncarnationId): boolean {
+    // **표가 아니라 별도 자리에 적는다.** `byAgent` 에 넣으면 조정기에게 "이 에이전트는
+    // 러너가 있다"로 보여 교체가 아예 안 일어난다. 여기 적는 것은 **순서를 지키기 위한
     // 사실**이고, 그 사실을 `spawnRunner` 가 읽는다.
-    this.retiring.set(agentId, pid);
+    //
+    // `incarnationId` 는 장부가 아는 옛 러너의 id 다(#838). 있으면 그 러너를 **우리 러너로
+    // announce 하고** 링크를 받아, 진행 중이던 턴이 이 오퍼레이터를 통해 끝나게 한다.
+    // 죽으면 그 id 로 exit 통지가 나가 서버가 그 러너를 지운다. 옛 장부(id 없음)는 순서만 지킨다.
+    this.retiring.set(agentId, { pid, incarnationId: incarnationId ?? null });
     return this.host.kill(pid, 'SIGTERM');
+  }
+
+  /** 회수(SIGTERM)를 보냈고 **아직 살아 있는**, id 를 아는 앞 세대 러너들 — hello 의 announce 에 실린다. */
+  retiringRunners(): { agentId: string; pid: number; incarnationId: IncarnationId }[] {
+    const out: { agentId: string; pid: number; incarnationId: IncarnationId }[] = [];
+    for (const [agentId, entry] of this.retiring) {
+      if (entry.incarnationId === null) continue;
+      if (this.host.kill(entry.pid, 0)) out.push({ agentId, pid: entry.pid, incarnationId: entry.incarnationId });
+    }
+    return out;
   }
 
   /**
@@ -364,11 +377,23 @@ export class RunnerRegistry {
    * 영구 거절이 되는 순간 에이전트는 돌아오지 않는다.
    */
   private retiringAlive(agentId: string): number | null {
-    const pid = this.retiring.get(agentId);
-    if (pid === undefined) return null;
-    if (this.host.kill(pid, 0)) return pid;
-    this.retiring.delete(agentId);
+    const entry = this.retiring.get(agentId);
+    if (entry === undefined) return null;
+    if (this.host.kill(entry.pid, 0)) return entry.pid;
+    this.reapRetiring(agentId, entry);
     return null;
+  }
+
+  /**
+   * 물러난 옛 세대 러너를 지우고, id 를 알면 exit 통지를 낸다 — `pollAdopted` 와 `retiringAlive`
+   * 어느 쪽이 먼저 발견하든 **한 번**이다(지우는 것과 알리는 것이 같은 자리다).
+   */
+  private reapRetiring(agentId: string, entry: { pid: number; incarnationId: IncarnationId | null }): void {
+    if (this.retiring.get(agentId) !== entry) return;
+    this.retiring.delete(agentId);
+    if (entry.incarnationId === null) return;
+    // 내 자식이 아니라 wait 할 수 없다 — 코드도 시그널도 모른다(`pollAdopted` 와 같은 이유).
+    this.onExit({ agentId, incarnationId: entry.incarnationId, code: null, signal: null, tailLines: [] });
   }
 
   private records(): RunnerRecord[] {
@@ -594,6 +619,10 @@ export class RunnerRegistry {
    * 않는다(`#368`): 우리가 아는 것은 "그 pid 가 이제 없다"뿐이다.
    */
   pollAdopted(): void {
+    // 회수 중인 옛 세대 러너도 같은 방식으로 관측한다 — 그 역시 내 자식이 아니다(#838).
+    for (const [agentId, entry] of [...this.retiring]) {
+      if (!this.host.kill(entry.pid, 0)) this.reapRetiring(agentId, entry);
+    }
     let changed = false;
     for (const record of [...this.byAgent.values()]) {
       if (!record.adopted || record.exited) continue;

@@ -272,8 +272,12 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     options.host ?? nodeRunnerHost,
     (notice) => {
       serverRef.current?.broadcastRunnerExit(notice);
-      // 배정이 살아 있으면 오퍼레이터가 스스로 다시 띄운다(assignments.ts::onRunnerExit).
-      for (const c of communities) c.onRunnerExit(notice.agentId, notice.code ?? null);
+      for (const c of communities) {
+        // 서버가 그 러너를 지운다 — 안 알리면 다음 hello 까지 죽은 러너가 서버 표에 남는다.
+        c.notifyRunnerExited(notice.incarnationId, notice.code ?? null);
+        // 배정이 살아 있으면 오퍼레이터가 스스로 다시 띄운다(assignments.ts::onRunnerExit).
+        c.onRunnerExit(notice.agentId, notice.code ?? null);
+      }
     },
     ledgerSink,
     options.logs === undefined ? logSink : options.logs,
@@ -299,7 +303,10 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     // 통과한 러너다. 그래서 SIGTERM 을 보낼 근거가 선다.
     for (const { entry, verdict } of plan.rejected) {
       if (verdict.kind !== 'stale-generation') continue;
-      registry.retire(entry.agentId, entry.pid);
+      registry.retire(entry.agentId, entry.pid, entry.incarnationId);
+      // 회수 러너의 링크도 받는다(#838). 그 러너의 링크는 죽은 옛 오퍼레이터를 향해 있었다 —
+      // 여기서 secret 을 적어 두지 않으면 재접속이 영영 거절돼 진행 중이던 턴을 끝낼 길이 없다.
+      if (entry.linkSecret) runnerLink.expect(entry.incarnationId, entry.agentId, entry.linkSecret);
     }
     const adopted = [];
     for (const entry of plan.adopt) {
