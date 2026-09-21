@@ -4,7 +4,7 @@
  * `claudeAccounts.ts` 와 같은 경계다: 웹뷰가 넘기는 것은 URL·id·문자열뿐이고 Rust 커맨드가
  * 데몬에 전달한다.
  */
-import type { OperatorAgentsListResult, OperatorLocalAgent } from '@harkroom/shared/daemonProtocol';
+import type { OperatorAgentsListResult, OperatorLocalAgent, OperatorRegisterResult } from '@harkroom/shared/daemonProtocol';
 
 interface TauriInternals { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> }
 
@@ -22,6 +22,11 @@ function call(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
   const invoke = internals()?.invoke;
   if (!invoke) return Promise.reject(new Error('이 빌드에는 Tauri 표면이 없다 — 오퍼레이터 로컬 설정을 다룰 수 없다'));
   return invoke(cmd, args);
+}
+
+/** 이 머신의 오퍼레이터를 이 커뮤니티에 등록한다 — 코드는 서버가 발급했고, claim 은 오퍼레이터가 한다. */
+export function registerLocalOperator(baseUrl: string, code: string, name?: string): Promise<OperatorRegisterResult> {
+  return call('operator_register', { baseUrl, code, name: name ?? null }) as Promise<OperatorRegisterResult>;
 }
 
 export function listLocalAgents(): Promise<OperatorAgentsListResult> {

@@ -26,6 +26,7 @@ const op = (id: string, name: string, extra: Partial<OperatorView> = {}): Operat
 function fakeController(operators: OperatorView[] = []) {
   const c = {
     operators: vi.fn(async () => operators),
+    api: { baseUrl: 'https://example.com' },
     operatorCapabilities: vi.fn(async (id: string) => (id === 'op-1'
       ? { agentIds: ['a-1', 'a-2'], harnesses: { 'claude-code': { installed: true, loggedIn: true }, codex: { installed: false, loggedIn: false } } }
       : Promise.reject(new Error('offline')))),
@@ -95,5 +96,27 @@ describe('오퍼레이터 능력(스펙 §3)', () => {
     expect(caps.textContent).toContain('claude-code: 설치·로그인됨');
     expect(caps.textContent).toContain('codex: 없음');
     expect(screen.queryByTestId('operator-caps-op-2')).toBeNull();
+  });
+});
+
+describe('이 머신 등록(스펙 §3) — 코드를 사람이 옮기지 않는다', () => {
+  afterEach(() => { delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__; });
+  it('Tauri 표면이 있으면 버튼 하나가 코드 발급 → 오퍼레이터 등록 → 목록 갱신으로 이어진다', async () => {
+    const invoke = vi.fn(async (cmd: string) => (cmd === 'operator_register' ? { operatorId: 'op-7', name: 'this-mac', baseUrl: 'https://example.com' } : {}));
+    (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke, metadata: { currentWindow: { label: 'main' } } };
+    const c = fakeController();
+    render(<OperatorsSettings />);
+    fireEvent.click(await screen.findByText('이 머신을 등록'));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_register', { baseUrl: 'https://example.com', code: 'hkreg_abc', name: null }));
+    expect(c.operatorRegisterCode).toHaveBeenCalled();
+    expect((await screen.findByTestId('operator-registered-here')).textContent).toContain('this-mac');
+    // 목록을 다시 읽는다 — 방금 붙은 오퍼레이터가 online 으로 서게.
+    await waitFor(() => expect(c.operators.mock.calls.length).toBeGreaterThanOrEqual(2));
+  });
+  it('Tauri 표면이 없으면(웹) 이 머신 등록 버튼이 없고 코드 발급만 있다', async () => {
+    fakeController();
+    render(<OperatorsSettings />);
+    await screen.findByText('등록 코드 발급');
+    expect(screen.queryByText('이 머신을 등록')).toBeNull();
   });
 });

@@ -34,6 +34,7 @@ import {
   parseRequest,
   readOperatorAgentRemovePayload,
   readOperatorAgentSetPayload,
+  readOperatorRegisterPayload,
   type AdoptRunnerResult,
   type DaemonError,
   type DaemonIdentity,
@@ -354,6 +355,20 @@ export class DaemonServer {
         return result;
       }
       // ── 오퍼레이터 로컬 설정(스펙 §3 능력) ─────────────────────────────────────
+      case 'operatorRegister': {
+        const port = this.deps.localAgents;
+        if (!port) return daemonError('no-such-runner', '이 daemon 에는 로컬 설정이 배선되지 않았다');
+        const p = readOperatorRegisterPayload(req.payload);
+        if (isDaemonError(p)) return p;
+        try {
+          const out = await port.register(p.baseUrl, p.code, p.name);
+          this.log(`등록: ${out.name} (${out.operatorId}) @ ${out.baseUrl}`);
+          return out;
+        } catch (err) {
+          // 코드 만료·서버 거절은 사람이 고칠 사유다 — 원문 그대로 올린다(`#368`).
+          return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
+        }
+      }
       case 'operatorAgentsList': {
         const port = this.deps.localAgents;
         if (!port) return daemonError('no-such-runner', '이 daemon 에는 로컬 설정이 배선되지 않았다');
