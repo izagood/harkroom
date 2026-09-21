@@ -334,6 +334,9 @@ interactive = createInteractiveManager({
   // 위의 configDir 와 갈리면 화면이 도는 계정과 다른 이름을 단언한다.
   claudeAccount: accountLane[0]?.name ?? null,
   claudePool: lane.pool ?? null,
+  // 다만 **세션이 다른 계정에서 만들어졌으면 그 계정을 따른다** — 멘션 턴의 페일오버가 옮긴
+  // 세션을 첫 계정으로 resume 하면 죽는다(`InteractiveTurnDeps.configDirOf`, 실측 2026-09-21).
+  configDirOf: (name) => accountLane.find((a) => a?.name === name)?.configDir ?? null,
   operatorBin: config.operatorBin,
   relay, registry, queue: mentionQueue,
   orphanMs: config.interactiveOrphanMs,

@@ -447,3 +447,32 @@ describe('#337 턴의 끝 — 레지스트리 해제·클램프·turnsRun (§5-2
     expect(h.store.get(KEY)!.sessionId).not.toBeNull();
   });
 });
+
+/**
+ * 실측(2026-09-21): 멘션 턴이 계정 페일오버로 plum 에서 돌아 세션 기록에 `claudeAccount: 'plum'`
+ * 이 남았는데, 터미널은 첫 계정(lime)으로 `--resume` 해 "No conversation found" 로 죽었다.
+ * 세션 파일은 계정 디렉터리 안에 있으므로 터미널은 **그 세션을 만든 계정**에서 열어야 한다.
+ */
+describe('인터랙티브 턴은 세션을 만든 계정을 따른다', () => {
+  it('기록의 claudeAccount 가 configDirOf 로 풀리면 그 디렉터리로 plan·세션 이름을 만든다', async () => {
+    const h = await makeHarness({
+      claudeConfigDir: '/accounts/lime', claudeAccount: 'lime',
+      configDirOf: (name: string) => (name === 'plum' ? '/accounts/plum' : null),
+    });
+    await h.store.put(KEY, { workspaceDir: '/tmp/ws', sessionId: 'uuid-plum', harness: 'claude-code', lastFedSeq: 0, turnsRun: 2, claudeAccount: 'plum' });
+    const manager = createInteractiveManager(h.deps);
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin', cols: 100, rows: 30 });
+    expect(h.plans[0]!.env.CLAUDE_CONFIG_DIR).toBe('/accounts/plum');
+    expect(h.plans[0]!.args).toContain('uuid-plum');
+  });
+  it('기록에 계정이 없거나 모르는 이름이면 첫 계정 그대로다', async () => {
+    const h = await makeHarness({
+      claudeConfigDir: '/accounts/lime', claudeAccount: 'lime',
+      configDirOf: (name: string) => (name === 'plum' ? '/accounts/plum' : null),
+    });
+    await h.store.put(KEY, { workspaceDir: '/tmp/ws', sessionId: 'uuid-x', harness: 'claude-code', lastFedSeq: 0, turnsRun: 2, claudeAccount: 'ghost' });
+    const manager = createInteractiveManager(h.deps);
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin', cols: 100, rows: 30 });
+    expect(h.plans[0]!.env.CLAUDE_CONFIG_DIR).toBe('/accounts/lime');
+  });
+});
