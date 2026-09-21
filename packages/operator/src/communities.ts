@@ -9,6 +9,7 @@
 import { createAssignmentReconciler, type AssignmentDeps } from './assignments.js';
 import { createCommunity, type CommunityInstance } from './community.js';
 import { communityKey, readConfig } from './config.js';
+import { createForwarder } from './forward.js';
 import { readLoginPath } from './loginPath.js';
 import type { RunnerLinkServer } from './runnerLink.js';
 import type { RunnerRegistry, RunnerHost } from './runners.js';
@@ -24,24 +25,21 @@ export interface StartCommunitiesDeps {
   /** 테스트가 바꿔 끼운다. 기본은 `<appDataDir>/operator/secrets/` 의 0600 파일. */
   secrets?: OperatorSecrets;
   fetchImpl?: typeof fetch;
-  /**
-   * 러너 링크(스펙 §5)와 그 소켓 경로. 둘 다 있어야 러너가 unix 링크로 붙는다 — 하나라도
-   * 없으면 러너는 옛 방식(서버 WS)으로 붙는다.
-   */
-  runnerLink?: RunnerLinkServer;
-  socketPath?: string;
+  /** 러너 링크(스펙 §5)와 그 소켓 경로 — 러너가 붙는 곳. */
+  runnerLink: RunnerLinkServer;
+  socketPath: string;
+  /** `harkroom-operator` 실행 파일 — 러너가 하네스에 `mcp-bridge` 명령으로 굽는다. */
+  operatorBin: string;
 }
 
 export async function startCommunities(deps: StartCommunitiesDeps): Promise<CommunityInstance[]> {
   const config = await readConfig(join(deps.appDataDir, 'operator', 'operator.json'));
   const secrets = deps.secrets ?? fileSecrets(join(deps.appDataDir, 'operator', 'secrets'));
-  const fetchImpl = deps.fetchImpl ?? fetch;
+  const forwarder = createForwarder({ fetchImpl: deps.fetchImpl });
   const loginPath = await readLoginPath();
   if (!loginPath) deps.log('로그인 셸 PATH 를 못 읽었다 — 러너가 하네스를 못 찾을 수 있다');
 
-  const linked = deps.runnerLink && deps.socketPath ? { link: deps.runnerLink, socketPath: deps.socketPath } : null;
-
-  const runnerDeps = (baseUrl: string, token: string, community: { current: CommunityInstance | null }): AssignmentDeps => ({
+  const runnerDeps = (community: { current: CommunityInstance | null }): AssignmentDeps => ({
     async spawn(agentId, env, runnerId) {
       const before = deps.registry.currentIncarnation(agentId);
       const record = await deps.registry.spawnRunner(agentId, env, runnerId);
@@ -59,18 +57,11 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
     listRunners: () => deps.registry.listRunners()
       .filter((r) => r.alive)
       .map((r) => ({ agentId: r.agentId, runnerId: r.incarnationId, pid: r.pid })),
-    secrets,
-    // 단계 2~3 한정 — 단계 4 가 지운다(서버의 같은 라우트와 함께).
-    async fetchAgentPat(base, agentId) {
-      const res = await fetchImpl(`${base}/operator/agents/${agentId}/pat`, {
-        method: 'POST', headers: { authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`PAT 발급 실패: ${res.status}`);
-      return ((await res.json()) as { token: string }).token;
-    },
     loginPath,
     appVersion: deps.appVersion,
-    ...(linked ? { link: linked.link, socketPath: linked.socketPath } : {}),
+    link: deps.runnerLink,
+    socketPath: deps.socketPath,
+    operatorBin: deps.operatorBin,
     schedule: (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return () => clearTimeout(t); },
     log: deps.log,
   });
@@ -81,10 +72,10 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
     const token = await secrets.getToken(baseUrl);
     if (!token) { deps.log(`커뮤니티 건너뜀(토큰 없음 — 등록이 필요하다): ${baseUrl}`); continue; }
     const ref: { current: CommunityInstance | null } = { current: null };
-    const reconciler = createAssignmentReconciler(runnerDeps(baseUrl, token, ref));
+    const reconciler = createAssignmentReconciler(runnerDeps(ref));
     const community = createCommunity({
       baseUrl, token, agents: section.agents, reconciler, log: deps.log,
-      ...(linked ? { runnerLink: linked.link } : {}),
+      runnerLink: deps.runnerLink, forwarder,
     });
     ref.current = community;
     community.start();

@@ -19,10 +19,29 @@
 // 닿지 않는다. 즉 이 핸들러가 아예 안 불려도(SIGKILL) 러너는 산다 — 이 핸들러가 하는
 // 일은 러너를 살리는 것이 아니라 **잔해를 남기지 않는 것**이다.
 import { parseDaemonArgs, describeArgs } from './args.js';
+import { runMcpBridge } from './mcpBridge.js';
 import { EXIT_INCONCLUSIVE, EXIT_OCCUPIED, startDaemon } from './run.js';
 
+/**
+ * `harkroom-operator mcp-bridge` — 하네스가 stdio MCP 서버로 띄우는 갈래(스펙 2026-09-20 §5).
+ * 러너 env(오퍼레이터가 spawn 때 심은 셋)를 상속한다. 여기서 끝나는 프로세스라 daemon 을 세우지
+ * 않는다 — 인자 파서도 소켓 획득도 지나지 않는다.
+ */
+async function mcpBridgeMain(): Promise<void> {
+  const socketPath = process.env.HARKROOM_OPERATOR_SOCKET;
+  const runnerId = process.env.HARKROOM_RUNNER_ID;
+  const secret = process.env.HARKROOM_RUNNER_SECRET;
+  if (!socketPath || !runnerId || !secret) {
+    console.error('mcp-bridge: HARKROOM_OPERATOR_SOCKET·HARKROOM_RUNNER_ID·HARKROOM_RUNNER_SECRET 이 필요하다 — 러너가 띄운 하네스 안에서만 돈다');
+    process.exit(2);
+  }
+  await runMcpBridge({ socketPath, runnerId, secret }, { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr });
+}
+
 async function main(): Promise<void> {
-  const args = parseDaemonArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  if (argv[0] === 'mcp-bridge') { await mcpBridgeMain(); return; }
+  const args = parseDaemonArgs(argv);
   // stdout 으로 적는다 — 앱이 사이드카를 spawn 하면 이 줄이 그대로 파이프로 온다.
   console.log(`harkroom daemon 기동 ${describeArgs(args)}`);
 

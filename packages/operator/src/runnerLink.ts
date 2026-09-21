@@ -21,7 +21,9 @@
 import { timingSafeEqual } from 'node:crypto';
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
 import { encodeLine, NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
-import { checkRunnerHello } from '@harkroom/shared/runnerLink';
+import {
+  checkRunnerHello, isRunnerLinkRequest, type RunnerLinkRequest, type RunnerLinkResponse,
+} from '@harkroom/shared/runnerLink';
 
 /** `net.Socket` 의 최소 표면. 테스트가 가짜를 준다. */
 export interface LinkSocket {
@@ -33,8 +35,13 @@ export interface LinkSocket {
 }
 
 export interface RunnerLinkDeps {
-  /** 인증된 러너의 프레임. `agentId` 는 `expect` 가 적어 둔 값이다 — 러너의 주장이 아니다. */
+  /** 인증된 러너의 릴레이 프레임. `agentId` 는 `expect` 가 적어 둔 값이다 — 러너의 주장이 아니다. */
   onFrame(runnerId: string, agentId: string, frame: RelayRunnerFrame): void;
+  /**
+   * 요청 프레임(`mcp.request`·`http.forward`, 스펙 §5 MCP 행). 답은 **온 소켓으로** 돌아간다 —
+   * relay 소켓이든 브릿지 소켓이든. 없으면 요청은 status 0 으로 거절된다(삼키지 않는다).
+   */
+  onRequest?(runnerId: string, agentId: string, req: RunnerLinkRequest): Promise<RunnerLinkResponse>;
   onClose?(runnerId: string): void;
   log(line: string): void;
 }
@@ -73,7 +80,21 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
     deps.onClose?.(runnerId);
   };
 
-  const handleLine = (runnerId: string, agentId: string, value: unknown): void => {
+  const refuse = (req: RunnerLinkRequest, message: string): RunnerLinkResponse =>
+    req.type === 'mcp.request'
+      ? { type: 'mcp.error', id: req.id, status: 0, message }
+      : { type: 'http.response', id: req.id, status: 0, body: message };
+
+  const handleLine = (runnerId: string, agentId: string, socket: LinkSocket, kind: 'relay' | 'bridge', value: unknown): void => {
+    if (isRunnerLinkRequest(value)) {
+      const answer = deps.onRequest
+        ? deps.onRequest(runnerId, agentId, value).catch((err: unknown) => refuse(value, err instanceof Error ? err.message : String(err)))
+        : Promise.resolve(refuse(value, '이 오퍼레이터에는 전달이 배선되지 않았다'));
+      void answer.then((res) => { try { socket.write(encodeLine(res)); } catch { /* 끊긴 소켓 — 답할 곳이 없다 */ } });
+      return;
+    }
+    // 브릿지는 PTY 를 모른다 — 요청이 아닌 것은 버린다.
+    if (kind === 'bridge') return;
     // 얕게만 본다 — 타입 문자열이 있으면 릴레이 프레임으로 넘긴다. 깊은 검증은 서버 허브의 일이다.
     if (typeof value !== 'object' || value === null || typeof (value as { type?: unknown }).type !== 'string') return;
     deps.onFrame(runnerId, agentId, value as RelayRunnerFrame);
@@ -95,24 +116,30 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
         socket.destroy();
         return false;
       }
-      const { runnerId } = claim;
-      // 같은 러너가 다시 붙으면 앞 소켓을 놓는다 — 러너 재접속이 앞 소켓의 close 보다 먼저 올 수 있다.
-      const previous = linked.get(runnerId);
-      if (previous && previous !== socket) { linked.delete(runnerId); previous.destroy(); }
-      linked.set(runnerId, socket);
+      const { runnerId, kind } = claim;
+      if (kind === 'relay') {
+        // 같은 러너가 다시 붙으면 앞 소켓을 놓는다 — 러너 재접속이 앞 소켓의 close 보다 먼저 올 수 있다.
+        const previous = linked.get(runnerId);
+        if (previous && previous !== socket) { linked.delete(runnerId); previous.destroy(); }
+        linked.set(runnerId, socket);
+      }
 
       const decoder = new NdjsonDecoder();
       socket.removeAllListeners('data');
       socket.on('data', (chunk) => {
         for (const line of decoder.push(chunk)) {
-          if (!line.ok) { if (line.error.code === 'line-too-long') drop(runnerId, socket), socket.destroy(); continue; }
-          handleLine(runnerId, entry.agentId, line.value);
+          if (!line.ok) { if (line.error.code === 'line-too-long') { if (kind === 'relay') drop(runnerId, socket); socket.destroy(); } continue; }
+          handleLine(runnerId, entry.agentId, socket, kind, line.value);
         }
       });
-      socket.on('close', () => drop(runnerId, socket));
-      socket.on('error', () => drop(runnerId, socket));
-      for (const value of pending) handleLine(runnerId, entry.agentId, value);
-      deps.log(`러너 링크 연결: runnerId=${runnerId} agent=${entry.agentId}`);
+      if (kind === 'relay') {
+        socket.on('close', () => drop(runnerId, socket));
+        socket.on('error', () => drop(runnerId, socket));
+      } else {
+        socket.on('error', () => socket.destroy());
+      }
+      for (const value of pending) handleLine(runnerId, entry.agentId, socket, kind, value);
+      deps.log(`러너 링크 연결(${kind}): runnerId=${runnerId} agent=${entry.agentId}`);
       return true;
     },
 

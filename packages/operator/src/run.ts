@@ -183,6 +183,17 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     onFrame: (runnerId, agentId, frame) => {
       for (const c of communities) if (c.knowsAgent(agentId)) c.onRunnerFrame(runnerId, frame);
     },
+    // 러너의 MCP·REST 요청 — 그 에이전트를 아는 커뮤니티의 서버로 나른다(스펙 §5). 인증은
+    // 그 커뮤니티의 오퍼레이터 토큰 + 에이전트 id 로 바뀐다.
+    onRequest: async (_runnerId, agentId, req) => {
+      const c = communities.find((x) => x.knowsAgent(agentId));
+      if (!c) {
+        return req.type === 'mcp.request'
+          ? { type: 'mcp.error', id: req.id, status: 0, message: '이 에이전트를 아는 커뮤니티가 없다' }
+          : { type: 'http.response', id: req.id, status: 0, body: '이 에이전트를 아는 커뮤니티가 없다' };
+      }
+      return c.forward(agentId, req);
+    },
     log,
   });
 
@@ -403,7 +414,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       communities = await startCommunities({
         appDataDir, registry, host: options.host ?? nodeRunnerHost,
         appVersion: args.appVersion ?? null, log,
-        runnerLink, socketPath: outcome.paths.socketPath,
+        runnerLink, socketPath: outcome.paths.socketPath, operatorBin: entryPath,
       });
     } catch (err) {
       log(`커뮤니티 기동 실패(소켓 서비스는 계속): ${err instanceof Error ? err.message : String(err)}`);
