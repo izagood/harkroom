@@ -1517,6 +1517,9 @@ export const ko = {
   'agents.assignment.unassign': '배정 해제',
   'agents.assignment.noOperators': '등록된 오퍼레이터가 없다 — 먼저 Operators 에서 등록하라.',
   'agents.assignment.failed': '배정을 저장하지 못했다: {reason}',
+  'agents.assignment.refusedPersonal': '오퍼레이터가 띄우기를 거절했다: 개인 자격증명을 쥔 에이전트인데 그 오퍼레이터가 소유자의 것이 아니다.',
+  'agents.assignment.refusedMcp': '오퍼레이터가 띄우기를 거절했다: 그 머신에 MCP 서버 {names} 의 정의가 없다(operator/mcp-servers.json 또는 ~/.claude.json).',
+  'agents.assignment.refusedOther': '오퍼레이터가 띄우기를 거절했다: {reason}',
   'agents.assignment.notCapable': '그 오퍼레이터의 로컬 설정에 이 에이전트가 없어 거절했다.',
   'agents.assignment.note':
     '배정하면 그 오퍼레이터가 러너를 띄운다. 다른 곳으로 옮기면 옛 러너는 진행 중인 턴을 마치고 물러난다. '

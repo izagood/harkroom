@@ -463,7 +463,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     agentPresence,
   });
   await registerAuthRoutes(app, deps.pool);
-  await registerAccountRoutes(app, deps.pool);
+  // 오퍼레이터 허브(스펙 2026-09-20 §4)를 여기서 만든다 — 계정 라우트가 배정 거절 사유를 여기서
+  // 읽는다. 라우트 등록은 아래(릴레이 뒤)다: 허브는 소켓이 붙기 전엔 빈 표일 뿐이라 순서가 무관하다.
+  const operatorHub = createOperatorHub();
+  await registerAccountRoutes(app, deps.pool, { operatorHub });
   // 권한 부여·회수·역할(스펙 2026-09-20 §6). 계정 라우트 바로 뒤 — 같은 `/accounts/:id/*` 표면이다.
   await registerGrantRoutes(app, deps.pool);
   await registerTeamRoutes(app, deps.pool);
@@ -496,7 +499,6 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // 오퍼레이터 신원과 채널(스펙 2026-09-20 §3·§4). 릴레이와 같은 이유로 registerWs·registerAuth
   // 뒤다. 허브는 연결이 살아 있는 동안의 사실(능력·러너)만 든다 — 저장하지 않는다.
-  const operatorHub = createOperatorHub();
   await registerOperatorRoutes(app, deps.pool, {
     hub: operatorHub,
     // 소켓 수명 규칙은 `/ws`·릴레이와 **같은 값**이다 — 갈라지면 더 민감한 쪽이 더 느슨해진다.

@@ -3616,6 +3616,9 @@ export const en = {
   'agents.assignment.unassign': 'Unassign',
   'agents.assignment.noOperators': 'No operator is registered yet — register one under Operators first.',
   'agents.assignment.failed': 'The assignment was not saved: {reason}',
+  'agents.assignment.refusedPersonal': 'The operator refused to start it: it holds personal credentials and that operator is not the owner\u2019s.',
+  'agents.assignment.refusedMcp': 'The operator refused to start it: no definition for MCP server(s) {names} on that machine (operator/mcp-servers.json or ~/.claude.json).',
+  'agents.assignment.refusedOther': 'The operator refused to start it: {reason}',
   'agents.assignment.notCapable': 'That operator has not listed this agent in its local config, so it refused.',
   'agents.assignment.note':
     'Assigning tells that operator to start the runner; reassigning lets the old runner finish its turn first. '

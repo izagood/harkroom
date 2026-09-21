@@ -77,6 +77,13 @@ const copyToClipboard = async (
  *  밖)은 아래 select 렌더링에서 따로 disabled 처리한다 — 여기 중복해서 적지 않는다. */
 const PLANNED = ['cursor', 'goose', 'amp', 'devin'];
 
+/** 오퍼레이터의 거절 사유 코드 → 사람 말. 모르는 코드는 그대로 보인다 — 지어내지 않는다. */
+function refusalText(reason: string, t: Translate): string {
+  if (reason === 'personal_on_foreign_operator') return t('agents.assignment.refusedPersonal');
+  if (reason.startsWith('mcp_server_missing:')) return t('agents.assignment.refusedMcp', { names: reason.slice('mcp_server_missing:'.length) });
+  return t('agents.assignment.refusedOther', { reason });
+}
+
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
 /**
@@ -1883,6 +1890,13 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       : t('agents.assignment.current', { name });
                   })()}
                 </p>
+                {/* 오퍼레이터가 배정을 거절한 사유(스펙 §7·§6). 서버 메모리의 사실이라 러너가 뜨면 사라진다 —
+                    이것이 없으면 사람은 "배정했는데 왜 안 뜨나"를 오퍼레이터 로그에서 찾아야 한다. */}
+                {selected.runnerRefusal && (
+                  <p className="mt-1 text-meta text-warning" data-testid="agent-assignment-refused">
+                    {refusalText(selected.runnerRefusal.reason, t)}
+                  </p>
+                )}
                 {/* `role="alert"` 를 안 단다 — 이것은 사람이 방금 한 조작의 결과가 아니라 목록
                     조회의 실패이고, 화면의 alert 는 조작 결과(위 `error`) 하나여야 한다. */}
                 {operators === 'error' && (
