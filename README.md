@@ -266,7 +266,7 @@ Requirements appear only when you run **agents**, and they depend on what you tu
 
 #### `node` — required for any agent
 
-The app ships two sidecars (`harkroom-runner`, `harkroom-daemon`) that run the agent turns.
+The app ships two sidecars (`harkroom-runner`, `harkroom-operator`) that run the agent turns.
 They are bundled JavaScript with a `#!/usr/bin/env node` shebang, not native binaries, so
 the system `node` on your `PATH` is what actually executes them:
 

@@ -168,7 +168,7 @@ describe('회귀선 1 — 러너의 출력이 파일로 간다 (#434)', () => {
   it('로그 파일을 못 열어도 러너 기동을 막지 않는다', async () => {
     const appDataDir = 임시앱데이터();
     // 디렉터리가 있어야 할 자리에 파일을 놓는다.
-    writeFileSync(join(appDataDir, 'daemon'), '나는 디렉터리가 아니다');
+    writeFileSync(join(appDataDir, 'operator'), '나는 디렉터리가 아니다');
 
     const 남은로그: string[] = [];
     const registry = new RunnerRegistry(
@@ -252,7 +252,7 @@ describe('회전 — spawn 직전에 한 번만 본다', () => {
 
 describe('로그 경로 — 소켓에서 온 문자열이 경로가 되지 않는다 (#250 의 경계)', () => {
   /**
-   * `agentId` 는 소켓 너머에서 온다. 그대로 이어 붙이면 `<appDataDir>/daemon/` 밖의
+   * `agentId` 는 소켓 너머에서 온다. 그대로 이어 붙이면 `<appDataDir>/operator/` 밖의
    * 파일을 daemon 권한으로 열고, 회전 경로에서는 `rename`·`unlink` 까지 닿는다 —
    * **임의 파일 파괴**다.
    *
@@ -264,9 +264,9 @@ describe('로그 경로 — 소켓에서 온 문자열이 경로가 되지 않�
     const 나쁜값 = ['../../../etc/passwd', 'a/b/c', './..', '..'];
     for (const id of 나쁜값) {
       const path = runnerLogPath(appDataDir, id);
-      expect(path.startsWith(`${appDataDir}/daemon/`)).toBe(true);
+      expect(path.startsWith(`${appDataDir}/operator/`)).toBe(true);
       expect(path).not.toContain('/..');
-      expect(path.slice(`${appDataDir}/daemon/`.length)).not.toContain('/');
+      expect(path.slice(`${appDataDir}/operator/`.length)).not.toContain('/');
     }
   });
 

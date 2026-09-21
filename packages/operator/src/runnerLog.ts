@@ -161,7 +161,7 @@ export function runnerLogFileName(agentId: string): string {
 
 /** `<appDataDir>/daemon/runner-<agentId>.log`. **경로 규칙은 여기 하나뿐이다.** */
 export function runnerLogPath(appDataDir: string, agentId: string): string {
-  return join(appDataDir, 'daemon', runnerLogFileName(agentId));
+  return join(appDataDir, 'operator', runnerLogFileName(agentId));
 }
 
 /**
@@ -208,7 +208,7 @@ export function openRunnerLog(
   const log = options.log ?? (() => undefined);
   const path = runnerLogPath(appDataDir, agentId);
   try {
-    mkdirSync(join(appDataDir, 'daemon'), { recursive: true });
+    mkdirSync(join(appDataDir, 'operator'), { recursive: true });
     rotateIfLarge(path, options.maxBytes ?? RUNNER_LOG_MAX_BYTES, log);
     // 0600 — 러너 로그에는 하네스가 뱉은 것이 그대로 들어간다(경로·환경·오류 원문).
     // 소켓·토큰·장부와 같은 디렉터리이고, 같은 자리의 파일이 서로 다른 권한을 갖는 것

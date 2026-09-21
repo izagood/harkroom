@@ -2,7 +2,7 @@
 // 앱과 함께 배포되는 Node 사이드카를 **전부** 만든다.
 //
 // - `harkroom-runner` — 러너(#431 1단계 B, `#425`·`#429` 를 닫았다). `node-pty` 를 곁들인다.
-// - `harkroom-daemon` — daemon(#431 2단계 a). **네이티브 의존이 없다.**
+// - `harkroom-operator` — daemon(#431 2단계 a). **네이티브 의존이 없다.**
 //
 // ## 왜 스크립트를 둘로 나누지 않고 하나로 묶었는가
 //
@@ -28,7 +28,7 @@ async function main() {
   rmSync(binariesDir, { recursive: true, force: true });
 
   const agentRoot = join(repoRoot, 'packages', 'agent');
-  const daemonRoot = join(repoRoot, 'packages', 'daemon');
+  const operatorRoot = join(repoRoot, 'packages', 'operator');
 
   const runner = await buildSidecar({
     name: 'harkroom-runner',
@@ -41,9 +41,9 @@ async function main() {
   });
 
   const daemon = await buildSidecar({
-    name: 'harkroom-daemon',
-    entry: join(daemonRoot, 'src', 'main.ts'),
-    resolveFrom: daemonRoot,
+    name: 'harkroom-operator',
+    entry: join(operatorRoot, 'src', 'main.ts'),
+    resolveFrom: operatorRoot,
     // **daemon 은 `node-pty` 를 곁들이지 않는다.** daemon 이 하는 일은 러너 프로세스를
     // spawn 하고 unix 소켓으로 말하는 것이고, 그 어느 것도 PTY 를 요구하지 않는다 —
     // PTY 는 하네스를 실제로 돌리는 러너의 일이다. 네이티브 애드온을 안 곁들이므로
@@ -55,7 +55,7 @@ async function main() {
   console.log(`러너 사이드카 빌드 완료: ${runner.outfile}`);
   console.log(`  구워 넣은 버전: ${version}`);
   console.log(`  node-pty prebuild: ${target.platform}-${target.arch}`);
-  console.log(`daemon 사이드카 빌드 완료: ${daemon.outfile}`);
+  console.log(`operator 사이드카 빌드 완료: ${daemon.outfile}`);
   console.log('  네이티브 의존: 없음 (PTY 는 러너의 일이다)');
 }
 

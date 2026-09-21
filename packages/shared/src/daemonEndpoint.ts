@@ -178,8 +178,11 @@ export function daemonEndpointPaths(
   appDataDir: string,
   protocolVersion: number = DAEMON_PROTOCOL_VERSION,
 ): DaemonEndpointPaths {
-  const dir = join(appDataDir, 'daemon');
-  const base = `daemon-v${protocolVersion}`;
+  // 개명(스펙 2026-09-20 §3): `daemon/daemon-v1.*` → `operator/operator-v1.*`. 디렉터리와
+  // 파일명이 함께 바뀌므로 옛 daemon 과 새 operator 는 서로를 영영 못 만난다 — 그것이 의도다
+  // (세대 격리). 옛 장부(`daemon/runners-v1.json`)만 고아 입양이 한 번 더 읽는다.
+  const dir = join(appDataDir, 'operator');
+  const base = `operator-v${protocolVersion}`;
   return {
     dir,
     socketPath: join(dir, `${base}.sock`),

@@ -127,7 +127,7 @@ describe('UpdatesSettings — 확인 → 설치 흐름', () => {
  * 통과한다. 지금도 유효한 안내가 남아 있는지 여기서 함께 잰다.
  *
  * 이 문장이 여전히 참이라는 근거는 코드에 있다: 러너는 앱이 아니라 daemon 이 소유하고
- * (`packages/daemon/src/runners.ts` 의 `detached: true`), daemon 자신도 `setsid` 로
+ * (`packages/operator/src/runners.ts` 의 `detached: true`), daemon 자신도 `setsid` 로
  * 앱과 다른 프로세스 그룹에 있다(`src-tauri/src/main.rs` 의 `detached_command`).
  * 앱에는 종료 시 러너를 죽이는 경로가 없고, 다시 뜰 때 살아 있는 daemon 에 다시 붙는다
  * (`daemon_client.rs` 의 `ensure_daemon`).

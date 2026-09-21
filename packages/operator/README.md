@@ -1,9 +1,9 @@
-# @harkroom/daemon
+# @harkroom/operator
 
 harkroom daemon. 앱이 아니라 이쪽이 러너를 소유하게 만드는 상주 프로세스다(`#431` 2단계).
 
 이 패키지는 지금 **소켓을 열고, 토큰으로 인증하고, 러너를 소유하고, 앞선 daemon 이 남긴
-고아 러너를 다시 소유한다**(`#431` 2단계-b·c). 배포 경로(Tauri 사이드카 `harkroom-daemon`)는
+고아 러너를 다시 소유한다**(`#431` 2단계-b·c). 배포 경로(Tauri 사이드카 `harkroom-operator`)는
 2단계-a 가 이미 깔았다.
 
 ## 무엇을 하는가
@@ -114,7 +114,7 @@ unix 소켓으로 말하는 것이고, 그 어느 것도 네이티브 애드온�
 끌어들여 daemon 사이드카가 조용히 네이티브 의존을 갖게 된다 — 그리고 그 사실은 daemon 을
 배포한 앱에서 `node-pty` 를 못 찾아 스폰이 실패할 때 처음 드러난다.
 
-패키지를 나누면 그 경계가 **빌드가 강제하는 것**이 된다: `packages/daemon/package.json` 에
+패키지를 나누면 그 경계가 **빌드가 강제하는 것**이 된다: `packages/operator/package.json` 에
 `node-pty` 가 없으므로 daemon 이 그것을 import 하면 typecheck 와 번들이 그 자리에서 깨진다.
 `scripts/build-sidecars.mjs` 가 daemon 에 `nativeDeps: []` 를 주는 것도 같은 판단의 다른 쪽
 면이다 — external 목록이 비어 있으면 번들에 못 들어가는 것을 눈감아 줄 여지 자체가 없다.

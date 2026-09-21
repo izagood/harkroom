@@ -8,18 +8,18 @@ describe('parseDaemonArgs — 앱이 넘기는 인자 (#431 2단계-a)', () => {
    */
   it('orca 실측 형태의 인자를 전부 판다', () => {
     const args = parseDaemonArgs([
-      '--socket', '/tmp/harkroom/daemon/daemon-v1.sock',
-      '--token', '/tmp/harkroom/daemon/daemon-v1.token',
-      '--pid-record', '/tmp/harkroom/daemon/daemon-v1.pid',
+      '--socket', '/tmp/harkroom/operator/operator-v1.sock',
+      '--token', '/tmp/harkroom/operator/operator-v1.token',
+      '--pid-record', '/tmp/harkroom/operator/operator-v1.pid',
       '--launch-nonce', '0d918a6a-53b5-47d2-9aff-6a00b495ab89',
-      '--entry-path', '/Applications/Harkroom.app/Contents/MacOS/harkroom-daemon',
+      '--entry-path', '/Applications/Harkroom.app/Contents/MacOS/harkroom-operator',
       '--app-version', '0.1.0',
     ]);
-    expect(args.socket).toBe('/tmp/harkroom/daemon/daemon-v1.sock');
-    expect(args.token).toBe('/tmp/harkroom/daemon/daemon-v1.token');
-    expect(args.pidRecord).toBe('/tmp/harkroom/daemon/daemon-v1.pid');
+    expect(args.socket).toBe('/tmp/harkroom/operator/operator-v1.sock');
+    expect(args.token).toBe('/tmp/harkroom/operator/operator-v1.token');
+    expect(args.pidRecord).toBe('/tmp/harkroom/operator/operator-v1.pid');
     expect(args.launchNonce).toBe('0d918a6a-53b5-47d2-9aff-6a00b495ab89');
-    expect(args.entryPath).toBe('/Applications/Harkroom.app/Contents/MacOS/harkroom-daemon');
+    expect(args.entryPath).toBe('/Applications/Harkroom.app/Contents/MacOS/harkroom-operator');
     expect(args.appVersion).toBe('0.1.0');
     expect(args.unknown).toEqual([]);
   });

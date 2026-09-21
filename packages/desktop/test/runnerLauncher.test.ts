@@ -918,7 +918,7 @@ describe('9. 중복 방지·정리', () => {
 // 보면 `adopted` 로 두고 새로 띄우지 않는다(중복 금지). 번들에 담긴 수정이 도는 러너에
 // 닿는 길은 그 러너를 한 번 종료시키는 것 하나뿐이다 — 이 절이 그 길을 만든다.
 //
-// **SIGTERM 은 graceful 이고 SIGKILL 승격이 없다**(`packages/daemon/src/runners.ts` 의
+// **SIGTERM 은 graceful 이고 SIGKILL 승격이 없다**(`packages/operator/src/runners.ts` 의
 // "SIGTERM 하나. 여기서 끝이다" 와 그 회귀선). 러너는 진행 중인 턴을 마친 뒤에야 죽고,
 // 실측된 턴은 5분이 넘은 것도 있다. 그래서 재기동은 한 동작이 아니라 **예약**이다:
 // 죽이라고 말하고, 실제로 죽은 것을 확인한 뒤에 띄운다. 그 시차가 화면에 있어야 한다는
