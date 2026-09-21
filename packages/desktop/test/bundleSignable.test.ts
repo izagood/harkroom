@@ -144,7 +144,7 @@ describe.skipIf(!macOS)('Mach-O 를 내용으로 찾는다 (`--deep` 이 놓친 
    * 대조군 — **Mach-O 가 아닌 것은 안 잡아야 한다.** 이것이 없으면 위 테스트는
    * "전부 다 Mach-O 라고 답하는" 구현으로도 통과한다.
    *
-   * 사이드카(`harkroom-runner`·`harkroom-daemon`)가 정확히 이 경우다: 셔뱅 스크립트라
+   * 사이드카(`harkroom-runner`·`harkroom-operator`)가 정확히 이 경우다: 셔뱅 스크립트라
    * Mach-O 가 아니고, 서명 대상이 아닌 것이 맞다.
    */
   it('셔뱅 스크립트는 Mach-O 가 아니다 (사이드카가 이 경우다)', () => {

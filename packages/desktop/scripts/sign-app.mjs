@@ -57,7 +57,7 @@
 //
 // `file -b <경로>` 가 `Mach-O` 를 말하는지로 판정한다 — **파일 내용을 본다.** 실측으로
 // 확인한 결과(이 번들, 2026-09-06): 이 방식이 `pty.node`·`spawn-helper`·`harkroom-desktop`
-// 셋을 찾고, 사이드카 둘(`harkroom-runner`·`harkroom-daemon`)은 **셔뱅 스크립트라 Mach-O 가
+// 셋을 찾고, 사이드카 둘(`harkroom-runner`·`harkroom-operator`)은 **셔뱅 스크립트라 Mach-O 가
 // 아니어서 제외된다.**
 //
 // ## 그렇다고 사이드카를 안 서명해도 되는 것은 아니다 — 실측으로 배운 것
@@ -329,7 +329,7 @@ function main() {
 
   // ── 2) `Contents/MacOS/` 의 사이드카 — **Mach-O 가 아니어도 서명해야 한다** ───
   //
-  // 이것을 실측으로 배웠다. 사이드카(`harkroom-runner`·`harkroom-daemon`)는 셔뱅 스크립트라
+  // 이것을 실측으로 배웠다. 사이드카(`harkroom-runner`·`harkroom-operator`)는 셔뱅 스크립트라
   // Mach-O 가 **아니고**, 그래서 위 1) 의 내용 기반 탐지가 올바르게 제외한다. 그런데
   // 그것만으로 끝내면 마지막 `.app` 서명이 그대로 실패한다:
   //

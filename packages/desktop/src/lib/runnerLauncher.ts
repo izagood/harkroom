@@ -111,7 +111,7 @@ export type RunnerStatus =
    * 재기동을 **예약했다** — 죽이라고 말했고, 실제 종료를 기다리는 중이다.
    *
    * 이 상태가 따로 있어야 하는 이유: SIGTERM 은 graceful 이고 SIGKILL 승격이 없으므로
-   * (`packages/daemon/src/runners.ts`) 러너는 진행 중인 턴을 마친 뒤에야 죽는다 —
+   * (`packages/operator/src/runners.ts`) 러너는 진행 중인 턴을 마친 뒤에야 죽는다 —
    * 실측 5분이 넘은 턴도 있다. 그동안 'running' 으로 두면 사람에게는 "눌렀는데 아무 일이
    * 없다"이고, 'stopped' 로 두면 없는 종료를 단정한다. 둘 다 거짓 신호다(design.md §4).
    */

@@ -133,7 +133,7 @@ compose 밖에서 따로 띄우고 `AVCS_BASE_URL` 로 가리킨다(§0, §5):
 harkroom/
   packages/server     # Fastify: REST + WS + MCP + avcs lease 투영
   packages/agent      # 멘션 러너: PTY 안에서 harness CLI 를 돌린다
-  packages/daemon     # 러너 프로세스의 소유자 (기계마다 하나, 앱과 unix 소켓으로 말한다)
+  packages/operator   # 러너 프로세스의 소유자 (기계마다 하나, 앱과 unix 소켓으로 말한다)
   packages/desktop    # Tauri 2 + React
   packages/shared     # 프로토콜 타입·스키마 (server/desktop/agent/daemon 공유)
 ```
@@ -142,7 +142,7 @@ MVP 제외: cli, 모바일, 웹 UI, 상주 에이전트 러너.
 
 #### daemon 과 server 의 경계 — **누가 무엇의 주인인가**
 
-`packages/daemon` 은 뒤늦게 생긴 패키지이고(위 목록에 넷만 적혀 있던 동안 실제로는
+`packages/operator` 은 뒤늦게 생긴 패키지이고(위 목록에 넷만 적혀 있던 동안 실제로는
 다섯이었다), 그 공백 때문에 *"에이전트 관리는 daemon 이 하니 에이전트에 관한 통지도
 daemon 이 중계하면 되지 않나"* 라는 물음이 반복됐다. 그 답을 여기 적는다.
 

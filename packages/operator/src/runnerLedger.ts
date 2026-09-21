@@ -77,7 +77,7 @@ import type { IncarnationId } from '@harkroom/shared/daemonProtocol';
 export const RUNNER_LEDGER_VERSION = 1;
 
 export function runnerLedgerPath(appDataDir: string): string {
-  return join(appDataDir, 'daemon', `runners-v${RUNNER_LEDGER_VERSION}.json`);
+  return join(appDataDir, 'operator', `runners-v${RUNNER_LEDGER_VERSION}.json`);
 }
 
 /**
@@ -144,10 +144,22 @@ interface LedgerFile {
  * 버전이 다르면 **읽지 않는다.** 항목의 모양을 모르는 채 pid 를 꺼내 쓰면 무관한
  * 프로세스를 채택할 수 있다.
  */
-export async function readRunnerLedger(appDataDir: string): Promise<RunnerLedgerEntry[]> {
+/**
+ * 개명 전(`daemon/`) 장부. 오퍼레이터로 이름이 바뀐 첫 기동에서 **옛 daemon 이 띄운 러너**가
+ * 고아로 남아 있다 — 그것을 다시 소유하려면 옛 장부를 한 번 더 읽어야 한다. 쓰지는 않는다:
+ * writer 는 새 장부 하나다. 옛 파일은 사람이 지운다(운영 문서).
+ */
+export function legacyRunnerLedgerPath(appDataDir: string): string {
+  return join(appDataDir, 'daemon', `runners-v${RUNNER_LEDGER_VERSION}.json`);
+}
+
+export async function readRunnerLedger(
+  appDataDir: string,
+  path: string = runnerLedgerPath(appDataDir),
+): Promise<RunnerLedgerEntry[]> {
   let text: string;
   try {
-    text = await readFile(runnerLedgerPath(appDataDir), 'utf8');
+    text = await readFile(path, 'utf8');
   } catch {
     return [];
   }
@@ -221,7 +233,7 @@ export async function writeRunnerLedger(
   const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
   const body: LedgerFile = { version: RUNNER_LEDGER_VERSION, runners: [...entries] };
   try {
-    await mkdir(join(appDataDir, 'daemon'), { recursive: true });
+    await mkdir(join(appDataDir, 'operator'), { recursive: true });
     // 0600 — 장부에는 pid 와 agentId 가 있다. 비밀은 아니지만 소켓·토큰과 같은
     // 디렉터리에 있고, 같은 자리의 파일이 서로 다른 권한을 갖는 것 자체가 사고의 씨앗이다.
     await writeFile(tmp, JSON.stringify(body), { mode: 0o600 });

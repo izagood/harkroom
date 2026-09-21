@@ -97,7 +97,7 @@ export function UpdatesSettings() {
         재시작이 무엇을 건드리고 무엇을 안 건드리는지.
 
         **에이전트 문장은 유지한다** — 실측으로 여전히 참이고, `#431` 이후 오히려
-        더 강해졌다. 러너는 앱이 아니라 daemon 이 소유하고(`packages/daemon/src/runners.ts`),
+        더 강해졌다. 러너는 앱이 아니라 daemon 이 소유하고(`packages/operator/src/runners.ts`),
         daemon 자신도 `setsid` 로 앱과 다른 프로세스 그룹에 있다
         (`src-tauri/src/main.rs` 의 `detached_command`). 앱에는 종료 시 러너를 죽이는
         경로가 아예 없고, 다시 뜰 때는 살아 있는 daemon 에 **다시 붙는다**

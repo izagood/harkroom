@@ -21,6 +21,7 @@ import type { DaemonArgs } from './args.js';
 import { describeVerdict, planAdoption, psIdentityProbe, type ProcessIdentityProbe } from './adopt.js';
 import {
   createRunnerLedgerWriter,
+  legacyRunnerLedgerPath,
   readRunnerLedger,
   runnerLedgerPath,
   type RunnerLedgerEntry,
@@ -160,7 +161,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   const { args } = options;
   const log = options.log ?? ((line: string) => console.log(line));
   if (!args.socket) throw new Error('--socket 이 없다 — daemon 은 어디에 소켓을 열지 모른다');
-  const entryPath = args.entryPath ?? resolve(process.argv[1] ?? 'harkroom-daemon');
+  const entryPath = args.entryPath ?? resolve(process.argv[1] ?? 'harkroom-operator');
   const appDataDir = appDataDirFromSocket(args.socket);
 
   // exit 통지는 레지스트리 → 서버로 흐르는데 서버는 레지스트리를 필요로 한다. 그 순환을
@@ -244,7 +245,13 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
    * 부른다. 둘이 갈리면 한쪽만 강화되는 날이 온다.
    */
   const adoptOrphans = async (): Promise<AdoptRunnerResult> => {
-    const entries = await readRunnerLedger(appDataDir);
+    // 새 장부 + 개명 전 장부(`daemon/`). 같은 pid 가 둘에 있으면 새 장부가 이긴다 — 뒤에
+    // 붙인 옛 항목은 pid 로 걸러진다(planAdoption 은 pid 단위로 판정한다).
+    const fresh = await readRunnerLedger(appDataDir);
+    const seen = new Set(fresh.map((e) => e.pid));
+    const legacy = (await readRunnerLedger(appDataDir, legacyRunnerLedgerPath(appDataDir)))
+      .filter((e) => !seen.has(e.pid));
+    const entries = [...fresh, ...legacy];
     const plan = await planAdoption(entries, probe, args.appVersion ?? null);
     // 낡은 세대의 러너는 **회수한다.** 안 채택하고 두면 앱이 새 러너를 띄워 같은
     // 에이전트에 둘이 되고(`#430` 이 관측한 중복), 그 둘이 멘션을 나눠 집어 간다.

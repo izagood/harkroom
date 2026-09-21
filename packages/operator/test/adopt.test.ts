@@ -84,7 +84,7 @@ async function daemon띄우기(
     args: {
       socket: paths.socketPath,
       launchNonce: 'test-nonce',
-      entryPath: join(appDataDir, 'harkroom-daemon'),
+      entryPath: join(appDataDir, 'harkroom-operator'),
       appVersion: '0.0.0-test',
       unknown: [],
     },
@@ -193,7 +193,7 @@ describe('고아 재발견 — daemon 이 죽고 새로 떠도 그 러너를 안
 
     const 첫daemon = await daemon띄우기(dir, { args: {
       socket: daemonEndpointPaths(dir).socketPath, launchNonce: 'test-nonce',
-      entryPath: join(dir, 'harkroom-daemon'), appVersion: '0.1.26', unknown: [],
+      entryPath: join(dir, 'harkroom-operator'), appVersion: '0.1.26', unknown: [],
     } });
     if (첫daemon.kind !== 'running') throw new Error('daemon 이 안 떴다');
     const 러너 = await 첫daemon.daemon.registry.spawnRunner('a1', { PATH: process.env.PATH ?? '' });
@@ -205,7 +205,7 @@ describe('고아 재발견 — daemon 이 죽고 새로 떠도 그 러너를 안
     // ── 새 세대 daemon ───────────────────────────────────────────────────────
     const 새daemon = await daemon띄우기(dir, { args: {
       socket: daemonEndpointPaths(dir).socketPath, launchNonce: 'test-nonce-2',
-      entryPath: join(dir, 'harkroom-daemon'), appVersion: '0.1.27', unknown: [],
+      entryPath: join(dir, 'harkroom-operator'), appVersion: '0.1.27', unknown: [],
     } });
     if (새daemon.kind !== 'running') throw new Error('새 daemon 이 안 떴다');
 
@@ -447,7 +447,7 @@ describe('안전 경계 — 남의 러너를 채택하지 않는다 (#431 2-c)',
 
     // 장부에는 **하나만** 적는다 — daemon 이 자기 손으로 띄운 그 하나라는 뜻이다.
     const 내것 = 가짜러너[2]!;
-    await mkdir(join(dir, 'daemon'), { recursive: true });
+    await mkdir(join(dir, 'operator'), { recursive: true });
     await writeRunnerLedger(dir, [
       {
         agentId: 'a1',
@@ -719,9 +719,9 @@ describe('D5 — daemon 은 세션을 읽지도 쓰지도 않는다 (#431)', () 
   });
 
   /** 장부는 **daemon 디렉터리 안**에 산다 — 러너의 상태 트리를 안 건드린다. */
-  it('장부는 <appDataDir>/daemon/ 아래에 있다', () => {
+  it('장부는 <appDataDir>/operator/ 아래에 있다', () => {
     const path = runnerLedgerPath('/tmp/앱데이터');
-    expect(path).toBe('/tmp/앱데이터/daemon/runners-v1.json');
+    expect(path).toBe('/tmp/앱데이터/operator/runners-v1.json');
   });
 });
 
@@ -741,7 +741,7 @@ describe('러너 장부 (#431 2-c)', () => {
    */
   it('깨진 장부는 빈 목록이다 — daemon 이 뜨는 것을 막지 않는다', async () => {
     const dir = await 임시앱디렉터리();
-    await mkdir(join(dir, 'daemon'), { recursive: true });
+    await mkdir(join(dir, 'operator'), { recursive: true });
     await writeFile(runnerLedgerPath(dir), '{이건 JSON 이 아니다', 'utf8');
     expect(await readRunnerLedger(dir)).toEqual([]);
 
@@ -752,7 +752,7 @@ describe('러너 장부 (#431 2-c)', () => {
   /** 버전이 다른 장부는 **읽지 않는다** — 항목 모양을 모르는 채 pid 를 쓰면 위험하다. */
   it('버전이 다른 장부는 읽지 않는다', async () => {
     const dir = await 임시앱디렉터리();
-    await mkdir(join(dir, 'daemon'), { recursive: true });
+    await mkdir(join(dir, 'operator'), { recursive: true });
     await writeFile(
       runnerLedgerPath(dir),
       JSON.stringify({ version: 999, runners: [{ agentId: 'a1', pid: 1, incarnationId: 'i', startedAtMs: 0, bootTimeSec: 0 }] }),
@@ -819,7 +819,7 @@ describe('러너 장부 (#431 2-c)', () => {
 
     // 임시 파일이 하나도 안 남았다 — 남으면 그것이 새 잔해다.
     const { readdir } = await import('node:fs/promises');
-    const 남은 = (await readdir(join(dir, 'daemon'))).filter((n) => n.includes('.tmp-'));
+    const 남은 = (await readdir(join(dir, 'operator'))).filter((n) => n.includes('.tmp-'));
     expect(남은).toEqual([]);
   });
 
