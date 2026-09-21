@@ -12,29 +12,42 @@ import { createRelayClient, unixDialer, type RelayHandlers, type RelayTransport,
 
 const LINK = { socketPath: '/tmp/op.sock', runnerId: 'r-1', secret: 'sec' };
 
-describe('링크가 있으면 서버가 아니라 오퍼레이터 소켓으로 건다', () => {
-  it('unix dialer 에 링크 정보를 넘기고, WS dialer 는 부르지 않는다', () => {
-    const wsDials: string[] = [];
-    const unixDials: { socketPath: string; runnerId: string; secret: string }[] = [];
-    const client = createRelayClient({
-      harkroomUrl: 'http://x', pat: 'p', link: LINK,
-      dial: (url) => { wsDials.push(url); },
-      unixDial: (link) => { unixDials.push(link); },
-    });
-    client.start();
-    expect(wsDials).toEqual([]);
-    expect(unixDials).toEqual([LINK]);
-  });
-
-  it('소켓이 열리면 옛 릴레이와 똑같이 announce 부터 보낸다 — 러너 코어는 상대를 모른다', () => {
+describe('러너 코어는 소켓의 상대를 모른다', () => {
+  it('소켓이 열리면 옛 릴레이와 똑같이 announce 부터 보낸다', () => {
     const sent: RelayRunnerFrame[] = [];
     let handlers: RelayHandlers | null = null;
     const unixDial: RelayUnixDialer = (_link, h) => { handlers = h; };
-    const client = createRelayClient({ harkroomUrl: 'http://x', pat: 'p', link: LINK, unixDial });
+    const client = createRelayClient({ link: LINK, unixDial });
     client.start();
     const transport: RelayTransport = { send: (d) => sent.push(JSON.parse(d) as RelayRunnerFrame), close: () => {} };
     handlers!.onOpen(transport);
     expect(sent[0]).toMatchObject({ type: 'announce', sessions: [] });
+  });
+
+  it('요청은 링크 위로 가고 답은 id 로 짝지어 돌아온다 — 링크가 없으면 즉시 거절한다', async () => {
+    const sentRaw: string[] = [];
+    let handlers: RelayHandlers | null = null;
+    const client = createRelayClient({ link: LINK, unixDial: (_l, h) => { handlers = h; } });
+    client.start();
+    // 아직 안 붙었다 — 큐에 담지 않고 status 0 으로 거절한다.
+    const down = await client.request({ type: 'http.forward', method: 'GET', path: '/agent/config' });
+    expect(down).toMatchObject({ type: 'http.response', status: 0 });
+    handlers!.onOpen({ send: (d) => sentRaw.push(d), close: () => {} });
+    const pending = client.request({ type: 'http.forward', method: 'GET', path: '/agent/config' });
+    const req = JSON.parse(sentRaw.at(-1)!) as { type: string; id: string };
+    expect(req.type).toBe('http.forward');
+    handlers!.onMessage(JSON.stringify({ type: 'http.response', id: req.id, status: 200, body: '{"ok":true}' }));
+    expect(await pending).toEqual({ type: 'http.response', id: req.id, status: 200, body: '{"ok":true}' });
+  });
+
+  it('링크가 끊기면 기다리던 요청은 전부 status 0 으로 끝난다 — 답이 올 소켓이 사라졌다', async () => {
+    let handlers: RelayHandlers | null = null;
+    const client = createRelayClient({ link: LINK, unixDial: (_l, h) => { handlers = h; }, schedule: () => {} });
+    client.start();
+    handlers!.onOpen({ send: () => {}, close: () => {} });
+    const pending = client.request({ type: 'mcp.request', payload: { jsonrpc: '2.0', id: 1, method: 'x' } });
+    handlers!.onClose('끊김');
+    expect(await pending).toMatchObject({ type: 'mcp.error', status: 0 });
   });
 });
 

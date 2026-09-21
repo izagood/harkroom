@@ -15,20 +15,13 @@ import { RUNNABLE_HARNESSES, type AgentHarness, type MentionPermission } from '@
 import { executionModelFor } from './adapters/index.js';
 
 /**
- * `harkroomUrl` 은 서버 베이스 URL(`http://localhost:3400`)이고, MCP 엔드포인트는 `/mcp` 다.
- * claude(`writeMcpConfigOnce`)와 codex(`CODEX_PRESET.mcp`) 양쪽이 이 정규화를 거쳐야 한다 —
- * 한쪽만 하고 다른 쪽을 harkroomUrl 그대로 쓰면 그쪽 harness 는 베이스 URL 에 `POST /` 를
- * 때려 `404 route not found` 로 MCP 연결 자체가 안 된다(실물 검증에서 codex 가 이렇게
- * 실패했다 — 아래 CODEX_PRESET.mcp 참고).
- *
- * export 하는 이유: `harkroom.ts::HarkroomAgentClient` 도 같은 `/mcp` 엔드포인트에 붙는데, 그
- * 파일이 이 정규화를 따로(`new URL(\`${baseUrl}/mcp\`)`) 다시 구현하면 값이 두 곳에서
- * 유도되는 모양이 된다 — 그 자체가 이 함수를 만든 계기(claude/codex 사이 이중 구현)와
- * 같은 종류의 결함이라 리뷰에서 지적됐다. 진실 원천을 여기 하나로 둔다.
+ * 하네스가 harkroom MCP 에 닿는 길은 `harkroom-operator mcp-bridge` 하나다(스펙 2026-09-20 §5).
+ * URL 도 토큰도 없다 — 브릿지가 러너 env(오퍼레이터 소켓·러너 id·secret)를 상속해 오퍼레이터에
+ * 붙고, 오퍼레이터가 서버에 전달한다. claude(`writeMcpConfigOnce`)와 codex(`CODEX_PRESET.mcp`)
+ * 양쪽이 **같은 명령**을 굽는다 — 옛 `mcpUrl()` 이 두 곳의 URL 정규화를 한 자리에 모았던 것과
+ * 같은 이유다.
  */
-export function mcpUrl(harkroomUrl: string): string {
-  return `${harkroomUrl.replace(/\/$/, '')}/mcp`;
-}
+export const MCP_BRIDGE_ARGS = ['mcp-bridge'] as const;
 
 export type TurnMode = 'mention' | 'interactive';
 
@@ -58,25 +51,21 @@ export interface BuildTurnCommandOptions {
   effort: string | null;
   mentionPermission: MentionPermission;
   mcpConfigPath: string;
-  pat: string;
   /** systemPrompt 를 파일로 전달할 때 그 경로. null 이면 argv 에 직접 전달(하위 호환). */
   systemPromptFile?: string | null;
   /** stdin 리다이렉션용 파일 경로. null 이면 PTY stdin 을 그대로 쓴다(인터랙티브·resume). */
   stdinFile?: string | null;
   /**
-   * codex 의 `-c mcp_servers.harkroom.url=...` 오버라이드에 필요한 실제 harkroom URL. claude 는
-   * 이 값을 쓰지 않는다 — `writeMcpConfigOnce` 가 이미 `mcpConfigPath` 파일 안에 실제 URL 을
-   * 구워 넣었고 claude 는 그 경로만 넘기면 된다. 반면 codex 는 그 파일을 읽지 않고 턴마다
-   * `-c` 로 값을 직접 준다(spec §4·§6 — `codex mcp add` 는 영구 기록이라 금지).
+   * `harkroom-operator` 실행 파일(스펙 2026-09-20 §5). 하네스의 harkroom MCP 항목이 이 명령의
+   * `mcp-bridge` 갈래다 — claude 는 `mcp.json` 에, codex 는 `-c mcp_servers.harkroom.*` 에 굽는다.
    *
-   * **필수다 — 선택 인자로 두지 않는다.** 러너는 더 이상 하네스 출력을 파싱하지 않으므로
-   * 에이전트가 답하는 유일한 경로가 harkroom MCP 의 `message.post` 다(prompt.ts 의 시스템
-   * 프롬프트가 그렇게 지시한다). harkroom MCP 없이 뜬 codex 턴은 에러 없이 그냥 돌다가 답을
-   * 못 하고, 러너는 "답 없이 턴을 끝냈습니다"만 남긴다 — 원인이 "MCP 가 안 붙었다"라는
-   * 단서가 어디에도 안 남는 조용한 실패다. 그래서 이 값을 생략해 조용히 넘어가는 경로 자체를
-   * 두지 않는다: 호출자가 안 채우면 여기서 타입 에러로, 넘겼는데 비어 있으면 즉시 예외로 죽는다.
+   * **필수다 — 선택 인자로 두지 않는다.** 에이전트가 답하는 유일한 경로가 harkroom MCP 의
+   * `message.post` 다(prompt.ts 의 시스템 프롬프트가 그렇게 지시한다). harkroom MCP 없이 뜬 턴은
+   * 에러 없이 그냥 돌다가 답을 못 하고, 러너는 "답 없이 턴을 끝냈습니다"만 남긴다 — 원인 단서가
+   * 어디에도 안 남는 조용한 실패다. 그래서 이 값을 생략해 조용히 넘어가는 경로 자체를 두지
+   * 않는다: 호출자가 안 채우면 타입 에러로, 넘겼는데 비어 있으면 즉시 예외로 죽는다.
    */
-  harkroomUrl: string;
+  operatorBin: string;
   /** 개인 config.toml/MCP 를 상속하지 않는 Harkroom 전용 Codex 상태 루트. */
   codexHome: string;
   /**
@@ -109,7 +98,7 @@ interface HarnessPreset {
   allowsNullSessionOnFirstTurn: boolean;
   /** mentionPermission → 멘션 턴 전용 권한 플래그. 인터랙티브에선 아예 쓰지 않는다. */
   permission: Record<MentionPermission, string[]>;
-  mcp(args: { mcpConfigPath: string; harkroomUrl: string }): string[];
+  mcp(args: { mcpConfigPath: string; operatorBin: string }): string[];
   model(model: string | null): string[];
   effort(effort: string | null): string[];
   /**
@@ -249,7 +238,7 @@ const CODEX_PRESET: HarnessPreset = {
     ],
     readonly: ['-c', 'sandbox_mode="read-only"'],
   },
-  mcp: ({ harkroomUrl }) => [
+  mcp: ({ operatorBin }) => [
     // avcs 는 항상 등록한다(실측 shape: stdio, command 'avcs', args ['mcp'], env 없음).
     //
     // **`transport` 를 반드시 적는다(2026-09-15 실측).** codex 0.154 는 이 갈래 표시가 없는
@@ -268,26 +257,14 @@ const CODEX_PRESET: HarnessPreset = {
     '-c', 'mcp_servers.avcs.transport="stdio"',
     '-c', 'mcp_servers.avcs.command="avcs"',
     '-c', 'mcp_servers.avcs.args=["mcp"]',
-    // harkroom 도 항상 등록한다 — 이게 빠지면 에이전트가 답할 방법이 없다(위 harkroomUrl 주석).
-    // `bearer_token_env_var` 는 env 변수 "이름"만 담는다 — PAT 값 자체는 절대 argv 에 오르지
-    // 않는다(spec §7, task-1 실측: `-c mcp_servers.harkroom.bearer_token_env_var="HARKROOM_PAT"`).
-    // 실값은 buildTurnCommand 가 돌려주는 env.HARKROOM_PAT 로만 간다.
-    //
-    // **`/mcp` 를 붙여야 한다 — 실물 검증에서 드러난 회귀다.** `harkroomUrl` 은 서버 베이스
-    // URL(`http://localhost:3400`)이지 MCP 엔드포인트가 아니다. claude 쪽은
-    // `writeMcpConfigOnce` 가 `${harkroomUrl}/mcp` 로 정규화해서 파일에 굽는데, 여기는 그 정규화
-    // 없이 harkroomUrl 을 그대로 썼다 — codex 가 `POST /`(베이스 URL)를 때려 서버가
-    // `404 route not found: POST /` 를 던지고, MCP 자체가 안 붙어 harkroom 도구가 하나도 안
-    // 보였다. 실제 실패 증상은 조용했다: codex 는 exit 0 으로 끝났지만 message.post 를 못 불러
-    // "(답 없이 턴을 끝냈습니다)" 만 남았다 — 원인이 이 URL 하나였다는 단서가 로그 어디에도
-    // 없었다. 단위 테스트가 못 잡은 이유도 같은 패턴이다: `test/turn.test.ts` 의 fixture 가
-    // `harkroomUrl: 'http://localhost:3401/mcp'` 로 **이미 `/mcp` 가 붙은 값을 직접 줘서** 이
-    // 함수가 값을 그대로 돌려주기만 해도 통과했다 — 프로덕션(main.ts→config.harkroomUrl)이
-    // 실제로 주는 값(베이스 URL, `/mcp` 없음)과 다른 입력으로 검증한 것이다. `mcpUrl()` 로
-    // claude 와 정규화 지점을 하나로 합쳐, 다음에 엔드포인트 경로가 바뀌어도 한 곳만 고치면
-    // 되게 한다.
-    '-c', `mcp_servers.harkroom.url="${mcpUrl(harkroomUrl)}"`,
-    '-c', 'mcp_servers.harkroom.bearer_token_env_var="HARKROOM_PAT"',
+    // harkroom 도 항상 등록한다 — 이게 빠지면 에이전트가 답할 방법이 없다. **stdio 브릿지다**
+    // (스펙 2026-09-20 §5): URL 도 토큰도 없다. 브릿지는 하네스의 env(러너 env 를 상속)에서
+    // 오퍼레이터 소켓·러너 id·secret 을 읽어 오퍼레이터에 붙고, 오퍼레이터가 서버에 전달한다.
+    // 앞 판본은 `url` + `bearer_token_env_var="HARKROOM_PAT"` 였다 — 그 두 줄이 사라진 것이
+    // 러너 env 에서 PAT 이 사라진 것과 같은 사건이다.
+    '-c', 'mcp_servers.harkroom.transport="stdio"',
+    '-c', `mcp_servers.harkroom.command=${JSON.stringify(operatorBin)}`,
+    '-c', `mcp_servers.harkroom.args=${JSON.stringify([...MCP_BRIDGE_ARGS])}`,
   ],
   model: (model) => (model ? ['--model', model] : []),
   // codex 에 `--effort` 플래그는 없다 — spec §4 표에도 이 항목은 없다(측정 대상 밖). 키
@@ -434,10 +411,10 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     );
   }
   assertValidSession(opts, preset);
-  if (!opts.harkroomUrl) {
+  if (!opts.operatorBin) {
     // 타입은 필수(string)로 강제하지만, 빈 문자열은 타입 체크를 통과하고도 같은 조용한
     // 실패(harkroom MCP 미등록 → 답 못 함 → "답 없이 턴을 끝냈습니다")로 이어진다 — 여기서 막는다.
-    throw new Error('buildTurnCommand: harkroomUrl 이 비어 있다 — harkroom MCP 없이는 에이전트가 답할 방법이 없다');
+    throw new Error('buildTurnCommand: operatorBin 이 비어 있다 — harkroom MCP(mcp-bridge) 없이는 에이전트가 답할 방법이 없다');
   }
   if (opts.harness === 'codex' && !opts.codexHome) {
     throw new Error('buildTurnCommand: codexHome 이 비어 있다 — 개인 Codex 설정을 격리할 수 없다');
@@ -447,7 +424,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     ...preset.session(opts.sessionId, opts.isFirstTurn, opts.mode),
     ...preset.alwaysArgs(opts.mode),
     ...(opts.mode === 'mention' ? preset.permission[opts.mentionPermission] : []),
-    ...preset.mcp({ mcpConfigPath: opts.mcpConfigPath, harkroomUrl: opts.harkroomUrl }),
+    ...preset.mcp({ mcpConfigPath: opts.mcpConfigPath, operatorBin: opts.operatorBin }),
     ...preset.model(opts.model),
     ...preset.effort(opts.effort),
     ...preset.prompt(opts.systemPrompt, opts.mode === 'mention' ? opts.promptCtx : '', opts.mode, opts.systemPromptFile ?? null),
@@ -459,7 +436,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
   return {
     command: preset.command,
     args,
-    env: childEnv(opts.pat, {
+    env: childEnv({
       codexHome: opts.harness === 'codex' ? opts.codexHome : null,
       claudeConfigDir: opts.harness === 'claude-code' ? opts.claudeConfigDir : null,
     }),
@@ -552,7 +529,6 @@ export const HARNESS_ENV_DENYLIST = [
  * 그 목록과 각 키를 빼는 근거는 위 상수의 주석에 있다 — 지우려거든 거기부터 읽어라.
  */
 function childEnv(
-  pat: string,
   homes: { codexHome: string | null; claudeConfigDir: string | null },
 ): Record<string, string> {
   const env: Record<string, string> = {};
@@ -562,7 +538,8 @@ function childEnv(
   // 부모에 있어도 자식에는 없어야 하는 키를 뺀다(#374). 복사 뒤에 지우는 이유: 복사 루프에
   // 조건을 섞으면 '전체 상속'이라는 규칙과 그 예외가 한 줄에 엉켜 둘 다 읽기 어려워진다.
   for (const key of HARNESS_ENV_DENYLIST) delete env[key];
-  env.HARKROOM_PAT = pat;
+  // PAT 을 덮어쓰던 자리였다. 이제 하네스가 서버에 닿는 길은 `mcp-bridge` 뿐이고, 브릿지가 읽는
+  // 것은 러너 env 의 오퍼레이터 소켓·러너 id·secret 이다 — 전체 상속으로 이미 넘어간다.
   if (homes.codexHome !== null) env.CODEX_HOME = homes.codexHome;
   // **`null` 이면 키 자체를 넣지 않는다.** 빈 문자열을 넣으면 claude 가 그것을 경로로 읽어
   // 엉뚱한 자리에 설정을 만든다 — "계정 지정 없음"은 부재로 표현해야 시스템 기본으로 떨어진다.
@@ -582,14 +559,12 @@ function childEnv(
  * (workspace.ts::ensureWorkspace 처럼 존재 검사로 건너뛰지는 않는다: harkroomUrl 이 바뀌었는데
  * 옛 파일이 그대로 남는 사고를 피한다).
  */
-export async function writeMcpConfigOnce(dir: string, harkroomUrl: string): Promise<string> {
+export async function writeMcpConfigOnce(dir: string, operatorBin: string): Promise<string> {
   const config = {
     mcpServers: {
-      harkroom: {
-        type: 'http' as const,
-        url: mcpUrl(harkroomUrl),
-        headers: { Authorization: 'Bearer ${HARKROOM_PAT}' },
-      },
+      // stdio 브릿지(스펙 2026-09-20 §5). 인증 재료는 하네스 env 에서 브릿지가 읽는다 — 이 파일에는
+      // 명령만 있고 비밀이 없다(앞 판본의 `${HARKROOM_PAT}` 플레이스홀더조차 없다).
+      harkroom: { type: 'stdio' as const, command: operatorBin, args: [...MCP_BRIDGE_ARGS] },
       avcs: { type: 'stdio' as const, command: 'avcs', args: ['mcp'] },
     },
   };

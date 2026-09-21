@@ -2,7 +2,7 @@
 // 백오프 곡선은 네트워크를 태우면 "느리다"로만 보이고 무엇이 깨졌는지 알려 주지 않는다.
 import { describe, it, expect, vi } from 'vitest';
 import type { RelayRunnerFrame } from '@harkroom/shared';
-import { createRelayClient, relayUrl, RING_CAP_BYTES, type RelayHandlers, type RelayTransport } from '../src/relay.js';
+import { createRelayClient, RING_CAP_BYTES, type RelayHandlers, type RelayTransport, type RunnerLinkTarget } from '../src/relay.js';
 import { nextBackoffMs } from '../src/policy.js';
 
 /**
@@ -10,12 +10,12 @@ import { nextBackoffMs } from '../src/policy.js';
  * 생애를 직접 돌린다.
  */
 function fakeDialer() {
-  const dials: { url: string; pat: string; handlers: RelayHandlers }[] = [];
+  const dials: { link: RunnerLinkTarget; handlers: RelayHandlers }[] = [];
   const sent: RelayRunnerFrame[] = [];
   let closedCount = 0;
 
-  const dial = (url: string, pat: string, handlers: RelayHandlers) => {
-    dials.push({ url, pat, handlers });
+  const dial = (link: RunnerLinkTarget, handlers: RelayHandlers) => {
+    dials.push({ link, handlers });
   };
 
   const open = (index = dials.length - 1): RelayTransport => {
@@ -52,31 +52,24 @@ function fakeSchedule() {
 }
 
 // `acceptsInput` 은 필수다(#369) — 기본 픽스처는 멘션 턴(stdin 이 프롬프트 파일)이라 false 다.
+const LINK: RunnerLinkTarget = { socketPath: '/tmp/op.sock', runnerId: 'r-1', secret: 'sec' };
+
 const SESSION = { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm1', harness: 'claude-code', acceptsInput: false } as const;
 
 /** ANSI + 잘린 UTF-8. 어디서든 문자열로 뜨면 U+FFFD 로 치환돼 되돌릴 수 없다. */
 const RAW = Buffer.concat([Buffer.from('\x1b[31mERR\x1b[0m', 'binary'), Buffer.from([0xed, 0x95])]);
 
-describe('relayUrl', () => {
-  it('http(s) 를 ws(s) 로 바꾸고 /agent-relay 를 붙인다', () => {
-    expect(relayUrl('http://localhost:3400')).toBe('ws://localhost:3400/agent-relay');
-    expect(relayUrl('https://harkroom.example/')).toBe('wss://harkroom.example/agent-relay');
-  });
-});
-
 describe('#141 러너 릴레이 — 접속과 announce', () => {
-  it('PAT 를 dialer 에 넘긴다 — URL 이 아니라 헤더로 가야 한다', () => {
+  it('링크(소켓·id·secret)를 dialer 에 넘긴다 — 러너는 서버를 모른다', () => {
     const d = fakeDialer();
-    createRelayClient({ harkroomUrl: 'http://x', pat: 'murp_secret', dial: d.dial }).start();
+    createRelayClient({ link: LINK, unixDial: d.dial }).start();
     expect(d.dials).toHaveLength(1);
-    expect(d.dials[0]!.pat).toBe('murp_secret');
-    // PAT 가 URL 에 실리면 앞단 프록시 로그에 남는다 — 그래서 URL 에는 없어야 한다.
-    expect(d.dials[0]!.url).not.toContain('murp_secret');
+    expect(d.dials[0]!.link).toEqual(LINK);
   });
 
   it('접속하면 진행 중인 세션을 announce 한다', () => {
     const d = fakeDialer();
-    const client = createRelayClient({ harkroomUrl: 'http://x', pat: 'p', dial: d.dial });
+    const client = createRelayClient({ link: LINK, unixDial: d.dial });
     client.start();
     d.open();
     // 접속 시점에 세션이 없으면 빈 announce 다 — 안 보내면 서버가 "아직 못 받았다"와
@@ -100,7 +93,7 @@ describe('#141 러너 릴레이 — 접속과 announce', () => {
 
   it('릴레이가 끊겨 있어도 세션은 열리고 ring 은 계속 쌓인다', () => {
     const d = fakeDialer();
-    const client = createRelayClient({ harkroomUrl: 'http://x', pat: 'p', dial: d.dial, schedule: () => {} });
+    const client = createRelayClient({ link: LINK, unixDial: d.dial, schedule: () => {} });
     client.start();
     // open 을 안 부른다 — 아직 붙지 못한 상태다.
     const session = client.openSession({ ...SESSION });
@@ -120,7 +113,7 @@ describe('#141 러너 릴레이 — 접속과 announce', () => {
 describe('#141-2 러너는 바이트를 변형하지 않는다', () => {
   it('output 프레임의 base64 가 원본 바이트와 정확히 같다', () => {
     const d = fakeDialer();
-    const client = createRelayClient({ harkroomUrl: 'http://x', pat: 'p', dial: d.dial });
+    const client = createRelayClient({ link: LINK, unixDial: d.dial });
     client.start();
     d.open();
     const session = client.openSession({ ...SESSION });
@@ -134,7 +127,7 @@ describe('#141-2 러너는 바이트를 변형하지 않는다', () => {
 
   it('ring 은 256KB 를 넘으면 앞을 버리고 뒤를 남긴다', () => {
     const d = fakeDialer();
-    const client = createRelayClient({ harkroomUrl: 'http://x', pat: 'p', dial: d.dial });
+    const client = createRelayClient({ link: LINK, unixDial: d.dial });
     client.start();
     d.open();
     const session = client.openSession({ ...SESSION });
@@ -151,7 +144,7 @@ describe('#141-2 러너는 바이트를 변형하지 않는다', () => {
 
   it('모르는 세션의 재생 요청에는 답하지 않는다', () => {
     const d = fakeDialer();
-    const client = createRelayClient({ harkroomUrl: 'http://x', pat: 'p', dial: d.dial });
+    const client = createRelayClient({ link: LINK, unixDial: d.dial });
     client.start();
     d.open();
     d.deliver({ type: 'replay.request', sessionId: 'nope' });
@@ -165,7 +158,7 @@ describe('#141-6 러너 재접속 (백오프 경로)', () => {
     const d = fakeDialer();
     const s = fakeSchedule();
     const client = createRelayClient({
-      harkroomUrl: 'http://x', pat: 'p', dial: d.dial, schedule: s.schedule, initialBackoffMs: 1_000,
+      link: LINK, unixDial: d.dial, schedule: s.schedule, initialBackoffMs: 1_000,
     });
     client.start();
     d.open();
@@ -196,7 +189,7 @@ describe('#141-6 러너 재접속 (백오프 경로)', () => {
     const d = fakeDialer();
     const s = fakeSchedule();
     const client = createRelayClient({
-      harkroomUrl: 'http://x', pat: 'p', dial: d.dial, schedule: s.schedule, initialBackoffMs: 1_000,
+      link: LINK, unixDial: d.dial, schedule: s.schedule, initialBackoffMs: 1_000,
     });
     client.start();
 
@@ -217,7 +210,7 @@ describe('#141-6 러너 재접속 (백오프 경로)', () => {
   it('종료 뒤에는 재접속하지 않는다', () => {
     const d = fakeDialer();
     const s = fakeSchedule();
-    const client = createRelayClient({ harkroomUrl: 'http://x', pat: 'p', dial: d.dial, schedule: s.schedule });
+    const client = createRelayClient({ link: LINK, unixDial: d.dial, schedule: s.schedule });
     client.start();
     d.open();
     client.stop();
@@ -231,7 +224,7 @@ describe('#141-6 러너 재접속 (백오프 경로)', () => {
 describe('#141 세션의 끝', () => {
   it('세션을 닫으면 서버에 알리고, 그 뒤 재생 요청에는 답하지 않는다', () => {
     const d = fakeDialer();
-    const client = createRelayClient({ harkroomUrl: 'http://x', pat: 'p', dial: d.dial });
+    const client = createRelayClient({ link: LINK, unixDial: d.dial });
     client.start();
     d.open();
     const session = client.openSession({ ...SESSION });
@@ -245,7 +238,7 @@ describe('#141 세션의 끝', () => {
   it('닫힌 세션은 재접속 announce 에도 실리지 않는다', () => {
     const d = fakeDialer();
     const s = fakeSchedule();
-    const client = createRelayClient({ harkroomUrl: 'http://x', pat: 'p', dial: d.dial, schedule: s.schedule });
+    const client = createRelayClient({ link: LINK, unixDial: d.dial, schedule: s.schedule });
     client.start();
     d.open();
     client.openSession({ ...SESSION }).close();
@@ -260,7 +253,7 @@ describe('#141 세션의 끝', () => {
 describe('#335 서버가 보낸 resize 를 그 세션의 PTY 창 크기로 넣는다', () => {
   it('resize 프레임의 숫자가 bindInput 으로 이어 붙인 통로에 그대로 간다', () => {
     const d = fakeDialer();
-    const client = createRelayClient({ harkroomUrl: 'http://x', pat: 'p', dial: d.dial });
+    const client = createRelayClient({ link: LINK, unixDial: d.dial });
     client.start();
     d.open();
     const session = client.openSession(SESSION);
@@ -275,7 +268,7 @@ describe('#335 서버가 보낸 resize 를 그 세션의 PTY 창 크기로 넣�
 
   it('모르는 세션의 resize 는 어느 통로에도 가지 않는다', () => {
     const d = fakeDialer();
-    const client = createRelayClient({ harkroomUrl: 'http://x', pat: 'p', dial: d.dial });
+    const client = createRelayClient({ link: LINK, unixDial: d.dial });
     client.start();
     d.open();
     const session = client.openSession(SESSION);
@@ -289,7 +282,7 @@ describe('#335 서버가 보낸 resize 를 그 세션의 PTY 창 크기로 넣�
 
   it('아직 spawn 전이라 통로가 없으면 버린다 — 던지지 않는다', () => {
     const d = fakeDialer();
-    const client = createRelayClient({ harkroomUrl: 'http://x', pat: 'p', dial: d.dial });
+    const client = createRelayClient({ link: LINK, unixDial: d.dial });
     client.start();
     d.open();
     const session = client.openSession(SESSION);
@@ -303,7 +296,7 @@ describe('#335 서버가 보낸 resize 를 그 세션의 PTY 창 크기로 넣�
 describe('#315 서버가 보낸 input 을 그 세션의 PTY 로 넣는다', () => {
   it('input 프레임의 바이트가 bindInput 으로 이어 붙인 통로에 그대로 간다', () => {
     const d = fakeDialer();
-    const client = createRelayClient({ harkroomUrl: 'http://x', pat: 'p', dial: d.dial });
+    const client = createRelayClient({ link: LINK, unixDial: d.dial });
     client.start();
     d.open();
     const session = client.openSession(SESSION);
@@ -320,7 +313,7 @@ describe('#315 서버가 보낸 input 을 그 세션의 PTY 로 넣는다', () =
 
   it('아직 spawn 전이라 통로가 없으면 버린다 — 던지지 않는다', () => {
     const d = fakeDialer();
-    const client = createRelayClient({ harkroomUrl: 'http://x', pat: 'p', dial: d.dial });
+    const client = createRelayClient({ link: LINK, unixDial: d.dial });
     client.start();
     d.open();
     const session = client.openSession(SESSION);
@@ -332,7 +325,7 @@ describe('#315 서버가 보낸 input 을 그 세션의 PTY 로 넣는다', () =
 
   it('모르는 세션의 input 은 어느 통로에도 가지 않는다', () => {
     const d = fakeDialer();
-    const client = createRelayClient({ harkroomUrl: 'http://x', pat: 'p', dial: d.dial });
+    const client = createRelayClient({ link: LINK, unixDial: d.dial });
     client.start();
     d.open();
     const session = client.openSession(SESSION);
@@ -348,7 +341,7 @@ describe('#315 서버가 보낸 input 을 그 세션의 PTY 로 넣는다', () =
 describe('#337 viewer.count — 인터랙티브 고아 회수의 신호', () => {
   it('세션을 연 쪽이 넘긴 콜백으로 count 가 도착한다', () => {
     const d = fakeDialer();
-    const client = createRelayClient({ harkroomUrl: 'http://x', pat: 'p', dial: d.dial });
+    const client = createRelayClient({ link: LINK, unixDial: d.dial });
     client.start();
     d.open();
     const counts: number[] = [];
@@ -364,7 +357,7 @@ describe('#337 viewer.count — 인터랙티브 고아 회수의 신호', () => 
 
   it('콜백이 던져도 릴레이는 산다 — 관찰이 답을 죽이지 않는다', () => {
     const d = fakeDialer();
-    const client = createRelayClient({ harkroomUrl: 'http://x', pat: 'p', dial: d.dial });
+    const client = createRelayClient({ link: LINK, unixDial: d.dial });
     client.start();
     d.open();
     const session = client.openSession({ ...SESSION, mode: 'interactive', onViewerCount: () => { throw new Error('boom'); } });
@@ -373,7 +366,7 @@ describe('#337 viewer.count — 인터랙티브 고아 회수의 신호', () => 
 
   it('인터랙티브로 연 세션은 announce·started 에 mode 가 실린다 — 데스크탑이 조종 중을 구분한다', () => {
     const d = fakeDialer();
-    const client = createRelayClient({ harkroomUrl: 'http://x', pat: 'p', dial: d.dial });
+    const client = createRelayClient({ link: LINK, unixDial: d.dial });
     client.start();
     d.open();
     client.openSession({ ...SESSION, mode: 'interactive' });
@@ -397,7 +390,7 @@ describe('#337 interactive.open 왕복', () => {
   it('훅의 성공이 interactive.opened 로 서버에 돌아간다', async () => {
     const d = fakeDialer();
     const client = createRelayClient({
-      harkroomUrl: 'http://x', pat: 'p', dial: d.dial,
+      link: LINK, unixDial: d.dial,
       onInteractiveOpen: async (req) => {
         expect(req).toEqual({ channelId: 'c1', threadRootId: 'm1', openedByHandle: 'jaebin', cols: 100, rows: 30 });
         return { sessionId: 'sess-i', created: true };
@@ -413,7 +406,7 @@ describe('#337 interactive.open 왕복', () => {
   it('훅이 던지면 그 메시지가 interactive.error 로 간다 — codex 거절 문구가 사람에게 닿는 경로', async () => {
     const d = fakeDialer();
     const client = createRelayClient({
-      harkroomUrl: 'http://x', pat: 'p', dial: d.dial,
+      link: LINK, unixDial: d.dial,
       onInteractiveOpen: async () => { throw new Error('codex 인터랙티브 턴은 지원하지 않는다'); },
     });
     client.start();
@@ -427,7 +420,7 @@ describe('#337 interactive.open 왕복', () => {
 
   it('훅이 배선되지 않았으면 조용히 버리지 않고 에러로 응답한다 — 침묵이 곧 서버 타임아웃이다', async () => {
     const d = fakeDialer();
-    const client = createRelayClient({ harkroomUrl: 'http://x', pat: 'p', dial: d.dial });
+    const client = createRelayClient({ link: LINK, unixDial: d.dial });
     client.start();
     d.open();
     d.deliver(OPEN);
@@ -449,7 +442,7 @@ describe('관찰이 끊기면 뷰어 수를 모름(0)으로 되돌린다', () =>
   it('소켓이 끊기면 살아 있는 세션마다 onViewerCount(0) 이 온다', () => {
     const d = fakeDialer();
     const client = createRelayClient({
-      harkroomUrl: 'http://x', pat: 'p', dial: d.dial, schedule: () => {},
+      link: LINK, unixDial: d.dial, schedule: () => {},
     });
     client.start();
     d.open();
@@ -470,7 +463,7 @@ describe('관찰이 끊기면 뷰어 수를 모름(0)으로 되돌린다', () =>
   it('세션이 없으면 아무 일도 없다 — 끊김 처리가 던지지 않는다', () => {
     const d = fakeDialer();
     const client = createRelayClient({
-      harkroomUrl: 'http://x', pat: 'p', dial: d.dial, schedule: () => {},
+      link: LINK, unixDial: d.dial, schedule: () => {},
     });
     client.start();
     d.open();

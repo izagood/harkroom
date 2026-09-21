@@ -134,7 +134,7 @@ async function makeHarness(
   const deps: InteractiveTurnDeps = {
     harkroom, store, exec: async () => ({ code: 0, stdout: '', stderr: '' }),
     runTurn, me: ME, workspaceBaseDir,
-    mcpConfigPath: '/tmp/mcp.json', harkroomUrl: 'http://localhost:3400', pat: 'murp_fake',
+    mcpConfigPath: '/tmp/mcp.json', operatorBin: '/opt/harkroom/harkroom-operator',
     codexHome: join(stateDir, 'codex-home'),
     // 이 스위트는 계정 지정 없음(시스템 기본)을 전제로 돈다.
     claudeConfigDir: null,

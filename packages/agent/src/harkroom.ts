@@ -3,12 +3,19 @@
 //
 // 이 러너를 만들면서 MCP 표면에 구멍이 하나 드러났다: 미읽음을 소비하는 도구가 없어서 같은
 // 멘션에 영원히 반복 응답했다. `inbox.read` 를 추가해 닫았고, 그래서 여기 REST 호출이 없다.
+//
+// **서버는 여기 없다**(스펙 2026-09-20 §5). 이 클라이언트가 아는 것은 오퍼레이터 링크 하나다:
+// MCP 는 링크 위의 트랜스포트(`mcp.request`)로, 몇 안 되는 REST(`/agent/config` 등)는
+// `http.forward` 로 간다. 인증(오퍼레이터 토큰 + `X-Harkroom-Agent`)은 오퍼레이터가 붙인다 —
+// 그래서 이 파일에 PAT 도 URL 도 없다.
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { AccountView, AgentView, InboxEntry, MessageRow } from '@harkroom/shared';
-import { mcpUrl } from './turn.js';
+import type { RelayClient } from './relay.js';
 import { HARKROOM_ERROR_SOURCE } from './policy.js';
 import { VERSION } from './version.js';
+
+/** 이 클라이언트가 링크에서 쓰는 표면. `RelayClient` 가 그대로 맞는다 — 테스트는 가짜를 준다. */
+export type RunnerLink = Pick<RelayClient, 'request' | 'mcpTransport'>;
 
 export interface Me { id: string; handle: string }
 
@@ -38,25 +45,20 @@ function harkroomError(message: string, status?: number): Error {
  * MCP **트랜스포트**가 던진 에러도 이 클라이언트의 에러다 — 태그를 붙여 다시 던진다
  * (2026-09-08 14:04 실측).
  *
- * 왜 필요한가: `call()` 은 도구 **결과**의 에러만 태그했고, 그 자리 주석은 전제를 이렇게
- * 적어 뒀다 — *"자격증명 문제라면 서버가 401/403 을 내는 fetch 경로에서 먼저 드러난다."*
- * **그 전제가 틀렸다.** 폴 루프(`inbox.poll`)는 MCP 전용이고, 롱턴에 park 된 러너는 fetch
- * 경로를 아예 타지 않는다. 그날 PAT 가 회전되자 러너가 처음 낸 호출은 MCP `POST /mcp` 였고,
- * 서버는 도구 결과가 아니라 **HTTP 401** 로 답했다. SDK 는 그것을 `StreamableHTTPError`
- * 로 던지는데 그 객체가 가진 것은 숫자 `code` 뿐 — `status` 도 `source` 도 없다. 그래서
- * `isCredentialFailure` 는 `'other'` 로 읽었고, `#250` 이 약속한 "401 이면 78 로 물러난다"가
- * 지켜지지 않아 러너는 `poll 루프 오류, 재접속` 만 찍다가 처리되지 않은 예외로 죽었다.
+ * 왜 필요한가: `call()` 은 도구 **결과**의 에러만 태그했고, 폴 루프(`inbox.poll`)는 MCP 전용이라
+ * 롱턴에 park 된 러너는 REST 경로를 아예 타지 않는다. 그날 PAT 가 회전되자 러너가 처음 낸
+ * 호출은 MCP 였고, 서버는 도구 결과가 아니라 **HTTP 401** 로 답했다 — 그 오류에 `status` 가
+ * 없어 `isCredentialFailure` 가 `'other'` 로 읽었고, "401 이면 78 로 물러난다"가 안 지켜졌다.
  *
- * **문구가 아니라 클래스로 판정한다.** `policy.ts::isExecutableNotFound` 가 같은 규율을
- * 적어 뒀다 — 우리가 직접 다루는 오류에 문구 매칭을 쓸 이유가 없고, 메시지가 바뀌어도
- * 이 판정은 안 흔들린다.
- *
- * `code` 가 `undefined` 인 판본(트랜스포트가 status 를 못 읽은 경우)은 status 없이 태그만
- * 붙는다 — 출처는 우리가 아는 사실이고, status 는 모르는 사실이다. 지어내지 않는다.
+ * 지금 그 자리는 링크 트랜스포트(`relay.ts::mcpTransport`)가 `mcp.error` 의 `status` 를 실어
+ * 던지는 오류다. **문구가 아니라 `status` 로 판정한다** — 서버가 오퍼레이터에게 낸 401/403
+ * (토큰 폐기·배정 해제)이 그 숫자 그대로 여기 닿는다. `status: 0` 은 링크가 끊긴 것이라
+ * 자격증명이 아니다 — 재접속으로 낫는 실패이고, 폴 루프의 백오프가 담당한다.
  */
 function tagTransportError(err: unknown): never {
-  if (err instanceof StreamableHTTPError) {
-    throw harkroomError(err.message, err.code);
+  const status = (err as { status?: unknown } | null)?.status;
+  if (err instanceof Error && typeof status === 'number' && status > 0) {
+    throw harkroomError(err.message, status);
   }
   throw err;
 }
@@ -64,17 +66,27 @@ function tagTransportError(err: unknown): never {
 export class HarkroomAgentClient {
   private mcp: Client | null = null;
 
-  constructor(private baseUrl: string, private pat: string) {}
+  constructor(private link: RunnerLink) {}
 
   private async connected(): Promise<Client> {
     if (this.mcp) return this.mcp;
     const client = new Client({ name: 'harkroom-agent', version: VERSION });
-    const transport = new StreamableHTTPClientTransport(new URL(mcpUrl(this.baseUrl)), {
-      requestInit: { headers: { authorization: `Bearer ${this.pat}` } },
-    });
-    await client.connect(transport);
+    await client.connect(this.link.mcpTransport());
     this.mcp = client;
     return client;
+  }
+
+  /**
+   * REST 한 번 — 오퍼레이터가 `http.forward` 로 서버에 넘긴다. 이 클라이언트가 REST 를 쓰는
+   * 자리는 MCP 에 그 표면이 없는 넷뿐이다(`definition`·`reportActivity`·`accounts`·
+   * `listApprovedSkills`). 실패는 status 를 실어 던진다 — `isCredentialFailure` 가 읽는다.
+   */
+  private async rest<T>(method: string, path: string, what: string): Promise<T> {
+    const res = await this.link.request({ type: 'http.forward', method, path });
+    if (res.status < 200 || res.status >= 300) {
+      throw harkroomError(`${what} 실패: ${res.status}${res.status === 0 ? ` (${res.body})` : ''}`, res.status || undefined);
+    }
+    return (res.body ? JSON.parse(res.body) : undefined) as T;
   }
 
   /** 서버 재시작·절단 후 다음 호출이 새 세션을 열도록 버린다. */
@@ -112,14 +124,8 @@ export class HarkroomAgentClient {
   }
 
   /** 서버가 들고 있는 자기 정의(UI 로 수정된다). REST 다 — MCP 에는 이 도구가 없다. */
-  async definition(): Promise<AgentView> {
-    const res = await fetch(`${this.baseUrl}/agent/config`, {
-      headers: { authorization: `Bearer ${this.pat}` },
-    });
-    if (!res.ok) {
-      throw harkroomError(`agent/config 실패: ${res.status}`, res.status);
-    }
-    return (await res.json()) as AgentView;
+  definition(): Promise<AgentView> {
+    return this.rest<AgentView>('GET', '/agent/config', 'agent/config');
   }
 
   /**
@@ -134,13 +140,7 @@ export class HarkroomAgentClient {
    * 로그로 남긴다(`readMemory` 가 같은 이유로 던진다).
    */
   async reportActivity(): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/agent/activity`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${this.pat}` },
-    });
-    if (!res.ok) {
-      throw harkroomError(`agent/activity 실패: ${res.status}`, res.status);
-    }
+    await this.rest<unknown>('POST', '/agent/activity', 'agent/activity');
   }
 
   /**
@@ -167,13 +167,7 @@ export class HarkroomAgentClient {
    * 사용자"로 렌더한다). MCP 에는 이 표면이 없다 — definition() 과 같은 이유로 REST 다.
    */
   async accounts(): Promise<AccountView[]> {
-    const res = await fetch(`${this.baseUrl}/accounts`, {
-      headers: { authorization: `Bearer ${this.pat}` },
-    });
-    if (!res.ok) {
-      throw harkroomError(`accounts 실패: ${res.status}`, res.status);
-    }
-    const body = (await res.json()) as { accounts: AccountView[] };
+    const body = await this.rest<{ accounts: AccountView[] }>('GET', '/accounts', 'accounts');
     return body.accounts;
   }
 
@@ -205,14 +199,8 @@ export class HarkroomAgentClient {
    * 있는 스킬을 '사라진 것'으로 보고 지운다. 삼키는 것은 호출자(syncSkills)의 일이고,
    * 그쪽은 삼키면서 stderr 에 한 줄을 남긴다.
    */
-  async listApprovedSkills(): Promise<{ slug: string; body: string }[]> {
-    const res = await fetch(`${this.baseUrl}/skills?state=approved`, {
-      headers: { authorization: `Bearer ${this.pat}` },
-    });
-    if (!res.ok) {
-      throw harkroomError(`skills 실패: ${res.status}`, res.status);
-    }
-    return (await res.json()) as { slug: string; body: string }[];
+  listApprovedSkills(): Promise<{ slug: string; body: string }[]> {
+    return this.rest<{ slug: string; body: string }[]>('GET', '/skills?state=approved', 'skills');
   }
 
   /**
