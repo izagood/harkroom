@@ -20,6 +20,8 @@
 // 죽으면 스크롤백도 같이 사라지는 것이 이 설계의 결과이고, 그것이 의도다.
 import { randomUUID } from 'node:crypto';
 import type { AgentHarness, AgentSessionView, RelayRunnerFrame, RelayServerFrame, RunnerCap } from '@harkroom/shared';
+import { NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
+import { RUNNER_LINK_PROTOCOL_VERSION, type RunnerHello } from '@harkroom/shared/runnerLink';
 import { RingBuffer, type PtyWriter } from './pty.js';
 import { nextBackoffMs } from './policy.js';
 
@@ -59,6 +61,19 @@ export interface RelayHandlers {
  * 보이고, 무엇이 깨졌는지는 알려 주지 않는다.
  */
 export type RelayDialer = (url: string, pat: string, handlers: RelayHandlers) => void;
+
+/**
+ * 오퍼레이터 unix 링크(스펙 2026-09-20 §5). spawn 때 env 로 받는 셋이다 — 이것이 있으면 러너는
+ * 서버가 아니라 **이 머신의 오퍼레이터**에 붙고, 오퍼레이터가 프레임에 `runnerId` 를 달아 서버
+ * 채널에 싣는다. 러너 코어(세션·ring·재접속)는 상대가 누구인지 모른다 — 바뀌는 것은 dialer 뿐이다.
+ */
+export interface RunnerLinkTarget {
+  socketPath: string;
+  runnerId: string;
+  secret: string;
+}
+
+export type RelayUnixDialer = (link: RunnerLinkTarget, handlers: RelayHandlers) => void;
 
 /** 한 턴에 대응하는 살아 있는 PTY 세션. */
 interface LiveSession {
@@ -159,7 +174,10 @@ export interface RelayClientOptions {
   /** harkroom 서버의 http(s) 베이스 URL. ws(s) 로 바꿔 `/agent-relay` 에 붙는다. */
   harkroomUrl: string;
   pat: string;
+  /** 있으면 서버 WS 대신 오퍼레이터 소켓으로 건다(단계 3). 없으면 옛 경로 — 단계 4 에서 사라진다. */
+  link?: RunnerLinkTarget | null;
   dial?: RelayDialer;
+  unixDial?: RelayUnixDialer;
   /** 재접속 예약. 테스트가 시간을 직접 돌리려고 뽑아 뒀다. */
   schedule?: (fn: () => void, ms: number) => void;
   /** 첫 재접속 지연. 이후 `nextBackoffMs` 로 늘어난다. */
@@ -189,7 +207,13 @@ export function relayUrl(harkroomUrl: string): string {
 }
 
 export function createRelayClient(opts: RelayClientOptions): RelayClient {
-  const dial = opts.dial ?? nodeWsDialer;
+  const wsDial = opts.dial ?? nodeWsDialer;
+  const unixDial = opts.unixDial ?? unixDialer;
+  const link = opts.link ?? null;
+  const dial = (handlers: RelayHandlers): void => {
+    if (link) unixDial(link, handlers);
+    else wsDial(relayUrl(opts.harkroomUrl), opts.pat, handlers);
+  };
   const schedule = opts.schedule ?? ((fn, ms) => { setTimeout(fn, ms).unref?.(); });
   const initialBackoffMs = opts.initialBackoffMs ?? 1_000;
 
@@ -329,7 +353,7 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
 
   const connect = (): void => {
     if (stopped) return;
-    dial(relayUrl(opts.harkroomUrl), opts.pat, {
+    dial({
       onOpen: (t) => {
         transport = t;
         opened = true;
@@ -356,7 +380,7 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
           opened = false;
         } else if (!outageReported) {
           outageReported = true;
-          console.error(`릴레이에 붙지 못한다 — 재시도한다(터미널 관찰·개입이 그동안 안 된다): ${reason ?? '이유 불명'}`);
+          console.error(`${link ? '오퍼레이터 링크' : '릴레이'}에 붙지 못한다 — 재시도한다(터미널 관찰·개입이 그동안 안 된다): ${reason ?? '이유 불명'}`);
         }
         /**
          * **관찰이 끊긴 동안은 조종을 붙잡지 않는다.**
@@ -492,4 +516,43 @@ const nodeWsDialer: RelayDialer = (url, pat, handlers) => {
     // 이 경로가 이유를 버리던 것이 그 결함을 몇 달간 보이지 않게 만들었다.
     err instanceof Error ? err.message : String(err),
   ));
+};
+
+/**
+ * 오퍼레이터 unix 소켓 dialer(스펙 §5). NDJSON 한 줄이 프레임 하나이고, 첫 줄은 `hello` 다
+ * (`@harkroom/shared/runnerLink`). 소켓 파일은 앱 프로토콜과 같은 것이라 오퍼레이터가 `role`
+ * 로 갈라 받는다.
+ *
+ * `send` 가 받는 `data` 는 이미 JSON 문자열이다 — `JSON.stringify` 는 개행을 이스케이프하므로
+ * 개행 하나만 붙이면 NDJSON 이다. 다시 파싱하지 않는다(PTY 바이트가 실린 프레임을 두 번
+ * 파싱할 이유가 없다).
+ *
+ * 끝은 **한 번만** 알린다(`nodeWsDialer` 와 같은 이유 — 'error' 와 'close' 가 둘 다 온다).
+ * 소켓이 없어 못 붙는 것(ENOENT)도 사유와 함께 `onClose` 다: 오퍼레이터가 아직 안 떴거나
+ * 재시작 중이면 백오프 재접속이 곧 붙는다.
+ */
+export const unixDialer: RelayUnixDialer = (link, handlers) => {
+  void (async () => {
+    const { connect } = await import('node:net');
+    const socket = connect(link.socketPath);
+    const decoder = new NdjsonDecoder();
+    let settled = false;
+    const settle = (reason?: string) => {
+      if (!settled) { settled = true; handlers.onClose(reason); }
+    };
+    socket.on('connect', () => {
+      const hello: RunnerHello = {
+        type: 'hello', version: RUNNER_LINK_PROTOCOL_VERSION, role: 'runner', runnerId: link.runnerId, secret: link.secret,
+      };
+      socket.write(`${JSON.stringify(hello)}\n`);
+      handlers.onOpen({ send: (data) => { socket.write(`${data}\n`); }, close: () => socket.destroy() });
+    });
+    socket.on('data', (chunk: Buffer) => {
+      for (const line of decoder.push(chunk)) {
+        if (line.ok) handlers.onMessage(JSON.stringify(line.value));
+      }
+    });
+    socket.on('close', () => settle());
+    socket.on('error', (err: Error) => settle(err.message));
+  })().catch((err: unknown) => handlers.onClose(err instanceof Error ? err.message : String(err)));
 };

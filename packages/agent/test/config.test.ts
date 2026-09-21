@@ -62,3 +62,18 @@ describe('loadConfig — HARKROOM_AGENT_INSTANCE (#174)', () => {
       .toThrow(/"Bad"[\s\S]*\[a-z0-9-\]\{1,32\}/);
   });
 });
+
+describe('loadConfig — 오퍼레이터 링크 (스펙 2026-09-20 §5)', () => {
+  it('셋이 없으면 null 이다 — 손으로 띄운 러너', () => {
+    expect(loadConfig({ HARKROOM_PAT: 'murp_test' }).operatorLink).toBeNull();
+  });
+  it('셋이 다 있으면 링크다', () => {
+    expect(loadConfig({
+      HARKROOM_PAT: 'murp_test', HARKROOM_OPERATOR_SOCKET: '/tmp/op.sock', HARKROOM_RUNNER_ID: 'r-1', HARKROOM_RUNNER_SECRET: 's',
+    }).operatorLink).toEqual({ socketPath: '/tmp/op.sock', runnerId: 'r-1', secret: 's' });
+  });
+  it('일부만 있으면 기동 실패다 — 조용히 폴백하면 오퍼레이터의 spawn 결함이 숨는다', () => {
+    expect(() => loadConfig({ HARKROOM_PAT: 'murp_test', HARKROOM_OPERATOR_SOCKET: '/tmp/op.sock' }))
+      .toThrow(/셋이 함께/);
+  });
+});
