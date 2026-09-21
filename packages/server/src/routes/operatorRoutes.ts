@@ -63,7 +63,8 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
   const view = (row: Omit<OperatorView, 'online'>): OperatorView => ({ ...row, online: presence.isOnline(row.id) });
 
   /**
-   * 하트비트. `/agent-relay` 에 넣은 것과 같은 배선(b485b9d8) — 프록시가 조용히 걷어간 소켓은
+   * 하트비트. 옛 `/agent-relay` 에 넣었던 것과 같은 배선(b485b9d8; 그 소켓은 단계 3 에서 이 채널로
+   * 합쳐졌다) — 프록시가 조용히 걷어간 소켓은
    * close 를 주지 않으므로 pong 부재가 유일한 신호다. 끊으면 close 핸들러가 돌아 허브에서 빠진다.
    */
   const heartbeat = createHeartbeat();

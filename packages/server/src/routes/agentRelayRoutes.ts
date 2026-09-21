@@ -1,6 +1,8 @@
-// Phase 2 attach 의 서버 표면(스펙 §5). 다섯 개다:
+// Phase 2 attach 의 서버 표면(스펙 §5). 넷이다:
 //
-//   GET  /agent-relay              러너가 거는 상시 outbound WS (PAT 헤더 인증)
+//   (없어졌다) GET /agent-relay    러너가 직접 걸던 WS — 단계 3(스펙 2026-09-20 §5)에서 폐기.
+//                                  러너 프레임은 이제 오퍼레이터 채널(`/operator`)에 runnerId 로
+//                                  다중화돼 오고, 이 파일이 그 채널을 구독해 허브에 넣는다.
 //   GET  /agent-sessions           내가 볼 수 있는 진행 중 세션 목록
 //   POST /agent-sessions/:id/attach  소유자 판정 → attach 티켓 발급
 //   POST /agent-sessions/interactive 사람이 스스로 인터랙티브 턴을 연다(#337) → attach 티켓
@@ -8,8 +10,10 @@
 //
 // **러너가 포트를 열지 않는다.** 러너는 사람의 로그인 세션 안에서 돌고, 관찰 하나 때문에
 // 두 번째 보안 표면(청취 포트 + 인증 + TLS)을 만들지 않는다는 것이 스펙 §2 가 안 C 를
-// 기각한 이유다. 그래서 방향이 러너 → 서버이고, 인증은 PAT 헤더다 — 러너는 브라우저가
-// 아니라 헤더를 실을 수 있으므로 티켓이 필요 없다(티켓은 URL 노출 문제의 해법이었다).
+// 기각한 이유다. 단계 3 뒤로 서버에 붙는 것은 러너가 아니라 **오퍼레이터**이고(outbound WS,
+// 오퍼레이터 토큰), 러너는 그 머신의 오퍼레이터 소켓에만 붙는다 — 방향은 여전히 안쪽에서
+// 바깥으로다. 어느 오퍼레이터의 어느 러너가 어느 에이전트인지는 `agent_assignment` 가 판정한다:
+// 배정되지 않은 에이전트의 러너를 주장하는 프레임은 버린다(배정이 곧 인가, 스펙 §5).
 //
 // **인가 술어를 새로 만들지 않았다.** attach 는 `checkOwnerOrAdmin`(auth/plugin.ts) 하나가
 // 판정한다 — #253 이 그 술어를 "이 파일에 하나만 둔다"로 못박았고, PAT 목록·메모리 조회와
@@ -25,9 +29,10 @@
 // 붙여 넣은 토큰이나 비밀번호 프롬프트의 답이 섞이므로 출력과 성질이 같다. 개입 사실은
 // `agent.detached` 의 detail.inputBytes 하나로 남는다(스펙 §5-2 결정 3): 입력마다 행을
 // 쓰면 행 타임스탬프가 곧 키 입력의 리듬이라 그 자체가 부채널이다.
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import type { AgentSessionView, AgentWakeView } from '@harkroom/shared';
+import { unwrapOperatorFrame, wrapServerFrame } from '@harkroom/shared/runnerLink';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { cancelDelegationsFor } from '../services/delegations.js';
@@ -36,22 +41,7 @@ import { emitEvent } from '../events.js';
 import { createRelayHub, type RelayHub } from '../ws/relay.js';
 import type { AgentPresence } from '../mcp/presence.js';
 import { createCredentialSweep, DEFAULT_REVALIDATE_MS, originAllowed } from '../ws/socketLifetime.js';
-import { createHeartbeat } from '../ws/heartbeat.js';
-
-/**
- * 러너 소켓의 인증. `requireAccount` 뒤에 붙어 **에이전트 계정인지**까지 본다.
- *
- * 사람 계정을 막는 이유: 이 소켓은 세션을 announce 하고 PTY 바이트를 밀어 넣는 자리다.
- * 사람의 세션 토큰으로 붙을 수 있으면 아무 멤버나 "나는 에이전트 X 의 러너다"라고
- * 주장할 수 있고, 그 주장으로 남의 에이전트 세션 목록을 위조한다.
- */
-async function requireAgentAccount(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  if (req.account && req.account.kind !== 'agent') {
-    await reply.code(401).send({
-      error: { code: 'unauthorized', message: 'agent account PAT required' },
-    });
-  }
-}
+import type { OperatorHub } from '../ws/operatorHub.js';
 
 /** 내가 소유한 에이전트 계정들. admin 은 이 질의를 타지 않는다('all' 이다). */
 async function ownedAgentIds(pool: Pool, accountId: string): Promise<string[]> {
@@ -74,10 +64,16 @@ export interface AgentRelayDeps {
   /** 자격증명 재검증 주기(ms). `/ws` 와 같은 값을 쓴다. 테스트가 짧게 준다. */
   revalidateMs?: number;
   /**
-   * 러너 소켓 하트비트 주기(ms). `/ws` 와 **같은 값**이어야 한다 — 갈라지면 더 민감한
-   * 쪽(PTY 바이트가 흐르는 소켓)이 더 느슨해진다(`socketLifetime.ts` 머리 주석의 원칙).
+   * 오퍼레이터 채널(단계 3). 러너 프레임은 이 허브의 `hello`·`runner.started`·`runner.announce`…
+   * 로 온다. 하트비트는 그 채널의 것이다(`operatorRoutes.ts`) — 이 파일이 따로 돌리지 않는다.
    */
-  heartbeatMs?: number;
+  operatorHub: OperatorHub;
+  /**
+   * (오퍼레이터, 에이전트) 쌍이 배정돼 있는가. 기본은 `agent_assignment` 조회. 배정되지 않은
+   * 에이전트의 러너를 주장하는 프레임은 **버린다** — 오퍼레이터 하나가 남의 에이전트 세션을
+   * 위조해 그 소유자의 화면에 띄우는 길을 막는다(옛 `requireAgentAccount` 가 막던 것과 같은 결).
+   */
+  isAssigned?: (operatorId: string, agentId: string) => Promise<boolean>;
   /** interactive.open 응답 대기 한도(ms, #337). 기본 10초 — 테스트가 짧게 준다. */
   interactiveOpenTimeoutMs?: number;
   /**
@@ -161,44 +157,80 @@ export async function registerAgentRelayRoutes(
   app.addHook('onClose', async () => { sweep.stop(); });
 
   /**
-   * 러너 소켓의 하트비트. **`socket.on('close')` 만으로는 부족하다**(2026-09-20 실측):
-   * 경로 중간의 프록시가 연결을 걷어가면 close 가 오지 않고, 서버는 죽은 소켓을
-   * 레지스트리에 들고 있다가 `interactive.open` 을 그리로 던진다 — 사람 화면에는
-   * 10초 뒤 원인 없는 504 가 뜬다. pong 부재가 그 상태를 아는 **유일한** 신호다.
+   * 오퍼레이터 채널 위의 러너들(단계 3, 스펙 2026-09-20 §5).
    *
-   * 판정은 `heartbeat.ts` 가 하고(직전 ping 에 pong 이 없으면 끊는다) 여기서는 주기만
-   * 돌린다 — 끊으면 close 핸들러가 돌아 `detach` 가 레지스트리를 비운다. `/ws` 와
-   * 같은 배선이고, 같은 값을 받는다.
+   * 키는 `(operatorId, runnerId)` 다 — 같은 에이전트의 러너가 재spawn 되면 runnerId 가 바뀌고,
+   * 허브는 에이전트당 하나만 들므로 새 것이 옛 것을 밀어낸다(`addRunner` 의 교체 규칙).
+   * 등록은 **배정 확인 뒤**다. 확인은 DB 왕복이라 비동기이고, `runner.started` 바로 뒤에
+   * `runner.announce` 가 붙어 오므로 프레임 처리는 그 확인을 **기다린다** — 순서를 지키려고
+   * 키마다 약속 하나를 들고, 뒤따르는 프레임은 그 약속 뒤에 선다.
    */
-  const heartbeat = createHeartbeat();
-  const beat = setInterval(() => heartbeat.tick(), deps.heartbeatMs ?? 30_000);
-  beat.unref?.(); // 이 타이머가 프로세스 종료를 붙잡지 않게 한다
-  app.addHook('onClose', async () => { clearInterval(beat); });
-
+  const isAssigned = deps.isAssigned ?? (async (operatorId: string, agentId: string) => {
+    const res = await pool.query(
+      `select 1 from agent_assignment where operator_id = $1 and agent_id = $2`, [operatorId, agentId]);
+    return Boolean(res.rowCount);
+  });
+  const runnerKey = (operatorId: string, runnerId: string) => `${operatorId}/${runnerId}`;
+  const known = new Map<string, Promise<{ agentId: string; detach: () => void } | null>>();
   /**
-   * 러너의 상시 outbound WS. 재접속은 러너가 백오프로 한다(`packages/agent/src/policy.ts`
-   * 의 `nextBackoffMs` — inbox.poll 루프와 같은 정책을 쓴다). 서버는 소켓이 끊기면 그
-   * 러너의 세션 레지스트리를 버리고, 재접속 시 러너가 보내는 `announce` 로 다시 채운다 —
-   * 서버는 러너가 살아 있는지 알 방법이 없으므로 진실의 원천을 러너에 둔다.
+   * 에이전트별 **가장 최근 등록**의 약속. `interactive.open` 은 러너가 방금 떴을 때 오기 쉽다
+   * (사람이 [터미널 열기]를 누르는 그 순간) — 배정 확인이 끝나기 전에 허브에 물으면 없는
+   * 러너라고 답한다. 그 창을 닫으려고 열기 전에 이것을 기다린다.
    */
-  app.get('/agent-relay', {
-    websocket: true,
-    preHandler: [app.requireAccount, requireAgentAccount],
-  }, (socket, req) => {
-    const agentAccountId = req.account!.id;
-    const detach = hub.addRunner(agentAccountId, socket);
-    // 정상 ws 클라이언트는 ping 에 자동으로 pong 한다. 서버는 그 답을 기록만 한다.
-    heartbeat.track(socket);
-    socket.on('pong', () => heartbeat.pong(socket));
-    socket.on('message', (raw) => {
-      // 프레임이 왔다 = 이 러너가 살아 있다. `hub` 앞에 두는 이유: 허브가 모르는
-      // 프레임 종류(구·신 러너의 차이)도 생존 증거로는 똑같이 유효하다.
-      deps.agentPresence.mark(agentAccountId);
-      hub.onRunnerMessage(agentAccountId, String(raw));
+  const settling = new Map<string, Promise<unknown>>();
+  const settled = (agentId: string): Promise<unknown> => settling.get(agentId) ?? Promise.resolve();
+  /** 세션 id 로만 오는 문(attach·cancel)은 누구의 러너인지 모른다 — 진행 중인 등록 전부를 기다린다. */
+  const allSettled = (): Promise<unknown> => Promise.allSettled([...settling.values()]);
+
+  const register = (operatorId: string, runnerId: string, agentId: string): void => {
+    const key = runnerKey(operatorId, runnerId);
+    if (known.has(key)) return;
+    const entry = (async () => {
+      if (!(await isAssigned(operatorId, agentId))) {
+        app.log.warn({ operatorId, runnerId, agentId }, '배정되지 않은 에이전트의 러너 — 프레임을 버린다');
+        return null;
+      }
+      const detach = hub.addRunner(agentId, {
+        send: () => { /* sendFrame 이 있다 — 허브는 그쪽을 쓴다 */ },
+        close: () => { /* 오퍼레이터 소켓은 이 러너 하나의 것이 아니다 — 끊지 않는다 */ },
+        sendFrame: (frame) => deps.operatorHub.send(operatorId, wrapServerFrame(runnerId, frame)),
+      });
+      return { agentId, detach };
+    })();
+    known.set(key, entry);
+    settling.set(agentId, entry);
+  };
+  const unregister = (operatorId: string, runnerId: string): void => {
+    const key = runnerKey(operatorId, runnerId);
+    const entry = known.get(key);
+    if (!entry) return;
+    known.delete(key);
+    void entry.then((e) => e?.detach());
+  };
+
+  deps.operatorHub.onFrame((operatorId, frame) => {
+    if (frame.type === 'hello') {
+      for (const r of frame.runners) register(operatorId, r.runnerId, r.agentId);
+      return;
+    }
+    if (frame.type === 'runner.started') { register(operatorId, frame.runnerId, frame.agentId); return; }
+    if (frame.type === 'runner.exited') { unregister(operatorId, frame.runnerId); return; }
+    const inner = unwrapOperatorFrame(frame);
+    if (!inner) return;
+    const entry = known.get(runnerKey(operatorId, inner.runnerId));
+    // 모르는 러너의 프레임은 버린다 — `runner.started` 없이 온 것이거나 이미 물러난 러너다.
+    if (!entry) return;
+    void entry.then((e) => {
+      if (!e) return;
+      // 프레임이 왔다 = 이 에이전트가 살아 있다. 턴 중에는 이것이 유일한 신호다(inbox.poll 이 안 나간다).
+      deps.agentPresence.mark(e.agentId);
+      hub.onRunnerFrame(e.agentId, inner.frame);
     });
-    // 추적에서 빼는 것을 잊으면 죽은 소켓이 매 tick 마다 ping 을 받는다(`heartbeat.ts`
-    // 는 스스로 정리하지 않는다 — 누가 그 소켓의 주인인지 모르기 때문이다).
-    socket.on('close', () => { heartbeat.untrack(socket); detach(); });
+  });
+  deps.operatorHub.onClose((operatorId) => {
+    for (const key of [...known.keys()]) {
+      if (key.startsWith(`${operatorId}/`)) unregister(operatorId, key.slice(operatorId.length + 1));
+    }
   });
 
   /**
@@ -310,6 +342,7 @@ export async function registerAgentRelayRoutes(
     preHandler: app.requireAccount,
   }, async (req, reply) => {
     const account = req.account!;
+    await allSettled();
     const session = hub.getSession(req.params.id);
     if (!session) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such session' } });
@@ -383,6 +416,7 @@ export async function registerAgentRelayRoutes(
     preHandler: app.requireAccount,
   }, async (req, reply) => {
     const account = req.account!;
+    await allSettled();
     const session = hub.getSession(req.params.id);
     if (!session) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such session' } });
@@ -443,6 +477,8 @@ export async function registerAgentRelayRoutes(
         return reply.code(verdict.status).send({ error: { code: verdict.code, message: verdict.message } });
       }
 
+      // 러너가 방금 떴다면 등록(배정 확인)이 끝나길 기다린다 — 위 `settling` 주석.
+      await settled(agentAccountId);
       const outcome = await hub.openInteractive(
         agentAccountId,
         { channelId, threadRootId, openedByHandle: account.handle },

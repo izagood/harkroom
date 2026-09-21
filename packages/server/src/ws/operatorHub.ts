@@ -36,6 +36,8 @@ export interface OperatorHub {
   runnerOf(agentId: string): { operatorId: string; runnerId: string } | null;
   /** 파싱된 모든 프레임을 구독한다. 배정 라우트(hello 에 배정 재전송)와 릴레이(단계 3)가 쓴다. */
   onFrame(listener: (operatorId: string, frame: OperatorToServerFrame) => void): () => void;
+  /** 오퍼레이터가 떨어졌다(소켓 close·교체). 릴레이가 그 오퍼레이터의 러너 세션을 접는 근거다. */
+  onClose(listener: (operatorId: string) => void): () => void;
 }
 
 export function createOperatorHub(): OperatorHub {
@@ -48,12 +50,16 @@ export function createOperatorHub(): OperatorHub {
       const previous = live.get(operatorId);
       if (previous && previous.socket !== socket) {
         previous.socket.close(4409, 'replaced by a newer operator connection');
+        // 교체도 끊김이다 — 앞 소켓의 러너들은 새 hello 가 다시 알린다.
+        bus.emit('close', operatorId);
       }
       const entry: LiveOperator = { socket, capabilities: null, runners: new Map() };
       live.set(operatorId, entry);
       return () => {
         // 이미 다른 소켓으로 교체됐다면 그쪽 등록을 지우지 않는다.
-        if (live.get(operatorId) === entry) live.delete(operatorId);
+        if (live.get(operatorId) !== entry) return;
+        live.delete(operatorId);
+        bus.emit('close', operatorId);
       };
     },
 
@@ -92,6 +98,10 @@ export function createOperatorHub(): OperatorHub {
     onFrame(listener) {
       bus.on('frame', listener);
       return () => { bus.off('frame', listener); };
+    },
+    onClose(listener) {
+      bus.on('close', listener);
+      return () => { bus.off('close', listener); };
     },
   };
 }

@@ -12,6 +12,7 @@ import type { AgentSessionView, AttachClientFrame, AttachServerFrame, RelayRunne
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { operatorRunnerFactory, type OperatorRunner } from './helpers/operatorRunner.js';
 
 let app: FastifyInstance;
 let pool: Pool;
@@ -27,6 +28,7 @@ let strangerToken: string;
 let agentId: string;
 let agentPat: string;
 let baseUrl: string;
+let runners: ReturnType<typeof operatorRunnerFactory>;
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 
@@ -41,27 +43,8 @@ const TYPED = Buffer.concat([
   Buffer.from('yes 비밀번호1234\r', 'utf8'),
 ]);
 
-interface FakeRunner {
-  socket: WebSocket;
-  received: RelayServerFrame[];
-  send(frame: RelayRunnerFrame): void;
-  close(): Promise<void>;
-}
-
-async function connectRunner(pat: string): Promise<FakeRunner> {
-  const socket = new WebSocket(`ws://${baseUrl}/agent-relay`, { headers: auth(pat) });
-  const received: RelayServerFrame[] = [];
-  socket.on('message', (d) => received.push(JSON.parse(String(d)) as RelayServerFrame));
-  await new Promise<void>((resolve, reject) => {
-    socket.on('open', () => resolve());
-    socket.on('error', reject);
-  });
-  return {
-    socket, received,
-    send: (frame) => socket.send(JSON.stringify(frame)),
-    close: () => new Promise<void>((resolve) => { socket.on('close', () => resolve()); socket.close(); }),
-  };
-}
+type FakeRunner = OperatorRunner;
+const connectRunner = (id: string, ..._rest: unknown[]): Promise<FakeRunner> => runners.connect(id);
 
 /**
  * `acceptsInput` 을 **인자로 받는다**(#369). 기본값을 주지 않는 이유: 이 값이 곧 writer
@@ -210,13 +193,14 @@ beforeAll(async () => {
   await app.listen({ port: 0, host: '127.0.0.1' });
   const addr = app.server.address();
   baseUrl = typeof addr === 'object' && addr ? `127.0.0.1:${addr.port}` : '';
+  runners = operatorRunnerFactory(app, () => baseUrl, adminToken);
 });
 afterAll(async () => { await app.close(); await stop(); });
 
 describe('#315-1 writer 뷰어가 친 바이트가 러너 PTY 로 간다', () => {
   it('혼자 붙은 뷰어는 writer 통지를 받고, 그 input 이 러너에게 바이트 그대로 도착한다', async () => {
     const sessionId = 'sess-input-1';
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
@@ -241,7 +225,7 @@ describe('#315-1 writer 뷰어가 친 바이트가 러너 PTY 로 간다', () =>
 describe('#315-4 writer 가 아닌 뷰어는 소켓에 직접 써도 러너에 닿지 않는다', () => {
   it('두 번째 attach 가 첫 번째를 강등시키고, 강등된 창의 input 은 버려진다', async () => {
     const sessionId = 'sess-input-nonwriter';
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
@@ -271,7 +255,7 @@ describe('#315-4 writer 가 아닌 뷰어는 소켓에 직접 써도 러너에 �
 
   it('writer 가 떠나면 가장 최근에 붙은 남은 뷰어가 승계한다', async () => {
     const sessionId = 'sess-input-succession';
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
@@ -305,7 +289,7 @@ describe('#315-4 writer 가 아닌 뷰어는 소켓에 직접 써도 러너에 �
 describe('#315-6 소유자도 admin 도 아니면 읽기도 못 한다 (#141 게이트 유지)', () => {
   it('제3자는 attach 인가에서 403 이고 티켓 자체를 못 받는다', async () => {
     const sessionId = 'sess-input-stranger';
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
@@ -326,7 +310,7 @@ describe('#315-7 감사에 누가·언제·몇 바이트만 남고 내용은 남
   it('detach 행 전체를 문자열로 만들어도 타이핑한 값이 그 안에 없다', async () => {
     const sessionId = 'sess-input-audit';
     const secret = 'sk-live-0123456789abcdef';
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
@@ -358,7 +342,7 @@ describe('#315-7 감사에 누가·언제·몇 바이트만 남고 내용은 남
 describe('#315-8 연타가 감사 행을 폭증시키지 않는다', () => {
   it('한 attach 소켓의 입력 전부가 detach 행 하나의 합산으로 남는다', async () => {
     const sessionId = 'sess-input-burst';
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
@@ -388,7 +372,7 @@ describe('#315-8 연타가 감사 행을 폭증시키지 않는다', () => {
 
   it('아무것도 안 친 뷰어의 detach 행은 inputBytes 0 이다 — 관찰과 개입이 구분된다', async () => {
     const sessionId = 'sess-input-zero';
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
@@ -414,7 +398,7 @@ describe('#315-9 소유자가 admin 이어도 자기 에이전트에는 칠 수 
     // admin 이든 소유자든 — 차례가 그에게 온다. 이 조합이 죽으면 갓 만든 에이전트의
     // 터미널에 칠 수 있는 사람이 한 명도 없다(#338 이 잡은 사고의 재발 방지선).
     const sessionId = 'sess-input-adminowner';
-    const runner = await connectRunner(adminOwnedAgentPat);
+    const runner = await connectRunner(adminOwnedAgentId);
     runner.send({
       type: 'announce',
       sessions: [{ ...session(sessionId, true), agentAccountId: adminOwnedAgentId }],
@@ -440,7 +424,7 @@ describe('#315-9 소유자가 admin 이어도 자기 에이전트에는 칠 수 
 describe('#346 caps 없는 구 러너에는 입력이 조용히 사라지지 않는다', () => {
   it('caps 를 선언하지 않은 러너의 세션에서는 writer:false 만 오고, 그래도 친 input 은 포워딩되지 않는다', async () => {
     const sessionId = 'sess-input-nocaps';
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     // 구 러너 흉내 — caps 필드 자체가 없다. 이 러너는 input 프레임을 받아도 버린다.
     runner.send({ type: 'announce', sessions: [session(sessionId, true)] });
     await waitForSession(sessionId);
@@ -482,7 +466,7 @@ describe('#346 caps 없는 구 러너에는 입력이 조용히 사라지지 않
 describe('#369 관찰 전용 세션에는 writer 차례가 없다', () => {
   it('멘션 턴(acceptsInput=false)에는 writer:false 와 이유가 오고, 친 input 은 러너에 닿지 않는다', async () => {
     const sessionId = 'sess-observe-only';
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     // 능력은 **있다** — 구 러너와 구분하기 위해서다. 못 치는 이유가 러너의 나이가 아니라
     // 이 턴의 stdin 이라는 것이 이 테스트의 요점이다.
     runner.send({ type: 'announce', sessions: [session(sessionId, false)], caps: ['input', 'interactive'] });
@@ -516,7 +500,7 @@ describe('#369 관찰 전용 세션에는 writer 차례가 없다', () => {
    */
   it('인터랙티브 턴(acceptsInput=true)에는 여전히 writer 가 열리고 input 이 러너에 도착한다', async () => {
     const sessionId = 'sess-interactive-open';
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
@@ -543,7 +527,7 @@ describe('#369 관찰 전용 세션에는 writer 차례가 없다', () => {
    */
   it('acceptsInput 을 안 싣는 구 러너에는 이유가 runner-outdated 다 — 관찰 전용이라고 지어내지 않는다', async () => {
     const sessionId = 'sess-observe-unknown';
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     // `#346` 러너 흉내 — caps 는 있고 세션에 `acceptsInput` **필드 자체가 없다.**
     // `false` 로 두면 안 된다: 그것은 "러너가 관찰 전용이라고 말했다"는 다른 사실이다.
     const { acceptsInput: _unknown, ...oldRunnerSession } = session(sessionId, true);
@@ -571,7 +555,7 @@ describe('#369 관찰 전용 세션에는 writer 차례가 없다', () => {
    */
   it('resize 는 관찰 전용 턴과 인터랙티브 턴 양쪽에서 러너에 도착한다', async () => {
     for (const [sessionId, acceptsInput] of [['sess-rs-observe', false], ['sess-rs-live', true]] as const) {
-      const runner = await connectRunner(agentPat);
+      const runner = await connectRunner(agentId);
       runner.send({ type: 'announce', sessions: [session(sessionId, acceptsInput)], caps: ['input', 'interactive'] });
       await waitForSession(sessionId);
 
