@@ -392,7 +392,6 @@ export const ko = {
   'agents.run.note': '무엇으로 도는가.',
   'agents.run.title': '실행',
 
-  'agents.runner.commandCopy': '명령 복사',
   'agents.runner.copied': '복사됨',
   'agents.runner.copy': '복사',
   'agents.runner.copyFailedManual': '클립보드를 쓸 수 없고 명령을 선택할 수도 없다 — 명령을 손으로 옮겨 적는다',
@@ -408,43 +407,18 @@ export const ko = {
     + '‘{label}’ 으로 표시한다 — 같은 에이전트에 러너가 둘이면 멘션을 두 러너가 나눠 집어 간다.',
   'agents.runner.ownedNoteDaemon': 'daemon 이 이미 들고 있는',
   'agents.runner.ownedNoteOwn': '내가 소유한',
-  'agents.runner.patGoToMint': 'PAT 발급으로 이동',
-  'agents.runner.reissue': 'PAT 재발급',
-  'agents.runner.reissueFailed': 'PAT 재발급에 실패했다: {reason}',
-  'agents.runner.reissueNote':
-    '새 PAT 를 발급하고 {strongRevoke} 러너를 다시 띄운다. 옛 PAT 로 돌던 러너(다른 머신의 것도)는 '
-    + '다음 호출에서 401 을 받고 종료 코드 78 로 스스로 물러난다.',
-  'agents.runner.reissueNoteRevoke': '옛 PAT 를 폐기한 뒤',
-  'agents.runner.reissuing': '재발급 중…',
-  'agents.runner.startFailed': '러너를 띄우지 못했다: {reason}',
-  /** `#` 는 셸 주석 기호다 — 이 값이 통째로 클립보드에 실린다(`en.ts` 의 그 주석). */
-  'agents.runner.commandBundledNote': '# 앱을 설치해 쓰는 경우 (설치 위치가 다르면 경로를 바꾼다)',
-  'agents.runner.commandDevNote': '# Harkroom 저장소를 클론한 개발 환경',
-  'agents.runner.templateHeading': '러너 실행',
-  'agents.runner.templateNote': '토큰은 발급 순간에만 보인다. 잃었으면 새로 발급한다.',
-  'agents.runner.whoStarts':
-    'Harkroom {strongServer}는 러너를 띄우지 않는다. 이 데스크탑 앱은 {strongOwn} 에이전트만 띄운다 — '
-    + '남이 소유했거나 소유자가 없는 에이전트는 {strongNoAnswer}(멘션은 쌓이기만 한다). '
-    + '러너는 앱과 함께 배포되므로 Harkroom 앱이 설치된 머신이면 된다 — 저장소는 아래 개발용 갈래에만 필요하다.',
-  'agents.runner.whoStartsNoAnswer': '위 명령을 직접 실행해 러너를 붙이기 전까지 멘션에 답하지 않는다',
-  'agents.runner.whoStartsOwn': '내가 소유한',
-  'agents.runner.whoStartsServer': '서버',
+  'agents.runner.operatorTakesPat':
+    '배정된 오퍼레이터는 이 토큰을 서버에서 직접 받아 간다 — 어디에도 옮겨 적을 필요가 없다. '
+    + '러너를 손으로 띄울 때만 이 값이 필요하다.',
 
   'agents.stale.allCurrent': '도는 러너가 전부 이 번들이다.',
+  'agents.stale.here': { other: '이 머신의 러너 {count}대가 이 번들보다 뒤처졌다 — 이 머신의 오퍼레이터를 갱신하면 따라온다.' },
   'agents.stale.elsewhere': {
     other: '이 기기가 띄운 러너는 전부 이 번들이다. 뒤처진 러너 {count}대는 다른 기기의 것이라 '
       + '여기서 재기동할 수 없다 — 그 기기의 Harkroom 에서 눌러야 한다.',
   },
   'agents.stale.note': '재기동은 {strong} — 턴을 마친 뒤 새 번들로 다시 뜬다.',
   'agents.stale.noteStrong': '진행 중인 턴을 끊지 않는다',
-  // 한국어는 수에 따라 명사가 안 바뀐다 — `other` 하나인 것이 그 언어의 사실이다.
-  'agents.stale.restart': { other: '뒤처진 러너 전체 재기동 ({count})' },
-  'agents.stale.restartDone': { other: '러너 {count}대가 새 번들로 돌아왔다.' },
-  'agents.stale.restartFailed': '재기동하지 못했다: {reason}',
-  'agents.stale.restartRequested': {
-    other: '러너 {count}대에 재기동을 걸었다 — 진행 중인 턴을 마치면 새 번들로 다시 뜬다.',
-  },
-  'agents.stale.restarting': '재기동 거는 중…',
   'agents.stale.unknownAppVersion': '앱 버전을 얻지 못해 뒤처짐을 판정할 수 없다.',
   'agents.stale.unknownVersion': {
     other: '버전을 모르는 러너 {count}대 — 뒤처졌는지 알 수 없어 대상에서 뺐다. '
@@ -597,42 +571,7 @@ export const ko = {
   // `waitChain.link` 가 세운 규율이다. 한국어 쪽 결과 글자는 그대로다.
   // ---------------------------------------------------------------------------
 
-  'runner.exit.credentialRejected': 'PAT 가 폐기·회전됐다 — 재발급하면 다시 뜬다',
-  'runner.exit.loginRequired': '{what} 로그인이 풀렸다 — 터미널에서 {binary} 를 실행해 다시 로그인하면 살아난다',
-  'runner.exit.loginRequiredNoBinary': '{what} 의 로그인이 풀렸다 — 그 CLI 로 다시 로그인해라',
   'runner.exit.notFound': '{what} 를 찾을 수 없다 — 설치하고 PATH 에 있는지 확인하라. {hint}',
-  'runner.exit.notFoundNoHint': '{what} 를 찾을 수 없다 — 설치하고 PATH 에 있는지 확인하라',
-  'runner.exit.subjectHarness': '이 에이전트의 하네스({harness})',
-  'runner.exit.subjectHarnessUnknown': '알 수 없음',
-  'runner.exit.unknown': '설정 문제로 물러났다(78) — 사유를 가리지 못했다. 러너 로그를 확인하라',
-  'runner.exit.unknownWithLog':
-    '설정 문제로 물러났다(78) — 사유를 가리지 못했다. 러너 로그 마지막 줄: {excerpt}',
-
-  'runner.launch.daemonUnreachable': 'daemon 에 닿지 못해 러너를 띄우지 않았다: {reason}',
-  'runner.launch.failed': '기동 실패: {reason}',
-  'runner.launch.keychainUnreadable':
-    '키체인을 읽지 못했다 — 돌고 있는 러너를 죽일 수 있어 새로 발급하지 않았다: {reason}',
-  'runner.launch.patNotStored':
-    '에이전트는 생성됐지만 PAT 를 키체인에 저장하지 못해 러너를 띄우지 않았다: {reason}',
-
-  'runner.reissue.keychainUnreadable': '키체인을 읽지 못해 옛 PAT 를 폐기할 수 없다 — 재발급하지 않았다: {reason}',
-  'runner.reissue.mintFailed': '새 PAT 를 발급하지 못했다 — 옛 PAT 는 그대로 살아 있다: {reason}',
-  'runner.reissue.revokeDeferred':
-    '새 PAT 로 다시 띄운다. 옛 PAT({label})는 폐기하지 않았다 — 그것으로 도는 러너가 진행 중인 '
-    + '턴을 마치는 중이다(끝나면 스스로 물러난다). 지금 끊어야 한다면 설정에서 손으로 폐기해라 — '
-    + '그 턴은 답을 남기지 못한다.',
-  'runner.reissue.revokeFailed':
-    '새 PAT 로 다시 띄웠지만 옛 PAT({label}) 폐기에 실패했다 — 설정에서 손으로 폐기해라: {reason}',
-  'runner.reissue.waiting': '새 PAT 를 받았다 — 옛 러너가 진행 중인 턴을 끝내고 물러나기를 기다린다',
-
-  'runner.restart.killFailed': '재기동하지 못했다 — daemon 에 종료를 전하지 못했다: {reason}',
-  'runner.restart.respawnUnreachable': '러너는 물러났지만 daemon 에 닿지 못해 다시 띄우지 못했다: {reason}',
-  'runner.restart.stillRunning':
-    '러너가 아직 물러나지 않았다 — 진행 중인 턴이 길다. 종료 요청은 이미 갔으므로 그 턴이 끝나면 곧 뜬다.',
-  'runner.restart.waitingForRetirement': '앞 세대 러너가 진행 중인 턴을 끝내고 물러나는 중이다 — 끝나면 새로 띄운다',
-
-  'runner.stranger.attached':
-    '이 계정으로 붙어 있는 러너가 서버에 보이지만 이 daemon 의 장부에는 없다 — 내 러너는 새로 띄웠다',
 
   // ---------------------------------------------------------------------------
   // sidebar — **키 순서는 `en.ts` 와 같다**(덩어리 알파벳 → 그 안 키 알파벳).
@@ -912,7 +851,6 @@ export const ko = {
   'grid.version.current': '{version}',
   'grid.version.restarting': '재기동 중…',
   'grid.version.stale': '{version} · 뒤처짐',
-  'grid.version.staleAction': '{handle} 러너 재기동 — {version} 은 앱보다 뒤처졌다',
   'grid.version.unknown': '버전 모름',
 
   'grid.card.relaunch': '{handle} 실행하기',
@@ -1086,9 +1024,6 @@ export const ko = {
 
   'profile.actions.agentSettings': '에이전트 설정',
   'profile.actions.dm': 'DM 열기',
-  'profile.actions.restartCancel': '재기동 예약 취소',
-  'profile.actions.restartStale': '새 버전으로 재기동',
-  'profile.actions.restart': '러너 재기동',
 
   'profile.rows.harness': '하네스',
   'profile.rows.kind': '종류',
@@ -1145,6 +1080,7 @@ export const ko = {
   'message.unsave': '담은 것 빼기',
   // 연쇄 깊이 상한에 막힌 호출(4단계) — 근거는 `en.ts` 의 같은 자리에 있다.
   'message.chainCapped': '{handles} 를 부르지 않았다 — 멘션 연쇄가 깊이 상한({limit})에 닿았다. 이어 가려면 사람이 한 줄 쓰면 된다.',
+  'message.mentionDenied': '{handles} 를 부르지 않았다 — 부를 수 있는 범위 밖이다. 그 에이전트의 소유자에게 물어라.',
   'message.openSkillApproval': '스킬 승인 화면 열기',
 
   'message.authorLabel': '작성자 {name}',
@@ -1494,6 +1430,40 @@ export const ko = {
   // 뜻은 한 글자도 안 바꿨다: 세 사실(한 번만 보인다 · 소진된다 · 지금 복사하라)이
   // 그대로 있고, 어미만 `~습니다`·`~세요` 에서 `~다` 로 왔다.
   // ---------------------------------------------------------------------------
+
+  'operators.description': '에이전트를 돌리는 머신들. 여기서 등록하고, 에이전트를 거기에 배정한다.',
+  'operators.loading': '읽는 중…',
+  'operators.listFailed': '오퍼레이터 목록을 읽지 못했다',
+  'operators.none': '등록된 오퍼레이터가 없다. 아래에서 코드를 발급해 에이전트를 돌릴 머신에서 실행하라.',
+  'operators.online': '연결됨',
+  'operators.offline': '끊김',
+  'operators.lastSeen': '마지막 {at}',
+  'operators.revoke': '폐기',
+  'operators.revokeAction': '{name} 폐기',
+  'operators.revokeFailed': '오퍼레이터를 폐기하지 못했다',
+  'operators.registerNote':
+    '등록 코드는 5분 동안 한 번만 쓸 수 있다. 화면의 명령을 그 머신에서 실행하면 그 머신이 여기 오퍼레이터로 올라온다.',
+  'operators.register': '등록 코드 발급',
+  'operators.registerAgain': '새 코드 발급 (위 코드는 사라진다)',
+  'operators.registerBusy': '발급 중…',
+  'operators.registerFailed': '코드를 발급하지 못했다',
+  'operators.codeWarning': '이 코드는 지금만 보인다 — 화면을 떠나면 사라진다',
+  'operators.codeNextStep': '5분 안에 그 머신에서 실행하라. 이름을 묻고, 토큰은 그 머신이 스스로 보관한다.',
+
+  'agents.assignment.heading': '어디서 돌리나',
+  'agents.assignment.label': '오퍼레이터 배정',
+  'agents.assignment.none': '배정 없음 — 어느 오퍼레이터도 이 에이전트의 러너를 띄우지 않는다.',
+  'agents.assignment.current': '{name} 에서 돈다',
+  'agents.assignment.currentOffline': '{name} 에서 돈다 — 지금은 끊겨 있어 러너가 없다',
+  'agents.assignment.unknownOperator': '내가 볼 수 없는 오퍼레이터',
+  'agents.assignment.pick': '오퍼레이터를 고른다…',
+  'agents.assignment.unassign': '배정 해제',
+  'agents.assignment.noOperators': '등록된 오퍼레이터가 없다 — 먼저 Operators 에서 등록하라.',
+  'agents.assignment.failed': '배정을 저장하지 못했다: {reason}',
+  'agents.assignment.notCapable': '그 오퍼레이터의 로컬 설정에 이 에이전트가 없어 거절했다.',
+  'agents.assignment.note':
+    '배정하면 그 오퍼레이터가 러너를 띄운다. 다른 곳으로 옮기면 옛 러너는 진행 중인 턴을 마치고 물러난다. '
+    + '오퍼레이터 쪽 설정에도 이 에이전트가 있어야 한다 — 양쪽이 동의해야 돈다.',
 
   'invite.busy': '발급 중…',
   'invite.create': '초대 토큰 발급',

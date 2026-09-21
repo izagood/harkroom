@@ -118,7 +118,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       # **사이드카가 `tauri build` 보다 반드시 앞이다.** `tauri.conf.json` 의 `externalBin` 이
-      # `binaries/harkroom-runner`·`binaries/harkroom-daemon` 둘 다 요구하고, 없으면 번들 단계가
+      # `binaries/harkroom-runner`·`binaries/harkroom-operator` 둘 다 요구하고, 없으면 번들 단계가
       # `resource path … doesn't exist` 로 죽는다(#441). 사람이 기억해야 하는 순서를 여기에
       # 못박는 것이 이 잡이 #441 을 닫는 방식이다.
       - run: pnpm --filter @harkroom/desktop build:sidecar
@@ -160,7 +160,7 @@ jobs:
       #
       #   Contents/MacOS/harkroom-desktop           ← 본체
       #   Contents/MacOS/harkroom-runner            ← externalBin (하네스를 돌린다)
-      #   Contents/MacOS/harkroom-daemon            ← externalBin (러너를 spawn 한다)
+      #   Contents/MacOS/harkroom-operator            ← externalBin (러너를 spawn 한다)
       #   Contents/Resources/node_modules/node-pty ← bundle.resources (러너가 PTY 를 연다)
       #
       # 마지막 항목이 `Resources/` 인 것은 Tauri 가 `bundle.resources` 를 거기 두기 때문이다.
@@ -179,7 +179,7 @@ jobs:
           for f in \
             "$app/Contents/MacOS/harkroom-desktop" \
             "$app/Contents/MacOS/harkroom-runner" \
-            "$app/Contents/MacOS/harkroom-daemon"
+            "$app/Contents/MacOS/harkroom-operator"
           do
             if [ -x "$f" ]; then
               echo "ok  $f"

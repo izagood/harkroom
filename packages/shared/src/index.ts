@@ -20,6 +20,12 @@ export interface AccountView {
   kind: 'human' | 'agent';
   isAdmin: boolean;
   /**
+   * 역할 — 누가 권한을 줄 수 있나만 정한다(스펙 2026-09-20 §6 (1)). `isAdmin` 은
+   * `role in owner|admin` 과 항상 같다(마이그레이션 055 의 check). 행위 자체는 역할이 아니라
+   * grant·소유가 정한다.
+   */
+  role: Role;
+  /**
    * 에이전트를 소유한 계정의 ID. **null 이 정상이다** — backfill 없이 컬럼이 추가됐고
    * "추측 소유자는 소유자가 아니다"라는 원칙(#181)에 따라 null 이면 운영자가 없는 것이다.
    * 사람 계정에서는 항상 null 이다.
@@ -108,9 +114,27 @@ export const MENTION_PERMISSIONS = ['auto', 'readonly'] as const;
 export type MentionPermission = (typeof MENTION_PERMISSIONS)[number];
 
 /** UI 에서 등록·수정하는 에이전트의 정의. null 은 'harness 기본값 사용'이다. */
+/** 누가 이 에이전트를 깨울 수 있나(스펙 2026-09-20 §6). 좁히기는 자유, 넓히기는 일방통행으로 막힌다. */
+export const INVOKE_SCOPES = ['owner', 'list', 'channel', 'community'] as const;
+export type InvokeScope = typeof INVOKE_SCOPES[number];
+/** 무슨 자격증명을 쥐나. `personal` ⟺ `invokeScope === 'owner'` (양방향 불변식). */
+export const CREDENTIAL_SCOPES = ['personal', 'community', 'none'] as const;
+export type CredentialScope = typeof CREDENTIAL_SCOPES[number];
+
 export interface AgentConfig {
   instructions: string;
   harness: AgentHarness;
+  /**
+   * 누가 깨울 수 있나(스펙 2026-09-20 §6). `owner_account_id` 는 설정·터미널·배정의 소유이고,
+   * 이것은 **호출**의 범위다 — 둘을 한 컬럼이 겸하던 것이 요구 4(내 에이전트는 실행 쪽에선
+   * 사실이고 호출 쪽에선 아직 아니다)의 뿌리였다. 기본 `community` 가 현행 동작이다.
+   */
+  invokeScope: InvokeScope;
+  /**
+   * 무슨 자격증명을 쥐나. `personal` 이면 소유자만 부를 수 있어야 하고(불변식), 소유자 자신의
+   * 오퍼레이터에만 배정된다(§7 교차 불변식). 기본 `none`.
+   */
+  credentialScope: CredentialScope;
   model: string | null;
   effort: string | null;
   workingDir: string | null;
@@ -185,7 +209,22 @@ export interface ClaudeLaneView {
   accounts: string[];
 }
 
-export interface AgentView extends AccountView, AgentConfig {}
+export interface AgentView extends AccountView, AgentConfig {
+  /** 어느 오퍼레이터가 이 에이전트를 돌리는가(스펙 2026-09-20 §3). null 은 미배정 — 첫 판의 기본값이다. */
+  assignment: AgentAssignmentView | null;
+  /** `invokeScope === 'list'` 의 명단(계정 id). 다른 스코프에서는 비어 있다 — 명단은 남지만 판정에 안 쓰인다. */
+  invokers: string[];
+  /** 이 에이전트에 붙는 MCP 서버 **이름**들 — `mcp_server` 레지스트리의 부분집합(스펙 §6). 정의는 오퍼레이터 머신에 있다. */
+  mcpServers: string[];
+}
+
+/** MCP 레지스트리 한 줄(스펙 2026-09-20 §6). 이름과 자격증명 종류뿐이다 — 정의·토큰은 여기 없다. */
+export interface McpServerRow {
+  name: string;
+  credentialKind: 'community' | 'personal';
+  createdBy: string | null;
+  createdAt: string;
+}
 
 /**
  * 새 에이전트를 만들 때 채워 넣는 기본값(#171). 워크스페이스 전체에 하나뿐이다.
@@ -2173,6 +2212,12 @@ export type WsServerEvent =
   | { type: 'agent_team.changed'; teamId: string; audience: 'all' | string[] }
   // 담기/해제/상태 변경(#219). 본인의 소켓에만 온다.
   | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string }
+  /** 오퍼레이터가 등록·폐기·접속·단절됐다(스펙 2026-09-20 §4). 목록을 다시 읽으라는 신호다. */
+  | { type: 'operator.changed'; operatorId: string; audience: 'all' | string[] }
+  /** 에이전트의 배정이 바뀌었다(§3). 화면은 그 에이전트 하나만 다시 읽는다. */
+  | { type: 'agent_assignment.changed'; agentId: string; audience: 'all' }
+  /** grant 나 역할이 바뀌었다(§6). 그 계정의 화면 게이트가 다시 서야 한다. */
+  | { type: 'grant.changed'; accountId: string; audience: 'all' | string[] }
   /**
    * 링크 미리보기가 준비됐다(#215). 가져오기는 비동기라 메시지가 먼저 뜨고 카드가 뒤에
    * 온다 — 이 이벤트가 없으면 카드는 **다음에 그 메시지를 다시 그릴 때까지** 안 보인다.
@@ -2362,7 +2407,8 @@ export const MENTION_CHAIN_LIMIT = 4;
 export type RunnerCap = 'input' | 'interactive' | 'attention' | 'cancel';
 
 /**
- * 러너 → 서버 프레임. `GET /agent-relay` 소켓에 실린다.
+ * 러너 → 서버 프레임. 러너는 이것을 오퍼레이터 unix 링크에 싣고(`runnerLink.ts`), 오퍼레이터가
+ * `runnerId` 를 달아 `/operator` 채널로 나른다 — 옛 `GET /agent-relay` 소켓은 단계 3 에서 사라졌다.
  *
  * `announce` 가 재접속마다 다시 오는 것이 중요하다 — 서버는 소켓이 끊기면 그 러너의
  * 세션 레지스트리를 버리므로(살아 있는지 알 방법이 없다), 재접속 후 announce 가
@@ -3019,3 +3065,45 @@ export interface CollabProposalsView {
  */
 export const MAX_MEMORY_VALUE_LENGTH = 8000;
 export const MAX_MEMORY_ITEMS_PER_ACCOUNT = 200;
+
+export * from './permissions.js';
+import type { Capability, Role } from './permissions.js';
+
+/**
+ * `/auth/me` 의 응답 — 내 계정에 **전역으로** 유효한 capability 목록이 붙는다. 화면은 이것으로
+ * 버튼을 그리거나 감춘다(게이트의 근거는 서버가 준다; 화면이 역할에서 추론하지 않는다).
+ * 대상 한정 grant 는 여기 없다 — 대상이 있을 때 서버에 물어야 정확하다.
+ */
+export interface MeView extends AccountView {
+  capabilities: Capability[];
+}
+
+/**
+ * 오퍼레이터 — 사람의 기기(스펙 2026-09-20 §3). 서버에 outbound WS 로 붙어 능력을 등록하고
+ * 배정을 받아 러너를 띄우는 프로세스다. 계정이 아니라 계정에 속한다.
+ */
+export interface OperatorView {
+  id: string;
+  ownerAccountId: string;
+  name: string;
+  createdAt: string;
+  lastSeenAt: string | null;
+  revokedAt: string | null;
+  /** 허브가 아는 연결 상태. 목록·단건 응답에서 채운다 — 저장된 사실이 아니라 지금의 사실이다. */
+  online: boolean;
+}
+
+/** 오퍼레이터가 `hello` 에 싣는 능력 — 연결이 살아 있는 동안만 서버가 든다. */
+export interface OperatorCapabilities {
+  /** 로컬 설정에 있어 이 머신에서 돌릴 수 있는 에이전트. */
+  agentIds: string[];
+  harnesses: Record<string, { installed: boolean; loggedIn: boolean }>;
+}
+
+/** 에이전트 → 오퍼레이터 배정(§3). 에이전트당 하나. */
+export interface AgentAssignmentView {
+  agentId: string;
+  operatorId: string;
+  assignedBy: string;
+  assignedAt: string;
+}

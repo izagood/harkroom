@@ -17,6 +17,7 @@ import type { AgentSessionView, AttachClientFrame, AttachServerFrame, RelayRunne
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { operatorRunnerFactory, type OperatorRunner } from './helpers/operatorRunner.js';
 import { createRelayHub, type RelaySocket } from '../src/ws/relay.js';
 
 let app: FastifyInstance;
@@ -28,30 +29,12 @@ let ownerId: string;
 let agentId: string;
 let agentPat: string;
 let baseUrl: string;
+let runners: ReturnType<typeof operatorRunnerFactory>;
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 
-interface FakeRunner {
-  socket: WebSocket;
-  received: RelayServerFrame[];
-  send(frame: RelayRunnerFrame): void;
-  close(): Promise<void>;
-}
-
-async function connectRunner(pat: string): Promise<FakeRunner> {
-  const socket = new WebSocket(`ws://${baseUrl}/agent-relay`, { headers: auth(pat) });
-  const received: RelayServerFrame[] = [];
-  socket.on('message', (d) => received.push(JSON.parse(String(d)) as RelayServerFrame));
-  await new Promise<void>((resolve, reject) => {
-    socket.on('open', () => resolve());
-    socket.on('error', reject);
-  });
-  return {
-    socket, received,
-    send: (frame) => socket.send(JSON.stringify(frame)),
-    close: () => new Promise<void>((resolve) => { socket.on('close', () => resolve()); socket.close(); }),
-  };
-}
+type FakeRunner = OperatorRunner;
+const connectRunner = (id: string, ..._rest: unknown[]): Promise<FakeRunner> => runners.connect(id);
 
 /** `acceptsInput` 은 인자다(#369) — resize 도 writer 차례를 타므로 어느 턴인지가 판정에 든다. */
 function session(sessionId: string, acceptsInput: boolean): AgentSessionView {
@@ -167,13 +150,14 @@ beforeAll(async () => {
   await app.listen({ port: 0, host: '127.0.0.1' });
   const addr = app.server.address();
   baseUrl = typeof addr === 'object' && addr ? `127.0.0.1:${addr.port}` : '';
+  runners = operatorRunnerFactory(app, () => baseUrl, adminToken);
 });
 afterAll(async () => { await app.close(); await stop(); });
 
 describe('#335-1 writer 가 패널 크기를 바꾸면 러너에 그 크기가 간다', () => {
   it('뷰어 소켓의 resize 가 그 세션의 러너에게 숫자 그대로 도착한다', async () => {
     const sessionId = 'sess-resize-owner';
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
@@ -192,7 +176,7 @@ describe('#335-1 writer 가 패널 크기를 바꾸면 러너에 그 크기가 �
 
   it('말이 안 되는 크기는 러너까지 가지 않는다 — 이 숫자는 ioctl 로 내려간다', async () => {
     const sessionId = 'sess-resize-bad';
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
@@ -217,7 +201,7 @@ describe('#335-1 writer 가 패널 크기를 바꾸면 러너에 그 크기가 �
 describe('#335-2 writer 가 아닌 창이 크기를 바꿔도 PTY 크기는 안 바뀐다 — 서버가 버린다', () => {
   it('강등된 창의 resize 는 러너에 닿지 않고, writer 의 것만 닿는다', async () => {
     const sessionId = 'sess-resize-nonwriter';
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
@@ -274,7 +258,7 @@ describe('#335-4 뷰어가 아닌 곳에서 온 크기는 존재하지 않는다
 describe('#335-5 resize 는 감사에 아무것도 남기지 않는다', () => {
   it('드래그처럼 수십 번 보내도 detach 합산(inputBytes)에 크기는 한 바이트도 안 섞인다', async () => {
     const sessionId = 'sess-resize-audit';
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 
@@ -307,7 +291,7 @@ describe('#335-5 resize 는 감사에 아무것도 남기지 않는다', () => {
 describe('#335-6 #315 의 입력 경로가 그대로 동작한다', () => {
   it('resize 를 사이사이 섞어도 친 바이트가 순서대로 전부 도착한다', async () => {
     const sessionId = 'sess-resize-input';
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session(sessionId, true)], caps: ['input', 'interactive'] });
     await waitForSession(sessionId);
 

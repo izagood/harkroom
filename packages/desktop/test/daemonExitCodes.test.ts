@@ -3,7 +3,7 @@
  *
  * ## 왜 이 파일이 필요한가 — 값이 두 곳에 적혀 있다
  *
- * `EXIT_OCCUPIED` 는 daemon 이 정하고(`packages/daemon/src/run.ts`) 앱이 읽는다
+ * `EXIT_OCCUPIED` 는 daemon 이 정하고(`packages/operator/src/run.ts`) 앱이 읽는다
  * (`src-tauri/src/daemon_client.rs`). Rust 가 TS 상수를 import 할 방법이 없어 숫자가
  * **두 벌 존재한다.**
  *
@@ -22,8 +22,8 @@ import path from 'node:path';
 const read = (rel: string): string =>
   readFileSync(path.resolve(import.meta.dirname, rel), 'utf8');
 
-/** `packages/daemon/src/run.ts` — 값의 **출처**다. */
-const RUN_TS = read('../../daemon/src/run.ts');
+/** `packages/operator/src/run.ts` — 값의 **출처**다. */
+const RUN_TS = read('../../operator/src/run.ts');
 /** `src-tauri/src/daemon_client.rs` — 그 값을 읽는 쪽. */
 const DAEMON_RS = read('../src-tauri/src/daemon_client.rs');
 
@@ -53,7 +53,7 @@ describe('daemon 종료 코드 계약', () => {
   });
 
   it('daemon 이 그 상수로 물러난다 — `main.ts` 가 숫자를 따로 적지 않는다', () => {
-    const mainTs = read('../../daemon/src/main.ts');
+    const mainTs = read('../../operator/src/main.ts');
     expect(mainTs).toContain('process.exit(EXIT_OCCUPIED)');
   });
 });

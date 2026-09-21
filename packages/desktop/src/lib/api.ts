@@ -1,5 +1,5 @@
 import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView,
-  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AccountView, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
+  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
 export class ApiError extends Error {
@@ -91,7 +91,7 @@ export class ApiClient {
   claim(claimToken: string, loginId: string, handle: string, displayName: string, password: string): Promise<{ id: string }> {
     return this.req('POST', '/claim', { claimToken, loginId, handle, displayName, password });
   }
-  me(): Promise<AccountView> { return this.req('GET', '/auth/me'); }
+  me(): Promise<MeView> { return this.req('GET', '/auth/me'); }
   /**
    * 내 handle 을 바꾼다(#271).
    */
@@ -573,6 +573,36 @@ export class ApiClient {
   /** 초대 토큰을 발급한다 — admin 전용. 토큰은 생성 직후 한 번만 볼 수 있다. */
   createInvite(): Promise<string> {
     return (this.req<{ token: string }>('POST', '/invites')).then((r) => r.token);
+  }
+
+  // --- 오퍼레이터·배정(스펙 2026-09-20 §3) ---------------------------------------------
+
+  /** 내가 볼 수 있는 오퍼레이터. `operator.manage` 가 있으면 전부, 아니면 내 것만(서버가 가른다). */
+  async operators(): Promise<OperatorView[]> {
+    return (await this.req<{ operators: OperatorView[] }>('GET', '/operators')).operators;
+  }
+
+  /** 1회용 등록 코드(`hkreg_`). 5분 안에 그 머신의 `harkroom-operator register` 에 넣는다. */
+  operatorRegisterCode(): Promise<{ code: string; expiresAt: string }> {
+    return this.req('POST', '/operators/register-codes');
+  }
+
+  /** 연결이 살아 있는 동안만 있다 — 오프라인이면 404. */
+  operatorCapabilities(id: string): Promise<OperatorCapabilities> {
+    return this.req('GET', `/operators/${id}/capabilities`);
+  }
+
+  revokeOperator(id: string): Promise<void> {
+    return this.req('DELETE', `/operators/${id}`);
+  }
+
+  /** 에이전트를 오퍼레이터에 배정한다. 능력에 없으면 409 `not_capable`. */
+  assignAgent(agentId: string, operatorId: string): Promise<AgentAssignmentView> {
+    return this.req('PUT', `/accounts/agents/${agentId}/assignment`, { operatorId });
+  }
+
+  unassignAgent(agentId: string): Promise<void> {
+    return this.req('DELETE', `/accounts/agents/${agentId}/assignment`);
   }
 
   async channelPrefs(): Promise<ChannelPrefRow[]> {

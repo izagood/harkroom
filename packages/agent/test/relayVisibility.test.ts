@@ -22,13 +22,15 @@
  * 틀렸다는 뜻이고, 이 결함이 정확히 그것이었다.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { createRelayClient, type RelayHandlers, type RelayTransport } from '../src/relay.js';
+import { createRelayClient, type RelayHandlers, type RelayTransport, type RunnerLinkTarget } from '../src/relay.js';
+
+const LINK: RunnerLinkTarget = { socketPath: '/tmp/op.sock', runnerId: 'r-1', secret: 'sec' };
 
 /** dial 마다 핸들러를 붙잡아 두고 테스트가 소켓의 생애를 직접 돌린다. */
 function fakeDialer() {
   const dials: { handlers: RelayHandlers }[] = [];
   return {
-    dial: (_url: string, _pat: string, handlers: RelayHandlers) => { dials.push({ handlers }); },
+    dial: (_link: RunnerLinkTarget, handlers: RelayHandlers) => { dials.push({ handlers }); },
     dials,
     open: (index = dials.length - 1): RelayTransport => {
       const transport: RelayTransport = { send: () => {}, close: () => {} };
@@ -46,7 +48,7 @@ describe('붙지 못하는 릴레이', () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     const d = fakeDialer();
     createRelayClient({
-      harkroomUrl: 'http://x', pat: 'p', dial: d.dial, schedule: () => {},
+      link: LINK, unixDial: d.dial, schedule: () => {},
     }).start();
 
     d.fail('Dynamic require of "events" is not supported');
@@ -60,7 +62,7 @@ describe('붙지 못하는 릴레이', () => {
     const d = fakeDialer();
     // 예약을 즉시 터뜨려 재시도가 실제로 여러 번 돌게 한다.
     createRelayClient({
-      harkroomUrl: 'http://x', pat: 'p', dial: d.dial, schedule: (fn) => { fn(); },
+      link: LINK, unixDial: d.dial, schedule: (fn) => { fn(); },
     }).start();
 
     d.fail('boom', 0);
@@ -76,7 +78,7 @@ describe('붙지 못하는 릴레이', () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     const d = fakeDialer();
     createRelayClient({
-      harkroomUrl: 'http://x', pat: 'p', dial: d.dial, schedule: () => {},
+      link: LINK, unixDial: d.dial, schedule: () => {},
     }).start();
 
     d.open();          // 한 번 붙었다

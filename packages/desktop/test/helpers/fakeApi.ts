@@ -1,16 +1,20 @@
 import { vi } from 'vitest';
 import type {
-  InboxEntry, AccountView, AgentSessionView, AgentTeamRow, ChannelRow, HandleGroupRow, MessageRow, PinRow } from '@harkroom/shared';
+  InboxEntry, AccountView, AgentSessionView, AgentTeamRow, ChannelRow, HandleGroupRow, MeView, MessageRow, PinRow } from '@harkroom/shared';
+import { CAPABILITIES } from '@harkroom/shared';
 import type { ApiClient } from '../../src/lib/api';
 
 // #186: 상태는 옵셔널이 아니라 **필수 필드**다 — fixture 도 그것을 적어야 한다.
 // 기본값은 서버의 기본값과 같은 'available' 이고, 상태를 보는 테스트가 덮어쓴다.
 // #181: ownerAccountId 도 필수다 — 에이전트는 null 이 정상이고, 사람 계정에도 null 이다.
 // #159: 아바타도 필수 필드다. 기본은 null(사진 없음)이고, 아바타를 보는 테스트가 extra 로 덮어쓴다.
+// 스펙 2026-09-20 §6: `/auth/me` 는 capability 목록까지 준다(MeView). 이 헬퍼가 그 모양을 내면
+// `me` 목과 계정 목록 목이 같은 값을 쓸 수 있다 — MeView 는 AccountView 에 대입 가능하다.
 export const acc = (id: string, handle: string, kind: 'human' | 'agent' = 'human', isAdmin = false,
-  extra: Partial<AccountView> = {}): AccountView =>
-  ({ id, handle, displayName: handle, kind, isAdmin, disabled: false, status: 'available', statusText: null,
-    ownerAccountId: null, avatarAttachmentId: null, ...extra });
+  extra: Partial<MeView> = {}): MeView =>
+  ({ id, handle, displayName: handle, kind, isAdmin, role: isAdmin ? 'admin' : 'member', disabled: false, status: 'available', statusText: null,
+    ownerAccountId: null, avatarAttachmentId: null,
+    capabilities: isAdmin ? [...CAPABILITIES] : ['operator.register'], ...extra });
 
 // #285: 구성원 수도 **필수 필드**다 — fixture 가 그것을 적어야 한다. 기본은 0(빈 집합)이고,
 // 후보의 수 표시를 보는 테스트가 마지막 인자로 덮어쓴다.
@@ -207,6 +211,14 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     // #250: 러너 실행기가 부르는 표면. 베이스가 덮어야 `Controller.start` 뒤의 자동 기동이
     // 조용히 던지지 않고, "발급을 부르지 않았다" 도 단언할 수 있다.
     listAgents: vi.fn(async () => []),
+    // 스펙 2026-09-20 §3: 오퍼레이터·배정 표면. 기본은 "등록된 것이 없다"다.
+    operators: vi.fn(async () => []),
+    operatorRegisterCode: vi.fn(async () => ({ code: 'hkreg_base', expiresAt: new Date(0).toISOString() })),
+    operatorCapabilities: vi.fn(async () => ({ agentIds: [], harnesses: {} })),
+    revokeOperator: vi.fn(async () => undefined),
+    assignAgent: vi.fn(async (agentId: string, operatorId: string) =>
+      ({ agentId, operatorId, assignedBy: 'u1', assignedAt: new Date(0).toISOString() })),
+    unassignAgent: vi.fn(async () => undefined),
     listPats: vi.fn(async () => []),
     mintPat: vi.fn(async (_id: string, label: string) => `murp_${label}`),
     revokePat: vi.fn(async () => ({ revoked: 1 })),

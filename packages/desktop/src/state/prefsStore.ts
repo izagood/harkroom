@@ -4,7 +4,6 @@ import { DEFAULT_PREFS, prefsStorage, type ColorMode, type LocalePref, type Noti
 export interface PrefsState extends Prefs {
   setNotifications(patch: Partial<NotificationPrefs>): void;
   setColorMode(mode: ColorMode): void;
-  setRunnerAutoStart(enabled: boolean): void;
   /**
    * 화면 언어를 바꾼다. **다시 띄우지 않아도 화면이 따라온다** — 이 스토어를 구독하는
    * `useT` 가 새 번역기를 내고 React 가 그것을 쓰는 화면만 다시 그린다.
@@ -46,7 +45,6 @@ export const usePrefsStore = create<PrefsState>((set, get) => {
     ...prefsStorage.load(),
     setNotifications: (patch) => update({ notifications: { ...get().notifications, ...patch } }),
     setColorMode: (mode) => update({ colorMode: mode }),
-    setRunnerAutoStart: (enabled) => update({ runnerAutoStart: enabled }),
     setLocale: (locale) => update({ locale }),
     setZoom: (zoom) => update({ zoom }),
   };

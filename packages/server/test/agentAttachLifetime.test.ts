@@ -16,6 +16,7 @@ import type { AgentSessionView, AttachServerFrame } from '@harkroom/shared';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { operatorRunnerFactory, type OperatorRunner } from './helpers/operatorRunner.js';
 
 let app: FastifyInstance;
 let pool: Pool;
@@ -24,7 +25,7 @@ let adminToken: string;
 let ownerToken: string;
 let agentPat: string;
 let baseUrl: string;
-let runner: WebSocket;
+let runner: OperatorRunner;
 
 const ALLOWED = 'tauri://localhost';
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
@@ -91,15 +92,11 @@ beforeAll(async () => {
 
   // 러너 하나가 세션 두 개를 announce 한다. 테스트마다 티켓을 따로 받으므로(1회용) 세션도
   // 따로 쓴다 — 하나를 공유하면 앞 테스트가 소켓을 닫은 뒤 다음 테스트가 무엇을 보는지 흐려진다.
-  runner = new WebSocket(`ws://${baseUrl}/agent-relay`, { headers: auth(agentPat) });
-  await new Promise<void>((resolve, reject) => {
-    runner.on('open', () => resolve());
-    runner.on('error', reject);
-  });
-  runner.send(JSON.stringify({
+  runner = await operatorRunnerFactory(app, () => baseUrl, adminToken).connect(agent.accountId);
+  runner.send({
     type: 'announce',
     sessions: [session('life-1', agent.accountId), session('life-2', agent.accountId)],
-  }));
+  });
   // announce 가 반영됐는지 목록으로 확인한다 — 고정 지연으로 갈음하면 느린 머신에서
   // 이 파일이 자기 이유 없이 빨개진다.
   const seen = async () => {
@@ -112,7 +109,7 @@ beforeAll(async () => {
     await new Promise((r) => setTimeout(r, 10));
   }
 });
-afterAll(async () => { runner.close(); await app.close(); await stop(); });
+afterAll(async () => { await runner.close(); await app.close(); await stop(); });
 
 describe('#141 뷰어 소켓의 Origin 허용 목록', () => {
   it('목록 밖의 Origin 이면 핸드셰이크를 거절한다', async () => {
@@ -168,7 +165,7 @@ describe('#141 뷰어 소켓의 수명은 자격증명을 따른다', () => {
 
     // 붙어 있는 동안에는 바이트가 온다 — 이 확인이 없으면 아래의 "더 오지 않는다"가
     // "애초에 오지 않았다"로도 초록이 된다.
-    runner.send(JSON.stringify({ type: 'replay', sessionId: 'life-2', data: Buffer.from('전').toString('base64') }));
+    runner.send({ type: 'replay', sessionId: 'life-2', data: Buffer.from('전').toString('base64') });
     await waitFor(() => frames.some((f) => f.type === 'output'));
     const before = frames.filter((f) => f.type === 'output').length;
 
@@ -183,7 +180,7 @@ describe('#141 뷰어 소켓의 수명은 자격증명을 따른다', () => {
     expect(await closed).toBe(4401);
 
     // 닫힌 뒤에는 러너가 보내도 이 소켓으로 가지 않는다.
-    runner.send(JSON.stringify({ type: 'output', sessionId: 'life-2', data: Buffer.from('후').toString('base64') }));
+    runner.send({ type: 'output', sessionId: 'life-2', data: Buffer.from('후').toString('base64') });
     await new Promise((r) => setTimeout(r, 100));
     expect(frames.filter((f) => f.type === 'output').length).toBe(before);
   });

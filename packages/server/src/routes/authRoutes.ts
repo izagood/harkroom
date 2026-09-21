@@ -3,6 +3,7 @@ import type { Pool } from 'pg';
 import argon2 from 'argon2';
 import { z } from 'zod';
 import { newToken, hashToken } from '../auth/tokens.js';
+import { effectiveCapabilities } from '../auth/permissions.js';
 import { recordAudit } from '../audit.js';
 import { createChannel } from '../services/channels.js';
 import { getHandleGroupByHandle } from '../services/handleGroups.js';
@@ -41,8 +42,8 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
     try {
       await client.query('begin');
       const res = await client.query(
-        `insert into account (handle, login_id, display_name, kind, is_admin, password_hash)
-         values ($1, $2, $3, 'human', true, $4) returning id`,
+        `insert into account (handle, login_id, display_name, kind, is_admin, role, password_hash)
+         values ($1, $2, $3, 'human', true, 'owner', $4) returning id`,
         [body.handle, body.loginId, body.displayName, hash],
       );
       accountId = res.rows[0].id;
@@ -148,8 +149,8 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
       // 0 개로 굳는다. 토큰도 같은 트랜잭션에서 소진되므로, 무엇이 실패하든 **토큰은
       // 되돌아간다** — 사용자가 같은 토큰으로 다시 시도할 수 있다.
       const res = await client.query(
-        `insert into account (handle, login_id, display_name, kind, is_admin, password_hash)
-         values ($1, $2, $3, 'human', true, $4) returning id`,
+        `insert into account (handle, login_id, display_name, kind, is_admin, role, password_hash)
+         values ($1, $2, $3, 'human', true, 'owner', $4) returning id`,
         [body.handle, body.loginId, body.displayName, hash],
       );
       accountId = res.rows[0].id;
@@ -204,7 +205,12 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
     return { token };
   });
 
-  app.get('/auth/me', { preHandler: app.requireAccount }, async (req) => req.account);
+  // 계정에 **전역** capability 목록을 붙여 준다(스펙 2026-09-20 §6) — 화면 게이트의 근거.
+  // 화면이 역할에서 추론하게 두면 grant 가 생긴 순간 화면과 서버가 갈린다.
+  app.get('/auth/me', { preHandler: app.requireAccount }, async (req) => ({
+    ...req.account!,
+    capabilities: await effectiveCapabilities(pool, req.account!),
+  }));
 
   // 로그아웃은 **이 토큰만** 끊는다. 한 기기에서 나가는 것이 모든 기기에서 쫓겨나는 것과
   // 같으면 놀라움이 크다 — 전체 폐기가 필요하면 별도 표면이어야 한다. 지금까지는 클라이언트가

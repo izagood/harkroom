@@ -19,36 +19,45 @@
  * 하네스(claude/codex)는 필요 없다: 기동의 첫 호출(`harkroom.me()`)에서 401 이 나므로 러너는
  * 상태 디렉터리도 만들기 전에 물러난다.
  */
-import { createServer, type Server } from 'node:http';
+import { createServer, type Server } from 'node:net';
 import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CREDENTIAL_REJECTED_LINE, EX_CONFIG } from '@harkroom/shared';
+import { NdjsonDecoder, encodeLine } from '@harkroom/shared/daemonProtocol';
 
 const agentRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** 이 세션이 띄운 것들. 단언이 실패해도 반드시 거둔다 — 남기면 다음 테스트가 포트를 못 잡는다. */
 let server: Server | null = null;
 
 /**
- * `POST /mcp` 에 그날 서버가 실제로 낸 본문을 그대로 낸다(narwhal-server 로그 실측).
- *
- * `agent_only` 는 "PAT 는 유효한데 사람 계정이다"와 "PAT 를 못 찾았다"를 한 코드로 쓴다 —
- * 그날 러너가 받은 것은 후자(401)였다. 상태 코드가 판정의 근거이므로 그것을 고정한다.
+ * 서버가 이 오퍼레이터를 거절하는 상황의 오퍼레이터 흉내(스펙 2026-09-20 §5). 러너의 모든 요청
+ * (MCP 든 REST 든)에 401 을 되돌린다 — 오퍼레이터 토큰이 폐기됐거나 배정이 풀린 모양이다.
  */
-async function startRejectingServer(): Promise<string> {
-  const s = createServer((_req, res) => {
-    res.writeHead(401, { 'content-type': 'application/json' });
-    res.end('{"error":{"code":"agent_only","message":"MCP surface requires an agent PAT"}}');
+async function startRejectingOperator(): Promise<string> {
+  const socketPath = join(mkdtempSync(join(tmpdir(), 'hk-reject-')), 'op.sock');
+  const s = createServer((socket) => {
+    const decoder = new NdjsonDecoder();
+    socket.on('data', (chunk: Buffer) => {
+      for (const line of decoder.push(chunk)) {
+        if (!line.ok) continue;
+        const v = line.value as { type?: string; id?: string };
+        if (v.type === 'mcp.request') {
+          socket.write(encodeLine({ type: 'mcp.error', id: v.id, status: 401, message: '{"error":{"code":"unauthorized","message":"오퍼레이터 토큰이 폐기됐다"}}' }));
+        } else if (v.type === 'http.forward') {
+          socket.write(encodeLine({ type: 'http.response', id: v.id, status: 401, body: 'unauthorized' }));
+        }
+      }
+    });
   });
-  s.listen(0, '127.0.0.1');
+  s.listen(socketPath);
   await once(s, 'listening');
   server = s;
-  const addr = s.address();
-  if (!addr || typeof addr === 'string') throw new Error('포트를 얻지 못했다');
-  return `http://127.0.0.1:${addr.port}`;
+  return socketPath;
 }
 
 interface RunnerOutcome {
@@ -57,15 +66,19 @@ interface RunnerOutcome {
   stdout: string;
 }
 
-/** 러너를 띄우고 스스로 물러나기를 기다린다. */
-async function runRunner(harkroomUrl: string): Promise<RunnerOutcome> {
+async function runRunner(socketPath: string): Promise<RunnerOutcome> {
+  // 오퍼레이터가 spawn 전에 써 두는 파일 — 여기서는 소켓 옆에 최소 모양으로 둔다.
+  const mcpConfigPath = join(dirname(socketPath), 'mcp.json');
+  writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers: { harkroom: { type: 'stdio', command: '/opt/harkroom/harkroom-operator', args: ['mcp-bridge'] } } }));
   const child = spawn('pnpm', ['exec', 'tsx', 'src/main.ts'], {
     cwd: agentRoot,
     env: {
       ...process.env,
-      HARKROOM_URL: harkroomUrl,
-      HARKROOM_PAT: 'murp_revoked_by_reissue',
-      // 풀을 비워 둔다 — 계정 축은 이 계약과 무관하고, 여기서 뜨면 실패 사유가 섞인다.
+      HARKROOM_OPERATOR_SOCKET: socketPath,
+      HARKROOM_RUNNER_ID: 'r-test',
+      HARKROOM_RUNNER_SECRET: 'sec_revoked_by_reissue',
+      HARKROOM_OPERATOR_BIN: '/opt/harkroom/harkroom-operator',
+      HARKROOM_MCP_CONFIG: mcpConfigPath,
       HARKROOM_CLAUDE_ACCOUNTS: '',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -82,7 +95,7 @@ async function runRunner(harkroomUrl: string): Promise<RunnerOutcome> {
   return { code, stderr, stdout };
 }
 
-describe('폐기된 PAT 로 뜬 러너는 78 로 물러난다 (수용)', () => {
+describe('오퍼레이터가 서버에서 거절당한 러너는 78 로 물러난다 (수용)', () => {
   beforeEach(() => { server = null; });
 
   afterEach(async () => {
@@ -93,31 +106,23 @@ describe('폐기된 PAT 로 뜬 러너는 78 로 물러난다 (수용)', () => {
     }
   });
 
-  /**
-   * 이 단언 둘이 앱↔러너 계약의 **전부**다: 종료 코드로 "재시도로 낫지 않는다"를,
-   * 마지막 줄로 "그중 자격증명 쪽"을 말한다(`runnerLauncher.ts::handleExit` 이 그 둘을 읽는다).
-   *
-   * 2026-09-08 실측에서 이 자리에 온 것은 `code=1` 과 생 `StreamableHTTPError` 스택이었다.
-   */
-  it('MCP 트랜스포트의 401 을 받고 종료 코드 78 과 마커를 남긴다', async () => {
-    const url = await startRejectingServer();
+  it('링크 위의 MCP 401 을 받고 종료 코드 78 과 마커를 남긴다', async () => {
+    const socketPath = await startRejectingOperator();
 
-    const { code, stderr } = await runRunner(url);
+    const { code, stderr } = await runRunner(socketPath);
 
     expect(stderr).toContain(CREDENTIAL_REJECTED_LINE);
     expect(code).toBe(EX_CONFIG);
   }, 60_000);
 
-  /**
-   * 생 스택으로 죽으면 안 된다 — 그것이 그날의 증상이었다. 스택은 사람에게 아무 길도
-   * 알려 주지 않고, 앱은 78 이 아니므로 "재발급하면 된다"를 말할 수 없다.
-   */
   it('처리되지 않은 예외로 죽지 않는다 — 안내문을 남긴다', async () => {
-    const url = await startRejectingServer();
+    const socketPath = await startRejectingOperator();
 
-    const { stderr } = await runRunner(url);
+    const { stderr } = await runRunner(socketPath);
 
     expect(stderr).not.toContain('StreamableHTTPError:');
-    expect(stderr).toContain('HARKROOM_PAT');
+    // 사람이 할 일이 PAT 교체가 아니라 오퍼레이터·배정 확인이라고 말한다.
+    expect(stderr).toContain('오퍼레이터');
+    expect(stderr).not.toContain('HARKROOM_PAT');
   }, 60_000);
 });

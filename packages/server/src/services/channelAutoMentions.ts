@@ -22,7 +22,7 @@ export async function listChannelAutoMentions(pool: Pool, channelId: string): Pr
 
 export type SetAutoMentionResult =
   | { ok: true; row: ChannelAutoMentionRow }
-  | { ok: false; reason: 'not_found' | 'not_an_agent' | 'agent_disabled' };
+  | { ok: false; reason: 'not_found' | 'not_an_agent' | 'agent_disabled' | 'invoke_scope_restricted' };
 
 /**
  * 자동 멘션을 건다. 이미 걸려 있으면 **모드만 고쳐** 그 행을 돌려준다(멱등 PUT).
@@ -41,8 +41,10 @@ export async function setChannelAutoMention(
 ): Promise<SetAutoMentionResult> {
   const inserted = await pool.query(
     `insert into channel_auto_mention (channel_id, agent_account_id, created_by, mode)
-     select $1, a.id, $3, $4 from account a
+     select $1, a.id, $3, $4 from account a left join agent_config c on c.account_id = a.id
       where a.id = $2 and a.kind = 'agent' and a.disabled_at is null
+        -- 스펙 2026-09-20 §6: auto-mention 은 "소유자가 아닌 무언가가 부르는 것"이라 community 만.
+        and coalesce(c.invoke_scope, 'community') = 'community'
      on conflict (channel_id, agent_account_id) do update set mode = excluded.mode`,
     [input.channelId, input.agentAccountId, input.createdBy, input.mode],
   );
@@ -60,12 +62,14 @@ export async function setChannelAutoMention(
      * 표에는 옛 값이 남는다 — 새로 고치면 되돌아오는 화면이 된다.
      */
     if (existing.rowCount && existing.rows[0]!.mode === input.mode) return { ok: true, row: existing.rows[0]! };
-    const account = await pool.query<{ kind: string; disabled: boolean }>(
-      `select kind, disabled_at is not null as disabled from account where id = $1`, [input.agentAccountId],
+    const account = await pool.query<{ kind: string; disabled: boolean; invoke_scope: string }>(
+      `select a.kind, a.disabled_at is not null as disabled, coalesce(c.invoke_scope, 'community') as invoke_scope
+         from account a left join agent_config c on c.account_id = a.id where a.id = $1`, [input.agentAccountId],
     );
     if (!account.rowCount) return { ok: false, reason: 'not_found' };
     if (account.rows[0]!.kind !== 'agent') return { ok: false, reason: 'not_an_agent' };
-    return { ok: false, reason: 'agent_disabled' };
+    if (account.rows[0]!.disabled) return { ok: false, reason: 'agent_disabled' };
+    return { ok: false, reason: 'invoke_scope_restricted' };
   }
   const row = await pool.query<ChannelAutoMentionRow>(
     `select ${COLS} ${FROM} where m.channel_id = $1 and m.agent_account_id = $2`,

@@ -21,7 +21,7 @@ import { randomUUID } from 'node:crypto';
 import type { AgentHarness, AgentView, MessageRow } from '@harkroom/shared';
 import type { Me } from './harkroom.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
-import { buildTurnCommand, preassignsSessionId, type TurnPlan } from './turn.js';
+import { buildTurnCommand, preassignsSessionId, type McpServerEntry, type TurnPlan } from './turn.js';
 import { discoversSessionIdAfterTurn, hasAccountPool } from './adapters/index.js';
 import { acceptsPtyInput } from './pty.js';
 import type { PtyControls, TurnResult } from './pty.js';
@@ -118,8 +118,10 @@ export interface InteractiveTurnDeps {
   me: Me;
   workspaceBaseDir: string;
   mcpConfigPath: string;
-  harkroomUrl: string;
-  pat: string;
+  /** 그 파일의 harkroom·avcs 밖 항목 — codex 에만 `-c` 로 간다(`turn.ts::readExtraMcpServers`). */
+  extraMcpServers?: Record<string, McpServerEntry>;
+  /** `harkroom-operator` 실행 파일 — 하네스의 harkroom MCP(`mcp-bridge`) 명령(스펙 2026-09-20 §5). */
+  operatorBin: string;
   codexHome: string;
   /**
    * 이 턴을 돌릴 claude 계정의 `CLAUDE_CONFIG_DIR`(`claudeAccounts.ts`). `null` 은 계정
@@ -266,8 +268,8 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       effort: def.effort,
       mentionPermission: def.mentionPermission,
       mcpConfigPath: deps.mcpConfigPath,
-      pat: deps.pat,
-      harkroomUrl: deps.harkroomUrl,
+      extraMcpServers: deps.extraMcpServers,
+      operatorBin: deps.operatorBin,
       codexHome: deps.codexHome,
       claudeConfigDir: deps.claudeConfigDir,
     });

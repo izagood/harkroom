@@ -18,7 +18,7 @@ import { acc } from './helpers/fakeApi';
  * 사람은 자기가 뭘 잘못했다고 생각한다.
  */
 const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
-  id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
+  id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member', assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [], mcpServers: [],
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
   claudeLane: null,
@@ -84,9 +84,9 @@ describe('소유자의 에이전트 설정 화면 (#299)', () => {
     await screen.findByText('runner');
   });
 
-  it('5b. 러너 실행 명령도 소유자에게 보인다(#177) — PAT 가 열렸으니 명령도 열린다', async () => {
+  it('5b. 배정도 소유자에게 열린다(스펙 2026-09-20 §3) — 자기 에이전트를 어디서 돌릴지는 소유자가 정한다', async () => {
     await openAsOwner();
-    expect(screen.getByText('러너 실행')).toBeTruthy();
+    expect(screen.getByText('어디서 돌리나')).toBeTruthy();
   });
 
   it('6. admin 전용 컨트롤은 소유자 화면에 **없다**(비활성이 아니라 부재)', async () => {

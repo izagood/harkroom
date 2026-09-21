@@ -9,6 +9,11 @@ import { serverVersion } from './version.js';
 import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
 import { registerAccountRoutes } from './routes/accountRoutes.js';
+import { registerGrantRoutes } from './routes/grantRoutes.js';
+import { registerOperatorRoutes } from './routes/operatorRoutes.js';
+import { createOperatorHub } from './ws/operatorHub.js';
+import { registerAssignmentRoutes } from './routes/assignmentRoutes.js';
+import { registerMcpServerRoutes } from './routes/mcpServerRoutes.js';
 import { registerChannelRoutes } from './routes/channelRoutes.js';
 import { registerTeamRoutes } from './routes/teamRoutes.js';
 import { registerMessageRoutes } from './routes/messageRoutes.js';
@@ -459,6 +464,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
   await registerAuthRoutes(app, deps.pool);
   await registerAccountRoutes(app, deps.pool);
+  // 권한 부여·회수·역할(스펙 2026-09-20 §6). 계정 라우트 바로 뒤 — 같은 `/accounts/:id/*` 표면이다.
+  await registerGrantRoutes(app, deps.pool);
   await registerTeamRoutes(app, deps.pool);
   const storageOpts = deps.storage ?? {
     root: defaultAttachmentRoot(app),
@@ -487,6 +494,19 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerLinkPreviewRoutes(app, deps.pool);
   await registerSkillRoutes(app, deps.pool);
 
+  // 오퍼레이터 신원과 채널(스펙 2026-09-20 §3·§4). 릴레이와 같은 이유로 registerWs·registerAuth
+  // 뒤다. 허브는 연결이 살아 있는 동안의 사실(능력·러너)만 든다 — 저장하지 않는다.
+  const operatorHub = createOperatorHub();
+  await registerOperatorRoutes(app, deps.pool, {
+    hub: operatorHub,
+    // 소켓 수명 규칙은 `/ws`·릴레이와 **같은 값**이다 — 갈라지면 더 민감한 쪽이 더 느슨해진다.
+    heartbeatMs: deps.wsHeartbeatMs,
+  });
+  // 배정(§3). 허브 뒤 — hello 에 배정을 다시 미는 구독이 허브에 걸린다.
+  await registerAssignmentRoutes(app, deps.pool, operatorHub);
+  // MCP 레지스트리(§6) — 이름만. 에이전트 PATCH 의 mcpServers 가 이것을 참조한다.
+  await registerMcpServerRoutes(app, deps.pool);
+
   // #141 Phase 2 attach. **registerWs 뒤여야 한다** — `websocket: true` 라우트는
   // `@fastify/websocket` 이 등록된 뒤에만 만들어질 수 있고, 그 등록은 registerWs 안에서
   // 일어난다. `registerAuth` 뒤여야 하는 이유는 `/metrics` 와 같다: `app.requireAccount`
@@ -498,6 +518,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // 쪽(PTY 바이트)이 더 느슨해진다.
     allowedOrigins: deps.corsOrigins ?? null,
     revalidateMs: deps.wsRevalidateMs,
+    // 러너 프레임은 오퍼레이터 채널로 온다(단계 3). 그 소켓의 하트비트는 operatorRoutes 의 것이다.
+    operatorHub,
     // 러너 프레임도 생존 신호다 — 턴 중에는 이것이 **유일한** 신호다(폴이 안 나간다).
     agentPresence,
   });

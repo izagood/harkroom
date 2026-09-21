@@ -16,7 +16,7 @@ const MINE = 'a-mine';
 const THEIRS = 'a-theirs';
 
 const agentView = (id: string, handle: string, over: Partial<AgentView> = {}): AgentView => ({
-  id, handle, displayName: handle, kind: 'agent', isAdmin: false,
+  id, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member', assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [], mcpServers: [],
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: ME, disabled: false, runnerVersion: null,
   claudeLane: null,
@@ -28,8 +28,6 @@ const fakeController = (agents: AgentView[] = []) => {
   const c = {
     listAgents: vi.fn(async () => agents),
     startDm: vi.fn(async () => undefined),
-    restartRunner: vi.fn(async () => undefined),
-    cancelRestart: vi.fn(() => undefined),
   };
   setController(c as unknown as Controller);
   return c;
@@ -152,14 +150,16 @@ describe('Profile — 나가는 문', () => {
 // 러너는 옛 번들 그대로이고, `doStartOne` 은 장부에 살아 있는 러너를 새로 띄우지 않는다.
 // 그래서 **사람이 갈아 줘야** 하고, 그러려면 화면이 "이 러너가 뒤처졌다"를 먼저 말해야
 // 한다 — 근거 없이 버튼만 두면 사람은 누를 이유를 알 수 없다.
-describe('Profile — 러너 버전과 재기동', () => {
+describe('Profile — 러너 버전', () => {
   const live = (agentId: string, status = 'running') => {
     useAppStore.getState().set({
       runnerStates: { [agentId]: { agentId, status, exitCode: null, message: null } } as never,
     });
   };
 
-  it('러너가 앱보다 뒤처졌으면 그렇게 말하고 재기동을 내놓는다', async () => {
+  // 재기동 버튼은 사라졌다(스펙 2026-09-20 §2): 러너를 갈아 띄우는 것은 그 러너를 돌리는
+  // 오퍼레이터의 일이다. 남는 것은 **사실** — 뒤처졌는지는 사람이 여전히 알아야 한다.
+  it('러너가 앱보다 뒤처졌으면 그렇게 말한다 — 버튼은 없다', async () => {
     fakeController([agentView(MINE, 'mine', { runnerVersion: '0.1.6' })]);
     live(MINE);
     render(<Profile accountId={MINE} onClose={vi.fn()} />);
@@ -167,7 +167,7 @@ describe('Profile — 러너 버전과 재기동', () => {
     const dialog = await screen.findByRole('dialog', { name: 'mine 프로필' });
     await waitFor(() => expect(dialog.textContent).toContain('0.1.6'));
     expect(dialog.textContent).toContain('뒤처진');
-    expect(screen.getByRole('button', { name: '새 버전으로 재기동' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /재기동/ })).toBeNull();
   });
 
   it('버전을 모르면 뒤처졌다고 하지 않는다 — 모르는 것을 단정하지 않는다', async () => {
@@ -178,42 +178,5 @@ describe('Profile — 러너 버전과 재기동', () => {
     const dialog = await screen.findByRole('dialog', { name: 'mine 프로필' });
     await waitFor(() => expect(dialog.textContent).toContain('버전을 모른다'));
     expect(dialog.textContent).not.toContain('뒤처진');
-    // 그래도 재기동은 할 수 있다 — 사람이 판단한다. 다만 "새 버전으로" 라고 약속하지 않는다.
-    expect(screen.getByRole('button', { name: '러너 재기동' })).toBeTruthy();
-  });
-
-  it('누르면 컨트롤러의 재기동에 닿는다', async () => {
-    const c = fakeController([agentView(MINE, 'mine', { runnerVersion: '0.1.6' })]);
-    live(MINE);
-    render(<Profile accountId={MINE} onClose={vi.fn()} />);
-
-    fireEvent.click(await screen.findByRole('button', { name: '새 버전으로 재기동' }));
-
-    await waitFor(() => expect(c.restartRunner).toHaveBeenCalledWith(MINE));
-  });
-
-  /**
-   * **기다린다는 사실이 화면에 있어야 한다.** SIGTERM 은 graceful 이라 러너는 진행 중인
-   * 턴을 마친 뒤에야 죽고, 실측 5분이 넘은 턴도 있다. 그동안 아무 표시가 없으면 사람에게는
-   * "눌렀는데 아무 일이 없다"이고, 그것이 이 저장소가 `#384` 에서 이미 고친 결함이다.
-   */
-  it('예약 중에는 무엇을 기다리는지 적고, 취소는 뜨는 것만 취소한다고 말한다', async () => {
-    fakeController([agentView(MINE, 'mine', { runnerVersion: '0.1.6' })]);
-    live(MINE, 'restarting');
-    render(<Profile accountId={MINE} onClose={vi.fn()} />);
-
-    const dialog = await screen.findByRole('dialog', { name: 'mine 프로필' });
-    await waitFor(() => expect(dialog.textContent).toContain('진행 중인 턴'));
-    expect(screen.getByRole('button', { name: '재기동 예약 취소' })).toBeTruthy();
-  });
-
-  it('붙어 있는 러너가 없으면 재기동을 내놓지 않는다 — 갈아 줄 것이 없다', async () => {
-    fakeController([agentView(MINE, 'mine', { runnerVersion: '0.1.6' })]);
-    render(<Profile accountId={MINE} onClose={vi.fn()} />);
-
-    await screen.findByRole('dialog', { name: 'mine 프로필' });
-    await waitFor(() => {
-      expect(screen.queryByRole('button', { name: '새 버전으로 재기동' })).toBeNull();
-    });
   });
 });
