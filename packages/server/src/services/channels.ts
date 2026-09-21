@@ -64,9 +64,11 @@ export async function createChannel(
   const visibility = input.visibility ?? 'public';
   const insert = async (q: Pool | PoolClient): Promise<ChannelRow> => {
     const res = await q.query(
-      `insert into channel (name, topic, kind, repo, visibility)
-       values ($1, $2, 'standard', $3, $4) returning ${COLS}`,
-      [input.name, input.topic ?? '', input.repo ?? null, visibility],
+      // created_by 는 소유의 근거다(056) — 만든 사람은 channel.manage grant 없이 자기 채널을
+      // 관리한다. creatorId 가 없는 호출(bootstrap 의 기본 채널·DM)은 null 로 남는다.
+      `insert into channel (name, topic, kind, repo, visibility, created_by)
+       values ($1, $2, 'standard', $3, $4, $5) returning ${COLS}`,
+      [input.name, input.topic ?? '', input.repo ?? null, visibility, input.creatorId ?? null],
     );
     const row = res.rows[0] as ChannelRow;
     // 멤버가 0 인 private 채널은 **아무도 열 수 없는 채널**이다 — 만든 사람조차 목록에서

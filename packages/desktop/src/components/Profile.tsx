@@ -228,29 +228,6 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
               {t('profile.actions.agentSettings')}
             </button>
           )}
-          {canSeeConfig && agent && runnerPresent && (
-            runnerState?.status === 'restarting' ? (
-              <button
-                data-testid="profile-runner-restart-cancel"
-                className="rounded border border-border px-3 py-1.5 text-body font-medium
-                           text-fg hover:bg-surface-hover"
-                onClick={() => getController().cancelRestart(account.id)}
-              >
-                {t('profile.actions.restartCancel')}
-              </button>
-            ) : (
-              /* 이름이 사실을 약속한다: 뒤처졌다고 **확인된** 때만 "새 버전으로"라고
-                 쓴다. 버전을 모르는데 그렇게 쓰면 지키지 못할 약속이 된다(design.md §4). */
-              <button
-                data-testid="profile-runner-restart"
-                className="rounded border border-border px-3 py-1.5 text-body font-medium
-                           text-fg hover:bg-surface-hover"
-                onClick={() => { void getController().restartRunner(account.id); }}
-              >
-                {isStale ? t('profile.actions.restartStale') : t('profile.actions.restart')}
-              </button>
-            )
-          )}
           {account.id !== me?.id && (
             <button
               data-testid="profile-dm"

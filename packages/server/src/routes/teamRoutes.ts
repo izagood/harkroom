@@ -33,7 +33,7 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
     teams: await listTeams(pool),
   }));
 
-  app.post('/teams', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.post('/teams', { preHandler: app.requireCap('team.create') }, async (req, reply) => {
     const { name } = z.object({ name: nameSchema }).parse(req.body);
 
     // 먼저 읽는 것은 **사유를 갈라 말하기 위해서**다 — 팀과 겹쳤는지 계정·집합과 겹쳤는지
@@ -62,7 +62,7 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
     return reply.code(201).send(team);
   });
 
-  app.patch('/teams/:id', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.patch('/teams/:id', { preHandler: app.requireCap('team.manage', { kind: 'team', param: 'id' }) }, async (req, reply) => {
     const { id } = teamParam.parse(req.params);
     const { name } = z.object({ name: nameSchema }).parse(req.body);
 
@@ -85,7 +85,7 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
     return result.team;
   });
 
-  app.delete('/teams/:id', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.delete('/teams/:id', { preHandler: app.requireCap('team.manage', { kind: 'team', param: 'id' }) }, async (req, reply) => {
     const { id } = teamParam.parse(req.params);
     // 지운 행을 받아 온다 — 감사에 이름을 남겨야 하고, 지운 뒤에는 물어볼 곳이 없다.
     const deleted = await deleteTeam(pool, id);
@@ -125,7 +125,7 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
    * `requireAdmin` 인 이유: 팀 구성을 정하는 것은 admin 이고(팀원 추가·제거와 같은 게이트),
    * 팀장은 그 구성의 일부다.
    */
-  app.put('/teams/:id/lead', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.put('/teams/:id/lead', { preHandler: app.requireCap('team.manage', { kind: 'team', param: 'id' }) }, async (req, reply) => {
     const { id } = teamParam.parse(req.params);
     // `.nullable()` 이지 `.optional()` 이 아니다 — 빠뜨린 본문을 '해제'로 읽으면 오타 하나가
     // 팀장을 조용히 지운다. 해제하려는 쪽은 `null` 을 **적어야** 한다.
@@ -159,7 +159,7 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
     return result.team;
   });
 
-  app.put('/teams/:id/members/:accountId', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.put('/teams/:id/members/:accountId', { preHandler: app.requireCap('team.manage', { kind: 'team', param: 'id' }) }, async (req, reply) => {
     const { id, accountId } = memberParams.parse(req.params);
 
     // 팀이 없으면 FK 위반으로 500 이 된다 — 잘못된 입력을 서버 오류로 답하면 호출부가
@@ -168,7 +168,9 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such team' } });
     }
 
-    const account = await pool.query(`select kind, handle from account where id = $1`, [accountId]);
+    const account = await pool.query(
+      `select a.kind, a.handle, coalesce(c.invoke_scope, 'community') as invoke_scope
+         from account a left join agent_config c on c.account_id = a.id where a.id = $1`, [accountId]);
     if (!account.rowCount) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such account' } });
     }
@@ -176,6 +178,12 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
     // 집합(#230)이 에이전트를 거절하는 것과 정확히 대칭이다.
     if (account.rows[0].kind !== 'agent') {
       return reply.code(400).send({ error: { code: 'not_an_agent', message: 'only agents can join a team' } });
+    }
+    // 스펙 2026-09-20 §6: 팀 부름은 "소유자가 아닌 무언가가 부르는 것"이라 community 스코프만
+    // 팀원이 된다. 넣는 시점에 거절한다 — 런타임에 조용히 건너뛰면 팀장이 "다섯 중 넷만
+    // 응답"을 디버깅한다.
+    if (account.rows[0].invoke_scope !== 'community') {
+      return reply.code(400).send({ error: { code: 'invoke_scope_restricted', message: '호출 범위가 community 가 아닌 에이전트는 팀원이 될 수 없다' } });
     }
 
     await addAgentToTeam(pool, id, accountId);
@@ -189,7 +197,7 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
     return { members: await listTeamMembers(pool, id) };
   });
 
-  app.delete('/teams/:id/members/:accountId', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.delete('/teams/:id/members/:accountId', { preHandler: app.requireCap('team.manage', { kind: 'team', param: 'id' }) }, async (req, reply) => {
     const { id, accountId } = memberParams.parse(req.params);
 
     if (!(await getTeam(pool, id))) {

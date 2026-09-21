@@ -40,7 +40,6 @@ const fakeController = () => {
   const c = {
     openChannel: vi.fn(async () => undefined),
     startDm: vi.fn(async () => undefined),
-    reissueRunnerPat: vi.fn(async () => undefined),
     logout: vi.fn(), createChannel: vi.fn(), updateChannel: vi.fn(),
     setChannelNotifyLevel: vi.fn(), toggleChannelStar: vi.fn(), setStatus: vi.fn(),
   };
@@ -263,67 +262,6 @@ describe('세 콜백이 이 자리에서 뜻하는 것', () => {
     expect(screen.queryByTestId('agent-create')).toBeNull();
   });
 
-  /**
-   * **멈춘 것은 ▶ 로 여기서 바로 켠다**(문서). 이 칸이 3단계에서 얻는 새 능력이고,
-   * 옛 목록에는 없었다 — 사유를 읽을 수는 있어도 켤 수는 없었다.
-   */
-  it('멈춘 에이전트는 ▶ 를 받고, 누르면 러너가 뜬다', () => {
-    const c = fakeController();
-    const onOpenAgentConfig = vi.fn();
-    useAppStore.getState().set(두에이전트({ online: [], connected: true }));
-    renderAgentsPanel({ onOpenAgentConfig });
-
-    expect(screen.getByTestId('agent-card-codex').dataset.face).toBe('stopped');
-    fireEvent.click(screen.getByTestId('agent-relaunch-codex'));
-    expect(c.reissueRunnerPat).toHaveBeenCalledWith('codex');
-    /*
-      **카드와 다른 동작이다** — 겹쳐 두면 실행이 우연히 눌린다(격자의 규칙: ▶ 는
-      `stopPropagation` 을 한다). 재는 대상이 `startDm` 에서 카드의 새 동작(설정 열기)으로
-      옮겼다 — 옛 이름을 그대로 두면 이 단언은 아무것도 막지 못하는 참이 된다.
-    */
-    expect(onOpenAgentConfig).not.toHaveBeenCalled();
-    expect(c.startDm).not.toHaveBeenCalled();
-  });
-
-  /**
-   * **권한이 없으면 그 자리를 그리지 않는다**(`AgentGrid` 주석: *"없으면 그 자리를 그리지
-   * 않는다 — 권한 없는 사람에게는 문이 없다"*). 판정은 설정 화면과 같은 것이다:
-   * 관리자이거나 내가 소유한 에이전트.
-   */
-  it('띄울 수 없는 사람에게는 ▶ 자체가 없다', () => {
-    fakeController();
-    const me = acc('me', 'nari', 'human', false);
-    useAppStore.getState().set({
-      me,
-      accounts: { me, codex: acc('codex', 'codex', 'agent') },
-      channels: [chan('c1', 'general')],
-      dms: [], online: [], connected: true, activeChannelId: 'c1', runnerStates: {},
-    });
-    renderAgentsPanel();
-
-    expect(screen.getByTestId('agent-card-codex').dataset.face).toBe('stopped');
-    expect(screen.queryByTestId('agent-relaunch-codex')).toBeNull();
-  });
-
-  /**
-   * **대조군** — 소유자면 관리자가 아니어도 켤 수 있다. 위 회귀선만 있으면 `onRelaunch` 를
-   * 아예 안 넘기는 구현으로 초록이 되고, 그러면 문서의 *"▶ 로 여기서 바로 켠다"* 가
-   * 아무에게도 닿지 않는다.
-   */
-  it('대조군 — 내가 소유한 에이전트는 관리자가 아니어도 켤 수 있다', () => {
-    const c = fakeController();
-    const me = acc('me', 'nari', 'human', false);
-    useAppStore.getState().set({
-      me,
-      accounts: { me, codex: acc('codex', 'codex', 'agent', false, { ownerAccountId: 'me' }) },
-      channels: [chan('c1', 'general')],
-      dms: [], online: [], connected: true, activeChannelId: 'c1', runnerStates: {},
-    });
-    renderAgentsPanel();
-
-    fireEvent.click(screen.getByTestId('agent-relaunch-codex'));
-    expect(c.reissueRunnerPat).toHaveBeenCalledWith('codex');
-  });
 });
 
 describe('좁은 폭 — 62px 레일 옆의 패널은 설정 화면이 아니다', () => {
@@ -422,6 +360,7 @@ describe('좁은 폭 — 62px 레일 옆의 패널은 설정 화면이 아니다
   it('회귀선 — 자리를 안 주면 설정의 그 격자다', () => {
     const agent: AgentView = {
       ...acc('forge', 'forge', 'agent'),
+      assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [], mcpServers: [],
       instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
       mentionPermission: 'auto', runnerVersion: null,
       claudeLane: null,

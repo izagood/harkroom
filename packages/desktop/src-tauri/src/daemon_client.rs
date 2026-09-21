@@ -17,7 +17,7 @@
 //!
 //! | 무엇 | 누가 정하나 |
 //! |---|---|
-//! | daemon 실행 파일 경로 | Rust — `sidecar_path(DAEMON_SIDECAR_NAME)` |
+//! | daemon 실행 파일 경로 | Rust — `sidecar_path(OPERATOR_SIDECAR_NAME)` |
 //! | daemon 에 넘길 인자 | Rust — 아래 `spawn_daemon` 이 리터럴로 조립한다 |
 //! | **소켓·토큰·pid 경로** | Rust — `app.path().app_data_dir()` 에서 계산한다 |
 //! | 토큰 값 | Rust — 토큰 **파일**에서 읽는다 |
@@ -57,7 +57,7 @@ use serde_json::{json, Value};
 
 /// daemon 사이드카의 이름. **`tauri.conf.json` 의 `bundle.externalBin` 항목과 같아야 한다**
 /// — 러너 쪽 `RUNNER_SIDECAR_NAME` 과 같은 계약이다.
-pub const DAEMON_SIDECAR_NAME: &str = "harkroom-daemon";
+pub const OPERATOR_SIDECAR_NAME: &str = "harkroom-operator";
 
 /// 소켓·pid·토큰 파일명에 박히는 프로토콜 버전. **`@harkroom/shared` 의
 /// `DAEMON_PROTOCOL_VERSION` 과 같은 값이어야 한다** — 다르면 앱은 `daemon-v1.sock` 을
@@ -74,7 +74,7 @@ pub const DAEMON_PROTOCOL_VERSION: u32 = 1;
 ///
 /// 넘으면 `bind` 가 **`EINVAL`** 로 실패하는데, 그 에러 이름만으로는 원인을 알 수 없다.
 /// 2/3 실물 검증에서 115바이트짜리 워크트리 경로로 실제로 밟았고, `listen EINVAL:
-/// invalid argument …` 앞에서 한참 헤맸다(`packages/daemon/src/server.ts::bindTemporary`
+/// invalid argument …` 앞에서 한참 헤맸다(`packages/operator/src/server.ts::bindTemporary`
 /// 주석에 그 원문이 남아 있다).
 ///
 /// ## 여유가 얼마나 되나 — 실측 (2026-09-06)
@@ -599,8 +599,8 @@ pub struct EndpointPaths {
 }
 
 pub fn endpoint_paths(app_data_dir: &Path) -> EndpointPaths {
-    let dir = app_data_dir.join("daemon");
-    let base = format!("daemon-v{DAEMON_PROTOCOL_VERSION}");
+    let dir = app_data_dir.join("operator");
+    let base = format!("operator-v{DAEMON_PROTOCOL_VERSION}");
     // 앱 클라이언트 로그도 **같은 디렉터리**에 둔다 — 사람이 daemon 로그와 한자리에서
     // 대조한다(`log_line` 주석, `#456`). 경로를 여기서 정하는 것이 요점이다: 웹뷰는
     // 이 함수를 부르지 못하므로 임의 파일을 앱 권한으로 덮어쓸 수 없다.
@@ -918,7 +918,7 @@ pub fn read_pid_record(path: &Path) -> Option<PidRecord> {
 /// ```
 ///
 /// **실측(2026-09-06)**: 릴리즈 앱이 다른 워크트리의 **debug** daemon(pid 35721,
-/// `entryPath = …/permit/…/target/debug/harkroom-daemon`)에 그대로 붙었다. 토큰도 같은
+/// `entryPath = …/permit/…/target/debug/harkroom-operator`)에 그대로 붙었다. 토큰도 같은
 /// 파일을 공유하니 인증은 자동으로 통과한다.
 ///
 /// ## 무엇이 위험한가 — `#250` 과 **층이 다르다**
@@ -926,7 +926,7 @@ pub fn read_pid_record(path: &Path) -> Option<PidRecord> {
 /// daemon 은 러너 경로를 클라이언트에게 받지 않고 **자기 옆에서** 찾는다:
 ///
 /// ```ts
-/// // packages/daemon/src/run.ts
+/// // packages/operator/src/run.ts
 /// export function defaultRunnerCommand(entryPath: string): string {
 ///   return resolve(dirname(resolve(entryPath)), 'harkroom-runner');
 /// }
@@ -1074,7 +1074,7 @@ pub fn ensure_daemon(
     let paths = resolve_endpoint_paths(app)?;
     // **내 빌드의 daemon 실행 파일.** 소켓을 쥔 daemon 이 이것과 다른 것이면 안 붙는다
     // (`same_entry_path` 주석: 소켓이 워크트리를 가로질러 공유된다).
-    let my_entry = crate::sidecar_path(DAEMON_SIDECAR_NAME)?;
+    let my_entry = crate::sidecar_path(OPERATOR_SIDECAR_NAME)?;
     let launch_app = app.clone();
     let launch_paths = paths.clone();
     let (conn, kind) = ensure_at(&paths, &my_entry, runner_exit_emitter(app), move || {
@@ -1129,7 +1129,7 @@ fn runner_exit_emitter(
 /// 직접 셀 수 있어야 한다. 프로덕션에서 그 클로저 안에 들어가는 것은 `spawn_daemon` 하나뿐이다.
 ///
 /// `my_entry` 는 **내 빌드의 daemon 실행 파일 경로**다(`same_entry_path` 주석 참조).
-/// 프로덕션에서는 `sidecar_path(DAEMON_SIDECAR_NAME)` 하나뿐이고, 회귀선이 "남의 경로"를
+/// 프로덕션에서는 `sidecar_path(OPERATOR_SIDECAR_NAME)` 하나뿐이고, 회귀선이 "남의 경로"를
 /// 만들 수 있어야 해서 파라미터로 받는다.
 /// 붙은 daemon 을 **물러나게 해야 하는가** — 낡은 번들이 띄운 것인가(2026-09-07).
 ///
@@ -1392,7 +1392,7 @@ pub fn resolve_endpoint_paths(app: &tauri::AppHandle) -> Result<EndpointPaths, S
 /// **인자는 전부 Rust 가 조립한다.** 웹뷰는 이 함수에 아무것도 못 넘긴다 —
 /// 프로그램 경로도, 소켓·토큰·pid 경로도, nonce 도 여기서 만든다.
 fn spawn_daemon(app: &tauri::AppHandle, paths: &EndpointPaths) -> Result<DaemonExitWatch, String> {
-    let program = crate::sidecar_path(DAEMON_SIDECAR_NAME)?;
+    let program = crate::sidecar_path(OPERATOR_SIDECAR_NAME)?;
     if !program.is_file() {
         return Err(format!(
             "daemon 사이드카를 찾지 못했다: `{}` — 빌드가 externalBin 을 이 이름으로 넣었는지 확인하라",
@@ -1518,7 +1518,7 @@ const EXIT_COMMAND_NOT_FOUND: i32 = 127;
 
 /// daemon 이 **점유를 보고 물러났다**는 종료 코드.
 ///
-/// **출처는 `packages/daemon/src/run.ts` 의 `EXIT_OCCUPIED` 다.** 그 값이 이 상수와
+/// **출처는 `packages/operator/src/run.ts` 의 `EXIT_OCCUPIED` 다.** 그 값이 이 상수와
 /// 갈리면 앱은 점유를 다른 사유로 읽고(또는 그 반대로) 사람에게 엉뚱한 말을 한다.
 /// 두 언어를 가로질러 값을 공유할 방법이 없으므로 **회귀선이 두 파일을 읽어 대조한다** —
 /// `packages/desktop/test/daemonExitCodes.test.ts`.
@@ -1645,7 +1645,7 @@ fn exit_reason(
 ///
 /// ## 무엇을 말하나 — **종료할 앱**이다
 ///
-/// `entryPath` 는 daemon **실행 파일**이지만(`…/Harkroom.app/Contents/MacOS/harkroom-daemon`),
+/// `entryPath` 는 daemon **실행 파일**이지만(`…/Harkroom.app/Contents/MacOS/harkroom-operator`),
 /// 사람이 종료할 수 있는 것은 `.app` 이다. 그래서 `app_bundle_of` 로 번들까지 줄여 말한다.
 ///
 /// **모르는 것은 지어내지 않는다**(`#368`). 레코드를 못 읽었거나 `entryPath` 가 비어
@@ -1674,11 +1674,11 @@ fn occupied_reason(occupant: Option<&PidRecord>) -> String {
 /// `.app` 번들 안의 실행 파일 경로를 **번들 경로**로 줄인다.
 ///
 /// ```text
-/// /Applications/Harkroom.app/Contents/MacOS/harkroom-daemon  →  /Applications/Harkroom.app
+/// /Applications/Harkroom.app/Contents/MacOS/harkroom-operator  →  /Applications/Harkroom.app
 /// ```
 ///
 /// **모양이 안 맞으면 원문을 그대로 돌려준다.** `tauri dev` 로 띄운 빌드의 사이드카는
-/// 번들 안에 없다(`target/debug/harkroom-daemon`) — 그때 억지로 자르면 없는 경로를
+/// 번들 안에 없다(`target/debug/harkroom-operator`) — 그때 억지로 자르면 없는 경로를
 /// 사람에게 말하게 된다.
 fn app_bundle_of(entry: &str) -> &str {
     const INSIDE_BUNDLE: &str = "/Contents/MacOS/";
@@ -2170,7 +2170,7 @@ mod tests {
     // 개발 구획 회귀선 — 워크트리마다 앱 데이터 뿌리가 갈린다
     //
     // 여기서 재는 것은 **경로 계산**이다. 그 밑의 daemon 이 그 뿌리를 실제로 쓰는지는
-    // `packages/daemon` 의 회귀선(`appDataDirFromSocket` 되짚기)과 아래 실물 daemon
+    // `packages/operator` 의 회귀선(`appDataDirFromSocket` 되짚기)과 아래 실물 daemon
     // 회귀선이 잰다.
     // -----------------------------------------------------------------------
 
@@ -2433,7 +2433,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
             assert!(p.starts_with(&root), "{} 가 구획 밖에 있다", p.display());
         }
         // 앱 클라이언트 로그도 같은 자리다(`#456` 의 오독이 이 파일에서 났다).
-        assert_eq!(paths.dir, root.join("daemon"));
+        assert_eq!(paths.dir, root.join("operator"));
     }
 
     /// **환경변수 탈출구** — 개발 빌드에서 주면 그것이 뿌리가 된다.
@@ -2694,7 +2694,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("debug");
-        let p = dir.join(DAEMON_SIDECAR_NAME);
+        let p = dir.join(OPERATOR_SIDECAR_NAME);
         if p.is_file() {
             Some(p)
         } else {
@@ -3101,7 +3101,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         // **내 빌드의 daemon 은 다른 자리에 있다고 말한다** — 다른 워크트리의 체크아웃이
         // 이 자리에 오는 그 상황이다. 파일이 실재하지 않아도 된다: 판정은 경로 비교이고,
         // `canonicalize` 실패는 원문 비교로 떨어진다(`same_entry_path` 주석).
-        let my_entry = dir.join("other-build").join(DAEMON_SIDECAR_NAME);
+        let my_entry = dir.join("other-build").join(OPERATOR_SIDECAR_NAME);
 
         // 붙지 못하면 그 다음은 "띄운다"인데, 여기서는 띄우지 않고 **불렸는지만** 센다 —
         // 살아 있는 남의 daemon 을 건드리지 않는 것이 이 회귀선의 절반이다.
@@ -3193,19 +3193,19 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     /// 그때 "같다고 단정"하면 이 관문이 옛 daemon 앞에서 통째로 열린다.
     #[test]
     fn entry_path_비교는_모르는_것을_다른_것으로_다룬다() {
-        let mine = Path::new("/tmp/mmr-a/harkroom-daemon");
+        let mine = Path::new("/tmp/mmr-a/harkroom-operator");
         assert!(!same_entry_path("", mine), "빈 entryPath 를 같다고 했다");
         assert!(
-            !same_entry_path("/tmp/mmr-b/harkroom-daemon", mine),
+            !same_entry_path("/tmp/mmr-b/harkroom-operator", mine),
             "다른 경로를 같다고 했다"
         );
         assert!(
-            same_entry_path("/tmp/mmr-a/harkroom-daemon", mine),
+            same_entry_path("/tmp/mmr-a/harkroom-operator", mine),
             "같은 경로를 다르다고 했다"
         );
         // `.` 성분이 낀 표기도 같은 파일이다 — 정규화가 그것을 흡수한다.
         assert!(
-            same_entry_path("/tmp/mmr-a/./harkroom-daemon", mine),
+            same_entry_path("/tmp/mmr-a/./harkroom-operator", mine),
             "정규화 전 표기가 다르다고 갈렸다"
         );
     }
@@ -3222,7 +3222,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     #[test]
     fn node_가_없으면_어디서_받는지까지_말한다() {
         let e = std::io::Error::new(std::io::ErrorKind::NotFound, "os error 2");
-        let msg = spawn_failure_reason(Path::new("/A/harkroom-daemon"), &e);
+        let msg = spawn_failure_reason(Path::new("/A/harkroom-operator"), &e);
         assert!(msg.contains("node"), "무엇이 없는지 말해야 한다: {msg}");
         assert!(
             msg.contains("https://nodejs.org/en/download"),
@@ -3240,7 +3240,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     #[test]
     fn enoent_가_아닌_실패에는_node_이야기를_붙이지_않는다() {
         let e = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
-        let msg = spawn_failure_reason(Path::new("/A/harkroom-daemon"), &e);
+        let msg = spawn_failure_reason(Path::new("/A/harkroom-operator"), &e);
         assert!(!msg.contains("nodejs.org"), "지어내지 않는다: {msg}");
         assert!(msg.contains("denied"), "원문은 그대로 올린다: {msg}");
     }
@@ -3264,7 +3264,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     fn daemon_커맨드가_path_를_env_로_넘긴다() {
         let dir = std::env::temp_dir().join(format!("mmr-env-{}", std::process::id()));
         let paths = endpoint_paths(&dir);
-        let cmd = daemon_command(Path::new("/A/harkroom-daemon"), &paths, "n", "0.0.0");
+        let cmd = daemon_command(Path::new("/A/harkroom-operator"), &paths, "n", "0.0.0");
 
         let path = cmd
             .get_envs()
@@ -3324,7 +3324,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     #[test]
     fn daemon_이_node_를_못_찾으면_그_사실이_사유로_나온다() {
         let watch = DaemonExitWatch::exited(
-            "/A/harkroom-daemon",
+            "/A/harkroom-operator",
             Some(127),
             Some("env: node: No such file or directory"),
         );
@@ -3371,7 +3371,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     fn 다른_사유로_죽으면_node_이야기를_안_한다() {
         // 코드가 127 이 아니다.
         let occupied = DaemonExitWatch::exited(
-            "/A/harkroom-daemon",
+            "/A/harkroom-operator",
             Some(10),
             Some("소켓을 다른 daemon 이 쥐고 있다"),
         );
@@ -3386,7 +3386,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         // **127 이어도 로그가 다른 이야기면 단정하지 않는다.** 코드만 보고 판정하면
         // daemon 이 127 로 끝나는 다른 경우까지 전부 Node 탓이 된다.
         let other127 = DaemonExitWatch::exited(
-            "/A/harkroom-daemon",
+            "/A/harkroom-operator",
             Some(127),
             Some("설정 파일을 읽지 못했다"),
         );
@@ -3397,7 +3397,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         );
 
         // 로그가 아예 없어도 마찬가지다.
-        let silent = DaemonExitWatch::exited("/A/harkroom-daemon", Some(127), None);
+        let silent = DaemonExitWatch::exited("/A/harkroom-operator", Some(127), None);
         let msg = silent.death_reason().unwrap();
         assert!(
             !msg.contains("nodejs.org"),
@@ -3412,13 +3412,13 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     #[test]
     fn 점유로_물러나면_누가_쥐고_있는지와_할_일을_말한다() {
         let dir = temp_app_data_dir("occupied");
-        let pid_path = dir.join("daemon-v1.pid");
+        let pid_path = dir.join("operator-v1.pid");
         // **실측한 레코드 원문 그대로다.** 구조체를 만들어 직렬화하지 않는 이유는
         // 필드 이름까지 daemon 이 쓴 그대로인지 함께 재기 위해서다.
-        std::fs::write(&pid_path, r#"{"pid":17109,"startedAtMs":1788754303745,"entryPath":"/Applications/Harkroom.app/Contents/MacOS/harkroom-daemon","appVersion":"0.1.6","launchNonce":"ccf30441-045b-4497-b203-5835ededda34"}"#).unwrap();
+        std::fs::write(&pid_path, r#"{"pid":17109,"startedAtMs":1788754303745,"entryPath":"/Applications/Harkroom.app/Contents/MacOS/harkroom-operator","appVersion":"0.1.6","launchNonce":"ccf30441-045b-4497-b203-5835ededda34"}"#).unwrap();
 
         let watch = DaemonExitWatch::exited_at(
-            "/A/harkroom-daemon",
+            "/A/harkroom-operator",
             pid_path,
             Some(EXIT_OCCUPIED),
             Some("이미 서비스 중인 daemon 이 있다: /tmp/x/daemon-v1.sock — 물러난다"),
@@ -3459,7 +3459,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     fn 점유_상대를_모르면_지어내지_않는다() {
         // pid 레코드가 없다 — 그 daemon 이 물러나며 지웠거나, 애초에 못 읽는다.
         let 없음 = DaemonExitWatch::exited(
-            "/A/harkroom-daemon",
+            "/A/harkroom-operator",
             Some(EXIT_OCCUPIED),
             Some("이미 서비스 중인 daemon 이 있다"),
         );
@@ -3473,10 +3473,10 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
 
         // `entryPath` 를 안 적는 **옛 daemon** 도 같다 — 빈 문자열을 경로로 말하지 않는다.
         let dir = temp_app_data_dir("occupied-legacy");
-        let pid_path = dir.join("daemon-v1.pid");
+        let pid_path = dir.join("operator-v1.pid");
         std::fs::write(&pid_path, r#"{"pid":17109}"#).unwrap();
         let 옛것 =
-            DaemonExitWatch::exited_at("/A/harkroom-daemon", pid_path, Some(EXIT_OCCUPIED), None);
+            DaemonExitWatch::exited_at("/A/harkroom-operator", pid_path, Some(EXIT_OCCUPIED), None);
         let msg = 옛것.death_reason().unwrap();
         assert!(
             msg.contains("모른다"),
@@ -3493,11 +3493,11 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     #[test]
     fn 점유가_아니면_점유_문구를_안_붙인다() {
         let dir = temp_app_data_dir("occupied-other");
-        let pid_path = dir.join("daemon-v1.pid");
-        std::fs::write(&pid_path, r#"{"pid":17109,"startedAtMs":1788754303745,"entryPath":"/Applications/Harkroom.app/Contents/MacOS/harkroom-daemon","appVersion":"0.1.6","launchNonce":"ccf30441-045b-4497-b203-5835ededda34"}"#).unwrap();
+        let pid_path = dir.join("operator-v1.pid");
+        std::fs::write(&pid_path, r#"{"pid":17109,"startedAtMs":1788754303745,"entryPath":"/Applications/Harkroom.app/Contents/MacOS/harkroom-operator","appVersion":"0.1.6","launchNonce":"ccf30441-045b-4497-b203-5835ededda34"}"#).unwrap();
 
         let watch = DaemonExitWatch::exited_at(
-            "/A/harkroom-daemon",
+            "/A/harkroom-operator",
             pid_path,
             Some(78),
             Some("자격증명을 거부했다"),
@@ -3522,17 +3522,17 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     #[test]
     fn 번들_밖의_실행_파일은_경로를_그대로_말한다() {
         assert_eq!(
-            app_bundle_of("/Applications/Harkroom.app/Contents/MacOS/harkroom-daemon"),
+            app_bundle_of("/Applications/Harkroom.app/Contents/MacOS/harkroom-operator"),
             "/Applications/Harkroom.app"
         );
 
         // `tauri dev` 빌드의 사이드카는 번들 안에 없다 — 억지로 자르면 **없는 경로**를
         // 사람에게 말하게 된다.
-        let dev = "/Users/x/wt/a/packages/desktop/src-tauri/target/debug/harkroom-daemon";
+        let dev = "/Users/x/wt/a/packages/desktop/src-tauri/target/debug/harkroom-operator";
         assert_eq!(app_bundle_of(dev), dev);
 
         // `.app` 이 아닌 디렉터리가 `/Contents/MacOS/` 를 품고 있어도 안 자른다.
-        let 이상 = "/tmp/notabundle/Contents/MacOS/harkroom-daemon";
+        let 이상 = "/tmp/notabundle/Contents/MacOS/harkroom-operator";
         assert_eq!(app_bundle_of(이상), 이상);
     }
 
@@ -3562,7 +3562,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     /// 실측(2026-09-07, 이 테스트를 만들며):
     ///
     /// ```text
-    /// $ env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin ./harkroom-daemon-aarch64-apple-darwin --version
+    /// $ env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin ./harkroom-operator-aarch64-apple-darwin --version
     /// env: node: No such file or directory
     /// exit=127
     /// ```

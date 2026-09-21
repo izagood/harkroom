@@ -342,7 +342,7 @@ jobs:
 
       # ## 사이드카가 `tauri build` 보다 **반드시 앞이다** (`#441`)
       #
-      # `tauri.conf.json` 의 `externalBin` 이 `binaries/harkroom-runner`·`binaries/harkroom-daemon`
+      # `tauri.conf.json` 의 `externalBin` 이 `binaries/harkroom-runner`·`binaries/harkroom-operator`
       # 둘 다 요구한다. 없으면 번들 단계가 `resource path … doesn't exist` 로 죽는다.
       # `#441` 이 "사람이 기억해야 한다"고 지적한 자리이고, 실제로 사람이 손으로 돌려 왔다.
       # `ci.yml` 이 PR 경로에서 이 순서를 못박았고, **릴리즈 경로에서도 같아야 한다** —

@@ -1,7 +1,7 @@
 // daemon 사이드카 빌드 경로의 회귀선(#431 2단계-a).
 //
 // 여기서 재는 것은 **배포 형태**뿐이다 — daemon 이 무엇을 하는지(소켓·인증·러너 소유)는
-// `packages/daemon` 의 회귀선이 재고, 이 파일이 닫는 것은 "daemon 이 앱과 함께 나가는
+// `packages/operator` 의 회귀선이 재고, 이 파일이 닫는 것은 "daemon 이 앱과 함께 나가는
 // 실행 가능한 사이드카가 된다"는 것 하나다.
 //
 // 2단계-b 에서 **daemon 이 상주 프로세스가 됐다.** 그래서 실행 회귀선이 종료를 기다리던
@@ -43,7 +43,7 @@ describe('tauri.conf.json — daemon 이 externalBin 에 있다 (#431 2단계-a)
   it('externalBin 이 러너와 daemon 을 둘 다 싣는다', () => {
     const externalBin = readTauriConf().bundle?.externalBin;
     expect(externalBin).toContain('binaries/harkroom-runner');
-    expect(externalBin).toContain('binaries/harkroom-daemon');
+    expect(externalBin).toContain('binaries/harkroom-operator');
   });
 
   /**
@@ -71,7 +71,7 @@ describe('daemon 사이드카 산출물 (#431 2단계-a)', () => {
    * 들어갔는지(빈 번들·엉뚱한 엔트리)를 같은 실행 하나로 가른다.
    */
   it('셔뱅 + 실행 비트로 그대로 실행되고 인자를 판다', async () => {
-    const sidecar = findSidecar('harkroom-daemon');
+    const sidecar = findSidecar('harkroom-operator');
     if (!sidecar) {
       console.warn(`건너뜀: daemon 사이드카가 ${BINARIES_DIR} 에 없다 — ${SKIP_HINT}`);
       return;
@@ -92,7 +92,7 @@ describe('daemon 사이드카 산출물 (#431 2단계-a)', () => {
     //
     // 엔드포인트를 실제로 잡지 않도록 **임시 디렉터리**를 준다 — 그러지 않으면 이
     // 테스트가 사람의 진짜 daemon 소켓을 건드린다.
-    const tempDir = mkdtempSync(path.join(tmpdir(), 'harkroom-daemon-sidecar-'));
+    const tempDir = mkdtempSync(path.join(tmpdir(), 'harkroom-operator-sidecar-'));
     const socketPath = path.join(tempDir, 'daemon', 'daemon-v1.sock');
     const child = spawn(sidecar, ['--socket', socketPath, '--app-version', '9.9.9']);
     try {
@@ -135,7 +135,7 @@ describe('daemon 사이드카 산출물 (#431 2단계-a)', () => {
    * 존재만 보면 주석이나 이 검사 자체에 걸릴 수 있으므로 **모듈 지정자 형태**를 본다.
    */
   it('번들이 node-pty 를 요구하지 않는다', () => {
-    const sidecar = findSidecar('harkroom-daemon');
+    const sidecar = findSidecar('harkroom-operator');
     if (!sidecar) {
       console.warn(`건너뜀: daemon 사이드카가 ${BINARIES_DIR} 에 없다 — ${SKIP_HINT}`);
       return;
@@ -192,14 +192,14 @@ describe('daemon 사이드카 산출물 (#431 2단계-a)', () => {
    * `externalBin` 이 둘을 요구하므로 `tauri build` 가 실패하는 상태이고,
    * 청소 지점이 하나라는 설계(`build-sidecars.mjs` 주석)가 깨진 신호이기도 하다.
    */
-  it('러너와 daemon 이 같은 triple 로 함께 나온다', () => {
+  it('러너와 operator 가 같은 triple 로 함께 나온다', () => {
     const runner = findSidecar('harkroom-runner');
-    const daemon = findSidecar('harkroom-daemon');
+    const daemon = findSidecar('harkroom-operator');
     if (!runner || !daemon) {
       console.warn(`건너뜀: 사이드카가 ${BINARIES_DIR} 에 없다 — ${SKIP_HINT}`);
       return;
     }
-    const triple = (p: string) => path.basename(p).replace(/^harkroom-(runner|daemon)-/, '');
+    const triple = (p: string) => path.basename(p).replace(/^harkroom-(runner|operator)-/, '');
     expect(triple(daemon)).toBe(triple(runner));
   });
 });

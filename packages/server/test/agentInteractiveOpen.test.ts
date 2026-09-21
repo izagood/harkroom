@@ -12,6 +12,7 @@ import type { AgentSessionView, RelayRunnerFrame, RelayServerFrame, RunnerCap } 
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { operatorRunnerFactory, type OperatorRunner } from './helpers/operatorRunner.js';
 
 let app: FastifyInstance;
 let pool: Pool;
@@ -21,40 +22,36 @@ let ownerToken: string;
 let ownerId: string;
 let strangerToken: string;
 let agentId: string;
-let agentPat: string;
 let baseUrl: string;
+let runners: ReturnType<typeof operatorRunnerFactory>;
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 
 /** interactive.open 타임아웃을 짧게 잡는다 — 504 경로 확인이 테스트를 10초 세우면 안 된다. */
 const OPEN_TIMEOUT_MS = 400;
 
-interface FakeRunner {
-  socket: WebSocket;
-  received: RelayServerFrame[];
-  send(frame: RelayRunnerFrame): void;
-  close(): Promise<void>;
+type FakeRunner = OperatorRunner;
+/** caps: null 은 구 러너 흉내 — announce 에 필드 자체가 없다. */
+async function connectRunner(id: string, caps: readonly RunnerCap[] | null): Promise<FakeRunner> {
+  const runner = await runners.connect(id);
+  runner.send(caps ? { type: 'announce', sessions: [], caps } : { type: 'announce', sessions: [] });
+  return runner;
 }
 
-async function connectRunner(pat: string, caps: readonly RunnerCap[] | null): Promise<FakeRunner> {
-  const socket = new WebSocket(`ws://${baseUrl}/agent-relay`, { headers: auth(pat) });
-  const received: RelayServerFrame[] = [];
-  socket.on('message', (d) => received.push(JSON.parse(String(d)) as RelayServerFrame));
-  await new Promise<void>((resolve, reject) => {
-    socket.on('open', () => resolve());
-    socket.on('error', reject);
-  });
-  // caps: null 은 구 러너 흉내 — announce 에 필드 자체가 없다.
-  socket.send(JSON.stringify(caps
-    ? { type: 'announce', sessions: [], caps }
-    : { type: 'announce', sessions: [] }));
-  return {
-    socket, received,
-    send: (frame) => socket.send(JSON.stringify(frame)),
-    close: () => new Promise<void>((resolve) => { socket.on('close', () => resolve()); socket.close(); }),
-  };
-}
-
+/**
+ * 러너가 보낸 `session.started` 가 허브에 반영될 때까지 기다린다. 소켓 write 가 돌아온 것과
+ * 서버가 그 프레임을 처리한 것은 다른 사건이다 — CI(2026-09-21, run 35564790880)에서 그 사이에
+ * attach 가 들어가 404 였다. 로컬에선 빨라서 안 보이던 경합이다.
+ */
+const waitForSession = async (token: string, sessionId: string): Promise<void> => {
+  const start = Date.now();
+  for (;;) {
+    const res = await app.inject({ method: 'GET', url: '/agent-sessions', headers: auth(token) });
+    if ((res.json().sessions as { sessionId: string }[]).some((x) => x.sessionId === sessionId)) return;
+    if (Date.now() - start > 4000) throw new Error(`세션이 허브에 안 올랐다: ${sessionId}`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
+};
 const waitFor = async (pred: () => boolean, ms = 4000): Promise<void> => {
   const start = Date.now();
   while (!pred()) {
@@ -78,8 +75,7 @@ function session(sessionId: string, mode: 'mention' | 'interactive'): AgentSessi
  * interactive.opened 로 답한다 — 실제 러너(interactiveTurn.ts)와 같은 순서다.
  */
 function answerOpens(runner: FakeRunner, opts: { sessionId: string; created: boolean }): void {
-  runner.socket.on('message', (d) => {
-    const frame = JSON.parse(String(d)) as RelayServerFrame;
+  runner.onFrame((frame) => {
     if (frame.type !== 'interactive.open') return;
     if (opts.created) {
       runner.send({ type: 'session.started', session: session(opts.sessionId, 'interactive') });
@@ -115,7 +111,7 @@ beforeAll(async () => {
   ownerToken = owner.token;
   strangerToken = (await register('stranger')).token;
 
-  ({ accountId: agentId, pat: agentPat } = await createAgent(app, adminToken, 'forge'));
+  ({ accountId: agentId } = await createAgent(app, adminToken, 'forge'));
   const patched = await app.inject({
     method: 'PATCH', url: `/accounts/agents/${agentId}`, headers: auth(adminToken),
     payload: { ownerAccountId: ownerId },
@@ -125,12 +121,13 @@ beforeAll(async () => {
   await app.listen({ port: 0, host: '127.0.0.1' });
   const addr = app.server.address();
   baseUrl = typeof addr === 'object' && addr ? `127.0.0.1:${addr.port}` : '';
+  runners = operatorRunnerFactory(app, () => baseUrl, adminToken);
 });
 afterAll(async () => { await app.close(); await stop(); });
 
 describe('#337-1 열기 성공 — opened 응답이 티켓·세션으로 돌아온다', () => {
   it('러너가 세션을 만들어 답하면 200 에 ticket 과 session 이 실리고 감사가 남는다', async () => {
-    const runner = await connectRunner(agentPat, ['input', 'interactive']);
+    const runner = await connectRunner(agentId, ['input', 'interactive']);
     answerOpens(runner, { sessionId: 'sess-new', created: true });
 
     const res = await openReq(ownerToken);
@@ -164,7 +161,7 @@ describe('#337-1 열기 성공 — opened 응답이 티켓·세션으로 돌아�
   });
 
   it('이미 돌던 턴이면 created:false 로 그 세션에 합류한다', async () => {
-    const runner = await connectRunner(agentPat, ['input', 'interactive']);
+    const runner = await connectRunner(agentId, ['input', 'interactive']);
     // 멘션 턴이 이미 announce 돼 있다 — 러너의 3분기 ① 이 이 세션 id 를 돌려준다.
     runner.send({ type: 'session.started', session: session('sess-mention', 'mention') });
     answerOpens(runner, { sessionId: 'sess-mention', created: false });
@@ -191,7 +188,7 @@ describe('#337-2 실패가 상태 코드로 갈린다 — 화면이 그대로 �
   });
 
   it('caps 에 interactive 가 없는 구 러너는 즉시 409 — 타임아웃을 기다리지 않는다', async () => {
-    const runner = await connectRunner(agentPat, null);
+    const runner = await connectRunner(agentId, null);
     const started = Date.now();
     const res = await openReq(ownerToken);
     expect(res.statusCode).toBe(409);
@@ -204,7 +201,7 @@ describe('#337-2 실패가 상태 코드로 갈린다 — 화면이 그대로 �
   });
 
   it('러너가 답하지 않으면 504 runner_timeout', async () => {
-    const runner = await connectRunner(agentPat, ['input', 'interactive']);
+    const runner = await connectRunner(agentId, ['input', 'interactive']);
     // 아무 응답도 하지 않는 러너 — spawn 이 걸려 있는 경우의 흉내다.
     const res = await openReq(ownerToken);
     expect(res.statusCode).toBe(504);
@@ -213,9 +210,8 @@ describe('#337-2 실패가 상태 코드로 갈린다 — 화면이 그대로 �
   });
 
   it('러너의 거절(interactive.error)은 그 문구 그대로 409 로 온다 — codex 거절이 이 경로다', async () => {
-    const runner = await connectRunner(agentPat, ['input', 'interactive']);
-    runner.socket.on('message', (d) => {
-      const frame = JSON.parse(String(d)) as RelayServerFrame;
+    const runner = await connectRunner(agentId, ['input', 'interactive']);
+    runner.onFrame((frame) => {
       if (frame.type !== 'interactive.open') return;
       runner.send({ type: 'interactive.error', requestId: frame.requestId, message: 'codex 인터랙티브 턴은 지원하지 않는다' });
     });
@@ -227,7 +223,7 @@ describe('#337-2 실패가 상태 코드로 갈린다 — 화면이 그대로 �
   });
 
   it('소유자도 admin 도 아니면 403 — attach 와 같은 술어다', async () => {
-    const runner = await connectRunner(agentPat, ['input', 'interactive']);
+    const runner = await connectRunner(agentId, ['input', 'interactive']);
     const res = await openReq(strangerToken);
     expect(res.statusCode).toBe(403);
     // 인가에서 거절된 요청은 러너에 닿지도 않는다.
@@ -246,9 +242,9 @@ describe('#337-2 실패가 상태 코드로 갈린다 — 화면이 그대로 �
 
 describe('#337-3 viewer.count 가 러너에 흐른다 — 인터랙티브 고아 회수의 신호', () => {
   it('attach 가 count 를 올리고 detach 가 내린다', async () => {
-    const runner = await connectRunner(agentPat, ['input', 'interactive']);
+    const runner = await connectRunner(agentId, ['input', 'interactive']);
     runner.send({ type: 'session.started', session: session('sess-count', 'interactive') });
-    await waitFor(() => runner.received.length >= 0);
+    await waitForSession(ownerToken, 'sess-count');
 
     const attachRes = await app.inject({
       method: 'POST', url: '/agent-sessions/sess-count/attach', headers: auth(ownerToken),
@@ -280,8 +276,9 @@ describe('#337-3 viewer.count 가 러너에 흐른다 — 인터랙티브 고아
    * 주면 유실이 **다음 재접속에 자동으로 복구된다.**
    */
   it('announce 하면 그 세션들의 현재 뷰어 수를 되돌려준다 — 유실이 재접속에서 복구된다', async () => {
-    const runner = await connectRunner(agentPat, ['input', 'interactive']);
+    const runner = await connectRunner(agentId, ['input', 'interactive']);
     runner.send({ type: 'session.started', session: session('sess-resync', 'interactive') });
+    await waitForSession(ownerToken, 'sess-resync');
 
     const attachRes = await app.inject({
       method: 'POST', url: '/agent-sessions/sess-resync/attach', headers: auth(ownerToken),

@@ -99,15 +99,15 @@ describe('daemonEndpointPaths — 프로토콜 버전이 파일명에 박힌다'
     expect(a.socketPath).not.toBe(b.socketPath);
     expect(a.pidPath).not.toBe(b.pidPath);
     expect(a.tokenPath).not.toBe(b.tokenPath);
-    expect(a.socketPath).toContain('daemon-v1.sock');
-    expect(b.socketPath).toContain('daemon-v2.sock');
+    expect(a.socketPath).toContain('operator-v1.sock');
+    expect(b.socketPath).toContain('operator-v2.sock');
   });
 
   // 앱 버전이 아니라 프로토콜 버전이 기본값이어야 한다. 앱 버전을 쓰면 릴리스마다
   // 멀쩡히 통하던 daemon 들이 세대로 갈린다.
   it('기본값은 하드코딩된 프로토콜 버전 상수다', () => {
     expect(daemonEndpointPaths('/data').socketPath).toContain(
-      `daemon-v${DAEMON_PROTOCOL_VERSION}.sock`,
+      `operator-v${DAEMON_PROTOCOL_VERSION}.sock`,
     );
   });
 });
@@ -273,7 +273,7 @@ describe('회귀선 4 — 남의 파일을 안 지운다 (rename-verify-unlink)'
   // 내용이 내 것이 아니면 지우지 않는다.
   it('토큰 내용이 다르면 unlink 하지 않는다', async () => {
     const dir = await tempDir();
-    const path = join(dir, 'daemon-v1.token');
+    const path = join(dir, 'operator-v1.token');
     await writeFile(path, '남의-토큰');
 
     expect(await renameVerifyUnlink(path, (c) => c.trim() === '내-토큰')).toBe(false);
@@ -285,7 +285,7 @@ describe('회귀선 4 — 남의 파일을 안 지운다 (rename-verify-unlink)'
 
   it('토큰 내용이 내 것이면 unlink 한다', async () => {
     const dir = await tempDir();
-    const path = join(dir, 'daemon-v1.token');
+    const path = join(dir, 'operator-v1.token');
     await writeFile(path, '내-토큰');
 
     expect(await renameVerifyUnlink(path, (c) => c.trim() === '내-토큰')).toBe(true);
@@ -295,7 +295,7 @@ describe('회귀선 4 — 남의 파일을 안 지운다 (rename-verify-unlink)'
   // 격리 파일(.hold-…)을 남기면 그것 자체가 새로운 잔해다.
   it('되돌린 뒤 격리 파일(.hold-)을 남기지 않는다', async () => {
     const dir = await tempDir();
-    const path = join(dir, 'daemon-v1.token');
+    const path = join(dir, 'operator-v1.token');
     await writeFile(path, '남의-토큰');
     await renameVerifyUnlink(path, () => false);
 

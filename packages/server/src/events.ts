@@ -37,6 +37,11 @@ export type WorkspaceEvent =
   // 에이전트 팀 변경(#172). 집합과 같은 모양·같은 수신자다 — 팀 이름이 자동완성 후보이고
   // 팀원 수가 조용한 실패 판정의 유일한 출처이므로, 알리지 않으면 둘 다 낡는다.
   | { type: 'agent_team.changed'; teamId: string; audience: 'all' | string[] }
+  // 권한·오퍼레이터(스펙 2026-09-20). 모양은 `@harkroom/shared` 의 WsServerEvent 와 같다 —
+  // 화면은 "다시 읽으라"는 신호로만 쓰고 본문을 싣지 않는다(권한 목록은 공격 표면의 지도다).
+  | { type: 'grant.changed'; accountId: string; audience: 'all' | string[] }
+  | { type: 'operator.changed'; operatorId: string; audience: 'all' | string[] }
+  | { type: 'agent_assignment.changed'; agentId: string; audience: 'all' }
   // 담기/해제/상태 변경(#219). 본인의 소켓에만 간다.
   | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string }
   // 워크스페이스 스킬(#140). 제안·승인·비활성을 알린다.

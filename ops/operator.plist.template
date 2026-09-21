@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  오퍼레이터를 launchd 감독 하에 둔다 (docs/operations.md §8-1, 스펙 2026-09-20 단계 6).
+  감독할 것은 러너가 아니라 **오퍼레이터**다 — 머신에 하나이고, 러너는 오퍼레이터가 배정을
+  받아 띄우고 죽으면 다시 띄운다. 에이전트마다 plist 하나이던 옛 `agent-runner.plist.template`
+  은 이것으로 대체됐다(러너는 서버 URL 도 PAT 도 받지 않으므로 그 plist 의 env 자리 자체가 없다).
+
+  쓰는 법:
+    harkroom-operator register https://<host> <코드>      # 먼저 등록한다 — 토큰이 데이터 디렉터리에 남는다
+    sed -e 's|@BIN@|/Applications/Harkroom.app/Contents/MacOS/harkroom-operator|g' \
+        -e 's|@USER@|jaebin|g' \
+        ops/operator.plist.template > ~/Library/LaunchAgents/dev.harkroom.operator.plist
+    launchctl load ~/Library/LaunchAgents/dev.harkroom.operator.plist
+
+  붙인 뒤 반드시 죽여서 확인한다 — 감독이 붙었다는 것과 동작한다는 것은 다른 사실이다:
+    kill -9 $(launchctl list | awk '$3=="dev.harkroom.operator"{print $1}')
+    launchctl list | grep dev.harkroom.operator    # PID 가 바뀌어야 한다
+
+  러너는 오퍼레이터가 죽어도 살아 있고(detached), 새 오퍼레이터가 장부로 다시 소유한다 —
+  그래서 이 재시작이 진행 중인 턴을 끊지 않는다.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>dev.harkroom.operator</string>
+
+  <!-- 실행 파일 그 자체를 감독한다. pnpm 같은 중간 프로세스를 감독하면 오퍼레이터가 죽어도
+       그 프로세스가 남아 launchd 가 재시작하지 않는 경우가 생긴다. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>@BIN@</string>
+    <string>run</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- launchd 는 로그인 셸의 PATH 를 물려받지 않는다. 오퍼레이터는 러너에 로그인 셸의 PATH 를
+         따로 캐내 넘기지만(loginPath.ts), 사이드카가 셔뱅 스크립트라 **오퍼레이터 자신을 실행할
+         node** 가 여기서 발견돼야 한다(#513 의 `env: node: No such file or directory`). -->
+    <key>PATH</key><string>/Users/@USER@/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key><string>/Users/@USER@</string>
+    <!-- 앱과 다른 자리에 두려면 HARKROOM_DATA_DIR 을 여기 적는다. 기본은 앱과 같은
+         ~/Library/Application Support/app.harkroom.desktop 이다 — 앱이 나중에 떠도 같은 소켓을 본다. -->
+  </dict>
+
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <!-- 즉시 재시작을 반복하면 CPU 를 태운다. -->
+  <key>ThrottleInterval</key><integer>10</integer>
+
+  <key>StandardOutPath</key><string>/tmp/harkroom-operator/operator.log</string>
+  <key>StandardErrorPath</key><string>/tmp/harkroom-operator/operator.err.log</string>
+</dict>
+</plist>

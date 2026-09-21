@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { ExecutableNotFoundError, isCredentialFailure, isExecutableNotFound, isQuotaExhausted, isSessionIdConflict, nextBackoffMs, quotaFromText, MAX_ATTEMPTS, exhausted } from '../src/policy.js';
 import { HARKROOM_ERROR_SOURCE } from '../src/policy.js';
 import { HarkroomAgentClient } from '../src/harkroom.js';
+import { fakeLink } from './helpers/fakeLink.js';
 
 /**
  * 하네스가 **자기 세션 파일에** 남긴 에러를 흉내낸다(2026-09-08 실행 모델 교체).
@@ -132,16 +133,11 @@ describe('isCredentialFailure', () => {
     // 태그를 손으로 붙인 객체가 아니라 **프로덕션 클라이언트가 실제로 던지는 에러**를 태운다.
     // 손으로 만들면 harkroom.ts 가 태그·status 를 붙이는 것을 그만둬도 이 테스트가 초록이다.
     it('HarkroomAgentClient 가 던지는 401 에러가 실제로 harkroom 로 판정된다', async () => {
-      const original = globalThis.fetch;
-      globalThis.fetch = (async () => new Response('nope', { status: 401 })) as typeof fetch;
-      try {
-        const client = new HarkroomAgentClient('http://localhost:3400', 'murp_dead');
-        const err = await client.accounts().then(() => null, (e: unknown) => e);
-        expect(err).toBeInstanceOf(Error);
-        expect(isCredentialFailure(err)).toBe('harkroom-credential');
-      } finally {
-        globalThis.fetch = original;
-      }
+      // REST 는 오퍼레이터의 http.forward 로 간다 — 서버가 401 을 내면 그 status 가 그대로 온다.
+      const client = new HarkroomAgentClient(fakeLink({ http: () => ({ status: 401, body: 'nope' }) }));
+      const err = await client.accounts().then(() => null, (e: unknown) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect(isCredentialFailure(err)).toBe('harkroom-credential');
     });
 
     /**
@@ -169,35 +165,31 @@ describe('isCredentialFailure', () => {
      * `harkroom.ts` 가 트랜스포트 에러에 태그를 붙이는 것을 그만두면 이 테스트가 붉어진다.
      */
     it('MCP 트랜스포트가 낸 401 도 harkroom 자격증명 실패다 (2026-09-08 실측)', async () => {
-      const original = globalThis.fetch;
-      globalThis.fetch = (async () => new Response(
-        '{"error":{"code":"agent_only","message":"MCP surface requires an agent PAT"}}',
-        { status: 401 },
-      )) as typeof fetch;
-      try {
-        const client = new HarkroomAgentClient('http://localhost:3400', 'murp_revoked');
-        // `me()` 는 MCP 도구(`account.me`)다 — REST 경로를 거치지 않는다.
-        const err = await client.me().then(() => null, (e: unknown) => e);
-        expect(err).toBeInstanceOf(Error);
-        expect(isCredentialFailure(err)).toBe('harkroom-credential');
-      } finally {
-        globalThis.fetch = original;
-      }
+      // 링크 트랜스포트는 오퍼레이터의 mcp.error 를 status 를 실은 오류로 던진다 — 그 숫자가 판정이다.
+      const client = new HarkroomAgentClient(fakeLink({
+        mcp: () => ({ status: 401, message: '{"error":{"code":"unauthorized","message":"오퍼레이터 토큰이 폐기됐다"}}' }),
+      }));
+      // `me()` 는 MCP 도구(`account.me`)다 — REST 경로를 거치지 않는다.
+      const err = await client.me().then(() => null, (e: unknown) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect(isCredentialFailure(err)).toBe('harkroom-credential');
     });
 
     // 대조군: 트랜스포트 오류를 전부 자격증명으로 읽으면 서버 재시작·502 마다 러너가
     // 78 로 죽는다. 그것은 재시도로 낫는 실패이고, 폴 루프의 재접속이 담당한다.
     it('MCP 트랜스포트의 5xx 는 자격증명 실패가 아니다 (재접속으로 낫는다)', async () => {
-      const original = globalThis.fetch;
-      globalThis.fetch = (async () => new Response('bad gateway', { status: 502 })) as typeof fetch;
-      try {
-        const client = new HarkroomAgentClient('http://localhost:3400', 'murp_live');
-        const err = await client.me().then(() => null, (e: unknown) => e);
-        expect(err).toBeInstanceOf(Error);
-        expect(isCredentialFailure(err)).toBe('other');
-      } finally {
-        globalThis.fetch = original;
-      }
+      const client = new HarkroomAgentClient(fakeLink({ mcp: () => ({ status: 502, message: 'bad gateway' }) }));
+      const err = await client.me().then(() => null, (e: unknown) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect(isCredentialFailure(err)).toBe('other');
+    });
+
+    // 링크 자체가 끊긴 것(status 0)도 자격증명이 아니다 — 오퍼레이터가 재시작 중인 몇 초다.
+    it('링크가 끊겨 status 0 이면 자격증명 실패가 아니다', async () => {
+      const client = new HarkroomAgentClient(fakeLink({ mcp: () => ({ status: 0, message: '오퍼레이터 링크가 없다' }) }));
+      const err = await client.me().then(() => null, (e: unknown) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect(isCredentialFailure(err)).toBe('other');
     });
   });
 

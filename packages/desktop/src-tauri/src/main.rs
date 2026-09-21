@@ -158,7 +158,7 @@ async fn secret_delete(key: String) -> Result<(), String> {
 // "왜 폴백이 없나"). 실패는 실패로 화면에 오른다(`#368`).
 //
 // `detached_command()` 는 그대로 남는다 — 이제 그것이 띄우는 것이 daemon 이고, 러너는
-// daemon 이 자기 쪽에서 같은 성질(`detached`)로 띄운다(`packages/daemon/src/runners.ts`).
+// daemon 이 자기 쪽에서 같은 성질(`detached`)로 띄운다(`packages/operator/src/runners.ts`).
 // ---------------------------------------------------------------------------
 
 /// 러너 사이드카의 스코프 이름. **`tauri.conf.json` 의 `bundle.externalBin` 항목 이름과
@@ -166,7 +166,7 @@ async fn secret_delete(key: String) -> Result<(), String> {
 ///
 /// **`#[cfg(test)]` 인 이유**: `#433` 을 닫으면서 프로덕션 경로에서 이 이름을 쓰는 자리가
 /// 사라졌다. 러너를 실제로 띄우는 것은 daemon 이고, daemon 은 **자기 위치에서** 러너 경로를
-/// 계산한다(`packages/daemon/src/run.ts` — 같은 디렉터리에 있다는 계약을 daemon 쪽이 안다).
+/// 계산한다(`packages/operator/src/run.ts` — 같은 디렉터리에 있다는 계약을 daemon 쪽이 안다).
 /// 앱은 배치에 더 이상 관여하지 않는다.
 ///
 /// 그래도 지우지 않는 이유는 회귀선이 이 이름으로 **실행 위치의 사이드카를 실물로 띄우기**
@@ -184,7 +184,7 @@ const RUNNER_SIDECAR_NAME: &str = "harkroom-runner";
 /// ## `name` 파라미터는 웹뷰의 입력이 아니다 (`#431` 2단계-b 3/3)
 ///
 /// daemon 도 사이드카가 되면서 이 함수가 이름을 받게 됐다. **그 이름을 넘기는 자리는 둘
-/// 뿐이고 둘 다 Rust 안의 상수다** — `RUNNER_SIDECAR_NAME` 과 `DAEMON_SIDECAR_NAME`.
+/// 뿐이고 둘 다 Rust 안의 상수다** — `RUNNER_SIDECAR_NAME` 과 `OPERATOR_SIDECAR_NAME`.
 /// 웹뷰가 이 함수에 닿는 경로는 없다: 커맨드 시그니처 어디에도 프로그램 이름을 받는
 /// 파라미터가 없고, 그 성질을 `test/runnerShellScope.test.ts` 가 소스를 읽어 못박는다.
 ///

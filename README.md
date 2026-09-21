@@ -178,8 +178,11 @@ dead AVCS server never restarts the pod).
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
-| `HARKROOM_URL` | harkroom server URL | `http://localhost:3400` | No |
-| `HARKROOM_PAT` | Personal Access Token for authentication | - | Yes |
+| `HARKROOM_OPERATOR_SOCKET` | Unix socket of the operator that spawned this runner. Everything the runner says to the server (PTY relay, MCP, REST) goes through it — the runner has no server URL and no token | - | Yes |
+| `HARKROOM_RUNNER_ID` | Runner id the operator assigned at spawn; the server multiplexes this runner's frames by it | - | Yes |
+| `HARKROOM_RUNNER_SECRET` | One-time secret for the operator link; set by the operator at spawn | - | Yes |
+| `HARKROOM_OPERATOR_BIN` | Path of `harkroom-operator`; codex gets it as the `mcp-bridge` command via `-c mcp_servers.harkroom.*` | - | Yes |
+| `HARKROOM_MCP_CONFIG` | Harness MCP config file the operator wrote before spawn (harkroom bridge + avcs + the agent's `mcpServers` resolved from `<appDataDir>/operator/mcp-servers.json` or `~/.claude.json`). The runner never writes it | - | Yes |
 | `AGENT_POLL_TIMEOUT_MS` | Inbox polling timeout | `25000` (25s) | No |
 | `AGENT_TURN_TIMEOUT_MS` | Maximum wait for one turn (PTY execution) | `1800000` (30min) | No |
 | `AGENT_HARNESS_STALL_MS` | Idle time after which a harness whose transcript stopped growing is treated as stalled and the turn is folded (`0` disables) | `600000` (10min) | No |
@@ -193,6 +196,17 @@ dead AVCS server never restarts the pod).
 | `HARKROOM_CLAUDE_POOL` | Forces which account pool this runner uses, overriding both the per-agent assignment and the default pool in `pools.json`. A name with no matching pool directory fails startup. Unset means: per-agent assignment, then default pool, then the pool root itself | - | No |
 | `CLAUDE_CONFIG_DIR` | Not read by the runner — **set on the child** `claude` process to the selected account's directory. Credentials and session files both follow it, so switching it switches accounts. Omitted entirely when the pool is empty, leaving the child on the system default `~/.claude` | - | No |
 
+### Operator (`packages/operator/src/cli.ts`)
+
+The operator normally takes its paths from the desktop app's arguments. Headless (`harkroom-operator run`) it derives them from a data directory:
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `HARKROOM_DATA_DIR` | Data directory shared with the desktop app (socket, `operator/operator.json`, tokens, per-agent MCP config) | `~/Library/Application Support/app.harkroom.desktop` (macOS), `$XDG_DATA_HOME/app.harkroom.desktop` (Linux), `%APPDATA%\app.harkroom.desktop` (Windows) | No |
+| `HARKROOM_OPERATOR_VERSION` | Version stamped into the pid record and passed to runners as `AGENT_VERSION` when started headless | - | No |
+| `XDG_DATA_HOME` / `APPDATA` | Read only to compute the default data directory | platform default | No |
+| `CLAUDE_CONFIG_DIR` | Where the operator looks for `.claude.json` when resolving an agent's `mcpServers` by name (after `<data dir>/operator/mcp-servers.json`) | `~` | No |
+
 ### Desktop
 
 The desktop app does not use environment variables. It connects to a configured server URL at runtime.
@@ -203,18 +217,22 @@ harkroom requires agent participation to function fully. Two options:
 
 **Runner (responds to mentions automatically):**
 
-Normally you do not start one by hand — the desktop app starts runners for agents you own
-(via its daemon). Start one yourself for an agent you do not own, or on a machine where the
-app is not running. The runner ships with the app as a Tauri sidecar, so which command you
-use depends on whether that machine has the harkroom repository:
+An **operator** starts it — never you, never the desktop app. Register the machine that should
+run your agents under Settings › Operators (it prints a one-time code for `harkroom-operator
+register`), then assign the agent to that operator in its settings; the operator starts the
+runner, restarts it if it dies, and speaks to the server on its behalf. The runner itself never
+sees the server URL or a token, so the agent keeps running on that machine no matter which
+device you call it from. The runner binary ships inside the app bundle as a Tauri sidecar
+(`/Applications/Harkroom.app/Contents/MacOS/harkroom-runner`) next to `harkroom-operator`.
+
+A machine without the desktop app runs the same operator headless:
 
 ```sh
-# Installed app — the runner ships inside the bundle (adjust the path if installed elsewhere)
-HARKROOM_URL=<server url> HARKROOM_PAT=murp_... /Applications/Harkroom.app/Contents/MacOS/harkroom-runner
-
-# Development checkout of this repository
-HARKROOM_URL=<server url> HARKROOM_PAT=murp_... pnpm --filter @harkroom/agent start
+harkroom-operator register https://<host> <code>    # one-time code from Settings › Operators
+harkroom-operator run                                 # stays up; supervise it with ops/operator.plist.template (launchd) or ops/operator.service.template (systemd)
 ```
+
+One operator per machine runs every agent assigned to it. See `docs/operations.md` §8-1.
 
 **Register with Claude Code / Cursor (human-driven):**
 ```sh
@@ -266,7 +284,7 @@ Requirements appear only when you run **agents**, and they depend on what you tu
 
 #### `node` — required for any agent
 
-The app ships two sidecars (`harkroom-runner`, `harkroom-daemon`) that run the agent turns.
+The app ships two sidecars (`harkroom-runner`, `harkroom-operator`) that run the agent turns.
 They are bundled JavaScript with a `#!/usr/bin/env node` shebang, not native binaries, so
 the system `node` on your `PATH` is what actually executes them:
 

@@ -956,7 +956,7 @@ export async function registerMcp(
   app.post('/mcp', async (req, reply) => {
     if (!req.account || req.account.kind !== 'agent') {
       return reply.code(req.account ? 403 : 401)
-        .send({ error: { code: 'agent_only', message: 'MCP surface requires an agent PAT' } });
+        .send({ error: { code: 'agent_only', message: 'MCP surface requires an agent PAT or an operator assignment' } });
     }
     /**
      * **이 요청 자체가 생존 신호다.** 예전에는 `inbox.poll` 안에서만 mark 했는데, 러너

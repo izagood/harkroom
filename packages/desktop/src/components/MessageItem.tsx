@@ -159,6 +159,14 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
     ? message.meta.mentionChainLimit
     : null;
   /**
+   * **호출 범위 밖이라 막힌 부름**(스펙 2026-09-20 §6, `meta.mentionDenied`). `chainCapped` 와
+   * 같은 규율 — 서버가 적은 것을 그대로 읽는다. 이 줄이 없으면 소유자 전용 에이전트를 남이
+   * 부른 자리는 "아무 일도 없었다"로 보이고, 그 사람은 러너를 의심한다.
+   */
+  const mentionDenied = Array.isArray(message.meta.mentionDenied)
+    ? (message.meta.mentionDenied as unknown[]).filter((h): h is string => typeof h === 'string')
+    : [];
+  /**
    * **부르지 않고 이름만 부른 계정**(`meta.mentionRefs`, 2026-09-09). 에이전트가 동료를
    * 본문 한가운데서 지칭한 자리다 — 서버는 알림을 만들지 않고, 화면은 그 이름을 칩이 아닌
    * 평범한 이름으로 그린다(`MessageBody`).
@@ -715,6 +723,12 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
                   handles: chainCapped.map((h) => `@${h}`).join(' '),
                   limit: chainLimit ?? '',
                 })}
+              </p>
+            )}
+            {mentionDenied.length > 0 && (
+              /* 같은 톤이다 — 부른 사람이 할 수 있는 일은 그 에이전트의 소유자에게 묻는 것뿐이다. */
+              <p data-testid="mention-denied" className="mt-1 text-meta text-fg-muted">
+                {t('message.mentionDenied', { handles: mentionDenied.map((h) => `@${h}`).join(' ') })}
               </p>
             )}
             {skillSlug && onOpenSettings && (

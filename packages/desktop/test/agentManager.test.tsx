@@ -13,7 +13,7 @@ import { ApiError } from '../src/lib/api';
 const ko = translator('ko');
 
 const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
-  id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false,
+  id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member', assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [], mcpServers: [],
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
   claudeLane: null,
@@ -89,69 +89,6 @@ describe('AgentsSettings', () => {
     expect(c.createAgent.mock.calls[0]![0]).toMatchObject({
       handle: 'fizz', instructions: '느린 쿼리를 찾아 원인을 설명한다.', harness: 'claude-code',
     });
-  });
-
-  // PAT 는 생성 직후 한 번만 보여줄 수 있다(서버가 해시만 보관한다). 놓치면 러너를 띄울 수 없다.
-  it('shows the new PAT once so the operator can start the runner', async () => {
-    fakeController();
-    render(<AgentsSettings />);
-    // Task 15: 그리드가 먼저 뜬다 — 새 에이전트 폼은 `+` 를 눌러야 열린다.
-    fireEvent.click(await screen.findByTestId('agent-create'));
-
-    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
-    fireEvent.click(screen.getByRole('button', { name: '에이전트 만들기' }));
-
-    // 토큰은 코드 블록과 실행 힌트 두 곳에 나온다 — 보이는지만 확인한다.
-    expect((await screen.findAllByText(/murp_secret/)).length).toBeGreaterThan(0);
-  });
-
-  // … 가 토큰 조각 뒤에 붙은 형태는 복사하면 인증이 실패한다. 그런 문자열이 화면에 있으면 안 된다.
-  it('does not show broken token hint with ellipsis after partial token', async () => {
-    fakeController();
-    render(<AgentsSettings />);
-    // Task 15: 그리드가 먼저 뜬다 — 새 에이전트 폼은 `+` 를 눌러야 열린다.
-    fireEvent.click(await screen.findByTestId('agent-create'));
-
-    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
-    fireEvent.click(screen.getByRole('button', { name: '에이전트 만들기' }));
-
-    // "토큰 조각 + 말줄임표" 형태가 화면에 있으면 안 된다 — 복사하면 인증이 실패한다.
-    const panel = await screen.findByText(/이 토큰은 지금만 보인다/);
-    const panelContent = panel.parentElement?.textContent ?? '';
-    expect(panelContent).not.toMatch(/murp_secre[A-Za-z0-9+/=]*…/);
-  });
-
-  // 명령 힌트에 전체 토큰이 들어가 있어야 복사해서 바로 쓸 수 있다.
-  it('shows the full token in the command hint so it can be copy-pasted', async () => {
-    fakeController();
-    render(<AgentsSettings />);
-    // Task 15: 그리드가 먼저 뜬다 — 새 에이전트 폼은 `+` 를 눌러야 열린다.
-    fireEvent.click(await screen.findByTestId('agent-create'));
-
-    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
-    fireEvent.click(screen.getByRole('button', { name: '에이전트 만들기' }));
-
-    // 명령 힌트에 토큰이 **잘리지 않은 채** 들어 있어야 복사해서 바로 쓸 수 있다.
-    const panel = await screen.findByText(/이 토큰은 지금만 보인다/);
-    const panelContent = panel.parentElement?.textContent ?? '';
-    expect(panelContent).toMatch(/HARKROOM_PAT=murp_secret/);
-  });
-
-  // 에이전트는 러너 프로세스가 붙어야 멘션에 답할 수 있다 — 그 사실을 알려주어야 한다.
-  it('shows a hint that runner is required for the agent to respond', async () => {
-    fakeController();
-    render(<AgentsSettings />);
-    // Task 15: 그리드가 먼저 뜬다 — 새 에이전트 폼은 `+` 를 눌러야 열린다.
-    fireEvent.click(await screen.findByTestId('agent-create'));
-
-    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
-    fireEvent.click(screen.getByRole('button', { name: '에이전트 만들기' }));
-
-    // 문구를 느슨한 정규식으로 잡으면 관계없는 문장에 우연히 걸린다 — 이 안내가 반드시
-    // 말해야 하는 두 가지를 각각 확인한다: harkroom 가 러너를 띄우지 않는다는 것과,
-    // 붙이기 전까지 답하지 않는다는 것.
-    expect(await screen.findByText(/Harkroom 는 러너를 띄우지 않는다/)).toBeTruthy();
-    expect(screen.getByText(/멘션에 답하지 않는다/)).toBeTruthy();
   });
 
   it('refuses to submit without a name', async () => {

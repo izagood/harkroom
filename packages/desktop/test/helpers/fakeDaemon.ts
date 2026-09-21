@@ -3,18 +3,10 @@
  *
  * ## 왜 목이 필요해졌나
  *
- * `RunnerLauncher` 는 이제 러너를 띄우기 **전에** daemon 에게 "무엇이 돌고 있나"를 묻는다.
- * 그 표면 없이 만든 실행기는 실물 `tauriDaemonObserver` 로 떨어지고, 테스트 환경에는
- * Tauri invoke 표면이 없으니 던진다 — 즉 **목을 안 주면 아무것도 안 뜬다.**
- *
- * 그것이 실수처럼 보이지만 의도한 성질이다: daemon 에 못 닿으면 러너를 안 띄우는 것이
- * 프로덕션 동작이고(`startAll` 의 첫 블록), 테스트가 그 사실을 우회로 넘기면 안 된다.
- *
- * ## 기본값이 "빈 장부"인 이유
- *
- * 대부분의 회귀선이 재는 것은 "띄운다"이고, 그 조건은 **장부에 없다**이다.
- * 장부에 무언가를 넣는 것은 그 사실 자체를 재는 회귀선(중복 금지·`adopted` 표시)뿐이라
- * 그쪽이 명시적으로 넘긴다.
+ * `RunnerLauncher` 는 이 머신의 오퍼레이터에게 "무엇이 돌고 있나"를 묻는다(단계 2 뒤로는
+ * 그것이 이 클래스의 일 전부다). 그 표면 없이 만든 관측기는 실물 `tauriDaemonObserver` 로
+ * 떨어지고, 테스트 환경에는 Tauri invoke 표면이 없으니 던진다 — 즉 **목을 안 주면 아무것도
+ * 안 보인다.** 그것이 의도한 성질이다: 원격 오퍼레이터만 쓰는 머신에서도 같은 일이 난다.
  */
 import type { DaemonObservation, DaemonObserver, ObservedRunner } from '../../src/lib/runnerLauncher';
 
@@ -25,14 +17,7 @@ export interface FakeDaemon extends DaemonObserver {
   runners: ObservedRunner[];
   /** 관측 자체가 실패하는 상황(daemon 이 안 뜬다)을 만든다. */
   error: Error | null;
-  /** `kill()` 이 불린 agentId 들, 순서대로. 재기동 회귀선이 이 축을 본다. */
-  kills: string[];
-  /**
-   * 러너가 **실제로 종료했다**고 장부를 갈아 끼운다. `kill()` 이 자동으로 이것을 하지
-   * 않는 것이 의도다 — SIGTERM 은 graceful 이고 러너는 진행 중인 턴을 마친 뒤에야
-   * 죽는다(`packages/agent/src/main.ts::acceptStopRequest`). 그 시차가 이 기능의
-   * 설계 전부이므로, 테스트가 그 시점을 직접 정해야 한다.
-   */
+  /** 러너가 **실제로 종료했다**고 장부를 갈아 끼운다. */
   died(agentId: string): void;
 }
 
@@ -41,14 +26,10 @@ export function fakeDaemon(runners: ObservedRunner[] = []): FakeDaemon {
     observeCalls: 0,
     runners,
     error: null,
-    kills: [],
     async observe(): Promise<DaemonObservation> {
       daemon.observeCalls += 1;
       if (daemon.error) throw daemon.error;
       return { daemonPid: 4242, attached: true, runners: daemon.runners };
-    },
-    async kill(agentId: string): Promise<void> {
-      daemon.kills.push(agentId);
     },
     died(agentId: string): void {
       daemon.runners = daemon.runners.filter((r) => r.agentId !== agentId);

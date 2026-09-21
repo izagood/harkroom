@@ -794,18 +794,17 @@ function renderLine(m: MessageRow, handles: Record<string, string>): string {
  *
  * 첨부가 있는 턴에만 붙인다 — 대부분의 턴은 첨부가 없고, 그때 이 여덟 줄은 순전한 낭비다.
  *
- * URL 은 러너가 아는 실값(`config.harkroomUrl`)을 그대로 굽고 토큰은 **env 이름으로만** 적는다.
- * 실값을 프롬프트 파일에 넣지 않는 이유는 #92·#117 과 같다 — 그 파일은 디스크에 남는다.
+ * **통로는 MCP 하나다**(스펙 2026-09-20 §5). 앞 판본은 `curl -H "Bearer $HARKROOM_PAT"` 도
+ * 함께 적었는데, 러너가 서버를 모르게 되면서(URL 도 PAT 도 env 에 없다) 그 줄은 실행할 수
+ * 없는 안내가 됐다 — 실행 못 할 것을 적어 두면 에이전트는 그것을 시도하다 실패하고 "못 봤다"
+ * 로 돌아간다. `attachment.fetch` 는 브릿지를 지나 서버에 닿는다.
  */
-function attachmentHowTo(harkroomUrl: string): string[] {
+function attachmentHowTo(): string[] {
   return [
     '',
-    '(위 `[첨부: …]` 의 id 로 첨부 바이트를 직접 받을 수 있다 — 파일명만 보고 내용을 짐작하지 마라.',
-    '셸이 있으면:',
-    `  curl -fsS -H "Authorization: Bearer $HARKROOM_PAT" ${harkroomUrl}/attachments/<id> -o /tmp/<파일명>`,
-    '받은 파일을 열어서 봐라 — 이미지도 그대로 읽힌다.',
-    '셸이 없으면 harkroom MCP 의 `attachment.fetch` 를 attachmentId 로 불러라 — 이미지는 그 응답에',
-    '그림으로 실려 온다. 받기가 실패했을 때만 "못 봤다"고 말하고, 못 본 것을 본 것처럼 쓰지 마라.)',
+    '(위 `[첨부: …]` 의 id 로 첨부 바이트를 받을 수 있다 — 파일명만 보고 내용을 짐작하지 마라.',
+    'harkroom MCP 의 `attachment.fetch` 를 attachmentId 로 불러라 — 이미지는 그 응답에 그림으로 실려 온다.',
+    '받기가 실패했을 때만 "못 봤다"고 말하고, 못 본 것을 본 것처럼 쓰지 마라.)',
   ];
 }
 
@@ -828,16 +827,6 @@ export function buildTurnPrompt(opts: {
    * 아니다. 호출자가 이미 알고 있는 값을 두 번째 진실 원천으로 다시 만들지 않는다. */
   channelId: string;
   threadRootId: string | null;
-  /**
-   * 서버 베이스 URL(`config.harkroomUrl`). 첨부 안내에 실을 실값이다.
-   *
-   * 옵셔널이 아니라 필수인 이유: 여기서 `$HARKROOM_URL` 같은 env 참조로 때우면 그 변수가
-   * 없는 러너(`config.ts` 는 없으면 기본값으로 넘어간다)에서 curl 이 조용히 실패한다.
-   * 러너는 자기가 붙은 URL 을 이미 알고 있으므로 그 값을 받는다 — 두 번째 진실 원천을
-   * 만들지 않는다. 첨부가 없는 턴에는 쓰이지 않지만 그렇다고 옵셔널로 두면 새 호출자가
-   * 잊었을 때 **첨부가 있는 턴에서만** 조용히 망가진다.
-   */
-  harkroomUrl: string;
   /**
    * 이 턴이 **깨어난 턴**이면 그 사유(마이그레이션 040). 있으면 사람의 새 발화가 없어도
    * 프롬프트가 비지 않는다 — 깨움에는 부른 사람이 없고, 예약 줄을 쓴 것도 자기라서
@@ -870,7 +859,7 @@ export function buildTurnPrompt(opts: {
   delegatedBy?: InboxDelegatedBy;
 }): { prompt: string; fedSeq: number } {
   const {
-    messages, lastFedSeq, meId, handles, channelId, threadRootId, harkroomUrl, wake, team, delegation,
+    messages, lastFedSeq, meId, handles, channelId, threadRootId, wake, team, delegation,
     delegatedBy,
   } = opts;
   const isFirstTurn = lastFedSeq === 0;
@@ -905,7 +894,7 @@ export function buildTurnPrompt(opts: {
   const handedLines = delegatedBy === undefined ? [] : handedSection(delegatedBy);
   // 안내는 첨부 줄 **뒤**에 선다 — 먼저 무엇이 왔는지 보고 그다음 어떻게 여는지 읽는 순서다.
   // `toShow` 로 판정한다: 보여주지 않은 메시지의 첨부는 프롬프트에 id 가 없어 열 수도 없다.
-  const howTo = toShow.some((m) => m.attachments.length) ? attachmentHowTo(harkroomUrl) : [];
+  const howTo = toShow.some((m) => m.attachments.length) ? attachmentHowTo() : [];
   // 팀 블록은 **델타 앞**이다 — 사람의 말을 읽기 전에 "너는 이 팀의 창구다"를 알아야
   // 그 말을 팀의 일로 읽는다. `wakeLines` 뒤에 두는 이유: 그 줄은 이 턴이 왜 떴는지이고,
   // 팀 블록은 이 턴이 무엇인지다(둘이 함께 오는 경우는 예약이 걸린 팀 턴이다).

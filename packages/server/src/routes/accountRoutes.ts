@@ -3,12 +3,13 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { newToken } from '../auth/tokens.js';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
-import { ACCOUNT_STATUSES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@harkroom/shared';
+import { ACCOUNT_STATUSES, CREDENTIAL_SCOPES, INVOKE_SCOPES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@harkroom/shared';
 import {
   ackAgentStop, createAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
-  revokeAllPats, undoAgentStopRequest, updateAgent,
+  revokeAllPats, setAgentMcpServers, setInvoker, undoAgentStopRequest, updateAgent, validateMcpServers, validateScopeChange,
 } from '../services/agents.js';
-import { recordAudit } from '../audit.js';
+import { actorOf, recordAudit } from '../audit.js';
+import { mintPat } from '../services/pats.js';
 import { emitEvent } from '../events.js';
 import { deleteMemory, listMemoryEntries } from '../services/memory.js';
 
@@ -133,7 +134,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     return { handle: body.handle };
   });
 
-  app.post('/invites', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.post('/invites', { preHandler: app.requireCap('member.invite') }, async (req, reply) => {
     const { token, hash } = newToken('hrki');
     await pool.query(`insert into invite (token_hash, created_by) values ($1, $2)`, [hash, req.account!.id]);
     await recordAudit(pool, {
@@ -156,6 +157,10 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     workingDir: z.string().max(512).nullable().optional(),
     mentionPermission: z.enum(MENTION_PERMISSIONS).optional(),
     ownerAccountId: z.string().uuid().nullable().optional(),
+    // 스코프(스펙 2026-09-20 §6). 소유자도 고친다 — 좁히는 것은 자기 에이전트의 일이다. 불변식·넓히기
+    // 금지는 `validateScopeChange` 가 생성·PATCH 양쪽에서 판정한다.
+    invokeScope: z.enum(INVOKE_SCOPES).optional(),
+    credentialScope: z.enum(CREDENTIAL_SCOPES).optional(),
   };
 
   const ADMIN_ONLY_FIELDS = ['ownerAccountId', 'disabled', 'mentionPermission'] as const;
@@ -216,12 +221,16 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     return { agents: await listAgents(pool, ownerId) };
   });
 
-  app.post('/accounts/agents', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.post('/accounts/agents', { preHandler: app.requireCap('agent.create') }, async (req, reply) => {
     const body = z.object({
       handle: z.string().regex(/^[a-z0-9_-]{2,32}$/),
       displayName: z.string().min(1).max(64),
       ...configFields,
     }).parse(req.body);
+    const scopeError = validateScopeChange(null, {
+      invokeScope: body.invokeScope ?? 'community', credentialScope: body.credentialScope ?? 'none',
+    });
+    if (scopeError) return reply.code(400).send({ error: scopeError });
     try {
       const created = await createAgentAccount(pool, body, req.account!.id);
       await recordAudit(pool, {
@@ -250,12 +259,39 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
    * 필드를 섞어 보내면 403 이고 **아무것도 바꾸지 않는다**(부분 적용 금지). 일부만 적용하면
    * 사람은 전부 됐다고 믿는다 — 그리고 안 된 쪽이 하필 권한 필드다.
    */
+  /**
+   * `invokeScope === 'list'` 의 명단(스펙 2026-09-20 §6). 소유자·admin 이 관리한다 — 누가 내
+   * 에이전트를 부를 수 있는지는 그 에이전트를 가진 사람이 정한다. 명단은 스코프가 list 가 아니어도
+   * 남는다(판정에만 안 쓰인다) — 스코프를 잠깐 바꿨다 되돌릴 때 명단을 다시 짜지 않게.
+   */
+  const invokerParams = z.object({ id: z.string().uuid(), accountId: z.string().uuid() });
+  for (const [method, present] of [['PUT', true], ['DELETE', false]] as const) {
+    app.route<{ Params: { id: string; accountId: string } }>({
+      method, url: '/accounts/agents/:id/invokers/:accountId',
+      preHandler: app.requireOwnerOrAdmin('id'),
+      handler: async (req, reply) => {
+        const { id, accountId } = invokerParams.parse(req.params);
+        const target = await pool.query(`select 1 from account where id = $1`, [accountId]);
+        if (!target.rowCount) return reply.code(404).send({ error: { code: 'not_found', message: 'no such account' } });
+        const view = await setInvoker(pool, id, accountId, present);
+        if (!view) return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+        await recordAudit(pool, {
+          action: present ? 'agent.invoker.added' : 'agent.invoker.removed', ...actorOf(req), target: id, detail: { accountId },
+        }, req);
+        return view;
+      },
+    });
+  }
+
   app.patch('/accounts/agents/:id', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const patch = z.object({
       displayName: z.string().min(1).max(64).optional(),
       disabled: z.boolean().optional(),
       ...configFields,
+      // MCP 이름 목록(스펙 2026-09-20 §6). 레지스트리의 부분집합이어야 하고, personal 이름은
+      // credentialScope=personal 을 요구한다 — `validateMcpServers`.
+      mcpServers: z.array(z.string().regex(/^[a-z0-9-]{1,32}$/)).max(32).optional(),
     }).parse(req.body);
 
     const account = req.account!;
@@ -281,6 +317,21 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
     if (!before) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
     }
+    if (patch.invokeScope !== undefined || patch.credentialScope !== undefined) {
+      const scopeError = validateScopeChange(before, {
+        invokeScope: patch.invokeScope ?? before.invokeScope,
+        credentialScope: patch.credentialScope ?? before.credentialScope,
+      });
+      if (scopeError) return reply.code(400).send({ error: scopeError });
+    }
+    // MCP 목록은 스코프가 바뀌는 PATCH 와 같이 와도, 스코프만 바뀌어도 다시 본다 — personal 이름을
+    // 단 채로 credentialScope 를 넓히는 길을 막는다.
+    if (patch.mcpServers !== undefined || patch.credentialScope !== undefined) {
+      const mcpError = await validateMcpServers(
+        pool, patch.mcpServers ?? before.mcpServers, patch.credentialScope ?? before.credentialScope);
+      if (mcpError) return reply.code(400).send({ error: mcpError });
+    }
+    if (patch.mcpServers !== undefined) await setAgentMcpServers(pool, id, patch.mcpServers);
 
     let revokedLabels: string[] = [];
     if (patch.disabled !== undefined && patch.disabled !== before.disabled) {
@@ -348,7 +399,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
    * 가드가 `requireAdmin` 인 이유: 이 파일의 에이전트 관리 라우트가 전부 그렇고, 남의
    * 러너를 세우는 것은 그중에서도 도달 범위가 큰 조작이다.
    */
-  app.post('/accounts/agents/:id/stop', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.post('/accounts/agents/:id/stop', { preHandler: app.requireCap('agent.manage', { kind: 'agent', param: 'id' }) }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const updated = await requestAgentStop(pool, id, req.account!.id);
     // 존재 확인은 서비스가 한다 — 없는 에이전트에 감사만 남는 모양(위 PATCH 주석)을 피한다.
@@ -387,7 +438,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
    * 어느 쪽이 더 위험한 조작인지를 따질 자리가 아니라 **한 쌍이 같은 문을 써야 하는**
    * 자리다 — 문이 갈리면 그 쌍은 더 이상 대칭이 아니다.
    */
-  app.post('/accounts/agents/:id/stop/undo', { preHandler: app.requireAdmin }, async (req, reply) => {
+  app.post('/accounts/agents/:id/stop/undo', { preHandler: app.requireCap('agent.manage', { kind: 'agent', param: 'id' }) }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     // 되돌린 뒤에는 정의에서 사라지므로 **먼저** 읽는다 — 감사에 "무엇을 되돌렸나"를
     // 남길 수 있는 마지막 순간이다.
@@ -536,26 +587,14 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
   app.post('/accounts/:id/pats', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({ label: z.string().min(1).max(64) }).parse(req.body);
-    // 라벨은 살아 있는 토큰 안에서 유일하다(마이그레이션 010) — 같은 라벨이 둘이면
-    // 라벨로 폐기하는 DELETE 가 둘 다 지워 UI 가 약속하는 것과 달라진다.
-    const live = await pool.query(
-      `select 1 from pat where account_id = $1 and label = $2 and revoked_at is null`,
-      [id, body.label],
-    );
-    if (live.rowCount) {
+    // 발급 규칙은 services/pats.ts 한 곳이다 — 오퍼레이터 경로와 같은 규칙을 쓴다.
+    const minted = await mintPat(pool, id, body.label, { actorId: req.account!.id, actorHandle: req.account!.handle }, req);
+    if (!minted.ok) {
       return reply.code(409).send({
         error: { code: 'label_in_use', message: 'a live token already uses this label — revoke it first or pick another' },
       });
     }
-    const { token, hash } = newToken('hrkp');
-    await pool.query(`insert into pat (token_hash, account_id, label) values ($1, $2, $3)`, [hash, id, body.label]);
-    // pat 행은 토큰을 받은 에이전트만 가리킨다 — 누가 그 권한을 줬는지는 어디에도 없었다.
-    // 토큰도 해시도 남기지 않는다: 라벨과 대상만으로 추적에 충분하다.
-    await recordAudit(pool, {
-      action: 'pat.issued', actorId: req.account!.id, actorHandle: req.account!.handle,
-      target: id, detail: { label: body.label },
-    }, req);
-    return reply.code(201).send({ token });
+    return reply.code(201).send({ token: minted.token });
   });
 
   // 라벨 단위 폐기다. pat.label 에 유일성이 없어 같은 라벨의 토큰이 여러 개면 전부 폐기된다 —

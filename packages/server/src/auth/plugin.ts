@@ -1,34 +1,89 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
-import type { AccountView } from '@harkroom/shared';
+import type { AccountView, Capability, OperatorView, PermissionTarget } from '@harkroom/shared';
 import { hashToken } from './tokens.js';
+import { can } from './permissions.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
     account: AccountView | null;
+    /**
+     * 오퍼레이터 토큰(`hkop_…`)으로 온 요청(스펙 2026-09-20 §3). **계정이 아니다** — 이때
+     * `account` 는 null 이다. 사람 세션·PAT 과 같은 `Authorization: Bearer` 를 쓰지만 표가
+     * 다르고, 이 필드가 서는 것과 `account` 가 서는 것은 서로 배타다.
+     */
+    operator: OperatorView | null;
     /** 이 요청을 인증한 자격증명의 해시. WS 티켓이 운반해 소켓 수명을 자격증명에 묶는다. */
     credentialHash: string | null;
   }
   interface FastifyInstance {
     requireAccount: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
     requireAdmin: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
+    /** 오퍼레이터 토큰 관문. 사람·에이전트 토큰은 401 이다 — 표면이 다르다. */
+    requireOperator: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
     requireOwnerOrAdmin: (paramName: string) => (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
+    /**
+     * capability 관문(스펙 2026-09-20 §6). 판정은 `permissions.ts::can` 이 한다 — 소유 ∨ grant ∨
+     * 역할. `target` 을 주면 그 라우트 파라미터가 가리키는 대상의 소유자도 통과한다.
+     */
+    requireCap: (cap: Capability, target?: { kind: PermissionTarget['kind']; param: string }) =>
+      (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
   }
 }
 
 // 상태는 여기서 함께 읽는다 — `/auth/me` 가 `req.account` 를 그대로 돌려주므로,
 // 빠뜨리면 내가 방금 정한 상태가 내 화면에만 안 보인다.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const ACCOUNT_COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admin as "isAdmin",
-  a.status, a.status_text as "statusText", a.avatar_attachment_id as "avatarAttachmentId"`;
+  a.role, a.status, a.status_text as "statusText", a.avatar_attachment_id as "avatarAttachmentId"`;
 
 export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<void> {
   app.decorateRequest('account', null);
+  app.decorateRequest('operator', null);
   app.decorateRequest('credentialHash', null);
 
-  app.addHook('onRequest', async (req) => {
+  app.addHook('onRequest', async (req, reply) => {
     const header = req.headers.authorization;
     if (!header?.startsWith('Bearer ')) return;
-    const hash = hashToken(header.slice('Bearer '.length));
+    const raw = header.slice('Bearer '.length);
+    const hash = hashToken(raw);
+    // 오퍼레이터 토큰은 접두로 먼저 가른다 — 세션·PAT 표를 헛되이 두 번 두드리지 않고,
+    // 무엇보다 같은 해시가 두 표에 있을 수 없다는 사실을 코드 순서가 아니라 접두가 보장한다.
+    if (raw.startsWith('hkop_')) {
+      const op = await pool.query(
+        `select id, owner_account_id as "ownerAccountId", name, created_at as "createdAt",
+                last_seen_at as "lastSeenAt", revoked_at as "revokedAt"
+           from operator where token_hash = $1 and revoked_at is null`, [hash]);
+      if (!op.rowCount) return;
+      const operator: OperatorView = { ...op.rows[0], online: false };
+      req.operator = operator;
+      req.credentialHash = hash;
+      /**
+       * **배정이 곧 인가**(스펙 2026-09-20 §5). 오퍼레이터가 러너 대신 서버에 말할 때 `X-Harkroom-Agent`
+       * 로 어느 에이전트인지 밝히고, 그 (오퍼레이터, 에이전트) 쌍이 `agent_assignment` 에 있으면
+       * 요청은 **그 에이전트로** 선다 — 이 뒤의 모든 라우트·MCP 는 PAT 로 온 에이전트와 구분하지
+       * 못하고, 구분할 이유도 없다. 배정이 없으면 여기서 403 이다: 라우트까지 가서 "에이전트가
+       * 아니다"로 답하면 오퍼레이터는 무엇이 빠졌는지 알 수 없다.
+       *
+       * 이 헤더는 오퍼레이터 토큰에만 뜻이 있다. 사람 세션·PAT 에 붙어 오면 읽지 않는다 — 사람이
+       * 헤더 하나로 에이전트가 되는 길은 없어야 한다(아래 세션·PAT 분기는 이 줄을 지나지 않는다).
+       */
+      const agentHeader = req.headers['x-harkroom-agent'];
+      const agentId = typeof agentHeader === 'string' ? agentHeader : undefined;
+      if (!agentId) return;
+      // uuid 가 아니면 조회조차 안 한다 — pg 가 형 오류로 500 을 내는 것을 403 앞에서 막는다.
+      const agent = UUID.test(agentId) ? await pool.query(
+        `select ${ACCOUNT_COLS} from agent_assignment asg join account a on a.id = asg.agent_id
+          where asg.operator_id = $1 and asg.agent_id = $2 and a.kind = 'agent'`,
+        [operator.id, agentId]) : null;
+      if (!agent?.rowCount) {
+        await reply.code(403).send({ error: { code: 'not_assigned', message: '이 오퍼레이터에 배정되지 않은 에이전트다' } });
+        return reply;
+      }
+      req.account = agent.rows[0];
+      return;
+    }
     const viaSession = await pool.query(
       `select ${ACCOUNT_COLS} from session s join account a on a.id = s.account_id
        where s.token_hash = $1 and s.expires_at > now()`, [hash]);
@@ -45,11 +100,31 @@ export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<vo
     }
   });
 
+  app.decorate('requireOperator', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!req.operator) {
+      await reply.code(401).send({ error: { code: 'unauthorized', message: '오퍼레이터 토큰이 필요하다' } });
+    }
+  });
+
   app.decorate('requireAdmin', async (req: FastifyRequest, reply: FastifyReply) => {
     if (!req.account?.isAdmin) {
       await reply.code(403).send({ error: { code: 'forbidden', message: 'admin required' } });
     }
   });
+
+  app.decorate('requireCap', (cap: Capability, target?: { kind: PermissionTarget['kind']; param: string }) =>
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      if (!req.account) {
+        await reply.code(401).send({ error: { code: 'unauthorized', message: 'authentication required' } });
+        return;
+      }
+      const id = target ? (req.params as Record<string, string>)[target.param] : undefined;
+      const ok = await can(pool, req.account, cap, target && id ? { kind: target.kind, id } : undefined);
+      if (!ok) {
+        // 코드는 `requireAdmin` 과 같은 'forbidden' 이다 — 화면이 두 관문을 다르게 그릴 이유가 없다.
+        await reply.code(403).send({ error: { code: 'forbidden', message: `${cap} 권한이 필요하다` } });
+      }
+    });
 
   app.decorate('requireOwnerOrAdmin', (paramName: string) => async (req: FastifyRequest, reply: FastifyReply) => {
     if (!req.account) {

@@ -1,9 +1,14 @@
 import type { Pool, PoolClient } from 'pg';
-import { AGENT_HARNESSES, type AgentConfig, type AgentHarness, type AgentView } from '@harkroom/shared';
+import {
+  AGENT_HARNESSES, type AgentAssignmentView, type AgentConfig, type AgentHarness, type AgentView,
+  type CredentialScope, type InvokeScope,
+} from '@harkroom/shared';
+import type { AgentDefinition } from '@harkroom/shared/operatorProtocol';
 import { getAgentDefaults } from './agentDefaults.js';
 import { getHandleGroupByHandle } from './handleGroups.js';
 
 const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admin as "isAdmin",
+  a.role,
   coalesce(c.instructions, '') as instructions,
   coalesce(c.harness, 'claude-code') as harness,
   c.model, c.effort, c.working_dir as "workingDir",
@@ -12,6 +17,12 @@ const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admi
   -- 기본이 바뀌는 날 이 컬럼이 옛 값을 고집한다(shared 의 AGENT_EXECUTION_PATHS 주석).
   -- (이 문자열은 템플릿 리터럴 안이다 — 주석에 백틱을 쓰면 거기서 끊긴다.)
   c.owner_account_id as "ownerAccountId",
+  -- 스코프(스펙 2026-09-20 §6). coalesce 는 agent_config 행이 없는 계정(사람·옛 에이전트)을 위한 것이고
+  -- 그 값은 마이그레이션 059 의 기본값과 같다 — 현행 동작.
+  coalesce(c.invoke_scope, 'community') as "invokeScope",
+  coalesce(c.credential_scope, 'none') as "credentialScope",
+  coalesce((select json_agg(i.account_id order by i.account_id) from agent_invoker i where i.agent_id = a.id), '[]'::json) as invokers,
+  coalesce((select json_agg(m.name order by m.name) from agent_mcp_server m where m.agent_id = a.id), '[]'::json) as "mcpServers",
   a.disabled_at is not null as disabled,
   -- 에이전트는 상태를 고를 수 없다(서버가 거절한다). 기본값 그대로지만 AccountView 의
   -- 필수 필드라 형태를 맞춰 준다 — 화면은 사람 계정에만 이 값을 그린다.
@@ -33,11 +44,17 @@ const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admi
   -- 있을 때 빈 accounts 가 "풀이 비었다"를 말한다. 컬럼 둘로 보내면 화면이 그 둘을
   -- (pool is null && accounts is null) 같은 조합으로 다시 세워야 한다.
   case when l.account_id is null then null
-       else json_build_object('pool', l.pool, 'accounts', l.accounts) end as "claudeLane"`;
+       else json_build_object('pool', l.pool, 'accounts', l.accounts) end as "claudeLane",
+  -- 배정(스펙 2026-09-20 §3). claudeLane 과 같은 이유로 json 하나로 접는다 — 행이 없으면
+  -- null 하나가 "미배정"을 말한다.
+  case when asg.agent_id is null then null
+       else json_build_object('agentId', asg.agent_id, 'operatorId', asg.operator_id,
+                              'assignedBy', asg.assigned_by, 'assignedAt', asg.assigned_at) end as assignment`;
 
 const FROM = `from account a left join agent_config c on c.account_id = a.id
   left join agent_runner_version v on v.account_id = a.id
-  left join agent_claude_lane l on l.account_id = a.id`;
+  left join agent_claude_lane l on l.account_id = a.id
+  left join agent_assignment asg on asg.agent_id = a.id`;
 
 export function isHarness(value: unknown): value is AgentHarness {
   return typeof value === 'string' && (AGENT_HARNESSES as readonly string[]).includes(value);
@@ -71,8 +88,10 @@ async function upsertConfig(
   // 지정된 필드만 갱신한다. 키 부재는 '손대지 않음', null 은 'harness 기본값으로 되돌리기'다 —
   // 구분하지 못하면 지시문만 고치려다 모델 지정이 조용히 사라진다.
   await client.query(
-    `insert into agent_config (account_id, instructions, harness, model, effort, working_dir, mention_permission, owner_account_id)
-     values ($1, coalesce($3, ''), coalesce($5, 'claude-code'), $6, $8, $10, coalesce($13, 'auto'), $15)
+    `insert into agent_config (account_id, instructions, harness, model, effort, working_dir, mention_permission, owner_account_id,
+                               invoke_scope, credential_scope)
+     values ($1, coalesce($3, ''), coalesce($5, 'claude-code'), $6, $8, $10, coalesce($13, 'auto'), $15,
+             coalesce($17, 'community'), coalesce($19, 'none'))
      on conflict (account_id) do update set
        instructions       = case when $2::bool  then excluded.instructions       else agent_config.instructions       end,
        harness            = case when $4::bool  then excluded.harness            else agent_config.harness            end,
@@ -81,6 +100,8 @@ async function upsertConfig(
        working_dir        = case when $11::bool then excluded.working_dir        else agent_config.working_dir        end,
        mention_permission = case when $12::bool then excluded.mention_permission else agent_config.mention_permission end,
        owner_account_id   = case when $14::bool then excluded.owner_account_id   else agent_config.owner_account_id   end,
+       invoke_scope       = case when $16::bool then excluded.invoke_scope       else agent_config.invoke_scope       end,
+       credential_scope   = case when $18::bool then excluded.credential_scope   else agent_config.credential_scope   end,
        updated_at = now()`,
     [
       accountId,
@@ -94,8 +115,77 @@ async function upsertConfig(
       patch.workingDir !== undefined,
       patch.mentionPermission !== undefined, patch.mentionPermission ?? null,
       patch.ownerAccountId !== undefined, patch.ownerAccountId ?? null,
+      patch.invokeScope !== undefined, patch.invokeScope ?? null,
+      patch.credentialScope !== undefined, patch.credentialScope ?? null,
     ],
   );
+}
+
+/**
+ * 스코프 변경의 두 규칙(스펙 2026-09-20 §6). PATCH 와 생성이 **같은 이 함수**를 부른다.
+ *
+ * - 불변식: `credentialScope === 'personal'` 이면 `invokeScope === 'owner'` 여야 한다. 개인
+ *   자격증명을 쥔 에이전트는 소유자만 부를 수 있다 — 남이 부르는 순간 그 사람이 소유자의
+ *   slack 을 쓰는 셈이다. 역방향(owner 인데 personal 이 아님)은 허용된다: owner 는 개인 MCP 를
+ *   **붙일 수 있는** 자격이지 의무가 아니다.
+ * - 넓히기 금지: 한 번 `owner` 였던 에이전트는 다시 넓어지지 않는다 — 그 메모리·세션 기록·
+ *   워크스페이스에 개인 데이터가 이미 눕는다. 넓히려면 새 에이전트를 만든다. 좁히기는 자유.
+ *
+ * `before` 가 null 이면 생성이다(넓히기 검사 없음).
+ */
+export function validateScopeChange(
+  before: { invokeScope: InvokeScope } | null,
+  after: { invokeScope: InvokeScope; credentialScope: CredentialScope },
+): { code: 'scope_invariant' | 'scope_widening'; message: string } | null {
+  if (after.credentialScope === 'personal' && after.invokeScope !== 'owner') {
+    return { code: 'scope_invariant', message: '개인 자격증명(personal)을 쥔 에이전트는 소유자만 부를 수 있어야 한다(invokeScope=owner)' };
+  }
+  if (before && before.invokeScope === 'owner' && after.invokeScope !== 'owner') {
+    return { code: 'scope_widening', message: '소유자 전용이던 에이전트는 넓힐 수 없다 — 넓히려면 새 에이전트를 만든다' };
+  }
+  return null;
+}
+
+/**
+ * 에이전트의 MCP 이름 목록을 **통째로** 바꾼다(스펙 2026-09-20 §6). 부분집합 검사와 personal
+ * 불변식은 호출자(PATCH)가 `validateMcpServers` 로 먼저 한다 — 여기는 쓰기뿐이다.
+ */
+export async function setAgentMcpServers(db: Pool | PoolClient, agentId: string, names: string[]): Promise<void> {
+  await db.query(`delete from agent_mcp_server where agent_id = $1 and not (name = any($2::text[]))`, [agentId, names]);
+  for (const name of names) {
+    await db.query(`insert into agent_mcp_server (agent_id, name) values ($1, $2) on conflict do nothing`, [agentId, name]);
+  }
+}
+
+/**
+ * MCP 이름 목록의 두 규칙. 모르는 이름은 거절한다 — 조용히 버리면 오퍼레이터가 정의를 못 찾는
+ * 이름이 남아 "MCP 가 안 붙는다"로 나타난다. personal 이름이 하나라도 있으면 에이전트의
+ * credential_scope 가 personal 이어야 한다(그 불변식이 다시 invokeScope=owner 를 요구한다).
+ */
+export async function validateMcpServers(
+  db: Pool | PoolClient, names: string[], credentialScope: CredentialScope,
+): Promise<{ code: 'unknown_mcp_server' | 'scope_invariant'; message: string } | null> {
+  if (!names.length) return null;
+  const rows = await db.query<{ name: string; credential_kind: string }>(
+    `select name, credential_kind from mcp_server where name = any($1::text[])`, [names]);
+  const known = new Map(rows.rows.map((r) => [r.name, r.credential_kind]));
+  const unknown = names.filter((n) => !known.has(n));
+  if (unknown.length) return { code: 'unknown_mcp_server', message: `레지스트리에 없는 MCP 이름: ${unknown.join(', ')}` };
+  if (credentialScope !== 'personal' && [...known.values()].includes('personal')) {
+    return { code: 'scope_invariant', message: 'personal 자격증명의 MCP 를 붙이려면 credentialScope 가 personal 이어야 한다' };
+  }
+  return null;
+}
+
+/** invokers 명단 갱신. 멱등 — 이미 있으면 그대로다. 돌려주는 것은 갱신된 뷰다. */
+export async function setInvoker(pool: Pool, agentId: string, accountId: string, present: boolean): Promise<AgentView | null> {
+  if (present) {
+    await pool.query(
+      `insert into agent_invoker (agent_id, account_id) values ($1, $2) on conflict do nothing`, [agentId, accountId]);
+  } else {
+    await pool.query(`delete from agent_invoker where agent_id = $1 and account_id = $2`, [agentId, accountId]);
+  }
+  return getAgent(pool, agentId);
 }
 
 /**
@@ -334,4 +424,38 @@ export async function revokeAllPats(db: Pool | PoolClient, accountId: string): P
     [accountId],
   );
   return res.rows.map((r) => r.label as string);
+}
+
+/**
+ * 서버가 배정과 함께 오퍼레이터에 내려주는 정의(스펙 2026-09-20 §3·§4). **머신 값은 여기
+ * 없다** — 실제 작업 디렉터리·계정 풀은 오퍼레이터 로컬 설정이 준다. `workingDir` 은
+ * 로컬 설정이 비었을 때의 기본값으로만 실린다.
+ *
+ * `credentialScope`(059)·`mcpServers`(060)는 실제 값이다.
+ */
+export async function definitionFor(pool: Pool, agentId: string): Promise<AgentDefinition | null> {
+  const res = await pool.query(
+    `select a.id, a.handle, coalesce(c.harness, 'claude-code') as harness,
+            coalesce(c.instructions, '') as instructions, c.model, c.effort,
+            coalesce(c.mention_permission, 'auto') as "mentionPermission",
+            c.working_dir as "workingDirDefault", c.owner_account_id as "ownerAccountId",
+            coalesce(c.credential_scope, 'none') as "credentialScope",
+            coalesce((select json_agg(m.name order by m.name) from agent_mcp_server m where m.agent_id = a.id), '[]'::json) as "mcpServers"
+       from account a left join agent_config c on c.account_id = a.id
+      where a.id = $1 and a.kind = 'agent'`, [agentId]);
+  if (!res.rowCount) return null;
+  const r = res.rows[0];
+  return {
+    agentId: r.id, handle: r.handle, harness: r.harness, instructions: r.instructions,
+    model: r.model, effort: r.effort, mentionPermission: r.mentionPermission,
+    workingDirDefault: r.workingDirDefault, ownerAccountId: r.ownerAccountId,
+    credentialScope: r.credentialScope, mcpServers: r.mcpServers,
+  };
+}
+
+export async function assignmentOf(pool: Pool, agentId: string): Promise<AgentAssignmentView | null> {
+  const res = await pool.query(
+    `select agent_id as "agentId", operator_id as "operatorId", assigned_by as "assignedBy", assigned_at as "assignedAt"
+       from agent_assignment where agent_id = $1`, [agentId]);
+  return res.rowCount ? res.rows[0] : null;
 }

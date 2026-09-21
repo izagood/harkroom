@@ -2,9 +2,10 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import {
   AGENT_HARNESSES, HANDLE_PATTERN, RUNNABLE_HARNESSES,
   type AgentConfig, type AgentDefaults, type AgentTeamMemberRow, type AgentTeamRow,
-  type AgentView, type MentionPermission, type PatView, harnessHasAccountPool,
+  type AgentView, type MentionPermission, type OperatorView, type PatView, harnessHasAccountPool,
   MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH } from '@harkroom/shared';
 import { getController } from '../../state/controller';
+import { ApiError } from '../../lib/api';
 import { useActiveStore } from '../../state/communities';
 import { staleRunners } from '../../lib/runnerVersions';
 // #443: daemon 이 직접 확인한 사실을 사람이 읽는 행으로 바꾸는 판정. 화면이 그것을 제 손으로
@@ -28,8 +29,8 @@ import type { Translate } from '../../i18n';
 // `RunnerStatus.tsx` 가 바뀔 때 여기만 낡는다. `external` → `adopted`(`#482`) 가 정확히
 // 그렇게 어긋났다.
 import { RunnerStatusLine, runnerStatusLabel } from '../RunnerStatus';
-import { PAT_PLACEHOLDER, runnerCommandClipboardText } from '../../lib/runnerCommand';
 import { AgentGrid } from './AgentGrid';
+import { canSeeAgentConfig } from '../../lib/agentConfigGate';
 // 팀 묶음(`docs/desktop-agent-cards.html` 4단계). 카드가 `AgentGrid` 를 재사용하지 않은
 // 근거는 `TeamGrid` 머리 주석에 있다 — 요지는 `AgentGridPlace` 가 못 박은 것이다:
 // *"그 이상으로 늘릴 축이 아니다 — 늘어나기 시작하면 카드가 다시 두 벌이 된다."*
@@ -37,7 +38,6 @@ import { TeamGrid } from './TeamGrid';
 import { TeamDetail } from './TeamDetail';
 // 띄울 권한 판정은 `lib/` 하나가 낸다 — 레일의 에이전트 칸이 같은 판정을 쓴다
 // (`docs/desktop-rail.html` 3단계). 사본을 두면 두 화면이 같은 사람에게 다르게 답한다.
-import { canRelaunchAgent } from '../../lib/relaunchGate';
 import { AVATAR_ACCEPT, AVATAR_FORMATS } from '../../lib/avatar';
 import { Identity } from '../Identity';
 import { Button } from './primitives';
@@ -292,6 +292,13 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   // 실패를 빈 배열로 삼키면 "기억이 없다" 와 "못 읽었다" 가 구분되지 않는다
   // (docs/design.md 4절). 러너 쪽 MemoryContext 가 같은 이유로 세 상태다.
   const [memories, setMemories] = useState<MemoryEntry[] | 'error' | null>(null);
+  /**
+   * 배정 고르개의 후보(스펙 2026-09-20 §3). 상세를 열 때 한 번 읽는다 — 목록은 짧고
+   * 화면을 여는 동안 바뀔 일이 드물다. `'error'` 는 "못 읽었다"이고 빈 배열은 "없다"다 —
+   * 둘을 같게 그리면 등록된 오퍼레이터가 있는데도 "먼저 등록하라"고 말한다.
+   */
+  const [operators, setOperators] = useState<OperatorView[] | 'error' | null>(null);
+  const [assigning, setAssigning] = useState(false);
   const [confirmingSlug, setConfirmingSlug] = useState<string | null>(null);
   /**
    * **접힌 줄이 기본이다** — 펼친 것만 센다(#139 4단계).
@@ -314,8 +321,6 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   // 복사 성공 시 버튼 문구를 잠깐 "복사됨"으로 바꾼다(2초).
   const [copySuccess, setCopySuccess] = useState<string | null>(null);
   // 클립보드를 못 쓸 때 선택해 줄 명령 노드들. 화면 밖 복제가 아니라 사람이 보고 있는 그 텍스트다.
-  const fullCommandRef = useRef<HTMLSpanElement | null>(null);
-  const templateCommandRef = useRef<HTMLSpanElement | null>(null);
   /** 토큰 원문이 그려진 노드. 클립보드가 막혔을 때 **이것을** 선택해 준다(아래 복사 버튼). */
   const patRef = useRef<HTMLElement | null>(null);
   // #177: "잃었으면 새로 발급한다" 를 글로만 두면 발급 자리를 찾아야 한다 — 진입점으로 보낸다.
@@ -331,7 +336,6 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const daemonRunners = useActiveStore((s) => s.daemonRunners);
   /** 뒤처진 러너를 세는 기준. 컨트롤러가 스토어에 밀어 넣은 값이다(`appStore.ts`). */
   const appVersion = useActiveStore((s) => s.appVersion);
-  const [reissuing, setReissuing] = useState(false);
   const accounts = useActiveStore((s) => s.accounts);
   // #176: 생존(presence)과 마지막 활동은 **다른 두 사실**이라 두 자리에서 온다 — presence 는
   // 소켓 이벤트로 살아 있는 목록이고(#124), 마지막 활동은 `AgentView.lastTurnAt` 이다.
@@ -696,6 +700,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     setMemSort('recent');
     loadPats(a);
     loadMemories(a);
+    setOperators(null);
+    // 프로미스 안에서 부른다 — 표면이 없거나 던지는 것도 "못 읽었다"로 접힌다(`loadPats` 와 달리
+    // 이 절은 상세를 열 때마다 뜨므로, 여기서 동기로 던지면 상세 자체가 안 열린다).
+    void Promise.resolve().then(() => getController().operators()).then(setOperators).catch(() => setOperators('error'));
   };
 
   const startNew = () => {
@@ -754,16 +762,14 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     }
     setBusy(true);
     try {
-      const { agent, pat: minted, poolError } = await getController().createAgent(
+      const { agent, poolError } = await getController().createAgent(
         { handle: draft.handle, displayName: draft.handle, ...configPatch(draft) },
         // 고른 풀을 **여기서** 넘긴다 — 러너가 뜨기 전에 쓰여야 첫 러너가 그 풀로 돈다
         // (`controller.createAgent` 의 근거). `''` 은 배정 없음이라 넘길 것이 없다.
         agentPool.assigned ? { claudePool: agentPool.assigned } : undefined,
       );
-      setPat(minted);
       setCreatedAgentId(agent.id);
-      // 배정 실패는 **생성 실패가 아니다.** 그렇게 적지 않으면 사람은 위 PAT 상자를
-      // 무효한 것으로 읽고 버린다 — 그 토큰은 다시 볼 수 없다.
+      // 배정 실패는 **생성 실패가 아니다.** 에이전트는 이미 만들어졌다.
       if (poolError) setError(t('agents.create.poolFailed', { reason: poolError }));
       reload();
     } catch {
@@ -1082,7 +1088,6 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           agents={agents}
           runnerStates={runnerStates}
           appVersion={appVersion}
-          onError={setError}
           /* 자식이 훅을 다시 부르지 않고 **같은 번역기를 받는다** — 부모가 이미 든 값이라
              두 번 부를 이유가 없고, 받아 두면 이 컴포넌트가 언어를 따라오는지가 부모의
              렌더 한 곳에서만 결정된다. */
@@ -1097,24 +1102,6 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           onPick={pick}
           onCreate={startNew}
           canCreate={isAdmin}
-          onRelaunch={(a) => {
-            /*
-              **판정이 `lib/relaunchGate.ts` 하나다**(`docs/desktop-rail.html` 3단계).
-              3단계가 레일의 에이전트 칸에도 ▶ 를 세우면서 이 판정을 보는 화면이 둘이 됐다 —
-              여기 사본을 남기면 한쪽만 고치는 순간 같은 사람이 한 화면에서는 띄울 수 있고
-              다른 화면에서는 못 띄운다(`faceState` 가 나온 것과 같은 이유).
-
-              **이 화면의 모양은 그대로다.** 사이드바는 `canRelaunch` 술어로 권한 없는 카드의
-              ▶ 자체를 그리지 않는데, 여기서는 그 술어를 넘기지 않아 예전처럼 ▶ 가 서고
-              콜백이 조용히 물러난다. 그 차이를 지금 통일하지 않는 이유는 범위다 — 이 화면의
-              모양을 바꾸지 않는 것이 3단계의 전제이고(카드를 두 번 그리지 않기 위해 설정이
-              먼저 들어갔다), 여기 ▶ 를 없애는 것은 별개의 판단이다.
-            */
-            if (!canRelaunchAgent(a, myId ? { id: myId, isAdmin } : null)) return;
-            void getController().reissueRunnerPat(a.id).catch((err: unknown) => setError(
-              t('agents.runner.startFailed', { reason: err instanceof Error ? err.message : String(err) }),
-            ));
-          }}
           /*
             **`■` 가 부르는 것**(`docs/desktop-agent-cards.pdf` 2쪽 하단). 상세의 `중지`
             버튼과 **같은 API** 다(`requestAgentStop`) — 격자에서 누르는 것과 상세에서
@@ -1134,7 +1121,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             하나로 좁힌 근거가 그 주석에 있다).
           */
           onStop={(a) => {
-            if (!canRelaunchAgent(a, myId ? { id: myId, isAdmin } : null)) return;
+            if (!canSeeAgentConfig(a, myId ? { id: myId, isAdmin } : null)) return;
             void getController().requestAgentStop(a.id)
               .then((updated) => setAgents(
                 (prev) => prev.map((x) => (x.id === updated.id ? updated : x)),
@@ -1877,6 +1864,94 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               </div>
             )}
 
+            {/* 스펙 2026-09-20 §3: **어디서 돌리나.** 앱은 러너를 띄우지 않는다 — 이 고르개가
+                서버에 배정을 쓰면 그 오퍼레이터가 러너를 띄운다. 러너 실행·중지 절 바로 뒤에
+                두는 이유: 그 절의 '실행'이 실제로 무엇을 켜는지가 이 배정으로 정해진다. */}
+            {selected && (isAdmin || isOwner) && (
+              <div className="rounded border border-border p-3">
+                <div className="text-meta font-medium text-fg-muted">{t('agents.assignment.heading')}</div>
+                <p className="mt-1 text-meta text-fg-subtle" data-testid="agent-assignment-current">
+                  {(() => {
+                    const asg = selected.assignment;
+                    if (!asg) return t('agents.assignment.none');
+                    const op = Array.isArray(operators) ? operators.find((o) => o.id === asg.operatorId) : undefined;
+                    const name = op?.name ?? t('agents.assignment.unknownOperator');
+                    return op && !op.online
+                      ? t('agents.assignment.currentOffline', { name })
+                      : t('agents.assignment.current', { name });
+                  })()}
+                </p>
+                {/* `role="alert"` 를 안 단다 — 이것은 사람이 방금 한 조작의 결과가 아니라 목록
+                    조회의 실패이고, 화면의 alert 는 조작 결과(위 `error`) 하나여야 한다. */}
+                {operators === 'error' && (
+                  <p className="mt-2 text-meta text-danger">{t('operators.listFailed')}</p>
+                )}
+                {Array.isArray(operators) && operators.length === 0 && (
+                  <p className="mt-2 text-meta text-fg-subtle">{t('agents.assignment.noOperators')}</p>
+                )}
+                {Array.isArray(operators) && operators.length > 0 && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <select
+                      aria-label={t('agents.assignment.label')}
+                      className="rounded border border-border bg-surface px-2 py-1 text-meta text-fg"
+                      disabled={assigning || busy}
+                      value={selected.assignment?.operatorId ?? ''}
+                      onChange={(e) => {
+                        const operatorId = e.target.value;
+                        if (!operatorId || operatorId === selected.assignment?.operatorId) return;
+                        setError(null);
+                        setAssigning(true);
+                        void getController().assignAgent(selected.id, operatorId)
+                          .then((assignment) => {
+                            // 응답의 배정을 **그대로** 앉힌다 — 목록을 다시 읽지 않아도 방금 고른
+                            // 것이 화면에 선다(`requestStop` 과 같은 규율).
+                            const updated = { ...selected, assignment };
+                            setSelected(updated);
+                            setAgents((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+                          })
+                          .catch((err: unknown) => setError(
+                            err instanceof ApiError && err.code === 'not_capable'
+                              ? t('agents.assignment.notCapable')
+                              : t('agents.assignment.failed', { reason: err instanceof Error ? err.message : String(err) }),
+                          ))
+                          .finally(() => setAssigning(false));
+                      }}
+                    >
+                      <option value="">{t('agents.assignment.pick')}</option>
+                      {operators.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.name}{o.online ? '' : ` (${t('operators.offline')})`}
+                        </option>
+                      ))}
+                    </select>
+                    {selected.assignment && (
+                      <button
+                        className="rounded border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
+                        disabled={assigning || busy}
+                        onClick={() => {
+                          setError(null);
+                          setAssigning(true);
+                          void getController().unassignAgent(selected.id)
+                            .then(() => {
+                              const updated = { ...selected, assignment: null };
+                              setSelected(updated);
+                              setAgents((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+                            })
+                            .catch((err: unknown) => setError(
+                              t('agents.assignment.failed', { reason: err instanceof Error ? err.message : String(err) }),
+                            ))
+                            .finally(() => setAssigning(false));
+                        }}
+                      >
+                        {t('agents.assignment.unassign')}
+                      </button>
+                    )}
+                  </div>
+                )}
+                <p className="mt-2 text-meta text-fg-subtle">{t('agents.assignment.note')}</p>
+              </div>
+            )}
+
             {selected && (isAdmin || isOwner) && (
               <div className="rounded border border-border p-3">
                 <div className="text-meta font-medium text-fg-muted">PAT (Personal Access Token)</div>
@@ -2000,56 +2075,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     {copySuccess === 'pat' ? t('agents.runner.copied') : t('agents.runner.copy')}
                   </button>
                 </div>
-                {/* #125: 이 명령의 토큰을 자르고 말줄임표를 붙여 두면, 그대로 복사해 실행했을 때
-                    인증이 실패한다 — "완성된 명령"처럼 보이는데 아니었다. 전체 토큰을 싣는다.
-                    바로 위 코드 블록에 이미 전체 토큰이 있으므로 중복 노출이 새 위험은 아니다.
-
-                    **명령 자체는 `runnerCommand.ts` 가 만든다**(`#431` 1단계·`#494`). 여기서
-                    문자열을 짓지 않는 이유는 이 자리가 정확히 그렇게 낡았기 때문이다 — 러너가
-                    사이드카 배포로 바뀌었는데 화면에는 `pnpm --filter @harkroom/agent start` 가
-                    남아, 저장소를 클론하지 않은 사람에게 **붙여넣는 순간 실패하는 명령**을
-                    복사시키고 있었다. 근거 전문은 그 파일 머리말에 있다. */}
-                <div className="mt-2 flex flex-col gap-1 break-all font-mono text-meta text-warning">
-                  <span ref={fullCommandRef} className="whitespace-pre-wrap">
-                    {runnerCommandClipboardText(pat, t)}
-                  </span>
-                  <button
-                    className="self-start shrink-0 rounded border border-warning-border bg-warning-surface-strong px-1.5 py-0.5 text-meta text-warning hover:bg-warning-border"
-                    aria-label={t('agents.runner.commandCopy')}
-                    onClick={async () => {
-                      // #125: 토큰을 자르거나 말줄임표를 붙이지 않는다 — 클립보드에도 명령 전체가 들어간다.
-                      const cmd = runnerCommandClipboardText(pat, t);
-                      setError(null);
-                      const ok = await copyToClipboard(cmd, fullCommandRef.current, setError, t);
-                      if (ok) {
-                        setCopySuccess('full');
-                        setTimeout(() => setCopySuccess((s) => s === 'full' ? null : s), 2000);
-                      }
-                    }}
-                  >
-                    {copySuccess === 'full' ? t('agents.runner.copied') : t('agents.runner.copy')}
-                  </button>
-                </div>
-                {/* #125: 등록만으로는 아무 일도 일어나지 않는다. 실측으로 에이전트 6개 중 4개가
-                    러너를 가져본 적이 없고 그중 2개는 미읽음 멘션이 쌓인 채였다. 사용자의 기대는
-                    "UI 로 등록했으면 러너도 같이 떴어야 하는 것 아닌가"였다 — 그 기대를 바로잡는다.
-
-                    #250 이 그 기대의 절반을 실제로 만족시켰다: **이 데스크탑 앱은** 내가
-                    소유한 에이전트의 러너를 띄운다. 그래서 문구를 고친다 — 옛 문구("harkroom 는
-                    러너를 띄우지 않는다")를 그대로 두면 아래의 "러너 (이 앱)" 절과 정면으로
-                    어긋나고, 어느 쪽을 믿어야 할지 사람이 알 수 없다. 서버는 여전히 러너를
-                    띄우지 않는다(design.md §1 외부 접속형) — 띄우는 것은 앱이다. */}
-                {/* 마지막 문장이 낡아 있었다: *"harkroom 저장소를 체크아웃한 머신에서
-                    실행한다"* 는 러너가 소스로 돌던 시절의 조건이다. 사이드카 배포
-                    (`#431` 1단계·`#494`) 뒤로는 **앱이 설치된 머신**이면 된다 —
-                    저장소는 개발 갈래에서만 필요하다. */}
-                <p className="mt-2 text-meta text-warning">
-                  {emphasize(t('agents.runner.whoStarts'), {
-                    strongServer: t('agents.runner.whoStartsServer'),
-                    strongOwn: t('agents.runner.whoStartsOwn'),
-                    strongNoAnswer: t('agents.runner.whoStartsNoAnswer'),
-                  })}
-                </p>
+                {/* 스펙 2026-09-20 §2: 이 토큰을 러너 명령에 심어 복사시키던 자리였다. 이제
+                    배정된 오퍼레이터가 이 토큰을 서버에서 직접 받아 가므로(단계 2 한정;
+                    단계 4 가 PAT 자체를 없앤다) 사람이 옮겨 적을 일이 없다. 손으로 띄우는
+                    길만 이 토큰이 필요하고, 그 안내가 아래 한 줄이다. */}
+                <p className="mt-2 text-meta text-warning">{t('agents.runner.operatorTakesPat')}</p>
               </div>
             )}
 
@@ -2130,82 +2160,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   stopRequestedAt={selected.stopRequestedAt}
                   stopAckedAt={selected.stopAckedAt}
                 />
-                {/* 재발급은 순서가 요점이다: 새 발급 → 옛 폐기 → 재실행. 폐기가 먼저면
-                    발급 실패 한 번에 쓸 수 있는 PAT 가 사라진다(runnerLauncher.ts 주석). */}
-                <button
-                  className="mt-2 rounded border border-warning-border bg-warning-surface px-2 py-1 text-meta font-medium text-warning hover:bg-warning-surface-strong disabled:opacity-50"
-                  aria-label={t('agents.runner.reissue')}
-                  disabled={reissuing}
-                  onClick={() => {
-                    const id = selected.id;
-                    setReissuing(true);
-                    setError(null);
-                    void getController().reissueRunnerPat(id)
-                      .catch((err: unknown) => setError(
-                        t('agents.runner.reissueFailed', { reason: err instanceof Error ? err.message : String(err) }),
-                      ))
-                      .finally(() => setReissuing(false));
-                  }}
-                >
-                  {reissuing ? t('agents.runner.reissuing') : t('agents.runner.reissue')}
-                </button>
-                <p className="mt-1 text-meta text-fg-subtle">
-                  {emphasize(t('agents.runner.reissueNote'), {
-                    strongRevoke: t('agents.runner.reissueNoteRevoke'),
-                  })}
-                </p>
               </div>
             )}
 
-            {/* #177: 러너 실행 명령 틀은 **항상** 보인다 — PAT 를 막 발급한 직후만이 아니다.
-                토큰은 해시만 저장하므로 재노출이 불가능하다(design.md §4). 그래서 여기서는
-                자리표시가 든 틀만 보이고, 전체 토큰이 든 명령은 위의 발급 직후 화면에만 있다.
-                PAT 개수로 이 절을 가리지 않는다: PAT 가 0 개인 에이전트야말로 "무엇을 실행해야
-                하는가"를 알아야 하고, 틀에는 비밀이 없다.
-
-                **이 절은 남는다** — `#482` 로 앱이 daemon 을 먼저 세우고 러너를 spawn 하게
-                됐지만, 앱이 띄우는 대상은 `ownerAccountId` 가 내 계정인 에이전트뿐이다.
-                남이 소유했거나 소유자가 없는 에이전트, 그리고 이 앱이 안 도는 머신에 붙일
-                러너는 지금도 사람이 띄운다. 낡은 것은 절의 존재 이유가 아니라 **명령**이었다
-                (`runnerCommand.ts` 머리말). */}
-            {selected && (isAdmin || isOwner) && (
-              <div className="rounded border border-border p-3">
-                <div className="text-meta font-medium text-fg-muted">{t('agents.runner.templateHeading')}</div>
-                <div className="mt-2 flex flex-col gap-1 break-all font-mono text-meta text-fg">
-                  <span ref={templateCommandRef} className="whitespace-pre-wrap">
-                    {runnerCommandClipboardText(PAT_PLACEHOLDER, t)}
-                  </span>
-                  <button
-                    className="self-start shrink-0 rounded border border-border bg-surface px-1.5 py-0.5 text-meta text-fg hover:bg-surface-sunken"
-                    aria-label={t('agents.runner.commandCopy')}
-                    onClick={async () => {
-                      // 틀은 자리표시까지 통째로 복사한다 — 사람이 그 자리만 토큰으로 바꿔 쓴다.
-                      const cmd = runnerCommandClipboardText(PAT_PLACEHOLDER, t);
-                      setError(null);
-                      const ok = await copyToClipboard(cmd, templateCommandRef.current, setError, t);
-                      if (ok) {
-                        setCopySuccess('template');
-                        setTimeout(() => setCopySuccess((s) => s === 'template' ? null : s), 2000);
-                      }
-                    }}
-                  >
-                    {copySuccess === 'template' ? t('agents.runner.copied') : t('agents.runner.copy')}
-                  </button>
-                </div>
-                <p className="mt-2 text-meta text-fg-subtle">
-                  {t('agents.runner.templateNote')}{' '}
-                  <button
-                    className="text-accent underline"
-                    onClick={() => {
-                      newPatLabelRef.current?.scrollIntoView({ block: 'center' });
-                      newPatLabelRef.current?.focus();
-                    }}
-                  >
-                    {t('agents.runner.patGoToMint')}
-                  </button>
-                </p>
-              </div>
-            )}
           </div>
 
           {/*
@@ -2352,40 +2309,24 @@ function DaemonFacts({ runner, stopRequestedAt, stopAckedAt }: {
  * 사라지면 "이 기능이 없다"로 읽힌다. 비활성 버튼 + 이유가 "전부 최신이다"라는 **사실**을
  * 말한다 — 없는 것과 할 일이 없는 것은 다르다(docs/design.md §4).
  */
-function StaleRunnerBar({ agents, runnerStates, appVersion, onError, t }: {
+function StaleRunnerBar({ agents, runnerStates, appVersion, t }: {
   agents: AgentView[];
   runnerStates: Record<string, { status: string } | undefined>;
   appVersion: string | null;
-  onError: (message: string) => void;
   /** 부모가 이미 든 번역기를 받는다 — 여기서 `useT` 를 다시 부를 이유가 없다(그 prop 주석). */
   t: Translate;
 }) {
-  const [busy, setBusy] = useState(false);
   /**
-   * **눌렀다는 사실**과 **끝났다는 사실**을 따로 든다 (2026-09-08 실측).
+   * **띠에서 버튼이 사라졌다**(스펙 2026-09-20 §2). 앞 판본은 여기서 뒤처진 러너 전체를
+   * 새 번들로 갈아 띄웠다 — 그 러너를 띄운 것이 이 앱이었기 때문이다. 이제 러너는
+   * 오퍼레이터가 띄우고, 새 번들로 가는 길은 그 오퍼레이터를 갱신하는 것이다. 이 띠가
+   * 남아 있는 이유는 **사실**이 남아서다: 어느 러너가 이 앱보다 뒤처졌는지는 사람이
+   * 여전히 알아야 한다(어느 머신의 오퍼레이터를 갱신할지 그것으로 안다).
    *
-   * 앞 판본은 `busy` 하나였고, 그것이 하는 일은 버튼을 `disabled:opacity-50` 으로 흐리는
-   * 것뿐이었다. 그런데 이 버튼은 **뒤처진 러너가 0 대면 평소에도 흐리다** — 누른 뒤와
-   * 누르기 전의 모양이 같으니 사람에게는 *"눌렀는지 알 수가 없어"* 가 된다.
-   *
-   * 그리고 이 조작은 **길다.** `restartStaleRunners()` 는 러너가 진행 중인 턴을 마치고
-   * 나가기를 기다린다(`RunnerLauncher.restart` 의 `awaitRunnerExit`, 상한 15분). 그 끝을
-   * 기다려서야 결과를 적으면 사람은 그동안 아무 말도 못 듣는다. 그래서 둘로 가른다:
-   *
-   * | 값 | 언제 | 무엇을 말하나 |
-   * |---|---|---|
-   * | `requested` | 누른 **즉시** | 몇 대에 재기동을 걸었다 — 턴을 마치면 다시 뜬다 |
-   * | `done` | 전부 다시 뜬 뒤 | 몇 대가 새 번들로 돌아왔다 |
-   *
-   * `requested` 를 컨트롤러의 반환값으로 채우지 않는 이유가 그 표에 있다 — 그 값은 **끝에야**
-   * 온다. 띠가 이미 센 `stale.length` 가 지금 손에 있는 답이고, 컨트롤러가 같은
-   * `staleRunners()` 를 보므로 두 수가 갈라지지 않는다.
+   * 대상은 이 머신의 오퍼레이터 장부에 살아 있는 것(`runnerStates`)이고, 그 밖의 뒤처진
+   * 러너는 `elsewhere` 로 따로 센다 — 앞 판본이 *"전부 이 번들이다"* 라고 단정하다 들킨
+   * 자리다(2026-09-08 실측).
    */
-  const [requested, setRequested] = useState<number | null>(null);
-  const [done, setDone] = useState<number | null>(null);
-  // 러너가 **있다고 보는** 에이전트만 대상이다. `runnerStates` 는 이 앱의 실행기가 관리하는
-  // (즉 소유한) 에이전트만 담으므로, 이 한 줄이 소유 판정도 겸한다 — 그래도 컨트롤러가
-  // 같은 술어를 한 번 더 본다(`restartStaleRunners`).
   const live = new Set(
     agents
       .filter((a) => {
@@ -2395,27 +2336,6 @@ function StaleRunnerBar({ agents, runnerStates, appVersion, onError, t }: {
       .map((a) => a.id),
   );
   const { stale, unknown } = staleRunners({ agents, live, appVersion });
-  /**
-   * **띠와 카드가 서로 다른 말을 하던 자리** (2026-09-08 실측 스크린샷).
-   *
-   * 화면에는 이 둘이 나란히 있었다:
-   *
-   * ```
-   * [뒤처진 러너 전체 재기동 (0)]  도는 러너가 전부 이 번들이다.
-   * …
-   * @rebelro   러너  0.1.85 · 뒤처짐 ↻
-   * ```
-   *
-   * 둘 다 자기 규칙대로는 옳다. 띠의 대상은 **이 기기가 띄운 러너**뿐이고(위 `live`),
-   * 카드의 칩은 *"서버가 마지막으로 들은 버전"* 을 말한다(`VersionChip` 의 `live` 주석).
-   * 그런데 사람이 읽는 것은 두 문장이고, 한쪽이 *"전부 이 번들이다"* 라고 **단정한다** —
-   * 그 단정이 거짓이라 사람은 비활성 버튼을 누르고 아무 일도 안 일어나는 것을 봤다.
-   *
-   * 그래서 **버튼의 대상은 그대로 두고 말만 사실로 바꾼다.** 남의 기기가 띄운 러너를 이
-   * 앱이 재기동하면 그 러너의 PAT·소유가 여기로 옮겨 온다 — 대상을 넓히는 것은
-   * `restartStaleRunners` 가 거부한 방향이고(그 함수의 `mine` 주석), 이 결함은 그것이
-   * 아니라 문장이 낸 것이다.
-   */
   const elsewhere = staleRunners({
     agents,
     live: new Set(agents.map((a) => a.id)),
@@ -2424,82 +2344,23 @@ function StaleRunnerBar({ agents, runnerStates, appVersion, onError, t }: {
 
   return (
     <div className="mb-3 rounded border border-border p-3">
-      <div className="flex items-center gap-2">
-        <button
-          data-testid="restart-stale-runners"
-          disabled={stale.length === 0 || busy}
-          className="rounded border border-border px-2 py-1 text-meta text-fg
-                     hover:bg-surface-sunken disabled:opacity-50"
-          onClick={() => {
-            setBusy(true);
-            // 누른 그 순간의 대상 수를 **먼저** 적는다(위 그 표). 앞 판본이 사람에게
-            // 아무 말도 안 한 채 15분까지 기다릴 수 있었던 자리다.
-            setRequested(stale.length);
-            setDone(null);
-            void getController().restartStaleRunners()
-              .then((ids) => setDone(ids.length))
-              .catch((err: unknown) => {
-                // 실패하면 "걸었다"는 말이 남아 있으면 안 된다 — 남기면 오류 줄과 진행
-                // 줄이 동시에 서서 무엇이 참인지 사람이 고르게 된다.
-                setRequested(null);
-                onError(
-                  t('agents.stale.restartFailed', { reason: err instanceof Error ? err.message : String(err) }),
-                );
-              })
-              .finally(() => setBusy(false));
-          }}
-        >
-          {/* 개수가 **곧 영향 범위**다(이 컴포넌트 머리말). 영어는 1대와 여러 대가 다른
-              낱말이라 복수형으로 갈리고, 한국어는 한 갈래다.
-
-              **누르는 동안 낱말이 바뀐다.** 흐려지는 것만으로는 0 대일 때의 평소 모양과
-              구분되지 않는다(위 `requested` 주석). 글자가 바뀌면 그 자리 하나로 "받았다"가
-              전해진다. */}
-          {busy
-            ? t('agents.stale.restarting')
-            : t('agents.stale.restart', { count: stale.length })}
-        </button>
-        {/* 재기동이 도는 동안에는 이 말을 접는다 — 방금 걸어 둔 것이 있는데 "전부 최신이다"
-            가 나란히 서면 둘 중 무엇이 참인지 사람이 고르게 된다. 아래 진행 줄이 그 자리를
-            대신 말한다. */}
-        {stale.length === 0 && !busy && (
-          <span className="text-meta text-fg-subtle">
-            {appVersion === null
-              // 앱 버전을 못 얻었으면 비교 기준이 없다. "전부 최신이다"로 적으면 확인하지
-              // 않은 것을 단정하는 셈이다.
-              ? t('agents.stale.unknownAppVersion')
-              // 뒤처진 러너가 **보이는데** 이 버튼의 대상이 아니면 그 사실을 적는다.
-              // "전부 이 번들이다"는 그때 거짓이다(위 `elsewhere` 주석).
-              : elsewhere > 0
-                ? t('agents.stale.elsewhere', { count: elsewhere })
-                : t('agents.stale.allCurrent')}
-          </span>
-        )}
-      </div>
-      {/*
-        **누른 것에 대한 답.** `role="status"` 라 스크린리더가 그 자리를 다시 읽는다 — 이
-        줄이 서는 것은 사람이 방금 누른 결과이고, 색도 위치도 그것을 말해 주지 않는다.
-
-        `done` 이 먼저다: 끝났으면 걸어 둔 사실이 아니라 **끝났다는 사실**이 지금의 답이다.
-        `requested === 0` 이면 아무 줄도 안 선다 — 0 대면 버튼이 애초에 안 눌린다.
-      */}
-      {(busy || done !== null) && (requested ?? 0) > 0 && (
-        <p role="status" className="mt-1 text-meta text-fg-muted">
-          {done !== null
-            ? t('agents.stale.restartDone', { count: done })
-            : t('agents.stale.restartRequested', { count: requested ?? 0 })}
-        </p>
-      )}
-      {/* **모르는 것을 뒤처졌다고 하지 않는다**(`runnerVersions.ts` 의 판정). 대신 그
-          사실을 적어 사람이 개별 재기동으로 값을 채우게 한다 — 재기동 한 번이면
-          `AGENT_VERSION` 이 심긴 러너가 뜨고 그 뒤로는 판정에 든다. */}
+      <p className="text-meta text-fg-subtle" data-testid="stale-runners-summary">
+        {appVersion === null
+          // 앱 버전을 못 얻었으면 비교 기준이 없다. "전부 최신이다"로 적으면 확인하지
+          // 않은 것을 단정하는 셈이다.
+          ? t('agents.stale.unknownAppVersion')
+          : stale.length > 0
+            ? t('agents.stale.here', { count: stale.length })
+            : elsewhere > 0
+              ? t('agents.stale.elsewhere', { count: elsewhere })
+              : t('agents.stale.allCurrent')}
+      </p>
+      {/* **모르는 것을 뒤처졌다고 하지 않는다**(`runnerVersions.ts` 의 판정). */}
       {unknown.length > 0 && (
         <p className="mt-1 text-meta text-fg-subtle">
           {t('agents.stale.unknownVersion', { count: unknown.length })}
         </p>
       )}
-      {/* 진행 중인 턴을 끊지 않는다는 사실이 **누르기 전에** 있어야 한다. 이 조작은
-          예약이고, 실제 교체는 그 턴이 끝난 뒤다(실측 5분 넘는 턴도 있다). */}
       <p className="mt-1 text-meta text-fg-subtle">
         {emphasize(t('agents.stale.note'), { strong: t('agents.stale.noteStrong') })}
       </p>

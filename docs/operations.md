@@ -430,9 +430,15 @@ curl -fsS http://localhost:3400/healthz | python3 -c 'import json,sys; print(jso
 확인 순서:
 1. `GET /metrics`에서 그 핸들의 값을 본다. 커지고 있으면 러너 쪽이다.
    **값이 아예 없으면** 그 계정에 정의가 없는 것이다(위 문단) — 러너 문제가 아니다.
-2. 러너가 감독 하에 있는지 본다: `launchctl list | grep dev.harkroom.agent`.
-   PID 자리가 `-`면 죽어 있고 재시작을 못 하는 상태다.
-3. 로그를 본다: `/tmp/harkroom-runner/<handle>.log`(stdout), `.err.log`(stderr).
+2. **오퍼레이터**가 살아 있는지 본다 — 러너를 띄우고 다시 띄우는 것은 오퍼레이터다(8-0).
+   앱이 있는 머신이면 설정 › Operators 에서 그 오퍼레이터가 온라인인지, 앱 없는 머신이면
+   `launchctl list | grep dev.harkroom.operator`(PID 자리가 `-` 면 죽어 있고 재시작을 못 하는
+   상태다) 또는 `systemctl --user status harkroom-operator`. 그리고 설정 › 에이전트 상세에서 그
+   에이전트가 **배정돼 있는지** — 배정이 없으면 어느 오퍼레이터도 띄우지 않는다.
+3. 로그를 본다. 오퍼레이터: 데이터 디렉터리의 `operator/operator-v1.log`(앱이 띄운 경우),
+   `/tmp/harkroom-operator/operator.log`(launchd 템플릿), `journalctl --user -u harkroom-operator`
+   (systemd). 러너: 같은 디렉터리의 `operator/runner-<agentId>.log` — 러너가 배정을 거절당했으면
+   (`personal_on_foreign_operator`·`mcp_server_missing:<이름>`) 오퍼레이터 로그에 사유가 있다.
 4. 러너가 뜨면 쌓인 것을 처리한다. 설계가 at-least-once이므로 **늦게라도 답한다** —
    inbox 항목은 읽음 처리 전까지 남는다.
 
@@ -455,11 +461,14 @@ where a.kind = 'agent';
 `harness`가 비어 있으면 harkroom가 실행할 수 없는 계정이다. 답은 지표를 고치는 것이 아니라
 그 계정을 정리하거나 정의를 붙이는 것이다(UI의 Add/Edit agent).
 
-## 8-0. 데스크탑 앱이 띄우게 하는 러너 (#250, `#431` 로 구조가 바뀌었다)
+## 8-0. 오퍼레이터가 띄우는 러너 (#250 → `#431` → 스펙 2026-09-20)
 
-감독(8-1) 대신 **앱**에 맡기는 길이 있다. 앱은 **내가 소유한**(`ownerAccountId` 가 내 계정)
-에이전트만 띄운다 — 남이 소유했거나 소유자가 없는 에이전트는 지금까지처럼 사람이 띄운다
-(그 명령은 아래 "손으로 띄우는 길" 이다).
+감독(8-1) 대신 **오퍼레이터**에 맡기는 길이 있다. 오퍼레이터는 머신마다 하나 상주하며
+서버에 붙어 **배정**을 받는다 — 설정 › Operators 에서 등록 코드를 발급해 그 머신에서
+`harkroom-operator register` 에 넣고, 설정 › 에이전트 상세에서 그 오퍼레이터를 배정하면
+러너가 뜬다. **앱은 러너를 띄우지 않는다.** 앞 판본(#250)의 *"앱이 내가 소유한 에이전트를
+띄운다"* 는 서버를 원격지로 옮기자 드러난 결함의 원인이었다 — 앱이 없으면 에이전트도 없었다.
+배정되지 않은 에이전트는 지금도 사람이 띄운다(그 명령은 아래 "손으로 띄우는 길" 이다).
 
 ### 앱은 러너의 부모가 아니다 — daemon 이 띄운다 (`#431` 2단계)
 
@@ -481,11 +490,8 @@ daemon 을 앞에 세운 것은 `#430` 의 실측 때문이다: 앱이 러너의
 아무것도 못 띄우는** 상태가 됐다. 지금 판정은 daemon 이 자기 장부와 `kill(pid, 0)` 으로 한다
 (상태 표는 아래).
 
-설정 → 연결에는 이제 하나만 남는다:
-
-| 설정 | 뜻 |
-|---|---|
-| Auto-start runners | 앱 시작 시 대상 러너를 띄운다(기본 켬) |
+설정 → 연결의 *Auto-start runners* 토글은 **사라졌다** — 앱이 띄우지 않으니 켜고 끌 것이
+없다. 그 자리는 설정 › Operators(등록·폐기)와 에이전트 상세의 배정이다.
 
 **명령은 설정에서 바꿀 수 없다.** 이 성질은 그대로다 — 다만 근거가 바뀌었다. 예전 근거는
 "Tauri shell 스코프에 그 명령 한 줄만 허용해 뒀다" 였는데, **러너는 이제 shell 플러그인으로
@@ -493,29 +499,22 @@ daemon 을 앞에 세운 것은 `#430` 의 실측 때문이다: 앱이 러너의
 인자도 넘기지 않고, 무엇을 띄울지는 Rust 와 daemon 안에 고정돼 있다. 사람이 편집할 수 있는
 명령을 만들면 그 순간 웹뷰가 임의 명령을 실행할 수 있는 표면이 된다.
 
-### 손으로 띄우는 길 — 사라지지 않았다, 명령이 바뀌었다
+### 손으로 띄우는 길 — 사라졌다
 
-앱이 띄우는 것은 내가 소유한 에이전트뿐이므로, 남이 소유한 에이전트나 **이 앱이 안 도는
-머신**에 붙일 러너는 지금도 사람이 띄운다. 설정 → 에이전트의 "러너 실행" 명령 틀이 그
-명령을 만들어 준다(정본은 `packages/desktop/src/lib/runnerCommand.ts`). 두 갈래다:
+앞 판본은 여기 `HARKROOM_URL=… HARKROOM_PAT=… harkroom-runner` 명령을 두 갈래(사이드카·pnpm)로
+적어 뒀다. 단계 4(스펙 2026-09-20 §5)에서 그 길이 닫혔다: **러너는 서버를 모른다.** 러너가
+받는 env 는 이 머신의 오퍼레이터 소켓과 자기 id·secret, 그리고 `harkroom-operator` 경로뿐이고,
+서버 URL 도 PAT 도 없다. 서버에 말하는 것은 오퍼레이터이며 인증은 오퍼레이터 토큰 +
+`X-Harkroom-Agent` 다(배정이 곧 인가). 사이드카(`/Applications/Harkroom.app/Contents/MacOS/harkroom-runner`)
+는 그대로 배포되지만 그것을 실행하는 것은 사람이 아니라 옆에 놓인 `harkroom-operator` 다.
 
-```sh
-# 앱을 설치해 쓰는 경우 (설치 위치가 다르면 경로를 바꾼다)
-HARKROOM_URL=<서버 주소> HARKROOM_PAT=<발급한 토큰> /Applications/Harkroom.app/Contents/MacOS/harkroom-runner
+배정되지 않은 에이전트는 **돌지 않는다** — 그것이 이제 정상 상태이고, 화면(에이전트 상세의
+"어디서 돌리나")이 그 사실을 말한다. 저장소 안의 `pnpm --filter @harkroom/agent start` 는 개발용으로
+남아 있지만 오퍼레이터가 심는 env 넷 없이는 뜨지 않는다.
 
-# harkroom 저장소를 클론한 개발 환경
-HARKROOM_URL=<서버 주소> HARKROOM_PAT=<발급한 토큰> pnpm --filter @harkroom/agent start
-```
-
-**아래쪽(pnpm)을 지우지 않은 이유**: `packages/agent/package.json` 의 `start` 는 그대로 있고
-저장소 안에서는 지금도 돈다. 낡았던 것은 그 명령이 아니라 **그것이 유일한 길이라는 전제**다 —
-앱을 설치해 쓰는 사람에게는 실행할 소스도 `pnpm` 워크스페이스도 없다.
-
-**손으로 띄운 러너는 앱의 러너 목록에 나타나지 않는다.** daemon 은 자기가 spawn 한 것만
-장부에 갖는다 — 서버 presence 에 그 계정이 보이면 앱은 그 어긋남을 사유 한 줄로 말할 뿐
-상태로 삼지 않는다(`runnerLauncher.ts::STRANGER_ATTACHED`). 예전 이 자리에는 *"그 러너는
-앱에서 '외부에서 실행 중'으로 보인다"* 고 적혀 있었는데 **두 겹으로 틀렸다**: `external`
-이라는 상태가 `#482` 에서 없어졌고, 손으로 띄운 러너는 애초에 그렇게 보이지도 않는다.
+**손으로 띄운 러너가 앱의 러너 목록에 나타나지 않는다**는 앞 판본의 문장은 그래서 대상이 없어졌다 —
+러너는 전부 오퍼레이터의 장부에 있고, 앱은 이 머신의 그 장부를 읽을 뿐이다. 다른 머신의
+오퍼레이터가 돌리는 러너는 여기 안 보이고, 얼굴은 서버 presence 를 따른다.
 
 ### 함정: GUI 로 띄운 앱의 `PATH` (8-1 과 같은 함정이다)
 
@@ -567,38 +566,59 @@ Rust 로 옮겨갔기 때문이다. `#250` 이 좁히기 시작한 경계가 여
 인자가 리터럴(`["-lc", "echo $PATH"]`)이라 임의 명령을 실행하지 않는다 — 같은 파일이
 그것도 함께 못박는다.
 
-### PAT 는 앱이 쥐고, 회전은 사람이 누를 때만
+### 앱 없는 머신 — `register` 와 `run` (단계 6)
 
-앱이 `POST /accounts/:id/pats` 로 발급받아 **OS 키체인**에 라벨과 함께 보관한다(라벨
-`desktop:<기기 id>`). **기동마다 재발급하지 않는다** — 재발급하면 그 PAT 로 돌던 러너가
-401 을 받고 물러나며 진행 중인 작업이 날아간다. 앱 업데이트 한 번에 돌던 러너가 전부
-죽는 것이 이 결정이 막는 것이다.
+오퍼레이터는 앱의 사이드카이지만 앱이 필요하지 않다. 서버·에이전트를 돌릴 머신에 앱 없이
+오퍼레이터 하나만 두는 길:
 
-설정 → 에이전트 상세의 **"PAT 재발급"** 을 누르면 이 순서로 일어난다:
+```sh
+# 1. 설정 › Operators(아무 기기의 앱)에서 등록 코드를 발급한다 — 5분·1회용.
+# 2. 그 머신에서 코드를 토큰으로 바꾼다. 토큰은 <데이터 디렉터리>/operator/secrets/ 에 0600 으로 남고,
+#    operator/operator.json 에 그 서버의 자리가 생긴다.
+harkroom-operator register https://<host> <코드> --name lab-mac
+# 3. 그 자리에 이 머신이 돌릴 에이전트를 적는다(키는 에이전트 계정 id).
+#    { "communities": { "https://<host>": { "agents": { "<agentId>": { "workingDir": "~/dev/x" } } } } }
+# 4. 상주시킨다. 소켓·설정·토큰 자리는 앱과 같은 규칙으로 데이터 디렉터리에서 조립한다 —
+#    같은 머신에 앱이 나중에 떠도 같은 소켓을 보고 "이미 서비스 중"으로 물러난다.
+harkroom-operator run            # 또는 --data-dir <경로> / HARKROOM_DATA_DIR
+# 5. 설정 › 에이전트 상세에서 그 오퍼레이터를 배정한다. 러너가 뜬다.
+```
 
-1. 새 라벨(`desktop:<기기 id>#<epoch>`)로 **새 PAT 발급**
-2. 키체인에 있던 **옛 라벨을 폐기**(`DELETE /accounts/:id/pats/:label`)
-3. 자식 종료 → 새 PAT 로 재실행
+데이터 디렉터리의 기본값은 앱과 같다: macOS `~/Library/Application Support/app.harkroom.desktop`,
+리눅스 `$XDG_DATA_HOME/app.harkroom.desktop`. 감독(launchd/systemd)은 8-1 이다.
 
-발급이 먼저인 이유: 폐기가 먼저면 발급이 실패한 순간 쓸 수 있는 PAT 가 하나도 없고, 그
-사이 돌던 러너는 이미 401 로 물러난다. 라벨을 새로 만드는 이유: 라벨은 **살아 있는 토큰
-안에서 유일**해서(마이그레이션 010) 같은 라벨로 먼저 발급하는 것이 409 로 막힌다.
+에이전트에 `mcpServers` 이름이 달려 있으면 그 정의는 **이 머신**에 있어야 한다 —
+`<데이터 디렉터리>/operator/mcp-servers.json`(`{ "<이름>": { "command": …, "args": […], "env": {…} } }`)
+또는 `~/.claude.json` 의 `mcpServers`. 없는 이름이 있으면 오퍼레이터는 그 배정을 **띄우지 않고**
+로그에 `mcp_server_missing:<이름>` 을 남긴다 — 도구 없이 뜬 에이전트는 조용히 실패하기 때문이다.
 
-옛 PAT 로 돌던 러너(다른 머신의 것도 포함)는 다음 호출에서 401 을 받고 **종료 코드 78**로
-스스로 물러난다 — 러너↔앱 통신 채널은 없고 서버가 진실의 원천이다. 앱은 자식이 78 로
-죽은 것을 보고 '종료 (78: 자격증명 폐기 — 재발급 필요)' 로 표시한다.
+### PAT 는 없다 — 배정이 곧 인가
+
+앞 판본 둘을 지나 왔다: *"PAT 는 앱이 쥐고, 회전은 사람이 누를 때만"*(앱이 키체인에 두고 러너에
+넘겼다) → *"PAT 는 오퍼레이터가 받아 간다"*(단계 2~3 의 임시 경로, `POST /operator/agents/:id/pat`).
+**둘 다 사라졌다.** 지금 오퍼레이터가 돌리는 에이전트에는 PAT 자체가 없다: 오퍼레이터가 러너
+대신 서버에 말하고, 서버는 (오퍼레이터, 에이전트) 쌍이 `agent_assignment` 에 있는지 보고 그
+요청을 그 에이전트로 세운다(`auth/plugin.ts` 의 `X-Harkroom-Agent`). PAT 는 `design.md` §1 의
+외부 접속형(오퍼레이터 없이 직접 붙는 에이전트·Claude Code 등록)에만 남는다.
+
+서버가 오퍼레이터를 거절하면(토큰 폐기·배정 해제) 러너는 다음 호출에서 401/403 을 받고 **종료
+코드 78**로 스스로 물러난다 — 서버가 진실의 원천이라는 성질은 그대로다. 그 안내문은 PAT 교체가
+아니라 설정 › Operators 와 배정을 가리킨다. 배정이 살아 있으면 오퍼레이터가 백오프 뒤 다시 띄운다.
+
+옛 키체인 항목(`harkroom.runner.pat.*`)은 앱이 더 읽지 않는다 — 손으로 지운다: 키체인 접근에서
+`harkroom.runner` 로 검색해 항목을 삭제한다(macOS). 서버 쪽 옛 PAT 는 설정 › 에이전트 상세의
+PAT 절에서 폐기한다.
 
 ### 상태 표시가 말하는 것
 
 | 표시 | 뜻 |
 |---|---|
-| 실행 중 | 이 앱의 요청으로 daemon 이 띄운 러너가 살아 있다 |
-| daemon 이 들고 있음 | daemon 장부에 이미 있고 `kill(pid, 0)` 으로 살아 있음을 확인했다 — 새로 띄우지 않았다 |
-| 종료 (78: 자격증명 폐기 — 재발급 필요) | PAT 가 폐기·회전됐다. 재발급하면 다시 뜬다 |
-| 종료 (78: 하네스를 찾을 수 없음 — 설치 필요) | 러너는 떴는데 `claude`·`codex` 같은 하네스를 못 찾았다. 사유에 이름이 붙는다(`#473`) |
-| 종료 (기타: 코드 N) | 그 코드로 죽었다. 원인은 러너 로그를 본다 |
-| 기동 실패 | 띄우지 못했다 — 사유가 옆에 붙는다(daemon 확보 실패, 키체인 읽기 실패 등) |
-| 꺼짐 | 이 앱이 아는 러너가 없다 |
+| daemon 이 들고 있음 | 이 머신의 오퍼레이터 장부에 있고 `kill(pid, 0)` 으로 살아 있음을 확인했다. 단계 2 뒤로 앱이 만드는 상태는 이것 하나다 — 앱은 어떤 러너도 띄우지 않으므로 전부 "들고 있음"이다 |
+| (없음) | 이 머신의 장부에 없다. 다른 머신의 오퍼레이터가 돌리는 러너는 여기 안 보이고, 얼굴은 서버 presence 를 따른다 |
+
+앞 판본의 '실행 중'·'종료 (78 …)'·'기동 실패' 행은 앱이 러너를 띄우던 시절의 판정이다.
+그 사실들(하네스가 없다·로그인이 풀렸다·PAT 가 폐기됐다)은 오퍼레이터가 알고, 능력
+(`hello.capabilities.harnesses`)으로 서버에 오른다 — 화면이 그것을 다시 보이는 것은 뒤 단계다.
 
 문구의 정본은 `packages/desktop/src/components/RunnerStatus.tsx::runnerStatusLabel` 이다.
 **옛 표에는 `외부에서 실행 중`(이미 러너가 붙어 있다 — presence)이 있었다.** 그 이름과 그
@@ -612,34 +632,34 @@ Rust 로 옮겨갔기 때문이다. `#250` 이 좁히기 시작한 경계가 여
 금지 결정이 무너진다. 그 경우 상태는 '기동 실패' 로 남고 사유를 말한다(키체인 잠김은 사람이
 푸는 것이고, 조용한 재시도는 실패를 다시 숨긴다).
 
-## 8-1. 러너를 감독 하에 두기 (macOS)
+## 8-1. 오퍼레이터를 감독 하에 두기
 
-`~/Library/LaunchAgents/dev.harkroom.agent.<handle>.plist`를 만들고
-`launchctl load <경로>`. 세 가지가 함정이다:
+감독할 대상은 **오퍼레이터**다 — 러너가 아니다(스펙 2026-09-20 §8). 앞 판본은 에이전트마다
+`dev.harkroom.agent.<handle>.plist` 하나씩 러너를 감독했고 그 plist 에 서버 URL 과 PAT 가 평문으로
+담겼다. 지금은 머신에 하나(`harkroom-operator run`)이고 러너는 그 오퍼레이터가 배정을 받아
+띄우며, 죽으면 백오프 뒤 다시 띄운다. 러너는 URL 도 PAT 도 받지 않으므로 감독 설정에 비밀이
+없다 — 토큰은 데이터 디렉터리의 `operator/secrets/` 에 있다.
 
-- **감독할 대상은 러너 실행 파일 그 자체다.** 지금은 사이드카 번들
-  (`.../Harkroom.app/Contents/MacOS/harkroom-runner`)을 `ProgramArguments` 에 그대로 적으면
-  된다 — 러너가 앱과 함께 배포되면서(`#431` 1단계) 감쌀 것이 없어졌다. 저장소를 클론한
-  개발 환경이라면 `pnpm`이 아니라 `tsx`를 직접 부른다: **중간 프로세스를 감독하면 러너가
-  죽어도 그 프로세스가 남아 launchd가 재시작하지 않는 경우가 생긴다.** 함정은 `pnpm`이
-  아니라 "감독 대상과 실제로 죽는 프로세스가 다르다"는 것이다.
-- **`PATH`를 명시한다.** launchd는 로그인 셸의 PATH를 물려받지 않는다. 예전에는 이 함정이
-  `claude` 하나였지만, 러너 재구축([`docs/specs/2026-09-01-runner-sessions-pty-design.md`](specs/2026-09-01-runner-sessions-pty-design.md))
-  이후로는 PATH에 있어야 하는 실행 파일이 **에이전트의 harness 선택에 따라 늘어난다** —
-  `codex`·`gemini`(harness 자체)뿐 아니라 `avcs`도 매 턴 필요하다(스레드별 workspace를
-  만드는 `avcs workspace project`, 그리고 turn 이 등록하는 avcs MCP 서버가 `avcs mcp`를
-  그대로 스폰한다). 이 중 하나라도 PATH에 없으면 "러너는 살아 있는데 답을 못 하는" 조용한
-  실패가 된다 — 여러 harness를 섞어 쓸수록 launchd 환경에 빠뜨리기 쉬운 이름이 늘어난다는
-  뜻이니, plist의 `PATH`에는 실제로 쓰는 harness 전부와 `avcs`가 있는 디렉터리를 넣는다.
-- **`chmod 600`.** PAT가 plist에 평문으로 담긴다.
+| 플랫폼 | 템플릿 | 붙이는 법 |
+|---|---|---|
+| macOS | [`ops/operator.plist.template`](../ops/operator.plist.template) | `@BIN@`·`@USER@` 를 채워 `~/Library/LaunchAgents/dev.harkroom.operator.plist` 로, `launchctl load` |
+| Linux | [`ops/operator.service.template`](../ops/operator.service.template) | `@BIN@` 을 채워 `~/.config/systemd/user/harkroom-operator.service` 로, `systemctl --user enable --now harkroom-operator`, `loginctl enable-linger` |
 
-`KeepAlive`와 함께 `ThrottleInterval 10`을 둔다 — 즉시 재시작을 반복하면 CPU를 태운다.
+함정은 셋이고 전부 템플릿 주석에 있다:
 
-붙인 뒤 **반드시 죽여서 확인한다**: `kill -9 <PID>` → `launchctl list`의 PID가 바뀌고
-로그에 재접속이 찍히는지. 감독이 붙었다는 것과 감독이 동작한다는 것은 다른 사실이다.
+- **감독할 대상은 실행 파일 그 자체다.** `pnpm` 같은 중간 프로세스를 감독하면 오퍼레이터가
+  죽어도 그 프로세스가 남아 감독이 재시작하지 않는 경우가 생긴다. 사이드카
+  (`/Applications/Harkroom.app/Contents/MacOS/harkroom-operator`)를 그대로 적는다.
+- **`PATH` 를 명시한다.** launchd·systemd 는 로그인 셸의 PATH 를 물려받지 않는다. 오퍼레이터는
+  러너에 로그인 셸의 PATH 를 따로 캐내 넘기지만(`loginPath.ts`), 사이드카가 셔뱅 스크립트라
+  **오퍼레이터 자신을 실행할 `node`** 가 감독의 PATH 에서 발견돼야 한다(`#513`).
+- **러너를 데려가지 않는다.** 러너는 detached 라 오퍼레이터의 재시작에 죽지 않고, 새 오퍼레이터가
+  장부(`operator/runners-v1.json`)로 다시 소유한다 — systemd 유닛의 `KillMode=process` 가 그
+  성질을 지킨다. 진행 중인 턴(사람이 기다리는 답)이 감독의 재시작으로 끊기지 않는 이유다.
 
-리눅스는 같은 내용의 systemd 유닛(`Restart=always`, `RestartSec=10`,
-`Environment=PATH=...`)으로 대체한다.
+붙인 뒤 **반드시 죽여서 확인한다**: `kill -9 <PID>` → `launchctl list` 의 PID 가 바뀌고
+로그에 서버 재접속(`서버에 붙었다`)이 찍히는지. 감독이 붙었다는 것과 감독이 동작한다는 것은
+다른 사실이다.
 
 ## 9. 클라이언트 주소가 보이지 않는다 (compose 기본 배포)
 

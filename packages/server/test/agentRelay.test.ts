@@ -6,10 +6,11 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import WebSocket from 'ws';
-import type { AgentSessionView, AttachServerFrame, RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
+import type { AgentSessionView, AttachServerFrame } from '@harkroom/shared';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
-import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { bootstrapAdmin, createAgent, registerOperator } from './helpers/fixtures.js';
+import { operatorRunnerFactory, type OperatorRunner } from './helpers/operatorRunner.js';
 
 let app: FastifyInstance;
 let pool: Pool;
@@ -19,8 +20,8 @@ let ownerToken: string;
 let ownerId: string;
 let strangerToken: string;
 let agentId: string;
-let agentPat: string;
 let baseUrl: string;
+let runners: ReturnType<typeof operatorRunnerFactory>;
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 
@@ -40,34 +41,16 @@ const RAW_BYTES = Buffer.concat([
 
 const REPLAY_BYTES = Buffer.from('\x1b[2J이전 화면', 'utf8');
 
-interface FakeRunner {
-  socket: WebSocket;
-  /** 서버가 보낸 프레임들(주로 replay.request). */
-  received: RelayServerFrame[];
-  send(frame: RelayRunnerFrame): void;
-  close(): Promise<void>;
-}
-
-/** 러너처럼 PAT 헤더로 `/agent-relay` 에 붙는다. */
-async function connectRunner(pat: string): Promise<FakeRunner> {
-  const socket = new WebSocket(`ws://${baseUrl}/agent-relay`, { headers: auth(pat) });
-  const received: RelayServerFrame[] = [];
-  socket.on('message', (d) => received.push(JSON.parse(String(d)) as RelayServerFrame));
-  await new Promise<void>((resolve, reject) => {
-    socket.on('open', () => resolve());
-    socket.on('error', reject);
-    socket.on('unexpected-response', (_req, res) => reject(new Error(`http ${res.statusCode}`)));
-  });
-  return {
-    socket, received,
-    send: (frame) => socket.send(JSON.stringify(frame)),
-    close: () => new Promise<void>((resolve) => { socket.on('close', () => resolve()); socket.close(); }),
-  };
-}
+/**
+ * 오퍼레이터 채널 위의 러너(단계 3). 옛 `connectRunner(pat)` 가 하던 일을 헬퍼가 한다 — 테스트
+ * 본문은 여전히 릴레이 프레임만 다룬다(`helpers/operatorRunner.ts` 머리말).
+ */
+type FakeRunner = OperatorRunner;
+const connectRunner = (id: string): Promise<FakeRunner> => runners.connect(id);
 
 /** 업그레이드가 거절되면 HTTP 상태 코드를, 성공하면 0 을 준다. */
-async function relayHandshakeStatus(headers: Record<string, string>): Promise<number> {
-  const socket = new WebSocket(`ws://${baseUrl}/agent-relay`, { headers });
+async function handshakeStatus(path: string, headers: Record<string, string>): Promise<number> {
+  const socket = new WebSocket(`ws://${baseUrl}${path}`, { headers });
   return new Promise<number>((resolve) => {
     socket.on('open', () => { socket.close(); resolve(0); });
     socket.on('unexpected-response', (_req, res) => { socket.terminate(); resolve(res.statusCode ?? -1); });
@@ -168,7 +151,7 @@ beforeAll(async () => {
   ownerToken = owner.token;
   strangerToken = (await register('stranger')).token;
 
-  ({ accountId: agentId, pat: agentPat } = await createAgent(app, adminToken, 'forge'));
+  ({ accountId: agentId } = await createAgent(app, adminToken, 'forge'));
   const patched = await app.inject({
     method: 'PATCH', url: `/accounts/agents/${agentId}`, headers: auth(adminToken),
     payload: { ownerAccountId: ownerId },
@@ -178,33 +161,39 @@ beforeAll(async () => {
   await app.listen({ port: 0, host: '127.0.0.1' });
   const addr = app.server.address();
   baseUrl = typeof addr === 'object' && addr ? `127.0.0.1:${addr.port}` : '';
+  runners = operatorRunnerFactory(app, () => baseUrl, adminToken);
 });
 afterAll(async () => { await app.close(); await stop(); });
 
-describe('#141-1 러너 소켓의 인증', () => {
-  it('에이전트 PAT 로는 붙는다', async () => {
-    expect(await relayHandshakeStatus(auth(agentPat))).toBe(0);
+describe('#141-1 러너는 서버에 직접 붙지 않는다 (단계 3, 스펙 2026-09-20 §5)', () => {
+  it('/agent-relay 는 사라졌다 — 어떤 자격증명으로도 404 다', async () => {
+    const { pat } = await createAgent(app, adminToken, 'legacy');
+    expect(await handshakeStatus('/agent-relay', auth(pat))).toBe(404);
+    expect(await handshakeStatus('/agent-relay', auth(adminToken))).toBe(404);
   });
 
-  it('자격증명이 없으면 401 이다', async () => {
-    expect(await relayHandshakeStatus({})).toBe(401);
-  });
-
-  it('사람 계정의 세션 토큰이면 401 이다', async () => {
-    // 인증은 통과하지만 kind 가 'human' 이다. 이 소켓은 세션을 announce 하는 자리이므로,
-    // 아무 멤버나 "나는 에이전트 X 의 러너다"라고 주장할 수 있으면 목록이 위조된다.
-    expect(await relayHandshakeStatus(auth(ownerToken))).toBe(401);
-  });
-
-  it('admin 이어도 사람 계정이면 401 이다', async () => {
-    // isAdmin 이 러너 자격을 주지 않는다 — 러너는 계정 종류의 문제다.
-    expect(await relayHandshakeStatus(auth(adminToken))).toBe(401);
+  it('배정되지 않은 에이전트의 러너를 주장하는 오퍼레이터 프레임은 버려진다 — 배정이 곧 인가', async () => {
+    // 오퍼레이터 하나가 남의 에이전트 세션을 위조해 그 소유자 화면에 띄우는 길이 없어야 한다.
+    const { accountId: other } = await createAgent(app, adminToken, 'unassigned');
+    const { token } = await registerOperator(app, adminToken, 'rogue');
+    const ws = new WebSocket(`ws://${baseUrl}/operator`, { headers: auth(token) });
+    await new Promise<void>((resolve, reject) => { ws.on('open', () => resolve()); ws.on('error', reject); });
+    ws.send(JSON.stringify({ type: 'hello', protocol: 1, capabilities: { agentIds: [other], harnesses: {} }, runners: [{ agentId: other, runnerId: 'r-x', pid: 1 }], sessions: [] }));
+    ws.send(JSON.stringify({ type: 'runner.announce', runnerId: 'r-x', sessions: [session({ sessionId: 'forged-1', agentAccountId: other })], caps: ['input'] }));
+    // 반대로 정상 경로가 살아 있음을 같은 자리에서 확인한다 — 안 그러면 "아직 안 왔다"로도 초록이다.
+    const good = await connectRunner(agentId);
+    good.send({ type: 'announce', sessions: [session({ sessionId: 'good-1' })] });
+    await waitForSession(adminToken, 'good-1');
+    const res = await app.inject({ method: 'GET', url: '/agent-sessions', headers: auth(adminToken) });
+    expect((res.json().sessions as AgentSessionView[]).some((s) => s.sessionId === 'forged-1')).toBe(false);
+    ws.close();
+    await good.close();
   });
 });
 
 describe('#141-2 서버는 바이트를 변형하지 않는다', () => {
   it('ANSI 이스케이프와 잘린 UTF-8 을 포함한 바이트열이 그대로 도착한다', async () => {
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session({ sessionId: 'raw-1' })] });
     await waitForSession(ownerToken, 'raw-1');
 
@@ -229,7 +218,7 @@ describe('#141-2 서버는 바이트를 변형하지 않는다', () => {
 
 describe('#141-3 attach 는 재생이 먼저다', () => {
   it('ring buffer 재생이 먼저 오고 그다음 실시간 바이트가 온다', async () => {
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session({ sessionId: 'ord-1' })] });
     // `send` 는 소켓에 밀어 넣고 곧 돌아온다 — 서버가 그 프레임을 처리한 것과는 다른
     // 사실이다. `attach` 는 `app.inject` 로 같은 프로세스 안에서 바로 도는 REST 요청이라
@@ -258,7 +247,7 @@ describe('#141-3 attach 는 재생이 먼저다', () => {
 
 describe('#141-4 attach 는 소유자·admin 만', () => {
   it('소유자도 admin 도 아니면 403 이다', async () => {
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session({ sessionId: 'own-1' })] });
     await waitForSession(ownerToken, 'own-1');
 
@@ -278,7 +267,7 @@ describe('#141-4 attach 는 소유자·admin 만', () => {
   });
 
   it('소유하지 않은 사람의 세션 목록은 비어 있다 — 403 이 아니라 부재다', async () => {
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session({ sessionId: 'list-1' })] });
     // 소유자에게 보인다는 것을 먼저 확인한다 — 안 하면 아래의 빈 목록이 "아직 안 왔다"로도
     // 초록이 되어, 이 테스트가 소유자 필터를 전혀 지키지 않는다.
@@ -292,7 +281,7 @@ describe('#141-4 attach 는 소유자·admin 만', () => {
   });
 
   it('티켓은 발급받은 그 세션에만 쓴다', async () => {
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session({ sessionId: 'tick-1' }), session({ sessionId: 'tick-2' })] });
     await waitForSession(ownerToken, 'tick-2');
 
@@ -323,7 +312,7 @@ describe('#141-4 attach 는 소유자·admin 만', () => {
   });
 
   it('한 번 쓴 티켓은 다시 쓰지 못한다', async () => {
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session({ sessionId: 'once-1' })] });
     await waitForSession(ownerToken, 'once-1');
     const res = await app.inject({
@@ -345,7 +334,7 @@ describe('#141-4 attach 는 소유자·admin 만', () => {
 
 describe('#141-5 PTY 바이트는 DB 에 남지 않는다', () => {
   it('message·audit 어디에도 바이트가 없다', async () => {
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session({ sessionId: 'db-1' })] });
     // announce 가 반영된 뒤에 붙는다 — 이유는 `#141-3` 의 같은 자리에 적었다(#367).
     await waitForSession(ownerToken, 'db-1');
@@ -405,7 +394,7 @@ describe('#141-5 PTY 바이트는 DB 에 남지 않는다', () => {
 
 describe('#141-6 러너 재접속 후에도 attach 가 이어진다', () => {
   it('재접속 러너의 announce 로 세션이 되살아나고 다시 붙을 수 있다', async () => {
-    const first = await connectRunner(agentPat);
+    const first = await connectRunner(agentId);
     first.send({ type: 'announce', sessions: [session({ sessionId: 'rc-1' })] });
     // 첫 attach 도 announce 반영을 기다린다 — 아래 재접속 쪽만 기다리고 여기를 빼면
     // 이 자리가 CI 에서 `expected 404 to be 200` 으로 샌다(#367 에서 실측).
@@ -425,7 +414,7 @@ describe('#141-6 러너 재접속 후에도 attach 가 이어진다', () => {
     before.close();
 
     // 러너가 백오프 뒤 다시 붙어 같은 세션을 announce 한다.
-    const second = await connectRunner(agentPat);
+    const second = await connectRunner(agentId);
     second.send({ type: 'announce', sessions: [session({ sessionId: 'rc-1' })] });
     await waitForSession(ownerToken, 'rc-1');
 
@@ -451,7 +440,7 @@ describe('#141-7 attach 는 턴의 권한을 바꾸지 않는다', () => {
     const defBefore = (before.json().agents as { id: string; mentionPermission: string }[])
       .find((a) => a.id === agentId)!;
 
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session({ sessionId: 'perm-1' })] });
     // announce 가 반영된 뒤에 붙는다 — 이유는 `#141-3` 의 같은 자리에 적었다(#367).
     await waitForSession(ownerToken, 'perm-1');
@@ -494,7 +483,7 @@ describe('#141-7 attach 는 턴의 권한을 바꾸지 않는다', () => {
  */
 describe('중단 — POST /agent-sessions/:id/cancel (3단계)', () => {
   it('소유자가 누르면 러너에게 session.cancel 이 가고 202 다', async () => {
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session({ sessionId: 'cancel-1' })], caps: ['cancel'] });
     await waitForSession(ownerToken, 'cancel-1');
     const res = await app.inject({
@@ -515,7 +504,7 @@ describe('중단 — POST /agent-sessions/:id/cancel (3단계)', () => {
   });
 
   it('소유자도 admin 도 아니면 403 이고, 러너에게 아무것도 가지 않는다', async () => {
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     runner.send({ type: 'announce', sessions: [session({ sessionId: 'cancel-2' })], caps: ['cancel'] });
     await waitForSession(ownerToken, 'cancel-2');
     const res = await app.inject({
@@ -534,7 +523,7 @@ describe('중단 — POST /agent-sessions/:id/cancel (3단계)', () => {
   });
 
   it('caps 에 cancel 이 없는 러너는 409 runner_outdated 다 — 기다리면 원인 없는 침묵이 된다', async () => {
-    const runner = await connectRunner(agentPat);
+    const runner = await connectRunner(agentId);
     // 구 러너를 흉내낸다: attach 는 되지만 중단은 못 한다.
     runner.send({ type: 'announce', sessions: [session({ sessionId: 'cancel-3' })], caps: ['input'] });
     await waitForSession(ownerToken, 'cancel-3');

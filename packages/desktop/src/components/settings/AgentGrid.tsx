@@ -6,7 +6,7 @@ import type { RunnerState } from '../../lib/runnerLauncher';
 // (`docs/desktop-rail.html` 2단계). 여기 사본을 두면 두 화면이 같은 러너를 다르게 그린다.
 // `isStopping` 은 **격자만** 부른다 — 사이드바가 그 값을 받을 수 없는 이유가 그 함수 주석에 있다.
 import type { FaceState } from '../../lib/faceState';
-import { faceState, faceTakesRelaunch, isFaceGreyed, isStopping } from '../../lib/faceState';
+import { faceState, isFaceGreyed, isStopping } from '../../lib/faceState';
 // 뒤처짐 판정도 **이미 있는 것을 그대로 쓴다**(`lib/runnerVersions.ts`). 그 규칙
 // (*"모르는 것을 뒤처졌다고 하지 않는다"*)을 칩에서 다시 적으면 일괄 재기동 띠와 카드가
 // 서로 다른 대상을 고르고, 그 어긋남은 조용하다 — 그 모듈 주석이 정확히 그것을 경고한다.
@@ -521,7 +521,7 @@ function InfoRow({ label, children }: { label: string; children: React.ReactNode
  * 러너는 나를 막지 않는다 — 잘 돌고 있고, 갈아 끼우는 것은 내가 고를 일이다. 그래서
  * `warning` 이고, 실패는 이미 `danger` 라 둘이 섞이지 않는다.
  */
-function VersionChip({ handle, runnerVersion, appVersion, restarting, onRelaunch }: {
+function VersionChip({ handle, runnerVersion, appVersion, restarting }: {
   handle: string;
   runnerVersion: string | null;
   appVersion: string | null;
@@ -537,8 +537,6 @@ function VersionChip({ handle, runnerVersion, appVersion, restarting, onRelaunch
    * 첫 줄에서 `restarting` 을 밀어 넣는다) 카드 쪽 응답이 **두 경로에 한 벌**로 선다.
    */
   restarting?: boolean;
-  /** 없으면 뒤처진 칩도 안 눌린다 — *"권한 없는 사람에게는 문이 없다"*(`AgentGrid` 주석). */
-  onRelaunch?: () => void;
 }) {
   // **훅을 이 컴포넌트가 직접 부른다** — 격자에서 `t` 를 prop 으로 내려보내면 카드마다
   // 인자가 하나 늘고, 그 인자는 이 칩이 그리는 세 문구에만 쓰인다. 화면이므로 훅이 맞다
@@ -633,28 +631,12 @@ function VersionChip({ handle, runnerVersion, appVersion, restarting, onRelaunch
   */
   const shape = 'inline-block whitespace-nowrap rounded border border-warning-border'
     + ' bg-warning-surface px-1.5 py-px text-meta text-warning';
-  if (!onRelaunch) {
-    return (
-      <span data-testid={`agent-version-${handle}`} data-version="stale" className={shape}>
-        {t('grid.version.stale', { version })}
-      </span>
-    );
-  }
+  // 뒤처진 칩은 **눌리지 않는다**(스펙 2026-09-20 §2) — 새 번들로 가는 길은 그 러너를
+  // 돌리는 오퍼레이터를 갱신하는 것이고, 앱에서 누를 일이 아니다. 칩은 사실만 말한다.
   return (
-    <button
-      data-testid={`agent-version-${handle}`}
-      data-version="stale"
-      // 색은 스크린리더에 아무 말도 하지 않는다(`#443`). 칩 글자가 `↻` 로 끝나므로 그것이
-      // 무엇을 하는 것인지 접근 이름이 말해야 한다.
-      aria-label={t('grid.version.staleAction', { handle, version })}
-      // 포커스 링을 따로 안 붙인다 — 전역 `:focus-visible`(`index.css`)이 준다. `GLYPH_FOCUS`
-      // 는 **얼굴 글리프 전용**이다: 그것들은 `opacity-50` 으로 숨어 있어 `opacity-100` 을
-      // 함께 켜야 하는데(그 상수 주석), 이 칩은 평소에도 또렷하므로 그 조합이 필요 없다.
-      className={`${shape} hover:bg-warning-surface-strong`}
-      onClick={(e) => { e.stopPropagation(); onRelaunch(); }}
-    >
-      {t('grid.version.stale', { version })} <span aria-hidden="true">{'↻'}</span>
-    </button>
+    <span data-testid={`agent-version-${handle}`} data-version="stale" className={shape}>
+      {t('grid.version.stale', { version })}
+    </span>
   );
 }
 
@@ -728,8 +710,8 @@ function VersionChip({ handle, runnerVersion, appVersion, restarting, onRelaunch
  * `focus-visible` 에서 뜬다 — `GLYPH_FOCUS` 가 그 조합을 이미 갖고 있다.
  */
 export function AgentGrid<T extends AgentCardSubject>({
-  agents, selectedId, runnerStates, online, connected, onPick, onCreate, canCreate, onRelaunch,
-  canRelaunch, onStop, appVersion = null, place = 'settings',
+  agents, selectedId, runnerStates, online, connected, onPick, onCreate, canCreate,
+  onStop, appVersion = null, place = 'settings',
 }: {
   agents: T[];
   selectedId: string | null;
@@ -740,17 +722,12 @@ export function AgentGrid<T extends AgentCardSubject>({
   onPick(agent: T): void;
   onCreate(): void;
   canCreate: boolean;
-  /** ▶ · ↻ 가 부르는 것. 없으면 그 자리를 그리지 않는다(권한 없는 사람에게는 문이 없다). */
-  onRelaunch?(agent: T): void;
   /**
-   * **`■` 가 부르는 것** — 도는 러너에게 종료를 요청한다. 없으면 `■` 를 안 그린다:
-   * `onRelaunch` 와 같은 규율이고(*"권한 없는 사람에게는 문이 없다"*), 사이드바는 이것을
-   * 넘기지 않으므로 그 칸에는 오늘처럼 `▶`·`↻` 만 있다.
+   * **`■` 가 부르는 것** — 도는 러너에게 종료를 요청한다. 없으면 `■` 를 안 그린다
+   * (*"권한 없는 사람에게는 문이 없다"*). 사이드바는 이것을 넘기지 않는다.
    *
-   * **`onRelaunch` 와 합치지 않는 이유**: 부르는 API 가 다르다(`requestStop` 대
-   * `reissueRunnerPat`)고, 무엇보다 **되돌리기 어려움이 다르다** — 멈추기는 진행 중인 턴을
-   * 기다렸다가 러너를 내리고, 다시 띄우기는 없는 것을 세운다. 한 콜백에 얼굴 상태로 분기를
-   * 심으면 그 판단이 호출자 쪽으로 새고, 호출자마다 다르게 적힌다.
+   * ▶·↻(다시 띄우기)는 여기 없다(스펙 2026-09-20 §2): 러너를 띄우는 것은 오퍼레이터가
+   * 서버의 배정을 받아 하는 일이고, 앱에는 그것을 누를 자리가 없다.
    */
   onStop?(agent: T): void;
   /**
@@ -763,17 +740,6 @@ export function AgentGrid<T extends AgentCardSubject>({
    * `docs/design.md` §4 가 금지하는 거짓 신호다.
    */
   appVersion?: string | null;
-  /**
-   * **이 카드가 ▶ 를 받는가.** 없으면 `onRelaunch` 가 있는 모든 카드가 받는다 — 그것이
-   * 설정 화면의 오늘 동작이고 기본값으로 남는다.
-   *
-   * 왜 `onRelaunch` 의 유무만으로 안 되는가: 콜백은 격자 전체에 **하나뿐인 값**이라
-   * 카드마다 다르게 줄 수 없다. 그런데 띄울 권한은 카드마다 갈린다(관리자이거나 내가
-   * 소유한 에이전트). 이 술어가 없으면 하나라도 띄울 수 있는 사람에게는 **띄울 수 없는
-   * 카드에도 ▶ 가 그려지고**, `AgentGrid` 가 세운 규칙(*"권한 없는 사람에게는 문이
-   * 없다"*)이 "권한 없는 카드에는" 으로는 지켜지지 않는다.
-   */
-  canRelaunch?(agent: T): boolean;
   /** 이 격자가 선 자리. 기본값 `settings` 가 설정 화면의 오늘 모양이다(`AgentGridPlace` 주석). */
   place?: AgentGridPlace;
 }) {
@@ -1124,14 +1090,8 @@ export function AgentGrid<T extends AgentCardSubject>({
                     둔 러너에 ▶ 를 권하게 된다. 두 값이 함께 와야 뜻이 생기는 얼굴이라
                     (그 함수 주석) 여기서도 함께 본다.
                   */
-                  action={canStop
-                    ? 'stop'
-                    : onRelaunch && (canRelaunch?.(a) ?? true) && faceTakesRelaunch(face) && !stopping
-                      ? 'relaunch'
-                      : null}
-                  onAct={canStop
-                    ? () => onStop?.(a)
-                    : onRelaunch ? () => onRelaunch(a) : undefined}
+                  action={canStop ? 'stop' : null}
+                  onAct={canStop ? () => onStop?.(a) : undefined}
                 />
               )}
 
@@ -1174,13 +1134,6 @@ export function AgentGrid<T extends AgentCardSubject>({
                            이미 손에 들고 있으므로 새 왕복이 없고, 실행기가 그 값을 스토어에
                            밀어 넣는 순간 칩이 따라 바뀐다(`VersionChip.restarting` 주석). */
                         restarting={runnerStates[a.id]?.status === 'restarting'}
-                        /* 뒤처진 칩이 부르는 것은 `▶`·`↻` 와 **같은 콜백**이다 — 하는 일이
-                           같다(러너를 새 번들로 다시 띄운다). 권한 술어도 같은 것을 본다:
-                           문이 없어야 할 사람에게 버전 칩만 문이 되면 `canRelaunch` 가
-                           세운 규칙이 한 자리에서 새는 것이다. */
-                        onRelaunch={onRelaunch && (canRelaunch?.(a) ?? true)
-                          ? () => onRelaunch(a)
-                          : undefined}
                       />
                     </InfoRow>
                   )}
@@ -1243,41 +1196,6 @@ export function AgentGrid<T extends AgentCardSubject>({
                 `face` 가 `ok` 라 아래 `▶`·`↻` 조건에 안 들고, `canStop` 이 `stopping` 을
                 빼므로 `■` 도 안 선다.
               */}
-              {/* `#443`: `unknown` 에는 ▶ 를 **달지 않는다.** ▶ 는 "눌러서 켜라"인데,
-                  지금 도는지 모르는 것을 켜라고 권하면 이미 도는 러너를 하나 더 띄우게
-                  된다 — `#430` 의 중복이 바로 그 모양이었다. 모를 때 화면이 할 일은
-                  행동을 권하는 것이 아니라 **모른다고 말하는 것**이다. */}
-              {/* `canRelaunch` 를 안 준 호출자에게는 오늘 동작 그대로다(그 prop 주석). */}
-              {/* **설정에서는 이 글리프가 없다** — 손잡이가 상태 칩으로 내려갔다
-          (`StateChip` 주석). 사이드바에만 남는 이유도 거기 있다: 64px 트랙에는
-          칩이 들어갈 자리가 없고, 그 자리의 동작은 재기동뿐이라 되돌릴 수 있다. */}
-              {place === 'sidebar' && onRelaunch && (canRelaunch?.(a) ?? true)
-                && faceTakesRelaunch(face) && (
-                /*
-                  **글리프는 사진 안에 있다**(문서: "실행하기 버튼도 사라진다 — 사진 안으로
-                  들어간다"). 그래서 뱃지가 아니라 얼굴을 덮는 원이고, 평소에는 **옅게** 얹혀
-                  사진을 가리지 않는다. 마우스를 올리면 또렷해진다 — 누를 수 있다는 것이
-                  그때 분명해지면 충분하고, 26개가 깔린 화면에서 26개의 진한 글리프는 소음이다.
-
-                  카드와 **다른 동작**이라는 것은 그대로다: 카드를 누르면 설정이 열리고
-                  이것을 누르면 러너가 뜬다.
-                */
-                <button
-                  data-testid={`agent-relaunch-${a.handle}`}
-                  aria-label={face === 'failed'
-                    ? t('grid.card.relaunchFailed', { handle: a.handle })
-                    : t('grid.card.relaunch', { handle: a.handle })}
-                  className={`absolute left-1/2 top-0 flex ${s.glyph} -translate-x-1/2 items-center
-                              justify-center rounded-full leading-none opacity-50 transition
-                              group-hover:opacity-100 ${GLYPH_FOCUS} ${
-                                face === 'failed' ? 'text-state-stuck' : 'text-fg'
-                              }`}
-                  onClick={(e) => { e.stopPropagation(); onRelaunch(a); }}
-                >
-                  <span aria-hidden="true">{face === 'failed' ? '\u21bb' : '\u25b6'}</span>
-                </button>
-              )}
-
               {/*
                 ## `■` 는 여기 없다 — 손잡이가 **상태 칩**으로 내려갔다 (2026-09-09)
 
