@@ -210,16 +210,3 @@ export function isFaceGreyed(face: FaceState): boolean {
   return face === 'stopped' || face === 'unknown' || face === 'retiring';
 }
 
-/**
- * **▶(또는 ↻)를 받는 얼굴인가.**
- *
- * `ok` 가 빠지는 이유: 정상은 기본값이라 손잡이를 붙이지 않는다. `unknown` 이 빠지는 이유는
- * `#443` 이고(모르는 것을 켜라고 권하면 이미 도는 러너를 하나 더 띄운다), `retiring` 이
- * 빠지는 이유는 2026-09-08 실측이다 — 그 ▶ 가 일하고 있던 러너를 죽였다.
- *
- * 두 값이 같은 이유로 빠지므로 **판정을 하나로 둔다.** 조건을 호출부에 늘어놓으면 다음에
- * 값이 하나 더 늘 때 한 자리만 고쳐지고, 그 어긋남은 조용히 '켜라고 권하는' 쪽으로 간다.
- */
-export function faceTakesRelaunch(face: FaceState): boolean {
-  return face === 'stopped' || face === 'failed';
-}

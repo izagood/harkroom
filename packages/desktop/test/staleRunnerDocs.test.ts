@@ -31,11 +31,12 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 
-import {
-  RUNNER_DEV_COMMAND,
-  RUNNER_SIDECAR_NAME,
-  RUNNER_SIDECAR_PATH,
-} from '../src/lib/runnerCommand';
+// 앞 판본은 `src/lib/runnerCommand.ts` 의 상수를 썼다. 그 파일은 앱이 러너 명령을 짓던
+// 자리였고 단계 2 가 없앴다(앱은 러너를 띄우지 않는다) — 문서가 말하는 낡은 명령과
+// 사이드카 이름은 여기서 그대로 든다.
+const RUNNER_DEV_COMMAND = 'pnpm --filter @harkroom/agent start';
+const RUNNER_SIDECAR_NAME = 'harkroom-runner';
+const RUNNER_SIDECAR_PATH = '/Applications/Harkroom.app/Contents/MacOS/harkroom-runner';
 import { runnerStatusLabel } from '../src/components/RunnerStatus';
 import { translator } from '../src/i18n';
 

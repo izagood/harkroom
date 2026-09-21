@@ -471,7 +471,7 @@ describe('AgentsSettings — 만들 때 계정 풀을 고른다', () => {
       }),
     });
     createAgent = vi.fn(async () => ({
-      agent: makeAgent({ id: 'agent-new', handle: 'beta' }), pat: 'murp_new', poolError: null,
+      agent: makeAgent({ id: 'agent-new', handle: 'beta' }), poolError: null,
     }));
     setController({
       listAgents: vi.fn(async () => []),
@@ -529,11 +529,12 @@ describe('AgentsSettings — 만들 때 계정 풀을 고른다', () => {
     expect(createAgent.mock.calls[0]![1]).toBeUndefined();
   });
 
-  it('풀 배정만 실패하면 생성 실패라고 말하지 않는다 — PAT 는 그대로 보여 준다', async () => {
-    // 그렇게 적지 않으면 사람은 PAT 상자를 무효한 것으로 읽고 버린다. 그 토큰은 다시 볼 수 없다.
+  it('풀 배정만 실패하면 생성 실패라고 말하지 않는다', async () => {
+    // 만들어진 것은 만들어진 것이다 — "만들지 못했다"로 적으면 사람은 다시 만들고, 같은
+    // 핸들이 둘이 된다. (앞 판본은 여기서 PAT 상자도 봤다 — 생성이 PAT 를 찍던 시절이고,
+    // 이제 PAT 는 배정된 오퍼레이터가 받아 간다.)
     createAgent = vi.fn(async () => ({
       agent: makeAgent({ id: 'agent-new', handle: 'beta' }),
-      pat: 'murp_new',
       poolError: '데몬이 죽었다',
     }));
     setController({
@@ -550,29 +551,7 @@ describe('AgentsSettings — 만들 때 계정 풀을 고른다', () => {
     screen.getByRole('button', { name: '에이전트 만들기' }).click();
 
     await waitFor(() => expect(screen.getByText(/에이전트는 만들어졌지만/)).toBeTruthy());
-    expect(screen.getByText('murp_new')).toBeTruthy();
     expect(screen.queryByText(/만들지 못했다/)).toBeNull();
-  });
-
-  /**
-   * 토큰 **자체**를 복사하는 버튼. 러너 명령 복사와 둘 다 필요한 이유: 토큰이 가는 곳이
-   * 명령만이 아니다(다른 기기의 `.env`·비밀 저장소·CI 변수). 버튼이 없으면 사람은 명령을
-   * 복사해 앞뒤를 손으로 잘라내야 하고, 한 글자를 흘리면 인증만 조용히 실패한다.
-   */
-  it('PAT 옆에 토큰만 복사하는 버튼이 있다', async () => {
-    const writeText = vi.fn(async () => undefined);
-    Object.defineProperty(navigator, 'clipboard', {
-      value: { writeText }, configurable: true, writable: true,
-    });
-    await openCreate();
-    const { fireEvent } = await import('@testing-library/react');
-    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'beta' } });
-    screen.getByRole('button', { name: '에이전트 만들기' }).click();
-
-    const copy = await screen.findByLabelText('토큰 복사');
-    copy.click();
-    // 명령 껍데기가 아니라 **토큰 원문**이 클립보드로 가야 한다.
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith('murp_new'));
   });
 });
 

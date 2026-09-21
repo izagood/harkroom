@@ -26,7 +26,7 @@
  * 그 한 줄이 **두 화면에 각각** 있다: `TeamDetail` 의 `team-mention-note`(팀 → 집합)와
  * `HandleGroupsSettings` 의 목록 머리(집합 → 팀).
  */
-export type SectionId = 'profile' | 'notifications' | 'messages' | 'appearance' | 'connection' | 'communities' | 'agents' | 'agent-defaults' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'gallery';
+export type SectionId = 'profile' | 'notifications' | 'messages' | 'appearance' | 'connection' | 'communities' | 'agents' | 'agent-defaults' | 'operators' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'gallery';
 
 export const SETTINGS_GROUPS: { title: string; items: { id: SectionId; label: string }[] }[] = [
   {
@@ -50,6 +50,10 @@ export const SETTINGS_GROUPS: { title: string; items: { id: SectionId; label: st
       // 고치는 화면 안에 워크스페이스 전체에 걸리는 값이 앉아 있으면 지금 무엇을 고치고
       // 있는지가 사라진다 — 그래서 목차의 별도 항목으로 두고 Agents 바로 뒤에 세운다.
       { id: 'agent-defaults', label: 'Agent defaults' },
+      // 스펙 2026-09-20 §3: 에이전트를 **어디서** 돌릴지. 러너를 띄우는 것은 이제 오퍼레이터라
+      // 사람이 앱에서 하는 일은 등록·배정뿐이고, 그 목록이 이 화면이다. Agents 옆에 두는
+      // 이유는 배정이 에이전트 상세에서 이 목록을 가리키기 때문이다.
+      { id: 'operators', label: 'Operators' },
       // 계정 풀은 **기기 로컬 자원**이다 — 이 기기의 디렉터리와 그 안의 자격증명이고,
       // 서버에도 다른 기기에도 없다. Agents 옆에 두는 이유는 러너가 그것을 쓰기 때문이고,
       // Agents 안에 넣지 않는 이유는 개별 에이전트의 설정이 아니기 때문이다

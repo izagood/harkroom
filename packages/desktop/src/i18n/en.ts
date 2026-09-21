@@ -892,7 +892,6 @@ export const en = {
   'agents.run.note': 'What it runs on.',
   'agents.run.title': 'Run',
 
-  'agents.runner.commandCopy': 'Copy the command',
   'agents.runner.copied': 'Copied',
   'agents.runner.copy': 'Copy',
   /** 선택조차 못 했을 때. 남은 길이 손으로 옮겨 적는 것뿐이라 그것을 말한다. */
@@ -922,54 +921,23 @@ export const en = {
     + 'its mentions between them.',
   'agents.runner.ownedNoteDaemon': 'daemon already holds',
   'agents.runner.ownedNoteOwn': 'I own',
-  'agents.runner.patGoToMint': 'Go to minting a PAT',
-  'agents.runner.reissue': 'Reissue the PAT',
-  'agents.runner.reissueFailed': 'The PAT was not reissued: {reason}',
   /**
-   * 재발급이 무엇을 하는지. **순서가 요점이다**(새 발급 → 옛 폐기 → 재실행) — 그리고
-   * 옛 PAT 로 돌던 러너가 어떻게 물러나는지까지 적는다. 그 러너가 다른 머신에 있으면
-   * 사람은 그것을 손으로 죽이러 갈 수 없고, 스스로 물러난다는 사실이 그 걱정을 없앤다.
+   * 발급 직후 상자의 안내. 앞 판본은 여기서 러너 명령을 통째로 복사시켰다 — 이제 배정된
+   * 오퍼레이터가 토큰을 서버에서 직접 받아 가므로 사람이 옮겨 적을 일이 없다(단계 2 한정).
    */
-  'agents.runner.reissueNote':
-    'This mints a new PAT, {strongRevoke}, and starts the runner again. A runner still holding '
-    + 'the old PAT — including one on another machine — gets a 401 on its next call and steps '
-    + 'down with exit code 78.',
-  'agents.runner.reissueNoteRevoke': 'revokes the old one',
-  'agents.runner.reissuing': 'Reissuing…',
-  'agents.runner.startFailed': 'The runner did not start: {reason}',
-  /**
-   * 손으로 띄우는 명령 **두 갈래의 이름**(`lib/runnerCommand.ts`). 그 파일이 *"두 갈래를
-   * 모두 적는다 — 하나만 적으면 반쪽이 또 낡는다"* 고 못 박았고, 사람이 자기 상황을
-   * 고르려면 **각 줄이 어느 상황의 것인지**를 알아야 한다.
-   *
-   * `#` 를 문구에 함께 두는 이유: 이 값은 **셸에 붙여넣는 텍스트**다. 주석 기호를 코드가
-   * 붙이고 문구만 사전에서 오면, 번역자가 이것이 셸 주석이라는 것을 모르고 줄바꿈을
-   * 넣어 그 아래 명령을 통째로 주석에서 꺼낸다.
-   *
-   * **`Run a runner` 와 갈린다**(아래 `templateHeading`): 저것은 절의 제목이고 이 둘은
-   * 클립보드에 실려 나가는 값이다.
-   */
-  'agents.runner.commandBundledNote': '# If you installed the app (change the path if you installed it elsewhere)',
-  /** 저장소를 클론한 사람만의 길이다 — 배포판에는 이 소스가 없다(그 파일 머리말). */
-  'agents.runner.commandDevNote': '# A checkout of the Harkroom repository',
-  'agents.runner.templateHeading': 'Run a runner',
-  /** 토큰을 잃었을 때 갈 곳. **글로만 두면 발급 자리를 찾아야 한다**(`#177`). */
-  'agents.runner.templateNote': 'A token is visible only when it is minted. If you lost it, mint a new one.',
-  /**
-   * 남이 소유한 에이전트는 사람이 손으로 띄워야 한다. **세 사실을 진다** — 서버는 안
-   * 띄운다 / 이 앱은 내 것만 띄운다 / 그 밖은 이 명령을 직접 돌리기 전까지 답하지 않고
-   * 멘션은 쌓인다. 마지막을 자르면 사람은 "부르면 언젠가 오겠지"로 읽는다.
-   */
-  'agents.runner.whoStarts':
-    'The Harkroom {strongServer} does not start runners. This desktop app starts only the agents '
-    + '{strongOwn} — an agent someone else owns, or one with no owner, {strongNoAnswer} '
-    + '(the mentions just pile up). The runner ships with the app, so any machine with Harkroom '
-    + 'installed will do — a checkout is only needed for the development branch below.',
-  'agents.runner.whoStartsNoAnswer': 'does not answer mentions until you run the command above to attach a runner',
-  'agents.runner.whoStartsOwn': 'I own',
-  'agents.runner.whoStartsServer': 'server',
+  'agents.runner.operatorTakesPat':
+    'You do not need to copy this anywhere for an assigned operator — it fetches the token from the server itself. '
+    + 'Keep it only if you start a runner by hand.',
 
   'agents.stale.allCurrent': 'Every running runner is on this bundle.',
+  /**
+   * 이 머신의 오퍼레이터가 돌리는 러너 중 뒤처진 것. 버튼은 없다(스펙 2026-09-20 §2) —
+   * 새 번들로 가는 길은 이 머신의 오퍼레이터를 갱신하는 것이라 그것을 적는다.
+   */
+  'agents.stale.here': {
+    one: '{count} runner on this machine is behind this bundle — update the operator here to bring it forward.',
+    other: '{count} runners on this machine are behind this bundle — update the operator here to bring them forward.',
+  },
   /**
    * 뒤처진 러너가 **보이는데 이 버튼의 대상이 아닐 때.** `allCurrent` 를 그대로 쓰면
    * 카드가 `· Outdated` 를 달고 있는 옆에서 "전부 이 번들이다"를 단정한다 — 그 어긋남이
@@ -987,36 +955,6 @@ export const en = {
    */
   'agents.stale.note': 'A restart {strong} — it comes back on the new bundle once the turn is done.',
   'agents.stale.noteStrong': 'does not cut a turn that is in flight',
-  /**
-   * 개수를 이름에 넣는다 — 원래 주석이 적은 대로 **개수가 곧 영향 범위**다.
-   * 복수형이 갈린다: 영어는 `1 runner` / `2 runners` 이고 한국어는 한 갈래다.
-   */
-  'agents.stale.restart': {
-    one: 'Restart the outdated runner ({count})',
-    other: 'Restart all outdated runners ({count})',
-  },
-  /**
-   * 끝났다는 사실. **걸었다(`restartRequested`)와 다른 말이다** — 그 사이가 진행 중인
-   * 턴을 기다리는 시간이고, 실측 상한이 15분이다. 복수형이 갈린다.
-   */
-  'agents.stale.restartDone': {
-    one: '{count} runner is back on the new bundle.',
-    other: '{count} runners are back on the new bundle.',
-  },
-  'agents.stale.restartFailed': 'The runners were not restarted: {reason}',
-  /**
-   * 누른 **즉시** 서는 줄. 이 조작은 예약이라 여기서 끝나지 않는다는 것을 함께 적는다 —
-   * 안 적으면 사람은 곧 버전이 바뀔 것으로 읽고, 안 바뀌는 동안 다시 누른다.
-   */
-  'agents.stale.restartRequested': {
-    one: 'A restart is queued for {count} runner — it comes back on the new bundle once its turn is done.',
-    other: 'A restart is queued for {count} runners — they come back on the new bundle once their turns are done.',
-  },
-  /**
-   * 누르는 동안의 버튼 이름. **개수를 안 싣는다** — 그 수는 바로 아래 진행 줄이 말하고,
-   * 버튼은 지금 눌리지 않는다는 사실만 지면 된다.
-   */
-  'agents.stale.restarting': 'Restarting…',
   /** 앱 버전을 모르면 비교 기준이 없다 — **"전부 최신"은 확인하지 않은 것을 단정하는 말이다.** */
   'agents.stale.unknownAppVersion': 'The app version could not be read, so being outdated cannot be judged.',
   /**
@@ -1390,113 +1328,11 @@ export const en = {
   // ---------------------------------------------------------------------------
 
   /**
-   * 78 로 죽었는데 PAT 가 거절됐다. **대조군이다** — `#473` 이 고친 것은 78 을 전부
-   * 이쪽으로 보내던 것이지 이 갈래 자체가 아니라, 뜻을 그대로 옮긴다.
-   */
-  'runner.exit.credentialRejected': 'The PAT was revoked or rotated — minting a new one brings it back',
-  /**
-   * 로그인이 풀렸는데 실행 파일 이름을 안다. **한 줄짜리 명령을 준다** — `#476` 이
-   * 세운 규율이다(`Login required` 는 어디를 볼지 안 말한다).
-   */
-  'runner.exit.loginRequired': '{what} is no longer logged in — run {binary} in a terminal and log in again',
-  /** 이름을 모를 때. 그때는 명령을 지어내지 않고 **그 CLI** 라고만 말한다(`#368`). */
-  'runner.exit.loginRequiredNoBinary': '{what} is no longer logged in — log in again with that CLI',
-  /**
    * 실행 파일이 없다. **무엇이 없는지와 어떻게 채우는지를 둘 다** 말한다(`#473`+`#476`).
    * `{hint}` 는 `installHint()` 가 준 한 줄이고, 없으면 아래 `notFoundNoHint` 를 쓴다 —
    * 지어내지 않는다.
    */
   'runner.exit.notFound': '{what} was not found — install it and make sure it is on PATH. {hint}',
-  'runner.exit.notFoundNoHint': '{what} was not found — install it and make sure it is on PATH',
-  /**
-   * 실행 파일 이름을 모를 때 `{what}` 자리에 들어가는 말. `{harness}` 에 하네스 이름이
-   * 오고, 그것도 없으면 아래 `subjectHarnessUnknown` 이 그 자리에 들어간다.
-   */
-  'runner.exit.subjectHarness': "this agent's harness ({harness})",
-  'runner.exit.subjectHarnessUnknown': 'unknown',
-  /**
-   * 78 인데 사유를 못 가렸다. **이 갈래가 `#473` 이 만든 것이다** — 앞 셋 중 하나로
-   * 접으면 사람이 틀린 일을 한다. *"가리지 못했다"* 가 영어에도 남아야 하는 이유다.
-   */
-  'runner.exit.unknown':
-    'It exited over a configuration problem (78) — the reason could not be told apart. '
-    + 'Check the runner log',
-  /** 로그 꼬리가 있을 때. **러너가 한 말을 그대로 보인다** — 앱이 다시 설명하지 않는다. */
-  'runner.exit.unknownWithLog':
-    'It exited over a configuration problem (78) — the reason could not be told apart. '
-    + 'The last lines of the runner log: {excerpt}',
-
-  /**
-   * daemon 에 못 닿아 아무것도 안 띄웠다. **인과가 한 문장에 있다** — 자르면 사람은
-   * "daemon 이 안 됐다"와 "러너가 안 떴다"를 별개 사고로 센다.
-   */
-  'runner.launch.daemonUnreachable': 'The daemon could not be reached, so no runner was started: {reason}',
-  /** 그 밖의 실패. **결과 상태로 쓴다**(`The X was not Yed` 규율). */
-  'runner.launch.failed': 'The runner did not start: {reason}',
-  /**
-   * 키체인을 못 읽었다. **여기서 발급으로 넘어가지 않는 것이 요점**이라 그 사실을
-   * 사람에게도 말한다 — `since` 절을 빼면 사람은 앱이 게으르다고 읽는다.
-   */
-  'runner.launch.keychainUnreadable':
-    'The keychain could not be read — no new PAT was minted, since that could kill a running runner: {reason}',
-  /** 계정은 만들어졌다. **그 사실을 먼저 말한다** — 안 그러면 사람은 처음부터 다시 만든다. */
-  'runner.launch.patNotStored':
-    'The agent was created, but its PAT was not stored in the keychain, so no runner was started: {reason}',
-
-  /** 키체인을 못 읽어 옛 것을 못 지운다. 그래서 **발급도 안 했다**. */
-  'runner.reissue.keychainUnreadable':
-    'The keychain could not be read, so the old PAT cannot be revoked — nothing was re-minted: {reason}',
-  /** 발급 자체가 실패했다. **아무것도 잃지 않았다**가 이 문장의 값이다. */
-  'runner.reissue.mintFailed': 'A new PAT was not minted — the old one is still alive: {reason}',
-  /**
-   * 옛 러너가 아직 그 PAT 로 돌고 있어 폐기를 미뤘다. **왜 미뤘는지와 지금 끊으면
-   * 무엇을 잃는지**를 함께 말한다 — 대가를 안 적으면 사람은 공짜인 줄 알고 끊는다.
-   */
-  'runner.reissue.revokeDeferred':
-    'Starting again with the new PAT. The old one ({label}) was not revoked — a runner is still '
-    + 'finishing its turn with it (it steps down on its own when done). If you must cut it now, '
-    + 'revoke it by hand in the settings — that turn will not leave an answer.',
-  /**
-   * 재발급했는데 옛 PAT 를 못 지웠다. **남은 일을 말한다** — 폐기되지 않은 PAT 가
-   * 남았고 그것은 사람이 알아야 하는 상태다.
-   */
-  'runner.reissue.revokeFailed':
-    'Started again with the new PAT, but the old one ({label}) was not revoked — '
-    + 'revoke it by hand in the settings: {reason}',
-  /** 회전 중. **기다림을 화면에 적는다** — 그 침묵이 2026-09-08 사고의 시작이었다. */
-  'runner.reissue.waiting': 'Got a new PAT — waiting for the old runner to finish its turn and step down',
-
-  /** daemon 에 종료를 못 전했다 — 재기동이 시작조차 안 됐다. */
-  'runner.restart.killFailed': 'It could not be restarted — the daemon was not told to stop it: {reason}',
-  /** 죽기는 했는데 다시 띄울 상대가 없다. **어디까지 됐는지**를 말한다. */
-  'runner.restart.respawnUnreachable':
-    'The runner stepped down, but the daemon could not be reached to start it again: {reason}',
-  /**
-   * 상한에 걸렸다. **`Timeout` 이 아니다** — 상한에 걸린 것은 우리 기다림이고
-   * 러너는 정상이다. 그리고 **다음에 무엇이 일어나는지**까지 말한다.
-   *
-   * 2026-09-10: 뒷문장이 "다음 앱 기동에 뜬다"였다. 그것이 사실이었고 그래서 고쳤다 —
-   * 앱이 다시 뜰 때까지 그 에이전트에는 러너가 없어, 예약된 깨움이 21분 열리지 않았다.
-   * 지금은 기다림을 다시 걸므로(`queueRespawnRetry`) 문구도 그 사실을 말한다.
-   */
-  'runner.restart.stillRunning':
-    'The runner has not stepped down yet — the turn in flight is long. The stop request has already '
-    + 'gone, so it comes up as soon as that turn ends.',
-  /**
-   * 앞 세대가 물러나기를 기다린다. 2026-09-08 사고가 만든 문장이라 **지금 무엇이
-   * 일어나는지와 다음에 무엇이 일어나는지**를 둘 다 말한다.
-   */
-  'runner.restart.waitingForRetirement':
-    'The previous runner is finishing its turn before stepping down — a new one starts when it does',
-
-  /**
-   * 장부에 없는데 서버에는 붙어 있다. **실패가 아니다** — 러너는 떴고 상태는 `running`
-   * 이다. 이 문장이 붙는 이유는 *"이 계정으로 내가 모르는 러너가 하나 더 붙어 있을 수
-   * 있다"* 가 사람이 알아야 할 사실이기 때문이다(`#430` 이 기록한 오독).
-   */
-  'runner.stranger.attached':
-    "A runner for this account is attached to the server but is not in this daemon's ledger — "
-    + 'a new one was started for this app',
 
   // ---------------------------------------------------------------------------
   // sidebar — **화면 이름이다.** 이 말들을 내는 판정이 `lib/` 에 없다: 사이드바가
@@ -2182,11 +2018,6 @@ export const en = {
   'grid.version.restarting': 'Restarting…',
   'grid.version.stale': '{version} · Outdated',
   /**
-   * 그 칩의 접근 이름. **무엇을 하는 버튼인지와 왜인지를 함께 진다** — 칩 글자가 `↻` 로
-   * 끝나므로 그것이 무슨 일인지는 이름만이 말할 수 있다.
-   */
-  'grid.version.staleAction': 'Restart the runner of {handle} — {version} is behind the app',
-  /**
    * 버전을 모르는 러너. **칩을 안 그리는 것이 아니라 모른다고 적는다** — 안 그리면
    * "러너가 없다"와 구분되지 않는다(원래 주석이 이 칩을 만든 이유가 그것이다).
    */
@@ -2739,11 +2570,6 @@ export const en = {
   /** 설정으로 가는 문. **`canSeeConfig` 인 사람에게만 선다** — 없는 사람에게는 문이 없다. */
   'profile.actions.agentSettings': 'Agent settings',
   'profile.actions.dm': 'Open a DM',
-  /** 예약을 무른다. 러너는 계속 돈다 — 무르는 것은 **예약**이지 러너가 아니다. */
-  'profile.actions.restartCancel': 'Cancel the queued restart',
-  /** 뒤처졌다고 **확인됐을 때만** 이 이름이다(위 표). */
-  'profile.actions.restartStale': 'Restart on the new bundle',
-  'profile.actions.restart': 'Restart the runner',
 
   'profile.rows.harness': 'Harness',
   'profile.rows.kind': 'Kind',
@@ -3694,6 +3520,47 @@ export const en = {
   // - **`Invite`(화면 제목) · `admin`** — 이미 영어이자 고유어다
   // - **토큰 문자열** — 데이터다
   // ---------------------------------------------------------------------------
+
+  /**
+   * 설정 › Operators(스펙 2026-09-20 §3). 러너를 띄우는 것은 앱이 아니라 오퍼레이터라,
+   * 사람이 앱에서 하는 일은 등록·보기·폐기뿐이다. 코드는 한 번만 보이므로 초대 토큰과
+   * 같은 어조로 말한다.
+   */
+  'operators.description': 'Machines that run your agents. Register one here, then assign agents to it.',
+  'operators.loading': 'Loading…',
+  'operators.listFailed': 'The operators could not be read',
+  'operators.none': 'No operator is registered yet. Mint a code below and run it on the machine that should run your agents.',
+  'operators.online': 'Connected',
+  'operators.offline': 'Disconnected',
+  'operators.lastSeen': 'last seen {at}',
+  'operators.revoke': 'Revoke',
+  'operators.revokeAction': 'Revoke {name}',
+  'operators.revokeFailed': 'The operator was not revoked',
+  'operators.registerNote':
+    'A registration code is valid for five minutes and works once. Run the command it prints on the machine, '
+    + 'and that machine shows up here as an operator.',
+  'operators.register': 'Mint a registration code',
+  'operators.registerAgain': 'Mint a new code (the one above disappears)',
+  'operators.registerBusy': 'Minting…',
+  'operators.registerFailed': 'The code was not minted',
+  'operators.codeWarning': 'This code is on screen only now — leave this view and it is gone',
+  'operators.codeNextStep': 'Run this on the machine within five minutes. It asks for a name and keeps its own token.',
+
+  /** 에이전트 상세의 배정(스펙 §3). 배정이 곧 "어디서 돌리나"다 — 앱은 러너를 띄우지 않는다. */
+  'agents.assignment.heading': 'Where it runs',
+  'agents.assignment.label': 'Assign an operator',
+  'agents.assignment.none': 'Not assigned — no operator will start a runner for this agent.',
+  'agents.assignment.current': 'Runs on {name}',
+  'agents.assignment.currentOffline': 'Runs on {name} — currently disconnected, so no runner is up',
+  'agents.assignment.unknownOperator': 'an operator you cannot see',
+  'agents.assignment.pick': 'Choose an operator…',
+  'agents.assignment.unassign': 'Unassign',
+  'agents.assignment.noOperators': 'No operator is registered yet — register one under Operators first.',
+  'agents.assignment.failed': 'The assignment was not saved: {reason}',
+  'agents.assignment.notCapable': 'That operator has not listed this agent in its local config, so it refused.',
+  'agents.assignment.note':
+    'Assigning tells that operator to start the runner; reassigning lets the old runner finish its turn first. '
+    + 'The operator must also list this agent in its own config — both sides have to agree.',
 
   'invite.busy': 'Minting…',
   'invite.create': 'Mint an invite token',
