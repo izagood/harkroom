@@ -75,7 +75,7 @@ export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<vo
       // uuid 가 아니면 조회조차 안 한다 — pg 가 형 오류로 500 을 내는 것을 403 앞에서 막는다.
       const agent = UUID.test(agentId) ? await pool.query(
         `select ${ACCOUNT_COLS} from agent_assignment asg join account a on a.id = asg.agent_id
-          where asg.operator_id = $1 and asg.agent_id = $2 and a.kind = 'agent'`,
+          where asg.operator_id = $1 and asg.agent_id = $2 and a.kind = 'agent' and a.deleted_at is null`,
         [operator.id, agentId]) : null;
       if (!agent?.rowCount) {
         await reply.code(403).send({ error: { code: 'not_assigned', message: '이 오퍼레이터에 배정되지 않은 에이전트다' } });
@@ -86,11 +86,14 @@ export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<vo
     }
     const viaSession = await pool.query(
       `select ${ACCOUNT_COLS} from session s join account a on a.id = s.account_id
-       where s.token_hash = $1 and s.expires_at > now()`, [hash]);
+       where s.token_hash = $1 and s.expires_at > now() and a.deleted_at is null`, [hash]);
     if (viaSession.rowCount) { req.account = viaSession.rows[0]; req.credentialHash = hash; return; }
     const viaPat = await pool.query(
+      // 삭제된 계정은 어떤 자격증명으로도 서지 못한다(061). 삭제가 PAT 를 전부 폐기하므로
+      // 이 조건은 보통 걸리지 않지만, 삭제 뒤에 발급된 PAT(소유자 라우트는 계정을 목록으로
+      // 찾지 않는다) 하나가 지워진 에이전트를 되살리는 길이 되면 안 된다.
       `select ${ACCOUNT_COLS} from pat p join account a on a.id = p.account_id
-       where p.token_hash = $1 and p.revoked_at is null`, [hash]);
+       where p.token_hash = $1 and p.revoked_at is null and a.deleted_at is null`, [hash]);
     if (viaPat.rowCount) { req.account = viaPat.rows[0]; req.credentialHash = hash; }
   });
 

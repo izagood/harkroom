@@ -321,6 +321,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const [memSort, setMemSort] = useState<MemorySort>('recent');
   // #251: 비활성화는 되돌릴 수 없는 작업이므로 확인 단계를 거친다.
   const [confirmingDisable, setConfirmingDisable] = useState(false);
+  // #836: 삭제도 두 걸음이다. 비활성화와 달리 **handle 을 그대로 쳐야** 확인 버튼이 선다 —
+  // 두 위험이 나란히 있는 화면에서 확인 모양까지 같으면, 끄려던 손이 지우는 쪽을 누른다.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
   // 라벨을 하드코딩하면 재발급이 막힌다 — 라벨은 살아 있는 토큰 안에서 유일하고
   // (마이그레이션 010) 서버가 중복을 409 로 거절한다. 토큰을 잃어 폐기한 뒤 같은 이름으로
   // 다시 발급하는 것이 주 사용 흐름이라, 사용자가 이름을 정할 수 있어야 한다.
@@ -859,6 +863,30 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     } finally {
       setBusy(false);
       setConfirmingDisable(false);
+    }
+  };
+
+  /**
+   * #836: 에이전트를 명부에서 내린다. **비활성화와 다른 조작이다** — 되돌리지 않는다.
+   *
+   * 성공하면 격자로 돌아간다. 상세에 남으면 이미 없는 에이전트의 설정 칸이 그대로 서 있고,
+   * 거기서 누른 저장은 404 로 죽는다 — 사람은 자기가 방금 지웠다는 것을 잊는다.
+   */
+  const removeAgent = async () => {
+    if (!selected || deleteConfirmText !== selected.handle) return;
+    setError(null);
+    setBusy(true);
+    try {
+      await getController().deleteAgent(selected.id);
+      setAgents((prev) => prev.filter((a) => a.id !== selected.id));
+      setSelected(null);
+      setView('grid');
+      setConfirmingDelete(false);
+      setDeleteConfirmText('');
+    } catch {
+      setError(t('agents.delete.failed'));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -1731,6 +1759,73 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       onClick={() => void toggleDisabled()}
                     >
                       {t('agents.disable.disable')}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* #836: 에이전트 삭제. 비활성화 **아래**에 둔다 — 위아래가 곧 세기라, 되돌릴 수
+                있는 것을 먼저 보여 주고 되돌릴 수 없는 것을 그 다음에 둔다. 관리 행위이므로
+                admin 만 보인다(비활성화와 같은 문). */}
+            {selected && isAdmin && (
+              <div className="rounded border border-danger-border bg-danger-surface p-3">
+                <div className="text-meta font-medium text-fg-muted">{t('agents.delete.heading')}</div>
+                {confirmingDelete ? (
+                  <div className="mt-2">
+                    <p className="text-meta text-danger mb-2">
+                      {emphasize(t('agents.delete.warning'), {
+                        strongIrreversible: t('agents.delete.warningIrreversible'),
+                        strongHistory: t('agents.delete.warningHistory'),
+                      })}
+                    </p>
+                    {/* 이름을 그대로 치게 한다. 버튼 하나 더 누르는 확인은 "예"를 두 번
+                        누르는 것과 같아서, 지우려던 것이 이 에이전트가 맞는지는 묻지 않는다. */}
+                    <label className="block text-meta text-fg-subtle mb-1" htmlFor="agent-delete-confirm">
+                      {t('agents.delete.confirmPrompt', { handle: selected.handle })}
+                    </label>
+                    <input
+                      id="agent-delete-confirm"
+                      data-testid="agent-delete-confirm-input"
+                      className="mb-2 w-full rounded border border-border bg-surface px-2 py-1 text-meta text-fg"
+                      value={deleteConfirmText}
+                      autoComplete="off"
+                      onChange={(e) => setDeleteConfirmText(e.target.value)}
+                    />
+                    <div className="flex gap-1">
+                      <button
+                        className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                        data-testid="agent-delete-confirm"
+                        aria-label={t('agents.delete.confirm')}
+                        disabled={busy || deleteConfirmText !== selected.handle}
+                        onClick={() => void removeAgent()}
+                      >
+                        {t('agents.delete.confirm')}
+                      </button>
+                      <button
+                        className="rounded border border-border px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
+                        onClick={() => { setConfirmingDelete(false); setDeleteConfirmText(''); }}
+                      >
+                        {t('agents.delete.cancel')}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-2">
+                    <p className="text-meta text-fg-subtle mb-2">
+                      {emphasize(t('agents.delete.note'), {
+                        strongIrreversible: t('agents.delete.noteIrreversible'),
+                        strongHistory: t('agents.delete.noteHistory'),
+                      })}
+                    </p>
+                    <button
+                      className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                      data-testid="agent-delete"
+                      aria-label={t('agents.delete.action')}
+                      disabled={busy}
+                      onClick={() => { setConfirmingDelete(true); setDeleteConfirmText(''); }}
+                    >
+                      {t('agents.delete.delete')}
                     </button>
                   </div>
                 )}

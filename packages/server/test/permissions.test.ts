@@ -15,7 +15,7 @@ let ownerId: string; let memberId: string; let otherId: string; let agentId: str
 const view = (id: string, role: AccountView['role']): AccountView => ({
   id, handle: `h-${id.slice(0, 4)}`, displayName: 'x', kind: 'human',
   isAdmin: role === 'owner' || role === 'admin', role,
-  ownerAccountId: null, disabled: false,
+  ownerAccountId: null, disabled: false, deleted: false,
   status: 'available', statusText: null, avatarAttachmentId: null,
 });
 

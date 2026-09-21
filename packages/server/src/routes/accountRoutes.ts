@@ -5,7 +5,7 @@ import { newToken } from '../auth/tokens.js';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { ACCOUNT_STATUSES, CREDENTIAL_SCOPES, INVOKE_SCOPES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@harkroom/shared';
 import {
-  ackAgentStop, createAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
+  ackAgentStop, createAgentAccount, deleteAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
   revokeAllPats, setAgentMcpServers, setInvoker, undoAgentStopRequest, updateAgent, validateMcpServers, validateScopeChange,
 } from '../services/agents.js';
 import { actorOf, recordAudit } from '../audit.js';
@@ -470,6 +470,39 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
       }, req);
     }
     return updated;
+  });
+
+  /**
+   * 에이전트를 **삭제한다**(#836). 만들기·고치기는 있는데 내리는 길이 없어서, 잘못 만든
+   * 에이전트가 목록에 영원히 남거나 운영자가 DB 를 손으로 고쳐야 했다(#427 이 종료 요청에서
+   * 닫은 것과 같은 모양의 구멍이다 — 그 우회는 감사에 아무것도 남기지 않는다).
+   *
+   * **비활성화와 다른 것**: 비활성화는 "꺼 뒀다"이고 다시 켤 수 있다. 삭제는 "명부에 없다"
+   * 이고 되돌리지 않는다. 화면이 둘을 나란히 두는 이유도, 서버가 컬럼을 따로 두는 이유도
+   * 그것이다(061).
+   *
+   * 메시지는 남는다 — `deleteAgentAccount` 주석. 그래서 이 라우트는 이력을 지우는 수단이
+   * 아니고, 응답도 지운 개수 같은 것을 주지 않는다.
+   *
+   * 가드는 종료 요청과 **같은 문**(`agent.manage`)이다. 삭제가 더 센 조작이니 더 좁혀야
+   * 한다고 생각하기 쉽지만, 이 문을 지나는 사람은 이미 PAT 를 전부 폐기하고 러너를 세울 수
+   * 있다 — 문을 하나 더 만들면 권한이 아니라 헷갈림만 는다.
+   */
+  app.delete('/accounts/agents/:id', { preHandler: app.requireCap('agent.manage', { kind: 'agent', param: 'id' }) }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const removed = await deleteAgentAccount(pool, id);
+    // 존재 확인은 서비스가 한다 — 없는(또는 이미 지운) 에이전트에 감사만 남는 모양을 피한다
+    // (위 PATCH 주석과 같은 규칙).
+    if (!removed) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+    }
+    await recordAudit(pool, {
+      // 지시문도 기억 본문도 넣지 않는다 — 감사에 본문을 복사하면 삭제가 삭제가 아니다
+      // (종료 요청 기록과 같은 규칙). 누가·언제·누구를, 그리고 함께 죽은 PAT 만 남긴다.
+      action: 'agent.deleted', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { handle: removed.handle, revokedPats: removed.revokedPats },
+    }, req);
+    return reply.code(204).send();
   });
 
   // 러너가 자기 정의를 읽는 자리. 이것이 없으면 UI 수정이 도는 러너에 도달하지 않는다.
