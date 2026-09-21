@@ -447,6 +447,40 @@ fn claude_pool_remove(
     conn.claude_pool_remove(&pool)
 }
 
+// 오퍼레이터 로컬 설정(스펙 2026-09-20 §3 능력). 웹뷰가 넘기는 것은 서버 URL·에이전트 id·
+// 작업 디렉터리 문자열뿐이고 파일은 데몬이 쓴다 — `runnerShellScope.test.ts` 의 경계 그대로.
+#[tauri::command]
+fn operator_agents_list(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+) -> Result<serde_json::Value, String> {
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.operator_agents_list()
+}
+
+#[tauri::command]
+fn operator_agent_set(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+    base_url: String,
+    agent_id: String,
+    config: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.operator_agent_set(&base_url, &agent_id, config)
+}
+
+#[tauri::command]
+fn operator_agent_remove(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+    base_url: String,
+    agent_id: String,
+) -> Result<serde_json::Value, String> {
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.operator_agent_remove(&base_url, &agent_id)
+}
+
 #[tauri::command]
 fn claude_account_move(
     app: tauri::AppHandle,
@@ -583,6 +617,9 @@ fn main() {
             claude_account_remove,
             claude_pool_remove,
             claude_account_move,
+            operator_agents_list,
+            operator_agent_set,
+            operator_agent_remove,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Harkroom");

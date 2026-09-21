@@ -559,7 +559,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       expect(callers).toEqual([{ fn: 'daemon_command', file: 'daemon_client.rs' }]);
     });
 
-    it('`#[tauri::command]` 중 웹뷰가 채울 수 있는 파라미터를 받는 것은 시크릿 3종·daemon 2종뿐이다', () => {
+    it('`#[tauri::command]` 중 웹뷰가 채울 수 있는 파라미터를 받는 것은 시크릿 3종·daemon 2종·로컬 설정 2종뿐이다', () => {
       const commands = [...mainRs.matchAll(
         /#\[tauri::command\]\s*\n\s*(?:async\s+)?fn\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)/g,
       )].map((m) => {
@@ -587,8 +587,15 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
           'claude_account_login_submit', 'claude_account_move',
           'claude_account_remove', 'claude_accounts_configure', 'claude_pool_remove',
           'daemon_kill_runner', 'daemon_spawn_runner',
+          'operator_agent_remove', 'operator_agent_set',
           'secret_delete', 'secret_get', 'secret_set',
         ]);
+      // 오퍼레이터 로컬 설정(스펙 2026-09-20 §3): 웹뷰가 넘기는 것은 서버 URL·에이전트 id 와
+      // 작업 디렉터리 **문자열**뿐이다. 파일은 데몬이 쓰고, 프로그램·인자를 고를 자리가 없다.
+      const setLocal = commands.find((c) => c.fn === 'operator_agent_set')!;
+      expect(setLocal.webviewParams.sort()).toEqual(['agent_id: String', 'base_url: String', 'config: serde_json::Value']);
+      const removeLocal = commands.find((c) => c.fn === 'operator_agent_remove')!;
+      expect(removeLocal.webviewParams.sort()).toEqual(['agent_id: String', 'base_url: String']);
       // `daemon_kill_runner` 가 받는 것은 **누구를·어느 세대를** 뿐이다 — 프로그램·인자·경로를
       // 다시 고를 수 있는 자리가 아니다.
       const kill = commands.find((c) => c.fn === 'daemon_kill_runner')!;

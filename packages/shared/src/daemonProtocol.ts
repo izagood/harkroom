@@ -94,6 +94,13 @@ export const REQUEST_TYPES = [
   'claudeAccountMove',
   // 사용량 조회(2026-09-09). **읽기만 한다** — 계정 디렉터리를 건드리지 않는다.
   'claudeAccountsUsage',
+  // ── 오퍼레이터 로컬 설정(스펙 2026-09-20 §3 능력) ─────────────────────────────
+  //
+  // "이 머신이 어떤 에이전트를 돌릴 수 있나"는 `operator.json` 에 있고 그 파일은 오퍼레이터의
+  // 것이다. 앱은 여기로 넣고 뺀다 — 계정 풀과 같은 이유로 웹뷰가 파일을 직접 만지지 않는다.
+  'operatorAgentsList',
+  'operatorAgentSet',
+  'operatorAgentRemove',
 ] as const;
 export type DaemonRequestType = (typeof REQUEST_TYPES)[number];
 
@@ -642,6 +649,39 @@ export interface ClaudeUsageSnapshot {
   /** 창 길이(ms). 화면이 "지난 5시간"을 자기 상수로 적지 않게 값으로 준다. */
   windowMs: number;
   accounts: ClaudeAccountUsage[];
+}
+
+/** `operatorAgentsList` 의 답. `registered` 는 그 커뮤니티의 토큰이 이 머신에 있는가다. */
+export interface OperatorAgentsListResult {
+  communities: { baseUrl: string; registered: boolean; agents: Record<string, OperatorLocalAgent> }[];
+}
+export interface OperatorLocalAgent { workingDir?: string; claudePool?: string }
+
+export function readOperatorAgentSetPayload(payload: unknown): { baseUrl: string; agentId: string; config: OperatorLocalAgent } | DaemonError {
+  const p = payload as { baseUrl?: unknown; agentId?: unknown; config?: unknown } | null;
+  if (!p || typeof p.baseUrl !== 'string' || !p.baseUrl || typeof p.agentId !== 'string' || !p.agentId) {
+    return daemonError('bad-payload', 'operatorAgentSet 에는 baseUrl·agentId 가 필요하다');
+  }
+  const c = (p.config ?? {}) as { workingDir?: unknown; claudePool?: unknown };
+  if (typeof c !== 'object' || c === null) return daemonError('bad-payload', 'config 는 객체여야 한다');
+  const config: OperatorLocalAgent = {};
+  if (c.workingDir !== undefined) {
+    if (typeof c.workingDir !== 'string') return daemonError('bad-payload', 'workingDir 는 문자열이어야 한다');
+    if (c.workingDir.trim()) config.workingDir = c.workingDir.trim();
+  }
+  if (c.claudePool !== undefined) {
+    if (typeof c.claudePool !== 'string') return daemonError('bad-payload', 'claudePool 은 문자열이어야 한다');
+    if (c.claudePool.trim()) config.claudePool = c.claudePool.trim();
+  }
+  return { baseUrl: p.baseUrl, agentId: p.agentId, config };
+}
+
+export function readOperatorAgentRemovePayload(payload: unknown): { baseUrl: string; agentId: string } | DaemonError {
+  const p = payload as { baseUrl?: unknown; agentId?: unknown } | null;
+  if (!p || typeof p.baseUrl !== 'string' || !p.baseUrl || typeof p.agentId !== 'string' || !p.agentId) {
+    return daemonError('bad-payload', 'operatorAgentRemove 에는 baseUrl·agentId 가 필요하다');
+  }
+  return { baseUrl: p.baseUrl, agentId: p.agentId };
 }
 
 export interface PingResult {
