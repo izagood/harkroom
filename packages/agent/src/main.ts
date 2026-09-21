@@ -26,6 +26,7 @@ import { runPtyTurn } from './pty.js';
 import { SessionStore } from './sessions.js';
 import { resolveAgentStateDir } from './stateDir.js';
 import { assertHarnessContract, readExtraMcpServers } from './turn.js';
+import { createStoppableSleep } from './stoppableSleep.js';
 import type { Exec } from './workspace.js';
 import { isCredentialFailure, nextBackoffMs } from './policy.js';
 import { harnessBinaryName } from '@harkroom/shared';
@@ -71,11 +72,14 @@ const harkroom = new HarkroomAgentClient(relay);
 assertHarnessContract();
 
 let running = true;
+/** 폴 루프의 기다림(backoff). 종료 신호가 이것을 깨운다 — 오퍼레이터가 없을 때 최대 60초를 더 사는 일이 없게. */
+const stoppable = createStoppableSleep();
 /** 아래에서 늦게 배선된다(릴레이 ↔ 매니저 상호 참조). 시그널 핸들러가 참조하므로 먼저 선언한다. */
 let interactive: InteractiveManager | null = null;
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.on(sig, () => {
     running = false;
+    stoppable.wake();
     // #337: 인터랙티브 PTY 는 사람이 닫아 줄 때까지 기다릴 대상이 없다 — 러너가 죽으면
     // 릴레이도 함께 끊긴다. 고아 회수와 같은 경로(SIGTERM→유예→SIGKILL)로 즉시 회수한다.
     interactive?.shutdown();
@@ -386,7 +390,7 @@ const scheduler = createMentionScheduler({
   startedAtMs,
 });
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => stoppable.sleep(ms);
 
 /** 폴 **자체**의 transport 실패용 백오프. 턴 실패는 스케줄러가 entry 별로 쉰다. */
 let backoffMs = 1_000;
