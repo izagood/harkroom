@@ -26,7 +26,7 @@
  * 그 한 줄이 **두 화면에 각각** 있다: `TeamDetail` 의 `team-mention-note`(팀 → 집합)와
  * `HandleGroupsSettings` 의 목록 머리(집합 → 팀).
  */
-export type SectionId = 'profile' | 'notifications' | 'messages' | 'appearance' | 'connection' | 'communities' | 'agents' | 'agent-defaults' | 'operators' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'gallery';
+export type SectionId = 'profile' | 'notifications' | 'messages' | 'appearance' | 'connection' | 'communities' | 'agents' | 'agent-defaults' | 'operators' | 'mcp-servers' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'gallery';
 
 export const SETTINGS_GROUPS: { title: string; items: { id: SectionId; label: string }[] }[] = [
   {
@@ -54,6 +54,9 @@ export const SETTINGS_GROUPS: { title: string; items: { id: SectionId; label: st
       // 사람이 앱에서 하는 일은 등록·배정뿐이고, 그 목록이 이 화면이다. Agents 옆에 두는
       // 이유는 배정이 에이전트 상세에서 이 목록을 가리키기 때문이다.
       { id: 'operators', label: 'Operators' },
+      // 스펙 2026-09-20 §6: 에이전트가 붙일 수 있는 MCP 의 **이름** 목록. 정의는 오퍼레이터
+      // 머신에 있으므로 Operators 바로 뒤다 — 이름을 여기 적고 정의는 그 머신에 적는다.
+      { id: 'mcp-servers', label: 'MCP servers' },
       // 계정 풀은 **기기 로컬 자원**이다 — 이 기기의 디렉터리와 그 안의 자격증명이고,
       // 서버에도 다른 기기에도 없다. Agents 옆에 두는 이유는 러너가 그것을 쓰기 때문이고,
       // Agents 안에 넣지 않는 이유는 개별 에이전트의 설정이 아니기 때문이다
