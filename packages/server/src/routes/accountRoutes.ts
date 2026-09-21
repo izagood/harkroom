@@ -13,7 +13,12 @@ import { mintPat } from '../services/pats.js';
 import { emitEvent } from '../events.js';
 import { deleteMemory, listMemoryEntries } from '../services/memory.js';
 
-export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
+export interface AccountRouteDeps {
+  /** 오퍼레이터 허브 — 에이전트 목록에 배정 거절 사유를 붙인다(`OperatorHub.refusalOf`). 테스트는 생략한다. */
+  operatorHub?: { refusalOf(agentId: string): { reason: string; at: string } | null };
+}
+
+export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, routeDeps: AccountRouteDeps = {}): Promise<void> {
   /**
    * 사람이 자기 상태를 직접 정한다(#186). presence 를 **덮지 않는다** — 별도 컬럼·별도
    * 이벤트다. 여기서 `presence.changed` 를 내면 소켓 연결에서 파생되는 사실과 사람이 고른
@@ -218,7 +223,10 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
   app.get('/accounts/agents', { preHandler: app.requireAccount }, async (req) => {
     const account = req.account!;
     const ownerId = account.isAdmin ? null : account.id;
-    return { agents: await listAgents(pool, ownerId) };
+    const agents = await listAgents(pool, ownerId);
+    // 거절 사유는 서버 메모리의 사실이다(허브) — DB 의 뷰에 붙여 준다. 허브가 없으면 필드도 없다.
+    const hub = routeDeps.operatorHub;
+    return { agents: hub ? agents.map((a) => ({ ...a, runnerRefusal: hub.refusalOf(a.id) })) : agents };
   });
 
   app.post('/accounts/agents', { preHandler: app.requireCap('agent.create') }, async (req, reply) => {

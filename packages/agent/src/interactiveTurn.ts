@@ -142,6 +142,13 @@ export interface InteractiveTurnDeps {
    */
   claudeAccount?: string | null;
   claudePool?: string | null;
+  /**
+   * 계정 이름 → 그 계정의 `CLAUDE_CONFIG_DIR`. 세션 기록에 **다른 계정**이 적혀 있으면(멘션 턴이
+   * 페일오버로 lime→plum 에서 돌았다) 터미널은 그 계정에서 열어야 한다 — 세션 파일이 그 계정
+   * 디렉터리에 있어서, 첫 계정으로 `--resume` 하면 "No conversation found" 로 죽는다(실측
+   * 2026-09-21). 모르는 이름이면 null → 기본(`claudeConfigDir`)으로 간다.
+   */
+  configDirOf?: (account: string) => string | null;
   relay: InteractiveRelay;
   registry: TurnRegistry;
   queue: MentionQueue;
@@ -251,6 +258,12 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
 
     const isFirstTurn = rec.turnsRun === 0 || rec.sessionId === null;
 
+    // 이 세션을 만든 계정을 따른다(`configDirOf` 주석). 기록에 계정이 없거나 이 러너가 모르는
+    // 이름이면 첫 계정 — 그것이 옛 동작이고, 새 세션도 그 계정에서 시작한다.
+    const followed = rec.claudeAccount ? deps.configDirOf?.(rec.claudeAccount) ?? null : null;
+    const claudeConfigDir = followed ?? deps.claudeConfigDir;
+    const claudeAccount = followed ? (rec.claudeAccount ?? null) : (deps.claudeAccount ?? null);
+
     // 권한 플래그 없음(mode 가 mention 이 아니면 permission 표를 안 탄다 — 스펙 §6: 묻는
     // 것이 곧 "직접 개입"의 값이고 사람이 터미널에서 답한다), 프롬프트·stdin 파일 없음
     // (사람이 직접 친다). codex 는 여기서 명확한 거절을 던진다(§5-2 결정 8) — 그 메시지가
@@ -271,7 +284,7 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       extraMcpServers: deps.extraMcpServers,
       operatorBin: deps.operatorBin,
       codexHome: deps.codexHome,
-      claudeConfigDir: deps.claudeConfigDir,
+      claudeConfigDir,
     });
 
     // definition() 을 기다리는 사이 멘션 턴이 시작됐을 수 있다 — 등록 직전에 다시 본다.
@@ -349,7 +362,7 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       // 이유: 판정의 근거는 턴의 이름이 아니라 fd 0 의 정체다(pty.ts::acceptsPtyInput).
       acceptsInput: acceptsPtyInput(plan),
       // 풀 표면이 있는 하네스에만 싣는다(`mentionTurn` 과 같은 근거). 판단은 어댑터가 한다.
-      claudeAccount: hasAccountPool(def.harness) ? (deps.claudeAccount ?? null) : undefined,
+      claudeAccount: hasAccountPool(def.harness) ? claudeAccount : undefined,
       claudePool: hasAccountPool(def.harness) ? (deps.claudePool ?? null) : undefined,
       onViewerCount,
       onCancel,
@@ -369,7 +382,7 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
     await ensureWorkspaceTrusted({
       harness: def.harness,
       workspaceDir: rec.workspaceDir,
-      claudeConfigDir: deps.claudeConfigDir,
+      claudeConfigDir,
       codexHome: deps.codexHome,
     });
     // 계정 단위 관문도 같은 이유로 미리 지난다. 여기서도 부르는 이유는 인터랙티브 턴이
@@ -377,7 +390,7 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
     // 먼저 연 계정은 경고 화면부터 만난다.
     await ensureDangerousModeAccepted({
       harness: def.harness,
-      claudeConfigDir: deps.claudeConfigDir,
+      claudeConfigDir,
     });
 
     const turnStartMs = Date.now();
@@ -428,7 +441,7 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
         // 올려 다음 턴이 resume 으로 조립되게 하고, 그냥 닫았으면(파일 없음) 그대로 둬
         // 같은 uuid 로 첫 턴을 다시 시도하게 한다. 어느 쪽을 틀려도 다음 턴이 죽는다
         // ("Session ID already in use" / "No conversation found").
-        if (turnsRun === 0 && sessionId !== null && (await sessionMaterialized(def.harness, sessionId, deps.claudeConfigDir))) {
+        if (turnsRun === 0 && sessionId !== null && (await sessionMaterialized(def.harness, sessionId, claudeConfigDir))) {
           turnsRun = 1;
         }
 

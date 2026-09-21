@@ -42,7 +42,12 @@ export type OperatorToServerFrame =
   | { type: 'hello'; protocol: 1; capabilities: OperatorCapabilities;
       runners: RunnerAnnounce[]; sessions: AgentSessionView[] }
   | { type: 'runner.started'; agentId: string; runnerId: string }
-  | { type: 'runner.exited'; runnerId: string; code: number | null; reason?: string }
+  /**
+   * `reason` 은 러너가 아니라 오퍼레이터의 판단이다(배정 거절: personal_on_foreign_operator,
+   * mcp_server_missing:<이름>). 그때는 러너가 없었으므로 `agentId` 를 함께 준다 — 서버가 그 사유를
+   * 에이전트에 붙여 화면에 보이게(`OperatorHub.refusalOf`).
+   */
+  | { type: 'runner.exited'; runnerId: string; code: number | null; reason?: string; agentId?: string }
   /**
    * 능력이 바뀌었다 — 소켓은 그대로 두고 능력만 새로 낸다(앱이 로컬 설정에 에이전트를
    * 넣거나 뺐을 때). hello 를 다시 보내면 서버가 러너 목록까지 교체하므로 따로 둔다.
