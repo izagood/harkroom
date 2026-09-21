@@ -265,7 +265,7 @@ export function describeVerdict(
       // "회수했다"까지 적는다 — 사유만 있으면 사람은 "왜 러너가 갈렸지"에 답을 못 찾는다.
       return (
         `${head} — 세대가 다르다(그 러너를 띄운 앱 ${verdict.theirs ?? '(안 적혀 있음)'}, ` +
-        `지금 앱 ${verdict.mine}) — 회수하고 앱이 새로 띄우게 둔다`
+        `지금 앱 ${verdict.mine}) — 회수하고 배정이 다시 띄운다`
       );
   }
 }
