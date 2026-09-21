@@ -191,7 +191,10 @@ export interface ClaudeLaneView {
   accounts: string[];
 }
 
-export interface AgentView extends AccountView, AgentConfig {}
+export interface AgentView extends AccountView, AgentConfig {
+  /** 어느 오퍼레이터가 이 에이전트를 돌리는가(스펙 2026-09-20 §3). null 은 미배정 — 첫 판의 기본값이다. */
+  assignment: AgentAssignmentView | null;
+}
 
 /**
  * 새 에이전트를 만들 때 채워 넣는 기본값(#171). 워크스페이스 전체에 하나뿐이다.

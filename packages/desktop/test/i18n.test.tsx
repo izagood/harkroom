@@ -697,7 +697,7 @@ describe('시간 표기 — 한 벌이다', () => {
 const AGENT_ID = 'id-forge';
 
 const agentView = (extra: Partial<AgentView> = {}): AgentView => ({
-  id: AGENT_ID, handle: 'forge', displayName: 'forge', kind: 'agent', isAdmin: false, role: 'member',
+  id: AGENT_ID, handle: 'forge', displayName: 'forge', kind: 'agent', isAdmin: false, role: 'member', assignment: null,
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
   claudeLane: null,
@@ -1873,7 +1873,7 @@ describe('러너 사유 — 컨트롤러가 지금 언어로 말한다', () => {
 
   const runnerAgent = {
     id: 'a-forge', handle: 'forge', displayName: 'forge', kind: 'agent' as const,
-    isAdmin: false, role: 'member' as const, instructions: '', harness: 'claude-code' as const, model: null, effort: null,
+    isAdmin: false, role: 'member' as const, assignment: null, instructions: '', harness: 'claude-code' as const, model: null, effort: null,
     workingDir: null, mentionPermission: 'auto' as const, ownerAccountId: 'u1',
     disabled: false, runnerVersion: null, stopRequestedAt: null, stopAckedAt: null,
     claudeLane: null,

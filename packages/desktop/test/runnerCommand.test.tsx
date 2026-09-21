@@ -18,7 +18,7 @@ import { translator } from '../src/i18n';
 const ko = translator('ko');
 
 const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
-  id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member',
+  id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member', assignment: null,
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
   claudeLane: null,

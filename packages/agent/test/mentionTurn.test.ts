@@ -51,7 +51,7 @@ function msg(seq: number, authorId: string, body: string, threadRootId: string |
 // fix round 2), 그 구분 자체를 테스트하는 시나리오만 명시적으로 `workingDir: null` 을 준다.
 function defOf(overrides: Partial<AgentView> = {}): AgentView {
   return {
-    id: ME.id, handle: ME.handle, displayName: 'forge', kind: 'agent', isAdmin: false, role: 'member',
+    id: ME.id, handle: ME.handle, displayName: 'forge', kind: 'agent', isAdmin: false, role: 'member', assignment: null,
     instructions: '친절하게 답한다', harness: 'claude-code', model: null, effort: null,
     workingDir: '/repo', mentionPermission: 'auto', ownerAccountId: 'human-1', disabled: false,
     runnerVersion: null,

@@ -1,5 +1,8 @@
 import type { Pool, PoolClient } from 'pg';
-import { AGENT_HARNESSES, type AgentConfig, type AgentHarness, type AgentView } from '@harkroom/shared';
+import {
+  AGENT_HARNESSES, type AgentAssignmentView, type AgentConfig, type AgentHarness, type AgentView,
+} from '@harkroom/shared';
+import type { AgentDefinition } from '@harkroom/shared/operatorProtocol';
 import { getAgentDefaults } from './agentDefaults.js';
 import { getHandleGroupByHandle } from './handleGroups.js';
 
@@ -34,11 +37,17 @@ const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admi
   -- 있을 때 빈 accounts 가 "풀이 비었다"를 말한다. 컬럼 둘로 보내면 화면이 그 둘을
   -- (pool is null && accounts is null) 같은 조합으로 다시 세워야 한다.
   case when l.account_id is null then null
-       else json_build_object('pool', l.pool, 'accounts', l.accounts) end as "claudeLane"`;
+       else json_build_object('pool', l.pool, 'accounts', l.accounts) end as "claudeLane",
+  -- 배정(스펙 2026-09-20 §3). claudeLane 과 같은 이유로 json 하나로 접는다 — 행이 없으면
+  -- null 하나가 "미배정"을 말한다.
+  case when asg.agent_id is null then null
+       else json_build_object('agentId', asg.agent_id, 'operatorId', asg.operator_id,
+                              'assignedBy', asg.assigned_by, 'assignedAt', asg.assigned_at) end as assignment`;
 
 const FROM = `from account a left join agent_config c on c.account_id = a.id
   left join agent_runner_version v on v.account_id = a.id
-  left join agent_claude_lane l on l.account_id = a.id`;
+  left join agent_claude_lane l on l.account_id = a.id
+  left join agent_assignment asg on asg.agent_id = a.id`;
 
 export function isHarness(value: unknown): value is AgentHarness {
   return typeof value === 'string' && (AGENT_HARNESSES as readonly string[]).includes(value);
@@ -335,4 +344,36 @@ export async function revokeAllPats(db: Pool | PoolClient, accountId: string): P
     [accountId],
   );
   return res.rows.map((r) => r.label as string);
+}
+
+/**
+ * 서버가 배정과 함께 오퍼레이터에 내려주는 정의(스펙 2026-09-20 §3·§4). **머신 값은 여기
+ * 없다** — 실제 작업 디렉터리·계정 풀은 오퍼레이터 로컬 설정이 준다. `workingDir` 은
+ * 로컬 설정이 비었을 때의 기본값으로만 실린다.
+ *
+ * `credentialScope`·`mcpServers` 는 단계 5 가 실제 값으로 바꾼다 — 그 전엔 'none'·[] 이다.
+ */
+export async function definitionFor(pool: Pool, agentId: string): Promise<AgentDefinition | null> {
+  const res = await pool.query(
+    `select a.id, a.handle, coalesce(c.harness, 'claude-code') as harness,
+            coalesce(c.instructions, '') as instructions, c.model, c.effort,
+            coalesce(c.mention_permission, 'auto') as "mentionPermission",
+            c.working_dir as "workingDirDefault", c.owner_account_id as "ownerAccountId"
+       from account a left join agent_config c on c.account_id = a.id
+      where a.id = $1 and a.kind = 'agent'`, [agentId]);
+  if (!res.rowCount) return null;
+  const r = res.rows[0];
+  return {
+    agentId: r.id, handle: r.handle, harness: r.harness, instructions: r.instructions,
+    model: r.model, effort: r.effort, mentionPermission: r.mentionPermission,
+    workingDirDefault: r.workingDirDefault, ownerAccountId: r.ownerAccountId,
+    credentialScope: 'none', mcpServers: [],
+  };
+}
+
+export async function assignmentOf(pool: Pool, agentId: string): Promise<AgentAssignmentView | null> {
+  const res = await pool.query(
+    `select agent_id as "agentId", operator_id as "operatorId", assigned_by as "assignedBy", assigned_at as "assignedAt"
+       from agent_assignment where agent_id = $1`, [agentId]);
+  return res.rowCount ? res.rows[0] : null;
 }
