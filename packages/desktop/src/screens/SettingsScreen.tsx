@@ -9,6 +9,7 @@ import { ConnectionSettings } from '../components/settings/ConnectionSettings';
 import { HandleGroupsSettings } from '../components/settings/HandleGroupsSettings';
 import { InviteSettings } from '../components/settings/InviteSettings';
 import { OperatorsSettings } from '../components/settings/OperatorsSettings';
+import { McpServersSettings } from '../components/settings/McpServersSettings';
 import { NotificationSettings } from '../components/settings/NotificationSettings';
 import { MessageSettings } from '../components/settings/MessageSettings';
 import { ProfileSettings } from '../components/settings/ProfileSettings';
@@ -94,6 +95,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
           {section === 'claude-accounts' && <ClaudeAccountsSettings />}
           {section === 'agent-defaults' && <AgentDefaultsSettings />}
           {section === 'operators' && <OperatorsSettings />}
+          {section === 'mcp-servers' && <McpServersSettings />}
           {section === 'handle-groups' && <HandleGroupsSettings />}
           {section === 'invite' && <InviteSettings />}
           {section === 'updates' && <UpdatesSettings />}
