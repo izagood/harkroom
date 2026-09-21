@@ -1,18 +1,26 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
-import type { AccountView, Capability, PermissionTarget } from '@harkroom/shared';
+import type { AccountView, Capability, OperatorView, PermissionTarget } from '@harkroom/shared';
 import { hashToken } from './tokens.js';
 import { can } from './permissions.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
     account: AccountView | null;
+    /**
+     * 오퍼레이터 토큰(`hkop_…`)으로 온 요청(스펙 2026-09-20 §3). **계정이 아니다** — 이때
+     * `account` 는 null 이다. 사람 세션·PAT 과 같은 `Authorization: Bearer` 를 쓰지만 표가
+     * 다르고, 이 필드가 서는 것과 `account` 가 서는 것은 서로 배타다.
+     */
+    operator: OperatorView | null;
     /** 이 요청을 인증한 자격증명의 해시. WS 티켓이 운반해 소켓 수명을 자격증명에 묶는다. */
     credentialHash: string | null;
   }
   interface FastifyInstance {
     requireAccount: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
     requireAdmin: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
+    /** 오퍼레이터 토큰 관문. 사람·에이전트 토큰은 401 이다 — 표면이 다르다. */
+    requireOperator: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
     requireOwnerOrAdmin: (paramName: string) => (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
     /**
      * capability 관문(스펙 2026-09-20 §6). 판정은 `permissions.ts::can` 이 한다 — 소유 ∨ grant ∨
@@ -30,12 +38,24 @@ const ACCOUNT_COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a
 
 export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<void> {
   app.decorateRequest('account', null);
+  app.decorateRequest('operator', null);
   app.decorateRequest('credentialHash', null);
 
   app.addHook('onRequest', async (req) => {
     const header = req.headers.authorization;
     if (!header?.startsWith('Bearer ')) return;
-    const hash = hashToken(header.slice('Bearer '.length));
+    const raw = header.slice('Bearer '.length);
+    const hash = hashToken(raw);
+    // 오퍼레이터 토큰은 접두로 먼저 가른다 — 세션·PAT 표를 헛되이 두 번 두드리지 않고,
+    // 무엇보다 같은 해시가 두 표에 있을 수 없다는 사실을 코드 순서가 아니라 접두가 보장한다.
+    if (raw.startsWith('hkop_')) {
+      const op = await pool.query(
+        `select id, owner_account_id as "ownerAccountId", name, created_at as "createdAt",
+                last_seen_at as "lastSeenAt", revoked_at as "revokedAt"
+           from operator where token_hash = $1 and revoked_at is null`, [hash]);
+      if (op.rowCount) { req.operator = { ...op.rows[0], online: false }; req.credentialHash = hash; }
+      return;
+    }
     const viaSession = await pool.query(
       `select ${ACCOUNT_COLS} from session s join account a on a.id = s.account_id
        where s.token_hash = $1 and s.expires_at > now()`, [hash]);
@@ -49,6 +69,12 @@ export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<vo
   app.decorate('requireAccount', async (req: FastifyRequest, reply: FastifyReply) => {
     if (!req.account) {
       await reply.code(401).send({ error: { code: 'unauthorized', message: 'authentication required' } });
+    }
+  });
+
+  app.decorate('requireOperator', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!req.operator) {
+      await reply.code(401).send({ error: { code: 'unauthorized', message: '오퍼레이터 토큰이 필요하다' } });
     }
   });
 
