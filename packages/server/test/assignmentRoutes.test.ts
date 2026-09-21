@@ -17,12 +17,12 @@ let opA: { token: string; operatorId: string }; let opB: { token: string; operat
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 
 interface Attached { frames: ServerToOperatorFrame[]; ws: WebSocket; close(): Promise<void> }
-async function attachOperator(op: { token: string }, agentIds: string[]): Promise<Attached> {
+async function attachOperator(op: { token: string }, agentIds: string[], harnesses: Record<string, { installed: boolean; loggedIn: boolean }> = {}): Promise<Attached> {
   const ws = new WebSocket(`ws://${baseUrl}/operator`, { headers: auth(op.token) });
   const frames: ServerToOperatorFrame[] = [];
   ws.on('message', (d) => frames.push(JSON.parse(String(d)) as ServerToOperatorFrame));
   await new Promise<void>((resolve, reject) => { ws.on('open', () => resolve()); ws.on('error', reject); });
-  ws.send(JSON.stringify({ type: 'hello', protocol: 1, capabilities: { agentIds, harnesses: {} }, runners: [], sessions: [] }));
+  ws.send(JSON.stringify({ type: 'hello', protocol: 1, capabilities: { agentIds, harnesses }, runners: [], sessions: [] }));
   return {
     frames, ws,
     close: () => new Promise<void>((resolve) => { ws.on('close', () => resolve()); ws.close(); }),
@@ -107,6 +107,14 @@ describe('배정', () => {
     const b = await attachOperator(opB, [agentId]);
     await waitFor(() => b.frames.some((f) => f.type === 'assign' && f.agentId === agentId));
     await b.close();
+  });
+  it('오퍼레이터가 그 하네스를 없다고 했으면 409 harness_missing — 말하지 않았으면 모른다', async () => {
+    const a = await attachOperator(opA, [agentId], { 'claude-code': { installed: false, loggedIn: false } });
+    await waitCapable(opA.operatorId, [agentId]);
+    const res = await app.inject({ method: 'PUT', url: `/accounts/agents/${agentId}/assignment`, headers: auth(aliceToken), payload: { operatorId: opA.operatorId } });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('harness_missing');
+    await a.close();
   });
   it('personal 자격증명은 소유자 자신의 오퍼레이터에만 — 남의 오퍼레이터면 admin 도 403 (스펙 §7)', async () => {
     const { accountId: privy } = await createAgent(app, adminToken, 'privy');

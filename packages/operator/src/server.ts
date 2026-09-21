@@ -32,6 +32,8 @@ import {
   makeResponse,
   NdjsonDecoder,
   parseRequest,
+  readOperatorAgentRemovePayload,
+  readOperatorAgentSetPayload,
   type AdoptRunnerResult,
   type DaemonError,
   type DaemonIdentity,
@@ -47,6 +49,7 @@ import {
 
 import type { RunnerRegistry } from './runners.js';
 import type { ClaudeAccountsPort } from './claudeAccounts.js';
+import type { LocalAgentsPort } from './localAgents.js';
 import type { ClaudePoolsConfig } from '@harkroom/shared/claudePools';
 
 export interface DaemonServerDeps {
@@ -79,6 +82,8 @@ export interface DaemonServerDeps {
    * 계정 디렉터리 구조를 들고 다니게 되고, "소켓 위의 말"만 다룬다는 경계가 흐려진다.
    */
   claudeAccounts?: ClaudeAccountsPort;
+  /** 오퍼레이터 로컬 설정의 에이전트 항목(스펙 §3 능력). 없으면 그 요청들은 배선되지 않았다고 답한다. */
+  localAgents?: LocalAgentsPort;
   /** 로그 한 줄. 기본은 stdout — 앱이 사이드카 파이프로 그대로 본다. */
   log?: (line: string) => void;
   /**
@@ -347,6 +352,30 @@ export class DaemonServer {
       case 'listRunners': {
         const result: ListRunnersResult = { runners: this.deps.registry.listRunners() };
         return result;
+      }
+      // ── 오퍼레이터 로컬 설정(스펙 §3 능력) ─────────────────────────────────────
+      case 'operatorAgentsList': {
+        const port = this.deps.localAgents;
+        if (!port) return daemonError('no-such-runner', '이 daemon 에는 로컬 설정이 배선되지 않았다');
+        return port.list();
+      }
+      case 'operatorAgentSet': {
+        const port = this.deps.localAgents;
+        if (!port) return daemonError('no-such-runner', '이 daemon 에는 로컬 설정이 배선되지 않았다');
+        const p = readOperatorAgentSetPayload(req.payload);
+        if (isDaemonError(p)) return p;
+        await port.set(p.baseUrl, p.agentId, p.config);
+        this.log(`로컬 설정: agent=${p.agentId} @ ${p.baseUrl} 넣음`);
+        return {};
+      }
+      case 'operatorAgentRemove': {
+        const port = this.deps.localAgents;
+        if (!port) return daemonError('no-such-runner', '이 daemon 에는 로컬 설정이 배선되지 않았다');
+        const p = readOperatorAgentRemovePayload(req.payload);
+        if (isDaemonError(p)) return p;
+        await port.remove(p.baseUrl, p.agentId);
+        this.log(`로컬 설정: agent=${p.agentId} @ ${p.baseUrl} 뺌`);
+        return {};
       }
       // ── claude 계정 풀 ────────────────────────────────────────────────────────
       //

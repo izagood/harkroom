@@ -161,3 +161,24 @@ describe('community — 소유자 확인과 거절 통지', () => {
     expect(c.assignments.has('a-1')).toBe(false);
   });
 });
+
+describe('community — 로컬 설정이 바뀌면 능력을 다시 낸다', () => {
+  it('setAgents 는 capabilities 프레임을 보내고, 그 뒤의 assign 은 새 표로 판정한다', async () => {
+    const sent: string[] = [];
+    let handlers: Parameters<LinkDialer>[2] | null = null;
+    const dial: LinkDialer = (_u, _t, h) => { handlers = h; h.onOpen({ send: (d) => sent.push(d), close: () => {} }); };
+    const { reconciler, calls } = fakeReconciler();
+    const c = createCommunity({ baseUrl: 'https://example.com', token: 'hkop_x', agents: {}, reconciler, dial, schedule: () => {}, log: () => {} });
+    c.start();
+    c.setAgents({ 'a-9': { workingDir: '~/nine' } });
+    const caps = sent.map((d) => JSON.parse(d)).find((f) => f.type === 'capabilities');
+    expect(caps.capabilities.agentIds).toEqual(['a-9']);
+    expect(c.knowsAgent('a-9')).toBe(true);
+    handlers!.onMessage(JSON.stringify({ type: 'assign', agentId: 'a-9', definition: {
+      agentId: 'a-9', handle: 'nine', harness: 'claude-code', instructions: '', model: null, effort: null,
+      mentionPermission: 'auto', workingDirDefault: null, credentialScope: 'none', ownerAccountId: null, mcpServers: [],
+    } }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toEqual(['assign https://example.com a-9 ~/nine']);
+  });
+});

@@ -1458,7 +1458,7 @@ export class Controller {
   }
 
   updateAgent(
-    id: string, patch: Partial<import('@harkroom/shared').AgentConfig> & { displayName?: string },
+    id: string, patch: Partial<import('@harkroom/shared').AgentConfig> & { displayName?: string; mcpServers?: string[] },
   ): Promise<import('@harkroom/shared').AgentView> {
     return this.api.updateAgent(id, patch);
   }
@@ -1974,6 +1974,11 @@ export class Controller {
     return this.api.operatorRegisterCode();
   }
 
+  /** 붙어 있는 동안만 있다(서버가 저장하지 않는다) — 오프라인이면 404 가 던져진다. */
+  operatorCapabilities(id: string): Promise<import('@harkroom/shared').OperatorCapabilities> {
+    return this.api.operatorCapabilities(id);
+  }
+
   revokeOperator(id: string): Promise<void> {
     return this.api.revokeOperator(id);
   }
@@ -1984,6 +1989,23 @@ export class Controller {
 
   unassignAgent(agentId: string): Promise<void> {
     return this.api.unassignAgent(agentId);
+  }
+
+  // 호출 범위(스펙 2026-09-20 §6) — 전부 서버가 판정한다. 화면은 응답을 그대로 앉힌다.
+  addInvoker(agentId: string, accountId: string): Promise<import('@harkroom/shared').AgentView> {
+    return this.api.addInvoker(agentId, accountId);
+  }
+  removeInvoker(agentId: string, accountId: string): Promise<import('@harkroom/shared').AgentView> {
+    return this.api.removeInvoker(agentId, accountId);
+  }
+  mcpServers(): Promise<import('@harkroom/shared').McpServerRow[]> {
+    return this.api.mcpServers();
+  }
+  putMcpServer(name: string, credentialKind: 'community' | 'personal'): Promise<import('@harkroom/shared').McpServerRow> {
+    return this.api.putMcpServer(name, credentialKind);
+  }
+  deleteMcpServer(name: string): Promise<void> {
+    return this.api.deleteMcpServer(name);
   }
 
   /**

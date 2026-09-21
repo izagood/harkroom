@@ -1,4 +1,5 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView,
+import type {
+  McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView,
   AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
@@ -360,7 +361,8 @@ export class ApiClient {
     return this.req('DELETE', `/accounts/${accountId}/pats/${encodeURIComponent(label)}`);
   }
 
-  updateAgent(id: string, patch: Partial<AgentConfig> & { displayName?: string }): Promise<AgentView> {
+  /** `mcpServers` 는 정의(AgentConfig)가 아니라 레지스트리 이름의 부분집합이라 따로 받는다(스펙 §6). */
+  updateAgent(id: string, patch: Partial<AgentConfig> & { displayName?: string; mcpServers?: string[] }): Promise<AgentView> {
     return this.req('PATCH', `/accounts/agents/${id}`, patch);
   }
 
@@ -603,6 +605,30 @@ export class ApiClient {
 
   unassignAgent(agentId: string): Promise<void> {
     return this.req('DELETE', `/accounts/agents/${agentId}/assignment`);
+  }
+
+  // --- 호출 범위(스펙 2026-09-20 §6) ---------------------------------------------------
+
+  /** `invokeScope: 'list'` 의 명단에 사람을 넣는다. 멱등. 답은 갱신된 AgentView. */
+  addInvoker(agentId: string, accountId: string): Promise<AgentView> {
+    return this.req('PUT', `/accounts/agents/${agentId}/invokers/${accountId}`);
+  }
+
+  removeInvoker(agentId: string, accountId: string): Promise<AgentView> {
+    return this.req('DELETE', `/accounts/agents/${agentId}/invokers/${accountId}`);
+  }
+
+  /** MCP 레지스트리 — 이름과 자격증명 종류뿐이다. 정의와 토큰은 오퍼레이터 머신에 있다. */
+  async mcpServers(): Promise<McpServerRow[]> {
+    return (await this.req<{ servers: McpServerRow[] }>('GET', '/mcp-servers')).servers;
+  }
+
+  putMcpServer(name: string, credentialKind: McpServerRow['credentialKind']): Promise<McpServerRow> {
+    return this.req('PUT', `/mcp-servers/${name}`, { credentialKind });
+  }
+
+  deleteMcpServer(name: string): Promise<void> {
+    return this.req('DELETE', `/mcp-servers/${name}`);
   }
 
   async channelPrefs(): Promise<ChannelPrefRow[]> {
