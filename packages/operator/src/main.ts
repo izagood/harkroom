@@ -18,7 +18,9 @@
 // 러너는 `detached` 로 떠 있으므로 이 프로세스의 프로세스 그룹에 오는 시그널도 러너에
 // 닿지 않는다. 즉 이 핸들러가 아예 안 불려도(SIGKILL) 러너는 산다 — 이 핸들러가 하는
 // 일은 러너를 살리는 것이 아니라 **잔해를 남기지 않는 것**이다.
-import { parseDaemonArgs, describeArgs } from './args.js';
+import { resolve } from 'node:path';
+import { parseDaemonArgs, describeArgs, type DaemonArgs } from './args.js';
+import { parseCliArgs, register, resolveDataDir, runArgs } from './cli.js';
 import { runMcpBridge } from './mcpBridge.js';
 import { EXIT_INCONCLUSIVE, EXIT_OCCUPIED, startDaemon } from './run.js';
 
@@ -38,10 +40,36 @@ async function mcpBridgeMain(): Promise<void> {
   await runMcpBridge({ socketPath, runnerId, secret }, { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr });
 }
 
+/**
+ * 서브커맨드 분기(`cli.ts`). 앱이 띄우면 `--socket …` 인자가 그대로 오고(`daemon`), 사람이나
+ * launchd/systemd 가 띄우면 `run` 이다 — 둘 다 같은 `daemonMain` 으로 들어간다. 차이는 인자를
+ * 누가 조립했는가뿐이다.
+ */
 async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
-  if (argv[0] === 'mcp-bridge') { await mcpBridgeMain(); return; }
-  const args = parseDaemonArgs(argv);
+  const cmd = parseCliArgs(process.argv.slice(2));
+  switch (cmd.command) {
+    case 'mcp-bridge':
+      await mcpBridgeMain();
+      return;
+    case 'register': {
+      const dataDir = resolveDataDir(process.env.HARKROOM_DATA_DIR);
+      const out = await register({ baseUrl: cmd.baseUrl, code: cmd.code, ...(cmd.name ? { name: cmd.name } : {}) }, { dataDir });
+      console.log(`등록됐다: ${out.name} (${out.operatorId}) @ ${out.baseUrl} — 설정: ${dataDir}/operator/operator.json`);
+      console.log('이제 설정 › 에이전트 상세에서 이 오퍼레이터를 배정하면 러너가 뜬다. 상주시키려면: harkroom-operator run');
+      return;
+    }
+    case 'run': {
+      const dataDir = resolveDataDir(cmd.dataDir);
+      await daemonMain(runArgs(dataDir, resolve(process.argv[1] ?? 'harkroom-operator'), process.env.HARKROOM_OPERATOR_VERSION));
+      return;
+    }
+    case 'daemon':
+      await daemonMain(parseDaemonArgs(cmd.argv));
+      return;
+  }
+}
+
+async function daemonMain(args: DaemonArgs): Promise<void> {
   // stdout 으로 적는다 — 앱이 사이드카를 spawn 하면 이 줄이 그대로 파이프로 온다.
   console.log(`harkroom daemon 기동 ${describeArgs(args)}`);
 
