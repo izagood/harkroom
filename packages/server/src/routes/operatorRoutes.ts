@@ -13,6 +13,7 @@ import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import type { OperatorView } from '@harkroom/shared';
 import { newToken } from '../auth/tokens.js';
+import { mintPat } from '../services/pats.js';
 import { can } from '../auth/permissions.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
@@ -121,6 +122,26 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
   });
 
   app.get('/operators/self', { preHandler: app.requireOperator }, async (req) => view(req.operator!));
+
+  /**
+   * **단계 2~3 한정.** 러너가 아직 PAT 로 서버에 직접 붙는 동안, 그 PAT 을 데스크탑 키체인
+   * 대신 오퍼레이터가 받아 간다 — 배정된 에이전트 것만. 단계 4(배정이 곧 인가)에서 이 라우트를
+   * 지운다: 그때부터 러너는 PAT 을 갖지 않는다.
+   */
+  app.post<{ Params: { agentId: string } }>('/operator/agents/:agentId/pat', { preHandler: app.requireOperator }, async (req, reply) => {
+    const { agentId } = z.object({ agentId: z.string().uuid() }).parse(req.params);
+    const assigned = await pool.query(
+      `select 1 from agent_assignment where agent_id = $1 and operator_id = $2`, [agentId, req.operator!.id]);
+    if (!assigned.rowCount) {
+      return reply.code(403).send({ error: { code: 'not_assigned', message: '이 오퍼레이터에 배정된 에이전트가 아니다' } });
+    }
+    // 라벨에 오퍼레이터 id 를 박는다 — 같은 오퍼레이터가 다시 받으면 앞 것을 폐기하고 새로 낸다.
+    const label = `operator:${req.operator!.id}`;
+    await pool.query(`update pat set revoked_at = now() where account_id = $1 and label = $2 and revoked_at is null`, [agentId, label]);
+    const minted = await mintPat(pool, agentId, label, { actorId: null, actorHandle: `operator:${req.operator!.name}` }, req);
+    if (!minted.ok) return reply.code(409).send({ error: { code: 'label_in_use', message: '발급 경합' } });
+    return { token: minted.token };
+  });
 
   app.get<{ Params: { id: string } }>(
     '/operators/:id/capabilities',

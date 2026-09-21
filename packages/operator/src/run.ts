@@ -30,6 +30,8 @@ import { openRunnerLog, readRunnerLogTail, runnerLogPath } from './runnerLog.js'
 import { RunnerRegistry, nodeRunnerHost, type RunnerHost, type RunnerLogSink } from './runners.js';
 import { DaemonServer } from './server.js';
 import { createClaudeAccountsPort } from './claudeAccounts.js';
+import { startCommunities } from './communities.js';
+import type { CommunityInstance } from './community.js';
 
 /**
  * 채택한 러너의 생사를 확인하는 주기(`#431` 2-c).
@@ -102,6 +104,11 @@ export interface RunOptions {
    * 운영에서는 `ADOPTED_POLL_MS` 다.
    */
   adoptedPollMs?: number;
+  /**
+   * 서버(커뮤니티)에 붙을지. 기본 true. 테스트가 false 로 준다 — 소켓·입양만 재는 테스트가
+   * `operator.json` 을 읽고 네트워크로 나가면 안 된다.
+   */
+  communities?: boolean;
   log?: (line: string) => void;
 }
 
@@ -372,6 +379,21 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   // 타이머가 아니다.
   pollTimer.unref?.();
 
+  // 서버에 붙는다(스펙 2026-09-20 §3·§4). **고아 입양 뒤**다 — hello 의 announce 에 살아 있는
+  // 러너가 실려야 서버가 그 세션을 안다. 실패해도 소켓 서비스는 뜬다: 앱이 붙어 등록·설정을
+  // 고칠 수 있어야 하므로 기동의 전제가 아니다.
+  let communities: CommunityInstance[] = [];
+  if (options.communities !== false) {
+    try {
+      communities = await startCommunities({
+        appDataDir, registry, host: options.host ?? nodeRunnerHost,
+        appVersion: args.appVersion ?? null, log,
+      });
+    } catch (err) {
+      log(`커뮤니티 기동 실패(소켓 서비스는 계속): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   const daemon: RunningDaemon = {
     paths: outcome.paths,
     pidRecord: outcome.pidRecord,
@@ -381,6 +403,9 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     adoptedAtStartup,
     async shutdown() {
       clearInterval(pollTimer);
+      // 서버 링크를 먼저 끊는다 — 러너는 데려가지 않는다(이 파일 머리 주석). 링크가 살아
+      // 있으면 종료 중에 assign 이 와서 새 러너를 띄울 수 있다.
+      for (const c of communities) c.stop();
       // ── 러너는 살리지만 **로그인은 회수한다** ─────────────────────────────────
       // 아래 문단이 적은 "러너는 산다"의 근거는 진행 중인 턴이 사람이 기다리는 답을
       // 들고 있다는 것이다. 로그인은 그 반대다: 우리가 죽으면 코드를 받을 stdin 이

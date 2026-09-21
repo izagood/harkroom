@@ -56,7 +56,7 @@ function 가짜호스트(): RunnerHost {
 
 async function daemon띄우기(appDataDir: string, host: RunnerHost = 가짜호스트()) {
   const paths = daemonEndpointPaths(appDataDir);
-  const outcome = await startDaemon({
+  const outcome = await startDaemon({ communities: false,
     args: {
       socket: paths.socketPath,
       launchNonce: 'test-nonce',
@@ -518,7 +518,7 @@ describe('요청 넷 (#431 2단계-b 범위)', () => {
   it('러너가 끝나면 incarnationId 를 실은 runnerExit 이벤트가 온다', async () => {
     const dir = await 임시앱디렉터리();
     const paths = daemonEndpointPaths(dir);
-    const outcome = await startDaemon({
+    const outcome = await startDaemon({ communities: false,
       args: {
         socket: paths.socketPath,
         entryPath: join(dir, 'harkroom-operator'),
