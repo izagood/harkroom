@@ -110,13 +110,15 @@ describe('낡은 러너 구조 문서 회귀선 (#431 사이드카·daemon · #4
     expect(read('docs/operations.md')).toContain(adopted);
   });
 
-  it('③ 대조군 — 러너를 손으로 띄우는 안내가 살아 있고, 실행 가능한 명령을 준다', () => {
-    // ①②만 있으면 "그 절을 통째로 지웠다"로도 초록이다. 손으로 띄우는 길은 사라지지
-    // 않았다 — 앱은 내가 소유한 에이전트만 띄운다(`runnerLauncher.ts::doStartOne`).
+  it('③ 대조군 — 러너를 띄우는 것이 오퍼레이터라고 세 문서가 다 말하고, 옛 PAT 명령은 현재 안내가 아니다', () => {
+    // ①②만 있으면 "그 절을 통째로 지웠다"로도 초록이다. 스펙 2026-09-20 §5 뒤로 러너를 띄우는
+    // 것은 오퍼레이터뿐이고 러너는 서버 URL 도 PAT 도 받지 않는다 — 세 문서가 그 사실을 적고,
+    // `HARKROOM_PAT=…` 명령은 과거를 말하는 문단에만 남아야 한다.
     for (const rel of ['docs/operations.md', 'packages/agent/README.md', 'README.md']) {
       const text = read(rel);
-      expect(text, `${rel}: 사이드카 실행 경로가 없다`).toContain(RUNNER_SIDECAR_PATH);
-      expect(text, `${rel}: PAT 환경변수 안내가 없다`).toContain('HARKROOM_PAT');
+      expect(text, `${rel}: 오퍼레이터가 러너를 띄운다는 말이 없다`).toContain('harkroom-operator');
+      expect(text, `${rel}: 사이드카 경로가 없다`).toContain(RUNNER_SIDECAR_PATH);
+      expect(currentGuidanceBlocks(text, 'HARKROOM_PAT='), `${rel}: PAT 로 러너를 띄우는 명령이 현재 안내로 남아 있다`).toEqual([]);
     }
     const ops = read('docs/operations.md');
     // 상태 표가 산다 — 이 표가 없으면 ②는 "표를 지웠다"로도 통과한다.
