@@ -20,9 +20,6 @@ export interface OperatorSecrets {
    * 에이전트 PAT — **단계 2~3 한정.** 러너가 아직 서버에 직접 붙는 동안 데스크탑 키체인
    * 대신 오퍼레이터가 든다. 단계 4(배정이 곧 인가)가 이 셋을 지운다.
    */
-  getAgentPat(baseUrl: string, agentId: string): Promise<string | null>;
-  setAgentPat(baseUrl: string, agentId: string, pat: string): Promise<void>;
-  clearAgentPat(baseUrl: string, agentId: string): Promise<void>;
 }
 
 function hashKey(...parts: string[]): string {
@@ -32,9 +29,6 @@ function hashKey(...parts: string[]): string {
 /** 파일명은 baseUrl 의 해시다 — URL 문자를 경로에 그대로 쓰지 않는다. */
 function fileFor(dir: string, baseUrl: string): string {
   return join(dir, `operator-token.${hashKey(baseUrl)}`);
-}
-function patFileFor(dir: string, baseUrl: string, agentId: string): string {
-  return join(dir, `agent-pat.${hashKey(baseUrl, agentId)}`);
 }
 
 export function fileSecrets(dir: string): OperatorSecrets {
@@ -48,16 +42,6 @@ export function fileSecrets(dir: string): OperatorSecrets {
     },
     async clearToken(baseUrl) {
       await rm(fileFor(dir, baseUrl), { force: true });
-    },
-    async getAgentPat(baseUrl, agentId) {
-      try { return (await readFile(patFileFor(dir, baseUrl, agentId), 'utf8')).trim() || null; } catch { return null; }
-    },
-    async setAgentPat(baseUrl, agentId, pat) {
-      await mkdir(dir, { recursive: true, mode: 0o700 });
-      await writeFile(patFileFor(dir, baseUrl, agentId), `${pat}\n`, { encoding: 'utf8', mode: 0o600 });
-    },
-    async clearAgentPat(baseUrl, agentId) {
-      await rm(patFileFor(dir, baseUrl, agentId), { force: true });
     },
   };
 }

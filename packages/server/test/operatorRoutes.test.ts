@@ -68,21 +68,6 @@ describe('오퍼레이터 등록', () => {
     const gone = await app.inject({ method: 'GET', url: '/operators', headers: auth(memberToken) });
     expect(gone.json().operators).toEqual([]);
   });
-  // 단계 2~3 한정 — 단계 4(배정이 곧 인가)에서 이 라우트와 이 테스트를 함께 지운다.
-  it('배정된 에이전트의 PAT 을 오퍼레이터 토큰으로 받는다, 미배정은 403', async () => {
-    const { token: opTok, operatorId: opId } = await registerOperator(app, memberToken, '발급기기');
-    const { accountId: agentId } = await createAgent(app, adminToken, 'patbot');
-    const denied = await app.inject({ method: 'POST', url: `/operator/agents/${agentId}/pat`, headers: auth(opTok) });
-    expect(denied.statusCode).toBe(403);
-    expect(denied.json().error.code).toBe('not_assigned');
-    await pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)`,
-      [agentId, opId, (await app.inject({ method: 'GET', url: '/auth/me', headers: auth(memberToken) })).json().id]);
-    const res = await app.inject({ method: 'POST', url: `/operator/agents/${agentId}/pat`, headers: auth(opTok) });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().token).toMatch(/^hrkp_/);
-    const me = await app.inject({ method: 'GET', url: '/auth/me', headers: auth(res.json().token) });
-    expect(me.json().id).toBe(agentId);
-  });
   it('모르는 코드는 401, 이름 없는 claim 은 400', async () => {
     const bad = await app.inject({ method: 'POST', url: '/operators/claim', payload: { code: 'hkreg_nope', name: 'x' } });
     expect(bad.statusCode).toBe(401);

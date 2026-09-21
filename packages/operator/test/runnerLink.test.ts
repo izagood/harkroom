@@ -85,6 +85,56 @@ describe('runnerLink 서버', () => {
     expect(link.accept(again.socket, hello('r-1', 'sec'), [])).toBe(true);
   });
 
+  it('요청 프레임(mcp.request·http.forward)은 onFrame 이 아니라 onRequest 로 가고, 답은 같은 소켓으로 돌아온다', async () => {
+    const frames: unknown[] = [];
+    const link = createRunnerLinkServer({
+      onFrame: (_r, _a, f) => frames.push(f),
+      onRequest: async (runnerId, agentId, req) => ({ type: 'http.response', id: req.id, status: 200, body: `${runnerId}/${agentId}` }),
+      log: () => {},
+    });
+    link.expect('r-1', 'agent-a', 'sec');
+    const s = fakeSocket();
+    link.accept(s.socket, hello('r-1', 'sec'), []);
+    s.feed({ type: 'http.forward', id: 'q1', method: 'GET', path: '/agent/config' });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(frames).toEqual([]);
+    expect(s.lines()).toEqual([{ type: 'http.response', id: 'q1', status: 200, body: 'r-1/agent-a' }]);
+  });
+
+  it('kind:bridge 소켓은 relay 링크를 밀어내지 않고, 요청만 나른다', async () => {
+    const frames: unknown[] = [];
+    const link = createRunnerLinkServer({
+      onFrame: (_r, _a, f) => frames.push(f),
+      onRequest: async (_r, _a, req) => ({ type: 'mcp.response', id: req.id, messages: [{ ok: true }] }),
+      log: () => {},
+    });
+    link.expect('r-1', 'agent-a', 'sec');
+    const relay = fakeSocket();
+    link.accept(relay.socket, hello('r-1', 'sec'), []);
+    const bridge = fakeSocket();
+    expect(link.accept(bridge.socket, { ...hello('r-1', 'sec'), kind: 'bridge' }, [])).toBe(true);
+    // relay 소켓은 그대로다 — 서버 프레임은 여전히 그리로 간다.
+    expect(link.send('r-1', { type: 'replay.request', sessionId: 's' })).toBe(true);
+    expect(relay.lines()).toEqual([{ type: 'replay.request', sessionId: 's' }]);
+    // 브릿지의 요청은 답이 브릿지 소켓으로 돌아온다.
+    bridge.feed({ type: 'mcp.request', id: 'b1', payload: { jsonrpc: '2.0', id: 1, method: 'tools/list' } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(bridge.lines()).toEqual([{ type: 'mcp.response', id: 'b1', messages: [{ ok: true }] }]);
+    // 브릿지 소켓에서 온 릴레이 프레임은 버린다 — 브릿지는 PTY 를 모른다.
+    bridge.feed({ type: 'session.ended', sessionId: 's1' });
+    expect(frames).toEqual([]);
+  });
+
+  it('onRequest 가 없으면 요청에 mcp.error/http.response 로 거절한다 — 조용히 삼키지 않는다', async () => {
+    const link = createRunnerLinkServer({ onFrame: () => {}, log: () => {} });
+    link.expect('r-1', 'agent-a', 'sec');
+    const s = fakeSocket();
+    link.accept(s.socket, hello('r-1', 'sec'), []);
+    s.feed({ type: 'mcp.request', id: 'q1', payload: {} });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(s.lines()).toMatchObject([{ type: 'mcp.error', id: 'q1', status: 0 }]);
+  });
+
   it('forget 하면 그 runnerId 는 다시 붙을 수 없다 — 죽은 러너의 secret 을 남기지 않는다', () => {
     const link = createRunnerLinkServer({ onFrame: () => {}, log: () => {} });
     link.expect('r-1', 'agent-a', 'sec');

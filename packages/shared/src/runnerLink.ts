@@ -22,22 +22,69 @@ import type { OperatorToServerFrame, ServerToOperatorFrame } from './operatorPro
 
 export const RUNNER_LINK_PROTOCOL_VERSION = 1;
 
-/** 러너가 오퍼레이터 소켓에 보내는 첫 줄. secret 은 spawn 때 env 로 받은 1회성 값이다. */
+/**
+ * 러너가 오퍼레이터 소켓에 보내는 첫 줄. secret 은 spawn 때 env 로 받은 1회성 값이다.
+ *
+ * `kind` — 같은 자격으로 붙는 소켓이 둘이다(스펙 §5): 러너 코어의 **relay**(PTY 프레임과
+ * 요청/응답 전부, 러너당 하나)와, 하네스가 띄우는 `harkroom-operator mcp-bridge` 프로세스의
+ * **bridge**(요청/응답만, 러너당 여럿일 수 있다 — 하네스가 MCP 서버를 여러 번 띄운다).
+ * 생략은 relay 다.
+ */
 export interface RunnerHello {
   type: 'hello';
   version: typeof RUNNER_LINK_PROTOCOL_VERSION;
   role: 'runner';
   runnerId: string;
   secret: string;
+  kind?: 'relay' | 'bridge';
 }
 
 /** 모양만 본다 — secret 이 맞는지는 오퍼레이터가 자기 장부로 판정한다. */
-export function checkRunnerHello(value: unknown): { runnerId: string; secret: string } | null {
+export function checkRunnerHello(value: unknown): { runnerId: string; secret: string; kind: 'relay' | 'bridge' } | null {
   if (typeof value !== 'object' || value === null) return null;
   const m = value as Record<string, unknown>;
   if (m.type !== 'hello' || m.role !== 'runner' || m.version !== RUNNER_LINK_PROTOCOL_VERSION) return null;
   if (typeof m.runnerId !== 'string' || typeof m.secret !== 'string') return null;
-  return { runnerId: m.runnerId, secret: m.secret };
+  if (m.kind !== undefined && m.kind !== 'relay' && m.kind !== 'bridge') return null;
+  return { runnerId: m.runnerId, secret: m.secret, kind: m.kind === 'bridge' ? 'bridge' : 'relay' };
+}
+
+// ---------------------------------------------------------------------------
+// 요청/응답 — 러너가 서버에 하던 말을 오퍼레이터가 대신 한다(스펙 §5 MCP 행).
+//
+// 러너 코어의 MCP 클라이언트와 하네스의 stdio 브릿지는 JSON-RPC 메시지 한 개를 `mcp.request`
+// 로 싣고, 오퍼레이터가 그것을 서버 `/mcp` 에 HTTPS POST 로 넘긴다(오퍼레이터 토큰 +
+// `X-Harkroom-Agent`). 러너 코어가 부르던 REST(`/agent/config` 등)는 `http.forward` 하나로
+// 싣는다 — 프레임은 다르고 인증 치환 규칙은 하나다. 러너용 REST 표면을 오퍼레이터에 따로
+// 만들지 않는다.
+//
+// `id` 는 링크 위의 상관 키다(JSON-RPC 의 id 와 별개 — 알림에는 JSON-RPC id 가 없다).
+// ---------------------------------------------------------------------------
+
+export type RunnerLinkRequest =
+  | { type: 'mcp.request'; id: string; payload: unknown }
+  | { type: 'http.forward'; id: string; method: string; path: string; body?: string; contentType?: string };
+
+export type RunnerLinkResponse =
+  /** 서버가 돌려준 JSON-RPC 메시지들. 알림(202)이면 빈 배열. */
+  | { type: 'mcp.response'; id: string; messages: unknown[] }
+  /** 서버가 HTTP 로 거절했다(401·403·5xx). 러너의 자격증명 판정이 `status` 를 읽는다. */
+  | { type: 'mcp.error'; id: string; status: number; message: string }
+  | { type: 'http.response'; id: string; status: number; body: string };
+
+const REQUEST_TYPES = new Set(['mcp.request', 'http.forward']);
+const RESPONSE_TYPES = new Set(['mcp.response', 'mcp.error', 'http.response']);
+
+export function isRunnerLinkRequest(value: unknown): value is RunnerLinkRequest {
+  if (typeof value !== 'object' || value === null) return false;
+  const m = value as Record<string, unknown>;
+  return typeof m.type === 'string' && REQUEST_TYPES.has(m.type) && typeof m.id === 'string';
+}
+
+export function isRunnerLinkResponse(value: unknown): value is RunnerLinkResponse {
+  if (typeof value !== 'object' || value === null) return false;
+  const m = value as Record<string, unknown>;
+  return typeof m.type === 'string' && RESPONSE_TYPES.has(m.type) && typeof m.id === 'string';
 }
 
 /** 러너 → 오퍼레이터 프레임에 `runnerId` 를 붙여 서버 채널 프레임으로. 모르는 타입은 null. */

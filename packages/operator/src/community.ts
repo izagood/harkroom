@@ -11,6 +11,8 @@
  */
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
 import type { AgentDefinition, ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
+import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
+import type { Forwarder } from './forward.js';
 import type { AssignmentReconciler } from './assignments.js';
 import type { LocalAgentConfig } from './config.js';
 import { createRelayMux } from './relayMux.js';
@@ -30,6 +32,8 @@ export interface CommunityDeps {
   runnerLink?: { send(runnerId: string, frame: RelayServerFrame): boolean; isLinked(runnerId: string): boolean };
   /** 배정도 러너 프레임도 아닌 것(`runner.kill`)을 받는 자리. */
   onFrame?: (frame: ServerToOperatorFrame) => void;
+  /** 러너의 MCP·REST 요청을 이 커뮤니티의 서버로 나른다(스펙 §5). 없으면 요청은 거절된다. */
+  forwarder?: Forwarder;
   dial?: LinkDialer;
   schedule?: (fn: () => void, ms: number) => void;
   log: (line: string) => void;
@@ -50,6 +54,8 @@ export interface CommunityInstance {
   onRunnerFrame(runnerId: string, frame: RelayRunnerFrame): void;
   notifyRunnerStarted(agentId: string, runnerId: string): void;
   notifyRunnerExited(runnerId: string, code: number | null): void;
+  /** 러너 대신 서버에 말한다 — 인증만 이 커뮤니티의 오퍼레이터 토큰 + 그 에이전트로 바꿔서. */
+  forward(agentId: string, req: RunnerLinkRequest): Promise<RunnerLinkResponse>;
 }
 
 export function createCommunity(deps: CommunityDeps): CommunityInstance {
@@ -124,6 +130,14 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
     notifyRunnerExited: (runnerId, code) => {
       mux.forget(runnerId);
       link.send({ type: 'runner.exited', runnerId, code });
+    },
+    forward: async (agentId, req) => {
+      if (!deps.forwarder) {
+        return req.type === 'mcp.request'
+          ? { type: 'mcp.error', id: req.id, status: 0, message: '이 커뮤니티에는 전달이 배선되지 않았다' }
+          : { type: 'http.response', id: req.id, status: 0, body: '이 커뮤니티에는 전달이 배선되지 않았다' };
+      }
+      return deps.forwarder.forward({ baseUrl: deps.baseUrl, token: deps.token, agentId }, req);
     },
   };
 }

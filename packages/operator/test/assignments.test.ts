@@ -15,8 +15,8 @@ function harness(over: Partial<AssignmentDeps> = {}) {
   const signals: { agentId: string; signal: string }[] = [];
   const alive = new Set<string>();
   const timers: { fn: () => void; ms: number; cancelled: boolean }[] = [];
-  const pats = new Map<string, string>();
-  let fetched = 0;
+  const expected: { runnerId: string; agentId: string; secret: string }[] = [];
+  const forgotten: string[] = [];
   const deps: AssignmentDeps = {
     spawn: async (agentId, env) => {
       if (alive.has(agentId)) return { spawned: false, pid: 1, runnerId: `r-${agentId}` };
@@ -26,40 +26,28 @@ function harness(over: Partial<AssignmentDeps> = {}) {
     signal: (agentId, signal) => { signals.push({ agentId, signal }); return alive.has(agentId); },
     isAlive: (agentId) => alive.has(agentId),
     listRunners: () => [...alive].map((agentId) => ({ agentId, runnerId: `r-${agentId}`, pid: 1 })),
-    secrets: {
-      getAgentPat: async (b, a) => pats.get(`${b}|${a}`) ?? null,
-      setAgentPat: async (b, a, p) => { pats.set(`${b}|${a}`, p); },
-    },
-    fetchAgentPat: async () => { fetched += 1; return `hrkp_fetched${fetched}`; },
+    link: { expect: (r, a, sec) => expected.push({ runnerId: r, agentId: a, secret: sec }), forget: (r) => forgotten.push(r) },
+    socketPath: '/tmp/op.sock',
+    operatorBin: '/opt/harkroom/harkroom-operator',
     loginPath: '/usr/bin:/bin',
     appVersion: '0.2.8',
     schedule: (fn, ms) => { const t = { fn, ms, cancelled: false }; timers.push(t); return () => { t.cancelled = true; }; },
     log: () => {},
     ...over,
   };
-  return { deps, spawned, signals, alive, timers, pats, fetched: () => fetched, exit: (agentId: string) => alive.delete(agentId) };
+  return { deps, spawned, signals, alive, timers, expected, forgotten, exit: (agentId: string) => alive.delete(agentId) };
 }
 
 describe('assign', () => {
-  it('PAT 을 받아 저장하고, HARKROOM_URL·PATH·AGENT_VERSION 과 함께 띄운다', async () => {
+  it('PATH·AGENT_VERSION·로컬 값과 함께 띄운다 — URL 도 PAT 도 없다(러너는 서버를 모른다)', async () => {
     const h = harness();
     const r = createAssignmentReconciler(h.deps);
     const outcome = await r.onAssign('https://example.com', def(), { workingDir: '~/dev/x' });
     expect(outcome).toBe('spawned');
     expect(h.spawned).toHaveLength(1);
-    expect(h.spawned[0]!.env).toMatchObject({
-      HARKROOM_URL: 'https://example.com', HARKROOM_PAT: 'hrkp_fetched1', PATH: '/usr/bin:/bin', AGENT_VERSION: '0.2.8',
-    });
-    expect(h.fetched()).toBe(1);
-    expect(await h.deps.secrets.getAgentPat('https://example.com', 'a-1')).toBe('hrkp_fetched1');
-  });
-  it('저장된 PAT 이 있으면 다시 받지 않는다', async () => {
-    const h = harness();
-    await h.deps.secrets.setAgentPat('https://example.com', 'a-1', 'hrkp_saved');
-    const r = createAssignmentReconciler(h.deps);
-    await r.onAssign('https://example.com', def(), undefined);
-    expect(h.fetched()).toBe(0);
-    expect(h.spawned[0]!.env.HARKROOM_PAT).toBe('hrkp_saved');
+    expect(h.spawned[0]!.env).toMatchObject({ PATH: '/usr/bin:/bin', AGENT_VERSION: '0.2.8', HARKROOM_WORKING_DIR: '~/dev/x' });
+    expect(h.spawned[0]!.env.HARKROOM_URL).toBeUndefined();
+    expect(h.spawned[0]!.env.HARKROOM_PAT).toBeUndefined();
   });
   it('이미 살아 있으면 새로 띄우지 않는다 — 멱등', async () => {
     const h = harness();
@@ -68,57 +56,38 @@ describe('assign', () => {
     expect(await r.onAssign('https://example.com', def(), undefined)).toBe('already');
     expect(h.spawned).toHaveLength(1);
   });
-  it('PAT 을 못 받으면 failed 이고 띄우지 않는다', async () => {
-    const h = harness({ fetchAgentPat: async () => { throw new Error('403'); } });
-    const r = createAssignmentReconciler(h.deps);
-    expect(await r.onAssign('https://example.com', def(), undefined)).toBe('failed');
-    expect(h.spawned).toHaveLength(0);
-  });
 });
 
 describe('러너 링크(스펙 §5) — spawn 마다 id 와 secret 을 새로 만든다', () => {
-  it('링크가 있으면 소켓·id·secret 을 env 에 심고, spawn 전에 link.expect 를 부른다', async () => {
-    const expected: { runnerId: string; agentId: string; secret: string }[] = [];
+  it('소켓·id·secret 을 env 에 심고, spawn 전에 link.expect 를 부른다', async () => {
     const spawnedIds: string[] = [];
     const h = harness({
       spawn: async (_agentId, _env, runnerId) => { spawnedIds.push(runnerId); return { spawned: true, pid: 1, runnerId }; },
-      link: { expect: (r, a, sec) => expected.push({ runnerId: r, agentId: a, secret: sec }), forget: () => {} },
-      socketPath: '/tmp/op.sock',
     });
     const r = createAssignmentReconciler(h.deps);
     await r.onAssign('https://example.com', def(), undefined);
     await r.onAssign('https://example.com', def('a-2'), undefined);
-    expect(expected).toHaveLength(2);
-    expect(expected[0]!.agentId).toBe('a-1');
-    expect(expected[0]!.runnerId).toBe(spawnedIds[0]);
+    expect(h.expected).toHaveLength(2);
+    expect(h.expected[0]!.agentId).toBe('a-1');
+    expect(h.expected[0]!.runnerId).toBe(spawnedIds[0]);
     // 러너마다 다른 secret — 하나가 새도 다른 러너에는 쓸모없다.
-    expect(expected[0]!.secret).not.toBe(expected[1]!.secret);
-    expect(expected[0]!.secret.length).toBeGreaterThanOrEqual(32);
+    expect(h.expected[0]!.secret).not.toBe(h.expected[1]!.secret);
+    expect(h.expected[0]!.secret.length).toBeGreaterThanOrEqual(32);
   });
 
-  it('env 에 셋이 실리고, 러너가 이미 있으면 새 id 의 secret 은 잊는다', async () => {
-    const expected: string[] = []; const forgotten: string[] = [];
-    const h = harness({
-      link: { expect: (r) => expected.push(r), forget: (r) => forgotten.push(r) },
-      socketPath: '/tmp/op.sock',
-    });
+  it('env 에 넷(소켓·id·secret·오퍼레이터 실행 파일)이 실리고, 러너가 이미 있으면 새 id 의 secret 은 잊는다', async () => {
+    const h = harness();
     const r = createAssignmentReconciler(h.deps);
     await r.onAssign('https://example.com', def(), undefined);
     const env = h.spawned[0]!.env;
     expect(env.HARKROOM_OPERATOR_SOCKET).toBe('/tmp/op.sock');
-    expect(env.HARKROOM_RUNNER_ID).toBe(expected[0]);
+    expect(env.HARKROOM_RUNNER_ID).toBe(h.expected[0]!.runnerId);
     expect(env.HARKROOM_RUNNER_SECRET).toBeTruthy();
+    expect(env.HARKROOM_OPERATOR_BIN).toBe('/opt/harkroom/harkroom-operator');
     // 두 번째 assign — 살아 있으므로 안 띄운다(harness 의 spawn 은 옛 id 를 돌려준다). 새로
     // 적은 secret 은 아무 러너도 안 쓰므로 지운다.
     await r.onAssign('https://example.com', def(), undefined);
-    expect(forgotten).toEqual([expected[1]]);
-  });
-
-  it('링크가 없으면(단계 3 이전 배선) env 에 셋을 심지 않는다', async () => {
-    const h = harness();
-    const r = createAssignmentReconciler(h.deps);
-    await r.onAssign('https://example.com', def(), undefined);
-    expect(h.spawned[0]!.env.HARKROOM_RUNNER_ID).toBeUndefined();
+    expect(h.forgotten).toEqual([h.expected[1]!.runnerId]);
   });
 });
 
