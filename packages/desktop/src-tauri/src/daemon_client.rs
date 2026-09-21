@@ -1978,6 +1978,28 @@ impl DaemonConnection {
         self.request("claudePoolRemove", json!({ "pool": pool }))
     }
 
+    // ── 오퍼레이터 로컬 설정(스펙 2026-09-20 §3 능력) ─────────────────────────
+    //
+    // "이 머신이 어떤 에이전트를 돌릴 수 있나"는 오퍼레이터의 `operator.json` 이고 그 writer 는
+    // 오퍼레이터 하나다. 앱은 소켓으로 넣고 뺄 뿐이다 — 계정 풀과 같은 규율.
+    pub fn operator_agents_list(&self) -> Result<Value, String> {
+        self.request("operatorAgentsList", json!({}))
+    }
+
+    pub fn operator_agent_set(&self, base_url: &str, agent_id: &str, config: Value) -> Result<Value, String> {
+        self.request(
+            "operatorAgentSet",
+            json!({ "baseUrl": base_url, "agentId": agent_id, "config": config }),
+        )
+    }
+
+    pub fn operator_agent_remove(&self, base_url: &str, agent_id: &str) -> Result<Value, String> {
+        self.request(
+            "operatorAgentRemove",
+            json!({ "baseUrl": base_url, "agentId": agent_id }),
+        )
+    }
+
     pub fn claude_account_move(&self, account: &str, to_pool: &str) -> Result<Value, String> {
         self.request(
             "claudeAccountMove",
