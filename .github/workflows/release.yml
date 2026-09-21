@@ -393,7 +393,11 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm --filter @harkroom/desktop tauri build --target ${{ matrix.triple }}
+        # `--verbose` 인 이유(실측 2026-09-21, v0.2.14 두 번째 시도): `bundle_dmg.sh` 가 5초 만에
+        # 죽었는데 tauri 는 "failed to run bundle_dmg.sh" 만 남기고 스크립트의 stderr(hdiutil·Finder)
+        # 를 삼켰다. 사유 없는 실패는 재시도밖에 할 수 없고, 재시도가 또 실패해도 사유가 없다 —
+        # 그래서 늘 켠다. 성공 빌드의 로그가 길어지는 값은 치른다.
+        run: pnpm --filter @harkroom/desktop tauri build --target ${{ matrix.triple }} --verbose
 
       # ## 서명 — 이미 실물로 통과한 스크립트를 부른다
       #
