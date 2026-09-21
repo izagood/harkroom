@@ -3043,3 +3043,33 @@ import type { Capability, Role } from './permissions.js';
 export interface MeView extends AccountView {
   capabilities: Capability[];
 }
+
+/**
+ * 오퍼레이터 — 사람의 기기(스펙 2026-09-20 §3). 서버에 outbound WS 로 붙어 능력을 등록하고
+ * 배정을 받아 러너를 띄우는 프로세스다. 계정이 아니라 계정에 속한다.
+ */
+export interface OperatorView {
+  id: string;
+  ownerAccountId: string;
+  name: string;
+  createdAt: string;
+  lastSeenAt: string | null;
+  revokedAt: string | null;
+  /** 허브가 아는 연결 상태. 목록·단건 응답에서 채운다 — 저장된 사실이 아니라 지금의 사실이다. */
+  online: boolean;
+}
+
+/** 오퍼레이터가 `hello` 에 싣는 능력 — 연결이 살아 있는 동안만 서버가 든다. */
+export interface OperatorCapabilities {
+  /** 로컬 설정에 있어 이 머신에서 돌릴 수 있는 에이전트. */
+  agentIds: string[];
+  harnesses: Record<string, { installed: boolean; loggedIn: boolean }>;
+}
+
+/** 에이전트 → 오퍼레이터 배정(§3). 에이전트당 하나. */
+export interface AgentAssignmentView {
+  agentId: string;
+  operatorId: string;
+  assignedBy: string;
+  assignedAt: string;
+}

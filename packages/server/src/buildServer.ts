@@ -10,6 +10,7 @@ import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
 import { registerAccountRoutes } from './routes/accountRoutes.js';
 import { registerGrantRoutes } from './routes/grantRoutes.js';
+import { registerOperatorRoutes } from './routes/operatorRoutes.js';
 import { registerChannelRoutes } from './routes/channelRoutes.js';
 import { registerTeamRoutes } from './routes/teamRoutes.js';
 import { registerMessageRoutes } from './routes/messageRoutes.js';
@@ -489,6 +490,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerHandleGroupRoutes(app, deps.pool);
   await registerLinkPreviewRoutes(app, deps.pool);
   await registerSkillRoutes(app, deps.pool);
+
+  // 오퍼레이터 신원(스펙 2026-09-20 §3). 릴레이와 같은 이유로 registerWs·registerAuth 뒤다.
+  // `presence` 는 2.4 의 허브가 채운다 — 그 전까지 "아무도 안 붙어 있다".
+  await registerOperatorRoutes(app, deps.pool, {
+    presence: { isOnline: () => false, capabilities: () => null },
+  });
 
   // #141 Phase 2 attach. **registerWs 뒤여야 한다** — `websocket: true` 라우트는
   // `@fastify/websocket` 이 등록된 뒤에만 만들어질 수 있고, 그 등록은 registerWs 안에서
