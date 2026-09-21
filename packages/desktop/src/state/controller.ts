@@ -1974,6 +1974,11 @@ export class Controller {
     return this.api.operatorRegisterCode();
   }
 
+  /** 붙어 있는 동안만 있다(서버가 저장하지 않는다) — 오프라인이면 404 가 던져진다. */
+  operatorCapabilities(id: string): Promise<import('@harkroom/shared').OperatorCapabilities> {
+    return this.api.operatorCapabilities(id);
+  }
+
   revokeOperator(id: string): Promise<void> {
     return this.api.revokeOperator(id);
   }

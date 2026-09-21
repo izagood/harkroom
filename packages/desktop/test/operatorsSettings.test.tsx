@@ -26,6 +26,9 @@ const op = (id: string, name: string, extra: Partial<OperatorView> = {}): Operat
 function fakeController(operators: OperatorView[] = []) {
   const c = {
     operators: vi.fn(async () => operators),
+    operatorCapabilities: vi.fn(async (id: string) => (id === 'op-1'
+      ? { agentIds: ['a-1', 'a-2'], harnesses: { 'claude-code': { installed: true, loggedIn: true }, codex: { installed: false, loggedIn: false } } }
+      : Promise.reject(new Error('offline')))),
     operatorRegisterCode: vi.fn(async () => ({ code: 'hkreg_abc', expiresAt: '2026-09-21T00:05:00Z' })),
     revokeOperator: vi.fn(async () => undefined),
   };
@@ -80,5 +83,17 @@ describe('OperatorsSettings', () => {
     render(<OperatorsSettings />);
     await screen.findByText('someone');
     expect(screen.queryByRole('button', { name: '등록 코드 발급' })).toBeNull();
+  });
+});
+
+describe('오퍼레이터 능력(스펙 §3)', () => {
+  it('붙어 있는 오퍼레이터는 로컬 설정의 에이전트 수와 하네스를 보이고, 끊긴 것은 능력 줄이 없다', async () => {
+    fakeController([op('op-1', 'jaebin-mbp', { online: true }), op('op-2', 'gpu-box')]);
+    render(<OperatorsSettings />);
+    const caps = await screen.findByTestId('operator-caps-op-1');
+    expect(caps.textContent).toContain('에이전트 2개');
+    expect(caps.textContent).toContain('claude-code: 설치·로그인됨');
+    expect(caps.textContent).toContain('codex: 없음');
+    expect(screen.queryByTestId('operator-caps-op-2')).toBeNull();
   });
 });
