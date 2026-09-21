@@ -38,6 +38,20 @@ async function connectRunner(id: string, caps: readonly RunnerCap[] | null): Pro
   return runner;
 }
 
+/**
+ * 러너가 보낸 `session.started` 가 허브에 반영될 때까지 기다린다. 소켓 write 가 돌아온 것과
+ * 서버가 그 프레임을 처리한 것은 다른 사건이다 — CI(2026-09-21, run 35564790880)에서 그 사이에
+ * attach 가 들어가 404 였다. 로컬에선 빨라서 안 보이던 경합이다.
+ */
+const waitForSession = async (token: string, sessionId: string): Promise<void> => {
+  const start = Date.now();
+  for (;;) {
+    const res = await app.inject({ method: 'GET', url: '/agent-sessions', headers: auth(token) });
+    if ((res.json().sessions as { sessionId: string }[]).some((x) => x.sessionId === sessionId)) return;
+    if (Date.now() - start > 4000) throw new Error(`세션이 허브에 안 올랐다: ${sessionId}`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
+};
 const waitFor = async (pred: () => boolean, ms = 4000): Promise<void> => {
   const start = Date.now();
   while (!pred()) {
@@ -230,7 +244,7 @@ describe('#337-3 viewer.count 가 러너에 흐른다 — 인터랙티브 고아
   it('attach 가 count 를 올리고 detach 가 내린다', async () => {
     const runner = await connectRunner(agentId, ['input', 'interactive']);
     runner.send({ type: 'session.started', session: session('sess-count', 'interactive') });
-    await waitFor(() => runner.received.length >= 0);
+    await waitForSession(ownerToken, 'sess-count');
 
     const attachRes = await app.inject({
       method: 'POST', url: '/agent-sessions/sess-count/attach', headers: auth(ownerToken),
@@ -264,6 +278,7 @@ describe('#337-3 viewer.count 가 러너에 흐른다 — 인터랙티브 고아
   it('announce 하면 그 세션들의 현재 뷰어 수를 되돌려준다 — 유실이 재접속에서 복구된다', async () => {
     const runner = await connectRunner(agentId, ['input', 'interactive']);
     runner.send({ type: 'session.started', session: session('sess-resync', 'interactive') });
+    await waitForSession(ownerToken, 'sess-resync');
 
     const attachRes = await app.inject({
       method: 'POST', url: '/agent-sessions/sess-resync/attach', headers: auth(ownerToken),
