@@ -583,6 +583,15 @@ export async function readExtraMcpServers(path: string): Promise<Record<string, 
   return out;
 }
 
+/**
+ * `-c` 의 값은 **TOML** 이다. 문자열·배열은 JSON 표기와 겹치지만 표(env·headers)는 아니다 —
+ * JSON 의 `{"K":"v"}` 는 TOML 인라인 표가 아니라 파싱 오류다(실측 2026-09-21: codex 0.15x 가
+ * `in \`mcp_servers.timing.env\`` 로 거절). TOML 인라인 표는 `{ "K" = "v" }` 다.
+ */
+function tomlInlineTable(record: Record<string, string>): string {
+  return `{ ${Object.entries(record).map(([k, v]) => `${JSON.stringify(k)} = ${JSON.stringify(v)}`).join(', ')} }`;
+}
+
 /** codex 의 `-c mcp_servers.<name>.*` 조각. transport 를 반드시 적는다(프리셋 주석의 2026-09-15 실측). */
 function codexMcpFlags(name: string, entry: McpServerEntry): string[] {
   const key = `mcp_servers.${name}`;
@@ -590,14 +599,14 @@ function codexMcpFlags(name: string, entry: McpServerEntry): string[] {
     return [
       '-c', `${key}.transport=${JSON.stringify(entry.type === 'sse' ? 'sse' : 'streamable_http')}`,
       '-c', `${key}.url=${JSON.stringify(entry.url)}`,
-      ...(entry.headers ? ['-c', `${key}.http_headers=${JSON.stringify(entry.headers)}`] : []),
+      ...(entry.headers ? ['-c', `${key}.http_headers=${tomlInlineTable(entry.headers)}`] : []),
     ];
   }
   return [
     '-c', `${key}.transport="stdio"`,
     '-c', `${key}.command=${JSON.stringify(entry.command)}`,
     '-c', `${key}.args=${JSON.stringify(entry.args ?? [])}`,
-    ...(entry.env ? ['-c', `${key}.env=${JSON.stringify(entry.env)}`] : []),
+    ...(entry.env ? ['-c', `${key}.env=${tomlInlineTable(entry.env)}`] : []),
   ];
 }
 
