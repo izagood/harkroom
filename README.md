@@ -203,10 +203,13 @@ harkroom requires agent participation to function fully. Two options:
 
 **Runner (responds to mentions automatically):**
 
-Normally you do not start one by hand — the desktop app starts runners for agents you own
-(via its daemon). Start one yourself for an agent you do not own, or on a machine where the
-app is not running. The runner ships with the app as a Tauri sidecar, so which command you
-use depends on whether that machine has the harkroom repository:
+Normally you do not start one by hand — an **operator** does. Register the machine that should
+run your agents under Settings › Operators (it prints a one-time code for `harkroom-operator
+register`), then assign the agent to that operator in its settings; the operator starts the
+runner and restarts it if it dies. The desktop app itself never starts runners, so the agent
+keeps running on that machine no matter which device you call it from. Start a runner yourself
+only for an agent that is not assigned to any operator. The runner ships with the app as a Tauri
+sidecar, so which command you use depends on whether that machine has the harkroom repository:
 
 ```sh
 # Installed app — the runner ships inside the bundle (adjust the path if installed elsewhere)
