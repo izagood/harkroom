@@ -293,9 +293,15 @@ console.log('정의는 서버에서 읽는다 (harkroom UI 의 Add/Edit agent �
 // **접속 실패로 러너를 죽이지 않는다.** 릴레이는 관찰이고 poll 루프는 답이다 — 서버가
 // attach 를 지원하지 않는 구버전이거나 릴레이가 막혀 있어도 멘션에는 답해야 한다.
 // 그래서 여기에 await 도, 성공 확인도 없다.
+// 스펙 2026-09-20 §5: 오퍼레이터가 띄운 러너는 이 머신의 오퍼레이터 소켓에 붙고, 서버에는 오퍼레이터가
+// 대신 붙는다. 링크가 없으면 옛 경로(서버 WS)다 — 그 경로는 단계 4 에서 사라진다(Task 3.3).
+if (!config.operatorLink) {
+  console.warn('오퍼레이터 없이 도는 러너다 — 릴레이를 서버에 직접 건다. 이 경로는 단계 4 에서 사라진다.');
+}
 const relay = createRelayClient({
   harkroomUrl: config.harkroomUrl,
   pat: config.harkroomPat,
+  link: config.operatorLink,
   // #337: 서버의 interactive.open 은 매니저가 처리한다. 매니저가 relay 를 필요로 해서
   // (세션 열기) 상호 참조가 생기므로 늦게 배선한다 — 매니저가 아직 없으면 릴레이가
   // 스스로 interactive.error 로 답한다(relay.ts 의 훅 부재 처리).

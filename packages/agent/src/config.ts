@@ -41,6 +41,11 @@ export function runnerLabel(handle: string, instance: string | undefined): strin
 export interface RunnerConfig {
   harkroomUrl: string;
   harkroomPat: string;
+  /**
+   * 오퍼레이터 링크(스펙 2026-09-20 §5). 오퍼레이터가 spawn 때 셋을 함께 심는다. `null` 이면
+   * 오퍼레이터 없이 손으로 띄운 러너다 — 서버 WS 로 직접 붙는 옛 경로이고, 단계 4 에서 사라진다.
+   */
+  operatorLink: { socketPath: string; runnerId: string; secret: string } | null;
   pollTimeoutMs: number;
   /** 한 턴(PTY 실행)의 최대 대기 시간. 코딩 에이전트는 도구 호출을 여러 번 거치므로 넉넉히 잡는다. */
   turnTimeoutMs: number;
@@ -69,12 +74,26 @@ function required(env: NodeJS.ProcessEnv, key: string): string {
   return v;
 }
 
+/** 셋이 다 있어야 링크다. 일부만 있으면 오퍼레이터의 spawn 이 깨진 것이라 조용히 폴백하지 않는다. */
+function operatorLink(env: NodeJS.ProcessEnv): RunnerConfig['operatorLink'] {
+  const socketPath = env.HARKROOM_OPERATOR_SOCKET;
+  const runnerId = env.HARKROOM_RUNNER_ID;
+  const secret = env.HARKROOM_RUNNER_SECRET;
+  const given = [socketPath, runnerId, secret].filter(Boolean).length;
+  if (given === 0) return null;
+  if (given < 3) {
+    throw new Error('HARKROOM_OPERATOR_SOCKET·HARKROOM_RUNNER_ID·HARKROOM_RUNNER_SECRET 은 셋이 함께 있어야 한다');
+  }
+  return { socketPath: socketPath!, runnerId: runnerId!, secret: secret! };
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
   // 모델·effort 는 여기 없다 — 서버 정의에 있어야 UI 수정이 반영된다.
   // claude-code harness 는 claude CLI 의 자격증명을 쓰므로 API 키도 필요 없다.
   return {
     harkroomUrl: (env.HARKROOM_URL ?? 'http://localhost:3400').replace(/\/$/, ''),
     harkroomPat: required(env, 'HARKROOM_PAT'),
+    operatorLink: operatorLink(env),
     // 서버의 inbox.poll 상한은 25초다.
     pollTimeoutMs: Number(env.AGENT_POLL_TIMEOUT_MS ?? 25_000),
     // 코딩 에이전트 한 턴은 도구 호출을 여러 번 거칠 수 있다 — 30분을 기본값으로 둔다.
