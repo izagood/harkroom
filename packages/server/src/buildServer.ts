@@ -516,6 +516,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const relay = await registerAgentRelayRoutes(app, deps.pool, {
     attachTicketTtlMs: deps.attachTicketTtlMs,
     interactiveOpenTimeoutMs: deps.interactiveOpenTimeoutMs,
+    // 뷰어 소켓의 ping 주기 — `/ws`·`/operator` 와 같은 값(실측 2026-09-21: 이 소켓만 빠져 있었다).
+    heartbeatMs: deps.wsHeartbeatMs,
     // 뷰어 소켓의 수명 규칙은 `/ws` 와 **같은 값**을 받아야 한다 — 갈라지면 더 민감한
     // 쪽(PTY 바이트)이 더 느슨해진다.
     allowedOrigins: deps.corsOrigins ?? null,
