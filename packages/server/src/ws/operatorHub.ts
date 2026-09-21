@@ -34,6 +34,11 @@ export interface OperatorHub {
   send(operatorId: string, frame: ServerToOperatorFrame): boolean;
   /** 이 에이전트의 러너가 지금 어느 오퍼레이터에 살아 있나. 없으면 null. */
   runnerOf(agentId: string): { operatorId: string; runnerId: string } | null;
+  /**
+   * 오퍼레이터가 마지막으로 이 에이전트의 배정을 거절한 사유(`runner.exited{reason, agentId}`).
+   * 러너가 뜨면(runner.started·hello 의 announce) 지워진다. 화면이 "왜 안 뜨나"를 여기서 본다.
+   */
+  refusalOf(agentId: string): { reason: string; at: string } | null;
   /** 파싱된 모든 프레임을 구독한다. 배정 라우트(hello 에 배정 재전송)와 릴레이(단계 3)가 쓴다. */
   onFrame(listener: (operatorId: string, frame: OperatorToServerFrame) => void): () => void;
   /** 오퍼레이터가 떨어졌다(소켓 close·교체). 릴레이가 그 오퍼레이터의 러너 세션을 접는 근거다. */
@@ -43,6 +48,7 @@ export interface OperatorHub {
 export function createOperatorHub(): OperatorHub {
   const live = new Map<string, LiveOperator>();
   const bus = new EventEmitter();
+  const refusals = new Map<string, { reason: string; at: string }>();
   bus.setMaxListeners(100);
 
   return {
@@ -70,18 +76,22 @@ export function createOperatorHub(): OperatorHub {
       if (frame.type === 'hello') {
         entry.capabilities = frame.capabilities;
         entry.runners = new Map(frame.runners.map((r) => [r.runnerId, r.agentId]));
+        for (const r of frame.runners) refusals.delete(r.agentId);
       } else if (frame.type === 'capabilities') {
         // 앱이 오퍼레이터 로컬 설정을 고쳤다 — 러너 목록은 그대로, 능력만 바뀐다.
         entry.capabilities = frame.capabilities;
       } else if (frame.type === 'runner.started') {
         entry.runners.set(frame.runnerId, frame.agentId);
+        refusals.delete(frame.agentId);
       } else if (frame.type === 'runner.exited') {
         entry.runners.delete(frame.runnerId);
+        if (frame.reason && frame.agentId) refusals.set(frame.agentId, { reason: frame.reason, at: new Date().toISOString() });
       }
       bus.emit('frame', operatorId, frame);
     },
 
     isOnline: (operatorId) => live.has(operatorId),
+    refusalOf: (agentId) => refusals.get(agentId) ?? null,
     capabilities: (operatorId) => live.get(operatorId)?.capabilities ?? null,
 
     send(operatorId, frame) {
