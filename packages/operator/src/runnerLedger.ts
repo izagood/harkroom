@@ -92,6 +92,13 @@ export interface RunnerLedgerEntry {
   pid: number;
   incarnationId: IncarnationId;
   /**
+   * 러너 링크의 secret(스펙 2026-09-20 §5). **채택한 러너가 다시 붙을 수 있게** 적는다 — 실측
+   * (2026-09-21): 오퍼레이터를 kill -9 하고 다시 띄우면 러너는 채택되지만 secret 이 앞 프로세스의
+   * 메모리에만 있어 링크가 영영 안 붙었고, 러너는 살아 있는데 답을 못 했다(조용한 실패).
+   * 장부는 0600 이고 토큰 파일과 같은 자리라 신뢰 경계가 넓어지지 않는다. 옛 항목엔 없다.
+   */
+  linkSecret?: string;
+  /**
    * 러너를 spawn 한 시각(daemon 의 시계).
    *
    * **pid 재사용을 가르는 축이 아니다** — 그것은 아래 `bootTimeSec` 이다. 이 값은
@@ -186,7 +193,8 @@ function isEntry(value: unknown): value is RunnerLedgerEntry {
     e.pid > 0 &&
     typeof e.incarnationId === 'string' &&
     typeof e.startedAtMs === 'number' &&
-    (e.bootTimeSec === null || typeof e.bootTimeSec === 'number')
+    (e.bootTimeSec === null || typeof e.bootTimeSec === 'number') &&
+    (e.linkSecret === undefined || typeof e.linkSecret === 'string')
   );
 }
 
