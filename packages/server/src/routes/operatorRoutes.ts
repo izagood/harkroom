@@ -11,11 +11,13 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import type { OperatorCapabilities, OperatorView } from '@harkroom/shared';
+import type { OperatorView } from '@harkroom/shared';
 import { newToken } from '../auth/tokens.js';
 import { can } from '../auth/permissions.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
+import { createHeartbeat } from '../ws/heartbeat.js';
+import type { OperatorHub } from '../ws/operatorHub.js';
 
 const REGISTER_CODE_TTL_MS = 5 * 60_000;
 const claimBody = z.object({ code: z.string().startsWith('hkreg_'), name: z.string().min(1).max(64) });
@@ -24,14 +26,8 @@ const idParam = z.object({ id: z.string().uuid() });
 const OP_COLS = `id, owner_account_id as "ownerAccountId", name, created_at as "createdAt",
   last_seen_at as "lastSeenAt", revoked_at as "revokedAt"`;
 
-/**
- * 허브가 아는 **지금의 사실** — 연결돼 있는가, 무엇을 돌릴 수 있다고 했는가. 2.4 의
- * `OperatorHub` 가 이 둘을 구현한다. 그 전까지는 "아무도 안 붙어 있다"는 스텁이다.
- */
-export interface OperatorPresence {
-  isOnline(operatorId: string): boolean;
-  capabilities(operatorId: string): OperatorCapabilities | null;
-}
+/** 허브가 아는 **지금의 사실** — 연결돼 있는가, 무엇을 돌릴 수 있다고 했는가. */
+export type OperatorPresence = Pick<OperatorHub, 'isOnline' | 'capabilities'>;
 
 /**
  * 등록 코드 저장소. `ws/tickets.ts` 의 코어는 export 돼 있지 않고 접두를 정할 수 없다 —
@@ -55,12 +51,42 @@ function createRegisterCodes(ttlMs: number) {
 }
 
 export interface OperatorRoutesDeps {
-  presence: OperatorPresence;
+  hub: OperatorHub;
+  /** 소켓 ping 주기(ms). `/ws`·릴레이와 **같은 값**을 받는다(`wsHeartbeatMs`) — 갈라지면 수명이 갈린다. */
+  heartbeatMs?: number;
 }
 
 export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, deps: OperatorRoutesDeps): Promise<void> {
   const codes = createRegisterCodes(REGISTER_CODE_TTL_MS);
-  const view = (row: Omit<OperatorView, 'online'>): OperatorView => ({ ...row, online: deps.presence.isOnline(row.id) });
+  const presence: OperatorPresence = deps.hub;
+  const view = (row: Omit<OperatorView, 'online'>): OperatorView => ({ ...row, online: presence.isOnline(row.id) });
+
+  /**
+   * 하트비트. `/agent-relay` 에 넣은 것과 같은 배선(b485b9d8) — 프록시가 조용히 걷어간 소켓은
+   * close 를 주지 않으므로 pong 부재가 유일한 신호다. 끊으면 close 핸들러가 돌아 허브에서 빠진다.
+   */
+  const heartbeat = createHeartbeat();
+  const beat = setInterval(() => heartbeat.tick(), deps.heartbeatMs ?? 30_000);
+  beat.unref?.();
+  app.addHook('onClose', async () => { clearInterval(beat); });
+
+  app.get('/operator', { websocket: true, preHandler: app.requireOperator }, (socket, req) => {
+    const operatorId = req.operator!.id;
+    const detach = deps.hub.addOperator(operatorId, socket);
+    heartbeat.track(socket);
+    socket.on('pong', () => heartbeat.pong(socket));
+    socket.on('message', (raw) => {
+      // 프레임 도착 = 생존. last_seen_at 은 "마지막으로 말한 때"이고 실패해도 흐름을 막지 않는다.
+      void pool.query(`update operator set last_seen_at = now() where id = $1`, [operatorId]).catch(() => {});
+      deps.hub.onOperatorMessage(operatorId, String(raw));
+    });
+    socket.on('close', () => {
+      heartbeat.untrack(socket);
+      detach();
+      emitEvent({ type: 'operator.changed', operatorId, audience: 'all' });
+    });
+    emitEvent({ type: 'operator.changed', operatorId, audience: 'all' });
+  });
 
   app.post('/operators/register-codes', { preHandler: app.requireCap('operator.register') }, async (req) => ({
     code: codes.issue({ ownerAccountId: req.account!.id }),
@@ -101,7 +127,7 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
     { preHandler: app.requireCap('operator.manage', { kind: 'operator', param: 'id' }) },
     async (req, reply) => {
       const { id } = idParam.parse(req.params);
-      const caps = deps.presence.capabilities(id);
+      const caps = presence.capabilities(id);
       // 오프라인이면 능력도 없다 — 저장하지 않으므로 "모른다"가 정확한 답이다.
       return caps ?? reply.code(404).send({ error: { code: 'offline', message: '오퍼레이터가 붙어 있지 않다' } });
     });
