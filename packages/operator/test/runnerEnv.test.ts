@@ -40,7 +40,8 @@
 import { describe, expect, it } from 'vitest';
 import type { ChildProcess } from 'node:child_process';
 
-import { RunnerRegistry, type RunnerHost } from '../src/runners.js';
+import { RunnerRegistry, type RunnerHost, type RunnerExitNotice } from '../src/runners.js';
+import type { IncarnationId } from '@harkroom/shared/daemonProtocol';
 
 const SLEEPER = { command: '/bin/sh', args: ['-c', 'sleep 30'] };
 
@@ -120,6 +121,55 @@ describe('회수 중에는 교체 러너를 띄우지 않는다', () => {
 
     await registry.spawnRunner('a2', { PATH: '/usr/bin' });
     expect(envs).toHaveLength(1);
+  });
+});
+
+/**
+ * **회수한 러너도 이 오퍼레이터의 러너다** (#838). 앱 갱신으로 세대가 바뀌면 새 오퍼레이터가
+ * 옛 러너에 SIGTERM 을 보내고 턴이 끝나길 기다리는데, 그 러너의 링크는 죽은 옛 오퍼레이터를
+ * 향해 있었다. 새 오퍼레이터가 그 러너를 **자기 것으로 알아야**(id 로 announce 하고, 링크를
+ * 받고, 죽으면 서버에 알려야) 진행 중이던 턴이 새 오퍼레이터를 통해 끝난다.
+ */
+describe('회수한 러너를 id 로 알고, 사라지면 exit 통지를 낸다 (#838)', () => {
+  const INC = 'inc-old' as IncarnationId;
+
+  it('retiringRunners 에 incarnationId 와 함께 보이고, 죽으면 그 id 로 exit 통지가 한 번 나간다', () => {
+    const { host } = 엿보는host();
+    let alive = true;
+    const notices: RunnerExitNotice[] = [];
+    const registry = new RunnerRegistry(SLEEPER, { ...host, kill: () => alive } as RunnerHost, (n) => notices.push(n));
+
+    registry.retire('a1', 4242, INC);
+    expect(registry.retiringRunners()).toEqual([{ agentId: 'a1', pid: 4242, incarnationId: INC }]);
+    registry.pollAdopted();
+    expect(notices).toHaveLength(0);
+
+    alive = false;
+    registry.pollAdopted();
+    expect(notices).toMatchObject([{ agentId: 'a1', incarnationId: INC, code: null, signal: null }]);
+    expect(registry.retiringRunners()).toEqual([]);
+    registry.pollAdopted();
+    expect(notices).toHaveLength(1);
+  });
+
+  it('spawnRunner 가 물러난 자리를 발견해도 exit 통지는 한 번이다', async () => {
+    const { host } = 엿보는host();
+    const notices: RunnerExitNotice[] = [];
+    const registry = new RunnerRegistry(SLEEPER, { ...host, kill: () => false } as RunnerHost, (n) => notices.push(n));
+    registry.retire('a1', 4242, INC);
+    await registry.spawnRunner('a1', { PATH: '/usr/bin' });
+    registry.pollAdopted();
+    expect(notices.filter((n) => n.incarnationId === INC)).toHaveLength(1);
+  });
+
+  it('id 를 모르는 회수(옛 장부)는 announce 에 싣지 않고 exit 통지도 내지 않는다', () => {
+    const { host } = 엿보는host();
+    const notices: RunnerExitNotice[] = [];
+    const registry = new RunnerRegistry(SLEEPER, { ...host, kill: () => false } as RunnerHost, (n) => notices.push(n));
+    registry.retire('a1', 4242);
+    expect(registry.retiringRunners()).toEqual([]);
+    registry.pollAdopted();
+    expect(notices).toHaveLength(0);
   });
 });
 

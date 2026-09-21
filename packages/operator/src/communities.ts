@@ -46,6 +46,19 @@ export interface CommunityRuntime {
   startOne(baseUrl: string): Promise<CommunityInstance | null>;
 }
 
+/**
+ * hello 의 announce — 서버가 "이 오퍼레이터에 어떤 러너가 살아 있나"를 아는 표. 살아 있는
+ * 러너에 더해 **회수 중인 옛 세대 러너**도 싣는다(#838): 그 러너는 SIGTERM 을 받고 진행 중인
+ * 턴을 끝내는 중이고, 그 턴의 프레임과 답이 이 오퍼레이터를 지난다. announce 에 없으면
+ * 서버가 그 프레임을 버린다. 죽으면 registry 가 exit 통지를 내고 서버가 지운다.
+ */
+export function announceOf(registry: Pick<RunnerRegistry, 'listRunners' | 'retiringRunners'>): { agentId: string; runnerId: string; pid: number }[] {
+  return [
+    ...registry.listRunners().filter((r) => r.alive).map((r) => ({ agentId: r.agentId, runnerId: r.incarnationId, pid: r.pid })),
+    ...registry.retiringRunners().map((r) => ({ agentId: r.agentId, runnerId: r.incarnationId, pid: r.pid })),
+  ];
+}
+
 export async function startCommunities(deps: StartCommunitiesDeps): Promise<CommunityRuntime> {
   const configPath = join(deps.appDataDir, 'operator', 'operator.json');
   const config = await readConfig(configPath);
@@ -76,9 +89,7 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
       return info ? deps.host.kill(info.pid, 'SIGKILL') : false;
     },
     isAlive: (agentId) => deps.registry.listRunners().some((r) => r.agentId === agentId && r.alive),
-    listRunners: () => deps.registry.listRunners()
-      .filter((r) => r.alive)
-      .map((r) => ({ agentId: r.agentId, runnerId: r.incarnationId, pid: r.pid })),
+    listRunners: () => announceOf(deps.registry),
     loginPath,
     appVersion: deps.appVersion,
     link: deps.runnerLink,
