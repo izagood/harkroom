@@ -1080,6 +1080,7 @@ export const ko = {
   'message.unsave': '담은 것 빼기',
   // 연쇄 깊이 상한에 막힌 호출(4단계) — 근거는 `en.ts` 의 같은 자리에 있다.
   'message.chainCapped': '{handles} 를 부르지 않았다 — 멘션 연쇄가 깊이 상한({limit})에 닿았다. 이어 가려면 사람이 한 줄 쓰면 된다.',
+  'message.mentionDenied': '{handles} 를 부르지 않았다 — 부를 수 있는 범위 밖이다. 그 에이전트의 소유자에게 물어라.',
   'message.openSkillApproval': '스킬 승인 화면 열기',
 
   'message.authorLabel': '작성자 {name}',

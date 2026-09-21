@@ -168,7 +168,9 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such team' } });
     }
 
-    const account = await pool.query(`select kind, handle from account where id = $1`, [accountId]);
+    const account = await pool.query(
+      `select a.kind, a.handle, coalesce(c.invoke_scope, 'community') as invoke_scope
+         from account a left join agent_config c on c.account_id = a.id where a.id = $1`, [accountId]);
     if (!account.rowCount) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such account' } });
     }
@@ -176,6 +178,12 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
     // 집합(#230)이 에이전트를 거절하는 것과 정확히 대칭이다.
     if (account.rows[0].kind !== 'agent') {
       return reply.code(400).send({ error: { code: 'not_an_agent', message: 'only agents can join a team' } });
+    }
+    // 스펙 2026-09-20 §6: 팀 부름은 "소유자가 아닌 무언가가 부르는 것"이라 community 스코프만
+    // 팀원이 된다. 넣는 시점에 거절한다 — 런타임에 조용히 건너뛰면 팀장이 "다섯 중 넷만
+    // 응답"을 디버깅한다.
+    if (account.rows[0].invoke_scope !== 'community') {
+      return reply.code(400).send({ error: { code: 'invoke_scope_restricted', message: '호출 범위가 community 가 아닌 에이전트는 팀원이 될 수 없다' } });
     }
 
     await addAgentToTeam(pool, id, accountId);
