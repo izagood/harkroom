@@ -17,7 +17,7 @@ const session = {
 describe('runnerLink — hello', () => {
   it('runner 역할·runnerId·secret 이 있어야 hello 다', () => {
     expect(checkRunnerHello({ type: 'hello', version: RUNNER_LINK_PROTOCOL_VERSION, role: 'runner', runnerId: 'r', secret: 's' }))
-      .toEqual({ runnerId: 'r', secret: 's' });
+      .toEqual({ runnerId: 'r', secret: 's', kind: 'relay' });
     expect(checkRunnerHello({ type: 'hello', version: 1, role: 'app', token: 't' })).toBeNull();
     expect(checkRunnerHello({ type: 'hello', version: 99, role: 'runner', runnerId: 'r', secret: 's' })).toBeNull();
     expect(checkRunnerHello({ type: 'hello', version: 1, role: 'runner', runnerId: 'r' })).toBeNull();
