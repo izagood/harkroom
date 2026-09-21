@@ -24,6 +24,9 @@ const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admi
   coalesce((select json_agg(i.account_id order by i.account_id) from agent_invoker i where i.agent_id = a.id), '[]'::json) as invokers,
   coalesce((select json_agg(m.name order by m.name) from agent_mcp_server m where m.agent_id = a.id), '[]'::json) as "mcpServers",
   a.disabled_at is not null as disabled,
+  -- 이 목록은 삭제된 것을 아예 빼므로 항상 false 다. 그래도 싣는 이유는 AgentView 가
+  -- AccountView 를 확장하기 때문이다 — 빼면 형만 맞추려고 화면에서 채워 넣게 된다.
+  a.deleted_at is not null as deleted,
   -- 에이전트는 상태를 고를 수 없다(서버가 거절한다). 기본값 그대로지만 AccountView 의
   -- 필수 필드라 형태를 맞춰 준다 — 화면은 사람 계정에만 이 값을 그린다.
   a.status, a.status_text as "statusText",
@@ -67,8 +70,8 @@ export function isHarness(value: unknown): value is AgentHarness {
  * 실렸다가 지워지는 모양이 된다. */
 export async function listAgents(pool: Pool, ownerId: string | null = null): Promise<AgentView[]> {
   const where = ownerId
-    ? `where a.kind = 'agent' and c.owner_account_id = $1`
-    : `where a.kind = 'agent'`;
+    ? `where a.kind = 'agent' and a.deleted_at is null and c.owner_account_id = $1`
+    : `where a.kind = 'agent' and a.deleted_at is null`;
   const res = await pool.query(
     `select ${COLS} ${FROM} ${where} order by a.handle`,
     ownerId ? [ownerId] : [],
@@ -77,7 +80,10 @@ export async function listAgents(pool: Pool, ownerId: string | null = null): Pro
 }
 
 export async function getAgent(pool: Pool, id: string): Promise<AgentView | null> {
-  const res = await pool.query(`select ${COLS} ${FROM} where a.id = $1 and a.kind = 'agent'`, [id]);
+  // 삭제된 에이전트는 **없는 것**이다(061). 이 하나로 상세·수정·종료요청 라우트가 전부
+  // 404 가 된다 — 라우트마다 따로 거르면 한 곳을 빠뜨렸을 때 삭제된 에이전트가 되살아난다.
+  const res = await pool.query(
+    `select ${COLS} ${FROM} where a.id = $1 and a.kind = 'agent' and a.deleted_at is null`, [id]);
   return res.rowCount ? res.rows[0] : null;
 }
 
@@ -424,6 +430,68 @@ export async function revokeAllPats(db: Pool | PoolClient, accountId: string): P
     [accountId],
   );
   return res.rows.map((r) => r.label as string);
+}
+
+/**
+ * 에이전트를 **명부에서 내린다**(#836). 되돌리는 길은 없다.
+ *
+ * ## 왜 행을 지우지 않나
+ *
+ * `message.author_id` 가 `account(id)` 를 가리키고 on delete 가 없다 — 진짜 delete 는 FK 가
+ * 막거나, 막지 않게 고치면 그 에이전트가 쓴 메시지를 통째로 끌고 간다. 대화 이력은 그
+ * 에이전트 혼자의 것이 아니므로 어느 쪽도 답이 아니다(061 주석). 행은 남겨 과거 메시지의
+ * 작성자 이름·아바타를 계속 풀어 주고, `deleted_at` 하나로 목록에서 사라진다.
+ *
+ * ## 지우는 것과 남기는 것
+ *
+ * **지운다** — 팀원·채널 자동멘션·오퍼레이터 배정·호출자·MCP 지정·대기 중인 wake, 그리고
+ * 그 에이전트가 자기 것으로 쓴 기억. 전부 "이 에이전트가 지금 무엇을 한다"를 뜻하는
+ * 행이라, 남겨 두면 삭제된 에이전트가 팀 상세에 서고 wake 시각에 인박스 항목이 생긴다.
+ * **남긴다** — 메시지와 감사 기록. 남의 눈에 이미 보인 사실이다.
+ *
+ * PAT 폐기가 러너를 세운다(비활성화와 같은 길 — 401 을 `isCredentialFailure` 가 자격증명
+ * 실패로 읽는다). `disabled_at` 도 함께 찍는다: `deleted_at` 을 아직 안 보는 조회가 남아
+ * 있어도 이미 있는 비활성 판정에 걸리게 하는 **두 번째 그물**이다.
+ *
+ * 한 트랜잭션이다 — 중간에 끊기면 PAT 만 죽고 팀원으로는 남은 에이전트가 된다.
+ */
+export async function deleteAgentAccount(
+  pool: Pool, id: string,
+): Promise<{ handle: string; revokedPats: string[] } | null> {
+  const before = await getAgent(pool, id);
+  // 이미 삭제된 것도 여기서 null 이다(`getAgent` 가 거른다) — 두 번째 호출은 404 이고,
+  // 감사에 같은 삭제가 두 번 남지 않는다.
+  if (!before) return null;
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    await client.query(
+      `update account set deleted_at = now(), disabled_at = coalesce(disabled_at, now()) where id = $1`,
+      [id],
+    );
+    const revokedPats = await revokeAllPats(client, id);
+    await client.query(`delete from agent_team_member where agent_account_id = $1`, [id]);
+    await client.query(`delete from channel_auto_mention where agent_account_id = $1`, [id]);
+    await client.query(`delete from agent_assignment where agent_id = $1`, [id]);
+    await client.query(`delete from agent_invoker where agent_id = $1`, [id]);
+    await client.query(`delete from agent_mcp_server where agent_id = $1`, [id]);
+    // 이미 발화된 wake 는 건드리지 않는다 — 그 메시지는 채널에 남아 있다. 아직 오지 않은
+    // 것만 취소한다(`delete` 가 아니라 `canceled_at` 인 이유: 이 표는 지운 적이 없고,
+    // 폴러의 조건절이 그 컬럼 하나를 본다).
+    await client.query(
+      `update agent_wake set canceled_at = now()
+       where account_id = $1 and fired_at is null and canceled_at is null`,
+      [id],
+    );
+    await client.query(`delete from agent_memory where account_id = $1`, [id]);
+    await client.query('commit');
+    return { handle: before.handle, revokedPats };
+  } catch (err) {
+    await client.query('rollback');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /**

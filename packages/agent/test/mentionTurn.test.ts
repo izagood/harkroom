@@ -54,7 +54,7 @@ function defOf(overrides: Partial<AgentView> = {}): AgentView {
   return {
     id: ME.id, handle: ME.handle, displayName: 'forge', kind: 'agent', isAdmin: false, role: 'member', assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [], mcpServers: [],
     instructions: '친절하게 답한다', harness: 'claude-code', model: null, effort: null,
-    workingDir: '/repo', mentionPermission: 'auto', ownerAccountId: 'human-1', disabled: false,
+    workingDir: '/repo', mentionPermission: 'auto', ownerAccountId: 'human-1', disabled: false, deleted: false,
     runnerVersion: null,
     claudeLane: null,
     // #129: 종료 요청 없음이 기본이다. 종료를 검증하는 테스트가 이 값을 덮는다.

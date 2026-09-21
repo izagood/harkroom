@@ -1504,6 +1504,26 @@ export class Controller {
     return updated;
   }
 
+  /**
+   * #836: 에이전트를 명부에서 내린다. 되돌리는 길이 없다.
+   *
+   * **스토어의 계정 표에서도 뺀다** — `setAgentDisabled` 가 표를 갱신하는 것과 같은 이유다.
+   * 여기서는 갱신이 아니라 제거인데, 서버가 돌려줄 정의가 없기 때문이 아니라 이 에이전트를
+   * 더는 부를 수 없기 때문이다: 남겨 두면 지운 직후에도 자동완성에 떠서, 부른 사람은 답이
+   * 올 것이라 믿는다.
+   *
+   * 지운 계정의 **과거 메시지는 작성자를 잃지 않는다** — 다음 디렉터리 갱신이 `deleted: true`
+   * 인 그 행을 다시 실어 준다(서버가 빼지 않는다, `AccountView.deleted` 주석). 여기서 빼는
+   * 것은 그 사이의 자동완성을 막기 위한 것이지 이력을 지우는 것이 아니다.
+   */
+  async deleteAgent(agentId: string): Promise<void> {
+    await this.api.deleteAgent(agentId);
+    const store = this.store.getState();
+    const accounts = { ...store.accounts };
+    delete accounts[agentId];
+    store.set({ accounts });
+  }
+
   /** #171: 새 에이전트의 기본값. 실패를 삼키지 않는다 — 화면이 실패를 그려야 한다. */
   agentDefaults(): Promise<import('@harkroom/shared').AgentDefaults> {
     return this.api.agentDefaults();
