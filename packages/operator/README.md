@@ -119,6 +119,19 @@ unix 소켓으로 말하는 것이고, 그 어느 것도 네이티브 애드온�
 `scripts/build-sidecars.mjs` 가 daemon 에 `nativeDeps: []` 를 주는 것도 같은 판단의 다른 쪽
 면이다 — external 목록이 비어 있으면 번들에 못 들어가는 것을 눈감아 줄 여지 자체가 없다.
 
+## 명령 (`src/cli.ts`)
+
+| 명령 | 하는 일 |
+|---|---|
+| `harkroom-operator register <baseUrl> <code> [--name n]` | 등록 코드(설정 › Operators, 5분·1회)를 `POST /operators/claim` 으로 토큰과 바꿔 `<데이터 디렉터리>/operator/secrets/` 에 두고, `operator/operator.json` 에 그 커뮤니티의 자리(`agents: {}`)를 만든다. 이미 있는 자리의 로컬 설정은 건드리지 않는다 |
+| `harkroom-operator run [--data-dir d]` | 앱 없이 상주한다. 아래 인자를 데이터 디렉터리에서 앱과 **같은 규칙**(`daemonEndpointPaths`)으로 조립한다 — 앱이 나중에 같은 머신에 떠도 같은 소켓을 보고 물러난다. 감독 템플릿은 `ops/operator.plist.template`·`ops/operator.service.template` |
+| `harkroom-operator mcp-bridge` | 하네스가 띄우는 stdio MCP 브릿지(`src/mcpBridge.ts`). 러너 env 를 상속해 오퍼레이터 소켓에 붙는다 |
+| (그 밖) | 앱이 넘기는 `--socket …` 인자 — 아래 |
+
+데이터 디렉터리 기본값은 앱의 `app_data_dir` 과 같다(`HARKROOM_DATA_DIR` 로 바꾼다). 그 아래
+`operator/mcp-servers.json` 이 에이전트 `mcpServers` 이름의 정의(`src/mcpConfig.ts`)이고, 없으면
+`~/.claude.json` 을 본다.
+
 ## 인자
 
 앱이 daemon 을 띄울 때 넘기는 값들. 이름은 지어내지 않고 orca daemon 의 실제 명령줄을 읽어

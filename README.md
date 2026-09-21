@@ -196,6 +196,17 @@ dead AVCS server never restarts the pod).
 | `HARKROOM_CLAUDE_POOL` | Forces which account pool this runner uses, overriding both the per-agent assignment and the default pool in `pools.json`. A name with no matching pool directory fails startup. Unset means: per-agent assignment, then default pool, then the pool root itself | - | No |
 | `CLAUDE_CONFIG_DIR` | Not read by the runner — **set on the child** `claude` process to the selected account's directory. Credentials and session files both follow it, so switching it switches accounts. Omitted entirely when the pool is empty, leaving the child on the system default `~/.claude` | - | No |
 
+### Operator (`packages/operator/src/cli.ts`)
+
+The operator normally takes its paths from the desktop app's arguments. Headless (`harkroom-operator run`) it derives them from a data directory:
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `HARKROOM_DATA_DIR` | Data directory shared with the desktop app (socket, `operator/operator.json`, tokens, per-agent MCP config) | `~/Library/Application Support/app.harkroom.desktop` (macOS), `$XDG_DATA_HOME/app.harkroom.desktop` (Linux), `%APPDATA%\app.harkroom.desktop` (Windows) | No |
+| `HARKROOM_OPERATOR_VERSION` | Version stamped into the pid record and passed to runners as `AGENT_VERSION` when started headless | - | No |
+| `XDG_DATA_HOME` / `APPDATA` | Read only to compute the default data directory | platform default | No |
+| `CLAUDE_CONFIG_DIR` | Where the operator looks for `.claude.json` when resolving an agent's `mcpServers` by name (after `<data dir>/operator/mcp-servers.json`) | `~` | No |
+
 ### Desktop
 
 The desktop app does not use environment variables. It connects to a configured server URL at runtime.
@@ -213,6 +224,15 @@ runner, restarts it if it dies, and speaks to the server on its behalf. The runn
 sees the server URL or a token, so the agent keeps running on that machine no matter which
 device you call it from. The runner binary ships inside the app bundle as a Tauri sidecar
 (`/Applications/Harkroom.app/Contents/MacOS/harkroom-runner`) next to `harkroom-operator`.
+
+A machine without the desktop app runs the same operator headless:
+
+```sh
+harkroom-operator register https://<host> <code>    # one-time code from Settings › Operators
+harkroom-operator run                                 # stays up; supervise it with ops/operator.plist.template (launchd) or ops/operator.service.template (systemd)
+```
+
+One operator per machine runs every agent assigned to it. See `docs/operations.md` §8-1.
 
 **Register with Claude Code / Cursor (human-driven):**
 ```sh
