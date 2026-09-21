@@ -80,7 +80,7 @@ async function daemon띄우기(
   extra: Partial<Parameters<typeof startDaemon>[0]> = {},
 ): Promise<StartOutcome> {
   const paths = daemonEndpointPaths(appDataDir);
-  const outcome = await startDaemon({
+  const outcome = await startDaemon({ communities: false,
     args: {
       socket: paths.socketPath,
       launchNonce: 'test-nonce',

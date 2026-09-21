@@ -60,7 +60,7 @@ describe('daemon 종료 — 러너를 데려가지 않는다 (#431)', () => {
       bootTimeSec: () => Promise.resolve(null),
     };
     const paths = daemonEndpointPaths(dir);
-    const outcome = await startDaemon({
+    const outcome = await startDaemon({ communities: false,
       args: { socket: paths.socketPath, entryPath: join(dir, 'd'), appVersion: 't', unknown: [] },
       host,
       runnerCommand: '/bin/sh',
@@ -80,7 +80,7 @@ describe('daemon 종료 — 러너를 데려가지 않는다 (#431)', () => {
     const dir = await mkdtemp(join(tmpdir(), 'harkroom-operator-release-'));
     임시들.push(dir);
     const paths = daemonEndpointPaths(dir);
-    const outcome = await startDaemon({
+    const outcome = await startDaemon({ communities: false,
       args: { socket: paths.socketPath, entryPath: join(dir, 'd'), appVersion: 't', unknown: [] },
       host: { spawn: () => ({ pid: 1, on: () => undefined }) as never, kill: () => true, now: () => 0, bootTimeSec: () => Promise.resolve(null) },
       runnerCommand: '/bin/sh',

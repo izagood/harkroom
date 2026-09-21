@@ -9,6 +9,7 @@ import {
   revokeAllPats, undoAgentStopRequest, updateAgent,
 } from '../services/agents.js';
 import { recordAudit } from '../audit.js';
+import { mintPat } from '../services/pats.js';
 import { emitEvent } from '../events.js';
 import { deleteMemory, listMemoryEntries } from '../services/memory.js';
 
@@ -536,26 +537,14 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool): P
   app.post('/accounts/:id/pats', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({ label: z.string().min(1).max(64) }).parse(req.body);
-    // 라벨은 살아 있는 토큰 안에서 유일하다(마이그레이션 010) — 같은 라벨이 둘이면
-    // 라벨로 폐기하는 DELETE 가 둘 다 지워 UI 가 약속하는 것과 달라진다.
-    const live = await pool.query(
-      `select 1 from pat where account_id = $1 and label = $2 and revoked_at is null`,
-      [id, body.label],
-    );
-    if (live.rowCount) {
+    // 발급 규칙은 services/pats.ts 한 곳이다 — 오퍼레이터 경로와 같은 규칙을 쓴다.
+    const minted = await mintPat(pool, id, body.label, { actorId: req.account!.id, actorHandle: req.account!.handle }, req);
+    if (!minted.ok) {
       return reply.code(409).send({
         error: { code: 'label_in_use', message: 'a live token already uses this label — revoke it first or pick another' },
       });
     }
-    const { token, hash } = newToken('hrkp');
-    await pool.query(`insert into pat (token_hash, account_id, label) values ($1, $2, $3)`, [hash, id, body.label]);
-    // pat 행은 토큰을 받은 에이전트만 가리킨다 — 누가 그 권한을 줬는지는 어디에도 없었다.
-    // 토큰도 해시도 남기지 않는다: 라벨과 대상만으로 추적에 충분하다.
-    await recordAudit(pool, {
-      action: 'pat.issued', actorId: req.account!.id, actorHandle: req.account!.handle,
-      target: id, detail: { label: body.label },
-    }, req);
-    return reply.code(201).send({ token });
+    return reply.code(201).send({ token: minted.token });
   });
 
   // 라벨 단위 폐기다. pat.label 에 유일성이 없어 같은 라벨의 토큰이 여러 개면 전부 폐기된다 —
