@@ -15,6 +15,7 @@ import type { AgentHarness, AgentView, MessageRow } from '@harkroom/shared';
 import { mentionAnchor, runMentionTurn, syncSkills, type MentionTurnDeps, type MentionTurnHarkroom, type RunTurn } from '../src/mentionTurn.js';
 import { BODY_LIMIT, NO_REPLY_NOTICE } from '../src/prompt.js';
 import { HarkroomAgentClient } from '../src/harkroom.js';
+import { fakeLink } from './helpers/fakeLink.js';
 import { SessionStore } from '../src/sessions.js';
 import { isQuotaExhausted } from '../src/policy.js';
 import { workspaceName, type Exec } from '../src/workspace.js';
@@ -284,8 +285,8 @@ async function makeDeps(fake: FakeHarkroom, overrides: Partial<MentionTurnDeps> 
     // 기본은 계정 지정 없음(시스템 기본) — 계정을 재는 테스트가 overrides 로 넘긴다.
     claudeAccount: null,
     claudeConfigDir: null,
-    harkroomUrl: 'http://localhost:3400',
-    pat: 'murp_test',
+    operatorBin: '/opt/harkroom/harkroom-operator',
+    runnerSecret: 'sec_test_never_shown',
     turnTimeoutMs: 10_000,
     ...overrides,
   };
@@ -538,7 +539,7 @@ describe('runMentionTurn', () => {
     expect(fake.posts[0]!.body.length).toBeLessThanOrEqual(BODY_LIMIT);
   });
 
-  it('PAT 가 tail 에 섞여 있어도 대화로 새지 않는다', async () => {
+  it('링크 secret 이 tail 에 섞여 있어도 대화로 새지 않는다', async () => {
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge env 를 찍어봐');
     const { deps, runTurn } = await makeDeps(fake);
@@ -547,12 +548,12 @@ describe('runMentionTurn', () => {
       exitCode: 0,
       timedOut: false,
       // 하네스가 자기 env 를 찍은 상황. PTY 는 stdout·stderr 를 한 스트림으로 낸다.
-      tail: `HARKROOM_PAT=${plan.env.HARKROOM_PAT} 로 붙었다`,
+      tail: `HARKROOM_RUNNER_SECRET=${deps.runnerSecret} 로 붙었다`,
     });
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
-    expect(fake.posts[0]!.body).not.toContain(deps.pat);
+    expect(fake.posts[0]!.body).not.toContain(deps.runnerSecret);
   });
 
   // #90: 한 턴에서 두 번 이상 발화하면 경고가 나지만 채널에는 통보하지 않는다.
@@ -2122,29 +2123,14 @@ describe('syncSkills 단독(#140)', () => {
 // 스텁 fetch 로 한 번 태운다: 러너가 stderr 에 한 줄 남길 수 있는지는 여기서 갈린다.
 describe('HarkroomAgentClient.listApprovedSkills(#140)', () => {
   it('승인된 것만 요청한다 — 미승인 스킬을 실체화하면 승인 게이트가 없는 것과 같다', async () => {
-    const original = globalThis.fetch;
-    let seen = '';
-    globalThis.fetch = (async (url: string | URL | Request) => {
-      seen = String(url);
-      return new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } });
-    }) as typeof fetch;
-    try {
-      await new HarkroomAgentClient('http://localhost:3400', 'murp_t').listApprovedSkills();
-      expect(seen).toContain('/skills?state=approved');
-    } finally {
-      globalThis.fetch = original;
-    }
+    const link = fakeLink({ http: () => ({ status: 200, body: '[]' }) });
+    await new HarkroomAgentClient(link).listApprovedSkills();
+    expect(link.requests[0]!.path).toBe('/skills?state=approved');
   });
 
   it('조회 실패를 빈 배열로 삼키지 않고 던진다', async () => {
-    const original = globalThis.fetch;
-    globalThis.fetch = (async () => new Response('nope', { status: 503 })) as typeof fetch;
-    try {
-      const client = new HarkroomAgentClient('http://localhost:3400', 'murp_t');
-      await expect(client.listApprovedSkills()).rejects.toThrow(/503/);
-    } finally {
-      globalThis.fetch = original;
-    }
+    const client = new HarkroomAgentClient(fakeLink({ http: () => ({ status: 503, body: 'nope' }) }));
+    await expect(client.listApprovedSkills()).rejects.toThrow(/503/);
   });
 });
 
@@ -2349,8 +2335,8 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     const sent: RelayRunnerFrame[] = [];
     let handlers: RelayHandlers | null = null;
     const client = createRelayClient({
-      harkroomUrl: 'http://x', pat: 'p',
-      dial: (_url, _pat, h) => {
+      link: { socketPath: '/tmp/op.sock', runnerId: 'r-1', secret: 'sec' },
+      unixDial: (_link, h) => {
         handlers = h;
         h.onOpen({ send: (data) => sent.push(JSON.parse(data) as RelayRunnerFrame), close: () => {} });
       },

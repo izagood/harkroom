@@ -118,8 +118,8 @@ export interface InteractiveTurnDeps {
   me: Me;
   workspaceBaseDir: string;
   mcpConfigPath: string;
-  harkroomUrl: string;
-  pat: string;
+  /** `harkroom-operator` 실행 파일 — 하네스의 harkroom MCP(`mcp-bridge`) 명령(스펙 2026-09-20 §5). */
+  operatorBin: string;
   codexHome: string;
   /**
    * 이 턴을 돌릴 claude 계정의 `CLAUDE_CONFIG_DIR`(`claudeAccounts.ts`). `null` 은 계정
@@ -266,8 +266,7 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       effort: def.effort,
       mentionPermission: def.mentionPermission,
       mcpConfigPath: deps.mcpConfigPath,
-      pat: deps.pat,
-      harkroomUrl: deps.harkroomUrl,
+      operatorBin: deps.operatorBin,
       codexHome: deps.codexHome,
       claudeConfigDir: deps.claudeConfigDir,
     });

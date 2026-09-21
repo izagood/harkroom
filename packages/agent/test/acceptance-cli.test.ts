@@ -137,8 +137,7 @@ async function planFor(combo: Combo, dir: string): Promise<TurnPlan> {
     effort: null,
     mentionPermission: 'auto',
     mcpConfigPath,
-    pat: 'murp_fake_never_sent',
-    harkroomUrl: 'http://localhost:3401',
+    operatorBin: '/opt/harkroom/harkroom-operator',
     codexHome: join(dir, 'codex-home'),
     claudeConfigDir: null,
   });

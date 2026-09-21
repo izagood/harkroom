@@ -93,9 +93,8 @@ export function runnerExitPlan(err: unknown): RunnerExitPlan | null {
     `\n${credType === 'harkroom-credential' ? 'Harkroom' : 'Harness'} 자격증명을 해결할 수 없다. 러너를 멈춘다.`,
   ];
   if (credType === 'harkroom-credential') {
-    lines.push('  Harkroom API 의 PAT 가 만료·폐기됐는지 확인해라.');
-    lines.push('  HARKROOM_PAT 환경변수를 새 PAT 로 교체하고 러너를 재시작한다.');
-    lines.push('  데스크탑 앱이 띄운 러너라면 설정 → 에이전트에서 "PAT 재발급"을 누른다.');
+    lines.push('  서버가 이 러너의 오퍼레이터를 거절했다 — 오퍼레이터가 폐기됐거나 이 에이전트의 배정이 풀렸다.');
+    lines.push('  설정 › Operators 와 에이전트 상세의 배정을 확인해라. 배정이 살아 있으면 오퍼레이터가 다시 띄운다.');
   } else {
     lines.push('  claude-code harness 는 claude CLI 의 로그인을 쓴다 — `claude` 를 한 번 실행해 로그인해라.');
   }

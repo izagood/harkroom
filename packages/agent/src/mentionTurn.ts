@@ -197,8 +197,14 @@ export interface MentionTurnDeps {
    * 호출부의 턴은 그대로 돌고 화면만 풀을 말하지 못한다.
    */
   claudePool?: string | null;
-  harkroomUrl: string;
-  pat: string;
+  /** `harkroom-operator` 실행 파일 — 하네스의 harkroom MCP(`mcp-bridge`) 명령(스펙 2026-09-20 §5). */
+  operatorBin: string;
+  /**
+   * 러너의 링크 secret. 하네스가 env 를 화면에 찍으면 이 값이 tail 에 들어온다 — 옛 PAT 이
+   * 그랬듯 대화로 새면 안 된다(`harnessTailNotice` 가 가린다). 이 값으로 할 수 있는 것은 이
+   * 러너 행세이고, 그것은 배정된 에이전트 행세다.
+   */
+  runnerSecret: string;
   turnTimeoutMs: number;
   /**
    * PTY 릴레이(#141). **옵셔널이다** — 릴레이가 없어도 턴은 그대로 돌아야 한다.
@@ -645,8 +651,6 @@ export async function runMentionTurn(
     handles: deps.handles,
     channelId,
     threadRootId: anchor,
-    // 첨부 안내에 실을 실값(#첨부 열기). 러너는 자기가 붙은 URL 을 이미 안다.
-    harkroomUrl: deps.harkroomUrl,
     ...(target.wake ? { wake: target.wake } : {}),
     ...(target.team ? { team: target.team } : {}),
     ...(target.delegation ? { delegation: target.delegation } : {}),
@@ -747,8 +751,7 @@ export async function runMentionTurn(
     effort: def.effort,
     mentionPermission: def.mentionPermission,
     mcpConfigPath: deps.mcpConfigPath,
-    pat: deps.pat,
-    harkroomUrl: deps.harkroomUrl,
+    operatorBin: deps.operatorBin,
     codexHome: deps.codexHome,
     claudeConfigDir: deps.claudeConfigDir,
   });
@@ -1435,7 +1438,7 @@ export async function runMentionTurn(
       쓰는 이유가 자르기보다 그 가리기다.
     */
     if (end.stalled) {
-      const 화면 = harnessTailNotice(result.tail, deps.pat);
+      const 화면 = harnessTailNotice(result.tail, deps.runnerSecret);
       console.error(
         `[mentionTurn] ${key}: 정지 당시 마지막 화면 —\n${화면 ?? '(출력이 없었다)'}`,
       );
@@ -1493,7 +1496,7 @@ export async function runMentionTurn(
       //
       // 해석이 아니라 **증거 첨부**다(`harnessTailNotice` 주석). 통지가 먼저 서는 순서도
       // 뜻이 있다: 사실("발화가 없었다")이 먼저고, 출력은 그 사실의 정황이다.
-      const evidence = harnessTailNotice(result.tail, deps.pat);
+      const evidence = harnessTailNotice(result.tail, deps.runnerSecret);
       // **침묵의 이유가 옆 스레드에 있을 수 있다**(2026-09-08 실측, `offAnchorPosts` 주석).
       // 여기서만 채널 전체를 훑는 이유는 값이 싸지 않아서다: 이 경로는 드물게 도는 침묵
       // 경로이고, 그때는 사람에게 어차피 통지가 나가므로 한 왕복을 더 쓸 값어치가 있다.

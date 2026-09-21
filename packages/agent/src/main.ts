@@ -1,11 +1,12 @@
 // harkroom 에이전트 러너. 멘션을 기다리다 깨어나 답한다.
 //
-// 실행(저장소 안): HARKROOM_URL=... HARKROOM_PAT=murp_... pnpm --filter @harkroom/agent start
+// 실행: 오퍼레이터가 배정을 받아 띄운다(스펙 2026-09-20 §5) — env 로 오퍼레이터 소켓·러너 id·secret·
+// `harkroom-operator` 경로를 받는다. 손으로 띄울 URL·PAT 경로는 사라졌다.
 // 배포판에서는 이 소스가 아니라 **단일 번들**이 돈다 — `#431` 1단계가 러너를 Tauri
 // 사이드카(`externalBin`)로 만들어 앱과 함께 배포하고, `.app` 안
 // `Contents/MacOS/harkroom-runner` 로 놓인다. 즉 위 pnpm 명령은 죽지 않았지만 **개발 환경
 // 전용**이다: 앱을 설치해 쓰는 사람에게는 실행할 소스도 pnpm 워크스페이스도 없다.
-// 사람에게 보여 줄 명령의 정본은 `packages/desktop/src/lib/runnerCommand.ts` 다.
+// 러너를 띄우는 정본은 `packages/operator/src/assignments.ts` 다.
 // (claude-code harness 는 claude CLI 의 로그인을 그대로 쓴다 — API 키가 필요 없다.)
 //
 // 옛 구조(reply.ts + harness/claudeCode.ts)는 멘션마다 `claude -p` 를 새로 띄워 stdout 의
@@ -41,7 +42,29 @@ import { ensureCodexHome } from './codexHome.js';
 import { createMentionScheduler, type BatchContext } from './mentionScheduler.js';
 
 const config = loadConfig();
-const harkroom = new HarkroomAgentClient(config.harkroomUrl, config.harkroomPat);
+// 릴레이(오퍼레이터 링크)가 곧 서버로 가는 유일한 길이다(스펙 2026-09-20 §5) — MCP 도 REST 도 이
+// 소켓 위로 간다. 그래서 클라이언트보다 먼저 세운다. 재접속은 이 객체가 스스로 한다.
+//
+// **접속 실패로 러너를 죽이지 않는다.** 붙지 못한 동안의 호출은 status 0 으로 거절되고, poll
+// 루프가 백오프로 다시 부른다 — 오퍼레이터가 재시작 중인 몇 초가 정확히 그 경우다.
+const relay = createRelayClient({
+  link: config.operatorLink,
+  // #337: 서버의 interactive.open 은 매니저가 처리한다. 매니저가 relay 를 필요로 해서
+  // (세션 열기) 상호 참조가 생기므로 늦게 배선한다 — 매니저가 아직 없으면 릴레이가
+  // 스스로 interactive.error 로 답한다(relay.ts 의 훅 부재 처리).
+  onInteractiveOpen: (req) => {
+    if (!interactive) return Promise.reject(new Error('러너가 아직 기동 중이다 — 잠시 뒤 다시 열어라'));
+    return interactive.open(req);
+  },
+});
+relay.start();
+// 첫 왕복(`me()`) 전에 링크가 붙기를 잠깐 기다린다 — 소켓 연결은 비동기이고, 그 전의 호출은
+// status 0 으로 거절되어 기동이 "오퍼레이터가 없다"로 죽는다. 못 붙으면 그대로 간다: 그 뒤의
+// 실패는 poll 루프의 백오프가 다룬다.
+if (!(await relay.whenConnected(10_000))) {
+  console.error('오퍼레이터 링크에 아직 붙지 못했다 — 계속 시도한다');
+}
+const harkroom = new HarkroomAgentClient(relay);
 
 // RUNNABLE_HARNESSES 가 실제로 PRESETS 에 구현돼 있는지 기동 시점에 검사한다.
 // 불일치가 있으면 여기서 크게 실패한다 — 멘션마다 개별적으로 실패하는 대신.
@@ -237,7 +260,7 @@ const claudeLaneReport = { pool: lane.pool ?? null, accounts: claudeAccounts.map
 const hasLegacyPath = await access(legacyPath).then(() => true, () => false);
 if (hasLegacyPath) {
   console.warn(`[main] 서버별로 갈리기 전 상태 디렉터리가 있다: ${legacyPath}`);
-  console.warn(`  이 디렉터리가 이 서버(${config.harkroomUrl})의 @${me.handle} 것이 확실하면 옮겨라:`);
+  console.warn(`  이 디렉터리가 이 서버의 @${me.handle} 것이 확실하면 옮겨라:`);
   console.warn(`    mv ${legacyPath} ${agentStateDir}`);
   console.warn('  확실하지 않으면 옮기지 마라 — 다른 커뮤니티의 세션을 접수한다.');
 }
@@ -256,7 +279,7 @@ await store.load();
 // MCP 설정 파일은 기동 시 한 번만 쓴다 — PAT 는 실값이 아니라 플레이스홀더로 들어가므로
 // 파일 자체는 비밀이 아니다(turn.ts::writeMcpConfigOnce). stateDir/handle 아래 고정 경로에
 // 둬서 러너가 재시작돼도 같은 경로를 그대로 재사용한다.
-const mcpConfigPath = await writeMcpConfigOnce(mcpDir, config.harkroomUrl);
+const mcpConfigPath = await writeMcpConfigOnce(mcpDir, config.operatorBin);
 
 /**
  * `node:child_process` 의 `execFile` 을 workspace.ts::Exec 계약으로 감싼 얇은 어댑터.
@@ -282,35 +305,10 @@ const exec: Exec = (cmd, args, opts) =>
 
 // 기동 로그에 handle 과 인스턴스를 함께 적는다(#174) — 운영자가 `ps` 로 구분해야 한다.
 // 형식은 `runnerLabel` 하나가 갖는다: 여기서 직접 조립하면 로그와 문서가 갈린다.
-console.log(`${runnerLabel(me.handle, config.agentInstance)} 로 붙었다 — ${config.harkroomUrl}`);
+console.log(`${runnerLabel(me.handle, config.agentInstance)} 로 붙었다 — 오퍼레이터 ${config.operatorLink.socketPath} (runner ${config.operatorLink.runnerId})`);
 console.log(`상태 디렉터리: ${agentStateDir}`);
 console.log('정의는 서버에서 읽는다 (harkroom UI 의 Add/Edit agent 로 바꾼다)');
 
-// #141 Phase 2: 진행 중인 턴의 PTY 바이트를 서버로 중계하는 상시 outbound WS. 여기서
-// 시작하고, 끊기면 스스로 백오프로 다시 붙는다(`relay.ts` — `policy.ts::nextBackoffMs`
-// 를 poll 루프와 공유한다).
-//
-// **접속 실패로 러너를 죽이지 않는다.** 릴레이는 관찰이고 poll 루프는 답이다 — 서버가
-// attach 를 지원하지 않는 구버전이거나 릴레이가 막혀 있어도 멘션에는 답해야 한다.
-// 그래서 여기에 await 도, 성공 확인도 없다.
-// 스펙 2026-09-20 §5: 오퍼레이터가 띄운 러너는 이 머신의 오퍼레이터 소켓에 붙고, 서버에는 오퍼레이터가
-// 대신 붙는다. 링크가 없으면 옛 경로(서버 WS)다 — 그 경로는 단계 4 에서 사라진다(Task 3.3).
-if (!config.operatorLink) {
-  console.warn('오퍼레이터 없이 도는 러너다 — 릴레이를 서버에 직접 건다. 이 경로는 단계 4 에서 사라진다.');
-}
-const relay = createRelayClient({
-  harkroomUrl: config.harkroomUrl,
-  pat: config.harkroomPat,
-  link: config.operatorLink,
-  // #337: 서버의 interactive.open 은 매니저가 처리한다. 매니저가 relay 를 필요로 해서
-  // (세션 열기) 상호 참조가 생기므로 늦게 배선한다 — 매니저가 아직 없으면 릴레이가
-  // 스스로 interactive.error 로 답한다(relay.ts 의 훅 부재 처리).
-  onInteractiveOpen: (req) => {
-    if (!interactive) return Promise.reject(new Error('러너가 아직 기동 중이다 — 잠시 뒤 다시 열어라'));
-    return interactive.open(req);
-  },
-});
-relay.start();
 
 // #337: 진행 중 턴의 레지스트리와 멘션 유예 장부. 멘션 턴(runMentionTurn)과 인터랙티브
 // 턴이 같은 레지스트리를 봐야 한다 — 갈라지면 같은 세션에 PTY 가 둘 뜬다(turnRegistry.ts).
@@ -331,7 +329,7 @@ interactive = createInteractiveManager({
   // 위의 configDir 와 갈리면 화면이 도는 계정과 다른 이름을 단언한다.
   claudeAccount: accountLane[0]?.name ?? null,
   claudePool: lane.pool ?? null,
-  harkroomUrl: config.harkroomUrl, pat: config.harkroomPat,
+  operatorBin: config.operatorBin,
   relay, registry, queue: mentionQueue,
   orphanMs: config.interactiveOrphanMs,
 });
@@ -369,7 +367,7 @@ const scheduler = createMentionScheduler({
     // 살아남아 전환 자체가 일어나지 않는다 — 부르는 경로는 던지지 않기 때문이다.
     attentionLedger: isLastAccount ? attentionLedger : undefined,
     callsForHuman: isLastAccount,
-    harkroomUrl: config.harkroomUrl, pat: config.harkroomPat,
+    operatorBin: config.operatorBin, runnerSecret: config.operatorLink.secret,
     turnTimeoutMs: config.turnTimeoutMs,
     harnessStallMs: config.harnessStallMs,
     relay,

@@ -42,8 +42,7 @@ function 계획(harness: (typeof RUNNABLE_HARNESSES)[number]): string {
     effort: null,
     mentionPermission: 'readonly',
     mcpConfigPath: '/tmp/mcp.json',
-    pat: 'murp_x',
-    harkroomUrl: 'https://harkroom.example',
+    operatorBin: '/opt/harkroom/harkroom-operator',
     codexHome: '/tmp/codex-home',
     claudeConfigDir: null,
   }).command;

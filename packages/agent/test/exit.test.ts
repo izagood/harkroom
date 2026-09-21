@@ -40,8 +40,9 @@ describe('자격증명 실패는 78 로 물러난다', () => {
     expect(runnerExitPlan(harkroomErr(401))!.lines.at(-1)).toBe(CREDENTIAL_REJECTED_LINE);
   });
 
-  it('harkroom PAT 문제와 하네스 로그인 문제를 다르게 안내한다 — 볼 곳이 다르다', () => {
-    expect(runnerExitPlan(harkroomErr(401))!.lines.join('\n')).toContain('HARKROOM_PAT');
+  it('harkroom 자격증명 문제와 하네스 로그인 문제를 다르게 안내한다 — 볼 곳이 다르다', () => {
+    // 스펙 2026-09-20 §5: 러너에는 PAT 이 없다. 서버의 거절은 오퍼레이터(토큰 폐기)나 배정(해제)의 일이다.
+    expect(runnerExitPlan(harkroomErr(401))!.lines.join('\n')).toContain('오퍼레이터');
     expect(runnerExitPlan(harnessErr('x-api-key'))!.lines.join('\n')).toContain('claude CLI');
   });
 
@@ -61,8 +62,9 @@ describe('자격증명 실패는 78 로 물러난다', () => {
     expect(plan!.lines.at(-1)).not.toBe(CREDENTIAL_REJECTED_LINE);
   });
 
-  it('앱이 띄운 러너에게는 재발급 버튼을 가리킨다 — 환경변수를 손으로 바꾸라는 안내만으로는 길이 없다', () => {
-    expect(runnerExitPlan(harkroomErr(401))!.lines.join('\n')).toContain('PAT 재발급');
+  it('사람이 볼 자리를 가리킨다 — 설정의 Operators 와 배정', () => {
+    expect(runnerExitPlan(harkroomErr(401))!.lines.join('\n')).toContain('배정');
+    expect(runnerExitPlan(harkroomErr(401))!.lines.join('\n')).not.toContain('HARKROOM_PAT');
   });
 });
 

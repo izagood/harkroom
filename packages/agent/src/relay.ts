@@ -1,5 +1,10 @@
-// 러너 → 서버 상시 outbound WS 릴레이(스펙 §5 "릴레이"). 진행 중인 턴의 PTY 바이트를
-// 서버로 밀어 넣어, 소유자가 데스크탑 xterm 에서 실시간으로 본다.
+// 러너 → 오퍼레이터 링크(스펙 2026-09-20 §5). 진행 중인 턴의 PTY 바이트를 오퍼레이터에 밀어
+// 넣고, 오퍼레이터가 runnerId 를 달아 서버 채널로 나른다 — 소유자가 데스크탑 xterm 에서
+// 실시간으로 본다. **러너는 서버를 모른다**: 이 파일에 서버 URL 도 PAT 도 없다. 같은 링크 위에
+// 러너 코어의 MCP·REST 요청(`request`·`mcpTransport`)도 실린다 — 소켓은 하나다.
+//
+// 앞 판본(#141)은 서버 `/agent-relay` 에 PAT 헤더로 직접 붙었다. 그 소켓이 원격 서버 경로에서
+// 조용히 끊기던 것이 이 재설계의 출발이다(스펙 §1).
 //
 // **#315 로 방향이 하나 더 생겼다**: 소유자가 그 xterm 에 친 바이트가 `input` 프레임으로
 // 되돌아와 PTY stdin 에 들어간다. 쓰기 권한(소유자만)은 서버가 attach 인가 때 판정하고,
@@ -19,9 +24,14 @@
 // 하네스가 화면에 그린 모든 것(토큰, 환경변수, 사람이 붙여 넣은 비밀)이 들어간다. 프로세스가
 // 죽으면 스크롤백도 같이 사라지는 것이 이 설계의 결과이고, 그것이 의도다.
 import { randomUUID } from 'node:crypto';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import type { AgentHarness, AgentSessionView, RelayRunnerFrame, RelayServerFrame, RunnerCap } from '@harkroom/shared';
 import { NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
-import { RUNNER_LINK_PROTOCOL_VERSION, type RunnerHello } from '@harkroom/shared/runnerLink';
+import {
+  RUNNER_LINK_PROTOCOL_VERSION, isRunnerLinkResponse,
+  type RunnerHello, type RunnerLinkRequest, type RunnerLinkResponse,
+} from '@harkroom/shared/runnerLink';
 import { RingBuffer, type PtyWriter } from './pty.js';
 import { nextBackoffMs } from './policy.js';
 
@@ -56,16 +66,8 @@ export interface RelayHandlers {
 }
 
 /**
- * 실제 소켓을 여는 함수. 주입 가능하게 뽑아 둔 이유: 재접속·백오프·announce 순서는
- * 소켓 없이 검증돼야 한다. 네트워크를 태우는 테스트는 그 순서가 깨졌을 때 "느리다"로만
- * 보이고, 무엇이 깨졌는지는 알려 주지 않는다.
- */
-export type RelayDialer = (url: string, pat: string, handlers: RelayHandlers) => void;
-
-/**
- * 오퍼레이터 unix 링크(스펙 2026-09-20 §5). spawn 때 env 로 받는 셋이다 — 이것이 있으면 러너는
- * 서버가 아니라 **이 머신의 오퍼레이터**에 붙고, 오퍼레이터가 프레임에 `runnerId` 를 달아 서버
- * 채널에 싣는다. 러너 코어(세션·ring·재접속)는 상대가 누구인지 모른다 — 바뀌는 것은 dialer 뿐이다.
+ * 오퍼레이터 unix 링크(스펙 2026-09-20 §5). spawn 때 env 로 받는 셋이다. 러너는 **이 머신의
+ * 오퍼레이터**에 붙고, 오퍼레이터가 프레임에 `runnerId` 를 달아 서버 채널에 싣는다.
  */
 export interface RunnerLinkTarget {
   socketPath: string;
@@ -73,6 +75,11 @@ export interface RunnerLinkTarget {
   secret: string;
 }
 
+/**
+ * 실제 소켓을 여는 함수. 주입 가능하게 뽑아 둔 이유: 재접속·백오프·announce 순서는
+ * 소켓 없이 검증돼야 한다. 네트워크를 태우는 테스트는 그 순서가 깨졌을 때 "느리다"로만
+ * 보이고, 무엇이 깨졌는지는 알려 주지 않는다.
+ */
 export type RelayUnixDialer = (link: RunnerLinkTarget, handlers: RelayHandlers) => void;
 
 /** 한 턴에 대응하는 살아 있는 PTY 세션. */
@@ -171,12 +178,7 @@ export interface OpenSession {
 }
 
 export interface RelayClientOptions {
-  /** harkroom 서버의 http(s) 베이스 URL. `link` 가 없을 때만 — ws(s) 로 바꿔 옛 `/agent-relay` 에 붙는다(단계 4 에서 사라진다). */
-  harkroomUrl: string;
-  pat: string;
-  /** 있으면 서버 WS 대신 오퍼레이터 소켓으로 건다(단계 3). 없으면 옛 경로 — 단계 4 에서 사라진다. */
-  link?: RunnerLinkTarget | null;
-  dial?: RelayDialer;
+  link: RunnerLinkTarget;
   unixDial?: RelayUnixDialer;
   /** 재접속 예약. 테스트가 시간을 직접 돌리려고 뽑아 뒀다. */
   schedule?: (fn: () => void, ms: number) => void;
@@ -199,21 +201,33 @@ export interface RelayClient {
   openSession(input: OpenSessionInput): OpenSession;
   /** 지금 붙어 있는가. 로그·테스트가 본다. */
   connected(): boolean;
+  /**
+   * 오퍼레이터에게 요청 하나(MCP JSON-RPC 또는 REST 전달). 답이 오면 그 프레임으로 푼다.
+   * 링크가 없으면 **즉시 거절한다** — 큐에 담아 두면 25초 롱폴이 링크 뒤에서 쌓여 재접속
+   * 순간 한꺼번에 터진다. 호출자(poll 루프)가 백오프로 다시 부른다.
+   */
+  request(req: LinkMcpRequest): Promise<Extract<RunnerLinkResponse, { type: 'mcp.response' | 'mcp.error' }>>;
+  request(req: LinkHttpRequest): Promise<Extract<RunnerLinkResponse, { type: 'http.response' }>>;
+  /** MCP SDK `Client` 가 쓰는 트랜스포트 — 메시지마다 `mcp.request` 하나다. */
+  mcpTransport(): Transport;
+  /**
+   * 링크가 붙을 때까지 기다린다(기동 경로용). 이미 붙어 있으면 즉시, `timeoutMs` 안에 못 붙으면
+   * false — 던지지 않는다: 기동은 계속되고, 그 뒤의 호출이 status 0 으로 거절되며 poll 루프가
+   * 백오프로 다시 부른다. `request` 가 큐를 두지 않는 대신 이것이 기동의 첫 왕복을 지킨다.
+   */
+  whenConnected(timeoutMs: number): Promise<boolean>;
 }
 
-/** http(s) → ws(s). 옛 경로 `/agent-relay` — 오퍼레이터 없이 도는 러너의 폴백이고 단계 4 에서 사라진다. */
-export function relayUrl(harkroomUrl: string): string {
-  return `${harkroomUrl.replace(/\/$/, '').replace(/^http/, 'ws')}/agent-relay`;
-}
+/** `request` 의 입력 — 링크 id 는 클라이언트가 붙인다. */
+export type LinkMcpRequest = { type: 'mcp.request'; payload: unknown };
+export type LinkHttpRequest = { type: 'http.forward'; method: string; path: string; body?: string; contentType?: string };
+
+/** 링크가 없거나 끊겼을 때 요청에 붙이는 사유. `status: 0` 은 "서버가 답한 것이 아니다"다. */
+export const LINK_DOWN_MESSAGE = '오퍼레이터 링크가 없다 — 재접속 중이다';
 
 export function createRelayClient(opts: RelayClientOptions): RelayClient {
-  const wsDial = opts.dial ?? nodeWsDialer;
   const unixDial = opts.unixDial ?? unixDialer;
-  const link = opts.link ?? null;
-  const dial = (handlers: RelayHandlers): void => {
-    if (link) unixDial(link, handlers);
-    else wsDial(relayUrl(opts.harkroomUrl), opts.pat, handlers);
-  };
+  const dial = (handlers: RelayHandlers): void => { unixDial(opts.link, handlers); };
   const schedule = opts.schedule ?? ((fn, ms) => { setTimeout(fn, ms).unref?.(); });
   const initialBackoffMs = opts.initialBackoffMs ?? 1_000;
 
@@ -225,6 +239,29 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
   let outageReported = false;
   let stopped = false;
   let backoffMs = initialBackoffMs;
+  /** 답을 기다리는 요청들. 링크가 끊기면 전부 거절한다 — 답이 올 소켓이 사라졌다. */
+  const pendingRequests = new Map<string, { req: RunnerLinkRequest; resolve: (res: RunnerLinkResponse) => void }>();
+  /** MCP 트랜스포트가 살아 있으면 그 `onmessage` 로 서버의 JSON-RPC 메시지가 간다. */
+  let transportSink: ((message: JSONRPCMessage) => void) | null = null;
+
+  /** 링크가 열리기를 기다리는 쪽(`whenConnected`). 열릴 때마다 전부 깨운다. */
+  const waiters: (() => void)[] = [];
+
+  const downResponse = (req: RunnerLinkRequest, message: string): RunnerLinkResponse =>
+    req.type === 'mcp.request'
+      ? { type: 'mcp.error', id: req.id, status: 0, message }
+      : { type: 'http.response', id: req.id, status: 0, body: message };
+
+  const sendRequest = (req: RunnerLinkRequest): Promise<RunnerLinkResponse> => {
+    if (!transport) return Promise.resolve(downResponse(req, LINK_DOWN_MESSAGE));
+    return new Promise((resolve) => {
+      pendingRequests.set(req.id, { req, resolve });
+      try { transport!.send(JSON.stringify(req)); } catch {
+        pendingRequests.delete(req.id);
+        resolve(downResponse(req, LINK_DOWN_MESSAGE));
+      }
+    });
+  };
 
   const send = (frame: RelayRunnerFrame): void => {
     if (!transport) return;
@@ -280,6 +317,13 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
     let parsed: unknown;
     try { parsed = JSON.parse(raw); } catch { return; }
     if (typeof parsed !== 'object' || parsed === null) return;
+    if (isRunnerLinkResponse(parsed)) {
+      const pending = pendingRequests.get(parsed.id);
+      if (!pending) return;
+      pendingRequests.delete(parsed.id);
+      pending.resolve(parsed);
+      return;
+    }
     const frame = parsed as RelayServerFrame;
 
     switch (frame.type) {
@@ -357,6 +401,7 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
       onOpen: (t) => {
         transport = t;
         opened = true;
+        for (const wake of waiters.splice(0)) wake();
         // 붙었으므로 다음 장애는 **새 장애**다 — 안 풀어 주면 평생 한 번만 외친다.
         outageReported = false;
         backoffMs = initialBackoffMs;
@@ -380,7 +425,7 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
           opened = false;
         } else if (!outageReported) {
           outageReported = true;
-          console.error(`${link ? '오퍼레이터 링크' : '릴레이'}에 붙지 못한다 — 재시도한다(터미널 관찰·개입이 그동안 안 된다): ${reason ?? '이유 불명'}`);
+          console.error(`오퍼레이터 링크에 붙지 못한다 — 재시도한다(관찰·개입·서버 호출이 그동안 안 된다): ${reason ?? '이유 불명'}`);
         }
         /**
          * **관찰이 끊긴 동안은 조종을 붙잡지 않는다.**
@@ -402,6 +447,11 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
          */
         for (const live of sessions.values()) {
           try { live.onViewerCount?.(0); } catch { /* 관찰은 답을 죽이지 않는다 */ }
+        }
+        // 답이 올 소켓이 사라졌다 — 기다리던 요청은 전부 여기서 끝난다.
+        for (const [id, pending] of pendingRequests) {
+          pendingRequests.delete(id);
+          pending.resolve(downResponse(pending.req, `${LINK_DOWN_MESSAGE}${reason ? ` (${reason})` : ''}`));
         }
         if (stopped) return;
         schedule(connect, backoffMs);
@@ -481,42 +531,39 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
     },
 
     connected: () => transport !== null,
+
+    whenConnected(timeoutMs) {
+      if (transport) return Promise.resolve(true);
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => { resolve(false); }, timeoutMs);
+        timer.unref?.();
+        waiters.push(() => { clearTimeout(timer); resolve(true); });
+      });
+    },
+
+    request: ((req: LinkMcpRequest | LinkHttpRequest) =>
+      sendRequest({ ...req, id: randomUUID() } as RunnerLinkRequest)) as RelayClient['request'],
+
+    mcpTransport() {
+      const self: Transport = {
+        async start() { transportSink = (m) => self.onmessage?.(m); },
+        async send(message) {
+          const res = await sendRequest({ type: 'mcp.request', id: randomUUID(), payload: message });
+          if (res.type === 'mcp.error') {
+            // 서버(또는 링크)의 거절. SDK 는 요청마다 응답을 기다리므로 그 요청의 오류로 되돌려
+            // 준다 — `harkroom.ts` 가 `status` 로 자격증명 실패를 가른다.
+            const err = Object.assign(new Error(res.message), { status: res.status });
+            throw err;
+          }
+          if (res.type !== 'mcp.response') return;
+          for (const m of res.messages) transportSink?.(m as JSONRPCMessage);
+        },
+        async close() { transportSink = null; self.onclose?.(); },
+      };
+      return self;
+    },
   };
 }
-
-/**
- * 프로덕션 dialer. `ws` 를 쓰는 이유: Node 의 전역 `WebSocket`(undici)은 **커스텀 헤더를
- * 실을 수 없다.** 이 소켓의 인증은 PAT 헤더이므로(URL 에 실으면 앞단 프록시 로그에 남는다)
- * 헤더를 실을 수 있는 클라이언트가 필요하다.
- *
- * `import` 를 함수 안에 둔 이유: 이 모듈을 import 하는 테스트가 가짜 dialer 만 쓸 때
- * `ws` 를 실제로 로드하지 않게 한다.
- */
-const nodeWsDialer: RelayDialer = (url, pat, handlers) => {
-  void (async () => {
-    const { default: WebSocket } = await import('ws');
-    const socket = new WebSocket(url, { headers: { authorization: `Bearer ${pat}` } });
-    // `ws` 는 실패 시 'error' 와 'close' 를 **둘 다** 낸다. 그대로 넘기면 재접속이 두 번
-    // 예약되고, 그 두 배가 매 실패마다 곱해져 몇 분 뒤에는 접속 폭풍이 된다. 이 dial 의
-    // 끝을 한 번만 알린다 — 백오프가 곡선 하나로 남는다.
-    let settled = false;
-    const settle = (reason?: string) => {
-      if (!settled) { settled = true; handlers.onClose(reason); }
-    };
-    socket.on('open', () => {
-      handlers.onOpen({ send: (data) => socket.send(data), close: () => socket.close() });
-    });
-    socket.on('message', (raw: unknown) => handlers.onMessage(String(raw)));
-    socket.on('close', () => settle());
-    // 핸드셰이크 자체가 실패(401, 연결 거부)하면 여기로 온다. **이유를 넘긴다** —
-    // 삼키면 러너가 조용히 릴레이 없이 도는 상태로 남고, 실제로 그렇게 남아 있었다.
-    socket.on('error', (err: Error) => settle(err.message));
-  })().catch((err: unknown) => handlers.onClose(
-    // 모듈 로드 실패가 여기로 온다(`ws` 를 못 불러오는 번들이 정확히 그 경우였다).
-    // 이 경로가 이유를 버리던 것이 그 결함을 몇 달간 보이지 않게 만들었다.
-    err instanceof Error ? err.message : String(err),
-  ));
-};
 
 /**
  * 오퍼레이터 unix 소켓 dialer(스펙 §5). NDJSON 한 줄이 프레임 하나이고, 첫 줄은 `hello` 다

@@ -13,8 +13,8 @@ import { HARNESS_ENV_DENYLIST, assertHarnessContract, buildTurnCommand, preassig
 // 그 결함을 못 잡았다. 프로덕션이 실제로 주는 모양으로 고쳐야 이 종류의 결함을 다시 잡는다.
 const base = {
   systemPrompt: 'SYS', promptCtx: 'CTX', model: null, effort: null,
-  mentionPermission: 'auto' as const, mcpConfigPath: '/mcp.json', pat: 'murp_x',
-  harkroomUrl: 'http://localhost:3401',
+  mentionPermission: 'auto' as const, mcpConfigPath: '/mcp.json',
+  operatorBin: '/opt/harkroom/harkroom-operator',
   codexHome: '/state/codex-home',
   // 프로덕션(`mentionTurn.ts`)은 매 턴 `writeSystemPromptFile` 로 파일을 쓰고 그 경로를
   // 반드시 넘긴다 — fixture 가 null 로 두면 프로덕션이 절대 타지 않는 경로를 검증하게 된다.
@@ -35,11 +35,11 @@ const base = {
 // 만 보던 예전 단언들은 `{ HARKROOM_PAT: 'x' }` 하나짜리 env 로도 통과했으므로 이 결함을 못
 // 잡았다.
 describe('buildTurnCommand — env 는 부모를 물려받는다 (실물 검증에서 드러난 회귀)', () => {
-  it('PATH·HOME 등 부모 env 를 물려주고 HARKROOM_PAT 만 덮어쓴다', () => {
+  it('PATH·HOME 등 부모 env 를 물려주고, PAT 은 넣지 않는다 — 하네스가 서버에 닿는 길은 mcp-bridge 뿐이다', () => {
     const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true });
     expect(p.env.PATH).toBe(process.env.PATH);
     if (process.env.HOME) expect(p.env.HOME).toBe(process.env.HOME);
-    expect(p.env.HARKROOM_PAT).toBe('murp_x');
+    expect(p.env.HARKROOM_PAT).toBeUndefined();
   });
 });
 
@@ -56,7 +56,7 @@ describe('buildTurnCommand — claude', () => {
     expect(p.args).toContain('--append-system-prompt-file');
     expect(p.args).toContain(filePath);
     expect(p.args).not.toContain('-r');
-    expect(p.env.HARKROOM_PAT).toBe('murp_x');
+    expect(p.env.HARKROOM_PAT).toBeUndefined();
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -265,35 +265,27 @@ describe('buildTurnCommand — codex', () => {
   // MCP 의 `message.post` 다(prompt.ts). harkroom MCP 가 안 붙은 codex 턴은 에러 없이 그냥
   // 돌다가 답을 못 하고, 러너는 "답 없이 턴을 끝냈습니다"만 남긴다 — 원인 단서가 없는 조용한
   // 실패다. 그래서 harkroomUrl 은 선택이 아니라 필수이고, codex 의 모든 턴에 반드시 붙는다.
-  it('codex 턴의 argv 에는 harkroom MCP 등록이 항상 들어 있다 — PAT 값 자체는 여전히 안 붙는다', () => {
-    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, harkroomUrl: 'http://localhost:3401' });
+  it('codex 턴의 argv 에는 harkroom MCP 가 stdio 브릿지로 항상 들어 있다 — URL 도 토큰도 없다', () => {
+    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false });
     expect(p.args.join(' ')).toContain('mcp_servers.avcs.command');
     // **transport 가 빠지면 harkroom 도 같이 죽는다**(2026-09-15 실측). codex 0.154 는 갈래
     // 표시 없는 stdio 항목에서 MCP 설정 **전체**를 버린다 — 그러면 이 턴은 답할 수단이
     // 없는 채로 돌다가 조용히 끝난다. 그래서 이 한 줄이 harkroom 등록만큼 중요하다.
     expect(p.args.join(' ')).toContain('mcp_servers.avcs.transport="stdio"');
-    expect(p.args.join(' ')).toContain('mcp_servers.harkroom.url="http://localhost:3401/mcp"');
-    expect(p.args.join(' ')).toContain('mcp_servers.harkroom.bearer_token_env_var="HARKROOM_PAT"');
-    expect(p.args.join(' ')).not.toContain('murp_x');
+    // 스펙 2026-09-20 §5: harkroom 항목은 `harkroom-operator mcp-bridge` 다. 앞 판본의
+    // `url` + `bearer_token_env_var="HARKROOM_PAT"` 는 없다 — 러너 env 에 PAT 이 없다.
+    expect(p.args.join(' ')).toContain('mcp_servers.harkroom.transport="stdio"');
+    expect(p.args.join(' ')).toContain(`mcp_servers.harkroom.command="/opt/harkroom/harkroom-operator"`);
+    expect(p.args.join(' ')).toContain('mcp_servers.harkroom.args=["mcp-bridge"]');
+    expect(p.args.join(' ')).not.toContain('mcp_servers.harkroom.url');
+    expect(p.args.join(' ')).not.toContain('HARKROOM_PAT');
   });
 
-  // 실물 검증에서 드러난 회귀 — harkroomUrl 은 서버 베이스 URL 이지 MCP 엔드포인트가 아닌데
-  // codex 쪽 조립이 `/mcp` 를 안 붙여, codex 가 `POST /`(베이스 URL)를 때려 서버의
-  // `404 route not found` 로 MCP 연결 자체가 안 됐다. 증상은 조용했다 — exit 0, message.post
-  // 못 부름, "(답 없이 턴을 끝냈습니다)"만 남았다. 위 테스트는 harkroomUrl 에 이미 `/mcp` 가
-  // 붙은 값을 넘겨 이 결함을 가렸다 — 이 테스트는 **베이스 URL 만 주고** 조립된 값이 실제
-  // 엔드포인트(`/mcp`)와 같은지를 겨눈다.
-  it('harkroomUrl 에 이미 트레일링 슬래시가 있어도 /mcp 가 정확히 한 번만 붙는다', () => {
-    const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, harkroomUrl: 'http://localhost:3401/' });
-    expect(p.args.join(' ')).toContain('mcp_servers.harkroom.url="http://localhost:3401/mcp"');
-    expect(p.args.join(' ')).not.toContain('http://localhost:3401//mcp');
-  });
-
-  // harkroomUrl 을 빈 문자열로 넘기면 타입 체크는 통과하지만(string), 그대로 두면
-  // `mcp_servers.harkroom.url=""` 같은 값이 조용히 조립돼 위와 같은 조용한 실패로 이어진다 —
+  // operatorBin 을 빈 문자열로 넘기면 타입 체크는 통과하지만(string), 그대로 두면
+  // `mcp_servers.harkroom.command=""` 같은 값이 조용히 조립돼 답 못 하는 턴으로 이어진다 —
   // 런타임에서도 막는다.
-  it('harkroomUrl 이 빈 문자열이면 던진다 — 조용히 틀린 URL 을 조립하지 않는다', () => {
-    expect(() => buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, harkroomUrl: '' })).toThrow();
+  it('operatorBin 이 빈 문자열이면 던진다 — 조용히 틀린 명령을 조립하지 않는다', () => {
+    expect(() => buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false, operatorBin: '' })).toThrow();
   });
 });
 
@@ -365,24 +357,25 @@ describe('writeMcpConfigOnce', () => {
     if (dir) await rm(dir, { recursive: true, force: true });
   });
 
-  it('harkroom(http, 플레이스홀더 PAT) + avcs(stdio, avcs mcp) 둘만 담은 파일을 쓴다', async () => {
+  it('harkroom(stdio, mcp-bridge) + avcs(stdio, avcs mcp) 둘만 담은 파일을 쓴다', async () => {
     dir = await mkdtemp(join(tmpdir(), 'mcp-cfg-'));
-    const path = await writeMcpConfigOnce(dir, 'http://localhost:3401');
+    const path = await writeMcpConfigOnce(dir, '/opt/harkroom/harkroom-operator');
     const config = JSON.parse(await readFile(path, 'utf8'));
     expect(config.mcpServers.harkroom).toEqual({
-      type: 'http', url: 'http://localhost:3401/mcp', headers: { Authorization: 'Bearer ${HARKROOM_PAT}' },
+      type: 'stdio', command: '/opt/harkroom/harkroom-operator', args: ['mcp-bridge'],
     });
     expect(config.mcpServers.avcs).toEqual({ type: 'stdio', command: 'avcs', args: ['mcp'] });
     expect(Object.keys(config.mcpServers)).toHaveLength(2); // harkroom + avcs 만 — strict-mcp-config 와 짝
   });
 
-  // 실값이 아니라 플레이스홀더이므로 파일 자체는 비밀이 아니다(spec §7) — 그래도 실수로
-  // 실제 PAT 문자열이 섞여 들어가는 회귀를 여기서 잡는다.
-  it('생성된 파일에 실제 PAT 값은 절대 들어가지 않는다', async () => {
+  // 파일에는 명령만 있고 비밀이 없다(스펙 2026-09-20 §5) — 앞 판본의 `${HARKROOM_PAT}`
+  // 플레이스홀더조차 없다. 실수로 토큰·URL 이 섞여 들어가는 회귀를 여기서 잡는다.
+  it('생성된 파일에 토큰도 서버 URL 도 없다', async () => {
     dir = await mkdtemp(join(tmpdir(), 'mcp-cfg-'));
-    const path = await writeMcpConfigOnce(dir, 'http://localhost:3401');
+    const path = await writeMcpConfigOnce(dir, '/opt/harkroom/harkroom-operator');
     const raw = await readFile(path, 'utf8');
-    expect(raw).toContain('${HARKROOM_PAT}');
+    expect(raw).not.toContain('HARKROOM_');
+    expect(raw).not.toMatch(/https?:\/\//);
     expect(raw).not.toMatch(/murp_[a-zA-Z0-9]/);
   });
 
@@ -390,8 +383,8 @@ describe('writeMcpConfigOnce', () => {
   // 재시도 경로) 깨지면 안 된다 — 두 번째 호출도 같은 결과를 내고 에러를 던지지 않는다.
   it('두 번 불러도 에러 없이 같은 내용을 낸다 — 멱등', async () => {
     dir = await mkdtemp(join(tmpdir(), 'mcp-cfg-'));
-    const first = await writeMcpConfigOnce(dir, 'http://localhost:3401');
-    const second = await writeMcpConfigOnce(dir, 'http://localhost:3401');
+    const first = await writeMcpConfigOnce(dir, '/opt/harkroom/harkroom-operator');
+    const second = await writeMcpConfigOnce(dir, '/opt/harkroom/harkroom-operator');
     expect(second).toBe(first);
     expect(await readFile(first, 'utf8')).toBe(await readFile(second, 'utf8'));
   });
