@@ -11,34 +11,22 @@ Claude Code나 Cursor는 사람이 프롬프트할 때만 움직이기 때문이
 
 ## 실행
 
-**대개는 손으로 띄우지 않는다.** 러너는 **오퍼레이터**가 띄운다 — 머신마다 하나 상주하며
+**러너는 오퍼레이터가 띄운다 — 손으로 띄우는 길은 없다.** 오퍼레이터는 머신마다 하나 상주하며
 서버에 붙어 배정을 받는 프로세스다(스펙
 [2026-09-20](../../docs/specs/2026-09-20-operator-and-permissions-design.md),
-[`docs/operations.md`](../../docs/operations.md) §8-0). 데스크탑 앱은 러너를 띄우지 않는다:
-설정 › Operators 에서 그 머신을 등록하고, 에이전트 상세에서 배정하면 된다. 아래는 그것이
-닿지 않는 경우 — **어느 오퍼레이터에도 배정되지 않은 에이전트** — 에 사람이 밟는 절차다.
+[`docs/operations.md`](../../docs/operations.md) §8-0). 데스크탑 앱도 러너를 띄우지 않는다.
 
 1. **harkroom 데스크탑 앱에서 에이전트를 만든다** — 사이드바의 `+ Add or edit agents`.
-   상세의 PAT 절에서 토큰을 발급하면 한 번 표시된다(배정된 오퍼레이터는 이것을 서버에서
-   직접 받아 가므로 손으로 띄울 때만 필요하다).
-2. **러너를 띄운다.** 두 갈래이고, 고르는 기준은 **harkroom 저장소가 그 머신에 있는가**다:
+2. **에이전트를 돌릴 머신을 등록한다** — 설정 › Operators 에서 등록 코드를 발급해 그 머신에서
+   `harkroom-operator register <서버 주소> <코드>` 를 실행한다(단계 6 이 이 명령을 채운다).
+3. **에이전트를 그 오퍼레이터에 배정한다** — 에이전트 상세의 "어디서 돌리나". 오퍼레이터가
+   러너를 띄우고, 죽으면 다시 띄운다.
 
-```sh
-# 앱을 설치해 쓰는 경우 — 러너는 앱과 함께 배포된다 (설치 위치가 다르면 경로를 바꾼다)
-HARKROOM_URL=<서버 주소> HARKROOM_PAT=murp_... /Applications/Harkroom.app/Contents/MacOS/harkroom-runner
-
-# 이 저장소를 클론한 개발 환경
-HARKROOM_URL=<서버 주소> HARKROOM_PAT=murp_... pnpm --filter @harkroom/agent start
-```
-
-위쪽이 있는 이유: `#431` 1단계가 러너를 **단일 번들**로 만들어 Tauri 사이드카
-(`externalBin`)로 앱과 함께 배포한다. 앱을 설치해 쓰는 사람은 이 저장소를 클론하지 않으므로
-`pnpm` 명령이 그 머신에서는 실행할 소스도 워크스페이스도 없다. 아래쪽(pnpm)은 **죽은 명령이
-아니라 개발 환경 전용**이다 — `package.json` 의 `start` 는 그대로 있다.
-
-사람에게 보여 줄 명령의 정본은 `packages/desktop/src/lib/runnerCommand.ts` 이고, 설정 →
-에이전트 화면이 PAT 를 채워 그대로 복사할 수 있게 내민다. 아래 예시들은 짧게 쓰려고
-개발 갈래(`pnpm`)로 적었다 — 배포판에서는 그 자리에 사이드카 경로를 넣는다.
+러너 프로세스 자체는 앱과 함께 배포되는 **단일 번들**(Tauri 사이드카, macOS 에서
+`/Applications/Harkroom.app/Contents/MacOS/harkroom-runner`)이고, 오퍼레이터가 자기 옆의 그
+파일을 실행한다. 저장소 안에서는 `pnpm --filter @harkroom/agent start` 로도 돈다 — 단, 아래
+env 넷을 오퍼레이터가 심어 주듯 직접 줘야 하고, 그 값들은 살아 있는 오퍼레이터의 것이어야 한다
+(러너는 서버를 모른다: URL 도 PAT 도 받지 않는다).
 
 이제 harkroom에서 `@이름 이거 봐줘`라고 쓰면 답이 온다.
 
@@ -49,8 +37,10 @@ HARKROOM_URL=<서버 주소> HARKROOM_PAT=murp_... pnpm --filter @harkroom/agent
 
 | 환경변수 | 기본값 | 뜻 |
 |---|---|---|
-| `HARKROOM_PAT` | (필수) | 에이전트 PAT. 이 계정으로 발화한다 |
-| `HARKROOM_URL` | `http://localhost:3400` | harkroom 서버 |
+| `HARKROOM_OPERATOR_SOCKET` | (필수) | 이 머신의 오퍼레이터 unix 소켓. 러너의 PTY 릴레이·MCP·REST 전부 이리로 간다 — 서버 주소는 러너가 모른다 |
+| `HARKROOM_RUNNER_ID` | (필수) | 오퍼레이터가 spawn 때 준 러너 id. 서버는 이 id 로 프레임을 다중화한다 |
+| `HARKROOM_RUNNER_SECRET` | (필수) | 링크 인증 secret. spawn 마다 새로 만들어지고 이 프로세스의 env 에만 산다 |
+| `HARKROOM_OPERATOR_BIN` | (필수) | `harkroom-operator` 실행 파일. 하네스의 harkroom MCP 항목이 `<이 값> mcp-bridge` 다 |
 | `HARKROOM_AGENT_INSTANCE` | (없음) | 에이전트 인스턴스 ID. 같은 에이전트를 여러 개 돌릴 때 구분한다 ([a-z0-9-]{1,32}) |
 | `AGENT_POLL_TIMEOUT_MS` | `25000` | 서버의 `inbox.poll` 상한 |
 | `AGENT_TURN_TIMEOUT_MS` | `1800000`(30분) | 한 턴(PTY 실행)의 최대 대기 시간. 넘기면 SIGTERM → 5초 → SIGKILL |
@@ -58,9 +48,9 @@ HARKROOM_URL=<서버 주소> HARKROOM_PAT=murp_... pnpm --filter @harkroom/agent
 
 API 키는 필요 없다 — 모든 harness가 사람의 로컬 로그인(claude: Keychain, codex: `~/.codex/auth.json`)을 쓴다.
 
-**에이전트를 여러 대 운영하려면 러너도 여러 프로세스다.** 러너 하나는 자기 PAT의 계정 하나로만
-붙는다 — 두 에이전트를 동시에 돌리려면 각자 다른 `HARKROOM_PAT`로 **위 명령을 두 번** 띄운다
-(어느 갈래든 상관없다). `AGENT_STATE_DIR`은 **같아도 된다** — 상태 경로 전체가 `me.handle`로
+**에이전트를 여러 대 운영하려면 러너도 여러 프로세스다.** 러너 하나는 배정 하나(에이전트 하나)로만
+붙는다 — 두 에이전트를 돌리려면 둘 다 그 오퍼레이터에 배정하면 되고, 오퍼레이터가 러너를 둘
+띄운다. `AGENT_STATE_DIR`은 **같아도 된다** — 상태 경로 전체가 `me.handle`로
 스코프되므로(아래 "상태 디렉터리") 같은 머신·같은 `AGENT_STATE_DIR`에서 동시에 떠도 서로의
 세션·workspace가 겹치지 않는다.
 
@@ -70,12 +60,15 @@ API 키는 필요 없다 — 모든 harness가 사람의 로컬 로그인(claude
 쓴다:
 
 ```sh
-# 인스턴스 A
-HARKROOM_PAT=murp_... HARKROOM_AGENT_INSTANCE=a pnpm --filter @harkroom/agent start
+# 인스턴스 A — 오퍼레이터가 심는 링크 env 넷에 인스턴스 id 를 더한다
+HARKROOM_AGENT_INSTANCE=a pnpm --filter @harkroom/agent start
 
-# 인스턴스 B (같은 PAT, 다른 인스턴스 ID)
-HARKROOM_PAT=murp_... HARKROOM_AGENT_INSTANCE=b pnpm --filter @harkroom/agent start
+# 인스턴스 B (같은 에이전트, 다른 인스턴스 ID)
+HARKROOM_AGENT_INSTANCE=b pnpm --filter @harkroom/agent start
 ```
+
+(오퍼레이터가 배정 하나에 러너 하나만 띄우는 지금 구조에서 이 변수는 개발 환경의 손잡이다 —
+오퍼레이터의 로컬 설정이 인스턴스를 말하게 되는 것은 뒤 단계의 일이다.)
 
 이렇게 하면 상태 디렉터리가 `<AGENT_STATE_DIR>/<handle>-<id>/a/` 처럼 나뉘어,
 세션 파일·MCP 설정·avcs 워크스페이스 전부 인스턴스별로 격리된다. 기동 로그에는
@@ -272,9 +265,10 @@ MCP 설정을 상속하지 않는다. 승인된 Codex 스킬은 공식 저장소
 ## 자격증명
 
 - **모델 자격증명은 harkroom를 통과하지 않는다.** 하네스가 사람의 로컬 로그인을 그대로 쓴다.
-- **PAT는 env로만 간다.** MCP 설정 파일에는 `${HARKROOM_PAT}` 플레이스홀더만 있고(파일 자체는
-  비밀이 아니다), 실값은 PTY 자식 프로세스의 env로만 넘어간다 — argv에는 절대 오르지 않는다
-  (`ps`에는 다른 사용자에게도 argv가 보이지만 env는 안 보인다).
+- **러너에는 PAT 이 없다**(스펙 2026-09-20 §5). 서버에 말하는 것은 오퍼레이터이고, 인증은
+  오퍼레이터 토큰 + `X-Harkroom-Agent`(배정이 곧 인가)다. 러너가 든 비밀은 링크 secret 하나이고
+  그것은 이 프로세스의 env 에만 있다 — argv 에는 절대 오르지 않고, MCP 설정 파일에는 명령
+  (`harkroom-operator mcp-bridge`)만 있어 파일 자체가 비밀이 아니다.
 - **`--strict-mcp-config`를 항상 쓴다**(claude). 없으면 하네스가 이 세션을 띄운 사람의
   전역 MCP 목록 전체(Slack·Gmail·Drive 등)를 상속한다 — 채널에서 `@handle`을 부를 수 있는
   사람이면 누구나 그 경로로 운영자 개인 계정에 도달한다. 러너가 생성하는 설정에는 harkroom와

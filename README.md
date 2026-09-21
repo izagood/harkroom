@@ -178,11 +178,10 @@ dead AVCS server never restarts the pod).
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
-| `HARKROOM_URL` | harkroom server URL | `http://localhost:3400` | No |
-| `HARKROOM_PAT` | Personal Access Token for authentication | - | Yes |
-| `HARKROOM_OPERATOR_SOCKET` | Unix socket of the operator that spawned this runner; with the two below, the runner attaches its PTY relay there instead of the server (set by the operator, not by hand) | - | No |
-| `HARKROOM_RUNNER_ID` | Runner id the operator assigned at spawn; the server multiplexes this runner's frames by it | - | No |
-| `HARKROOM_RUNNER_SECRET` | One-time secret for the operator link; set by the operator at spawn together with the two above | - | No |
+| `HARKROOM_OPERATOR_SOCKET` | Unix socket of the operator that spawned this runner. Everything the runner says to the server (PTY relay, MCP, REST) goes through it — the runner has no server URL and no token | - | Yes |
+| `HARKROOM_RUNNER_ID` | Runner id the operator assigned at spawn; the server multiplexes this runner's frames by it | - | Yes |
+| `HARKROOM_RUNNER_SECRET` | One-time secret for the operator link; set by the operator at spawn | - | Yes |
+| `HARKROOM_OPERATOR_BIN` | Path of `harkroom-operator`; the runner writes it into the harness MCP config as the `mcp-bridge` command | - | Yes |
 | `AGENT_POLL_TIMEOUT_MS` | Inbox polling timeout | `25000` (25s) | No |
 | `AGENT_TURN_TIMEOUT_MS` | Maximum wait for one turn (PTY execution) | `1800000` (30min) | No |
 | `AGENT_HARNESS_STALL_MS` | Idle time after which a harness whose transcript stopped growing is treated as stalled and the turn is folded (`0` disables) | `600000` (10min) | No |
@@ -206,21 +205,13 @@ harkroom requires agent participation to function fully. Two options:
 
 **Runner (responds to mentions automatically):**
 
-Normally you do not start one by hand — an **operator** does. Register the machine that should
+An **operator** starts it — never you, never the desktop app. Register the machine that should
 run your agents under Settings › Operators (it prints a one-time code for `harkroom-operator
 register`), then assign the agent to that operator in its settings; the operator starts the
-runner and restarts it if it dies. The desktop app itself never starts runners, so the agent
-keeps running on that machine no matter which device you call it from. Start a runner yourself
-only for an agent that is not assigned to any operator. The runner ships with the app as a Tauri
-sidecar, so which command you use depends on whether that machine has the harkroom repository:
-
-```sh
-# Installed app — the runner ships inside the bundle (adjust the path if installed elsewhere)
-HARKROOM_URL=<server url> HARKROOM_PAT=murp_... /Applications/Harkroom.app/Contents/MacOS/harkroom-runner
-
-# Development checkout of this repository
-HARKROOM_URL=<server url> HARKROOM_PAT=murp_... pnpm --filter @harkroom/agent start
-```
+runner, restarts it if it dies, and speaks to the server on its behalf. The runner itself never
+sees the server URL or a token, so the agent keeps running on that machine no matter which
+device you call it from. The runner binary ships inside the app bundle as a Tauri sidecar
+(`/Applications/Harkroom.app/Contents/MacOS/harkroom-runner`) next to `harkroom-operator`.
 
 **Register with Claude Code / Cursor (human-driven):**
 ```sh
