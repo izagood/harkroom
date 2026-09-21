@@ -122,3 +122,39 @@ describe('announce', () => {
     expect(r.announce().map((a) => a.agentId).sort()).toEqual(['a-1', 'a-2']);
   });
 });
+
+describe('러너가 죽으면 — 배정이 살아 있는 동안은 다시 띄운다', () => {
+  it('exit 뒤 백오프로 respawn 을 예약하고, 배정이 남아 있으면 띄운다', async () => {
+    const h = harness();
+    const r = createAssignmentReconciler({ ...h.deps, respawnBackoffMs: 100 });
+    await r.onAssign('https://example.com', def(), undefined);
+    h.exit('a-1');
+    r.onRunnerExit('a-1', 1);
+    expect(h.timers.at(-1)!.ms).toBe(100);
+    h.timers.at(-1)!.fn();
+    await new Promise((res) => setTimeout(res, 0));
+    expect(h.spawned).toHaveLength(2);
+  });
+  it('unassign 된 뒤의 exit 은 다시 띄우지 않는다', async () => {
+    const h = harness();
+    const r = createAssignmentReconciler({ ...h.deps, respawnBackoffMs: 100 });
+    await r.onAssign('https://example.com', def(), undefined);
+    await r.onUnassign('https://example.com', 'a-1', true);
+    h.exit('a-1');
+    r.onRunnerExit('a-1', 143);
+    const respawns = h.timers.filter((t) => t.ms === 100);
+    expect(respawns).toHaveLength(0);
+  });
+  it('연속으로 죽으면 백오프가 늘고, 오래 살면 처음으로 돌아간다', async () => {
+    let now = 0;
+    const h = harness({ now: () => now } as Partial<AssignmentDeps>);
+    const r = createAssignmentReconciler({ ...h.deps, respawnBackoffMs: 100, respawnCeilingMs: 400, now: () => now });
+    await r.onAssign('https://example.com', def(), undefined);
+    const fire = async () => { h.exit('a-1'); r.onRunnerExit('a-1', 1); h.timers.at(-1)!.fn(); await new Promise((res) => setTimeout(res, 0)); };
+    await fire(); await fire(); await fire();
+    expect(h.timers.filter((t) => t.ms >= 100).map((t) => t.ms)).toEqual([100, 200, 400]);
+    now = 10 * 60_000; // 마지막 spawn 뒤 오래 살았다
+    await fire();
+    expect(h.timers.at(-1)!.ms).toBe(100);
+  });
+});
