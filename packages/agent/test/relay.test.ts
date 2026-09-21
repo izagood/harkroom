@@ -355,6 +355,26 @@ describe('#337 viewer.count — 인터랙티브 고아 회수의 신호', () => 
     expect(counts).toEqual([2, 0]);
   });
 
+  it('뷰어 수가 바뀌면 로그 한 줄을 남긴다 — 같은 값의 재전송(화해)은 남기지 않는다', () => {
+    const d = fakeDialer();
+    const lines: string[] = [];
+    const client = createRelayClient({ link: LINK, unixDial: d.dial, log: (l) => lines.push(l) });
+    client.start();
+    d.open();
+    const session = client.openSession({ ...SESSION, mode: 'mention' });
+
+    d.deliver({ type: 'viewer.count', sessionId: session.sessionId, count: 1 });
+    expect(lines).toEqual([`[relay] 세션 ${session.sessionId} (mention, 스레드 m1) 뷰어 0→1`]);
+    // 서버의 화해(resync)는 같은 값을 다시 보낸다 — 사건이 아니므로 줄을 늘리지 않는다.
+    d.deliver({ type: 'viewer.count', sessionId: session.sessionId, count: 1 });
+    expect(lines).toHaveLength(1);
+    d.deliver({ type: 'viewer.count', sessionId: session.sessionId, count: 0 });
+    expect(lines.at(-1)).toBe(`[relay] 세션 ${session.sessionId} (mention, 스레드 m1) 뷰어 1→0`);
+    // 모르는 세션은 남기지 않는다.
+    d.deliver({ type: 'viewer.count', sessionId: 'nope', count: 3 });
+    expect(lines).toHaveLength(2);
+  });
+
   it('콜백이 던져도 릴레이는 산다 — 관찰이 답을 죽이지 않는다', () => {
     const d = fakeDialer();
     const client = createRelayClient({ link: LINK, unixDial: d.dial });
