@@ -96,6 +96,12 @@ interface LiveSession {
   /** 서버가 알려 준 뷰어 수 변동(#337). 인터랙티브 고아 회수 타이머가 읽는다. */
   onViewerCount?: (count: number) => void;
   /**
+   * 마지막으로 들은 뷰어 수. 로그 한 줄의 근거다 — attach 는 이 프레임 말고는 러너에 아무
+   * 흔적을 남기지 않아서, 원격에서 터미널을 열었는지를 로그로 확인할 길이 없었다(2026-09-22).
+   * 서버의 화해(`resyncViewerCounts`)는 같은 값을 되풀이하므로 **바뀔 때만** 남긴다.
+   */
+  viewerCount: number;
+  /**
    * 사람이 이 턴을 **그만두게 했다**(3단계). 죽이는 것은 여기가 아니라 **턴이 한다** —
    * 그 턴만이 자기 PTY 손잡이(`PtyControls`)와 끝 처리(실패 카드·리액션 정리)를 갖고
    * 있고, 릴레이가 직접 kill 하면 종료 경로가 둘로 갈라져 한쪽은 흔적을 남기지 않는다.
@@ -190,6 +196,8 @@ export interface RelayClientOptions {
    * 버리면 서버가 10초 타임아웃까지 기다린 뒤 원인 없는 504 를 사람에게 준다.
    */
   onInteractiveOpen?: InteractiveOpenHandler;
+  /** 운영 로그 한 줄. 기본은 러너 로그(stdout). */
+  log?: (line: string) => void;
 }
 
 export interface RelayClient {
@@ -229,6 +237,7 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
   const unixDial = opts.unixDial ?? unixDialer;
   const dial = (handlers: RelayHandlers): void => { unixDial(opts.link, handlers); };
   const schedule = opts.schedule ?? ((fn, ms) => { setTimeout(fn, ms).unref?.(); });
+  const log = opts.log ?? ((line: string) => console.log(line));
   const initialBackoffMs = opts.initialBackoffMs ?? 1_000;
 
   const sessions = new Map<string, LiveSession>();
@@ -368,6 +377,10 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
       case 'viewer.count': {
         if (typeof frame.sessionId !== 'string' || typeof frame.count !== 'number') return;
         const live = sessions.get(frame.sessionId);
+        if (live && live.viewerCount !== frame.count) {
+          log(`[relay] 세션 ${frame.sessionId} (${live.info.mode ?? '?'}, 스레드 ${live.info.threadRootId ?? '-'}) 뷰어 ${live.viewerCount}→${frame.count}`);
+          live.viewerCount = frame.count;
+        }
         // 콜백 예외는 삼킨다 — 관찰(고아 회수 타이머)이 다른 턴을 죽이면 안 된다.
         try { live?.onViewerCount?.(frame.count); } catch { /* 관찰은 답을 죽이지 않는다 */ }
         return;
@@ -494,6 +507,7 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
         info,
         ring: new RingBuffer(RING_CAP_BYTES),
         writer: null,
+        viewerCount: 0,
         onViewerCount: input.onViewerCount,
         onCancel: input.onCancel,
       };
