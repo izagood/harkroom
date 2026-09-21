@@ -8,10 +8,12 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@harkroom/shared": "workspace:*"
+    "@harkroom/shared": "workspace:*",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.12",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vitest": "^3.0.0"
