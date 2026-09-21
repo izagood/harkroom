@@ -31,6 +31,8 @@ function harness(over: Partial<AssignmentDeps> = {}) {
     operatorBin: '/opt/harkroom/harkroom-operator',
     loginPath: '/usr/bin:/bin',
     appVersion: '0.2.8',
+    operatorOwnerId: async () => 'u-1',
+    mcpConfig: async (d) => ({ path: `/tmp/mcp/${d.agentId}.json` }),
     schedule: (fn, ms) => { const t = { fn, ms, cancelled: false }; timers.push(t); return () => { t.cancelled = true; }; },
     log: () => {},
     ...over,
@@ -48,6 +50,11 @@ describe('assign', () => {
     expect(h.spawned[0]!.env).toMatchObject({ PATH: '/usr/bin:/bin', AGENT_VERSION: '0.2.8', HARKROOM_WORKING_DIR: '~/dev/x' });
     expect(h.spawned[0]!.env.HARKROOM_URL).toBeUndefined();
     expect(h.spawned[0]!.env.HARKROOM_PAT).toBeUndefined();
+  });
+  it('오퍼레이터가 쓴 MCP 설정 경로를 HARKROOM_MCP_CONFIG 로 준다 — 러너는 파일을 만들지 않는다', async () => {
+    const h = harness();
+    await createAssignmentReconciler(h.deps).onAssign('https://example.com', def(), undefined);
+    expect(h.spawned[0]!.env.HARKROOM_MCP_CONFIG).toBe('/tmp/mcp/a-1.json');
   });
   it('이미 살아 있으면 새로 띄우지 않는다 — 멱등', async () => {
     const h = harness();
@@ -171,5 +178,47 @@ describe('러너가 죽으면 — 배정이 살아 있는 동안은 다시 띄�
     now = 10 * 60_000; // 마지막 spawn 뒤 오래 살았다
     await fire();
     expect(h.timers.at(-1)!.ms).toBe(100);
+  });
+});
+
+// 교차 불변식(스펙 2026-09-20 §7). 서버가 배정을 거절해야 맞지만 오퍼레이터는 서버만 믿지
+// 않는다 — 개인 자격증명을 쥔 에이전트를 남의 머신에서 띄우는 것은 그 사람의 토큰이 남의
+// 프로세스에 들어가는 일이라, 여기서 한 번 더 잰다.
+describe('personal 자격증명 재검사', () => {
+  const personal = (owner: string | null): AgentDefinition => ({ ...def(), credentialScope: 'personal', ownerAccountId: owner });
+  it('소유자가 이 오퍼레이터의 소유자와 다르면 띄우지 않고 refused 를 낸다', async () => {
+    const h = harness({ operatorOwnerId: async () => 'u-2' });
+    const outcome = await createAssignmentReconciler(h.deps).onAssign('https://example.com', personal('u-1'), undefined);
+    expect(outcome).toEqual({ refused: 'personal_on_foreign_operator' });
+    expect(h.spawned).toHaveLength(0);
+    expect(h.expected).toHaveLength(0);
+  });
+  it('오퍼레이터의 소유자를 모르면(null) personal 은 거절한다 — 모르는 채로 열지 않는다', async () => {
+    const h = harness({ operatorOwnerId: async () => null });
+    expect(await createAssignmentReconciler(h.deps).onAssign('https://example.com', personal('u-1'), undefined)).toEqual({ refused: 'personal_on_foreign_operator' });
+  });
+  it('소유자가 같으면 띄운다', async () => {
+    const h = harness();
+    expect(await createAssignmentReconciler(h.deps).onAssign('https://example.com', personal('u-1'), undefined)).toBe('spawned');
+  });
+  it('personal 이 아니면 소유자를 묻지 않는다', async () => {
+    const h = harness({ operatorOwnerId: async () => { throw new Error('묻지 말아야 한다'); } });
+    expect(await createAssignmentReconciler(h.deps).onAssign('https://example.com', def(), undefined)).toBe('spawned');
+  });
+  it('거절된 배정은 러너가 죽어도 다시 띄우지 않는다', async () => {
+    const h = harness({ operatorOwnerId: async () => 'u-2' });
+    const r = createAssignmentReconciler(h.deps);
+    await r.onAssign('https://example.com', personal('u-1'), undefined);
+    r.onRunnerExit('a-1', 1);
+    expect(h.timers).toHaveLength(0);
+  });
+});
+
+describe('MCP 설정', () => {
+  it('이 머신에 정의가 없는 이름이 있으면 띄우지 않는다 — 도구 없이 뜬 에이전트는 조용히 실패한다', async () => {
+    const h = harness({ mcpConfig: async () => ({ missing: ['slack'] }) });
+    const outcome = await createAssignmentReconciler(h.deps).onAssign('https://example.com', { ...def(), mcpServers: ['slack'] }, undefined);
+    expect(outcome).toEqual({ refused: 'mcp_server_missing:slack' });
+    expect(h.spawned).toHaveLength(0);
   });
 });

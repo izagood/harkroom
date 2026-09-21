@@ -116,3 +116,48 @@ describe('community', () => {
     expect(lines.some((l) => l.includes('stranger'))).toBe(true);
   });
 });
+
+// 교차 불변식(스펙 §7)의 재료 — 오퍼레이터는 자기 소유자를 `/operators/self` 로 안다. 그리고
+// 조정기가 거절한 배정은 서버에 `runner.exited{reason}` 으로 보인다 — 조용히 안 뜨는 것이 아니라.
+describe('community — 소유자 확인과 거절 통지', () => {
+  const dialOpen = (sent: string[]): LinkDialer => (_u, _t, h) => { h.onOpen({ send: (d) => sent.push(d), close: () => {} }); return h; };
+  it('붙을 때 /operators/self 를 오퍼레이터 토큰으로 읽어 소유자 id 를 안다', async () => {
+    const urls: string[] = [];
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      urls.push(`${String(url)} ${(init?.headers as Record<string, string>)?.authorization ?? ''}`);
+      return new Response(JSON.stringify({ id: 'op-1', ownerAccountId: 'u-9' }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const { reconciler } = fakeReconciler();
+    const c = createCommunity({ baseUrl: 'https://example.com', token: 'hkop_x', agents: {}, reconciler, dial: dialOpen([]), schedule: () => {}, log: () => {}, fetchImpl });
+    c.start();
+    expect(await c.ownerAccountId()).toBe('u-9');
+    expect(urls).toEqual(['https://example.com/operators/self Bearer hkop_x']);
+  });
+  it('self 를 못 읽으면 null — 그때 personal 배정은 조정기가 거절한다', async () => {
+    const fetchImpl = (async () => new Response('nope', { status: 500 })) as unknown as typeof fetch;
+    const { reconciler } = fakeReconciler();
+    const c = createCommunity({ baseUrl: 'https://example.com', token: 'hkop_x', agents: {}, reconciler, dial: dialOpen([]), schedule: () => {}, log: () => {}, fetchImpl });
+    c.start();
+    expect(await c.ownerAccountId()).toBeNull();
+  });
+  it('조정기가 거절하면 서버에 runner.exited{reason} 을 보내고 배정 목록에 남기지 않는다', async () => {
+    const sent: string[] = [];
+    let handlers: Parameters<LinkDialer>[2] | null = null;
+    const dial: LinkDialer = (_u, _t, h) => { handlers = h; h.onOpen({ send: (d) => sent.push(d), close: () => {} }); };
+    const reconciler: AssignmentReconciler = {
+      onAssign: async () => ({ refused: 'personal_on_foreign_operator' }),
+      onUnassign: async () => {}, onRunnerExit: () => {}, announce: () => [],
+    };
+    const c = createCommunity({ baseUrl: 'https://example.com', token: 'hkop_x', agents: { 'a-1': {} }, reconciler, dial, schedule: () => {}, log: () => {} });
+    c.start();
+    handlers!.onMessage(JSON.stringify({ type: 'assign', agentId: 'a-1', definition: {
+      agentId: 'a-1', handle: 'privy', harness: 'claude-code', instructions: '', model: null, effort: null,
+      mentionPermission: 'auto', workingDirDefault: null, credentialScope: 'personal', ownerAccountId: 'u-1', mcpServers: [],
+    } }));
+    await new Promise((r) => setTimeout(r, 0));
+    const exited = sent.map((d) => JSON.parse(d)).find((f) => f.type === 'runner.exited');
+    expect(exited).toMatchObject({ type: 'runner.exited', code: null, reason: 'personal_on_foreign_operator' });
+    expect(typeof exited.runnerId).toBe('string');
+    expect(c.assignments.has('a-1')).toBe(false);
+  });
+});

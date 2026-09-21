@@ -32,6 +32,16 @@ export interface AssignmentDeps {
   socketPath: string;
   /** `harkroom-operator` 실행 파일 — 러너가 하네스의 MCP 설정에 `mcp-bridge` 명령으로 굽는다. */
   operatorBin: string;
+  /**
+   * 이 커뮤니티에서 이 오퍼레이터의 소유자 id(`/operators/self`). 교차 불변식(스펙 §7)의 재료다 —
+   * 모르면(null) personal 배정은 거절한다. 모르는 채로 여는 쪽이 더 나쁘다.
+   */
+  operatorOwnerId(): Promise<string | null>;
+  /**
+   * spawn 직전에 하네스 MCP 설정 파일을 쓴다(`mcpConfig.ts`). 이 머신에 정의가 없는 이름이
+   * 있으면 `missing` — 그 배정은 띄우지 않는다.
+   */
+  mcpConfig(definition: AgentDefinition): Promise<{ path: string } | { missing: string[] }>;
   /** 취소 손잡이를 돌려준다. */
   schedule(fn: () => void, ms: number): () => void;
   log(line: string): void;
@@ -49,7 +59,8 @@ export interface AssignmentDeps {
   now?: () => number;
 }
 
-export type AssignOutcome = 'spawned' | 'already';
+/** `refused` 는 띄우지 않았고 다시 띄우지도 않는다는 뜻 — 커뮤니티가 서버에 `runner.exited{reason}` 으로 알린다. */
+export type AssignOutcome = 'spawned' | 'already' | { refused: string };
 
 export interface AssignmentReconciler {
   onAssign(baseUrl: string, definition: AgentDefinition, local: LocalAgentConfig | undefined): Promise<AssignOutcome>;
@@ -82,6 +93,21 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
   const self: AssignmentReconciler = {
     async onAssign(baseUrl, definition, local) {
       const { agentId } = definition;
+      // 교차 불변식(스펙 §7) — 서버가 거절했어야 하지만 오퍼레이터는 서버만 믿지 않는다. 개인
+      // 자격증명을 쥔 에이전트를 남의 머신에서 띄우면 그 사람의 토큰이 남의 프로세스에 들어간다.
+      if (definition.credentialScope === 'personal') {
+        const owner = await deps.operatorOwnerId();
+        if (owner === null || owner !== definition.ownerAccountId) {
+          deps.log(`배정을 거절한다: agent=${definition.handle} — personal 자격증명인데 이 오퍼레이터의 소유자가 아니다`);
+          return { refused: 'personal_on_foreign_operator' };
+        }
+      }
+      // 하네스 MCP 설정은 여기서 쓴다(스펙 §6) — 정의와 토큰은 이 머신에 있고 러너는 경로만 받는다.
+      const mcp = await deps.mcpConfig(definition);
+      if ('missing' in mcp) {
+        deps.log(`배정을 거절한다: agent=${definition.handle} — 이 머신에 MCP 정의가 없다: ${mcp.missing.join(', ')}`);
+        return { refused: `mcp_server_missing:${mcp.missing.join(',')}` };
+      }
       assigned.set(agentId, { baseUrl, definition, local });
       respawns.get(agentId)?.(); respawns.delete(agentId);
       // 회수 중이던 에이전트가 다시 배정됐다 — 예약된 SIGKILL 을 놓는다.
@@ -97,6 +123,7 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
         HARKROOM_RUNNER_ID: runnerId,
         HARKROOM_RUNNER_SECRET: secret,
         HARKROOM_OPERATOR_BIN: deps.operatorBin,
+        HARKROOM_MCP_CONFIG: mcp.path,
         ...(deps.loginPath ? { PATH: deps.loginPath } : {}),
         // 없으면 넣지 않는다 — 거짓 버전을 심는 것보다 '모른다'가 낫다(design.md §4).
         ...(deps.appVersion ? { AGENT_VERSION: deps.appVersion } : {}),

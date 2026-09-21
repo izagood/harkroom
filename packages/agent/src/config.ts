@@ -45,8 +45,13 @@ export interface RunnerConfig {
    * 경로는 단계 4 에서 사라졌다).
    */
   operatorLink: { socketPath: string; runnerId: string; secret: string };
-  /** `harkroom-operator` 실행 파일 — 하네스의 MCP 설정에 `mcp-bridge` 명령으로 굽는다. */
+  /** `harkroom-operator` 실행 파일 — codex 의 `-c mcp_servers.harkroom.*` 에 `mcp-bridge` 명령으로 굽는다. */
   operatorBin: string;
+  /**
+   * 오퍼레이터가 spawn 전에 써 둔 하네스 MCP 설정 파일(스펙 2026-09-20 §6). harkroom 브릿지·avcs·
+   * 에이전트의 mcpServers 가 합쳐져 있다. 러너는 만들지 않고 이 경로를 그대로 쓴다.
+   */
+  mcpConfigPath: string;
   pollTimeoutMs: number;
   /** 한 턴(PTY 실행)의 최대 대기 시간. 코딩 에이전트는 도구 호출을 여러 번 거치므로 넉넉히 잡는다. */
   turnTimeoutMs: number;
@@ -95,6 +100,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
   return {
     operatorLink: operatorLink(env),
     operatorBin: required(env, 'HARKROOM_OPERATOR_BIN'),
+    mcpConfigPath: required(env, 'HARKROOM_MCP_CONFIG'),
     // 서버의 inbox.poll 상한은 25초다.
     pollTimeoutMs: Number(env.AGENT_POLL_TIMEOUT_MS ?? 25_000),
     // 코딩 에이전트 한 턴은 도구 호출을 여러 번 거칠 수 있다 — 30분을 기본값으로 둔다.

@@ -108,6 +108,23 @@ describe('배정', () => {
     await waitFor(() => b.frames.some((f) => f.type === 'assign' && f.agentId === agentId));
     await b.close();
   });
+  it('personal 자격증명은 소유자 자신의 오퍼레이터에만 — 남의 오퍼레이터면 admin 도 403 (스펙 §7)', async () => {
+    const { accountId: privy } = await createAgent(app, adminToken, 'privy');
+    const scoped = await app.inject({ method: 'PATCH', url: `/accounts/agents/${privy}`, headers: auth(adminToken),
+      payload: { ownerAccountId: aliceId, invokeScope: 'owner', credentialScope: 'personal' } });
+    expect(scoped.statusCode).toBe(200);
+    const b = await attachOperator(opB, [privy]);
+    await waitCapable(opB.operatorId, [privy]);
+    const foreign = await app.inject({ method: 'PUT', url: `/accounts/agents/${privy}/assignment`, headers: auth(adminToken), payload: { operatorId: opB.operatorId } });
+    expect(foreign.statusCode).toBe(403);
+    expect(foreign.json().error.code).toBe('personal_on_foreign_operator');
+    await b.close();
+    const a = await attachOperator(opA, [privy]);
+    await waitCapable(opA.operatorId, [privy]);
+    const mine = await app.inject({ method: 'PUT', url: `/accounts/agents/${privy}/assignment`, headers: auth(aliceToken), payload: { operatorId: opA.operatorId } });
+    expect(mine.statusCode).toBe(200);
+    await a.close();
+  });
   it('배정 해제는 unassign{drain} 을 보내고 404 로 두 번 지울 수 없다', async () => {
     const b = await attachOperator(opB, [agentId]);
     await waitCapable(opB.operatorId, [agentId]);

@@ -23,7 +23,7 @@ import { createServer, type Server } from 'node:net';
 import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -67,6 +67,9 @@ interface RunnerOutcome {
 }
 
 async function runRunner(socketPath: string): Promise<RunnerOutcome> {
+  // 오퍼레이터가 spawn 전에 써 두는 파일 — 여기서는 소켓 옆에 최소 모양으로 둔다.
+  const mcpConfigPath = join(dirname(socketPath), 'mcp.json');
+  writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers: { harkroom: { type: 'stdio', command: '/opt/harkroom/harkroom-operator', args: ['mcp-bridge'] } } }));
   const child = spawn('pnpm', ['exec', 'tsx', 'src/main.ts'], {
     cwd: agentRoot,
     env: {
@@ -75,6 +78,7 @@ async function runRunner(socketPath: string): Promise<RunnerOutcome> {
       HARKROOM_RUNNER_ID: 'r-test',
       HARKROOM_RUNNER_SECRET: 'sec_revoked_by_reissue',
       HARKROOM_OPERATOR_BIN: '/opt/harkroom/harkroom-operator',
+      HARKROOM_MCP_CONFIG: mcpConfigPath,
       HARKROOM_CLAUDE_ACCOUNTS: '',
     },
     stdio: ['ignore', 'pipe', 'pipe'],

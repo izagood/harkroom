@@ -63,6 +63,14 @@ export async function registerAssignmentRoutes(app: FastifyInstance, pool: Pool,
 
     const definition = await definitionFor(pool, agentId);
     if (!definition) return reply.code(404).send({ error: { code: 'not_found', message: '그런 에이전트가 없다' } });
+    // 교차 불변식(스펙 §7): 개인 자격증명을 쥔 에이전트는 **소유자 자신의** 오퍼레이터에만 간다.
+    // 남의 머신에 띄우면 그 사람의 토큰이 남의 프로세스 env 로 들어간다 — admin 도 예외가 아니다.
+    // 오퍼레이터도 spawn 전에 같은 검사를 한다(서버만 믿지 않는다).
+    if (definition.credentialScope === 'personal' && definition.ownerAccountId !== op.rows[0]!.owner_account_id) {
+      return reply.code(403).send({
+        error: { code: 'personal_on_foreign_operator', message: '개인 자격증명을 쥔 에이전트는 소유자 자신의 오퍼레이터에만 배정할 수 있다' },
+      });
+    }
 
     const previous = await assignmentOf(pool, agentId);
     await pool.query(

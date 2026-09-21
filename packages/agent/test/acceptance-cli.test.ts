@@ -15,14 +15,14 @@
 //   codex exec resume <uuid> --skip-git-repo-check          → unexpected argument 로 죽는다
 // 즉 `--help` 는 나머지 인자 검증을 건너뛰므로 그 방법은 이 결함을 못 잡는다.
 import { readFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import type { AgentHarness } from '@harkroom/shared';
-import { buildTurnCommand, writeMcpConfigOnce, writeSystemPromptFile, type TurnPlan } from '../src/turn.js';
+import { buildTurnCommand, writeSystemPromptFile, type TurnPlan } from '../src/turn.js';
 import { looksReadyForPrompt } from '../src/pty.js';
 
 const run = promisify(execFile);
@@ -123,7 +123,9 @@ const COMBOS: Combo[] = [
  * 파일은 실제 writer 로 쓴다.
  */
 async function planFor(combo: Combo, dir: string): Promise<TurnPlan> {
-  const mcpConfigPath = await writeMcpConfigOnce(join(dir, 'mcp'), 'http://localhost:3401');
+  // 오퍼레이터가 쓰는 모양 그대로(operator/mcpConfig.ts) — 러너는 이 경로만 받는다.
+  const mcpConfigPath = join(dir, 'mcp.json');
+  await writeFile(mcpConfigPath, JSON.stringify({ mcpServers: { harkroom: { type: 'stdio', command: '/opt/harkroom/harkroom-operator', args: ['mcp-bridge'] } } }));
   const systemPromptFile = await writeSystemPromptFile(dir, '지시문');
   return buildTurnCommand({
     harness: combo.harness,

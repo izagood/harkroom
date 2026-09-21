@@ -14,7 +14,7 @@ import type { AgentHarness, AgentView, InboxDelegatedBy, InboxDelegationOutcome,
 import type { Me } from './harkroom.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, gateNotice, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts } from './prompt.js';
 import { SessionStore } from './sessions.js';
-import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type TurnPlan } from './turn.js';
+import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
 import { discoversSessionIdAfterTurn, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readsSessionTranscript, usesTuiForMention } from './adapters/index.js';
 import { acceptsPtyInput } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
@@ -169,8 +169,10 @@ export interface MentionTurnDeps {
   handles: Record<string, string>;
   /** avcs 워크스페이스들이 사는 상위 디렉터리. */
   workspaceBaseDir: string;
-  /** writeMcpConfigOnce 가 기동 시 한 번 쓴 경로. 매 턴 그대로 재사용한다. */
+  /** 오퍼레이터가 spawn 전에 쓴 MCP 설정 파일(`HARKROOM_MCP_CONFIG`). 매 턴 그대로 재사용한다. */
   mcpConfigPath: string;
+  /** 그 파일의 harkroom·avcs 밖 항목 — codex 에만 `-c` 로 간다(`turn.ts::readExtraMcpServers`). */
+  extraMcpServers?: Record<string, McpServerEntry>;
   /**
    * 러너의 상태 디렉터리(config.ts::stateDir). 지시문 파일을 여기 쓴다 —
    * **에이전트의 워크스페이스 안에 두면 안 된다**: `mentionPermission: 'auto'`
@@ -751,6 +753,7 @@ export async function runMentionTurn(
     effort: def.effort,
     mentionPermission: def.mentionPermission,
     mcpConfigPath: deps.mcpConfigPath,
+    extraMcpServers: deps.extraMcpServers,
     operatorBin: deps.operatorBin,
     codexHome: deps.codexHome,
     claudeConfigDir: deps.claudeConfigDir,
