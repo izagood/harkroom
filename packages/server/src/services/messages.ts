@@ -7,6 +7,7 @@ import { channelVisibleSql } from './channels.js';
 import { emitEvent } from '../events.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
 import { getTeamByName, listTeamMembers } from './teams.js';
+import { invokeFactsFor, mayInvoke, type InvokeVia } from './invokeGate.js';
 
 /**
  * 채널 안에서 `seq` 발급을 직렬화하는 advisory lock 의 classid(#523).
@@ -445,6 +446,8 @@ async function fanOutMention(
    * 적어야 하게 만들면 한 곳이 틀렸을 때 사유가 조용히 갈린다.
    */
   call: { reason: InboxEntry['reason']; teamId?: string } = { reason: 'mention' },
+  /** 이 부름이 어떻게 왔나(스펙 2026-09-20 §6 게이트). 직접 멘션이 아니면 community 스코프만 통과한다. */
+  via: InvokeVia = 'mention',
 ): Promise<void> {
   if (candidateIds !== null && candidateIds.length === 0) return;
   const audience = await client.query<{ id: string }>(
@@ -454,10 +457,15 @@ async function fanOutMention(
         and ${channelVisibleSql('c', 'a.id')}`,
     [input.channelId, input.authorId, candidateIds],
   );
+  // 호출 게이트(스펙 2026-09-20 §6). 사람은 스코프가 없다 — facts 에 없으면 그대로 통과. 여기서
+  // 걸러진 부름은 meta 에 남지 않는다(행이 이미 나갔다) — 팀·auto-mention 은 넣는 시점에 400 으로
+  // 막히므로 이 거름은 그 전에 들어간 옛 데이터를 위한 방어다.
+  const facts = await invokeFactsFor(client, audience.rows.map((r) => r.id));
   for (const row of audience.rows) {
-    if (!notified.has(row.id)) {
-      await insertInbox(client, row.id, input.messageId, call.reason, notified, call.teamId);
-    }
+    if (notified.has(row.id)) continue;
+    const fact = facts.get(row.id);
+    if (fact && !(await mayInvoke(client, fact, { callerId: input.authorId, channelId: input.channelId, via }))) continue;
+    await insertInbox(client, row.id, input.messageId, call.reason, notified, call.teamId);
   }
 }
 
@@ -670,6 +678,18 @@ export async function postMessage(
       }
     }
     const cappedHandles = mentionedAccounts.filter((a) => cappedIds.has(a.id)).map((a) => a.handle);
+    /*
+      호출 게이트(스펙 2026-09-20 §6) — **insert 보다 앞에서** 잰다. 상한 판정과 같은 이유다:
+      막힌 부름은 `meta.mentionDenied` 로 그 메시지에 남아야 하고, 응답·WS 이벤트로 이미 나간
+      행에 뒤늦게 얹을 수 없다. 상한에 이미 막힌 것은 다시 세지 않는다 — 한 이름이 두 사유로
+      두 번 적히면 화면이 "둘을 못 불렀다"로 읽는다.
+    */
+    const deniedIds = new Set<string>();
+    const gateFacts = await invokeFactsFor(client, [...calledIds].filter((id) => id !== input.authorId && !cappedIds.has(id)));
+    for (const [id, fact] of gateFacts) {
+      if (!(await mayInvoke(client, fact, { callerId: input.authorId, channelId: input.channelId, via: 'mention' }))) deniedIds.add(id);
+    }
+    const deniedHandles = mentionedAccounts.filter((a) => deniedIds.has(a.id)).map((a) => a.handle);
 
     /*
       지칭한 이름은 **그 메시지에 남긴다** — `mentionChainCapped` 와 같은 자리·같은 이유다.
@@ -694,6 +714,7 @@ export async function postMessage(
          ...(cappedHandles.length
            ? { mentionChainCapped: cappedHandles, mentionChainLimit: MENTION_CHAIN_LIMIT }
            : {}),
+         ...(deniedHandles.length ? { mentionDenied: deniedHandles } : {}),
          ...(refIdsForMeta.length ? { mentionRefs: refIdsForMeta } : {}),
        }),
        alsoInChannel, mentionDepth],
@@ -749,7 +770,7 @@ export async function postMessage(
       // 상한에 걸린 에이전트는 **inbox 항목을 받지 않는다** — 그것이 곧 턴이 뜨지 않는다는
       // 뜻이다(러너는 inbox 를 폴한다). 판정은 위에서 이미 끝났고 여기서 다시 하지 않는다.
       // 지칭(`refIds`)도 같은 이유로 여기 오지 않는다 — 이름은 본문에 남고 턴은 뜨지 않는다.
-      if (accountId !== input.authorId && !cappedIds.has(accountId)) {
+      if (accountId !== input.authorId && !cappedIds.has(accountId) && !deniedIds.has(accountId)) {
         await insertInbox(client, accountId, message.id, 'mention', notified);
       }
     }
@@ -764,7 +785,7 @@ export async function postMessage(
     const accountHandles = new Set(handleToId.keys());
     if (bodyHandles.includes(CHANNEL_MENTION_HANDLE) && !accountHandles.has(CHANNEL_MENTION_HANDLE)) {
       // 대상은 **그 채널을 볼 수 있는 사람 전부**다. 규칙은 `fanOutMention` 하나에 있다.
-      await fanOutMention(client, { ...input, messageId: message.id }, null, notified);
+      await fanOutMention(client, { ...input, messageId: message.id }, null, notified, { reason: 'mention' }, 'channel_all');
     }
 
     /**
@@ -822,6 +843,7 @@ export async function postMessage(
         const members = await listHandleGroupMembers(client, group.id);
         await fanOutMention(
           client, { ...input, messageId: message.id }, members.map((m) => m.accountId), notified,
+          { reason: 'mention' }, 'group',
         );
         continue;
       }
@@ -891,6 +913,7 @@ export async function postMessage(
         lead === null ? awake.map((m) => m.accountId) : [lead],
         notified,
         lead === null ? { reason: 'mention' } : { reason: 'team_mention', teamId: team.id },
+        'team',
       );
     }
 

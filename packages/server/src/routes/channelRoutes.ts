@@ -650,6 +650,10 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
       if (result.reason === 'not_an_agent') {
         return reply.code(400).send({ error: { code: 'not_an_agent', message: 'only agents can be auto-mentioned' } });
       }
+      if (result.reason === 'invoke_scope_restricted') {
+        // 스펙 2026-09-20 §6: 넣는 시점에 거절한다 — 런타임에 조용히 건너뛰면 사람이 "왜 안 오나"를 디버깅한다.
+        return reply.code(400).send({ error: { code: 'invoke_scope_restricted', message: '호출 범위가 community 가 아닌 에이전트는 자동 멘션 대상이 될 수 없다' } });
+      }
       return reply.code(400).send({ error: { code: 'agent_disabled', message: 'a disabled agent cannot be auto-mentioned' } });
     }
     /**
