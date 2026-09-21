@@ -11,6 +11,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
+import type { OperatorCapabilities } from '@harkroom/shared';
 import type { AgentDefinition, ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 import type { Forwarder } from './forward.js';
@@ -39,6 +40,8 @@ export interface CommunityDeps {
   schedule?: (fn: () => void, ms: number) => void;
   /** `/operators/self` 를 읽는 데 쓴다(교차 불변식의 재료). 없으면 전역 fetch. */
   fetchImpl?: typeof fetch;
+  /** 이 머신의 하네스 능력(`harnesses.ts`). hello 마다 읽는다 — 없으면 빈 표(옛 오퍼레이터와 같다). */
+  harnesses?: () => OperatorCapabilities['harnesses'];
   log: (line: string) => void;
 }
 
@@ -100,7 +103,7 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
     // 연결·재연결마다 새로 만든다 — 그 사이 러너가 바뀌었을 수 있다.
     hello: () => ({
       type: 'hello', protocol: 1,
-      capabilities: { agentIds: Object.keys(deps.agents), harnesses: {} },
+      capabilities: { agentIds: Object.keys(deps.agents), harnesses: deps.harnesses?.() ?? {} },
       runners: deps.reconciler.announce(),
       sessions: mux.sessions(),
     }),

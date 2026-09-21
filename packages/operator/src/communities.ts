@@ -10,11 +10,13 @@ import { createAssignmentReconciler, type AssignmentDeps } from './assignments.j
 import { createCommunity, type CommunityInstance } from './community.js';
 import { communityKey, readConfig } from './config.js';
 import { createForwarder } from './forward.js';
+import { detectHarnesses } from './harnesses.js';
 import { readLoginPath } from './loginPath.js';
 import type { RunnerLinkServer } from './runnerLink.js';
 import type { RunnerRegistry, RunnerHost } from './runners.js';
 import { fileSecrets, type OperatorSecrets } from './secrets.js';
 import { buildMcpConfig, claudeConfigPath, readLocalMcpDefinitions, writeAgentMcpConfig } from './mcpConfig.js';
+import { access } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -40,6 +42,13 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
   const forwarder = createForwarder({ fetchImpl: deps.fetchImpl });
   const loginPath = await readLoginPath();
   if (!loginPath) deps.log('로그인 셸 PATH 를 못 읽었다 — 러너가 하네스를 못 찾을 수 있다');
+  // 하네스 능력(스펙 §3). 기동 때 한 번 재고, 다시 붙을 때마다 새로 잰다 — 사람이 그 사이에
+  // claude 를 설치했거나 로그인했을 수 있고, 그 사실은 다음 hello 에 실려야 배정이 통한다.
+  const exists = (p: string) => access(p).then(() => true, () => false);
+  const detect = () => detectHarnesses({ path: loginPath, env: process.env, home: homedir(), exists });
+  let harnesses = await detect();
+  deps.log(`하네스: ${Object.entries(harnesses).map(([k, v]) => `${k}=${v.installed ? (v.loggedIn ? '설치·로그인' : '설치') : '없음'}`).join(', ')}`);
+  const refreshHarnesses = () => { void detect().then((h) => { harnesses = h; }); };
 
   const runnerDeps = (community: { current: CommunityInstance | null }): AssignmentDeps => ({
     async spawn(agentId, env, runnerId) {
@@ -88,6 +97,7 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
     const community = createCommunity({
       baseUrl, token, agents: section.agents, reconciler, log: deps.log,
       runnerLink: deps.runnerLink, forwarder, fetchImpl: deps.fetchImpl,
+      harnesses: () => { refreshHarnesses(); return harnesses; },
     });
     ref.current = community;
     community.start();
