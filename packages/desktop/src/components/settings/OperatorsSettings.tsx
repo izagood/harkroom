@@ -4,6 +4,7 @@ import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { useT } from '../../i18n/useT';
 import { hasCapability } from '../../lib/capabilities';
+import { hasOperatorLocalSurface, registerLocalOperator } from '../../lib/operatorLocal';
 import { SettingsGroup, SettingsPage } from './primitives';
 
 /**
@@ -29,6 +30,29 @@ export function OperatorsSettings() {
   const [code, setCode] = useState<{ code: string; expiresAt: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** 이 머신에 오퍼레이터가 있는 빌드(Tauri)인가 — 있으면 코드를 사람이 옮길 필요가 없다. */
+  const localAvailable = hasOperatorLocalSurface();
+  const [registered, setRegistered] = useState<string | null>(null);
+
+  /** 이 머신 등록: 코드 발급 → 이 머신의 오퍼레이터에 넘김 → 오퍼레이터가 claim 하고 곧바로 붙는다. */
+  const registerHere = async () => {
+    setError(null); setRegistered(null);
+    setBusy(true);
+    try {
+      const minted = await getController().operatorRegisterCode();
+      const baseUrl = getController().api?.baseUrl;
+      if (!baseUrl) throw new Error('서버 주소를 모른다');
+      const out = await registerLocalOperator(baseUrl, minted.code);
+      setRegistered(out.name);
+      // 붙는 데 한 박자 걸린다 — 목록을 두 번 읽어 online 이 서게 한다.
+      reload();
+      setTimeout(reload, 2000);
+    } catch (e) {
+      setError(t('operators.registerHereFailed', { reason: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const reload = useCallback(() => {
     void getController().operators().then((list) => {
@@ -115,10 +139,28 @@ export function OperatorsSettings() {
         </div>
       )}
 
+      {canRegister && localAvailable && (
+        <SettingsGroup>
+          <div className="px-4 py-3">
+            <p className="mb-3 text-meta text-fg-muted">{t('operators.registerHereNote')}</p>
+            {registered && (
+              <p className="mb-3 text-meta text-success" data-testid="operator-registered-here">{t('operators.registerHereDone', { name: registered })}</p>
+            )}
+            <button
+              className="rounded bg-accent px-4 py-2 font-medium text-fg-on-strong disabled:opacity-50"
+              disabled={busy}
+              onClick={() => void registerHere()}
+            >
+              {busy ? t('operators.registerBusy') : t('operators.registerHere')}
+            </button>
+          </div>
+        </SettingsGroup>
+      )}
+
       {canRegister && (
         <SettingsGroup>
           <div className="px-4 py-3">
-            <p className="mb-3 text-meta text-fg-muted">{t('operators.registerNote')}</p>
+            <p className="mb-3 text-meta text-fg-muted">{t(localAvailable ? 'operators.registerElsewhereNote' : 'operators.registerNote')}</p>
             {code && (
               <div className="mb-3 rounded border border-warning-border bg-warning-surface p-3">
                 <div className="font-semibold text-warning">{t('operators.codeWarning')}</div>

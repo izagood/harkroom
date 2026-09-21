@@ -17,7 +17,7 @@ describe('localAgents', () => {
     const dir = await mkdtemp(join(tmpdir(), 'op-local-'));
     const configPath = join(dir, 'operator.json');
     const changed: { baseUrl: string; agents: Record<string, unknown> }[] = [];
-    const port = createLocalAgentsPort({ configPath, secrets: secretsWith(['https://example.com']), onChanged: (b, a) => changed.push({ baseUrl: b, agents: a }) });
+    const port = createLocalAgentsPort({ configPath, secrets: secretsWith(['https://example.com']), dataDir: dir, onChanged: (b, a) => changed.push({ baseUrl: b, agents: a }), onRegistered: async () => {} });
     await port.set('https://example.com/', 'a-1', { workingDir: '~/x' });
     expect(changed).toEqual([{ baseUrl: 'https://example.com', agents: { 'a-1': { workingDir: '~/x' } } }]);
     expect(JSON.parse(await readFile(configPath, 'utf8'))).toEqual({ communities: { 'https://example.com': { agents: { 'a-1': { workingDir: '~/x' } } } } });
@@ -26,7 +26,7 @@ describe('localAgents', () => {
   });
   it('등록 전 커뮤니티에도 자리를 만든다 — register 가 토큰을 채우면 그대로 능력이 된다', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'op-local-'));
-    const port = createLocalAgentsPort({ configPath: join(dir, 'operator.json'), secrets: secretsWith([]), onChanged: () => {} });
+    const port = createLocalAgentsPort({ configPath: join(dir, 'operator.json'), secrets: secretsWith([]), dataDir: dir, onChanged: () => {}, onRegistered: async () => {} });
     await port.set('https://new.example.com', 'a-2', {});
     expect((await port.list()).communities[0]).toEqual({ baseUrl: 'https://new.example.com', registered: false, agents: { 'a-2': {} } });
   });
@@ -35,10 +35,26 @@ describe('localAgents', () => {
     const configPath = join(dir, 'operator.json');
     await writeConfig(configPath, { communities: { 'https://example.com': { agents: { 'a-1': {}, 'a-2': { claudePool: 'p' } } } } });
     const changed: string[] = [];
-    const port = createLocalAgentsPort({ configPath, secrets: secretsWith([]), onChanged: (b) => changed.push(b) });
+    const port = createLocalAgentsPort({ configPath, secrets: secretsWith([]), dataDir: dir, onChanged: (b) => changed.push(b), onRegistered: async () => {} });
     await port.remove('https://example.com', 'a-1');
     await port.remove('https://example.com', 'nope');
     expect((await port.list()).communities[0]!.agents).toEqual({ 'a-2': { claudePool: 'p' } });
     expect(changed).toEqual(['https://example.com']);
+  });
+});
+
+describe('localAgents.register — 앱이 넘긴 코드로 claim 하고 곧바로 붙는다', () => {
+  it('claim → 토큰·설정 저장 → onRegistered(baseUrl)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'op-local-'));
+    const fetchImpl = (async () => new Response(JSON.stringify({ operator: { id: 'op-9', name: 'mac' }, token: 'hkop_t' }), { status: 200 })) as unknown as typeof fetch;
+    const registered: string[] = [];
+    const tokens: Record<string, string> = {};
+    const secrets: OperatorSecrets = { getToken: async (u) => tokens[u] ?? null, setToken: async (u, t) => { tokens[u] = t; }, clearToken: async () => {} };
+    const port = createLocalAgentsPort({ configPath: join(dir, 'operator', 'operator.json'), secrets, dataDir: dir, fetchImpl, onChanged: () => {}, onRegistered: async (b) => { registered.push(b); } });
+    const out = await port.register('https://example.com/', 'CODE', 'mac');
+    expect(out).toEqual({ operatorId: 'op-9', name: 'mac', baseUrl: 'https://example.com' });
+    expect(tokens['https://example.com']).toBe('hkop_t');
+    expect(registered).toEqual(['https://example.com']);
+    expect((await port.list()).communities[0]).toEqual({ baseUrl: 'https://example.com', registered: true, agents: {} });
   });
 });

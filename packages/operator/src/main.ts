@@ -20,7 +20,7 @@
 // 일은 러너를 살리는 것이 아니라 **잔해를 남기지 않는 것**이다.
 import { resolve } from 'node:path';
 import { parseDaemonArgs, describeArgs, type DaemonArgs } from './args.js';
-import { parseCliArgs, register, resolveDataDir, runArgs } from './cli.js';
+import { parseCliArgs, register, registerViaRunningOperator, resolveDataDir, runArgs } from './cli.js';
 import { runMcpBridge } from './mcpBridge.js';
 import { EXIT_INCONCLUSIVE, EXIT_OCCUPIED, startDaemon } from './run.js';
 
@@ -53,9 +53,14 @@ async function main(): Promise<void> {
       return;
     case 'register': {
       const dataDir = resolveDataDir(process.env.HARKROOM_DATA_DIR);
-      const out = await register({ baseUrl: cmd.baseUrl, code: cmd.code, ...(cmd.name ? { name: cmd.name } : {}) }, { dataDir });
+      const input = { baseUrl: cmd.baseUrl, code: cmd.code, ...(cmd.name ? { name: cmd.name } : {}) };
+      // 도는 오퍼레이터가 있으면 그쪽이 claim 하고 곧바로 붙는다 — 없으면 파일에 두고 `run` 이 읽는다.
+      const live = await registerViaRunningOperator(dataDir, input);
+      const out = live ?? await register(input, { dataDir });
       console.log(`등록됐다: ${out.name} (${out.operatorId}) @ ${out.baseUrl} — 설정: ${dataDir}/operator/operator.json`);
-      console.log('이제 설정 › 에이전트 상세에서 이 오퍼레이터를 배정하면 러너가 뜬다. 상주시키려면: harkroom-operator run');
+      console.log(live
+        ? '도는 오퍼레이터가 방금 그 커뮤니티에 붙었다. 이제 설정 › 에이전트 상세에서 이 오퍼레이터를 배정하면 러너가 뜬다.'
+        : '이제 설정 › 에이전트 상세에서 이 오퍼레이터를 배정하면 러너가 뜬다. 상주시키려면: harkroom-operator run');
       return;
     }
     case 'run': {

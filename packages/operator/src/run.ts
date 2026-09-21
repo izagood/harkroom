@@ -178,6 +178,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   // 한 칸짜리 참조로 끊는다 — 레지스트리가 먼저 만들어지고, 통지는 서버가 선 뒤에만 온다.
   const serverRef: { current: DaemonServer | null } = { current: null };
   let communities: CommunityInstance[] = [];
+  /** 등록 직후 그 커뮤니티를 띄우는 손잡이 — `startCommunities` 가 준다. 그 전엔 아무것도 안 한다. */
+  let startCommunity: (baseUrl: string) => Promise<CommunityInstance | null> = async () => null;
 
   // 러너 링크(스펙 2026-09-20 §5). 러너 프레임은 그 에이전트를 아는 커뮤니티로 간다 — 에이전트
   // id 는 서버별 UUID 라 두 커뮤니티가 같은 id 를 알 일은 없다.
@@ -339,7 +341,9 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   const localAgents = createLocalAgentsPort({
     configPath: join(appDataDir, 'operator', 'operator.json'),
     secrets: fileSecrets(join(appDataDir, 'operator', 'secrets')),
+    dataDir: appDataDir,
     onChanged: (baseUrl, agents) => { for (const c of communities) if (c.baseUrl === baseUrl) c.setAgents(agents); },
+    onRegistered: async (baseUrl) => { await startCommunity(baseUrl); },
   });
 
   const server = new DaemonServer({
@@ -427,11 +431,13 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   // 고칠 수 있어야 하므로 기동의 전제가 아니다.
   if (options.communities !== false) {
     try {
-      communities = await startCommunities({
+      const runtime = await startCommunities({
         appDataDir, registry, host: options.host ?? nodeRunnerHost,
         appVersion: args.appVersion ?? null, log,
         runnerLink, socketPath: outcome.paths.socketPath, operatorBin: entryPath,
       });
+      communities = runtime.communities;
+      startCommunity = runtime.startOne;
     } catch (err) {
       log(`커뮤니티 기동 실패(소켓 서비스는 계속): ${err instanceof Error ? err.message : String(err)}`);
     }

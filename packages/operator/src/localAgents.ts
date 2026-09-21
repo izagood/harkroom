@@ -6,11 +6,17 @@
  * 이 포트가 같은 함수(`readConfig`/`writeConfig`)로 쓰고, 바뀐 커뮤니티에는 **능력을 다시
  * 낸다**(`onChanged`) — 서버가 그것을 봐야 배정이 409 가 아니다.
  */
-import type { OperatorAgentsListResult, OperatorLocalAgent } from '@harkroom/shared/daemonProtocol';
+import type { OperatorAgentsListResult, OperatorLocalAgent, OperatorRegisterResult } from '@harkroom/shared/daemonProtocol';
+import { register as claimAndSave } from './cli.js';
 import { communityKey, readConfig, writeConfig, type LocalAgentConfig } from './config.js';
 import type { OperatorSecrets } from './secrets.js';
 
 export interface LocalAgentsPort {
+  /**
+   * 등록(스펙 §3) — 앱이 발급한 코드로 claim 해 토큰·설정을 두고, 도는 오퍼레이터가 곧바로
+   * 그 커뮤니티에 붙는다(`onRegistered`). CLI `register` 와 같은 함수를 쓴다.
+   */
+  register(baseUrl: string, code: string, name?: string): Promise<OperatorRegisterResult>;
   list(): Promise<OperatorAgentsListResult>;
   set(baseUrl: string, agentId: string, config: OperatorLocalAgent): Promise<void>;
   remove(baseUrl: string, agentId: string): Promise<void>;
@@ -21,8 +27,18 @@ export function createLocalAgentsPort(deps: {
   secrets: OperatorSecrets;
   /** 그 커뮤니티의 새 에이전트 표 — 도는 커뮤니티가 능력을 다시 내게. */
   onChanged: (baseUrl: string, agents: Record<string, LocalAgentConfig>) => void;
+  /** 등록이 끝났다 — 그 커뮤니티를 지금 띄운다(`CommunityRuntime.startOne`). */
+  onRegistered: (baseUrl: string) => Promise<void>;
+  /** claim 요청에 쓴다. 테스트가 바꿔 끼운다. */
+  fetchImpl?: typeof fetch;
+  dataDir: string;
 }): LocalAgentsPort {
   return {
+    async register(baseUrl, code, name) {
+      const out = await claimAndSave({ baseUrl, code, ...(name ? { name } : {}) }, { dataDir: deps.dataDir, fetchImpl: deps.fetchImpl, secrets: deps.secrets });
+      await deps.onRegistered(out.baseUrl);
+      return out;
+    },
     async list() {
       const config = await readConfig(deps.configPath);
       const communities: OperatorAgentsListResult['communities'] = [];

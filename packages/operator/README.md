@@ -123,7 +123,7 @@ unix 소켓으로 말하는 것이고, 그 어느 것도 네이티브 애드온�
 
 | 명령 | 하는 일 |
 |---|---|
-| `harkroom-operator register <baseUrl> <code> [--name n]` | 등록 코드(설정 › Operators, 5분·1회)를 `POST /operators/claim` 으로 토큰과 바꿔 `<데이터 디렉터리>/operator/secrets/` 에 두고, `operator/operator.json` 에 그 커뮤니티의 자리(`agents: {}`)를 만든다. 이미 있는 자리의 로컬 설정은 건드리지 않는다 |
+| `harkroom-operator register <baseUrl> <code> [--name n]` | 등록 코드(설정 › Operators, 5분·1회)를 `POST /operators/claim` 으로 토큰과 바꿔 `<데이터 디렉터리>/operator/secrets/` 에 두고, `operator/operator.json` 에 그 커뮤니티의 자리(`agents: {}`)를 만든다. **도는 오퍼레이터가 있으면 소켓으로 그쪽에 시킨다**(`operatorRegister`) — 오퍼레이터가 claim 하고 곧바로 붙는다. 앱이 있는 머신은 설정 › Operators › "이 머신을 등록" 이 같은 요청을 보낸다. 이미 있는 자리의 로컬 설정은 건드리지 않는다 |
 | `harkroom-operator run [--data-dir d]` | 앱 없이 상주한다. 아래 인자를 데이터 디렉터리에서 앱과 **같은 규칙**(`daemonEndpointPaths`)으로 조립한다 — 앱이 나중에 같은 머신에 떠도 같은 소켓을 보고 물러난다. 감독 템플릿은 `ops/operator.plist.template`·`ops/operator.service.template` |
 | `harkroom-operator mcp-bridge` | 하네스가 띄우는 stdio MCP 브릿지(`src/mcpBridge.ts`). 러너 env 를 상속해 오퍼레이터 소켓에 붙는다 |
 | (그 밖) | 앱이 넘기는 `--socket …` 인자 — 아래 |
