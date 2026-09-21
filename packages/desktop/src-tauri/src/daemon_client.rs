@@ -1982,6 +1982,14 @@ impl DaemonConnection {
     //
     // "이 머신이 어떤 에이전트를 돌릴 수 있나"는 오퍼레이터의 `operator.json` 이고 그 writer 는
     // 오퍼레이터 하나다. 앱은 소켓으로 넣고 뺄 뿐이다 — 계정 풀과 같은 규율.
+    /// 등록(스펙 §3): 앱이 발급한 코드를 넘기면 오퍼레이터가 claim 하고 곧바로 붙는다.
+    pub fn operator_register(&self, base_url: &str, code: &str, name: Option<&str>) -> Result<Value, String> {
+        self.request(
+            "operatorRegister",
+            json!({ "baseUrl": base_url, "code": code, "name": name }),
+        )
+    }
+
     pub fn operator_agents_list(&self) -> Result<Value, String> {
         self.request("operatorAgentsList", json!({}))
     }

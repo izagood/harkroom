@@ -101,6 +101,9 @@ export const REQUEST_TYPES = [
   'operatorAgentsList',
   'operatorAgentSet',
   'operatorAgentRemove',
+  // 등록(스펙 §3). 앱이 발급한 코드를 이 머신의 오퍼레이터에 넘기면 오퍼레이터가 claim 을 대신
+  // 하고 곧바로 그 커뮤니티에 붙는다 — 사람이 터미널을 열거나 오퍼레이터를 다시 띄울 일이 없다.
+  'operatorRegister',
 ] as const;
 export type DaemonRequestType = (typeof REQUEST_TYPES)[number];
 
@@ -674,6 +677,17 @@ export function readOperatorAgentSetPayload(payload: unknown): { baseUrl: string
     if (c.claudePool.trim()) config.claudePool = c.claudePool.trim();
   }
   return { baseUrl: p.baseUrl, agentId: p.agentId, config };
+}
+
+export interface OperatorRegisterResult { operatorId: string; name: string; baseUrl: string }
+
+export function readOperatorRegisterPayload(payload: unknown): { baseUrl: string; code: string; name?: string } | DaemonError {
+  const p = payload as { baseUrl?: unknown; code?: unknown; name?: unknown } | null;
+  if (!p || typeof p.baseUrl !== 'string' || !p.baseUrl || typeof p.code !== 'string' || !p.code) {
+    return daemonError('bad-payload', 'operatorRegister 에는 baseUrl·code 가 필요하다');
+  }
+  if (p.name !== undefined && p.name !== null && typeof p.name !== 'string') return daemonError('bad-payload', 'name 은 문자열이어야 한다');
+  return { baseUrl: p.baseUrl, code: p.code, ...(typeof p.name === 'string' && p.name.trim() ? { name: p.name.trim() } : {}) };
 }
 
 export function readOperatorAgentRemovePayload(payload: unknown): { baseUrl: string; agentId: string } | DaemonError {

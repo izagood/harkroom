@@ -11,6 +11,7 @@
  * 등록이 CLI 인 이유: 코드는 화면에서 사람이 읽어 그 머신의 터미널에 붙여 넣는다 — 서버가
  * 오퍼레이터 머신을 먼저 알 방법이 없고, 앱이 없는 머신은 그 길밖에 없다.
  */
+import { readFile } from 'node:fs/promises';
 import { hostname as osHostname, homedir } from 'node:os';
 import { join } from 'node:path';
 import { daemonEndpointPaths } from '@harkroom/shared/daemonEndpoint';
@@ -123,6 +124,45 @@ export async function register(
   config.communities[baseUrl] ??= { agents: {} };
   await writeConfig(configPath, config);
   return { operatorId: body.operator.id, name: body.operator.name, baseUrl };
+}
+
+/**
+ * 도는 오퍼레이터가 있으면 **그쪽에 시킨다** — 오퍼레이터가 claim 하고 곧바로 그 커뮤니티에 붙는다.
+ * 파일만 쓰면 도는 오퍼레이터는 재시작 전까지 모른다(실측 2026-09-21: 앱 화면에 "끊김"). 소켓이나
+ * 토큰이 없으면 null — 호출자가 파일 경로(`register`)로 간다.
+ */
+export async function registerViaRunningOperator(
+  dataDir: string,
+  input: { baseUrl: string; code: string; name?: string },
+): Promise<{ operatorId: string; name: string; baseUrl: string } | null> {
+  const paths = daemonEndpointPaths(dataDir);
+  let token: string;
+  try { token = (await readFile(paths.tokenPath, 'utf8')).trim(); } catch { return null; }
+  const { connect } = await import('node:net');
+  const { encodeLine, NdjsonDecoder, DAEMON_PROTOCOL_VERSION } = await import('@harkroom/shared/daemonProtocol');
+  return new Promise((resolve, reject) => {
+    const socket = connect(paths.socketPath);
+    const decoder = new NdjsonDecoder();
+    let stage: 'hello' | 'request' = 'hello';
+    socket.once('error', () => resolve(null));
+    socket.on('connect', () => socket.write(encodeLine({ type: 'hello', version: DAEMON_PROTOCOL_VERSION, token, role: 'app' })));
+    socket.on('data', (chunk: Buffer) => {
+      for (const line of decoder.push(chunk)) {
+        if (!line.ok) continue;
+        const msg = line.value as { ok?: boolean; error?: { message?: string }; payload?: unknown };
+        if (stage === 'hello') {
+          if (!msg.ok) { socket.destroy(); resolve(null); return; }
+          stage = 'request';
+          socket.write(encodeLine({ id: 'register', type: 'operatorRegister', payload: input }));
+          continue;
+        }
+        socket.destroy();
+        if (msg.ok) resolve(msg.payload as { operatorId: string; name: string; baseUrl: string });
+        else reject(new Error(msg.error?.message ?? '오퍼레이터가 등록을 거절했다'));
+        return;
+      }
+    });
+  });
 }
 
 export function resolveDataDir(explicit: string | undefined): string {
