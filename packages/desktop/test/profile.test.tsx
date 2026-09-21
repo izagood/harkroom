@@ -16,7 +16,7 @@ const MINE = 'a-mine';
 const THEIRS = 'a-theirs';
 
 const agentView = (id: string, handle: string, over: Partial<AgentView> = {}): AgentView => ({
-  id, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member',
+  id, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member', assignment: null,
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: ME, disabled: false, runnerVersion: null,
   claudeLane: null,

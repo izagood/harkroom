@@ -27,7 +27,7 @@ import { fakeDaemon, liveRunner } from './helpers/fakeDaemon';
 import { acc, accountsResult, fakeApi, fakeWsFactory } from './helpers/fakeApi';
 
 const agentView = (id: string, extra: Partial<AgentView> = {}): AgentView => ({
-  id, handle: id, displayName: id, kind: 'agent', isAdmin: false, role: 'member',
+  id, handle: id, displayName: id, kind: 'agent', isAdmin: false, role: 'member', assignment: null,
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: 'u1', disabled: false, runnerVersion: null,
   claudeLane: null,

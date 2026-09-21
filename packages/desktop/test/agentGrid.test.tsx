@@ -10,7 +10,7 @@ import { AgentGrid } from '../src/components/settings/AgentGrid';
 import { usePrefsStore } from '../src/state/prefsStore';
 
 const agent = (handle: string, over: Partial<AgentView> = {}): AgentView => ({
-  id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member',
+  id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member', assignment: null,
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
   claudeLane: null,

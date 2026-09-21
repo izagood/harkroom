@@ -12,6 +12,7 @@ import { registerAccountRoutes } from './routes/accountRoutes.js';
 import { registerGrantRoutes } from './routes/grantRoutes.js';
 import { registerOperatorRoutes } from './routes/operatorRoutes.js';
 import { createOperatorHub } from './ws/operatorHub.js';
+import { registerAssignmentRoutes } from './routes/assignmentRoutes.js';
 import { registerChannelRoutes } from './routes/channelRoutes.js';
 import { registerTeamRoutes } from './routes/teamRoutes.js';
 import { registerMessageRoutes } from './routes/messageRoutes.js';
@@ -500,6 +501,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // 소켓 수명 규칙은 `/ws`·릴레이와 **같은 값**이다 — 갈라지면 더 민감한 쪽이 더 느슨해진다.
     heartbeatMs: deps.wsHeartbeatMs,
   });
+  // 배정(§3). 허브 뒤 — hello 에 배정을 다시 미는 구독이 허브에 걸린다.
+  await registerAssignmentRoutes(app, deps.pool, operatorHub);
 
   // #141 Phase 2 attach. **registerWs 뒤여야 한다** — `websocket: true` 라우트는
   // `@fastify/websocket` 이 등록된 뒤에만 만들어질 수 있고, 그 등록은 registerWs 안에서
