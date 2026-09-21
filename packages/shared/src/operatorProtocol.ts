@@ -44,6 +44,11 @@ export type OperatorToServerFrame =
   | { type: 'runner.started'; agentId: string; runnerId: string }
   | { type: 'runner.exited'; runnerId: string; code: number | null; reason?: string }
   /**
+   * 능력이 바뀌었다 — 소켓은 그대로 두고 능력만 새로 낸다(앱이 로컬 설정에 에이전트를
+   * 넣거나 뺐을 때). hello 를 다시 보내면 서버가 러너 목록까지 교체하므로 따로 둔다.
+   */
+  | { type: 'capabilities'; capabilities: OperatorCapabilities }
+  /**
    * 러너가 링크에 붙을 때마다(재접속 포함) 자기 세션·능력을 다시 선언한다 — 옛 릴레이의
    * `announce` 그대로다(`runnerLink.ts`). 서버는 이 목록으로 그 러너의 세션을 **교체**한다.
    */
@@ -71,7 +76,7 @@ export type ServerToOperatorFrame =
       threadRootId: string; openedByHandle: string; cols?: number; rows?: number };
 
 const OPERATOR_TYPES = new Set<OperatorToServerFrame['type']>([
-  'hello', 'runner.started', 'runner.exited', 'runner.announce', 'session.started', 'session.updated', 'session.ended',
+  'hello', 'capabilities', 'runner.started', 'runner.exited', 'runner.announce', 'session.started', 'session.updated', 'session.ended',
   'pty.output', 'pty.replay', 'interactive.opened', 'interactive.error', 'attention.required',
 ]);
 const SERVER_TYPES = new Set<ServerToOperatorFrame['type']>([
@@ -79,7 +84,7 @@ const SERVER_TYPES = new Set<ServerToOperatorFrame['type']>([
 ]);
 
 /** `hello` 와 배정 둘(`assign`·`unassign`)만 러너 밖의 말이다 — 나머지는 전부 `runnerId` 가 있어야 한다. */
-const NO_RUNNER_ID = new Set<string>(['hello', 'assign', 'unassign']);
+const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'assign', 'unassign']);
 
 function parse(raw: string, known: Set<string>): Record<string, unknown> | null {
   let value: unknown;

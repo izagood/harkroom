@@ -11,6 +11,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
+import type { OperatorCapabilities } from '@harkroom/shared';
 import type { AgentDefinition, ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 import type { Forwarder } from './forward.js';
@@ -39,6 +40,8 @@ export interface CommunityDeps {
   schedule?: (fn: () => void, ms: number) => void;
   /** `/operators/self` 를 읽는 데 쓴다(교차 불변식의 재료). 없으면 전역 fetch. */
   fetchImpl?: typeof fetch;
+  /** 이 머신의 하네스 능력(`harnesses.ts`). hello 마다 읽는다 — 없으면 빈 표(옛 오퍼레이터와 같다). */
+  harnesses?: () => OperatorCapabilities['harnesses'];
   log: (line: string) => void;
 }
 
@@ -64,10 +67,14 @@ export interface CommunityInstance {
    * 못 읽으면 null(조정기는 그때 personal 배정을 거절한다).
    */
   ownerAccountId(): Promise<string | null>;
+  /** 로컬 설정의 에이전트 표를 바꾸고 서버에 능력을 다시 낸다(`capabilities` 프레임). */
+  setAgents(agents: Record<string, LocalAgentConfig>): void;
 }
 
 export function createCommunity(deps: CommunityDeps): CommunityInstance {
   const assignments = new Map<string, AgentDefinition>();
+  let agents = deps.agents;
+  const capabilities = (): OperatorCapabilities => ({ agentIds: Object.keys(agents), harnesses: deps.harnesses?.() ?? {} });
   const noLink = { send: () => false, isLinked: () => false };
   // 링크가 서버 링크를 필요로 하고 서버 링크의 훅이 다중화기를 필요로 한다 — 늦게 묶는다.
   const linkRef: { current: ServerLink | null } = { current: null };
@@ -100,7 +107,7 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
     // 연결·재연결마다 새로 만든다 — 그 사이 러너가 바뀌었을 수 있다.
     hello: () => ({
       type: 'hello', protocol: 1,
-      capabilities: { agentIds: Object.keys(deps.agents), harnesses: {} },
+      capabilities: capabilities(),
       runners: deps.reconciler.announce(),
       sessions: mux.sessions(),
     }),
@@ -113,7 +120,7 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
     onClose: (reason) => deps.log(`서버와 끊겼다: ${deps.baseUrl}${reason ? ` — ${reason}` : ''}`),
     onFrame: (frame) => {
       if (frame.type === 'assign') {
-        const local = deps.agents[frame.agentId];
+        const local = agents[frame.agentId];
         // 양쪽 동의(스펙 §3): 로컬 설정에 없으면 서버가 무엇을 내려도 띄우지 않는다. 서버가
         // 능력을 보고 거절했어야 하지만, 오퍼레이터는 서버만 믿지 않는다.
         if (!local) {
@@ -155,7 +162,7 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
       // 여기서 먼저 거르면 로그가 커뮤니티마다 한 줄씩 찍히지 않는다.
       if (assignments.has(agentId)) deps.reconciler.onRunnerExit(agentId, code);
     },
-    knowsAgent: (agentId) => agentId in deps.agents,
+    knowsAgent: (agentId) => agentId in agents,
     onRunnerFrame: (runnerId, frame) => mux.onRunnerFrame(runnerId, frame),
     notifyRunnerStarted: (agentId, runnerId) => { link.send({ type: 'runner.started', agentId, runnerId }); },
     notifyRunnerExited: (runnerId, code) => {
@@ -163,6 +170,11 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
       link.send({ type: 'runner.exited', runnerId, code });
     },
     ownerAccountId: () => selfOwner ?? (selfOwner = readSelf()),
+    setAgents: (next) => {
+      agents = next;
+      // 끊겨 있으면 다음 hello 가 새 표를 싣는다 — send 의 false 는 실패가 아니다.
+      link.send({ type: 'capabilities', capabilities: capabilities() });
+    },
     forward: async (agentId, req) => {
       if (!deps.forwarder) {
         return req.type === 'mcp.request'

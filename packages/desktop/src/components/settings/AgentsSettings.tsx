@@ -30,6 +30,8 @@ import type { Translate } from '../../i18n';
 // 그렇게 어긋났다.
 import { RunnerStatusLine, runnerStatusLabel } from '../RunnerStatus';
 import { AgentGrid } from './AgentGrid';
+import { LocalOperatorRow } from './LocalOperatorRow';
+import { AgentScopeSection } from './AgentScopeSection';
 import { canSeeAgentConfig } from '../../lib/agentConfigGate';
 // 팀 묶음(`docs/desktop-agent-cards.html` 4단계). 카드가 `AgentGrid` 를 재사용하지 않은
 // 근거는 `TeamGrid` 머리 주석에 있다 — 요지는 `AgentGridPlace` 가 못 박은 것이다:
@@ -1949,7 +1951,22 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   </div>
                 )}
                 <p className="mt-2 text-meta text-fg-subtle">{t('agents.assignment.note')}</p>
+                {/* 양쪽 동의의 둘째 절반 — 이 머신의 오퍼레이터 로컬 설정(스펙 §3 능력). */}
+                <LocalOperatorRow agentId={selected.id} disabled={busy} />
               </div>
+            )}
+
+            {/* 스펙 2026-09-20 §6: 누가 깨울 수 있고 무슨 자격증명을 쥐나. 배정 뒤에 두는 이유는
+                personal 자격증명이 배정을 제한하기 때문이다(소유자 자신의 오퍼레이터에만). */}
+            {selected && (isAdmin || isOwner) && (
+              <AgentScopeSection
+                agent={selected}
+                disabled={busy}
+                onUpdated={(updated) => {
+                  setSelected(updated);
+                  setAgents((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+                }}
+              />
             )}
 
             {selected && (isAdmin || isOwner) && (

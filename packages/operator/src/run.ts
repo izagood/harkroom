@@ -6,7 +6,7 @@
  * 따른 분기를 직접 밟아야 하는데, 그것이 `main.ts` 의 top-level 에 있으면 재는 방법이
  * 자식 프로세스뿐이다.
  */
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 import {
   claimDaemonEndpoint,
@@ -31,6 +31,8 @@ import { RunnerRegistry, nodeRunnerHost, type RunnerHost, type RunnerLogSink } f
 import { DaemonServer } from './server.js';
 import { createClaudeAccountsPort } from './claudeAccounts.js';
 import { startCommunities } from './communities.js';
+import { createLocalAgentsPort } from './localAgents.js';
+import { fileSecrets } from './secrets.js';
 import { createRunnerLinkServer } from './runnerLink.js';
 import type { CommunityInstance } from './community.js';
 
@@ -327,12 +329,21 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   // 파일시스템을 아는 유일한 자리이고, 서버는 그것을 모른다(`DaemonServerDeps` 주석).
   const claudeAccounts = createClaudeAccountsPort();
 
+  // 로컬 설정의 에이전트 항목(스펙 §3 능력). 앱이 넣고 빼면 그 커뮤니티가 능력을 다시 낸다 —
+  // 커뮤니티는 아래에서 뜨므로 그때의 목록을 늦게 본다.
+  const localAgents = createLocalAgentsPort({
+    configPath: join(appDataDir, 'operator', 'operator.json'),
+    secrets: fileSecrets(join(appDataDir, 'operator', 'secrets')),
+    onChanged: (baseUrl, agents) => { for (const c of communities) if (c.baseUrl === baseUrl) c.setAgents(agents); },
+  });
+
   const server = new DaemonServer({
     token: '', // claim 이 만든 값으로 아래에서 바꾼다 — 그 전에는 아무도 못 붙는다.
     identity,
     registry,
     adoptOrphans,
     claudeAccounts,
+    localAgents,
     log,
     runnerLink,
   });

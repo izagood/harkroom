@@ -70,6 +70,9 @@ export function createOperatorHub(): OperatorHub {
       if (frame.type === 'hello') {
         entry.capabilities = frame.capabilities;
         entry.runners = new Map(frame.runners.map((r) => [r.runnerId, r.agentId]));
+      } else if (frame.type === 'capabilities') {
+        // 앱이 오퍼레이터 로컬 설정을 고쳤다 — 러너 목록은 그대로, 능력만 바뀐다.
+        entry.capabilities = frame.capabilities;
       } else if (frame.type === 'runner.started') {
         entry.runners.set(frame.runnerId, frame.agentId);
       } else if (frame.type === 'runner.exited') {

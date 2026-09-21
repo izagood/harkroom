@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { OperatorView } from '@harkroom/shared';
+import type { OperatorCapabilities, OperatorView } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { useT } from '../../i18n/useT';
@@ -24,12 +24,23 @@ export function OperatorsSettings() {
   const me = useActiveStore((s) => s.me);
   const canRegister = hasCapability(me, 'operator.register');
   const [operators, setOperators] = useState<OperatorView[] | 'error' | null>(null);
+  /** 오퍼레이터별 능력(스펙 §3). 붙어 있는 것만 읽는다 — 서버가 저장하지 않으므로 끊긴 것은 "모른다". */
+  const [caps, setCaps] = useState<Record<string, OperatorCapabilities>>({});
   const [code, setCode] = useState<{ code: string; expiresAt: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const reload = useCallback(() => {
-    void getController().operators().then(setOperators).catch(() => setOperators('error'));
+    void getController().operators().then((list) => {
+      setOperators(list);
+      for (const op of list) {
+        if (!op.online) continue;
+        void getController().operatorCapabilities(op.id)
+          .then((c) => setCaps((prev) => ({ ...prev, [op.id]: c })))
+          // 읽는 사이에 끊겼을 수 있다 — 능력 줄 하나가 비는 것이지 목록의 실패가 아니다.
+          .catch(() => undefined);
+      }
+    }).catch(() => setOperators('error'));
   }, []);
   useEffect(() => { reload(); }, [reload]);
 
@@ -74,6 +85,18 @@ export function OperatorsSettings() {
                 {op.online ? t('operators.online') : t('operators.offline')}
                 {op.lastSeenAt && !op.online && ` · ${t('operators.lastSeen', { at: new Date(op.lastSeenAt).toLocaleString() })}`}
               </span>
+              {/* 능력(스펙 §3): 이 머신이 돌릴 수 있는 에이전트 수와 하네스. 배정이 409 로 거절되는
+                  두 이유(로컬 설정에 없다·하네스가 없다)를 사람이 여기서 미리 본다. */}
+              {caps[op.id] && (
+                <span className="mt-0.5 block text-meta text-fg-subtle" data-testid={`operator-caps-${op.id}`}>
+                  {t('operators.capsAgents', { count: caps[op.id]!.agentIds.length })}
+                  {Object.entries(caps[op.id]!.harnesses).map(([name, h]) => (
+                    <span key={name} className="ml-2">
+                      {name}: {h.installed ? (h.loggedIn ? t('operators.harnessReady') : t('operators.harnessNotLoggedIn')) : t('operators.harnessMissing')}
+                    </span>
+                  ))}
+                </span>
+              )}
             </span>
             <button
               className="shrink-0 rounded border border-border px-2 py-1 text-meta text-fg hover:bg-surface-sunken"

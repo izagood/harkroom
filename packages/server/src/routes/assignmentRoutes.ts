@@ -63,6 +63,14 @@ export async function registerAssignmentRoutes(app: FastifyInstance, pool: Pool,
 
     const definition = await definitionFor(pool, agentId);
     if (!definition) return reply.code(404).send({ error: { code: 'not_found', message: '그런 에이전트가 없다' } });
+    // 하네스 능력(스펙 §3). 오퍼레이터가 그 하네스를 **없다고 말했으면** 거절한다 — 배정해 봐야
+    // 러너가 살아 있는데 답을 못 하는 조용한 실패다. 말하지 않았으면(옛 오퍼레이터, 빈 표) 모른다.
+    const harness = caps.harnesses[definition.harness];
+    if (harness && !harness.installed) {
+      return reply.code(409).send({
+        error: { code: 'harness_missing', message: `그 오퍼레이터의 머신에 ${definition.harness} 가 설치돼 있지 않다` },
+      });
+    }
     // 교차 불변식(스펙 §7): 개인 자격증명을 쥔 에이전트는 **소유자 자신의** 오퍼레이터에만 간다.
     // 남의 머신에 띄우면 그 사람의 토큰이 남의 프로세스 env 로 들어간다 — admin 도 예외가 아니다.
     // 오퍼레이터도 spawn 전에 같은 검사를 한다(서버만 믿지 않는다).
