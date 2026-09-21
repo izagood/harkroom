@@ -23,6 +23,10 @@ export async function registerDirectoryRoutes(
       `select a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admin as "isAdmin",
               a.role,
               a.disabled_at is not null as disabled,
+              -- 삭제된 계정도 **준다**(061). 이유는 바로 위 비활성 계정과 같다 — 이 표가
+              -- 작성자 이름을 푸는 자리라 빼면 그 에이전트의 과거 메시지가 작성자를 잃는다.
+              -- 자동완성 후보에서 빼는 것은 이 플래그를 보는 화면의 몫이다.
+              a.deleted_at is not null as deleted,
               a.status, a.status_text as "statusText",
               -- 아바타는 id 만 싣는다(#159) — 바이트를 실으면 디렉터리 한 번에 모든 사진이
               -- 따라온다. 화면이 이 id 로 아바타를 따로 받아 온다.

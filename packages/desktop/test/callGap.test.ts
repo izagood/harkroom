@@ -15,7 +15,7 @@ const QUIET = 30_000;
 
 function account(over: Partial<AccountView> & Pick<AccountView, 'id' | 'handle' | 'kind'>): AccountView {
   return {
-    displayName: over.handle, isAdmin: false, ownerAccountId: null, disabled: false,
+    displayName: over.handle, isAdmin: false, ownerAccountId: null, disabled: false, deleted: false,
     ...over,
   } as AccountView;
 }

@@ -28,6 +28,10 @@ export type AuditAction =
   // detail 에는 `handle` 과 함께 되돌린 대상 요청 시각(`stopRequestedAt`)을 남긴다:
   // 그 값이 곧 정의에서 지워지므로, 지운 뒤에는 감사만이 "무엇을 되돌렸나"를 답할 수 있다.
   | 'agent.stop.undone'
+  // #836: 명부에서 내린 조작. 되돌리는 길이 없으므로 **감사만이 남는 기록**이다 — 목록에는
+  // 이미 없고 정의도 지워졌다. detail 에는 handle 과 함께 죽은 PAT label 을 남긴다:
+  // 그 러너가 왜 401 로 섰는지를 나중에 물을 사람이 있다.
+  | 'agent.deleted'
   | 'pat.issued' | 'pat.revoked'
   // 권한(스펙 2026-09-20 §6). 값은 비밀이 아니라 그대로 남긴다 — 준 기록이 없으면 사고를 못 되짚는다.
   | 'grant.given' | 'grant.revoked' | 'role.changed'

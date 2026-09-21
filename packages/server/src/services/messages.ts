@@ -622,7 +622,10 @@ export async function postMessage(
           // `kind` 를 함께 읽는다(4단계) — 연쇄 깊이 상한은 **에이전트만** 막으므로 부른
           // 대상이 사람인지 에이전트인지를 알아야 하고, 그 사실은 이미 이 조회에 있다.
           // 계정마다 다시 물으면 부른 수만큼 왕복이 늘고, 그 왕복은 게시 경로에 붙는다.
-          `select id, lower(handle) as handle, kind from account where lower(handle) = any($1)`,
+          // 삭제된 계정은 뺀다(061) — 이름은 그대로 잡혀 있으므로 빼지 않으면 `@handle` 이
+          // 명부에 없는 에이전트를 부르고, 아무도 읽지 않는 인박스 항목이 쌓인다.
+          `select id, lower(handle) as handle, kind from account
+            where lower(handle) = any($1) and deleted_at is null`,
           [bodyHandles],
         )).rows as { id: string; handle: string; kind: 'human' | 'agent' }[]
       : [];

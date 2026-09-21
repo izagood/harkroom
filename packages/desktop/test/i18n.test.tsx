@@ -692,7 +692,7 @@ const AGENT_ID = 'id-forge';
 const agentView = (extra: Partial<AgentView> = {}): AgentView => ({
   id: AGENT_ID, handle: 'forge', displayName: 'forge', kind: 'agent', isAdmin: false, role: 'member', assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [], mcpServers: [],
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
-  mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
+  mentionPermission: 'auto', ownerAccountId: null, disabled: false, deleted: false, runnerVersion: null,
   claudeLane: null,
   stopRequestedAt: null, stopAckedAt: null, lastTurnAt: null,
   status: 'available', statusText: null, avatarAttachmentId: null, ...extra,

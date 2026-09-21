@@ -309,6 +309,24 @@ export const ko = {
   'agents.disable.warningMint': '새로 발급',
   'agents.disable.warningRevoked': '이 에이전트의 모든 PAT 가 폐기',
 
+  'agents.delete.heading': '삭제',
+  'agents.delete.note':
+    '삭제하면 이 에이전트는 명부에서 내려간다 — 더는 부를 수 없고 {strongIrreversible}. '
+    + '{strongHistory}.',
+  'agents.delete.noteIrreversible': '되돌릴 수 없다',
+  'agents.delete.noteHistory': '이미 쓴 메시지는 채널에 그대로 남는다',
+  'agents.delete.warning':
+    'PAT 가 전부 폐기되고 러너가 서며 모든 팀에서 빠진다. 이 조작은 {strongIrreversible}. '
+    + '{strongHistory}.',
+  'agents.delete.warningIrreversible': '되돌릴 수 없다',
+  'agents.delete.warningHistory': '이미 쓴 메시지는 채널에 그대로 남는다',
+  'agents.delete.confirmPrompt': '확인하려면 {handle} 을 그대로 입력한다',
+  'agents.delete.delete': '삭제',
+  'agents.delete.action': '이 에이전트 삭제',
+  'agents.delete.confirm': '영구 삭제',
+  'agents.delete.cancel': '취소',
+  'agents.delete.failed': '에이전트를 삭제하지 못했다',
+
   'agents.grid.heading': '에이전트',
   'agents.grid.listFailed': '에이전트 목록을 받지 못했다',
   'agents.grid.note': '채널에서 @이름 으로 부른다. 카드를 누르면 설정이 열린다.',

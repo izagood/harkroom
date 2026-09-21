@@ -12,7 +12,7 @@ import type { ApiClient } from '../../src/lib/api';
 // `me` 목과 계정 목록 목이 같은 값을 쓸 수 있다 — MeView 는 AccountView 에 대입 가능하다.
 export const acc = (id: string, handle: string, kind: 'human' | 'agent' = 'human', isAdmin = false,
   extra: Partial<MeView> = {}): MeView =>
-  ({ id, handle, displayName: handle, kind, isAdmin, role: isAdmin ? 'admin' : 'member', disabled: false, status: 'available', statusText: null,
+  ({ id, handle, displayName: handle, kind, isAdmin, role: isAdmin ? 'admin' : 'member', disabled: false, deleted: false, status: 'available', statusText: null,
     ownerAccountId: null, avatarAttachmentId: null,
     capabilities: isAdmin ? [...CAPABILITIES] : ['operator.register'], ...extra });
 

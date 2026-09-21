@@ -783,6 +783,30 @@ export const en = {
   'agents.disable.warningMint': 'mint new ones',
   'agents.disable.warningRevoked': 'Every PAT of this agent is revoked',
 
+  /**
+   * #836: 삭제. 비활성화 문구와 **다른 사실**을 말해야 한다 — 되돌릴 수 없다는 것과,
+   * 그래도 대화 이력은 남는다는 것. 뒤엣것을 빼면 사람은 지우면 로그도 사라진다고 믿고,
+   * 지워야 할 때 못 지운다.
+   */
+  'agents.delete.heading': 'Delete',
+  'agents.delete.note':
+    'Deleting an agent takes it off the roster — it can no longer be called, and it {strongIrreversible}. '
+    + '{strongHistory}.',
+  'agents.delete.noteIrreversible': 'cannot be brought back',
+  'agents.delete.noteHistory': 'Messages it already wrote stay in the channels',
+  /** 확인 단계. 위 안내와 달리 **지금 벌어질 일**을 현재형으로 말한다(비활성화와 같은 규칙). */
+  'agents.delete.warning':
+    'Every PAT is revoked, its runner stops, and it leaves every team. This {strongIrreversible}. '
+    + '{strongHistory}.',
+  'agents.delete.warningIrreversible': 'cannot be undone',
+  'agents.delete.warningHistory': 'Messages it already wrote stay in the channels',
+  'agents.delete.confirmPrompt': 'Type {handle} to confirm',
+  'agents.delete.delete': 'Delete',
+  'agents.delete.action': 'Delete this agent',
+  'agents.delete.confirm': 'Delete permanently',
+  'agents.delete.cancel': 'Cancel',
+  'agents.delete.failed': 'The agent was not deleted',
+
   'agents.grid.heading': 'Agents',
   'agents.grid.listFailed': 'The agent list did not arrive',
   /** 격자 머리. **이름이 무엇을 하는지**를 말한다 — 카드를 눌러도 되는지가 여기서 온다. */

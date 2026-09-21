@@ -122,7 +122,7 @@ function serverFetch() {
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
     const account = {
       id: me.id, handle: me.handle, displayName: me.handle, kind: 'human', isAdmin: true,
-      disabled: false, status: 'available', statusText: null, ownerAccountId: null,
+      disabled: false, deleted: false, status: 'available', statusText: null, ownerAccountId: null,
       avatarAttachmentId: null,
     };
     if (url.endsWith('/auth/login')) return json({ token: `tok-${me.id}` });

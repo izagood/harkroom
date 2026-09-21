@@ -54,7 +54,7 @@ describe('ConnectScreen — 호스팅 워크스페이스 만들기', () => {
       if (u.endsWith('/auth/login')) return new Response(JSON.stringify({ token: 'tok-c' }), { status: 200 });
       if (u.endsWith('/auth/me')) {
         return new Response(JSON.stringify({
-          id: 'acct_c', handle: 'owner', displayName: 'Owner', kind: 'human', isAdmin: true, disabled: false,
+          id: 'acct_c', handle: 'owner', displayName: 'Owner', kind: 'human', isAdmin: true, disabled: false, deleted: false,
         }), { status: 200 });
       }
       return new Response(JSON.stringify({}), { status: 200 });
