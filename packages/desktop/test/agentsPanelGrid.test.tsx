@@ -360,7 +360,7 @@ describe('좁은 폭 — 62px 레일 옆의 패널은 설정 화면이 아니다
   it('회귀선 — 자리를 안 주면 설정의 그 격자다', () => {
     const agent: AgentView = {
       ...acc('forge', 'forge', 'agent'),
-      assignment: null,
+      assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [],
       instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
       mentionPermission: 'auto', runnerVersion: null,
       claudeLane: null,

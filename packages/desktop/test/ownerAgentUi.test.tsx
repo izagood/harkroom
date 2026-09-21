@@ -18,7 +18,7 @@ import { acc } from './helpers/fakeApi';
  * 사람은 자기가 뭘 잘못했다고 생각한다.
  */
 const agent = (handle: string, extra: Partial<AgentView> = {}): AgentView => ({
-  id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member', assignment: null,
+  id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member', assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [],
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: null, disabled: false, runnerVersion: null,
   claudeLane: null,
