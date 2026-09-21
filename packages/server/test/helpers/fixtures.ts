@@ -32,6 +32,17 @@ export async function createMember(
   return { token: login.json().token as string, accountId };
 }
 
+/** 등록 코드 → claim 으로 오퍼레이터 하나를 만든다(스펙 2026-09-20 §3). 토큰은 `hkop_…`. */
+export async function registerOperator(
+  app: FastifyInstance, ownerToken: string, name: string,
+): Promise<{ token: string; operatorId: string }> {
+  const code = (await app.inject({
+    method: 'POST', url: '/operators/register-codes', headers: { authorization: `Bearer ${ownerToken}` },
+  })).json().code as string;
+  const res = await app.inject({ method: 'POST', url: '/operators/claim', payload: { code, name } });
+  return { token: res.json().token as string, operatorId: res.json().operator.id as string };
+}
+
 export async function createAgent(
   app: FastifyInstance, adminToken: string, handle: string,
 ): Promise<{ accountId: string; pat: string }> {

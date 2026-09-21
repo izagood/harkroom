@@ -11,6 +11,7 @@ import { registerAuthRoutes } from './routes/authRoutes.js';
 import { registerAccountRoutes } from './routes/accountRoutes.js';
 import { registerGrantRoutes } from './routes/grantRoutes.js';
 import { registerOperatorRoutes } from './routes/operatorRoutes.js';
+import { createOperatorHub } from './ws/operatorHub.js';
 import { registerChannelRoutes } from './routes/channelRoutes.js';
 import { registerTeamRoutes } from './routes/teamRoutes.js';
 import { registerMessageRoutes } from './routes/messageRoutes.js';
@@ -491,10 +492,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerLinkPreviewRoutes(app, deps.pool);
   await registerSkillRoutes(app, deps.pool);
 
-  // 오퍼레이터 신원(스펙 2026-09-20 §3). 릴레이와 같은 이유로 registerWs·registerAuth 뒤다.
-  // `presence` 는 2.4 의 허브가 채운다 — 그 전까지 "아무도 안 붙어 있다".
+  // 오퍼레이터 신원과 채널(스펙 2026-09-20 §3·§4). 릴레이와 같은 이유로 registerWs·registerAuth
+  // 뒤다. 허브는 연결이 살아 있는 동안의 사실(능력·러너)만 든다 — 저장하지 않는다.
+  const operatorHub = createOperatorHub();
   await registerOperatorRoutes(app, deps.pool, {
-    presence: { isOnline: () => false, capabilities: () => null },
+    hub: operatorHub,
+    // 소켓 수명 규칙은 `/ws`·릴레이와 **같은 값**이다 — 갈라지면 더 민감한 쪽이 더 느슨해진다.
+    heartbeatMs: deps.wsHeartbeatMs,
   });
 
   // #141 Phase 2 attach. **registerWs 뒤여야 한다** — `websocket: true` 라우트는
