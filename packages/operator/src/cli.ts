@@ -65,9 +65,22 @@ export function defaultDataDir(platform: NodeJS.Platform, env: NodeJS.ProcessEnv
   return join(env.XDG_DATA_HOME ?? join(home, '.local', 'share'), APP_IDENTIFIER);
 }
 
+/**
+ * unix 소켓 경로의 커널 상한(macOS 104바이트, 리눅스 108). 넘으면 `bind` 가 `EINVAL` 로 실패하고
+ * 그 뒤의 `link` 가 `ENOENT` 로 죽는데, 그 두 이름만으로는 원인을 알 수 없다(실측 2026-09-21:
+ * 긴 임시 디렉터리를 `HARKROOM_DATA_DIR` 로 줬다가 `ENOENT … link` 만 보았다). 여기서 먼저 말한다.
+ */
+export const MAX_SOCKET_PATH_BYTES = 100;
+
 /** `run` 의 daemon 인자. `launchNonce` 는 없다 — 그것은 "내가 방금 띄운 것인가"를 앱이 가리는 값이다. */
 export function runArgs(dataDir: string, entryPath: string, appVersion?: string): DaemonArgs {
   const paths = daemonEndpointPaths(dataDir);
+  if (Buffer.byteLength(paths.socketPath) > MAX_SOCKET_PATH_BYTES) {
+    throw new Error(
+      `소켓 경로가 너무 길다(${Buffer.byteLength(paths.socketPath)}바이트 > ${MAX_SOCKET_PATH_BYTES}): ${paths.socketPath} — `
+      + 'unix 소켓 경로의 커널 상한이다. HARKROOM_DATA_DIR(또는 --data-dir)을 짧은 경로로 잡아라',
+    );
+  }
   return {
     socket: paths.socketPath,
     token: paths.tokenPath,
