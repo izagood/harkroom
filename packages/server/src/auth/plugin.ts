@@ -33,6 +33,8 @@ declare module 'fastify' {
 
 // 상태는 여기서 함께 읽는다 — `/auth/me` 가 `req.account` 를 그대로 돌려주므로,
 // 빠뜨리면 내가 방금 정한 상태가 내 화면에만 안 보인다.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const ACCOUNT_COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admin as "isAdmin",
   a.role, a.status, a.status_text as "statusText", a.avatar_attachment_id as "avatarAttachmentId"`;
 
@@ -41,7 +43,7 @@ export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<vo
   app.decorateRequest('operator', null);
   app.decorateRequest('credentialHash', null);
 
-  app.addHook('onRequest', async (req) => {
+  app.addHook('onRequest', async (req, reply) => {
     const header = req.headers.authorization;
     if (!header?.startsWith('Bearer ')) return;
     const raw = header.slice('Bearer '.length);
@@ -53,7 +55,33 @@ export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<vo
         `select id, owner_account_id as "ownerAccountId", name, created_at as "createdAt",
                 last_seen_at as "lastSeenAt", revoked_at as "revokedAt"
            from operator where token_hash = $1 and revoked_at is null`, [hash]);
-      if (op.rowCount) { req.operator = { ...op.rows[0], online: false }; req.credentialHash = hash; }
+      if (!op.rowCount) return;
+      const operator: OperatorView = { ...op.rows[0], online: false };
+      req.operator = operator;
+      req.credentialHash = hash;
+      /**
+       * **배정이 곧 인가**(스펙 2026-09-20 §5). 오퍼레이터가 러너 대신 서버에 말할 때 `X-Harkroom-Agent`
+       * 로 어느 에이전트인지 밝히고, 그 (오퍼레이터, 에이전트) 쌍이 `agent_assignment` 에 있으면
+       * 요청은 **그 에이전트로** 선다 — 이 뒤의 모든 라우트·MCP 는 PAT 로 온 에이전트와 구분하지
+       * 못하고, 구분할 이유도 없다. 배정이 없으면 여기서 403 이다: 라우트까지 가서 "에이전트가
+       * 아니다"로 답하면 오퍼레이터는 무엇이 빠졌는지 알 수 없다.
+       *
+       * 이 헤더는 오퍼레이터 토큰에만 뜻이 있다. 사람 세션·PAT 에 붙어 오면 읽지 않는다 — 사람이
+       * 헤더 하나로 에이전트가 되는 길은 없어야 한다(아래 세션·PAT 분기는 이 줄을 지나지 않는다).
+       */
+      const agentHeader = req.headers['x-harkroom-agent'];
+      const agentId = typeof agentHeader === 'string' ? agentHeader : undefined;
+      if (!agentId) return;
+      // uuid 가 아니면 조회조차 안 한다 — pg 가 형 오류로 500 을 내는 것을 403 앞에서 막는다.
+      const agent = UUID.test(agentId) ? await pool.query(
+        `select ${ACCOUNT_COLS} from agent_assignment asg join account a on a.id = asg.agent_id
+          where asg.operator_id = $1 and asg.agent_id = $2 and a.kind = 'agent'`,
+        [operator.id, agentId]) : null;
+      if (!agent?.rowCount) {
+        await reply.code(403).send({ error: { code: 'not_assigned', message: '이 오퍼레이터에 배정되지 않은 에이전트다' } });
+        return reply;
+      }
+      req.account = agent.rows[0];
       return;
     }
     const viaSession = await pool.query(
