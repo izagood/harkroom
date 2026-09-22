@@ -3067,6 +3067,32 @@ export function harnessBinaryName(harness: string | undefined | null): string | 
 }
 
 /**
+ * 이 하네스가 **PATH 밖에 설치되는 자리**(홈 기준 상대 경로). 없으면 빈 배열.
+ *
+ * ## 왜 필요한가 — 설치된 것과 실행되는 것이 갈렸다 (2026-09-22 실측)
+ *
+ * opencode 의 설치 스크립트는 `~/.opencode/bin` 에 놓고 **PATH 는 사람의 셸 rc 에만**
+ * 넣는다. 그래서 오퍼레이터는 "설치됨" 으로 보고하는데(같은 표를 보고 그 자리를 뒤진다)
+ * 러너가 띄운 PTY 는 `opencode` 를 못 찾고 죽었다 — 화면에는 "설치했는데 왜 안 되지" 만
+ * 남는다. 두 쪽이 **같은 표**를 봐야 그 갈림이 생기지 않는다.
+ *
+ * 러너는 이 자리를 자식 PATH 의 **뒤에** 붙인다(앞이 아니다) — 사람이 PATH 에 둔 것이
+ * 있으면 그쪽이 이긴다. 이건 없을 때의 대비이지 덮어쓰기가 아니다.
+ *
+ * 홈을 인자로 받지 않고 상대 경로를 돌려주는 이유: 이 파일은 웹뷰도 들이므로
+ * `node:path`·`node:os` 를 쓸 수 없다. 붙이는 것은 부르는 쪽이 한다.
+ */
+export function harnessFallbackBinDirs(harness: string | undefined | null): string[] {
+  switch (harness) {
+    case 'opencode':
+      return ['.opencode/bin'];
+    // claude·codex 는 npm 전역이라 이미 PATH 에 있다 — 지어내지 않는다.
+    default:
+      return [];
+  }
+}
+
+/**
  * 이 실행 파일을 **어떻게 설치하는가**(`#476`).
  *
  * ## 왜 이름만으로는 부족한가
