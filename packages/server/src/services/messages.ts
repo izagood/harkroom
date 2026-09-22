@@ -6,7 +6,7 @@ import { closeDelegationsForReply, outcomesFor } from './delegations.js';
 import { channelVisibleSql } from './channels.js';
 import { emitEvent } from '../events.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
-import { getTeamByName, listTeamMembers } from './teams.js';
+import { getTeam, getTeamByName, listTeamMembers } from './teams.js';
 import { invokeFactsFor, mayInvoke, type InvokeVia } from './invokeGate.js';
 
 /**
@@ -725,7 +725,7 @@ export async function postMessage(
       적으면 화면이 없던 호출을 있었다고 말하게 된다.
     */
     const agentIds = new Set(mentionedAccounts.filter((a) => a.kind === 'agent').map((a) => a.id));
-    const { call: calledIds, ref: refIds } = splitMentionCalls(normalizedBody, {
+    const { call: calledIds, ref: refIds, targetCall, targetRef } = splitMentionCalls(normalizedBody, {
       authorIsAgent,
       isAgent: (id) => agentIds.has(id),
     });
@@ -763,7 +763,16 @@ export async function postMessage(
       값이라 handle 이지만, 이것은 본문의 칩과 **맞춰 볼 열쇠**다 — 그 사이 handle 이 바뀌면
       본문은 새 이름으로 그려지는데 meta 는 옛 이름이라 표시가 조용히 어긋난다.
     */
-    const refIdsForMeta = refIds.filter((id) => id !== input.authorId);
+    /**
+     * 화면이 *"부르지 않고 이름만 적었다"* 를 그리는 데 쓴다. 팀 지칭도 함께 싣는다(#849) —
+     * 안 실으면 에이전트가 적은 `@팀이름` 이 부른 것과 **똑같이** 그려지고, 읽는 사람은
+     * 그 팀이 깼다고 읽는다. 키 모양은 본문 토큰과 같아서(`team:<id>`) 화면의 지도가
+     * 그대로 이름으로 되돌린다.
+     */
+    const refIdsForMeta = [
+      ...refIds.filter((id) => id !== input.authorId),
+      ...targetRef.map((t) => mentionTargetKey(t.kind, t.id)),
+    ];
     const inserted = await client.query(
       `insert into message (channel_id, thread_root_id, author_id, body, kind, meta, also_in_channel, mention_depth)
        values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
@@ -865,10 +874,27 @@ export async function postMessage(
      * 사람만 남기고, 작성자를 빼고, `notified` 에 이미 든 사람을 건너뛴다. 집합이 하는
      * 것과 **똑같이** 한다.
      *
-     * ## 해석 순서: 계정 → 집합 → 팀
+     * ## 무엇을 도는가 — **부름으로 판정된 대상만**(#849)
      *
-     * **계정이 이긴다.** `@foo` 가 계정이면 위에서 이미 평범한 멘션으로 처리됐고 여기서는
-     * 건너뛴다. 서버가 양방향 충돌을 막으므로 정상 경로에서는 겹치지 않지만, 026 이전에
+     * 초판은 본문에 나온 이름을 전부 돌며 여기서 다시 집합·팀으로 풀었다. 이제는
+     * `splitMentionCalls` 가 정규화된 본문의 `<@group:id>`·`<@team:id>` 에서 가른 **부름**
+     * 목록을 돈다. 두 가지가 함께 달라진다:
+     *
+     * 1. **지칭이 팀을 깨우지 않는다.** 에이전트가 보고 한가운데 `@팀이름` 을 적으면 지금까지
+     *    그 팀이 깼다 — 계정에 대해 #598 이 잰 "39% 가 부를 뜻이 없는 지칭" 을 팀이 그대로
+     *    되풀이하던 자리다. 규칙과 근거는 그 함수에 있다(집합은 사람이라 언제나 부름이다).
+     * 2. **이름을 다시 풀지 않는다.** 정규화가 이미 풀어 토큰에 담아 두었으므로 여기서
+     *    `getHandleGroupByHandle`·`getTeamByName` 을 다시 부를 이유가 없다.
+     *
+     * ## 해석 순서: 계정 → 집합 → 팀 — **이제 정규화 단계가 정본이다**
+     *
+     * 아래 근거는 그대로 살아 있고, 그것을 실행에 옮기는 자리가 위(`nameToToken` 조립)로
+     * 옮겼을 뿐이다. 그 순서가 토큰을 정하므로 이 루프는 결과만 물려받는다 —
+     * `CHANNEL_MENTION_HANDLE` 과 계정 이름은 애초에 대상 토큰이 되지 않으므로 여기서
+     * 걸러 낼 것도 없다.
+     *
+     * **계정이 이긴다.** `@foo` 가 계정이면 정규화가 계정 토큰으로 만들었고 위에서 평범한
+     * 멘션으로 처리됐다. 서버가 양방향 충돌을 막으므로 정상 경로에서는 겹치지 않지만, 026 이전에
      * 만들어진 행이나 동시 생성 경합으로 겹칠 수 있다 — 그때 사람의 이름이 집합에 밀리면
      * 그 사람은 영영 불릴 수 없다.
      *
@@ -887,22 +913,17 @@ export async function postMessage(
      * `not_an_agent` 로 거절한다) — 사람의 부름이 에이전트의 부름에 밀리면 그 사람들은
      * 영영 불릴 수 없고, 그것은 계정이 집합을 이기는 것과 같은 판단이다.
      *
-     * 집합을 찾은 뒤 `continue` 로 **이 handle 을 끝내는 것**이 그 순서를 실행에 옮기는
-     * 자리다(다음 handle 로 넘어간다). 겹침이 없는 정상 경로에서는 어느 쪽이 먼저든
-     * 결과가 같지만, 겹친 데이터에서 두 명단이 **둘 다** 펼쳐지는 것이 가장 나쁘다:
-     * `@foo` 가 사람 집합인지 에이전트 팀인지 부른 사람이 모르게 된다.
+     * 겹침이 없는 정상 경로에서는 어느 쪽이 먼저든 결과가 같지만, 겹친 데이터에서 두
+     * 명단이 **둘 다** 펼쳐지는 것이 가장 나쁘다: `@foo` 가 사람 집합인지 에이전트 팀인지
+     * 부른 사람이 모르게 된다. 정규화가 이름 하나에 토큰 하나만 붙이므로 그 일은 없다.
      *
      * 조회를 `client` 로 하는 이유: 트랜잭션 클라이언트를 쥔 채 `pool` 에서 또 다른 연결을
      * 얻으면 풀이 포화된 순간 자기 자신을 기다리는 교착이 된다. 같은 트랜잭션 스냅샷을
      * 보는 것도 이쪽이 맞다.
      */
-    for (const handle of bodyHandles) {
-      if (handle === CHANNEL_MENTION_HANDLE) continue;
-      if (accountHandles.has(handle)) continue;
-
-      const group = await getHandleGroupByHandle(client, handle);
-      if (group) {
-        const members = await listHandleGroupMembers(client, group.id);
+    for (const target of targetCall) {
+      if (target.kind === 'group') {
+        const members = await listHandleGroupMembers(client, target.id);
         await fanOutMention(
           client, { ...input, messageId: message.id }, members.map((m) => m.accountId), notified,
           { reason: 'mention' }, 'group',
@@ -936,7 +957,8 @@ export async function postMessage(
        * 어긋남은 결함이 아니라 화면이 말해야 하는 사실이다 — 넷을 불러 셋이 깼다면
        * 하나는 꺼져 있거나 채널을 못 본다.
        */
-      const team = await getTeamByName(client, handle);
+      // 토큰이 가리키는 팀이 그 사이 지워졌을 수 있다 — 그때는 부를 명단이 없다.
+      const team = await getTeam(client, target.id);
       if (!team) continue;
 
       const teamMembers = await listTeamMembers(client, team.id);
