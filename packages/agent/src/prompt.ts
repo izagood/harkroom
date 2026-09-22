@@ -798,12 +798,19 @@ function renderLine(m: MessageRow, handles: Record<string, string>): string {
  * 함께 적었는데, 러너가 서버를 모르게 되면서(URL 도 PAT 도 env 에 없다) 그 줄은 실행할 수
  * 없는 안내가 됐다 — 실행 못 할 것을 적어 두면 에이전트는 그것을 시도하다 실패하고 "못 봤다"
  * 로 돌아간다. `attachment.fetch` 는 브릿지를 지나 서버에 닿는다.
+ *
+ * **이미지만 실린다고 적지 않는다(#609).** 앞 판본이 그렇게 적었고, 그 문장이 맞는 동안에는
+ * 로그·diff·`.json` 을 붙여 준 사람에게 에이전트가 *"파일명은 알지만 내용은 모른다"* 로
+ * 답하는 것이 **정확한 행동**이었다. 지금은 텍스트도 실려 오므로 그 문장을 그대로 두면
+ * 에이전트가 받을 수 있는 것을 안 받는다 — 안내가 낡으면 통로가 열려도 안 쓰인다.
  */
 function attachmentHowTo(): string[] {
   return [
     '',
     '(위 `[첨부: …]` 의 id 로 첨부 바이트를 받을 수 있다 — 파일명만 보고 내용을 짐작하지 마라.',
-    'harkroom MCP 의 `attachment.fetch` 를 attachmentId 로 불러라 — 이미지는 그 응답에 그림으로 실려 온다.',
+    'harkroom MCP 의 `attachment.fetch` 를 attachmentId 로 불러라 — 이미지는 그림으로,',
+    '로그·diff·`.json` 같은 텍스트는 글로 실려 온다. 긴 텍스트는 앞뒤만 오고 그때는 응답이',
+    '`truncated` 로 그 사실을 말한다 — 잘린 것을 전부 본 것처럼 쓰지 마라.',
     '받기가 실패했을 때만 "못 봤다"고 말하고, 못 본 것을 본 것처럼 쓰지 마라.)',
   ];
 }
