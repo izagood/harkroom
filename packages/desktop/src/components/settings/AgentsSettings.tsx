@@ -31,6 +31,7 @@ import type { Translate } from '../../i18n';
 import { RunnerStatusLine, runnerStatusLabel } from '../RunnerStatus';
 import { AgentGrid } from './AgentGrid';
 import { LocalOperatorRow } from './LocalOperatorRow';
+import { hasOperatorLocalSurface, listLocalAgents } from '../../lib/operatorLocal';
 import { AgentScopeSection } from './AgentScopeSection';
 import { canSeeAgentConfig } from '../../lib/agentConfigGate';
 // 팀 묶음(`docs/desktop-agent-cards.html` 4단계). 카드가 `AgentGrid` 를 재사용하지 않은
@@ -308,6 +309,20 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    */
   const [operators, setOperators] = useState<OperatorView[] | 'error' | null>(null);
   const [assigning, setAssigning] = useState(false);
+  /**
+   * **이 기기의 오퍼레이터** — 만들기 화면의 기본 배정처(#856).
+   *
+   * 없이는 만든 에이전트가 멈춘 채로 선다: 서버는 계정을 만들지만 러너를 띄우는 것은
+   * 오퍼레이터이고, 오퍼레이터는 배정받은 것만 띄운다. 그 배정을 사람이 두 화면(이 기기 ·
+   * 배정)을 거쳐 손으로 하게 두면, 기본 경로(자기 노트북에서 돌린다)가 가장 긴 길이 된다.
+   *
+   * `null` 은 아직 안 읽음, `'none'` 은 이 빌드에 오퍼레이터 표면이 없거나(웹) 이 커뮤니티에
+   * 등록된 적이 없다 — 둘 다 체크박스를 그리지 않는다. `'error'` 는 못 읽었다이고, 그때는
+   * 체크박스를 그리되 잠그고 사유를 적는다(`LocalOperatorRow` 와 같은 규율).
+   */
+  const [localOperator, setLocalOperator] = useState<{ baseUrl: string; operatorId: string } | 'none' | 'error' | null>(null);
+  /** 만들기 화면의 '이 기기에서 돌린다'. 기본이 켜짐이다 — 그것이 흔한 답이다. */
+  const [runHere, setRunHere] = useState(true);
   const [confirmingSlug, setConfirmingSlug] = useState<string | null>(null);
   /**
    * **접힌 줄이 기본이다** — 펼친 것만 센다(#139 4단계).
@@ -362,6 +377,26 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     void getController().listAgents().then(setAgents).catch(() => setError(t('agents.grid.listFailed')));
   };
   useEffect(reload, []);
+
+  /**
+   * 이 기기의 오퍼레이터를 한 번 읽는다 — 만들기 화면의 기본 배정처(`localOperator`).
+   *
+   * **`operatorId` 가 근거다.** 이름으로 고르지 않는다: `GET /operators` 에는 같은 이름의
+   * 기기가 둘 있을 수 있고, 그때 기본값이 남의 머신을 가리키면 사람의 노트북이 아니라
+   * 남의 노트북에 프로세스가 뜬다. 오퍼레이터가 적어 둔 id 가 없으면(한 번도 붙지 못한
+   * 옛 설정) 기본값을 세우지 않는다 — 지어내는 것보다 손으로 고르는 편이 낫다.
+   */
+  useEffect(() => {
+    if (!hasOperatorLocalSurface()) { setLocalOperator('none'); return; }
+    const baseUrl = getController().api?.baseUrl ?? null;
+    if (!baseUrl) { setLocalOperator('none'); return; }
+    void listLocalAgents()
+      .then((r) => {
+        const c = r.communities.find((x) => x.baseUrl === baseUrl);
+        setLocalOperator(c?.registered && c.operatorId ? { baseUrl, operatorId: c.operatorId } : 'none');
+      })
+      .catch(() => setLocalOperator('error'));
+  }, []);
 
   /**
    * **격자를 열어 둔 동안 목록을 계속 다시 읽는다** (2026-09-08 실측).
@@ -721,6 +756,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
   const startNew = () => {
     setSelected(null);
+    // 앞 초안에서 껐다면 그것이 다음 초안의 기본이 될 이유가 없다 — 기본은 늘 '이 기기'다.
+    setRunHere(true);
     // 앞서 만든 에이전트의 id 를 남기면 새 초안의 풀 선택이 **그 에이전트**에 쓰인다.
     setCreatedAgentId(null);
     setView('detail');
@@ -775,15 +812,27 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     }
     setBusy(true);
     try {
-      const { agent, poolError } = await getController().createAgent(
-        { handle: draft.handle, displayName: draft.handle, ...configPatch(draft) },
+      const attachTo = runHere && typeof localOperator === 'object' && localOperator !== null ? localOperator : null;
+      const opts = {
         // 고른 풀을 **여기서** 넘긴다 — 러너가 뜨기 전에 쓰여야 첫 러너가 그 풀로 돈다
         // (`controller.createAgent` 의 근거). `''` 은 배정 없음이라 넘길 것이 없다.
-        agentPool.assigned ? { claudePool: agentPool.assigned } : undefined,
+        ...(agentPool.assigned ? { claudePool: agentPool.assigned } : {}),
+        // 이 기기에서 돌린다 — 로컬 설정에 넣고 배정까지 쓴다. 이것이 없으면 만든
+        // 에이전트는 계정만 있고 아무도 안 띄우는, 멈춘 상태로 선다.
+        ...(attachTo ? { localOperator: { ...attachTo, ...(draft.workingDir ? { workingDir: draft.workingDir } : {}) } } : {}),
+      };
+      const { agent, poolError, attachError } = await getController().createAgent(
+        { handle: draft.handle, displayName: draft.handle, ...configPatch(draft) },
+        // 넘길 것이 없으면 인자 자체를 넘기지 않는다 — 빈 객체는 "아무것도 고르지 않았다"와
+        // 같은 뜻이지만, 부르는 쪽이 그것을 구분해 읽을 이유를 만들지 않는다.
+        Object.keys(opts).length ? opts : undefined,
       );
       setCreatedAgentId(agent.id);
       // 배정 실패는 **생성 실패가 아니다.** 에이전트는 이미 만들어졌다.
+      // 둘 다 실패하면 앞의 것만 보인다 — 한 줄에 둘을 이어 붙이면 사람이 무엇을 고쳐야
+      // 하는지가 흐려진다. 나머지는 상세 화면의 같은 절이 다시 말한다.
       if (poolError) setError(t('agents.create.poolFailed', { reason: poolError }));
+      else if (attachError) setError(t('agents.create.attachFailed', { reason: attachError }));
       reload();
     } catch {
       setError(t('agents.create.failed'));
@@ -1441,6 +1490,35 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 {agentPool.error && (
                   <span className="mt-1 block text-meta text-danger">{agentPool.error}</span>
                 )}
+              </label>
+            )}
+
+            {/* **어디서 돌리나 — 만들기의 기본값**(#856).
+
+                상세 화면은 이 질문에 두 곳으로 답한다(위의 `LocalOperatorRow` 와 배정 고르개).
+                만들기에는 그 둘이 없어서, 만든 에이전트가 계정만 있고 아무도 안 띄우는 상태로
+                섰다 — 화면 어디에도 "왜 멈춰 있나"가 적혀 있지 않았다. 여기서 켜면 만든 직후
+                로컬 설정에 넣고 배정까지 쓴다(`controller.attachToLocalOperator`).
+
+                **끄는 자리를 남긴다.** 다른 기기에서 돌릴 에이전트가 있고, 그때 이 기기에
+                먼저 배정해 두면 러너가 떴다가 다시 옮겨지는 왕복이 생긴다. */}
+            {!selected && localOperator !== 'none' && (
+              <label className="flex items-start gap-2 text-meta text-fg">
+                <input
+                  type="checkbox"
+                  aria-label={t('agents.create.runHere')}
+                  checked={runHere && localOperator !== 'error'}
+                  disabled={localOperator === 'error' || localOperator === null}
+                  onChange={(e) => setRunHere(e.target.checked)}
+                />
+                <span>
+                  {t('agents.create.runHere')}
+                  <span className="mt-1 block text-meta text-fg-subtle">
+                    {localOperator === 'error'
+                      ? t('agents.local.listFailed')
+                      : t('agents.create.runHereNote')}
+                  </span>
+                </span>
               </label>
             )}
 
