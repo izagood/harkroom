@@ -592,34 +592,111 @@ describe('사이드바 안내문 — 옮기면서 사실을 잃지 않는다', (
  * (`daemonFacts.test.tsx` 의 *"판정 함수 어디에도 임계값 상수가 없다 — 소스를 직접
  * 본다"* 와 같은 방식이다).
  */
+/**
+ * `src/` 아래 모든 `.ts`·`.tsx` 를 **주석을 지운 채** 준다.
+ *
+ * 두 축이 쓴다(시간 표기 · 모듈 상수). 축마다 따로 걸으면 이 저장소가 반복 결함으로 지목한
+ * *"같은 판정이 두 벌"* 이 테스트 쪽에 생긴다 — 한쪽만 `.tsx` 를 빠뜨린 날에 그 축은
+ * 조용히 아무것도 안 잰다.
+ */
+async function sources(): Promise<[path: string, code: string][]> {
+  const { readdir, readFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const out: [string, string][] = [];
+  const walk = async (dir: string): Promise<void> => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) { await walk(full); continue; }
+      if (!/\.tsx?$/.test(entry.name)) continue;
+      // 주석에서 옛 문구를 **인용**하는 것은 정상이다 — 근거를 남기는 자리다.
+      // 금지 대상은 코드가 그 문자열을 만드는 것이므로 주석을 지운 뒤 본다.
+      const code = (await readFile(full, 'utf8'))
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/.*$/gm, '');
+      out.push([full.replace(/^.*\/src\//, 'src/'), code]);
+    }
+  };
+  await walk(join(process.cwd(), 'src'));
+  return out;
+}
+
+/**
+ * **모듈 상수가 언어를 굳히는 것을 소스에서 막는다**(`#659`).
+ *
+ * ## 왜 화면을 재는 축으로는 못 잡나
+ *
+ * 이 모양이다:
+ *
+ * ```ts
+ * const LABEL: Record<Kind, string> = { away: '자리 비움', … };   // 모듈 최상단
+ * ```
+ *
+ * 모듈이 **처음 읽힐 때의 언어로 굳는다.** 그 뒤 사람이 언어를 바꿔도 그 자리만 옛 언어로
+ * 남고, 화면이 `t()` 를 제대로 지나도 안 바뀐다. 그런데 **사전은 갈려 있으므로** 사전을
+ * 대조하는 축은 전부 초록이다. 잡는 것은 그 화면을 렌더해 언어를 바꿔 보는 축뿐이고,
+ * 그 축은 화면마다 사람이 따로 써야 한다.
+ *
+ * 그래서 같은 결함이 **여섯 번** 났다 — `Sidebar::NOTIFY_LEVEL_LABEL`(#630) ·
+ * `SkillsSettings::GROUPS`(#654) · `runnerLauncher::STRANGER_ATTACHED`(#650) ·
+ * `threadState::THREAD_STATE_LABEL`·`NotifiedGapRow::LABEL`(#656) ·
+ * `RunnerStatus`·`presenceView`·`TerminalPanel`·`ProjectionUrl` 의 넷(#658).
+ * **뒤 둘은 아무도 지목하지 않았는데 작업 중에 우연히 발견됐다** — 그것이 문제였다.
+ * 찾는 방법이 사람의 눈뿐이었다.
+ *
+ * `en.ts` 머리말에 이미 적혀 있었는데도 여섯 번 났다. 문서로 부족한 것이 실측됐으므로
+ * **소스에 그 모양이 있으면 안 된다**로 말한다.
+ *
+ * ## 무엇을 보나 — 그리고 일부러 안 보는 것
+ *
+ * `Record<…>` 로 **타입이 붙은 모듈 상수**만 본다. 여섯 번의 결함이 전부 그 모양이었고,
+ * 그보다 넓히면(모듈 상수 전부) `sessionStore`·`tauriDaemonObserver` 처럼 **메서드 안의
+ * 예외 문구**가 걸린다 — 그것은 화면 문구가 아니라 로그이고, 언어가 굳어도 사람이 볼
+ * 화면이 바뀌지 않는다. 거짓 양성이 섞이면 다음 사람이 이 축을 끄는 법을 배운다.
+ *
+ * `RunnerStatus::TONE`·`AgentGrid::PLACE` 는 **값이 색·레이아웃이라 자동으로 빠진다**
+ * (한글이 주석에만 있고, 주석은 `sources()` 가 지운다). 허용 목록에 적을 필요가 없다.
+ *
+ * ## RED 로 확인한 것 (2026-09-22)
+ *
+ * | 무엇을 했나 | 무엇이 빨개졌나 |
+ * |---|---|
+ * | 아무 화면에 `const L: Record<K, string> = { a: '자리 비움' }` 를 넣음 | 이 축 |
+ * | 그것을 `t()` 로 고침 | 초록 |
+ * | 값을 `'text-warning'` 으로 바꿈(TONE 모양) | 초록 — 거짓 양성이 아니다 |
+ */
+describe('모듈 상수가 언어를 굳히지 않는다 (#659)', () => {
+  /** `Record<…>` 로 타입이 붙은 모듈 최상단 상수 하나. 들여쓰기가 없는 것이 모듈 최상단의 신호다. */
+  const RECORD_CONST = /^(?:export\s+)?const\s+\w+\s*:\s*Record<[\s\S]*?^\};/gm;
+
+  /** 따옴표 안에 한글이 든 리터럴. 값이 색·클래스명이면 걸리지 않는다. */
+  const HANGUL_LITERAL = /(['"`])[^'"`\n]*[가-힣][^'"`\n]*\1/;
+
+  it('화면 문구를 담은 Record 상수가 사전 밖에 없다', async () => {
+    const offenders = (await sources())
+      /**
+       * 사전 자신은 예외다 — **그 파일들이 곧 언어**다.
+       *
+       * `format.ts::PARTICLES` 는 조사 규칙표(`이/가`·`은/는`)이고 한국어 문법 그 자체라
+       * 키로 뺄 수 있는 것이 아니다. `index.ts::LOCALE_NAMES` 는 언어 이름인데, 이것은
+       * **각 언어의 이름을 그 언어로 적는 것이 맞다**(`한국어` 를 영어 화면에서도 `한국어`
+       * 라고 적어야 그 언어를 쓰는 사람이 고를 수 있다) — 굳는 것이 결함이 아니라 의도다.
+       */
+      .filter(([path]) => !path.startsWith('src/i18n/'))
+      .flatMap(([path, code]) => (code.match(RECORD_CONST) ?? []).map((block) => [path, block] as const))
+      .filter(([, block]) => HANGUL_LITERAL.test(block))
+      // 어느 상수인지까지 말한다 — 파일 이름만 주면 다음 사람이 그 파일을 다시 훑어야 한다.
+      .map(([path, block]) => `${path} :: ${block.match(/const\s+(\w+)/)?.[1] ?? '?'}`);
+
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe('시간 표기 — 한 벌이다', () => {
   /**
    * 시간 낱말이 **문자열 리터럴 안에서** 조립되는 모양. 템플릿의 `}` 나 따옴표 바로 뒤에
    * 단위가 붙는 것이 그 신호다(`` `${mins}분 전` `` · `` `${secs}초` ``).
    */
   const HAND_BUILT = /[}'"]\s*(?:분 전|시간 전|일 전|분째|시간째|초|분|시간|일)\s*[`'"]/;
-
-  /** `src/` 아래 모든 `.ts`·`.tsx` 를 **주석을 지운 채** 준다. */
-  async function sources(): Promise<[path: string, code: string][]> {
-    const { readdir, readFile } = await import('node:fs/promises');
-    const { join } = await import('node:path');
-    const out: [string, string][] = [];
-    const walk = async (dir: string): Promise<void> => {
-      for (const entry of await readdir(dir, { withFileTypes: true })) {
-        const full = join(dir, entry.name);
-        if (entry.isDirectory()) { await walk(full); continue; }
-        if (!/\.tsx?$/.test(entry.name)) continue;
-        // 주석에서 옛 문구를 **인용**하는 것은 정상이다 — 근거를 남기는 자리다.
-        // 금지 대상은 코드가 그 문자열을 만드는 것이므로 주석을 지운 뒤 본다.
-        const code = (await readFile(full, 'utf8'))
-          .replace(/\/\*[\s\S]*?\*\//g, '')
-          .replace(/\/\/.*$/gm, '');
-        out.push([full.replace(/^.*\/src\//, 'src/'), code]);
-      }
-    };
-    await walk(join(process.cwd(), 'src'));
-    return out;
-  }
 
   it('시간 단위를 손으로 이어 붙이는 자리가 사전과 time.ts 밖에 없다', async () => {
     const offenders = (await sources())
