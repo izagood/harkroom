@@ -258,10 +258,15 @@ export async function createAgentAccount(
 
 /** 대상이 에이전트가 아니면 null — 사람 계정을 에이전트로 만들 수는 없다. */
 export async function updateAgent(
-  pool: Pool, id: string, patch: Partial<AgentConfig> & { displayName?: string },
+  pool: Pool, id: string, patch: Partial<AgentConfig> & { handle?: string; displayName?: string },
 ): Promise<AgentView | null> {
   const existing = await getAgent(pool, id);
   if (!existing) return null;
+  // 유니크·집합 충돌 판정은 라우트가 한다(전역 이름공간이라 계정 표 밖도 봐야 한다).
+  // 여기서는 쓰기만 한다 — 두 자리에서 판정하면 규칙이 갈린다.
+  if (patch.handle !== undefined) {
+    await pool.query(`update account set handle = $2 where id = $1`, [id, patch.handle]);
+  }
   if (patch.displayName !== undefined) {
     await pool.query(`update account set display_name = $2 where id = $1`, [id, patch.displayName]);
   }
