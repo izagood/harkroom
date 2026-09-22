@@ -661,7 +661,7 @@ export class Controller {
       // 미리보기를 끄면 제목(누가·어디서)은 남기고 대화 내용만 뺀다 — 멘션 알림과 같은 규칙이다.
       // 본문은 `displayBody` 를 지난다(#329) — 시스템 메시지는 자리표시자를 갖고 있어
       // 원본을 그대로 실으면 OS 알림에만 그 글자가 뜬다.
-      body: prefs.showPreview ? displayBody(message, store.accounts) : 'New message',
+      body: prefs.showPreview ? displayBody(message, store.accounts, store.groups, store.teams ?? []) : 'New message',
       // 눌렀을 때 갈 곳(#542). 제목의 `where` 는 사람이 읽는 문자열이고, 이동에는 id 를 쓴다.
       target: this.notificationTarget(message.id),
     });
@@ -669,7 +669,8 @@ export class Controller {
 
   /** 새로 들어온 미읽음을 OS 알림으로 알린다. 보고 있는 창에는 띄우지 않는다 — 배지가 그 일을 한다. */
   private async announceNewMentions(): Promise<void> {
-    const { unread, me, channels, dms, accounts, messages, channelPrefs } = this.store.getState();
+    // `groups`·`teams`: 알림 미리보기의 집합·팀 토큰을 이름으로 되돌린다(#845).
+    const { unread, me, channels, dms, accounts, messages, channelPrefs, groups, teams } = this.store.getState();
     if (document.hasFocus()) {
       // 포커스 중에는 알리지 않되, 본 것으로 처리해 나중에 뒤늦게 터지지 않게 한다.
       for (const e of unread) this.announced.add(e.id);
@@ -755,7 +756,7 @@ export class Controller {
         // 미리보기를 끄면 제목(누가·어디서)은 남기고 대화 내용만 뺀다.
         // `displayBody` 를 지나는 이유는 `announceNewMessage` 와 같다(#329) — 본문을
         // 사람에게 보여 주는 자리는 예외 없이 같은 함수를 지나야 자리표시자가 새지 않는다.
-        body: prefs.showPreview ? (row ? displayBody(row, accounts) : generic) : generic,
+        body: prefs.showPreview ? (row ? displayBody(row, accounts, groups, teams ?? []) : generic) : generic,
         // 스레드 답글이면 `openMessage` 가 스레드 패널까지 연다 — 목적지에 담을 것은
         // 그 메시지 id 하나뿐이고, 스레드 여부를 여기서 판단하지 않는다(#542).
         target: this.notificationTarget(e.messageId),

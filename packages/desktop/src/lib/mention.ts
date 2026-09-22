@@ -223,11 +223,16 @@ export function bodyAsHandles(
 export function displayBody(
   message: Pick<MessageRow, 'body' | 'kind' | 'meta'>,
   accounts: Record<string, { handle: string }>,
+  // 집합·팀 토큰(#845). **주는 것이 기본이어야 한다** — 이 함수가 본문을 사람에게 보여 주는
+  // 모든 자리를 지난다는 규약이 있으므로, 안 주면 그 자리마다 `@알 수 없음` 이 뜬다.
+  // 선택으로 둔 것은 스토어의 집합·팀에 닿지 않는 호출부가 있어서다(알림 미리보기 등).
+  groups?: readonly { id: string; handle: string }[],
+  teams?: readonly { id: string; name: string }[],
 ): string {
   const filled = message.kind === 'system' && typeof message.meta.accountId === 'string'
     ? fillSystemAccount(message.body, accounts[message.meta.accountId]?.handle ?? null)
     : message.body;
-  return bodyWithHandles(filled, accounts);
+  return bodyWithHandles(filled, accounts, groups, teams);
 }
 
 /**

@@ -670,19 +670,26 @@ export async function postMessage(
      * **우선순위는 아래 팬아웃 루프가 정본이다**: 계정 > 집합 > 팀. 여기서 그 순서를 다시
      * 정하지 않고 그대로 따른다 — 갈리면 한 발화에서 저장된 토큰과 실제로 깬 대상이 달라진다.
      * 겹친 데이터에서 집합이 팀을 이기는 근거는 그 루프의 주석에 있다.
+     *
+     * **`handleToId` 에 넣지 않고 사본(`nameToToken`)에 넣는다.** 그 지도의 키 집합이
+     * 아래에서 `accountHandles` 가 되고, 팬아웃 루프는 그 집합에 든 이름을 *"이미 계정으로
+     * 처리했다"* 며 건너뛴다 — 집합·팀을 원본에 넣으면 팬아웃이 그 둘을 통째로 지나쳐
+     * **아무도 안 깬다**(실측: 팀·집합 테스트 15개가 한꺼번에 빨개졌다). 정규화용 지도와
+     * "계정으로 처리한 이름" 목록은 서로 다른 사실이다.
      */
+    const nameToToken = new Map(handleToId);
     for (const handle of bodyHandles) {
-      if (handle === CHANNEL_MENTION_HANDLE || handleToId.has(handle)) continue;
+      if (handle === CHANNEL_MENTION_HANDLE || nameToToken.has(handle)) continue;
       const group = await getHandleGroupByHandle(client, handle);
       if (group) {
-        handleToId.set(handle, mentionTargetKey('group', group.id));
+        nameToToken.set(handle, mentionTargetKey('group', group.id));
         continue;
       }
       const team = await getTeamByName(client, handle);
-      if (team) handleToId.set(handle, mentionTargetKey('team', team.id));
+      if (team) nameToToken.set(handle, mentionTargetKey('team', team.id));
     }
 
-    const normalizedBody = normalizeMentions(input.body, handleToId);
+    const normalizedBody = normalizeMentions(input.body, nameToToken);
 
     /*
       연쇄 깊이(4단계). **insert 보다 앞에서** 잰다 — 뒤에서 재면 자기 자신이 스캔 대상에

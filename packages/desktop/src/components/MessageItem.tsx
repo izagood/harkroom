@@ -109,7 +109,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
    * 그린다. 거기에 대상의 이름을 넣으면 admin 이 내보낸 메시지가 내보내진 사람의 말처럼
    * 보이고, 한 줄 안에서 이름과 아바타가 서로 다른 사람을 가리킨다.
    */
-  const shownBody = displayBody(message, accounts);
+  const shownBody = displayBody(message, accounts, groups, teams);
 
   /**
    * 이 답이 딸린 스레드의 **뿌리 메시지**(#624 요구 2). 뿌리는 같은 채널의 최상위
@@ -125,7 +125,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   /** 한 줄로 접은 뿌리 본문. 줄바꿈이 남으면 한 줄짜리 링크가 두 줄로 벌어진다. */
   const rootPreview = useMemo(() => {
     if (!threadRoot) return null;
-    const text = displayBody(threadRoot, accounts).replace(/\s+/g, ' ').trim();
+    const text = displayBody(threadRoot, accounts, groups, teams).replace(/\s+/g, ' ').trim();
     if (!text) return null;
     return text.length > ROOT_PREVIEW_CHARS ? `${text.slice(0, ROOT_PREVIEW_CHARS)}…` : text;
   }, [threadRoot, accounts]);
@@ -371,7 +371,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
    * `<@0f3c…>` 를 `@handle` 로 되돌린다. 날것을 그대로 두면 사람은 자기가 무엇을 지우는지
    * 읽지 못한 채 확인을 누르게 된다.
    */
-  const deletePreview = bodyAsHandles(displayBody(message, accounts), accounts, groups, teams).trim();
+  const deletePreview = bodyAsHandles(displayBody(message, accounts, groups, teams), accounts, groups, teams).trim();
 
   /**
    * 클립보드에 담는다(#178). **실패를 조용히 삼키지 않는다** — 삼키면 사람은
