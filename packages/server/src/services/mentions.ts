@@ -11,7 +11,10 @@
 // 세 사본이 각각 `account` 를 통째로 읽으면서 그중 둘은 존재하지 않는 컬럼(`disabled`)을
 // 봐서 조용히 500 이 됐다. 규칙이 한 곳에 있으면 그런 어긋남이 생길 자리가 없다.
 import type { Pool, PoolClient } from 'pg';
-import { denormalizeMentions, mentionedHandles, MENTION_TOKEN_PATTERN, normalizeMentions } from '@harkroom/shared';
+import {
+  denormalizeMentions, mentionedHandles, mentionedTargets, mentionTargetKey,
+  MENTION_TOKEN_PATTERN, normalizeMentions,
+} from '@harkroom/shared';
 
 type Queryable = Pool | PoolClient;
 
@@ -30,7 +33,24 @@ export async function normalizeSearchQuery(db: Queryable, query: string): Promis
   const res = await db.query<{ id: string; handle: string }>(
     `select id, lower(handle) as handle from account where lower(handle) = any($1)`, [handles],
   );
-  return normalizeMentions(query, new Map(res.rows.map((r) => [r.handle, r.id])));
+  const map = new Map(res.rows.map((r) => [r.handle, r.id]));
+  /**
+   * 집합·팀도 본문에서 토큰이 됐으므로(#845) 질의도 같은 모양이어야 한다 — 안 그러면
+   * `@팀이름` 으로 검색한 사람이 그 팀을 부른 메시지를 **하나도** 못 찾는다. 본문 저장과
+   * 같은 우선순위(계정 > 집합 > 팀)를 쓴다.
+   */
+  const rest = handles.filter((h) => !map.has(h));
+  if (rest.length) {
+    const groups = await db.query<{ id: string; handle: string }>(
+      `select id, lower(handle) as handle from handle_group where lower(handle) = any($1)`, [rest],
+    );
+    for (const r of groups.rows) map.set(r.handle, mentionTargetKey('group', r.id));
+    const teams = await db.query<{ id: string; name: string }>(
+      `select id, lower(name) as name from agent_team where lower(name) = any($1)`, [rest],
+    );
+    for (const r of teams.rows) if (!map.has(r.name)) map.set(r.name, mentionTargetKey('team', r.id));
+  }
+  return normalizeMentions(query, map);
 }
 
 /**
@@ -44,14 +64,36 @@ export async function denormalizeBodies<T extends { body: string }>(
   db: Queryable, rows: T[],
 ): Promise<T[]> {
   const ids = new Set<string>();
+  const groupIds = new Set<string>();
+  const teamIds = new Set<string>();
   const token = new RegExp(MENTION_TOKEN_PATTERN, 'g');
   for (const row of rows) {
     for (const m of row.body.matchAll(token)) if (m[1]) ids.add(m[1]);
+    // 집합·팀 토큰(#845). 에이전트가 `@팀이름` 으로 생각하는 것은 계정과 같다 — 되돌려
+    // 주지 않으면 프롬프트에 `<@team:uuid>` 라는 뜻 없는 글자가 실린다.
+    for (const t of mentionedTargets(row.body)) {
+      (t.kind === 'group' ? groupIds : teamIds).add(t.id);
+    }
   }
-  if (!ids.size) return rows;
-  const res = await db.query<{ id: string; handle: string }>(
-    `select id, handle from account where id = any($1)`, [[...ids]],
-  );
-  const idToHandle = new Map(res.rows.map((r) => [r.id, r.handle]));
+  if (!ids.size && !groupIds.size && !teamIds.size) return rows;
+  const idToHandle = new Map<string, string>();
+  if (ids.size) {
+    const res = await db.query<{ id: string; handle: string }>(
+      `select id, handle from account where id = any($1)`, [[...ids]],
+    );
+    for (const r of res.rows) idToHandle.set(r.id, r.handle);
+  }
+  if (groupIds.size) {
+    const res = await db.query<{ id: string; handle: string }>(
+      `select id, handle from handle_group where id = any($1)`, [[...groupIds]],
+    );
+    for (const r of res.rows) idToHandle.set(mentionTargetKey('group', r.id), r.handle);
+  }
+  if (teamIds.size) {
+    const res = await db.query<{ id: string; name: string }>(
+      `select id, name from agent_team where id = any($1)`, [[...teamIds]],
+    );
+    for (const r of res.rows) idToHandle.set(mentionTargetKey('team', r.id), r.name);
+  }
   return rows.map((row) => ({ ...row, body: denormalizeMentions(row.body, idToHandle) }));
 }

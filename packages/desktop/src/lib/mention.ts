@@ -1,4 +1,4 @@
-import { CHANNEL_MENTION_HANDLE, denormalizeMentions, fillSystemAccount, MENTION_PATTERN, MENTION_TOKEN_PATTERN, mentionedHandles, mentionScanText, type MessageRow, renderMentions, splitCode } from '@harkroom/shared';
+import { CHANNEL_MENTION_HANDLE, denormalizeMentions, fillSystemAccount, MENTION_PATTERN, MENTION_TOKEN_PATTERN, mentionedHandles, mentionScanText, mentionTargetKey, type MessageRow, renderMentions, splitCode } from '@harkroom/shared';
 import type { Translate } from '../i18n';
 
 // 멘션 문법은 @harkroom/shared 에 있다 — 서버의 알림 발송과 같은 규칙을 봐야 한다. 갈라지면
@@ -172,10 +172,34 @@ export function keepMentioned(sticky: string[], body: string, known: Set<string>
  * `<@0f3c…>` 를 보게 된다. 복사도 같다 — 그 문자열을 다른 곳에 붙여넣으면 아무 뜻이 없고,
  * harkroom 에 다시 붙여넣어도 그 사람을 부르지 못한다(`normalizeMentions` 는 `@handle` 만 본다).
  */
-export function bodyAsHandles(body: string, accounts: Record<string, { id: string; handle: string }>): string {
-  const idToHandle = new Map<string, string>();
-  for (const a of Object.values(accounts)) idToHandle.set(a.id, a.handle);
-  return denormalizeMentions(body, idToHandle);
+/**
+ * 토큰 → **지금의** 이름. 계정은 id 가 그대로 키이고, 집합·팀은 `group:<id>`·`team:<id>` 다
+ * (#845). 셋을 한 지도에 담는 이유는 `MessageBody` 의 같은 지도와 같다 — `renderMentions` 는
+ * 토큰에서 잡은 글자로 한 번만 조회하므로 종류마다 지도를 두면 그 함수가 종류를 알아야 한다.
+ *
+ * 집합·팀을 **선택 인자**로 둔 이유: 이 지도를 쓰는 자리 중에는 스토어의 집합·팀에 닿지
+ * 않는 곳이 있다. 안 주면 그 토큰만 못 풀 뿐 계정은 그대로 풀린다 — 한 종류를 못 푼다고
+ * 나머지까지 못 그리게 만들 이유가 없다.
+ */
+export function mentionNameMap(
+  accounts: Record<string, { handle: string }>,
+  groups: readonly { id: string; handle: string }[] = [],
+  teams: readonly { id: string; name: string }[] = [],
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const [id, a] of Object.entries(accounts)) map.set(id, a.handle);
+  for (const g of groups) map.set(mentionTargetKey('group', g.id), g.handle);
+  for (const t of teams) map.set(mentionTargetKey('team', t.id), t.name);
+  return map;
+}
+
+export function bodyAsHandles(
+  body: string,
+  accounts: Record<string, { id: string; handle: string }>,
+  groups?: readonly { id: string; handle: string }[],
+  teams?: readonly { id: string; name: string }[],
+): string {
+  return denormalizeMentions(body, mentionNameMap(accounts, groups, teams));
 }
 
 /**
@@ -227,12 +251,14 @@ export function displayBody(
  * 값에서 `id` 를 다시 읽지 않는다.
  */
 export function bodyWithHandles(
-  body: string, accounts: Record<string, { handle: string }>,
+  body: string,
+  accounts: Record<string, { handle: string }>,
+  groups?: readonly { id: string; handle: string }[],
+  teams?: readonly { id: string; name: string }[],
 ): string {
   // 토큰이 없으면 맵도 만들지 않고 코드 구간도 나누지 않는다 — 목록의 줄마다 불린다.
   if (!body.includes('<@')) return body;
-  const idToHandle = new Map<string, string>();
-  for (const [id, a] of Object.entries(accounts)) idToHandle.set(id, a.handle);
+  const idToHandle = mentionNameMap(accounts, groups, teams);
 
   // **코드 구간은 비껴간다**(#298 과 같은 판정, 같은 함수로). `MessageBody` 는 `splitCode`
   // 로 코드를 먼저 떼기 때문에 `` `<@id>` `` 를 그대로 보여 준다 — 여기서 본문 전체에

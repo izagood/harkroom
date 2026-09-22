@@ -4,7 +4,7 @@ import { useActiveStore } from '../state/communities';
 import { NO_TEAMS } from '../state/appStore';
 import { splitMentions } from '../lib/mention';
 import { splitLinks, type LinkTarget, type BodyPart } from '../lib/link';
-import { extractPreviewUrls, renderMentions } from '@harkroom/shared';
+import { extractPreviewUrls, mentionTargetKey, renderMentions } from '@harkroom/shared';
 import { splitCode } from '../lib/code';
 import { parseBlocks, type Align, type Block, type Emphasis, type Inline } from '../lib/markdown';
 import { getExternalOpener } from '../lib/openExternal';
@@ -185,13 +185,23 @@ export function MessageBody({
   // 코드 → 마크다운 구조 순서로 읽는다(#216). 이 순서가 곧 규칙이다 — `lib/markdown` 참고.
   const blocks = useMemo(() => parseBlocks(splitCode(body)), [body]);
   const handles = useMemo(() => Object.values(accounts).map((a) => a.handle), [accounts]);
+  /**
+   * 토큰 → **지금의** 이름. 계정은 id 가 그대로 키이고, 집합·팀은 `group:<id>`·`team:<id>` 다
+   * (#845, `shared` 의 `mentionTargetKey`). 한 지도에 셋을 담는 이유: `renderMentions` 는
+   * 토큰에서 잡은 글자로 한 번만 조회하므로, 종류마다 지도를 두면 그 함수가 종류를 알아야 한다.
+   *
+   * 집합·팀을 빼면 이 파일 머리의 경계가 그대로 깨진다 — 본문에 `<@team:uuid>` 라는 뜻 없는
+   * 글자가 그려지고, 읽는 사람은 그 발화가 누구를 불렀는지 모른다.
+   */
   const accountsMap = useMemo(() => {
     const map = new Map<string, string>();
     for (const a of Object.values(accounts)) {
       map.set(a.id, a.handle);
     }
+    for (const g of groups) map.set(mentionTargetKey('group', g.id), g.handle);
+    for (const t of teams) map.set(mentionTargetKey('team', t.id), t.name);
     return map;
-  }, [accounts]);
+  }, [accounts, groups, teams]);
   /**
    * `splitMentions` 이 "여럿을 부르는 이름" 으로 칠할 목록 — 집합과 팀(#172)을 함께 준다.
    *

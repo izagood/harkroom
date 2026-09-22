@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_CHAIN_LIMIT, mentionedHandles, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type MessageRow } from '@harkroom/shared';
+import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_CHAIN_LIMIT, mentionedHandles, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type MessageRow } from '@harkroom/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { preemptWakesForThread } from './agentWakes.js';
 import { closeDelegationsForReply, outcomesFor } from './delegations.js';
@@ -658,6 +658,30 @@ export async function postMessage(
         )).rows as { id: string; handle: string; kind: 'human' | 'agent' }[]
       : [];
     const handleToId = new Map(mentionedAccounts.map((r) => [r.handle, r.id]));
+
+    /**
+     * 집합·팀도 정본으로 바꾼다(#845). 계정만 토큰이 되고 이 둘은 글자로 남아 있었는데,
+     * **팀은 이름이 바뀐다**(`PATCH /teams/:id`) — 바뀌는 순간 과거 본문의 `@옛팀이름` 은
+     * 아무것도 가리키지 않는다. #271 이 계정에 대해 푼 문제가 같은 이름공간에 남아 있었다.
+     *
+     * 지도의 **값**에 접두를 실어 `normalizeMentions` 자체는 손대지 않는다 — 그 함수는
+     * `<@${값}>` 을 쓰므로 값이 `team:<uuid>` 면 토큰도 `<@team:<uuid>>` 가 된다.
+     *
+     * **우선순위는 아래 팬아웃 루프가 정본이다**: 계정 > 집합 > 팀. 여기서 그 순서를 다시
+     * 정하지 않고 그대로 따른다 — 갈리면 한 발화에서 저장된 토큰과 실제로 깬 대상이 달라진다.
+     * 겹친 데이터에서 집합이 팀을 이기는 근거는 그 루프의 주석에 있다.
+     */
+    for (const handle of bodyHandles) {
+      if (handle === CHANNEL_MENTION_HANDLE || handleToId.has(handle)) continue;
+      const group = await getHandleGroupByHandle(client, handle);
+      if (group) {
+        handleToId.set(handle, mentionTargetKey('group', group.id));
+        continue;
+      }
+      const team = await getTeamByName(client, handle);
+      if (team) handleToId.set(handle, mentionTargetKey('team', team.id));
+    }
+
     const normalizedBody = normalizeMentions(input.body, handleToId);
 
     /*
