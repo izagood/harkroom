@@ -228,6 +228,40 @@ describe('#172 `@팀` 멘션', () => {
     expect(await inboxFor(a1Pat, messageId)).toEqual([{ reason: 'mention' }]);
   });
 
+  /**
+   * #849 — **팀 멘션에도 부름과 지칭이 갈린다.**
+   *
+   * #598 이 계정에 대해 세운 규칙(작성자가 에이전트이고 대상도 에이전트면 **머리 런 안의
+   * 멘션만 부름**)을 팀이 통째로 비껴가고 있었다. 팀은 계정이 아니라 `splitMentionCalls`
+   * 가 안 보던 자리였고, 그래서 에이전트가 보고 한가운데 `@release` 를 적으면 그 팀이 깼다.
+   * dev DB 에서 계정에 대해 잰 "에이전트→에이전트 멘션의 39% 가 부를 뜻 없는 지칭" 을
+   * 팀이 그대로 되풀이하던 자리다.
+   */
+  it('6-1. 에이전트가 보고 한가운데 적은 팀 이름은 깨우지 않는다', async () => {
+    const messageId = await post(a1Pat, publicId, '배포는 @release 가 맡은 일이다');
+
+    expect(await inboxFor(a2Pat, messageId)).toEqual([]);
+
+    // 조용히 사라지지 않는다 — 화면이 "부르지 않고 이름만 적었다"를 그릴 수 있어야 한다.
+    const row = await pool.query(`select meta from message where id = $1`, [messageId]);
+    expect(row.rows[0].meta.mentionRefs).toContain(`team:${teamId}`);
+  });
+
+  /** 머리 런 안이면 에이전트가 적어도 부름이다 — 나누려면 맨 앞에 쓴다. */
+  it('6-2. 머리 런 안의 팀 이름은 에이전트가 적어도 부른다', async () => {
+    const messageId = await post(a1Pat, publicId, '@release 이거 맡아라');
+    expect(await inboxFor(a2Pat, messageId)).toEqual([{ reason: 'mention' }]);
+  });
+
+  /**
+   * **사람이 쓴 것은 자리와 무관하게 전부 부름이다.** 사람에게 새 문법을 가르치는 값이
+   * 이 문제의 값보다 크다는 #598 의 판단을 팀에도 그대로 쓴다.
+   */
+  it('6-3. 사람이 본문 한가운데 적은 팀 이름은 그대로 부른다', async () => {
+    const messageId = await post(adminToken, publicId, '이건 @release 한테 맡기자');
+    expect(await inboxFor(a1Pat, messageId)).toEqual([{ reason: 'mention' }]);
+  });
+
   it('6. 없는 이름은 아무 일도 하지 않는다', async () => {
     const messageId = await post(adminToken, publicId, '@nosuchteam 아무도 없다');
     expect(await inboxFor(a1Pat, messageId)).toEqual([]);
