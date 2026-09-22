@@ -38,6 +38,9 @@ const FACE_SLOTS = 3;
  */
 const ROOT_PREVIEW_CHARS = 40;
 
+/** 빈 배열 리터럴을 매 렌더 새로 만들지 않는다. */
+const MSG_NO_TEAMS: never[] = [];
+
 export function MessageItem({ message, inThread = false, onOpenDirectory, onOpenSettings }: {
   message: MessageRow;
   inThread?: boolean;
@@ -52,6 +55,10 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
   const myId = useActiveStore((s) => s.me?.id ?? null);
   const accounts = useActiveStore((s) => s.accounts);
+  // 복사·수정용 본문의 집합·팀 토큰(#845)도 이름으로 되돌린다 — 수정창에 `<@team:uuid>` 가
+  // 뜨면 사람은 그것을 지우고 저장하고, 그 순간 그 발화가 누구를 불렀는지가 사라진다.
+  const groups = useActiveStore((s) => s.groups);
+  const teams = useActiveStore((s) => s.teams) ?? MSG_NO_TEAMS;
   /**
    * 이름·얼굴을 눌렀을 때 갈 곳. **`@멘션` 칩과 같은 함수**를 지난다(`lib/accountOpen`) —
    * 화면에서 한 사람을 가리키는 자리는 셋(멘션 칩·이름줄·거터 아바타)인데 그 셋이 서로
@@ -102,7 +109,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
    * 그린다. 거기에 대상의 이름을 넣으면 admin 이 내보낸 메시지가 내보내진 사람의 말처럼
    * 보이고, 한 줄 안에서 이름과 아바타가 서로 다른 사람을 가리킨다.
    */
-  const shownBody = displayBody(message, accounts);
+  const shownBody = displayBody(message, accounts, groups, teams);
 
   /**
    * 이 답이 딸린 스레드의 **뿌리 메시지**(#624 요구 2). 뿌리는 같은 채널의 최상위
@@ -118,7 +125,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
   /** 한 줄로 접은 뿌리 본문. 줄바꿈이 남으면 한 줄짜리 링크가 두 줄로 벌어진다. */
   const rootPreview = useMemo(() => {
     if (!threadRoot) return null;
-    const text = displayBody(threadRoot, accounts).replace(/\s+/g, ' ').trim();
+    const text = displayBody(threadRoot, accounts, groups, teams).replace(/\s+/g, ' ').trim();
     if (!text) return null;
     return text.length > ROOT_PREVIEW_CHARS ? `${text.slice(0, ROOT_PREVIEW_CHARS)}…` : text;
   }, [threadRoot, accounts]);
@@ -364,7 +371,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
    * `<@0f3c…>` 를 `@handle` 로 되돌린다. 날것을 그대로 두면 사람은 자기가 무엇을 지우는지
    * 읽지 못한 채 확인을 누르게 된다.
    */
-  const deletePreview = bodyAsHandles(displayBody(message, accounts), accounts).trim();
+  const deletePreview = bodyAsHandles(displayBody(message, accounts, groups, teams), accounts, groups, teams).trim();
 
   /**
    * 클립보드에 담는다(#178). **실패를 조용히 삼키지 않는다** — 삼키면 사람은
@@ -407,7 +414,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
    * 긴 메시지를 알림에 통째로 밀어 넣으면 알림이 화면을 덮는다.
    */
   const copyBody = () =>
-    copyToClipboard(bodyAsHandles(message.body, accounts), 'Could not copy the message. Select it in the message and copy by hand.');
+    copyToClipboard(bodyAsHandles(message.body, accounts, groups, teams), 'Could not copy the message. Select it in the message and copy by hand.');
 
   /**
    * 대기 줄(마이그레이션 040)은 말풍선이 아니다 — 발화가 아니므로 리액션·툴바·스레드
@@ -452,7 +459,7 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
     ...(canUnpin ? [{ label: 'Unpin', onSelect: () => { void getController().unpinMessage(message.channelId, message.id); } }] : []),
     // #271: 수정창에는 `@handle` 을 채운다 — 저장된 정본은 `<@id>` 라, 그대로 넣으면
     // 사람이 `<@0f3c…>` 를 고치게 된다. 저장할 때 서버가 다시 정규화한다.
-    ...(canEdit ? [{ label: 'Edit', onSelect: () => setDraft(bodyAsHandles(message.body, accounts)) }] : []),
+    ...(canEdit ? [{ label: 'Edit', onSelect: () => setDraft(bodyAsHandles(message.body, accounts, groups, teams)) }] : []),
     // 확인은 **겹창**으로 묻는다(#ConfirmDialog). 예전에는 툴바 안에 확인 버튼을 끼워 넣느라
     // `!confirmingDelete` 로 이 항목을 숨겨야 했다 — 같은 자리를 두 UI 가 나눠 썼기 때문이다.
     // 겹창은 툴바 밖이라 자리를 다투지 않으므로 조건은 권한 하나로 돌아온다.

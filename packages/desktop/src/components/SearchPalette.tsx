@@ -27,6 +27,9 @@ interface Props {
  * 전역 진입점(⌘K)은 전체, 채널 진입점(헤더 버튼)은 채널, ⌘F 는 스레드가 열려 있으면 그
  * 스레드·없으면 채널로 연다 — 셋 다 사람의 명시적 선택이다.
  */
+/** 빈 배열 리터럴을 매 렌더 새로 만들지 않는다. */
+const NO_TEAMS_FALLBACK: never[] = [];
+
 export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
   const t = useT();
   const [query, setQuery] = useState('');
@@ -50,6 +53,9 @@ export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const accounts = useActiveStore((s) => s.accounts);
+  // 집합·팀 토큰(#845)도 이름으로 되돌린다 — 안 주면 미리보기에 `@알 수 없음` 이 뜬다.
+  const groups = useActiveStore((s) => s.groups);
+  const teams = useActiveStore((s) => s.teams) ?? NO_TEAMS_FALLBACK;
   const channels = useActiveStore((s) => s.channels);
   const dms = useActiveStore((s) => s.dms);
   const activeChannelId = useActiveStore((s) => s.activeChannelId);
@@ -306,7 +312,7 @@ export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
               </div>
               {/* 본문은 `displayBody` 를 지난다 — 이 줄도 `MessageBody` 를 지나지 않아
                   `<@id>`·`{account}` 를 스스로 풀어야 한다(`lib/mention` 주석). */}
-              <div className="mt-1 truncate text-fg">{displayBody(msg, accounts)}</div>
+              <div className="mt-1 truncate text-fg">{displayBody(msg, accounts, groups, teams)}</div>
             </li>
           ))}
           {/* 잘렸다는 것을 말하지 않으면 사람은 "없다"로 읽는다 — 상위 50 건이 전부 최근

@@ -223,8 +223,14 @@ export function useThreadRoots(rootIds: readonly (string | null)[]): Map<string,
  *
  * `<@id>` 는 반드시 `bodyWithHandles` 를 지난다 — 안 지나면 제목 자리에 uuid 가 뜬다(#271).
  */
-export function threadTitle(row: MessageRow, accounts: Record<string, { handle: string }>): string | null {
-  const lines = bodyWithHandles(row.body, accounts).split('\n');
+export function threadTitle(
+  row: MessageRow,
+  accounts: Record<string, { handle: string }>,
+  // 집합·팀 토큰(#845)도 이름으로 되돌린다 — 안 주면 제목 자리에 `@알 수 없음` 이 뜬다.
+  groups?: readonly { id: string; handle: string }[],
+  teams?: readonly { id: string; name: string }[],
+): string | null {
+  const lines = bodyWithHandles(row.body, accounts, groups, teams).split('\n');
   for (const line of lines) {
     // 인용 줄(`>`)·머리표(`#`)·목록표(`-`)를 걷어낸 첫 줄. 붙여넣은 인용으로 시작하는
     // 스레드가 흔하고, 그때 `> @murmur …` 를 제목으로 세우면 죄다 같은 모양이 된다.

@@ -18,6 +18,9 @@ import { TerminalChip } from './TerminalChip';
  * 접힌 줄들이 보인다. 러너가 남긴 유일한 진행 기록이라 사라지면 "그때 무엇을 하고
  * 있었나"에 답할 것이 없어진다.
  */
+/** 빈 배열 리터럴을 매 렌더 새로 만들지 않는다. */
+const NO_TEAMS_FALLBACK: never[] = [];
+
 export function ProgressRow({ messages, endedAt = null }: {
   messages: MessageRow[];
   /**
@@ -34,6 +37,9 @@ export function ProgressRow({ messages, endedAt = null }: {
   const author = useActiveStore((s) => s.accounts[messages[0]!.authorId]);
   // 진행 본문도 본문 렌더러를 지나지 않는다 — `<@id>` 를 여기서 푼다(`lib/mention` 주석).
   const accounts = useActiveStore((s) => s.accounts);
+  // 집합·팀 토큰(#845)도 이름으로 되돌린다 — 안 주면 미리보기에 `@알 수 없음` 이 뜬다.
+  const groups = useActiveStore((s) => s.groups);
+  const teams = useActiveStore((s) => s.teams) ?? NO_TEAMS_FALLBACK;
   const first = messages[0]!;
   const last = messages[messages.length - 1]!;
 
@@ -93,7 +99,7 @@ export function ProgressRow({ messages, endedAt = null }: {
       {open && (
         <ul data-testid="progress-detail" className="mt-1 space-y-0.5 border-l border-border-agent pl-2">
           {messages.map((m) => (
-            <li key={m.id} className="text-meta text-fg-subtle">{displayBody(m, accounts)}</li>
+            <li key={m.id} className="text-meta text-fg-subtle">{displayBody(m, accounts, groups, teams)}</li>
           ))}
         </ul>
       )}
