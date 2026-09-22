@@ -171,9 +171,25 @@ export function discoversSessionIdAfterTurn(harness: AgentHarness): boolean {
  */
 export function injectionFactsFor(
   harness: AgentHarness,
-): { readyMinMs?: number; unsentHint?: RegExp } {
-  const { readyMinMs, unsentHint } = adapterFor(harness).screen;
-  return { ...(readyMinMs ? { readyMinMs } : {}), ...(unsentHint ? { unsentHint } : {}) };
+): { readyPattern: RegExp; readyMinMs?: number; unsentHint?: RegExp } {
+  const { ready, readyMinMs, unsentHint } = adapterFor(harness).screen;
+  return {
+    /**
+     * **준비 표시도 표에서 온다**(2026-09-22 실측으로 배웠다).
+     *
+     * 이 자리가 예전에는 `readyMinMs`·`unsentHint` 만 넘겨서, 주입은 `pty.ts` 의
+     * `DEFAULT_READY_PATTERN`(claude 의 `❯`+U+00A0 · codex 의 `Ask … to do anything`)으로
+     * 기다렸다. opencode 의 자리표시자는 `Ask anything…` 이라 **어디에도 안 걸린다** —
+     * 그래서 첫 실물 턴이 준비 상한 60초를 꽉 채우고 `PromptNotDeliveredError` 로 끝났고,
+     * 그 오류는 계정 축까지 태운 뒤(opencode 엔 계정 풀이 없는데도) 사람을 불렀다. 화면에는
+     * 멀쩡한 TUI 가, 로그에는 "준비를 못 봤다" 가 남는 조용한 실패다.
+     *
+     * 표의 `ready` 는 하네스마다 **정확히 그 하나**라, 넘기면 기본 패턴보다 좁고 맞다.
+     */
+    readyPattern: ready,
+    ...(readyMinMs ? { readyMinMs } : {}),
+    ...(unsentHint ? { unsentHint } : {}),
+  };
 }
 
 /** 이 하네스의 실행 파일 이름. 표가 진실이고, 조회에도 같은 값을 쓴다(세션 목록 등). */
