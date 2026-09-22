@@ -12,6 +12,7 @@ import { actorOf, recordAudit } from '../audit.js';
 import { mintPat } from '../services/pats.js';
 import { emitEvent } from '../events.js';
 import { deleteMemory, listMemoryEntries } from '../services/memory.js';
+import { getHandleGroupByHandle } from '../services/handleGroups.js';
 
 export interface AccountRouteDeps {
   /** 오퍼레이터 허브 — 에이전트 목록에 배정 거절 사유를 붙인다(`OperatorHub.refusalOf`). 테스트는 생략한다. */
@@ -294,6 +295,16 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
   app.patch('/accounts/agents/:id', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const patch = z.object({
+      /**
+       * 에이전트의 이름을 바꾼다(#843). 사람 계정과 같은 문법·같은 유니크 규칙이다.
+       *
+       * 오래 400 `agent_handle_immutable` 로 막아 두었던 자리다. 막았던 이유는 러너의 상태
+       * 디렉터리가 `<handle>-<id>` 라서 이름이 바뀌면 러너가 다음 기동에 남의 이름으로 빈
+       * 디렉터리를 새로 파고 세션·워크스페이스를 통째로 잃기 때문이었다. 그 근거는
+       * `agent/stateDir.ts` 에서 없앴다 — 디렉터리를 **id 로 찾아 쓰기** 때문에 이름이
+       * 바뀌어도 같은 자리로 돌아온다. handle 은 거기서도 사람이 알아보라고 붙인 꼬리표다.
+       */
+      handle: z.string().regex(/^[a-z0-9_-]{2,32}$/).optional(),
       displayName: z.string().min(1).max(64).optional(),
       disabled: z.boolean().optional(),
       ...configFields,
@@ -324,6 +335,39 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     // (같은 이유로 설정 변경 감사도 404 에서는 남기지 않는다.)
     if (!before) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+    }
+    /**
+     * 이름은 워크스페이스 **전역 이름공간**이다 — 사람·에이전트·집합이 한 자리를 나눠 쓴다.
+     * 그래서 계정과 집합 양쪽을 본다. 한쪽만 보면 `@foo` 가 에이전트인지 팀인지 갈린다
+     * (`createAgentAccount` 가 생성 때 막는 것과 같은 규칙).
+     *
+     * 값이 실제로 바뀔 때만 본다 — 자기 이름을 그대로 다시 저장한 PATCH 가 자기 자신과
+     * 부딪혀 409 로 죽으면, 이름 말고 다른 것을 고치러 온 사람이 아무것도 저장하지 못한다.
+     */
+    const renamedTo = patch.handle !== undefined && patch.handle !== before.handle ? patch.handle : null;
+    if (renamedTo) {
+      const taken = await pool.query(
+        `select id from account where lower(handle) = lower($1) and id != $2`,
+        [renamedTo, id],
+      );
+      if (taken.rowCount && taken.rowCount > 0) {
+        return reply.code(409).send({ error: { code: 'handle_taken', message: 'this handle is already taken' } });
+      }
+      if (await getHandleGroupByHandle(pool, renamedTo)) {
+        return reply.code(409).send({ error: { code: 'handle_taken', message: 'a group with this handle already exists' } });
+      }
+      /**
+       * 표시 이름이 옛 이름 **그대로**였다면 함께 따라간다. 에이전트는 만들 때
+       * `displayName = handle` 로 생기므로(desktop `submit`), 둘이 같다는 것은 "아무도
+       * 손대지 않았다"는 뜻이다. 그대로 두면 설정 카드가 굵게 옛 이름, 아래 옅게 새
+       * `@이름` 을 그려 이름을 바꾼 사람이 자기 조작이 반만 먹었다고 읽는다.
+       *
+       * 직접 지은 표시 이름은 건드리지 않는다 — 그것은 이름 변경이 아니라 **덮어쓰기**다.
+       * 명시적으로 함께 보낸 `displayName` 도 그대로 이긴다.
+       */
+      if (patch.displayName === undefined && before.displayName === before.handle) {
+        patch.displayName = renamedTo;
+      }
     }
     if (patch.invokeScope !== undefined || patch.credentialScope !== undefined) {
       const scopeError = validateScopeChange(before, {
@@ -391,6 +435,21 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
         action: 'agent.updated', actorId: req.account!.id, actorHandle: req.account!.handle,
         target: id, detail: changes,
       }, req);
+    }
+    /**
+     * 이름 변경은 `agent.updated` 에 묻지 않고 사람 계정과 **같은 감사 항목**으로 남긴다 —
+     * "언제 누가 이 이름이 되었나"는 계정 종류와 무관하게 한 줄로 찾을 수 있어야 한다.
+     *
+     * WS 이벤트도 사람 쪽과 같은 것을 쓴다. 이미 열려 있는 화면들이 `applyHandle` 로
+     * 스토어의 이름을 갈아끼우므로, 사이드바·멘션 자동완성·지난 메시지의 이름표가
+     * 새로고침 없이 따라온다.
+     */
+    if (renamedTo) {
+      await recordAudit(pool, {
+        action: 'account.handle.changed', actorId: req.account!.id, actorHandle: req.account!.handle,
+        target: id, detail: { from: before.handle, to: renamedTo },
+      }, req);
+      emitEvent({ type: 'account.handle_changed', accountId: id, newHandle: renamedTo });
     }
     return updated;
   });

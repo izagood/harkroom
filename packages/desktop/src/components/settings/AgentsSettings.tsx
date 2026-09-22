@@ -755,21 +755,37 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     ...(isAdmin ? { mentionPermission: d.mentionPermission, ownerAccountId: d.ownerAccountId } : {}),
   });
 
+  /** 만들 때와 바꿀 때가 같은 규칙이다 — 서버의 `^[a-z0-9_-]{2,32}$` 와 같은 문법. */
+  const validHandle = (h: string) => /^[a-z0-9_-]{2,32}$/.test(h);
+
   const submit = async () => {
     setError(null);
     if (!draft) return;
     if (selected) {
+      if (!validHandle(draft.handle)) {
+        setError(t('agents.create.invalidName'));
+        return;
+      }
       setBusy(true);
       try {
-        const updated = await getController().updateAgent(selected.id, configPatch(draft));
+        const updated = await getController().updateAgent(selected.id, {
+          // 바뀐 때만 싣는다. 늘 실으면 이름 말고 다른 것을 고치러 온 저장이 전부
+          // 이름 변경 감사·WS 이벤트를 끌고 다닌다.
+          ...(draft.handle !== selected.handle ? { handle: draft.handle } : {}),
+          ...configPatch(draft),
+        });
         setSelected(updated);
         reload();
-      } catch {
-        setError(t('agents.detail.saveFailed'));
+      } catch (e) {
+        // 이름 충돌은 **고칠 수 있는 실패**다. "저장하지 못했다"로 뭉뚱그리면 사람은
+        // 무엇을 고쳐야 할지 모른 채 같은 이름으로 다시 누른다.
+        setError(e instanceof ApiError && e.code === 'handle_taken'
+          ? t('agents.detail.handleTaken')
+          : t('agents.detail.saveFailed'));
       } finally { setBusy(false); }
       return;
     }
-    if (!/^[a-z0-9_-]{2,32}$/.test(draft.handle)) {
+    if (!validHandle(draft.handle)) {
       setError(t('agents.create.invalidName'));
       return;
     }
@@ -1325,6 +1341,17 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 <AvatarStatus phase={avatarEdit.phase} />
               </div>
             )}
+            {/*
+              #843: **만든 뒤에도 이름을 바꾼다.** 오래 `disabled` 였고, 그 자리에 붙은 안내가
+              "나중에 바꿀 수 없다"였다 — 이름을 잘못 지은 사람에게 남은 길은 에이전트를 지우고
+              다시 만드는 것뿐이었고, 그러면 계정 id 가 바뀌어 러너 상태가 통째로 날아갔다.
+              막았던 근거(러너 상태 디렉터리가 이름으로 스코프된다)는 `agent/stateDir.ts` 에서
+              없앴다. 그래서 여기서도 잠그지 않는다.
+
+              안내 문구가 만들 때와 고칠 때 갈리는 이유: 처음에는 "이게 부르는 이름이다"를
+              알려야 하고, 바꿀 때는 **무엇을 잃는지**(지난 메시지의 `@옛이름`) 를 알려야 한다.
+              둘을 한 문장으로 합치면 둘 다 안 읽힌다.
+            */}
             <label className={label}>
               Agent name
               <input
@@ -1332,10 +1359,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 aria-label="Agent name"
                 placeholder="fizz"
                 value={draft.handle}
-                disabled={selected !== null}
                 onChange={(e) => setDraft({ ...draft, handle: e.target.value })}
               />
-              {!selected && <span className="text-meta text-fg-subtle">{t('agents.profile.handleNote')}</span>}
+              <span className="text-meta text-fg-subtle">
+                {selected ? t('agents.profile.renameNote') : t('agents.profile.handleNote')}
+              </span>
             </label>
 
             <label className={label}>

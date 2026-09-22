@@ -900,7 +900,10 @@ export const en = {
   'agents.profile.avatarRemoveConfirm': 'Really remove',
   'agents.profile.avatarUpload': 'Upload a photo',
   /** 되돌릴 수 없다는 것을 **이름 칸 아래**에서 말한다 — 만든 뒤에는 이 칸이 잠긴다. */
-  'agents.profile.handleNote': 'This is what you call in a channel with @name. It cannot be changed later.',
+  'agents.profile.handleNote': 'This is what you call in a channel with @name.',
+  'agents.profile.renameNote':
+    'After a rename, @oldname in past messages no longer reaches this agent. Its work and sessions carry over.',
+  'agents.detail.handleTaken': 'That name is already taken',
   'agents.profile.instructionsPlaceholder': 'Write what this agent does.',
   'agents.profile.note': 'How it looks in a channel, and what it does.',
   'agents.profile.title': 'Profile',

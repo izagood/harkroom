@@ -112,4 +112,49 @@ describe('resolveAgentStateDir (#174 instance)', () => {
   it('legacyPath 는 인스턴스에 영향받지 않는다', () => {
     expect(resolveAgentStateDir('/state', 'forge', 'acct-1', 'a').legacyPath).toBe('/state/forge');
   });
+
+  /**
+   * #843 이름 변경. 이 묶음이 지키는 것 하나: **이름이 바뀌어도 상태는 같은 자리에 있다.**
+   * 이것이 깨지면 이름을 바꾼 에이전트가 다음 기동에 모든 스레드의 세션과 워크스페이스를
+   * 잃는다 — 서버가 오래 이름 변경을 막았던 바로 그 이유다.
+   */
+  it('이름이 바뀌어도 id 로 옛 디렉터리를 찾아 쓴다', () => {
+    const before = resolveAgentStateDir('/state', 'forge', 'acct-1');
+    const after = resolveAgentStateDir('/state', 'anvil', 'acct-1', undefined, ['forge-acct-1']);
+    expect(after.agentStateDir).toBe(before.agentStateDir);
+    expect(after.sessionsPath).toBe(before.sessionsPath);
+    expect(after.workspaceBaseDir).toBe(before.workspaceBaseDir);
+    expect(after.codexHomeDir).toBe(before.codexHomeDir);
+  });
+
+  /** 인스턴스 축은 그대로 남는다 — 옛 뿌리를 물려받되 인스턴스끼리는 여전히 갈린다. */
+  it('옛 디렉터리를 물려받아도 인스턴스는 갈린다', () => {
+    const a = resolveAgentStateDir('/state', 'anvil', 'acct-1', 'a', ['forge-acct-1']);
+    const b = resolveAgentStateDir('/state', 'anvil', 'acct-1', 'b', ['forge-acct-1']);
+    expect(a.agentStateDir).toBe('/state/forge-acct-1/a');
+    expect(b.agentStateDir).toBe('/state/forge-acct-1/b');
+  });
+
+  /** 남의 디렉터리를 주워 오지 않는다 — 꼬리표가 아니라 **id** 로 고른다. */
+  it('다른 에이전트의 디렉터리는 물려받지 않는다', () => {
+    const { agentStateDir } = resolveAgentStateDir(
+      '/state', 'anvil', 'acct-2', undefined, ['forge-acct-1', 'anvil-acct-9'],
+    );
+    expect(agentStateDir).toBe('/state/anvil-acct-2');
+  });
+
+  /** 첫 기동(디렉터리가 하나도 없음)은 예전 그대로다. */
+  it('물려받을 것이 없으면 새 이름으로 만든다', () => {
+    expect(resolveAgentStateDir('/state', 'forge', 'acct-1', undefined, []).agentStateDir)
+      .toBe('/state/forge-acct-1');
+  });
+
+  /**
+   * id 는 UUID 라 다른 id 의 **접미**가 될 수 없지만, 그것을 우연에 맡기지 않는다.
+   * `endsWith(id)` 로 썼다면 `x-2acct-1` 이 `acct-1` 의 자리를 훔친다.
+   */
+  it('id 는 하이픈 경계로 맞춘다', () => {
+    expect(resolveAgentStateDir('/state', 'forge', 'acct-1', undefined, ['x-2acct-1']).agentStateDir)
+      .toBe('/state/forge-acct-1');
+  });
 });

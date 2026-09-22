@@ -16,6 +16,21 @@ import { join } from 'node:path';
  * **handle 과 다른 이름의 디렉터리**를 조용히 만들어 사람이 찾을 수 없게 한다.
  * 제약이 느슨해지면 그것은 서버 쪽 변경이고 거기서 잡혀야 한다.
  *
+ * #843: **에이전트 이름이 바뀔 수 있다.** 그러면 `<handle>-<id>` 의 앞쪽이 달라지므로 다음
+ * 기동에 새 이름으로 빈 디렉터리가 하나 더 생기고, 세션 레코드·avcs 워크스페이스·CODEX_HOME 이
+ * 통째로 남겨진다 — 이름 하나 바꿨더니 에이전트가 모든 스레드의 기억을 잃는 모양이다. 오래
+ * 서버가 에이전트 이름 변경을 400 으로 막았던 이유가 이것이다.
+ *
+ * 그래서 **id 로 먼저 찾는다**: `existingNames` 에 `-<id>` 로 끝나는 디렉터리가 이미 있으면
+ * 이름이 무엇이든 그것을 쓴다. 격리에 필요한 것은 처음부터 id 뿐이었고(위), handle 은 사람이
+ * 알아보려고 붙인 꼬리표다. 이름이 바뀐 뒤의 디렉터리는 옛 이름을 달고 남지만 **내용은 이어진다** —
+ * 조용히 잃는 것보다 이름이 낡은 편이 낫다. 옮기지 않는 이유는 `legacyPath` 와 같다: 같은
+ * 에이전트의 다른 인스턴스가 지금 그 안에서 돌고 있을 수 있고, 기동 중의 `mv` 는 그 러너의
+ * 발밑을 치운다.
+ *
+ * `existingNames` 를 인자로 받는(여기서 `readdir` 하지 않는) 이유: 이 함수는 경로 계산이고,
+ * 계산에 디스크를 섞으면 테스트가 임시 디렉터리를 깔아야 한다. 주지 않으면 예전 그대로다.
+ *
  * `legacyPath` 는 서버별로 갈리기 **전** 경로다(handle 만으로 스코프). 호출자가
  * 존재를 확인해 운영자에게 안내한다 — 자동으로 옮기지 않는다.
  *
@@ -55,8 +70,12 @@ export function resolveAgentStateDir(
   handle: string,
   id: string,
   instance?: string,
+  existingNames?: readonly string[],
 ): AgentStatePaths {
-  const handleId = `${handle}-${id}`;
+  // 같은 id 로 끝나는 이름이 여럿일 수는 없다 — id 가 UUID 라 한 에이전트당 한 자리다.
+  // 그래도 `find` 로 첫 것을 쓰는 편이 안전하다(수동으로 만든 디렉터리까지 막지 않는다).
+  const adopted = existingNames?.find((n) => n.endsWith(`-${id}`));
+  const handleId = adopted ?? `${handle}-${id}`;
   const agentStateDir = instance
     ? join(baseDir, handleId, instance)
     : join(baseDir, handleId);
