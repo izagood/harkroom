@@ -236,9 +236,12 @@ const THREAD_STATE_FACTS = `LEFT JOIN LATERAL (
       FROM message d, LATERAL JSONB_ARRAY_ELEMENTS_TEXT(d.meta->'delegation'->'open') AS o(id)
       WHERE (d.id = m.id OR d.thread_root_id = m.id) AND d.deleted_at IS NULL
         AND d.meta->>'kind' = 'delegation' AND d.author_id IS NOT NULL
+        AND m.thread_root_id IS NULL
     ), '[]'::jsonb) as open_ask_links
   FROM message t
   WHERE (t.id = m.id OR t.thread_root_id = m.id) AND t.deleted_at IS NULL
+    -- 루트에서만 계산한다 — 근거는 THREAD_STATS 위 주석.
+    AND m.thread_root_id IS NULL
 ) thread_state ON true
 LEFT JOIN LATERAL (
   -- 마지막 말 하나. 그것이 진행이고 저자가 살아 있는 에이전트일 때만 '도는 중'이므로,
@@ -246,10 +249,32 @@ LEFT JOIN LATERAL (
   SELECT t.kind as last_kind, t.author_id::text as last_author_id
   FROM message t
   WHERE (t.id = m.id OR t.thread_root_id = m.id) AND t.deleted_at IS NULL
+    -- 루트에서만 계산한다 — 근거는 THREAD_STATS 위 주석.
+    AND m.thread_root_id IS NULL
   ORDER BY t.seq DESC LIMIT 1
 ) thread_last ON true`;
 
 // 스레드 메타데이터: 루트 메시지에만 계산. LATERAL join으로 같은 쿼리에서 계산한다 (N+1 방지).
+//
+// **`AND m.thread_root_id IS NULL` 이 각 LATERAL 의 `WHERE` 안에 있다**(2026-09-21).
+// 아래 `LIST_COLS` 가 이미 `case when m.thread_root_id is null then …` 로 답글 행의 값을
+// 버리고 있었지만, 플래너는 바깥 `CASE` 를 보고 LATERAL 을 건너뛰지 못한다 — **버릴 값을
+// 그대로 다 계산했다.** 채널 한 페이지에서 답글이 대부분이므로 그 헛계산이 곧 비용이었다.
+//
+// **`ON` 절로는 안 된다.** `ON m.thread_root_id IS NULL` 로 올려 보면 계획에 `Join Filter` 로
+// 내려앉고, 안쪽은 `loops=500` 그대로 돈 뒤 결과만 버려진다(실측: `ON true` 745ms →
+// `ON …` 665ms, 오차 범위). 조인 조건은 **이미 만들어진 행**을 거르는 자리이지 안쪽을
+// 막는 자리가 아니다.
+//
+// 조건을 `WHERE` 안에 두면 다르다. 바깥 행마다 상수인 조건이라 Postgres 가 이것을
+// **`One-Time Filter`** 로 세우고, 답글 행에서는 안쪽 스캔이 `never executed` 가 된다
+// (같은 실측에서 745ms → 33ms). 그래서 이 줄은 조인이 아니라 각 서브쿼리 안에 있어야 한다 —
+// 선택 목록의 스칼라 서브쿼리(참여자·위임 마디)까지 하나하나 붙인 이유도 그것이다:
+// 집계는 빈 입력에도 한 행을 내므로, 거기까지 막지 않으면 그 둘만 계속 돈다.
+//
+// LEFT JOIN 이라 걸러진 행의 컬럼은 null 이 되고, 그것은 `CASE` 가 내던 값과 같다 —
+// **응답은 한 글자도 바뀌지 않는다.** `CASE` 를 지우지 않는 이유가 그것이다: 둘은 같은
+// 사실을 말하고, 남겨 두면 이 조건이 나중에 빠져도 답글 행에 스레드 값이 실리지 않는다.
 //
 // **답글 수는 화면이 답글로 그리는 것만 센다**(2026-09-09). 여기 있던 주석은 반대를 적어
 // 두었다 — *"진행 설명도 답글 수에 포함한다 … 제외하면 개수가 안 맞는 것처럼 보인다."*
@@ -285,10 +310,13 @@ const THREAD_STATS = `LEFT JOIN LATERAL (
         SELECT author_id, MAX(created_at) as last_at
         FROM message
         WHERE thread_root_id = m.id AND deleted_at IS NULL AND author_id IS NOT NULL
+          AND m.thread_root_id IS NULL
         GROUP BY author_id
       ) recent
     ), '{}'::uuid[]) as participant_ids
   FROM message WHERE thread_root_id = m.id AND deleted_at IS NULL
+    -- 루트에서만 계산한다 — 근거는 THREAD_STATS 위 주석.
+    AND m.thread_root_id IS NULL
 ) thread_stats ON true
 ${THREAD_STATE_FACTS}`;
 
