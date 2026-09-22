@@ -6,7 +6,7 @@
 // 그대로 넘겨받아 격리가 조용히 사라진다.
 
 import { createHash } from 'node:crypto';
-import { stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export type Exec = (
@@ -21,10 +21,56 @@ export type Exec = (
  * 앞 8자로 줄이면 길이가 고정되고 충돌 확률은 무시할 만큼 낮다. handle 은 HANDLE_PATTERN
  * (`[a-zA-Z0-9_-]{2,32}`, @harkroom/shared)으로 이미 디렉터리 이름에 안전한 문자만 허용되므로
  * 별도로 다듬지 않는다.
+ *
+ * ## #846: **이름이 바뀌어도 같은 워크스페이스로 돌아온다**
+ *
+ * 에이전트 이름은 바뀐다(#843). 이름이 바뀌면 이 함수가 내놓는 이름의 가운데가 달라지므로
+ * 스레드마다 **새 워크스페이스가 하나씩 더** 생기고, 그때까지 그 스레드에서 하던 일은
+ * 옛 디렉터리에 남겨진다 — 커밋하지 않은 변경이 있으면 그대로 잃는다.
+ *
+ * 그래서 `existingNames` 에 `-<hash>` 로 끝나는 이름이 이미 있으면 **그것을 쓴다.**
+ * `baseDir` 는 이미 에이전트별로 갈려 있으므로(`stateDir.ts` 의 `workspaceBaseDir` 는
+ * `<handle>-<id>/workspaces` 다) 그 안에서 스레드를 가르는 것은 해시 하나다. 즉 이 함수의
+ * handle 은 디렉터리 안에서는 **사람이 알아보라고 붙은 꼬리표**이고, `stateDir.ts` 가
+ * 같은 판단을 같은 이유로 적어 두었다.
+ *
+ * **그런데 파일 이름 밖에서는 꼬리표가 아니다.** 이 이름은 `avcs workspace project <이름>`
+ * 의 **avcs 워크스페이스 이름**이기도 하다(아래). 같은 저장소를 가리키는 두 에이전트가 한
+ * 스레드에 불리면 해시만으로 지은 이름은 **같아지고**, 그때 둘째의 project 호출이 실패하거나
+ * 첫째의 워크스페이스를 넘겨받아 격리가 조용히 사라진다(이 파일 머리의 경고). 그래서
+ * 새로 짓는 이름에서는 handle 을 **빼지 않는다** — 바꾸는 것은 "이미 있으면 그것을 쓴다"
+ * 하나뿐이다.
+ *
+ * 옮기지 않는 이유는 `resolveAgentStateDir` 과 같다: 같은 에이전트의 다른 인스턴스가 지금
+ * 그 안에서 돌고 있을 수 있고, avcs 가 그 이름으로 워크스페이스를 알고 있다 — 디렉터리만
+ * 옮기면 그 둘이 갈린다.
+ *
+ * `existingNames` 를 인자로 받는(여기서 `readdir` 하지 않는) 이유: 이 함수는 이름 계산이고,
+ * 계산에 디스크를 섞으면 테스트가 임시 디렉터리를 깔아야 한다. 안 주면 예전 그대로다.
  */
-export function workspaceName(handle: string, threadKey: string): string {
+export function workspaceName(
+  handle: string, threadKey: string, existingNames?: readonly string[],
+): string {
   const hash = createHash('sha256').update(threadKey).digest('hex').slice(0, 8);
-  return `harkroom-${handle}-${hash}`;
+  return existingNames?.find((n) => n.endsWith(`-${hash}`)) ?? `harkroom-${handle}-${hash}`;
+}
+
+/**
+ * 이 스레드의 워크스페이스 **이름**을 디스크를 보고 정한다 — 위 함수의 `existingNames` 를
+ * 채우는 한 자리.
+ *
+ * 왜 한 자리인가: 워크스페이스 경로를 만드는 곳이 둘이다(`ensureWorkspace` 와
+ * `resolveWorkspaceDir` 의 `workingDir === null` 갈래). 각자 `readdir` 하면 한쪽만 고치는
+ * 사고가 나고, 그러면 같은 스레드의 멘션 턴과 인터랙티브 턴이 **서로 다른 디렉터리**에서
+ * 돈다 — `resolveWorkspaceDir` 주석이 경계하는 바로 그것이다.
+ *
+ * 뿌리가 아직 없으면(첫 턴) 읽을 것이 없다 — 그때는 빈 목록이고 새 이름으로 만든다.
+ */
+export async function resolveWorkspaceName(
+  baseDir: string, handle: string, threadKey: string,
+): Promise<string> {
+  const existing = await readdir(baseDir).catch(() => [] as string[]);
+  return workspaceName(handle, threadKey, existing);
 }
 
 /**
@@ -43,7 +89,7 @@ export async function ensureWorkspace(
   exec: Exec,
   opts: { handle: string; threadKey: string; baseDir: string; repoDir: string },
 ): Promise<string> {
-  const name = workspaceName(opts.handle, opts.threadKey);
+  const name = await resolveWorkspaceName(opts.baseDir, opts.handle, opts.threadKey);
   const dir = join(opts.baseDir, name);
 
   // access() 는 존재 여부만 보고 파일과 디렉터리를 구분하지 않는다 — 그 경로에 일반 파일이
