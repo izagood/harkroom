@@ -294,12 +294,50 @@ describe('sticky mentions survive leaving the view', () => {
     expect(chips()).toEqual([]);
   });
 
-  it('writes the kept handles to device storage', () => {
+  /**
+   * **의도된 회귀선이다(#848).** 보관소에 담기는 것이 이름에서 **계정 id** 로 바뀌었다.
+   * 이름으로 담아 두면 이름을 바꾼 상대의 칩이 `known` 필터에 걸려 조용히 사라지고, 사람은
+   * 고정해 둔 상대가 빠진 채로 한 줄을 보낸다 — 아무도 깨지 않는다.
+   */
+  it('writes the kept account ids to device storage', () => {
     render(<Composer onSend={vi.fn()} scopeKey="thread:t1" />);
 
     sendText('@fizz @honey 둘 다');
 
-    expect(JSON.parse(localStorage.getItem(STORE_KEY)!)).toEqual({ 'thread:t1': ['fizz', 'honey'] });
+    expect(JSON.parse(localStorage.getItem(STORE_KEY)!)).toEqual({ 'thread:t1': ['a1', 'a2'] });
+  });
+
+  /**
+   * 이 묶음이 사는 이유 하나: **이름을 바꿔도 칩이 그대로 있다.** 위 줄은 형식만 지키고,
+   * 형식을 바꾼 까닭은 이 줄이 지킨다.
+   */
+  it('keeps the chip when the account is renamed', () => {
+    const { unmount } = render(<Composer onSend={vi.fn()} scopeKey="thread:t1" />);
+    sendText('@fizz 확인해봐');
+    expect(chips()).toEqual(['fizz']);
+    unmount();
+
+    // 본문도 보관소도 건드리지 않고 **디렉터리만** 갈아끼운다.
+    useAppStore.getState().set({
+      accounts: { ...useAppStore.getState().accounts, a1: acc('a1', 'anvil', 'agent') },
+    });
+    render(<Composer onSend={vi.fn()} scopeKey="thread:t1" />);
+
+    expect(chips()).toEqual(['anvil']);
+  });
+
+  /**
+   * 브라우저에 남아 있던 **옛 형식(이름)** 도 읽힌다. 이것이 마이그레이션 전부다 — 저장소를
+   * 훑어 고치는 코드를 두지 않는 이유는 하이드레이트 시점에 계정 목록이 아직 안 와 있어
+   * 그때 고치면 아는 것이 없어 전부 버리기 때문이다.
+   */
+  it('reads the old name-shaped entries that are still in storage', () => {
+    localStorage.setItem(STORE_KEY, JSON.stringify({ 'thread:t1': ['fizz'] }));
+    useAppStore.getState().hydrateStickyMentions();
+
+    render(<Composer onSend={vi.fn()} scopeKey="thread:t1" />);
+
+    expect(chips()).toEqual(['fizz']);
   });
 
   // 칩을 떼면 보관소에서도 없어져야 한다 — 남으면 다음 기동에 되살아난다.

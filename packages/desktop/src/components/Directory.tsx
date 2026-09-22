@@ -50,7 +50,12 @@ export function Directory({ open, onClose, accountId }: Props) {
   const account = accountId ? accounts[accountId] : null;
   // 씨앗 검색어는 **handle 문자열**이다. 계정 객체를 아래 효과의 의존성에 걸면 presence·
   // 상태가 바뀔 때마다 객체 신원이 갈려 효과가 다시 돌고, 사람이 치고 있던 검색어를 덮는다
-  // (초판이 그랬다). handle 은 만든 뒤 바뀌지 않으므로 문자열이면 그 되풀이가 없다.
+  // (초판이 그랬다). 문자열이면 그 되풀이가 없다.
+  //
+  // 초판 주석은 *"handle 은 만든 뒤 바뀌지 않으므로"* 라고 근거를 댔는데 **틀린 문장이다** —
+  // 사람은 #271 부터, 에이전트는 #843 부터 이름을 바꾼다. 다만 이 자리에는 손댈 것이 없다:
+  // 여기서 필요한 것은 *"이 문자열이 바뀌면 다시 돌아도 된다"* 이고, 이름이 바뀌었으면
+  // 검색어를 새 이름으로 다시 채우는 것이 맞는 동작이다. 근거만 고친다.
   const seedHandle = account?.handle ?? null;
 
   const reload = useCallback((): (() => void) => {
