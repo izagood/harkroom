@@ -19,6 +19,28 @@ export type RunnerLink = Pick<RelayClient, 'request' | 'mcpTransport'>;
 
 export interface Me { id: string; handle: string }
 
+/**
+ * 서버가 준 계정 목록에서 **내 이름이 바뀌었는지** 보고, 바뀌었으면 고친다(#847).
+ * 바뀐 경우에만 옛 이름을 돌려준다(호출부가 그것으로 로그 한 줄을 남긴다).
+ *
+ * `main.ts` 가 아니라 여기 있는 이유: `main.ts` 는 top-level await 스크립트라 테스트가
+ * 불러올 수 없다. 규칙 하나가 테스트 밖에 있으면 그 규칙은 다음 사람이 옮기다 잃는다.
+ *
+ * **객체를 갈아끼우지 않고 필드를 고친다.** `me` 를 값으로 받아 둔 자리가 둘이다
+ * (`createInteractiveManager` 는 기동 때 한 번 조립되고, `buildTurnDeps` 는 턴마다 읽는다).
+ * 새 객체로 바꾸면 앞쪽은 영영 옛 이름을 쥔다 — 그래서 반환값이 새 `Me` 가 아니다.
+ *
+ * 목록에 내가 없으면 아무 일도 하지 않는다. 그것은 "이름이 지워졌다"가 아니라 대개
+ * 목록이 덜 왔다는 뜻이고, 그때 이름을 비우면 프롬프트가 이름 없는 에이전트를 만든다.
+ */
+export function applySelfRename(me: Me, accounts: readonly { id: string; handle: string }[]): string | null {
+  const mine = accounts.find((a) => a.id === me.id);
+  if (!mine || mine.handle === me.handle) return null;
+  const was = me.handle;
+  me.handle = mine.handle;
+  return was;
+}
+
 export interface InboxBatch {
   entries: InboxEntry[];
   messages: MessageRow[];
