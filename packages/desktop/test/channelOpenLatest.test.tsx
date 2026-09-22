@@ -113,11 +113,25 @@ describe('채널을 열면 최신 대화에 선다', () => {
     expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
-  it('바닥이 아닌 자리를 알리는 스크롤이 오면 창이 닫힌다', () => {
+  /**
+   * **무엇이 사람의 손인지가 갈린다**(jaebin 보고 2026-09-22). 예전에는 "바닥이 아닌 자리를
+   * 알리는 스크롤" 이면 무조건 사람으로 쳤다. 그런데 채널에 들어가는 1초는 내용 높이가 가장
+   * 많이 흔들리는 구간이고, 스크롤 상자는 채널이 바뀌어도 같은 DOM 이라 떠난 채널의
+   * `scrollTop` 을 들고 있다 — 브라우저가 그것을 새 높이에 맞춰 **잘라내면** 똑같이 생긴
+   * 이벤트가 온다. 그것을 사람으로 읽어 창을 닫고 고정을 풀었더니, 뒤이어 도착하는 대화가
+   * 아래로 쌓이는 동안 화면이 들어오다 잡힌 자리에 남았다("위쪽으로 쭉 올라간다").
+   *
+   * 가려내는 표식은 **내용의 높이**다: 스크롤 막대를 끄는 손은 높이를 바꾸지 않는다.
+   */
+  it('높이가 그대로인데 바닥이 아닌 자리를 알리면 창이 닫힌다', () => {
     render(<ChannelPane />);
     const list = screen.getByTestId('channel-scroll');
     grewBelow(list);
-    // 사람이 움직였다 — 바닥이 아닌 자리를 브라우저가 알려 온다.
+    // 먼저 바닥에서 지금 높이를 알린다 — 다음 이벤트의 "높이는 그대로"가 뜻을 가지려면 필요하다.
+    (list as unknown as { scrollTop: number }).scrollTop = 1500;
+    fireEvent.scroll(list);
+    // 사람이 스크롤 막대를 끌어 올렸다 — 높이는 그대로고 자리만 위다.
+    (list as unknown as { scrollTop: number }).scrollTop = 0;
     fireEvent.scroll(list);
 
     const scrollIntoView = spyScroll();
@@ -126,6 +140,21 @@ describe('채널을 열면 최신 대화에 선다', () => {
 
     // 읽던 자리를 빼앗지 않는다 — 이 규율이 정착 창보다 위에 있다.
     expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it('내용이 자라며 온 스크롤로는 창이 닫히지 않는다', () => {
+    render(<ChannelPane />);
+    const list = screen.getByTestId('channel-scroll');
+    // 높이가 0 에서 2000 으로 바뀌었고, 그 성장과 함께 브라우저가 자리를 알려 왔다 —
+    // 사람은 아무것도 하지 않았다.
+    grewBelow(list);
+    fireEvent.scroll(list);
+
+    const scrollIntoView = spyScroll();
+    frame();
+
+    // 창은 열려 있어야 한다 — 여는 동안의 이 한 번에 바닥 추종이 죽는 것이 보고된 증상이다.
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
   });
 
   it('휠을 굴리면 그 자리에서 창이 닫힌다', () => {

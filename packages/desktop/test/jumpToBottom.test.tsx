@@ -55,11 +55,20 @@ const spyScroll = () => {
   return fn;
 };
 
-/** 스크롤 상자를 "위를 보고 있다"로 세운다(바닥까지 1500px 남았다). */
+/**
+ * 스크롤 상자를 "위를 보고 있다"로 세운다(바닥까지 1500px 남았다).
+ *
+ * **바닥에서 시작해 위로 올린다.** 채널에 들어온 사람이 서 있는 자리가 바닥이고, 그 한 번이
+ * "지금 내용 높이"를 알려 준다 — 그래야 다음 이벤트의 높이가 **그대로**라는 사실이 "사람이
+ * 스크롤 막대를 끌어 올렸다"의 표식이 된다. 높이가 함께 바뀐 이벤트는 브라우저가 자리를
+ * 잘라낸 것이라 사람이 한 일로 읽지 않는다(`channelOpenSticky.test.tsx` 의 근거).
+ */
 const lookUp = (el: HTMLElement) => {
   Object.defineProperty(el, 'scrollHeight', { configurable: true, value: 2000 });
   Object.defineProperty(el, 'clientHeight', { configurable: true, value: 500 });
-  Object.defineProperty(el, 'scrollTop', { configurable: true, writable: true, value: 0 });
+  Object.defineProperty(el, 'scrollTop', { configurable: true, writable: true, value: 1500 });
+  fireEvent.scroll(el);
+  (el as unknown as { scrollTop: number }).scrollTop = 0;
   fireEvent.scroll(el);
 };
 
