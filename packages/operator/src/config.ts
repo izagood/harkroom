@@ -22,6 +22,13 @@ export interface LocalAgentConfig {
 export interface CommunityConfig {
   /** 이 커뮤니티에서 이 머신이 돌릴 수 있는 에이전트. 키는 에이전트 계정 id. */
   agents: Record<string, LocalAgentConfig>;
+  /**
+   * 이 커뮤니티에서 **이 머신의** 오퍼레이터 id. 서버가 준 값이고 파일에 적어 두는 이유는
+   * 앱이 `GET /operators` 의 목록에서 자기 기기를 골라야 하기 때문이다 — 이름만으로는
+   * 고를 수 없다(같은 이름의 기기가 둘일 수 있다). 등록 때 적고, 붙을 때마다
+   * `/operators/self` 로 맞춘다(옛 설정을 뒤늦게 채우는 길이기도 하다).
+   */
+  operatorId?: string;
 }
 
 export interface OperatorConfig {
@@ -57,6 +64,19 @@ export async function writeConfig(path: string, cfg: OperatorConfig): Promise<vo
   const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
   await writeFile(tmp, `${JSON.stringify(cfg, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   await rename(tmp, path);
+}
+
+/**
+ * 그 커뮤니티의 오퍼레이터 id 를 적는다. **바뀐 때만 쓴다** — 붙을 때마다 부르는 자리라
+ * 같은 값을 다시 쓰면 `localAgents` 의 쓰기와 겹칠 창만 늘린다(둘 다 read-modify-write 다).
+ */
+export async function rememberOperatorId(path: string, baseUrl: string, operatorId: string): Promise<void> {
+  const key = communityKey(baseUrl);
+  const config = await readConfig(path);
+  const section = (config.communities[key] ??= { agents: {} });
+  if (section.operatorId === operatorId) return;
+  section.operatorId = operatorId;
+  await writeConfig(path, config);
 }
 
 /** baseUrl 을 설정 키로 정규화한다 — 끝 슬래시 하나 때문에 같은 서버가 두 섹션이 되면 안 된다. */

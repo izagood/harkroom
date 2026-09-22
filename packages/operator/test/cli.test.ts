@@ -68,7 +68,8 @@ describe('register', () => {
     expect(calls).toEqual([{ url: 'https://example.com/operators/claim', body: { code: 'ABCD-1234', name: 'lab' } }]);
     expect(await fileSecrets(join(dir, 'operator', 'secrets')).getToken('https://example.com')).toBe('hkop_secret');
     const cfg = JSON.parse(await readFile(join(dir, 'operator', 'operator.json'), 'utf8'));
-    expect(cfg.communities['https://example.com']).toEqual({ agents: {} });
+    // 오퍼레이터 id 도 함께 적힌다 — 앱이 `GET /operators` 에서 **이 기기**를 고르는 근거다.
+    expect(cfg.communities['https://example.com']).toEqual({ agents: {}, operatorId: 'op-1' });
   });
   it('이미 있는 커뮤니티의 로컬 설정(agents)은 건드리지 않는다 — 토큰만 새로', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'op-cli-'));

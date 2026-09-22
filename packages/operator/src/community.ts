@@ -42,6 +42,11 @@ export interface CommunityDeps {
   fetchImpl?: typeof fetch;
   /** 이 머신의 하네스 능력(`harnesses.ts`). hello 마다 읽는다 — 없으면 빈 표(옛 오퍼레이터와 같다). */
   harnesses?: () => OperatorCapabilities['harnesses'];
+  /**
+   * `/operators/self` 가 알려 준 **이 머신의 오퍼레이터 id**. 붙을 때마다 부른다 — 앱이
+   * 자기 기기를 고르려면 이 값이 로컬 설정에 있어야 하고, CLI 로 등록한 옛 설정에는 없다.
+   */
+  onSelf?: (operatorId: string) => void;
   log: (line: string) => void;
 }
 
@@ -89,7 +94,8 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
     try {
       const res = await fetchImpl(`${deps.baseUrl}/operators/self`, { headers: { authorization: `Bearer ${deps.token}` } });
       if (!res.ok) { deps.log(`/operators/self 실패(${res.status}) — personal 배정은 거절된다: ${deps.baseUrl}`); return null; }
-      const body = (await res.json()) as { ownerAccountId?: unknown };
+      const body = (await res.json()) as { id?: unknown; ownerAccountId?: unknown };
+      if (typeof body.id === 'string') deps.onSelf?.(body.id);
       return typeof body.ownerAccountId === 'string' ? body.ownerAccountId : null;
     } catch (err) {
       deps.log(`/operators/self 실패 — personal 배정은 거절된다: ${err instanceof Error ? err.message : String(err)}`);

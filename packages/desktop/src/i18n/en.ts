@@ -676,6 +676,12 @@ export const en = {
   'agentTurns.title': 'Running turns',
   'agentTurns.unknown': "Can't tell what's running",
   'agentTurns.unknownHint': 'This is not zero — a runner may still be working.',
+  'agents.create.runHere': 'Run it on this machine',
+  'agents.create.runHereNote':
+    'Assigns the new agent to this machine\u2019s operator, so it starts as soon as it is created. '
+    + 'Turn this off to assign it to another machine later.',
+  'agents.create.attachFailed':
+    'The agent was created, but it could not be assigned to this machine: {reason}. Assign it from the agent\u2019s detail screen.',
   'agents.create.failed': 'The agent was not created — that name may already be taken',
   /**
    * 이름 규칙. **`Invalid name` 이 아니라 무엇이 되는지를 적는다**(`sidebar.channel

@@ -44,7 +44,10 @@ export function createLocalAgentsPort(deps: {
       const communities: OperatorAgentsListResult['communities'] = [];
       for (const [rawUrl, section] of Object.entries(config.communities)) {
         const baseUrl = communityKey(rawUrl);
-        communities.push({ baseUrl, registered: (await deps.secrets.getToken(baseUrl)) !== null, agents: section.agents });
+        communities.push({
+          baseUrl, registered: (await deps.secrets.getToken(baseUrl)) !== null,
+          operatorId: section.operatorId ?? null, agents: section.agents,
+        });
       }
       return { communities };
     },
