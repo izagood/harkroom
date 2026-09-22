@@ -90,7 +90,7 @@ export type AgentHarness = (typeof AGENT_HARNESSES)[number];
  *
  * gemini 는 `PRESETS.gemini === 'unsupported'` 로 구현 자체가 없다.
  */
-export const RUNNABLE_HARNESSES = ['claude-code', 'codex'] as const satisfies readonly AgentHarness[];
+export const RUNNABLE_HARNESSES = ['claude-code', 'codex', 'opencode'] as const satisfies readonly AgentHarness[];
 
 /**
  * **이 하네스에 계정 풀 표면이 있는가.**
@@ -3057,6 +3057,8 @@ export function harnessBinaryName(harness: string | undefined | null): string | 
       return 'claude';
     case 'codex':
       return 'codex';
+    case 'opencode':
+      return 'opencode';
     // `gemini` 는 `RUNNABLE_HARNESSES` 에 없어 러너가 실행하지 않는다(`PRESETS.gemini
     // === 'unsupported'`). 실행하지 않는 것의 실행 파일 이름을 말할 이유가 없다.
     default:

@@ -15,7 +15,7 @@ import type { Me } from './harkroom.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, gateNotice, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts } from './prompt.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
-import { discoversSessionIdAfterTurn, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readsSessionTranscript, usesTuiForMention } from './adapters/index.js';
+import { discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readsSessionTranscript, usesTuiForMention, usesXdgHome } from './adapters/index.js';
 import { acceptsPtyInput } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
@@ -25,6 +25,8 @@ import type { AttentionLedger } from './attentionLedger.js';
 import { sessionTranscriptGrewSince, sessionTranscriptMtimeMs } from './harnessErrors.js';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
+import { opencodeDirs } from './opencodeHome.js';
+import { findOpencodeSessionId } from './opencodeSessions.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
 
@@ -181,6 +183,8 @@ export interface MentionTurnDeps {
   stateDir: string;
   /** 이 러너 전용 CODEX_HOME. 세션 발견과 자식 env 가 같은 루트를 봐야 한다. */
   codexHome: string;
+  /** opencode 의 러너 전용 XDG 루트(`opencodeHome.ts`). codex 의 홈과 같은 자리·같은 이유다. */
+  opencodeHome: string;
   /**
    * 이 턴을 돌릴 claude 계정 이름(`claudeAccounts.ts`). `null` 은 계정 지정 없음(시스템
    * 기본)이다. **세션 무효화 판정이 이 값을 쓴다** — 계정이 바뀌면 그 스레드의 claude
@@ -760,6 +764,7 @@ export async function runMentionTurn(
     extraMcpServers: deps.extraMcpServers,
     operatorBin: deps.operatorBin,
     codexHome: deps.codexHome,
+    opencodeHome: deps.opencodeHome,
     claudeConfigDir: deps.claudeConfigDir,
   });
 
@@ -1301,10 +1306,25 @@ export async function runMentionTurn(
     // 시작한다(spec §8, isFirstTurn 계산이 sessionId===null 도 보므로 실제로 그렇게 된다).
     // 그래도 원인 없이 반복되면 "왜 이 스레드는 매번 새로 시작하지"를 아무도 알 수 없으니
     // 러너 로그에는 남긴다(spec §8 "+ 러너 로그 경고").
-    const discovered = await findCodexSessionId(codexSessionsDir(deps.codexHome), { cwd: rec.workspaceDir, sinceMs });
+    /**
+     * **재료는 하네스마다 다르다.** codex 는 rollout 파일을 훑고, opencode 는 CLI 에 묻는다
+     * (`session list --format json`, 세션이 SQLite 안에 있어 파일 경로가 없다). 어느 쪽이든
+     * 맞추는 열쇠는 같다 — **그 턴을 돌린 워크스페이스 경로**.
+     *
+     * 이름으로 갈리지 않으려고 표에 묻는다(`usesXdgHome`): XDG 로 상태를 옮기는 하네스가
+     * 지금은 opencode 하나이고, 그 하네스의 목록 명령이 곧 이 갈래다.
+     */
+    const discovered = usesXdgHome(def.harness)
+      ? await findOpencodeSessionId({
+        command: harnessCommand(def.harness),
+        env: { ...process.env, ...opencodeDirs(deps.opencodeHome) } as Record<string, string>,
+        cwd: rec.workspaceDir,
+        sinceMs,
+      })
+      : await findCodexSessionId(codexSessionsDir(deps.codexHome), { cwd: rec.workspaceDir, sinceMs });
     if (discovered === null) {
       console.warn(
-        `[mentionTurn] ${key}: codex 세션 발견 실패 (cwd=${rec.workspaceDir}, sinceMs=${sinceMs}) — 다음 턴은 새 세션으로 다시 시작한다`,
+        `[mentionTurn] ${key}: ${def.harness} 세션 발견 실패 (cwd=${rec.workspaceDir}, sinceMs=${sinceMs}) — 다음 턴은 새 세션으로 다시 시작한다`,
       );
     }
     rec = { ...rec, sessionId: discovered };

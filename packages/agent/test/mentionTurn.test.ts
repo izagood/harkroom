@@ -282,6 +282,7 @@ async function makeDeps(fake: FakeHarkroom, overrides: Partial<MentionTurnDeps> 
     mcpConfigPath: '/fake/mcp.json',
     stateDir,
     codexHome: join(stateDir, 'codex-home'),
+    opencodeHome: join(stateDir, 'opencode-home'),
     // 기본은 계정 지정 없음(시스템 기본) — 계정을 재는 테스트가 overrides 로 넘긴다.
     claudeAccount: null,
     claudeConfigDir: null,

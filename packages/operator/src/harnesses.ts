@@ -12,9 +12,25 @@ import { join } from 'node:path';
 import type { OperatorCapabilities, AgentHarness } from '@harkroom/shared';
 
 /** 러너가 실제로 부르는 실행 파일 이름(`turn.ts::PRESETS.command`). */
-export const HARNESS_BINARIES: Record<Extract<AgentHarness, 'claude-code' | 'codex'>, string> = {
+export const HARNESS_BINARIES: Record<Extract<AgentHarness, 'claude-code' | 'codex' | 'opencode'>, string> = {
   'claude-code': 'claude',
   codex: 'codex',
+  opencode: 'opencode',
+};
+
+/**
+ * PATH 에 없어도 **거기 있으면 설치된 것**인 자리(2026-09-22).
+ *
+ * opencode 의 공식 설치본은 `~/.opencode/bin` 에 들어가고 **그 디렉터리를 PATH 에 넣는 것은
+ * 사람 몫**이다. 로그인 셸 PATH 만 보면 멀쩡히 설치된 머신이 `installed:false` 로 잡히고,
+ * 서버는 그 하네스로의 배정을 409 로 거절한다 — 사람은 "설치했는데 왜 안 되지"만 본다.
+ *
+ * 그래서 **설치 관례로 아는 자리**를 함께 본다. 이것은 PATH 를 대신하지 않는다: 러너가
+ * 실행할 때는 여전히 PATH 가 필요하므로, 여기서 발견해도 `path` 로 잡히지 않았다면
+ * `viaKnownDir` 로 표시해 화면이 그 사실을 말할 수 있게 한다.
+ */
+const KNOWN_INSTALL_DIRS: Partial<Record<keyof typeof HARNESS_BINARIES, (home: string) => string>> = {
+  opencode: (home) => join(home, '.opencode', 'bin'),
 };
 
 export interface DetectDeps {
@@ -27,9 +43,15 @@ export interface DetectDeps {
 
 /** 러너와 같은 규칙으로 자격증명 파일 자리를 정한다(`claudeAccounts.ts`·`codexHome.ts`). */
 function credentialFile(harness: keyof typeof HARNESS_BINARIES, env: NodeJS.ProcessEnv, home: string): string {
-  return harness === 'claude-code'
-    ? join(env.CLAUDE_CONFIG_DIR || join(home, '.claude'), '.credentials.json')
-    : join(env.CODEX_HOME || join(home, '.codex'), 'auth.json');
+  switch (harness) {
+    case 'claude-code':
+      return join(env.CLAUDE_CONFIG_DIR || join(home, '.claude'), '.credentials.json');
+    case 'codex':
+      return join(env.CODEX_HOME || join(home, '.codex'), 'auth.json');
+    // opencode 는 XDG 를 따른다 — 자리가 한 단계 깊다(`<data>/opencode/auth.json`).
+    case 'opencode':
+      return join(env.XDG_DATA_HOME || join(home, '.local', 'share'), 'opencode', 'auth.json');
+  }
 }
 
 export async function detectHarnesses(deps: DetectDeps): Promise<OperatorCapabilities['harnesses']> {
@@ -39,6 +61,11 @@ export async function detectHarnesses(deps: DetectDeps): Promise<OperatorCapabil
     let installed = false;
     for (const dir of dirs) {
       if (await deps.exists(join(dir, bin))) { installed = true; break; }
+    }
+    // PATH 에 없으면 설치 관례 자리를 한 번 더 본다(위 `KNOWN_INSTALL_DIRS` 주석).
+    if (!installed) {
+      const known = KNOWN_INSTALL_DIRS[harness]?.(deps.home);
+      if (known && await deps.exists(join(known, bin))) installed = true;
     }
     const loggedIn = await deps.exists(credentialFile(harness, deps.env, deps.home));
     out[harness] = { installed, loggedIn };

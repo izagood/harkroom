@@ -51,6 +51,7 @@ function plan(harness: AgentHarness, over: Partial<BuildTurnCommandOptions> = {}
     mcpConfigPath: join(dir, 'mcp.json'),
     operatorBin: '/opt/harkroom/harkroom-operator',
     codexHome: join(dir, 'codex-home'),
+    opencodeHome: join(dir, 'opencode-home'),
     claudeConfigDir: null,
     ...over,
   });
@@ -365,14 +366,26 @@ describe('표에 있는 것과 러너가 돌리는 것은 다른 질문이다', 
     }
   });
 
-  it('어댑터가 있어도 RUNNABLE 이 아닐 수 있다 — opencode 가 지금 그 자리다', () => {
+  /**
+   * **opencode 가 그 자리를 떠났다**(2026-09-22). 표만 있고 러너가 안 돌리던 하네스였는데,
+   * 실물로 재고 열었다 — 브릿지 MCP · 붙여넣기 주입 · 읽기 전용 에이전트 · 세션 발견.
+   * 그래서 이 테스트는 "아직 아니다"가 아니라 **"무엇을 재고 열었나"**를 고정한다.
+   */
+  it('opencode 는 재고 열었다 — 권한 두 갈래와 argv 조립이 함께 선다', () => {
     const adapter = adapterFor('opencode');
-    expect(RUNNABLE.includes('opencode')).toBe(false);
-    // 아직 못 잰 것이 표에 그대로 남아 있어야 한다. 지어내면 그 값이 러너의 판단이 된다.
-    expect(adapter.supportedMentionPermissions).toEqual(['auto']);
+    expect(RUNNABLE.includes('opencode')).toBe(true);
+    // 권한 두 갈래가 **서로 다른** argv 를 낸다(auto=--auto, readonly=--agent <읽기전용>).
+    expect(adapter.supportedMentionPermissions).toEqual(['auto', 'readonly']);
+    expect(plan('opencode').args).toContain('--auto');
+    // 기록은 여전히 안 읽는다 — 세션 **목록**을 읽는 것과 기록을 해석하는 것은 다르다.
     expect(adapter.transcript?.parsed).toBe(false);
-    // 그리고 argv 조립은 닫혀 있어야 한다 — 표가 있다고 러너가 돌리면 안 된다.
-    expect(() => plan('opencode')).toThrow();
+  });
+
+  it('그래도 표가 있다고 러너가 도는 것은 아니다 — 그 경계는 gemini 가 지킨다', () => {
+    // 경계 자체는 남아 있어야 한다. `RUNNABLE_HARNESSES` 에 없는 하네스는 argv 조립이
+    // 닫혀 있고, 그것이 "표에 있는 것"과 "러너가 돌리는 것"을 가르는 자리다.
+    expect(RUNNABLE.includes('gemini')).toBe(false);
+    expect(() => plan('gemini')).toThrow();
   });
 
   it('장부가 없는 하네스는 아무 파일도 만들지 않는다', async () => {

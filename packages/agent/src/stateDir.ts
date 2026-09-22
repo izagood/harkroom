@@ -68,6 +68,8 @@ export interface AgentStatePaths {
   workspaceBaseDir: string;
   /** 개인 Codex 설정과 분리한 이 러너 전용 CODEX_HOME. */
   codexHomeDir: string;
+  /** opencode 의 러너 전용 XDG 루트(config·data·state 세 디렉터리가 그 아래 선다). */
+  opencodeHomeDir: string;
   /** 서버별로 갈리기 **전** 경로(handle 만으로 스코프). 존재 확인용이고 자동 이전은 하지 않는다. */
   legacyPath: string;
 }
@@ -93,6 +95,7 @@ export function resolveAgentStateDir(
     mcpDir: join(agentStateDir, 'mcp'),
     workspaceBaseDir: join(agentStateDir, 'workspaces'),
     codexHomeDir: join(agentStateDir, 'codex-home'),
+    opencodeHomeDir: join(agentStateDir, 'opencode-home'),
     legacyPath: join(baseDir, handle),
   };
 }
