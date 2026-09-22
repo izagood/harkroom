@@ -210,8 +210,8 @@ describe('#172 `@팀` 멘션', () => {
 
     // MCP 로 나가는 본문(에이전트가 읽는 것)은 **지금의** 이름이다.
     const { denormalizeBodies } = await import('../src/services/mentions.js');
-    const [back] = await denormalizeBodies(pool, [{ body: `<@team:${teamId}> 배포하자` }]);
-    expect(back.body).toBe('@shipit 배포하자');
+    const back = await denormalizeBodies(pool, [{ body: `<@team:${teamId}> 배포하자` }]);
+    expect(back[0]?.body).toBe('@shipit 배포하자');
 
     // 원래 발화도 같은 토큰을 담고 있다 — 위 변환이 그 발화에도 그대로 걸린다.
     const row = await pool.query(`select body from message where id = $1`, [messageId]);
