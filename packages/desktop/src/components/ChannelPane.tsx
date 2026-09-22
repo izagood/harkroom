@@ -91,6 +91,11 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    */
   const lastScrollTopRef = useRef(0);
   /**
+   * 직전 스크롤 이벤트 때의 **내용 높이.** 사람의 손과 브라우저의 잘라내기를 가르는 데 쓴다 —
+   * 근거는 `onListScroll` 의 주석.
+   */
+  const lastScrollHeightRef = useRef(0);
+  /**
    * 과거 한 페이지를 **받는 중인가.** 스크롤 이벤트는 손짓 한 번에 수십 번 오므로, 이 문이
    * 없으면 맨 위에 닿는 순간 같은 페이지를 여러 번 요청한다.
    */
@@ -263,7 +268,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     // 재는 기준이 0 으로 남아, 사람이 위로 올린 것을 "내용이 자랐다"로 오해한다 —
     // 그러면 읽던 자리를 빼앗는다.
     const el = listRef.current;
-    if (el) lastScrollTopRef.current = el.scrollTop;
+    if (el) { lastScrollTopRef.current = el.scrollTop; lastScrollHeightRef.current = el.scrollHeight; }
   };
 
   /** 붙잡을 후보 줄들. DOM 순서가 곧 세로 순서라 이분 탐색이 그대로 듣는다. */
@@ -296,6 +301,9 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     const el = listRef.current;
     const held = anchorRef.current;
     if (!el || !held || stickyRef.current) return;
+    // 여는 중에는 붙잡지 않는다 — 그 1.2초의 주인은 "가장 최신"이고, 여기서 손을 대면
+    // 들어오다 잡힌 어중간한 자리에 **사람이 아무것도 안 했는데** 못이 박힌다.
+    if (Date.now() < settleUntilRef.current) return;
     // 사라진 줄(삭제·창 밖으로 밀려남)을 기준으로 삼으면 `offsetTop` 이 0 이라 맨 위로 튄다.
     if (!held.node.isConnected) { anchorRef.current = null; return; }
     const next = anchoredScrollTop(held.anchor, held.node.offsetTop);
@@ -386,6 +394,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   useLayoutEffect(() => {
     // 대기 중인 앵커는 **떠난 채널의 자리**다 — 들고 가면 새 채널에서 엉뚱한 곳을 잡는다.
     olderAnchorRef.current = null;
+    anchorRef.current = null;
     scrollToBottom();
     // 여는 순간부터 짧게 바닥에 붙여 둔다 — 근거는 `OPEN_SETTLE_MS` 의 주석.
     startSettle();
@@ -525,7 +534,9 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     // **자라기 전에** 적어 둔다 — 스크롤이 멎은 지금이 마지막 기회다(`restoreAnchor` 의 근거).
     captureAnchor();
     const prevTop = lastScrollTopRef.current;
+    const prevHeight = lastScrollHeightRef.current;
     lastScrollTopRef.current = el.scrollTop;
+    lastScrollHeightRef.current = el.scrollHeight;
     const near = isNearBottom(el);
     atBottomRef.current = near;
     // 사람이 손으로 바닥까지 내려왔으면 버튼은 할 일이 없다. 다시 붙는다.
@@ -535,9 +546,26 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       return;
     }
     /**
-     * **정착 창은 여기서 닫는다.** 우리가 스스로 붙인 자리는 늘 바닥이므로, "바닥이 아니다"를
-     * 알리는 스크롤 이벤트는 우리가 낸 것이 아니다 — 사람이 움직였다는 뜻이다. 창을 시각만으로
-     * 닫으면 그 1.2초 동안 사람의 스크롤과 다투게 된다.
+     * **내용의 높이가 방금 바뀌었으면 이 이벤트는 사람이 낸 것이 아니다**(jaebin 보고
+     * 2026-09-22, #852 뒤에도 남은 증상: "채널에 들어간 다음에 위쪽으로 스크롤이 쭉 올라간다").
+     *
+     * 채널에 들어가는 1초는 높이가 가장 많이 흔들리는 구간이다 — 스크롤 상자는 채널이 바뀌어도
+     * **같은 DOM** 이라 떠난 채널의 `scrollTop` 을 그대로 들고 있고, 새 채널의 첫 페이지가
+     * 아직 없으면 브라우저가 그 값을 내용 높이에 맞춰 **잘라낸다.** 잘린 값은 `scrollTop` 이
+     * 줄어든 것으로 보이므로 아래 판정이 "사람이 위로 올렸다"로 읽었고, 그 한 번에
+     * **바닥 추종(`stickyRef`)이 꺼졌다.** 그러면 뒤이어 도착하는 대화가 전부 아래로 쌓이는
+     * 동안 화면은 들어오다 잡힌 자리에 남고, 사람 눈에는 대화가 위로 쭉 올라가 버린다.
+     *
+     * 그래서 **높이가 바뀐 이벤트는 읽지 않는다.** 사람의 손은 `wheel`·`touchmove` 로 오고
+     * (그쪽이 정착 창을 닫는다), 스크롤 막대를 끄는 손은 높이를 바꾸지 않는다 — 가려낼 것이
+     * 정확히 이 한 가지다.
+     */
+    if (el.scrollHeight !== prevHeight) return;
+
+    /**
+     * **정착 창은 여기서 닫는다.** 우리가 스스로 붙인 자리는 늘 바닥이므로, 높이가 그대로인데
+     * "바닥이 아니다"를 알리는 스크롤 이벤트는 우리가 낸 것이 아니다 — 사람이 움직였다는
+     * 뜻이다. 창을 시각만으로 닫으면 그 1.2초 동안 사람의 스크롤과 다투게 된다.
      */
     endSettle();
 
