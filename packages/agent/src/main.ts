@@ -18,13 +18,13 @@
 // 진짜 서버에 붙으려 든다.
 import { execFile } from 'node:child_process';
 import { access, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { loadConfig, runnerLabel } from './config.js';
 import { HarkroomAgentClient } from './harkroom.js';
 import { runMentionTurn, type MentionTurnDeps } from './mentionTurn.js';
 import { runPtyTurn } from './pty.js';
 import { SessionStore } from './sessions.js';
-import { resolveAgentStateDir } from './stateDir.js';
+import { ensureNameLink, resolveAgentStateDir } from './stateDir.js';
 import { assertHarnessContract, readExtraMcpServers } from './turn.js';
 import { createStoppableSleep } from './stoppableSleep.js';
 import type { Exec } from './workspace.js';
@@ -217,6 +217,11 @@ const stateDirNames = await readdir(config.stateDir).catch(() => [] as string[])
 const {
   agentStateDir, legacyPath, sessionsPath, workspaceBaseDir, codexHomeDir,
 } = resolveAgentStateDir(config.stateDir, me.handle, me.id, config.agentInstance, stateDirNames);
+
+// 뿌리 이름이 id 하나라(#850) 사람이 눈으로 찾을 길을 따로 낸다: `by-name/<handle> -> ../<뿌리>`.
+// 인스턴스가 붙어도 링크는 **뿌리**를 가리킨다 — 인스턴스는 그 아래 한 단이고, 사람이 찾는
+// 것은 "이 에이전트의 자리" 이지 "이 인스턴스의 자리" 가 아니다.
+await ensureNameLink(config.stateDir, me.handle, basename(config.agentInstance ? dirname(agentStateDir) : agentStateDir));
 
 // 대화형 `codex resume` 은 --ignore-user-config 를 받지 않는다. 개인 config.toml/MCP 를
 // 물려주지 않으면서 기존 로그인은 재사용하도록 Harkroom 전용 CODEX_HOME 을 준비한다.
