@@ -9,6 +9,7 @@
 //! 조용히 성공한 척하면 프런트가 평문 경로로 내려갈 기회를 잃는다.
 
 mod daemon_client;
+mod external_link;
 mod login_path;
 mod notification;
 
@@ -597,6 +598,12 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         // 링크를 OS 로 넘기는 표면. 권한은 capabilities/default.json 에서 허용한다.
         .plugin(tauri_plugin_shell::init())
+        // 웹뷰가 앱 밖으로 **이동하는 것 자체**를 막고 그 주소를 브라우저로 넘긴다.
+        // 화면단(`MessageBody`)의 왼쪽 클릭 처리와 겹치지 않는다 — 그쪽이 못 보는 경로,
+        // 예컨대 macOS 웹뷰 기본 우클릭 메뉴의 `Open Link` 가 여기로 온다
+        // (`external_link.rs` 머리 주석). **shell 플러그인보다 뒤에 둔다** — 훅 안에서
+        // 그 플러그인의 상태를 꺼내 쓴다.
+        .plugin(external_link::init())
         // 앱 내부 업데이트. 화면(설정 → Updates)이 확인·설치를 부르고, 설치가 끝나면
         // `process` 플러그인의 relaunch 로 새 버전으로 다시 뜬다. 두 플러그인이 한 벌이다 —
         // 재시작 표면이 없으면 사람이 손으로 앱을 껐다 켜야 하고, 그동안 설치된 것과
