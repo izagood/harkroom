@@ -77,10 +77,11 @@ describe('부름과 지칭', () => {
   });
 
   it('코드·인용 안의 토큰은 부름도 지칭도 아니다 — 없던 이름을 만들지 않는다(#298·#592)', () => {
-    const quoted = splitMentionCalls(`> 앞에서 <@${A}> 라고 했다`, byAgent);
-    expect(quoted).toEqual({ call: [], ref: [] });
-    const coded = splitMentionCalls(`\`<@${A}>\` 라고 쓰면 된다`, byAgent);
-    expect(coded).toEqual({ call: [], ref: [] });
+    const empty = { call: [], ref: [], targetCall: [], targetRef: [] };
+    expect(splitMentionCalls(`> 앞에서 <@${A}> 라고 했다`, byAgent)).toEqual(empty);
+    expect(splitMentionCalls(`\`<@${A}>\` 라고 쓰면 된다`, byAgent)).toEqual(empty);
+    // 팀 토큰도 같은 판정을 지난다(#849) — 규칙이 두 벌이면 한쪽만 새는 날이 온다.
+    expect(splitMentionCalls(`> 앞에서 <@team:${TEAM}> 라고 했다`, byAgent)).toEqual(empty);
   });
 
   it('모르는 계정은 사람으로 본다 — 막는 쪽이 아니라 부르는 쪽으로 기운다', () => {
@@ -88,4 +89,50 @@ describe('부름과 지칭', () => {
     const { call } = splitMentionCalls(`한가운데 <@${unknown}> 이름`, byAgent);
     expect(call).toEqual([unknown]);
   });
+
+  /**
+   * #849 — **팀·집합도 같은 규칙을 지난다.** 초판은 계정만 갈랐고, 팀은 이 판정을 통째로
+   * 비껴가 에이전트의 보고 한가운데 적힌 `@팀` 이 그 팀을 깨웠다.
+   *
+   * 종류가 곧 답이라 조회가 없다: **팀은 에이전트**(팀 라우트가 `not_an_agent` 로 거절)이고
+   * **집합은 사람**(`addHandleGroupMembers` 가 `kind = 'human'`)이다.
+   */
+  describe('팀·집합 (#849)', () => {
+    it('에이전트가 본문 한가운데 적은 팀은 지칭이다', () => {
+      const { targetCall, targetRef } = splitMentionCalls(`배포는 <@team:${TEAM}> 일이다`, byAgent);
+      expect(targetCall).toEqual([]);
+      expect(targetRef).toEqual([{ kind: 'team', id: TEAM }]);
+    });
+
+    it('머리 런 안이면 에이전트가 적어도 부름이다', () => {
+      const { targetCall, targetRef } = splitMentionCalls(`<@team:${TEAM}> 맡아라`, byAgent);
+      expect(targetCall).toEqual([{ kind: 'team', id: TEAM }]);
+      expect(targetRef).toEqual([]);
+    });
+
+    it('사람이 쓴 것은 자리와 무관하게 부름이다', () => {
+      const { targetCall } = splitMentionCalls(
+        `이건 <@team:${TEAM}> 한테 맡기자`, { authorIsAgent: false, isAgent: () => true },
+      );
+      expect(targetCall).toEqual([{ kind: 'team', id: TEAM }]);
+    });
+
+    /** 집합은 **사람**이다 — 에이전트→사람은 어디에 써도 부름이라는 규칙이 그대로 걸린다. */
+    it('집합은 에이전트가 한가운데 적어도 부름이다', () => {
+      const { targetCall, targetRef } = splitMentionCalls(`정리하면 <@group:${GROUP}> 판단이 필요하다`, byAgent);
+      expect(targetCall).toEqual([{ kind: 'group', id: GROUP }]);
+      expect(targetRef).toEqual([]);
+    });
+
+    /** 한 번이라도 부르면 부름이다 — 계정과 같은 규칙(머리와 본문에 함께 나온 경우). */
+    it('머리와 본문에 함께 나오면 부름이다', () => {
+      const body = `<@team:${TEAM}> 맡아라. 이건 <@team:${TEAM}> 일이다`;
+      const { targetCall, targetRef } = splitMentionCalls(body, byAgent);
+      expect(targetCall).toEqual([{ kind: 'team', id: TEAM }]);
+      expect(targetRef).toEqual([]);
+    });
+  });
 });
+
+const TEAM = '55555555-5555-4555-8555-555555555555';
+const GROUP = '66666666-6666-4666-8666-666666666666';
