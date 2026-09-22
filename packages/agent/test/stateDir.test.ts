@@ -240,8 +240,18 @@ describe('ensureNameLink (#850)', () => {
     expect(await readdir(real)).toEqual(['keep.txt']);
   });
 
-  /** 링크를 못 만들어도 던지지 않는다 — 없어도 러너는 똑같이 돈다. */
+  /**
+   * 링크를 못 만들어도 던지지 않는다 — 없어도 러너는 똑같이 돈다.
+   *
+   * **뿌리 자리에 파일을 둬서** 실패를 만든다. 처음에는 `/proc/...` 같은 못 쓰는 경로를
+   * 썼는데 그것은 OS 마다 다르게 굴고(리눅스 CI 에서 5초를 먹고 타임아웃했다), 테스트가
+   * 재려는 것은 "이 환경에서 못 만든다"가 아니라 **"못 만들면 조용히 넘어간다"** 다.
+   * 파일 아래에는 어느 OS 에서도 디렉터리를 못 만든다(ENOTDIR).
+   */
   it('실패해도 던지지 않는다', async () => {
-    await expect(ensureNameLink('/proc/nonexistent-harkroom', 'forge', 'acct-1')).resolves.toBeUndefined();
+    const dir = await mkdtemp(join(tmpdir(), 'namelink-'));
+    const notADir = join(dir, 'base');
+    await writeFile(notADir, 'not a directory');
+    await expect(ensureNameLink(notADir, 'forge', 'acct-1')).resolves.toBeUndefined();
   });
 });
