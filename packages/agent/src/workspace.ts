@@ -1,9 +1,13 @@
 // 스레드 하나에 avcs 워크스페이스 하나를 붙여 격리한다. git worktree 가 아니라 avcs
 // workspace 를 쓰는 이유는 러너의 전제 자체가 "코드 협업 기반은 avcs" 이기 때문이다 —
-// git worktree 로 격리하면 그 전제와 모순된다. 이름에 handle 을 반드시 넣는 이유:
+// git worktree 로 격리하면 그 전제와 모순된다. 이름에 **에이전트를 반드시 넣는** 이유:
 // 같은 스레드에 두 에이전트가 멘션될 수 있으므로(spec §3), 스레드만으로 이름을 지으면
 // 둘째 에이전트의 project 호출이 실패하거나 — 최악의 경우 — 첫째 에이전트의 디렉터리를
 // 그대로 넘겨받아 격리가 조용히 사라진다.
+//
+// **넣는 것은 id 다**(#850, jaebin 지시: 안은 id, 부르는 이름은 언제 바꿔도 동작에 영향이
+// 없어야 한다 — 디렉터리도). 초판은 handle 이었고 그것은 이름이 바뀌면 거짓말로 남는다.
+// 에이전트를 가르는 일은 id 가 똑같이 한다.
 
 import { createHash } from 'node:crypto';
 import { readdir, stat } from 'node:fs/promises';
@@ -18,9 +22,8 @@ export type Exec = (
 /**
  * threadKey(`channelId/threadRootId` 형태, sessions.ts 의 SessionStore.threadKey 참고)를
  * 그대로 디렉터리 이름에 쓰지 않는 이유: 슬래시를 포함하고 길이도 일정하지 않다. sha256
- * 앞 8자로 줄이면 길이가 고정되고 충돌 확률은 무시할 만큼 낮다. handle 은 HANDLE_PATTERN
- * (`[a-zA-Z0-9_-]{2,32}`, @harkroom/shared)으로 이미 디렉터리 이름에 안전한 문자만 허용되므로
- * 별도로 다듬지 않는다.
+ * 앞 8자로 줄이면 길이가 고정되고 충돌 확률은 무시할 만큼 낮다. 계정 id 는 UUID 라 경로에
+ * 위험한 문자가 들어올 입력 자체가 없다 — `stateDir.ts` 가 같은 이유로 문자 방어를 두지 않는다.
  *
  * ## #846: **이름이 바뀌어도 같은 워크스페이스로 돌아온다**
  *
@@ -28,18 +31,15 @@ export type Exec = (
  * 스레드마다 **새 워크스페이스가 하나씩 더** 생기고, 그때까지 그 스레드에서 하던 일은
  * 옛 디렉터리에 남겨진다 — 커밋하지 않은 변경이 있으면 그대로 잃는다.
  *
- * 그래서 `existingNames` 에 `-<hash>` 로 끝나는 이름이 이미 있으면 **그것을 쓴다.**
- * `baseDir` 는 이미 에이전트별로 갈려 있으므로(`stateDir.ts` 의 `workspaceBaseDir` 는
- * `<handle>-<id>/workspaces` 다) 그 안에서 스레드를 가르는 것은 해시 하나다. 즉 이 함수의
- * handle 은 디렉터리 안에서는 **사람이 알아보라고 붙은 꼬리표**이고, `stateDir.ts` 가
- * 같은 판단을 같은 이유로 적어 두었다.
+ * 그래서 `existingNames` 에 `-<hash>` 로 끝나는 이름이 이미 있으면 **그것을 쓴다**(옛
+ * `harkroom-<handle>-<hash>` 가 그렇다). `baseDir` 는 이미 에이전트별로 갈려 있으므로
+ * (`stateDir.ts` 의 `workspaceBaseDir`) 그 안에서 스레드를 가르는 것은 해시 하나다.
  *
- * **그런데 파일 이름 밖에서는 꼬리표가 아니다.** 이 이름은 `avcs workspace project <이름>`
+ * **이름을 뺀다고 에이전트를 빼는 것이 아니다.** 이 문자열은 `avcs workspace project <이름>`
  * 의 **avcs 워크스페이스 이름**이기도 하다(아래). 같은 저장소를 가리키는 두 에이전트가 한
- * 스레드에 불리면 해시만으로 지은 이름은 **같아지고**, 그때 둘째의 project 호출이 실패하거나
- * 첫째의 워크스페이스를 넘겨받아 격리가 조용히 사라진다(이 파일 머리의 경고). 그래서
- * 새로 짓는 이름에서는 handle 을 **빼지 않는다** — 바꾸는 것은 "이미 있으면 그것을 쓴다"
- * 하나뿐이다.
+ * 스레드에 불리면 에이전트를 안 넣은 이름은 **같아지고**, 그때 둘째의 project 호출이
+ * 실패하거나 첫째의 워크스페이스를 넘겨받아 격리가 조용히 사라진다(이 파일 머리의 경고).
+ * 그 자리를 handle 대신 **id** 가 채운다 — 가르는 일은 똑같이 하고 이름이 바뀌어도 안 늙는다.
  *
  * 옮기지 않는 이유는 `resolveAgentStateDir` 과 같다: 같은 에이전트의 다른 인스턴스가 지금
  * 그 안에서 돌고 있을 수 있고, avcs 가 그 이름으로 워크스페이스를 알고 있다 — 디렉터리만
@@ -49,10 +49,10 @@ export type Exec = (
  * 계산에 디스크를 섞으면 테스트가 임시 디렉터리를 깔아야 한다. 안 주면 예전 그대로다.
  */
 export function workspaceName(
-  handle: string, threadKey: string, existingNames?: readonly string[],
+  agentId: string, threadKey: string, existingNames?: readonly string[],
 ): string {
   const hash = createHash('sha256').update(threadKey).digest('hex').slice(0, 8);
-  return existingNames?.find((n) => n.endsWith(`-${hash}`)) ?? `harkroom-${handle}-${hash}`;
+  return existingNames?.find((n) => n.endsWith(`-${hash}`)) ?? `harkroom-${agentId}-${hash}`;
 }
 
 /**
@@ -67,10 +67,10 @@ export function workspaceName(
  * 뿌리가 아직 없으면(첫 턴) 읽을 것이 없다 — 그때는 빈 목록이고 새 이름으로 만든다.
  */
 export async function resolveWorkspaceName(
-  baseDir: string, handle: string, threadKey: string,
+  baseDir: string, agentId: string, threadKey: string,
 ): Promise<string> {
   const existing = await readdir(baseDir).catch(() => [] as string[]);
-  return workspaceName(handle, threadKey, existing);
+  return workspaceName(agentId, threadKey, existing);
 }
 
 /**
@@ -87,9 +87,9 @@ export async function resolveWorkspaceName(
  */
 export async function ensureWorkspace(
   exec: Exec,
-  opts: { handle: string; threadKey: string; baseDir: string; repoDir: string },
+  opts: { agentId: string; threadKey: string; baseDir: string; repoDir: string },
 ): Promise<string> {
-  const name = await resolveWorkspaceName(opts.baseDir, opts.handle, opts.threadKey);
+  const name = await resolveWorkspaceName(opts.baseDir, opts.agentId, opts.threadKey);
   const dir = join(opts.baseDir, name);
 
   // access() 는 존재 여부만 보고 파일과 디렉터리를 구분하지 않는다 — 그 경로에 일반 파일이

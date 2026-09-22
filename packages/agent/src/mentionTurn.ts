@@ -322,13 +322,13 @@ export async function resolveWorkspaceDir(
     // 이름이 바뀌어도 같은 자리로 돌아온다(#846) — `ensureWorkspace` 와 **같은 함수**를 쓴다.
     const dir = join(
       deps.workspaceBaseDir,
-      await resolveWorkspaceName(deps.workspaceBaseDir, deps.me.handle, threadKey),
+      await resolveWorkspaceName(deps.workspaceBaseDir, deps.me.id, threadKey),
     );
     await mkdir(dir, { recursive: true });
     return dir;
   }
   return ensureWorkspace(deps.exec, {
-    handle: deps.me.handle,
+    agentId: deps.me.id,
     threadKey,
     baseDir: deps.workspaceBaseDir,
     repoDir: def.workingDir,
