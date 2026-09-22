@@ -16,7 +16,8 @@ import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
  * 1. 팀을 멘션하면 팀원 전원의 inbox 에 들어간다.
  * 2. 채널을 볼 수 없는 팀원은 들어가지 않는다(`fanOutMention` 의 가시성 판정 하나).
  * 3. 부른 사람 자신은 빠진다.
- * 4. 본문은 손대지 않는다 — `@팀` 은 원문에 그대로 남는다.
+ * 4. 본문은 **정본 토큰**으로 저장된다 — `@팀` → `<@team:id>`(#845). 초판은 원문을 그대로
+ *    뒀는데, 그러면 팀 이름을 바꾼 뒤 과거 본문이 아무것도 가리키지 않는 글자가 된다.
  * 5. 비활성 팀원은 **부름이 닿지 않는다** — 채널에 넣을 때와 같은 판정을 멘션에서도 한다.
  * 6. 같은 팀을 두 번 적어도 알림은 한 번(`notified` 중복 제거).
  * 7. `memberCount` 가 팀 행을 주는 **모든 경로**에 실린다(#285 가 집합에 대해 정한 계약).
@@ -175,16 +176,51 @@ describe('#172 `@팀` 멘션', () => {
     });
   });
 
-  it('4. 부른 사람 자신은 빠지고, 본문은 손대지 않는다', async () => {
+  it('4. 부른 사람 자신은 빠지고, 본문은 정본 토큰으로 저장된다', async () => {
     const messageId = await post(a1Pat, publicId, '@release 내가 부른다');
 
     expect(await inboxFor(a1Pat, messageId)).toEqual([]);
     expect(await inboxFor(a2Pat, messageId)).toEqual([{ reason: 'mention' }]);
 
+    /**
+     * **의도된 회귀선이다(#845).** 초판은 *"팀 이름은 계정이 아니므로 `normalizeMentions`
+     * 가 지나친다 — `@release` 가 원문에 그대로 남아야 한다"* 고 못 박았다. 그 결정을
+     * 뒤집는다: 이름이 **바뀌기 때문**이다(`PATCH /teams/:id`). 글자로 남겨 두면 이름을
+     * 바꾼 순간 과거 본문의 `@release` 는 아무것도 가리키지 않고, 그 손실은 조용하다 —
+     * 알림은 이미 갔으므로(inbox 행은 id 다) 화면과 프롬프트에서만 깨진다.
+     *
+     * #271 이 계정에 대해 같은 판단을 이미 했다. 이 줄은 그 판단을 같은 이름공간의
+     * 나머지 둘(집합·팀)에 적용한 것이다.
+     */
     const row = await pool.query(`select body from message where id = $1`, [messageId]);
-    // 팀 이름은 계정이 아니므로 `normalizeMentions` 가 지나친다 — `@release` 가 원문에
-    // 그대로 남아야 한다(`@channel`·집합과 같은 결정).
-    expect(row.rows[0].body).toBe('@release 내가 부른다');
+    expect(row.rows[0].body).toBe(`<@team:${teamId}> 내가 부른다`);
+  });
+
+  /**
+   * 정본이 뜻하는 것 하나: **이름을 바꿔도 과거 발화가 그 팀을 가리킨다.** 이 줄이 없으면
+   * 위 줄은 "형식이 바뀌었다"만 지키고, 바꾼 이유는 아무것도 지키지 않는다.
+   */
+  it('4-1. 팀 이름을 바꿔도 과거 본문이 새 이름으로 돌아온다', async () => {
+    const messageId = await post(adminToken, publicId, '@release 배포하자');
+
+    const renamed = await app.inject({
+      method: 'PATCH', url: `/teams/${teamId}`, headers: auth(adminToken), payload: { name: 'shipit' },
+    });
+    expect(renamed.statusCode).toBe(200);
+
+    // MCP 로 나가는 본문(에이전트가 읽는 것)은 **지금의** 이름이다.
+    const { denormalizeBodies } = await import('../src/services/mentions.js');
+    const back = await denormalizeBodies(pool, [{ body: `<@team:${teamId}> 배포하자` }]);
+    expect(back[0]?.body).toBe('@shipit 배포하자');
+
+    // 원래 발화도 같은 토큰을 담고 있다 — 위 변환이 그 발화에도 그대로 걸린다.
+    const row = await pool.query(`select body from message where id = $1`, [messageId]);
+    expect(row.rows[0].body).toBe(`<@team:${teamId}> 배포하자`);
+
+    // 되돌린다 — 뒤 테스트들이 `@release` 를 쓴다.
+    await app.inject({
+      method: 'PATCH', url: `/teams/${teamId}`, headers: auth(adminToken), payload: { name: 'release' },
+    });
   });
 
   it('5. 같은 팀을 두 번 적어도 알림은 하나다', async () => {

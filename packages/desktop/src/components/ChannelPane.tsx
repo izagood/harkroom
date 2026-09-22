@@ -55,11 +55,16 @@ interface ChannelPaneProps {
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }
 
+/** 빈 배열 리터럴을 매 렌더 새로 만들지 않는다. */
+const CHANNEL_NO_TEAMS: never[] = [];
+
 export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: ChannelPaneProps) {
   // 날짜 구분선은 **앱 언어**를 따른다(`lib/day.ts` 의 근거).
   const locale = useLocale();
   const t = useT();
-  const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq, pins, runnerStates } = useActiveStore();
+  // `groups`·`teams` 는 고정 메시지 미리보기의 집합·팀 토큰을 이름으로 되돌리는 데 쓴다(#845).
+  const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq, pins, runnerStates, groups } = useActiveStore();
+  const teams = useActiveStore((s) => s.teams) ?? CHANNEL_NO_TEAMS;
   const bottomRef = useRef<HTMLDivElement>(null);
   /** 스크롤 상자 자체. 바닥에서 얼마나 떨어졌는지는 이 요소만 안다. */
   const listRef = useRef<HTMLDivElement>(null);
@@ -547,7 +552,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
                         그대로 두면 누를 곳이 handle 뿐인 줄이 된다.
                         `displayBody` 를 지나는 이유(#329): 시스템 메시지는 본문에 이름이 없고
                         자리표시자만 있어, 원본을 그대로 쓰면 이 줄에만 그 글자가 남는다. */}
-                    <span className="truncate">{displayBody(p.message, accounts).trim().split('\n')[0] || '(attachment)'}</span>
+                    <span className="truncate">{displayBody(p.message, accounts, groups, teams).trim().split('\n')[0] || '(attachment)'}</span>
                   </button>
                 </li>
               ))}

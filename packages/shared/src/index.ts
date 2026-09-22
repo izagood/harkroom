@@ -428,6 +428,62 @@ export const MENTION_PATTERN = `(^|[^a-zA-Z0-9_-])@(${HANDLE_PATTERN})`;
 export const MENTION_TOKEN_PATTERN = '<@([0-9a-f-]{36})>';
 
 /**
+ * 멘션 대상의 **종류**. 계정은 접두가 없고(`<@id>`, #271 이 정한 모양 그대로), 집합과 팀만
+ * 접두를 단다.
+ *
+ * 왜 계정에 접두를 안 붙이나: 이미 저장된 모든 본문이 `<@id>` 다. 접두를 붙이려면 그 전부를
+ * 다시 써야 하고, #271 이 토큰을 도입한 이유 자체가 *"이름이 바뀌어도 본문을 다시 쓰지
+ * 않는다"* 였다. 새 종류만 접두를 다는 쪽이 그 결정과 같은 방향이다.
+ */
+export const MENTION_TARGET_KINDS = ['group', 'team'] as const;
+export type MentionTargetKind = (typeof MENTION_TARGET_KINDS)[number];
+
+/**
+ * 집합·팀 멘션의 정본(#845). `<@group:id>` · `<@team:id>`.
+ *
+ * 왜 필요한가: 계정만 토큰이 되고 집합·팀은 **글자 그대로** 남아 있었다. 집합은 이름을
+ * 바꾸는 길이 없어 안 터졌을 뿐이고, **팀은 `PATCH /teams/:id` 로 이름이 바뀐다** — 그
+ * 순간 과거 본문의 `@옛팀이름` 은 아무것도 가리키지 않는 글자가 된다. 계정에서 #271 이
+ * 푼 문제가 같은 이름공간의 다른 두 대상에 그대로 남아 있었다.
+ */
+export const MENTION_TARGET_TOKEN_PATTERN = `<@((?:${MENTION_TARGET_KINDS.join('|')}):[0-9a-f-]{36})>`;
+
+/**
+ * 계정·집합·팀 **아무 토큰이나**. 본문을 사람이나 에이전트에게 **되돌려 줄 때** 쓴다
+ * (`renderMentions`·`denormalizeMentions`·`headMentionRunEnd`).
+ *
+ * 판정하는 자리(`mentionedIds`·`splitMentionCalls`)는 계속 `MENTION_TOKEN_PATTERN` 만 본다 —
+ * 그 둘은 **계정 id** 를 내놓는 약속이고, 팀 id 가 섞여 들어가면 `isAgent(id)` 나
+ * `accounts[id]` 같은 판정이 조용히 false 로 떨어진다. 종류를 가르는 것이 이 분리의 요점이다.
+ *
+ * 순서가 중요하다: 접두가 붙은 쪽을 **먼저** 적어야 한다. 계정 패턴을 앞에 두면 `<@team:…>`
+ * 의 `<@` 다음이 `t` 라 어차피 안 맞지만, 대안의 순서에 뜻을 걸어 두면 나중에 접두가 16진수
+ * 로 시작하는 종류가 생기는 날 조용히 갈린다.
+ */
+export const ANY_MENTION_TOKEN_PATTERN = `(?:${MENTION_TARGET_TOKEN_PATTERN}|${MENTION_TOKEN_PATTERN})`;
+
+/** 지도 키·토큰 본문으로 쓰는 문자열(`team:<uuid>`). 접두를 손으로 이어 붙이는 자리를 없앤다. */
+export function mentionTargetKey(kind: MentionTargetKind, id: string): string {
+  return `${kind}:${id}`;
+}
+
+/**
+ * 본문에 저장된 **집합·팀** 멘션. 서버의 팬아웃과 화면의 지도 조립이 같은 목록을 봐야 한다.
+ * 계정은 `mentionedIds` 가 따로 답한다 — 두 종류를 한 함수가 섞어 내놓으면 호출부가
+ * 매번 다시 가른다.
+ */
+export function mentionedTargets(body: string): { kind: MentionTargetKind; id: string }[] {
+  const found = new Map<string, { kind: MentionTargetKind; id: string }>();
+  for (const m of body.matchAll(new RegExp(MENTION_TARGET_TOKEN_PATTERN, 'g'))) {
+    const key = m[1];
+    if (!key) continue;
+    const [kind, id] = key.split(':') as [MentionTargetKind, string];
+    found.set(key, { kind, id });
+  }
+  return [...found.values()];
+}
+
+/**
  * 본문에서 불린 handle 들. 소문자로 정규화해 중복을 없앤다(`@fizz` 와 `@Fizz` 는 한 사람).
  * 패턴이 대문자를 이미 포함하므로 `i` 플래그는 필요하지 않다.
  *
@@ -474,7 +530,7 @@ export function mentionedIds(body: string): string[] {
  * 따라오는 결과다.
  */
 export function headMentionRunEnd(body: string): number {
-  const re = new RegExp(`\\s*(?:${MENTION_TOKEN_PATTERN}|@(?:${HANDLE_PATTERN}))`, 'y');
+  const re = new RegExp(`\\s*(?:${ANY_MENTION_TOKEN_PATTERN}|@(?:${HANDLE_PATTERN}))`, 'y');
   let end = 0;
   while (re.exec(body) !== null) end = re.lastIndex;
   return end;
@@ -549,12 +605,16 @@ export function splitMentionCalls(
  * 계정 목록을 순회하지 않고 **본문을 한 번** 훑는다. 순회하면 비용이 워크스페이스의 계정
  * 수에 비례하고, 그보다 나쁘게는 handle 을 정규식에 끼워 넣는 자리가 생긴다.
  *
- * #230 그룹 멘션(`@그룹`)은 여기서 처리하지 않는다 — 호출부가 먼저 그룹을 펼치고, 그룹
- * 토큰은 `accountsMap` 에 없으므로 **글자 그대로** 남는다. 존재하지 않는 handle 이 그대로
- * 남는 것도 같은 이유다(오타를 멘션처럼 보이지 않게 한다).
+ * 존재하지 않는 handle 은 **글자 그대로** 남는다 — 오타를 멘션처럼 보이지 않게 한다.
+ *
+ * #845: 집합·팀도 지도에 실리면 함께 정규화된다. 이 함수는 한 줄도 달라지지 않았다 —
+ * **값에 접두가 실리기 때문**이다(`mentionTargetKey`: `team:<uuid>`). 아래 `<@${id}>` 가
+ * 그대로 `<@team:<uuid>>` 를 만든다. 종류를 아는 것은 지도를 만드는 쪽이고, 여기는
+ * "본문의 이 이름을 이 값으로 바꾼다"만 안다. (#230 시절 주석은 *"그룹 토큰은 지도에
+ * 없으므로 글자 그대로 남는다"* 고 적었는데, 이제 호출부가 넣어 준다.)
  *
  * @param body 사람이 입력한 본문(`@handle` 형식)
- * @param accountsMap handle(소문자) -> 계정 id
+ * @param accountsMap handle(소문자) -> 계정 id **또는** `group:<id>`·`team:<id>`
  */
 export function normalizeMentions(body: string, accountsMap: Map<string, string>): string {
   if (!accountsMap.size) return body;
@@ -585,8 +645,10 @@ export function normalizeMentions(body: string, accountsMap: Map<string, string>
  * @param idToHandle 계정 id -> 현재 handle
  */
 export function denormalizeMentions(body: string, idToHandle: Map<string, string>): string {
-  return body.replace(new RegExp(MENTION_TOKEN_PATTERN, 'g'), (whole, id: string) => {
-    const handle = idToHandle.get(id);
+  return body.replace(new RegExp(ANY_MENTION_TOKEN_PATTERN, 'g'), (whole, target: string | undefined, id: string | undefined) => {
+    // 대안 둘 중 맞은 쪽만 값이 온다. 집합·팀은 `team:<uuid>` 가 **그대로 지도의 키**다 —
+    // 호출부가 접두를 떼어 따로 담으면 세 종류를 담는 지도가 셋이 된다.
+    const handle = idToHandle.get(target ?? id ?? '');
     return handle ? `@${handle}` : whole;
   });
 }
@@ -607,8 +669,8 @@ export function renderMentions(
   idToHandle: Map<string, string>,
   unknownLabel = UNKNOWN_ACCOUNT_LABEL,
 ): string {
-  return body.replace(new RegExp(MENTION_TOKEN_PATTERN, 'g'), (_whole, id: string) => {
-    const handle = idToHandle.get(id);
+  return body.replace(new RegExp(ANY_MENTION_TOKEN_PATTERN, 'g'), (_whole, target: string | undefined, id: string | undefined) => {
+    const handle = idToHandle.get(target ?? id ?? '');
     return handle ? `@${handle}` : `@${unknownLabel}`;
   });
 }

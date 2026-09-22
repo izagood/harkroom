@@ -100,3 +100,57 @@ describe('#271 수정·복사는 다시 입력할 수 있는 형태로 되돌린
     expect(bodyAsHandles(`<@${GHOST}> 누구지`, accounts)).toBe(`<@${GHOST}> 누구지`);
   });
 });
+
+/**
+ * #845 — 집합·팀 토큰도 같은 자리를 지난다.
+ *
+ * 위 묶음이 계정에 대해 지킨 것을 나머지 둘에도 지킨다. 팀을 빼면 화면에 `@알 수 없음`
+ * 이 뜨고, 읽는 사람은 그 발화가 누구를 불렀는지 알 수 없다 — 그리고 **팀은 이름이
+ * 바뀐다**(`PATCH /teams/:id`), 그것이 이 토큰을 만든 이유다.
+ */
+const TEAM = '33333333-3333-4333-8333-333333333333';
+const GROUP = '44444444-4444-4444-8444-444444444444';
+
+function seedTargets(teamName: string): void {
+  useAppStore.getState().reset();
+  useAppStore.getState().set({
+    me: acc('u1', 'me'),
+    accounts: { u1: acc('u1', 'me'), u2: acc('u2', 'someone') },
+    groups: [{ id: GROUP, handle: 'devs', displayName: 'Devs', memberCount: 2 }],
+    teams: [{ id: TEAM, name: teamName, memberCount: 3, leadAccountId: null, members: [] }],
+  } as never);
+}
+
+describe('#845 집합·팀 토큰도 현재 이름으로 그려진다', () => {
+  it('팀 토큰이 이름으로, 그리고 멘션으로 칠해진다', () => {
+    seedTargets('release');
+    show(`<@team:${TEAM}> 배포하자`);
+    expect(screen.getByTestId('message-body').textContent).toBe('@release 배포하자');
+    expect(highlighted()).toEqual(['release']);
+  });
+
+  it('팀 이름을 바꾸면 **같은 본문**이 새 이름으로 그려진다', () => {
+    seedTargets('release');
+    show(`<@team:${TEAM}> 배포하자`);
+    expect(screen.getByTestId('message-body').textContent).toBe('@release 배포하자');
+    cleanup();
+
+    seedTargets('shipit');
+    show(`<@team:${TEAM}> 배포하자`);
+    expect(screen.getByTestId('message-body').textContent).toBe('@shipit 배포하자');
+  });
+
+  it('집합 토큰도 같다', () => {
+    seedTargets('release');
+    show(`<@group:${GROUP}> 봐줘`);
+    expect(screen.getByTestId('message-body').textContent).toBe('@devs 봐줘');
+  });
+
+  /** 수정·복사용 본문도 이름으로 되돌아온다 — 안 그러면 수정창에 `<@team:uuid>` 가 뜬다. */
+  it('bodyAsHandles 가 팀 토큰을 이름으로 되돌린다', () => {
+    expect(bodyAsHandles(
+      `<@team:${TEAM}> 배포하자`, {},
+      [{ id: GROUP, handle: 'devs' }], [{ id: TEAM, name: 'release' }],
+    )).toBe('@release 배포하자');
+  });
+});

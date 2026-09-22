@@ -17,11 +17,17 @@ import { useLocale } from '../i18n/useT';
  * 시각을 `stampLabel` 로 읽는 이유: 서버는 ISO 사실만 싣는다(`readWakeMeta`
  * 주석). 문자열로 구워 보냈다면 이 줄은 다른 시간대에서 거짓을 말하게 된다.
  */
+/** 빈 배열 리터럴을 매 렌더 새로 만들지 않는다. */
+const NO_TEAMS_FALLBACK: never[] = [];
+
 export function WakeRow({ message }: { message: MessageRow }) {
   const author = useActiveStore((s) => s.accounts[message.authorId]);
   const locale = useLocale();
   // 사유도 본문이다 — 본문 렌더러를 지나지 않으므로 `<@id>` 를 여기서 푼다(`lib/mention` 주석).
   const accounts = useActiveStore((s) => s.accounts);
+  // 집합·팀 토큰(#845)도 이름으로 되돌린다 — 안 주면 미리보기에 `@알 수 없음` 이 뜬다.
+  const groups = useActiveStore((s) => s.groups);
+  const teams = useActiveStore((s) => s.teams) ?? NO_TEAMS_FALLBACK;
   const wake = readWakeMeta(message.meta);
   // 시각을 못 읽어도 줄은 그린다 — 대기 자체가 사실이고, 시각을 모르는 것이 그 사실을 지우지 않는다.
   const label = wake === null || Number.isNaN(new Date(wake.wakeAt).getTime())
@@ -35,7 +41,7 @@ export function WakeRow({ message }: { message: MessageRow }) {
         <span aria-hidden="true" className="shrink-0">🕐</span>
         <span className="font-medium text-fg-agent">{author?.handle ?? '…'}</span>
         {label === null ? <span>다시 봅니다</span> : <span>{label} 에 다시 봅니다</span>}
-        <span className="text-fg-subtle">· {displayBody(message, accounts)}</span>
+        <span className="text-fg-subtle">· {displayBody(message, accounts, groups, teams)}</span>
       </div>
     </div>
   );

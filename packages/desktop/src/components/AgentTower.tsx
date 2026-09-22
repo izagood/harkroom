@@ -26,6 +26,9 @@ import { AgentTurns } from './AgentTurns';
 import { AgentWaits } from './AgentWaits';
 import { useAgentTurns, useAgentWakes, useThreadRoots, threadTitle } from '../lib/agentTurns';
 
+/** 빈 배열 리터럴을 매 렌더 새로 만들면 `useMemo` 의존성이 매번 달라진다. */
+const NO_TEAMS: never[] = [];
+
 export function AgentTower({ onOpenThread }: {
   /**
    * 스레드로 이동. **부르는 쪽이 칸까지 되돌린다**(`Workspace`) — 관제탑이 본문을 쓰는
@@ -42,6 +45,9 @@ export function AgentTower({ onOpenThread }: {
   */
   const wakes = useAgentWakes(true);
   const accounts = useActiveStore((s) => s.accounts);
+  // 스레드 제목의 `<@group:…>`·`<@team:…>` 토큰을 이름으로 되돌리는 데 쓴다(#845).
+  const groups = useActiveStore((s) => s.groups);
+  const teams = useActiveStore((s) => s.teams) ?? NO_TEAMS;
   const channels = useActiveStore((s) => s.channels);
   const set = useActiveStore((s) => s.set);
   // 묶음 머리에 세울 스레드 이름. 목록이 5초마다 새로 와도 루트는 캐시에서 온다.
@@ -65,7 +71,7 @@ export function AgentTower({ onOpenThread }: {
         channelLabel={channelLabelOf}
         threadTitleOf={(rootId) => {
           const row = roots.get(rootId);
-          return row ? threadTitle(row, accounts) : null;
+          return row ? threadTitle(row, accounts, groups, teams) : null;
         }}
         onOpenThread={onOpenThread}
         onCancelTurns={(turns) => {

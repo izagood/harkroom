@@ -19,12 +19,18 @@ interface Props {
 type LoadState = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string };
 type Tab = 'open' | 'done';
 
+/** 빈 배열 리터럴을 매 렌더 새로 만들지 않는다. */
+const NO_TEAMS_FALLBACK: never[] = [];
+
 export function SavedMessages({ open, onClose }: Props) {
   const t = useT();
   const locale = useLocale();
   const channels = useActiveStore((s) => s.channels);
   const dms = useActiveStore((s) => s.dms);
   const accounts = useActiveStore((s) => s.accounts);
+  // 집합·팀 토큰(#845)도 이름으로 되돌린다 — 안 주면 미리보기에 `@알 수 없음` 이 뜬다.
+  const groups = useActiveStore((s) => s.groups);
+  const teams = useActiveStore((s) => s.teams) ?? NO_TEAMS_FALLBACK;
   const me = useActiveStore((s) => s.me);
 
   const [entries, setEntries] = useState<SavedMessageRow[]>([]);
@@ -95,7 +101,7 @@ export function SavedMessages({ open, onClose }: Props) {
     const time = stampLabel(e.createdAt, locale);
     // 시스템 메시지는 본문에 이름이 없고 자리표시자만 있다 — `displayBody` 를 지나지 않으면
     // 이 목록에만 그 글자가 남는다(#329).
-    const body = e.message ? displayBody(e.message, accounts) : '';
+    const body = e.message ? displayBody(e.message, accounts, groups, teams) : '';
     const preview = body.length > 100 ? `${body.slice(0, 100)}…` : body;
 
     return (

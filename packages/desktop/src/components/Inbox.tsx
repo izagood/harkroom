@@ -9,6 +9,9 @@ import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { useT } from '../i18n/useT';
 
+/** 빈 배열 리터럴을 매 렌더 새로 만들지 않는다. */
+const INBOX_NO_TEAMS: never[] = [];
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -116,6 +119,9 @@ export function Inbox({ open, onClose }: Props) {
   const channels = useActiveStore((s) => s.channels);
   const dms = useActiveStore((s) => s.dms);
   const accounts = useActiveStore((s) => s.accounts);
+  // 미리보기의 집합·팀 토큰(#845). 안 주면 그 자리가 `@알 수 없음` 이 된다.
+  const groups = useActiveStore((s) => s.groups);
+  const teams = useActiveStore((s) => s.teams) ?? INBOX_NO_TEAMS;
   const me = useActiveStore((s) => s.me);
   const drafts = useActiveStore((s) => s.drafts);
   const myId = me?.id ?? null;
@@ -495,7 +501,7 @@ export function Inbox({ open, onClose }: Props) {
                 줄마다 `<@2c8c1910-…>` 만 보이고 "무엇을" 이 사라진다(2026-09-08 실측). */}
             {/* 이미 본 줄은 여기서 물러난다 — 색만 옮기고 글자는 그대로 둔다(줄이는 것은
                 숨기는 것이고, 다시 찾을 길을 없앤다). */}
-            <span className={`truncate ${isUnread ? 'text-fg' : 'text-fg-muted'}`}>{bodyWithHandles(e.body, accounts)}</span>
+            <span className={`truncate ${isUnread ? 'text-fg' : 'text-fg-muted'}`}>{bodyWithHandles(e.body, accounts, groups, teams)}</span>
           </span>
           <span className="flex items-center gap-1.5 text-meta text-fg-subtle">
             {/* **언제·어디.** */}

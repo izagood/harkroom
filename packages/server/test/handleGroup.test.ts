@@ -350,7 +350,13 @@ describe('집합 멘션이 부르는 사람', () => {
     expect(await inboxFor(blindMemberToken, id)).toEqual([expect.objectContaining({ reason: 'mention' })]);
   });
 
-  it('본문의 @그룹을 그대로 남긴다', async () => {
+  /**
+   * **의도된 회귀선이다(#845).** 초판은 `@그룹` 을 글자로 남겼다. 이제 계정과 같은 모양
+   * (`<@group:id>`)으로 저장한다 — 집합은 오늘 이름을 바꾸는 길이 없어 안 터졌을 뿐이고,
+   * 같은 이름공간의 팀은 이미 바뀐다. 한 이름공간이 두 형식으로 저장되면 그리는 쪽이
+   * 종류마다 다른 규칙을 쓰게 되고, 그 어긋남이 다음 결함의 자리가 된다.
+   */
+  it('본문의 @그룹을 정본 토큰으로 저장한다', async () => {
     const id = await post(adminToken, privateId, '@myteam 원문 그대로');
 
     const list = await app.inject({
@@ -358,7 +364,7 @@ describe('집합 멘션이 부르는 사람', () => {
     });
     const found = (list.json().messages as Array<{ id: string; body: string }>)
       .find((m) => m.id === id);
-    expect(found?.body).toBe('@myteam 원문 그대로');
+    expect(found?.body).toBe(`<@group:${groupId}> 원문 그대로`);
   });
 });
 
