@@ -176,6 +176,23 @@ export function injectionFactsFor(
   return { ...(readyMinMs ? { readyMinMs } : {}), ...(unsentHint ? { unsentHint } : {}) };
 }
 
+/** 이 하네스의 실행 파일 이름. 표가 진실이고, 조회에도 같은 값을 쓴다(세션 목록 등). */
+export function harnessCommand(harness: AgentHarness): string {
+  return adapterFor(harness).command;
+}
+
+/**
+ * 이 하네스가 **XDG 세 변수로 상태를 옮기는가**(opencode 가 그렇다).
+ *
+ * 이름 비교(`harness === 'opencode'`)를 두지 않으려고 표에 묻는다 — 그 비교의 예산을
+ * `test/adapterParity.test.ts` 가 파일별로 세고 있고, 새 하네스가 같은 성질을 가지면
+ * 표의 `account.configDirEnv` 만 채우면 여기 저절로 걸린다.
+ */
+export function usesXdgHome(harness: AgentHarness): boolean {
+  const account = ADAPTERS[harness] === 'unsupported' ? null : adapterFor(harness).account;
+  return account?.configDirEnv.includes('XDG_CONFIG_HOME') === true;
+}
+
 export function adapterFor(harness: AgentHarness): HarnessAdapter {
   const adapter = ADAPTERS[harness];
   if (adapter === 'unsupported') {

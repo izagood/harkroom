@@ -12,7 +12,8 @@ import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { RUNNABLE_HARNESSES, type AgentHarness, type MentionPermission } from '@harkroom/shared';
 
-import { executionModelFor } from './adapters/index.js';
+import { executionModelFor, usesXdgHome } from './adapters/index.js';
+import { OPENCODE_READONLY_AGENT, opencodeDirs } from './opencodeHome.js';
 
 /**
  * 하네스가 harkroom MCP 에 닿는 길은 `harkroom-operator mcp-bridge` 하나다(스펙 2026-09-20 §5).
@@ -73,6 +74,11 @@ export interface BuildTurnCommandOptions {
   operatorBin: string;
   /** 개인 config.toml/MCP 를 상속하지 않는 Harkroom 전용 Codex 상태 루트. */
   codexHome: string;
+  /**
+   * opencode 의 러너 전용 XDG 루트(`opencodeHome.ts`). codex 의 `codexHome` 과 같은 자리이고
+   * 같은 이유다 — 사람의 설정·세션과 갈라 두지 않으면 개인 MCP 가 에이전트 턴에 붙는다.
+   */
+  opencodeHome?: string;
   /**
    * 이 턴을 돌릴 claude 계정의 `CLAUDE_CONFIG_DIR`(`claudeAccounts.ts`). **`null` 은 '계정
    * 지정 없음'** 이고, 그때 자식은 시스템 기본(`~/.claude`)을 쓴다 — 계정 풀을 안 만든
@@ -333,17 +339,51 @@ const CODEX_PRESET: HarnessPreset = {
   },
 };
 
+/**
+ * opencode (1.18.31 실측, 2026-09-22 — 세 번째 하네스).
+ *
+ * 앞의 둘과 다른 점이 셋이다:
+ *
+ * 1. **TUI 가 기본 커맨드**다(`opencode [project]`). 서브커맨드를 고를 것이 없어 세션이
+ *    순수 플래그(`-s <id>`)로 끝난다 — codex 의 `exec`/`resume` 비대칭이 여기엔 없다.
+ * 2. **MCP 를 argv 로 못 넘긴다.** 등록 수단이 설정 파일뿐이라 러너 전용 루트에 미리
+ *    적어 둔다(`opencodeHome.ts`). 그래서 `mcp()` 가 빈 배열이다 — **비어 있다는 것이
+ *    "안 붙인다"는 뜻이 아니다.** 브릿지는 그 파일에 `type: local` 로 들어간다.
+ * 3. **권한이 플래그가 아니라 에이전트**다. `--auto` 는 자동 승인이지만 읽기 전용에
+ *    해당하는 플래그가 없어, 설정에 권한을 `deny` 로 박은 에이전트를 정의해 두고
+ *    `--agent` 로 고른다(실측: 쓰기를 시켰더니 파일이 안 생겼다).
+ *
+ * 프롬프트를 argv 로 넘기는 길(`--prompt "<본문>"`)이 실제로 있고 돌아간다 — **쓰지 않는다.**
+ * 대화 본문이 argv 에 오르면 같은 기계의 다른 로컬 사용자가 `ps` 로 그대로 읽는다(#117).
+ * 붙여넣기 주입이 실물로 되는 것을 확인했으므로 그 길로 간다.
+ */
+const OPENCODE_PRESET: HarnessPreset = {
+  command: 'opencode',
+  session: (sessionId) => (sessionId === null ? [] : ['-s', sessionId]),
+  allowsNullSessionOnFirstTurn: true,
+  permission: {
+    // "explicitly denied 가 아닌 권한을 자동 승인한다"(실측 `--help`). 멘션 턴은 사람이
+    // 화면 앞에 없으므로 이것이 없으면 첫 도구에서 멈춘다.
+    auto: ['--auto'],
+    // 권한을 `deny` 로 박아 둔 에이전트를 고른다(`opencodeHome.ts` 가 설정에 적는다).
+    // `--auto` 를 함께 주지 않는다 — 자동 승인과 읽기 전용은 같이 갈 수 없다.
+    readonly: ['--agent', OPENCODE_READONLY_AGENT],
+  },
+  mcp: () => [],
+  model: (model) => (model ? ['-m', model] : []),
+  // `--variant`(provider-specific reasoning effort). harkroom 의 값과 어떻게 맞물리는지는
+  // 미측정이라 있을 때만 그대로 넘긴다(codex 의 `model_reasoning_effort` 와 같은 상태).
+  effort: (effort) => (effort ? ['--variant', effort] : []),
+  alwaysArgs: () => [],
+  // 지시문도 본문도 argv 에 오르지 않는다 — 둘 다 PTY 주입으로 간다(`prefixesSystemPrompt`).
+  prompt: () => [],
+};
+
 const PRESETS: Record<AgentHarness, HarnessPreset | 'unsupported'> = {
   'claude-code': CLAUDE_PRESET,
   codex: CODEX_PRESET,
-  // `-r` 이 UUID 가 아니라 "latest"/인덱스만 받아 `--session-id` 와 짝을 이루지 못한다
-  // (실측, task-1). `AGENT_HARNESSES`(스키마)에는 남기되 `RUNNABLE_HARNESSES`(실행 가능
-  // 목록, Task 2)에서 이미 빠져 있다 — 여기 도달했다면 상위 호출부가 그 목록을 확인하지
-  // 않은 결함이라는 뜻이다.
-  // opencode 는 어댑터(`adapters/opencode.ts`)가 먼저 생겼지만 argv 조립은 아직 없다 —
-  // 실물 왕복(`certify`)을 보기 전에는 여기를 열지 않는다. 어댑터가 있다는 것과 러너가
-  // 돌린다는 것은 다른 문제이고, 그 경계가 `RUNNABLE_HARNESSES` 다.
-  opencode: 'unsupported',
+  // 실물로 재고 열었다(2026-09-22): 브릿지 MCP · 붙여넣기 주입 · readonly 에이전트 · 세션 발견.
+  opencode: OPENCODE_PRESET,
   gemini: 'unsupported',
 };
 
@@ -423,6 +463,10 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     // 실패(harkroom MCP 미등록 → 답 못 함 → "답 없이 턴을 끝냈습니다")로 이어진다 — 여기서 막는다.
     throw new Error('buildTurnCommand: operatorBin 이 비어 있다 — harkroom MCP(mcp-bridge) 없이는 에이전트가 답할 방법이 없다');
   }
+  // 이름이 아니라 표에 묻는다(`usesXdgHome`) — 이름 비교의 예산은 어댑터 표가 대신 진다.
+  if (usesXdgHome(opts.harness) && !opts.opencodeHome) {
+    throw new Error('buildTurnCommand: opencodeHome 이 비어 있다 — 개인 opencode 설정·MCP 를 격리할 수 없다');
+  }
   if (opts.harness === 'codex' && !opts.codexHome) {
     throw new Error('buildTurnCommand: codexHome 이 비어 있다 — 개인 Codex 설정을 격리할 수 없다');
   }
@@ -445,6 +489,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     args,
     env: childEnv({
       codexHome: opts.harness === 'codex' ? opts.codexHome : null,
+      opencodeHome: usesXdgHome(opts.harness) ? (opts.opencodeHome ?? null) : null,
       claudeConfigDir: opts.harness === 'claude-code' ? opts.claudeConfigDir : null,
     }),
     stdinFile: opts.stdinFile ?? null,
@@ -536,7 +581,7 @@ export const HARNESS_ENV_DENYLIST = [
  * 그 목록과 각 키를 빼는 근거는 위 상수의 주석에 있다 — 지우려거든 거기부터 읽어라.
  */
 function childEnv(
-  homes: { codexHome: string | null; claudeConfigDir: string | null },
+  homes: { codexHome: string | null; claudeConfigDir: string | null; opencodeHome: string | null },
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -548,6 +593,9 @@ function childEnv(
   // PAT 을 덮어쓰던 자리였다. 이제 하네스가 서버에 닿는 길은 `mcp-bridge` 뿐이고, 브릿지가 읽는
   // 것은 러너 env 의 오퍼레이터 소켓·러너 id·secret 이다 — 전체 상속으로 이미 넘어간다.
   if (homes.codexHome !== null) env.CODEX_HOME = homes.codexHome;
+  // opencode 는 한 변수가 아니라 **XDG 셋**이다. 하나라도 빼면 자격증명만 갈리고 세션은
+  // 사람 것과 공유되는 반쪽 격리가 된다(`opencodeHome.ts` 머리말).
+  if (homes.opencodeHome !== null) Object.assign(env, opencodeDirs(homes.opencodeHome));
   // **`null` 이면 키 자체를 넣지 않는다.** 빈 문자열을 넣으면 claude 가 그것을 경로로 읽어
   // 엉뚱한 자리에 설정을 만든다 — "계정 지정 없음"은 부재로 표현해야 시스템 기본으로 떨어진다.
   // 계정 풀을 안 만든 러너의 하위 호환이 이 한 줄에 걸려 있다(`claudeAccounts.ts`).
@@ -568,6 +616,20 @@ export type McpServerEntry =
  * 파일이 없거나 깨졌으면 **던진다.** 도구 없이 뜬 에이전트는 에러 없이 돌다가 "못 하겠다"고만
  * 답한다(codex `invalid transport` 사고와 같은 종류) — 기동에서 죽는 편이 낫다.
  */
+/**
+ * 오퍼레이터가 쓴 표를 **통째로** 읽는다(`harkroom`·`avcs` 포함). opencode 는 이 표 전체를
+ * 제 설정 파일로 번역해 써야 하므로(`opencodeHome.ts`) 걸러낸 목록으로는 부족하다 —
+ * 브릿지 항목이 빠지면 그 하네스는 답할 길을 잃는다.
+ */
+export async function readMcpServers(path: string): Promise<Record<string, McpServerEntry>> {
+  try {
+    const parsed = JSON.parse(await readFile(path, 'utf8')) as { mcpServers?: Record<string, McpServerEntry> };
+    return parsed.mcpServers ?? {};
+  } catch (err) {
+    throw new Error(`HARKROOM_MCP_CONFIG 를 읽을 수 없다(${path}): ${err instanceof Error ? err.message : String(err)} — 오퍼레이터가 spawn 전에 쓰는 파일이다`);
+  }
+}
+
 export async function readExtraMcpServers(path: string): Promise<Record<string, McpServerEntry>> {
   let parsed: { mcpServers?: Record<string, McpServerEntry> };
   try {

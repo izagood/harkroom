@@ -98,6 +98,7 @@ describe('repo hygiene', () => {
       /^(?:www\.)?(?:github|nodejs|npmjs|claude|w3)\.(?:com|org)$/i,
       /^schema\.tauri\.app$/i,
       /^developers\.openai\.com$/i,
+      /^opencode\.ai$/i, // opencode 설정 파일이 가리키는 공개 스키마 URL
       /^engineering\.block\.xyz$/i,
     ];
 

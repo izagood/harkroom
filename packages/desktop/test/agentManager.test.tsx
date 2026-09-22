@@ -113,9 +113,10 @@ describe('AgentsSettings', () => {
     const options = (await screen.findByLabelText('Agent harness')).querySelectorAll('option');
     const enabled = [...options].filter((o) => !(o as HTMLOptionElement).disabled);
 
-    expect(enabled).toHaveLength(2);
+    expect(enabled).toHaveLength(3);
     expect(enabled.some((o) => o.textContent?.includes('claude-code'))).toBe(true);
     expect(enabled.some((o) => o.textContent?.includes('codex'))).toBe(true);
+    expect(enabled.some((o) => o.textContent?.includes('opencode'))).toBe(true);
     expect([...options].some((o) => o.textContent?.includes('지원 예정'))).toBe(true);
   });
 

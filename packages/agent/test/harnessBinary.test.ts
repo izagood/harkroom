@@ -44,6 +44,7 @@ function 계획(harness: (typeof RUNNABLE_HARNESSES)[number]): string {
     mcpConfigPath: '/tmp/mcp.json',
     operatorBin: '/opt/harkroom/harkroom-operator',
     codexHome: '/tmp/codex-home',
+    opencodeHome: '/tmp/opencode-home',
     claudeConfigDir: null,
   }).command;
 }

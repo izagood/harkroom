@@ -123,6 +123,8 @@ export interface InteractiveTurnDeps {
   /** `harkroom-operator` 실행 파일 — 하네스의 harkroom MCP(`mcp-bridge`) 명령(스펙 2026-09-20 §5). */
   operatorBin: string;
   codexHome: string;
+  /** opencode 의 러너 전용 XDG 루트(`opencodeHome.ts`). codex 의 홈과 같은 자리·같은 이유다. */
+  opencodeHome: string;
   /**
    * 이 턴을 돌릴 claude 계정의 `CLAUDE_CONFIG_DIR`(`claudeAccounts.ts`). `null` 은 계정
    * 지정 없음(시스템 기본)이다.
@@ -284,6 +286,7 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       extraMcpServers: deps.extraMcpServers,
       operatorBin: deps.operatorBin,
       codexHome: deps.codexHome,
+    opencodeHome: deps.opencodeHome,
       claudeConfigDir,
     });
 
