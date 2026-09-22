@@ -25,7 +25,7 @@ import type { AttentionLedger } from './attentionLedger.js';
 import { sessionTranscriptGrewSince, sessionTranscriptMtimeMs } from './harnessErrors.js';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
-import { ensureWorkspace, workspaceName, type Exec } from './workspace.js';
+import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
 
 /** runMentionTurn 이 요구하는 harkroom 표면. HarkroomAgentClient 의 부분집합이라 실제 클래스를
@@ -319,12 +319,16 @@ export async function resolveWorkspaceDir(
   threadKey: string,
 ): Promise<string> {
   if (def.workingDir === null) {
-    const dir = join(deps.workspaceBaseDir, workspaceName(deps.me.handle, threadKey));
+    // 이름이 바뀌어도 같은 자리로 돌아온다(#846) — `ensureWorkspace` 와 **같은 함수**를 쓴다.
+    const dir = join(
+      deps.workspaceBaseDir,
+      await resolveWorkspaceName(deps.workspaceBaseDir, deps.me.id, threadKey),
+    );
     await mkdir(dir, { recursive: true });
     return dir;
   }
   return ensureWorkspace(deps.exec, {
-    handle: deps.me.handle,
+    agentId: deps.me.id,
     threadKey,
     baseDir: deps.workspaceBaseDir,
     repoDir: def.workingDir,

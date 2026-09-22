@@ -192,9 +192,12 @@ const [me, guide] = await (async () => {
   }
 })();
 
-// spec §3: 상태는 handle 로 스코프한다 — `workspaceName` 은 이미 이름에 handle 을 넣어
-// 워크스페이스끼리는 안 겹치지만(다중 에이전트 격리), 세션 레코드·MCP 설정까지 나누지
-// 않으면 격리가 절반만 된다: 기본 `AGENT_STATE_DIR` 로 러너 두 대를 띄우면 에이전트 B 가
+// spec §3 은 *"상태는 handle 로 스코프한다"* 고 적었는데, **이제 키는 계정 id 다**(#167 ·
+// #846). handle 은 바뀌므로(#843) 키가 될 수 없고, 이름 안의 handle 은 사람이 디렉터리를
+// 보고 알아보라고 남은 꼬리표다 — 그 판단은 `stateDir.ts` 와 `workspace.ts` 주석에 있다.
+//
+// 그 스코프가 워크스페이스에만 있으면 격리는 절반이다. 세션 레코드·MCP 설정까지 나누지
+// 않으면: 기본 `AGENT_STATE_DIR` 로 러너 두 대를 띄우면 에이전트 B 가
 // A 의 sessions.json 레코드를 읽고, harness 가 같으면 A 의 세션 id 를 B 자신의(다른)
 // workspaceDir 에서 resume 하려 든다 — 다중 에이전트 협업(성공 기준 9·10)이 구조적으로
 // 깨진다.
