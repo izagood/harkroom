@@ -837,33 +837,60 @@ export class Controller {
         hasMore: { ...this.store.getState().hasMore, [channelId]: page.hasMore },
       });
     }
-    const ids = this.store.getState().unread
-      .filter((e) => e.channelId === channelId && !e.readAt)
-      .map((e) => e.id);
-    if (ids.length) {
-      await this.api.markRead(ids);
-      await this.refreshUnread();
-    }
-    await this.settleReadPosition(channelId);
+    this.settleReadPosition(channelId);
   }
 
   /**
-   * 채널을 열었을 때 (a) **그 순간의** 읽음 위치를 구분선용으로 얼려 두고 (b) 최신까지 읽음
-   * 처리한다. 순서가 중요하다 — 얼리기 전에 읽음 처리하면 구분선이 사라진다.
+   * 채널을 열었을 때 (a) **그 순간의** 읽음 위치를 구분선용으로 얼려 두고 (b) 읽음으로
+   * 표시한다. 순서가 중요하다 — 얼리기 전에 읽음 처리하면 구분선이 사라진다.
    *
    * 얼린 값은 그 채널을 다시 열 때까지 유지된다. 보고 있는 동안 새 메시지가 와도 구분선이
    * 그 자리에 남는 것이 의도다("내가 열었을 때 어디까지 읽었는가"를 말하는 선이다).
+   *
+   * ## 왕복은 **크리티컬 패스 밖**이다 (2026-09-22)
+   *
+   * 예전에는 `openChannel` 이 `markRead` → `refreshUnread` → `markChannelRead` 를 **직렬로
+   * 기다렸다.** 메시지는 그 앞의 `upsertMessages` 에서 이미 스토어에 들어간 뒤인데도, 채널
+   * 열기가 끝나는 시점은 이 세 왕복 뒤였다 — 그리고 `openThread`·`openMessage` 는 그
+   * `openChannel` 을 **기다린다.** 그래서 인박스에서 답글 하나를 여는 데 왕복이 예닐곱 번
+   * 쌓였다.
+   *
+   * 왕복 하나의 값이 실측 250ms 인 경로에서(서버 처리는 1~7ms, 나머지는 전부 CF 엣지까지의
+   * 거리다) 이 셋은 그대로 체감 로딩 시간이다. **읽음 표시는 사람이 기다릴 이유가 없다** —
+   * 결과가 화면에 미치는 영향은 사이드바 배지와 구분선뿐이고, 구분선은 아래에서 **동기로**
+   * 정한다. 핀·자동 멘션을 크리티컬 패스에서 뺀 것과 같은 판단이다(`openChannel` 의 그 줄들).
+   *
+   * **얼리기는 동기로 남긴다.** 이것이 이 함수가 `swallow` 한 줄로 끝나지 않는 이유다:
+   * 구분선은 왕복 없이 스토어만으로 정해지고, 비동기로 미루면 채널이 그려진 **뒤에** 선이
+   * 튀어 들어온다. 그리고 `markChannelRead` 보다 먼저여야 한다는 순서 요구도 그대로다.
+   *
+   * `newest`·`frozen`·`ids` 를 **미리 읽어 두는 것**도 같은 이유다. 예전 판본은 왕복이 끝난
+   * 뒤의 스토어에서 이 값들을 읽었는데, 그 사이에 값이 바뀌면(라이브로 새 메시지가 오면)
+   * "내가 열었을 때"가 아니라 "왕복이 끝났을 때"의 위치를 얼리게 된다.
    */
-  private async settleReadPosition(channelId: string): Promise<void> {
+  private settleReadPosition(channelId: string): void {
     const store = this.store.getState();
     const frozen = store.reads[channelId]?.lastReadSeq ?? 0;
     store.set({ dividerSeq: { ...store.dividerSeq, [channelId]: frozen } });
 
     const newest = Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq));
-    if (newest <= frozen) return;
-    await this.api.markChannelRead(channelId, newest);
-    const after = this.store.getState();
-    after.set({ reads: { ...after.reads, [channelId]: { lastReadSeq: newest, unread: 0 } } });
+    const ids = store.unread
+      .filter((e) => e.channelId === channelId && !e.readAt)
+      .map((e) => e.id);
+    if (!ids.length && newest <= frozen) return;
+
+    this.swallow((async () => {
+      // 순서는 예전과 같다 — inbox 항목을 먼저 읽음으로 만들고, 그 결과를 다시 받아
+      // 배지를 맞춘 뒤, 채널 읽음 위치를 올린다.
+      if (ids.length) {
+        await this.api.markRead(ids);
+        await this.refreshUnread();
+      }
+      if (newest <= frozen) return;
+      await this.api.markChannelRead(channelId, newest);
+      const after = this.store.getState();
+      after.set({ reads: { ...after.reads, [channelId]: { lastReadSeq: newest, unread: 0 } } });
+    })());
   }
 
   /**
@@ -2004,14 +2031,7 @@ export class Controller {
         hasMore: { ...store.hasMore, [channelId]: page.hasMore },
       });
     }
-    const ids = store.unread
-      .filter((e) => e.channelId === channelId && !e.readAt)
-      .map((e) => e.id);
-    if (ids.length) {
-      await this.api.markRead(ids);
-      await this.refreshUnread();
-    }
-    await this.settleReadPosition(channelId);
+    this.settleReadPosition(channelId);
   }
 
   logout(): void {
