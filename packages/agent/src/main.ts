@@ -20,7 +20,7 @@ import { execFile } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadConfig, runnerLabel } from './config.js';
-import { HarkroomAgentClient } from './harkroom.js';
+import { applySelfRename, HarkroomAgentClient } from './harkroom.js';
 import { runMentionTurn, type MentionTurnDeps } from './mentionTurn.js';
 import { runPtyTurn } from './pty.js';
 import { SessionStore } from './sessions.js';
@@ -422,6 +422,24 @@ while (running) {
     // 다중 에이전트 협업의 핵심 값이 여기 걸려 있다).
     const accounts = await harkroom.accounts();
     const handles = Object.fromEntries(accounts.map((a) => [a.id, a.handle]));
+
+    /**
+     * **내 이름도 여기서 따라간다**(#847). 에이전트 이름은 바뀌는데(#843) `me` 는 기동 때
+     * 한 번 읽고 끝이었다 — 그래서 이름을 바꾼 에이전트는 **러너를 다시 띄우기 전까지**
+     * 프롬프트에서 자기를 옛 이름으로 소개하고(`prompt.ts`: *"너는 … 에이전트 @<이름>"*),
+     * PR 을 열면 꼬리표에도 옛 이름이 박힌다. 사람은 이미 새 이름으로 부르고 있는데
+     * 에이전트만 옛 이름으로 말하는 모양이다.
+     *
+     * 판정은 전부 `me.id` 라(`countOwnPostsSince`·`offAnchorPosts`·attach) **동작은 원래
+     * 안 깨진다** — 틀리는 것은 말뿐이다. 그래서 새 왕복을 만들지 않고 이미 배치마다 받는
+     * 이 목록에서 집어 온다.
+     *
+     * 객체를 **갈아끼우지 않고 필드를 고친다**: `me` 를 값으로 받아 둔 자리가 둘이다
+     * (`createInteractiveManager` 는 기동 때 한 번 조립되고, `buildTurnDeps` 는 턴마다
+     * 읽는다). 새 객체로 바꾸면 앞쪽은 영영 옛 이름을 쥔다.
+     */
+    const wasCalled = applySelfRename(me, accounts);
+    if (wasCalled !== null) console.log(`이름이 바뀌었다: @${wasCalled} → @${me.handle}`);
 
     const ctx: BatchContext = {
       channelName: (channelId) => byId.get(channelId) ?? 'dm',
