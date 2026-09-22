@@ -565,15 +565,34 @@ export function headMentionRunEnd(body: string): number {
  * 같은 이름이 머리와 본문에 함께 나오면 **부름**이다. 반대로 정하면 이름을 다시 언급했다는
  * 이유로 부름이 취소되고, 그 취소는 쓴 사람 눈에 보이지 않는다.
  *
+ * ## 팀·집합도 같은 규칙이다 (#849)
+ *
+ * 초판은 **계정만** 갈랐다. 팀은 계정이 아니라 토큰 종류가 다르므로(#845) 이 판정을 통째로
+ * 비껴갔고, 그래서 에이전트가 보고 한가운데 `@팀이름` 을 적으면 그 팀이 깼다 — 위 실측이
+ * 계정에 대해 잰 39% 를 팀이 그대로 되풀이하는 자리다.
+ *
+ * 대상의 종류가 곧 답이라 조회가 필요 없다:
+ * - **팀은 에이전트다**(팀 라우트가 `not_an_agent` 로 거절한다) → 에이전트→에이전트 규칙 그대로.
+ * - **집합은 사람이다**(`addHandleGroupMembers` 가 `kind = 'human'`) → 에이전트→사람이므로
+ *   자리와 무관하게 언제나 부름이다. 사람을 부르는 것은 막을 이유가 없다(위 문단).
+ *
  * @param opts.isAgent 그 계정이 에이전트인가. **모르면 `false`** — 사람으로 보고 막지 않는다.
  */
 export function splitMentionCalls(
   body: string,
   opts: { authorIsAgent: boolean; isAgent: (accountId: string) => boolean },
-): { call: string[]; ref: string[] } {
+): {
+  call: string[]; ref: string[];
+  /** 부름으로 판정된 집합·팀. 계정과 **따로** 내놓는다 — 섞으면 호출부가 매번 다시 가른다. */
+  targetCall: { kind: MentionTargetKind; id: string }[];
+  /** 지칭으로 판정된 팀. 집합은 언제나 부름이라 여기 오지 않는다. */
+  targetRef: { kind: MentionTargetKind; id: string }[];
+} {
   const headEnd = headMentionRunEnd(body);
   const call = new Set<string>();
   const ref = new Set<string>();
+  const targetCall = new Map<string, { kind: MentionTargetKind; id: string }>();
+  const targetRef = new Map<string, { kind: MentionTargetKind; id: string }>();
   // 코드·인용 제거는 `mentionRegions` 하나가 한다(#298·#592). `mentionScanText` 를 쓰지 않는
   // 이유: 그 함수는 조각을 이어 붙여 **원문 위치를 잃는다**. 자리로 뜻을 가르는 판정이므로
   // 위치가 있어야 하고, 그래서 조각의 `start` 를 그대로 쓴다.
@@ -585,9 +604,27 @@ export function splitMentionCalls(
       if (!opts.authorIsAgent || !opts.isAgent(id) || at < headEnd) call.add(id);
       else ref.add(id);
     }
+    // 집합·팀(#849). **같은 구간을 한 번 더 훑는다** — 한 정규식에 합치면 잡힌 것이 계정인지
+    // 대상인지를 그룹 번호로 가려야 하고, 그 분기가 위 판정과 섞인다. 본문 하나에 두 번
+    // 훑는 값은 무시할 만하고, 두 규칙이 각자 읽히는 값이 그보다 크다.
+    for (const m of region.text.matchAll(new RegExp(MENTION_TARGET_TOKEN_PATTERN, 'g'))) {
+      const key = m[1];
+      if (!key) continue;
+      const [kind, id] = key.split(':') as [MentionTargetKind, string];
+      const at = region.start + (m.index ?? 0);
+      // 집합은 사람이라 자리와 무관하게 부름이다 — `!opts.isAgent(id)` 가 계정 쪽에서
+      // 하는 일을 여기서는 **종류**가 한다.
+      if (!opts.authorIsAgent || kind === 'group' || at < headEnd) targetCall.set(key, { kind, id });
+      else targetRef.set(key, { kind, id });
+    }
   }
   for (const id of call) ref.delete(id);
-  return { call: [...call], ref: [...ref] };
+  // 한 번이라도 부르면 부름이다(위 문단) — 대상에도 같은 규칙을 쓴다.
+  for (const key of targetCall.keys()) targetRef.delete(key);
+  return {
+    call: [...call], ref: [...ref],
+    targetCall: [...targetCall.values()], targetRef: [...targetRef.values()],
+  };
 }
 
 /**
