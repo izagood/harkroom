@@ -2885,7 +2885,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         let outcome = ensure_at(
             &paths,
             &program,
-            |_| {},
+            |_, _| {},
             || {
                 *child.lock().unwrap() = Some(launch_daemon(&program, &paths, "nonce-fresh"));
                 Ok(DaemonExitWatch::alive())
@@ -2946,7 +2946,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         let (conn, kind) = ensure_at(
             &paths,
             &program,
-            |_| {},
+            |_, _| {},
             || {
                 launched.store(true, std::sync::atomic::Ordering::SeqCst);
                 Ok(DaemonExitWatch::alive())
@@ -3004,7 +3004,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         let outcome = ensure_at(
             &paths,
             &program,
-            |_| {},
+            |_, _| {},
             || {
                 *child.lock().unwrap() = Some(launch_daemon(&program, &paths, "nonce-spawn"));
                 Ok(DaemonExitWatch::alive())
@@ -3185,7 +3185,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         let outcome = ensure_at(
             &paths,
             &my_entry,
-            |_| {},
+            |_, _| {},
             || {
                 launched.store(true, std::sync::atomic::Ordering::SeqCst);
                 Ok(DaemonExitWatch::alive())
@@ -3247,7 +3247,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         let (conn, kind) = ensure_at(
             &paths,
             &program,
-            |_| {},
+            |_, _| {},
             || {
                 launched.store(true, std::sync::atomic::Ordering::SeqCst);
                 Ok(DaemonExitWatch::alive())
