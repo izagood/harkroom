@@ -9,6 +9,7 @@ import { calledGroups, notifiedSummary, type NotifiedResult } from '../lib/notif
 import { RunnerLauncher, tauriDaemonObserver, tauriAppVersionReader, type AppVersionReader, type DaemonObserver } from '../lib/runnerLauncher';
 // 만들기 흐름이 러너를 띄우기 **전에** 풀 배정을 쓴다 — 근거는 `createAgent` 안에 있다.
 import { assignAgentPool } from '../lib/claudeAccounts';
+import { setLocalAgent } from '../lib/operatorLocal';
 import type { AppStore } from './appStore';
 import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
 import { usePrefsStore } from './prefsStore';
@@ -1432,10 +1433,34 @@ export class Controller {
    * 러너 준비 실패는 RunnerState 에 남고, 이미 성공한 계정 생성과 PAT 원문은 호출자에게
    * 그대로 돌려준다 — 화면이 "생성 실패"라고 거짓말하거나 유일한 PAT 를 잃으면 안 된다.
    */
+  /**
+   * 만든 에이전트를 **이 기기의 오퍼레이터**에 붙인다 — 능력(로컬 설정) → 배정 순서다.
+   *
+   * 순서가 계약이다: 서버는 오퍼레이터가 "그 에이전트를 돌릴 수 있다"고 낸 뒤에만 배정을
+   * 받는다(`assignmentRoutes.ts` 의 `not_capable`). 그 능력은 앱이 소켓으로 로컬 설정을
+   * 고치면 오퍼레이터가 **웹소켓으로** 서버에 내는 값이라, 이 HTTP 요청이 그 프레임을
+   * 앞지를 수 있다 — 그래서 `not_capable` 은 실패가 아니라 "아직"이고, 왕복 한 번을
+   * 기다렸다 다시 부른다. 몇 번을 기다려도 안 되면 그때가 진짜 실패다.
+   */
+  private async attachToLocalOperator(
+    agentId: string, target: { baseUrl: string; operatorId: string; workingDir?: string },
+  ): Promise<void> {
+    await setLocalAgent(target.baseUrl, agentId, target.workingDir ? { workingDir: target.workingDir } : {});
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.api.assignAgent(agentId, target.operatorId);
+        return;
+      } catch (err) {
+        if (attempt >= 4 || !(err instanceof ApiError) || err.code !== 'not_capable') throw err;
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+    }
+  }
+
   async createAgent(
     input: { handle: string; displayName: string } & Partial<import('@harkroom/shared').AgentConfig>,
-    opts?: { claudePool?: string },
-  ): Promise<{ agent: import('@harkroom/shared').AgentView; poolError: string | null }> {
+    opts?: { claudePool?: string; localOperator?: { baseUrl: string; operatorId: string; workingDir?: string } },
+  ): Promise<{ agent: import('@harkroom/shared').AgentView; poolError: string | null; attachError: string | null }> {
     const agent = await this.api.createAgent(input);
     /**
      * 계정 풀 배정은 이 기기의 로컬 값이다(`useAgentPool` 머리말) — 서버로 가지 않으므로
@@ -1454,7 +1479,22 @@ export class Controller {
         poolError = err instanceof Error ? err.message : String(err);
       }
     }
-    return { agent, poolError };
+    /**
+     * **배정이 마지막이다.** 배정을 쓰는 순간 오퍼레이터가 러너를 띄우므로, 그 전에 쓰여야
+     * 하는 것(계정 풀)은 이미 위에서 끝나 있어야 한다 — 순서를 바꾸면 첫 러너가 풀 없이 뜬다.
+     *
+     * 풀과 같은 규율로 **실패가 생성을 되돌리지 않는다**: 계정은 이미 있고, 사람은 상세
+     * 화면에서 손으로 배정할 수 있다. 사유만 돌려준다.
+     */
+    let attachError: string | null = null;
+    if (opts?.localOperator) {
+      try {
+        await this.attachToLocalOperator(agent.id, opts.localOperator);
+      } catch (err) {
+        attachError = err instanceof Error ? err.message : String(err);
+      }
+    }
+    return { agent, poolError, attachError };
   }
 
   updateAgent(

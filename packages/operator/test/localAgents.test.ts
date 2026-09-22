@@ -22,13 +22,13 @@ describe('localAgents', () => {
     expect(changed).toEqual([{ baseUrl: 'https://example.com', agents: { 'a-1': { workingDir: '~/x' } } }]);
     expect(JSON.parse(await readFile(configPath, 'utf8'))).toEqual({ communities: { 'https://example.com': { agents: { 'a-1': { workingDir: '~/x' } } } } });
     const list = await port.list();
-    expect(list.communities).toEqual([{ baseUrl: 'https://example.com', registered: true, agents: { 'a-1': { workingDir: '~/x' } } }]);
+    expect(list.communities).toEqual([{ baseUrl: 'https://example.com', registered: true, operatorId: null, agents: { 'a-1': { workingDir: '~/x' } } }]);
   });
   it('등록 전 커뮤니티에도 자리를 만든다 — register 가 토큰을 채우면 그대로 능력이 된다', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'op-local-'));
     const port = createLocalAgentsPort({ configPath: join(dir, 'operator.json'), secrets: secretsWith([]), dataDir: dir, onChanged: () => {}, onRegistered: async () => {} });
     await port.set('https://new.example.com', 'a-2', {});
-    expect((await port.list()).communities[0]).toEqual({ baseUrl: 'https://new.example.com', registered: false, agents: { 'a-2': {} } });
+    expect((await port.list()).communities[0]).toEqual({ baseUrl: 'https://new.example.com', registered: false, operatorId: null, agents: { 'a-2': {} } });
   });
   it('빼면 다른 에이전트는 그대로고, 없는 것을 빼면 아무 일도 없다', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'op-local-'));
@@ -55,6 +55,7 @@ describe('localAgents.register — 앱이 넘긴 코드로 claim 하고 곧바�
     expect(out).toEqual({ operatorId: 'op-9', name: 'mac', baseUrl: 'https://example.com' });
     expect(tokens['https://example.com']).toBe('hkop_t');
     expect(registered).toEqual(['https://example.com']);
-    expect((await port.list()).communities[0]).toEqual({ baseUrl: 'https://example.com', registered: true, agents: {} });
+    // 등록이 id 를 함께 적어 둔다 — 앱의 '이 기기' 기본값이 그것 하나를 근거로 선다.
+    expect((await port.list()).communities[0]).toEqual({ baseUrl: 'https://example.com', registered: true, operatorId: 'op-9', agents: {} });
   });
 });

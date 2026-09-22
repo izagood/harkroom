@@ -121,7 +121,9 @@ export async function register(
   const configPath = join(deps.dataDir, 'operator', 'operator.json');
   const config = await readConfig(configPath);
   // 이미 있는 자리의 로컬 설정(agents)은 그대로 — 재등록은 토큰을 바꾸는 일이지 머신 설정을 지우는 일이 아니다.
-  config.communities[baseUrl] ??= { agents: {} };
+  const section = (config.communities[baseUrl] ??= { agents: {} });
+  // 재등록이면 오퍼레이터가 새로 생긴다(claim 마다 새 행) — 옛 id 를 남기면 앱이 남의 기기를 고른다.
+  section.operatorId = body.operator.id;
   await writeConfig(configPath, config);
   return { operatorId: body.operator.id, name: body.operator.name, baseUrl };
 }

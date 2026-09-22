@@ -4,7 +4,7 @@ import { mkdtemp, readdir, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { readConfig, writeConfig, type OperatorConfig } from '../src/config.js';
+import { readConfig, rememberOperatorId, writeConfig, type OperatorConfig } from '../src/config.js';
 import { fileSecrets } from '../src/secrets.js';
 
 describe('operator.json', () => {
@@ -30,6 +30,24 @@ describe('operator.json', () => {
     await writeFile(path, '{not json', 'utf8');
     expect(await readConfig(path)).toEqual({ communities: {} });
     expect(await readFile(path, 'utf8')).toBe('{not json');
+  });
+  it('오퍼레이터 id 를 적고, 에이전트 표는 건드리지 않는다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'op-cfg-'));
+    const path = join(dir, 'operator.json');
+    await writeConfig(path, { communities: { 'https://example.com': { agents: { 'a-1': { workingDir: '~/x' } } } } });
+    // 끝 슬래시는 같은 커뮤니티다 — 키를 정규화하지 않으면 섹션이 둘로 갈린다.
+    await rememberOperatorId(path, 'https://example.com/', 'op-1');
+    expect((await readConfig(path)).communities['https://example.com'])
+      .toEqual({ agents: { 'a-1': { workingDir: '~/x' } }, operatorId: 'op-1' });
+  });
+  it('같은 값이면 다시 쓰지 않는다 — 붙을 때마다 부르는 자리다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'op-cfg-'));
+    const path = join(dir, 'operator.json');
+    await rememberOperatorId(path, 'https://example.com', 'op-1');
+    const first = (await stat(path)).mtimeMs;
+    await new Promise((r) => setTimeout(r, 5));
+    await rememberOperatorId(path, 'https://example.com', 'op-1');
+    expect((await stat(path)).mtimeMs).toBe(first);
   });
 });
 

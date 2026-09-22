@@ -8,7 +8,7 @@
  */
 import { createAssignmentReconciler, type AssignmentDeps } from './assignments.js';
 import { createCommunity, type CommunityInstance } from './community.js';
-import { communityKey, readConfig } from './config.js';
+import { communityKey, readConfig, rememberOperatorId } from './config.js';
 import { createForwarder } from './forward.js';
 import { detectHarnesses } from './harnesses.js';
 import { readLoginPath } from './loginPath.js';
@@ -123,6 +123,11 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
       baseUrl, token, agents, reconciler, log: deps.log,
       runnerLink: deps.runnerLink, forwarder, fetchImpl: deps.fetchImpl,
       harnesses: () => { refreshHarnesses(); return harnesses; },
+      // 실패는 삼킨다 — 못 적어도 이 오퍼레이터는 그대로 돈다. 앱의 '이 기기' 기본값만 늦어진다.
+      onSelf: (operatorId) => {
+        void rememberOperatorId(configPath, baseUrl, operatorId)
+          .catch((err: unknown) => deps.log(`오퍼레이터 id 를 적지 못했다: ${err instanceof Error ? err.message : String(err)}`));
+      },
     });
     ref.current = community;
     community.start();

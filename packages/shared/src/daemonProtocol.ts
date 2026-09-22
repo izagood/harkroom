@@ -656,7 +656,12 @@ export interface ClaudeUsageSnapshot {
 
 /** `operatorAgentsList` 의 답. `registered` 는 그 커뮤니티의 토큰이 이 머신에 있는가다. */
 export interface OperatorAgentsListResult {
-  communities: { baseUrl: string; registered: boolean; agents: Record<string, OperatorLocalAgent> }[];
+  /**
+   * `operatorId` 는 **이 머신의** 오퍼레이터 id 다 — 앱이 `GET /operators` 의 목록에서
+   * 자기 기기를 고르는 유일한 근거(등록 때 적히고, 붙을 때 `/operators/self` 로 맞춘다).
+   * 아직 모르면 null: 한 번도 붙지 못한 옛 설정이다.
+   */
+  communities: { baseUrl: string; registered: boolean; operatorId: string | null; agents: Record<string, OperatorLocalAgent> }[];
 }
 export interface OperatorLocalAgent { workingDir?: string; claudePool?: string }
 

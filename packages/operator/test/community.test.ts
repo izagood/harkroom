@@ -133,6 +133,18 @@ describe('community — 소유자 확인과 거절 통지', () => {
     expect(await c.ownerAccountId()).toBe('u-9');
     expect(urls).toEqual(['https://example.com/operators/self Bearer hkop_x']);
   });
+  it('self 의 id 를 onSelf 로 흘린다 — CLI 로 등록한 옛 설정도 이 길로 오퍼레이터 id 를 얻는다', async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify({ id: 'op-7', ownerAccountId: 'u-9' }), { status: 200 })) as unknown as typeof fetch;
+    const { reconciler } = fakeReconciler();
+    const seen: string[] = [];
+    const c = createCommunity({
+      baseUrl: 'https://example.com', token: 'hkop_x', agents: {}, reconciler,
+      dial: dialOpen([]), schedule: () => {}, log: () => {}, fetchImpl, onSelf: (id) => seen.push(id),
+    });
+    c.start();
+    await c.ownerAccountId();
+    expect(seen).toEqual(['op-7']);
+  });
   it('self 를 못 읽으면 null — 그때 personal 배정은 조정기가 거절한다', async () => {
     const fetchImpl = (async () => new Response('nope', { status: 500 })) as unknown as typeof fetch;
     const { reconciler } = fakeReconciler();
