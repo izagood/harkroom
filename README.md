@@ -195,6 +195,7 @@ dead AVCS server never restarts the pod).
 | `HARKROOM_CLAUDE_ACCOUNTS` | Comma-separated account names setting failover order and subset (e.g. `plum,lime`). A name missing from the pool fails startup. Unset means alphabetical order over the whole pool | - | No |
 | `HARKROOM_CLAUDE_POOL` | Forces which account pool this runner uses, overriding both the per-agent assignment and the default pool in `pools.json`. A name with no matching pool directory fails startup. Unset means: per-agent assignment, then default pool, then the pool root itself | - | No |
 | `CLAUDE_CONFIG_DIR` | Not read by the runner — **set on the child** `claude` process to the selected account's directory. Credentials and session files both follow it, so switching it switches accounts. Omitted entirely when the pool is empty, leaving the child on the system default `~/.claude` | - | No |
+| `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` | Source opencode home whose `opencode/auth.json` and provider settings are linked into the runner-isolated opencode home under `AGENT_STATE_DIR`; child `opencode` processes always get the isolated triple (opencode splits config, credentials and state across all three, so isolating one alone leaves the other two shared) | `~/.config`, `~/.local/share`, `~/.local/state` | No |
 
 ### Operator (`packages/operator/src/cli.ts`)
 
