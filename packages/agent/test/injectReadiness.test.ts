@@ -18,6 +18,8 @@
 // 그물을 따로 두는 이유: 기존 확인(`confirmDelivery`)은 세션 기록이 자랐는지로 재는데,
 // 기록을 못 읽는 하네스에서는 그 판정이 늘 참이라 **한 번도 돌지 않는다**. codex 가 그
 // 자리였고, 그래서 되살릴 수단이 아무것도 없었다.
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { runPtyTurn } from '../src/pty.js';
@@ -34,9 +36,24 @@ describe('표가 말하는 주입 하한', () => {
     expect(facts.unsentHint?.test('  tab to queue message')).toBe(true);
   });
 
-  it('claude 는 없다 — 그물을 치지 않는다는 뜻이다', () => {
+  it('claude 는 하한도 미제출 신호도 없다 — 그물을 치지 않는다는 뜻이다', () => {
     // 준비 표시가 실제 준비와 같고, 제출 확인은 세션 기록으로 이미 된다.
-    expect(injectionFactsFor('claude-code')).toEqual({});
+    const facts = injectionFactsFor('claude-code');
+    expect(facts.readyMinMs).toBeUndefined();
+    expect(facts.unsentHint).toBeUndefined();
+  });
+
+  // 표에 준비 표시가 있어도 **넘기지 않으면** 주입은 `pty.ts` 의 기본 패턴으로 기다린다.
+  // opencode 의 `Ask anything…` 은 그 기본에 안 걸려, 첫 실물 턴이 60초를 채우고
+  // `PromptNotDeliveredError` 로 죽었다(2026-09-22). 이 셋이 그 갈림을 못박는다.
+  it('준비 표시는 하네스마다 다르고, 주입은 **그 표의 것**으로 기다린다', () => {
+    const 화면 = readFileSync(new URL('./fixtures/opencode-tui-ready.txt', import.meta.url), 'utf8');
+
+    expect(injectionFactsFor('opencode').readyPattern.test(화면)).toBe(true);
+    // 기본 패턴에는 안 걸린다 — 이것이 표를 넘겨야 하는 이유 그 자체다.
+    expect(/[❯›]\u00a0|Ask\s+\S+\s+to\s+do\s+anything/.test(화면)).toBe(false);
+    expect(injectionFactsFor('claude-code').readyPattern.test(화면)).toBe(false);
+    expect(injectionFactsFor('codex').readyPattern.test(화면)).toBe(false);
   });
 });
 
