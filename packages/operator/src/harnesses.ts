@@ -9,7 +9,7 @@
  * 그것은 턴을 돌려 봐야 아는 사실이고, 오퍼레이터는 없는 것을 있다고 하지 않는 쪽으로만 잰다.
  */
 import { join } from 'node:path';
-import type { OperatorCapabilities, AgentHarness } from '@harkroom/shared';
+import { harnessFallbackBinDirs, type OperatorCapabilities, type AgentHarness } from '@harkroom/shared';
 
 /** 러너가 실제로 부르는 실행 파일 이름(`turn.ts::PRESETS.command`). */
 export const HARNESS_BINARIES: Record<Extract<AgentHarness, 'claude-code' | 'codex' | 'opencode'>, string> = {
@@ -25,13 +25,14 @@ export const HARNESS_BINARIES: Record<Extract<AgentHarness, 'claude-code' | 'cod
  * 사람 몫**이다. 로그인 셸 PATH 만 보면 멀쩡히 설치된 머신이 `installed:false` 로 잡히고,
  * 서버는 그 하네스로의 배정을 409 로 거절한다 — 사람은 "설치했는데 왜 안 되지"만 본다.
  *
- * 그래서 **설치 관례로 아는 자리**를 함께 본다. 이것은 PATH 를 대신하지 않는다: 러너가
- * 실행할 때는 여전히 PATH 가 필요하므로, 여기서 발견해도 `path` 로 잡히지 않았다면
- * `viaKnownDir` 로 표시해 화면이 그 사실을 말할 수 있게 한다.
+ * **표는 `@harkroom/shared` 의 `harnessFallbackBinDirs` 하나다.** 여기에 따로 적어 뒀더니
+ * 오퍼레이터는 "설치됨" 이라 말하는데 러너의 PTY 는 같은 실행 파일을 못 찾아 죽는, 두 쪽이
+ * 갈린 상태가 실제로 나왔다(실측 2026-09-22). 러너도 같은 표를 보고 자식 PATH 를 채운다.
  */
-const KNOWN_INSTALL_DIRS: Partial<Record<keyof typeof HARNESS_BINARIES, (home: string) => string>> = {
-  opencode: (home) => join(home, '.opencode', 'bin'),
-};
+function knownInstallDir(harness: keyof typeof HARNESS_BINARIES, home: string): string | null {
+  const [dir] = harnessFallbackBinDirs(harness);
+  return dir === undefined ? null : join(home, ...dir.split('/'));
+}
 
 export interface DetectDeps {
   /** 로그인 셸의 PATH(`loginPath.ts`). null 이면 아무것도 installed 가 아니다. */
@@ -62,9 +63,9 @@ export async function detectHarnesses(deps: DetectDeps): Promise<OperatorCapabil
     for (const dir of dirs) {
       if (await deps.exists(join(dir, bin))) { installed = true; break; }
     }
-    // PATH 에 없으면 설치 관례 자리를 한 번 더 본다(위 `KNOWN_INSTALL_DIRS` 주석).
+    // PATH 에 없으면 설치 관례 자리를 한 번 더 본다(위 `knownInstallDir` 주석).
     if (!installed) {
-      const known = KNOWN_INSTALL_DIRS[harness]?.(deps.home);
+      const known = knownInstallDir(harness, deps.home);
       if (known && await deps.exists(join(known, bin))) installed = true;
     }
     const loggedIn = await deps.exists(credentialFile(harness, deps.env, deps.home));

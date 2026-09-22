@@ -9,8 +9,14 @@
 // codex 에 `-a` 가 없다(sandbox 단독), codex MCP 는 파일이 아니라 턴별 `-c` 오버라이드,
 // claude 는 `--strict-mcp-config` 를 항상 받는다, gemini 는 이번 범위에서 미지원.
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { RUNNABLE_HARNESSES, type AgentHarness, type MentionPermission } from '@harkroom/shared';
+import { homedir } from 'node:os';
+import { delimiter, join } from 'node:path';
+import {
+  RUNNABLE_HARNESSES,
+  harnessFallbackBinDirs,
+  type AgentHarness,
+  type MentionPermission,
+} from '@harkroom/shared';
 
 import { executionModelFor, usesXdgHome } from './adapters/index.js';
 import { OPENCODE_READONLY_AGENT, opencodeDirs } from './opencodeHome.js';
@@ -488,6 +494,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     command: preset.command,
     args,
     env: childEnv({
+      harness: opts.harness,
       codexHome: opts.harness === 'codex' ? opts.codexHome : null,
       opencodeHome: usesXdgHome(opts.harness) ? (opts.opencodeHome ?? null) : null,
       claudeConfigDir: opts.harness === 'claude-code' ? opts.claudeConfigDir : null,
@@ -581,7 +588,12 @@ export const HARNESS_ENV_DENYLIST = [
  * 그 목록과 각 키를 빼는 근거는 위 상수의 주석에 있다 — 지우려거든 거기부터 읽어라.
  */
 function childEnv(
-  homes: { codexHome: string | null; claudeConfigDir: string | null; opencodeHome: string | null },
+  homes: {
+    harness: AgentHarness;
+    codexHome: string | null;
+    claudeConfigDir: string | null;
+    opencodeHome: string | null;
+  },
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -600,6 +612,15 @@ function childEnv(
   // 엉뚱한 자리에 설정을 만든다 — "계정 지정 없음"은 부재로 표현해야 시스템 기본으로 떨어진다.
   // 계정 풀을 안 만든 러너의 하위 호환이 이 한 줄에 걸려 있다(`claudeAccounts.ts`).
   if (homes.claudeConfigDir !== null) env.CLAUDE_CONFIG_DIR = homes.claudeConfigDir;
+  // **PATH 밖에 설치되는 하네스의 자리를 뒤에 붙인다**(`harnessFallbackBinDirs`).
+  // opencode 는 `~/.opencode/bin` 에 깔리고 PATH 는 사람의 셸 rc 에만 들어간다 — 러너는
+  // 그 rc 를 안 거치므로 PTY 가 `opencode` 를 못 찾고 죽었다(실측 2026-09-22, 앱 0.3.3).
+  // 오퍼레이터는 같은 표를 보고 "설치됨" 이라 말하던 터라 증상이 "설치했는데 왜 안 되지" 로만
+  // 보였다. **앞이 아니라 뒤**인 이유: 사람이 PATH 에 둔 것이 있으면 그쪽이 이겨야 한다.
+  const fallback = harnessFallbackBinDirs(homes.harness).map((dir) => join(homedir(), ...dir.split('/')));
+  if (fallback.length > 0) {
+    env.PATH = [...(env.PATH ? [env.PATH] : []), ...fallback].join(delimiter);
+  }
   return env;
 }
 

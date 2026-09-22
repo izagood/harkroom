@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { HARNESS_ENV_DENYLIST, assertHarnessContract, buildTurnCommand, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
@@ -599,6 +599,32 @@ describe('계정별 CLAUDE_CONFIG_DIR 주입', () => {
     });
     expect('CLAUDE_CONFIG_DIR' in p.env).toBe(false);
     expect(p.env.CODEX_HOME).toBe('/state/codex-home');
+  });
+});
+
+// 오퍼레이터는 "설치됨" 이라 말하는데 러너의 PTY 는 같은 실행 파일을 못 찾아 죽던 자리다
+// (실측 2026-09-22, 앱 0.3.3 의 첫 opencode 턴). 둘이 **같은 표**를 봐야 그 갈림이 없다.
+describe('PATH 밖에 설치되는 하네스', () => {
+  const 대비자리 = join(homedir(), '.opencode', 'bin');
+
+  it('opencode 는 `~/.opencode/bin` 을 자식 PATH **뒤에** 붙인다', () => {
+    const p = buildTurnCommand({
+      ...base, harness: 'opencode', mode: 'mention', sessionId: null, isFirstTurn: true,
+      opencodeHome: '/state/opencode-home',
+    });
+    const dirs = (p.env.PATH ?? '').split(delimiter);
+
+    expect(dirs.at(-1)).toBe(대비자리);
+    // **뒤**여야 한다 — 사람이 PATH 에 둔 opencode 가 있으면 그쪽이 이긴다. 이건 없을 때의
+    // 대비이지 덮어쓰기가 아니다.
+    expect(dirs[0]).not.toBe(대비자리);
+  });
+
+  it('그런 자리가 없는 하네스의 PATH 는 건드리지 않는다', () => {
+    const p = buildTurnCommand({
+      ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true,
+    });
+    expect(p.env.PATH).toBe(process.env.PATH);
   });
 });
 
