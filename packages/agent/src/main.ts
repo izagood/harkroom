@@ -17,14 +17,14 @@
 // 쓰기 같은 부작용을 곧바로 일으키므로, 그 흐름을 여기 두면 테스트가 import 하는 순간
 // 진짜 서버에 붙으려 든다.
 import { execFile } from 'node:child_process';
-import { access } from 'node:fs/promises';
-import { join } from 'node:path';
+import { access, readdir } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import { loadConfig, runnerLabel } from './config.js';
 import { HarkroomAgentClient } from './harkroom.js';
 import { runMentionTurn, type MentionTurnDeps } from './mentionTurn.js';
 import { runPtyTurn } from './pty.js';
 import { SessionStore } from './sessions.js';
-import { resolveAgentStateDir } from './stateDir.js';
+import { ensureNameLink, resolveAgentStateDir } from './stateDir.js';
 import { assertHarnessContract, readExtraMcpServers } from './turn.js';
 import { createStoppableSleep } from './stoppableSleep.js';
 import type { Exec } from './workspace.js';
@@ -210,9 +210,18 @@ const [me, guide] = await (async () => {
 // **세션 파일·MCP 설정·avcs 워크스페이스 경로를 여기서 이어 붙이지 않는다** — 그 셋을
 // `resolveAgentStateDir` 이 함께 돌려준다. 여기서 각자 조립하면 하나를 옛 뿌리에 두는
 // 실수가 타입에 걸리지 않고, 그 파일 하나만 두 인스턴스가 밟는다(그러면 격리는 없다).
+//
+// #843: 이름은 바뀔 수 있으므로 **이미 있는 디렉터리를 id 로 먼저 찾는다**(stateDir.ts 주석).
+// 뿌리가 아직 없는 첫 기동이면 읽을 것이 없다 — 그때는 빈 목록이고 새 이름으로 만든다.
+const stateDirNames = await readdir(config.stateDir).catch(() => [] as string[]);
 const {
   agentStateDir, legacyPath, sessionsPath, workspaceBaseDir, codexHomeDir,
-} = resolveAgentStateDir(config.stateDir, me.handle, me.id, config.agentInstance);
+} = resolveAgentStateDir(config.stateDir, me.handle, me.id, config.agentInstance, stateDirNames);
+
+// 뿌리 이름이 id 하나라(#850) 사람이 눈으로 찾을 길을 따로 낸다: `by-name/<handle> -> ../<뿌리>`.
+// 인스턴스가 붙어도 링크는 **뿌리**를 가리킨다 — 인스턴스는 그 아래 한 단이고, 사람이 찾는
+// 것은 "이 에이전트의 자리" 이지 "이 인스턴스의 자리" 가 아니다.
+await ensureNameLink(config.stateDir, me.handle, basename(config.agentInstance ? dirname(agentStateDir) : agentStateDir));
 
 // 대화형 `codex resume` 은 --ignore-user-config 를 받지 않는다. 개인 config.toml/MCP 를
 // 물려주지 않으면서 기존 로그인은 재사용하도록 Harkroom 전용 CODEX_HOME 을 준비한다.

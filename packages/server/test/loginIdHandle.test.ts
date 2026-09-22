@@ -229,19 +229,23 @@ describe('#271-11 handle 변경', () => {
     expect(await storedBody(old)).toBe('@fizz 옛 이름으로');
   });
 
-  it('**에이전트 handle 변경은 400 이다** — 러너 상태가 handle 스코프다(#167)', async () => {
+  /**
+   * #843: 에이전트 이름은 **바뀐다**. 남은 경계는 "누가 바꾸나"다 — 러너가 자기 PAT 로
+   * 자기 이름을 바꾸면 사람이 부르려던 이름이 턴 도중에 사라진다. 소유자·admin 의 문은 열려 있다.
+   */
+  it('에이전트는 자기 이름을 스스로 못 바꾼다 — 소유자의 문은 열려 있다', async () => {
     const res = await app.inject({
       method: 'PATCH', url: '/accounts/me/handle', headers: auth(forgePat), payload: { handle: 'forge2' },
     });
     expect(res.statusCode).toBe(400);
-    expect(res.json().error.code).toBe('agent_handle_immutable');
+    expect(res.json().error.code).toBe('agent_handle_not_self_serve');
 
     const admin = await app.inject({
       method: 'PATCH', url: `/accounts/${forgeId}/handle`, headers: auth(adminToken),
       payload: { handle: 'forge2' },
     });
-    expect(admin.statusCode).toBe(400);
-    expect(admin.json().error.code).toBe('agent_handle_immutable');
+    expect(admin.statusCode).toBe(200);
+    expect(admin.json().handle).toBe('forge2');
   });
 
   it('남의 handle 은 admin 만 바꾼다', async () => {
