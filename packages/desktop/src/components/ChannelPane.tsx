@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
@@ -14,6 +14,7 @@ import { ChannelEmptyState } from './ChannelEmptyState';
 import { RunnerStatusLine } from './RunnerStatus';
 import { dayLabel, localDayKey } from '../lib/day';
 import { distanceFromBottom, isNearBottom, isNearTop } from '../lib/stickyBottom';
+import { anchoredScrollTop, needsAnchorFix, pickAnchor, type ScrollAnchor } from '../lib/scrollAnchor';
 import { useLocale, useT } from '../i18n/useT';
 import { displayBody } from '../lib/mention';
 import { mentionedHandles, mentionedIds } from '@harkroom/shared';
@@ -101,6 +102,18 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * 없다**(macOS 앱은 WKWebView 다). 그래서 자란 높이만큼 우리가 되돌린다.
    */
   const olderAnchorRef = useRef<{ height: number; top: number } | null>(null);
+  /**
+   * 줄들을 담은 상자. **스크롤 상자와 따로 두는 이유**는 높이 변화를 지켜볼 대상이 필요해서다 —
+   * 스크롤 상자는 창이라 높이가 안 변하고(`ResizeObserver` 가 아무 말도 하지 않는다), 자라는
+   * 것은 그 **안의 내용**이다. 바닥 표식과 `Load older` 버튼은 이 상자 밖에 둔다: 붙잡을
+   * 후보는 대화 줄이지 그 둘이 아니다.
+   */
+  const contentRef = useRef<HTMLDivElement>(null);
+  /**
+   * 지금 붙잡고 있는 줄(`lib/scrollAnchor.ts` 의 근거). 바닥에 붙어 있을 때는 null 이다 —
+   * 그때 옳은 것은 "읽던 자리"가 아니라 "가장 최신"이다.
+   */
+  const anchorRef = useRef<{ node: HTMLElement; anchor: ScrollAnchor } | null>(null);
   /**
    * 정착 창이 **끝나는 시각**(`Date.now()` 기준 ms). 0 이면 창은 닫혀 있다 —
    * 사람이 손을 댔거나, 아직 채널을 열지 않았다는 뜻이다.
@@ -251,6 +264,46 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     // 그러면 읽던 자리를 빼앗는다.
     const el = listRef.current;
     if (el) lastScrollTopRef.current = el.scrollTop;
+  };
+
+  /** 붙잡을 후보 줄들. DOM 순서가 곧 세로 순서라 이분 탐색이 그대로 듣는다. */
+  const anchorRows = (): HTMLElement[] => {
+    const box = contentRef.current;
+    return box ? Array.from(box.querySelectorAll<HTMLElement>('[data-anchor-id]')) : [];
+  };
+
+  /**
+   * 지금 시야 맨 위의 줄을 **적어 둔다.** 자라기 전에 적어야 뜻이 있으므로 스크롤이 움직일
+   * 때마다 갱신한다 — 커밋 시점에 적으면 이미 자란 뒤라 되돌릴 기준이 없다.
+   */
+  const captureAnchor = () => {
+    const el = listRef.current;
+    const rows = anchorRows();
+    if (!el || !rows.length) { anchorRef.current = null; return; }
+    const anchor = pickAnchor(rows.map((r) => ({ top: r.offsetTop })), el.scrollTop);
+    if (!anchor) { anchorRef.current = null; return; }
+    const node = rows.find((r) => r.offsetTop === anchor.top) ?? null;
+    anchorRef.current = node ? { node, anchor } : null;
+  };
+
+  /**
+   * 붙잡아 둔 줄이 **같은 자리에 오도록** 되돌린다(`lib/scrollAnchor.ts` 의 근거).
+   *
+   * 바닥에 붙어 있으면 아무것도 하지 않는다 — 그 규율은 이 보정보다 위에 있고, 둘 다 손을
+   * 대면 새 줄이 올 때마다 바닥과 읽던 자리가 한 프레임씩 다툰다.
+   */
+  const restoreAnchor = () => {
+    const el = listRef.current;
+    const held = anchorRef.current;
+    if (!el || !held || stickyRef.current) return;
+    // 사라진 줄(삭제·창 밖으로 밀려남)을 기준으로 삼으면 `offsetTop` 이 0 이라 맨 위로 튄다.
+    if (!held.node.isConnected) { anchorRef.current = null; return; }
+    const next = anchoredScrollTop(held.anchor, held.node.offsetTop);
+    if (!needsAnchorFix(el.scrollTop, next)) return;
+    el.scrollTop = next;
+    // 방금 **우리가** 옮긴 자리다 — 적어 두지 않으면 다음 스크롤을 "사람이 올렸다"로 읽는다.
+    lastScrollTopRef.current = el.scrollTop;
+    held.anchor = { top: held.node.offsetTop, offset: held.anchor.offset };
   };
 
   /**
@@ -430,6 +483,35 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   }, [firstRootId]);
 
   /**
+   * **커밋마다 읽던 자리를 되돌린다.** 딸림값이 없는 것이 요점이다 — 목록의 줄 수가 그대로인
+   * 채로 높이만 바뀌는 길이 많고(답글 요약 줄이 서는 것이 그 중 가장 흔하다), 그때 도는
+   * 딸림값은 없기 때문이다.
+   *
+   * `useLayoutEffect` 여야 한다: 그리기 **전에** 되돌려야 튀는 한 프레임이 안 보인다.
+   */
+  useLayoutEffect(() => { restoreAnchor(); });
+
+  /**
+   * **React 를 거치지 않는 성장까지 잡는다.** 첨부 그림은 URL 을 받아온 뒤에 `<img>` 가
+   * 붙고(`Attachments.tsx`), 링크 카드도 fetch 가 끝난 뒤에 붙는데, 그 상태는 자식 컴포넌트
+   * 안에 있으므로 **이 컴포넌트는 다시 그려지지 않는다** — 위의 커밋 보정이 돌 일이 없다.
+   * 그래서 줄 상자의 높이를 직접 지켜본다.
+   *
+   * 딸림값이 `[activeChannelId]` 인 이유는 바닥 표식 관찰자와 같다 — 채널이 활성이 되는
+   * 때가 곧 상자가 생기는 때다(`[]` 로 두면 영원히 안 붙는다).
+   */
+  useEffect(() => {
+    const box = contentRef.current;
+    // jsdom 에는 `ResizeObserver` 가 없다. 없으면 이 보정만 빠진다 — 커밋으로 도는 위의
+    // 효과는 그대로 돈다(`IntersectionObserver` 의 `typeof` 확인과 같은 태도다).
+    if (!box || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => { restoreAnchor(); });
+    ro.observe(box);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeChannelId]);
+
+  /**
    * 스크롤 위치를 ref 에 담는 이유: 이 값은 **그리는 데 쓰이지 않는다.** 상태로 두면
    * 스크롤 한 번에 채널 화면이 프레임마다 다시 그려진다(목록이 수백 줄인 자리다).
    * 화면에 나오는 것은 버튼의 유무뿐이고, 그것만 상태로 둔다.
@@ -440,6 +522,8 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     // **바닥 판정보다 먼저 본다.** 스크롤이 없는 짧은 상자에서는 위와 아래가 같은 자리라,
     // 바닥 분기의 이른 반환 뒤에 두면 그 채널에서는 영원히 돌지 않는다.
     maybeLoadOlder(el);
+    // **자라기 전에** 적어 둔다 — 스크롤이 멎은 지금이 마지막 기회다(`restoreAnchor` 의 근거).
+    captureAnchor();
     const prevTop = lastScrollTopRef.current;
     lastScrollTopRef.current = el.scrollTop;
     const near = isNearBottom(el);
@@ -467,6 +551,13 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
      * 그러면 그림·링크가 많은 채널에서 다시 가운데쯤에 서게 된다.
      */
     if (el.scrollTop < prevTop) stickyRef.current = false;
+    /**
+     * **내려갈 길은 늘 세워 둔다.** 예전에는 이 버튼이 `roots.length` 가 바뀔 때만 섰다 —
+     * 그런데 에이전트의 답은 **스레드**에 달리므로 뿌리 줄 수는 그대로다(`roots` 필터).
+     * 그래서 대화가 한참 이어져도 위를 보는 사람에게는 버튼이 한 번도 안 떴고, 내려갈 길은
+     * 손으로 긁어 내리는 것뿐이었다(jaebin 보고 2026-09-22).
+     */
+    if (!stickyRef.current) setJumpVisible(true);
   };
 
   // 채널을 옮기면 파일 패널을 닫는다. 열린 채로 두면 방금 떠난 채널의 목록이 잠깐 남아
@@ -597,6 +688,9 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
         {roots.length === 0 && !hasMore[activeChannelId] && (
           <ChannelEmptyState channel={channel} isArchived={isArchived} />
         )}
+        {/* 줄들을 한 상자에 담는다 — 높이 변화를 지켜볼 대상이자, 붙잡을 후보의 범위다
+            (`contentRef` 주석). 상자는 아무 모양도 주지 않으므로 목록의 배치는 그대로다. */}
+        <div ref={contentRef}>
         {slots.map((slot, i) => {
           // 구분선·키는 그 자리의 **첫 메시지**를 기준으로 삼는다 — 접힌 묶음도 목록에서는
           // 한 자리이고, 그 자리가 시작된 시각이 곧 그 자리의 날짜다.
@@ -607,7 +701,9 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
           const prev = prevSlot && (prevSlot.kind === 'message' ? prevSlot.message : prevSlot.messages[0]!);
           const newDay = !prev || localDayKey(prev.createdAt) !== localDayKey(m.createdAt);
           return (
-            <Fragment key={m.id}>
+            /* `data-anchor-id` 는 **읽던 자리를 붙잡을 손잡이**다(`lib/scrollAnchor.ts`).
+               자리마다 하나여야 하므로 묶음도 첫 메시지의 id 를 쓴다 — 키와 같은 기준이다. */
+            <div key={m.id} data-anchor-id={m.id}>
               {/*
                 날짜 구분선과 "New messages" 구분선은 **한 지점에 둘 다 걸릴 수 있고, 그때 둘 다 그린다**.
                 하나를 감추면 "여기부터 새 날"과 "여기부터 안 읽음"이라는 서로 다른 두 사실 중
@@ -631,9 +727,10 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
                 : slot.kind === 'exchange'
                   ? <AgentExchange messages={slot.messages} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />
                   : <MessageItem message={m} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
-            </Fragment>
+            </div>
           );
         })}
+        </div>
         {/* 바닥 표식. **높이 1px 을 주는 이유**: 위의 관찰자가 이 요소로 "바닥이 보이는가"를
             판정한다 — 높이가 0 인 상자의 교차 판정은 브라우저마다 다르게 굴러 신호가 조용히
             죽을 수 있다. 1px 은 화면에서 보이지 않고 줄 간격도 바꾸지 않는다. */}
