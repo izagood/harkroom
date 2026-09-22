@@ -139,16 +139,21 @@ describe('mcp attachment.fetch', () => {
     expect(viaMcp.equals(viaRest.rawPayload)).toBe(true);
   });
 
-  // 이미지가 아니면 **거절이 아니라** "이렇게 받아라"다. 빈 응답으로 두면 에이전트는
-  // 받기가 실패한 것과 구별하지 못하고 같은 호출을 다시 한다.
-  it('falls back to metadata for a non-image, without bytes', async () => {
-    const id = await attach('notes.txt', Buffer.from('할 일 목록'), 'text/plain');
+  // 이미지도 텍스트도 아니면 **거절이 아니라** "이렇게 받아라"다. 빈 응답으로 두면
+  // 에이전트는 받기가 실패한 것과 구별하지 못하고 같은 호출을 다시 한다.
+  //
+  // **이 자리에 예전에는 `text/plain` 이 서 있었다**(#585). #609 가 그것을 실어 주기로
+  // 했으므로 여기는 진짜로 둘 다 아닌 타입이어야 한다 — 안 그러면 이 축이 새 동작을
+  // 막는 회귀선이 된다.
+  it('falls back to metadata for something that is neither image nor text', async () => {
+    const id = await attach('bundle.zip', Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0]), 'application/zip');
     const client = await mcpClient(botPat);
 
     const res = await fetchTool(client, id);
     expect(parts(res).some((c) => c.type === 'image')).toBe(false);
     const json = firstJson(res);
-    expect(json.attachment).toMatchObject({ filename: 'notes.txt', contentType: 'text/plain' });
+    expect(json.attachment).toMatchObject({ filename: 'bundle.zip', contentType: 'application/zip' });
+    expect(json.text).toBeUndefined();
     expect(json.note).toContain('not an inlineable image');
     expect(json.download).toContain(`/attachments/${id}`);
   });
@@ -163,6 +168,12 @@ describe('mcp attachment.fetch', () => {
     const res = await fetchTool(client, id);
     expect(parts(res).some((c) => c.type === 'image')).toBe(false);
     expect(firstJson(res).note).toContain('not an inlineable image');
+
+    // #609 의 함정: SVG 는 **텍스트이기도 하다.** "이미지가 아니면 텍스트" 로 규칙을
+    // 쓰면 여기서 마크업이 통째로 모델 컨텍스트에 실린다. 허용 목록이라 빠지는 것을
+    // 여기서 고정한다 — 되돌려 RED 로 확인했다(`isTextType` 을 `!IMAGE_TYPES…` 로 바꾸면 빨개진다).
+    expect(firstJson(res).text).toBeUndefined();
+    expect(JSON.stringify(firstJson(res))).not.toContain('<script>');
   });
 
   // 큰 파일을 base64 로 만들면 서버 메모리와 모델 컨텍스트를 함께 태운다. 한계를 넘으면
@@ -177,6 +188,115 @@ describe('mcp attachment.fetch', () => {
     const json = firstJson(res);
     expect(json.note).toContain('too large');
     expect(json.download).toContain(`/attachments/${id}`);
+  });
+
+  /**
+   * #609 — **텍스트도 손에 쥔다.**
+   *
+   * 이미지 축과 같은 방식으로 잰다: 진짜 MCP 클라이언트로 도구를 부르고 돌아온 문자열을
+   * **올린 원본과 대조**한다. "형식은 맞는데 내용이 다르다"가 이 결함군의 실패 모양이고,
+   * 길이나 존재만 재는 축은 그것을 통과시킨다.
+   */
+  describe('텍스트 첨부 (#609)', () => {
+    // 한글을 섞는다. ASCII 만으로 재면 UTF-8 왕복이 깨져도 초록이다.
+    const LOG = '에러가 났다\nTraceback (most recent call last):\n  File "a.py", line 1\nValueError: 값이 틀렸다\n';
+
+    it('로그를 올린 그대로 글로 싣는다', async () => {
+      const id = await attach('run.log', Buffer.from(LOG, 'utf8'), 'text/plain');
+      const client = await mcpClient(botPat);
+
+      const json = firstJson(await fetchTool(client, id));
+      // 바이트 단위로 같다 — 한 글자라도 다르면 여기서 걸린다.
+      expect(json.text).toBe(LOG);
+      expect(json.attachment).toMatchObject({ filename: 'run.log', contentType: 'text/plain' });
+      // 안 잘렸으면 자른 표시를 붙이지 않는다. 늘 붙으면 그 값이 아무것도 안 말한다.
+      expect(json.truncated).toBeUndefined();
+    });
+
+    // 허용 목록의 나머지 갈래. `+json` 접미는 `application/vnd.…+json` 로 실제로 올라온다.
+    it.each([
+      ['data.json', 'application/json'],
+      ['feed.xml', 'application/xml'],
+      ['doc.json', 'application/vnd.api+json'],
+      ['page.html', 'text/html'],
+    ])('%s (%s) 도 글로 실린다', async (filename, contentType) => {
+      const body = '{"ok":true,"말":"한글"}';
+      const id = await attach(filename, Buffer.from(body, 'utf8'), contentType);
+      const client = await mcpClient(botPat);
+
+      expect(firstJson(await fetchTool(client, id)).text).toBe(body);
+    });
+
+    /**
+     * **자르되 잘랐다고 말한다.** 이슈가 요구한 세 가지를 한자리에서 본다: 앞뒤가 남고,
+     * 자른 사실이 응답에 있고, 받는 방법이 함께 온다.
+     *
+     * 앞만 남기지 않는 이유가 여기서 눈에 보인다 — 로그는 **끝**에 실패가 있다.
+     */
+    it('상한을 넘으면 앞뒤를 남기고 자른 사실을 응답에 적는다', async () => {
+      const big = `머리표식\n${'가'.repeat(200_000)}\n꼬리표식`;
+      const id = await attach('huge.log', Buffer.from(big, 'utf8'), 'text/plain');
+      const client = await mcpClient(botPat);
+
+      const json = firstJson(await fetchTool(client, id));
+      expect(json.text).toContain('머리표식');
+      expect(json.text).toContain('꼬리표식');
+      expect(json.text).toContain('characters omitted');
+      expect(json.truncated.droppedCharacters).toBeGreaterThan(0);
+      expect(json.truncated.limitBytes).toBe(256 * 1024);
+      expect(json.download).toContain(`/attachments/${id}`);
+
+      // **깨진 글자를 만들지 않는다.** 바이트로 잘랐으면 경계에서 한글이 쪼개져 U+FFFD 가
+      // 섞인다 — 디코딩한 뒤 자르기로 한 이유가 이것이다.
+      expect(json.text).not.toContain('\uFFFD');
+    });
+
+    /**
+     * UTF-8 이 아니면 **텍스트로 취급하지 않는다.** 기본 디코더는 깨진 바이트를 조용히
+     * `U+FFFD` 로 바꿔 성공하는데, 그러면 에이전트는 깨진 글자가 원본인지 사고인지
+     * 구별할 수 없다 — "내용은 알지만 틀렸다"가 되어 원래 결함보다 나쁘다.
+     */
+    it('UTF-8 이 아니면 글로 싣지 않고 이유를 말한다', async () => {
+      // EUC-KR 의 "한글" — UTF-8 로는 못 읽는 바이트다.
+      const euckr = Buffer.from([0xc7, 0xd1, 0xb1, 0xdb]);
+      const id = await attach('legacy.txt', euckr, 'text/plain');
+      const client = await mcpClient(botPat);
+
+      const json = firstJson(await fetchTool(client, id));
+      expect(json.text).toBeUndefined();
+      expect(json.note).toContain('not valid UTF-8');
+      expect(json.download).toContain(`/attachments/${id}`);
+    });
+
+    /**
+     * 읽기 상한을 넘으면 이미지와 같이 메타데이터로 떨어진다. **문구가 텍스트의 것이어야
+     * 한다** — 여기서 `not an inlineable image type` 이라고 답하면 거짓말이고, 에이전트는
+     * 타입을 바꿔 다시 올려 달라고 사람에게 말하게 된다.
+     */
+    it('읽기 상한을 넘으면 텍스트의 문구로 떨어진다', async () => {
+      const id = await attach('massive.log', Buffer.alloc(4 * 1024 * 1024 + 1, 0x61), 'text/plain');
+      const client = await mcpClient(botPat);
+
+      const json = firstJson(await fetchTool(client, id));
+      expect(json.text).toBeUndefined();
+      expect(json.note).toContain('too large to inline as text');
+      expect(json.note).not.toContain('not an inlineable image');
+    });
+
+    // 이미지 축이 REST 와 대조하는 것과 같은 이유다: 두 통로가 다른 것을 내주면 어느 쪽을
+    // 믿을지 알 수 없다.
+    it('REST 다운로드와 같은 내용을 준다', async () => {
+      const id = await attach('same.log', Buffer.from(LOG, 'utf8'), 'text/plain');
+      const client = await mcpClient(botPat);
+
+      const viaMcp = firstJson(await fetchTool(client, id)).text;
+      const viaRest = await app.inject({
+        method: 'GET', url: `/attachments/${id}`, headers: { authorization: `Bearer ${botPat}` },
+      });
+
+      expect(viaRest.statusCode).toBe(200);
+      expect(viaMcp).toBe(viaRest.rawPayload.toString('utf8'));
+    });
   });
 
   // 가시성은 REST 와 같은 함수가 판정한다. MCP 가 통로를 하나 더 여는 것이지,

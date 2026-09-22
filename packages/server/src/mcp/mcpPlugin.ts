@@ -87,25 +87,165 @@ const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 const IMAGE_MAX_BYTES = 3 * 1024 * 1024;
 
 /**
+ * 텍스트로 실을 타입(#609). **이것도 허용 목록이다** — 위 `IMAGE_TYPES` 와 같은 이유로
+ * `contentType` 을 신뢰하지 않는다.
+ *
+ * ## 왜 "이미지가 아닌 것은 텍스트" 가 아닌가
+ *
+ * 그 규칙은 한 자리에서 어긋난다: **`image/svg+xml` 은 텍스트인데 이미지 이름을 달고 있다.**
+ * 반대 방향의 함정이라 눈에 잘 안 띈다 — SVG 를 그림으로 싣지 않기로 한 판단(`IMAGE_TYPES`
+ * 주석)만 지키고 "나머지는 텍스트" 로 흘리면, 마크업이 그대로 모델 컨텍스트에 실린다.
+ * **그리고 허용 목록으로 쓴다고 저절로 빠지지도 않는다.** 이 함수의 첫 판본은 `+xml` 접미를
+ * 타입 전체에서 봤고, `image/svg+xml` 이 그 조건에 그대로 걸렸다 — 회귀선 `does not inline
+ * svg as an image` 가 그것을 잡았다. 그래서 접미 규칙을 **`application/` 아래로 한정한다**:
+ * SVG 는 `text/*` 도 `application/*` 도 아니므로 이제 규칙이 판정으로 빼낸다. 다음 사람이
+ * SVG 를 기억해야 하는 것이 아니다.
+ *
+ * `+json`·`+xml` 접미를 받는 이유: `application/vnd.…+json` 같은 것이 실제로 올라온다.
+ * 구조는 JSON 이고 사람이 읽는 것도 JSON 이다.
+ *
+ * ## REST 의 `NEVER_INLINE` 과 왜 다른가
+ *
+ * 그쪽은 `text/html` 을 막는데(`attachmentRoutes.ts`), 이유가 **브라우저가 그것을 렌더한다**
+ * 는 것이다 — XSS 통로. 여기서 돌려주는 것은 도구 응답의 문자열이고 렌더하는 것이 없다.
+ * 그래서 같은 목록을 쓰지 않는다. 모델이 첨부 내용에 적힌 지시를 읽는 문제는 남지만,
+ * 그것은 `.txt` 에도 똑같이 있고 타입으로 가를 수 있는 종류가 아니다.
+ */
+function isTextType(contentType: string): boolean {
+  const type = contentType.split(';', 1)[0]!.trim().toLowerCase();
+  if (type.startsWith('text/')) return true;
+  if (!type.startsWith('application/')) return false;
+  return type === 'application/json'
+    || type === 'application/xml'
+    || type.endsWith('+json')
+    || type.endsWith('+xml');
+}
+
+/**
+ * 응답에 실어 줄 텍스트의 최대 크기(#609). **이미지의 3MiB 를 그대로 쓰지 않는다** —
+ * 이미지는 base64 로 부풀지만 소비하는 것은 한 장이고, 텍스트는 **토큰을 그 길이만큼**
+ * 태운다. 3MiB 로그 하나가 컨텍스트를 통째로 먹으면 에이전트는 그것을 받고도 아무것도
+ * 못 한다.
+ *
+ * 256KiB 는 사람이 붙이는 로그·diff 대부분이 통째로 들어오는 크기이면서, 넘는 경우에도
+ * 앞뒤를 보여 주기에 넉넉하다.
+ */
+const TEXT_MAX_BYTES = 256 * 1024;
+
+/**
+ * 텍스트를 **읽기라도 해 볼** 상한. 넘으면 이미지와 같이 메타데이터로 떨어뜨린다.
+ *
+ * 왜 `TEXT_MAX_BYTES` 와 따로인가: 자르더라도 **뒤쪽**을 보여 주려면 파일 끝까지 읽어야
+ * 하고(로그는 실패가 끝에 있다), 그러려면 한 번은 메모리에 들어와야 한다. 그 비용의
+ * 상한이 이 값이다. 이것마저 넘는 파일은 잘라 주는 것보다 "REST 로 받아라" 가 정직하다.
+ */
+const TEXT_READ_MAX_BYTES = 4 * 1024 * 1024;
+
+/**
  * 스트림을 메모리로 모은다. 도구 응답은 base64 **문자열** 하나라 스트리밍할 수가 없다 —
  * REST 는 스트림을 그대로 흘려보내지만 여기서는 전부 손에 들어야 한다.
  *
  * 모으는 동안에도 한계를 다시 센다. 위에서 `sizeBytes` 로 이미 걸렀지만 그것은 **DB 가
  * 기억하는 크기**다. 파일이 그것과 다르면(잘못된 마이그레이션·수동 조작) 한계가 없는 것과
  * 같아지므로, 실제로 흘러온 바이트로 한 번 더 막는다.
+ *
+ * `limit` 을 인자로 받는 이유(#609): 이미지와 텍스트의 상한이 다르다. 상수를 여기서
+ * 직접 읽으면 텍스트 경로가 이미지의 한계에 묶인다.
  */
-async function collect(stream: Readable): Promise<Buffer> {
+async function collect(stream: Readable, limit: number): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of stream) {
     total += (chunk as Buffer).length;
-    if (total > IMAGE_MAX_BYTES) {
+    if (total > limit) {
       stream.destroy();
       throw new OversizeError(`read ${total}B, over the inline limit`);
     }
     chunks.push(chunk as Buffer);
   }
   return Buffer.concat(chunks);
+}
+
+/**
+ * UTF-8 로만 디코딩한다. **못 읽으면 텍스트가 아니다**(#609).
+ *
+ * `fatal: true` 가 요점이다. 기본 디코더는 깨진 바이트를 `U+FFFD` 로 바꿔 **조용히**
+ * 성공하고, 그러면 에이전트는 깨진 글자가 원본인지 인코딩 사고인지 구별할 수 없다.
+ * 그 구별이 안 되면 "내용은 알지만 틀렸다"가 되어 원래 결함보다 나쁘다 — 차라리
+ * 메타데이터로 떨어뜨리고 사람에게 묻게 한다.
+ */
+function decodeUtf8(bytes: Buffer): string | null {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 길면 **앞뒤를 남기고 가운데를 버린다**(#609). 자른 것은 본문 안에서도 보인다 — 응답의
+ * `truncated` 만으로는 잘린 자리가 어디인지 알 수 없고, 에이전트가 이어진 줄로 오독한다.
+ *
+ * 앞만 남기지 않는 이유: 로그는 **끝**에 실패가 있고 diff 는 **앞**에 파일 이름이 있다.
+ * 둘 다 붙는 통로라 한쪽만 고르면 절반의 경우에 쓸모가 없다.
+ *
+ * 바이트가 아니라 **디코딩한 뒤** 자른다. 바이트로 자르면 문자 가운데를 갈라 깨진 글자를
+ * 만든다 — 위 `decodeUtf8` 이 막으려던 바로 그것을 여기서 만들어 내는 셈이다.
+ * 대리쌍(surrogate pair)도 같은 이유로 경계에서 한 칸 물러선다.
+ */
+function truncateText(text: string, limit: number): { text: string; dropped: number } | null {
+  if (Buffer.byteLength(text, 'utf8') <= limit) return null;
+  const half = Math.floor(limit / 2);
+  const head = sliceBytes(text, half, 'head');
+  const tail = sliceBytes(text, half, 'tail');
+  const dropped = text.length - head.length - tail.length;
+  // 앞뒤가 겹칠 만큼 짧으면 자를 것이 없다. 바이트로는 한계를 넘었는데 **글자 수**로는
+  // 넘지 않는 경우(한 글자가 여러 바이트)에 이 조건이 성립한다.
+  if (dropped <= 0) return null;
+  return {
+    text: `${head}
+
+… [${dropped} characters omitted — fetch the whole file over REST] …
+
+${tail}`,
+    dropped,
+  };
+}
+
+/**
+ * 앞(또는 뒤)에서 **UTF-8 로 `maxBytes` 안에 들어오는 가장 긴 조각**을 준다.
+ *
+ * 글자 수로 자르면 안 되는 이유가 이 함수가 있는 이유다: 한계는 바이트인데 한글은 한 글자가
+ * 3바이트다. 첫 판본은 `limit / 2` 를 글자 수로 썼고, 그래서 한글 20만 자(600KB)에서 앞뒤
+ * 조각이 원본보다 길어져 **잘라낸 양이 음수**로 나왔다 — 회귀선이 그것을 잡았다.
+ *
+ * 이분 탐색인 이유: `Buffer.byteLength` 는 O(n) 이라 한 글자씩 세면 O(n²) 이 된다. 여기에는
+ * 4MiB 까지 들어오므로 그 차이가 실제로 보인다.
+ */
+function sliceBytes(text: string, maxBytes: number, from: 'head' | 'tail'): string {
+  const take = (n: number) => (from === 'head' ? text.slice(0, n) : text.slice(text.length - n));
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (Buffer.byteLength(take(mid), 'utf8') <= maxBytes) lo = mid;
+    else hi = mid - 1;
+  }
+  // 경계가 대리쌍(surrogate pair) 한가운데면 그 반쪽을 버린다 — 남기면 그것이 곧
+  // `decodeUtf8` 이 막으려던 깨진 글자다.
+  return from === 'head' ? backOffSurrogate(take(lo)) : forwardOffSurrogate(take(lo));
+}
+
+/** 끝이 대리쌍의 앞쪽 반이면 그 한 칸을 버린다. */
+function backOffSurrogate(s: string): string {
+  const last = s.charCodeAt(s.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? s.slice(0, -1) : s;
+}
+
+/** 시작이 대리쌍의 뒤쪽 반이면 그 한 칸을 버린다. */
+function forwardOffSurrogate(s: string): string {
+  const first = s.charCodeAt(0);
+  return first >= 0xdc00 && first <= 0xdfff ? s.slice(1) : s;
 }
 
 /** 파일이 DB 가 기억하는 크기보다 큰 경우. 이 하나만 위 `collect` 가 던진다. */
@@ -863,6 +1003,48 @@ function buildMcpServer(
   });
 
   /**
+   * 파일을 읽어 오되 **읽기가 실패하는 두 모양을 응답으로 바꾼다**(#609 에서 한 벌로 합쳤다).
+   *
+   * 이미지와 텍스트가 같은 두 실패를 만난다: 파일이 DB 가 기억하는 크기보다 크거나
+   * (`OversizeError`), 행은 있는데 파일이 없거나(`AttachmentMissingError`, #257).
+   * 각 경로가 자기 `try/catch` 를 쓰면 **이 파일이 경고하는 "판정이 두 벌"** 이 그대로
+   * 생긴다 — 한쪽만 고친 날에 다른 쪽은 예외로 죽고, 에이전트는 그것을 "서버가 고장났다"로
+   * 읽는다. 실제 사실은 "이 첨부를 못 읽는다"이고 대처가 다르다.
+   *
+   * `limit` 이 경로마다 다르므로 문구도 그 값으로 적는다 — 고정 문자열로 두면 텍스트가
+   * 이미지의 숫자를 말한다. `meta` 를 받는 이유도 같다: 실패해도 **무엇이 왔는지**는
+   * 알려 줘야 에이전트가 사람에게 그 첨부를 가리킬 수 있다.
+   */
+  async function readAttachment(
+    meta: { id: string; filename: string; contentType: string; sizeBytes: number }, limit: number,
+    storageKey: string,
+  ): Promise<{ body: Buffer } | { error: ReturnType<typeof jsonResult> }> {
+    try {
+      return { body: await collect(await storage.read(storageKey), limit) };
+    } catch (err) {
+      if (err instanceof OversizeError) {
+        return {
+          error: jsonResult({
+            attachment: meta,
+            note: `file is larger than its recorded size and exceeds ${limit}B`,
+            download: `GET /attachments/${meta.id} (Authorization: Bearer $HARKROOM_PAT)`,
+          }),
+        };
+      }
+      if (err instanceof AttachmentMissingError) {
+        // 행은 있는데 파일이 없다(#257). REST 와 같은 코드로 답한다 — 찾은 경로는 싣지
+        // 않는다(서버 파일시스템 경로를 알려 주는 셈이고, 에이전트가 할 일이 달라지지 않는다).
+        return {
+          error: jsonResult({
+            error: { code: 'attachment_missing', message: 'attachment file not found on the server' },
+          }),
+        };
+      }
+      throw err;
+    }
+  }
+
+  /**
    * 첨부 바이트 받기(#585). **이미지는 그림으로 이 응답에 실린다.**
    *
    * 왜 REST 가 있는데도 필요한가: 프롬프트에 `curl` 안내를 넣어 셸이 있는 하네스는 이미
@@ -873,11 +1055,16 @@ function buildMcpServer(
    * 부른다. 두 통로가 같은 바이트를 내주는데 규칙이 두 벌이면, 한쪽만 고친 날에 새는 쪽은
    * 아무도 안 보는 통로가 된다.
    *
-   * 이미지가 아니거나 크면 **바이트 대신 메타데이터**를 준다(아래 IMAGE_TYPES·
+   * **텍스트도 실린다(#609).** #585 가 이미지만 열어 둔 탓에, 로그·diff·`.json` 을 붙여 준
+   * 사람에게 셸 없는 하네스의 에이전트는 여전히 *"파일명은 알지만 내용은 모른다"* 로
+   * 답했다 — 고치려던 결함이 절반만 닫혀 있었다. 판정은 `isTextType`·`TEXT_MAX_BYTES`·
+   * `decodeUtf8` 주석에 있다.
+   *
+   * 셋 다 아니거나 크면 **바이트 대신 메타데이터**를 준다(아래 IMAGE_TYPES·
    * IMAGE_MAX_BYTES 주석). 실패가 아니라 "이렇게 받아라"까지 함께 답한다.
    */
   server.registerTool('attachment.fetch', {
-    description: '첨부 바이트 받기 — 이미지는 그림으로 실린다. id 는 프롬프트의 [첨부: …] 에 있다',
+    description: '첨부 바이트 받기 — 이미지는 그림으로, 텍스트는 글로 실린다. id 는 프롬프트의 [첨부: …] 에 있다',
     inputSchema: { attachmentId: z.string().uuid() },
   }, async ({ attachmentId }) => {
     const resolved = await resolveAttachmentFor(pool, attachmentId, account.id);
@@ -897,14 +1084,49 @@ function buildMcpServer(
     const { id, filename, contentType, sizeBytes } = resolved.attachment;
     const meta = { id, filename, contentType, sizeBytes };
 
+    /**
+     * 텍스트 경로(#609). 이미지보다 **먼저** 보지 않는다 — 둘은 겹치지 않으므로 순서가
+     * 결과를 바꾸지 않고, 이미지가 이 도구의 원래 계약이라 그쪽을 먼저 읽게 둔다.
+     */
+    if (isTextType(contentType) && sizeBytes <= TEXT_READ_MAX_BYTES) {
+      const bytes = await readAttachment(meta, TEXT_READ_MAX_BYTES, resolved.attachment.storageKey);
+      if ('error' in bytes) return bytes.error;
+
+      const decoded = decodeUtf8(bytes.body);
+      if (decoded === null) {
+        return jsonResult({
+          attachment: meta,
+          // 무엇이 막았는지 말한다. "텍스트인 줄 알았는데 아니다"는 에이전트가 사람에게
+          // 물을 수 있는 사실이고, 그냥 "못 실었다"는 아니다.
+          note: 'not valid UTF-8; bytes are not carried as text in this response',
+          download: `GET /attachments/${id} (Authorization: Bearer $HARKROOM_PAT)`,
+        });
+      }
+
+      const cut = truncateText(decoded, TEXT_MAX_BYTES);
+      return jsonResult({
+        attachment: meta,
+        // 자른 것을 **구조로도** 말한다. 본문 안의 표식만 두면 에이전트가 그것을 파일
+        // 내용으로 읽을 수 있고, 여기만 두면 사람이 잘린 자리를 못 찾는다. 둘 다 둔다.
+        ...(cut ? { truncated: { droppedCharacters: cut.dropped, limitBytes: TEXT_MAX_BYTES } } : {}),
+        ...(cut ? { download: `GET /attachments/${id} (Authorization: Bearer $HARKROOM_PAT)` } : {}),
+        text: cut ? cut.text : decoded,
+      });
+    }
+
     if (!IMAGE_TYPES.includes(contentType) || sizeBytes > IMAGE_MAX_BYTES) {
       return jsonResult({
         attachment: meta,
         // 왜 바이트가 없는지 **이유를 말한다.** "빈 응답"으로 두면 에이전트는 받기가
         // 실패한 것과 구별하지 못하고 같은 호출을 다시 한다.
-        note: sizeBytes > IMAGE_MAX_BYTES
-          ? `too large to inline (${sizeBytes}B > ${IMAGE_MAX_BYTES}B)`
-          : 'not an inlineable image type; bytes are not carried in this response',
+        // 텍스트인데 여기까지 온 것은 **읽기 상한을 넘었다**는 뜻 하나뿐이다(위 분기가
+        // 그 조건만으로 갈린다). 그때 `not an inlineable image type` 이라고 답하면 거짓말이다
+        // — 에이전트는 타입을 바꿔 다시 올려 달라고 사람에게 말하게 된다.
+        note: isTextType(contentType)
+          ? `too large to inline as text (${sizeBytes}B > ${TEXT_READ_MAX_BYTES}B)`
+          : sizeBytes > IMAGE_MAX_BYTES
+            ? `too large to inline (${sizeBytes}B > ${IMAGE_MAX_BYTES}B)`
+            : 'not an inlineable image type; bytes are not carried in this response',
         // 셸이 없는 하네스에는 이 경로가 **막힌 길**이라는 것을 말해 준다. 그러지 않으면
         // 에이전트는 이 안내를 만족시키려 시도했다가 조용히 실패하고 같은 자리를 돈다 —
         // 못 여는 것을 아는 것이 사람에게 물어볼 근거가 된다.
@@ -912,26 +1134,9 @@ function buildMcpServer(
       });
     }
 
-    let body: Buffer;
-    try {
-      body = await collect(await storage.read(resolved.attachment.storageKey));
-    } catch (err) {
-      if (err instanceof OversizeError) {
-        return jsonResult({
-          attachment: meta,
-          note: `file is larger than its recorded size and exceeds ${IMAGE_MAX_BYTES}B`,
-          download: `GET /attachments/${id} (Authorization: Bearer $HARKROOM_PAT)`,
-        });
-      }
-      if (err instanceof AttachmentMissingError) {
-        // 행은 있는데 파일이 없다(#257). REST 와 같은 코드로 답한다 — 찾은 경로는 싣지
-        // 않는다(서버 파일시스템 경로를 알려 주는 셈이고, 에이전트가 할 일이 달라지지 않는다).
-        return jsonResult({
-          error: { code: 'attachment_missing', message: 'attachment file not found on the server' },
-        });
-      }
-      throw err;
-    }
+    const image = await readAttachment(meta, IMAGE_MAX_BYTES, resolved.attachment.storageKey);
+    if ('error' in image) return image.error;
+    const body = image.body;
 
     // 텍스트 한 줄을 그림 **앞에** 같이 싣는다. 그림만 주면 에이전트는 자기가 무엇을 보고
     // 있는지(어느 첨부인지) 말할 수 없어, 나중에 "그 스크린샷"을 가리킬 근거가 없다.
