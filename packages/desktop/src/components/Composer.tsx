@@ -9,6 +9,7 @@ import { GroupBadge, TeamBadge } from './Identity';
 import { AttachmentThumb, formatSize } from './Attachments';
 import {
   mentionQueryAt, applyMention, withStickyMentions, keepMentioned, bodyRecipients,
+  stickyKeyOf, stickyNameOf,
   type MentionQuery,
 } from '../lib/mention';
 import { undoSendStorage } from '../lib/prefs';
@@ -292,9 +293,18 @@ export function Composer({
    * 목록이 아직 안 온 순간에 보낸 한 줄이 고정을 전부 지운다.
    */
   const stickyRaw = useActiveStore((s) => s.stickyMentions[scopeKey]) ?? NO_STICKY;
-  const setSticky = (handles: string[]): void => {
-    useActiveStore.getState().setStickyMentions(scopeKey, handles);
+  const setSticky = (keys: string[]): void => {
+    useActiveStore.getState().setStickyMentions(scopeKey, keys);
   };
+  /**
+   * 고정 목록은 **키**(계정 id · `group:<id>` · `team:<id>`)로 산다(#848). 이름은 바뀌므로
+   * 이름으로 저장하면 이름을 바꾼 상대의 칩이 `known.has(h)` 필터에 걸려 조용히 사라진다.
+   *
+   * 이 두 함수가 이름과 키 사이의 **유일한 다리**다 — 아래 코드는 전부 이름으로 돌고(칩·
+   * 후보 목록·접두 붙이기가 전부 이름을 쓴다), 쓰는 순간에만 키로 바꾼다.
+   */
+  const toKey = (name: string): string | null => stickyKeyOf(name, accounts, groups, teams);
+  const toName = (key: string): string | null => stickyNameOf(key, accounts, groups, teams);
   /**
    * **이번 메시지에서만** 뺀 자동 멘션(#173). 칩의 × 는 설정을 지우지 않는다 — 설정은 admin 의
    * 것이고, 사람이 매번 필요한 것은 "이 한 줄은 에이전트를 부르지 않고 쓰기"다. 보내면 비운다:
@@ -532,10 +542,20 @@ export function Composer({
   // 계정이 사라지면 고정도 사라진다 — 없는 handle 을 붙이면 멘션이 아니라 그냥 글자다.
   // 자동 멘션인 handle 은 고정에서 뺀다 — 같은 상대에 칩이 둘 서면 × 하나로 어느 쪽이
   // 빠지는지 알 수 없다. 자동 칩이 그 자리를 대신한다.
-  const sticky = useMemo(
-    () => stickyRaw.filter((h) => known.has(h) && !autoHandles.includes(h)),
-    [stickyRaw, known, autoHandles],
-  );
+  const sticky = useMemo(() => {
+    const out: string[] = [];
+    for (const key of stickyRaw) {
+      const name = stickyNameOf(key, accounts, groups, teams);
+      // 모르는 키는 뺀다(지워진 계정·팀). 자동 멘션과 겹쳐도 뺀다 — 같은 상대에 칩이 둘
+      // 서면 × 하나로 어느 쪽이 빠지는지 알 수 없고, 자동 칩이 그 자리를 대신한다.
+      if (name === null || autoHandles.includes(name) || out.includes(name)) continue;
+      // `out.includes` 로 한 번 더 거르는 이유(#848): 브라우저에 남은 옛 형식(이름)과 새
+      // 키가 **같은 상대를 가리킨 채 함께** 있을 수 있다. 그때 칩이 둘 서면 × 를 눌러도
+      // 하나가 남는다 — 사람 눈에는 눌러도 안 지워지는 칩이다.
+      out.push(name);
+    }
+    return out;
+  }, [stickyRaw, accounts, groups, teams, autoHandles]);
 
   /**
    * **서버로 나갈 본문 그 자체** — 자동·고정 멘션 접두까지 붙은 것이다. 길이를 여기서 재는
@@ -767,14 +787,17 @@ export function Composer({
   const choose = (handle: string) => {
     if (!picking) return pick(handle);
     const picked = handle.toLowerCase();
-    if (!stickyRaw.includes(picked)) setSticky([...stickyRaw, picked]);
+    const key = toKey(picked);
+    if (key !== null && !stickyRaw.includes(key)) setSticky([...stickyRaw, key]);
     setPicking(false);
     setActive(0);
     ref.current?.focus();
   };
 
   const drop = (handle: string) => {
-    setSticky(stickyRaw.filter((h) => h !== handle));
+    // 칩은 **이름**을 준다. 옛 형식이 섞여 있을 수 있으므로 키 비교만으로는 못 지운다 —
+    // 지금 그 이름을 가리키는 항목을 전부 뺀다(위 `sticky` 의 중복 제거와 짝이다).
+    setSticky(stickyRaw.filter((k) => toName(k) !== handle.toLowerCase()));
     ref.current?.focus();
   };
 
@@ -786,7 +809,8 @@ export function Composer({
    * 고정 칩이 말하는 사실이다. 상태를 하나 더 두면 × 가 무엇을 지우는지가 칩마다 달라진다.
    */
   const callChannelAgent = (handle: string) => {
-    if (!stickyRaw.includes(handle)) setSticky([...stickyRaw, handle]);
+    const key = toKey(handle);
+    if (key !== null && !stickyRaw.includes(key)) setSticky([...stickyRaw, key]);
     ref.current?.focus();
   };
 
@@ -997,7 +1021,7 @@ export function Composer({
     try { getController().notifyTyping(false); } catch { /* 위와 같은 이유 */ }
     // 이번에 부른 상대는 다음 줄부터 고정이다. 한 번 부른 뒤 매번 @ 를 다시 치게 하면
     // 사용자는 잊어버리고, 잊으면 에이전트는 깨어나지 않는다.
-    setSticky(keepMentioned(stickyRaw, typed, known));
+    setSticky(keepMentioned(stickyRaw, typed, known, toKey));
     // 이번만 뺀 자동 멘션은 이 메시지로 끝이다 — 다음 줄에는 다시 붙는다(#173).
     if (skippedAuto.length) setSkippedAutoByScope((prev) => ({ ...prev, [scopeKey]: [] }));
 

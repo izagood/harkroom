@@ -152,11 +152,85 @@ export function withStickyMentions(body: string, sticky: string[]): string {
   return missing.length ? `${missing.map((h) => `@${h}`).join(' ')} ${body}` : body;
 }
 
-/** 방금 보낸 본문에서 새로 불린 상대를 뒤에 더한다. 이미 고정된 것의 순서는 흔들지 않는다. */
-export function keepMentioned(sticky: string[], body: string, known: Set<string>): string[] {
+/**
+ * 방금 보낸 본문에서 새로 불린 상대를 뒤에 더한다. 이미 고정된 것의 순서는 흔들지 않는다.
+ *
+ * `toKey` 는 본문에서 읽은 **이름**을 저장할 **키**로 바꾼다(#848) — 고정 멘션은 이제
+ * 이름이 아니라 id 로 저장하기 때문이다. 기본값이 항등이라 이름으로 쓰던 호출부는 그대로다.
+ * 모르는 이름(키가 `null`)은 더하지 않는다.
+ */
+export function keepMentioned(
+  sticky: string[], body: string, known: Set<string>,
+  toKey: (name: string) => string | null = (n) => n,
+): string[] {
   const kept = new Set(sticky);
-  const added = mentionedHandles(body).filter((h) => known.has(h) && !kept.has(h));
+  const added: string[] = [];
+  for (const h of mentionedHandles(body)) {
+    if (!known.has(h)) continue;
+    const key = toKey(h);
+    if (key === null || kept.has(key)) continue;
+    kept.add(key);
+    added.push(key);
+  }
   return added.length ? [...sticky, ...added] : sticky;
+}
+
+/**
+ * 고정 멘션(#706)이 **무엇으로 저장되는가**(#848).
+ *
+ * 그전에는 `@이름` 문자열이었다. 이름은 바뀌므로(#843 · 팀은 `PATCH /teams/:id`) 바뀌는
+ * 순간 그 칩은 `known.has(h)` 필터에 걸려 **조용히 사라진다** — 사람은 고정해 둔 상대가
+ * 빠진 채로 한 줄을 보내고, 아무도 깨지 않는다. 본문 멘션이 `<@id>` 로 간 것과 같은 이유로
+ * (#271 · #845) 여기도 id 로 간다.
+ *
+ * 키 모양은 본문 토큰과 **같은 것**을 쓴다: 계정은 id, 집합·팀은 `group:<id>`·`team:<id>`
+ * (`mentionTargetKey`). 고정 목록에는 셋이 섞여 들어오므로(컴포저의 `pickable` 이 셋을 다
+ * 내놓는다) 종류를 가를 수 있어야 하고, 이미 있는 규약을 다시 만들 이유가 없다.
+ */
+export function stickyKeyOf(
+  name: string,
+  accounts: Record<string, { handle: string }>,
+  groups: readonly { id: string; handle: string }[],
+  teams: readonly { id: string; name: string }[],
+): string | null {
+  const lower = name.toLowerCase();
+  for (const [id, a] of Object.entries(accounts)) {
+    if (a.handle.toLowerCase() === lower) return id;
+  }
+  // 순서는 서버의 멘션 해석과 같다 — 계정 > 집합 > 팀(`services/messages.ts` 의 팬아웃).
+  // 갈리면 화면의 칩과 실제로 깨는 대상이 달라진다.
+  const group = groups.find((g) => g.handle.toLowerCase() === lower);
+  if (group) return mentionTargetKey('group', group.id);
+  const team = teams.find((t) => t.name.toLowerCase() === lower);
+  if (team) return mentionTargetKey('team', team.id);
+  return null;
+}
+
+/**
+ * 저장된 키를 **지금의** 이름으로 되돌린다. 모르면 `null` — 지워진 계정·팀의 칩은 사라지는
+ * 것이 맞다(없는 이름을 붙이면 멘션이 아니라 그냥 글자다).
+ *
+ * **옛 형식(이름 그대로)도 받는다.** 이것이 마이그레이션 전부다: 브라우저에 남아 있던
+ * 이름은 여기서 그대로 이름으로 읽히고, 다음에 무엇이든 고정하거나 빼는 순간 목록 전체가
+ * 키로 다시 쓰인다. 저장소를 훑어 고치는 코드를 따로 두지 않는 이유는, 하이드레이트 시점에는
+ * 계정 목록이 아직 안 와 있어서 그때 고치면 **아는 것이 없어 전부 버리게** 되기 때문이다.
+ */
+export function stickyNameOf(
+  key: string,
+  accounts: Record<string, { handle: string }>,
+  groups: readonly { id: string; handle: string }[],
+  teams: readonly { id: string; name: string }[],
+): string | null {
+  if (key.startsWith('group:')) {
+    return groups.find((g) => g.id === key.slice('group:'.length))?.handle.toLowerCase() ?? null;
+  }
+  if (key.startsWith('team:')) {
+    return teams.find((t) => t.id === key.slice('team:'.length))?.name.toLowerCase() ?? null;
+  }
+  const account = accounts[key];
+  if (account) return account.handle.toLowerCase();
+  // 옛 형식: 키가 곧 이름이다. 아직 그 이름이 살아 있을 때만 남긴다.
+  return stickyKeyOf(key, accounts, groups, teams) !== null ? key.toLowerCase() : null;
 }
 
 /**
