@@ -67,15 +67,25 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
   });
 
   /**
-   * 사람이 자기 handle 을 바꾼다(#271). 에이전트는 400 — 러너 상태 디렉터리가 handle 스코프다.
-   * 유니크는 대소문자 무시, 충돌은 409. 감사 로그와 WS 이벤트를 보낸다.
+   * 사람이 **자기** handle 을 바꾼다(#271). 유니크는 대소문자 무시, 충돌은 409.
+   * 감사 로그와 WS 이벤트를 보낸다.
+   *
+   * 에이전트는 여기서 400 이다. #843 전의 이유("러너 상태가 handle 스코프다")는 사라졌지만
+   * 거절 자체는 남긴다 — 이제 이유가 다르다. **에이전트의 이름은 소유자가 정한다.** 러너가
+   * 자기 PAT 로 자기 이름을 바꿀 수 있으면, 사람이 부르려던 이름이 턴 도중에 사라질 수 있다.
+   * 바꾸는 문은 `PATCH /accounts/agents/:id`(소유자 또는 admin) 하나다.
    */
   app.patch('/accounts/me/handle', { preHandler: app.requireAccount }, async (req, reply) => {
     const body = z.object({ handle: z.string().regex(/^[a-z0-9_-]{2,32}$/) }).parse(req.body);
     const account = req.account!;
 
     if (account.kind !== 'human') {
-      return reply.code(400).send({ error: { code: 'agent_handle_immutable', message: 'agent handle cannot be changed' } });
+      return reply.code(400).send({
+        error: {
+          code: 'agent_handle_not_self_serve',
+          message: "an agent's name is changed by its owner via PATCH /accounts/agents/:id",
+        },
+      });
     }
 
     // 충돌 검사: 대소문자 무시
@@ -85,6 +95,14 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     );
     if (existing.rowCount) {
       return reply.code(409).send({ error: { code: 'handle_taken', message: 'this handle is already taken' } });
+    }
+    /**
+     * 집합도 본다. 이름공간은 계정·집합·팀이 나눠 쓰는데(`026_handle_group.sql` 결정 3),
+     * 생성 경로만 막혀 있고 **이름 변경 경로는 뚫려 있었다** — 만들 때는 못 쓰는 이름을
+     * 나중에 바꿔서 차지할 수 있었다. 그러면 `@foo` 가 사람인지 집합인지 갈린다.
+     */
+    if (await getHandleGroupByHandle(pool, body.handle)) {
+      return reply.code(409).send({ error: { code: 'handle_taken', message: 'a group with this handle already exists' } });
     }
 
     const oldHandle = account.handle;
@@ -102,6 +120,10 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
 
   /**
    * Admin 이 다른 계정의 handle 을 바꾼다(#271). 같은 유니크·감사·WS 규칙.
+   *
+   * #843: **에이전트도 여기를 지난다.** 그 전에는 `agent_handle_immutable` 로 거절했는데,
+   * 에이전트 PATCH(`/accounts/agents/:id`)가 이름 변경을 받게 된 뒤로 그 400 은 거짓말이
+   * 된다 — 문이 둘인데 서로 다른 말을 하면, 하나가 막혔다고 읽은 사람은 기능이 없다고 믿는다.
    */
   app.patch('/accounts/:id/handle', { preHandler: app.requireAdmin }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
@@ -114,17 +136,16 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     }
     const targetRow = target.rows[0];
 
-    if (targetRow.kind !== 'human') {
-      return reply.code(400).send({ error: { code: 'agent_handle_immutable', message: 'agent handle cannot be changed' } });
-    }
-
-    // 충돌 검사
+    // 충돌 검사 — 계정과 집합 둘 다(위 self 라우트와 같은 근거).
     const existing = await pool.query(
       `select id from account where lower(handle) = lower($1) and id != $2`,
       [body.handle, id],
     );
     if (existing.rowCount) {
       return reply.code(409).send({ error: { code: 'handle_taken', message: 'this handle is already taken' } });
+    }
+    if (await getHandleGroupByHandle(pool, body.handle)) {
+      return reply.code(409).send({ error: { code: 'handle_taken', message: 'a group with this handle already exists' } });
     }
 
     const oldHandle = targetRow.handle;

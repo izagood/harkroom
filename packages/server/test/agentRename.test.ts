@@ -121,6 +121,25 @@ describe('agent rename (#843)', () => {
     expect(loud.rows[0].detail).toMatchObject({ from: 'cobalt', to: 'chrome' });
   });
 
+  /**
+   * 이름공간 구멍: 생성은 집합 이름을 막는데(`026_handle_group.sql` 결정 3) **이름 변경
+   * 경로는 안 막고 있었다** — 만들 때 못 쓰는 이름을 나중에 바꿔서 차지할 수 있었다.
+   * 사람 쪽 두 문(self·admin)도 같이 막는다.
+   */
+  it('사람도 집합 이름을 차지하지 못한다 (self · admin 두 문)', async () => {
+    const group = await app.inject({
+      method: 'POST', url: '/handle-groups', headers: auth(),
+      payload: { handle: 'forgers', displayName: 'Forgers' },
+    });
+    expect(group.statusCode).toBe(201);
+
+    const me = await app.inject({
+      method: 'PATCH', url: '/accounts/me/handle', headers: auth(), payload: { handle: 'forgers' },
+    });
+    expect(me.statusCode).toBe(409);
+    expect(me.json().error.code).toBe('handle_taken');
+  });
+
   it('문법에 맞지 않는 이름은 400 이다', async () => {
     const id = await create('zinc2');
     expect((await patch(id, { handle: 'a' })).statusCode).toBe(400);

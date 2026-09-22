@@ -397,7 +397,7 @@ export const ko = {
   'agents.profile.avatarRemoveConfirm': '정말 지우기',
   'agents.profile.avatarUpload': '사진 올리기',
   'agents.profile.handleNote': '채널에서 @이름 으로 부른다.',
-  'agents.profile.renameNote': '이름을 바꾸면 지난 메시지의 @옛이름 은 이 에이전트를 부르지 못한다. 하던 일과 세션은 그대로다.',
+  'agents.profile.renameNote': '지난 메시지의 멘션과 하던 일·세션은 새 이름으로 그대로 따라온다.',
   'agents.detail.handleTaken': '그 이름은 이미 누군가 쓰고 있다',
   'agents.profile.instructionsPlaceholder': '이 에이전트가 무엇을 하는지 적는다.',
   'agents.profile.note': '채널에서 어떻게 보이고 무엇을 하는가.',
