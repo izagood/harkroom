@@ -55,7 +55,11 @@ export async function findOpencodeSessionId(
       maxBuffer: 8 * 1024 * 1024,
     });
     out = res.stdout;
-  } catch {
+  } catch (err) {
+    // **삼키지 않고 한 줄 남긴다**(2026-09-23). 여기서 조용히 `null` 을 내면 "명령을 못
+    // 불렀다"(PATH 에 없다 · 권한)와 "세션이 없다"가 같은 얼굴이 된다 — 실제로 그 둘이
+    // 섞여, 턴은 성공하는데 발견만 매번 실패하는 것을 한참 뒤에야 알았다.
+    console.warn(`[opencodeSessions] 목록 명령 실패 (${opts.command}): ${(err as Error).message}`);
     return null;
   }
 

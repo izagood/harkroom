@@ -6,10 +6,11 @@
 // 사정이고 판본이 바뀌면 조용히 틀린 답을 내기 때문이다.
 //
 // 맞추는 열쇠는 codex 와 같다: **그 턴을 돌린 워크스페이스 경로**.
+import { readFileSync } from 'node:fs';
 import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { findOpencodeSessionId } from '../src/opencodeSessions.js';
 
@@ -24,6 +25,20 @@ async function fakeOpencode(rows: unknown, opts: { exitCode?: number; stdout?: s
 }
 
 const ENV = {} as Record<string, string>;
+
+// 이 모듈은 `execFile` 로 하네스를 **직접** 부른다 — PTY 가 아니라서 `childEnv` 의 PATH
+// 규칙이 자동으로 따라오지 않는다. 부르는 자리(`mentionTurn`)가 그 규칙을 통과시키는지는
+// 여기서 주입으로 잴 수 없어(발견 함수를 deps 로 받지 않는다) **소스로** 못박는다.
+// 실측 2026-09-23: 이 한 줄이 없어서 opencode 턴이 매번 맥락을 잃었다.
+describe('발견 호출도 하네스의 PATH 로 부른다', () => {
+  it('`mentionTurn` 이 목록 명령 env 에 `harnessPath` 를 넣는다', () => {
+    const src = readFileSync(new URL('../src/mentionTurn.ts', import.meta.url), 'utf8');
+    const call = src.slice(src.indexOf('findOpencodeSessionId({'));
+    const 인자 = call.slice(0, call.indexOf('})'));
+
+    expect(인자).toContain('PATH: harnessPath(');
+  });
+});
 
 describe('findOpencodeSessionId', () => {
   it('그 워크스페이스에서 만들어진 세션을 고른다 — 다른 디렉터리 것은 안 집는다', async () => {
@@ -79,6 +94,22 @@ describe('findOpencodeSessionId', () => {
     await chmod(bin, 0o755);
 
     expect(await findOpencodeSessionId({ command: bin, env: ENV, cwd, sinceMs: 1_000 })).toBe('ses_here');
+  });
+
+  it('명령을 **못 불렀을 때**는 한 줄 남긴다 — "없다"와 구별돼야 한다', async () => {
+    // 이 둘을 같은 얼굴(`null`)로 두면 PATH 에 없어서 못 부른 것이 "세션이 없다" 로 보인다.
+    // 실제로 그랬다(2026-09-23): 턴은 성공하는데 발견만 매번 실패했고, 러너 로그에는
+    // "세션 발견 실패" 만 찍혀 원인이 한참 묻혔다.
+    const cwd = await mkdtemp(join(tmpdir(), 'ws-'));
+    const warns: string[] = [];
+    const spy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      warns.push(args.map(String).join(' '));
+    });
+
+    expect(await findOpencodeSessionId({ command: '/없는/명령', env: ENV, cwd, sinceMs: 0 })).toBeNull();
+    spy.mockRestore();
+
+    expect(warns.some((line) => line.includes('/없는/명령'))).toBe(true);
   });
 
   it('경로는 realpath 로 맞춘다 — macOS 의 `/var` 와 `/private/var` 는 같은 자리다', async () => {
