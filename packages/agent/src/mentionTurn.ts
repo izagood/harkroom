@@ -14,7 +14,7 @@ import type { AgentHarness, AgentView, InboxDelegatedBy, InboxDelegationOutcome,
 import type { Me } from './harkroom.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, gateNotice, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts } from './prompt.js';
 import { SessionStore } from './sessions.js';
-import { buildTurnCommand, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
+import { buildTurnCommand, harnessPath, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
 import { discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readsSessionTranscript, usesTuiForMention, usesXdgHome } from './adapters/index.js';
 import { acceptsPtyInput } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
@@ -1317,7 +1317,14 @@ export async function runMentionTurn(
     const discovered = usesXdgHome(def.harness)
       ? await findOpencodeSessionId({
         command: harnessCommand(def.harness),
-        env: { ...process.env, ...opencodeDirs(deps.opencodeHome) } as Record<string, string>,
+        // **PATH 도 하네스의 것으로 만든다**(`harnessPath`). 러너의 `process.env` 에는
+        // `~/.opencode/bin` 이 없어, 여기서 그대로 쓰면 목록 명령이 ENOENT 로 죽고 그것이
+        // "세션 없음"으로 둔갑한다 — 턴은 성공하는데 다음 턴이 늘 새 세션으로 시작했다.
+        env: {
+          ...process.env,
+          ...opencodeDirs(deps.opencodeHome),
+          PATH: harnessPath(def.harness, process.env.PATH),
+        } as Record<string, string>,
         cwd: rec.workspaceDir,
         sinceMs,
       })

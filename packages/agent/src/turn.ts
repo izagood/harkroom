@@ -617,11 +617,26 @@ function childEnv(
   // 그 rc 를 안 거치므로 PTY 가 `opencode` 를 못 찾고 죽었다(실측 2026-09-22, 앱 0.3.3).
   // 오퍼레이터는 같은 표를 보고 "설치됨" 이라 말하던 터라 증상이 "설치했는데 왜 안 되지" 로만
   // 보였다. **앞이 아니라 뒤**인 이유: 사람이 PATH 에 둔 것이 있으면 그쪽이 이겨야 한다.
-  const fallback = harnessFallbackBinDirs(homes.harness).map((dir) => join(homedir(), ...dir.split('/')));
-  if (fallback.length > 0) {
-    env.PATH = [...(env.PATH ? [env.PATH] : []), ...fallback].join(delimiter);
-  }
+  const path = harnessPath(homes.harness, env.PATH);
+  if (path.length > 0) env.PATH = path;
   return env;
+}
+
+/**
+ * 이 하네스를 **부를 수 있는** PATH — 주어진 PATH 뒤에 설치 관례 자리를 붙인 것.
+ *
+ * **왜 함수 하나로 모으나**(2026-09-23 실측). `#857` 이 이 규칙을 PTY 자식 env 에만
+ * 넣었더니, 턴이 끝난 뒤 세션을 찾는 `execFile`(`opencodeSessions.ts`)이 그대로 남았다 —
+ * 그쪽은 러너의 `process.env` 를 쓰는데 거기엔 `~/.opencode/bin` 이 없다. 그래서 **턴은
+ * 성공하는데 세션 발견은 매번 실패**했고(ENOENT 를 "세션 없음"으로 삼켰다), opencode
+ * 에이전트는 턴마다 맥락을 잃었다. 하네스를 부르는 자리는 전부 이 함수를 지나야 한다.
+ *
+ * 붙이는 자리가 **뒤**인 이유는 `childEnv` 주석과 같다 — 사람이 PATH 에 둔 것이 이긴다.
+ */
+export function harnessPath(harness: AgentHarness, basePath: string | undefined): string {
+  const fallback = harnessFallbackBinDirs(harness).map((dir) => join(homedir(), ...dir.split('/')));
+  if (fallback.length === 0) return basePath ?? '';
+  return [...(basePath ? [basePath] : []), ...fallback].join(delimiter);
 }
 
 /** 오퍼레이터가 쓴 MCP 설정 파일의 항목 하나(`operator/mcpConfig.ts` 와 같은 모양). */
