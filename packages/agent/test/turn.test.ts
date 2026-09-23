@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { HARNESS_ENV_DENYLIST, assertHarnessContract, buildTurnCommand, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
+import { HARNESS_ENV_DENYLIST, assertHarnessContract, buildTurnCommand, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
 
 // harkroomUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
 // 실제로 주는 값(`http://localhost:3400` 류, `/mcp` 없음)과 맞춘다. 예전엔 여기 이미
@@ -604,6 +604,20 @@ describe('계정별 CLAUDE_CONFIG_DIR 주입', () => {
 
 // 오퍼레이터는 "설치됨" 이라 말하는데 러너의 PTY 는 같은 실행 파일을 못 찾아 죽던 자리다
 // (실측 2026-09-22, 앱 0.3.3 의 첫 opencode 턴). 둘이 **같은 표**를 봐야 그 갈림이 없다.
+describe('하네스를 부르는 PATH 는 한 함수에서 나온다', () => {
+  // `#857` 이 이 규칙을 PTY 자식 env 에만 넣었더니, 턴 뒤 세션을 찾는 `execFile` 이 그대로
+  // 남아 **턴은 성공하는데 발견만 매번 실패**했다(2026-09-23). 규칙을 함수로 모은 이유다.
+  it('opencode 는 주어진 PATH **뒤에** 설치 자리를 붙인다', () => {
+    expect(harnessPath('opencode', '/usr/bin:/bin').split(delimiter)).toEqual([
+      '/usr/bin', '/bin', join(homedir(), '.opencode', 'bin'),
+    ]);
+  });
+
+  it('그런 자리가 없는 하네스는 받은 PATH 그대로다', () => {
+    expect(harnessPath('codex', '/usr/bin:/bin')).toBe('/usr/bin:/bin');
+  });
+});
+
 describe('PATH 밖에 설치되는 하네스', () => {
   const 대비자리 = join(homedir(), '.opencode', 'bin');
 
