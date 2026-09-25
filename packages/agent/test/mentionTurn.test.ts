@@ -767,6 +767,36 @@ describe('runMentionTurn', () => {
   });
 
   // 풀을 안 만든 러너(계정 지정 없음)가 이 필드 때문에 세션을 잃지 않아야 한다.
+  // **계정 축은 계정 풀이 있는 하네스에만 뜻이 있다**(실측 2026-09-25). opencode 는 풀이
+  // 없는데도 러너의 claude 계정 축이 돌아가고, 그 축이 바뀌면 이 자리가 세션을 버렸다 —
+  // 두 번째 턴이 `-s` 없이 새 세션으로 떠서 에이전트가 **맥락을 잃었다**. 그 턴은 겉으로는
+  // 성공해 보인다(스레드 기록을 다시 먹으므로 답은 그럴듯하다) — 그래서 더 늦게 드러난다.
+  it('계정 풀이 없는 하네스는 claude 계정이 바뀌어도 세션을 지킨다', async () => {
+    const fake = new FakeHarkroom(defOf({ harness: 'opencode' }));
+    fake.seedFrom('human-1', '첫 질문');
+    const { deps, plans, runTurn } = await makeDeps(fake, {
+      claudeAccount: 'cedar', claudeConfigDir: '/pool/cedar',
+    });
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '첫 답', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+    const key = SessionStore.threadKey(CHANNEL, null);
+    await deps.store.put(key, {
+      workspaceDir: join(deps.workspaceBaseDir, 'oc'),
+      sessionId: 'ses_keepme', harness: 'opencode',
+      lastFedSeq: 1, turnsRun: 1, claudeAccount: 'cedar',
+    });
+
+    fake.seedFrom('human-1', '두 번째 질문');
+    await runMentionTurn(
+      { ...deps, claudeAccount: 'aria', claudeConfigDir: '/pool/aria' },
+      { channelId: CHANNEL, threadRootId: null, mentionId: MENTION },
+    );
+
+    expect(plans[0]!.args).toEqual(expect.arrayContaining(['-s', 'ses_keepme']));
+  });
+
   it('옛 레코드(계정 필드 없음)를 계정 지정 없는 러너가 읽어도 세션을 버리지 않는다', async () => {
     const fake = new FakeHarkroom(defOf({ harness: 'claude-code' }));
     fake.seedFrom('human-1', '첫 질문');
