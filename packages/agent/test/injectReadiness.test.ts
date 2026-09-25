@@ -46,6 +46,15 @@ describe('표가 말하는 주입 하한', () => {
   // 표에 준비 표시가 있어도 **넘기지 않으면** 주입은 `pty.ts` 의 기본 패턴으로 기다린다.
   // opencode 의 `Ask anything…` 은 그 기본에 안 걸려, 첫 실물 턴이 60초를 채우고
   // `PromptNotDeliveredError` 로 죽었다(2026-09-22). 이 셋이 그 갈림을 못박는다.
+  it('되살린 세션 화면에도 걸린다 — 자리표시자는 첫 화면에만 있다', () => {
+    // 실측 2026-09-25: `-s <id>` 로 뜨면 앞 대화가 replay 되고 `Ask anything…` 은 안 보인다.
+    // 그 문구만 보면 **두 번째 턴부터** 준비를 못 보고 60초를 세다 죽는다(첫 턴만 되는 하네스).
+    const 되살린화면 = readFileSync(new URL('./fixtures/opencode-tui-resumed.txt', import.meta.url), 'utf8');
+
+    expect(되살린화면).not.toContain('Ask anything');
+    expect(injectionFactsFor('opencode').readyPattern.test(되살린화면)).toBe(true);
+  });
+
   it('준비 표시는 하네스마다 다르고, 주입은 **그 표의 것**으로 기다린다', () => {
     const 화면 = readFileSync(new URL('./fixtures/opencode-tui-ready.txt', import.meta.url), 'utf8');
 

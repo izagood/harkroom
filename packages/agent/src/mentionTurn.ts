@@ -610,7 +610,12 @@ export async function runMentionTurn(
   // `?? null` 로 정규화해 비교하는 이유: 옛 레코드에는 이 필드가 `undefined` 다. 그것과
   // "계정 지정 없음"(`null`)은 같은 상태이므로, 정규화 없이 비교하면 풀을 안 쓰는 러너가
   // 스레드마다 세션을 헛되이 버린다.
-  if (rec && (rec.harness !== def.harness || (rec.claudeAccount ?? null) !== deps.claudeAccount)) {
+  // **계정 축은 계정 풀이 있는 하네스에만 뜻이 있다**(실측 2026-09-25). opencode 는 풀이
+  // 없는데도 러너의 claude 계정 축이 돌아가고, 그 축이 바뀌면 여기가 세션을 통째로 버렸다 —
+  // 두 번째 턴이 `-s` 없이 새 세션으로 떠서 **에이전트가 맥락을 잃었다**. 하네스에 묻는다.
+  const 계정이바뀌었나 = hasAccountPool(def.harness)
+    && (rec?.claudeAccount ?? null) !== deps.claudeAccount;
+  if (rec && (rec.harness !== def.harness || 계정이바뀌었나)) {
     // harness 는 지시문·모델과 달리 플래그가 아니라 실행 바이너리다 — claude 가 발급한
     // session-id 를 codex 에 넘기면(또는 반대) resume 자체가 성립하지 않는다. 대화 기억
     // (세션 id·진행 상태)만 버리고 워크스페이스는 재사용한다: 그 안의 작업 산출물은
