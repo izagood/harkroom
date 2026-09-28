@@ -30,7 +30,7 @@ export const grp = (id: string, handle: string, displayName: string, memberCount
 export const tm = (
   id: string, name: string, memberCount = 0, leadAccountId: string | null = null,
 ): AgentTeamRow =>
-  ({ id, name, createdBy: 'u1', createdAt: new Date().toISOString(), memberCount, leadAccountId });
+  ({ id, name, createdBy: 'u1', createdAt: new Date().toISOString(), memberCount, leadAccountId, invokeScope: 'community', ownerAccountId: null });
 
 /**
  * `GET /accounts` 의 응답 모양(#230). 계정 목록과 집합 목록을 함께 준다.

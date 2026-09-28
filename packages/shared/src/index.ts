@@ -2829,6 +2829,13 @@ export interface AgentTeamRow {
    */
   leadAccountId: string | null;
   /**
+   * 누가 이 팀을 부를 수 있나(068). 에이전트의 `invokeScope` 와 **같은 네 값·같은 표**다.
+   * 팀을 통과해도 팀원 각자의 범위를 다시 본다 — 팀이 팀원의 범위를 넓히지 못한다.
+   */
+  invokeScope: InvokeScope;
+  /** `invokeScope === 'owner'` 가 가리키는 사람. 068 이 `createdBy` 로 채웠다. */
+  ownerAccountId: string | null;
+  /**
    * 지금 이 팀에 든 에이전트 수. **옵셔널이 아니라 필수다** — 근거는
    * `HandleGroupRow.memberCount`(#285)의 주석과 **같은 것**이다: 이 값을 안 실어 주는
    * 경로가 하나라도 있으면 화면은 "몇 명인지 모른다"를 그릴 방법이 없고, 결국 수를 아예

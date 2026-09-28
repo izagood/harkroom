@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import type { AgentTeamRow, AgentTeamMemberRow } from '@harkroom/shared';
+import type { AgentTeamRow, AgentTeamMemberRow, InvokeScope } from '@harkroom/shared';
 // 멤버십 삽입·조회는 **`#156` 의 것 하나**를 그대로 쓴다. 여기서 다시 쓰지 않는다.
 import { addChannelMember, isChannelMember } from './channels.js';
 
@@ -21,6 +21,7 @@ type Queryable = Pick<Pool, 'query'>;
  */
 const COLS = `t.id, t.name, t.created_by as "createdBy", t.created_at as "createdAt",
   t.lead_account_id as "leadAccountId",
+  t.invoke_scope as "invokeScope", t.owner_account_id as "ownerAccountId",
   (select count(*) from agent_team_member m where m.team_id = t.id)::int as "memberCount"`;
 
 export async function listTeams(db: Queryable): Promise<AgentTeamRow[]> {
@@ -56,8 +57,8 @@ export async function createTeam(
     // `as t` 는 `COLS` 가 그 별칭을 전제하기 때문이다 — 갓 만든 팀의 memberCount 는
     // 언제나 0 이지만, 그 0 을 여기서 손으로 적으면 COLS 를 안 쓰는 경로가 하나 생긴다
     // (`createHandleGroup` 의 같은 주석).
-    `insert into agent_team as t (name, created_by)
-     select $1, $2
+    `insert into agent_team as t (name, created_by, owner_account_id)
+     select $1, $2, $2
      where not exists (select 1 from account where lower(handle) = lower($1))
        and not exists (select 1 from handle_group where lower(handle) = lower($1))
        and not exists (select 1 from agent_team where lower(name) = lower($1))
@@ -222,4 +223,39 @@ export async function addTeamToChannel(
   } finally {
     client.release();
   }
+}
+
+/**
+ * 팀의 호출 범위를 바꾼다(068). `ownerAccountId` 를 주지 않으면 그대로 둔다.
+ *
+ * 에이전트와 달리 **넓히기 금지(`scope_widening`)를 두지 않는다.** 그 규칙은 개인 자격증명을
+ * 쥔 에이전트가 남에게 열리지 않게 하려는 것이고, 팀은 자격증명을 쥐지 않는다 — 팀원이 쥔
+ * 자격증명은 팀원 각자의 범위(②)가 지킨다.
+ */
+export async function setTeamScope(
+  db: Queryable, teamId: string, scope: { invokeScope: InvokeScope; ownerAccountId?: string | null },
+): Promise<AgentTeamRow | null> {
+  const res = await db.query(
+    `update agent_team as t set invoke_scope = $2,
+       owner_account_id = case when $3::boolean then $4::uuid else t.owner_account_id end
+     where t.id = $1 returning ${COLS}`,
+    [teamId, scope.invokeScope, scope.ownerAccountId !== undefined, scope.ownerAccountId ?? null],
+  );
+  return res.rows[0] ?? null;
+}
+
+/** `invokeScope: 'list'` 의 명단에 넣거나 뺀다. 멱등. */
+export async function setTeamInvoker(db: Queryable, teamId: string, accountId: string, present: boolean): Promise<void> {
+  if (present) {
+    await db.query(
+      `insert into agent_team_invoker (team_id, account_id) values ($1, $2) on conflict do nothing`, [teamId, accountId]);
+  } else {
+    await db.query(`delete from agent_team_invoker where team_id = $1 and account_id = $2`, [teamId, accountId]);
+  }
+}
+
+export async function listTeamInvokers(db: Queryable, teamId: string): Promise<string[]> {
+  const res = await db.query<{ account_id: string }>(
+    `select account_id from agent_team_invoker where team_id = $1 order by account_id`, [teamId]);
+  return res.rows.map((r) => r.account_id);
 }
