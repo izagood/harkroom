@@ -35,6 +35,8 @@ import {
   readOperatorAgentRemovePayload,
   readOperatorAgentSetPayload,
   readOperatorRegisterPayload,
+  readOperatorMcpRemovePayload,
+  readOperatorMcpSetPayload,
   type AdoptRunnerResult,
   type DaemonError,
   type DaemonIdentity,
@@ -51,6 +53,7 @@ import {
 import type { RunnerRegistry } from './runners.js';
 import type { ClaudeAccountsPort } from './claudeAccounts.js';
 import type { LocalAgentsPort } from './localAgents.js';
+import type { LocalMcpPort } from './localMcp.js';
 import type { ClaudePoolsConfig } from '@harkroom/shared/claudePools';
 
 export interface DaemonServerDeps {
@@ -85,6 +88,8 @@ export interface DaemonServerDeps {
   claudeAccounts?: ClaudeAccountsPort;
   /** 오퍼레이터 로컬 설정의 에이전트 항목(스펙 §3 능력). 없으면 그 요청들은 배선되지 않았다고 답한다. */
   localAgents?: LocalAgentsPort;
+  /** 이 머신의 MCP 정의(`mcp-servers.json`). 없으면 그 요청은 거절한다. */
+  localMcp?: LocalMcpPort;
   /** 로그 한 줄. 기본은 stdout — 앱이 사이드카 파이프로 그대로 본다. */
   log?: (line: string) => void;
   /**
@@ -390,6 +395,36 @@ export class DaemonServer {
         if (isDaemonError(p)) return p;
         await port.remove(p.baseUrl, p.agentId);
         this.log(`로컬 설정: agent=${p.agentId} @ ${p.baseUrl} 뺌`);
+        return {};
+      }
+      case 'operatorMcpList': {
+        const port = this.deps.localMcp;
+        if (!port) return daemonError('no-such-runner', '이 daemon 에는 MCP 정의가 배선되지 않았다');
+        try { return await port.list(); } catch (err) {
+          return daemonError('internal', err instanceof Error ? err.message : String(err));
+        }
+      }
+      case 'operatorMcpSet': {
+        const port = this.deps.localMcp;
+        if (!port) return daemonError('no-such-runner', '이 daemon 에는 MCP 정의가 배선되지 않았다');
+        const p = readOperatorMcpSetPayload(req.payload);
+        if (isDaemonError(p)) return p;
+        try { await port.set(p.name, p.definition); } catch (err) {
+          return daemonError('internal', err instanceof Error ? err.message : String(err));
+        }
+        // 정의 본문은 적지 않는다 — env·headers 에 토큰이 실린다.
+        this.log(`MCP 정의: ${p.name} 넣음`);
+        return {};
+      }
+      case 'operatorMcpRemove': {
+        const port = this.deps.localMcp;
+        if (!port) return daemonError('no-such-runner', '이 daemon 에는 MCP 정의가 배선되지 않았다');
+        const p = readOperatorMcpRemovePayload(req.payload);
+        if (isDaemonError(p)) return p;
+        try { await port.remove(p.name); } catch (err) {
+          return daemonError('internal', err instanceof Error ? err.message : String(err));
+        }
+        this.log(`MCP 정의: ${p.name} 뺌`);
         return {};
       }
       // ── claude 계정 풀 ────────────────────────────────────────────────────────

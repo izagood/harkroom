@@ -495,6 +495,36 @@ fn operator_agent_remove(
 }
 
 #[tauri::command]
+fn operator_mcp_list(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+) -> Result<serde_json::Value, String> {
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.operator_mcp_list()
+}
+
+#[tauri::command]
+fn operator_mcp_set(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+    name: String,
+    definition: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.operator_mcp_set(&name, definition)
+}
+
+#[tauri::command]
+fn operator_mcp_remove(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+    name: String,
+) -> Result<serde_json::Value, String> {
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.operator_mcp_remove(&name)
+}
+
+#[tauri::command]
 fn claude_account_move(
     app: tauri::AppHandle,
     state: tauri::State<daemon_client::DaemonState>,
@@ -639,6 +669,9 @@ fn main() {
             operator_register,
             operator_agents_list,
             operator_agent_set,
+            operator_mcp_list,
+            operator_mcp_set,
+            operator_mcp_remove,
             operator_agent_remove,
         ])
         .run(tauri::generate_context!())

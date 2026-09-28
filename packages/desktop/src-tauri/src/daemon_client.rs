@@ -2054,6 +2054,21 @@ impl DaemonConnection {
         )
     }
 
+    // 이 머신의 MCP 정의(스펙 2026-09-20 §6) — `mcp-servers.json` 의 writer 도 오퍼레이터다.
+    // 목록은 env·headers 의 값을 싣지 않는다(키만). 정의는 웹뷰가 준 JSON 을 그대로 넘기고
+    // 검사는 오퍼레이터(`readOperatorMcpSetPayload`)가 한다.
+    pub fn operator_mcp_list(&self) -> Result<Value, String> {
+        self.request("operatorMcpList", json!({}))
+    }
+
+    pub fn operator_mcp_set(&self, name: &str, definition: Value) -> Result<Value, String> {
+        self.request("operatorMcpSet", json!({ "name": name, "definition": definition }))
+    }
+
+    pub fn operator_mcp_remove(&self, name: &str) -> Result<Value, String> {
+        self.request("operatorMcpRemove", json!({ "name": name }))
+    }
+
     pub fn claude_account_move(&self, account: &str, to_pool: &str) -> Result<Value, String> {
         self.request(
             "claudeAccountMove",

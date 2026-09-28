@@ -104,6 +104,12 @@ export const REQUEST_TYPES = [
   // 등록(스펙 §3). 앱이 발급한 코드를 이 머신의 오퍼레이터에 넘기면 오퍼레이터가 claim 을 대신
   // 하고 곧바로 그 커뮤니티에 붙는다 — 사람이 터미널을 열거나 오퍼레이터를 다시 띄울 일이 없다.
   'operatorRegister',
+  // 이 머신의 MCP 정의(스펙 2026-09-20 §6). 서버 레지스트리에는 이름만 있고 정의·토큰은
+  // `operator/mcp-servers.json` 에 있다 — 그 파일의 writer 도 오퍼레이터 하나다. 목록은
+  // env·headers 의 **값을 싣지 않는다**(키만) — 웹뷰가 토큰을 되읽을 길을 만들지 않는다.
+  'operatorMcpList',
+  'operatorMcpSet',
+  'operatorMcpRemove',
 ] as const;
 export type DaemonRequestType = (typeof REQUEST_TYPES)[number];
 
@@ -682,6 +688,77 @@ export function readOperatorAgentSetPayload(payload: unknown): { baseUrl: string
     if (c.claudePool.trim()) config.claudePool = c.claudePool.trim();
   }
   return { baseUrl: p.baseUrl, agentId: p.agentId, config };
+}
+
+/** 이 머신의 MCP 정의 — claude `mcpServers` 한 항목과 같은 모양. `oauth` 는 claude 가 그대로 읽는다. */
+export interface OperatorMcpRemoteDefinition { type: 'http' | 'sse'; url: string; headers?: Record<string, string>; oauth?: { clientId?: string; callbackPort?: number } }
+export type OperatorMcpDefinition =
+  | { type?: 'stdio'; command: string; args?: string[]; env?: Record<string, string> }
+  | OperatorMcpRemoteDefinition;
+
+/**
+ * `operatorMcpList` 의 한 줄. `source` 는 정의가 어디서 왔나 — `operator` 는 앱이 고칠 수 있는
+ * 표, `claude` 는 `~/.claude.json` 에서 읽기만 한 것. env·headers 는 **키만** 싣는다.
+ */
+export interface OperatorMcpEntry {
+  name: string;
+  source: 'operator' | 'claude';
+  transport: 'stdio' | 'http' | 'sse';
+  /** stdio 면 명령, http/sse 면 url. */
+  target: string;
+  args: string[];
+  envKeys: string[];
+  headerKeys: string[];
+  oauth: boolean;
+}
+export interface OperatorMcpListResult { servers: OperatorMcpEntry[] }
+
+/** 이름 문법은 서버 레지스트리(`mcp_server.name`)와 같다. harkroom·avcs 는 오퍼레이터가 늘 넣는 자리다. */
+export const MCP_NAME_PATTERN = /^[a-z0-9-]{1,32}$/;
+export const RESERVED_MCP_SERVER_NAMES = ['harkroom', 'avcs'] as const;
+
+const isStringRecord = (v: unknown): v is Record<string, string> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v) && Object.values(v).every((x) => typeof x === 'string');
+
+function readMcpName(v: unknown, method: string): string | DaemonError {
+  if (typeof v !== 'string' || !MCP_NAME_PATTERN.test(v)) return daemonError('bad-payload', `${method} 의 name 은 [a-z0-9-] 1~32자다`);
+  if ((RESERVED_MCP_SERVER_NAMES as readonly string[]).includes(v)) return daemonError('bad-payload', `${v} 는 오퍼레이터가 늘 넣는 이름이다 — 정의를 덮을 수 없다`);
+  return v;
+}
+
+export function readOperatorMcpSetPayload(payload: unknown): { name: string; definition: OperatorMcpRemoteDefinition } | DaemonError {
+  const p = payload as { name?: unknown; definition?: unknown } | null;
+  if (!p) return daemonError('bad-payload', 'operatorMcpSet 에는 name·definition 이 필요하다');
+  const name = readMcpName(p.name, 'operatorMcpSet');
+  if (typeof name !== 'string') return name;
+  const d = p.definition as Record<string, unknown> | null | undefined;
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return daemonError('bad-payload', 'definition 은 객체여야 한다');
+  if (d.type === 'http' || d.type === 'sse') {
+    if (typeof d.url !== 'string' || !/^https?:\/\//.test(d.url.trim())) return daemonError('bad-payload', 'http/sse 정의에는 http(s) url 이 필요하다');
+    if (d.headers !== undefined && !isStringRecord(d.headers)) return daemonError('bad-payload', 'headers 는 문자열 표여야 한다');
+    const def: OperatorMcpRemoteDefinition = { type: d.type, url: d.url.trim() };
+    if (d.headers && Object.keys(d.headers).length) def.headers = d.headers as Record<string, string>;
+    if (d.oauth !== undefined) {
+      const o = d.oauth as { clientId?: unknown; callbackPort?: unknown } | null;
+      if (!o || typeof o !== 'object') return daemonError('bad-payload', 'oauth 는 객체여야 한다');
+      if (o.clientId !== undefined && typeof o.clientId !== 'string') return daemonError('bad-payload', 'oauth.clientId 는 문자열이어야 한다');
+      if (o.callbackPort !== undefined && !(Number.isInteger(o.callbackPort) && (o.callbackPort as number) > 0 && (o.callbackPort as number) < 65536)) {
+        return daemonError('bad-payload', 'oauth.callbackPort 는 1~65535 정수여야 한다');
+      }
+      def.oauth = { ...(o.clientId ? { clientId: o.clientId as string } : {}), ...(o.callbackPort ? { callbackPort: o.callbackPort as number } : {}) };
+    }
+    return { name, definition: def };
+  }
+  // stdio 정의는 **소켓으로 받지 않는다**(#431). 그 command 는 에이전트 턴이 그대로 실행한다 —
+  // 웹뷰가 채우게 두면 "웹뷰는 프로그램·인자를 고르지 못한다"는 경계에 옆문이 난다. stdio 는
+  // 사람이 `mcp-servers.json`·`~/.claude.json` 에 손으로 적는다(목록에는 보인다).
+  return daemonError('bad-payload', '앱에서는 http·sse 정의만 넣는다 — stdio 는 mcp-servers.json 에 손으로 적는다');
+}
+
+export function readOperatorMcpRemovePayload(payload: unknown): { name: string } | DaemonError {
+  const p = payload as { name?: unknown } | null;
+  const name = readMcpName(p?.name, 'operatorMcpRemove');
+  return typeof name === 'string' ? { name } : name;
 }
 
 export interface OperatorRegisterResult { operatorId: string; name: string; baseUrl: string }

@@ -559,7 +559,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       expect(callers).toEqual([{ fn: 'daemon_command', file: 'daemon_client.rs' }]);
     });
 
-    it('`#[tauri::command]` 중 웹뷰가 채울 수 있는 파라미터를 받는 것은 시크릿 3종·daemon 2종·로컬 설정 3종뿐이다', () => {
+    it('`#[tauri::command]` 중 웹뷰가 채울 수 있는 파라미터를 받는 것은 시크릿 3종·daemon 2종·로컬 설정 5종뿐이다', () => {
       const commands = [...mainRs.matchAll(
         /#\[tauri::command\]\s*\n\s*(?:async\s+)?fn\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)/g,
       )].map((m) => {
@@ -587,7 +587,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
           'claude_account_login_submit', 'claude_account_move',
           'claude_account_remove', 'claude_accounts_configure', 'claude_pool_remove',
           'daemon_kill_runner', 'daemon_spawn_runner',
-          'operator_agent_remove', 'operator_agent_set', 'operator_register',
+          'operator_agent_remove', 'operator_agent_set', 'operator_mcp_remove', 'operator_mcp_set', 'operator_register',
           'secret_delete', 'secret_get', 'secret_set',
         ]);
       // 등록: 서버 URL·코드·이름 문자열뿐 — claim 은 데몬이 한다.
@@ -599,6 +599,12 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       expect(setLocal.webviewParams.sort()).toEqual(['agent_id: String', 'base_url: String', 'config: serde_json::Value']);
       const removeLocal = commands.find((c) => c.fn === 'operator_agent_remove')!;
       expect(removeLocal.webviewParams.sort()).toEqual(['agent_id: String', 'base_url: String']);
+      // 이 머신의 MCP 정의(스펙 §6): 이름 문자열과 정의 JSON. 그 JSON 에 **stdio command 를 실을 수
+      // 없다** — 오퍼레이터가 http·sse 만 받는다(`readOperatorMcpSetPayload`, localMcp.test.ts).
+      const setMcp = commands.find((c) => c.fn === 'operator_mcp_set')!;
+      expect(setMcp.webviewParams.sort()).toEqual(['definition: serde_json::Value', 'name: String']);
+      const removeMcp = commands.find((c) => c.fn === 'operator_mcp_remove')!;
+      expect(removeMcp.webviewParams).toEqual(['name: String']);
       // `daemon_kill_runner` 가 받는 것은 **누구를·어느 세대를** 뿐이다 — 프로그램·인자·경로를
       // 다시 고를 수 있는 자리가 아니다.
       const kill = commands.find((c) => c.fn === 'daemon_kill_runner')!;
