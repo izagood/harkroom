@@ -26,7 +26,7 @@
  * 그 한 줄이 **두 화면에 각각** 있다: `TeamDetail` 의 `team-mention-note`(팀 → 집합)와
  * `HandleGroupsSettings` 의 목록 머리(집합 → 팀).
  */
-export type SectionId = 'profile' | 'notifications' | 'messages' | 'appearance' | 'connection' | 'communities' | 'agents' | 'agent-defaults' | 'operators' | 'mcp-servers' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'gallery';
+export type SectionId = 'profile' | 'notifications' | 'messages' | 'appearance' | 'connection' | 'communities' | 'agents' | 'agent-defaults' | 'operators' | 'mcp-servers' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'automations' | 'gallery';
 
 export const SETTINGS_GROUPS: { title: string; items: { id: SectionId; label: string }[] }[] = [
   {
@@ -67,6 +67,9 @@ export const SETTINGS_GROUPS: { title: string; items: { id: SectionId; label: st
       { id: 'invite', label: 'Invite' },
       { id: 'updates', label: 'Updates' },
       { id: 'skills', label: 'Skills' },
+      // 자동화(064): 만든 사람 이름으로 반복해서 글을 올린다. 에이전트에게 맡기는 반복 요청이라
+      // 스킬 옆에 둔다 — 둘 다 "에이전트가 매번 같은 일을 하게" 하는 자리다.
+      { id: 'automations', label: 'Automations' },
       /**
        * 컴포넌트 갤러리(Task 11). **개발자용이라 목록의 맨 끝**에 둔다 — 배포본에서도
        * 보이지만 쓰는 사람이 찾아 들어갈 일이 없는 자리다. 숨기지 않는 이유: 숨긴 화면은
