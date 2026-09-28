@@ -198,6 +198,15 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       }
       return c.forward(agentId, req);
     },
+    // 회수한 러너가 **인박스를 놓았다**고 알린다(2026-09-28). 그 순간부터 교체 러너를 띄워도
+    // 같은 멘션을 둘이 집지 않는다 — 프로세스가 죽기를 기다리던 공백이 여기서 사라진다.
+    // `registry` 는 아래에서 만들어지지만 이 콜백은 그 뒤에만 불린다(러너가 붙어야 온다).
+    onNotice: (runnerId, agentId, notice) => {
+      registry.notePollStopped(agentId, runnerId, notice.holding);
+      log(`러너가 인박스를 놓았다: agent=${agentId} runnerId=${runnerId} 진행 중인 턴 ${notice.holding.length}개 — 교체를 띄운다`);
+      // 배정이 5초 주기로 다시 시도하므로 여기서 직접 spawn 하지 않는다. 그 주기가 곧
+      // 공백의 상한이다(예전에는 "남은 턴이 끝날 때까지" 였다).
+    },
     log,
   });
 

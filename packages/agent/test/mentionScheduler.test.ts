@@ -41,7 +41,12 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function harness(opts: { runTurn: () => Promise<MentionTurnResult>; now?: () => number }) {
+function harness(opts: {
+  runTurn: () => Promise<MentionTurnResult>;
+  now?: () => number;
+  /** 이관 중 앞 세대 러너가 들고 있는 entry — `heldEntryIds` 회귀선이 쓴다. */
+  held?: Set<number>;
+}) {
   const markedRead: number[] = [];
   const posted: { channelId: string; body: string; anchor: string | null }[] = [];
   const failed: { body: string; retryable: boolean }[] = [];
@@ -69,12 +74,48 @@ function harness(opts: { runTurn: () => Promise<MentionTurnResult>; now?: () => 
       noticeHarnessLogin: async () => {},
     },
     startedAtMs: 0,
+    ...(opts.held ? { heldEntryIds: () => opts.held! } : {}),
     ...(opts.now ? { now: opts.now } : {}),
   });
   return { scheduler, registry, markedRead, posted, failed };
 }
 
 describe('mentionScheduler 승인 관문', () => {
+  /**
+   * 이관 보류(2026-09-28). 회수된 앞 러너는 폴을 놓는 순간 **아직 도는 턴의 entry** 를
+   * 함께 넘긴다. `markRead` 는 턴 완료 후라 그 항목들은 여전히 미읽음이고, 교체 러너가
+   * 그대로 집으면 **같은 멘션에 두 번 답한다** — `#430`·`#174` 의 중복이 되살아나는 자리다.
+   *
+   * 되돌려 RED: `admit` 의 `heldEntryIds` 검사를 지우면 이 턴이 떠서 `started` 가 1 이 된다.
+   */
+  it('앞 세대가 들고 있는 entry 는 띄우지 않는다 — 이관 중 중복 답변을 막는다', async () => {
+    const held = new Set([41]);
+    const h = harness({ runTurn: async () => ({ ok: true }) as never, held });
+
+    const 막힘 = await h.scheduler.admit(batchOf([{ entryId: 41, messageId: 'm-41' }]), ctx);
+    expect(막힘).toMatchObject({ started: 0, blocked: 1 });
+    // **markRead 도 하지 않는다** — 내 것이 아니므로 소비하면 앞 러너의 답이 사라진다.
+    expect(h.markedRead).toEqual([]);
+
+    // 유예가 끝나 집합이 비면 평범한 멘션으로 돌아온다 — 늦어질 뿐 잃지 않는다.
+    held.clear();
+    const 통과 = await h.scheduler.admit(batchOf([{ entryId: 41, messageId: 'm-41' }]), ctx);
+    expect(통과).toMatchObject({ started: 1 });
+  });
+
+  /** 물러나는 러너가 교체 러너에게 넘길 목록이다 — 없으면 오퍼레이터가 무엇을 넘길지 모른다. */
+  it('holdingEntries 가 지금 도는 턴의 entry 를 준다', async () => {
+    const gate = deferred<MentionTurnResult>();
+    const h = harness({ runTurn: () => gate.promise });
+
+    await h.scheduler.admit(batchOf([{ entryId: 77, messageId: 'm-77' }]), ctx);
+    expect(h.scheduler.holdingEntries()).toEqual([77]);
+
+    gate.resolve({ ok: true } as never);
+    await h.scheduler.drain();
+    expect(h.scheduler.holdingEntries()).toEqual([]);
+  });
+
   it('서로 다른 스레드 3건을 동시에 띄운다', async () => {
     let calls = 0;
     const gate = deferred<MentionTurnResult>();

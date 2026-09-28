@@ -370,8 +370,36 @@ interactive = createInteractiveManager({
 // 이 조립이 main 에 남는 이유: 계정 축·워크스페이스 경로·MCP 설정은 기동이 정하는 값이고,
 // 스케줄러가 그것을 직접 읽으면 테스트가 그 환경을 전부 세워야 한다. 스케줄러는 "무엇을
 // 언제 띄우는가"만 알고, "무엇으로 띄우는가"는 이 함수가 넘긴다.
+/**
+ * 이관 보류 — 앞 세대 러너가 아직 들고 있는 inbox entry(`HARKROOM_HANDOVER_HOLD`).
+ *
+ * 오퍼레이터가 앞 러너의 `runner.pollStopped` 통지를 받아 **spawn 때 심어 준다.** 그 항목들은
+ * 앞 러너에서 턴이 이미 돌고 있으므로 여기서 또 띄우면 같은 멘션에 두 번 답한다.
+ *
+ * **유예가 있는 이유**: 앞 러너가 그 턴을 못 끝내고 죽을 수 있다(9/22 처럼 사람이 끊는 경우).
+ * 그러면 그 항목은 미읽음으로 남는데, 영원히 건너뛰면 **아무도 답하지 않는다.** 유예가 지나면
+ * 집합이 비고 평범한 멘션으로 돌아온다 — 늦어질 뿐 잃지는 않는다. 턴 예산과 같은 30분이다:
+ * 그보다 짧으면 정상적으로 도는 앞 턴을 중복으로 집는다.
+ */
+const HANDOVER_HOLD_MS = 30 * 60_000;
+const handoverHeld = new Set<number>(
+  (process.env.HARKROOM_HANDOVER_HOLD ?? '')
+    .split(',').map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0),
+);
+const handoverHoldUntilMs = Date.now() + HANDOVER_HOLD_MS;
+if (handoverHeld.size) {
+  console.log(`[main] 이관 보류: 앞 러너가 들고 있는 entry ${[...handoverHeld].join(',')} — 최대 ${HANDOVER_HOLD_MS}ms 동안 건너뛴다`);
+}
+const heldEntryIds = (): ReadonlySet<number> => {
+  if (handoverHeld.size && Date.now() > handoverHoldUntilMs) {
+    console.log('[main] 이관 보류 유예가 끝났다 — 남은 항목을 평범한 멘션으로 다시 본다');
+    handoverHeld.clear();
+  }
+  return handoverHeld;
+};
+
 const scheduler = createMentionScheduler({
-  harkroom, registry, queue: mentionQueue, accountLane,
+  harkroom, registry, queue: mentionQueue, accountLane, heldEntryIds,
   runMentionTurn,
   // 계정별로 갈리는 두 필드(`claudeAccount`·`claudeConfigDir`)만 계정 축이 채운다 —
   // 나머지는 계정과 무관하므로 매번 같은 값이다.
@@ -499,6 +527,12 @@ while (running) {
 }
 // #129 의 계약 "진행 중인 턴을 마쳤으므로 물러난다" 를 병렬에서도 지킨다 — 루프를 벗어난
 // 지금 admit 은 멈췄고, 남은 것은 이미 도는 턴들뿐이다.
+//
+// **여기가 "인박스를 놓았다"의 정확한 순간이다.** 시그널 핸들러에서 알리면 거짓말이 된다 —
+// 그때는 배치 하나가 아직 돌고 있어서 새 항목을 더 집을 수 있다. 이 줄에 와서야 admit 이
+// 끝났고, 그래서 오퍼레이터가 **프로세스가 죽기를 기다리지 않고** 교체 러너를 띄워도 된다.
+// 아직 도는 턴의 entry 는 함께 넘겨 교체 러너가 그것만 건너뛰게 한다.
+relay.notifyPollStopped(scheduler.holdingEntries());
 await scheduler.drain();
 relay.stop();
 console.log('종료');

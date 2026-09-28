@@ -22,7 +22,8 @@ import { timingSafeEqual } from 'node:crypto';
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
 import { encodeLine, NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
 import {
-  checkRunnerHello, isRunnerLinkRequest, type RunnerLinkRequest, type RunnerLinkResponse,
+  checkRunnerHello, isRunnerLinkNotice, isRunnerLinkRequest,
+  type RunnerLinkNotice, type RunnerLinkRequest, type RunnerLinkResponse,
 } from '@harkroom/shared/runnerLink';
 
 /** `net.Socket` 의 최소 표면. 테스트가 가짜를 준다. */
@@ -42,6 +43,11 @@ export interface RunnerLinkDeps {
    * relay 소켓이든 브릿지 소켓이든. 없으면 요청은 status 0 으로 거절된다(삼키지 않는다).
    */
   onRequest?(runnerId: string, agentId: string, req: RunnerLinkRequest): Promise<RunnerLinkResponse>;
+  /**
+   * 단방향 통지(`runner.pollStopped`). **서버로 안 나간다** — 오퍼레이터 안에서 끝나는 말이다
+   * (`shared/runnerLink.ts` 의 `RunnerLinkNotice`). 없으면 그냥 버린다.
+   */
+  onNotice?(runnerId: string, agentId: string, notice: RunnerLinkNotice): void;
   onClose?(runnerId: string): void;
   log(line: string): void;
 }
@@ -102,6 +108,9 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
     }
     // 브릿지는 PTY 를 모른다 — 요청이 아닌 것은 버린다.
     if (kind === 'bridge') return;
+    // 통지는 **릴레이 프레임보다 먼저** 가른다. 아래로 흘려보내면 `wrapRunnerFrame` 이
+    // 모르는 타입으로 null 을 돌려 조용히 사라진다 — 그러면 회수 게이트가 영영 안 열린다.
+    if (isRunnerLinkNotice(value)) { deps.onNotice?.(runnerId, agentId, value); return; }
     // 얕게만 본다 — 타입 문자열이 있으면 릴레이 프레임으로 넘긴다. 깊은 검증은 서버 허브의 일이다.
     if (typeof value !== 'object' || value === null || typeof (value as { type?: unknown }).type !== 'string') return;
     deps.onFrame(runnerId, agentId, value as RelayRunnerFrame);

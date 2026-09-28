@@ -49,6 +49,18 @@ import {
 import { psIdentityProbe } from './adopt.js';
 
 /** 러너 하나에 대해 daemon 이 들고 있는 사실. **전부 프로세스 수준이다.** */
+/**
+ * 회수(SIGTERM)를 보낸 앞 세대 러너 하나. 표(`byAgent`)와 **다른 자리**다 — `retire` 주석 참조.
+ *
+ * `pollStopped` 는 그 러너가 **인박스를 놓았다고 스스로 알린** 사실이다(`runner.pollStopped`).
+ * 관측이지 추측이 아니다: 러너가 폴 루프를 실제로 빠져나온 자리에서 보낸다.
+ */
+interface RetiringEntry {
+  pid: number;
+  incarnationId: IncarnationId | null;
+  pollStopped?: { holding: number[] };
+}
+
 export interface RunnerRecord {
   agentId: string;
   pid: number;
@@ -330,9 +342,22 @@ export class RunnerRegistry {
    * 표(`byAgent`)와 **다른 자리**인 이유는 `retire` 주석에 있다. 프로세스가 사라지면
    * `retiringAlive` 가 지운다 — 그때부터 교체가 허용된다.
    */
-  private readonly retiring = new Map<string, { pid: number; incarnationId: IncarnationId | null }>();
+  private readonly retiring = new Map<string, RetiringEntry>();
 
   /** 지금 표 전체. 장부에 쓰기 위해서만 쓰인다. */
+  /**
+   * 회수를 보낸 앞 세대 러너가 **인박스를 놓았다고 스스로 알렸다**(`runner.pollStopped`).
+   *
+   * 알리지 않는 세대(이 프레임을 모르는 옛 러너)에서는 영영 `undefined` 로 남고, 그러면
+   * 게이트는 **예전 그대로** 프로세스가 죽을 때까지 기다린다. 즉 이 기능은 순수한 덧셈이다.
+   */
+  notePollStopped(agentId: string, incarnationId: IncarnationId, holding: readonly number[]): void {
+    const entry = this.retiring.get(agentId);
+    // id 를 대조한다 — 그 사이 또 다른 세대가 회수 자리에 들어왔을 수 있다.
+    if (entry === undefined || entry.incarnationId !== incarnationId) return;
+    entry.pollStopped = { holding: [...holding] };
+  }
+
   /**
    * 표에 올리지 **않고** 러너를 회수한다 — 낡은 세대의 고아에게만 쓴다(2026-09-07).
    *
@@ -371,24 +396,31 @@ export class RunnerRegistry {
   }
 
   /**
-   * 그 에이전트에 **아직 물러나지 않은** 앞 세대 러너가 있는가. 있으면 그 pid.
+   * 그 에이전트의 앞 세대 러너가 **아직 인박스를 쥐고 있는가.** 쥐고 있으면 그 pid.
+   *
+   * 2026-09-28 에 판정 기준을 바꿨다: 예전에는 **프로세스가 살아 있는가**를 물었다. 그런데
+   * 지키려던 성질은 *"에이전트당 프로세스 하나"* 가 아니라 **"같은 인박스를 둘이 폴하지
+   * 않는다"** 다. 러너는 SIGTERM 을 받으면 곧 폴을 놓는데(`agent/src/main.ts`), 그 사실을
+   * 알 길이 없어 프로세스 사망까지 기다렸고 — 그 기다림이 **턴 하나 길이(20~30분)의 멘션
+   * 공백**이었다. 이제는 러너가 놓은 순간 알려 준다(`notePollStopped`).
    *
    * 죽은 것은 지운다 — 남겨 두면 그 에이전트는 영원히 교체를 거절받고, 기다림이
    * 영구 거절이 되는 순간 에이전트는 돌아오지 않는다.
    */
-  private retiringAlive(agentId: string): number | null {
+  private retiringHoldsInbox(agentId: string): number | null {
     const entry = this.retiring.get(agentId);
     if (entry === undefined) return null;
-    if (this.host.kill(entry.pid, 0)) return entry.pid;
-    this.reapRetiring(agentId, entry);
-    return null;
+    if (!this.host.kill(entry.pid, 0)) { this.reapRetiring(agentId, entry); return null; }
+    // 살아 있어도 **폴을 놓았으면 인박스는 비어 있다.** 남은 턴은 저쪽이 마저 끝낸다.
+    if (entry.pollStopped) return null;
+    return entry.pid;
   }
 
   /**
    * 물러난 옛 세대 러너를 지우고, id 를 알면 exit 통지를 낸다 — `pollAdopted` 와 `retiringAlive`
    * 어느 쪽이 먼저 발견하든 **한 번**이다(지우는 것과 알리는 것이 같은 자리다).
    */
-  private reapRetiring(agentId: string, entry: { pid: number; incarnationId: IncarnationId | null }): void {
+  private reapRetiring(agentId: string, entry: RetiringEntry): void {
     if (this.retiring.get(agentId) !== entry) return;
     this.retiring.delete(agentId);
     if (entry.incarnationId === null) return;
@@ -452,7 +484,7 @@ export class RunnerRegistry {
     //
     // 던지는 이유: 조용히 `existing` 을 돌려주면 앱은 "떴다"고 믿고 다시 부르지 않는다.
     // 이것은 실패가 아니라 **순서**이므로, 앱이 그것을 알고 기다릴 수 있어야 한다.
-    const 물러나는중 = this.retiringAlive(agentId);
+    const 물러나는중 = this.retiringHoldsInbox(agentId);
     if (물러나는중 !== null) {
       throw Object.assign(
         new Error(
@@ -467,12 +499,19 @@ export class RunnerRegistry {
     // fd 가 있어야 `stdio` 를 세울 수 있으므로 순서는 강제된다. 그리고 `openRunnerLog`
     // 가 회전을 이 순간에 하는 것도 이 순서 덕이다 — 러너가 아직 파일을 안 열었으므로
     // 이름을 바꿔도 안전하다(`runnerLog.ts` 의 회전 표).
+    // ── 이관 보류를 교체 러너에 심는다 ─────────────────────────────────────────
+    // 앞 러너가 놓은 인박스에는 **그가 아직 돌리고 있는 턴의 entry 가 미읽음으로 남아 있다**
+    // (`markRead` 는 턴 완료 후다). 그대로 두면 이 새 러너가 같은 멘션을 집어 두 번 답한다.
+    // 그 목록만 건네 잠시 건너뛰게 한다 — 받는 쪽 유예는 `agent/src/main.ts` 가 갖는다.
+    const 보류 = this.retiring.get(agentId)?.pollStopped?.holding ?? [];
+    const env2 = 보류.length ? { ...env, HARKROOM_HANDOVER_HOLD: 보류.join(',') } : env;
+
     const logHandle = this.logs?.open(agentId) ?? null;
 
     let child: ChildProcess;
     try {
       child = this.host.spawn(
-        this.launch.command, this.launch.args, withUserEnv(env), logHandle?.fd ?? null,
+        this.launch.command, this.launch.args, withUserEnv(env2), logHandle?.fd ?? null,
       );
     } finally {
       // **daemon 쪽 사본은 즉시 닫는다.** 자식은 spawn 순간 자기 복제본을 받았으므로
