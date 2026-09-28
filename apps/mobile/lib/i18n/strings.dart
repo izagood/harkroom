@@ -56,6 +56,61 @@ abstract class Strings {
 
   /// 다시 해 보기.
   String get commonRetry;
+
+  // ── P0 ───────────────────────────────────────────────────────────────
+  /// 로그인 화면 제목.
+  String get loginTitle;
+
+  /// 로그인 아이디 입력칸.
+  String get loginIdLabel;
+
+  /// 비밀번호 입력칸.
+  String get loginPasswordLabel;
+
+  /// 로그인 버튼.
+  String get loginSubmit;
+
+  /// 서버가 자격증명을 거절했다. **무엇이 틀렸는지 말하지 않는다** — 아이디가 있는지 없는지를 알려 주면 계정 목록을 훑을 수 있다.
+  String get loginErrorRejected;
+
+  /// 서버에 닿지 못했다. 자격증명 문제와 **갈라서** 말한다 — 사람이 할 일이 다르다.
+  String get loginErrorUnreachable;
+
+  /// 로그아웃.
+  String get signOut;
+
+  /// 채널 목록 화면 제목.
+  String get channelsTitle;
+
+  /// 들어가 있는 채널이 하나도 없다.
+  String get channelsEmpty;
+
+  /// 채널에 말이 하나도 없다.
+  String get messagesEmpty;
+
+  /// 작성칸의 자리 표시. **에이전트를 부르는 방법이 여기 적혀 있다** — 별도 버튼이 없으므로 화면이 말해 주지 않으면 알 길이 없다.
+  String get composerHint;
+
+  /// 보내기 버튼의 접근성 이름.
+  String get composerSend;
+
+  /// 소켓이 붙어 있다.
+  String get connectionOnline;
+
+  /// 처음 붙는 중.
+  String get connectionConnecting;
+
+  /// 끊겼지만 **기다리면 낫는** 부류다.
+  String get connectionReconnecting;
+
+  /// 기다려도 안 낫는다. 다시 로그인해야 한다.
+  String get connectionDead;
+
+  /// 키체인에 못 썼다. **두 가지를 다 말한다** — 지금은 쓸 수 있다는 것과, 앱을 다시 켜면 다시 로그인해야 한다는 것. 앞만 말하면 무엇이 걸린 일인지 모르고, 뒤를 빼면 다음 기동의 로그아웃이 이유 없는 로그아웃으로 남는다.
+  String get noticeSessionNotSaved;
+
+  /// 에이전트 계정임을 나타내는 짧은 표. 사람과 갈라 보여야 누구를 부르는지 안다.
+  String get agentBadge;
 }
 
 /// **영어와 같아도 되는 키.** 고유명사처럼 번역이 존재하지 않는 것들이다.
@@ -90,4 +145,22 @@ Map<String, String> stringsToMap(Strings s) => {
       'commonLoading': s.commonLoading,
       'commonBack': s.commonBack,
       'commonRetry': s.commonRetry,
+      'loginTitle': s.loginTitle,
+      'loginIdLabel': s.loginIdLabel,
+      'loginPasswordLabel': s.loginPasswordLabel,
+      'loginSubmit': s.loginSubmit,
+      'loginErrorRejected': s.loginErrorRejected,
+      'loginErrorUnreachable': s.loginErrorUnreachable,
+      'signOut': s.signOut,
+      'channelsTitle': s.channelsTitle,
+      'channelsEmpty': s.channelsEmpty,
+      'messagesEmpty': s.messagesEmpty,
+      'composerHint': s.composerHint,
+      'composerSend': s.composerSend,
+      'connectionOnline': s.connectionOnline,
+      'connectionConnecting': s.connectionConnecting,
+      'connectionReconnecting': s.connectionReconnecting,
+      'connectionDead': s.connectionDead,
+      'noticeSessionNotSaved': s.noticeSessionNotSaved,
+      'agentBadge': s.agentBadge,
     };

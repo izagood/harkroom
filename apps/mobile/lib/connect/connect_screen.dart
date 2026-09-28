@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../i18n/i18n.dart';
+import '../state/app_scope.dart';
 import 'server_url.dart';
 
 /// 서버 주소를 받는 첫 화면.
@@ -36,7 +37,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
     final result = validateServerUrl(_controller.text);
     setState(() => _problem = result.problem);
     if (!result.isOk) return;
-    // P0 에서 여기가 로그인으로 이어진다.
+    // 주소가 정해지면 로그인 화면으로 넘어간다. 화면 전환은 상태가 정한다
+    // (`AppPhase`) — 여기서 `Navigator` 를 부르면 부팅 경로와 이 경로가 갈라진다.
+    context.app.setServer(result.normalized!);
   }
 
   @override

@@ -31,3 +31,7 @@ linter:
 
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options
+    # 생성자 매개변수 이름을 `this._getTicket` 으로 쓰면 **호출부가 밑줄 붙은 이름을
+    # 받아 적어야 한다**(`WsClient(_getTicket: ...)`). 비공개 필드를 공개 API 로 새게
+    # 하는 것보다, 초기화 리스트에서 한 번 옮겨 담는 편이 낫다.
+    prefer_initializing_formals: false
