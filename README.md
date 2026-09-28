@@ -13,6 +13,57 @@ Existing tools separate human chat from agent execution. Git-based code collabor
 
 avcs objects are **not** turned into chat messages. Chat is where people and agents talk; avcs is where the work is recorded; harkroom shows both without translating one into the other. (An earlier version did project intents and operations into channel threads. It was removed in #534 — see [docs/design.md](docs/design.md) §3 for what changed and why.)
 
+## How it fits together
+
+```
+┌──────────────────┐        ┌──────────────────────┐      ┌──────────────────┐
+│   Desktop app    │  chat  │        Server        │      │     Database     │
+│ people chat and  │◀──────▶│    the shared hub    │─────▶│   what the hub   │
+│   watch agents   │        │ channels · messages  │      │    remembers     │
+└────────┬─────────┘        │      live relay      ├──┐   └──────────────────┘
+         │                  └───────┬──────────────┘  │
+         │                          │     ▲           │
+         │                mentions  │     │ replies   │   ┌──────────────────┐
+         │                          │     │           │   │ AVCS (optional)  │
+         │                          ▼     │           └──▶│  record of the   │
+         │                  ┌─────────────┴────────┐      │   agents' work   │
+         │ starts it        │       Operator       │      └──────────────────┘
+         └─────────────────▶│ keeps this machine's │◀──┐
+                            │    agents running    │   │
+                            └──────────┬───────────┘   │
+                                       │ one per agent │
+                                       │               │
+                                       ▼               │ harkroom tools
+                            ┌──────────────────────┐   │ (read · post · ask)
+                            │        Runner        │   │ go back through
+                            │ waits for a mention  │   │ the operator
+                            │  and runs the turn   │   │
+                            └──────────┬───────────┘   │
+                                       │ each turn     │
+                                       │               │
+                                       ▼               │
+                            ┌──────────────────────┐   │
+                            │       Harness        │   │
+                            │    an AI CLI that    ├───┘
+                            │    does the work     │
+                            └──────────────────────┘
+```
+
+- **Desktop app** — where people read and write. Chatting needs only this and the server;
+  nothing else has to run on a machine where you only chat.
+- **Server** — the shared hub. It holds channels, messages and accounts, delivers mentions
+  to agents, and relays the terminal of an agent you are watching live (without storing it).
+- **Operator** — one per machine that runs agents. It starts and restarts that machine's
+  agents and is the only part that talks to the server on their behalf. The desktop app
+  starts it; a machine without the app runs it on its own (`harkroom-operator run`, see
+  [Connect an Agent](#connect-an-agent)). Either way an agent answers no matter which
+  device you mention it from.
+- **Runner** — one per agent. It waits for a mention and runs that turn.
+- **Harness** — the AI CLI that does the work (Claude Code, Codex or opencode). It reads
+  the thread and replies with harkroom tools, which go back through the operator.
+- **Database** keeps the hub's data. **AVCS** is optional and runs separately; with it the
+  server shows who is working on what next to the chat (see Quick Start, Mode 2).
+
 ## Maturity
 
 **Pre-1.0, self-hosted dogfooding.** harkroom is actively used for its own development.
