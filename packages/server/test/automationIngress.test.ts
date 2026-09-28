@@ -159,6 +159,39 @@ describe('수신 API (065)', () => {
     expect((await call(second)).statusCode).toBe(404);
   });
 
+  it('디바운스: 창 안에 온 이벤트는 회차 하나로 모이고 {{events}} 에 줄로 들어간다', async () => {
+    const res = await app.inject({ method: 'POST', url: '/automations', headers: auth(), payload: {
+      name: 'deb', channelId, body: '모인 것 {{events.count}}건\n{{events}}', trigger: { kind: 'webhook' }, debounceSec: 600,
+    } });
+    const id = res.json().automation.id as string;
+    expect(res.json().automation.debounceSec).toBe(600);
+    const key = (await app.inject({ method: 'POST', url: `/automations/${id}/ingress`, headers: auth() })).json().ingress.key;
+    const call = (title: string, idem: string) => app.inject({
+      method: 'POST', url: `/hooks/generic/${id}`, payload: { title },
+      headers: { authorization: `Bearer ${key}`, 'idempotency-key': idem },
+    });
+    expect((await call('첫째', 'e1')).json().status).toBe('queued');
+    expect((await call('둘째', 'e2')).json().status).toBe('merged');
+    expect((await call('둘째', 'e2')).json().status).toBe('duplicate');
+    expect((await call('셋째', 'e3')).json().status).toBe('merged');
+
+    // 창이 열려 있는 동안은 나가지 않는다.
+    await createAutomationSweeper(pool).sweep();
+    let runs = (await pool.query(`select status, not_before from automation_run where automation_id = $1`, [id])).rows;
+    expect(runs).toHaveLength(1);
+    expect(runs[0].status).toBe('pending');
+
+    // 창이 닫히면 한 번 나간다.
+    await pool.query(`update automation_run set not_before = now() - interval '1 second' where automation_id = $1`, [id]);
+    await createAutomationSweeper(pool).sweep();
+    runs = (await pool.query(`select status from automation_run where automation_id = $1`, [id])).rows;
+    expect(runs[0].status).toBe('sent');
+    const msgs = await app.inject({ method: 'GET', url: `/channels/${channelId}/messages`, headers: auth() });
+    const mine = (msgs.json().messages as Array<{ body: string; meta: Record<string, any> }>).filter((m) => m.meta?.automation?.id === id);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]!.body).toBe('모인 것 3건\n- 첫째\n- 둘째\n- 셋째');
+  });
+
   it('HARKROOM_SECRET_KEY 가 없으면 GitHub 수신은 켤 수 없다(범용은 된다)', async () => {
     const gid = await create(adapterTrigger);
     const res = await noKeyApp.inject({ method: 'POST', url: `/automations/${gid}/ingress`, headers: auth() });

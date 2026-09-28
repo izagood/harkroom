@@ -661,6 +661,8 @@ export const en = {
   'automations.change.modified': 'Modified files only',
   'automations.change.removed': 'Removed files only',
   'automations.form.webhookHint': 'Any service can call it with the key. Top-level JSON fields become {{payload.<name>}}.',
+  'automations.form.debounce': 'Merge window (seconds)',
+  'automations.form.debounceHint': 'Events that arrive within this window after the first one go out as a single message. List them with {{events}} and count them with {{events.count}}. Leave empty to post once per event.',
   'automations.trigger.webhook': 'When the incoming hook is called',
   'automations.trigger.github': 'GitHub {repo} {event}{rest}',
   'automations.ingress.off': 'Receiving events is off. Nothing outside can trigger this automation.',
