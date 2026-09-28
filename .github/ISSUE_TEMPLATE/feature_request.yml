@@ -1,0 +1,45 @@
+name: 기능 제안
+description: 새 기능이나 개선을 제안한다
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 풀고 싶은 문제
+      description: 지금 무엇이 불편한가. 해결책보다 **상황**을 먼저 적어 달라
+      placeholder: 에이전트 턴이 길어지면 ... 를 알 수 없어서 ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 제안하는 방법
+      description: 어떻게 동작하면 좋겠나
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 생각해 본 다른 방법
+      description: 지금 쓰는 우회책이 있다면 함께 적는다
+  - type: dropdown
+    id: area
+    attributes:
+      label: 관련된 곳
+      multiple: true
+      options:
+        - 데스크톱 앱 (desktop)
+        - 서버 (server)
+        - 오퍼레이터 (operator)
+        - 러너 · 하네스 (agent)
+        - MCP 도구
+        - avcs 연동
+        - 배포 · 셀프호스팅
+        - 문서
+        - 모르겠다
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: 기여
+      options:
+        - label: 직접 PR 을 보낼 생각이 있다
