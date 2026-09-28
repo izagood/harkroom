@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:harkroom/api/api_client.dart';
 import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/main.dart';
+import 'package:harkroom/screens/thread_screen.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_state.dart';
 import 'package:http/http.dart' as http;
@@ -20,7 +21,20 @@ http.Response _json(Object body, [int status = 200]) =>
     http.Response.bytes(utf8.encode(jsonEncode(body)), status,
         headers: {'content-type': 'application/json'});
 
+/// `pumpAndSettle` 대신 쓰는 것.
+///
+/// **진행 줄의 회전자는 영원히 돈다** — 그게 맞는 화면이다(에이전트가 아직 일하는 중).
+/// 그래서 `pumpAndSettle` 은 *"pumpAndSettle timed out"* 으로 죽는다. 애니메이션을
+/// 없애서 시험을 통과시키지 않는다: 시험이 배포되는 것과 다른 앱을 보게 된다.
+/// 몇 프레임만 돌려 비동기 작업이 끝나게 한다.
+Future<void> _settle(WidgetTester tester) async {
+  for (var i = 0; i < 8; i += 1) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+}
+
 final _sent = <String>[];
+final _answered = <String>[];
 
 MockClient _server() => MockClient((req) async {
       final path = req.url.path;
@@ -39,6 +53,41 @@ MockClient _server() => MockClient((req) async {
           {'id': 'me-1', 'handle': 'me', 'displayName': '나', 'kind': 'human'},
         ]);
       }
+      if (path == '/reads') return _json({'reads': <Object?>[]});
+      if (path.startsWith('/inbox') && req.method == 'GET') {
+        return _json({
+          'entries': [
+            {
+              'id': 1,
+              'messageId': 'm1',
+              'reason': 'mention',
+              'channelId': 'c1',
+              'authorId': 'a1',
+              'body': '@me 이거 봐 줘',
+              'createdAt': '2026-09-28T00:00:00.000Z',
+              'readAt': null,
+            },
+          ],
+        });
+      }
+      if (path == '/inbox/read') return _json(<String, Object?>{});
+      if (path.endsWith('/read') && req.method == 'PUT') return _json(<String, Object?>{});
+      if (path.endsWith('/messages') && req.method == 'GET' && req.url.queryParameters['thread'] != null) {
+        return _json({
+          'messages': [
+            {
+              'id': 'r1',
+              'seq': 5,
+              'channelId': 'c1',
+              'threadRootId': 'm1',
+              'authorId': 'a1',
+              'body': '스레드 안의 답글',
+              'kind': 'user',
+            },
+          ],
+          'hasMore': false,
+        });
+      }
       if (path.endsWith('/messages') && req.method == 'GET') {
         return _json({
           'messages': [
@@ -49,6 +98,7 @@ MockClient _server() => MockClient((req) async {
               'authorId': 'a1',
               'body': '먼저 있던 말',
               'kind': 'user',
+              'replyCount': 1,
             },
             // 진행 줄은 **말풍선이 아니다** — 화면이 걸러야 한다.
             {
@@ -59,8 +109,50 @@ MockClient _server() => MockClient((req) async {
               'body': '훑는 중이다',
               'kind': 'progress',
             },
+            // 에이전트가 갈림길에서 묻는다. 답이 없으면 그 턴은 여기서 멈춘다.
+            {
+              'id': 'm4',
+              'seq': 4,
+              'channelId': 'c1',
+              'authorId': 'a1',
+              'body': '어느 쪽으로 갈까',
+              'kind': 'user',
+              'meta': {
+                'kind': 'ask',
+                'ask': {
+                  'options': [
+                    {'id': 'x', 'label': '이걸로'},
+                    {'id': 'y', 'label': '저걸로'},
+                  ],
+                  'to': {'kind': 'human'},
+                },
+              },
+            },
           ],
           'hasMore': false,
+        });
+      }
+      if (path.contains('/ask-answer')) {
+        final optionId = (jsonDecode(req.body) as Map)['optionId'] as String;
+        _answered.add(optionId);
+        return _json({
+          'id': 'm4',
+          'seq': 4,
+          'channelId': 'c1',
+          'authorId': 'a1',
+          'body': '어느 쪽으로 갈까',
+          'kind': 'user',
+          'meta': {
+            'kind': 'ask',
+            'ask': {
+              'options': [
+                {'id': 'x', 'label': '이걸로'},
+                {'id': 'y', 'label': '저걸로'},
+              ],
+              'to': {'kind': 'human'},
+              'answeredWith': optionId,
+            },
+          },
         });
       }
       if (path.endsWith('/messages') && req.method == 'POST') {
@@ -124,7 +216,10 @@ AppState _state() => AppState(
     );
 
 void main() {
-  setUp(_sent.clear);
+  setUp(() {
+    _sent.clear();
+    _answered.clear();
+  });
 
   testWidgets('보관된 세션으로 켜면 채널 목록이 뜨고, 채널을 열어 말을 보낸다', (tester) async {
     final state = _state();
@@ -137,7 +232,7 @@ void main() {
     expect(find.byKey(const Key('channel-c2')), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('channel-c1')));
-    await tester.pumpAndSettle();
+    await _settle(tester);
 
     // 먼저 있던 말은 뜨고, **진행 줄은 말풍선이 되지 않는다**.
     expect(find.byKey(const Key('message-m1')), findsOneWidget);
@@ -145,7 +240,7 @@ void main() {
 
     await tester.enterText(find.byKey(const Key('composer')), '@forge 이거 해 줘');
     await tester.tap(find.byKey(const Key('composer-send')));
-    await tester.pumpAndSettle();
+    await _settle(tester);
 
     // 에이전트를 부르는 것은 **멘션이 든 메시지를 올리는 것**이다 — 별도 경로가 없다.
     expect(_sent, ['@forge 이거 해 줘']);
@@ -165,5 +260,162 @@ void main() {
     state.notifyListeners();
     await tester.pump();
     expect(find.byKey(const Key('connection-line')), findsOneWidget);
+  });
+
+  testWidgets('진행은 말풍선이 아니라 한 줄로 접힌다', (tester) async {
+    // P1 까지는 진행을 **버렸다** — 그래서 오래 도는 스레드가 조용해 보였다.
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await _settle(tester);
+
+    // 진행은 말풍선(`message-m2`)이 아니라 진행 줄(`progress-m2`)이다.
+    expect(find.byKey(const Key('message-m2')), findsNothing);
+    expect(find.byKey(const Key('progress-m2')), findsOneWidget);
+  });
+
+  testWidgets('에이전트가 물으면 폰에서 골라서 그 턴을 이어 보낸다', (tester) async {
+    // **P1 의 핵심**: 답할 수 없으면 "불렀는데 조용한" 것이 정상이 된다.
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await _settle(tester);
+
+    expect(find.byKey(const Key('ask-m4')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('ask-option-m4-y')));
+    await _settle(tester);
+
+    expect(_answered, ['y']);
+    // 버튼은 사라지고 **고른 것이 그 자리에 남는다** — 누른 뒤에도 버튼이 있으면
+    // 사람은 자기가 누른 것을 의심한다.
+    expect(find.byKey(const Key('ask-option-m4-y')), findsNothing);
+    expect(find.byKey(const Key('ask-chosen-m4')), findsOneWidget);
+    expect(find.text('저걸로'), findsOneWidget);
+  });
+
+  testWidgets('@ 를 치면 후보가 뜨고, 고르면 본문에 들어간다', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await _settle(tester);
+
+    expect(find.byKey(const Key('mention-picker')), findsNothing);
+    await tester.enterText(find.byKey(const Key('composer')), '@fo');
+    await _settle(tester);
+
+    expect(find.byKey(const Key('mention-candidate-forge')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('mention-candidate-forge')));
+    await _settle(tester);
+
+    final text = tester.widget<TextField>(find.byKey(const Key('composer'))).controller!.text;
+    expect(text, '@forge ');
+    // 고른 뒤에는 후보가 사라진다 — 이름이 끝났으므로.
+    expect(find.byKey(const Key('mention-picker')), findsNothing);
+  });
+
+  testWidgets('답글 줄을 누르면 스레드가 열리고, 거기서 답한다', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await _settle(tester);
+
+    // 답글이 달린 루트에만 문이 있다. `replyCount` 가 null 인 줄에는 없다.
+    await tester.tap(find.byKey(const Key('thread-open-m1')));
+    await _settle(tester);
+
+    // 루트와 답글이 함께 선다.
+    //
+    // **`ThreadScreen` 안으로 좁혀서 센다**: 밀어 넣은 화면이라 뒤의 채널 화면이 나무에
+    // 그대로 남아 있고, 거기에도 같은 루트가 있다. 좁히지 않으면 "둘 있다"로 빨개지는데
+    // 그건 버그가 아니라 시험이 잘못 센 것이다.
+    final inThread = find.descendant(
+      of: find.byType(ThreadScreen),
+      matching: find.byKey(const Key('message-m1')),
+    );
+    expect(inThread, findsOneWidget);
+    expect(find.byKey(const Key('message-r1')), findsOneWidget);
+    // **스레드 안에서는 또 들어갈 문을 그리지 않는다.**
+    expect(
+      find.descendant(
+        of: find.byType(ThreadScreen),
+        matching: find.byKey(const Key('thread-open-m1')),
+      ),
+      findsNothing,
+    );
+
+    await tester.enterText(find.byKey(const Key('thread-composer')), '답글이다');
+    await tester.tap(find.byKey(const Key('thread-send')));
+    await _settle(tester);
+    expect(_sent, ['답글이다']);
+  });
+
+  testWidgets('보내도 아무도 안 깨울 자리에서는 후보를 안 띄운다', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await _settle(tester);
+
+    await tester.enterText(find.byKey(const Key('composer')), '> @fo');
+    await _settle(tester);
+    // 띄우면 사람은 고르고 보냈는데 상대가 오지 않는다.
+    expect(find.byKey(const Key('mention-picker')), findsNothing);
+  });
+
+  testWidgets('받은 것 탭에서 부름을 눌러 그 채널로 간다', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+
+    await tester.tap(find.byKey(const Key('tab-inbox')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('inbox-1')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('inbox-1')));
+    await _settle(tester);
+
+    // 눌러서 열면 읽음이 된다 — **훑기만 해도 사라지지는 않는다.**
+    expect(state.inboxUnread, 0);
+    // 그 채널의 메시지가 선다.
+    expect(find.byKey(const Key('message-m1')), findsOneWidget);
+  });
+
+  testWidgets('탭을 옮겨도 채널 화면이 다시 만들어지지 않는다', (tester) async {
+    // 스크롤 위치와 치던 글이 사라지면 안 된다 — 채널을 보다 받은 것을 확인하고
+    // 돌아오는 것이 이 앱에서 가장 흔한 동작이다.
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await _settle(tester);
+    await tester.enterText(find.byKey(const Key('composer')), '치던 글');
+    await _settle(tester);
+
+    // 채널 화면을 닫고 탭을 옮겼다 돌아온다.
+    Navigator.of(tester.element(find.byKey(const Key('composer')))).pop();
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('tab-inbox')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('tab-channels')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('channel-c1')), findsOneWidget);
   });
 }

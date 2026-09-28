@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/api/api_client.dart';
+import 'package:harkroom/api/models.dart';
 import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_state.dart';
@@ -21,6 +23,8 @@ MockClient _server({
   List<Map<String, Object?>> channels = const [],
   List<Map<String, Object?>> accounts = const [],
   List<Map<String, Object?>> messages = const [],
+  List<Map<String, Object?>> reads = const [],
+  List<Map<String, Object?>> inbox = const [],
 }) {
   return MockClient((req) async {
     final path = req.url.path;
@@ -33,11 +37,29 @@ MockClient _server({
     }
     if (path == '/channels') return _json(channels, 200);
     if (path == '/accounts') return _json(accounts, 200);
+    if (path == '/reads') return _json({'reads': reads}, 200);
+    if (path.startsWith('/inbox') && req.method == 'GET') {
+      return _json({'entries': inbox}, 200);
+    }
+    if (path == '/inbox/read') return http.Response('', 204);
+    if (path == '/uploads') {
+      _uploaded.add(req.contentLength);
+      return _json({
+        'id': 'att-${_uploaded.length}',
+        'filename': '사진.png',
+        'contentType': 'image/png',
+        'byteSize': 10,
+      }, 200);
+    }
+    if (path.endsWith('/read') && req.method == 'PUT') return http.Response('', 204);
     if (path.endsWith('/messages') && req.method == 'GET') {
       return _json({'messages': messages, 'hasMore': false}, 200);
     }
     if (path.endsWith('/messages') && req.method == 'POST') {
       final body = jsonDecode(req.body) as Map<String, Object?>;
+      _postedAttachmentIds.add(
+        (body['attachmentIds'] as List?)?.cast<String>().toList() ?? const <String>[],
+      );
       return _json({
         'id': 'posted',
         'seq': 99,
@@ -69,6 +91,9 @@ String _seed({String token = 'tok'}) => jsonEncode({
         {'accountId': 'me-1', 'baseUrl': 'https://h.example.com', 'token': token, 'handle': 'me'},
       ],
     });
+
+final _uploaded = <int>[];
+final _postedAttachmentIds = <List<String>>[];
 
 void main() {
   group('부팅', () {
@@ -197,6 +222,229 @@ void main() {
     test('모르는 계정의 핸들 변경은 계정을 **지어내지 않는다**', () {
       app.applyEvent({'type': 'account.handle_changed', 'accountId': '없는계정', 'newHandle': 'x'});
       expect(app.accounts.containsKey('없는계정'), isFalse);
+    });
+  });
+
+  group('리액션은 델타로 온다', () {
+    late AppState app;
+
+    setUp(() async {
+      app = _app(
+        store: SessionStore.inMemory(seed: _seed()),
+        client: _server(channels: [
+          {'id': 'c1', 'name': 'general', 'kind': 'standard'},
+        ]),
+      );
+      await app.boot();
+      await app.openChannel('c1');
+      app.applyEvent({
+        'type': 'message.created',
+        'message': {
+          'id': 'm1',
+          'seq': 1,
+          'channelId': 'c1',
+          'authorId': 'a1',
+          'body': '하나',
+          'kind': 'user',
+        },
+      });
+    });
+
+    Map<String, Object?> delta(String type, String who, [String emoji = '👍']) => {
+          'type': type,
+          'channelId': 'c1',
+          'messageId': 'm1',
+          'emoji': emoji,
+          'accountId': who,
+        };
+
+    test('누르면 칸이 생기고 누가 눌렀는지가 남는다', () {
+      app.applyEvent(delta('reaction.added', 'a1'));
+      final r = app.messages['c1']!.single.reactions.single;
+      expect(r.emoji, '👍');
+      expect(r.accountIds, ['a1']);
+    });
+
+    test('같은 사람이 두 번 눌러도 한 번이다', () {
+      app.applyEvent(delta('reaction.added', 'a1'));
+      app.applyEvent(delta('reaction.added', 'a1'));
+      expect(app.messages['c1']!.single.reactions.single.accountIds, ['a1']);
+    });
+
+    test('마지막 사람이 떼면 칸이 사라진다', () {
+      // 아무도 안 누른 이모지가 남아 있으면 그것은 누군가 눌렀다는 거짓 신호다.
+      app.applyEvent(delta('reaction.added', 'a1'));
+      app.applyEvent(delta('reaction.added', 'b1'));
+      app.applyEvent(delta('reaction.removed', 'a1'));
+      expect(app.messages['c1']!.single.reactions.single.accountIds, ['b1']);
+      app.applyEvent(delta('reaction.removed', 'b1'));
+      expect(app.messages['c1']!.single.reactions, isEmpty);
+    });
+
+    test('모르는 메시지의 델타는 버린다', () {
+      expect(
+        () => app.applyEvent({
+          'type': 'reaction.added',
+          'channelId': 'c1',
+          'messageId': '없는메시지',
+          'emoji': '👍',
+          'accountId': 'a1',
+        }),
+        returnsNormally,
+      );
+      expect(app.messages['c1']!.single.reactions, isEmpty);
+    });
+
+    test('모양이 깨진 델타는 무시한다', () {
+      expect(() => app.applyEvent({'type': 'reaction.added'}), returnsNormally);
+    });
+  });
+
+  group('읽음', () {
+    test('채널을 열면 그 자리에서 안 읽은 수가 0 이 된다', () async {
+      // 서버 왕복을 기다리면 채널을 열었는데 배지가 남고, 그건 "또 있나" 로 읽힌다.
+      final app = _app(
+        store: SessionStore.inMemory(seed: _seed()),
+        client: _server(
+          channels: [
+            {'id': 'c1', 'name': 'general', 'kind': 'standard'},
+          ],
+          messages: [
+            {'id': 'm1', 'seq': 7, 'channelId': 'c1', 'authorId': 'a1', 'body': 'x', 'kind': 'user'},
+          ],
+          reads: [
+            {'channelId': 'c1', 'lastReadSeq': 3, 'unread': 4},
+          ],
+        ),
+      );
+      await app.boot();
+      expect(app.reads['c1']!.unread, 4);
+
+      await app.openChannel('c1');
+      expect(app.reads['c1']!.unread, 0);
+      expect(app.reads['c1']!.lastReadSeq, 7);
+    });
+  });
+
+  group('받은 것', () {
+    Map<String, Object?> entry(int id, {String reason = 'mention', String? readAt}) => {
+          'id': id,
+          'messageId': 'm$id',
+          'reason': reason,
+          'channelId': 'c1',
+          'authorId': 'a1',
+          'body': '@me 봐 줘',
+          'createdAt': '2026-09-28T00:00:00.000Z',
+          'readAt': readAt,
+        };
+
+    Future<AppState> booted(List<Map<String, Object?>> inbox) async {
+      final app = _app(
+        store: SessionStore.inMemory(seed: _seed()),
+        client: _server(channels: const [], inbox: inbox),
+      );
+      await app.boot();
+      // 부팅이 받은 것을 기다리지 않으므로(채널 목록이 먼저 선다) 한 틱 준다.
+      await Future<void>.delayed(Duration.zero);
+      return app;
+    }
+
+    test('안 본 것만 센다', () async {
+      final app = await booted([
+        entry(1),
+        entry(2, readAt: '2026-09-28T00:00:01.000Z'),
+        entry(3),
+      ]);
+      expect(app.inbox.length, 3);
+      expect(app.inboxUnread, 2);
+    });
+
+    test('읽음은 화면에서 먼저 반영된다', () async {
+      // 눌렀는데 배지가 그대로면 사람은 안 눌린 줄 알고 다시 누른다.
+      final app = await booted([entry(1), entry(2)]);
+      await app.markInboxRead([1]);
+      expect(app.inboxUnread, 1);
+      expect(app.inbox.firstWhere((e) => e.id == 1).isUnread, isFalse);
+    });
+
+    test('이미 읽은 것을 또 읽어도 그대로다', () async {
+      final app = await booted([entry(1, readAt: '2026-09-28T00:00:01.000Z')]);
+      await app.markInboxRead([1]);
+      expect(app.inboxUnread, 0);
+    });
+
+    test('모르는 사유도 줄을 지우지 않는다', () async {
+      // 서버가 사유를 하나 더하는 날 그 부름이 사라지면 안 된다.
+      final app = await booted([entry(1, reason: '아직없는사유')]);
+      expect(app.inbox.single.reason, InboxReason.unknown);
+      expect(app.inboxUnread, 1);
+    });
+
+    test('깨움에는 작성자가 없다 — 사람의 발화가 아니다', () async {
+      final app = await booted([
+        {
+          'id': 9,
+          'messageId': 'm9',
+          'reason': 'wake',
+          'channelId': 'c1',
+          'authorId': null,
+          'body': '다시 본다',
+          'createdAt': '2026-09-28T00:00:00.000Z',
+          'readAt': null,
+        },
+      ]);
+      expect(app.inbox.single.authorId, isNull);
+      expect(app.inbox.single.reason, InboxReason.wake);
+    });
+  });
+
+  group('첨부는 고르자마자 올린다', () {
+    setUp(() {
+      _uploaded.clear();
+      _postedAttachmentIds.clear();
+    });
+
+    Future<AppState> booted() async {
+      final app = _app(
+        store: SessionStore.inMemory(seed: _seed()),
+        client: _server(channels: [
+          {'id': 'c1', 'name': 'general', 'kind': 'standard'},
+        ]),
+      );
+      await app.boot();
+      await app.openChannel('c1');
+      return app;
+    }
+
+    test('올린 id 가 메시지에 실린다', () async {
+      // 보낼 때 몰아서 올리면 보내기가 몇 초 멈추고, 그때 실패하면 친 글까지 잃는다.
+      final app = await booted();
+      await app.attach('c1', PendingAttachment(filename: '사진.png'), Uint8List(10));
+      expect(_uploaded, hasLength(1));
+
+      await app.send('c1', '이거 봐');
+      expect(_postedAttachmentIds.single, ['att-1']);
+      // 보내고 나면 붙여 둔 것이 비워진다 — 다음 메시지에 또 딸려 가면 안 된다.
+      expect(app.pending['c1'], isNull);
+    });
+
+    test('채널과 스레드의 첨부가 섞이지 않는다', () async {
+      // 한 목록을 쓰면 채널에서 고른 사진이 스레드 답글에 딸려 간다.
+      final app = await booted();
+      await app.attach('c1', PendingAttachment(filename: '채널.png'), Uint8List(10));
+      await app.attach('root-1', PendingAttachment(filename: '스레드.png'), Uint8List(10));
+
+      await app.send('c1', '채널에', threadRootId: null);
+      expect(_postedAttachmentIds.single, ['att-1']);
+      expect(app.pending['root-1'], hasLength(1));
+    });
+
+    test('떼면 목록에서 빠진다', () async {
+      final app = await booted();
+      final item = PendingAttachment(filename: '사진.png');
+      await app.attach('c1', item, Uint8List(10));
+      app.detach('c1', item);
+      expect(app.pending['c1'], isNull);
     });
   });
 

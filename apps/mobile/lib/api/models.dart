@@ -205,6 +205,46 @@ class MessageRow {
   /// 화면이 **말풍선으로 그릴 말**인가. `progress`·`wake` 는 아니다.
   bool get isSpeech => kind == MessageKind.user || kind == MessageKind.system;
 
+  /// 리액션 델타 하나를 적용한 사본.
+  ///
+  /// **마지막 사람이 떼면 칸이 사라진다** — 아무도 안 누른 이모지가 남아 있으면 그것은
+  /// 누군가 눌렀다는 거짓 신호다.
+  MessageRow withReaction({required String emoji, required String accountId, required bool added}) {
+    final next = <ReactionRow>[];
+    var seen = false;
+    for (final r in reactions) {
+      if (r.emoji != emoji) {
+        next.add(r);
+        continue;
+      }
+      seen = true;
+      final ids = [...r.accountIds];
+      if (added) {
+        if (!ids.contains(accountId)) ids.add(accountId);
+      } else {
+        ids.remove(accountId);
+      }
+      if (ids.isNotEmpty) next.add(ReactionRow(emoji: emoji, accountIds: ids));
+    }
+    if (!seen && added) next.add(ReactionRow(emoji: emoji, accountIds: [accountId]));
+
+    return MessageRow(
+      id: id,
+      seq: seq,
+      channelId: channelId,
+      threadRootId: threadRootId,
+      authorId: authorId,
+      body: body,
+      kind: kind,
+      meta: meta,
+      createdAt: createdAt,
+      editedAt: editedAt,
+      reactions: next,
+      attachments: attachments,
+      replyCount: replyCount,
+    );
+  }
+
   static MessageRow fromJson(Map<String, Object?> j) => MessageRow(
         id: _str(j['id']),
         seq: _int(j['seq']),
@@ -250,5 +290,100 @@ class MessagePage {
                 .toList(growable: false)
             : const [],
         hasMore: _bool(j['hasMore']),
+      );
+}
+
+
+/// 한 채널의 읽음 위치. `GET /reads`.
+class ReadState {
+  const ReadState({required this.channelId, required this.lastReadSeq, required this.unread});
+
+  final String channelId;
+
+  /// 여기까지 읽었다. **`seq` 다** — 시각이 아니다(기기 시계가 틀리면 읽음이 흔들린다).
+  final int lastReadSeq;
+
+  /// 안 읽은 수. 서버가 센다 — 클라이언트가 세면 열지 않은 채널에서 틀린다.
+  final int unread;
+
+  static ReadState fromJson(Map<String, Object?> j) => ReadState(
+        channelId: _str(j['channelId']),
+        lastReadSeq: _int(j['lastReadSeq']),
+        unread: _int(j['unread']),
+      );
+}
+
+
+/// 내가 **불린 이유**. 러너가 프롬프트를 다르게 조립하려고 서버가 갈라 둔 값이고,
+/// 화면도 같은 이유로 갈라 그린다 — "멘션"과 "내가 낸 물음에 답이 왔다"는 다른 일이다.
+///
+/// 모르는 사유는 [unknown] 으로 떨어진다. 서버가 하나 더하는 날 그 줄이 **사라지는**
+/// 것보다, 사유를 모른 채 보이는 편이 낫다.
+enum InboxReason {
+  mention,
+  threadReply,
+  dm,
+  wake,
+  askAnswered,
+  askClosed,
+  teamMention,
+  teamDelegated,
+  delegationDone,
+  unknown;
+
+  static InboxReason parse(Object? v) => switch (v) {
+        'mention' => InboxReason.mention,
+        'thread_reply' => InboxReason.threadReply,
+        'dm' => InboxReason.dm,
+        'wake' => InboxReason.wake,
+        'ask_answered' => InboxReason.askAnswered,
+        'ask_closed' => InboxReason.askClosed,
+        'team_mention' => InboxReason.teamMention,
+        'team_delegated' => InboxReason.teamDelegated,
+        'delegation_done' => InboxReason.delegationDone,
+        _ => InboxReason.unknown,
+      };
+}
+
+/// 받은 것 한 줄. `GET /inbox`.
+class InboxEntry {
+  const InboxEntry({
+    required this.id,
+    required this.messageId,
+    required this.reason,
+    required this.channelId,
+    required this.authorId,
+    required this.body,
+    required this.createdAt,
+    required this.threadRootId,
+    required this.readAt,
+  });
+
+  /// 읽음 처리에 쓰는 열쇠. **메시지 id 가 아니다** — 같은 메시지로 두 번 불릴 수 있다.
+  final int id;
+  final String messageId;
+  final InboxReason reason;
+  final String channelId;
+
+  /// 깨움(`wake`)에는 **작성자가 없다** — 사람의 발화가 아니라 자기가 걸어 둔 예약이다.
+  final String? authorId;
+  final String body;
+  final DateTime createdAt;
+  final String? threadRootId;
+  final String? readAt;
+
+  bool get isUnread => readAt == null;
+
+  static InboxEntry fromJson(Map<String, Object?> j) => InboxEntry(
+        id: _int(j['id']),
+        messageId: _str(j['messageId']),
+        reason: InboxReason.parse(j['reason']),
+        channelId: _str(j['channelId']),
+        authorId: j['authorId'] as String?,
+        body: _str(j['body']),
+        createdAt: DateTime.tryParse(_str(j['createdAt']))?.toUtc() ??
+            DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+        threadRootId: j['threadRootId'] as String?,
+        readAt: j['readAt'] as String?,
       );
 }

@@ -23,14 +23,6 @@ class ChannelListScreen extends StatelessWidget {
           preferredSize: const Size.fromHeight(22),
           child: _ConnectionLine(state: app.connection),
         ),
-        actions: [
-          IconButton(
-            key: const Key('sign-out'),
-            tooltip: t.signOut,
-            icon: const Icon(Icons.logout),
-            onPressed: () => app.signOut(),
-          ),
-        ],
       ),
       body: SafeArea(
         child: Column(
@@ -53,6 +45,9 @@ class ChannelListScreen extends StatelessWidget {
                                   : Icons.tag),
                           title: Text(channel.name),
                           subtitle: channel.topic == null ? null : Text(channel.topic!),
+                          // 안 읽은 수는 **서버가 센다.** 클라이언트가 세면 열지 않은
+                          // 채널에서 틀리고, 틀린 배지는 없는 배지보다 나쁘다.
+                          trailing: _UnreadBadge(count: app.reads[channel.id]?.unread ?? 0),
                           onTap: () {
                             app.openChannel(channel.id);
                             Navigator.of(context).push(MaterialPageRoute<void>(
@@ -123,6 +118,33 @@ class _Notice extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+
+/// 안 읽은 수. **0 이면 아무것도 그리지 않는다** — 빈 배지는 "뭔가 있다"는 거짓 신호다.
+class _UnreadBadge extends StatelessWidget {
+  const _UnreadBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    if (count <= 0) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      key: Key('unread-$count'),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: scheme.primary,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        // 세 자리가 넘으면 줄인다 — 정확한 수보다 "많다"가 더 읽힌다.
+        count > 99 ? '99+' : '$count',
+        style: TextStyle(color: scheme.onPrimary, fontSize: 12),
       ),
     );
   }

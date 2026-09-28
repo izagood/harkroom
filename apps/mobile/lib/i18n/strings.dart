@@ -57,6 +57,149 @@ abstract class Strings {
   /// 다시 해 보기.
   String get commonRetry;
 
+  // ── P2 ───────────────────────────────────────────────────────────────
+  /// 파일 고르기 버튼의 접근성 이름.
+  String get attachmentAdd;
+
+  /// 올리기 실패. **조용히 지나가지 않는다** — 칩이 사라진 이유를 사람이 알아야 한다.
+  String get attachmentUploadFailed;
+
+  /// 1분 미만. 숫자를 쓰지 않는다 — 그 정밀도는 쓸모가 없다.
+  String get timeUnderMinute;
+
+  /// 분. `{n}` 이 수로 바뀐다.
+  String get timeMinutes;
+
+  /// 시간.
+  String get timeHours;
+
+  /// 일.
+  String get timeDays;
+
+  /// 아직 도는 중. `{duration}` 이 길이로 바뀐다.
+  String get timeRunning;
+
+  /// 끝났다.
+  String get timeTook;
+
+  /// 지난 일.
+  String get timeAgo;
+
+  /// 방금.
+  String get timeJustNow;
+
+  /// 아직 오지 않은 것.
+  String get timeIn;
+
+  /// 곧. 시각이 이미 지났을 때 — `0분 뒤` 는 틀린 말이 아니라 쓸모없는 말이다.
+  String get timeSoon;
+
+  /// 진행 줄의 머리말. 뒤에 마지막 진행 문구가 붙는다.
+  String get agentWorking;
+
+  /// 대기 줄의 머리말.
+  String get agentWaiting;
+
+  /// 완료 보고 카드 제목.
+  String get reportTitle;
+
+  /// 무엇을 확인했나.
+  String get reportChecks;
+
+  /// 바뀐 파일.
+  String get reportFiles;
+
+  /// 이 보고가 **닫지 못한 것**. 숨기면 끝난 것처럼 보인다.
+  String get reportRemaining;
+
+  /// 다음으로 할 일 후보.
+  String get reportNext;
+
+  /// 실패 카드 제목.
+  String get failureTitle;
+
+  /// 다시 해 보면 되는 실패.
+  String get failureRetryable;
+
+  /// 사람 손이 필요한 실패. `retryable` 을 모를 때도 이쪽이다 — 헛된 재시도를 권하지 않는다.
+  String get failureNeedsHand;
+
+  // ── P1 ───────────────────────────────────────────────────────────────
+  /// 탭 이름 — 채널.
+  String get tabChannels;
+
+  /// 탭 이름 — 나를 부른 것들.
+  String get tabInbox;
+
+  /// 탭 이름 — 나와 연결.
+  String get tabMe;
+
+  /// 부른 사람이 없다.
+  String get inboxEmpty;
+
+  /// 전부 읽음으로.
+  String get inboxMarkAllRead;
+
+  /// 누가 나를 불렀다.
+  String get inboxReasonMention;
+
+  /// 내 스레드에 답이 달렸다.
+  String get inboxReasonThreadReply;
+
+  /// DM.
+  String get inboxReasonDm;
+
+  /// 내가 낸 물음에 답이 왔다.
+  String get inboxReasonAskAnswered;
+
+  /// 내가 낸 물음을 접었다.
+  String get inboxReasonAskClosed;
+
+  /// 모르는 사유. 줄을 **지우지 않는다** — 사유를 몰라도 보이는 편이 낫다.
+  String get inboxReasonOther;
+
+  /// 어느 계정으로 들어와 있나. `{handle}` 이 바뀐다.
+  String get meSignedInAs;
+
+  /// 첨부를 크게 보기.
+  String get attachmentOpen;
+
+  /// 첨부를 못 불러왔다. **조용히 빈칸을 두지 않는다.**
+  String get attachmentFailed;
+
+  /// 이미 고른 물음. 고른 것이 무엇인지는 옆에 그린다.
+  String get askAnswered;
+
+  /// 답하지 않기로 한 물음.
+  String get askClosed;
+
+  /// 답하지 않기 버튼. **고르기만 있으면** 그만두려는 사람에게 남는 수단이 메시지를 지우는 것뿐이다.
+  String get askDecline;
+
+  /// 나에게 온 물음. 강조해야 "내 차례"가 보인다.
+  String get askToYou;
+
+  /// 사람 아무나에게 온 물음.
+  String get askToAnyone;
+
+  /// 스레드 화면 제목.
+  String get threadTitle;
+
+  /// 스레드 작성칸.
+  String get threadReplyHint;
+
+  /// 답글이 없는 루트.
+  String get threadRepliesZero;
+
+  /// 답글 하나.
+  String get threadRepliesOne;
+
+  /// 답글 여럿. `{n}` 이 수로 바뀐다 — 문장을 화면에서 조립하지 않는다.
+  String get threadRepliesMany;
+
+  /// 접두에 맞는 사람이 없다.
+  String get mentionPickerEmpty;
+
   // ── P0 ───────────────────────────────────────────────────────────────
   /// 로그인 화면 제목.
   String get loginTitle;
@@ -145,6 +288,53 @@ Map<String, String> stringsToMap(Strings s) => {
       'commonLoading': s.commonLoading,
       'commonBack': s.commonBack,
       'commonRetry': s.commonRetry,
+      'attachmentAdd': s.attachmentAdd,
+      'attachmentUploadFailed': s.attachmentUploadFailed,
+      'timeUnderMinute': s.timeUnderMinute,
+      'timeMinutes': s.timeMinutes,
+      'timeHours': s.timeHours,
+      'timeDays': s.timeDays,
+      'timeRunning': s.timeRunning,
+      'timeTook': s.timeTook,
+      'timeAgo': s.timeAgo,
+      'timeJustNow': s.timeJustNow,
+      'timeIn': s.timeIn,
+      'timeSoon': s.timeSoon,
+      'agentWorking': s.agentWorking,
+      'agentWaiting': s.agentWaiting,
+      'reportTitle': s.reportTitle,
+      'reportChecks': s.reportChecks,
+      'reportFiles': s.reportFiles,
+      'reportRemaining': s.reportRemaining,
+      'reportNext': s.reportNext,
+      'failureTitle': s.failureTitle,
+      'failureRetryable': s.failureRetryable,
+      'failureNeedsHand': s.failureNeedsHand,
+      'tabChannels': s.tabChannels,
+      'tabInbox': s.tabInbox,
+      'tabMe': s.tabMe,
+      'inboxEmpty': s.inboxEmpty,
+      'inboxMarkAllRead': s.inboxMarkAllRead,
+      'inboxReasonMention': s.inboxReasonMention,
+      'inboxReasonThreadReply': s.inboxReasonThreadReply,
+      'inboxReasonDm': s.inboxReasonDm,
+      'inboxReasonAskAnswered': s.inboxReasonAskAnswered,
+      'inboxReasonAskClosed': s.inboxReasonAskClosed,
+      'inboxReasonOther': s.inboxReasonOther,
+      'meSignedInAs': s.meSignedInAs,
+      'attachmentOpen': s.attachmentOpen,
+      'attachmentFailed': s.attachmentFailed,
+      'askAnswered': s.askAnswered,
+      'askClosed': s.askClosed,
+      'askDecline': s.askDecline,
+      'askToYou': s.askToYou,
+      'askToAnyone': s.askToAnyone,
+      'threadTitle': s.threadTitle,
+      'threadReplyHint': s.threadReplyHint,
+      'threadRepliesZero': s.threadRepliesZero,
+      'threadRepliesOne': s.threadRepliesOne,
+      'threadRepliesMany': s.threadRepliesMany,
+      'mentionPickerEmpty': s.mentionPickerEmpty,
       'loginTitle': s.loginTitle,
       'loginIdLabel': s.loginIdLabel,
       'loginPasswordLabel': s.loginPasswordLabel,

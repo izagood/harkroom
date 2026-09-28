@@ -96,4 +96,145 @@ class StringsEn implements Strings {
 
   @override
   String get agentBadge => 'agent';
+
+  @override
+  String get askAnswered => 'Answered';
+
+  @override
+  String get askClosed => 'Declined';
+
+  @override
+  String get askDecline => 'Not now';
+
+  @override
+  String get askToYou => 'Waiting on you';
+
+  @override
+  String get askToAnyone => 'Waiting on someone';
+
+  @override
+  String get threadTitle => 'Thread';
+
+  @override
+  String get threadReplyHint => 'Reply in thread';
+
+  @override
+  String get threadRepliesZero => 'Reply';
+
+  @override
+  String get threadRepliesOne => '1 reply';
+
+  @override
+  String get threadRepliesMany => '{n} replies';
+
+  @override
+  String get mentionPickerEmpty => 'No match';
+
+  @override
+  String get tabChannels => 'Channels';
+
+  @override
+  String get tabInbox => 'Inbox';
+
+  @override
+  String get tabMe => 'You';
+
+  @override
+  String get inboxEmpty => 'Nothing here yet.';
+
+  @override
+  String get inboxMarkAllRead => 'Mark all read';
+
+  @override
+  String get inboxReasonMention => 'Mentioned you';
+
+  @override
+  String get inboxReasonThreadReply => 'Replied in your thread';
+
+  @override
+  String get inboxReasonDm => 'Direct message';
+
+  @override
+  String get inboxReasonAskAnswered => 'Answered your question';
+
+  @override
+  String get inboxReasonAskClosed => 'Declined your question';
+
+  @override
+  String get inboxReasonOther => 'Called you';
+
+  @override
+  String get meSignedInAs => 'Signed in as @{handle}';
+
+  @override
+  String get attachmentOpen => 'Open';
+
+  @override
+  String get attachmentFailed => 'Could not load this file.';
+
+  @override
+  String get timeUnderMinute => 'under a minute';
+
+  @override
+  String get timeMinutes => '{n}m';
+
+  @override
+  String get timeHours => '{n}h';
+
+  @override
+  String get timeDays => '{n}d';
+
+  @override
+  String get timeRunning => 'running {duration}';
+
+  @override
+  String get timeTook => 'took {duration}';
+
+  @override
+  String get timeAgo => '{duration} ago';
+
+  @override
+  String get timeJustNow => 'just now';
+
+  @override
+  String get timeIn => 'in {duration}';
+
+  @override
+  String get timeSoon => 'soon';
+
+  @override
+  String get agentWorking => 'Working';
+
+  @override
+  String get agentWaiting => 'Waiting';
+
+  @override
+  String get reportTitle => 'Done';
+
+  @override
+  String get reportChecks => 'Checked';
+
+  @override
+  String get reportFiles => 'Changed';
+
+  @override
+  String get reportRemaining => 'Still open';
+
+  @override
+  String get reportNext => 'Next';
+
+  @override
+  String get failureTitle => 'Failed';
+
+  @override
+  String get failureRetryable => 'Can be retried';
+
+  @override
+  String get failureNeedsHand => 'Needs a hand';
+
+  @override
+  String get attachmentAdd => 'Attach a file';
+
+  @override
+  String get attachmentUploadFailed => 'Could not upload that file.';
 }

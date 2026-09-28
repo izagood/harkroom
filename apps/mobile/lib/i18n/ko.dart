@@ -95,4 +95,145 @@ class StringsKo implements Strings {
 
   @override
   String get agentBadge => '에이전트';
+
+  @override
+  String get askAnswered => '답함';
+
+  @override
+  String get askClosed => '답하지 않음';
+
+  @override
+  String get askDecline => '나중에';
+
+  @override
+  String get askToYou => '내 차례';
+
+  @override
+  String get askToAnyone => '누군가의 차례';
+
+  @override
+  String get threadTitle => '스레드';
+
+  @override
+  String get threadReplyHint => '스레드에 답하기';
+
+  @override
+  String get threadRepliesZero => '답글 달기';
+
+  @override
+  String get threadRepliesOne => '답글 1개';
+
+  @override
+  String get threadRepliesMany => '답글 {n}개';
+
+  @override
+  String get mentionPickerEmpty => '맞는 사람이 없습니다';
+
+  @override
+  String get tabChannels => '채널';
+
+  @override
+  String get tabInbox => '받은 것';
+
+  @override
+  String get tabMe => '나';
+
+  @override
+  String get inboxEmpty => '아직 받은 것이 없습니다.';
+
+  @override
+  String get inboxMarkAllRead => '모두 읽음';
+
+  @override
+  String get inboxReasonMention => '나를 불렀습니다';
+
+  @override
+  String get inboxReasonThreadReply => '내 스레드에 답글';
+
+  @override
+  String get inboxReasonDm => '다이렉트 메시지';
+
+  @override
+  String get inboxReasonAskAnswered => '내 물음에 답함';
+
+  @override
+  String get inboxReasonAskClosed => '내 물음을 접음';
+
+  @override
+  String get inboxReasonOther => '나를 불렀습니다';
+
+  @override
+  String get meSignedInAs => '@{handle} 로 로그인됨';
+
+  @override
+  String get attachmentOpen => '열기';
+
+  @override
+  String get attachmentFailed => '이 파일을 불러오지 못했습니다.';
+
+  @override
+  String get timeUnderMinute => '1분 미만';
+
+  @override
+  String get timeMinutes => '{n}분';
+
+  @override
+  String get timeHours => '{n}시간';
+
+  @override
+  String get timeDays => '{n}일';
+
+  @override
+  String get timeRunning => '{duration}째 작업 중';
+
+  @override
+  String get timeTook => '{duration} 걸림';
+
+  @override
+  String get timeAgo => '{duration} 전';
+
+  @override
+  String get timeJustNow => '방금';
+
+  @override
+  String get timeIn => '{duration} 뒤';
+
+  @override
+  String get timeSoon => '곧';
+
+  @override
+  String get agentWorking => '작업 중';
+
+  @override
+  String get agentWaiting => '대기 중';
+
+  @override
+  String get reportTitle => '완료';
+
+  @override
+  String get reportChecks => '확인한 것';
+
+  @override
+  String get reportFiles => '바뀐 것';
+
+  @override
+  String get reportRemaining => '남은 것';
+
+  @override
+  String get reportNext => '다음';
+
+  @override
+  String get failureTitle => '실패';
+
+  @override
+  String get failureRetryable => '다시 해 볼 수 있음';
+
+  @override
+  String get failureNeedsHand => '손이 필요함';
+
+  @override
+  String get attachmentAdd => '파일 첨부';
+
+  @override
+  String get attachmentUploadFailed => '파일을 올리지 못했습니다.';
 }

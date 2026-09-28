@@ -37,6 +37,8 @@ dependencies:
   http: ^1.6.0
   web_socket_channel: ^3.0.3
   flutter_secure_storage: ^11.2.0
+  file_picker: ^13.1.0
+  http_parser: ^4.1.2
 
 dev_dependencies:
   flutter_test:

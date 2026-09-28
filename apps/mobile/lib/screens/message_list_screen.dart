@@ -1,8 +1,17 @@
 import 'package:flutter/material.dart';
 
+import '../api/agent_meta.dart';
+import '../api/ask.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
+import '../mention/mention_suggest.dart';
 import '../state/app_scope.dart';
+import 'agent_rows.dart';
+import 'ask_card.dart';
+import 'composer_attachments.dart';
+import 'message_feed.dart';
+import 'message_tile.dart';
+import 'thread_screen.dart';
 
 /// 한 채널의 말들 + 작성칸. P0 의 마지막 화면이다.
 ///
@@ -54,7 +63,9 @@ class _MessageListScreenState extends State<MessageListScreen> {
     // `progress`·`wake` 는 말풍선이 아니다(서버가 `kind` 로 이미 갈라 준다). P0 에서는
     // 그것들을 **그리지 않는다** — 상태 줄·대기 줄은 P2 의 일이고, 그 전까지 말풍선으로
     // 흘리면 채널이 진행 로그로 덮인다.
-    final speech = all.where((m) => m.isSpeech).toList(growable: false);
+    // **이제 전부 그린다.** P1 까지는 `progress`·`wake` 를 버렸는데, 그러면 오래 도는
+    // 스레드가 조용해 보였다 — 진행은 한 줄로 접히고 대기는 대기 줄이 된다.
+    final feed = buildFeed(all);
     // `firstOrNull` 은 `package:collection` 것이다. 의존성 하나를 이것 때문에 들이지
     // 않는다 — 채널이 목록에서 사라지는 경우(다른 기기에서 나갔다)가 있으므로 null 은
     // 정상이고, 그때 제목은 빈 줄로 둔다.
@@ -72,25 +83,56 @@ class _MessageListScreenState extends State<MessageListScreen> {
         child: Column(
           children: [
             Expanded(
-              child: speech.isEmpty
+              child: feed.isEmpty
                   ? Center(child: Text(t.messagesEmpty))
                   : ListView.builder(
                       controller: _scroll,
                       padding: const EdgeInsets.symmetric(vertical: 8),
-                      itemCount: speech.length,
-                      itemBuilder: (context, i) => _MessageRowTile(message: speech[i]),
+                      itemCount: feed.length,
+                      itemBuilder: (context, i) => buildFeedItem(
+                        context,
+                        feed[i],
+                        onOpenThread: (m) => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => ThreadScreen(
+                              channelId: widget.channelId,
+                              rootId: m.id,
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
             ),
+            _MentionPicker(
+              controller: _composer,
+              onPicked: (handle) {
+                final sel = _composer.selection;
+                final cursor = sel.isValid ? sel.baseOffset : _composer.text.length;
+                final query = mentionQueryAt(_composer.text, cursor);
+                if (query == null) return;
+                final next = applyMention(_composer.text, query, handle);
+                _composer.value = TextEditingValue(
+                  text: next.text,
+                  selection: TextSelection.collapsed(offset: next.cursor),
+                );
+                setState(() {});
+              },
+            ),
+            ComposerAttachments(composerKey: widget.channelId),
             const Divider(height: 1),
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 8, 12),
+              padding: const EdgeInsets.fromLTRB(4, 8, 8, 12),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
+                  AttachButton(composerKey: widget.channelId),
                   Expanded(
                     child: TextField(
                       key: const Key('composer'),
                       controller: _composer,
+                      // 글자가 바뀔 때마다 후보를 다시 세운다. 커서만 움직여도 바뀌므로
+                      // `onChanged` 로는 모자라지만, 그 경우는 다음 입력에 따라잡힌다.
+                      onChanged: (_) => setState(() {}),
                       minLines: 1,
                       maxLines: 5,
                       textInputAction: TextInputAction.newline,
@@ -119,58 +161,81 @@ class _MessageListScreenState extends State<MessageListScreen> {
   }
 }
 
-class _MessageRowTile extends StatelessWidget {
-  const _MessageRowTile({required this.message});
+/// 컴포저 위에 서는 멘션 후보 줄.
+///
+/// **없을 때는 자리를 차지하지 않는다**(`SizedBox.shrink`). 늘 떠 있으면 그 줄은 곧
+/// 안 보이는 것이 되고, 화면 높이만 먹는다.
+class _MentionPicker extends StatelessWidget {
+  const _MentionPicker({required this.controller, required this.onPicked});
 
-  final MessageRow message;
+  final TextEditingController controller;
+  final void Function(String handle) onPicked;
 
   @override
   Widget build(BuildContext context) {
-    final app = context.app;
-    final t = context.t;
-    final author = app.accounts[message.authorId];
-    final theme = Theme.of(context);
+    final sel = controller.selection;
+    final cursor = sel.isValid ? sel.baseOffset : controller.text.length;
+    final query = mentionQueryAt(controller.text, cursor);
+    if (query == null) return const SizedBox.shrink();
 
-    return Padding(
-      key: Key('message-${message.id}'),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Flexible(
-                child: Text(
-                  app.displayNameOf(message.authorId),
-                  style: theme.textTheme.labelLarge,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              // 사람과 에이전트를 **갈라 보여 준다** — 누구를 부르는지, 누가 답했는지가
-              // 이 앱의 주제다.
-              if (author?.isAgent == true) ...[
-                const SizedBox(width: 6),
-                Text(
-                  t.agentBadge,
-                  style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.primary),
-                ),
-              ],
-            ],
-          ),
-          const SizedBox(height: 2),
-          // 마크다운은 아직 그리지 않는다(P1). 평문으로 흘리는 것이, 반쯤 해석해서
-          // 원문을 잃는 것보다 낫다.
-          Text(message.body),
-          if (message.attachments.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                message.attachments.map((a) => a.filename).join(', '),
-                style: theme.textTheme.bodySmall,
-              ),
+    final app = context.app;
+    // **비활성 계정은 후보에서 뺀다.** 디렉터리에는 남아 있어야 하지만(과거 메시지의
+    // 작성자를 푸는 표다) 부를 수는 없다.
+    final candidates = rankMentionCandidates(
+      app.accounts.values.where((a) => !a.isDisabled),
+      query.prefix,
+      handleOf: (a) => a.handle,
+      displayNameOf: (a) => a.displayName,
+    );
+    if (candidates.isEmpty) return const SizedBox.shrink();
+
+    return SizedBox(
+      key: const Key('mention-picker'),
+      height: 52,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        itemCount: candidates.length,
+        itemBuilder: (context, i) {
+          final a = candidates[i];
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+            child: ActionChip(
+              key: Key('mention-candidate-${a.handle}'),
+              avatar: a.isAgent ? const Icon(Icons.smart_toy_outlined, size: 16) : null,
+              label: Text('@${a.handle}'),
+              onPressed: () => onPicked(a.handle),
             ),
-        ],
+          );
+        },
       ),
     );
   }
+}
+
+/// 줄 하나를 그린다. **채널 화면과 스레드 화면이 같은 함수를 쓴다** — 갈라지면 같은
+/// 메시지가 두 화면에서 다르게 보인다.
+Widget buildFeedItem(
+  BuildContext context,
+  FeedItem item, {
+  void Function(MessageRow)? onOpenThread,
+}) {
+  if (item is FeedProgressRun) return ProgressRow(run: item.run);
+  final m = (item as FeedMessage).message;
+
+  // 판정 순서가 있다: `meta` 가 아는 모양이면 카드, 아니면 `kind`, 그것도 아니면 말풍선.
+  final ask = AskMeta.read(m.meta);
+  if (ask != null) return AskCard(message: m, ask: ask);
+  final report = ReportMeta.read(m.meta);
+  if (report != null) return ReportCard(message: m, report: report);
+  final failure = FailureMeta.read(m.meta);
+  if (failure != null) return FailureCard(message: m, failure: failure);
+  final wake = WakeMeta.read(m.meta);
+  if (wake != null) return WakeRow(message: m, wake: wake);
+
+  // `meta` 를 못 알아본 `wake` 는 **평문으로 흘린다**(형식이 깨져도 사라지지 않게).
+  return MessageTile(
+    message: m,
+    onOpenThread: onOpenThread == null ? null : () => onOpenThread(m),
+  );
 }

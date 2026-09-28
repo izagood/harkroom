@@ -1,0 +1,191 @@
+{
+  "cases": [
+    {
+      "body": "@forge 이거 해 줘",
+      "handles": [
+        "forge"
+      ]
+    },
+    {
+      "body": "앞에 말이 있어도 @forge 는 불린다",
+      "handles": [
+        "forge"
+      ]
+    },
+    {
+      "body": "@Forge 는 소문자로 접힌다",
+      "handles": [
+        "forge"
+      ]
+    },
+    {
+      "body": "@forge @codex 둘 다",
+      "handles": [
+        "codex",
+        "forge"
+      ]
+    },
+    {
+      "body": "@forge@codex 는 한 번만 — 구분자가 없다",
+      "handles": [
+        "forge"
+      ]
+    },
+    {
+      "body": "email 같은 x@forge 는 부름이 아니다",
+      "handles": []
+    },
+    {
+      "body": "a-b@forge 도 아니다",
+      "handles": []
+    },
+    {
+      "body": "@a 는 너무 짧다(두 글자부터)",
+      "handles": []
+    },
+    {
+      "body": "@ab 는 된다",
+      "handles": [
+        "ab"
+      ]
+    },
+    {
+      "body": "@with_underscore-and-dash",
+      "handles": [
+        "with_underscore-and-dash"
+      ]
+    },
+    {
+      "body": "@forge, @codex. 문장부호는 이름이 아니다",
+      "handles": [
+        "codex",
+        "forge"
+      ]
+    },
+    {
+      "body": "(@forge) 괄호 안에서도 불린다",
+      "handles": [
+        "forge"
+      ]
+    },
+    {
+      "body": "줄 끝의 @forge\n다음 줄",
+      "handles": [
+        "forge"
+      ]
+    },
+    {
+      "body": "@channel 은 예약 이름이지만 문법은 같다",
+      "handles": [
+        "channel"
+      ]
+    },
+    {
+      "body": "`@forge` 는 코드라 안 부른다",
+      "handles": []
+    },
+    {
+      "body": "앞 @real 뒤 `@fake`",
+      "handles": [
+        "real"
+      ]
+    },
+    {
+      "body": "```\n@forge\n```",
+      "handles": []
+    },
+    {
+      "body": "```ts\nconst x = \"@forge\";\n```",
+      "handles": []
+    },
+    {
+      "body": "```\n@fake\n```\n밖의 @real",
+      "handles": [
+        "real"
+      ]
+    },
+    {
+      "body": "짝 없는 백틱 ` @forge 는 코드가 아니다",
+      "handles": [
+        "forge"
+      ]
+    },
+    {
+      "body": "펜스가 안 닫히면\n```\n@forge",
+      "handles": [
+        "forge"
+      ]
+    },
+    {
+      "body": "> @forge 인용은 안 부른다",
+      "handles": []
+    },
+    {
+      "body": "> 인용\n@forge 밖은 부른다",
+      "handles": [
+        "forge"
+      ]
+    },
+    {
+      "body": "   > 들여쓴 인용의 @forge",
+      "handles": []
+    },
+    {
+      "body": "    > 네 칸은 인용이 아니다 @forge",
+      "handles": [
+        "forge"
+      ]
+    },
+    {
+      "body": "> 인용 `코드` 그리고 @forge",
+      "handles": []
+    },
+    {
+      "body": "https://x.io/@forge 주소 안은 안 부른다",
+      "handles": []
+    },
+    {
+      "body": "자세히는 https://a.io/@forge. 마침표는 주소가 아니다",
+      "handles": []
+    },
+    {
+      "body": "[@forge](https://x.io/@codex) 이름표는 부름이다",
+      "handles": [
+        "forge"
+      ]
+    },
+    {
+      "body": "cc:@forge 는 스킴이 아니다",
+      "handles": [
+        "forge"
+      ]
+    },
+    {
+      "body": "ftp://x.io/@forge 는 그릴 수 있는 링크가 아니다",
+      "handles": [
+        "forge"
+      ]
+    },
+    {
+      "body": "> 참고 https://x.com/@forge",
+      "handles": []
+    },
+    {
+      "body": "",
+      "handles": []
+    },
+    {
+      "body": "@forge 그리고 `@fake` 그리고 > 가 아닌 줄",
+      "handles": [
+        "forge"
+      ]
+    },
+    {
+      "body": "@forge\n> @quoted\n`@code`\n@codex",
+      "handles": [
+        "codex",
+        "forge"
+      ]
+    }
+  ]
+}
