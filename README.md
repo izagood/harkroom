@@ -163,12 +163,15 @@ The server image is published to GitHub Container Registry, so you do not have t
 build it yourself:
 
 ```sh
-docker pull ghcr.io/izagood/harkroom-server:0.1.208
+docker pull ghcr.io/izagood/harkroom-server:<version>   # e.g. 0.3.18
 ```
+
+`<version>` is a release number without the `v` — the newest one is on the
+[Releases](https://github.com/izagood/harkroom/releases) page.
 
 | Tag | What it points at | Published by |
 |-----|-------------------|--------------|
-| `:latest`, `:0.1.208` | the release tag — **the same commit the `.dmg` was built from**, so `GET /healthz` reports that exact release number | the release workflow, once per release |
+| `:latest`, `:<version>` | the release tag — **the same commit the `.dmg` was built from**, so `GET /healthz` reports that exact release number | the release workflow, once per release |
 | `:main` | the newest commit on `main` | every push to `main` |
 | `:sha-<7 chars>` | one exact commit; never moves | every push to `main` |
 
@@ -176,8 +179,8 @@ Deploy a pinned version with the compose stack — `HARKROOM_SERVER_TAG` selects
 tag, and `pull` is what makes it come from the registry rather than a local build:
 
 ```sh
-HARKROOM_SERVER_TAG=0.1.208 docker compose pull server
-HARKROOM_SERVER_TAG=0.1.208 docker compose up -d --no-deps server
+HARKROOM_SERVER_TAG=<version> docker compose pull server
+HARKROOM_SERVER_TAG=<version> docker compose up -d --no-deps server
 ```
 
 Pin the version rather than tracking `:latest`: rolling back is then editing that
@@ -290,7 +293,7 @@ One operator per machine runs every agent assigned to it. See `docs/operations.m
 **Register with Claude Code / Cursor (human-driven):**
 ```sh
 claude mcp add --transport http harkroom http://localhost:3400/mcp \
-  --header "Authorization: Bearer murp_..."
+  --header "Authorization: Bearer hrkp_..."
 ```
 
 The difference is "call responsiveness" — registration only moves when prompted, while runners wake up on `@handle` mentions.
@@ -354,12 +357,13 @@ older `node` can fail to parse the bundle outright.
 #### The harness CLI — depends on the agent you configure
 
 Each agent is created with a **harness**, and that choice decides which CLI it shells out
-to (`packages/agent/src/turn.ts`). You only need the one(s) you actually configure:
+to (`packages/agent/src/adapters/`). You only need the one(s) you actually configure:
 
 | Harness | Command it runs |
 | --- | --- |
 | `claude-code` | `claude` |
 | `codex` | `codex` |
+| `opencode` | `opencode` |
 
 These CLIs are published by other vendors on their own schedules, so this repo does not
 pin versions for them — install whichever version those projects currently ship.
@@ -371,9 +375,15 @@ Needed only if you use the AVCS integration.
 
 #### What happens when something is missing
 
-**The app still opens and chat still works** — the gap shows up only when an agent tries to
-take a turn. The runner checks the executable *before* spawning (`pty.ts::resolveExecutable`,
-`#340`), then stops rather than retrying, printing the reason to its log:
+**The app still opens and chat still works** — a missing harness only matters to agents.
+The operator checks which harness CLIs are installed on its machine (the login shell's
+`PATH`, plus a few known install directories) and reports them to the server. They are
+listed next to the operator under Settings › Operators, and assigning an agent to an
+operator that lacks its harness is refused up front (`409 harness_missing`).
+
+If the CLI disappears after that, the runner checks the executable *before* each spawn
+(`pty.ts::resolveExecutable`, `#340`) and stops rather than retrying, printing the reason
+to its log:
 
 ```
 harness 실행 파일을 찾을 수 없다. 러너를 멈춘다.
@@ -382,12 +392,11 @@ harness 실행 파일을 찾을 수 없다. 러너를 멈춘다.
 harkroom-agent: harness executable not found; exiting
 ```
 
-**One caveat worth knowing.** That exit uses code `78`, the same code the runner uses when a
-PAT is revoked — and the app currently labels every `78` as
-`PAT 가 폐기·회전됐다` ("the PAT was revoked or rotated",
-`packages/desktop/src/lib/runnerLauncher.ts::handleExit`). So a missing CLI can surface in
-the UI as a credential problem. **The last line of the runner log is what actually
-distinguishes the two** (`harness executable not found` vs `credential rejected`).
+That exit uses code `78`, the same code the runner uses when its credential is rejected,
+so the exit code alone does not say which one happened. **The last line of the runner log
+does**: `harness executable not found` vs `credential rejected (revoked or rotated)`. Those
+two lines are fixed English on purpose (`packages/shared/src/index.ts`) so that tools can
+match them.
 
 Install Node from [nodejs.org](https://nodejs.org/) or a version manager
 (`brew install node`, `nvm`, `mise`, …). Any install that puts the command on the `PATH`
