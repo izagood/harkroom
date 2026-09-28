@@ -21,6 +21,7 @@ MockClient _server({
   List<Map<String, Object?>> channels = const [],
   List<Map<String, Object?>> accounts = const [],
   List<Map<String, Object?>> messages = const [],
+  List<Map<String, Object?>> reads = const [],
 }) {
   return MockClient((req) async {
     final path = req.url.path;
@@ -33,6 +34,8 @@ MockClient _server({
     }
     if (path == '/channels') return _json(channels, 200);
     if (path == '/accounts') return _json(accounts, 200);
+    if (path == '/reads') return _json({'reads': reads}, 200);
+    if (path.endsWith('/read') && req.method == 'PUT') return http.Response('', 204);
     if (path.endsWith('/messages') && req.method == 'GET') {
       return _json({'messages': messages, 'hasMore': false}, 200);
     }
@@ -197,6 +200,107 @@ void main() {
     test('모르는 계정의 핸들 변경은 계정을 **지어내지 않는다**', () {
       app.applyEvent({'type': 'account.handle_changed', 'accountId': '없는계정', 'newHandle': 'x'});
       expect(app.accounts.containsKey('없는계정'), isFalse);
+    });
+  });
+
+  group('리액션은 델타로 온다', () {
+    late AppState app;
+
+    setUp(() async {
+      app = _app(
+        store: SessionStore.inMemory(seed: _seed()),
+        client: _server(channels: [
+          {'id': 'c1', 'name': 'general', 'kind': 'standard'},
+        ]),
+      );
+      await app.boot();
+      await app.openChannel('c1');
+      app.applyEvent({
+        'type': 'message.created',
+        'message': {
+          'id': 'm1',
+          'seq': 1,
+          'channelId': 'c1',
+          'authorId': 'a1',
+          'body': '하나',
+          'kind': 'user',
+        },
+      });
+    });
+
+    Map<String, Object?> delta(String type, String who, [String emoji = '👍']) => {
+          'type': type,
+          'channelId': 'c1',
+          'messageId': 'm1',
+          'emoji': emoji,
+          'accountId': who,
+        };
+
+    test('누르면 칸이 생기고 누가 눌렀는지가 남는다', () {
+      app.applyEvent(delta('reaction.added', 'a1'));
+      final r = app.messages['c1']!.single.reactions.single;
+      expect(r.emoji, '👍');
+      expect(r.accountIds, ['a1']);
+    });
+
+    test('같은 사람이 두 번 눌러도 한 번이다', () {
+      app.applyEvent(delta('reaction.added', 'a1'));
+      app.applyEvent(delta('reaction.added', 'a1'));
+      expect(app.messages['c1']!.single.reactions.single.accountIds, ['a1']);
+    });
+
+    test('마지막 사람이 떼면 칸이 사라진다', () {
+      // 아무도 안 누른 이모지가 남아 있으면 그것은 누군가 눌렀다는 거짓 신호다.
+      app.applyEvent(delta('reaction.added', 'a1'));
+      app.applyEvent(delta('reaction.added', 'b1'));
+      app.applyEvent(delta('reaction.removed', 'a1'));
+      expect(app.messages['c1']!.single.reactions.single.accountIds, ['b1']);
+      app.applyEvent(delta('reaction.removed', 'b1'));
+      expect(app.messages['c1']!.single.reactions, isEmpty);
+    });
+
+    test('모르는 메시지의 델타는 버린다', () {
+      expect(
+        () => app.applyEvent({
+          'type': 'reaction.added',
+          'channelId': 'c1',
+          'messageId': '없는메시지',
+          'emoji': '👍',
+          'accountId': 'a1',
+        }),
+        returnsNormally,
+      );
+      expect(app.messages['c1']!.single.reactions, isEmpty);
+    });
+
+    test('모양이 깨진 델타는 무시한다', () {
+      expect(() => app.applyEvent({'type': 'reaction.added'}), returnsNormally);
+    });
+  });
+
+  group('읽음', () {
+    test('채널을 열면 그 자리에서 안 읽은 수가 0 이 된다', () async {
+      // 서버 왕복을 기다리면 채널을 열었는데 배지가 남고, 그건 "또 있나" 로 읽힌다.
+      final app = _app(
+        store: SessionStore.inMemory(seed: _seed()),
+        client: _server(
+          channels: [
+            {'id': 'c1', 'name': 'general', 'kind': 'standard'},
+          ],
+          messages: [
+            {'id': 'm1', 'seq': 7, 'channelId': 'c1', 'authorId': 'a1', 'body': 'x', 'kind': 'user'},
+          ],
+          reads: [
+            {'channelId': 'c1', 'lastReadSeq': 3, 'unread': 4},
+          ],
+        ),
+      );
+      await app.boot();
+      expect(app.reads['c1']!.unread, 4);
+
+      await app.openChannel('c1');
+      expect(app.reads['c1']!.unread, 0);
+      expect(app.reads['c1']!.lastReadSeq, 7);
     });
   });
 

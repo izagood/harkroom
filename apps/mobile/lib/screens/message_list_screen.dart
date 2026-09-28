@@ -6,6 +6,8 @@ import '../i18n/i18n.dart';
 import '../mention/mention_suggest.dart';
 import '../state/app_scope.dart';
 import 'ask_card.dart';
+import 'message_tile.dart';
+import 'thread_screen.dart';
 
 /// 한 채널의 말들 + 작성칸. P0 의 마지막 화면이다.
 ///
@@ -86,7 +88,17 @@ class _MessageListScreenState extends State<MessageListScreen> {
                         // 선택 요청은 **말풍선이 아니라 누를 수 있는 것**이다.
                         final ask = AskMeta.read(m.meta);
                         if (ask != null) return AskCard(message: m, ask: ask);
-                        return _MessageRowTile(message: m);
+                        return MessageTile(
+                          message: m,
+                          onOpenThread: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => ThreadScreen(
+                                channelId: widget.channelId,
+                                rootId: m.id,
+                              ),
+                            ),
+                          ),
+                        );
                       },
                     ),
             ),
@@ -145,63 +157,6 @@ class _MessageListScreenState extends State<MessageListScreen> {
     );
   }
 }
-
-class _MessageRowTile extends StatelessWidget {
-  const _MessageRowTile({required this.message});
-
-  final MessageRow message;
-
-  @override
-  Widget build(BuildContext context) {
-    final app = context.app;
-    final t = context.t;
-    final author = app.accounts[message.authorId];
-    final theme = Theme.of(context);
-
-    return Padding(
-      key: Key('message-${message.id}'),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Flexible(
-                child: Text(
-                  app.displayNameOf(message.authorId),
-                  style: theme.textTheme.labelLarge,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              // 사람과 에이전트를 **갈라 보여 준다** — 누구를 부르는지, 누가 답했는지가
-              // 이 앱의 주제다.
-              if (author?.isAgent == true) ...[
-                const SizedBox(width: 6),
-                Text(
-                  t.agentBadge,
-                  style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.primary),
-                ),
-              ],
-            ],
-          ),
-          const SizedBox(height: 2),
-          // 마크다운은 아직 그리지 않는다(P1). 평문으로 흘리는 것이, 반쯤 해석해서
-          // 원문을 잃는 것보다 낫다.
-          Text(message.body),
-          if (message.attachments.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                message.attachments.map((a) => a.filename).join(', '),
-                style: theme.textTheme.bodySmall,
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
 
 /// 컴포저 위에 서는 멘션 후보 줄.
 ///

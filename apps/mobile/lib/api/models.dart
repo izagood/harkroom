@@ -205,6 +205,46 @@ class MessageRow {
   /// 화면이 **말풍선으로 그릴 말**인가. `progress`·`wake` 는 아니다.
   bool get isSpeech => kind == MessageKind.user || kind == MessageKind.system;
 
+  /// 리액션 델타 하나를 적용한 사본.
+  ///
+  /// **마지막 사람이 떼면 칸이 사라진다** — 아무도 안 누른 이모지가 남아 있으면 그것은
+  /// 누군가 눌렀다는 거짓 신호다.
+  MessageRow withReaction({required String emoji, required String accountId, required bool added}) {
+    final next = <ReactionRow>[];
+    var seen = false;
+    for (final r in reactions) {
+      if (r.emoji != emoji) {
+        next.add(r);
+        continue;
+      }
+      seen = true;
+      final ids = [...r.accountIds];
+      if (added) {
+        if (!ids.contains(accountId)) ids.add(accountId);
+      } else {
+        ids.remove(accountId);
+      }
+      if (ids.isNotEmpty) next.add(ReactionRow(emoji: emoji, accountIds: ids));
+    }
+    if (!seen && added) next.add(ReactionRow(emoji: emoji, accountIds: [accountId]));
+
+    return MessageRow(
+      id: id,
+      seq: seq,
+      channelId: channelId,
+      threadRootId: threadRootId,
+      authorId: authorId,
+      body: body,
+      kind: kind,
+      meta: meta,
+      createdAt: createdAt,
+      editedAt: editedAt,
+      reactions: next,
+      attachments: attachments,
+      replyCount: replyCount,
+    );
+  }
+
   static MessageRow fromJson(Map<String, Object?> j) => MessageRow(
         id: _str(j['id']),
         seq: _int(j['seq']),
@@ -250,5 +290,25 @@ class MessagePage {
                 .toList(growable: false)
             : const [],
         hasMore: _bool(j['hasMore']),
+      );
+}
+
+
+/// 한 채널의 읽음 위치. `GET /reads`.
+class ReadState {
+  const ReadState({required this.channelId, required this.lastReadSeq, required this.unread});
+
+  final String channelId;
+
+  /// 여기까지 읽었다. **`seq` 다** — 시각이 아니다(기기 시계가 틀리면 읽음이 흔들린다).
+  final int lastReadSeq;
+
+  /// 안 읽은 수. 서버가 센다 — 클라이언트가 세면 열지 않은 채널에서 틀린다.
+  final int unread;
+
+  static ReadState fromJson(Map<String, Object?> j) => ReadState(
+        channelId: _str(j['channelId']),
+        lastReadSeq: _int(j['lastReadSeq']),
+        unread: _int(j['unread']),
       );
 }

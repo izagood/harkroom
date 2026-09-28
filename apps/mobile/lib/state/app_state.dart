@@ -73,6 +73,10 @@ class AppState extends ChangeNotifier {
   final List<ChannelRow> channels = [];
   final Map<String, AccountView> accounts = {};
 
+  /// 채널 id → 읽음 위치와 안 읽은 수. **서버가 센다** — 클라이언트가 세면 열지 않은
+  /// 채널에서 틀린다.
+  final Map<String, ReadState> reads = {};
+
   /// 채널 id → 그 채널에서 읽어 둔 메시지(오름차순, `seq` 로 유일).
   final Map<String, List<MessageRow>> messages = {};
 
@@ -142,13 +146,16 @@ class AppState extends ChangeNotifier {
     final api = _api!;
     try {
       me ??= await api.me();
-      final results = await Future.wait([api.channels(), api.accounts()]);
+      final results = await Future.wait([api.channels(), api.accounts(), api.reads()]);
       channels
         ..clear()
         ..addAll(results[0] as List<ChannelRow>);
       accounts
         ..clear()
         ..addEntries((results[1] as List<AccountView>).map((a) => MapEntry(a.id, a)));
+      reads
+        ..clear()
+        ..addEntries((results[2] as List<ReadState>).map((r) => MapEntry(r.channelId, r)));
     } on ApiError catch (e) {
       // 토큰이 죽었다. **보관본을 지우고** 로그인으로 돌린다 — 안 지우면 다음 기동에
       // 같은 실패를 반복한다.
@@ -205,6 +212,9 @@ class AppState extends ChangeNotifier {
         if (channelId is! String || messageId is! String) return;
         messages[channelId]?.removeWhere((m) => m.id == messageId);
         notifyListeners();
+      case 'reaction.added':
+      case 'reaction.removed':
+        _applyReactionDelta(event);
       case 'account.handle_changed':
         final id = event['accountId'];
         final handle = event['newHandle'];
@@ -222,6 +232,30 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       default:
       // 모르는 이벤트. 무시한다.
+    }
+  }
+
+  /// 리액션은 **델타로 온다** — 메시지 전체를 다시 싣지 않는다. 한 번 누를 때마다
+  /// 본문이 오가는 것을 막으려는 서버의 결정이고, 받는 쪽도 그 모양대로 고쳐야 한다.
+  ///
+  /// 모르는 메시지의 델타는 **버린다.** 그 메시지를 나중에 읽을 때 서버가 리액션을
+  /// 함께 주므로, 여기서 빈 자리를 만들어 둘 이유가 없다.
+  void _applyReactionDelta(Map<String, Object?> event) {
+    final channelId = event['channelId'];
+    final messageId = event['messageId'];
+    final emoji = event['emoji'];
+    final accountId = event['accountId'];
+    if (channelId is! String || messageId is! String || emoji is! String || accountId is! String) {
+      return;
+    }
+    final added = event['type'] == 'reaction.added';
+
+    for (final list in [messages[channelId], ...threads.values]) {
+      if (list == null) continue;
+      final idx = list.indexWhere((m) => m.id == messageId);
+      if (idx < 0) continue;
+      list[idx] = list[idx].withReaction(emoji: emoji, accountId: accountId, added: added);
+      notifyListeners();
     }
   }
 
@@ -278,6 +312,56 @@ class AppState extends ChangeNotifier {
     final page = await _api!.messages(channelId, limit: 50);
     messages[channelId] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
     notifyListeners();
+    await markRead(channelId);
+  }
+
+  /// 이모지를 누르거나 뗀다.
+  ///
+  /// **화면을 먼저 고치지 않는다**(낙관적 갱신을 하지 않는다). 리액션은 서버가 델타를
+  /// 되쏘아 주므로 그것으로 화면이 선다 — 미리 고치면 실패했을 때 되돌릴 자리가
+  /// 생기고, 되돌리는 코드는 거의 시험되지 않는다.
+  Future<void> toggleReaction(String channelId, String messageId, String emoji) async {
+    final mine = me?.id;
+    if (mine == null) return;
+    final message = _findMessage(channelId, messageId);
+    final pressed = message?.reactions
+            .any((r) => r.emoji == emoji && r.accountIds.contains(mine)) ??
+        false;
+    if (pressed) {
+      await _api!.removeReaction(channelId, messageId, emoji);
+    } else {
+      await _api!.addReaction(channelId, messageId, emoji);
+    }
+  }
+
+  MessageRow? _findMessage(String channelId, String messageId) {
+    for (final list in [messages[channelId], ...threads.values]) {
+      if (list == null) continue;
+      for (final m in list) {
+        if (m.id == messageId) return m;
+      }
+    }
+    return null;
+  }
+
+  /// 여기까지 읽었다고 알린다. **화면이 그 채널을 보고 있을 때만** 부른다.
+  ///
+  /// 안 읽은 수를 화면에서 먼저 0 으로 만든다 — 서버 왕복을 기다리면 사람이 채널을
+  /// 열었는데 배지가 남아 있고, 그건 "안 읽은 것이 또 있나" 로 읽힌다.
+  Future<void> markRead(String channelId) async {
+    final list = messages[channelId];
+    if (list == null || list.isEmpty) return;
+    final last = list.last.seq;
+    final current = reads[channelId];
+    if (current != null && current.lastReadSeq >= last) return;
+    reads[channelId] = ReadState(channelId: channelId, lastReadSeq: last, unread: 0);
+    notifyListeners();
+    try {
+      await _api!.markRead(channelId, last);
+    } on Object {
+      // 못 알렸으면 다음에 다시 알린다. 화면을 되돌리지는 않는다 — 사람은 이미 읽었고,
+      // 배지가 다시 살아나는 것이 더 이상하다.
+    }
   }
 
   void closeChannel() {
@@ -301,11 +385,17 @@ class AppState extends ChangeNotifier {
   /// 한 곳에 섞으면 채널 화면이 답글까지 그리게 되고, 그건 스레드를 만든 이유를 지운다.
   final Map<String, List<MessageRow>> threads = {};
 
+  /// 스레드를 연다.
+  ///
+  /// **첫 `await` 전에 `notifyListeners()` 를 부르지 않는다.** 이 함수를 부르는 자리는
+  /// 화면의 `didChangeDependencies` 이고 그때는 **빌드 중**이다 — 거기서 알리면
+  /// *"setState() called during build"* 로 죽는다. 시험이 잡았고, 실기기였으면 스레드를
+  /// 처음 여는 순간 빨간 화면이었다.
+  ///
+  /// 알리지 않아도 손해가 없다: 화면은 `threads[rootId] ?? []` 를 읽으므로 빈 목록이
+  /// 그려지고, 답글이 도착하면 아래에서 알린다.
   Future<void> openThread(String channelId, String rootId) async {
-    if (!threads.containsKey(rootId)) {
-      threads[rootId] = [];
-      notifyListeners();
-    }
+    threads.putIfAbsent(rootId, () => []);
     final page = await _api!.messages(channelId, thread: rootId, limit: 100);
     threads[rootId] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
     notifyListeners();

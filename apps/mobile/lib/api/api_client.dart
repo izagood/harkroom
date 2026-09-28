@@ -139,6 +139,37 @@ class ApiClient {
     return MessageRow.fromJson(_obj(res));
   }
 
+  // ── 리액션 ────────────────────────────────────────────────────────────
+
+  /// 이모지를 누른다. 같은 것을 이미 눌렀으면 서버가 조용히 넘어간다.
+  ///
+  /// 이모지가 경로에 들어가므로 **반드시 인코딩한다** — 안 하면 대부분의 이모지가
+  /// 잘못된 URL 이 된다.
+  Future<void> addReaction(String channelId, String messageId, String emoji) => _send(
+        'PUT',
+        '/channels/$channelId/messages/$messageId/reactions/${Uri.encodeComponent(emoji)}',
+      );
+
+  Future<void> removeReaction(String channelId, String messageId, String emoji) => _send(
+        'DELETE',
+        '/channels/$channelId/messages/$messageId/reactions/${Uri.encodeComponent(emoji)}',
+      );
+
+  // ── 읽음 ──────────────────────────────────────────────────────────────
+
+  /// 채널별 읽음 위치와 안 읽은 수.
+  Future<List<ReadState>> reads() async {
+    final body = _obj(await _send('GET', '/reads'));
+    return _list(body['reads']).map(ReadState.fromJson).toList(growable: false);
+  }
+
+  /// 여기까지 읽었다고 알린다.
+  ///
+  /// **`seq` 를 보낸다** — 시각이 아니다. 시각으로 하면 기기 시계가 틀린 만큼 읽음이
+  /// 앞뒤로 흔들리고, 그 오차는 사람에게 "안 읽은 것이 사라졌다"로 보인다.
+  Future<void> markRead(String channelId, int seq) =>
+      _send('PUT', '/channels/$channelId/read', body: {'seq': seq});
+
   // ── 선택 요청 ─────────────────────────────────────────────────────────
 
   /// 선택지를 고른다.

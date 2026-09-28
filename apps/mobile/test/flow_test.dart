@@ -40,6 +40,24 @@ MockClient _server() => MockClient((req) async {
           {'id': 'me-1', 'handle': 'me', 'displayName': '나', 'kind': 'human'},
         ]);
       }
+      if (path == '/reads') return _json({'reads': <Object?>[]});
+      if (path.endsWith('/read') && req.method == 'PUT') return _json(<String, Object?>{});
+      if (path.endsWith('/messages') && req.method == 'GET' && req.url.queryParameters['thread'] != null) {
+        return _json({
+          'messages': [
+            {
+              'id': 'r1',
+              'seq': 5,
+              'channelId': 'c1',
+              'threadRootId': 'm1',
+              'authorId': 'a1',
+              'body': '스레드 안의 답글',
+              'kind': 'user',
+            },
+          ],
+          'hasMore': false,
+        });
+      }
       if (path.endsWith('/messages') && req.method == 'GET') {
         return _json({
           'messages': [
@@ -50,6 +68,7 @@ MockClient _server() => MockClient((req) async {
               'authorId': 'a1',
               'body': '먼저 있던 말',
               'kind': 'user',
+              'replyCount': 1,
             },
             // 진행 줄은 **말풍선이 아니다** — 화면이 걸러야 한다.
             {
@@ -256,6 +275,31 @@ void main() {
     expect(text, '@forge ');
     // 고른 뒤에는 후보가 사라진다 — 이름이 끝났으므로.
     expect(find.byKey(const Key('mention-picker')), findsNothing);
+  });
+
+  testWidgets('답글 줄을 누르면 스레드가 열리고, 거기서 답한다', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await tester.pumpAndSettle();
+
+    // 답글이 달린 루트에만 문이 있다. `replyCount` 가 null 인 줄에는 없다.
+    await tester.tap(find.byKey(const Key('thread-open-m1')));
+    await tester.pumpAndSettle();
+
+    // 루트와 답글이 함께 선다.
+    expect(find.byKey(const Key('message-m1')), findsOneWidget);
+    expect(find.byKey(const Key('message-r1')), findsOneWidget);
+    // **스레드 안에서는 또 들어갈 문을 그리지 않는다.**
+    expect(find.byKey(const Key('thread-open-m1')), findsNothing);
+
+    await tester.enterText(find.byKey(const Key('thread-composer')), '답글이다');
+    await tester.tap(find.byKey(const Key('thread-send')));
+    await tester.pumpAndSettle();
+    expect(_sent, ['답글이다']);
   });
 
   testWidgets('보내도 아무도 안 깨울 자리에서는 후보를 안 띄운다', (tester) async {
