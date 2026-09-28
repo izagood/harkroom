@@ -117,7 +117,7 @@ describe('createCodexAccountsPort', () => {
     port.onLoginEvent((e) => events.push(e));
     const { loginId } = await port.loginStart('work');
     const child = children[0]!;
-    child.stderr.emit('data', Buffer.from('Starting local login server on http://localhost:1455.\nhttps://auth.openai.com/oauth/auth'));
+    child.stderr.emit('data', Buffer.from('Starting local login server.\nhttps://auth.openai.com/oauth/auth'));
     expect(events).toEqual([]);
     child.stderr.emit('data', Buffer.from('orize?x=1\n'));
     expect(events).toEqual([{ loginId, url: 'https://auth.openai.com/oauth/authorize?x=1' }]);

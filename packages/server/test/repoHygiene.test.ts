@@ -100,6 +100,9 @@ describe('repo hygiene', () => {
       // MCP 프리셋(`desktop/src/lib/mcpPresets.ts`) — 공식 Claude 플러그인이 쓰는 공개 엔드포인트.
       /^mcp\.(?:slack|atlassian)\.com$/i,
       /^developers\.openai\.com$/i,
+      // `codex login` 이 찍는 OAuth 인증 페이지와 id_token 클레임 네임스페이스(2026-09-28,
+      // `operator/src/codexAccounts.ts`). 둘 다 공개 주소다.
+      /^(?:auth|api)\.openai\.com$/i,
       /^opencode\.ai$/i, // opencode 설정 파일이 가리키는 공개 스키마 URL
       /^engineering\.block\.xyz$/i,
     ];
