@@ -2258,6 +2258,55 @@ export interface ScheduledMessageView {
   canceledAt: string | null;
 }
 
+/**
+ * 자동화의 시간 트리거(마이그레이션 064). cron 문자열 대신 좁은 모양만 받는다 — UI 가
+ * 그대로 그릴 수 있고 검증이 쉽다. `time` 은 `tz` 의 벽시계 `HH:MM` 이다.
+ * `weekdays` 는 0=일 … 6=토, `monthDay` 는 1~31(그달에 없으면 말일).
+ */
+export type AutomationSchedule =
+  | { kind: 'schedule'; freq: 'daily'; time: string; tz: string }
+  | { kind: 'schedule'; freq: 'weekly'; weekdays: number[]; time: string; tz: string }
+  | { kind: 'schedule'; freq: 'monthly'; monthDay: number; time: string; tz: string };
+
+export type AutomationTrigger = AutomationSchedule;
+export type AutomationTriggerKind = AutomationTrigger['kind'] | 'manual';
+
+export interface AutomationView {
+  id: string;
+  ownerId: string;
+  /** 글이 올라갈 곳 — 채널이든 DM 이든 채널 id 하나다. */
+  channelId: string;
+  name: string;
+  body: string;
+  trigger: AutomationTrigger;
+  enabled: boolean;
+  nextAt: string | null;
+  pausedReason: string | null;
+  consecutiveFailures: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AutomationRunView {
+  id: string;
+  automationId: string;
+  eventKey: string;
+  triggerKind: AutomationTriggerKind | string;
+  status: 'pending' | 'sent' | 'failed' | 'skipped';
+  messageId: string | null;
+  error: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
+/** 자동화가 쓴 메시지의 `meta.automation`. 이름줄의 ⚡ 칩이 이것을 읽는다. */
+export interface AutomationMessageMeta {
+  id: string;
+  name: string;
+  trigger: AutomationTriggerKind | string;
+  runId: string;
+}
+
 export type WsServerEvent =
   | { type: 'message.created'; message: MessageRow; audience: 'all' | string[] }
   | { type: 'message.updated'; message: MessageRow; audience: 'all' | string[] }
