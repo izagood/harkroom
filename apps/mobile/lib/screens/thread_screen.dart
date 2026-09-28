@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
+import 'composer_attachments.dart';
 import 'message_feed.dart';
 import 'message_list_screen.dart';
 
@@ -100,12 +101,16 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 ],
               ),
             ),
+            // **스레드의 작성칸은 자기 키를 쓴다** — 채널에서 고른 사진이 답글에
+            // 딸려 가지 않게.
+            ComposerAttachments(composerKey: widget.rootId),
             const Divider(height: 1),
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 8, 12),
+              padding: const EdgeInsets.fromLTRB(4, 8, 8, 12),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
+                  AttachButton(composerKey: widget.rootId),
                   Expanded(
                     child: TextField(
                       key: const Key('thread-composer'),

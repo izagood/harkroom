@@ -12,6 +12,7 @@
 /// 된다. `ChangeNotifier` 로 시작하고 P1 에서 되돌아본다.
 library;
 
+
 import 'package:flutter/foundation.dart';
 
 import '../api/api_client.dart';
@@ -426,10 +427,68 @@ class AppState extends ChangeNotifier {
 
   /// 말한다. 멘션이 들어 있으면 **이것이 에이전트를 부르는 것**이다.
   ///
-  /// [threadRootId] 를 주면 그 스레드의 답글이 된다.
+  /// [threadRootId] 를 주면 그 스레드의 답글이 된다. 붙여 둔 첨부가 있으면 함께 간다.
   Future<void> send(String channelId, String body, {String? threadRootId}) async {
-    final sent = await _api!.postMessage(channelId, body, threadRootId: threadRootId);
+    final key = threadRootId ?? channelId;
+    final ids = (pending[key] ?? const <PendingAttachment>[])
+        .where((p) => p.attachment != null)
+        .map((p) => p.attachment!.id)
+        .toList(growable: false);
+    // **올리는 중인 것이 남아 있으면 보내지 않는다.** 보내 버리면 그 파일은 메시지에
+    // 안 붙고, 사람은 붙였다고 믿는다.
+    if ((pending[key] ?? const <PendingAttachment>[]).any((p) => p.attachment == null)) {
+      return;
+    }
+    final sent = await _api!.postMessage(
+      channelId,
+      body,
+      threadRootId: threadRootId,
+      attachmentIds: ids,
+    );
+    pending.remove(key);
     _upsertMessage(sent);
+  }
+
+  // ── 붙여 둔 첨부 ──────────────────────────────────────────────────────
+
+  /// 작성칸 키(채널 id 또는 스레드 루트 id) → 아직 안 보낸 첨부들.
+  ///
+  /// **채널과 스레드가 따로다.** 둘이 한 목록을 쓰면 채널에서 고른 사진이 스레드 답글에
+  /// 딸려 간다 — 사람은 그것을 보내고 나서야 안다.
+  final Map<String, List<PendingAttachment>> pending = {};
+
+  /// 파일을 고르자마자 **먼저 올린다.**
+  ///
+  /// 보낼 때 몰아서 올리지 않는 이유: 그러면 보내기 버튼이 몇 초씩 멈추고, 그 동안
+  /// 실패하면 사람은 **친 글까지 잃는다.** 미리 올려 두면 보내기는 id 만 싣는다.
+  Future<void> attach(String key, PendingAttachment item, Uint8List bytes) async {
+    final list = pending.putIfAbsent(key, () => []);
+    list.add(item);
+    notifyListeners();
+    try {
+      final row = await _api!.upload(
+        bytes,
+        item.filename,
+        contentType: item.contentType,
+        onProgress: (f) {
+          item.progress = f;
+          notifyListeners();
+        },
+      );
+      item.attachment = row;
+    } on Object {
+      // 실패한 것은 **목록에서 뺀다.** 남겨 두면 보내기가 영원히 막힌다(위 가드).
+      list.remove(item);
+      rethrow;
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  void detach(String key, PendingAttachment item) {
+    pending[key]?.remove(item);
+    if (pending[key]?.isEmpty ?? false) pending.remove(key);
+    notifyListeners();
   }
 
   // ── 스레드 ────────────────────────────────────────────────────────────
@@ -506,4 +565,22 @@ void unawaited(Future<void> future) {
     // 소켓 루프의 실패는 `onDown` 으로 이미 화면에 닿는다. 여기서 다시 던지면
     // 잡는 사람이 없어 앱이 죽는다.
   });
+}
+
+
+/// 아직 안 보낸 첨부 하나.
+///
+/// `attachment` 가 `null` 인 동안은 **올리는 중**이다. 그 상태로 메시지를 보내면 파일이
+/// 안 붙으므로 [AppState.send] 가 막는다.
+class PendingAttachment {
+  PendingAttachment({required this.filename, this.contentType});
+
+  final String filename;
+  final String? contentType;
+
+  /// 0~1. 총 길이를 모르면 올라가지 않는다 — **가짜 비율을 그리지 않는다.**
+  double progress = 0;
+
+  /// 올리기가 끝나면 채워진다.
+  AttachmentRow? attachment;
 }

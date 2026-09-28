@@ -58,6 +58,12 @@ abstract class Strings {
   String get commonRetry;
 
   // ── P2 ───────────────────────────────────────────────────────────────
+  /// 파일 고르기 버튼의 접근성 이름.
+  String get attachmentAdd;
+
+  /// 올리기 실패. **조용히 지나가지 않는다** — 칩이 사라진 이유를 사람이 알아야 한다.
+  String get attachmentUploadFailed;
+
   /// 1분 미만. 숫자를 쓰지 않는다 — 그 정밀도는 쓸모가 없다.
   String get timeUnderMinute;
 
@@ -282,6 +288,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'commonLoading': s.commonLoading,
       'commonBack': s.commonBack,
       'commonRetry': s.commonRetry,
+      'attachmentAdd': s.attachmentAdd,
+      'attachmentUploadFailed': s.attachmentUploadFailed,
       'timeUnderMinute': s.timeUnderMinute,
       'timeMinutes': s.timeMinutes,
       'timeHours': s.timeHours,

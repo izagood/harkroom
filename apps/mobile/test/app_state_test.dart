@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/api/api_client.dart';
@@ -41,12 +42,24 @@ MockClient _server({
       return _json({'entries': inbox}, 200);
     }
     if (path == '/inbox/read') return http.Response('', 204);
+    if (path == '/uploads') {
+      _uploaded.add(req.contentLength);
+      return _json({
+        'id': 'att-${_uploaded.length}',
+        'filename': '사진.png',
+        'contentType': 'image/png',
+        'byteSize': 10,
+      }, 200);
+    }
     if (path.endsWith('/read') && req.method == 'PUT') return http.Response('', 204);
     if (path.endsWith('/messages') && req.method == 'GET') {
       return _json({'messages': messages, 'hasMore': false}, 200);
     }
     if (path.endsWith('/messages') && req.method == 'POST') {
       final body = jsonDecode(req.body) as Map<String, Object?>;
+      _postedAttachmentIds.add(
+        (body['attachmentIds'] as List?)?.cast<String>().toList() ?? const <String>[],
+      );
       return _json({
         'id': 'posted',
         'seq': 99,
@@ -78,6 +91,9 @@ String _seed({String token = 'tok'}) => jsonEncode({
         {'accountId': 'me-1', 'baseUrl': 'https://h.example.com', 'token': token, 'handle': 'me'},
       ],
     });
+
+final _uploaded = <int>[];
+final _postedAttachmentIds = <List<String>>[];
 
 void main() {
   group('부팅', () {
@@ -379,6 +395,56 @@ void main() {
       ]);
       expect(app.inbox.single.authorId, isNull);
       expect(app.inbox.single.reason, InboxReason.wake);
+    });
+  });
+
+  group('첨부는 고르자마자 올린다', () {
+    setUp(() {
+      _uploaded.clear();
+      _postedAttachmentIds.clear();
+    });
+
+    Future<AppState> booted() async {
+      final app = _app(
+        store: SessionStore.inMemory(seed: _seed()),
+        client: _server(channels: [
+          {'id': 'c1', 'name': 'general', 'kind': 'standard'},
+        ]),
+      );
+      await app.boot();
+      await app.openChannel('c1');
+      return app;
+    }
+
+    test('올린 id 가 메시지에 실린다', () async {
+      // 보낼 때 몰아서 올리면 보내기가 몇 초 멈추고, 그때 실패하면 친 글까지 잃는다.
+      final app = await booted();
+      await app.attach('c1', PendingAttachment(filename: '사진.png'), Uint8List(10));
+      expect(_uploaded, hasLength(1));
+
+      await app.send('c1', '이거 봐');
+      expect(_postedAttachmentIds.single, ['att-1']);
+      // 보내고 나면 붙여 둔 것이 비워진다 — 다음 메시지에 또 딸려 가면 안 된다.
+      expect(app.pending['c1'], isNull);
+    });
+
+    test('채널과 스레드의 첨부가 섞이지 않는다', () async {
+      // 한 목록을 쓰면 채널에서 고른 사진이 스레드 답글에 딸려 간다.
+      final app = await booted();
+      await app.attach('c1', PendingAttachment(filename: '채널.png'), Uint8List(10));
+      await app.attach('root-1', PendingAttachment(filename: '스레드.png'), Uint8List(10));
+
+      await app.send('c1', '채널에', threadRootId: null);
+      expect(_postedAttachmentIds.single, ['att-1']);
+      expect(app.pending['root-1'], hasLength(1));
+    });
+
+    test('떼면 목록에서 빠진다', () async {
+      final app = await booted();
+      final item = PendingAttachment(filename: '사진.png');
+      await app.attach('c1', item, Uint8List(10));
+      app.detach('c1', item);
+      expect(app.pending['c1'], isNull);
     });
   });
 

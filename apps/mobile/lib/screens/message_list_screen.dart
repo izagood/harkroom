@@ -8,6 +8,7 @@ import '../mention/mention_suggest.dart';
 import '../state/app_scope.dart';
 import 'agent_rows.dart';
 import 'ask_card.dart';
+import 'composer_attachments.dart';
 import 'message_feed.dart';
 import 'message_tile.dart';
 import 'thread_screen.dart';
@@ -117,12 +118,14 @@ class _MessageListScreenState extends State<MessageListScreen> {
                 setState(() {});
               },
             ),
+            ComposerAttachments(composerKey: widget.channelId),
             const Divider(height: 1),
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 8, 12),
+              padding: const EdgeInsets.fromLTRB(4, 8, 8, 12),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
+                  AttachButton(composerKey: widget.channelId),
                   Expanded(
                     child: TextField(
                       key: const Key('composer'),

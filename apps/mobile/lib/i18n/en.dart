@@ -231,4 +231,10 @@ class StringsEn implements Strings {
 
   @override
   String get failureNeedsHand => 'Needs a hand';
+
+  @override
+  String get attachmentAdd => 'Attach a file';
+
+  @override
+  String get attachmentUploadFailed => 'Could not upload that file.';
 }

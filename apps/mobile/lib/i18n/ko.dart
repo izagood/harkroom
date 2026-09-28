@@ -230,4 +230,10 @@ class StringsKo implements Strings {
 
   @override
   String get failureNeedsHand => '손이 필요함';
+
+  @override
+  String get attachmentAdd => '파일 첨부';
+
+  @override
+  String get attachmentUploadFailed => '파일을 올리지 못했습니다.';
 }

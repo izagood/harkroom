@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart' show MediaType;
 
 import 'api_error.dart';
 import 'models.dart';
@@ -131,12 +134,105 @@ class ApiClient {
 
   /// 말한다. 멘션이 들어 있으면 **이것이 에이전트를 부르는 방법**이다 — 별도
   /// 엔드포인트가 없고, 서버가 본문을 훑어 턴을 띄운다.
-  Future<MessageRow> postMessage(String channelId, String body, {String? threadRootId}) async {
+  ///
+  /// [attachmentIds] 는 **먼저 올려 둔** 첨부의 id 다(`upload`). 업로드가 메시지보다
+  /// 먼저 존재하는 이 순서가 서버의 결정이고, 되돌릴 수 있는 실패를 고른 것이다 —
+  /// 올리다 만 파일은 고아로 남아 치울 수 있지만, 가리키는 파일이 없는 메시지는
+  /// **깨진 첨부**다.
+  Future<MessageRow> postMessage(
+    String channelId,
+    String body, {
+    String? threadRootId,
+    List<String> attachmentIds = const [],
+  }) async {
     final res = await _send('POST', '/channels/$channelId/messages', body: {
       'body': body,
       'threadRootId': ?threadRootId,
+      if (attachmentIds.isNotEmpty) 'attachmentIds': attachmentIds,
     });
     return MessageRow.fromJson(_obj(res));
+  }
+
+  /// 파일 하나를 올린다(`POST /uploads`, multipart 필드 이름은 `file`).
+  ///
+  /// ## 진행률을 **직접 센다**
+  ///
+  /// `http` 의 `MultipartRequest` 는 바디가 얼마나 갔는지 알려 주지 않는다. 그대로 두면
+  /// 화면은 "올리는 중"을 **길이 없는 스피너**로만 그릴 수 있고, 그러면 큰 파일에서
+  /// **멈춘 것과 가는 중인 것이 구별되지 않는다** — 사람이 오류로 읽는 자리다.
+  /// 데스크탑이 같은 이유로 `fetch` 대신 XHR 을 골랐고, 여기서는 보내는 스트림을 감싸
+  /// 같은 신호를 만든다.
+  ///
+  /// [onProgress] 는 0~1 이다. 총 길이를 모르면 **부르지 않는다** — 가짜 비율을 그리면
+  /// 막대가 거짓말을 한다.
+  Future<AttachmentRow> upload(
+    Uint8List bytes,
+    String filename, {
+    String? contentType,
+    void Function(double fraction)? onProgress,
+  }) async {
+    final uri = Uri.parse('$baseUrl/uploads');
+    final req = http.MultipartRequest('POST', uri)
+      ..headers.addAll(_headers())
+      ..files.add(http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: filename,
+        contentType: contentType == null ? null : MediaType.parse(contentType),
+      ));
+
+    final total = req.contentLength;
+    final body = req.finalize();
+    final watched = onProgress == null || total <= 0
+        ? body
+        : http.ByteStream(_counting(body, total, onProgress));
+
+    final streamedRequest = http.StreamedRequest('POST', uri)
+      ..headers.addAll(req.headers)
+      ..contentLength = total;
+    unawaited(watched.pipe(streamedRequest.sink));
+
+    late final http.StreamedResponse streamed;
+    try {
+      streamed = await _http.send(streamedRequest);
+    } on Object catch (e) {
+      throw NetworkError(e);
+    }
+    final res = await http.Response.fromStream(streamed);
+    if (res.statusCode >= 400) {
+      final decoded = _tryJson(res);
+      final err = decoded is Map ? decoded['error'] : null;
+      throw ApiError(
+        res.statusCode,
+        err is Map && err['code'] is String ? err['code']! as String : 'upload_failed',
+        err is Map && err['message'] is String ? err['message']! as String : 'HTTP ${res.statusCode}',
+        decoded,
+      );
+    }
+    return AttachmentRow.fromJson(_obj(_tryJson(res)));
+  }
+
+  static Object? _tryJson(http.Response res) {
+    try {
+      return jsonDecode(_utf8Body(res));
+    } on FormatException {
+      return null;
+    }
+  }
+
+  /// 보낸 바이트를 세면서 흘려보낸다.
+  static Stream<List<int>> _counting(
+    Stream<List<int>> source,
+    int total,
+    void Function(double) onProgress,
+  ) async* {
+    var sent = 0;
+    await for (final chunk in source) {
+      sent += chunk.length;
+      // 1 을 넘지 않게 — multipart 의 경계 바이트 때문에 실제 총량이 어긋날 수 있다.
+      onProgress(sent / total > 1 ? 1 : sent / total);
+      yield chunk;
+    }
   }
 
   // ── 받은 것 ───────────────────────────────────────────────────────────
