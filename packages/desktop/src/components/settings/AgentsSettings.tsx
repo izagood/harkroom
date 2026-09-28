@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import {
   AGENT_HARNESSES, HANDLE_PATTERN, RUNNABLE_HARNESSES,
   type AgentConfig, type AgentDefaults, type AgentTeamMemberRow, type AgentTeamRow,
-  type AgentView, type MentionPermission, type OperatorView, type PatView, harnessHasAccountPool,
+  type AgentView, type MentionPermission, type OperatorView, type OperatorCapabilities, type PatView, harnessHasAccountPool,
   MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { ApiError } from '../../lib/api';
@@ -31,6 +31,7 @@ import type { Translate } from '../../i18n';
 import { RunnerStatusLine, runnerStatusLabel } from '../RunnerStatus';
 import { AgentGrid } from './AgentGrid';
 import { LocalOperatorRow } from './LocalOperatorRow';
+import { ModelPicker } from './ModelPicker';
 import { hasOperatorLocalSurface, listLocalAgents } from '../../lib/operatorLocal';
 import { AgentScopeSection } from './AgentScopeSection';
 import { canSeeAgentConfig } from '../../lib/agentConfigGate';
@@ -340,6 +341,13 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 체크박스를 그리되 잠그고 사유를 적는다(`LocalOperatorRow` 와 같은 규율).
    */
   const [localOperator, setLocalOperator] = useState<{ baseUrl: string; operatorId: string } | 'none' | 'error' | null>(null);
+  /**
+   * 모델 고르개의 재료 — **이 에이전트를 돌릴 오퍼레이터**가 올린 하네스 능력(`ModelPicker`).
+   * 배정된 오퍼레이터가 있으면 그것, 없으면(만들기·미배정) 이 기기의 오퍼레이터다 — 모델
+   * 목록은 머신마다 다르다(opencode 는 그 머신의 제공자 설정을 따른다). `null` 은 아직 안
+   * 읽음, `'unknown'` 은 못 읽음(오프라인·권한 없음·오퍼레이터를 모름)이다.
+   */
+  const [modelCaps, setModelCaps] = useState<OperatorCapabilities['harnesses'] | 'unknown' | null>(null);
   /** 만들기 화면의 '이 기기에서 돌린다'. 기본이 켜짐이다 — 그것이 흔한 답이다. */
   const [runHere, setRunHere] = useState(true);
   const [confirmingSlug, setConfirmingSlug] = useState<string | null>(null);
@@ -396,6 +404,20 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     void getController().listAgents().then(setAgents).catch(() => setError(t('agents.grid.listFailed')));
   };
   useEffect(reload, []);
+
+  const modelOperatorId = selected?.assignment?.operatorId
+    ?? (typeof localOperator === 'object' && localOperator !== null ? localOperator.operatorId : null);
+  const modelOperatorKnown = selected?.assignment != null || localOperator !== null;
+  useEffect(() => {
+    if (!modelOperatorId) { setModelCaps(modelOperatorKnown ? 'unknown' : null); return; }
+    let live = true;
+    setModelCaps(null);
+    void Promise.resolve()
+      .then(() => getController().operatorCapabilities(modelOperatorId))
+      .then((c) => { if (live) setModelCaps(c.harnesses); })
+      .catch(() => { if (live) setModelCaps('unknown'); });
+    return () => { live = false; };
+  }, [modelOperatorId, modelOperatorKnown]);
 
   /**
    * 이 기기의 오퍼레이터를 한 번 읽는다 — 만들기 화면의 기본 배정처(`localOperator`).
@@ -1616,12 +1638,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               <div className="grid grid-cols-2 gap-3">
                 <label className={label}>
                   Model
-                  <input
+                  <ModelPicker
                     className={field}
-                    aria-label="Model"
-                    placeholder={t('agents.run.harnessDefault')}
                     value={draft.model}
-                    onChange={(e) => setDraft({ ...draft, model: e.target.value })}
+                    models={modelCaps === null ? null : modelCaps === 'unknown' ? undefined : modelCaps[draft.harness]?.models}
+                    onChange={(model) => setDraft({ ...draft, model })}
                   />
                 </label>
                 <label className={label}>

@@ -74,6 +74,8 @@ export interface CommunityInstance {
   ownerAccountId(): Promise<string | null>;
   /** 로컬 설정의 에이전트 표를 바꾸고 서버에 능력을 다시 낸다(`capabilities` 프레임). */
   setAgents(agents: Record<string, LocalAgentConfig>): void;
+  /** 하네스 능력이 바뀌었다(모델 목록이 늦게 도착했다 등) — 서버에 능력을 다시 낸다. */
+  announceCapabilities(): void;
 }
 
 export function createCommunity(deps: CommunityDeps): CommunityInstance {
@@ -185,6 +187,7 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
       // 끊겨 있으면 다음 hello 가 새 표를 싣는다 — send 의 false 는 실패가 아니다.
       link.send({ type: 'capabilities', capabilities: capabilities() });
     },
+    announceCapabilities: () => { link.send({ type: 'capabilities', capabilities: capabilities() }); },
     forward: async (agentId, req) => {
       if (!deps.forwarder) {
         return req.type === 'mcp.request'

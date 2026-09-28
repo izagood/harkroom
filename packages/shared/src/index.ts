@@ -3239,7 +3239,20 @@ export interface OperatorView {
 export interface OperatorCapabilities {
   /** 로컬 설정에 있어 이 머신에서 돌릴 수 있는 에이전트. */
   agentIds: string[];
-  harnesses: Record<string, { installed: boolean; loggedIn: boolean }>;
+  harnesses: Record<string, { installed: boolean; loggedIn: boolean; models?: HarnessModel[] }>;
+}
+
+/**
+ * 하네스가 이 머신에서 받는다고 **스스로 밝힌** 모델 하나(`operator/src/harnessModels.ts`).
+ *
+ * `id` 는 러너가 그대로 `--model`/`-m` 에 넘기는 값이다 — 화면이 고른 것이 곧 argv 다.
+ * `models` 가 없으면(옛 오퍼레이터·조회 실패) "모른다" 이지 "없다" 가 아니다 — 화면은 그때
+ * 직접 입력으로 물러선다.
+ */
+export interface HarnessModel {
+  id: string;
+  /** 사람이 읽는 이름. 하네스가 주지 않으면 없다(화면은 id 를 쓴다). */
+  label?: string;
 }
 
 /** 에이전트 → 오퍼레이터 배정(§3). 에이전트당 하나. */

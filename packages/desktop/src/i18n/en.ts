@@ -924,6 +924,8 @@ export const en = {
   /** 계정 풀 표면이 없는 하네스. **`not supported` 가 아니다** — 그 하네스는 계정 하나로 돈다. */
   'agents.run.poolNotForHarness': 'This agent runs on {harness}, which has no account pools — it uses the single account that harness is logged into.',
   'agents.run.harnessPlanned': '{harness} (planned)',
+  'agents.model.custom': 'Enter a name…',
+  'agents.model.listUnknown': 'Could not get this harness\'s model list from the operator running it — type the exact model name.',
   'agents.run.note': 'What it runs on.',
   'agents.run.title': 'Run',
 

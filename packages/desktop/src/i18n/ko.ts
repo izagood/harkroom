@@ -414,6 +414,8 @@ export const ko = {
   'agents.run.harnessDefault': 'harness 기본값',
   'agents.run.poolNotForHarness': '이 에이전트는 {harness} 로 도는데 그 하네스에는 계정 풀이 없다 — 하네스가 로그인한 계정 하나를 쓴다.',
   'agents.run.harnessPlanned': '{harness} (지원 예정)',
+  'agents.model.custom': '직접 입력…',
+  'agents.model.listUnknown': '이 에이전트를 돌리는 오퍼레이터에게서 하네스의 모델 목록을 받지 못했다 — 모델 이름을 정확히 입력한다.',
   'agents.run.note': '무엇으로 도는가.',
   'agents.run.title': '실행',
 
