@@ -293,6 +293,78 @@ describe('memory MCP tools', () => {
     }
   });
 
+  // M3: 병렬 턴 둘이 같은 판을 읽고 각자 고치면 나중 쓰기가 앞 것을 조용히 지웠다.
+  describe('ifUpdatedAt (낙관적 동시성)', () => {
+    it('맞는 판이면 쓰고, 어긋난 판이면 conflict 와 지금 판을 준다', async () => {
+      const { pat } = await createAgent(app, adminToken, 'cas-agent');
+      const client = await mcpClient(pat);
+      try {
+        await callTool(client, 'memory.set', { slug: 'core', value: 'v1' });
+        const read = await callTool(client, 'memory.get', { slug: 'core' });
+        expect(await callTool(client, 'memory.set', { slug: 'core', value: 'v2', ifUpdatedAt: read.updatedAt })).toEqual({ ok: true });
+        // 같은(이제 낡은) 판으로 다시 쓰면 거절된다.
+        const stale = await callTool(client, 'memory.set', { slug: 'core', value: 'v3', ifUpdatedAt: read.updatedAt });
+        expect(stale.error?.code).toBe('conflict');
+        expect(stale.error?.updatedAt).not.toBe(read.updatedAt);
+        expect((await callTool(client, 'memory.get', { slug: 'core' })).value).toBe('v2');
+      } finally {
+        await client.close();
+      }
+    });
+
+    it('null 은 "아직 없어야 한다" — 없으면 만들고, 있으면 conflict', async () => {
+      const { pat } = await createAgent(app, adminToken, 'cas-new-agent');
+      const client = await mcpClient(pat);
+      try {
+        expect(await callTool(client, 'memory.set', { slug: 'mem/n', value: 'a', ifUpdatedAt: null })).toEqual({ ok: true });
+        const again = await callTool(client, 'memory.set', { slug: 'mem/n', value: 'b', ifUpdatedAt: null });
+        expect(again.error?.code).toBe('conflict');
+        expect((await callTool(client, 'memory.get', { slug: 'mem/n' })).value).toBe('a');
+      } finally {
+        await client.close();
+      }
+    });
+
+    it('삭제도 판을 본다 — 어긋나면 지우지 않는다', async () => {
+      const { pat } = await createAgent(app, adminToken, 'cas-del-agent');
+      const client = await mcpClient(pat);
+      try {
+        await callTool(client, 'memory.set', { slug: 'mem/d', value: 'a' });
+        const old = (await callTool(client, 'memory.get', { slug: 'mem/d' })).updatedAt;
+        await callTool(client, 'memory.set', { slug: 'mem/d', value: 'b' });
+        const refused = await callTool(client, 'memory.set', { slug: 'mem/d', value: null, ifUpdatedAt: old });
+        expect(refused.error?.code).toBe('conflict');
+        const now = (await callTool(client, 'memory.get', { slug: 'mem/d' })).updatedAt;
+        expect(await callTool(client, 'memory.set', { slug: 'mem/d', value: null, ifUpdatedAt: now })).toEqual({ ok: true });
+        expect((await callTool(client, 'memory.get', { slug: 'mem/d' })).error?.code).toBe('not_found');
+      } finally {
+        await client.close();
+      }
+    });
+
+    // 핵심: 같은 판을 든 두 쓰기가 **동시에** 와도 한쪽만 통과한다(DO UPDATE WHERE 가 잠근 뒤 재평가).
+    it('같은 판을 든 동시 쓰기 둘 중 하나만 통과한다', async () => {
+      const { pat } = await createAgent(app, adminToken, 'cas-race-agent');
+      const a = await mcpClient(pat);
+      const b = await mcpClient(pat);
+      try {
+        await callTool(a, 'memory.set', { slug: 'core', value: 'base' });
+        const at = (await callTool(a, 'memory.get', { slug: 'core' })).updatedAt;
+        const [ra, rb] = await Promise.all([
+          callTool(a, 'memory.set', { slug: 'core', value: 'from-a', ifUpdatedAt: at }),
+          callTool(b, 'memory.set', { slug: 'core', value: 'from-b', ifUpdatedAt: at }),
+        ]);
+        const oks = [ra, rb].filter((r) => r.ok === true);
+        const conflicts = [ra, rb].filter((r) => r.error?.code === 'conflict');
+        expect(oks).toHaveLength(1);
+        expect(conflicts).toHaveLength(1);
+      } finally {
+        await a.close();
+        await b.close();
+      }
+    });
+  });
+
   it('different account cannot see other accounts memory', async () => {
     const client1 = await mcpClient(agent1Pat);
     const client2 = await mcpClient(agent2Pat);
