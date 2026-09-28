@@ -27,6 +27,7 @@ function setup(over: Partial<Record<string, unknown>> = {}) {
     addInvoker: vi.fn(async (_id: string, accountId: string) => agent({ invokeScope: 'list', invokers: [accountId] })),
     removeInvoker: vi.fn(async () => agent({ invokeScope: 'list', invokers: [] })),
     putMcpServer: vi.fn(async (name: string, credentialKind: string) => ({ name, credentialKind, createdBy: null, createdAt: '' })),
+    restartAgent: vi.fn(async () => ({ operatorId: 'op-1' })),
     mcpServers: vi.fn(async () => [
       { name: 'github', credentialKind: 'community', createdBy: null, createdAt: '' },
       { name: 'slack', credentialKind: 'personal', createdBy: null, createdAt: '' },
@@ -156,6 +157,22 @@ describe('AgentMcpSection — 한 절에서 끝낸다', () => {
     expect(c.putMcpServer).toHaveBeenCalledWith('jira', 'personal');
     const set = calls.find((x) => x.cmd === 'operator_mcp_set');
     expect(set?.args).toEqual({ name: 'jira', definition: { type: 'http', url: 'https://mcp.atlassian.com/v2/mcp' } });
+  });
+
+  it('저장 뒤 [지금 재시작] 이 그 자리에서 agent.restart 를 부른다 — 멈춰 둔 에이전트에는 없다', async () => {
+    fakeLocal([{ name: 'github' }, { name: 'slack' }]);
+    const c = setup({ restartAgent: vi.fn(async () => ({ operatorId: 'op-1' })) });
+    render(<AgentScopeSection agent={agent()} onUpdated={() => {}} />);
+    fireEvent.click(await screen.findByLabelText('github'));
+    fireEvent.click(await screen.findByTestId('agent-mcp-restart'));
+    await waitFor(() => expect(c.restartAgent).toHaveBeenCalledWith('agent-1'));
+    expect(screen.queryByTestId('agent-mcp-restart')).toBeNull();
+    cleanup();
+    setup();
+    render(<AgentScopeSection agent={agent({ stopRequestedAt: '2026-09-28T00:00:00.000Z' })} onUpdated={() => {}} />);
+    fireEvent.click(await screen.findByLabelText('github'));
+    await screen.findByTestId('agent-mcp-notice');
+    expect(screen.queryByTestId('agent-mcp-restart')).toBeNull();
   });
 
   it('레지스트리 등록 권한이 없으면 막는다 — 정의도 붙이기도 하지 않는다', async () => {
