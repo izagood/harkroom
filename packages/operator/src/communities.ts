@@ -10,7 +10,9 @@ import { createAssignmentReconciler, type AssignmentDeps } from './assignments.j
 import { createCommunity, type CommunityInstance } from './community.js';
 import { communityKey, readConfig, rememberOperatorId } from './config.js';
 import { createForwarder } from './forward.js';
-import { detectHarnesses } from './harnesses.js';
+import { detectHarnesses, HARNESS_BINARIES } from './harnesses.js';
+import { listHarnessModels } from './harnessModels.js';
+import type { HarnessModel, OperatorCapabilities } from '@harkroom/shared';
 import { readLoginPath } from './loginPath.js';
 import type { RunnerLinkServer } from './runnerLink.js';
 import type { RunnerRegistry, RunnerHost } from './runners.js';
@@ -74,6 +76,20 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
   deps.log(`하네스: ${Object.entries(harnesses).map(([k, v]) => `${k}=${v.installed ? (v.loggedIn ? '설치·로그인' : '설치') : '없음'}`).join(', ')}`);
   const refreshHarnesses = () => { void detect().then((h) => { harnesses = h; }); };
 
+  // 하네스가 받는 모델 목록(`harnessModels.ts`). 하네스를 **실행해** 묻는 일이라(codex 는
+  // 카탈로그를 네트워크로 받는다) 기동을 붙잡지 않는다 — hello 는 목록 없이 먼저 나가고,
+  // 목록이 오면 붙은 커뮤니티마다 능력을 다시 낸다. 기동 때 한 번만 잰다 — 모델 카탈로그는
+  // 하네스 업데이트로 바뀌고, 하네스 업데이트는 오퍼레이터 재시작과 같이 온다.
+  let models: Partial<Record<keyof typeof HARNESS_BINARIES, HarnessModel[]>> = {};
+  const withModels = (): OperatorCapabilities['harnesses'] => {
+    const out: OperatorCapabilities['harnesses'] = {};
+    for (const [k, v] of Object.entries(harnesses)) {
+      const list = models[k as keyof typeof HARNESS_BINARIES];
+      out[k] = list ? { ...v, models: list } : v;
+    }
+    return out;
+  };
+
   const runnerDeps = (community: { current: CommunityInstance | null }): AssignmentDeps => ({
     async spawn(agentId, env, runnerId) {
       const before = deps.registry.currentIncarnation(agentId);
@@ -122,7 +138,7 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
     const community = createCommunity({
       baseUrl, token, agents, reconciler, log: deps.log,
       runnerLink: deps.runnerLink, forwarder, fetchImpl: deps.fetchImpl,
-      harnesses: () => { refreshHarnesses(); return harnesses; },
+      harnesses: () => { refreshHarnesses(); return withModels(); },
       // 실패는 삼킨다 — 못 적어도 이 오퍼레이터는 그대로 돈다. 앱의 '이 기기' 기본값만 늦어진다.
       onSelf: (operatorId) => {
         void rememberOperatorId(configPath, baseUrl, operatorId)
@@ -134,6 +150,19 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
     started.push(community);
     return community;
   };
+  // 붙은 커뮤니티에 다시 내므로 `started` 가 선 뒤에 띄운다.
+  void (async () => {
+    const measured: typeof models = {};
+    await Promise.all((Object.keys(HARNESS_BINARIES) as (keyof typeof HARNESS_BINARIES)[])
+      .filter((h) => harnesses[h]?.installed)
+      .map(async (h) => {
+        const list = await listHarnessModels(h, { path: loginPath, env: process.env, home: homedir() });
+        if (list) measured[h] = list;
+      }));
+    models = measured;
+    deps.log(`하네스 모델: ${Object.entries(measured).map(([k, v]) => `${k}=${v.length}`).join(', ') || '없음'}`);
+    for (const c of started) c.announceCapabilities();
+  })();
   for (const [rawUrl, section] of Object.entries(config.communities)) await startOne(rawUrl, section);
   deps.log(`커뮤니티 ${started.length}곳에 붙는다`);
   return { communities: started, startOne };
