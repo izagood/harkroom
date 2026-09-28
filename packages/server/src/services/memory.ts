@@ -160,10 +160,59 @@ async function pruneRevisions(pool: Pool, accountId: string, slug: string): Prom
  * `description` 은 **세 상태**다: `undefined` 면 있던 요약을 그대로 두고(요약 없이 본문만
  * 고치는 호출이 요약을 지우면 안 된다), 문자열이면 바꾸고, 빈 문자열이면 지운다.
  */
+/**
+ * 낙관적 동시성(메모리 고도화 M3). `memory.get` 이 준 `updatedAt` 을 그대로 돌려주면 "그 사이
+ * 누가 고쳤으면 쓰지 마라"가 된다. `null` 은 "아직 없어야 한다"(새로 만들기)다.
+ *
+ * 왜 필요한가: 같은 에이전트의 멘션 턴이 병렬로 돈다. 둘이 core 를 읽고 각자 고쳐 쓰면 나중
+ * 쓰기가 앞 것을 **조용히** 지운다(2026-09-09 감사에서 예고했고, 기억을 자주 고치라고 말한 뒤로
+ * 실제로 일어날 수 있는 일이 됐다). 생략하면 예전처럼 무조건 쓴다 — 옛 호출을 깨지 않는다.
+ */
+export interface MemoryExpectation {
+  updatedAt: Date | null;
+}
+
+/** 기대가 어긋났다 — 지금 값의 시각을 준다(없으면 null). 호출자는 다시 읽고 합쳐 쓴다. */
+export interface MemoryConflict {
+  conflict: { updatedAt: Date | null };
+}
+
+/** DB 는 µs 까지 갖고 JSON 은 ms 까지 준다 — 비교는 ms 로 자른 값끼리 한다. */
+const MS_EQ = `date_trunc('milliseconds', updated_at) = date_trunc('milliseconds', $EXPECT::timestamptz)`;
+
+async function currentUpdatedAt(pool: Pool, accountId: string, slug: string): Promise<Date | null> {
+  const r = await pool.query(
+    `select updated_at from agent_memory where account_id = $1 and slug = $2`, [accountId, slug],
+  );
+  return r.rowCount ? (r.rows[0].updated_at as Date) : null;
+}
+
 export async function setMemory(
   pool: Pool, accountId: string, slug: string, value: string | null, description?: string, kind?: MemoryKind,
-): Promise<MemoryResult> {
+  expect?: MemoryExpectation,
+): Promise<MemoryResult | MemoryConflict> {
   if (value === null) {
+    if (expect) {
+      // 기대한 판일 때만 지운다. "없어야 한다"를 기대하며 지우는 것은 할 일이 없다 — 있으면 충돌.
+      if (expect.updatedAt === null) {
+        const now = await currentUpdatedAt(pool, accountId, slug);
+        return now === null ? 'ok' : { conflict: { updatedAt: now } };
+      }
+      const d = await pool.query(
+        `with d as (
+           delete from agent_memory where account_id = $1 and slug = $2 and ${MS_EQ.replace('$EXPECT', '$3')}
+           returning slug, value, description, updated_at)
+         insert into agent_memory_revision (account_id, slug, value, description, updated_at)
+         select $1, slug, value, description, updated_at from d returning 1`,
+        [accountId, slug, expect.updatedAt],
+      );
+      if (d.rowCount) {
+        await pruneRevisions(pool, accountId, slug);
+        return 'ok';
+      }
+      const now = await currentUpdatedAt(pool, accountId, slug);
+      return now === null ? 'ok' : { conflict: { updatedAt: now } };
+    }
     // 없는 것을 지워도 성공이다 — 위 MemoryResult 주석의 이유.
     await deleteWithRevision(pool, accountId, slug);
     return 'ok';
@@ -184,23 +233,41 @@ export async function setMemory(
      ins as (
        insert into agent_memory (account_id, slug, value, description, kind)
        select $1, $2, $3, nullif($5, ''), coalesce($7, 'topic')
-       where (select count(*) from agent_memory where account_id = $1) < $4
-          or exists (select 1 from prev)
+       where ((select count(*) from agent_memory where account_id = $1) < $4
+          or exists (select 1 from prev))
+         -- 기대가 있으면: 새로 만들기는 "기대가 null" 일 때만.
+         and ($8 = 'none' or ($8 = 'absent' and not exists (select 1 from prev)) or ($8 = 'at' and exists (select 1 from prev)))
        on conflict (account_id, slug) do update set
          value = excluded.value,
          description = case when $6 then excluded.description else agent_memory.description end,
          kind = coalesce($7, agent_memory.kind),
          updated_at = now()
+       -- **판 비교는 여기서 한다.** DO UPDATE 의 WHERE 는 잠근 뒤의 최신 행으로 다시 평가되므로,
+       -- 두 턴이 같은 판을 들고 동시에 와도 한쪽만 통과한다(prev 스냅숏으로 비교하면 둘 다 통과).
+       where $8 = 'none'
+          or ($8 = 'at' and date_trunc('milliseconds', agent_memory.updated_at) = date_trunc('milliseconds', $9::timestamptz))
        returning 1),
      rev as (
        insert into agent_memory_revision (account_id, slug, value, description, updated_at)
        select $1, slug, value, description, updated_at from prev where exists (select 1 from ins)
        returning 1)
      select (select count(*) from ins)::int as n`,
-    [accountId, slug, value, MAX_MEMORY_ITEMS_PER_ACCOUNT, description ?? null, description !== undefined, kind ?? null],
+    [
+      accountId, slug, value, MAX_MEMORY_ITEMS_PER_ACCOUNT, description ?? null, description !== undefined, kind ?? null,
+      !expect ? 'none' : expect.updatedAt === null ? 'absent' : 'at', expect?.updatedAt ?? null,
+    ],
   );
-  // 행이 안 들어갔다는 것은 where 절이 걸렀다는 뜻이고, 그 조건은 한도뿐이다.
-  if (!res.rows[0].n) return 'too_many';
+  if (!res.rows[0].n) {
+    // 기대가 없으면 걸러진 이유는 한도뿐이다. 기대가 있으면 지금 값과 대 봐서 가른다.
+    if (expect) {
+      const now = await currentUpdatedAt(pool, accountId, slug);
+      const matches = expect.updatedAt === null
+        ? now === null
+        : now !== null && Math.floor(now.getTime()) === Math.floor(expect.updatedAt.getTime());
+      if (!matches) return { conflict: { updatedAt: now } };
+    }
+    return 'too_many';
+  }
   await pruneRevisions(pool, accountId, slug);
   await pruneJournal(pool, accountId);
   return 'ok';
