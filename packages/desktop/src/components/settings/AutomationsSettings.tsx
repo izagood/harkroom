@@ -25,12 +25,14 @@ interface Draft {
   name: string; channelId: string; body: string; kind: Kind;
   freq: Freq; weekdays: number[]; monthDay: string; time: string; tz: string;
   repo: string; event: GhEvent; branch: string; paths: string; change: GhChange;
+  /** 초. 비우거나 0 이면 이벤트마다 한 번. */
+  debounce: string;
 }
 
 const emptyDraft = (): Draft => ({
   name: '', channelId: '', body: '', kind: 'schedule',
   freq: 'weekly', weekdays: [1], monthDay: '1', time: '09:00', tz: localTimeZone(),
-  repo: '', event: 'push', branch: 'main', paths: '', change: 'any',
+  repo: '', event: 'push', branch: 'main', paths: '', change: 'any', debounce: '',
 });
 
 function draftToTrigger(d: Draft): AutomationTrigger {
@@ -51,7 +53,7 @@ function draftToTrigger(d: Draft): AutomationTrigger {
 
 function triggerToDraft(a: AutomationView): Draft {
   const t = a.trigger;
-  const base = { ...emptyDraft(), name: a.name, channelId: a.channelId, body: a.body, kind: t.kind };
+  const base = { ...emptyDraft(), name: a.name, channelId: a.channelId, body: a.body, kind: t.kind, debounce: a.debounceSec ? String(a.debounceSec) : '' };
   if (t.kind === 'webhook') return base;
   if (t.kind === 'github') {
     return { ...base, repo: t.repo, event: t.event, branch: t.branch ?? '', paths: (t.paths ?? []).join('\n'), change: t.change ?? 'any' };
@@ -107,7 +109,11 @@ export function AutomationsSettings() {
 
   const save = async () => {
     if (!draft) return;
-    const input = { name: draft.name.trim(), channelId: draft.channelId, body: draft.body, trigger: draftToTrigger(draft) };
+    const debounce = Number(draft.debounce);
+    const input = {
+      name: draft.name.trim(), channelId: draft.channelId, body: draft.body, trigger: draftToTrigger(draft),
+      debounceSec: draft.kind !== 'schedule' && Number.isInteger(debounce) && debounce > 0 ? Math.min(debounce, 3600) : null,
+    };
     const ok = await act(
       () => editingId ? getController().api.updateAutomation(editingId, input) : getController().api.createAutomation(input),
       t('automations.form.saveFailed'),
@@ -213,6 +219,11 @@ export function AutomationsSettings() {
             </>
           )}
           {draft.kind === 'webhook' && <p className="text-meta text-fg-subtle">{t('automations.form.webhookHint')}</p>}
+          {draft.kind !== 'schedule' && (
+            <Field label={t('automations.form.debounce')} hint={t('automations.form.debounceHint')}>
+              <TextInput value={draft.debounce} onChange={(debounce) => setDraft({ ...draft, debounce })} placeholder="600" />
+            </Field>
+          )}
           {draft.kind === 'schedule' && <Segmented
             label={t('automations.form.freq')}
             value={draft.freq}
@@ -272,6 +283,11 @@ export function AutomationsSettings() {
               <div className="min-w-0 flex-1">
                 <div className="font-semibold text-fg">⚡ {a.name}</div>
                 <div className="text-fg-muted">{describeTrigger(a.trigger, locale, t)} → {targetLabel(a.channelId)}</div>
+                {!a.approvedAt && (
+                  <div data-testid="automation-proposal" className="mt-1 text-meta text-warning">
+                    {t('automations.proposal.pending', { who: `@${accounts[a.proposedBy ?? '']?.handle ?? '…'}` })}
+                  </div>
+                )}
                 <div className="text-meta text-fg-subtle">
                   {a.enabled
                     ? t('automations.row.next', { at: fmt(a.nextAt) })
@@ -280,11 +296,12 @@ export function AutomationsSettings() {
                       : t('automations.row.off')}
                 </div>
               </div>
-              <label className="flex items-center gap-2 text-meta text-fg-muted">
+              {/* 승인 버튼은 서버 `POST /automations/:id/approve` 가 릴리스된 뒤 붙인다(serverSurface 규칙). */}
+              {a.approvedAt && <label className="flex items-center gap-2 text-meta text-fg-muted">
                 <input type="checkbox" role="switch" data-testid="automation-enabled" checked={a.enabled} disabled={busy}
                   onChange={(e) => void act(() => getController().api.updateAutomation(a.id, { enabled: e.target.checked }), t('automations.form.saveFailed'))} />
                 {t('automations.row.enabled')}
-              </label>
+              </label>}
             </div>
             <pre className="mt-2 whitespace-pre-wrap rounded bg-surface p-2 text-meta text-fg-muted">{a.body}</pre>
             <div className="mt-2 flex flex-wrap gap-2">
