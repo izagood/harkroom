@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 보안 취약점 신고
+    url: https://github.com/izagood/harkroom/blob/main/SECURITY.md
+    about: 취약점은 공개 이슈로 올리지 말고 이 문서의 절차를 따른다
+  - name: 설계 문서
+    url: https://github.com/izagood/harkroom/blob/main/docs/design.md
+    about: 구조가 궁금하면 먼저 여기를 본다

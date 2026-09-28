@@ -126,6 +126,8 @@ on:
       - 'packages/*/README.md'
       - 'LICENSE'
       - '.github/workflows/ci.yml'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/pull_request_template.md'
   workflow_dispatch:
 
 # 버전 bump 커밋과 태그를 밀고, 릴리즈를 만든다.

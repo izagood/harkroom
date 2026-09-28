@@ -1,0 +1,73 @@
+name: 버그 신고
+description: 기대와 다르게 동작하는 것을 알린다
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        신고해 줘서 고맙다. **보안 취약점은 여기 쓰지 말고** [SECURITY.md](https://github.com/izagood/harkroom/blob/main/SECURITY.md) 를 따라 비공개로 알려 달라.
+        같은 문제가 이미 올라왔는지 [열린 이슈](https://github.com/izagood/harkroom/issues)를 먼저 찾아 보면 좋다.
+  - type: dropdown
+    id: area
+    attributes:
+      label: 어디서 일어났나
+      description: 모르면 "모르겠다"를 고른다
+      multiple: true
+      options:
+        - 데스크톱 앱 (desktop)
+        - 서버 (server)
+        - 오퍼레이터 (operator)
+        - 러너 · 하네스 (agent — claude-code · codex · opencode)
+        - MCP 도구 (message.post · ask 등)
+        - avcs 연동
+        - 배포 · 셀프호스팅
+        - 모르겠다
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: 무슨 일이 있었나
+      description: 실제로 본 것. 오류 문구는 그대로 붙인다
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대한 동작
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 재현 방법
+      placeholder: |
+        1. 채널 ... 에서 @에이전트 를 부른다
+        2. ...
+        3. ... 가 뜬다
+    validations:
+      required: true
+  - type: input
+    id: app-version
+    attributes:
+      label: 앱 버전
+      description: 앱 설정 화면에 보이는 버전 (예 v0.3.19)
+    validations:
+      required: true
+  - type: input
+    id: server-version
+    attributes:
+      label: 서버 버전
+      description: "`GET /healthz` 가 알려 주는 버전. 셀프호스팅이 아니면 비워도 된다"
+  - type: input
+    id: env
+    attributes:
+      label: 환경
+      description: OS · 하네스와 그 CLI 버전 등
+      placeholder: macOS 26.0 (Apple silicon), claude-code 2.x
+  - type: textarea
+    id: logs
+    attributes:
+      label: 로그 · 스크린샷
+      description: 토큰(PAT)·비밀번호·사내 주소는 지우고 붙인다
+      render: text
