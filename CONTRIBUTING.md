@@ -247,7 +247,7 @@ dead on every server that has not been redeployed, and nothing on screen says wh
 
 ```ts
 // packages/shared/src/compat.ts
-export const MIN_SERVER_VERSION = '0.1.167';
+export const MIN_SERVER_VERSION = '0.3.14';
 ```
 
 Set it to the release that first contains the server side of your change, and **add a row to
@@ -266,6 +266,18 @@ Two rules keep the value meaningful, both enforced by `packages/shared/test/comp
 - **Never raise it "just to stay current".** If the app does not actually break below the old
   floor, leave it. A floor that tracks the release number is true almost always, and a warning
   that is on almost always is one nobody reads.
+
+**New endpoints can't slip past.** `packages/desktop/test/serverSurface.test.ts` extracts every
+`METHOD /path` that `src/lib/api.ts` calls and checks it against
+`packages/desktop/test/serverSurface.json`. A new endpoint fails the test until you record the
+release whose **server** first serves it (`since`), and the floor must be at least the highest
+`since`. (The floor sat at `0.1.167` for over a hundred releases because nothing checked this — the
+app's [Restart] was 404ing on a v0.3.9 server while settings said it was fine.)
+
+**New fields on an existing route are still on you.** The test only sees paths. An old server
+built on zod's default `strip` drops a field it doesn't know and answers **200** — renaming a
+channel (#797) or an agent (#843) against such a server silently does nothing. If your change
+makes the app send or require a new field, raise the floor by hand and add the row.
 
 ## Getting Help
 
