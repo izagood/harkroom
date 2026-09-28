@@ -317,6 +317,8 @@ export const ko = {
   'automations.change.modified': '수정된 파일만',
   'automations.change.removed': '삭제된 파일만',
   'automations.form.webhookHint': '키를 가진 어느 서비스든 부를 수 있다. JSON 맨 윗단 값은 {{payload.<이름>}} 으로 쓴다.',
+  'automations.form.debounce': '병합 창 (초)',
+  'automations.form.debounceHint': '첫 이벤트 뒤 이 시간 안에 온 이벤트를 글 하나로 모아 보낸다. 목록은 {{events}}, 개수는 {{events.count}}. 비우면 이벤트마다 한 번 보낸다.',
   'automations.trigger.webhook': '범용 hook 이 불리면',
   'automations.trigger.github': 'GitHub {repo} {event}{rest}',
   'automations.ingress.off': '외부 수신이 꺼져 있다. 밖에서는 이 자동화를 부를 수 없다.',

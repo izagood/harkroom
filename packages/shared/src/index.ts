@@ -2304,6 +2304,8 @@ export interface AutomationView {
   consecutiveFailures: number;
   /** 외부 수신이 켜져 있으면 켠 시각. 키 원문은 켤 때 한 번만 준다(`AutomationIngressIssued`). */
   ingressEnabledAt: string | null;
+  /** 디바운스 병합 창(초, 071). null 이면 이벤트마다 한 번. 외부 이벤트 트리거에만 뜻이 있다. */
+  debounceSec: number | null;
   createdAt: string;
   updatedAt: string;
 }

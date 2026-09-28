@@ -819,13 +819,14 @@ export class ApiClient {
   }
 
   async createAutomation(input: {
-    name: string; channelId: string; body: string; trigger: AutomationTrigger;
+    name: string; channelId: string; body: string; trigger: AutomationTrigger; debounceSec?: number | null;
   }): Promise<AutomationView> {
     return (await this.req<{ automation: AutomationView }>('POST', '/automations', input)).automation;
   }
 
   async updateAutomation(id: string, patch: Partial<{
     name: string; channelId: string; body: string; trigger: AutomationTrigger; enabled: boolean;
+    debounceSec: number | null;
   }>): Promise<AutomationView> {
     return (await this.req<{ automation: AutomationView }>('PATCH', `/automations/${id}`, patch)).automation;
   }

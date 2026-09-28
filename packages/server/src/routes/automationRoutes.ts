@@ -48,6 +48,7 @@ export async function registerAutomationRoutes(
       channelId: z.string().uuid(),
       body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
       trigger: triggerSchema,
+      debounceSec: z.number().int().min(0).max(3600).nullable().optional(),
     }).parse(req.body);
     const refused = await gateFor(input.channelId, req.account!.id);
     if (refused) return reply.code(refused.code).send(refused.body);
@@ -71,6 +72,7 @@ export async function registerAutomationRoutes(
       body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS).optional(),
       trigger: triggerSchema.optional(),
       enabled: z.boolean().optional(),
+      debounceSec: z.number().int().min(0).max(3600).nullable().optional(),
     }).strict().parse(req.body);
     if (patch.channelId) {
       const refused = await gateFor(patch.channelId, req.account!.id);
@@ -174,7 +176,7 @@ export async function registerAutomationRoutes(
       const result = await enqueueRun(pool, {
         automationId: target.id, eventKey: `github:${delivery}`, triggerKind: 'github', vars: m.vars,
       });
-      return reply.code(result.status === 'queued' ? 202 : 200).send({ status: result.status });
+      return reply.code(result.status === 'queued' || result.status === 'merged' ? 202 : 200).send({ status: result.status });
     });
 
     hooks.post('/hooks/generic/:id', async (req, reply) => {
@@ -195,7 +197,7 @@ export async function registerAutomationRoutes(
         vars: genericVars(payload),
       });
       if (result.status === 'rate_limited') return reply.code(429).send({ status: result.status });
-      return reply.code(result.status === 'queued' ? 202 : 200).send({ status: result.status });
+      return reply.code(result.status === 'queued' || result.status === 'merged' ? 202 : 200).send({ status: result.status });
     });
   });
 }
