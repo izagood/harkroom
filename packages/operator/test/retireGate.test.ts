@@ -108,6 +108,45 @@ describe('회수 게이트 — 프로세스 생사가 아니라 인박스 소유
     await expect(registry.spawnRunner('murmur', {})).rejects.toMatchObject({ code: 'retiring' });
   });
 
+  /**
+   * 보류의 **주인은 오퍼레이터다**(2026-09-28, jaebin 지적). 러너에 env 로 목록만 주고
+   * 시한으로 풀게 두면, 앞 러너가 1초 만에 끝나도 그 시한 내내 그 항목을 건너뛴다.
+   * 앞 러너의 생사를 아는 쪽은 오퍼레이터뿐이므로, 푸는 것도 여기서 한다.
+   *
+   * 되돌려 RED: `reapRetiring` 의 `releaseHandover` 호출을 지우면 이 테스트만 빨개진다.
+   */
+  it('앞 러너가 물러나면 지금 세대에게 보류 해제를 알린다 — 시한을 기다리지 않는다', async () => {
+    const host = fakeHost();
+    const 해제: { agentId: string; runnerId: string }[] = [];
+    const registry = new RunnerRegistry(LAUNCH, host, undefined, null, null,
+      (agentId, runnerId) => { 해제.push({ agentId, runnerId }); });
+    host.alive.add(62702);
+    registry.retire('murmur', 62702, inc('old'));
+    registry.notePollStopped('murmur', inc('old'), [41]);
+    await registry.spawnRunner('murmur', {});
+    expect(해제).toEqual([]);
+
+    // 앞 러너가 이제야 죽었다. 실제로 그것을 관측하는 자리는 주기적인 `pollAdopted` 다.
+    host.alive.delete(62702);
+    registry.pollAdopted();
+
+    expect(해제).toHaveLength(1);
+    expect(해제[0]?.agentId).toBe('murmur');
+  });
+
+  it('보류를 준 적이 없으면 해제도 알리지 않는다 — 없는 일을 알리지 않는다', async () => {
+    const host = fakeHost();
+    const 해제: unknown[] = [];
+    const registry = new RunnerRegistry(LAUNCH, host, undefined, null, null,
+      () => { 해제.push(1); });
+    host.alive.add(62702);
+    registry.retire('murmur', 62702, inc('old'));
+    host.alive.delete(62702);
+
+    registry.pollAdopted();
+    expect(해제).toEqual([]);
+  });
+
   it('앞 러너가 죽으면 알림이 없어도 교체가 뜬다 — 예전 경로가 그대로 남아 있다', async () => {
     const host = fakeHost();
     const registry = new RunnerRegistry(LAUNCH, host);

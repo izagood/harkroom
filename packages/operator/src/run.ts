@@ -290,6 +290,13 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     },
     ledgerSink,
     options.logs === undefined ? logSink : options.logs,
+    // 앞 러너가 완전히 물러났다 — 지금 세대에게 이관 보류를 풀라고 알린다. 이것이
+    // 정상 경로이고, 러너 쪽 시한은 오퍼레이터가 죽은 경우의 백스톱일 뿐이다.
+    (agentId, runnerId) => {
+      if (runnerLink.sendNotice(runnerId, { type: 'handover.released' })) {
+        log(`이관 보류 해제: agent=${agentId} runnerId=${runnerId}`);
+      }
+    },
   );
 
   /**

@@ -49,11 +49,50 @@ const config = loadConfig();
 //
 // **접속 실패로 러너를 죽이지 않는다.** 붙지 못한 동안의 호출은 status 0 으로 거절되고, poll
 // 루프가 백오프로 다시 부른다 — 오퍼레이터가 재시작 중인 몇 초가 정확히 그 경우다.
+/**
+ * 이관 보류 — 앞 세대 러너가 아직 들고 있는 inbox entry(`HARKROOM_HANDOVER_HOLD`).
+ *
+ * 오퍼레이터가 앞 러너의 `runner.pollStopped` 통지를 받아 **spawn 때 심어 준다.** 그 항목들은
+ * 앞 러너에서 턴이 이미 돌고 있으므로 여기서 또 띄우면 같은 멘션에 두 번 답한다.
+ *
+ * **푸는 것은 오퍼레이터다.** 앞 러너가 완전히 물러나면 `handover.released` 가 와서 그 자리에서
+ * 집합을 비운다 — 앞 러너가 1초 만에 끝나면 보류도 1초다. 앞 러너의 생사를 아는 쪽이 거기뿐이라
+ * 이 판단을 러너에 두지 않는다.
+ *
+ * 아래 시한은 **백스톱**이다: 오퍼레이터가 죽어 통지가 영영 안 오는 경우에만 쓰인다. 영원히
+ * 건너뛰면 앞 러너가 끝내지 못한 항목에 **아무도 답하지 않는다** — 늦어질지언정 잃지는 않게
+ * 한다. 턴 예산과 같은 30분이다: 그보다 짧으면 정상적으로 도는 앞 턴을 중복으로 집는다.
+ */
+const HANDOVER_HOLD_MS = 30 * 60_000;
+const handoverHeld = new Set<number>(
+  (process.env.HARKROOM_HANDOVER_HOLD ?? '')
+    .split(',').map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0),
+);
+const handoverHoldUntilMs = Date.now() + HANDOVER_HOLD_MS;
+if (handoverHeld.size) {
+  console.log(`[main] 이관 보류: 앞 러너가 들고 있는 entry ${[...handoverHeld].join(',')} — 최대 ${HANDOVER_HOLD_MS}ms 동안 건너뛴다`);
+}
+const heldEntryIds = (): ReadonlySet<number> => {
+  if (handoverHeld.size && Date.now() > handoverHoldUntilMs) {
+    console.log('[main] 이관 보류 백스톱 시한이 지났다 — 오퍼레이터의 해제가 안 왔다. 남은 항목을 평범한 멘션으로 다시 본다');
+    handoverHeld.clear();
+  }
+  return handoverHeld;
+};
+/** 오퍼레이터가 "앞 러너가 물러났다"고 알려 오면 그 자리에서 푼다 — 정상 경로다. */
+const releaseHandoverHold = (): void => {
+  if (!handoverHeld.size) return;
+  console.log('[main] 오퍼레이터가 이관 보류를 풀었다 — 앞 러너가 물러났다');
+  handoverHeld.clear();
+};
+
 const relay = createRelayClient({
   link: config.operatorLink,
   // #337: 서버의 interactive.open 은 매니저가 처리한다. 매니저가 relay 를 필요로 해서
   // (세션 열기) 상호 참조가 생기므로 늦게 배선한다 — 매니저가 아직 없으면 릴레이가
   // 스스로 interactive.error 로 답한다(relay.ts 의 훅 부재 처리).
+  // 앞 세대가 물러났다는 오퍼레이터의 통지. 이관 보류를 **그 자리에서** 푼다.
+  onHandoverReleased: releaseHandoverHold,
   onInteractiveOpen: (req) => {
     if (!interactive) return Promise.reject(new Error('러너가 아직 기동 중이다 — 잠시 뒤 다시 열어라'));
     return interactive.open(req);
@@ -370,34 +409,6 @@ interactive = createInteractiveManager({
 // 이 조립이 main 에 남는 이유: 계정 축·워크스페이스 경로·MCP 설정은 기동이 정하는 값이고,
 // 스케줄러가 그것을 직접 읽으면 테스트가 그 환경을 전부 세워야 한다. 스케줄러는 "무엇을
 // 언제 띄우는가"만 알고, "무엇으로 띄우는가"는 이 함수가 넘긴다.
-/**
- * 이관 보류 — 앞 세대 러너가 아직 들고 있는 inbox entry(`HARKROOM_HANDOVER_HOLD`).
- *
- * 오퍼레이터가 앞 러너의 `runner.pollStopped` 통지를 받아 **spawn 때 심어 준다.** 그 항목들은
- * 앞 러너에서 턴이 이미 돌고 있으므로 여기서 또 띄우면 같은 멘션에 두 번 답한다.
- *
- * **유예가 있는 이유**: 앞 러너가 그 턴을 못 끝내고 죽을 수 있다(9/22 처럼 사람이 끊는 경우).
- * 그러면 그 항목은 미읽음으로 남는데, 영원히 건너뛰면 **아무도 답하지 않는다.** 유예가 지나면
- * 집합이 비고 평범한 멘션으로 돌아온다 — 늦어질 뿐 잃지는 않는다. 턴 예산과 같은 30분이다:
- * 그보다 짧으면 정상적으로 도는 앞 턴을 중복으로 집는다.
- */
-const HANDOVER_HOLD_MS = 30 * 60_000;
-const handoverHeld = new Set<number>(
-  (process.env.HARKROOM_HANDOVER_HOLD ?? '')
-    .split(',').map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0),
-);
-const handoverHoldUntilMs = Date.now() + HANDOVER_HOLD_MS;
-if (handoverHeld.size) {
-  console.log(`[main] 이관 보류: 앞 러너가 들고 있는 entry ${[...handoverHeld].join(',')} — 최대 ${HANDOVER_HOLD_MS}ms 동안 건너뛴다`);
-}
-const heldEntryIds = (): ReadonlySet<number> => {
-  if (handoverHeld.size && Date.now() > handoverHoldUntilMs) {
-    console.log('[main] 이관 보류 유예가 끝났다 — 남은 항목을 평범한 멘션으로 다시 본다');
-    handoverHeld.clear();
-  }
-  return handoverHeld;
-};
-
 const scheduler = createMentionScheduler({
   harkroom, registry, queue: mentionQueue, accountLane, heldEntryIds,
   runMentionTurn,

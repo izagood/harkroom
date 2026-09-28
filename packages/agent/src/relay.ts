@@ -29,7 +29,7 @@ import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import type { AgentHarness, AgentSessionView, RelayRunnerFrame, RelayServerFrame, RunnerCap } from '@harkroom/shared';
 import { NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
 import {
-  RUNNER_LINK_PROTOCOL_VERSION, isRunnerLinkResponse,
+  RUNNER_LINK_PROTOCOL_VERSION, isOperatorToRunnerNotice, isRunnerLinkResponse,
   type RunnerHello, type RunnerLinkRequest, type RunnerLinkResponse,
 } from '@harkroom/shared/runnerLink';
 import { RingBuffer, type PtyWriter } from './pty.js';
@@ -196,6 +196,11 @@ export interface RelayClientOptions {
    * 버리면 서버가 10초 타임아웃까지 기다린 뒤 원인 없는 504 를 사람에게 준다.
    */
   onInteractiveOpen?: InteractiveOpenHandler;
+  /**
+   * 오퍼레이터가 **이관 보류를 풀라**고 알려 왔다(`handover.released`). 앞 세대 러너가
+   * 완전히 물러났다는 뜻이다 — 그가 들고 있던 entry 를 이제 내가 집어도 된다.
+   */
+  onHandoverReleased?: () => void;
   /** 운영 로그 한 줄. 기본은 러너 로그(stdout). */
   log?: (line: string) => void;
 }
@@ -352,6 +357,9 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
       pending.resolve(parsed);
       return;
     }
+    // 오퍼레이터 자신의 말은 릴레이 프레임이 아니다 — switch 아래로 흘리면 `default` 에서
+    // 조용히 버려진다.
+    if (isOperatorToRunnerNotice(parsed)) { opts.onHandoverReleased?.(); return; }
     const frame = parsed as RelayServerFrame;
 
     switch (frame.type) {

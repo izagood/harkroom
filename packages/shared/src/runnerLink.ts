@@ -86,6 +86,23 @@ export type RunnerLinkResponse =
  */
 export type RunnerLinkNotice = { type: 'runner.pollStopped'; holding: number[] };
 
+/**
+ * 오퍼레이터 → 러너 **단방향 통지.** 서버에서 오는 말이 아니라 오퍼레이터가 하는 말이다.
+ *
+ * `handover.released`: 앞 세대 러너가 **완전히 물러났다**. 그 러너가 들고 있던 entry 를
+ * 더 건너뛸 이유가 없다 — 이관 보류를 지금 푼다.
+ *
+ * 보류의 **주인은 오퍼레이터**다. 러너는 spawn 때 받은 목록을 들고만 있고, 언제 놓을지는
+ * 앞 러너의 생사를 보는 쪽이 정한다. 러너가 스스로 시한만으로 풀면, 앞 러너가 1초 만에
+ * 끝난 경우에도 남은 시한 내내 그 항목을 건너뛴다.
+ */
+export type OperatorToRunnerNotice = { type: 'handover.released' };
+
+export function isOperatorToRunnerNotice(value: unknown): value is OperatorToRunnerNotice {
+  return typeof value === 'object' && value !== null
+    && (value as { type?: unknown }).type === 'handover.released';
+}
+
 export function isRunnerLinkNotice(value: unknown): value is RunnerLinkNotice {
   if (typeof value !== 'object' || value === null) return false;
   const m = value as Record<string, unknown>;

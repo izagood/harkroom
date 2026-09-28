@@ -334,6 +334,14 @@ export class RunnerRegistry {
      * 필요 없고, 없다고 러너가 안 뜨면 그것이 이 장치가 만든 사고다.
      */
     private readonly logs: RunnerLogSink | null = null,
+    /**
+     * 이관 보류를 **풀라고** 지금 세대 러너에게 알리는 자리(2026-09-28).
+     *
+     * 보류의 주인은 오퍼레이터다. 앞 러너가 완전히 물러난 것을 아는 쪽이 여기뿐이라서,
+     * 러너가 시한만으로 스스로 풀게 두면 앞 러너가 1초 만에 끝난 경우에도 남은 시한
+     * 내내 그 항목을 건너뛴다. 없으면 러너의 시한이 백스톱으로 남는다.
+     */
+    private readonly releaseHandover: (agentId: string, runnerId: IncarnationId) => void = () => undefined,
   ) {}
 
   /**
@@ -423,6 +431,13 @@ export class RunnerRegistry {
   private reapRetiring(agentId: string, entry: RetiringEntry): void {
     if (this.retiring.get(agentId) !== entry) return;
     this.retiring.delete(agentId);
+    // 앞 러너가 완전히 물러났다 — 그가 들고 있던 entry 를 더 건너뛸 이유가 없다.
+    // **여기가 보류를 푸는 유일한 정상 경로다.** 러너 쪽 시한은 오퍼레이터가 죽은 경우의
+    // 백스톱일 뿐이고, 그 시한에 기대면 앞 러너가 금방 끝나도 몇 분씩 멍하니 건너뛴다.
+    if (entry.pollStopped) {
+      const 지금 = this.byAgent.get(agentId);
+      if (지금 && !지금.exited) this.releaseHandover(agentId, 지금.incarnationId);
+    }
     if (entry.incarnationId === null) return;
     // 내 자식이 아니라 wait 할 수 없다 — 코드도 시그널도 모른다(`pollAdopted` 와 같은 이유).
     this.onExit({ agentId, incarnationId: entry.incarnationId, code: null, signal: null, tailLines: [] });

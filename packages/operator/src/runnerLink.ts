@@ -23,7 +23,7 @@ import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
 import { encodeLine, NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
 import {
   checkRunnerHello, isRunnerLinkNotice, isRunnerLinkRequest,
-  type RunnerLinkNotice, type RunnerLinkRequest, type RunnerLinkResponse,
+  type OperatorToRunnerNotice, type RunnerLinkNotice, type RunnerLinkRequest, type RunnerLinkResponse,
 } from '@harkroom/shared/runnerLink';
 
 /** `net.Socket` 의 최소 표면. 테스트가 가짜를 준다. */
@@ -64,6 +64,8 @@ export interface RunnerLinkServer {
    */
   accept(socket: LinkSocket, hello: unknown, pending: unknown[]): boolean;
   send(runnerId: string, frame: RelayServerFrame): boolean;
+  /** 오퍼레이터 자신의 말(`handover.released`). 릴레이 소켓이 없으면 false. */
+  sendNotice(runnerId: string, notice: OperatorToRunnerNotice): boolean;
   isLinked(runnerId: string): boolean;
   agentOf(runnerId: string): string | null;
   /** 붙어 있는 러너 전부를 끊는다(종료 경로). 러너 프로세스는 건드리지 않는다. */
@@ -165,6 +167,12 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
       const socket = linked.get(runnerId);
       if (!socket) return false;
       try { socket.write(encodeLine(frame)); return true; } catch { return false; }
+    },
+
+    sendNotice(runnerId, notice) {
+      const socket = linked.get(runnerId);
+      if (!socket) return false;
+      try { socket.write(encodeLine(notice)); return true; } catch { return false; }
     },
 
     isLinked: (runnerId) => linked.has(runnerId),
