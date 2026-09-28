@@ -44,7 +44,7 @@ class ApiClient {
     final res = await http.Response.fromStream(streamed);
 
     // 204 는 본문이 없다. `jsonDecode('')` 는 던지므로 먼저 걸러야 한다.
-    if (res.statusCode == 204 || res.body.isEmpty) {
+    if (res.statusCode == 204 || res.bodyBytes.isEmpty) {
       if (res.statusCode >= 400) {
         throw ApiError(res.statusCode, 'unknown', 'HTTP ${res.statusCode}');
       }
@@ -53,7 +53,7 @@ class ApiClient {
 
     Object? decoded;
     try {
-      decoded = jsonDecode(res.body);
+      decoded = jsonDecode(_utf8Body(res));
     } on FormatException {
       decoded = null;
     }
@@ -67,6 +67,15 @@ class ApiClient {
     }
     return decoded;
   }
+
+  /// 본문을 **언제나 UTF-8 로** 읽는다.
+  ///
+  /// `http` 의 `Response.body` 는 `content-type` 의 `charset` 을 보고 없으면 **latin-1** 로
+  /// 떨어진다(RFC 의 기본값이다). 그런데 JSON 은 UTF-8 이고, 이 저장소의 메시지는 한국어가
+  /// 대부분이다 — `charset` 을 안 붙이는 서버·프록시를 만나면 본문이 통째로 깨진다.
+  /// 깨진 채로 파싱은 **성공**하므로 아무 데서도 오류가 나지 않고, 사람이 화면에서
+  /// 글자가 깨진 것으로 처음 발견한다.
+  static String _utf8Body(http.Response res) => utf8.decode(res.bodyBytes, allowMalformed: true);
 
   Map<String, Object?> _obj(Object? v) =>
       v is Map ? Map<String, Object?>.from(v) : const <String, Object?>{};

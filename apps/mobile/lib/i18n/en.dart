@@ -42,4 +42,58 @@ class StringsEn implements Strings {
 
   @override
   String get commonRetry => 'Try again';
+
+  @override
+  String get loginTitle => 'Sign in';
+
+  @override
+  String get loginIdLabel => 'Login ID';
+
+  @override
+  String get loginPasswordLabel => 'Password';
+
+  @override
+  String get loginSubmit => 'Sign in';
+
+  @override
+  String get loginErrorRejected => 'That login ID or password is not right.';
+
+  @override
+  String get loginErrorUnreachable => 'Could not reach the server. Check the address and your connection.';
+
+  @override
+  String get signOut => 'Sign out';
+
+  @override
+  String get channelsTitle => 'Channels';
+
+  @override
+  String get channelsEmpty => 'You are not in any channel yet.';
+
+  @override
+  String get messagesEmpty => 'No messages yet.';
+
+  @override
+  String get composerHint => 'Message, or @mention an agent';
+
+  @override
+  String get composerSend => 'Send';
+
+  @override
+  String get connectionOnline => 'Connected';
+
+  @override
+  String get connectionConnecting => 'Connecting…';
+
+  @override
+  String get connectionReconnecting => 'Reconnecting…';
+
+  @override
+  String get connectionDead => 'Disconnected — sign in again';
+
+  @override
+  String get noticeSessionNotSaved => 'Could not save your session to the keychain. You can keep using the app now, but you will need to sign in again next time you open it.';
+
+  @override
+  String get agentBadge => 'agent';
 }
