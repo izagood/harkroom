@@ -20,8 +20,8 @@ services:
     # 버전으로 핀하는 것이 맞다 — 되돌리기가 "이 숫자를 전 릴리스로 바꿔 다시 올린다"가
     # 되기 때문이다. `rollback-<날짜>` 같은 로컬 태그를 손으로 만들어 두는 것보다 튼튼하다.
     #
-    #   HARKROOM_SERVER_TAG=0.1.209 docker compose -p <프로젝트> pull server
-    #   HARKROOM_SERVER_TAG=0.1.209 docker compose -p <프로젝트> up -d --no-deps server
+    #   HARKROOM_SERVER_TAG=<버전> docker compose -p <프로젝트> pull server
+    #   HARKROOM_SERVER_TAG=<버전> docker compose -p <프로젝트> up -d --no-deps server
     #
     # **`build:` 를 지우지 않는 이유**: 개발에서는 여전히 여기서 빌드한다. 둘이 함께 있으면
     # `docker compose build` 가 **이 이름으로 태그**하므로 그 뒤의 `up` 은 방금 만든 로컬
