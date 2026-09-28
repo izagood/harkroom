@@ -28,7 +28,12 @@ export const OPENCODE_ADAPTER: HarnessAdapter = {
     // 그 회귀선이 `test/adapterParity.test.ts` 에 있다.
     // 실측 2.5~2.7초에 뜬다(1차의 "30초"는 옛 판본이었다). 말줄임표는 판본에 따라 U+2026
     // 이기도 `...` 이기도 해서 **문구만** 본다.
-    ready: /Ask anything/,
+    // **되살린 세션에는 자리표시자가 없다**(실측 2026-09-25). `-s <id>` 로 뜨면 화면에 앞
+    // 대화가 replay 되고 입력창의 `Ask anything…` 은 **안 보인다**. 그 문구만 보면 두 번째
+    // 턴부터 준비를 영영 못 보고 60초를 세다 죽는다 — 첫 턴만 되는 하네스가 된다.
+    // 그래서 **두 화면에 다 있는** 상태줄(`ctrl+p`)을 함께 본다. fixture 둘이 그 차이를
+    // 그대로 들고 있다(`opencode-tui-ready.txt`·`opencode-tui-resumed.txt`).
+    ready: /Ask anything|ctrl\+p/,
     gate: GATE_PATTERN,
     gateMeasured: false,
   },
