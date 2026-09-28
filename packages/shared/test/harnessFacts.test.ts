@@ -4,8 +4,8 @@
 // 선택을 그릴지)이 **함께** 읽는다. 각자 `harness === 'claude-code'` 를 적으면 같은 사실이
 // 두 벌이 되고, 하네스가 늘 때 한쪽만 고치는 사고가 난다.
 //
-// 러너 쪽 어댑터 표(`packages/agent/src/adapters/`)의 `account.pooled` 가 같은 사실이고,
-// 둘이 일치하는지는 `packages/agent/test/adapterParity.test.ts` 가 지킨다(그쪽이 shared 를
+// 러너 쪽 어댑터 표(`apps/agent/src/adapters/`)의 `account.pooled` 가 같은 사실이고,
+// 둘이 일치하는지는 `apps/agent/test/adapterParity.test.ts` 가 지킨다(그쪽이 shared 를
 // 가리킨다). 여기서는 이 함수 자체의 답을 못 박는다.
 import { describe, expect, it } from 'vitest';
 import { AGENT_HARNESSES, harnessHasAccountPool } from '../src/index.js';

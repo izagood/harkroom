@@ -8,11 +8,11 @@ importers:
 
   .: {}
 
-  packages/agent:
+  apps/agent:
     dependencies:
       '@harkroom/shared':
         specifier: workspace:*
-        version: link:../shared
+        version: link:../../packages/shared
       '@modelcontextprotocol/sdk':
         specifier: ^1.12.0
         version: 1.30.0(zod@3.25.76)
@@ -39,11 +39,11 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.23.13)(yaml@2.9.0)
 
-  packages/desktop:
+  apps/desktop:
     dependencies:
       '@harkroom/shared':
         specifier: workspace:*
-        version: link:../shared
+        version: link:../../packages/shared
       '@tauri-apps/plugin-notification':
         specifier: ^2.4.0
         version: 2.4.0
@@ -112,11 +112,11 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.23.13)(yaml@2.9.0)
 
-  packages/operator:
+  apps/operator:
     dependencies:
       '@harkroom/shared':
         specifier: workspace:*
-        version: link:../shared
+        version: link:../../packages/shared
       ws:
         specifier: ^8.18.0
         version: 8.21.3
@@ -137,7 +137,7 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.23.13)(yaml@2.9.0)
 
-  packages/server:
+  apps/server:
     dependencies:
       '@fastify/cors':
         specifier: ^11.0.0
@@ -150,7 +150,7 @@ importers:
         version: 11.3.0
       '@harkroom/shared':
         specifier: workspace:*
-        version: link:../shared
+        version: link:../../packages/shared
       '@modelcontextprotocol/sdk':
         specifier: ^1.12.0
         version: 1.30.0(zod@3.25.76)

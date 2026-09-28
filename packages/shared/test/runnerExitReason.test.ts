@@ -5,8 +5,8 @@
  * 호출부마다 다시 쓰이면 한 곳에서 두 상수가 뒤바뀌어도 아무도 모른다. 그리고 그 사고의
  * 결과가 정확히 `#473` 이다 — 하네스가 없는 사람에게 PAT 재발급을 시키는 것.
  *
- * 앱 쪽 배선(문구·상태)은 `packages/desktop/test/runnerHarnessMissing.test.tsx` 가,
- * 실행 파일 이름 표가 러너의 것과 같은지는 `packages/agent/test/harnessBinary.test.ts` 가
+ * 앱 쪽 배선(문구·상태)은 `apps/desktop/test/runnerHarnessMissing.test.tsx` 가,
+ * 실행 파일 이름 표가 러너의 것과 같은지는 `apps/agent/test/harnessBinary.test.ts` 가
  * 잰다. 여기서 재는 것은 **판정 함수 하나**다.
  */
 import { describe, expect, it } from 'vitest';

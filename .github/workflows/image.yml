@@ -15,7 +15,7 @@
 #
 # ## 버전 태그는 **릴리즈가 불러야** 붙는다 (2026-09-14 정정)
 #
-# 릴리즈 버전의 정본은 `packages/desktop/src-tauri/tauri.conf.json` 이고, 그 숫자는
+# 릴리즈 버전의 정본은 `apps/desktop/src-tauri/tauri.conf.json` 이고, 그 숫자는
 # `release.yml` 이 미는 `chore(release): vX.Y.Z` 커밋에서 올라간다. 그래서 보통의 머지
 # 커밋에서 그 파일을 읽으면 **직전 릴리즈의 숫자**가 나온다 — 거기에 `:0.1.208` 을 붙이면
 # 이미 나간 태그가 그 뒤의 코드를 가리키게 된다.
@@ -113,7 +113,7 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: packages/server/Dockerfile
+          file: apps/server/Dockerfile
           platforms: ${{ matrix.platform }}
           build-args: |
             HARKROOM_COMMIT=${{ github.sha }}
@@ -181,7 +181,7 @@ jobs:
             version="${RELEASE_TAG#v}"
             # 정본과 대조한다. 릴리즈 태그와 파일이 어긋났다면 둘 중 하나가 잘못된 것이고,
             # 그 상태로 `:latest` 를 옮기는 것보다 여기서 서는 편이 낫다.
-            in_file="$(node -p "require('./packages/desktop/src-tauri/tauri.conf.json').version")"
+            in_file="$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")"
             if [ "$version" != "$in_file" ]; then
               echo "::error::릴리즈 태그의 버전($version)과 tauri.conf.json($in_file)이 다르다"
               exit 1

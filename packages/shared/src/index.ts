@@ -82,7 +82,7 @@ export type AgentHarness = (typeof AGENT_HARNESSES)[number];
  * (design.md §4).
  *
  * **이 목록에 들어가는 기준은 하나다: 실물 CLI 로 첫 턴 + resume 왕복이 도는 것을 봤는가**
- * (`packages/agent/README.md` harness 절, spec §10 "수용" 층).
+ * (`apps/agent/README.md` harness 절, spec §10 "수용" 층).
  *
  * codex 는 2026-09-04 codex-cli 0.153.2 실물 검증에서 첫 exec → 같은 세션 id 의 resume 두 번,
  * 그리고 격리 CODEX_HOME 을 쓴 대화형 resume 까지 완주했다. 대화형 CLI 가
@@ -106,8 +106,8 @@ export const RUNNABLE_HARNESSES = ['claude-code', 'codex', 'opencode'] as const 
  * 풀 선택을 그릴지). 각자 `harness === 'claude-code'` 를 적으면 같은 사실이 두 벌이 되고,
  * 하네스가 늘 때 한쪽만 고치는 사고가 난다 — 이 저장소가 반복 결함으로 지목한 모양이다.
  *
- * 러너 쪽 어댑터 표(`packages/agent/src/adapters/`)의 `account.pooled` 가 같은 사실이고,
- * 둘이 어긋나지 않는지는 `packages/agent/test/adapterParity.test.ts` 가 지킨다.
+ * 러너 쪽 어댑터 표(`apps/agent/src/adapters/`)의 `account.pooled` 가 같은 사실이고,
+ * 둘이 어긋나지 않는지는 `apps/agent/test/adapterParity.test.ts` 가 지킨다.
  *
  * ## 이 값이 거짓인데 화면이 풀을 그리면
  *
@@ -2223,7 +2223,7 @@ export interface ProjectionStatus extends ProjectionRuntime {
  */
 export interface ServerVersion {
   /**
-   * 릴리스 버전(`X.Y.Z`). 정본은 `packages/desktop/src-tauri/tauri.conf.json` 이고
+   * 릴리스 버전(`X.Y.Z`). 정본은 `apps/desktop/src-tauri/tauri.conf.json` 이고
    * 서버 이미지는 그 파일을 그대로 실어 읽는다(`server/src/version.ts`).
    *
    * **`null` 은 "모른다"이지 "없다"가 아니다** — 그 파일이 없는 구성(부분 체크아웃 등)에서
@@ -2435,7 +2435,7 @@ export function skillGroupOf(skill: WorkspaceSkillView): SkillGroupId {
  * 이 절의 타입이 **불투명 우체국**(스펙 §2)의 계약이다. 바이트는 항상 `data: string`
  * (base64) 로만 오간다 — 서버는 봉투(JSON)를 열어 `sessionId` 만 읽고 `data` 는
  * **절대 디코드하지 않는다.** 디코드하면 잘린 UTF-8 이 U+FFFD 로 치환되고 ANSI
- * 이스케이프가 깨져 xterm 이 화면을 재구성하지 못한다(`packages/agent/src/pty.ts`
+ * 이스케이프가 깨져 xterm 이 화면을 재구성하지 못한다(`apps/agent/src/pty.ts`
  * 의 `RingBuffer` 주석이 같은 이유로 문자 경계 정렬을 거부한다).
  *
  * base64 를 고른 이유: WS 는 바이너리 프레임을 실을 수 있지만, 한 소켓에 세션이
@@ -2620,7 +2620,7 @@ export type RelayRunnerFrame =
  *
  * **입력을 여는 것은 턴 모드를 바꾸는 것이 아니다.** 이 프레임은 PTY stdin 에 바이트를
  * 넣을 뿐이고, 그 턴의 `TurnMode` 도 `mention_permission` 도 건드리지 않는다(#141 회귀선의
- * 새 형태 — `packages/agent/test/mentionTurn.test.ts` 가 조립된 plan 을 직접 비교한다).
+ * 새 형태 — `apps/agent/test/mentionTurn.test.ts` 가 조립된 plan 을 직접 비교한다).
  *
  * `data` 는 `output` 과 **같은 규율**로 base64 다: 서버는 이 바이트도 열지 않는다.
  * 사람이 친 것에도 비밀이 섞인다(붙여 넣은 토큰, 비밀번호 프롬프트의 답).
@@ -2962,7 +2962,7 @@ export function extractPreviewUrls(body: string, max = 3): string[] {
 /**
  * `sysexits.h` 의 `EX_CONFIG`. "설정이 틀렸다 — 재시도로 낫지 않는다"는 뜻이다.
  *
- * **여기 있는 이유**: 러너가 이 코드로 물러나고(`packages/agent/src/exit.ts`), 앱이 이
+ * **여기 있는 이유**: 러너가 이 코드로 물러나고(`apps/agent/src/exit.ts`), 앱이 이
  * 코드를 보고 화면 문구를 정한다(`runnerLauncher.ts::handleExit`). 두 곳이 각자 `78` 을
  * 리터럴로 적으면 한쪽만 바뀌는 날이 온다.
  */
@@ -2990,7 +2990,7 @@ export const EX_CONFIG = 78;
  * `@harkroom/agent` 는 데스크탑의 **devDependency** 다 — 테스트는 그것을 import 할 수
  * 있지만 웹뷰 번들은 못 한다(그리고 그 패키지는 `node-pty` 같은 네이티브 의존을 끌고
  * 온다). 이 파일은 Node 의존이 없는 순수 타입·상수이고 웹뷰가 이미 import 한다.
- * `packages/agent/src/exit.ts` 는 이제 여기서 다시 낸다 — **값은 하나뿐이다.**
+ * `apps/agent/src/exit.ts` 는 이제 여기서 다시 낸다 — **값은 하나뿐이다.**
  */
 /**
  * `retiring` 사유가 **Rust 를 지나 앱까지 오는 접합면**(2026-09-07 후속).
@@ -3095,7 +3095,7 @@ export function runnerExitReason(
  * `CREDENTIAL_REJECTED_LINE` 주석의 같은 사정). 그래서 **이름만** 여기 둔다.
  *
  * 두 곳이 갈릴 위험은 있다. 그 위험을 회귀선으로 막는다 —
- * `packages/agent/test/harnessBinary.test.ts` 가 `PRESETS` 의 실제 명령과 이 표를
+ * `apps/agent/test/harnessBinary.test.ts` 가 `PRESETS` 의 실제 명령과 이 표를
  * 대조한다. 갈리면 빨개진다.
  *
  * 모르는 하네스면 `null` — **지어내지 않는다**(`#368`). 그때 문구는 이름 없이 나간다.
@@ -3247,7 +3247,7 @@ export interface CollabProposalsView {
  * 기억(memory)의 두 한도. **서버에만 두면 화면이 그 값을 다시 적게 된다.**
  *
  * 설정 화면이 `core` 의 길이 게이지와 `81 / 200` 을 그리려면 이 두 수가 필요하다.
- * 데스크탑은 `packages/server` 를 import 할 수 없으므로 그 자리에서 `8000` 을 다시
+ * 데스크탑은 `apps/server` 를 import 할 수 없으므로 그 자리에서 `8000` 을 다시
  * 적는 길밖에 없는데, 그러면 한도를 올리는 날 화면만 낡은 값을 말한다 — 그 결함이
  * 이 저장소가 "같은 판정이 두 벌"이라고 부르는 것이다.
  *

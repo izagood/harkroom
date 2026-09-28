@@ -2,16 +2,16 @@
 #
 # ## 왜 node_modules 를 반드시 빼야 하는가
 #
-# `packages/server/Dockerfile` 은 이 순서로 돈다:
+# `apps/server/Dockerfile` 은 이 순서로 돈다:
 #
 #   RUN pnpm install ...          ← 컨테이너 안에 제대로 설치한다
-#   COPY packages/server packages/server   ← 그 뒤에 소스를 덮어쓴다
+#   COPY apps/server apps/server   ← 그 뒤에 소스를 덮어쓴다
 #
-# 이때 호스트의 `packages/server/node_modules` 가 함께 복사되면 방금 설치한 것을
+# 이때 호스트의 `apps/server/node_modules` 가 함께 복사되면 방금 설치한 것을
 # **덮어쓴다.** 그리고 pnpm 은 실제 패키지를 루트 `node_modules/.pnpm/` 에 두고
 # 각 패키지에는 **심링크만** 건다:
 #
-#   packages/server/node_modules/fastify -> ../../../node_modules/.pnpm/fastify@5.12.1/...
+#   apps/server/node_modules/fastify -> ../../../node_modules/.pnpm/fastify@5.12.1/...
 #
 # `COPY` 는 그 심링크는 가져오지만 **루트 `.pnpm` 은 안 가져온다**(복사 대상이 아니다).
 # 결과는 **가리키는 곳이 없는 심링크**이고, 런타임에 이렇게 죽는다:
@@ -34,7 +34,7 @@ target
 **/target
 
 # 앱 사이드카 산출물(`#431`) — 서버 이미지와 무관하고 수십 MB 다.
-packages/desktop/src-tauri/binaries
+apps/desktop/src-tauri/binaries
 
 # 저장소 메타·로컬 도구
 .git

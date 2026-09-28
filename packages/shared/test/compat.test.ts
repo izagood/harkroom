@@ -9,9 +9,16 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { MIN_SERVER_VERSION, compareRelease, serverCompat } from '../src/compat.js';
 
-/** 릴리스 버전의 **정본**(`desktop/scripts/sync-version.mjs` 상단에 그 근거가 있다). */
+/**
+ * 릴리스 버전의 **정본**(`apps/desktop/scripts/sync-version.mjs` 상단에 그 근거가 있다).
+ *
+ * **이 경로는 저장소의 두 최상위를 건너뛴다**(`packages/shared/test` → `apps/desktop`).
+ * `apps/` 와 `packages/` 로 나뉘면서 이 줄이 유일하게 그 선을 넘는 자리가 됐다 —
+ * 같은 최상위 안에서 형제를 가리키던 것들(`apps/server/src/version.ts` 등)은 함께
+ * 옮겨 가서 그대로 산다. 재배치 때 **여기 하나만 깨졌고**, 그것을 잡은 것이 이 시험이다.
+ */
 const releaseVersion = (JSON.parse(readFileSync(
-  new URL('../../desktop/src-tauri/tauri.conf.json', import.meta.url), 'utf8',
+  new URL('../../../apps/desktop/src-tauri/tauri.conf.json', import.meta.url), 'utf8',
 )) as { version: string }).version;
 
 describe('compareRelease', () => {

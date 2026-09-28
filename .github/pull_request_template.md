@@ -15,7 +15,7 @@ PR 제목·본문은 한국어로 쓴다(CONTRIBUTING.md 「Language Convention�
 
 <!-- 실제로 돌린 것만 적는다. 화면이 바뀌면 스크린샷을 붙인다 -->
 
-- [ ] 바꾼 패키지의 타입체크: `cd packages/<p> && npx tsc -p .`
+- [ ] 바꾼 패키지의 타입체크: `cd apps/<p>`(또는 `packages/<p>`)`&& npx tsc -p .`
 - [ ] 바꾼 패키지의 테스트 전체: `pnpm --filter @harkroom/<p> test`
 - [ ] 버그 수정이면 회귀 테스트가 **수정 전에 빨갛고** 수정 후 초록인 것을 확인했다
 - [ ] 공용 타입(`packages/shared`)을 건드렸다면 모든 패키지 타입체크를 돌렸다
