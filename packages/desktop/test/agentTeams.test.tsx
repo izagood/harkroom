@@ -38,7 +38,7 @@ import { acc, accountsResult, chan, fakeApi, fakeWsFactory } from './helpers/fak
 const team = (
   id: string, name: string, memberCount = 0, leadAccountId: string | null = null,
 ): AgentTeamRow =>
-  ({ id, name, createdBy: 'u1', createdAt: '2024-01-01T00:00:00.000Z', memberCount, leadAccountId });
+  ({ id, name, createdBy: 'u1', createdAt: '2024-01-01T00:00:00.000Z', memberCount, leadAccountId, invokeScope: 'community', ownerAccountId: null });
 
 const member = (accountId: string, handle: string, disabled = false): AgentTeamMemberRow =>
   ({ accountId, handle, disabled });
