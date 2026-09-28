@@ -597,3 +597,49 @@ describe('툴바 여덟 칸 (2026-09-09)', () => {
     }
   });
 });
+
+// 2026-09-28 신고: 목록 **맨 위** 메시지에서 이모지 창이 위로만 떠서 스크롤 상자의 위
+// 테두리(채널 머리)에 잘려 통째로 보이지 않았다. jsdom 은 레이아웃이 없어 좌표를 스텁한다 —
+// 좌표가 가짜여도 **재고 나서 어느 쪽으로 여는가** 라는 판단은 진짜 코드가 한다.
+describe('이모지 창 — 위에 자리가 없으면 아래로 연다', () => {
+  const PANEL_H = 180;
+  const stubRects = (toolbarTop: number) => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const box = (top: number, bottom: number) =>
+        ({ top, bottom, height: bottom - top, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+      if (this.dataset.testid === 'reaction-picker-panel') return box(0, PANEL_H);
+      if (this.getAttribute('role') === 'toolbar') return box(toolbarTop, toolbarTop + 36);
+      if (this.dataset.scroller !== undefined) return box(100, 700);
+      return box(0, 0);
+    });
+  };
+  const openPicker = () => {
+    render(
+      <div data-scroller style={{ overflowY: 'auto' }}>
+        <MessageItem message={msg('m1', 'c1', 1, 'hello', 'u2')} />
+      </div>,
+    );
+    fireEvent.click(screen.getByTestId('toolbar-react-pick'));
+    return screen.getByTestId('reaction-picker-panel');
+  };
+
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('스크롤 상자 위 테두리에 붙은 메시지면 아래로 뒤집는다', () => {
+    fakeController();
+    // 툴바 위로 110-100=10px 뿐 — 180px 창은 안 들어가고 아래는 넉넉하다.
+    stubRects(110);
+    const panel = openPicker();
+    expect(panel.dataset.placement).toBe('bottom');
+    expect(panel.className).toMatch(/\btop-full\b/);
+    expect(panel.className).not.toMatch(/\bbottom-full\b/);
+  });
+
+  it('위에 자리가 있으면 원래대로 위로 연다', () => {
+    fakeController();
+    stubRects(500);
+    const panel = openPicker();
+    expect(panel.dataset.placement).toBe('top');
+    expect(panel.className).toMatch(/\bbottom-full\b/);
+  });
+});

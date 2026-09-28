@@ -1,8 +1,10 @@
 import type { MessageRow } from '@harkroom/shared';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { useT } from '../i18n/useT';
 import { reactorNames } from '../lib/reactionNames';
+import { clipBounds, PLACEMENT_GAP } from './Menu';
 
 /**
  * 피커에 올려 둘 이모지. 전체 이모지 검색은 별개 작업이고, 실제로 쓰이는 것은 소수다 —
@@ -57,10 +59,32 @@ export const INLINE = ['✅', '👀', '👍'];
  * 32px, 사이가 4px 이다. 글자 크기는 `text-title`(17px)이다 — 20px 이 더 낫겠지만 4단
  * 회귀선이 임의 글자 크기를 잡는다(`test/typeScale.test.ts`), 그리고 그 회귀선이 지키는
  * 것("단이 단으로 남는다")이 이모지 3px 보다 크다.
+ *
+ * ## 위에 자리가 없으면 아래로 뒤집는다
+ *
+ * 위로만 뜨던 판은 목록 **맨 위** 메시지에서 창이 채널 머리(스크롤 상자의 위 테두리)에
+ * 잘려 통째로 보이지 않았다(2026-09-28 신고). `⋯` 메뉴가 같은 결함을 이미 고쳐 두었으므로
+ * 판단도 그쪽 것을 그대로 쓴다(`Menu` 의 `clipBounds` — 뷰포트 ∩ 스크롤 조상). 재는
+ * 기준은 창의 부모인 **툴바**이고, 원하는 쪽(위)에 안 들어갈 때만, 아래가 더 넓으면 뒤집는다.
  */
 export function ReactionPickerPanel({ message, onClose }: { message: MessageRow; onClose: () => void }) {
   const myId = useActiveStore((s) => s.me?.id ?? null);
   const t = useT();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [below, setBelow] = useState(false);
+
+  // `useLayoutEffect` 는 그리기 전에 돈다 — 뒤집혀도 위에 한 번 그려졌다 내려오는 깜빡임이 없다.
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    const anchor = panel?.parentElement;
+    if (!panel || !anchor) return;
+    const height = panel.getBoundingClientRect().height;
+    const a = anchor.getBoundingClientRect();
+    const clip = clipBounds(anchor);
+    const roomAbove = a.top - clip.top - PLACEMENT_GAP;
+    const roomBelow = clip.bottom - a.bottom - PLACEMENT_GAP;
+    setBelow(height > roomAbove && roomBelow > roomAbove);
+  }, []);
 
   const toggle = (emoji: string, on: boolean) => {
     // 고르면 바로 닫는다 — 한 말에 셋을 연달아 다는 일은 드물고, 열린 채로 두면 창이
@@ -72,11 +96,13 @@ export function ReactionPickerPanel({ message, onClose }: { message: MessageRow;
 
   return (
     <div
+      ref={panelRef}
       data-testid="reaction-picker-panel"
+      data-placement={below ? 'bottom' : 'top'}
       /* 오른쪽 끝을 툴바에 맞춘다(`right-0`) — 툴바가 행의 오른쪽에 붙어 있으므로 왼쪽에
          맞추면 창이 화면 밖으로 나간다. `bottom-full` 은 "내 아래끝 = 부모의 위끝"이다. */
-      className="absolute bottom-full right-0 mb-1.5 w-58 rounded-[10px] border border-border
-                 bg-surface-raised p-2.5 shadow-lg"
+      className={`absolute right-0 z-10 w-58 rounded-[10px] border border-border bg-surface-raised
+                  p-2.5 shadow-lg ${below ? 'top-full mt-1.5' : 'bottom-full mb-1.5'}`}
     >
       <div className="mb-2 flex items-center justify-between px-0.5 text-meta text-fg-subtle">
         <span>{t('reactions.pickTitle')}</span>
