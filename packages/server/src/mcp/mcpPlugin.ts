@@ -983,15 +983,18 @@ function buildMcpServer(
   // value 가 null 이면 삭제 — 키 부재가 아니라 명시적 null 이 삭제다.
   // .nullable() 은 "값이 반드시 있고 null 일 수 있다"를 의미한다.
   server.registerTool('memory.set', {
-    description: `메모리 저장 또는 삭제(value가 null이면 삭제). description 은 목록에 같이 실리는 한 줄 요약(생략하면 있던 것 유지, 빈 문자열이면 지움). core 는 ${MAX_CORE_MEMORY_LENGTH}자까지. kind: topic(기본)·procedure(절차)·journal(한 작업의 경위 — 목록에 안 실리고 최근 ${MAX_JOURNAL_MEMORIES_PER_ACCOUNT}개만 남는다)`,
+    description: `메모리 저장 또는 삭제(value가 null이면 삭제). ifUpdatedAt(memory.get 의 updatedAt, 새로 만들 땐 null)을 주면 그 사이 바뀌었을 때 conflict 로 거절한다. description 은 목록에 같이 실리는 한 줄 요약(생략하면 있던 것 유지, 빈 문자열이면 지움). core 는 ${MAX_CORE_MEMORY_LENGTH}자까지. kind: topic(기본)·procedure(절차)·journal(한 작업의 경위 — 목록에 안 실리고 최근 ${MAX_JOURNAL_MEMORIES_PER_ACCOUNT}개만 남는다)`,
     inputSchema: {
       slug: z.string().min(1),
       value: z.string().max(MAX_MEMORY_VALUE_LENGTH).nullable(),
       description: z.string().max(MAX_MEMORY_DESCRIPTION_LENGTH).optional(),
       // 종류(070). 생략하면 새 기억은 topic, 있던 기억은 그대로다.
       kind: z.enum(MEMORY_KINDS).optional(),
+      // 낙관적 동시성(M3). memory.get 이 준 updatedAt 을 그대로 준다 — 그 사이 누가 고쳤으면
+      // 쓰지 않고 conflict 를 돌려준다. null 은 "아직 없어야 한다". 생략하면 무조건 쓴다.
+      ifUpdatedAt: z.string().datetime({ offset: true }).nullable().optional(),
     },
-  }, async ({ slug, value, description, kind }) => {
+  }, async ({ slug, value, description, kind, ifUpdatedAt }) => {
     if (!isValidSlug(slug)) {
       return jsonResult({ error: { code: 'invalid_slug', message: MEMORY_SLUG_HINT } });
     }
@@ -1009,7 +1012,23 @@ function buildMcpServer(
         },
       });
     }
-    const result = await setMemory(pool, account.id, slug, value, description, kind);
+    const result = await setMemory(
+      pool, account.id, slug, value, description, kind,
+      ifUpdatedAt === undefined ? undefined : { updatedAt: ifUpdatedAt === null ? null : new Date(ifUpdatedAt) },
+    );
+    if (typeof result === 'object') {
+      const now = result.conflict.updatedAt;
+      return jsonResult({
+        error: {
+          code: 'conflict',
+          message: now
+            ? `그 사이 다른 턴이 이 기억을 고쳤다(지금 판 ${now.toISOString()}). memory.get 으로 지금 값을 읽고, `
+              + '네 변경을 합쳐 그 updatedAt 으로 다시 써라 — 덮어쓰면 그 턴이 적은 것이 사라진다.'
+            : '그 사이 이 기억이 지워졌다. 되살릴 것인지 먼저 판단하고, 되살린다면 ifUpdatedAt: null 로 써라.',
+          updatedAt: now ? now.toISOString() : null,
+        },
+      });
+    }
     if (result === 'too_many') {
       return jsonResult({
         error: { code: 'too_many', message: `at most ${MAX_MEMORY_ITEMS_PER_ACCOUNT} memories per account` },
