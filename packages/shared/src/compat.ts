@@ -32,6 +32,7 @@
  *
  * | 값 | 왜 | 무엇이 깨지나 |
  * |---|---|---|
+ * | `0.3.23` | `/automations` CRUD·`POST /automations/:id/run` 이 그 릴리스에 들어갔고(#878), 앱의 설정 › Automations(#879)가 그것을 부른다 | Automations 화면이 목록을 못 받고 만들기가 404 |
  * | `0.3.14` | `POST /accounts/agents/:id/restart` 가 그 릴리스에 들어갔고(#869), 앱의 [재시작]이 그것을 부른다 | [재시작]이 404 로 죽는다 |
  * | `0.2.22` | `PATCH /accounts/agents/:id` 가 `handle` 을 받는다(#843) | 에이전트 이름 바꾸기가 조용한 200 으로 무시된다 |
  * | `0.2.18` | `DELETE /accounts/agents/:id`(#836) | 에이전트 삭제가 404 |
@@ -48,7 +49,7 @@
  *
  * 근거 없이 높이지는 않는다 — 멀쩡한 서버가 고장으로 그려지면 그 순간 이 값은 소음이 된다.
  */
-export const MIN_SERVER_VERSION = '0.3.14';
+export const MIN_SERVER_VERSION = '0.3.23';
 
 /** `X.Y.Z` 만 견준다. 그 밖의 모양은 견주지 않는다(아래 `compareRelease` 주석). */
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
