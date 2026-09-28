@@ -2,14 +2,40 @@ import type { Pool } from 'pg';
 
 // 두 한도의 정본은 `@harkroom/shared` 다 — 설정 화면이 같은 값을 그려야 하는데
 // 데스크탑은 이 패키지를 import 할 수 없다. 여기서는 다시 내보내기만 한다.
-import { MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH } from '@harkroom/shared';
+import {
+  MAX_CORE_MEMORY_LENGTH, MAX_MEMORY_DESCRIPTION_LENGTH, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH,
+} from '@harkroom/shared';
 
-export { MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH };
+export { MAX_CORE_MEMORY_LENGTH, MAX_MEMORY_DESCRIPTION_LENGTH, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH };
+
+/** slug 마다 남기는 이전 판 수(069). 되돌릴 길이면 되고, 역사서가 아니다. */
+export const MAX_MEMORY_REVISIONS_PER_SLUG = 5;
 
 export interface MemoryEntry {
   slug: string;
   value: string;
   updatedAt: Date;
+  description: string | null;
+  createdAt: Date;
+  readCount: number;
+  lastReadAt: Date | null;
+}
+
+const ENTRY_COLUMNS = `slug, value, updated_at as "updatedAt", description, created_at as "createdAt",
+  read_count as "readCount", last_read_at as "lastReadAt"`;
+
+/** 목록 한 줄 — 러너가 턴 프롬프트의 `<memory-index>` 에 싣는다(본문은 없다). */
+export interface MemoryIndexEntry {
+  slug: string;
+  description: string | null;
+}
+
+export async function listMemoryIndex(pool: Pool, accountId: string): Promise<MemoryIndexEntry[]> {
+  const res = await pool.query(
+    `select slug, description from agent_memory where account_id = $1 order by slug`,
+    [accountId],
+  );
+  return res.rows as MemoryIndexEntry[];
 }
 
 /**
@@ -56,7 +82,25 @@ export async function getMemory(
   pool: Pool, accountId: string, slug: string,
 ): Promise<MemoryEntry | null> {
   const res = await pool.query(
-    `select slug, value, updated_at as "updatedAt" from agent_memory where account_id = $1 and slug = $2`,
+    `select ${ENTRY_COLUMNS} from agent_memory where account_id = $1 and slug = $2`,
+    [accountId, slug],
+  );
+  if (!res.rowCount) return null;
+  return res.rows[0] as MemoryEntry;
+}
+
+/**
+ * 에이전트가 **읽었다**는 사실을 남기며 읽는다(069). 정리의 근거가 이것이다 — 무엇이 안
+ * 읽히는지 모르면 무엇을 지울지도 모른다. `updated_at` 은 건드리지 않는다: 읽기가 판본
+ * (`memoryRev`)을 바꾸면 러너 캐시가 읽을 때마다 무효가 된다.
+ */
+export async function readMemoryCounted(
+  pool: Pool, accountId: string, slug: string,
+): Promise<MemoryEntry | null> {
+  const res = await pool.query(
+    `update agent_memory set read_count = read_count + 1, last_read_at = now()
+     where account_id = $1 and slug = $2
+     returning ${ENTRY_COLUMNS}`,
     [accountId, slug],
   );
   if (!res.rowCount) return null;
@@ -72,8 +116,7 @@ export async function getMemory(
  */
 export async function listMemoryEntries(pool: Pool, accountId: string): Promise<MemoryEntry[]> {
   const res = await pool.query(
-    `select slug, value, updated_at as "updatedAt" from agent_memory
-     where account_id = $1 order by slug`,
+    `select ${ENTRY_COLUMNS} from agent_memory where account_id = $1 order by slug`,
     [accountId],
   );
   return res.rows as MemoryEntry[];
@@ -81,21 +124,42 @@ export async function listMemoryEntries(pool: Pool, accountId: string): Promise<
 
 /** slug 하나를 지운다. 없는 것을 지워도 성공이다 — setMemory 의 멱등 규칙과 같다. */
 export async function deleteMemory(pool: Pool, accountId: string, slug: string): Promise<void> {
+  await deleteWithRevision(pool, accountId, slug);
+}
+
+/** 지우기 전 본문을 이전 판으로 남기고 지운다 — 사람이 지워도, 에이전트가 지워도 되돌릴 수 있다. */
+async function deleteWithRevision(pool: Pool, accountId: string, slug: string): Promise<void> {
   await pool.query(
-    `delete from agent_memory where account_id = $1 and slug = $2`,
+    `with d as (
+       delete from agent_memory where account_id = $1 and slug = $2
+       returning slug, value, description, updated_at)
+     insert into agent_memory_revision (account_id, slug, value, description, updated_at)
+     select $1, slug, value, description, updated_at from d`,
     [accountId, slug],
+  );
+  await pruneRevisions(pool, accountId, slug);
+}
+
+async function pruneRevisions(pool: Pool, accountId: string, slug: string): Promise<void> {
+  await pool.query(
+    `delete from agent_memory_revision
+     where account_id = $1 and slug = $2 and id not in (
+       select id from agent_memory_revision where account_id = $1 and slug = $2
+       order by replaced_at desc, id desc limit $3)`,
+    [accountId, slug, MAX_MEMORY_REVISIONS_PER_SLUG],
   );
 }
 
+/**
+ * `description` 은 **세 상태**다: `undefined` 면 있던 요약을 그대로 두고(요약 없이 본문만
+ * 고치는 호출이 요약을 지우면 안 된다), 문자열이면 바꾸고, 빈 문자열이면 지운다.
+ */
 export async function setMemory(
-  pool: Pool, accountId: string, slug: string, value: string | null,
+  pool: Pool, accountId: string, slug: string, value: string | null, description?: string,
 ): Promise<MemoryResult> {
   if (value === null) {
     // 없는 것을 지워도 성공이다 — 위 MemoryResult 주석의 이유.
-    await pool.query(
-      `delete from agent_memory where account_id = $1 and slug = $2`,
-      [accountId, slug],
-    );
+    await deleteWithRevision(pool, accountId, slug);
     return 'ok';
   }
 
@@ -105,14 +169,51 @@ export async function setMemory(
   // `exists(...)` 절이 있는 이유: **기존 항목을 고치는 것은 한도에 걸리지 않아야 한다.**
   // 한도는 항목이 늘어나는 것을 막으려는 것이고, 200개에 도달한 에이전트가 자기 메모리를
   // 수정조차 못 하게 되면 저장소가 잠긴다.
+  //
+  // 이전 판(069)도 **같은 문장**에서 남긴다. 따로 하면 두 쓰기 사이에 다른 턴이 끼어 엉뚱한
+  // 본문을 "이전 판"으로 적는다. `prev` 는 문장 시작 시점의 스냅숏이라 덮어쓰기 전 값이다.
   const res = await pool.query(
-    `insert into agent_memory (account_id, slug, value)
-     select $1, $2, $3
-     where (select count(*) from agent_memory where account_id = $1) < $4
-        or exists (select 1 from agent_memory where account_id = $1 and slug = $2)
-     on conflict (account_id, slug) do update set value = excluded.value, updated_at = now()`,
-    [accountId, slug, value, MAX_MEMORY_ITEMS_PER_ACCOUNT],
+    `with prev as (
+       select slug, value, description, updated_at from agent_memory where account_id = $1 and slug = $2),
+     ins as (
+       insert into agent_memory (account_id, slug, value, description)
+       select $1, $2, $3, nullif($5, '')
+       where (select count(*) from agent_memory where account_id = $1) < $4
+          or exists (select 1 from prev)
+       on conflict (account_id, slug) do update set
+         value = excluded.value,
+         description = case when $6 then excluded.description else agent_memory.description end,
+         updated_at = now()
+       returning 1),
+     rev as (
+       insert into agent_memory_revision (account_id, slug, value, description, updated_at)
+       select $1, slug, value, description, updated_at from prev where exists (select 1 from ins)
+       returning 1)
+     select (select count(*) from ins)::int as n`,
+    [accountId, slug, value, MAX_MEMORY_ITEMS_PER_ACCOUNT, description ?? null, description !== undefined],
   );
   // 행이 안 들어갔다는 것은 where 절이 걸렀다는 뜻이고, 그 조건은 한도뿐이다.
-  return res.rowCount ? 'ok' : 'too_many';
+  if (!res.rows[0].n) return 'too_many';
+  await pruneRevisions(pool, accountId, slug);
+  return 'ok';
+}
+
+export interface MemoryRevision {
+  value: string;
+  description: string | null;
+  updatedAt: Date;
+  replacedAt: Date;
+}
+
+/** slug 의 이전 판, 최근 것부터. 사람이 보는 화면과 정리 턴이 되돌릴 때 쓴다. */
+export async function listMemoryRevisions(
+  pool: Pool, accountId: string, slug: string,
+): Promise<MemoryRevision[]> {
+  const res = await pool.query(
+    `select value, description, updated_at as "updatedAt", replaced_at as "replacedAt"
+     from agent_memory_revision where account_id = $1 and slug = $2
+     order by replaced_at desc, id desc`,
+    [accountId, slug],
+  );
+  return res.rows as MemoryRevision[];
 }

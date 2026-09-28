@@ -42,6 +42,8 @@ export interface MemorySnapshot {
   rev: string | null;
   core: string | null;
   slugs: string[];
+  /** slug → 한 줄 요약(서버 069). 옛 서버면 없다. */
+  descriptions?: Record<string, string>;
   /** 서버에서 받아 온 시각(ISO). 폴백일 때 프롬프트가 "언제 것인지"를 말한다. */
   fetchedAt: string;
 }
@@ -49,13 +51,14 @@ export interface MemorySnapshot {
 export interface MemoryRead {
   core: string | null;
   slugs: string[];
+  descriptions?: Record<string, string>;
   /** 서버를 못 읽어 사본으로 돈다 — 그 사본을 받은 시각. */
   stale?: { fetchedAt: string };
 }
 
 /** 서버에서 읽는 두 가지. `HarkroomAgentClient` 가 구현한다. 실패는 던진다. */
 export interface MemorySource {
-  listMemory(): Promise<{ slugs: string[]; rev?: string }>;
+  listMemory(): Promise<{ slugs: string[]; rev?: string; entries?: { slug: string; description: string | null }[] }>;
   getMemoryValue(slug: string): Promise<string | null>;
 }
 
@@ -67,6 +70,13 @@ export interface MemoryCache {
 
 /** 사본 파일 이름. 에이전트 state 디렉터리 바로 아래다(지시문 파일과 같은 자리). */
 export const MEMORY_CACHE_FILE = 'memory-cache.json';
+
+function view(snap: MemorySnapshot): MemoryRead {
+  return {
+    core: snap.core, slugs: snap.slugs,
+    ...(snap.descriptions ? { descriptions: snap.descriptions } : {}),
+  };
+}
 
 export function createMemoryCache(deps: {
   /** 이 에이전트(인스턴스)의 state 디렉터리 — `stateDir.ts::resolveAgentStateDir` 가 정한 것. */
@@ -91,6 +101,7 @@ export function createMemoryCache(deps: {
           core: typeof parsed.core === 'string' ? parsed.core : null,
           slugs: parsed.slugs.filter((s): s is string => typeof s === 'string'),
           fetchedAt: parsed.fetchedAt,
+          ...(parsed.descriptions && typeof parsed.descriptions === 'object' ? { descriptions: parsed.descriptions } : {}),
         }
         : null;
     } catch {
@@ -126,7 +137,7 @@ export function createMemoryCache(deps: {
       const batchRev = hint && now().getTime() - hint.at <= HINT_TTL_MS ? hint.rev : undefined;
       hint = undefined;
       if (batchRev !== undefined && cached?.rev === batchRev) {
-        return { core: cached.core, slugs: cached.slugs };
+        return view(cached);
       }
 
       try {
@@ -135,19 +146,25 @@ export function createMemoryCache(deps: {
         const slugs = (listed.slugs ?? []).filter((s) => s !== 'core');
         if (rev !== null && cached?.rev === rev) {
           // 목록만 확인하면 됐다 — core 본문은 사본 그대로다.
-          return { core: cached.core, slugs: cached.slugs };
+          return view(cached);
         }
         const core = (listed.slugs ?? []).includes('core')
           ? await deps.source.getMemoryValue('core')
           : null;
-        const next: MemorySnapshot = { rev, core, slugs, fetchedAt: now().toISOString() };
+        const descriptions = Object.fromEntries(
+          (listed.entries ?? []).filter((e) => e.slug !== 'core' && e.description).map((e) => [e.slug, e.description!]),
+        );
+        const next: MemorySnapshot = {
+          rev, core, slugs, fetchedAt: now().toISOString(),
+          ...(Object.keys(descriptions).length ? { descriptions } : {}),
+        };
         snap = next;
         await persist(next);
-        return { core, slugs };
+        return view(next);
       } catch (err: unknown) {
         if (!cached) throw err;
         log(`[memoryCache] 메모리 조회 실패 — ${cached.fetchedAt} 사본으로 돈다: ${err instanceof Error ? err.message : String(err)}`);
-        return { core: cached.core, slugs: cached.slugs, stale: { fetchedAt: cached.fetchedAt } };
+        return { ...view(cached), stale: { fetchedAt: cached.fetchedAt } };
       }
     },
   };

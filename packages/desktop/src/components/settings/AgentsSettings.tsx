@@ -3,7 +3,7 @@ import {
   AGENT_HARNESSES, HANDLE_PATTERN, RUNNABLE_HARNESSES,
   type AgentConfig, type AgentDefaults, type AgentTeamMemberRow, type AgentTeamRow,
   type AgentView, type MentionPermission, type OperatorView, type OperatorCapabilities, type PatView, harnessHasAccountPool,
-  MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH } from '@harkroom/shared';
+  MAX_CORE_MEMORY_LENGTH, MAX_MEMORY_ITEMS_PER_ACCOUNT } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { ApiError } from '../../lib/api';
 import { useActiveStore } from '../../state/communities';
@@ -1775,12 +1775,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                         <div className="h-1 flex-1 overflow-hidden rounded-full bg-border">
                           <div
                             className={`h-full rounded-full ${
-                              memorySplit.core.value.length >= MAX_MEMORY_VALUE_LENGTH * 0.9
+                              memorySplit.core.value.length >= MAX_CORE_MEMORY_LENGTH * 0.9
                                 ? 'bg-warning' : 'bg-fg-agent'
                             }`}
                             style={{
                               width: `${Math.min(100, Math.round(
-                                (memorySplit.core.value.length / MAX_MEMORY_VALUE_LENGTH) * 100,
+                                (memorySplit.core.value.length / MAX_CORE_MEMORY_LENGTH) * 100,
                               ))}%`,
                             }}
                           />
@@ -1788,7 +1788,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                         <span className="flex-none text-meta text-fg-subtle">
                           {t('agents.memory.charsOfMax', {
                             n: memorySplit.core.value.length.toLocaleString(locale),
-                            max: MAX_MEMORY_VALUE_LENGTH.toLocaleString(locale),
+                            max: MAX_CORE_MEMORY_LENGTH.toLocaleString(locale),
                           })}
                         </span>
                       </div>

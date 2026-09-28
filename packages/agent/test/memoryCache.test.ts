@@ -132,6 +132,16 @@ describe('memoryCache', () => {
     await expect(cache.read()).rejects.toThrow();
   });
 
+  it('목록의 요약(entries)을 사본에 담아 폴백에서도 돌려준다', async () => {
+    const { state, source } = fakeSource({ core: 'C', slugs: ['mem/a'], rev: 'r1' });
+    const list = source.listMemory.bind(source);
+    source.listMemory = async () => ({ ...(await list()), entries: [{ slug: 'core', description: null }, { slug: 'mem/a', description: '요약' }] });
+    const cache = createMemoryCache({ stateDir, source, now, log: silent });
+    expect((await cache.read()).descriptions).toEqual({ 'mem/a': '요약' });
+    state.down = true;
+    expect((await cache.read()).descriptions).toEqual({ 'mem/a': '요약' });
+  });
+
   // 옛 서버(rev 없음): 매번 받아 오지만 폴백 사본은 남는다.
   it('without server rev it always fetches but still keeps a fallback', async () => {
     const { state, source } = fakeSource({ core: 'C', slugs: [] });

@@ -19,7 +19,10 @@ import {
   DELEGATION_DEADLINE_DEFAULT_SEC, DELEGATION_DEADLINE_MAX_SEC, DELEGATION_DEADLINE_MIN_SEC,
 } from '../services/delegations.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
-import { getMemory, listMemory, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, memoryRev, setMemory } from '../services/memory.js';
+import {
+  listMemoryIndex, MAX_CORE_MEMORY_LENGTH, MAX_MEMORY_DESCRIPTION_LENGTH, MAX_MEMORY_ITEMS_PER_ACCOUNT,
+  MAX_MEMORY_VALUE_LENGTH, memoryRev, readMemoryCounted, setMemory,
+} from '../services/memory.js';
 import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
 import { scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC } from '../services/agentWakes.js';
 import { guideFor } from './guide.js';
@@ -937,8 +940,9 @@ function buildMcpServer(
   }, async () => {
     // rev 를 함께 준다 — 러너가 이 값을 자기 사본과 대 보고, 같으면 core 를 다시 받지 않는다
     // (services/memory.ts::memoryRev). 옛 러너는 모르는 필드를 무시한다.
-    const [slugs, rev] = await Promise.all([listMemory(pool, account.id), memoryRev(pool, account.id)]);
-    return jsonResult({ slugs, rev });
+    // entries 는 slug 와 한 줄 요약(069) — 러너가 목록에 같이 싣는다. slugs 는 옛 러너용으로 둔다.
+    const [entries, rev] = await Promise.all([listMemoryIndex(pool, account.id), memoryRev(pool, account.id)]);
+    return jsonResult({ slugs: entries.map((e) => e.slug), entries, rev });
   });
 
   server.registerTool('memory.get', {
@@ -948,25 +952,45 @@ function buildMcpServer(
     if (!isValidSlug(slug)) {
       return jsonResult({ error: { code: 'invalid_slug', message: MEMORY_SLUG_HINT } });
     }
-    const memory = await getMemory(pool, account.id, slug);
+    // 읽은 횟수를 센다(069) — 무엇이 안 읽히는지가 정리의 근거다.
+    const memory = await readMemoryCounted(pool, account.id, slug);
     if (!memory) {
       return jsonResult({ error: { code: 'not_found', message: 'memory not found' } });
     }
-    return jsonResult({ slug: memory.slug, value: memory.value, updatedAt: memory.updatedAt.toISOString() });
+    return jsonResult({
+      slug: memory.slug, value: memory.value, updatedAt: memory.updatedAt.toISOString(),
+      ...(memory.description ? { description: memory.description } : {}),
+    });
   });
 
   // value 가 null 이면 삭제 — 키 부재가 아니라 명시적 null 이 삭제다.
   // .nullable() 은 "값이 반드시 있고 null 일 수 있다"를 의미한다.
   server.registerTool('memory.set', {
-    description: '메모리 저장 또는 삭제(value가 null이면 삭제)',
-    inputSchema: { slug: z.string().min(1), value: z.string().max(MAX_MEMORY_VALUE_LENGTH).nullable() },
-  }, async ({ slug, value }) => {
+    description: `메모리 저장 또는 삭제(value가 null이면 삭제). description 은 목록에 같이 실리는 한 줄 요약(생략하면 있던 것 유지, 빈 문자열이면 지움). core 는 ${MAX_CORE_MEMORY_LENGTH}자까지`,
+    inputSchema: {
+      slug: z.string().min(1),
+      value: z.string().max(MAX_MEMORY_VALUE_LENGTH).nullable(),
+      description: z.string().max(MAX_MEMORY_DESCRIPTION_LENGTH).optional(),
+    },
+  }, async ({ slug, value, description }) => {
     if (!isValidSlug(slug)) {
       return jsonResult({ error: { code: 'invalid_slug', message: MEMORY_SLUG_HINT } });
     }
     // 길이는 위 zod `.max()` 가 이미 거른다 — 여기서 또 재지 않는다.
     // 삭제는 멱등이라 '없는 것을 지웠다'는 오류가 아니다(services/memory.ts 주석).
-    const result = await setMemory(pool, account.id, slug, value);
+    // core 는 매 턴 통째로 실린다 — 그래서 한도가 따로다(메모리 고도화 PR3). 전에는 프롬프트에
+    // "2,000자 안쪽"이라고만 적혀 있어 아무도 안 지켰다. 거절에 **어떻게 하라**를 싣는다 —
+    // 이유 없는 거절을 받은 에이전트는 포기하고 엉뚱한 곳(하네스 파일 메모리)에 적는다(09-11 실측).
+    if (slug === 'core' && value !== null && value.length > MAX_CORE_MEMORY_LENGTH) {
+      return jsonResult({
+        error: {
+          code: 'core_too_long',
+          message: `core 는 ${MAX_CORE_MEMORY_LENGTH}자까지다(지금 ${value.length}자). core 는 매 턴 통째로 실린다 — `
+            + '한 가지 주제로 묶이는 것은 `mem/<이름>` 으로 옮기고 core 에는 포인터 한 줄만 남겨라.',
+        },
+      });
+    }
+    const result = await setMemory(pool, account.id, slug, value, description);
     if (result === 'too_many') {
       return jsonResult({
         error: { code: 'too_many', message: `at most ${MAX_MEMORY_ITEMS_PER_ACCOUNT} memories per account` },
