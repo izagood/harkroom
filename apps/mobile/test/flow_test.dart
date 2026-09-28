@@ -41,6 +41,23 @@ MockClient _server() => MockClient((req) async {
         ]);
       }
       if (path == '/reads') return _json({'reads': <Object?>[]});
+      if (path.startsWith('/inbox') && req.method == 'GET') {
+        return _json({
+          'entries': [
+            {
+              'id': 1,
+              'messageId': 'm1',
+              'reason': 'mention',
+              'channelId': 'c1',
+              'authorId': 'a1',
+              'body': '@me 이거 봐 줘',
+              'createdAt': '2026-09-28T00:00:00.000Z',
+              'readAt': null,
+            },
+          ],
+        });
+      }
+      if (path == '/inbox/read') return _json(<String, Object?>{});
       if (path.endsWith('/read') && req.method == 'PUT') return _json(<String, Object?>{});
       if (path.endsWith('/messages') && req.method == 'GET' && req.url.queryParameters['thread'] != null) {
         return _json({
@@ -315,5 +332,48 @@ void main() {
     await tester.pumpAndSettle();
     // 띄우면 사람은 고르고 보냈는데 상대가 오지 않는다.
     expect(find.byKey(const Key('mention-picker')), findsNothing);
+  });
+
+  testWidgets('받은 것 탭에서 부름을 눌러 그 채널로 간다', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+
+    await tester.tap(find.byKey(const Key('tab-inbox')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('inbox-1')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('inbox-1')));
+    await tester.pumpAndSettle();
+
+    // 눌러서 열면 읽음이 된다 — **훑기만 해도 사라지지는 않는다.**
+    expect(state.inboxUnread, 0);
+    // 그 채널의 메시지가 선다.
+    expect(find.byKey(const Key('message-m1')), findsOneWidget);
+  });
+
+  testWidgets('탭을 옮겨도 채널 화면이 다시 만들어지지 않는다', (tester) async {
+    // 스크롤 위치와 치던 글이 사라지면 안 된다 — 채널을 보다 받은 것을 확인하고
+    // 돌아오는 것이 이 앱에서 가장 흔한 동작이다.
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('composer')), '치던 글');
+    await tester.pumpAndSettle();
+
+    // 채널 화면을 닫고 탭을 옮겼다 돌아온다.
+    Navigator.of(tester.element(find.byKey(const Key('composer')))).pop();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('tab-inbox')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('tab-channels')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('channel-c1')), findsOneWidget);
   });
 }

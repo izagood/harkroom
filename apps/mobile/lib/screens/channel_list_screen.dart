@@ -23,14 +23,6 @@ class ChannelListScreen extends StatelessWidget {
           preferredSize: const Size.fromHeight(22),
           child: _ConnectionLine(state: app.connection),
         ),
-        actions: [
-          IconButton(
-            key: const Key('sign-out'),
-            tooltip: t.signOut,
-            icon: const Icon(Icons.logout),
-            onPressed: () => app.signOut(),
-          ),
-        ],
       ),
       body: SafeArea(
         child: Column(

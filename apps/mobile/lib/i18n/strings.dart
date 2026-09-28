@@ -58,6 +58,48 @@ abstract class Strings {
   String get commonRetry;
 
   // ── P1 ───────────────────────────────────────────────────────────────
+  /// 탭 이름 — 채널.
+  String get tabChannels;
+
+  /// 탭 이름 — 나를 부른 것들.
+  String get tabInbox;
+
+  /// 탭 이름 — 나와 연결.
+  String get tabMe;
+
+  /// 부른 사람이 없다.
+  String get inboxEmpty;
+
+  /// 전부 읽음으로.
+  String get inboxMarkAllRead;
+
+  /// 누가 나를 불렀다.
+  String get inboxReasonMention;
+
+  /// 내 스레드에 답이 달렸다.
+  String get inboxReasonThreadReply;
+
+  /// DM.
+  String get inboxReasonDm;
+
+  /// 내가 낸 물음에 답이 왔다.
+  String get inboxReasonAskAnswered;
+
+  /// 내가 낸 물음을 접었다.
+  String get inboxReasonAskClosed;
+
+  /// 모르는 사유. 줄을 **지우지 않는다** — 사유를 몰라도 보이는 편이 낫다.
+  String get inboxReasonOther;
+
+  /// 어느 계정으로 들어와 있나. `{handle}` 이 바뀐다.
+  String get meSignedInAs;
+
+  /// 첨부를 크게 보기.
+  String get attachmentOpen;
+
+  /// 첨부를 못 불러왔다. **조용히 빈칸을 두지 않는다.**
+  String get attachmentFailed;
+
   /// 이미 고른 물음. 고른 것이 무엇인지는 옆에 그린다.
   String get askAnswered;
 
@@ -179,6 +221,20 @@ Map<String, String> stringsToMap(Strings s) => {
       'commonLoading': s.commonLoading,
       'commonBack': s.commonBack,
       'commonRetry': s.commonRetry,
+      'tabChannels': s.tabChannels,
+      'tabInbox': s.tabInbox,
+      'tabMe': s.tabMe,
+      'inboxEmpty': s.inboxEmpty,
+      'inboxMarkAllRead': s.inboxMarkAllRead,
+      'inboxReasonMention': s.inboxReasonMention,
+      'inboxReasonThreadReply': s.inboxReasonThreadReply,
+      'inboxReasonDm': s.inboxReasonDm,
+      'inboxReasonAskAnswered': s.inboxReasonAskAnswered,
+      'inboxReasonAskClosed': s.inboxReasonAskClosed,
+      'inboxReasonOther': s.inboxReasonOther,
+      'meSignedInAs': s.meSignedInAs,
+      'attachmentOpen': s.attachmentOpen,
+      'attachmentFailed': s.attachmentFailed,
       'askAnswered': s.askAnswered,
       'askClosed': s.askClosed,
       'askDecline': s.askDecline,

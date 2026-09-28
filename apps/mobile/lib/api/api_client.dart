@@ -139,6 +139,31 @@ class ApiClient {
     return MessageRow.fromJson(_obj(res));
   }
 
+  // ── 받은 것 ───────────────────────────────────────────────────────────
+
+  /// 나를 부른 것들. [unreadOnly] 면 아직 안 본 것만.
+  Future<List<InboxEntry>> inbox({bool unreadOnly = false}) async {
+    final body = _obj(await _send('GET', '/inbox${unreadOnly ? '?unread=1' : ''}'));
+    return _list(body['entries']).map(InboxEntry.fromJson).toList(growable: false);
+  }
+
+  /// 읽음 처리. **entry id 로 보낸다** — 메시지 id 가 아니다(같은 메시지로 두 번
+  /// 불릴 수 있고, 그때 한 줄만 읽음이 되어야 한다).
+  Future<void> markInboxRead(List<int> ids) =>
+      _send('POST', '/inbox/read', body: {'ids': ids});
+
+  // ── 첨부 ──────────────────────────────────────────────────────────────
+
+  /// 첨부 바이트를 받는 주소.
+  ///
+  /// **토큰이 URL 에 들어가지 않는다.** 그래서 이미지를 그릴 때 [authHeaders] 를 함께
+  /// 넘겨야 한다 — 쿼리에 토큰을 싣는 쪽이 쉽지만, 그 주소는 로그·캐시·공유에 그대로
+  /// 남는다.
+  String attachmentUrl(String attachmentId) => '$baseUrl/attachments/$attachmentId';
+
+  /// 이미지 위젯에 넘길 헤더.
+  Map<String, String> get authHeaders => _headers();
+
   // ── 리액션 ────────────────────────────────────────────────────────────
 
   /// 이모지를 누른다. 같은 것을 이미 눌렀으면 서버가 조용히 넘어간다.

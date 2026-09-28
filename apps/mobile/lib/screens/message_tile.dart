@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
+import 'attachments.dart';
 
 /// 말풍선 한 줄. **채널 화면과 스레드 화면이 같은 것을 쓴다.**
 ///
@@ -58,14 +59,7 @@ class MessageTile extends StatelessWidget {
           // 마크다운은 아직 그리지 않는다. 평문으로 흘리는 것이, 반쯤 해석해서 원문을
           // 잃는 것보다 낫다.
           Text(message.body),
-          if (message.attachments.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                message.attachments.map((a) => a.filename).join(', '),
-                style: theme.textTheme.bodySmall,
-              ),
-            ),
+          AttachmentStrip(attachments: message.attachments),
           if (message.reactions.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 6),

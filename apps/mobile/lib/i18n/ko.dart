@@ -128,4 +128,46 @@ class StringsKo implements Strings {
 
   @override
   String get mentionPickerEmpty => '맞는 사람이 없습니다';
+
+  @override
+  String get tabChannels => '채널';
+
+  @override
+  String get tabInbox => '받은 것';
+
+  @override
+  String get tabMe => '나';
+
+  @override
+  String get inboxEmpty => '아직 받은 것이 없습니다.';
+
+  @override
+  String get inboxMarkAllRead => '모두 읽음';
+
+  @override
+  String get inboxReasonMention => '나를 불렀습니다';
+
+  @override
+  String get inboxReasonThreadReply => '내 스레드에 답글';
+
+  @override
+  String get inboxReasonDm => '다이렉트 메시지';
+
+  @override
+  String get inboxReasonAskAnswered => '내 물음에 답함';
+
+  @override
+  String get inboxReasonAskClosed => '내 물음을 접음';
+
+  @override
+  String get inboxReasonOther => '나를 불렀습니다';
+
+  @override
+  String get meSignedInAs => '@{handle} 로 로그인됨';
+
+  @override
+  String get attachmentOpen => '열기';
+
+  @override
+  String get attachmentFailed => '이 파일을 불러오지 못했습니다.';
 }

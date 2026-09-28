@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/api/api_client.dart';
+import 'package:harkroom/api/models.dart';
 import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_state.dart';
@@ -22,6 +23,7 @@ MockClient _server({
   List<Map<String, Object?>> accounts = const [],
   List<Map<String, Object?>> messages = const [],
   List<Map<String, Object?>> reads = const [],
+  List<Map<String, Object?>> inbox = const [],
 }) {
   return MockClient((req) async {
     final path = req.url.path;
@@ -35,6 +37,10 @@ MockClient _server({
     if (path == '/channels') return _json(channels, 200);
     if (path == '/accounts') return _json(accounts, 200);
     if (path == '/reads') return _json({'reads': reads}, 200);
+    if (path.startsWith('/inbox') && req.method == 'GET') {
+      return _json({'entries': inbox}, 200);
+    }
+    if (path == '/inbox/read') return http.Response('', 204);
     if (path.endsWith('/read') && req.method == 'PUT') return http.Response('', 204);
     if (path.endsWith('/messages') && req.method == 'GET') {
       return _json({'messages': messages, 'hasMore': false}, 200);
@@ -301,6 +307,78 @@ void main() {
       await app.openChannel('c1');
       expect(app.reads['c1']!.unread, 0);
       expect(app.reads['c1']!.lastReadSeq, 7);
+    });
+  });
+
+  group('받은 것', () {
+    Map<String, Object?> entry(int id, {String reason = 'mention', String? readAt}) => {
+          'id': id,
+          'messageId': 'm$id',
+          'reason': reason,
+          'channelId': 'c1',
+          'authorId': 'a1',
+          'body': '@me 봐 줘',
+          'createdAt': '2026-09-28T00:00:00.000Z',
+          'readAt': readAt,
+        };
+
+    Future<AppState> booted(List<Map<String, Object?>> inbox) async {
+      final app = _app(
+        store: SessionStore.inMemory(seed: _seed()),
+        client: _server(channels: const [], inbox: inbox),
+      );
+      await app.boot();
+      // 부팅이 받은 것을 기다리지 않으므로(채널 목록이 먼저 선다) 한 틱 준다.
+      await Future<void>.delayed(Duration.zero);
+      return app;
+    }
+
+    test('안 본 것만 센다', () async {
+      final app = await booted([
+        entry(1),
+        entry(2, readAt: '2026-09-28T00:00:01.000Z'),
+        entry(3),
+      ]);
+      expect(app.inbox.length, 3);
+      expect(app.inboxUnread, 2);
+    });
+
+    test('읽음은 화면에서 먼저 반영된다', () async {
+      // 눌렀는데 배지가 그대로면 사람은 안 눌린 줄 알고 다시 누른다.
+      final app = await booted([entry(1), entry(2)]);
+      await app.markInboxRead([1]);
+      expect(app.inboxUnread, 1);
+      expect(app.inbox.firstWhere((e) => e.id == 1).isUnread, isFalse);
+    });
+
+    test('이미 읽은 것을 또 읽어도 그대로다', () async {
+      final app = await booted([entry(1, readAt: '2026-09-28T00:00:01.000Z')]);
+      await app.markInboxRead([1]);
+      expect(app.inboxUnread, 0);
+    });
+
+    test('모르는 사유도 줄을 지우지 않는다', () async {
+      // 서버가 사유를 하나 더하는 날 그 부름이 사라지면 안 된다.
+      final app = await booted([entry(1, reason: '아직없는사유')]);
+      expect(app.inbox.single.reason, InboxReason.unknown);
+      expect(app.inboxUnread, 1);
+    });
+
+    test('깨움에는 작성자가 없다 — 사람의 발화가 아니다', () async {
+      final app = await booted([
+        {
+          'id': 9,
+          'messageId': 'm9',
+          'reason': 'wake',
+          'channelId': 'c1',
+          'authorId': null,
+          'body': '다시 본다',
+          'createdAt': '2026-09-28T00:00:00.000Z',
+          'readAt': null,
+        },
+      ]);
+      expect(app.inbox.single.authorId, isNull);
+      expect(app.inbox.single.reason, InboxReason.wake);
     });
   });
 

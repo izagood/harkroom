@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'connect/connect_screen.dart';
 import 'i18n/i18n.dart';
-import 'screens/channel_list_screen.dart';
+import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'session/session_store.dart';
 import 'state/app_scope.dart';
@@ -79,7 +79,7 @@ class _Root extends StatelessWidget {
         AppPhase.booting => const _Booting(),
         AppPhase.needsServer => const ConnectScreen(),
         AppPhase.needsLogin => const LoginScreen(),
-        AppPhase.ready => const ChannelListScreen(),
+        AppPhase.ready => const HomeScreen(),
       };
 }
 

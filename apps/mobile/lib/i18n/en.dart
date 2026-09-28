@@ -129,4 +129,46 @@ class StringsEn implements Strings {
 
   @override
   String get mentionPickerEmpty => 'No match';
+
+  @override
+  String get tabChannels => 'Channels';
+
+  @override
+  String get tabInbox => 'Inbox';
+
+  @override
+  String get tabMe => 'You';
+
+  @override
+  String get inboxEmpty => 'Nothing here yet.';
+
+  @override
+  String get inboxMarkAllRead => 'Mark all read';
+
+  @override
+  String get inboxReasonMention => 'Mentioned you';
+
+  @override
+  String get inboxReasonThreadReply => 'Replied in your thread';
+
+  @override
+  String get inboxReasonDm => 'Direct message';
+
+  @override
+  String get inboxReasonAskAnswered => 'Answered your question';
+
+  @override
+  String get inboxReasonAskClosed => 'Declined your question';
+
+  @override
+  String get inboxReasonOther => 'Called you';
+
+  @override
+  String get meSignedInAs => 'Signed in as @{handle}';
+
+  @override
+  String get attachmentOpen => 'Open';
+
+  @override
+  String get attachmentFailed => 'Could not load this file.';
 }

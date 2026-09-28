@@ -312,3 +312,78 @@ class ReadState {
         unread: _int(j['unread']),
       );
 }
+
+
+/// 내가 **불린 이유**. 러너가 프롬프트를 다르게 조립하려고 서버가 갈라 둔 값이고,
+/// 화면도 같은 이유로 갈라 그린다 — "멘션"과 "내가 낸 물음에 답이 왔다"는 다른 일이다.
+///
+/// 모르는 사유는 [unknown] 으로 떨어진다. 서버가 하나 더하는 날 그 줄이 **사라지는**
+/// 것보다, 사유를 모른 채 보이는 편이 낫다.
+enum InboxReason {
+  mention,
+  threadReply,
+  dm,
+  wake,
+  askAnswered,
+  askClosed,
+  teamMention,
+  teamDelegated,
+  delegationDone,
+  unknown;
+
+  static InboxReason parse(Object? v) => switch (v) {
+        'mention' => InboxReason.mention,
+        'thread_reply' => InboxReason.threadReply,
+        'dm' => InboxReason.dm,
+        'wake' => InboxReason.wake,
+        'ask_answered' => InboxReason.askAnswered,
+        'ask_closed' => InboxReason.askClosed,
+        'team_mention' => InboxReason.teamMention,
+        'team_delegated' => InboxReason.teamDelegated,
+        'delegation_done' => InboxReason.delegationDone,
+        _ => InboxReason.unknown,
+      };
+}
+
+/// 받은 것 한 줄. `GET /inbox`.
+class InboxEntry {
+  const InboxEntry({
+    required this.id,
+    required this.messageId,
+    required this.reason,
+    required this.channelId,
+    required this.authorId,
+    required this.body,
+    required this.createdAt,
+    required this.threadRootId,
+    required this.readAt,
+  });
+
+  /// 읽음 처리에 쓰는 열쇠. **메시지 id 가 아니다** — 같은 메시지로 두 번 불릴 수 있다.
+  final int id;
+  final String messageId;
+  final InboxReason reason;
+  final String channelId;
+
+  /// 깨움(`wake`)에는 **작성자가 없다** — 사람의 발화가 아니라 자기가 걸어 둔 예약이다.
+  final String? authorId;
+  final String body;
+  final DateTime createdAt;
+  final String? threadRootId;
+  final String? readAt;
+
+  bool get isUnread => readAt == null;
+
+  static InboxEntry fromJson(Map<String, Object?> j) => InboxEntry(
+        id: _int(j['id']),
+        messageId: _str(j['messageId']),
+        reason: InboxReason.parse(j['reason']),
+        channelId: _str(j['channelId']),
+        authorId: j['authorId'] as String?,
+        body: _str(j['body']),
+        createdAt: DateTime.tryParse(_str(j['createdAt']))?.toUtc() ??
+            DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+        threadRootId: j['threadRootId'] as String?,
+        readAt: j['readAt'] as String?,
+      );
+}

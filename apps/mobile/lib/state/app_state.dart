@@ -73,6 +73,12 @@ class AppState extends ChangeNotifier {
   final List<ChannelRow> channels = [];
   final Map<String, AccountView> accounts = {};
 
+  /// 나를 부른 것들(새것 먼저). 서버가 준 순서를 뒤집지 않는다.
+  final List<InboxEntry> inbox = [];
+
+  /// 아직 안 본 부름의 수. 탭 배지가 읽는다.
+  int get inboxUnread => inbox.where((e) => e.isUnread).length;
+
   /// 채널 id → 읽음 위치와 안 읽은 수. **서버가 센다** — 클라이언트가 세면 열지 않은
   /// 채널에서 틀린다.
   final Map<String, ReadState> reads = {};
@@ -171,6 +177,8 @@ class AppState extends ChangeNotifier {
     phase = AppPhase.ready;
     notifyListeners();
     _openSocket();
+    // 부팅을 막지 않는다 — 채널 목록이 먼저 서고 받은 것은 뒤따라 온다.
+    unawaited(loadInbox());
   }
 
   void _openSocket() {
@@ -212,6 +220,11 @@ class AppState extends ChangeNotifier {
         if (channelId is! String || messageId is! String) return;
         messages[channelId]?.removeWhere((m) => m.id == messageId);
         notifyListeners();
+      case 'inbox.updated':
+        // 서버는 "바뀌었다"만 알린다 — 무엇이 바뀌었는지는 싣지 않는다. 한 건을
+        // 끼워 넣으면 그 사이 다른 기기에서 읽은 것이 화면에서 되살아나므로,
+        // **목록을 다시 읽는다**(데스크탑의 같은 판단).
+        unawaited(loadInbox());
       case 'reaction.added':
       case 'reaction.removed':
         _applyReactionDelta(event);
@@ -296,6 +309,48 @@ class AppState extends ChangeNotifier {
       list.sort((a, b) => a.seq.compareTo(b.seq));
     }
     notifyListeners();
+  }
+
+  // ── 받은 것 ───────────────────────────────────────────────────────────
+
+  Future<void> loadInbox() async {
+    final api = _api;
+    if (api == null) return;
+    final entries = await api.inbox();
+    inbox
+      ..clear()
+      ..addAll(entries);
+    notifyListeners();
+  }
+
+  /// 한 줄을 읽음으로 만든다.
+  ///
+  /// **화면을 먼저 고친다** — 눌렀는데 배지가 그대로면 사람은 안 눌린 줄 알고 다시
+  /// 누른다. 실패해도 되돌리지 않는다: 사람은 이미 봤고, 되살아나는 배지가 더 이상하다.
+  Future<void> markInboxRead(List<int> ids) async {
+    if (ids.isEmpty) return;
+    final now = DateTime.now().toUtc().toIso8601String();
+    for (var i = 0; i < inbox.length; i += 1) {
+      final e = inbox[i];
+      if (!ids.contains(e.id) || !e.isUnread) continue;
+      inbox[i] = InboxEntry(
+        id: e.id,
+        messageId: e.messageId,
+        reason: e.reason,
+        channelId: e.channelId,
+        authorId: e.authorId,
+        body: e.body,
+        createdAt: e.createdAt,
+        threadRootId: e.threadRootId,
+        readAt: now,
+      );
+    }
+    notifyListeners();
+    try {
+      await _api!.markInboxRead(ids);
+    } on Object {
+      // 다음 `loadInbox` 가 서버의 사실로 덮는다.
+    }
   }
 
   // ── 채널 ──────────────────────────────────────────────────────────────
@@ -425,6 +480,9 @@ class AppState extends ChangeNotifier {
     _ws = null;
     await _sessions.clear();
     me = null;
+    inbox.clear();
+    reads.clear();
+    threads.clear();
     channels.clear();
     accounts.clear();
     messages.clear();
