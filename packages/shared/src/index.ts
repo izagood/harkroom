@@ -3292,6 +3292,14 @@ export interface CollabProposalsView {
  */
 export const MAX_MEMORY_VALUE_LENGTH = 8000;
 export const MAX_MEMORY_ITEMS_PER_ACCOUNT = 200;
+/**
+ * `core` 만의 한도(메모리 고도화 PR3). core 는 매 턴 통째로 실리므로 다른 기억보다 훨씬
+ * 좁다 — 전에는 프롬프트에 "2,000자 안쪽"이라고만 적혀 있었고 아무도 막지 않아 4,700·6,100자
+ * core 가 생겼다. 서버가 거절하고, 설정 화면 게이지도 이 값으로 그린다.
+ */
+export const MAX_CORE_MEMORY_LENGTH = 3000;
+/** 목록에 같이 실리는 한 줄 요약의 한도. DB 제약(069)과 같다. */
+export const MAX_MEMORY_DESCRIPTION_LENGTH = 200;
 
 export * from './permissions.js';
 import type { Capability, Role } from './permissions.js';

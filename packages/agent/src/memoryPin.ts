@@ -69,12 +69,18 @@ async function loadPin(file: string): Promise<PinState | null> {
   }
 }
 
-function indexLines(slugs: string[]): string[] {
+/** 목록 한 줄. 요약(서버 069)이 있으면 이름 옆에 붙인다 — 언제 열어 볼지 정하는 근거다. */
+function entryLine(slug: string, descriptions: Record<string, string> | undefined): string {
+  const d = descriptions?.[slug];
+  return d ? `- ${escapeForPrompt(slug)} — ${escapeForPrompt(d)}` : `- ${escapeForPrompt(slug)}`;
+}
+
+function indexLines(slugs: string[], descriptions: Record<string, string> | undefined): string[] {
   if (!slugs.length) return [];
   return [
     '<memory-index>',
     '저장된 기억(본문은 필요할 때 `memory.get` 으로 가져온다 — 이름만으로 짐작되지 않으면 열어 본다):',
-    ...slugs.map((s) => `- ${escapeForPrompt(s)}`),
+    ...slugs.map((s) => entryLine(s, descriptions)),
     '</memory-index>',
   ];
 }
@@ -116,7 +122,7 @@ export async function planMemory(opts: {
 
   if (!pinUsable) {
     // 새 세션(또는 고정을 잃었다): 지금 값으로 고정하고 목록 전체를 싣는다.
-    const lines = [...indexLines(memory.slugs), ...stale];
+    const lines = [...indexLines(memory.slugs, memory.descriptions), ...stale];
     return {
       system: { core: memory.core, slugs: memory.slugs },
       turnLines: trimLeading(lines),
@@ -139,7 +145,7 @@ export async function planMemory(opts: {
     if (coreChanged && memory.core !== null) {
       lines.push('', '지금 core 전문:', escapeForPrompt(memory.core));
     }
-    if (added.length) lines.push('', '새로 생긴 기억:', ...added.map((s) => `- ${escapeForPrompt(s)}`));
+    if (added.length) lines.push('', '새로 생긴 기억:', ...added.map((s) => entryLine(s, memory.descriptions)));
     if (removed.length) lines.push('', '지워진 기억:', ...removed.map((s) => `- ${escapeForPrompt(s)}`));
     lines.push('</memory-update>');
   }
