@@ -1,4 +1,5 @@
 import type {
+  AutomationRunView, AutomationTrigger, AutomationView,
   McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView,
   AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
@@ -805,6 +806,37 @@ export class ApiClient {
     return (await this.req<{ scheduled: ScheduledMessageView }>(
       'POST', `/channels/${channelId}/scheduled`, { body, sendAt, ...(threadRootId ? { threadRootId } : {}) },
     )).scheduled;
+  }
+
+  /** 내가 만든 자동화(064). 만든 사람에게만 보인다. */
+  async listAutomations(): Promise<AutomationView[]> {
+    return (await this.req<{ automations: AutomationView[] }>('GET', '/automations')).automations;
+  }
+
+  /** 자동화 하나와 최근 회차 50개. */
+  getAutomation(id: string): Promise<{ automation: AutomationView; runs: AutomationRunView[] }> {
+    return this.req('GET', `/automations/${id}`);
+  }
+
+  async createAutomation(input: {
+    name: string; channelId: string; body: string; trigger: AutomationTrigger;
+  }): Promise<AutomationView> {
+    return (await this.req<{ automation: AutomationView }>('POST', '/automations', input)).automation;
+  }
+
+  async updateAutomation(id: string, patch: Partial<{
+    name: string; channelId: string; body: string; trigger: AutomationTrigger; enabled: boolean;
+  }>): Promise<AutomationView> {
+    return (await this.req<{ automation: AutomationView }>('PATCH', `/automations/${id}`, patch)).automation;
+  }
+
+  deleteAutomation(id: string): Promise<void> {
+    return this.req('DELETE', `/automations/${id}`);
+  }
+
+  /** "지금 한 번" — 회차만 만들고 발송은 서버 sweeper 가 한다(15초 안쪽). */
+  async runAutomation(id: string): Promise<AutomationRunView> {
+    return (await this.req<{ run: AutomationRunView }>('POST', `/automations/${id}/run`)).run;
   }
 
   /** 예약 메시지 취소(#222). */
