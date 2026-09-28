@@ -8,6 +8,7 @@
 // MCP 는 링크 위의 트랜스포트(`mcp.request`)로, 몇 안 되는 REST(`/agent/config` 등)는
 // `http.forward` 로 간다. 인증(오퍼레이터 토큰 + `X-Harkroom-Agent`)은 오퍼레이터가 붙인다 —
 // 그래서 이 파일에 PAT 도 URL 도 없다.
+import type { RecallHit } from './memoryPin.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { AccountView, AgentView, InboxEntry, MessageRow } from '@harkroom/shared';
 import type { RelayClient } from './relay.js';
@@ -217,8 +218,14 @@ export class HarkroomAgentClient {
   }
 
   /** `memory.list` — slug 와 판본(`rev`, 옛 서버는 없음). `memoryCache.ts` 의 `MemorySource`. */
-  listMemory(): Promise<{ slugs: string[]; rev?: string; entries?: { slug: string; description: string | null }[] }> {
-    return this.call<{ slugs: string[]; rev?: string; entries?: { slug: string; description: string | null }[] }>('memory.list');
+  listMemory(): Promise<{ slugs: string[]; rev?: string; entries?: { slug: string; description: string | null; kind?: string }[] }> {
+    return this.call<{ slugs: string[]; rev?: string; entries?: { slug: string; description: string | null; kind?: string }[] }>('memory.list');
+  }
+
+  /** `memory.search` 본문 포함 — 러너가 관련 기억을 턴 프롬프트에 붙일 때 쓴다(`memoryPin.ts`). 옛 서버면 던진다. */
+  async searchMemory(query: string, limit: number): Promise<RecallHit[]> {
+    const res = await this.call<{ hits?: RecallHit[] }>('memory.search', { query, limit, includeValue: true });
+    return res.hits ?? [];
   }
 
   /** `memory.get` 의 본문만. 없으면 null. */

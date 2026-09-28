@@ -44,6 +44,8 @@ export interface MemorySnapshot {
   slugs: string[];
   /** slug → 한 줄 요약(서버 069). 옛 서버면 없다. */
   descriptions?: Record<string, string>;
+  /** slug → 종류(서버 070). topic 이 아닌 것만. */
+  kinds?: Record<string, string>;
   /** 서버에서 받아 온 시각(ISO). 폴백일 때 프롬프트가 "언제 것인지"를 말한다. */
   fetchedAt: string;
 }
@@ -52,13 +54,14 @@ export interface MemoryRead {
   core: string | null;
   slugs: string[];
   descriptions?: Record<string, string>;
+  kinds?: Record<string, string>;
   /** 서버를 못 읽어 사본으로 돈다 — 그 사본을 받은 시각. */
   stale?: { fetchedAt: string };
 }
 
 /** 서버에서 읽는 두 가지. `HarkroomAgentClient` 가 구현한다. 실패는 던진다. */
 export interface MemorySource {
-  listMemory(): Promise<{ slugs: string[]; rev?: string; entries?: { slug: string; description: string | null }[] }>;
+  listMemory(): Promise<{ slugs: string[]; rev?: string; entries?: { slug: string; description: string | null; kind?: string }[] }>;
   getMemoryValue(slug: string): Promise<string | null>;
 }
 
@@ -75,6 +78,7 @@ function view(snap: MemorySnapshot): MemoryRead {
   return {
     core: snap.core, slugs: snap.slugs,
     ...(snap.descriptions ? { descriptions: snap.descriptions } : {}),
+    ...(snap.kinds ? { kinds: snap.kinds } : {}),
   };
 }
 
@@ -102,6 +106,7 @@ export function createMemoryCache(deps: {
           slugs: parsed.slugs.filter((s): s is string => typeof s === 'string'),
           fetchedAt: parsed.fetchedAt,
           ...(parsed.descriptions && typeof parsed.descriptions === 'object' ? { descriptions: parsed.descriptions } : {}),
+          ...(parsed.kinds && typeof parsed.kinds === 'object' ? { kinds: parsed.kinds } : {}),
         }
         : null;
     } catch {
@@ -154,9 +159,13 @@ export function createMemoryCache(deps: {
         const descriptions = Object.fromEntries(
           (listed.entries ?? []).filter((e) => e.slug !== 'core' && e.description).map((e) => [e.slug, e.description!]),
         );
+        const kinds = Object.fromEntries(
+          (listed.entries ?? []).filter((e) => e.slug !== 'core' && e.kind && e.kind !== 'topic').map((e) => [e.slug, e.kind!]),
+        );
         const next: MemorySnapshot = {
           rev, core, slugs, fetchedAt: now().toISOString(),
           ...(Object.keys(descriptions).length ? { descriptions } : {}),
+          ...(Object.keys(kinds).length ? { kinds } : {}),
         };
         snap = next;
         await persist(next);

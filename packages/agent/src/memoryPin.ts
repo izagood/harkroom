@@ -34,9 +34,24 @@ interface PinState {
   systemCore: string | null;
   /** 이 세션에 마지막으로 알린 core 의 해시. */
   announcedCoreSha: string | null;
-  /** 이 세션에 마지막으로 알린 slug 목록. */
+  /** 이 세션에 마지막으로 알린 slug 목록(journal 제외 — 목록에 안 싣는 것은 알리지도 않는다). */
   announcedSlugs: string[];
+  /** 이 세션에 이미 본문을 실어 준 기억(`<memory-recall>`). 같은 것을 턴마다 다시 싣지 않는다. */
+  recalled?: string[];
 }
+
+/** 러너가 요청 본문으로 찾은 기억(서버 `memory.search`, includeValue). */
+export interface RecallHit {
+  slug: string;
+  description: string | null;
+  score: number;
+  value?: string;
+}
+
+/** 자동 주입 기준. 이름·요약에 한 번 걸리면(3점) 넘는다 — 본문 한두 낱말 일치로는 싣지 않는다. */
+export const RECALL_MIN_SCORE = 3;
+export const RECALL_MAX_ITEMS = 2;
+export const RECALL_MAX_CHARS = 1500;
 
 export interface MemoryPlan {
   /** 시스템 프롬프트에 넘길 기억. core 는 고정값이다. */
@@ -63,6 +78,7 @@ async function loadPin(file: string): Promise<PinState | null> {
       systemCore: typeof p.systemCore === 'string' ? p.systemCore : null,
       announcedCoreSha: typeof p.announcedCoreSha === 'string' ? p.announcedCoreSha : null,
       announcedSlugs: p.announcedSlugs.filter((s): s is string => typeof s === 'string'),
+      recalled: Array.isArray(p.recalled) ? p.recalled.filter((s): s is string => typeof s === 'string') : [],
     };
   } catch {
     return null;
@@ -75,12 +91,13 @@ function entryLine(slug: string, descriptions: Record<string, string> | undefine
   return d ? `- ${escapeForPrompt(slug)} — ${escapeForPrompt(d)}` : `- ${escapeForPrompt(slug)}`;
 }
 
-function indexLines(slugs: string[], descriptions: Record<string, string> | undefined): string[] {
-  if (!slugs.length) return [];
+function indexLines(slugs: string[], descriptions: Record<string, string> | undefined, journalCount = 0): string[] {
+  if (!slugs.length && !journalCount) return [];
   return [
     '<memory-index>',
     '저장된 기억(본문은 필요할 때 `memory.get` 으로 가져온다 — 이름만으로 짐작되지 않으면 열어 본다):',
     ...slugs.map((s) => entryLine(s, descriptions)),
+    ...(journalCount ? [`(작업 경위 기록 journal ${journalCount}개는 목록에 싣지 않는다 — \`memory.search\` 로 찾는다.)`] : []),
     '</memory-index>',
   ];
 }
@@ -92,6 +109,12 @@ export async function planMemory(opts: {
   sessionId: string | null;
   isFirstTurn: boolean;
   memory: MemoryContext;
+  /**
+   * 관련 기억 찾기(메모리 고도화 PR4). 감사에서 `memory.get` 은 세션의 6.7% 에서만 불렸다 —
+   * 목록을 보고 모델이 알아서 열기를 기대할 수 없다. 그래서 러너가 **이번에 새로 온 말**로
+   * 찾아 관련 상위 몇 개의 본문을 턴 프롬프트에 붙여 준다. 실패는 삼킨다(없어도 턴은 돈다).
+   */
+  recall?: { query: string; search: (query: string) => Promise<RecallHit[]> };
 }): Promise<MemoryPlan> {
   const file = pinFile(opts.stateDir, opts.key);
   const noop: MemoryPlan['commit'] = async () => {};
@@ -100,6 +123,10 @@ export async function planMemory(opts: {
   if (opts.memory === 'unavailable') return { system: 'unavailable', turnLines: [], commit: noop };
   const memory = opts.memory;
   const stale = memory.stale ? ['', ...staleMemoryLines(memory.stale.fetchedAt)] : [];
+  // journal(070)은 목록에 싣지 않는다 — 한 작업의 경위라 적고 나면 거의 안 읽혔다(감사: pr-* 41%).
+  const isJournal = (s: string) => memory.kinds?.[s] === 'journal';
+  const visible = memory.slugs.filter((s) => !isJournal(s));
+  const journalCount = memory.slugs.length - visible.length;
 
   const pin = opts.isFirstTurn ? null : await loadPin(file);
   const pinUsable = pin !== null
@@ -120,15 +147,19 @@ export async function planMemory(opts: {
     }
   };
 
+  const alreadyRecalled = new Set(pinUsable ? pin!.recalled ?? [] : []);
+  const recall = await recallLines(opts.recall, alreadyRecalled);
+  const recalled = [...alreadyRecalled, ...recall.slugs];
+
   if (!pinUsable) {
     // 새 세션(또는 고정을 잃었다): 지금 값으로 고정하고 목록 전체를 싣는다.
-    const lines = [...indexLines(memory.slugs, memory.descriptions), ...stale];
+    const lines = [...indexLines(visible, memory.descriptions, journalCount), ...recall.lines, ...stale];
     return {
       system: { core: memory.core, slugs: memory.slugs },
       turnLines: trimLeading(lines),
       commit: save({
         sessionId: opts.sessionId, systemCore: memory.core,
-        announcedCoreSha: sha(memory.core), announcedSlugs: memory.slugs,
+        announcedCoreSha: sha(memory.core), announcedSlugs: visible, recalled,
       }),
     };
   }
@@ -137,8 +168,8 @@ export async function planMemory(opts: {
   const coreSha = sha(memory.core);
   const coreChanged = coreSha !== pin.announcedCoreSha;
   const seen = new Set(pin.announcedSlugs);
-  const now = new Set(memory.slugs);
-  const added = memory.slugs.filter((s) => !seen.has(s));
+  const now = new Set(visible);
+  const added = visible.filter((s) => !seen.has(s));
   const removed = pin.announcedSlugs.filter((s) => !now.has(s));
   if (coreChanged || added.length || removed.length) {
     lines.push('<memory-update>', '이 세션이 시작된 뒤 기억이 바뀌었다 — 시스템 프롬프트의 `<memory>` 보다 이것이 지금 값이다.');
@@ -149,13 +180,41 @@ export async function planMemory(opts: {
     if (removed.length) lines.push('', '지워진 기억:', ...removed.map((s) => `- ${escapeForPrompt(s)}`));
     lines.push('</memory-update>');
   }
-  lines.push(...stale);
+  lines.push(...recall.lines, ...stale);
   return {
     // slugs 는 "비었는가" 판정에만 쓰인다 — 목록 자체는 시스템 프롬프트에 안 실린다.
     system: { core: pin.systemCore, slugs: memory.slugs },
     turnLines: trimLeading(lines),
-    commit: save({ ...pin, announcedCoreSha: coreSha, announcedSlugs: memory.slugs }),
+    commit: save({ ...pin, announcedCoreSha: coreSha, announcedSlugs: visible, recalled }),
   };
+}
+
+async function recallLines(
+  recall: { query: string; search: (query: string) => Promise<RecallHit[]> } | undefined,
+  skip: Set<string>,
+): Promise<{ lines: string[]; slugs: string[] }> {
+  if (!recall || !recall.query.trim()) return { lines: [], slugs: [] };
+  let hits: RecallHit[];
+  try {
+    hits = await recall.search(recall.query);
+  } catch (err: unknown) {
+    console.error(`[memoryPin] 관련 기억 찾기 실패 — 이번 턴은 싣지 않는다: ${err instanceof Error ? err.message : String(err)}`);
+    return { lines: [], slugs: [] };
+  }
+  const picked = hits
+    .filter((h) => h.score >= RECALL_MIN_SCORE && typeof h.value === 'string' && !skip.has(h.slug) && h.slug !== 'core')
+    .slice(0, RECALL_MAX_ITEMS);
+  if (!picked.length) return { lines: [], slugs: [] };
+  const lines = [
+    '', '<memory-recall>',
+    '이번 요청과 관련돼 보이는 기억이다(러너가 낱말로 찾았다 — 맞지 않으면 무시하고, 낡았으면 고쳐라):',
+  ];
+  for (const h of picked) {
+    const body = h.value!.length > RECALL_MAX_CHARS ? `${h.value!.slice(0, RECALL_MAX_CHARS)}\n…(잘림 — 전문은 memory.get)` : h.value!;
+    lines.push('', `## ${escapeForPrompt(h.slug)}${h.description ? ` — ${escapeForPrompt(h.description)}` : ''}`, escapeForPrompt(body));
+  }
+  lines.push('</memory-recall>');
+  return { lines, slugs: picked.map((h) => h.slug) };
 }
 
 function trimLeading(lines: string[]): string[] {
