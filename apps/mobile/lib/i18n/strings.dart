@@ -57,6 +57,40 @@ abstract class Strings {
   /// 다시 해 보기.
   String get commonRetry;
 
+  // ── P1 ───────────────────────────────────────────────────────────────
+  /// 이미 고른 물음. 고른 것이 무엇인지는 옆에 그린다.
+  String get askAnswered;
+
+  /// 답하지 않기로 한 물음.
+  String get askClosed;
+
+  /// 답하지 않기 버튼. **고르기만 있으면** 그만두려는 사람에게 남는 수단이 메시지를 지우는 것뿐이다.
+  String get askDecline;
+
+  /// 나에게 온 물음. 강조해야 "내 차례"가 보인다.
+  String get askToYou;
+
+  /// 사람 아무나에게 온 물음.
+  String get askToAnyone;
+
+  /// 스레드 화면 제목.
+  String get threadTitle;
+
+  /// 스레드 작성칸.
+  String get threadReplyHint;
+
+  /// 답글이 없는 루트.
+  String get threadRepliesZero;
+
+  /// 답글 하나.
+  String get threadRepliesOne;
+
+  /// 답글 여럿. `{n}` 이 수로 바뀐다 — 문장을 화면에서 조립하지 않는다.
+  String get threadRepliesMany;
+
+  /// 접두에 맞는 사람이 없다.
+  String get mentionPickerEmpty;
+
   // ── P0 ───────────────────────────────────────────────────────────────
   /// 로그인 화면 제목.
   String get loginTitle;
@@ -145,6 +179,17 @@ Map<String, String> stringsToMap(Strings s) => {
       'commonLoading': s.commonLoading,
       'commonBack': s.commonBack,
       'commonRetry': s.commonRetry,
+      'askAnswered': s.askAnswered,
+      'askClosed': s.askClosed,
+      'askDecline': s.askDecline,
+      'askToYou': s.askToYou,
+      'askToAnyone': s.askToAnyone,
+      'threadTitle': s.threadTitle,
+      'threadReplyHint': s.threadReplyHint,
+      'threadRepliesZero': s.threadRepliesZero,
+      'threadRepliesOne': s.threadRepliesOne,
+      'threadRepliesMany': s.threadRepliesMany,
+      'mentionPickerEmpty': s.mentionPickerEmpty,
       'loginTitle': s.loginTitle,
       'loginIdLabel': s.loginIdLabel,
       'loginPasswordLabel': s.loginPasswordLabel,

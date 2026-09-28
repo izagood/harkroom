@@ -231,6 +231,23 @@ class AppState extends ChangeNotifier {
   /// 한 번 온다. 재연결 직후에도 겹칠 수 있다. `seq` 가 채널 안에서 유일하므로 그것으로
   /// 가려내고, 이미 있으면 **덮어쓴다**(수정·리액션이 그 경로로 온다).
   void _upsertMessage(MessageRow message) {
+    // 스레드 답글이면 그 스레드에도 넣는다. **둘 다 갱신해야 한다** — 채널 화면의
+    // 요약(답글 수)과 열려 있는 스레드가 같은 사실을 봐야 하기 때문이다.
+    final rootId = message.threadRootId;
+    if (rootId != null) {
+      final replies = threads[rootId];
+      if (replies != null) {
+        final at = replies.indexWhere((m) => m.seq == message.seq);
+        if (at >= 0) {
+          replies[at] = message;
+        } else {
+          replies.add(message);
+          replies.sort((a, b) => a.seq.compareTo(b.seq));
+        }
+        notifyListeners();
+      }
+    }
+
     // 열지 않은 채널은 쌓지 않는다 — 열 때 서버에서 읽는다.
     final list = messages[message.channelId];
     if (list == null) return;
@@ -269,9 +286,42 @@ class AppState extends ChangeNotifier {
   }
 
   /// 말한다. 멘션이 들어 있으면 **이것이 에이전트를 부르는 것**이다.
-  Future<void> send(String channelId, String body) async {
-    final sent = await _api!.postMessage(channelId, body);
+  ///
+  /// [threadRootId] 를 주면 그 스레드의 답글이 된다.
+  Future<void> send(String channelId, String body, {String? threadRootId}) async {
+    final sent = await _api!.postMessage(channelId, body, threadRootId: threadRootId);
     _upsertMessage(sent);
+  }
+
+  // ── 스레드 ────────────────────────────────────────────────────────────
+
+  /// 스레드 루트 id → 그 답글들(오름차순).
+  ///
+  /// 채널 목록과 **따로 둔다**: 채널에는 루트만 실리고 답글은 스레드를 열 때 읽는다.
+  /// 한 곳에 섞으면 채널 화면이 답글까지 그리게 되고, 그건 스레드를 만든 이유를 지운다.
+  final Map<String, List<MessageRow>> threads = {};
+
+  Future<void> openThread(String channelId, String rootId) async {
+    if (!threads.containsKey(rootId)) {
+      threads[rootId] = [];
+      notifyListeners();
+    }
+    final page = await _api!.messages(channelId, thread: rootId, limit: 100);
+    threads[rootId] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
+    notifyListeners();
+  }
+
+  // ── 선택 요청 ─────────────────────────────────────────────────────────
+
+  /// 선택지를 고른다. 돌아온 메시지로 **그 자리를 덮어쓴다** — 버튼이 사라지고 고른
+  /// 것이 남는다. 누른 뒤에도 버튼이 있으면 사람은 자기가 누른 것을 의심한다.
+  Future<void> answerAsk(String channelId, String messageId, String optionId) async {
+    _upsertMessage(await _api!.answerAsk(channelId, messageId, optionId));
+  }
+
+  /// 답하지 않기로 한다.
+  Future<void> closeAsk(String channelId, String messageId) async {
+    _upsertMessage(await _api!.closeAsk(channelId, messageId));
   }
 
   void clearNotice() {

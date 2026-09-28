@@ -96,4 +96,37 @@ class StringsEn implements Strings {
 
   @override
   String get agentBadge => 'agent';
+
+  @override
+  String get askAnswered => 'Answered';
+
+  @override
+  String get askClosed => 'Declined';
+
+  @override
+  String get askDecline => 'Not now';
+
+  @override
+  String get askToYou => 'Waiting on you';
+
+  @override
+  String get askToAnyone => 'Waiting on someone';
+
+  @override
+  String get threadTitle => 'Thread';
+
+  @override
+  String get threadReplyHint => 'Reply in thread';
+
+  @override
+  String get threadRepliesZero => 'Reply';
+
+  @override
+  String get threadRepliesOne => '1 reply';
+
+  @override
+  String get threadRepliesMany => '{n} replies';
+
+  @override
+  String get mentionPickerEmpty => 'No match';
 }

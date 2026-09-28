@@ -112,10 +112,18 @@ class ApiClient {
   ///
   /// [before] 는 **역방향 커서**다(그 `seq` 보다 앞). 서버가 desc 로 잡아 오름차순으로
   /// 되돌려 주므로 받은 순서를 그대로 그리면 된다.
-  Future<MessagePage> messages(String channelId, {int? before, int? limit}) async {
+  /// [thread] 를 주면 **그 스레드의 답글**만 온다. 채널 목록에는 루트만 실리므로
+  /// 답글은 스레드를 열 때 따로 읽는다.
+  Future<MessagePage> messages(
+    String channelId, {
+    int? before,
+    int? limit,
+    String? thread,
+  }) async {
     final q = <String, String>{
       if (before != null) 'before': '$before',
       if (limit != null) 'limit': '$limit',
+      'thread': ?thread,
     };
     final qs = q.isEmpty ? '' : '?${Uri(queryParameters: q).query}';
     return MessagePage.fromJson(_obj(await _send('GET', '/channels/$channelId/messages$qs')));
@@ -128,6 +136,34 @@ class ApiClient {
       'body': body,
       'threadRootId': ?threadRootId,
     });
+    return MessageRow.fromJson(_obj(res));
+  }
+
+  // ── 선택 요청 ─────────────────────────────────────────────────────────
+
+  /// 선택지를 고른다.
+  ///
+  /// **답은 원본을 고치지 않는다** — 고른 결과가 `meta.ask.answeredWith/By/At` 로
+  /// 덧붙고 본문과 `editedAt` 은 그대로다. 사람이 글을 고친 것이 아니기 때문이다.
+  Future<MessageRow> answerAsk(String channelId, String messageId, String optionId) async {
+    final res = await _send(
+      'POST',
+      '/channels/$channelId/messages/$messageId/ask-answer',
+      body: {'optionId': optionId},
+    );
+    return MessageRow.fromJson(_obj(res));
+  }
+
+  /// **답하지 않기로 한다.**
+  ///
+  /// 고르기만 있으면 그 작업을 그만두기로 한 사람에게 남는 수단이 **메시지를 지우는
+  /// 것**뿐이고, 지우면 무엇을 물었는지까지 사라진다. 물음이 닫히는 길을 하나 더 둔다.
+  Future<MessageRow> closeAsk(String channelId, String messageId) async {
+    final res = await _send(
+      'POST',
+      '/channels/$channelId/messages/$messageId/ask-close',
+      body: const <String, Object?>{},
+    );
     return MessageRow.fromJson(_obj(res));
   }
 

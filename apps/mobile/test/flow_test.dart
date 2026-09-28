@@ -21,6 +21,7 @@ http.Response _json(Object body, [int status = 200]) =>
         headers: {'content-type': 'application/json'});
 
 final _sent = <String>[];
+final _answered = <String>[];
 
 MockClient _server() => MockClient((req) async {
       final path = req.url.path;
@@ -59,8 +60,50 @@ MockClient _server() => MockClient((req) async {
               'body': '훑는 중이다',
               'kind': 'progress',
             },
+            // 에이전트가 갈림길에서 묻는다. 답이 없으면 그 턴은 여기서 멈춘다.
+            {
+              'id': 'm4',
+              'seq': 4,
+              'channelId': 'c1',
+              'authorId': 'a1',
+              'body': '어느 쪽으로 갈까',
+              'kind': 'user',
+              'meta': {
+                'kind': 'ask',
+                'ask': {
+                  'options': [
+                    {'id': 'x', 'label': '이걸로'},
+                    {'id': 'y', 'label': '저걸로'},
+                  ],
+                  'to': {'kind': 'human'},
+                },
+              },
+            },
           ],
           'hasMore': false,
+        });
+      }
+      if (path.contains('/ask-answer')) {
+        final optionId = (jsonDecode(req.body) as Map)['optionId'] as String;
+        _answered.add(optionId);
+        return _json({
+          'id': 'm4',
+          'seq': 4,
+          'channelId': 'c1',
+          'authorId': 'a1',
+          'body': '어느 쪽으로 갈까',
+          'kind': 'user',
+          'meta': {
+            'kind': 'ask',
+            'ask': {
+              'options': [
+                {'id': 'x', 'label': '이걸로'},
+                {'id': 'y', 'label': '저걸로'},
+              ],
+              'to': {'kind': 'human'},
+              'answeredWith': optionId,
+            },
+          },
         });
       }
       if (path.endsWith('/messages') && req.method == 'POST') {
@@ -124,7 +167,10 @@ AppState _state() => AppState(
     );
 
 void main() {
-  setUp(_sent.clear);
+  setUp(() {
+    _sent.clear();
+    _answered.clear();
+  });
 
   testWidgets('보관된 세션으로 켜면 채널 목록이 뜨고, 채널을 열어 말을 보낸다', (tester) async {
     final state = _state();
@@ -165,5 +211,65 @@ void main() {
     state.notifyListeners();
     await tester.pump();
     expect(find.byKey(const Key('connection-line')), findsOneWidget);
+  });
+
+  testWidgets('에이전트가 물으면 폰에서 골라서 그 턴을 이어 보낸다', (tester) async {
+    // **P1 의 핵심**: 답할 수 없으면 "불렀는데 조용한" 것이 정상이 된다.
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ask-m4')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('ask-option-m4-y')));
+    await tester.pumpAndSettle();
+
+    expect(_answered, ['y']);
+    // 버튼은 사라지고 **고른 것이 그 자리에 남는다** — 누른 뒤에도 버튼이 있으면
+    // 사람은 자기가 누른 것을 의심한다.
+    expect(find.byKey(const Key('ask-option-m4-y')), findsNothing);
+    expect(find.byKey(const Key('ask-chosen-m4')), findsOneWidget);
+    expect(find.text('저걸로'), findsOneWidget);
+  });
+
+  testWidgets('@ 를 치면 후보가 뜨고, 고르면 본문에 들어간다', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('mention-picker')), findsNothing);
+    await tester.enterText(find.byKey(const Key('composer')), '@fo');
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('mention-candidate-forge')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('mention-candidate-forge')));
+    await tester.pumpAndSettle();
+
+    final text = tester.widget<TextField>(find.byKey(const Key('composer'))).controller!.text;
+    expect(text, '@forge ');
+    // 고른 뒤에는 후보가 사라진다 — 이름이 끝났으므로.
+    expect(find.byKey(const Key('mention-picker')), findsNothing);
+  });
+
+  testWidgets('보내도 아무도 안 깨울 자리에서는 후보를 안 띄운다', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const Key('composer')), '> @fo');
+    await tester.pumpAndSettle();
+    // 띄우면 사람은 고르고 보냈는데 상대가 오지 않는다.
+    expect(find.byKey(const Key('mention-picker')), findsNothing);
   });
 }

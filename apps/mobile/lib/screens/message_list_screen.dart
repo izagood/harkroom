@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../api/ask.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
+import '../mention/mention_suggest.dart';
 import '../state/app_scope.dart';
+import 'ask_card.dart';
 
 /// 한 채널의 말들 + 작성칸. P0 의 마지막 화면이다.
 ///
@@ -78,8 +81,29 @@ class _MessageListScreenState extends State<MessageListScreen> {
                       controller: _scroll,
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       itemCount: speech.length,
-                      itemBuilder: (context, i) => _MessageRowTile(message: speech[i]),
+                      itemBuilder: (context, i) {
+                        final m = speech[i];
+                        // 선택 요청은 **말풍선이 아니라 누를 수 있는 것**이다.
+                        final ask = AskMeta.read(m.meta);
+                        if (ask != null) return AskCard(message: m, ask: ask);
+                        return _MessageRowTile(message: m);
+                      },
                     ),
+            ),
+            _MentionPicker(
+              controller: _composer,
+              onPicked: (handle) {
+                final sel = _composer.selection;
+                final cursor = sel.isValid ? sel.baseOffset : _composer.text.length;
+                final query = mentionQueryAt(_composer.text, cursor);
+                if (query == null) return;
+                final next = applyMention(_composer.text, query, handle);
+                _composer.value = TextEditingValue(
+                  text: next.text,
+                  selection: TextSelection.collapsed(offset: next.cursor),
+                );
+                setState(() {});
+              },
             ),
             const Divider(height: 1),
             Padding(
@@ -91,6 +115,9 @@ class _MessageListScreenState extends State<MessageListScreen> {
                     child: TextField(
                       key: const Key('composer'),
                       controller: _composer,
+                      // 글자가 바뀔 때마다 후보를 다시 세운다. 커서만 움직여도 바뀌므로
+                      // `onChanged` 로는 모자라지만, 그 경우는 다음 입력에 따라잡힌다.
+                      onChanged: (_) => setState(() {}),
                       minLines: 1,
                       maxLines: 5,
                       textInputAction: TextInputAction.newline,
@@ -170,6 +197,59 @@ class _MessageRowTile extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+
+/// 컴포저 위에 서는 멘션 후보 줄.
+///
+/// **없을 때는 자리를 차지하지 않는다**(`SizedBox.shrink`). 늘 떠 있으면 그 줄은 곧
+/// 안 보이는 것이 되고, 화면 높이만 먹는다.
+class _MentionPicker extends StatelessWidget {
+  const _MentionPicker({required this.controller, required this.onPicked});
+
+  final TextEditingController controller;
+  final void Function(String handle) onPicked;
+
+  @override
+  Widget build(BuildContext context) {
+    final sel = controller.selection;
+    final cursor = sel.isValid ? sel.baseOffset : controller.text.length;
+    final query = mentionQueryAt(controller.text, cursor);
+    if (query == null) return const SizedBox.shrink();
+
+    final app = context.app;
+    // **비활성 계정은 후보에서 뺀다.** 디렉터리에는 남아 있어야 하지만(과거 메시지의
+    // 작성자를 푸는 표다) 부를 수는 없다.
+    final candidates = rankMentionCandidates(
+      app.accounts.values.where((a) => !a.isDisabled),
+      query.prefix,
+      handleOf: (a) => a.handle,
+      displayNameOf: (a) => a.displayName,
+    );
+    if (candidates.isEmpty) return const SizedBox.shrink();
+
+    return SizedBox(
+      key: const Key('mention-picker'),
+      height: 52,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        itemCount: candidates.length,
+        itemBuilder: (context, i) {
+          final a = candidates[i];
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+            child: ActionChip(
+              key: Key('mention-candidate-${a.handle}'),
+              avatar: a.isAgent ? const Icon(Icons.smart_toy_outlined, size: 16) : null,
+              label: Text('@${a.handle}'),
+              onPressed: () => onPicked(a.handle),
+            ),
+          );
+        },
       ),
     );
   }

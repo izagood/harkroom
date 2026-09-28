@@ -95,4 +95,37 @@ class StringsKo implements Strings {
 
   @override
   String get agentBadge => '에이전트';
+
+  @override
+  String get askAnswered => '답함';
+
+  @override
+  String get askClosed => '답하지 않음';
+
+  @override
+  String get askDecline => '나중에';
+
+  @override
+  String get askToYou => '내 차례';
+
+  @override
+  String get askToAnyone => '누군가의 차례';
+
+  @override
+  String get threadTitle => '스레드';
+
+  @override
+  String get threadReplyHint => '스레드에 답하기';
+
+  @override
+  String get threadRepliesZero => '답글 달기';
+
+  @override
+  String get threadRepliesOne => '답글 1개';
+
+  @override
+  String get threadRepliesMany => '답글 {n}개';
+
+  @override
+  String get mentionPickerEmpty => '맞는 사람이 없습니다';
 }
