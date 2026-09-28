@@ -56,6 +56,28 @@ describe('owner 스코프', () => {
   });
 });
 
+// 본문이 처음부터 `<@id>` 인 부름(에이전트는 흔히 id 로 부른다). 예전에는 막힘 표시가
+// `@handle` 글자로 찾은 계정에서만 만들어져서, 막힌 부름이 meta 에 남지 않고 조용히
+// 사라졌다(#rcms: task_manager → rcms 세 번, notified 에도 meta 에도 없었다).
+describe('raw <@id> 로 부른 막힌 호출', () => {
+  it('meta.mentionDenied 에 handle 로 남는다', async () => {
+    const a = await agentWith('rawprivy', owner.accountId, 'owner');
+    const caller = await createAgent(app, adminToken, 'rawcaller');
+    const denied = await post(caller.pat, `<@${a.accountId}> 진행해 주세요`);
+    expect(await inboxHas(a.pat, denied.id)).toBe(false);
+    expect(denied.meta.mentionDenied).toEqual(['rawprivy']);
+  });
+
+  // 에이전트 글의 한가운데 `<@id>` 는 지칭이다 — 계정 종류를 몰라 사람으로 보면 부름이 된다.
+  it('에이전트 글 한가운데의 <@에이전트id> 는 부르지 않는다', async () => {
+    const target = await createAgent(app, adminToken, 'rawref');
+    const caller = await createAgent(app, adminToken, 'rawreffer');
+    const msg = await post(caller.pat, `보고입니다. 구현은 <@${target.accountId}> 몫이다`);
+    expect(await inboxHas(target.pat, msg.id)).toBe(false);
+    expect(msg.meta.mentionDenied).toBeUndefined();
+  });
+});
+
 describe('list 스코프', () => {
   it('명단에 있는 사람만 부를 수 있다', async () => {
     const a = await agentWith('listed', owner.accountId, 'list');
