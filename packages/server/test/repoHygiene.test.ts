@@ -4,6 +4,19 @@ import { join } from 'node:path';
 
 const ROOT = join(import.meta.dirname, '../../..');
 
+/**
+ * 코드가 사는 최상위 디렉터리들.
+ *
+ * **왜 둘인가:** `apps/` 가 생겼다(`apps/mobile` — Flutter 모바일 클라이언트). pnpm 워크스페이스
+ * 밖이라 `pnpm -r test` 도 `pnpm -r typecheck` 도 거기를 보지 않는다. 그러면 이 파일의
+ * 회귀선이 **저장소 전체에 대해 도는 유일한 검사**가 되는데, 훑는 곳이 `packages/` 하나면
+ * `apps/` 의 위반은 **조용히 초록으로 지나간다.**
+ *
+ * 나중에 나머지 패키지도 `apps/` 로 옮겨 갈 예정이라(계획은 보류 중) 그때도 이 상수 하나만
+ * 맞으면 된다 — 훑을 곳을 한 자리에 모아 두는 이유다.
+ */
+const CODE_ROOTS = ['apps', 'packages'] as const;
+
 function getRoot(): string {
   return ROOT;
 }
@@ -181,7 +194,7 @@ describe('repo hygiene', () => {
           }
         }
       };
-      walk(join(getRoot(), 'packages'));
+      for (const root of CODE_ROOTS) walk(join(getRoot(), root));
       walk(join(getRoot(), 'docs'));
       out.push(join(getRoot(), 'README.md'));
       return out;
@@ -233,7 +246,6 @@ describe('repo hygiene', () => {
   });
 
   describe('README environment variables table', () => {
-    const configDir = join(getRoot(), 'packages');
 
     // 툴체인이 주는 변수는 README 의 harkroom 설정 표에 적을 것이 아니다.
     //
@@ -259,13 +271,17 @@ describe('repo hygiene', () => {
     // `config.ts` 만 보면 `packages/agent/src/version.ts` 의 `AGENT_VERSION` 처럼
     // 다른 파일에서 읽는 변수가 표에서 빠져도 초록으로 지나간다. 그래서 각 패키지의
     // src 와 scripts 디렉터리 전체를 훑는다(test 디렉터리는 제외).
-    function extractEnvVars(dir: string): string[] {
+    function extractEnvVars(roots: readonly string[]): string[] {
       const envVars = new Set<string>();
       const files: string[] = [];
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (!entry.isDirectory()) continue;
-        collectSourceFiles(join(dir, entry.name, 'src'), files);
-        collectSourceFiles(join(dir, entry.name, 'scripts'), files);
+      for (const root of roots) {
+        const dir = join(getRoot(), root);
+        if (!existsSync(dir)) continue;
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          if (!entry.isDirectory()) continue;
+          collectSourceFiles(join(dir, entry.name, 'src'), files);
+          collectSourceFiles(join(dir, entry.name, 'scripts'), files);
+        }
       }
       for (const file of files) {
         const content = readFileSync(file, 'utf-8');
@@ -280,7 +296,7 @@ describe('repo hygiene', () => {
       const readmePath = join(getRoot(), 'README.md');
       const readmeContent = readFileSync(readmePath, 'utf-8');
 
-      const configEnvVars = extractEnvVars(configDir);
+      const configEnvVars = extractEnvVars(CODE_ROOTS);
       // 추출기 자체가 비면 이 회귀선은 아무것도 지키지 못한다 — 최소 개수를 못 박는다.
       expect(configEnvVars.length).toBeGreaterThan(5);
 
