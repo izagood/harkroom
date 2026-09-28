@@ -205,6 +205,9 @@ const draftOf = (a: AgentView): Draft => ({
   ownerAccountId: a.ownerAccountId,
 });
 
+/** 만들었다는 팝업이 머무는 시간. 읽고 닫을 새도 없이 사라지지 않을 만큼만. */
+export const CREATED_TOAST_MS = 5000;
+
 export function AgentsSettings({ targetId }: { targetId?: string }) {
   // 시간 표기는 언어를 따른다(`lib/time.ts`). 접두는 사전을 지난다.
   const t = useT();
@@ -241,6 +244,22 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 필요하다. 이 값이 없으면 그 조작은 아무 데도 쓰이지 않는다.
    */
   const [createdAgentId, setCreatedAgentId] = useState<string | null>(null);
+  /**
+   * 방금 만든 에이전트의 이름 — **만들었다는 팝업**의 재료.
+   *
+   * 만들기 화면은 만든 뒤에도 그대로 서 있으므로(위 `createdAgentId`) 성공해도 화면에
+   * 바뀌는 것이 없었다 — 사람은 눌린 것인지, 아직 도는 것인지, 만들어졌는지를 알 길이
+   * 없어 격자로 돌아가 카드를 찾아봐야 했다. 실패는 `error` 줄이 말하는데 성공만 조용했다.
+   *
+   * `Notice` 에 싣지 않는다 — 그 자리는 실패 전용이다(저절로 사라지지 않는 경고색). 이건
+   * 확인일 뿐이라 몇 초 뒤 스스로 걷힌다.
+   */
+  const [createdToast, setCreatedToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!createdToast) return;
+    const timer = setTimeout(() => setCreatedToast(null), CREATED_TOAST_MS);
+    return () => clearTimeout(timer);
+  }, [createdToast]);
   /** 에이전트별 계정 풀 배정(기기 로컬). 이 값은 서버로 가지 않는다 — `useAgentPool` 주석. */
   const agentPool = useAgentPool(selected?.id ?? createdAgentId);
   /**
@@ -844,6 +863,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
         Object.keys(opts).length ? opts : undefined,
       );
       setCreatedAgentId(agent.id);
+      setCreatedToast(agent.handle ?? draft.handle);
       // 배정 실패는 **생성 실패가 아니다.** 에이전트는 이미 만들어졌다.
       // 둘 다 실패하면 앞의 것만 보인다 — 한 줄에 둘을 이어 붙이면 사람이 무엇을 고쳐야
       // 하는지가 흐려진다. 나머지는 상세 화면의 같은 절이 다시 말한다.
@@ -1254,7 +1274,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   }
 
   return (
-    <div className="flex h-full min-h-0 bg-surface-raised">
+    <div className="relative flex h-full min-h-0 bg-surface-raised">
 
 
         <div className="flex min-w-0 flex-1 flex-col">
@@ -2454,6 +2474,24 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             )}
           </footer>
         </div>
+      {createdToast && (
+        <div
+          data-testid="agent-created-toast"
+          // 확인이지 경보가 아니다 — `Notice` 의 `alert` 보다 약하게 둔다(`UpdateToast` 와 같은 판단).
+          role="status"
+          className="absolute bottom-4 left-1/2 z-50 flex max-w-[90%] -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-surface-raised py-1.5 pl-3 pr-1.5 text-body shadow-md"
+        >
+          <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-accent-brand" />
+          <span className="truncate">{t('agents.create.created', { handle: createdToast })}</span>
+          <button
+            className="rounded-full px-1.5 text-fg-muted hover:bg-surface-hover"
+            aria-label={t('agents.create.createdDismiss')}
+            onClick={() => setCreatedToast(null)}
+          >
+            ×
+          </button>
+        </div>
+      )}
     </div>
   );
 }

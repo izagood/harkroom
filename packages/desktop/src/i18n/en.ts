@@ -682,6 +682,9 @@ export const en = {
     + 'Turn this off to assign it to another machine later.',
   'agents.create.attachFailed':
     'The agent was created, but it could not be assigned to this machine: {reason}. Assign it from the agent\u2019s detail screen.',
+  /** 만들기 성공 팝업. 만들기 화면은 만든 뒤에도 그대로 서 있어서, 이것이 없으면 성공이 보이지 않는다. */
+  'agents.create.created': 'Agent @{handle} created',
+  'agents.create.createdDismiss': 'Dismiss',
   'agents.create.failed': 'The agent was not created — that name may already be taken',
   /**
    * 이름 규칙. **`Invalid name` 이 아니라 무엇이 되는지를 적는다**(`sidebar.channel
