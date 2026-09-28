@@ -79,7 +79,7 @@ interface MenuProps {
 }
 
 /** `absolute` 배치와 트리거 사이의 간격(`mt-1`/`mb-1`) — 뒤집을지 잴 때 함께 센다. */
-const PLACEMENT_GAP = 4;
+export const PLACEMENT_GAP = 4;
 
 /**
  * 메뉴가 실제로 잘리는 상자. 화면(뷰포트)과 **스크롤되는 조상들**의 교집합이다.
@@ -92,7 +92,7 @@ const PLACEMENT_GAP = 4;
  * 조상 하나에서 멈추지 않고 끝까지 올라가며 교집합을 좁힌다. 스크롤 상자 안에 스크롤
  * 상자가 있는 배치(스레드 패널 안의 목록)에서 바깥 상자가 더 좁을 수 있다.
  */
-function clipBounds(el: HTMLElement): { top: number; bottom: number } {
+export function clipBounds(el: HTMLElement): { top: number; bottom: number } {
   let top = 0;
   let bottom = window.innerHeight;
   for (let p = el.parentElement; p; p = p.parentElement) {
