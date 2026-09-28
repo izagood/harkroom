@@ -1,4 +1,5 @@
 import type { AccountStatus, AddTeamToChannelResult, AgentView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
+import type { MemoryEdit, MemoryEntry, MemoryRevision } from '../lib/memoryList';
 import { countsAsReply, notifyLevelOf } from '@harkroom/shared';
 import { ApiClient, ApiError } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
@@ -1636,8 +1637,16 @@ export class Controller {
   }
 
   /** #139: 에이전트 메모리. 실패를 삼키지 않는다 — 호출부가 "없다" 와 "못 읽었다" 를 가른다. */
-  agentMemory(agentId: string): Promise<{ slug: string; value: string; updatedAt: string }[]> {
+  agentMemory(agentId: string): Promise<MemoryEntry[]> {
     return this.api.agentMemory(agentId);
+  }
+
+  putAgentMemory(agentId: string, slug: string, edit: MemoryEdit): Promise<{ ok: true }> {
+    return this.api.putAgentMemory(agentId, slug, edit);
+  }
+
+  agentMemoryRevisions(agentId: string, slug: string): Promise<MemoryRevision[]> {
+    return this.api.agentMemoryRevisions(agentId, slug);
   }
 
   deleteAgentMemory(agentId: string, slug: string): Promise<void> {

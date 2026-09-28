@@ -17,6 +17,27 @@ export interface MemoryEntry {
   slug: string;
   value: string;
   updatedAt: string;
+  /** 서버 069/070 이후 필드. 옛 서버면 없다 — 화면은 없는 것을 그리지 않는다. */
+  description?: string | null;
+  kind?: 'topic' | 'procedure' | 'journal';
+  readCount?: number;
+  lastReadAt?: string | null;
+}
+
+/** 이전 판(서버 069). 최근 것부터 온다. */
+export interface MemoryRevision {
+  value: string;
+  description: string | null;
+  updatedAt: string;
+  replacedAt: string;
+}
+
+/** 사람의 기억 편집(M5). `ifUpdatedAt` 은 화면이 연 판 — 그 사이 에이전트가 고쳤으면 409. */
+export interface MemoryEdit {
+  value: string;
+  description?: string;
+  kind?: 'topic' | 'procedure' | 'journal';
+  ifUpdatedAt?: string | null;
 }
 
 /**

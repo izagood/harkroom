@@ -247,7 +247,7 @@ dead on every server that has not been redeployed, and nothing on screen says wh
 
 ```ts
 // packages/shared/src/compat.ts
-export const MIN_SERVER_VERSION = '0.3.37';
+export const MIN_SERVER_VERSION = '0.3.41';
 ```
 
 Set it to the release that first contains the server side of your change, and **add a row to
