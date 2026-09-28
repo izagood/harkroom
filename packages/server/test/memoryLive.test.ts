@@ -114,7 +114,8 @@ describe('memory MCP tools', () => {
       expect(listResult.slugs).toContain('mem/listtest2');
       expect(listResult.slugs.length).toBeGreaterThanOrEqual(2);
       // rev 는 판본 해시다(러너 캐시용) — 값이 아니므로 "값을 주지 않는다"는 그대로다.
-      expect(Object.keys(listResult).sort()).toEqual(['rev', 'slugs']);
+      expect(Object.keys(listResult).sort()).toEqual(['entries', 'rev', 'slugs']);
+      expect(JSON.stringify(listResult)).not.toContain('secret data');
     } finally {
       await client.close();
     }
@@ -143,6 +144,84 @@ describe('memory MCP tools', () => {
       const afterDelete = await rev();
       expect(afterDelete).not.toBe(afterSecond);
       expect(afterDelete).toBe(afterUpdate);
+    } finally {
+      await client.close();
+    }
+  });
+
+  // 메모리 고도화 PR3: core 는 매 턴 실리므로 한도가 따로다. 거절은 "어떻게 하라"를 싣는다.
+  it('rejects core over the core limit with a how-to, allows it exactly', async () => {
+    const { pat } = await createAgent(app, adminToken, 'core-limit-agent');
+    const client = await mcpClient(pat);
+    try {
+      const over = await callTool(client, 'memory.set', { slug: 'core', value: 'x'.repeat(3001) });
+      expect(over.error?.code).toBe('core_too_long');
+      expect(over.error?.message).toContain('mem/');
+      expect(await callTool(client, 'memory.set', { slug: 'core', value: 'x'.repeat(3000) })).toEqual({ ok: true });
+      // mem/* 는 여전히 8000 까지다.
+      expect(await callTool(client, 'memory.set', { slug: 'mem/long', value: 'x'.repeat(8000) })).toEqual({ ok: true });
+    } finally {
+      await client.close();
+    }
+  });
+
+  // description 은 세 상태다: 생략=유지, 문자열=바꿈, ''=지움. 생략이 지우면 본문만 고치는
+  // 호출마다 요약이 사라진다.
+  it('description: set, kept when omitted, cleared by empty string, listed in entries', async () => {
+    const { pat } = await createAgent(app, adminToken, 'desc-agent');
+    const client = await mcpClient(pat);
+    const entry = async () => ((await callTool(client, 'memory.list', {})).entries as { slug: string; description: string | null }[])
+      .find((e) => e.slug === 'mem/d');
+    try {
+      await callTool(client, 'memory.set', { slug: 'mem/d', value: 'v1', description: '배포 절차' });
+      expect(await entry()).toEqual({ slug: 'mem/d', description: '배포 절차' });
+      await callTool(client, 'memory.set', { slug: 'mem/d', value: 'v2' });
+      expect((await entry())?.description).toBe('배포 절차');
+      expect((await callTool(client, 'memory.get', { slug: 'mem/d' })).description).toBe('배포 절차');
+      await callTool(client, 'memory.set', { slug: 'mem/d', value: 'v3', description: '' });
+      expect((await entry())?.description).toBeNull();
+    } finally {
+      await client.close();
+    }
+  });
+
+  // 읽은 횟수가 정리의 근거다. 읽기는 판본(rev)을 바꾸지 않는다 — 바꾸면 러너 캐시가 매번 깨진다.
+  it('memory.get counts reads without changing rev', async () => {
+    const { accountId, pat } = await createAgent(app, adminToken, 'read-agent');
+    const client = await mcpClient(pat);
+    try {
+      await callTool(client, 'memory.set', { slug: 'mem/r', value: 'v' });
+      const before = (await callTool(client, 'memory.list', {})).rev;
+      await callTool(client, 'memory.get', { slug: 'mem/r' });
+      await callTool(client, 'memory.get', { slug: 'mem/r' });
+      const row = (await pool.query(
+        `select read_count, last_read_at from agent_memory where account_id = $1 and slug = 'mem/r'`, [accountId],
+      )).rows[0];
+      expect(row.read_count).toBe(2);
+      expect(row.last_read_at).not.toBeNull();
+      expect((await callTool(client, 'memory.list', {})).rev).toBe(before);
+    } finally {
+      await client.close();
+    }
+  });
+
+  // 덮어쓰기·삭제 전 본문을 이전 판으로 남긴다 — 정리 턴이 병합·삭제를 하려면 되돌릴 길이 먼저다.
+  it('keeps the last 5 revisions on update and delete', async () => {
+    const { accountId, pat } = await createAgent(app, adminToken, 'rev-keep-agent');
+    const client = await mcpClient(pat);
+    const revs = async () => (await pool.query(
+      `select value from agent_memory_revision where account_id = $1 and slug = 'mem/h' order by replaced_at desc, id desc`,
+      [accountId],
+    )).rows.map((r) => r.value as string);
+    try {
+      await callTool(client, 'memory.set', { slug: 'mem/h', value: 'v0' });
+      expect(await revs()).toEqual([]);
+      await callTool(client, 'memory.set', { slug: 'mem/h', value: 'v1' });
+      expect(await revs()).toEqual(['v0']);
+      for (let i = 2; i <= 7; i++) await callTool(client, 'memory.set', { slug: 'mem/h', value: `v${i}` });
+      expect(await revs()).toEqual(['v6', 'v5', 'v4', 'v3', 'v2']);
+      await callTool(client, 'memory.set', { slug: 'mem/h', value: null });
+      expect((await revs())[0]).toBe('v7');
     } finally {
       await client.close();
     }

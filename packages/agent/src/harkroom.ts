@@ -217,8 +217,8 @@ export class HarkroomAgentClient {
   }
 
   /** `memory.list` — slug 와 판본(`rev`, 옛 서버는 없음). `memoryCache.ts` 의 `MemorySource`. */
-  listMemory(): Promise<{ slugs: string[]; rev?: string }> {
-    return this.call<{ slugs: string[]; rev?: string }>('memory.list');
+  listMemory(): Promise<{ slugs: string[]; rev?: string; entries?: { slug: string; description: string | null }[] }> {
+    return this.call<{ slugs: string[]; rev?: string; entries?: { slug: string; description: string | null }[] }>('memory.list');
   }
 
   /** `memory.get` 의 본문만. 없으면 null. */

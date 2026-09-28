@@ -108,6 +108,14 @@ describe('memoryPin — 시스템 프롬프트를 세션 동안 고정한다', (
     expect(t.system).not.toContain('기억이 아직 없다');
   });
 
+  // 요약(서버 069)이 있으면 이름 옆에 싣는다 — 언제 열어 볼지 정하는 근거다.
+  it('목록과 새로 생긴 기억에 한 줄 요약을 붙인다', async () => {
+    const first = await turn({ core: 'C', slugs: ['mem/a'], descriptions: { 'mem/a': '배포 절차' } }, true);
+    expect(first.turn).toContain('- mem/a — 배포 절차');
+    const next = await turn({ core: 'C', slugs: ['mem/a', 'mem/b'], descriptions: { 'mem/b': 'CI 함정' } }, false);
+    expect(next.turn).toContain('- mem/b — CI 함정');
+  });
+
   it('slug 와 core 를 이스케이프한다', async () => {
     await turn({ core: 'x', slugs: [] }, true);
     const t = await turn({ core: 'a < b', slugs: ['mem/<script>'] }, false);

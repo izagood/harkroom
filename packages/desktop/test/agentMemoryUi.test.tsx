@@ -112,13 +112,14 @@ describe('core 는 목록에서 떨어져 위에 선다', () => {
    * 두면 화면이 그 차이를 말하지 않고, 맨 위에 오는 것도 이름순의 우연이 된다.
    */
   it('core 카드가 따로 서고 길이와 한도를 함께 말한다', async () => {
-    fakeController([mem('core', '가'.repeat(4000)), mem('mem/a-one', '# 첫째')]);
+    fakeController([mem('core', '가'.repeat(2000)), mem('mem/a-one', '# 첫째')]);
     await open();
 
     const card = await screen.findByTestId('memory-core');
     expect(within(card).getByText('core')).toBeTruthy();
     expect(within(card).getByText('매 턴 실림')).toBeTruthy();
-    expect(within(card).getByText('4,000 / 8,000자')).toBeTruthy();
+    // 한도는 core 전용 3,000자다(서버가 강제한다) — 일반 기억의 8,000 이 아니다.
+    expect(within(card).getByText('2,000 / 3,000자')).toBeTruthy();
     // 목록 쪽에는 core 줄이 없다 — 두 벌로 서면 같은 것이 둘로 보인다.
     expect(screen.queryByTestId('memory-row-core')).toBeNull();
   });
