@@ -48,4 +48,13 @@ describe('lib/automation', () => {
     const s = describeTrigger({ kind: 'schedule', freq: 'weekly', weekdays: [1], time: '09:00', tz: 'Asia/Seoul' }, 'ko', t);
     expect(s).toBe('매주 월 09:00 (Asia/Seoul)');
   });
+
+  it('describeTrigger — GitHub 어댑터 추가 트리거', () => {
+    const t = translator('ko');
+    const s = describeTrigger({
+      kind: 'github', repo: 'izagood/harkroom', event: 'push', branch: 'main',
+      paths: ['packages/agent/src/adapters/*.ts'], change: 'added',
+    }, 'ko', t);
+    expect(s).toBe('GitHub izagood/harkroom push → main · packages/agent/src/adapters/*.ts (added)');
+  });
 });

@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import type { AutomationRunView, AutomationTrigger, AutomationView } from '@harkroom/shared';
+import type { AutomationRunView, AutomationSchedule, AutomationTrigger, AutomationView } from '@harkroom/shared';
 import { postMessage } from './messages.js';
 import { channelPostGate } from './channels.js';
 
@@ -34,7 +34,7 @@ function isTimeZone(tz: string): boolean {
 
 const tzSchema = z.string().min(1).max(64).refine(isTimeZone, 'unknown time zone');
 
-export const triggerSchema: z.ZodType<AutomationTrigger> = z.discriminatedUnion('freq', [
+const scheduleSchema = z.discriminatedUnion('freq', [
   z.object({ kind: z.literal('schedule'), freq: z.literal('daily'), time: z.string().regex(HHMM), tz: tzSchema }),
   z.object({
     kind: z.literal('schedule'), freq: z.literal('weekly'),
@@ -46,6 +46,23 @@ export const triggerSchema: z.ZodType<AutomationTrigger> = z.discriminatedUnion(
     kind: z.literal('schedule'), freq: z.literal('monthly'),
     monthDay: z.number().int().min(1).max(31), time: z.string().regex(HHMM), tz: tzSchema,
   }),
+]);
+
+const githubSchema = z.object({
+  kind: z.literal('github'),
+  repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/, 'owner/name'),
+  event: z.enum(['push', 'pull_request.merged', 'release.published', 'workflow_run.completed']),
+  branch: z.string().min(1).max(200).optional(),
+  paths: z.array(z.string().min(1).max(300)).max(20).optional(),
+  change: z.enum(['any', 'added', 'modified', 'removed']).optional(),
+});
+
+/**
+ * 트리거는 `kind` 로 먼저 가르고, schedule 은 그 안에서 `freq` 로 또 가른다. zod 의
+ * discriminatedUnion 은 한 칸만 보므로 바깥은 일반 union 이다.
+ */
+export const triggerSchema: z.ZodType<AutomationTrigger> = z.union([
+  scheduleSchema, githubSchema, z.object({ kind: z.literal('webhook') }),
 ]) as unknown as z.ZodType<AutomationTrigger>;
 
 // ── 시간 계산 ──────────────────────────────────────────────────────────────
@@ -89,7 +106,7 @@ function daysInMonth(y: number, m: number): number {
 }
 
 /** `after` 보다 **뒤의** 첫 회차. 규칙이 400일 안에 한 번도 맞지 않으면 null(그럴 수 없지만 무한 루프는 막는다). */
-export function nextOccurrence(trigger: AutomationTrigger, after: Date): Date | null {
+export function nextOccurrence(trigger: AutomationSchedule, after: Date): Date | null {
   const [hh, mm] = trigger.time.split(':').map(Number) as [number, number];
   const start = wallClock(after, trigger.tz);
   for (let i = 0; i <= 400; i++) {
@@ -145,7 +162,7 @@ export function renderBody(template: string, vars: Record<string, string>): stri
 
 const COLS = `id, owner_id as "ownerId", channel_id as "channelId", name, body, trigger,
   enabled, next_at as "nextAt", paused_reason as "pausedReason",
-  consecutive_failures as "consecutiveFailures", created_at as "createdAt", updated_at as "updatedAt"`;
+  consecutive_failures as "consecutiveFailures", ingress_enabled_at as "ingressEnabledAt", created_at as "createdAt", updated_at as "updatedAt"`;
 
 const RUN_COLS = `id, automation_id as "automationId", event_key as "eventKey",
   trigger_kind as "triggerKind", status, message_id as "messageId", error,
@@ -206,6 +223,10 @@ export async function updateAutomation(pool: Pool, id: string, ownerId: string, 
        next_at = case when $8 then $9::timestamptz else next_at end,
        paused_reason = case when $10 then null else paused_reason end,
        consecutive_failures = case when $10 then 0 else consecutive_failures end,
+       -- 시간 트리거로 바뀌면 외부 입구를 닫는다(065). 열어 두면 범용 hook 이 schedule 을 두드린다.
+       ingress_enabled_at = case when $6::jsonb->>'kind' = 'schedule' then null else ingress_enabled_at end,
+       ingress_token_hash = case when $6::jsonb->>'kind' = 'schedule' then null else ingress_token_hash end,
+       ingress_secret_enc = case when $6::jsonb->>'kind' = 'schedule' then null else ingress_secret_enc end,
        updated_at = now()
      where id = $1 and owner_id = $2 and deleted_at is null
      returning ${COLS}`,
