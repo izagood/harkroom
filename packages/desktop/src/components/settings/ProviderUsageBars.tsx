@@ -1,0 +1,64 @@
+/**
+ * 계정 줄 아래에 서는 **한도 막대 두 개**(5시간·주간) + 복귀 시각. 공급자 API 가 말한 % 다
+ * (`lib/providerUsage.ts`). 못 읽었으면 막대 대신 이유 한 줄 — 빈 자리로 두면 "0%"로 읽힌다.
+ *
+ * 색: 90% 이상만 경고색. 강조색(주황)은 쓰지 않는다(`accentBudget.test.tsx` — 강조는 "나를
+ * 막는 것"과 주 동작 하나로 좁혀 두었다). 한도에 가까운 것은 막을 뻔한 일이라 경고가 맞다.
+ */
+import { useLocale, useT } from '../../i18n/useT';
+import type { ProviderAccountUsage, ProviderUsageWindow } from '../../lib/providerUsage';
+import type { MessageKey } from '../../i18n/en';
+
+const ERROR_KEY: Record<string, MessageKey> = {
+  'no-credentials': 'providerUsage.error.noCredentials',
+  'token-expired': 'providerUsage.error.tokenExpired',
+  unauthorized: 'providerUsage.error.unauthorized',
+};
+
+function Bar({ label, w, nowMs }: { label: string; w: ProviderUsageWindow; nowMs: number }) {
+  const t = useT();
+  const locale = useLocale();
+  const pct = Math.round(w.usedPercent);
+  const reset = w.resetsAtMs === null
+    ? null
+    : new Intl.DateTimeFormat(locale, {
+      ...(w.resetsAtMs - nowMs > 20 * 60 * 60 * 1000 ? { month: 'numeric', day: 'numeric' } : {}),
+      hour: 'numeric', minute: '2-digit',
+    }).format(new Date(w.resetsAtMs));
+  return (
+    <div className="min-w-0 flex-1" data-testid="provider-usage-bar">
+      <div className="flex items-baseline justify-between gap-2 text-meta">
+        <span className="text-fg-muted">{label}</span>
+        <span className="tabular-nums text-fg">{pct}%</span>
+      </div>
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-border" aria-hidden="true">
+        <div
+          className={`h-full rounded-full ${pct >= 90 ? 'bg-warning' : 'bg-fg-muted'}`}
+          style={{ width: `${Math.max(pct, 1)}%` }}
+        />
+      </div>
+      {reset && <div className="mt-0.5 text-meta text-fg-subtle">{t('providerUsage.resetsAt', { time: reset })}</div>}
+    </div>
+  );
+}
+
+export function ProviderUsageBars({ usage, nowMs }: { usage: ProviderAccountUsage | null; nowMs: number }) {
+  const t = useT();
+  if (!usage) return null;
+  if (usage.error) {
+    const key = ERROR_KEY[usage.error];
+    return (
+      <div className="text-meta text-fg-subtle" data-testid="provider-usage-error">
+        {key ? t(key) : t('providerUsage.error.other', { reason: usage.error })}
+      </div>
+    );
+  }
+  if (!usage.session && !usage.weekly) return null;
+  return (
+    <div className="flex gap-6" data-testid="provider-usage">
+      {usage.session && <Bar label={t('providerUsage.session')} w={usage.session} nowMs={nowMs} />}
+      {usage.weekly && <Bar label={t('providerUsage.weekly')} w={usage.weekly} nowMs={nowMs} />}
+      {usage.extra?.map((x) => <Bar key={x.label} label={x.label} w={x.window} nowMs={nowMs} />)}
+    </div>
+  );
+}

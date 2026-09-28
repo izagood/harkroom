@@ -197,6 +197,9 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
     claude_account_move: ['account: String', 'to_pool: String'],
     // codex 계정(2026-09-28): 이름·로그인 id 뿐이다.
     codex_accounts_list: [],
+    // 공급자 API 사용률(2026-09-28): 아무것도 안 받는다. 토큰은 데몬이 읽는다.
+    claude_accounts_provider_usage: [],
+    codex_accounts_provider_usage: [],
     codex_account_login_start: ['account: String'],
     codex_account_login_cancel: ['login_id: String'],
     codex_account_remove: ['account: String'],

@@ -105,3 +105,52 @@ describe('Codex 카드', () => {
     await waitFor(() => expect(calls.some((c) => c.cmd === 'codex_account_remove' && c.args?.account === 'spare')).toBe(true));
   });
 });
+
+describe('공급자 API 사용률 막대', () => {
+  const USAGE = {
+    measuredAtMs: Date.parse('2026-09-28T12:00:00Z'),
+    accounts: [
+      { account: '', session: null, weekly: null, fetchedAtMs: 0, error: 'token-expired' },
+      {
+        account: 'work', fetchedAtMs: 0,
+        session: { usedPercent: 93.4, resetsAtMs: Date.parse('2026-09-28T13:00:00Z') },
+        weekly: { usedPercent: 12, resetsAtMs: null },
+      },
+    ],
+  };
+  const stubWithUsage = (): void => {
+    calls = [];
+    vi.stubGlobal('__TAURI_INTERNALS__', {
+      transformCallback: () => 1,
+      invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
+        calls.push({ cmd, args });
+        if (cmd === 'codex_accounts_list') return SNAP;
+        if (cmd === 'codex_accounts_provider_usage') return USAGE;
+        return {};
+      }),
+    });
+  };
+
+  it('켜져 있으면(기본) 계정 줄에 5시간·주간 % 가 서고, 못 읽은 계정은 이유를 말한다', async () => {
+    const { usePrefsStore } = await import('../../state/prefsStore');
+    usePrefsStore.setState({ providerUsageApi: null });
+    stubWithUsage();
+    render(<CodexAccountsSettings />);
+    const work = await screen.findByTestId('codex-account-work');
+    await waitFor(() => expect(within(work).getByText('93%')).toBeTruthy());
+    expect(within(work).getByText('12%')).toBeTruthy();
+    const system = screen.getByTestId('codex-account-system');
+    expect(within(system).getByTestId('provider-usage-error').textContent).toMatch(/expired/);
+  });
+
+  it('꺼져 있으면 데몬에 묻지도 않는다 — 로컬 동작 그대로', async () => {
+    const { usePrefsStore } = await import('../../state/prefsStore');
+    usePrefsStore.setState({ providerUsageApi: false });
+    stubWithUsage();
+    render(<CodexAccountsSettings />);
+    await screen.findByTestId('codex-account-work');
+    expect(calls.some((c) => c.cmd === 'codex_accounts_provider_usage')).toBe(false);
+    expect(screen.queryByTestId('provider-usage')).toBeNull();
+    usePrefsStore.setState({ providerUsageApi: null });
+  });
+});
