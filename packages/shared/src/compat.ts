@@ -32,6 +32,7 @@
  *
  * | 값 | 왜 | 무엇이 깨지나 |
  * |---|---|---|
+ * | `0.3.37` | `POST /automations/:id/approve` 가 그 릴리스에 들어갔고(#882 가 #881 과 함께 v0.3.37), 설정 › Automations 의 제안 [승인]이 그것을 부른다. 같은 화면의 수신 키 발급(`POST/DELETE /automations/:id/ingress`)은 v0.3.28(#880) | 제안 승인이 404, 0.3.28 아래에서는 수신 켜기도 404 |
  * | `0.3.29` | `PUT /teams/:id/scope`·`/teams/:id/invokers` 가 그 릴리스에 들어갔고(#890, #891 과 함께 v0.3.29), 팀 상세의 호출 범위 절이 그것을 부른다 | 팀 범위를 바꾸면 404 |
  * | `0.3.23` | `/automations` CRUD·`POST /automations/:id/run` 이 그 릴리스에 들어갔고(#878), 앱의 설정 › Automations(#879)가 그것을 부른다 | Automations 화면이 목록을 못 받고 만들기가 404 |
  * | `0.3.14` | `POST /accounts/agents/:id/restart` 가 그 릴리스에 들어갔고(#869), 앱의 [재시작]이 그것을 부른다 | [재시작]이 404 로 죽는다 |
@@ -50,7 +51,7 @@
  *
  * 근거 없이 높이지는 않는다 — 멀쩡한 서버가 고장으로 그려지면 그 순간 이 값은 소음이 된다.
  */
-export const MIN_SERVER_VERSION = '0.3.29';
+export const MIN_SERVER_VERSION = '0.3.37';
 
 /** `X.Y.Z` 만 견준다. 그 밖의 모양은 견주지 않는다(아래 `compareRelease` 주석). */
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
