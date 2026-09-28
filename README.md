@@ -13,6 +13,59 @@ Existing tools separate human chat from agent execution. Git-based code collabor
 
 avcs objects are **not** turned into chat messages. Chat is where people and agents talk; avcs is where the work is recorded; harkroom shows both without translating one into the other. (An earlier version did project intents and operations into channel threads. It was removed in #534 — see [docs/design.md](docs/design.md) §3 for what changed and why.)
 
+## How it fits together
+
+```
+┌─── server host ────────────────────────────────────────────────────────┐
+│                                                                        │
+│  harkroom-server          REST · /ws · /operator · /mcp                │
+│        │                                   ╎                           │
+│        ▼                                   ╎ AVCS_BASE_URL             │
+│  PostgreSQL                         AVCS server (optional,             │
+│                                     separate process)                  │
+└───────────────────────────────▲────────────────────▲───────────────────┘
+                                │ REST + /ws         │ /operator (WebSocket)
+┌─── a machine that runs agents ┼────────────────────┼───────────────────┐
+│                               │                    │                   │
+│  Harkroom.app (Tauri)         │                    │                   │
+│   ├─ webview (UI) ────────────┘                    │                   │
+│   └─ Rust shell                                    │                   │
+│        │ starts or attaches (unix socket)          │                   │
+│        ▼                                           │                   │
+│  harkroom-operator   one per machine ──────────────┘                   │
+│        │ spawns · restarts · forwards (unix socket)                    │
+│        ▼                                                               │
+│  harkroom-runner     one per agent                                     │
+│        │ runs each turn in a PTY                                       │
+│        ▼                                                               │
+│  claude / codex / opencode     the harness CLI                         │
+│        │ stdio MCP                                                     │
+│        ▼                                                               │
+│  harkroom-operator mcp-bridge ──▶ the operator (unix socket)           │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Chat needs only the app and the server.** The webview talks to `harkroom-server` over
+  REST and one WebSocket (`/ws`). Nothing else has to run on a machine where you only chat.
+- **Agents live with an operator, not with the app.** The app's Rust shell starts (or attaches
+  to) `harkroom-operator` over a unix socket; the operator keeps one `/operator` WebSocket to
+  the server and starts one `harkroom-runner` per agent assigned to it. A machine without the
+  app runs the same operator headless (`harkroom-operator run`, see
+  [Connect an Agent](#connect-an-agent)). Either way the agent answers no matter which
+  device you mention it from.
+- **The runner never holds a server URL or token.** It long-polls its inbox and relays its
+  PTY through the operator's unix socket. When a mention arrives it starts the harness CLI
+  in a PTY for that turn.
+- **The harness reaches harkroom through the operator too.** Its `harkroom` MCP server is
+  `harkroom-operator mcp-bridge`, a stdio process that hands each JSON-RPC request to the
+  operator, which forwards it to the server's `/mcp` under its own token and that agent's id.
+- **The terminal you watch in the app is relayed, not stored.** PTY bytes go
+  runner → operator → server → your `/ws` and on to xterm; the server passes them through
+  without writing them to the database or logs.
+- **AVCS is optional and external.** With `AVCS_BASE_URL` set the server follows an AVCS
+  server's object log and shows leases next to the chat (see Quick Start, Mode 2).
+
 ## Maturity
 
 **Pre-1.0, self-hosted dogfooding.** harkroom is actively used for its own development.
