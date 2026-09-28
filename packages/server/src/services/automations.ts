@@ -162,7 +162,8 @@ export function renderBody(template: string, vars: Record<string, string>): stri
 
 const COLS = `id, owner_id as "ownerId", channel_id as "channelId", name, body, trigger,
   enabled, next_at as "nextAt", paused_reason as "pausedReason",
-  consecutive_failures as "consecutiveFailures", ingress_enabled_at as "ingressEnabledAt", created_at as "createdAt", updated_at as "updatedAt"`;
+  consecutive_failures as "consecutiveFailures", ingress_enabled_at as "ingressEnabledAt",
+  debounce_sec as "debounceSec", proposed_by as "proposedBy", approved_at as "approvedAt", created_at as "createdAt", updated_at as "updatedAt"`;
 
 const RUN_COLS = `id, automation_id as "automationId", event_key as "eventKey",
   trigger_kind as "triggerKind", status, message_id as "messageId", error,
@@ -174,15 +175,46 @@ function initialNextAt(trigger: AutomationTrigger, now: Date): Date | null {
 
 export async function createAutomation(pool: Pool, input: {
   ownerId: string; channelId: string; name: string; body: string;
-  trigger: AutomationTrigger; now?: Date;
+  trigger: AutomationTrigger; debounceSec?: number | null; now?: Date;
 }): Promise<AutomationView> {
   const nextAt = initialNextAt(input.trigger, input.now ?? new Date());
   const res = await pool.query(
-    `insert into automation (owner_id, channel_id, name, body, trigger, next_at)
-     values ($1, $2, $3, $4, $5, $6) returning ${COLS}`,
-    [input.ownerId, input.channelId, input.name, input.body, JSON.stringify(input.trigger), nextAt?.toISOString() ?? null],
+    `insert into automation (owner_id, channel_id, name, body, trigger, next_at, debounce_sec)
+     values ($1, $2, $3, $4, $5, $6, $7) returning ${COLS}`,
+    [input.ownerId, input.channelId, input.name, input.body, JSON.stringify(input.trigger), nextAt?.toISOString() ?? null,
+      input.debounceSec ?? null],
   );
   return res.rows[0];
+}
+
+/**
+ * 에이전트의 제안(072). `enabled=false`·`approved_at=null` 로 들어가 시계도 입구도 돌지 않는다.
+ * 소유자는 **승인할 사람**이다 — 승인하면 글이 그 사람 이름으로 나간다.
+ */
+export async function proposeAutomation(pool: Pool, input: {
+  ownerId: string; proposedBy: string; channelId: string; name: string; body: string;
+  trigger: AutomationTrigger; debounceSec?: number | null;
+}): Promise<AutomationView> {
+  const res = await pool.query(
+    `insert into automation (owner_id, proposed_by, approved_at, enabled, channel_id, name, body, trigger, debounce_sec)
+     values ($1, $2, null, false, $3, $4, $5, $6, $7) returning ${COLS}`,
+    [input.ownerId, input.proposedBy, input.channelId, input.name, input.body, JSON.stringify(input.trigger),
+      input.debounceSec ?? null],
+  );
+  return res.rows[0];
+}
+
+/** 제안 승인. 켜고 다음 회차를 잡는다. 이미 승인된 것은 false. */
+export async function approveAutomation(pool: Pool, id: string, ownerId: string, now = new Date()): Promise<AutomationView | null> {
+  const cur = await getAutomation(pool, id, ownerId);
+  if (!cur || cur.approvedAt) return null;
+  const nextAt = initialNextAt(cur.trigger, now);
+  const res = await pool.query(
+    `update automation set approved_at = now(), enabled = true, next_at = $3, updated_at = now()
+     where id = $1 and owner_id = $2 and approved_at is null and deleted_at is null returning ${COLS}`,
+    [id, ownerId, nextAt?.toISOString() ?? null],
+  );
+  return res.rows[0] ?? null;
 }
 
 /** 만든 사람 것만 보인다 — 예약 메시지(#222)와 같은 이유로, 소유자 조건을 호출부로 올리지 않는다. */
@@ -208,6 +240,8 @@ export async function getAutomation(pool: Pool, id: string, ownerId: string): Pr
  */
 export async function updateAutomation(pool: Pool, id: string, ownerId: string, patch: {
   name?: string; body?: string; channelId?: string; trigger?: AutomationTrigger; enabled?: boolean;
+  /** `null` 은 끈다. `undefined` 는 그대로 둔다. */
+  debounceSec?: number | null;
   now?: Date;
 }): Promise<AutomationView | null> {
   const cur = await getAutomation(pool, id, ownerId);
@@ -227,12 +261,13 @@ export async function updateAutomation(pool: Pool, id: string, ownerId: string, 
        ingress_enabled_at = case when $6::jsonb->>'kind' = 'schedule' then null else ingress_enabled_at end,
        ingress_token_hash = case when $6::jsonb->>'kind' = 'schedule' then null else ingress_token_hash end,
        ingress_secret_enc = case when $6::jsonb->>'kind' = 'schedule' then null else ingress_secret_enc end,
+       debounce_sec = case when $11 then $12::int else debounce_sec end,
        updated_at = now()
      where id = $1 and owner_id = $2 and deleted_at is null
      returning ${COLS}`,
     [id, ownerId, patch.name ?? null, patch.body ?? null, patch.channelId ?? null,
       JSON.stringify(trigger), enabled, reschedule, nextAt?.toISOString() ?? null,
-      patch.enabled === true],
+      patch.enabled === true, patch.debounceSec !== undefined, patch.debounceSec ?? null],
   );
   return res.rows[0] ?? null;
 }
@@ -259,6 +294,8 @@ export async function listRuns(pool: Pool, automationId: string, limit = 50): Pr
 
 export type EnqueueResult =
   | { status: 'queued'; run: AutomationRunView }
+  /** 디바운스(071): 모으는 중인 회차에 붙었다. 새 회차는 없다. */
+  | { status: 'merged'; run: AutomationRunView }
   | { status: 'duplicate' }
   | { status: 'rate_limited' }
   | { status: 'inactive' };
@@ -274,11 +311,17 @@ export async function enqueueRun(db: Pool | PoolClient, input: {
   /** 사람이 "지금 한 번" 누른 것은 꺼진 자동화도 돌린다(시험용이다). */
   ignoreEnabled?: boolean;
 }): Promise<EnqueueResult> {
-  const a = await db.query<{ enabled: boolean }>(
-    `select enabled from automation where id = $1 and deleted_at is null`, [input.automationId],
+  const a = await db.query<{ enabled: boolean; debounce_sec: number | null }>(
+    `select enabled, debounce_sec from automation where id = $1 and deleted_at is null`, [input.automationId],
   );
   const row = a.rows[0];
   if (!row || (!row.enabled && !input.ignoreEnabled)) return { status: 'inactive' };
+
+  // 디바운스(071). 사람이 누른 "지금 한 번"과 schedule 은 모으지 않는다 — 기다리게 할 이유가 없다.
+  if (row.debounce_sec && input.triggerKind !== 'manual' && input.triggerKind !== 'schedule') {
+    const merged = await mergeIntoGathering(db, input);
+    if (merged) return merged;
+  }
 
   const recent = await db.query<{ n: number }>(
     `select count(*)::int as n from automation_run
@@ -295,14 +338,78 @@ export async function enqueueRun(db: Pool | PoolClient, input: {
   }
 
   const ins = await db.query(
-    `insert into automation_run (automation_id, event_key, trigger_kind, payload)
-     values ($1, $2, $3, $4)
+    `insert into automation_run (automation_id, event_key, trigger_kind, payload, not_before)
+     values ($1, $2, $3, $4, $5)
      on conflict (automation_id, event_key) do nothing
      returning ${RUN_COLS}`,
-    [input.automationId, input.eventKey, input.triggerKind, JSON.stringify({ vars: input.vars })],
+    [input.automationId, input.eventKey, input.triggerKind,
+      JSON.stringify({ vars: input.vars, events: [{ key: input.eventKey, summary: eventSummary(input.vars, input.eventKey) }] }),
+      row.debounce_sec && input.triggerKind !== 'manual' && input.triggerKind !== 'schedule'
+        ? new Date(Date.now() + row.debounce_sec * 1000).toISOString() : null],
   );
   if (!ins.rows[0]) return { status: 'duplicate' };
   return { status: 'queued', run: ins.rows[0] };
+}
+
+/** 병합 목록의 한 줄. 사람이 알아볼 이름을 고르고, 없으면 이벤트 키로 둔다. 값은 이미 `neutralize` 를 지났다. */
+export function eventSummary(vars: Record<string, string>, eventKey: string): string {
+  const head = vars['pr.number'] ? `#${vars['pr.number']} ` : vars.sha ? `${vars.sha.slice(0, 7)} ` : '';
+  const text = vars['pr.title'] ?? vars['commit.message'] ?? vars['release.tag'] ?? vars['workflow.name']
+    ?? vars['payload.title'] ?? vars['payload.status'] ?? eventKey;
+  return `${head}${text}`;
+}
+
+const MAX_MERGED_EVENTS = 50;
+
+/**
+ * 모으는 중인 회차(`pending` + `not_before` 가 아직 미래)가 있으면 이 이벤트를 거기 붙인다.
+ * 없으면 null — 호출부가 새 회차를 연다(그 회차가 다음 모으기의 그릇이 된다).
+ *
+ * 두 이벤트가 동시에 와서 둘 다 "그릇 없음"을 보면 회차가 둘 생긴다. 막으려고 automation 행을
+ * `for update` 로 잡는다 — 풀이면 트랜잭션을 열어야 락이 산다.
+ */
+async function mergeIntoGathering(
+  db: Pool | PoolClient,
+  input: { automationId: string; eventKey: string; vars: Record<string, string> },
+): Promise<EnqueueResult | null> {
+  const isPool = 'totalCount' in db;
+  const client: PoolClient = isPool ? await (db as Pool).connect() : (db as PoolClient);
+  try {
+    if (isPool) await client.query('begin');
+    await client.query(`select 1 from automation where id = $1 for update`, [input.automationId]);
+    const open = await client.query<{ id: string; payload: { vars?: Record<string, string>; events?: Array<{ key: string; summary: string }> } }>(
+      `select id, payload from automation_run
+       where automation_id = $1 and status = 'pending' and not_before is not null and not_before > now()
+       order by created_at desc limit 1 for update`,
+      [input.automationId],
+    );
+    const run = open.rows[0];
+    if (!run) {
+      if (isPool) await client.query('commit');
+      return null;
+    }
+    const events = run.payload.events ?? [];
+    if (events.some((e) => e.key === input.eventKey)) {
+      if (isPool) await client.query('commit');
+      return { status: 'duplicate' };
+    }
+    const nextEvents = events.length >= MAX_MERGED_EVENTS
+      ? events
+      : [...events, { key: input.eventKey, summary: eventSummary(input.vars, input.eventKey) }];
+    // 변수는 **가장 마지막 이벤트** 것으로 덮는다 — `{{sha}}` 는 최신 머리를 가리켜야 한다.
+    // 창은 늘리지 않는다: 이벤트가 끝없이 오면 영영 안 나가는 것이 한 번 늦는 것보다 나쁘다.
+    const updated = await client.query(
+      `update automation_run set payload = $2 where id = $1 returning ${RUN_COLS}`,
+      [run.id, JSON.stringify({ vars: input.vars, events: nextEvents })],
+    );
+    if (isPool) await client.query('commit');
+    return { status: 'merged', run: updated.rows[0] };
+  } catch (err) {
+    if (isPool) await client.query('rollback').catch(() => {});
+    throw err;
+  } finally {
+    if (isPool) client.release();
+  }
 }
 
 // ── sweeper ───────────────────────────────────────────────────────────────
@@ -314,8 +421,9 @@ export interface SweepHost {
 interface DueSchedule { id: string; trigger: AutomationTrigger; next_at: Date }
 
 interface PendingRun {
-  id: string; automation_id: string; trigger_kind: string; payload: { vars?: Record<string, string> };
-  created_at: Date; owner_id: string; channel_id: string; name: string; body: string;
+  id: string; automation_id: string; trigger_kind: string;
+  payload: { vars?: Record<string, string>; events?: Array<{ key: string; summary: string }> };
+  created_at: Date; not_before: Date | null; owner_id: string; channel_id: string; name: string; body: string;
   deleted_at: Date | null;
 }
 
@@ -382,13 +490,14 @@ export function createAutomationSweeper(pool: Pool, opts: { now?: () => Date } =
     try {
       await client.query('begin');
       const due = await client.query<PendingRun>(
-        `select r.id, r.automation_id, r.trigger_kind, r.payload, r.created_at,
+        `select r.id, r.automation_id, r.trigger_kind, r.payload, r.created_at, r.not_before,
                 a.owner_id, a.channel_id, a.name, a.body, a.deleted_at
          from automation_run r join automation a on a.id = r.automation_id
          where r.status = 'pending' and not (r.id = any($1::uuid[]))
+           and (r.not_before is null or r.not_before <= $2)
          order by r.created_at limit 1
          for update of r skip locked`,
-        [skip],
+        [skip, now().toISOString()],
       );
       const run = due.rows[0];
       if (!run) { await client.query('commit'); return 'none'; }
@@ -402,7 +511,9 @@ export function createAutomationSweeper(pool: Pool, opts: { now?: () => Date } =
       };
 
       if (run.deleted_at) { await finish('skipped', 'automation_deleted'); await client.query('commit'); return 'done'; }
-      if (now().getTime() - new Date(run.created_at).getTime() > PENDING_EXPIRY_MS) {
+      // 만료는 **보낼 수 있게 된 때**부터 잰다 — 모으는 창만큼 늦은 것은 늦은 것이 아니다.
+      const readyAt = Math.max(new Date(run.created_at).getTime(), run.not_before ? new Date(run.not_before).getTime() : 0);
+      if (now().getTime() - readyAt > PENDING_EXPIRY_MS) {
         await finish('failed', 'expired');
         await client.query('commit');
         return 'done';
@@ -419,7 +530,12 @@ export function createAutomationSweeper(pool: Pool, opts: { now?: () => Date } =
       const result = await postMessage(pool, {
         channelId: run.channel_id,
         authorId: run.owner_id,
-        body: renderBody(run.body, run.payload.vars ?? {}),
+        body: renderBody(run.body, {
+          ...(run.payload.vars ?? {}),
+          // 병합 목록. 디바운스를 안 켰으면 한 줄이다 — 본문이 `{{events}}` 를 써도 늘 채워진다.
+          events: (run.payload.events ?? []).map((e) => `- ${e.summary}`).join('\n'),
+          'events.count': String((run.payload.events ?? []).length || 1),
+        }),
         // 발송이 재시도돼도 같은 메시지를 돌려받는다(`scheduledMessages.ts` 와 같은 이유).
         idempotencyKey: `automation:${run.id}`,
         meta: { automation: { id: run.automation_id, name: run.name, trigger: run.trigger_kind, runId: run.id } },
