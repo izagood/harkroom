@@ -26,6 +26,7 @@ function setup(over: Partial<Record<string, unknown>> = {}) {
     updateAgent: vi.fn(async (_id: string, patch: Record<string, unknown>) => agent(patch as Partial<AgentView>)),
     addInvoker: vi.fn(async (_id: string, accountId: string) => agent({ invokeScope: 'list', invokers: [accountId] })),
     removeInvoker: vi.fn(async () => agent({ invokeScope: 'list', invokers: [] })),
+    putMcpServer: vi.fn(async (name: string, credentialKind: string) => ({ name, credentialKind, createdBy: null, createdAt: '' })),
     mcpServers: vi.fn(async () => [
       { name: 'github', credentialKind: 'community', createdBy: null, createdAt: '' },
       { name: 'slack', credentialKind: 'personal', createdBy: null, createdAt: '' },
@@ -88,12 +89,86 @@ describe('AgentScopeSection', () => {
 
   it('MCP 체크는 레지스트리에서 오고, 켜고 끄면 mcpServers 전체를 보낸다', async () => {
     const c = setup();
-    render(<AgentScopeSection agent={agent({ mcpServers: ['github'] })} onUpdated={() => {}} />);
+    render(<AgentScopeSection agent={agent({ mcpServers: ['github'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
     const github = await screen.findByLabelText('github') as HTMLInputElement;
     expect(github.checked).toBe(true);
     fireEvent.click(screen.getByLabelText('slack'));
     await waitFor(() => expect(c.updateAgent).toHaveBeenCalledWith('agent-1', { mcpServers: ['github', 'slack'] }));
     fireEvent.click(github);
     await waitFor(() => expect(c.updateAgent).toHaveBeenCalledWith('agent-1', { mcpServers: [] }));
+  });
+});
+
+/** 이 머신의 오퍼레이터 표면 — Tauri invoke 를 가짜로 건다. */
+function fakeLocal(servers: { name: string; source?: 'operator' | 'claude' }[]) {
+  const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+  (globalThis as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
+    invoke: async (cmd: string, args?: Record<string, unknown>) => {
+      calls.push({ cmd, args });
+      if (cmd === 'operator_mcp_list') {
+        return { servers: servers.map((x) => ({ name: x.name, source: x.source ?? 'operator', transport: 'http', target: 'https://x', args: [], envKeys: [], headerKeys: [], oauth: false })) };
+      }
+      return {};
+    },
+  };
+  return calls;
+}
+
+describe('AgentMcpSection — 한 절에서 끝낸다', () => {
+  afterEach(() => { delete (globalThis as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__; });
+
+  it('이 머신에 정의가 없는 이름은 켜지 못한다 — 켜면 오퍼레이터가 에이전트를 안 띄운다', async () => {
+    fakeLocal([{ name: 'slack' }]);
+    const c = setup();
+    render(<AgentScopeSection agent={agent()} onUpdated={() => {}} />);
+    expect(await screen.findByTestId('agent-mcp-missing-github')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('github'));
+    expect((await screen.findByTestId('agent-mcp-error')).textContent).toContain('github');
+    expect(c.updateAgent).not.toHaveBeenCalled();
+  });
+
+  it('personal 서버를 켜면 확인을 받고 scope 를 같은 PATCH 로 바꾼다', async () => {
+    fakeLocal([{ name: 'slack' }, { name: 'github' }]);
+    const c = setup();
+    render(<AgentScopeSection agent={agent()} onUpdated={() => {}} />);
+    fireEvent.click(await screen.findByLabelText('slack'));
+    expect(await screen.findByTestId('agent-mcp-confirm-personal')).toBeTruthy();
+    expect(c.updateAgent).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('agent-mcp-confirm-yes'));
+    await waitFor(() => expect(c.updateAgent).toHaveBeenCalledWith('agent-1',
+      { mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' }));
+    expect(await screen.findByTestId('agent-mcp-notice')).toBeTruthy();
+  });
+
+  it('[추가] 는 레지스트리 이름 → 이 머신 정의 → 붙이기 순서다(프리셋 Jira)', async () => {
+    const calls = fakeLocal([]);
+    const order: string[] = [];
+    const c = setup({
+      mcpServers: vi.fn(async () => (order.includes('put')
+        ? [{ name: 'jira', credentialKind: 'personal', createdBy: null, createdAt: '' }] : [])),
+      putMcpServer: vi.fn(async () => { order.push('put'); return { name: 'jira', credentialKind: 'personal', createdBy: null, createdAt: '' }; }),
+    });
+    render(<AgentScopeSection agent={agent({ credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+    fireEvent.click(await screen.findByTestId('agent-mcp-add-open'));
+    fireEvent.change(screen.getByLabelText('서버'), { target: { value: 'jira' } });
+    fireEvent.click(screen.getByTestId('agent-mcp-add-submit'));
+    await waitFor(() => expect(c.updateAgent).toHaveBeenCalledWith('agent-1', { mcpServers: ['jira'] }));
+    expect(c.putMcpServer).toHaveBeenCalledWith('jira', 'personal');
+    const set = calls.find((x) => x.cmd === 'operator_mcp_set');
+    expect(set?.args).toEqual({ name: 'jira', definition: { type: 'http', url: 'https://mcp.atlassian.com/v2/mcp' } });
+  });
+
+  it('레지스트리 등록 권한이 없으면 막는다 — 정의도 붙이기도 하지 않는다', async () => {
+    const calls = fakeLocal([]);
+    const c = setup({
+      mcpServers: vi.fn(async () => []),
+      putMcpServer: vi.fn(async () => { throw new ApiError(403, 'forbidden', 'no'); }),
+    });
+    render(<AgentScopeSection agent={agent()} onUpdated={() => {}} />);
+    fireEvent.click(await screen.findByTestId('agent-mcp-add-open'));
+    fireEvent.click(screen.getByTestId('agent-mcp-add-submit'));
+    expect((await screen.findByTestId('agent-mcp-error')).textContent).toContain('agent.privileged');
+    expect(calls.some((x) => x.cmd === 'operator_mcp_set')).toBe(false);
+    expect(c.updateAgent).not.toHaveBeenCalled();
   });
 });
