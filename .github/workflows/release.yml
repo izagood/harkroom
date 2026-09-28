@@ -123,6 +123,7 @@ on:
     paths-ignore:
       - 'docs/**'
       - '*.md'
+      - 'apps/*/README.md'
       - 'packages/*/README.md'
       - 'LICENSE'
       - '.github/workflows/ci.yml'
@@ -216,13 +217,13 @@ jobs:
           node-version: 22
 
       # 버전 정본은 `tauri.conf.json` 이다. **왜 루트 `package.json` 이 아닌지는
-      # `packages/desktop/scripts/sync-version.mjs` 상단에 근거와 함께 적혀 있다**
+      # `apps/desktop/scripts/sync-version.mjs` 상단에 근거와 함께 적혀 있다**
       # (요약: `vite.config.ts` 가 이미 그렇게 정해 뒀고, 화면에 뜨는 버전이 거기서 나온다).
       - name: 다음 버전을 정한다
         id: version
         run: |
           set -euo pipefail
-          current=$(node packages/desktop/scripts/sync-version.mjs)
+          current=$(node apps/desktop/scripts/sync-version.mjs)
           if git rev-parse -q --verify "refs/tags/v$current" >/dev/null; then
             # 이미 그 버전으로 릴리즈했다 — patch 를 올린다.
             next=$(node -p "const [a,b,c]='$current'.split('.'); [a,b,+c+1].join('.')")
@@ -243,7 +244,7 @@ jobs:
           version="${{ steps.version.outputs.next }}"
           # **셋을 한 번에 맞춘다.** 여기서 `sed` 를 흩어 놓지 않는 이유는 그것을 잴 수
           # 없기 때문이다 — 스크립트로 두면 `test/syncVersion.test.ts` 가 실제로 돌려 본다.
-          node packages/desktop/scripts/sync-version.mjs "$version"
+          node apps/desktop/scripts/sync-version.mjs "$version"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -356,8 +357,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            packages/desktop/src-tauri/target
-          key: release-cargo-${{ matrix.triple }}-${{ hashFiles('packages/desktop/src-tauri/Cargo.lock') }}
+            apps/desktop/src-tauri/target
+          key: release-cargo-${{ matrix.triple }}-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock') }}
 
       - run: pnpm install --frozen-lockfile
 
@@ -469,8 +470,8 @@ jobs:
       # 러너에 인증서가 여러 개일 때 엉뚱한 것을 고를 수 있다.
       #
       # **절대 경로여야 한다.** `pnpm --filter` 는 그 패키지 디렉터리에서 스크립트를 돌리므로
-      # cwd 가 `packages/desktop` 이 된다 — 상대 경로를 넘기면 거기에 다시 이어붙어
-      # `packages/desktop/packages/desktop/...` 을 찾는다(실측 2026-09-06, 두 번째 시도).
+      # cwd 가 `apps/desktop` 이 된다 — 상대 경로를 넘기면 거기에 다시 이어붙어
+      # `apps/desktop/apps/desktop/...` 을 찾는다(실측 2026-09-06, 두 번째 시도).
       # 첫 시도는 경로가 아예 안 넘어가서, 두 번째는 넘겼지만 상대라서 죽었다.
       #
       # `HARKROOM_APP_PATH` 를 넘기는 이유: `--target` 을 준 빌드는 산출물을
@@ -479,7 +480,7 @@ jobs:
       - name: 앱을 서명한다
         env:
           HARKROOM_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          HARKROOM_APP_PATH: ${{ github.workspace }}/packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app
+          HARKROOM_APP_PATH: ${{ github.workspace }}/apps/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app
         run: pnpm --filter @harkroom/desktop sign
 
       # ## 공증 — `.p8` 을 **파일로** 푼다
@@ -497,7 +498,7 @@ jobs:
           # `umask` 로 만들어지자마자 남이 못 읽게 한다.
           (umask 077; echo "$APPLE_NOTARY_KEY" | base64 --decode > "$key")
           HARKROOM_NOTARY_KEY="$key" \
-            HARKROOM_APP_PATH="${{ github.workspace }}/packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app" \
+            HARKROOM_APP_PATH="${{ github.workspace }}/apps/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app" \
             pnpm --filter @harkroom/desktop notarize
 
       - name: 공증 키를 지운다
@@ -520,7 +521,7 @@ jobs:
           set -euo pipefail
           tag="${{ needs.prepare.outputs.tag }}"
           version="${tag#v}"
-          app="packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app"
+          app="apps/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app"
           # `aarch64-apple-darwin` → `aarch64`. `.dmg` 이름에 들어갈 아키텍처 토큰이고,
           # 아래 `finalize` 의 검증 목록이 같은 이름을 기대한다.
           arch="$(echo "${{ matrix.triple }}" | cut -d- -f1)"
@@ -592,7 +593,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          app="packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app"
+          app="apps/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app"
           arch="$(echo "${{ matrix.triple }}" | cut -d- -f1)"
           out="$RUNNER_TEMP/Harkroom_${arch}.app.tar.gz"
 

@@ -1,0 +1,549 @@
+// harkroom 에이전트 러너. 멘션을 기다리다 깨어나 답한다.
+//
+// 실행: 오퍼레이터가 배정을 받아 띄운다(스펙 2026-09-20 §5) — env 로 오퍼레이터 소켓·러너 id·secret·
+// `harkroom-operator` 경로를 받는다. 손으로 띄울 URL·PAT 경로는 사라졌다.
+// 배포판에서는 이 소스가 아니라 **단일 번들**이 돈다 — `#431` 1단계가 러너를 Tauri
+// 사이드카(`externalBin`)로 만들어 앱과 함께 배포하고, `.app` 안
+// `Contents/MacOS/harkroom-runner` 로 놓인다. 즉 위 pnpm 명령은 죽지 않았지만 **개발 환경
+// 전용**이다: 앱을 설치해 쓰는 사람에게는 실행할 소스도 pnpm 워크스페이스도 없다.
+// 러너를 띄우는 정본은 `apps/operator/src/assignments.ts` 다.
+// (claude-code harness 는 claude CLI 의 로그인을 그대로 쓴다 — API 키가 필요 없다.)
+//
+// 옛 구조(reply.ts + harness/claudeCode.ts)는 멘션마다 `claude -p` 를 새로 띄워 stdout 의
+// json 을 파싱해 대신 발화했다. 지금은 스레드마다 하네스 세션이 디스크에 살아남아
+// resume 되고(sessions.ts), 발화는 에이전트 자신이 harkroom MCP `message.post` 로 한다
+// (prompt.ts) — 이 파일은 더 이상 하네스 출력을 파싱하지 않는다. 조립 흐름 자체는
+// mentionTurn.ts::runMentionTurn 에 있다: main.ts 는 top-level await 로 접속·설정 파일
+// 쓰기 같은 부작용을 곧바로 일으키므로, 그 흐름을 여기 두면 테스트가 import 하는 순간
+// 진짜 서버에 붙으려 든다.
+import { execFile } from 'node:child_process';
+import { access, readdir } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
+import { loadConfig, runnerLabel } from './config.js';
+import { applySelfRename, HarkroomAgentClient } from './harkroom.js';
+import { runMentionTurn, type MentionTurnDeps } from './mentionTurn.js';
+import { runPtyTurn } from './pty.js';
+import { SessionStore } from './sessions.js';
+import { ensureNameLink, resolveAgentStateDir } from './stateDir.js';
+import { assertHarnessContract, readExtraMcpServers, readMcpServers } from './turn.js';
+import { createStoppableSleep } from './stoppableSleep.js';
+import type { Exec } from './workspace.js';
+import { isCredentialFailure, nextBackoffMs } from './policy.js';
+import { harnessBinaryName } from '@harkroom/shared';
+import { runnerExitPlan } from './exit.js';
+import { stopRequestedForRunner } from './stop.js';
+import { harnessLoginNotice } from './prompt.js';
+import { createRelayClient } from './relay.js';
+import { createInteractiveManager, type InteractiveManager } from './interactiveTurn.js';
+import { createAttentionLedger } from './attentionLedger.js';
+import { TurnRegistry } from './turnRegistry.js';
+import { MentionQueue } from './mentionQueue.js';
+import { loadClaudeAccountLane } from './claudeAccounts.js';
+import { ensureCodexHome } from './codexHome.js';
+import { ensureOpencodeHome } from './opencodeHome.js';
+import { createMentionScheduler, type BatchContext } from './mentionScheduler.js';
+
+const config = loadConfig();
+// 릴레이(오퍼레이터 링크)가 곧 서버로 가는 유일한 길이다(스펙 2026-09-20 §5) — MCP 도 REST 도 이
+// 소켓 위로 간다. 그래서 클라이언트보다 먼저 세운다. 재접속은 이 객체가 스스로 한다.
+//
+// **접속 실패로 러너를 죽이지 않는다.** 붙지 못한 동안의 호출은 status 0 으로 거절되고, poll
+// 루프가 백오프로 다시 부른다 — 오퍼레이터가 재시작 중인 몇 초가 정확히 그 경우다.
+/**
+ * 이관 보류 — 앞 세대 러너가 아직 들고 있는 inbox entry(`HARKROOM_HANDOVER_HOLD`).
+ *
+ * 오퍼레이터가 앞 러너의 `runner.pollStopped` 통지를 받아 **spawn 때 심어 준다.** 그 항목들은
+ * 앞 러너에서 턴이 이미 돌고 있으므로 여기서 또 띄우면 같은 멘션에 두 번 답한다.
+ *
+ * **푸는 것은 오퍼레이터다.** 앞 러너가 완전히 물러나면 `handover.released` 가 와서 그 자리에서
+ * 집합을 비운다 — 앞 러너가 1초 만에 끝나면 보류도 1초다. 앞 러너의 생사를 아는 쪽이 거기뿐이라
+ * 이 판단을 러너에 두지 않는다.
+ *
+ * 아래 시한은 **백스톱**이다: 오퍼레이터가 죽어 통지가 영영 안 오는 경우에만 쓰인다. 영원히
+ * 건너뛰면 앞 러너가 끝내지 못한 항목에 **아무도 답하지 않는다** — 늦어질지언정 잃지는 않게
+ * 한다. 턴 예산과 같은 30분이다: 그보다 짧으면 정상적으로 도는 앞 턴을 중복으로 집는다.
+ */
+const HANDOVER_HOLD_MS = 30 * 60_000;
+const handoverHeld = new Set<number>(
+  (process.env.HARKROOM_HANDOVER_HOLD ?? '')
+    .split(',').map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0),
+);
+const handoverHoldUntilMs = Date.now() + HANDOVER_HOLD_MS;
+if (handoverHeld.size) {
+  console.log(`[main] 이관 보류: 앞 러너가 들고 있는 entry ${[...handoverHeld].join(',')} — 최대 ${HANDOVER_HOLD_MS}ms 동안 건너뛴다`);
+}
+const heldEntryIds = (): ReadonlySet<number> => {
+  if (handoverHeld.size && Date.now() > handoverHoldUntilMs) {
+    console.log('[main] 이관 보류 백스톱 시한이 지났다 — 오퍼레이터의 해제가 안 왔다. 남은 항목을 평범한 멘션으로 다시 본다');
+    handoverHeld.clear();
+  }
+  return handoverHeld;
+};
+/** 오퍼레이터가 "앞 러너가 물러났다"고 알려 오면 그 자리에서 푼다 — 정상 경로다. */
+const releaseHandoverHold = (): void => {
+  if (!handoverHeld.size) return;
+  console.log('[main] 오퍼레이터가 이관 보류를 풀었다 — 앞 러너가 물러났다');
+  handoverHeld.clear();
+};
+
+const relay = createRelayClient({
+  link: config.operatorLink,
+  // #337: 서버의 interactive.open 은 매니저가 처리한다. 매니저가 relay 를 필요로 해서
+  // (세션 열기) 상호 참조가 생기므로 늦게 배선한다 — 매니저가 아직 없으면 릴레이가
+  // 스스로 interactive.error 로 답한다(relay.ts 의 훅 부재 처리).
+  // 앞 세대가 물러났다는 오퍼레이터의 통지. 이관 보류를 **그 자리에서** 푼다.
+  onHandoverReleased: releaseHandoverHold,
+  onInteractiveOpen: (req) => {
+    if (!interactive) return Promise.reject(new Error('러너가 아직 기동 중이다 — 잠시 뒤 다시 열어라'));
+    return interactive.open(req);
+  },
+});
+relay.start();
+// 첫 왕복(`me()`) 전에 링크가 붙기를 잠깐 기다린다 — 소켓 연결은 비동기이고, 그 전의 호출은
+// status 0 으로 거절되어 기동이 "오퍼레이터가 없다"로 죽는다. 못 붙으면 그대로 간다: 그 뒤의
+// 실패는 poll 루프의 백오프가 다룬다.
+if (!(await relay.whenConnected(10_000))) {
+  console.error('오퍼레이터 링크에 아직 붙지 못했다 — 계속 시도한다');
+}
+const harkroom = new HarkroomAgentClient(relay);
+
+// RUNNABLE_HARNESSES 가 실제로 PRESETS 에 구현돼 있는지 기동 시점에 검사한다.
+// 불일치가 있으면 여기서 크게 실패한다 — 멘션마다 개별적으로 실패하는 대신.
+assertHarnessContract();
+
+let running = true;
+/** 폴 루프의 기다림(backoff). 종료 신호가 이것을 깨운다 — 오퍼레이터가 없을 때 최대 60초를 더 사는 일이 없게. */
+const stoppable = createStoppableSleep();
+/** 아래에서 늦게 배선된다(릴레이 ↔ 매니저 상호 참조). 시그널 핸들러가 참조하므로 먼저 선언한다. */
+let interactive: InteractiveManager | null = null;
+for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(sig, () => {
+    running = false;
+    stoppable.wake();
+    // #337: 인터랙티브 PTY 는 사람이 닫아 줄 때까지 기다릴 대상이 없다 — 러너가 죽으면
+    // 릴레이도 함께 끊긴다. 고아 회수와 같은 경로(SIGTERM→유예→SIGKILL)로 즉시 회수한다.
+    interactive?.shutdown();
+  });
+}
+
+// 기동 시각. 종료 요청(#129)이 **나를 향한 것인지** 가르는 기준이다 — 내가 뜨기 전에 남은
+// 요청은 이미 물러난 앞 러너의 것이고, 그것으로 죽으면 새 러너가 뜰 때마다 곧바로 죽는다
+// (stop.ts 주석). 원격 종료 요청은 위 SIGTERM 과 **같은 플래그**를 끈다: 진행 중인 배치를
+// 끝낸 뒤에만 루프를 벗어난다는 이미 검증된 성질을 그대로 물려받는다.
+const startedAtMs = Date.now();
+
+/**
+ * 종료 요청을 받아들인다. 여기서 프로세스를 죽이지 않는다 — 플래그만 끄고, 실제 종료는
+ * 진행 중인 턴·배치가 끝난 뒤 루프가 스스로 빠져나가며 일어난다.
+ *
+ * #126: 요청을 받았다는 사실은 로그에 남긴다. 로그가 없으면 운영자는 러너가 요청 때문에
+ * 물러난 것인지 죽은 것인지 구분할 수 없다.
+ */
+function acceptStopRequest(at: string): void {
+  running = false;
+  console.log(`[main] 종료 요청을 받았다 (요청 시각: ${at}) — 진행 중인 턴을 마쳤으므로 물러난다.`);
+  // #250: 데스크탑 앱이 띄운 러너라면 앱이 다시 띄운다(내가 소유한 에이전트인 경우).
+  // 그 밖에는 여전히 사람(또는 감독)의 몫이다 — 서버는 러너를 띄우지 않는다(design.md §1).
+  console.log('  harkroom 서버는 러너를 띄우지 않는다 — 다시 띄우는 것은 데스크탑 앱(소유한 에이전트) 또는 사람/launchd/systemd 감독의 몫이다.');
+}
+
+/**
+ * **재시도로 낫지 않는 실패**면 78 로 물러난다 — 자격증명 실패(#250)와 하네스 실행 파일
+ * 부재(#340). 판정은 `exit.ts::runnerExitPlan` 하나가 갖는다: 세 자리(기동·멘션 턴·폴 루프)가
+ * 같은 판정을 써야 하고, 판정을 늘릴 때도 여기가 아니라 거기를 고쳐야 한다.
+ *
+ * 이름이 `...CredentialRejected` 가 아닌 이유: #340 이 같은 결의 두 번째 부류를 더했다.
+ * 자격증명만 가리키는 이름으로 두면 다음 사람이 실행 파일 부재를 "왜 여기서 죽지"로 읽는다.
+ */
+function exitIfUnrecoverable(err: unknown): void {
+  const plan = runnerExitPlan(err);
+  if (!plan) return;
+  for (const line of plan.lines) console.error(line);
+  process.exit(plan.code);
+}
+
+/**
+ * **아무도 await 하지 않은 거절도 같은 판정을 지나게 한다**(2026-09-08 14:04 실측).
+ *
+ * 위 세 자리(기동·멘션 턴·폴 루프)는 모두 `try/catch` 다. 그날 러너를 죽인 것은 그 셋 중
+ * 어디도 아니었다: 드레인(SIGTERM)을 받은 러너가 턴을 끝내고 폴 루프를 빠져나가
+ * `relay.stop()` → `종료` 까지 정상으로 출력한 **뒤**, 떠 있던 MCP send 하나가 401 로
+ * 거절되며 프로세스를 죽였다. 스택에 애플리케이션 프레임이 하나도 없었다 — 그 promise 를
+ * 들고 있는 곳이 없었으니 걸릴 catch 도 없다.
+ *
+ * 그 죽음이 남긴 것은 종료 코드 1 과 생 `StreamableHTTPError` 스택이었다. 앱이 읽는 것은
+ * 78 과 마커 한 줄뿐이므로(`exit.ts` 주석) 앱은 이 죽음을 `needs_reissue` 로 칠할 수
+ * 없었고, 사람이 화면에서 본 것은 이유 없이 사라진 러너다.
+ *
+ * **판정을 새로 만들지 않는다** — 같은 `exitIfUnrecoverable` 을 태운다. 판정이 두 벌이
+ * 되면 한쪽만 고치는 사고가 나고, 이 저장소는 그 사고를 이미 두 번 겪었다(#250·#473).
+ *
+ * **삼키지 않는다.** 판정이 "물러날 사유가 아니다"라고 하면 다시 던져 Node 의 기본 동작으로
+ * 돌려보낸다. 모든 거절을 로그 한 줄로 덮으면 이번 사고와 무관한 결함들이 조용히 묻히고,
+ * 그것은 그물이 아니라 뚜껑이다.
+ */
+process.on('unhandledRejection', (reason: unknown) => {
+  exitIfUnrecoverable(reason);
+  throw reason;
+});
+
+/**
+ * 하네스 로그인이 풀린 실패를 **사람이 보는 자리에** 남긴다(2026-09-07).
+ *
+ * 왜 러너 로그로 충분하지 않았나: 그날 forge 의 claude 로그인이 만료됐고 러너 로그에는
+ * "`claude` 를 한 번 실행해 로그인해라"가 이미 있었다. 그런데 사람이 보고 있던 곳은
+ * 스레드였고, 거기 남은 것은 "(답변에 실패했습니다 — 운영자 확인이 필요합니다)" 두
+ * 줄이었다. 사용자의 말이 그것이다: *"그럼 다시 로그인 할 수 있게 알려줬어야지"*.
+ *
+ * **함수로 뽑은 이유**: 이 통지는 `exitIfUnrecoverable` 바로 앞에 서야 하고
+ * (그 함수가 `process.exit` 을 부른다), 호출부에 열 줄 넘게 펼치면 판정과 그 자리가
+ * 멀어진다 — `mainCredentialSites.test.ts` 가 "판정이 그 자리에 붙어 있는가"를 재고,
+ * 그 회귀선이 실제로 이 변경을 잡았다.
+ *
+ * 던지지 않는다: 통지 실패로 물러남을 막으면 안 된다. 78 로 죽는 것이 앱이 상태를
+ * 갱신하는 유일한 계약이고(`exit.ts` 주석), 그 계약이 통지 성공에 매달릴 이유가 없다.
+ */
+async function noticeIfHarnessLogin(
+  err: unknown, channelId: string, anchor: string, messageId: string,
+): Promise<void> {
+  if (isCredentialFailure(err) !== 'harness-credential') return;
+  try {
+    // 하네스 이름은 정의에서 읽는다 — 지어내지 않는다(#368). 사람이 실행할 명령이
+    // 에이전트마다 다르므로(`claude-code` → `claude`) 이름이 없으면 문구가 명령을 뺀다.
+    const def = await harkroom.definition();
+    await harkroom.post(channelId, harnessLoginNotice(harnessBinaryName(def.harness)), anchor);
+  } catch (notifyErr) {
+    console.error(`  ${messageId} 로그인 통지 발화 실패(물러남은 계속):`,
+      notifyErr instanceof Error ? notifyErr.message : notifyErr);
+  }
+}
+
+/**
+ * 기동의 첫 두 호출. 여기서 401 이 나는 것이 **가장 흔한 경우**다 — 앱이 PAT 를 회전한
+ * 뒤 옛 PAT 로 다시 뜬 러너, 또는 사람이 폐기된 PAT 를 넘긴 러너. 감싸지 않으면 top-level
+ * rejection 이 되어 Node 가 종료 코드 1 로 죽고, 앱은 "그냥 죽었다"와 구분할 수 없다.
+ */
+const [me, guide] = await (async () => {
+  try {
+    return [await harkroom.me(), await harkroom.guide()] as const;
+  } catch (err) {
+    exitIfUnrecoverable(err);
+    throw err;
+  }
+})();
+
+// spec §3 은 *"상태는 handle 로 스코프한다"* 고 적었는데, **이제 키는 계정 id 다**(#167 ·
+// #846). handle 은 바뀌므로(#843) 키가 될 수 없고, 이름 안의 handle 은 사람이 디렉터리를
+// 보고 알아보라고 남은 꼬리표다 — 그 판단은 `stateDir.ts` 와 `workspace.ts` 주석에 있다.
+//
+// 그 스코프가 워크스페이스에만 있으면 격리는 절반이다. 세션 레코드·MCP 설정까지 나누지
+// 않으면: 기본 `AGENT_STATE_DIR` 로 러너 두 대를 띄우면 에이전트 B 가
+// A 의 sessions.json 레코드를 읽고, harness 가 같으면 A 의 세션 id 를 B 자신의(다른)
+// workspaceDir 에서 resume 하려 든다 — 다중 에이전트 협업(성공 기준 9·10)이 구조적으로
+// 깨진다.
+//
+// #167: 그 격리가 **서버 축에서** 또 절반이었다. handle 만으로 나누면 서로 다른 서버의
+// 같은 handle 이 같은 디렉터리를 쓴다. 키에 계정 id 를 넣어 서버별로 갈린다 — 왜 URL 이
+// 아니라 id 인지는 stateDir.ts 주석에 있다.
+//
+// #174: 같은 에이전트를 여러 인스턴스로 동시에 돌리기 위해 인스턴스 축을 하나 더한다.
+// HARKROOM_AGENT_INSTANCE 가 없으면 기존 경로가 그대로(하위 호환). 있으면 마지막
+// 세그먼트로 붙는다.
+//
+// **세션 파일·MCP 설정·avcs 워크스페이스 경로를 여기서 이어 붙이지 않는다** — 그 셋을
+// `resolveAgentStateDir` 이 함께 돌려준다. 여기서 각자 조립하면 하나를 옛 뿌리에 두는
+// 실수가 타입에 걸리지 않고, 그 파일 하나만 두 인스턴스가 밟는다(그러면 격리는 없다).
+//
+// #843: 이름은 바뀔 수 있으므로 **이미 있는 디렉터리를 id 로 먼저 찾는다**(stateDir.ts 주석).
+// 뿌리가 아직 없는 첫 기동이면 읽을 것이 없다 — 그때는 빈 목록이고 새 이름으로 만든다.
+const stateDirNames = await readdir(config.stateDir).catch(() => [] as string[]);
+const {
+  agentStateDir, legacyPath, sessionsPath, workspaceBaseDir, codexHomeDir, opencodeHomeDir,
+} = resolveAgentStateDir(config.stateDir, me.handle, me.id, config.agentInstance, stateDirNames);
+
+// 뿌리 이름이 id 하나라(#850) 사람이 눈으로 찾을 길을 따로 낸다: `by-name/<handle> -> ../<뿌리>`.
+// 인스턴스가 붙어도 링크는 **뿌리**를 가리킨다 — 인스턴스는 그 아래 한 단이고, 사람이 찾는
+// 것은 "이 에이전트의 자리" 이지 "이 인스턴스의 자리" 가 아니다.
+await ensureNameLink(config.stateDir, me.handle, basename(config.agentInstance ? dirname(agentStateDir) : agentStateDir));
+
+// 대화형 `codex resume` 은 --ignore-user-config 를 받지 않는다. 개인 config.toml/MCP 를
+// 물려주지 않으면서 기존 로그인은 재사용하도록 Harkroom 전용 CODEX_HOME 을 준비한다.
+const codexHome = await ensureCodexHome(codexHomeDir);
+
+// opencode 도 같은 이유로 격리한다 — 다만 한 변수가 아니라 XDG 셋이고, MCP 는 argv 가 아니라
+// **설정 파일**로만 등록되므로 오퍼레이터가 쓴 표를 그 파일로 번역해 둔다(`opencodeHome.ts`).
+// 사람 설정에서 물려받는 것은 `provider`·`model` 뿐이다 — `mcp` 를 물려받으면 운영자 개인
+// MCP 가 에이전트 턴에 붙는다(claude 의 `--strict-mcp-config` 와 같은 자리).
+const opencodeHome = await ensureOpencodeHome({
+  opencodeHome: opencodeHomeDir,
+  mcpServers: await readMcpServers(config.mcpConfigPath),
+});
+
+// claude 계정 풀. **비어 있는 것이 정상이다** — 그때는 `CLAUDE_CONFIG_DIR` 를 주입하지 않아
+// 자식이 시스템 기본(`~/.claude`)을 쓴다(기존 동작).
+//
+// 이것이 필요한 이유: 러너는 `CLAUDE_CONFIG_DIR` 를 설정하지 않아 언제나 시스템 기본 계정에
+// 묶여 있었고, 계정 전환을 그 경로로 하는 도구에서 사람이 계정을 바꿔도 러너에 닿지 않았다
+// (`claudeAccounts.ts` 모듈 주석).
+//
+// `HARKROOM_CLAUDE_ACCOUNTS` 에 없는 계정이 오면 이 호출이 던지고 러너는 뜨지 않는다 —
+// 조용히 무시하면 운영자가 계정 B 라고 믿고 띄운 러너가 A 로 돈다.
+// 풀 축(다중 계정 2단계): 어느 풀을 쓸지는 `HARKROOM_CLAUDE_POOL` → `pools.json` 의 이
+// 에이전트 배정 → 기본 풀 → 암묵 풀(뿌리 자체) 순으로 정해진다.
+//
+// **키는 `me.id`** 다 — handle 이 아닌 이유는 `stateDir.ts` 판단과 같다: handle 은 바뀔 수
+// 있고 서로 다른 서버의 같은 handle 은 다른 계정이다.
+//
+// **러너는 `pools.json` 을 쓰지 않는다.** 읽기만 한다 — 그 파일의 writer 는 데몬 하나이고,
+// 두 번째 writer 가 생기면 lost update 가 조용히 난다(`daemonProtocol.ts` 머리 주석이
+// `sessions.json` 에 대해 적은 것과 같은 근거).
+const lane = await loadClaudeAccountLane({
+  agentId: me.id,
+  forcedPool: process.env.HARKROOM_CLAUDE_POOL,
+  order: process.env.HARKROOM_CLAUDE_ACCOUNTS,
+});
+const claudeAccounts = lane.accounts;
+// **이름만 적는다** — 이메일·토큰·Keychain 서비스명은 적지 않는다(PAT 규율과 같다).
+console.log(claudeAccounts.length
+  ? `claude 계정 ${claudeAccounts.length}개 (풀: ${lane.pool ?? '기본(뿌리)'}): ${claudeAccounts.map((a) => a.name).join(', ')}`
+  : `claude 계정 풀이 비어 있다 (풀: ${lane.pool ?? '지정 없음'}) — 시스템 기본 로그인을 쓴다`);
+
+// 계정 축에 넘길 배열. 풀이 비면 `[null]` — 루프가 정확히 한 번 돌아 기존 동작과 같아진다
+// (`withAccountFailover` 주석).
+const accountLane = claudeAccounts.length ? claudeAccounts : [null];
+
+// 폴이 나르는 신고값(5단계). **이름과 풀만** — 경로·이메일은 싣지 않는다(위 콘솔 한 줄과
+// 같은 규율). 기동 때 한 번 만들어 두는 이유는 이것이 러너가 사는 동안 바뀌지 않는
+// 사실이기 때문이다: 페일오버가 옮기는 머리는 여기 없고, 지금 도는 계정은 턴 줄(#694)이
+// 말한다. codex·gemini 러너가 이것을 보내도 서버가 harness 로 걸러 낸다
+// (`services/claudeLane.ts`) — 러너가 자기 하네스를 폴 루프에서 들고 있지 않기 때문이다.
+const claudeLaneReport = { pool: lane.pool ?? null, accounts: claudeAccounts.map((a) => a.name) };
+
+// 서버별로 갈리기 전 경로가 남아 있으면 **경고만** 한다 — 자동으로 옮기지 않는다.
+// 코드는 그 디렉터리가 *어느 서버의* 이 handle 것인지 알 방법이 없다(아래 레거시
+// sessions.json 주석과 같은 논리다). 대신 운영자가 판단할 수 있게 명령을 그대로 준다.
+const hasLegacyPath = await access(legacyPath).then(() => true, () => false);
+if (hasLegacyPath) {
+  console.warn(`[main] 서버별로 갈리기 전 상태 디렉터리가 있다: ${legacyPath}`);
+  console.warn(`  이 디렉터리가 이 서버의 @${me.handle} 것이 확실하면 옮겨라:`);
+  console.warn(`    mv ${legacyPath} ${agentStateDir}`);
+  console.warn('  확실하지 않으면 옮기지 마라 — 다른 커뮤니티의 세션을 접수한다.');
+}
+
+const legacySessionsPath = join(config.stateDir, 'sessions.json');
+const hasLegacySessions = await access(legacySessionsPath).then(() => true, () => false);
+if (hasLegacySessions) {
+  console.warn(`[main] 레거시 세션 파일이 있다: ${legacySessionsPath}`);
+  console.warn('  handle 스코프 이전 버전이 남긴 것이라 여러 에이전트의 레코드가 섞여 있을 수 있다.');
+  console.warn('  자동으로 옮기지 않는다 — 고아 워크스페이스·claude 세션을 직접 확인하고 정리해라.');
+}
+
+const store = new SessionStore(sessionsPath);
+await store.load();
+
+// MCP 설정 파일은 **오퍼레이터가** spawn 전에 썼다(스펙 2026-09-20 §6) — harkroom 브릿지·avcs·
+// 에이전트의 mcpServers 가 이 머신의 정의로 합쳐져 있다. 러너는 만들지 않고 경로만 쓴다. codex 는
+// 파일을 못 받으므로 추가 항목을 여기서 한 번 읽어 `-c` 로 넘긴다(없거나 깨졌으면 여기서 죽는다).
+const mcpConfigPath = config.mcpConfigPath;
+const extraMcpServers = await readExtraMcpServers(mcpConfigPath);
+
+/**
+ * `node:child_process` 의 `execFile` 을 workspace.ts::Exec 계약으로 감싼 얇은 어댑터.
+ * **절대 reject 하지 않는다** — `ensureWorkspace` 는 stderr 를 보고 "avcs repo 아님" 폴백을
+ * 판정하는데, reject 하면 그 분기 자체에 도달하지 못하고 채팅 전용 에이전트까지 죽는다
+ * (브리프 지적). exec 자체가 실패해도(명령을 못 찾음 등) code 로만 알린다.
+ */
+const exec: Exec = (cmd, args, opts) =>
+  new Promise((resolve) => {
+    execFile(cmd, args, { cwd: opts.cwd }, (err, stdout, stderr) => {
+      if (!err) {
+        resolve({ code: 0, stdout, stderr });
+        return;
+      }
+      // 프로세스가 떠서 비정상 종료했으면 err.code 는 그 종료 코드(숫자)다. 애초에 spawn
+      // 자체가 안 됐으면(명령을 못 찾음 등) err.code 는 'ENOENT' 같은 문자열이라 종료 코드로
+      // 쓸 수 없다 — 그 경우엔 실패를 나타내는 숫자로만 뭉뚱그리고, 원인은 stderr(비어
+      // 있으면 에러 메시지)로 넘긴다.
+      const code = typeof err.code === 'number' ? err.code : 1;
+      resolve({ code, stdout, stderr: stderr || err.message });
+    });
+  });
+
+// 기동 로그에 handle 과 인스턴스를 함께 적는다(#174) — 운영자가 `ps` 로 구분해야 한다.
+// 형식은 `runnerLabel` 하나가 갖는다: 여기서 직접 조립하면 로그와 문서가 갈린다.
+console.log(`${runnerLabel(me.handle, config.agentInstance)} 로 붙었다 — 오퍼레이터 ${config.operatorLink.socketPath} (runner ${config.operatorLink.runnerId})`);
+console.log(`상태 디렉터리: ${agentStateDir}`);
+console.log('정의는 서버에서 읽는다 (harkroom UI 의 Add/Edit agent 로 바꾼다)');
+
+
+// #337: 진행 중 턴의 레지스트리와 멘션 유예 장부. 멘션 턴(runMentionTurn)과 인터랙티브
+// 턴이 같은 레지스트리를 봐야 한다 — 갈라지면 같은 세션에 PTY 가 둘 뜬다(turnRegistry.ts).
+const registry = new TurnRegistry();
+const mentionQueue = new MentionQueue();
+// 계정별 "사람 부름" 원장(2026-09-08). **러너 수명 동안 하나다** — 첫 실행 관문은 계정
+// 설정에 기록되므로 한 계정이 한 번 지나면 그 계정의 모든 턴이 풀린다. 턴마다 새로 만들면
+// 매번 처음이 되어 사람이 같은 승인을 스레드 수만큼 반복하게 된다.
+const attentionLedger = createAttentionLedger();
+interactive = createInteractiveManager({
+  harkroom, store, exec, runTurn: runPtyTurn, me,
+  workspaceBaseDir, mcpConfigPath, extraMcpServers, codexHome, opencodeHome,
+  // **인터랙티브 턴은 페일오버하지 않는다.** 사람이 앉아 있고, 계정을 바꾸면 그 사람이
+  // 보던 세션이 사라진다(세션 파일이 계정 디렉터리 안에 있다) — 관찰 도중에 화면을 갈아
+  // 치우는 것보다 그 계정의 한도를 그대로 보여 주는 편이 낫다. 그래서 첫 계정에 고정한다.
+  claudeConfigDir: accountLane[0]?.configDir ?? null,
+  // 화면이 말할 이름은 **같은 계정에서** 읽는다(`InteractiveTurnDeps.claudeAccount`) —
+  // 위의 configDir 와 갈리면 화면이 도는 계정과 다른 이름을 단언한다.
+  claudeAccount: accountLane[0]?.name ?? null,
+  claudePool: lane.pool ?? null,
+  // 다만 **세션이 다른 계정에서 만들어졌으면 그 계정을 따른다** — 멘션 턴의 페일오버가 옮긴
+  // 세션을 첫 계정으로 resume 하면 죽는다(`InteractiveTurnDeps.configDirOf`, 실측 2026-09-21).
+  configDirOf: (name) => accountLane.find((a) => a?.name === name)?.configDir ?? null,
+  operatorBin: config.operatorBin,
+  relay, registry, queue: mentionQueue,
+  orphanMs: config.interactiveOrphanMs,
+});
+
+// 멘션 턴의 실행·회수는 여기 있다(2026-09-08 병렬화). **같은 registry·queue 를 본다** —
+// 갈라지면 인터랙티브 open 이 죽은 PTY 에 사람을 붙이거나 같은 세션에 PTY 가 둘 뜬다.
+//
+// 이 조립이 main 에 남는 이유: 계정 축·워크스페이스 경로·MCP 설정은 기동이 정하는 값이고,
+// 스케줄러가 그것을 직접 읽으면 테스트가 그 환경을 전부 세워야 한다. 스케줄러는 "무엇을
+// 언제 띄우는가"만 알고, "무엇으로 띄우는가"는 이 함수가 넘긴다.
+const scheduler = createMentionScheduler({
+  harkroom, registry, queue: mentionQueue, accountLane, heldEntryIds,
+  runMentionTurn,
+  // 계정별로 갈리는 두 필드(`claudeAccount`·`claudeConfigDir`)만 계정 축이 채운다 —
+  // 나머지는 계정과 무관하므로 매번 같은 값이다.
+  buildTurnDeps: ({ ctx, mention, account, isLastAccount }) => ({
+    harkroom, store, exec, runTurn: runPtyTurn, me, guide,
+    channelName: ctx.channelName(mention.channelId),
+    handles: ctx.handles, workspaceBaseDir, mcpConfigPath, extraMcpServers,
+    // 지시문 파일이 여기 쓰인다(#92) — 에이전트 워크스페이스가 아니라 러너의 상태
+    // 디렉터리다. 워크스페이스 안에 두면 에이전트가 자기 지시문을 고칠 수 있다.
+    stateDir: agentStateDir,
+    codexHome,
+    opencodeHome,
+    claudeAccount: account?.name ?? null,
+    claudeConfigDir: account?.configDir ?? null,
+    // 풀은 계정과 달리 축을 따라 바뀌지 않는다(축 자체가 한 풀이다) — 기동 때 정한 lane
+    // 에서 그대로 온다. 화면이 "어느 풀의 어느 계정"을 말할 수 있으려면 짝이 필요하다.
+    claudePool: lane.pool ?? null,
+    // 사람을 부를 때 쓰는 이름과 원장(2026-09-08). **원장은 러너 수명 동안 하나다** —
+    // 턴마다 새로 만들면 매번 "처음 부르는 계정"이 되어, 7개 스레드가 동시에 걸렸을 때
+    // 창이 7개 뜬다. 관문은 계정 단위라 하나만 지나면 나머지가 함께 풀린다.
+    accountLabel: account?.name ?? undefined,
+    // **사람 부르기는 축의 마지막에서만 열린다**(2026-09-08 실물 검증에서 드러났다).
+    // 앞 계정에서 부르면 준비된 계정이 뒤에 있는데도 사람을 깨우고, 게다가 그 턴이
+    // 살아남아 전환 자체가 일어나지 않는다 — 부르는 경로는 던지지 않기 때문이다.
+    attentionLedger: isLastAccount ? attentionLedger : undefined,
+    callsForHuman: isLastAccount,
+    operatorBin: config.operatorBin, runnerSecret: config.operatorLink.secret,
+    turnTimeoutMs: config.turnTimeoutMs,
+    harnessStallMs: config.harnessStallMs,
+    relay,
+    // #337: 멘션 턴도 자기 존재를 등록해야 인터랙티브 open 이 그 PTY 에 합류한다.
+    registry,
+  } satisfies MentionTurnDeps),
+  hooks: {
+    // #129: 종료 요청은 턴이 끝난 **지금** 본다. 진행 중인 다른 턴은 아래 drain 이 기다린다.
+    stopRequested: (at) => {
+      if (stopRequestedForRunner(at, startedAtMs)) acceptStopRequest(at);
+    },
+    exitIfUnrecoverable,
+    noticeHarnessLogin: noticeIfHarnessLogin,
+  },
+  startedAtMs,
+});
+
+const sleep = (ms: number) => stoppable.sleep(ms);
+
+/** 폴 **자체**의 transport 실패용 백오프. 턴 실패는 스케줄러가 entry 별로 쉰다. */
+let backoffMs = 1_000;
+
+while (running) {
+  try {
+    const batch = await harkroom.pollInbox(config.pollTimeoutMs, claudeLaneReport);
+    if (!batch.entries.length) {
+      backoffMs = 1_000;
+      // 멘션이 없어도 종료 요청은 봐야 한다. 턴 안에서만 정의를 읽으면 **조용한 러너는
+      // 영원히 물러나지 않는다** — 낡은 코드로 도는 러너가 마침 한가한 경우가 정확히
+      // 운영자가 세우고 싶어 하는 경우다. 새 채널을 만드는 것이 아니라 러너가 이미 매 턴
+      // 읽는 그 정의를 한 번 더 읽는 것이다(빈 폴은 pollTimeoutMs 만큼 park 된 뒤라 잦지 않다).
+      const idleDef = await harkroom.definition();
+      if (stopRequestedForRunner(idleDef.stopRequestedAt, startedAtMs)) {
+        acceptStopRequest(idleDef.stopRequestedAt!);
+      }
+      continue;
+    }
+
+    // 채널 이름·계정 handle 은 턴마다 바뀌지 않으니 배치 단위로 한 번만 받는다.
+    const channels = await harkroom.channels();
+    const byId = new Map(channels.map((c) => [c.id, c.name]));
+    // GET /accounts — MCP 에는 이 표면이 없다. 이게 없으면 handles 맵에 나(me) 하나만
+    // 남아 동료 에이전트·사람의 발화가 전부 "알 수 없는 사용자"로 렌더된다(브리프 지적,
+    // 다중 에이전트 협업의 핵심 값이 여기 걸려 있다).
+    const accounts = await harkroom.accounts();
+    const handles = Object.fromEntries(accounts.map((a) => [a.id, a.handle]));
+
+    /**
+     * **내 이름도 여기서 따라간다**(#847). 에이전트 이름은 바뀌는데(#843) `me` 는 기동 때
+     * 한 번 읽고 끝이었다 — 그래서 이름을 바꾼 에이전트는 **러너를 다시 띄우기 전까지**
+     * 프롬프트에서 자기를 옛 이름으로 소개하고(`prompt.ts`: *"너는 … 에이전트 @<이름>"*),
+     * PR 을 열면 꼬리표에도 옛 이름이 박힌다. 사람은 이미 새 이름으로 부르고 있는데
+     * 에이전트만 옛 이름으로 말하는 모양이다.
+     *
+     * 판정은 전부 `me.id` 라(`countOwnPostsSince`·`offAnchorPosts`·attach) **동작은 원래
+     * 안 깨진다** — 틀리는 것은 말뿐이다. 그래서 새 왕복을 만들지 않고 이미 배치마다 받는
+     * 이 목록에서 집어 온다.
+     *
+     * 객체를 **갈아끼우지 않고 필드를 고친다**: `me` 를 값으로 받아 둔 자리가 둘이다
+     * (`createInteractiveManager` 는 기동 때 한 번 조립되고, `buildTurnDeps` 는 턴마다
+     * 읽는다). 새 객체로 바꾸면 앞쪽은 영영 옛 이름을 쥔다.
+     */
+    const wasCalled = applySelfRename(me, accounts);
+    if (wasCalled !== null) console.log(`이름이 바뀌었다: @${wasCalled} → @${me.handle}`);
+
+    const ctx: BatchContext = {
+      channelName: (channelId) => byId.get(channelId) ?? 'dm',
+      handles,
+    };
+    const outcome = await scheduler.admit(batch, ctx);
+
+    // 인플라이트 entry 는 미읽음으로 남으므로(markRead 는 턴 완료 후다) 다음 폴이 **즉시**
+    // 같은 배치를 돌려준다 — 아무것도 새로 못 띄운 폴이면 잠깐 쉰다. 유예 backoff 와 같은
+    // 5초다: 유예도 blocked 도 실패가 아니고(늘어나는 backoff 는 자리가 난 뒤 반응만 늦춘다),
+    // 5초는 턴 하나가 끝난 뒤 대기 멘션이 시작되기까지의 최대 지연이다.
+    //
+    // **실패 backoff 가 여기 없는 이유**: 턴 실패는 이제 entry 별로 쉰다(mentionScheduler 의
+    // `backoffFor`). 전역 sleep 으로 두면 스레드 하나의 실패가 나머지 전부를 멈춘다 —
+    // 병렬화가 없앤 바로 그 결함이다. 아래 catch 의 backoffMs 는 폴 자체의 transport
+    // 실패용이고, 그것은 진짜로 러너 전역이다.
+    if (outcome.started === 0 && outcome.deferred + outcome.blocked > 0) {
+      await sleep(5_000);
+    }
+    backoffMs = 1_000;
+  } catch (err) {
+    // #250: 자격증명 실패는 **여기서** 먼저 걸러야 한다. 앱이 PAT 를 회전할 때 옛 러너는
+    // 거의 항상 롱폴에 park 돼 있어 401 이 이 catch 로 온다 — 아래 "재접속하면 된다"로
+    // 삼키면 러너는 영원히 물러나지 않고, 폐기된 PAT 로 무한 재시도만 한다. 회전이
+    // 약속한 것("옛 러너는 다음 호출에서 401 을 받고 78 로 스스로 물러난다")이 여기 걸려 있다.
+    exitIfUnrecoverable(err);
+    // 서버 재시작이면 poll 이 빈 결과로 끝나거나 transport 오류가 난다 — 둘 다 정상이고
+    // 재접속하면 된다(workspace.guide 의 poll 루프 계약).
+    console.error('poll 루프 오류, 재접속:', err instanceof Error ? err.message : err);
+    harkroom.reset();
+    await sleep(backoffMs);
+    backoffMs = nextBackoffMs(backoffMs);
+  }
+}
+// #129 의 계약 "진행 중인 턴을 마쳤으므로 물러난다" 를 병렬에서도 지킨다 — 루프를 벗어난
+// 지금 admit 은 멈췄고, 남은 것은 이미 도는 턴들뿐이다.
+//
+// **여기가 "인박스를 놓았다"의 정확한 순간이다.** 시그널 핸들러에서 알리면 거짓말이 된다 —
+// 그때는 배치 하나가 아직 돌고 있어서 새 항목을 더 집을 수 있다. 이 줄에 와서야 admit 이
+// 끝났고, 그래서 오퍼레이터가 **프로세스가 죽기를 기다리지 않고** 교체 러너를 띄워도 된다.
+// 아직 도는 턴의 entry 는 함께 넘겨 교체 러너가 그것만 건너뛰게 한다.
+relay.notifyPollStopped(scheduler.holdingEntries());
+await scheduler.drain();
+relay.stop();
+console.log('종료');

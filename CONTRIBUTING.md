@@ -121,7 +121,7 @@ Before pushing to a PR that has been open while other work merged, rebase and re
 
 ```sh
 git fetch origin && git rebase origin/main
-cd packages/desktop && ./node_modules/.bin/tsc -p .
+cd apps/desktop && ./node_modules/.bin/tsc -p .
 ```
 
 If you rebase to fix this, use `--force-with-lease` rather than `--force` so a push
@@ -151,7 +151,7 @@ Because this is a pnpm workspace, `vitest` lives inside each package rather than
 root:
 
 ```sh
-cd packages/desktop
+cd apps/desktop
 <path-to-node-22>/bin/node ./node_modules/vitest/vitest.mjs run
 ```
 
@@ -186,7 +186,7 @@ designated => identifier "app.harkroom.desktop.dev" and anchor apple generic
 
 Two builds then match character for character, and one approval holds.
 
-`packages/desktop/scripts/sign-dev.sh` already does this — it runs as a cargo `runner`
+`apps/desktop/scripts/sign-dev.sh` already does this — it runs as a cargo `runner`
 hook before the binary starts, and it **exits quietly when the identity is absent** so
 that machines without a certificate keep working exactly as before. It defaults to an
 identity named `harkroom-dev`, which you would create yourself in Keychain Access; the
@@ -199,7 +199,7 @@ same environment variable the release signer uses:
 ```sh
 security find-identity -v -p codesigning   # pick a name from the list
 export HARKROOM_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
-pnpm -C packages/desktop tauri dev
+pnpm -C apps/desktop tauri dev
 ```
 
 The first launch after switching signatures still prompts once, because the stored ACL
@@ -267,9 +267,9 @@ Two rules keep the value meaningful, both enforced by `packages/shared/test/comp
   floor, leave it. A floor that tracks the release number is true almost always, and a warning
   that is on almost always is one nobody reads.
 
-**New endpoints can't slip past.** `packages/desktop/test/serverSurface.test.ts` extracts every
+**New endpoints can't slip past.** `apps/desktop/test/serverSurface.test.ts` extracts every
 `METHOD /path` that `src/lib/api.ts` calls and checks it against
-`packages/desktop/test/serverSurface.json`. A new endpoint fails the test until you record the
+`apps/desktop/test/serverSurface.json`. A new endpoint fails the test until you record the
 release whose **server** first serves it (`since`), and the floor must be at least the highest
 `since`. (The floor sat at `0.1.167` for over a hundred releases because nothing checked this — the
 app's [Restart] was 404ing on a v0.3.9 server while settings said it was fine.)

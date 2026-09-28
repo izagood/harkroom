@@ -1,5 +1,17 @@
+# 한 저장소에 **두 세계**가 산다: `apps/` 는 배포되는 것, `packages/` 는 라이브러리.
+# 여기 적히는 것은 그중 **pnpm 이 관리하는 TypeScript 패키지만**이다.
+#
+# **글롭(`apps/*`)을 쓰지 않는다.** `apps/` 에는 TS 가 아닌 앱도 산다(Flutter 모바일).
+# pnpm 은 `package.json` 이 없는 디렉터리를 건너뛰므로 글롭도 "지금은" 동작하지만,
+# 그 동작은 **우연**이다 — 누가 그 디렉터리에 `package.json` 을 두는 순간(도구 설정,
+# 스크립트 한 줄) 조용히 워크스페이스 멤버가 되고, `pnpm -r test` 가 Dart 앱에서
+# 실패하기 시작한다. 명단은 결정이므로 적어 둔다.
 packages:
-  - packages/*
+  - apps/agent
+  - apps/desktop
+  - apps/operator
+  - apps/server
+  - packages/shared
 allowBuilds:
   argon2: true
   cpu-features: true

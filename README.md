@@ -1,6 +1,6 @@
 # Harkroom
 
-<img src="packages/desktop/public/logo.svg" alt="Harkroom logo" width="96">
+<img src="apps/desktop/public/logo.svg" alt="Harkroom logo" width="96">
 
 **A chat workspace where people and AI agents share channels.**
 
@@ -239,9 +239,9 @@ The server reads these environment variables:
 | `ATTACHMENT_ROOT` | File system path for uploaded attachments | `./.attachments` (the published image sets `/var/lib/harkroom/attachments`) | No |
 | `ATTACHMENT_MAX_BYTES` | Maximum attachment size in bytes | `26214400` (25MB) | No |
 | `CLAIM_TOKEN_HASH` | sha256 hex digest of a one-time workspace claim token. When set, the server seeds it into `claim_token` at startup and `POST /claim` will create the first admin for whoever presents the matching token. Only for hosted deployments that provision empty instances — self-hosting uses `/bootstrap` instead. Pass the **digest**, never the token itself | - | No |
-| `HARKROOM_NEW_PASSWORD` | New password read by `packages/server/scripts/reset-password.ts`; only set for that one command | - | No |
+| `HARKROOM_NEW_PASSWORD` | New password read by `apps/server/scripts/reset-password.ts`; only set for that one command | - | No |
 | `HARKROOM_COMMIT` | Commit sha stamped at image build time; served by `GET /healthz` so operators can tell which build is running. Pass it as a Docker build arg (`HARKROOM_COMMIT=$(git rev-parse --short HEAD) docker compose build server`). Reported as `null` when unset | - | No |
-| `HARKROOM_VERSION` | Overrides the release number `GET /healthz` reports. Normally unset — the server reads `packages/desktop/src-tauri/tauri.conf.json`, which is this repo's version source of truth. Set it only when building outside this repo's layout | from `tauri.conf.json` | No |
+| `HARKROOM_VERSION` | Overrides the release number `GET /healthz` reports. Normally unset — the server reads `apps/desktop/src-tauri/tauri.conf.json`, which is this repo's version source of truth. Set it only when building outside this repo's layout | from `tauri.conf.json` | No |
 
 The desktop app has no environment variables; it asks for the server URL on first launch.
 
@@ -275,7 +275,7 @@ set these by hand:
 | `AGENT_STATE_DIR` | Directory for sessions.json, MCP config, AVCS workspace | `~/.harkroom-agent` | No |
 | `CODEX_HOME` | Source Codex home whose `auth.json` is linked into the runner-isolated Codex home; child Codex processes always use the isolated home under `AGENT_STATE_DIR` | `~/.codex` | No |
 | `HARKROOM_AGENT_INSTANCE` | Instance id for running the same agent account as several runners; becomes the last path segment of the state directory. Must match `[a-z0-9-]{1,32}` — an invalid value fails startup. Unset keeps the pre-instance path unchanged | - | No |
-| `AGENT_VERSION` | Runner version string reported to the server (`packages/agent/src/version.ts`). Overrides the version baked into the sidecar bundle at build time (`packages/desktop/scripts/sidecar.mjs`); only needed when running the runner from source | baked bundle version, else `unknown` | No |
+| `AGENT_VERSION` | Runner version string reported to the server (`apps/agent/src/version.ts`). Overrides the version baked into the sidecar bundle at build time (`apps/desktop/scripts/sidecar.mjs`); only needed when running the runner from source | baked bundle version, else `unknown` | No |
 | `HARKROOM_CLAUDE_ACCOUNTS_DIR` | Root of the claude account pool; one subdirectory per account, each used as that account's `CLAUDE_CONFIG_DIR` | `~/.harkroom-agent/claude-accounts` | No |
 | `HARKROOM_CLAUDE_ACCOUNTS` | Comma-separated account names setting failover order and subset (e.g. `plum,lime`). A name missing from the pool fails startup. Unset means alphabetical order over the whole pool | - | No |
 | `HARKROOM_CLAUDE_POOL` | Forces which account pool this runner uses, overriding both the per-agent assignment and the default pool in `pools.json`. A name with no matching pool directory fails startup. Unset means: per-agent assignment, then default pool, then the pool root itself | - | No |
@@ -297,6 +297,32 @@ set these by hand:
 
 Requirements: Node.js 22+, pnpm 11, Docker (tests start PostgreSQL in a container), and the Rust
 toolchain for the desktop app.
+
+### Repository layout
+
+```
+apps/        things that ship and run
+  server/      Fastify API + WebSocket hub (@harkroom/server)
+  desktop/     Tauri + React app (@harkroom/desktop)
+  agent/       the runner an agent account runs as (@harkroom/agent)
+  operator/    per-machine CLI and daemon that launches runners (@harkroom/operator)
+packages/    libraries that ship inside the above
+  shared/      protocol types and rules both ends must agree on (@harkroom/shared)
+```
+
+The split is by role, not by language: `apps/` is what a person or a machine runs, `packages/`
+is what those things import. A mobile client written in Flutter would live in `apps/` too, which
+is why `pnpm-workspace.yaml` lists its TypeScript members one by one instead of globbing `apps/*`
+— see the comment in that file.
+
+Two rules follow from the layout:
+
+- **`packages/*` must not reach into `apps/*`.** A library that reads an application's files
+  inverts the dependency. One place does it today (`packages/shared/test/compat.test.ts` reads the
+  desktop app's `tauri.conf.json`, the repo's version source of truth) and the comment there says so.
+- **Depth is part of the contract.** Several scripts and tests find the repo root by climbing two
+  levels (`<root>/<area>/<package>`). Keep every package exactly one level under `apps/` or
+  `packages/`.
 
 ```sh
 pnpm install

@@ -804,7 +804,7 @@ export interface RunnerExitEvent {
    * | 자격증명 거부(`#250`) | PAT 를 재발급한다 |
    * | 하네스 실행 파일 부재(`#340`) | `claude`/`codex` 를 설치하고 `PATH` 를 고친다 |
    *
-   * 러너는 그 둘을 로그의 마지막 줄로 가른다 — `packages/agent/src/exit.ts` 의
+   * 러너는 그 둘을 로그의 마지막 줄로 가른다 — `apps/agent/src/exit.ts` 의
    * `CREDENTIAL_REJECTED_LINE` 과 `EXECUTABLE_NOT_FOUND_LINE` 이고, 그 주석이
    * *"종료 코드(78)가 같으므로 그 줄이 유일한 구분자다"* 라고 적어 뒀다.
    *

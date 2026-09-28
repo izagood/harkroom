@@ -30,7 +30,7 @@ services:
     image: ghcr.io/izagood/harkroom-server:${HARKROOM_SERVER_TAG:-latest}
     build:
       context: .
-      dockerfile: packages/server/Dockerfile
+      dockerfile: apps/server/Dockerfile
       args:
         # 도는 서버가 정확히 무슨 코드인지를 `/healthz` 가 말하게 한다(#693). 비워 두면
         # 버전·기동 시각만 뜨고 커밋은 `null` 이다 — 빌드가 실패하지는 않는다.

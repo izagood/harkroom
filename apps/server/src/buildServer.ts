@@ -1,0 +1,592 @@
+import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
+import cors from '@fastify/cors';
+import fastifyMultipart from '@fastify/multipart';
+import type { Pool } from 'pg';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, projectionState, type ProjectionRuntime, type ProjectionStatus, type ServerHealth } from '@harkroom/shared';
+import { serverVersion } from './version.js';
+import { registerAuth } from './auth/plugin.js';
+import { registerAuthRoutes } from './routes/authRoutes.js';
+import { registerAccountRoutes } from './routes/accountRoutes.js';
+import { registerGrantRoutes } from './routes/grantRoutes.js';
+import { registerOperatorRoutes } from './routes/operatorRoutes.js';
+import { createOperatorHub } from './ws/operatorHub.js';
+import { registerAssignmentRoutes } from './routes/assignmentRoutes.js';
+import { registerMcpServerRoutes } from './routes/mcpServerRoutes.js';
+import { registerChannelRoutes } from './routes/channelRoutes.js';
+import { registerTeamRoutes } from './routes/teamRoutes.js';
+import { registerMessageRoutes } from './routes/messageRoutes.js';
+import { registerAttachmentRoutes } from './routes/attachmentRoutes.js';
+import { registerAvatarRoutes } from './routes/avatarRoutes.js';
+import { createLocalStorage } from './storage/local.js';
+import { registerDirectoryRoutes } from './routes/directoryRoutes.js';
+import { registerCollabRoutes } from './routes/collabRoutes.js';
+import { registerAuditRoutes } from './routes/auditRoutes.js';
+import { registerSettingsRoutes } from './routes/settingsRoutes.js';
+import { registerHandleGroupRoutes } from './routes/handleGroupRoutes.js';
+import { registerLinkPreviewRoutes } from './routes/linkPreviewRoutes.js';
+import { registerAgentRelayRoutes } from './routes/agentRelayRoutes.js';
+import { registerSkillRoutes } from './routes/skillRoutes.js';
+import { registerAutomationRoutes } from './routes/automationRoutes.js';
+import { registerWs } from './ws/wsPlugin.js';
+import { registerMcp } from './mcp/mcpPlugin.js';
+import { createAgentPresence } from './mcp/presence.js';
+import { Lifecycle } from './lifecycle.js';
+import { loggerConfig } from './logging.js';
+import { createRateLimiter, type RateLimitRule } from './rateLimit.js';
+import { createMetrics } from './metrics.js';
+import { createScheduledMessageSweeper } from './services/scheduledMessages.js';
+import { createAutomationSweeper } from './services/automations.js';
+import { createAgentWakeSweeper } from './services/agentWakes.js';
+import { emitEvent } from './events.js';
+import { createStaleRequestSweeper } from './services/staleRequests.js';
+import { createDelegationDeadlineSweeper } from './services/delegations.js';
+
+/**
+ * 인증 표면 기본 리밋.
+ *
+ * `/auth/login` 이 가장 낮은 이유: Argon2 검증은 **의도적으로 비싼** 연산이라 무제한 요청이
+ * 브루트포스 벡터이면서 동시에 CPU 소진 벡터다. 계정 생성 표면(`/bootstrap`, `/auth/register`)은
+ * 초대 토큰이 있어도 시도 자체를 좁힌다. `/ws-ticket` 은 넉넉하다 — 재연결 폭풍은 정상 동작이고,
+ * 여기서 막으면 네트워크가 불안한 클라이언트가 영구히 못 붙는다.
+ */
+const DEFAULT_RATE_LIMITS: Record<'login' | 'signup' | 'ticket' | 'upload', RateLimitRule> = {
+  login: { windowMs: 5 * 60_000, max: 20 },
+  signup: { windowMs: 15 * 60_000, max: 10 },
+  ticket: { windowMs: 60_000, max: 120 },
+  // 첨부는 크기 제한(25MB)만으로 부족하다 — 그건 **한 번의** 업로드만 막고, 반복하면 디스크가
+  // 조용히 찬다. 분당 20건이면 사람의 정상 사용(스크린샷 몇 장)에는 걸리지 않는다.
+  upload: { windowMs: 60_000, max: 20 },
+};
+
+/** 어떤 경로에 어떤 리밋을 적용하는가. 인증 표면만 좁힌다 — 발화·조회는 건드리지 않는다. */
+const LIMITED_ROUTES: { method: string; url: string; rule: keyof typeof DEFAULT_RATE_LIMITS }[] = [
+  { method: 'POST', url: '/auth/login', rule: 'login' },
+  { method: 'POST', url: '/auth/register', rule: 'signup' },
+  { method: 'POST', url: '/bootstrap', rule: 'signup' },
+  // `/claim` 은 **인증 없는 계정 생성 표면**이고, 그 위에 추측 가능한 비밀(클레임 토큰)을
+  // 맞히는 시도를 받는 자리다. 리밋이 없으면 토큰을 무차별 대입할 수 있다 — 토큰이 128비트
+  // 난수라 현실적으로 맞지는 않지만, 그 사실에 기대는 것과 시도 자체를 좁히는 것은 다르다.
+  { method: 'POST', url: '/claim', rule: 'signup' },
+  { method: 'POST', url: '/ws-ticket', rule: 'ticket' },
+  { method: 'POST', url: '/uploads', rule: 'upload' },
+];
+
+export interface ServerDeps {
+  pool: Pool;
+  /** avcs 연결 상태 — /healthz 에서 쓴다. */
+  getAvcsStatus?: () => { connected: boolean };
+  /**
+   * 투영 상태의 **원자료** — `/projection/status` 에서 쓴다. `state` 는 이 라우트가
+   * `projectionState` 로 뽑는다(shared). 미지정이면 `configured: false` 로 답한다:
+   * 투영을 물어봤는데 아무도 답할 수 없는 상태가 곧 "설정되지 않았다"다.
+   */
+  getProjectionStatus?: () => ProjectionRuntime;
+  /**
+   * 투영 **설정** 표면(`/settings/projection`). 상태(`getProjectionStatus`)와 다른 질문에
+   * 답한다: 무엇을 바라볼 것인가.
+   *
+   * supervisor 인스턴스를 통째로 받지 않는 이유: 라우트가 필요한 것은 env 값과 갈아 끼우는
+   * 동작 둘뿐이다. 클래스를 받으면 이 파일과 라우트 테스트가 그것에 매이고, 가짜를 만들려면
+   * 쓰지도 않는 `stop()`·`status()` 까지 함께 구현해야 한다.
+   *
+   * 미지정이면 두 라우트를 **등록하지 않는다**. 등록해 두고 500 을 내는 것보다 404 가
+   * 정직하다 — 500 은 "고장났다" 는 뜻이고, 여기서 참인 것은 "그 표면이 없다" 다.
+   */
+  projection?: {
+    /** `AVCS_BASE_URL`. 응답의 `envUrl` 이자 `resolveProjectionUrl` 의 첫 인자다. */
+    envBaseUrl: string | null;
+    reconfigure(url: string | null): Promise<void>;
+    /**
+     * 지금 투영이 보고 있는 avcs 서버. `/leases` 와 커서 메트릭이 이 값으로 거른다 —
+     * `projection_cursor`·`active_lease` 가 (repo, avcs_base_url)로 키가 잡히므로,
+     * 지금 서버가 아닌 행을 섞으면 다른 서버의 리스가 현재 작업인 것처럼 보이거나
+     * 메트릭이 같은 repo 라벨을 중복 출력한다.
+     */
+    currentUrl(): string | null;
+  };
+  /** 종료 시 in-flight long-poll을 정상 마감시키는 창구. main이 SIGTERM에서 beginDrain을 부른다. */
+  lifecycle?: Lifecycle;
+  /** null·미지정이면 모든 origin 을 반영한다. 목록이면 CORS 와 WS 핸드셰이크에 함께 적용된다. */
+  corsOrigins?: string[] | null;
+  /** 소켓 뒤 자격증명 재검증 주기. 기본 60초. */
+  wsRevalidateMs?: number;
+  /** WS ping/pong 주기(ms). 기본 30초. 테스트에서 짧게 준다. */
+  wsHeartbeatMs?: number;
+  /** '입력 중' 상태의 수명(ms). 기본 6초. */
+  typingTtlMs?: number;
+  /** 에이전트 online 상태의 수명(ms). 기본 30초. */
+  agentPresenceTtlMs?: number;
+  /**
+   * 요청이 이만큼 미읽음으로 남고 러너가 오프라인이면 스레드에 실패를 남긴다(049).
+   * 시험이 줄여 쓴다 — 기본값은 `STALE_AFTER_MS`.
+   */
+  staleRequestAfterMs?: number;
+  /** 기동 유예(049). 시험이 0 으로 주어 유예를 건너뛴다 — 기본값은 `STALE_STARTUP_GRACE_MS`. */
+  staleRequestGraceMs?: number;
+  /** 로그 레벨. 미지정이면 LOG_LEVEL, 그것도 없으면 info. */
+  logLevel?: string;
+  /** 로그 싱크 교체(테스트 전용 seam). 프로덕션은 stdout 이다. */
+  logStream?: import('node:stream').Writable;
+  /** 인증 표면 리밋 재정의. 미지정이면 DEFAULT_RATE_LIMITS. */
+  rateLimits?: Partial<Record<'login' | 'signup' | 'ticket' | 'upload', RateLimitRule>>;
+  /** 리밋 판정용 시계(테스트 전용 seam). */
+  now?: () => number;
+  /**
+   * 앞단 리버스 프록시를 신뢰할지. **켜면 `X-Forwarded-For` 를 클라이언트 주소로 받아들인다.**
+   *
+   * 켜야 하는 이유: 프록시 뒤에서는 소켓 주소가 프록시 하나뿐이라 **모든 클라이언트가 레이트
+   * 리밋 버킷 하나를 공유하고**(서로를 밀어낸다) 감사 로그의 ip 가 전부 같은 값이 된다.
+   * compose 기본 배포가 지금 그 상태다 — 모든 요청이 Docker 브리지 게이트웨이로 보인다.
+   *
+   * 켜면 안 되는 이유: 프록시가 **없는데** 켜면 누구나 헤더를 위조해 리밋을 무한히 우회한다.
+   * 그래서 기본값은 끔이고, 실제로 앞단을 둔 배포에서만 켠다.
+   */
+  trustProxy?: boolean;
+  /**
+   * 첨부 스토리지. 미지정이면 ATTACHMENT_ROOT·ATTACHMENT_MAX_BYTES(기본 25MB)를 쓴다.
+   * S3 호환으로 바꿀 때는 storage/local.ts 만 갈아 끼우면 된다.
+   */
+  storage?: { root: string; maxBytes: number };
+  /** attach 티켓 수명(ms). 기본 30초 — `/ws` 티켓과 같다. 테스트에서 짧게 준다. */
+  attachTicketTtlMs?: number;
+  /** interactive.open 응답 대기 한도(ms, #337). 기본 10초 — 테스트에서 짧게 준다. */
+  interactiveOpenTimeoutMs?: number;
+}
+
+/** 25MB. 스크린샷·로그 파일에는 넉넉하고, 디스크가 조용히 차지 않을 만큼은 좁다. */
+const DEFAULT_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+/**
+ * 첨부 저장 루트의 기본값(#257). **작업 디렉터리에 기대지 않는다.**
+ *
+ * 원래 `process.env.ATTACHMENT_ROOT ?? './.attachments'` 였다. 상대경로는 **어디서
+ * 기동했느냐**에 따라 다른 곳을 가리킨다 — 그래서 업로드는 성공하는데, 며칠 뒤 다른
+ * 디렉터리에서 기동한 서버에서 누가 그 첨부를 누르면 파일이 없다. 워크트리를 여러 개 두고
+ * 개발하는 이 저장소에서는 그것이 예외가 아니라 기본값이었다.
+ *
+ * `006_attachment.sql` 이 적어 둔 문제의식의 연장이다: 거기서는 파일을 먼저 쓰고 행을
+ * 나중에 만들어 "가리키는 파일이 없는 행"을 한 건씩 피했다. 여기서 일어난 것은 그 사고의
+ * 전역판이다 — 경로의 **기준**이 바뀌면서 이미 있던 **모든 행이 한꺼번에** 깨졌다.
+ * 한 건씩 막는 순서 규칙은 기준이 흔들리는 것을 막아 주지 않는다.
+ *
+ * 그래서 이 파일의 위치(`import.meta.url`)를 기준으로 잡는다. `apps/server` 는 빌드
+ * 단계가 없고 `tsx` 로 `src/` 를 직접 돌리므로 이 파일은 항상 `apps/server/src` 에
+ * 있다 — 한 단계 올라간 **패키지 루트**가 저장 루트의 기준이다(예전에 `apps/server`
+ * 에서 기동했을 때 상대경로가 가리켰던 곳과 같으므로, 이미 쌓인 파일도 그대로 보인다).
+ * 빌드 산출물로 돌리게 되면 이 `'..'` 를 그 레이아웃에 맞춰야 한다.
+ *
+ * `ATTACHMENT_ROOT` 가 주어지면 그것을 쓰되 상대경로면 절대경로로 풀고, 풀린 결과를
+ * 로그에 남긴다 — 사람이 어디로 갔는지 볼 수 있어야 한다.
+ */
+function defaultAttachmentRoot(app: FastifyInstance): string {
+  const fromEnv = process.env.ATTACHMENT_ROOT;
+  if (fromEnv) {
+    const resolved = resolve(fromEnv);
+    if (resolved !== fromEnv) {
+      app.log.info(`ATTACHMENT_ROOT "${fromEnv}" resolved to "${resolved}"`);
+    }
+    return resolved;
+  }
+  return resolve(dirname(fileURLToPath(import.meta.url)), '..', '.attachments');
+}
+
+export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
+  const app = Fastify({
+    // 기본값 false 를 유지한다 — 프록시가 없는데 신뢰하면 헤더 위조로 리밋이 무의미해진다.
+    trustProxy: deps.trustProxy ?? false,
+    /**
+     * JSON 본문의 상한을 **명시한다**. fastify 기본값(1MB)에 기대면 그 수가 어디에도 적혀
+     * 있지 않아, 메시지 상한(`MAX_MESSAGE_BODY_CHARS`)과의 관계를 읽을 수 없다. 여기를
+     * 넉넉히 두는 이유는 이 통로로 메시지만 오지 않기 때문이다 — 채널 문서(`64KB`)와
+     * 에이전트 설정(`8000자` 여러 필드)이 같은 통로를 쓴다. 파일은 이 통로가 아니라
+     * multipart 업로드로 간다.
+     */
+    bodyLimit: 1024 * 1024,
+    logger: loggerConfig({
+      level: deps.logLevel ?? process.env.LOG_LEVEL ?? 'info',
+      stream: deps.logStream,
+    }),
+  });
+  const lifecycle = deps.lifecycle ?? new Lifecycle();
+
+  app.setErrorHandler((err: FastifyError, _req, reply) => {
+    if (err.name === 'ZodError') {
+      return reply.code(400).send({ error: { code: 'invalid_request', message: err.message } });
+    }
+    /**
+     * **fastify 가 스스로 던진 오류는 자기 상태 코드를 들고 온다** — 본문이 `bodyLimit` 을
+     * 넘으면 413, content-type 이 틀리면 415다. 그것을 전부 500 `internal` 로 덮으면 화면은
+     * 자기가 고칠 수 있는 일(글이 너무 길다)을 "서버가 고장났다"로 읽고, 사람에게는 다시
+     * 시도하라는 말밖에 할 수 없다. 코드도 함께 넘겨야 호출부가 사유로 갈라 볼 수 있다.
+     *
+     * 5xx 는 그대로 `internal` 이다 — 서버 내부 사정을 코드로 노출할 이유가 없다.
+     */
+    const status = typeof err.statusCode === 'number' && err.statusCode >= 400 && err.statusCode < 500
+      ? err.statusCode
+      : 500;
+    const code = status === 500 ? 'internal' : (err.code ?? 'bad_request').toLowerCase();
+    reply.code(status).send({ error: { code, message: err.message } });
+  });
+
+  app.setNotFoundHandler((req, reply) => {
+    reply.code(404).send({ error: { code: 'not_found', message: `route not found: ${req.method} ${req.url}` } });
+  });
+
+  /**
+   * **본문이 비었으면 어떤 `content-type` 이든 통과시킨다** (2026-09-20 실측).
+   *
+   * ## 무엇이 깨졌나
+   *
+   * 앱과 러너는 본문 없는 POST 를 쓴다 — `/ws-ticket`·`/auth/logout`·`/invites`·
+   * `/agent/activity`. 본문이 없으니 `content-type` 도 붙이지 않는다.
+   *
+   * 직접 연결에서는 그것이 맞다. 그런데 **앞단이 그 헤더를 채워서** 보낸다. 실측한
+   * 경로(Cloudflare 터널)는 빈 POST 에 `application/x-www-form-urlencoded` 와
+   * `transfer-encoding: chunked` 를 함께 붙였고, 이 서버에 그 파서가 없으므로 fastify 가
+   * **415 로 라우트 밖에서** 거절했다:
+   *
+   *   클러스터 안에서 직접   POST /ws-ticket → 401 (라우트까지 감)
+   *   같은 요청, 터널 경유   POST /ws-ticket → 415 fst_err_ctp_invalid_media_type
+   *
+   * 증상은 앱의 **"Disconnected"**(티켓을 못 받아 WS 를 못 연다)와 러너의
+   * `agent/activity 실패: 415` 였다. 서버는 `/healthz` 200 으로 멀쩡해 보였다.
+   *
+   * ## 왜 헤더를 지우는 것으로는 안 되는가
+   *
+   * 이 자리를 세 번 틀렸다. "서버 버전이 낡았다"(아님), "빈 문자열이 온다"(값은 앞단이
+   * 정한다), 그리고 `onRequest` 에서 **헤더를 지우는 방법**(이것도 아님) 이다.
+   *
+   * 마지막 것이 실패한 이유: `transfer-encoding: chunked` 가 함께 오면 fastify 는
+   * content-type 이 없어도 **본문이 있다고 보고 파서를 찾는다.** 훅이 헤더를 지워도
+   * 415 는 그대로였다.
+   *
+   * ## 그래서 파서로 받는다
+   *
+   * 알 수 없는 타입(`*`)에 파서를 하나 둔다. **본문이 비었으면 통과시키고, 내용이 있으면
+   * 그대로 415 로 거절한다.** 판정이 헤더가 아니라 **실제로 읽은 바이트**에 달리므로
+   * 앞단이 무엇을 붙이든(타입·chunked·길이) 깨지지 않는다.
+   *
+   * 알 수 없는 타입에 **본문이 실려 오면 여전히 415 다** — 그 방어를 없애는 것이 아니다.
+   * JSON 은 fastify 의 기본 파서가 먼저 잡으므로 이 파서에 오지 않는다.
+   */
+  //
+  // 빈 문자열·공백만 있는 `content-type` 은 **파서 매칭 자체가 되지 않아** 아래 `*` 에도
+  // 걸리지 않는다. 그런 값은 어느 미디어 타입도 아니므로 헤더를 지워 '없음' 으로 만든다.
+  app.addHook('onRequest', async (req) => {
+    const ct = req.headers['content-type'];
+    if (typeof ct === 'string' && ct.trim() === '') delete req.headers['content-type'];
+  });
+
+  app.addContentTypeParser('*', { parseAs: 'string' }, (_req, body: string, done) => {
+    if (body === '') return done(null, undefined);
+    done(Object.assign(new Error('Unsupported Media Type'), { statusCode: 415 }));
+  });
+
+  await app.register(cors, {
+    // 인증은 Origin 이 아니라 Bearer 토큰이 한다. 목록은 브라우저 클라이언트를 좁히는 추가 방어이고,
+    // 미설정 시 반영(true)이 기본인 이유는 셀프호스트가 어떤 origin 으로 뜰지 서버가 모르기 때문이다.
+    origin: deps.corsOrigins ?? true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+    allowedHeaders: ['content-type', 'authorization', 'idempotency-key'],
+    // 브라우저는 **기본적으로 응답 헤더를 스크립트에 넘기지 않는다** — 안전 목록
+    // (content-type 등) 밖의 헤더는 여기에 적어야 `fetch` 가 읽을 수 있다. 부름의 결과를
+    // 헤더로 싣기로 한 이상(`NOTIFIED_HEADER`) 이 줄이 없으면 데스크탑에서는 그 헤더가
+    // 존재하지 않는 것과 같다 — 서버는 보냈다고 믿고 화면은 못 받는 조용한 실패다.
+    exposedHeaders: [NOTIFIED_HEADER, NOTIFIED_COUNT_HEADER],
+  });
+
+  // 인증 **앞**에 둔다(그리고 그대로 둔다) — 배포가 낡았는지는 로그인 전에도 물을 수
+  // 있어야 한다. 여기 실리는 것은 릴리스 번호·커밋·기동 시각뿐이고 셋 다 공개 저장소에
+  // 이미 있는 사실이다(#693).
+  app.get('/healthz', async (): Promise<ServerHealth> => ({
+    ok: true,
+    avcs: deps.getAvcsStatus?.() ?? { connected: false },
+    // 버전을 **별도 엔드포인트로 빼지 않는다.** 운영이 재배포를 확인할 때 이미 치는 것이
+    // `/healthz` 이고(docs/operations.md), 표면을 둘로 두면 한쪽만 보고 낡은 판단을 한다.
+    ...serverVersion(),
+  }));
+
+  app.get('/readyz', async (_req, reply) => {
+    await deps.pool.query('select 1');
+    return { ok: true };
+  });
+
+  const metrics = createMetrics();
+  let socketCount: () => number = () => 0;
+  metrics.registerGauge('harkroom_ws_connections', 'live websocket connections', () => socketCount());
+  // 투영 커서를 스크레이프 시점에 읽는다. #48 이 고정한 결함(avcs 를 커서 뒤로 되돌리면
+  // 조용히 건너뛴다)은 **관측되지 않기 때문에** 위험하다 — 채널에는 아무 일도 없어 보인다.
+  // 커서가 숫자로 보이면 그 침묵이 눈에 띈다.
+  metrics.registerLabeledGauge(
+    'harkroom_projection_cursor', 'last projected avcs log index per repo', 'repo',
+    async () => {
+      // `projection_cursor` 는 이제 (repo, avcs_base_url)로 키가 잡힌다 — 같은 repo 이름이
+      // 여러 avcs 서버 아래 있을 수 있어서다. 걸러 읽지 않으면 같은 repo 라벨의 행이
+      // 여러 개 나와 Prometheus 텍스트가 깨진다. 현재 서버로 좁힌다 — 이 게이지가 답하는
+      // 질문은 "지금 어디까지 봤나"이지 과거에 지나친 모든 서버가 아니다.
+      // 라벨에 URL 을 더하지 않는 이유: URL 은 카디널리티가 낮지만 비밀에 가까운 인프라
+      // 값이다.
+      const currentUrl = deps.projection?.currentUrl() ?? null;
+      if (currentUrl === null) return {};
+      const res = await deps.pool.query(
+        `select repo, last_log_index from projection_cursor where avcs_base_url = $1`,
+        [currentUrl],
+      );
+      return Object.fromEntries(
+        res.rows.map((r: { repo: string; last_log_index: string }) => [r.repo, Number(r.last_log_index)]),
+      );
+    },
+  );
+
+
+  /**
+   * 에이전트가 부름을 얼마나 오래 방치했는가(초). **2026-09-01 도그푸딩에서 난 실패를 보이게
+   * 하려고 만들었다**: 사용자가 에이전트를 불렀는데 러너 프로세스가 죽어 답이 없었고, 서버·
+   * 기존 메트릭은 전부 정상이었다. inbox 에 부름이 쌓이는 것만 사실이었으므로 그 나이를 낸다.
+   *
+   * **답할 의무가 있는 계정만 센다.** 두 겹으로 좁힌다:
+   * - 사람을 뺀다. 사람이 멘션을 늦게 읽는 것은 장애가 아니라 일상이다(자고 있을 수 있다).
+   * - `kind='agent'` 라도 **정의(`agent_config`)가 없는 계정을 뺀다.** avcs 투영용 시스템 계정
+   *   (`harkroom`)과 정의 없이 만들어진 계정에는 답할 러너가 없고 앞으로도 없다. 사용자는
+   *   사이드바에 보이니 자연스럽게 부르고, 그 미처리는 **영원히 쌓이며 절대 내려오지 않는다.**
+   *   경보가 몇 번 반복되면 사람이 경보를 무시하게 되고, 그때 진짜 러너가 죽으면 아무도 안 본다
+   *   (2026-09-01 실사용에서 드러났다).
+   *
+   * 미처리가 없는 계정은 시계열을 만들지 않는다 — 0 을 내면 "처리됐다"와 "부름이 없었다"가
+   * 같아진다.
+   */
+  metrics.registerLabeledGauge(
+    'harkroom_agent_oldest_unread_seconds',
+    'age of the oldest unhandled inbox entry per agent — a dead runner shows up here',
+    'handle',
+    async () => {
+      const res = await deps.pool.query(
+        `select a.handle,
+                extract(epoch from (now() - min(i.created_at))) as seconds
+         from inbox i
+         join account a on a.id = i.account_id
+         -- 정의가 있는 에이전트만. join 이 곧 "harkroom 가 실행할 수 있는 에이전트"의 정의다.
+         join agent_config ac on ac.account_id = a.id
+         where i.read_at is null and a.kind = 'agent'
+         group by a.handle`,
+      );
+      return Object.fromEntries(
+        res.rows.map((r: { handle: string; seconds: string }) => [r.handle, Math.round(Number(r.seconds))]),
+      );
+    },
+  );
+
+  // 요청 계측. **라우트 패턴**을 쓴다 — 구체 경로를 라벨로 넣으면 채널 id·메시지 id 마다
+  // 시계열이 하나씩 생겨 스크레이프가 곧 메모리 사고가 된다.
+  app.addHook('onResponse', async (req, reply) => {
+    const route = req.routeOptions?.url ?? 'unmatched';
+    // /metrics 가 자기 자신을 세면 스크레이프 주기가 곧 트래픽으로 보인다.
+    if (route === '/metrics') return;
+    metrics.observeRequest({
+      method: req.method, route, status: reply.statusCode,
+      durationMs: reply.elapsedTime,
+    });
+  });
+
+  // 리밋은 인증(onRequest 훅)보다 앞에서 걸어야 한다 — 그래야 Argon2 검증에 도달하기 전에
+  // 막히고, 응답이 계정 존재 여부를 드러내지 않는다.
+  const limiter = createRateLimiter(deps.now);
+  const rules = { ...DEFAULT_RATE_LIMITS, ...deps.rateLimits };
+  app.addHook('onRequest', async (req, reply) => {
+    const route = LIMITED_ROUTES.find(
+      (r) => r.method === req.method && req.url.split('?')[0] === r.url,
+    );
+    if (!route) return;
+    // req.ip 는 프록시 뒤에서는 프록시 주소다. 앞단을 두면 Fastify `trustProxy` 를 켜야
+    // 실제 클라이언트 주소로 계수된다 — 안 켜면 전체가 한 키를 공유해 서로를 밀어낸다.
+    const verdict = limiter.hit(`${route.rule}:${req.ip}`, rules[route.rule]);
+    if (verdict.allowed) return;
+    await reply
+      .code(429)
+      .header('retry-after', String(Math.ceil(verdict.retryAfterMs / 1000)))
+      .send({ error: { code: 'rate_limited', message: 'too many attempts, try again later' } });
+  });
+
+  await registerAuth(app, deps.pool);
+
+  // 에이전트 presence 레지스트리를 한 번 만들고 두 곳에 넘긴다.
+  // - registerWs: presence.snapshot 에 에이전트를 합집합으로 얹는다.
+  // - registerMcp: /mcp 요청마다 mark() 를 부른다(도구 하나가 아니라 게이트에서).
+  // - registerAgentRelayRoutes: 러너 프레임이 도착할 때마다 mark() 를 부른다.
+  const agentPresence = createAgentPresence({
+    ttlMs: deps.agentPresenceTtlMs ?? 30_000,
+    now: deps.now,
+  });
+  agentPresence.startSweep(app);
+
+  const scheduledSweeper = createScheduledMessageSweeper(deps.pool);
+  scheduledSweeper.startSweep(app);
+
+  // 자동화(064): 시각이 된 schedule 을 회차로 만들고, 대기 회차를 만든 사람 이름의 글로 보낸다.
+  const automationSweeper = createAutomationSweeper(deps.pool);
+  automationSweeper.startSweep(app);
+
+  // 깨움(wake) sweeper — 예약 발송과 같은 모양의 시계다. 이것이 안 돌면 에이전트가 걸어 둔
+  // 대기가 영원히 깨어나지 않는다: 스레드에는 "기다린다"는 줄만 남고 후속은 오지 않는다.
+  const wakeSweeper = createAgentWakeSweeper(deps.pool);
+  wakeSweeper.startSweep(app);
+
+  /**
+   * 아무도 집지 않은 요청을 스레드에 말하는 스위퍼(049).
+   *
+   * **`agentPresence` 를 그대로 넘긴다** — 여기서 새로 만들면 러너가 mark 하는 레지스트리와
+   * 다른 인스턴스가 되어 "아무도 온라인이 아니다" 로 판정하고, 그러면 정상적으로 일하는
+   * 에이전트의 스레드마다 거짓 통지가 남는다. presence 를 한 번 만들어 여러 곳에 넘기는
+   * 위 주석과 같은 이유다.
+   */
+  const staleSweeper = createStaleRequestSweeper(deps.pool, {
+    presence: agentPresence,
+    now: deps.now,
+    staleAfterMs: deps.staleRequestAfterMs,
+    startupGraceMs: deps.staleRequestGraceMs,
+  });
+  staleSweeper.startSweep(app);
+
+  /**
+   * 위임 기한 스위퍼(050) — **아무 신호도 오지 않는 경우의 유일한 출구다.** 팀원이 죽으면
+   * 의무는 열린 채 남고 팀장은 기다리는 것이 아니라 없다(위임하고 턴이 끝나면 프로세스가
+   * 죽는다). 이 시계가 안 돌면 그 스레드는 영영 조용하다.
+   *
+   * 깨운 팀장에게 이벤트를 치는 것은 여기다 — 서비스가 `emitEvent` 를 부르지 않고 콜백으로
+   * 돌려주는 이유는 `preemptWakesForThread` 와 같다: 이벤트는 커밋 뒤여야 하고, 그 순서를
+   * 지키는 자리를 한 곳(호출부)으로 모은다.
+   */
+
+
+  await registerWs(app, deps.pool, {
+    onSocketCount: (read) => { socketCount = read; },
+    allowedOrigins: deps.corsOrigins ?? null,
+    revalidateMs: deps.wsRevalidateMs,
+    heartbeatMs: deps.wsHeartbeatMs,
+    typingTtlMs: deps.typingTtlMs,
+    agentPresence,
+  });
+  await registerAuthRoutes(app, deps.pool);
+  // 오퍼레이터 허브(스펙 2026-09-20 §4)를 여기서 만든다 — 계정 라우트가 배정 거절 사유를 여기서
+  // 읽는다. 라우트 등록은 아래(릴레이 뒤)다: 허브는 소켓이 붙기 전엔 빈 표일 뿐이라 순서가 무관하다.
+  const operatorHub = createOperatorHub();
+  await registerAccountRoutes(app, deps.pool, { operatorHub });
+  // 권한 부여·회수·역할(스펙 2026-09-20 §6). 계정 라우트 바로 뒤 — 같은 `/accounts/:id/*` 표면이다.
+  await registerGrantRoutes(app, deps.pool);
+  await registerTeamRoutes(app, deps.pool);
+  const storageOpts = deps.storage ?? {
+    root: defaultAttachmentRoot(app),
+    maxBytes: Number(process.env.ATTACHMENT_MAX_BYTES ?? DEFAULT_MAX_ATTACHMENT_BYTES),
+  };
+  // **실제로 쓰는 절대경로**를 한 줄 남긴다(#257). 기본값을 계산한 자리가 아니라 여기서
+  // 찍는 이유: `deps.storage` 가 주어지면 기본값은 버려지므로, 계산 자리에서 찍으면 로그가
+  // 쓰지 않는 경로를 가리킨다. 이 사고는 **로그만으로** 알아낼 수 있어야 한다.
+  app.log.info(`attachment storage root: ${storageOpts.root}`);
+  const storage = createLocalStorage(storageOpts);
+  // multipart 의 자체 제한도 같은 값으로 맞춘다 — 스토리지만 막으면 파서가 먼저 메모리를 쓴다.
+  await app.register(fastifyMultipart, { limits: { fileSize: storageOpts.maxBytes, files: 1 } });
+  // #155: 채널 라우트가 storage 를 받는다 — 채널을 지울 때 그 안의 첨부 **파일**까지
+  // 지워야 하고, 그 경로를 아는 것이 storage 다. 그래서 등록 순서가 main 과 다르다:
+  // 채널·메시지 라우트가 createLocalStorage 뒤로 내려왔다.
+  await registerChannelRoutes(app, deps.pool, storage);
+  await registerMessageRoutes(app, deps.pool);
+  await registerAttachmentRoutes(app, deps.pool, storage);
+  // 아바타는 같은 스토리지를 쓴다 — 파일 저장소를 하나로 유지하기 위해서다(avatarRoutes 주석).
+  await registerAvatarRoutes(app, deps.pool, storage);
+  await registerDirectoryRoutes(app, deps.pool, deps.projection);
+  await registerCollabRoutes(app, deps.pool, deps.projection);
+  await registerAuditRoutes(app, deps.pool);
+  await registerSettingsRoutes(app, deps.pool, deps.projection);
+  await registerHandleGroupRoutes(app, deps.pool);
+  await registerLinkPreviewRoutes(app, deps.pool);
+  await registerSkillRoutes(app, deps.pool);
+  await registerAutomationRoutes(app, deps.pool);
+
+  // 오퍼레이터 신원과 채널(스펙 2026-09-20 §3·§4). 릴레이와 같은 이유로 registerWs·registerAuth
+  // 뒤다. 허브는 연결이 살아 있는 동안의 사실(능력·러너)만 든다 — 저장하지 않는다.
+  await registerOperatorRoutes(app, deps.pool, {
+    hub: operatorHub,
+    // 소켓 수명 규칙은 `/ws`·릴레이와 **같은 값**이다 — 갈라지면 더 민감한 쪽이 더 느슨해진다.
+    heartbeatMs: deps.wsHeartbeatMs,
+  });
+  // 배정(§3). 허브 뒤 — hello 에 배정을 다시 미는 구독이 허브에 걸린다.
+  await registerAssignmentRoutes(app, deps.pool, operatorHub);
+  // MCP 레지스트리(§6) — 이름만. 에이전트 PATCH 의 mcpServers 가 이것을 참조한다.
+  await registerMcpServerRoutes(app, deps.pool);
+
+  // #141 Phase 2 attach. **registerWs 뒤여야 한다** — `websocket: true` 라우트는
+  // `@fastify/websocket` 이 등록된 뒤에만 만들어질 수 있고, 그 등록은 registerWs 안에서
+  // 일어난다. `registerAuth` 뒤여야 하는 이유는 `/metrics` 와 같다: `app.requireAccount`
+  // 가 아직 undefined 면 preHandler 가 통째로 사라져 러너 소켓이 인증 없이 열린다.
+  const relay = await registerAgentRelayRoutes(app, deps.pool, {
+    attachTicketTtlMs: deps.attachTicketTtlMs,
+    interactiveOpenTimeoutMs: deps.interactiveOpenTimeoutMs,
+    // 뷰어 소켓의 ping 주기 — `/ws`·`/operator` 와 같은 값(실측 2026-09-21: 이 소켓만 빠져 있었다).
+    heartbeatMs: deps.wsHeartbeatMs,
+    // 뷰어 소켓의 수명 규칙은 `/ws` 와 **같은 값**을 받아야 한다 — 갈라지면 더 민감한
+    // 쪽(PTY 바이트)이 더 느슨해진다.
+    allowedOrigins: deps.corsOrigins ?? null,
+    revalidateMs: deps.wsRevalidateMs,
+    // 러너 프레임은 오퍼레이터 채널로 온다(단계 3). 그 소켓의 하트비트는 operatorRoutes 의 것이다.
+    operatorHub,
+    // 러너 프레임도 생존 신호다 — 턴 중에는 이것이 **유일한** 신호다(폴이 안 나간다).
+    agentPresence,
+  });
+
+  /**
+   * 위임 기한 스위퍼(050·2026-09-12) — **아무 신호도 오지 않는 경우의 유일한 출구다.**
+   * 팀원이 죽으면 의무는 열린 채 남고 팀장은 기다리는 것이 아니라 없다(위임하고 턴이 끝나면
+   * 프로세스가 죽는다). 이 시계가 안 돌면 그 스레드는 영영 조용하다.
+   *
+   * **릴레이 등록 뒤에 시작한다** — `runningTurns` 가 그 허브의 것이기 때문이다. 기한이
+   * 지났어도 그 팀원의 턴이 그 스레드에서 아직 돌면 무응답이 아니다(턴 예산은 30분이라
+   * 10분 넘는 일이 정상이다).
+   *
+   * 깨운 팀장에게 이벤트를 치는 것은 여기다 — 서비스가 `emitEvent` 를 부르지 않고 콜백으로
+   * 돌려주는 이유는 `preemptWakesForThread` 와 같다: 이벤트는 커밋 뒤여야 하고, 그 순서를
+   * 지키는 자리를 한 곳(호출부)으로 모은다.
+   */
+  const delegationSweeper = createDelegationDeadlineSweeper(deps.pool, {
+    onWake: (accountId) => emitEvent({ type: 'inbox.updated', accountId }),
+    runningTurns: () => relay.listSessions('all'),
+  });
+  delegationSweeper.startSweep(app);
+
+  // **registerAuth 뒤에 등록해야 한다.** `app.requireAccount` 는 registerAuth 가 데코레이트하므로,
+  // 앞에서 등록하면 preHandler 가 undefined 로 박혀 인증 없이 열린다(테스트가 이걸 잡았다).
+  // 스크레이프에 인증을 요구하는 이유: 집계라도 워크스페이스 활동량을 드러낸다. admin 까지는
+  // 요구하지 않는다 — 스크레이퍼가 쓸 실용적 자격증명은 만료 없는 에이전트 PAT 이고, 사람
+  // 세션 토큰은 14일에 만료돼 스크레이퍼로 부적합하다.
+  app.get('/metrics', { preHandler: app.requireAccount }, async (_req, reply) => {
+    reply.header('content-type', 'text/plain; version=0.0.4; charset=utf-8');
+    return metrics.renderAsync();
+  });
+
+  /**
+   * avcs 투영 상태(#267). 화면이 "투영이 꺼졌다·멈췄다·비어 있다"를 **서로 다르게**
+   * 말할 수 있게 하는 것이 전부다 — "없다"와 "못 읽었다"를 한 화면에 두지 않는다
+   * (docs/design.md §4).
+   *
+   * 판정은 여기서 하지 않고 `projectionState`(shared)가 한다. 라우트에 인라인으로
+   * 두면 5분 임계값이 서버·클라이언트·문서에 세 벌 생긴다.
+   *
+   * **위 `/metrics` 와 같은 이유로 `registerAuth` 뒤에 있어야 한다.** 처음에는
+   * `/healthz` 옆(앞쪽)에 뒀는데, 그 자리에서는 `app.requireAccount` 가 아직
+   * undefined 라 `preHandler` 가 통째로 사라지고 라우트가 **인증 없이 열린다**.
+   * 이 응답은 저장소 이름과 에러 메시지(내부 URL 이 섞일 수 있다)를 담으므로 로그인
+   * 하지 않은 사람에게 줄 것이 아니다. 401 을 확인하는 테스트가 이 자리를 지킨다.
+   */
+  app.get('/projection/status', { preHandler: app.requireAccount }, async () => {
+    const runtime: ProjectionRuntime = deps.getProjectionStatus?.() ?? {
+      configured: false, repo: null, lastLogIndex: 0,
+      lastPolledAt: null, lastAdvancedAt: null, lastError: null,
+    };
+    // 원자료를 그대로 싣고 파생만 더한다 — 필드를 하나씩 베끼면 새 필드가 조용히 빠진다.
+    return { ...runtime, state: projectionState(runtime) } satisfies ProjectionStatus;
+  });
+  await registerMcp(app, deps.pool, lifecycle, agentPresence, storage);
+
+  return app;
+}
