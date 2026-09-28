@@ -110,6 +110,41 @@ describe('@channel 이 부르는 사람', () => {
   });
 });
 
+// 에이전트의 글에서 `@channel` 은 **맨 앞에 있을 때만** 부름이다(`splitMentionCalls` 와 같은
+// 규칙). 입력은 #harkroom 에서 실제로 채널 전체를 깨운 글들의 해당 줄이다(seq 3452·3458·3461).
+// 멘션 문법을 설명하던 보고 한 줄이 채널의 에이전트 전부를 깨웠고, 깬 턴들이 원인을
+// 설명하며 그 글자를 따옴표·굵게로 옮겨 적어 연쇄가 됐다.
+describe('에이전트가 쓴 @channel 은 맨 앞에서만 부른다', () => {
+  const midBody = [
+    ['표 안의 설명(3452)', '수정 계획입니다.\n| 호출 범위 판정 | 멘션·팀·집합·@channel이 모두 `services/messages.ts` fan-out을 지난다 |'],
+    ['따옴표 인용(3458)', '- 표 1행 "멘션·팀·집합·@channel이 모두…"에서 `@channel`이 백틱 밖에 있었습니다.'],
+    ['굵게(3461)', '본문 가운데의 "멘션·팀·집합·**@channel**이 모두 …" 구절이 채널 전체 호출로 해석됐습니다.'],
+  ] as const;
+  for (const [label, body] of midBody) {
+    it(`본문 한가운데는 지칭이다 — ${label}`, async () => {
+      const id = await post(memberPat, publicId, body);
+      expect(await inboxFor(outsiderPat, id)).toEqual([]);
+    });
+  }
+
+  // 백틱은 원래 막았다(3462 은 1명만 받았다) — 이 수정이 그 판정을 건드리지 않는다는 회귀선.
+  it('코드 구간 안은 맨 앞이 아니어도 원래대로 부르지 않는다(3462)', async () => {
+    const id = await post(memberPat, publicId, '"멘션·팀·집합·(at)channel이" 부분에서 `@channel`이 백틱 없이 본문에 들어가 있었습니다.');
+    expect(await inboxFor(outsiderPat, id)).toEqual([]);
+  });
+
+  it('맨 앞이면 부른다', async () => {
+    const id = await post(memberPat, publicId, '@channel 배포 끝났다');
+    expect(await inboxFor(outsiderPat, id)).toEqual([expect.objectContaining({ reason: 'mention' })]);
+  });
+
+  // 사람을 부르는 쪽은 좁히지 않는다 — 사람이 문장 중간에 `@channel` 을 쓰는 것은 부르는 것이다.
+  it('사람의 글은 어디에 있어도 부른다', async () => {
+    const id = await post(adminToken, publicId, '오늘 배포한다 @channel 확인 부탁');
+    expect(await inboxFor(outsiderPat, id)).toEqual([expect.objectContaining({ reason: 'mention' })]);
+  });
+});
+
 // 이 계정은 앞의 테스트들이 끝난 뒤에 만든다 — 만들어지는 순간 `@channel` 의 뜻이
 // 바뀌므로, 같은 파일의 앞선 테스트가 그 영향을 받으면 안 된다.
 describe('@channel 이라는 handle 의 계정이 있을 때', () => {

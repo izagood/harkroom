@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_CHAIN_LIMIT, mentionedHandles, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type MessageRow } from '@harkroom/shared';
+import { CHANNEL_MENTION_HANDLE, countsAsReply, headMentionRunEnd, MENTION_CHAIN_LIMIT, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type MessageRow } from '@harkroom/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { preemptWakesForThread } from './agentWakes.js';
 import { closeDelegationsForReply, outcomesFor } from './delegations.js';
@@ -724,7 +724,27 @@ export async function postMessage(
       깊이 상한(`cappedIds`)도 이 결과 위에서 센다 — 애초에 부르지 않은 이름을 "막았다"고
       적으면 화면이 없던 호출을 있었다고 말하게 된다.
     */
-    const agentIds = new Set(mentionedAccounts.filter((a) => a.kind === 'agent').map((a) => a.id));
+    /*
+      **본문에 처음부터 `<@id>` 로 적힌 계정도 함께 읽는다.** 위 조회는 `@handle` 글자만 보므로
+      에이전트가 id 로 부른 계정은 거기 없다 — 그러면 `isAgent` 가 모르는 id 를 사람으로 보고
+      (본문 한가운데의 지칭이 부름이 된다), 막힌 부름이 `mentionDenied`·`mentionChainCapped` 에
+      남지 않고 조용히 사라진다(#rcms, task_manager → rcms 세 번). 판정이 보는 계정 목록은
+      정규화된 본문의 토큰 전부여야 한다.
+
+      `handleToId`(정규화 지도·`@channel` 예외의 "계정으로 처리한 이름")에는 넣지 않는다 —
+      그 둘은 본문의 **글자** 에 대한 사실이다.
+    */
+    const knownIds = new Set(mentionedAccounts.map((a) => a.id));
+    const rawIds = mentionedIds(normalizedBody).filter((id) => !knownIds.has(id));
+    const tokenAccounts = rawIds.length
+      ? (await client.query(
+          `select id, lower(handle) as handle, kind from account
+            where id = any($1::uuid[]) and deleted_at is null`,
+          [rawIds],
+        )).rows as { id: string; handle: string; kind: 'human' | 'agent' }[]
+      : [];
+    const calledAccounts = [...mentionedAccounts, ...tokenAccounts];
+    const agentIds = new Set(calledAccounts.filter((a) => a.kind === 'agent').map((a) => a.id));
     const { call: calledIds, ref: refIds, targetCall, targetRef } = splitMentionCalls(normalizedBody, {
       authorIsAgent,
       isAgent: (id) => agentIds.has(id),
@@ -739,7 +759,7 @@ export async function postMessage(
         if (agentIds.has(accountId)) cappedIds.add(accountId);
       }
     }
-    const cappedHandles = mentionedAccounts.filter((a) => cappedIds.has(a.id)).map((a) => a.handle);
+    const cappedHandles = calledAccounts.filter((a) => cappedIds.has(a.id)).map((a) => a.handle);
     /*
       호출 게이트(스펙 2026-09-20 §6) — **insert 보다 앞에서** 잰다. 상한 판정과 같은 이유다:
       막힌 부름은 `meta.mentionDenied` 로 그 메시지에 남아야 하고, 응답·WS 이벤트로 이미 나간
@@ -751,7 +771,7 @@ export async function postMessage(
     for (const [id, fact] of gateFacts) {
       if (!(await mayInvoke(client, fact, { callerId: input.authorId, channelId: input.channelId, via: 'mention' }))) deniedIds.add(id);
     }
-    const deniedHandles = mentionedAccounts.filter((a) => deniedIds.has(a.id)).map((a) => a.handle);
+    const deniedHandles = calledAccounts.filter((a) => deniedIds.has(a.id)).map((a) => a.handle);
 
     /*
       **팀 부름도 insert 앞에서 판정한다**(068). 예전에는 팀 게이트가 insert 뒤의 `fanOutMention`
@@ -910,8 +930,16 @@ export async function postMessage(
     // `@channel` 이라는 handle 의 **계정이 실제로 있으면 계정이 이긴다** — 위에서 이미
     // 평범한 멘션으로 처리됐고 여기서는 아무것도 하지 않는다. 사람의 이름이 예약어에
     // 밀리면 그 사람은 영영 불릴 수 없다.
+    //
+    // **에이전트의 글에서는 맨 앞에 있을 때만 부름이다**(`splitMentionCalls` 와 같은 규칙).
+    // 본문 한가운데의 `@channel` 은 그 기능을 **가리키는** 것이다 — 멘션 문법을 설명하던 보고
+    // 한 줄이 채널의 에이전트 전부를 깨웠고, 깬 턴들이 원인을 설명하며 그 글자를 다시 옮겨
+    // 적어 연쇄가 됐다(#harkroom seq 3452). 사람의 글은 어디에 있어도 부름이다.
     const accountHandles = new Set(handleToId.keys());
-    if (bodyHandles.includes(CHANNEL_MENTION_HANDLE) && !accountHandles.has(CHANNEL_MENTION_HANDLE)) {
+    const channelCalled = authorIsAgent
+      ? mentionedHandles(normalizedBody.slice(0, headMentionRunEnd(normalizedBody))).includes(CHANNEL_MENTION_HANDLE)
+      : bodyHandles.includes(CHANNEL_MENTION_HANDLE);
+    if (channelCalled && !accountHandles.has(CHANNEL_MENTION_HANDLE)) {
       // 대상은 **그 채널을 볼 수 있는 사람 전부**다. 규칙은 `fanOutMention` 하나에 있다.
       await fanOutMention(client, { ...input, messageId: message.id }, null, notified, { reason: 'mention' }, 'channel_all');
     }
