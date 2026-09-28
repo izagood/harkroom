@@ -41,6 +41,17 @@ export const ko = {
 
   'mention.unknownAccount': '알 수 없음',
 
+  'mention.card.team': '에이전트 팀',
+  'mention.card.group': '집합',
+  'mention.card.members': { one: '{count}명', other: '{count}명' },
+  'mention.card.lead': '팀장',
+  'mention.card.noLead': '팀장 없음 — 팀원 전원을 깨운다',
+  'mention.card.loading': '불러오는 중…',
+  'mention.card.failed': '명단을 불러오지 못했다',
+  'mention.card.denied': '이 집합의 명단은 관리자만 볼 수 있다',
+  'mention.card.empty': '팀원 없음',
+  'mention.card.disabled': '비활성',
+
   'thread.alsoPostToChannel': '채널에도 올리기',
   'thread.resizeHandle': '스레드 너비 조절',
   'thread.title': '스레드',

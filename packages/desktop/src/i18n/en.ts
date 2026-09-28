@@ -295,6 +295,18 @@ export const en = {
 
   'mention.unknownAccount': 'unknown',
 
+  // 팀·집합 멘션에 올리면 뜨는 명단 카드(`MentionCard`).
+  'mention.card.team': 'Agent team',
+  'mention.card.group': 'Group',
+  'mention.card.members': { one: '{count} member', other: '{count} members' },
+  'mention.card.lead': 'Lead',
+  'mention.card.noLead': 'No lead set — every member is woken',
+  'mention.card.loading': 'Loading…',
+  'mention.card.failed': 'Could not load the members',
+  'mention.card.denied': 'Only admins can see who is in this group',
+  'mention.card.empty': 'No members',
+  'mention.card.disabled': 'disabled',
+
   // ---------------------------------------------------------------------------
   // thread — 스레드 패널. `thread.*` 영역이 이미 있고(상태 다섯), 여기 둘을 더한다.
   // ---------------------------------------------------------------------------
