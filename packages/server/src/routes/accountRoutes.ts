@@ -1,11 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
+import type { ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
 import { newToken } from '../auth/tokens.js';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { ACCOUNT_STATUSES, CREDENTIAL_SCOPES, INVOKE_SCOPES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@harkroom/shared';
 import {
-  ackAgentStop, createAgentAccount, deleteAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
+  ackAgentStop, assignmentOf, createAgentAccount, definitionFor, deleteAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
   revokeAllPats, setAgentMcpServers, setInvoker, undoAgentStopRequest, updateAgent, validateMcpServers, validateScopeChange,
 } from '../services/agents.js';
 import { actorOf, recordAudit } from '../audit.js';
@@ -16,7 +17,14 @@ import { getHandleGroupByHandle } from '../services/handleGroups.js';
 
 export interface AccountRouteDeps {
   /** 오퍼레이터 허브 — 에이전트 목록에 배정 거절 사유를 붙인다(`OperatorHub.refusalOf`). 테스트는 생략한다. */
-  operatorHub?: { refusalOf(agentId: string): { reason: string; at: string } | null };
+  operatorHub?: {
+    refusalOf(agentId: string): { reason: string; at: string } | null;
+    /**
+     * 종료 요청·되돌리기를 배정받은 오퍼레이터에 곧바로 알린다. 없으면(테스트) 알리지 않는다 —
+     * 그때도 러너는 자기 정의에서 요청을 보고 물러나지만, 오퍼레이터가 다시 띄운다.
+     */
+    send?(operatorId: string, frame: ServerToOperatorFrame): boolean;
+  };
 }
 
 export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, routeDeps: AccountRouteDeps = {}): Promise<void> {
@@ -500,6 +508,12 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
       action: 'agent.stop.requested', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: id, detail: { handle: updated.handle },
     }, req);
+    // 오퍼레이터 시대(스펙 2026-09-20 §3)에는 러너를 띄우는 쪽이 **배정**이다. 요청만 찍으면
+    // 러너가 물러난 뒤 오퍼레이터가 배정을 보고 다시 띄워서, [멈추기] 가 재시작이 됐다(옛 앱의
+    // `runnerLauncher.startAll` 이 걸러 주던 `!stopRequestedAt` 이 오퍼레이터에는 없었다).
+    // 배정 기록은 두고 오퍼레이터에만 unassign{drain} 을 보낸다 — 되돌리면 같은 곳에 다시 민다.
+    const assignment = await assignmentOf(pool, id);
+    if (assignment) routeDeps.operatorHub?.send?.(assignment.operatorId, { type: 'unassign', agentId: id, drain: true });
     return updated;
   });
 
@@ -548,6 +562,10 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
         action: 'agent.stop.undone', actorId: req.account!.id, actorHandle: req.account!.handle,
         target: id, detail: { handle: updated.handle, stopRequestedAt: before.stopRequestedAt },
       }, req);
+      // 요청이 걸려 있는 동안 오퍼레이터는 배정을 받지 못했다(위 요청 라우트) — 되돌리면 다시 민다.
+      const assignment = await assignmentOf(pool, id);
+      const definition = assignment ? await definitionFor(pool, id) : null;
+      if (assignment && definition) routeDeps.operatorHub?.send?.(assignment.operatorId, { type: 'assign', agentId: id, definition });
     }
     return updated;
   });

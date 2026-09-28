@@ -18,6 +18,11 @@ import type { OperatorHub } from '../ws/operatorHub.js';
 const body = z.object({ operatorId: z.string().uuid() });
 const idParam = z.object({ id: z.string().uuid() });
 
+async function stopRequested(pool: Pool, agentId: string): Promise<boolean> {
+  const r = await pool.query(`select 1 from agent_config where account_id = $1 and stop_requested_at is not null`, [agentId]);
+  return (r.rowCount ?? 0) > 0;
+}
+
 export async function registerAssignmentRoutes(app: FastifyInstance, pool: Pool, hub: OperatorHub): Promise<void> {
   /**
    * 오퍼레이터가 붙을 때 그 오퍼레이터의 배정 전부를 다시 민다. 서버는 끊기면 잊고
@@ -27,8 +32,12 @@ export async function registerAssignmentRoutes(app: FastifyInstance, pool: Pool,
   hub.onFrame((operatorId, frame) => {
     if (frame.type !== 'hello') return;
     void (async () => {
+      // 종료 요청이 걸린 에이전트는 다시 밀지 않는다 — 밀면 붙을 때마다 멈춘 러너가 살아난다
+      // (`accountRoutes.ts` 의 stop/undo 라우트가 배정 기록은 두고 오퍼레이터에만 알린다).
       const rows = await pool.query<{ agent_id: string }>(
-        `select agent_id from agent_assignment where operator_id = $1`, [operatorId]);
+        `select a.agent_id from agent_assignment a
+           left join agent_config c on c.account_id = a.agent_id
+          where a.operator_id = $1 and c.stop_requested_at is null`, [operatorId]);
       for (const r of rows.rows) {
         const definition = await definitionFor(pool, r.agent_id);
         if (definition) hub.send(operatorId, { type: 'assign', agentId: r.agent_id, definition });
@@ -87,7 +96,8 @@ export async function registerAssignmentRoutes(app: FastifyInstance, pool: Pool,
       [agentId, operatorId, req.account!.id]);
     // 순서가 계약이다: 이전 곳이 먼저 놓고(drain), 새 곳이 잡는다.
     if (previous && previous.operatorId !== operatorId) hub.send(previous.operatorId, { type: 'unassign', agentId, drain: true });
-    hub.send(operatorId, { type: 'assign', agentId, definition });
+    // 멈춰 둔 에이전트는 자리만 옮기고 띄우지 않는다 — 되돌리기가 새 자리에 민다.
+    if (!(await stopRequested(pool, agentId))) hub.send(operatorId, { type: 'assign', agentId, definition });
 
     await recordAudit(pool, {
       action: 'agent.assigned', ...actorOf(req), target: agentId,

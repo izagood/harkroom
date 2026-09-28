@@ -133,6 +133,24 @@ describe('배정', () => {
     expect(mine.statusCode).toBe(200);
     await a.close();
   });
+  it('[멈추기] 는 오퍼레이터에 unassign{drain} — 붙어도 다시 안 밀고, 되돌리면 assign 이 다시 온다', async () => {
+    const b = await attachOperator(opB, [agentId]);
+    await waitCapable(opB.operatorId, [agentId]);
+    await waitFor(() => b.frames.some((f) => f.type === 'assign' && f.agentId === agentId));
+    const stopRes = await app.inject({ method: 'POST', url: `/accounts/agents/${agentId}/stop`, headers: auth(adminToken) });
+    expect(stopRes.statusCode).toBe(200);
+    await waitFor(() => b.frames.some((f) => f.type === 'unassign' && f.agentId === agentId && f.drain === true));
+    await b.close();
+    // 다시 붙어도 멈춘 에이전트는 밀지 않는다 — 옛 버그는 여기서 러너를 되살렸다.
+    const again = await attachOperator(opB, [agentId]);
+    await waitCapable(opB.operatorId, [agentId]);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(again.frames.some((f) => f.type === 'assign' && f.agentId === agentId)).toBe(false);
+    const undo = await app.inject({ method: 'POST', url: `/accounts/agents/${agentId}/stop/undo`, headers: auth(adminToken) });
+    expect(undo.statusCode).toBe(200);
+    await waitFor(() => again.frames.some((f) => f.type === 'assign' && f.agentId === agentId));
+    await again.close();
+  });
   it('배정 해제는 unassign{drain} 을 보내고 404 로 두 번 지울 수 없다', async () => {
     const b = await attachOperator(opB, [agentId]);
     await waitCapable(opB.operatorId, [agentId]);
