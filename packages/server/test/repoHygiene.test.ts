@@ -97,6 +97,8 @@ describe('repo hygiene', () => {
       // 공개 문서·표준 링크.
       /^(?:www\.)?(?:github|nodejs|npmjs|claude|w3)\.(?:com|org)$/i,
       /^schema\.tauri\.app$/i,
+      // MCP 프리셋(`desktop/src/lib/mcpPresets.ts`) — 공식 Claude 플러그인이 쓰는 공개 엔드포인트.
+      /^mcp\.(?:slack|atlassian)\.com$/i,
       /^developers\.openai\.com$/i,
       /^opencode\.ai$/i, // opencode 설정 파일이 가리키는 공개 스키마 URL
       /^engineering\.block\.xyz$/i,

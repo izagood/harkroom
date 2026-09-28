@@ -10,12 +10,13 @@
  * 인가의 값이라 그 본문에 섞이면 소유자가 지시문을 고칠 때마다 스코프 검사가 같이 돌고, 넓히기
  * 거절이 "지시문을 저장하지 못했다"로 읽힌다.
  */
-import { useEffect, useState } from 'react';
-import { CREDENTIAL_SCOPES, INVOKE_SCOPES, type AgentView, type CredentialScope, type InvokeScope, type McpServerRow } from '@harkroom/shared';
+import { useState } from 'react';
+import { CREDENTIAL_SCOPES, INVOKE_SCOPES, type AgentView, type CredentialScope, type InvokeScope } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { ApiError } from '../../lib/api';
 import { useT } from '../../i18n/useT';
+import { AgentMcpSection } from './AgentMcpSection';
 
 export function AgentScopeSection({ agent, disabled, onUpdated }: {
   agent: AgentView;
@@ -24,15 +25,9 @@ export function AgentScopeSection({ agent, disabled, onUpdated }: {
 }) {
   const t = useT();
   const accounts = useActiveStore((s) => s.accounts);
-  const [registry, setRegistry] = useState<McpServerRow[] | 'error' | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pick, setPick] = useState('');
-
-  useEffect(() => {
-    // 약속 안에서 부른다 — 표면이 없는 컨트롤러(부분 가짜)에서도 동기 예외가 아니라 '읽지 못했다'다.
-    void Promise.resolve().then(() => getController().mcpServers()).then(setRegistry).catch(() => setRegistry('error'));
-  }, []);
 
   const explain = (err: unknown): string => {
     if (err instanceof ApiError) {
@@ -49,7 +44,6 @@ export function AgentScopeSection({ agent, disabled, onUpdated }: {
 
   // 옛 서버(스코프 마이그레이션 전)는 이 두 필드를 주지 않는다 — 없으면 빈 목록으로 그린다.
   const invokers = agent.invokers ?? [];
-  const mcpServers = agent.mcpServers ?? [];
   const humans = Object.values(accounts).filter((a) => a.kind === 'human' && !invokers.includes(a.id));
   const off = busy || disabled;
 
@@ -130,39 +124,8 @@ export function AgentScopeSection({ agent, disabled, onUpdated }: {
         </div>
       )}
 
-      <div className="mt-3" data-testid="agent-mcp-servers">
-        <div className="text-meta text-fg-muted">{t('agents.scope.mcp')}</div>
-        {registry === null && <p className="mt-1 text-meta text-fg-subtle">{t('agents.scope.mcpLoading')}</p>}
-        {registry === 'error' && <p className="mt-1 text-meta text-danger">{t('agents.scope.mcpListFailed')}</p>}
-        {Array.isArray(registry) && registry.length === 0 && (
-          <p className="mt-1 text-meta text-fg-subtle">{t('agents.scope.mcpNone')}</p>
-        )}
-        {Array.isArray(registry) && registry.length > 0 && (
-          <ul className="mt-1 flex flex-wrap gap-3">
-            {registry.map((row) => {
-              const on = mcpServers.includes(row.name);
-              return (
-                <li key={row.name}>
-                  <label className="flex items-center gap-1 text-meta text-fg">
-                    <input
-                      type="checkbox"
-                      aria-label={row.name}
-                      checked={on}
-                      disabled={off}
-                      onChange={() => {
-                        const next = on ? mcpServers.filter((n) => n !== row.name) : [...mcpServers, row.name];
-                        void run(() => getController().updateAgent(agent.id, { mcpServers: next }));
-                      }}
-                    />
-                    {row.name}
-                    <span className="text-fg-subtle">({t(`mcpServers.kind.${row.credentialKind}`)})</span>
-                  </label>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
+      {/* MCP 는 한 절에서 끝낸다(레지스트리·이 머신 정의·scope) — `AgentMcpSection` 머리 주석. */}
+      <AgentMcpSection agent={agent} disabled={disabled} onUpdated={onUpdated} />
 
       {error && <p role="alert" className="mt-2 text-meta text-danger" data-testid="agent-scope-error">{error}</p>}
     </div>
