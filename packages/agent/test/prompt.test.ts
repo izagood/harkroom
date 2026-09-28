@@ -649,6 +649,30 @@ describe('메모리 주입 (#139)', () => {
     expect(s).toContain('message.post');
   });
 
+  // 러너 사본으로 돌 때(memoryCache.ts): 기억은 싣되 **낡았을 수 있다고 말한다** — 그래야
+  // 낡은 core 를 바탕으로 memory.set 해 그 사이 고친 것을 덮어쓰지 않는다. 경고는 지시라서
+  // `</memory>` 바깥이다.
+  it('사본으로 돌면 기억을 싣고 낡았을 수 있다는 경고를 블록 바깥에 붙인다', () => {
+    const s = build({ core: '본문', slugs: ['mem/a'], stale: { fetchedAt: '2026-09-28T00:00:00.000Z' } });
+    expect(s).toContain('본문');
+    expect(s).toContain('mem/a');
+    expect(s).toContain('2026-09-28T00:00:00.000Z');
+    expect(s.indexOf('</memory>')).toBeLessThan(s.indexOf('받아 둔 사본'));
+  });
+
+  it('신선한 기억에는 사본 경고가 없다', () => {
+    const s = build({ core: '본문', slugs: [] });
+    expect(s).not.toContain('받아 둔 사본');
+  });
+
+  // 비어 있던 사본의 "비었다"는 그때의 사실이다 — 온보딩을 넣으면 unavailable 에서 막은
+  // 사고(새 프로필로 덮어쓰기)가 돌아온다.
+  it('비어 있는 사본으로 돌면 온보딩 안내를 넣지 않는다', () => {
+    const s = build({ core: null, slugs: [], stale: { fetchedAt: '2026-09-28T00:00:00.000Z' } });
+    expect(s).not.toContain('기억이 아직 없다');
+    expect(s).toContain('message.post');
+  });
+
   it('< 와 & 를 이스케이프한다', () => {
     const s = build({ core: 'a < b && c', slugs: [] });
     expect(s).toContain('&lt;');

@@ -29,6 +29,7 @@ import { opencodeDirs } from './opencodeHome.js';
 import { findOpencodeSessionId } from './opencodeSessions.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
+import type { MemoryCache } from './memoryCache.js';
 
 /** runMentionTurn 이 요구하는 harkroom 표면. HarkroomAgentClient 의 부분집합이라 실제 클래스를
  * 그대로 넘겨도 되고, 테스트는 인메모리 fake 를 넘긴다(프로세스 경계·네트워크 없이 검증). */
@@ -159,6 +160,11 @@ export interface TurnRelay {
 
 export interface MentionTurnDeps {
   harkroom: MentionTurnHarkroom;
+  /**
+   * 러너 메모리 사본(`memoryCache.ts`). 러너 수명 동안 하나다 — main.ts 가 조립한다. 없으면
+   * `harkroom.readMemory()` 를 직접 부른다(사본도 폴백도 없는 옛 동작).
+   */
+  memory?: Pick<MemoryCache, 'read'>;
   store: SessionStore;
   exec: Exec;
   runTurn: RunTurn;
@@ -685,15 +691,16 @@ export async function runMentionTurn(
   // 아무것도 안 하고 끝낸 턴도 "발화했다"로 잘못 판정된다.
   const turnStartSeq = thread.reduce((max, m) => Math.max(max, m.seq), 0);
 
-  // #139: 메모리는 **매 턴 다시 읽는다.** 지시문이 그렇듯(바로 아래 주석) 시스템
-  // 프롬프트가 매 턴 새로 쓰이므로, 캐시 없이도 메모리 수정이 다음 턴부터 반영된다 —
-  // 캐시를 넣으면 그 이점을 없애고 무효화 문제를 새로 만든다.
+  // #139 는 "매 턴 다시 읽는다, 캐시 없음"이었다. 이제 러너 사본(`memoryCache.ts`)을 거친다
+  // (2026-09-28) — 판본이 같으면 왕복하지 않고, 서버를 못 읽으면 사본으로 돈다. 수정이 다음
+  // 턴부터 반영된다는 #139 의 이점은 판본 비교로 그대로 지킨다. `deps.memory` 가 없으면
+  // (테스트·옛 조립) 예전처럼 직접 읽는다.
   //
   // **조회 실패와 빈 저장소를 구분한다.** 실패를 빈 값으로 삼키면 에이전트가 "나는
-  // 기억이 없다" 고 믿고 진짜 기억을 새 프로필로 덮어쓴다.
+  // 기억이 없다" 고 믿고 진짜 기억을 새 프로필로 덮어쓴다. 사본도 없을 때만 'unavailable' 이다.
   let memory: MemoryContext;
   try {
-    memory = await deps.harkroom.readMemory();
+    memory = deps.memory ? await deps.memory.read() : await deps.harkroom.readMemory();
   } catch (err: unknown) {
     memory = 'unavailable';
     console.error(

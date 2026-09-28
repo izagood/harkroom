@@ -22,6 +22,7 @@ import { basename, dirname, join } from 'node:path';
 import { loadConfig, runnerLabel } from './config.js';
 import { applySelfRename, HarkroomAgentClient } from './harkroom.js';
 import { runMentionTurn, type MentionTurnDeps } from './mentionTurn.js';
+import { createMemoryCache } from './memoryCache.js';
 import { runPtyTurn } from './pty.js';
 import { SessionStore } from './sessions.js';
 import { ensureNameLink, resolveAgentStateDir } from './stateDir.js';
@@ -409,13 +410,21 @@ interactive = createInteractiveManager({
 // 이 조립이 main 에 남는 이유: 계정 축·워크스페이스 경로·MCP 설정은 기동이 정하는 값이고,
 // 스케줄러가 그것을 직접 읽으면 테스트가 그 환경을 전부 세워야 한다. 스케줄러는 "무엇을
 // 언제 띄우는가"만 알고, "무엇으로 띄우는가"는 이 함수가 넘긴다.
+// 러너 메모리 사본(`memoryCache.ts`, 2026-09-28). **러너 수명 동안 하나**이고 파일은 이
+// 에이전트의 state 디렉터리에 둔다 — 러너가 다시 떠도 첫 턴부터 폴백 사본이 있다. 워크스페이스
+// (스레드 cwd)에 두지 않는 이유는 지시문 파일과 같다(에이전트가 자기 입력을 고칠 수 있다).
+const memoryCache = createMemoryCache({
+  stateDir: agentStateDir,
+  source: harkroom,
+});
+
 const scheduler = createMentionScheduler({
   harkroom, registry, queue: mentionQueue, accountLane, heldEntryIds,
   runMentionTurn,
   // 계정별로 갈리는 두 필드(`claudeAccount`·`claudeConfigDir`)만 계정 축이 채운다 —
   // 나머지는 계정과 무관하므로 매번 같은 값이다.
   buildTurnDeps: ({ ctx, mention, account, isLastAccount }) => ({
-    harkroom, store, exec, runTurn: runPtyTurn, me, guide,
+    harkroom, memory: memoryCache, store, exec, runTurn: runPtyTurn, me, guide,
     channelName: ctx.channelName(mention.channelId),
     handles: ctx.handles, workspaceBaseDir, mcpConfigPath, extraMcpServers,
     // 지시문 파일이 여기 쓰인다(#92) — 에이전트 워크스페이스가 아니라 러너의 상태
@@ -463,6 +472,8 @@ let backoffMs = 1_000;
 while (running) {
   try {
     const batch = await harkroom.pollInbox(config.pollTimeoutMs, claudeLaneReport);
+    // 이 배치의 메모리 판본 — 사본과 같으면 첫 턴이 메모리를 왕복하지 않는다(`memoryCache.ts`).
+    memoryCache.noteRev(batch.memoryRev);
     if (!batch.entries.length) {
       backoffMs = 1_000;
       // 멘션이 없어도 종료 요청은 봐야 한다. 턴 안에서만 정의를 읽으면 **조용한 러너는
