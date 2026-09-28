@@ -44,6 +44,11 @@ export function applySelfRename(me: Me, accounts: readonly { id: string; handle:
 export interface InboxBatch {
   entries: InboxEntry[];
   messages: MessageRow[];
+  /**
+   * 이 배치 시점의 메모리 판본(러너 메모리 캐시, `memoryCache.ts`). 항목이 있는 배치에만
+   * 온다. 옛 서버는 안 준다 — 그때 캐시는 매번 받아 온다.
+   */
+  memoryRev?: string;
 }
 
 /**
@@ -202,14 +207,24 @@ export class HarkroomAgentClient {
    * 구분해야 하기 때문이다 — 여기서 빈 값으로 뭉개면 그 구분이 사라진다.
    */
   async readMemory(): Promise<{ core: string | null; slugs: string[] }> {
-    const listed = await this.call<{ slugs: string[] }>('memory.list');
+    const listed = await this.listMemory();
     const slugs = listed.slugs ?? [];
     if (!slugs.includes('core')) return { core: null, slugs: slugs.filter((s) => s !== 'core') };
-    const got = await this.call<{ value?: string; error?: unknown }>('memory.get', { slug: 'core' });
     return {
-      core: typeof got.value === 'string' ? got.value : null,
+      core: await this.getMemoryValue('core'),
       slugs: slugs.filter((s) => s !== 'core'),
     };
+  }
+
+  /** `memory.list` — slug 와 판본(`rev`, 옛 서버는 없음). `memoryCache.ts` 의 `MemorySource`. */
+  listMemory(): Promise<{ slugs: string[]; rev?: string }> {
+    return this.call<{ slugs: string[]; rev?: string }>('memory.list');
+  }
+
+  /** `memory.get` 의 본문만. 없으면 null. */
+  async getMemoryValue(slug: string): Promise<string | null> {
+    const got = await this.call<{ value?: string; error?: unknown }>('memory.get', { slug });
+    return typeof got.value === 'string' ? got.value : null;
   }
 
   /**

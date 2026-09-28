@@ -76,6 +76,29 @@ describe('mcp surface', () => {
     expect(after.entries).toHaveLength(0);
   });
 
+  // 러너 메모리 캐시(2026-09-28): 턴을 띄울 배치에만 memoryRev 를 얹는다. 그 값은
+  // memory.list 의 rev 와 같아야 러너가 사본을 믿을 수 있다. 빈 폴에는 싣지 않는다.
+  it('inbox.poll carries memoryRev only on a non-empty batch, equal to memory.list rev', async () => {
+    const { pat } = await createAgent(app, adminToken, 'revbot');
+    const client = await mcpClient(pat);
+    await client.callTool({ name: 'memory.set', arguments: { slug: 'core', value: 'hi' } });
+    const empty = text(await client.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 0 } })) as
+      { entries: unknown[]; memoryRev?: string };
+    expect(empty.entries).toHaveLength(0);
+    expect(empty.memoryRev).toBeUndefined();
+
+    await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { body: '@revbot 판본 확인' },
+    });
+    const batch = text(await client.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 0 } })) as
+      { entries: unknown[]; memoryRev?: string };
+    const listed = text(await client.callTool({ name: 'memory.list', arguments: {} })) as { rev: string };
+    expect(batch.entries.length).toBeGreaterThan(0);
+    expect(batch.memoryRev).toBe(listed.rev);
+  });
+
   // entry id 를 그대로 믿고 지우면 남의 inbox 를 소비할 수 있다.
   it('refuses to consume an inbox entry that belongs to someone else', async () => {
     const other = await createAgent(app, adminToken, 'otherbot');
