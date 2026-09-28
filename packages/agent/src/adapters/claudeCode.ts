@@ -39,6 +39,8 @@ export const CLAUDE_CODE_ADAPTER: HarnessAdapter = {
   // JSONL 을 읽어 마지막 API 에러·기록 성장(정지 판정)을 재고, `claudeUsage.ts`(데몬)가
   // 같은 파일에서 5시간 창의 토큰과 `quotaLimits` 를 센다.
   transcript: { kind: 'files', dirUnderConfig: 'projects', layout: 'flat', fileName: '<id>.jsonl', parsed: true },
+  // 시스템 프롬프트의 `# Memory` 절이 가리키는 자리(2026-09-28 실측).
+  fileMemory: { dirUnderConfig: 'projects' },
 
   // 계정 하나 = `CLAUDE_CONFIG_DIR` 하나. 목록·로그인·사용량·페일오버 표면이 다 있다.
   account: { configDirEnv: ['CLAUDE_CONFIG_DIR'], pooled: true },

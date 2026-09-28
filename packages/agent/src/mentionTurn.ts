@@ -15,7 +15,7 @@ import type { Me } from './harkroom.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, gateNotice, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts } from './prompt.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, harnessPath, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
-import { discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readsSessionTranscript, usesTuiForMention, usesXdgHome } from './adapters/index.js';
+import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readsSessionTranscript, usesTuiForMention, usesXdgHome } from './adapters/index.js';
 import { acceptsPtyInput } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
 import { findCodexSessionId } from './codexSessions.js';
@@ -31,6 +31,7 @@ import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js
 import type { TurnRegistry } from './turnRegistry.js';
 import type { MemoryCache } from './memoryCache.js';
 import { planMemory, RECALL_MAX_ITEMS, type RecallHit } from './memoryPin.js';
+import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './harnessMemory.js';
 
 /** runMentionTurn 이 요구하는 harkroom 표면. HarkroomAgentClient 의 부분집합이라 실제 클래스를
  * 그대로 넘겨도 되고, 테스트는 인메모리 fake 를 넘긴다(프로세스 경계·네트워크 없이 검증). */
@@ -730,8 +731,18 @@ export async function runMentionTurn(
     stateDir: deps.stateDir, key, sessionId: rec.sessionId, isFirstTurn, memory,
     ...(search && recallQuery ? { recall: { query: recallQuery, search: (q: string) => search(q, RECALL_MAX_ITEMS + 3) } } : {}),
   });
-  const turnPrompt = memoryPlan.turnLines.length
-    ? `${memoryPlan.turnLines.join('\n')}\n\n${prompt}`
+  // 하네스 파일 메모리 수확 알림(U5, `harnessMemory.ts`). 어댑터가 그 자리를 아는 하네스만
+  // (지금은 claude). 읽기 실패는 빈 목록이라 턴을 막지 않는다.
+  const fileMemoryRoot = fileMemoryDirUnderConfig(def.harness);
+  const harnessNotice = fileMemoryRoot
+    ? await planHarnessMemoryNotice({
+      stateDir: deps.stateDir, key,
+      files: await scanHarnessMemory(claudeMemoryDir(deps.claudeConfigDir, rec.workspaceDir, fileMemoryRoot)),
+    })
+    : null;
+  const headLines = [...memoryPlan.turnLines, ...(harnessNotice?.lines.length ? ['', ...harnessNotice.lines] : [])];
+  const turnPrompt = headLines.length
+    ? `${headLines.join('\n').replace(/^\n+/, '')}\n\n${prompt}`
     : prompt;
 
   const systemPrompt = buildSystemPrompt({
@@ -1552,6 +1563,7 @@ export async function runMentionTurn(
   // 이 턴에 알린 기억을 저장한다 — 성공한 턴만(`memoryPin.ts` 머리). 세션 id 는 **지금** 값을
   // 넘긴다: codex 는 첫 턴이 끝나야 id 가 생긴다.
   await memoryPlan.commit(rec.sessionId);
+  await harnessNotice?.commit();
 
   // 관측·통보는 best-effort 다 — 방금 저장한 상태를 좌우하지 않으므로 여기서 던진 예외로
   // 턴 전체를 실패(재시도 대상)로 만들 이유가 없다. 조용히 삼키면 "왜 NO_REPLY_NOTICE 가

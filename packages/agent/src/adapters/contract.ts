@@ -226,6 +226,13 @@ export interface HarnessAdapter {
   // ── T1: 없으면 "모른다"로 그린다 ──────────────────────────────────────────────
 
   readonly transcript: TranscriptSource | null;
+  /**
+   * 하네스가 **작업 디렉터리별 파일 메모리**를 `<config>/<dirUnderConfig>/<cwd 이름>/memory/` 에
+   * 적는가(메모리 고도화 U5 — `harnessMemory.ts` 가 새로 생긴 것을 다음 턴에 알린다). 없으면 알리지
+   * 않는다. 선택 필드인 이유: 모르는 하네스에 지어낸 경로를 주면 없는 디렉터리를 뒤지는 게 아니라
+   * **엉뚱한** 디렉터리를 뒤질 수 있다.
+   */
+  readonly fileMemory?: { readonly dirUnderConfig: string } | null;
 
   // ── T2: 없으면 계정 하나로 돈다 ──────────────────────────────────────────────
 
