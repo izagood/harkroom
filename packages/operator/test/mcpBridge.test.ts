@@ -30,6 +30,14 @@ function fakeOperator(onLine: (socket: Socket, value: Record<string, unknown>) =
 
 const link = { socketPath, runnerId: 'r-1', secret: 'sec' };
 
+async function waitFor(cond: () => boolean, ms = 3000): Promise<void> {
+  const until = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > until) throw new Error('기다리던 조건이 끝내 오지 않았다');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 async function collect(stdout: PassThrough, n: number): Promise<unknown[]> {
   const out: unknown[] = [];
   const decoder = new NdjsonDecoder();
@@ -115,5 +123,88 @@ describe('mcp-bridge', () => {
     await done;
     await new Promise((r) => setTimeout(r, 30));
     expect(closed).toBe(true);
+  });
+
+  // ── 2026-09-22 사고의 회귀선 ────────────────────────────────────────────────
+  // 앱 갱신으로 오퍼레이터가 갈리면 옛 오퍼레이터는 종료하며 브릿지 소켓을 **일부러 끊는다**
+  // (`runnerLink.ts` 의 `accepted`). 그때 브릿지가 그냥 끝나 버려서 진행 중이던 턴의 MCP
+  // 호출이 답 없이 증발했고, 턴이 안 끝나니 러너가 못 물러나고, 러너가 안 물러나니 교체
+  // 러너가 못 떠서 그 에이전트는 30분간 멘션을 아무도 안 집었다.
+  it('오퍼레이터가 갈려도 다시 붙는다 — 열린 요청은 실패로 답하고 재전송하지 않는다', async () => {
+    const seen: Record<string, unknown>[] = [];
+    const live: Socket[] = [];
+    let respond = false; // 1세대는 받기만 하고 답하지 않는다(교체가 그 사이에 온다).
+    const handler = (socket: Socket, value: Record<string, unknown>): void => {
+      if (!live.includes(socket)) live.push(socket);
+      seen.push(value);
+      if (!respond || value.type !== 'mcp.request') return;
+      const rpcId = (value.payload as { id: unknown }).id;
+      socket.write(encodeLine({ type: 'mcp.response', id: value.id, messages: [{ jsonrpc: '2.0', id: rpcId, result: { ok: true } }] }));
+    };
+    await fakeOperator(handler);
+
+    const stdin = new PassThrough(); const stdout = new PassThrough();
+    const done = runMcpBridge(link, { stdin, stdout, stderr: new PassThrough() }, {
+      reconnectInitialMs: 5, reconnectMaxMs: 10, requestTimeoutMs: 10_000, linkDownGraceMs: 10_000,
+    });
+    stdin.write('{"jsonrpc":"2.0","id":1,"method":"message.post"}\n');
+    await waitFor(() => seen.some((v) => v.type === 'mcp.request'));
+
+    // 옛 오퍼레이터가 물러난다 — 연결을 끊고 소켓 파일을 치운다.
+    for (const s of live) s.destroy();
+    await new Promise<void>((r) => (server ? server.close(() => r()) : r()));
+    server = null;
+
+    // 열린 요청은 **답을 받아야 한다.** 예전에는 여기서 아무것도 안 나왔다.
+    const failed = await collect(stdout, 1);
+    expect(failed[0]).toMatchObject({
+      jsonrpc: '2.0', id: 1, error: { message: expect.stringContaining('오퍼레이터 링크가 끊겼다') },
+    });
+
+    // 새 오퍼레이터가 같은 자리에 뜬다.
+    respond = true;
+    await fakeOperator(handler);
+    await waitFor(() => seen.filter((v) => v.type === 'hello').length === 2);
+    stdin.write('{"jsonrpc":"2.0","id":2,"method":"message.read"}\n');
+    const out = await collect(stdout, 1);
+    expect(out[0]).toEqual({ jsonrpc: '2.0', id: 2, result: { ok: true } });
+
+    // 재접속에도 hello 가 첫 줄이고, **실패한 요청을 다시 보내지는 않았다** — 다시 보내면
+    // `message.post` 가 두 번 발화된다.
+    expect(seen.filter((v) => v.type === 'hello')).toHaveLength(2);
+    expect(seen.filter((v) => v.type === 'mcp.request' && (v.payload as { id: unknown }).id === 1)).toHaveLength(1);
+
+    stdin.end();
+    await done;
+  });
+
+  it('시한을 넘긴 요청은 오류로 답한다 — 소켓은 살아 있는데 답이 안 오는 경우', async () => {
+    await fakeOperator(() => {}); // 받기만 하고 영영 답하지 않는다.
+    const stdin = new PassThrough(); const stdout = new PassThrough();
+    const done = runMcpBridge(link, { stdin, stdout, stderr: new PassThrough() }, { requestTimeoutMs: 40 });
+    stdin.write('{"jsonrpc":"2.0","id":9,"method":"inbox.poll"}\n');
+    const out = await collect(stdout, 1);
+    expect(out[0]).toMatchObject({
+      jsonrpc: '2.0', id: 9, error: { message: expect.stringContaining('40ms 안에 답하지 않았다') },
+    });
+    stdin.end();
+    await done;
+  });
+
+  it('링크가 유예를 넘겨 없으면 요청을 바로 거절한다 — 오퍼레이터가 아예 없는 경우', async () => {
+    // 서버를 안 띄운다. 예전에는 이때 프로세스가 죽어 하네스가 빨리 실패를 알았다 —
+    // 재접속을 얻으면서 그 빠른 실패를 잃지 않았는지를 잰다.
+    const nobody = { ...link, socketPath: join(dir, 'nobody.sock') };
+    const stdin = new PassThrough(); const stdout = new PassThrough();
+    const done = runMcpBridge(nobody, { stdin, stdout, stderr: new PassThrough() }, {
+      reconnectInitialMs: 5, reconnectMaxMs: 5, linkDownGraceMs: 20, requestTimeoutMs: 60_000,
+    });
+    stdin.write('{"jsonrpc":"2.0","id":3,"method":"tools/list"}\n');
+    const out = await collect(stdout, 1);
+    expect(out[0]).toMatchObject({
+      jsonrpc: '2.0', id: 3, error: { message: expect.stringContaining('오퍼레이터 링크가 없다') },
+    });
+    stdin.end();
+    await done;
   });
 });
