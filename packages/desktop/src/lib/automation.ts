@@ -16,8 +16,15 @@ export function weekdayName(dow: number, locale: string): string {
   return new Date(Date.UTC(2023, 0, 1 + dow)).toLocaleDateString(locale || undefined, { weekday: 'short', timeZone: 'UTC' });
 }
 
-/** 트리거 한 줄 요약. "매주 월 09:00 (Asia/Seoul)". */
+/** 트리거 한 줄 요약. "매주 월 09:00 (Asia/Seoul)" · "GitHub izagood/harkroom push → main". */
 export function describeTrigger(trigger: AutomationTrigger, locale: string, t: Translate): string {
+  if (trigger.kind === 'webhook') return t('automations.trigger.webhook');
+  if (trigger.kind === 'github') {
+    const branch = trigger.branch ? ` → ${trigger.branch}` : '';
+    const paths = trigger.paths?.length ? ` · ${trigger.paths.join(', ')}` : '';
+    const change = trigger.change && trigger.change !== 'any' ? ` (${trigger.change})` : '';
+    return t('automations.trigger.github', { repo: trigger.repo, event: trigger.event, rest: `${branch}${paths}${change}` });
+  }
   const tail = `${trigger.time} (${trigger.tz})`;
   if (trigger.freq === 'daily') return t('automations.trigger.daily', { at: tail });
   if (trigger.freq === 'weekly') {

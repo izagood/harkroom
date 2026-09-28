@@ -4,6 +4,10 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { MAX_MESSAGE_BODY_CHARS } from '@harkroom/shared';
 import { channelPostGate } from '../services/channels.js';
+import type { SecretBox } from '../services/secretBox.js';
+import {
+  genericVars, issueIngress, loadIngressTarget, matchGithub, revokeIngress, verifyBearer, verifyGithubSignature,
+} from '../services/automationIngress.js';
 import {
   createAutomation, deleteAutomation, enqueueRun, getAutomation, listAutomations, listRuns,
   timeVars, triggerSchema, updateAutomation,
@@ -16,7 +20,9 @@ import {
  * "나중에, 반복해서 터뜨린다"를 스스로 고르면 사람이 그 발화를 예측할 수 없다. 에이전트가
  * 제안하고 사람이 승인하는 길은 따로 둔다.
  */
-export async function registerAutomationRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
+export async function registerAutomationRoutes(
+  app: FastifyInstance, pool: Pool, opts: { secretBox: SecretBox | null } = { secretBox: null },
+): Promise<void> {
   const idParam = z.object({ id: z.string().uuid() });
   const agentRefused = { error: { code: 'agents_cannot_automate', message: 'agents cannot create or change automations' } };
   const notFound = { error: { code: 'not_found', message: 'automation not found' } };
@@ -100,5 +106,96 @@ export async function registerAutomationRoutes(app: FastifyInstance, pool: Pool)
     }
     if (result.status !== 'queued') return reply.code(409).send({ error: { code: result.status, message: 'not queued' } });
     return reply.code(202).send({ run: result.run });
+  });
+
+  // ── 외부 수신(065) ──────────────────────────────────────────────────────
+
+  /**
+   * 수신 켜기 / 키 다시 받기. **키 원문은 이 응답에만 있다** — 서버는 해시(범용)와 암호문
+   * (GitHub)만 남긴다. 다시 부르면 옛 키는 곧바로 무효다.
+   */
+  app.post('/automations/:id/ingress', { preHandler: app.requireAccount }, async (req, reply) => {
+    if (req.account!.kind === 'agent') return reply.code(403).send(agentRefused);
+    const { id } = idParam.parse(req.params);
+    const automation = await getAutomation(pool, id, req.account!.id);
+    if (!automation) return reply.code(404).send(notFound);
+    const issued = await issueIngress(pool, id, req.account!.id, automation.trigger, opts.secretBox);
+    if (issued === 'not_found') return reply.code(404).send(notFound);
+    if (issued === 'schedule_has_no_ingress') {
+      return reply.code(400).send({ error: { code: issued, message: 'schedule automations do not receive events' } });
+    }
+    if (issued === 'needs_secret_key') {
+      return reply.code(409).send({ error: { code: issued, message: 'HARKROOM_SECRET_KEY is not set on the server; GitHub signatures cannot be verified' } });
+    }
+    return reply.code(201).send({ ingress: issued });
+  });
+
+  app.delete('/automations/:id/ingress', { preHandler: app.requireAccount }, async (req, reply) => {
+    if (req.account!.kind === 'agent') return reply.code(403).send(agentRefused);
+    const { id } = idParam.parse(req.params);
+    if (!(await revokeIngress(pool, id, req.account!.id))) return reply.code(404).send(notFound);
+    return reply.code(204).send();
+  });
+
+  /**
+   * 입구 두 개. 로그인 없이 부르는 **유일한** 자동화 표면이라 판정 순서가 중요하다:
+   * (1) 수신이 꺼졌거나 없는 id 는 404 — 인증 실패와 구분되지 않게 해 존재를 드러내지 않는다,
+   * (2) 서명·키가 틀리면 401, (3) 필터에 안 맞으면 200 `ignored`(GitHub 이 재전송하지 않게),
+   * (4) 맞으면 회차를 만들고 202.
+   *
+   * GitHub 서명은 **원문 바이트**로 검증해야 하므로 이 범위에서만 JSON 파서를 buffer 로 바꾼다.
+   */
+  await app.register(async (hooks) => {
+    hooks.removeContentTypeParser('application/json');
+    hooks.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_req, body, done) => done(null, body));
+    const hookNotFound = { error: { code: 'not_found', message: 'not found' } };
+    const parse = (raw: unknown): unknown => {
+      if (!Buffer.isBuffer(raw) || raw.length === 0) return {};
+      try { return JSON.parse(raw.toString('utf8')); } catch { return undefined; }
+    };
+
+    hooks.post('/hooks/github/:id', async (req, reply) => {
+      const parsedId = idParam.safeParse(req.params);
+      if (!parsedId.success) return reply.code(404).send(hookNotFound);
+      const target = await loadIngressTarget(pool, parsedId.data.id);
+      if (!target || target.trigger.kind !== 'github') return reply.code(404).send(hookNotFound);
+      const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      const sig = req.headers['x-hub-signature-256'];
+      if (!verifyGithubSignature(target, opts.secretBox, raw, typeof sig === 'string' ? sig : undefined)) {
+        return reply.code(401).send({ error: { code: 'bad_signature', message: 'signature does not match' } });
+      }
+      const event = String(req.headers['x-github-event'] ?? '');
+      if (event === 'ping') return reply.code(200).send({ status: 'pong' });
+      const payload = parse(req.body);
+      if (!payload || typeof payload !== 'object') return reply.code(400).send({ error: { code: 'bad_json', message: 'body is not JSON' } });
+      const m = matchGithub(target.trigger, event, payload as Record<string, unknown>);
+      if (!m.match) return reply.code(200).send({ status: 'ignored', reason: m.reason });
+      const delivery = String(req.headers['x-github-delivery'] ?? '') || randomUUID();
+      const result = await enqueueRun(pool, {
+        automationId: target.id, eventKey: `github:${delivery}`, triggerKind: 'github', vars: m.vars,
+      });
+      return reply.code(result.status === 'queued' ? 202 : 200).send({ status: result.status });
+    });
+
+    hooks.post('/hooks/generic/:id', async (req, reply) => {
+      const parsedId = idParam.safeParse(req.params);
+      if (!parsedId.success) return reply.code(404).send(hookNotFound);
+      const target = await loadIngressTarget(pool, parsedId.data.id);
+      if (!target) return reply.code(404).send(hookNotFound);
+      if (!verifyBearer(target, req.headers.authorization)) {
+        return reply.code(401).send({ error: { code: 'bad_key', message: 'key does not match' } });
+      }
+      const payload = parse(req.body);
+      if (payload === undefined) return reply.code(400).send({ error: { code: 'bad_json', message: 'body is not JSON' } });
+      const idem = req.headers['idempotency-key'];
+      const result = await enqueueRun(pool, {
+        automationId: target.id,
+        eventKey: `generic:${typeof idem === 'string' && idem ? idem.slice(0, 200) : randomUUID()}`,
+        triggerKind: target.trigger.kind === 'github' ? 'github' : 'webhook',
+        vars: genericVars(payload),
+      });
+      if (result.status === 'rate_limited') return reply.code(429).send({ status: result.status });
+      return reply.code(result.status === 'queued' ? 202 : 200).send({ status: result.status });
+    });
   });
 }

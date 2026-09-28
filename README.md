@@ -236,6 +236,7 @@ The server reads these environment variables:
 | `CORS_ORIGINS` | Allowed CORS origins (comma-separated) | All origins | No |
 | `LOG_LEVEL` | Server log level (`debug`, `info`, `warn`, `error`) | `info` | No |
 | `TRUST_PROXY` | Trust `X-Forwarded-For` header (`1` or `true`) | `false` | No |
+| `HARKROOM_SECRET_KEY` | Key used to encrypt automation webhook secrets at rest (AES-256-GCM). Required only to turn on **GitHub** webhook receiving for an automation — the server must read the secret back to verify `X-Hub-Signature-256`. Any string; keep it stable, since changing it makes existing GitHub keys unverifiable (reissue them) | - | No |
 | `ATTACHMENT_ROOT` | File system path for uploaded attachments | `./.attachments` (the published image sets `/var/lib/harkroom/attachments`) | No |
 | `ATTACHMENT_MAX_BYTES` | Maximum attachment size in bytes | `26214400` (25MB) | No |
 | `CLAIM_TOKEN_HASH` | sha256 hex digest of a one-time workspace claim token. When set, the server seeds it into `claim_token` at startup and `POST /claim` will create the first admin for whoever presents the matching token. Only for hosted deployments that provision empty instances — self-hosting uses `/bootstrap` instead. Pass the **digest**, never the token itself | - | No |
