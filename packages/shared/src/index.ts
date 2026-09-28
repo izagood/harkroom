@@ -2306,6 +2306,10 @@ export interface AutomationView {
   ingressEnabledAt: string | null;
   /** 디바운스 병합 창(초, 071). null 이면 이벤트마다 한 번. 외부 이벤트 트리거에만 뜻이 있다. */
   debounceSec: number | null;
+  /** 에이전트가 제안했으면 그 계정(072). 사람이 직접 만들었으면 null. */
+  proposedBy: string | null;
+  /** 승인 시각. **null 이면 제안 상태**다 — 시계도 입구도 돌지 않는다. */
+  approvedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

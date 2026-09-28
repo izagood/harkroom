@@ -9,7 +9,7 @@ import {
   genericVars, issueIngress, loadIngressTarget, matchGithub, revokeIngress, verifyBearer, verifyGithubSignature,
 } from '../services/automationIngress.js';
 import {
-  createAutomation, deleteAutomation, enqueueRun, getAutomation, listAutomations, listRuns,
+  approveAutomation, createAutomation, deleteAutomation, enqueueRun, getAutomation, listAutomations, listRuns,
   timeVars, triggerSchema, updateAutomation,
 } from '../services/automations.js';
 
@@ -78,9 +78,27 @@ export async function registerAutomationRoutes(
       const refused = await gateFor(patch.channelId, req.account!.id);
       if (refused) return reply.code(refused.code).send(refused.body);
     }
+    if (patch.enabled === true) {
+      const cur = await getAutomation(pool, id, req.account!.id);
+      if (cur && !cur.approvedAt) {
+        return reply.code(409).send({ error: { code: 'not_approved', message: 'approve the proposal first' } });
+      }
+    }
     const automation = await updateAutomation(pool, id, req.account!.id, patch);
     if (!automation) return reply.code(404).send(notFound);
     return { automation };
+  });
+
+  /**
+   * 에이전트 제안 승인(072). 승인하면 **내 이름으로** 글이 나가기 시작한다 — 그래서 승인은
+   * 제안을 받은 사람(소유자)만 한다. 거절은 삭제(`DELETE`)다.
+   */
+  app.post('/automations/:id/approve', { preHandler: app.requireAccount }, async (req, reply) => {
+    if (req.account!.kind === 'agent') return reply.code(403).send(agentRefused);
+    const { id } = idParam.parse(req.params);
+    const approved = await approveAutomation(pool, id, req.account!.id);
+    if (!approved) return reply.code(404).send({ error: { code: 'not_found', message: 'no pending proposal with this id' } });
+    return { automation: approved };
   });
 
   app.delete('/automations/:id', { preHandler: app.requireAccount }, async (req, reply) => {
@@ -121,6 +139,9 @@ export async function registerAutomationRoutes(
     const { id } = idParam.parse(req.params);
     const automation = await getAutomation(pool, id, req.account!.id);
     if (!automation) return reply.code(404).send(notFound);
+    if (!automation.approvedAt) {
+      return reply.code(409).send({ error: { code: 'not_approved', message: 'approve the proposal first' } });
+    }
     const issued = await issueIngress(pool, id, req.account!.id, automation.trigger, opts.secretBox);
     if (issued === 'not_found') return reply.code(404).send(notFound);
     if (issued === 'schedule_has_no_ingress') {
