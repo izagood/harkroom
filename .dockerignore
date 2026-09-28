@@ -36,6 +36,10 @@ target
 # 앱 사이드카 산출물(`#431`) — 서버 이미지와 무관하고 수십 MB 다.
 packages/desktop/src-tauri/binaries
 
+# 모바일 앱. 서버 이미지와 무관하고, iOS 프로젝트 파일이 수십 개다 — 빌드 컨텍스트를
+# 서버가 안 쓰는 것으로 채우지 않는다(`packages/desktop/src-tauri/binaries` 와 같은 이유).
+apps/mobile
+
 # 저장소 메타·로컬 도구
 .git
 .github

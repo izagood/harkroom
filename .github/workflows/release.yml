@@ -124,6 +124,12 @@ on:
       - 'docs/**'
       - '*.md'
       - 'packages/*/README.md'
+      # 모바일은 이 릴리스에 **들어가지 않는다.** `release.yml` 이 굽는 것은 데스크탑 앱
+      # 번들이고, `apps/mobile` 은 거기에 한 바이트도 실리지 않는다. 빼지 않으면 Dart 한
+      # 줄만 고쳐도 버전이 오르고 6~12분짜리 릴리스가 돈다 — 아무도 받아 갈 것이 없는
+      # 릴리스다. 모바일의 배포 경로는 따로 생긴다(TestFlight, 계획서 §9).
+      - 'apps/mobile/**'
+      - '.github/workflows/mobile.yml'
       - 'LICENSE'
       - '.github/workflows/ci.yml'
       - '.github/ISSUE_TEMPLATE/**'
