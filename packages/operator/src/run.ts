@@ -6,6 +6,7 @@
  * 따른 분기를 직접 밟아야 하는데, 그것이 `main.ts` 의 top-level 에 있으면 재는 방법이
  * 자식 프로세스뿐이다.
  */
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
 import {
@@ -32,6 +33,8 @@ import { DaemonServer } from './server.js';
 import { createClaudeAccountsPort } from './claudeAccounts.js';
 import { startCommunities } from './communities.js';
 import { createLocalAgentsPort } from './localAgents.js';
+import { createLocalMcpPort } from './localMcp.js';
+import { claudeConfigPath } from './mcpConfig.js';
 import { fileSecrets } from './secrets.js';
 import { createRunnerLinkServer } from './runnerLink.js';
 import type { CommunityInstance } from './community.js';
@@ -353,6 +356,12 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     onRegistered: async (baseUrl) => { await startCommunity(baseUrl); },
   });
 
+  // 이 머신의 MCP 정의(스펙 §6). 러너 config 를 만드는 쪽(`communities.ts::mcpConfig`)과 같은 두 파일을 본다.
+  const localMcp = createLocalMcpPort({
+    registryPath: join(appDataDir, 'operator', 'mcp-servers.json'),
+    claudeConfigPath: claudeConfigPath(process.env, homedir()),
+  });
+
   const server = new DaemonServer({
     token: '', // claim 이 만든 값으로 아래에서 바꾼다 — 그 전에는 아무도 못 붙는다.
     identity,
@@ -360,6 +369,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     adoptOrphans,
     claudeAccounts,
     localAgents,
+    localMcp,
     log,
     runnerLink,
   });
