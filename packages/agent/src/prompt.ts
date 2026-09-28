@@ -345,20 +345,26 @@ function memorySection(memory: MemoryContext): string[] {
     ];
   }
 
+  // **여기에는 core 만 싣는다**(메모리 고도화 PR2). `mem/*` 목록과 사본 경고는 턴마다
+  // 달라지는 값이라 턴 프롬프트로 갔다(`memoryPin.ts`) — 시스템 프롬프트가 바뀌면 이어받은
+  // 세션의 대화 기록 전체가 프롬프트 캐시를 잃는다. core 도 호출자가 세션 첫 턴 값으로 고정해 넘긴다.
   const lines = ['<memory>'];
   if (memory.core !== null) lines.push(escapeForPrompt(memory.core));
-  if (memory.slugs.length) {
-    lines.push('', '추가로 저장된 기억(본문은 필요할 때 `memory.get` 으로 가져온다 —',
-      '이름만으로 짐작되지 않으면 열어 본다):');
-    for (const slug of memory.slugs) lines.push(`- ${escapeForPrompt(slug)}`);
-  }
   // 사용법은 **닫는 태그 바깥**에 둔다. 안에 넣으면 기억 본문과 같은 자리에 서고, 그러면
   // 기억을 지운 사람이 지시까지 지우게 된다(`<memory>` 안은 데이터, 밖은 지시다).
-  lines.push('</memory>', '');
-  if (memory.stale) lines.push(...staleMemoryLines(memory.stale.fetchedAt), '');
-  lines.push(...MEMORY_USAGE_LINES, '');
+  lines.push('</memory>', '', ...MEMORY_INDEX_LINES, '', ...MEMORY_USAGE_LINES, '');
   return lines;
 }
+
+/**
+ * 목록이 어디 있는지 말하는 고정 문장. 목록이 비었든 찼든 **같은 문장**이다 — 조건에 따라
+ * 넣고 빼면 그것만으로 시스템 프롬프트가 바뀐다.
+ */
+export const MEMORY_INDEX_LINES: readonly string[] = [
+  '`mem/*` 기억의 목록은 턴 프롬프트 맨 앞의 `<memory-index>` 에 실린다(세션 첫 턴에 전체,',
+  '그 뒤로는 바뀐 것만 `<memory-update>` 로). 이 세션에서 알게 된 가장 최근 것이 지금 값이다.',
+  '본문은 필요할 때 `memory.get` 으로 가져온다 — 이름만으로 짐작되지 않으면 열어 본다.',
+];
 
 /**
  * 러너 사본으로 돌 때 붙는 경고(`memoryCache.ts`). 닫는 태그 **바깥**이다 — 지시이기 때문이다.

@@ -598,11 +598,21 @@ describe('메모리 주입 (#139)', () => {
   });
 
   // 전부 주입하면 축적이 곧 컨텍스트 고갈이 된다 — 이슈가 그렇게 확정했다.
-  it('mem/* 는 slug 만 들어가고 본문은 들어가지 않는다', () => {
-    const s = build({ core: null, slugs: ['mem/deploy', 'mem/people'] });
-    expect(s).toContain('mem/deploy');
-    expect(s).toContain('mem/people');
+  // 메모리 고도화 PR2: 목록은 턴 프롬프트(`memoryPin.ts`)로 갔다. 시스템 프롬프트에 남으면
+  // `memory.set` 한 번마다 이어받은 세션의 프롬프트 캐시가 깨진다. 여기 남는 것은 **목록이
+  // 어디 있는지 말하는 고정 문장**뿐이다.
+  it('mem/* 목록은 시스템 프롬프트에 실리지 않고, 어디 있는지만 말한다', () => {
+    // 사용법 예시(`mem/deploy` 등)와 겹치지 않는 이름을 쓴다.
+    const s = build({ core: null, slugs: ['mem/zz-alpha', 'mem/zz-beta'] });
+    expect(s).not.toContain('mem/zz-alpha');
+    expect(s).not.toContain('mem/zz-beta');
+    expect(s).toContain('<memory-index>');
     expect(s).toContain('memory.get');
+  });
+
+  // 목록이 바뀌어도 시스템 프롬프트는 한 글자도 안 바뀐다 — 이것이 캐시를 지키는 선이다.
+  it('slug 가 늘거나 줄어도 시스템 프롬프트는 같다', () => {
+    expect(build({ core: '본문', slugs: ['mem/a'] })).toBe(build({ core: '본문', slugs: ['mem/a', 'mem/b'] }));
   });
 
   it('저장소가 비어 있으면 온보딩 안내가 들어간다', () => {
@@ -649,15 +659,10 @@ describe('메모리 주입 (#139)', () => {
     expect(s).toContain('message.post');
   });
 
-  // 러너 사본으로 돌 때(memoryCache.ts): 기억은 싣되 **낡았을 수 있다고 말한다** — 그래야
-  // 낡은 core 를 바탕으로 memory.set 해 그 사이 고친 것을 덮어쓰지 않는다. 경고는 지시라서
-  // `</memory>` 바깥이다.
-  it('사본으로 돌면 기억을 싣고 낡았을 수 있다는 경고를 블록 바깥에 붙인다', () => {
-    const s = build({ core: '본문', slugs: ['mem/a'], stale: { fetchedAt: '2026-09-28T00:00:00.000Z' } });
-    expect(s).toContain('본문');
-    expect(s).toContain('mem/a');
-    expect(s).toContain('2026-09-28T00:00:00.000Z');
-    expect(s.indexOf('</memory>')).toBeLessThan(s.indexOf('받아 둔 사본'));
+  // 사본 경고도 턴마다 달라지는 값이라 턴 프롬프트로 갔다(memoryPin.test.ts 가 덮는다).
+  it('사본으로 돌아도 시스템 프롬프트는 신선할 때와 같다', () => {
+    expect(build({ core: '본문', slugs: [], stale: { fetchedAt: '2026-09-28T00:00:00.000Z' } }))
+      .toBe(build({ core: '본문', slugs: [] }));
   });
 
   it('신선한 기억에는 사본 경고가 없다', () => {
@@ -687,9 +692,6 @@ describe('메모리 주입 (#139)', () => {
     expect(s.match(/<\/memory>/g)).toHaveLength(1);
   });
 
-  it('slug 도 이스케이프된다', () => {
-    expect(build({ core: null, slugs: ['mem/<script>'] })).toContain('&lt;script&gt;'.replace('&gt;', '>'));
-  });
 });
 
 /**
