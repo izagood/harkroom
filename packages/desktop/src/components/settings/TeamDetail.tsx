@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import type { AgentTeamMemberRow, AgentTeamRow, AgentView } from '@harkroom/shared';
+import type { AgentTeamMemberRow, AgentTeamRow, AgentView, InvokeScope } from '@harkroom/shared';
 import { HANDLE_PATTERN } from '@harkroom/shared';
 import { getController } from '../../state/controller';
+import { TeamScopeSection } from './TeamScopeSection';
 import { useActiveStore } from '../../state/communities';
 import { Identity } from '../Identity';
 import { Button } from './primitives';
@@ -87,6 +88,12 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
    * 배지가 **팀원 줄 안에** 있기 때문이다 — 줄 자체가 `members` 를 기다린다.
    */
   const [lead, setLead] = useState<string | null>(null);
+  /**
+   * 호출 범위(068). 팀장과 같은 이유로 **`GET /teams/:id` 의 응답에서** 받는다 — 호출부의
+   * `team` 은 갱신되지 않는 스냅샷이다. 옛 서버는 `invokeScope` 를 주지 않으므로 `null` 이면
+   * 절 자체를 그리지 않는다(고를 수 없는 값을 고르는 척하지 않는다).
+   */
+  const [scope, setScope] = useState<{ scope: InvokeScope; ownerAccountId: string | null; invokers: string[] } | null>(null);
   const [editName, setEditName] = useState(team.name);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -114,13 +121,15 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
     // 다른 팀을 골라 이 컴포넌트가 재사용될 때 앞 팀의 팀장이 남아 있으면 안 된다 —
     // `members` 를 `null` 로 되돌리는 것과 같은 이유다.
     setLead(null);
+    setScope(null);
     setConfirmDelete(false);
     setError(null);
     void getController().getTeam(team.id)
-      .then(({ team: row, members: m }) => {
+      .then(({ team: row, members: m, invokers: inv }) => {
         if (!live) return;
         setMembers(m);
         setLead(row.leadAccountId);
+        if (row.invokeScope) setScope({ scope: row.invokeScope, ownerAccountId: row.ownerAccountId ?? null, invokers: inv ?? [] });
       })
       // 명단을 못 받은 것과 명단이 빈 것은 다른 사실이다 — `null` 로 남겨 두면 아래가
       // "불러오는 중"으로 그리고, 사유는 이 줄이 말한다(`HandleGroupsSettings` 와 같은 짝).
@@ -277,6 +286,17 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
             {t('agents.teams.nameNote', { name: team.name })}
           </p>
         </div>
+
+        {scope && (
+          <TeamScopeSection
+            teamId={team.id}
+            scope={scope.scope}
+            ownerAccountId={scope.ownerAccountId}
+            invokers={scope.invokers}
+            editable={isAdmin}
+            onChanged={(next) => { setScope(next); onChanged({ deleted: false }); }}
+          />
+        )}
 
         <div className="rounded border border-border p-3">
           <div className="text-meta font-medium text-fg-muted">{t('agents.teams.membersHeading')}</div>
