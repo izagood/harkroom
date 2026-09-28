@@ -169,6 +169,16 @@ import type { Message } from './types';
  * 언어 고르개만 영어로 서면 그 화면 혼자 두 언어가 되기 때문이다.
  */
 export const en = {
+  // providerUsage — 공급자 API 사용률 막대·토글(2단계). 2026-09-28.
+  'providerUsage.session': '5-hour',
+  'providerUsage.weekly': 'Weekly',
+  'providerUsage.resetsAt': 'Resets {time}',
+  'providerUsage.error.noCredentials': 'No readable login for usage.',
+  'providerUsage.error.tokenExpired': 'Login token expired — the next turn refreshes it.',
+  'providerUsage.error.unauthorized': 'The provider rejected this login. Re-authenticate.',
+  'providerUsage.error.other': 'Could not read usage ({reason}).',
+  'providerUsage.toggle.label': 'Read usage from provider APIs (experimental)',
+  'providerUsage.toggle.description': 'Uses the login on this device to ask Anthropic and OpenAI for each account’s 5-hour and weekly limits. These endpoints are not documented and can break when the providers change them. Tokens stay in the local daemon. When off, usage is estimated from local transcripts.',
   // providerAccounts — 설정 > 제공업체 계정(하네스별 카드). 2026-09-28.
   'providerAccounts.page.title': 'Provider accounts',
   'providerAccounts.page.subtitle': 'Optional. Agents work with your existing provider logins. Add accounts only if you want Harkroom to switch between them.',

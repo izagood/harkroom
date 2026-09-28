@@ -101,6 +101,10 @@ export const REQUEST_TYPES = [
   'codexAccountLoginCancel',
   'codexAccountRemove',
   'codexAccountActivate',
+  // 공급자 API 사용률(2026-09-28, 2단계). **비공식 엔드포인트**라 화면의 토글이 켜졌을 때만
+  // 부른다(`operator/src/providerUsage.ts`). 둘 다 payload 가 없다 — 어느 계정을 셀지는 디스크가 정한다.
+  'claudeAccountsProviderUsage',
+  'codexAccountsProviderUsage',
   // ── 오퍼레이터 로컬 설정(스펙 2026-09-20 §3 능력) ─────────────────────────────
   //
   // "이 머신이 어떤 에이전트를 돌릴 수 있나"는 `operator.json` 에 있고 그 파일은 오퍼레이터의
@@ -958,4 +962,37 @@ export interface CodexLoginEvent {
   done?: boolean;
   status?: CodexAuthStatus;
   error?: string;
+}
+
+// ── 공급자 API 사용률(2026-09-28) ────────────────────────────────────────────────
+
+/** 한도 창 하나. `usedPercent` 는 0–100, `resetsAtMs` 는 그 창이 풀리는 시각(모르면 `null`). */
+export interface ProviderUsageWindow {
+  usedPercent: number;
+  resetsAtMs: number | null;
+  windowMinutes?: number;
+}
+
+export interface ProviderAccountUsage {
+  /** claude 는 계정 이름, codex 는 계정 이름 또는 `''`(시스템 기본 로그인). */
+  account: string;
+  /** claude 만. 평평한 구조면 `''`. */
+  pool?: string;
+  /** 5시간(claude)·세션(codex) 창. */
+  session: ProviderUsageWindow | null;
+  weekly: ProviderUsageWindow | null;
+  /** 모델별 주간 창 등(claude `seven_day_opus`·`seven_day_sonnet`). */
+  extra?: { label: string; window: ProviderUsageWindow }[];
+  plan?: string;
+  fetchedAtMs: number;
+  /**
+   * 못 읽었을 때의 **꼬리표**(`no-credentials`·`token-expired`·`unauthorized`·`timeout`·`network`·`http-<n>`).
+   * 사람이 읽는 문장이 아니다 — 화면이 i18n 으로 고른다. 토큰·URL 은 여기에 싣지 않는다.
+   */
+  error?: string;
+}
+
+export interface ProviderUsageSnapshot {
+  measuredAtMs: number;
+  accounts: ProviderAccountUsage[];
 }

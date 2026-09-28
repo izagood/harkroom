@@ -520,6 +520,16 @@ export class DaemonServer {
         // 정하고, 이름을 받으면 그 이름이 다시 경로가 된다(그 표면을 늘리지 않는다).
         return await port.usage();
       }
+      case 'claudeAccountsProviderUsage': {
+        const port = this.requireAccounts();
+        if (isDaemonError(port)) return port;
+        return await port.providerUsage();
+      }
+      case 'codexAccountsProviderUsage': {
+        const port = this.requireCodexAccounts();
+        if (isDaemonError(port)) return port;
+        return await port.providerUsage();
+      }
       case 'claudeAccountMove': {
         const port = this.requireAccounts();
         if (isDaemonError(port)) return port;

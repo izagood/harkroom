@@ -22,6 +22,16 @@ import type { Catalog } from './en';
  * **문법 규칙은 그것을 가진 언어의 파일에만 있어야 한다.**
  */
 export const ko = {
+  // providerUsage — 공급자 API 사용률 막대·토글(2단계). 2026-09-28.
+  'providerUsage.session': '5시간',
+  'providerUsage.weekly': '주간',
+  'providerUsage.resetsAt': '{time}에 초기화',
+  'providerUsage.error.noCredentials': '사용량을 읽을 로그인이 없습니다.',
+  'providerUsage.error.tokenExpired': '로그인 토큰이 만료됐습니다 — 다음 턴이 갱신합니다.',
+  'providerUsage.error.unauthorized': '공급자가 이 로그인을 거절했습니다. 재인증하세요.',
+  'providerUsage.error.other': '사용량을 읽지 못했습니다 ({reason}).',
+  'providerUsage.toggle.label': '공급자 API로 사용량 읽기(실험적)',
+  'providerUsage.toggle.description': '이 기기의 로그인으로 Anthropic·OpenAI에 계정별 5시간·주간 한도를 묻습니다. 문서화되지 않은 엔드포인트라 공급자가 바꾸면 중단될 수 있습니다. 토큰은 로컬 데몬 밖으로 나가지 않습니다. 끄면 로컬 트랜스크립트로 추정합니다.',
   // providerAccounts — 설정 > 제공업체 계정(하네스별 카드). 2026-09-28.
   'providerAccounts.page.title': '제공업체 계정',
   'providerAccounts.page.subtitle': '선택 사항. 에이전트는 기존 공급자 로그인으로 동작합니다. Harkroom이 계정 사이를 전환하길 원할 때만 계정을 추가하세요.',

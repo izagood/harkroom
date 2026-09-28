@@ -2029,6 +2029,15 @@ impl DaemonConnection {
     }
 
     // codex 계정(2026-09-28). 계정 풀과 같은 규율 — 이름만 넘기고 실행은 데몬이 한다.
+    /// 공급자 API 사용률(비공식). **인자가 없다** — 어느 계정을 물을지는 데몬이 디스크를 보고 정한다.
+    pub fn claude_accounts_provider_usage(&self) -> Result<Value, String> {
+        self.request("claudeAccountsProviderUsage", json!({}))
+    }
+
+    pub fn codex_accounts_provider_usage(&self) -> Result<Value, String> {
+        self.request("codexAccountsProviderUsage", json!({}))
+    }
+
     pub fn codex_accounts_list(&self) -> Result<Value, String> {
         self.request("codexAccountsList", json!({}))
     }
