@@ -14,7 +14,7 @@ describe('localMcp 포트', () => {
   it('넣은 정의를 0600 파일에 쓰고, 목록은 env·headers 의 값을 싣지 않는다', async () => {
     const { registryPath } = await fresh();
     const port = createLocalMcpPort({ registryPath, claudeConfigPath: null });
-    await port.set('slack', { type: 'http', url: 'https://mcp.slack.com/mcp', headers: { Authorization: 'Bearer SECRET' }, oauth: { clientId: 'c', callbackPort: 3118 } });
+    await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp', headers: { Authorization: 'Bearer SECRET' }, oauth: { clientId: 'c', callbackPort: 3118 } });
     // stdio 는 사람이 손으로 적은 것 — 목록에는 보이되 env 값은 숨긴다.
     const table = JSON.parse(await readFile(registryPath, 'utf8'));
     table.timing = { command: 'timing-mcp', args: ['--x'], env: { TOKEN: 'SECRET2' } };
@@ -23,7 +23,7 @@ describe('localMcp 포트', () => {
     const listed = await port.list();
     expect(JSON.stringify(listed)).not.toContain('SECRET');
     expect(listed.servers).toEqual([
-      { name: 'slack', source: 'operator', transport: 'http', target: 'https://mcp.slack.com/mcp', args: [], envKeys: [], headerKeys: ['Authorization'], oauth: true },
+      { name: 'slack', source: 'operator', transport: 'http', target: 'https://mcp.example.com/mcp', args: [], envKeys: [], headerKeys: ['Authorization'], oauth: true },
       { name: 'timing', source: 'operator', transport: 'stdio', target: 'timing-mcp', args: ['--x'], envKeys: ['TOKEN'], headerKeys: [], oauth: false },
     ]);
     const onDisk = JSON.parse(await readFile(registryPath, 'utf8'));
@@ -35,10 +35,10 @@ describe('localMcp 포트', () => {
     const claude = JSON.stringify({ mcpServers: { buddy: { command: 'buddy' }, slack: { type: 'http', url: 'https://old' } } });
     await writeFile(claudePath, claude);
     const port = createLocalMcpPort({ registryPath, claudeConfigPath: claudePath });
-    await port.set('slack', { type: 'http', url: 'https://mcp.slack.com/mcp' });
+    await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp' });
     const { servers } = await port.list();
     expect(servers.map((s) => [s.name, s.source, s.target])).toEqual([
-      ['buddy', 'claude', 'buddy'], ['slack', 'operator', 'https://mcp.slack.com/mcp'],
+      ['buddy', 'claude', 'buddy'], ['slack', 'operator', 'https://mcp.example.com/mcp'],
     ]);
     await port.remove('slack');
     expect((await port.list()).servers.find((s) => s.name === 'slack')?.source).toBe('claude');
