@@ -1,0 +1,102 @@
+import 'package:flutter/material.dart';
+
+import 'connect/connect_screen.dart';
+import 'i18n/i18n.dart';
+import 'screens/home_screen.dart';
+import 'screens/login_screen.dart';
+import 'session/session_store.dart';
+import 'state/app_scope.dart';
+import 'state/app_state.dart';
+import 'theme.dart';
+
+void main() => runApp(HarkroomApp(state: AppState(sessions: SessionStore.keychain())));
+
+/// 앱 루트.
+///
+/// **오퍼레이터가 아니라 대화 클라이언트다**(계획서 §1) — 이 앱은 에이전트를 돌리지
+/// 않고 부른다. 터미널·러너 제어·Claude 계정은 여기 들어오지 않는다.
+class HarkroomApp extends StatefulWidget {
+  const HarkroomApp({super.key, required this.state});
+
+  /// 시험이 바꿔 끼운다(메모리 보관소 + 가짜 소켓).
+  final AppState state;
+
+  @override
+  State<HarkroomApp> createState() => _HarkroomAppState();
+}
+
+class _HarkroomAppState extends State<HarkroomApp> {
+  /// 사람이 앱 안에서 고른 언어. `null` 이면 **기기 언어를 따른다**(§7-2 — 폰 언어를
+  /// 바꾸는 것이 유일한 수단이면 그것은 설정이 아니다. 고르는 화면은 P1 이후).
+  final Locale? _override = null;
+
+  @override
+  void initState() {
+    super.initState();
+    // 보관된 세션을 읽는다. 키체인 접근은 느릴 수 있어서 그동안 `booting` 이 선다 —
+    // 화면이 "연결 중"이라고 **지어내지 않게** 단계를 값으로 둔다.
+    widget.state.boot();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      // **`context.t` 를 쓰지 않는다.** 이 콜백은 아래 `builder` 보다 **위**에서 불리므로
+      // 거기서 세우는 `I18n` 이 아직 없다 — `context.t` 를 쓰면 앱이 첫 프레임에 죽는다
+      // (시험이 잡았다). `Localizations` 는 MaterialApp 이 이 위에 둔다.
+      onGenerateTitle: (context) =>
+          stringsFor(Localizations.localeOf(context).languageCode).appName,
+      locale: _override,
+      supportedLocales: supportedLocales,
+      // `supportedLocales` 의 첫 번째(영어)가 폴백이다 — 모르는 기기 언어는 영어로 떨어진다.
+      localeResolutionCallback: (deviceLocale, supported) {
+        final wanted = _override ?? deviceLocale;
+        return supported.firstWhere(
+          (l) => l.languageCode == wanted?.languageCode,
+          orElse: () => supported.first,
+        );
+      },
+      theme: harkroomTheme(Brightness.light),
+      darkTheme: harkroomTheme(Brightness.dark),
+      builder: (context, child) => I18n(
+        strings: stringsFor(Localizations.localeOf(context).languageCode),
+        child: AppScope(state: widget.state, child: child ?? const SizedBox.shrink()),
+      ),
+      home: const _Root(),
+    );
+  }
+}
+
+/// 어느 화면을 세울지는 **상태 하나가 정한다.**
+///
+/// 각 화면이 스스로 다음 화면으로 `Navigator.push` 하게 두면, 부팅으로 들어온 경로와
+/// 로그인으로 들어온 경로가 갈라지고 둘 중 하나에만 있는 버그가 생긴다.
+class _Root extends StatelessWidget {
+  const _Root();
+
+  @override
+  Widget build(BuildContext context) => switch (context.app.phase) {
+        AppPhase.booting => const _Booting(),
+        AppPhase.needsServer => const ConnectScreen(),
+        AppPhase.needsLogin => const LoginScreen(),
+        AppPhase.ready => const HomeScreen(),
+      };
+}
+
+class _Booting extends StatelessWidget {
+  const _Booting();
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text(context.t.commonLoading),
+            ],
+          ),
+        ),
+      );
+}
