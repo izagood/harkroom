@@ -163,7 +163,7 @@ export function renderBody(template: string, vars: Record<string, string>): stri
 const COLS = `id, owner_id as "ownerId", channel_id as "channelId", name, body, trigger,
   enabled, next_at as "nextAt", paused_reason as "pausedReason",
   consecutive_failures as "consecutiveFailures", ingress_enabled_at as "ingressEnabledAt",
-  debounce_sec as "debounceSec", created_at as "createdAt", updated_at as "updatedAt"`;
+  debounce_sec as "debounceSec", proposed_by as "proposedBy", approved_at as "approvedAt", created_at as "createdAt", updated_at as "updatedAt"`;
 
 const RUN_COLS = `id, automation_id as "automationId", event_key as "eventKey",
   trigger_kind as "triggerKind", status, message_id as "messageId", error,
@@ -185,6 +185,36 @@ export async function createAutomation(pool: Pool, input: {
       input.debounceSec ?? null],
   );
   return res.rows[0];
+}
+
+/**
+ * 에이전트의 제안(071). `enabled=false`·`approved_at=null` 로 들어가 시계도 입구도 돌지 않는다.
+ * 소유자는 **승인할 사람**이다 — 승인하면 글이 그 사람 이름으로 나간다.
+ */
+export async function proposeAutomation(pool: Pool, input: {
+  ownerId: string; proposedBy: string; channelId: string; name: string; body: string;
+  trigger: AutomationTrigger; debounceSec?: number | null;
+}): Promise<AutomationView> {
+  const res = await pool.query(
+    `insert into automation (owner_id, proposed_by, approved_at, enabled, channel_id, name, body, trigger, debounce_sec)
+     values ($1, $2, null, false, $3, $4, $5, $6, $7) returning ${COLS}`,
+    [input.ownerId, input.proposedBy, input.channelId, input.name, input.body, JSON.stringify(input.trigger),
+      input.debounceSec ?? null],
+  );
+  return res.rows[0];
+}
+
+/** 제안 승인. 켜고 다음 회차를 잡는다. 이미 승인된 것은 false. */
+export async function approveAutomation(pool: Pool, id: string, ownerId: string, now = new Date()): Promise<AutomationView | null> {
+  const cur = await getAutomation(pool, id, ownerId);
+  if (!cur || cur.approvedAt) return null;
+  const nextAt = initialNextAt(cur.trigger, now);
+  const res = await pool.query(
+    `update automation set approved_at = now(), enabled = true, next_at = $3, updated_at = now()
+     where id = $1 and owner_id = $2 and approved_at is null and deleted_at is null returning ${COLS}`,
+    [id, ownerId, nextAt?.toISOString() ?? null],
+  );
+  return res.rows[0] ?? null;
 }
 
 /** 만든 사람 것만 보인다 — 예약 메시지(#222)와 같은 이유로, 소유자 조건을 호출부로 올리지 않는다. */

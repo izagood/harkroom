@@ -24,6 +24,8 @@ import {
   MAX_MEMORY_VALUE_LENGTH, memoryRev, readMemoryCounted, setMemory,
 } from '../services/memory.js';
 import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
+import { proposeAutomation, triggerSchema } from '../services/automations.js';
+import { channelPostGate } from '../services/channels.js';
 import { scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC } from '../services/agentWakes.js';
 import { guideFor } from './guide.js';
 import { listTeams } from '../services/teams.js';
@@ -1016,6 +1018,49 @@ function buildMcpServer(
     }
     const result = await proposeSkill(pool, { slug, body, proposedBy: account.id, channelId });
     return jsonResult(result);
+  });
+
+  /**
+   * automation.propose(071) — 에이전트가 반복 작업을 **제안**한다. 만들지는 못한다(064: 사람만).
+   *
+   * 승인할 사람은 `forHandle`(사람), 없으면 이 에이전트의 소유자다. 승인하면 글이 **그 사람
+   * 이름으로** 나가므로, 그 사람이 `channelId` 에 쓸 수 있어야 한다 — 여기서 미리 막아 두면
+   * 승인 뒤 첫 회차가 거부로 멈추는 일이 없다. 제안은 설정 › Automations 에 승인 대기로 선다.
+   * 사람에게 알리는 것은 에이전트의 발화 몫이다(워크스페이스 규칙: 오브젝트는 채팅에 투영되지 않는다).
+   */
+  server.registerTool('automation.propose', {
+    description: '반복 작업 자동화를 제안한다(사람이 설정 › Automations 에서 승인해야 돈다). 글은 승인한 사람 이름으로 나간다',
+    inputSchema: {
+      name: z.string().trim().min(1).max(100),
+      channelId: z.string().uuid(),
+      body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
+      trigger: triggerSchema,
+      debounceSec: z.number().int().min(0).max(3600).optional(),
+      forHandle: z.string().min(1).max(64).optional(),
+    },
+  }, async ({ name, channelId, body, trigger, debounceSec, forHandle }) => {
+    const ownerRes = forHandle
+      ? await pool.query<{ id: string }>(
+        `select id from account where handle = $1 and kind = 'human' and deleted_at is null and disabled_at is null`,
+        [forHandle.replace(/^@/, '')],
+      )
+      : await pool.query<{ id: string }>(
+        `select o.id from agent_config c join account o on o.id = c.owner_account_id
+         where c.account_id = $1 and o.kind = 'human' and o.deleted_at is null and o.disabled_at is null`,
+        [account.id],
+      );
+    const ownerId = ownerRes.rows[0]?.id;
+    if (!ownerId) {
+      return jsonResult({ error: { code: 'no_owner', message: forHandle ? `no active human @${forHandle}` : 'this agent has no owner; pass forHandle' } });
+    }
+    const exists = await pool.query(`select 1 from channel where id = $1`, [channelId]);
+    if (!exists.rowCount || (await channelPostGate(pool, channelId, ownerId)) !== 'ok') {
+      return jsonResult({ error: { code: 'forbidden', message: 'the approver cannot post in this channel' } });
+    }
+    const automation = await proposeAutomation(pool, {
+      ownerId, proposedBy: account.id, channelId, name, body, trigger, debounceSec: debounceSec ?? null,
+    });
+    return jsonResult({ automation, next: 'Tell the approver in chat: Settings › Automations › Approve.' });
   });
 
   /**

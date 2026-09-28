@@ -283,6 +283,11 @@ export function AutomationsSettings() {
               <div className="min-w-0 flex-1">
                 <div className="font-semibold text-fg">⚡ {a.name}</div>
                 <div className="text-fg-muted">{describeTrigger(a.trigger, locale, t)} → {targetLabel(a.channelId)}</div>
+                {!a.approvedAt && (
+                  <div data-testid="automation-proposal" className="mt-1 text-meta text-warning">
+                    {t('automations.proposal.pending', { who: `@${accounts[a.proposedBy ?? '']?.handle ?? '…'}` })}
+                  </div>
+                )}
                 <div className="text-meta text-fg-subtle">
                   {a.enabled
                     ? t('automations.row.next', { at: fmt(a.nextAt) })
@@ -291,11 +296,12 @@ export function AutomationsSettings() {
                       : t('automations.row.off')}
                 </div>
               </div>
-              <label className="flex items-center gap-2 text-meta text-fg-muted">
+              {/* 승인 버튼은 서버 `POST /automations/:id/approve` 가 릴리스된 뒤 붙인다(serverSurface 규칙). */}
+              {a.approvedAt && <label className="flex items-center gap-2 text-meta text-fg-muted">
                 <input type="checkbox" role="switch" data-testid="automation-enabled" checked={a.enabled} disabled={busy}
                   onChange={(e) => void act(() => getController().api.updateAutomation(a.id, { enabled: e.target.checked }), t('automations.form.saveFailed'))} />
                 {t('automations.row.enabled')}
-              </label>
+              </label>}
             </div>
             <pre className="mt-2 whitespace-pre-wrap rounded bg-surface p-2 text-meta text-fg-muted">{a.body}</pre>
             <div className="mt-2 flex flex-wrap gap-2">
