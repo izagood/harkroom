@@ -10,7 +10,8 @@
  *   이름은 켜지 못한다 — 켜면 다음 기동에서 에이전트가 조용히 안 뜬다.
  * - personal 서버를 켜면 "호출자가 소유자로 좁혀진다"를 확인받고 scope 를 **같은 PATCH** 로 바꾼다.
  * - [추가] 한 번에: 레지스트리 이름(없으면, agent.privileged — 없으면 막는다) → 이 머신 정의 →
- *   에이전트에 붙이기. 반영은 러너를 다시 띄울 때다(러너 config 는 기동 때 만든다).
+ *   에이전트에 붙이기. 반영은 러너를 다시 띄울 때다(러너 config 는 기동 때 만든다) — 저장 뒤
+ *   [지금 재시작] 이 그 자리에서 `agent.restart`(#869)를 부른다.
  *
  * 판정은 서버·오퍼레이터가 한다. 여기는 순서를 지키고 거절을 사람 말로 옮긴다.
  */
@@ -47,6 +48,14 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
   const [url, setUrl] = useState(MCP_PRESETS[0]!.definition.url);
   const [kind, setKind] = useState<'community' | 'personal'>(MCP_PRESETS[0]!.credentialKind);
 
+  const [restarted, setRestarted] = useState(false);
+  const restartNow = () => void (async () => {
+    setBusy(true); setError(null);
+    try { await getController().restartAgent(agent.id); setRestarted(true); }
+    catch { setError(t('agents.restart.failed')); }
+    finally { setBusy(false); }
+  })();
+
   const reload = useCallback(() => {
     // 약속 안에서 부른다 — 표면이 없는 컨트롤러(부분 가짜)에서도 동기 예외가 아니라 '읽지 못했다'다.
     void Promise.resolve().then(() => getController().mcpServers()).then(setRegistry).catch(() => setRegistry('error'));
@@ -81,7 +90,7 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
   };
 
   const run = async (fn: () => Promise<void>) => {
-    setBusy(true); setError(null); setNotice(null);
+    setBusy(true); setError(null); setNotice(null); setRestarted(false);
     try { await fn(); } catch (e) { setError(explain(e)); } finally { setBusy(false); }
   };
 
@@ -222,7 +231,17 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
           </div>
         </div>
       )}
-      {notice && <p role="status" className="mt-2 text-meta text-fg-muted" data-testid="agent-mcp-notice">{notice}</p>}
+      {notice && (
+        <div role="status" className="mt-2 flex flex-wrap items-center gap-2 text-meta text-fg-muted" data-testid="agent-mcp-notice">
+          <span>{notice}</span>
+          {/* 러너 config 는 기동 때 만든다 — 지금 쓰려면 갈아 띄운다(#869 `agent.restart`). 멈춰 둔 에이전트는 되살리지 않는다. */}
+          {!agent.stopRequestedAt && !restarted && (
+            <button className="rounded border border-border px-2 py-0.5 font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
+              data-testid="agent-mcp-restart" disabled={off} onClick={restartNow}>{t('agents.mcp.restartNow')}</button>
+          )}
+          {restarted && <span>{t('agents.restart.sent')}</span>}
+        </div>
+      )}
       {error && <p role="alert" className="mt-2 text-meta text-danger" data-testid="agent-mcp-error">{error}</p>}
     </div>
   );
