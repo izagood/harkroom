@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 
+import '../api/agent_meta.dart';
 import '../api/ask.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../mention/mention_suggest.dart';
 import '../state/app_scope.dart';
+import 'agent_rows.dart';
 import 'ask_card.dart';
+import 'message_feed.dart';
 import 'message_tile.dart';
 import 'thread_screen.dart';
 
@@ -59,7 +62,9 @@ class _MessageListScreenState extends State<MessageListScreen> {
     // `progress`·`wake` 는 말풍선이 아니다(서버가 `kind` 로 이미 갈라 준다). P0 에서는
     // 그것들을 **그리지 않는다** — 상태 줄·대기 줄은 P2 의 일이고, 그 전까지 말풍선으로
     // 흘리면 채널이 진행 로그로 덮인다.
-    final speech = all.where((m) => m.isSpeech).toList(growable: false);
+    // **이제 전부 그린다.** P1 까지는 `progress`·`wake` 를 버렸는데, 그러면 오래 도는
+    // 스레드가 조용해 보였다 — 진행은 한 줄로 접히고 대기는 대기 줄이 된다.
+    final feed = buildFeed(all);
     // `firstOrNull` 은 `package:collection` 것이다. 의존성 하나를 이것 때문에 들이지
     // 않는다 — 채널이 목록에서 사라지는 경우(다른 기기에서 나갔다)가 있으므로 null 은
     // 정상이고, 그때 제목은 빈 줄로 둔다.
@@ -77,29 +82,24 @@ class _MessageListScreenState extends State<MessageListScreen> {
         child: Column(
           children: [
             Expanded(
-              child: speech.isEmpty
+              child: feed.isEmpty
                   ? Center(child: Text(t.messagesEmpty))
                   : ListView.builder(
                       controller: _scroll,
                       padding: const EdgeInsets.symmetric(vertical: 8),
-                      itemCount: speech.length,
-                      itemBuilder: (context, i) {
-                        final m = speech[i];
-                        // 선택 요청은 **말풍선이 아니라 누를 수 있는 것**이다.
-                        final ask = AskMeta.read(m.meta);
-                        if (ask != null) return AskCard(message: m, ask: ask);
-                        return MessageTile(
-                          message: m,
-                          onOpenThread: () => Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) => ThreadScreen(
-                                channelId: widget.channelId,
-                                rootId: m.id,
-                              ),
+                      itemCount: feed.length,
+                      itemBuilder: (context, i) => buildFeedItem(
+                        context,
+                        feed[i],
+                        onOpenThread: (m) => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => ThreadScreen(
+                              channelId: widget.channelId,
+                              rootId: m.id,
                             ),
                           ),
-                        );
-                      },
+                        ),
+                      ),
                     ),
             ),
             _MentionPicker(
@@ -208,4 +208,31 @@ class _MentionPicker extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 줄 하나를 그린다. **채널 화면과 스레드 화면이 같은 함수를 쓴다** — 갈라지면 같은
+/// 메시지가 두 화면에서 다르게 보인다.
+Widget buildFeedItem(
+  BuildContext context,
+  FeedItem item, {
+  void Function(MessageRow)? onOpenThread,
+}) {
+  if (item is FeedProgressRun) return ProgressRow(run: item.run);
+  final m = (item as FeedMessage).message;
+
+  // 판정 순서가 있다: `meta` 가 아는 모양이면 카드, 아니면 `kind`, 그것도 아니면 말풍선.
+  final ask = AskMeta.read(m.meta);
+  if (ask != null) return AskCard(message: m, ask: ask);
+  final report = ReportMeta.read(m.meta);
+  if (report != null) return ReportCard(message: m, report: report);
+  final failure = FailureMeta.read(m.meta);
+  if (failure != null) return FailureCard(message: m, failure: failure);
+  final wake = WakeMeta.read(m.meta);
+  if (wake != null) return WakeRow(message: m, wake: wake);
+
+  // `meta` 를 못 알아본 `wake` 는 **평문으로 흘린다**(형식이 깨져도 사라지지 않게).
+  return MessageTile(
+    message: m,
+    onOpenThread: onOpenThread == null ? null : () => onOpenThread(m),
+  );
 }

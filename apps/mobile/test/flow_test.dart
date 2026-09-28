@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:harkroom/api/api_client.dart';
 import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/main.dart';
+import 'package:harkroom/screens/thread_screen.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_state.dart';
 import 'package:http/http.dart' as http;
@@ -19,6 +20,18 @@ import 'package:http/testing.dart';
 http.Response _json(Object body, [int status = 200]) =>
     http.Response.bytes(utf8.encode(jsonEncode(body)), status,
         headers: {'content-type': 'application/json'});
+
+/// `pumpAndSettle` 대신 쓰는 것.
+///
+/// **진행 줄의 회전자는 영원히 돈다** — 그게 맞는 화면이다(에이전트가 아직 일하는 중).
+/// 그래서 `pumpAndSettle` 은 *"pumpAndSettle timed out"* 으로 죽는다. 애니메이션을
+/// 없애서 시험을 통과시키지 않는다: 시험이 배포되는 것과 다른 앱을 보게 된다.
+/// 몇 프레임만 돌려 비동기 작업이 끝나게 한다.
+Future<void> _settle(WidgetTester tester) async {
+  for (var i = 0; i < 8; i += 1) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+}
 
 final _sent = <String>[];
 final _answered = <String>[];
@@ -219,7 +232,7 @@ void main() {
     expect(find.byKey(const Key('channel-c2')), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('channel-c1')));
-    await tester.pumpAndSettle();
+    await _settle(tester);
 
     // 먼저 있던 말은 뜨고, **진행 줄은 말풍선이 되지 않는다**.
     expect(find.byKey(const Key('message-m1')), findsOneWidget);
@@ -227,7 +240,7 @@ void main() {
 
     await tester.enterText(find.byKey(const Key('composer')), '@forge 이거 해 줘');
     await tester.tap(find.byKey(const Key('composer-send')));
-    await tester.pumpAndSettle();
+    await _settle(tester);
 
     // 에이전트를 부르는 것은 **멘션이 든 메시지를 올리는 것**이다 — 별도 경로가 없다.
     expect(_sent, ['@forge 이거 해 줘']);
@@ -249,6 +262,21 @@ void main() {
     expect(find.byKey(const Key('connection-line')), findsOneWidget);
   });
 
+  testWidgets('진행은 말풍선이 아니라 한 줄로 접힌다', (tester) async {
+    // P1 까지는 진행을 **버렸다** — 그래서 오래 도는 스레드가 조용해 보였다.
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await _settle(tester);
+
+    // 진행은 말풍선(`message-m2`)이 아니라 진행 줄(`progress-m2`)이다.
+    expect(find.byKey(const Key('message-m2')), findsNothing);
+    expect(find.byKey(const Key('progress-m2')), findsOneWidget);
+  });
+
   testWidgets('에이전트가 물으면 폰에서 골라서 그 턴을 이어 보낸다', (tester) async {
     // **P1 의 핵심**: 답할 수 없으면 "불렀는데 조용한" 것이 정상이 된다.
     final state = _state();
@@ -257,11 +285,11 @@ void main() {
     addTearDown(state.dispose);
 
     await tester.tap(find.byKey(const Key('channel-c1')));
-    await tester.pumpAndSettle();
+    await _settle(tester);
 
     expect(find.byKey(const Key('ask-m4')), findsOneWidget);
     await tester.tap(find.byKey(const Key('ask-option-m4-y')));
-    await tester.pumpAndSettle();
+    await _settle(tester);
 
     expect(_answered, ['y']);
     // 버튼은 사라지고 **고른 것이 그 자리에 남는다** — 누른 뒤에도 버튼이 있으면
@@ -278,15 +306,15 @@ void main() {
     addTearDown(state.dispose);
 
     await tester.tap(find.byKey(const Key('channel-c1')));
-    await tester.pumpAndSettle();
+    await _settle(tester);
 
     expect(find.byKey(const Key('mention-picker')), findsNothing);
     await tester.enterText(find.byKey(const Key('composer')), '@fo');
-    await tester.pumpAndSettle();
+    await _settle(tester);
 
     expect(find.byKey(const Key('mention-candidate-forge')), findsOneWidget);
     await tester.tap(find.byKey(const Key('mention-candidate-forge')));
-    await tester.pumpAndSettle();
+    await _settle(tester);
 
     final text = tester.widget<TextField>(find.byKey(const Key('composer'))).controller!.text;
     expect(text, '@forge ');
@@ -301,21 +329,35 @@ void main() {
     addTearDown(state.dispose);
 
     await tester.tap(find.byKey(const Key('channel-c1')));
-    await tester.pumpAndSettle();
+    await _settle(tester);
 
     // 답글이 달린 루트에만 문이 있다. `replyCount` 가 null 인 줄에는 없다.
     await tester.tap(find.byKey(const Key('thread-open-m1')));
-    await tester.pumpAndSettle();
+    await _settle(tester);
 
     // 루트와 답글이 함께 선다.
-    expect(find.byKey(const Key('message-m1')), findsOneWidget);
+    //
+    // **`ThreadScreen` 안으로 좁혀서 센다**: 밀어 넣은 화면이라 뒤의 채널 화면이 나무에
+    // 그대로 남아 있고, 거기에도 같은 루트가 있다. 좁히지 않으면 "둘 있다"로 빨개지는데
+    // 그건 버그가 아니라 시험이 잘못 센 것이다.
+    final inThread = find.descendant(
+      of: find.byType(ThreadScreen),
+      matching: find.byKey(const Key('message-m1')),
+    );
+    expect(inThread, findsOneWidget);
     expect(find.byKey(const Key('message-r1')), findsOneWidget);
     // **스레드 안에서는 또 들어갈 문을 그리지 않는다.**
-    expect(find.byKey(const Key('thread-open-m1')), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byType(ThreadScreen),
+        matching: find.byKey(const Key('thread-open-m1')),
+      ),
+      findsNothing,
+    );
 
     await tester.enterText(find.byKey(const Key('thread-composer')), '답글이다');
     await tester.tap(find.byKey(const Key('thread-send')));
-    await tester.pumpAndSettle();
+    await _settle(tester);
     expect(_sent, ['답글이다']);
   });
 
@@ -326,10 +368,10 @@ void main() {
     addTearDown(state.dispose);
 
     await tester.tap(find.byKey(const Key('channel-c1')));
-    await tester.pumpAndSettle();
+    await _settle(tester);
 
     await tester.enterText(find.byKey(const Key('composer')), '> @fo');
-    await tester.pumpAndSettle();
+    await _settle(tester);
     // 띄우면 사람은 고르고 보냈는데 상대가 오지 않는다.
     expect(find.byKey(const Key('mention-picker')), findsNothing);
   });
@@ -345,7 +387,7 @@ void main() {
 
     expect(find.byKey(const Key('inbox-1')), findsOneWidget);
     await tester.tap(find.byKey(const Key('inbox-1')));
-    await tester.pumpAndSettle();
+    await _settle(tester);
 
     // 눌러서 열면 읽음이 된다 — **훑기만 해도 사라지지는 않는다.**
     expect(state.inboxUnread, 0);
@@ -362,13 +404,13 @@ void main() {
     addTearDown(state.dispose);
 
     await tester.tap(find.byKey(const Key('channel-c1')));
-    await tester.pumpAndSettle();
+    await _settle(tester);
     await tester.enterText(find.byKey(const Key('composer')), '치던 글');
-    await tester.pumpAndSettle();
+    await _settle(tester);
 
     // 채널 화면을 닫고 탭을 옮겼다 돌아온다.
     Navigator.of(tester.element(find.byKey(const Key('composer')))).pop();
-    await tester.pumpAndSettle();
+    await _settle(tester);
     await tester.tap(find.byKey(const Key('tab-inbox')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('tab-channels')));

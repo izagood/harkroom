@@ -57,6 +57,67 @@ abstract class Strings {
   /// 다시 해 보기.
   String get commonRetry;
 
+  // ── P2 ───────────────────────────────────────────────────────────────
+  /// 1분 미만. 숫자를 쓰지 않는다 — 그 정밀도는 쓸모가 없다.
+  String get timeUnderMinute;
+
+  /// 분. `{n}` 이 수로 바뀐다.
+  String get timeMinutes;
+
+  /// 시간.
+  String get timeHours;
+
+  /// 일.
+  String get timeDays;
+
+  /// 아직 도는 중. `{duration}` 이 길이로 바뀐다.
+  String get timeRunning;
+
+  /// 끝났다.
+  String get timeTook;
+
+  /// 지난 일.
+  String get timeAgo;
+
+  /// 방금.
+  String get timeJustNow;
+
+  /// 아직 오지 않은 것.
+  String get timeIn;
+
+  /// 곧. 시각이 이미 지났을 때 — `0분 뒤` 는 틀린 말이 아니라 쓸모없는 말이다.
+  String get timeSoon;
+
+  /// 진행 줄의 머리말. 뒤에 마지막 진행 문구가 붙는다.
+  String get agentWorking;
+
+  /// 대기 줄의 머리말.
+  String get agentWaiting;
+
+  /// 완료 보고 카드 제목.
+  String get reportTitle;
+
+  /// 무엇을 확인했나.
+  String get reportChecks;
+
+  /// 바뀐 파일.
+  String get reportFiles;
+
+  /// 이 보고가 **닫지 못한 것**. 숨기면 끝난 것처럼 보인다.
+  String get reportRemaining;
+
+  /// 다음으로 할 일 후보.
+  String get reportNext;
+
+  /// 실패 카드 제목.
+  String get failureTitle;
+
+  /// 다시 해 보면 되는 실패.
+  String get failureRetryable;
+
+  /// 사람 손이 필요한 실패. `retryable` 을 모를 때도 이쪽이다 — 헛된 재시도를 권하지 않는다.
+  String get failureNeedsHand;
+
   // ── P1 ───────────────────────────────────────────────────────────────
   /// 탭 이름 — 채널.
   String get tabChannels;
@@ -221,6 +282,26 @@ Map<String, String> stringsToMap(Strings s) => {
       'commonLoading': s.commonLoading,
       'commonBack': s.commonBack,
       'commonRetry': s.commonRetry,
+      'timeUnderMinute': s.timeUnderMinute,
+      'timeMinutes': s.timeMinutes,
+      'timeHours': s.timeHours,
+      'timeDays': s.timeDays,
+      'timeRunning': s.timeRunning,
+      'timeTook': s.timeTook,
+      'timeAgo': s.timeAgo,
+      'timeJustNow': s.timeJustNow,
+      'timeIn': s.timeIn,
+      'timeSoon': s.timeSoon,
+      'agentWorking': s.agentWorking,
+      'agentWaiting': s.agentWaiting,
+      'reportTitle': s.reportTitle,
+      'reportChecks': s.reportChecks,
+      'reportFiles': s.reportFiles,
+      'reportRemaining': s.reportRemaining,
+      'reportNext': s.reportNext,
+      'failureTitle': s.failureTitle,
+      'failureRetryable': s.failureRetryable,
+      'failureNeedsHand': s.failureNeedsHand,
       'tabChannels': s.tabChannels,
       'tabInbox': s.tabInbox,
       'tabMe': s.tabMe,

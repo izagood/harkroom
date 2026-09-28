@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
 
-import '../api/ask.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
-import 'ask_card.dart';
-import 'message_tile.dart';
+import 'message_feed.dart';
+import 'message_list_screen.dart';
 
 /// 스레드 하나. 루트를 맨 위에 두고 그 아래 답글이 붙는다.
 ///
@@ -83,22 +82,21 @@ class _ThreadScreenState extends State<ThreadScreen> {
     }
     // 채널 화면에서 들어온 답글은 **말풍선이 되는 것만** 그린다(`progress`·`wake` 제외) —
     // 채널에서와 같은 기준이어야 같은 스레드가 두 화면에서 달라 보이지 않는다.
-    final replies = (app.threads[widget.rootId] ?? const <MessageRow>[])
-        .where((m) => m.isSpeech)
-        .toList(growable: false);
+    final replies = buildFeed(app.threads[widget.rootId] ?? const <MessageRow>[]);
 
     return Scaffold(
       appBar: AppBar(title: Text(t.threadTitle)),
       body: SafeArea(
         child: Column(
           children: [
+            // `onOpenThread` 를 주지 않는다 — **이미 스레드 안이라 들어갈 곳이 없다.**
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 children: [
-                  if (root != null) _tile(root),
+                  if (root != null) buildFeedItem(context, FeedMessage(root)),
                   if (root != null) const Divider(),
-                  ...replies.map(_tile),
+                  ...replies.map((item) => buildFeedItem(context, item)),
                 ],
               ),
             ),
@@ -136,11 +134,4 @@ class _ThreadScreenState extends State<ThreadScreen> {
     );
   }
 
-  /// 스레드 안에서는 **스레드로 들어가는 길을 그리지 않는다**(`onOpenThread` 가 없다) —
-  /// 이미 그 안이다.
-  Widget _tile(MessageRow m) {
-    final ask = AskMeta.read(m.meta);
-    if (ask != null) return AskCard(message: m, ask: ask);
-    return MessageTile(message: m);
-  }
 }

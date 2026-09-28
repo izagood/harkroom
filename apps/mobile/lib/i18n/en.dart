@@ -171,4 +171,64 @@ class StringsEn implements Strings {
 
   @override
   String get attachmentFailed => 'Could not load this file.';
+
+  @override
+  String get timeUnderMinute => 'under a minute';
+
+  @override
+  String get timeMinutes => '{n}m';
+
+  @override
+  String get timeHours => '{n}h';
+
+  @override
+  String get timeDays => '{n}d';
+
+  @override
+  String get timeRunning => 'running {duration}';
+
+  @override
+  String get timeTook => 'took {duration}';
+
+  @override
+  String get timeAgo => '{duration} ago';
+
+  @override
+  String get timeJustNow => 'just now';
+
+  @override
+  String get timeIn => 'in {duration}';
+
+  @override
+  String get timeSoon => 'soon';
+
+  @override
+  String get agentWorking => 'Working';
+
+  @override
+  String get agentWaiting => 'Waiting';
+
+  @override
+  String get reportTitle => 'Done';
+
+  @override
+  String get reportChecks => 'Checked';
+
+  @override
+  String get reportFiles => 'Changed';
+
+  @override
+  String get reportRemaining => 'Still open';
+
+  @override
+  String get reportNext => 'Next';
+
+  @override
+  String get failureTitle => 'Failed';
+
+  @override
+  String get failureRetryable => 'Can be retried';
+
+  @override
+  String get failureNeedsHand => 'Needs a hand';
 }

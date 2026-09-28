@@ -170,4 +170,64 @@ class StringsKo implements Strings {
 
   @override
   String get attachmentFailed => '이 파일을 불러오지 못했습니다.';
+
+  @override
+  String get timeUnderMinute => '1분 미만';
+
+  @override
+  String get timeMinutes => '{n}분';
+
+  @override
+  String get timeHours => '{n}시간';
+
+  @override
+  String get timeDays => '{n}일';
+
+  @override
+  String get timeRunning => '{duration}째 작업 중';
+
+  @override
+  String get timeTook => '{duration} 걸림';
+
+  @override
+  String get timeAgo => '{duration} 전';
+
+  @override
+  String get timeJustNow => '방금';
+
+  @override
+  String get timeIn => '{duration} 뒤';
+
+  @override
+  String get timeSoon => '곧';
+
+  @override
+  String get agentWorking => '작업 중';
+
+  @override
+  String get agentWaiting => '대기 중';
+
+  @override
+  String get reportTitle => '완료';
+
+  @override
+  String get reportChecks => '확인한 것';
+
+  @override
+  String get reportFiles => '바뀐 것';
+
+  @override
+  String get reportRemaining => '남은 것';
+
+  @override
+  String get reportNext => '다음';
+
+  @override
+  String get failureTitle => '실패';
+
+  @override
+  String get failureRetryable => '다시 해 볼 수 있음';
+
+  @override
+  String get failureNeedsHand => '손이 필요함';
 }
