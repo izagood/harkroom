@@ -455,23 +455,26 @@ fn claude_pool_remove(
 //
 // 계정 풀 명령과 같다: 웹뷰는 **계정 이름·로그인 id** 만 넘기고, `codex login` 을 띄우는 것도
 // 파일을 쓰는 것도 데몬이다(`runnerShellScope.test.ts` 가 파라미터를 고정한다).
-// 공급자 API 사용률(2026-09-28). 웹뷰는 아무것도 넘기지 않는다 — 토큰을 읽고 부르는 것은 데몬이다.
+// 한도 사용률(2026-09-28). 웹뷰가 넘기는 것은 "비공식 API 로 넘어가도 되나" 불린 하나다 — CLI 를 띄우고
+// 토큰을 읽는 것은 데몬이다.
 #[tauri::command]
 fn claude_accounts_provider_usage(
     app: tauri::AppHandle,
     state: tauri::State<daemon_client::DaemonState>,
+    allow_unofficial: bool,
 ) -> Result<serde_json::Value, String> {
     let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.claude_accounts_provider_usage()
+    conn.claude_accounts_provider_usage(allow_unofficial)
 }
 
 #[tauri::command]
 fn codex_accounts_provider_usage(
     app: tauri::AppHandle,
     state: tauri::State<daemon_client::DaemonState>,
+    allow_unofficial: bool,
 ) -> Result<serde_json::Value, String> {
     let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.codex_accounts_provider_usage()
+    conn.codex_accounts_provider_usage(allow_unofficial)
 }
 
 #[tauri::command]

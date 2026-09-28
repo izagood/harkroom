@@ -33,7 +33,9 @@ import type {
   ProviderUsageSnapshot,
 } from '@harkroom/shared/daemonProtocol';
 
+import { codexCliUsage, type SpawnRpc } from './cliUsage.js';
 import { fetchCodexProviderUsage, type CodexToken, type FetchLike } from './providerUsage.js';
+import { createUsageCache, officialThenUnofficial } from './usageChain.js';
 
 /** 로그인 자식의 우리가 쓰는 표면만(`ClaudeLoginChild` 와 같은 이유 — 테스트가 가짜를 끼운다). */
 export interface CodexLoginChild {
@@ -52,8 +54,11 @@ export interface CodexAccountsPort {
   activate(account: string | null): Promise<void>;
   shutdownLogins(): Promise<void>;
   onLoginEvent(cb: (e: CodexLoginEvent) => void): void;
-  /** 공급자 API 사용률(비공식 — `providerUsage.ts`). 시스템 기본 로그인은 `account: ''` 로 싣는다. */
-  providerUsage(): Promise<ProviderUsageSnapshot>;
+  /**
+   * 한도 사용률. 공식(`codex app-server` → `account/rateLimits/read`) 먼저, 실패하면 `allowUnofficial`
+   * 일 때만 비공식 API(`usageChain.ts`). 시스템 기본 로그인은 `account: ''` 로 싣는다.
+   */
+  providerUsage(opts?: { allowUnofficial?: boolean }): Promise<ProviderUsageSnapshot>;
 }
 
 /** 러너의 `codexAccountsRoot()`(`agent/src/codexHome.ts`)와 **같은 값**이어야 한다. */
@@ -166,12 +171,15 @@ export function createCodexAccountsPort(opts: {
   now?: () => number;
   fetchImpl?: FetchLike;
   readToken?: (codexHome: string) => Promise<CodexToken | null>;
+  spawnRpc?: SpawnRpc;
+  usageCacheMs?: number;
 } = {}): CodexAccountsPort {
   const root = opts.root ?? codexAccountsRoot();
   const systemHome = opts.systemHome ?? systemCodexHome();
   const status = opts.status ?? codexStatusFromDisk;
   const spawnLogin = opts.spawnLogin ?? nodeSpawnLogin;
   const killGraceMs = opts.killGraceMs ?? LOGIN_KILL_GRACE_MS;
+  const usageCache = createUsageCache(opts.usageCacheMs, opts.now ?? Date.now);
 
   const logins = new Map<string, {
     child: CodexLoginChild;
@@ -307,16 +315,22 @@ export function createCodexAccountsPort(opts: {
       listeners.push(cb);
     },
 
-    async providerUsage(): Promise<ProviderUsageSnapshot> {
+    async providerUsage(o: { allowUnofficial?: boolean } = {}): Promise<ProviderUsageSnapshot> {
       const at = (opts.now ?? Date.now)();
+      const allow = o.allowUnofficial === true;
       const homes = [{ account: '', home: systemHome }, ...(await subdirs(root)).map((n) => ({ account: n, home: join(root, n) }))];
       const accounts = await Promise.all(homes.map(async (h) => ({
         account: h.account,
-        ...(await fetchCodexProviderUsage({
-          codexHome: h.home, now: at,
-          fetchImpl: opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike),
-          ...(opts.readToken ? { readToken: opts.readToken } : {}),
-        })),
+        ...(await usageCache(`${h.home}|${allow}`, () => officialThenUnofficial(
+          () => codexCliUsage({ codexHome: h.home, now: at, ...(opts.spawnRpc ? { spawnRpc: opts.spawnRpc } : {}) }),
+          allow
+            ? () => fetchCodexProviderUsage({
+              codexHome: h.home, now: at,
+              fetchImpl: opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike),
+              ...(opts.readToken ? { readToken: opts.readToken } : {}),
+            })
+            : null,
+        ))),
       })));
       return { measuredAtMs: at, accounts };
     },

@@ -47,10 +47,9 @@ export interface Prefs {
    */
   zoom: number;
   /**
-   * 공급자 API(비공식)로 계정 사용률을 읽을까. **`null` = 사람이 고른 적 없음** — 그때는
-   * `PROVIDER_USAGE_API_DEFAULT`(`lib/providerUsage.ts`)를 따른다. 불린으로 기본값을 박지 않는
-   * 이유: 기본값이 아직 정해지지 않았고(jaebin 결정 대기), 정해지면 상수 한 줄만 바꿔서 손대지
-   * 않은 사람 모두에게 곧바로 먹어야 한다.
+   * 공식(CLI) 경로가 실패했을 때 **비공식** 공급자 API 로 넘어가도 되나. **`null` = 사람이 고른 적
+   * 없음** — 그때는 `UNOFFICIAL_USAGE_API_DEFAULT`(`lib/providerUsage.ts`)를 따른다. 불린으로 기본값을
+   * 박지 않는 이유: 기본값을 바꿀 때 상수 한 줄만 고쳐 손대지 않은 사람 모두에게 곧바로 먹게 하려고.
    */
   providerUsageApi: boolean | null;
 }

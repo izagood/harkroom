@@ -93,18 +93,32 @@ describe('Claude /api/oauth/usage', () => {
     expect(r).toMatchObject({ error: 'no-credentials', session: null, weekly: null });
   });
 
-  it('포트: 풀 안의 계정마다 묻고 풀 이름을 싣는다', async () => {
+  it('포트: 공식(CLI)이 되면 비공식은 부르지 않는다 · 안 되면 토글이 켜졌을 때만 비공식', async () => {
     const root = await temp();
     await writeFile(join(root, 'pools.json'), JSON.stringify({ defaultPool: 'work', order: {}, agents: {} }));
     await mkdir(join(root, 'work', 'aria'), { recursive: true });
+    const f = fakeFetch(BODY);
+    let cliOut = 'Current session: 5% used · resets 7pm (UTC)\nCurrent week (all models): 7% used\n';
     const port = createClaudeAccountsPort({
-      root, now: () => NOW, fetchImpl: fakeFetch(BODY),
+      root, now: () => NOW, fetchImpl: f, usageCacheMs: 0,
       readToken: async () => ({ accessToken: 'T', expiresAtMs: null }),
+      runCli: async (_cmd, _args, o) => {
+        expect(o.env.CLAUDE_CONFIG_DIR).toBe(join(root, 'work', 'aria'));
+        return { code: 0, stdout: cliOut };
+      },
     });
-    const snap = await port.providerUsage();
-    expect(snap.measuredAtMs).toBe(NOW);
-    expect(snap.accounts).toHaveLength(1);
-    expect(snap.accounts[0]).toMatchObject({ account: 'aria', pool: 'work', weekly: { usedPercent: 18 } });
+    const ok = await port.providerUsage({ allowUnofficial: true });
+    expect(ok.accounts[0]).toMatchObject({ account: 'aria', pool: 'work', source: 'cli', weekly: { usedPercent: 7 } });
+    expect(f.calls).toEqual([]);
+
+    cliOut = 'Not logged in';
+    const off = await port.providerUsage({ allowUnofficial: false });
+    expect(off.accounts[0]).toMatchObject({ source: 'cli', error: 'cli-unparsed' });
+    expect(f.calls).toEqual([]);
+
+    const on = await port.providerUsage({ allowUnofficial: true });
+    expect(on.accounts[0]).toMatchObject({ source: 'unofficial-api', weekly: { usedPercent: 18 } });
+    expect(f.calls).toHaveLength(1);
   });
 });
 
@@ -143,15 +157,18 @@ describe('Codex wham/usage', () => {
     expect(r.error).toBe('no-credentials');
   });
 
-  it('포트: 시스템 기본(account "")과 관리 계정을 모두 싣는다', async () => {
+  it('포트: 시스템 기본(account "")과 관리 계정을 모두 싣는다 — 공식이 안 되면 토글 켰을 때 비공식', async () => {
     const root = await temp();
     const systemHome = await temp();
     await mkdir(join(root, 'work'));
     const port = createCodexAccountsPort({
       root, systemHome, now: () => NOW, fetchImpl: fakeFetch(BODY),
       readToken: async () => ({ accessToken: 'T', accountId: null }),
+      spawnRpc: () => { throw new Error('codex 없음'); },
     });
-    const snap = await port.providerUsage();
+    const off = await port.providerUsage();
+    expect(off.accounts.every((a) => a.error === 'cli-unavailable')).toBe(true);
+    const snap = await port.providerUsage({ allowUnofficial: true });
     expect(snap.accounts.map((a) => a.account)).toEqual(['', 'work']);
     expect(snap.accounts.every((a) => a.weekly?.usedPercent === 9)).toBe(true);
   });

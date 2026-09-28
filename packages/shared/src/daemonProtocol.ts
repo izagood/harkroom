@@ -101,8 +101,8 @@ export const REQUEST_TYPES = [
   'codexAccountLoginCancel',
   'codexAccountRemove',
   'codexAccountActivate',
-  // 공급자 API 사용률(2026-09-28, 2단계). **비공식 엔드포인트**라 화면의 토글이 켜졌을 때만
-  // 부른다(`operator/src/providerUsage.ts`). 둘 다 payload 가 없다 — 어느 계정을 셀지는 디스크가 정한다.
+  // 한도 사용률(2026-09-28, 2단계). 공식(CLI) 먼저, 실패하면 `allowUnofficial` 일 때만 비공식 API
+  // (`operator/src/usageChain.ts`). payload 는 `{ allowUnofficial?: boolean }` 뿐 — 어느 계정을 셀지는 디스크가 정한다.
   'claudeAccountsProviderUsage',
   'codexAccountsProviderUsage',
   // ── 오퍼레이터 로컬 설정(스펙 2026-09-20 §3 능력) ─────────────────────────────
@@ -978,6 +978,8 @@ export interface ProviderAccountUsage {
   account: string;
   /** claude 만. 평평한 구조면 `''`. */
   pool?: string;
+  /** 어디서 읽었나. `cli` = 하네스 CLI 의 공식 표면, `unofficial-api` = 공급자 API 직접(토글 뒤). */
+  source?: 'cli' | 'unofficial-api';
   /** 5시간(claude)·세션(codex) 창. */
   session: ProviderUsageWindow | null;
   weekly: ProviderUsageWindow | null;
@@ -986,10 +988,16 @@ export interface ProviderAccountUsage {
   plan?: string;
   fetchedAtMs: number;
   /**
-   * 못 읽었을 때의 **꼬리표**(`no-credentials`·`token-expired`·`unauthorized`·`timeout`·`network`·`http-<n>`).
+   * 못 읽었을 때의 **꼬리표**(`cli-unavailable`·`cli-unparsed`·`cli-error`·`no-credentials`·`token-expired`·
+   * `unauthorized`·`timeout`·`network`·`http-<n>`).
    * 사람이 읽는 문장이 아니다 — 화면이 i18n 으로 고른다. 토큰·URL 은 여기에 싣지 않는다.
    */
   error?: string;
+}
+
+export interface ProviderUsageParams {
+  /** 공식 경로가 실패했을 때 비공식 공급자 API 로 넘어가도 되는가(화면의 토글). 기본 거짓. */
+  allowUnofficial?: boolean;
 }
 
 export interface ProviderUsageSnapshot {
