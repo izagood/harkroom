@@ -395,6 +395,14 @@ export class ApiClient {
    *
    * 응답은 갱신된 정의다 — 목록을 다시 받지 않고도 요청 시각을 바로 그린다.
    */
+  /**
+   * 러너를 갈아 띄운다 — 배정은 두고 오퍼레이터가 SIGTERM 뒤 곧바로 다시 띄운다. 새 MCP·지시문을
+   * 읽히려는 버튼이다. 멈춰 둔 에이전트·배정 없음·오퍼레이터 오프라인은 409.
+   */
+  restartAgent(agentId: string): Promise<{ operatorId: string }> {
+    return this.req('POST', `/accounts/agents/${agentId}/restart`);
+  }
+
   requestAgentStop(agentId: string): Promise<AgentView> {
     return this.req('POST', `/accounts/agents/${agentId}/stop`);
   }

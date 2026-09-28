@@ -863,6 +863,21 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 목록 전체를 다시 받지 않고 응답으로 온 정의만 갈아끼운다 — 방금 누른 사람이 자기
    * 조작의 결과(요청 시각)를 곧바로 봐야 한다.
    */
+  /** [재시작] — 배정은 두고 러너만 갈아 띄운다. 새 MCP config·지시문이 여기서 읽힌다. */
+  const [restartSent, setRestartSent] = useState(false);
+  const restartRunner = async () => {
+    if (!selected) return;
+    setError(null);
+    setRestartSent(false);
+    setBusy(true);
+    try {
+      await getController().restartAgent(selected.id);
+      setRestartSent(true);
+    } catch {
+      setError(t('agents.restart.failed'));
+    } finally { setBusy(false); }
+  };
+
   const requestStop = async () => {
     if (!selected) return;
     setError(null);
@@ -2073,6 +2088,18 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       {t('agents.stop.stop')}
                     </button>
                   )}
+                  {!selected.stopRequestedAt && (
+                    <button
+                      className="rounded border border-border px-2 py-1 text-meta font-medium text-fg-default hover:bg-surface-sunken disabled:opacity-50"
+                      aria-label={t('agents.restart.action')}
+                      data-testid="agent-restart"
+                      disabled={busy}
+                      onClick={() => void restartRunner()}
+                    >
+                      {t('agents.restart.label')}
+                    </button>
+                  )}
+                  {restartSent && <span className="self-center text-meta text-fg-muted" role="status">{t('agents.restart.sent')}</span>}
                 </div>
               </div>
             )}
