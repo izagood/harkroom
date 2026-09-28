@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AutomationRunView, AutomationTrigger, AutomationView } from '@harkroom/shared';
+import type { AutomationGithubTrigger, AutomationRunView, AutomationTrigger, AutomationView } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { Button, Field, Segmented, Select, SettingsPage, TextInput } from './primitives';
@@ -16,18 +16,34 @@ import { describeTrigger, localTimeZone, weekdayName } from '../../lib/automatio
  * 만든 사람만 본다(서버가 `owner_id` 로 거른다). 남의 자동화가 이 목록에 없는 것은 결함이 아니다.
  */
 
-type Freq = AutomationTrigger['freq'];
+type Kind = AutomationTrigger['kind'];
+type Freq = 'daily' | 'weekly' | 'monthly';
+type GhEvent = AutomationGithubTrigger['event'];
+type GhChange = NonNullable<AutomationGithubTrigger['change']>;
 
 interface Draft {
-  name: string; channelId: string; body: string;
+  name: string; channelId: string; body: string; kind: Kind;
   freq: Freq; weekdays: number[]; monthDay: string; time: string; tz: string;
+  repo: string; event: GhEvent; branch: string; paths: string; change: GhChange;
 }
 
 const emptyDraft = (): Draft => ({
-  name: '', channelId: '', body: '', freq: 'weekly', weekdays: [1], monthDay: '1', time: '09:00', tz: localTimeZone(),
+  name: '', channelId: '', body: '', kind: 'schedule',
+  freq: 'weekly', weekdays: [1], monthDay: '1', time: '09:00', tz: localTimeZone(),
+  repo: '', event: 'push', branch: 'main', paths: '', change: 'any',
 });
 
 function draftToTrigger(d: Draft): AutomationTrigger {
+  if (d.kind === 'webhook') return { kind: 'webhook' };
+  if (d.kind === 'github') {
+    const paths = d.paths.split(/[\n,]/).map((x) => x.trim()).filter(Boolean);
+    return {
+      kind: 'github', repo: d.repo.trim(), event: d.event,
+      ...(d.branch.trim() ? { branch: d.branch.trim() } : {}),
+      ...(paths.length ? { paths } : {}),
+      ...(d.change !== 'any' ? { change: d.change } : {}),
+    };
+  }
   if (d.freq === 'daily') return { kind: 'schedule', freq: 'daily', time: d.time, tz: d.tz };
   if (d.freq === 'weekly') return { kind: 'schedule', freq: 'weekly', weekdays: d.weekdays, time: d.time, tz: d.tz };
   return { kind: 'schedule', freq: 'monthly', monthDay: Number(d.monthDay) || 1, time: d.time, tz: d.tz };
@@ -35,8 +51,13 @@ function draftToTrigger(d: Draft): AutomationTrigger {
 
 function triggerToDraft(a: AutomationView): Draft {
   const t = a.trigger;
+  const base = { ...emptyDraft(), name: a.name, channelId: a.channelId, body: a.body, kind: t.kind };
+  if (t.kind === 'webhook') return base;
+  if (t.kind === 'github') {
+    return { ...base, repo: t.repo, event: t.event, branch: t.branch ?? '', paths: (t.paths ?? []).join('\n'), change: t.change ?? 'any' };
+  }
   return {
-    name: a.name, channelId: a.channelId, body: a.body, freq: t.freq,
+    ...base, freq: t.freq,
     weekdays: t.freq === 'weekly' ? t.weekdays : [1],
     monthDay: t.freq === 'monthly' ? String(t.monthDay) : '1',
     time: t.time, tz: t.tz,
@@ -103,8 +124,10 @@ export function AutomationsSettings() {
   };
 
   const canSave = !!draft && draft.name.trim() !== '' && draft.channelId !== '' && draft.body.trim() !== ''
-    && /^([01]\d|2[0-3]):[0-5]\d$/.test(draft.time) && draft.tz.trim() !== ''
-    && (draft.freq !== 'weekly' || draft.weekdays.length > 0);
+    && (draft.kind !== 'schedule' || (/^([01]\d|2[0-3]):[0-5]\d$/.test(draft.time) && draft.tz.trim() !== ''
+      && (draft.freq !== 'weekly' || draft.weekdays.length > 0)))
+    && (draft.kind !== 'github' || /^[\w.-]+\/[\w.-]+$/.test(draft.repo.trim()));
+
 
   const rows = Array.isArray(items) ? items : [];
   const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString(locale || undefined) : '—');
@@ -145,6 +168,52 @@ export function AutomationsSettings() {
             />
           </Field>
           <Segmented
+            label={t('automations.form.kind')}
+            value={draft.kind}
+            onChange={(kind) => setDraft({ ...draft, kind: kind as Kind })}
+            options={[
+              { value: 'schedule', label: t('automations.kind.schedule') },
+              { value: 'github', label: t('automations.kind.github') },
+              { value: 'webhook', label: t('automations.kind.webhook') },
+            ]}
+          />
+          {draft.kind === 'github' && (
+            <>
+              <Field label={t('automations.form.repo')}>
+                <TextInput value={draft.repo} onChange={(repo) => setDraft({ ...draft, repo })} placeholder="izagood/harkroom" />
+              </Field>
+              <Field label={t('automations.form.event')}>
+                <Select value={draft.event} onChange={(event) => setDraft({ ...draft, event: event as GhEvent })} options={[
+                  { value: 'push', label: t('automations.event.push') },
+                  { value: 'pull_request.merged', label: t('automations.event.prMerged') },
+                  { value: 'release.published', label: t('automations.event.release') },
+                  { value: 'workflow_run.completed', label: t('automations.event.workflow') },
+                ]} />
+              </Field>
+              <Field label={t('automations.form.branch')}>
+                <TextInput value={draft.branch} onChange={(branch) => setDraft({ ...draft, branch })} placeholder="main" />
+              </Field>
+              {draft.event === 'push' && (
+                <>
+                  <Field label={t('automations.form.paths')} hint={t('automations.form.pathsHint')}>
+                    <textarea className="w-full rounded border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle"
+                      rows={2} value={draft.paths} placeholder="packages/agent/src/adapters/*.ts"
+                      onChange={(e) => setDraft({ ...draft, paths: e.target.value })} />
+                  </Field>
+                  <Field label={t('automations.form.change')}>
+                    <Select value={draft.change} onChange={(change) => setDraft({ ...draft, change: change as GhChange })} options={[
+                      { value: 'any', label: t('automations.change.any') },
+                      { value: 'added', label: t('automations.change.added') },
+                      { value: 'modified', label: t('automations.change.modified') },
+                      { value: 'removed', label: t('automations.change.removed') },
+                    ]} />
+                  </Field>
+                </>
+              )}
+            </>
+          )}
+          {draft.kind === 'webhook' && <p className="text-meta text-fg-subtle">{t('automations.form.webhookHint')}</p>}
+          {draft.kind === 'schedule' && <Segmented
             label={t('automations.form.freq')}
             value={draft.freq}
             onChange={(freq) => setDraft({ ...draft, freq: freq as Freq })}
@@ -153,8 +222,8 @@ export function AutomationsSettings() {
               { value: 'weekly', label: t('automations.freq.weekly') },
               { value: 'monthly', label: t('automations.freq.monthly') },
             ]}
-          />
-          {draft.freq === 'weekly' && (
+          />}
+          {draft.kind === 'schedule' && draft.freq === 'weekly' && (
             <div className="flex flex-wrap gap-1" role="group" aria-label={t('automations.form.weekdays')}>
               {[1, 2, 3, 4, 5, 6, 0].map((d) => {
                 const on = draft.weekdays.includes(d);
@@ -170,19 +239,19 @@ export function AutomationsSettings() {
               })}
             </div>
           )}
-          {draft.freq === 'monthly' && (
+          {draft.kind === 'schedule' && draft.freq === 'monthly' && (
             <Field label={t('automations.form.monthDay')} hint={t('automations.form.monthDayHint')}>
               <TextInput value={draft.monthDay} onChange={(monthDay) => setDraft({ ...draft, monthDay })} />
             </Field>
           )}
-          <div className="grid grid-cols-2 gap-4">
+          {draft.kind === 'schedule' && <div className="grid grid-cols-2 gap-4">
             <Field label={t('automations.form.time')}>
               <TextInput value={draft.time} onChange={(time) => setDraft({ ...draft, time })} placeholder="09:00" />
             </Field>
             <Field label={t('automations.form.tz')}>
               <TextInput value={draft.tz} onChange={(tz) => setDraft({ ...draft, tz })} placeholder="Asia/Seoul" />
             </Field>
-          </div>
+          </div>}
           <div className="flex gap-2">
             <Button variant="primary" disabled={!canSave || busy} onClick={() => void save()}>
               {editingId ? t('automations.form.update') : t('automations.form.create')}

@@ -38,6 +38,7 @@ import { createRateLimiter, type RateLimitRule } from './rateLimit.js';
 import { createMetrics } from './metrics.js';
 import { createScheduledMessageSweeper } from './services/scheduledMessages.js';
 import { createAutomationSweeper } from './services/automations.js';
+import { createSecretBox } from './services/secretBox.js';
 import { createAgentWakeSweeper } from './services/agentWakes.js';
 import { emitEvent } from './events.js';
 import { createStaleRequestSweeper } from './services/staleRequests.js';
@@ -75,6 +76,10 @@ const LIMITED_ROUTES: { method: string; url: string; rule: keyof typeof DEFAULT_
 
 export interface ServerDeps {
   pool: Pool;
+  /**
+   * 자동화 수신(065)의 비밀 봉투 키. 생략하면 `HARKROOM_SECRET_KEY` env 를 읽고, `null` 이면 끈다(테스트용).
+   */
+  secretKey?: string | null;
   /** avcs 연결 상태 — /healthz 에서 쓴다. */
   getAvcsStatus?: () => { connected: boolean };
   /**
@@ -502,7 +507,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerHandleGroupRoutes(app, deps.pool);
   await registerLinkPreviewRoutes(app, deps.pool);
   await registerSkillRoutes(app, deps.pool);
-  await registerAutomationRoutes(app, deps.pool);
+  // 외부 수신(065)의 GitHub 서명 검증 키. 없으면 GitHub 수신은 켤 수 없다(범용 hook 은 해시라 된다).
+  await registerAutomationRoutes(app, deps.pool, {
+    secretBox: createSecretBox(deps.secretKey !== undefined ? deps.secretKey : process.env.HARKROOM_SECRET_KEY),
+  });
 
   // 오퍼레이터 신원과 채널(스펙 2026-09-20 §3·§4). 릴레이와 같은 이유로 registerWs·registerAuth
   // 뒤다. 허브는 연결이 살아 있는 동안의 사실(능력·러너)만 든다 — 저장하지 않는다.
