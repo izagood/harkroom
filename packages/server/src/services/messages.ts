@@ -889,7 +889,17 @@ export async function postMessage(
       // 뜻이다(러너는 inbox 를 폴한다). 판정은 위에서 이미 끝났고 여기서 다시 하지 않는다.
       // 지칭(`refIds`)도 같은 이유로 여기 오지 않는다 — 이름은 본문에 남고 턴은 뜨지 않는다.
       if (accountId !== input.authorId && !cappedIds.has(accountId) && !deniedIds.has(accountId)) {
-        await insertInbox(client, accountId, message.id, 'mention', notified);
+        /*
+          **팀과 그 팀장을 한 발화에서 함께 불렀으면 팀장 항목에 팀을 싣는다**(`@ops @lead`).
+          이 루프가 팀 팬아웃보다 먼저 돌아 팀장을 평범한 `mention` 으로 넣으면, 팀 부름은
+          `notified` 중복 제거로 그를 건너뛰고 팀장 턴은 명단(팀 블록)을 못 받는다 — #udc 에서
+          `@udc-team @forge` 로 부른 forge 가 "udc-team 답이 없어 이어받는다"며 자기가 그 팀의
+          팀장인 줄 몰랐던 자리다. 누가 팀장 하나로 가는지는 insert 앞에서 이미 정했다(`teamPlans`).
+        */
+        const ledTeam = teamPlans.find((p) => p.viaLead && p.recipients[0] === accountId);
+        await insertInbox(
+          client, accountId, message.id, ledTeam ? 'team_mention' : 'mention', notified, ledTeam?.teamId,
+        );
       }
     }
 
@@ -1028,9 +1038,9 @@ export async function postMessage(
        * 바로 그것 — 아무도 읽지 않는 항목 — 이 된다.
        *
        * `notified` 중복 제거는 `fanOutMention` 이 그대로 한다. 그래서 팀장이 이 발화에서
-       * 이미 이름으로 불렸다면(`@ops @lead`) 팀 부름은 그를 건너뛴다 — 그때 그 턴은
-       * 평범한 멘션으로 도므로 명단을 못 받는다. 한 발화에서 팀과 팀장을 함께 부르는
-       * 것은 팀을 부른 것과 같은 뜻이므로 손해가 없다(둘 다 팀장의 턴 하나다).
+       * 이미 이름으로 불렸다면(`@ops @lead`) 팀 부름은 그를 건너뛴다 — 대신 위의 계정
+       * 멘션 루프가 그 항목을 `team_mention` 으로 넣어 명단을 싣는다. 한 발화에서 팀과
+       * 팀장을 함께 부르는 것은 팀을 부른 것과 같은 뜻이다(둘 다 팀장의 턴 하나다).
        */
       await fanOutMention(
         client, { ...input, messageId: message.id },
