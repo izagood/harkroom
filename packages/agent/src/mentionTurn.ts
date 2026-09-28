@@ -30,6 +30,7 @@ import { findOpencodeSessionId } from './opencodeSessions.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
 import type { MemoryCache } from './memoryCache.js';
+import { planMemory } from './memoryPin.js';
 
 /** runMentionTurn 이 요구하는 harkroom 표면. HarkroomAgentClient 의 부분집합이라 실제 클래스를
  * 그대로 넘겨도 되고, 테스트는 인메모리 fake 를 넘긴다(프로세스 경계·네트워크 없이 검증). */
@@ -708,12 +709,21 @@ export async function runMentionTurn(
     );
   }
 
+  // 세션 단위로 고정한다(`memoryPin.ts`) — 시스템 프롬프트에는 세션 첫 턴의 core 만, 목록과
+  // 바뀐 것은 턴 프롬프트로. 그래야 다른 스레드의 `memory.set` 이 이 세션의 캐시를 깨지 않는다.
+  const memoryPlan = await planMemory({
+    stateDir: deps.stateDir, key, sessionId: rec.sessionId, isFirstTurn, memory,
+  });
+  const turnPrompt = memoryPlan.turnLines.length
+    ? `${memoryPlan.turnLines.join('\n')}\n\n${prompt}`
+    : prompt;
+
   const systemPrompt = buildSystemPrompt({
     handle: deps.me.handle,
     channelName: deps.channelName,
     instructions: def.instructions,
     guide: deps.guide,
-    memory,
+    memory: memoryPlan.system,
     // 턴 예산은 러너만 아는 사실이다. 알려주지 않으면 에이전트가 "지금 기다려도 되는지"를
     // 판단할 근거 없이 물러난다 — 2026-09-07 15:08 의 턴은 30분 중 4분만 쓰고 끝냈다.
     turnBudgetMs: deps.turnTimeoutMs,
@@ -753,8 +763,8 @@ export async function runMentionTurn(
    * 되살린 세션이 앞 턴의 지시문을 들고 있다고 해서 **그 내용이 지금 것이라는 보장은 없다.**
    */
   const promptForHarness = prefixesSystemPrompt(def.harness)
-    ? [systemPrompt, prompt].filter((s) => s.length > 0).join('\n\n')
-    : prompt;
+    ? [systemPrompt, turnPrompt].filter((s) => s.length > 0).join('\n\n')
+    : turnPrompt;
   let stdinFile: string | null = null;
   if (!usesTui) {
     stdinFile = await writePromptFile(deps.stateDir, promptForHarness);
@@ -767,7 +777,7 @@ export async function runMentionTurn(
     isFirstTurn,
     systemPrompt,
     systemPromptFile,
-    promptCtx: prompt,
+    promptCtx: turnPrompt,
     stdinFile,
     model: def.model,
     effort: def.effort,
@@ -1514,6 +1524,9 @@ export async function runMentionTurn(
   // turnsRun===0 을 보고 새 uuid 를 발급하거나(claude 세션이 고아가 된다) 이미 먹인 메시지를
   // 다시 먹인다(리뷰 지적).
   await deps.store.put(key, { ...rec, lastFedSeq: fedSeq, turnsRun: rec.turnsRun + 1 });
+  // 이 턴에 알린 기억을 저장한다 — 성공한 턴만(`memoryPin.ts` 머리). 세션 id 는 **지금** 값을
+  // 넘긴다: codex 는 첫 턴이 끝나야 id 가 생긴다.
+  await memoryPlan.commit(rec.sessionId);
 
   // 관측·통보는 best-effort 다 — 방금 저장한 상태를 좌우하지 않으므로 여기서 던진 예외로
   // 턴 전체를 실패(재시도 대상)로 만들 이유가 없다. 조용히 삼키면 "왜 NO_REPLY_NOTICE 가
