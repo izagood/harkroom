@@ -3,10 +3,14 @@ import type { Pool } from 'pg';
 // 두 한도의 정본은 `@harkroom/shared` 다 — 설정 화면이 같은 값을 그려야 하는데
 // 데스크탑은 이 패키지를 import 할 수 없다. 여기서는 다시 내보내기만 한다.
 import {
-  MAX_CORE_MEMORY_LENGTH, MAX_MEMORY_DESCRIPTION_LENGTH, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH,
+  MAX_CORE_MEMORY_LENGTH, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MAX_MEMORY_DESCRIPTION_LENGTH, MAX_MEMORY_ITEMS_PER_ACCOUNT,
+  MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, type MemoryKind,
 } from '@harkroom/shared';
 
-export { MAX_CORE_MEMORY_LENGTH, MAX_MEMORY_DESCRIPTION_LENGTH, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH };
+export {
+  MAX_CORE_MEMORY_LENGTH, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MAX_MEMORY_DESCRIPTION_LENGTH, MAX_MEMORY_ITEMS_PER_ACCOUNT,
+  MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, type MemoryKind,
+};
 
 /** slug 마다 남기는 이전 판 수(069). 되돌릴 길이면 되고, 역사서가 아니다. */
 export const MAX_MEMORY_REVISIONS_PER_SLUG = 5;
@@ -19,20 +23,22 @@ export interface MemoryEntry {
   createdAt: Date;
   readCount: number;
   lastReadAt: Date | null;
+  kind: MemoryKind;
 }
 
 const ENTRY_COLUMNS = `slug, value, updated_at as "updatedAt", description, created_at as "createdAt",
-  read_count as "readCount", last_read_at as "lastReadAt"`;
+  read_count as "readCount", last_read_at as "lastReadAt", kind`;
 
 /** 목록 한 줄 — 러너가 턴 프롬프트의 `<memory-index>` 에 싣는다(본문은 없다). */
 export interface MemoryIndexEntry {
   slug: string;
   description: string | null;
+  kind: MemoryKind;
 }
 
 export async function listMemoryIndex(pool: Pool, accountId: string): Promise<MemoryIndexEntry[]> {
   const res = await pool.query(
-    `select slug, description from agent_memory where account_id = $1 order by slug`,
+    `select slug, description, kind from agent_memory where account_id = $1 order by slug`,
     [accountId],
   );
   return res.rows as MemoryIndexEntry[];
@@ -155,7 +161,7 @@ async function pruneRevisions(pool: Pool, accountId: string, slug: string): Prom
  * 고치는 호출이 요약을 지우면 안 된다), 문자열이면 바꾸고, 빈 문자열이면 지운다.
  */
 export async function setMemory(
-  pool: Pool, accountId: string, slug: string, value: string | null, description?: string,
+  pool: Pool, accountId: string, slug: string, value: string | null, description?: string, kind?: MemoryKind,
 ): Promise<MemoryResult> {
   if (value === null) {
     // 없는 것을 지워도 성공이다 — 위 MemoryResult 주석의 이유.
@@ -176,13 +182,14 @@ export async function setMemory(
     `with prev as (
        select slug, value, description, updated_at from agent_memory where account_id = $1 and slug = $2),
      ins as (
-       insert into agent_memory (account_id, slug, value, description)
-       select $1, $2, $3, nullif($5, '')
+       insert into agent_memory (account_id, slug, value, description, kind)
+       select $1, $2, $3, nullif($5, ''), coalesce($7, 'topic')
        where (select count(*) from agent_memory where account_id = $1) < $4
           or exists (select 1 from prev)
        on conflict (account_id, slug) do update set
          value = excluded.value,
          description = case when $6 then excluded.description else agent_memory.description end,
+         kind = coalesce($7, agent_memory.kind),
          updated_at = now()
        returning 1),
      rev as (
@@ -190,12 +197,83 @@ export async function setMemory(
        select $1, slug, value, description, updated_at from prev where exists (select 1 from ins)
        returning 1)
      select (select count(*) from ins)::int as n`,
-    [accountId, slug, value, MAX_MEMORY_ITEMS_PER_ACCOUNT, description ?? null, description !== undefined],
+    [accountId, slug, value, MAX_MEMORY_ITEMS_PER_ACCOUNT, description ?? null, description !== undefined, kind ?? null],
   );
   // 행이 안 들어갔다는 것은 where 절이 걸렀다는 뜻이고, 그 조건은 한도뿐이다.
   if (!res.rows[0].n) return 'too_many';
   await pruneRevisions(pool, accountId, slug);
+  await pruneJournal(pool, accountId);
   return 'ok';
+}
+
+/**
+ * journal 을 최근 것 `MAX_JOURNAL_MEMORIES_PER_ACCOUNT` 개로 자른다(070). 넘친 것은 **이전 판으로
+ * 옮기며** 지운다 — 경위 기록은 PR 본문이 갖는 서사라 버려도 되지만, 되돌릴 길은 남긴다.
+ * 쓰기마다 부르지만 넘치지 않으면 지울 행이 없어 값싸다.
+ */
+async function pruneJournal(pool: Pool, accountId: string): Promise<void> {
+  await pool.query(
+    `with d as (
+       delete from agent_memory where account_id = $1 and kind = 'journal' and slug in (
+         select slug from agent_memory where account_id = $1 and kind = 'journal'
+         order by updated_at desc, slug offset $2)
+       returning slug, value, description, updated_at)
+     insert into agent_memory_revision (account_id, slug, value, description, updated_at)
+     select $1, slug, value, description, updated_at from d`,
+    [accountId, MAX_JOURNAL_MEMORIES_PER_ACCOUNT],
+  );
+}
+
+export interface MemorySearchHit {
+  slug: string;
+  description: string | null;
+  kind: MemoryKind;
+  score: number;
+  value?: string;
+}
+
+/** 한국어 조사가 붙은 낱말도 걸리게 끝의 흔한 조사를 떼어 본다(형태소 분석기 없이 싼 근사). */
+const PARTICLES = ['에서', '으로', '에게', '까지', '부터', '처럼', '은', '는', '이', '가', '을', '를', '에', '의', '로', '도', '만', '와', '과'];
+
+export function searchTerms(query: string): string[] {
+  const out = new Set<string>();
+  for (const raw of query.toLowerCase().split(/[\s,.;:!?()[\]{}"'`<>@#|/\\*~=+]+/u)) {
+    let t = raw.trim();
+    if (t.length < 2) continue;
+    if (/[\uAC00-\uD7A3]$/u.test(t)) {
+      const p = PARTICLES.find((x) => t.endsWith(x) && t.length - x.length >= 2);
+      if (p) t = t.slice(0, -p.length);
+    }
+    out.add(t);
+    if (out.size >= 12) break;
+  }
+  return [...out];
+}
+
+/**
+ * 기억 검색(070). 목록에 안 실리는 journal 을 찾는 길이자, 러너가 요청 본문으로 관련 기억을
+ * 골라 주입하는 길이다. 에이전트당 200행이 상한이라 전문 색인 없이 부분 일치 점수로 충분하다
+ * — 이름·요약에 걸리면 3점, 본문에 걸리면 1점. `core` 는 매 턴 실리므로 뺀다.
+ */
+export async function searchMemory(
+  pool: Pool, accountId: string, query: string, opts: { limit: number; includeValue: boolean },
+): Promise<MemorySearchHit[]> {
+  const terms = searchTerms(query);
+  if (!terms.length) return [];
+  const patterns = terms.map((t) => `%${t.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+  const res = await pool.query(
+    `select slug, description, kind, ${opts.includeValue ? 'value,' : ''}
+       (select coalesce(sum(
+          case when lower(m.slug) like p or lower(coalesce(m.description, '')) like p then 3 else 0 end
+          + case when lower(m.value) like p then 1 else 0 end), 0)
+        from unnest($2::text[]) as p)::int as score
+     from agent_memory m
+     where account_id = $1 and slug <> 'core'
+     order by score desc, updated_at desc
+     limit $3`,
+    [accountId, patterns, opts.limit],
+  );
+  return (res.rows as MemorySearchHit[]).filter((r) => r.score > 0);
 }
 
 export interface MemoryRevision {

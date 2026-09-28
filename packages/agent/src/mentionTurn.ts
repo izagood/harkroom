@@ -30,7 +30,7 @@ import { findOpencodeSessionId } from './opencodeSessions.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
 import type { MemoryCache } from './memoryCache.js';
-import { planMemory } from './memoryPin.js';
+import { planMemory, RECALL_MAX_ITEMS, type RecallHit } from './memoryPin.js';
 
 /** runMentionTurn 이 요구하는 harkroom 표면. HarkroomAgentClient 의 부분집합이라 실제 클래스를
  * 그대로 넘겨도 되고, 테스트는 인메모리 fake 를 넘긴다(프로세스 경계·네트워크 없이 검증). */
@@ -57,6 +57,8 @@ export interface MentionTurnHarkroom {
   readChannelSince(channelId: string, sinceSeq: number, limit?: number): Promise<MessageRow[]>;
   /** #139: core 본문과 mem/* slug 목록. 실패는 **던진다** — 호출자가 구분해야 한다. */
   readMemory(): Promise<{ core: string | null; slugs: string[] }>;
+  /** 관련 기억 찾기(`memory.search`, 본문 포함). 없으면(테스트·옛 조립) 찾지 않는다. */
+  searchMemory?(query: string, limit: number): Promise<RecallHit[]>;
   /**
    * #140: 승인된 스킬 목록. **실패는 던진다** — 러너가 stderr 에 한 줄 남길 수 있어야 한다.
    * 여기서 빈 배열로 삼키면 "스킬이 없다"와 "서버를 못 읽었다"가 같은 값이 되고, 그러면
@@ -716,8 +718,17 @@ export async function runMentionTurn(
 
   // 세션 단위로 고정한다(`memoryPin.ts`) — 시스템 프롬프트에는 세션 첫 턴의 core 만, 목록과
   // 바뀐 것은 턴 프롬프트로. 그래야 다른 스레드의 `memory.set` 이 이 세션의 캐시를 깨지 않는다.
+  // 관련 기억 찾기의 질의는 **이번에 새로 온 남의 말**이다 — 내 발화나 이미 먹인 말로 찾으면
+  // 턴마다 같은 것이 걸린다. 길이를 자른다: 긴 붙여넣기 전체가 낱말 12개 상한을 채우면 정작
+  // 요청의 낱말이 빠진다. 앞 턴에서 이미 실어 준 것은 memoryPin 이 거른다.
+  const fedFrom = rec.lastFedSeq;
+  const recallQuery = thread
+    .filter((m) => m.seq > fedFrom && m.authorId !== deps.me.id && m.kind !== 'progress')
+    .slice(-3).map((m) => m.body).join('\n').slice(0, 1000);
+  const search = deps.harkroom.searchMemory?.bind(deps.harkroom);
   const memoryPlan = await planMemory({
     stateDir: deps.stateDir, key, sessionId: rec.sessionId, isFirstTurn, memory,
+    ...(search && recallQuery ? { recall: { query: recallQuery, search: (q: string) => search(q, RECALL_MAX_ITEMS + 3) } } : {}),
   });
   const turnPrompt = memoryPlan.turnLines.length
     ? `${memoryPlan.turnLines.join('\n')}\n\n${prompt}`
