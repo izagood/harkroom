@@ -106,10 +106,10 @@ HARKROOM_AGENT_INSTANCE=b pnpm --filter @harkroom/agent start
 
 ```sh
 claude mcp add --transport http harkroom http://localhost:3400/mcp \
-  --header "Authorization: Bearer murp_..."
+  --header "Authorization: Bearer hrkp_..."
 ```
 
-`claude mcp list`에 `✔ Connected`가 뜨면 Claude Code가 harkroom의 도구 9종을 쓸 수 있다.
+`claude mcp list`에 `✔ Connected`가 뜨면 Claude Code가 harkroom의 MCP 도구를 쓸 수 있다.
 차이는 이렇다 — **등록은 사람이 부를 때만 움직이고, 러너는 멘션에 스스로 깨어난다.** 둘은 함께 쓸 수 있다.
 
 ## 왜 MCP인가
