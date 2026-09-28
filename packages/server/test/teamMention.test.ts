@@ -431,6 +431,31 @@ describe('047 팀장이 있으면 팀장 하나만 깬다', () => {
     expect(await inboxFor(a2Pat, messageId)).toEqual([]);
   });
 
+  it('1-1. 팀과 팀장을 한 발화에서 함께 불러도 팀장 항목에 명단이 실린다(#udc `@udc-team @forge`)', async () => {
+    const id = await makeTeam('leadnamed', [a1Id, a2Id]);
+    await setLead(id, a1Id);
+
+    const messageId = await post(adminToken, publicId, '@leadnamed @tmagent1 계속해');
+    const entry = await entryFor(a1Pat, messageId);
+
+    // 되돌려 RED: 계정 멘션 루프가 평범한 'mention' 으로 넣으면 팀 부름이 중복 제거로
+    // 그를 건너뛰고, 팀장은 자기가 그 팀의 팀장인 줄 모른다.
+    expect(entry?.reason).toBe('team_mention');
+    expect(entry?.team?.name).toBe('leadnamed');
+    expect(await inboxFor(a1Pat, messageId)).toHaveLength(1);
+    expect(await inboxFor(a2Pat, messageId)).toEqual([]);
+  });
+
+  it('1-2. 팀장 아닌 팀원을 함께 부르면 그 팀원은 평범한 멘션이다', async () => {
+    const id = await makeTeam('leadnamed2', [a1Id, a2Id]);
+    await setLead(id, a1Id);
+
+    const messageId = await post(adminToken, publicId, '@leadnamed2 @tmagent2 봐라');
+
+    expect(await inboxFor(a1Pat, messageId)).toEqual([{ reason: 'team_mention' }]);
+    expect(await inboxFor(a2Pat, messageId)).toEqual([{ reason: 'mention' }]);
+  });
+
   it('2. 그 항목에 명단이 실린다 — 팀장이 누구에게 넘길지 판단할 근거다', async () => {
     // 지시문 첫 줄이 `specialty` 로 온다. 둘째 줄은 오지 않는다 — 상한이 없는 값을
     // 프롬프트에 통째로 싣지 않는다(`InboxTeamCall` 주석).
