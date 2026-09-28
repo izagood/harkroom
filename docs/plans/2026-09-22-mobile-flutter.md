@@ -29,7 +29,7 @@
 
 | # | 물음 | 답 |
 |---|---|---|
-| 1 | Flutter 의 자리 | 저장소 루트에 `mobile/` 을 새로 만들고 **모바일 전용 두 번째 클라이언트**. 데스크탑은 Tauri+React 그대로 |
+| 1 | Flutter 의 자리 | **모바일 전용 두 번째 클라이언트**를 새로 만든다. 데스크탑은 Tauri+React 그대로 |
 | 2 | 범위 | "에이전트를 호출해서 쓰는 정도" + **메신저 같은 느낌**. 터미널 없음 |
 | 3 | 푸시 | 다음에 |
 | 4 | 타겟·배포 | **iOS 먼저, TestFlight 까지** |
@@ -44,26 +44,32 @@
 | 8 | 서버 | **HTTPS 다.** ATS 예외를 만들지 않는다 (§4) |
 | 9 | TestFlight | **jaebin 과 함께 진행한다.** 내가 혼자 밀지 않는다 (§9) |
 
-## 3. 왜 `mobile/` 이 `packages/` 밖인가
+## 3. 어디에 두나 — `apps/mobile`
 
-`pnpm-workspace.yaml` 의 `packages: [packages/*]` 가 그 디렉터리를 워크스페이스 멤버로
-빨아들인다. Flutter 패키지에는 `package.json` 이 없으므로 pnpm 이 무시하기는 하지만,
-**같은 이름의 두 규약이 한 디렉터리에 겹치는 것 자체가 함정이다** — `pnpm -r test` 가
-mobile 을 건너뛰는 것이 우연이 되고, 어느 날 누가 `packages/mobile/package.json` 을
-만들면 조용히 워크스페이스에 들어온다.
+**2026-09-28 갱신.** 처음 이 문서는 저장소 루트의 `mobile/` 이라고 적었다. 그 뒤 jaebin 이
+저장소를 `apps/`(돌아가는 것) + `packages/`(그것들이 가져다 쓰는 것)로 나누기로 했고,
+**모바일만 먼저 최종 자리인 `apps/mobile` 에 둔다**(나머지 패키지의 이동은 열린 PR 들이
+머지된 뒤로 미뤘다 — PR #885 에 그때 쓸 레시피가 있다).
 
-루트에 두면 경계가 눈에 보인다: `packages/` 는 pnpm·TypeScript, `mobile/` 은 pub·Dart.
-`pnpm-workspace.yaml` 을 **고치지 않는다** — 고칠 필요가 없다는 것이 이 배치의 근거다.
+모바일만 먼저 가는 이유: **새로 만드는 것이라 옮길 이력이 없다.** 나중에 한 번 더 옮기는
+것보다 처음부터 제자리에 두는 편이 싸다.
 
 ```
 harkroom/
-  packages/        # pnpm 워크스페이스 (shared·server·desktop·agent·daemon)
-  mobile/          # Flutter 앱 — pub 이 관리한다. pnpm 이 모른다
-    lib/
-    ios/
-    test/
-    pubspec.yaml
+  packages/        # pnpm 워크스페이스 (shared·server·desktop·agent·operator)
+  apps/
+    mobile/        # Flutter 앱 — pub 이 관리한다. pnpm 이 모른다
+      lib/  ios/  test/  pubspec.yaml
 ```
+
+`pnpm-workspace.yaml` 의 `packages: [packages/*]` 는 **고치지 않는다** — `apps/mobile` 이
+그 글롭 밖이라 pnpm 이 아예 모른다. 그것이 의도다.
+
+**대신 그 때문에 생기는 구멍이 하나 있다.** pnpm 이 모른다는 것은 `pnpm -r test` 도
+`pnpm -r typecheck` 도 이 디렉터리를 **안 본다**는 뜻이다. 저장소 전역 회귀선
+(`packages/server/test/repoHygiene.test.ts`)이 `packages/` 만 훑고 있었으므로,
+그대로 두면 `apps/` 의 위반은 **조용히 초록으로 지나간다.** `CODE_ROOTS` 상수로 두 곳을
+함께 훑게 고쳤다(#855).
 
 ## 4. 붙는 표면 — 코드로 확인한 것
 
@@ -131,7 +137,7 @@ Flutter 스켈레톤, 연결·로그인, 커뮤니티 보관, 채널 목록, 메
   지금은 `mentionScanText`·`MENTION_PATTERN`·`splitCode` 가 **`@harkroom/shared` 에
   한 벌로 있고** 서버와 데스크탑이 그 하나를 함께 읽는다. Dart 는 **세 번째 사본**이 된다 —
   공유가 막아 주던 것이 여기서 처음 뚫린다. 그래서 이 함수만큼은 시험을 사본이 아니라
-  **표**로 쓴다: 같은 입력/기대 쌍을 `mobile/test/` 와 TS 쪽이 같은 JSON 에서 읽는다(§7).
+  **표**로 쓴다: 같은 입력/기대 쌍을 `apps/mobile/test/` 와 TS 쪽이 같은 JSON 에서 읽는다(§7).
 - 첨부는 보기만 — 이미지 미리보기 + 내려받기. 올리기는 P2.
 - **끝났다**: 폰에서 `@agent 이거 해 줘` 를 치면 그 머신의 에이전트가 깨어나고, 답이 폰에
   뜬다. 에이전트가 되물으면 **폰에서 골라서 그 턴을 이어 보낸다.**
@@ -193,7 +199,7 @@ Flutter 스켈레톤, 연결·로그인, 커뮤니티 보관, 채널 목록, 메
    Dart 에서 모르는 `type` 은 **무시하고 로그만** 남긴다(끊지 않는다). `meta` 는
    `Map<String, dynamic>` 으로 들고 있다가 아는 `kind` 만 읽는다 — 데스크탑이 정한
    *"모르는 `meta` 는 평문으로 흘린다"* 와 같은 규약이다.
-2. **골든 테스트.** `mobile/test/golden/` 에 실제 서버 응답 JSON 을 박아 두고 파서를
+2. **골든 테스트.** `apps/mobile/test/golden/` 에 실제 서버 응답 JSON 을 박아 두고 파서를
    건다. 서버가 필드를 바꾸면 이 시험이 먼저 빨개진다 — 사람이 앱에서 발견하기 전에.
 
 갈라지기 시작하면(= 골든이 자주 깨지면) 그때 서버에 OpenAPI 를 붙이고 생성으로 간다.
@@ -208,7 +214,7 @@ P0 에서 그것을 하면 모바일이 한 화면도 못 띄운 채 서버 PR �
 전부 다시 훑는 일**이다. 데스크탑이 그 비용을 이미 치렀고(`i18n/en.ts` 3,738줄), 같은 값을
 두 번 낼 이유가 없다.
 
-- `mobile/lib/i18n/` 에 `en.dart` · `ko.dart` + 조회 하나. **데스크탑의 배치를 그대로 베낀다**
+- `apps/mobile/lib/i18n/` 에 `en.dart` · `ko.dart` + 조회 하나. **데스크탑의 배치를 그대로 베낀다**
   (`src/i18n/{en,ko}.ts` + `useT()`) — 두 클라이언트의 문구 구조가 같으면 옮겨 적기가
   번역이 아니라 복사가 된다.
 - **`en` 이 원본이다.** 데스크탑의 규약이고(주석은 한국어, UI 문자열은 영어) 여기서 뒤집으면
@@ -242,13 +248,23 @@ P0 에서 그것을 하면 모바일이 한 화면도 못 띄운 채 서버 PR �
 ```yaml
 on:
   pull_request:
-    paths: ['mobile/**', '.github/workflows/mobile.yml']
+    paths: ['apps/mobile/**', '.github/workflows/mobile.yml']
 ```
 
 - `flutter analyze` + `flutter test` 는 ubuntu 에서 돈다(빠르고 싸다).
 - `flutter build ios --no-codesign` 은 macOS 러너다. macOS 는 과금 배수가 붙으므로
   `paths` 필터가 있는 이 워크플로 안에만 둔다.
 - 액션은 **40자 SHA 로 핀한다** — 이 저장소의 규약이다(`ci.yml` 상단 주석).
+- Flutter 는 채널이 아니라 **정확한 버전으로 핀한다**(`3.47.5`). 채널만 적으면 로컬에서
+  초록인 것이 어느 날 CI 에서 빨개지고, 그때 SDK 를 의심하는 사람은 아무도 없다.
+
+**`release.yml` 에서는 반대로 모바일을 빼야 한다**(#855 에서 발견). 그 워크플로는
+`paths-ignore` 에 없는 변경이면 무엇이든 데스크탑 릴리스를 돌린다 — 빼지 않으면 **Dart 한
+줄만 고쳐도** 버전이 오르고 6~12분짜리 릴리스가 도는데, 그 번들에 `apps/mobile` 은 한
+바이트도 실리지 않는다. 모바일의 배포 경로는 따로 생긴다(§9 TestFlight).
+
+`.dockerignore` 에도 `apps/mobile` 을 넣는다 — iOS 프로젝트 파일이 서버 이미지 빌드
+컨텍스트에 실릴 이유가 없다.
 
 ### TestFlight — **jaebin 과 함께 한다** (결정 9)
 
@@ -265,7 +281,7 @@ on:
 **P0~P2 는 이 단계 없이 전부 진행된다** — 시뮬레이터와 `flutter build ios --no-codesign`
 으로 돈다. 그러므로 이것이 지금 아무것도 막지 않는다. 실기기에 처음 얹을 때 함께 연다.
 
-**저장소는 공개다.** 인증서·키·프로비저닝 파일은 절대 커밋하지 않는다. `mobile/.gitignore`
+**저장소는 공개다.** 인증서·키·프로비저닝 파일은 절대 커밋하지 않는다. `apps/mobile/.gitignore`
 에 `ios/Runner.xcworkspace/xcuserdata/`, `*.mobileprovision`, `*.p8`, `*.p12` 를 넣는다.
 
 ## 10. 다음 걸음과, 아직 안 정한 것
@@ -281,7 +297,7 @@ on:
 
 ### 착수 순서
 
-1. Flutter SDK 설치 + `mobile/` 스켈레톤 + `.gitignore` + `mobile.yml` CI. **이것이 첫 PR.**
+1. Flutter SDK 설치 + `apps/mobile` 스켈레톤 + `.gitignore` + `mobile.yml` CI. **이것이 첫 PR.**
 2. P0 — 연결·로그인·채널 목록·메시지 읽기·WS.
 3. P1 — 메신저 + `ask`.
 4. P2 — 카드.
