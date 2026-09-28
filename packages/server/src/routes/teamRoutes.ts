@@ -1,10 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { HANDLE_PATTERN } from '@harkroom/shared';
+import { HANDLE_PATTERN, INVOKE_SCOPES } from '@harkroom/shared';
 import {
   listTeams, getTeam, getTeamByName, createTeam, updateTeamName, deleteTeam,
   listTeamMembers, addAgentToTeam, removeAgentFromTeam, addTeamToChannel, setTeamLead,
+  setTeamScope, setTeamInvoker, listTeamInvokers,
 } from '../services/teams.js';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
@@ -106,8 +107,63 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
     if (!team) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such team' } });
     }
-    return { team, members: await listTeamMembers(pool, id) };
+    return { team, members: await listTeamMembers(pool, id), invokers: await listTeamInvokers(pool, id) };
   });
+
+  /**
+   * 팀의 호출 범위(068) — 에이전트의 `invokeScope` 와 같은 네 값. 팀 구성을 정하는 것과 같은
+   * 게이트(`team.manage`)다: 누가 부를 수 있나는 그 구성의 일부다.
+   *
+   * `PATCH /teams/:id` 에 얹지 않는 이유는 팀장 라우트와 같다 — 그 라우트는 이름 하나만 다룬다.
+   */
+  app.put('/teams/:id/scope', { preHandler: app.requireCap('team.manage', { kind: 'team', param: 'id' }) }, async (req, reply) => {
+    const { id } = teamParam.parse(req.params);
+    const body = z.object({
+      invokeScope: z.enum(INVOKE_SCOPES),
+      ownerAccountId: z.string().uuid().nullable().optional(),
+    }).parse(req.body);
+    // owner 인데 가리킬 사람이 없으면 **아무도** 못 부르는 팀이 된다 — 조용한 침묵을 만드는
+    // 설정은 받지 않는다.
+    const before = await getTeam(pool, id);
+    if (!before) return reply.code(404).send({ error: { code: 'not_found', message: 'no such team' } });
+    const owner = body.ownerAccountId !== undefined ? body.ownerAccountId : before.ownerAccountId;
+    if (body.invokeScope === 'owner' && owner === null) {
+      return reply.code(400).send({ error: { code: 'owner_required', message: 'owner 범위에는 소유자가 있어야 한다' } });
+    }
+    const team = await setTeamScope(pool, id, body);
+    if (!team) return reply.code(404).send({ error: { code: 'not_found', message: 'no such team' } });
+    await recordAudit(pool, {
+      action: 'team.scope.set', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { invokeScope: team.invokeScope, ownerAccountId: team.ownerAccountId },
+    }, req);
+    emitEvent({ type: 'agent_team.changed', teamId: id, audience: 'all' });
+    return team;
+  });
+
+  const invokerParams = z.object({ id: z.string().uuid(), accountId: z.string().uuid() });
+  for (const [method, present] of [['PUT', true], ['DELETE', false]] as const) {
+    app.route({
+      method, url: '/teams/:id/invokers/:accountId',
+      preHandler: app.requireCap('team.manage', { kind: 'team', param: 'id' }),
+      handler: async (req, reply) => {
+        const { id, accountId } = invokerParams.parse(req.params);
+        if (!(await getTeam(pool, id))) {
+          return reply.code(404).send({ error: { code: 'not_found', message: 'no such team' } });
+        }
+        const account = await pool.query(`select kind from account where id = $1`, [accountId]);
+        if (!account.rowCount) {
+          return reply.code(404).send({ error: { code: 'not_found', message: 'no such account' } });
+        }
+        await setTeamInvoker(pool, id, accountId, present);
+        await recordAudit(pool, {
+          action: present ? 'team.invoker.added' : 'team.invoker.removed',
+          actorId: req.account!.id, actorHandle: req.account!.handle, target: id, detail: { accountId },
+        }, req);
+        emitEvent({ type: 'agent_team.changed', teamId: id, audience: 'all' });
+        return { invokers: await listTeamInvokers(pool, id) };
+      },
+    });
+  }
 
   /**
    * 팀장을 지정한다(`accountId: null` 이면 해제).
@@ -168,9 +224,7 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such team' } });
     }
 
-    const account = await pool.query(
-      `select a.kind, a.handle, coalesce(c.invoke_scope, 'community') as invoke_scope
-         from account a left join agent_config c on c.account_id = a.id where a.id = $1`, [accountId]);
+    const account = await pool.query(`select a.kind, a.handle from account a where a.id = $1`, [accountId]);
     if (!account.rowCount) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such account' } });
     }
@@ -179,12 +233,10 @@ export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Prom
     if (account.rows[0].kind !== 'agent') {
       return reply.code(400).send({ error: { code: 'not_an_agent', message: 'only agents can join a team' } });
     }
-    // 스펙 2026-09-20 §6: 팀 부름은 "소유자가 아닌 무언가가 부르는 것"이라 community 스코프만
-    // 팀원이 된다. 넣는 시점에 거절한다 — 런타임에 조용히 건너뛰면 팀장이 "다섯 중 넷만
-    // 응답"을 디버깅한다.
-    if (account.rows[0].invoke_scope !== 'community') {
-      return reply.code(400).send({ error: { code: 'invoke_scope_restricted', message: '호출 범위가 community 가 아닌 에이전트는 팀원이 될 수 없다' } });
-    }
+    // 팀원의 호출 범위는 **넣는 시점에 거르지 않는다**(068). 예전에는 community 만 받았지만
+    // 그 검사는 넣은 뒤 좁혀지는 경우를 못 막았고, 그 틈에서 팀 부름이 조용히 사라졌다.
+    // 이제 팀 부름은 팀원 각자의 범위를 호출자 기준으로 다시 보고, 막힌 팀원은
+    // `meta.mentionDenied` 로 그 메시지에 남는다 — "다섯 중 넷만 응답"의 사유가 화면에 있다.
 
     await addAgentToTeam(pool, id, accountId);
     await recordAudit(pool, {

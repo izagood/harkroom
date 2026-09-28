@@ -11,10 +11,15 @@
  * | list | `agent_invoker` 에 호출자가 있다 |
  * | owner | 호출자 = `owner_account_id` |
  *
- * **팀·집합·auto-mention·@channel 을 거쳐 온 부름은 `community` 만 통과한다.** 그것들은 전부
- * "소유자가 아닌 무언가가 부르는 것"이고, 소유자 전용 에이전트를 팀에 넣는 것은 넣는 시점에
- * 400 으로 막힌다(`teamRoutes`·`channelAutoMentions`). 런타임의 이 거름은 그 전에 들어간 옛
- * 데이터를 위한 방어다.
+ * **집합·auto-mention·@channel 을 거쳐 온 부름은 `community` 만 통과한다.** 그것들은 전부
+ * "소유자가 아닌 무언가가 부르는 것"이다(auto-mention 은 넣는 시점에 400 으로도 막힌다).
+ *
+ * **팀은 다르다(068).** 팀 멘션은 사람이 이름을 붙여 둔 명단을 **그 사람이** 부르는 것이라
+ * 호출자는 작성자 그대로다. 그래서 팀은 에이전트와 같은 규칙을 두 겹으로 탄다:
+ * ① 팀 자체의 범위(`mayInvokeTeam`) — "이 사람이 이 팀을 부를 수 있나",
+ * ② 팀원 각자의 범위(`mayInvoke(…, via: 'team')`) — 직접 멘션과 같은 판정.
+ * ②가 있어서 팀이 팀원의 범위를 넓히지 못한다. 예전 규칙(팀이면 community 만)은 팀원이 나중에
+ * owner 로 좁혀지는 순간 그 팀의 부름을 소유자에게서까지 조용히 빼앗았다.
  */
 import type { PoolClient } from 'pg';
 import type { InvokeScope } from '@harkroom/shared';
@@ -44,13 +49,47 @@ export async function mayInvoke(
   ctx: { callerId: string; channelId: string; via: InvokeVia },
 ): Promise<boolean> {
   if (facts.invokeScope === 'community') return true;
-  if (ctx.via !== 'mention') return false;
-  switch (facts.invokeScope) {
+  // 팀도 호출자가 작성자 그대로다 — 직접 멘션과 같은 판정을 탄다(위 머리 주석 ②).
+  if (ctx.via !== 'mention' && ctx.via !== 'team') return false;
+  return passesScope(client, facts.invokeScope, facts.ownerAccountId, ctx,
+    `select 1 from agent_invoker where agent_id = $1 and account_id = $2`, facts.agentId);
+}
+
+export interface TeamInvokeFacts {
+  teamId: string;
+  invokeScope: InvokeScope;
+  ownerAccountId: string | null;
+}
+
+/**
+ * "이 사람이 이 **팀**을 부를 수 있나"(068, 머리 주석 ①). 표는 에이전트와 같다 — 같은 네 값을
+ * 두 곳에서 다르게 읽으면 한쪽만 고치는 날 어긋나므로 판정 몸통(`passesScope`)을 함께 쓴다.
+ */
+export async function mayInvokeTeam(
+  client: PoolClient,
+  facts: TeamInvokeFacts,
+  ctx: { callerId: string; channelId: string },
+): Promise<boolean> {
+  if (facts.invokeScope === 'community') return true;
+  return passesScope(client, facts.invokeScope, facts.ownerAccountId, ctx,
+    `select 1 from agent_team_invoker where team_id = $1 and account_id = $2`, facts.teamId);
+}
+
+async function passesScope(
+  client: PoolClient,
+  scope: InvokeScope,
+  ownerAccountId: string | null,
+  ctx: { callerId: string; channelId: string },
+  listSql: string,
+  subjectId: string,
+): Promise<boolean> {
+  switch (scope) {
+    case 'community':
+      return true;
     case 'owner':
-      return facts.ownerAccountId !== null && facts.ownerAccountId === ctx.callerId;
+      return ownerAccountId !== null && ownerAccountId === ctx.callerId;
     case 'list': {
-      const res = await client.query(
-        `select 1 from agent_invoker where agent_id = $1 and account_id = $2`, [facts.agentId, ctx.callerId]);
+      const res = await client.query(listSql, [subjectId, ctx.callerId]);
       return Boolean(res.rowCount);
     }
     case 'channel': {

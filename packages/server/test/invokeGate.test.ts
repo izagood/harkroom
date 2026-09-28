@@ -1,6 +1,6 @@
 // 호출 게이트(스펙 2026-09-20 §6). 게이트 자리는 fan-out 한 곳이고, 막힌 부름은 조용히 사라지지
 // 않고 `meta.mentionDenied` 로 그 메시지에 남는다 — 부른 사람이 "왜 아무도 안 왔나"를 묻지
-// 않게. 팀·auto-mention 은 넣는 시점에 400 이다.
+// 않게. auto-mention 은 넣는 시점에 400 이다. 팀은 자기 범위 + 팀원 범위 두 겹이다(068).
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { startTestDb } from './helpers/testDb.js';
@@ -89,16 +89,7 @@ describe('community 스코프는 그대로다', () => {
   });
 });
 
-describe('팀·auto-mention 은 넣는 시점에 거절한다', () => {
-  it('팀원 추가 — invoke_scope != community 면 400 invoke_scope_restricted', async () => {
-    const a = await agentWith('teamless', owner.accountId, 'owner');
-    const team = await app.inject({ method: 'POST', url: '/teams', headers: auth(adminToken), payload: { name: 'gate-team', displayName: 'Gate' } });
-    expect(team.statusCode).toBe(201);
-    const res = await app.inject({ method: 'PUT', url: `/teams/${team.json().id}/members/${a.accountId}`, headers: auth(adminToken) });
-    expect(res.statusCode).toBe(400);
-    expect(res.json().error.code).toBe('invoke_scope_restricted');
-  });
-
+describe('auto-mention 은 넣는 시점에 거절한다', () => {
   it('auto-mention — invoke_scope != community 면 400 invoke_scope_restricted', async () => {
     const a = await agentWith('noauto', owner.accountId, 'list');
     const res = await app.inject({ method: 'PUT', url: `/channels/${channelId}/auto-mentions/${a.accountId}`, headers: auth(adminToken), payload: { mode: 'always' } });
@@ -114,5 +105,89 @@ describe('admin 도 스코프 밖이면 부르지 못한다', () => {
     expect(await inboxHas(a.pat, res.id)).toBe(false);
     expect(res.meta.mentionDenied).toEqual(['strict']);
     expect(adminId).toBeTruthy();
+  });
+});
+
+describe('팀 — 팀도 에이전트와 같은 범위 규칙을 탄다(068)', () => {
+  const put = (url: string, payload?: unknown) => app.inject({ method: 'PUT', url, headers: auth(adminToken), ...(payload ? { payload } : {}) });
+  async function team(name: string, members: string[], lead?: string) {
+    const res = await app.inject({ method: 'POST', url: '/teams', headers: auth(adminToken), payload: { name } });
+    expect(res.statusCode).toBe(201);
+    const id = res.json().id as string;
+    for (const m of members) expect((await put(`/teams/${id}/members/${m}`)).statusCode).toBe(200);
+    if (lead) expect((await put(`/teams/${id}/lead`, { accountId: lead })).statusCode).toBe(200);
+    return id;
+  }
+
+  it('owner 스코프 팀원도 팀에 넣을 수 있다 — 넣는 시점에 거르지 않는다', async () => {
+    const a = await agentWith('joinable', owner.accountId, 'owner');
+    await team('join-team', [a.accountId]);
+  });
+
+  it('회귀(#udc): owner 스코프 팀장을 소유자가 팀으로 부르면 깬다 — team_mention 으로', async () => {
+    const lead = await agentWith('udclead', owner.accountId, 'owner');
+    await team('udc-like', [lead.accountId], lead.accountId);
+    const ok = await post(owner.token, '@udc-like 계속해');
+    const inbox = (await app.inject({ method: 'GET', url: '/inbox', headers: auth(lead.pat) })).json().entries as { messageId: string; reason: string }[];
+    expect(inbox.find((e) => e.messageId === ok.id)?.reason).toBe('team_mention');
+    expect(ok.meta.mentionDenied).toBeUndefined();
+  });
+
+  it('남이 팀으로 부르면 owner 팀원은 안 깨고 mentionDenied 에 남는다 — 팀이 팀원을 넓히지 못한다', async () => {
+    const privy = await agentWith('tprivy', owner.accountId, 'owner');
+    const open = await agentWith('topen', owner.accountId, 'community');
+    await team('mixed-team', [privy.accountId, open.accountId]);
+    const res = await post(stranger.token, '@mixed-team 봐 줘');
+    expect(await inboxHas(privy.pat, res.id)).toBe(false);
+    expect(await inboxHas(open.pat, res.id)).toBe(true);
+    expect(res.meta.mentionDenied).toEqual(['tprivy']);
+  });
+
+  it('막힌 팀장은 적고, 부를 수 있는 팀원 전원으로 떨어진다', async () => {
+    const lead = await agentWith('blead', owner.accountId, 'owner');
+    const other = await agentWith('bother', owner.accountId, 'community');
+    await team('fallback-team', [lead.accountId, other.accountId], lead.accountId);
+    const res = await post(stranger.token, '@fallback-team 봐 줘');
+    expect(await inboxHas(lead.pat, res.id)).toBe(false);
+    expect(await inboxHas(other.pat, res.id)).toBe(true);
+    expect(res.meta.mentionDenied).toEqual(['blead']);
+  });
+
+  it('팀 자체의 owner 범위 — 남이 부르면 팀 이름이 mentionDenied 에 남고 아무도 안 깬다', async () => {
+    const a = await agentWith('tmember', owner.accountId, 'community');
+    const id = await team('owned-team', [a.accountId]);
+    const set = await put(`/teams/${id}/scope`, { invokeScope: 'owner', ownerAccountId: owner.accountId });
+    expect(set.statusCode).toBe(200);
+    expect(set.json()).toMatchObject({ invokeScope: 'owner', ownerAccountId: owner.accountId });
+    const denied = await post(stranger.token, '@owned-team 봐 줘');
+    expect(await inboxHas(a.pat, denied.id)).toBe(false);
+    expect(denied.meta.mentionDenied).toEqual(['owned-team']);
+    const ok = await post(owner.token, '@owned-team 봐 줘');
+    expect(await inboxHas(a.pat, ok.id)).toBe(true);
+  });
+
+  it('팀 list 범위 — 명단에 넣으면 부를 수 있다', async () => {
+    const a = await agentWith('lmember', owner.accountId, 'community');
+    const id = await team('listed-team', [a.accountId]);
+    expect((await put(`/teams/${id}/scope`, { invokeScope: 'list' })).statusCode).toBe(200);
+    expect((await post(stranger.token, '@listed-team 봐 줘')).meta.mentionDenied).toEqual(['listed-team']);
+    const add = await put(`/teams/${id}/invokers/${stranger.accountId}`);
+    expect(add.json().invokers).toEqual([stranger.accountId]);
+    const ok = await post(stranger.token, '@listed-team 봐 줘');
+    expect(await inboxHas(a.pat, ok.id)).toBe(true);
+  });
+
+  it('새 팀은 community 이고 소유자는 만든 사람이다', async () => {
+    const id = await team('fresh-team', []);
+    const got = (await app.inject({ method: 'GET', url: `/teams/${id}`, headers: auth(adminToken) })).json();
+    expect(got.team).toMatchObject({ invokeScope: 'community', ownerAccountId: adminId });
+    expect(got.invokers).toEqual([]);
+  });
+
+  it('owner 범위에 소유자가 없으면 400 owner_required', async () => {
+    const id = await team('ownerless-team', []);
+    const res = await put(`/teams/${id}/scope`, { invokeScope: 'owner', ownerAccountId: null });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('owner_required');
   });
 });
