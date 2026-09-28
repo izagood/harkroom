@@ -49,11 +49,50 @@ const config = loadConfig();
 //
 // **접속 실패로 러너를 죽이지 않는다.** 붙지 못한 동안의 호출은 status 0 으로 거절되고, poll
 // 루프가 백오프로 다시 부른다 — 오퍼레이터가 재시작 중인 몇 초가 정확히 그 경우다.
+/**
+ * 이관 보류 — 앞 세대 러너가 아직 들고 있는 inbox entry(`HARKROOM_HANDOVER_HOLD`).
+ *
+ * 오퍼레이터가 앞 러너의 `runner.pollStopped` 통지를 받아 **spawn 때 심어 준다.** 그 항목들은
+ * 앞 러너에서 턴이 이미 돌고 있으므로 여기서 또 띄우면 같은 멘션에 두 번 답한다.
+ *
+ * **푸는 것은 오퍼레이터다.** 앞 러너가 완전히 물러나면 `handover.released` 가 와서 그 자리에서
+ * 집합을 비운다 — 앞 러너가 1초 만에 끝나면 보류도 1초다. 앞 러너의 생사를 아는 쪽이 거기뿐이라
+ * 이 판단을 러너에 두지 않는다.
+ *
+ * 아래 시한은 **백스톱**이다: 오퍼레이터가 죽어 통지가 영영 안 오는 경우에만 쓰인다. 영원히
+ * 건너뛰면 앞 러너가 끝내지 못한 항목에 **아무도 답하지 않는다** — 늦어질지언정 잃지는 않게
+ * 한다. 턴 예산과 같은 30분이다: 그보다 짧으면 정상적으로 도는 앞 턴을 중복으로 집는다.
+ */
+const HANDOVER_HOLD_MS = 30 * 60_000;
+const handoverHeld = new Set<number>(
+  (process.env.HARKROOM_HANDOVER_HOLD ?? '')
+    .split(',').map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0),
+);
+const handoverHoldUntilMs = Date.now() + HANDOVER_HOLD_MS;
+if (handoverHeld.size) {
+  console.log(`[main] 이관 보류: 앞 러너가 들고 있는 entry ${[...handoverHeld].join(',')} — 최대 ${HANDOVER_HOLD_MS}ms 동안 건너뛴다`);
+}
+const heldEntryIds = (): ReadonlySet<number> => {
+  if (handoverHeld.size && Date.now() > handoverHoldUntilMs) {
+    console.log('[main] 이관 보류 백스톱 시한이 지났다 — 오퍼레이터의 해제가 안 왔다. 남은 항목을 평범한 멘션으로 다시 본다');
+    handoverHeld.clear();
+  }
+  return handoverHeld;
+};
+/** 오퍼레이터가 "앞 러너가 물러났다"고 알려 오면 그 자리에서 푼다 — 정상 경로다. */
+const releaseHandoverHold = (): void => {
+  if (!handoverHeld.size) return;
+  console.log('[main] 오퍼레이터가 이관 보류를 풀었다 — 앞 러너가 물러났다');
+  handoverHeld.clear();
+};
+
 const relay = createRelayClient({
   link: config.operatorLink,
   // #337: 서버의 interactive.open 은 매니저가 처리한다. 매니저가 relay 를 필요로 해서
   // (세션 열기) 상호 참조가 생기므로 늦게 배선한다 — 매니저가 아직 없으면 릴레이가
   // 스스로 interactive.error 로 답한다(relay.ts 의 훅 부재 처리).
+  // 앞 세대가 물러났다는 오퍼레이터의 통지. 이관 보류를 **그 자리에서** 푼다.
+  onHandoverReleased: releaseHandoverHold,
   onInteractiveOpen: (req) => {
     if (!interactive) return Promise.reject(new Error('러너가 아직 기동 중이다 — 잠시 뒤 다시 열어라'));
     return interactive.open(req);
@@ -371,7 +410,7 @@ interactive = createInteractiveManager({
 // 스케줄러가 그것을 직접 읽으면 테스트가 그 환경을 전부 세워야 한다. 스케줄러는 "무엇을
 // 언제 띄우는가"만 알고, "무엇으로 띄우는가"는 이 함수가 넘긴다.
 const scheduler = createMentionScheduler({
-  harkroom, registry, queue: mentionQueue, accountLane,
+  harkroom, registry, queue: mentionQueue, accountLane, heldEntryIds,
   runMentionTurn,
   // 계정별로 갈리는 두 필드(`claudeAccount`·`claudeConfigDir`)만 계정 축이 채운다 —
   // 나머지는 계정과 무관하므로 매번 같은 값이다.
@@ -499,6 +538,12 @@ while (running) {
 }
 // #129 의 계약 "진행 중인 턴을 마쳤으므로 물러난다" 를 병렬에서도 지킨다 — 루프를 벗어난
 // 지금 admit 은 멈췄고, 남은 것은 이미 도는 턴들뿐이다.
+//
+// **여기가 "인박스를 놓았다"의 정확한 순간이다.** 시그널 핸들러에서 알리면 거짓말이 된다 —
+// 그때는 배치 하나가 아직 돌고 있어서 새 항목을 더 집을 수 있다. 이 줄에 와서야 admit 이
+// 끝났고, 그래서 오퍼레이터가 **프로세스가 죽기를 기다리지 않고** 교체 러너를 띄워도 된다.
+// 아직 도는 턴의 entry 는 함께 넘겨 교체 러너가 그것만 건너뛰게 한다.
+relay.notifyPollStopped(scheduler.holdingEntries());
 await scheduler.drain();
 relay.stop();
 console.log('종료');

@@ -29,7 +29,7 @@ import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import type { AgentHarness, AgentSessionView, RelayRunnerFrame, RelayServerFrame, RunnerCap } from '@harkroom/shared';
 import { NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
 import {
-  RUNNER_LINK_PROTOCOL_VERSION, isRunnerLinkResponse,
+  RUNNER_LINK_PROTOCOL_VERSION, isOperatorToRunnerNotice, isRunnerLinkResponse,
   type RunnerHello, type RunnerLinkRequest, type RunnerLinkResponse,
 } from '@harkroom/shared/runnerLink';
 import { RingBuffer, type PtyWriter } from './pty.js';
@@ -196,6 +196,11 @@ export interface RelayClientOptions {
    * 버리면 서버가 10초 타임아웃까지 기다린 뒤 원인 없는 504 를 사람에게 준다.
    */
   onInteractiveOpen?: InteractiveOpenHandler;
+  /**
+   * 오퍼레이터가 **이관 보류를 풀라**고 알려 왔다(`handover.released`). 앞 세대 러너가
+   * 완전히 물러났다는 뜻이다 — 그가 들고 있던 entry 를 이제 내가 집어도 된다.
+   */
+  onHandoverReleased?: () => void;
   /** 운영 로그 한 줄. 기본은 러너 로그(stdout). */
   log?: (line: string) => void;
 }
@@ -218,6 +223,17 @@ export interface RelayClient {
   request(req: LinkHttpRequest): Promise<Extract<RunnerLinkResponse, { type: 'http.response' }>>;
   /** MCP SDK `Client` 가 쓰는 트랜스포트 — 메시지마다 `mcp.request` 하나다. */
   mcpTransport(): Transport;
+  /**
+   * **폴 루프를 빠져나왔다**고 오퍼레이터에 알린다. 이 뒤로 이 러너는 인박스를 안 본다.
+   *
+   * `holding` 은 아직 도는 턴의 inbox entry id 들이다 — 교체 러너가 그동안 그 항목을
+   * 건너뛰게 하는 근거다(`shared/runnerLink.ts` 의 `RunnerLinkNotice`).
+   *
+   * **끈끈하다**: 한 번 부르면 이후 재접속마다 다시 보낸다. 지금 링크가 끊겨 있어도
+   * (오퍼레이터 교체 중이 바로 그 경우다) 붙는 순간 전달된다 — 이 통지가 유실되면
+   * 오퍼레이터는 옛 동작으로 돌아가 프로세스가 죽을 때까지 교체를 미룬다.
+   */
+  notifyPollStopped(holding: readonly number[]): void;
   /**
    * 링크가 붙을 때까지 기다린다(기동 경로용). 이미 붙어 있으면 즉시, `timeoutMs` 안에 못 붙으면
    * false — 던지지 않는다: 기동은 계속되고, 그 뒤의 호출이 status 0 으로 거절되며 poll 루프가
@@ -270,6 +286,14 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
         resolve(downResponse(req, LINK_DOWN_MESSAGE));
       }
     });
+  };
+
+  /** `notifyPollStopped` 가 한 번이라도 불렸으면 여기 남아 재접속마다 다시 나간다. */
+  let pollStopped: readonly number[] | null = null;
+  const sendPollStopped = (): void => {
+    if (pollStopped === null || !transport) return;
+    try { transport.send(JSON.stringify({ type: 'runner.pollStopped', holding: [...pollStopped] })); }
+    catch { /* 재접속이 다시 보낸다 */ }
   };
 
   const send = (frame: RelayRunnerFrame): void => {
@@ -333,6 +357,9 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
       pending.resolve(parsed);
       return;
     }
+    // 오퍼레이터 자신의 말은 릴레이 프레임이 아니다 — switch 아래로 흘리면 `default` 에서
+    // 조용히 버려진다.
+    if (isOperatorToRunnerNotice(parsed)) { opts.onHandoverReleased?.(); return; }
     const frame = parsed as RelayServerFrame;
 
     switch (frame.type) {
@@ -422,6 +449,9 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
         // 버리므로(살아 있는지 알 방법이 없다), announce 가 없으면 진행 중인 턴이
         // 서버 쪽에서 영구히 사라진다 — attach 가 재접속을 못 넘긴다.
         send({ type: 'announce', sessions: [...sessions.values()].map((s) => s.info), caps: RUNNER_CAPS });
+        // announce **뒤**다. 오퍼레이터가 이 러너를 알아본 뒤에 와야 하는 말이고, 무엇보다
+        // 교체 러너를 띄우라는 신호라 순서가 뒤집히면 교체가 announce 를 앞지른다.
+        sendPollStopped();
       },
       onMessage: onServerFrame,
       onClose: (reason) => {
@@ -475,6 +505,11 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
 
   return {
     start: connect,
+
+    notifyPollStopped(holding) {
+      pollStopped = [...holding];
+      sendPollStopped();
+    },
 
     stop() {
       stopped = true;

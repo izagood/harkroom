@@ -72,6 +72,44 @@ export type RunnerLinkResponse =
   | { type: 'mcp.error'; id: string; status: number; message: string }
   | { type: 'http.response'; id: string; status: number; body: string };
 
+/**
+ * 러너 → 오퍼레이터 **단방향 통지.** 답이 없고, 서버로도 안 나간다 — 오퍼레이터 안에서 끝난다.
+ *
+ * `runner.pollStopped`: SIGTERM 을 받은 러너가 **폴 루프를 빠져나왔다**. 그 순간부터 이 러너는
+ * 인박스에서 새 항목을 집지 않으므로, 오퍼레이터는 **프로세스가 죽기를 기다리지 않고** 교체
+ * 러너를 띄울 수 있다(`operator/src/runners.ts` 의 회수 게이트). 남은 턴은 이 프로세스가
+ * 마저 끝낸다.
+ *
+ * `holding` — 아직 도는 턴의 inbox entry id 들. `markRead` 는 턴 **완료 후**라 이것들은
+ * 여전히 미읽음이고, 그대로 두면 **교체 러너가 같은 멘션을 다시 집어 두 번 답한다.**
+ * 오퍼레이터가 이 목록을 교체 러너에게 넘겨 그동안만 건너뛰게 한다.
+ */
+export type RunnerLinkNotice = { type: 'runner.pollStopped'; holding: number[] };
+
+/**
+ * 오퍼레이터 → 러너 **단방향 통지.** 서버에서 오는 말이 아니라 오퍼레이터가 하는 말이다.
+ *
+ * `handover.released`: 앞 세대 러너가 **완전히 물러났다**. 그 러너가 들고 있던 entry 를
+ * 더 건너뛸 이유가 없다 — 이관 보류를 지금 푼다.
+ *
+ * 보류의 **주인은 오퍼레이터**다. 러너는 spawn 때 받은 목록을 들고만 있고, 언제 놓을지는
+ * 앞 러너의 생사를 보는 쪽이 정한다. 러너가 스스로 시한만으로 풀면, 앞 러너가 1초 만에
+ * 끝난 경우에도 남은 시한 내내 그 항목을 건너뛴다.
+ */
+export type OperatorToRunnerNotice = { type: 'handover.released' };
+
+export function isOperatorToRunnerNotice(value: unknown): value is OperatorToRunnerNotice {
+  return typeof value === 'object' && value !== null
+    && (value as { type?: unknown }).type === 'handover.released';
+}
+
+export function isRunnerLinkNotice(value: unknown): value is RunnerLinkNotice {
+  if (typeof value !== 'object' || value === null) return false;
+  const m = value as Record<string, unknown>;
+  if (m.type !== 'runner.pollStopped') return false;
+  return Array.isArray(m.holding) && m.holding.every((v) => typeof v === 'number' && Number.isInteger(v));
+}
+
 const REQUEST_TYPES = new Set(['mcp.request', 'http.forward']);
 const RESPONSE_TYPES = new Set(['mcp.response', 'mcp.error', 'http.response']);
 
