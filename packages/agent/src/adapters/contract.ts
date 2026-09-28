@@ -128,7 +128,7 @@ export interface AccountAxis {
   configDirEnv: readonly string[];
   /**
    * 계정 풀을 **관리하는 표면이 있는가**(목록·로그인·사용량·페일오버). claude 만 참이다 —
-   * codex 는 `ensureCodexHome` 이 `~/.codex/auth.json` 을 링크해 **계정 하나**로 돈다.
+   * codex 는 활성 계정 **하나**로 돈다(`codexHome.ts::syncCodexAuth`) — 계정 목록은 있어도 풀·배정은 없다.
    *
    * 거짓인 하네스에 풀 선택을 그리면 화면이 거짓말을 한다: 사람은 배정했고 화면은 배정됐다고
    * 말하는데 러너는 그 값을 버린다(`mentionTurn.ts` 의 `claudeAccount` 분기).

@@ -123,6 +123,8 @@ export interface InteractiveTurnDeps {
   /** `harkroom-operator` 실행 파일 — 하네스의 harkroom MCP(`mcp-bridge`) 명령(스펙 2026-09-20 §5). */
   operatorBin: string;
   codexHome: string;
+  /** 인터랙티브 codex 를 띄우기 직전에 활성 codex 계정으로 링크를 돌린다(`MentionTurnDeps.syncCodexAuth`). */
+  syncCodexAuth?: () => Promise<{ account: string | null }>;
   /** opencode 의 러너 전용 XDG 루트(`opencodeHome.ts`). codex 의 홈과 같은 자리·같은 이유다. */
   opencodeHome: string;
   /**
@@ -382,6 +384,11 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
     // 생성된 파일과 같은 cwd 의 오래된 세션을 혼동하지 않는다.
     // 인터랙티브 턴도 TUI 라 같은 대화상자를 만난다 — 사람이 앉아 있으므로 답할 수는
     // 있지만, 그 사람이 매번 답해야 하는 것은 이 기능이 주려던 경험이 아니다.
+    if (deps.syncCodexAuth) {
+      await deps.syncCodexAuth().catch((err: unknown) => {
+        console.warn(`[interactive] ${key}: codex 계정 링크 갱신 실패 — 직전 계정으로 돈다: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
     await ensureWorkspaceTrusted({
       harness: def.harness,
       workspaceDir: rec.workspaceDir,

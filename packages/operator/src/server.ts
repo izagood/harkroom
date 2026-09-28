@@ -52,6 +52,7 @@ import {
 
 import type { RunnerRegistry } from './runners.js';
 import type { ClaudeAccountsPort } from './claudeAccounts.js';
+import type { CodexAccountsPort } from './codexAccounts.js';
 import type { LocalAgentsPort } from './localAgents.js';
 import type { LocalMcpPort } from './localMcp.js';
 import type { ClaudePoolsConfig } from '@harkroom/shared/claudePools';
@@ -86,6 +87,7 @@ export interface DaemonServerDeps {
    * 계정 디렉터리 구조를 들고 다니게 되고, "소켓 위의 말"만 다룬다는 경계가 흐려진다.
    */
   claudeAccounts?: ClaudeAccountsPort;
+  codexAccounts?: CodexAccountsPort;
   /** 오퍼레이터 로컬 설정의 에이전트 항목(스펙 §3 능력). 없으면 그 요청들은 배선되지 않았다고 답한다. */
   localAgents?: LocalAgentsPort;
   /** 이 머신의 MCP 정의(`mcp-servers.json`). 없으면 그 요청은 거절한다. */
@@ -531,7 +533,67 @@ export class DaemonServer {
           return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
         }
       }
+      // ── codex 계정 ────────────────────────────────────────────────────────────
+      //
+      // 로그에는 계정 이름만 적는다 — 이메일은 사람의 로컬 사실이다.
+      case 'codexAccountsList': {
+        const port = this.requireCodexAccounts();
+        if (isDaemonError(port)) return port;
+        return await port.list();
+      }
+      case 'codexAccountLoginStart': {
+        const port = this.requireCodexAccounts();
+        if (isDaemonError(port)) return port;
+        const ref = readCodexAccountRef(req.payload);
+        if (isDaemonError(ref)) return ref;
+        try {
+          const result = await port.loginStart(ref.account);
+          this.log(`codex 계정 로그인 시작: ${ref.account}`);
+          return result;
+        } catch (err) {
+          return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
+        }
+      }
+      case 'codexAccountLoginCancel': {
+        const port = this.requireCodexAccounts();
+        if (isDaemonError(port)) return port;
+        const ref = readLoginRef(req.payload);
+        if (isDaemonError(ref)) return ref;
+        await port.loginCancel(ref.loginId);
+        return {};
+      }
+      case 'codexAccountRemove': {
+        const port = this.requireCodexAccounts();
+        if (isDaemonError(port)) return port;
+        const ref = readCodexAccountRef(req.payload);
+        if (isDaemonError(ref)) return ref;
+        try {
+          await port.removeAccount(ref.account);
+          this.log(`codex 계정 삭제: ${ref.account}`);
+          return {};
+        } catch (err) {
+          return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
+        }
+      }
+      case 'codexAccountActivate': {
+        const port = this.requireCodexAccounts();
+        if (isDaemonError(port)) return port;
+        const params = readCodexActivate(req.payload);
+        if (isDaemonError(params)) return params;
+        try {
+          await port.activate(params.account);
+          this.log(`codex 활성 계정: ${params.account ?? '(시스템 기본)'}`);
+          return {};
+        } catch (err) {
+          return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
+        }
+      }
     }
+  }
+
+  private requireCodexAccounts(): CodexAccountsPort | DaemonError {
+    return this.deps.codexAccounts
+      ?? daemonError('no-such-runner', '이 daemon 에는 codex 계정이 배선되지 않았다');
   }
 
   /**
@@ -592,6 +654,26 @@ function readAccountRef(payload: unknown): { pool: string; account: string } | D
     return daemonError('bad-payload', 'account 가 없다');
   }
   return { pool, account };
+}
+
+function readCodexAccountRef(payload: unknown): { account: string } | DaemonError {
+  if (typeof payload !== 'object' || payload === null) {
+    return daemonError('bad-payload', 'payload 가 객체가 아니다');
+  }
+  const { account } = payload as { account?: unknown };
+  if (typeof account !== 'string' || account.length === 0) return daemonError('bad-payload', 'account 가 없다');
+  return { account };
+}
+
+/** `account` 는 문자열 또는 `null`(시스템 기본). **빠진 것은 거절한다** — 실수로 비운 요청이 활성을 지우면 안 된다. */
+function readCodexActivate(payload: unknown): { account: string | null } | DaemonError {
+  if (typeof payload !== 'object' || payload === null || !('account' in payload)) {
+    return daemonError('bad-payload', 'account 가 없다');
+  }
+  const { account } = payload as { account?: unknown };
+  if (account === null) return { account: null };
+  if (typeof account !== 'string' || account.length === 0) return daemonError('bad-payload', 'account 가 문자열도 null 도 아니다');
+  return { account };
 }
 
 function readPoolRef(payload: unknown): { pool: string } | DaemonError {

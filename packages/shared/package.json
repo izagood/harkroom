@@ -10,7 +10,8 @@
     "./operatorEndpoint": "./src/operatorEndpoint.ts",
     "./operatorProtocol": "./src/operatorProtocol.ts",
     "./runnerLink": "./src/runnerLink.ts",
-    "./claudePools": "./src/claudePools.ts"
+    "./claudePools": "./src/claudePools.ts",
+    "./codexAccounts": "./src/codexAccounts.ts"
   },
   "scripts": { "test": "vitest run", "typecheck": "tsc -p ." },
   "devDependencies": {

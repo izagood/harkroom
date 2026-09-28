@@ -22,6 +22,32 @@ import type { Catalog } from './en';
  * **문법 규칙은 그것을 가진 언어의 파일에만 있어야 한다.**
  */
 export const ko = {
+  // providerAccounts — 설정 > 제공업체 계정(하네스별 카드). 2026-09-28.
+  'providerAccounts.page.title': '제공업체 계정',
+  'providerAccounts.page.subtitle': '선택 사항. 에이전트는 기존 공급자 로그인으로 동작합니다. Harkroom이 계정 사이를 전환하길 원할 때만 계정을 추가하세요.',
+  'providerAccounts.badge.thisDevice': '이 기기',
+  'providerAccounts.badge.active': '활성',
+  'providerAccounts.systemDefault': '시스템 기본값',
+  'providerAccounts.accounts.title': '계정',
+  'providerAccounts.accounts.hint': '이 기기의 계정을 표시합니다. 새 계정은 여기에 추가됩니다.',
+  'providerAccounts.addAccount': '계정 추가',
+  'providerAccounts.reauth': '재인증',
+  'providerAccounts.remove': '제거',
+  'providerAccounts.use': '사용',
+  'providerAccounts.notSignedIn': '로그인되지 않음',
+  'providerAccounts.unavailable': '계정 관리는 이 디렉터리를 소유한 로컬 데몬을 띄우는 데스크탑 앱에서만 할 수 있습니다.',
+  'providerAccounts.nameLabel': '계정 이름',
+  'providerAccounts.nameHint': '소문자·숫자·하이픈(a-z 0-9 -), 32자까지.',
+  'providerAccounts.signIn': '로그인',
+  'providerAccounts.cancel': '취소',
+  'providerAccounts.confirmRemove': '{name} 을(를) 제거할까요? 이 기기에 저장된 로그인이 삭제됩니다.',
+  'providerAccounts.codex.description': '선택 사항. Harkroom은 일반 Codex 로그인을 사용할 수 있습니다. 빠르게 전환하려는 경우에만 계정을 추가하세요. 각 계정은 이 기기에 자체 로컬 로그인 컨텍스트를 유지합니다.',
+  'providerAccounts.codex.empty': '이 기기에 관리되는 Codex 계정이 없습니다. 여기에 추가할 때까지 Harkroom은 시스템 기본 Codex 로그인을 사용합니다.',
+  'providerAccounts.codex.systemSignedOut': '터미널에서 `codex login` 을 실행하거나 여기에서 계정을 추가하세요.',
+  'providerAccounts.codex.loginWaiting': '브라우저에서 로그인을 마치세요. Codex가 결과를 알리면 이 화면이 갱신됩니다.',
+  'providerAccounts.codex.openLogin': '로그인 페이지 열기',
+  'providerAccounts.codex.switchNote': '러너는 다음 Codex 턴부터 전환합니다. 스레드 세션은 계정을 바꿔도 이어집니다.',
+  'providerAccounts.apiKey': 'API 키',
   'common.someone': '사람',
 
   'appearance.colorMode': '색 모드',
