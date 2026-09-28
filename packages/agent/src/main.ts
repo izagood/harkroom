@@ -40,7 +40,7 @@ import { createAttentionLedger } from './attentionLedger.js';
 import { TurnRegistry } from './turnRegistry.js';
 import { MentionQueue } from './mentionQueue.js';
 import { loadClaudeAccountLane } from './claudeAccounts.js';
-import { ensureCodexHome } from './codexHome.js';
+import { syncCodexAuth } from './codexHome.js';
 import { ensureOpencodeHome } from './opencodeHome.js';
 import { createMentionScheduler, type BatchContext } from './mentionScheduler.js';
 
@@ -269,7 +269,8 @@ await ensureNameLink(config.stateDir, me.handle, basename(config.agentInstance ?
 
 // 대화형 `codex resume` 은 --ignore-user-config 를 받지 않는다. 개인 config.toml/MCP 를
 // 물려주지 않으면서 기존 로그인은 재사용하도록 Harkroom 전용 CODEX_HOME 을 준비한다.
-const codexHome = await ensureCodexHome(codexHomeDir);
+// 로그인은 설정 화면에서 고른 **활성 codex 계정**의 것이다(없으면 시스템 기본 `~/.codex`).
+const { codexHome } = await syncCodexAuth(codexHomeDir);
 
 // opencode 도 같은 이유로 격리한다 — 다만 한 변수가 아니라 XDG 셋이고, MCP 는 argv 가 아니라
 // **설정 파일**로만 등록되므로 오퍼레이터가 쓴 표를 그 파일로 번역해 둔다(`opencodeHome.ts`).
@@ -388,6 +389,7 @@ const attentionLedger = createAttentionLedger();
 interactive = createInteractiveManager({
   harkroom, store, exec, runTurn: runPtyTurn, me,
   workspaceBaseDir, mcpConfigPath, extraMcpServers, codexHome, opencodeHome,
+  syncCodexAuth: () => syncCodexAuth(codexHome),
   // **인터랙티브 턴은 페일오버하지 않는다.** 사람이 앉아 있고, 계정을 바꾸면 그 사람이
   // 보던 세션이 사라진다(세션 파일이 계정 디렉터리 안에 있다) — 관찰 도중에 화면을 갈아
   // 치우는 것보다 그 계정의 한도를 그대로 보여 주는 편이 낫다. 그래서 첫 계정에 고정한다.
@@ -431,6 +433,7 @@ const scheduler = createMentionScheduler({
     // 디렉터리다. 워크스페이스 안에 두면 에이전트가 자기 지시문을 고칠 수 있다.
     stateDir: agentStateDir,
     codexHome,
+    syncCodexAuth: () => syncCodexAuth(codexHome),
     opencodeHome,
     claudeAccount: account?.name ?? null,
     claudeConfigDir: account?.configDir ?? null,

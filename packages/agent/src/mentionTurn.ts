@@ -189,6 +189,11 @@ export interface MentionTurnDeps {
   stateDir: string;
   /** 이 러너 전용 CODEX_HOME. 세션 발견과 자식 env 가 같은 루트를 봐야 한다. */
   codexHome: string;
+  /**
+   * codex 턴 직전에 `CODEX_HOME/auth.json` 링크를 **지금 활성인 codex 계정**으로 돌린다
+   * (`codexHome.ts::syncCodexAuth`). 생략하면 기동 때 건 링크 그대로다(테스트·옛 조립).
+   */
+  syncCodexAuth?: () => Promise<{ account: string | null }>;
   /** opencode 의 러너 전용 XDG 루트(`opencodeHome.ts`). codex 의 홈과 같은 자리·같은 이유다. */
   opencodeHome: string;
   /**
@@ -1065,6 +1070,15 @@ export async function runMentionTurn(
   // **PTY 를 띄우기 전에** 이 워크스페이스를 하네스가 신뢰하게 한다(2026-09-08).
   // 뜬 뒤에 적으면 그 턴은 이미 신뢰 대화상자를 만난 뒤다 — 러너는 답할 수 없고, 그
   // 대화상자가 준비 표시와 같은 글자를 담고 있어 프롬프트가 모달에 타이핑된다.
+  // 활성 codex 계정이 바뀌었으면 이 턴부터 그 계정으로 돈다. **실패해도 턴을 죽이지
+  // 않는다** — 기동 때 건 링크가 그대로 남아 있으므로 직전 계정으로라도 돈다.
+  // 하네스를 가리지 않고 부른다: 링크 하나를 재는 싼 일이고, 여기에 하네스 이름 비교를
+  // 심으면 어댑터 뒤로 옮길 목록이 늘어난다(`adapterParity.test.ts` 의 예산).
+  if (deps.syncCodexAuth) {
+    await deps.syncCodexAuth().catch((err: unknown) => {
+      console.warn(`[mentionTurn] ${key}: codex 계정 링크 갱신 실패 — 직전 계정으로 돈다: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
   await ensureWorkspaceTrusted({
     harness: def.harness,
     workspaceDir: rec.workspaceDir,

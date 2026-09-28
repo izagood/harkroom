@@ -1110,6 +1110,10 @@ fn runner_exit_emitter(
             "claudeLoginOutput" => {
                 let _ = emitter.emit(crate::CLAUDE_LOGIN_EVENT, payload);
             }
+            // codex 로그인도 같은 규율 — 모양은 화면이 판단한다.
+            "codexLoginOutput" => {
+                let _ = emitter.emit(crate::CODEX_LOGIN_EVENT, payload);
+            }
             // 모르는 이벤트는 버린다 — 데몬이 우리보다 새 판본일 수 있다.
             _ => {}
         }
@@ -2022,6 +2026,28 @@ impl DaemonConnection {
 
     pub fn claude_pool_remove(&self, pool: &str) -> Result<Value, String> {
         self.request("claudePoolRemove", json!({ "pool": pool }))
+    }
+
+    // codex 계정(2026-09-28). 계정 풀과 같은 규율 — 이름만 넘기고 실행은 데몬이 한다.
+    pub fn codex_accounts_list(&self) -> Result<Value, String> {
+        self.request("codexAccountsList", json!({}))
+    }
+
+    pub fn codex_account_login_start(&self, account: &str) -> Result<Value, String> {
+        self.request("codexAccountLoginStart", json!({ "account": account }))
+    }
+
+    pub fn codex_account_login_cancel(&self, login_id: &str) -> Result<Value, String> {
+        self.request("codexAccountLoginCancel", json!({ "loginId": login_id }))
+    }
+
+    pub fn codex_account_remove(&self, account: &str) -> Result<Value, String> {
+        self.request("codexAccountRemove", json!({ "account": account }))
+    }
+
+    /// `None` 이면 시스템 기본 로그인으로 돌린다.
+    pub fn codex_account_activate(&self, account: Option<&str>) -> Result<Value, String> {
+        self.request("codexAccountActivate", json!({ "account": account }))
     }
 
     // ── 오퍼레이터 로컬 설정(스펙 2026-09-20 §3 능력) ─────────────────────────

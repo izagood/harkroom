@@ -80,9 +80,9 @@ export const CODEX_ADAPTER: HarnessAdapter = {
 
   /**
    * 축은 있다 — `CODEX_HOME` 은 config·auth·sessions 를 한꺼번에 바꾸므로 claude 의
-   * `CLAUDE_CONFIG_DIR` 과 **같은 성질**이다. 없는 것은 그 위의 **풀 관리 표면**이다:
-   * 목록·로그인·사용량·페일오버가 claude 전용으로 지어져 있고, `ensureCodexHome` 은
-   * `~/.codex/auth.json` 을 링크해 계정 하나로 돈다.
+   * `CLAUDE_CONFIG_DIR` 과 **같은 성질**이다. 계정은 여럿 둘 수 있지만(2026-09-28,
+   * `codexHome.ts::syncCodexAuth` — 설정 화면의 **활성 계정 하나**로 턴마다 링크를 돌린다)
+   * **풀은 없다**: 에이전트별 배정·한도 페일오버가 없으므로 `pooled` 는 거짓 그대로다.
    *
    * `pooled: false` 가 화면에 곧바로 뜻이 있다: 이 값이 거짓인 하네스에 계정 풀 선택을
    * 그리면 사람은 배정했다고 믿고 러너는 그 값을 버린다(현재 `AgentsSettings.tsx` 가
