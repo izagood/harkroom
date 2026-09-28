@@ -151,6 +151,10 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
           .catch((err: unknown) => deps.log(`해제 처리 실패: ${err instanceof Error ? err.message : String(err)}`));
         return;
       }
+      if (frame.type === 'agent.restart') {
+        if (!deps.reconciler.restart(frame.agentId)) deps.log(`재시작 무시: agent=${frame.agentId} — 배정·러너가 없다`);
+        return;
+      }
       // 러너 프레임이면 다중화기가 runnerId 로 러너를 골라 내린다. 아니면(runner.kill) 밖으로.
       if (!mux.onServerFrame(frame)) deps.onFrame?.(frame);
     },

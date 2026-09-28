@@ -270,3 +270,30 @@ describe('MCP 설정', () => {
     expect(h.spawned).toHaveLength(0);
   });
 });
+
+describe('restart — 사람의 [재시작]', () => {
+  it('배정은 두고 SIGTERM, 물러나면 1초 뒤(백오프 처음부터) 다시 띄운다', async () => {
+    const h = harness();
+    const r = createAssignmentReconciler(h.deps);
+    await r.onAssign('https://example.com', def(), undefined);
+    // 앞서 빨리 죽은 적이 있어 백오프가 불어 있어도 재시작은 처음부터다.
+    h.exit('a-1'); r.onRunnerExit('a-1', 0); h.timers.at(-1)!.fn();
+    await new Promise((res) => setTimeout(res, 0));
+    expect(r.restart('a-1')).toBe(true);
+    expect(h.signals.at(-1)).toEqual({ agentId: 'a-1', signal: 'SIGTERM' });
+    h.exit('a-1'); r.onRunnerExit('a-1', 0);
+    expect(h.timers.at(-1)!.ms).toBe(1_000);
+    h.timers.at(-1)!.fn();
+    await new Promise((res) => setTimeout(res, 0));
+    expect(h.spawned).toHaveLength(3);
+  });
+  it('배정이 없거나 러너가 없으면 아무것도 안 한다', async () => {
+    const h = harness();
+    const r = createAssignmentReconciler(h.deps);
+    expect(r.restart('a-1')).toBe(false);
+    await r.onAssign('https://example.com', def(), undefined);
+    h.exit('a-1');
+    expect(r.restart('a-1')).toBe(false);
+    expect(h.signals).toHaveLength(0);
+  });
+});

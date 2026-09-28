@@ -79,6 +79,12 @@ export interface AssignmentReconciler {
    * 회수 중(unassign)이거나 배정이 없으면 아무것도 안 한다.
    */
   onRunnerExit(agentId: string, code: number | null): void;
+  /**
+   * 사람의 [재시작] — 배정은 두고 러너에 SIGTERM 을 보낸다. 러너가 턴을 마치고 물러나면
+   * `onRunnerExit` 가 배정을 보고 다시 띄운다. 백오프는 처음부터다(사람이 누른 것이지 죽음의
+   * 되풀이가 아니다). 배정이 없거나 러너가 없으면 false.
+   */
+  restart(agentId: string): boolean;
   /** 살아 있는 러너 전부 — hello 의 announce 에 실린다. */
   announce(): RunnerAnnounce[];
 }
@@ -185,6 +191,14 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
         if (deps.isAlive(agentId)) deps.signal(agentId, 'SIGKILL');
       }, grace);
       reclaims.set(agentId, cancel);
+    },
+
+    restart(agentId) {
+      if (!assigned.has(agentId) || reclaims.has(agentId) || !deps.isAlive(agentId)) return false;
+      backoff.delete(agentId);
+      lastSpawnAt.delete(agentId);
+      deps.log(`재시작: agent=${assigned.get(agentId)!.definition.handle} — SIGTERM, 물러나면 다시 띄운다`);
+      return deps.signal(agentId, 'SIGTERM');
     },
 
     onRunnerExit(agentId, code) {
