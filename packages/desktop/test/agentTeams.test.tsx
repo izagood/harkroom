@@ -738,3 +738,40 @@ describe('멤버 패널 팀 추가 (#172)', () => {
     expect(within(panel).queryByText(/추가: /)).toBeNull();
   });
 });
+
+describe('팀 호출 범위 절 (068)', () => {
+  beforeEach(() => seed(true));
+
+  it('응답의 범위를 그리고, 고르면 PUT /teams/:id/scope 를 부른 뒤 응답 행을 그린다', async () => {
+    const setTeamScope = vi.fn(async () => ({ ...team('t1', 'ops'), invokeScope: 'list' as const, ownerAccountId: 'u1' }));
+    mountTeams({
+      team: vi.fn(async () => ({ team: { ...team('t1', 'ops'), ownerAccountId: 'u1' }, members: [member('a1', 'bot')], invokers: [] })),
+      setTeamScope,
+    } as never);
+    await openTeam();
+    const select = await screen.findByTestId('team-scope-select') as HTMLSelectElement;
+    expect(select.value).toBe('community');
+    fireEvent.change(select, { target: { value: 'list' } });
+    await waitFor(() => expect(setTeamScope).toHaveBeenCalledWith('t1', { invokeScope: 'list' }));
+    await waitFor(() => expect(screen.getByTestId('team-invokers')).toBeTruthy());
+  });
+
+  it('비-admin 은 범위를 볼 수만 있다', async () => {
+    seed(false);
+    mountTeams({
+      team: vi.fn(async () => ({ team: { ...team('t1', 'ops'), invokeScope: 'owner' as const, ownerAccountId: 'u2' }, members: [member('a1', 'bot')], invokers: [] })),
+    } as never);
+    await openTeam();
+    const select = await screen.findByTestId('team-scope-select') as HTMLSelectElement;
+    expect(select.disabled).toBe(true);
+    expect(screen.getByTestId('team-scope-owner').textContent).toContain('@alice');
+  });
+
+  it('옛 서버(invokeScope 없음)면 절을 그리지 않는다', async () => {
+    const { invokeScope: _i, ownerAccountId: _o, ...old } = team('t1', 'ops');
+    mountTeams({ team: vi.fn(async () => ({ team: old, members: [member('a1', 'bot')] })) } as never);
+    await openTeam();
+    await waitFor(() => expect(screen.getByTestId('team-lead-note')).toBeTruthy());
+    expect(screen.queryByTestId('team-scope')).toBeNull();
+  });
+});

@@ -42,6 +42,26 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
   const [notice, setNotice] = useState<string | null>(null);
   /** personal 서버를 붙이기 전 확인을 기다리는 PATCH. */
   const [pending, setPending] = useState<Patch | null>(null);
+  /**
+   * 이 에이전트가 든 팀의 이름 — 확인창이 열릴 때만 받는다. 팀 명단은 `GET /teams/:id` 에서만
+   * 오므로(N+1) 늘 받아 두지 않는다. 못 받으면 조용히 빈다 — 확인 자체를 막을 사유는 아니다.
+   */
+  const [teamsOf, setTeamsOf] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (!pending) { setTeamsOf(null); return; }
+    let live = true;
+    void (async () => {
+      const c = getController();
+      const rows = await c.listTeams();
+      const names: string[] = [];
+      for (const row of rows) {
+        const { members } = await c.getTeam(row.id);
+        if (members.some((m) => m.accountId === agent.id)) names.push(row.name);
+      }
+      if (live) setTeamsOf(names);
+    })().catch(() => { if (live) setTeamsOf(null); });
+    return () => { live = false; };
+  }, [pending, agent.id]);
   const [adding, setAdding] = useState(false);
   const [presetId, setPresetId] = useState(MCP_PRESETS[0]!.id);
   const [name, setName] = useState(MCP_PRESETS[0]!.name);
@@ -225,6 +245,13 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
       {pending && (
         <div role="alertdialog" className="mt-2 rounded border border-warning-border bg-warning-surface p-2 text-meta text-warning" data-testid="agent-mcp-confirm-personal">
           <p>{t('agents.mcp.confirmPersonal')}</p>
+          {/* 팀 소속을 함께 말한다(068) — owner 로 좁히면 팀 부름에서도 이 팀원 자리는 소유자만
+              깨운다. 안 적으면 팀을 부른 남은 "왜 이 에이전트만 안 왔나"를 묻는다(#udc). */}
+          {teamsOf && teamsOf.length > 0 && (
+            <p className="mt-1" data-testid="agent-mcp-confirm-teams">
+              {t('agents.mcp.confirmPersonalTeams', { teams: teamsOf.map((n) => `@${n}`).join(', ') })}
+            </p>
+          )}
           <div className="mt-2 flex gap-2">
             <button className="rounded border border-warning-border px-2 py-1 font-medium" data-testid="agent-mcp-confirm-yes" onClick={confirmPending}>{t('agents.mcp.confirmYes')}</button>
             <button className="rounded px-2 py-1" onClick={() => setPending(null)}>{t('agents.mcp.cancel')}</button>

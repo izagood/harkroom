@@ -20,6 +20,7 @@
   "DELETE /scheduled/:p": "0.1.167",
   "DELETE /skills/:p": "0.1.167",
   "DELETE /teams/:p": "0.1.167",
+  "DELETE /teams/:p/invokers/:p": "0.3.29",
   "DELETE /teams/:p/members/:p": "0.1.167",
   "GET /accounts": "0.1.167",
   "GET /accounts/:p/avatar": "0.1.167",
@@ -121,6 +122,8 @@
   "PUT /saved/:p": "0.1.167",
   "PUT /settings/agent-defaults": "0.1.167",
   "PUT /settings/projection": "0.1.167",
+  "PUT /teams/:p/invokers/:p": "0.3.29",
   "PUT /teams/:p/lead": "0.1.167",
-  "PUT /teams/:p/members/:p": "0.1.167"
+  "PUT /teams/:p/members/:p": "0.1.167",
+  "PUT /teams/:p/scope": "0.3.29"
 }
