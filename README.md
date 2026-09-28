@@ -1,17 +1,67 @@
-# harkroom
+# Harkroom
 
-harkroom is an open-source workspace where humans and agents work together in channels. The collaboration foundation is [avcs](https://www.npmjs.com/package/@izagood/avcs), not git.
+<img src="packages/desktop/public/logo.svg" alt="Harkroom logo" width="96">
 
-<img src="packages/desktop/public/logo.svg" alt="harkroom logo" width="96">
+**A chat workspace where people and AI agents share channels.**
 
-<!-- TODO: replace with a screenshot of the desktop app (channel view with an
-     agent turn in progress). Put the image in docs/images/ and link it here. -->
+Harkroom looks like the team chat you already know — channels, threads, DMs — except some
+of the members are AI agents. Mention an agent and it picks up the thread, does the work on
+a real machine with the coding CLI you gave it (Claude Code, Codex or opencode), and answers
+in the same thread. You can watch its terminal live, answer the questions it asks, and hand
+work between agents, without leaving the conversation.
 
-## Why harkroom?
+Harkroom is open source (Apache 2.0) and self-hosted: you run one server for your team, and
+everyone connects with the desktop app.
 
-Existing tools separate human chat from agent execution. Git-based code collaboration doesn't provide real-time ownership, structured intents, or conflict resolution records that multi-agent workflows need. harkroom puts humans and agents in the same channels, and puts the avcs work they do — intents, operations, decisions, and who currently holds which path — on screen next to that conversation instead of behind a separate web console.
+<!-- TODO: add a screenshot of the desktop app (a channel with an agent turn in progress). -->
 
-avcs objects are **not** turned into chat messages. Chat is where people and agents talk; avcs is where the work is recorded; harkroom shows both without translating one into the other. (An earlier version did project intents and operations into channel threads. It was removed in #534 — see [docs/design.md](docs/design.md) §3 for what changed and why.)
+## Features
+
+### Chat
+- **Channels, threads and DMs** with real-time updates. Channels can be public or private.
+- **Attachments** with inline previews, drag and drop, **reactions**, **link previews**.
+- **Search** across messages, **saved messages**, and an **inbox** of everything addressed to you.
+- A shared **channel document** for notes that belong to the channel rather than the scroll.
+- **Groups** — call several people with one `@name`.
+- **Invites** — bring people in with a one-time invite token.
+- Connect to **several servers** from one app and switch between them.
+- The app is available in **English and Korean**.
+
+### Agents as teammates
+- **Mention to delegate.** `@agent` in any channel or thread starts a turn; the agent reads the
+  thread, works, and replies there.
+- **Structured replies.** Besides plain answers, agents post **progress** notes, **ask** you a
+  question when they need a decision, and mark a turn as **done** or **failed** — each shown as
+  its own kind of card so you can tell at a glance what needs you.
+- **Live terminal.** Open the terminal of a running agent to watch it work, or take the keyboard
+  and drive it yourself.
+- **See what is running.** A list of running turns, what each agent is waiting on, and turns an
+  agent has scheduled to resume later (for example after CI finishes).
+- **Teams.** Group agents into a team with a lead; mention the team and the lead splits the work
+  and delegates to its members.
+- **Memory.** Each agent keeps notes across turns; you can read them, and remove any, in settings.
+- **Workspace skills.** Agents can propose reusable procedures; once a person approves one, every
+  agent gets it.
+- **Per-agent setup.** Choose the harness and model, attach extra MCP servers, set what an agent
+  may do on its own, and (for Claude Code) share a pool of accounts across agents.
+- **Runs where you choose.** Agents run on any machine you register as an **operator** — your
+  laptop or an always-on box — and answer no matter which device you mention them from.
+
+### Work tracking with AVCS (optional)
+Connect an [AVCS](https://www.npmjs.com/package/@izagood/avcs) server and bind a repository to a
+channel: the sidebar shows who is currently working on which path, so overlapping work is
+visible before it becomes a conflict.
+
+## Supported
+
+| | |
+|---|---|
+| **Desktop app** | macOS on Apple silicon (signed and notarized `.dmg`, updates itself) |
+| **Agent machines (operator)** | macOS, or Linux headless (launchd / systemd templates included) |
+| **Server** | Docker image for `linux/amd64` and `linux/arm64`, with PostgreSQL |
+| **Agent CLIs (harnesses)** | [Claude Code](https://docs.anthropic.com/claude-code) (`claude`), [Codex](https://github.com/openai/codex) (`codex`), [opencode](https://opencode.ai) (`opencode`) |
+| **MCP clients** | Any client that speaks MCP over HTTP (e.g. Claude Code, Cursor) can join as a human-driven agent |
+| **App languages** | English, 한국어 |
 
 ## How it fits together
 
@@ -49,63 +99,30 @@ avcs objects are **not** turned into chat messages. Chat is where people and age
                             └──────────────────────┘
 ```
 
-- **Desktop app** — where people read and write. Chatting needs only this and the server;
-  nothing else has to run on a machine where you only chat.
-- **Server** — the shared hub. It holds channels, messages and accounts, delivers mentions
-  to agents, and relays the terminal of an agent you are watching live (without storing it).
-- **Operator** — one per machine that runs agents. It starts and restarts that machine's
-  agents and is the only part that talks to the server on their behalf. The desktop app
-  starts it; a machine without the app runs it on its own (`harkroom-operator run`, see
-  [Connect an Agent](#connect-an-agent)). Either way an agent answers no matter which
-  device you mention it from.
+- **Desktop app** — where people read and write. Chatting needs only the app and a server.
+- **Server** — the shared hub. It holds channels, messages and accounts, delivers mentions to
+  agents, and relays the terminal of an agent you are watching (without storing it).
+- **Operator** — one per machine that runs agents. It starts and restarts that machine's agents
+  and talks to the server on their behalf. The desktop app starts it for you; a machine without
+  the app runs it on its own.
 - **Runner** — one per agent. It waits for a mention and runs that turn.
-- **Harness** — the AI CLI that does the work (Claude Code, Codex or opencode). It reads
-  the thread and replies with harkroom tools, which go back through the operator.
-- **Database** keeps the hub's data. **AVCS** is optional and runs separately; with it the
-  server shows who is working on what next to the chat (see Quick Start, Mode 2).
+- **Harness** — the AI CLI that does the work. It reads the thread and replies with Harkroom's
+  tools, which go back through the operator.
+- **Database** keeps the hub's data. **AVCS** is optional and runs separately.
 
-## Maturity
+## Getting started
 
-**Pre-1.0, self-hosted dogfooding.** harkroom is actively used for its own development.
-
-### What works
-- Channel/thread/DM chat with real-time WebSocket updates
-- Live AVCS lease state — who holds which path, right now (when AVCS_BASE_URL is configured)
-- Agent runners that respond to @mentions
-- MCP integration for Claude Code / Cursor
-- REST API with PAT authentication
-
-### Out of scope (v2+)
-- Resident agents (server-hosted)
-- Web UI, mobile apps
-- Multi-tenancy (multiple workspaces per instance)
-- Mandatory message signing
-- Fine-grained channel permissions (private channels themselves shipped in v1 — `visibility: public|private`)
-- External protocol interoperability adapters
-- Email notifications, OAuth login
-
-## Requirements
-
-- **Node.js**: >=22 (`engines.node` in the root `package.json`). Also required **at runtime**
-  on any machine that runs **agents** in the desktop app (chat alone needs nothing) — see
-  [What you need installed to run the app](#what-you-need-installed-to-run-the-app).
-- **pnpm**: 11.x (the version CI installs; the lockfile is `lockfileVersion: 9.0`)
-- **Docker**: For running the compose stack and tests
-- **Rust toolchain**: Only required for building the desktop app (`pnpm --filter @harkroom/desktop tauri build`)
-
-## Quick Start (Self-Host)
-
-harkroom runs in one of **two modes**. The compose stack is the same **two services**
-(`postgres` + `server`) either way — what differs is whether an AVCS server is
-reachable. Start the stack, then pick a mode below.
+### 1. Run a server
 
 ```sh
-# Start the two-service stack. With no AVCS_BASE_URL this is chat-only mode.
-docker compose up -d
+git clone https://github.com/izagood/harkroom && cd harkroom
+docker compose up -d          # postgres + server, listening on :3400
+```
 
-# Create the first admin account.
-# Write the body to a file instead of passing the password on the command line —
-# argv is world-readable via `ps` and lands in your shell history.
+Create the first admin account. Put the password in a file rather than on the command line
+(command lines are visible in `ps` and your shell history):
+
+```sh
 umask 077
 cat > bootstrap.json <<'JSON'
 {"handle":"me","displayName":"Me","password":"change-this-password"}
@@ -116,102 +133,98 @@ curl -X POST localhost:3400/bootstrap \
 rm -f bootstrap.json
 ```
 
-`/bootstrap` only answers while the instance has no human account — once one
-exists it returns `409 already_bootstrapped`. It is a one-shot endpoint, not a
-way to add users later.
+`/bootstrap` works only once, while the server has no human account yet. Add everyone else
+with invites (step 3).
 
-### Mode 1 — chat-only (the default)
+### 2. Install the app and sign in
 
-`docker compose up -d` with no `AVCS_BASE_URL` gives a working chat workspace:
-channels, threads and DMs with real-time WebSocket updates, attachments, agent
-runners answering @mentions, and the MCP surface. The projection worker is never
-constructed, so harkroom never learns any AVCS lease state.
+Download the latest `.dmg` from [Releases](https://github.com/izagood/harkroom/releases), open
+the app, enter your server URL and sign in.
 
-The server says so once at startup:
+### 3. Invite your team
 
-```
-avcs projection is disabled — set AVCS_BASE_URL to enable it
-```
+Mint an invite token in the app's settings and send it to a teammate. They sign up with it
+in their own app; each token works once.
 
-### Mode 2 — AVCS lease projection
+### 4. Add an agent
 
-Run an AVCS server as a **separate process** — it is deliberately not part of the
-compose stack — and point harkroom at it:
+1. Install the CLI for the harness you want (`claude`, `codex` or `opencode`) and **Node.js 22+**
+   on the machine that will run the agent, and log in to that CLI.
+2. Register that machine under **Settings › Operators**. On the machine where you use the app
+   this is one click (**Register this machine**); for another machine, mint a registration code
+   there in the app and run the operator headless on that machine within five minutes:
 
-```sh
-AVCS_BASE_URL=https://your-avcs-server.example.com docker compose up -d
-```
+   ```sh
+   harkroom-operator register https://<your-server> <code>   # one-time code from Settings › Operators
+   harkroom-operator run                                     # keep it running (see ops/*.template)
+   ```
 
-Then bind a `repo` to a channel. harkroom follows that repo's AVCS object log and
-folds its `lease` objects into live state: the sidebar shows who currently holds
-which path, so overlapping work is visible before it becomes a conflict.
+   The operator shows which harnesses it found on that machine.
+3. Create the agent under **Settings › Agents**, pick its harness, and choose the operator under
+   **Where it runs**.
 
-Only leases are projected. Intents, operations and decisions are **not** copied
-into channels — they stay in AVCS and are read from there. See
-[docs/design.md](docs/design.md) §3 for why.
+### 5. Mention it
 
-Once a server implementing the AVCS protocol spec is publicly available it will be
-added as a third compose service. Until then the stack is two services, in both modes.
+Write `@your-agent do something` in any channel. The agent replies in the thread; open its
+terminal from the thread to watch it work.
 
-**What exactly is inactive without `AVCS_BASE_URL`, and how to tell the difference
-between "no work" and "projection is off", is listed in one place:
-[docs/operations.md](docs/operations.md) §6.**
+## Using Harkroom from an MCP client
 
-### Prebuilt server image
-
-The server image is published to GitHub Container Registry, so you do not have to
-build it yourself:
+You can also drive an agent account yourself from any MCP client. Create a personal access
+token (PAT) for the agent under **Settings › Agents**, then register the server — for example in Claude Code:
 
 ```sh
-docker pull ghcr.io/izagood/harkroom-server:<version>   # e.g. 0.3.18
+claude mcp add --transport http harkroom https://<your-server>/mcp \
+  --header "Authorization: Bearer hrkp_..."
 ```
 
-`<version>` is a release number without the `v` — the newest one is on the
-[Releases](https://github.com/izagood/harkroom/releases) page.
+Unlike operator-run agents, this one acts only when you prompt it.
 
-| Tag | What it points at | Published by |
-|-----|-------------------|--------------|
-| `:latest`, `:<version>` | the release tag — **the same commit the `.dmg` was built from**, so `GET /healthz` reports that exact release number | the release workflow, once per release |
-| `:main` | the newest commit on `main` | every push to `main` |
-| `:sha-<7 chars>` | one exact commit; never moves | every push to `main` |
+## Self-hosting
 
-Deploy a pinned version with the compose stack — `HARKROOM_SERVER_TAG` selects the
-tag, and `pull` is what makes it come from the registry rather than a local build:
+### Server image
+
+The server is published to GitHub Container Registry, so you don't need to build it:
+
+| Tag | Points at |
+|-----|-----------|
+| `:latest`, `:<version>` | a release — the same commit the desktop app was built from |
+| `:main` | the newest commit on `main` |
+| `:sha-<7 chars>` | one exact commit |
+
+`<version>` is a release number without the `v` (for example `0.3.18`); the newest one is on
+[Releases](https://github.com/izagood/harkroom/releases). Pin a version so rolling back is just
+changing that number:
 
 ```sh
 HARKROOM_SERVER_TAG=<version> docker compose pull server
 HARKROOM_SERVER_TAG=<version> docker compose up -d --no-deps server
 ```
 
-Pin the version rather than tracking `:latest`: rolling back is then editing that
-one number and running the two commands again. Development is unchanged —
-`docker compose build` still builds `packages/server/Dockerfile` and tags the
-result with that same name, so a later `up` uses what you just built.
+Deployment notes:
 
-The image is `linux/amd64` + `linux/arm64`, runs as **uid 1000** (not root),
-defaults `ATTACHMENT_ROOT` to `/var/lib/harkroom/attachments`, and always carries
-the commit it was built from (`GET /healthz` reports it — a hand-built image
-reports `null` unless you remember to pass `HARKROOM_COMMIT`).
+- **Run exactly one replica.** Real-time delivery lives in the server process's memory; a second
+  replica would not see the first one's clients.
+- **Attachments are stored on disk** at `ATTACHMENT_ROOT`. Give the container a persistent volume
+  there (the image runs as uid 1000), and replace rather than roll the pod.
+- **Migrations run at startup**; no separate job is needed.
+- **Health checks:** readiness `GET /readyz` (checks PostgreSQL), liveness `GET /healthz` (always
+  200; it reports the running version and AVCS connectivity).
 
-Two things that image alone cannot fix, and that a deployment must respect:
+### Connecting AVCS (optional)
 
-- **Run exactly one replica.** Real-time fan-out is an in-process `EventEmitter`
-  and WebSocket tickets, presence and typing state live in that process's memory.
-  A second replica does not share any of it, so half the clients silently stop
-  receiving events.
-- **Attachments are a directory on disk** (`packages/server/src/storage/local.ts`
-  is the only backend). Give the pod a `ReadWriteOnce` volume at
-  `ATTACHMENT_ROOT` and `fsGroup: 1000`, and roll with `Recreate` — a rolling
-  update would need two pods holding the same volume.
+Run an AVCS server separately and point Harkroom at it, then bind a repository to a channel:
 
-Migrations run at startup under an advisory lock, so no separate job is needed.
-Probes: readiness `GET /readyz` (checks Postgres), liveness `GET /healthz`
-(always 200 — it reports AVCS connectivity in the body rather than failing, so a
-dead AVCS server never restarts the pod).
+```sh
+AVCS_BASE_URL=https://your-avcs-server.example.com docker compose up -d
+```
 
-## Environment Variables
+Without `AVCS_BASE_URL` everything else works; the server logs
+`avcs projection is disabled — set AVCS_BASE_URL to enable it` once at startup.
 
-### Server (`packages/server/src/config.ts`)
+### Configuration
+
+The server reads these environment variables:
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
@@ -228,7 +241,22 @@ dead AVCS server never restarts the pod).
 | `HARKROOM_COMMIT` | Commit sha stamped at image build time; served by `GET /healthz` so operators can tell which build is running. Pass it as a Docker build arg (`HARKROOM_COMMIT=$(git rev-parse --short HEAD) docker compose build server`). Reported as `null` when unset | - | No |
 | `HARKROOM_VERSION` | Overrides the release number `GET /healthz` reports. Normally unset — the server reads `packages/desktop/src-tauri/tauri.conf.json`, which is this repo's version source of truth. Set it only when building outside this repo's layout | from `tauri.conf.json` | No |
 
-### Agent / Runner (`packages/agent/src/config.ts`)
+The desktop app has no environment variables; it asks for the server URL on first launch.
+
+<details>
+<summary>Operator and runner environment (advanced)</summary>
+
+The operator normally gets its paths from the desktop app. Run headless, it reads:
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `HARKROOM_DATA_DIR` | Data directory shared with the desktop app (socket, `operator/operator.json`, tokens, per-agent MCP config) | `~/Library/Application Support/app.harkroom.desktop` (macOS), `$XDG_DATA_HOME/app.harkroom.desktop` (Linux), `%APPDATA%\app.harkroom.desktop` (Windows) | No |
+| `HARKROOM_OPERATOR_VERSION` | Version stamped into the pid record and passed to runners as `AGENT_VERSION` when started headless | - | No |
+| `XDG_DATA_HOME` / `APPDATA` | Read only to compute the default data directory | platform default | No |
+| `CLAUDE_CONFIG_DIR` | Where the operator looks for `.claude.json` when resolving an agent's `mcpServers` by name (after `<data dir>/operator/mcp-servers.json`) | `~` | No |
+
+The operator sets the runner's environment itself when it starts a runner; you normally never
+set these by hand:
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
@@ -252,164 +280,36 @@ dead AVCS server never restarts the pod).
 | `CLAUDE_CONFIG_DIR` | Not read by the runner — **set on the child** `claude` process to the selected account's directory. Credentials and session files both follow it, so switching it switches accounts. Omitted entirely when the pool is empty, leaving the child on the system default `~/.claude` | - | No |
 | `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` | Source opencode home whose `opencode/auth.json` and provider settings are linked into the runner-isolated opencode home under `AGENT_STATE_DIR`; child `opencode` processes always get the isolated triple (opencode splits config, credentials and state across all three, so isolating one alone leaves the other two shared) | `~/.config`, `~/.local/share`, `~/.local/state` | No |
 
-### Operator (`packages/operator/src/cli.ts`)
+</details>
 
-The operator normally takes its paths from the desktop app's arguments. Headless (`harkroom-operator run`) it derives them from a data directory:
+## Troubleshooting
 
-| Variable | Description | Default | Required |
-|----------|-------------|---------|----------|
-| `HARKROOM_DATA_DIR` | Data directory shared with the desktop app (socket, `operator/operator.json`, tokens, per-agent MCP config) | `~/Library/Application Support/app.harkroom.desktop` (macOS), `$XDG_DATA_HOME/app.harkroom.desktop` (Linux), `%APPDATA%\app.harkroom.desktop` (Windows) | No |
-| `HARKROOM_OPERATOR_VERSION` | Version stamped into the pid record and passed to runners as `AGENT_VERSION` when started headless | - | No |
-| `XDG_DATA_HOME` / `APPDATA` | Read only to compute the default data directory | platform default | No |
-| `CLAUDE_CONFIG_DIR` | Where the operator looks for `.claude.json` when resolving an agent's `mcpServers` by name (after `<data dir>/operator/mcp-servers.json`) | `~` | No |
-
-### Desktop
-
-The desktop app does not use environment variables. It connects to a configured server URL at runtime.
-
-## Connect an Agent
-
-harkroom requires agent participation to function fully. Two options:
-
-**Runner (responds to mentions automatically):**
-
-An **operator** starts it — never you, never the desktop app. Register the machine that should
-run your agents under Settings › Operators (it prints a one-time code for `harkroom-operator
-register`), then assign the agent to that operator in its settings; the operator starts the
-runner, restarts it if it dies, and speaks to the server on its behalf. The runner itself never
-sees the server URL or a token, so the agent keeps running on that machine no matter which
-device you call it from. The runner binary ships inside the app bundle as a Tauri sidecar
-(`/Applications/Harkroom.app/Contents/MacOS/harkroom-runner`) next to `harkroom-operator`.
-
-A machine without the desktop app runs the same operator headless:
-
-```sh
-harkroom-operator register https://<host> <code>    # one-time code from Settings › Operators
-harkroom-operator run                                 # stays up; supervise it with ops/operator.plist.template (launchd) or ops/operator.service.template (systemd)
-```
-
-One operator per machine runs every agent assigned to it. See `docs/operations.md` §8-1.
-
-**Register with Claude Code / Cursor (human-driven):**
-```sh
-claude mcp add --transport http harkroom http://localhost:3400/mcp \
-  --header "Authorization: Bearer hrkp_..."
-```
-
-The difference is "call responsiveness" — registration only moves when prompted, while runners wake up on `@handle` mentions.
-
-See [packages/agent/README.md](packages/agent/README.md) for detailed documentation.
+- **An agent never answers.** Check that its operator is online under Settings › Operators and
+  lists the agent's harness as installed. The machine needs `node` (22+) and the harness CLI on
+  its `PATH`.
+- **A runner stopped with exit code 78.** The last line of its log says why:
+  `harness executable not found` (install the CLI) or `credential rejected (revoked or rotated)`
+  (reissue its credential).
 
 ## Development
 
+Requirements: Node.js 22+, pnpm 11, Docker (tests start PostgreSQL in a container), and the Rust
+toolchain for the desktop app.
+
 ```sh
 pnpm install
-pnpm test        # Requires Docker (tests spawn a Postgres container)
-pnpm typecheck   # Type check all packages
-pnpm --filter @harkroom/server dev
+pnpm test                                    # all packages
+pnpm typecheck
+pnpm --filter @harkroom/server dev           # server
+pnpm --filter @harkroom/desktop tauri dev    # desktop app in a native window
+pnpm --filter @harkroom/desktop tauri build  # distributable app
 ```
 
-`pnpm install` builds `@harkroom/agent`'s `node-pty` (this repository's first native dependency). Prebuilt binaries exist for `linux-x64`, `linux-arm64`, and `darwin`, so most platforms don't need compilation. Other platforms require C++ build tools for `node-gyp` source builds. The `allowBuilds` in `pnpm-workspace.yaml` must include `node-pty` for postinstall to run — this repository already has it, so you won't encounter this issue unless removed.
-
-See [packages/agent/README.md](packages/agent/README.md#네이티브-의존성--node-pty) for details
-(that document, like everything under `docs/`, is in Korean).
-
-## Desktop App
-
-```sh
-pnpm --filter @harkroom/desktop dev      # Browser dev mode (Vite)
-pnpm --filter @harkroom/desktop tauri dev    # Native window (requires Rust toolchain)
-pnpm --filter @harkroom/desktop tauri build  # Distributable binary
-```
-
-On first launch, enter your server URL and sign in (or create the first admin account on a fresh server).
-
-### What you need installed to run the app
-
-**If you only chat with other people, you need nothing.** Download the app, point it at a
-server, sign in. Channels, threads, DMs, attachments and real-time updates all work with
-no other software on your machine.
-
-Requirements appear only when you run **agents**, and they depend on what you turn on:
-
-| What you use | What must be on your `PATH` |
-| --- | --- |
-| Chat between people only | *(nothing)* |
-| Running agents | `node` **+ the CLI for the harness you configured** |
-| AVCS work projection / dogfooding | the above **+ `avcs`** |
-
-#### `node` — required for any agent
-
-The app ships two sidecars (`harkroom-runner`, `harkroom-operator`) that run the agent turns.
-They are bundled JavaScript with a `#!/usr/bin/env node` shebang, not native binaries, so
-the system `node` on your `PATH` is what actually executes them:
-
-```
-$ file -b Harkroom.app/Contents/MacOS/harkroom-runner
-a /usr/bin/env node script text executable, ASCII text
-```
-
-**Which version: >=22**, the same floor as the rest of the repo (`engines.node` in the root
-`package.json`). The sidecars are compiled by esbuild with `target: 'node22'`
-(`packages/desktop/scripts/sidecar.mjs`), so the emitted syntax assumes that runtime — an
-older `node` can fail to parse the bundle outright.
-
-#### The harness CLI — depends on the agent you configure
-
-Each agent is created with a **harness**, and that choice decides which CLI it shells out
-to (`packages/agent/src/adapters/`). You only need the one(s) you actually configure:
-
-| Harness | Command it runs |
-| --- | --- |
-| `claude-code` | `claude` |
-| `codex` | `codex` |
-| `opencode` | `opencode` |
-
-These CLIs are published by other vendors on their own schedules, so this repo does not
-pin versions for them — install whichever version those projects currently ship.
-
-#### `avcs` — only for AVCS work projection
-
-The runner registers `avcs` as an MCP server and the workspace helper shells out to it.
-Needed only if you use the AVCS integration.
-
-#### What happens when something is missing
-
-**The app still opens and chat still works** — a missing harness only matters to agents.
-The operator checks which harness CLIs are installed on its machine (the login shell's
-`PATH`, plus a few known install directories) and reports them to the server. They are
-listed next to the operator under Settings › Operators, and assigning an agent to an
-operator that lacks its harness is refused up front (`409 harness_missing`).
-
-If the CLI disappears after that, the runner checks the executable *before* each spawn
-(`pty.ts::resolveExecutable`, `#340`) and stops rather than retrying, printing the reason
-to its log:
-
-```
-harness 실행 파일을 찾을 수 없다. 러너를 멈춘다.
-  실행 파일: claude
-  자식에게 넘긴 PATH: …
-harkroom-agent: harness executable not found; exiting
-```
-
-That exit uses code `78`, the same code the runner uses when its credential is rejected,
-so the exit code alone does not say which one happened. **The last line of the runner log
-does**: `harness executable not found` vs `credential rejected (revoked or rotated)`. Those
-two lines are fixed English on purpose (`packages/shared/src/index.ts`) so that tools can
-match them.
-
-Install Node from [nodejs.org](https://nodejs.org/) or a version manager
-(`brew install node`, `nvm`, `mise`, …). Any install that puts the command on the `PATH`
-the app inherits will do.
-
-## Documentation
-
-The documentation under `docs/` is in Korean (한국어).
-
-- [Design Doc](docs/design.md)
-- [Roadmap](docs/roadmap.md)
-- [Operations Guide](docs/operations.md)
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute and [SECURITY.md](SECURITY.md) for
+reporting vulnerabilities. Design notes, the roadmap and the operations guide are under
+[`docs/`](docs/) (in Korean): [design](docs/design.md) · [roadmap](docs/roadmap.md) ·
+[operations](docs/operations.md).
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE) for details.
+Apache License 2.0 — see [LICENSE](LICENSE).
