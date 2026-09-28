@@ -372,6 +372,7 @@ Buzz 의 "Agent runtimes 탐지 + Install" 목록은 **의도적으로 베끼지
 | `inbox.poll` | 멘션·DM·답글 커서 poll, **long-poll 지원** — 에이전트가 물고 대기하다 멘션에 깨어남 |
 | `inbox.read` | inbox 항목 읽음 처리(자기 inbox 한정, entry id). **이것이 없으면 MCP 단독으로 에이전트 루프가 성립하지 않는다** — 미읽음을 소비할 수 없어 같은 멘션에 영원히 반복 응답한다 |
 | `account.me` | 자기 identity 확인 |
+| `account.list` | 계정·팀·집합의 handle → id 조회(기록은 id 로 남기라는 가이드 절의 짝) |
 | `memory.list` / `memory.get` / `memory.set` | 에이전트 메모리(slug → 값, set 의 value null 이 삭제) |
 | `skill.propose` | 워크스페이스 스킬 제안(미승인 상태로 올리고 채널에 알림) |
 

@@ -23,6 +23,8 @@ import { getMemory, listMemory, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_L
 import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
 import { scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC } from '../services/agentWakes.js';
 import { guideFor } from './guide.js';
+import { listTeams } from '../services/teams.js';
+import { listHandleGroups } from '../services/handleGroups.js';
 import { recordClaudeLane } from '../services/claudeLane.js';
 import { recordRunnerVersion } from '../services/runnerVersion.js';
 import { resolveAttachmentFor } from '../services/attachments.js';
@@ -280,6 +282,27 @@ function buildMcpServer(
 
   server.registerTool('account.me', { description: '내 계정 정보' },
     async () => jsonResult(account));
+
+  /**
+   * handle → id 를 푸는 표. 워크스페이스 가이드의 「이름이 아니라 id 로」 절이 이 도구를 가리킨다 —
+   * 규칙만 주고 남의 id 를 얻을 길을 안 주면 에이전트는 결국 이름을 적는다(2026-09-28).
+   *
+   * 사람 화면의 `GET /accounts` 와 같은 가시성(로그인한 계정이면 누구나)이고, 거기서 이름을 푸는 데
+   * 필요한 열만 싣는다 — 상태·아바타·소유자는 에이전트가 기록할 키가 아니다. 비활성·삭제 계정을
+   * 빼지 않는 이유도 그 라우트와 같다: 지난 기록의 id 를 이름으로 되짚는 표이기도 하다.
+   * 팀·집합은 `listTeams`·`listHandleGroups` 하나가 낸다(질의 사본을 두지 않는다 — #285).
+   */
+  server.registerTool('account.list', { description: '계정·팀·집합 목록(handle → id 조회)' },
+    async () => {
+      const res = await pool.query(
+        `select id, handle, display_name as "displayName", kind,
+                disabled_at is not null as disabled, deleted_at is not null as deleted
+         from account order by handle`,
+      );
+      const teams = (await listTeams(pool)).map((t) => ({ id: t.id, name: t.name, leadAccountId: t.leadAccountId }));
+      const groups = (await listHandleGroups(pool)).map((g) => ({ id: g.id, handle: g.handle }));
+      return jsonResult({ accounts: res.rows, teams, groups });
+    });
 
   // 에이전트도 사람과 같은 가시성 규칙을 받는다 — private 채널은 멤버인 에이전트만 본다.
   // admin 예외는 주지 않는다: 이 목록은 곧 `message.read` 로 이어지는 경로이고, admin 이

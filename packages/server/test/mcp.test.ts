@@ -100,12 +100,24 @@ describe('mcp surface', () => {
     expect(stillTheirs.entries.length).toBe(theirs.entries.length);
   });
 
+  it('account.list 는 handle 을 id 로 푼다 — 가이드의 「이름이 아니라 id 로」 절이 가리키는 조회 수단', async () => {
+    const client = await mcpClient(botPat);
+    const me = text(await client.callTool({ name: 'account.me', arguments: {} })) as { id: string; handle: string };
+    const list = text(await client.callTool({ name: 'account.list', arguments: {} })) as {
+      accounts: { id: string; handle: string }[]; teams: unknown[]; groups: unknown[];
+    };
+    expect(list.accounts.find((a) => a.handle === me.handle)?.id).toBe(me.id);
+    expect(Array.isArray(list.teams)).toBe(true);
+    expect(Array.isArray(list.groups)).toBe(true);
+    await client.close();
+  });
+
   it('lists tools, posts and reads messages', async () => {
     const client = await mcpClient(botPat);
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name).sort();
     expect(names).toEqual([
-      'account.me', 'attachment.fetch', 'channel.doc', 'channel.list', 'inbox.poll', 'inbox.read',
+      'account.list', 'account.me', 'attachment.fetch', 'channel.doc', 'channel.list', 'inbox.poll', 'inbox.read',
       'memory.get', 'memory.list', 'memory.set',
       'message.ask', 'message.delegate', 'message.fail', 'message.post', 'message.progress', 'message.react', 'message.read', 'message.report', 'message.search', 'message.unreact',
       'skill.propose', 'turn.wake', 'workspace.guide',
