@@ -1,4 +1,4 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
 import { countsAsReply, notifyLevelOf } from '@harkroom/shared';
 import { ApiClient, ApiError } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
@@ -2147,8 +2147,20 @@ export class Controller {
     return this.api.setTeamLead(id, accountId);
   }
 
-  async getTeam(id: string): Promise<{ team: AgentTeamRow; members: AgentTeamMemberRow[] }> {
+  async getTeam(id: string): Promise<{ team: AgentTeamRow; members: AgentTeamMemberRow[]; invokers?: string[] }> {
     return this.api.team(id);
+  }
+
+  setTeamScope(id: string, scope: { invokeScope: InvokeScope; ownerAccountId?: string | null }): Promise<AgentTeamRow> {
+    return this.api.setTeamScope(id, scope);
+  }
+
+  addTeamInvoker(teamId: string, accountId: string): Promise<{ invokers: string[] }> {
+    return this.api.addTeamInvoker(teamId, accountId);
+  }
+
+  removeTeamInvoker(teamId: string, accountId: string): Promise<{ invokers: string[] }> {
+    return this.api.removeTeamInvoker(teamId, accountId);
   }
 
   addTeamMember(teamId: string, accountId: string): Promise<{ members: AgentTeamMemberRow[] }> {

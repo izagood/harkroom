@@ -1,7 +1,7 @@
 import type {
   AutomationRunView, AutomationTrigger, AutomationView,
   McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView,
-  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
+  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InvokeScope, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
 export class ApiError extends Error {
@@ -944,8 +944,22 @@ export class ApiClient {
     return this.req('PUT', `/teams/${id}/lead`, { accountId });
   }
 
-  async team(id: string): Promise<{ team: AgentTeamRow; members: AgentTeamMemberRow[] }> {
+  /** `invokers` 는 068 서버부터 온다 — 옛 서버는 싣지 않으므로 옵셔널이다. */
+  async team(id: string): Promise<{ team: AgentTeamRow; members: AgentTeamMemberRow[]; invokers?: string[] }> {
     return this.req('GET', `/teams/${id}`);
+  }
+
+  /** 팀의 호출 범위(068) — 에이전트의 `invokeScope` 와 같은 네 값. 갱신된 팀 행을 돌려준다. */
+  setTeamScope(id: string, scope: { invokeScope: InvokeScope; ownerAccountId?: string | null }): Promise<AgentTeamRow> {
+    return this.req('PUT', `/teams/${id}/scope`, scope);
+  }
+
+  addTeamInvoker(teamId: string, accountId: string): Promise<{ invokers: string[] }> {
+    return this.req('PUT', `/teams/${teamId}/invokers/${accountId}`);
+  }
+
+  removeTeamInvoker(teamId: string, accountId: string): Promise<{ invokers: string[] }> {
+    return this.req('DELETE', `/teams/${teamId}/invokers/${accountId}`);
   }
 
   addTeamMember(teamId: string, accountId: string): Promise<{ members: AgentTeamMemberRow[] }> {

@@ -141,6 +141,22 @@ describe('AgentMcpSection — 한 절에서 끝낸다', () => {
     expect(await screen.findByTestId('agent-mcp-notice')).toBeTruthy();
   });
 
+  it('확인창이 이 에이전트가 든 팀을 말한다 — owner 로 좁히면 남의 팀 부름에서 빠진다(068)', async () => {
+    fakeLocal([{ name: 'slack' }, { name: 'github' }]);
+    setup({
+      listTeams: vi.fn(async () => [{ id: 't1', name: 'udc-team' }, { id: 't2', name: 'other' }]),
+      getTeam: vi.fn(async (id: string) => ({
+        team: { id },
+        members: id === 't1' ? [{ accountId: 'agent-1', handle: 'alpha', disabled: false }] : [],
+      })),
+    });
+    render(<AgentScopeSection agent={agent()} onUpdated={() => {}} />);
+    fireEvent.click(await screen.findByLabelText('slack'));
+    const line = await screen.findByTestId('agent-mcp-confirm-teams');
+    expect(line.textContent).toContain('@udc-team');
+    expect(line.textContent).not.toContain('@other');
+  });
+
   it('[추가] 는 레지스트리 이름 → 이 머신 정의 → 붙이기 순서다(프리셋 Jira)', async () => {
     const calls = fakeLocal([]);
     const order: string[] = [];
