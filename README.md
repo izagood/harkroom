@@ -16,55 +16,53 @@ avcs objects are **not** turned into chat messages. Chat is where people and age
 ## How it fits together
 
 ```
-┌─── server host ────────────────────────────────────────────────────────┐
-│                                                                        │
-│  harkroom-server          REST · /ws · /operator · /mcp                │
-│        │                                   ╎                           │
-│        ▼                                   ╎ AVCS_BASE_URL             │
-│  PostgreSQL                         AVCS server (optional,             │
-│                                     separate process)                  │
-└───────────────────────────────▲────────────────────▲───────────────────┘
-                                │ REST + /ws         │ /operator (WebSocket)
-┌─── a machine that runs agents ┼────────────────────┼───────────────────┐
-│                               │                    │                   │
-│  Harkroom.app (Tauri)         │                    │                   │
-│   ├─ webview (UI) ────────────┘                    │                   │
-│   └─ Rust shell                                    │                   │
-│        │ starts or attaches (unix socket)          │                   │
-│        ▼                                           │                   │
-│  harkroom-operator   one per machine ──────────────┘                   │
-│        │ spawns · restarts · forwards (unix socket)                    │
-│        ▼                                                               │
-│  harkroom-runner     one per agent                                     │
-│        │ runs each turn in a PTY                                       │
-│        ▼                                                               │
-│  claude / codex / opencode     the harness CLI                         │
-│        │ stdio MCP                                                     │
-│        ▼                                                               │
-│  harkroom-operator mcp-bridge ──▶ the operator (unix socket)           │
-│                                                                        │
-└────────────────────────────────────────────────────────────────────────┘
+┌──────────────────┐        ┌──────────────────────┐      ┌──────────────────┐
+│   Desktop app    │  chat  │        Server        │      │     Database     │
+│ people chat and  │◀──────▶│    the shared hub    │─────▶│   what the hub   │
+│   watch agents   │        │ channels · messages  │      │    remembers     │
+└────────┬─────────┘        │      live relay      ├──┐   └──────────────────┘
+         │                  └───────┬──────────────┘  │
+         │                          │     ▲           │
+         │                mentions  │     │ replies   │   ┌──────────────────┐
+         │                          │     │           │   │ AVCS (optional)  │
+         │                          ▼     │           └──▶│  record of the   │
+         │                  ┌─────────────┴────────┐      │   agents' work   │
+         │ starts it        │       Operator       │      └──────────────────┘
+         └─────────────────▶│ keeps this machine's │◀──┐
+                            │    agents running    │   │
+                            └──────────┬───────────┘   │
+                                       │ one per agent │
+                                       │               │
+                                       ▼               │ harkroom tools
+                            ┌──────────────────────┐   │ (read · post · ask)
+                            │        Runner        │   │ go back through
+                            │ waits for a mention  │   │ the operator
+                            │  and runs the turn   │   │
+                            └──────────┬───────────┘   │
+                                       │ each turn     │
+                                       │               │
+                                       ▼               │
+                            ┌──────────────────────┐   │
+                            │       Harness        │   │
+                            │    an AI CLI that    ├───┘
+                            │    does the work     │
+                            └──────────────────────┘
 ```
 
-- **Chat needs only the app and the server.** The webview talks to `harkroom-server` over
-  REST and one WebSocket (`/ws`). Nothing else has to run on a machine where you only chat.
-- **Agents live with an operator, not with the app.** The app's Rust shell starts (or attaches
-  to) `harkroom-operator` over a unix socket; the operator keeps one `/operator` WebSocket to
-  the server and starts one `harkroom-runner` per agent assigned to it. A machine without the
-  app runs the same operator headless (`harkroom-operator run`, see
-  [Connect an Agent](#connect-an-agent)). Either way the agent answers no matter which
+- **Desktop app** — where people read and write. Chatting needs only this and the server;
+  nothing else has to run on a machine where you only chat.
+- **Server** — the shared hub. It holds channels, messages and accounts, delivers mentions
+  to agents, and relays the terminal of an agent you are watching live (without storing it).
+- **Operator** — one per machine that runs agents. It starts and restarts that machine's
+  agents and is the only part that talks to the server on their behalf. The desktop app
+  starts it; a machine without the app runs it on its own (`harkroom-operator run`, see
+  [Connect an Agent](#connect-an-agent)). Either way an agent answers no matter which
   device you mention it from.
-- **The runner never holds a server URL or token.** It long-polls its inbox and relays its
-  PTY through the operator's unix socket. When a mention arrives it starts the harness CLI
-  in a PTY for that turn.
-- **The harness reaches harkroom through the operator too.** Its `harkroom` MCP server is
-  `harkroom-operator mcp-bridge`, a stdio process that hands each JSON-RPC request to the
-  operator, which forwards it to the server's `/mcp` under its own token and that agent's id.
-- **The terminal you watch in the app is relayed, not stored.** PTY bytes go
-  runner → operator → server → your `/ws` and on to xterm; the server passes them through
-  without writing them to the database or logs.
-- **AVCS is optional and external.** With `AVCS_BASE_URL` set the server follows an AVCS
-  server's object log and shows leases next to the chat (see Quick Start, Mode 2).
+- **Runner** — one per agent. It waits for a mention and runs that turn.
+- **Harness** — the AI CLI that does the work (Claude Code, Codex or opencode). It reads
+  the thread and replies with harkroom tools, which go back through the operator.
+- **Database** keeps the hub's data. **AVCS** is optional and runs separately; with it the
+  server shows who is working on what next to the chat (see Quick Start, Mode 2).
 
 ## Maturity
 
