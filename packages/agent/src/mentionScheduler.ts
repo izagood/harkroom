@@ -125,6 +125,13 @@ export interface MentionSchedulerDeps {
     exitIfUnrecoverable(err: unknown): void;
     noticeHarnessLogin(err: unknown, channelId: string, anchor: string, messageId: string): Promise<void>;
   };
+  /**
+   * 앞 세대 러너가 아직 들고 있는 entry — 이관 중에만 있다(`main.ts` 의 `HARKROOM_HANDOVER_HOLD`).
+   *
+   * 여기 있는 항목은 **띄우지 않는다.** 앞 러너가 그 턴을 이미 돌리고 있는데 여기서 또 띄우면
+   * 같은 멘션에 두 번 답한다 — 이관을 빠르게 하려다 `#430`·`#174` 의 중복을 되살리는 자리다.
+   */
+  heldEntryIds?: () => ReadonlySet<number>;
   /** 종료 요청이 나를 향한 것인지 가르는 기준(stop.ts). */
   startedAtMs: number;
   /** 테스트가 백오프 경계를 결정론적으로 재현하기 위한 시계 주입. 생략하면 Date.now. */
@@ -134,6 +141,13 @@ export interface MentionSchedulerDeps {
 export interface MentionScheduler {
   admit(batch: InboxBatch, ctx: BatchContext): Promise<AdmitOutcome>;
   inFlight(): number;
+  /**
+   * 지금 도는 턴들의 inbox entry id. `markRead` 가 턴 완료 후라 **아직 미읽음**인 것들이다.
+   *
+   * 물러나는 러너가 교체 러너에게 "이건 내가 들고 있다"고 넘기는 목록이다
+   * (`main.ts` 의 종료 경로 → `relay.notifyPollStopped`).
+   */
+  holdingEntries(): number[];
   drain(): Promise<void>;
 }
 
@@ -424,6 +438,9 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         if (record && record.notBefore > now()) { out.blocked += 1; continue; }
 
         if (inFlightEntries.has(entry.id)) { out.blocked += 1; continue; }
+        // 앞 세대가 들고 있는 것은 **내 것이 아니다**(이관 중). 유예가 끝나면 이 집합이
+        // 비므로, 앞 러너가 끝내지 못한 항목도 결국 여기로 돌아온다 — 잃지 않는다.
+        if (deps.heldEntryIds?.().has(entry.id)) { out.blocked += 1; continue; }
 
         const anchor = mentionAnchor(mention);
         const threadKey = SessionStore.threadKey(mention.channelId, anchor);
@@ -510,6 +527,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
     },
 
     inFlight: () => running.size,
+    holdingEntries: () => [...inFlightEntries],
 
     async drain() {
       // 스냅샷을 떠서 도는 이유: 완료 콜백이 이 집합을 수정하므로 순회 중에 직접 읽지 않는다.
