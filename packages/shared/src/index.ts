@@ -2268,7 +2268,26 @@ export type AutomationSchedule =
   | { kind: 'schedule'; freq: 'weekly'; weekdays: number[]; time: string; tz: string }
   | { kind: 'schedule'; freq: 'monthly'; monthDay: number; time: string; tz: string };
 
-export type AutomationTrigger = AutomationSchedule;
+/**
+ * GitHub 이벤트 트리거(065). webhook 이 들어오면 이 필터를 지난 것만 회차가 된다.
+ * `paths` 는 glob(`**`·`*`·`?`), `change` 는 그 경로가 **어떻게** 바뀌었을 때인가 —
+ * "어댑터 파일이 **새로** 들어왔을 때"(`added`)를 가르려면 이 칸이 있어야 한다.
+ */
+export interface AutomationGithubTrigger {
+  kind: 'github';
+  /** `owner/name`. 대소문자는 가리지 않는다. */
+  repo: string;
+  event: 'push' | 'pull_request.merged' | 'release.published' | 'workflow_run.completed';
+  /** push 는 ref 의 브랜치, PR 은 base 브랜치. 없으면 모든 브랜치. */
+  branch?: string;
+  paths?: string[];
+  change?: 'any' | 'added' | 'modified' | 'removed';
+}
+
+/** 범용 hook(065) — GitHub Actions 의 curl 한 줄, CI, Jira 등. 필터 없이 들어오면 돈다. */
+export interface AutomationWebhookTrigger { kind: 'webhook' }
+
+export type AutomationTrigger = AutomationSchedule | AutomationGithubTrigger | AutomationWebhookTrigger;
 export type AutomationTriggerKind = AutomationTrigger['kind'] | 'manual';
 
 export interface AutomationView {
@@ -2283,8 +2302,18 @@ export interface AutomationView {
   nextAt: string | null;
   pausedReason: string | null;
   consecutiveFailures: number;
+  /** 외부 수신이 켜져 있으면 켠 시각. 키 원문은 켤 때 한 번만 준다(`AutomationIngressIssued`). */
+  ingressEnabledAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** 수신을 켜거나 키를 다시 받을 때 **한 번만** 오는 값. */
+export interface AutomationIngressIssued {
+  key: string;
+  /** 서버 기준 상대 경로. 앞에 서버 주소를 붙여 GitHub 에 넣는다. */
+  githubPath: string | null;
+  genericPath: string;
 }
 
 export interface AutomationRunView {
