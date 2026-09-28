@@ -4,7 +4,7 @@
  * `claudeAccounts.ts` 와 같은 경계다: 웹뷰가 넘기는 것은 URL·id·문자열뿐이고 Rust 커맨드가
  * 데몬에 전달한다.
  */
-import type { OperatorAgentsListResult, OperatorLocalAgent, OperatorRegisterResult } from '@harkroom/shared/daemonProtocol';
+import type { OperatorAgentsListResult, OperatorLocalAgent, OperatorMcpListResult, OperatorMcpRemoteDefinition, OperatorRegisterResult } from '@harkroom/shared/daemonProtocol';
 
 interface TauriInternals { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> }
 
@@ -39,4 +39,22 @@ export async function setLocalAgent(baseUrl: string, agentId: string, config: Op
 
 export async function removeLocalAgent(baseUrl: string, agentId: string): Promise<void> {
   await call('operator_agent_remove', { baseUrl, agentId });
+}
+
+/**
+ * 이 머신의 MCP 정의(`operator/mcp-servers.json`) — 서버 레지스트리의 이름에 붙는 명령·url·토큰.
+ * 목록은 env·headers 의 **키만** 돌려준다. 정의를 바꿔도 도는 러너는 그대로다 — 러너를 다시
+ * 띄울 때 새 config 가 만들어진다.
+ */
+export function listLocalMcpServers(): Promise<OperatorMcpListResult> {
+  return call('operator_mcp_list') as Promise<OperatorMcpListResult>;
+}
+
+/** http·sse 정의만 넣는다 — stdio 는 오퍼레이터가 거절한다(#431). */
+export async function setLocalMcpServer(name: string, definition: OperatorMcpRemoteDefinition): Promise<void> {
+  await call('operator_mcp_set', { name, definition });
+}
+
+export async function removeLocalMcpServer(name: string): Promise<void> {
+  await call('operator_mcp_remove', { name });
 }
