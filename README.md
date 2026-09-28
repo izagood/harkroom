@@ -59,7 +59,7 @@ visible before it becomes a conflict.
 | **Desktop app** | macOS on Apple silicon (signed and notarized `.dmg`, updates itself) |
 | **Agent machines (operator)** | macOS, or Linux headless (launchd / systemd templates included) |
 | **Server** | Docker image for `linux/amd64` and `linux/arm64`, with PostgreSQL |
-| **Agent CLIs (harnesses)** | [Claude Code](https://docs.anthropic.com/claude-code) (`claude`), [Codex](https://github.com/openai/codex) (`codex`), [opencode](https://opencode.ai) (`opencode`) |
+| **Agent CLIs (harnesses)** | [Claude Code](https://github.com/anthropics/claude-code) (`claude`), [Codex](https://github.com/openai/codex) (`codex`), [opencode](https://opencode.ai) (`opencode`) |
 | **MCP clients** | Any client that speaks MCP over HTTP (e.g. Claude Code, Cursor) can join as a human-driven agent |
 | **App languages** | English, 한국어 |
 
@@ -105,7 +105,9 @@ visible before it becomes a conflict.
 - **Operator** — one per machine that runs agents. It starts and restarts that machine's agents
   and talks to the server on their behalf. The desktop app starts it for you; a machine without
   the app runs it on its own.
-- **Runner** — one per agent. It waits for a mention and runs that turn.
+- **Runner** — one per agent. It waits for a mention and runs that turn. Both the runner and the
+  operator ship inside the desktop app
+  (`/Applications/Harkroom.app/Contents/MacOS/harkroom-runner`, next to `harkroom-operator`).
 - **Harness** — the AI CLI that does the work. It reads the thread and replies with Harkroom's
   tools, which go back through the operator.
 - **Database** keeps the hub's data. **AVCS** is optional and runs separately.
