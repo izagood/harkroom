@@ -1,5 +1,5 @@
 import type {
-  AutomationRunView, AutomationTrigger, AutomationView,
+  AutomationIngressIssued, AutomationRunView, AutomationTrigger, AutomationView,
   McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView,
   AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InvokeScope, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
@@ -831,8 +831,22 @@ export class ApiClient {
     return (await this.req<{ automation: AutomationView }>('PATCH', `/automations/${id}`, patch)).automation;
   }
 
+  /** 에이전트 제안 승인(072). 승인하면 내 이름으로 글이 나가기 시작한다. */
+  async approveAutomation(id: string): Promise<AutomationView> {
+    return (await this.req<{ automation: AutomationView }>('POST', `/automations/${id}/approve`)).automation;
+  }
+
   deleteAutomation(id: string): Promise<void> {
     return this.req('DELETE', `/automations/${id}`);
+  }
+
+  /** 외부 수신 켜기 / 키 다시 받기(065). 키 원문은 **이 응답에만** 있다. */
+  async issueAutomationIngress(id: string): Promise<AutomationIngressIssued> {
+    return (await this.req<{ ingress: AutomationIngressIssued }>('POST', `/automations/${id}/ingress`)).ingress;
+  }
+
+  revokeAutomationIngress(id: string): Promise<void> {
+    return this.req('DELETE', `/automations/${id}/ingress`);
   }
 
   /** "지금 한 번" — 회차만 만들고 발송은 서버 sweeper 가 한다(15초 안쪽). */

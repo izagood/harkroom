@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AutomationGithubTrigger, AutomationRunView, AutomationTrigger, AutomationView } from '@harkroom/shared';
+import type { AutomationGithubTrigger, AutomationIngressIssued, AutomationRunView, AutomationTrigger, AutomationView } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { Button, Field, Segmented, Select, SettingsPage, TextInput } from './primitives';
@@ -81,6 +81,9 @@ export function AutomationsSettings() {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** 방금 받은 수신 키. **이 화면을 떠나면 다시 볼 수 없다** — 서버가 원문을 남기지 않는다. */
+  const [issued, setIssued] = useState<{ id: string; ingress: AutomationIngressIssued } | null>(null);
+  const baseUrl = getController().api.baseUrl;
 
   const reload = useCallback(() => {
     void getController().api.listAutomations().then(setItems).catch(() => setItems('error'));
@@ -134,6 +137,13 @@ export function AutomationsSettings() {
       && (draft.freq !== 'weekly' || draft.weekdays.length > 0)))
     && (draft.kind !== 'github' || /^[\w.-]+\/[\w.-]+$/.test(draft.repo.trim()));
 
+  const issue = async (id: string) => {
+    setError(null);
+    try {
+      setIssued({ id, ingress: await getController().api.issueAutomationIngress(id) });
+      reload();
+    } catch (e) { setError(reason(e, t('automations.ingress.issueFailed'))); }
+  };
 
   const rows = Array.isArray(items) ? items : [];
   const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString(locale || undefined) : '—');
@@ -296,8 +306,12 @@ export function AutomationsSettings() {
                       : t('automations.row.off')}
                 </div>
               </div>
-              {/* 승인 버튼은 서버 `POST /automations/:id/approve` 가 릴리스된 뒤 붙인다(serverSurface 규칙). */}
-              {a.approvedAt && <label className="flex items-center gap-2 text-meta text-fg-muted">
+              {!a.approvedAt ? (
+                <Button variant="primary" disabled={busy}
+                  onClick={() => void act(() => getController().api.approveAutomation(a.id), t('automations.proposal.approveFailed'))}>
+                  {t('automations.proposal.approve')}
+                </Button>
+              ) : <label className="flex items-center gap-2 text-meta text-fg-muted">
                 <input type="checkbox" role="switch" data-testid="automation-enabled" checked={a.enabled} disabled={busy}
                   onChange={(e) => void act(() => getController().api.updateAutomation(a.id, { enabled: e.target.checked }), t('automations.form.saveFailed'))} />
                 {t('automations.row.enabled')}
@@ -322,6 +336,35 @@ export function AutomationsSettings() {
                 <Button onClick={() => setConfirmDelete(a.id)}>{t('automations.row.delete')}</Button>
               )}
             </div>
+            {a.trigger.kind !== 'schedule' && (
+              <div data-testid="automation-ingress" className="mt-3 rounded border border-border p-3 text-meta">
+                <div className="mb-2 text-fg-muted">
+                  {a.ingressEnabledAt ? t('automations.ingress.on') : t('automations.ingress.off')}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={() => void issue(a.id)}>
+                    {a.ingressEnabledAt ? t('automations.ingress.reissue') : t('automations.ingress.enable')}
+                  </Button>
+                  {a.ingressEnabledAt && (
+                    <Button onClick={() => void act(async () => {
+                      await getController().api.revokeAutomationIngress(a.id);
+                      if (issued?.id === a.id) setIssued(null);
+                    }, t('automations.ingress.issueFailed'))}>{t('automations.ingress.disable')}</Button>
+                  )}
+                </div>
+                {issued?.id === a.id && (
+                  <div data-testid="automation-ingress-key" className="mt-3 space-y-1">
+                    <p className="text-warning">{t('automations.ingress.onceWarning')}</p>
+                    <pre className="whitespace-pre-wrap break-all rounded bg-surface p-2 text-fg">{[
+                      issued.ingress.githubPath ? `GitHub webhook URL: ${baseUrl}${issued.ingress.githubPath}` : null,
+                      issued.ingress.githubPath ? `Secret: ${issued.ingress.key}` : null,
+                      `curl -X POST ${baseUrl}${issued.ingress.genericPath} -H 'Authorization: Bearer ${issued.ingress.key}' -H 'Content-Type: application/json' -d '{}'`,
+                    ].filter(Boolean).join('\n')}</pre>
+                    {issued.ingress.githubPath && <p className="text-fg-subtle">{t('automations.ingress.githubHint')}</p>}
+                  </div>
+                )}
+              </div>
+            )}
             {runsFor?.id === a.id && (
               <table data-testid="automation-runs" className="mt-3 w-full text-meta">
                 <tbody>
