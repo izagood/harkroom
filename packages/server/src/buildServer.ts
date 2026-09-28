@@ -28,6 +28,7 @@ import { registerHandleGroupRoutes } from './routes/handleGroupRoutes.js';
 import { registerLinkPreviewRoutes } from './routes/linkPreviewRoutes.js';
 import { registerAgentRelayRoutes } from './routes/agentRelayRoutes.js';
 import { registerSkillRoutes } from './routes/skillRoutes.js';
+import { registerAutomationRoutes } from './routes/automationRoutes.js';
 import { registerWs } from './ws/wsPlugin.js';
 import { registerMcp } from './mcp/mcpPlugin.js';
 import { createAgentPresence } from './mcp/presence.js';
@@ -36,6 +37,7 @@ import { loggerConfig } from './logging.js';
 import { createRateLimiter, type RateLimitRule } from './rateLimit.js';
 import { createMetrics } from './metrics.js';
 import { createScheduledMessageSweeper } from './services/scheduledMessages.js';
+import { createAutomationSweeper } from './services/automations.js';
 import { createAgentWakeSweeper } from './services/agentWakes.js';
 import { emitEvent } from './events.js';
 import { createStaleRequestSweeper } from './services/staleRequests.js';
@@ -422,6 +424,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const scheduledSweeper = createScheduledMessageSweeper(deps.pool);
   scheduledSweeper.startSweep(app);
 
+  // 자동화(064): 시각이 된 schedule 을 회차로 만들고, 대기 회차를 만든 사람 이름의 글로 보낸다.
+  const automationSweeper = createAutomationSweeper(deps.pool);
+  automationSweeper.startSweep(app);
+
   // 깨움(wake) sweeper — 예약 발송과 같은 모양의 시계다. 이것이 안 돌면 에이전트가 걸어 둔
   // 대기가 영원히 깨어나지 않는다: 스레드에는 "기다린다"는 줄만 남고 후속은 오지 않는다.
   const wakeSweeper = createAgentWakeSweeper(deps.pool);
@@ -496,6 +502,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerHandleGroupRoutes(app, deps.pool);
   await registerLinkPreviewRoutes(app, deps.pool);
   await registerSkillRoutes(app, deps.pool);
+  await registerAutomationRoutes(app, deps.pool);
 
   // 오퍼레이터 신원과 채널(스펙 2026-09-20 §3·§4). 릴레이와 같은 이유로 registerWs·registerAuth
   // 뒤다. 허브는 연결이 살아 있는 동안의 사실(능력·러너)만 든다 — 저장하지 않는다.
