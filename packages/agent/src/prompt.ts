@@ -268,7 +268,16 @@ const NON_UTTERANCE_KINDS: ReadonlySet<string> = new Set([MESSAGE_KIND_PROGRESS,
  * `catch` 로 빈 값을 흘려보낼 수 없다.
  */
 export type MemoryContext =
-  | { core: string | null; slugs: string[] }
+  | {
+    core: string | null;
+    slugs: string[];
+    /**
+     * 서버를 못 읽어 러너 사본(`memoryCache.ts`)으로 돈다 — 그 사본을 받은 시각. 없는 것이
+     * 기억 없이 도는 것보다 낫지만, 에이전트가 **그 사실을 알아야** 낡은 값을 새것처럼
+     * 믿고 덮어쓰지 않는다.
+     */
+    stale?: { fetchedAt: string };
+  }
   | 'unavailable';
 
 /**
@@ -322,6 +331,9 @@ function memorySection(memory: MemoryContext): string[] {
   if (memory === 'unavailable') return [];
 
   if (memory.core === null && memory.slugs.length === 0) {
+    // 사본으로 도는데 그 사본이 비어 있다 — "비었다"는 **그때의** 사실이지 지금의 사실이
+    // 아니다. 온보딩을 넣으면 'unavailable' 에서 막은 사고(새 프로필로 덮어쓰기)가 돌아온다.
+    if (memory.stale) return [];
     // 조회는 성공했고 저장소가 비어 있다. 이건 사실이므로 안내해도 안전하다.
     return [
       '기억이 아직 없다. 이 워크스페이스에서 반복해서 쓸 사실(사람들의 역할, 저장소 규칙,',
@@ -342,8 +354,23 @@ function memorySection(memory: MemoryContext): string[] {
   }
   // 사용법은 **닫는 태그 바깥**에 둔다. 안에 넣으면 기억 본문과 같은 자리에 서고, 그러면
   // 기억을 지운 사람이 지시까지 지우게 된다(`<memory>` 안은 데이터, 밖은 지시다).
-  lines.push('</memory>', '', ...MEMORY_USAGE_LINES, '');
+  lines.push('</memory>', '');
+  if (memory.stale) lines.push(...staleMemoryLines(memory.stale.fetchedAt), '');
+  lines.push(...MEMORY_USAGE_LINES, '');
   return lines;
+}
+
+/**
+ * 러너 사본으로 돌 때 붙는 경고(`memoryCache.ts`). 닫는 태그 **바깥**이다 — 지시이기 때문이다.
+ * 없으면 에이전트는 낡은 core 를 지금 것으로 믿고, 그것을 바탕으로 `memory.set` 해 그 사이
+ * 다른 턴이 고친 것을 덮어쓴다.
+ */
+export function staleMemoryLines(fetchedAt: string): string[] {
+  return [
+    `**위 기억은 러너가 ${fetchedAt} 에 받아 둔 사본이다** — 이번 턴은 서버에서 메모리를 읽지`,
+    '못했다. 그 뒤에 바뀐 것은 반영돼 있지 않을 수 있다. 기억을 고치기(`memory.set`) 전에는',
+    '`memory.get` 으로 지금 값을 먼저 확인하고, 읽히지 않으면 고치지 마라.',
+  ];
 }
 
 /**

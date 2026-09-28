@@ -41,6 +41,7 @@ export type AuditAction =
   | 'operator.registered' | 'operator.revoked' | 'agent.assigned' | 'agent.unassigned'
   // 호출 명단(스펙 2026-09-20 §6).
   | 'agent.invoker.added' | 'agent.invoker.removed'
+  | 'team.scope.set' | 'team.invoker.added' | 'team.invoker.removed'
   // MCP 레지스트리(스펙 §6).
   | 'mcp_server.set' | 'mcp_server.deleted'
   | 'password.changed'

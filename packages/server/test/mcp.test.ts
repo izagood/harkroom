@@ -76,6 +76,29 @@ describe('mcp surface', () => {
     expect(after.entries).toHaveLength(0);
   });
 
+  // 러너 메모리 캐시(2026-09-28): 턴을 띄울 배치에만 memoryRev 를 얹는다. 그 값은
+  // memory.list 의 rev 와 같아야 러너가 사본을 믿을 수 있다. 빈 폴에는 싣지 않는다.
+  it('inbox.poll carries memoryRev only on a non-empty batch, equal to memory.list rev', async () => {
+    const { pat } = await createAgent(app, adminToken, 'revbot');
+    const client = await mcpClient(pat);
+    await client.callTool({ name: 'memory.set', arguments: { slug: 'core', value: 'hi' } });
+    const empty = text(await client.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 0 } })) as
+      { entries: unknown[]; memoryRev?: string };
+    expect(empty.entries).toHaveLength(0);
+    expect(empty.memoryRev).toBeUndefined();
+
+    await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { body: '@revbot 판본 확인' },
+    });
+    const batch = text(await client.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 0 } })) as
+      { entries: unknown[]; memoryRev?: string };
+    const listed = text(await client.callTool({ name: 'memory.list', arguments: {} })) as { rev: string };
+    expect(batch.entries.length).toBeGreaterThan(0);
+    expect(batch.memoryRev).toBe(listed.rev);
+  });
+
   // entry id 를 그대로 믿고 지우면 남의 inbox 를 소비할 수 있다.
   it('refuses to consume an inbox entry that belongs to someone else', async () => {
     const other = await createAgent(app, adminToken, 'otherbot');
@@ -100,12 +123,24 @@ describe('mcp surface', () => {
     expect(stillTheirs.entries.length).toBe(theirs.entries.length);
   });
 
+  it('account.list 는 handle 을 id 로 푼다 — 가이드의 「이름이 아니라 id 로」 절이 가리키는 조회 수단', async () => {
+    const client = await mcpClient(botPat);
+    const me = text(await client.callTool({ name: 'account.me', arguments: {} })) as { id: string; handle: string };
+    const list = text(await client.callTool({ name: 'account.list', arguments: {} })) as {
+      accounts: { id: string; handle: string }[]; teams: unknown[]; groups: unknown[];
+    };
+    expect(list.accounts.find((a) => a.handle === me.handle)?.id).toBe(me.id);
+    expect(Array.isArray(list.teams)).toBe(true);
+    expect(Array.isArray(list.groups)).toBe(true);
+    await client.close();
+  });
+
   it('lists tools, posts and reads messages', async () => {
     const client = await mcpClient(botPat);
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name).sort();
     expect(names).toEqual([
-      'account.me', 'attachment.fetch', 'channel.doc', 'channel.list', 'inbox.poll', 'inbox.read',
+      'account.list', 'account.me', 'attachment.fetch', 'channel.doc', 'channel.list', 'inbox.poll', 'inbox.read',
       'memory.get', 'memory.list', 'memory.set',
       'message.ask', 'message.delegate', 'message.fail', 'message.post', 'message.progress', 'message.react', 'message.read', 'message.report', 'message.search', 'message.unreact',
       'skill.propose', 'turn.wake', 'workspace.guide',

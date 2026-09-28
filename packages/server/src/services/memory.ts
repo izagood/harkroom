@@ -27,6 +27,31 @@ export async function listMemory(pool: Pool, accountId: string): Promise<string[
   return res.rows.map((r) => r.slug as string);
 }
 
+/**
+ * 이 계정 메모리 전체의 **판본**. 러너가 들고 있는 사본이 아직 맞는지 왕복 없이 가리는 값이다
+ * (러너 메모리 캐시, 2026-09-28). 러너는 이 값이 자기 사본과 같으면 `memory.get` 을 부르지 않는다.
+ *
+ * 열(`rev`)을 새로 두지 않고 **있는 것에서 계산한다** — 마이그레이션 없이 들어가고, 쓰기 경로가
+ * 판본을 올리는 것을 잊을 자리가 아예 없다. 재료는 `(slug, updated_at)` 이다:
+ * - 추가·수정은 `updated_at = now()` 로 그 행의 값을 바꾼다.
+ * - 삭제는 그 행이 목록에서 빠진다.
+ * 그래서 어느 쪽이든 해시가 바뀐다. 본문을 해시하지 않는 이유: 200행×8,000자를 폴마다
+ * 읽을 까닭이 없다 — 본문이 바뀌면 `updated_at` 도 반드시 바뀐다.
+ *
+ * 빈 저장소는 `'empty'` 다(`string_agg` 가 null 을 낸다). null 을 내면 "판본을 모르는 옛
+ * 서버"와 구분되지 않는다.
+ */
+export async function memoryRev(pool: Pool, accountId: string): Promise<string> {
+  const res = await pool.query(
+    `select coalesce(
+       md5(string_agg(slug || ':' || (extract(epoch from updated_at) * 1000000)::bigint, ',' order by slug)),
+       'empty') as rev
+     from agent_memory where account_id = $1`,
+    [accountId],
+  );
+  return res.rows[0].rev as string;
+}
+
 export async function getMemory(
   pool: Pool, accountId: string, slug: string,
 ): Promise<MemoryEntry | null> {

@@ -19,10 +19,12 @@ import {
   DELEGATION_DEADLINE_DEFAULT_SEC, DELEGATION_DEADLINE_MAX_SEC, DELEGATION_DEADLINE_MIN_SEC,
 } from '../services/delegations.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
-import { getMemory, listMemory, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, setMemory } from '../services/memory.js';
+import { getMemory, listMemory, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, memoryRev, setMemory } from '../services/memory.js';
 import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
 import { scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC } from '../services/agentWakes.js';
 import { guideFor } from './guide.js';
+import { listTeams } from '../services/teams.js';
+import { listHandleGroups } from '../services/handleGroups.js';
 import { recordClaudeLane } from '../services/claudeLane.js';
 import { recordRunnerVersion } from '../services/runnerVersion.js';
 import { resolveAttachmentFor } from '../services/attachments.js';
@@ -280,6 +282,27 @@ function buildMcpServer(
 
   server.registerTool('account.me', { description: '내 계정 정보' },
     async () => jsonResult(account));
+
+  /**
+   * handle → id 를 푸는 표. 워크스페이스 가이드의 「이름이 아니라 id 로」 절이 이 도구를 가리킨다 —
+   * 규칙만 주고 남의 id 를 얻을 길을 안 주면 에이전트는 결국 이름을 적는다(2026-09-28).
+   *
+   * 사람 화면의 `GET /accounts` 와 같은 가시성(로그인한 계정이면 누구나)이고, 거기서 이름을 푸는 데
+   * 필요한 열만 싣는다 — 상태·아바타·소유자는 에이전트가 기록할 키가 아니다. 비활성·삭제 계정을
+   * 빼지 않는 이유도 그 라우트와 같다: 지난 기록의 id 를 이름으로 되짚는 표이기도 하다.
+   * 팀·집합은 `listTeams`·`listHandleGroups` 하나가 낸다(질의 사본을 두지 않는다 — #285).
+   */
+  server.registerTool('account.list', { description: '계정·팀·집합 목록(handle → id 조회)' },
+    async () => {
+      const res = await pool.query(
+        `select id, handle, display_name as "displayName", kind,
+                disabled_at is not null as disabled, deleted_at is not null as deleted
+         from account order by handle`,
+      );
+      const teams = (await listTeams(pool)).map((t) => ({ id: t.id, name: t.name, leadAccountId: t.leadAccountId }));
+      const groups = (await listHandleGroups(pool)).map((g) => ({ id: g.id, handle: g.handle }));
+      return jsonResult({ accounts: res.rows, teams, groups });
+    });
 
   // 에이전트도 사람과 같은 가시성 규칙을 받는다 — private 채널은 멤버인 에이전트만 본다.
   // admin 예외는 주지 않는다: 이 목록은 곧 `message.read` 로 이어지는 경로이고, admin 이
@@ -863,6 +886,13 @@ function buildMcpServer(
       if (!result.entries.length && (woken || waited)) {
         result = await fetchUnread();
       }
+      // 턴을 띄울 배치에만 메모리 판본을 얹는다(러너 메모리 캐시, 2026-09-28). 러너는 이
+      // 값이 자기 사본과 같으면 턴 시작 때 메모리를 **한 번도 왕복하지 않는다.** 빈 폴에는
+      // 싣지 않는다 — 25초마다 도는 롱폴에 질의를 하나 더 얹을 까닭이 없고, 러너는 빈
+      // 배치로는 턴을 띄우지 않는다. 판본이 필요한 순간이 곧 항목이 있는 순간이다.
+      if (result.entries.length && account.kind === 'agent') {
+        return jsonResult({ ...result, memoryRev: await memoryRev(pool, account.id) });
+      }
       return jsonResult(result);
     } finally {
       off();
@@ -905,8 +935,10 @@ function buildMcpServer(
   server.registerTool('memory.list', {
     description: '에이전트 메모리 slug 목록(값은 포함 안 함)',
   }, async () => {
-    const slugs = await listMemory(pool, account.id);
-    return jsonResult({ slugs });
+    // rev 를 함께 준다 — 러너가 이 값을 자기 사본과 대 보고, 같으면 core 를 다시 받지 않는다
+    // (services/memory.ts::memoryRev). 옛 러너는 모르는 필드를 무시한다.
+    const [slugs, rev] = await Promise.all([listMemory(pool, account.id), memoryRev(pool, account.id)]);
+    return jsonResult({ slugs, rev });
   });
 
   server.registerTool('memory.get', {

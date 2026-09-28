@@ -113,7 +113,36 @@ describe('memory MCP tools', () => {
       expect(listResult.slugs).toContain('mem/listtest1');
       expect(listResult.slugs).toContain('mem/listtest2');
       expect(listResult.slugs.length).toBeGreaterThanOrEqual(2);
-      expect(Object.keys(listResult)).toEqual(['slugs']);
+      // rev 는 판본 해시다(러너 캐시용) — 값이 아니므로 "값을 주지 않는다"는 그대로다.
+      expect(Object.keys(listResult).sort()).toEqual(['rev', 'slugs']);
+    } finally {
+      await client.close();
+    }
+  });
+
+  // 러너 메모리 캐시(2026-09-28): 러너는 rev 가 자기 사본과 같으면 core 를 다시 받지 않는다.
+  // 그러니 **내용이 바뀌는 모든 쓰기가 rev 를 바꿔야 하고**, 안 바뀌면 rev 도 그대로여야 한다.
+  it('list rev changes on add, update and delete, and is stable otherwise', async () => {
+    const { pat } = await createAgent(app, adminToken, 'rev-agent');
+    const client = await mcpClient(pat);
+    const rev = async () => (await callTool(client, 'memory.list', {})).rev as string;
+    try {
+      expect(await rev()).toBe('empty');
+      await callTool(client, 'memory.set', { slug: 'core', value: 'a' });
+      const afterAdd = await rev();
+      expect(afterAdd).not.toBe('empty');
+      expect(await rev()).toBe(afterAdd);
+
+      await callTool(client, 'memory.set', { slug: 'core', value: 'b' });
+      const afterUpdate = await rev();
+      expect(afterUpdate).not.toBe(afterAdd);
+
+      await callTool(client, 'memory.set', { slug: 'mem/x', value: 'x' });
+      const afterSecond = await rev();
+      await callTool(client, 'memory.set', { slug: 'mem/x', value: null });
+      const afterDelete = await rev();
+      expect(afterDelete).not.toBe(afterSecond);
+      expect(afterDelete).toBe(afterUpdate);
     } finally {
       await client.close();
     }

@@ -7,7 +7,7 @@ import { channelVisibleSql } from './channels.js';
 import { emitEvent } from '../events.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
 import { getTeam, getTeamByName, listTeamMembers } from './teams.js';
-import { invokeFactsFor, mayInvoke, type InvokeVia } from './invokeGate.js';
+import { invokeFactsFor, mayInvoke, mayInvokeTeam, type InvokeVia } from './invokeGate.js';
 
 /**
  * 채널 안에서 `seq` 발급을 직렬화하는 advisory lock 의 classid(#523).
@@ -754,6 +754,53 @@ export async function postMessage(
     const deniedHandles = mentionedAccounts.filter((a) => deniedIds.has(a.id)).map((a) => a.handle);
 
     /*
+      **팀 부름도 insert 앞에서 판정한다**(068). 예전에는 팀 게이트가 insert 뒤의 `fanOutMention`
+      안에만 있어서 막힌 팀원이 `mentionDenied` 에 남지 않았다 — #udc 의 `@udc-team` 네 번이
+      👀·실패·표시 없이 사라진 자리다. 여기서 누구를 깨울지(`teamPlans`)까지 정해 두고, 아래
+      팬아웃은 그 결과만 넣는다.
+
+      판정은 두 겹이다(`invokeGate.ts` 머리 주석): ① 팀의 범위, ② 팀원 각자의 범위(호출자 기준).
+      막힌 것은 팀이면 팀 이름, 팀원이면 그 handle 로 `mentionDenied` 에 싣는다. 이름 공간이
+      하나라(036) 둘이 겹치지 않는다.
+    */
+    const teamPlans: { teamId: string; recipients: string[]; viaLead: boolean }[] = [];
+    const denyHandle = (h: string) => { if (!deniedHandles.includes(h)) deniedHandles.push(h); };
+    for (const target of targetCall) {
+      if (target.kind !== 'team') continue;
+      // 토큰이 가리키는 팀이 그 사이 지워졌을 수 있다 — 그때는 부를 명단이 없다.
+      const team = await getTeam(client, target.id);
+      if (!team) continue;
+      const teamCtx = { callerId: input.authorId, channelId: input.channelId };
+      if (!(await mayInvokeTeam(client, { teamId: team.id, invokeScope: team.invokeScope, ownerAccountId: team.ownerAccountId }, teamCtx))) {
+        denyHandle(team.name);
+        continue;
+      }
+      /*
+        **비활성 팀원은 부르지 않는다**(아래 팬아웃 주석의 근거 그대로) — 비활성 계정은 턴을
+        시작하지 못하므로 넣으면 아무도 읽지 않는 항목이 쌓인다. 작성자 자신도 뺀다.
+      */
+      const awake = (await listTeamMembers(client, team.id)).filter((m) => !m.disabled && m.accountId !== input.authorId);
+      const memberFacts = await invokeFactsFor(client, awake.map((m) => m.accountId));
+      const allowed = new Set<string>();
+      for (const m of awake) {
+        const fact = memberFacts.get(m.accountId);
+        if (!fact || (await mayInvoke(client, fact, { ...teamCtx, via: 'team' }))) allowed.add(m.accountId);
+      }
+      /*
+        팀장이 있고 깰 수 있으면 팀장 하나(047). 팀장이 **이 호출자에게 막혔으면** 막혔다고 적고
+        부를 수 있는 팀원 전원으로 떨어진다 — 비활성 팀장과 같은 폴백이다: 부름이 조용히 사라지는
+        것이 여럿 깨는 것보다 나쁘다.
+      */
+      const leadMember = team.leadAccountId === null ? undefined : awake.find((m) => m.accountId === team.leadAccountId);
+      if (leadMember && allowed.has(leadMember.accountId)) {
+        teamPlans.push({ teamId: team.id, recipients: [leadMember.accountId], viaLead: true });
+        continue;
+      }
+      for (const m of awake) if (!allowed.has(m.accountId)) denyHandle(m.handle);
+      teamPlans.push({ teamId: team.id, recipients: [...allowed], viaLead: false });
+    }
+
+    /*
       지칭한 이름은 **그 메시지에 남긴다** — `mentionChainCapped` 와 같은 자리·같은 이유다.
       화면은 멘션을 옅은 배경 칩으로 그리므로, 부르지 않은 이름이 부른 것과 똑같이 보이면
       그 자체가 거짓말이다(design.md §4). 화면이 본문을 다시 파싱하지 않고 서버가 실제로 한
@@ -842,7 +889,17 @@ export async function postMessage(
       // 뜻이다(러너는 inbox 를 폴한다). 판정은 위에서 이미 끝났고 여기서 다시 하지 않는다.
       // 지칭(`refIds`)도 같은 이유로 여기 오지 않는다 — 이름은 본문에 남고 턴은 뜨지 않는다.
       if (accountId !== input.authorId && !cappedIds.has(accountId) && !deniedIds.has(accountId)) {
-        await insertInbox(client, accountId, message.id, 'mention', notified);
+        /*
+          **팀과 그 팀장을 한 발화에서 함께 불렀으면 팀장 항목에 팀을 싣는다**(`@ops @lead`).
+          이 루프가 팀 팬아웃보다 먼저 돌아 팀장을 평범한 `mention` 으로 넣으면, 팀 부름은
+          `notified` 중복 제거로 그를 건너뛰고 팀장 턴은 명단(팀 블록)을 못 받는다 — #udc 에서
+          `@udc-team @forge` 로 부른 forge 가 "udc-team 답이 없어 이어받는다"며 자기가 그 팀의
+          팀장인 줄 몰랐던 자리다. 누가 팀장 하나로 가는지는 insert 앞에서 이미 정했다(`teamPlans`).
+        */
+        const ledTeam = teamPlans.find((p) => p.viaLead && p.recipients[0] === accountId);
+        await insertInbox(
+          client, accountId, message.id, ledTeam ? 'team_mention' : 'mention', notified, ledTeam?.teamId,
+        );
       }
     }
 
@@ -957,12 +1014,9 @@ export async function postMessage(
        * 어긋남은 결함이 아니라 화면이 말해야 하는 사실이다 — 넷을 불러 셋이 깼다면
        * 하나는 꺼져 있거나 채널을 못 본다.
        */
-      // 토큰이 가리키는 팀이 그 사이 지워졌을 수 있다 — 그때는 부를 명단이 없다.
-      const team = await getTeam(client, target.id);
-      if (!team) continue;
-
-      const teamMembers = await listTeamMembers(client, team.id);
-      const awake = teamMembers.filter((m) => !m.disabled);
+      // 누구를 깨울지는 insert 앞에서 이미 정했다(`teamPlans`) — 팀·팀원 게이트와 팀장 폴백이 거기 있다.
+      const plan = teamPlans.find((p) => p.teamId === target.id);
+      if (!plan) continue;
 
       /**
        * **팀장이 있으면 팀장 하나만 깨운다**(047 · 046 의 `lead_account_id` 를 읽는 자리).
@@ -984,19 +1038,15 @@ export async function postMessage(
        * 바로 그것 — 아무도 읽지 않는 항목 — 이 된다.
        *
        * `notified` 중복 제거는 `fanOutMention` 이 그대로 한다. 그래서 팀장이 이 발화에서
-       * 이미 이름으로 불렸다면(`@ops @lead`) 팀 부름은 그를 건너뛴다 — 그때 그 턴은
-       * 평범한 멘션으로 도므로 명단을 못 받는다. 한 발화에서 팀과 팀장을 함께 부르는
-       * 것은 팀을 부른 것과 같은 뜻이므로 손해가 없다(둘 다 팀장의 턴 하나다).
+       * 이미 이름으로 불렸다면(`@ops @lead`) 팀 부름은 그를 건너뛴다 — 대신 위의 계정
+       * 멘션 루프가 그 항목을 `team_mention` 으로 넣어 명단을 싣는다. 한 발화에서 팀과
+       * 팀장을 함께 부르는 것은 팀을 부른 것과 같은 뜻이다(둘 다 팀장의 턴 하나다).
        */
-      const lead = team.leadAccountId !== null && awake.some((m) => m.accountId === team.leadAccountId)
-        ? team.leadAccountId
-        : null;
-
       await fanOutMention(
         client, { ...input, messageId: message.id },
-        lead === null ? awake.map((m) => m.accountId) : [lead],
+        plan.recipients,
         notified,
-        lead === null ? { reason: 'mention' } : { reason: 'team_mention', teamId: team.id },
+        plan.viaLead ? { reason: 'team_mention', teamId: plan.teamId } : { reason: 'mention' },
         'team',
       );
     }
