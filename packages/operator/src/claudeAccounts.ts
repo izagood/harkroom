@@ -37,9 +37,10 @@ import {
   parseClaudePoolsConfig,
   type ClaudePoolsConfig,
 } from '@harkroom/shared/claudePools';
-import type { ClaudeUsageSnapshot } from '@harkroom/shared/daemonProtocol';
+import type { ClaudeUsageSnapshot, ProviderUsageSnapshot } from '@harkroom/shared/daemonProtocol';
 
 import { measureClaudeUsage, type UsageTarget } from './claudeUsage.js';
+import { fetchClaudeProviderUsage, type ClaudeOAuthToken, type FetchLike } from './providerUsage.js';
 
 /**
  * `claude auth status --json` 이 주는 것 중 **UI 가 쓰는 것만**. 비밀값은 이 출력에 없다
@@ -130,6 +131,11 @@ export interface ClaudeAccountsPort {
    * 관측이고 이것은 소유다).
    */
   usage(): Promise<ClaudeUsageSnapshot>;
+  /**
+   * 공급자 API 가 말하는 한도 사용률(비공식 — `providerUsage.ts`). 화면의 토글이 켜졌을 때만 부른다.
+   * 계정끼리 **병렬로** 묻는다 — 하나가 느려도 나머지를 기다리게 하지 않는다.
+   */
+  providerUsage(): Promise<ProviderUsageSnapshot>;
   /** 진행 중인 로그인을 전부 회수한다. 데몬 종료 경로가 부른다. */
   shutdownLogins(): Promise<void>;
   onLoginEvent(cb: (e: ClaudeLoginEvent) => void): void;
@@ -393,6 +399,9 @@ export function createClaudeAccountsPort(opts: {
   killGraceMs?: number;
   /** 사용량 창의 기준 시각. 테스트가 고정한다 — 5시간 창은 시계에 달린 판정이다. */
   now?: () => number;
+  /** 공급자 API 호출. 테스트가 가짜를 끼운다 — CI 에는 로그인도 네트워크도 없다. */
+  fetchImpl?: FetchLike;
+  readToken?: (configDir: string) => Promise<ClaudeOAuthToken | null>;
 } = {}): ClaudeAccountsPort {
   const root = opts.root ?? claudeAccountsRoot();
   const runStatus = opts.runStatus ?? nodeRunStatus;
@@ -447,6 +456,22 @@ export function createClaudeAccountsPort(opts: {
       // **잔여물은 세지 않는다.** 목록에도 계정으로 안 나오므로, 세면 화면이 그릴 자리가
       // 없는 줄이 생긴다.
       return measureClaudeUsage(targets, now());
+    },
+
+    async providerUsage(): Promise<ProviderUsageSnapshot> {
+      const layout = await readClaudeAccountsLayout(root);
+      const at = now();
+      const targets = layout.pools.flatMap((p) => p.accounts.map((a) => ({ pool: p.name, ...a })));
+      const accounts = await Promise.all(targets.map(async (t) => ({
+        account: t.name,
+        pool: t.pool,
+        ...(await fetchClaudeProviderUsage({
+          configDir: t.dir, now: at,
+          fetchImpl: opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike),
+          ...(opts.readToken ? { readToken: opts.readToken } : {}),
+        })),
+      })));
+      return { measuredAtMs: at, accounts };
     },
 
     async configure(cfg: ClaudePoolsConfig): Promise<void> {

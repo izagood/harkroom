@@ -29,6 +29,8 @@ import {
 import { getExternalOpener } from '../../lib/openExternal';
 import { Button, TextInput } from './primitives';
 import { ProviderSection } from './ProviderSection';
+import { ProviderUsageBars } from './ProviderUsageBars';
+import { usageFor, useProviderUsage, useProviderUsageEnabled } from '../../lib/providerUsage';
 
 interface LoginState {
   account: string;
@@ -58,6 +60,12 @@ export function CodexAccountsSettings() {
   const [name, setName] = useState('');
   const [login, setLogin] = useState<LoginState | null>(null);
   const [pendingRemove, setPendingRemove] = useState<string | null>(null);
+  const [providerUsageOn] = useProviderUsageEnabled();
+  const { snap: providerSnap } = useProviderUsage('codex', providerUsageOn && available);
+  const bars = (account: string) => {
+    const u = providerSnap ? usageFor(providerSnap, account) : null;
+    return u ? <div className="mt-2"><ProviderUsageBars usage={u} nowMs={providerSnap!.measuredAtMs} /></div> : null;
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -195,6 +203,7 @@ export function CodexAccountsSettings() {
                     ? (snap.system.email ?? detail(snap.system))
                     : t('providerAccounts.codex.systemSignedOut')}
                 </div>
+                {snap?.system.loggedIn && bars('')}
               </div>
               {snap && snap.active !== null && (
                 <Button onClick={() => void act(() => activateCodexAccount(null))}>{t('providerAccounts.use')}</Button>
@@ -227,6 +236,7 @@ export function CodexAccountsSettings() {
                       {[a.status.email ? a.name : null, a.status.loggedIn ? detail(a.status) : t('providerAccounts.notSignedIn')]
                         .filter(Boolean).join(' · ')}
                     </div>
+                    {a.status.loggedIn && bars(a.name)}
                   </div>
                   {pendingRemove === a.name ? (
                     <div className="flex items-center gap-2">

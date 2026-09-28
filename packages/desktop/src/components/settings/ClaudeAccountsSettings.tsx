@@ -73,6 +73,8 @@ import { getExternalOpener } from '../../lib/openExternal';
 import { Menu } from '../Menu';
 import { Button, Field, SettingsGroup, SettingsPage, TextInput } from './primitives';
 import { ProviderSection } from './ProviderSection';
+import { ProviderUsageBars } from './ProviderUsageBars';
+import { usageFor, useProviderUsage, useProviderUsageEnabled } from '../../lib/providerUsage';
 
 /** 제공업체 계정 화면 안의 Claude 칸. `SettingsPage` 와 같은 인자를 받아 `Shell` 로 갈아 끼운다. */
 function ClaudeSection({ description, children }: {
@@ -153,7 +155,10 @@ function statusLine(status: ClaudeAuthStatus): string {
  */
 export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolean } = {}) {
   const Shell = embedded ? ClaudeSection : SettingsPage;
+  // 공급자 API 사용률(비공식, 토글 뒤). 꺼져 있으면 부르지 않고 아래 표(로컬 추정)만 선다.
+  const [providerUsageOn] = useProviderUsageEnabled();
   const available = hasClaudeAccountsSurface();
+  const { snap: providerSnap } = useProviderUsage('claude', providerUsageOn && available);
   // **글자는 영어이지만 시각 표기는 로케일을 따른다.** 이 화면의 문구는 사전을 쓰지 않는데
   // (이 파일 머리말) `HH:MM` 은 문구가 아니라 숫자 표기라 `Intl` 이 낸다 — `lib/time.ts`
   // 머리말이 가른 그 축이다: 수량·표기는 플랫폼이 우리보다 잘 안다.
@@ -563,9 +568,12 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
           {rows.map(({ a, u }) => {
             const cells = u ? usageCells(u) : null;
             const state = u ? accountState(u, nowMs, locale) : null;
+            const pu = providerSnap ? usageFor(providerSnap, a.name, pool.name) : null;
             return (
+              // 줄과 막대를 **한 자식**으로 묶는다 — `SettingsGroup` 이 자식 사이에 선을 긋는데,
+              // 막대가 따로 서면 계정과 그 계정의 한도 사이에 선이 생긴다.
+              <div key={a.name}>
               <div
-                key={a.name}
                 className={`${ACCOUNT_GRID} items-center px-4 py-2.5`}
                 data-testid={`claude-account-${pool.name}-${a.name}`}
               >
@@ -670,6 +678,12 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                     )}
                   />
                 </span>
+              </div>
+              {pu && (
+                <div className="px-4 pb-2.5" data-testid={`claude-provider-usage-${pool.name}-${a.name}`}>
+                  <ProviderUsageBars usage={pu} nowMs={providerSnap!.measuredAtMs} />
+                </div>
+              )}
               </div>
             );
           })}

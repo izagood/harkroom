@@ -30,7 +30,10 @@ import type {
   CodexAccountsSnapshot,
   CodexAuthStatus,
   CodexLoginEvent,
+  ProviderUsageSnapshot,
 } from '@harkroom/shared/daemonProtocol';
+
+import { fetchCodexProviderUsage, type CodexToken, type FetchLike } from './providerUsage.js';
 
 /** 로그인 자식의 우리가 쓰는 표면만(`ClaudeLoginChild` 와 같은 이유 — 테스트가 가짜를 끼운다). */
 export interface CodexLoginChild {
@@ -49,6 +52,8 @@ export interface CodexAccountsPort {
   activate(account: string | null): Promise<void>;
   shutdownLogins(): Promise<void>;
   onLoginEvent(cb: (e: CodexLoginEvent) => void): void;
+  /** 공급자 API 사용률(비공식 — `providerUsage.ts`). 시스템 기본 로그인은 `account: ''` 로 싣는다. */
+  providerUsage(): Promise<ProviderUsageSnapshot>;
 }
 
 /** 러너의 `codexAccountsRoot()`(`agent/src/codexHome.ts`)와 **같은 값**이어야 한다. */
@@ -158,6 +163,9 @@ export function createCodexAccountsPort(opts: {
   status?: (codexHome: string) => Promise<CodexAuthStatus>;
   spawnLogin?: (codexHome: string) => CodexLoginChild;
   killGraceMs?: number;
+  now?: () => number;
+  fetchImpl?: FetchLike;
+  readToken?: (codexHome: string) => Promise<CodexToken | null>;
 } = {}): CodexAccountsPort {
   const root = opts.root ?? codexAccountsRoot();
   const systemHome = opts.systemHome ?? systemCodexHome();
@@ -297,6 +305,20 @@ export function createCodexAccountsPort(opts: {
 
     onLoginEvent(cb: (e: CodexLoginEvent) => void): void {
       listeners.push(cb);
+    },
+
+    async providerUsage(): Promise<ProviderUsageSnapshot> {
+      const at = (opts.now ?? Date.now)();
+      const homes = [{ account: '', home: systemHome }, ...(await subdirs(root)).map((n) => ({ account: n, home: join(root, n) }))];
+      const accounts = await Promise.all(homes.map(async (h) => ({
+        account: h.account,
+        ...(await fetchCodexProviderUsage({
+          codexHome: h.home, now: at,
+          fetchImpl: opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike),
+          ...(opts.readToken ? { readToken: opts.readToken } : {}),
+        })),
+      })));
+      return { measuredAtMs: at, accounts };
     },
   };
 }
