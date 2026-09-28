@@ -2,7 +2,7 @@
 
 폰에서 harkroom 을 **메신저처럼** 쓰고, 그 안에서 **다른 머신에서 도는 에이전트를 부른다.**
 
-계획서: [`docs/plans/2026-09-22-mobile-flutter.md`](../docs/plans/2026-09-22-mobile-flutter.md)
+계획서: [`docs/plans/2026-09-22-mobile-flutter.md`](../../docs/plans/2026-09-22-mobile-flutter.md)
 
 ## 이 앱이 하지 않는 것
 
@@ -12,23 +12,32 @@
 
 애매한 화면이 나오면 이 문장으로 돌아온다.
 
-## 왜 `packages/` 밖인가
+## 왜 `apps/` 인가 — 그리고 왜 지금은 여기 혼자인가
 
-루트 `pnpm-workspace.yaml` 이 `packages/*` 를 워크스페이스 멤버로 잡는다. 여기는 pub 과
-Dart 의 땅이라 그 글롭 밖에 둔다 — **`pnpm-workspace.yaml` 을 고칠 필요가 없다는 것**이
-이 배치의 근거다.
+`apps/` 는 **돌아가는 것**이고 `packages/` 는 **그것들이 가져다 쓰는 것**이다. 나누는 축은
+언어가 아니라 역할이라, Dart 로 쓰인 이 앱도 `apps/` 가 제자리다.
+
+지금 `apps/` 에 이것 하나뿐인 이유는 **나머지가 아직 안 옮겨졌기 때문**이다. 전면 재배치
+(`packages/{server,desktop,agent,operator}` → `apps/*`)는 열린 PR 들이 머지된 뒤로 미뤘다
+(PR #885 에 그때 쓸 레시피가 있다). 모바일만 먼저 온 것은 **새로 만드는 것이라 옮길 이력이
+없어서**다 — 나중에 한 번 더 옮기는 것보다 처음부터 최종 자리에 두는 편이 싸다.
+
+`packages/*` 글롭 밖이라 **pnpm 은 이 디렉터리를 모른다.** `pnpm -r test` 도
+`pnpm -r typecheck` 도 여기를 돌지 않는다. 그것이 의도다 — 여기는 pub 의 땅이다.
+다만 그 때문에 저장소 전역 검사가 이 디렉터리를 빠뜨리기 쉬우니,
+`packages/server/test/repoHygiene.test.ts` 의 `CODE_ROOTS` 가 `apps` 를 함께 훑는다.
 
 ## 돌리기
 
 ```sh
 brew install --cask flutter     # 3.47.5 에서 확인했다
-cd mobile
+cd apps/mobile
 flutter pub get
 flutter test
 flutter run                     # iOS 시뮬레이터
 ```
 
-CI 는 [`.github/workflows/mobile.yml`](../.github/workflows/mobile.yml) 이고 `mobile/` 이
+CI 는 [`.github/workflows/mobile.yml`](../../.github/workflows/mobile.yml) 이고 `apps/mobile/` 이
 바뀔 때만 깬다.
 
 ## 지금 서 있는 것

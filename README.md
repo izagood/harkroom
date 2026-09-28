@@ -298,6 +298,26 @@ set these by hand:
 Requirements: Node.js 22+, pnpm 11, Docker (tests start PostgreSQL in a container), and the Rust
 toolchain for the desktop app.
 
+### Repository layout
+
+```
+packages/    server, desktop, agent, operator, shared — the pnpm/TypeScript workspace
+apps/        mobile — the Flutter client (pub/Dart), outside the pnpm workspace
+```
+
+`apps/` holds one thing today, and that is on purpose rather than by accident. The split is by
+role — `apps/` is what a person or a machine runs, `packages/` is what those things import — and
+the rest of the move is deferred until the open pull requests land. The mobile client went
+straight to its final home because it is new: there was no history to move, and placing it
+correctly now is cheaper than moving it twice.
+
+Two consequences worth knowing:
+
+- **pnpm does not see `apps/`.** `pnpm -r test` and `pnpm -r typecheck` skip it, which is
+  intended — that directory belongs to pub. Run its checks from `apps/mobile` with `flutter`.
+- Because of that, a repo-wide check must name both roots. `packages/server/test/repoHygiene.test.ts`
+  keeps that list in one place (`CODE_ROOTS`).
+
 ```sh
 pnpm install
 pnpm test                                    # all packages
