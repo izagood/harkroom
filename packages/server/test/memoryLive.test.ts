@@ -170,11 +170,11 @@ describe('memory MCP tools', () => {
   it('description: set, kept when omitted, cleared by empty string, listed in entries', async () => {
     const { pat } = await createAgent(app, adminToken, 'desc-agent');
     const client = await mcpClient(pat);
-    const entry = async () => ((await callTool(client, 'memory.list', {})).entries as { slug: string; description: string | null }[])
+    const entry = async () => ((await callTool(client, 'memory.list', {})).entries as { slug: string; description: string | null; kind: string }[])
       .find((e) => e.slug === 'mem/d');
     try {
       await callTool(client, 'memory.set', { slug: 'mem/d', value: 'v1', description: '배포 절차' });
-      expect(await entry()).toEqual({ slug: 'mem/d', description: '배포 절차' });
+      expect(await entry()).toEqual({ slug: 'mem/d', description: '배포 절차', kind: 'topic' });
       await callTool(client, 'memory.set', { slug: 'mem/d', value: 'v2' });
       expect((await entry())?.description).toBe('배포 절차');
       expect((await callTool(client, 'memory.get', { slug: 'mem/d' })).description).toBe('배포 절차');
@@ -222,6 +222,72 @@ describe('memory MCP tools', () => {
       expect(await revs()).toEqual(['v6', 'v5', 'v4', 'v3', 'v2']);
       await callTool(client, 'memory.set', { slug: 'mem/h', value: null });
       expect((await revs())[0]).toBe('v7');
+    } finally {
+      await client.close();
+    }
+  });
+
+  // 070: kind 는 생략=유지, 새 기억은 topic. list entries 에 실린다.
+  it('kind defaults to topic, is kept when omitted, and is listed', async () => {
+    const { pat } = await createAgent(app, adminToken, 'kind-agent');
+    const client = await mcpClient(pat);
+    const kindOf = async (slug: string) => ((await callTool(client, 'memory.list', {})).entries as { slug: string; kind: string }[])
+      .find((e) => e.slug === slug)?.kind;
+    try {
+      await callTool(client, 'memory.set', { slug: 'mem/k', value: 'v' });
+      expect(await kindOf('mem/k')).toBe('topic');
+      await callTool(client, 'memory.set', { slug: 'mem/k', value: 'v', kind: 'procedure' });
+      await callTool(client, 'memory.set', { slug: 'mem/k', value: 'v2' });
+      expect(await kindOf('mem/k')).toBe('procedure');
+      const bad = await callTool(client, 'memory.set', { slug: 'mem/k', value: 'v', kind: 'nope' });
+      expect(bad.error).toBeDefined();
+    } finally {
+      await client.close();
+    }
+  });
+
+  // 070: journal 은 최근 60개만 남고, 밀려난 것은 이전 판으로 간다. topic 은 건드리지 않는다.
+  it('keeps only the newest 60 journal entries, moving the rest to revisions', async () => {
+    const { accountId, pat } = await createAgent(app, adminToken, 'journal-agent');
+    const client = await mcpClient(pat);
+    try {
+      await callTool(client, 'memory.set', { slug: 'mem/keep', value: 'topic' });
+      for (let i = 0; i < 62; i++) {
+        await callTool(client, 'memory.set', { slug: `mem/j-${String(i).padStart(2, '0')}`, value: `j${i}`, kind: 'journal' });
+      }
+      const rows = (await pool.query(
+        `select slug from agent_memory where account_id = $1 and kind = 'journal' order by slug`, [accountId],
+      )).rows.map((r) => r.slug as string);
+      expect(rows).toHaveLength(60);
+      expect(rows).not.toContain('mem/j-00');
+      expect(rows).not.toContain('mem/j-01');
+      expect(rows).toContain('mem/j-61');
+      const moved = (await pool.query(
+        `select slug from agent_memory_revision where account_id = $1 and slug in ('mem/j-00', 'mem/j-01')`, [accountId],
+      )).rowCount;
+      expect(moved).toBe(2);
+      expect((await callTool(client, 'memory.get', { slug: 'mem/keep' })).value).toBe('topic');
+    } finally {
+      await client.close();
+    }
+  });
+
+  // 070: 이름·요약 3점, 본문 1점. core 는 빼고, 조사가 붙은 낱말도 걸린다.
+  it('memory.search ranks slug/description over body, skips core, strips Korean particles', async () => {
+    const { pat } = await createAgent(app, adminToken, 'search-agent');
+    const client = await mcpClient(pat);
+    try {
+      await callTool(client, 'memory.set', { slug: 'core', value: '캐시 캐시 캐시' });
+      await callTool(client, 'memory.set', { slug: 'mem/body-only', value: '여기에 캐시 이야기가 있다' });
+      await callTool(client, 'memory.set', { slug: 'mem/runner-cache', value: '본문', description: '러너 캐시 설계' });
+      await callTool(client, 'memory.set', { slug: 'mem/unrelated', value: 'xterm' });
+      const res = await callTool(client, 'memory.search', { query: '캐시가 치명적이다' });
+      const slugs = (res.hits as { slug: string }[]).map((h) => h.slug);
+      expect(slugs).toEqual(['mem/runner-cache', 'mem/body-only']);
+      expect(res.hits[0].value).toBeUndefined();
+      const withValue = await callTool(client, 'memory.search', { query: '캐시', includeValue: true, limit: 1 });
+      expect(withValue.hits).toHaveLength(1);
+      expect(withValue.hits[0].value).toBe('본문');
     } finally {
       await client.close();
     }

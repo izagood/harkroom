@@ -20,8 +20,9 @@ import {
 } from '../services/delegations.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import {
-  listMemoryIndex, MAX_CORE_MEMORY_LENGTH, MAX_MEMORY_DESCRIPTION_LENGTH, MAX_MEMORY_ITEMS_PER_ACCOUNT,
-  MAX_MEMORY_VALUE_LENGTH, memoryRev, readMemoryCounted, setMemory,
+  listMemoryIndex, MAX_CORE_MEMORY_LENGTH, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MAX_MEMORY_DESCRIPTION_LENGTH,
+  MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, memoryRev, readMemoryCounted, searchMemory,
+  setMemory,
 } from '../services/memory.js';
 import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
 import { scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC } from '../services/agentWakes.js';
@@ -963,16 +964,32 @@ function buildMcpServer(
     });
   });
 
+  // memory.search — 목록에 안 실리는 journal 을 찾는 길이자, 러너가 요청 본문으로 관련 기억을
+  // 골라 주입하는 길이다(070). includeValue 는 본문까지 준다 — 러너가 왕복 한 번에 끝내려고 쓴다.
+  server.registerTool('memory.search', {
+    description: '내 기억을 낱말로 찾는다(이름·요약 3점, 본문 1점). journal 도 여기서 찾는다',
+    inputSchema: {
+      query: z.string().min(1).max(2000),
+      limit: z.number().int().min(1).max(20).optional(),
+      includeValue: z.boolean().optional(),
+    },
+  }, async ({ query, limit, includeValue }) => {
+    const hits = await searchMemory(pool, account.id, query, { limit: limit ?? 5, includeValue: includeValue ?? false });
+    return jsonResult({ hits });
+  });
+
   // value 가 null 이면 삭제 — 키 부재가 아니라 명시적 null 이 삭제다.
   // .nullable() 은 "값이 반드시 있고 null 일 수 있다"를 의미한다.
   server.registerTool('memory.set', {
-    description: `메모리 저장 또는 삭제(value가 null이면 삭제). description 은 목록에 같이 실리는 한 줄 요약(생략하면 있던 것 유지, 빈 문자열이면 지움). core 는 ${MAX_CORE_MEMORY_LENGTH}자까지`,
+    description: `메모리 저장 또는 삭제(value가 null이면 삭제). description 은 목록에 같이 실리는 한 줄 요약(생략하면 있던 것 유지, 빈 문자열이면 지움). core 는 ${MAX_CORE_MEMORY_LENGTH}자까지. kind: topic(기본)·procedure(절차)·journal(한 작업의 경위 — 목록에 안 실리고 최근 ${MAX_JOURNAL_MEMORIES_PER_ACCOUNT}개만 남는다)`,
     inputSchema: {
       slug: z.string().min(1),
       value: z.string().max(MAX_MEMORY_VALUE_LENGTH).nullable(),
       description: z.string().max(MAX_MEMORY_DESCRIPTION_LENGTH).optional(),
+      // 종류(070). 생략하면 새 기억은 topic, 있던 기억은 그대로다.
+      kind: z.enum(MEMORY_KINDS).optional(),
     },
-  }, async ({ slug, value, description }) => {
+  }, async ({ slug, value, description, kind }) => {
     if (!isValidSlug(slug)) {
       return jsonResult({ error: { code: 'invalid_slug', message: MEMORY_SLUG_HINT } });
     }
@@ -990,7 +1007,7 @@ function buildMcpServer(
         },
       });
     }
-    const result = await setMemory(pool, account.id, slug, value, description);
+    const result = await setMemory(pool, account.id, slug, value, description, kind);
     if (result === 'too_many') {
       return jsonResult({
         error: { code: 'too_many', message: `at most ${MAX_MEMORY_ITEMS_PER_ACCOUNT} memories per account` },

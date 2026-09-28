@@ -3300,6 +3300,11 @@ export const MAX_MEMORY_ITEMS_PER_ACCOUNT = 200;
 export const MAX_CORE_MEMORY_LENGTH = 3000;
 /** 목록에 같이 실리는 한 줄 요약의 한도. DB 제약(069)과 같다. */
 export const MAX_MEMORY_DESCRIPTION_LENGTH = 200;
+/** 기억의 종류(070). journal 은 목록에 안 실리고 `memory.search` 로만 찾는다. */
+export const MEMORY_KINDS = ['topic', 'procedure', 'journal'] as const;
+export type MemoryKind = typeof MEMORY_KINDS[number];
+/** 에이전트마다 두는 journal 수. 넘치면 오래된 것부터 이전 판으로 옮기며 지운다. */
+export const MAX_JOURNAL_MEMORIES_PER_ACCOUNT = 60;
 
 export * from './permissions.js';
 import type { Capability, Role } from './permissions.js';

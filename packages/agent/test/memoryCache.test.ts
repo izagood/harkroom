@@ -135,9 +135,11 @@ describe('memoryCache', () => {
   it('목록의 요약(entries)을 사본에 담아 폴백에서도 돌려준다', async () => {
     const { state, source } = fakeSource({ core: 'C', slugs: ['mem/a'], rev: 'r1' });
     const list = source.listMemory.bind(source);
-    source.listMemory = async () => ({ ...(await list()), entries: [{ slug: 'core', description: null }, { slug: 'mem/a', description: '요약' }] });
+    source.listMemory = async () => ({ ...(await list()), entries: [{ slug: 'core', description: null }, { slug: 'mem/a', description: '요약', kind: 'journal' }] });
     const cache = createMemoryCache({ stateDir, source, now, log: silent });
-    expect((await cache.read()).descriptions).toEqual({ 'mem/a': '요약' });
+    const read = await cache.read();
+    expect(read.descriptions).toEqual({ 'mem/a': '요약' });
+    expect(read.kinds).toEqual({ 'mem/a': 'journal' });
     state.down = true;
     expect((await cache.read()).descriptions).toEqual({ 'mem/a': '요약' });
   });

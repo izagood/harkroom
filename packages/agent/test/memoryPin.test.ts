@@ -116,6 +116,58 @@ describe('memoryPin — 시스템 프롬프트를 세션 동안 고정한다', (
     expect(next.turn).toContain('- mem/b — CI 함정');
   });
 
+  // 070: journal 은 목록에 안 싣고 개수만 말한다. 세션 도중 생긴 journal 도 알리지 않는다.
+  it('journal 은 목록과 변경 알림에서 빠지고 개수만 말한다', async () => {
+    const kinds = { 'mem/pr-1': 'journal' };
+    const first = await turn({ core: 'C', slugs: ['mem/a', 'mem/pr-1'], kinds }, true);
+    expect(first.turn).toContain('- mem/a');
+    expect(first.turn).not.toContain('mem/pr-1');
+    expect(first.turn).toContain('journal 1개');
+    const next = await turn({ core: 'C', slugs: ['mem/a', 'mem/pr-1', 'mem/pr-2'], kinds: { ...kinds, 'mem/pr-2': 'journal' } }, false);
+    expect(next.turn).toBe('');
+  });
+
+  // PR4: 새로 온 말로 찾은 관련 기억의 본문을 싣는다. 점수가 낮은 것·이미 실은 것은 싣지 않는다.
+  describe('관련 기억 자동 주입', () => {
+    const hits = [
+      { slug: 'mem/deploy', description: '배포 절차', score: 6, value: '1. 빌드\n2. 올린다' },
+      { slug: 'mem/weak', description: null, score: 1, value: '본문에 한 번' },
+    ];
+    const plan = (isFirstTurn: boolean, search = async () => hits) => planMemory({
+      stateDir, key: KEY, sessionId: SID, isFirstTurn,
+      memory: { core: 'C', slugs: ['mem/deploy', 'mem/weak'] },
+      recall: { query: '배포 어떻게 해', search },
+    });
+
+    it('점수가 기준을 넘는 것만 본문과 함께 싣는다', async () => {
+      const p = await plan(true);
+      const text = p.turnLines.join('\n');
+      expect(text).toContain('<memory-recall>');
+      expect(text).toContain('## mem/deploy — 배포 절차');
+      expect(text).toContain('2. 올린다');
+      expect(text).not.toContain('본문에 한 번');
+    });
+
+    it('이 세션에서 이미 실은 기억은 다시 싣지 않는다', async () => {
+      await (await plan(true)).commit(SID);
+      const again = await plan(false);
+      expect(again.turnLines.join('\n')).not.toContain('<memory-recall>');
+    });
+
+    it('찾기가 실패해도 계획은 나온다(싣지 않을 뿐)', async () => {
+      const p = await plan(true, async () => { throw new Error('old server'); });
+      expect(p.turnLines.join('\n')).toContain('<memory-index>');
+      expect(p.turnLines.join('\n')).not.toContain('<memory-recall>');
+    });
+
+    it('긴 본문은 잘라서 싣는다', async () => {
+      const p = await plan(true, async () => [{ slug: 'mem/long', description: null, score: 3, value: 'x'.repeat(5000) }]);
+      const text = p.turnLines.join('\n');
+      expect(text).toContain('잘림');
+      expect(text.length).toBeLessThan(2500);
+    });
+  });
+
   it('slug 와 core 를 이스케이프한다', async () => {
     await turn({ core: 'x', slugs: [] }, true);
     const t = await turn({ core: 'a < b', slugs: ['mem/<script>'] }, false);
