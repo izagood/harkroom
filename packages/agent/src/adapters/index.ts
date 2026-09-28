@@ -140,6 +140,12 @@ export function executionModelFor(harness: AgentHarness, mode: 'mention' | 'inte
  * 없는 하네스에 이름을 실으면 화면이 **그 턴과 아무 상관 없는 계정**을 가리킨다. 생략은
  * "모른다"이고, 모르는 것으로 남기는 편이 틀린 것을 단언하는 것보다 낫다(릴레이 주석).
  */
+/** **이 하네스가 cwd 별 파일 메모리를 어디에 적는가**(`<config>` 아래 디렉터리 이름). 모르면 null. */
+export function fileMemoryDirUnderConfig(harness: AgentHarness): string | null {
+  if (ADAPTERS[harness] === 'unsupported') return null;
+  return adapterFor(harness).fileMemory?.dirUnderConfig ?? null;
+}
+
 export function hasAccountPool(harness: AgentHarness): boolean {
   return adapterFor(harness).account?.pooled === true;
 }
