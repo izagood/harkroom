@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { messagePermalink, readAskMeta, readModelMeta, type MessageRow } from '@harkroom/shared';
+import { readAutomationMeta } from '../lib/automation';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { AskCard } from './AskCard';
@@ -139,6 +140,8 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
    * 드물고 곧 문제이므로(간단한 일에 Opus, 어려운 일에 Fable) 그것만 눈에 보인다.
    */
   const model = readModelMeta(message.meta);
+  // 자동화(064)가 쓴 글. 작성자는 만든 사람이고, 자동이라는 사실은 이 칩이 말한다.
+  const automation = readAutomationMeta(message.meta);
   const avcsType = typeof message.meta.avcsType === 'string' ? message.meta.avcsType : null;
   /**
    * 스킬 제안 알림에서 승인 화면으로 가는 진입점(#311 요구 5).
@@ -648,6 +651,13 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
               title={t('message.model.mismatchTooltip', { id: model.id })}
               aria-label={t('message.model.mismatchLabel', { id: model.id })}
             >⚠️</span>
+          )}
+          {automation && (
+            <span
+              data-testid="automation-chip"
+              className="rounded border border-border px-1 text-meta text-fg-subtle"
+              title={t('message.automation.tooltip', { name: automation.name, trigger: automation.trigger })}
+            >⚡ {t('message.automation.chip')}</span>
           )}
           {/*
             **여기에 배지가 있었다**(🤖 + 소유자 핸들). 뺐다 — identity 문서:
