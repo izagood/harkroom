@@ -169,6 +169,32 @@ import type { Message } from './types';
  * 언어 고르개만 영어로 서면 그 화면 혼자 두 언어가 되기 때문이다.
  */
 export const en = {
+  // providerAccounts — 설정 > 제공업체 계정(하네스별 카드). 2026-09-28.
+  'providerAccounts.page.title': 'Provider accounts',
+  'providerAccounts.page.subtitle': 'Optional. Agents work with your existing provider logins. Add accounts only if you want Harkroom to switch between them.',
+  'providerAccounts.badge.thisDevice': 'This device',
+  'providerAccounts.badge.active': 'Active',
+  'providerAccounts.systemDefault': 'System default',
+  'providerAccounts.accounts.title': 'Accounts',
+  'providerAccounts.accounts.hint': 'Showing accounts on this device. New accounts are added here.',
+  'providerAccounts.addAccount': 'Add account',
+  'providerAccounts.reauth': 'Re-authenticate',
+  'providerAccounts.remove': 'Remove',
+  'providerAccounts.use': 'Use',
+  'providerAccounts.notSignedIn': 'Not signed in',
+  'providerAccounts.unavailable': 'Account management needs the desktop app, which runs the local daemon that owns these directories.',
+  'providerAccounts.nameLabel': 'Account name',
+  'providerAccounts.nameHint': 'Lowercase letters, digits and hyphens (a-z 0-9 -), up to 32 characters.',
+  'providerAccounts.signIn': 'Sign in',
+  'providerAccounts.cancel': 'Cancel',
+  'providerAccounts.confirmRemove': 'Remove {name}? Its saved login on this device is deleted.',
+  'providerAccounts.codex.description': 'Optional. Harkroom can use your regular Codex login. Add accounts only if you want to switch quickly. Each account keeps its own local login context on this device.',
+  'providerAccounts.codex.empty': 'No managed Codex accounts on this device. Harkroom uses the system default Codex login until you add one here.',
+  'providerAccounts.codex.systemSignedOut': 'Run `codex login` in a terminal, or add an account here.',
+  'providerAccounts.codex.loginWaiting': 'Finish signing in in your browser. This page updates when Codex reports back.',
+  'providerAccounts.codex.openLogin': 'Open sign-in page',
+  'providerAccounts.codex.switchNote': 'Runners switch on their next Codex turn. Thread sessions continue across accounts.',
+  'providerAccounts.apiKey': 'API key',
   // ---------------------------------------------------------------------------
   // common — **두 화면 이상이 실제로 부르는 것만** 온다. 미리 올려 두지 않는다.
   // ---------------------------------------------------------------------------

@@ -304,6 +304,9 @@ pub const RUNNER_EXIT_EVENT: &str = "harkroom://runner-exit";
 /// 다녀오는 동안 기다린다 — 요청 하나에 대한 답으로 담을 수 없는 길이의 시간이다.
 pub const CLAUDE_LOGIN_EVENT: &str = "harkroom://claude-login";
 
+/// codex 로그인 진행 통지. `CLAUDE_LOGIN_EVENT` 와 같은 길이다.
+pub const CODEX_LOGIN_EVENT: &str = "harkroom://codex-login";
+
 /// 자식에게 넘길 `PATH` 를 웹뷰에 **알려 준다** — 만들어 주는 것이 아니다(`#513`).
 ///
 /// ## 왜 이 커맨드가 생겼나 — 출처를 하나로 합치려고
@@ -446,6 +449,59 @@ fn claude_pool_remove(
 ) -> Result<serde_json::Value, String> {
     let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
     conn.claude_pool_remove(&pool)
+}
+
+// ── codex 계정(2026-09-28) ────────────────────────────────────────────────────
+//
+// 계정 풀 명령과 같다: 웹뷰는 **계정 이름·로그인 id** 만 넘기고, `codex login` 을 띄우는 것도
+// 파일을 쓰는 것도 데몬이다(`runnerShellScope.test.ts` 가 파라미터를 고정한다).
+#[tauri::command]
+fn codex_accounts_list(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+) -> Result<serde_json::Value, String> {
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.codex_accounts_list()
+}
+
+#[tauri::command]
+fn codex_account_login_start(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+    account: String,
+) -> Result<serde_json::Value, String> {
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.codex_account_login_start(&account)
+}
+
+#[tauri::command]
+fn codex_account_login_cancel(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+    login_id: String,
+) -> Result<serde_json::Value, String> {
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.codex_account_login_cancel(&login_id)
+}
+
+#[tauri::command]
+fn codex_account_remove(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+    account: String,
+) -> Result<serde_json::Value, String> {
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.codex_account_remove(&account)
+}
+
+#[tauri::command]
+fn codex_account_activate(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+    account: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.codex_account_activate(account.as_deref())
 }
 
 // 오퍼레이터 로컬 설정(스펙 2026-09-20 §3 능력). 웹뷰가 넘기는 것은 서버 URL·에이전트 id·
@@ -666,6 +722,11 @@ fn main() {
             claude_account_remove,
             claude_pool_remove,
             claude_account_move,
+            codex_accounts_list,
+            codex_account_login_start,
+            codex_account_login_cancel,
+            codex_account_remove,
+            codex_account_activate,
             operator_register,
             operator_agents_list,
             operator_agent_set,

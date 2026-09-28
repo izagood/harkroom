@@ -711,15 +711,16 @@ describe('채택 판정이 로그에 남는다 (#456 ②)', () => {
 // ---------------------------------------------------------------------------
 
 /**
- * `.murmur-agent` 금지의 **유일한 예외**를 지운다 — 계정 풀 뿌리
- * (`join(..., '.murmur-agent', 'claude-accounts')`). 그 조합만 지우고 나머지는 남긴다.
+ * `.murmur-agent` 금지의 **유일한 예외**를 지운다 — 계정 뿌리
+ * (`join(..., '.murmur-agent', 'claude-accounts' | 'codex-accounts')`). 그 조합만 지우고 나머지는 남긴다.
+ * codex 계정 뿌리(2026-09-28)도 상태 트리의 **형제**이고 writer 가 데몬 하나라 같은 근거가 선다.
  */
 const 상태트리이름 = ['.harkroom-agent', '.murmur-agent'] as const;
 
 function 계정풀예외제거(code: string): string {
   return 상태트리이름.reduce(
     (acc, 이름) => acc.replace(
-      new RegExp(`['"]\\${이름}['"]\\s*,\\s*['"]claude-accounts['"]`, 'g'),
+      new RegExp(`['"]\\${이름}['"]\\s*,\\s*['"](?:claude|codex)-accounts['"]`, 'g'),
       '',
     ),
     code,

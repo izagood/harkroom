@@ -61,7 +61,9 @@ export const SETTINGS_GROUPS: { title: string; items: { id: SectionId; label: st
       // 서버에도 다른 기기에도 없다. Agents 옆에 두는 이유는 러너가 그것을 쓰기 때문이고,
       // Agents 안에 넣지 않는 이유는 개별 에이전트의 설정이 아니기 때문이다
       // (`agent-defaults` 를 별 항목으로 세운 것과 같은 판단이다).
-      { id: 'claude-accounts', label: 'Claude accounts' },
+      // 2026-09-28: Claude 만이 아니라 하네스별 계정(Codex …)을 한 화면에 모았다. id 는 그대로다
+      // (`ProviderAccountsSettings` 머리말).
+      { id: 'claude-accounts', label: 'Provider accounts' },
       // `Teams` 가 여기 있었다. 지금은 `Agents` 안의 묶음이다 — 근거는 위 `SectionId` 주석.
       { id: 'handle-groups', label: 'Handle Groups' },
       { id: 'invite', label: 'Invite' },

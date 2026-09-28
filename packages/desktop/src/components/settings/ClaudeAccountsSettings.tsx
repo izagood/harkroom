@@ -39,7 +39,7 @@
  *
  * UI 문자열은 **영어**다 — 저장소 관례이고 한 번 어겨 되돌린 적이 있다. 주석은 한국어다.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
 import { CLAUDE_POOL_NAME_PATTERN } from '@harkroom/shared/claudePools';
 
@@ -72,6 +72,18 @@ import {
 import { getExternalOpener } from '../../lib/openExternal';
 import { Menu } from '../Menu';
 import { Button, Field, SettingsGroup, SettingsPage, TextInput } from './primitives';
+import { ProviderSection } from './ProviderSection';
+
+/** 제공업체 계정 화면 안의 Claude 칸. `SettingsPage` 와 같은 인자를 받아 `Shell` 로 갈아 끼운다. */
+function ClaudeSection({ description, children }: {
+  title: string; description?: string; width?: 'default' | 'wide'; children: ReactNode;
+}) {
+  return (
+    <ProviderSection icon="claude" title="Claude" description={description ?? ''} testId="provider-claude">
+      {children}
+    </ProviderSection>
+  );
+}
 
 /**
  * 사용량을 다시 재는 주기.
@@ -135,7 +147,12 @@ function statusLine(status: ClaudeAuthStatus): string {
   return [status.email, status.orgName, status.subscriptionType].filter(Boolean).join(' · ');
 }
 
-export function ClaudeAccountsSettings() {
+/**
+ * `embedded` = 제공업체 계정 화면(`ProviderAccountsSettings`)의 한 칸으로 그린다. 그때는 화면
+ * 껍데기(`SettingsPage`) 대신 하네스 칸(`ProviderSection`)을 쓴다 — 껍데기가 둘이면 제목이 둘이다.
+ */
+export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolean } = {}) {
+  const Shell = embedded ? ClaudeSection : SettingsPage;
   const available = hasClaudeAccountsSurface();
   // **글자는 영어이지만 시각 표기는 로케일을 따른다.** 이 화면의 문구는 사전을 쓰지 않는데
   // (이 파일 머리말) `HH:MM` 은 문구가 아니라 숫자 표기라 `Intl` 이 낸다 — `lib/time.ts`
@@ -257,7 +274,7 @@ export function ClaudeAccountsSettings() {
 
   if (!available) {
     return (
-      <SettingsPage
+      <Shell
         title="Claude accounts"
         description="Manage the Claude account pools your agent runners use."
       >
@@ -267,7 +284,7 @@ export function ClaudeAccountsSettings() {
             which runs the local daemon that owns these directories.
           </div>
         </SettingsGroup>
-      </SettingsPage>
+      </Shell>
     );
   }
 
@@ -306,7 +323,7 @@ export function ClaudeAccountsSettings() {
   };
 
   return (
-    <SettingsPage
+    <Shell
       title="Claude accounts"
       description="Group accounts into pools. A runner uses one pool and moves to the next account when it hits a usage limit."
       width="wide"
@@ -788,7 +805,7 @@ export function ClaudeAccountsSettings() {
           </div>
         </SettingsGroup>
       )}
-    </SettingsPage>
+    </Shell>
   );
 }
 

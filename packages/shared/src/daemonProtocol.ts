@@ -94,6 +94,13 @@ export const REQUEST_TYPES = [
   'claudeAccountMove',
   // 사용량 조회(2026-09-09). **읽기만 한다** — 계정 디렉터리를 건드리지 않는다.
   'claudeAccountsUsage',
+  // codex 계정(2026-09-28). claude 와 달리 풀이 없고 `active.json` 이 한 계정을 가리킨다
+  // (`codexAccounts.ts` 머리 주석). 로그인은 브라우저가 localhost 로 돌아오므로 코드 제출이 없다.
+  'codexAccountsList',
+  'codexAccountLoginStart',
+  'codexAccountLoginCancel',
+  'codexAccountRemove',
+  'codexAccountActivate',
   // ── 오퍼레이터 로컬 설정(스펙 2026-09-20 §3 능력) ─────────────────────────────
   //
   // "이 머신이 어떤 에이전트를 돌릴 수 있나"는 `operator.json` 에 있고 그 파일은 오퍼레이터의
@@ -170,7 +177,7 @@ export interface DaemonEventMessage {
  * 로그인 출력이 **응답이 아니라 이벤트**인 이유: `claude auth login` 은 URL 을 찍고 사람이
  * 브라우저를 다녀오는 동안 기다린다 — 요청 하나에 대한 답으로 담을 수 없는 길이의 시간이다.
  */
-export const EVENT_NAMES = ['runnerExit', 'claudeLoginOutput'] as const;
+export const EVENT_NAMES = ['runnerExit', 'claudeLoginOutput', 'codexLoginOutput'] as const;
 export type DaemonEventName = (typeof EVENT_NAMES)[number];
 
 /**
@@ -905,4 +912,50 @@ export function makeErrorResponse(id: string, error: DaemonError): DaemonRespons
 
 export function makeEvent(event: DaemonEventName, payload: unknown): DaemonEventMessage {
   return { type: 'event', event, payload };
+}
+
+// ── codex 계정(2026-09-28) ───────────────────────────────────────────────────────
+//
+// **비밀값이 없다.** 정체는 `auth.json` 의 id_token 페이로드에서 읽은 이메일·플랜뿐이고,
+// 토큰 자체는 데몬 밖으로 나가지 않는다(`operator/src/codexAccounts.ts` 머리 주석).
+
+export interface CodexAuthStatus {
+  loggedIn: boolean;
+  /** `chatgpt` = OAuth 로그인, `apikey` = `OPENAI_API_KEY`. */
+  authMode?: 'chatgpt' | 'apikey';
+  email?: string;
+  plan?: string;
+  /** `auth.json` 의 mtime — 마지막 로그인·토큰 갱신 시각. */
+  signedInAtMs?: number;
+}
+
+export interface CodexAccountView {
+  name: string;
+  status: CodexAuthStatus;
+}
+
+export interface CodexAccountsSnapshot {
+  root: string;
+  /** 지금 러너가 쓰는 계정. `null` = 시스템 기본 로그인(`~/.codex`). */
+  active: string | null;
+  /** 시스템 기본 로그인의 상태. 관리 계정이 없을 때 화면의 "시스템 기본값" 줄이 이것이다. */
+  system: CodexAuthStatus;
+  accounts: CodexAccountView[];
+}
+
+export interface CodexAccountRef {
+  account: string;
+}
+
+/** `account: null` 이면 시스템 기본으로 돌린다. */
+export interface CodexAccountActivateParams {
+  account: string | null;
+}
+
+export interface CodexLoginEvent {
+  loginId: string;
+  url?: string;
+  done?: boolean;
+  status?: CodexAuthStatus;
+  error?: string;
 }
