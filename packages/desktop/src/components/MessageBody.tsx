@@ -12,6 +12,7 @@ import { copyText } from '../lib/clipboard';
 import { accountOpen } from '../lib/accountOpen';
 import { getController } from '../state/controller';
 import { LinkPreview } from './LinkPreview';
+import { MentionCard, type MentionCardTarget } from './MentionCard';
 import type { SectionId } from './settings/sections';
 
 /**
@@ -229,6 +230,17 @@ export function MessageBody({
     }
     return out;
   }, [refIds, accountsMap]);
+  /**
+   * 이름 → 여럿을 부르는 대상(팀·집합). 호버 카드(`MentionCard`)가 누구를 부르는지 보여
+   * 주려면 칩의 글자에서 id 를 되찾아야 한다. 팀 이름과 집합 handle 은 같은 네임스페이스라
+   * (`AgentTeamRow.name` 주석) 한 지도에 담아도 겹치지 않는다.
+   */
+  const multiByHandle = useMemo(() => {
+    const map = new Map<string, MentionCardTarget>();
+    for (const g of groups) map.set(g.handle.toLowerCase(), { kind: 'group', group: g });
+    for (const tm of teams) map.set(tm.name.toLowerCase(), { kind: 'team', team: tm });
+    return map;
+  }, [groups, teams]);
   // handle → 계정. 멘션마다 `Object.values(...).find` 를 돌면 본문 하나에 계정 수 × 멘션 수다.
   const byHandle = useMemo(
     () => new Map(Object.values(accounts).map((a) => [a.handle.toLowerCase(), a])),
@@ -315,7 +327,18 @@ export function MessageBody({
     };
 
     // 갈 곳이 없으면 **버튼이 아니다.** 눌러도 아무 일이 없는 컨트롤은 없는 것보다 나쁘다.
-    if (!target) return <span key={key} {...shared}>{p.text}</span>;
+    if (!target) {
+      const multi = isGroup ? multiByHandle.get(p.handle) : undefined;
+      // 팀·집합은 누를 곳이 없지만 **누구를 부르는지**는 있다 — 올리면 명단을 보여 준다.
+      if (multi) {
+        return (
+          <MentionCard key={key} target={multi}>
+            <span {...shared}>{p.text}</span>
+          </MentionCard>
+        );
+      }
+      return <span key={key} {...shared}>{p.text}</span>;
+    }
 
     return (
       <button
