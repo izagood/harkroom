@@ -12,6 +12,7 @@ function fakeReconciler() {
   const reconciler: AssignmentReconciler = {
     onAssign: async (baseUrl, def, local) => { calls.push(`assign ${baseUrl} ${def.agentId} ${local?.workingDir ?? '-'}`); return 'spawned'; },
     onUnassign: async (baseUrl, agentId, drain) => { calls.push(`unassign ${baseUrl} ${agentId} ${drain}`); },
+    restart: (agentId) => { calls.push(`restart ${agentId}`); return true; },
     onRunnerExit: (agentId, code) => { calls.push(`exit ${agentId} ${code}`); },
     announce: () => [{ agentId: 'a-1', runnerId: 'r-1', pid: 7 }],
   };
@@ -158,7 +159,7 @@ describe('community — 소유자 확인과 거절 통지', () => {
     const dial: LinkDialer = (_u, _t, h) => { handlers = h; h.onOpen({ send: (d) => sent.push(d), close: () => {} }); };
     const reconciler: AssignmentReconciler = {
       onAssign: async () => ({ refused: 'personal_on_foreign_operator' }),
-      onUnassign: async () => {}, onRunnerExit: () => {}, announce: () => [],
+      onUnassign: async () => {}, onRunnerExit: () => {}, restart: () => false, announce: () => [],
     };
     const c = createCommunity({ baseUrl: 'https://example.com', token: 'hkop_x', agents: { 'a-1': {} }, reconciler, dial, schedule: () => {}, log: () => {} });
     c.start();

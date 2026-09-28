@@ -71,6 +71,12 @@ export type OperatorToServerFrame =
 export type ServerToOperatorFrame =
   | { type: 'assign'; agentId: string; definition: AgentDefinition }
   | { type: 'unassign'; agentId: string; drain: boolean }
+  /**
+   * 배정은 그대로 두고 러너만 갈아 띄운다 — 사람의 [재시작](새 MCP config·지시문을 읽히려고).
+   * 오퍼레이터는 SIGTERM(진행 중인 턴을 마치고 물러남) 뒤 배정을 보고 바로 다시 띄운다.
+   * 모르는 옛 오퍼레이터는 이 프레임을 버린다(파서가 null) — 러너는 그대로 돈다.
+   */
+  | { type: 'agent.restart'; agentId: string }
   | { type: 'runner.kill'; runnerId: string }
   | { type: 'pty.replay.request'; runnerId: string; sessionId: string }
   | { type: 'pty.input'; runnerId: string; sessionId: string; bytes: string }
@@ -85,11 +91,11 @@ const OPERATOR_TYPES = new Set<OperatorToServerFrame['type']>([
   'pty.output', 'pty.replay', 'interactive.opened', 'interactive.error', 'attention.required',
 ]);
 const SERVER_TYPES = new Set<ServerToOperatorFrame['type']>([
-  'assign', 'unassign', 'runner.kill', 'pty.replay.request', 'pty.input', 'pty.resize', 'viewer.count', 'session.cancel', 'interactive.open',
+  'assign', 'unassign', 'agent.restart', 'runner.kill', 'pty.replay.request', 'pty.input', 'pty.resize', 'viewer.count', 'session.cancel', 'interactive.open',
 ]);
 
-/** `hello` 와 배정 둘(`assign`·`unassign`)만 러너 밖의 말이다 — 나머지는 전부 `runnerId` 가 있어야 한다. */
-const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'assign', 'unassign']);
+/** `hello` 와 배정 셋(`assign`·`unassign`·`agent.restart`)만 러너 밖의 말이다 — 나머지는 전부 `runnerId` 가 있어야 한다. */
+const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'assign', 'unassign', 'agent.restart']);
 
 function parse(raw: string, known: Set<string>): Record<string, unknown> | null {
   let value: unknown;
@@ -98,6 +104,7 @@ function parse(raw: string, known: Set<string>): Record<string, unknown> | null 
   const frame = value as Record<string, unknown>;
   if (typeof frame.type !== 'string' || !known.has(frame.type)) return null;
   if (!NO_RUNNER_ID.has(frame.type) && typeof frame.runnerId !== 'string') return null;
+  if (frame.type === 'agent.restart' && typeof frame.agentId !== 'string') return null;
   return frame;
 }
 

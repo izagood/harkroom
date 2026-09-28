@@ -1533,6 +1533,11 @@ export class Controller {
     return this.api.updateAgent(id, patch);
   }
 
+  /** 러너 재시작(배정 유지). 실패를 삼키지 않는다 — 409 의 사유를 화면이 말한다. */
+  restartAgent(agentId: string): Promise<{ operatorId: string }> {
+    return this.api.restartAgent(agentId);
+  }
+
   /** #129: 러너 종료 요청. 실패를 삼키지 않는다 — 요청이 갔는지 화면이 말해야 한다. */
   requestAgentStop(agentId: string): Promise<import('@harkroom/shared').AgentView> {
     return this.api.requestAgentStop(agentId);

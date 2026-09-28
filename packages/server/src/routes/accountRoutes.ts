@@ -518,6 +518,30 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
   });
 
   /**
+   * 러너를 **갈아 띄운다** — 배정은 그대로 두고 그 오퍼레이터에 `agent.restart` 를 보낸다.
+   * 오퍼레이터가 SIGTERM(진행 중인 턴을 마치고 물러남) 뒤 곧바로 다시 띄운다. 새 MCP config·
+   * 지시문을 읽히려고 사람이 누르는 버튼이다 — 전에는 [멈추기] 가 우연히 이 일을 했다.
+   * 멈춰 둔 에이전트는 되살리지 않는다(그건 되돌리기의 일이다). 같은 관문(`agent.manage`).
+   */
+  app.post('/accounts/agents/:id/restart', { preHandler: app.requireCap('agent.manage', { kind: 'agent', param: 'id' }) }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const agent = await getAgent(pool, id);
+    if (!agent) return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+    if (agent.stopRequestedAt) {
+      return reply.code(409).send({ error: { code: 'stopped', message: '멈춰 둔 에이전트다 — 먼저 실행(되돌리기)을 누른다' } });
+    }
+    const assignment = await assignmentOf(pool, id);
+    if (!assignment) return reply.code(409).send({ error: { code: 'not_assigned', message: '배정된 오퍼레이터가 없다' } });
+    const sent = routeDeps.operatorHub?.send?.(assignment.operatorId, { type: 'agent.restart', agentId: id }) ?? false;
+    if (!sent) return reply.code(409).send({ error: { code: 'operator_offline', message: '그 오퍼레이터가 지금 붙어 있지 않다' } });
+    await recordAudit(pool, {
+      action: 'agent.restart.requested', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { handle: agent.handle, operatorId: assignment.operatorId },
+    }, req);
+    return reply.code(202).send({ operatorId: assignment.operatorId });
+  });
+
+  /**
    * 그 종료 요청을 **되돌린다**(#427). 위 `POST .../stop` 의 대칭이다.
    *
    * ## 왜 필요한가

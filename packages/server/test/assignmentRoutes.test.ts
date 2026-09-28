@@ -151,6 +151,23 @@ describe('배정', () => {
     await waitFor(() => again.frames.some((f) => f.type === 'assign' && f.agentId === agentId));
     await again.close();
   });
+  it('[재시작] 은 배정은 두고 agent.restart 를 보낸다 — 멈춰 둔 에이전트·배정 없음은 409', async () => {
+    const b = await attachOperator(opB, [agentId]);
+    await waitCapable(opB.operatorId, [agentId]);
+    const res = await app.inject({ method: 'POST', url: `/accounts/agents/${agentId}/restart`, headers: auth(aliceToken) });
+    expect(res.statusCode).toBe(202);
+    await waitFor(() => b.frames.some((f) => f.type === 'agent.restart' && f.agentId === agentId));
+    expect(b.frames.some((f) => f.type === 'unassign')).toBe(false);
+    await app.inject({ method: 'POST', url: `/accounts/agents/${agentId}/stop`, headers: auth(adminToken) });
+    const stopped = await app.inject({ method: 'POST', url: `/accounts/agents/${agentId}/restart`, headers: auth(aliceToken) });
+    expect(stopped.statusCode).toBe(409);
+    expect(stopped.json().error.code).toBe('stopped');
+    await app.inject({ method: 'POST', url: `/accounts/agents/${agentId}/stop/undo`, headers: auth(adminToken) });
+    await b.close();
+    const { accountId: loose } = await createAgent(app, adminToken, 'loose');
+    const none = await app.inject({ method: 'POST', url: `/accounts/agents/${loose}/restart`, headers: auth(adminToken) });
+    expect(none.json().error.code).toBe('not_assigned');
+  });
   it('배정 해제는 unassign{drain} 을 보내고 404 로 두 번 지울 수 없다', async () => {
     const b = await attachOperator(opB, [agentId]);
     await waitCapable(opB.operatorId, [agentId]);
