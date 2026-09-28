@@ -43,6 +43,16 @@ describe('워크스페이스 가이드의 두 판본 (2026-09-08 앵커 이탈 �
     }
   });
 
+  it('두 판본 다 「이름이 아니라 id 로」를 말한다 — 에이전트가 이 원칙을 받는 유일한 경로다 (2026-09-28)', () => {
+    for (const mode of ['resident', 'turn'] as const) {
+      const g = guideFor(mode);
+      expect(g, mode).toMatch(/## 이름이 아니라 id 로 가리킨다/);
+      // 규칙만 주고 id 를 어디서 얻는지 안 주면 지킬 수 없다 — 조회 도구 이름이 함께 서야 한다.
+      expect(g, mode).toMatch(/account\.list/);
+      expect(g, mode).toMatch(/account\.me/);
+    }
+  });
+
   it('옛 이름 GUIDE 는 상주 판본과 글자 그대로 같다 — 모드를 모르는 호출자의 계약이 바뀌면 안 된다', () => {
     expect(GUIDE).toBe(guideFor('resident'));
   });
