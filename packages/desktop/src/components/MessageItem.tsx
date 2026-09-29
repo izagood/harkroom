@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { messagePermalink, readAskMeta, readModelMeta, type MessageRow } from '@harkroom/shared';
 import { readAutomationMeta } from '../lib/automation';
 import { useActiveStore } from '../state/communities';
@@ -39,10 +39,32 @@ const FACE_SLOTS = 3;
  */
 const ROOT_PREVIEW_CHARS = 40;
 
+/** 이 행의 생존 판정이 묻는 계정들 — `MessageItem` 의 `online` 구독 주석 참고. */
+function livenessIdsOf(message: MessageRow): string[] {
+  const ids = new Set<string>();
+  if (message.lastAuthorId) ids.add(message.lastAuthorId);
+  for (const l of message.openAskLinks ?? []) {
+    ids.add(l.waiter);
+    if (l.blockedBy) ids.add(l.blockedBy);
+  }
+  return [...ids];
+}
+
 /** 빈 배열 리터럴을 매 렌더 새로 만들지 않는다. */
 const MSG_NO_TEAMS: never[] = [];
 
-export function MessageItem({ message, inThread = false, onOpenDirectory, onOpenSettings }: {
+/**
+ * **`memo` 로 감싼다**(채널 전환 버벅임, 2026-09-29 측정). 채널 목록은 이 행을 수백 개
+ * 그리는데, 감싸지 않으면 스토어의 **아무** 변경(입력 중 표시·다른 채널에 온 메시지·
+ * unread 갱신)마다 `ChannelPane` 이 다시 그려지면서 행 전부가 같이 다시 그려졌다 —
+ * 합성 500행 jsdom 실측으로 이벤트 하나에 130~200ms. 행이 읽는 스토어 값은 각자
+ * selector 로 구독하므로, 부모에서 받는 것(`message` 객체·콜백)이 같으면 다시 그릴
+ * 까닭이 없다. `message` 는 스토어에 든 그 객체라(`upsertMessages` 가 안 바뀐 행을
+ * 그대로 둔다) 같음 비교가 맞는다.
+ */
+export const MessageItem = memo(MessageItemImpl);
+
+function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSettings }: {
   message: MessageRow;
   inThread?: boolean;
   /** 멘션을 눌렀을 때 갈 곳(#279). 넘기지 않으면 멘션은 버튼이 아니다 — `MessageBody` 참고. */
@@ -69,7 +91,15 @@ export function MessageItem({ message, inThread = false, onOpenDirectory, onOpen
    */
   const authorOpen = accountOpen(author, { id: myId, isAdmin }, { onOpenDirectory, onOpenSettings }, t);
   // 생존 판정의 두 축 — `connected` 가 false 면 `online` 은 '아무도 없다'가 아니라 '모른다'다.
-  const online = useActiveStore((s) => s.online);
+  //
+  // `online` 은 **이 행의 판정에 드는 계정만** 구독한다. 목록 전체를 구독하면 누가 접속하거나
+  // 나갈 때마다 행 수백 개가 모두 다시 그려진다. 생존을 묻는 자리는 둘뿐이다 —
+  // 마지막 진행을 쓴 에이전트(`threadStateFromFacts` 의 `lastAuthorId`)와 기다림 사슬의
+  // 마디(`waitChainFromLinks` 의 `waiter`·`blockedBy`). 그 밖의 계정은 판정에 들지 않으므로
+  // 교집합만 들고 있어도 두 판정의 답은 같다.
+  const liveIds = useMemo(() => livenessIdsOf(message), [message.lastAuthorId, message.openAskLinks]);
+  const onlineKey = useActiveStore((s) => (liveIds.length ? liveIds.filter((id) => s.online.includes(id)).join(',') : ''));
+  const online = useMemo(() => (onlineKey ? onlineKey.split(',') : []), [onlineKey]);
   const connected = useActiveStore((s) => s.connected);
   const [draft, setDraft] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
