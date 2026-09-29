@@ -44,6 +44,11 @@ export interface OpenThreadOpts {
   focusMessageId?: string;
   /** 그 답글이 보이는 창을 달라는 것(⌘F 의 스레드 스코프). */
   aroundSeq?: number;
+  /**
+   * 이미 띄워 둔 스레드 조회. `openMessage` 가 채널 열기와 **동시에** 보낸 것을 넘긴다 —
+   * 주지 않으면 지금까지처럼 여기서 묻는다(채널을 옮긴 **뒤에**).
+   */
+  prefetched?: Promise<{ messages: MessageRow[]; hasMore: boolean }>;
 }
 
 export class Controller {
@@ -939,7 +944,7 @@ export class Controller {
     this.store.getState().set({ threadRootId: rootId });
     let page;
     try {
-      page = await this.api.messages(channelId, { thread: rootId, around: opts.aroundSeq });
+      page = await (opts.prefetched ?? this.api.messages(channelId, { thread: rootId, around: opts.aroundSeq }));
     } catch {
       // 열다 만 패널을 남기지 않는다. 남기면 그 자리가 "답이 하나도 없는 끝난 스레드"로
       // 읽힌다 — 연결이 끊긴 것과 정반대의 사실이다.
@@ -1012,10 +1017,24 @@ export class Controller {
     }
   }
 
+  /**
+   * ## 왕복을 **겹쳐** 보낸다 (saved·검색·링크 점프, 2026-09-29)
+   *
+   * 예전 판은 메시지 조회 → 채널 열기 → around 창 → 스레드 조회를 **하나씩 기다렸다.** 이
+   * 서버는 왕복 하나가 약 390ms(실측, KR→SJC)라 saved 한 번 누르는 데 네트워크만 1.2~1.6초였다.
+   * 넷 중 서로를 기다릴 이유가 있는 것은 "대상이 어디 사는가"(메시지 조회) 하나뿐이다:
+   *  - 대상이 **이미 스토어에 있으면** 메시지 조회를 건너뛴다(채널 열기의 증분이 최신화한다).
+   *  - 스레드 조회는 채널·뿌리·seq 만 알면 되므로 채널 열기와 **동시에** 띄운다.
+   *  - around 창은 채널이 **이미 불러온 채널일 때만** 미리 띄운다. 그 채널의 열기는 증분
+   *    (새 것만)이라 옛 대상이 거기 실려 올 수 없고, 창이 꼭 필요하다는 것을 미리 안다.
+   *    처음 여는 채널은 최신 페이지에 대상이 있을 수 있어 지금까지처럼 **본 뒤에** 묻는다 —
+   *    쓸데없는 왕복을 만들지 않는다는 규율(`searchJump.test.ts`)을 지킨다.
+   */
   async openMessage(messageId: string): Promise<void> {
     let target: MessageRow;
+    const cached = this.findCachedMessage(messageId);
     try {
-      target = await this.api.message(messageId);
+      target = cached ?? await this.api.message(messageId);
     } catch (e) {
       const status = e instanceof ApiError ? e.status : 0;
       this.store.getState().set({
@@ -1031,6 +1050,17 @@ export class Controller {
     // 본문은 그대로 둔다 — 인박스를 훑으며 답글을 여는 기본 동작이 그것이다(#783, 그
     // 판정이 `Inbox.openEntry` 와 같은 술어여야 한다는 것도 거기 적혀 있다). 본문의 말이면
     // 목적지가 채널 타임라인이라, 인박스·관제탑이 서 있으면 방금 누른 것이 그 뒤에 숨는다.
+    const inStore = (): boolean => (this.store.getState().messages[target.channelId] ?? []).some((m) => m.id === target.id);
+    const earlyAround = !inStore() && this.loadedChannels.has(target.channelId)
+      ? this.api.messages(target.channelId, { around: target.seq })
+      : null;
+    const earlyThread = target.threadRootId
+      ? this.api.messages(target.channelId, { thread: target.threadRootId, around: target.seq })
+      : null;
+    // 미리 띄운 것이 실패하면 **기다리는 자리에서** 다룬다. 여기서 잡아 두지 않으면 채널을
+    // 여는 동안 거절된 promise 가 처리되지 않은 거절로 떠오른다.
+    earlyAround?.catch(() => undefined);
+    earlyThread?.catch(() => undefined);
     await this.openChannel(target.channelId, { reveal: !target.threadRootId });
     /**
      * 옛 메시지는 `openChannel` 이 불러온 **최신 페이지에 없다** — 강조할 DOM 이 없으니
@@ -1043,9 +1073,9 @@ export class Controller {
      * 사이를 메우는 '여기부터 새 메시지' 구분선은 별개 과제다(`loadOlder` 로 위로 올라가면
      * 메워진다).
      */
-    if (!(this.store.getState().messages[target.channelId] ?? []).some((m) => m.id === target.id)) {
+    if (!inStore()) {
       try {
-        const page = await this.api.messages(target.channelId, { around: target.seq });
+        const page = await (earlyAround ?? this.api.messages(target.channelId, { around: target.seq }));
         this.store.getState().upsertMessages(target.channelId, page.messages);
         this.store.getState().set({
           hasMore: { ...this.store.getState().hasMore, [target.channelId]: page.hasMore },
@@ -1061,10 +1091,21 @@ export class Controller {
     if (target.threadRootId) {
       // 채널을 **명시한다**: 여기서 활성 채널을 다시 읽으면 이 왕복 도중에 사람이 채널을
       // 옮긴 경우 엉뚱한 채널에 그 뿌리를 세운다(위 `openThread` 주석의 사고와 같은 모양).
-      await this.openThread(target.threadRootId, { channelId: target.channelId, aroundSeq: target.seq });
+      await this.openThread(target.threadRootId, {
+        channelId: target.channelId, aroundSeq: target.seq, prefetched: earlyThread ?? undefined,
+      });
     }
     // 강조는 openChannel 이 지운 **뒤에** 건다. 순서가 뒤바뀌면 방금 건 강조를 스스로 지운다.
     this.store.getState().set({ highlightedMessageId: target.id, notice: null });
+  }
+
+  /** 스토어 어느 채널에든 실려 있는 그 메시지. 없으면 `null` — 서버에 물어야 한다. */
+  private findCachedMessage(messageId: string): MessageRow | null {
+    for (const rows of Object.values(this.store.getState().messages)) {
+      const hit = rows.find((m) => m.id === messageId);
+      if (hit && !hit.deletedAt) return hit;
+    }
+    return null;
   }
 
   /** 상단에 도달했을 때 한 페이지 더 과거로. 남은 게 없으면 요청하지 않는다. */
