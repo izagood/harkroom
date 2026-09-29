@@ -21,6 +21,9 @@ export type AuditAction =
   // 이 기록의 존재 이유다. detail 은 {before, after} 의 {appUrl, source} — env 값 자체는
   // 이미 배포 설정에 있으므로 다시 적지 않는다.
   | 'projection.url.updated'
+  // 워크스페이스 아이콘(`/settings/workspace-icon`). 모든 멤버의 레일에 걸리는 얼굴이라 누가 바꿨나를
+  // 남긴다. detail 은 {before, after} 첨부 id — 바이트는 attachment 에 그대로 있다.
+  | 'workspace.icon.updated'
   // #129: 러너 종료 요청. 남의 러너를 멈추는 조작이라 남는 기록이 있어야 한다.
   // detail 에는 handle 만 남긴다 — 지시문도 대화 본문도 넣지 않는다(같은 파일 위 규칙).
   | 'agent.stop.requested'
