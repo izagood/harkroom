@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { CHANNEL_MENTION_HANDLE, countsAsReply, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type MessageRow } from '@harkroom/shared';
+import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type MessageRow } from '@harkroom/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { preemptWakesForThread } from './agentWakes.js';
 import { closeDelegationsForReply, outcomesFor } from './delegations.js';
@@ -860,6 +860,8 @@ async function fanOutCalls(
     // 상한에 걸린 에이전트는 **inbox 항목을 받지 않는다** — 그것이 곧 턴이 뜨지 않는다는
     // 뜻이다(러너는 inbox 를 폴한다). 판정은 위에서 이미 끝났고 여기서 다시 하지 않는다.
     // 지칭(`refIds`)도 같은 이유로 여기 오지 않는다 — 이름은 본문에 남고 턴은 뜨지 않는다.
+    // 이미 받은 사람은 건너뛴다 — 게시에서는 이 시점에 비어 있고, 수정은 이 메시지로 이미 받은 명단으로 시작한다.
+    if (notified.has(accountId)) continue;
     if (accountId !== ctx.authorId && !cappedIds.has(accountId) && !deniedIds.has(accountId)) {
       /*
         **팀과 그 팀장을 한 발화에서 함께 불렀으면 팀장 항목에 팀을 싣는다**(`@ops @lead`).
@@ -1292,16 +1294,56 @@ export async function hasOlderMessages(pool: Pool, channelId: string, oldestSeq:
 
 export type MutationRefusal = 'not_found' | 'forbidden';
 
-/** 수정은 작성자 본인만, user 메시지만. system 메시지는 avcs 투영의 산물이라 사람이 고칠 수 없다. */
+/** 본문에 적힌 멘션 토큰 전부(`<@id>`·`<@team:id>`·`<@group:id>`)와 `@channel`. 수정으로 **새로 생긴** 부름이 있는지 보는 데만 쓴다. */
+function mentionTokens(body: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of body.matchAll(/<@([^>\s]+)>/g)) if (m[1]) out.add(m[1]);
+  if (mentionedHandles(body).includes(CHANNEL_MENTION_HANDLE)) out.add(CHANNEL_MENTION_HANDLE);
+  return out;
+}
+
+export interface EditMessageOutcome {
+  message: MessageRow;
+  /** 이 수정으로 **새로** inbox 를 받은 계정. 앞서 이 메시지로 이미 받은 사람은 없다. */
+  notified: string[];
+  /** 새 멘션을 넣었지만 부르지 않았으면 그 이유. */
+  mentionSkipped: MentionEditSkipReason | null;
+}
+
+/**
+ * 수정은 작성자 본인만, user 메시지만. system 메시지는 avcs 투영의 산물이라 사람이 고칠 수 없다.
+ *
+ * ## 수정으로 넣은 멘션도 부른다 (jaebin 승인 D1~D5)
+ *
+ * 멘션 없이 쓴 글을 고쳐 `@handle` 을 넣으면 그 대상이 불린다. 규칙:
+ * - **D1 누구를**: 새 본문이 부르는 대상에서 **이 메시지로 이미 inbox 를 받은 계정**을 뺀다.
+ *   본문을 전후로 비교하지 않는 이유: 넣었다 빼고 다시 넣으면 비교로는 또 부르게 된다. inbox 를
+ *   기준으로 하면 같은 메시지가 한 사람을 두 번 부르지 않고, thread_reply·팀 팬아웃으로 이미 받은
+ *   사람도 저절로 빠진다. `fanOutCalls` 의 `notified` 에 그 명단을 **미리 넣어** 시작하면 된다.
+ * - **D2 언제까지**: 작성 뒤 `MENTION_EDIT_WINDOW_MS`(24시간). 그 뒤의 수정은 저장만 한다.
+ * - **D3 누구의 글**: 사람이 쓴 글만. 에이전트의 글을 고쳐 부르는 길을 열면 연쇄 한도가 보지 않는
+ *   폭주 경로가 하나 생긴다(수정 도구가 MCP 에 없어 지금은 쓰이지 않는 길이기도 하다).
+ * - **D4 `@channel`·집합**: 허용한다. 이미 받은 사람은 위와 같이 빠진다.
+ * - **D5 멘션을 지우면**: 아무것도 거두지 않는다 — 이미 뜬 턴은 거둘 수 없다.
+ *
+ * 호출 게이트·연쇄 상한은 게시와 똑같이 `resolveMentionCalls` 가 판정한다(호출자 = 작성자).
+ * 깊이는 새로 재지 않고 이 행에 저장된 값을 쓴다 — 사람의 글이라 0 이다.
+ *
+ * 부르지 않았는데 새 멘션이 있으면 `mentionSkipped` 로 이유를 돌려준다. 조용히 사라지면 사람은
+ * "왜 안 오나"를 묻고, 그 답이 화면에 없다(design.md §4).
+ *
+ * thread_reply·dm·기다림 선점·위임 닫기는 하지 않는다 — 수정은 새 답이 아니다.
+ */
 export async function editMessage(
   pool: Pool, args: { channelId: string; messageId: string; actorId: string; body: string },
-): Promise<MessageRow | MutationRefusal> {
+): Promise<EditMessageOutcome | MutationRefusal> {
   const client = await pool.connect();
   try {
     await client.query('begin');
-    // 행을 잠근다 — 같은 메시지를 두 번 빠르게 고치면 판정·meta 갱신이 서로 엇갈린다.
+    // 행을 잠근다 — 같은 메시지를 두 번 빠르게 고치면 판정·inbox 넣기가 서로 엇갈려 두 번 부를 수 있다.
     const found = await client.query(
-      `select m.author_id, m.kind, m.meta, m.mention_depth as depth, (a.kind = 'agent') as author_is_agent
+      `select m.author_id, m.kind, m.body, m.meta, m.mention_depth as depth, m.created_at,
+              (a.kind = 'agent') as author_is_agent
          from message m join account a on a.id = m.author_id
         where m.id = $1 and m.channel_id = $2 and m.deleted_at is null
         for update of m`,
@@ -1311,7 +1353,10 @@ export async function editMessage(
       await client.query('rollback');
       return 'not_found';
     }
-    const row = found.rows[0] as { author_id: string; kind: string; meta: Record<string, unknown> | null; depth: number; author_is_agent: boolean };
+    const row = found.rows[0] as {
+      author_id: string; kind: string; body: string; meta: Record<string, unknown> | null;
+      depth: number; created_at: Date; author_is_agent: boolean;
+    };
     if (row.author_id !== args.actorId || row.kind !== 'user') {
       await client.query('rollback');
       return 'forbidden';
@@ -1321,25 +1366,63 @@ export async function editMessage(
      * 수정도 **게시와 같은 판정**을 탄다(#271·#845) — `resolveMentionCalls` 하나다. 따로 두면
      * 고친 메시지만 옛 형식으로 남는다: 이 함수가 계정만 토큰으로 바꾸던 동안 수정으로 넣은
      * `@팀`·`@집합` 은 글자로 남았고, 삭제된 계정(061)도 걸러지지 않았다.
-     *
-     * 깊이는 새로 재지 않는다 — 이 메시지가 연쇄의 몇 번째 고리인지는 게시 때 정해졌다.
-     *
-     * 알림은 아직 여기서 만들지 않는다. 지금은 **지칭 표시(`mentionRefs`)만** 새 본문 기준으로
-     * 갈아 끼운다 — 안 그러면 고친 뒤에도 옛 본문의 칩 표시가 남는다.
      */
     const calls = await resolveMentionCalls(client, {
       body: args.body, channelId: args.channelId, authorId: args.actorId,
       authorIsAgent: row.author_is_agent, mentionDepth: row.depth,
     });
-    const { mentionRefs: _oldRefs, ...keptMeta } = row.meta ?? {};
-    const meta = calls.callMeta.mentionRefs ? { ...keptMeta, mentionRefs: calls.callMeta.mentionRefs } : keptMeta;
+
+    const before = mentionTokens(row.body);
+    const added = [...mentionTokens(calls.normalizedBody)].some((t) => !before.has(t));
+    const skip: MentionEditSkipReason | null = row.author_is_agent
+      ? 'agent_author'
+      : Date.now() - new Date(row.created_at).getTime() > MENTION_EDIT_WINDOW_MS ? 'too_old' : null;
+    const invoke = skip === null;
+
+    /*
+      부름에 관한 meta 는 **새 본문의 판정으로 통째로 갈아 끼운다** — 부를 때만. 부르지 않는 수정에서
+      `mentionDenied`·`mentionChainCapped` 를 새로 적으면 시도하지도 않은 부름을 "막혔다"고 말하게
+      되므로 그때는 지칭 표시(`mentionRefs`)만 새 본문 기준으로 바꾼다.
+    */
+    const { mentionRefs: _refs, mentionDenied: _denied, mentionChainCapped: _capped, mentionChainLimit: _limit, ...rest } = row.meta ?? {};
+    const meta = invoke
+      ? { ...rest, ...calls.callMeta }
+      : {
+        ...rest,
+        ...(_denied !== undefined ? { mentionDenied: _denied } : {}),
+        ...(_capped !== undefined ? { mentionChainCapped: _capped, mentionChainLimit: _limit } : {}),
+        ...(calls.callMeta.mentionRefs ? { mentionRefs: calls.callMeta.mentionRefs } : {}),
+      };
 
     const updated = await client.query(
       `update message set body = $2, meta = $3, edited_at = now() where id = $1 returning ${COLS}`,
       [args.messageId, calls.normalizedBody, JSON.stringify(meta)],
     );
+
+    let fresh: string[] = [];
+    if (invoke) {
+      const already = new Set(
+        (await client.query<{ account_id: string }>(
+          `select distinct account_id from inbox where message_id = $1`, [args.messageId],
+        )).rows.map((r) => r.account_id),
+      );
+      const notified = new Set(already);
+      await fanOutCalls(client, { channelId: args.channelId, authorId: args.actorId, messageId: args.messageId }, calls, notified);
+      fresh = [...notified].filter((id) => !already.has(id));
+      /*
+        새로 넣은 항목에 "수정으로 생겼다"를 찍는다(076). `insertInbox` 에 인자를 더하지 않고 뒤에서
+        찍는 이유: 그 함수까지 가는 길이 셋(계정·`@channel`·집합/팀)이라 인자를 모두에 꿰어야 하고,
+        같은 트랜잭션이라 찍기 전의 항목을 누가 읽을 수도 없다.
+      */
+      if (fresh.length) {
+        await client.query(
+          `update inbox set via_edit = true where message_id = $1 and account_id = any($2::uuid[])`,
+          [args.messageId, fresh],
+        );
+      }
+    }
     await client.query('commit');
-    return updated.rows[0];
+    return { message: updated.rows[0], notified: fresh, mentionSkipped: !invoke && added ? skip : null };
   } catch (err) {
     await client.query('rollback');
     throw err;
