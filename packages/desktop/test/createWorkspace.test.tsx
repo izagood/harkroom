@@ -17,7 +17,7 @@ afterEach(() => {
 /** 만들기 폼을 열고 네 칸을 채운다. */
 function fillCreateForm() {
   fireEvent.click(screen.getByRole('button', { name: /Create a hosted workspace/ }));
-  fireEvent.change(screen.getByLabelText('Workspace service URL'), { target: { value: GATE } });
+  fireEvent.change(screen.getByLabelText('Provisioning service URL'), { target: { value: GATE } });
   fireEvent.change(screen.getByLabelText('Workspace name'), { target: { value: 'mine' } });
   fireEvent.change(screen.getByLabelText('Invite code'), { target: { value: 'hrg_ok' } });
   fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'me@example.com' } });
@@ -185,8 +185,32 @@ describe('ConnectScreen — 호스팅 워크스페이스 만들기', () => {
     fireEvent.click(screen.getByRole('button', { name: /Create a hosted workspace/ }));
     const submit = screen.getByRole('button', { name: 'Create workspace' }) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText('Workspace service URL'), { target: { value: GATE } });
+    fireEvent.change(screen.getByLabelText('Provisioning service URL'), { target: { value: GATE } });
     expect((screen.getByRole('button', { name: 'Create workspace' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  /**
+   * 서비스 칸에 **만들 워크스페이스 자신의 주소**를 넣는 실수(2026-09-29 실측). 그 주소는 아직
+   * 없으므로 보내기 전에 칸 밑에서 알려 준다.
+   */
+  it('서비스 칸에 워크스페이스 주소를 넣으면 칸 밑에서 알려 준다', () => {
+    render(<ConnectScreen onConnected={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Create a hosted workspace/ }));
+    fireEvent.change(screen.getByLabelText('Workspace name'), { target: { value: 'mine' } });
+    fireEvent.change(screen.getByLabelText('Provisioning service URL'), { target: { value: WS } });
+    expect(screen.getByText(/looks like the new workspace's own address/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Provisioning service URL'), { target: { value: GATE } });
+    expect(screen.queryByText(/looks like the new workspace's own address/)).toBeNull();
+  });
+
+  /** 응답을 못 받으면(CORS·DNS) 네트워크 탓만 하지 않고 무엇을 넣는 칸인지 말한다. */
+  it('서비스에 닿지 않으면 주소를 확인하라고 한다', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    render(<ConnectScreen onConnected={vi.fn()} />);
+    fillCreateForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
+    expect(await screen.findByText(/not the new workspace's address/)).toBeTruthy();
+    expect(pendingWorkspace.read()).toBeNull();
   });
 
   /** `add` 겹창에서는 새 워크스페이스를 만들 자리가 아니다(부트스트랩과 같은 근거). */
