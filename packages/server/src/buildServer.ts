@@ -19,6 +19,7 @@ import { registerTeamRoutes } from './routes/teamRoutes.js';
 import { registerMessageRoutes } from './routes/messageRoutes.js';
 import { registerAttachmentRoutes } from './routes/attachmentRoutes.js';
 import { registerAvatarRoutes } from './routes/avatarRoutes.js';
+import { registerWorkspaceRoutes } from './routes/workspaceRoutes.js';
 import { createLocalStorage } from './storage/local.js';
 import { registerDirectoryRoutes } from './routes/directoryRoutes.js';
 import { registerCollabRoutes } from './routes/collabRoutes.js';
@@ -500,6 +501,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerAttachmentRoutes(app, deps.pool, storage);
   // 아바타는 같은 스토리지를 쓴다 — 파일 저장소를 하나로 유지하기 위해서다(avatarRoutes 주석).
   await registerAvatarRoutes(app, deps.pool, storage);
+  await registerWorkspaceRoutes(app, deps.pool, storage);
   await registerDirectoryRoutes(app, deps.pool, deps.projection);
   await registerCollabRoutes(app, deps.pool, deps.projection);
   await registerAuditRoutes(app, deps.pool);
