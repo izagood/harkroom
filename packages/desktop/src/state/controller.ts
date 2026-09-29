@@ -231,6 +231,8 @@ export class Controller {
         // 다시 붙는다.** 그래서 재접속이 곧 "버전이 바뀌었을 수 있는 유일한 순간"이다 —
         // 60초 타이머를 얹으면 아무것도 더 못 잡으면서 요청만 늘어난다.
         this.swallow(this.refreshServerVersion());
+        // 워크스페이스 아이콘도 재접속마다 다시 받는다 — 끊긴 사이에 바뀌었으면 이벤트를 놓쳤다.
+        this.swallow(this.refreshWorkspaceIcon());
       },
       onDown: (reason) => this.handleDown(reason),
     });
@@ -275,6 +277,32 @@ export class Controller {
     const serverVersion = await this.api.serverVersion();
     if (this.stopped) return;
     this.store.getState().set({ serverVersion });
+  }
+
+  /**
+   * 워크스페이스 아이콘을 받아 objectURL 로 스토어에 넣는다. 걸린 것이 없으면(404) null 로 지운다.
+   *
+   * **못 읽었을 때는 이전 값을 지우지 않는다**(`refreshServerVersion` 과 같은 이유) — 한 번
+   * 실패했다고 사진이 글자로 되돌아가면 레일이 깜박인다. 실패는 `swallow` 가 삼킨다.
+   */
+  private async refreshWorkspaceIcon(): Promise<void> {
+    const blob = await this.api.fetchWorkspaceIcon();
+    if (this.stopped) return;
+    const prev = this.store.getState().workspaceIconUrl;
+    const next = blob ? URL.createObjectURL(blob) : null;
+    this.store.getState().set({ workspaceIconUrl: next });
+    if (prev) URL.revokeObjectURL(prev);
+  }
+
+  /**
+   * 워크스페이스 아이콘을 건다(owner/admin). `setAvatar` 와 같은 두 걸음 — 기존 `POST /uploads`
+   * 로 올린 뒤 그 첨부를 잇는다. 서버가 받아들인 뒤에 다시 받는다: 미리 그리면 서버가 거절한
+   * 파일이 잠깐 레일에 떴다가 사라진다.
+   */
+  async setWorkspaceIcon(file: File | null, onProgress?: (fraction: number) => void): Promise<void> {
+    const attachmentId = file ? (await this.api.upload(file, onProgress)).id : null;
+    await this.api.setWorkspaceIcon(attachmentId);
+    await this.refreshWorkspaceIcon();
   }
 
   /**
@@ -462,6 +490,10 @@ export class Controller {
       case 'avatar.changed':
         store.applyAvatar(e.accountId, e.avatarAttachmentId);
         if (!store.accounts[e.accountId]) this.swallow(this.refreshAccounts());
+        break;
+      case 'workspace.icon.changed':
+        // 바이트가 아니라 신호만 온다 — 다시 받는다.
+        this.swallow(this.refreshWorkspaceIcon());
         break;
       case 'account.handle_changed':
         store.applyHandle(e.accountId, e.newHandle);

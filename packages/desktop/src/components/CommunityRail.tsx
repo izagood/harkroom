@@ -12,8 +12,10 @@ import { useT } from '../i18n/useT';
  * 하나만 쓰는 사람(오늘의 거의 모든 사용자)의 화면이 이유 없이 좁아진다 — 그 사람에게는
  * 전환할 대상이 없으므로 전환기는 정보가 0 인 기둥이다.
  *
- * **아바타를 쓰지 않는다.** 커뮤니티 아바타는 서버가 그것을 알아야 하는 일이고(#163 의 결정
- * (A) 는 서버 계약을 건드리지 않는다), 그래서 표시는 이름의 이니셜 타일이다.
+ * **사진은 워크스페이스 아이콘이다(2026-09-29).** 전에는 이름의 이니셜 타일뿐이었고(#163 의
+ * 결정 (A) 는 서버 계약을 건드리지 않았다), `jaebin.`·`jinbin.` 처럼 첫 글자가 같은 커뮤니티가
+ * 둘 다 "J" 로 서서 구별되지 않았다. 이제 각 서버가 owner/admin 이 올린 아이콘을 내주고
+ * (`GET /workspace/icon`), 없거나 못 받았으면 **이니셜이 폴백**으로 남는다.
  *
  * **`#146`·`#159` 의 아바타 컴포넌트(`Identity`)를 재사용하지 않는다.** 그것은 **계정 신원**
  * (누가 말하는가)이고 이것은 **서버 신원**(어느 커뮤니티인가)이다. 지금은 둘 다 "원 안의
@@ -62,6 +64,7 @@ export function CommunityRail() {
 function CommunityTile({ entry, active }: { entry: CommunityEntry; active: boolean }) {
   const t = useT();
   const connected = useStore(entry.store, (s) => s.connected);
+  const iconUrl = useStore(entry.store, (s) => s.workspaceIconUrl);
   const label = communityLabel(entry);
   // 이니셜은 **코드 포인트 단위**로 자른다. `label[0]` 은 이모지·일부 문자를 반쪽만 잘라
   // 깨진 글자를 그린다.
@@ -92,9 +95,14 @@ function CommunityTile({ entry, active }: { entry: CommunityEntry; active: boole
         ${active
           ? 'bg-accent text-fg-on-strong'
           : 'bg-surface-raised text-fg-muted hover:bg-surface-hover'}
+        ${iconUrl && active ? 'ring-2 ring-accent ring-offset-2 ring-offset-surface-sunken' : ''}
         ${connected ? '' : 'border-2 border-danger'}`}
     >
-      {initial}
+      {/* 사진이 있으면 타일을 채운다. 이름은 버튼의 aria-label 이 이미 말하므로 alt 는 비운다 —
+          같은 이름을 두 번 읽히지 않게. 사진이 있을 때 활성 표시는 배경색이 가려지므로 링으로 한다. */}
+      {iconUrl
+        ? <img src={iconUrl} alt="" data-testid={`community-icon-${entry.id}`} className="h-full w-full rounded-xl object-cover" />
+        : initial}
       {!connected && (
         <span
           aria-hidden
