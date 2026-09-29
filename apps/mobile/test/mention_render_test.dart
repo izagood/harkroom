@@ -28,7 +28,7 @@ void main() {
   });
 
   test('토큰이 없는 본문은 손대지 않는다', () {
-    expect(renderMentions('메일은 a@b.io, <@not-an-id>', accounts, '@?'),
-        '메일은 a@b.io, <@not-an-id>');
+    expect(renderMentions('메일은 a@example.com, <@not-an-id>', accounts, '@?'),
+        '메일은 a@example.com, <@not-an-id>');
   });
 }
