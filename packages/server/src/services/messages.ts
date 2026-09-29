@@ -564,6 +564,459 @@ async function mentionDepthFor(
   return 0;
 }
 
+/**
+ * 한 본문이 **누구를 부르는가** — 정규화부터 상한·호출 게이트·팀 계획·`@channel` 판정까지.
+ *
+ * 게시(`postMessage`)와 수정(`editMessage`)이 **같은 함수를 쓴다.** 판정이 두 자리에 살던 동안
+ * 수정 쪽만 #845(집합·팀 토큰)·061(삭제 계정)을 놓쳐, 고친 메시지의 `@팀` 은 글자로만 남았다.
+ *
+ * 디비를 읽기만 하고 아무것도 쓰지 않는다 — 결과는 insert·update 앞에서 meta 로 굳히고,
+ * 실제로 inbox 를 넣는 일은 `fanOutCalls` 가 한다. 깊이는 부른 쪽이 잰다: 게시는 스레드를
+ * 훑고(`mentionDepthFor`), 수정은 그 행에 이미 저장된 값을 쓴다.
+ */
+interface ResolvedMentionCalls {
+  normalizedBody: string;
+  /** 본문의 글자 `@handle` 가운데 계정으로 풀린 것 — `@channel` 이라는 계정이 있는지 보는 데 쓴다. */
+  accountHandles: Set<string>;
+  calledIds: string[];
+  cappedIds: Set<string>;
+  deniedIds: Set<string>;
+  teamPlans: { teamId: string; recipients: string[]; viaLead: boolean }[];
+  targetCall: { kind: 'group' | 'team'; id: string }[];
+  channelCalled: boolean;
+  /** 이 판정이 메시지에 남기는 사실(`mentionChainCapped`·`mentionDenied`·`mentionRefs`). */
+  callMeta: Record<string, unknown>;
+}
+
+async function resolveMentionCalls(
+  client: PoolClient,
+  input: { body: string; channelId: string; authorId: string; authorIsAgent: boolean; mentionDepth: number },
+): Promise<ResolvedMentionCalls> {
+  const { authorIsAgent, mentionDepth } = input;
+  /**
+   * 멘션 정규화(#271). 저장되는 정본은 `<@id>` 다 — 그래야 handle 을 바꿔도 과거 본문을
+   * 다시 쓰지 않는다.
+   *
+   * **삽입 전에 한다.** 넣고 나서 update 로 고치면 그 사이에 읽는 경로(`COLS` 재조회,
+   * WS 이벤트)가 정규화 전 본문을 보고, 같은 메시지가 두 형식으로 존재하는 순간이 생긴다.
+   *
+   * 대상은 **워크스페이스의 모든 계정**이다. 채널 멤버로 좁히면 public standard 채널에는
+   * `channel_member` 행이 아예 없으므로(`createChannel` — private 만 첫 멤버를 넣는다)
+   * 정규화가 통째로 비고, 그 채널의 멘션은 알림이 하나도 가지 않는다.
+   *
+   * `mentionedHandles` 가 코드 구간(#298)과 인용 줄(#592)을 걷어내므로 그 안의 `@handle` 은
+   * 여기 목록에 들어오지 않고, `normalizeMentions` 도 같은 판정으로 그 구간을 비껴간다.
+   */
+  const bodyHandles = mentionedHandles(input.body);
+  const mentionedAccounts = bodyHandles.length
+    ? (await client.query(
+        // `kind` 를 함께 읽는다(4단계) — 연쇄 깊이 상한은 **에이전트만** 막으므로 부른
+        // 대상이 사람인지 에이전트인지를 알아야 하고, 그 사실은 이미 이 조회에 있다.
+        // 계정마다 다시 물으면 부른 수만큼 왕복이 늘고, 그 왕복은 게시 경로에 붙는다.
+        // 삭제된 계정은 뺀다(061) — 이름은 그대로 잡혀 있으므로 빼지 않으면 `@handle` 이
+        // 명부에 없는 에이전트를 부르고, 아무도 읽지 않는 인박스 항목이 쌓인다.
+        `select id, lower(handle) as handle, kind from account
+          where lower(handle) = any($1) and deleted_at is null`,
+        [bodyHandles],
+      )).rows as { id: string; handle: string; kind: 'human' | 'agent' }[]
+    : [];
+  const handleToId = new Map(mentionedAccounts.map((r) => [r.handle, r.id]));
+
+  /**
+   * 집합·팀도 정본으로 바꾼다(#845). 계정만 토큰이 되고 이 둘은 글자로 남아 있었는데,
+   * **팀은 이름이 바뀐다**(`PATCH /teams/:id`) — 바뀌는 순간 과거 본문의 `@옛팀이름` 은
+   * 아무것도 가리키지 않는다. #271 이 계정에 대해 푼 문제가 같은 이름공간에 남아 있었다.
+   *
+   * 지도의 **값**에 접두를 실어 `normalizeMentions` 자체는 손대지 않는다 — 그 함수는
+   * `<@${값}>` 을 쓰므로 값이 `team:<uuid>` 면 토큰도 `<@team:<uuid>>` 가 된다.
+   *
+   * **우선순위는 아래 팬아웃 루프가 정본이다**: 계정 > 집합 > 팀. 여기서 그 순서를 다시
+   * 정하지 않고 그대로 따른다 — 갈리면 한 발화에서 저장된 토큰과 실제로 깬 대상이 달라진다.
+   * 겹친 데이터에서 집합이 팀을 이기는 근거는 그 루프의 주석에 있다.
+   *
+   * **`handleToId` 에 넣지 않고 사본(`nameToToken`)에 넣는다.** 그 지도의 키 집합이
+   * 아래에서 `accountHandles` 가 되고, 팬아웃 루프는 그 집합에 든 이름을 *"이미 계정으로
+   * 처리했다"* 며 건너뛴다 — 집합·팀을 원본에 넣으면 팬아웃이 그 둘을 통째로 지나쳐
+   * **아무도 안 깬다**(실측: 팀·집합 테스트 15개가 한꺼번에 빨개졌다). 정규화용 지도와
+   * "계정으로 처리한 이름" 목록은 서로 다른 사실이다.
+   */
+  const nameToToken = new Map(handleToId);
+  for (const handle of bodyHandles) {
+    if (handle === CHANNEL_MENTION_HANDLE || nameToToken.has(handle)) continue;
+    const group = await getHandleGroupByHandle(client, handle);
+    if (group) {
+      nameToToken.set(handle, mentionTargetKey('group', group.id));
+      continue;
+    }
+    const team = await getTeamByName(client, handle);
+    if (team) nameToToken.set(handle, mentionTargetKey('team', team.id));
+  }
+
+  const normalizedBody = normalizeMentions(input.body, nameToToken);
+
+  /*
+    상한 판정을 **insert 보다 앞에서** 끝낸다. 뒤에서 `update ... meta` 로 얹으면 이미
+    읽어 응답·WS 이벤트로 나간 행에는 그 사실이 없어서, 화면은 부르지 않은 호출을
+    부른 것으로 그린다 — 같은 메시지가 두 형식으로 존재하는 순간을 만들지 않는다는
+    정규화 주석의 규율과 같다.
+  */
+  const chainCapped = authorIsAgent && mentionDepth >= MENTION_CHAIN_LIMIT;
+
+  /*
+    **부름과 지칭을 가른다**(2026-09-09). 규칙과 근거는 `splitMentionCalls` 에 있다:
+    에이전트가 동료 에이전트를 **본문 한가운데서** 이름으로 언급한 것은 부르는 것이
+    아니다. 알림을 만드는 자리가 여기 하나뿐이므로 판정도 여기서 한 번만 한다.
+
+    깊이 상한(`cappedIds`)도 이 결과 위에서 센다 — 애초에 부르지 않은 이름을 "막았다"고
+    적으면 화면이 없던 호출을 있었다고 말하게 된다.
+  */
+  /*
+    **본문에 처음부터 `<@id>` 로 적힌 계정도 함께 읽는다.** 위 조회는 `@handle` 글자만 보므로
+    에이전트가 id 로 부른 계정은 거기 없다 — 그러면 `isAgent` 가 모르는 id 를 사람으로 보고
+    (본문 한가운데의 지칭이 부름이 된다), 막힌 부름이 `mentionDenied`·`mentionChainCapped` 에
+    남지 않고 조용히 사라진다(#rcms, task_manager → rcms 세 번). 판정이 보는 계정 목록은
+    정규화된 본문의 토큰 전부여야 한다.
+
+    `handleToId`(정규화 지도·`@channel` 예외의 "계정으로 처리한 이름")에는 넣지 않는다 —
+    그 둘은 본문의 **글자** 에 대한 사실이다.
+  */
+  const knownIds = new Set(mentionedAccounts.map((a) => a.id));
+  const rawIds = mentionedIds(normalizedBody).filter((id) => !knownIds.has(id));
+  const tokenAccounts = rawIds.length
+    ? (await client.query(
+        `select id, lower(handle) as handle, kind from account
+          where id = any($1::uuid[]) and deleted_at is null`,
+        [rawIds],
+      )).rows as { id: string; handle: string; kind: 'human' | 'agent' }[]
+    : [];
+  const calledAccounts = [...mentionedAccounts, ...tokenAccounts];
+  const agentIds = new Set(calledAccounts.filter((a) => a.kind === 'agent').map((a) => a.id));
+  const { call: calledIds, ref: refIds, targetCall, targetRef } = splitMentionCalls(normalizedBody, {
+    authorIsAgent,
+    isAgent: (id) => agentIds.has(id),
+  });
+
+  const cappedIds = new Set<string>();
+  if (chainCapped) {
+    for (const accountId of calledIds) {
+      if (accountId === input.authorId) continue;
+      // **에이전트만 막는다.** 사람을 부르는 것은 "이 스레드에 사람이 필요하다"는 뜻이라
+      // 상한이 걸린 그때 오히려 더 필요하다.
+      if (agentIds.has(accountId)) cappedIds.add(accountId);
+    }
+  }
+  const cappedHandles = calledAccounts.filter((a) => cappedIds.has(a.id)).map((a) => a.handle);
+  /*
+    호출 게이트(스펙 2026-09-20 §6) — **insert 보다 앞에서** 잰다. 상한 판정과 같은 이유다:
+    막힌 부름은 `meta.mentionDenied` 로 그 메시지에 남아야 하고, 응답·WS 이벤트로 이미 나간
+    행에 뒤늦게 얹을 수 없다. 상한에 이미 막힌 것은 다시 세지 않는다 — 한 이름이 두 사유로
+    두 번 적히면 화면이 "둘을 못 불렀다"로 읽는다.
+  */
+  const deniedIds = new Set<string>();
+  const gateFacts = await invokeFactsFor(client, [...calledIds].filter((id) => id !== input.authorId && !cappedIds.has(id)));
+  for (const [id, fact] of gateFacts) {
+    if (!(await mayInvoke(client, fact, { callerId: input.authorId, channelId: input.channelId, via: 'mention' }))) deniedIds.add(id);
+  }
+  const deniedHandles = calledAccounts.filter((a) => deniedIds.has(a.id)).map((a) => a.handle);
+
+  /*
+    **팀 부름도 insert 앞에서 판정한다**(068). 예전에는 팀 게이트가 insert 뒤의 `fanOutMention`
+    안에만 있어서 막힌 팀원이 `mentionDenied` 에 남지 않았다 — #udc 의 `@udc-team` 네 번이
+    👀·실패·표시 없이 사라진 자리다. 여기서 누구를 깨울지(`teamPlans`)까지 정해 두고, 아래
+    팬아웃은 그 결과만 넣는다.
+
+    판정은 두 겹이다(`invokeGate.ts` 머리 주석): ① 팀의 범위, ② 팀원 각자의 범위(호출자 기준).
+    막힌 것은 팀이면 팀 이름, 팀원이면 그 handle 로 `mentionDenied` 에 싣는다. 이름 공간이
+    하나라(036) 둘이 겹치지 않는다.
+  */
+  const teamPlans: { teamId: string; recipients: string[]; viaLead: boolean }[] = [];
+  const denyHandle = (h: string) => { if (!deniedHandles.includes(h)) deniedHandles.push(h); };
+  for (const target of targetCall) {
+    if (target.kind !== 'team') continue;
+    // 토큰이 가리키는 팀이 그 사이 지워졌을 수 있다 — 그때는 부를 명단이 없다.
+    const team = await getTeam(client, target.id);
+    if (!team) continue;
+    const teamCtx = { callerId: input.authorId, channelId: input.channelId };
+    if (!(await mayInvokeTeam(client, { teamId: team.id, invokeScope: team.invokeScope, ownerAccountId: team.ownerAccountId }, teamCtx))) {
+      denyHandle(team.name);
+      continue;
+    }
+    /*
+      **비활성 팀원은 부르지 않는다**(아래 팬아웃 주석의 근거 그대로) — 비활성 계정은 턴을
+      시작하지 못하므로 넣으면 아무도 읽지 않는 항목이 쌓인다. 작성자 자신도 뺀다.
+    */
+    const awake = (await listTeamMembers(client, team.id)).filter((m) => !m.disabled && m.accountId !== input.authorId);
+    const memberFacts = await invokeFactsFor(client, awake.map((m) => m.accountId));
+    const allowed = new Set<string>();
+    for (const m of awake) {
+      const fact = memberFacts.get(m.accountId);
+      if (!fact || (await mayInvoke(client, fact, { ...teamCtx, via: 'team' }))) allowed.add(m.accountId);
+    }
+    /*
+      팀장이 있고 깰 수 있으면 팀장 하나(047). 팀장이 **이 호출자에게 막혔으면** 막혔다고 적고
+      부를 수 있는 팀원 전원으로 떨어진다 — 비활성 팀장과 같은 폴백이다: 부름이 조용히 사라지는
+      것이 여럿 깨는 것보다 나쁘다.
+    */
+    const leadMember = team.leadAccountId === null ? undefined : awake.find((m) => m.accountId === team.leadAccountId);
+    if (leadMember && allowed.has(leadMember.accountId)) {
+      teamPlans.push({ teamId: team.id, recipients: [leadMember.accountId], viaLead: true });
+      continue;
+    }
+    for (const m of awake) if (!allowed.has(m.accountId)) denyHandle(m.handle);
+    teamPlans.push({ teamId: team.id, recipients: [...allowed], viaLead: false });
+  }
+
+  /*
+    지칭한 이름은 **그 메시지에 남긴다** — `mentionChainCapped` 와 같은 자리·같은 이유다.
+    화면은 멘션을 옅은 배경 칩으로 그리므로, 부르지 않은 이름이 부른 것과 똑같이 보이면
+    그 자체가 거짓말이다(design.md §4). 화면이 본문을 다시 파싱하지 않고 서버가 실제로 한
+    일을 그대로 읽게 한다.
+
+    **handle 이 아니라 id 를 싣는다.** `mentionChainCapped` 는 그 자리에서 글자로 읽히는
+    값이라 handle 이지만, 이것은 본문의 칩과 **맞춰 볼 열쇠**다 — 그 사이 handle 이 바뀌면
+    본문은 새 이름으로 그려지는데 meta 는 옛 이름이라 표시가 조용히 어긋난다.
+  */
+  /**
+   * 화면이 *"부르지 않고 이름만 적었다"* 를 그리는 데 쓴다. 팀 지칭도 함께 싣는다(#849) —
+   * 안 실으면 에이전트가 적은 `@팀이름` 이 부른 것과 **똑같이** 그려지고, 읽는 사람은
+   * 그 팀이 깼다고 읽는다. 키 모양은 본문 토큰과 같아서(`team:<id>`) 화면의 지도가
+   * 그대로 이름으로 되돌린다.
+   */
+  const refIdsForMeta = [
+    ...refIds.filter((id) => id !== input.authorId),
+    ...targetRef.map((t) => mentionTargetKey(t.kind, t.id)),
+  ];
+
+  // `@channel`(#225) — 채널 전체 호출. 본문은 손대지 않는다: `@channel` 은 원문에
+  // 그대로 남고 서버는 inbox 항목만 펼쳐 넣는다. 본문을 치환하면 원문이 사라져
+  // 수정할 때 되돌릴 수 없다(계정이 없으므로 정규화도 지나친다).
+  //
+  // `@channel` 이라는 handle 의 **계정이 실제로 있으면 계정이 이긴다** — 위에서 이미
+  // 평범한 멘션으로 처리됐고 여기서는 아무것도 하지 않는다. 사람의 이름이 예약어에
+  // 밀리면 그 사람은 영영 불릴 수 없다.
+  //
+  // **에이전트의 글에서는 맨 앞에 있을 때만 부름이다**(`splitMentionCalls` 와 같은 규칙).
+  // 본문 한가운데의 `@channel` 은 그 기능을 **가리키는** 것이다 — 멘션 문법을 설명하던 보고
+  // 한 줄이 채널의 에이전트 전부를 깨웠고, 깬 턴들이 원인을 설명하며 그 글자를 다시 옮겨
+  // 적어 연쇄가 됐다(#harkroom seq 3452). 사람의 글은 어디에 있어도 부름이다.
+  const accountHandles = new Set(handleToId.keys());
+  const channelCalled = authorIsAgent
+    ? mentionedHandles(normalizedBody.slice(0, headMentionRunEnd(normalizedBody))).includes(CHANNEL_MENTION_HANDLE)
+    : bodyHandles.includes(CHANNEL_MENTION_HANDLE);
+  return {
+    normalizedBody,
+    accountHandles,
+    calledIds: [...calledIds],
+    cappedIds,
+    deniedIds,
+    teamPlans,
+    targetCall: targetCall as { kind: 'group' | 'team'; id: string }[],
+    channelCalled,
+    callMeta: {
+      ...(cappedHandles.length
+        ? { mentionChainCapped: cappedHandles, mentionChainLimit: MENTION_CHAIN_LIMIT }
+        : {}),
+      ...(deniedHandles.length ? { mentionDenied: deniedHandles } : {}),
+      ...(refIdsForMeta.length ? { mentionRefs: refIdsForMeta } : {}),
+    },
+  };
+}
+
+/**
+ * 판정(`resolveMentionCalls`)대로 inbox 를 넣는다 — 계정 멘션 → `@channel` → 집합·팀 순서.
+ * `notified` 에 이미 든 계정은 건너뛴다: 게시는 빈 집합으로, 수정은 **그 메시지로 이미 inbox 를
+ * 받은 계정**으로 시작한다(같은 메시지로 두 번 부르지 않는다).
+ */
+async function fanOutCalls(
+  client: PoolClient,
+  ctx: { channelId: string; authorId: string; messageId: string },
+  r: ResolvedMentionCalls,
+  notified: Set<string>,
+): Promise<void> {
+  const { calledIds, cappedIds, deniedIds, teamPlans, targetCall, accountHandles, channelCalled } = r;
+  /**
+   * 알림 판정은 **정규화된 본문의 `<@id>` 토큰**에서 한다(#271 요구 6). 옛 handle 경로를
+   * 남겨 두면 두 판정이 갈라지고, 그때 본문에 남은 것과 알림이 간 곳이 달라진다.
+   *
+   * 코드 구간을 한 번 더 걷어내는 이유: 사람이 코드 블록 안에 `<@uuid>` 를 **직접** 적을
+   * 수 있다. 정규화는 코드를 비껴가지만 그렇게 손으로 적힌 토큰까지 막지는 못한다 —
+   * 코드 안은 알림을 만들지 않는다는 #298 의 결정을 여기서도 같은 함수로 지킨다.
+   *
+   * 그 두 가지를 `splitMentionCalls` 하나가 한다(위에서 이미 돌았다). 그 함수가 코드·인용을
+   * 걷어내고, 남은 것을 **부름과 지칭**으로 가른다 — 여기 도는 것은 부름뿐이다.
+   *
+   * 작성자 자신은 걸러 낸다.
+   */
+  /*
+    **연쇄 깊이 상한**(4단계). 상한에 닿은 에이전트의 발화는 **다른 에이전트를 부르지
+    못한다** — 그 지점부터가 관측된 폭주의 모양이고, 각 고리는 앞의 답을 그대로 다시 던진다.
+
+    **사람에게 가는 알림은 막지 않는다.** 상한은 기계가 스스로 도는 것을 끊는 장치이고,
+    사람을 부르는 것은 "이 스레드에 사람이 필요하다"는 뜻이라 그때 오히려 더 필요하다.
+    막힌 호출은 조용히 사라지지 않고 `meta.mentionChainCapped` 로 그 메시지에 남는다 —
+    화면이 그 사실을 그려야 사람이 "왜 아무도 안 왔나"를 묻지 않는다(design.md §4).
+  */
+  for (const accountId of calledIds) {
+    // 상한에 걸린 에이전트는 **inbox 항목을 받지 않는다** — 그것이 곧 턴이 뜨지 않는다는
+    // 뜻이다(러너는 inbox 를 폴한다). 판정은 위에서 이미 끝났고 여기서 다시 하지 않는다.
+    // 지칭(`refIds`)도 같은 이유로 여기 오지 않는다 — 이름은 본문에 남고 턴은 뜨지 않는다.
+    if (accountId !== ctx.authorId && !cappedIds.has(accountId) && !deniedIds.has(accountId)) {
+      /*
+        **팀과 그 팀장을 한 발화에서 함께 불렀으면 팀장 항목에 팀을 싣는다**(`@ops @lead`).
+        이 루프가 팀 팬아웃보다 먼저 돌아 팀장을 평범한 `mention` 으로 넣으면, 팀 부름은
+        `notified` 중복 제거로 그를 건너뛰고 팀장 턴은 명단(팀 블록)을 못 받는다 — #udc 에서
+        `@udc-team @forge` 로 부른 forge 가 "udc-team 답이 없어 이어받는다"며 자기가 그 팀의
+        팀장인 줄 몰랐던 자리다. 누가 팀장 하나로 가는지는 insert 앞에서 이미 정했다(`teamPlans`).
+      */
+      const ledTeam = teamPlans.find((p) => p.viaLead && p.recipients[0] === accountId);
+      await insertInbox(
+        client, accountId, ctx.messageId, ledTeam ? 'team_mention' : 'mention', notified, ledTeam?.teamId,
+      );
+    }
+  }
+
+  // `@channel`(#225) — 판정(`channelCalled`)과 근거는 `resolveMentionCalls` 에 있다.
+  if (channelCalled && !accountHandles.has(CHANNEL_MENTION_HANDLE)) {
+    // 대상은 **그 채널을 볼 수 있는 사람 전부**다. 규칙은 `fanOutMention` 하나에 있다.
+    await fanOutMention(client, ctx, null, notified, { reason: 'mention' }, 'channel_all');
+  }
+
+  /**
+   * 집합(#230)과 팀(#172) — 저장된 명단을 펼친다. 본문은 손대지 않는다: `@release` 는
+   * 원문에 그대로 남고 서버는 inbox 항목만 펼쳐 넣는다(`@channel` 과 같은 이유다).
+   *
+   * **한 자리에서 둘을 본다.** 팀을 위한 새 루프를 만들지 않는 이유: 이 루프가 이미
+   * "이 handle 은 계정이 아니다 → 저장된 명단인가?" 를 묻고 있고, 팀은 그 물음의
+   * 두 번째 답일 뿐이다. 루프를 하나 더 두면 `notified` 중복 제거가 두 루프에 걸쳐
+   * 살고, `CHANNEL_MENTION_HANDLE`·`accountHandles` 예외를 양쪽에 베껴야 한다 —
+   * 한쪽만 고치는 날 `@channel` 이라는 이름의 팀이 채널 전체를 두 번 부른다.
+   *
+   * **가시성과 중복 제거를 여기서 다시 쓰지 않는다.** 대상 목록만 만들어
+   * `fanOutMention` 에 넘긴다 — 그 함수 하나가 `channelVisibleSql` 로 볼 수 있는
+   * 사람만 남기고, 작성자를 빼고, `notified` 에 이미 든 사람을 건너뛴다. 집합이 하는
+   * 것과 **똑같이** 한다.
+   *
+   * ## 무엇을 도는가 — **부름으로 판정된 대상만**(#849)
+   *
+   * 초판은 본문에 나온 이름을 전부 돌며 여기서 다시 집합·팀으로 풀었다. 이제는
+   * `splitMentionCalls` 가 정규화된 본문의 `<@group:id>`·`<@team:id>` 에서 가른 **부름**
+   * 목록을 돈다. 두 가지가 함께 달라진다:
+   *
+   * 1. **지칭이 팀을 깨우지 않는다.** 에이전트가 보고 한가운데 `@팀이름` 을 적으면 지금까지
+   *    그 팀이 깼다 — 계정에 대해 #598 이 잰 "39% 가 부를 뜻이 없는 지칭" 을 팀이 그대로
+   *    되풀이하던 자리다. 규칙과 근거는 그 함수에 있다(집합은 사람이라 언제나 부름이다).
+   * 2. **이름을 다시 풀지 않는다.** 정규화가 이미 풀어 토큰에 담아 두었으므로 여기서
+   *    `getHandleGroupByHandle`·`getTeamByName` 을 다시 부를 이유가 없다.
+   *
+   * ## 해석 순서: 계정 → 집합 → 팀 — **이제 정규화 단계가 정본이다**
+   *
+   * 아래 근거는 그대로 살아 있고, 그것을 실행에 옮기는 자리가 위(`nameToToken` 조립)로
+   * 옮겼을 뿐이다. 그 순서가 토큰을 정하므로 이 루프는 결과만 물려받는다 —
+   * `CHANNEL_MENTION_HANDLE` 과 계정 이름은 애초에 대상 토큰이 되지 않으므로 여기서
+   * 걸러 낼 것도 없다.
+   *
+   * **계정이 이긴다.** `@foo` 가 계정이면 정규화가 계정 토큰으로 만들었고 위에서 평범한
+   * 멘션으로 처리됐다. 서버가 양방향 충돌을 막으므로 정상 경로에서는 겹치지 않지만, 026 이전에
+   * 만들어진 행이나 동시 생성 경합으로 겹칠 수 있다 — 그때 사람의 이름이 집합에 밀리면
+   * 그 사람은 영영 불릴 수 없다.
+   *
+   * **집합과 팀 사이의 순서는 실측하면 결과를 바꿀 수 있다.** `createTeam` 은 세 겹침을
+   * 모두 확인하지만(계정·집합·팀) 반대 방향은 그렇지 않다 — `createHandleGroup` 은
+   * `account` 만 보고 `agent_team` 을 안 보며, 계정 생성(`authRoutes.ts` 의 register,
+   * `services/agents.ts` 의 에이전트 생성)도 `handle_group` 만 본다. 즉 팀 이름과 같은
+   * 집합·계정을 **나중에 만들 수 있고**, 그러면 한 handle 이 두 대상을 가리킨다.
+   * `036_agent_team.sql` 은 *"유일성도 멘션 해석과 같은 기준이어야 한다"* 고 적었지만
+   * 그 기준을 지키는 문장은 팀 쪽에만 있다.
+   *
+   * 그 구멍을 여기서 메우지 않는다 — 계정·집합 생성 경로에 검사를 더하는 것은 그
+   * 라우트들의 사실이고, 이 함수는 **이미 겹쳐 있는 데이터에도 답을 하나로 정해야**
+   * 한다. 그래서 순서를 못 박는다: **집합이 팀을 이긴다.** 집합은 사람이고 팀은
+   * 에이전트다(`addHandleGroupMembers` 는 `kind = 'human'`, 팀 라우트는
+   * `not_an_agent` 로 거절한다) — 사람의 부름이 에이전트의 부름에 밀리면 그 사람들은
+   * 영영 불릴 수 없고, 그것은 계정이 집합을 이기는 것과 같은 판단이다.
+   *
+   * 겹침이 없는 정상 경로에서는 어느 쪽이 먼저든 결과가 같지만, 겹친 데이터에서 두
+   * 명단이 **둘 다** 펼쳐지는 것이 가장 나쁘다: `@foo` 가 사람 집합인지 에이전트 팀인지
+   * 부른 사람이 모르게 된다. 정규화가 이름 하나에 토큰 하나만 붙이므로 그 일은 없다.
+   *
+   * 조회를 `client` 로 하는 이유: 트랜잭션 클라이언트를 쥔 채 `pool` 에서 또 다른 연결을
+   * 얻으면 풀이 포화된 순간 자기 자신을 기다리는 교착이 된다. 같은 트랜잭션 스냅샷을
+   * 보는 것도 이쪽이 맞다.
+   */
+  for (const target of targetCall) {
+    if (target.kind === 'group') {
+      const members = await listHandleGroupMembers(client, target.id);
+      await fanOutMention(
+        client, ctx, members.map((m) => m.accountId), notified,
+        { reason: 'mention' }, 'group',
+      );
+      continue;
+    }
+
+    /**
+     * 에이전트 팀(#172). `036_agent_team.sql` 이 *"나중에 `@팀` 멘션을 열 여지를
+     * 남기기 위한 예약"* 이라고 적어 둔 그 여지를 여기서 쓴다.
+     *
+     * **비활성 팀원은 부르지 않는다.** `036` 은 *"비활성화는 팀원을 지우지 않는다 …
+     * 걸러지는 자리는 채널에 넣는 시점 하나다"* 라고 적었고, 이 줄은 그 문장에 자리를
+     * 하나 더한다. 그 결정을 뒤집는 것이 아니라 **같은 결정을 새로 생긴 경로에
+     * 적용하는 것**이다: 그 문장이 지킨 것은 "명단을 지우지 않는다"이고, 걸러는
+     * "닿게 하지 않는다"다. 멘션은 채널에 넣기와 나란히 **닿게 하는 두 번째 경로**라
+     * 같은 필터가 필요하다 — `AddTeamToChannelResult.skipped` 가 이미 그 개념을 갖고 있다.
+     *
+     * 왜 부르지 않는가 — 비활성 에이전트는 **깰 수 없다**. inbox 항목은 러너가 턴을
+     * 시작하는 신호이고(`agentWake`), 비활성 계정은 그 턴을 시작하지 않는다. 그것을
+     * 넣으면 아무도 읽지 않는 항목이 쌓이고, 그 계정을 다시 켜는 날 몇 주 전의 부름이
+     * 한꺼번에 되살아난다 — 그때 시작되는 턴은 이미 끝난 일에 대한 것이다.
+     *
+     * **가시성 필터로는 이것을 대신할 수 없다.** 비활성 에이전트도 채널 멤버로 남으므로
+     * (`disabled` 는 멤버십을 지우지 않는다) `channelVisibleSql` 을 통과한다 — 서버
+     * 테스트가 그 조합을 지킨다(`teamMention.test.ts` 3: 비활성이면서 채널 멤버).
+     * 그래서 `fanOutMention` 안이 아니라 **후보를 만드는 이 자리**가 필터의 자리다:
+     * 그 함수는 채널 가시성의 규칙이고 계정 상태의 규칙이 아니다.
+     *
+     * 반면 `memberCount` 는 비활성 팀원도 센다(`AgentTeamRow.memberCount`). 그
+     * 어긋남은 결함이 아니라 화면이 말해야 하는 사실이다 — 넷을 불러 셋이 깼다면
+     * 하나는 꺼져 있거나 채널을 못 본다.
+     */
+    // 누구를 깨울지는 insert 앞에서 이미 정했다(`teamPlans`) — 팀·팀원 게이트와 팀장 폴백이 거기 있다.
+    const plan = teamPlans.find((p) => p.teamId === target.id);
+    if (!plan) continue;
+
+    /**
+     * **팀장이 있으면 팀장 하나만 깨운다**(047 · 046 의 `lead_account_id` 를 읽는 자리).
+     *
+     * 이 두 줄이 팀 멘션의 뜻을 바꾼다: 지금까지 `@팀` 은 명단을 펼치는 것이었고, 그래서
+     * 턴이 팀원 수만큼 떠 같은 요청을 각자 처음부터 풀었다. 팀장이 정해져 있으면 그
+     * 부름은 **창구 하나**로 간다 — 나눌 일은 팀장이 `@팀원` 으로 나눈다.
+     *
+     * ## 폴백이 있는 이유 (jaebin 승인)
+     *
+     * 팀장이 **없거나 비활성**이면 지금까지의 동작(전원)을 그대로 쓴다. 팀장만 부르고
+     * 마는 쪽이 더 단순하지만, 그러면 팀 멘션이 **아무도 깨우지 않는 침묵**이 된다 —
+     * 팀장 지정은 선택이므로(046) 지정하지 않은 팀이 정상 상태이고, 비활성 계정은 턴을
+     * 시작하지 못한다(위 문단: inbox 항목은 러너가 턴을 시작하는 신호다). 부름이 조용히
+     * 사라지는 것이 여럿 깨는 것보다 나쁘다.
+     *
+     * 비활성 판정을 `awake` 로 한 번에 하는 이유: 팀장도 팀원이므로(046 의 복합 FK)
+     * 같은 필터를 통과해야 한다. 팀장이 비활성인데 그를 골라 넣으면 위 문단이 막으려는
+     * 바로 그것 — 아무도 읽지 않는 항목 — 이 된다.
+     *
+     * `notified` 중복 제거는 `fanOutMention` 이 그대로 한다. 그래서 팀장이 이 발화에서
+     * 이미 이름으로 불렸다면(`@ops @lead`) 팀 부름은 그를 건너뛴다 — 대신 위의 계정
+     * 멘션 루프가 그 항목을 `team_mention` 으로 넣어 명단을 싣는다. 한 발화에서 팀과
+     * 팀장을 함께 부르는 것은 팀을 부른 것과 같은 뜻이다(둘 다 팀장의 턴 하나다).
+     */
+    await fanOutMention(
+      client, ctx,
+      plan.recipients,
+      notified,
+      plan.viaLead ? { reason: 'team_mention', teamId: plan.teamId } : { reason: 'mention' },
+      'team',
+    );
+  }
+}
+
 export async function postMessage(
   pool: Pool, input: PostMessageInput,
 ): Promise<PostMessageResult> {
@@ -630,67 +1083,6 @@ export async function postMessage(
     // threadRootId 없이 true 를 보내는 것은 이미 채널 메시지이기 때문이다.
     const alsoInChannel = input.threadRootId ? (input.alsoInChannel ?? false) : false;
 
-    /**
-     * 멘션 정규화(#271). 저장되는 정본은 `<@id>` 다 — 그래야 handle 을 바꿔도 과거 본문을
-     * 다시 쓰지 않는다.
-     *
-     * **삽입 전에 한다.** 넣고 나서 update 로 고치면 그 사이에 읽는 경로(`COLS` 재조회,
-     * WS 이벤트)가 정규화 전 본문을 보고, 같은 메시지가 두 형식으로 존재하는 순간이 생긴다.
-     *
-     * 대상은 **워크스페이스의 모든 계정**이다. 채널 멤버로 좁히면 public standard 채널에는
-     * `channel_member` 행이 아예 없으므로(`createChannel` — private 만 첫 멤버를 넣는다)
-     * 정규화가 통째로 비고, 그 채널의 멘션은 알림이 하나도 가지 않는다.
-     *
-     * `mentionedHandles` 가 코드 구간(#298)과 인용 줄(#592)을 걷어내므로 그 안의 `@handle` 은
-     * 여기 목록에 들어오지 않고, `normalizeMentions` 도 같은 판정으로 그 구간을 비껴간다.
-     */
-    const bodyHandles = mentionedHandles(input.body);
-    const mentionedAccounts = bodyHandles.length
-      ? (await client.query(
-          // `kind` 를 함께 읽는다(4단계) — 연쇄 깊이 상한은 **에이전트만** 막으므로 부른
-          // 대상이 사람인지 에이전트인지를 알아야 하고, 그 사실은 이미 이 조회에 있다.
-          // 계정마다 다시 물으면 부른 수만큼 왕복이 늘고, 그 왕복은 게시 경로에 붙는다.
-          // 삭제된 계정은 뺀다(061) — 이름은 그대로 잡혀 있으므로 빼지 않으면 `@handle` 이
-          // 명부에 없는 에이전트를 부르고, 아무도 읽지 않는 인박스 항목이 쌓인다.
-          `select id, lower(handle) as handle, kind from account
-            where lower(handle) = any($1) and deleted_at is null`,
-          [bodyHandles],
-        )).rows as { id: string; handle: string; kind: 'human' | 'agent' }[]
-      : [];
-    const handleToId = new Map(mentionedAccounts.map((r) => [r.handle, r.id]));
-
-    /**
-     * 집합·팀도 정본으로 바꾼다(#845). 계정만 토큰이 되고 이 둘은 글자로 남아 있었는데,
-     * **팀은 이름이 바뀐다**(`PATCH /teams/:id`) — 바뀌는 순간 과거 본문의 `@옛팀이름` 은
-     * 아무것도 가리키지 않는다. #271 이 계정에 대해 푼 문제가 같은 이름공간에 남아 있었다.
-     *
-     * 지도의 **값**에 접두를 실어 `normalizeMentions` 자체는 손대지 않는다 — 그 함수는
-     * `<@${값}>` 을 쓰므로 값이 `team:<uuid>` 면 토큰도 `<@team:<uuid>>` 가 된다.
-     *
-     * **우선순위는 아래 팬아웃 루프가 정본이다**: 계정 > 집합 > 팀. 여기서 그 순서를 다시
-     * 정하지 않고 그대로 따른다 — 갈리면 한 발화에서 저장된 토큰과 실제로 깬 대상이 달라진다.
-     * 겹친 데이터에서 집합이 팀을 이기는 근거는 그 루프의 주석에 있다.
-     *
-     * **`handleToId` 에 넣지 않고 사본(`nameToToken`)에 넣는다.** 그 지도의 키 집합이
-     * 아래에서 `accountHandles` 가 되고, 팬아웃 루프는 그 집합에 든 이름을 *"이미 계정으로
-     * 처리했다"* 며 건너뛴다 — 집합·팀을 원본에 넣으면 팬아웃이 그 둘을 통째로 지나쳐
-     * **아무도 안 깬다**(실측: 팀·집합 테스트 15개가 한꺼번에 빨개졌다). 정규화용 지도와
-     * "계정으로 처리한 이름" 목록은 서로 다른 사실이다.
-     */
-    const nameToToken = new Map(handleToId);
-    for (const handle of bodyHandles) {
-      if (handle === CHANNEL_MENTION_HANDLE || nameToToken.has(handle)) continue;
-      const group = await getHandleGroupByHandle(client, handle);
-      if (group) {
-        nameToToken.set(handle, mentionTargetKey('group', group.id));
-        continue;
-      }
-      const team = await getTeamByName(client, handle);
-      if (team) nameToToken.set(handle, mentionTargetKey('team', team.id));
-    }
-
-    const normalizedBody = normalizeMentions(input.body, nameToToken);
-
     /*
       연쇄 깊이(4단계). **insert 보다 앞에서** 잰다 — 뒤에서 재면 자기 자신이 스캔 대상에
       들어가고, 그러면 자기 본문이 자기를 부른 것으로 보이는 경우(고정 멘션이 자기 handle
@@ -708,152 +1100,19 @@ export async function postMessage(
       authorId: input.authorId,
       authorIsAgent,
     });
-    /*
-      상한 판정을 **insert 보다 앞에서** 끝낸다. 뒤에서 `update ... meta` 로 얹으면 이미
-      읽어 응답·WS 이벤트로 나간 행에는 그 사실이 없어서, 화면은 부르지 않은 호출을
-      부른 것으로 그린다 — 같은 메시지가 두 형식으로 존재하는 순간을 만들지 않는다는
-      정규화 주석의 규율과 같다.
-    */
-    const chainCapped = authorIsAgent && mentionDepth >= MENTION_CHAIN_LIMIT;
-
-    /*
-      **부름과 지칭을 가른다**(2026-09-09). 규칙과 근거는 `splitMentionCalls` 에 있다:
-      에이전트가 동료 에이전트를 **본문 한가운데서** 이름으로 언급한 것은 부르는 것이
-      아니다. 알림을 만드는 자리가 여기 하나뿐이므로 판정도 여기서 한 번만 한다.
-
-      깊이 상한(`cappedIds`)도 이 결과 위에서 센다 — 애초에 부르지 않은 이름을 "막았다"고
-      적으면 화면이 없던 호출을 있었다고 말하게 된다.
-    */
-    /*
-      **본문에 처음부터 `<@id>` 로 적힌 계정도 함께 읽는다.** 위 조회는 `@handle` 글자만 보므로
-      에이전트가 id 로 부른 계정은 거기 없다 — 그러면 `isAgent` 가 모르는 id 를 사람으로 보고
-      (본문 한가운데의 지칭이 부름이 된다), 막힌 부름이 `mentionDenied`·`mentionChainCapped` 에
-      남지 않고 조용히 사라진다(#rcms, task_manager → rcms 세 번). 판정이 보는 계정 목록은
-      정규화된 본문의 토큰 전부여야 한다.
-
-      `handleToId`(정규화 지도·`@channel` 예외의 "계정으로 처리한 이름")에는 넣지 않는다 —
-      그 둘은 본문의 **글자** 에 대한 사실이다.
-    */
-    const knownIds = new Set(mentionedAccounts.map((a) => a.id));
-    const rawIds = mentionedIds(normalizedBody).filter((id) => !knownIds.has(id));
-    const tokenAccounts = rawIds.length
-      ? (await client.query(
-          `select id, lower(handle) as handle, kind from account
-            where id = any($1::uuid[]) and deleted_at is null`,
-          [rawIds],
-        )).rows as { id: string; handle: string; kind: 'human' | 'agent' }[]
-      : [];
-    const calledAccounts = [...mentionedAccounts, ...tokenAccounts];
-    const agentIds = new Set(calledAccounts.filter((a) => a.kind === 'agent').map((a) => a.id));
-    const { call: calledIds, ref: refIds, targetCall, targetRef } = splitMentionCalls(normalizedBody, {
-      authorIsAgent,
-      isAgent: (id) => agentIds.has(id),
+    const calls = await resolveMentionCalls(client, {
+      body: input.body, channelId: input.channelId, authorId: input.authorId, authorIsAgent, mentionDepth,
     });
-
-    const cappedIds = new Set<string>();
-    if (chainCapped) {
-      for (const accountId of calledIds) {
-        if (accountId === input.authorId) continue;
-        // **에이전트만 막는다.** 사람을 부르는 것은 "이 스레드에 사람이 필요하다"는 뜻이라
-        // 상한이 걸린 그때 오히려 더 필요하다.
-        if (agentIds.has(accountId)) cappedIds.add(accountId);
-      }
-    }
-    const cappedHandles = calledAccounts.filter((a) => cappedIds.has(a.id)).map((a) => a.handle);
-    /*
-      호출 게이트(스펙 2026-09-20 §6) — **insert 보다 앞에서** 잰다. 상한 판정과 같은 이유다:
-      막힌 부름은 `meta.mentionDenied` 로 그 메시지에 남아야 하고, 응답·WS 이벤트로 이미 나간
-      행에 뒤늦게 얹을 수 없다. 상한에 이미 막힌 것은 다시 세지 않는다 — 한 이름이 두 사유로
-      두 번 적히면 화면이 "둘을 못 불렀다"로 읽는다.
-    */
-    const deniedIds = new Set<string>();
-    const gateFacts = await invokeFactsFor(client, [...calledIds].filter((id) => id !== input.authorId && !cappedIds.has(id)));
-    for (const [id, fact] of gateFacts) {
-      if (!(await mayInvoke(client, fact, { callerId: input.authorId, channelId: input.channelId, via: 'mention' }))) deniedIds.add(id);
-    }
-    const deniedHandles = calledAccounts.filter((a) => deniedIds.has(a.id)).map((a) => a.handle);
-
-    /*
-      **팀 부름도 insert 앞에서 판정한다**(068). 예전에는 팀 게이트가 insert 뒤의 `fanOutMention`
-      안에만 있어서 막힌 팀원이 `mentionDenied` 에 남지 않았다 — #udc 의 `@udc-team` 네 번이
-      👀·실패·표시 없이 사라진 자리다. 여기서 누구를 깨울지(`teamPlans`)까지 정해 두고, 아래
-      팬아웃은 그 결과만 넣는다.
-
-      판정은 두 겹이다(`invokeGate.ts` 머리 주석): ① 팀의 범위, ② 팀원 각자의 범위(호출자 기준).
-      막힌 것은 팀이면 팀 이름, 팀원이면 그 handle 로 `mentionDenied` 에 싣는다. 이름 공간이
-      하나라(036) 둘이 겹치지 않는다.
-    */
-    const teamPlans: { teamId: string; recipients: string[]; viaLead: boolean }[] = [];
-    const denyHandle = (h: string) => { if (!deniedHandles.includes(h)) deniedHandles.push(h); };
-    for (const target of targetCall) {
-      if (target.kind !== 'team') continue;
-      // 토큰이 가리키는 팀이 그 사이 지워졌을 수 있다 — 그때는 부를 명단이 없다.
-      const team = await getTeam(client, target.id);
-      if (!team) continue;
-      const teamCtx = { callerId: input.authorId, channelId: input.channelId };
-      if (!(await mayInvokeTeam(client, { teamId: team.id, invokeScope: team.invokeScope, ownerAccountId: team.ownerAccountId }, teamCtx))) {
-        denyHandle(team.name);
-        continue;
-      }
-      /*
-        **비활성 팀원은 부르지 않는다**(아래 팬아웃 주석의 근거 그대로) — 비활성 계정은 턴을
-        시작하지 못하므로 넣으면 아무도 읽지 않는 항목이 쌓인다. 작성자 자신도 뺀다.
-      */
-      const awake = (await listTeamMembers(client, team.id)).filter((m) => !m.disabled && m.accountId !== input.authorId);
-      const memberFacts = await invokeFactsFor(client, awake.map((m) => m.accountId));
-      const allowed = new Set<string>();
-      for (const m of awake) {
-        const fact = memberFacts.get(m.accountId);
-        if (!fact || (await mayInvoke(client, fact, { ...teamCtx, via: 'team' }))) allowed.add(m.accountId);
-      }
-      /*
-        팀장이 있고 깰 수 있으면 팀장 하나(047). 팀장이 **이 호출자에게 막혔으면** 막혔다고 적고
-        부를 수 있는 팀원 전원으로 떨어진다 — 비활성 팀장과 같은 폴백이다: 부름이 조용히 사라지는
-        것이 여럿 깨는 것보다 나쁘다.
-      */
-      const leadMember = team.leadAccountId === null ? undefined : awake.find((m) => m.accountId === team.leadAccountId);
-      if (leadMember && allowed.has(leadMember.accountId)) {
-        teamPlans.push({ teamId: team.id, recipients: [leadMember.accountId], viaLead: true });
-        continue;
-      }
-      for (const m of awake) if (!allowed.has(m.accountId)) denyHandle(m.handle);
-      teamPlans.push({ teamId: team.id, recipients: [...allowed], viaLead: false });
-    }
-
-    /*
-      지칭한 이름은 **그 메시지에 남긴다** — `mentionChainCapped` 와 같은 자리·같은 이유다.
-      화면은 멘션을 옅은 배경 칩으로 그리므로, 부르지 않은 이름이 부른 것과 똑같이 보이면
-      그 자체가 거짓말이다(design.md §4). 화면이 본문을 다시 파싱하지 않고 서버가 실제로 한
-      일을 그대로 읽게 한다.
-
-      **handle 이 아니라 id 를 싣는다.** `mentionChainCapped` 는 그 자리에서 글자로 읽히는
-      값이라 handle 이지만, 이것은 본문의 칩과 **맞춰 볼 열쇠**다 — 그 사이 handle 이 바뀌면
-      본문은 새 이름으로 그려지는데 meta 는 옛 이름이라 표시가 조용히 어긋난다.
-    */
-    /**
-     * 화면이 *"부르지 않고 이름만 적었다"* 를 그리는 데 쓴다. 팀 지칭도 함께 싣는다(#849) —
-     * 안 실으면 에이전트가 적은 `@팀이름` 이 부른 것과 **똑같이** 그려지고, 읽는 사람은
-     * 그 팀이 깼다고 읽는다. 키 모양은 본문 토큰과 같아서(`team:<id>`) 화면의 지도가
-     * 그대로 이름으로 되돌린다.
-     */
-    const refIdsForMeta = [
-      ...refIds.filter((id) => id !== input.authorId),
-      ...targetRef.map((t) => mentionTargetKey(t.kind, t.id)),
-    ];
     const inserted = await client.query(
       `insert into message (channel_id, thread_root_id, author_id, body, kind, meta, also_in_channel, mention_depth)
        values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
-      [input.channelId, input.threadRootId ?? null, input.authorId, normalizedBody,
+      [input.channelId, input.threadRootId ?? null, input.authorId, calls.normalizedBody,
        input.kind ?? 'user',
        // 막힌 호출은 **그 메시지에 남는다** — 조용히 사라지면 사람은 "왜 아무도 안 왔나"를
        // 묻고, 그 답이 화면에 없다(design.md §4).
        JSON.stringify({
          ...(input.meta ?? {}),
-         ...(cappedHandles.length
-           ? { mentionChainCapped: cappedHandles, mentionChainLimit: MENTION_CHAIN_LIMIT }
-           : {}),
-         ...(deniedHandles.length ? { mentionDenied: deniedHandles } : {}),
-         ...(refIdsForMeta.length ? { mentionRefs: refIdsForMeta } : {}),
+         ...calls.callMeta,
        }),
        alsoInChannel, mentionDepth],
     );
@@ -881,203 +1140,8 @@ export async function postMessage(
     }
 
     const notified = new Set<string>();
+    await fanOutCalls(client, { channelId: input.channelId, authorId: input.authorId, messageId: message.id }, calls, notified);
 
-    /**
-     * 알림 판정은 **정규화된 본문의 `<@id>` 토큰**에서 한다(#271 요구 6). 옛 handle 경로를
-     * 남겨 두면 두 판정이 갈라지고, 그때 본문에 남은 것과 알림이 간 곳이 달라진다.
-     *
-     * 코드 구간을 한 번 더 걷어내는 이유: 사람이 코드 블록 안에 `<@uuid>` 를 **직접** 적을
-     * 수 있다. 정규화는 코드를 비껴가지만 그렇게 손으로 적힌 토큰까지 막지는 못한다 —
-     * 코드 안은 알림을 만들지 않는다는 #298 의 결정을 여기서도 같은 함수로 지킨다.
-     *
-     * 그 두 가지를 `splitMentionCalls` 하나가 한다(위에서 이미 돌았다). 그 함수가 코드·인용을
-     * 걷어내고, 남은 것을 **부름과 지칭**으로 가른다 — 여기 도는 것은 부름뿐이다.
-     *
-     * 작성자 자신은 걸러 낸다.
-     */
-    /*
-      **연쇄 깊이 상한**(4단계). 상한에 닿은 에이전트의 발화는 **다른 에이전트를 부르지
-      못한다** — 그 지점부터가 관측된 폭주의 모양이고, 각 고리는 앞의 답을 그대로 다시 던진다.
-
-      **사람에게 가는 알림은 막지 않는다.** 상한은 기계가 스스로 도는 것을 끊는 장치이고,
-      사람을 부르는 것은 "이 스레드에 사람이 필요하다"는 뜻이라 그때 오히려 더 필요하다.
-      막힌 호출은 조용히 사라지지 않고 `meta.mentionChainCapped` 로 그 메시지에 남는다 —
-      화면이 그 사실을 그려야 사람이 "왜 아무도 안 왔나"를 묻지 않는다(design.md §4).
-    */
-    for (const accountId of calledIds) {
-      // 상한에 걸린 에이전트는 **inbox 항목을 받지 않는다** — 그것이 곧 턴이 뜨지 않는다는
-      // 뜻이다(러너는 inbox 를 폴한다). 판정은 위에서 이미 끝났고 여기서 다시 하지 않는다.
-      // 지칭(`refIds`)도 같은 이유로 여기 오지 않는다 — 이름은 본문에 남고 턴은 뜨지 않는다.
-      if (accountId !== input.authorId && !cappedIds.has(accountId) && !deniedIds.has(accountId)) {
-        /*
-          **팀과 그 팀장을 한 발화에서 함께 불렀으면 팀장 항목에 팀을 싣는다**(`@ops @lead`).
-          이 루프가 팀 팬아웃보다 먼저 돌아 팀장을 평범한 `mention` 으로 넣으면, 팀 부름은
-          `notified` 중복 제거로 그를 건너뛰고 팀장 턴은 명단(팀 블록)을 못 받는다 — #udc 에서
-          `@udc-team @forge` 로 부른 forge 가 "udc-team 답이 없어 이어받는다"며 자기가 그 팀의
-          팀장인 줄 몰랐던 자리다. 누가 팀장 하나로 가는지는 insert 앞에서 이미 정했다(`teamPlans`).
-        */
-        const ledTeam = teamPlans.find((p) => p.viaLead && p.recipients[0] === accountId);
-        await insertInbox(
-          client, accountId, message.id, ledTeam ? 'team_mention' : 'mention', notified, ledTeam?.teamId,
-        );
-      }
-    }
-
-    // `@channel`(#225) — 채널 전체 호출. 본문은 손대지 않는다: `@channel` 은 원문에
-    // 그대로 남고 서버는 inbox 항목만 펼쳐 넣는다. 본문을 치환하면 원문이 사라져
-    // 수정할 때 되돌릴 수 없다(계정이 없으므로 정규화도 지나친다).
-    //
-    // `@channel` 이라는 handle 의 **계정이 실제로 있으면 계정이 이긴다** — 위에서 이미
-    // 평범한 멘션으로 처리됐고 여기서는 아무것도 하지 않는다. 사람의 이름이 예약어에
-    // 밀리면 그 사람은 영영 불릴 수 없다.
-    //
-    // **에이전트의 글에서는 맨 앞에 있을 때만 부름이다**(`splitMentionCalls` 와 같은 규칙).
-    // 본문 한가운데의 `@channel` 은 그 기능을 **가리키는** 것이다 — 멘션 문법을 설명하던 보고
-    // 한 줄이 채널의 에이전트 전부를 깨웠고, 깬 턴들이 원인을 설명하며 그 글자를 다시 옮겨
-    // 적어 연쇄가 됐다(#harkroom seq 3452). 사람의 글은 어디에 있어도 부름이다.
-    const accountHandles = new Set(handleToId.keys());
-    const channelCalled = authorIsAgent
-      ? mentionedHandles(normalizedBody.slice(0, headMentionRunEnd(normalizedBody))).includes(CHANNEL_MENTION_HANDLE)
-      : bodyHandles.includes(CHANNEL_MENTION_HANDLE);
-    if (channelCalled && !accountHandles.has(CHANNEL_MENTION_HANDLE)) {
-      // 대상은 **그 채널을 볼 수 있는 사람 전부**다. 규칙은 `fanOutMention` 하나에 있다.
-      await fanOutMention(client, { ...input, messageId: message.id }, null, notified, { reason: 'mention' }, 'channel_all');
-    }
-
-    /**
-     * 집합(#230)과 팀(#172) — 저장된 명단을 펼친다. 본문은 손대지 않는다: `@release` 는
-     * 원문에 그대로 남고 서버는 inbox 항목만 펼쳐 넣는다(`@channel` 과 같은 이유다).
-     *
-     * **한 자리에서 둘을 본다.** 팀을 위한 새 루프를 만들지 않는 이유: 이 루프가 이미
-     * "이 handle 은 계정이 아니다 → 저장된 명단인가?" 를 묻고 있고, 팀은 그 물음의
-     * 두 번째 답일 뿐이다. 루프를 하나 더 두면 `notified` 중복 제거가 두 루프에 걸쳐
-     * 살고, `CHANNEL_MENTION_HANDLE`·`accountHandles` 예외를 양쪽에 베껴야 한다 —
-     * 한쪽만 고치는 날 `@channel` 이라는 이름의 팀이 채널 전체를 두 번 부른다.
-     *
-     * **가시성과 중복 제거를 여기서 다시 쓰지 않는다.** 대상 목록만 만들어
-     * `fanOutMention` 에 넘긴다 — 그 함수 하나가 `channelVisibleSql` 로 볼 수 있는
-     * 사람만 남기고, 작성자를 빼고, `notified` 에 이미 든 사람을 건너뛴다. 집합이 하는
-     * 것과 **똑같이** 한다.
-     *
-     * ## 무엇을 도는가 — **부름으로 판정된 대상만**(#849)
-     *
-     * 초판은 본문에 나온 이름을 전부 돌며 여기서 다시 집합·팀으로 풀었다. 이제는
-     * `splitMentionCalls` 가 정규화된 본문의 `<@group:id>`·`<@team:id>` 에서 가른 **부름**
-     * 목록을 돈다. 두 가지가 함께 달라진다:
-     *
-     * 1. **지칭이 팀을 깨우지 않는다.** 에이전트가 보고 한가운데 `@팀이름` 을 적으면 지금까지
-     *    그 팀이 깼다 — 계정에 대해 #598 이 잰 "39% 가 부를 뜻이 없는 지칭" 을 팀이 그대로
-     *    되풀이하던 자리다. 규칙과 근거는 그 함수에 있다(집합은 사람이라 언제나 부름이다).
-     * 2. **이름을 다시 풀지 않는다.** 정규화가 이미 풀어 토큰에 담아 두었으므로 여기서
-     *    `getHandleGroupByHandle`·`getTeamByName` 을 다시 부를 이유가 없다.
-     *
-     * ## 해석 순서: 계정 → 집합 → 팀 — **이제 정규화 단계가 정본이다**
-     *
-     * 아래 근거는 그대로 살아 있고, 그것을 실행에 옮기는 자리가 위(`nameToToken` 조립)로
-     * 옮겼을 뿐이다. 그 순서가 토큰을 정하므로 이 루프는 결과만 물려받는다 —
-     * `CHANNEL_MENTION_HANDLE` 과 계정 이름은 애초에 대상 토큰이 되지 않으므로 여기서
-     * 걸러 낼 것도 없다.
-     *
-     * **계정이 이긴다.** `@foo` 가 계정이면 정규화가 계정 토큰으로 만들었고 위에서 평범한
-     * 멘션으로 처리됐다. 서버가 양방향 충돌을 막으므로 정상 경로에서는 겹치지 않지만, 026 이전에
-     * 만들어진 행이나 동시 생성 경합으로 겹칠 수 있다 — 그때 사람의 이름이 집합에 밀리면
-     * 그 사람은 영영 불릴 수 없다.
-     *
-     * **집합과 팀 사이의 순서는 실측하면 결과를 바꿀 수 있다.** `createTeam` 은 세 겹침을
-     * 모두 확인하지만(계정·집합·팀) 반대 방향은 그렇지 않다 — `createHandleGroup` 은
-     * `account` 만 보고 `agent_team` 을 안 보며, 계정 생성(`authRoutes.ts` 의 register,
-     * `services/agents.ts` 의 에이전트 생성)도 `handle_group` 만 본다. 즉 팀 이름과 같은
-     * 집합·계정을 **나중에 만들 수 있고**, 그러면 한 handle 이 두 대상을 가리킨다.
-     * `036_agent_team.sql` 은 *"유일성도 멘션 해석과 같은 기준이어야 한다"* 고 적었지만
-     * 그 기준을 지키는 문장은 팀 쪽에만 있다.
-     *
-     * 그 구멍을 여기서 메우지 않는다 — 계정·집합 생성 경로에 검사를 더하는 것은 그
-     * 라우트들의 사실이고, 이 함수는 **이미 겹쳐 있는 데이터에도 답을 하나로 정해야**
-     * 한다. 그래서 순서를 못 박는다: **집합이 팀을 이긴다.** 집합은 사람이고 팀은
-     * 에이전트다(`addHandleGroupMembers` 는 `kind = 'human'`, 팀 라우트는
-     * `not_an_agent` 로 거절한다) — 사람의 부름이 에이전트의 부름에 밀리면 그 사람들은
-     * 영영 불릴 수 없고, 그것은 계정이 집합을 이기는 것과 같은 판단이다.
-     *
-     * 겹침이 없는 정상 경로에서는 어느 쪽이 먼저든 결과가 같지만, 겹친 데이터에서 두
-     * 명단이 **둘 다** 펼쳐지는 것이 가장 나쁘다: `@foo` 가 사람 집합인지 에이전트 팀인지
-     * 부른 사람이 모르게 된다. 정규화가 이름 하나에 토큰 하나만 붙이므로 그 일은 없다.
-     *
-     * 조회를 `client` 로 하는 이유: 트랜잭션 클라이언트를 쥔 채 `pool` 에서 또 다른 연결을
-     * 얻으면 풀이 포화된 순간 자기 자신을 기다리는 교착이 된다. 같은 트랜잭션 스냅샷을
-     * 보는 것도 이쪽이 맞다.
-     */
-    for (const target of targetCall) {
-      if (target.kind === 'group') {
-        const members = await listHandleGroupMembers(client, target.id);
-        await fanOutMention(
-          client, { ...input, messageId: message.id }, members.map((m) => m.accountId), notified,
-          { reason: 'mention' }, 'group',
-        );
-        continue;
-      }
-
-      /**
-       * 에이전트 팀(#172). `036_agent_team.sql` 이 *"나중에 `@팀` 멘션을 열 여지를
-       * 남기기 위한 예약"* 이라고 적어 둔 그 여지를 여기서 쓴다.
-       *
-       * **비활성 팀원은 부르지 않는다.** `036` 은 *"비활성화는 팀원을 지우지 않는다 …
-       * 걸러지는 자리는 채널에 넣는 시점 하나다"* 라고 적었고, 이 줄은 그 문장에 자리를
-       * 하나 더한다. 그 결정을 뒤집는 것이 아니라 **같은 결정을 새로 생긴 경로에
-       * 적용하는 것**이다: 그 문장이 지킨 것은 "명단을 지우지 않는다"이고, 걸러는
-       * "닿게 하지 않는다"다. 멘션은 채널에 넣기와 나란히 **닿게 하는 두 번째 경로**라
-       * 같은 필터가 필요하다 — `AddTeamToChannelResult.skipped` 가 이미 그 개념을 갖고 있다.
-       *
-       * 왜 부르지 않는가 — 비활성 에이전트는 **깰 수 없다**. inbox 항목은 러너가 턴을
-       * 시작하는 신호이고(`agentWake`), 비활성 계정은 그 턴을 시작하지 않는다. 그것을
-       * 넣으면 아무도 읽지 않는 항목이 쌓이고, 그 계정을 다시 켜는 날 몇 주 전의 부름이
-       * 한꺼번에 되살아난다 — 그때 시작되는 턴은 이미 끝난 일에 대한 것이다.
-       *
-       * **가시성 필터로는 이것을 대신할 수 없다.** 비활성 에이전트도 채널 멤버로 남으므로
-       * (`disabled` 는 멤버십을 지우지 않는다) `channelVisibleSql` 을 통과한다 — 서버
-       * 테스트가 그 조합을 지킨다(`teamMention.test.ts` 3: 비활성이면서 채널 멤버).
-       * 그래서 `fanOutMention` 안이 아니라 **후보를 만드는 이 자리**가 필터의 자리다:
-       * 그 함수는 채널 가시성의 규칙이고 계정 상태의 규칙이 아니다.
-       *
-       * 반면 `memberCount` 는 비활성 팀원도 센다(`AgentTeamRow.memberCount`). 그
-       * 어긋남은 결함이 아니라 화면이 말해야 하는 사실이다 — 넷을 불러 셋이 깼다면
-       * 하나는 꺼져 있거나 채널을 못 본다.
-       */
-      // 누구를 깨울지는 insert 앞에서 이미 정했다(`teamPlans`) — 팀·팀원 게이트와 팀장 폴백이 거기 있다.
-      const plan = teamPlans.find((p) => p.teamId === target.id);
-      if (!plan) continue;
-
-      /**
-       * **팀장이 있으면 팀장 하나만 깨운다**(047 · 046 의 `lead_account_id` 를 읽는 자리).
-       *
-       * 이 두 줄이 팀 멘션의 뜻을 바꾼다: 지금까지 `@팀` 은 명단을 펼치는 것이었고, 그래서
-       * 턴이 팀원 수만큼 떠 같은 요청을 각자 처음부터 풀었다. 팀장이 정해져 있으면 그
-       * 부름은 **창구 하나**로 간다 — 나눌 일은 팀장이 `@팀원` 으로 나눈다.
-       *
-       * ## 폴백이 있는 이유 (jaebin 승인)
-       *
-       * 팀장이 **없거나 비활성**이면 지금까지의 동작(전원)을 그대로 쓴다. 팀장만 부르고
-       * 마는 쪽이 더 단순하지만, 그러면 팀 멘션이 **아무도 깨우지 않는 침묵**이 된다 —
-       * 팀장 지정은 선택이므로(046) 지정하지 않은 팀이 정상 상태이고, 비활성 계정은 턴을
-       * 시작하지 못한다(위 문단: inbox 항목은 러너가 턴을 시작하는 신호다). 부름이 조용히
-       * 사라지는 것이 여럿 깨는 것보다 나쁘다.
-       *
-       * 비활성 판정을 `awake` 로 한 번에 하는 이유: 팀장도 팀원이므로(046 의 복합 FK)
-       * 같은 필터를 통과해야 한다. 팀장이 비활성인데 그를 골라 넣으면 위 문단이 막으려는
-       * 바로 그것 — 아무도 읽지 않는 항목 — 이 된다.
-       *
-       * `notified` 중복 제거는 `fanOutMention` 이 그대로 한다. 그래서 팀장이 이 발화에서
-       * 이미 이름으로 불렸다면(`@ops @lead`) 팀 부름은 그를 건너뛴다 — 대신 위의 계정
-       * 멘션 루프가 그 항목을 `team_mention` 으로 넣어 명단을 싣는다. 한 발화에서 팀과
-       * 팀장을 함께 부르는 것은 팀을 부른 것과 같은 뜻이다(둘 다 팀장의 턴 하나다).
-       */
-      await fanOutMention(
-        client, { ...input, messageId: message.id },
-        plan.recipients,
-        notified,
-        plan.viaLead ? { reason: 'team_mention', teamId: plan.teamId } : { reason: 'mention' },
-        'team',
-      );
-    }
 
     /**
      * 이 말이 **답글로 세어지는가**. `thread_reply`·`dm` 두 자리가 함께 본다.
@@ -1232,39 +1296,56 @@ export type MutationRefusal = 'not_found' | 'forbidden';
 export async function editMessage(
   pool: Pool, args: { channelId: string; messageId: string; actorId: string; body: string },
 ): Promise<MessageRow | MutationRefusal> {
-  const found = await pool.query(
-    `select author_id, kind from message
-     where id = $1 and channel_id = $2 and deleted_at is null`,
-    [args.messageId, args.channelId],
-  );
-  if (!found.rowCount) return 'not_found';
-  const row = found.rows[0];
-  if (row.author_id !== args.actorId || row.kind !== 'user') return 'forbidden';
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    // 행을 잠근다 — 같은 메시지를 두 번 빠르게 고치면 판정·meta 갱신이 서로 엇갈린다.
+    const found = await client.query(
+      `select m.author_id, m.kind, m.meta, m.mention_depth as depth, (a.kind = 'agent') as author_is_agent
+         from message m join account a on a.id = m.author_id
+        where m.id = $1 and m.channel_id = $2 and m.deleted_at is null
+        for update of m`,
+      [args.messageId, args.channelId],
+    );
+    if (!found.rowCount) {
+      await client.query('rollback');
+      return 'not_found';
+    }
+    const row = found.rows[0] as { author_id: string; kind: string; meta: Record<string, unknown> | null; depth: number; author_is_agent: boolean };
+    if (row.author_id !== args.actorId || row.kind !== 'user') {
+      await client.query('rollback');
+      return 'forbidden';
+    }
 
-  /**
-   * 수정도 **같은 정규화**를 탄다(#271) — 안 그러면 고친 메시지만 옛 형식으로 남아,
-   * 그 메시지의 멘션만 이름 변경을 따라가지 못한다.
-   *
-   * `postMessage` 와 같은 이유로 채널 멤버가 아니라 **모든 계정**에서 찾는다:
-   * public standard 채널에는 `channel_member` 행이 없다.
-   *
-   * 알림은 여기서 다시 만들지 않는다 — 그것은 이 함수가 원래 하지 않던 일이고,
-   * 수정으로 뒤늦게 알림이 가는 것은 이 작업의 범위가 아니다.
-   */
-  const bodyHandles = mentionedHandles(args.body);
-  const accounts = bodyHandles.length
-    ? (await pool.query(
-        `select id, lower(handle) as handle from account where lower(handle) = any($1)`,
-        [bodyHandles],
-      )).rows as { id: string; handle: string }[]
-    : [];
-  const normalizedBody = normalizeMentions(args.body, new Map(accounts.map((r) => [r.handle, r.id])));
+    /**
+     * 수정도 **게시와 같은 판정**을 탄다(#271·#845) — `resolveMentionCalls` 하나다. 따로 두면
+     * 고친 메시지만 옛 형식으로 남는다: 이 함수가 계정만 토큰으로 바꾸던 동안 수정으로 넣은
+     * `@팀`·`@집합` 은 글자로 남았고, 삭제된 계정(061)도 걸러지지 않았다.
+     *
+     * 깊이는 새로 재지 않는다 — 이 메시지가 연쇄의 몇 번째 고리인지는 게시 때 정해졌다.
+     *
+     * 알림은 아직 여기서 만들지 않는다. 지금은 **지칭 표시(`mentionRefs`)만** 새 본문 기준으로
+     * 갈아 끼운다 — 안 그러면 고친 뒤에도 옛 본문의 칩 표시가 남는다.
+     */
+    const calls = await resolveMentionCalls(client, {
+      body: args.body, channelId: args.channelId, authorId: args.actorId,
+      authorIsAgent: row.author_is_agent, mentionDepth: row.depth,
+    });
+    const { mentionRefs: _oldRefs, ...keptMeta } = row.meta ?? {};
+    const meta = calls.callMeta.mentionRefs ? { ...keptMeta, mentionRefs: calls.callMeta.mentionRefs } : keptMeta;
 
-  const updated = await pool.query(
-    `update message set body = $2, edited_at = now() where id = $1 returning ${COLS}`,
-    [args.messageId, normalizedBody],
-  );
-  return updated.rows[0];
+    const updated = await client.query(
+      `update message set body = $2, meta = $3, edited_at = now() where id = $1 returning ${COLS}`,
+      [args.messageId, calls.normalizedBody, JSON.stringify(meta)],
+    );
+    await client.query('commit');
+    return updated.rows[0];
+  } catch (err) {
+    await client.query('rollback');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /**
