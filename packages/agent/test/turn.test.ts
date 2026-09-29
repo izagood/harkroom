@@ -281,6 +281,25 @@ describe('buildTurnCommand — codex', () => {
     expect(p.args.join(' ')).not.toContain('HARKROOM_PAT');
   });
 
+  // **codex 는 MCP 자식에 env 를 통째로 넘기지 않는다**(2026-09-29 실측). 이름을 대지 않으면
+  // 브릿지가 링크 셋 없이 떠서 exit 2 — codex 는 harkroom 도구 없이 조용히 돈다. 값을 argv 에
+  // 굽는 `env` 가 아니라 이름만 적는 `env_vars` 여야 secret 이 `ps` 에 안 뜬다.
+  it('codex 의 harkroom 항목은 링크 env 셋을 env_vars 로 이름 대어 브릿지에 넘긴다 — 값은 argv 에 없다', () => {
+    const prev = process.env.HARKROOM_RUNNER_SECRET;
+    process.env.HARKROOM_RUNNER_SECRET = 'secret-must-not-leak';
+    try {
+      const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false });
+      expect(p.args).toContain(
+        'mcp_servers.harkroom.env_vars=["HARKROOM_OPERATOR_SOCKET","HARKROOM_RUNNER_ID","HARKROOM_RUNNER_SECRET"]',
+      );
+      expect(p.args.join(' ')).not.toContain('mcp_servers.harkroom.env=');
+      expect(p.args.join(' ')).not.toContain('secret-must-not-leak');
+    } finally {
+      if (prev === undefined) delete process.env.HARKROOM_RUNNER_SECRET;
+      else process.env.HARKROOM_RUNNER_SECRET = prev;
+    }
+  });
+
   // operatorBin 을 빈 문자열로 넘기면 타입 체크는 통과하지만(string), 그대로 두면
   // `mcp_servers.harkroom.command=""` 같은 값이 조용히 조립돼 답 못 하는 턴으로 이어진다 —
   // 런타임에서도 막는다.

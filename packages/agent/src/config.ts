@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { RUNNER_LINK_ENV, RUNNER_LINK_ENV_KEYS } from '@harkroom/shared/runnerLink';
 
 /**
  * 인스턴스 ID 문법(#174). 소문자·숫자·하이픈 1~32자.
@@ -82,12 +83,12 @@ function required(env: NodeJS.ProcessEnv, key: string): string {
 
 /** 셋이 다 있어야 한다. 하나라도 없으면 오퍼레이터의 spawn 이 깨진 것이라 기동을 막는다. */
 function operatorLink(env: NodeJS.ProcessEnv): RunnerConfig['operatorLink'] {
-  const socketPath = env.HARKROOM_OPERATOR_SOCKET;
-  const runnerId = env.HARKROOM_RUNNER_ID;
-  const secret = env.HARKROOM_RUNNER_SECRET;
+  const socketPath = env[RUNNER_LINK_ENV.socketPath];
+  const runnerId = env[RUNNER_LINK_ENV.runnerId];
+  const secret = env[RUNNER_LINK_ENV.secret];
   if (!socketPath || !runnerId || !secret) {
     throw new Error(
-      'HARKROOM_OPERATOR_SOCKET·HARKROOM_RUNNER_ID·HARKROOM_RUNNER_SECRET 이 필요하다 — 러너는 오퍼레이터가 띄운다 '
+      `${RUNNER_LINK_ENV_KEYS.join('·')} 이 필요하다 — 러너는 오퍼레이터가 띄운다 `
       + '(설정 › Operators 에서 등록하고 에이전트를 배정하라)',
     );
   }

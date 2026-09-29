@@ -12,6 +12,7 @@
  */
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { AgentDefinition, RunnerAnnounce } from '@harkroom/shared/operatorProtocol';
+import { RUNNER_LINK_ENV } from '@harkroom/shared/runnerLink';
 import type { LocalAgentConfig } from './config.js';
 
 export interface AssignmentDeps {
@@ -135,9 +136,9 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
       const secret = randomBytes(24).toString('base64url');
       deps.link.expect(runnerId, agentId, secret);
       const env: Record<string, string> = {
-        HARKROOM_OPERATOR_SOCKET: deps.socketPath,
-        HARKROOM_RUNNER_ID: runnerId,
-        HARKROOM_RUNNER_SECRET: secret,
+        [RUNNER_LINK_ENV.socketPath]: deps.socketPath,
+        [RUNNER_LINK_ENV.runnerId]: runnerId,
+        [RUNNER_LINK_ENV.secret]: secret,
         HARKROOM_OPERATOR_BIN: deps.operatorBin,
         HARKROOM_MCP_CONFIG: mcp.path,
         ...(deps.loginPath ? { PATH: deps.loginPath } : {}),

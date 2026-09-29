@@ -19,6 +19,7 @@
 // 닿지 않는다. 즉 이 핸들러가 아예 안 불려도(SIGKILL) 러너는 산다 — 이 핸들러가 하는
 // 일은 러너를 살리는 것이 아니라 **잔해를 남기지 않는 것**이다.
 import { resolve } from 'node:path';
+import { RUNNER_LINK_ENV, RUNNER_LINK_ENV_KEYS } from '@harkroom/shared/runnerLink';
 import { parseDaemonArgs, describeArgs, type DaemonArgs } from './args.js';
 import { parseCliArgs, register, registerViaRunningOperator, resolveDataDir, runArgs } from './cli.js';
 import { runMcpBridge } from './mcpBridge.js';
@@ -30,11 +31,11 @@ import { EXIT_INCONCLUSIVE, EXIT_OCCUPIED, startDaemon } from './run.js';
  * 않는다 — 인자 파서도 소켓 획득도 지나지 않는다.
  */
 async function mcpBridgeMain(): Promise<void> {
-  const socketPath = process.env.HARKROOM_OPERATOR_SOCKET;
-  const runnerId = process.env.HARKROOM_RUNNER_ID;
-  const secret = process.env.HARKROOM_RUNNER_SECRET;
+  const socketPath = process.env[RUNNER_LINK_ENV.socketPath];
+  const runnerId = process.env[RUNNER_LINK_ENV.runnerId];
+  const secret = process.env[RUNNER_LINK_ENV.secret];
   if (!socketPath || !runnerId || !secret) {
-    console.error('mcp-bridge: HARKROOM_OPERATOR_SOCKET·HARKROOM_RUNNER_ID·HARKROOM_RUNNER_SECRET 이 필요하다 — 러너가 띄운 하네스 안에서만 돈다');
+    console.error(`mcp-bridge: ${RUNNER_LINK_ENV_KEYS.join('·')} 이 필요하다 — 러너가 띄운 하네스 안에서만 돈다`);
     process.exit(2);
   }
   await runMcpBridge({ socketPath, runnerId, secret }, { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr });
