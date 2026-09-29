@@ -213,3 +213,102 @@ describe('팀 — 팀도 에이전트와 같은 범위 규칙을 탄다(068)', (
     expect(res.json().error.code).toBe('owner_required');
   });
 });
+
+// owner 범위의 대리 호출자(073). 소유자가 지정한 **자기 에이전트**는 owner 에이전트를 부를 수 있다 —
+// 관리 에이전트(task_manager)가 담당 에이전트(rcms)를 직접 부르는 자리. 조건은 넣을 때와 부를 때
+// 둘 다 본다: 에이전트 · 같은 소유자 · 그 에이전트도 owner.
+describe('owner 대리 호출자(agent_owner_delegate)', () => {
+  const putDelegate = (agentId: string, delegateId: string, token = owner.token) =>
+    app.inject({ method: 'PUT', url: `/accounts/agents/${agentId}/delegates/${delegateId}`, headers: auth(token) });
+
+  it('지정한 같은 소유자의 owner 에이전트는 부를 수 있고, 지정 안 한 것은 막힌다', async () => {
+    const target = await agentWith('dg-target', owner.accountId, 'owner');
+    const lead = await agentWith('dg-lead', owner.accountId, 'owner');
+    const unlisted = await agentWith('dg-unlisted', owner.accountId, 'owner');
+
+    const before = await post(lead.pat, `<@${target.accountId}> 진행해 주세요`);
+    expect(before.meta.mentionDenied).toEqual(['dg-target']);
+
+    const res = await putDelegate(target.accountId, lead.accountId);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().delegates).toEqual([lead.accountId]);
+
+    const ok = await post(lead.pat, `<@${target.accountId}> 진행해 주세요`);
+    expect(await inboxHas(target.pat, ok.id)).toBe(true);
+    expect(ok.meta.mentionDenied).toBeUndefined();
+
+    const still = await post(unlisted.pat, '@dg-target 진행해 주세요');
+    expect(await inboxHas(target.pat, still.id)).toBe(false);
+    expect(still.meta.mentionDenied).toEqual(['dg-target']);
+  });
+
+  it('조건에 어긋나는 대리자는 넣을 때 400 이다 — community·남의 에이전트·사람', async () => {
+    const target = await agentWith('dg-t2', owner.accountId, 'owner');
+    const open = await agentWith('dg-open', owner.accountId, 'community');
+    const foreign = await agentWith('dg-foreign', stranger.accountId, 'owner');
+    for (const id of [open.accountId, foreign.accountId, stranger.accountId, target.accountId]) {
+      const res = await putDelegate(target.accountId, id);
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('delegate_not_eligible');
+    }
+  });
+
+  it('소유자·admin 이 아니면 명단을 못 고친다', async () => {
+    const target = await agentWith('dg-t3', owner.accountId, 'owner');
+    const lead = await agentWith('dg-l3', owner.accountId, 'owner');
+    expect((await putDelegate(target.accountId, lead.accountId, stranger.token)).statusCode).toBe(403);
+  });
+
+  // 명단은 남아도 조건이 깨지면 게이트가 막는다 — 대리자의 소유자가 바뀐 경우.
+  it('넣은 뒤 대리자의 소유자가 바뀌면 부를 때 막힌다', async () => {
+    const target = await agentWith('dg-t4', owner.accountId, 'owner');
+    const lead = await agentWith('dg-l4', owner.accountId, 'owner');
+    expect((await putDelegate(target.accountId, lead.accountId)).statusCode).toBe(200);
+    const moved = await app.inject({
+      method: 'PATCH', url: `/accounts/agents/${lead.accountId}`, headers: auth(adminToken),
+      payload: { ownerAccountId: stranger.accountId },
+    });
+    expect(moved.statusCode).toBe(200);
+    const denied = await post(lead.pat, `<@${target.accountId}> 진행`);
+    expect(await inboxHas(target.pat, denied.id)).toBe(false);
+    expect(denied.meta.mentionDenied).toEqual(['dg-t4']);
+  });
+
+  it('DELETE 로 빼면 다시 막힌다', async () => {
+    const target = await agentWith('dg-t5', owner.accountId, 'owner');
+    const lead = await agentWith('dg-l5', owner.accountId, 'owner');
+    await putDelegate(target.accountId, lead.accountId);
+    const del = await app.inject({ method: 'DELETE', url: `/accounts/agents/${target.accountId}/delegates/${lead.accountId}`, headers: auth(owner.token) });
+    expect(del.statusCode).toBe(200);
+    expect(del.json().delegates).toEqual([]);
+    expect((await post(lead.pat, '@dg-t5 진행')).meta.mentionDenied).toEqual(['dg-t5']);
+  });
+});
+
+// 스레드 답글도 게이트를 지난다(073). 머리 주인이 owner 에이전트면 그 항목이 곧 턴이다 —
+// 건너뛰면 누구든 그 에이전트가 연 스레드에 답글을 달아 깨울 수 있다.
+describe('thread_reply 게이트', () => {
+  async function reply(token: string, rootId: string, body: string) {
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`, headers: auth(token), payload: { body, threadRootId: rootId },
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json() as { id: string };
+  }
+
+  it('owner 에이전트가 연 스레드에 남이 답하면 깨지 않고, 소유자가 답하면 깬다', async () => {
+    const a = await agentWith('tr-owner', owner.accountId, 'owner');
+    const root = await post(a.pat, '작업 보고 스레드');
+    const fromStranger = await reply(stranger.token, root.id, '지나가다 한마디');
+    expect(await inboxHas(a.pat, fromStranger.id)).toBe(false);
+    const fromOwner = await reply(owner.token, root.id, '이어서 해');
+    expect(await inboxHas(a.pat, fromOwner.id)).toBe(true);
+  });
+
+  it('community 에이전트와 사람은 예전처럼 답글 알림을 받는다', async () => {
+    const a = await agentWith('tr-open', owner.accountId, 'community');
+    const root = await post(a.pat, '공개 스레드');
+    const r = await reply(stranger.token, root.id, '답');
+    expect(await inboxHas(a.pat, r.id)).toBe(true);
+  });
+});

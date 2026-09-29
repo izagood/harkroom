@@ -1124,7 +1124,17 @@ export async function postMessage(
       );
       const rootAuthor = root.rows[0]?.author_id;
       if (rootAuthor && rootAuthor !== input.authorId && !notified.has(rootAuthor)) {
-        await insertInbox(client, rootAuthor, message.id, 'thread_reply', notified);
+        /*
+          **스레드 답글도 호출 게이트를 지난다**(073). 머리 주인이 에이전트면 이 항목이 곧 그
+          에이전트의 턴이다 — 게이트를 건너뛰면 owner 에이전트가 연 스레드에 누구든 답글을 달아
+          그것을 깨울 수 있고, 대리 호출(073)과 이어지면 "남 → 대리자 → 개인 자격증명 에이전트"
+          가 된다. 판정은 직접 멘션과 같다(via mention, 호출자 = 작성자). 사람은 facts 에 없어
+          그대로 받는다. 막힌 답글은 meta 에 남기지 않는다 — 답글은 부르려던 것이 아니다.
+        */
+        const rootFact = (await invokeFactsFor(client, [rootAuthor])).get(rootAuthor);
+        if (!rootFact || (await mayInvoke(client, rootFact, { callerId: input.authorId, channelId: input.channelId, via: 'mention' }))) {
+          await insertInbox(client, rootAuthor, message.id, 'thread_reply', notified);
+        }
       }
       if (root.rows[0]?.deleted_at) deletedRoot = input.threadRootId;
     }
