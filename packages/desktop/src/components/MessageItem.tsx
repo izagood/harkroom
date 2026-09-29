@@ -22,6 +22,7 @@ import { Attachments } from './Attachments';
 
 import { ConfirmDialog } from './ConfirmDialog';
 import { bodyAsHandles, displayBody } from '../lib/mention';
+import { selectAccountNames } from '../lib/accountNames';
 import { accountOpen } from '../lib/accountOpen';
 import { stampLabel } from '../lib/day';
 import type { SectionId } from './settings/sections';
@@ -87,11 +88,21 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
 }) {
   const t = useT();
   const locale = useLocale();
-  const author = useActiveStore((s) => s.accounts[message.authorId]);
   const isMine = useActiveStore((s) => s.me?.id === message.authorId);
   const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
   const myId = useActiveStore((s) => s.me?.id ?? null);
-  const accounts = useActiveStore((s) => s.accounts);
+  /**
+   * 이름 쪽만 구독한다(`lib/accountNames`). `s.accounts` 를 통째로 들면 누구 하나의 상태·
+   * 아바타 이벤트마다 행 전부가 다시 그려진다 — 그 표에서 이 행이 읽는 것은 이름·종류뿐이다.
+   * 얼굴(참여자 아바타)은 그 얼굴 하나가 자기 계정을 구독한다(`ParticipantFace`).
+   */
+  const accounts = useActiveStore(selectAccountNames);
+  /**
+   * 작성자도 **이름 쪽만** 든다. 상태·아바타는 그것을 그리는 조각(`AuthorFace`·
+   * `AuthorStatus`·`AuthorTerminal`)이 각자 구독한다 — 에이전트가 일할 때마다 오는 상태
+   * 이벤트에 그 작성자의 행 전부가 통째로 다시 그려지지 않고, 점 하나만 바뀐다.
+   */
+  const author = accounts[message.authorId];
   // 복사·수정용 본문의 집합·팀 토큰(#845)도 이름으로 되돌린다 — 수정창에 `<@team:uuid>` 가
   // 뜨면 사람은 그것을 지우고 저장하고, 그 순간 그 발화가 누구를 불렀는지가 사라진다.
   const groups = useActiveStore((s) => s.groups);
@@ -182,7 +193,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
     const text = displayBody(threadRoot, accounts, groups, teams).replace(/\s+/g, ' ').trim();
     if (!text) return null;
     return text.length > ROOT_PREVIEW_CHARS ? `${text.slice(0, ROOT_PREVIEW_CHARS)}…` : text;
-  }, [threadRoot, accounts]);
+  }, [threadRoot, accounts, groups, teams]);
   /**
    * 어느 모델이 이 말을 했는가(#600). **상시 픽셀은 0 이다** — 이름줄 hover 의 `title` 로만
    * 나오고, 어긋났을 때만 ⚠️ 한 글자가 선다.
@@ -411,8 +422,9 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
     && !message.alsoInChannel && !isArchived;
   // #219: 담긴 상태는 **id 집합**(open+done 전부)으로 본다. 패널이 받아 온 한 탭의 행들로
   // 판단하면 '완료' 탭을 한 번 열어 본 뒤로 open 인 메시지가 담기지 않은 것으로 읽힌다.
-  const savedIds = useActiveStore((s) => s.savedIds);
-  const isSaved = savedIds.includes(message.id);
+  // 집합을 통째로 들지 않고 **이 행의 답**만 구독한다 — 하나를 담거나 풀 때 행 전부가 다시
+  // 그려지지 않도록(대화 불러오기 성능, 2026-09-29).
+  const isSaved = useActiveStore((s) => s.savedIds.includes(message.id));
 
   const save = () => {
     const next = draft ?? '';
@@ -427,7 +439,10 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
    * `<@0f3c…>` 를 `@handle` 로 되돌린다. 날것을 그대로 두면 사람은 자기가 무엇을 지우는지
    * 읽지 못한 채 확인을 누르게 된다.
    */
-  const deletePreview = bodyAsHandles(displayBody(message, accounts, groups, teams), accounts, groups, teams).trim();
+  // 확인창이 떠 있을 때만 만든다 — 행마다 매 렌더 본문을 두 번 훑을 까닭이 없다.
+  const deletePreview = confirmingDelete
+    ? bodyAsHandles(displayBody(message, accounts, groups, teams), accounts, groups, teams).trim()
+    : '';
 
   /**
    * 클립보드에 담는다(#178). **실패를 조용히 삼키지 않는다** — 삼키면 사람은
@@ -584,11 +599,11 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
           aria-hidden="true"
           tabIndex={-1}
         >
-          <Identity account={author} className="h-8 w-8 text-sm" variant="avatar" />
+          <AuthorFace id={message.authorId} />
         </button>
       ) : (
         <div data-testid="author-gutter" className="flex h-8 w-8 shrink-0 items-center justify-center">
-          <Identity account={author} className="h-8 w-8 text-sm" variant="avatar" />
+          <AuthorFace id={message.authorId} />
         </div>
       )}
       {/*
@@ -729,7 +744,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
           */}
           {/* 작성 시점이 아니라 **지금**의 상태다 — 이 줄이 답하는 질문은 "이 사람에게
               지금 물어봐도 되는가"이지 "그때 무슨 상태였나"가 아니다(#186). */}
-          <StatusMark account={author} />
+          <AuthorStatus id={message.authorId} />
           {/* 수신자 배지(규칙 04) — 이 말이 **누구에게 갔는지**. `→ 나` 만 강조색을 받고
               남에게 간 것은 무채색이다. 지금은 선택 요청만 수신자를 싣지만 배지 자체는
               되물음·실패도 쓸 것이므로 `AskCard` 밖(이름줄)에 둔다. */}
@@ -737,7 +752,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
           {/* #141: 진행 중인 터미널 진입점. 소유자·admin 이 아니면 렌더 자체가 없다
               (TerminalChip 이 판정한다) — 이름줄에 두는 이유는 소유자 배지와 같다:
               32px 거터에 넣으면 넘친다(#277). */}
-          <TerminalChip account={author} message={message} />
+          <AuthorTerminal id={message.authorId} message={message} />
           {/* #624 요구 1: 스레드에서 **채널에도** 함께 보낸 답. 스레드 안에서 이 사실이
               보여야 한다 — 안 보이면 "우리끼리 한 말"로 읽고 다음 말을 고르게 된다.
               채널 쪽 사본에는 이 표시를 달지 않는다: 거기서 필요한 것은 반대 사실
@@ -879,7 +894,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                     // 겹친 자리에서 그 세로 변이 앞 아바타 위에 선처럼 얹힌다. 링의 목적은
                     // 겹친 원들을 떼어 놓는 것인데 사각 링은 반대로 경계를 만든다.
                     <span key={id} className="rounded-full ring-1 ring-surface">
-                      <Identity account={accounts[id]} className="h-4 w-4 text-[8px]" variant="avatar" />
+                      <ParticipantFace id={id} />
                     </span>
                   ))}
                   {remainingCount > 0 && (
@@ -1088,8 +1103,8 @@ function DeletedMessageRow({ message, inThread }: { message: MessageRow; inThrea
 function AudienceBadge({ message }: { message: MessageRow }) {
   const t = useT();
   const myId = useActiveStore((s) => s.me?.id ?? null);
-  const accounts = useActiveStore((s) => s.accounts);
   const ask = readAskMeta(message.meta);
+  const toHandle = useActiveStore((s) => (ask?.to.kind === 'account' ? s.accounts[ask.to.accountId]?.handle ?? null : null));
   if (!ask || ask.answeredWith != null) return null;
 
   const forMe = ask.to.kind === 'human' ? myId != null : ask.to.accountId === myId;
@@ -1098,7 +1113,7 @@ function AudienceBadge({ message }: { message: MessageRow }) {
     ? t('message.audience.me')
     : ask.to.kind === 'account'
       ? t('message.audience.agent', {
-        name: accounts[ask.to.accountId]?.handle ?? t('message.audience.unknownAgent'),
+        name: toHandle ?? t('message.audience.unknownAgent'),
       })
       : t('message.audience.person');
   return (
@@ -1113,3 +1128,29 @@ function AudienceBadge({ message }: { message: MessageRow }) {
     </span>
   );
 }
+
+/**
+ * 답글 요약의 참여자 얼굴 하나. **자기 계정만 구독한다** — 행이 얼굴을 그리려고 계정 표를
+ * 통째로 들면, 그 표의 아무 계정 상태가 바뀔 때마다 모든 행이 다시 그려진다.
+ */
+const ParticipantFace = memo(function ParticipantFace({ id }: { id: string }) {
+  const account = useActiveStore((s) => s.accounts[id]);
+  return <Identity account={account} className="h-4 w-4 text-[8px]" variant="avatar" />;
+});
+
+/** 작성자 거터의 얼굴. 자기 계정만 구독한다 — `ParticipantFace` 와 같은 이유. */
+const AuthorFace = memo(function AuthorFace({ id }: { id: string }) {
+  const account = useActiveStore((s) => s.accounts[id]);
+  return <Identity account={account} className="h-8 w-8 text-sm" variant="avatar" />;
+});
+
+/** 이름줄의 상태 표시. 상태 이벤트는 여기만 다시 그린다. */
+const AuthorStatus = memo(function AuthorStatus({ id }: { id: string }) {
+  const account = useActiveStore((s) => s.accounts[id]);
+  return <StatusMark account={account} />;
+});
+
+const AuthorTerminal = memo(function AuthorTerminal({ id, message }: { id: string; message: MessageRow }) {
+  const account = useActiveStore((s) => s.accounts[id]);
+  return <TerminalChip account={account} message={message} />;
+});
