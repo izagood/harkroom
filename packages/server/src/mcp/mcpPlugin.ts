@@ -21,7 +21,7 @@ import {
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import {
   listMemoryIndex, MAX_CORE_MEMORY_LENGTH, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MAX_MEMORY_DESCRIPTION_LENGTH,
-  MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, memoryRev, readMemoryCounted, searchMemory,
+  MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, memoryRev, readMemoryCounted, searchMemory, auditMemory,
   setMemory,
 } from '../services/memory.js';
 import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
@@ -961,6 +961,14 @@ function buildMcpServer(
     const hits = await searchMemory(pool, account.id, query, { limit: limit ?? 5, includeValue: includeValue ?? false });
     return jsonResult({ hits });
   });
+
+  // memory.audit — 정리 턴(M4)이 볼 후보. 판단은 에이전트가 한다; 서버는 사실만 모은다.
+  server.registerTool('memory.audit', {
+    description: '내 기억의 정리 후보: 한 번도/30일 넘게 안 읽힘·깨진 [[링크]]·이름이 거의 같은 짝·낡은 낱말(patterns)·core 길이. '
+      + '정리 절차: 후보마다 memory.get 으로 읽고 판단한다 — 합치거나(한쪽에 모으고 다른 쪽 삭제), 되풀이할 교훈만 남기고 줄이거나, '
+      + '낡은 이름을 고치거나, 필요 없으면 지운다. 고칠 땐 ifUpdatedAt 을 준다(이전 판이 남아 되돌릴 수 있다). 끝나면 무엇을 바꿨는지 스레드에 보고한다',
+    inputSchema: { patterns: z.array(z.string().min(3).max(100)).max(20).optional() },
+  }, async ({ patterns }) => jsonResult(await auditMemory(pool, account.id, patterns ?? [])));
 
   // value 가 null 이면 삭제 — 키 부재가 아니라 명시적 null 이 삭제다.
   // .nullable() 은 "값이 반드시 있고 null 일 수 있다"를 의미한다.
