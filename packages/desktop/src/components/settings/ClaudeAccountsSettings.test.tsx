@@ -368,8 +368,6 @@ describe('계정 추가', () => {
     render(<ClaudeAccountsSettings />);
     await screen.findByText('work');
     fireEvent.click(screen.getByRole('button', { name: /add account to work/i }));
-    fireEvent.change(screen.getByLabelText(/account name/i), { target: { value: 'newone' } });
-    fireEvent.click(screen.getByRole('button', { name: /^sign in$/i }));
 
     await waitFor(() => expect(calls.some((c) => c.cmd === 'claude_account_login_start')).toBe(true));
     emitLogin({ loginId: 'lid-1', url: 'https://claude.com/oauth?x=1' });
@@ -383,8 +381,6 @@ describe('계정 추가', () => {
     render(<ClaudeAccountsSettings />);
     await screen.findByText('work');
     fireEvent.click(screen.getByRole('button', { name: /add account to work/i }));
-    fireEvent.change(screen.getByLabelText(/account name/i), { target: { value: 'newone' } });
-    fireEvent.click(screen.getByRole('button', { name: /^sign in$/i }));
     await waitFor(() => expect(calls.some((c) => c.cmd === 'claude_account_login_start')).toBe(true));
     emitLogin({ loginId: 'lid-1', url: 'https://claude.com/oauth?x=1' });
 
@@ -396,15 +392,18 @@ describe('계정 추가', () => {
     });
   });
 
-  it('이름 문법을 입력 단계에서 안내한다', async () => {
+  it('이름을 묻지 않고 곧바로 로그인한다 — 디렉터리 이름은 화면이 짓는다', async () => {
+    // 사람이 붙인 이름(`lime`)은 재인증 뒤 실제 로그인(Lychee 팀)과 어긋났다(2026-09-29).
     stubTauri();
     render(<ClaudeAccountsSettings />);
     await screen.findByText('work');
     fireEvent.click(screen.getByRole('button', { name: /add account to work/i }));
-    fireEvent.change(screen.getByLabelText(/account name/i), { target: { value: 'Bad Name' } });
-    // 보내지 않는다 — 데몬이 거절할 것을 미리 말한다.
-    expect((screen.getByRole('button', { name: /^sign in$/i }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(/lowercase|a-z/i)).toBeTruthy();
+    expect(screen.queryByLabelText(/account name/i)).toBeNull();
+    await waitFor(() => expect(calls.some((c) => c.cmd === 'claude_account_login_start')).toBe(true));
+    const args = calls.find((c) => c.cmd === 'claude_account_login_start')?.args;
+    expect(args?.pool).toBe('work');
+    // 데몬이 다시 재는 문법(`^[a-z0-9-]{1,32}$`)에 맞아야 한다 — 러너·pools.json 이 옛 이름과 똑같이 다룬다.
+    expect(args?.account).toMatch(/^acct-[0-9a-f]{8}$/);
   });
 
   it('실패로 끝나면 그 사유를 남긴다 — 무음으로 사라지지 않는다', async () => {
@@ -412,12 +411,47 @@ describe('계정 추가', () => {
     render(<ClaudeAccountsSettings />);
     await screen.findByText('work');
     fireEvent.click(screen.getByRole('button', { name: /add account to work/i }));
-    fireEvent.change(screen.getByLabelText(/account name/i), { target: { value: 'newone' } });
-    fireEvent.click(screen.getByRole('button', { name: /^sign in$/i }));
     await waitFor(() => expect(calls.some((c) => c.cmd === 'claude_account_login_start')).toBe(true));
 
     emitLogin({ loginId: 'lid-1', done: true, status: { loggedIn: false }, error: '로그인이 끝나지 않았다' });
     await waitFor(() => expect(screen.getByText(/끝나지 않았다|did not finish/i)).toBeTruthy());
+  });
+});
+
+describe('정체 표시', () => {
+  const withLogin = (name: string, orgName: string | undefined, ids: [string, string]) => ({
+    name,
+    status: {
+      loggedIn: true, email: 'me@corp.example', subscriptionType: 'team',
+      ...(orgName ? { orgName } : {}), orgId: ids[0], accountId: ids[1],
+    },
+  });
+
+  it('줄 첫 칸은 팀이고 계정 이름은 id 로 곁에 선다', async () => {
+    stubTauri({
+      ...POOLS_SNAPSHOT,
+      pools: [{ name: 'work', accounts: [withLogin('lime', 'Rebellions-Lychee', ['o1', 'a1'])] }],
+    });
+    render(<ClaudeAccountsSettings />);
+    const row = await screen.findByTestId('claude-account-work-lime');
+    expect(row.firstElementChild?.textContent).toBe('Rebellions-Lychee');
+    expect(row.textContent).toContain('lime');
+  });
+
+  it('같은 풀에 같은 로그인이 둘이면 알린다 — 팀명이 빠져도 uuid 로 가린다', async () => {
+    // 실측: 재인증 직후 `.claude.json` 에 organizationName 이 없었다. 표시용 글자로 비교하면 놓친다.
+    stubTauri({
+      ...POOLS_SNAPSHOT,
+      pools: [{ name: 'work', accounts: [
+        withLogin('lime', undefined, ['o1', 'a1']),
+        withLogin('lychee', 'Rebellions-Lychee', ['o1', 'a1']),
+        withLogin('plum', 'Rebellions-Plum', ['o2', 'a1']),
+      ] }],
+    });
+    render(<ClaudeAccountsSettings />);
+    await screen.findByTestId('claude-account-work-lime');
+    const dups = screen.getAllByTestId('claude-account-duplicate').map((el) => el.textContent);
+    expect(dups).toEqual(['same sign-in as lychee', 'same sign-in as lime']);
   });
 });
 
