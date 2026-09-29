@@ -17,6 +17,8 @@ export type AuditAction =
   // #171: 새 에이전트의 기본값 변경. 이미 만들어진 에이전트는 바뀌지 않으므로, 이 기록은
   // '앞으로 만들 것의 서식이 언제 누구 손에 바뀌었나' 를 답한다.
   | 'agent.defaults.updated'
+  // 멘션 연쇄 상한(078). 상한은 에이전트 폭주를 막는 안전장치라 누가 풀었는지 남긴다.
+  | 'mention.policy.updated'
   // 투영 URL 설정 표면(`/settings/projection`). "누가 서버의 아웃바운드 대상을 바꿨나" 가
   // 이 기록의 존재 이유다. detail 은 {before, after} 의 {appUrl, source} — env 값 자체는
   // 이미 배포 설정에 있으므로 다시 적지 않는다.
