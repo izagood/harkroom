@@ -23,6 +23,29 @@ import type { OperatorToServerFrame, ServerToOperatorFrame } from './operatorPro
 export const RUNNER_LINK_PROTOCOL_VERSION = 1;
 
 /**
+ * 오퍼레이터가 러너를 spawn 할 때 심는 링크 env 셋의 **이름**(`assignments.ts`). 러너 코어
+ * (`agent/src/config.ts`)와 하네스가 띄우는 `mcp-bridge`(`operator/src/main.ts`)가 같은 셋을 읽는다.
+ *
+ * **한 벌로 두는 이유**(2026-09-29 실측): codex 는 stdio MCP 자식에게 부모 env 를 통째로 넘기지
+ * 않는다 — 자기 기본 목록(PATH·HOME 등)과 항목의 `env`·`env_vars` 에 적힌 것만 넘긴다. 그래서
+ * 러너가 codex 에 거는 harkroom 항목이 이 셋을 `env_vars` 로 **이름을 대어** 달라고 해야 하고
+ * (`agent/src/turn.ts` CODEX_PRESET.mcp), 그 이름이 읽는 쪽과 한 글자라도 어긋나면 브릿지는
+ * "이 필요하다" 를 찍고 죽는다 — codex 는 그 죽음을 화면에 안 띄우고 도구 없이 돈다.
+ */
+export const RUNNER_LINK_ENV = {
+  socketPath: 'HARKROOM_OPERATOR_SOCKET',
+  runnerId: 'HARKROOM_RUNNER_ID',
+  secret: 'HARKROOM_RUNNER_SECRET',
+} as const;
+
+/** `RUNNER_LINK_ENV` 의 이름들 — 순서는 사람에게 보이는 오류 문구의 순서다. */
+export const RUNNER_LINK_ENV_KEYS = [
+  RUNNER_LINK_ENV.socketPath,
+  RUNNER_LINK_ENV.runnerId,
+  RUNNER_LINK_ENV.secret,
+] as const;
+
+/**
  * 러너가 오퍼레이터 소켓에 보내는 첫 줄. secret 은 spawn 때 env 로 받은 1회성 값이다.
  *
  * `kind` — 같은 자격으로 붙는 소켓이 둘이다(스펙 §5): 러너 코어의 **relay**(PTY 프레임과
