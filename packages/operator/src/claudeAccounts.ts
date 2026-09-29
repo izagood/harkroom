@@ -224,6 +224,32 @@ function nodeHasKeychainCredentials(configDir: string): Promise<boolean> {
 }
 
 /**
+ * 이 계정의 Keychain 자격증명을 지운다. **값을 읽지 않는다** — 항목을 없애기만 한다.
+ *
+ * 계정을 지울 때 디렉터리만 지우면 Keychain 항목이 남는다(서비스 이름이 경로의 해시라서).
+ * 그러면 같은 경로에 디렉터리가 **다시 생기는 순간 옛 로그인이 되살아난다** — 2026-09-29
+ * 실측: 지운 `work/lime` 을 기동 때 목록을 읽은 러너가 계속 `CLAUDE_CONFIG_DIR` 로 넘겨
+ * claude 가 디렉터리를 다시 만들었고, 남은 Keychain 항목 때문에 로그인된 계정으로 보였다.
+ *
+ * 항목이 없으면(`security` 가 44 로 끝난다) 성공으로 본다 — 지우려던 상태가 이미 그렇다.
+ * 서버 쪽 토큰 폐기(`claude auth logout`)는 하지 않는다: 같은 로그인을 다른 계정 디렉터리가
+ * 함께 쓸 수 있고, 여기서 할 일은 **이 기계에 남은 흔적**을 치우는 것이다.
+ */
+function nodeDeleteKeychainCredentials(configDir: string): Promise<void> {
+  if (process.platform !== 'darwin') return Promise.resolve();
+  return new Promise((res) => {
+    execFile(
+      'security',
+      ['delete-generic-password', '-s', keychainService(configDir), '-a', process.env.USER ?? ''],
+      { timeout: 10_000 },
+      // 실패해도 계정 삭제를 막지 않는다 — Keychain 이 잠겨 있어도 디렉터리는 지워져야 하고,
+      // 러너는 없는 디렉터리를 이제 건너뛴다(agent `presentAccounts`).
+      () => res(),
+    );
+  });
+}
+
+/**
  * 계정의 로그인 상태·정체를 **디스크에서** 읽는다.
  *
  * ## `claude auth status --json` 을 쓰지 않는 이유 — 2026-09-08 실측
@@ -344,6 +370,16 @@ async function readPoolsConfig(root: string): Promise<ClaudePoolsConfig | null> 
   }
 }
 
+/**
+ * `pools.json` 을 원자적으로 쓴다. 유일한 임시 이름을 쓰는 이유는 `sessions.json` 과 같다 —
+ * 고정 이름이면 먼저 끝난 rename 이 tmp 를 치워 나중 rename 이 ENOENT 로 죽는다.
+ */
+async function writePoolsConfig(root: string, cfg: ClaudePoolsConfig): Promise<void> {
+  const tmpPath = `${poolsConfigPath(root)}.tmp-${randomUUID()}`;
+  await writeFile(tmpPath, `${JSON.stringify(cfg, null, 2)}\n`, { mode: 0o600 });
+  await rename(tmpPath, poolsConfigPath(root));
+}
+
 /** 뿌리 아래 계정 하나가 실제로 어디 있는가. */
 export interface ClaudeAccountDir {
   name: string;
@@ -410,12 +446,15 @@ export function createClaudeAccountsPort(opts: {
   /** 공식 경로(`claude -p /usage`)의 실행기. 테스트가 가짜를 끼운다. */
   runCli?: RunCommand;
   usageCacheMs?: number;
+  /** Keychain 항목 삭제. 테스트가 가짜를 끼운다 — 진짜 Keychain 을 건드리지 않게. */
+  deleteKeychain?: (configDir: string) => Promise<void>;
 } = {}): ClaudeAccountsPort {
   const root = opts.root ?? claudeAccountsRoot();
   const runStatus = opts.runStatus ?? nodeRunStatus;
   const spawnLogin = opts.spawnLogin ?? nodeSpawnLogin;
   const killGraceMs = opts.killGraceMs ?? LOGIN_KILL_GRACE_MS;
   const now = opts.now ?? ((): number => Date.now());
+  const deleteKeychain = opts.deleteKeychain ?? nodeDeleteKeychainCredentials;
   const usageCache = createUsageCache(opts.usageCacheMs, now);
 
   /** 진행 중인 로그인. 키는 `loginId`. */
@@ -506,11 +545,7 @@ export function createClaudeAccountsPort(opts: {
         await mkdir(under(root, name), { recursive: true, mode: 0o700 });
       }
 
-      // 원자적으로 쓴다. 유일한 임시 이름을 쓰는 이유는 `sessions.json` 과 같다 — 고정
-      // 이름이면 먼저 끝난 rename 이 tmp 를 치워 나중 rename 이 ENOENT 로 죽는다.
-      const tmpPath = `${poolsConfigPath(root)}.tmp-${randomUUID()}`;
-      await writeFile(tmpPath, `${JSON.stringify(norm, null, 2)}\n`, { mode: 0o600 });
-      await rename(tmpPath, poolsConfigPath(root));
+      await writePoolsConfig(root, norm);
     },
 
     async removeAccount(pool: string, account: string): Promise<void> {
@@ -521,6 +556,15 @@ export function createClaudeAccountsPort(opts: {
         throw new Error(`계정이 없다: ${pool}/${account}`);
       }
       await rm(dir, { recursive: true, force: true });
+      // 디렉터리만 지우면 두 흔적이 남아 지운 계정이 되살아난다(2026-09-29):
+      // Keychain 항목(같은 경로에 디렉터리가 다시 생기면 로그인된 채로 보인다)과
+      // `order` 의 이름(같은 이름을 다시 만들면 옛 순서 자리로 돌아간다).
+      await deleteKeychain(dir);
+      const cfg = await readPoolsConfig(root);
+      const list = cfg?.order[pool];
+      if (cfg && list?.includes(account)) {
+        await writePoolsConfig(root, { ...cfg, order: { ...cfg.order, [pool]: list.filter((n) => n !== account) } });
+      }
     },
 
     async removePool(pool: string): Promise<void> {

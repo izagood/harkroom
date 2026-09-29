@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { claudeAccountsRoot, loadClaudeAccountLane, loadClaudeAccounts } from '../src/claudeAccounts.js';
+import { claudeAccountsRoot, loadClaudeAccountLane, loadClaudeAccounts, presentAccounts } from '../src/claudeAccounts.js';
 
 async function fixture(names: string[]): Promise<string> {
   const root = mkdtempSync(join(tmpdir(), 'harkroom-claude-accounts-'));
@@ -214,5 +214,26 @@ describe('loadClaudeAccountLane — 풀 축', () => {
     // `aria` 은 풀로 읽히고 그 안에 계정이 없다 — 암묵 풀로 되돌아가지 않았다.
     expect(lane.pool).toBe(null);
     expect(lane.accounts).toEqual([]);
+  });
+});
+
+describe('presentAccounts — 지운 계정을 턴마다 건너뛴다', () => {
+  // 2026-09-29 실측: 러너가 기동 때 읽은 축을 그대로 쓰는 바람에, 사람이 지운 계정 경로로
+  // claude 가 떠서 디렉터리를 다시 만들었고 그 계정이 로그인된 채로 되살아났다.
+  it('디렉터리가 없어진 계정을 뺀다 — 순서는 그대로', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'present-'));
+    await mkdir(join(root, 'lychee'));
+    await mkdir(join(root, 'plum'));
+    const lane = ['lime', 'lychee', 'plum'].map((name) => ({ name, configDir: join(root, name) }));
+    expect((await presentAccounts(lane)).map((a) => a?.name)).toEqual(['lychee', 'plum']);
+  });
+
+  it('전부 없어지면 [null] — 풀이 빈 채로 뜬 러너와 같다', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'present-'));
+    expect(await presentAccounts([{ name: 'lime', configDir: join(root, 'lime') }])).toEqual([null]);
+  });
+
+  it('풀 미구성 [null] 은 그대로 둔다', async () => {
+    expect(await presentAccounts([null])).toEqual([null]);
   });
 });
