@@ -116,6 +116,20 @@ describe('configure', () => {
     expect((await port(root).list()).pools.map((p) => p.name)).toEqual(['work']);
   });
 
+  it('배정 기준(assign)을 쓰고, 그 칸을 모르는 호출자가 쓸 때는 지우지 않는다', async () => {
+    const root = await tmp();
+    await port(root).configure({
+      defaultPool: 'work', order: { work: [] }, agents: {}, assign: { work: { newSessionPct: 70 } },
+    });
+    expect((await port(root).list()).assign).toEqual({ work: { newSessionPct: 70 } });
+    // 옛 UI: 순서만 바꿔 쓴다 → 기준은 남는다
+    await port(root).configure({ defaultPool: 'work', order: { work: [] }, agents: {} });
+    expect((await port(root).list()).assign).toEqual({ work: { newSessionPct: 70 } });
+    // 비우려면 빈 객체를 보낸다
+    await port(root).configure({ defaultPool: 'work', order: { work: [] }, agents: {}, assign: {} });
+    expect((await port(root).list()).assign).toEqual({});
+  });
+
   it('배정에만 나오는 풀도 만든다', async () => {
     const root = await tmp();
     await port(root).configure({ defaultPool: null, order: {}, agents: { a1: 'personal' } });

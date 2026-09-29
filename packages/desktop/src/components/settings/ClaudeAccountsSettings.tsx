@@ -34,7 +34,8 @@
  */
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
-import { CLAUDE_POOL_NAME_PATTERN } from '@harkroom/shared/claudePools';
+import { CLAUDE_POOL_NAME_PATTERN, resolveAssignThresholds, type ClaudePoolsConfig } from '@harkroom/shared/claudePools';
+import { headroomPerHour } from '@harkroom/shared/claudeUsage';
 
 import {
   cancelClaudeLogin,
@@ -60,6 +61,7 @@ import { Menu } from '../Menu';
 import { Button, Field, SettingsGroup, SettingsPage, TextInput } from './primitives';
 import { ProviderSection } from './ProviderSection';
 import { ProviderUsageBars } from './ProviderUsageBars';
+import { ClaudeAssignThresholdsRow } from './ClaudeAssignThresholds';
 import { usageFor, useProviderUsage } from '../../lib/providerUsage';
 
 /** 제공업체 계정 화면 안의 Claude 칸. `SettingsPage` 와 같은 인자를 받아 `Shell` 로 갈아 끼운다. */
@@ -196,6 +198,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
     defaultPool: string | null;
     order: Record<string, string[]>;
     agents: Record<string, string>;
+    assign: NonNullable<ClaudePoolsConfig['assign']>;
   }>): Promise<void> => {
     if (!snap) return;
     // 세 값을 **한 번에** 쓴다. 부분 갱신이면 배정이 가리키는 풀이 사라진 상태가 중간에 생긴다.
@@ -203,7 +206,10 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
     for (const p of snap.pools) if (p.name) order[p.name] = p.accounts.map((a) => a.name);
     try {
       await configureClaudeAccounts({
-        defaultPool: snap.defaultPool, order, agents: snap.agents, ...over,
+        // 배정 기준은 옛 데몬이 싣지 않는다(`snap.assign` 부재). 그때는 칸을 보내지 않아 데몬이
+        // 디스크의 값을 그대로 두게 한다 — 빈 객체를 보내면 지운다.
+        defaultPool: snap.defaultPool, order, agents: snap.agents,
+        ...(snap.assign ? { assign: snap.assign } : {}), ...over,
       });
       await refresh();
     } catch (err) {
@@ -257,7 +263,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
   return (
     <Shell
       title="Claude accounts"
-      description="Group accounts into pools. A runner uses one pool and moves to the next account when it hits a usage limit."
+      description="Group accounts into pools. A runner uses one pool and spreads new threads across its accounts by usage; a thread stays on its account unless that account nears its limit."
       width="wide"
     >
       {error && (
@@ -322,12 +328,12 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                   ? 'used by agents with no pool of their own'
                   : `${pool.accounts.length} account${pool.accounts.length === 1 ? '' : 's'}`}
                 {/*
-                  **순서에 뜻이 있다는 사실을 처음으로 적는다.** 설정의 `order` 가 러너의
-                  대체 순서이고(`writeConfig` 가 화면 순서를 그대로 쓴다), 그래서 이 표는
-                  숫자로 정렬하지 않는다 — 정렬하면 보기는 좋아지지만 화면이 들고 있던
-                  정보 하나가 조용히 사라진다.
+                  **순서의 뜻이 바뀌었다(C ③).** 러너는 새 스레드를 점수(주간 여유 ÷ 초기화까지
+                  남은 시간) 순으로 나누고, 설정의 `order` 는 동점일 때의 순서다(`writeConfig` 가
+                  화면 순서를 그대로 쓴다). 그래서 이 표는 여전히 점수로 정렬하지 않는다 —
+                  점수는 몇 분마다 바뀌고, 사람이 정한 순서가 화면에서 사라지면 안 된다.
                 */}
-                {pool.accounts.length > 1 && ' · a runner tries them top to bottom'}
+                {pool.accounts.length > 1 && ' · new threads go to the account with the most weekly room per hour left; order breaks ties'}
               </span>
             </div>
             <div className="flex items-center gap-3">
@@ -374,6 +380,20 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
               )}
             </div>
           </div>
+
+          {/* 기준은 `pools.json` 에만 산다 — 평평한 구조(이름 없는 풀)에는 적을 자리가 없다. */}
+          {pool.name && pool.accounts.length > 1 && (
+            <ClaudeAssignThresholdsRow
+              pool={pool.name}
+              assign={snap.assign ?? {}}
+              onSave={(next) => {
+                const assign = { ...(snap.assign ?? {}) };
+                if (Object.keys(next).length) assign[pool.name] = next;
+                else delete assign[pool.name];
+                return writeConfig({ assign });
+              }}
+            />
+          )}
 
           {pool.accounts.length > 0 && (
             <div className={`${ACCOUNT_GRID} px-4 py-2 text-meta uppercase tracking-wide text-fg-subtle`}>
@@ -443,6 +463,14 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
               {pu && (
                 <div className="px-4 pb-2.5" data-testid={`claude-provider-usage-${pool.name}-${a.name}`}>
                   <ProviderUsageBars usage={pu} nowMs={providerSnap!.measuredAtMs} />
+                  <AssignScore
+                    usage={pu}
+                    nowMs={providerSnap!.measuredAtMs}
+                    limits={resolveAssignThresholds(
+                      { defaultPool: null, order: {}, agents: {}, assign: snap.assign ?? {} }, pool.name || null,
+                    )}
+                    show={pool.accounts.length > 1}
+                  />
                 </div>
               )}
               </div>
@@ -570,6 +598,29 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
  * (`setLogin` 이 새 객체를 만든다) 입력 중인 값이 흔들릴 여지가 생긴다. 코드는 이 화면에서
  * 밖으로 나가지 않는 값이므로 부모가 들 이유가 없다.
  */
+/**
+ * 러너가 이 계정에 매기는 점수와, 새 배정에서 빠지는지(C ③). 식은 러너와 **같은 함수**다
+ * (`headroomPerHour`) — 다르면 화면이 러너의 판단과 다른 말을 한다. 모델별 주간 창은 에이전트
+ * 모델에 따라 갈리므로 여기서는 전체 주간 창만 본다.
+ */
+function AssignScore({ usage, nowMs, limits, show }: {
+  usage: { session: { usedPercent: number } | null; weekly: { usedPercent: number; resetsAtMs: number | null } | null; error?: string };
+  nowMs: number;
+  limits: { newSessionPct: number; newWeeklyPct: number };
+  show: boolean;
+}) {
+  if (!show || !usage.weekly || usage.error) return null;
+  const score = headroomPerHour(usage.weekly, nowMs);
+  const skip = (usage.session && usage.session.usedPercent >= limits.newSessionPct)
+    || usage.weekly.usedPercent >= limits.newWeeklyPct;
+  return (
+    <div className="mt-1 text-meta text-fg-subtle" data-testid="claude-assign-score">
+      Score {score.toFixed(2)}%/h
+      {skip && <span className="text-warning"> · skipped for new threads</span>}
+    </div>
+  );
+}
+
 function LoginCodeForm({ onSubmit }: { onSubmit(code: string): Promise<void> }) {
   const [code, setCode] = useState('');
   return (
