@@ -21,23 +21,14 @@
  *    다시 로그인되고, 사용자는 "두 번 등록했는데 하나뿐"을 보게 된다. 브라우저를 자동으로
  *    열지 않고 **링크를 보여 주는** 이유의 절반이 이것이다.
  *
- * ## 왜 표인가 (#702)
+ * ## 사용량은 공급자가 말한 % 뿐이다 (2026-09-29)
  *
- * 이 화면은 설정 화면 중 **유일하게 표**다 — 계정 하나가 숫자를 다섯 개 갖는다. 앞판은
- * 그것을 계정마다 네 줄짜리 문장으로 쌓고 `SettingsPage` 기본 폭(768px)에 담았다.
- * 그래서 세 가지가 동시에 망가졌다:
+ * 계정 줄 아래의 막대 두 개(5시간·주간)가 전부다 — CLI(`claude -p /usage`) 먼저, 실패하면 같은
+ * API(`operator/src/usageChain.ts`). 앞판은 여기에 트랜스크립트 토큰 합계·응답 수·한도 사건으로
+ * 짐작한 상태 알약을 표로 그렸는데(#702), 분모가 없어 "몇 % 남았나"에 답하지 못했고 공급자 %가
+ * 생긴 뒤로는 같은 질문에 두 답을 주는 셈이라 걷어 냈다.
  *
- * 1. `1283` 과 `1649` 가 서로 다른 x 좌표에 130px 떨어져 서서, **어느 계정이 많이
- *    돌았나** 를 눈으로 알 수 없었다. 그 비교가 이 화면이 있는 이유다.
- * 2. 사용량과 한도 상태가 라벨용 회색(`--app-fg-subtle`)의 11px 이었다 — 카드 면과
- *    **3.08:1** 로 WCAG AA(4.5:1) 미달이고, 팔레트에는 그 자리에 쓰라고 정의된
- *    `--app-fg-muted`(5.81:1)가 이미 있었다.
- * 3. 줄마다 가장 넓고 시끄러운 것이 `Remove account <이름>` 이었다. 그 빨강도 같은 면에서
- *    3.08:1 이라, 눈을 끄는 것은 색상뿐이고 읽기 쉬운 것도 아니었다.
- *
- * 고친 방향: 열을 맞추고(`ACCOUNT_GRID`), 숫자를 본문단으로 올리고, 상태를 문장에서
- * 알약으로 바꾸고, 파괴적 조작을 `⋯` 뒤로 내렸다. **재는 값은 하나도 늘리지 않았다** —
- * 데몬이 이미 주던 것을 읽을 수 있게 놓은 것뿐이다.
+ * 파괴적 조작은 `⋯` 뒤에 둔다 — 안전은 색이 아니라 확인 단계가 진다.
  *
  * UI 문자열은 **영어**다 — 저장소 관례이고 한 번 어겨 되돌린 적이 있다. 주석은 한국어다.
  */
@@ -45,11 +36,8 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
 import { CLAUDE_POOL_NAME_PATTERN } from '@harkroom/shared/claudePools';
 
-import { useLocale } from '../../i18n/useT';
-
 import {
   cancelClaudeLogin,
-  claudeAccountsUsage,
   configureClaudeAccounts,
   hasClaudeAccountsSurface,
   listClaudeAccounts,
@@ -65,15 +53,7 @@ import {
   type ClaudeAccountView,
   type ClaudeAuthStatus,
   type ClaudeLoginEvent,
-  type ClaudeUsageSnapshot,
 } from '../../lib/claudeAccounts';
-import {
-  accountState,
-  clockLabel,
-  clockWithDayLabel,
-  usageByAccount,
-  usageCells,
-} from '../../lib/claudeUsage';
 import { getExternalOpener } from '../../lib/openExternal';
 import { Menu } from '../Menu';
 import { Button, Field, SettingsGroup, SettingsPage, TextInput } from './primitives';
@@ -93,45 +73,10 @@ function ClaudeSection({ description, children }: {
 }
 
 /**
- * 사용량을 다시 재는 주기.
- *
- * **10초인 이유**: 이 화면이 답하는 물음이 *"지금 어느 계정이 타고 있나"* 인데, 러너의
- * 턴 하나가 그보다 짧게 끝나는 일이 흔하다(`AGENT_TURNS_POLL_MS` 가 5초인 것과 같은
- * 사실). 30초로 두면 사람이 보는 앞에서 숫자가 계단처럼 뛴다.
- *
- * **비싸지 않다는 것을 재고 넣었다**(2026-09-09 실측, 계정 4개 · 창 안 트랜스크립트
- * 22개 19.9MB): 한 번 재는 데 **~115ms**. 앞 판본의 주석은 이것을 *"수십 MB 를 훑는
- * 일"* 이라 적고 자동 갱신을 막았는데, 그 값을 실제로 재 보지 않은 판단이었다. 다만
- * 파일을 매번 통째로 읽는 것(`daemon/src/claudeUsage.ts::readTail`)은 그대로 낭비이므로
- * 증분 읽기가 후속으로 남아 있다 — 그것은 이 화면의 결함이 아니라 재는 쪽의 일이다.
+ * 계정 줄의 열. **한 곳에 적어 머리줄과 본문 줄이 같은 값을 쓴다** — 두 벌로 두면 언젠가
+ * 한쪽만 고쳐진다.
  */
-const USAGE_POLL_MS = 10_000;
-
-/**
- * 계정 표의 열. **한 곳에 적어 머리줄과 본문 줄이 같은 값을 쓴다** — 두 벌로 두면
- * 언젠가 한쪽만 고쳐지고, 그때 머리줄의 `Cache` 가 다른 열 위에 선다.
- *
- * 이 화면이 표인 이유: 계정 하나가 숫자를 다섯 개 갖는다. 앞판은 그것을 계정마다
- * 네 줄짜리 문장으로 쌓아서, `1283` 과 `1649` 가 서로 다른 x 좌표에 130px 떨어져
- * 섰다 — 그러면 어느 계정이 많이 돌았는지 **눈으로 알 수 없다**.
- */
-const ACCOUNT_GRID =
-  'grid grid-cols-[9rem_minmax(9rem,1fr)_6.5rem_3.5rem_3rem_3rem_3.75rem_5rem_8.5rem_1.75rem] gap-x-3';
-
-/**
- * 상태 알약의 색. **`warning` 만 면을 채운다** — 지금 못 쓰는 계정 하나가 화면에서
- * 튀어야 하고, 다섯 갈래가 다 채워진 면이면 아무것도 튀지 않는다.
- *
- * `muted` 는 테두리만이다: "이 창에서 이미 걸렸다"는 경고가 아니라 **기억해 둘 사실**
- * 이라(이미 풀렸다) 경고와 같은 무게를 주면 거짓말이 된다. 그래도 테두리를 주는 이유는
- * 모양이 있어야 훑을 때 걸리기 때문이다 — 앞판이 이것을 회색 문장으로 둬서 묻혔다.
- */
-const STATE_PILL = {
-  warning: 'border border-warning-border bg-warning-surface text-warning',
-  muted: 'border border-border text-fg-muted',
-  success: 'text-success',
-  subtle: 'text-fg-subtle',
-} as const;
+const ACCOUNT_GRID = 'grid grid-cols-[9rem_minmax(9rem,1fr)_1.75rem] gap-x-3';
 
 /** 되돌릴 수 없는 일 하나를 기다리는 상태. `null` 은 대기 중인 것이 없다. */
 type Pending =
@@ -176,25 +121,15 @@ function accountLabel(a: ClaudeAccountView): string {
  */
 export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolean } = {}) {
   const Shell = embedded ? ClaudeSection : SettingsPage;
-  // 한도 사용률: CLI(`/usage`) 먼저, 실패하면 같은 API(`usageChain.ts`). 아래 표(로컬 추정)는 늘 선다.
+  // 한도 사용률: CLI(`/usage`) 먼저, 실패하면 같은 API(`usageChain.ts`). 사용량은 이것 하나다.
   const available = hasClaudeAccountsSurface();
   const { snap: providerSnap } = useProviderUsage('claude', available);
-  // **글자는 영어이지만 시각 표기는 로케일을 따른다.** 이 화면의 문구는 사전을 쓰지 않는데
-  // (이 파일 머리말) `HH:MM` 은 문구가 아니라 숫자 표기라 `Intl` 이 낸다 — `lib/time.ts`
-  // 머리말이 가른 그 축이다: 수량·표기는 플랫폼이 우리보다 잘 안다.
-  const locale = useLocale();
   const [snap, setSnap] = useState<ClaudeAccountsSnapshot | null>(null);
-  // 사용량은 **목록과 따로** 온다. 실패해도 계정 목록은 그대로 옳으므로 오류도 따로 든다 —
-  // 하나로 두면 트랜스크립트를 못 읽은 것이 "계정을 못 읽었다"로 보인다.
-  const [usage, setUsage] = useState<ClaudeUsageSnapshot | null>(null);
-  const [usageError, setUsageError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending>(null);
   const [login, setLogin] = useState<LoginState | null>(null);
   const [newPool, setNewPool] = useState<string | null>(null);
   const [moveNote, setMoveNote] = useState<string | null>(null);
-  // 퍼센트가 없는 이유 — 접어 둔다(위 안내 줄의 주석 참조).
-  const [whyOpen, setWhyOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!available) return;
@@ -208,70 +143,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
     }
   }, [available]);
 
-  /**
-   * 사용량을 다시 잰다. 아래 폴이 되풀이해 부른다.
-   *
-   * **실패해도 앞서 잰 스냅샷을 버리지 않는다.** 지우면 폴 한 번 걸린 것이 표 전체를
-   * `…` 로 되돌리고, 사람은 자기 계정이 안 읽히는 줄 안다. 대신 오류를 따로 들고
-   * 안내 줄이 *"언제 잰 값인지 + 마지막 시도가 실패했다"* 를 함께 말한다.
-   */
-  const refreshUsage = useCallback(async () => {
-    if (!available) return;
-    try {
-      setUsage(await claudeAccountsUsage());
-      setUsageError(null);
-    } catch (err) {
-      setUsageError(err instanceof Error ? err.message : String(err));
-    }
-  }, [available]);
-
-  useEffect(() => { void refresh(); void refreshUsage(); }, [refresh, refreshUsage]);
-
-  /**
-   * 사용량을 되풀이해 잰다. **이 화면이 실시간으로 보이는데 실시간이 아니었다** — 앞
-   * 판본은 마운트 때 딱 한 번 재고 멈췄고, 그래서 설정을 열어 둔 채 계속 일해도 숫자가
-   * 그대로였다. 표는 "지금"을 말하는 모양인데 값은 화면을 연 순간의 것이니, 사람이
-   * 그것을 **고장으로 읽는 것이 옳다.**
-   *
-   * 규율은 `AgentsSettings` 의 목록 폴과 같은 것 셋이다.
-   * - **`document.hidden` 이면 왕복을 접는다.** 창을 내려 둔 사람 수만큼 디스크를 읽을
-   *   이유가 없다. 타이머는 계속 돌되 건너뛰므로, 돌아오면 늦어도 한 tick 뒤 최신이다
-   * - **다시 보이는 순간 즉시 한 번 잰다.** 그 한 tick 조차 기다리게 하면 창을 되살린
-   *   사람이 제일 먼저 보는 것이 낡은 숫자다
-   * - **폴 실패를 화면 오류로 키우지 않는다.** 안내 줄의 덧말로만 남고 다음 tick 이
-   *   다시 시도한다
-   */
-  useEffect(() => {
-    if (!available) return;
-    const timer = window.setInterval(() => {
-      if (document.hidden) return;
-      void refreshUsage();
-    }, USAGE_POLL_MS);
-    const onVisible = (): void => { if (!document.hidden) void refreshUsage(); };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
-  }, [available, refreshUsage]);
-
-  /**
-   * 판정의 기준 시각은 **잰 시각**이다 — `Date.now()` 가 아니다.
-   *
-   * 폴이 생겼으니 이 값은 이제 길어야 10초 낡은다. 그래도 흐르는 시계로 바꾸지 않는
-   * 이유는 그렇게 하면 **판정이 자기가 판정하는 값보다 새로워지기** 때문이다: 창이
-   * 숨어 폴이 접힌 동안 시계만 굴리면, 스냅샷은 옛 창의 응답 수를 들고 있는데 창은
-   * 이미 다음 것이 된다. 낡았다는 사실은 시계를 굴려 감추는 것이 아니라 안내 줄의
-   * `measured HH:MM` 로 **말한다.**
-   */
-  const nowMs = usage?.measuredAtMs ?? 0;
-  const usageMap = usageByAccount(usage?.accounts ?? null);
-  // **시각을 못 낼 값이면 그 자리를 비운다.** 데몬이 이 필드를 안 실어 보내는 판본과
-  // 마주쳐도 화면 전체가 `Invalid time value` 로 죽지 않아야 한다 — 이 줄은 안내이고,
-  // 안내 하나 때문에 계정 목록을 잃는 것은 바꿔치기가 안 되는 손해다.
-  const measuredLabel = Number.isFinite(usage?.measuredAtMs)
-    ? clockLabel(nowMs, locale)
-    : null;
+  useEffect(() => { void refresh(); }, [refresh]);
 
   // 로그인 진행을 듣는다. 화면이 살아 있는 동안만 — 떠날 때 떼지 않으면 다음 마운트가
   // 두 번 듣는다.
@@ -376,72 +248,11 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
         </SettingsGroup>
       )}
 
-      {/*
-        안내 두 줄과 다시 재기 버튼을 **한 줄로 합쳤다.** 앞판은 이 둘이 각자
-        `SettingsGroup` 카드였고, 그래서 화면의 첫 150px 을 **한 번 읽으면 끝인 산문**이
-        먹었다 — 그 아래가 이 화면에 매번 오는 이유(계정과 사용량)인데도.
-
-        말해야 할 것을 줄이지는 않았다. 이 파일 머리말이 못 뺀다고 못박은 세 가지 중
-        둘이 여기 있다(러너 재시작 · 사용량의 출처). 무게만 낮췄다.
-
-        "퍼센트가 없다"는 설명은 접었다. 그것은 **한 번 납득하면 다시 읽지 않는** 종류의
-        사실이라 늘 펼쳐 둘 값이 아니고, 그렇다고 지우면 퍼센트의 부재가 우리 누락처럼
-        보인다 — 그래서 지우지 않고 물음 뒤에 둔다.
-      */}
-      <div className="mb-6 flex flex-wrap items-center gap-x-2 gap-y-1 text-meta text-fg-muted">
-        {/*
-          **언제 잰 값인지 말한다.** 이 줄이 그것을 안 말했던 것이 위 결함의 절반이다 —
-          표가 실시간처럼 생겼는데 숫자가 안 변하니 사람은 재는 쪽이 고장 난 줄 알았다
-          (실제로는 화면이 한 번만 쟀다). 시각이 10초마다 바뀌는 것 자체가 "살아 있다"는
-          가장 값싼 증거이기도 하다.
-
-          스냅샷이 있는데 마지막 시도가 실패했으면 **둘 다** 말한다. 오류만 그리면 표에
-          남아 있는 숫자가 어디서 온 것인지 알 수 없고, 시각만 그리면 지금 멈춰 있다는
-          사실이 사라진다.
-        */}
-        <span>
-          {usage
-            ? `Counted from each account’s own transcripts over its last 5-hour window${
-                measuredLabel ? ` · measured ${measuredLabel}` : ''
-              }`
-            : usageError
-              ? `Could not read usage: ${usageError}`
-              : 'Reading usage from transcripts…'}
-        </span>
-        {usage && usageError && (
-          <>
-            <span className="text-fg-subtle">·</span>
-            <span className="text-warning">Last refresh failed: {usageError}</span>
-          </>
-        )}
-        <span className="text-fg-subtle">·</span>
-        <span>
-          A runner reads its pool once at startup — restart it from Settings › Agents after
-          changing accounts here.
-        </span>
-        <span className="text-fg-subtle">·</span>
-        <button
-          type="button"
-          onClick={() => setWhyOpen((v) => !v)}
-          aria-expanded={whyOpen}
-          className="underline underline-offset-2 hover:text-fg"
-        >
-          Why no percentages?
-        </button>
-        <span className="ml-auto">
-          <Button onClick={() => void refreshUsage()}>Refresh usage</Button>
-        </span>
+      {/* 러너 재시작은 이 파일 머리말이 반드시 말한다고 못박은 것이다 — 무게만 낮췄다. */}
+      <div className="mb-6 text-meta text-fg-muted">
+        A runner reads its pool once at startup — restart it from Settings › Agents after
+        changing accounts here.
       </div>
-
-      {whyOpen && (
-        <div className="mb-6 rounded-xl border border-border bg-surface-raised px-4 py-3 text-meta text-fg-muted">
-          Claude reports no fixed limit to compare against — it is in neither{' '}
-          <span className="font-mono">claude auth status</span> nor the transcripts, and Claude only
-          says “over” at the moment it is over. So these are amounts, not percentages. The bar
-          compares accounts <span className="text-fg">within one pool</span>: full width is the
-          busiest account in that pool, never a quota we invented.
-        </div>
-      )}
 
       {/* 평평한 계정 이전 안내 — 풀 모드에서 목록에서 사라진 계정들이다. */}
       {snap && snap.strays.length > 0 && (
@@ -475,27 +286,6 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
       )}
 
       {snap?.pools.map((pool) => {
-        const rows = pool.accounts.map((a) => ({ a, u: usageMap.get(`${pool.name}/${a.name}`) }));
-        /**
-         * 막대의 100%. **풀 안에서만 잰다** — 분모를 모르니 절대 눈금은 지어낸 값이 되고
-         * (`lib/claudeUsage.ts` 머리말), 풀들을 통틀어 재면 계정 하나짜리 풀이 언제나
-         * 100% 로 보인다. "이 풀에서 누가 제일 많이 돌았나" 는 답할 수 있는 질문이다.
-         */
-        const busiest = Math.max(0, ...rows.map((r) => r.u?.responses ?? 0));
-        const totalResponses = rows.reduce((n, r) => n + (r.u?.responses ?? 0), 0);
-        const limited = rows.filter(
-          (r) => r.u && accountState(r.u, nowMs, locale).kind.startsWith('limited'),
-        ).length;
-        // 못 읽은 파일이 있으면 위 합계는 **하한**이다. 그 사실을 계정 줄이 아니라 풀
-        // 머리에 적는다 — 합계를 읽는 사람이 알아야 하는 것이고, 줄마다 적으면 표가 시끄럽다.
-        const underCounted = rows.some((r) => r.u && r.u.unreadableFiles > 0);
-        /*
-          아직 안 온 것 · 못 읽은 것 · 이 창에 안 돈 것을 **다른 글리프로** 가른다.
-          하나로 두면 화면이 확인한 적 없는 것을 단언한다 — `AgentTurns` 에서 `0` 과
-          `모름` 을 가른 것과 같은 규율이다.
-        */
-        const cellFallback = usageError ? '?' : usage ? '—' : '…';
-
         // 카드 제목을 쓰지 않는다 — 풀 이름을 카드 제목과 본문에 두 번 그리면 화면이
         // 같은 말을 반복하고, 이름으로 요소를 찾는 쪽(테스트·스크린리더)이 둘 중 어느
         // 것인지 알 수 없다.
@@ -523,22 +313,6 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
               </span>
             </div>
             <div className="flex items-center gap-3">
-              {usage && pool.accounts.length > 0 && (
-                <span
-                  className="text-meta tabular-nums text-fg-muted"
-                  data-testid={`claude-pool-summary-${pool.name}`}
-                >
-                  <span className="text-fg">{totalResponses}</span>
-                  {' responses this window'}
-                  {limited > 0 && (
-                    <>
-                      {' · '}
-                      <span className="text-warning">{`${limited} limited`}</span>
-                    </>
-                  )}
-                  {underCounted && ' · some files unreadable, so counts are a floor'}
-                </span>
-              )}
               {pool.name && snap.defaultPool !== pool.name && (
                 <Button onClick={() => void writeConfig({ defaultPool: pool.name })}>
                   Make default
@@ -583,26 +357,15 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
             </div>
           </div>
 
-          {/* 열 이름은 풀마다 한 번 선다. 앞판은 이 이름들을 계정 줄마다 값과 붙여
-              반복했다(`in 5.3M · out 1.1M`) — 계정 넷이면 같은 라벨이 넷이다. */}
           {pool.accounts.length > 0 && (
             <div className={`${ACCOUNT_GRID} px-4 py-2 text-meta uppercase tracking-wide text-fg-subtle`}>
               <span>Team</span>
               <span>Signed in as</span>
-              <span>Share of pool</span>
-              <span className="text-right">Resp</span>
-              <span className="text-right">In</span>
-              <span className="text-right">Out</span>
-              <span className="text-right">Cache</span>
-              <span className="text-right">Active</span>
-              <span>State</span>
               <span />
             </div>
           )}
 
-          {rows.map(({ a, u }) => {
-            const cells = u ? usageCells(u) : null;
-            const state = u ? accountState(u, nowMs, locale) : null;
+          {pool.accounts.map((a) => {
             const pu = providerSnap ? usageFor(providerSnap, a.name, pool.name) : null;
             // 같은 로그인이 둘이면 페일오버가 같은 한도로 옮겨 탈 뿐이다 — 사람이 알아야 한다.
             const dup = sameSignInAs(pool.accounts, a.name);
@@ -634,74 +397,6 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                     <span className="shrink-0 text-warning" data-testid="claude-account-duplicate">
                       same sign-in as {dup.name}
                     </span>
-                  )}
-                </span>
-
-                {/*
-                  막대는 숫자 옆의 **중복**이다 — 그러니 스크린리더에서는 빼고 눈으로만
-                  일하게 둔다. 남기는 이유: 이 표에서 초점을 맞추지 않고 읽히는 유일한
-                  것이다. 안 돈 계정은 막대 대신 기준선만 그어 자리를 지킨다(빈 칸으로
-                  두면 그 줄만 높이가 달라 보인다).
-                */}
-                <span className="flex items-center" aria-hidden="true">
-                  {cells && u ? (
-                    <span className="h-1.5 w-full overflow-hidden rounded-full bg-border">
-                      <span
-                        /*
-                          제일 많이 돈 계정만 진하게. **강조색(주황)은 쓰지 않는다** —
-                          이 저장소는 강조를 "나를 막는 것과 화면당 주 동작 하나"로 좁혀
-                          회수해 뒀다(#488 B2, `test/accentBudget.test.tsx`). 많이 돌았다는
-                          것은 나를 막는 일이 아니므로 잉크 농도로 말한다.
-                        */
-                        className={`block h-full rounded-full ${u.responses === busiest ? 'bg-fg' : 'bg-fg-subtle'}`}
-                        style={{ width: `${Math.max(3, (u.responses / busiest) * 100)}%` }}
-                      />
-                    </span>
-                  ) : (
-                    <span className="h-px w-full bg-border" />
-                  )}
-                </span>
-
-                {/* 응답 수는 이 표의 머릿수다 — 본문단 `text-fg`(13.5:1). 나머지 토큰
-                    열은 한 단 낮춰 `fg-muted` 로. 셋이 다 같은 무게면 위계가 없다. */}
-                <span className="text-right tabular-nums text-fg" data-testid="claude-account-usage">
-                  {cells ? cells.responses : cellFallback}
-                </span>
-                <span className="text-right tabular-nums text-fg-muted">
-                  {cells ? cells.input : cellFallback}
-                </span>
-                <span className="text-right tabular-nums text-fg-muted">
-                  {cells ? cells.output : cellFallback}
-                </span>
-                <span className="text-right tabular-nums text-fg-muted">
-                  {cells ? cells.cacheRead : cellFallback}
-                </span>
-                {/* 마지막으로 돈 시각. 사람이 시계와 대조하는 값이라 상대 시간이 아니다.
-                    **오늘이 아니면 날짜가 붙는다** — 그 이유는 `clockWithDayLabel` 에 있다. */}
-                <span
-                  className="text-right tabular-nums text-fg-muted"
-                  data-testid="claude-account-last-used"
-                >
-                  {u
-                    ? u.lastUsedAtMs === null
-                      ? '—'
-                      : clockWithDayLabel(u.lastUsedAtMs, nowMs, locale)
-                    : cellFallback}
-                </span>
-
-                <span className="min-w-0">
-                  {state ? (
-                    <span
-                      data-testid="claude-account-state"
-                      className={`inline-flex max-w-full items-center gap-1.5 rounded-full px-2 py-0.5 text-meta ${STATE_PILL[state.tone]}`}
-                    >
-                      {(state.tone === 'warning' || state.tone === 'success') && (
-                        <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-current" />
-                      )}
-                      <span className="truncate">{state.label}</span>
-                    </span>
-                  ) : (
-                    <span className="text-meta text-fg-subtle">{cellFallback}</span>
                   )}
                 </span>
 

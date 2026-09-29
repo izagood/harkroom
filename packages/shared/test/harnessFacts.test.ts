@@ -12,7 +12,7 @@ import { AGENT_HARNESSES, harnessHasAccountPool } from '../src/index.js';
 
 describe('harnessHasAccountPool', () => {
   it('풀 관리 표면이 있는 하네스는 claude 하나다', () => {
-    // 데몬 RPC 이름이 그 사실을 그대로 말한다(`claudeAccountsList`·`claudeAccountsUsage` …).
+    // 데몬 RPC 이름이 그 사실을 그대로 말한다(`claudeAccountsList`·`claudeAccountsProviderUsage` …).
     // codex·opencode 는 계정 하나로 돈다 — 풀을 그리면 화면이 거짓말을 한다.
     const pooled = AGENT_HARNESSES.filter((h) => harnessHasAccountPool(h));
     expect(pooled).toEqual(['claude-code']);
