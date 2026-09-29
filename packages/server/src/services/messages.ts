@@ -1,9 +1,9 @@
 import type { Pool, PoolClient } from 'pg';
-import { CHANNEL_MENTION_HANDLE, countsAsReply, headMentionRunEnd, MENTION_CHAIN_LIMIT, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type MessageRow } from '@harkroom/shared';
+import { CHANNEL_MENTION_HANDLE, countsAsReply, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type MessageRow } from '@harkroom/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { preemptWakesForThread } from './agentWakes.js';
 import { closeDelegationsForReply, outcomesFor } from './delegations.js';
-import { channelVisibleSql } from './channels.js';
+import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels.js';
 import { emitEvent } from '../events.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
 import { getTeam, getTeamByName, listTeamMembers } from './teams.js';
@@ -1296,9 +1296,115 @@ export async function recordAskAnswer(
   /**
    * 수신자가 정해져 있으면 그 계정만 답할 수 있다. 이것이 없으면 남에게 간 물음을
    * 아무나 가로채 답할 수 있고, 그러면 `to` 를 실은 뜻이 사라진다.
+   *
+   * **사람 앞 물음은 사람만 답한다**(2026-09-29). 전에는 `account` 만 보고 `human` 은
+   * 통과시켜서, 채널을 볼 수 있는 계정이면 에이전트든 HTTP 로 사람 카드를 누를 수 있었다.
+   * MCP 에 답하는 도구가 없어 막혀 있었을 뿐 문은 열려 있었다 — 사람에게 물은 갈림길을
+   * 에이전트가 정하면 그 물음을 사람 앞에 둔 뜻이 사라진다.
    */
   if (ask.to.kind === 'account' && ask.to.accountId !== args.actorId) return 'forbidden';
+  if (ask.to.kind === 'human' && !(await isHumanAccount(pool, args.actorId))) return 'forbidden';
 
+  /**
+   * **거울 카드에 답하면 원본에 먼저 적는다**(2026-09-29). 정본은 원본이다 — 거울은
+   * 원본을 사람 눈앞에 한 번 더 세워 둔 것일 뿐이라, 답은 원본에서 경합하고 거울들은
+   * 그 결과를 **따라 적는다**(`syncAskMirrors`). 그래서 거울 둘과 원본에 세 사람이
+   * 동시에 눌러도 이기는 것은 원본의 `answeredWith is null` 하나이고, 나머지는 모두
+   * 이긴 답으로 닫힌다.
+   *
+   * 원본이 지워졌으면 거울만 답한다 — 물은 쪽이 사라졌어도 거울을 낸 쪽은 답을 기다린다.
+   */
+  if (ask.mirrorOf) {
+    const root = await readAskRow(pool, ask.mirrorOf);
+    if (root) {
+      // 원본은 거울을 만들 때 검사했다(`checkAskMirror`). 여기서 다시 보는 것은 원본에 적는
+      // 것이 **이 사람의 이름으로** 적는 일이기 때문이다 — 원본 채널을 못 보는 사람이
+      // 거울을 거쳐 그 채널의 물음을 정하면 안 된다.
+      if (root.ask.to.kind !== 'human') return 'forbidden';
+      if (!root.ask.options.some((o) => o.id === args.optionId)) return 'unknown_option';
+      if (!(await assertChannelVisible(pool, root.channelId, args.actorId))) return 'forbidden';
+
+      const rootRow = await answerAskRow(pool, ask.mirrorOf, args.optionId, args.actorId);
+      if (rootRow) {
+        emitEvent({ type: 'message.updated', message: rootRow, audience: await audienceFor(pool, rootRow.channelId) });
+      }
+      // 이겼든 졌든 거울들을 원본에 맞춘다 — 졌으면 이 거울은 이긴 답으로 닫힌다.
+      await syncAskMirrors(pool, ask.mirrorOf);
+      if (!rootRow) return 'already_answered';
+      return (await getMessageById(pool, args.messageId)) ?? 'not_found';
+    }
+  }
+
+  const row = await answerAskRow(pool, args.messageId, args.optionId, args.actorId);
+  if (!row) return 'already_answered';
+  // 원본이면 거울들도 같은 답으로 닫는다. 거울이 없으면 갱신되는 행이 없을 뿐이다.
+  if (!ask.mirrorOf) await syncAskMirrors(pool, args.messageId);
+  return row;
+}
+
+/** 계정이 사람인가. 없는 계정은 사람이 아니다(답할 자격을 줄 근거가 없다). */
+async function isHumanAccount(pool: Pool, accountId: string): Promise<boolean> {
+  const res = await pool.query(`select kind from account where id = $1`, [accountId]);
+  return res.rows[0]?.kind === 'human';
+}
+
+/** 물음 하나를 읽는다. 없거나 지워졌거나 물음이 아니면 null. */
+async function readAskRow(
+  pool: Pool, messageId: string,
+): Promise<{ ask: NonNullable<ReturnType<typeof readAskMeta>>; channelId: string; authorId: string | null } | null> {
+  const res = await pool.query(
+    `select meta, channel_id as "channelId", author_id as "authorId"
+       from message where id = $1 and deleted_at is null`,
+    [messageId],
+  );
+  const row = res.rows[0] as { meta: Record<string, unknown>; channelId: string; authorId: string | null } | undefined;
+  if (!row) return null;
+  const ask = readAskMeta(row.meta);
+  return ask ? { ask, channelId: row.channelId, authorId: row.authorId } : null;
+}
+
+/**
+ * 물어본 쪽을 깨운다(`ask_answered`·`ask_closed`). **자기 자신은 깨우지 않는다** — 에이전트가
+ * 다른 에이전트의 물음에 답하는 경로가 있고(`to.kind === 'account'`), 그때 답한 쪽이 곧
+ * 물은 쪽이면 자기를 깨우게 된다.
+ *
+ * 실패해도 던지지 않는다 — 답(닫힘)은 이미 기록됐고, 그것이 부른 쪽이 약속한 것이다.
+ * 깨우지 못하면 사람이 다시 멘션하는 길이 남는다(더 나쁜 쪽은 답이 사라지는 것이다).
+ */
+async function wakeAsker(
+  pool: Pool, askerId: string | null, actorId: string, messageId: string, reason: 'ask_answered' | 'ask_closed',
+): Promise<void> {
+  if (!askerId || askerId === actorId) return;
+  try {
+    await pool.query(
+      `insert into inbox (account_id, message_id, reason) values ($1, $2, $3)`,
+      [askerId, messageId, reason],
+    );
+    emitEvent({ type: 'inbox.updated', accountId: askerId });
+  } catch (err) {
+    console.error(`[${reason}] 깨움 실패(기록은 됐다):`, err);
+  }
+}
+
+/**
+ * 물음 한 행에 답을 적고 물어본 쪽을 깨운다. 경합에서 졌으면 null.
+ *
+ * **답이 왔음을 물어본 쪽에 알린다**(2026-09-09). 이것이 없으면 `message.ask` 의 약속
+ * ("고르면 즉시 진행")이 성립하지 않는다: 답은 meta 에만 남고, 물어본 에이전트는 그
+ * 사실을 영영 모른다. 게다가 `message.ask` 는 발화라서 그 턴은 답을 올린 뒤 회수되므로
+ * (agent/src/mentionTurn.ts), 사람이 고민하는 사이 물어본 자리는 이미 비어 있다.
+ * 실측(03:41): 답을 기록한 뒤 15분 동안 그 스레드에 아무 일도 없었다.
+ *
+ * **UPDATE 가 성공한 뒤에만** 깨운다 — `answeredWith is null` 조건이 경합에서 진
+ * 쪽을 걸러 주므로, 두 사람이 동시에 눌러도 깨움은 하나다.
+ *
+ * `message_id` 는 **물음 자신**이다. 러너는 그 메시지의 meta 에서 `answeredWith` 를
+ * 읽어 무엇이 골라졌는지 안다 — 별도 메시지를 만들지 않는 이유가 이것이다(스레드에
+ * "답했다"는 줄이 하나 더 생기면 그 대화를 읽는 사람에게 소음이다).
+ */
+async function answerAskRow(
+  pool: Pool, messageId: string, optionId: string, actorId: string,
+): Promise<MessageRow | null> {
   const updated = await pool.query(
     `update message
         set meta = jsonb_set(
@@ -1310,43 +1416,136 @@ export async function recordAskAnswer(
         and deleted_at is null
         and meta->'ask'->>'answeredWith' is null
       returning ${COLS}`,
-    [args.messageId, args.optionId, args.actorId],
+    [messageId, optionId, actorId],
   );
-  if (!updated.rowCount) return 'already_answered';
+  const row = updated.rows[0] as MessageRow | undefined;
+  if (!row) return null;
+  await wakeAsker(pool, row.authorId, actorId, messageId, 'ask_answered');
+  return row;
+}
 
+/** 물음 한 행을 "답하지 않기로 했다"로 닫고 물어본 쪽을 깨운다. 이미 답했거나 닫혔으면 null. */
+async function closeAskRow(pool: Pool, messageId: string, actorId: string): Promise<MessageRow | null> {
+  const updated = await pool.query(
+    `update message
+        set meta = jsonb_set(
+              jsonb_set(
+                jsonb_set(meta::jsonb, '{ask,closedAt}', to_jsonb(now())),
+                '{ask,closedBy}', to_jsonb($2::text)),
+              '{ask,closedReason}', to_jsonb('declined'::text))
+      where id = $1
+        and deleted_at is null
+        and meta->'ask'->>'answeredWith' is null
+        and meta->'ask'->>'closedAt' is null
+      returning ${COLS}`,
+    [messageId, actorId],
+  );
+  const row = updated.rows[0] as MessageRow | undefined;
+  if (!row) return null;
   /**
-   * **답이 왔음을 물어본 쪽에 알린다**(2026-09-09). 이것이 없으면 `message.ask` 의 약속
-   * ("고르면 즉시 진행")이 성립하지 않는다: 답은 meta 에만 남고, 물어본 에이전트는 그
-   * 사실을 영영 모른다. 게다가 `message.ask` 는 발화라서 그 턴은 답을 올린 뒤 회수되므로
-   * (agent/src/mentionTurn.ts), 사람이 고민하는 사이 물어본 자리는 이미 비어 있다.
-   * 실측(03:41): 답을 기록한 뒤 15분 동안 그 스레드에 아무 일도 없었다.
-   *
-   * **UPDATE 가 성공한 뒤에만** 만든다 — 위 `answeredWith is null` 조건이 경합에서 진
-   * 쪽을 걸러 주므로, 두 사람이 동시에 눌러도 깨움은 하나다.
-   *
-   * `message_id` 는 **물음 자신**이다. 러너는 그 메시지의 meta 에서 `answeredWith` 를
-   * 읽어 무엇이 골라졌는지 안다 — 별도 메시지를 만들지 않는 이유가 이것이다(스레드에
-   * "답했다"는 줄이 하나 더 생기면 그 대화를 읽는 사람에게 소음이다).
-   *
-   * **자기 자신은 깨우지 않는다.** 에이전트가 다른 에이전트의 물음에 답하는 경로가
-   * 있고(`to.kind === 'account'`), 그때 답한 쪽이 곧 물은 쪽이면 자기를 깨우게 된다.
-   *
-   * 실패해도 던지지 않는다 — 답은 이미 기록됐고, 그것이 이 함수가 약속한 것이다.
-   * 깨우지 못하면 사람이 다시 멘션하는 길이 남는다(더 나쁜 쪽은 답이 사라지는 것이다).
+   * **물어본 쪽을 깨운다.** 답과 같은 이유다: `message.ask` 는 발화라서 그 턴은 물음을
+   * 올린 뒤 회수되므로, 깨우지 않으면 "답하지 않겠다"는 결정을 물어본 에이전트가 영영
+   * 모른다 — 그러면 그 턴은 접히지 않고 사람은 같은 물음을 다시 받는다. 사유를
+   * `ask_answered` 와 가르는 이유는 러너가 할 일이 다르기 때문이다(고른 길로 가는 것이
+   * 아니라 접는 것이다 — 마이그레이션 045).
    */
-  const authorId = updated.rows[0].authorId as string;
-  if (authorId !== args.actorId) {
-    try {
-      await pool.query(
-        `insert into inbox (account_id, message_id, reason) values ($1, $2, 'ask_answered')`,
-        [authorId, args.messageId],
-      );
-      emitEvent({ type: 'inbox.updated', accountId: authorId });
-    } catch (err) {
-      console.error('[recordAskAnswer] 깨움 실패(답은 기록됐다):', err);
-    }
+  await wakeAsker(pool, row.authorId, actorId, messageId, 'ask_closed');
+  return row;
+}
+
+/**
+ * **거울 카드를 원본에 맞춘다**(2026-09-29). 원본이 정해졌으면(답이든 닫힘이든) 아직 열린
+ * 거울을 모두 같은 결과로 닫고, 각 거울을 낸 쪽을 깨우고, 그 채널에 알린다.
+ *
+ * 멱등이다 — 이미 맞춰진 거울은 조건에서 빠진다. 그래서 답·닫힘·거울 발행 **어디서든**
+ * 불러도 된다: 거울을 발행하는 사이 원본이 정해지는 경합도 발행 직후 한 번 부르는 것으로
+ * 닫힌다.
+ *
+ * 답은 **원본에 적힌 그대로**(`answeredBy`·`answeredAt` 까지) 옮긴다 — 누른 사람이 원본에
+ * 누른 것이고 거울에서 누른 것이 아니어도, 거울이 말할 사실은 "무엇으로 누가 정했나"다.
+ * 거울이 이미 닫혀 있어도 답은 덮는다: 답이 닫힘보다 강하다는 것은 `answerAskRow` 의
+ * 규칙(`closedAt` 을 보지 않는다)과 같다. 닫힘은 열린 거울에만 옮긴다.
+ */
+export async function syncAskMirrors(pool: Pool, rootId: string): Promise<void> {
+  const root = await readAskRow(pool, rootId);
+  if (!root) return;
+  let rows: MessageRow[] = [];
+  let reason: 'ask_answered' | 'ask_closed';
+  let actorId: string;
+  if (root.ask.answeredWith != null) {
+    reason = 'ask_answered';
+    actorId = root.ask.answeredBy ?? '';
+    rows = (await pool.query(
+      `update message
+          set meta = jsonb_set(
+                jsonb_set(
+                  jsonb_set(meta::jsonb, '{ask,answeredWith}', to_jsonb($2::text)),
+                  '{ask,answeredBy}', to_jsonb($3::text)),
+                '{ask,answeredAt}', to_jsonb($4::text))
+        where meta->'ask'->>'mirrorOf' = $1
+          and deleted_at is null
+          and meta->'ask'->>'answeredWith' is null
+        returning ${COLS}`,
+      [rootId, root.ask.answeredWith, root.ask.answeredBy ?? null, root.ask.answeredAt ?? new Date().toISOString()],
+    )).rows as MessageRow[];
+  } else if (root.ask.closedAt != null) {
+    reason = 'ask_closed';
+    actorId = root.ask.closedBy ?? '';
+    rows = (await pool.query(
+      `update message
+          set meta = jsonb_set(
+                jsonb_set(
+                  jsonb_set(meta::jsonb, '{ask,closedAt}', to_jsonb($2::text)),
+                  '{ask,closedBy}', to_jsonb($3::text)),
+                '{ask,closedReason}', to_jsonb('declined'::text))
+        where meta->'ask'->>'mirrorOf' = $1
+          and deleted_at is null
+          and meta->'ask'->>'answeredWith' is null
+          and meta->'ask'->>'closedAt' is null
+        returning ${COLS}`,
+      [rootId, root.ask.closedAt, root.ask.closedBy ?? null],
+    )).rows as MessageRow[];
+  } else {
+    return;
   }
-  return updated.rows[0];
+  for (const row of rows) {
+    await wakeAsker(pool, row.authorId, actorId, row.id, reason);
+    emitEvent({ type: 'message.updated', message: row, audience: await audienceFor(pool, row.channelId) });
+  }
+}
+
+export type AskMirrorRefusal =
+  | 'mirror_not_found' | 'mirror_of_mirror' | 'mirror_not_human' | 'mirror_options_mismatch' | 'mirror_resolved';
+
+/**
+ * `message.ask` 의 `mirrorOf` 를 받아도 되는가(2026-09-29, jaebin 이 #task 에서 (b) 를 골랐다).
+ *
+ * 거울은 **사람이 누를 자리를 하나 더 세우는 것**이지 대리 답이 아니다 — 누르는 것은 끝까지
+ * 사람이고, 서버는 그 사람의 이름으로 원본에 옮겨 적을 뿐이다. 그래서 거절하는 경우는 모두
+ * "옮겨 적는 것이 거짓이 되는" 경우다:
+ *
+ * - 원본이 없거나 부른 쪽이 그 채널을 못 본다 → `mirror_not_found`(있다는 것도 새지 않게 같은 답).
+ * - 원본이 거울이다 → `mirror_of_mirror`. 정본을 하나로 두려고 사슬을 막는다(원본을 가리켜라).
+ * - 원본이 사람 앞이 아니다 → `mirror_not_human`. 에이전트 앞 물음을 사람 카드로 세우면 사람이
+ *   남의 물음을 가로채는 길이 된다(`to` 를 실은 뜻).
+ * - 선택지 id 가 다르다 → `mirror_options_mismatch`. 거울에서 고른 id 가 원본에 없으면 옮길 수
+ *   없고, 일부만 같으면 사람이 본 선택지와 원본의 선택지가 다른 것이다. 라벨은 달라도 된다
+ *   (다른 채널에서 읽히게 다시 쓸 수 있다).
+ * - 원본이 이미 정해졌다 → `mirror_resolved`. 정해진 것을 다시 묻는 카드는 소음이다.
+ */
+export async function checkAskMirror(
+  pool: Pool, args: { rootId: string; callerId: string; optionIds: string[] },
+): Promise<AskMirrorRefusal | null> {
+  const root = await readAskRow(pool, args.rootId);
+  if (!root) return 'mirror_not_found';
+  if (!(await assertChannelVisible(pool, root.channelId, args.callerId))) return 'mirror_not_found';
+  if (root.ask.mirrorOf) return 'mirror_of_mirror';
+  if (root.ask.to.kind !== 'human') return 'mirror_not_human';
+  const rootIds = root.ask.options.map((o) => o.id).sort();
+  const ids = [...args.optionIds].sort();
+  if (rootIds.length !== ids.length || rootIds.some((id, i) => id !== ids[i])) return 'mirror_options_mismatch';
+  if (!isAskOpen(root.ask)) return 'mirror_resolved';
+  return null;
 }
 
 /**
@@ -1366,9 +1565,15 @@ export async function recordAskAnswer(
  *
  * ## 누가 닫을 수 있는가
  *
- * 답할 수 있는 사람(`recordAskAnswer` 와 **같은 규칙**), **물어본 쪽**, 그리고 admin 이다.
- * 물어본 쪽을 넣는 이유: 스스로 답을 찾았으면 자기 물음을 거두는 것이 맞고, 그 길이
- * 없으면 에이전트는 자기가 세운 대기 줄을 지울 수 없다.
+ * 답할 수 있는 사람(`recordAskAnswer` 와 **같은 규칙** — 사람 앞 물음이면 사람), **물어본 쪽**,
+ * 그리고 admin 이다. 물어본 쪽을 넣는 이유: 스스로 답을 찾았으면 자기 물음을 거두는 것이
+ * 맞고, 그 길이 없으면 에이전트는 자기가 세운 대기 줄을 지울 수 없다.
+ *
+ * ## 거울과 함께 닫힌다 (2026-09-29)
+ *
+ * 원본이 닫히면 열린 거울도 닫힌다(`syncAskMirrors`). 거울에서 닫으면 **닫은 쪽이 사람일
+ * 때만** 원본도 닫는다 — 거울을 낸 에이전트가 자기 거울을 거두는 것은 "사람이 답하지 않기로
+ * 했다"가 아니다. 그것을 원본에 옮기면 에이전트가 사람 카드를 정하는 길이 된다.
  *
  * ## 이미 답이 있으면 거절한다
  *
@@ -1390,54 +1595,44 @@ export async function closeAsk(
   if (ask.answeredWith != null) return 'already_answered';
 
   const asker: string | null = found.rows[0].authorId;
-  const mayAnswer = ask.to.kind === 'human' || ask.to.accountId === args.actorId;
+  const actorIsHuman = await isHumanAccount(pool, args.actorId);
+  const mayAnswer = ask.to.kind === 'human' ? actorIsHuman : ask.to.accountId === args.actorId;
   if (!mayAnswer && asker !== args.actorId && !args.actorIsAdmin) return 'forbidden';
 
-  const updated = await pool.query(
-    `update message
-        set meta = jsonb_set(
-              jsonb_set(
-                jsonb_set(meta::jsonb, '{ask,closedAt}', to_jsonb(now())),
-                '{ask,closedBy}', to_jsonb($2::text)),
-              '{ask,closedReason}', to_jsonb('declined'::text))
-      where id = $1
-        and deleted_at is null
-        and meta->'ask'->>'answeredWith' is null
-        and meta->'ask'->>'closedAt' is null
-      returning ${COLS}`,
-    [args.messageId, args.actorId],
-  );
+  /**
+   * 사람이 거울에서 닫으면 **원본을 먼저 닫는다** — 답과 같은 이유로 정본은 원본이다.
+   * 원본이 이미 답을 가졌으면 이 닫힘은 경합에서 진 것이고, 거울은 그 답으로 맞춰진다.
+   * 원본 채널을 못 보는 사람은 원본을 닫지 않는다(거울만 닫힌다).
+   */
+  if (ask.mirrorOf && actorIsHuman) {
+    const root = await readAskRow(pool, ask.mirrorOf);
+    if (root && root.ask.to.kind === 'human' && (await assertChannelVisible(pool, root.channelId, args.actorId))) {
+      const rootRow = await closeAskRow(pool, ask.mirrorOf, args.actorId);
+      if (rootRow) {
+        emitEvent({ type: 'message.updated', message: rootRow, audience: await audienceFor(pool, rootRow.channelId) });
+      }
+      await syncAskMirrors(pool, ask.mirrorOf);
+      const after = await getMessageById(pool, args.messageId);
+      if (!after) return 'not_found';
+      const askAfter = readAskMeta(after.meta);
+      if (askAfter?.answeredWith != null) return 'already_answered';
+      if (askAfter?.closedAt != null) return after;
+      // 원본은 닫혔는데 이 거울만 남았다면(원본 없이 조건이 갈린 경우) 아래에서 거울만 닫는다.
+    }
+  }
+
+  const row = await closeAskRow(pool, args.messageId, args.actorId);
   // 갱신된 행이 없으면 누군가 먼저 닫았거나 먼저 답했다. 답이 이겼는지 여기서 다시 읽어
   // 가른다 — 닫힘이 먼저였으면 사람이 원한 결과가 이미 나 있으므로 그 행을 그대로 준다.
-  if (!updated.rowCount) {
+  if (!row) {
     const after = await getMessageById(pool, args.messageId);
     if (!after) return 'not_found';
     const askAfter = readAskMeta(after.meta);
     return askAfter?.answeredWith != null ? 'already_answered' : after;
   }
-
-  /**
-   * **물어본 쪽을 깨운다.** `recordAskAnswer` 와 같은 이유이고 같은 자리다: `message.ask`
-   * 는 발화라서 그 턴은 물음을 올린 뒤 회수되므로, 깨우지 않으면 "답하지 않겠다"는 결정을
-   * 물어본 에이전트가 영영 모른다 — 그러면 그 턴은 접히지 않고 사람은 같은 물음을 다시
-   * 받는다. 사유를 `ask_answered` 와 가르는 이유는 러너가 할 일이 다르기 때문이다(고른
-   * 길로 가는 것이 아니라 접는 것이다 — 마이그레이션 045).
-   *
-   * 자기 물음을 자기가 거둔 경우는 깨우지 않는다. 실패해도 던지지 않는다 — 닫힘은 이미
-   * 기록됐고, 그것이 이 함수가 약속한 것이다.
-   */
-  if (asker && asker !== args.actorId) {
-    try {
-      await pool.query(
-        `insert into inbox (account_id, message_id, reason) values ($1, $2, 'ask_closed')`,
-        [asker, args.messageId],
-      );
-      emitEvent({ type: 'inbox.updated', accountId: asker });
-    } catch (err) {
-      console.error('[closeAsk] 깨움 실패(닫힘은 기록됐다):', err);
-    }
-  }
-  return updated.rows[0];
+  // 원본이면 열린 거울도 닫는다.
+  if (!ask.mirrorOf) await syncAskMirrors(pool, args.messageId);
+  return row;
 }
 
 /** 삭제는 작성자 또는 admin. 수정과 달리 원문을 왜곡하지 않고 가리는 일이라 운영자에게 열어둔다. */

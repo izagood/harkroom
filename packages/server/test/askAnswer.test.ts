@@ -8,7 +8,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
-import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 import { postMessage } from '../src/services/messages.js';
 import type { AskMeta } from '@harkroom/shared';
 
@@ -20,6 +20,8 @@ let adminId: string;
 let agentId: string;
 let agentPat: string;
 let channelId: string;
+let memberToken: string;
+let memberId: string;
 
 const auth = (token: string) => ({ authorization: `Bearer ${token}` });
 
@@ -30,6 +32,7 @@ beforeAll(async () => {
   app = await buildServer({ pool: db.pool });
   ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
   ({ accountId: agentId, pat: agentPat } = await createAgent(app, adminToken, 'askbot'));
+  ({ token: memberToken, accountId: memberId } = await createMember(app, adminToken, 'askmember'));
   const ch = await app.inject({
     method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'asks' },
   });
@@ -75,7 +78,7 @@ describe('POST /channels/:id/messages/:messageId/ask-answer', () => {
 
     const second = await app.inject({
       method: 'POST', url: `/channels/${channelId}/messages/${id}/ask-answer`,
-      headers: auth(agentPat), payload: { optionId: 'edit' },
+      headers: auth(memberToken), payload: { optionId: 'edit' },
     });
     expect(second.statusCode).toBe(409);
     expect(second.json().error.code).toBe('already_answered');
@@ -184,5 +187,157 @@ describe('선택에 답하면 물어본 에이전트가 깨어난다', () => {
       [agentId, messageId],
     );
     expect(n.rows[0].n).toBe(1);
+  });
+});
+
+// ── 사람 앞 물음은 사람만 답한다(2026-09-29)
+//
+// 전에는 `to.kind === 'account'` 만 검사해서, 채널을 볼 수 있는 계정이면 에이전트도 HTTP 로
+// 사람 카드를 누를 수 있었다. MCP 에 도구가 없어 막혀 있었을 뿐이다.
+describe('사람 앞 물음 — 에이전트는 답하지도 닫지도 못한다', () => {
+  it('에이전트가 사람 카드에 답하면 403, 사람은 된다', async () => {
+    const { pat: otherPat } = await createAgent(app, adminToken, 'askintruder');
+    const id = await seedAsk({ kind: 'human' });
+    const url = `/channels/${channelId}/messages/${id}/ask-answer`;
+    for (const pat of [otherPat, agentPat]) {
+      const res = await app.inject({ method: 'POST', url, headers: auth(pat), payload: { optionId: 'new' } });
+      expect(res.statusCode).toBe(403);
+    }
+    const ok = await app.inject({ method: 'POST', url, headers: auth(memberToken), payload: { optionId: 'new' } });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().meta.ask.answeredBy).toBe(memberId);
+  });
+
+  it('남의 에이전트는 사람 카드를 닫지 못하고, 물어본 에이전트는 자기 카드를 거둘 수 있다', async () => {
+    const { pat: otherPat } = await createAgent(app, adminToken, 'askintruder2');
+    const id = await seedAsk({ kind: 'human' });
+    const url = `/channels/${channelId}/messages/${id}/ask-close`;
+    const denied = await app.inject({ method: 'POST', url, headers: auth(otherPat) });
+    expect(denied.statusCode).toBe(403);
+    const own = await app.inject({ method: 'POST', url, headers: auth(agentPat) });
+    expect(own.statusCode).toBe(200);
+    expect(own.json().meta.ask.closedBy).toBe(agentId);
+  });
+});
+
+// ── 거울 카드(`mirrorOf`, 2026-09-29) — 관리 에이전트가 다른 채널에 같은 선택지로 다시 세운 카드
+//
+// 정본은 원본이다. 사람이 어느 쪽을 누르든 원본에 그 사람 이름으로 적히고, 열린 거울은
+// 같은 결과로 닫힌다. 원본을 낸 쪽과 거울을 낸 쪽이 **둘 다** 깨어난다.
+describe('거울 카드', () => {
+  let mirrorBotId: string;
+  let mirrorBotPat: string;
+  let otherChannelId: string;
+
+  beforeAll(async () => {
+    ({ accountId: mirrorBotId, pat: mirrorBotPat } = await createAgent(app, adminToken, 'mirrorbot'));
+    const ch = await app.inject({
+      method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'task-mirror' },
+    });
+    otherChannelId = ch.json().id;
+  });
+
+  async function seedMirror(rootId: string): Promise<string> {
+    const meta: AskMeta = {
+      kind: 'ask',
+      ask: {
+        options: [{ id: 'edit', label: '008 을 고친다' }, { id: 'new', label: '새 009' }],
+        to: { kind: 'human' }, mirrorOf: rootId,
+      },
+    };
+    const posted = await postMessage(pool, {
+      channelId: otherChannelId, authorId: mirrorBotId, body: '[원래 스레드] 골라 줘',
+      meta: meta as unknown as Record<string, unknown>,
+    });
+    return (posted as { message: { id: string } }).message.id;
+  }
+
+  const lastWake = async (accountId: string, messageId: string) => (await pool.query(
+    `select reason from inbox where account_id = $1 and message_id = $2 order by id desc`, [accountId, messageId],
+  )).rows.map((r) => r.reason as string);
+
+  const metaOf = async (id: string) => (await pool.query(`select meta from message where id = $1`, [id])).rows[0].meta.ask;
+
+  it('거울에 답하면 원본에도 그 사람 이름으로 적히고, 두 쪽이 다 깨어난다', async () => {
+    const root = await seedAsk({ kind: 'human' });
+    const mirror = await seedMirror(root);
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${otherChannelId}/messages/${mirror}/ask-answer`,
+      headers: auth(memberToken), payload: { optionId: 'edit' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().meta.ask).toMatchObject({ answeredWith: 'edit', answeredBy: memberId, mirrorOf: root });
+    expect(await metaOf(root)).toMatchObject({ answeredWith: 'edit', answeredBy: memberId });
+    expect(await lastWake(agentId, root)).toEqual(['ask_answered']);
+    expect(await lastWake(mirrorBotId, mirror)).toEqual(['ask_answered']);
+  });
+
+  it('원본에 먼저 답하면 거울은 그 답으로 닫히고, 뒤늦은 거울 답은 409', async () => {
+    const root = await seedAsk({ kind: 'human' });
+    const mirror = await seedMirror(root);
+    const first = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages/${root}/ask-answer`,
+      headers: auth(adminToken), payload: { optionId: 'new' },
+    });
+    expect(first.statusCode).toBe(200);
+    expect(await metaOf(mirror)).toMatchObject({ answeredWith: 'new', answeredBy: adminId });
+    expect(await lastWake(mirrorBotId, mirror)).toEqual(['ask_answered']);
+
+    const late = await app.inject({
+      method: 'POST', url: `/channels/${otherChannelId}/messages/${mirror}/ask-answer`,
+      headers: auth(memberToken), payload: { optionId: 'edit' },
+    });
+    expect(late.statusCode).toBe(409);
+    // 진 답은 어디에도 남지 않는다.
+    expect((await metaOf(root)).answeredWith).toBe('new');
+    expect((await metaOf(mirror)).answeredWith).toBe('new');
+    expect(await lastWake(agentId, root)).toEqual(['ask_answered']);
+  });
+
+  it('에이전트는 거울을 거쳐서도 사람 카드에 답하지 못한다', async () => {
+    const root = await seedAsk({ kind: 'human' });
+    const mirror = await seedMirror(root);
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${otherChannelId}/messages/${mirror}/ask-answer`,
+      headers: auth(mirrorBotPat), payload: { optionId: 'edit' },
+    });
+    expect(res.statusCode).toBe(403);
+    expect((await metaOf(root)).answeredWith).toBeUndefined();
+  });
+
+  it('사람이 거울에서 "답하지 않기로" 하면 원본도 닫힌다', async () => {
+    const root = await seedAsk({ kind: 'human' });
+    const mirror = await seedMirror(root);
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${otherChannelId}/messages/${mirror}/ask-close`, headers: auth(memberToken),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().meta.ask.closedBy).toBe(memberId);
+    expect(await metaOf(root)).toMatchObject({ closedBy: memberId, closedReason: 'declined' });
+    expect(await lastWake(agentId, root)).toEqual(['ask_closed']);
+    expect(await lastWake(mirrorBotId, mirror)).toEqual(['ask_closed']);
+  });
+
+  it('거울을 낸 에이전트가 자기 거울을 거두면 원본은 열린 채로 남는다', async () => {
+    const root = await seedAsk({ kind: 'human' });
+    const mirror = await seedMirror(root);
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${otherChannelId}/messages/${mirror}/ask-close`, headers: auth(mirrorBotPat),
+    });
+    expect(res.statusCode).toBe(200);
+    const rootAsk = await metaOf(root);
+    expect(rootAsk.closedAt).toBeUndefined();
+    expect(rootAsk.answeredWith).toBeUndefined();
+  });
+
+  it('원본이 닫히면 열린 거울도 닫힌다', async () => {
+    const root = await seedAsk({ kind: 'human' });
+    const mirror = await seedMirror(root);
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages/${root}/ask-close`, headers: auth(adminToken),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(await metaOf(mirror)).toMatchObject({ closedBy: adminId, closedReason: 'declined' });
+    expect(await lastWake(mirrorBotId, mirror)).toEqual(['ask_closed']);
   });
 });
