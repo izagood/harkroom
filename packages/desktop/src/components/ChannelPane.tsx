@@ -1,10 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
-import { MessageItem } from './MessageItem';
-import { ProgressRow } from './ProgressRow';
+import { MessageRows } from './MessageRows';
 import { groupProgress } from '../lib/progressGroup';
-import { AgentExchange } from './AgentExchange';
 import { groupAgentExchanges } from '../lib/agentExchange';
 import { Composer } from './Composer';
 import { TypingLine } from './TypingLine';
@@ -12,11 +10,11 @@ import { ChannelFiles } from './ChannelFiles';
 import { ChannelDocPanel } from './ChannelDocPanel';
 import { ChannelEmptyState } from './ChannelEmptyState';
 import { RunnerStatusLine } from './RunnerStatus';
-import { dayLabel, localDayKey } from '../lib/day';
 import { distanceFromBottom, isNearBottom, isNearTop } from '../lib/stickyBottom';
 import { anchoredScrollTop, needsAnchorFix, pickAnchor, type ScrollAnchor } from '../lib/scrollAnchor';
 import { useLocale, useT } from '../i18n/useT';
 import { displayBody } from '../lib/mention';
+import { selectAccountNames } from '../lib/accountNames';
 import { mentionedHandles, mentionedIds } from '@harkroom/shared';
 import type { SectionId } from './settings/sections';
 
@@ -248,12 +246,15 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * 연속된 진행(progress)을 한 줄로 접는다(#144, 규칙 02). 판정은 `lib/progressGroup` 의
    * 순수 함수가 하고, 스레드 패널도 **같은 함수**를 쓴다 — 두 곳에 두면 조용히 갈라진다.
    */
+  // 접힘 판정이 읽는 것은 "에이전트인가"뿐이다 — 이름 쪽 지도를 쓴다. `accounts` 를 딸림값으로
+  // 두면 누구의 상태·아바타가 바뀔 때마다 자리 배열이 새로 생겨 보이는 줄이 전부 다시 그려진다.
+  const accountNames = useActiveStore(selectAccountNames);
   const slots = useMemo(() => {
     // **순서가 중요하다**: 진행을 먼저 접고, 그 위에 에이전트끼리의 주고받기를 접는다.
     // 반대로 하면 진행 묶음이 주고받기 안으로 삼켜져 두 규칙이 한 줄에 뭉친다.
-    const isAgent = (id: string): boolean => accounts[id]?.kind === 'agent';
+    const isAgent = (id: string): boolean => accountNames[id]?.kind === 'agent';
     return groupAgentExchanges(groupProgress(roots), isAgent);
-  }, [roots, accounts]);
+  }, [roots, accountNames]);
 
   /**
    * 구분선을 그릴 메시지. **채널을 열 때 얼려 둔 위치**(`dividerSeq`)를 쓴다 — 라이브 읽음
@@ -334,6 +335,20 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * 건드리지 않고, 기존 판정(`atBottomRef`·`stickyRef`)만 남는다.
    */
   const endSettle = () => { settleUntilRef.current = 0; };
+
+  /**
+   * 강조 점프(`MessageRows`)가 목록을 옮기기 **직전**에 부른다. 바닥 추종을 끄고 정착 창을
+   * 닫는다 — 안 끄면 정착 루프·바닥 관찰자가 방금 옮긴 자리를 바닥으로 되끌어 간다. 사람이
+   * 스스로 위로 올린 것과 같은 상태가 되므로 "아래로 내려가기" 버튼도 선다.
+   */
+  const onJump = () => {
+    endSettle();
+    // 붙잡아 둔 줄은 **떠날 자리**다. 두면 옮긴 직후 높이 관찰자가 그 줄로 되돌려 놓는다.
+    anchorRef.current = null;
+    atBottomRef.current = false;
+    stickyRef.current = false;
+    setJumpVisible(true);
+  };
 
   /**
    * 정착 창을 **연다**(또는 이미 열려 있으면 끝 시각을 미룬다).
@@ -529,7 +544,14 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     // jsdom 에는 `ResizeObserver` 가 없다. 없으면 이 보정만 빠진다 — 커밋으로 도는 위의
     // 효과는 그대로 돈다(`IntersectionObserver` 의 `typeof` 확인과 같은 태도다).
     if (!box || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => { restoreAnchor(); });
+    // 바닥에 붙어 있으면 **그리기 전에** 바닥으로 되붙인다. 창이 바닥 근처 줄을 재면서 위쪽
+    // 어림 높이가 실제 높이로 바뀌는 일이 채널을 열 때마다 생긴다 — 바닥 표식 관찰자만 기다리면
+    // 한 프레임 밀린 화면이 보인다.
+    const ro = new ResizeObserver(() => {
+      const el = listRef.current;
+      if (stickyRef.current && el && distanceFromBottom(el) > 0) scrollToBottom();
+      else restoreAnchor();
+    });
     ro.observe(box);
     return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -734,45 +756,19 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
         {/* 줄들을 한 상자에 담는다 — 높이 변화를 지켜볼 대상이자, 붙잡을 후보의 범위다
             (`contentRef` 주석). 상자는 아무 모양도 주지 않으므로 목록의 배치는 그대로다. */}
         <div ref={contentRef}>
-        {slots.map((slot, i) => {
-          // 구분선·키는 그 자리의 **첫 메시지**를 기준으로 삼는다 — 접힌 묶음도 목록에서는
-          // 한 자리이고, 그 자리가 시작된 시각이 곧 그 자리의 날짜다.
-          const m = slot.kind === 'message' ? slot.message : slot.messages[0]!;
-          // 앞 메시지와 로컬 날짜가 다르면 새 날이다. 목록의 첫 메시지도 새 날로 친다 —
-          // 그 채널의 첫 날도 날이고, 여기에 선이 없으면 위쪽 메시지들의 날짜를 알 길이 없다.
-          const prevSlot = slots[i - 1];
-          const prev = prevSlot && (prevSlot.kind === 'message' ? prevSlot.message : prevSlot.messages[0]!);
-          const newDay = !prev || localDayKey(prev.createdAt) !== localDayKey(m.createdAt);
-          return (
-            /* `data-anchor-id` 는 **읽던 자리를 붙잡을 손잡이**다(`lib/scrollAnchor.ts`).
-               자리마다 하나여야 하므로 묶음도 첫 메시지의 id 를 쓴다 — 키와 같은 기준이다. */
-            <div key={m.id} data-anchor-id={m.id}>
-              {/*
-                날짜 구분선과 "New messages" 구분선은 **한 지점에 둘 다 걸릴 수 있고, 그때 둘 다 그린다**.
-                하나를 감추면 "여기부터 새 날"과 "여기부터 안 읽음"이라는 서로 다른 두 사실 중
-                하나가 사라진다. 날짜를 먼저 두는 것은 읽는 순서다 — 날이 바뀌고, 그 안에서 안 읽음이 시작된다.
-              */}
-              {newDay && (
-                <div className="flex items-center gap-2 px-4 py-1" role="separator">
-                  <span className="h-px flex-1 bg-surface-hover" />
-                  <span className="text-meta font-medium text-fg-subtle">{dayLabel(m.createdAt, locale)}</span>
-                  <span className="h-px flex-1 bg-surface-hover" />
-                </div>
-              )}
-              {m.id === dividerBeforeId && (
-                <div className="flex items-center gap-2 px-4 py-1" role="separator">
-                  <span className="h-px flex-1 bg-danger-border" />
-                  <span className="text-meta font-medium text-danger">New messages</span>
-                  <span className="h-px flex-1 bg-danger-border" />
-                </div>
-              )}
-              {slot.kind === 'progress' ? <ProgressRow messages={slot.messages} endedAt={slot.endedAt} />
-                : slot.kind === 'exchange'
-                  ? <AgentExchange messages={slot.messages} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />
-                  : <MessageItem message={m} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
-            </div>
-          );
-        })}
+        {/* 줄은 창으로 좁혀 그린다(`MessageRows` 의 근거). 채널마다 새로 만드는 이유: 잰 높이·
+            창 위치는 그 채널의 것이다 — 들고 가면 새 채널의 첫 계산이 남의 높이로 시작한다. */}
+        <MessageRows
+          key={activeChannelId}
+          slots={slots}
+          scrollRef={listRef}
+          dividerBeforeId={dividerBeforeId}
+          locale={locale}
+          hasMore={!!channelHasMore}
+          onJump={onJump}
+          onOpenDirectory={onOpenDirectory}
+          onOpenSettings={onOpenSettings}
+        />
         </div>
         {/* 바닥 표식. **높이 1px 을 주는 이유**: 위의 관찰자가 이 요소로 "바닥이 보이는가"를
             판정한다 — 높이가 0 인 상자의 교차 판정은 브라우저마다 다르게 굴러 신호가 조용히
