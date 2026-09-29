@@ -455,7 +455,8 @@ fn claude_pool_remove(
 //
 // 계정 풀 명령과 같다: 웹뷰는 **계정 이름·로그인 id** 만 넘기고, `codex login` 을 띄우는 것도
 // 파일을 쓰는 것도 데몬이다(`runnerShellScope.test.ts` 가 파라미터를 고정한다).
-// 공급자 API 사용률(2026-09-28). 웹뷰는 아무것도 넘기지 않는다 — 토큰을 읽고 부르는 것은 데몬이다.
+// 한도 사용률(2026-09-28). 웹뷰는 아무것도 넘기지 않는다 — CLI 를 띄우고 (실패하면) 토큰을 읽어
+// API 를 부르는 것은 데몬이다.
 #[tauri::command]
 fn claude_accounts_provider_usage(
     app: tauri::AppHandle,

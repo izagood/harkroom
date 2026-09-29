@@ -8,23 +8,12 @@
 import { useT } from '../../i18n/useT';
 import { ClaudeAccountsSettings } from './ClaudeAccountsSettings';
 import { CodexAccountsSettings } from './CodexAccountsSettings';
-import { useProviderUsageEnabled } from '../../lib/providerUsage';
-import { SettingsGroup, SettingsPage, Toggle } from './primitives';
+import { SettingsPage } from './primitives';
 
 export function ProviderAccountsSettings() {
   const t = useT();
-  const [usageOn, setUsageOn] = useProviderUsageEnabled();
   return (
     <SettingsPage title={t('providerAccounts.page.title')} description={t('providerAccounts.page.subtitle')} width="wide">
-      {/* 비공식 엔드포인트를 쓰는 기능이라 **경고를 토글과 한 자리에** 둔다 — 켜는 사람이 그 문장을 지나야 한다. */}
-      <SettingsGroup>
-        <Toggle
-          label={t('providerUsage.toggle.label')}
-          description={t('providerUsage.toggle.description')}
-          checked={usageOn}
-          onChange={setUsageOn}
-        />
-      </SettingsGroup>
       <ClaudeAccountsSettings embedded />
       <CodexAccountsSettings />
     </SettingsPage>

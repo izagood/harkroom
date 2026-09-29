@@ -40,7 +40,9 @@ import {
 import type { ClaudeUsageSnapshot, ProviderUsageSnapshot } from '@harkroom/shared/daemonProtocol';
 
 import { measureClaudeUsage, type UsageTarget } from './claudeUsage.js';
+import { claudeCliUsage, type RunCommand } from './cliUsage.js';
 import { fetchClaudeProviderUsage, type ClaudeOAuthToken, type FetchLike } from './providerUsage.js';
+import { cliThenApi, createUsageCache } from './usageChain.js';
 
 /**
  * `claude auth status --json` 이 주는 것 중 **UI 가 쓰는 것만**. 비밀값은 이 출력에 없다
@@ -139,8 +141,8 @@ export interface ClaudeAccountsPort {
    */
   usage(): Promise<ClaudeUsageSnapshot>;
   /**
-   * 공급자 API 가 말하는 한도 사용률(비공식 — `providerUsage.ts`). 화면의 토글이 켜졌을 때만 부른다.
-   * 계정끼리 **병렬로** 묻는다 — 하나가 느려도 나머지를 기다리게 하지 않는다.
+   * 계정별 한도 사용률. CLI(`claude -p /usage`) 먼저, 실패하면 API(`/api/oauth/usage`) — 출처는 같다
+   * (`usageChain.ts`). 계정끼리 **병렬로** 묻는다 — 하나가 느려도 나머지를 기다리게 하지 않는다.
    */
   providerUsage(): Promise<ProviderUsageSnapshot>;
   /** 진행 중인 로그인을 전부 회수한다. 데몬 종료 경로가 부른다. */
@@ -413,12 +415,16 @@ export function createClaudeAccountsPort(opts: {
   /** 공급자 API 호출. 테스트가 가짜를 끼운다 — CI 에는 로그인도 네트워크도 없다. */
   fetchImpl?: FetchLike;
   readToken?: (configDir: string) => Promise<ClaudeOAuthToken | null>;
+  /** 공식 경로(`claude -p /usage`)의 실행기. 테스트가 가짜를 끼운다. */
+  runCli?: RunCommand;
+  usageCacheMs?: number;
 } = {}): ClaudeAccountsPort {
   const root = opts.root ?? claudeAccountsRoot();
   const runStatus = opts.runStatus ?? nodeRunStatus;
   const spawnLogin = opts.spawnLogin ?? nodeSpawnLogin;
   const killGraceMs = opts.killGraceMs ?? LOGIN_KILL_GRACE_MS;
   const now = opts.now ?? ((): number => Date.now());
+  const usageCache = createUsageCache(opts.usageCacheMs, now);
 
   /** 진행 중인 로그인. 키는 `loginId`. */
   const logins = new Map<string, {
@@ -478,11 +484,14 @@ export function createClaudeAccountsPort(opts: {
       const accounts = await Promise.all(targets.map(async (t) => ({
         account: t.name,
         pool: t.pool,
-        ...(await fetchClaudeProviderUsage({
-          configDir: t.dir, now: at,
-          fetchImpl: opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike),
-          ...(opts.readToken ? { readToken: opts.readToken } : {}),
-        })),
+        ...(await usageCache(t.dir, () => cliThenApi(
+          () => claudeCliUsage({ configDir: t.dir, now: at, ...(opts.runCli ? { run: opts.runCli } : {}) }),
+          () => fetchClaudeProviderUsage({
+            configDir: t.dir, now: at,
+            fetchImpl: opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike),
+            ...(opts.readToken ? { readToken: opts.readToken } : {}),
+          }),
+        ))),
       })));
       return { measuredAtMs: at, accounts };
     },
