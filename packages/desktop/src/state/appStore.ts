@@ -107,6 +107,12 @@ export interface AppState {
    */
   serverVersion: ServerVersion | null;
   /**
+   * 이 커뮤니티의 워크스페이스 아이콘 objectURL(커뮤니티 레일의 사진). `null` 은 "걸린 것이
+   * 없거나 아직 못 받았다" — 레일은 그때 이름 첫 글자를 그린다. `serverVersion` 과 같은 이유로
+   * 커뮤니티마다 **자기 스토어에** 산다. 끊겨도 지우지 않는다 — 마지막으로 받은 얼굴이 맞다.
+   */
+  workspaceIconUrl: string | null;
+  /**
    * avcs 투영 상태(#267). 60초마다 갱신한다. `null` 은 **"아직 모른다"** 다 —
    * "투영이 없다"가 아니다. 화면이 둘을 갈라 말해야 하므로 별도의 값으로 둔다.
    */
@@ -373,7 +379,7 @@ export const NO_TEAMS: AgentTeamRow[] = [];
 const initial = {
   me: null, accounts: {}, groups: [], teams: null, channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], inboxRevision: 0, reads: {}, dividerSeq: {},
-  online: [], terminalTarget: null, leases: [], connected: false, serverVersion: null,
+  online: [], terminalTarget: null, leases: [], connected: false, serverVersion: null, workspaceIconUrl: null,
   projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, drafts: {}, stickyMentions: {},
   history: [], historyIndex: -1, notice: null, notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,

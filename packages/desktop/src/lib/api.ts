@@ -577,6 +577,25 @@ export class ApiClient {
   }
 
   /**
+   * 워크스페이스 아이콘 바이트(커뮤니티 레일의 사진). `fetchAvatar` 와 같은 이유로 토큰을 URL 에
+   * 넣지 않는다. **걸린 것이 없으면(404) null** 이다 — 레일은 그때 이름 첫 글자로 폴백한다.
+   * 이 라우트가 없는 옛 서버도 404 라 같은 폴백으로 떨어진다.
+   */
+  async fetchWorkspaceIcon(): Promise<Blob | null> {
+    const res = await fetch(`${this.baseUrl}/workspace/icon`, {
+      headers: this.token ? { authorization: `Bearer ${this.token}` } : {},
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new ApiError(res.status, 'workspace_icon_failed', `HTTP ${res.status}`);
+    return res.blob();
+  }
+
+  /** 워크스페이스 아이콘을 건다(첨부 id) 또는 지운다(**명시적 null**) — owner/admin 전용. */
+  setWorkspaceIcon(attachmentId: string | null): Promise<{ iconAttachmentId: string | null }> {
+    return this.req('PUT', '/settings/workspace-icon', { attachmentId });
+  }
+
+  /**
    * 내 아바타를 정하거나(첨부 id) 지운다(**명시적 null**). 키를 생략하지 않는다 —
    * `undefined` 는 `JSON.stringify` 가 버려서 지우기가 조용히 무시된다.
    */

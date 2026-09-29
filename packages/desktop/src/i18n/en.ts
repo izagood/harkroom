@@ -562,6 +562,11 @@ export const en = {
   'profileAvatar.removeCancel': 'Cancel',
   'profileAvatar.removeConfirm': 'Delete for good',
 
+  // 워크스페이스 아이콘 — 커뮤니티 레일의 사진(설정 › Workspace).
+  'workspaceIcon.description': 'Settings for this workspace, shared by every member.',
+  'workspaceIcon.label': 'Workspace icon',
+  'workspaceIcon.adminOnly': 'Only owners and admins can change the icon. Without one, the community rail shows the first letter of the name.',
+
   'profileName.apply': 'Apply',
   'profileName.empty': 'Enter a new name',
   'profileName.cancel': 'Cancel',
