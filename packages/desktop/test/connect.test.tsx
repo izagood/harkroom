@@ -5,6 +5,8 @@ import { ConnectScreen } from '../src/screens/ConnectScreen';
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  // 성공한 로그인은 주소를 남긴다 — 다음 테스트의 기본값으로 새지 않게 비운다.
+  localStorage.clear();
 });
 
 describe('ConnectScreen', () => {
@@ -162,5 +164,49 @@ describe('ConnectScreen', () => {
     await waitFor(() =>
       expect(onConnected).toHaveBeenCalledWith('http://localhost:3400', 'tok-246', 'acct_246', 'admin'));
     expect(seen.find((s) => s.url.endsWith('/auth/me'))?.auth).toBe('Bearer tok-246');
+  });
+  describe('remembers the last workspace URL', () => {
+    const okFetch = () => vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).endsWith('/auth/login')) return new Response(JSON.stringify({ token: 'tok-u' }), { status: 200 });
+      if (String(url).endsWith('/auth/me')) {
+        return new Response(JSON.stringify({ id: 'acct_u', handle: 'me', displayName: 'Me', kind: 'human', isAdmin: false, disabled: false }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+    const urlField = () => screen.getByLabelText('Server URL') as HTMLInputElement;
+    const signIn = (url: string) => {
+      fireEvent.change(urlField(), { target: { value: url } });
+      fireEvent.change(screen.getByLabelText('Login ID'), { target: { value: 'me' } });
+      fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    };
+
+    it('falls back to localhost when this device never signed in', () => {
+      render(<ConnectScreen onConnected={vi.fn()} />);
+      expect(urlField().value).toBe('http://localhost:3400');
+    });
+
+    it('prefills the URL of the last successful sign-in', async () => {
+      okFetch();
+      const onConnected = vi.fn();
+      render(<ConnectScreen onConnected={onConnected} />);
+      signIn('https://team.example.com/');
+      await waitFor(() => expect(onConnected).toHaveBeenCalled());
+      cleanup();
+      render(<ConnectScreen onConnected={vi.fn()} />);
+      // 끝 슬래시는 ApiClient 가 떼어 낸 모양으로 남는다.
+      expect(urlField().value).toBe('https://team.example.com');
+    });
+
+    it('does not remember a URL whose sign-in failed', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () =>
+        new Response(JSON.stringify({ error: { code: 'invalid_credentials', message: 'wrong handle or password' } }), { status: 401 })));
+      render(<ConnectScreen onConnected={vi.fn()} />);
+      signIn('https://typo.example.com');
+      await waitFor(() => expect(screen.getByText('wrong handle or password')).toBeTruthy());
+      cleanup();
+      render(<ConnectScreen onConnected={vi.fn()} />);
+      expect(urlField().value).toBe('http://localhost:3400');
+    });
   });
 });

@@ -57,6 +57,7 @@ const UNDO_SEND_KEY = 'harkroom.undoSendMs';
 const THREAD_WIDTH_KEY = 'harkroom.threadWidth';
 const TERMINAL_WIDTH_KEY = 'harkroom.terminalWidth';
 const INBOX_FILTER_KEY = 'harkroom.inboxFilter';
+const LAST_WORKSPACE_URL_KEY = 'harkroom.lastWorkspaceUrl';
 
 export const MIN_SIDEBAR_WIDTH = 200;
 export const MAX_SIDEBAR_WIDTH = 480;
@@ -237,6 +238,35 @@ export const inboxStorage = {
   },
   saveFilter(filter: InboxFilter): void {
     try { localStorage.setItem(INBOX_FILTER_KEY, filter); } catch { /* 저장 불가 환경 허용 */ }
+  },
+};
+
+/**
+ * 로그인 화면의 "Workspace URL" 칸이 처음에 보여 줄 값.
+ *
+ * 로그인에 **성공한** 주소만 적는다 — 틀린 주소로 실패한 시도까지 적으면 다음 기동에 그
+ * 틀린 주소가 다시 채워진다. 세션 레지스트리(`session.ts`)에서 꺼내 쓰지 않는 이유: 로그아웃
+ * 하면 그 항목이 지워지는데, 이 값이 가장 필요한 때가 바로 로그아웃 뒤 다시 들어올 때다.
+ * 토큰이 아니라 주소뿐이라 키체인이 아니라 `localStorage` 에 둔다.
+ *
+ * 저장본이 없으면(이 기기에서 한 번도 로그인한 적이 없다) `DEFAULT_WORKSPACE_URL` 로 떨어진다 —
+ * 같은 기계에서 서버를 띄운 self-host 첫 실행의 주소다.
+ */
+export const DEFAULT_WORKSPACE_URL = 'http://localhost:3400';
+
+export const lastWorkspaceUrlStorage = {
+  load(): string {
+    try {
+      const raw = localStorage.getItem(LAST_WORKSPACE_URL_KEY);
+      return raw && raw.trim() !== '' ? raw : DEFAULT_WORKSPACE_URL;
+    } catch {
+      return DEFAULT_WORKSPACE_URL;
+    }
+  },
+  save(url: string): void {
+    const trimmed = url.trim();
+    if (trimmed === '') return;
+    try { localStorage.setItem(LAST_WORKSPACE_URL_KEY, trimmed); } catch { /* 저장 불가 환경 허용 */ }
   },
 };
 
