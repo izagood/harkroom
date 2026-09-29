@@ -52,6 +52,13 @@ export interface ClaudeAuthStatus {
   loggedIn: boolean;
   email?: string;
   orgName?: string;
+  /**
+   * `oauthAccount.organizationUuid`·`accountUuid`. **식별자이지 비밀값이 아니다.** 화면이 "같은
+   * 풀에 같은 로그인이 둘"을 알아보는 데 쓴다 — 이메일·팀명은 표시용이라 비교 키로 약하다
+   * (재인증 직후 `organizationName` 이 빠진 `.claude.json` 을 실측했다, 2026-09-29).
+   */
+  orgId?: string;
+  accountId?: string;
   subscriptionType?: string;
   authMethod?: string;
 }
@@ -283,6 +290,8 @@ export async function accountStatusFromDisk(
     loggedIn: true,
     ...(pick('emailAddress') !== undefined ? { email: pick('emailAddress')! } : {}),
     ...(pick('organizationName') !== undefined ? { orgName: pick('organizationName')! } : {}),
+    ...(pick('organizationUuid') !== undefined ? { orgId: pick('organizationUuid')! } : {}),
+    ...(pick('accountUuid') !== undefined ? { accountId: pick('accountUuid')! } : {}),
   };
 }
 
@@ -304,6 +313,8 @@ function readStatus(raw: unknown): ClaudeAuthStatus {
     loggedIn: r.loggedIn === true,
     ...(pick('email') !== undefined ? { email: pick('email')! } : {}),
     ...(pick('orgName') !== undefined ? { orgName: pick('orgName')! } : {}),
+    ...(pick('orgId') !== undefined ? { orgId: pick('orgId')! } : {}),
+    ...(pick('accountId') !== undefined ? { accountId: pick('accountId')! } : {}),
     ...(pick('subscriptionType') !== undefined ? { subscriptionType: pick('subscriptionType')! } : {}),
     ...(pick('authMethod') !== undefined ? { authMethod: pick('authMethod')! } : {}),
   };
@@ -415,6 +426,8 @@ export function createClaudeAccountsPort(opts: {
     configDir: string;
     /** `<pool>/<account>` — 같은 계정에 둘이 붙는 것을 막는 키다. */
     slot: string;
+    /** 이 로그인이 디렉터리를 **새로 만들었는가**. 실패로 끝나면 그때만 치운다. */
+    created: boolean;
     settled: boolean;
     urlSent: boolean;
     buffer: string;
@@ -561,12 +574,16 @@ export function createClaudeAccountsPort(opts: {
         }
       }
       // 디렉터리를 **먼저** 만든다 — 없으면 claude 가 어디에 로그인해야 할지 모른다.
+      // 이미 있었는지를 먼저 잰다: 이름을 화면이 자동으로 짓게 된 뒤로(`acct-<hex>`) 취소한
+      // 추가마다 빈 계정이 하나씩 남는다. 치우는 것은 **이 로그인이 만든 것**뿐이다 — 기존
+      // 계정의 재로그인이 실패했다고 그 디렉터리(세션·설정)를 지우면 안 된다.
+      const created = !(await stat(configDir).then(() => true, () => false));
       await mkdir(configDir, { recursive: true, mode: 0o700 });
 
       const loginId = randomUUID();
       const child = spawnLogin(configDir);
       const state = {
-        child, configDir, slot,
+        child, configDir, slot, created,
         settled: false, urlSent: false, buffer: '',
         killTimer: null as ReturnType<typeof setTimeout> | null,
       };
@@ -582,6 +599,9 @@ export function createClaudeAccountsPort(opts: {
         // 사람이 브라우저를 닫아도 프로세스는 0 으로 끝날 수 있다.
         void (async () => {
           const status = readStatus(await runStatus(configDir));
+          if (!status.loggedIn && state.created) {
+            await rm(configDir, { recursive: true, force: true }).catch(() => undefined);
+          }
           emit({
             loginId, done: true, status,
             ...(status.loggedIn ? {} : {

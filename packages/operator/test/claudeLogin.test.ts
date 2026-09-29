@@ -11,7 +11,7 @@
  */
 import { EventEmitter } from 'node:events';
 import { mkdtempSync } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { mkdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -117,6 +117,37 @@ describe('loginStart', () => {
     await expect(h.port.loginStart('work', 'aria')).rejects.toThrow();
     // 다른 계정은 괜찮다.
     await expect(h.port.loginStart('work', 'cedar')).resolves.toBeTruthy();
+  });
+});
+
+describe('실패한 추가를 치운다', () => {
+  // 이름을 화면이 짓게 된 뒤로(`acct-<hex>`) 사람은 디렉터리가 생긴 줄 모른다. 취소한
+  // 추가마다 빈 계정이 남으면 목록에 "Not signed in" 줄이 쌓인다.
+  const exists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
+
+  it('이 로그인이 만든 디렉터리는 미로그인으로 끝나면 지운다', async () => {
+    const h = harness({ loggedIn: false });
+    await h.port.loginStart('work', 'acct-0a1b2c3d');
+    h.children[0]!.emit('exit', 1, null);
+    await vi.waitFor(() => expect(h.events.some((e) => e.done)).toBe(true));
+    expect(await exists(join(h.root, 'work', 'acct-0a1b2c3d'))).toBe(false);
+  });
+
+  it('있던 계정의 재로그인이 실패해도 디렉터리를 남긴다 — 세션·설정이 거기 있다', async () => {
+    const h = harness({ loggedIn: false });
+    await mkdir(join(h.root, 'work', 'aria'), { recursive: true });
+    await h.port.loginStart('work', 'aria');
+    h.children[0]!.emit('exit', 1, null);
+    await vi.waitFor(() => expect(h.events.some((e) => e.done)).toBe(true));
+    expect(await exists(join(h.root, 'work', 'aria'))).toBe(true);
+  });
+
+  it('성공하면 남긴다', async () => {
+    const h = harness({ loggedIn: true });
+    await h.port.loginStart('work', 'acct-0a1b2c3d');
+    h.children[0]!.emit('exit', 0, null);
+    await vi.waitFor(() => expect(h.events.some((e) => e.done)).toBe(true));
+    expect(await exists(join(h.root, 'work', 'acct-0a1b2c3d'))).toBe(true);
   });
 });
 
