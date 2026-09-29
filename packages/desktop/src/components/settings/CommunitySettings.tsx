@@ -111,7 +111,15 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
       return;
     }
     const stored = (await sessionStore.load()) ?? { active: null, communities: [] };
-    stored.communities.push({ accountId, baseUrl, token, handle, label: null });
+    // 계정 id 로 **덮어쓴다.** 위의 중복 검사는 레지스트리만 본다 — 보관본에는 있는데
+    // 레지스트리에 없는 커뮤니티(기동 복원 전의 앱이 떨어뜨린 것)를 다시 붙이면 `push` 는
+    // 같은 계정을 둘 적는다. 사람이 붙인 이름은 살린다.
+    const existing = stored.communities.findIndex((c) => c.accountId === accountId);
+    if (existing >= 0) {
+      stored.communities[existing] = { accountId, baseUrl, token, handle, label: stored.communities[existing]!.label };
+    } else {
+      stored.communities.push({ accountId, baseUrl, token, handle, label: null });
+    }
     await sessionStore.save(stored);
     setAddOpen(false);
   };
