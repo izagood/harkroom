@@ -299,3 +299,88 @@ describe('상한 설정 표면(/settings/mention-policy)', () => {
     }
   });
 });
+
+/**
+ * **턴의 원인에서 깊이를 물려받는다**(2026-09-29). jaebin 이 #task 의 task_manager 한 곳에만
+ * 말하면, task_manager 가 담당을 부르는 작업 스레드에는 사람의 글이 없다. 스레드를 훑는 셈으로는
+ * 두 번 왕복하면 반드시 막혔다(#harkroom seq 3336). 러너는 턴을 띄운 메시지를 안다 — 브릿지·
+ * 오퍼레이터를 거쳐 `x-harkroom-cause` 로 온다.
+ */
+describe('턴의 원인(x-harkroom-cause)', () => {
+  async function postVia(pat: string, cause: string | null, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const client = new Client({ name: 'test', version: '0.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(mcpUrl), {
+      requestInit: { headers: { ...auth(pat), ...(cause ? { 'x-harkroom-cause': cause } : {}) } },
+    }));
+    try {
+      const res = await client.callTool({ name: 'message.post', arguments: args });
+      return JSON.parse((res.content as { type: string; text: string }[])[0]!.text) as Record<string, unknown>;
+    } finally {
+      await client.close();
+    }
+  }
+
+  /**
+   * 사람 없이 쌓인 작업 스레드 — **ada 를 실제로 깨운 마지막 부름이 깊이 3** 이다(dee → ada).
+   * 옛 셈이면 ada 의 다음 발화는 4 로 상한이다. 이 모양이어야 회귀선에 이빨이 있다.
+   */
+  async function deepThread(label: string): Promise<string> {
+    const root = await post(adminToken, `@bob ${label}`);   // 0
+    await post(agents.bob!.pat, '@cid 이어서', root);        // 1
+    await post(agents.cid!.pat, '@dee 이어서', root);        // 2
+    const toAda = await post(agents.dee!.pat, '@ada 너 차례', root); // 3
+    expect(await inboxFor(agents.ada!.pat, toAda)).toEqual(['mention']);
+    return root;
+  }
+
+  it('원인이 없으면 옛 셈이다 — 사람 없는 작업 스레드에서 막힌다(3336 의 모양)', async () => {
+    const root = await deepThread('원인 없음');
+    const out = await postVia(agents.ada!.pat, null, { channelId, threadRootId: root, body: '@bob 다시 부탁' });
+    expect(out.warnings).toBeDefined();
+  });
+
+  it('다른 대화에서 사람이 시킨 턴은 작업 스레드에서 깊이 1 로 시작한다 — 3336 재현', async () => {
+    const root = await deepThread('원인 1');
+    // 사람이 **다른 대화**(최상위)에서 ada 에게 시킨다 — 작업 스레드에는 사람의 새 글이 없다.
+    const order = await post(adminToken, '@ada 작업 스레드에서 bob 을 다시 불러라');
+    const out = await postVia(agents.ada!.pat, order, { channelId, threadRootId: root, body: '@bob 다시 부탁' });
+    expect(out).not.toHaveProperty('warnings');
+    const id = (out.message as { id: string }).id;
+    expect(await inboxFor(agents.bob!.pat, id)).toEqual(['mention']);
+  });
+
+  it('원인에서 물려받은 사슬도 사람 없이 길어지면 상한에 걸린다 — 폭주 방지는 그대로다', async () => {
+    const order = await post(adminToken, '@ada 시작 (원인 사슬)');
+    const root = order;
+    // ada(1) → bob(2) → cid(3) → dee(4, 상한). 각 고리는 앞 고리의 메시지를 원인으로 댄다.
+    let cause = order;
+    const hops: Array<[string, string]> = [['ada', 'bob'], ['bob', 'cid'], ['cid', 'dee']];
+    for (const [author, next] of hops) {
+      const out = await postVia(agents[author]!.pat, cause, { channelId, threadRootId: root, body: `@${next} 이어서` });
+      expect(out).not.toHaveProperty('warnings');
+      cause = (out.message as { id: string }).id;
+    }
+    const capped = await postVia(agents.dee!.pat, cause, { channelId, threadRootId: root, body: '@eve 이어서' });
+    expect(capped.warnings).toBeDefined();
+    expect((await metaOf((capped.message as { id: string }).id)).mentionChainCapped).toEqual(['eve']);
+  });
+
+  it('나를 깨우지 않은 메시지를 원인으로 대면 무시한다 — 깊이를 0 으로 되돌리는 우회로가 아니다', async () => {
+    const root = await post(adminToken, '@ada 위조 시작');
+    for (const [author, next] of [['ada', 'bob'], ['bob', 'cid'], ['cid', 'dee']] as Array<[string, string]>) {
+      await post(agents[author]!.pat, `@${next} 이어서`, root);
+    }
+    // 사람 글이지만 dee 를 부르지 않았다 — dee 의 원인이 될 수 없다.
+    const unrelated = await post(adminToken, '@eve 이건 dee 와 무관하다');
+    const out = await postVia(agents.dee!.pat, unrelated, { channelId, threadRootId: root, body: '@eve 이어서' });
+    expect(out.warnings).toBeDefined();
+    expect((await metaOf((out.message as { id: string }).id)).mentionChainCapped).toEqual(['eve']);
+  });
+
+  it('형식이 틀린 원인은 무시하고 옛 셈으로 간다', async () => {
+    const root = await post(adminToken, '@ada 형식');
+    const out = await postVia(agents.ada!.pat, 'not-a-uuid', { channelId, threadRootId: root, body: '@bob 확인' });
+    expect(out).not.toHaveProperty('warnings');
+  });
+});
+

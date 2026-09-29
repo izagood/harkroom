@@ -31,6 +31,15 @@ describe('forward — MCP', () => {
     expect(res).toEqual({ type: 'mcp.response', id: 'q1', messages: [{ jsonrpc: '2.0', id: 1, result: { ok: true } }] });
   });
 
+  it('턴의 원인(cause)이 있으면 x-harkroom-cause 로 옮기고, 없으면 헤더를 달지 않는다', async () => {
+    const f = fakeFetch(() => new Response('', { status: 202 }));
+    const fw = createForwarder({ fetchImpl: f.fetchImpl });
+    await fw.forward(target, { type: 'mcp.request', id: 'q1', payload: {}, cause: 'c0ffee00-0000-4000-8000-000000000001' });
+    await fw.forward(target, { type: 'mcp.request', id: 'q2', payload: {} });
+    expect((f.calls[0]!.init.headers as Record<string, string>)['x-harkroom-cause']).toBe('c0ffee00-0000-4000-8000-000000000001');
+    expect(f.calls[1]!.init.headers as Record<string, string>).not.toHaveProperty('x-harkroom-cause');
+  });
+
   it('SSE 로 온 답도 메시지 목록으로 푼다 — Streamable HTTP 서버는 둘 다 낼 수 있다', async () => {
     const sse = 'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"a":1}}\n\nevent: message\ndata: {"jsonrpc":"2.0","method":"notifications/x"}\n\n';
     const f = fakeFetch(() => new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } }));

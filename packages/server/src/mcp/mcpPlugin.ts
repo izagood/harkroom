@@ -9,6 +9,7 @@ import {
   type AccountView, type AskAudience, type AskMeta, type DelegationMeta, type FailureMeta,
   type MessageRow, type ModelMeta, type ReportMeta,
 } from '@harkroom/shared';
+import { CAUSE_HEADER } from '@harkroom/shared/runnerLink';
 import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js';
 import { emitEvent, emitPosted, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
@@ -60,6 +61,8 @@ import type { AgentPresence } from './presence.js';
  * 그리지 않는다.
  */
 const MODEL_ARG = z.string().min(1).max(MODEL_ID_MAX).optional();
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function jsonResult(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }] };
@@ -291,6 +294,8 @@ function buildMcpServer(
    * (`presence.ts`: *"지금 붙어 있나"는 이 표가 답하지 않는다*).
    */
   presence: Pick<AgentPresence, 'online'>,
+  /** 이 요청을 낸 턴의 원인 메시지(`CAUSE_HEADER`). 발화 도구가 `postMessage` 에 넘긴다. */
+  cause: string | null = null,
 ): McpServer {
   const server = new McpServer({ name: 'harkroom', version: '0.1.0' });
 
@@ -399,6 +404,7 @@ function buildMcpServer(
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
     const posted = await postMessage(pool, {
+      causeMessageId: cause,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null, alsoInChannel,
       meta: await reportedModelMeta(pool, account.id, model),
     });
@@ -442,6 +448,7 @@ function buildMcpServer(
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
     const posted = await postMessage(pool, {
+      causeMessageId: cause,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null, kind: 'progress',
       meta: await reportedModelMeta(pool, account.id, model),
     });
@@ -527,6 +534,7 @@ function buildMcpServer(
       ...(await reportedModelMeta(pool, account.id, model)),
     };
     const posted = await postMessage(pool, {
+      causeMessageId: cause,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
       meta: meta as unknown as Record<string, unknown>,
     });
@@ -575,6 +583,7 @@ function buildMcpServer(
       ...(await reportedModelMeta(pool, account.id, model)),
     };
     const posted = await postMessage(pool, {
+      causeMessageId: cause,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
       meta: meta as unknown as Record<string, unknown>,
     });
@@ -685,6 +694,7 @@ function buildMcpServer(
       ...(await reportedModelMeta(pool, account.id, model)),
     };
     const posted = await postMessage(pool, {
+      causeMessageId: cause,
       channelId, authorId: account.id, body, threadRootId,
       meta: meta as unknown as Record<string, unknown>,
     });
@@ -782,6 +792,7 @@ function buildMcpServer(
       },
     };
     const posted = await postMessage(pool, {
+      causeMessageId: cause,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
       meta: meta as unknown as Record<string, unknown>,
     });
@@ -1357,7 +1368,14 @@ export async function registerMcp(
      * 진행 메시지를 올리는 것도, 메모리를 읽는 것도 전부 "나 여기 있다"다.
      */
     agentPresence.mark(req.account.id);
-    const server = buildMcpServer(pool, req.account, lifecycle, storage, agentPresence);
+    /*
+      턴의 원인(`CAUSE_HEADER`, 러너 → 브릿지 → 오퍼레이터). 연쇄 깊이를 이 메시지에서 물려받는다.
+      **믿기 전에 확인한다** — 확인은 `postMessage` 가 한다: 그 메시지가 이 에이전트를 실제로
+      깨웠어야(inbox) 원인으로 친다. 아니면 옛 셈(스레드 스캔)으로 간다.
+    */
+    const rawCause = req.headers[CAUSE_HEADER];
+    const cause = typeof rawCause === 'string' && UUID_RE.test(rawCause) ? rawCause : null;
+    const server = buildMcpServer(pool, req.account, lifecycle, storage, agentPresence, cause);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     reply.hijack();
     reply.raw.on('close', () => {
