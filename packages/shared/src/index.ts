@@ -1207,6 +1207,20 @@ export const NOTIFIED_COUNT_HEADER = 'x-harkroom-notified-count';
 export const NOTIFIED_HEADER_MAX_IDS = 100;
 
 /**
+ * 수정으로 새 멘션을 넣었는데 **부르지 않았을 때** 그 이유를 싣는 헤더(`PATCH /channels/:id/messages/:messageId`).
+ * 값은 `MentionEditSkipReason` 이다. 헤더가 없으면 수정으로 부를 것이 없었거나 불렀다는 뜻이다 —
+ * 부른 사람은 `NOTIFIED_HEADER` 가 말한다. 조용히 사라지지 않게 화면이 이 헤더로
+ * *"수정으로는 부르지 않았다 — 새 글로 불러 달라"* 를 그린다.
+ */
+export const MENTION_EDIT_SKIPPED_HEADER = 'x-harkroom-mention-edit-skipped';
+
+/** `too_old`: 작성 뒤 `MENTION_EDIT_WINDOW_MS` 가 지났다 · `agent_author`: 에이전트가 쓴 글이다(사람의 글만 수정으로 부른다). */
+export type MentionEditSkipReason = 'too_old' | 'agent_author';
+
+/** 수정으로 멘션을 부를 수 있는 기한 — 작성 뒤 24시간(jaebin 승인 D2). 그 뒤의 수정은 저장만 한다. */
+export const MENTION_EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
  * 선택 요청의 수신자 — **누가 답해야 진행되는가**.
  *
  * `'human'` 은 특정 사람이 아니라 **사람 아무나**다. 스레드에 사람이 여럿 있어도 먼저 고른

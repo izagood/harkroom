@@ -4,7 +4,7 @@ import fastifyMultipart from '@fastify/multipart';
 import type { Pool } from 'pg';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, projectionState, type ProjectionRuntime, type ProjectionStatus, type ServerHealth } from '@harkroom/shared';
+import { MENTION_EDIT_SKIPPED_HEADER, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, projectionState, type ProjectionRuntime, type ProjectionStatus, type ServerHealth } from '@harkroom/shared';
 import { serverVersion } from './version.js';
 import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
@@ -299,7 +299,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // (content-type 등) 밖의 헤더는 여기에 적어야 `fetch` 가 읽을 수 있다. 부름의 결과를
     // 헤더로 싣기로 한 이상(`NOTIFIED_HEADER`) 이 줄이 없으면 데스크탑에서는 그 헤더가
     // 존재하지 않는 것과 같다 — 서버는 보냈다고 믿고 화면은 못 받는 조용한 실패다.
-    exposedHeaders: [NOTIFIED_HEADER, NOTIFIED_COUNT_HEADER],
+    exposedHeaders: [NOTIFIED_HEADER, NOTIFIED_COUNT_HEADER, MENTION_EDIT_SKIPPED_HEADER],
   });
 
   // 인증 **앞**에 둔다(그리고 그대로 둔다) — 배포가 낡았는지는 로그인 전에도 물을 수
