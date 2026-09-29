@@ -5,7 +5,7 @@
 // ("이 화면 위계 혼란의 대부분이 여기서 나온다").
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import type { AgentDefaults } from '@harkroom/shared';
+import type { AgentDefaults, MentionPolicy } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
@@ -21,6 +21,8 @@ const fakeController = () => {
     updateAgentDefaults: vi.fn(async (patch: Partial<AgentDefaults>): Promise<AgentDefaults> => (
       { harness: 'claude-code', model: null, effort: null, ...patch }
     )),
+    mentionPolicy: vi.fn(async (): Promise<MentionPolicy> => ({ chainLimit: 8 })),
+    updateMentionPolicy: vi.fn(async (p: MentionPolicy): Promise<MentionPolicy> => p),
   };
   setController(c as unknown as Controller);
   return c;
@@ -102,5 +104,48 @@ describe('AgentDefaultsSettings', () => {
     // 403 이 날 것을 알면서 부르지 않는다 — 붉은 글이 아무 잘못 없이 뜬다.
     expect(c.agentDefaults).not.toHaveBeenCalled();
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
+
+/**
+ * **멘션 연쇄 상한 칸**(#932 서버 표면). jaebin 지시(2026-09-29): "한도 숫자 설정에서 UI로
+ * 수정할 수 있도록 해". 누구나 값을 보고 admin 만 바꾼다 · 범위 밖·같은 값이면 저장이 잠긴다.
+ */
+describe('AgentDefaultsSettings — 멘션 연쇄 상한', () => {
+  const LABEL = '에이전트끼리 이어 부를 수 있는 깊이';
+
+  it('admin 은 값을 바꿔 저장한다 — 기본값 저장과 따로다', async () => {
+    const c = fakeController();
+    render(<AgentDefaultsSettings />);
+    const input = await screen.findByLabelText(LABEL) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe('8'));
+    const button = screen.getByRole('button', { name: '상한 저장' });
+    expect(button).toHaveProperty('disabled', true); // 같은 값이면 보낼 것이 없다
+    fireEvent.change(input, { target: { value: '12' } });
+    fireEvent.click(button);
+    await waitFor(() => expect(c.updateMentionPolicy).toHaveBeenCalledWith({ chainLimit: 12 }));
+    expect(c.updateAgentDefaults).not.toHaveBeenCalled();
+  });
+
+  it('범위 밖이거나 정수가 아니면 저장 버튼이 잠긴다', async () => {
+    fakeController();
+    render(<AgentDefaultsSettings />);
+    const input = await screen.findByLabelText(LABEL) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe('8'));
+    const button = screen.getByRole('button', { name: '상한 저장' });
+    for (const bad of ['0', '51', '2.5', 'abc', '']) {
+      fireEvent.change(input, { target: { value: bad } });
+      expect(button).toHaveProperty('disabled', true);
+    }
+  });
+
+  it('admin 이 아니면 값은 보이되 고칠 수 없다', async () => {
+    asAdmin(false);
+    fakeController();
+    render(<AgentDefaultsSettings />);
+    const input = await screen.findByLabelText(LABEL) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe('8'));
+    expect(input.disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: '상한 저장' })).toBeNull();
   });
 });

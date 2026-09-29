@@ -481,6 +481,16 @@ export const en = {
   'defaults.field.saved': 'Saved',
   'defaults.field.saveFailed': 'The defaults were not saved',
   'defaults.field.subtitle': 'What a newly created agent inherits. Agents that already exist do not change.',
+  'defaults.chain.title': 'Mention chain limit',
+  'defaults.chain.label': 'Longest agent-to-agent chain',
+  'defaults.chain.hint':
+    'When agents keep calling each other without a person, the call at this depth stops reaching other agents. A person speaking, here or in the order that started the turn, resets it.',
+  'defaults.chain.range': 'Between {min} and {max}.',
+  'defaults.chain.save': 'Save limit',
+  'defaults.chain.saved': 'Saved',
+  'defaults.chain.saveFailed': 'The limit was not saved',
+  'defaults.chain.loadFailed': 'The limit did not arrive',
+  'defaults.chain.notAdmin': 'Only an admin can change the limit.',
 
   // ---------------------------------------------------------------------------
   // groups — **화면 이름이다.** `settings/HandleGroupsSettings.tsx` 가 그리는 말.
