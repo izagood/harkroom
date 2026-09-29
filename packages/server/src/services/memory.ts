@@ -383,3 +383,94 @@ export const MEMORY_SLUG_HINT = 'slug must be "core" or "mem/<name>" '
 export function isValidSlug(slug: string): boolean {
   return slug.length > 0 && slug.length <= 255 && MEMORY_SLUG_REGEX.test(slug);
 }
+
+// ── 정리 후보(메모리 고도화 M4) ─────────────────────────────────────────────────────
+
+/** 이 기간 넘게 안 읽힌 기억은 정리 후보다. 한 번도 안 읽힌 것은 만든 지 이만큼 지나야 센다. */
+export const AUDIT_STALE_DAYS = 30;
+export const AUDIT_NEVER_READ_GRACE_DAYS = 7;
+const AUDIT_LIST_CAP = 30;
+
+export interface MemoryAudit {
+  total: number;
+  core: { length: number; limit: number } | null;
+  /** 만든 지 7일이 지났는데 한 번도 안 읽힌 것(journal 제외 — 경위는 원래 잘 안 읽힌다). */
+  neverRead: string[];
+  /** 마지막으로 읽은 지 30일이 지난 것(journal 제외). */
+  stale: { slug: string; lastReadAt: string }[];
+  /** 본문의 `[[이름]]` 이 가리키는 기억이 없다. */
+  brokenLinks: { slug: string; target: string }[];
+  /** 이름이 거의 같은 짝 — 합칠 후보. */
+  similar: [string, string][];
+  /** 호출자가 준 낡은 낱말(옛 이름·옛 주소)이 들어 있는 기억. */
+  outdated: { slug: string; pattern: string }[];
+}
+
+/** 이름을 낱말로 편다 — `mem/pr-896-memory-runner-cache` → {pr, memory, runner, cache}(숫자는 버린다). */
+function nameTokens(slug: string): Set<string> {
+  return new Set(slug.replace(/^mem\//, '').split(/[\/_-]+/).filter((t) => t.length > 1 && !/^\d+$/.test(t)));
+}
+
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (!a.size || !b.size) return 0;
+  let inter = 0;
+  for (const x of a) if (b.has(x)) inter++;
+  return inter / (a.size + b.size - inter);
+}
+
+/**
+ * 정리 턴이 볼 후보를 뽑는다(M4). **판단은 에이전트가 한다** — 서버는 사실(읽힘·링크·이름)만
+ * 모은다. 안 읽혔다고 쓸모없는 것은 아니고(드물게 꼭 필요한 런북), 이름이 비슷해도 다른 주제일
+ * 수 있다. 목록마다 30개로 자른다 — 한 번에 다 고칠 필요가 없다.
+ */
+export async function auditMemory(
+  pool: Pool, accountId: string, patterns: string[] = [],
+): Promise<MemoryAudit> {
+  const res = await pool.query(
+    `select slug, value, kind, read_count, last_read_at, created_at from agent_memory where account_id = $1 order by slug`,
+    [accountId],
+  );
+  const rows = res.rows as {
+    slug: string; value: string; kind: MemoryKind; read_count: number; last_read_at: Date | null; created_at: Date;
+  }[];
+  const now = Date.now();
+  const day = 86_400_000;
+  const slugs = new Set(rows.map((r) => r.slug));
+  const coreRow = rows.find((r) => r.slug === 'core');
+  const audit: MemoryAudit = {
+    total: rows.length,
+    core: coreRow ? { length: coreRow.value.length, limit: MAX_CORE_MEMORY_LENGTH } : null,
+    neverRead: [], stale: [], brokenLinks: [], similar: [], outdated: [],
+  };
+  const lowered = patterns.map((p) => p.trim()).filter((p) => p.length >= 3).map((p) => [p, p.toLowerCase()] as const);
+  for (const r of rows) {
+    const judged = r.slug !== 'core' && r.kind !== 'journal';
+    if (judged && r.read_count === 0 && now - r.created_at.getTime() > AUDIT_NEVER_READ_GRACE_DAYS * day) {
+      audit.neverRead.push(r.slug);
+    }
+    if (judged && r.last_read_at && now - r.last_read_at.getTime() > AUDIT_STALE_DAYS * day) {
+      audit.stale.push({ slug: r.slug, lastReadAt: r.last_read_at.toISOString() });
+    }
+    for (const m of r.value.matchAll(/\[\[([^\]\s]{1,255})\]\]/g)) {
+      const target = m[1]!;
+      const exists = slugs.has(target) || slugs.has(`mem/${target}`);
+      if (!exists && !audit.brokenLinks.some((b) => b.slug === r.slug && b.target === target)) {
+        audit.brokenLinks.push({ slug: r.slug, target });
+      }
+    }
+    const body = r.value.toLowerCase();
+    for (const [raw, low] of lowered) if (body.includes(low)) audit.outdated.push({ slug: r.slug, pattern: raw });
+  }
+  const named = rows.filter((r) => r.slug !== 'core' && r.kind !== 'journal').map((r) => [r.slug, nameTokens(r.slug)] as const);
+  for (let i = 0; i < named.length; i++) {
+    for (let j = i + 1; j < named.length; j++) {
+      if (jaccard(named[i]![1], named[j]![1]) >= 0.6) audit.similar.push([named[i]![0], named[j]![0]]);
+    }
+  }
+  audit.neverRead = audit.neverRead.slice(0, AUDIT_LIST_CAP);
+  audit.stale = audit.stale.slice(0, AUDIT_LIST_CAP);
+  audit.brokenLinks = audit.brokenLinks.slice(0, AUDIT_LIST_CAP);
+  audit.similar = audit.similar.slice(0, AUDIT_LIST_CAP);
+  audit.outdated = audit.outdated.slice(0, AUDIT_LIST_CAP);
+  return audit;
+}

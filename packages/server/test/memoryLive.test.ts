@@ -365,6 +365,34 @@ describe('memory MCP tools', () => {
     });
   });
 
+  // M4: 정리 턴이 볼 후보를 서버가 사실로 모은다. journal·core 는 "안 읽힘"에서 뺀다.
+  it('memory.audit reports never-read, stale, broken links, similar names, outdated words, core length', async () => {
+    const { accountId, pat } = await createAgent(app, adminToken, 'audit-agent');
+    const client = await mcpClient(pat);
+    try {
+      await callTool(client, 'memory.set', { slug: 'core', value: 'x'.repeat(2800) });
+      await callTool(client, 'memory.set', { slug: 'mem/old-unread', value: '옛 서버 narwhal 에서 잰 값' });
+      await callTool(client, 'memory.set', { slug: 'mem/fresh-unread', value: '새것' });
+      await callTool(client, 'memory.set', { slug: 'mem/read-long-ago', value: '[[mem/fresh-unread]] 와 [[gone]] 을 본다' });
+      await callTool(client, 'memory.set', { slug: 'mem/runner-cache-design', value: 'a' });
+      await callTool(client, 'memory.set', { slug: 'mem/runner-cache-design-v2', value: 'b' });
+      await callTool(client, 'memory.set', { slug: 'mem/pr-1', value: '경위', kind: 'journal' });
+      // 시계를 되돌린다: 만든 지 오래됐고, 하나는 오래전에 읽혔다.
+      await pool.query(`update agent_memory set created_at = now() - interval '40 days' where account_id = $1 and slug <> 'mem/fresh-unread'`, [accountId]);
+      await pool.query(`update agent_memory set read_count = 1, last_read_at = now() - interval '45 days' where account_id = $1 and slug in ('mem/read-long-ago', 'mem/runner-cache-design', 'mem/runner-cache-design-v2')`, [accountId]);
+
+      const a = await callTool(client, 'memory.audit', { patterns: ['narwhal'] });
+      expect(a.core).toEqual({ length: 2800, limit: 3000 });
+      expect(a.neverRead).toEqual(['mem/old-unread']);
+      expect(a.stale.map((s: { slug: string }) => s.slug)).toContain('mem/read-long-ago');
+      expect(a.brokenLinks).toEqual([{ slug: 'mem/read-long-ago', target: 'gone' }]);
+      expect(a.similar).toEqual([['mem/runner-cache-design', 'mem/runner-cache-design-v2']]);
+      expect(a.outdated).toEqual([{ slug: 'mem/old-unread', pattern: 'narwhal' }]);
+    } finally {
+      await client.close();
+    }
+  });
+
   it('different account cannot see other accounts memory', async () => {
     const client1 = await mcpClient(agent1Pat);
     const client2 = await mcpClient(agent2Pat);
