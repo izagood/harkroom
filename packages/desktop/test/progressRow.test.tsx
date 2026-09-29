@@ -315,11 +315,12 @@ describe('ProgressRow — 끝난 묶음', () => {
  */
 describe('endedAt 배선', () => {
   it('채널과 스레드가 슬롯의 endedAt 을 ProgressRow 로 넘긴다', async () => {
+    // 채널의 줄은 `MessageRows` 가 그린다(창으로 좁힌 목록, 2026-09-29) — 호출부가 거기로 옮겼다.
     // `import.meta.url` 을 쓰지 않는다 — 이 파일은 jsdom 환경에서 돌고 그때 그 값이
     // file 스킴이 아니라 `readFile` 이 거절한다(실측: "The URL must be of scheme file").
     const src = (name: string) => join(process.cwd(), 'src/components', name);
     const [channel, thread] = await Promise.all([
-      readFile(src('ChannelPane.tsx'), 'utf8'),
+      readFile(src('MessageRows.tsx'), 'utf8'),
       readFile(src('ThreadPanel.tsx'), 'utf8'),
     ]);
     expect(channel).toMatch(/<ProgressRow[^>]*endedAt=\{slot\.endedAt\}/s);
