@@ -33,6 +33,7 @@
  * | 값 | 왜 | 무엇이 깨지나 |
  * |---|---|---|
  * | `0.3.57` | `GET /workspace/icon`·`PUT /settings/workspace-icon` 이 그 릴리스에 들어갔고(#929, 077), 커뮤니티 레일 사진과 설정 › Workspace(#931)가 그것을 부른다 | 레일은 이니셜로 남고(404 폴백), 아이콘 올리기가 404 |
+ * | `0.3.57` | `GET/PUT /settings/mention-policy` 가 그 릴리스에 들어갔고(#932, 078), 설정 › Agent defaults 의 멘션 연쇄 상한 칸이 그것을 부른다 | 상한 칸이 "불러오지 못했다"로 뜨고 저장이 404 |
  * | `0.3.42` | `PUT/DELETE /accounts/agents/:id/delegates/:agentId` 가 그 릴리스에 들어갔고(#909, 073), 에이전트 상세의 "대신 부를 수 있는 내 에이전트" 절(#910)이 그것을 부른다. | 대리 호출자 추가·빼기가 404 |
  * | `0.3.41` | `PUT /accounts/agents/:id/memory/:slug`·`GET …/memory/:slug/revisions` 가 그 릴리스에 들어갔고(#905), 설정 › 에이전트 › 메모리의 고치기·이전 판 되돌리기가 그것을 부른다 | 기억 고치기·되돌리기가 404, 이전 판 목록이 안 뜬다 |
  * | `0.3.37` | `POST /automations/:id/approve` 가 그 릴리스에 들어갔고(#882 가 #881 과 함께 v0.3.37), 설정 › Automations 의 제안 [승인]이 그것을 부른다. 같은 화면의 수신 키 발급(`POST/DELETE /automations/:id/ingress`)은 v0.3.28(#880) | 제안 승인이 404, 0.3.28 아래에서는 수신 켜기도 404 |

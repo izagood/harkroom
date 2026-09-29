@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AgentDefaults } from '@harkroom/shared';
+import { MENTION_CHAIN_LIMIT_MAX, MENTION_CHAIN_LIMIT_MIN, type AgentDefaults, type MentionPolicy } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { Button, Field, Segmented, Select, SettingsGroup, SettingsPage, TextInput } from './primitives';
@@ -125,6 +125,88 @@ export function AgentDefaultsSettings() {
           </div>
         )}
       </SettingsGroup>
+      <MentionChainLimit isAdmin={isAdmin} />
     </SettingsPage>
+  );
+}
+
+/**
+ * **멘션 연쇄 상한**(078, #932). 에이전트끼리 사람 없이 서로 부르며 도는 폭주를 끊는 깊이다.
+ *
+ * 새 에이전트의 서식이 아니라 **지금 도는 모든 에이전트에 곧바로 걸리는 값**이다 — 그래서 위의
+ * 기본값 폼과 저장 버튼을 나눈다. 한 버튼으로 묶으면 "기본값 저장"이 폭주 방지까지 바꾸는
+ * 줄 모른다.
+ *
+ * 읽기는 누구나다(서버 `GET` 이 requireAccount) — 막힌 메시지의 "상한 N 에 걸렸다"를 보고
+ * N 이 어디서 왔는지 찾아온 사람에게 값은 보여야 한다. 바꾸기만 admin 이다.
+ */
+function MentionChainLimit({ isAdmin }: { isAdmin: boolean }) {
+  const t = useT();
+  const [policy, setPolicy] = useState<MentionPolicy | 'error' | null>(null);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    void getController().mentionPolicy()
+      .then((p) => { setPolicy(p); setDraft(String(p.chainLimit)); })
+      .catch(() => setPolicy('error'));
+  }, []);
+
+  const parsed = Number(draft);
+  // 정수·범위를 여기서도 본다 — 서버가 400 으로 막지만, 보내기 전에 버튼이 막혀 있어야
+  // "왜 저장이 안 되지"를 묻지 않는다.
+  const valid = /^\d+$/.test(draft) && parsed >= MENTION_CHAIN_LIMIT_MIN && parsed <= MENTION_CHAIN_LIMIT_MAX;
+  const unchanged = policy !== null && policy !== 'error' && parsed === policy.chainLimit;
+
+  const save = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+    try {
+      const next = await getController().updateMentionPolicy({ chainLimit: parsed });
+      setPolicy(next);
+      setDraft(String(next.chainLimit));
+      setSaved(true);
+    } catch {
+      setError(t('defaults.chain.saveFailed'));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <SettingsGroup title={t('defaults.chain.title')}>
+      <div className="max-w-md space-y-3">
+        {policy === null && <p className="text-fg-muted">{t('defaults.field.loading')}</p>}
+        {policy === 'error' && <p role="alert" className="text-danger">{t('defaults.chain.loadFailed')}</p>}
+        {policy !== null && policy !== 'error' && (
+          <>
+            <Field
+              label={t('defaults.chain.label')}
+              hint={t('defaults.chain.range', { min: MENTION_CHAIN_LIMIT_MIN, max: MENTION_CHAIN_LIMIT_MAX })}
+            >
+              <TextInput
+                ariaLabel={t('defaults.chain.label')}
+                value={draft}
+                disabled={!isAdmin}
+                onChange={(v) => { setDraft(v.trim()); setSaved(false); }}
+              />
+            </Field>
+            <p className="text-meta text-fg-muted">{t('defaults.chain.hint')}</p>
+            {isAdmin ? (
+              <div className="flex items-center gap-2">
+                <Button variant="primary" disabled={busy || !valid || unchanged} onClick={() => void save()}>
+                  {t('defaults.chain.save')}
+                </Button>
+                {saved && <span className="text-meta text-success">{t('defaults.chain.saved')}</span>}
+                {error && <span role="alert" className="text-meta text-danger">{error}</span>}
+              </div>
+            ) : (
+              <p className="text-meta text-fg-muted">{t('defaults.chain.notAdmin')}</p>
+            )}
+          </>
+        )}
+      </div>
+    </SettingsGroup>
   );
 }
