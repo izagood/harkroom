@@ -2399,6 +2399,11 @@ export type WsServerEvent =
    */
   | { type: 'avatar.changed'; accountId: string; avatarAttachmentId: string | null }
   /**
+   * 워크스페이스 아이콘이 바뀌었다(077). 바이트가 아니라 id 만 보낸다 — 받는 쪽이
+   * `GET /workspace/icon` 으로 다시 받고, 지우기는 null 이다.
+   */
+  | { type: 'workspace.icon.changed'; iconAttachmentId: string | null }
+  /**
    * 누군가 자기 handle 을 바꿨다(#271). 데스크탑은 디렉터리만 갱신하면 본문은 다음 렌더에
    * 새 이름으로 나온다 — 매핑이 그 일을 한다.
    */
