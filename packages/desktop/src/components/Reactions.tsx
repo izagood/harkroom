@@ -1,9 +1,10 @@
 import type { MessageRow } from '@harkroom/shared';
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { useT } from '../i18n/useT';
-import { reactorNames } from '../lib/reactionNames';
+import { reactionSentence, reactorNames } from '../lib/reactionNames';
 import { clipBounds, PLACEMENT_GAP } from './Menu';
 
 /**
@@ -193,7 +194,6 @@ export function InlineReactionButtons({ message, className, classNameOn }: {
 export function Reactions({ message }: { message: MessageRow }) {
   const accounts = useActiveStore((s) => s.accounts);
   const myId = useActiveStore((s) => s.me?.id ?? null);
-  const t = useT();
 
   const toggle = (emoji: string, on: boolean) => {
     void getController().toggleReaction(message.channelId, message.id, emoji, on).catch(() => {});
@@ -218,59 +218,173 @@ export function Reactions({ message }: { message: MessageRow }) {
 
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1" data-testid="reactions">
-      {message.reactions.map((r) => {
-        const mine = myId !== null && r.accountIds.includes(myId);
-        // 호버(`title`)와 스크린리더(`aria-label`)가 **같은 목록**을 말한다. 갈라 두면
-        // 한쪽만 고쳐지고, 그러면 눈으로 본 것과 읽힌 것이 다르다.
-        const who = reactorNames(r.accountIds, nameOf, myId, t);
-        return (
-          <button
-            key={r.emoji}
-            data-testid={`reaction-${r.emoji}`}
-            data-mine={mine ? 'true' : 'false'}
-            /*
-              **호버로 누가 달았는지 보여 준다**(2026-09-09).
-
-              칩에 이모지와 수만 있던 동안 화면에는 그 수가 누구인지 알 방법이 아예
-              없었다 — `👀`·`💬` 는 "누가 이 말을 읽었나"가 신호의 뜻 전부인데
-              (`STATUS_SIGNAL_EMOJI`) 화면은 몇 명인지만 말했다.
-
-              문구를 문장으로 짜지 않고 **이름 목록만** 두는 이유: 이모지는 칩에 이미
-              그려져 있으므로 문장은 그것을 한 번 더 말하는 것이고, `title` 은 OS 가
-              그리는 평문이라 길어지면 우리가 접을 수 없다. 호버가 묻는 것은 "누구"다.
-            */
-            title={who}
-            // 이모지 문자만으로는 스크린리더가 무엇인지 읽을 수 없다 — 누가 눌렀는지 함께 준다.
-            aria-label={`${r.emoji} — ${who}`}
-            aria-pressed={mine}
-            /*
-              **내가 단 것은 선으로도 구별한다**(2026-09-09, 요청자 jaebin).
-
-              앞판은 면과 굵기만 갈랐다(#488 B2: *"테두리는 양쪽이 같다 — 선까지 갈라
-              두면 칩이 셋만 붙어도 줄이 시끄러워진다"*). 실사용에서 그 구별이 안 읽혔다:
-              `bg-surface-sunken` 과 `bg-surface` 는 면 한 단계 차이라, 칩이 본문 아래
-              작게 붙어 있으면 내가 누른 것인지 알아보려고 **눌러 보게 된다** — 그리고
-              누르면 취소된다.
-
-              **선에만 `border-accent-brand` 를 쓰고 면·글자에는 강조를 안 쓴다.** 그
-              토큰이 `index.css` 에서 *"글자를 얹지 않는 자리에만 쓴다 —
-              선(`border-accent-brand`), 상태 점"* 으로 정의된 자리다. 강조 예산(#488 B2)이
-              걱정한 것은 채운 면과 글자이고 `accentBudget.test.tsx` 가 그 둘을 계속
-              막는다. 선은 칩이 몇 개 붙든 한 겹이므로 "줄이 시끄러워진다"는 그 걱정에
-              닿지 않는다.
-            */
-            className={`flex items-center gap-1 rounded-full border px-1.5 text-meta ${
-              mine
-                ? 'border-accent-brand bg-surface-sunken font-medium text-fg'
-                : 'border-border bg-surface text-fg-muted'
-            }`}
-            onClick={() => toggle(r.emoji, !mine)}
-          >
-            <span>{r.emoji}</span>
-            <span>{r.accountIds.length}</span>
-          </button>
-        );
-      })}
+      {message.reactions.map((r) => (
+        <ReactionChip
+          key={r.emoji}
+          emoji={r.emoji}
+          accountIds={r.accountIds}
+          nameOf={nameOf}
+          myId={myId}
+          onToggle={toggle}
+        />
+      ))}
     </div>
+  );
+}
+
+/** 올린 뒤 이만큼 머물러야 말풍선을 연다 — 칩 줄을 가로지르는 커서마다 깜빡이지 않게. */
+const TOOLTIP_OPEN_DELAY_MS = 150;
+
+/** 칩 하나. 말풍선의 열림 상태가 칩마다 따로라 컴포넌트로 뗐다. */
+function ReactionChip({ emoji, accountIds, nameOf, myId, onToggle }: {
+  emoji: string;
+  accountIds: string[];
+  nameOf: (id: string) => string | null;
+  myId: string | null;
+  onToggle: (emoji: string, on: boolean) => void;
+}) {
+  const t = useT();
+  const chipRef = useRef<HTMLButtonElement>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [anchor, setAnchor] = useState<DOMRect | null>(null);
+
+  const clear = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
+  const openSoon = () => {
+    clear();
+    timer.current = setTimeout(() => {
+      if (chipRef.current) setAnchor(chipRef.current.getBoundingClientRect());
+    }, TOOLTIP_OPEN_DELAY_MS);
+  };
+  const close = () => { clear(); setAnchor(null); };
+  useEffect(() => clear, []);
+
+  const mine = myId !== null && accountIds.includes(myId);
+  // 말풍선(`ReactionTooltip`)과 스크린리더(`aria-label`)가 **같은 목록**을 말한다. 갈라 두면
+  // 한쪽만 고쳐지고, 그러면 눈으로 본 것과 읽힌 것이 다르다.
+  const who = reactorNames(accountIds, nameOf, myId, t);
+  return (
+    <>
+      <button
+        ref={chipRef}
+        data-testid={`reaction-${emoji}`}
+        data-mine={mine ? 'true' : 'false'}
+        /*
+          **호버로 누가 달았는지 보여 준다** — 앞 판(2026-09-09)은 OS `title` 에 이름
+          목록만 실었다. OS 툴팁은 작고 늦게 뜨며(약 1초) 우리가 모양을 못 정한다.
+          2026-09-29 부터는 `ReactionTooltip` 이 말풍선을 그린다(Slack 본). `title` 을
+          남겨 두면 OS 툴팁이 말풍선 위에 한 번 더 뜨므로 **뺐다.**
+
+          누른 뒤에도 말풍선을 닫지 않는다 — 문장이 바로 "(제거하려면 클릭) …you…" 로
+          바뀌어 방금 누른 것이 반영됐음을 커서 자리에서 확인해 준다. 마지막 한 명이 떼면
+          칩째 사라지므로 말풍선도 같이 사라진다.
+        */
+        onMouseEnter={openSoon}
+        onMouseLeave={close}
+        onFocus={openSoon}
+        onBlur={close}
+        // 이모지 문자만으로는 스크린리더가 무엇인지 읽을 수 없다 — 누가 눌렀는지 함께 준다.
+        aria-label={`${emoji} — ${who}`}
+        aria-pressed={mine}
+        /*
+          **내가 단 것은 선으로도 구별한다**(2026-09-09, 요청자 jaebin).
+
+          앞판은 면과 굵기만 갈랐다(#488 B2: *"테두리는 양쪽이 같다 — 선까지 갈라
+          두면 칩이 셋만 붙어도 줄이 시끄러워진다"*). 실사용에서 그 구별이 안 읽혔다:
+          `bg-surface-sunken` 과 `bg-surface` 는 면 한 단계 차이라, 칩이 본문 아래
+          작게 붙어 있으면 내가 누른 것인지 알아보려고 **눌러 보게 된다** — 그리고
+          누르면 취소된다.
+
+          **선에만 `border-accent-brand` 를 쓰고 면·글자에는 강조를 안 쓴다.** 그
+          토큰이 `index.css` 에서 *"글자를 얹지 않는 자리에만 쓴다 —
+          선(`border-accent-brand`), 상태 점"* 으로 정의된 자리다. 강조 예산(#488 B2)이
+          걱정한 것은 채운 면과 글자이고 `accentBudget.test.tsx` 가 그 둘을 계속
+          막는다. 선은 칩이 몇 개 붙든 한 겹이므로 "줄이 시끄러워진다"는 그 걱정에
+          닿지 않는다.
+        */
+        className={`flex items-center gap-1 rounded-full border px-1.5 text-meta ${
+          mine
+            ? 'border-accent-brand bg-surface-sunken font-medium text-fg'
+            : 'border-border bg-surface text-fg-muted'
+        }`}
+        onClick={() => onToggle(emoji, !mine)}
+      >
+        <span>{emoji}</span>
+        <span>{accountIds.length}</span>
+      </button>
+      {anchor && (
+        <ReactionTooltip emoji={emoji} accountIds={accountIds} nameOf={nameOf} myId={myId} anchor={anchor} />
+      )}
+    </>
+  );
+}
+
+const TOOLTIP_WIDTH = 240;
+const TOOLTIP_GAP = 8;
+const EDGE_GAP = 8;
+
+/**
+ * **리액션 말풍선** — 칩 위에 어두운 풍선, 위에 큰 이모지, 아래에 굵은 문장, 칩을 가리키는
+ * 꼬리(2026-09-29, Slack 리액션 툴팁을 본으로 한 요청).
+ *
+ * `MentionCard` 와 같은 틀이다: `document.body` 로 포털을 띄우고 `fixed` 로 칩의 자리를
+ * 따른다. 메시지 목록은 스크롤 상자라 그 안에 두면 맨 위 메시지에서 말풍선이 채널 머리에
+ * 잘린다(피커가 2026-09-28 에 겪은 그 결함).
+ *
+ * - **어두운 면은 `bg-fg` 에 `text-surface`** 다 — 앞글자색과 바탕색을 뒤집은 것이라 두
+ *   테마 모두에서 본문과 반대 명도가 되고, 새 색 토큰이 필요 없다.
+ * - **위에 자리가 없으면 아래로 연다**(꼬리도 뒤집힌다). 가로는 창 안으로 밀되 꼬리는 늘
+ *   칩의 가운데를 가리킨다.
+ * - 말풍선 자체는 마우스를 받지 않는다(`pointer-events-none`) — 안에 누를 것이 없고, 받으면
+ *   칩에서 커서를 올리는 순간 `mouseleave` 가 나서 풍선이 떨린다.
+ * - 스크린리더는 이 말풍선을 따로 읽지 않는다(`aria-hidden`) — 칩의 `aria-label` 이 같은 목록을
+ *   이미 말한다. 둘 다 읽히면 같은 이름이 두 번 들린다.
+ */
+function ReactionTooltip({ emoji, accountIds, nameOf, myId, anchor }: {
+  emoji: string;
+  accountIds: string[];
+  nameOf: (id: string) => string | null;
+  myId: string | null;
+  anchor: DOMRect;
+}) {
+  const t = useT();
+  const ref = useRef<HTMLDivElement>(null);
+  const [below, setBelow] = useState(false);
+  const { hint, sentence } = reactionSentence(emoji, accountIds, nameOf, myId, t);
+
+  useLayoutEffect(() => {
+    const height = ref.current?.getBoundingClientRect().height ?? 0;
+    setBelow(anchor.top - TOOLTIP_GAP - height < EDGE_GAP && anchor.bottom + TOOLTIP_GAP + height <= window.innerHeight - EDGE_GAP);
+  }, [anchor]);
+
+  const center = anchor.left + anchor.width / 2;
+  const left = Math.max(EDGE_GAP, Math.min(center - TOOLTIP_WIDTH / 2, window.innerWidth - TOOLTIP_WIDTH - EDGE_GAP));
+  const style = below
+    ? { position: 'fixed' as const, left, top: anchor.bottom + TOOLTIP_GAP, width: TOOLTIP_WIDTH }
+    : { position: 'fixed' as const, left, bottom: window.innerHeight - anchor.top + TOOLTIP_GAP, width: TOOLTIP_WIDTH };
+  // 꼬리는 칩 가운데에 — 풍선이 창 가장자리로 밀려도 가리키는 곳은 그대로다.
+  const tailLeft = Math.max(12, Math.min(center - left, TOOLTIP_WIDTH - 12));
+
+  return createPortal(
+    <div
+      ref={ref}
+      aria-hidden="true"
+      data-testid="reaction-tooltip"
+      data-placement={below ? 'bottom' : 'top'}
+      style={style}
+      className="pointer-events-none z-50 flex flex-col items-center gap-2 rounded-xl bg-fg px-4 py-3 text-surface shadow-lg"
+    >
+      {/* 칩의 이모지를 크게 다시 그린다 — 칩 여럿이 붙어 있으면 이 풍선이 **어느** 칩 것인지를 이것이 답한다. */}
+      <span className="flex h-24 w-24 items-center justify-center text-[64px] leading-none" data-testid="reaction-tooltip-emoji">{emoji}</span>
+      <p className="text-center text-body font-semibold break-words">
+        {hint && <span data-testid="reaction-tooltip-hint">{hint} </span>}
+        {sentence}
+      </p>
+      <span
+        aria-hidden="true"
+        className={`absolute h-3 w-3 -translate-x-1/2 rotate-45 bg-fg ${below ? '-top-1.5' : '-bottom-1.5'}`}
+        style={{ left: tailLeft }}
+      />
+    </div>,
+    document.body,
   );
 }

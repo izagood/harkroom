@@ -1760,6 +1760,9 @@ export const ko = {
   'reactions.unknown': '누군가',
   /** 한국어는 수에 따라 명사가 안 바뀌므로 `other` 하나로 충분하다(`ko.ts` 머리말). */
   'reactions.andMore': { other: '{names} 외 {count}명' },
+  /** 목록 끝 글자에 따라 조사가 갈리므로 `이(가)` 로 둘 다 적는다 — 목록은 사람 이름이라 고를 수 없다. */
+  'reactions.tooltip.reacted': '{names}이(가) {emoji} 로 반응했다',
+  'reactions.tooltip.clickToRemove': '(제거하려면 클릭)',
 
   // ---------------------------------------------------------------------------
   // boot — **원래 문구 그대로다.** 부팅 시점에도 언어를 안다는 실측은 `en.ts` 머리말에.

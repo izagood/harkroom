@@ -193,6 +193,11 @@ const ALLOWED: { file: string; contains: string; why: string }[] = [
     contains: 'border border-border bg-surface p-3 font-mono text-[12px] text-fg',
     why: '같은 등폭 보정 — 스킬 본문은 읽는 글자이고 등폭이라 한 단 내렸다',
   },
+  {
+    file: 'components/Reactions.tsx',
+    contains: 'flex h-24 w-24 items-center justify-center text-[64px] leading-none',
+    why: '리액션 말풍선의 큰 이모지 — h-24 상자에 묶인 그림 글리프다(글이 아니다, Slack 본 2026-09-29)',
+  },
   // ↓ 척도 이름 쪽의 상자 글리프. 위 임의값 예외와 **같은 판단**이고, 이 회귀선이 척도
   //   이름을 잡기 시작한 이번 판에서 새로 등록된 것이다.
   {

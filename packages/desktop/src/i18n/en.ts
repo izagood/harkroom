@@ -3896,6 +3896,14 @@ export const en = {
     one: '{names} and {count} more',
     other: '{names} and {count} more',
   },
+  /**
+   * 칩 호버 말풍선의 문장(`lib/reactionNames.ts::reactionSentence`). `{names}` 는 위 세 낱말로
+   * 짠 목록이고 `{emoji}` 는 칩의 이모지 문자 그대로다 — 이 저장소의 리액션은 유니코드
+   * 이모지라 `:name:` 같은 별명이 없다.
+   */
+  'reactions.tooltip.reacted': '{names} reacted with {emoji}',
+  /** 내가 누른 칩에만 앞에 붙는다 — 누르면 **취소**된다는 것이 칩 모양으로는 안 보인다. */
+  'reactions.tooltip.clickToRemove': '(click to remove)',
 
   // ---------------------------------------------------------------------------
   // boot — **화면 이름이다.** `components/BootNotice.tsx`(`#460`).
