@@ -77,7 +77,8 @@ import {
   RUNNER_LINK_PROTOCOL_VERSION, isRunnerLinkResponse, type RunnerHello, type RunnerLinkRequest,
 } from '@harkroom/shared/runnerLink';
 
-export interface BridgeLink { socketPath: string; runnerId: string; secret: string }
+/** `cause` — 이 브릿지를 띄운 턴의 원인 메시지(`RUNNER_TURN_CAUSE_ENV`). 모든 요청에 싣는다. */
+export interface BridgeLink { socketPath: string; runnerId: string; secret: string; cause?: string | null }
 
 export interface BridgeStdio { stdin: Readable; stdout: Writable; stderr: Writable }
 
@@ -292,7 +293,9 @@ export function runMcpBridge(link: BridgeLink, io: BridgeStdio, tuning: BridgeTu
           );
         }, requestTimeoutMs);
         pending.set(id, { rpcId, timer });
-        const req: RunnerLinkRequest = { type: 'mcp.request', id, payload };
+        const req: RunnerLinkRequest = link.cause
+          ? { type: 'mcp.request', id, payload, cause: link.cause }
+          : { type: 'mcp.request', id, payload };
         const text = `${JSON.stringify(req)}\n`;
         if (connected && socket !== null) socket.write(text);
         else queued.push({ id, line: text });

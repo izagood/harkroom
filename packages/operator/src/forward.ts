@@ -13,7 +13,7 @@
  *
  * REST 는 경로를 베이스 아래로만 허용한다. 오퍼레이터는 열린 프록시가 아니다.
  */
-import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
+import { CAUSE_HEADER, type RunnerLinkRequest, type RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 
 export interface ForwardTarget {
   baseUrl: string;
@@ -53,6 +53,8 @@ export function createForwarder(deps: { fetchImpl?: typeof fetch } = {}): Forwar
             method: 'POST',
             headers: {
               ...headersFor(target),
+              // 턴의 원인(`mcp.request.cause`). 본문은 열지 않는다는 규칙 그대로 — 헤더 하나를 옮길 뿐이다.
+              ...(req.cause ? { [CAUSE_HEADER]: req.cause } : {}),
               'content-type': 'application/json',
               accept: 'application/json, text/event-stream',
             },

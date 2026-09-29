@@ -290,7 +290,7 @@ describe('buildTurnCommand — codex', () => {
     try {
       const p = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: 's', isFirstTurn: false });
       expect(p.args).toContain(
-        'mcp_servers.harkroom.env_vars=["HARKROOM_OPERATOR_SOCKET","HARKROOM_RUNNER_ID","HARKROOM_RUNNER_SECRET"]',
+        'mcp_servers.harkroom.env_vars=["HARKROOM_OPERATOR_SOCKET","HARKROOM_RUNNER_ID","HARKROOM_RUNNER_SECRET","HARKROOM_TURN_CAUSE"]',
       );
       expect(p.args.join(' ')).not.toContain('mcp_servers.harkroom.env=');
       expect(p.args.join(' ')).not.toContain('secret-must-not-leak');

@@ -19,7 +19,7 @@
 // 닿지 않는다. 즉 이 핸들러가 아예 안 불려도(SIGKILL) 러너는 산다 — 이 핸들러가 하는
 // 일은 러너를 살리는 것이 아니라 **잔해를 남기지 않는 것**이다.
 import { resolve } from 'node:path';
-import { RUNNER_LINK_ENV, RUNNER_LINK_ENV_KEYS } from '@harkroom/shared/runnerLink';
+import { RUNNER_LINK_ENV, RUNNER_LINK_ENV_KEYS, RUNNER_TURN_CAUSE_ENV } from '@harkroom/shared/runnerLink';
 import { parseDaemonArgs, describeArgs, type DaemonArgs } from './args.js';
 import { parseCliArgs, register, registerViaRunningOperator, resolveDataDir, runArgs } from './cli.js';
 import { runMcpBridge } from './mcpBridge.js';
@@ -38,7 +38,9 @@ async function mcpBridgeMain(): Promise<void> {
     console.error(`mcp-bridge: ${RUNNER_LINK_ENV_KEYS.join('·')} 이 필요하다 — 러너가 띄운 하네스 안에서만 돈다`);
     process.exit(2);
   }
-  await runMcpBridge({ socketPath, runnerId, secret }, { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr });
+  // 턴의 원인은 없어도 된다 — 옛 러너·대화형 턴은 심지 않는다(서버는 옛 셈으로 간다).
+  const cause = process.env[RUNNER_TURN_CAUSE_ENV] || null;
+  await runMcpBridge({ socketPath, runnerId, secret, cause }, { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr });
 }
 
 /**
