@@ -39,6 +39,20 @@ const FACE_SLOTS = 3;
  */
 const ROOT_PREVIEW_CHARS = 40;
 
+/**
+ * 툴바를 처음부터 마운트할지(테스트 전용 손잡이). 제품에서는 언제나 `false` 다 — 행에 손이
+ * 닿은 뒤에만 마운트한다(`MessageItem` 의 `toolbarLive` 주석). 기존 테스트 수십 개는
+ * 툴바 **안의** 동작(메뉴·권한·반응)을 재며 "렌더 직후 툴바가 있다"를 전제로 쓰였으므로,
+ * `test/setup.ts` 가 이것을 켠다(전역 값으로 켠다 — setup 이 이 모듈을 import 하면
+ * 컨트롤러를 `vi.mock` 하는 테스트보다 먼저 진짜 모듈이 실려 그 목이 무너진다). 지연 마운트 자체는 `messageToolbarLazy.test.tsx` 가
+ * 이 손잡이를 끄고 잰다.
+ */
+const EAGER_TOOLBAR_KEY = '__harkroomEagerMessageToolbar';
+export function setEagerMessageToolbar(on: boolean): void {
+  (globalThis as Record<string, unknown>)[EAGER_TOOLBAR_KEY] = on;
+}
+const eagerToolbar = (): boolean => (globalThis as Record<string, unknown>)[EAGER_TOOLBAR_KEY] === true;
+
 /** 이 행의 생존 판정이 묻는 계정들 — `MessageItem` 의 `online` 구독 주석 참고. */
 function livenessIdsOf(message: MessageRow): string[] {
   const ids = new Set<string>();
@@ -103,6 +117,15 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
   const connected = useActiveStore((s) => s.connected);
   const [draft, setDraft] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  /**
+   * 툴바를 **이 행에 손이 닿은 뒤에만** 마운트한다(채널 전환 버벅임, 2026-09-29 측정).
+   * 툴바는 숨어 있어도(`opacity-0`) 행마다 늘 마운트돼 있었고, 채널을 옮길 때 행 500개를
+   * 새로 그리는 비용의 약 45% 가 여기서 나왔다. 포인터가 들어오거나 행 안에 포커스가
+   * 들어오면 켜고, **한 번 켜면 끄지 않는다** — 반응 창이나 메뉴를 향해 마우스를 옮기다
+   * 행을 벗어나는 순간 툴바째 사라지면 안 된다(`MessageToolbar` 의 `data-open` 주석).
+   */
+  const [toolbarLive, setToolbarLive] = useState(eagerToolbar);
+  const liveToolbar = () => { if (!toolbarLive) setToolbarLive(true); };
   // 링크로 방금 온 메시지인가. **스토어의 화면 상태**를 보고 그린다 — 이 사실을 message 에
   // 넣으면 서버에서 온 데이터와 지금 화면의 사정이 한 값에 섞인다(#178).
   const highlighted = useActiveStore((s) => s.highlightedMessageId === message.id);
@@ -532,6 +555,9 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
       // 정하지 못한다. 링크로 방금 왔다는 사실이 더 급한 정보다.
       className={`group relative flex gap-2 px-4 py-1.5 hover:bg-surface ${isSystem ? 'border-l-2 border-warning-border' : ''} ${highlighted ? 'bg-warning-surface-strong ring-1 ring-warning-border' : isSystem ? 'bg-warning-surface' : ''}`}
       data-highlighted={highlighted ? 'true' : undefined}
+      onPointerEnter={liveToolbar}
+      onMouseEnter={liveToolbar}
+      onFocus={liveToolbar}
     >
       {/* 작성자 아바타 거터 - 메시지 행 왼쪽에 고정폭 열로 배치. #161 2단계.
           #254 이후 답글 컨트롤이 본문 열로 이동하고 툴바는 행 기준 right-2 top-1 에
@@ -979,7 +1005,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
           이 파일은 무엇을 넘길지만 정한다. 수정 중(`draft`)에는 그리지 않는다: 그 상태의
           이 자리는 저장·취소가 쓰고, 툴바가 함께 서면 같은 행에 두 벌의 결정이 놓인다. */}
       <div className="relative flex shrink-0 items-start gap-1">
-        {draft === null && (
+        {draft === null && toolbarLive && (
           <MessageToolbar
             message={message}
             inThread={inThread}
