@@ -38,6 +38,18 @@ export const RUNNER_LINK_ENV = {
   secret: 'HARKROOM_RUNNER_SECRET',
 } as const;
 
+/**
+ * **이 턴을 띄운 메시지**(멘션 연쇄의 앞 고리, 2026-09-29). 러너가 턴마다 하네스 env 에 심고,
+ * 하네스가 띄운 브릿지가 읽어 `mcp.request.cause` 로 싣고, 오퍼레이터가 `CAUSE_HEADER` 로
+ * 서버에 넘긴다. 서버는 이 메시지에서 연쇄 깊이를 물려받는다 — 사람이 #task 에서 한 지시로
+ * 뜬 턴이 **다른 스레드에** 쓴 부름도 "사람이 시작한 사슬"로 셀 수 있게.
+ *
+ * 링크 셋과 달리 **없어도 된다**(옛 러너·대화형 턴). 없으면 서버는 스레드를 훑던 옛 셈으로 간다.
+ */
+export const RUNNER_TURN_CAUSE_ENV = 'HARKROOM_TURN_CAUSE';
+/** 오퍼레이터 → 서버 `/mcp` 요청에서 `RUNNER_TURN_CAUSE_ENV` 값을 싣는 헤더. */
+export const CAUSE_HEADER = 'x-harkroom-cause';
+
 /** `RUNNER_LINK_ENV` 의 이름들 — 순서는 사람에게 보이는 오류 문구의 순서다. */
 export const RUNNER_LINK_ENV_KEYS = [
   RUNNER_LINK_ENV.socketPath,
@@ -85,7 +97,8 @@ export function checkRunnerHello(value: unknown): { runnerId: string; secret: st
 // ---------------------------------------------------------------------------
 
 export type RunnerLinkRequest =
-  | { type: 'mcp.request'; id: string; payload: unknown }
+  /** `cause` — 이 요청을 낸 턴을 띄운 메시지 id(`RUNNER_TURN_CAUSE_ENV`). 옛 브릿지는 싣지 않는다. */
+  | { type: 'mcp.request'; id: string; payload: unknown; cause?: string }
   | { type: 'http.forward'; id: string; method: string; path: string; body?: string; contentType?: string };
 
 export type RunnerLinkResponse =

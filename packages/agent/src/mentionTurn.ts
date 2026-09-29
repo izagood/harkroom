@@ -821,6 +821,8 @@ export async function runMentionTurn(
     codexHome: deps.codexHome,
     opencodeHome: deps.opencodeHome,
     claudeConfigDir: deps.claudeConfigDir,
+    // 연쇄 깊이의 앞 고리 — 이 턴을 띄운 멘션이다(앵커가 아니다: 앵커는 스레드 루트일 수 있다).
+    causeMessageId: mentionId,
   });
 
   // #126: 턴 시작 로그 (어느 채널·스레드·하네스·워크스페이스에서 PTY 를 띄우는가)

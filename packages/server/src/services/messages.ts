@@ -71,6 +71,11 @@ export interface PostMessageInput {
   attachmentIds?: string[];
   /** 스레드 답을 채널에도 함께 올린다(#231). threadRootId 가 없으면 무시된다. */
   alsoInChannel?: boolean;
+  /**
+   * 이 발화를 낸 턴을 띄운 메시지(러너 → 브릿지 → 오퍼레이터 → MCP `CAUSE_HEADER`). 연쇄 깊이를
+   * 스레드에서 짐작하지 않고 이 메시지에서 물려받는다(`mentionDepthFor`). 없으면 옛 셈이다.
+   */
+  causeMessageId?: string | null;
 }
 
 // 리액션을 COLS 에 넣는 이유: 메시지를 내주는 경로가 네 갈래(목록·POST·PATCH·idempotency
@@ -527,9 +532,16 @@ const DEPTH_SCAN_LIMIT = 50;
 
 async function mentionDepthFor(
   client: PoolClient,
-  input: { channelId: string; threadRootId: string | null; authorId: string; authorIsAgent: boolean },
+  input: {
+    channelId: string; threadRootId: string | null; authorId: string; authorIsAgent: boolean;
+    causeMessageId?: string | null;
+  },
 ): Promise<number> {
   if (!input.authorIsAgent) return 0;
+  if (input.causeMessageId) {
+    const fromCause = await causeDepth(client, input.authorId, input.causeMessageId);
+    if (fromCause !== null) return fromCause;
+  }
   const rows = (await client.query(
     `select m.body, m.mention_depth as depth, (a.kind = 'agent') as author_is_agent,
             -- **실제로 나를 깨운 부름만 고리다**(2026-09-29). 본문만 다시 파싱하면 상한에
@@ -571,6 +583,36 @@ async function mentionDepthFor(
   }
   // 나를 부른 것이 없는 발화(스스로 올린 보고·깨움 뒤의 이어 말하기)는 연쇄가 아니다.
   return 0;
+}
+
+/**
+ * **턴의 원인에서 물려받은 깊이**(2026-09-29). 사람이 #task 의 작업 관리 에이전트에게만 말하면
+ * 그 에이전트가 담당을 부르는 작업 스레드에는 사람의 글이 없다 — 스레드를 훑는 셈으로는 사람이
+ * 사슬을 시작했다는 것이 보이지 않아, 위임·회수가 두 번 오가면 반드시 상한에 걸렸다(#harkroom
+ * seq 3336). 러너는 이 턴을 무엇이 띄웠는지 정확히 안다 — 그 메시지의 깊이 + 1 이 내 깊이다.
+ * 채널·스레드가 달라도 된다.
+ *
+ * **원인으로 치는 것은 나를 실제로 깨운 메시지뿐이다.** 헤더는 에이전트 쪽에서 오는 값이므로,
+ * 아무 사람 메시지 id 나 대면 깊이를 0 으로 되돌리는 우회로가 된다. 그래서 그 메시지가 나에게
+ * inbox 를 만들었는지 본다. 사유도 가린다: 부름(mention·dm·team_*)이거나 **사람이 쓴 것**
+ * (스레드 답·ask 답)만 원인이다. 내가 건 대기 줄(`wake`)이나 에이전트 글의 답글 알림으로 뜬
+ * 턴은 원인에서 깊이를 물려받지 않는다 — 대기 줄은 내 발화라 물려받으면 깨어날 때마다 한 칸씩
+ * 쌓이고, 에이전트 답글은 부름이 아니다. 그때는 null 로 옛 셈에 맡긴다.
+ */
+async function causeDepth(client: PoolClient, authorId: string, causeMessageId: string): Promise<number | null> {
+  const row = (await client.query(
+    `select m.mention_depth as depth, (a.kind = 'agent') as author_is_agent
+       from message m join account a on a.id = m.author_id
+      where m.id = $1 and m.deleted_at is null
+        and exists (select 1 from inbox i
+                     where i.message_id = m.id and i.account_id = $2
+                       and (i.reason in ('mention', 'dm', 'team_mention', 'team_delegated')
+                            or (a.kind = 'human' and i.reason in ('thread_reply', 'ask_answered'))))`,
+    [causeMessageId, authorId],
+  )).rows[0] as { depth: number; author_is_agent: boolean } | undefined;
+  if (!row) return null;
+  // 사람은 언제나 0 이다(`mentionDepthFor`) — 저장된 값을 믿지 않고 규칙으로 센다.
+  return row.author_is_agent ? row.depth + 1 : 1;
 }
 
 /**
@@ -1112,6 +1154,7 @@ export async function postMessage(
       threadRootId: input.threadRootId ?? null,
       authorId: input.authorId,
       authorIsAgent,
+      causeMessageId: input.causeMessageId ?? null,
     });
     const calls = await resolveMentionCalls(client, {
       body: input.body, channelId: input.channelId, authorId: input.authorId, authorIsAgent, mentionDepth,

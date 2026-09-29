@@ -17,7 +17,7 @@ import {
   type AgentHarness,
   type MentionPermission,
 } from '@harkroom/shared';
-import { RUNNER_LINK_ENV_KEYS } from '@harkroom/shared/runnerLink';
+import { RUNNER_LINK_ENV_KEYS, RUNNER_TURN_CAUSE_ENV } from '@harkroom/shared/runnerLink';
 
 import { executionModelFor, usesXdgHome } from './adapters/index.js';
 import { OPENCODE_READONLY_AGENT, opencodeDirs } from './opencodeHome.js';
@@ -95,6 +95,15 @@ export interface BuildTurnCommandOptions {
    * 빈 문자열이 곧 결함이지만(아래 검사가 그것을 던진다), 계정은 **없는 것이 정상**이다.
    */
   claudeConfigDir: string | null;
+  /**
+   * 이 턴을 띄운 메시지 id — 멘션 턴이면 그 멘션(`MentionTarget.mentionId`). 하네스 env 의
+   * `RUNNER_TURN_CAUSE_ENV` 로 심어 브릿지가 서버까지 싣는다. 서버는 여기서 연쇄 깊이를
+   * 물려받는다(사람이 다른 채널에서 시킨 일도 "사람이 시작한 사슬"로 센다).
+   *
+   * 없으면(대화형 턴) **빈 문자열로 덮는다** — 러너 env 에 옛 값이 남아 있으면 그것을 물려받아
+   * 엉뚱한 메시지를 원인으로 대게 되고, 키를 아예 빼면 codex `env_vars` 가 없는 이름을 보게 된다.
+   */
+  causeMessageId?: string | null;
 }
 
 /** 멘션 턴(화면 앞에 사람이 없다)의 권한 매핑. 인터랙티브 턴은 아예 플래그를 안 준다(spec §6). */
@@ -291,7 +300,8 @@ const CODEX_PRESET: HarnessPreset = {
     //
     // **`env` 가 아니라 `env_vars` 다.** `env` 는 값을 argv 에 굽는다 — secret 이 `ps` 에 뜬다.
     // `env_vars` 는 이름만 적고 값은 codex 가 자기 env 에서 꺼내 넘긴다.
-    '-c', `mcp_servers.harkroom.env_vars=${JSON.stringify([...RUNNER_LINK_ENV_KEYS])}`,
+    // 턴의 원인(`RUNNER_TURN_CAUSE_ENV`)도 같은 이유로 이름을 댄다 — 빠지면 codex 턴만 옛 셈으로 간다.
+    '-c', `mcp_servers.harkroom.env_vars=${JSON.stringify([...RUNNER_LINK_ENV_KEYS, RUNNER_TURN_CAUSE_ENV])}`,
     // 에이전트의 mcpServers(스펙 §6) — 오퍼레이터가 이 머신의 정의로 합쳐 파일에 넣은 것을 codex 문법으로.
     ...Object.entries(extraMcpServers).flatMap(([name, entry]) => codexMcpFlags(name, entry)),
   ],
@@ -508,6 +518,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
       codexHome: opts.harness === 'codex' ? opts.codexHome : null,
       opencodeHome: usesXdgHome(opts.harness) ? (opts.opencodeHome ?? null) : null,
       claudeConfigDir: opts.harness === 'claude-code' ? opts.claudeConfigDir : null,
+      causeMessageId: opts.causeMessageId ?? null,
     }),
     stdinFile: opts.stdinFile ?? null,
   };
@@ -603,6 +614,7 @@ function childEnv(
     codexHome: string | null;
     claudeConfigDir: string | null;
     opencodeHome: string | null;
+    causeMessageId: string | null;
   },
 ): Record<string, string> {
   const env: Record<string, string> = {};
@@ -625,6 +637,8 @@ function childEnv(
   // 엉뚱한 자리에 설정을 만든다 — "계정 지정 없음"은 부재로 표현해야 시스템 기본으로 떨어진다.
   // 계정 풀을 안 만든 러너의 하위 호환이 이 한 줄에 걸려 있다(`claudeAccounts.ts`).
   if (homes.claudeConfigDir !== null) env.CLAUDE_CONFIG_DIR = homes.claudeConfigDir;
+  // 턴의 원인 — 없으면 빈 값으로 **덮는다**(옵션 주석). 브릿지는 빈 값을 "없음"으로 읽는다.
+  env[RUNNER_TURN_CAUSE_ENV] = homes.causeMessageId ?? '';
   // **PATH 밖에 설치되는 하네스의 자리를 뒤에 붙인다**(`harnessFallbackBinDirs`).
   // opencode 는 `~/.opencode/bin` 에 깔리고 PATH 는 사람의 셸 rc 에만 들어간다 — 러너는
   // 그 rc 를 안 거치므로 PTY 가 `opencode` 를 못 찾고 죽었다(실측 2026-09-22, 앱 0.3.3).
