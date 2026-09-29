@@ -34,6 +34,7 @@ import { LocalOperatorRow } from './LocalOperatorRow';
 import { ModelPicker } from './ModelPicker';
 import { hasOperatorLocalSurface, listLocalAgents } from '../../lib/operatorLocal';
 import { AgentScopeSection } from './AgentScopeSection';
+import { kindLabel, MemoryDetail } from './MemoryDetail';
 import { canSeeAgentConfig } from '../../lib/agentConfigGate';
 // 팀 묶음(`docs/desktop-agent-cards.html` 4단계). 카드가 `AgentGrid` 를 재사용하지 않은
 // 근거는 `TeamGrid` 머리 주석에 있다 — 요지는 `AgentGridPlace` 가 못 박은 것이다:
@@ -725,8 +726,14 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           >
             <span aria-hidden="true" className="flex-none text-meta text-fg-subtle">{open ? '▾' : '▸'}</span>
             <span className="flex-none text-meta font-medium">{m.slug}</span>
-            {/* 첫 줄을 제목처럼 쓴다(`memorySummary`). 넘치면 잘린다 — 펼치면 원문이 있다. */}
-            <span className="min-w-0 flex-1 truncate text-meta text-fg-subtle">{memorySummary(m.value)}</span>
+            {/* 종류(M5): 주제가 아닌 것만 표를 단다 — 대부분인 주제에까지 달면 표가 소음이 된다. */}
+            {m.kind && m.kind !== 'topic' && (
+              <span data-testid="memory-kind" className="flex-none rounded bg-surface-hover px-1 text-meta text-fg-subtle">
+                {kindLabel(t, m.kind)}
+              </span>
+            )}
+            {/* 요약(에이전트가 쓴 한 줄)이 있으면 그것을, 없으면 첫 줄을 제목처럼 쓴다. 넘치면 잘린다. */}
+            <span className="min-w-0 flex-1 truncate text-meta text-fg-subtle">{m.description || memorySummary(m.value)}</span>
           </button>
           <span
             className="flex-none text-meta text-fg-subtle"
@@ -737,10 +744,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           {memoryDelete(m.slug, agentId)}
         </div>
         {open && (
-          /* 값은 최대 8,000자다 — 펼쳐도 이 상자 안에서만 자란다. */
-          <pre className={`mb-1 max-h-64 overflow-auto whitespace-pre-wrap break-words px-2 text-meta text-fg-muted ${inGroup ? 'pl-6' : ''}`}>
-            {m.value}
-          </pre>
+          <div className={inGroup ? 'pl-4' : ''}>
+            <MemoryDetail agentId={agentId} entry={m} onChanged={() => { if (selected) loadMemories(selected); }} />
+          </div>
         )}
       </div>
     );
@@ -1794,9 +1800,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       </div>
                       <div className="mt-1 text-meta text-fg-subtle">{t('agents.memory.coreNote')}</div>
                       {openSlugs.includes(memorySplit.core.slug) && (
-                        <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words text-meta text-fg-muted">
-                          {memorySplit.core.value}
-                        </pre>
+                        <div className="mt-1">
+                          <MemoryDetail agentId={selected.id} entry={memorySplit.core} onChanged={() => loadMemories(selected)} />
+                        </div>
                       )}
                     </div>
                   )}

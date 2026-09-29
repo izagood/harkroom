@@ -2,6 +2,7 @@ import type {
   AutomationIngressIssued, AutomationRunView, AutomationTrigger, AutomationView,
   McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView,
   AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InvokeScope, LeaseRow, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
+import type { MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
 export class ApiError extends Error {
@@ -703,14 +704,25 @@ export class ApiClient {
   }
 
   /** #139: 에이전트 메모리 조회. MCP 는 에이전트 전용이라 사람은 이 REST 를 쓴다. */
-  async agentMemory(agentId: string): Promise<{ slug: string; value: string; updatedAt: string }[]> {
-    return (await this.req<{ memories: { slug: string; value: string; updatedAt: string }[] }>(
+  async agentMemory(agentId: string): Promise<MemoryEntry[]> {
+    return (await this.req<{ memories: MemoryEntry[] }>(
       'GET', `/accounts/agents/${agentId}/memory`,
     )).memories;
   }
 
   deleteAgentMemory(agentId: string, slug: string): Promise<void> {
     return this.req('DELETE', `/accounts/agents/${agentId}/memory/${encodeURIComponent(slug)}`);
+  }
+
+  /** 메모리 고도화 M5: 사람이 기억을 고친다. 판이 어긋나면 409 로 던진다(`ApiError`). */
+  putAgentMemory(agentId: string, slug: string, edit: MemoryEdit): Promise<{ ok: true }> {
+    return this.req('PUT', `/accounts/agents/${agentId}/memory/${encodeURIComponent(slug)}`, edit);
+  }
+
+  async agentMemoryRevisions(agentId: string, slug: string): Promise<MemoryRevision[]> {
+    return (await this.req<{ revisions: MemoryRevision[] }>(
+      'GET', `/accounts/agents/${agentId}/memory/${encodeURIComponent(slug)}/revisions`,
+    )).revisions;
   }
 
   /**
