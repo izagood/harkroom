@@ -64,7 +64,22 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   const locale = useLocale();
   const t = useT();
   // `groups`·`teams` 는 고정 메시지 미리보기의 집합·팀 토큰을 이름으로 되돌리는 데 쓴다(#845).
-  const { activeChannelId, channels, dms, accounts, me, messages, hasMore, dividerSeq, pins, runnerStates, groups } = useActiveStore();
+  //
+  // **필드마다 selector 로 구독한다**(채널 전환 버벅임, 2026-09-29). 예전에는 인자 없는
+  // `useActiveStore()` 로 스토어 전체를 구독해서, 입력 중 표시·접속 상태·**다른 채널**에 온
+  // 메시지까지 모든 변경이 이 목록을 통째로 다시 그렸다. 메시지·핀·`hasMore`·구분선은
+  // **활성 채널의 것만** 읽는다 — 다른 채널의 배열이 바뀌어도 이 값들은 같은 참조다.
+  const activeChannelId = useActiveStore((s) => s.activeChannelId);
+  const channels = useActiveStore((s) => s.channels);
+  const dms = useActiveStore((s) => s.dms);
+  const accounts = useActiveStore((s) => s.accounts);
+  const me = useActiveStore((s) => s.me);
+  const channelMessages = useActiveStore((s) => (s.activeChannelId ? s.messages[s.activeChannelId] : undefined));
+  const channelHasMore = useActiveStore((s) => (s.activeChannelId ? s.hasMore[s.activeChannelId] : undefined));
+  const channelDividerSeq = useActiveStore((s) => (s.activeChannelId ? s.dividerSeq[s.activeChannelId] : undefined));
+  const channelPinsRaw = useActiveStore((s) => (s.activeChannelId ? s.pins[s.activeChannelId] : undefined));
+  const runnerStates = useActiveStore((s) => s.runnerStates);
+  const groups = useActiveStore((s) => s.groups);
   const teams = useActiveStore((s) => s.teams) ?? CHANNEL_NO_TEAMS;
   const bottomRef = useRef<HTMLDivElement>(null);
   /** 스크롤 상자 자체. 바닥에서 얼마나 떨어졌는지는 이 요소만 안다. */
@@ -186,7 +201,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
         if (accounts[memberId]?.kind === 'agent') called.add(memberId);
       }
     }
-    for (const m of messages[activeChannelId] ?? []) {
+    for (const m of channelMessages ?? []) {
       for (const id of mentionedIds(m.body)) {
         if (accounts[id]?.kind === 'agent') called.add(id);
       }
@@ -222,11 +237,11 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       }
     }
     return null;
-  }, [activeChannelId, dm, accounts, messages, runnerStates]);
+  }, [activeChannelId, dm, accounts, channelMessages, runnerStates]);
 
   const roots = useMemo(
-    () => (activeChannelId ? (messages[activeChannelId] ?? []).filter((m) => m.threadRootId === null || m.alsoInChannel) : []),
-    [messages, activeChannelId],
+    () => (activeChannelId ? (channelMessages ?? []).filter((m) => m.threadRootId === null || m.alsoInChannel) : []),
+    [channelMessages, activeChannelId],
   );
 
   /**
@@ -247,9 +262,9 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    */
   const dividerBeforeId = useMemo(() => {
     if (!activeChannelId) return null;
-    const frozen = dividerSeq[activeChannelId] ?? 0;
+    const frozen = channelDividerSeq ?? 0;
     return roots.find((m) => m.seq > frozen && m.authorId !== me?.id)?.id ?? null;
-  }, [roots, dividerSeq, activeChannelId, me?.id]);
+  }, [roots, channelDividerSeq, activeChannelId, me?.id]);
 
   /**
    * **`block: 'nearest'` 는 필수다.** 인자를 안 주면 `block: 'start'` 이고, 그것은 이 요소가
@@ -461,7 +476,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * `hasMore` 가 거짓이면 요청하지 않는다(컨트롤러도 같은 문을 한 번 더 잠근다).
    */
   const maybeLoadOlder = (el: HTMLElement) => {
-    if (!activeChannelId || !hasMore[activeChannelId] || loadingOlderRef.current) return;
+    if (!activeChannelId || !channelHasMore || loadingOlderRef.current) return;
     if (!isNearTop(el)) return;
     loadingOlderRef.current = true;
     olderAnchorRef.current = { height: el.scrollHeight, top: el.scrollTop };
@@ -597,7 +612,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   }
 
   const isArchived = channel?.archivedAt != null;
-  const channelPins = pins[activeChannelId] ?? [];
+  const channelPins = channelPinsRaw ?? [];
 
   return (
     /* `data-testid` 는 **자리를 재는 회귀선**의 손잡이다(`inboxPane.test.tsx`). 인박스가
@@ -698,7 +713,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
         data-testid="channel-scroll"
         className="flex-1 overflow-y-auto py-2"
       >
-        {activeChannelId && hasMore[activeChannelId] && (
+        {activeChannelId && channelHasMore && (
           // 서버 히스토리 창(최신 N개) 밖으로 밀려난 대화로 돌아가는 유일한 경로다.
           <div className="px-4 py-2 text-center">
             <button
@@ -713,7 +728,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
           빈 상태는 **메시지가 없을 때만**이다. `hasMore` 가 참이면 과거가 서버에 더 있고 아직
           안 받아온 것뿐이라, 그때 "아직 메시지가 없다"를 그리면 거짓말이 된다(#234).
         */}
-        {roots.length === 0 && !hasMore[activeChannelId] && (
+        {roots.length === 0 && !channelHasMore && (
           <ChannelEmptyState channel={channel} isArchived={isArchived} />
         )}
         {/* 줄들을 한 상자에 담는다 — 높이 변화를 지켜볼 대상이자, 붙잡을 후보의 범위다
