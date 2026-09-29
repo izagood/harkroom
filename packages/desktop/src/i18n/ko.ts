@@ -58,6 +58,13 @@ export const ko = {
   'providerAccounts.codex.openLogin': '로그인 페이지 열기',
   'providerAccounts.codex.switchNote': '러너는 다음 Codex 턴부터 전환합니다. 스레드 세션은 계정을 바꿔도 이어집니다.',
   'providerAccounts.apiKey': 'API 키',
+  'providerAccounts.displayOnly': '이 공급자의 계정 전환은 아직 여기서 관리하지 않습니다.',
+  'providerAccounts.opencode.description': '러너는 이 기기의 OpenCode 로그인으로 OpenCode를 실행합니다.',
+  'providerAccounts.opencode.system': 'OpenCode 로그인을 사용합니다. 바꾸려면 터미널에서 `opencode auth login` 을 실행하세요.',
+  'providerAccounts.cursor.description': '참고용으로 보여 줍니다. Cursor는 아직 Harkroom의 에이전트 하네스가 아닙니다.',
+  'providerAccounts.cursor.system': 'Cursor 앱 로그인을 사용합니다.',
+  'providerAccounts.cursor.note': '여기 있는 것은 러너에 영향을 주지 않습니다. 플랜 사용량은 Cursor 대시보드에서 확인하세요.',
+  'providerAccounts.cursor.dashboard': 'Cursor 대시보드 열기',
   'common.someone': '사람',
 
   'appearance.colorMode': '색 모드',
