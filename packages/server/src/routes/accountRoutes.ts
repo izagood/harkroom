@@ -12,7 +12,10 @@ import {
 import { actorOf, recordAudit } from '../audit.js';
 import { mintPat } from '../services/pats.js';
 import { emitEvent } from '../events.js';
-import { deleteMemory, listMemoryEntries } from '../services/memory.js';
+import {
+  deleteMemory, listMemoryEntries, listMemoryRevisions, MAX_CORE_MEMORY_LENGTH, MAX_MEMORY_DESCRIPTION_LENGTH,
+  isValidSlug, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, MEMORY_SLUG_HINT, setMemory,
+} from '../services/memory.js';
 import { getHandleGroupByHandle } from '../services/handleGroups.js';
 
 export interface AccountRouteDeps {
@@ -730,6 +733,50 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
       target: id, detail: { slug },
     }, req);
     return reply.code(204).send();
+  });
+
+  /**
+   * 사람이 기억을 **고친다**(메모리 고도화 M5). 전에는 보기와 지우기뿐이라 에이전트가 틀리게 적은
+   * 것을 사람이 바로잡을 길이 지우는 것밖에 없었다. 에이전트의 `memory.set` 과 **같은 서비스**를
+   * 탄다 — 한도·이전 판·journal 자르기가 한 벌이다. `ifUpdatedAt` 은 화면이 연 판이고, 그 사이
+   * 에이전트가 고쳤으면 409 로 돌려보낸다(사람이 에이전트의 새 기억을 모르고 덮지 않게).
+   */
+  app.put('/accounts/agents/:id/memory/:slug', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
+    const { id, slug } = z.object({ id: z.string().uuid(), slug: z.string().min(1).max(255) }).parse(req.params);
+    const body = z.object({
+      value: z.string().min(1).max(MAX_MEMORY_VALUE_LENGTH),
+      description: z.string().max(MAX_MEMORY_DESCRIPTION_LENGTH).optional(),
+      kind: z.enum(MEMORY_KINDS).optional(),
+      ifUpdatedAt: z.string().datetime({ offset: true }).nullable().optional(),
+    }).parse(req.body);
+    if (!isValidSlug(slug)) return reply.code(422).send({ error: { code: 'invalid_slug', message: MEMORY_SLUG_HINT } });
+    if (slug === 'core' && body.value.length > MAX_CORE_MEMORY_LENGTH) {
+      return reply.code(422).send({ error: { code: 'core_too_long', message: `core 는 ${MAX_CORE_MEMORY_LENGTH}자까지다` } });
+    }
+    const result = await setMemory(
+      pool, id, slug, body.value, body.description, body.kind,
+      body.ifUpdatedAt === undefined ? undefined : { updatedAt: body.ifUpdatedAt === null ? null : new Date(body.ifUpdatedAt) },
+    );
+    if (typeof result === 'object') {
+      return reply.code(409).send({
+        error: { code: 'conflict', updatedAt: result.conflict.updatedAt?.toISOString() ?? null },
+      });
+    }
+    if (result === 'too_many') {
+      return reply.code(422).send({ error: { code: 'too_many', message: `at most ${MAX_MEMORY_ITEMS_PER_ACCOUNT}` } });
+    }
+    // 본문은 감사에 남기지 않는다 — 지우기와 같은 규칙(slug 만).
+    await recordAudit(pool, {
+      action: 'agent.memory.edited', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { slug },
+    }, req);
+    return { ok: true };
+  });
+
+  /** 이전 판(069), 최근 것부터. 화면이 "이 판으로 되돌리기"를 그린다 — 되돌리기는 위 PUT 이다. */
+  app.get('/accounts/agents/:id/memory/:slug/revisions', { preHandler: app.requireOwnerOrAdmin('id') }, async (req) => {
+    const { id, slug } = z.object({ id: z.string().uuid(), slug: z.string().min(1).max(255) }).parse(req.params);
+    return { revisions: await listMemoryRevisions(pool, id, slug) };
   });
 
   app.get('/accounts/:id/pats', { preHandler: app.requireOwnerOrAdmin('id') }, async (req) => {
