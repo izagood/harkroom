@@ -1,5 +1,11 @@
 import { vi } from 'vitest';
 
+// 메시지 툴바는 제품에서 행에 손이 닿은 뒤에만 마운트된다(채널 전환 비용). 툴바 안의 동작을
+// 재는 기존 테스트들은 렌더 직후 툴바가 있다고 전제하므로 여기서 켠다 — 지연 마운트
+// 자체는 `messageToolbarLazy.test.tsx` 가 끄고 잰다(`MessageItem.tsx` 의 `setEagerMessageToolbar` 주석).
+// 모듈을 import 하지 않고 전역 값으로 켜는 이유도 거기 있다.
+(globalThis as Record<string, unknown>).__harkroomEagerMessageToolbar = true;
+
 // #392: 지연 주입 통제 실험 전용. 무엇을 어떻게 쟀고 무엇이 빨개졌는지는
 // docs/specs/2026-09-05-timing-delay-injection.md 에 있다 — 실측 결과가 이슈의 산출물이다.
 // HARKROOM_TEST_DELAY_MS 를 안 주면 이 블록은 아무 것도
