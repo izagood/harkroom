@@ -43,7 +43,8 @@ export interface AccountOpen {
  * 열린 뒤의 규칙이다 — 그 전에는 소유자가 403 을 받고 빈 화면을 봤다.
  */
 export function accountOpen(
-  account: AccountView | undefined,
+  // 이름 쪽 필드만 읽는다 — `lib/accountNames` 의 투영도 그대로 받도록.
+  account: Pick<AccountView, 'id' | 'handle' | 'kind' | 'ownerAccountId'> | undefined,
   viewer: Viewer,
   { onOpenDirectory, onOpenSettings }: AccountOpeners,
   // 번역기를 **맨 뒤에 필수로** 받는다 — 기본값을 주면 부르는 화면이 안 넘겨도 컴파일이

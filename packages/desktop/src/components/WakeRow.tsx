@@ -1,6 +1,7 @@
 import { readWakeMeta, type MessageRow } from '@harkroom/shared';
 import { displayBody } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
+import { selectAccountNames } from '../lib/accountNames';
 import { stampLabel } from '../lib/day';
 import { useLocale } from '../i18n/useT';
 
@@ -24,7 +25,8 @@ export function WakeRow({ message }: { message: MessageRow }) {
   const author = useActiveStore((s) => s.accounts[message.authorId]);
   const locale = useLocale();
   // 사유도 본문이다 — 본문 렌더러를 지나지 않으므로 `<@id>` 를 여기서 푼다(`lib/mention` 주석).
-  const accounts = useActiveStore((s) => s.accounts);
+  // 이름 쪽만 구독한다 — 상태·아바타 이벤트에 행마다 다시 그려지지 않도록(`lib/accountNames`).
+  const accounts = useActiveStore(selectAccountNames);
   // 집합·팀 토큰(#845)도 이름으로 되돌린다 — 안 주면 미리보기에 `@알 수 없음` 이 뜬다.
   const groups = useActiveStore((s) => s.groups);
   const teams = useActiveStore((s) => s.teams) ?? NO_TEAMS_FALLBACK;

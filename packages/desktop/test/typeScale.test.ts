@@ -170,7 +170,7 @@ const ALLOWED: { file: string; contains: string; why: string }[] = [
   },
   {
     file: 'components/MessageItem.tsx',
-    contains: '<Identity account={accounts[id]} className="h-4 w-4 text-[8px]"',
+    contains: '<Identity account={account} className="h-4 w-4 text-[8px]" variant="avatar" />',
     why: '겹친 참여자 아바타(h-4)의 글리프 — 더 작은 상자에는 더 작은 글리프',
   },
   {
@@ -202,7 +202,7 @@ const ALLOWED: { file: string; contains: string; why: string }[] = [
   //   이름을 잡기 시작한 이번 판에서 새로 등록된 것이다.
   {
     file: 'components/MessageItem.tsx',
-    contains: '<Identity account={author} className="h-8 w-8 text-sm" variant="avatar" />',
+    contains: '<Identity account={account} className="h-8 w-8 text-sm" variant="avatar" />',
     why: '거터 아바타(h-8)의 머리글자 — 32px 원에 묶인 글리프다',
   },
   {

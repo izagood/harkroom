@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useT } from '../i18n/useT';
 import { useActiveStore } from '../state/communities';
+import { selectAccountNames } from '../lib/accountNames';
 import { NO_TEAMS } from '../state/appStore';
 import { splitMentions } from '../lib/mention';
 import { splitLinks, type LinkTarget, type BodyPart } from '../lib/link';
@@ -174,7 +175,8 @@ export function MessageBody({
   refIds?: readonly string[];
 } & MentionOpeners) {
   const t = useT();
-  const accounts = useActiveStore((s) => s.accounts);
+  // 이름 쪽만 구독한다 — 상태·아바타 이벤트에 행마다 다시 그려지지 않도록(`lib/accountNames`).
+  const accounts = useActiveStore(selectAccountNames);
   const groups = useActiveStore((s) => s.groups);
   // 목록을 못 받은 서버에서는 빈 목록이 사실이다 — 판단의 근거는 `Composer` 의 같은
   // 자리 주석과 하나다(그 서버는 `@팀` 을 펼치지 않으므로 칠할 이름이 없다).

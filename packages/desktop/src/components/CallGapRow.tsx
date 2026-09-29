@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { callGap, type CallGapDetail } from '../lib/callGap';
+import { selectAccountNames } from '../lib/accountNames';
 import type { MessageKey } from '../i18n';
 import { useT } from '../i18n/useT';
 
@@ -36,9 +37,21 @@ const LABEL: Record<CallGapDetail, MessageKey> = {
   offline: 'message.callGap.offline',
 };
 
+/**
+ * **판정에 들 수 없는 행은 아무것도 구독하지 않는다.** 이 줄은 채널의 모든 행 밑에 붙는데
+ * (`MessageItem`), 속은 채널 메시지 목록·러너 상태·접속 목록을 구독한다 — 그대로 두면 새 말
+ * 하나·접속 하나에 행 수백 개가 전부 다시 그려진다(대화 불러오기 성능, 2026-09-29).
+ * `callGap` 의 첫 관문과 넷째 관문(`kind`·`activityCount`)은 행만 보고 답이 나오므로 여기서
+ * 먼저 거른다 — 판정은 여전히 `callGap` 이 하고, 여기는 답이 `null` 로 정해진 행만 뺀다.
+ */
 export function CallGapRow({ message }: { message: MessageRow }) {
+  if (message.kind !== 'user' || (message.activityCount ?? 0) > 0) return null;
+  return <CallGapRowLive message={message} />;
+}
+
+function CallGapRowLive({ message }: { message: MessageRow }) {
   const t = useT();
-  const accounts = useActiveStore((s) => s.accounts);
+  const accounts = useActiveStore(selectAccountNames);
   const runnerStates = useActiveStore((s) => s.runnerStates);
   const channelMessages = useActiveStore((s) => s.messages[message.channelId]);
   // 생존 판정의 두 축 — `connected` 가 false 면 `online` 은 '아무도 없다'가 아니라 '모른다'다.
