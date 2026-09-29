@@ -75,6 +75,7 @@ import {
   usageCells,
 } from '../../lib/claudeUsage';
 import { getExternalOpener } from '../../lib/openExternal';
+import { ConfirmDialog } from '../ConfirmDialog';
 import { Menu } from '../Menu';
 import { Button, Field, SettingsGroup, SettingsPage, TextInput } from './primitives';
 import { ProviderSection } from './ProviderSection';
@@ -190,6 +191,9 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
   const [usageError, setUsageError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending>(null);
+  // 확인한 삭제가 도는 중인가 · 실패한 까닭. 둘 다 확인창 안에서만 뜻이 있다.
+  const [pendingBusy, setPendingBusy] = useState(false);
+  const [pendingError, setPendingError] = useState<string | null>(null);
   const [login, setLogin] = useState<LoginState | null>(null);
   const [newPool, setNewPool] = useState<string | null>(null);
   const [moveNote, setMoveNote] = useState<string | null>(null);
@@ -352,16 +356,30 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
     }
   };
 
+  const askPending = (p: NonNullable<Pending>): void => {
+    setPendingError(null);
+    setPending(p);
+  };
+
+  /**
+   * 확인한 삭제를 한 번만 보낸다. **실패하면 창을 닫지 않는다** — 앞판은 실패를 화면 맨 위
+   * 오류 칸에 띄우고 확인 카드를 닫아서, 사람은 무엇이 실패했는지를 다시 찾아야 했다.
+   */
   const confirmPending = async (): Promise<void> => {
-    if (!pending) return;
+    if (!pending || pendingBusy) return;
+    setPendingBusy(true);
+    setPendingError(null);
     try {
       if (pending.kind === 'account') await removeClaudeAccount(pending.pool, pending.account);
       else await removeClaudePool(pending.pool);
-      await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setPendingError(err instanceof Error ? err.message : String(err));
+      setPendingBusy(false);
+      return;
     }
+    setPendingBusy(false);
     setPending(null);
+    await refresh();
   };
 
   return (
@@ -565,7 +583,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                     placement="bottom"
                     items={[{
                       label: `Remove pool ${pool.name}`,
-                      onSelect: () => setPending({ kind: 'pool', pool: pool.name }),
+                      onSelect: () => askPending({ kind: 'pool', pool: pool.name }),
                     }]}
                     renderTrigger={(triggerProps) => (
                       <button
@@ -710,7 +728,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                     placement="bottom"
                     items={[{
                       label: `Remove account ${a.name}`,
-                      onSelect: () => setPending({
+                      onSelect: () => askPending({
                         kind: 'account', pool: pool.name, account: a.name, label: accountLabel(a),
                       }),
                     }]}
@@ -828,21 +846,25 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
         </SettingsGroup>
       )}
 
-      {/* 확인 단계 — 자격증명이 사라지는 일이라 한 번 더 묻는다. */}
+      {/*
+        확인 단계 — 자격증명이 사라지는 일이라 한 번 더 묻는다. **겹창이다.** 앞판은 페이지 맨
+        아래 "Confirm" 카드로 붙였는데, 누른 `⋯` 에서 멀고 스크롤해야 보일 때도 있어서 오류
+        배너로 읽혔다(2026-09-29 jaebin). 버튼 이름은 "Confirm" 이 아니라 **하는 일**이다.
+      */}
       {pending && (
-        <SettingsGroup title="Confirm">
-          <div className="px-4 py-3">
-            <div className="text-fg">
-              {pending.kind === 'account'
-                ? `Remove account ${pending.label} from ${pending.pool}? Its saved sign-in is deleted and you would have to sign in again.`
-                : `Remove pool ${pending.pool} and every account in it? Their saved sign-ins are deleted.`}
-            </div>
-            <div className="mt-3 flex gap-2">
-              <Button variant="danger" onClick={() => void confirmPending()}>Confirm</Button>
-              <Button onClick={() => setPending(null)}>Keep</Button>
-            </div>
-          </div>
-        </SettingsGroup>
+        <ConfirmDialog
+          danger
+          title={pending.kind === 'account' ? `Remove account ${pending.account}?` : `Remove pool ${pending.pool}?`}
+          detail={pending.kind === 'account'
+            ? `${pending.label}${pending.pool ? ` in pool ${pending.pool}` : ''}. Its saved sign-in is deleted and you would have to sign in again.`
+            : 'Every account in it and their saved sign-ins are deleted.'}
+          confirmLabel={pending.kind === 'account' ? 'Remove' : 'Remove pool'}
+          cancelLabel="Keep"
+          busy={pendingBusy}
+          error={pendingError}
+          onConfirm={() => void confirmPending()}
+          onCancel={() => setPending(null)}
+        />
       )}
     </Shell>
   );

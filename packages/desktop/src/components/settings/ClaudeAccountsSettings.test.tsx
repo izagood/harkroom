@@ -334,29 +334,94 @@ describe('평평한 계정 이전 안내', () => {
   });
 });
 
+/**
+ * 확인은 **겹창**이다. 앞판은 페이지 맨 아래 "Confirm" 카드로 붙였고, 누른 `⋯` 에서 멀어서
+ * 오류 배너로 읽혔다(2026-09-29). 그래서 dialog 로 뜨는지 · 기본 손가락이 취소인지 ·
+ * 한 번만 보내는지 · 실패를 창 안에서 말하는지를 잰다.
+ */
 describe('삭제', () => {
-  it('계정 삭제에 확인 단계가 있다 — 자격증명이 사라진다', async () => {
-    stubTauri();
+  const removes = (cmd: string) => calls.filter((c) => c.cmd === cmd);
+
+  async function openAccountRemove(): Promise<void> {
     render(<ClaudeAccountsSettings />);
     await screen.findByText('aria');
     // 파괴적 조작은 `⋯` 뒤에 있다 — 색이 아니라 확인 단계가 안전을 지므로 줄에서 내렸다.
     fireEvent.click(screen.getByRole('button', { name: /actions for account aria/i }));
     fireEvent.click(screen.getByRole('menuitem', { name: /remove account aria/i }));
+  }
+
+  it('계정 삭제에 확인 단계가 있다 — 자격증명이 사라진다', async () => {
+    stubTauri();
+    await openAccountRemove();
     // 한 번 눌러서는 안 지워진다.
-    expect(calls.some((c) => c.cmd === 'claude_account_remove')).toBe(false);
-    fireEvent.click(screen.getByRole('button', { name: /confirm/i }));
-    await waitFor(() => expect(calls.some((c) => c.cmd === 'claude_account_remove')).toBe(true));
+    expect(removes('claude_account_remove')).toHaveLength(0);
+    const dialog = screen.getByRole('dialog', { name: 'Remove account aria?' });
+    expect(dialog.textContent).toContain('in pool work');
+    expect(dialog.textContent).toContain('saved sign-in is deleted');
+    // 하단 "Confirm" 카드는 더 없다. 버튼 이름은 하는 일이다.
+    expect(screen.queryByText('Confirm')).toBeNull();
+    expect(screen.getByTestId('confirm-ok').textContent).toBe('Remove');
+    fireEvent.click(screen.getByTestId('confirm-ok'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(removes('claude_account_remove')).toEqual([
+      { cmd: 'claude_account_remove', args: { pool: 'work', account: 'aria' } },
+    ]);
   });
 
-  it('풀 삭제에도 확인 단계가 있다', async () => {
+  it('열리면 포커스는 취소(Keep)에 가고, Esc 는 아무것도 지우지 않고 닫는다', async () => {
+    stubTauri();
+    await openAccountRemove();
+    expect(document.activeElement).toBe(screen.getByTestId('confirm-cancel'));
+    expect(screen.getByTestId('confirm-cancel').textContent).toBe('Keep');
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(removes('claude_account_remove')).toHaveLength(0);
+  });
+
+  it('확인을 연타해도 제거는 한 번만 가고, 도는 동안 Esc 로 닫히지 않는다', async () => {
+    let finish!: () => void;
+    stubTauri(POOLS_SNAPSHOT, {
+      claude_account_remove: new Promise<void>((r) => { finish = r; }),
+    });
+    await openAccountRemove();
+    const ok = screen.getByTestId('confirm-ok');
+    fireEvent.click(ok);
+    fireEvent.click(ok);
+    expect(removes('claude_account_remove')).toHaveLength(1);
+    expect((ok as HTMLButtonElement).disabled).toBe(true);
+    // 도중에 창이 닫히면 결과를 말할 자리가 없다.
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    finish();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(removes('claude_account_remove')).toHaveLength(1);
+  });
+
+  it('실패하면 창을 닫지 않고 창 안에 까닭을 보여 준다', async () => {
+    // 게터로 준다 — 미리 만든 거절 Promise 는 부르기 전까지 "처리 안 된 거절"로 잡힌다.
+    stubTauri(POOLS_SNAPSHOT, { get claude_account_remove() { return Promise.reject(new Error('keychain locked')); } });
+    await openAccountRemove();
+    fireEvent.click(screen.getByTestId('confirm-ok'));
+    expect((await screen.findByTestId('confirm-error')).textContent).toBe('keychain locked');
+    expect(screen.getByRole('dialog', { name: 'Remove account aria?' })).toBeTruthy();
+    // 다시 시도할 수 있다.
+    expect((screen.getByTestId('confirm-ok') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('풀 삭제에도 같은 겹창으로 묻는다', async () => {
     stubTauri();
     render(<ClaudeAccountsSettings />);
     await screen.findByText('work');
     fireEvent.click(screen.getByRole('button', { name: /actions for pool work/i }));
     fireEvent.click(screen.getByRole('menuitem', { name: /remove pool work/i }));
-    expect(calls.some((c) => c.cmd === 'claude_pool_remove')).toBe(false);
-    fireEvent.click(screen.getByRole('button', { name: /confirm/i }));
-    await waitFor(() => expect(calls.some((c) => c.cmd === 'claude_pool_remove')).toBe(true));
+    expect(removes('claude_pool_remove')).toHaveLength(0);
+    expect(screen.getByRole('dialog', { name: 'Remove pool work?' }).textContent).toContain('Every account in it');
+    expect(screen.getByTestId('confirm-ok').textContent).toBe('Remove pool');
+    fireEvent.click(screen.getByTestId('confirm-ok'));
+    await waitFor(() => expect(removes('claude_pool_remove')).toEqual([
+      { cmd: 'claude_pool_remove', args: { pool: 'work' } },
+    ]));
+    expect(removes('claude_account_remove')).toHaveLength(0);
   });
 });
 

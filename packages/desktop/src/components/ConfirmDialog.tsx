@@ -27,7 +27,9 @@ import { Overlay } from './Overlay';
  * 띄운 줄 모르고 Enter 를 친 사람이 그대로 지우게 된다 — 확인 단계를 둔 이유를
  * 확인창이 스스로 무너뜨리는 셈이다. Esc·바깥 클릭도 취소다(`Overlay` 가 맡는다).
  */
-export function ConfirmDialog({ title, detail, confirmLabel, cancelLabel = 'Cancel', danger = false, onConfirm, onCancel }: {
+export function ConfirmDialog({
+  title, detail, confirmLabel, cancelLabel = 'Cancel', danger = false, busy = false, error = null, onConfirm, onCancel,
+}: {
   /** 무엇을 묻는지. `role="dialog"` 의 접근성 이름으로도 쓰인다. */
   title: string;
   /** 대상을 알아보게 하는 본문. 문자열이면 그대로, 노드면 그대로 그린다. */
@@ -36,6 +38,17 @@ export function ConfirmDialog({ title, detail, confirmLabel, cancelLabel = 'Canc
   cancelLabel?: string;
   /** 되돌릴 수 없는 조작인가. 확인 버튼의 색만 바꾼다 — 배치는 같다. */
   danger?: boolean;
+  /**
+   * 확인한 조작이 도는 중인가. 도는 동안은 두 버튼을 막고 Esc·바깥 클릭도 무시한다 —
+   * 확인을 연타하면 같은 삭제가 두 번 가고, 도중에 창이 닫히면 실패를 말할 자리가 없다.
+   */
+  busy?: boolean;
+  /**
+   * 확인한 조작이 실패한 까닭. 있으면 **창 안에** 그린다. 창을 닫고 화면 다른 곳에 띄우면
+   * 사람은 무엇이 실패했는지를 다시 찾아야 한다 — 그래서 실패하면 창을 닫지 않는 것이
+   * 부르는 쪽의 약속이다.
+   */
+  error?: string | null;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -43,7 +56,7 @@ export function ConfirmDialog({ title, detail, confirmLabel, cancelLabel = 'Canc
   useEffect(() => { cancelRef.current?.focus(); }, []);
 
   return (
-    <Overlay label={title} onClose={onCancel} align="center" className="w-[22rem]">
+    <Overlay label={title} onClose={busy ? noop : onCancel} align="center" className="w-[22rem]">
       <div className="flex flex-col gap-3 p-4">
         {/* 겹창 제목은 이름줄단 15px — 화면 제목단(17px)은 화면 하나를 여는 자리에만 준다
             (`Composer` 의 예약 겹창과 같은 규칙). */}
@@ -55,22 +68,26 @@ export function ConfirmDialog({ title, detail, confirmLabel, cancelLabel = 'Canc
             {detail}
           </div>
         )}
+        {error && <p role="alert" data-testid="confirm-error" className="text-danger">{error}</p>}
         <div className="flex justify-end gap-2">
           <button
             ref={cancelRef}
+            disabled={busy}
             /* 시험이 버튼을 **글자로 집지 않게** 이름을 준다 — 로케일 기본값이 바뀌면
                글자로 집은 줄이 이유 없이 빨개진다(사전 이관이 세운 규율). */
             data-testid="confirm-cancel"
-            className="rounded px-3 py-1 text-fg-muted hover:bg-surface-sunken"
+            className="rounded px-3 py-1 text-fg-muted hover:bg-surface-sunken disabled:opacity-50"
             onClick={onCancel}
           >
             {cancelLabel}
           </button>
           <button
             data-testid="confirm-ok"
-            className={danger
+            disabled={busy}
+            aria-busy={busy || undefined}
+            className={`${danger
               ? 'rounded border border-danger-border bg-danger-surface px-3 py-1 font-medium text-danger hover:bg-danger-surface-strong'
-              : 'rounded bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover'}
+              : 'rounded bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover'} disabled:opacity-50`}
             onClick={onConfirm}
           >
             {confirmLabel}
@@ -80,3 +97,5 @@ export function ConfirmDialog({ title, detail, confirmLabel, cancelLabel = 'Canc
     </Overlay>
   );
 }
+
+function noop(): void {}
