@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'connect/connect_screen.dart';
 import 'i18n/i18n.dart';
@@ -48,6 +49,22 @@ class _HarkroomAppState extends State<HarkroomApp> {
           stringsFor(Localizations.localeOf(context).languageCode).appName,
       locale: _override,
       supportedLocales: supportedLocales,
+      // **이 셋이 없으면 한국어 기기에서 앱이 첫 프레임에 빨간 오류가 된다.**
+      //
+      // `supportedLocales` 는 "이 언어를 받아들인다"는 선언일 뿐이고, 그 언어의
+      // **Material 문구**(툴팁·달력·"뒤로" 같은 것)를 주는 것은 delegate 다. Flutter 가
+      // 기본으로 끼워 주는 `DefaultMaterialLocalizations` 는 **영어 한 벌뿐**이라,
+      // 기기 언어가 ko 로 풀리는 순간 `AppBar` 가
+      // *"No MaterialLocalizations found"* 로 터진다.
+      //
+      // **위젯 시험이 이것을 못 잡았다** — 시험 바인딩의 기본 로케일이 영어라 기본
+      // 제공분으로 덮였다. 실제 시뮬레이터(ko-KR)에 처음 띄웠을 때 드러났고,
+      // `test/locale_test.dart` 가 그 자리를 지킨다.
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       // `supportedLocales` 의 첫 번째(영어)가 폴백이다 — 모르는 기기 언어는 영어로 떨어진다.
       localeResolutionCallback: (deviceLocale, supported) {
         final wanted = _override ?? deviceLocale;

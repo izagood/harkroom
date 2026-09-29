@@ -31,6 +31,13 @@ dependencies:
   flutter:
     sdk: flutter
 
+  # **없으면 한국어 기기에서 앱이 첫 화면부터 빨간 오류가 된다.**
+  # Flutter 가 기본으로 주는 `MaterialLocalizations` 는 영어 한 벌뿐이라,
+  # `supportedLocales` 에 ko 를 넣어도 그 언어의 Material 문구(툴팁·날짜·"뒤로" 등)가
+  # 없어서 `AppBar` 부터 터진다.
+  flutter_localizations:
+    sdk: flutter
+
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
@@ -42,6 +49,11 @@ dependencies:
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+
+  # **진짜 기기(시뮬레이터)에서 도는 시험.** 위젯 시험 160개가 초록인데도 시뮬레이터
+  # 첫 화면이 빨간 오류였다 — 로케일·플러그인 채널·ATS 는 진짜 런타임에서만 드러난다.
+  integration_test:
     sdk: flutter
 
   # The "flutter_lints" package below contains a set of recommended lints to

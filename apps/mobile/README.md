@@ -31,11 +31,29 @@
 
 ```sh
 brew install --cask flutter     # 3.47.5 에서 확인했다
+brew install cocoapods          # 네이티브 플러그인에 필요하다
+xcodebuild -downloadPlatform iOS  # **시뮬레이터 런타임** (8.5GB, 한 번만)
+
 cd apps/mobile
 flutter pub get
-flutter test
+flutter test                    # 위젯·단위 시험
 flutter run                     # iOS 시뮬레이터
 ```
+
+`xcodebuild -showsdks` 에 iOS SDK 가 보여도 **시뮬레이터 런타임은 따로**다. 없으면
+`flutter build ios` 가 *"iOS 26.5 is not installed"* 로 죽는다 — SDK 가 없다는 말이 아니다.
+
+### 기기에서 도는 시험 (`integration_test/`)
+
+```sh
+xcrun simctl boot "iPhone 17 Pro"   # 아무 시뮬레이터나 띄워 두고
+flutter test integration_test/app_boots_test.dart
+```
+
+**위젯 시험만으로는 모자란다.** 160개가 전부 초록인데도 시뮬레이터에 처음 띄웠을 때
+첫 화면이 빨간 오류였다(`No MaterialLocalizations found` — 기기 언어가 한국어였다).
+위젯 시험은 기본 로케일이 영어라 그 경로를 한 번도 안 지났다. 로케일·플러그인 채널
+(Keychain·파일 고르기)·ATS 는 **진짜 런타임에서만** 드러난다.
 
 CI 는 [`.github/workflows/mobile.yml`](../../.github/workflows/mobile.yml) 이고 `apps/mobile/` 이
 바뀔 때만 깬다.
