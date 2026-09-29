@@ -109,3 +109,48 @@ describe('에이전트 기억 관리 REST (#139 3단계)', () => {
     expect(JSON.stringify(rows.rows[0].detail)).not.toContain('민감한 본문이다');
   });
 });
+
+// 메모리 고도화 M5: 사람이 기억을 고치고, 이전 판을 보고 되돌린다.
+describe('에이전트 기억 편집 REST (M5)', () => {
+  const url = (slug: string) => `/accounts/agents/${agentId}/memory/${encodeURIComponent(slug)}`;
+
+  it('PUT 이 본문·요약·종류를 고치고, 이전 판이 남는다', async () => {
+    await setMemory(pool, agentId, 'mem/edit-me', 'v1');
+    const put = await app.inject({
+      method: 'PUT', url: url('mem/edit-me'), headers: admin(),
+      payload: { value: 'v2', description: '사람이 고침', kind: 'procedure' },
+    });
+    expect(put.statusCode).toBe(200);
+    const list = (await app.inject({ method: 'GET', url: `/accounts/agents/${agentId}/memory`, headers: admin() }))
+      .json() as { memories: { slug: string; value: string; description: string | null; kind: string }[] };
+    expect(list.memories.find((m) => m.slug === 'mem/edit-me')).toMatchObject({ value: 'v2', description: '사람이 고침', kind: 'procedure' });
+    const revs = await app.inject({ method: 'GET', url: `${url('mem/edit-me')}/revisions`, headers: admin() });
+    expect((revs.json() as { revisions: { value: string }[] }).revisions.map((r) => r.value)).toEqual(['v1']);
+  });
+
+  // 사람이 연 판 뒤에 에이전트가 고쳤으면 덮지 않는다.
+  it('ifUpdatedAt 이 어긋나면 409 와 지금 판을 준다', async () => {
+    await setMemory(pool, agentId, 'mem/raced', 'a');
+    const stale = new Date(Date.now() - 60_000).toISOString();
+    const res = await app.inject({
+      method: 'PUT', url: url('mem/raced'), headers: admin(), payload: { value: 'b', ifUpdatedAt: stale },
+    });
+    expect(res.statusCode).toBe(409);
+    expect((res.json() as { error: { code: string; updatedAt: string } }).error.code).toBe('conflict');
+  });
+
+  it('core 한도·slug 문법을 에이전트와 같이 지킨다', async () => {
+    const long = await app.inject({ method: 'PUT', url: url('core'), headers: admin(), payload: { value: 'x'.repeat(3001) } });
+    expect(long.statusCode).toBe(422);
+    const bad = await app.inject({ method: 'PUT', url: url('Bad.Slug'), headers: admin(), payload: { value: 'x' } });
+    expect(bad.statusCode).toBe(422);
+  });
+
+  it('소유자·관리자가 아니면 고칠 수도, 이전 판을 볼 수도 없다', async () => {
+    const plain = { authorization: `Bearer ${plainToken}` };
+    const put = await app.inject({ method: 'PUT', url: url('mem/x'), headers: plain, payload: { value: 'x' } });
+    const revs = await app.inject({ method: 'GET', url: `${url('mem/x')}/revisions`, headers: plain });
+    expect(put.statusCode).toBe(403);
+    expect(revs.statusCode).toBe(403);
+  });
+});
