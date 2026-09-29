@@ -32,6 +32,7 @@
  *
  * | 값 | 왜 | 무엇이 깨지나 |
  * |---|---|---|
+ * | `0.3.42` | `PUT/DELETE /accounts/agents/:id/delegates/:agentId` 가 그 릴리스에 들어갔고(#909, 073), 에이전트 상세의 "대신 부를 수 있는 내 에이전트" 절(#910)이 그것을 부른다. | 대리 호출자 추가·빼기가 404 |
  * | `0.3.41` | `PUT /accounts/agents/:id/memory/:slug`·`GET …/memory/:slug/revisions` 가 그 릴리스에 들어갔고(#905), 설정 › 에이전트 › 메모리의 고치기·이전 판 되돌리기가 그것을 부른다 | 기억 고치기·되돌리기가 404, 이전 판 목록이 안 뜬다 |
  * | `0.3.37` | `POST /automations/:id/approve` 가 그 릴리스에 들어갔고(#882 가 #881 과 함께 v0.3.37), 설정 › Automations 의 제안 [승인]이 그것을 부른다. 같은 화면의 수신 키 발급(`POST/DELETE /automations/:id/ingress`)은 v0.3.28(#880) | 제안 승인이 404, 0.3.28 아래에서는 수신 켜기도 404 |
  * | `0.3.29` | `PUT /teams/:id/scope`·`/teams/:id/invokers` 가 그 릴리스에 들어갔고(#890, #891 과 함께 v0.3.29), 팀 상세의 호출 범위 절이 그것을 부른다 | 팀 범위를 바꾸면 404 |
@@ -52,7 +53,7 @@
  *
  * 근거 없이 높이지는 않는다 — 멀쩡한 서버가 고장으로 그려지면 그 순간 이 값은 소음이 된다.
  */
-export const MIN_SERVER_VERSION = '0.3.41';
+export const MIN_SERVER_VERSION = '0.3.42';
 
 /** `X.Y.Z` 만 견준다. 그 밖의 모양은 견주지 않는다(아래 `compareRelease` 주석). */
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;

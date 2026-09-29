@@ -18,8 +18,10 @@ import { ApiError } from '../../lib/api';
 import { useT } from '../../i18n/useT';
 import { AgentMcpSection } from './AgentMcpSection';
 
-export function AgentScopeSection({ agent, disabled, onUpdated }: {
+export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
   agent: AgentView;
+  /** 대리 호출자 후보를 고를 목록 — 상세 화면이 이미 받아 둔 `listAgents()` 결과다(새 왕복 없음). */
+  agents?: AgentView[];
   disabled?: boolean;
   onUpdated: (next: AgentView) => void;
 }) {
@@ -28,12 +30,14 @@ export function AgentScopeSection({ agent, disabled, onUpdated }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pick, setPick] = useState('');
+  const [pickDelegate, setPickDelegate] = useState('');
 
   const explain = (err: unknown): string => {
     if (err instanceof ApiError) {
       if (err.code === 'scope_invariant') return t('agents.scope.errInvariant');
       if (err.code === 'scope_widening') return t('agents.scope.errWidening');
       if (err.code === 'unknown_mcp_server') return t('agents.scope.errUnknownMcp');
+      if (err.code === 'delegate_not_eligible') return t('agents.scope.errDelegate');
     }
     return t('agents.scope.errFailed', { reason: err instanceof Error ? err.message : String(err) });
   };
@@ -46,6 +50,14 @@ export function AgentScopeSection({ agent, disabled, onUpdated }: {
   const invokers = agent.invokers ?? [];
   const humans = Object.values(accounts).filter((a) => a.kind === 'human' && !invokers.includes(a.id));
   const off = busy || disabled;
+  /*
+    대리 호출자 후보(서버 073). 서버와 **같은 조건**으로 거른다 — 같은 소유자·그 에이전트도 owner.
+    판정은 서버가 넣을 때·부를 때 다시 한다; 여기서 거르는 것은 넣으면 400 이 날 줄을 애초에
+    보이지 않게 하려는 것뿐이다(고르고 나서 거절당하면 "왜 안 되나"를 사람이 캐야 한다).
+  */
+  const delegates = agent.delegates ?? [];
+  const delegateCandidates = agents.filter((a) => a.id !== agent.id && !delegates.includes(a.id)
+    && a.invokeScope === 'owner' && agent.ownerAccountId != null && a.ownerAccountId === agent.ownerAccountId);
 
   return (
     <div className="rounded border border-border p-3" data-testid="agent-scope">
@@ -117,6 +129,46 @@ export function AgentScopeSection({ agent, disabled, onUpdated }: {
               className="rounded border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
               disabled={off || !pick}
               onClick={() => { const id = pick; setPick(''); void run(() => getController().addInvoker(agent.id, id)); }}
+            >
+              {t('agents.scope.addInvoker')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {agent.invokeScope === 'owner' && (
+        <div className="mt-3" data-testid="agent-delegates">
+          <div className="text-meta text-fg-muted">{t('agents.scope.delegates')}</div>
+          <p className="mt-1 text-meta text-fg-subtle">{t('agents.scope.delegatesNote')}</p>
+          {delegates.length === 0 && <p className="mt-1 text-meta text-fg-subtle">{t('agents.scope.delegatesNone')}</p>}
+          <ul className="mt-1 flex flex-wrap gap-2">
+            {delegates.map((id) => (
+              <li key={id} className="flex items-center gap-1 rounded border border-border px-2 py-0.5 text-meta text-fg">
+                @{accounts[id]?.handle ?? id}
+                <button
+                  className="text-fg-subtle hover:text-danger"
+                  aria-label={t('agents.scope.removeDelegate', { handle: accounts[id]?.handle ?? id })}
+                  disabled={off}
+                  onClick={() => void run(() => getController().removeDelegate(agent.id, id))}
+                >×</button>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-2 flex items-center gap-2">
+            <select
+              aria-label={t('agents.scope.addDelegate')}
+              className="rounded border border-border bg-surface px-2 py-1 text-meta text-fg"
+              disabled={off || delegateCandidates.length === 0}
+              value={pickDelegate}
+              onChange={(e) => setPickDelegate(e.target.value)}
+            >
+              <option value="">{t(delegateCandidates.length ? 'agents.scope.pickAgent' : 'agents.scope.noDelegateCandidates')}</option>
+              {delegateCandidates.map((a) => <option key={a.id} value={a.id}>@{a.handle}</option>)}
+            </select>
+            <button
+              className="rounded border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
+              disabled={off || !pickDelegate}
+              onClick={() => { const id = pickDelegate; setPickDelegate(''); void run(() => getController().addDelegate(agent.id, id)); }}
             >
               {t('agents.scope.addInvoker')}
             </button>
