@@ -7,7 +7,7 @@ import {
   ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, MAX_MESSAGE_BODY_CHARS,
   MODEL_ID_MAX, REPORT_MAX_ITEMS, REPORT_MAX_NEXT, TEAM_ROUND_LIMIT,
   type AccountView, type AskAudience, type AskMeta, type DelegationMeta, type FailureMeta,
-  type ModelMeta, type ReportMeta,
+  type MessageRow, type ModelMeta, type ReportMeta,
 } from '@harkroom/shared';
 import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js';
 import { emitEvent, emitPosted, onEvent } from '../events.js';
@@ -63,6 +63,35 @@ const MODEL_ARG = z.string().min(1).max(MODEL_ID_MAX).optional();
 
 function jsonResult(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }] };
+}
+
+/**
+ * 발화 도구의 결과 — `{ message, notified }` 에 **못 부른 이름**을 앞세운다(2026-09-29).
+ *
+ * 막힌 부름(`mentionChainCapped`·`mentionDenied`)은 meta 에 남아 화면에는 그려지지만, 발화한
+ * 에이전트는 `notified: []` 만 보고 "불렀다"고 믿은 채 턴을 끝냈다 — task_manager 가 담당을
+ * 부른 글이 상한에 막히고 사람이 직접 부르기 전까지 위임이 조용히 끊겼다(#harkroom seq 3336).
+ * 그래서 사유와 다음 할 일을 문장으로 준다. JSON 의 맨 앞 키로 두는 것은 에이전트가 결과를
+ * 끝까지 읽지 않아도 보게 하려는 것이다.
+ */
+function postedResult(message: MessageRow, notified: string[]) {
+  const meta = (message.meta ?? {}) as Record<string, unknown>;
+  const capped = Array.isArray(meta.mentionChainCapped) ? meta.mentionChainCapped as string[] : [];
+  const denied = Array.isArray(meta.mentionDenied) ? meta.mentionDenied as string[] : [];
+  const warnings: string[] = [];
+  if (capped.length) {
+    warnings.push(
+      `${capped.map((h) => `@${h}`).join(', ')} 를 부르지 못했다: 멘션 연쇄 상한 ${String(meta.mentionChainLimit)} 에 닿았다`
+      + ' (사람 없이 에이전트끼리 이어진 부름이 너무 길다). 사람에게 message.ask 로 넘겨라.',
+    );
+  }
+  if (denied.length) {
+    warnings.push(
+      `${denied.map((h) => `@${h}`).join(', ')} 를 부르지 못했다: 너는 그 에이전트의 호출 범위(invokeScope) 밖이다.`
+      + ' 사람에게 message.ask 로 넘기거나 소유자에게 호출 범위를 물어라.',
+    );
+  }
+  return jsonResult(warnings.length ? { warnings, message, notified } : { message, notified });
 }
 
 /**
@@ -395,7 +424,7 @@ function buildMcpServer(
      *
      * 재생(idempotency)이면 빈 배열이다 — 그 요청이 새로 부른 사람이 없다는 뜻이다.
      */
-    return jsonResult({ message, notified });
+    return postedResult(message, notified);
   });
 
   // #144: 진행 설명 메시지 — 결과 발화로 세지 않고, 사용자가 읽을 수 있어야 뜻이 있다.
@@ -425,7 +454,7 @@ function buildMcpServer(
       emitPosted(posted, audience);
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
-    return jsonResult({ message, notified });
+    return postedResult(message, notified);
   });
 
   /**
@@ -512,7 +541,7 @@ function buildMcpServer(
       // 검사와 발행 사이에 원본이 정해졌으면 방금 세운 거울을 곧바로 그 결과로 닫는다.
       if (mirrorOf) await syncAskMirrors(pool, mirrorOf);
     }
-    return jsonResult({ message, notified });
+    return postedResult(message, notified);
   });
 
   /**
@@ -558,7 +587,7 @@ function buildMcpServer(
       emitPosted(posted, channelAudience);
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
-    return jsonResult({ message, notified });
+    return postedResult(message, notified);
   });
 
   /**
@@ -765,7 +794,7 @@ function buildMcpServer(
       emitPosted(posted, channelAudience);
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
-    return jsonResult({ message, notified });
+    return postedResult(message, notified);
   });
 
   server.registerTool('message.react', {

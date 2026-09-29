@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { MENTION_CHAIN_LIMIT } from '@harkroom/shared';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
@@ -24,6 +26,13 @@ let app: FastifyInstance;
 let stop: () => Promise<void>;
 let adminToken: string;
 let channelId: string;
+let mcpUrl: string;
+/**
+ * 이 파일의 사슬은 **상한 4** 로 짠다(078 이전의 상수). 기본값은 8 이지만 사슬마다 여덟
+ * 고리를 쓰면 무엇을 지키는지가 흐려진다 — 상한을 설정으로 낮추는 것 자체가 설정 표면의
+ * 회귀선이기도 하다.
+ */
+const TEST_LIMIT = 4;
 const agents: Record<string, { id: string; pat: string }> = {};
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
@@ -57,6 +66,15 @@ beforeAll(async () => {
   stop = db.stop;
   app = await buildServer({ pool: db.pool });
   ({ token: adminToken } = await bootstrapAdmin(app));
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const addr = app.server.address();
+  mcpUrl = typeof addr === 'object' && addr ? `http://127.0.0.1:${addr.port}/mcp` : '';
+  const before = await app.inject({ method: 'GET', url: '/settings/mention-policy', headers: auth(adminToken) });
+  expect(before.json()).toEqual({ chainLimit: MENTION_CHAIN_LIMIT });
+  const set = await app.inject({
+    method: 'PUT', url: '/settings/mention-policy', headers: auth(adminToken), payload: { chainLimit: TEST_LIMIT },
+  });
+  expect(set.statusCode).toBe(200);
   // 상한(4)보다 한 걸음 더 갈 수 있어야 상한이 실제로 닫히는 것을 볼 수 있다.
   for (const handle of ['ada', 'bob', 'cid', 'dee', 'eve']) {
     const made = await createAgent(app, adminToken, handle);
@@ -72,7 +90,7 @@ beforeAll(async () => {
 
 afterAll(async () => { await app.close(); await stop(); });
 
-describe(`연쇄 깊이 상한 ${MENTION_CHAIN_LIMIT} (4단계)`, () => {
+describe(`연쇄 깊이 상한 ${TEST_LIMIT} (4단계)`, () => {
   it('상한 전까지는 이어진다 — 사람 → A → B 는 평범한 위임이다', async () => {
     const root = await post(adminToken, '@ada 이거 봐 줘');
     expect(await inboxFor(agents.ada!.pat, root)).toEqual(['mention']);
@@ -97,7 +115,7 @@ describe(`연쇄 깊이 상한 ${MENTION_CHAIN_LIMIT} (4단계)`, () => {
     // 조용히 사라지지 않는다: 무엇이 막혔는지와 상한값이 그 메시지에 남는다.
     const meta = await metaOf(capped);
     expect(meta.mentionChainCapped).toEqual(['eve']);
-    expect(meta.mentionChainLimit).toBe(MENTION_CHAIN_LIMIT);
+    expect(meta.mentionChainLimit).toBe(TEST_LIMIT);
   });
 
   it('상한에 닿아도 사람은 계속 불린다 — 그때가 사람이 필요한 순간이다', async () => {
@@ -176,5 +194,108 @@ describe(`연쇄 깊이 상한 ${MENTION_CHAIN_LIMIT} (4단계)`, () => {
     }
     const byHuman = await post(adminToken, '@eve 사람이 부른다', root);
     expect(await inboxFor(agents.eve!.pat, byHuman)).toEqual(['mention']);
+  });
+
+  /**
+   * **깨운 적 없는 부름은 고리가 아니다**(2026-09-29). 본문만 다시 파싱하던 동안에는 상한에
+   * 막힌 부름도 "eve 를 부른 메시지"로 보여, 불리지도 않은 eve 의 다음 발화가 깊이 5 로
+   * 시작해 곧바로 막혔다. 막힌 부름이 깊이를 쌓으면 한 번 막힌 스레드는 사람이 나설 때까지
+   * 아무도 못 부른다.
+   */
+  it('상한에 막힌 부름은 다음 깊이를 올리지 않는다', async () => {
+    const root = await post(adminToken, '@ada 다섯 번째 시작');
+    for (const [author, next] of [['ada', 'bob'], ['bob', 'cid'], ['cid', 'dee']] as Array<[string, string]>) {
+      await post(agents[author]!.pat, `@${next} 이어서`, root);
+    }
+    const capped = await post(agents.dee!.pat, '@eve 이어서', root);
+    expect((await metaOf(capped)).mentionChainCapped).toEqual(['eve']);
+    // eve 는 깨지 않았다 — 그러니 eve 가 스스로 올린 말은 사슬의 고리가 아니다(깊이 0).
+    const byEve = await post(agents.eve!.pat, '@ada 따로 할 말이 있다', root);
+    expect(await inboxFor(agents.ada!.pat, byEve)).toEqual(['mention']);
+    expect(await metaOf(byEve)).not.toHaveProperty('mentionChainCapped');
+  });
+
+  it('상한에 막히면 MCP 결과가 발화한 에이전트에게 그 사실을 말한다', async () => {
+    const root = await post(adminToken, '@ada 여섯 번째 시작');
+    for (const [author, next] of [['ada', 'bob'], ['bob', 'cid'], ['cid', 'dee']] as Array<[string, string]>) {
+      await post(agents[author]!.pat, `@${next} 이어서`, root);
+    }
+    const client = new Client({ name: 'test', version: '0.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(mcpUrl), {
+      requestInit: { headers: auth(agents.dee!.pat) },
+    }));
+    try {
+      const res = await client.callTool({
+        name: 'message.post', arguments: { channelId, threadRootId: root, body: '@eve 이어서' },
+      });
+      const out = JSON.parse((res.content as { type: string; text: string }[])[0]!.text) as Record<string, unknown>;
+      // 스레드를 연 사람(admin)은 답글 알림을 받는다 — 빠진 것은 eve 다.
+      expect(out.notified).not.toContain(agents.eve!.id);
+      // 조용히 끊기지 않는다: 누구를, 왜 못 불렀는지와 다음 할 일이 맨 앞에 온다.
+      expect(Object.keys(out)[0]).toBe('warnings');
+      const warnings = out.warnings as string[];
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('@eve');
+      expect(warnings[0]).toContain(`상한 ${TEST_LIMIT}`);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('막히지 않은 발화의 MCP 결과에는 경고가 없다', async () => {
+    const client = new Client({ name: 'test', version: '0.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(mcpUrl), {
+      requestInit: { headers: auth(agents.ada!.pat) },
+    }));
+    try {
+      const root = await post(adminToken, '@ada 일곱 번째 시작');
+      const res = await client.callTool({
+        name: 'message.post', arguments: { channelId, threadRootId: root, body: '@bob 확인 부탁' },
+      });
+      const out = JSON.parse((res.content as { type: string; text: string }[])[0]!.text) as Record<string, unknown>;
+      expect(out).not.toHaveProperty('warnings');
+      expect(out.notified).toContain(agents.bob!.id);
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+describe('상한 설정 표면(/settings/mention-policy)', () => {
+  it('누구나 읽고 admin 만 바꾼다', async () => {
+    const read = await app.inject({ method: 'GET', url: '/settings/mention-policy', headers: auth(agents.ada!.pat) });
+    expect(read.statusCode).toBe(200);
+    expect(read.json()).toEqual({ chainLimit: TEST_LIMIT });
+    const put = await app.inject({
+      method: 'PUT', url: '/settings/mention-policy', headers: auth(agents.ada!.pat), payload: { chainLimit: 20 },
+    });
+    expect(put.statusCode).toBe(403);
+  });
+
+  it('범위 밖의 값은 거절한다 — 0 이면 아무도 못 부르고, 너무 크면 상한이 아니다', async () => {
+    for (const chainLimit of [0, 51, 2.5]) {
+      const res = await app.inject({
+        method: 'PUT', url: '/settings/mention-policy', headers: auth(adminToken), payload: { chainLimit },
+      });
+      expect(res.statusCode).toBe(400);
+    }
+  });
+
+  it('바꾼 값이 곧바로 판정과 meta 에 실린다', async () => {
+    const put = await app.inject({
+      method: 'PUT', url: '/settings/mention-policy', headers: auth(adminToken), payload: { chainLimit: 2 },
+    });
+    expect(put.json()).toEqual({ chainLimit: 2 });
+    try {
+      const root = await post(adminToken, '@ada 상한 2');
+      await post(agents.ada!.pat, '@bob 이어서', root);            // 1
+      const capped = await post(agents.bob!.pat, '@cid 이어서', root); // 2 — 상한
+      expect(await inboxFor(agents.cid!.pat, capped)).toEqual([]);
+      expect((await metaOf(capped)).mentionChainLimit).toBe(2);
+    } finally {
+      await app.inject({
+        method: 'PUT', url: '/settings/mention-policy', headers: auth(adminToken), payload: { chainLimit: TEST_LIMIT },
+      });
+    }
   });
 });
