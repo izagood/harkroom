@@ -7,7 +7,7 @@ import type { ReactNode } from 'react';
  *
  * 아이콘은 **상표 로고가 아니라 글리프**다. 로고를 앱에 싣는 것은 이 화면이 할 결정이 아니다.
  */
-const GLYPH = { claude: '✳', codex: '◎' } as const;
+const GLYPH = { claude: '✳', codex: '◎', opencode: '▣', cursor: '◇' } as const;
 
 export function ProviderSection({ icon, title, description, testId, children }: {
   icon: keyof typeof GLYPH;
