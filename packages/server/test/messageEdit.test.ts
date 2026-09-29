@@ -123,6 +123,37 @@ describe('message edit', () => {
     expect(ev.message.body).toBe('푸시 확인 후');
     w.close();
   });
+
+  /*
+   * 수정도 게시와 같은 정규화를 탄다(#845) — 예전에는 계정만 토큰이 되고 수정으로 넣은 `@팀` 은
+   * 글자로 남았다. 그러면 팀 이름이 바뀌는 순간 그 메시지의 멘션만 대상을 잃는다.
+   */
+  it('normalizes a team mention added by an edit into a team token', async () => {
+    const team = await app.inject({
+      method: 'POST', url: '/teams', headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: 'edit-crew' },
+    });
+    const teamId = team.json().id as string;
+    const m = await post(adminToken, '팀 부르기 전');
+
+    const res = await edit(adminToken, m.id, '@edit-crew 봐 달라');
+
+    expect(res.json().body).toBe(`<@team:${teamId}> 봐 달라`);
+  });
+
+  // 지칭 표시(`mentionRefs`)는 새 본문 기준이다 — 고친 뒤에도 옛 본문의 칩 표시가 남으면 안 된다.
+  it('replaces mentionRefs with the edited body', async () => {
+    const { accountId: peerId } = await createAgent(app, adminToken, 'editpeer');
+    const m = await post(botPat, `보고 한가운데 @editpeer 를 지칭한다`);
+    expect(m.meta.mentionRefs).toEqual([peerId]);
+
+    const res = await app.inject({
+      method: 'PATCH', url: `/channels/${channelId}/messages/${m.id}`,
+      headers: { authorization: `Bearer ${botPat}` }, payload: { body: '지칭을 뺐다' },
+    });
+
+    expect(res.json().meta.mentionRefs).toBeUndefined();
+  });
 });
 
 describe('message delete', () => {
