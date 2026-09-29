@@ -119,6 +119,8 @@ describe('repo hygiene', () => {
       // 공급자 사용량 API(2026-09-28, `operator/src/providerUsage.ts`) — claude·codex CLI 가 부르는 1st-party 경로다.
       /^api\.anthropic\.com$/i,
       /^chatgpt\.com$/i,
+      // Cursor 공급자 대시보드 — 설정 › 제공업체 계정의 Cursor 카드 링크(표시만).
+      /^cursor\.com$/i,
       /^opencode\.ai$/i, // opencode 설정 파일이 가리키는 공개 스키마 URL
       /^engineering\.block\.xyz$/i,
     ];

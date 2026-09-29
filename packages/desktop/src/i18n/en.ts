@@ -205,6 +205,13 @@ export const en = {
   'providerAccounts.codex.openLogin': 'Open sign-in page',
   'providerAccounts.codex.switchNote': 'Runners switch on their next Codex turn. Thread sessions continue across accounts.',
   'providerAccounts.apiKey': 'API key',
+  'providerAccounts.displayOnly': 'Account switching for this provider is not managed here yet.',
+  'providerAccounts.opencode.description': 'Runners use OpenCode with its own login on this device.',
+  'providerAccounts.opencode.system': 'Uses your OpenCode login. Run `opencode auth login` in a terminal to change it.',
+  'providerAccounts.cursor.description': 'Shown for reference. Cursor is not an agent harness in Harkroom yet.',
+  'providerAccounts.cursor.system': 'Uses your Cursor app login.',
+  'providerAccounts.cursor.note': 'Nothing here affects runners. Check plan usage on the Cursor dashboard.',
+  'providerAccounts.cursor.dashboard': 'Open Cursor dashboard',
   // ---------------------------------------------------------------------------
   // common — **두 화면 이상이 실제로 부르는 것만** 온다. 미리 올려 두지 않는다.
   // ---------------------------------------------------------------------------
