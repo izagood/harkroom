@@ -26,6 +26,8 @@ function setup(over: Partial<Record<string, unknown>> = {}) {
     updateAgent: vi.fn(async (_id: string, patch: Record<string, unknown>) => agent(patch as Partial<AgentView>)),
     addInvoker: vi.fn(async (_id: string, accountId: string) => agent({ invokeScope: 'list', invokers: [accountId] })),
     removeInvoker: vi.fn(async () => agent({ invokeScope: 'list', invokers: [], delegates: [] })),
+    addDelegate: vi.fn(async (_id: string, delegateId: string) => agent({ invokeScope: 'owner', delegates: [delegateId] })),
+    removeDelegate: vi.fn(async () => agent({ invokeScope: 'owner', delegates: [] })),
     putMcpServer: vi.fn(async (name: string, credentialKind: string) => ({ name, credentialKind, createdBy: null, createdAt: '' })),
     restartAgent: vi.fn(async () => ({ operatorId: 'op-1' })),
     mcpServers: vi.fn(async () => [
@@ -203,5 +205,40 @@ describe('AgentMcpSection — 한 절에서 끝낸다', () => {
     expect((await screen.findByTestId('agent-mcp-error')).textContent).toContain('agent.privileged');
     expect(calls.some((x) => x.cmd === 'operator_mcp_set')).toBe(false);
     expect(c.updateAgent).not.toHaveBeenCalled();
+  });
+
+  // 대리 호출자(서버 073). 후보는 서버와 같은 조건(같은 소유자·owner 범위)으로 걸러지고,
+  // 고르면 addDelegate 에 닿는다. 조건 밖 줄은 애초에 보이지 않는다.
+  it('owner 범위에서 대리 호출자 후보는 같은 소유자의 owner 에이전트만 보이고, 고르면 addDelegate 에 닿는다', async () => {
+    const lead = agent({ id: 'agent-2', handle: 'lead', invokeScope: 'owner' } as Partial<AgentView>);
+    const open = agent({ id: 'agent-3', handle: 'open', invokeScope: 'community' } as Partial<AgentView>);
+    const foreign = agent({ id: 'agent-4', handle: 'foreign', invokeScope: 'owner', ownerAccountId: 'someone-else' } as Partial<AgentView>);
+    const c = setup({ addDelegate: vi.fn(async (_id: string, d: string) => agent({ invokeScope: 'owner', delegates: [d] })) });
+    const onUpdated = vi.fn();
+    render(<AgentScopeSection agent={agent({ invokeScope: 'owner' })} agents={[agent({ invokeScope: 'owner' }), lead, open, foreign]} onUpdated={onUpdated} />);
+    const box = screen.getByTestId('agent-delegates');
+    const picker = box.querySelector('select')!;
+    const values = [...picker.querySelectorAll('option')].map((o) => o.value).filter(Boolean);
+    expect(values).toEqual(['agent-2']);
+    fireEvent.change(picker, { target: { value: 'agent-2' } });
+    fireEvent.click(box.querySelector('button:not([aria-label])') ?? box.querySelectorAll('button')[0]!);
+    await waitFor(() => expect(c.addDelegate).toHaveBeenCalledWith('agent-1', 'agent-2'));
+    expect(onUpdated).toHaveBeenCalledWith(expect.objectContaining({ delegates: ['agent-2'] }));
+  });
+
+  it('owner 가 아니면 대리 호출자 절을 그리지 않는다', () => {
+    setup();
+    render(<AgentScopeSection agent={agent({ invokeScope: 'list' })} agents={[]} onUpdated={vi.fn()} />);
+    expect(screen.queryByTestId('agent-delegates')).toBeNull();
+  });
+
+  it('delegate_not_eligible 거절을 사람 말로 보인다', async () => {
+    const lead = agent({ id: 'agent-2', handle: 'lead', invokeScope: 'owner' } as Partial<AgentView>);
+    setup({ addDelegate: vi.fn(async () => { throw new ApiError(400, 'delegate_not_eligible', 'x'); }) });
+    render(<AgentScopeSection agent={agent({ invokeScope: 'owner' })} agents={[lead]} onUpdated={vi.fn()} />);
+    const box = screen.getByTestId('agent-delegates');
+    fireEvent.change(box.querySelector('select')!, { target: { value: 'agent-2' } });
+    fireEvent.click(box.querySelectorAll('button')[0]!);
+    expect((await screen.findByTestId('agent-scope-error')).textContent).toContain('소유자 전용');
   });
 });

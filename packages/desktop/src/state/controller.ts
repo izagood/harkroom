@@ -2095,6 +2095,12 @@ export class Controller {
   removeInvoker(agentId: string, accountId: string): Promise<import('@harkroom/shared').AgentView> {
     return this.api.removeInvoker(agentId, accountId);
   }
+  addDelegate(agentId: string, delegateId: string): Promise<import('@harkroom/shared').AgentView> {
+    return this.api.addDelegate(agentId, delegateId);
+  }
+  removeDelegate(agentId: string, delegateId: string): Promise<import('@harkroom/shared').AgentView> {
+    return this.api.removeDelegate(agentId, delegateId);
+  }
   mcpServers(): Promise<import('@harkroom/shared').McpServerRow[]> {
     return this.api.mcpServers();
   }

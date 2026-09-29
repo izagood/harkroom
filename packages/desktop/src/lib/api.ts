@@ -641,6 +641,15 @@ export class ApiClient {
     return this.req('DELETE', `/accounts/agents/${agentId}/invokers/${accountId}`);
   }
 
+  /** owner 범위의 대리 호출자(서버 073). 조건에 어긋나면 400 `delegate_not_eligible`. */
+  addDelegate(agentId: string, delegateId: string): Promise<AgentView> {
+    return this.req('PUT', `/accounts/agents/${agentId}/delegates/${delegateId}`);
+  }
+
+  removeDelegate(agentId: string, delegateId: string): Promise<AgentView> {
+    return this.req('DELETE', `/accounts/agents/${agentId}/delegates/${delegateId}`);
+  }
+
   /** MCP 레지스트리 — 이름과 자격증명 종류뿐이다. 정의와 토큰은 오퍼레이터 머신에 있다. */
   async mcpServers(): Promise<McpServerRow[]> {
     return (await this.req<{ servers: McpServerRow[] }>('GET', '/mcp-servers')).servers;

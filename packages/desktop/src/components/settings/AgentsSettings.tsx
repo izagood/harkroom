@@ -2253,6 +2253,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             {selected && (isAdmin || isOwner) && (
               <AgentScopeSection
                 agent={selected}
+                agents={agents}
                 disabled={busy}
                 onUpdated={(updated) => {
                   setSelected(updated);
