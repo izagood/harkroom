@@ -1,5 +1,6 @@
 import { readAskMeta, type AskAudience, type MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
+import { selectAccountNames } from '../lib/accountNames';
 import { getController } from '../state/controller';
 import { useT } from '../i18n/useT';
 import type { Translate } from '../i18n';
@@ -26,7 +27,8 @@ import type { Translate } from '../i18n';
 export function AskCard({ message }: { message: MessageRow }) {
   const t = useT();
   const myId = useActiveStore((s) => s.me?.id ?? null);
-  const accounts = useActiveStore((s) => s.accounts);
+  // 이름 쪽만 구독한다 — 상태·아바타 이벤트에 행마다 다시 그려지지 않도록(`lib/accountNames`).
+  const accounts = useActiveStore(selectAccountNames);
   const ask = readAskMeta(message.meta);
   if (!ask) return null;
 

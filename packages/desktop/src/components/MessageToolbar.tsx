@@ -52,8 +52,7 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
   const [picking, setPicking] = useState(false);
   // #219 와 같은 판단: 담김은 **id 집합**으로 본다(한 탭의 행들로 판단하면 '완료' 탭을 열어
   // 본 뒤로 open 인 메시지가 담기지 않은 것으로 읽힌다).
-  const savedIds = useActiveStore((s) => s.savedIds);
-  const isSaved = savedIds.includes(message.id);
+  const isSaved = useActiveStore((s) => s.savedIds.includes(message.id));
   const rootRef = useRef<HTMLDivElement>(null);
   const pickBtnRef = useRef<HTMLButtonElement>(null);
 

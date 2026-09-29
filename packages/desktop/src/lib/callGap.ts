@@ -89,7 +89,7 @@ export interface CallGapInput {
   message: Pick<MessageRow,
     'kind' | 'seq' | 'authorId' | 'body' | 'createdAt' | 'activityCount'>;
   /** handle 을 풀 표이자 **누가 에이전트인지**의 정본. */
-  accounts: Record<string, AccountView>;
+  accounts: Readonly<Record<string, Pick<AccountView, 'id' | 'handle' | 'kind'>>>;
   /** 같은 채널에 이미 실린 발화 전부. 이 안에서 `seq` 로 "뒤에 온 것"을 고른다. */
   channelMessages: MessageRow[];
   runnerStates: Record<string, RunnerState>;
@@ -132,12 +132,12 @@ export function callGap(input: CallGapInput): CallGap | null {
   //    `@handle` 을 서버가 부르지 않는다는 사실(`#298`·`#592`)이 그 함수에 이미 들어 있고,
   //    여기서 정규식을 새로 쓰면 판정이 두 벌이 되어 부르지도 않은 상대를 두고 줄이 선다.
   //    집합·팀(`kind !== 'account'`)은 서버가 펼치므로 이 자리에서는 명단을 모른다 — 뺀다.
-  const byHandle = new Map<string, AccountView>();
+  const byHandle = new Map<string, Pick<AccountView, 'id' | 'handle' | 'kind'>>();
   for (const a of Object.values(accounts)) byHandle.set(a.handle.toLowerCase(), a);
   const called = bodyRecipients(message.body, [...byHandle.values()].map((a) => a.handle), [])
     .filter((r) => r.kind === 'account')
     .map((r) => byHandle.get(r.handle))
-    .filter((a): a is AccountView => a != null && a.kind === 'agent');
+    .filter((a): a is Pick<AccountView, 'id' | 'handle' | 'kind'> => a != null && a.kind === 'agent');
   if (called.length === 0) return null;
 
   // 4. 그 뒤로 아무 일도 없었는가.

@@ -2,6 +2,7 @@ import type { MessageRow } from '@harkroom/shared';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useActiveStore } from '../state/communities';
+import { selectAccountNames } from '../lib/accountNames';
 import { getController } from '../state/controller';
 import { useT } from '../i18n/useT';
 import { reactionSentence, reactorNames } from '../lib/reactionNames';
@@ -192,7 +193,8 @@ export function InlineReactionButtons({ message, className, classNameOn }: {
 
 /** 달린 리액션 칩. 추가는 `ReactionPicker`(툴바)가 맡는다 — 같은 것을 두 곳에 두지 않는다. */
 export function Reactions({ message }: { message: MessageRow }) {
-  const accounts = useActiveStore((s) => s.accounts);
+  // 이름 쪽만 구독한다 — 상태·아바타 이벤트에 행마다 다시 그려지지 않도록(`lib/accountNames`).
+  const accounts = useActiveStore(selectAccountNames);
   const myId = useActiveStore((s) => s.me?.id ?? null);
 
   const toggle = (emoji: string, on: boolean) => {
