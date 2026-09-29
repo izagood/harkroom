@@ -755,3 +755,35 @@ HARKROOM_NEW_PASSWORD=<새 비밀번호> DATABASE_URL=<...> \
 그래서 비밀번호 재설정 링크를 이메일로 보내는 self-serve 복구는 불가능하다.
 필요하면 운영자가 이 도구를 사용해야 한다. 백업·계정 정책을 세울 때 이 제약을
 고려해야 한다.
+
+## 12. 마이그레이션은 expand/contract — 롤링 배포의 전제
+
+서버는 롤링으로 배포한다(`RollingUpdate`, maxSurge 1 / maxUnavailable 0). 새 파드는 기동하면서
+`runMigrations` 를 돌리고, 끝나야 `listen` 해서 ready 가 된다. **그동안 옛 파드는 새 스키마
+위에서 계속 요청을 받는다.** 옛 파드가 내려갈 때까지(preStop + 드레인, 수십 초) 두 판의 코드가
+한 DB 를 같이 쓴다. 마이그레이션이 옛 코드를 깨뜨리면 배포 자체가 장애가 된다.
+
+그래서 한 릴리스의 마이그레이션은 **더하기(expand)만** 한다. 빼기(contract)는 옛 코드가 더는
+그것을 쓰지 않는 **다음 릴리스**로 넘긴다.
+
+| 하고 싶은 것 | 이번 릴리스 (expand) | 다음 릴리스 (contract) |
+| --- | --- | --- |
+| 컬럼·테이블 지우기 | 코드가 읽기·쓰기를 멈춘다 | `drop column` / `drop table` |
+| 이름 바꾸기 | 새 컬럼 추가 + 양쪽에 쓰기 + 옮겨 담기, 읽기는 새 쪽 | 옛 컬럼 `drop` |
+| 타입 바꾸기 | 새 타입의 새 컬럼 (위와 같다) | 옛 컬럼 `drop` |
+| `not null` 걸기 | 코드가 항상 값을 넣게 하고, 빈 행을 채운다 | `set not null` |
+| `not null` 컬럼 추가 | `default` 를 준다(옛 코드의 insert 는 그 컬럼을 모른다) | — |
+
+**검사**: `packages/server/test/migrationExpandContract.test.ts` 가 079 이후 파일에서
+`drop table`·`drop column`·`rename`·`alter column … type`·`set not null`·default 없는
+`add column … not null` 을 잡는다. contract 단계라면(앞 릴리스에서 코드가 이미 그것을 안 쓰면)
+파일에 `-- contract: <사유 — 어느 릴리스부터 안 쓰는지>` 를 적으면 통과한다.
+
+**검사가 못 잡는 것 — 리뷰에서 본다**
+- **데이터 형식 바꾸기.** 063 은 본문의 집합·팀 멘션을 `<@group:id>`·`<@team:id>` 로 다시 썼다.
+  DDL 은 아니지만, 옛 코드가 새 형식을 못 읽으면 같은 장애다. 새 코드가 옛 형식도 읽게 한 릴리스를
+  먼저 내고, 다시 쓰는 것은 그다음이다.
+- **긴 잠금.** 마이그레이션은 파일마다 트랜잭션이라 `create index concurrently` 를 못 쓴다. 큰
+  테이블에 인덱스를 만들거나 행을 대량으로 고치면, 그동안 옛 파드의 쓰기가 잠금에 걸려 선다.
+  다운타임은 아니지만 느려진다.
+- **enum·check 좁히기.** 허용 값을 줄이면 옛 코드가 쓰던 값이 거절된다. 넓히기만 expand 다.
