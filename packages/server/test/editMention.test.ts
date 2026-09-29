@@ -64,6 +64,19 @@ describe('edit adds a mention', () => {
     expect(await inboxOf(m.id)).toEqual([{ account_id: botId, reason: 'mention', via_edit: true }]);
   });
 
+  // 러너는 `viaEdit` 로 "수정으로 추가된 멘션"을 안다(076). 게시로 생긴 항목에는 키가 없다.
+  it('exposes viaEdit on the inbox entry only for edit-created calls', async () => {
+    const posted = await post(adminToken, '@edbot 게시로 부름');
+    const later = await post(adminToken, '나중에 고칠 글');
+    await edit(adminToken, later.id, '@edbot 수정으로 부름');
+
+    const res = await app.inject({ method: 'GET', url: '/inbox', headers: auth(botPat) });
+    const entries = res.json().entries as { messageId: string; viaEdit?: boolean }[];
+
+    expect(entries.find((e) => e.messageId === later.id)?.viaEdit).toBe(true);
+    expect(entries.find((e) => e.messageId === posted.id)).not.toHaveProperty('viaEdit');
+  });
+
   // D1 — 이미 이 메시지로 받은 사람은 다시 부르지 않는다. 넣었다 뺐다 다시 넣어도 그렇다.
   it('never calls the same account twice for one message', async () => {
     const m = await post(adminToken, '@edbot 처음부터 부른 글');
