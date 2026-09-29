@@ -17,6 +17,7 @@ import {
   type AgentHarness,
   type MentionPermission,
 } from '@harkroom/shared';
+import { RUNNER_LINK_ENV_KEYS } from '@harkroom/shared/runnerLink';
 
 import { executionModelFor, usesXdgHome } from './adapters/index.js';
 import { OPENCODE_READONLY_AGENT, opencodeDirs } from './opencodeHome.js';
@@ -282,6 +283,15 @@ const CODEX_PRESET: HarnessPreset = {
     '-c', 'mcp_servers.harkroom.transport="stdio"',
     '-c', `mcp_servers.harkroom.command=${JSON.stringify(operatorBin)}`,
     '-c', `mcp_servers.harkroom.args=${JSON.stringify([...MCP_BRIDGE_ARGS])}`,
+    // **링크 env 셋을 이름으로 달라고 해야 한다**(2026-09-29 실측, jinbin 커뮤니티). codex 는
+    // stdio MCP 자식에게 자기 env 를 통째로 넘기지 않는다 — 기본 목록(PATH·HOME 등)과 항목의
+    // `env`·`env_vars` 에 적힌 것만 넘긴다. 이 줄이 없던 동안(09-20 브릿지 전환 이후) 브릿지는
+    // `… 이 필요하다` 를 찍고 exit 2, codex 는 `handshaking with MCP server failed` 를 로그에만
+    // 남기고 harkroom 도구 없이 돌았다 — 답할 수단이 없는 턴이다. 러너 env 에는 셋이 다 있었다.
+    //
+    // **`env` 가 아니라 `env_vars` 다.** `env` 는 값을 argv 에 굽는다 — secret 이 `ps` 에 뜬다.
+    // `env_vars` 는 이름만 적고 값은 codex 가 자기 env 에서 꺼내 넘긴다.
+    '-c', `mcp_servers.harkroom.env_vars=${JSON.stringify([...RUNNER_LINK_ENV_KEYS])}`,
     // 에이전트의 mcpServers(스펙 §6) — 오퍼레이터가 이 머신의 정의로 합쳐 파일에 넣은 것을 codex 문법으로.
     ...Object.entries(extraMcpServers).flatMap(([name, entry]) => codexMcpFlags(name, entry)),
   ],
@@ -603,7 +613,10 @@ function childEnv(
   // 조건을 섞으면 '전체 상속'이라는 규칙과 그 예외가 한 줄에 엉켜 둘 다 읽기 어려워진다.
   for (const key of HARNESS_ENV_DENYLIST) delete env[key];
   // PAT 을 덮어쓰던 자리였다. 이제 하네스가 서버에 닿는 길은 `mcp-bridge` 뿐이고, 브릿지가 읽는
-  // 것은 러너 env 의 오퍼레이터 소켓·러너 id·secret 이다 — 전체 상속으로 이미 넘어간다.
+  // 것은 러너 env 의 오퍼레이터 소켓·러너 id·secret 이다 — 여기서는 전체 상속으로 하네스까지 간다.
+  // **하네스 → 브릿지 한 단은 하네스 몫이다.** claude·opencode 는 MCP 자식에 env 를 물려주지만
+  // codex 는 안 물려준다 — 그래서 codex 는 MCP 항목에 `env_vars` 로 셋을 이름 대어 둔다
+  // (CODEX_PRESET.mcp). 여기서 넣어 두는 것만으로 브릿지까지 간다고 믿지 마라.
   if (homes.codexHome !== null) env.CODEX_HOME = homes.codexHome;
   // opencode 는 한 변수가 아니라 **XDG 셋**이다. 하나라도 빼면 자격증명만 갈리고 세션은
   // 사람 것과 공유되는 반쪽 격리가 된다(`opencodeHome.ts` 머리말).
