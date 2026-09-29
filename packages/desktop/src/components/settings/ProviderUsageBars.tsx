@@ -1,6 +1,7 @@
 /**
- * 계정 줄 아래에 서는 **한도 막대 두 개**(5시간·주간) + 복귀 시각. 공급자 API 가 말한 % 다
- * (`lib/providerUsage.ts`). 못 읽었으면 막대 대신 이유 한 줄 — 빈 자리로 두면 "0%"로 읽힌다.
+ * 계정 줄 아래에 서는 **한도 막대 두 개**(5시간·주간) + 복귀 시각. 공급자가 말한 % 다 — CLI 로 읽었든
+ * API 로 읽었든 출처가 같으므로 똑같이 그린다(`lib/providerUsage.ts`). 못 읽었으면 막대 대신 이유 한 줄 —
+ * 빈 자리로 두면 "0%"로 읽힌다.
  *
  * 색: 90% 이상만 경고색. 강조색(주황)은 쓰지 않는다(`accentBudget.test.tsx` — 강조는 "나를
  * 막는 것"과 주 동작 하나로 좁혀 두었다). 한도에 가까운 것은 막을 뻔한 일이라 경고가 맞다.
@@ -10,6 +11,9 @@ import type { ProviderAccountUsage, ProviderUsageWindow } from '../../lib/provid
 import type { MessageKey } from '../../i18n/en';
 
 const ERROR_KEY: Record<string, MessageKey> = {
+  'cli-unavailable': 'providerUsage.error.cliUnavailable',
+  'cli-unparsed': 'providerUsage.error.cliUnparsed',
+  'cli-error': 'providerUsage.error.cliUnparsed',
   'no-credentials': 'providerUsage.error.noCredentials',
   'token-expired': 'providerUsage.error.tokenExpired',
   unauthorized: 'providerUsage.error.unauthorized',
@@ -55,7 +59,7 @@ export function ProviderUsageBars({ usage, nowMs }: { usage: ProviderAccountUsag
   }
   if (!usage.session && !usage.weekly) return null;
   return (
-    <div className="flex gap-6" data-testid="provider-usage">
+    <div className="flex items-start gap-6" data-testid="provider-usage">
       {usage.session && <Bar label={t('providerUsage.session')} w={usage.session} nowMs={nowMs} />}
       {usage.weekly && <Bar label={t('providerUsage.weekly')} w={usage.weekly} nowMs={nowMs} />}
       {usage.extra?.map((x) => <Bar key={x.label} label={x.label} w={x.window} nowMs={nowMs} />)}

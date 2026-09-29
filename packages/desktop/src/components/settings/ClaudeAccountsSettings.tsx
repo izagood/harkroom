@@ -79,7 +79,7 @@ import { Menu } from '../Menu';
 import { Button, Field, SettingsGroup, SettingsPage, TextInput } from './primitives';
 import { ProviderSection } from './ProviderSection';
 import { ProviderUsageBars } from './ProviderUsageBars';
-import { usageFor, useProviderUsage, useProviderUsageEnabled } from '../../lib/providerUsage';
+import { usageFor, useProviderUsage } from '../../lib/providerUsage';
 
 /** 제공업체 계정 화면 안의 Claude 칸. `SettingsPage` 와 같은 인자를 받아 `Shell` 로 갈아 끼운다. */
 function ClaudeSection({ description, children }: {
@@ -176,10 +176,9 @@ function accountLabel(a: ClaudeAccountView): string {
  */
 export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolean } = {}) {
   const Shell = embedded ? ClaudeSection : SettingsPage;
-  // 공급자 API 사용률(비공식, 토글 뒤). 꺼져 있으면 부르지 않고 아래 표(로컬 추정)만 선다.
-  const [providerUsageOn] = useProviderUsageEnabled();
+  // 한도 사용률: CLI(`/usage`) 먼저, 실패하면 같은 API(`usageChain.ts`). 아래 표(로컬 추정)는 늘 선다.
   const available = hasClaudeAccountsSurface();
-  const { snap: providerSnap } = useProviderUsage('claude', providerUsageOn && available);
+  const { snap: providerSnap } = useProviderUsage('claude', available);
   // **글자는 영어이지만 시각 표기는 로케일을 따른다.** 이 화면의 문구는 사전을 쓰지 않는데
   // (이 파일 머리말) `HH:MM` 은 문구가 아니라 숫자 표기라 `Intl` 이 낸다 — `lib/time.ts`
   // 머리말이 가른 그 축이다: 수량·표기는 플랫폼이 우리보다 잘 안다.

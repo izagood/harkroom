@@ -46,13 +46,6 @@ export interface Prefs {
    * 로컬이다). 눈금과 그 뜻은 `lib/zoom.ts` 가 정한다.
    */
   zoom: number;
-  /**
-   * 공급자 API(비공식)로 계정 사용률을 읽을까. **`null` = 사람이 고른 적 없음** — 그때는
-   * `PROVIDER_USAGE_API_DEFAULT`(`lib/providerUsage.ts`)를 따른다. 불린으로 기본값을 박지 않는
-   * 이유: 기본값이 아직 정해지지 않았고(jaebin 결정 대기), 정해지면 상수 한 줄만 바꿔서 손대지
-   * 않은 사람 모두에게 곧바로 먹어야 한다.
-   */
-  providerUsageApi: boolean | null;
 }
 
 const KEY = 'harkroom.prefs';
@@ -154,7 +147,6 @@ export const DEFAULT_PREFS: Prefs = {
   colorMode: 'system',
   locale: 'system',
   zoom: DEFAULT_ZOOM,
-  providerUsageApi: null,
 };
 
 export const prefsStorage = {
@@ -176,7 +168,6 @@ export const prefsStorage = {
         // 고친 저장본이나 표 밖의 옛 값이 들어오면 화면이 읽을 수 없는 크기로 선다.
         // 그때 되돌릴 손잡이는 그 화면 안에 있으므로 빠져나올 길이 없다.
         zoom: normalizeZoom(parsed.zoom ?? DEFAULT_PREFS.zoom),
-        providerUsageApi: typeof parsed.providerUsageApi === 'boolean' ? parsed.providerUsageApi : null,
       };
     } catch {
       return DEFAULT_PREFS;

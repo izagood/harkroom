@@ -131,9 +131,7 @@ describe('공급자 API 사용률 막대', () => {
     });
   };
 
-  it('켜져 있으면(기본) 계정 줄에 5시간·주간 % 가 서고, 못 읽은 계정은 이유를 말한다', async () => {
-    const { usePrefsStore } = await import('../../state/prefsStore');
-    usePrefsStore.setState({ providerUsageApi: null });
+  it('계정 줄에 5시간·주간 % 가 서고, 못 읽은 계정은 이유를 말한다 — 데몬에는 아무것도 넘기지 않는다', async () => {
     stubWithUsage();
     render(<CodexAccountsSettings />);
     const work = await screen.findByTestId('codex-account-work');
@@ -141,16 +139,16 @@ describe('공급자 API 사용률 막대', () => {
     expect(within(work).getByText('12%')).toBeTruthy();
     const system = screen.getByTestId('codex-account-system');
     expect(within(system).getByTestId('provider-usage-error').textContent).toMatch(/expired/);
+    expect(calls.find((c) => c.cmd === 'codex_accounts_provider_usage')?.args).toBeUndefined();
   });
 
-  it('꺼져 있으면 데몬에 묻지도 않는다 — 로컬 동작 그대로', async () => {
-    const { usePrefsStore } = await import('../../state/prefsStore');
-    usePrefsStore.setState({ providerUsageApi: false });
+  it('API 로 읽은 값도 CLI 로 읽은 값과 똑같이 그린다 — 출처가 같아 꼬리표가 없다', async () => {
+    USAGE.accounts[1] = { ...USAGE.accounts[1]!, source: 'api' } as never;
     stubWithUsage();
     render(<CodexAccountsSettings />);
-    await screen.findByTestId('codex-account-work');
-    expect(calls.some((c) => c.cmd === 'codex_accounts_provider_usage')).toBe(false);
-    expect(screen.queryByTestId('provider-usage')).toBeNull();
-    usePrefsStore.setState({ providerUsageApi: null });
+    const work = await screen.findByTestId('codex-account-work');
+    await waitFor(() => expect(within(work).getByText('93%')).toBeTruthy());
+    expect(within(work).getAllByTestId('provider-usage')).toHaveLength(1);
+    expect(within(work).queryByText(/API/)).toBeNull();
   });
 });
