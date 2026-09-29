@@ -746,3 +746,73 @@ describe('#600 발화에 실린 모델', () => {
     expect(readFailureMeta(failed.message.meta)).not.toBeNull();
   });
 });
+
+/**
+ * `message.ask` 의 `mirrorOf`(2026-09-29) — 거울 카드를 세울 때 서버가 거절하는 경우들과,
+ * 사람이 거울에 답하면 원본에도 적히는 왕복.
+ */
+describe('message.ask — mirrorOf', () => {
+  const opts = [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }];
+
+  it('원본과 같은 선택지 id 로만 거울을 세우고, 사람이 답하면 원본에도 적힌다', async () => {
+    const { pat: tmPat } = await createAgent(app, adminToken, 'mirrortm');
+    const bot = await mcpClient(botPat);
+    const tm = await mcpClient(tmPat);
+    try {
+      const root = text(await bot.callTool({
+        name: 'message.ask', arguments: { channelId, body: '원래 물음', options: opts },
+      })) as { message: { id: string } };
+      const rootId = root.message.id;
+
+      const call = async (args: Record<string, unknown>) => text(await tm.callTool({
+        name: 'message.ask', arguments: { channelId, body: '거울', options: opts, mirrorOf: rootId, ...args },
+      })) as { message?: { id: string; meta: Record<string, unknown> }; error?: { code: string } };
+
+      expect((await call({ options: [{ id: 'a', label: 'A' }, { id: 'c', label: 'C' }] })).error?.code)
+        .toBe('mirror_options_mismatch');
+      expect((await call({ options: [...opts, { id: 'c', label: 'C' }] })).error?.code)
+        .toBe('mirror_options_mismatch');
+      expect((await call({ to: '@mirrortm' })).error?.code).toBe('mirror_audience');
+      expect((await call({ mirrorOf: '00000000-0000-4000-8000-000000000000' })).error?.code).toBe('mirror_not_found');
+
+      // 라벨은 달라도 된다 — 다른 채널에서 읽히게 다시 쓸 수 있다. 순서도 상관없다.
+      const mirror = await call({ options: [{ id: 'b', label: 'B 로 간다' }, { id: 'a', label: 'A 로 간다' }] });
+      expect(mirror.error).toBeUndefined();
+      expect(readAskMeta(mirror.message!.meta)!.mirrorOf).toBe(rootId);
+
+      // 사슬은 막는다 — 정본은 하나다.
+      expect((await call({ mirrorOf: mirror.message!.id })).error?.code).toBe('mirror_of_mirror');
+
+      const answered = await recordAskAnswer(pool, { messageId: mirror.message!.id, actorId: adminAccountId, optionId: 'b' });
+      expect(typeof answered).not.toBe('string');
+      const rootAsk = readAskMeta((await pool.query(`select meta from message where id = $1`, [rootId])).rows[0].meta)!;
+      expect(rootAsk.answeredWith).toBe('b');
+      expect(rootAsk.answeredBy).toBe(adminAccountId);
+
+      // 정해진 원본은 다시 거울로 세우지 않는다.
+      expect((await call({})).error?.code).toBe('mirror_resolved');
+    } finally {
+      await bot.close();
+      await tm.close();
+    }
+  });
+
+  it('에이전트 앞 물음은 거울로 세우지 못한다', async () => {
+    const { pat: tmPat } = await createAgent(app, adminToken, 'mirrortm2');
+    await createAgent(app, adminToken, 'mirrortarget');
+    const bot = await mcpClient(botPat);
+    const tm = await mcpClient(tmPat);
+    try {
+      const root = text(await bot.callTool({
+        name: 'message.ask', arguments: { channelId, body: '너에게 묻는다', to: '@mirrortarget', options: opts },
+      })) as { message: { id: string } };
+      const res = text(await tm.callTool({
+        name: 'message.ask', arguments: { channelId, body: '거울', options: opts, mirrorOf: root.message.id },
+      })) as { error?: { code: string } };
+      expect(res.error?.code).toBe('mirror_not_human');
+    } finally {
+      await bot.close();
+      await tm.close();
+    }
+  });
+});
