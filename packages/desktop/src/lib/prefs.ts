@@ -46,12 +46,6 @@ export interface Prefs {
    * 로컬이다). 눈금과 그 뜻은 `lib/zoom.ts` 가 정한다.
    */
   zoom: number;
-  /**
-   * 공식(CLI) 경로가 실패했을 때 **비공식** 공급자 API 로 넘어가도 되나. **`null` = 사람이 고른 적
-   * 없음** — 그때는 `UNOFFICIAL_USAGE_API_DEFAULT`(`lib/providerUsage.ts`)를 따른다. 불린으로 기본값을
-   * 박지 않는 이유: 기본값을 바꿀 때 상수 한 줄만 고쳐 손대지 않은 사람 모두에게 곧바로 먹게 하려고.
-   */
-  providerUsageApi: boolean | null;
 }
 
 const KEY = 'harkroom.prefs';
@@ -153,7 +147,6 @@ export const DEFAULT_PREFS: Prefs = {
   colorMode: 'system',
   locale: 'system',
   zoom: DEFAULT_ZOOM,
-  providerUsageApi: null,
 };
 
 export const prefsStorage = {
@@ -175,7 +168,6 @@ export const prefsStorage = {
         // 고친 저장본이나 표 밖의 옛 값이 들어오면 화면이 읽을 수 없는 크기로 선다.
         // 그때 되돌릴 손잡이는 그 화면 안에 있으므로 빠져나올 길이 없다.
         zoom: normalizeZoom(parsed.zoom ?? DEFAULT_PREFS.zoom),
-        providerUsageApi: typeof parsed.providerUsageApi === 'boolean' ? parsed.providerUsageApi : null,
       };
     } catch {
       return DEFAULT_PREFS;

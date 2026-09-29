@@ -523,12 +523,12 @@ export class DaemonServer {
       case 'claudeAccountsProviderUsage': {
         const port = this.requireAccounts();
         if (isDaemonError(port)) return port;
-        return await port.providerUsage({ allowUnofficial: readAllowUnofficial(req.payload) });
+        return await port.providerUsage();
       }
       case 'codexAccountsProviderUsage': {
         const port = this.requireCodexAccounts();
         if (isDaemonError(port)) return port;
-        return await port.providerUsage({ allowUnofficial: readAllowUnofficial(req.payload) });
+        return await port.providerUsage();
       }
       case 'claudeAccountMove': {
         const port = this.requireAccounts();
@@ -664,11 +664,6 @@ function readAccountRef(payload: unknown): { pool: string; account: string } | D
     return daemonError('bad-payload', 'account 가 없다');
   }
   return { pool, account };
-}
-
-/** `{ allowUnofficial: true }` 일 때만 참. 모양이 달라도 거절하지 않고 **거짓**으로 읽는다 — 안전한 쪽이다. */
-function readAllowUnofficial(payload: unknown): boolean {
-  return typeof payload === 'object' && payload !== null && (payload as { allowUnofficial?: unknown }).allowUnofficial === true;
 }
 
 function readCodexAccountRef(payload: unknown): { account: string } | DaemonError {

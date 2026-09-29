@@ -1,6 +1,6 @@
 /**
- * 계정 줄 아래에 서는 **한도 막대 두 개**(5시간·주간) + 복귀 시각. 공식(CLI)이나 비공식 API 가 말한
- * % 다(`lib/providerUsage.ts`). 비공식에서 왔으면 꼬리표를 붙인다. 못 읽었으면 막대 대신 이유 한 줄 —
+ * 계정 줄 아래에 서는 **한도 막대 두 개**(5시간·주간) + 복귀 시각. 공급자가 말한 % 다 — CLI 로 읽었든
+ * API 로 읽었든 출처가 같으므로 똑같이 그린다(`lib/providerUsage.ts`). 못 읽었으면 막대 대신 이유 한 줄 —
  * 빈 자리로 두면 "0%"로 읽힌다.
  *
  * 색: 90% 이상만 경고색. 강조색(주황)은 쓰지 않는다(`accentBudget.test.tsx` — 강조는 "나를
@@ -60,11 +60,6 @@ export function ProviderUsageBars({ usage, nowMs }: { usage: ProviderAccountUsag
   if (!usage.session && !usage.weekly) return null;
   return (
     <div className="flex items-start gap-6" data-testid="provider-usage">
-      {usage.source === 'unofficial-api' && (
-        <span className="shrink-0 rounded-md border border-border px-1.5 py-px text-meta text-fg-muted" title={t('providerUsage.unofficialHint')}>
-          {t('providerUsage.unofficialBadge')}
-        </span>
-      )}
       {usage.session && <Bar label={t('providerUsage.session')} w={usage.session} nowMs={nowMs} />}
       {usage.weekly && <Bar label={t('providerUsage.weekly')} w={usage.weekly} nowMs={nowMs} />}
       {usage.extra?.map((x) => <Bar key={x.label} label={x.label} w={x.window} nowMs={nowMs} />)}

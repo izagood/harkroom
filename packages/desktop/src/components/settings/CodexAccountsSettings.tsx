@@ -30,7 +30,7 @@ import { getExternalOpener } from '../../lib/openExternal';
 import { Button, TextInput } from './primitives';
 import { ProviderSection } from './ProviderSection';
 import { ProviderUsageBars } from './ProviderUsageBars';
-import { usageFor, useProviderUsage, useUnofficialUsageAllowed } from '../../lib/providerUsage';
+import { usageFor, useProviderUsage } from '../../lib/providerUsage';
 
 interface LoginState {
   account: string;
@@ -60,8 +60,7 @@ export function CodexAccountsSettings() {
   const [name, setName] = useState('');
   const [login, setLogin] = useState<LoginState | null>(null);
   const [pendingRemove, setPendingRemove] = useState<string | null>(null);
-  const [allowUnofficial] = useUnofficialUsageAllowed();
-  const { snap: providerSnap } = useProviderUsage('codex', available, allowUnofficial);
+  const { snap: providerSnap } = useProviderUsage('codex', available);
   const bars = (account: string) => {
     const u = providerSnap ? usageFor(providerSnap, account) : null;
     return u ? <div className="mt-2"><ProviderUsageBars usage={u} nowMs={providerSnap!.measuredAtMs} /></div> : null;

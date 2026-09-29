@@ -131,9 +131,7 @@ describe('공급자 API 사용률 막대', () => {
     });
   };
 
-  it('계정 줄에 5시간·주간 % 가 서고, 못 읽은 계정은 이유를 말한다 — 기본은 비공식 금지로 묻는다', async () => {
-    const { usePrefsStore } = await import('../../state/prefsStore');
-    usePrefsStore.setState({ providerUsageApi: null });
+  it('계정 줄에 5시간·주간 % 가 서고, 못 읽은 계정은 이유를 말한다 — 데몬에는 아무것도 넘기지 않는다', async () => {
     stubWithUsage();
     render(<CodexAccountsSettings />);
     const work = await screen.findByTestId('codex-account-work');
@@ -141,20 +139,16 @@ describe('공급자 API 사용률 막대', () => {
     expect(within(work).getByText('12%')).toBeTruthy();
     const system = screen.getByTestId('codex-account-system');
     expect(within(system).getByTestId('provider-usage-error').textContent).toMatch(/expired/);
-    expect(calls.find((c) => c.cmd === 'codex_accounts_provider_usage')?.args).toEqual({ allowUnofficial: false });
-    // 공식(CLI)에서 온 값에는 "비공식" 꼬리표가 없다
-    expect(within(work).queryByText('Unofficial API')).toBeNull();
+    expect(calls.find((c) => c.cmd === 'codex_accounts_provider_usage')?.args).toBeUndefined();
   });
 
-  it('토글을 켜면 비공식 허용으로 묻고, 비공식에서 온 값에는 꼬리표가 붙는다', async () => {
-    const { usePrefsStore } = await import('../../state/prefsStore');
-    usePrefsStore.setState({ providerUsageApi: true });
-    USAGE.accounts[1] = { ...USAGE.accounts[1]!, source: 'unofficial-api' } as never;
+  it('API 로 읽은 값도 CLI 로 읽은 값과 똑같이 그린다 — 출처가 같아 꼬리표가 없다', async () => {
+    USAGE.accounts[1] = { ...USAGE.accounts[1]!, source: 'api' } as never;
     stubWithUsage();
     render(<CodexAccountsSettings />);
     const work = await screen.findByTestId('codex-account-work');
-    await waitFor(() => expect(within(work).getByText('Unofficial API')).toBeTruthy());
-    expect(calls.find((c) => c.cmd === 'codex_accounts_provider_usage')?.args).toEqual({ allowUnofficial: true });
-    usePrefsStore.setState({ providerUsageApi: null });
+    await waitFor(() => expect(within(work).getByText('93%')).toBeTruthy());
+    expect(within(work).getAllByTestId('provider-usage')).toHaveLength(1);
+    expect(within(work).queryByText(/API/)).toBeNull();
   });
 });

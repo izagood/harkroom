@@ -32,10 +32,6 @@ export const ko = {
   'providerUsage.error.other': '사용량을 읽지 못했습니다 ({reason}).',
   'providerUsage.error.cliUnavailable': '사용량을 읽을 CLI를 실행하지 못했습니다. 설치돼 있는지 확인하세요.',
   'providerUsage.error.cliUnparsed': 'CLI가 사용량을 알려 주지 않았습니다 — 다시 로그인하거나 CLI를 업데이트하세요.',
-  'providerUsage.unofficialBadge': '비공식 API',
-  'providerUsage.unofficialHint': 'CLI가 알려 주지 못해 문서화되지 않은 공급자 API에서 읽었습니다.',
-  'providerUsage.toggle.label': '비공식 공급자 API로 대신 읽기(실험적)',
-  'providerUsage.toggle.description': '사용량은 먼저 각 CLI(claude /usage, codex app-server)로 읽습니다. 그게 안 되면 이 기기의 로그인으로 Anthropic·OpenAI에 직접 묻습니다. 문서화되지 않은 엔드포인트라 공급자가 바꾸면 중단될 수 있습니다. 토큰은 로컬 데몬 밖으로 나가지 않습니다. 끄면 CLI가 못 읽은 계정은 로컬 추정으로 돌아갑니다.',
   // providerAccounts — 설정 > 제공업체 계정(하네스별 카드). 2026-09-28.
   'providerAccounts.page.title': '제공업체 계정',
   'providerAccounts.page.subtitle': '선택 사항. 에이전트는 기존 공급자 로그인으로 동작합니다. Harkroom이 계정 사이를 전환하길 원할 때만 계정을 추가하세요.',

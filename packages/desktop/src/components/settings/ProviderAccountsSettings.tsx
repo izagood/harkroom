@@ -8,24 +8,12 @@
 import { useT } from '../../i18n/useT';
 import { ClaudeAccountsSettings } from './ClaudeAccountsSettings';
 import { CodexAccountsSettings } from './CodexAccountsSettings';
-import { useUnofficialUsageAllowed } from '../../lib/providerUsage';
-import { SettingsGroup, SettingsPage, Toggle } from './primitives';
+import { SettingsPage } from './primitives';
 
 export function ProviderAccountsSettings() {
   const t = useT();
-  const [usageOn, setUsageOn] = useUnofficialUsageAllowed();
   return (
     <SettingsPage title={t('providerAccounts.page.title')} description={t('providerAccounts.page.subtitle')} width="wide">
-      {/* 사용량은 공식(각 CLI)으로 먼저 읽는다. 이 토글은 그것이 안 될 때 **비공식** 공급자 API 로 넘어갈지다 —
-          그래서 경고를 토글과 한 자리에 둔다. 켜는 사람이 그 문장을 지나야 한다. */}
-      <SettingsGroup>
-        <Toggle
-          label={t('providerUsage.toggle.label')}
-          description={t('providerUsage.toggle.description')}
-          checked={usageOn}
-          onChange={setUsageOn}
-        />
-      </SettingsGroup>
       <ClaudeAccountsSettings embedded />
       <CodexAccountsSettings />
     </SettingsPage>

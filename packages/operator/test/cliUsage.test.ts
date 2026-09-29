@@ -9,7 +9,7 @@ import {
   parseCodexRateLimits,
   type RpcChild,
 } from '../src/cliUsage.js';
-import { createUsageCache, officialThenUnofficial } from '../src/usageChain.js';
+import { cliThenApi, createUsageCache } from '../src/usageChain.js';
 
 // claude 2.1.283 `claude -p /usage` 실측 출력(개인 값 없음 — 숫자·시각만).
 const CLAUDE_OUT = `You are currently using your subscription to power your Claude Code usage
@@ -126,12 +126,11 @@ describe('usageChain', () => {
   const ok = { fetchedAtMs: 0, session: { usedPercent: 1, resetsAtMs: null }, weekly: null };
   const bad = { fetchedAtMs: 0, session: null, weekly: null, error: 'cli-unavailable' };
 
-  it('공식이 되면 공식, 안 되면 비공식(있을 때만), 둘 다 안 되면 공식의 이유', async () => {
-    expect(await officialThenUnofficial(async () => ok, async () => { throw new Error('불리면 안 된다'); }))
+  it('CLI 가 되면 CLI, 안 되면 API, 둘 다 안 되면 CLI 쪽 이유', async () => {
+    expect(await cliThenApi(async () => ok, async () => { throw new Error('불리면 안 된다'); }))
       .toMatchObject({ source: 'cli' });
-    expect(await officialThenUnofficial(async () => bad, null)).toMatchObject({ source: 'cli', error: 'cli-unavailable' });
-    expect(await officialThenUnofficial(async () => bad, async () => ok)).toMatchObject({ source: 'unofficial-api' });
-    expect(await officialThenUnofficial(async () => bad, async () => ({ ...bad, error: 'unauthorized' })))
+    expect(await cliThenApi(async () => bad, async () => ok)).toMatchObject({ source: 'api' });
+    expect(await cliThenApi(async () => bad, async () => ({ ...bad, error: 'unauthorized' })))
       .toMatchObject({ source: 'cli', error: 'cli-unavailable' });
   });
 

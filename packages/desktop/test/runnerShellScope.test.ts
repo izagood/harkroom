@@ -197,9 +197,9 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
     claude_account_move: ['account: String', 'to_pool: String'],
     // codex 계정(2026-09-28): 이름·로그인 id 뿐이다.
     codex_accounts_list: [],
-    // 한도 사용률(2026-09-28): 불린 하나(비공식 API 로 넘어가도 되나). CLI·토큰은 데몬이 다룬다.
-    claude_accounts_provider_usage: ['allow_unofficial: bool'],
-    codex_accounts_provider_usage: ['allow_unofficial: bool'],
+    // 한도 사용률(2026-09-28): 아무것도 안 받는다. CLI·토큰은 데몬이 다룬다.
+    claude_accounts_provider_usage: [],
+    codex_accounts_provider_usage: [],
     codex_account_login_start: ['account: String'],
     codex_account_login_cancel: ['login_id: String'],
     codex_account_remove: ['account: String'],
@@ -594,9 +594,9 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
         .toEqual([
           'claude_account_login_cancel', 'claude_account_login_start',
           'claude_account_login_submit', 'claude_account_move',
-          'claude_account_remove', 'claude_accounts_configure', 'claude_accounts_provider_usage', 'claude_pool_remove',
+          'claude_account_remove', 'claude_accounts_configure', 'claude_pool_remove',
           'codex_account_activate', 'codex_account_login_cancel', 'codex_account_login_start',
-          'codex_account_remove', 'codex_accounts_provider_usage',
+          'codex_account_remove',
           'daemon_kill_runner', 'daemon_spawn_runner',
           'operator_agent_remove', 'operator_agent_set', 'operator_mcp_remove', 'operator_mcp_set', 'operator_register',
           'secret_delete', 'secret_get', 'secret_set',

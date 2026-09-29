@@ -93,7 +93,7 @@ describe('Claude /api/oauth/usage', () => {
     expect(r).toMatchObject({ error: 'no-credentials', session: null, weekly: null });
   });
 
-  it('포트: 공식(CLI)이 되면 비공식은 부르지 않는다 · 안 되면 토글이 켜졌을 때만 비공식', async () => {
+  it('포트: CLI 가 되면 API 는 부르지 않는다 · CLI 가 안 되면 자동으로 API', async () => {
     const root = await temp();
     await writeFile(join(root, 'pools.json'), JSON.stringify({ defaultPool: 'work', order: {}, agents: {} }));
     await mkdir(join(root, 'work', 'aria'), { recursive: true });
@@ -107,17 +107,13 @@ describe('Claude /api/oauth/usage', () => {
         return { code: 0, stdout: cliOut };
       },
     });
-    const ok = await port.providerUsage({ allowUnofficial: true });
+    const ok = await port.providerUsage();
     expect(ok.accounts[0]).toMatchObject({ account: 'aria', pool: 'work', source: 'cli', weekly: { usedPercent: 7 } });
     expect(f.calls).toEqual([]);
 
     cliOut = 'Not logged in';
-    const off = await port.providerUsage({ allowUnofficial: false });
-    expect(off.accounts[0]).toMatchObject({ source: 'cli', error: 'cli-unparsed' });
-    expect(f.calls).toEqual([]);
-
-    const on = await port.providerUsage({ allowUnofficial: true });
-    expect(on.accounts[0]).toMatchObject({ source: 'unofficial-api', weekly: { usedPercent: 18 } });
+    const fallback = await port.providerUsage();
+    expect(fallback.accounts[0]).toMatchObject({ source: 'api', weekly: { usedPercent: 18 } });
     expect(f.calls).toHaveLength(1);
   });
 });
@@ -157,7 +153,7 @@ describe('Codex wham/usage', () => {
     expect(r.error).toBe('no-credentials');
   });
 
-  it('포트: 시스템 기본(account "")과 관리 계정을 모두 싣는다 — 공식이 안 되면 토글 켰을 때 비공식', async () => {
+  it('포트: 시스템 기본(account "")과 관리 계정을 모두 싣는다 — CLI 가 없으면 API 로', async () => {
     const root = await temp();
     const systemHome = await temp();
     await mkdir(join(root, 'work'));
@@ -166,9 +162,8 @@ describe('Codex wham/usage', () => {
       readToken: async () => ({ accessToken: 'T', accountId: null }),
       spawnRpc: () => { throw new Error('codex 없음'); },
     });
-    const off = await port.providerUsage();
-    expect(off.accounts.every((a) => a.error === 'cli-unavailable')).toBe(true);
-    const snap = await port.providerUsage({ allowUnofficial: true });
+    const snap = await port.providerUsage();
+    expect(snap.accounts.every((a) => a.source === 'api')).toBe(true);
     expect(snap.accounts.map((a) => a.account)).toEqual(['', 'work']);
     expect(snap.accounts.every((a) => a.weekly?.usedPercent === 9)).toBe(true);
   });

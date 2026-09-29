@@ -179,10 +179,6 @@ export const en = {
   'providerUsage.error.other': 'Could not read usage ({reason}).',
   'providerUsage.error.cliUnavailable': 'Could not run the CLI to read usage. Check that it is installed.',
   'providerUsage.error.cliUnparsed': 'The CLI did not report usage — sign in again, or update the CLI.',
-  'providerUsage.unofficialBadge': 'Unofficial API',
-  'providerUsage.unofficialHint': 'Read from an undocumented provider API because the CLI could not report it.',
-  'providerUsage.toggle.label': 'Fall back to unofficial provider APIs (experimental)',
-  'providerUsage.toggle.description': 'Usage is read from each CLI first (claude /usage, codex app-server). If that fails, ask Anthropic and OpenAI directly with the login on this device. Those endpoints are not documented and can break when the providers change them. Tokens stay in the local daemon. When off, accounts the CLI cannot read fall back to local estimates.',
   // providerAccounts — 설정 > 제공업체 계정(하네스별 카드). 2026-09-28.
   'providerAccounts.page.title': 'Provider accounts',
   'providerAccounts.page.subtitle': 'Optional. Agents work with your existing provider logins. Add accounts only if you want Harkroom to switch between them.',
