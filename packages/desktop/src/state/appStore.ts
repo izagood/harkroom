@@ -311,6 +311,12 @@ export interface AppState {
    * 같은 값이라 화면이 두 번째를 못 본다. 세는 수는 그런 자리가 없다.
    */
   skillsRevision: number;
+  /**
+   * 오퍼레이터 목록이 바뀐 횟수. `operator.changed`(등록·폐기·접속·단절·버전 변경)를 받을 때마다
+   * 1 올라간다. 러너 버전 칩의 기준(`useOperatorVersions`)이 이것을 보고 목록을 다시 읽는다 —
+   * 목록을 여기 담지 않는 이유는 `skillsRevision` 과 같다.
+   */
+  operatorsRevision: number;
   set(partial: Partial<AppState>): void;
   upsertMessages(channelId: string, rows: MessageRow[]): void;
   /**
@@ -373,7 +379,7 @@ const initial = {
   history: [], historyIndex: -1, notice: null, notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,
   highlightedMessageId: null, channelRevealSeq: 0,
   runnerStates: {}, daemonRunners: {}, appVersion: null, savedIds: [], savedCount: 0,
-  linkPreviewReadyAt: {}, skillsRevision: 0,
+  linkPreviewReadyAt: {}, skillsRevision: 0, operatorsRevision: 0,
 };
 
 /**

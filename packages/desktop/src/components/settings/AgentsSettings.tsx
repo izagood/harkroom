@@ -7,7 +7,8 @@ import {
 import { getController } from '../../state/controller';
 import { ApiError } from '../../lib/api';
 import { useActiveStore } from '../../state/communities';
-import { staleRunners } from '../../lib/runnerVersions';
+import { staleRunners, type OperatorVersions } from '../../lib/runnerVersions';
+import { useOperatorVersions } from '../../lib/useOperatorVersions';
 // #443: daemon 이 직접 확인한 사실을 사람이 읽는 행으로 바꾸는 판정. 화면이 그것을 제 손으로
 // 적지 않는 이유는 그 파일 머리말에 있다 — 규율 셋을 회귀선이 직접 재야 한다.
 import { daemonFactRows } from '../../lib/daemonFacts';
@@ -390,8 +391,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 그 이유는 `appStore.ts::daemonRunners` 주석의 표에 있다.
    */
   const daemonRunners = useActiveStore((s) => s.daemonRunners);
-  /** 뒤처진 러너를 세는 기준. 컨트롤러가 스토어에 밀어 넣은 값이다(`appStore.ts`). */
-  const appVersion = useActiveStore((s) => s.appVersion);
+  /**
+   * 뒤처진 러너를 세는 기준 — 에이전트마다 **배정된 오퍼레이터의 버전**(`runnerVersions.ts` 머리말).
+   * 보는 앱의 버전이 아니다: 그것을 기준으로 삼으면 어느 데스크탑에서 보느냐에 따라 판정이 갈린다.
+   */
+  const operatorVersions = useOperatorVersions();
   const accounts = useActiveStore((s) => s.accounts);
   // #176: 생존(presence)과 마지막 활동은 **다른 두 사실**이라 두 자리에서 온다 — presence 는
   // 소켓 이벤트로 살아 있는 목록이고(#124), 마지막 활동은 `AgentView.lastTurnAt` 이다.
@@ -1252,7 +1256,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
         <StaleRunnerBar
           agents={agents}
           runnerStates={runnerStates}
-          appVersion={appVersion}
+          operators={operatorVersions}
           /* 자식이 훅을 다시 부르지 않고 **같은 번역기를 받는다** — 부모가 이미 든 값이라
              두 번 부를 이유가 없고, 받아 두면 이 컴포넌트가 언어를 따라오는지가 부모의
              렌더 한 곳에서만 결정된다. */
@@ -1293,9 +1297,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               ))
               .catch(() => setError(t('agents.stop.stopFailed')));
           }}
-          /* 버전 칩의 기준값. `StaleRunnerBar` 가 읽는 그 값이다 — 띠와 카드가 같은 기준을
+          /* 버전 칩의 기준. `StaleRunnerBar` 가 읽는 그 값이다 — 띠와 카드가 같은 기준을
              봐야 "3대"가 격자에서 어느 셋인지 맞는다(문서 2쪽 「러너 버전」). */
-          appVersion={appVersion}
+          operatorVersions={operatorVersions}
         />
       </div>
     );
@@ -2637,10 +2641,11 @@ function DaemonFacts({ runner, stopRequestedAt, stopAckedAt }: {
  * 사라지면 "이 기능이 없다"로 읽힌다. 비활성 버튼 + 이유가 "전부 최신이다"라는 **사실**을
  * 말한다 — 없는 것과 할 일이 없는 것은 다르다(docs/design.md §4).
  */
-function StaleRunnerBar({ agents, runnerStates, appVersion, t }: {
+function StaleRunnerBar({ agents, runnerStates, operators, t }: {
   agents: AgentView[];
   runnerStates: Record<string, { status: string } | undefined>;
-  appVersion: string | null;
+  /** 오퍼레이터별 버전 — 에이전트마다 자기 배정의 값과 견준다. `null` 은 목록을 못 읽었다. */
+  operators: OperatorVersions | null;
   /** 부모가 이미 든 번역기를 받는다 — 여기서 `useT` 를 다시 부를 이유가 없다(그 prop 주석). */
   t: Translate;
 }) {
@@ -2648,8 +2653,8 @@ function StaleRunnerBar({ agents, runnerStates, appVersion, t }: {
    * **띠에서 버튼이 사라졌다**(스펙 2026-09-20 §2). 앞 판본은 여기서 뒤처진 러너 전체를
    * 새 번들로 갈아 띄웠다 — 그 러너를 띄운 것이 이 앱이었기 때문이다. 이제 러너는
    * 오퍼레이터가 띄우고, 새 번들로 가는 길은 그 오퍼레이터를 갱신하는 것이다. 이 띠가
-   * 남아 있는 이유는 **사실**이 남아서다: 어느 러너가 이 앱보다 뒤처졌는지는 사람이
-   * 여전히 알아야 한다(어느 머신의 오퍼레이터를 갱신할지 그것으로 안다).
+   * 남아 있는 이유는 **사실**이 남아서다: 어느 러너가 **자기 오퍼레이터보다** 옛 번들인지는
+   * 사람이 여전히 알아야 한다(오퍼레이터가 갱신된 뒤 adopted 로 남은 러너다).
    *
    * 대상은 이 머신의 오퍼레이터 장부에 살아 있는 것(`runnerStates`)이고, 그 밖의 뒤처진
    * 러너는 `elsewhere` 로 따로 센다 — 앞 판본이 *"전부 이 번들이다"* 라고 단정하다 들킨
@@ -2663,20 +2668,20 @@ function StaleRunnerBar({ agents, runnerStates, appVersion, t }: {
       })
       .map((a) => a.id),
   );
-  const { stale, unknown } = staleRunners({ agents, live, appVersion });
+  const { stale, unknown } = staleRunners({ agents, live, operators });
   const elsewhere = staleRunners({
     agents,
     live: new Set(agents.map((a) => a.id)),
-    appVersion,
+    operators,
   }).stale.length - stale.length;
 
   return (
     <div className="mb-3 rounded border border-border p-3">
       <p className="text-meta text-fg-subtle" data-testid="stale-runners-summary">
-        {appVersion === null
-          // 앱 버전을 못 얻었으면 비교 기준이 없다. "전부 최신이다"로 적으면 확인하지
+        {operators === null
+          // 오퍼레이터 목록을 못 얻었으면 비교 기준이 없다. "전부 최신이다"로 적으면 확인하지
           // 않은 것을 단정하는 셈이다.
-          ? t('agents.stale.unknownAppVersion')
+          ? t('agents.stale.unknownOperatorVersions')
           : stale.length > 0
             ? t('agents.stale.here', { count: stale.length })
             : elsewhere > 0

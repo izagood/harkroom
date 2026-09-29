@@ -47,6 +47,8 @@ export interface CommunityDeps {
    * 자기 기기를 고르려면 이 값이 로컬 설정에 있어야 하고, CLI 로 등록한 옛 설정에는 없다.
    */
   onSelf?: (operatorId: string) => void;
+  /** 이 오퍼레이터의 빌드 버전(`version.ts`). hello 에 싣는다 — `null`·빈 값이면 싣지 않는다(서버는 "모른다"). */
+  version?: string | null;
   log: (line: string) => void;
 }
 
@@ -118,6 +120,7 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
       capabilities: capabilities(),
       runners: deps.reconciler.announce(),
       sessions: mux.sessions(),
+      ...(deps.version ? { version: deps.version } : {}),
     }),
     onOpen: () => {
       deps.log(`서버에 붙었다: ${deps.baseUrl}`);

@@ -1000,8 +1000,8 @@ describe('에이전트 설정 — 시간 표기가 한 줄에서 만난다', () 
 describe('에이전트 설정 — 개수를 말하는 문장의 복수형', () => {
   it('영어는 1대와 2대가 다른 낱말이다', () => {
     const t = translator('en');
-    expect(t('agents.stale.here', { count: 1 })).toContain('1 runner on this machine is behind');
-    expect(t('agents.stale.here', { count: 2 })).toContain('2 runners on this machine are behind');
+    expect(t('agents.stale.here', { count: 1 })).toContain('1 runner on this machine is on an older bundle');
+    expect(t('agents.stale.here', { count: 2 })).toContain('2 runners on this machine are on an older bundle');
     expect(t('agents.stale.unknownVersion', { count: 1 })).toContain('1 runner of unknown version');
     expect(t('agents.stale.unknownVersion', { count: 3 })).toContain('3 runners of unknown version');
   });

@@ -29,7 +29,7 @@ const agent = (overrides: Partial<AgentView> = {}): AgentView => ({
 });
 
 const op = (id: string, name: string): OperatorView => ({
-  id, name, ownerAccountId: ME_ID, createdAt: '2026-09-21T00:00:00Z', lastSeenAt: null, revokedAt: null, online: true,
+  id, name, ownerAccountId: ME_ID, createdAt: '2026-09-21T00:00:00Z', lastSeenAt: null, revokedAt: null, online: true, version: null,
 });
 
 function setup(a: AgentView, operators: OperatorView[]) {

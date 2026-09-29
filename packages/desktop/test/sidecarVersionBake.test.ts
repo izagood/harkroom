@@ -18,7 +18,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import * as path from 'node:path';
-import { appVersion, binariesDir, buildSidecar, resolveTarget, runnerDefines } from '../scripts/sidecar.mjs';
+import { appVersion, binariesDir, buildSidecar, operatorDefines, resolveTarget, runnerDefines } from '../scripts/sidecar.mjs';
 
 const repoRoot = path.resolve(__dirname, '../../..');
 const read = (rel: string) => readFileSync(path.join(repoRoot, rel), 'utf8');
@@ -60,15 +60,25 @@ describe('러너 사이드카에 버전을 굽는다', () => {
     expect(runnerDefines('0.1.80').__AGENT_VERSION__).toBe('"0.1.80"');
   });
 
-  it('러너 빌드에만 `define` 을 준다 — daemon 은 자기 버전을 보고하지 않는다', () => {
+  it('오퍼레이터 `define` 의 키가 `operator/src/version.ts` 가 읽는 식별자와 같다', () => {
+    const keys = Object.keys(operatorDefines('0.1.80'));
+    expect(keys).toEqual(['__OPERATOR_VERSION__']);
+    const versionTs = read('packages/operator/src/version.ts');
+    for (const key of keys) {
+      expect(versionTs, `operator version.ts 가 ${key} 를 읽지 않는다`).toContain(key);
+    }
+    expect(operatorDefines('0.1.80').__OPERATOR_VERSION__).toBe('"0.1.80"');
+  });
+
+  it('러너에는 러너 이름으로, daemon 에는 오퍼레이터 이름으로 굽는다 — 서로 바뀌면 조용히 모름이 된다', () => {
     const script = read('packages/desktop/scripts/build-sidecars.mjs');
-    // 러너 블록에만 있어야 한다. `harkroom-operator` 이후 구간에 나타나면 daemon 번들에도
-    // 굽는 것이고, 그것은 아무도 읽지 않는 값이다.
     const daemonAt = script.indexOf("name: 'harkroom-operator'");
-    const defineAt = script.indexOf('runnerDefines(');
-    expect(defineAt).toBeGreaterThan(-1);
-    expect(defineAt).toBeLessThan(daemonAt);
-    expect(script.slice(daemonAt)).not.toContain('define:');
+    const runnerAt = script.indexOf('runnerDefines(');
+    const operatorAt = script.indexOf('operatorDefines(');
+    expect(runnerAt).toBeGreaterThan(-1);
+    expect(runnerAt).toBeLessThan(daemonAt);
+    expect(operatorAt).toBeGreaterThan(daemonAt);
+    expect(script.slice(daemonAt)).not.toContain('runnerDefines(');
   });
 
   /**
