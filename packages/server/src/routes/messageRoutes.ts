@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { MAX_MESSAGE_BODY_CHARS, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@harkroom/shared';
+import { MAX_MESSAGE_BODY_CHARS, MENTION_EDIT_SKIPPED_HEADER, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@harkroom/shared';
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages, SEARCH_MAX_OFFSET } from '../services/messages.js';
@@ -90,8 +90,15 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     if (result === 'forbidden') {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'only the author can edit a user message' } });
     }
-    emitEvent({ type: 'message.updated', message: result, audience: await audienceFor(pool, id) });
-    return result;
+    emitEvent({ type: 'message.updated', message: result.message, audience: await audienceFor(pool, id) });
+    // 수정으로 새로 부른 사람 — 게시와 같은 이벤트·헤더다(위 POST 의 주석). 본문은 여전히 `MessageRow` 그 자체다.
+    for (const accountId of result.notified) emitEvent({ type: 'inbox.updated', accountId });
+    reply.header(NOTIFIED_COUNT_HEADER, String(result.notified.length));
+    if (result.notified.length > 0) {
+      reply.header(NOTIFIED_HEADER, result.notified.slice(0, NOTIFIED_HEADER_MAX_IDS).join(','));
+    }
+    if (result.mentionSkipped) reply.header(MENTION_EDIT_SKIPPED_HEADER, result.mentionSkipped);
+    return result.message;
   });
 
   /**
