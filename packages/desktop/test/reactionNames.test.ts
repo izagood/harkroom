@@ -5,7 +5,7 @@
 // 판정 시험이 지키는 것이 "사람이 무엇을 읽나"이기 때문이다(`i18n/index.ts::Translate`).
 import { describe, it, expect } from 'vitest';
 import { translator } from '../src/i18n';
-import { reactorNames, MAX_REACTOR_NAMES } from '../src/lib/reactionNames';
+import { reactorNames, reactionSentence, MAX_REACTOR_NAMES } from '../src/lib/reactionNames';
 
 const en = translator('en');
 const ko = translator('ko');
@@ -79,5 +79,26 @@ describe('사람이 많으면 접는다', () => {
   /** 상한은 인자로도 받는다 — 자리마다 다른 폭을 줄 수 있어야 한다. */
   it('상한을 호출자가 정할 수 있다', () => {
     expect(reactorNames(['u2', 'u3', 'u4'], nameOf, null, en, 2)).toBe('alpha, bravo and 1 more');
+  });
+});
+
+describe('말풍선 문장', () => {
+  it('누가 어떤 이모지로 반응했는지 한 문장으로 말한다', () => {
+    expect(reactionSentence('👍', ['u2', 'u3'], nameOf, null, en))
+      .toEqual({ hint: null, sentence: 'alpha, bravo reacted with 👍' });
+    expect(reactionSentence('👍', ['u2'], nameOf, null, ko).sentence).toBe('alpha이(가) 👍 로 반응했다');
+  });
+
+  // 누르면 **취소**된다는 것만 칩 모양으로 안 보인다 — 내가 누른 칩에만 안내가 붙는다.
+  it('내가 누른 칩에만 떼기 안내가 붙고, 문장 첫 글자는 대문자다', () => {
+    expect(reactionSentence('✅', ['u1'], nameOf, 'u1', en))
+      .toEqual({ hint: '(click to remove)', sentence: 'You reacted with ✅' });
+    expect(reactionSentence('✅', ['u1'], nameOf, 'u1', ko).hint).toBe('(제거하려면 클릭)');
+    expect(reactionSentence('✅', ['u2'], nameOf, 'u1', en).hint).toBeNull();
+  });
+
+  it('사람이 많으면 목록 규칙 그대로 접힌다', () => {
+    const many = Array.from({ length: MAX_REACTOR_NAMES + 3 }, (_, i) => `x${i}`);
+    expect(reactionSentence('🎉', many, nameOf, null, ko).sentence).toMatch(/외 3명이\(가\) 🎉 로 반응했다$/);
   });
 });

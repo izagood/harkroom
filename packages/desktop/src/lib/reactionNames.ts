@@ -61,3 +61,34 @@ export function reactorNames(
   const shown = names.slice(0, max);
   return t('reactions.andMore', { names: shown.join(', '), count: names.length - max });
 }
+
+/**
+ * **호버 말풍선의 문장** — `"(click to remove) alpha, you reacted with 👍"`(2026-09-29,
+ * Slack 리액션 툴팁을 본으로 한 요청).
+ *
+ * 앞 판의 칩은 OS `title` 에 이름 목록만 실었다. 그 판단(“이모지는 칩에 이미 있다”)은 OS
+ * 툴팁이 작은 평문이라 맞았지만, 말풍선을 우리가 그리게 되면서 이모지를 크게 다시 보여 주는
+ * 것이 오히려 “이 목록이 **어느** 칩 것인가”를 답한다 — 칩 여럿이 붙어 있으면 커서 아래가
+ * 어느 것인지 헷갈린다.
+ *
+ * 이름 목록은 `reactorNames` 를 그대로 쓴다 — 나를 `you` 로, 모르는 계정을 `someone` 으로,
+ * 8명 넘으면 `외 N명` 으로 접는 규칙이 스크린리더 이름(`aria-label`)과 **같아야** 한다.
+ *
+ * 내가 누른 칩에만 “눌러서 떼기” 안내를 앞에 붙인다: 누르면 **취소**된다는 것이 칩 모양만으로는
+ * 드러나지 않는 유일한 동작이다(남의 칩을 누르면 같이 다는 것은 짐작대로라 말하지 않는다).
+ */
+export function reactionSentence(
+  emoji: string,
+  accountIds: string[],
+  nameOf: (id: string) => string | null,
+  myId: string | null,
+  t: Translate,
+): { hint: string | null; sentence: string } {
+  const names = reactorNames(accountIds, nameOf, myId, t);
+  const raw = t('reactions.tooltip.reacted', { names, emoji });
+  // 영어는 `you` 가 문장 맨 앞에 올 수 있다 — 그때만 첫 글자를 올린다(한글에는 대소문자가 없다).
+  // 남의 이름은 건드리지 않는다: `jaebin` 을 `Jaebin` 으로 적으면 그 사람의 이름이 아니다.
+  const sentence = accountIds[0] === myId ? raw.charAt(0).toUpperCase() + raw.slice(1) : raw;
+  const mine = myId !== null && accountIds.includes(myId);
+  return { hint: mine ? t('reactions.tooltip.clickToRemove') : null, sentence };
+}

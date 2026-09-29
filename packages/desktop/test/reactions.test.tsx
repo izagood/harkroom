@@ -221,13 +221,19 @@ describe('#145 인라인 선정 규칙과 접근성 이름', () => {
  * 화면에 없었다. `👀`·`💬` 는 에이전트가 상태 신호로 쓰는 것이라 특히 아팠다:
  * **"누가 이 말을 읽었나"가 그 신호의 뜻 전부**인데 화면은 몇 명인지만 말했다.
  */
+/**
+ * 칩이 말하는 이름 목록. 2026-09-29 전에는 `title` 이었고, 말풍선(`ReactionTooltip`)이 생긴 뒤
+ * 칩에 늘 붙어 있는 목록은 `aria-label` 의 `이모지 — 목록` 뒤쪽이다 — 말풍선이 같은 목록을
+ * 말하는지는 아래 "호버와 스크린리더가 같은 목록을 말한다" 가 잰다.
+ */
+const whoOf = (chip: HTMLElement) => chip.getAttribute('aria-label')!.split(' — ').slice(1).join(' — ');
+
 describe('리액션을 단 사람을 호버로 보여 준다', () => {
-  it('단 사람들의 이름이 title 에 들어 있다', () => {
+  it('단 사람들의 이름이 칩의 이름에 들어 있다', () => {
     fakeController();
     render(<MessageItem message={withReactions([{ emoji: '👀', accountIds: ['u2', 'u3'] }])} />);
 
-    const chip = screen.getByTestId('reaction-👀');
-    expect(chip.getAttribute('title')).toBe('someone, third');
+    expect(whoOf(screen.getByTestId('reaction-👀'))).toBe('someone, third');
   });
 
   // 서버가 주는 `accountIds` 는 이미 누른 순서다(`services/messages.ts::REACTIONS` 의
@@ -236,16 +242,18 @@ describe('리액션을 단 사람을 호버로 보여 준다', () => {
     fakeController();
     render(<MessageItem message={withReactions([{ emoji: '👀', accountIds: ['u3', 'u2'] }])} />);
 
-    expect(screen.getByTestId('reaction-👀').getAttribute('title')).toBe('third, someone');
+    expect(whoOf(screen.getByTestId('reaction-👀'))).toBe('third, someone');
   });
 
   /** 호버와 스크린리더가 갈라지면 한쪽만 고쳐지고, 그러면 본 것과 읽힌 것이 다르다. */
-  it('호버와 스크린리더가 같은 목록을 말한다', () => {
+  it('호버와 스크린리더가 같은 목록을 말한다', async () => {
     fakeController();
     render(<MessageItem message={withReactions([{ emoji: '👀', accountIds: ['u2', 'u3'] }])} />);
 
     const chip = screen.getByTestId('reaction-👀');
-    expect(chip.getAttribute('aria-label')).toContain(chip.getAttribute('title')!);
+    fireEvent.mouseEnter(chip);
+    const tip = await screen.findByTestId('reaction-tooltip');
+    expect(tip.textContent).toContain(whoOf(chip));
   });
 
   it('내가 단 것은 핸들 대신 나 로 적힌다', () => {
@@ -253,7 +261,7 @@ describe('리액션을 단 사람을 호버로 보여 준다', () => {
     render(<MessageItem message={withReactions([{ emoji: '👀', accountIds: ['u2', 'u1'] }])} />);
 
     // 테스트의 기본 언어는 영어다(`i18n.test.tsx` 의 "화면 — 기본은 영어다").
-    expect(screen.getByTestId('reaction-👀').getAttribute('title')).toBe('someone, you');
+    expect(whoOf(screen.getByTestId('reaction-👀'))).toBe('someone, you');
   });
 
   /**
@@ -264,7 +272,7 @@ describe('리액션을 단 사람을 호버로 보여 준다', () => {
     fakeController();
     render(<MessageItem message={withReactions([{ emoji: '👀', accountIds: ['u2', 'u3', 'u1'] }])} />);
 
-    expect(screen.getByTestId('reaction-👀').getAttribute('title')).toBe('someone, third, you');
+    expect(whoOf(screen.getByTestId('reaction-👀'))).toBe('someone, third, you');
   });
 
   /**
@@ -278,10 +286,10 @@ describe('리액션을 단 사람을 호버로 보여 준다', () => {
     const { rerender } = render(
       <MessageItem message={withReactions([{ emoji: '👀', accountIds: ['u2', 'u3'] }])} />,
     );
-    expect(screen.getByTestId('reaction-👀').getAttribute('title')).toBe('someone, third');
+    expect(whoOf(screen.getByTestId('reaction-👀'))).toBe('someone, third');
 
     rerender(<MessageItem message={withReactions([{ emoji: '👀', accountIds: ['u2'] }])} />);
-    expect(screen.getByTestId('reaction-👀').getAttribute('title')).toBe('someone');
+    expect(whoOf(screen.getByTestId('reaction-👀'))).toBe('someone');
   });
 
   /** 사람이 많아도 툴팁 하나가 화면을 덮지 않는다 — OS 툴팁은 우리가 접을 수 없다. */
@@ -290,7 +298,7 @@ describe('리액션을 단 사람을 호버로 보여 준다', () => {
     const ids = Array.from({ length: 12 }, (_, i) => `u-${i}`);
     render(<MessageItem message={withReactions([{ emoji: '👀', accountIds: ids }])} />);
 
-    expect(screen.getByTestId('reaction-👀').getAttribute('title')).toContain('more');
+    expect(whoOf(screen.getByTestId('reaction-👀'))).toContain('more');
   });
 });
 
@@ -340,5 +348,35 @@ describe('내가 단 이모지는 테두리가 강조된다', () => {
     const chip = screen.getByTestId('reaction-👀');
     expect(chip.getAttribute('aria-pressed')).toBe('true');
     expect(chip.className).toContain('font-medium');
+  });
+});
+
+describe('리액션 말풍선 (2026-09-29, Slack 본)', () => {
+  it('칩에 올리면 큰 이모지와 누가 눌렀는지를 문장으로 보여 준다', async () => {
+    fakeController();
+    render(<MessageItem message={withReactions([{ emoji: '🎉', accountIds: ['u2', 'u3'] }])} />);
+
+    const chip = screen.getByTestId('reaction-🎉');
+    // OS 툴팁이 말풍선 위에 겹쳐 뜨지 않게 `title` 은 없다.
+    expect(chip.getAttribute('title')).toBeNull();
+    fireEvent.mouseEnter(chip);
+
+    const tip = await screen.findByTestId('reaction-tooltip');
+    expect(within(tip).getByTestId('reaction-tooltip-emoji').textContent).toBe('🎉');
+    expect(tip.textContent).toContain('someone, third reacted with 🎉');
+    expect(within(tip).queryByTestId('reaction-tooltip-hint')).toBeNull();
+
+    fireEvent.mouseLeave(chip);
+    expect(screen.queryByTestId('reaction-tooltip')).toBeNull();
+  });
+
+  it('내가 누른 칩이면 제거 안내가 앞에 붙는다', async () => {
+    fakeController();
+    render(<MessageItem message={withReactions([{ emoji: '🎉', accountIds: ['u1'] }])} />);
+
+    fireEvent.mouseEnter(screen.getByTestId('reaction-🎉'));
+    const tip = await screen.findByTestId('reaction-tooltip');
+    expect(within(tip).getByTestId('reaction-tooltip-hint').textContent).toContain('(click to remove)');
+    expect(tip.textContent).toContain('You reacted with 🎉');
   });
 });
