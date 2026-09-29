@@ -14,8 +14,8 @@ afterEach(() => { cleanup(); resetCommunityRegistry(); });
 
 function twoCommunities() {
   const reg = useCommunityRegistry.getState();
-  const a = reg.claimActive({ baseUrl: 'https://jaebin.harkroom.com', accountId: 'a1' });
-  const b = reg.register({ baseUrl: 'https://jinbin.harkroom.com', accountId: 'b1' });
+  const a = reg.claimActive({ baseUrl: 'https://jaebin.example.com', accountId: 'a1' });
+  const b = reg.register({ baseUrl: 'https://jinbin.example.com', accountId: 'b1' });
   return { a, b };
 }
 
