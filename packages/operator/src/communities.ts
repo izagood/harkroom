@@ -8,6 +8,7 @@
  */
 import { createAssignmentReconciler, type AssignmentDeps } from './assignments.js';
 import { createCommunity, type CommunityInstance } from './community.js';
+import { operatorVersion } from './version.js';
 import { communityKey, readConfig, rememberOperatorId } from './config.js';
 import { createForwarder } from './forward.js';
 import { detectHarnesses, HARNESS_BINARIES } from './harnesses.js';
@@ -137,6 +138,7 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
     const reconciler = createAssignmentReconciler(runnerDeps(ref));
     const community = createCommunity({
       baseUrl, token, agents, reconciler, log: deps.log,
+      version: operatorVersion(deps.appVersion),
       runnerLink: deps.runnerLink, forwarder, fetchImpl: deps.fetchImpl,
       harnesses: () => { refreshHarnesses(); return withModels(); },
       // 실패는 삼킨다 — 못 적어도 이 오퍼레이터는 그대로 돈다. 앱의 '이 기기' 기본값만 늦어진다.

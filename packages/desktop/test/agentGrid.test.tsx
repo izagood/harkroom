@@ -8,6 +8,14 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import type { AgentView } from '@harkroom/shared';
 import { AgentGrid } from '../src/components/settings/AgentGrid';
 import { usePrefsStore } from '../src/state/prefsStore';
+import { operatorVersionMap } from '../src/lib/runnerVersions';
+
+/** 버전 칩의 기준 — 카드는 `assignment.operatorId` 의 이 버전과 견준다. */
+const OP = 'op-1';
+const opAt = (version: string | null) => operatorVersionMap([{ id: OP, version }]);
+const assigned: Partial<AgentView> = {
+  assignment: { agentId: 'id-alpha', operatorId: OP, assignedBy: 'u-admin', assignedAt: '2026-09-21T00:00:00Z' },
+};
 
 const agent = (handle: string, over: Partial<AgentView> = {}): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member', assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [], delegates: [], mcpServers: [],
@@ -29,7 +37,7 @@ const grid = (props: Partial<Parameters<typeof AgentGrid>[0]> = {}) => render(
     onCreate={props.onCreate ?? vi.fn()}
     canCreate={props.canCreate ?? true}
     onStop={props.onStop}
-    appVersion={props.appVersion}
+    operatorVersions={props.operatorVersions}
     place={props.place}
   />,
 );
@@ -448,8 +456,8 @@ describe('AgentGrid — 카드가 올리는 셋 (설정)', () => {
    */
   it('세 줄의 라벨이 고정 폭이다 — 값이 같은 x 에서 시작한다', () => {
     grid({
-      agents: [agent('alpha', { runnerVersion: 'v0.1.3' })],
-      appVersion: 'v0.1.3',
+      agents: [agent('alpha', { runnerVersion: 'v0.1.3', ...assigned })],
+      operatorVersions: opAt('v0.1.3'),
       online: ['id-alpha'],
     });
     const labels = [...screen.getByTestId('agent-grid').querySelectorAll('.w-9')];
@@ -516,8 +524,8 @@ describe('AgentGrid — 카드가 올리는 셋 (설정)', () => {
 
   it('카드 아래에 버튼 줄이 서지 않는다 — 손잡이는 상태 칩과 버전 칩뿐이다', () => {
     grid({
-      agents: [agent('alpha', { runnerVersion: 'v0.1.3' })],
-      appVersion: 'v0.1.3',
+      agents: [agent('alpha', { runnerVersion: 'v0.1.3', ...assigned })],
+      operatorVersions: opAt('v0.1.3'),
       online: ['id-alpha'],
       onStop: vi.fn(),
     });
@@ -541,8 +549,8 @@ describe('AgentGrid — 카드가 올리는 셋 (설정)', () => {
 describe('AgentGrid — 러너 버전 칩 3종', () => {
   it('최신은 회색 칩이고 손잡이가 없다', () => {
     grid({
-      agents: [agent('alpha', { runnerVersion: 'v0.1.3' })],
-      appVersion: 'v0.1.3',
+      agents: [agent('alpha', { runnerVersion: 'v0.1.3', ...assigned })],
+      operatorVersions: opAt('v0.1.3'),
       online: ['id-alpha'],
     });
     const chip = screen.getByTestId('agent-version-alpha');
@@ -566,8 +574,8 @@ describe('AgentGrid — 러너 버전 칩 3종', () => {
    */
   it('뒤처진 칩은 감싸이지 않는다 — 쪼개지면 뜻이 흐려지는 원자값이다', () => {
     grid({
-      agents: [agent('alpha', { runnerVersion: 'v0.1.1' })],
-      appVersion: 'v0.1.3',
+      agents: [agent('alpha', { runnerVersion: 'v0.1.1', ...assigned })],
+      operatorVersions: opAt('v0.1.3'),
       online: ['id-alpha'],
     });
     expect(screen.getByTestId('agent-version-alpha').className).toContain('whitespace-nowrap');
@@ -579,8 +587,8 @@ describe('AgentGrid — 러너 버전 칩 3종', () => {
    */
   it('뒤처진 칩은 강조색을 쓰지 않는다 — 나를 막는 것이 아니다', () => {
     grid({
-      agents: [agent('alpha', { runnerVersion: 'v0.1.1' })],
-      appVersion: 'v0.1.3',
+      agents: [agent('alpha', { runnerVersion: 'v0.1.1', ...assigned })],
+      operatorVersions: opAt('v0.1.3'),
       online: ['id-alpha'],
     });
     const chip = screen.getByTestId('agent-version-alpha');
@@ -601,8 +609,8 @@ describe('AgentGrid — 러너 버전 칩 3종', () => {
   it('모름은 점선 칩이고 손잡이가 없다', () => {
     for (const runnerVersion of [null, 'unknown']) {
       grid({
-        agents: [agent('alpha', { runnerVersion })],
-        appVersion: 'v0.1.3',
+        agents: [agent('alpha', { runnerVersion, ...assigned })],
+        operatorVersions: opAt('v0.1.3'),
         online: ['id-alpha'],
       });
       const chip = screen.getByTestId('agent-version-alpha');
@@ -615,21 +623,50 @@ describe('AgentGrid — 러너 버전 칩 3종', () => {
   });
 
   /**
-   * **앱 버전을 모르면 아무것도 뒤처졌다고 하지 않는다.** 비교 기준이 없는데 단정하는 것이
-   * `docs/design.md` §4 가 금지하는 거짓 신호다 — `staleRunners` 가 이미 그렇게 정했고,
+   * **오퍼레이터 버전을 모르면 아무것도 뒤처졌다고 하지 않는다.** 비교 기준이 없는데 단정하는
+   * 것이 `docs/design.md` §4 가 금지하는 거짓 신호다 — `staleRunners` 가 이미 그렇게 정했고,
    * 이 시험은 칩이 그 판정을 우회하지 않는 것을 지킨다.
    *
-   * 그리고 이것이 **사이드바의 기본값**이다: `appVersion` prop 을 안 넘기면 `null` 이다.
+   * 그리고 이것이 **사이드바의 기본값**이다: `operatorVersions` prop 을 안 넘기면 `null` 이다.
    */
-  it('앱 버전을 모르면 뒤처졌다고 하지 않는다 — 기준이 없다', () => {
+  it('오퍼레이터 버전을 모르면 뒤처졌다고 하지 않는다 — 기준이 없다', () => {
+    for (const over of [
+      { operatorVersions: null },
+      { operatorVersions: opAt(null) },
+      // 미배정 — 기준을 찾을 오퍼레이터가 없다.
+      { operatorVersions: opAt('v0.1.3'), agents: [agent('alpha', { runnerVersion: 'v0.1.1', assignment: null })] },
+    ]) {
+      grid({ agents: [agent('alpha', { runnerVersion: 'v0.1.1', ...assigned })], online: ['id-alpha'], ...over });
+      const chip = screen.getByTestId('agent-version-alpha');
+      expect(chip.dataset.version).toBe('unknown');
+      cleanup();
+    }
+  });
+
+  /**
+   * **이번 버그의 회귀선**(2026-09-29). homelab·rowlol 이 `0.3.45 · 뒤처짐` 으로 떴는데 실제로는
+   * 보는 데스크탑보다 새 러너였다. 칩은 이제 앱 버전을 입력으로 받지도 않는다 — 기준은 오퍼레이터다.
+   */
+  it('오퍼레이터와 같은 버전이면 최신이고, hover 로 무엇과 견줬는지 보인다', () => {
     grid({
-      agents: [agent('alpha', { runnerVersion: 'v0.1.1' })],
-      appVersion: null,
+      agents: [agent('alpha', { runnerVersion: '0.3.45', ...assigned })],
+      operatorVersions: opAt('0.3.45'),
       online: ['id-alpha'],
     });
     const chip = screen.getByTestId('agent-version-alpha');
-    expect(chip.dataset.version).toBe('unknown');
-    expect(chip.dataset.version).not.toBe('stale');
+    expect(chip.dataset.version).toBe('current');
+    expect(chip.getAttribute('title')).toBe('기준: 오퍼레이터 0.3.45');
+  });
+
+  it('오퍼레이터가 갱신됐는데 러너가 옛 번들이면 뒤처짐이다', () => {
+    grid({
+      agents: [agent('alpha', { runnerVersion: '0.3.44', ...assigned })],
+      operatorVersions: opAt('0.3.47'),
+      online: ['id-alpha'],
+    });
+    const chip = screen.getByTestId('agent-version-alpha');
+    expect(chip.dataset.version).toBe('stale');
+    expect(chip.getAttribute('title')).toBe('기준: 오퍼레이터 0.3.47');
   });
 
 });
@@ -884,7 +921,7 @@ describe('AgentGrid — 사이드바는 한 픽셀도 안 바뀐다', () => {
     online: ['id-alpha'],
     // 사이드바는 이 둘을 안 넘긴다. 그래도 **넘겨 보고** 자리 분기가 막는지 본다.
     onStop: vi.fn(),
-    appVersion: 'v0.1.3',
+    operatorVersions: opAt('v0.1.3'),
     place: 'sidebar',
     ...over,
   });

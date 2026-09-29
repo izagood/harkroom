@@ -17,6 +17,9 @@ export declare function appVersion(): string;
 /** 러너 번들에 구울 값들(esbuild `define`). 키는 `version.ts` 의 식별자와 같아야 한다. */
 export declare function runnerDefines(version: string): Record<string, string>;
 
+/** 오퍼레이터(daemon) 번들에 구울 값들. 키는 `operator/src/version.ts` 의 식별자와 같아야 한다. */
+export declare function operatorDefines(version: string): Record<string, string>;
+
 export declare function resolveTarget(): { triple: string; platform: string; arch: string };
 
 export declare function buildSidecar(opts: {

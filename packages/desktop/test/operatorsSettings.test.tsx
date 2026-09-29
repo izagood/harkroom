@@ -20,7 +20,7 @@ afterEach(() => usePrefsStore.getState().setLocale('system'));
 
 const op = (id: string, name: string, extra: Partial<OperatorView> = {}): OperatorView => ({
   id, name, ownerAccountId: 'u1', createdAt: '2026-09-21T00:00:00Z', lastSeenAt: null, revokedAt: null,
-  online: false, ...extra,
+  online: false, version: null, ...extra,
 });
 
 function fakeController(operators: OperatorView[] = []) {

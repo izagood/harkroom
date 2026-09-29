@@ -10,7 +10,7 @@ import { faceState, isFaceGreyed, isStopping } from '../../lib/faceState';
 // 뒤처짐 판정도 **이미 있는 것을 그대로 쓴다**(`lib/runnerVersions.ts`). 그 규칙
 // (*"모르는 것을 뒤처졌다고 하지 않는다"*)을 칩에서 다시 적으면 일괄 재기동 띠와 카드가
 // 서로 다른 대상을 고르고, 그 어긋남은 조용하다 — 그 모듈 주석이 정확히 그것을 경고한다.
-import { staleRunners } from '../../lib/runnerVersions';
+import { baselineOf, staleRunners, type OperatorVersions } from '../../lib/runnerVersions';
 // 경과 계산도 한 벌이다. `AgentsSettings.lastTurnLabel` 이 같은 함수 위에 접두만 붙인다 —
 // 이 파일이 그쪽에서 가져올 수 없는 이유(순환)가 `lib/lastTurn.ts` 주석에 있다.
 import { lastTurnAgo } from '../../lib/lastTurn';
@@ -52,6 +52,11 @@ export type AgentCardSubject = AccountView & {
   model?: string | null;
   /** 버전 칩의 값. `null`·`'unknown'` 둘 다 **모른다**다(`runnerVersions.ts` 의 판정). */
   runnerVersion?: string | null;
+  /**
+   * 이 에이전트를 돌리는 오퍼레이터(`AgentView.assignment`) — 버전 칩의 **비교 기준**을 여기서
+   * 찾는다. 없으면(사이드바의 계정 목록·미배정) 기준이 없고 칩은 `버전 모름` 이다.
+   */
+  assignment?: { operatorId: string } | null;
   /** 다섯 번째 얼굴(종료 요청 중)의 입력. 둘이 함께 와야 뜻이 생긴다 — `isStopping` 참고. */
   stopRequestedAt?: string | null;
   stopAckedAt?: string | null;
@@ -484,17 +489,19 @@ function InfoRow({ label, children }: { label: string; children: React.ReactNode
  *
  * | 상태 | 모양 | 손잡이 |
  * |---|---|---|
- * | **최신** — 앱과 같다 | 회색 칩 `v0.1.3` | 없음 |
- * | **뒤처짐** — 앱보다 낮다 | 주의색 칩 `v0.1.1 · 뒤처짐 ↻` | **칩 자체가 눌린다** |
- * | **모름** — 접속 안 했거나 버전 안 보냄 | 점선 칩 `버전 모름` | 없음 |
+ * | **최신** — 자기 오퍼레이터와 같다 | 회색 칩 `v0.1.3` | 없음 |
+ * | **뒤처짐** — 자기 오퍼레이터와 다르다 | 주의색 칩 `v0.1.1 · 뒤처짐` | 없음 |
+ * | **모름** — 러너나 오퍼레이터의 버전을 모른다·미배정 | 점선 칩 `버전 모름` | 없음 |
+ *
+ * **기준은 보는 앱이 아니라 그 에이전트의 오퍼레이터다**(2026-09-29, `runnerVersions.ts` 머리말).
+ * 앱 버전이 기준이던 때는 보는 데스크탑보다 새 러너까지 `· 뒤처짐` 이 떴다.
  *
  * ## 판정을 새로 쓰지 않는다
  *
  * 셋을 가르는 규칙은 `lib/runnerVersions.ts` 의 `staleRunners()` 가 이미 갖고 있고, 그
  * 규칙의 핵심이 *"모르는 것을 뒤처졌다고 하지 않는다"* 다 — `null`(한 번도 보고 없음)과
  * `'unknown'`(보고는 왔지만 러너가 `AGENT_VERSION` 을 못 받음)은 원인이 다르지만 이
- * 판정에는 같고, 앱 버전을 모르면(`appVersion === null`) **아무것도 뒤처졌다고 하지
- * 않는다.** 그 모듈 주석이 두 번째 이유를 미리 적어 뒀다: *"읽는 곳이 둘이다(프로필 한
+ * 판정에는 같고, 기준(오퍼레이터 버전)을 모르면 **아무것도 뒤처졌다고 하지 않는다.** 그 모듈 주석이 두 번째 이유를 미리 적어 뒀다: *"읽는 곳이 둘이다(프로필 한
  * 에이전트, 설정의 전체 재기동) — 한 곳에 두지 않으면 두 화면이 서로 다른 대상을 고르고,
  * 그 어긋남은 조용하다."* 이제 읽는 곳이 셋이라 그 경고가 더 무겁다.
  *
@@ -521,10 +528,12 @@ function InfoRow({ label, children }: { label: string; children: React.ReactNode
  * 러너는 나를 막지 않는다 — 잘 돌고 있고, 갈아 끼우는 것은 내가 고를 일이다. 그래서
  * `warning` 이고, 실패는 이미 `danger` 라 둘이 섞이지 않는다.
  */
-function VersionChip({ handle, runnerVersion, appVersion, restarting }: {
+function VersionChip({ handle, runnerVersion, assignment, operators, restarting }: {
   handle: string;
   runnerVersion: string | null;
-  appVersion: string | null;
+  assignment: { operatorId: string } | null | undefined;
+  /** 오퍼레이터별 버전(`useOperatorVersions`). `null` 이면 기준을 모른다. */
+  operators: OperatorVersions | null;
   /**
    * **네 번째 모양** — 재기동을 걸어 둔 러너다(`RunnerState.status === 'restarting'`).
    *
@@ -568,10 +577,13 @@ function VersionChip({ handle, runnerVersion, appVersion, restarting }: {
   }
 
   const { stale, unknown } = staleRunners({
-    agents: [{ id: handle, runnerVersion }],
+    agents: [{ id: handle, runnerVersion, assignment }],
     live: new Set([handle]),
-    appVersion,
+    operators,
   });
+  // 무엇과 비교했는지를 hover 로 보인다 — 칩만으로는 "누구보다 뒤처졌나"가 안 보인다.
+  const baseline = baselineOf({ assignment }, operators);
+  const title = baseline === null ? undefined : t('grid.version.baseline', { version: baseline });
 
   // 점선 칩. `버전 모름` 이라고 **적는 것**이 요점이다 — 칩을 아예 안 그리면 "러너가 없다"와
   // 구분되지 않고, 문서가 이 칩을 만든 이유가 정확히 그것이다(*"없으면 매번 상세를 열어야
@@ -607,6 +619,7 @@ function VersionChip({ handle, runnerVersion, appVersion, restarting }: {
       <span
         data-testid={`agent-version-${handle}`}
         data-version="current"
+        title={title}
         className="inline-block rounded bg-surface-sunken px-1.5 py-px text-meta text-fg-muted"
       >
         {t('grid.version.current', { version })}
@@ -634,7 +647,7 @@ function VersionChip({ handle, runnerVersion, appVersion, restarting }: {
   // 뒤처진 칩은 **눌리지 않는다**(스펙 2026-09-20 §2) — 새 번들로 가는 길은 그 러너를
   // 돌리는 오퍼레이터를 갱신하는 것이고, 앱에서 누를 일이 아니다. 칩은 사실만 말한다.
   return (
-    <span data-testid={`agent-version-${handle}`} data-version="stale" className={shape}>
+    <span data-testid={`agent-version-${handle}`} data-version="stale" title={title} className={shape}>
       {t('grid.version.stale', { version })}
     </span>
   );
@@ -711,7 +724,7 @@ function VersionChip({ handle, runnerVersion, appVersion, restarting }: {
  */
 export function AgentGrid<T extends AgentCardSubject>({
   agents, selectedId, runnerStates, online, connected, onPick, onCreate, canCreate,
-  onStop, appVersion = null, place = 'settings',
+  onStop, operatorVersions = null, place = 'settings',
 }: {
   agents: T[];
   selectedId: string | null;
@@ -731,15 +744,15 @@ export function AgentGrid<T extends AgentCardSubject>({
    */
   onStop?(agent: T): void;
   /**
-   * 버전 칩의 **기준값**. 이 앱 번들의 버전이고 스토어가 갖고 있다(`appStore.ts` 의
-   * `appVersion`, `AgentsSettings` 의 `StaleRunnerBar` 가 이미 같은 값을 읽는다).
+   * 버전 칩의 **기준** — 오퍼레이터별 버전(`useOperatorVersions`). 카드마다 자기 배정
+   * (`assignment.operatorId`)의 값과 견준다. 설정 화면의 띠(`StaleRunnerBar`)가 같은 값을 읽는다.
    *
    * 기본값 `null` 이 계약이다 — `staleRunners` 가 `null` 을 **"아무것도 뒤처졌다고 하지
    * 않는다"** 로 읽으므로(그 함수 주석), 이 prop 을 안 넘기는 호출자(사이드바)에게는
    * 뒤처짐 판정이 애초에 일어나지 않는다. 비교 기준이 없는데 단정하는 것이
    * `docs/design.md` §4 가 금지하는 거짓 신호다.
    */
-  appVersion?: string | null;
+  operatorVersions?: OperatorVersions | null;
   /** 이 격자가 선 자리. 기본값 `settings` 가 설정 화면의 오늘 모양이다(`AgentGridPlace` 주석). */
   place?: AgentGridPlace;
 }) {
@@ -1129,7 +1142,8 @@ export function AgentGrid<T extends AgentCardSubject>({
                       <VersionChip
                         handle={a.handle}
                         runnerVersion={a.runnerVersion}
-                        appVersion={appVersion}
+                        assignment={a.assignment}
+                        operators={operatorVersions}
                         /* 러너가 갈아 끼워지는 중이라는 사실. 이 격자는 `runnerStates` 를
                            이미 손에 들고 있으므로 새 왕복이 없고, 실행기가 그 값을 스토어에
                            밀어 넣는 순간 칩이 따라 바뀐다(`VersionChip.restarting` 주석). */

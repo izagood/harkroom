@@ -144,7 +144,7 @@ unix 소켓으로 말하는 것이고, 그 어느 것도 네이티브 애드온�
 | `--pid-record` | pid 기록 파일. 어느 앱 빌드가 띄웠는지 판정한다 | `#431` D3 |
 | `--launch-nonce` | 이번 기동의 식별자 | `#431` D3 |
 | `--entry-path` | daemon 실행 파일 자신의 경로 | `#431` D3 |
-| `--app-version` | 띄운 앱의 버전. 버전 공존 판정의 근거 | `#431` D3·D4 |
+| `--app-version` | 띄운 앱의 버전. 버전 공존 판정의 근거이고, `hello.version` 으로 서버에 알려 화면의 러너 뒤처짐 기준이 된다(없으면 번들에 구운 값 — `src/version.ts`) | `#431` D3·D4 |
 
 **필수는 `--socket` 하나다** — 그것이 없으면 daemon 은 어디에 소켓을 열지 모른다. 나머지는
 없으면 빈 값으로 pid 레코드에 실린다(`--launch-nonce` 는 어차피 `claimDaemonEndpoint` 가

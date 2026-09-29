@@ -24,9 +24,19 @@ const agentView = (id: string, handle: string, over: Partial<AgentView> = {}): A
   status: 'available', statusText: null, avatarAttachmentId: null, ...over,
 });
 
-const fakeController = (agents: AgentView[] = []) => {
+/** 이 에이전트를 돌리는 오퍼레이터 — 러너 버전의 비교 기준이다(`runnerVersions.ts`). */
+const OP = 'op-mac';
+const assignedTo = (operatorId = OP): Partial<AgentView> => ({
+  assignment: { agentId: MINE, operatorId, assignedBy: ME, assignedAt: '2026-09-21T00:00:00Z' },
+});
+
+const fakeController = (agents: AgentView[] = [], operatorVersion: string | null = '0.1.15') => {
   const c = {
     listAgents: vi.fn(async () => agents),
+    operators: vi.fn(async () => [{
+      id: OP, name: '맥북', ownerAccountId: ME, createdAt: '2026-09-21T00:00:00Z', lastSeenAt: null, revokedAt: null,
+      online: true, version: operatorVersion,
+    }]),
     startDm: vi.fn(async () => undefined),
   };
   setController(c as unknown as Controller);
@@ -39,8 +49,9 @@ const setup = (isAdmin = false) => {
     me: acc(ME, 'jaebin', 'human', isAdmin),
     connected: true,
     online: [MINE],
-    // 뒤처짐 판정의 기준. 실제로는 컨트롤러가 기동 때 밀어 넣는다(`appStore.ts::appVersion`).
-    appVersion: '0.1.15',
+    // 보는 앱의 버전. **판정 기준이 아니다** — 기준은 오퍼레이터다. 일부러 러너보다 낡은 값을
+    // 둔다: 이 값이 판정에 새어 들면 아래 "앱보다 새 러너" 시험이 빨개진다.
+    appVersion: '0.1.0',
     accounts: {
       [ME]: acc(ME, 'jaebin', 'human', isAdmin),
       [MINE]: acc(MINE, 'mine', 'agent', false, { ownerAccountId: ME }),
@@ -159,19 +170,46 @@ describe('Profile — 러너 버전', () => {
 
   // 재기동 버튼은 사라졌다(스펙 2026-09-20 §2): 러너를 갈아 띄우는 것은 그 러너를 돌리는
   // 오퍼레이터의 일이다. 남는 것은 **사실** — 뒤처졌는지는 사람이 여전히 알아야 한다.
-  it('러너가 앱보다 뒤처졌으면 그렇게 말한다 — 버튼은 없다', async () => {
-    fakeController([agentView(MINE, 'mine', { runnerVersion: '0.1.6' })]);
+  it('러너가 자기 오퍼레이터보다 뒤처졌으면 그렇게 말한다 — 버튼은 없다', async () => {
+    fakeController([agentView(MINE, 'mine', { runnerVersion: '0.1.6', ...assignedTo() })]);
     live(MINE);
     render(<Profile accountId={MINE} onClose={vi.fn()} />);
 
     const dialog = await screen.findByRole('dialog', { name: 'mine 프로필' });
-    await waitFor(() => expect(dialog.textContent).toContain('0.1.6'));
+    await waitFor(() => expect(dialog.textContent).toContain('0.1.6 (오퍼레이터 0.1.15)'));
     expect(dialog.textContent).toContain('뒤처진');
     expect(screen.queryByRole('button', { name: /재기동/ })).toBeNull();
   });
 
+  /** **이번 버그의 회귀선**(2026-09-29) — 보는 앱(0.1.0)보다 새 러너가 뒤처짐으로 뜨던 것. */
+  it('러너가 보는 앱보다 새것이어도 오퍼레이터와 같으면 뒤처졌다고 하지 않는다', async () => {
+    fakeController([agentView(MINE, 'mine', { runnerVersion: '0.1.15', ...assignedTo() })]);
+    live(MINE);
+    render(<Profile accountId={MINE} onClose={vi.fn()} />);
+
+    const dialog = await screen.findByRole('dialog', { name: 'mine 프로필' });
+    await waitFor(() => expect(dialog.textContent).toContain('0.1.15 (오퍼레이터 0.1.15)'));
+    expect(dialog.textContent).not.toContain('뒤처진');
+  });
+
+  it('오퍼레이터 버전을 모르면(미배정·버전 없음) 뒤처졌다고 하지 않는다 — 앱 버전으로 물러서지 않는다', async () => {
+    for (const [agent, operatorVersion] of [
+      [agentView(MINE, 'mine', { runnerVersion: '0.1.6' }), '0.1.15'],
+      [agentView(MINE, 'mine', { runnerVersion: '0.1.6', ...assignedTo() }), null],
+    ] as const) {
+      fakeController([agent], operatorVersion);
+      live(MINE);
+      render(<Profile accountId={MINE} onClose={vi.fn()} />);
+      const dialog = await screen.findByRole('dialog', { name: 'mine 프로필' });
+      await waitFor(() => expect(dialog.textContent).toContain('0.1.6'));
+      expect(dialog.textContent).not.toContain('오퍼레이터 0.1');
+      expect(dialog.textContent).not.toContain('뒤처진');
+      cleanup();
+    }
+  });
+
   it('버전을 모르면 뒤처졌다고 하지 않는다 — 모르는 것을 단정하지 않는다', async () => {
-    fakeController([agentView(MINE, 'mine', { runnerVersion: 'unknown' })]);
+    fakeController([agentView(MINE, 'mine', { runnerVersion: 'unknown', ...assignedTo() })]);
     live(MINE);
     render(<Profile accountId={MINE} onClose={vi.fn()} />);
 

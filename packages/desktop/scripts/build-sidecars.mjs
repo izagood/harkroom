@@ -15,7 +15,7 @@
 // 유효한 중간 상태가 아니다 — 명령 하나가 둘 다 내는 것이 그 계약과도 맞는다.
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { appVersion, binariesDir, buildSidecar, repoRoot, resolveTarget, runnerDefines } from './sidecar.mjs';
+import { appVersion, binariesDir, buildSidecar, operatorDefines, repoRoot, resolveTarget, runnerDefines } from './sidecar.mjs';
 
 async function main() {
   const target = resolveTarget();
@@ -49,6 +49,8 @@ async function main() {
     // PTY 는 하네스를 실제로 돌리는 러너의 일이다. 네이티브 애드온을 안 곁들이므로
     // daemon 은 `bundle.resources` 도 필요 없다(그 항목은 러너 것으로 그대로 둔다).
     nativeDeps: [],
+    // 헤드리스로 env 없이 돌 때 hello 에 실을 버전(`operator/src/version.ts`).
+    define: operatorDefines(version),
     target,
   });
 
@@ -57,6 +59,7 @@ async function main() {
   console.log(`  node-pty prebuild: ${target.platform}-${target.arch}`);
   console.log(`operator 사이드카 빌드 완료: ${daemon.outfile}`);
   console.log('  네이티브 의존: 없음 (PTY 는 러너의 일이다)');
+  console.log(`  구워 넣은 버전: ${version}`);
 }
 
 main().catch((err) => {

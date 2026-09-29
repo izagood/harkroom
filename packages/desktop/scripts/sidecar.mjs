@@ -19,7 +19,8 @@
 // - **엔트리포인트** — 러너는 `packages/agent/src/main.ts`, daemon 은 `daemon/src/main.ts`
 // - **산출물 이름** — `harkroom-runner` / `harkroom-operator` (`externalBin` 항목 이름과 같아야 한다)
 // - **곁들일 네이티브 의존** — **러너만 `node-pty`** 를 곁들인다
-// - **구워 넣을 값**(`define`) — **러너만** 자기 버전을 안고 나간다(`runnerDefines()`)
+// - **구워 넣을 값**(`define`) — 러너는 `runnerDefines()`, daemon 은 `operatorDefines()`.
+//   이름이 다르다: 둘은 다른 소스(`agent/src/version.ts`·`operator/src/version.ts`)가 읽는다
 //
 // 마지막 항목이 이 일반화의 핵심이다. **daemon 은 `node-pty` 가 필요 없다** — PTY 를 여는
 // 것은 하네스를 실제로 돌리는 러너의 일이고, daemon 은 프로세스를 spawn 하고 unix 소켓으로
@@ -76,6 +77,19 @@ export function appVersion() {
  */
 export function runnerDefines(version) {
   return { __AGENT_VERSION__: JSON.stringify(version) };
+}
+
+/**
+ * 오퍼레이터(daemon) 번들에 구울 값들. `packages/operator/src/version.ts` 의
+ * `__OPERATOR_VERSION__` 과 **이름이 같아야 한다**.
+ *
+ * 오퍼레이터는 이 값을 `hello.version` 으로 서버에 알리고, 화면은 그것을 러너 뒤처짐 판정의
+ * 기준으로 삼는다. 앱이 띄운 daemon 은 `--app-version` 이 있어 이 값이 필요 없지만, env
+ * (`HARKROOM_OPERATOR_VERSION`) 없이 도는 헤드리스 오퍼레이터는 이것이 유일한 기준이다 —
+ * 그 러너들은 같은 번들에 구운 `__AGENT_VERSION__` 을 보고하므로 두 값이 맞물린다.
+ */
+export function operatorDefines(version) {
+  return { __OPERATOR_VERSION__: JSON.stringify(version) };
 }
 
 /**
@@ -146,7 +160,7 @@ export function resolveTarget() {
  *   가진 패키지뿐이다(러너의 `node-pty`). daemon 은 그런 의존이 없으므로 비운다.
  * @param {{triple:string, platform:string, arch:string}} opts.target `resolveTarget()` 의 결과.
  * @param {Record<string,string>} [opts.define] 번들 시점에 치환할 값들(esbuild `define`).
- *   **비워 두는 것이 기본이다** — 러너만 자기 버전을 구워 간다(`runnerDefines()`).
+ *   러너는 `runnerDefines()`, daemon 은 `operatorDefines()` 를 준다.
  */
 export async function buildSidecar({ name, entry, resolveFrom, nativeDeps = [], target, define = {} }) {
   mkdirSync(binariesDir, { recursive: true });
@@ -161,7 +175,7 @@ export async function buildSidecar({ name, entry, resolveFrom, nativeDeps = [], 
     format: 'esm',
     target: 'node22',
     outfile: bundleFile,
-    // **구워 넣는 값**(지금은 러너 버전 하나). 치환되지 않으면 그 식별자는 선언되지 않은
+    // **구워 넣는 값**(러너·오퍼레이터 버전). 치환되지 않으면 그 식별자는 선언되지 않은
     // 채 남고, 읽는 쪽은 `typeof` 로만 만져 조용히 없는 값으로 떨어진다 — 그래서 이름이
     // 어긋나도 빌드는 성공한다. 그 조용함을 `sidecarVersionBake.test.ts` 가 잡는다.
     define,
