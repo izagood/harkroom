@@ -1701,6 +1701,17 @@ export class Controller {
     return this.api.updateAgentDefaults(patch);
   }
 
+  /** 멘션 연쇄 상한(#932). 실패를 삼키지 않는다 — 화면이 실패를 그려야 한다. */
+  mentionPolicy(): Promise<import('@harkroom/shared').MentionPolicy> {
+    return this.api.mentionPolicy();
+  }
+
+  updateMentionPolicy(
+    policy: import('@harkroom/shared').MentionPolicy,
+  ): Promise<import('@harkroom/shared').MentionPolicy> {
+    return this.api.updateMentionPolicy(policy);
+  }
+
   /** 투영 설정. admin 전용이라 실패를 삼키지 않는다 — 화면이 실패를 그려야 한다. */
   projectionConfig(): Promise<import('@harkroom/shared').ProjectionConfigView> {
     return this.api.projectionConfig();

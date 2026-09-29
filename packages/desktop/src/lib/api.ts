@@ -1,6 +1,6 @@
 import type {
   AutomationIngressIssued, AutomationRunView, AutomationTrigger, AutomationView,
-  McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView,
+  McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, MentionPolicy,
   AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
 import { MENTION_EDIT_SKIPPED_HEADER } from '@harkroom/shared';
 import type { MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
@@ -730,6 +730,15 @@ export class ApiClient {
   /** model·effort 를 지우는 것은 **명시적 null** 이다 — 키를 빼면 '손대지 않음'이 된다. */
   updateAgentDefaults(patch: Partial<AgentDefaults>): Promise<AgentDefaults> {
     return this.req('PUT', '/settings/agent-defaults', patch);
+  }
+
+  /** 멘션 연쇄 상한(078, #932). 읽기는 누구나, 바꾸기는 admin 이다. */
+  mentionPolicy(): Promise<MentionPolicy> {
+    return this.req('GET', '/settings/mention-policy');
+  }
+
+  updateMentionPolicy(policy: MentionPolicy): Promise<MentionPolicy> {
+    return this.req('PUT', '/settings/mention-policy', policy);
   }
 
   /**
