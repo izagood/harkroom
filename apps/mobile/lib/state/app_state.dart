@@ -308,6 +308,17 @@ class AppState extends ChangeNotifier {
       // 소켓은 순서를 보장하지만 재연결 직후에는 섞일 수 있다. 꼬리만 보고 넣으므로
       // 대부분 이 정렬은 공짜다.
       list.sort((a, b) => a.seq.compareTo(b.seq));
+      // **새 답글이면 루트의 답글 수를 올린다.** 서버는 루트를 다시 보내 주지 않는다 —
+      // 안 올리면 답글이 달려도 채널 화면에 "답글 N개" 줄이 안 생기고, 스레드를 열 길이
+      // 없다. 처음 들어올 때만 센다: 내 답글은 POST 응답과 소켓으로 **두 번** 온다.
+      // `progress`·`wake` 는 답글로 안 센다(데스크탑 `countsAsReply` 와 같은 규칙).
+      final root = message.threadRootId;
+      if (root != null &&
+          message.kind != MessageKind.progress &&
+          message.kind != MessageKind.wake) {
+        final at = list.indexWhere((m) => m.id == root);
+        if (at >= 0) list[at] = list[at].withReplyCount((list[at].replyCount ?? 0) + 1);
+      }
     }
     notifyListeners();
   }

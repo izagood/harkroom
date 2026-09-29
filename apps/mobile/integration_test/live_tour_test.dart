@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/api/api_client.dart';
 import 'package:harkroom/api/models.dart';
 import 'package:harkroom/main.dart';
+import 'package:harkroom/screens/message_list_screen.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_state.dart';
 import 'package:integration_test/integration_test.dart';
@@ -29,7 +30,7 @@ import 'package:integration_test/integration_test.dart';
 ///   --dart-define=E2E_SERVER=https://jaebin.harkroom.com \
 ///   --dart-define=E2E_LOGIN=e2e-mobile --dart-define=E2E_PASSWORD=... \
 ///   --dart-define=E2E_CHANNEL=<공개 채널 id> --dart-define=E2E_AGENT=<부를 에이전트 handle> \
-///   --dart-define=E2E_ASK=<이 계정에게 세운 ask 메시지 id>   # 없으면 ask·받은 것은 건너뛴다
+///   --dart-define=E2E_ASK=<이 계정에게 세운 ask 메시지 id, 선택지 id `ok` 가 있어야 한다>   # 없으면 건너뛴다
 /// ```
 ///
 /// ## 옆 통로(side)를 하나 더 둔다
@@ -57,6 +58,9 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('로그인 뒤 한 바퀴', skip: _server.isEmpty, (tester) async {
+    // 빗나간 탭은 경고만 남기고 지나간다 — 그러면 "보냈다"고 믿은 채 다음 단계가 작성칸에
+    // 남은 글자를 보고 통과한다(처음 돌렸을 때 실제로 그랬다).
+    WidgetController.hitTestWarningShouldBeFatal = true;
     final nonce = DateTime.now().millisecondsSinceEpoch.toRadixString(36);
     final side = ApiClient(baseUrl: _server);
     side.token = await side.login(_login, _password);
@@ -69,26 +73,26 @@ void main() {
 
     // ── 로그인
     await tester.enterText(find.byKey(const Key('connect-server-url')), _server);
-    await tester.tap(find.byKey(const Key('connect-continue')));
+    await _tap(tester, find.byKey(const Key('connect-continue')));
     await _until(tester, find.byKey(const Key('login-id')));
     await tester.enterText(find.byKey(const Key('login-id')), _login);
     await tester.enterText(find.byKey(const Key('login-password')), _password);
-    await tester.tap(find.byKey(const Key('login-submit')));
+    await _tap(tester, find.byKey(const Key('login-submit')));
 
     // ── 채널 목록 → 시험 채널
     await _until(tester, find.byKey(const Key('channel-$_channel')));
-    await tester.tap(find.byKey(const Key('channel-$_channel')));
+    await _tap(tester, find.byKey(const Key('channel-$_channel')));
     await _until(tester, find.byKey(const Key('composer')));
 
     // ── 보내기: 화면에 뜨고 **서버에도 남는다**
     await tester.enterText(find.byKey(const Key('composer')), 'e2e send $nonce');
-    await tester.tap(find.byKey(const Key('composer-send')));
-    await _until(tester, find.textContaining('e2e send $nonce'));
+    await _tap(tester, find.byKey(const Key('composer-send')));
+    await _until(tester, _shown('e2e send $nonce'));
     expect(await _serverHas(side, 'e2e send $nonce'), isTrue);
 
     // ── 실시간 수신: 앱 밖에서 넣은 말이 새로고침 없이 뜬다
     await side.postMessage(_channel, 'e2e live $nonce');
-    await _until(tester, find.textContaining('e2e live $nonce'));
+    await _until(tester, _shown('e2e live $nonce'));
 
     // ── 리액션: 옆에서 단 것을 앱에서 누르면 떨어진다(내가 유일한 사람이라 칸이 사라진다)
     final reacted = await side.postMessage(_channel, 'e2e react $nonce');
@@ -96,7 +100,7 @@ void main() {
     final chip = find.byKey(Key('reaction-${reacted.id}-👍'));
     await _until(tester, chip);
     await tester.ensureVisible(chip);
-    await tester.tap(chip);
+    await _tap(tester, chip);
     await _until(tester, chip, gone: true);
     final after = await _find(side, reacted.id);
     expect(after?.reactions.where((r) => r.emoji == '👍'), isEmpty);
@@ -107,12 +111,13 @@ void main() {
     final open = find.byKey(Key('thread-open-${root.id}'));
     await _until(tester, open);
     await tester.ensureVisible(open);
-    await tester.tap(open);
+    await _tap(tester, open);
     await _until(tester, find.byKey(const Key('thread-composer')));
     await tester.enterText(find.byKey(const Key('thread-composer')), 'e2e reply-app $nonce');
-    await tester.tap(find.byKey(const Key('thread-send')));
-    await _until(tester, find.textContaining('e2e reply-app $nonce'));
-    await tester.pageBack();
+    await _tap(tester, find.byKey(const Key('thread-send')));
+    await _until(tester, _shown('e2e reply-app $nonce'));
+    // `pageBack` 은 iOS 에서 쿠퍼티노 뒤로 단추를 찾는다 — 이 앱의 AppBar 는 Material 것이다.
+    await _tap(tester, find.byType(BackButton));
     await _until(tester, find.byKey(const Key('composer')));
 
     // ── 첨부: 고른 뒤의 경로(올리기 → 보내기 → 미리보기)
@@ -121,7 +126,7 @@ void main() {
     await app.attach(_channel, PendingAttachment(filename: 'e2e-$nonce.png'), _png);
     await _until(tester, find.byKey(Key('pending-e2e-$nonce.png')));
     await tester.enterText(find.byKey(const Key('composer')), 'e2e attach $nonce');
-    await tester.tap(find.byKey(const Key('composer-send')));
+    await _tap(tester, find.byKey(const Key('composer-send')));
     await _until(tester, find.byWidgetPredicate(_keyStarts('attachment-preview-')));
 
     // ── `@` 자동완성 → 에이전트 부르기. **진짜로 그 에이전트의 턴이 뜬다.**
@@ -130,32 +135,61 @@ void main() {
           find.byKey(const Key('composer')), '@${_agent.substring(0, 2)}');
       final candidate = find.byKey(Key('mention-candidate-$_agent'));
       await _until(tester, candidate);
-      await tester.tap(candidate);
+      await _tap(tester, candidate);
       await tester.pump();
       final field = tester.widget<TextField>(find.byKey(const Key('composer')));
       expect(field.controller!.text, startsWith('@$_agent '));
       await tester.enterText(find.byKey(const Key('composer')),
           '${field.controller!.text}모바일 e2e 확인용이다. "받았다" 한 줄만 답해 줘. $nonce');
-      await tester.tap(find.byKey(const Key('composer-send')));
-      await _until(tester, find.textContaining('모바일 e2e 확인용이다'));
-      // 막혔는지(mentionDenied·capped)는 화면이 아니라 서버의 meta 로 본다.
+      await _tap(tester, find.byKey(const Key('composer-send')));
+      await _until(tester, _shown('모바일 e2e 확인용이다'));
+      // 막혔는지(mentionDenied·capped)는 화면이 아니라 서버의 meta 로 본다. 서버는 본문의
+      // `@handle` 을 `<@id>` 로 바꿔 저장한다.
       final sent = (await side.messages(_channel, limit: 20))
           .messages
-          .lastWhere((m) => m.body.contains(nonce) && m.body.startsWith('@'));
+          .lastWhere((m) => m.body.contains(nonce) && m.body.startsWith('<@'));
       debugPrint('E2E mention meta: ${jsonEncode(sent.meta)}');
     }
 
     // ── ask 답하기 · 받은 것
     if (_ask.isNotEmpty) {
-      final option = find.byWidgetPredicate(_keyStarts('ask-option-$_ask-'));
-      await _until(tester, option, scroll: true);
-      await tester.tap(option.first);
-      await _until(tester, find.byKey(Key('ask-chosen-$_ask')));
+      // 시험이 세우는 카드의 선택지 id 는 `ok` 다(`E2E_ASK` 를 만들 때 그렇게 만든다).
+      // `.first` 는 비어 있을 때 **던진다** — 스크롤해서 찾는 동안은 비어 있으므로 쓰지 않는다.
+      final option = find.byKey(Key('ask-option-$_ask-ok'));
+      // 카드는 목록 위쪽(옛 쪽)에 있다. 목록은 아래에서부터 쌓이므로(`reverse`) 앞으로 밀면
+      // 옛 쪽으로 간다 — 지나치지 않게 조금씩 민다.
+      await tester.scrollUntilVisible(option, 250,
+          // 탭들이 `IndexedStack` 이라 **다른 탭의 목록도 나무에 있다** — 채널 화면의 것으로 좁힌다.
+          scrollable: find
+              .descendant(
+                  of: find.byType(MessageListScreen), matching: find.byType(Scrollable))
+              .first,
+          maxScrolls: 200);
+      await _tap(tester, option);
+      // 고른 사실이 **서버에** 남았는가 — 화면만 바뀌고 요청이 실패하면 그 턴은 영영 멈춘다.
+      Object? answered;
+      for (var i = 0; i < 20 && answered == null; i++) {
+        await tester.pump(const Duration(milliseconds: 250));
+        answered = ((await _find(side, _ask))?.meta['ask'] as Map?)?['answeredWith'];
+      }
+      expect(answered, 'ok');
+      debugPrint('E2E DEBUG after-answer screens=${find.byType(MessageListScreen).evaluate().length} '
+          'phase=${app.phase} texts=${find.byType(Text).evaluate().take(8).map((e) => (e.widget as Text).data).toList()}');
+      // 답하는 사이 새 말이 아래에 붙으면 카드가 밀려 올라간다 — 다시 찾아가서 본다.
+      final chosen = find.byKey(Key('ask-chosen-$_ask'));
+      await tester.scrollUntilVisible(chosen, 250,
+          scrollable: find
+              .descendant(
+                  of: find.byType(MessageListScreen), matching: find.byType(Scrollable))
+              .first,
+          maxScrolls: 200);
 
-      await tester.tap(find.byKey(const Key('tab-inbox')));
+      // 탭 막대는 채널 화면 **밖**에만 있다 — 채널은 탭 위로 밀어 넣은 화면이다.
+      await _tap(tester, find.byType(BackButton));
+      await _tap(tester, find.byKey(const Key('tab-inbox')));
       final entry = find.byWidgetPredicate(_keyStarts('inbox-'));
       await _until(tester, entry);
-      await tester.tap(entry.first);
+      await _tap(tester, entry.first);
       await _until(tester, find.byKey(const Key('composer')));
     }
 
@@ -172,7 +206,6 @@ Future<void> _until(
   WidgetTester tester,
   Finder finder, {
   bool gone = false,
-  bool scroll = false,
   Duration timeout = const Duration(seconds: 20),
 }) async {
   final end = DateTime.now().add(timeout);
@@ -180,20 +213,43 @@ Future<void> _until(
     await tester.pump(const Duration(milliseconds: 100));
     final present = finder.evaluate().isNotEmpty;
     if (present != gone) return;
-    // 목록이 길면 찾는 것이 화면 밖에 있다 — 위로 한 번씩 민다.
-    if (scroll && !gone) {
-      final list = find.byType(Scrollable);
-      if (list.evaluate().isNotEmpty) await tester.drag(list.first, const Offset(0, 300));
-    }
   }
-  fail('${gone ? '사라지지' : '나타나지'} 않았다: $finder');
+  // 무엇이 떠 있었는지 남긴다 — 밖에서 찍는 스크린샷은 이 시험의 프레임을 따라오지 못한다.
+  final texts = find
+      .byType(Text)
+      .evaluate()
+      .map((e) => (e.widget as Text).data)
+      .whereType<String>()
+      .toList();
+  fail('${gone ? '사라지지' : '나타나지'} 않았다: $finder\n화면의 글: $texts');
 }
 
-Future<bool> _serverHas(ApiClient side, String text) async =>
-    (await side.messages(_channel, limit: 20)).messages.any((m) => m.body.contains(text));
+/// 화면에 **그려진 글**만 찾는다. `find.textContaining` 은 작성칸 안의 글자도 잡아서, 보내기가
+/// 빗나가도 "화면에 떴다"로 통과했다.
+Finder _shown(String text) =>
+    find.byWidgetPredicate((w) => w is Text && (w.data ?? '').contains(text));
+
+/// 키보드가 올라오며 화면이 움직이는 중에 누르면 빗나간다 — 가라앉힌 뒤 보이게 하고 누른다.
+Future<void> _tap(WidgetTester tester, Finder finder) async {
+  await tester.pump(const Duration(milliseconds: 400));
+  await tester.ensureVisible(finder);
+  await tester.pump(const Duration(milliseconds: 100));
+  await tester.tap(finder);
+  await tester.pump();
+}
+
+/// 보낸 것이 서버에 남았는가. 응답이 오기 전일 수 있어 잠깐 기다린다.
+Future<bool> _serverHas(ApiClient side, String text) async {
+  for (var i = 0; i < 20; i++) {
+    final page = await side.messages(_channel, limit: 20);
+    if (page.messages.any((m) => m.body.contains(text))) return true;
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
+  return false;
+}
 
 Future<MessageRow?> _find(ApiClient side, String id) async {
-  final page = await side.messages(_channel, limit: 50);
+  final page = await side.messages(_channel, limit: 100);
   for (final m in page.messages) {
     if (m.id == id) return m;
   }

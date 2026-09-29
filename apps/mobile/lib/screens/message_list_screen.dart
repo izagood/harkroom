@@ -65,7 +65,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
     // 흘리면 채널이 진행 로그로 덮인다.
     // **이제 전부 그린다.** P1 까지는 `progress`·`wake` 를 버렸는데, 그러면 오래 도는
     // 스레드가 조용해 보였다 — 진행은 한 줄로 접히고 대기는 대기 줄이 된다.
-    final feed = buildFeed(all);
+    final feed = buildFeed(all.where((m) => m.inChannelFeed).toList(growable: false));
     // `firstOrNull` 은 `package:collection` 것이다. 의존성 하나를 이것 때문에 들이지
     // 않는다 — 채널이 목록에서 사라지는 경우(다른 기기에서 나갔다)가 있으므로 null 은
     // 정상이고, 그때 제목은 빈 줄로 둔다.
@@ -85,13 +85,18 @@ class _MessageListScreenState extends State<MessageListScreen> {
             Expanded(
               child: feed.isEmpty
                   ? Center(child: Text(t.messagesEmpty))
+                  // **아래에서부터 쌓는다**(`reverse`). 위에서부터면 채널을 열었을 때 불러온
+                  // 50개 중 **가장 오래된 것**이 보이고, 새 말은 화면 밖 아래로 붙는다 —
+                  // 채팅에서 사람이 보려는 것은 늘 맨 아래다. 짧은 시험 목록에서는 한 화면에
+                  // 다 들어가서 드러나지 않았다.
                   : ListView.builder(
                       controller: _scroll,
+                      reverse: true,
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       itemCount: feed.length,
                       itemBuilder: (context, i) => buildFeedItem(
                         context,
-                        feed[i],
+                        feed[feed.length - 1 - i],
                         onOpenThread: (m) => Navigator.of(context).push(
                           MaterialPageRoute<void>(
                             builder: (_) => ThreadScreen(

@@ -133,7 +133,7 @@ class AttachmentRow {
         id: _str(j['id']),
         filename: _str(j['filename']),
         contentType: _str(j['contentType'], 'application/octet-stream'),
-        byteSize: _int(j['byteSize']),
+        byteSize: _int(j['sizeBytes']),
       );
 }
 
@@ -173,6 +173,7 @@ class MessageRow {
     required this.reactions,
     required this.attachments,
     required this.replyCount,
+    this.alsoInChannel = false,
   });
 
   final String id;
@@ -199,6 +200,32 @@ class MessageRow {
   /// **스레드 루트에만 있다.** 답글이면 `null` — "답글이 0개"가 아니라 "이 질문의 대상이
   /// 아니다"다. 둘을 0 으로 뭉치면 모든 답글이 스레드 진입점을 갖게 된다.
   final int? replyCount;
+
+  /// 스레드 답글인데 **채널에도 보이라고** 올린 것(#231). 채널 화면은 루트와 이것만 그린다.
+  final bool alsoInChannel;
+
+  /// 채널 화면에 한 줄로 설 말인가. 서버는 채널 조회에 **답글까지 섞어** 주고 거르는 것은
+  /// 화면의 몫이다(데스크탑 `ChannelPane` 과 같은 규칙) — 안 거르면 남의 스레드 대화가
+  /// 채널 한가운데 문맥 없이 흘러든다.
+  bool get inChannelFeed => threadRootId == null || alsoInChannel;
+
+  /// 답글 수를 바꾼 사본(루트에만 뜻이 있다).
+  MessageRow withReplyCount(int n) => MessageRow(
+        id: id,
+        seq: seq,
+        channelId: channelId,
+        threadRootId: threadRootId,
+        authorId: authorId,
+        body: body,
+        kind: kind,
+        meta: meta,
+        createdAt: createdAt,
+        editedAt: editedAt,
+        reactions: reactions,
+        attachments: attachments,
+        replyCount: n < 0 ? 0 : n,
+        alsoInChannel: alsoInChannel,
+      );
 
   bool get isThreadRoot => threadRootId == null;
 
@@ -242,6 +269,7 @@ class MessageRow {
       reactions: next,
       attachments: attachments,
       replyCount: replyCount,
+      alsoInChannel: alsoInChannel,
     );
   }
 
@@ -272,6 +300,7 @@ class MessageRow {
                 .toList(growable: false)
             : const [],
         replyCount: j['replyCount'] is num ? (j['replyCount']! as num).toInt() : null,
+        alsoInChannel: j['alsoInChannel'] == true,
       );
 }
 

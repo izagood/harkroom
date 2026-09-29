@@ -5,6 +5,7 @@ import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
 import '../time.dart';
+import '../mention/render.dart';
 
 /// 진행 줄 — **말풍선이 아니라 상태 한 줄**이다.
 ///
@@ -40,7 +41,7 @@ class ProgressRow extends StatelessWidget {
           Expanded(
             child: Text(
               // `작업 중 · 4분째 — 마지막 진행 문구`
-              '${t.agentWorking} · ${runningLabel(elapsed, t)} — ${last.body}',
+              '${t.agentWorking} · ${runningLabel(elapsed, t)} — ${renderMentions(last.body, context.app.accounts, context.t.mentionUnknown)}',
               style: theme.textTheme.bodySmall,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
@@ -130,7 +131,7 @@ class ReportCard extends StatelessWidget {
             ),
             if (message.body.trim().isNotEmpty) ...[
               const SizedBox(height: 8),
-              Text(message.body),
+              Text(renderMentions(message.body, context.app.accounts, context.t.mentionUnknown)),
             ],
             _Section(title: t.reportChecks, items: report.checks),
             _Section(title: t.reportFiles, items: report.files),
@@ -205,7 +206,7 @@ class FailureCard extends StatelessWidget {
             ],
             if (failure.what == null && failure.reason == null && message.body.trim().isNotEmpty) ...[
               const SizedBox(height: 8),
-              Text(message.body),
+              Text(renderMentions(message.body, context.app.accounts, context.t.mentionUnknown)),
             ],
           ],
         ),
