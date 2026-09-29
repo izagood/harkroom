@@ -1,13 +1,16 @@
-import { useEffect, useState, type ReactElement } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { createNotifier } from './lib/notify';
-import { sessionStore, type StoredCommunity } from './lib/session';
+import { sessionStore, type StoredCommunity, type StoredSessions } from './lib/session';
 import { useColorMode } from './lib/useColorMode';
 import { useZoom } from './lib/useZoom';
 import { useNotificationOpen } from './lib/useNotificationOpen';
 import { useDockBadge } from './lib/useDockBadge';
 import { useFileDropGuard } from './lib/useFileDropGuard';
 import { getActiveEntry } from './state/communities';
-import { getController, openNotificationTarget, startCommunitySession, type Controller } from './state/controller';
+import {
+  getController, isCredentialRejection, openNotificationTarget, restoreCommunitySession, startCommunitySession,
+  type Controller, type RestoreHandle,
+} from './state/controller';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { Workspace } from './components/Workspace';
 import { SettingsScreen } from './screens/SettingsScreen';
@@ -35,6 +38,38 @@ async function startSession(
     onSessionLost: (message: string, accountId: string) => onSessionLost(message, accountId),
   });
   return entry.controller!;
+}
+
+/**
+ * 보관본의 **나머지** 커뮤니티를 레지스트리에 되살린다. 활성 커뮤니티가 선 뒤에 부른다 —
+ * 화면이 이것들을 기다리지 않게 한다(각자 뒤에서 붙고, 못 붙으면 끊김 타일로 서서 재시도한다).
+ *
+ * 이것이 없을 때는 앱을 다시 켤 때마다 비활성 커뮤니티가 레일에서 사라졌다. 키체인에는
+ * 남아 있었는데 기동이 활성 하나만 띄웠기 때문이다(2026-09-29).
+ *
+ * 서버가 토큰을 거절한 것만 보관본에서 뺀다 — 그 판단은 `restoreCommunitySession` 이 한다.
+ */
+function restoreOthers(
+  stored: StoredSessions,
+  activeAccountId: string,
+  onSessionLost: (message: string, accountId: string) => void,
+): RestoreHandle[] {
+  return stored.communities
+    // 계정 id 가 빈 항목은 옛 단일 세션(`murmur.session`)을 옮긴 것이고, 그것은 활성 하나뿐이다.
+    .filter((c) => c.accountId && c.accountId !== activeAccountId)
+    .map((c) => restoreCommunitySession({
+      baseUrl: c.baseUrl,
+      token: c.token,
+      accountId: c.accountId,
+      label: c.label,
+      notifier: createNotifier(),
+      onSessionLost,
+      onCredentialRejected: (accountId) => { void sessionStore.remove(accountId); },
+    }));
+}
+
+function hostOf(baseUrl: string): string {
+  try { return new URL(baseUrl).host || baseUrl; } catch { return baseUrl; }
 }
 
 export default function App() {
@@ -73,6 +108,8 @@ export default function App() {
    * 문구가 남아 있으면 그것도 거짓말이고, 사람은 다음 화면을 기다리며 또 헤맨다.
    */
   const [bootWait, setBootWait] = useState<BootWait>('unknown');
+  /** 뒤에서 되살리는 비활성 커뮤니티들. 앱이 내려갈 때 재시도 타이머를 끈다. */
+  const restores = useRef<RestoreHandle[]>([]);
 
   // 세션이 실행 중에 죽는 경로(다른 기기에서 로그아웃·PAT 폐기·세션 만료)를 부팅 실패와
   // 같은 표면으로 보낸다. 이것이 없으면 사이드바 빨간 점과 영구 재연결만 보이고 이유를
@@ -133,11 +170,19 @@ export default function App() {
           return;
         }
         setPhase('ready');
-      } catch {
+        restores.current.push(...restoreOthers(stored, active.accountId, handleSessionLost));
+      } catch (err) {
         if (cancelled) return;
-        await sessionStore.clear();
-        if (cancelled) return;
-        setConnectError('Your saved session could not be resumed — it expired, or the server was unreachable. Please sign in again.');
+        // **활성 하나가 못 붙었다고 보관본 전체를 지우지 않는다.** 예전에는 여기서 `clear()`
+        // 했다 — 서버가 잠깐 내려가 있기만 해도 다른 커뮤니티의 토큰까지 모두 잃었다(#164 가
+        // 막으려던 바로 그것). 서버가 토큰을 거절했을 때만 **그 커뮤니티 하나**를 뺀다.
+        if (isCredentialRejection(err)) {
+          await sessionStore.remove(active.accountId);
+          if (cancelled) return;
+          setConnectError('Your saved session has expired, or it was signed out elsewhere. Please sign in again.');
+        } else {
+          setConnectError(`Could not reach ${hostOf(active.baseUrl)}. Your saved communities are kept — sign in again, or restart the app to retry.`);
+        }
         setPhase('connect');
       }
     })();
@@ -145,6 +190,7 @@ export default function App() {
     return () => {
       cancelled = true;
       startedController?.stop();
+      for (const r of restores.current.splice(0)) r.cancel();
     };
   }, []);
 
@@ -189,6 +235,9 @@ export default function App() {
           try {
             await startSession(stored.communities.find((c) => c.accountId === accountId)!, handleSessionLost);
             setPhase('ready');
+            // 기동 때 활성 커뮤니티가 못 붙어 이 화면으로 왔다면, 나머지는 아직 레지스트리에
+            // 없다. 이미 붙어 있는 것은 `restoreCommunitySession` 이 건너뛴다.
+            restores.current.push(...restoreOthers(stored, accountId, handleSessionLost));
           } catch {
             // 세션을 조용히 지우고 로그인 화면만 띄우면 사용자에겐 이유 없는 로그아웃이 된다.
             // #164: **방금 붙은 커뮤니티만** 뺀다 — clear() 는 다른 커뮤니티의 토큰까지 지운다.
