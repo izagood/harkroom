@@ -186,6 +186,39 @@ describe('Controller', () => {
     expect((api.deleteMessage as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual(['c1', 'm1']);
   });
 
+  // 수정으로 넣은 멘션(076) — 부르지 않았으면 이유를, 불렀으면 몇 명인지를 말한다.
+  it('edit tells when an added mention was not called because the message is old', async () => {
+    const api = fakeApi({
+      editMessage: vi.fn(async () => ({
+        message: msg('m1', 'c1', 1, '@forge 뒤늦게'), notified: { count: 0, ids: [], truncated: false }, mentionSkipped: 'too_old' as const,
+      })),
+    });
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    await c.openChannel('c1');
+
+    await c.editMessage('m1', '@forge 뒤늦게');
+
+    expect(useAppStore.getState().notice).toMatch(/more than 24 hours old/);
+  });
+
+  it('edit tells how many people an added mention called', async () => {
+    const api = fakeApi({
+      editMessage: vi.fn(async () => ({
+        message: msg('m1', 'c1', 1, '@forge 봐 달라'), notified: { count: 1, ids: ['a1'], truncated: false }, mentionSkipped: null,
+      })),
+    });
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    await c.openChannel('c1');
+
+    await c.editMessage('m1', '@forge 봐 달라');
+
+    expect(useAppStore.getState().notice).toBe('Your edit called 1 person.');
+  });
+
   // #231 되돌리기는 **지우기가 아니다**. 스토어에서 빼면 스레드에서도 사라져
   // 되돌리기가 지우기가 되고, 열려 있던 스레드까지 닫힌다.
   it('recall keeps the message in the store and only flips alsoInChannel', async () => {
