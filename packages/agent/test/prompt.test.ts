@@ -936,3 +936,30 @@ describe('앵커 고정 지시 (2026-09-08)', () => {
     expect(s).toMatch(/답 없이 남는다/);
   });
 });
+
+/**
+ * 수정으로 불린 턴(076). 고친 글은 seq 가 옛날 그대로라 이미 본 구간일 수 있다 — 델타가 비어도
+ * 프롬프트가 비면 안 되고, 글이 델타에 있으면 두 번 싣지 않는다.
+ */
+describe('buildTurnPrompt — 수정으로 추가된 멘션(076)', () => {
+  const handles = { u1: 'jaebin', a1: 'forge' };
+  const edited = msg(3, 'u1', '<@a1> 이것도 봐 달라', { editedAt: 'x' });
+
+  it('이미 본 구간의 글이 고쳐져 불렀으면 그 글을 싣는다', () => {
+    const { prompt } = buildTurnPrompt({
+      messages: [], lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
+      editedMention: edited,
+    });
+    expect(prompt).toContain('수정으로 추가된 멘션');
+    expect(prompt).toContain('이것도 봐 달라');
+  });
+
+  it('글이 델타에 있으면 안내 한 줄만 더하고 글은 한 번만 보인다', () => {
+    const { prompt } = buildTurnPrompt({
+      messages: [edited], lastFedSeq: 0, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
+      editedMention: edited,
+    });
+    expect(prompt).toContain('수정으로 추가된 멘션');
+    expect(prompt.split('이것도 봐 달라')).toHaveLength(2);
+  });
+});

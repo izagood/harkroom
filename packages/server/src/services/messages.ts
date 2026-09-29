@@ -2101,7 +2101,9 @@ export async function listInbox(
             m.created_at as "createdAt", m.thread_root_id as "threadRootId",
             -- 팀 부름의 팀(047). 명단은 아래에서 한 번에 채운다 — 여기서 join 하면
             -- 팀원 수만큼 행이 불어나 항목이 여러 번 나온다.
-            i.team_id as "teamId"
+            i.team_id as "teamId",
+            -- 수정으로 생긴 부름(076). 참일 때만 싣는다 — 아래에서 거짓은 키째 지운다.
+            i.via_edit as "viaEdit"
      from inbox i join message m on m.id = i.message_id
      -- 지워진 말은 인박스에도 남지 않는다. 본문을 싣기 시작했으므로 이 조건이 없으면
      -- 지운 글이 인박스 줄에 그대로 보인다(전에는 id 만 실어 보이지 않았다).
@@ -2208,6 +2210,8 @@ export async function listInbox(
   // `teamId` 는 계약이 아니다(`InboxEntry` 에 없다) — 명단으로 옮긴 뒤 지운다. 남겨 두면
   // 화면·러너가 그 값을 읽기 시작하고, 그러면 명단과 id 라는 두 출처가 생긴다.
   for (const row of rows) delete row.teamId;
+  // `viaEdit` 는 참일 때만 나간다(`InboxEntry.viaEdit`) — 게시로 생긴 항목의 모양을 넓히지 않는다.
+  for (const row of rows as { viaEdit?: boolean }[]) if (!row.viaEdit) delete row.viaEdit;
   return rows;
 }
 

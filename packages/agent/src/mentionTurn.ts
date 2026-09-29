@@ -418,6 +418,11 @@ export interface MentionTarget {
   delegation?: InboxDelegationOutcome;
   /** 이 턴이 **넘겨받은 일**이면 넘긴 팀장과 기한(3-2). 서버가 inbox 항목에 실어 준다. */
   delegatedBy?: InboxDelegatedBy;
+  /**
+   * 이 턴이 **메시지 수정으로** 불린 턴이면 그 글(고친 뒤의 본문, 076). 델타에 들지 않을 수
+   * 있어 프롬프트가 따로 싣는다(`buildTurnPrompt` 의 `editedMention`).
+   */
+  editedMention?: MessageRow;
 }
 
 /**
@@ -685,6 +690,7 @@ export async function runMentionTurn(
     ...(target.team ? { team: target.team } : {}),
     ...(target.delegation ? { delegation: target.delegation } : {}),
     ...(target.delegatedBy ? { delegatedBy: target.delegatedBy } : {}),
+    ...(target.editedMention ? { editedMention: target.editedMention } : {}),
   });
 
   if (!prompt) {

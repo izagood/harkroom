@@ -212,6 +212,8 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
     delegation?: InboxBatch['entries'][number]['delegation'],
     /** 넘겨받은 일의 팀장·기한(3-2). */
     delegatedBy?: InboxBatch['entries'][number]['delegatedBy'],
+    /** 수정으로 생긴 부름(076). */
+    viaEdit?: boolean,
   ): Promise<void> {
     const target: MentionTarget = {
       channelId: mention.channelId, threadRootId: anchor, mentionId: mention.id,
@@ -264,6 +266,12 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
        * 지워지면 서버가 맥락 없이 사유만 준다. 그때는 블록 없이 평범한 부름처럼 돈다.
        */
       ...(reason === 'team_delegated' && delegatedBy ? { delegatedBy } : {}),
+      /**
+       * **수정으로 불렸다**(076). 고친 글은 seq 가 옛날 그대로라 이미 본 구간일 수 있다 — 그러면
+       * 델타(`readThread(since)`)에 들지 않아 프롬프트가 비고 턴이 돌지 않는다. 배치에 실려 온
+       * 그 글(고친 뒤의 본문)을 그대로 넘겨 델타와 무관하게 싣게 한다.
+       */
+      ...(viaEdit ? { editedMention: mention } : {}),
     };
     try {
       const turn = await withAccountFailover(
@@ -514,7 +522,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         // entry 당 1회라는 약속이 깨진다.
         attempts.set(entry.id, { tried, notBefore: 0, noticed: prior?.noticed });
 
-        const task: Promise<void> = runOne(entry.id, mention, anchor, threadKey, ctx, tried, entry.reason, entry.team, entry.delegation, entry.delegatedBy)
+        const task: Promise<void> = runOne(entry.id, mention, anchor, threadKey, ctx, tried, entry.reason, entry.team, entry.delegation, entry.delegatedBy, entry.viaEdit === true)
           .catch((err: unknown) => {
             console.error(`  ${entry.messageId} 턴 실패:`, err instanceof Error ? err.message : err);
           })

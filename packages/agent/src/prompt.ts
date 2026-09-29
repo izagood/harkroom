@@ -918,10 +918,16 @@ export function buildTurnPrompt(opts: {
    * 맥락이라 `team` 과 같은 성격이고, 델타를 대신하지 않는다.
    */
   delegatedBy?: InboxDelegatedBy;
+  /**
+   * 이 턴이 **메시지 수정으로** 불린 턴이면 그 글(076). `wake` 처럼 **델타를 대신할 수 있다** —
+   * 고친 글은 seq 가 옛날 그대로라 이미 본 구간이면 `messages` 에 없고, 그러면 아래 빈-프롬프트
+   * 가드에 걸려 부름이 흔적 없이 사라진다.
+   */
+  editedMention?: MessageRow;
 }): { prompt: string; fedSeq: number } {
   const {
     messages, lastFedSeq, meId, handles, channelId, threadRootId, wake, team, delegation,
-    delegatedBy,
+    delegatedBy, editedMention,
   } = opts;
   const isFirstTurn = lastFedSeq === 0;
 
@@ -932,7 +938,7 @@ export function buildTurnPrompt(opts: {
   const fedSeq = newMessages.reduce((max, m) => Math.max(max, m.seq), lastFedSeq);
 
   const toShow = newMessages.filter((m) => isFirstTurn || m.authorId !== meId);
-  if (!toShow.length && wake === undefined && delegation === undefined) {
+  if (!toShow.length && wake === undefined && delegation === undefined && editedMention === undefined) {
     // 새 메시지가 있었지만 전부 자기 발화라 걸러진 경우도 여기로 온다. 그래도 prompt 를
     // 비우고 fedSeq 는 이미 위에서 전진시킨 값을 그대로 쓴다 — 걸러냈다고 다음 턴에 같은
     // 메시지를 또 "새 것"으로 들이밀면 세션이 매번 자기 말을 다시 보고, 반대로 fedSeq 를
@@ -953,13 +959,20 @@ export function buildTurnPrompt(opts: {
   const teamLines = team === undefined ? [] : teamSection(team, meId, handles);
   const delegationLines = delegation === undefined ? [] : delegationSection(delegation);
   const handedLines = delegatedBy === undefined ? [] : handedSection(delegatedBy);
+  // 수정으로 불렸다(076). 그 글이 델타에 있으면 안내 한 줄만, 없으면(이미 본 구간) 글까지 싣는다 —
+  // 둘 다 싣으면 같은 글이 두 번 보인다.
+  const editLines = editedMention === undefined ? [] : [
+    '(수정으로 추가된 멘션 — 앞서 올라온 글이 고쳐지면서 너를 불렀다. 고친 뒤의 본문을 다시 읽어라)',
+    ...(toShow.some((m) => m.id === editedMention.id) ? [] : [renderLine(editedMention, handles)]),
+    '',
+  ];
   // 안내는 첨부 줄 **뒤**에 선다 — 먼저 무엇이 왔는지 보고 그다음 어떻게 여는지 읽는 순서다.
   // `toShow` 로 판정한다: 보여주지 않은 메시지의 첨부는 프롬프트에 id 가 없어 열 수도 없다.
   const howTo = toShow.some((m) => m.attachments.length) ? attachmentHowTo() : [];
   // 팀 블록은 **델타 앞**이다 — 사람의 말을 읽기 전에 "너는 이 팀의 창구다"를 알아야
   // 그 말을 팀의 일로 읽는다. `wakeLines` 뒤에 두는 이유: 그 줄은 이 턴이 왜 떴는지이고,
   // 팀 블록은 이 턴이 무엇인지다(둘이 함께 오는 경우는 예약이 걸린 팀 턴이다).
-  const prompt = [head, '', ...wakeLines, ...teamLines, ...delegationLines, ...handedLines, ...lines, ...howTo].join('\n');
+  const prompt = [head, '', ...wakeLines, ...teamLines, ...delegationLines, ...handedLines, ...editLines, ...lines, ...howTo].join('\n');
 
   return { prompt, fedSeq };
 }

@@ -1385,8 +1385,21 @@ export class Controller {
   async editMessage(messageId: string, body: string): Promise<void> {
     const { activeChannelId } = this.store.getState();
     if (!activeChannelId || !body.trim()) return;
-    const updated = await this.api.editMessage(activeChannelId, messageId, body);
+    const { message: updated, notified, mentionSkipped } = await this.api.editMessage(activeChannelId, messageId, body);
     this.store.getState().upsertMessages(activeChannelId, [updated]);
+    // 수정으로 넣은 멘션의 결과를 말한다(076) — 부르지 않은 것이 조용히 사라지면 사람은 "왜 안
+    // 오나"를 묻고, 그 답이 화면에 없다. 수정으로 새로 부른 사람이 없으면 아무 말도 하지 않는다.
+    if (mentionSkipped) {
+      this.store.getState().set({
+        notice: mentionSkipped === 'too_old'
+          ? 'Your edit added a mention, but it did not call anyone — the message is more than 24 hours old. Mention them in a new message.'
+          : 'Your edit added a mention, but edits to an agent message do not call anyone. Mention them in a new message.',
+      });
+    } else if (notified && notified.count > 0) {
+      this.store.getState().set({
+        notice: `Your edit called ${notified.count} ${notified.count === 1 ? 'person' : 'people'}.`,
+      });
+    }
   }
 
   /**
