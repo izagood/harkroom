@@ -4,6 +4,7 @@ import { GateClient, gateErrorText, gateProgressText, looksLikeWorkspaceAddress,
   type PendingWorkspace } from '../lib/gate';
 import { Logo } from '../components/Logo';
 import { ConnectUpdateBanner } from '../components/ConnectUpdateBanner';
+import { lastWorkspaceUrlStorage } from '../lib/prefs';
 
 /** 로그인이 성공했을 때 위로 올려 보내는 것. 두 모드가 같은 값을 다른 곳으로 보낸다. */
 type Credentials = (baseUrl: string, token: string, accountId: string, handle: string) => void | Promise<void>;
@@ -27,7 +28,8 @@ export type ConnectScreenProps =
 export function ConnectScreen(props: ConnectScreenProps) {
   const { initialError = null } = props;
   const adding = props.mode === 'add';
-  const [baseUrl, setBaseUrl] = useState('http://localhost:3400');
+  // 직전에 로그인에 성공한 주소로 채운다. 한 번도 없으면 self-host 기본값(localhost)이다.
+  const [baseUrl, setBaseUrl] = useState(() => lastWorkspaceUrlStorage.load());
   const [loginId, setLoginId] = useState('');
   const [handle, setHandle] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -154,6 +156,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
       const me = await api.me();
       // 클레임이 끝나야 지운다 — 실패하면 토큰이 남아 있어야 다시 시도할 수 있다.
       pendingWorkspace.clear();
+      lastWorkspaceUrlStorage.save(api.baseUrl);
       if (props.mode === 'add') await props.onAdded(api.baseUrl, token, me.id, me.handle);
       else await props.onConnected(api.baseUrl, token, me.id, me.handle);
     } catch (err) {
@@ -185,6 +188,8 @@ export function ConnectScreen(props: ConnectScreenProps) {
       // 200 인데 그 직후 /auth/me 가 401 이라 아무도 앱에 들어갈 수 없었다).
       api.setToken(token);
       const me = await api.me();
+      // `me()` 까지 통과한 뒤에만 적는다 — 실패한 주소가 다음 기동의 기본값이 되면 안 된다.
+      lastWorkspaceUrlStorage.save(api.baseUrl);
       // 성공을 **어디로** 올려 보내는가가 두 모드의 유일한 차이다. `add` 는 `onAdded` 로
       // 가고 `onConnected`(= `phase` 를 옮기는 초기 흐름)를 부르지 않는다.
       if (props.mode === 'add') await props.onAdded(api.baseUrl, token, me.id, me.handle);
