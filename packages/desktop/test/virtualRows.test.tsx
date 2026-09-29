@@ -28,7 +28,12 @@ import { acc, chan, msg, scheduledApiStub } from './helpers/fakeApi';
 import { ROW_ESTIMATE_PX } from '../src/components/MessageRows';
 import type { MessageRow } from '@harkroom/shared';
 
-const ROW_H = 100;
+/**
+ * 스텁 줄 높이는 **어림값과 같게** 둔다. 다르면 줄이 재어지는 시점(느린 CI 에서는 한 커밋 늦다)에
+ * 따라 내용 높이가 흔들려 바닥·앵커 수치가 타이밍에 묶인다(첫 CI 에서 -224px·7452 로 흔들렸다).
+ * 재어진 높이가 어림과 다를 때의 보정은 실제 레이아웃이 있는 WebKit 탐침이 잰다.
+ */
+const ROW_H = ROW_ESTIMATE_PX;
 const VIEW_H = 600;
 const DAY = 24 * 60 * 60 * 1000;
 const T0 = Date.parse('2026-09-01T12:00:00.000Z');
@@ -198,7 +203,7 @@ describe('창으로 좁힌 채널 줄', () => {
     fireEvent.scroll(el);
     await flush();
     expect(loadOlder).toHaveBeenCalled();
-    // 앞에 100줄이 (아직 재지 않은) 어림 높이로 붙었다 — 자란 만큼 내려가 있어야 m0 이 그 자리에 있다.
+    // 앞에 100줄이 어림 높이로 붙었다 — 자란 만큼 내려가 있어야 m0 이 그 자리에 있다.
     expect(el.scrollTop).toBe(100 * ROW_ESTIMATE_PX);
     fireEvent.scroll(el);
     await flush();
