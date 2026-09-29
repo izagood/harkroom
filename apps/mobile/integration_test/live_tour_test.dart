@@ -5,7 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/api/api_client.dart';
 import 'package:harkroom/api/models.dart';
 import 'package:harkroom/main.dart';
-import 'package:harkroom/screens/message_list_screen.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_state.dart';
 import 'package:integration_test/integration_test.dart';
@@ -27,7 +26,7 @@ import 'package:integration_test/integration_test.dart';
 ///
 /// ```
 /// flutter test integration_test/live_tour_test.dart \
-///   --dart-define=E2E_SERVER=https://jaebin.harkroom.com \
+///   --dart-define=E2E_SERVER=https://your-workspace.example.com \
 ///   --dart-define=E2E_LOGIN=e2e-mobile --dart-define=E2E_PASSWORD=... \
 ///   --dart-define=E2E_CHANNEL=<공개 채널 id> --dart-define=E2E_AGENT=<부를 에이전트 handle> \
 ///   --dart-define=E2E_ASK=<이 계정에게 세운 ask 메시지 id, 선택지 id `ok` 가 있어야 한다>   # 없으면 건너뛴다
@@ -158,13 +157,7 @@ void main() {
       final option = find.byKey(Key('ask-option-$_ask-ok'));
       // 카드는 목록 위쪽(옛 쪽)에 있다. 목록은 아래에서부터 쌓이므로(`reverse`) 앞으로 밀면
       // 옛 쪽으로 간다 — 지나치지 않게 조금씩 민다.
-      await tester.scrollUntilVisible(option, 250,
-          // 탭들이 `IndexedStack` 이라 **다른 탭의 목록도 나무에 있다** — 채널 화면의 것으로 좁힌다.
-          scrollable: find
-              .descendant(
-                  of: find.byType(MessageListScreen), matching: find.byType(Scrollable))
-              .first,
-          maxScrolls: 200);
+      await _seek(tester, option);
       await _tap(tester, option);
       // 고른 사실이 **서버에** 남았는가 — 화면만 바뀌고 요청이 실패하면 그 턴은 영영 멈춘다.
       Object? answered;
@@ -173,16 +166,10 @@ void main() {
         answered = ((await _find(side, _ask))?.meta['ask'] as Map?)?['answeredWith'];
       }
       expect(answered, 'ok');
-      debugPrint('E2E DEBUG after-answer screens=${find.byType(MessageListScreen).evaluate().length} '
-          'phase=${app.phase} texts=${find.byType(Text).evaluate().take(8).map((e) => (e.widget as Text).data).toList()}');
-      // 답하는 사이 새 말이 아래에 붙으면 카드가 밀려 올라간다 — 다시 찾아가서 본다.
-      final chosen = find.byKey(Key('ask-chosen-$_ask'));
-      await tester.scrollUntilVisible(chosen, 250,
-          scrollable: find
-              .descendant(
-                  of: find.byType(MessageListScreen), matching: find.byType(Scrollable))
-              .first,
-          maxScrolls: 200);
+      // 화면도 그 답으로 바뀐다 — 버튼이 사라지고 고른 것이 선다.
+      // 답을 받은 에이전트가 그 카드의 스레드에 답하고 새 말이 붙으면서 목록이 움직인다 —
+      // 다시 찾아가서 본다.
+      await _seek(tester, find.byKey(Key('ask-chosen-$_ask')));
 
       // 탭 막대는 채널 화면 **밖**에만 있다 — 채널은 탭 위로 밀어 넣은 화면이다.
       await _tap(tester, find.byType(BackButton));
@@ -239,6 +226,26 @@ Future<void> _tap(WidgetTester tester, Finder finder) async {
 }
 
 /// 보낸 것이 서버에 남았는가. 응답이 오기 전일 수 있어 잠깐 기다린다.
+/// 채널 목록에서 [finder] 가 그려질 때까지 민다. 목록은 게으르게 그려서 화면 밖은 나무에
+/// 없다. 옛 쪽으로 먼저 가 보고, 없으면 새 쪽으로 돌아온다.
+///
+/// 목록은 키로 집는다: 탭들이 `IndexedStack` 이라 **다른 탭의 목록도 나무에 있다.**
+Future<void> _seek(WidgetTester tester, Finder finder) async {
+  final list = find.descendant(
+      of: find.byKey(const Key('channel-feed')), matching: find.byType(Scrollable));
+  await tester.pump(const Duration(milliseconds: 300));
+  if (finder.evaluate().isNotEmpty) return;
+  for (final step in [250.0, -250.0]) {
+    try {
+      await tester.scrollUntilVisible(finder, step, scrollable: list.first, maxScrolls: 60);
+      return;
+    } on StateError {
+      // 이 방향 끝까지 갔다 — 반대로 간다.
+    }
+  }
+  fail('목록 어디에도 없다: $finder');
+}
+
 Future<bool> _serverHas(ApiClient side, String text) async {
   for (var i = 0; i < 20; i++) {
     final page = await side.messages(_channel, limit: 20);

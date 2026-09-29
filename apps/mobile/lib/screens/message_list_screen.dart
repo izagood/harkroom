@@ -90,6 +90,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
                   // 채팅에서 사람이 보려는 것은 늘 맨 아래다. 짧은 시험 목록에서는 한 화면에
                   // 다 들어가서 드러나지 않았다.
                   : ListView.builder(
+                      key: const Key('channel-feed'),
                       controller: _scroll,
                       reverse: true,
                       padding: const EdgeInsets.symmetric(vertical: 8),
