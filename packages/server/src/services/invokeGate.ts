@@ -9,7 +9,7 @@
  * | community | 누구나 |
  * | channel | 호출자가 그 채널의 멤버(`channel_member`) |
  * | list | `agent_invoker` 에 호출자가 있다 |
- * | owner | 호출자 = `owner_account_id` |
+ * | owner | 호출자 = `owner_account_id`, 또는 소유자가 지정한 자기 에이전트(`agent_owner_delegate`, 073) |
  *
  * **집합·auto-mention·@channel 을 거쳐 온 부름은 `community` 만 통과한다.** 그것들은 전부
  * "소유자가 아닌 무언가가 부르는 것"이다(auto-mention 은 넣는 시점에 400 으로도 막힌다).
@@ -51,8 +51,33 @@ export async function mayInvoke(
   if (facts.invokeScope === 'community') return true;
   // 팀도 호출자가 작성자 그대로다 — 직접 멘션과 같은 판정을 탄다(위 머리 주석 ②).
   if (ctx.via !== 'mention' && ctx.via !== 'team') return false;
-  return passesScope(client, facts.invokeScope, facts.ownerAccountId, ctx,
-    `select 1 from agent_invoker where agent_id = $1 and account_id = $2`, facts.agentId);
+  if (await passesScope(client, facts.invokeScope, facts.ownerAccountId, ctx,
+    `select 1 from agent_invoker where agent_id = $1 and account_id = $2`, facts.agentId)) return true;
+  // owner 의 두 번째 길 — 소유자가 지정한 자기 에이전트(073).
+  return facts.invokeScope === 'owner' && isEligibleDelegate(client, facts, ctx.callerId, { listed: true });
+}
+
+/**
+ * 대리 호출자 판정(073). `listed` 면 명단에 있어야 하고, 아니면(명단에 넣기 전 검사) 조건만 본다.
+ * 조건은 **부를 때마다 다시** 본다 — 대리자의 범위나 소유자는 명단에 넣은 뒤에도 바뀐다:
+ * (a) 에이전트 (b) 소유자가 같다 (c) 대리자도 owner 범위다. (c) 가 없으면 누구나 대리자를
+ * 불러 대상을 부르게 할 수 있다 — 개인 자격증명을 남에게 여는 우회로다.
+ */
+export async function isEligibleDelegate(
+  client: Pick<PoolClient, 'query'>,
+  target: { agentId: string; ownerAccountId: string | null },
+  delegateId: string,
+  opts: { listed: boolean },
+): Promise<boolean> {
+  if (!target.ownerAccountId || delegateId === target.agentId) return false;
+  const res = await client.query(
+    `select 1 from account a join agent_config c on c.account_id = a.id
+      where a.id = $1 and a.kind = 'agent' and a.deleted_at is null
+        and c.invoke_scope = 'owner' and c.owner_account_id = $2
+        and ($4::bool = false or exists (
+          select 1 from agent_owner_delegate d where d.agent_id = $3 and d.delegate_id = a.id))`,
+    [delegateId, target.ownerAccountId, target.agentId, opts.listed]);
+  return Boolean(res.rowCount);
 }
 
 export interface TeamInvokeFacts {

@@ -7,8 +7,9 @@ import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { ACCOUNT_STATUSES, CREDENTIAL_SCOPES, INVOKE_SCOPES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@harkroom/shared';
 import {
   ackAgentStop, assignmentOf, createAgentAccount, definitionFor, deleteAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
-  revokeAllPats, setAgentMcpServers, setInvoker, undoAgentStopRequest, updateAgent, validateMcpServers, validateScopeChange,
+  revokeAllPats, setAgentMcpServers, setDelegate, setInvoker, undoAgentStopRequest, updateAgent, validateMcpServers, validateScopeChange,
 } from '../services/agents.js';
+import { isEligibleDelegate } from '../services/invokeGate.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { mintPat } from '../services/pats.js';
 import { emitEvent } from '../events.js';
@@ -318,6 +319,42 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
         if (!view) return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
         await recordAudit(pool, {
           action: present ? 'agent.invoker.added' : 'agent.invoker.removed', ...actorOf(req), target: id, detail: { accountId },
+        }, req);
+        return view;
+      },
+    });
+  }
+
+  /**
+   * owner 범위의 대리 호출자(073). 소유자·admin 이 관리한다. 넣을 때 조건 (a)·(b)·(c) 를 보고
+   * 어긋나면 400 `delegate_not_eligible` — 조용히 넣고 게이트에서만 막으면 소유자는 "넣었는데
+   * 왜 안 불리나"를 디버깅한다. 게이트는 부를 때 같은 조건을 다시 본다. 빼기는 조건 없이 된다.
+   * MCP 도구로는 열지 않는다 — 에이전트가 스스로 권한을 넓히는 길이 된다.
+   */
+  const delegateParams = z.object({ id: z.string().uuid(), agentId: z.string().uuid() });
+  for (const [method, present] of [['PUT', true], ['DELETE', false]] as const) {
+    app.route<{ Params: { id: string; agentId: string } }>({
+      method, url: '/accounts/agents/:id/delegates/:agentId',
+      preHandler: app.requireOwnerOrAdmin('id'),
+      handler: async (req, reply) => {
+        const { id, agentId } = delegateParams.parse(req.params);
+        if (present) {
+          const target = await pool.query<{ owner_account_id: string | null }>(
+            `select c.owner_account_id from account a left join agent_config c on c.account_id = a.id
+              where a.id = $1 and a.kind = 'agent' and a.deleted_at is null`, [id]);
+          if (!target.rowCount) return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+          const ok = await isEligibleDelegate(pool, { agentId: id, ownerAccountId: target.rows[0]!.owner_account_id }, agentId, { listed: false });
+          if (!ok) {
+            return reply.code(400).send({ error: {
+              code: 'delegate_not_eligible',
+              message: '대리 호출자는 같은 소유자의 에이전트이고, 그 에이전트도 소유자 전용(invokeScope=owner)이어야 한다',
+            } });
+          }
+        }
+        const view = await setDelegate(pool, id, agentId, present);
+        if (!view) return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+        await recordAudit(pool, {
+          action: present ? 'agent.delegate.added' : 'agent.delegate.removed', ...actorOf(req), target: id, detail: { agentId },
         }, req);
         return view;
       },

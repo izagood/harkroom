@@ -229,6 +229,12 @@ export interface AgentView extends AccountView, AgentConfig {
   runnerRefusal?: { reason: string; at: string } | null;
   /** `invokeScope === 'list'` 의 명단(계정 id). 다른 스코프에서는 비어 있다 — 명단은 남지만 판정에 안 쓰인다. */
   invokers: string[];
+  /**
+   * `invokeScope === 'owner'` 인 에이전트를 소유자 대신 부를 수 있는 **소유자의 에이전트**들(073).
+   * 판정은 부를 때마다 조건(같은 소유자·그 에이전트도 owner)을 다시 보므로, 명단에 있어도 조건이
+   * 깨진 id 는 통과하지 못한다. 다른 스코프에서는 판정에 안 쓰인다.
+   */
+  delegates: string[];
   /** 이 에이전트에 붙는 MCP 서버 **이름**들 — `mcp_server` 레지스트리의 부분집합(스펙 §6). 정의는 오퍼레이터 머신에 있다. */
   mcpServers: string[];
 }

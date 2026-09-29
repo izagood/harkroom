@@ -18,14 +18,14 @@ const agent = (overrides: Partial<AgentView> = {}): AgentView => ({
   ...(acc('agent-1', 'alpha', 'agent', false, { ownerAccountId: ME_ID }) as unknown as AgentView),
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', runnerVersion: null, stopRequestedAt: null, stopAckedAt: null,
-  lastTurnAt: null, claudeLane: null, assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [], mcpServers: [], ...overrides,
+  lastTurnAt: null, claudeLane: null, assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [], delegates: [], mcpServers: [], ...overrides,
 });
 
 function setup(over: Partial<Record<string, unknown>> = {}) {
   const c = {
     updateAgent: vi.fn(async (_id: string, patch: Record<string, unknown>) => agent(patch as Partial<AgentView>)),
     addInvoker: vi.fn(async (_id: string, accountId: string) => agent({ invokeScope: 'list', invokers: [accountId] })),
-    removeInvoker: vi.fn(async () => agent({ invokeScope: 'list', invokers: [] })),
+    removeInvoker: vi.fn(async () => agent({ invokeScope: 'list', invokers: [], delegates: [] })),
     putMcpServer: vi.fn(async (name: string, credentialKind: string) => ({ name, credentialKind, createdBy: null, createdAt: '' })),
     restartAgent: vi.fn(async () => ({ operatorId: 'op-1' })),
     mcpServers: vi.fn(async () => [
@@ -70,7 +70,7 @@ describe('AgentScopeSection', () => {
   it('list 스코프면 명단이 보이고, 넣기·빼기가 컨트롤러에 닿는다', async () => {
     const c = setup();
     const onUpdated = vi.fn();
-    render(<AgentScopeSection agent={agent({ invokeScope: 'list', invokers: [] })} onUpdated={onUpdated} />);
+    render(<AgentScopeSection agent={agent({ invokeScope: 'list', invokers: [], delegates: [] })} onUpdated={onUpdated} />);
     expect(screen.getByTestId('agent-invokers')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('넣기'), { target: { value: 'u-2' } });
     fireEvent.click(screen.getByText('넣기'));
