@@ -136,7 +136,13 @@ export function gateProgressText(job: JobResult): string {
  * 나누지 않는다.
  */
 export function gateErrorText(err: unknown): string {
-  if (!(err instanceof ApiError)) return 'Could not reach the workspace service';
+  // 응답 자체를 못 받았다. 실측(2026-09-29)에서 가장 흔한 원인은 **주소를 잘못 넣은 것**이었다 —
+  // 만들 워크스페이스의 주소(`<이름>.<zone>`)를 넣으면 그 주소는 아직 없어서 CORS 헤더 없는 빈
+  // 404 가 오고, `fetch` 가 응답 대신 예외를 던진다. "닿지 않는다"만 말하면 네트워크 탓으로
+  // 읽히므로 무엇을 넣는 칸인지를 같이 말한다.
+  if (!(err instanceof ApiError)) {
+    return 'Could not reach the provisioning service. Check the service URL — it is the service that creates workspaces, not the new workspace\'s address.';
+  }
   switch (err.code) {
     case 'invalid_invite':
       return 'That invite code cannot be used. Ask for a new one.';
@@ -148,4 +154,22 @@ export function gateErrorText(err: unknown): string {
       // 이름 규칙 위반(`invalid_name` 등)은 서버 문구가 무엇이 틀렸는지 말해 준다.
       return err.message;
   }
+}
+
+/**
+ * 적은 서비스 주소가 **만들려는 워크스페이스 자신의 주소**처럼 보이는가.
+ *
+ * 이 칸에 `https://<이름>.<zone>` 을 넣는 실수가 실제로 났다(2026-09-29) — 칸 이름만 보고
+ * "워크스페이스 주소"로 읽은 것이다. 그 주소는 gate 가 만들어 준 **뒤에야** 생기므로 보내 봐야
+ * 닿지 않는다. 보내기 전에 알려 주려고 첫 라벨이 이름과 같은지만 본다.
+ *
+ * 막지는 않는다(힌트일 뿐이다) — self-host 배포가 gate 를 어떤 이름으로 띄울지는 이 코드가
+ * 모른다.
+ */
+export function looksLikeWorkspaceAddress(serviceUrl: string, name: string): boolean {
+  const n = name.trim().toLowerCase();
+  if (!n) return false;
+  try {
+    return new URL(serviceUrl.trim()).hostname.toLowerCase().split('.')[0] === n;
+  } catch { return false; }
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { ApiClient, ApiError } from '../lib/api';
-import { GateClient, gateErrorText, gateProgressText, pendingWorkspace,
+import { GateClient, gateErrorText, gateProgressText, looksLikeWorkspaceAddress, pendingWorkspace,
   type PendingWorkspace } from '../lib/gate';
 import { Logo } from '../components/Logo';
 import { ConnectUpdateBanner } from '../components/ConnectUpdateBanner';
@@ -104,7 +104,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
     } catch (err) {
       // 폴링 실패로 **보관본을 지우지 않는다.** 네트워크가 잠깐 끊긴 것과 작업이 죽은 것을
       // 여기서 구분할 수 없고, 지우면 클레임 토큰이 함께 사라진다.
-      setProgress(err instanceof ApiError ? err.message : 'Could not reach the workspace service');
+      setProgress(err instanceof ApiError ? err.message : 'Could not reach the provisioning service');
       pollTimer.current = setTimeout(() => { void poll(p); }, 15000);
     }
   };
@@ -283,10 +283,28 @@ export function ConnectScreen(props: ConnectScreenProps) {
             </>
           ) : (
             <>
-              <label className="block text-meta font-medium">
-                Workspace service URL
-                <input className={field} value={gateUrl} onChange={(e) => setGateUrl(e.target.value)} placeholder="https://…" />
-              </label>
+              {/* **이 칸은 만들 워크스페이스의 주소가 아니다.** "Workspace service URL" 이라고만
+                  적었더니 사람이 `https://<이름>.harkroom.com` 을 넣었다(2026-09-29) — 그 주소는
+                  아직 없어서 닿지 않는다. 라벨을 바꾸고, 무엇이 아닌지를 칸 밑에 적는다.
+                  설명은 라벨 **밖**에 둔다(`aria-describedby`) — 라벨 안에 넣으면 접근성 이름이
+                  설명까지 삼킨다. */}
+              <div>
+                <label className="block text-meta font-medium">
+                  Provisioning service URL
+                  <input
+                    className={field}
+                    value={gateUrl}
+                    onChange={(e) => setGateUrl(e.target.value)}
+                    placeholder="https://gate.…"
+                    aria-describedby="gate-url-hint"
+                  />
+                </label>
+                <p id="gate-url-hint" className="mt-1 text-meta text-fg-subtle">
+                  {looksLikeWorkspaceAddress(gateUrl, wsName)
+                    ? 'This looks like the new workspace\'s own address — it does not exist yet. Enter the service that creates workspaces.'
+                    : 'The service that creates workspaces — not your new workspace\'s address. It comes with your invite code.'}
+                </p>
+              </div>
               <label className="block text-meta font-medium">
                 Workspace name
                 <input className={field} value={wsName} onChange={(e) => setWsName(e.target.value)} placeholder="my-team" />
