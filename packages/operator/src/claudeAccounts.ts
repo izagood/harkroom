@@ -37,9 +37,8 @@ import {
   parseClaudePoolsConfig,
   type ClaudePoolsConfig,
 } from '@harkroom/shared/claudePools';
-import type { ClaudeUsageSnapshot, ProviderUsageSnapshot } from '@harkroom/shared/daemonProtocol';
+import type { ProviderUsageSnapshot } from '@harkroom/shared/daemonProtocol';
 
-import { measureClaudeUsage, type UsageTarget } from './claudeUsage.js';
 import { claudeCliUsage, type RunCommand } from './cliUsage.js';
 import { fetchClaudeProviderUsage, type ClaudeOAuthToken, type FetchLike } from './providerUsage.js';
 import { cliThenApi, createUsageCache } from './usageChain.js';
@@ -133,13 +132,6 @@ export interface ClaudeAccountsPort {
   loginStart(pool: string, account: string): Promise<{ loginId: string }>;
   loginSubmit(loginId: string, code: string): Promise<void>;
   loginCancel(loginId: string): Promise<void>;
-  /**
-   * 계정별 사용량. **읽기만 한다.** 같은 포트에 두는 이유: 세는 대상이 이 포트가 이미
-   * 소유한 그 디렉터리들이고, 열거를 두 벌로 두면 어느 계정이 목록엔 있고 사용량엔
-   * 없는 날이 온다. 실제 계산은 `claudeUsage.ts` 다 — 여기와 이유가 다르다(저것은
-   * 관측이고 이것은 소유다).
-   */
-  usage(): Promise<ClaudeUsageSnapshot>;
   /**
    * 계정별 한도 사용률. CLI(`claude -p /usage`) 먼저, 실패하면 API(`/api/oauth/usage`) — 출처는 같다
    * (`usageChain.ts`). 계정끼리 **병렬로** 묻는다 — 하나가 느려도 나머지를 기다리게 하지 않는다.
@@ -362,10 +354,10 @@ export interface ClaudeAccountDir {
 /**
  * **디스크의 모양 그대로** — 상태를 재지 않는다.
  *
- * `list()` 와 `usage()` 가 이것을 공유한다. 갈라 둔 이유는 `list()` 가 계정마다
+ * `list()` 와 `providerUsage()` 가 이것을 공유한다. 갈라 둔 이유는 `list()` 가 계정마다
  * `claude auth status` 를 돌리는데(느리고 실패할 수 있다) 사용량은 그것이 필요 없기
  * 때문이고, 합쳐 둔 이유는 **열거가 한 벌이어야** 하기 때문이다 — 두 벌이면 목록에는
- * 보이는데 사용량에는 없는 계정이 생기고 그것은 화면에서 "0" 으로 보인다.
+ * 보이는데 사용량에는 없는 계정이 생긴다.
  */
 export interface ClaudeAccountsLayout {
   root: string;
@@ -464,17 +456,6 @@ export function createClaudeAccountsPort(opts: {
         pools,
         strays: layout.strays,
       };
-    },
-
-    async usage(): Promise<ClaudeUsageSnapshot> {
-      const layout = await readClaudeAccountsLayout(root);
-      const targets: UsageTarget[] = [];
-      for (const p of layout.pools) {
-        for (const a of p.accounts) targets.push({ pool: p.name, account: a.name, dir: a.dir });
-      }
-      // **잔여물은 세지 않는다.** 목록에도 계정으로 안 나오므로, 세면 화면이 그릴 자리가
-      // 없는 줄이 생긴다.
-      return measureClaudeUsage(targets, now());
     },
 
     async providerUsage(): Promise<ProviderUsageSnapshot> {

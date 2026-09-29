@@ -98,7 +98,7 @@ export const RUNNABLE_HARNESSES = ['claude-code', 'codex', 'opencode'] as const 
  * 계정은 harkroom 의 개념이 아니라 **하네스의 디렉터리 하나**다(claude 는 `CLAUDE_CONFIG_DIR`,
  * codex 는 `CODEX_HOME`). 그 위에 목록·로그인·사용량·페일오버를 얹은 **풀 관리 표면**은
  * 지금 claude 것만 있다 — 데몬 RPC 이름이 그 사실을 그대로 말한다(`claudeAccountsList`,
- * `claudeAccountLoginStart`, `claudeAccountsUsage` …).
+ * `claudeAccountLoginStart`, `claudeAccountsProviderUsage` …).
  *
  * ## 왜 `shared` 에 있는가
  *
