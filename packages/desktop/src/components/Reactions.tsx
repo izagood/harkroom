@@ -318,12 +318,17 @@ function ReactionChip({ emoji, accountIds, nameOf, myId, onToggle }: {
   );
 }
 
-const TOOLTIP_WIDTH = 240;
+/**
+ * 폭·이모지·여백은 첫 판(240 · 64px · h-24)에서 한 단씩 줄였다(2026-09-29 jaebin: "좋은데 너무
+ * 크다 … 전체적으로 조금만 축소"). 실앱에서 말풍선이 칩에 비해 너무 넓고 높았고, 이모지 위아래
+ * 빈 자리가 컸다.
+ */
+const TOOLTIP_WIDTH = 208;
 const TOOLTIP_GAP = 8;
 const EDGE_GAP = 8;
 
 /**
- * **리액션 말풍선** — 칩 위에 어두운 풍선, 위에 큰 이모지, 아래에 굵은 문장, 칩을 가리키는
+ * **리액션 말풍선** — 칩 위에 어두운 풍선, 위에 큰 이모지, 아래에 본문 크기의 문장, 칩을 가리키는
  * 꼬리(2026-09-29, Slack 리액션 툴팁을 본으로 한 요청).
  *
  * `MentionCard` 와 같은 틀이다: `document.body` 로 포털을 띄우고 `fixed` 로 칩의 자리를
@@ -371,11 +376,14 @@ function ReactionTooltip({ emoji, accountIds, nameOf, myId, anchor }: {
       data-testid="reaction-tooltip"
       data-placement={below ? 'bottom' : 'top'}
       style={style}
-      className="pointer-events-none z-50 flex flex-col items-center gap-2 rounded-xl bg-fg px-4 py-3 text-surface shadow-lg"
+      className="pointer-events-none z-50 flex flex-col items-center gap-1 rounded-lg bg-fg px-3 py-2 text-surface shadow-lg"
     >
       {/* 칩의 이모지를 크게 다시 그린다 — 칩 여럿이 붙어 있으면 이 풍선이 **어느** 칩 것인지를 이것이 답한다. */}
-      <span className="flex h-24 w-24 items-center justify-center text-[64px] leading-none" data-testid="reaction-tooltip-emoji">{emoji}</span>
-      <p className="text-center text-body font-semibold break-words">
+      <span className="flex h-14 w-14 items-center justify-center text-[48px] leading-none" data-testid="reaction-tooltip-emoji">{emoji}</span>
+      {/* **글자는 본문과 같다** — 단(`text-body`)도 굵기도. 첫 판의 `font-semibold` 는 같은 14px 이어도
+          본문보다 커 보였고 폭을 더 먹어 "반응 / 했다" 처럼 낱말 가운데서 꺾였다. `break-keep` 은
+          한글 낱말을 가운데서 자르지 않게 한다(줄은 띄어쓰기에서만 바뀐다). */}
+      <p className="text-center text-body break-keep break-words">
         {hint && <span data-testid="reaction-tooltip-hint">{hint} </span>}
         {sentence}
       </p>
