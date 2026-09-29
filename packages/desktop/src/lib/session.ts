@@ -69,8 +69,32 @@ function tauriInvoke(): Invoke | null {
  */
 const normalize = (parsed: StoredSessions): StoredSessions => ({
   active: parsed.active ?? null,
-  communities: parsed.communities.map((c) => ({ ...c, label: c.label ?? null })),
+  communities: dedupeByAccount(parsed.communities.map((c) => ({ ...c, label: c.label ?? null }))),
 });
+
+/**
+ * 같은 계정 id 가 둘 적힌 보관본을 하나로 접는다. 설정의 추가 흐름이 보관본을 `push` 만 하던
+ * 때, 기동이 떨어뜨린 커뮤니티를 다시 붙이면 같은 계정이 두 번 적혔다. 둘 다 띄우면 같은
+ * 커뮤니티에 WS 가 둘 붙는다.
+ *
+ * **뒤의 것이 이긴다** — 나중에 적힌 쪽이 새로 받은 토큰이다. 이름은 뒤의 것에 없으면 앞의
+ * 것을 살린다(추가 흐름은 이름을 `null` 로 적었다). 자리는 처음 나온 곳을 지킨다.
+ * 계정 id 가 빈 항목(옛 단일 세션을 옮긴 것)은 접지 않는다 — 무엇과 같은지 알 수 없다.
+ */
+function dedupeByAccount(communities: StoredCommunity[]): StoredCommunity[] {
+  const out: StoredCommunity[] = [];
+  const at = new Map<string, number>();
+  for (const c of communities) {
+    const i = c.accountId ? at.get(c.accountId) : undefined;
+    if (i === undefined) {
+      if (c.accountId) at.set(c.accountId, out.length);
+      out.push(c);
+    } else {
+      out[i] = { ...c, label: c.label ?? out[i]!.label };
+    }
+  }
+  return out;
+}
 
 const readPlain = (): StoredSessions | null => {
   try {

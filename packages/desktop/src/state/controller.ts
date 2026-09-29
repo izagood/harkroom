@@ -2349,6 +2349,117 @@ export async function startCommunitySession(opts: {
 }
 
 /**
+ * 서버가 **이 자격증명을 거절했다**는 뜻의 실패인가.
+ *
+ * 401 하나만 센다. 네트워크 끊김·5xx·옛 서버의 415 는 기다리거나 서버를 고치면 낫는
+ * 실패라, 그것을 자격증명 실패로 치면 보관본의 토큰을 지워 사람에게 다시 로그인을 시킨다 —
+ * 서버가 잠깐 내려간 것만으로 커뮤니티를 잃는다. 403 은 권한·출처(CORS) 거절일 수 있어
+ * 토큰이 죽었다는 근거가 못 된다.
+ */
+export function isCredentialRejection(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 401;
+}
+
+/** 복원 재시도 간격. 마지막 값에서 멈춰 그 간격으로 계속 시도한다. */
+const RESTORE_RETRY_MS: readonly number[] = [2_000, 5_000, 15_000, 30_000, 60_000];
+
+export interface RestoreHandle {
+  /** 복원을 그만둔다 — 재시도 타이머를 끄고, 붙은 컨트롤러를 끝내고, 엔트리를 뺀다. */
+  cancel(): void;
+}
+
+/**
+ * 보관본에 있는 **비활성 커뮤니티를 기동 때 되살린다.**
+ *
+ * 이것이 없을 때는 앱이 켜질 때 활성 커뮤니티 하나만 띄웠다 — 나머지는 키체인에 그대로
+ * 있는데 레지스트리에 없어서, 앱을 다시 켤 때마다 레일에서 사라졌다(2026-09-29 jinbin 사고).
+ *
+ * `startCommunitySession({ active: false })` 와 다른 점은 **실패했을 때**다. 그 함수는
+ * 사람이 방금 누른 추가라 실패를 던지고 엔트리를 뺀다(#165 — 사람이 그 자리에서 문구를
+ * 본다). 기동 복원은 아무도 누르지 않았으므로:
+ *
+ * - **엔트리를 먼저 세운다.** 연결 전에도 타일이 서야 "그 커뮤니티가 있다"가 화면에 남는다.
+ *   스토어의 `connected` 가 `false` 라 타일은 끊김 표시로 선다.
+ * - **자격증명 거절(401)일 때만 뺀다** — 레지스트리와 보관본 둘 다(`onCredentialRejected`).
+ *   그때는 기다려도 낫지 않고, 남기면 영원히 끊긴 타일이 선다.
+ * - **그 밖의 실패는 남기고 다시 시도한다.** 서버가 잠깐 내려갔다고 커뮤니티를 치우면 다음
+ *   기동까지 그것이 없는 것처럼 보인다.
+ */
+export function restoreCommunitySession(opts: {
+  baseUrl: string;
+  token: string;
+  accountId: string;
+  label: string | null;
+  /** 서버가 이 토큰을 거절했다. 보관본에서 빼는 것은 호출부 몫이다(이 층은 키체인을 모른다). */
+  onCredentialRejected: (accountId: string) => void;
+  onSessionLost?: (message: string, accountId: string) => void;
+  makeWs?: typeof connectWs;
+  notifier?: Notifier;
+  /** 테스트 이음새. 시도마다 새 클라이언트가 필요해서 값이 아니라 공장이다. */
+  makeApi?: () => ApiClient;
+  retryDelaysMs?: readonly number[];
+}): RestoreHandle {
+  const registry = useCommunityRegistry.getState();
+  // 이미 붙어 있으면(같은 계정의 활성 엔트리·먼저 끝난 복원) 두 번째 엔트리를 세우지 않는다 —
+  // 같은 커뮤니티가 레일에 둘 서고 WS 도 둘 붙는다.
+  if (opts.accountId && registry.entries.some((e) => e.accountId === opts.accountId)) {
+    return { cancel: () => {} };
+  }
+  const entry = registry.register({ baseUrl: opts.baseUrl, accountId: opts.accountId, label: opts.label });
+  const delays = opts.retryDelaysMs ?? RESTORE_RETRY_MS;
+  let cancelled = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let current: Controller | null = null;
+  const alive = () => !cancelled && useCommunityRegistry.getState().entries.some((e) => e.id === entry.id);
+
+  const drop = () => {
+    const reg = useCommunityRegistry.getState();
+    if (reg.entries.some((e) => e.id === entry.id) && reg.entries.length > 1) reg.remove(entry.id);
+  };
+
+  const attempt = async (n: number): Promise<void> => {
+    timer = null;
+    if (!alive()) return;
+    const controller = new Controller(
+      opts.makeApi ? opts.makeApi() : new ApiClient(opts.baseUrl, opts.token),
+      opts.makeWs ?? connectWs,
+      opts.notifier ?? silentNotifier,
+      opts.onSessionLost ?? (() => {}),
+      entry.store,
+    );
+    current = controller;
+    useCommunityRegistry.getState().attachController(entry.id, controller);
+    try {
+      await controller.start();
+    } catch (err) {
+      controller.stop();
+      if (current === controller) current = null;
+      // 사람이 그 사이 이 커뮤니티를 뺐다면(설정 › Communities) 이 엔트리는 이미 없다.
+      if (!alive()) return;
+      useCommunityRegistry.getState().attachController(entry.id, null);
+      if (isCredentialRejection(err)) {
+        drop();
+        opts.onCredentialRejected(opts.accountId);
+        return;
+      }
+      timer = setTimeout(() => { void attempt(n + 1); }, delays[Math.min(n, delays.length - 1)]);
+    }
+  };
+
+  void attempt(0);
+  return {
+    cancel: () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      timer = null;
+      current?.stop();
+      current = null;
+      drop();
+    },
+  };
+}
+
+/**
  * 보고 있는 커뮤니티를 바꾼다(#165).
  *
  * 보관본의 `active` 도 함께 옮긴다 — 안 그러면 전환한 뒤 앱을 다시 켤 때마다 예전 커뮤니티로
