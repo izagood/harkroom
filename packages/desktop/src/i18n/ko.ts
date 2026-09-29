@@ -224,6 +224,10 @@ export const ko = {
   'profileAvatar.removeCancel': '취소',
   'profileAvatar.removeConfirm': '정말 지우기',
 
+  'workspaceIcon.description': '이 워크스페이스의 설정이다. 모든 멤버에게 똑같이 걸린다.',
+  'workspaceIcon.label': '워크스페이스 아이콘',
+  'workspaceIcon.adminOnly': '아이콘은 owner·admin 만 바꿀 수 있다. 없으면 커뮤니티 레일에 이름 첫 글자가 나온다.',
+
   'profileName.apply': '적용',
   'profileName.empty': '새 이름을 적는다',
   'profileName.cancel': '취소',

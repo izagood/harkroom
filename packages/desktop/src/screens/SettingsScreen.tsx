@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { AgentsSettings } from '../components/settings/AgentsSettings';
 import { ProviderAccountsSettings } from '../components/settings/ProviderAccountsSettings';
 import { AgentDefaultsSettings } from '../components/settings/AgentDefaultsSettings';
+import { WorkspaceSettings } from '../components/settings/WorkspaceSettings';
 import { GallerySettings } from '../components/settings/GallerySettings';
 import { AppearanceSettings } from '../components/settings/AppearanceSettings';
 import { CommunitySettings } from '../components/settings/CommunitySettings';
@@ -95,6 +96,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
           {section === 'agents' && <AgentsSettings targetId={targetId} />}
           {section === 'claude-accounts' && <ProviderAccountsSettings />}
           {section === 'agent-defaults' && <AgentDefaultsSettings />}
+          {section === 'workspace' && <WorkspaceSettings />}
           {section === 'operators' && <OperatorsSettings />}
           {section === 'mcp-servers' && <McpServersSettings />}
           {section === 'handle-groups' && <HandleGroupsSettings />}

@@ -26,7 +26,7 @@
  * 그 한 줄이 **두 화면에 각각** 있다: `TeamDetail` 의 `team-mention-note`(팀 → 집합)와
  * `HandleGroupsSettings` 의 목록 머리(집합 → 팀).
  */
-export type SectionId = 'profile' | 'notifications' | 'messages' | 'appearance' | 'connection' | 'communities' | 'agents' | 'agent-defaults' | 'operators' | 'mcp-servers' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'automations' | 'gallery';
+export type SectionId = 'workspace' | 'profile' | 'notifications' | 'messages' | 'appearance' | 'connection' | 'communities' | 'agents' | 'agent-defaults' | 'operators' | 'mcp-servers' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'automations' | 'gallery';
 
 export const SETTINGS_GROUPS: { title: string; items: { id: SectionId; label: string }[] }[] = [
   {
@@ -45,6 +45,8 @@ export const SETTINGS_GROUPS: { title: string; items: { id: SectionId; label: st
   {
     title: 'App',
     items: [
+      // 워크스페이스 자체의 설정 — 지금은 커뮤니티 레일에 걸리는 아이콘 하나다(owner/admin 이 바꾼다).
+      { id: 'workspace', label: 'Workspace' },
       { id: 'agents', label: 'Agents' },
       // #171 · identity 문서 원칙 04: **개별 에이전트의 설정이 아니다.** 한 에이전트를
       // 고치는 화면 안에 워크스페이스 전체에 걸리는 값이 앉아 있으면 지금 무엇을 고치고
