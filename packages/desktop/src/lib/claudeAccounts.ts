@@ -25,6 +25,9 @@ export interface ClaudeAuthStatus {
   loggedIn: boolean;
   email?: string;
   orgName?: string;
+  /** `oauthAccount.organizationUuid`·`accountUuid` — "같은 로그인인가"의 비교 키(`sameSignInAs`). */
+  orgId?: string;
+  accountId?: string;
   subscriptionType?: string;
   authMethod?: string;
 }
@@ -118,6 +121,36 @@ export function claudeAccountsUsage(): Promise<ClaudeUsageSnapshot> {
  */
 export function configureClaudeAccounts(config: ClaudePoolsConfig): Promise<void> {
   return call('claude_accounts_configure', { config }) as Promise<void>;
+}
+
+/**
+ * 새 계정 디렉터리 이름. **사람에게 묻지 않는다** — 사람이 붙인 이름(`lime`)은 재인증하면
+ * 실제 로그인(Lychee 팀)과 어긋나고, 그 뒤로 화면은 틀린 말을 한다. 계정을 가리키는 것은
+ * 로그인 정체(이메일·팀)이고, 이 이름은 디렉터리를 가리키는 id 일 뿐이다.
+ *
+ * 그렇다고 기존 이름을 이 모양으로 **옮기지 않는다**: 디렉터리 경로가 Keychain 서비스 이름의
+ * 원료라(`agent/src/claudeAccounts.ts` 머리말) 옮기면 로그아웃되고 스레드 세션도 끊긴다.
+ * `CLAUDE_POOL_NAME_PATTERN` 에 맞으므로 러너·`pools.json`·데몬은 이 이름을 옛 이름과 똑같이 다룬다.
+ */
+export function newClaudeAccountId(taken: readonly string[]): string {
+  for (;;) {
+    const bytes = crypto.getRandomValues(new Uint8Array(4));
+    const id = `acct-${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`;
+    if (!taken.includes(id)) return id;
+  }
+}
+
+/**
+ * 같은 풀 안에서 이 계정과 **같은 로그인**인 다른 계정. 없으면 `null`.
+ *
+ * 비교 키는 uuid 둘이다 — 이메일·팀명은 표시용이고 재인증 직후 팀명이 빠지기도 한다(실측).
+ * 같은 로그인이 둘이면 페일오버가 같은 한도로 옮겨 탈 뿐이라, 사람이 알아야 한다.
+ */
+export function sameSignInAs(accounts: readonly ClaudeAccountView[], name: string): ClaudeAccountView | null {
+  const me = accounts.find((a) => a.name === name);
+  if (!me?.status.loggedIn || !me.status.orgId || !me.status.accountId) return null;
+  return accounts.find((a) => a.name !== name && a.status.loggedIn
+    && a.status.orgId === me.status.orgId && a.status.accountId === me.status.accountId) ?? null;
 }
 
 export function startClaudeLogin(pool: string, account: string): Promise<{ loginId: string }> {

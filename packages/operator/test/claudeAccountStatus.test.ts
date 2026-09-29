@@ -64,6 +64,17 @@ describe('accountStatusFromDisk', () => {
     expect(s.orgName).toBe('Org');
   });
 
+  it('조직·계정 uuid 를 싣는다 — 같은 로그인이 둘인지 가리는 키다', async () => {
+    // 이메일·팀명은 표시용이다. 재인증 직후 `organizationName` 이 빠진 `.claude.json` 을
+    // 실측했다(2026-09-29) — 그것으로 비교하면 같은 로그인을 다른 것으로 본다.
+    const d = await dir({ '.claude.json': { oauthAccount: {
+      emailAddress: 'a@b.c', organizationUuid: 'org-1', accountUuid: 'acc-1',
+    } } });
+    const s = await accountStatusFromDisk(d, HAS_KEYCHAIN);
+    expect(s.orgId).toBe('org-1');
+    expect(s.accountId).toBe('acc-1');
+  });
+
   it('파일에만 있어도 로그인으로 본다', async () => {
     // 비 macOS 와, 파일 폴백으로 쓰인 계정의 경로다.
     const d = await dir({

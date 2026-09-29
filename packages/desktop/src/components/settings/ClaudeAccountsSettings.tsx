@@ -12,7 +12,9 @@
  * ## 세 가지를 반드시 말한다
  *
  * 1. **계정의 정체**(이메일·조직·구독). 이름만 보여 주면 그건 사용자가 붙인 별명일 뿐이고,
- *    "회사 계정이 어느 것인가"를 여기서 알 수 없다.
+ *    "회사 계정이 어느 것인가"를 여기서 알 수 없다. 그래서 줄의 첫 칸이 **팀**이고 계정 이름은
+ *    옆에 작은 id 로만 선다 — 추가할 때 이름을 묻지도 않는다(`newClaudeAccountId`). 사람이 붙인
+ *    `lime` 이 재인증 뒤 Lychee 팀을 가리키는 일이 실제로 있었다(2026-09-29).
  * 2. **러너 재시작이 필요하다**는 사실. 러너는 풀을 기동 시 1회 읽는다 — 안 말하면 사용자는
  *    계정을 추가하고 왜 안 쓰는지 모른다.
  * 3. **두 번째 계정부터 시크릿 창**이 필요하다는 사실. 그러지 않으면 기존 쿠키로 같은 계정에
@@ -53,11 +55,14 @@ import {
   listClaudeAccounts,
   listenClaudeLogin,
   moveClaudeAccount,
+  newClaudeAccountId,
   removeClaudeAccount,
   removeClaudePool,
+  sameSignInAs,
   startClaudeLogin,
   submitClaudeLoginCode,
   type ClaudeAccountsSnapshot,
+  type ClaudeAccountView,
   type ClaudeAuthStatus,
   type ClaudeLoginEvent,
   type ClaudeUsageSnapshot,
@@ -111,7 +116,7 @@ const USAGE_POLL_MS = 10_000;
  * 섰다 — 그러면 어느 계정이 많이 돌았는지 **눈으로 알 수 없다**.
  */
 const ACCOUNT_GRID =
-  'grid grid-cols-[7rem_minmax(9rem,1fr)_6.5rem_3.5rem_3rem_3rem_3.75rem_5rem_8.5rem_1.75rem] gap-x-3';
+  'grid grid-cols-[9rem_minmax(9rem,1fr)_6.5rem_3.5rem_3rem_3rem_3.75rem_5rem_8.5rem_1.75rem] gap-x-3';
 
 /**
  * 상태 알약의 색. **`warning` 만 면을 채운다** — 지금 못 쓰는 계정 하나가 화면에서
@@ -130,7 +135,7 @@ const STATE_PILL = {
 
 /** 되돌릴 수 없는 일 하나를 기다리는 상태. `null` 은 대기 중인 것이 없다. */
 type Pending =
-  | { kind: 'account'; pool: string; account: string }
+  | { kind: 'account'; pool: string; account: string; label: string }
   | { kind: 'pool'; pool: string }
   | null;
 
@@ -147,6 +152,22 @@ interface LoginState {
 function statusLine(status: ClaudeAuthStatus): string {
   if (!status.loggedIn) return 'Not signed in';
   return [status.email, status.orgName, status.subscriptionType].filter(Boolean).join(' · ');
+}
+
+/** 줄 첫 칸. 계정을 가리키는 것은 **로그인한 팀**이다 — 디렉터리 이름은 id 일 뿐이다. */
+function teamLabel(a: ClaudeAccountView): string {
+  if (!a.status.loggedIn) return 'Not signed in';
+  return a.status.orgName ?? a.status.email ?? a.name;
+}
+
+/** 둘째 칸의 글자. 팀은 첫 칸이 이미 말했으니 여기서 되풀이하지 않는다. */
+function signedInAs(status: ClaudeAuthStatus): string {
+  return [status.email, status.subscriptionType].filter(Boolean).join(' · ');
+}
+
+/** 확인 문구·메뉴에 쓰는 한 줄 이름. */
+function accountLabel(a: ClaudeAccountView): string {
+  return a.status.loggedIn ? statusLine(a.status) : `${a.name} (not signed in)`;
 }
 
 /**
@@ -311,6 +332,23 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
       });
       await refresh();
     } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  /**
+   * 추가는 곧바로 로그인이다 — 이름을 묻지 않는다(파일 머리말). 상태를 **먼저** 세우고 부르는
+   * 이유는 URL 통지가 `loginStart` 응답보다 먼저 올 수 있어서다: 그때 `loginId` 가 아직 `null`
+   * 이면 리스너가 통지를 받아 준다(위 `listenClaudeLogin`).
+   */
+  const beginLogin = async (pool: string, taken: string[]): Promise<void> => {
+    const account = newClaudeAccountId(taken);
+    setLogin({ pool, account, loginId: null, url: null, error: null, done: false });
+    try {
+      const { loginId } = await startClaudeLogin(pool, account);
+      setLogin((cur) => (cur && cur.account === account ? { ...cur, loginId } : cur));
+    } catch (err) {
+      setLogin(null);
       setError(err instanceof Error ? err.message : String(err));
     }
   };
@@ -510,9 +548,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
               {pool.name && (
                 <Button
                   ariaLabel={`Add account to ${pool.name}`}
-                  onClick={() => setLogin({
-                    pool: pool.name, account: '', loginId: null, url: null, error: null, done: false,
-                  })}
+                  onClick={() => void beginLogin(pool.name, pool.accounts.map((a) => a.name))}
                 >
                   Add account
                 </Button>
@@ -552,7 +588,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
               반복했다(`in 5.3M · out 1.1M`) — 계정 넷이면 같은 라벨이 넷이다. */}
           {pool.accounts.length > 0 && (
             <div className={`${ACCOUNT_GRID} px-4 py-2 text-meta uppercase tracking-wide text-fg-subtle`}>
-              <span>Account</span>
+              <span>Team</span>
               <span>Signed in as</span>
               <span>Share of pool</span>
               <span className="text-right">Resp</span>
@@ -569,6 +605,8 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
             const cells = u ? usageCells(u) : null;
             const state = u ? accountState(u, nowMs, locale) : null;
             const pu = providerSnap ? usageFor(providerSnap, a.name, pool.name) : null;
+            // 같은 로그인이 둘이면 페일오버가 같은 한도로 옮겨 탈 뿐이다 — 사람이 알아야 한다.
+            const dup = sameSignInAs(pool.accounts, a.name);
             return (
               // 줄과 막대를 **한 자식**으로 묶는다 — `SettingsGroup` 이 자식 사이에 선을 긋는데,
               // 막대가 따로 서면 계정과 그 계정의 한도 사이에 선이 생긴다.
@@ -577,18 +615,27 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                 className={`${ACCOUNT_GRID} items-center px-4 py-2.5`}
                 data-testid={`claude-account-${pool.name}-${a.name}`}
               >
-                <span className="truncate font-mono text-fg">{a.name}</span>
+                <span
+                  className={`truncate ${a.status.loggedIn ? 'text-fg' : 'text-warning'}`}
+                  title={teamLabel(a)}
+                >
+                  {teamLabel(a)}
+                </span>
                 {/*
                   정체는 이 화면이 반드시 말해야 하는 것 중 하나다(파일 머리말). 열로
                   옮기면서 색을 `fg-subtle`(3.08:1) 에서 `fg-muted`(5.81:1) 로 올렸다 —
                   후자가 팔레트에서 "시각·타임스탬프·설명" 용으로 정의된 값이다.
                   좁아질 수 있는 열이라 잘리는 대신 `title` 로 전문을 남긴다.
                 */}
-                <span
-                  className={`truncate text-meta ${a.status.loggedIn ? 'text-fg-muted' : 'text-warning'}`}
-                  title={statusLine(a.status)}
-                >
-                  {statusLine(a.status)}
+                <span className="flex min-w-0 items-baseline gap-2 text-meta" title={statusLine(a.status)}>
+                  {a.status.loggedIn && <span className="truncate text-fg-muted">{signedInAs(a.status)}</span>}
+                  {/* 디렉터리 이름은 id 로만 선다 — `HARKROOM_CLAUDE_ACCOUNTS`·로그가 이것을 쓴다. */}
+                  <span className="shrink-0 font-mono text-fg-subtle">{a.name}</span>
+                  {dup && (
+                    <span className="shrink-0 text-warning" data-testid="claude-account-duplicate">
+                      same sign-in as {dup.name}
+                    </span>
+                  )}
                 </span>
 
                 {/*
@@ -664,7 +711,9 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                     placement="bottom"
                     items={[{
                       label: `Remove account ${a.name}`,
-                      onSelect: () => setPending({ kind: 'account', pool: pool.name, account: a.name }),
+                      onSelect: () => setPending({
+                        kind: 'account', pool: pool.name, account: a.name, label: accountLabel(a),
+                      }),
                     }]}
                     renderTrigger={(triggerProps) => (
                       <button
@@ -727,34 +776,11 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
         <SettingsGroup title={`Add account to ${login.pool}`}>
           {login.loginId === null ? (
             <div className="px-4 py-3">
-              <Field
-                label="Account name"
-                hint={login.account === '' || nameOk(login.account) ? NAME_HINT : NAME_HINT}
-                tone="warning"
-              >
-                <TextInput
-                  value={login.account}
-                  onChange={(v) => setLogin({ ...login, account: v })}
-                  placeholder="work-main"
-                />
-              </Field>
-              <div className="mt-3 flex gap-2">
-                <Button
-                  variant="primary"
-                  disabled={!nameOk(login.account)}
-                  onClick={async () => {
-                    try {
-                      const { loginId } = await startClaudeLogin(login.pool, login.account);
-                      setLogin((cur) => (cur ? { ...cur, loginId } : cur));
-                    } catch (err) {
-                      setError(err instanceof Error ? err.message : String(err));
-                    }
-                  }}
-                >
-                  Sign in
-                </Button>
-                <Button onClick={() => setLogin(null)}>Cancel</Button>
-              </div>
+              {/*
+                취소를 여기 두지 않는다: 아직 `loginId` 가 없어 데몬의 로그인 프로세스를 거둘 수
+                없다. 이 틈은 데몬이 자식을 띄우는 동안뿐이고, URL 이 오면 아래에 취소가 선다.
+              */}
+              <div className="text-meta text-fg-subtle">Starting sign-in…</div>
             </div>
           ) : (
             <div className="px-4 py-3">
@@ -809,7 +835,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
           <div className="px-4 py-3">
             <div className="text-fg">
               {pending.kind === 'account'
-                ? `Remove account ${pending.account} from ${pending.pool}? Its saved sign-in is deleted and you would have to sign in again.`
+                ? `Remove account ${pending.label} from ${pending.pool}? Its saved sign-in is deleted and you would have to sign in again.`
                 : `Remove pool ${pending.pool} and every account in it? Their saved sign-ins are deleted.`}
             </div>
             <div className="mt-3 flex gap-2">
