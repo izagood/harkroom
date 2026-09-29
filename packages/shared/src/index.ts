@@ -3343,6 +3343,13 @@ export interface OperatorView {
   revokedAt: string | null;
   /** 허브가 아는 연결 상태. 목록·단건 응답에서 채운다 — 저장된 사실이 아니라 지금의 사실이다. */
   online: boolean;
+  /**
+   * 이 오퍼레이터가 마지막 `hello` 에 실은 빌드 버전(`operator.version`, 마이그레이션 075).
+   * **저장된 사실**이다 — 오프라인이어도 마지막 값이 남는다(러너가 꺼진 에이전트 카드도 기준이
+   * 있어야 한다). `null` 은 모른다: 버전을 보내지 않는 옛 오퍼레이터이거나 아직 붙은 적이 없다.
+   * 화면의 러너 뒤처짐 판정 기준이다(`desktop/src/lib/runnerVersions.ts`).
+   */
+  version: string | null;
 }
 
 /** 오퍼레이터가 `hello` 에 싣는 능력 — 연결이 살아 있는 동안만 서버가 든다. */

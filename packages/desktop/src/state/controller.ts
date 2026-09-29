@@ -537,6 +537,10 @@ export class Controller {
       case 'skill.disabled':
         store.set({ skillsRevision: store.skillsRevision + 1 });
         break;
+      /** 오퍼레이터 목록(과 그 버전)을 다시 읽으라는 신호 — 러너 버전 칩의 기준이 따라온다. */
+      case 'operator.changed':
+        store.set({ operatorsRevision: store.operatorsRevision + 1 });
+        break;
     }
   }
 

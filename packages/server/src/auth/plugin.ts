@@ -53,7 +53,7 @@ export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<vo
     if (raw.startsWith('hkop_')) {
       const op = await pool.query(
         `select id, owner_account_id as "ownerAccountId", name, created_at as "createdAt",
-                last_seen_at as "lastSeenAt", revoked_at as "revokedAt"
+                last_seen_at as "lastSeenAt", revoked_at as "revokedAt", version
            from operator where token_hash = $1 and revoked_at is null`, [hash]);
       if (!op.rowCount) return;
       const operator: OperatorView = { ...op.rows[0], online: false };

@@ -40,7 +40,14 @@ export interface AgentDefinition {
 
 export type OperatorToServerFrame =
   | { type: 'hello'; protocol: 1; capabilities: OperatorCapabilities;
-      runners: RunnerAnnounce[]; sessions: AgentSessionView[] }
+      runners: RunnerAnnounce[]; sessions: AgentSessionView[];
+      /**
+       * 이 오퍼레이터의 빌드 버전 — 이 오퍼레이터가 띄우는 러너에 심는 `AGENT_VERSION` 과 같은
+       * 값이다(`operator/src/version.ts`). 화면의 러너 뒤처짐 판정이 이것을 기준으로 삼는다.
+       * 옛 오퍼레이터는 싣지 않고, 버전을 모르는 오퍼레이터도 싣지 않는다 — 서버는 없음을
+       * "모른다"로 적는다(빈 문자열 같은 거짓 값을 보내지 않는다).
+       */
+      version?: string }
   | { type: 'runner.started'; agentId: string; runnerId: string }
   /**
    * `reason` 은 러너가 아니라 오퍼레이터의 판단이다(배정 거절: personal_on_foreign_operator,
@@ -105,7 +112,15 @@ function parse(raw: string, known: Set<string>): Record<string, unknown> | null 
   if (typeof frame.type !== 'string' || !known.has(frame.type)) return null;
   if (!NO_RUNNER_ID.has(frame.type) && typeof frame.runnerId !== 'string') return null;
   if (frame.type === 'agent.restart' && typeof frame.agentId !== 'string') return null;
+  // 버전이 틀린 모양이면 hello 를 버리지 않고 버전만 뗀다 — 버전 하나 때문에 배정·러너가 끊기면
+  // 안 되고, 틀린 값을 기준으로 삼으면 멀쩡한 러너가 뒤처졌다고 뜬다. 없음은 "모른다"다.
+  if (frame.type === 'hello' && 'version' in frame && !isVersionString(frame.version)) delete frame.version;
   return frame;
+}
+
+/** 오퍼레이터 버전으로 받을 수 있는 값 — 빈 문자열이 아니고 짧은 문자열(`operator.version` 칸). */
+export function isVersionString(value: unknown): value is string {
+  return typeof value === 'string' && value !== '' && value.length <= 64;
 }
 
 export function parseOperatorFrame(raw: string): OperatorToServerFrame | null {

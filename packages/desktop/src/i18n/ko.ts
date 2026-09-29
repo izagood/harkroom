@@ -585,15 +585,15 @@ export const ko = {
     '배정된 오퍼레이터는 이 토큰을 서버에서 직접 받아 간다 — 어디에도 옮겨 적을 필요가 없다. '
     + '러너를 손으로 띄울 때만 이 값이 필요하다.',
 
-  'agents.stale.allCurrent': '도는 러너가 전부 이 번들이다.',
-  'agents.stale.here': { other: '이 머신의 러너 {count}대가 이 번들보다 뒤처졌다 — 이 머신의 오퍼레이터를 갱신하면 따라온다.' },
+  'agents.stale.allCurrent': '도는 러너가 전부 자기 오퍼레이터와 같은 버전이다.',
+  'agents.stale.here': { other: '이 머신의 러너 {count}대가 오퍼레이터보다 옛 번들이다 — 재기동하면 오퍼레이터의 번들로 다시 뜬다.' },
   'agents.stale.elsewhere': {
-    other: '이 기기가 띄운 러너는 전부 이 번들이다. 뒤처진 러너 {count}대는 다른 기기의 것이라 '
+    other: '이 기기가 띄운 러너는 전부 오퍼레이터와 같은 버전이다. 뒤처진 러너 {count}대는 다른 기기의 것이라 '
       + '여기서 재기동할 수 없다 — 그 기기의 Harkroom 에서 눌러야 한다.',
   },
   'agents.stale.note': '재기동은 {strong} — 턴을 마친 뒤 새 번들로 다시 뜬다.',
   'agents.stale.noteStrong': '진행 중인 턴을 끊지 않는다',
-  'agents.stale.unknownAppVersion': '앱 버전을 얻지 못해 뒤처짐을 판정할 수 없다.',
+  'agents.stale.unknownOperatorVersions': '오퍼레이터 목록을 읽지 못해 뒤처짐을 판정할 수 없다.',
   'agents.stale.unknownVersion': {
     other: '버전을 모르는 러너 {count}대 — 뒤처졌는지 알 수 없어 대상에서 뺐다. '
       + '한 번 재기동하면 그 뒤로는 버전이 보인다.',
@@ -1030,6 +1030,7 @@ export const ko = {
   'grid.version.restarting': '재기동 중…',
   'grid.version.stale': '{version} · 뒤처짐',
   'grid.version.unknown': '버전 모름',
+  'grid.version.baseline': '기준: 오퍼레이터 {version}',
 
   'grid.card.relaunch': '{handle} 실행하기',
   'grid.card.relaunchFailed': '{handle} 다시 띄우기',
@@ -1225,7 +1226,7 @@ export const ko = {
   'profile.rows.presenceOnline': '온라인',
   'profile.rows.presenceUnknown': '알 수 없음',
   'profile.rows.runnerVersion': '러너 버전',
-  'profile.rows.runnerVersionWithApp': '{version} (앱 {appVersion})',
+  'profile.rows.runnerVersionWithOperator': '{version} (오퍼레이터 {operatorVersion})',
   'profile.rows.runnerVersionUnknown': '버전을 모른다 — 재기동하면 채워진다',
   'profile.rows.state': '상태',
   'profile.rows.stateDisabled': '비활성',
@@ -1238,7 +1239,7 @@ export const ko = {
   'profile.runner.restartQueuedTurn': '진행 중인 턴',
   'profile.runner.stale':
     '이 러너는 {strongBundle}로 돌고 있다 — 새 버전으로 재기동하면 갈아탄다.',
-  'profile.runner.staleBundle': '앱보다 뒤처진 번들',
+  'profile.runner.staleBundle': '오퍼레이터보다 뒤처진 번들',
   // message — **키 순서는 `en.ts` 와 같다**. 이 화면의 말투는 `~다` 로 끝나는 서술이고
   // (대화 옆에 앉는 곁정보라 명령이 아니다) 원래 화면이 그렇게 쓰고 있었다.
   // ---------------------------------------------------------------------------

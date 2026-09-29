@@ -11,6 +11,7 @@ import type { OperatorToServerFrame } from '@harkroom/shared/operatorProtocol';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, registerOperator } from './helpers/fixtures.js';
+import { onEvent } from '../src/events.js';
 
 let app: FastifyInstance; let stop: () => Promise<void>;
 let adminToken: string; let opToken: string; let operatorId: string; let baseUrl: string;
@@ -76,6 +77,42 @@ describe('/operator 채널', () => {
     // 읽기를 멈춘다 → ping 이 도착해도 처리되지 않아 pong 이 나가지 않는다.
     (ws as unknown as { _socket: { pause(): void } })._socket.pause();
     await waitFor(async () => !(await online()), 5000);
+  });
+  it('hello 의 버전을 적고 목록에 싣는다 — 끊겨도 남고, 버전 없는 hello 는 모름(null)으로 덮는다', async () => {
+    const { token, operatorId: id } = await registerOperator(app, adminToken, '버전기기');
+    const versionOf = async (): Promise<string | null | undefined> =>
+      (await app.inject({ method: 'GET', url: '/operators', headers: auth(adminToken) }))
+        .json().operators.find((o: { id: string }) => o.id === id)?.version;
+    expect(await versionOf()).toBeNull();
+
+    const changed: string[] = [];
+    const off = onEvent((e) => { if (e.type === 'operator.changed' && e.operatorId === id) changed.push(e.type); });
+    try {
+      const ws = await connect(token);
+      ws.send(JSON.stringify({ ...hello(), version: '0.3.45' }));
+      await waitFor(async () => (await versionOf()) === '0.3.45');
+      // 접속 한 번 + 버전이 바뀐 한 번. 같은 값을 다시 hello 하면 더 내지 않는다.
+      await waitFor(async () => changed.length >= 2);
+      const before = changed.length;
+      ws.send(JSON.stringify({ ...hello(), version: '0.3.45' }));
+      await new Promise((r) => setTimeout(r, 100));
+      expect(changed.length).toBe(before);
+      ws.close();
+      await waitFor(async () => {
+        const op = (await app.inject({ method: 'GET', url: '/operators', headers: auth(adminToken) }))
+          .json().operators.find((o: { id: string }) => o.id === id);
+        return op?.online === false;
+      });
+      // 오프라인이어도 마지막 버전은 남는다 — 러너가 꺼진 카드도 기준이 있어야 한다.
+      expect(await versionOf()).toBe('0.3.45');
+      const self = await app.inject({ method: 'GET', url: '/operators/self', headers: auth(token) });
+      expect(self.json().version).toBe('0.3.45');
+
+      const old = await connect(token);
+      old.send(JSON.stringify(hello()));
+      await waitFor(async () => (await versionOf()) === null);
+      old.close();
+    } finally { off(); }
   });
   it('폐기된 오퍼레이터는 붙을 수 없다', async () => {
     const { token, operatorId: doomed } = await registerOperator(app, adminToken, '폐기될기기');

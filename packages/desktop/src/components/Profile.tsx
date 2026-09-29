@@ -7,7 +7,8 @@ import { claudeLaneLabel, showsClaudeLane } from '../lib/claudeLane';
 import { Identity, StatusMark } from './Identity';
 import { Overlay } from './Overlay';
 import { emphasize, lastTurnLabel } from './settings/AgentsSettings';
-import { staleRunners, UNKNOWN_RUNNER_VERSION } from '../lib/runnerVersions';
+import { baselineOf, staleRunners, UNKNOWN_RUNNER_VERSION } from '../lib/runnerVersions';
+import { useOperatorVersions } from '../lib/useOperatorVersions';
 import { useT, useLocale } from '../i18n/useT';
 // 화면 밖 순수 함수(`runnerVersionLabel`)는 번역기를 인자로 받는다 — 그 갈림의 근거는
 // `i18n/index.ts::Translate` 머리말에 있다.
@@ -69,11 +70,12 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
   }, [accountId, canSeeConfig]);
 
   /**
-   * 이 앱 번들의 버전 — 뒤처짐 판정의 기준. 컨트롤러가 기동 때 스토어에 밀어 넣은 값을
-   * 읽는다(`appStore.ts::appVersion`). 러너에 심는 `AGENT_VERSION` 과 **같은 값**이므로,
-   * 방금 재기동한 러너가 계속 뒤처진 것으로 보이는 어긋남이 없다.
+   * 뒤처짐 판정의 기준 — 이 에이전트가 **배정된 오퍼레이터의 버전**. 오퍼레이터가 러너에
+   * `AGENT_VERSION` 으로 심는 값이 그것이므로, 방금 재기동한 러너가 계속 뒤처진 것으로 보이는
+   * 어긋남이 없고, 어느 데스크탑에서 보든 판정이 같다(`runnerVersions.ts` 머리말). 설정을 볼 수
+   * 없는 사람에게는 러너 행이 없으므로 읽지 않는다.
    */
-  const appVersion = useActiveStore((st) => st.appVersion);
+  const operatorVersions = useOperatorVersions(canSeeConfig);
 
   /** 이 앱이 아는 러너의 상태. 없으면 '모른다'다 — '꺼짐'이 아니다. */
   const runnerState = useActiveStore((st) => st.runnerStates[accountId]);
@@ -97,9 +99,9 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
    * 대상이 어긋나고, 사람은 그 어긋남을 알 방법이 없다.
    */
   const isStale = staleRunners({
-    agents: agent ? [{ id: agent.id, runnerVersion: agent.runnerVersion }] : [],
+    agents: agent ? [{ id: agent.id, runnerVersion: agent.runnerVersion, assignment: agent.assignment }] : [],
     live: runnerPresent ? new Set([accountId]) : new Set<string>(),
-    appVersion,
+    operators: operatorVersions,
   }).stale.length > 0;
   // 생존은 `threadState`·`waitChain` 과 같은 규약이다 — `connected` 가 false 면 '모른다'.
   const live = connected ? online.includes(account.id) : null;
@@ -171,7 +173,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
                   한 문장으로 적는다 — 없는 구분을 화면에 만들지 않는다. */}
               <Row
                 label={t('profile.rows.runnerVersion')}
-                value={runnerVersionLabel(agent.runnerVersion, appVersion, t)}
+                value={runnerVersionLabel(agent.runnerVersion, baselineOf(agent, operatorVersions), t)}
                 mono={agent.runnerVersion !== null && agent.runnerVersion !== UNKNOWN_RUNNER_VERSION}
               />
               {/* 러너가 **어느 claude 계정들을 읽고 떴나**(5단계). 턴 줄(#694)이 도는
@@ -256,12 +258,12 @@ function Row({ label, value, mono = false }: { label: string; value: string; mon
 }
 
 /**
- * 러너 버전 한 줄. 두 사실을 함께 적는다 — 러너의 버전과 **비교 대상**(앱의 버전).
- * 앱 버전만 알거나 러너 버전만 알면 사람은 "뒤처졌다"를 스스로 확인할 수 없다.
+ * 러너 버전 한 줄. 두 사실을 함께 적는다 — 러너의 버전과 **비교 대상**(배정된 오퍼레이터의 버전).
+ * 한쪽만 알면 사람은 "뒤처졌다"를 스스로 확인할 수 없다.
  */
 function runnerVersionLabel(
   runnerVersion: string | null,
-  appVersion: string | null,
+  operatorVersion: string | null,
   t: Translate,
 ): string {
   if (runnerVersion === null || runnerVersion === UNKNOWN_RUNNER_VERSION) {
@@ -270,9 +272,9 @@ function runnerVersionLabel(
     return t('profile.rows.runnerVersionUnknown');
   }
   // **화면 밖 함수라 `t` 를 인자로 받는다**(`i18n/index.ts::Translate` 의 (b) 주입).
-  // 앱 버전을 모르면 비교 대상이 없으므로 러너 버전만 세운다 — 그때 `(app )` 처럼 빈
-  // 괄호를 남기면 사람은 그 괄호를 값으로 읽는다.
-  return appVersion === null
+  // 오퍼레이터 버전을 모르면 비교 대상이 없으므로 러너 버전만 세운다 — 그때 `(operator )`
+  // 처럼 빈 괄호를 남기면 사람은 그 괄호를 값으로 읽는다.
+  return operatorVersion === null
     ? runnerVersion
-    : t('profile.rows.runnerVersionWithApp', { version: runnerVersion, appVersion });
+    : t('profile.rows.runnerVersionWithOperator', { version: runnerVersion, operatorVersion });
 }

@@ -24,7 +24,7 @@ const claimBody = z.object({ code: z.string().startsWith('hkreg_'), name: z.stri
 const idParam = z.object({ id: z.string().uuid() });
 
 const OP_COLS = `id, owner_account_id as "ownerAccountId", name, created_at as "createdAt",
-  last_seen_at as "lastSeenAt", revoked_at as "revokedAt"`;
+  last_seen_at as "lastSeenAt", revoked_at as "revokedAt", version`;
 
 /** 허브가 아는 **지금의 사실** — 연결돼 있는가, 무엇을 돌릴 수 있다고 했는가. */
 export type OperatorPresence = Pick<OperatorHub, 'isOnline' | 'capabilities'>;
@@ -70,6 +70,24 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
   const beat = setInterval(() => heartbeat.tick(), deps.heartbeatMs ?? 30_000);
   beat.unref?.();
   app.addHook('onClose', async () => { clearInterval(beat); });
+
+  /**
+   * hello 의 버전을 적는다(마이그레이션 075). 화면의 러너 뒤처짐 판정 기준이 이 값이다.
+   *
+   * hello 에 버전이 없으면 **null 로 덮는다** — 옛 오퍼레이터로 되돌아갔는데 예전 값이 남으면
+   * 그 값이 거짓 기준이 된다. 바뀌었을 때만 `operator.changed` 를 낸다: 접속 때 이미 한 번
+   * 냈고(아래 소켓 배선), 재접속마다 같은 값이면 화면이 목록을 다시 읽을 까닭이 없다.
+   */
+  const offFrame = deps.hub.onFrame((operatorId, frame) => {
+    if (frame.type !== 'hello') return;
+    const version = frame.version ?? null;
+    void pool.query(
+      `update operator set version = $2 where id = $1 and version is distinct from $2 returning id`,
+      [operatorId, version])
+      .then((res) => { if (res.rowCount) emitEvent({ type: 'operator.changed', operatorId, audience: 'all' }); })
+      .catch((err: unknown) => app.log.warn({ err, operatorId }, 'operator version 기록 실패'));
+  });
+  app.addHook('onClose', async () => { offFrame(); });
 
   app.get('/operator', { websocket: true, preHandler: app.requireOperator }, (socket, req) => {
     const operatorId = req.operator!.id;

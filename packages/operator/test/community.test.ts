@@ -36,6 +36,24 @@ describe('community', () => {
     expect(hello.runners).toEqual([{ agentId: 'a-1', runnerId: 'r-1', pid: 7 }]);
   });
 
+  it('hello 에 자기 버전을 싣는다 — 모르면(null·빈 값) 싣지 않는다', () => {
+    const helloWith = (version: string | null | undefined) => {
+      const sent: string[] = [];
+      const dial: LinkDialer = (_u, _t, h) => { h.onOpen({ send: (d) => sent.push(d), close: () => {} }); };
+      const c = createCommunity({
+        baseUrl: 'https://example.com', token: 'hkop_x', agents: {},
+        reconciler: fakeReconciler().reconciler, dial, schedule: () => {}, log: () => {},
+        ...(version === undefined ? {} : { version }),
+      });
+      c.start();
+      return JSON.parse(sent[0]!);
+    };
+    expect(helloWith('0.3.45').version).toBe('0.3.45');
+    expect('version' in helloWith(null)).toBe(false);
+    expect('version' in helloWith('')).toBe(false);
+    expect('version' in helloWith(undefined)).toBe(false);
+  });
+
   it('assign 은 로컬 설정과 함께 조정기로, unassign 도 조정기로 간다', async () => {
     let handlers: Parameters<LinkDialer>[2] | null = null;
     const dial: LinkDialer = (_u, _t, h) => { handlers = h; h.onOpen({ send: () => {}, close: () => {} }); };

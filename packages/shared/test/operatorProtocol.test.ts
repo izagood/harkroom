@@ -16,6 +16,21 @@ describe('operatorProtocol', () => {
     }));
     expect(f?.type).toBe('hello');
   });
+  it('hello 의 version 은 그대로 싣고, 없으면 없다 — 옛 오퍼레이터는 버전을 모른다', () => {
+    const base = { type: 'hello', protocol: 1, capabilities: { agentIds: [], harnesses: {} }, runners: [], sessions: [] };
+    const withVersion = parseOperatorFrame(JSON.stringify({ ...base, version: '0.3.45' }));
+    expect(withVersion?.type === 'hello' && withVersion.version).toBe('0.3.45');
+    const old = parseOperatorFrame(JSON.stringify(base));
+    expect(old?.type === 'hello' && 'version' in old).toBe(false);
+  });
+  it('hello 의 version 이 틀린 모양이면 hello 는 살리고 버전만 뗀다', () => {
+    const base = { type: 'hello', protocol: 1, capabilities: { agentIds: [], harnesses: {} }, runners: [], sessions: [] };
+    for (const version of ['', 42, null, 'x'.repeat(65)]) {
+      const f = parseOperatorFrame(JSON.stringify({ ...base, version }));
+      expect(f?.type).toBe('hello');
+      expect(f && 'version' in f).toBe(false);
+    }
+  });
   it('runnerId 가 필요한 프레임에 없으면 버린다', () => {
     expect(parseOperatorFrame(JSON.stringify({ type: 'runner.started', agentId: 'a' }))).toBeNull();
     expect(parseOperatorFrame(JSON.stringify({ type: 'runner.started', agentId: 'a', runnerId: 'r' }))?.type).toBe('runner.started');

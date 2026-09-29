@@ -1114,14 +1114,15 @@ export const en = {
     'You do not need to copy this anywhere for an assigned operator — it fetches the token from the server itself. '
     + 'Keep it only if you start a runner by hand.',
 
-  'agents.stale.allCurrent': 'Every running runner is on this bundle.',
+  'agents.stale.allCurrent': 'Every running runner matches the version of its operator.',
   /**
-   * 이 머신의 오퍼레이터가 돌리는 러너 중 뒤처진 것. 버튼은 없다(스펙 2026-09-20 §2) —
-   * 새 번들로 가는 길은 이 머신의 오퍼레이터를 갱신하는 것이라 그것을 적는다.
+   * 이 머신의 오퍼레이터가 돌리는 러너 중 **그 오퍼레이터보다** 옛 번들인 것(판정 기준은
+   * 오퍼레이터다 — `runnerVersions.ts`). 오퍼레이터가 갱신된 뒤 adopted 로 남은 러너라,
+   * 재기동하면 오퍼레이터의 번들로 다시 뜬다.
    */
   'agents.stale.here': {
-    one: '{count} runner on this machine is behind this bundle — update the operator here to bring it forward.',
-    other: '{count} runners on this machine are behind this bundle — update the operator here to bring them forward.',
+    one: '{count} runner on this machine is on an older bundle than its operator — restart it to come back on the bundle of the operator.',
+    other: '{count} runners on this machine are on an older bundle than their operator — restart them to come back on the bundle of the operator.',
   },
   /**
    * 뒤처진 러너가 **보이는데 이 버튼의 대상이 아닐 때.** `allCurrent` 를 그대로 쓰면
@@ -1129,9 +1130,9 @@ export const en = {
    * 사람을 비활성 버튼으로 보냈다. 어디서 눌러야 하는지까지 적는다. 복수형이 갈린다.
    */
   'agents.stale.elsewhere': {
-    one: 'Every runner this device started is on this bundle. {count} outdated runner belongs to '
+    one: 'Every runner this device started matches its operator. {count} outdated runner belongs to '
       + 'another device and cannot be restarted from here — press it in the Harkroom on that device.',
-    other: 'Every runner this device started is on this bundle. {count} outdated runners belong to '
+    other: 'Every runner this device started matches its operator. {count} outdated runners belong to '
       + 'another device and cannot be restarted from here — press it in the Harkroom on that device.',
   },
   /**
@@ -1140,8 +1141,8 @@ export const en = {
    */
   'agents.stale.note': 'A restart {strong} — it comes back on the new bundle once the turn is done.',
   'agents.stale.noteStrong': 'does not cut a turn that is in flight',
-  /** 앱 버전을 모르면 비교 기준이 없다 — **"전부 최신"은 확인하지 않은 것을 단정하는 말이다.** */
-  'agents.stale.unknownAppVersion': 'The app version could not be read, so being outdated cannot be judged.',
+  /** 오퍼레이터 목록을 못 읽으면 비교 기준이 없다 — **"전부 최신"은 확인하지 않은 것을 단정하는 말이다.** */
+  'agents.stale.unknownOperatorVersions': 'The operator list could not be read, so being outdated cannot be judged.',
   /**
    * 버전을 모르는 러너. **모르는 것을 뒤처졌다고 하지 않는다**(`runnerVersions.ts`) —
    * 대신 값을 채우는 방법을 적는다. 복수형이 갈린다.
@@ -2211,6 +2212,8 @@ export const en = {
    * "러너가 없다"와 구분되지 않는다(원래 주석이 이 칩을 만든 이유가 그것이다).
    */
   'grid.version.unknown': 'Version unknown',
+  /** 칩의 hover — **무엇과 비교했나**. 기준은 보는 앱이 아니라 그 에이전트의 오퍼레이터다. */
+  'grid.version.baseline': 'Compared with operator {version}',
 
   /** 격자의 `▶`·`↻` 접근 이름. 하는 일이 갈리므로 **두 낱말이 따로 있다.** */
   'grid.card.relaunch': 'Start {handle}',
@@ -2793,8 +2796,8 @@ export const en = {
   /** **`connected` 가 false 면 '모른다'다** — 오프라인이 아니다(그 화면의 규약). */
   'profile.rows.presenceUnknown': 'Unknown',
   'profile.rows.runnerVersion': 'Runner version',
-  /** 앱 버전을 아는 경우. **비교 대상이 함께 서야 뒤처짐을 스스로 확인할 수 있다.** */
-  'profile.rows.runnerVersionWithApp': '{version} (app {appVersion})',
+  /** 오퍼레이터 버전을 아는 경우. **비교 대상이 함께 서야 뒤처짐을 스스로 확인할 수 있다.** */
+  'profile.rows.runnerVersionWithOperator': '{version} (operator {operatorVersion})',
   /** 원인 둘을 **가르지 않는다** — 사람이 할 일이 하나다(위 표). */
   'profile.rows.runnerVersionUnknown': 'Version unknown — restart it once and it fills in',
   'profile.rows.state': 'State',
@@ -2814,7 +2817,7 @@ export const en = {
   /** 뒤처짐 안내. 누르기 전에 **무엇을 갈아 끼우는지**를 말한다. */
   'profile.runner.stale':
     'This runner is on {strongBundle} — restarting it moves it to the new one.',
-  'profile.runner.staleBundle': 'a bundle older than the app',
+  'profile.runner.staleBundle': 'a bundle older than its operator',
 
   'message.channelEcho': 'Also sent to the channel',
   /** 코드 블록의 복사 버튼(#724). 짧게 둔다 — 헤더 줄에 언어 이름과 나란히 선다. */
