@@ -13,7 +13,16 @@ import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js
 import { emitEvent, emitPosted, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '../services/channels.js';
-import { listInbox, listMessages, markInboxRead, postMessage, searchMessages } from '../services/messages.js';
+import { checkAskMirror, listInbox, listMessages, markInboxRead, postMessage, searchMessages, syncAskMirrors, type AskMirrorRefusal } from '../services/messages.js';
+
+/** `message.ask` 의 `mirrorOf` 거절 사유 — 에이전트가 읽고 고칠 수 있게 무엇을 바꾸면 되는지 적는다. */
+const MIRROR_REFUSAL_MESSAGE: Record<AskMirrorRefusal, string> = {
+  mirror_not_found: 'no choice request with that id that you can see',
+  mirror_of_mirror: 'that card is itself a mirror; point mirrorOf at its original',
+  mirror_not_human: 'only a card addressed to humans can be mirrored',
+  mirror_options_mismatch: "options must carry exactly the original card's option ids",
+  mirror_resolved: 'the original card is already answered or closed',
+};
 import {
   createDelegation, leadTeamFor, roundsUsed,
   DELEGATION_DEADLINE_DEFAULT_SEC, DELEGATION_DEADLINE_MAX_SEC, DELEGATION_DEADLINE_MIN_SEC,
@@ -433,7 +442,7 @@ function buildMcpServer(
    * 조용한 실패다.
    */
   server.registerTool('message.ask', {
-    description: '갈림길에서 선택지를 내놓는다(고르면 즉시 진행). to 는 사람이면 생략, 특정 대상이면 handle',
+    description: '갈림길에서 선택지를 내놓는다(고르면 즉시 진행). to 는 사람이면 생략, 특정 대상이면 handle. mirrorOf 는 다른 스레드의 사람 앞 카드 id — 같은 선택지 id 로 다시 세우면 사람이 여기서 고른 답이 원본에도 적힌다',
     inputSchema: {
       channelId: z.string().uuid(),
       body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
@@ -446,9 +455,15 @@ function buildMcpServer(
       /** 답할 대상의 handle. 비우면 '사람 아무나'다. */
       to: z.string().min(1).max(64).optional(),
       prompt: z.string().min(1).max(500).optional(),
+      /**
+       * 다른 스레드의 **사람 앞 물음**을 여기 같은 선택지로 다시 세운다(원본 메시지 id).
+       * 사람이 이 카드에 답하면 원본에도 같은 답이 그 사람 이름으로 적히고, 원본이 먼저
+       * 정해지면 이 카드가 그 결과로 닫힌다. 답은 끝까지 사람이 누른다 — 대리 답이 아니다.
+       */
+      mirrorOf: z.string().uuid().optional(),
       model: MODEL_ARG,
     },
-  }, async ({ channelId, body, threadRootId, options, to, prompt, model }) => {
+  }, async ({ channelId, body, threadRootId, options, to, prompt, mirrorOf, model }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
@@ -468,8 +483,18 @@ function buildMcpServer(
       }
       audience = { kind: 'account', accountId: found[0]!.id };
     }
+    if (mirrorOf) {
+      // 거울은 사람이 누를 자리다 — 원본이 사람 앞이므로 거울도 사람 앞이어야 옮겨 적을 수 있다.
+      if (audience.kind !== 'human') {
+        return jsonResult({ error: { code: 'mirror_audience', message: 'a mirror card is always addressed to humans; omit `to`' } });
+      }
+      const refusal = await checkAskMirror(pool, { rootId: mirrorOf, callerId: account.id, optionIds: options.map((o) => o.id) });
+      if (refusal) {
+        return jsonResult({ error: { code: refusal, message: MIRROR_REFUSAL_MESSAGE[refusal] } });
+      }
+    }
     const meta: AskMeta & Partial<ModelMeta> = {
-      kind: 'ask', ask: { options, to: audience, ...(prompt ? { prompt } : {}) },
+      kind: 'ask', ask: { options, to: audience, ...(prompt ? { prompt } : {}), ...(mirrorOf ? { mirrorOf } : {}) },
       ...(await reportedModelMeta(pool, account.id, model)),
     };
     const posted = await postMessage(pool, {
@@ -484,6 +509,8 @@ function buildMcpServer(
       const channelAudience = await audienceFor(pool, channelId);
       emitPosted(posted, channelAudience);
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
+      // 검사와 발행 사이에 원본이 정해졌으면 방금 세운 거울을 곧바로 그 결과로 닫는다.
+      if (mirrorOf) await syncAskMirrors(pool, mirrorOf);
     }
     return jsonResult({ message, notified });
   });
