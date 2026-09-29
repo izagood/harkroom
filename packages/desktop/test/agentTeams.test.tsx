@@ -45,7 +45,7 @@ const member = (accountId: string, handle: string, disabled = false): AgentTeamM
 
 /** 후보 격자가 그리는 에이전트. `listAgents()` 가 주는 모양이다. */
 const agentView = (id: string, handle: string, over: Partial<AgentView> = {}): AgentView => ({
-  id, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member', assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [], mcpServers: [],
+  id, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member', assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [], delegates: [], mcpServers: [],
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: null, disabled: false, deleted: false, runnerVersion: null,
   claudeLane: null,
@@ -745,7 +745,7 @@ describe('팀 호출 범위 절 (068)', () => {
   it('응답의 범위를 그리고, 고르면 PUT /teams/:id/scope 를 부른 뒤 응답 행을 그린다', async () => {
     const setTeamScope = vi.fn(async () => ({ ...team('t1', 'ops'), invokeScope: 'list' as const, ownerAccountId: 'u1' }));
     mountTeams({
-      team: vi.fn(async () => ({ team: { ...team('t1', 'ops'), ownerAccountId: 'u1' }, members: [member('a1', 'bot')], invokers: [] })),
+      team: vi.fn(async () => ({ team: { ...team('t1', 'ops'), ownerAccountId: 'u1' }, members: [member('a1', 'bot')], invokers: [], delegates: [] })),
       setTeamScope,
     } as never);
     await openTeam();
@@ -759,7 +759,7 @@ describe('팀 호출 범위 절 (068)', () => {
   it('비-admin 은 범위를 볼 수만 있다', async () => {
     seed(false);
     mountTeams({
-      team: vi.fn(async () => ({ team: { ...team('t1', 'ops'), invokeScope: 'owner' as const, ownerAccountId: 'u2' }, members: [member('a1', 'bot')], invokers: [] })),
+      team: vi.fn(async () => ({ team: { ...team('t1', 'ops'), invokeScope: 'owner' as const, ownerAccountId: 'u2' }, members: [member('a1', 'bot')], invokers: [], delegates: [] })),
     } as never);
     await openTeam();
     const select = await screen.findByTestId('team-scope-select') as HTMLSelectElement;

@@ -22,6 +22,7 @@ const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admi
   coalesce(c.invoke_scope, 'community') as "invokeScope",
   coalesce(c.credential_scope, 'none') as "credentialScope",
   coalesce((select json_agg(i.account_id order by i.account_id) from agent_invoker i where i.agent_id = a.id), '[]'::json) as invokers,
+  coalesce((select json_agg(d.delegate_id order by d.delegate_id) from agent_owner_delegate d where d.agent_id = a.id), '[]'::json) as delegates,
   coalesce((select json_agg(m.name order by m.name) from agent_mcp_server m where m.agent_id = a.id), '[]'::json) as "mcpServers",
   a.disabled_at is not null as disabled,
   -- 이 목록은 삭제된 것을 아예 빼므로 항상 false 다. 그래도 싣는 이유는 AgentView 가
@@ -181,6 +182,17 @@ export async function validateMcpServers(
     return { code: 'scope_invariant', message: 'personal 자격증명의 MCP 를 붙이려면 credentialScope 가 personal 이어야 한다' };
   }
   return null;
+}
+
+/** 대리 호출자 명단 갱신(073). 멱등. 조건 검사는 호출자(라우트)가 `isEligibleDelegate` 로 먼저 한다. */
+export async function setDelegate(pool: Pool, agentId: string, delegateId: string, present: boolean): Promise<AgentView | null> {
+  if (present) {
+    await pool.query(
+      `insert into agent_owner_delegate (agent_id, delegate_id) values ($1, $2) on conflict do nothing`, [agentId, delegateId]);
+  } else {
+    await pool.query(`delete from agent_owner_delegate where agent_id = $1 and delegate_id = $2`, [agentId, delegateId]);
+  }
+  return getAgent(pool, agentId);
 }
 
 /** invokers 명단 갱신. 멱등 — 이미 있으면 그대로다. 돌려주는 것은 갱신된 뷰다. */
@@ -479,6 +491,8 @@ export async function deleteAgentAccount(
     await client.query(`delete from channel_auto_mention where agent_account_id = $1`, [id]);
     await client.query(`delete from agent_assignment where agent_id = $1`, [id]);
     await client.query(`delete from agent_invoker where agent_id = $1`, [id]);
+    // 대리 명단은 양쪽 다 지운다 — 삭제는 soft delete 라 FK cascade 가 돌지 않는다.
+    await client.query(`delete from agent_owner_delegate where agent_id = $1 or delegate_id = $1`, [id]);
     await client.query(`delete from agent_mcp_server where agent_id = $1`, [id]);
     // 이미 발화된 wake 는 건드리지 않는다 — 그 메시지는 채널에 남아 있다. 아직 오지 않은
     // 것만 취소한다(`delete` 가 아니라 `canceled_at` 인 이유: 이 표는 지운 적이 없고,
