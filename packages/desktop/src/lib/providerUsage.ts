@@ -1,10 +1,9 @@
 /**
  * 계정별 한도 사용률(2026-09-28, 2단계) — 웹뷰 쪽.
  *
- * 호출 순서는 데몬이 정한다(`operator/src/usageChain.ts`): **CLI → (실패하면) API → 로컬 추정.**
+ * 호출 순서는 데몬이 정한다(`operator/src/usageChain.ts`): **CLI → (실패하면) API.**
  * CLI(`claude -p /usage`, `codex app-server` → `account/rateLimits/read`)와 API(`/api/oauth/usage`,
  * `wham/usage`)는 **출처가 같다** — CLI 가 안에서 그 API 를 부른다. 그래서 켜고 끌 것이 없다.
- * 로컬 추정(트랜스크립트 합계, Claude 표)은 위 둘과 무관하게 늘 그려진다.
  */
 import { useCallback, useEffect, useState } from 'react';
 
@@ -12,7 +11,7 @@ import type { ProviderAccountUsage, ProviderUsageSnapshot, ProviderUsageWindow }
 
 export type { ProviderAccountUsage, ProviderUsageSnapshot, ProviderUsageWindow };
 
-/** 폴 간격. 데몬이 계정마다 CLI 를 띄우므로 로컬 추정(10초)보다 길게 — 데몬도 2분 캐시를 둔다. */
+/** 폴 간격. 데몬이 계정마다 CLI 를 띄우므로 길게 — 데몬도 2분 캐시를 둔다. */
 export const PROVIDER_USAGE_POLL_MS = 60_000;
 
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -30,7 +29,7 @@ const COMMAND: Record<ProviderKind, string> = {
 
 /**
  * 폴링한다(`enabled` = 이 빌드에 데몬 표면이 있다). 창이 숨으면 접고 다시 보이면 즉시 한 번 —
- * `ClaudeAccountsSettings` 의 로컬 폴과 같은 규율. 실패해도 마지막 스냅샷은 지우지 않는다.
+ * `AgentsSettings` 의 목록 폴과 같은 규율. 실패해도 마지막 스냅샷은 지우지 않는다.
  */
 export function useProviderUsage(kind: ProviderKind, enabled: boolean): {
   snap: ProviderUsageSnapshot | null;

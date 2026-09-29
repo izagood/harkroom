@@ -99,220 +99,35 @@ describe('목록', () => {
 });
 
 /**
- * 표가 된 뒤의 회귀선(#702). 여기서 지키는 것은 **읽을 수 있다는 사실**이다 — 앞판은
- * 이 숫자들을 라벨용 회색 11px(면과 3.08:1, AA 미달)로 그렸고, 그것이 이 개편의 이유다.
+ * 사용량은 **공급자가 말한 %** 하나다(2026-09-29). 트랜스크립트 토큰 합계로 짐작하던 로컬 추정은
+ * 걷어 냈다 — 되살아나면 같은 물음에 답이 둘이 된다.
  */
-describe('사용량이 읽히는가', () => {
+describe('사용량', () => {
   const NOW = Date.UTC(2026, 8, 9, 12, 0, 0);
-  const HOUR = 3_600_000;
 
-  function usageSnapshot(over: Partial<Record<string, unknown>> = {}) {
-    return {
-      measuredAtMs: NOW,
-      windowMs: 5 * HOUR,
-      accounts: [
-        {
-          pool: 'work', account: 'aria', windowStartMs: NOW - 5 * HOUR,
-          tokens: { input: 5_300_000, output: 1_100_000, cacheRead: 209_100_000, cacheCreation: 0 },
-          responses: 1283, lastUsedAtMs: NOW - HOUR, limitHit: null, unreadableFiles: 0,
-        },
-        {
-          pool: 'work', account: 'cedar', windowStartMs: NOW - 5 * HOUR,
-          tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
-          responses: 0, lastUsedAtMs: NOW - 2 * HOUR,
-          limitHit: { atMs: NOW - HOUR, resetsAtMs: NOW + 2 * HOUR, rateLimitType: 'five_hour' },
-          unreadableFiles: 0,
-        },
-      ],
-      ...over,
-    };
-  }
-
-  it('숫자를 라벨용 회색에 두지 않는다 — 그 색은 면과 3.08:1 로 AA 미달이다', async () => {
-    stubTauri(POOLS_SNAPSHOT, { claude_accounts_usage: usageSnapshot() });
-    render(<ClaudeAccountsSettings />);
-    const cell = await waitFor(() => {
-      const found = screen.getAllByTestId('claude-account-usage').find((el) => el.textContent === '1283');
-      if (!found) throw new Error('아직');
-      return found;
+  it('계정 줄 아래에 5시간·주간 막대를 그린다', async () => {
+    stubTauri(POOLS_SNAPSHOT, {
+      claude_accounts_provider_usage: {
+        measuredAtMs: NOW,
+        accounts: [{
+          account: 'aria', pool: 'work', source: 'cli', fetchedAtMs: NOW,
+          session: { usedPercent: 42, resetsAtMs: null }, weekly: { usedPercent: 7, resetsAtMs: null },
+        }],
+      },
     });
-    // 색을 값으로 고정하지 않고 **금지된 토큰**만 못박는다 — 팔레트가 바뀌어도 이 규율은 산다.
-    expect(cell.className).not.toContain('text-fg-subtle');
-    expect(cell.className).toContain('text-fg');
-    // 열끼리 자리가 맞아야 눈으로 비교된다.
-    expect(cell.className).toContain('tabular-nums');
+    render(<ClaudeAccountsSettings />);
+    const box = await screen.findByTestId('claude-provider-usage-work-aria');
+    expect(box.textContent).toContain('42%');
+    expect(box.textContent).toContain('7%');
   });
 
-  it('열 이름은 풀마다 한 번만 선다 — 계정 줄마다 반복하지 않는다', async () => {
-    stubTauri(POOLS_SNAPSHOT, { claude_accounts_usage: usageSnapshot() });
+  it('트랜스크립트를 세는 옛 경로를 부르지 않고, 토큰 열도 그리지 않는다', async () => {
+    stubTauri();
     render(<ClaudeAccountsSettings />);
     await screen.findByText('aria');
-    // work(2계정) · personal(1계정) 두 풀이니 머리줄은 둘이다. 계정 수(3)가 아니다.
-    expect(screen.getAllByText('Cache')).toHaveLength(2);
-  });
-
-  it('한도 상태를 문장이 아니라 경고 알약으로 그린다', async () => {
-    // 앞판은 이것을 이메일 아래 같은 회색 문장으로 뒀다 — 이 화면에서 가장 결정적인
-    // 사실이 나머지 잡정보와 똑같이 생겼다. 색만 올리면 부족하고 **모양**이 달라야 한다.
-    stubTauri(POOLS_SNAPSHOT, { claude_accounts_usage: usageSnapshot() });
-    render(<ClaudeAccountsSettings />);
-    const pill = await screen.findByText(/Limited — back/);
-    const box = pill.closest('[data-testid="claude-account-state"]');
-    expect(box?.className).toContain('text-warning');
-    expect(box?.className).toContain('bg-warning-surface');
-  });
-
-  it('안 돈 계정에 `0` 을 그리지 않는다 — 잰 적 없음과 구별되어야 한다', async () => {
-    stubTauri(POOLS_SNAPSHOT, { claude_accounts_usage: usageSnapshot() });
-    render(<ClaudeAccountsSettings />);
-    await screen.findByText('cedar');
-    const row = screen.getByTestId('claude-account-work-cedar');
-    expect(row.textContent).toContain('—');
-    expect(row.textContent).not.toMatch(/\b0\b/);
-  });
-
-  it('사용량이 아직 안 왔으면 `—` 가 아니라 `…` 다 — 재는 중과 안 돎은 다른 사실이다', async () => {
-    // 사용량 호출을 영원히 매달아 둔다.
-    stubTauri(POOLS_SNAPSHOT, { claude_accounts_usage: new Promise(() => {}) });
-    render(<ClaudeAccountsSettings />);
-    await screen.findByText('aria');
-    expect(screen.getByTestId('claude-account-work-aria').textContent).toContain('…');
-  });
-
-  it('언제 잰 값인지 말한다 — 안 말하면 안 변하는 숫자가 고장으로 읽힌다', async () => {
-    stubTauri(POOLS_SNAPSHOT, { claude_accounts_usage: usageSnapshot() });
-    render(<ClaudeAccountsSettings />);
-    // `NOW` 는 UTC 12:00 이다. 시각 표기는 실행 환경의 시간대를 따르므로 값을 고정하지
-    // 않고 **시각이 있다는 사실**만 잰다 — 값을 박으면 CI 의 TZ 에 달린 테스트가 된다.
-    await waitFor(() => {
-      expect(screen.getByText(/measured \d{2}:\d{2}/)).toBeTruthy();
-    });
-  });
-
-  it('마지막으로 돈 날이 오늘이 아니면 날짜가 붙는다 — `17:12` 만으로는 어제와 구별되지 않는다', async () => {
-    const base = usageSnapshot();
-    const [aria, cedar] = base.accounts;
-    if (!aria || !cedar) throw new Error('fixture 가 깨졌다');
-    // aria 는 **어제** 마지막으로 돌았고 cedar 는 오늘이다. 실제 화면에서 본 그 모양이다:
-    // 어제 17:12 에 멈춘 계정이 17:00 짜리 화면에서 `17:12` 로 서서, 12분 **뒤** 시각이
-    // "마지막으로 돈 때"로 보였다.
-    const snap = {
-      ...base,
-      accounts: [
-        { ...aria, lastUsedAtMs: NOW - 23 * HOUR },
-        { ...cedar, lastUsedAtMs: NOW - 2 * HOUR },
-      ],
-    };
-    stubTauri(POOLS_SNAPSHOT, { claude_accounts_usage: snap });
-    render(<ClaudeAccountsSettings />);
-    await screen.findByText('aria');
-
-    // 시각 표기는 실행 환경의 시간대를 따르므로 **값을 박지 않는다** — 오늘인 것과
-    // 아닌 것이 서로 다른 모양이라는 사실만 잰다(23시간 차는 어느 시간대에서도 다른 날이다).
-    await waitFor(() => {
-      const cells = screen.getAllByTestId('claude-account-last-used').map((el) => el.textContent ?? '');
-      const yesterday = cells.find((t) => t !== '' && t !== '…' && t !== '—' && !/^\d{2}:\d{2}$/.test(t));
-      const today = cells.find((t) => /^\d{2}:\d{2}$/.test(t));
-      // 하나는 `HH:MM` 이 아니어야 한다(날짜가 붙었다), 하나는 `HH:MM` 그대로여야 한다.
-      expect(yesterday).toBeTruthy();
-      expect(today).toBeTruthy();
-      expect(yesterday).toMatch(/\d{2}:\d{2}$/);
-    });
-  });
-});
-
-describe('사용량을 되풀이해 잰다', () => {
-  const NOW = Date.UTC(2026, 8, 9, 12, 0, 0);
-  const HOUR = 3_600_000;
-
-  function usageOf(responses: number) {
-    return {
-      measuredAtMs: NOW, windowMs: 5 * HOUR,
-      accounts: [{
-        pool: 'work', account: 'aria', windowStartMs: NOW - 5 * HOUR,
-        tokens: { input: 10, output: 10, cacheRead: 10, cacheCreation: 0 },
-        responses, lastUsedAtMs: NOW, limitHit: null, unreadableFiles: 0,
-      }],
-    };
-  }
-
-  /** `claude_accounts_usage` 가 몇 번 불렸나. 폴이 도는지를 재는 유일한 관측이다. */
-  function usageCalls(): number {
-    return calls.filter((c) => c.cmd === 'claude_accounts_usage').length;
-  }
-
-  /**
-   * `document.hidden` 을 갈아끼운다. jsdom 의 그것은 프로토타입의 getter 라
-   * `vi.spyOn` 이 인스턴스에 못 걸린다 — 그래서 인스턴스에 직접 정의한다.
-   */
-  function setHidden(hidden: boolean): void {
-    Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
-  }
-
-  beforeEach(() => {
-    // `shouldAdvanceTime` 은 이 저장소의 폴링 테스트 판례다(`AgentsSettings.test.tsx`) —
-    // 실제 시간도 흐르게 두어 `waitFor` 가 멈추지 않는다.
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    setHidden(false);
-  });
-
-  it('열어 둔 채로 두면 스스로 다시 잰다 — 앞판은 마운트 때 한 번이 전부였다', async () => {
-    stubTauri(POOLS_SNAPSHOT, { claude_accounts_usage: usageOf(1) });
-    render(<ClaudeAccountsSettings />);
-    await waitFor(() => { expect(usageCalls()).toBe(1); });
-
-    await vi.advanceTimersByTimeAsync(10_000);
-    await waitFor(() => { expect(usageCalls()).toBe(2); });
-    await vi.advanceTimersByTimeAsync(10_000);
-    await waitFor(() => { expect(usageCalls()).toBe(3); });
-  });
-
-  it('창이 숨어 있으면 왕복을 접는다 — 안 보는 화면 때문에 디스크를 읽지 않는다', async () => {
-    stubTauri(POOLS_SNAPSHOT, { claude_accounts_usage: usageOf(1) });
-    render(<ClaudeAccountsSettings />);
-    await waitFor(() => { expect(usageCalls()).toBe(1); });
-
-    setHidden(true);
-    await vi.advanceTimersByTimeAsync(35_000);
-    expect(usageCalls()).toBe(1);
-
-    // 다시 보이면 **tick 을 기다리지 않고** 바로 잰다 — 돌아온 사람이 제일 먼저 보는
-    // 것이 낡은 숫자면 이 폴을 넣은 이유가 없다.
-    setHidden(false);
-    document.dispatchEvent(new Event('visibilitychange'));
-    await waitFor(() => { expect(usageCalls()).toBe(2); });
-  });
-
-  it('폴이 실패해도 앞서 잰 값을 지우지 않는다 — 표가 통째로 `…` 로 돌아가면 안 된다', async () => {
-    let attempt = 0;
-    calls = [];
-    vi.stubGlobal('__TAURI_INTERNALS__', {
-      transformCallback: () => 1,
-      invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
-        calls.push({ cmd, args });
-        if (cmd === 'claude_accounts_list') return POOLS_SNAPSHOT;
-        if (cmd === 'claude_accounts_usage') {
-          attempt += 1;
-          if (attempt === 1) return usageOf(1283);
-          throw new Error('daemon is away');
-        }
-        return {};
-      }),
-    });
-    render(<ClaudeAccountsSettings />);
-    await waitFor(() => {
-      expect(screen.getAllByTestId('claude-account-usage').some((el) => el.textContent === '1283')).toBe(true);
-    });
-
-    await vi.advanceTimersByTimeAsync(10_000);
-    // 실패했다는 사실은 말해지고,
-    await waitFor(() => { expect(screen.getByText(/Last refresh failed: daemon is away/)).toBeTruthy(); });
-    // 숫자는 그대로 남는다.
-    expect(screen.getAllByTestId('claude-account-usage').some((el) => el.textContent === '1283')).toBe(true);
+    expect(calls.some((c) => c.cmd === 'claude_accounts_usage')).toBe(false);
+    expect(screen.queryByText('Cache')).toBeNull();
+    expect(screen.queryByText(/transcripts/i)).toBeNull();
   });
 });
 

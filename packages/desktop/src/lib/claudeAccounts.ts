@@ -18,7 +18,6 @@ import type { ClaudePoolsConfig } from '@harkroom/shared/claudePools';
 // **사용량 타입은 베끼지 않는다.** 아래 `ClaudeAccountsSnapshot` 은 데몬의 선언을 손으로
 // 베낀 것인데(이 파일이 생긴 순서 때문이다) 그 결과 필드가 늘면 두 곳을 고쳐야 한다.
 // 새 말은 프로토콜의 한 벌을 그대로 쓴다.
-import type { ClaudeUsageSnapshot } from '@harkroom/shared/daemonProtocol';
 
 /** `claude auth status --json` 에서 UI 가 쓰는 것만. **비밀값은 이 출력에 없다.** */
 export interface ClaudeAuthStatus {
@@ -52,8 +51,6 @@ export interface ClaudeAccountsSnapshot {
   /** 풀 모드인데 뿌리에 남은 평평한 계정. UI 가 이전을 안내하는 근거다. */
   strays: string[];
 }
-
-export type { ClaudeAccountUsage, ClaudeUsageSnapshot } from '@harkroom/shared/daemonProtocol';
 
 /** 로그인 진행 통지. 필드가 상황마다 다르다 — url 만, 또는 done+status. */
 export interface ClaudeLoginEvent {
@@ -101,17 +98,6 @@ export function listClaudeAccounts(): Promise<ClaudeAccountsSnapshot> {
   return call('claude_accounts_list') as Promise<ClaudeAccountsSnapshot>;
 }
 
-/**
- * 계정별 사용량. **목록과 따로 부른다.**
- *
- * 합치지 않은 이유가 둘이다. `list` 는 계정마다 `claude auth status` 를 돌려 느리고, 이쪽은
- * 트랜스크립트 수십 MB 를 훑어 또 느리다 — 하나로 묶으면 설정 화면을 열 때마다 둘 다
- * 기다린다. 그리고 **실패의 뜻이 다르다**: 목록이 실패하면 화면에 그릴 것이 없지만
- * 사용량이 실패해도 계정 목록은 그대로 옳다. 따로 부르면 그 둘을 따로 그릴 수 있다.
- */
-export function claudeAccountsUsage(): Promise<ClaudeUsageSnapshot> {
-  return call('claude_accounts_usage') as Promise<ClaudeUsageSnapshot>;
-}
 
 /**
  * 기본 풀·순서·배정을 한 번에 쓴다. **부분 갱신이 아니다** — 세 값이 서로를 참조하므로

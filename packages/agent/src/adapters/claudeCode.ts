@@ -36,8 +36,7 @@ export const CLAUDE_CODE_ADAPTER: HarnessAdapter = {
   supportedMentionPermissions: ['auto', 'readonly'],
 
   // `<CLAUDE_CONFIG_DIR>/projects/<프로젝트>/<세션id>.jsonl`. `harnessErrors.ts` 가 이
-  // JSONL 을 읽어 마지막 API 에러·기록 성장(정지 판정)을 재고, `claudeUsage.ts`(데몬)가
-  // 같은 파일에서 5시간 창의 토큰과 `quotaLimits` 를 센다.
+  // JSONL 을 읽어 마지막 API 에러·기록 성장(정지 판정)을 잰다.
   transcript: { kind: 'files', dirUnderConfig: 'projects', layout: 'flat', fileName: '<id>.jsonl', parsed: true },
   // 시스템 프롬프트의 `# Memory` 절이 가리키는 자리(2026-09-28 실측).
   fileMemory: { dirUnderConfig: 'projects' },
