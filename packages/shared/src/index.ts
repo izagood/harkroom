@@ -256,6 +256,14 @@ export interface McpServerRow {
  *
  * `model`·`effort` 의 null 은 `AgentConfig` 와 같은 뜻이다 — 'harness 기본값 사용'.
  */
+/**
+ * 멘션 연쇄 상한 설정(078). admin 이 설정 › 에이전트에서 고친다. 범위는
+ * `MENTION_CHAIN_LIMIT_MIN`~`MENTION_CHAIN_LIMIT_MAX`.
+ */
+export interface MentionPolicy {
+  chainLimit: number;
+}
+
 export interface AgentDefaults {
   harness: string;
   model: string | null;
@@ -2598,12 +2606,19 @@ export type AgentSessionState = 'running' | 'ended' | 'runner-offline';
  * 깊이의 정의는 `043_mention_chain_depth.sql` 에 있다: 사람이 쓴 것은 0, 에이전트가 쓴
  * 것은 자기를 부른 메시지의 깊이 + 1.
  *
- * **왜 4인가.** 사람 → A → B → C 까지는 정상적인 위임이다(질문을 받은 A 가 자료를 가진 B
- * 를 부르고, B 가 확인을 위해 C 를 부른다). 그 이상은 실제로 관측된 폭주의 모양이고,
- * 그때 각 고리는 앞의 답을 그대로 다시 던진다. 값을 환경변수로 두지 않는 이유: 이 숫자는
- * 화면 문구("연쇄 깊이 상한 4에 걸렸다")에도 들어가므로 서버·화면이 같은 값을 봐야 한다.
+ * **기본값이다 — 실제 값은 워크스페이스 설정(`mention_policy`, 078)에서 읽는다.** 막힌
+ * 메시지는 그때의 값을 `meta.mentionChainLimit` 에 적으므로 화면은 이 상수가 아니라 그 값을
+ * 그린다(설정을 바꿔도 지난 메시지의 문구는 그때의 사실로 남는다).
+ *
+ * **왜 8인가**(2026-09-29, 처음엔 4). 사람 → A → B → C 까지가 정상적인 위임이라고 보고 4로
+ * 뒀는데, 사람이 작업 관리 에이전트(task_manager) 한 곳에만 지시하고 그 에이전트가 담당을
+ * 부르고 회수하는 흐름에서는 작업 스레드에 사람의 글이 없다. 4면 위임→보고→재위임→보고
+ * 다음 재위임이 막혔다(#harkroom seq 3336). 8이면 한 번의 지시로 3번 반 왕복한다. 그보다
+ * 사람 없이 오래 도는 것은 여전히 사람이 볼 때다.
  */
-export const MENTION_CHAIN_LIMIT = 4;
+export const MENTION_CHAIN_LIMIT = 8;
+export const MENTION_CHAIN_LIMIT_MIN = 1;
+export const MENTION_CHAIN_LIMIT_MAX = 50;
 
 /**
  * 러너가 다룰 줄 아는 개입 능력(#346, 스펙 §5-2 결정 2). `announce` 에 실려 서버가

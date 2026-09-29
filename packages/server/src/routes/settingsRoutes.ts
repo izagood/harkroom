@@ -2,9 +2,10 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import {
-  RUNNABLE_HARNESSES, resolveProjectionUrl, canonicalAvcsBaseUrl, type ProjectionConfigView,
+  MENTION_CHAIN_LIMIT_MAX, MENTION_CHAIN_LIMIT_MIN, RUNNABLE_HARNESSES, resolveProjectionUrl, canonicalAvcsBaseUrl, type ProjectionConfigView,
 } from '@harkroom/shared';
 import { getAgentDefaults, updateAgentDefaults } from '../services/agentDefaults.js';
+import { getMentionPolicy, setMentionPolicy } from '../services/mentionPolicy.js';
 import { getProjectionConfig, setProjectionConfig } from '../services/projectionConfig.js';
 import { recordAudit } from '../audit.js';
 
@@ -77,6 +78,27 @@ export async function registerSettingsRoutes(
     // 에이전트들의 서식을 바꿨나" 가 이 기록의 존재 이유다.
     await recordAudit(pool, {
       action: 'agent.defaults.updated', actorId: req.account!.id, actorHandle: req.account!.handle,
+      detail: { before, after },
+    }, req);
+    return after;
+  });
+
+  /*
+    멘션 연쇄 상한(078). 읽기는 로그인한 누구나다 — 상한은 "왜 아무도 안 왔나"를 설명하는
+    사실이라 에이전트를 관리하지 않는 사람도 볼 수 있어야 한다. 바꾸기만 admin 이다.
+  */
+  app.get('/settings/mention-policy', { preHandler: app.requireAccount }, async () => (
+    getMentionPolicy(pool)
+  ));
+
+  app.put('/settings/mention-policy', { preHandler: app.requireAdmin }, async (req) => {
+    const body = z.object({
+      chainLimit: z.number().int().min(MENTION_CHAIN_LIMIT_MIN).max(MENTION_CHAIN_LIMIT_MAX),
+    }).parse(req.body);
+    const before = await getMentionPolicy(pool);
+    const after = await setMentionPolicy(pool, body);
+    await recordAudit(pool, {
+      action: 'mention.policy.updated', actorId: req.account!.id, actorHandle: req.account!.handle,
       detail: { before, after },
     }, req);
     return after;

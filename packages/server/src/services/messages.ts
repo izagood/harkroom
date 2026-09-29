@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { CHANNEL_MENTION_HANDLE, countsAsReply, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type MessageRow } from '@harkroom/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
+import { getMentionPolicy } from './mentionPolicy.js';
 import { preemptWakesForThread } from './agentWakes.js';
 import { closeDelegationsForReply, outcomesFor } from './delegations.js';
 import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels.js';
@@ -530,7 +531,14 @@ async function mentionDepthFor(
 ): Promise<number> {
   if (!input.authorIsAgent) return 0;
   const rows = (await client.query(
-    `select m.body, m.mention_depth as depth, (a.kind = 'agent') as author_is_agent
+    `select m.body, m.mention_depth as depth, (a.kind = 'agent') as author_is_agent,
+            -- **실제로 나를 깨운 부름만 고리다**(2026-09-29). 본문만 다시 파싱하면 상한에
+            -- 막혔거나(capped) 호출 범위에 거절된(denied) 부름도 "나를 부른 메시지"로 보여,
+            -- 깨운 적 없는 부름이 깊이를 쌓았다. 그 부름으로 inbox 가 생겼는지를 함께 본다.
+            -- thread_reply·wake 같은 사유는 부름이 아니므로 세지 않는다.
+            exists (select 1 from inbox i
+                     where i.message_id = m.id and i.account_id = $3
+                       and i.reason in ('mention', 'dm', 'team_mention', 'team_delegated')) as woke
        from message m join account a on a.id = m.author_id
       where m.channel_id = $1
         -- **스레드 경계를 양쪽 다 지킨다**(2026-09-14).
@@ -549,9 +557,10 @@ async function mentionDepthFor(
         and m.deleted_at is null
       order by m.seq desc
       limit ${DEPTH_SCAN_LIMIT}`,
-    [input.channelId, input.threadRootId],
-  )).rows as { body: string; depth: number; author_is_agent: boolean }[];
+    [input.channelId, input.threadRootId, input.authorId],
+  )).rows as { body: string; depth: number; author_is_agent: boolean; woke: boolean }[];
   for (const row of rows) {
+    if (!row.woke) continue;
     // 나를 부른 **가장 최근** 메시지 하나가 내 앞 고리다 — 그것을 찾으면 멈춘다.
     // 대상은 나 하나뿐이므로 `isAgent` 도 나만 물으면 된다(위에서 이미 에이전트로 걸렀다).
     const { call } = splitMentionCalls(row.body, {
@@ -593,6 +602,8 @@ async function resolveMentionCalls(
   input: { body: string; channelId: string; authorId: string; authorIsAgent: boolean; mentionDepth: number },
 ): Promise<ResolvedMentionCalls> {
   const { authorIsAgent, mentionDepth } = input;
+  // 상한은 워크스페이스 설정이다(078). 에이전트 발화일 때만 읽는다 — 사람은 막히지 않는다.
+  const chainLimit = authorIsAgent ? (await getMentionPolicy(client)).chainLimit : MENTION_CHAIN_LIMIT;
   /**
    * 멘션 정규화(#271). 저장되는 정본은 `<@id>` 다 — 그래야 handle 을 바꿔도 과거 본문을
    * 다시 쓰지 않는다.
@@ -660,7 +671,7 @@ async function resolveMentionCalls(
     부른 것으로 그린다 — 같은 메시지가 두 형식으로 존재하는 순간을 만들지 않는다는
     정규화 주석의 규율과 같다.
   */
-  const chainCapped = authorIsAgent && mentionDepth >= MENTION_CHAIN_LIMIT;
+  const chainCapped = authorIsAgent && mentionDepth >= chainLimit;
 
   /*
     **부름과 지칭을 가른다**(2026-09-09). 규칙과 근거는 `splitMentionCalls` 에 있다:
@@ -814,7 +825,7 @@ async function resolveMentionCalls(
     channelCalled,
     callMeta: {
       ...(cappedHandles.length
-        ? { mentionChainCapped: cappedHandles, mentionChainLimit: MENTION_CHAIN_LIMIT }
+        ? { mentionChainCapped: cappedHandles, mentionChainLimit: chainLimit }
         : {}),
       ...(deniedHandles.length ? { mentionDenied: deniedHandles } : {}),
       ...(refIdsForMeta.length ? { mentionRefs: refIdsForMeta } : {}),
