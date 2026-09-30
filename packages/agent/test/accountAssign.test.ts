@@ -158,6 +158,30 @@ describe('pickAccount', () => {
   });
 });
 
+describe('pickAccount — 같은 로그인은 후보 한 자리 (09-30 qa 실측)', () => {
+  // lychee·lime 은 같은 로그인, plum 은 다른 로그인. 묶지 않으면 상위 둘이 lychee·lime 이라
+  // 무작위를 어떻게 굴려도 plum 이 첫째가 되지 않았다.
+  const usage = [
+    entry('lychee', { signIn: 's1', weekly: 64, weeklyResetH: 2.4, session: 70 }),
+    entry('lime', { signIn: 's1', weekly: 64, weeklyResetH: 2.4, session: 70 }),
+    entry('plum', { signIn: 's2', weekly: 0, weeklyResetH: 26, session: 0 }),
+    entry('acct', { signIn: 's3', weekly: 0, weeklyResetH: 170, session: 0 }),
+  ];
+  const accounts = ['lime', 'lychee', 'plum', 'acct'];
+
+  it('상위 둘은 로그인 묶음 둘이다 — 둘째를 뽑으면 다른 로그인으로 간다', () => {
+    const first = pickAccount(input(usage, { accounts, random: () => 0 }));
+    const second = pickAccount(input(usage, { accounts, random: () => 0.9 }));
+    expect(first.order[0]).toBe('lime'); // 묶음 대표는 풀 순서상 앞선 쪽
+    expect(second.order[0]).toBe('plum');
+  });
+
+  it('묶음의 나머지는 페일오버 꼬리 맨 뒤다 — 빠지지는 않는다', () => {
+    const r = pickAccount(input(usage, { accounts, random: () => 0 }));
+    expect(r.order).toEqual(['lime', 'plum', 'acct', 'lychee']);
+  });
+});
+
 describe('createAccountAssigner', () => {
   const acct = (name: string) => ({ name, configDir: `/x/${name}` });
 
@@ -235,5 +259,22 @@ describe('createAccountAssigner', () => {
     // a 가 먼저지만 감점이 쌓이면 b 로 넘어간다
     expect(firsts[0]).toBe('a');
     expect(firsts).toContain('b');
+  });
+
+  it('current() 로 받은 축을 턴마다 따른다 — 지운 계정은 후보가 아니고 새 계정은 곧바로 후보다', async () => {
+    const root = await rootWith([
+      { ...entry('a', { weekly: 50, weeklyResetH: 10 }), pool: 'work' },
+      { ...entry('b', { weekly: 50, weeklyResetH: 10 }), pool: 'work' },
+      { ...entry('c', { weekly: 0, weeklyResetH: 10 }), pool: 'work' },
+    ]);
+    let lane = [acct('a'), acct('b')];
+    const as = createAccountAssigner({
+      lane: [acct('a'), acct('b')], pool: 'work', root,
+      current: async () => ({ pool: 'work', lane }),
+      pinnedOf: () => null, now: () => NOW, random: () => 0, log: () => {},
+    });
+    expect((await as.laneFor('t1')).map((a) => a?.name)).toEqual(['a', 'b']);
+    lane = [acct('b'), acct('c')]; // a 를 지우고 c 를 더했다
+    expect((await as.laneFor('t2')).map((a) => a?.name)).toEqual(['c', 'b']);
   });
 });

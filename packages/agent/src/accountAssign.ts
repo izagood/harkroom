@@ -124,7 +124,7 @@ function modelWindow(entry: ClaudeUsageEntry, model: string | null | undefined):
  * 계정을 고른다. **순수 함수다** — 파일·시계·난수를 모두 인자로 받는다.
  *
  * 같은 로그인(`signIn`)은 한도를 함께 쓰므로 **한 칸**으로 센다: 묶음 안에서 가장 최근에 읽은
- * 값을 모두가 쓰고, 최근 배정 수도 묶음으로 합친다.
+ * 값을 모두가 쓰고, 최근 배정 수도 묶음으로 합치고, **후보 자리도 하나만 차지한다**(아래 `reps`).
  */
 export function pickAccount(input: PickInput): PickResult {
   const { accounts, usage, pinned, policy, now, model } = input;
@@ -208,7 +208,20 @@ export function pickAccount(input: PickInput): PickResult {
   };
   const eligible = byScore(scored.filter((s) => s.eligible));
   const hot = byScore(scored.filter((s) => !s.eligible));
-  const tail = (first: string): string[] => [...eligible, ...hot].map((s) => s.name).filter((n) => n !== first);
+  // 같은 로그인 묶음은 **후보 한 자리**다(2026-09-30 qa 실측). 묶지 않으면 lychee·lime 처럼 한도를
+  // 함께 쓰는 두 계정이 상위 둘을 모두 차지해 3등(plum)은 영영 뽑히지 않는다 — 둘 중 무엇을 골라도
+  // 같은 한도를 태운다. 묶음마다 앞선 계정 하나가 대표이고, 나머지는 페일오버 꼬리 맨 뒤로 간다
+  // (한도로는 옮길 이유가 없지만, 그 디렉터리만 로그인이 깨졌을 때는 받쳐 줄 수 있다).
+  const seenGroups = new Set<string>();
+  const reps: Scored[] = [];
+  const mates: Scored[] = [];
+  for (const s of [...eligible, ...hot]) {
+    const g = groupOf(s.name);
+    if (seenGroups.has(g)) mates.push(s);
+    else { seenGroups.add(g); reps.push(s); }
+  }
+  const eligibleReps = reps.filter((s) => s.eligible);
+  const tail = (first: string): string[] => [...reps, ...mates].map((s) => s.name).filter((n) => n !== first);
 
   const pin = pinned ? scored.find((s) => s.name === pinned) : undefined;
   if (pin && !pin.mustMove) {
@@ -227,8 +240,9 @@ export function pickAccount(input: PickInput): PickResult {
   }
 
   // 러너끼리는 배정 수를 나누지 않는다 → 상위 둘 가운데 무작위로 흩는다(power-of-two).
-  const pickIdx = eligible.length >= 2 && input.random() >= 0.5 ? 1 : 0;
-  const chosen = eligible[pickIdx]!;
+  // "둘"은 계정이 아니라 **로그인 묶음** 둘이다(위 `reps`).
+  const pickIdx = eligibleReps.length >= 2 && input.random() >= 0.5 ? 1 : 0;
+  const chosen = eligibleReps[pickIdx]!;
   return {
     order: [chosen.name, ...tail(chosen.name)],
     reason: pin ? 'moved' : 'new',
@@ -237,10 +251,16 @@ export function pickAccount(input: PickInput): PickResult {
 }
 
 export interface AccountAssignerDeps {
-  /** 기동 때 읽은 계정 축(풀 순서). `[null]` 이면 풀이 없다 — 손대지 않는다. */
+  /** 계정 축(풀 순서). `[null]` 이면 풀이 없다 — 손대지 않는다. `current` 를 주면 그것이 이긴다. */
   lane: readonly (ClaudeAccount | null)[];
   /** 이 러너의 풀. 평평한 구조면 `null`(usage.json 에서는 `''`). */
   pool: string | null;
+  /**
+   * **지금** 계정 축과 풀(`createLiveAccountLane`). 턴마다 부른다 — 계정을 지우거나 더하거나
+   * pools.json 을 고치면 러너를 다시 띄우지 않아도 다음 배정부터 따른다(2026-09-30). 여기서
+   * 돌려준 축은 이미 디렉터리가 있는 계정만 담고 있어야 한다(`presentAccounts`).
+   */
+  current?: () => Promise<{ pool: string | null; lane: readonly (ClaudeAccount | null)[] }>;
   /** claude-accounts 뿌리 — usage.json 이 여기 있다. */
   root: string;
   /** 스레드에 고정된 계정(`SessionRecord.claudeAccount`). */
@@ -264,9 +284,7 @@ export function createAccountAssigner(deps: AccountAssignerDeps): AccountAssigne
   const now = deps.now ?? Date.now;
   const random = deps.random ?? Math.random;
   const log = deps.log ?? ((line: string) => console.log(line));
-  const accounts = deps.lane.filter((a): a is ClaudeAccount => a !== null);
-  const byName = new Map(accounts.map((a) => [a.name, a]));
-  const poolKey = deps.pool ?? '';
+  const current = deps.current ?? (async () => ({ pool: deps.pool, lane: deps.lane }));
   /** 이 러너가 새로 배정한 기록. 스냅숏이 그 뒤에 읽혔으면 이미 값에 반영됐으므로 세지 않는다. */
   const assigned: { account: string; atMs: number }[] = [];
   /** "풀 전체가 뜨겁다"는 한 번만 알린다 — 풀리면 다시 알릴 수 있게 된다. */
@@ -276,16 +294,16 @@ export function createAccountAssigner(deps: AccountAssignerDeps): AccountAssigne
    * 기준은 **턴마다** 읽는다 — 사람이 설정에서 숫자를 바꾸면 러너를 다시 띄우지 않아도 다음
    * 새 스레드부터 따른다. 파일이 없거나 깨졌으면 기본값이다(러너는 이 파일을 쓰지 않는다).
    */
-  async function readPolicy(): Promise<AssignPolicy> {
+  async function readPolicy(pool: string | null): Promise<AssignPolicy> {
     if (deps.policy) return deps.policy;
     let cfg = null;
     try {
       cfg = parseClaudePoolsConfig(JSON.parse(await readFile(join(deps.root, 'pools.json'), 'utf8')));
     } catch { /* 없다·깨졌다 = 기본값 */ }
-    return { ...DEFAULT_ASSIGN_POLICY, ...resolveAssignThresholds(cfg, deps.pool) };
+    return { ...DEFAULT_ASSIGN_POLICY, ...resolveAssignThresholds(cfg, pool) };
   }
 
-  async function readUsage(): Promise<Map<string, ClaudeUsageEntry>> {
+  async function readUsage(poolKey: string): Promise<Map<string, ClaudeUsageEntry>> {
     let raw: unknown;
     try {
       raw = JSON.parse(await readFile(join(deps.root, CLAUDE_USAGE_FILE), 'utf8'));
@@ -298,10 +316,13 @@ export function createAccountAssigner(deps: AccountAssignerDeps): AccountAssigne
 
   return {
     async laneFor(threadKey, model) {
+      const { pool, lane } = await current();
+      const accounts = lane.filter((a): a is ClaudeAccount => a !== null);
+      const byName = new Map(accounts.map((a) => [a.name, a]));
       // 계정이 하나 이하면 고를 것이 없다.
-      if (accounts.length < 2) return deps.lane;
+      if (accounts.length < 2) return lane;
       const t = now();
-      const [usage, policy] = await Promise.all([readUsage(), readPolicy()]);
+      const [usage, policy] = await Promise.all([readUsage(pool ?? ''), readPolicy(pool)]);
       while (assigned.length && t - assigned[0]!.atMs > ASSIGNMENT_MEMORY_MS) assigned.shift();
       const recent = new Map<string, number>();
       for (const a of assigned) {

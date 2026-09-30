@@ -40,7 +40,7 @@ import { createInteractiveManager, type InteractiveManager } from './interactive
 import { createAttentionLedger } from './attentionLedger.js';
 import { TurnRegistry } from './turnRegistry.js';
 import { MentionQueue } from './mentionQueue.js';
-import { claudeAccountsRoot, loadClaudeAccountLane, presentAccounts } from './claudeAccounts.js';
+import { claudeAccountsRoot, createLiveAccountLane, loadClaudeAccountLane, presentAccounts } from './claudeAccounts.js';
 import { createAccountAssigner } from './accountAssign.js';
 import { syncCodexAuth } from './codexHome.js';
 import { usesXdgHome } from './adapters/index.js';
@@ -302,11 +302,12 @@ const opencodeHome = await ensureOpencodeHome({
 // **러너는 `pools.json` 을 쓰지 않는다.** 읽기만 한다 — 그 파일의 writer 는 데몬 하나이고,
 // 두 번째 writer 가 생기면 lost update 가 조용히 난다(`daemonProtocol.ts` 머리 주석이
 // `sessions.json` 에 대해 적은 것과 같은 근거).
-const lane = await loadClaudeAccountLane({
+const loadLane = () => loadClaudeAccountLane({
   agentId: me.id,
   forcedPool: process.env.HARKROOM_CLAUDE_POOL,
   order: process.env.HARKROOM_CLAUDE_ACCOUNTS,
 });
+const lane = await loadLane();
 const claudeAccounts = lane.accounts;
 // **이름만 적는다** — 이메일·토큰·Keychain 서비스명은 적지 않는다(PAT 규율과 같다).
 console.log(claudeAccounts.length
@@ -322,7 +323,15 @@ const accountLane = claudeAccounts.length ? claudeAccounts : [null];
 // 사실이기 때문이다: 페일오버가 옮기는 머리는 여기 없고, 지금 도는 계정은 턴 줄(#694)이
 // 말한다. codex·gemini 러너가 이것을 보내도 서버가 harness 로 걸러 낸다
 // (`services/claudeLane.ts`) — 러너가 자기 하네스를 폴 루프에서 들고 있지 않기 때문이다.
-const claudeLaneReport = { pool: lane.pool ?? null, accounts: claudeAccounts.map((a) => a.name) };
+//
+// 멘션 턴의 축은 **턴마다 디스크에서 다시 읽는다**(`createLiveAccountLane`, 2026-09-30) — 지운
+// 계정이 배정 후보 자리를 차지해 한 계정만 쓰이던 결함. 그래서 신고값도 폴마다 그 마지막 값에서
+// 만든다(값이 바뀔 때만 서버가 쓴다).
+const liveLane = createLiveAccountLane({ initial: lane, load: loadLane });
+const claudeLaneReport = () => {
+  const now = liveLane.snapshot();
+  return { pool: now.pool, accounts: now.lane.flatMap((a) => (a ? [a.name] : [])) };
+};
 
 // 서버별로 갈리기 전 경로가 남아 있으면 **경고만** 한다 — 자동으로 옮기지 않는다.
 // 코드는 그 디렉터리가 *어느 서버의* 이 handle 것인지 알 방법이 없다(아래 레거시
@@ -415,11 +424,11 @@ interactive = createInteractiveManager({
   // 지운 계정은 따르지 않는다 — 없는 디렉터리로 띄우면 claude 가 그것을 다시 만든다
   // (`presentAccounts` 주석). 그때는 아래 `currentAccount` 로 간다.
   configDirOf: (name) => {
-    const dir = accountLane.find((a) => a?.name === name)?.configDir ?? null;
+    const dir = [...liveLane.snapshot().lane, ...accountLane].find((a) => a?.name === name)?.configDir ?? null;
     return dir && existsSync(dir) ? dir : null;
   },
   currentAccount: async () => {
-    const head = (await presentAccounts(accountLane))[0] ?? null;
+    const head = (await liveLane.current()).lane[0] ?? null;
     return { configDir: head?.configDir ?? null, name: head?.name ?? null };
   },
   operatorBin: config.operatorBin,
@@ -447,16 +456,18 @@ const memoryCache = createMemoryCache({
 const accountAssigner = createAccountAssigner({
   lane: accountLane,
   pool: lane.pool ?? null,
+  current: () => liveLane.current(),
   root: claudeAccountsRoot(),
   pinnedOf: (key) => store.get(key)?.claudeAccount ?? null,
 });
 
 const scheduler = createMentionScheduler({
   harkroom, registry, queue: mentionQueue, heldEntryIds,
-  // **턴마다** 지운 계정을 걸러 낸다(`presentAccounts` — 지운 계정이 되살아나던 결함).
-  accountLane: () => presentAccounts(accountLane),
+  // **턴마다** 축을 다시 읽는다 — 지운 계정은 빠지고 새 계정은 들어온다(`createLiveAccountLane`).
+  accountLane: async () => (await liveLane.current()).lane,
   // 모델은 매 턴 정의에서 읽는다 — 모델별 주간 창(Opus 등)이 있으면 그것까지 본다. 못 읽으면
-  // `weekly` 만 본다(턴은 어차피 정의를 다시 읽는다). 고른 순서에서도 지운 계정은 걸러 낸다.
+  // `weekly` 만 본다(턴은 어차피 정의를 다시 읽는다). 배정기도 같은 축을 받고, 고른 뒤에도
+  // 지운 계정을 한 번 더 거른다(읽은 뒤 턴 사이에 지워질 수 있다).
   laneFor: async (key) => presentAccounts(await accountAssigner.laneFor(
     key, await harkroom.definition().then((d) => d.model, () => null),
   )),
@@ -512,7 +523,7 @@ let backoffMs = 1_000;
 
 while (running) {
   try {
-    const batch = await harkroom.pollInbox(config.pollTimeoutMs, claudeLaneReport);
+    const batch = await harkroom.pollInbox(config.pollTimeoutMs, claudeLaneReport());
     // 이 배치의 메모리 판본 — 사본과 같으면 첫 턴이 메모리를 왕복하지 않는다(`memoryCache.ts`).
     memoryCache.noteRev(batch.memoryRev);
     if (!batch.entries.length) {

@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { claudeAccountsRoot, loadClaudeAccountLane, loadClaudeAccounts, presentAccounts } from '../src/claudeAccounts.js';
+import {
+  claudeAccountsRoot, createLiveAccountLane, loadClaudeAccountLane, loadClaudeAccounts, presentAccounts,
+} from '../src/claudeAccounts.js';
 
 async function fixture(names: string[]): Promise<string> {
   const root = mkdtempSync(join(tmpdir(), 'harkroom-claude-accounts-'));
@@ -235,5 +237,67 @@ describe('presentAccounts — 지운 계정을 턴마다 건너뛴다', () => {
 
   it('풀 미구성 [null] 은 그대로 둔다', async () => {
     expect(await presentAccounts([null])).toEqual([null]);
+  });
+});
+
+describe('createLiveAccountLane — 러너를 다시 띄우지 않고 축을 다시 읽는다 (09-30)', () => {
+  const acct = (name: string) => ({ name, configDir: `/x/${name}` });
+  const names = (lane: ({ name: string } | null)[]) => lane.map((a) => a?.name ?? null);
+
+  function setup(o: { minIntervalMs?: number } = {}) {
+    let t = 0;
+    let disk: { pool: string | null; accounts: ReturnType<typeof acct>[] } | Error =
+      { pool: 'work', accounts: [acct('a'), acct('b')] };
+    const dirs = new Set(['/x/a', '/x/b']);
+    let loads = 0;
+    const lines: string[] = [];
+    const live = createLiveAccountLane({
+      initial: { pool: 'work', accounts: [acct('a'), acct('b')] },
+      load: async () => { loads++; if (disk instanceof Error) throw disk; return disk; },
+      minIntervalMs: o.minIntervalMs ?? 1000,
+      now: () => t,
+      isDir: async (p) => dirs.has(p),
+      log: (l) => lines.push(l),
+    });
+    return {
+      live, lines, dirs,
+      loads: () => loads,
+      tick: (ms: number) => { t += ms; },
+      setDisk: (d: typeof disk) => { disk = d; },
+    };
+  }
+
+  it('지운 계정은 빠지고 새 계정은 들어온다', async () => {
+    const s = setup();
+    expect(names((await s.live.current()).lane)).toEqual(['a', 'b']);
+    s.dirs.delete('/x/a'); s.dirs.add('/x/c');
+    s.setDisk({ pool: 'work', accounts: [acct('b'), acct('c')] });
+    s.tick(1000);
+    expect(names((await s.live.current()).lane)).toEqual(['b', 'c']);
+    expect(names(s.live.snapshot().lane)).toEqual(['b', 'c']);
+    expect(s.lines.some((l) => l.includes('바뀜'))).toBe(true);
+  });
+
+  it('간격 안쪽이면 디스크를 다시 보지 않는다 — 몰린 턴도 한 번만 읽는다', async () => {
+    const s = setup();
+    await Promise.all([s.live.current(), s.live.current(), s.live.current()]);
+    s.tick(500);
+    await s.live.current();
+    expect(s.loads()).toBe(1);
+  });
+
+  it('다시 읽기가 던지면 앞 목록에서 지운 계정만 뺀다 — 턴을 막지 않는다', async () => {
+    const s = setup();
+    await s.live.current();
+    s.setDisk(new Error('HARKROOM_CLAUDE_ACCOUNTS 에 없는 계정이 있다: a'));
+    s.dirs.delete('/x/a');
+    s.tick(1000);
+    expect(names((await s.live.current()).lane)).toEqual(['b']);
+  });
+
+  it('모두 사라지면 [null](시스템 기본)이다', async () => {
+    const s = setup();
+    s.setDisk({ pool: 'work', accounts: [] });
+    expect(names((await s.live.current()).lane)).toEqual([null]);
   });
 });
