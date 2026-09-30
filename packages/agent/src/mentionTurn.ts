@@ -12,7 +12,7 @@ import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs
 import { join } from 'node:path';
 import type { AgentHarness, AgentView, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow } from '@harkroom/shared';
 import type { Me } from './harkroom.js';
-import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, gateNotice, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts } from './prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts, permissionDenialNotice, silentWakeNotice } from './prompt.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, harnessPath, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
 import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readsSessionTranscript, usesTuiForMention, usesXdgHome } from './adapters/index.js';
@@ -22,7 +22,7 @@ import { findCodexSessionId } from './codexSessions.js';
 import { claudeSessionMaterialized } from './claudeSessions.js';
 import { readLastApiError } from './harnessErrors.js';
 import type { AttentionLedger } from './attentionLedger.js';
-import { readTranscriptTurnState, sessionTranscriptGrewSince, sessionTranscriptMtimeMs } from './harnessErrors.js';
+import { readLastAssistantText, readPermissionDenials, readTranscriptTurnState, sessionTranscriptGrewSince, sessionTranscriptMtimeMs, type PermissionDenial } from './harnessErrors.js';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
 import { opencodeDirs } from './opencodeHome.js';
@@ -319,6 +319,16 @@ export interface MentionTurnDeps {
     harness: AgentHarness, sessionId: string | null,
     opts: { configDir?: string | null; sinceMs?: number },
   ) => Promise<{ text: string } | null>;
+  /** 이 턴의 권한 분류기 거부를 읽는다(기본 `readPermissionDenials`). 주입 이유는 `readApiError` 와 같다. */
+  readDenials?: (
+    harness: AgentHarness, sessionId: string | null,
+    opts: { configDir?: string | null; sinceMs?: number },
+  ) => Promise<PermissionDenial[]>;
+  /** 이 턴에서 하네스가 끝내며 남긴 말을 읽는다(기본 `readLastAssistantText`). */
+  readLastSaid?: (
+    harness: AgentHarness, sessionId: string | null,
+    opts: { configDir?: string | null; sinceMs?: number },
+  ) => Promise<string | null>;
 }
 
 /**
@@ -935,11 +945,26 @@ export async function runMentionTurn(
     finished: boolean;
     /** 마지막으로 읽은 기록 꼬리. `null` 은 판정할 수 없다는 뜻이다(읽지 못하는 하네스·파일 없음). */
     tail: 'ended' | 'working' | null;
+    /**
+     * **마지막 발화 확인이 실패했는가**(2026-09-30). 참이면 "말하지 않았다"가 아니라 "모른다"다.
+     *
+     * 09-30 05:26Z 러너 교체 때 옛 러너의 서버 호출이 전부 `MCP error -32001: Request timed out`
+     * 이었다. 그 턴들은 제 MCP 로 스레드에 계속 말하고 있었는데(05:28·05:36·05:40Z), 러너는 그것을
+     * 못 보고 30분 무발화로 다섯 턴을 한꺼번에 실패시켰다. 모르는 것을 침묵으로 세지 않는다.
+     */
+    threadUnreadable: boolean;
+    /** 발화를 확인할 수 없어 무발화 시계를 한 번 미뤘는가. 한 번만 미룬다 — 링크가 영영 안 돌아올 수 있다. */
+    silenceDeferred: boolean;
+    /** 이미 스레드에 알린 권한 거부(`toolUseId`). */
+    deniedSeen: Set<string>;
+    /** 이 턴에 올린 권한 거부 통지 수(`DENIAL_NOTICE_MAX_PER_TURN` 까지). */
+    denialNotices: number;
     cancelReclaim: (() => void) | null; cancelProbe: (() => void) | null; cancelSilence: (() => void) | null;
   } = {
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
     apiError: null, canceledBy: null, stalled: false, awaitingHuman: false, gateNoticed: false,
     lastLifeMs: 0, lastDataAtMs: 0, stalledIdleMs: 0, finished: false, tail: null,
+    threadUnreadable: false, silenceDeferred: false, deniedSeen: new Set(), denialNotices: 0,
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
   };
 
@@ -1148,28 +1173,65 @@ export async function runMentionTurn(
     }
   };
 
+  /**
+   * **권한 분류기 거부를 스레드에 알린다**(2026-09-30). 기록에서 새로 본 거부만 한 통지로 묶어
+   * progress 로 올린다 — 결과 발화가 아니므로 발화로 세지 않는다. 턴마다 상한이 있다(거부는 번진다).
+   * 던지지 않는다: 알리지 못했다고 턴을 죽이지 않는다.
+   */
+  const probeDenials = async (): Promise<void> => {
+    if (end.denialNotices >= DENIAL_NOTICE_MAX_PER_TURN) return;
+    const read = deps.readDenials ?? readPermissionDenials;
+    const all = await read(def.harness, sessionIdForProbe, {
+      configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
+    }).catch(() => [] as PermissionDenial[]);
+    const fresh = all.filter((d) => !end.deniedSeen.has(d.toolUseId));
+    if (fresh.length === 0) return;
+    for (const d of fresh) end.deniedSeen.add(d.toolUseId);
+    end.denialNotices += 1;
+    for (const d of fresh) console.error(`[mentionTurn] ${key}: 권한 거부 — ${d.reason} (${d.tool})`);
+    await deps.harkroom.progress(channelId, permissionDenialNotice(fresh, deps.runnerSecret).slice(0, BODY_LIMIT), anchor)
+      .catch((err: unknown) => {
+        console.error(`[mentionTurn] ${key}: 권한 거부 통지 실패 — ${err instanceof Error ? err.message : String(err)}`);
+      });
+  };
+
   const probeUtterance = (): void => {
     if (end.exited) return;
     const again = (): void => { if (!end.exited) end.cancelProbe = schedule(probeUtterance, probeMs); };
     // 발화는 한 번 보면 다시 묻지 않는다 — 그 뒤로는 기록 꼬리만 본다.
-    const posts = end.spoke
+    //
+    // **발화 확인이 실패해도 기록 꼬리는 본다**(2026-09-30). 전에는 서버 읽기가 던지면 이 주기를
+    // 통째로 건너뛰어, 서버 링크가 끊긴 턴은 `end_turn` 을 해도 끝난 줄 몰랐다 — 기록은 로컬
+    // 디스크라 링크와 무관한데도. 실패는 `null`(모른다)로 넘긴다.
+    const posts: Promise<boolean | null> = end.spoke
       ? Promise.resolve(true)
       : deps.harkroom.readThread(channelId, anchor, turnStartSeq)
-        .then((after) => countOwnPostsSince(after, deps.me.id, turnStartSeq) > 0);
+        .then((after) => countOwnPostsSince(after, deps.me.id, turnStartSeq) > 0)
+        .catch((err: unknown) => {
+          if (!end.threadUnreadable) {
+            console.error(`[mentionTurn] ${key}: 발화 확인 실패(모르는 것으로 둔다) — ${err instanceof Error ? err.message : String(err)}`);
+          }
+          return null;
+        });
     void posts
       .then(async (spoke) => {
         if (end.exited) return;
-        if (spoke) end.spoke = true;
-        if (!end.spoke) {
+        end.threadUnreadable = spoke === null;
+        if (spoke === true) end.spoke = true;
+        await probeDenials();
+        if (end.exited) return;
+        if (spoke === false) {
           // 발화가 없다 — 하네스가 말을 못 하는 이유가 디스크에 있을 수 있다. 끝 판정보다
           // **먼저** 본다: 한도에 걸린 턴을 "말없이 끝났다"로 읽으면 계정을 안 넘긴다.
+          // 모를 때(`null`)는 보지 않는다 — 말한 뒤의 한도를 실패로 읽으면 재시도가 두 번 답한다.
           if (await probeApiError()) return;
         }
         await probeTurnState();
         if (end.exited) return;
         reconsiderEnd();
         // 끝나지 않았고 말도 없다 — 일하는 중인가, 서 있는가. 그것도 디스크가 말해 준다.
-        if (!end.spoke && !end.finished && await probeStall()) return;
+        // 발화를 모를 때는 접지 않는다: 말하고 CI 를 기다리는 턴을 정지로 접으면 재시도가 두 번 답한다.
+        if (spoke === false && !end.spoke && !end.finished && await probeStall()) return;
         again();
       })
       // 관측 실패로 턴을 죽이지 않는다 — 다음 주기에 다시 묻는다.
@@ -1378,11 +1440,20 @@ export async function runMentionTurn(
         // 관찰자가 있으면 재지 않는다: 인터랙티브 턴이 `timeoutMs: 0`(무기한)인 것과 같은
         // 규칙이고, 회수·유예와 한 문장으로 모인다 — 사람이 보고 있으면 러너는 끼어들지 않는다.
         if (usesTui) {
-          end.cancelSilence = schedule(() => {
+          const onSilence = (): void => {
             if (end.exited || end.spoke || end.viewers > 0) return;
+            // **발화를 확인할 수 없으면 한 번 미룬다**(2026-09-30, `threadUnreadable` 주석). 그 사이
+            // 하네스가 `end_turn` 하면 기록 꼬리가 끝을 정한다(로컬이라 링크와 무관하다).
+            if (end.threadUnreadable && !end.silenceDeferred) {
+              end.silenceDeferred = true;
+              console.error(`[mentionTurn] ${key}: 무발화 시계가 찼지만 발화를 확인할 수 없다 — 무발화로 세지 않고 ${deps.turnTimeoutMs}ms 더 본다`);
+              end.cancelSilence = schedule(onSilence, deps.turnTimeoutMs);
+              return;
+            }
             end.silenced = true;
             reclaim();
-          }, deps.turnTimeoutMs);
+          };
+          end.cancelSilence = schedule(onSilence, deps.turnTimeoutMs);
         }
       },
     });
@@ -1411,6 +1482,9 @@ export async function runMentionTurn(
 
   // #144: 에이전트가 직접 message.progress 로 진행 설명을 올리므로, 더 이상 ack seq 를 추적할 필요가 없다.
   // progress 메시지는 kind='progress' 로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
+
+  // 끝나기 직전의 거부는 주기 사이에 떨어질 수 있다 — 한 번 더 훑는다(TUI 가 아니면 여기가 유일하다).
+  await probeDenials();
 
   // #126: 턴 종료 로그 (경과 시간, exitCode, 발화 여부)
   const elapsedMs = (deps.now ?? Date.now)() - turnStartMs;
@@ -1590,7 +1664,10 @@ export async function runMentionTurn(
             // 서 있었나"를 알 수 없어, 통지 시각에서 한도를 빼 턴 시작을 되짚는 산수를 해야
             // 한다. 한도를 함께 남기는 것은 그 값이 손잡이(`AGENT_HARNESS_STALL_MS`)여서다.
             ? `harness 정지 ${end.stalledIdleMs}ms(한도 ${deps.harnessStallMs ?? 10 * 60_000}ms) — 기록이 자라지 않았다(답 없음)`
-            : end.silenced
+            : end.silenced && end.threadUnreadable
+              // 침묵을 **단정하지 않는다** — 러너가 서버를 못 읽었을 뿐, 하네스는 말했을 수 있다.
+              ? `harness 발화 확인 불가 ${deps.turnTimeoutMs * 2}ms — 러너가 서버에서 이 스레드를 읽지 못해 답했는지 모른다(서버 링크 확인)`
+              : end.silenced
               ? `harness 무발화 ${deps.turnTimeoutMs}ms — 답 없이 시간 한도를 넘겼다`
               : `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
     ) as Error & { harnessApiError?: string; harnessStalledMs?: number };
@@ -1687,6 +1764,13 @@ export async function runMentionTurn(
       // 같은 결과다. `harnessTailNotice` 가 이미 1000자로 줄이지만, 상한 판정을 그 함수의
       // 상수에 맡기지 않는다: 여기가 서버 계약을 아는 자리다.
       await deps.harkroom.post(channelId, body.slice(0, BODY_LIMIT), anchor);
+    } else if (postCount === 0 && target.wake) {
+      // **예약으로 깨어난 턴이 다시 깨움만 걸고 말없이 끝났다**(2026-09-30, `silentWakeNotice` 주석).
+      // 대기 줄은 보이지만 "확인은 했다"와 그 이유는 안 보였다 — 한 줄로 남긴다.
+      const lastSaid = await (deps.readLastSaid ?? readLastAssistantText)(def.harness, rec.sessionId, {
+        configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
+      }).catch(() => null);
+      await deps.harkroom.progress(channelId, silentWakeNotice(lastSaid, deps.runnerSecret), anchor);
     }
   } catch (err) {
     console.error(

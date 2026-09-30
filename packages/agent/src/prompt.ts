@@ -69,6 +69,59 @@ export function harnessTailNotice(tail: string, pat: string): string | null {
     : text;
 }
 
+/** 한 줄 요약의 상한. 스레드에 남는 러너 통지는 한눈에 읽혀야 한다. */
+const NOTICE_LINE_MAX_CHARS = 200;
+
+/** 비밀을 가리고 한 줄로 접는다(`harnessTailNotice` 와 같은 가리기 규칙). */
+function oneLine(text: string, pat: string, max = NOTICE_LINE_MAX_CHARS): string {
+  let t = text;
+  if (pat.length > 0) t = t.split(pat).join('(가림)');
+  t = t
+    .replace(/(?:hrkp|murp)_[A-Za-z0-9_-]+/g, '(가림)')
+    .replace(/(Bearer\s+)\S+/gi, '$1(가림)')
+    .replace(/`/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+  return t.length > max ? `${t.slice(0, max)}…` : t;
+}
+
+/**
+ * **예약으로 깨어난 턴이 말없이 끝났다**(2026-09-30).
+ *
+ * 그 턴이 다시 깨움을 걸었으면 `NO_REPLY_NOTICE` 는 나가지 않는다(대기 줄이 보이므로). 그런데
+ * 그 사이 무엇을 확인했는지는 아무 데도 없었다 — 09-30 #task e3ecfdf7·5f5fc126 에서 깨어난 턴이
+ * "새 소식이 없어서 글을 쓰지 않았어"를 터미널에만 남기고 끝났고, 사람은 약속한 보고가 사라진
+ * 것으로 읽었다. 한 줄로 **확인은 했다**는 사실과 하네스가 남긴 이유를 싣는다.
+ *
+ * progress 로 올린다(호출자) — 결과 발화가 아니므로 발화로 세지 않고, 스레드를 `막힘` 으로 칠하지 않는다.
+ */
+export function silentWakeNotice(lastSaid: string | null, pat: string): string {
+  const said = lastSaid === null ? '' : oneLine(lastSaid, pat);
+  return said
+    ? `(예약된 확인 턴이 발화 없이 끝났습니다 — 하네스의 마지막 말: "${said}")`
+    : '(예약된 확인 턴이 발화 없이 끝났습니다)';
+}
+
+/** 한 턴에 권한 거부 통지를 몇 번까지 올리나. 거부는 줄줄이 번진다(09-30 실측: 한 턴에 4건). */
+export const DENIAL_NOTICE_MAX_PER_TURN = 3;
+
+/**
+ * **권한 분류기가 도구 호출을 거부했다**(2026-09-30). 러너가 턴 기록에서 보고 스레드에 올린다.
+ *
+ * 거부는 턴을 죽이지 않고, 거부 문구가 "같은 결과를 다른 도구로 좇지 마라"를 시키므로 에이전트는
+ * 그 사실을 말하지 못한 채 끝나기 쉽다. 사람이 할 일(직접 하기·허용 규칙 넣기)은 이 줄에서 시작한다.
+ */
+export function permissionDenialNotice(
+  denials: ReadonlyArray<{ tool: string; input: string; reason: string }>,
+  pat: string,
+): string {
+  const lines = denials.map((d) => {
+    const what = d.tool === 'Bash' ? d.input : `${d.tool}${d.input ? ` ${d.input}` : ''}`;
+    return `- ${oneLine(d.reason, pat, 120)} — \`${oneLine(what, pat)}\``;
+  });
+  return ['권한 거부(auto mode 분류기) — 이 명령은 실행되지 않았다:', ...lines].join('\n');
+}
+
 /** MAX_ATTEMPTS 를 소진했을 때 채널에 남기는 통지문구(#82). */
 export const FAILURE_NOTICE = '(답변에 실패했습니다 — 운영자 확인이 필요합니다)';
 

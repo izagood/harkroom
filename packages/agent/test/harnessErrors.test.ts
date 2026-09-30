@@ -8,7 +8,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { readLastApiError, readTranscriptTurnState, sessionTranscriptGrewSince } from '../src/harnessErrors.js';
+import { readLastApiError, readLastAssistantText, readPermissionDenials, readTranscriptTurnState, sessionTranscriptGrewSince } from '../src/harnessErrors.js';
 
 /** `isApiErrorMessage` 레코드 한 줄. 실물 세션 파일의 모양을 그대로 쓴다. */
 const rec = (timestamp: string, text: string): string => JSON.stringify({
@@ -240,5 +240,70 @@ describe('readTranscriptTurnState', () => {
     expect(await readTranscriptTurnState('claude-code', 'ffffffff-0000-0000-0000-000000000000', { projectsDir })).toBeNull();
     expect(await readTranscriptTurnState('codex', SID, { projectsDir })).toBeNull();
     expect(await readTranscriptTurnState('claude-code', null, { projectsDir })).toBeNull();
+  });
+});
+
+// 실물 모양(2026-09-30, work/lychee 세션): 거부는 `tool_result`(is_error) 의 문자열 content 로 온다.
+describe('readPermissionDenials', () => {
+  const T0 = Date.parse('2026-09-30T05:00:00.000Z');
+  const at = (s: number) => new Date(T0 + s * 1000).toISOString();
+  const use = (s: number, id: string, command: string) => ({
+    type: 'assistant', timestamp: at(s),
+    message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] },
+  });
+  const denied = (s: number, id: string, reason: string) => ({
+    type: 'user', timestamp: at(s),
+    message: { role: 'user', content: [{
+      type: 'tool_result', tool_use_id: id, is_error: true,
+      content: `Permission for this action was denied by the Claude Code auto mode classifier. Reason: ${reason}. If you have other tasks that don't depend on this action, continue working on those.`,
+    }] },
+  });
+
+  it('거부된 도구 호출을 명령·이유와 짝지어 돌려준다(로컬·서버 분류기 둘 다)', async () => {
+    const projectsDir = await seed([
+      use(1, 't1', 'gh pr merge 949 --squash'), denied(2, 't1', '[Merge Without Review]'),
+      use(3, 't2', 'gh pr merge 356'), denied(4, 't2', 'The server-side auto mode classifier judged this action dangerous (it gave no explanation)'),
+    ]);
+    expect(await readPermissionDenials('claude-code', SID, { projectsDir, sinceMs: T0 })).toEqual([
+      { toolUseId: 't1', tool: 'Bash', input: 'gh pr merge 949 --squash', reason: '[Merge Without Review]' },
+      { toolUseId: 't2', tool: 'Bash', input: 'gh pr merge 356', reason: 'The server-side auto mode classifier judged this action dangerous (it gave no explanation)' },
+    ]);
+  });
+
+  it('이 턴 이전의 거부·평범한 도구 에러·말 속 인용은 세지 않는다', async () => {
+    const projectsDir = await seed([
+      use(-10, 'old', 'gh pr merge 1'), denied(-9, 'old', '[Merge Without Review]'),
+      use(1, 't1', 'false'),
+      { type: 'user', timestamp: at(2), message: { content: [{ type: 'tool_result', tool_use_id: 't1', is_error: true, content: 'Exit code 1' }] } },
+      { type: 'assistant', timestamp: at(3), message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Permission for this action was denied by the Claude Code auto mode classifier. Reason: [X]. If you' }] } },
+    ]);
+    expect(await readPermissionDenials('claude-code', SID, { projectsDir, sinceMs: T0 })).toEqual([]);
+  });
+
+  it('기록을 못 읽는 하네스는 빈 배열이다', async () => {
+    expect(await readPermissionDenials('codex', SID, {})).toEqual([]);
+  });
+});
+
+describe('readLastAssistantText', () => {
+  const T0 = Date.parse('2026-09-30T05:00:00.000Z');
+  const at = (s: number) => new Date(T0 + s * 1000).toISOString();
+  const say = (s: number, stop: string, text: string) => ({
+    type: 'assistant', timestamp: at(s), message: { role: 'assistant', stop_reason: stop, content: [{ type: 'text', text }] },
+  });
+
+  it('이 턴의 마지막 end_turn 말을 돌려준다 — 도구 사이 혼잣말·앞 턴의 말은 아니다', async () => {
+    const projectsDir = await seed([
+      say(-60, 'end_turn', '앞 턴의 말'),
+      say(1, 'tool_use', 'PR 을 본다'),
+      say(2, 'end_turn', '새 소식이 없어서 글을 쓰지 않았어'),
+      { type: 'system', subtype: 'turn_duration', timestamp: at(3) },
+    ]);
+    expect(await readLastAssistantText('claude-code', SID, { projectsDir, sinceMs: T0 })).toBe('새 소식이 없어서 글을 쓰지 않았어');
+  });
+
+  it('이 턴에 끝낸 말이 없으면 null', async () => {
+    const projectsDir = await seed([say(-60, 'end_turn', '앞 턴의 말'), say(1, 'tool_use', '보는 중')]);
+    expect(await readLastAssistantText('claude-code', SID, { projectsDir, sinceMs: T0 })).toBeNull();
   });
 });

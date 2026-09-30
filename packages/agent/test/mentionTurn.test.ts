@@ -3492,3 +3492,146 @@ describe('하네스 정지 감지 (2026-09-09)', () => {
     expect(read).toBe(0);
   }, 20_000);
 });
+
+// ── 말없는 끝·발화 확인 실패·권한 거부를 스레드에 드러낸다 (2026-09-30, harkroom 08d3f0d1) ──────────
+describe('러너가 턴의 사정을 스레드에 드러낸다 (2026-09-30)', () => {
+  /** 진짜 TUI 처럼 회수되면 143 으로, 아니면 버티다 0 으로 끝난다. */
+  function tui(after: () => Promise<void> | void, holdMs = 250) {
+    let killed: string | null = null;
+    return {
+      killed: () => killed,
+      script: async (_plan: TurnPlan, opts: {
+        onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+      }) => {
+        opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+        await after();
+        for (let i = 0; i < holdMs / 5 && killed === null; i += 1) await new Promise((r) => setTimeout(r, 5));
+        return { exitCode: killed ? 143 : 0, timedOut: false, tail: '' };
+      },
+    };
+  }
+  const rewake = (fake: FakeHarkroom) => () => { fake.seedFrom(ME.id, '다음 확인 05:15Z', null).kind = 'wake'; };
+  /** 턴이 뜬 **뒤에** 서버 링크가 끊긴다 — 옛 러너의 모든 호출이 timeout 이었다. */
+  const cutLinkAfterSpawn = (fake: FakeHarkroom) => {
+    const orig = fake.readThread.bind(fake);
+    let cut = false;
+    Object.assign(fake, {
+      readThread: (...a: Parameters<FakeHarkroom['readThread']>) => (cut
+        ? Promise.reject(new Error('MCP error -32001: Request timed out'))
+        : orig(...a)),
+    });
+    return () => { cut = true; };
+  };
+
+  it('깨어난 턴이 다시 깨움만 걸고 말없이 끝나면 한 줄을 남긴다 — 하네스의 마지막 말과 함께(e3ecfdf7)', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge PR 확인해서 보고해');
+    const t = tui(rewake(fake), 1_000);
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 5, readTurnState: async () => 'ended',
+      readLastSaid: async () => '05:01Z 에 이미 보고해서\n다시 올리지 않았어',
+    });
+    runTurn.script = t.script;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION, wake: { reason: 'PR 확인' } });
+    expect(fake.posts.map((p) => p.body)).toEqual([
+      '(예약된 확인 턴이 발화 없이 끝났습니다 — 하네스의 마지막 말: "05:01Z 에 이미 보고해서 다시 올리지 않았어")',
+    ]);
+    // 결과 발화로 세지 않는다 — progress 다.
+    expect(fake.messages.at(-1)?.kind).toBe('progress');
+  });
+
+  it('평범한 멘션 턴이 깨움만 걸고 끝나면 아무것도 더 남기지 않는다 — 대기 줄이 이미 말한다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge CI 끝나면 알려줘');
+    const t = tui(rewake(fake), 1_000);
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 5, readTurnState: async () => 'ended', readLastSaid: async () => '기다린다',
+    });
+    runTurn.script = t.script;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(fake.posts).toEqual([]);
+  });
+
+  it('서버 읽기가 계속 실패해도 end_turn 이면 끝난 턴으로 회수한다 — 실패로 세지 않는다(05:26Z 러너 교체)', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 머지해');
+    const cut = cutLinkAfterSpawn(fake);
+    const t = tui(cut, 1_000);
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 5, turnTimeoutMs: 10_000, readTurnState: async () => 'ended',
+    });
+    runTurn.script = t.script;
+
+    await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })).resolves.toBeDefined();
+    expect(t.killed()).toBe('SIGTERM');
+  });
+
+  it('발화를 확인할 수 없으면 무발화 시계를 한 번 미루고, 그래도 모르면 "확인 불가"로 끝낸다 — 무발화라 단정하지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 머지해');
+    const killedAt: number[] = [];
+    const started = Date.now();
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, turnTimeoutMs: 60, readTurnState: async () => 'working', readTranscriptMtime: async () => Date.now(),
+    });
+    let killed = false;
+    const cut = cutLinkAfterSpawn(fake);
+    runTurn.script = async (_plan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+    }) => {
+      cut();
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: () => { killed = true; killedAt.push(Date.now() - started); } });
+      for (let i = 0; i < 100 && !killed; i += 1) await new Promise((r) => setTimeout(r, 5));
+      return { exitCode: killed ? 143 : 0, timedOut: false, tail: '' };
+    };
+
+    const err = await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })
+      .then(() => null, (e: unknown) => e as Error);
+    expect(killedAt).toHaveLength(1);
+    expect(killedAt[0]).toBeGreaterThanOrEqual(110);   // 한 번 미뤘다(60ms × 2)
+    expect(err?.message).toContain('발화 확인 불가');
+    expect(err?.message).not.toContain('무발화');
+  });
+
+  it('권한 분류기 거부를 스레드에 한 번씩 알린다 — 발화로 세지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge #949 머지해');
+    const denials = [{ toolUseId: 't1', tool: 'Bash', input: 'gh pr merge 949 --squash', reason: '[Merge Without Review]' }];
+    const t = tui(async () => { await new Promise((r) => setTimeout(r, 40)); }, 1_000);
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 5, readTurnState: async () => 'ended', readDenials: async () => denials,
+    });
+    runTurn.script = t.script;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    const bodies = fake.posts.map((p) => p.body);
+    expect(bodies.filter((b) => b.startsWith('권한 거부'))).toEqual([
+      '권한 거부(auto mode 분류기) — 이 명령은 실행되지 않았다:\n- [Merge Without Review] — `gh pr merge 949 --squash`',
+    ]);
+    // 거부 통지는 결과 발화가 아니다 — 침묵은 여전히 침묵으로 남는다.
+    expect(bodies.at(-1)).toBe(NO_REPLY_NOTICE);
+  });
+
+  it('권한 거부 통지는 턴마다 상한이 있다 — 거부는 줄줄이 번진다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 머지해');
+    let n = 0;
+    const denials: { toolUseId: string; tool: string; input: string; reason: string }[] = [];
+    const t = tui(async () => {
+      for (let i = 0; i < 6; i += 1) {
+        denials.push({ toolUseId: `t${n += 1}`, tool: 'mcp__harkroom__message_read', input: '{}', reason: '[Merge Without Review]' });
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    }, 1_000);
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 5, readTurnState: async () => (n >= 6 ? 'ended' : 'working'),
+      readTranscriptMtime: async () => Date.now(), readDenials: async () => [...denials],
+    });
+    runTurn.script = t.script;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(fake.posts.filter((p) => p.body.startsWith('권한 거부'))).toHaveLength(3);
+  });
+});
