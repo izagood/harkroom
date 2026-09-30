@@ -219,6 +219,8 @@ export const en = {
   'operators.confirmDetail': 'This machine cannot run agents until it is registered again. This cannot be undone.',
   'mcpServers.cancel': 'Cancel',
   'operators.cancel': 'Cancel',
+  'settings.saved': '✓ Saved',
+  'settings.saving': 'Saving…',
   'settings.back': 'Back to app',
   'settings.group.personal': 'Personal',
   'settings.group.app': 'App',
@@ -550,12 +552,9 @@ export const en = {
    */
   'defaults.field.modelHint':
     'Leave it empty and the harness picks — Harkroom only learns that choice from the model carried on a message',
-  'defaults.field.applyScope': 'It applies only to agents created after this. Agents that already exist do not change.',
   'defaults.field.loadFailed': 'The defaults did not arrive',
   'defaults.field.loading': 'Loading…',
   'defaults.field.notAdmin': 'Only an admin can set the defaults.',
-  'defaults.field.save': 'Save defaults',
-  'defaults.field.saved': 'Saved',
   'defaults.field.saveFailed': 'The defaults were not saved',
   'defaults.field.subtitle': 'What a newly created agent inherits. Agents that already exist do not change.',
   'defaults.chain.title': 'Mention chain limit',
@@ -563,8 +562,6 @@ export const en = {
   'defaults.chain.hint':
     'When agents keep calling each other without a person, the call at this depth stops reaching other agents. A person speaking, here or in the order that started the turn, resets it.',
   'defaults.chain.range': 'Between {min} and {max}.',
-  'defaults.chain.save': 'Save limit',
-  'defaults.chain.saved': 'Saved',
   'defaults.chain.saveFailed': 'The limit was not saved',
   'defaults.chain.loadFailed': 'The limit did not arrive',
   'defaults.chain.notAdmin': 'Only an admin can change the limit.',

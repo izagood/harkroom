@@ -15,7 +15,8 @@ export function SettingsPage({ section, description, width = 'default', children
   const title = t(navKey(section));
   return (
     /*
-      **폭은 화면이 고른다.** 기본은 `max-w-3xl`(768px) 이고 대부분 그대로다 — 설정 화면
+      **폭은 화면이 고른다.** 기본은 **640px** 이다(UX ⑤ designer 사양 — 768px `max-w-3xl` 이었고,
+      그 폭에서는 라벨과 값이 멀어졌다). 대부분 그대로다 — 설정 화면
       12개 중 11개는 한 줄에 한 필드를 쌓는 스택이라, 더 넓히면 라벨과 값이 멀어져 읽기만
       나빠진다(줄 길이는 좁을수록 낫다는 그 이유).
 
@@ -25,7 +26,7 @@ export function SettingsPage({ section, description, width = 'default', children
       기본값을 바꾸지 않고 갈래를 하나 더 두는 쪽을 고른 이유가 이것이다: 넓혀야 할
       근거가 있는 화면만 넓힌다.
     */
-    <div className={`${width === 'wide' ? 'max-w-6xl' : 'max-w-3xl'} px-10 py-10`}>
+    <div className={`${width === 'wide' ? 'max-w-6xl' : 'max-w-[640px]'} px-10 py-10`}>
       {/*
         **화면 제목단 17px 은 이 자리다.** 24px(`text-2xl`)이었고 4단 밖이었다.
 
@@ -267,5 +268,21 @@ export function Button({ children, onClick, variant = 'secondary', disabled, typ
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * 바로 저장하는 화면의 **저장 상태 한 줄**(UX ⑤). 저장 버튼을 걷어 내면 "눌렀는데 들어갔나" 를
+ * 말할 자리가 이것 하나다 — 도는 중·저장됨·실패를 같은 자리에서 말한다. 실패는 `role="alert"`.
+ */
+export type SaveState = 'idle' | 'saving' | 'saved' | 'failed';
+export function SaveStatus({ state, failedLabel }: { state: SaveState; failedLabel: string }) {
+  const t = useT();
+  if (state === 'idle') return null;
+  if (state === 'failed') return <p role="alert" className="text-meta text-danger">{failedLabel}</p>;
+  return (
+    <p role="status" data-testid="save-status" className={`text-meta ${state === 'saved' ? 'text-success' : 'text-fg-muted'}`}>
+      {state === 'saved' ? t('settings.saved') : t('settings.saving')}
+    </p>
   );
 }

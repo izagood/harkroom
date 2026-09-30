@@ -79,8 +79,10 @@ describe('AgentDefaultsSettings', () => {
     const c = fakeController();
     render(<AgentDefaultsSettings />);
 
-    fireEvent.change(await screen.findByLabelText('기본 model'), { target: { value: '' } });
-    fireEvent.click(screen.getByRole('button', { name: '기본값 저장' }));
+    // 저장 버튼이 없다(UX ⑤) — 모델 칸은 **떠날 때** 저장한다.
+    const model = await screen.findByLabelText('기본 model');
+    fireEvent.change(model, { target: { value: '' } });
+    fireEvent.blur(model);
 
     await waitFor(() => expect(c.updateAgentDefaults).toHaveBeenCalled());
     const patch = c.updateAgentDefaults.mock.calls[0]![0];
@@ -89,11 +91,18 @@ describe('AgentDefaultsSettings', () => {
     expect('model' in patch).toBe(true);
   });
 
-  it('저장하면 저장했다고 말한다 — 눌렀는데 아무 일이 없으면 또 누른다', async () => {
-    fakeController();
+  /**
+   * **바꾸면 바로 저장하고, 저장했다고 말한다**(UX ⑤ M1). 저장 버튼이 없으니 "들어갔나" 를
+   * 말할 자리는 상태 줄 하나다. 하네스는 고르는 순간 저장된다 — opencode 도 고를 수 있다.
+   */
+  it('하네스를 고르면 바로 저장하고 저장됐다고 말한다 — opencode 도 있다', async () => {
+    const c = fakeController();
     render(<AgentDefaultsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: '기본값 저장' }));
-    expect(await screen.findByText('저장했다')).toBeTruthy();
+    fireEvent.click(await screen.findByRole('radio', { name: 'opencode' }));
+    await waitFor(() => expect(c.updateAgentDefaults).toHaveBeenCalled());
+    expect(c.updateAgentDefaults.mock.calls[0]![0].harness).toBe('opencode');
+    expect(await screen.findByText('✓ 저장됨')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '기본값 저장' })).toBeNull();
   });
 
   it('조회가 실패하면 오류를 보인다', async () => {
@@ -128,23 +137,24 @@ describe('AgentDefaultsSettings — 멘션 연쇄 상한', () => {
     render(<AgentDefaultsSettings />);
     const input = await screen.findByLabelText(LABEL) as HTMLInputElement;
     await waitFor(() => expect(input.value).toBe('8'));
-    const button = screen.getByRole('button', { name: '상한 저장' });
-    expect(button).toHaveProperty('disabled', true); // 같은 값이면 보낼 것이 없다
+    // 같은 값이면 보낼 것이 없다 — 떠나도 저장하지 않는다.
+    fireEvent.blur(input);
+    expect(c.updateMentionPolicy).not.toHaveBeenCalled();
     fireEvent.change(input, { target: { value: '12' } });
-    fireEvent.click(button);
+    fireEvent.blur(input);
     await waitFor(() => expect(c.updateMentionPolicy).toHaveBeenCalledWith({ chainLimit: 12 }));
     expect(c.updateAgentDefaults).not.toHaveBeenCalled();
   });
 
-  it('범위 밖이거나 정수가 아니면 저장 버튼이 잠긴다', async () => {
-    fakeController();
+  it('범위 밖이거나 정수가 아니면 떠나도 저장하지 않는다', async () => {
+    const c = fakeController();
     render(<AgentDefaultsSettings />);
     const input = await screen.findByLabelText(LABEL) as HTMLInputElement;
     await waitFor(() => expect(input.value).toBe('8'));
-    const button = screen.getByRole('button', { name: '상한 저장' });
     for (const bad of ['0', '51', '2.5', 'abc', '']) {
       fireEvent.change(input, { target: { value: bad } });
-      expect(button).toHaveProperty('disabled', true);
+      fireEvent.blur(input);
+      expect(c.updateMentionPolicy).not.toHaveBeenCalled();
     }
   });
 
