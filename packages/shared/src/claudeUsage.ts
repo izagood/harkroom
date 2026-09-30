@@ -109,3 +109,20 @@ export function parseClaudeUsageFile(raw: unknown): ClaudeUsageFile {
 export function isUsageFresh(entry: ClaudeUsageEntry, now: number, staleMs: number = CLAUDE_USAGE_STALE_MS): boolean {
   return entry.readAtMs !== null && now - entry.readAtMs <= staleMs;
 }
+
+/**
+ * 배정 점수: 창이 초기화되기 전에 남은 % 를 남은 시간(h)으로 나눈 것 — 초기화 전에 다 쓰려면
+ * 시간당 몇 % 를 써야 하는가. 높을수록 먼저 쓴다(`agent/src/accountAssign.ts`). 러너와 화면이
+ * **같은 식**을 써야 화면의 점수가 러너의 판단과 같은 말을 한다.
+ *
+ * 초기화 시각을 모르면 한 주 전체(168h)로 본다 — 모르는 것을 "곧 초기화된다"로 보면 그 계정에
+ * 몰린다. 초기화 직전 값이 무한대로 튀지 않게 6분을 바닥으로 둔다.
+ */
+export function headroomPerHour(
+  window: ProviderUsageWindow, now: number, penaltyPct: number = 0,
+): number {
+  const hours = window.resetsAtMs === null
+    ? 168
+    : Math.max(0.1, (window.resetsAtMs - now) / 3_600_000);
+  return Math.max(0, 100 - window.usedPercent - penaltyPct) / hours;
+}

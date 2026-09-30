@@ -733,8 +733,8 @@ function readPoolsConfigPayload(payload: unknown): ClaudePoolsConfig | DaemonErr
   if (typeof payload !== 'object' || payload === null) {
     return daemonError('bad-payload', 'payload 가 객체가 아니다');
   }
-  const { defaultPool, order, agents } = payload as {
-    defaultPool?: unknown; order?: unknown; agents?: unknown;
+  const { defaultPool, order, agents, assign } = payload as {
+    defaultPool?: unknown; order?: unknown; agents?: unknown; assign?: unknown;
   };
   if (defaultPool !== null && typeof defaultPool !== 'string') {
     return daemonError('bad-payload', 'defaultPool 이 문자열도 null 도 아니다');
@@ -759,7 +759,16 @@ function readPoolsConfigPayload(payload: unknown): ClaudePoolsConfig | DaemonErr
     }
     outAgents[agentId] = pool;
   }
-  return { defaultPool: defaultPool ?? null, order: outOrder, agents: outAgents };
+  // 배정 기준(C ③)은 **있을 때만** 싣는다 — 이 칸을 모르는 옛 UI 가 보낸 설정은 그대로다. 칸의
+  // 모양은 포트가 정규화한다(틀린 숫자는 기본값으로 떨어질 뿐 풀 이름처럼 위험하지 않다).
+  if (assign === undefined) return { defaultPool: defaultPool ?? null, order: outOrder, agents: outAgents };
+  if (typeof assign !== 'object' || assign === null || Array.isArray(assign)) {
+    return daemonError('bad-payload', 'assign 이 객체가 아니다');
+  }
+  return {
+    defaultPool: defaultPool ?? null, order: outOrder, agents: outAgents,
+    assign: assign as NonNullable<ClaudePoolsConfig['assign']>,
+  };
 }
 
 function readSpawnParams(payload: unknown): SpawnRunnerParams | DaemonError {

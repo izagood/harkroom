@@ -47,6 +47,8 @@ export interface ClaudeAccountsSnapshot {
   mode: 'flat' | 'pools';
   defaultPool: string | null;
   agents: Record<string, string>;
+  /** 풀별 배정 기준(`pools.json` 의 `assign`). 옛 데몬은 싣지 않는다 — 없으면 기본값이다. */
+  assign?: NonNullable<ClaudePoolsConfig['assign']>;
   pools: ClaudePoolView[];
   /** 풀 모드인데 뿌리에 남은 평평한 계정. UI 가 이전을 안내하는 근거다. */
   strays: string[];

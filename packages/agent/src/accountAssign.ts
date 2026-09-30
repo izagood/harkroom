@@ -21,7 +21,14 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
+  DEFAULT_ASSIGN_THRESHOLDS,
+  parseClaudePoolsConfig,
+  resolveAssignThresholds,
+  type ClaudeAssignThresholds,
+} from '@harkroom/shared/claudePools';
+import {
   CLAUDE_USAGE_FILE,
+  headroomPerHour,
   isUsageFresh,
   parseClaudeUsageFile,
   type ClaudeUsageEntry,
@@ -30,16 +37,11 @@ import type { ProviderUsageWindow } from '@harkroom/shared/daemonProtocol';
 
 import type { ClaudeAccount } from './claudeAccounts.js';
 
-/** jaebin 이 고른 숫자(2026-09-29 12:09Z). 바꾸려면 ③ 의 풀 정책 설정을 거친다. */
-export interface AssignPolicy {
-  /** 새 배정에서 뺀다: 5시간 ≥ 이 값. */
-  newSessionPct: number;
-  /** 새 배정에서 뺀다: 주간 ≥ 이 값. */
-  newWeeklyPct: number;
-  /** 고정된 스레드를 옮긴다: 5시간 ≥ 이 값. */
-  moveSessionPct: number;
-  /** 고정된 스레드를 옮긴다: 주간 ≥ 이 값. */
-  moveWeeklyPct: number;
+/**
+ * 기준 % 넷은 `pools.json` 의 풀별 `assign` 에서 온다(설정 › Claude 계정, 비면 jaebin 이 고른
+ * 85/97·95/98). 나머지 둘은 사람이 만질 값이 아니라 상수다.
+ */
+export interface AssignPolicy extends ClaudeAssignThresholds {
   /** 스냅숏을 읽은 뒤 이 러너가 배정한 스레드마다 주간 남은 양에서 뺀다(%p). */
   perAssignPenaltyPct: number;
   /** 점수가 1등의 이 비율 안쪽이면 동점으로 보고 5시간 사용률이 낮은 쪽을 앞에 둔다. */
@@ -47,21 +49,10 @@ export interface AssignPolicy {
 }
 
 export const DEFAULT_ASSIGN_POLICY: AssignPolicy = {
-  newSessionPct: 85,
-  newWeeklyPct: 97,
-  moveSessionPct: 95,
-  moveWeeklyPct: 98,
+  ...DEFAULT_ASSIGN_THRESHOLDS,
   perAssignPenaltyPct: 2,
   tieRatio: 0.1,
 };
-
-/**
- * 주간 창의 초기화 시각을 모를 때 쓰는 남은 시간. 한 주 전체로 본다 — 모르는 것을 "곧
- * 초기화된다"로 보면 그 계정에 몰린다.
- */
-const UNKNOWN_RESET_HOURS = 168;
-/** 초기화 직전 계정의 점수가 무한대로 튀지 않게 막는 바닥(6분). */
-const MIN_HOURS = 0.1;
 
 export type PickReason =
   /** 고정된 계정을 그대로 쓴다. */
@@ -168,11 +159,9 @@ export function pickAccount(input: PickInput): PickResult {
     const binding = mw && mw.usedPercent > e.weekly.usedPercent ? mw : e.weekly;
     const weeklyPct = binding.usedPercent;
     const sessionPct = e.session?.usedPercent ?? null;
-    const hours = binding.resetsAtMs === null
-      ? UNKNOWN_RESET_HOURS
-      : Math.max(MIN_HOURS, (binding.resetsAtMs - now) / 3_600_000);
     const penalty = (groupAssigned.get(g) ?? 0) * policy.perAssignPenaltyPct;
-    const score = Math.max(0, 100 - weeklyPct - penalty) / hours;
+    // 화면(설정 › Claude 계정)과 **같은 식**이다 — shared 에 둔 이유.
+    const score = headroomPerHour(binding, now, penalty);
     const sessionHot = sessionPct !== null && sessionPct >= policy.newSessionPct;
     const weeklyHot = weeklyPct >= policy.newWeeklyPct;
     const unblock = Math.max(
@@ -256,6 +245,7 @@ export interface AccountAssignerDeps {
   root: string;
   /** 스레드에 고정된 계정(`SessionRecord.claudeAccount`). */
   pinnedOf(threadKey: string): string | null;
+  /** 주면 `pools.json` 을 읽지 않고 이것을 쓴다(테스트). */
   policy?: AssignPolicy;
   now?: () => number;
   random?: () => number;
@@ -271,7 +261,6 @@ export interface AccountAssigner {
 const ASSIGNMENT_MEMORY_MS = 15 * 60 * 1000;
 
 export function createAccountAssigner(deps: AccountAssignerDeps): AccountAssigner {
-  const policy = deps.policy ?? DEFAULT_ASSIGN_POLICY;
   const now = deps.now ?? Date.now;
   const random = deps.random ?? Math.random;
   const log = deps.log ?? ((line: string) => console.log(line));
@@ -282,6 +271,19 @@ export function createAccountAssigner(deps: AccountAssignerDeps): AccountAssigne
   const assigned: { account: string; atMs: number }[] = [];
   /** "풀 전체가 뜨겁다"는 한 번만 알린다 — 풀리면 다시 알릴 수 있게 된다. */
   let allHotNoticed = false;
+
+  /**
+   * 기준은 **턴마다** 읽는다 — 사람이 설정에서 숫자를 바꾸면 러너를 다시 띄우지 않아도 다음
+   * 새 스레드부터 따른다. 파일이 없거나 깨졌으면 기본값이다(러너는 이 파일을 쓰지 않는다).
+   */
+  async function readPolicy(): Promise<AssignPolicy> {
+    if (deps.policy) return deps.policy;
+    let cfg = null;
+    try {
+      cfg = parseClaudePoolsConfig(JSON.parse(await readFile(join(deps.root, 'pools.json'), 'utf8')));
+    } catch { /* 없다·깨졌다 = 기본값 */ }
+    return { ...DEFAULT_ASSIGN_POLICY, ...resolveAssignThresholds(cfg, deps.pool) };
+  }
 
   async function readUsage(): Promise<Map<string, ClaudeUsageEntry>> {
     let raw: unknown;
@@ -299,7 +301,7 @@ export function createAccountAssigner(deps: AccountAssignerDeps): AccountAssigne
       // 계정이 하나 이하면 고를 것이 없다.
       if (accounts.length < 2) return deps.lane;
       const t = now();
-      const usage = await readUsage();
+      const [usage, policy] = await Promise.all([readUsage(), readPolicy()]);
       while (assigned.length && t - assigned[0]!.atMs > ASSIGNMENT_MEMORY_MS) assigned.shift();
       const recent = new Map<string, number>();
       for (const a of assigned) {

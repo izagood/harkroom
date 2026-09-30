@@ -22,7 +22,7 @@ const IDENTITY = { pid: 1, startedAtMs: 0, entryPath: '/x', appVersion: '0', lau
 function fakePort(over: Partial<ClaudeAccountsPort> = {}): ClaudeAccountsPort {
   return {
     list: vi.fn(async () => ({
-      root: '/r', mode: 'flat' as const, defaultPool: null, agents: {}, pools: [], strays: [],
+      root: '/r', mode: 'flat' as const, defaultPool: null, agents: {}, assign: {}, pools: [], strays: [],
     })),
     providerUsage: vi.fn(async () => ({ measuredAtMs: 0, accounts: [] })),
     measureUsage: vi.fn(async () => ({ fetchedAtMs: 0, session: null, weekly: null })),

@@ -83,6 +83,8 @@ export interface ClaudeAccountsSnapshot {
   mode: 'flat' | 'pools';
   defaultPool: string | null;
   agents: Record<string, string>;
+  /** 풀별 배정 기준(C ③). 빈 칸은 `DEFAULT_ASSIGN_THRESHOLDS`. */
+  assign: NonNullable<ClaudePoolsConfig['assign']>;
   pools: ClaudePoolView[];
   /**
    * 풀 모드인데 뿌리에 남아 있는 **평평한 계정**. 사용자가 풀을 만든 순간 이것들은 계정
@@ -401,7 +403,10 @@ async function readPoolsConfig(root: string): Promise<ClaudePoolsConfig | null> 
  */
 async function writePoolsConfig(root: string, cfg: ClaudePoolsConfig): Promise<void> {
   const tmpPath = `${poolsConfigPath(root)}.tmp-${randomUUID()}`;
-  await writeFile(tmpPath, `${JSON.stringify(cfg, null, 2)}\n`, { mode: 0o600 });
+  // 빈 `assign` 은 쓰지 않는다 — 선택 칸이라 없음과 `{}` 가 같은 뜻이고, 파일을 옛 모양 그대로 둔다.
+  const { assign, ...rest } = cfg;
+  const out = assign && Object.keys(assign).length ? { ...rest, assign } : rest;
+  await writeFile(tmpPath, `${JSON.stringify(out, null, 2)}\n`, { mode: 0o600 });
   await rename(tmpPath, poolsConfigPath(root));
 }
 
@@ -425,6 +430,8 @@ export interface ClaudeAccountsLayout {
   mode: 'flat' | 'pools';
   defaultPool: string | null;
   agents: Record<string, string>;
+  /** 풀별 배정 기준(`pools.json` 의 `assign`). 평평한 구조면 비어 있다. */
+  assign: NonNullable<ClaudePoolsConfig['assign']>;
   strays: string[];
   /** 계정이 **없는 풀도 들어 있다** — 빈 풀을 화면에서 지우면 방금 만든 풀이 사라진다. */
   pools: { name: string; accounts: ClaudeAccountDir[] }[];
@@ -439,7 +446,7 @@ export async function readClaudeAccountsLayout(root: string): Promise<ClaudeAcco
     // 평평한 구조. 뿌리의 하위 디렉터리가 계정이고, 이름 없는 풀 하나로 보여 준다.
     const accounts = await dirsOf(root);
     return {
-      root, mode: 'flat', defaultPool: null, agents: {},
+      root, mode: 'flat', defaultPool: null, agents: {}, assign: {},
       pools: accounts.length ? [{ name: '', accounts }] : [],
       strays: [],
     };
@@ -455,7 +462,9 @@ export async function readClaudeAccountsLayout(root: string): Promise<ClaudeAcco
     if (await looksLikeAccount(dir)) { strays.push(name); continue; }
     pools.push({ name, accounts: await dirsOf(dir) });
   }
-  return { root, mode: 'pools', defaultPool: cfg.defaultPool, agents: cfg.agents, pools, strays };
+  return {
+    root, mode: 'pools', defaultPool: cfg.defaultPool, agents: cfg.agents, assign: cfg.assign ?? {}, pools, strays,
+  };
 }
 
 export function createClaudeAccountsPort(opts: {
@@ -527,6 +536,7 @@ export function createClaudeAccountsPort(opts: {
         mode: layout.mode,
         defaultPool: layout.defaultPool,
         agents: layout.agents,
+        assign: layout.assign,
         pools,
         strays: layout.strays,
       };
@@ -552,6 +562,9 @@ export function createClaudeAccountsPort(opts: {
       // **정규화에서 이름이 떨어져 나가면 던진다.** 조용히 버리면 UI 가 쓴 것과 디스크가
       // 갈리고, 사용자는 "설정했는데 안 먹었다"를 보게 된다(spec §6-2 — 웹뷰를 신뢰하지 않는다).
       const norm = parseClaudePoolsConfig(cfg);
+      // 배정 기준(C ③)을 **모르는 호출자**(옛 UI)가 순서만 바꿔 쓸 때 기준이 지워지면 안 된다 —
+      // 칸이 없으면 디스크에 있던 것을 그대로 둔다. 비우려면 `assign: {}` 를 보낸다.
+      if (cfg.assign === undefined) norm.assign = (await readPoolsConfig(root))?.assign ?? {};
       if (norm.defaultPool !== (cfg.defaultPool ?? null)) {
         throw new Error(`defaultPool 이 문법에 맞지 않는다: ${JSON.stringify(cfg.defaultPool)}`);
       }
