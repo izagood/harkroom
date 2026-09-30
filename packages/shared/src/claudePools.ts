@@ -34,6 +34,57 @@ export interface ClaudePoolsConfig {
   order: Record<string, string[]>;
   /** 에이전트 계정 id → 풀 이름. 배정이 없는 에이전트는 여기 없다. */
   agents: Record<string, string>;
+  /**
+   * 풀별 계정 배정 기준(2026-09-29 C ③). 없는 풀·없는 칸은 `DEFAULT_ASSIGN_THRESHOLDS` 를 쓴다.
+   * **선택 필드다** — 이 칸을 모르는 옛 데몬·UI 가 쓴 파일도 그대로 읽힌다.
+   */
+  assign?: Record<string, Partial<ClaudeAssignThresholds>>;
+}
+
+/**
+ * 러너가 새 스레드에 계정을 고를 때(`agent/src/accountAssign.ts`)의 기준 %. 5시간·주간 창의
+ * 사용률이 이 값 **이상**이면 그렇게 한다.
+ */
+export interface ClaudeAssignThresholds {
+  /** 새 배정에서 뺀다: 5시간 창. */
+  newSessionPct: number;
+  /** 새 배정에서 뺀다: 주간 창. */
+  newWeeklyPct: number;
+  /** 이미 고정된 스레드를 옮긴다: 5시간 창. 옮기면 세션을 잃으므로 새 배정 기준보다 높다. */
+  moveSessionPct: number;
+  /** 이미 고정된 스레드를 옮긴다: 주간 창. */
+  moveWeeklyPct: number;
+}
+
+/** jaebin 이 고른 숫자(2026-09-29 12:09Z). */
+export const DEFAULT_ASSIGN_THRESHOLDS: ClaudeAssignThresholds = {
+  newSessionPct: 85,
+  newWeeklyPct: 97,
+  moveSessionPct: 95,
+  moveWeeklyPct: 98,
+};
+
+const THRESHOLD_KEYS = ['newSessionPct', 'newWeeklyPct', 'moveSessionPct', 'moveWeeklyPct'] as const;
+
+/** 1~100 사이의 수만 인정한다. 틀린 칸만 버린다(모듈 규율). */
+function thresholds(raw: unknown): Partial<ClaudeAssignThresholds> | null {
+  if (!isRecord(raw)) return null;
+  const out: Partial<ClaudeAssignThresholds> = {};
+  for (const k of THRESHOLD_KEYS) {
+    const v = raw[k];
+    if (typeof v === 'number' && Number.isFinite(v) && v >= 1 && v <= 100) out[k] = v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** 이 풀의 기준(빈 칸은 기본값). 옮기기 기준이 새 배정 기준보다 낮으면 새 배정 기준으로 올린다. */
+export function resolveAssignThresholds(cfg: ClaudePoolsConfig | null, pool: string | null): ClaudeAssignThresholds {
+  const own = (pool && cfg?.assign?.[pool]) || {};
+  const t = { ...DEFAULT_ASSIGN_THRESHOLDS, ...own };
+  // 옮기기가 새 배정보다 먼저 걸리면, 새로 배정한 계정을 곧바로 옮기는 왕복이 생긴다.
+  t.moveSessionPct = Math.max(t.moveSessionPct, t.newSessionPct);
+  t.moveWeeklyPct = Math.max(t.moveWeeklyPct, t.newWeeklyPct);
+  return t;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -52,7 +103,7 @@ function name(v: unknown): string | null {
  * 인정한 모양이고, 읽는 쪽이 두 번째 방어를 따로 짤 필요가 없다.
  */
 export function parseClaudePoolsConfig(raw: unknown): ClaudePoolsConfig {
-  if (!isRecord(raw)) return { defaultPool: null, order: {}, agents: {} };
+  if (!isRecord(raw)) return { defaultPool: null, order: {}, agents: {}, assign: {} };
 
   const order: Record<string, string[]> = {};
   if (isRecord(raw.order)) {
@@ -72,7 +123,15 @@ export function parseClaudePoolsConfig(raw: unknown): ClaudePoolsConfig {
     }
   }
 
-  return { defaultPool: name(raw.defaultPool), order, agents };
+  const assign: Record<string, Partial<ClaudeAssignThresholds>> = {};
+  if (isRecord(raw.assign)) {
+    for (const [pool, t] of Object.entries(raw.assign)) {
+      const parsed = name(pool) === null ? null : thresholds(t);
+      if (parsed) assign[pool] = parsed;
+    }
+  }
+
+  return { defaultPool: name(raw.defaultPool), order, agents, assign };
 }
 
 /**

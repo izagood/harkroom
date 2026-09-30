@@ -3,11 +3,13 @@ import { describe, expect, it } from 'vitest';
 import {
   CLAUDE_POOL_NAME_PATTERN,
   orderAccounts,
+  DEFAULT_ASSIGN_THRESHOLDS,
   parseClaudePoolsConfig,
+  resolveAssignThresholds,
   resolvePoolName,
 } from '../src/claudePools.js';
 
-const EMPTY = { defaultPool: null, order: {}, agents: {} };
+const EMPTY = { defaultPool: null, order: {}, agents: {}, assign: {} };
 
 describe('parseClaudePoolsConfig', () => {
   it('빈 값·쓰레기 값에서 빈 설정을 낸다 — 던지지 않는다', () => {
@@ -24,7 +26,7 @@ describe('parseClaudePoolsConfig', () => {
       defaultPool: 'work',
       order: { work: ['aria', 'cedar'] },
       agents: { a1: 'personal' },
-    })).toEqual({ defaultPool: 'work', order: { work: ['aria', 'cedar'] }, agents: { a1: 'personal' } });
+    })).toEqual({ defaultPool: 'work', order: { work: ['aria', 'cedar'] }, agents: { a1: 'personal' }, assign: {} });
   });
 
   it('모양이 틀린 항목만 버리고 나머지는 살린다', () => {
@@ -102,5 +104,21 @@ describe('CLAUDE_POOL_NAME_PATTERN', () => {
     for (const ok of ['work', 'personal-2', 'a', 'x'.repeat(32)]) {
       expect(CLAUDE_POOL_NAME_PATTERN.test(ok)).toBe(true);
     }
+  });
+});
+
+describe('assign (풀별 배정 기준)', () => {
+  it('틀린 칸·틀린 풀 이름만 버린다', () => {
+    const cfg = parseClaudePoolsConfig({
+      assign: { work: { newSessionPct: 70, newWeeklyPct: 'x', moveWeeklyPct: 101 }, 'Bad Name': { newSessionPct: 50 }, empty: {} },
+    });
+    expect(cfg.assign).toEqual({ work: { newSessionPct: 70 } });
+  });
+
+  it('빈 칸은 기본값, 옮기기 기준은 새 배정 기준 아래로 내려가지 않는다', () => {
+    expect(resolveAssignThresholds(null, 'work')).toEqual(DEFAULT_ASSIGN_THRESHOLDS);
+    const cfg = parseClaudePoolsConfig({ assign: { work: { newSessionPct: 96, moveSessionPct: 90 } } });
+    expect(resolveAssignThresholds(cfg, 'work')).toMatchObject({ newSessionPct: 96, moveSessionPct: 96, newWeeklyPct: 97 });
+    expect(resolveAssignThresholds(cfg, 'other')).toEqual(DEFAULT_ASSIGN_THRESHOLDS);
   });
 });

@@ -9,7 +9,7 @@
  * 파괴적 연산에 확인을 두는지, 러너 반영을 안내하는지, 표면이 없을 때 정직한지.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import { ClaudeAccountsSettings } from './ClaudeAccountsSettings';
 
@@ -336,6 +336,55 @@ describe('정체 표시', () => {
 });
 
 describe('풀 만들기', () => {
+  it('풀의 배정 기준을 보이고, 고치면 기본값과 다른 칸만 보낸다 (C ③)', async () => {
+    stubTauri({ ...POOLS_SNAPSHOT, assign: { work: { newSessionPct: 70 } } });
+    render(<ClaudeAccountsSettings />);
+    const row = await screen.findByTestId('claude-assign-work');
+    expect(row.textContent).toContain('70% (5-hour)');
+    expect(row.textContent).toContain('97% (weekly)');
+    // 계정이 하나뿐인 풀에는 고를 것이 없으므로 그리지 않는다
+    expect(screen.queryByTestId('claude-assign-personal')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /edit assignment limits for work/i }));
+    fireEvent.change(screen.getByLabelText(/skip for new threads at weekly % \(work\)/i), { target: { value: '90' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => {
+      const call = calls.find((c) => c.cmd === 'claude_accounts_configure');
+      const config = call?.args?.config as { assign?: unknown } | undefined;
+      expect(config?.assign).toEqual({ work: { newSessionPct: 70, newWeeklyPct: 90 } });
+    });
+  });
+
+  it('옛 데몬(assign 없음)에게는 기준 칸을 보내지 않는다 — 디스크의 값을 지우지 않게', async () => {
+    stubTauri();
+    render(<ClaudeAccountsSettings />);
+    await screen.findByText('work');
+    fireEvent.click(screen.getByRole('button', { name: /new pool/i }));
+    fireEvent.change(screen.getByLabelText(/pool name/i), { target: { value: 'client-b' } });
+    fireEvent.click(screen.getByRole('button', { name: /^create$/i }));
+    await waitFor(() => expect(calls.some((c) => c.cmd === 'claude_accounts_configure')).toBe(true));
+    const config = calls.find((c) => c.cmd === 'claude_accounts_configure')!.args!.config as Record<string, unknown>;
+    expect(config).not.toHaveProperty('assign');
+  });
+
+  it('계정 줄에 러너와 같은 점수와 새 배정 제외 여부를 보인다', async () => {
+    const NOW = Date.UTC(2026, 8, 29, 12);
+    stubTauri(POOLS_SNAPSHOT, {
+      claude_accounts_provider_usage: {
+        measuredAtMs: NOW,
+        accounts: [{
+          account: 'aria', pool: 'work', source: 'cli', fetchedAtMs: NOW,
+          session: { usedPercent: 90, resetsAtMs: null }, weekly: { usedPercent: 50, resetsAtMs: NOW + 10 * 3_600_000 },
+        }],
+      },
+    });
+    render(<ClaudeAccountsSettings />);
+    const box = await screen.findByTestId('claude-provider-usage-work-aria');
+    const score = within(box).getByTestId('claude-assign-score');
+    // (100 − 50) ÷ 10h = 5.00
+    expect(score.textContent).toContain('5.00%/h');
+    expect(score.textContent).toContain('skipped for new threads');
+  });
+
   it('새 풀 이름을 설정 쓰기로 보낸다 — 그것이 생성 경로다', async () => {
     stubTauri();
     render(<ClaudeAccountsSettings />);

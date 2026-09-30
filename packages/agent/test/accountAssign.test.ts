@@ -186,6 +186,24 @@ describe('createAccountAssigner', () => {
     expect(lines.some((l) => l.includes('t2') && l.includes('새 스레드'))).toBe(true);
   });
 
+  it('pools.json 의 풀별 기준을 턴마다 읽는다', async () => {
+    const root = await rootWith([
+      { ...entry('a', { session: 70, weekly: 10 }), pool: 'work' },
+      { ...entry('b', { session: 10, weekly: 60 }), pool: 'work' },
+    ]);
+    const as = createAccountAssigner({
+      lane: [acct('a'), acct('b')], pool: 'work', root,
+      pinnedOf: () => null, now: () => NOW, random: () => 0, log: () => {},
+    });
+    // 기본(85): a 가 점수로 앞선다
+    expect((await as.laneFor('t1'))[0]!.name).toBe('a');
+    // 새 배정 5h 기준을 60 으로 내리면 a(70%) 는 빠진다 — 러너를 다시 띄우지 않고
+    await writeFile(join(root, 'pools.json'), JSON.stringify({
+      defaultPool: 'work', order: {}, agents: {}, assign: { work: { newSessionPct: 60 } },
+    }));
+    expect((await as.laneFor('t2'))[0]!.name).toBe('b');
+  });
+
   it('usage.json 이 없으면 기동 때 축 그대로다', async () => {
     const root = await rootWith(null);
     const lane = [acct('a'), acct('b')];
