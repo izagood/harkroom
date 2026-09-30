@@ -311,7 +311,7 @@ const PARTICLES = ['에서', '으로', '에게', '까지', '부터', '처럼', '
  * 뗀 어간은 `%어간%` 부분 일치라 곧 "어간 앞부분 맞추기" 다.
  */
 const ENDINGS = [
-  '했습니다', '합니다', '해주세요', '해달라', '해줘', '해라', '해서', '해야', '해도', '했다', '했고', '했는', '했던',
+  '해야해', '해야지', '해야겠', '했습니다', '합니다', '해주세요', '해달라', '해줘', '해라', '해서', '해야', '해도', '했다', '했고', '했는', '했던',
   '하고', '하다', '한다', '하는', '하면', '하지', '하게', '하려', '된다', '됐다', '되는', '되어', '되면',
   '해', '했', '할', '한', '돼', '됨',
 ];
@@ -328,9 +328,27 @@ export const RECALL_STOPWORDS: ReadonlySet<string> = new Set([
   '스레드', '채널', '메시지', '에이전트', '사람', '이번', '지금', '다음', '먼저', '그리고', '그러니', '그래서',
   '어떻게', '무엇', '여기', '거기', '이것', '그것', '해당', '관련', '내용', '부분', '경우', '정도', '이상', '이하',
   '달라', '주세요', '있다', '없다', '같다', '한다', '된다', '했다', '위해', '대해', '대한', '통해',
+  // 말버릇·활용 조각(qa 측정 ④, 09-30) — 12자리를 채우던 것들
+  '이거', '이걸', '너가', '내가', '말고', '아니', '있는', '하는', '하고', '하면', '않아', '같아', '때도', '보면',
+  '원문', '첨부', '계획', '수정', '원인', '분석',
   // 영어·주소 조각
   'task', 'the', 'and', 'for', 'with', 'this', 'that', 'from', 'message', 'thread', 'channel', 'please', 'http', 'https',
+  'png', 'jpg', 'id', 'v0',
 ]);
+
+/**
+ * 비밀값처럼 생긴 조각(초대 토큰 `hrki_…`·API 키). 요청 낱말은 러너 로그(`terms=`)에 남으므로
+ * recall 낱말로 받지 않는다(qa 리뷰 ③) — 기억 이름에 20자 넘는 영숫자 덩어리가 걸릴 일도 없다.
+ */
+const SECRET_LIKE = /^[a-z0-9_-]{20,}$/u;
+
+/** 3자 이하 ASCII 낱말(`ui`·`pr`)은 부분 일치하면 `progress`·`mcp-ui-…` 에 걸린다 — 경계에서만 맞춘다. */
+const SHORT_ASCII = /^[a-z0-9]{1,3}$/u;
+function termMatcher(t: string): (hay: string) => number {
+  if (!SHORT_ASCII.test(t)) return (hay) => countOccurrences(hay, t);
+  const re = new RegExp(`(?<![a-z0-9])${t}(?![a-z0-9])`, 'gu');
+  return (hay) => Math.min(50, hay.match(re)?.length ?? 0);
+}
 
 /** 떼어 낸 낱말 하나. 기호로 가르고, 조사·어미를 한 번씩 떼어 본다. */
 function normalizeTerm(raw: string): string | null {
@@ -351,6 +369,7 @@ export function searchTerms(query: string, opts: { exclude?: ReadonlySet<string>
   // recall 모드: `@handle` 과 주소는 통째로 지운다 — 부른 사람·부름받은 이름은 요청의 뜻이 아니다.
   const text = exclude
     ? query.toLowerCase().replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gu, ' ').replace(/@[\p{L}\p{N}_.-]+/gu, ' ')
+      .replace(/\[첨부:[^\]]*\]/gu, ' ')
     : query.toLowerCase();
   for (const raw of text.split(/[\s,.;:!?()[\]{}"'`<>@#|/\\*~=+]+/u)) {
     const t = normalizeTerm(raw);
@@ -359,6 +378,7 @@ export function searchTerms(query: string, opts: { exclude?: ReadonlySet<string>
     if (exclude) {
       if (exclude.has(t) || RECALL_STOPWORDS.has(t)) continue;
       if (/^[0-9a-f-]{8,}$/u.test(t) || /^\d{1,2}$/u.test(t)) continue; // id 조각·작은 숫자
+      if (SECRET_LIKE.test(t) || !/[\p{L}\p{N}]/u.test(t)) continue; // 비밀값·`---` 같은 기호 덩어리
     }
     out.add(t);
     if (out.size >= 12) break;
@@ -367,15 +387,29 @@ export function searchTerms(query: string, opts: { exclude?: ReadonlySet<string>
 }
 
 /**
- * 계정·팀의 handle 과 표시 이름(낱말로 편 것까지). 요청문의 "task_manager:"·"jaebin 결정" 같은
- * 이름 낱말이 기억 본문에 흔해서 recall 을 오염시켰다(감사 ⑤ (a)). 이름은 바뀌므로 표에서 읽는다.
+ * recall 에서 뺄 이름. 요청문의 "task_manager:"·"jaebin 결정" 같은 이름 낱말이 기억 본문에 흔해서
+ * recall 을 오염시켰다(감사 ⑤ (a)). 이름은 바뀌므로 표에서 읽는다.
+ * - **사람**(지워지지 않은 계정): handle·표시 이름 통째와 낱말로 편 조각까지.
+ * - **에이전트·팀**: handle 통째만. 조각으로 펴면 `rcms`·`forge`·`homelab`·`server`·`claude` 같은
+ *   도메인 낱말이 빠져 `rcms-deploy-pipeline` 류가 안 걸렸다(qa 리뷰 ①, 09-30). 에이전트 이름은
+ *   대개 그 에이전트가 맡은 주제의 이름이기도 하다.
  */
 export async function recallExcludedNames(pool: Pool): Promise<Set<string>> {
   const res = await pool.query(
-    `select handle, display_name from account union all select handle, display_name from handle_group`,
+    `select handle, display_name, kind from account where deleted_at is null
+     union all select handle, null, 'group' from handle_group`,
   );
+  return excludedNamesFrom(res.rows as { handle: string; display_name: string | null; kind: string }[]);
+}
+
+export function excludedNamesFrom(rows: { handle: string; display_name: string | null; kind: string }[]): Set<string> {
   const out = new Set<string>();
-  for (const r of res.rows as { handle: string; display_name: string | null }[]) {
+  for (const r of rows) {
+    if (r.kind !== 'human') {
+      const low = r.handle.toLowerCase().trim();
+      if (low.length >= 2) out.add(low);
+      continue;
+    }
     for (const name of [r.handle, r.display_name ?? '']) {
       const low = name.toLowerCase().trim();
       if (low.length >= 2) out.add(low);
@@ -410,13 +444,15 @@ function countOccurrences(hay: string, needle: string): number {
 export function rankRecall(terms: string[], rows: RecallCandidate[], limit: number): (MemorySearchHit & { nameHits: number })[] {
   const scored = [];
   for (const r of rows) {
-    if (r.slug === 'core' || r.kind === 'journal') continue;
+    // 이름이 journal 인데 kind 가 topic 으로 남은 행(`mem/journal/e2cc9c57`)도 journal 로 본다.
+    if (r.slug === 'core' || r.kind === 'journal' || r.slug.startsWith('mem/journal/')) continue;
     const name = `${r.slug.toLowerCase()}\n${(r.description ?? '').toLowerCase()}`;
     const body = r.value.toLowerCase();
     let nameHits = 0; let bodyHits = 0; let occurrences = 0;
     for (const t of terms) {
-      if (name.includes(t)) nameHits++;
-      const c = countOccurrences(body, t);
+      const count = termMatcher(t);
+      if (count(name)) nameHits++;
+      const c = count(body);
       if (c) { bodyHits++; occurrences += c; }
     }
     if (!nameHits) continue;

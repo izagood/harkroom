@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { rankRecall, searchTerms, type RecallCandidate } from '../src/services/memory.js';
+import { excludedNamesFrom, rankRecall, searchTerms, type RecallCandidate } from '../src/services/memory.js';
 
 // recall P1 의 순수 부분 — pg 없이 돈다. 정답 세트(fixture) 회귀도 이 자리에 붙인다.
 describe('searchTerms', () => {
@@ -19,8 +19,28 @@ describe('searchTerms', () => {
     expect(terms).toEqual(['결정', '하나', '둘셋', '넷다섯', '여섯', '일곱', '여덟', '아홉', '열개', '열하나', '열둘', '열셋']);
   });
 
+  it('recall 모드: 비밀값처럼 생긴 조각·[첨부: …]·기호 덩어리는 낱말로 받지 않는다(로그에 남으므로)', () => {
+    const terms = searchTerms('hrki_w7G6Vl65h6NkKoAhkhKjxzXmwEdfiPf 초대 토큰 [첨부: shot.png (id 51e5)] --- 서빙해야해', { exclude: new Set() });
+    expect(terms).toEqual(['초대', '토큰', '서빙']);
+  });
+
   it('exclude 가 없으면(에이전트가 직접 찾을 때) 이름도 찾는다', () => {
     expect(searchTerms('jaebin 결정')).toEqual(['jaebin', '결정']);
+  });
+});
+
+describe('excludedNamesFrom', () => {
+  it('사람은 조각까지, 에이전트·팀은 handle 통째만 뺀다 — rcms·server 같은 도메인 낱말은 살린다', () => {
+    const names = excludedNamesFrom([
+      { handle: 'jaebin', display_name: 'Jaebin Lee', kind: 'human' },
+      { handle: 'rcms', display_name: 'rcms', kind: 'agent' },
+      { handle: 'avcs-server', display_name: 'AVCS Server', kind: 'agent' },
+      { handle: 'task_manager', display_name: 'Task Manager', kind: 'agent' },
+      { handle: 'core-team', display_name: null, kind: 'group' },
+    ]);
+    expect([...names].sort()).toEqual(['avcs-server', 'core-team', 'jaebin', 'jaebin lee', 'lee', 'rcms', 'task_manager']);
+    // rcms 자체는 빠지지만, 요청의 `forge`·`server` 는 남는다
+    expect(searchTerms('forge server 배포', { exclude: names })).toEqual(['forge', 'server', '배포']);
   });
 });
 
@@ -36,6 +56,15 @@ describe('rankRecall', () => {
   it('journal·core 는 뺀다', () => {
     const hits = rankRecall(['캐시'], [row('core', '캐시', '캐시'), row('mem/j', '캐시', '캐시', 'journal')], 5);
     expect(hits).toEqual([]);
+  });
+
+  it('이름이 mem/journal/ 이면 kind 가 topic 이어도 뺀다', () => {
+    expect(rankRecall(['캐시'], [row('mem/journal/e2cc9c57', '캐시', '')], 5)).toEqual([]);
+  });
+
+  it('3자 이하 영문은 경계에서만 맞춘다 — pr 이 progress 에 걸리지 않는다', () => {
+    const rows = [row('mem/mcp-ui-phase1-progress', null, ''), row('mem/pr-recipe', null, 'pr 만들기')];
+    expect(rankRecall(['pr'], rows, 5).map((h) => [h.slug, h.score])).toEqual([['mem/pr-recipe', 4]]);
   });
 
   it('동점은 이름 일치 수 → 본문 출현 수 → slug 로 가른다(최근 수정 순이 아니다)', () => {
