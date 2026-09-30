@@ -43,6 +43,16 @@ describe('워크스페이스 가이드의 두 판본 (2026-09-08 앵커 이탈 �
     }
   });
 
+  it('두 판본 다 MCP 인증을 턴 안에서 열지 말고 사람에게 넘기라고 말한다 — 흐름이 프로세스와 함께 사라진다 (2026-09-30)', () => {
+    for (const mode of ['resident', 'turn'] as const) {
+      const g = guideFor(mode);
+      expect(g, mode).toMatch(/## MCP 인증은 턴 안에서 하지 않는다/);
+      expect(g, mode).toContain('인증 흐름을 열지 마라');
+      expect(g, mode).toContain('retryable: true');
+      expect(g, mode).toContain('데스크톱');
+    }
+  });
+
   it('두 판본 다 「이름이 아니라 id 로」를 말한다 — 에이전트가 이 원칙을 받는 유일한 경로다 (2026-09-28)', () => {
     for (const mode of ['resident', 'turn'] as const) {
       const g = guideFor(mode);

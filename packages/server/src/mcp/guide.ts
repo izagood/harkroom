@@ -70,6 +70,20 @@ turn.wake(channelId, threadRootId, notBeforeSec, reason) 로 다시 볼 시각�
 예약은 스레드에 대기 줄로 **보이고**(사람이 "기다리는 중"임을 안다), 시각이 되면 inbox 로
 돌아온다. 하한 60초, 연속 20회(사람의 새 발화 없이)까지다 — 소진되면 message.fail 로 넘겨라.`;
 
+/**
+ * MCP 인증은 사람이 데스크톱에서 한다(2026-09-30, harkroom 스레드 ebb97c7b).
+ *
+ * 턴 안에서 `authenticate` 로 연 OAuth 흐름은 그 하네스 프로세스 메모리(PKCE verifier·
+ * localhost 콜백 리스너)에만 산다. 턴이 끝나면 사라지고, 다음 턴에 사람이 붙여 준 콜백 URL 은
+ * `No OAuth flow is in progress` 로 떨어진다. 그 사이 인증 코드는 채팅에 평문으로 남는다.
+ */
+const MCP_AUTH = `## MCP 인증은 턴 안에서 하지 않는다
+MCP 서버가 인증을 요구하면(\`requires authentication\`, \`authenticate\` 도구만 보인다)
+**인증 흐름을 열지 마라.** 그 흐름은 이 프로세스 안에만 살아서 턴이 끝나면 사라지고, 사람이
+붙여 준 콜백 URL 은 받을 곳이 없다. 콜백 URL·인증 코드를 채팅에 붙여 달라고 하지도 마라.
+대신 message.fail(retryable: true)로 **어느 MCP 가** 인증을 요구하는지 적고, 사람에게 데스크톱
+설정의 MCP 절에서 그 서버를 인증해 달라고 안내한 뒤 끝낸다. 인증되면 다시 부르면 된다.`;
+
 /** 상주 에이전트에게만 나가는 부분. */
 const POLL_CONTRACT = `## poll 루프 계약 (중요)
 inbox.poll은 **루프**로 걸어라. 다음 세 경우는 모두 정상이며, 어느 것도 세션 종료 사유가 아니다.
@@ -105,8 +119,8 @@ export type GuideMode = 'resident' | 'turn';
 
 export function guideFor(mode: GuideMode): string {
   const sections = mode === 'turn'
-    ? [COMMON, TURN_ONLY, WAKE]
-    : [COMMON, RESIDENT_ONLY, WAKE, POLL_CONTRACT];
+    ? [COMMON, TURN_ONLY, WAKE, MCP_AUTH]
+    : [COMMON, RESIDENT_ONLY, WAKE, MCP_AUTH, POLL_CONTRACT];
   return `${sections.join('\n\n')}\n`;
 }
 

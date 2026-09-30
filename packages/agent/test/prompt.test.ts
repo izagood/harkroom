@@ -563,6 +563,13 @@ describe('buildSystemPrompt', () => {
     expect(s).toContain('30분');
   });
 
+  it('MCP 인증은 턴 안에서 열지 않고 message.fail(retryable) 로 사람에게 넘긴다 (2026-09-30, ebb97c7b)', () => {
+    const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] }, turnBudgetMs: 30 * 60_000 });
+    expect(s).toContain('인증 흐름을 열지 마라');
+    expect(s).toContain('`message.fail`(retryable: true)');
+    expect(s).toContain('콜백 URL');
+  });
+
   it('기다릴 것이 있으면 turn.wake 로 예약하라고 지시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] }, turnBudgetMs: 30 * 60_000 });
     expect(s).toContain('turn.wake');
