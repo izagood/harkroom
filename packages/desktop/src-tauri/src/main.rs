@@ -12,6 +12,7 @@ mod daemon_client;
 mod external_link;
 mod login_path;
 mod notification;
+mod window_chrome;
 
 use std::collections::HashMap;
 
@@ -712,6 +713,8 @@ fn main() {
         // 이어야 한다 — 첫 알림을 보낼 때 세우면 그 알림의 클릭을 놓칠 수 있다.
         .setup(|app| {
             notification::install(app.handle());
+            // 신호등을 툴바 창의 크기·자리로 둔다(`window_chrome` 머리 주석).
+            window_chrome::install(app);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
