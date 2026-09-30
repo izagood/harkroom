@@ -334,7 +334,17 @@ jobs:
           # **매트릭스 구조는 남겨 둔다** — 나중에 `x86_64-apple-darwin` 을 한 줄 더하는
           # 것으로 늘릴 수 있다. 다만 **지금 없는 플랫폼을 아래 `finalize` 의 검증 목록에
           # 넣지 마라**: 영영 나오지 않을 자산을 기다리다 릴리즈가 공개되지 않는다.
-          - os: macos-14
+          #
+          # **러너는 `macos-26` 으로 고정한다**(2026-09-30). 앱이 링크되는 SDK 가 러너의 Xcode 를
+          # 따르고, macOS 26 은 **SDK 26 미만으로 링크된 앱을 옛 모양으로 그린다** — `macos-14`
+          # (Xcode 15, SDK 14.5)로 만든 판은 신호등이 다른 앱보다 작았다(지름 12pt 대 14pt, 실측).
+          # `ci.yml` 처럼 `macos-latest` 를 쓰지 않는 이유: 라벨이 옮겨 가면 SDK 가 말없이 바뀌고,
+          # 그러면 `tauri.macos.conf.json` 의 `trafficLightPosition` 이 다른 자리에 선다
+          # (`src/lib/platform.ts` 의 `MAC_TRAFFIC_LIGHT_POSITION` 주석). 러너를 바꿀 때는 그 값을
+          # 다시 잰다. 아래 "링크 SDK 를 확인한다" 단계가 그 전제를 산출물에서 지킨다.
+          #
+          # 배포 최소 버전은 SDK 와 별개다 — 실행 파일의 `minos` 는 Rust 타깃 기본값 11.0 그대로다.
+          - os: macos-26
             triple: aarch64-apple-darwin
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60 # 공증 왕복(수 분)이 있어 `ci.yml` 의 20 분보다 넉넉히 잡는다
@@ -363,7 +373,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             packages/desktop/src-tauri/target
-          key: release-cargo-${{ matrix.triple }}-${{ hashFiles('packages/desktop/src-tauri/Cargo.lock') }}
+          key: release-cargo-${{ matrix.os }}-${{ matrix.triple }}-${{ hashFiles('packages/desktop/src-tauri/Cargo.lock') }}
 
       - run: pnpm install --frozen-lockfile
 
@@ -425,6 +435,17 @@ jobs:
         # 를 삼켰다. 사유 없는 실패는 재시도밖에 할 수 없고, 재시도가 또 실패해도 사유가 없다 —
         # 그래서 늘 켠다. 성공 빌드의 로그가 길어지는 값은 치른다.
         run: pnpm --filter @harkroom/desktop tauri build --target ${{ matrix.triple }} --verbose
+
+      # ## 링크 SDK 를 확인한다 — 러너를 `macos-26` 으로 둔 이유를 산출물에서 지킨다
+      #
+      # 러너 이미지가 기본 Xcode 를 바꾸거나 누가 러너를 되돌리면, 빌드는 초록인 채로 옛 SDK 로
+      # 링크된 앱(작은 신호등, 어긋난 `trafficLightPosition`)이 나간다. 그것은 사람이 설치해 보기
+      # 전까지 아무 데서도 드러나지 않으므로 **서명·공증 전에** 여기서 멈춘다.
+      - name: 링크 SDK 를 확인한다
+        run: >
+          packages/desktop/scripts/check-link-sdk.sh
+          packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop
+          26
 
       # ## 서명 — 이미 실물로 통과한 스크립트를 부른다
       #
