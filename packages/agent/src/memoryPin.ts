@@ -46,9 +46,23 @@ export interface RecallHit {
   description: string | null;
   score: number;
   value?: string;
+  /** 이름·요약에 걸린 낱말 수 — recall 모드를 아는 서버만 준다(없으면 옛 서버). */
+  nameHits?: number;
 }
 
-/** 자동 주입 기준. 이름·요약에 한 번 걸리면(3점) 넘는다 — 본문 한두 낱말 일치로는 싣지 않는다. */
+/** `memory.search` recall 모드의 응답. `terms` 는 서버가 실제로 쓴 낱말이다(옛 서버는 없다). */
+export interface RecallResult {
+  hits: RecallHit[];
+  terms?: string[];
+}
+
+type RecallSearch = (query: string) => Promise<RecallResult>;
+
+/**
+ * 자동 주입 기준. 새 서버는 이름·요약 일치(`nameHits ≥ 1`)를 이미 걸러 주고, 옛 서버에는 점수로만
+ * 거른다 — 이름·요약에 한 번 걸리면(3점) 넘는다. 옛 서버에서 본문 1점 세 개로 3점을 넘는 것은
+ * 막을 수 없다(recall P1 이 서버로 간 이유).
+ */
 export const RECALL_MIN_SCORE = 3;
 export const RECALL_MAX_ITEMS = 2;
 export const RECALL_MAX_CHARS = 1500;
@@ -114,7 +128,7 @@ export async function planMemory(opts: {
    * 목록을 보고 모델이 알아서 열기를 기대할 수 없다. 그래서 러너가 **이번에 새로 온 말**로
    * 찾아 관련 상위 몇 개의 본문을 턴 프롬프트에 붙여 준다. 실패는 삼킨다(없어도 턴은 돈다).
    */
-  recall?: { query: string; search: (query: string) => Promise<RecallHit[]> };
+  recall?: { query: string; search: RecallSearch };
 }): Promise<MemoryPlan> {
   const file = pinFile(opts.stateDir, opts.key);
   const noop: MemoryPlan['commit'] = async () => {};
@@ -148,7 +162,7 @@ export async function planMemory(opts: {
   };
 
   const alreadyRecalled = new Set(pinUsable ? pin!.recalled ?? [] : []);
-  const recall = await recallLines(opts.recall, alreadyRecalled);
+  const recall = await recallLines(opts.recall, alreadyRecalled, opts.key);
   const recalled = [...alreadyRecalled, ...recall.slugs];
 
   if (!pinUsable) {
@@ -190,20 +204,23 @@ export async function planMemory(opts: {
 }
 
 async function recallLines(
-  recall: { query: string; search: (query: string) => Promise<RecallHit[]> } | undefined,
+  recall: { query: string; search: RecallSearch } | undefined,
   skip: Set<string>,
+  key: string,
 ): Promise<{ lines: string[]; slugs: string[] }> {
   if (!recall || !recall.query.trim()) return { lines: [], slugs: [] };
-  let hits: RecallHit[];
+  let found: RecallResult;
   try {
-    hits = await recall.search(recall.query);
+    found = await recall.search(recall.query);
   } catch (err: unknown) {
     console.error(`[memoryPin] 관련 기억 찾기 실패 — 이번 턴은 싣지 않는다: ${err instanceof Error ? err.message : String(err)}`);
     return { lines: [], slugs: [] };
   }
-  const picked = hits
-    .filter((h) => h.score >= RECALL_MIN_SCORE && typeof h.value === 'string' && !skip.has(h.slug) && h.slug !== 'core')
+  const picked = found.hits
+    .filter((h) => (h.nameHits === undefined ? h.score >= RECALL_MIN_SCORE : h.nameHits >= 1)
+      && typeof h.value === 'string' && !skip.has(h.slug) && h.slug !== 'core')
     .slice(0, RECALL_MAX_ITEMS);
+  console.log(recallLogLine(key, found, picked, skip));
   if (!picked.length) return { lines: [], slugs: [] };
   const lines = [
     '', '<memory-recall>',
@@ -215,6 +232,21 @@ async function recallLines(
   }
   lines.push('</memory-recall>');
   return { lines, slugs: picked.map((h) => h.slug) };
+}
+
+/**
+ * 턴마다 한 줄(recall P1). 무엇이 왜 실렸는지 러너 로그만 보고 잴 수 있어야 한다 — 전에는
+ * 하네스 대화 기록에서 `<memory-recall>` 을 긁어야 했다. 본문은 남기지 않는다(이름과 점수만).
+ */
+export function recallLogLine(key: string, found: RecallResult, picked: RecallHit[], skip: Set<string>): string {
+  const hit = (h: RecallHit) => `${h.slug}:${h.score}${h.nameHits === undefined ? '' : `/n${h.nameHits}`}`;
+  const pickedSet = new Set(picked.map((h) => h.slug));
+  const dropped = found.hits.filter((h) => !pickedSet.has(h.slug))
+    .map((h) => `${hit(h)}${skip.has(h.slug) ? '(이미)' : ''}`);
+  // 낱말은 요청문에서 왔다 — 서버가 비밀값 같은 조각을 거르지만, 옛 서버·빠진 틈에 대비해 로그에서도 가린다.
+  const term = (t: string) => (/^[\w-]{20,}$/u.test(t) ? `${t.slice(0, 4)}…` : t);
+  return `[memoryPin] recall ${key}: terms=${found.terms ? found.terms.map(term).join(',') || '-' : '?'}`
+    + ` picked=${picked.map(hit).join(' ') || '-'}${dropped.length ? ` dropped=${dropped.join(' ')}` : ''}`;
 }
 
 function trimLeading(lines: string[]): string[] {

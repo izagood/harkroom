@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { planMemory } from '../src/memoryPin.js';
+import { planMemory, recallLogLine, type RecallResult } from '../src/memoryPin.js';
 import { buildSystemPrompt, type MemoryContext } from '../src/prompt.js';
 
 let stateDir: string;
@@ -133,7 +133,7 @@ describe('memoryPin — 시스템 프롬프트를 세션 동안 고정한다', (
       { slug: 'mem/deploy', description: '배포 절차', score: 6, value: '1. 빌드\n2. 올린다' },
       { slug: 'mem/weak', description: null, score: 1, value: '본문에 한 번' },
     ];
-    const plan = (isFirstTurn: boolean, search = async () => hits) => planMemory({
+    const plan = (isFirstTurn: boolean, search = async (): Promise<RecallResult> => ({ hits })) => planMemory({
       stateDir, key: KEY, sessionId: SID, isFirstTurn,
       memory: { core: 'C', slugs: ['mem/deploy', 'mem/weak'] },
       recall: { query: '배포 어떻게 해', search },
@@ -161,10 +161,47 @@ describe('memoryPin — 시스템 프롬프트를 세션 동안 고정한다', (
     });
 
     it('긴 본문은 잘라서 싣는다', async () => {
-      const p = await plan(true, async () => [{ slug: 'mem/long', description: null, score: 3, value: 'x'.repeat(5000) }]);
+      const p = await plan(true, async () => ({ hits: [{ slug: 'mem/long', description: null, score: 3, value: 'x'.repeat(5000) }] }));
       const text = p.turnLines.join('\n');
       expect(text).toContain('잘림');
       expect(text.length).toBeLessThan(2500);
+    });
+
+    // recall P1: 새 서버는 nameHits 를 준다 — 그때는 점수가 아니라 이름·요약 일치로 거른다.
+    it('새 서버(nameHits)면 이름·요약 일치가 없는 것은 점수가 높아도 싣지 않는다', async () => {
+      const p = await plan(true, async () => ({
+        terms: ['배포'],
+        hits: [
+          { slug: 'mem/body', description: null, score: 9, nameHits: 0, value: '본문뿐' },
+          { slug: 'mem/deploy', description: '배포 절차', score: 3, nameHits: 1, value: '올린다' },
+        ],
+      }));
+      const text = p.turnLines.join('\n');
+      expect(text).toContain('## mem/deploy');
+      expect(text).not.toContain('본문뿐');
+    });
+
+    it('턴마다 무엇을 골랐는지 로그 한 줄을 남긴다(본문 없이 이름·점수만)', async () => {
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        await plan(true, async () => ({ terms: ['배포', '절차'], hits: [{ ...hits[0]!, nameHits: 2 }, { ...hits[1]!, nameHits: 0 }] }));
+        const line = log.mock.calls.map((c) => String(c[0])).find((l) => l.startsWith('[memoryPin] recall'));
+        expect(line).toBe(`[memoryPin] recall ${KEY}: terms=배포,절차 picked=mem/deploy:6/n2 dropped=mem/weak:1/n0`);
+        expect(line).not.toContain('올린다');
+      } finally {
+        log.mockRestore();
+      }
+    });
+
+    it('로그: 옛 서버는 terms 가 없어 ? 로 적는다', () => {
+      expect(recallLogLine('k', { hits: [] }, [], new Set())).toBe('[memoryPin] recall k: terms=? picked=-');
+      expect(recallLogLine('k', { hits: [hits[0]!] , terms: [] }, [], new Set(['mem/deploy'])))
+        .toBe('[memoryPin] recall k: terms=- picked=- dropped=mem/deploy:6(이미)');
+    });
+
+    it('로그: 비밀값처럼 생긴 낱말(20자 넘는 영숫자 덩어리)은 앞 4자만 남긴다', () => {
+      const line = recallLogLine('k', { hits: [], terms: ['hrki_w7G6Vl65h6NkKoAhkhKjxzXmw', '초대'] }, [], new Set());
+      expect(line).toBe('[memoryPin] recall k: terms=hrki…,초대 picked=-');
     });
   });
 
