@@ -3839,7 +3839,7 @@ export const en = {
   'agents.scope.errWidening': 'A scope cannot be widened once narrowed — this agent may already hold personal data.',
   'agents.scope.errUnknownMcp': 'That MCP server is not in the registry.',
   'agents.scope.errFailed': 'Not saved: {reason}',
-  'mcpServers.description': 'Names an agent may attach. Only the name and credential kind live here — the definition and any token stay on each operator machine.',
+  'mcpServers.description': 'Names an agent may attach. Only the name and credential kind live here — the definition and any token stay on each operator machine. For remote servers, sign in once on this machine with the row\'s Sign in button and every agent on this machine uses it.',
   'mcpServers.loading': 'Loading…',
   'mcpServers.listFailed': 'The registry could not be read',
   'mcpServers.none': 'No MCP server is registered yet.',

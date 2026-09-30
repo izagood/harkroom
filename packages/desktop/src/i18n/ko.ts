@@ -1726,7 +1726,7 @@ export const ko = {
   'agents.scope.errWidening': '한 번 좁힌 범위는 넓힐 수 없다 — 이 에이전트에 이미 개인 데이터가 있을 수 있다.',
   'agents.scope.errUnknownMcp': '레지스트리에 없는 MCP 서버다.',
   'agents.scope.errFailed': '저장하지 못했다: {reason}',
-  'mcpServers.description': '에이전트가 붙일 수 있는 이름. 여기에는 이름과 자격증명 종류만 있다 — 정의와 토큰은 각 오퍼레이터 머신에 남는다.',
+  'mcpServers.description': '에이전트가 붙일 수 있는 이름. 여기에는 이름과 자격증명 종류만 있다 — 정의와 토큰은 각 오퍼레이터 머신에 남는다. 원격 서버의 OAuth 는 줄의 [인증] 으로 이 머신에서 한 번 하면, 이 머신의 모든 에이전트가 쓴다.',
   'mcpServers.loading': '읽는 중…',
   'mcpServers.listFailed': '레지스트리를 읽지 못했다',
   'mcpServers.none': '등록된 MCP 서버가 아직 없다.',
