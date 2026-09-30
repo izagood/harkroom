@@ -4,7 +4,7 @@
  * `claudeAccounts.ts` 와 같은 경계다: 웹뷰가 넘기는 것은 URL·id·문자열뿐이고 Rust 커맨드가
  * 데몬에 전달한다.
  */
-import type { OperatorAgentsListResult, OperatorLocalAgent, OperatorMcpListResult, OperatorMcpRemoteDefinition, OperatorRegisterResult } from '@harkroom/shared/daemonProtocol';
+import type { OperatorAgentsListResult, OperatorLocalAgent, OperatorMcpAuthStartResult, OperatorMcpAuthState, OperatorMcpListResult, OperatorMcpRemoteDefinition, OperatorRegisterResult } from '@harkroom/shared/daemonProtocol';
 
 interface TauriInternals { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> }
 
@@ -57,4 +57,20 @@ export async function setLocalMcpServer(name: string, definition: OperatorMcpRem
 
 export async function removeLocalMcpServer(name: string): Promise<void> {
   await call('operator_mcp_remove', { name });
+}
+
+/**
+ * 원격 MCP 의 OAuth(2026-09-30). 토큰은 오퍼레이터가 들고 러너를 띄울 때 헤더로 굽는다 — 계정 풀의
+ * 어느 계정으로 돌든 같은 토큰이다. 앱은 인가 url 을 받아 브라우저로 열고 상태를 물을 뿐, 토큰은 보지 않는다.
+ */
+export function startLocalMcpAuth(name: string): Promise<OperatorMcpAuthStartResult> {
+  return call('operator_mcp_auth', { action: 'start', name }) as Promise<OperatorMcpAuthStartResult>;
+}
+
+export function localMcpAuthStatus(name: string): Promise<OperatorMcpAuthState> {
+  return call('operator_mcp_auth', { action: 'status', name }) as Promise<OperatorMcpAuthState>;
+}
+
+export async function forgetLocalMcpAuth(name: string): Promise<void> {
+  await call('operator_mcp_auth', { action: 'forget', name });
 }

@@ -19,6 +19,7 @@ import type { RunnerLinkServer } from './runnerLink.js';
 import type { RunnerRegistry, RunnerHost } from './runners.js';
 import { fileSecrets, type OperatorSecrets } from './secrets.js';
 import { buildMcpConfig, claudeConfigPath, readLocalMcpDefinitions, writeAgentMcpConfig } from './mcpConfig.js';
+import type { McpOAuth } from './mcpOAuth.js';
 import { access } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -37,6 +38,8 @@ export interface StartCommunitiesDeps {
   socketPath: string;
   /** `harkroom-operator` 실행 파일 — 러너가 하네스에 `mcp-bridge` 명령으로 굽는다. */
   operatorBin: string;
+  /** 원격 MCP 의 OAuth 토큰(`mcpOAuth.ts`). 없으면 토큰을 굽지 않는다 — 하네스가 제 손으로 인증한다(옛 동작). */
+  mcpOAuth?: McpOAuth;
 }
 
 export interface CommunityRuntime {
@@ -118,8 +121,20 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
         registryPath: join(deps.appDataDir, 'operator', 'mcp-servers.json'),
         claudeConfigPath: claudeConfigPath(process.env, homedir()),
       });
-      const built = buildMcpConfig({ operatorBin: deps.operatorBin, names: definition.mcpServers, definitions });
+      // 이 에이전트가 고른 원격 정의의 토큰만 묻는다 — 만료가 가까우면 여기서 refresh 한다.
+      const remote: Record<string, { url?: string }> = {};
+      for (const n of definition.mcpServers) { const d = definitions[n]; if (d && 'url' in d) remote[n] = { url: d.url }; }
+      const auth = deps.mcpOAuth
+        ? await deps.mcpOAuth.tokensFor(remote).catch((err: unknown) => {
+          deps.log(`MCP OAuth 토큰을 읽지 못했다(토큰 없이 띄운다): ${err instanceof Error ? err.message : String(err)}`);
+          return { tokens: {}, expired: [] as string[] };
+        })
+        : { tokens: {}, expired: [] as string[] };
+      const built = buildMcpConfig({ operatorBin: deps.operatorBin, names: definition.mcpServers, definitions, ...auth });
       if (built.missing.length) return { missing: built.missing };
+      // **거절하지 않는다.** 인증이 없어도 에이전트의 나머지 일은 된다 — 그 MCP 만 "requires
+      // authentication" 이고, 턴은 가이드대로 사람에게 넘긴다. 사람은 앱의 MCP 절에서 이 상태를 본다.
+      if (built.needsAuth.length) deps.log(`MCP 인증 필요: agent=${definition.handle} — ${built.needsAuth.join(', ')} (데스크톱 › 에이전트 › MCP 에서 인증)`);
       return { path: await writeAgentMcpConfig(join(deps.appDataDir, 'operator', 'mcp'), definition.agentId, built.mcpServers) };
     },
     schedule: (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return () => clearTimeout(t); },

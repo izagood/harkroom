@@ -12,6 +12,7 @@ import { resetCommunityRegistry, useActiveStore } from '../src/state/communities
 import { usePrefsStore } from '../src/state/prefsStore';
 import { ApiError } from '../src/lib/api';
 import { acc } from './helpers/fakeApi';
+import { setExternalOpener } from '../src/lib/openExternal';
 
 const ME_ID = 'owner-1';
 const agent = (overrides: Partial<AgentView> = {}): AgentView => ({
@@ -240,5 +241,96 @@ describe('AgentMcpSection — 한 절에서 끝낸다', () => {
     fireEvent.change(box.querySelector('select')!, { target: { value: 'agent-2' } });
     fireEvent.click(box.querySelectorAll('button')[0]!);
     expect((await screen.findByTestId('agent-scope-error')).textContent).toContain('소유자 전용');
+  });
+});
+
+// 원격 MCP 인증(2026-09-30, harkroom 스레드 ebb97c7b). 토큰은 오퍼레이터가 든다 — 앱은 인가 url 을
+// 브라우저로 열고 상태를 물을 뿐이다. 계정 디렉터리마다 따로 인증하던 것을 여기 한 번으로 바꾼 자리다.
+describe('AgentMcpSection — 원격 MCP 인증', () => {
+  afterEach(() => {
+    delete (globalThis as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    setExternalOpener(null);
+  });
+
+  function fakeAuth(initial: Record<string, unknown>, opts: { oauth?: boolean; startError?: string } = {}) {
+    const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+    let auth = initial;
+    (globalThis as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
+      invoke: async (cmd: string, args?: Record<string, unknown>) => {
+        calls.push({ cmd, args });
+        if (cmd === 'operator_mcp_list') {
+          return { servers: [{ name: 'slack', source: 'operator', transport: 'http', target: 'https://mcp.example.com/mcp', args: [], envKeys: [], headerKeys: [], oauth: opts.oauth ?? true, auth }] };
+        }
+        if (cmd === 'operator_mcp_auth' && args?.action === 'start' && opts.startError) throw new Error(opts.startError);
+        if (cmd === 'operator_mcp_auth' && args?.action === 'start') { auth = { state: 'pending' }; return { authUrl: 'https://auth.example.com/authorize?x=1' }; }
+        if (cmd === 'operator_mcp_auth' && args?.action === 'status') return auth;
+        if (cmd === 'operator_mcp_auth' && args?.action === 'forget') { auth = { state: 'none' }; return {}; }
+        return {};
+      },
+    };
+    return { calls, set: (next: Record<string, unknown>) => { auth = next; } };
+  }
+
+  it('정의에 oauth 가 있고 토큰이 없으면 "인증 필요" — 켠 줄이면 경고다', async () => {
+    fakeAuth({ state: 'none' });
+    setup();
+    render(<AgentScopeSection agent={agent({ mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+    const badge = await screen.findByTestId('agent-mcp-auth-slack');
+    expect(badge.textContent).toContain('인증 필요');
+    expect(badge.querySelector('.text-danger')).toBeTruthy();
+    expect(screen.getByTestId('agent-mcp-auth-start-slack').textContent).toBe('인증');
+  });
+
+  it('[인증] 은 오퍼레이터가 만든 인가 url 을 브라우저로 열고, 끝날 때까지 상태를 묻는다', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const f = fakeAuth({ state: 'none' });
+      const opened: string[] = [];
+      setExternalOpener({ open: async (u) => { opened.push(u); } });
+      setup();
+      render(<AgentScopeSection agent={agent({ mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+      fireEvent.click(await screen.findByTestId('agent-mcp-auth-start-slack'));
+      await waitFor(() => expect(opened).toEqual(['https://auth.example.com/authorize?x=1']));
+      expect((await screen.findByTestId('agent-mcp-auth-slack')).textContent).toContain('기다리는 중');
+      // 사람이 브라우저에서 끝냈다 — 오퍼레이터가 콜백을 받아 토큰을 들었다.
+      f.set({ state: 'ok', expiresAt: Date.now() + 3600_000 });
+      await vi.advanceTimersByTimeAsync(1600);
+      await waitFor(() => expect(screen.getByTestId('agent-mcp-auth-slack').textContent).toContain('인증됨'));
+      expect(f.calls.some((c) => c.cmd === 'operator_mcp_auth' && c.args?.action === 'status' && c.args?.name === 'slack')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('만료면 "다시 인증", 인증됨이면 [인증 해제] 가 forget 에 닿는다', async () => {
+    const f = fakeAuth({ state: 'expired' });
+    setup();
+    const { unmount } = render(<AgentScopeSection agent={agent({ mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+    expect((await screen.findByTestId('agent-mcp-auth-slack')).textContent).toContain('인증 만료');
+    expect(screen.getByTestId('agent-mcp-auth-start-slack').textContent).toBe('다시 인증');
+    unmount();
+    f.set({ state: 'ok' });
+    render(<AgentScopeSection agent={agent({ mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+    fireEvent.click(await screen.findByTestId('agent-mcp-auth-forget-slack'));
+    await waitFor(() => expect(f.calls.some((c) => c.cmd === 'operator_mcp_auth' && c.args?.action === 'forget')).toBe(true));
+  });
+
+  it('시작이 실패하면 오퍼레이터의 이유를 그대로 보인다 — 포트 3118 이 쓰이고 있다', async () => {
+    fakeAuth({ state: 'none' }, { startError: '콜백 포트 3118 를 다른 프로그램이 쓰고 있다' });
+    const opened: string[] = [];
+    setExternalOpener({ open: async (u) => { opened.push(u); } });
+    setup();
+    render(<AgentScopeSection agent={agent({ mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+    fireEvent.click(await screen.findByTestId('agent-mcp-auth-start-slack'));
+    expect((await screen.findByTestId('agent-mcp-error')).textContent).toContain('3118');
+    expect(opened).toEqual([]);
+  });
+
+  it('옛 오퍼레이터(auth 없음)에는 인증 줄을 그리지 않는다 — 모르는 것을 단언하지 않는다', async () => {
+    fakeLocal([{ name: 'slack' }]);
+    setup();
+    render(<AgentScopeSection agent={agent()} onUpdated={() => {}} />);
+    await screen.findByTestId('agent-mcp-row-slack');
+    expect(screen.queryByTestId('agent-mcp-auth-slack')).toBeNull();
   });
 });

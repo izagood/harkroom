@@ -126,6 +126,11 @@ interface HarnessPreset {
   /** mentionPermission → 멘션 턴 전용 권한 플래그. 인터랙티브에선 아예 쓰지 않는다. */
   permission: Record<MentionPermission, string[]>;
   mcp(args: { mcpConfigPath: string; operatorBin: string; extraMcpServers: Record<string, McpServerEntry> }): string[];
+  /**
+   * `mcp` 가 이름만 적은 비밀값을 자식 env 로 준다(2026-09-30). argv 는 `ps` 에 뜨므로 토큰은 여기로만.
+   * 파일로 MCP 를 받는 하네스(claude·opencode)는 없다.
+   */
+  mcpEnv?(extraMcpServers: Record<string, McpServerEntry>): Record<string, string>;
   model(model: string | null): string[];
   effort(effort: string | null): string[];
   /**
@@ -265,6 +270,7 @@ const CODEX_PRESET: HarnessPreset = {
     ],
     readonly: ['-c', 'sandbox_mode="read-only"'],
   },
+  mcpEnv: (extraMcpServers) => codexBearerEnv(extraMcpServers),
   mcp: ({ operatorBin, extraMcpServers }) => [
     // avcs 는 항상 등록한다(실측 shape: stdio, command 'avcs', args ['mcp'], env 없음).
     //
@@ -513,13 +519,16 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
   return {
     command: preset.command,
     args,
-    env: childEnv({
+    env: {
+      ...childEnv({
       harness: opts.harness,
       codexHome: opts.harness === 'codex' ? opts.codexHome : null,
       opencodeHome: usesXdgHome(opts.harness) ? (opts.opencodeHome ?? null) : null,
       claudeConfigDir: opts.harness === 'claude-code' ? opts.claudeConfigDir : null,
       causeMessageId: opts.causeMessageId ?? null,
-    }),
+      }),
+      ...(preset.mcpEnv?.(opts.extraMcpServers ?? {}) ?? {}),
+    },
     stdinFile: opts.stdinFile ?? null,
   };
 }
@@ -717,14 +726,46 @@ function tomlInlineTable(record: Record<string, string>): string {
   return `{ ${Object.entries(record).map(([k, v]) => `${JSON.stringify(k)} = ${JSON.stringify(v)}`).join(', ')} }`;
 }
 
+/** `Authorization: Bearer <t>` 를 떼어 낸다. 대소문자는 가리지 않는다(HTTP 헤더 이름). */
+function splitBearer(headers: Record<string, string> | undefined): { bearer: string | null; rest: Record<string, string> } {
+  const rest: Record<string, string> = {};
+  let bearer: string | null = null;
+  for (const [k, v] of Object.entries(headers ?? {})) {
+    const m = k.toLowerCase() === 'authorization' ? /^Bearer\s+(.+)$/i.exec(v) : null;
+    if (m) bearer = m[1]!; else rest[k] = v;
+  }
+  return { bearer, rest };
+}
+
+/** codex 가 그 MCP 의 bearer 토큰을 읽을 env 이름. MCP 이름 문법은 `[a-z0-9-]` 다. */
+export function codexBearerEnvName(name: string): string {
+  return `HARKROOM_MCP_BEARER_${name.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
+}
+
+/** codex 자식 env 에 얹을 bearer 토큰들 — `codexMcpFlags` 가 이름만 적은 값이다. */
+export function codexBearerEnv(servers: Record<string, McpServerEntry>): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [name, entry] of Object.entries(servers)) {
+    if (!('url' in entry)) continue;
+    const { bearer } = splitBearer(entry.headers);
+    if (bearer !== null) env[codexBearerEnvName(name)] = bearer;
+  }
+  return env;
+}
+
 /** codex 의 `-c mcp_servers.<name>.*` 조각. transport 를 반드시 적는다(프리셋 주석의 2026-09-15 실측). */
 function codexMcpFlags(name: string, entry: McpServerEntry): string[] {
   const key = `mcp_servers.${name}`;
   if ('url' in entry) {
+    // **Bearer 토큰은 argv 에 굽지 않는다**(2026-09-30). 오퍼레이터가 든 OAuth 토큰이 `Authorization`
+    // 으로 오는데, `http_headers` 로 넘기면 `ps` 에 뜬다. codex 는 `bearer_token_env_var` 로 이름만
+    // 받고 값은 제 env 에서 꺼낸다(0.154 바이너리에서 키 실재 확인) — 값은 `codexBearerEnv` 가 env 로 준다.
+    const { bearer, rest } = splitBearer(entry.headers);
     return [
       '-c', `${key}.transport=${JSON.stringify(entry.type === 'sse' ? 'sse' : 'streamable_http')}`,
       '-c', `${key}.url=${JSON.stringify(entry.url)}`,
-      ...(entry.headers ? ['-c', `${key}.http_headers=${tomlInlineTable(entry.headers)}`] : []),
+      ...(Object.keys(rest).length ? ['-c', `${key}.http_headers=${tomlInlineTable(rest)}`] : []),
+      ...(bearer !== null ? ['-c', `${key}.bearer_token_env_var=${JSON.stringify(codexBearerEnvName(name))}`] : []),
     ];
   }
   return [

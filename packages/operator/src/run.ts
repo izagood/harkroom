@@ -36,6 +36,8 @@ import { createCodexAccountsPort } from './codexAccounts.js';
 import { startCommunities } from './communities.js';
 import { createLocalAgentsPort } from './localAgents.js';
 import { createLocalMcpPort } from './localMcp.js';
+import { createMcpOAuth } from './mcpOAuth.js';
+import { rewriteMcpConfigTokens } from './mcpConfig.js';
 import { claudeConfigPath } from './mcpConfig.js';
 import { fileSecrets } from './secrets.js';
 import { createRunnerLinkServer } from './runnerLink.js';
@@ -384,9 +386,34 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   });
 
   // 이 머신의 MCP 정의(스펙 §6). 러너 config 를 만드는 쪽(`communities.ts::mcpConfig`)과 같은 두 파일을 본다.
+  //
+  // 원격 MCP 의 OAuth 토큰은 오퍼레이터가 든다(2026-09-30, `mcpOAuth.ts`). 새 토큰이 생기면(인증·refresh)
+  // 이미 쓴 러너 설정에 곧바로 넣는다 — 러너를 다시 띄우지 않고 다음 턴부터 간다.
+  const agentMcpDir = join(appDataDir, 'operator', 'mcp');
+  const pushTokens = async (updates: Record<string, { url: string; accessToken: string }>) => {
+    if (!Object.keys(updates).length) return;
+    const n = await rewriteMcpConfigTokens(agentMcpDir, updates).catch((err: unknown) => {
+      log(`MCP OAuth: 러너 설정에 새 토큰을 넣지 못했다(다음 스폰에 들어간다): ${err instanceof Error ? err.message : String(err)}`);
+      return 0;
+    });
+    if (n) log(`MCP OAuth: 러너 설정 ${n}개에 새 토큰(${Object.keys(updates).join(', ')})`);
+  };
+  const mcpOAuth = createMcpOAuth({
+    storePath: join(appDataDir, 'operator', 'secrets', 'mcp-oauth.json'),
+    log,
+    onToken: (name, rec) => pushTokens({ [name]: rec }),
+  });
+  // 1분마다 만료가 가까운 것을 refresh 한다. 턴이 없는 동안에도 돈다 — 긴 턴 도중에 만료되지 않게.
+  const oauthTimer = setInterval(() => {
+    void mcpOAuth.refreshDue().then(pushTokens).catch((err: unknown) => {
+      log(`MCP OAuth: refresh 주기 실패: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }, 60_000);
+  oauthTimer.unref?.();
   const localMcp = createLocalMcpPort({
     registryPath: join(appDataDir, 'operator', 'mcp-servers.json'),
     claudeConfigPath: claudeConfigPath(process.env, homedir()),
+    oauth: mcpOAuth,
   });
 
   const server = new DaemonServer({
@@ -480,7 +507,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       const runtime = await startCommunities({
         appDataDir, registry, host: options.host ?? nodeRunnerHost,
         appVersion: args.appVersion ?? null, log,
-        runnerLink, socketPath: outcome.paths.socketPath, operatorBin: entryPath,
+        runnerLink, socketPath: outcome.paths.socketPath, operatorBin: entryPath, mcpOAuth,
       });
       communities = runtime.communities;
       startCommunity = runtime.startOne;

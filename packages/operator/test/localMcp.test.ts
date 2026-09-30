@@ -55,6 +55,65 @@ describe('localMcp 포트', () => {
   });
 });
 
+describe('localMcp 포트 — 원격 MCP 인증 (2026-09-30)', () => {
+  function fakeOAuth() {
+    const calls: string[] = [];
+    return {
+      calls,
+      oauth: {
+        start: async (name: string, def: { url: string }) => { calls.push(`start:${name}:${def.url}`); return { authUrl: 'https://auth.example.com/a' }; },
+        status: async (name: string, url: string) => { calls.push(`status:${name}:${url}`); return { state: 'ok' as const }; },
+        tokensFor: async () => ({ tokens: {}, expired: [] }),
+        refreshDue: async () => ({}),
+        forget: async (name: string) => { calls.push(`forget:${name}`); },
+        close: () => {},
+      },
+    };
+  }
+
+  it('목록의 원격 항목에 인증 상태를 싣는다 — stdio 에는 없다', async () => {
+    const { registryPath } = await fresh();
+    const f = fakeOAuth();
+    const port = createLocalMcpPort({ registryPath, claudeConfigPath: null, oauth: f.oauth });
+    await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp' });
+    const table = JSON.parse(await readFile(registryPath, 'utf8'));
+    table.timing = { command: 'timing-mcp' };
+    await writeFile(registryPath, JSON.stringify(table));
+    const listed = await port.list();
+    expect(listed.servers.find((s) => s.name === 'slack')?.auth).toEqual({ state: 'ok' });
+    expect(listed.servers.find((s) => s.name === 'timing')?.auth).toBeUndefined();
+  });
+
+  it('인증은 이 머신의 정의에서 url 을 읽는다 — ~/.claude.json 에만 있는 원격 서버도 된다', async () => {
+    const { registryPath, claudePath } = await fresh();
+    await writeFile(claudePath, JSON.stringify({ mcpServers: { jira: { type: 'http', url: 'https://jira.example.com/mcp' } } }));
+    const f = fakeOAuth();
+    const port = createLocalMcpPort({ registryPath, claudeConfigPath: claudePath, oauth: f.oauth });
+    expect(await port.authStart('jira')).toEqual({ authUrl: 'https://auth.example.com/a' });
+    expect(f.calls).toEqual(['start:jira:https://jira.example.com/mcp']);
+  });
+
+  it('정의가 없거나 stdio 면 흐름을 열지 않는다', async () => {
+    const { registryPath } = await fresh();
+    const f = fakeOAuth();
+    const port = createLocalMcpPort({ registryPath, claudeConfigPath: null, oauth: f.oauth });
+    await expect(port.authStart('nope')).rejects.toThrow(/정의가 이 머신에 없다/);
+    await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp' }); // 디렉터리를 만든다
+    await writeFile(registryPath, JSON.stringify({ timing: { command: 'timing-mcp' } }));
+    await expect(port.authStart('timing')).rejects.toThrow(/원격\(http·sse\) 정의가 아니다/);
+    expect(f.calls).toEqual([]);
+  });
+
+  it('정의를 빼면 그 토큰도 지운다', async () => {
+    const { registryPath } = await fresh();
+    const f = fakeOAuth();
+    const port = createLocalMcpPort({ registryPath, claudeConfigPath: null, oauth: f.oauth });
+    await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp' });
+    await port.remove('slack');
+    expect(f.calls).toContain('forget:slack');
+  });
+});
+
 describe('operatorMcpSet/Remove 페이로드', () => {
   it('이름 문법과 예약어를 거절한다', () => {
     expect(readOperatorMcpSetPayload({ name: 'Slack', definition: { type: 'http', url: 'https://x' } })).toMatchObject({ code: 'bad-payload' });

@@ -591,6 +591,24 @@ fn operator_mcp_remove(
     conn.operator_mcp_remove(&name)
 }
 
+/// 원격 MCP 의 OAuth — `action` 은 start·status·forget. 웹뷰가 넘기는 것은 이름 하나다.
+#[tauri::command]
+fn operator_mcp_auth(
+    app: tauri::AppHandle,
+    state: tauri::State<daemon_client::DaemonState>,
+    action: String,
+    name: String,
+) -> Result<serde_json::Value, String> {
+    let method = match action.as_str() {
+        "start" => "operatorMcpAuthStart",
+        "status" => "operatorMcpAuthStatus",
+        "forget" => "operatorMcpAuthForget",
+        _ => return Err(format!("알 수 없는 MCP 인증 동작: {action}")),
+    };
+    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    conn.operator_mcp_auth(method, &name)
+}
+
 #[tauri::command]
 fn claude_account_move(
     app: tauri::AppHandle,
@@ -745,6 +763,7 @@ fn main() {
             operator_mcp_list,
             operator_mcp_set,
             operator_mcp_remove,
+            operator_mcp_auth,
             operator_agent_remove,
         ])
         .run(tauri::generate_context!())

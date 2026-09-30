@@ -12,13 +12,21 @@
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { OperatorMcpEntry, OperatorMcpListResult, OperatorMcpRemoteDefinition } from '@harkroom/shared/daemonProtocol';
+import type { OperatorMcpAuthState, OperatorMcpEntry, OperatorMcpListResult, OperatorMcpRemoteDefinition } from '@harkroom/shared/daemonProtocol';
+import type { McpOAuth } from './mcpOAuth.js';
 
 export interface LocalMcpPort {
   list(): Promise<OperatorMcpListResult>;
   /** http·sse 만 — stdio 는 소켓으로 받지 않는다(`readOperatorMcpSetPayload` 주석, #431). */
   set(name: string, definition: OperatorMcpRemoteDefinition): Promise<void>;
   remove(name: string): Promise<void>;
+  /**
+   * 원격 정의의 OAuth(2026-09-30, `mcpOAuth.ts`). 정의는 두 파일을 합친 표에서 찾는다 — `~/.claude.json`
+   * 에만 적힌 원격 서버도 여기서 인증할 수 있다. 정의가 없거나 stdio 면 던진다.
+   */
+  authStart(name: string): Promise<{ authUrl: string }>;
+  authStatus(name: string): Promise<OperatorMcpAuthState>;
+  authForget(name: string): Promise<void>;
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -58,8 +66,29 @@ export function describeMcpDefinition(name: string, source: OperatorMcpEntry['so
   };
 }
 
-export function createLocalMcpPort(deps: { registryPath: string; claudeConfigPath: string | null }): LocalMcpPort {
+export function createLocalMcpPort(deps: { registryPath: string; claudeConfigPath: string | null; oauth?: McpOAuth }): LocalMcpPort {
+  /** 합친 표에서 원격 정의 하나. 같은 이름이면 오퍼레이터 표가 이긴다(`list` 와 같은 순서). */
+  const remoteDefinition = async (name: string): Promise<OperatorMcpRemoteDefinition> => {
+    const own = (await readTable(deps.registryPath))[name];
+    let def: unknown = own;
+    if (def === undefined && deps.claudeConfigPath) {
+      try {
+        const claude: unknown = JSON.parse(await readFile(deps.claudeConfigPath, 'utf8'));
+        if (isRecord(claude) && isRecord(claude.mcpServers)) def = claude.mcpServers[name];
+      } catch { /* 없다 */ }
+    }
+    if (!isRecord(def)) throw new Error(`${name} 의 정의가 이 머신에 없다`);
+    if (typeof def.url !== 'string') throw new Error(`${name} 는 원격(http·sse) 정의가 아니다 — OAuth 는 원격 서버만 한다`);
+    return def as unknown as OperatorMcpRemoteDefinition;
+  };
+  const oauth = (): McpOAuth => {
+    if (!deps.oauth) throw new Error('이 오퍼레이터에는 MCP OAuth 가 배선되지 않았다');
+    return deps.oauth;
+  };
   return {
+    async authStart(name) { return oauth().start(name, await remoteDefinition(name)); },
+    async authStatus(name) { return oauth().status(name, (await remoteDefinition(name)).url); },
+    async authForget(name) { await oauth().forget(name); },
     async list() {
       const out = new Map<string, OperatorMcpEntry>();
       if (deps.claudeConfigPath) {
@@ -71,6 +100,12 @@ export function createLocalMcpPort(deps: { registryPath: string; claudeConfigPat
       }
       for (const [name, def] of Object.entries(await readTable(deps.registryPath))) {
         if (isRecord(def)) out.set(name, describeMcpDefinition(name, 'operator', def));
+      }
+      if (deps.oauth) {
+        for (const e of out.values()) {
+          if (e.transport === 'stdio') continue;
+          e.auth = await deps.oauth.status(e.name, e.target).catch(() => ({ state: 'error' as const, reason: '상태를 읽지 못했다' }));
+        }
       }
       return { servers: [...out.values()].sort((a, b) => a.name.localeCompare(b.name)) };
     },
@@ -84,6 +119,8 @@ export function createLocalMcpPort(deps: { registryPath: string; claudeConfigPat
       if (!(name in table)) return;
       delete table[name];
       await writeTable(deps.registryPath, table);
+      // 정의를 뺐으면 그 토큰도 들고 있을 이유가 없다.
+      await deps.oauth?.forget(name);
     },
   };
 }

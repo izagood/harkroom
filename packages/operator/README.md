@@ -132,6 +132,13 @@ unix 소켓으로 말하는 것이고, 그 어느 것도 네이티브 애드온�
 `operator/mcp-servers.json` 이 에이전트 `mcpServers` 이름의 정의(`src/mcpConfig.ts`)이고, 없으면
 `~/.claude.json` 을 본다.
 
+원격(http·sse) MCP 의 OAuth 토큰은 오퍼레이터가 든다(`src/mcpOAuth.ts`, `operator/secrets/mcp-oauth.json`
+0600). 사람이 앱의 에이전트 상세 › MCP 에서 [인증] 을 한 번 누르면 오퍼레이터가 흐름(보호 자원
+메타데이터 → 인가 서버 → 동적 등록 또는 정의의 `oauth.clientId` → PKCE → localhost 콜백)을 돌리고,
+러너 설정에 `Authorization` 헤더로 굽는다. 하네스·claude 계정 디렉터리와 무관하다 — 계정 풀의 어느
+계정으로 돌든 같은 토큰이다. 만료 5분 전이면 refresh 하고(1분 주기·스폰 직전), 새 토큰은 이미 쓴
+러너 설정에도 넣어 다음 턴부터 간다. refresh 가 거절되면 `expired` 로 남아 앱에 "인증 만료"가 보인다.
+
 ## 인자
 
 앱이 daemon 을 띄울 때 넘기는 값들. 이름은 지어내지 않고 orca daemon 의 실제 명령줄을 읽어
