@@ -11,7 +11,8 @@
     "./operatorProtocol": "./src/operatorProtocol.ts",
     "./runnerLink": "./src/runnerLink.ts",
     "./claudePools": "./src/claudePools.ts",
-    "./codexAccounts": "./src/codexAccounts.ts"
+    "./codexAccounts": "./src/codexAccounts.ts",
+    "./claudeUsage": "./src/claudeUsage.ts"
   },
   "scripts": { "test": "vitest run", "typecheck": "tsc -p ." },
   "devDependencies": {

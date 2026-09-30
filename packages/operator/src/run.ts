@@ -30,7 +30,8 @@ import {
 import { openRunnerLog, readRunnerLogTail, runnerLogPath } from './runnerLog.js';
 import { RunnerRegistry, nodeRunnerHost, type RunnerHost, type RunnerLogSink } from './runners.js';
 import { DaemonServer } from './server.js';
-import { createClaudeAccountsPort } from './claudeAccounts.js';
+import { claudeAccountsRoot, createClaudeAccountsPort } from './claudeAccounts.js';
+import { createClaudeUsagePoller } from './claudeUsagePoller.js';
 import { createCodexAccountsPort } from './codexAccounts.js';
 import { startCommunities } from './communities.js';
 import { createLocalAgentsPort } from './localAgents.js';
@@ -364,6 +365,14 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   const claudeAccounts = createClaudeAccountsPort();
   const codexAccounts = createCodexAccountsPort();
 
+  // 계정별 사용률을 뒤에서 재서 `usage.json` 에 쓴다(C ①) — 러너가 새 스레드의 계정을 고를 때 읽는다.
+  // 서버에 안 붙는 기동(테스트)에서는 돌리지 않는다: 러너가 뜰 일이 없고, 그 머신의 실제 계정으로
+  // `claude` 를 띄우면 안 된다.
+  const usagePoller = options.communities !== false
+    ? createClaudeUsagePoller({ root: claudeAccountsRoot(), measure: (dir) => claudeAccounts.measureUsage(dir), log })
+    : null;
+  usagePoller?.start();
+
   // 로컬 설정의 에이전트 항목(스펙 §3 능력). 앱이 넣고 빼면 그 커뮤니티가 능력을 다시 낸다 —
   // 커뮤니티는 아래에서 뜨므로 그때의 목록을 늦게 본다.
   const localAgents = createLocalAgentsPort({
@@ -489,6 +498,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     adoptedAtStartup,
     async shutdown() {
       clearInterval(pollTimer);
+      usagePoller?.stop();
       // 서버 링크를 먼저 끊는다 — 러너는 데려가지 않는다(이 파일 머리 주석). 링크가 살아
       // 있으면 종료 중에 assign 이 와서 새 러너를 띄울 수 있다.
       for (const c of communities) c.stop();
