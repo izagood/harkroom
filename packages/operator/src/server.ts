@@ -36,6 +36,7 @@ import {
   readOperatorAgentSetPayload,
   readOperatorRegisterPayload,
   readOperatorMcpRemovePayload,
+  readOperatorMcpAuthPayload,
   readOperatorMcpSetPayload,
   type AdoptRunnerResult,
   type DaemonError,
@@ -428,6 +429,28 @@ export class DaemonServer {
         }
         this.log(`MCP 정의: ${p.name} 뺌`);
         return {};
+      }
+      case 'operatorMcpAuthStart':
+      case 'operatorMcpAuthStatus':
+      case 'operatorMcpAuthForget': {
+        const port = this.deps.localMcp;
+        if (!port) return daemonError('no-such-runner', '이 daemon 에는 MCP 정의가 배선되지 않았다');
+        const p = readOperatorMcpAuthPayload(req.payload, req.type);
+        if (isDaemonError(p)) return p;
+        try {
+          if (req.type === 'operatorMcpAuthStart') {
+            const r = await port.authStart(p.name);
+            // 인가 url 은 적지 않는다 — state·challenge 가 실린다.
+            this.log(`MCP OAuth: ${p.name} 흐름 시작`);
+            return r;
+          }
+          if (req.type === 'operatorMcpAuthStatus') return await port.authStatus(p.name);
+          await port.authForget(p.name);
+          this.log(`MCP OAuth: ${p.name} 토큰 지움`);
+          return {};
+        } catch (err) {
+          return daemonError('internal', err instanceof Error ? err.message : String(err));
+        }
       }
       // ── claude 계정 풀 ────────────────────────────────────────────────────────
       //

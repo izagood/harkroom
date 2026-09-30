@@ -2100,6 +2100,11 @@ impl DaemonConnection {
         self.request("operatorMcpRemove", json!({ "name": name }))
     }
 
+    // 원격 MCP 의 OAuth(2026-09-30). 토큰은 오퍼레이터가 든다 — 소켓으로는 인가 url 과 상태만 온다.
+    pub fn operator_mcp_auth(&self, method: &str, name: &str) -> Result<Value, String> {
+        self.request(method, json!({ "name": name }))
+    }
+
     pub fn claude_account_move(&self, account: &str, to_pool: &str) -> Result<Value, String> {
         self.request(
             "claudeAccountMove",

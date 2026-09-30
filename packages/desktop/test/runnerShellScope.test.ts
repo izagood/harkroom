@@ -595,7 +595,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
           'codex_account_activate', 'codex_account_login_cancel', 'codex_account_login_start',
           'codex_account_remove',
           'daemon_kill_runner', 'daemon_spawn_runner',
-          'operator_agent_remove', 'operator_agent_set', 'operator_mcp_remove', 'operator_mcp_set', 'operator_register',
+          'operator_agent_remove', 'operator_agent_set', 'operator_mcp_auth', 'operator_mcp_remove', 'operator_mcp_set', 'operator_register',
           'secret_delete', 'secret_get', 'secret_set',
         ]);
       // 등록: 서버 URL·코드·이름 문자열뿐 — claim 은 데몬이 한다.
@@ -613,6 +613,11 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       expect(setMcp.webviewParams.sort()).toEqual(['definition: serde_json::Value', 'name: String']);
       const removeMcp = commands.find((c) => c.fn === 'operator_mcp_remove')!;
       expect(removeMcp.webviewParams).toEqual(['name: String']);
+      // 원격 MCP 의 OAuth(2026-09-30): 동작 이름(start·status·forget — Rust 가 고정 표로 소켓 메서드에
+      // 옮긴다)과 MCP 이름뿐이다. url·클라이언트·포트는 오퍼레이터가 제 정의에서 읽는다 — 웹뷰가 인가
+      // 서버를 고를 자리가 없다.
+      const authMcp = commands.find((c) => c.fn === 'operator_mcp_auth')!;
+      expect(authMcp.webviewParams.sort()).toEqual(['action: String', 'name: String']);
       // `daemon_kill_runner` 가 받는 것은 **누구를·어느 세대를** 뿐이다 — 프로그램·인자·경로를
       // 다시 고를 수 있는 자리가 아니다.
       const kill = commands.find((c) => c.fn === 'daemon_kill_runner')!;

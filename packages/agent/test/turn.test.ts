@@ -405,6 +405,37 @@ describe('readExtraMcpServers — 오퍼레이터가 합쳐 준 파일에서 cod
     // 기존 둘은 그대로다.
     expect(flags).toContain('mcp_servers.harkroom.transport="stdio"');
   });
+
+  // 2026-09-30: 오퍼레이터가 든 OAuth 토큰이 `Authorization: Bearer` 로 온다. `http_headers` 로 넘기면
+  // argv 라 `ps` 에 뜬다 — codex 의 `bearer_token_env_var` 로 이름만 넘기고 값은 자식 env 로.
+  it('codex 의 Bearer 토큰은 argv 가 아니라 env 로 간다 — bearer_token_env_var', () => {
+    const base = {
+      harness: 'codex' as const, mode: 'mention' as const, sessionId: null, isFirstTurn: true, systemPrompt: '', promptCtx: 'x',
+      model: null, effort: null, mentionPermission: 'auto' as const, mcpConfigPath: '/m.json', operatorBin: '/opt/harkroom/harkroom-operator',
+      codexHome: '/codex', claudeConfigDir: null,
+    };
+    const plan = buildTurnCommand({
+      ...base,
+      extraMcpServers: { 'slack-work': { type: 'http', url: 'https://mcp.example.com/mcp', headers: { Authorization: 'Bearer SECRET-1', 'X-Team': 't' } } },
+    });
+    expect(plan.args.join(' ')).not.toContain('SECRET-1');
+    const flags = plan.args.filter((_, i) => plan.args[i - 1] === '-c');
+    expect(flags).toContain('mcp_servers.slack-work.bearer_token_env_var="HARKROOM_MCP_BEARER_SLACK_WORK"');
+    // 나머지 헤더는 그대로 http_headers 다.
+    expect(flags).toContain('mcp_servers.slack-work.http_headers={ "X-Team" = "t" }');
+    expect(plan.env.HARKROOM_MCP_BEARER_SLACK_WORK).toBe('SECRET-1');
+  });
+
+  it('claude 는 env 에 bearer 를 얹지 않는다 — 파일(--mcp-config)로 받는다', () => {
+    const plan = buildTurnCommand({
+      harness: 'claude-code', mode: 'mention', sessionId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', isFirstTurn: true, systemPrompt: '', promptCtx: 'x',
+      model: null, effort: null, mentionPermission: 'auto', mcpConfigPath: '/m.json', operatorBin: '/opt/harkroom/harkroom-operator',
+      codexHome: '/codex', claudeConfigDir: null,
+      extraMcpServers: { slack: { type: 'http', url: 'https://mcp.example.com/mcp', headers: { Authorization: 'Bearer SECRET-1' } } },
+    });
+    expect(Object.keys(plan.env).filter((k) => k.startsWith('HARKROOM_MCP_BEARER_'))).toEqual([]);
+    expect(plan.args.join(' ')).not.toContain('SECRET-1');
+  });
 });
 
 describe('assertHarnessContract', () => {

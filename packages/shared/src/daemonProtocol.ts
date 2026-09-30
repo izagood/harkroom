@@ -119,6 +119,11 @@ export const REQUEST_TYPES = [
   'operatorMcpList',
   'operatorMcpSet',
   'operatorMcpRemove',
+  // 원격 MCP 의 OAuth(2026-09-30). 토큰은 오퍼레이터가 갖고(`operator/src/mcpOAuth.ts`), 소켓으로는
+  // **상태만** 오간다 — 앱은 받은 인가 url 을 브라우저로 열 뿐 토큰을 보지 않는다.
+  'operatorMcpAuthStart',
+  'operatorMcpAuthStatus',
+  'operatorMcpAuthForget',
 ] as const;
 export type DaemonRequestType = (typeof REQUEST_TYPES)[number];
 
@@ -658,6 +663,26 @@ export interface OperatorMcpEntry {
   envKeys: string[];
   headerKeys: string[];
   oauth: boolean;
+  /** 오퍼레이터가 든 OAuth 토큰의 상태(원격 정의만). 없으면 옛 오퍼레이터 — 모른다. */
+  auth?: OperatorMcpAuthState;
+}
+
+/**
+ * 원격 MCP OAuth 의 상태. `none` 은 오퍼레이터가 토큰을 안 들고 있다는 뜻이다 — 그 서버가 인증을
+ * 요구하는지는 서버에 물어야 안다(정의에 `oauth` 가 있으면 요구한다).
+ */
+export type OperatorMcpAuthState =
+  | { state: 'none' }
+  | { state: 'pending' }
+  | { state: 'ok'; expiresAt?: number }
+  | { state: 'expired' }
+  | { state: 'error'; reason: string };
+export interface OperatorMcpAuthStartResult { authUrl: string }
+
+export function readOperatorMcpAuthPayload(payload: unknown, method: string): { name: string } | DaemonError {
+  const p = payload as { name?: unknown } | null;
+  const name = readMcpName(p?.name, method);
+  return typeof name === 'string' ? { name } : name;
 }
 export interface OperatorMcpListResult { servers: OperatorMcpEntry[] }
 
