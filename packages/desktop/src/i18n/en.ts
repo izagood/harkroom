@@ -2388,9 +2388,10 @@ export const en = {
   'projection.banner.unreadable': 'The projection status could not be read',
 
   /** 띠 안의 닫기. **사정별로 닫힌다**(그 화면 주석) — 다른 사정이면 다시 선다. */
-  'projection.banner.dismiss': 'Dismiss this alert',
+  'projection.banner.dismiss': 'Later',
   /** 고치는 문. **띠 안에 붙는다**(문서) — 좁은 칸에서는 이 문이 없었다. */
-  'projection.banner.openSettings': 'Open settings',
+  'projection.banner.openSettings': 'Set up now',
+  'projection.banner.unconfigured': 'avcs projection is off, so the Collab screen is empty.',
 
   /**
    * 같은 사정이 **리스 목록에** 뜻하는 것. 띠가 "고장났다"를 말하는 동안 이 줄은
@@ -2407,7 +2408,9 @@ export const en = {
   'projection.list.unreadable': 'The status cannot be read right now, so this list cannot be trusted',
 
   /** 편집 자리의 필드 이름. **`avcs` 는 안 옮긴다**(제품 이름). */
-  'projection.url.field': 'avcs address',
+  'projection.url.field': 'avcs server address',
+  'projection.url.connect': 'Connect',
+  'projection.url.statusOff': 'Not connected · checked as soon as you enter an address',
   /** env 값이 있을 때의 안내. **지우면 무엇으로 돌아가는지**를 미리 말한다. */
   'projection.url.hintFallback': 'Clearing it falls back to {url}',
   /** env 도 없을 때. **잃는 것이 다르므로 문장이 갈린다.** */
@@ -2417,7 +2420,6 @@ export const en = {
   'projection.url.placeholder': 'http://avcs.example:4000',
   'projection.url.saveFailed': 'The projection URL was not saved',
   /** **출처가 없다는 것도 사정이다** — '아직 아무도 정하지 않았다'. */
-  'projection.url.sourceNone': 'Not set yet',
   /**
    * 출처를 **사정마다 다른 말**로 적는다(그 파일 주석). `{source}` 에 아래 둘 중
    * 하나가 들어간다.
@@ -3566,7 +3568,9 @@ export const en = {
   'collab.title': 'Collaboration',
   'collab.checking': 'Loading proposals…',
   'collab.unknown': "Couldn't read proposals",
-  'collab.noServer': 'No avcs server is configured — set one in Settings › Projection.',
+  'collab.noServer.title': 'Connect an avcs server to gather proposals and work here',
+  'collab.noServer.body': 'See the changes agents propose and how they are going, outside the channels.',
+  'collab.noServer.open': 'Open avcs connection settings',
   'collab.empty': 'Nothing here',
   'collab.filter.label': 'Filter proposals',
   'collab.filter.open': 'Open {count}',

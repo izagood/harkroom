@@ -414,3 +414,19 @@ export const stickyMentionsStorage = {
     try { localStorage.removeItem(STICKY_MENTIONS_KEY); } catch { /* noop */ }
   },
 };
+
+/**
+ * 투영 띠의 "나중에"(UX ②). **꺼짐(`projection-unconfigured`)만** 이 기기에 남긴다 —
+ * 꺼 둔 것은 사람이 알고 고른 상태일 수 있어 날마다 다시 띄우면 잡음이다. 멈춤·못 읽음은
+ * 지금 벌어진 고장이라 남기지 않는다(스토어의 세션 닫기만 쓴다) — 그것까지 기억하면
+ * "나중에" 가 곧 알림 끄기가 된다.
+ */
+const PROJECTION_SNOOZE_KEY = 'harkroom.projectionBanner.snoozed';
+export const projectionBannerStorage = {
+  isSnoozed(testid: string): boolean {
+    try { return localStorage.getItem(PROJECTION_SNOOZE_KEY) === testid; } catch { return false; }
+  },
+  snooze(testid: string): void {
+    try { localStorage.setItem(PROJECTION_SNOOZE_KEY, testid); } catch { /* 저장 불가 환경 허용 */ }
+  },
+};

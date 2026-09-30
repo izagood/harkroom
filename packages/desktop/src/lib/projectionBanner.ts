@@ -1,4 +1,3 @@
-import { PROJECTION_UNCONFIGURED_DETAIL, PROJECTION_UNCONFIGURED_HEADLINE } from '@harkroom/shared';
 import type { ProjectionStatus } from '@harkroom/shared';
 import type { Translate } from '../i18n';
 
@@ -106,13 +105,13 @@ export function projectionBanner(input: {
     return {
       testid: 'projection-unconfigured',
       tone: 'warning',
-      // **이 둘만 사전을 안 지난다** — `packages/shared` 의 상수라 데스크탑 사전이 닿을
-      // 수 없다(서버·러너가 함께 쓴다). `runner.exit.notFound` 뒤에 붙는 `installHint()`
-      // 와 **같은 경계이고 같은 미결**이다: `Translate` 를 shared 로 내릴지, 저 상수가
-      // 키만 내고 여기서 문구를 씌울지를 먼저 정해야 한다. 그래서 사전에 짝이 될 키를
-      // 미리 만들어 두지 않았다 — 안 쓰는 키는 검사할 방법이 없어 조용히 썩는다.
-      text: PROJECTION_UNCONFIGURED_HEADLINE,
-      detail: PROJECTION_UNCONFIGURED_DETAIL,
+      // 전에는 `packages/shared` 의 상수(`PROJECTION_UNCONFIGURED_HEADLINE`·`_DETAIL`)를
+      // 그대로 썼다 — "앱 설정이나 AVCS_BASE_URL 로 켠다" 는 서버·러너 로그의 말이라 **무엇이
+      // 비었는지**(Collab)도, **어디로 가는지**도 말하지 않았다(UX ② H3). 띠는 이 화면의
+      // 말이므로 사전을 지난다. 상수는 서버·러너 쪽에 그대로 남는다. 갈 곳은 문구가 아니라
+      // 띠의 "지금 설정" 버튼이 지목한다(메뉴 이름이 바뀌어도 길이 산다).
+      text: t('projection.banner.unconfigured'),
+      detail: null,
       strip: true,
       // 목록 쪽은 이 파일의 말이라 사전을 지난다 — 위 둘과 출처가 다르다.
       listNote: t('projection.list.unconfigured'),

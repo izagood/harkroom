@@ -12,7 +12,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import { PROJECTION_UNCONFIGURED_DETAIL, PROJECTION_UNCONFIGURED_HEADLINE } from '@harkroom/shared';
+import { PROJECTION_UNCONFIGURED_HEADLINE } from '@harkroom/shared';
 import type { ProjectionStatus } from '@harkroom/shared';
 import { useActiveStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
@@ -43,8 +43,8 @@ describe('Connection 설정의 투영 행', () => {
   it('꺼져 있으면 무엇을 켜야 하는지 적는다', () => {
     useActiveStore.getState().set({ projectionStatus: status({ state: 'unconfigured', configured: false, repo: null }) });
     render(<ConnectionSettings onSignOut={vi.fn()} />);
-    expect(row()).toContain(PROJECTION_UNCONFIGURED_HEADLINE);
-    expect(row()).toContain(PROJECTION_UNCONFIGURED_DETAIL);
+    // 띠와 **같은 판정·같은 말**이다(UX ②: shared 상수가 아니라 화면의 사전).
+    expect(row()).toContain('avcs 투영이 꺼져 있어 Collab 화면이 비어 있다.');
   });
 
   /** 정상과 고장이 같은 말이면 이 행은 아무것도 알려 주지 않는다. */

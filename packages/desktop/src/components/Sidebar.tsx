@@ -202,7 +202,7 @@ const memberErrorText = (err: unknown, fallback: string, t: Translate): string =
 
 export function Sidebar({
   panel, onOpenDirectory, onOpenChannelDirectory, onOpenInbox, onOpenAgentConfig, onOpenProfile,
-  collapsed, onToggleCollapse,
+  onOpenProjectionSettings, collapsed, onToggleCollapse,
 }: {
   /**
    * 레일이 고른 칸(정본 문서 `docs/desktop-rail.html` 1단계). 이 패널은 **그 칸의 묶음만**
@@ -244,6 +244,12 @@ export function Sidebar({
    * (design.md §4).
    */
   onOpenAgentConfig: (agentId: string) => void;
+  /**
+   * 협업 칸의 빈 상태가 **투영 설정 칸**으로 바로 가는 길(UX ②, H3). `onOpenAgentConfig` 와
+   * 같은 이유로 설정 전체가 아니라 그 칸 하나로 좁혔다. 옵셔널인 이유: 이 버튼이 없어도
+   * 칸은 제 말(서버가 없다)을 한다 — 배너(`ProjectionBanner`)의 설정 문과 같은 규약이다.
+   */
+  onOpenProjectionSettings?: () => void;
   /**
    * 설정을 볼 수 없는 사람이 카드를 눌렀을 때 여는 곳(`onPick` 주석에 근거). 위
    * `onOpenDirectory`(누구를 지목하지 않는 검색 목록)와 **다른 화면**이다 — 디렉터리는
@@ -2043,6 +2049,7 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
             */
             handleOf={(accountId) => accounts[accountId]?.handle ?? accountId}
             onOpenChannel={(channelId) => { void getController().openChannel(channelId); }}
+            onOpenProjectionSettings={onOpenProjectionSettings}
           />
         )}
         {panel === 'agents' && (

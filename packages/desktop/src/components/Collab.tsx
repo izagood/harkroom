@@ -27,7 +27,7 @@ import { countFor, filterRepos, type CollabFilter, type CollabSnapshot } from '.
  * "누가 어느 파일을 잡았다"(lease)는 제안을 읽는 사람이 묻는 것이 아니다 — 겹침이 실제로
  * 문제가 되면 **결정 필요**로 나타나고, 그때 이 칸이 말한다.
  */
-export function Collab({ snapshot, filter, onFilterChange, handleOf, onOpenChannel }: {
+export function Collab({ snapshot, filter, onFilterChange, handleOf, onOpenChannel, onOpenProjectionSettings }: {
   snapshot: CollabSnapshot;
   filter: CollabFilter;
   onFilterChange: (filter: CollabFilter) => void;
@@ -35,6 +35,8 @@ export function Collab({ snapshot, filter, onFilterChange, handleOf, onOpenChann
   handleOf: (actorKeyId: string) => string;
   /** 저장소에 바인딩된 채널로 간다. 채널이 없으면 부르지 않는다. */
   onOpenChannel: (channelId: string) => void;
+  /** 빈 상태의 "avcs 연결 설정 열기" 가 가는 곳(UX ②). 없으면 버튼을 그리지 않는다. */
+  onOpenProjectionSettings?: () => void;
 }): ReactElement {
   const t = useT();
 
@@ -70,11 +72,23 @@ export function Collab({ snapshot, filter, onFilterChange, handleOf, onOpenChann
           ? (
             // "제안이 없다" 와 "보고 있는 서버가 없다" 는 다른 말이다. 후자는 설정의 문제라
             // 사람이 할 일이 다르다.
+            // 안내문이 **없는 메뉴**("설정 › 투영")를 가리키던 자리다(UX ② H3). 이제 말로
+            // 길을 설명하지 않고 그 칸으로 가는 버튼을 준다 — 메뉴 이름이 바뀌어도(⑥) 길은 산다.
             <div
-              className="mx-1 rounded border border-dashed border-border px-2 py-2 text-meta text-fg-subtle"
+              className="mx-1 flex flex-col gap-1.5 rounded border border-border bg-surface-raised px-3 py-2.5"
               data-testid="collab-no-server"
             >
-              {t('collab.noServer')}
+              <div className="text-body font-semibold text-fg">{t('collab.noServer.title')}</div>
+              <div className="text-meta text-fg-muted">{t('collab.noServer.body')}</div>
+              {onOpenProjectionSettings && (
+                <button
+                  data-testid="collab-open-projection"
+                  className="mt-0.5 self-start rounded bg-accent px-2.5 py-1 text-meta font-medium text-fg-on-strong hover:bg-accent-hover"
+                  onClick={onOpenProjectionSettings}
+                >
+                  {t('collab.noServer.open')}
+                </button>
+              )}
             </div>
           )
           : (
