@@ -13,6 +13,8 @@ import { acc, chan, scheduledApiStub } from './helpers/fakeApi';
 import capabilitiesRaw from '../src-tauri/capabilities/default.json?raw';
 import baseConfRaw from '../src-tauri/tauri.conf.json?raw';
 import macConfRaw from '../src-tauri/tauri.macos.conf.json?raw';
+import mainRsRaw from '../src-tauri/src/main.rs?raw';
+import windowChromeRaw from '../src-tauri/src/window_chrome.rs?raw';
 
 /**
  * macOS 에서 OS 타이틀바를 없애고 앱 바를 창 손잡이로 쓴다(#270).
@@ -104,6 +106,17 @@ describe('#270 창 설정', () => {
     expect(w.hiddenTitle).toBe(true);
     // 창 전환기·화면 공유·접근성이 읽는 값이라 지우지 않는다. `hiddenTitle` 로 가릴 뿐이다.
     expect(w.title).toBe('Harkroom');
+  });
+
+  /**
+   * 신호등의 **자리**는 설정 파일이 정하지 못한다(2026-09-30). macOS 26 은 툴바 없는 창의
+   * 신호등을 창 모서리에 바짝 붙이므로, 기동 때 빈 툴바를 단다(`window_chrome.rs` 머리 주석).
+   * 그 호출이 빠지면 창은 뜨지만 신호등만 조용히 옛 모양으로 돌아간다 — 그래서 여기서 막는다.
+   * 스타일이 바뀌면 신호등 자리가 달라져 `TOP_BAR_H`·`MAC_TITLEBAR_H` 의 측정값이 틀린다.
+   */
+  it('기동 때 창에 빈 툴바(UnifiedCompact)를 단다 — 신호등 자리', () => {
+    expect(mainRsRaw).toMatch(/^\s*window_chrome::install\(app\);/m);
+    expect(windowChromeRaw).toContain('NSWindowToolbarStyle::UnifiedCompact');
   });
 
   /**
@@ -370,19 +383,19 @@ describe('#359 최상단 바 정렬', () => {
 /**
  * 로그인 화면 손잡이 띠는 **원래 타이틀바가 있던 높이까지만** 끈다(#359).
  *
- * 초판은 38px 이었는데 신호등 실측(지름 14px, 중심 y≈12px)이 말하는 띠는 28px 이다. 10px 이
- * 더 크면 그만큼 폼 위 빈 공간이 드래그에 먹혀, 사용자에게는 "끌리는 자리가 타이틀바보다
+ * 초판은 38px 이었는데 당시 신호등 실측이 말하는 띠는 28px 이었다(지금은 툴바를 단 창의 신호등이라
+ * 36px — `platform.ts`). 그보다 크면 그만큼 폼 위 빈 공간이 드래그에 먹혀, 사용자에게는 "끌리는 자리가 타이틀바보다
  * 아래로 내려온다" 로 보인다.
  */
 describe('#359 띠 높이', () => {
-  it('띠가 타이틀바 높이(28px)를 쓴다', async () => {
+  it('띠가 타이틀바 높이(36px)를 쓴다', async () => {
     pretendMac();
     render(<App />);
     expect(await screen.findByText('Server URL')).toBeTruthy();
 
     const strip = document.querySelector('[data-testid="window-drag-strip"]')!;
     expect(strip.className).toContain(MAC_TITLEBAR_H);
-    expect(MAC_TITLEBAR_H).toBe('h-[28px]');
+    expect(MAC_TITLEBAR_H).toBe('h-[36px]');
   });
 });
 

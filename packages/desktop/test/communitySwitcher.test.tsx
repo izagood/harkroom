@@ -15,6 +15,7 @@ import {
 import { setController, startCommunitySession, type Controller } from '../src/state/controller';
 import { acc, chan, fakeApi } from './helpers/fakeApi';
 import { usePrefsStore } from '../src/state/prefsStore';
+import { TOP_BAR_BG, TOP_BAR_H } from '../src/lib/platform';
 
 /**
  * **언어를 한국어로 고정한다.** 이 파일이 재는 것은 언어가 아니라 **그 언어로 표현된
@@ -197,6 +198,28 @@ describe('커뮤니티 전환기 레일 (#165)', () => {
     expect(screen.getByLabelText('b.example — 연결 끊김')).toBeTruthy();
     expect(screen.getByTestId(`community-tile-${a.id}`).getAttribute('aria-current')).toBe('true');
     expect(screen.getByTestId(`community-tile-${b.id}`).getAttribute('aria-current')).toBeNull();
+  });
+
+  it('2b. 레일이 서도 창 맨 위 띠가 끊기지 않는다 — 레일 맨 위도 같은 높이·색의 띠다', async () => {
+    const { a, b } = await twoCommunities();
+    seed(a, 'me-a', true);
+    seed(b, 'me-b', true);
+
+    renderWorkspace();
+
+    // 레일이 서면 창의 좌상단이 이 레일이다. 전에는 몸통이 창 맨 위까지 올라가(`pt-8`)
+    // 면도 sunken 이라, 옆의 `rail-titlebar`·브랜드 바·헤더가 이루는 한 줄이 여기서 끊겼다.
+    const strip = screen.getByTestId('community-rail-titlebar');
+    const railStrip = screen.getByTestId('rail-titlebar');
+    expect(strip.className).toContain(TOP_BAR_H);
+    expect(strip.className).toContain(TOP_BAR_BG);
+    // 같은 조각이면 클래스도 같다 — 한쪽만 고쳐지면 다시 이음선이 생긴다.
+    expect(strip.className).toBe(railStrip.className);
+    expect(strip.hasAttribute('data-tauri-drag-region')).toBe(true);
+    // 세로선은 띠가 아니라 몸통이 진다 — 신호등이 경계를 지나가도 선에 걸치지 않는다.
+    const rail = screen.getByTestId('community-rail');
+    expect(rail.className).not.toContain('border-r');
+    expect(rail.className).not.toContain('pt-8');
   });
 
   it('3. 타일을 누르면 활성이 바뀌고 useActiveStore 가 다른 스토어를 돌려준다', async () => {

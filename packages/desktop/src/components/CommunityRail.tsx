@@ -1,8 +1,7 @@
-import { useMemo } from 'react';
 import { useStore } from 'zustand';
 import { communityLabel, useCommunityRegistry, type CommunityEntry } from '../state/communities';
 import { switchCommunity } from '../state/controller';
-import { isMacOS } from '../lib/platform';
+import { TOP_BAR_BG, TOP_BAR_H } from '../lib/platform';
 import { useT } from '../i18n/useT';
 
 /**
@@ -27,14 +26,6 @@ export function CommunityRail() {
   const t = useT();
   const entries = useCommunityRegistry((r) => r.entries);
   const activeId = useCommunityRegistry((r) => r.activeId);
-  /**
-   * 레일이 그려지면 **레일이 창의 좌상단**이 되므로 macOS 신호등이 첫 타일을 덮는다.
-   * 가로가 아니라 세로로 비운다: 레일은 신호등 3 개(78px)보다 좁아서 가로 여백으로는
-   * 피할 수 없고, 사이드바의 기존 가로 여백(`MAC_TRAFFIC_LIGHT_PL`)은 그대로 두어도
-   * 레일 폭만큼 오른쪽으로 밀려 있어 덮이지 않는다.
-   */
-  const macTrafficLightRoom = useMemo(() => isMacOS(), []);
-
   // 하나뿐이면 오늘 화면과 같다 — 요소를 남기지 않는다(폭 0 인 껍데기도 두지 않는다).
   if (entries.length < 2) return null;
 
@@ -42,13 +33,33 @@ export function CommunityRail() {
     <nav
       data-testid="community-rail"
       aria-label={t('rail.community.label')}
-      className={`flex w-14 shrink-0 flex-col items-center gap-2 border-r border-border bg-surface-sunken pb-2 ${
-        macTrafficLightRoom ? 'pt-8' : 'pt-2'
-      }`}
+      className="flex w-14 shrink-0 flex-col bg-surface-sunken"
     >
-      {entries.map((entry) => (
-        <CommunityTile key={entry.id} entry={entry} active={entry.id === activeId} />
-      ))}
+      {/*
+        창 최상단 띠의 이 레일 구간. **`Rail` 의 `rail-titlebar` 와 같은 조각이다.**
+
+        이 레일이 서면 **창의 좌상단이 여기**가 되는데, 전에는 몸통이 창 맨 위까지 올라가
+        (`pt-8` 로 신호등 자리만 비우고) 면도 `sunken`, 오른쪽 세로선도 창 맨 위까지였다.
+        그래서 `rail-titlebar` · 브랜드 바 · 헤더가 이루는 `TOP_BAR_BG` 한 줄이 **이 레일의
+        오른쪽 경계에서 끊겨** 보였다(2026-09-30 스크린샷). 커뮤니티가 하나면 이 레일이 없어
+        드러나지 않았다.
+
+        `Rail` 이 같은 문제를 푼 방식을 그대로 따른다: 같은 높이·같은 색의 띠를 맨 위에 두고,
+        테두리는 띠가 아니라 아래 몸통에 붙인다. 그러면 신호등(78px)이 레일 경계(56px)를
+        지나가도 걸치는 세로선이 없고, 띠 높이(36px)가 신호등 자리도 비우므로 옛 `pt-8`
+        플랫폼 분기가 필요 없다. 창 좌상단이라 손잡이도 여기다.
+      */}
+      <div
+        data-testid="community-rail-titlebar"
+        data-tauri-drag-region
+        aria-hidden="true"
+        className={`shrink-0 ${TOP_BAR_H} border-b border-border ${TOP_BAR_BG}`}
+      />
+      <div className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto border-r border-border pb-2 pt-2">
+        {entries.map((entry) => (
+          <CommunityTile key={entry.id} entry={entry} active={entry.id === activeId} />
+        ))}
+      </div>
     </nav>
   );
 }
