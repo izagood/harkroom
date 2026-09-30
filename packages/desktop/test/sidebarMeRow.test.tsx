@@ -52,7 +52,7 @@ const mount = (props: Partial<{ onOpenSettings: (section?: SectionId) => void; o
         onPanelChange={vi.fn()}
         onOpenSaved={vi.fn()}
         onOpenSettings={props.onOpenSettings ?? (() => {})}
-        onOpenCommunityMark={vi.fn()}
+        onManageCommunities={vi.fn()}
         onLogout={props.onLogout ?? (() => {})}
       />
       <Sidebar panel="home"

@@ -1,11 +1,11 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import { useStore } from 'zustand';
-import { communityLabel, useActiveStore, useCommunityRegistry, type CommunityEntry } from '../state/communities';
+import { communityLabel, useActiveStore, useCommunityRegistry } from '../state/communities';
 import { getController } from '../state/controller';
 import { blockingUnreadCount } from '../state/unread';
 import { Identity, StatusMark } from './Identity';
 import { Menu } from './Menu';
 import { StatusPicker } from './StatusPicker';
+import { CommunitySwitcher } from './CommunitySwitcher';
 import { TOP_BAR_BG, TOP_BAR_H } from '../lib/platform';
 import { AgentsIcon, CollabIcon, DmIcon, HomeIcon, SavedIcon } from './RailIcons';
 import type { SectionId } from './settings/sections';
@@ -112,27 +112,26 @@ const RAIL_FOCUS = 'outline-none focus-visible:outline-solid focus-visible:outli
  * 즐겨찾기는 사람에게 관리를 시키는 회피책이고 한 열이라는 제약은 그대로여서, 축을
  * 하나 더 만든다.
  *
- * ## 이 레일이 하지 않는 것
+ * ## 커뮤니티 전환도 이 레일이 한다 (2026-09-30, 레일 통합 안 A)
  *
- * **커뮤니티 전환 목록을 만들지 않는다**(문서의 4단계). 커뮤니티가 하나뿐인 오늘은
- * 마크만 있으면 되고, 문서도 "하나뿐이면 마크만 두고 목록은 나중"이라고 적었다.
- * 여럿일 때의 전환은 이미 `CommunityRail`(#165)이 하고 있어 그것을 그대로 세운다 —
- * 같은 일을 하는 두 번째 표면을 만들면 어느 쪽이 정본인지 알 수 없게 된다.
+ * 전에는 커뮤니티가 둘 이상이면 `CommunityRail`(56px)이 이 레일 왼쪽에 하나 더 섰다.
+ * 이제 맨 위 타일(`CommunitySwitcher`)이 지금 커뮤니티를 말하고, 호버·클릭으로 전환
+ * 팝오버를 연다. 커뮤니티가 몇 개든 왼쪽 기둥은 이것 하나다.
  *
  * ## 세로를 쓰는 것은 네 칸뿐이다
  *
  * 문서: "레일에서 세로를 쓰는 것은 네 칸뿐이어야 한다." 그래서 커뮤니티 마크와 내 얼굴은
  * 스크롤에 들어가지 않고 위아래에 **고정**이고, 가운데 네 칸만 필요하면 스크롤한다.
  */
-export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onOpenCommunityMark, onLogout }: {
+export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onManageCommunities, onLogout }: {
   panel: RailPanel;
   onPanelChange: (panel: RailPanel) => void;
   /** 북마크 칸이 여는 오버레이. **옵셔널이 아니다** — 기본값을 여기서 공급하면 배선을
    *  잊은 화면에서도 칸이 그려지고 눌러도 아무 일이 없다(design.md §4). */
   onOpenSaved: () => void;
   onOpenSettings: (section?: SectionId) => void;
-  /** 커뮤니티 마크를 눌렀을 때. 전환 목록은 4단계이므로 지금은 설정 › 커뮤니티로 보낸다. */
-  onOpenCommunityMark: () => void;
+  /** 전환 팝오버의 「커뮤니티 추가」·「커뮤니티 관리…」가 가는 곳(설정 › 커뮤니티). */
+  onManageCommunities: () => void;
   onLogout: () => void;
 }) {
   const t = useT();
@@ -183,7 +182,8 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onOpen
    */
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
-      if (!(e.metaKey || e.ctrlKey)) return;
+      // ⌥ 가 붙으면 커뮤니티 전환(⌥⌘1~9, `CommunitySwitcher`)이다 — 칸이 가로채지 않는다.
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
       const index = Number(e.key) - 1;
       const cell = RAIL_CELLS[index];
       if (!Number.isInteger(index) || !cell) return;
@@ -261,7 +261,9 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onOpen
         `min-height: auto` 는 내용만큼 늘어나 스크롤이 창 밖으로 밀린다.
       */}
       <div className="relative flex min-h-0 flex-1 flex-col items-center gap-1 border-r border-border pb-1 pt-2">
-        <CommunityMark onClick={onOpenCommunityMark} />
+        <CommunitySwitcher onManage={onManageCommunities} />
+        {/* 어느 곳(커뮤니티)과 무엇(칸)을 가르는 선 — 목업의 구분선이다. */}
+        <div aria-hidden="true" className="mt-1 w-8 shrink-0 border-t border-border" />
         {/* 네 칸만 스크롤한다 — 위아래 둘은 패널이 무엇을 보여주든 자리가 안 변한다
             (문서: "레일에서 그 둘만 고정이다"). */}
         <div className="flex w-full flex-1 flex-col items-center gap-1 overflow-y-auto py-2">
@@ -370,7 +372,7 @@ function MeMenuHeader() {
  * 칸 하나.
  *
  * **`aria-current` 로 지금 어느 칸인지 말한다.** 색과 굵기만으로 표시하면 그 구분이
- * 스크린리더에는 없는 것과 같다 — `CommunityRail` 의 타일이 이미 같은 규칙을 쓴다.
+ * 스크린리더에는 없는 것과 같다 — `CommunitySwitcher` 의 행이 이미 같은 규칙을 쓴다.
  * 배지도 같은 이유로 접근 가능한 이름에 수치를 싣는다: 주황 원 하나는 읽히지 않는다.
  *
  * 글자를 붙이는 것이 문서의 요구다 — "Slack 도 아이콘만 두지 않는다. 하물며 `에이전트` 는
@@ -444,67 +446,6 @@ function RailButton({ cell, active, badge, countInName, onClick, t }: {
           {badge}
         </span>
       )}
-    </button>
-  );
-}
-
-/**
- * 레일 맨 위 커뮤니티 마크(문서 「레일 맨 위 · 커뮤니티」).
- *
- * 문서의 진단을 확인했다: **앱 화면 어디에도 지금 어느 커뮤니티에 있는지 나오지 않는다.**
- * 실측으로는 한 곳 있었다 — 계정 메뉴의 머리(#488 A1)가 `@handle · 워크스페이스` 를 적는다.
- * 다만 그것은 **메뉴를 열어야 보이는** 것이라 "화면에 늘 있는가"라는 문서의 물음에는
- * 여전히 아니다. 타이틀바의 `harkroom` 가 앱 이름이라는 지적도 코드와 맞았다(`Sidebar` 의
- * 브랜드 바는 상수 문자열 `harkroom` 다).
- *
- * **커뮤니티가 여럿이면 그리지 않는다.** 그때는 `CommunityRail`(#165)이 이 레일 왼쪽에
- * 서서 같은 일을 하고, 마크를 두 개 세우면 지금 있는 곳이 두 곳에 표시된다. 전환 목록은
- * 문서의 4단계다.
- *
- * 누르면 설정 › 커뮤니티로 간다 — 문서는 "커뮤니티를 옮겨 다니는 일은 설정에 들어가서 할
- * 일이 아니다"라고 적었지만 그것은 목록을 만드는 4단계의 이야기고, 지금 없는 목록을
- * 대신해 눌러도 아무 일이 없는 마크를 두는 것이 더 나쁘다(design.md §4).
- */
-function CommunityMark({ onClick }: { onClick: () => void }) {
-  const entries = useCommunityRegistry((r) => r.entries);
-  const activeId = useCommunityRegistry((r) => r.activeId);
-  const entry = entries.find((e) => e.id === activeId);
-  if (!entry || entries.length > 1) return null;
-  return <CommunityMarkTile entry={entry} onClick={onClick} />;
-}
-
-/**
- * 마크 타일. 연결 상태를 **자기 커뮤니티의 스토어에서 직접 읽는다** — `CommunityRail` 의
- * 타일과 같은 이유다(전역 플래그 하나로 합치면 "셋 중 하나가 끊겼다"가 "끊겼다"로 뭉친다).
- * 훅이 조건 뒤에 오지 않게 타일을 따로 뽑았다.
- */
-function CommunityMarkTile({ entry, onClick }: { entry: CommunityEntry; onClick: () => void }) {
-  const t = useT();
-  const connected = useStore(entry.store, (s) => s.connected);
-  const label = communityLabel(entry);
-  // 이니셜은 **코드 포인트 단위**로 자른다 — `label[0]` 은 이모지를 반쪽만 잘라 깨진 글자를
-  // 그린다(`CommunityRail` 이 같은 실수를 이미 고쳤다).
-  const initial = Array.from(label)[0]?.toUpperCase() ?? '?';
-  return (
-    <button
-      type="button"
-      data-testid="rail-community-mark"
-      /* `CommunityRail` 의 타일과 **같은 키를 본다** — 두 파일이 같은 문장을 따로
-         적으면 한쪽만 고쳐진다(두 파일 주석이 이미 그 중복을 위험으로 적었다). */
-      aria-label={t('rail.community.tile', {
-        name: label,
-        state: t(connected ? 'rail.community.connected' : 'rail.community.disconnected'),
-      })}
-      title={label}
-      onClick={onClick}
-      // `text-sm` 은 4단이 아니라 **h-9 원에 묶인 머리글자**다 — 위 `initial` 하나가 이
-      // 버튼의 내용 전부이고, 크기가 원의 지름에서 따라 나온다(`Identity.tsx` 의 근거와
-      // 같은 자리). 4단으로 올리면 원은 그대로인데 글자만 커져 가장자리에 붙는다.
-      className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-raised text-sm font-bold text-fg-muted hover:bg-surface-hover ${RAIL_FOCUS} ${
-        connected ? '' : 'border-2 border-danger'
-      }`}
-    >
-      {initial}
     </button>
   );
 }

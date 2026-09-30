@@ -2902,7 +2902,7 @@ describe('레일 — 두 언어로 뜨고 칸 이름은 안 옮긴다', () => {
     onPanelChange: () => {},
     onOpenSaved: () => {},
     onOpenSettings: () => {},
-    onOpenCommunityMark: () => {},
+    onManageCommunities: () => {},
     onLogout: () => {},
   };
 

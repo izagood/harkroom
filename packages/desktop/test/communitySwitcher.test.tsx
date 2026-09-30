@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, within, act } from '@testing-library/react';
+import { HOVER_CLOSE_MS, HOVER_OPEN_MS } from '../src/components/CommunitySwitcher';
 import type { connectWs } from '../src/lib/ws';
 import App from '../src/App';
 import { Workspace } from '../src/components/Workspace';
@@ -15,7 +16,6 @@ import {
 import { setController, startCommunitySession, type Controller } from '../src/state/controller';
 import { acc, chan, fakeApi } from './helpers/fakeApi';
 import { usePrefsStore } from '../src/state/prefsStore';
-import { TOP_BAR_BG, TOP_BAR_H } from '../src/lib/platform';
 
 /**
  * **언어를 한국어로 고정한다.** 이 파일이 재는 것은 언어가 아니라 **그 언어로 표현된
@@ -170,59 +170,71 @@ afterEach(() => {
   localStorage.clear();
 });
 
-describe('커뮤니티 전환기 레일 (#165)', () => {
-  it('1. 커뮤니티가 하나면 레일을 그리지 않는다 — 오늘 화면과 같다', async () => {
+/** 전환 팝오버를 **고정으로** 연다(타일 클릭). */
+const openSwitcher = () => {
+  fireEvent.click(screen.getByTestId('rail-community-mark'));
+  return screen.getByTestId('community-switcher');
+};
+
+/** 안 읽은 멘션 하나(나를 막는 것). */
+const mention = (id: number) => ({
+  id, messageId: `m${id}`, reason: 'mention' as const, readAt: null, channelId: 'c1',
+  authorId: 'u9', body: '', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null,
+});
+
+describe('커뮤니티 전환기 — 레일 하나 + 팝오버 (#165, 2026-09-30 레일 통합 안 A)', () => {
+  it('1. 커뮤니티가 몇 개든 왼쪽 기둥은 레일 하나다 — 별도 커뮤니티 레일이 없다', async () => {
     const a = await community('https://a.example', 'acct-a', true);
     seed(a, 'me-a', true);
-
     renderWorkspace();
-
-    // 폭 0 인 껍데기도 두지 않는다 — 없는 것을 위해 자리를 비우지 않는다는 결정이다.
     expect(screen.queryByTestId('community-rail')).toBeNull();
-    expect(screen.queryByLabelText('커뮤니티 전환')).toBeNull();
+    expect(screen.getByTestId('rail-community-mark')).toBeTruthy();
+
+    cleanup();
+    const b = await community('https://b.example', 'acct-b', false);
+    seed(b, 'me-b', true);
+    renderWorkspace();
+    // 둘이 되어도 56px 기둥이 새로 서지 않는다 — 타일도 하나(지금 커뮤니티)다.
+    expect(screen.queryByTestId('community-rail')).toBeNull();
+    expect(screen.queryByTestId('community-rail-titlebar')).toBeNull();
+    expect(screen.getAllByTestId('rail-community-mark')).toHaveLength(1);
+    expect(screen.getAllByTestId('rail-titlebar')).toHaveLength(1);
   });
 
-  it('2. 둘이면 타일 둘이고, 활성 타일이 구분되고, 접근 가능한 이름에 상태가 들어 있다', async () => {
+  it('2. 팝오버 행마다 커뮤니티 하나 — 지금 것이 구분되고, 접근 가능한 이름에 상태가 들어 있다', async () => {
     const { a, b } = await twoCommunities();
     seed(a, 'me-a', true);
     seed(b, 'me-b', false);
-
     renderWorkspace();
 
-    const rail = screen.getByTestId('community-rail');
-    expect(within(rail).getAllByRole('button')).toHaveLength(2);
-    // 이름을 붙이지 않았으면 호스트명이 기본값이고, 타일은 그 이니셜이다.
-    expect(within(rail).getByTestId(`community-tile-${a.id}`).textContent).toContain('A');
-    // 상태를 색·점으로만 말하지 않는다 — 점 하나는 스크린리더에 아무것도 아니다.
-    expect(screen.getByLabelText('a.example — 연결됨')).toBeTruthy();
-    expect(screen.getByLabelText('b.example — 연결 끊김')).toBeTruthy();
+    const pop = openSwitcher();
+    const rows = within(pop).getAllByRole('menuitem').filter((el) => el.dataset.testid?.startsWith('community-tile-'));
+    expect(rows).toHaveLength(2);
+    expect(within(pop).getByTestId(`community-tile-${a.id}`).textContent).toContain('a.example');
+    // 상태를 색·점으로만 말하지 않는다.
+    expect(within(pop).getByLabelText('a.example — 연결됨')).toBeTruthy();
+    expect(within(pop).getByLabelText('b.example — 연결 끊김')).toBeTruthy();
     expect(screen.getByTestId(`community-tile-${a.id}`).getAttribute('aria-current')).toBe('true');
     expect(screen.getByTestId(`community-tile-${b.id}`).getAttribute('aria-current')).toBeNull();
+    // 단축키는 등록 순서를 따른다.
+    expect(screen.getByTestId(`community-tile-${a.id}`).textContent).toContain('⌥⌘1');
+    expect(screen.getByTestId(`community-tile-${b.id}`).textContent).toContain('⌥⌘2');
   });
 
-  it('2b. 레일이 서도 창 맨 위 띠가 끊기지 않는다 — 레일 맨 위도 같은 높이·색의 띠다', async () => {
-    const { a, b } = await twoCommunities();
+  it('2b. 하나뿐이면 팝오버에 행 하나와 「커뮤니티 추가」 — 단축키 숫자는 없다', async () => {
+    const a = await community('https://a.example', 'acct-a', true);
     seed(a, 'me-a', true);
-    seed(b, 'me-b', true);
+    const onOpenSettings = vi.fn();
+    render(<Workspace onLogout={() => {}} onOpenSettings={onOpenSettings} />);
 
-    renderWorkspace();
-
-    // 레일이 서면 창의 좌상단이 이 레일이다. 전에는 몸통이 창 맨 위까지 올라가(`pt-8`)
-    // 면도 sunken 이라, 옆의 `rail-titlebar`·브랜드 바·헤더가 이루는 한 줄이 여기서 끊겼다.
-    const strip = screen.getByTestId('community-rail-titlebar');
-    const railStrip = screen.getByTestId('rail-titlebar');
-    expect(strip.className).toContain(TOP_BAR_H);
-    expect(strip.className).toContain(TOP_BAR_BG);
-    // 같은 조각이면 클래스도 같다 — 한쪽만 고쳐지면 다시 이음선이 생긴다.
-    expect(strip.className).toBe(railStrip.className);
-    expect(strip.hasAttribute('data-tauri-drag-region')).toBe(true);
-    // 세로선은 띠가 아니라 몸통이 진다 — 신호등이 경계를 지나가도 선에 걸치지 않는다.
-    const rail = screen.getByTestId('community-rail');
-    expect(rail.className).not.toContain('border-r');
-    expect(rail.className).not.toContain('pt-8');
+    const pop = openSwitcher();
+    expect(within(pop).getByTestId(`community-tile-${a.id}`).textContent).not.toContain('⌥⌘');
+    fireEvent.click(within(pop).getByText('커뮤니티 추가'));
+    expect(onOpenSettings).toHaveBeenCalledWith('communities');
+    expect(screen.queryByTestId('community-switcher')).toBeNull();
   });
 
-  it('3. 타일을 누르면 활성이 바뀌고 useActiveStore 가 다른 스토어를 돌려준다', async () => {
+  it('3. 행을 누르면 활성이 바뀌고 useActiveStore 가 다른 스토어를 돌려준다', async () => {
     const { a, b } = await twoCommunities();
     seed(a, 'me-a', true);
     seed(b, 'me-b', true);
@@ -234,27 +246,167 @@ describe('커뮤니티 전환기 레일 (#165)', () => {
     renderWorkspace();
     expect(useActiveStore.getState().me?.handle).toBe('me-a');
 
+    openSwitcher();
     fireEvent.click(screen.getByTestId(`community-tile-${b.id}`));
 
     await waitFor(() => expect(useCommunityRegistry.getState().activeId).toBe(b.id));
     expect(useActiveStore.getState().me?.handle).toBe('me-b');
+    expect(screen.queryByTestId('community-switcher')).toBeNull();
     // 보관본의 활성도 함께 옮긴다 — 안 그러면 다음 기동마다 예전 커뮤니티로 돌아간다.
     await waitFor(() => {
       const stored = JSON.parse(localStorage.getItem('harkroom.sessions')!) as { active: string };
       expect(stored.active).toBe('acct-b');
     });
-    expect(a.id).not.toBe(b.id);
+    // 레일 타일은 이제 b 를 말한다.
+    expect(screen.getByTestId('rail-community-mark').getAttribute('aria-label')).toContain('b.example');
   });
 
-  it('8. 끊긴 커뮤니티의 타일에만 상태 표시가 붙고, Connection 에 옛 문구가 없다', async () => {
+  it('3b. ⌥⌘숫자로 바꾼다 — ⌘숫자(레일 칸)와 부딪히지 않는다', async () => {
+    const { a, b } = await twoCommunities();
+    seed(a, 'me-a', true);
+    seed(b, 'me-b', true);
+    renderWorkspace();
+
+    // macOS 는 ⌥ 를 누르면 e.key 가 `™` 같은 글자가 된다 — e.code 로 읽어야 한다.
+    fireEvent.keyDown(document, { key: '™', code: 'Digit2', metaKey: true, altKey: true });
+    await waitFor(() => expect(useCommunityRegistry.getState().activeId).toBe(b.id));
+
+    // ⌘2 는 여전히 칸(DM)이다 — 커뮤니티는 그대로.
+    fireEvent.keyDown(document, { key: '2', code: 'Digit2', metaKey: true });
+    expect(useCommunityRegistry.getState().activeId).toBe(b.id);
+    expect(screen.getByTestId('rail-dm').getAttribute('aria-current')).toBe('page');
+
+    // 없는 번호는 무시한다.
+    fireEvent.keyDown(document, { key: '£', code: 'Digit3', metaKey: true, altKey: true });
+    expect(useCommunityRegistry.getState().activeId).toBe(b.id);
+
+    fireEvent.keyDown(document, { key: '¡', code: 'Digit1', metaKey: true, altKey: true });
+    await waitFor(() => expect(useCommunityRegistry.getState().activeId).toBe(a.id));
+  });
+
+  it('4. 호버하면 클릭했을 때와 같은 팝오버가 미리 서고, 떠나면 닫힌다', async () => {
+    vi.useFakeTimers();
+    try {
+      const { a, b } = await twoCommunities();
+      seed(a, 'me-a', true);
+      seed(b, 'me-b', true);
+      renderWorkspace();
+      const composer = document.createElement('input');
+      document.body.appendChild(composer);
+      composer.focus();
+
+      const tile = screen.getByTestId('rail-community-mark');
+      fireEvent.mouseEnter(tile.parentElement!);
+      // 스쳐 지나가는 포인터에는 열리지 않는다.
+      expect(screen.queryByTestId('community-switcher')).toBeNull();
+      act(() => { vi.advanceTimersByTime(HOVER_OPEN_MS); });
+      const pop = screen.getByTestId('community-switcher');
+      expect(pop.dataset.mode).toBe('hover');
+      // 같은 내용이다 — 행 둘 + 추가 + 관리.
+      expect(within(pop).getAllByRole('menuitem')).toHaveLength(4);
+      // 미리보기는 포커스를 빼앗지 않는다(컴포저에서 입력 중일 수 있다).
+      expect(document.activeElement).toBe(composer);
+
+      // 타일 → 팝오버로 옮기는 사이(틈)에는 닫히지 않는다.
+      fireEvent.mouseLeave(tile.parentElement!);
+      act(() => { vi.advanceTimersByTime(HOVER_CLOSE_MS - 50); });
+      fireEvent.mouseEnter(tile.parentElement!);
+      act(() => { vi.advanceTimersByTime(HOVER_CLOSE_MS * 2); });
+      expect(screen.getByTestId('community-switcher')).toBeTruthy();
+
+      // 정말 떠나면 닫힌다.
+      fireEvent.mouseLeave(tile.parentElement!);
+      act(() => { vi.advanceTimersByTime(HOVER_CLOSE_MS); });
+      expect(screen.queryByTestId('community-switcher')).toBeNull();
+      composer.remove();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('5. 클릭하면 고정된다 — 포인터가 떠나도 남고, 바깥 클릭·Esc 로 닫힌다', async () => {
+    vi.useFakeTimers();
+    try {
+      const { a, b } = await twoCommunities();
+      seed(a, 'me-a', true);
+      seed(b, 'me-b', true);
+      renderWorkspace();
+      const tile = screen.getByTestId('rail-community-mark');
+
+      // 호버로 미리 선 것을 누르면 그 자리에서 고정된다.
+      fireEvent.mouseEnter(tile.parentElement!);
+      act(() => { vi.advanceTimersByTime(HOVER_OPEN_MS); });
+      fireEvent.click(tile);
+      expect(screen.getByTestId('community-switcher').dataset.mode).toBe('pinned');
+      expect(tile.getAttribute('aria-expanded')).toBe('true');
+      // 고정으로 열면 지금 커뮤니티 행에 포커스가 간다.
+      expect(document.activeElement).toBe(screen.getByTestId(`community-tile-${a.id}`));
+      // ↓ 로 다음 행.
+      fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(screen.getByTestId(`community-tile-${b.id}`));
+
+      fireEvent.mouseLeave(tile.parentElement!);
+      act(() => { vi.advanceTimersByTime(HOVER_CLOSE_MS * 3); });
+      expect(screen.getByTestId('community-switcher')).toBeTruthy();
+
+      // 팝오버 안을 눌러도 닫히지 않는다.
+      fireEvent.mouseDown(screen.getByTestId('community-switcher'));
+      expect(screen.getByTestId('community-switcher')).toBeTruthy();
+      // 바깥을 누르면 닫힌다.
+      fireEvent.mouseDown(document.body);
+      expect(screen.queryByTestId('community-switcher')).toBeNull();
+
+      // 다시 고정 → Esc 로 닫히고 포커스는 타일로 돌아간다.
+      fireEvent.click(tile);
+      expect(screen.getByTestId('community-switcher')).toBeTruthy();
+      fireEvent.keyDown(document, { key: 'Escape' });
+      expect(screen.queryByTestId('community-switcher')).toBeNull();
+      expect(document.activeElement).toBe(tile);
+
+      // 고정된 채로 타일을 다시 누르면 닫힌다.
+      fireEvent.click(tile);
+      fireEvent.click(tile);
+      expect(screen.queryByTestId('community-switcher')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('6. 다른 커뮤니티에 나를 기다리는 것이 있으면 타일에 점, 수는 팝오버 행에 — 지금 커뮤니티 수는 Home 배지', async () => {
+    const { a, b } = await twoCommunities();
+    seed(a, 'me-a', true);
+    seed(b, 'me-b', true);
+    a.store.getState().set({ unread: [mention(1)] });
+    renderWorkspace();
+
+    // 지금 커뮤니티의 것은 점이 아니다(Home 배지가 센다).
+    expect(screen.queryByTestId('rail-community-dot')).toBeNull();
+    expect(screen.getByTestId('rail-home-badge').textContent).toBe('1');
+
+    act(() => { b.store.getState().set({ unread: [mention(2), mention(3), mention(4)] }); });
+    expect(screen.getByTestId('rail-community-dot')).toBeTruthy();
+    expect(screen.getByTestId('rail-community-mark').getAttribute('aria-label'))
+      .toBe('a.example — 연결됨, 다른 커뮤니티에 나를 기다리는 것 3개');
+
+    openSwitcher();
+    expect(screen.getByTestId(`community-count-${b.id}`).textContent).toBe('3');
+    // 지금 커뮤니티 행에는 수를 안 적는다.
+    expect(screen.queryByTestId(`community-count-${a.id}`)).toBeNull();
+    expect(screen.getByTestId(`community-tile-${b.id}`).getAttribute('aria-label')).toContain('나를 기다리는 것 3개');
+  });
+
+  it('8. 끊긴 커뮤니티의 행에만 상태 표시가 붙고, Connection 에 옛 문구가 없다', async () => {
     const { a, b } = await twoCommunities();
     seed(a, 'me-a', true);
     seed(b, 'me-b', false);
 
     renderWorkspace();
+    // 지금 커뮤니티(a)는 붙어 있다 — 레일 타일에 끊김 점이 없다.
+    expect(screen.queryByTestId('rail-community-offline')).toBeNull();
 
-    // "셋 중 하나가 끊겼다" 를 전역 하나로 뭉개지 않는다 — 끊긴 것에만 붙는다.
-    expect(screen.getByTestId(`community-offline-${b.id}`)).toBeTruthy();
+    openSwitcher();
+    // "셋 중 하나가 끊겼다" 를 전역 하나로 뭉개지 않는다 — 끊긴 것에만 붙고, 글자로 적는다.
+    expect(screen.getByTestId(`community-offline-${b.id}`).textContent).toBe('연결 끊김');
     expect(screen.queryByTestId(`community-offline-${a.id}`)).toBeNull();
 
     cleanup();
@@ -484,6 +636,7 @@ describe('커뮤니티 표시 이름 (#165 결정 2)', () => {
 
     cleanup();
     renderWorkspace();
+    openSwitcher();
     // 이니셜 타일이 붙인 이름을 따른다(아바타가 아니다 — 서버 계약이 없다).
     expect(screen.getByLabelText('Work — 연결됨')).toBeTruthy();
     expect(screen.getByTestId(`community-tile-${b.id}`).textContent).toContain('W');

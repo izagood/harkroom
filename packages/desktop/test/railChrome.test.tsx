@@ -45,7 +45,7 @@ const mountRail = () =>
       onPanelChange={vi.fn()}
       onOpenSaved={vi.fn()}
       onOpenSettings={vi.fn()}
-      onOpenCommunityMark={vi.fn()}
+      onManageCommunities={vi.fn()}
       onLogout={vi.fn()}
     />,
   );

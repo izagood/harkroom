@@ -58,7 +58,7 @@ const mountRail = (props: Partial<{
   onPanelChange: (p: RailPanel) => void;
   onOpenSaved: () => void;
   onOpenSettings: (section?: SectionId) => void;
-  onOpenCommunityMark: () => void;
+  onManageCommunities: () => void;
   onLogout: () => void;
 }> = {}) =>
   render(
@@ -67,7 +67,7 @@ const mountRail = (props: Partial<{
       onPanelChange={props.onPanelChange ?? vi.fn()}
       onOpenSaved={props.onOpenSaved ?? vi.fn()}
       onOpenSettings={props.onOpenSettings ?? vi.fn()}
-      onOpenCommunityMark={props.onOpenCommunityMark ?? vi.fn()}
+      onManageCommunities={props.onManageCommunities ?? vi.fn()}
       onLogout={props.onLogout ?? vi.fn()}
     />,
   );
@@ -326,16 +326,17 @@ describe('레일 위아래 — 커뮤니티 마크와 내 얼굴', () => {
     expect(scroller.contains(screen.getByTestId('me-row'))).toBe(false);
   });
 
-  it('커뮤니티가 여럿이면 마크를 그리지 않는다 — 전환기가 그 일을 한다', () => {
+  it('커뮤니티가 여럿이어도 마크는 하나다 — 지금 커뮤니티를 말하고, 전환은 팝오버가 한다', () => {
     /*
-      `CommunityRail`(#165)이 이미 여럿일 때의 전환을 한다. 마크를 함께 세우면 지금 있는
-      곳이 두 곳에 표시되고, 어느 쪽이 정본인지 알 수 없다. 목록을 만드는 것은 문서의 4단계다.
+      2026-09-30 레일 통합(안 A): 예전에는 여럿이면 마크를 거두고 왼쪽에 `CommunityRail` 이
+      섰다. 이제 레일이 하나이고 마크가 늘 지금 커뮤니티를 말한다.
     */
     fakeController();
     useCommunityRegistry.getState().register({ baseUrl: 'http://second.test', label: 'second' });
     mountRail();
 
-    expect(screen.queryByTestId('rail-community-mark')).toBeNull();
+    expect(screen.getAllByTestId('rail-community-mark')).toHaveLength(1);
+    expect(screen.getByTestId('rail-community-mark').getAttribute('aria-label')).not.toContain('second');
   });
 });
 
