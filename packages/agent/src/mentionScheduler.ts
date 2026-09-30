@@ -111,6 +111,12 @@ export interface MentionSchedulerDeps {
    * 함수면 **턴마다** 불러 그 턴의 축을 얻는다 — 지운 계정을 건너뛰는 자리다(`presentAccounts`).
    */
   accountLane: readonly (ClaudeAccount | null)[] | (() => Promise<readonly (ClaudeAccount | null)[]>);
+  /**
+   * 이 스레드의 계정 순서(2026-09-29 C ②, `accountAssign.ts`). 생략하면 `accountLane` 그대로다.
+   * 스레드마다 묻는 이유: 계정은 스레드 단위로 고정된다 — 세션 파일이 계정 디렉터리 안에 있다.
+   * 지운 계정 걸러 내기(`presentAccounts`)는 이 함수가 맡는다.
+   */
+  laneFor?(threadKey: string): Promise<readonly (ClaudeAccount | null)[]>;
   runMentionTurn(deps: MentionTurnDeps, target: MentionTarget): Promise<MentionTurnResult>;
   /** 계정 두 필드까지 채운 완성 deps 를 만든다. 조립은 main 이 갖는다. */
   buildTurnDeps(args: {
@@ -277,8 +283,11 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       ...(viaEdit ? { editedMention: mention } : {}),
     };
     try {
+      const lane = deps.laneFor
+        ? await deps.laneFor(threadKey)
+        : typeof deps.accountLane === 'function' ? await deps.accountLane() : deps.accountLane;
       const turn = await withAccountFailover(
-        typeof deps.accountLane === 'function' ? await deps.accountLane() : deps.accountLane,
+        lane,
         (account, isLastAccount) => deps.runMentionTurn(
           deps.buildTurnDeps({ ctx, mention, account, isLastAccount }), target,
         ),

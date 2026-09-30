@@ -40,7 +40,8 @@ import { createInteractiveManager, type InteractiveManager } from './interactive
 import { createAttentionLedger } from './attentionLedger.js';
 import { TurnRegistry } from './turnRegistry.js';
 import { MentionQueue } from './mentionQueue.js';
-import { loadClaudeAccountLane, presentAccounts } from './claudeAccounts.js';
+import { claudeAccountsRoot, loadClaudeAccountLane, presentAccounts } from './claudeAccounts.js';
+import { createAccountAssigner } from './accountAssign.js';
 import { syncCodexAuth } from './codexHome.js';
 import { ensureOpencodeHome } from './opencodeHome.js';
 import { createMentionScheduler, type BatchContext } from './mentionScheduler.js';
@@ -430,10 +431,25 @@ const memoryCache = createMemoryCache({
   source: harkroom,
 });
 
+// 스레드마다 계정을 고른다(2026-09-29 C ②). 데몬이 재 둔 usage.json 으로 점수를 매겨 새 스레드를
+// 골고루 나누고, 이미 고정된 스레드는 그 계정이 옮기기 기준을 넘을 때까지 그대로 둔다
+// (`accountAssign.ts`). 풀 모드면 usage.json 은 풀 디렉터리가 아니라 **뿌리**에 있다.
+const accountAssigner = createAccountAssigner({
+  lane: accountLane,
+  pool: lane.pool ?? null,
+  root: claudeAccountsRoot(),
+  pinnedOf: (key) => store.get(key)?.claudeAccount ?? null,
+});
+
 const scheduler = createMentionScheduler({
   harkroom, registry, queue: mentionQueue, heldEntryIds,
   // **턴마다** 지운 계정을 걸러 낸다(`presentAccounts` — 지운 계정이 되살아나던 결함).
   accountLane: () => presentAccounts(accountLane),
+  // 모델은 매 턴 정의에서 읽는다 — 모델별 주간 창(Opus 등)이 있으면 그것까지 본다. 못 읽으면
+  // `weekly` 만 본다(턴은 어차피 정의를 다시 읽는다). 고른 순서에서도 지운 계정은 걸러 낸다.
+  laneFor: async (key) => presentAccounts(await accountAssigner.laneFor(
+    key, await harkroom.definition().then((d) => d.model, () => null),
+  )),
   runMentionTurn,
   // 계정별로 갈리는 두 필드(`claudeAccount`·`claudeConfigDir`)만 계정 축이 채운다 —
   // 나머지는 계정과 무관하므로 매번 같은 값이다.
