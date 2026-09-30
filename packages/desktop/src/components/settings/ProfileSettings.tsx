@@ -240,32 +240,31 @@ export function ProfileSettings({ onSignOut }: { onSignOut(): void }) {
       <SettingsGroup>
         <AvatarRow />
         <HandleRow />
-        <ReadonlyRow label="Display name" value={me?.displayName ?? '—'} />
-        <ReadonlyRow label="Account type" value={me?.kind === 'agent' ? 'Agent' : 'Person'} />
-        {me?.isAdmin && <ReadonlyRow label="Role" value="Administrator" />}
+        <ReadonlyRow label={t('profile.displayName')} value={me?.displayName ?? '—'} />
+        <ReadonlyRow label={t('profile.accountType')} value={me?.kind === 'agent' ? t('profile.kindAgent') : t('profile.kindPerson')} />
+        {me?.isAdmin && <ReadonlyRow label={t('profile.role')} value={t('profile.roleAdmin')} />}
       </SettingsGroup>
 
       {/* #271 로 handle 은 바꿀 수 있게 됐다 — main 의 문구("handle 과 display name 은
           만들 때 정해지고 앱에서 바꿀 수 없다")는 이제 사실이 아니다. 무엇이 바뀌고
           무엇이 안 바뀌는지를 그대로 적는다: 로그인 ID 는 v1 불변이다. */}
       <p data-testid="profile-readonly-note" className="-mt-6 mb-8 text-fg-subtle">
-        You can change your profile photo and your handle here. Your display name and login ID are
-        set when the account is created and cannot be changed from the app yet.
+        {t('profile.readonlyNote')}
       </p>
 
       <SettingsGroup>
         <div className="flex items-center gap-4 px-4 py-3">
           <span className="min-w-0 flex-1">
-            <span className="block font-medium text-fg">Sign out</span>
+            <span className="block font-medium text-fg">{t('profile.signOut')}</span>
             <span className="mt-0.5 block text-fg-subtle">
-              Ends this session on this device only. Your other devices stay signed in.
+              {t('profile.signOutNote')}
             </span>
           </span>
           <button
             className="shrink-0 rounded-lg border border-border px-3 py-1.5 font-medium text-danger hover:bg-danger-surface"
             onClick={onSignOut}
           >
-            Sign out
+            {t('profile.signOut')}
           </button>
         </div>
       </SettingsGroup>

@@ -38,7 +38,7 @@ function ProjectionRow() {
   // 이미 한다 — 이 줄까지 그 문장을 주황으로 되풀이하면, 바로 아래 주소 칸의 상태 줄과 같은
   // 말을 두 번 한다. 고칠 곳은 이 줄 아래 칸이므로 이 줄은 회색 "꺼짐" 이면 된다.
   const value = banner === null
-    ? <span data-testid="projection-row">{status?.repo ?? '—'} · 투영이 돌고 있다</span>
+    ? <span data-testid="projection-row">{t('connection.projectionRunning', { repo: status?.repo ?? '—' })}</span>
     : banner.testid === 'projection-unconfigured'
       ? <span data-testid="projection-row" className="text-fg-muted">{t('projection.row.off')}</span>
       : (
@@ -49,7 +49,7 @@ function ProjectionRow() {
       </span>
     );
 
-  return <ReadonlyRow label="Projection" value={value} />;
+  return <ReadonlyRow label={t('connection.projection')} value={value} />;
 }
 
 export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
@@ -64,17 +64,17 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
       <SettingsGroup>
         {/* #165: 이 행은 계속 **활성 커뮤니티**를 보여 준다. 이 기기가 아는 서버 전부를
             보는 자리는 Communities 다 — 여기서 목록을 또 그리면 같은 사실이 두 곳에 산다. */}
-        <ReadonlyRow label="Server" value={baseUrl} />
+        <ReadonlyRow label={t('connection.server')} value={baseUrl} />
         {/* #488 A3-a 후속: 투영 띠의 `설정 열기` 가 지목하는 자리다. */}
         <ProjectionRow />
         {/* 무엇을 바라볼 것인가. admin 이 아니면 이 조각이 스스로 null 을 그린다. */}
         <ProjectionUrl />
         <ReadonlyRow
-          label="Realtime connection"
+          label={t('connection.realtime')}
           value={
             <span className="inline-flex items-center gap-2">
               <span className={`h-2 w-2 rounded-full ${connected ? 'bg-success' : 'bg-danger'}`} />
-              <span data-testid="connection-state">{connected ? 'Connected' : 'Disconnected'}</span>
+              <span data-testid="connection-state">{connected ? t('connection.connected') : t('connection.disconnected')}</span>
             </span>
           }
         />
@@ -90,17 +90,16 @@ export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
             한 줄로 바꾸고, 로그아웃은 로그아웃이라고만 적는다. */}
         <div className="flex items-center gap-4 px-4 py-3">
           <span className="min-w-0 flex-1">
-            <span className="block font-medium text-fg">Sign out of this community</span>
+            <span className="block font-medium text-fg">{t('connection.signOutTitle')}</span>
             <span className="mt-0.5 block text-fg-subtle">
-              To use another server, add it in Settings › Communities — the switcher appears at the
-              left of the sidebar once you are in more than one.
+              {t('connection.signOutNote')}
             </span>
           </span>
           <button
             className="shrink-0 rounded-lg border border-border px-3 py-1.5 font-medium hover:bg-surface"
             onClick={onSignOut}
           >
-            Sign out
+            {t('profile.signOut')}
           </button>
         </div>
       </SettingsGroup>

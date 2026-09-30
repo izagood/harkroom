@@ -319,6 +319,6 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     fakeController();
     useAppStore.getState().set({ me: acc('u1', 'me') });
     render(<ProfileSettings onSignOut={() => {}} />);
-    expect(screen.getByTestId('profile-readonly-note').textContent).toMatch(/profile photo/i);
+    expect(screen.getByTestId('profile-readonly-note').textContent).toMatch(/프로필 사진/);
   });
 });

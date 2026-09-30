@@ -444,8 +444,8 @@ describe('커뮤니티 전환기 — 레일 하나 + 팝오버 (#165, 2026-09-30
     // (A) 아래서 거짓 문장이 된 옛 문구가 화면에 남아 있으면 안 된다.
     expect(screen.queryByText('Use a different server')).toBeNull();
     expect(screen.queryByText('Sign out to enter another server address.')).toBeNull();
-    expect(screen.getByText('Sign out of this community')).toBeTruthy();
-    expect(screen.getByText(/Settings › Communities/)).toBeTruthy();
+    expect(screen.getByText('이 커뮤니티에서 로그아웃')).toBeTruthy();
+    expect(screen.getByText(/설정 › 커뮤니티/)).toBeTruthy();
   });
 });
 

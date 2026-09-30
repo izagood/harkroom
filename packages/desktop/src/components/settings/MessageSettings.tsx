@@ -31,13 +31,11 @@ export function MessageSettings() {
       section="messages"
       description={t('settings.desc.messages')}
     >
-      <SettingsGroup title="Undo send">
+      <SettingsGroup title={t('messages.undo.title')}>
         <div className="px-4 py-3">
-          <p className="font-medium text-fg">Hold a message before it goes out</p>
+          <p className="font-medium text-fg">{t('messages.undo.label')}</p>
           <p className="mt-0.5 text-fg-subtle">
-            harkroom keeps the message on this device for that long. Undo it and nothing was ever
-            sent — no message, no mention, no agent woken. Once the window closes there is no
-            way back.
+            {t('messages.undo.note')}
           </p>
           <div className="mt-3 flex gap-2">
             {CHOICES.map((ms) => (
@@ -52,13 +50,13 @@ export function MessageSettings() {
                 }`}
                 onClick={() => choose(ms)}
               >
-                {ms === 0 ? 'Off' : `${ms / 1000}s`}
+                {ms === 0 ? t('messages.undo.off') : t('messages.undo.seconds', { n: ms / 1000 })}
               </button>
             ))}
           </div>
           {windowMs === 0 && (
             <p data-testid="undo-send-off" className="mt-2 text-fg-subtle">
-              Off sends every message the moment you press Enter.
+              {t('messages.undo.offNote')}
             </p>
           )}
         </div>
