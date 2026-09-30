@@ -249,7 +249,7 @@ export const ko = {
   'defaults.field.harness': '기본 harness',
   'defaults.field.harnessDefault': 'harness 기본값',
   'defaults.field.model': '기본 model',
-  'defaults.field.modelHint': '비우면 하네스가 고른다 — Harkroom 는 그 선택을 발화에 실린 모델로만 안다',
+  'defaults.field.modelHint': '비우면 harness 가 고른다 — harkroom 은 그 선택을 발화에 실린 model 로만 안다',
   'defaults.field.loadFailed': '기본값을 불러오지 못했다',
   'defaults.field.loading': '불러오는 중…',
   'defaults.field.notAdmin': '기본값을 정할 수 있는 것은 admin 뿐이다.',
