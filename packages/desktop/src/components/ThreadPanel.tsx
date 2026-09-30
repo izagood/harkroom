@@ -19,10 +19,16 @@ import { isNearBottom } from '../lib/stickyBottom';
 import type { SectionId } from './settings/sections';
 import { useT } from '../i18n/useT';
 
-export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
+export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN_CHANNEL_WIDTH }: {
   /** 멘션 이동(#279). 스레드의 멘션도 대화의 멘션과 같게 동작해야 한다. */
   onOpenDirectory?: (accountId: string | null) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
+  /**
+   * 이 패널 왼쪽에 **남겨 둘 폭**. 기본은 대화의 하한이다. 왼쪽에 인박스가 서면 더 크게
+   * 받는다(`MIN_INBOX_WIDTH`, UX ① H2) — 222px 는 작성창에는 버틸 만한 폭이지만 인박스
+   * 줄(라벨·본문·채널·시각)에는 모자라 "불렀다" 가 한 글자씩 세로로 꺾였다.
+   */
+  reserveLeft?: number;
 } = {}) {
   const t = useT();
   const { activeChannelId, threadRootId, messages, accounts, me, online, connected } = useActiveStore();
@@ -261,15 +267,15 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
       className="relative flex flex-col border-l border-border bg-surface-raised"
       /* 상한은 `paneMaxWidth` 가 적는다(그 함수의 주석) — 터미널과 **같은 결함**을 여기서도
          막는다: 넓은 창에서 고른 폭이 좁은 창에서 그대로 서면 대화가 폭 0 으로 밀린다. */
-      style={{ width: threadWidth, minWidth: MIN_THREAD_WIDTH, maxWidth: paneMaxWidth(MIN_THREAD_WIDTH, MIN_CHANNEL_WIDTH) }}
+      style={{ width: threadWidth, minWidth: MIN_THREAD_WIDTH, maxWidth: paneMaxWidth(MIN_THREAD_WIDTH, reserveLeft) }}
     >
       <PaneResizer
         label={t('thread.resizeHandle')}
         width={threadWidth}
         min={MIN_THREAD_WIDTH}
         max={MAX_THREAD_WIDTH}
-        /* 이 구분선 왼쪽에는 대화만 있다. */
-        minRoomLeft={MIN_CHANNEL_WIDTH}
+        /* 이 구분선 왼쪽에는 대화(또는 인박스) 하나만 있다. */
+        minRoomLeft={reserveLeft}
         onWidth={setThreadWidth}
       />
       <header className="flex items-center border-b border-border px-4 py-2">

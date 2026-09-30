@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
-import { sidebarStorage } from '../lib/prefs';
+import { sidebarStorage, MIN_CHANNEL_WIDTH, MIN_INBOX_WIDTH } from '../lib/prefs';
 import { usePrefsStore } from '../state/prefsStore';
 import { DEFAULT_ZOOM, stepZoom } from '../lib/zoom';
 // `isMacOS`·`MAC_TRAFFIC_LIGHT_PL` 이 여기 있었다 — 좌상단은 이제 늘 레일이다(아래 주석).
@@ -401,7 +401,12 @@ export function Workspace({ onLogout, onOpenSettings }: {
             />
           )}
           {threadRootId && (
-            <ThreadPanel onOpenDirectory={handleOpenDirectory} onOpenSettings={onOpenSettings} />
+            <ThreadPanel
+              onOpenDirectory={handleOpenDirectory}
+              onOpenSettings={onOpenSettings}
+              // 인박스가 본문일 때는 스레드가 더 넓어지지 못하게 인박스 몫을 남긴다(UX ① H2).
+              reserveLeft={railPanel !== 'agents' && inboxOpen ? MIN_INBOX_WIDTH : MIN_CHANNEL_WIDTH}
+            />
           )}
           {/* #141: 터미널은 스레드 패널과 **같은 자리**를 쓰고 둘이 나란히 열린다.
               채널 레이아웃 안에 심지 않는다 — `#189`(앱 안 터미널 패널이 어디서 도는가)가

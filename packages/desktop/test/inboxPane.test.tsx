@@ -18,6 +18,7 @@
 // 자신이 아니라 **옆에 선 것**이고, 그 옆이 있는 곳이 이 화면이다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { paneMaxWidth, MIN_THREAD_WIDTH, MIN_CHANNEL_WIDTH, MIN_INBOX_WIDTH } from '../src/lib/prefs';
 import type { InboxEntry } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
@@ -212,6 +213,29 @@ describe('인박스는 자리다 — 모달이 아니다 (#488 C2)', () => {
     // 그리고 채널은 **그 줄에 없다** — 열이 늘지 않았다는 뜻이고, 그것이 이 작업의 요지다.
     expect(screen.queryByTestId('channel-pane')).toBeNull();
     expect(kids.length).toBe(2);
+  });
+
+  /**
+   * **인박스 몫을 남긴다**(UX ① H2). 스레드는 대화의 하한(222px)만 남기고 넓어질 수
+   * 있었는데, 그 폭에서 인박스 줄은 라벨이 한 글자씩 세로로 꺾였다(designer 실측 약 210px).
+   * jsdom 은 레이아웃을 재지 않으므로, 상한에 **인박스의 하한**이 적혀 있는지를 본다 —
+   * 그리고 인박스를 접으면 대화의 하한으로 돌아가는지도.
+   */
+  it('인박스가 서 있는 동안 스레드는 인박스 몫을 남기고, 접으면 대화 몫으로 돌아간다', async () => {
+    mount([entry(1, 'mention', 'c1')], { threadRootId: 'm1' });
+
+    expect(screen.getByTestId('thread-pane').style.maxWidth)
+      .toBe(paneMaxWidth(MIN_THREAD_WIDTH, MIN_CHANNEL_WIDTH));
+
+    openInbox();
+    await screen.findByTestId('inbox-pane');
+    expect(screen.getByTestId('thread-pane').style.maxWidth)
+      .toBe(paneMaxWidth(MIN_THREAD_WIDTH, MIN_INBOX_WIDTH));
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.getByTestId('channel-pane')).toBeTruthy());
+    expect(screen.getByTestId('thread-pane').style.maxWidth)
+      .toBe(paneMaxWidth(MIN_THREAD_WIDTH, MIN_CHANNEL_WIDTH));
   });
 });
 

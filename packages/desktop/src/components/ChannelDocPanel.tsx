@@ -114,7 +114,7 @@ export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSet
   const updatedAtLabel = doc?.updatedAt ? new Date(doc.updatedAt).toLocaleString() : null;
 
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col border-l border-border bg-surface">
+    <aside className="flex h-full w-full min-w-0 flex-col bg-surface">
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
         {/* 패널 제목은 **이름줄단 15px** 이다 — 화면 제목단(17px)은 설정 화면 제목처럼
             화면 하나를 여는 자리에만 준다. 이 패널은 채널 안에 붙는 곁창이고, 옆의 메타는

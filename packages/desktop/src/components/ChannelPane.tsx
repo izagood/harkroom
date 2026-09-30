@@ -148,7 +148,6 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   const [jumpVisible, setJumpVisible] = useState(false);
   // 파일 색인(#232)은 채널 안에서 열고 닫는 패널이다 — 새 최상위 화면이 아니다. 그래서
   // 열림 상태도 채널 화면이 들고 있고, 채널이 바뀌면 `key` 로 패널이 다시 만들어진다.
-  const [filesOpen, setFilesOpen] = useState(false);
   /**
    * 고정 목록은 **접힌 채로 시작한다**(#218). 핀은 "필요할 때 찾아가는 자리"이지 늘 읽는
    * 것이 아니고, 펼친 채로 두면 핀이 몇 개만 쌓여도 대화가 화면 아래로 밀린다.
@@ -159,8 +158,19 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * 문서 패널(#188)도 채널을 옮기면 닫는다 — 열린 채로 두면 방금 떠난 채널의 문서가 잠깐
    * 남아 어느 채널의 전제인지 오해할 여지가 생긴다(파일 패널과 같은 이유다).
    */
-  const [docOpen, setDocOpen] = useState(false);
-  useEffect(() => { setPinsOpen(false); setDocOpen(false); }, [activeChannelId]);
+  /**
+   * 채널 칸이 **무엇을 보여 주는가** — 대화·문서·파일은 채널 머리의 탭이다(UX ①, H1).
+   *
+   * 문서와 파일이 오른쪽 곁창(`w-80 shrink-0`)이던 때에는 스레드 패널이 넓게 선 창에서
+   * 채널 열이 하한(`MIN_CHANNEL_WIDTH`)까지 줄고, 그 안에서 곁창이 320px 을 먼저 가져가
+   * 작성창이 20px 로 무너졌다(placeholder 가 세로로 쪼개지고 "편집" 이 작성창에 겹쳤다).
+   * 탭이면 셋이 **같은 폭을 나눠 쓰지 않는다** — 고른 것 하나가 채널 칸 전체를 쓴다.
+   *
+   * 채널을 옮기면 대화로 돌아온다 — 열린 채로 두면 방금 떠난 채널의 문서·파일이 잠깐
+   * 남아 어느 채널의 것인지 오해할 여지가 생긴다.
+   */
+  const [view, setView] = useState<'messages' | 'doc' | 'files'>('messages');
+  useEffect(() => { setPinsOpen(false); setView('messages'); }, [activeChannelId]);
 
   const channel = channels.find((c) => c.id === activeChannelId);
   const dm = dms.find((d) => d.id === activeChannelId);
@@ -649,9 +659,6 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     if (!stickyRef.current) setJumpVisible(true);
   };
 
-  // 채널을 옮기면 파일 패널을 닫는다. 열린 채로 두면 방금 떠난 채널의 목록이 잠깐 남아
-  // 어느 채널의 파일인지 오해할 여지가 생긴다.
-  useEffect(() => { setFilesOpen(false); }, [activeChannelId]);
 
   if (!activeChannelId) {
     return <main className="flex flex-1 items-center justify-center text-fg-muted">Pick a channel to start</main>;
@@ -675,23 +682,29 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
         {channel?.topic && <span className="truncate text-meta text-fg-subtle">{channel.topic}</span>}
         {channel?.repo && <span className="rounded bg-surface-sunken px-1.5 text-meta text-fg-muted">{channel.repo}</span>}
         {isArchived && <span className="rounded bg-surface-hover px-1.5 text-meta text-fg-muted">{t('channel.header.archived')}</span>}
-        {/* 문서는 채널에 붙는다(#188) — DM 에는 없다. `channel` 이 없을 때 버튼을 그리면
-            눌러도 아무 일이 없는 죽은 버튼이 된다(패널 쪽 조건과 같은 조건이어야 한다). */}
-        {channel && (
-          <button
-            className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
-            aria-expanded={docOpen}
-            onClick={() => setDocOpen((v) => !v)}
-          >
-            {t('channel.header.doc')}
-          </button>
-        )}
-        <button
-          className={`${channel ? '' : 'ml-auto '}shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken`}
-          onClick={() => setFilesOpen((v) => !v)}
-        >
-          {t('channel.header.files')}
-        </button>
+        {/* 대화·문서·파일 탭(UX ①). 문서는 채널에 붙는다(#188) — DM 에는 없다. `channel` 이
+            없을 때 문서 탭을 그리면 눌러도 아무 일이 없는 죽은 탭이 된다(아래 덮개와 같은
+            조건이어야 한다). 탭이 하나(대화)만 남는 DM 이라도 파일 탭이 있어 묶음은 선다. */}
+        <div role="tablist" aria-label={t('channel.header.views')} className="ml-auto flex shrink-0 items-center gap-0.5 rounded border border-border p-0.5">
+          {([
+            ['messages', t('channel.header.messages')],
+            ...(channel ? [['doc', t('channel.header.doc')] as const] : []),
+            ['files', t('channel.header.files')],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              role="tab"
+              aria-selected={view === value}
+              data-testid={`channel-view-${value}`}
+              onClick={() => setView(value)}
+              className={`rounded px-2 py-0.5 text-meta ${view === value
+                ? 'bg-surface-sunken font-medium text-fg'
+                : 'text-fg-muted hover:bg-surface-sunken'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         {/* 검색은 ⌘K 로도 열리지만 단축키만으로는 보이지 않는다(#258). 헤더 버튼은
             **지금 보는 대화로 좁힌 채** 열고, ⌘K 는 전역으로 남는다 — 두 진입점이 서로
             다른 뜻을 가지므로 title 에 그 차이를 적는다. DM 에도 같은 버튼이 나온다. */}
@@ -704,6 +717,12 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
           {t('channel.header.search')}
         </button>
       </header>
+      {/* 헤더 아래 전부를 한 겹 싼다 — 문서·파일 탭은 이 상자를 **덮는다**(`absolute inset-0`).
+          대화를 내리지(unmount) 않는 이유: 스크롤 자리·가상 목록의 측정·쓰던 초안이 그 안에
+          산다. 내렸다가 다시 세우면 대화 탭으로 돌아올 때 바닥 고정이 처음부터 다시 돈다.
+          덮인 동안은 `inert` 로 포커스·클릭이 밑으로 새지 않게 한다. */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col" inert={view !== 'messages'}>
       {/* 고정된 메시지(#218). 핀이 하나도 없으면 아무것도 그리지 않는다 — 늘 있는 빈 줄은
           "여기에 뭔가 있다"는 거짓 신호이고, 헤더 아래 세로 공간을 그냥 먹는다. */}
       {channelPins.length > 0 && (
@@ -865,23 +884,29 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
           />
         )}
       </div>
+      </div>
+      {/* `activeChannelId` 는 위에서 이미 이른 반환으로 걸러졌다 — 여기서 또 보면
+          "널일 수도 있다" 는 거짓 신호가 남는다. */}
+      {view === 'files' && (
+        <div className="absolute inset-0 z-10 flex">
+          <ChannelFiles key={activeChannelId} channelId={activeChannelId} onClose={() => setView('messages')} />
+        </div>
+      )}
+      {view === 'doc' && channel && (
+        <div className="absolute inset-0 z-10 flex">
+          <ChannelDocPanel
+            key={activeChannelId}
+            channelId={activeChannelId}
+            onClose={() => setView('messages')}
+            // 채널 문서의 본문도 멘션을 담는다(#279) — 여기서 신호를 끊으면 같은 `@handle` 이
+            // 대화에서는 눌리고 문서에서는 안 눌린다.
+            onOpenDirectory={onOpenDirectory}
+            onOpenSettings={onOpenSettings}
+          />
+        </div>
+      )}
+      </div>
     </main>
-    {/* `activeChannelId` 는 위에서 이미 이른 반환으로 걸러졌다 — 여기서 또 보면
-        "널일 수도 있다" 는 거짓 신호가 남는다. */}
-    {filesOpen && (
-      <ChannelFiles key={activeChannelId} channelId={activeChannelId} onClose={() => setFilesOpen(false)} />
-    )}
-    {docOpen && channel && (
-      <ChannelDocPanel
-        key={activeChannelId}
-        channelId={activeChannelId}
-        onClose={() => setDocOpen(false)}
-        // 채널 문서의 본문도 멘션을 담는다(#279) — 여기서 신호를 끊으면 같은 `@handle` 이
-        // 대화에서는 눌리고 문서에서는 안 눌린다.
-        onOpenDirectory={onOpenDirectory}
-        onOpenSettings={onOpenSettings}
-      />
-    )}
     </div>
   );
 }

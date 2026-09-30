@@ -1440,6 +1440,8 @@ export const ko = {
   'channel.header.archived': '보관됨',
   'channel.header.doc': '문서',
   'channel.header.files': '파일',
+  'channel.header.messages': '대화',
+  'channel.header.views': '채널 보기',
   'channel.header.search': '검색',
   'channel.header.searchLabel': '이 채널에서 찾기',
   'channel.header.searchTitle': '이 채널에서 찾기 (⌘K 는 전체 검색)',

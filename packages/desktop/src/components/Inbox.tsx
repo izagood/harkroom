@@ -480,7 +480,9 @@ export function Inbox({ open, onClose }: Props) {
           <Identity account={accounts[e.authorId]} className="mt-0.5 h-5 w-5 text-[10px]" variant="avatar" />
         )}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="flex items-center gap-1.5">
+          {/* 첫 줄: **무슨 말 · 언제·어디.** 한 줄로만 선다 — 넘치면 끝이 잘린다(줄마다 높이가
+              달라지지 않게). */}
+          <span className="flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap">
             {/*
               **무슨 말.** 나를 막는 것만 강조를 받는다(규칙 04) — 강조가 여러 줄에
               뿌려지면 "내 차례"라는 신호가 죽고, 인박스는 그 신호가 가장 진해야 하는
@@ -488,32 +490,36 @@ export function Inbox({ open, onClose }: Props) {
             */}
             <span
               data-testid={`inbox-reason-${e.id}`}
-              className={`rounded px-1 text-meta ${row.rank === 0
+              // `shrink-0`: 라벨은 **줄지 않는다**(UX ① H2). 칸이 좁을 때 잘려야 하는 것은
+              // 옆의 메타다 — 라벨이 줄면 "불렀다" 가 한 글자씩 세로로 선다.
+              className={`shrink-0 rounded px-1 text-meta ${row.rank === 0
                 ? 'bg-accent-surface font-medium text-state-turn'
                 : 'bg-surface-sunken text-fg-muted'}`}
             >
               {row.label}
             </span>
-            {/* **무엇을** — 본문 한 줄. 자르는 폭은 화면이 정한다(서버는 안 자른다).
-
-                `bodyWithHandles` 를 지나는 이유: 서버가 싣는 본문은 정본 형식(`<@id>`)이고,
-                이 줄은 `MessageBody` 를 지나지 않아 그 치환을 스스로 해야 한다. 안 하면
-                줄마다 `<@2c8c1910-…>` 만 보이고 "무엇을" 이 사라진다(2026-09-08 실측). */}
-            {/* 이미 본 줄은 여기서 물러난다 — 색만 옮기고 글자는 그대로 둔다(줄이는 것은
-                숨기는 것이고, 다시 찾을 길을 없앤다). */}
-            <span className={`truncate ${isUnread ? 'text-fg' : 'text-fg-muted'}`}>{bodyWithHandles(e.body, accounts, groups, teams)}</span>
-          </span>
-          <span className="flex items-center gap-1.5 text-meta text-fg-subtle">
             {/* **언제·어디.** */}
-            <span>{channelLabel(e.channelId)}</span>
-            {e.threadRootId && <span>· {t('inbox.entries.thread')}</span>}
-            <span>· {new Date(e.createdAt).toLocaleString()}</span>
-        {/* 안 읽음은 표시가 있어야 한다. 필터로 걸러 볼 수 있는 것이 목록에서는 안 보이면
-            "안 읽음만" 을 껐을 때 무엇이 안 읽은 것인지 알 수 없다. */}
-            {e.readAt === null && (
-              <span data-testid={`inbox-unread-${e.id}`} className="text-accent">· {t('inbox.entries.unread')}</span>
-            )}
+            <span className="flex min-w-0 items-center gap-1.5 truncate text-meta text-fg-subtle">
+              <span>{channelLabel(e.channelId)}</span>
+              {e.threadRootId && <span>· {t('inbox.entries.thread')}</span>}
+              <span>· {new Date(e.createdAt).toLocaleString()}</span>
+              {/* 안 읽음은 표시가 있어야 한다. 필터로 걸러 볼 수 있는 것이 목록에서는 안 보이면
+                  "안 읽음만" 을 껐을 때 무엇이 안 읽은 것인지 알 수 없다. */}
+              {e.readAt === null && (
+                <span data-testid={`inbox-unread-${e.id}`} className="text-accent">· {t('inbox.entries.unread')}</span>
+              )}
+            </span>
           </span>
+          {/* **무엇을** — 본문 **두 줄**(UX ①: 한 줄로는 무슨 말인지 서지 않는다). 자르는 폭은
+              화면이 정한다(서버는 안 자른다).
+
+              `bodyWithHandles` 를 지나는 이유: 서버가 싣는 본문은 정본 형식(`<@id>`)이고,
+              이 줄은 `MessageBody` 를 지나지 않아 그 치환을 스스로 해야 한다. 안 하면
+              줄마다 `<@2c8c1910-…>` 만 보이고 "무엇을" 이 사라진다(2026-09-08 실측).
+
+              이미 본 줄은 여기서 물러난다 — 색만 옮기고 글자는 그대로 둔다(줄이는 것은
+              숨기는 것이고, 다시 찾을 길을 없앤다). */}
+          <span className={`line-clamp-2 break-words ${isUnread ? 'text-fg' : 'text-fg-muted'}`}>{bodyWithHandles(e.body, accounts, groups, teams)}</span>
         </span>
       </button>
       {/*
