@@ -80,19 +80,34 @@ export function Toggle({ label, description, checked, disabled, onChange }: {
         <span className="block font-medium text-fg">{label}</span>
         {description && <span className="mt-0.5 block text-fg-subtle">{description}</span>}
       </span>
-      <input
-        type="checkbox"
-        role="switch"
-        aria-label={label}
-        checked={checked}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.checked)}
-        className="mt-0.5 h-5 w-9 shrink-0 cursor-pointer appearance-none rounded-full bg-fg-subtle
-                   transition before:block before:h-4 before:w-4 before:translate-x-0.5
-                   before:translate-y-0.5 before:rounded-full before:bg-white before:transition
-                   checked:bg-accent checked:before:translate-x-4 disabled:cursor-default"
-      />
+      <Switch ariaLabel={label} checked={checked} disabled={disabled} onChange={onChange} className="mt-0.5" />
     </label>
+  );
+}
+
+/**
+ * 켜고 끄는 스위치 하나(UX ④c). `Toggle` 은 설정 한 줄 전체이고, 이것은 **목록 줄 안에 서는
+ * 스위치**다 — 자동화 줄의 "켜짐" 이 맨 체크박스(파란 네모)였고, 같은 일을 하는 것이 화면마다
+ * 다른 컨트롤로 보였다(M9). 이제 켜기/끄기는 모두 이 모양 하나다.
+ */
+export function Switch({ checked, disabled, onChange, ariaLabel, testId, className = '' }: {
+  checked: boolean; disabled?: boolean; onChange(next: boolean): void;
+  ariaLabel?: string; testId?: string; className?: string;
+}) {
+  return (
+    <input
+      type="checkbox"
+      role="switch"
+      aria-label={ariaLabel}
+      data-testid={testId}
+      checked={checked}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.checked)}
+      className={`${className} h-5 w-9 shrink-0 cursor-pointer appearance-none rounded-full bg-fg-subtle
+                 transition before:block before:h-4 before:w-4 before:translate-x-0.5
+                 before:translate-y-0.5 before:rounded-full before:bg-white before:transition
+                 checked:bg-accent checked:before:translate-x-4 disabled:cursor-default`}
+    />
   );
 }
 
