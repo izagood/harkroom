@@ -104,7 +104,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
 
   return (
     <SettingsPage
-      title="Skills"
+      section="skills"
       description={t('skills.group.subtitle')}
     >
       <div className="mb-6 flex items-center gap-2">

@@ -32,6 +32,7 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
    */
   onCommunitiesEmpty(): void;
 }) {
+  const t = useT();
   const entries = useCommunityRegistry((r) => r.entries);
   const activeId = useCommunityRegistry((r) => r.activeId);
 
@@ -126,8 +127,8 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
 
   return (
     <SettingsPage
-      title="Communities"
-      description="The harkroom servers this device knows. Each one keeps its own channels, messages and connection."
+      section="communities"
+      description={t('settings.desc.communities')}
     >
       <SettingsGroup>
         {entries.map((entry) => (

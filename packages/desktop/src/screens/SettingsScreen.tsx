@@ -17,9 +17,10 @@ import { ProfileSettings } from '../components/settings/ProfileSettings';
 import { SkillsSettings } from '../components/settings/SkillsSettings';
 import { AutomationsSettings } from '../components/settings/AutomationsSettings';
 import { UpdatesSettings } from '../components/settings/UpdatesSettings';
-import { DEFAULT_SECTION, SETTINGS_GROUPS, isSectionId, type SectionId } from '../components/settings/sections';
+import { DEFAULT_SECTION, SETTINGS_GROUPS, isSectionId, navKey, type SectionId } from '../components/settings/sections';
 import { useActiveStore } from '../state/communities';
 import { WindowDragStrip } from '../components/WindowDragStrip';
+import { useT } from '../i18n/useT';
 
 export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onBack, onSignOut, onCommunitiesEmpty }: {
   initialSection?: SectionId;
@@ -33,6 +34,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
    */
   onCommunitiesEmpty(): void;
 }) {
+  const t = useT();
   /**
    * **빈 화면은 답이 아니다.** 목차에 없는 값이 들어오면 아래 분기가 전부 거짓이 되어
    * 본문이 통째로 빈다 — 사용자는 "설정이 안 열린다" 로 겪는다(실측 2026-09-07: 투영
@@ -58,13 +60,13 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
             className="flex items-center gap-2 px-4 py-4 text-left font-medium text-fg-muted hover:text-fg"
             onClick={onBack}
           >
-            <span aria-hidden>←</span> Back to app
+            <span aria-hidden>←</span> {t('settings.back')}
           </button>
 
           <nav className="flex-1 overflow-y-auto px-2 pb-4">
             {SETTINGS_GROUPS.map((g) => (
-              <div key={g.title} className="mb-4">
-                <div className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">{g.title}</div>
+              <div key={g.id} className="mb-4">
+                <div className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">{t(g.titleKey)}</div>
                 {g.items.map((item) => (
                   <button
                     key={item.id}
@@ -73,7 +75,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
                     aria-current={section === item.id ? 'page' : undefined}
                     onClick={() => setSection(item.id)}
                   >
-                    {item.label}
+                    {t(navKey(item.id))}
                   </button>
                 ))}
               </div>

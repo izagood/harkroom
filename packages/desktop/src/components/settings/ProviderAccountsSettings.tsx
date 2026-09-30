@@ -14,7 +14,7 @@ import { SettingsPage } from './primitives';
 export function ProviderAccountsSettings() {
   const t = useT();
   return (
-    <SettingsPage title={t('providerAccounts.page.title')} description={t('providerAccounts.page.subtitle')} width="wide">
+    <SettingsPage section="claude-accounts" description={t('providerAccounts.page.subtitle')} width="wide">
       <ClaudeAccountsSettings embedded />
       <CodexAccountsSettings />
       <OpenCodeAccountsCard />

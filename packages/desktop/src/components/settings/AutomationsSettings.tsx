@@ -149,7 +149,7 @@ export function AutomationsSettings() {
   const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString(locale || undefined) : '—');
 
   return (
-    <SettingsPage title={t('automations.title')} description={t('automations.subtitle')}>
+    <SettingsPage section="automations" description={t('automations.subtitle')}>
       <div className="mb-6 flex items-center gap-2">
         <Button variant="primary" disabled={draft !== null}
           onClick={() => { setEditingId(null); setDraft({ ...emptyDraft(), channelId: targets[0]?.value ?? '' }); }}>

@@ -59,7 +59,7 @@ export function McpServersSettings() {
   };
 
   return (
-    <SettingsPage title="MCP servers" description={t('mcpServers.description')}>
+    <SettingsPage section="mcp-servers" description={t('mcpServers.description')}>
       <SettingsGroup>
         {rows === null && <p className="px-4 py-3 text-meta text-fg-muted">{t('mcpServers.loading')}</p>}
         {rows === 'error' && <p role="alert" className="px-4 py-3 text-meta text-danger">{t('mcpServers.listFailed')}</p>}

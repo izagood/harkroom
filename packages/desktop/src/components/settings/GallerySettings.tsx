@@ -186,7 +186,7 @@ export function GallerySettings() {
 
   return (
     <SettingsPage
-      title={t('gallery.page.title')}
+      section="gallery"
       description={t('gallery.page.subtitle')}
     >
       <div data-testid="gallery" className="space-y-8">

@@ -1,3 +1,4 @@
+import type { MessageKey } from '../../i18n';
 /** 설정 화면의 목차. 새 섹션은 여기에 한 줄 더하고 SettingsScreen 의 렌더 분기에 한 줄 더하면 붙는다.
  *  타입이 화면(SettingsScreen)이 아니라 여기 사는 이유는, Sidebar·App 이 섹션을 지목하면서
  *  화면 컴포넌트를 import 하게 되면 의존 방향이 거꾸로 서기 때문이다. */
@@ -28,58 +29,67 @@
  */
 export type SectionId = 'workspace' | 'profile' | 'notifications' | 'messages' | 'appearance' | 'connection' | 'communities' | 'agents' | 'agent-defaults' | 'operators' | 'mcp-servers' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'automations' | 'gallery';
 
-export const SETTINGS_GROUPS: { title: string; items: { id: SectionId; label: string }[] }[] = [
+/**
+ * 목차 한 줄의 **이름은 사전 키 하나다**(UX ④ H5). 전에는 목차가 영어 문자열(`Appearance`)을,
+ * 페이지 제목이 사전(`모양`)을 따로 들고 있어 누른 이름과 열린 이름이 달랐다. 이제 목차와
+ * `SettingsPage section=…` 이 **같은 키**를 읽으므로 둘이 갈라질 수 없다(`navKey`).
+ */
+export const navKey = (id: SectionId): MessageKey => `settings.nav.${id}` as MessageKey;
+
+export const SETTINGS_GROUPS: { id: 'personal' | 'app'; titleKey: MessageKey; items: { id: SectionId }[] }[] = [
   {
-    title: 'Personal',
+    id: 'personal',
+    titleKey: 'settings.group.personal',
     items: [
-      { id: 'profile', label: 'Profile' },
-      { id: 'notifications', label: 'Notifications' },
-      { id: 'messages', label: 'Messages' },
-      { id: 'appearance', label: 'Appearance' },
-      { id: 'connection', label: 'Connection' },
+      { id: 'profile' },
+      { id: 'notifications' },
+      { id: 'messages' },
+      { id: 'appearance' },
+      { id: 'connection' },
       // #165: 커뮤니티 목록·추가·전환. `Connection` 바로 뒤에 두는 이유는 그 화면이
       // "지금 붙은 서버 하나" 를 말하고 이 화면이 "이 기기가 아는 서버 전부" 를 말해서다.
-      { id: 'communities', label: 'Communities' },
+      { id: 'communities' },
     ],
   },
   {
-    title: 'App',
+    id: 'app',
+    titleKey: 'settings.group.app',
     items: [
       // 워크스페이스 자체의 설정 — 지금은 커뮤니티 레일에 걸리는 아이콘 하나다(owner/admin 이 바꾼다).
-      { id: 'workspace', label: 'Workspace' },
-      { id: 'agents', label: 'Agents' },
+      { id: 'workspace' },
+      { id: 'agents' },
       // #171 · identity 문서 원칙 04: **개별 에이전트의 설정이 아니다.** 한 에이전트를
       // 고치는 화면 안에 워크스페이스 전체에 걸리는 값이 앉아 있으면 지금 무엇을 고치고
       // 있는지가 사라진다 — 그래서 목차의 별도 항목으로 두고 Agents 바로 뒤에 세운다.
-      { id: 'agent-defaults', label: 'Agent defaults' },
+      { id: 'agent-defaults' },
       // 스펙 2026-09-20 §3: 에이전트를 **어디서** 돌릴지. 러너를 띄우는 것은 이제 오퍼레이터라
       // 사람이 앱에서 하는 일은 등록·배정뿐이고, 그 목록이 이 화면이다. Agents 옆에 두는
       // 이유는 배정이 에이전트 상세에서 이 목록을 가리키기 때문이다.
-      { id: 'operators', label: 'Operators' },
+      { id: 'operators' },
       // 스펙 2026-09-20 §6: 에이전트가 붙일 수 있는 MCP 의 **이름** 목록. 정의는 오퍼레이터
       // 머신에 있으므로 Operators 바로 뒤다 — 이름을 여기 적고 정의는 그 머신에 적는다.
-      { id: 'mcp-servers', label: 'MCP servers' },
+      { id: 'mcp-servers' },
       // 계정 풀은 **기기 로컬 자원**이다 — 이 기기의 디렉터리와 그 안의 자격증명이고,
       // 서버에도 다른 기기에도 없다. Agents 옆에 두는 이유는 러너가 그것을 쓰기 때문이고,
       // Agents 안에 넣지 않는 이유는 개별 에이전트의 설정이 아니기 때문이다
       // (`agent-defaults` 를 별 항목으로 세운 것과 같은 판단이다).
       // 2026-09-28: Claude 만이 아니라 하네스별 계정(Codex …)을 한 화면에 모았다. id 는 그대로다
       // (`ProviderAccountsSettings` 머리말).
-      { id: 'claude-accounts', label: 'Provider accounts' },
+      { id: 'claude-accounts' },
       // `Teams` 가 여기 있었다. 지금은 `Agents` 안의 묶음이다 — 근거는 위 `SectionId` 주석.
-      { id: 'handle-groups', label: 'Handle Groups' },
-      { id: 'invite', label: 'Invite' },
-      { id: 'updates', label: 'Updates' },
-      { id: 'skills', label: 'Skills' },
+      { id: 'handle-groups' },
+      { id: 'invite' },
+      { id: 'updates' },
+      { id: 'skills' },
       // 자동화(064): 만든 사람 이름으로 반복해서 글을 올린다. 에이전트에게 맡기는 반복 요청이라
       // 스킬 옆에 둔다 — 둘 다 "에이전트가 매번 같은 일을 하게" 하는 자리다.
-      { id: 'automations', label: 'Automations' },
+      { id: 'automations' },
       /**
        * 컴포넌트 갤러리(Task 11). **개발자용이라 목록의 맨 끝**에 둔다 — 배포본에서도
        * 보이지만 쓰는 사람이 찾아 들어갈 일이 없는 자리다. 숨기지 않는 이유: 숨긴 화면은
        * 곧 깨지고, 깨진 것을 아무도 모른다(그 화면이 지키려는 것이 어휘 그 자체다).
        */
-      { id: 'gallery', label: 'Component gallery' },
+      { id: 'gallery' },
     ],
   },
 ];

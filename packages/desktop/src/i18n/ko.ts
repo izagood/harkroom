@@ -22,6 +22,38 @@ import type { Catalog } from './en';
  * **문법 규칙은 그것을 가진 언어의 파일에만 있어야 한다.**
  */
 export const ko = {
+  // ---------------------------------------------------------------------------
+  // settings — 설정 목차와 페이지 머리(UX ④). **목차 이름 = 페이지 제목**이 한 키에서 나온다
+  // (`sections.navKey`, `SettingsPage section=…`).
+  // ---------------------------------------------------------------------------
+  'settings.back': '앱으로 돌아가기',
+  'settings.group.personal': '개인',
+  'settings.group.app': '앱',
+  'settings.nav.profile': '프로필',
+  'settings.nav.notifications': '알림',
+  'settings.nav.messages': '메시지',
+  'settings.nav.appearance': '모양과 언어',
+  'settings.nav.connection': '연결',
+  'settings.nav.communities': '커뮤니티',
+  'settings.nav.workspace': '워크스페이스',
+  'settings.nav.agents': '에이전트',
+  'settings.nav.agent-defaults': '새 에이전트 기본값',
+  'settings.nav.operators': '오퍼레이터',
+  'settings.nav.mcp-servers': 'MCP 서버',
+  'settings.nav.claude-accounts': '제공업체 계정',
+  'settings.nav.handle-groups': '핸들 그룹',
+  'settings.nav.invite': '초대',
+  'settings.nav.updates': '업데이트',
+  'settings.nav.skills': '스킬',
+  'settings.nav.automations': '자동화',
+  'settings.nav.gallery': '컴포넌트 갤러리',
+  'settings.desc.communities': '이 기기가 아는 harkroom 서버들. 서버마다 채널·메시지·연결을 따로 가진다.',
+  'settings.desc.connection': '이 앱이 지금 붙어 있는 harkroom 서버.',
+  'settings.desc.messages': '이 기기에만 저장되는 설정이다.',
+  'settings.desc.notifications': 'harkroom 창이 뒤에 있을 때만 알린다.',
+  'settings.desc.profile': '이 서버에 누구로 로그인했는지.',
+  'settings.desc.updates': '이 앱을 새 버전으로 올리는 곳.',
+
   // providerUsage — 공급자 API 사용률 막대·토글(2단계). 2026-09-28.
   'providerUsage.session': '5시간',
   'providerUsage.weekly': '주간',
@@ -33,8 +65,7 @@ export const ko = {
   'providerUsage.error.cliUnavailable': '사용량을 읽을 CLI를 실행하지 못했습니다. 설치돼 있는지 확인하세요.',
   'providerUsage.error.cliUnparsed': 'CLI가 사용량을 알려 주지 않았습니다 — 다시 로그인하거나 CLI를 업데이트하세요.',
   // providerAccounts — 설정 > 제공업체 계정(하네스별 카드). 2026-09-28.
-  'providerAccounts.page.title': '제공업체 계정',
-  'providerAccounts.page.subtitle': '선택 사항. 에이전트는 기존 공급자 로그인으로 동작합니다. Harkroom이 계정 사이를 전환하길 원할 때만 계정을 추가하세요.',
+  'providerAccounts.page.subtitle': '고르지 않아도 된다. 에이전트는 이미 로그인한 제공업체 계정으로 돈다. harkroom 이 계정 사이를 바꿔 가며 쓰게 하고 싶을 때만 계정을 더한다.',
   'providerAccounts.badge.thisDevice': '이 기기',
   'providerAccounts.badge.active': '활성',
   'providerAccounts.systemDefault': '시스템 기본값',
@@ -68,12 +99,11 @@ export const ko = {
   'common.someone': '사람',
 
   'appearance.colorMode': '색 모드',
-  'appearance.description': '시스템을 따르거나, 밝게 또는 어둡게 고른다',
+  'appearance.description': '색, 언어, 글자 크기를 고른다. 이 기기에만 적용된다.',
   'appearance.language': '언어',
   'appearance.languageOption': '{name} 로 보기',
   'appearance.languageSystem': '시스템',
   'appearance.mode': '{mode} 모드',
-  'appearance.title': '모양',
   'appearance.zoom': '확대/축소',
   'appearance.zoomDefault': '기본값',
   'appearance.zoomHint': 'Cmd +/- 키를 눌러 확대/축소 수준을 바꾸거나, Cmd 0 으로 되돌릴 수 있다.',
@@ -136,8 +166,6 @@ export const ko = {
     '에이전트가 둘 미만이라 이름 자리가 {ellipsis} 로 남는다. 색과 수신자, 사슬의 모양은 '
     + '견본으로 고정되어 규칙대로 그려진다 — 에이전트 둘을 만들면 이름까지 실제 값으로 채워진다.',
   'gallery.page.subtitle': '여덟 가지 말과 그 경계 상태. 여기가 깨지면 어휘가 깨진 것이다.',
-  /** 화면 제목은 원래도 영어였다 — 설정 목차의 다른 항목들과 같은 자리이기 때문이다. */
-  'gallery.page.title': 'Component gallery',
 
   'gallery.speech.askDone': '선택 — 이미 답한 것',
   'gallery.speech.askDoneNote': '고른 것만 남고 강조를 거둔다.',
@@ -179,7 +207,7 @@ export const ko = {
   'defaults.field.save': '기본값 저장',
   'defaults.field.saved': '저장했다',
   'defaults.field.saveFailed': '기본값을 저장하지 못했다',
-  'defaults.field.subtitle': '새로 만드는 에이전트가 물려받을 값. 이미 있는 에이전트는 바뀌지 않는다.',
+  'defaults.field.subtitle': '새로 만드는 에이전트가 물려받는다. 이미 있는 에이전트는 바뀌지 않는다.',
   'defaults.chain.title': '멘션 연쇄 상한',
   'defaults.chain.label': '에이전트끼리 이어 부를 수 있는 깊이',
   'defaults.chain.hint':
@@ -274,7 +302,6 @@ export const ko = {
   'skills.list.loadFailed': '스킬 목록을 불러오지 못했다',
   'skills.list.loading': '불러오는 중…',
   'skills.list.refresh': '새로고침',
-  'automations.title': '자동화',
   'automations.subtitle': '정한 때가 되면 내 이름으로 고른 채널이나 DM 에 글을 올린다. 본문 맨 앞에 @handle 을 쓰면 그 에이전트가 일을 맡는다.',
   'automations.list.new': '새 자동화',
   'automations.list.loading': '불러오는 중…',

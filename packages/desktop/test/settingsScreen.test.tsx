@@ -4,6 +4,7 @@ import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { SettingsScreen } from '../src/screens/SettingsScreen';
 import { acc } from './helpers/fakeApi';
+import { usePrefsStore } from '../src/state/prefsStore';
 
 beforeEach(() => {
   localStorage.clear();
@@ -39,6 +40,24 @@ describe('SettingsScreen', () => {
     render(<SettingsScreen initialSection={{ type: 'click' } as never} onBack={vi.fn()} onSignOut={vi.fn()} onCommunitiesEmpty={vi.fn()} />);
     expect(screen.getByRole('heading', { name: 'Profile' })).toBeTruthy();
   });
+
+  /**
+   * **누른 이름이 열린 이름이다**(UX ④ H5). 한국어에서 목차는 "Appearance" 였고 열린 페이지는
+   * "모양" 이었다 — 사람은 제대로 왔는지 한 번 더 읽어야 했다. 이제 둘이 같은 키라 갈라질 수
+   * 없지만, 그 약속이 두 언어에서 다 지켜지는지 **본래 결함이 난 자리**로 잰다.
+   */
+  it.each([['ko', '모양과 언어'], ['en', 'Appearance & language']] as const)(
+    '목차 이름과 페이지 제목이 같다 (%s)', (locale, name) => {
+      usePrefsStore.getState().setLocale(locale);
+      try {
+        render(<SettingsScreen onBack={vi.fn()} onSignOut={vi.fn()} onCommunitiesEmpty={vi.fn()} />);
+        fireEvent.click(screen.getByRole('button', { name }));
+        expect(screen.getByRole('heading', { name })).toBeTruthy();
+      } finally {
+        usePrefsStore.getState().setLocale('system');
+      }
+    },
+  );
 
   it('returns to the app', () => {
     const onBack = vi.fn();

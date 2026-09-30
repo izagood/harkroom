@@ -131,11 +131,22 @@ function accountLabel(a: ClaudeAccountView): string {
 }
 
 /**
+ * 떼어 낸 화면(테스트·옛 진입점)에서 쓰는 껍데기. 제목은 목차 줄에서 나온다(UX ④,
+ * `SettingsPage section`) — 이 화면은 `Provider accounts` 줄의 한 부분이라 그 줄 이름을 쓴다.
+ * 모듈 수준에 두는 이유: 렌더 안에서 만들면 매번 새 컴포넌트라 본문이 통째로 다시 선다.
+ */
+function StandalonePage({ description, width, children }: {
+  title: string; description?: string; width?: 'default' | 'wide'; children: ReactNode;
+}) {
+  return <SettingsPage section="claude-accounts" description={description} width={width}>{children}</SettingsPage>;
+}
+
+/**
  * `embedded` = 제공업체 계정 화면(`ProviderAccountsSettings`)의 한 칸으로 그린다. 그때는 화면
  * 껍데기(`SettingsPage`) 대신 하네스 칸(`ProviderSection`)을 쓴다 — 껍데기가 둘이면 제목이 둘이다.
  */
 export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolean } = {}) {
-  const Shell = embedded ? ClaudeSection : SettingsPage;
+  const Shell = embedded ? ClaudeSection : StandalonePage;
   // 한도 사용률: CLI(`/usage`) 먼저, 실패하면 같은 API(`usageChain.ts`). 사용량은 이것 하나다.
   const available = hasClaudeAccountsSurface();
   const { snap: providerSnap } = useProviderUsage('claude', available);

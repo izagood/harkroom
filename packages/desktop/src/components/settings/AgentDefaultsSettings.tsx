@@ -68,7 +68,7 @@ export function AgentDefaultsSettings() {
 
   return (
     <SettingsPage
-      title="Agent defaults"
+      section="agent-defaults"
       description={t('defaults.field.subtitle')}
     >
       <SettingsGroup>
