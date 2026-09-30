@@ -293,6 +293,31 @@ describe('memory MCP tools', () => {
     }
   });
 
+  // recall P1: 러너 자동 주입 모드. 이름·상투어를 거르고, 이름·요약 일치만, journal 은 뺀다.
+  it('memory.search recall mode drops names/stopwords, needs a slug/description hit, skips journal', async () => {
+    const { pat } = await createAgent(app, adminToken, 'recall-agent');
+    const client = await mcpClient(pat);
+    try {
+      // 사람 handle(admin)과 상투어(task·지시)가 본문에 잔뜩 있는 기억 — 전에는 이것이 실렸다.
+      await callTool(client, 'memory.set', { slug: 'mem/noise', value: 'admin task 지시 task 지시 admin', description: '잡담' });
+      await callTool(client, 'memory.set', { slug: 'mem/body-only', value: '캐시 조사 기록' });
+      await callTool(client, 'memory.set', { slug: 'mem/runner-cache', value: '캐시 캐시', description: '러너 캐시 조사' });
+      await callTool(client, 'memory.set', { slug: 'mem/cache-pr-1', value: '캐시 경위', description: '캐시 PR 경위', kind: 'journal' });
+      const query = '@recall-agent admin: 캐시를 조사해 달라 (task 지시 경유) harkroom://message/0b07fe16-2df8-45af-a047-24e1577ddfeb';
+
+      const old = await callTool(client, 'memory.search', { query });
+      expect((old.hits as { slug: string }[]).map((h) => h.slug)).toContain('mem/noise');
+      expect(old.terms).toBeUndefined();
+
+      const res = await callTool(client, 'memory.search', { query, recall: true, includeValue: true });
+      expect(res.terms).toEqual(['캐시', '조사']);
+      expect((res.hits as { slug: string; nameHits: number }[]).map((h) => [h.slug, h.nameHits])).toEqual([['mem/runner-cache', 2]]);
+      expect(res.hits[0].value).toBe('캐시 캐시');
+    } finally {
+      await client.close();
+    }
+  });
+
   // M3: 병렬 턴 둘이 같은 판을 읽고 각자 고치면 나중 쓰기가 앞 것을 조용히 지웠다.
   describe('ifUpdatedAt (낙관적 동시성)', () => {
     it('맞는 판이면 쓰고, 어긋난 판이면 conflict 와 지금 판을 준다', async () => {
@@ -388,6 +413,10 @@ describe('memory MCP tools', () => {
       expect(a.brokenLinks).toEqual([{ slug: 'mem/read-long-ago', target: 'gone' }]);
       expect(a.similar).toEqual([['mem/runner-cache-design', 'mem/runner-cache-design-v2']]);
       expect(a.outdated).toEqual([{ slug: 'mem/old-unread', pattern: 'narwhal' }]);
+      // P2: 요약 없는 것(journal·core 제외). 요약을 채우면 빠진다.
+      expect(a.undescribed).toEqual(['mem/fresh-unread', 'mem/old-unread', 'mem/read-long-ago', 'mem/runner-cache-design', 'mem/runner-cache-design-v2']);
+      await callTool(client, 'memory.set', { slug: 'mem/fresh-unread', value: '새것', description: '새것 — 언제 여는지' });
+      expect((await callTool(client, 'memory.audit', {})).undescribed).not.toContain('mem/fresh-unread');
     } finally {
       await client.close();
     }

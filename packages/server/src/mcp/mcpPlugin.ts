@@ -1023,17 +1023,22 @@ function buildMcpServer(
       query: z.string().min(1).max(2000),
       limit: z.number().int().min(1).max(20).optional(),
       includeValue: z.boolean().optional(),
+      // 러너 자동 주입용(recall P1) — 이름·상투어를 거르고 이름·요약 일치만, journal 빼고.
+      // 옛 서버는 모르는 키를 버리므로(zod strip) 러너는 응답의 nameHits 로 새 서버를 알아본다.
+      recall: z.boolean().optional(),
     },
-  }, async ({ query, limit, includeValue }) => {
-    const hits = await searchMemory(pool, account.id, query, { limit: limit ?? 5, includeValue: includeValue ?? false });
-    return jsonResult({ hits });
+  }, async ({ query, limit, includeValue, recall }) => {
+    const res = await searchMemory(pool, account.id, query, {
+      limit: limit ?? 5, includeValue: includeValue ?? false, recall: recall ?? false,
+    });
+    return jsonResult(recall ? res : { hits: res.hits });
   });
 
   // memory.audit — 정리 턴(M4)이 볼 후보. 판단은 에이전트가 한다; 서버는 사실만 모은다.
   server.registerTool('memory.audit', {
-    description: '내 기억의 정리 후보: 한 번도/30일 넘게 안 읽힘·깨진 [[링크]]·이름이 거의 같은 짝·낡은 낱말(patterns)·core 길이. '
+    description: '내 기억의 정리 후보: 한 번도/30일 넘게 안 읽힘·깨진 [[링크]]·이름이 거의 같은 짝·낡은 낱말(patterns)·요약 없음(undescribed)·core 길이. '
       + '정리 절차: 후보마다 memory.get 으로 읽고 판단한다 — 합치거나(한쪽에 모으고 다른 쪽 삭제), 되풀이할 교훈만 남기고 줄이거나, '
-      + '낡은 이름을 고치거나, 필요 없으면 지운다. 고칠 땐 ifUpdatedAt 을 준다(이전 판이 남아 되돌릴 수 있다). 끝나면 무엇을 바꿨는지 스레드에 보고한다',
+      + '낡은 이름을 고치거나, 필요 없으면 지운다. 요약이 없는 것은 읽고 "언제 열어 볼지" 한 줄을 description 으로 채운다(목록·자동 recall 이 요약으로 찾는다). 고칠 땐 ifUpdatedAt 을 준다(이전 판이 남아 되돌릴 수 있다). 끝나면 무엇을 바꿨는지 스레드에 보고한다',
     inputSchema: { patterns: z.array(z.string().min(3).max(100)).max(20).optional() },
   }, async ({ patterns }) => jsonResult(await auditMemory(pool, account.id, patterns ?? [])));
 
