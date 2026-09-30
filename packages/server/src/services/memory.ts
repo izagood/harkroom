@@ -297,19 +297,68 @@ export interface MemorySearchHit {
   kind: MemoryKind;
   score: number;
   value?: string;
+  /** recall 모드만: 이름·요약에 걸린 낱말 수. 러너가 이 값이 있으면 새 서버로 알아본다. */
+  nameHits?: number;
 }
 
 /** 한국어 조사가 붙은 낱말도 걸리게 끝의 흔한 조사를 떼어 본다(형태소 분석기 없이 싼 근사). */
 const PARTICLES = ['에서', '으로', '에게', '까지', '부터', '처럼', '은', '는', '이', '가', '을', '를', '에', '의', '로', '도', '만', '와', '과'];
 
-export function searchTerms(query: string): string[] {
+/**
+ * 활용 어미(recall P1, 2026-09-30). "조사해 달라"의 `조사해` 는 `%조사해%` 로 찾으니 기억의
+ * "조사" 에 안 걸렸다(감사 ⑤ — 활용형은 안 걸림). 긴 것부터 떼고, 어간이 두 글자 이상 남을
+ * 때만 뗀다 — `권한`·`제한` 같은 명사의 끝 `한` 을 어미로 보고 한 글자로 만들지 않으려고.
+ * 뗀 어간은 `%어간%` 부분 일치라 곧 "어간 앞부분 맞추기" 다.
+ */
+const ENDINGS = [
+  '했습니다', '합니다', '해주세요', '해달라', '해줘', '해라', '해서', '해야', '해도', '했다', '했고', '했는', '했던',
+  '하고', '하다', '한다', '하는', '하면', '하지', '하게', '하려', '된다', '됐다', '되는', '되어', '되면',
+  '해', '했', '할', '한', '돼', '됨',
+];
+
+/**
+ * 러너 recall 에서만 거르는 상투어. 요청문마다 붙어 다니는 말이라 본문 1점이 쌓여 아무 기억이나
+ * 끌어올렸다(감사 ⑤ (b)). 사람·에이전트·팀 이름은 여기 적지 않는다 — 계정 표에서 읽는다
+ * (`recallExcludedNames`). 에이전트가 직접 부르는 `memory.search` 에는 걸지 않는다: 거기서
+ * "jaebin" 을 찾으면 찾아져야 한다.
+ */
+export const RECALL_STOPWORDS: ReadonlySet<string> = new Set([
+  // 요청의 틀
+  '지시', '경유', '요청', '부탁', '착수', '진행', '확인', '보고', '답변', '방식',
+  '스레드', '채널', '메시지', '에이전트', '사람', '이번', '지금', '다음', '먼저', '그리고', '그러니', '그래서',
+  '어떻게', '무엇', '여기', '거기', '이것', '그것', '해당', '관련', '내용', '부분', '경우', '정도', '이상', '이하',
+  '달라', '주세요', '있다', '없다', '같다', '한다', '된다', '했다', '위해', '대해', '대한', '통해',
+  // 영어·주소 조각
+  'task', 'the', 'and', 'for', 'with', 'this', 'that', 'from', 'message', 'thread', 'channel', 'please', 'http', 'https',
+]);
+
+/** 떼어 낸 낱말 하나. 기호로 가르고, 조사·어미를 한 번씩 떼어 본다. */
+function normalizeTerm(raw: string): string | null {
+  let t = raw.trim();
+  if (t.length < 2) return null;
+  if (/[가-힣]$/u.test(t)) {
+    const p = PARTICLES.find((x) => t.endsWith(x) && t.length - x.length >= 2);
+    if (p) t = t.slice(0, -p.length);
+    const e = ENDINGS.find((x) => t.endsWith(x) && t.length - x.length >= 2);
+    if (e) t = t.slice(0, -e.length);
+  }
+  return t;
+}
+
+export function searchTerms(query: string, opts: { exclude?: ReadonlySet<string> } = {}): string[] {
   const out = new Set<string>();
-  for (const raw of query.toLowerCase().split(/[\s,.;:!?()[\]{}"'`<>@#|/\\*~=+]+/u)) {
-    let t = raw.trim();
-    if (t.length < 2) continue;
-    if (/[\uAC00-\uD7A3]$/u.test(t)) {
-      const p = PARTICLES.find((x) => t.endsWith(x) && t.length - x.length >= 2);
-      if (p) t = t.slice(0, -p.length);
+  const exclude = opts.exclude;
+  // recall 모드: `@handle` 과 주소는 통째로 지운다 — 부른 사람·부름받은 이름은 요청의 뜻이 아니다.
+  const text = exclude
+    ? query.toLowerCase().replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gu, ' ').replace(/@[\p{L}\p{N}_.-]+/gu, ' ')
+    : query.toLowerCase();
+  for (const raw of text.split(/[\s,.;:!?()[\]{}"'`<>@#|/\\*~=+]+/u)) {
+    const t = normalizeTerm(raw);
+    if (!t) continue;
+    // 필터를 **먼저** 건다 — 12개 상한을 상투어가 채우면 정작 요청의 낱말이 빠진다(감사 ⑤).
+    if (exclude) {
+      if (exclude.has(t) || RECALL_STOPWORDS.has(t)) continue;
+      if (/^[0-9a-f-]{8,}$/u.test(t) || /^\d{1,2}$/u.test(t)) continue; // id 조각·작은 숫자
     }
     out.add(t);
     if (out.size >= 12) break;
@@ -318,15 +367,98 @@ export function searchTerms(query: string): string[] {
 }
 
 /**
+ * 계정·팀의 handle 과 표시 이름(낱말로 편 것까지). 요청문의 "task_manager:"·"jaebin 결정" 같은
+ * 이름 낱말이 기억 본문에 흔해서 recall 을 오염시켰다(감사 ⑤ (a)). 이름은 바뀌므로 표에서 읽는다.
+ */
+export async function recallExcludedNames(pool: Pool): Promise<Set<string>> {
+  const res = await pool.query(
+    `select handle, display_name from account union all select handle, display_name from handle_group`,
+  );
+  const out = new Set<string>();
+  for (const r of res.rows as { handle: string; display_name: string | null }[]) {
+    for (const name of [r.handle, r.display_name ?? '']) {
+      const low = name.toLowerCase().trim();
+      if (low.length >= 2) out.add(low);
+      for (const part of low.split(/[\s_.-]+/u)) if (part.length >= 2) out.add(part);
+    }
+  }
+  return out;
+}
+
+export interface RecallCandidate {
+  slug: string;
+  description: string | null;
+  kind: MemoryKind;
+  value: string;
+  updatedAt: Date;
+}
+
+function countOccurrences(hay: string, needle: string): number {
+  let n = 0;
+  for (let i = hay.indexOf(needle); i !== -1 && n < 50; i = hay.indexOf(needle, i + needle.length)) n++;
+  return n;
+}
+
+/**
+ * recall 순위(P1). 순수 함수라 pg 없이 정답 세트(fixture)로 잰다.
+ * - 이름·요약에 걸린 낱말이 **하나도 없으면 싣지 않는다** — 본문 1점만 쌓인 것은 상투어였다.
+ * - journal 은 뺀다 — 한 작업의 경위라 요청 낱말(PR·기능 이름)에 잘 걸리지만 교훈은 주제 기억에
+ *   증류돼 있다. 경위가 필요하면 에이전트가 `memory.search` 로 직접 찾는다.
+ * - 점수 = 이름·요약 3 + 본문 1(낱말당, 전과 같다). 동점은 이름 일치 수 → 본문 출현 수 → slug.
+ *   전에는 동점을 최근 수정 순으로 갈라, 같은 짝이 세션마다 실렸다(감사 ⑤).
+ */
+export function rankRecall(terms: string[], rows: RecallCandidate[], limit: number): (MemorySearchHit & { nameHits: number })[] {
+  const scored = [];
+  for (const r of rows) {
+    if (r.slug === 'core' || r.kind === 'journal') continue;
+    const name = `${r.slug.toLowerCase()}\n${(r.description ?? '').toLowerCase()}`;
+    const body = r.value.toLowerCase();
+    let nameHits = 0; let bodyHits = 0; let occurrences = 0;
+    for (const t of terms) {
+      if (name.includes(t)) nameHits++;
+      const c = countOccurrences(body, t);
+      if (c) { bodyHits++; occurrences += c; }
+    }
+    if (!nameHits) continue;
+    scored.push({ r, nameHits, score: nameHits * 3 + bodyHits, occurrences });
+  }
+  scored.sort((a, b) => b.score - a.score || b.nameHits - a.nameHits || b.occurrences - a.occurrences
+    || (a.r.slug < b.r.slug ? -1 : a.r.slug > b.r.slug ? 1 : 0));
+  return scored.slice(0, limit).map(({ r, nameHits, score }) => ({
+    slug: r.slug, description: r.description, kind: r.kind, score, nameHits, value: r.value,
+  }));
+}
+
+/**
  * 기억 검색(070). 목록에 안 실리는 journal 을 찾는 길이자, 러너가 요청 본문으로 관련 기억을
  * 골라 주입하는 길이다. 에이전트당 200행이 상한이라 전문 색인 없이 부분 일치 점수로 충분하다
  * — 이름·요약에 걸리면 3점, 본문에 걸리면 1점. `core` 는 매 턴 실리므로 뺀다.
+ *
+ * `recall: true` 는 러너 자동 주입용이다(P1): 이름·상투어를 거른 낱말로, 이름·요약에 걸린
+ * 것만, journal 빼고, 일치 수로 동점을 가른다(`rankRecall`). 쓴 낱말(`terms`)을 같이 돌려줘
+ * 러너가 로그 한 줄로 남긴다.
  */
 export async function searchMemory(
-  pool: Pool, accountId: string, query: string, opts: { limit: number; includeValue: boolean },
-): Promise<MemorySearchHit[]> {
+  pool: Pool, accountId: string, query: string, opts: { limit: number; includeValue: boolean; recall?: boolean },
+): Promise<{ hits: MemorySearchHit[]; terms: string[] }> {
+  if (opts.recall) {
+    const terms = searchTerms(query, { exclude: await recallExcludedNames(pool) });
+    if (!terms.length) return { hits: [], terms };
+    const patterns = terms.map((t) => `%${t.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+    // 이름·요약에 걸린 행만 가져온다 — 본문은 그 몇 행만 JS 로 센다.
+    const res = await pool.query(
+      `select slug, description, kind, value, updated_at as "updatedAt" from agent_memory m
+       where account_id = $1 and slug <> 'core' and kind <> 'journal'
+         and exists (select 1 from unnest($2::text[]) as p
+                     where lower(m.slug) like p or lower(coalesce(m.description, '')) like p)`,
+      [accountId, patterns],
+    );
+    const hits = rankRecall(terms, res.rows as RecallCandidate[], opts.limit)
+      .map((h) => (opts.includeValue ? h : { ...h, value: undefined }));
+    return { hits, terms };
+  }
   const terms = searchTerms(query);
-  if (!terms.length) return [];
+  if (!terms.length) return { hits: [], terms };
   const patterns = terms.map((t) => `%${t.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
   const res = await pool.query(
     `select slug, description, kind, ${opts.includeValue ? 'value,' : ''}
@@ -340,7 +472,7 @@ export async function searchMemory(
      limit $3`,
     [accountId, patterns, opts.limit],
   );
-  return (res.rows as MemorySearchHit[]).filter((r) => r.score > 0);
+  return { hits: (res.rows as MemorySearchHit[]).filter((r) => r.score > 0), terms };
 }
 
 export interface MemoryRevision {
@@ -404,6 +536,11 @@ export interface MemoryAudit {
   similar: [string, string][];
   /** 호출자가 준 낡은 낱말(옛 이름·옛 주소)이 들어 있는 기억. */
   outdated: { slug: string; pattern: string }[];
+  /**
+   * 요약(description)이 없는 기억(journal 제외, P2). 목록에 이름만 실리고, 러너 recall 은
+   * 이름·요약에 걸린 것만 싣으므로 요약이 없으면 이름 낱말로만 찾힌다. 채울 후보다.
+   */
+  undescribed: string[];
 }
 
 /** 이름을 낱말로 편다 — `mem/pr-896-memory-runner-cache` → {pr, memory, runner, cache}(숫자는 버린다). */
@@ -427,11 +564,12 @@ export async function auditMemory(
   pool: Pool, accountId: string, patterns: string[] = [],
 ): Promise<MemoryAudit> {
   const res = await pool.query(
-    `select slug, value, kind, read_count, last_read_at, created_at from agent_memory where account_id = $1 order by slug`,
+    `select slug, value, description, kind, read_count, last_read_at, created_at from agent_memory where account_id = $1 order by slug`,
     [accountId],
   );
   const rows = res.rows as {
-    slug: string; value: string; kind: MemoryKind; read_count: number; last_read_at: Date | null; created_at: Date;
+    slug: string; value: string; description: string | null; kind: MemoryKind;
+    read_count: number; last_read_at: Date | null; created_at: Date;
   }[];
   const now = Date.now();
   const day = 86_400_000;
@@ -440,7 +578,7 @@ export async function auditMemory(
   const audit: MemoryAudit = {
     total: rows.length,
     core: coreRow ? { length: coreRow.value.length, limit: MAX_CORE_MEMORY_LENGTH } : null,
-    neverRead: [], stale: [], brokenLinks: [], similar: [], outdated: [],
+    neverRead: [], stale: [], brokenLinks: [], similar: [], outdated: [], undescribed: [],
   };
   const lowered = patterns.map((p) => p.trim()).filter((p) => p.length >= 3).map((p) => [p, p.toLowerCase()] as const);
   for (const r of rows) {
@@ -448,6 +586,7 @@ export async function auditMemory(
     if (judged && r.read_count === 0 && now - r.created_at.getTime() > AUDIT_NEVER_READ_GRACE_DAYS * day) {
       audit.neverRead.push(r.slug);
     }
+    if (judged && !r.description?.trim()) audit.undescribed.push(r.slug);
     if (judged && r.last_read_at && now - r.last_read_at.getTime() > AUDIT_STALE_DAYS * day) {
       audit.stale.push({ slug: r.slug, lastReadAt: r.last_read_at.toISOString() });
     }
@@ -472,5 +611,6 @@ export async function auditMemory(
   audit.brokenLinks = audit.brokenLinks.slice(0, AUDIT_LIST_CAP);
   audit.similar = audit.similar.slice(0, AUDIT_LIST_CAP);
   audit.outdated = audit.outdated.slice(0, AUDIT_LIST_CAP);
+  audit.undescribed = audit.undescribed.slice(0, AUDIT_LIST_CAP);
   return audit;
 }
