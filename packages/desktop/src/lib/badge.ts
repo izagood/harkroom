@@ -37,9 +37,13 @@ export const BADGE_LABEL_COMMAND = 'plugin:window|set_badge_label';
 
 /**
  * 점으로 쓰는 글자. macOS 의 배지는 라벨(문자열)이므로 점도 글자로 그린다.
- * 사이드바의 회색 점과 같은 뜻이고, 크기·색은 OS 가 정한다(빨간 알약 안의 흰 점).
+ * 사이드바의 회색 점과 같은 뜻이고, 색은 OS 가 정한다(빨간 원 안의 흰 점).
+ *
+ * 크기는 글자가 정한다. `●`(U+25CF BLACK CIRCLE)는 배지 원을 거의 채울 만큼 커서
+ * 숫자 배지처럼 무겁게 보인다. `•`(U+2022 BULLET)는 Slack 이 쓰는 작은 점과 같은
+ * 크기로 그려진다 — "읽을 것이 있다"는 약한 신호여야 숫자(멘션·DM)와 구별된다.
  */
-export const BADGE_DOT_LABEL = '●';
+export const BADGE_DOT_LABEL = '\u2022';
 
 /** 아무것도 하지 않는 배지기. 브라우저 dev 모드와 테스트 기본값. */
 export const silentBadger: Badger = {
