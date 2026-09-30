@@ -153,6 +153,12 @@ export interface InteractiveTurnDeps {
    * 2026-09-21). 모르는 이름이면 null → 기본(`claudeConfigDir`)으로 간다.
    */
   configDirOf?: (account: string) => string | null;
+  /**
+   * 지금 쓸 기본 계정(턴을 열 때마다 부른다). 있으면 `claudeConfigDir`·`claudeAccount` 대신
+   * 이것을 쓴다 — 기동 뒤 사람이 첫 계정을 지웠으면 그 경로로 claude 를 띄우지 않기 위해서다
+   * (claude 가 없는 `CLAUDE_CONFIG_DIR` 을 새로 만들어 지운 계정이 되살아난다, 2026-09-29).
+   */
+  currentAccount?: () => Promise<{ configDir: string | null; name: string | null }>;
   relay: InteractiveRelay;
   registry: TurnRegistry;
   queue: MentionQueue;
@@ -265,8 +271,11 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
     // 이 세션을 만든 계정을 따른다(`configDirOf` 주석). 기록에 계정이 없거나 이 러너가 모르는
     // 이름이면 첫 계정 — 그것이 옛 동작이고, 새 세션도 그 계정에서 시작한다.
     const followed = rec.claudeAccount ? deps.configDirOf?.(rec.claudeAccount) ?? null : null;
-    const claudeConfigDir = followed ?? deps.claudeConfigDir;
-    const claudeAccount = followed ? (rec.claudeAccount ?? null) : (deps.claudeAccount ?? null);
+    const fallback = followed ? null : await deps.currentAccount?.();
+    const claudeConfigDir = followed ?? (fallback ? fallback.configDir : deps.claudeConfigDir);
+    const claudeAccount = followed
+      ? (rec.claudeAccount ?? null)
+      : (fallback ? fallback.name : (deps.claudeAccount ?? null));
 
     // 권한 플래그 없음(mode 가 mention 이 아니면 permission 표를 안 탄다 — 스펙 §6: 묻는
     // 것이 곧 "직접 개입"의 값이고 사람이 터미널에서 답한다), 프롬프트·stdin 파일 없음
