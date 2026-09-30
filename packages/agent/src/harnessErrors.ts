@@ -13,7 +13,7 @@
 // **이것은 하네스 출력 파싱이 아니다.** `claudeSessions.ts`(세션 파일 실재)·`codexSessions.ts`
 // (rollout 발견)가 세운 것과 같은 "디스크의 사실 관측"이고, 그 파일들이 적어 둔 것과 같은
 // 이유로 러너의 파싱 금지 원칙에 어긋나지 않는다.
-import { readFile, stat } from 'node:fs/promises';
+import { open, readFile, stat } from 'node:fs/promises';
 import type { AgentHarness } from '@harkroom/shared';
 
 import { readsSessionTranscript } from './adapters/index.js';
@@ -137,6 +137,76 @@ export async function sessionTranscriptMtimeMs(
     return null;
   }
 }
+
+/**
+ * 이 턴에서 하네스가 **자기 차례를 끝냈는가**(2026-09-30). 기록 꼬리의 사실을 돌려준다.
+ *
+ * - `'ended'` — `sinceMs` 이후의 마지막 대화 레코드가 `stop_reason: end_turn` 인 어시스턴트 말이다.
+ *   claude 는 그 뒤에 `system/turn_duration`·`cost-state`·`last-prompt` 를 붙이는데, 대화 레코드
+ *   (user·assistant)가 아니므로 건너뛴다.
+ * - `'working'` — 마지막 대화 레코드가 도구 호출(`tool_use`)·도구 결과·새 입력이다. 긴 셸
+ *   명령을 기다리는 턴이 여기 걸린다 — 기록은 멈췄지만 차례는 안 끝났다.
+ * - `null` — 판정할 수 없다(기록을 못 읽는 하네스·파일 없음·꼬리에 대화 레코드가 없음).
+ *
+ * **왜 필요한가.** 러너가 "턴이 끝났다"고 보는 신호가 발화(`end.spoke`) 하나뿐이었다. 그래서
+ * 두 방향으로 틀렸다 — 발화 없이 `end_turn` 한 턴(깨움만 걸고 끝난 턴)은 끝난 줄 몰라 10분
+ * 정지로 접었고(c0853e6f), 발화한 뒤 기다리던 턴(OAuth 콜백·CI)은 60초 만에 죽였다(ebb97c7b).
+ *
+ * `sinceMs` 이전 레코드는 세지 않는다: 되살린 세션(`-r`)은 앞 턴의 `end_turn` 으로 끝나 있어,
+ * 프롬프트가 들어가기 전에 읽으면 "이미 끝났다"가 된다. API 에러 레코드(`isApiErrorMessage`)는
+ * 끝으로 치지 않는다 — 그것은 실패이고 `readLastApiError` 가 따로 잡는다.
+ *
+ * 꼬리 256KB 만 읽는다 — 기록은 수 MB 가 되고 이 함수는 몇 초마다 돈다. **던지지 않는다.**
+ */
+export async function readTranscriptTurnState(
+  harness: AgentHarness,
+  sessionId: string | null,
+  opts: { projectsDir?: string; configDir?: string | null; sinceMs?: number } = {},
+): Promise<'ended' | 'working' | null> {
+  if (!readsSessionTranscript(harness)) return null;
+  if (!sessionId) return null;
+  let text: string;
+  try {
+    const path = await claudeSessionFilePath(sessionId, opts);
+    if (path === null) return null;
+    const fh = await open(path, 'r');
+    try {
+      const { size } = await fh.stat();
+      const len = Math.min(size, TAIL_BYTES);
+      const buf = Buffer.alloc(len);
+      await fh.read(buf, 0, len, size - len);
+      text = buf.toString('utf8');
+      // 잘린 첫 줄은 버린다 — 반쪽 JSON 이다.
+      if (len < size) text = text.slice(text.indexOf('\n') + 1);
+    } finally {
+      await fh.close();
+    }
+  } catch {
+    return null;
+  }
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (!line) continue;
+    let record: {
+      type?: unknown; isSidechain?: unknown; isApiErrorMessage?: unknown; timestamp?: unknown;
+      message?: { stop_reason?: unknown };
+    };
+    try { record = JSON.parse(line); } catch { continue; }
+    if (record.type !== 'user' && record.type !== 'assistant') continue;
+    if (record.isSidechain === true) continue;
+    if (opts.sinceMs !== undefined) {
+      const at = typeof record.timestamp === 'string' ? Date.parse(record.timestamp) : NaN;
+      // 이 턴 이전의 말이다 — 이 턴의 대화는 아직 시작되지 않았다.
+      if (!Number.isFinite(at) || at < opts.sinceMs) return 'working';
+    }
+    if (record.type === 'assistant' && record.isApiErrorMessage !== true && record.message?.stop_reason === 'end_turn') return 'ended';
+    return 'working';
+  }
+  return null;
+}
+
+const TAIL_BYTES = 256 * 1024;
 
 /**
  * 이 세션의 기록 파일이 `sinceMs` **이후에 자랐는가**(2026-09-09).

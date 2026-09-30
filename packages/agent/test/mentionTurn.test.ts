@@ -2898,6 +2898,91 @@ describe('턴의 끝 — 발화 + 관찰자 없음 (2026-09-08)', () => {
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
     expect(h.killed()).toBeNull();
   });
+
+  // ── 끝은 기록 꼬리가 정한다 (2026-09-30, ebb97c7b · c0853e6f) ──────────────────────────
+  // 발화 하나로 끝을 정하면 두 방향으로 틀린다: 답을 올린 뒤 콜백·CI 를 기다리던 Bash 가
+  // 60초 만에 잘렸고(ebb97c7b), 깨움만 걸고 말없이 `end_turn` 한 턴은 10분 뒤 정지로 접혔다(c0853e6f).
+
+  /** 진짜 TUI 처럼 회수되면 143 으로, 아니면 버티다 0 으로 끝난다. */
+  function tuiScript(after: () => Promise<void> | void, holdMs = 250) {
+    let killed: string | null = null;
+    return {
+      killed: () => killed,
+      script: async (_plan: TurnPlan, opts: {
+        onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+      }) => {
+        opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+        await after();
+        for (let i = 0; i < holdMs / 5 && killed === null; i += 1) await new Promise((r) => setTimeout(r, 5));
+        return { exitCode: killed ? 143 : 0, timedOut: false, tail: '' };
+      },
+    };
+  }
+
+  it('발화한 뒤에도 도구가 도는 중(기록 꼬리 working)이면 회수하지 않는다 — 기다리던 Bash 를 자르지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 인증해 줘');
+    const t = tuiScript(async () => { await fake.post(CHANNEL, '브라우저에서 인증해 주세요', null); });
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 5, readTurnState: async () => 'working',
+      readTranscriptMtime: async () => Date.now(),
+    });
+    runTurn.script = t.script;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(t.killed()).toBeNull();
+  });
+
+  it('발화한 뒤 기록 꼬리가 end_turn 이 되면 그때 회수한다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    let state: 'working' | 'ended' = 'working';
+    const t = tuiScript(async () => {
+      await fake.post(CHANNEL, '답했다', null);
+      await new Promise((r) => setTimeout(r, 40));
+      state = 'ended';
+    });
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 5, readTurnState: async () => state,
+      readTranscriptMtime: async () => Date.now(),
+    });
+    runTurn.script = t.script;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(t.killed()).toBe('SIGTERM');
+  });
+
+  it('말없이 end_turn 한 턴은 끝난 것이다 — 정지로 접지 않고 정상으로 회수한다(c0853e6f)', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 확인해 줘');
+    const t = tuiScript(() => {}, 1_000);
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 5, readTurnState: async () => 'ended',
+      // 정지 시계가 먼저 서면 이 턴은 실패로 끝난다 — 끝난 턴은 정지 대상이 아님을 못 박는다.
+      harnessStallMs: 1, readTranscriptMtime: async () => null,
+    });
+    runTurn.script = t.script;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(t.killed()).toBe('SIGTERM');
+    // 성공 경로다: 깨움도 발화도 없으니 침묵을 알리는 한 줄이 남는다(실패 카드가 아니다).
+    expect(fake.posts.map((p) => p.body)).toEqual([NO_REPLY_NOTICE]);
+  });
+
+  it('발화 뒤 꼬리가 working 이어도 기록·화면이 정지 한도만큼 멈추면 끝난 것으로 본다 — 답한 턴이 영원히 살지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const t = tuiScript(async () => { await fake.post(CHANNEL, '답했다', null); }, 2_000);
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 5, readTurnState: async () => 'working',
+      harnessStallMs: 30, readTranscriptMtime: async () => null,
+    });
+    runTurn.script = t.script;
+
+    // 답을 올린 턴이므로 실패가 아니다.
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(t.killed()).toBe('SIGTERM');
+  });
 });
 
 describe('타임아웃이 무발화 경과를 잰다 (2026-09-08)', () => {

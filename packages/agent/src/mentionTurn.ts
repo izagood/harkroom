@@ -22,7 +22,7 @@ import { findCodexSessionId } from './codexSessions.js';
 import { claudeSessionMaterialized } from './claudeSessions.js';
 import { readLastApiError } from './harnessErrors.js';
 import type { AttentionLedger } from './attentionLedger.js';
-import { sessionTranscriptGrewSince, sessionTranscriptMtimeMs } from './harnessErrors.js';
+import { readTranscriptTurnState, sessionTranscriptGrewSince, sessionTranscriptMtimeMs } from './harnessErrors.js';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
 import { opencodeDirs } from './opencodeHome.js';
@@ -255,6 +255,8 @@ export interface MentionTurnDeps {
    * 그것을 세우지 않고 "자라는 중"과 "멈췄다"를 다 재현할 수 있어야 한다.
    */
   readTranscriptMtime?: typeof sessionTranscriptMtimeMs;
+  /** 하네스가 이 턴의 차례를 끝냈는가(기본 `readTranscriptTurnState`). 주입 이유는 위와 같다. */
+  readTurnState?: typeof readTranscriptTurnState;
   /**
    * 발화를 확인하는 주기(기본 3초, 2026-09-08). TUI 는 답하고도 안 죽으므로 러너가
    * "답했는가"를 직접 봐야 하고, 그 사실은 스레드에만 있다 — 에이전트는 자기 PAT 로
@@ -912,11 +914,19 @@ export async function runMentionTurn(
      * 턴 시작 시점을 되짚어야 했던 자리가 그것이다 — 잰 값을 그대로 쓰면 그 산수가 없다.
      */
     stalledIdleMs: number;
+    /**
+     * **하네스가 자기 차례를 끝냈는가**(2026-09-30). 기록 꼬리가 이 턴의 `end_turn` 이다.
+     * 발화와 갈라 둔다 — 발화는 "답을 올렸다"이고 이것은 "일을 멈췄다"다. 둘은 어긋난다:
+     * 깨움만 걸고 말없이 끝나는 턴(c0853e6f), 답을 올린 뒤 CI·콜백을 기다리는 턴(ebb97c7b).
+     */
+    finished: boolean;
+    /** 마지막으로 읽은 기록 꼬리. `null` 은 판정할 수 없다는 뜻이다(읽지 못하는 하네스·파일 없음). */
+    tail: 'ended' | 'working' | null;
     cancelReclaim: (() => void) | null; cancelProbe: (() => void) | null; cancelSilence: (() => void) | null;
   } = {
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
     apiError: null, canceledBy: null, stalled: false, awaitingHuman: false, gateNoticed: false,
-    lastLifeMs: 0, lastDataAtMs: 0, stalledIdleMs: 0,
+    lastLifeMs: 0, lastDataAtMs: 0, stalledIdleMs: 0, finished: false, tail: null,
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
   };
 
@@ -933,10 +943,19 @@ export async function runMentionTurn(
     end.controls.kill('SIGTERM');
   };
 
-  /** 끝 조건을 다시 잰다. 발화·뷰어 어느 쪽이 바뀌어도 여기로 모인다. */
+  /**
+   * **끝났는가**(2026-09-30). 기록을 읽을 수 있으면 기록 꼬리가 정한다 — 발화만으로 정하면
+   * 답을 올린 뒤 도구를 기다리는 턴이 60초 만에 죽는다(ebb97c7b: OAuth 콜백을 기다리던 Bash 가
+   * 두 번 `Tool call interrupted` 로 잘렸다). 발화 없이 `end_turn` 한 턴도 끝난 것이다.
+   * 꼬리를 판정할 수 없으면(`null`) 옛 규칙(발화)으로 돌아간다 — 모르는 것을 "일하는 중"으로
+   * 읽으면 답한 턴이 영원히 산다.
+   */
+  const turnIsDone = (): boolean => end.finished || (end.spoke && end.tail === null);
+
+  /** 끝 조건을 다시 잰다. 발화·기록 꼬리·뷰어 어느 쪽이 바뀌어도 여기로 모인다. */
   const reconsiderEnd = (): void => {
     if (end.exited) return;
-    if (!end.spoke || end.viewers > 0) {
+    if (!turnIsDone() || end.viewers > 0) {
       end.cancelReclaim?.();
       end.cancelReclaim = null;
       return;
@@ -1046,7 +1065,7 @@ export async function runMentionTurn(
      * 기록을 못 읽는 하네스는 자연히 화면 하나로 재게 된다(그 갈래가 이제 따로 필요 없다).
      */
     const limit = deps.harnessStallMs ?? 10 * 60_000;
-    if (limit <= 0 || end.awaitingHuman || end.exited || end.spoke) return false;
+    if (limit <= 0 || end.awaitingHuman || end.exited || end.spoke || end.finished) return false;
 
     // 읽을 줄 아는 하네스만 기록을 본다. 자랐으면 기준점을 민다 — 여기서 접을지는 아래가 정한다.
     if (readsSessionTranscript(def.harness)) {
@@ -1055,7 +1074,7 @@ export async function runMentionTurn(
         configDir: deps.claudeConfigDir,
       }).catch(() => null);
       // 기다리는 사이에 끝났거나 말했을 수 있다 — 그러면 잴 것이 없다.
-      if (end.exited || end.spoke || end.awaitingHuman) return false;
+      if (end.exited || end.spoke || end.finished || end.awaitingHuman) return false;
       if (mtime !== null && mtime > end.lastLifeMs) end.lastLifeMs = mtime;
     }
 
@@ -1086,24 +1105,62 @@ export async function runMentionTurn(
     return true;
   };
 
+  /**
+   * 기록 꼬리를 읽어 `end.finished` 를 갱신한다(2026-09-30). **발화한 뒤에도 계속 본다** —
+   * 답을 올린 턴이 아직 도구를 돌리는 중인지가 회수 여부를 정한다.
+   *
+   * 발화한 뒤 꼬리가 `working` 인 채 기록도 화면도 정지 한도만큼 멈춰 있으면 끝난 것으로
+   * 본다. 실패가 아니다(답은 이미 올라갔다) — 꼬리 형식이 바뀌어 `end_turn` 을 못 알아볼 때
+   * 답한 턴이 영원히 살지 않게 하는 바닥이다.
+   */
+  const probeTurnState = async (): Promise<void> => {
+    const read = deps.readTurnState ?? readTranscriptTurnState;
+    const tail = await read(def.harness, sessionIdForProbe, {
+      configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
+    }).catch(() => null);
+    if (end.exited) return;
+    end.tail = tail;
+    end.finished = tail === 'ended';
+    if (!end.finished && end.spoke && tail === 'working') {
+      const limit = deps.harnessStallMs ?? 10 * 60_000;
+      const mtime = await (deps.readTranscriptMtime ?? sessionTranscriptMtimeMs)(def.harness, sessionIdForProbe, {
+        configDir: deps.claudeConfigDir,
+      }).catch(() => null);
+      if (mtime !== null && mtime > end.lastLifeMs) end.lastLifeMs = mtime;
+      const life = Math.max(end.lastLifeMs, end.lastDataAtMs);
+      if (limit > 0 && life > 0 && (deps.now?.() ?? Date.now()) - life >= limit) {
+        console.error(`[mentionTurn] ${key}: 발화 뒤 기록도 화면도 ${limit}ms 째 그대로다 — 끝난 것으로 본다`);
+        end.finished = true;
+      }
+    }
+  };
+
   const probeUtterance = (): void => {
-    if (end.exited || end.spoke) return;
-    void deps.harkroom.readThread(channelId, anchor, turnStartSeq)
-      .then(async (after) => {
-        if (end.exited || end.spoke) return;
-        if (countOwnPostsSince(after, deps.me.id, turnStartSeq) > 0) {
-          end.spoke = true;
-          reconsiderEnd();
-          return;
+    if (end.exited) return;
+    const again = (): void => { if (!end.exited) end.cancelProbe = schedule(probeUtterance, probeMs); };
+    // 발화는 한 번 보면 다시 묻지 않는다 — 그 뒤로는 기록 꼬리만 본다.
+    const posts = end.spoke
+      ? Promise.resolve(true)
+      : deps.harkroom.readThread(channelId, anchor, turnStartSeq)
+        .then((after) => countOwnPostsSince(after, deps.me.id, turnStartSeq) > 0);
+    void posts
+      .then(async (spoke) => {
+        if (end.exited) return;
+        if (spoke) end.spoke = true;
+        if (!end.spoke) {
+          // 발화가 없다 — 하네스가 말을 못 하는 이유가 디스크에 있을 수 있다. 끝 판정보다
+          // **먼저** 본다: 한도에 걸린 턴을 "말없이 끝났다"로 읽으면 계정을 안 넘긴다.
+          if (await probeApiError()) return;
         }
-        // 발화가 없다 — 하네스가 말을 못 하는 이유가 디스크에 있을 수 있다.
-        if (await probeApiError()) return;
-        // 에러도 없다 — 그러면 일하는 중인가, 서 있는가. 그것도 디스크가 말해 준다.
-        if (await probeStall()) return;
-        end.cancelProbe = schedule(probeUtterance, probeMs);
+        await probeTurnState();
+        if (end.exited) return;
+        reconsiderEnd();
+        // 끝나지 않았고 말도 없다 — 일하는 중인가, 서 있는가. 그것도 디스크가 말해 준다.
+        if (!end.spoke && !end.finished && await probeStall()) return;
+        again();
       })
       // 관측 실패로 턴을 죽이지 않는다 — 다음 주기에 다시 묻는다.
-      .catch(() => { end.cancelProbe = schedule(probeUtterance, probeMs); });
+      .catch(again);
   };
   if (usesTui) end.cancelProbe = schedule(probeUtterance, probeMs);
 
@@ -1413,7 +1470,9 @@ export async function runMentionTurn(
   // **종료 코드로는 못 가른다**: 회수·무발화·하네스 자멸이 전부 143 이다. 그래서 러너가
   // 아는 두 사실을 함께 본다 — 우리가 죽였는가(`reclaimed`), 그리고 답했는가(`spoke`).
   // 무발화 회수는 `spoke` 가 거짓이므로 아래 실패 경로에 그대로 남는다.
-  const 회수로끝났다 = end.reclaimed && end.spoke && !end.silenced && !end.stalled;
+  // **말없이 `end_turn` 한 턴도 회수로 끝난 정상 턴이다**(2026-09-30, c0853e6f). 깨움만 걸고
+  // 끝난 턴이 그렇다 — 아래 성공 경로가 깨움 여부를 보고 NO_REPLY_NOTICE 를 정한다.
+  const 회수로끝났다 = end.reclaimed && (end.spoke || end.finished) && !end.silenced && !end.stalled && !end.apiError;
 
   if (!회수로끝났다 && (result.exitCode !== 0 || result.timedOut || end.silenced || end.stalled || end.apiError)) {
     // #81: 실패한 턴은 turnsRun 을 올리지 않는다. claude 의 세션 uuid 는 러너가 발급만 했을
