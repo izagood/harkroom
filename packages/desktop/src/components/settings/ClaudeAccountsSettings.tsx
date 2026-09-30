@@ -15,8 +15,9 @@
  *    "회사 계정이 어느 것인가"를 여기서 알 수 없다. 그래서 줄의 첫 칸이 **팀**이고 계정 이름은
  *    옆에 작은 id 로만 선다 — 추가할 때 이름을 묻지도 않는다(`newClaudeAccountId`). 사람이 붙인
  *    `lime` 이 재인증 뒤 Lychee 팀을 가리키는 일이 실제로 있었다(2026-09-29).
- * 2. **러너 재시작이 필요하다**는 사실. 러너는 풀을 기동 시 1회 읽는다 — 안 말하면 사용자는
- *    계정을 추가하고 왜 안 쓰는지 모른다.
+ * 2. **언제부터 반영되는가.** 러너는 멘션 턴마다 풀을 다시 읽는다(2026-09-30,
+ *    `agent/src/claudeAccounts.ts::createLiveAccountLane`) — 재시작은 필요 없지만, 이미 계정에
+ *    고정된 스레드는 그대로이고 **새 스레드부터** 따른다는 것을 말해 둔다.
  * 3. **두 번째 계정부터 시크릿 창**이 필요하다는 사실. 그러지 않으면 기존 쿠키로 같은 계정에
  *    다시 로그인되고, 사용자는 "두 번 등록했는데 하나뿐"을 보게 된다. 브라우저를 자동으로
  *    열지 않고 **링크를 보여 주는** 이유의 절반이 이것이다.
@@ -272,10 +273,10 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
         </SettingsGroup>
       )}
 
-      {/* 러너 재시작은 이 파일 머리말이 반드시 말한다고 못박은 것이다 — 무게만 낮췄다. */}
+      {/* 언제부터 반영되는가 — 이 파일 머리말 2. */}
       <div className="mb-6 text-meta text-fg-muted">
-        A runner reads its pool once at startup — restart it from Settings › Agents after
-        changing accounts here.
+        Runners pick up account changes here on their next turn — no restart needed. Threads
+        already on an account stay on it; new threads follow the change.
       </div>
 
       {/* 평평한 계정 이전 안내 — 풀 모드에서 목록에서 사라진 계정들이다. */}

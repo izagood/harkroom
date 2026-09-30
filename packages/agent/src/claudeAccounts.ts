@@ -314,9 +314,8 @@ export async function loadClaudeAccountLane(opts: {
  * `CLAUDE_CONFIG_DIR` 이 없으면 **그 디렉터리를 새로 만든다.** 남은 Keychain 항목(서비스 이름이
  * 경로의 해시다) 때문에 그 계정은 로그인된 채로 앱 목록에 다시 나타났다.
  *
- * 없는 디렉터리를 건너뛰면 러너는 절대 그 경로를 다시 만들지 않는다. **새로 추가된 계정을
- * 줍지는 않는다** — 그것은 축을 다시 읽는 일이고, 페일오버 순서·인터랙티브 고정 계정이 러너
- * 수명 동안 같다는 전제를 건드린다.
+ * 없는 디렉터리를 건너뛰면 러너는 절대 그 경로를 다시 만들지 않는다. 새로 추가된 계정을 줍는
+ * 일(축을 다시 읽기)은 `createLiveAccountLane` 이 맡고, 그 결과에도 이 함수를 다시 씌운다.
  *
  * 전부 사라지면 `[null]`(시스템 기본 로그인)이다 — 풀이 빈 채로 기동한 러너와 같은 동작이다.
  * `null` 칸(애초에 풀이 비었다)은 디렉터리가 없으므로 그대로 둔다.
@@ -330,4 +329,79 @@ export async function presentAccounts(
     if (a === null || (await isDir(a.configDir))) kept.push(a);
   }
   return kept.length ? kept : [null];
+}
+
+export interface LiveAccountLane {
+  /** 지금 풀과 계정 축(디렉터리가 있는 계정만, 비면 `[null]`). 턴마다 부른다. */
+  current(): Promise<{ pool: string | null; lane: (ClaudeAccount | null)[] }>;
+  /** 마지막으로 읽은 값(동기). 폴이 서버에 싣는 신고값·인터랙티브의 경로 찾기가 쓴다. */
+  snapshot(): { pool: string | null; lane: (ClaudeAccount | null)[] };
+}
+
+/**
+ * 계정 축을 **디스크에서 다시 읽는다**(2026-09-30). `presentAccounts` 는 지운 계정을 건너뛰기만
+ * 하고 새 계정은 줍지 않았다 — 그래서 러너가 기동 때 목록을 쥔 채로 남았다.
+ *
+ * ## 왜 필요한가 — 한 계정만 사용량이 올랐다(qa 실측, 09-30)
+ * 05:26Z 에 뜬 러너들이 그 뒤 지운 `lime` 을 계속 축에 들고 있었다. 배정(`accountAssign.ts`)이
+ * 상위 둘 가운데 하나를 고르는데 lime 이 그 한 자리를 차지했고, 턴 직전 `presentAccounts` 가
+ * lime 을 빼면 순서상 다음인 lychee 로 떨어졌다 — plum 은 한 번도 뽑히지 않았다.
+ *
+ * ## 왜 러너 재시작이 아닌가
+ * 데몬이 계정을 지울 때 러너를 다시 띄우면 그 러너에서 돌던 턴이 모두 끊긴다. 계정 하나 지우는
+ * 일이 대화 여러 개를 죽일 이유가 없다. 다시 읽는 비용은 readdir·stat 몇 번이다.
+ *
+ * ## 규율
+ * - `minIntervalMs` 안쪽이면 앞 값을 쓴다 — 한 번에 여러 스레드가 몰려도 디스크를 한 번만 본다.
+ * - **다시 읽기가 실패하면(던지면) 앞 값을 지운 계정만 걸러 쓴다.** `HARKROOM_CLAUDE_ACCOUNTS` 가
+ *   지운 계정을 가리키면 `loadClaudeAccounts` 가 던진다 — 기동 때라면 사람이 고칠 신호지만, 떠 있는
+ *   러너가 그 이유로 턴을 못 돌리면 안 된다. 같은 이유는 한 번만 경고한다.
+ * - 목록이 바뀌면 한 줄 로그를 남긴다(이름만 — 이메일·경로는 없다).
+ */
+export function createLiveAccountLane(opts: {
+  initial: { pool: string | null; accounts: ClaudeAccount[] };
+  load: () => Promise<{ pool: string | null; accounts: ClaudeAccount[] }>;
+  minIntervalMs?: number;
+  now?: () => number;
+  isDir?: (path: string) => Promise<boolean>;
+  log?: (line: string) => void;
+}): LiveAccountLane {
+  const minIntervalMs = opts.minIntervalMs ?? 5_000;
+  const now = opts.now ?? Date.now;
+  const log = opts.log ?? ((line: string) => console.log(line));
+  const toLane = (accounts: ClaudeAccount[]): (ClaudeAccount | null)[] => (accounts.length ? accounts : [null]);
+  const describe = (v: { pool: string | null; lane: (ClaudeAccount | null)[] }): string =>
+    `${v.pool ?? '기본'}: ${v.lane.map((a) => a?.name ?? '(시스템 기본)').join(', ')}`;
+
+  let last = { pool: opts.initial.pool, lane: toLane(opts.initial.accounts) };
+  let readAt = -Infinity;
+  let inflight: Promise<{ pool: string | null; lane: (ClaudeAccount | null)[] }> | null = null;
+  let warned: string | null = null;
+
+  async function refresh(): Promise<{ pool: string | null; lane: (ClaudeAccount | null)[] }> {
+    let next: { pool: string | null; lane: (ClaudeAccount | null)[] };
+    try {
+      const loaded = await opts.load();
+      next = { pool: loaded.pool, lane: await presentAccounts(toLane(loaded.accounts), opts.isDir) };
+      warned = null;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (warned !== msg) console.warn(`[claudeAccounts] 계정 축을 다시 읽지 못했다 — 앞 목록에서 지운 계정만 뺀다: ${msg}`);
+      warned = msg;
+      next = { pool: last.pool, lane: await presentAccounts(last.lane, opts.isDir) };
+    }
+    if (describe(next) !== describe(last)) log(`[계정 축] 바뀜 — ${describe(last)} → ${describe(next)}`);
+    last = next;
+    readAt = now();
+    return next;
+  }
+
+  return {
+    async current() {
+      if (now() - readAt < minIntervalMs) return last;
+      inflight ??= refresh().finally(() => { inflight = null; });
+      return inflight;
+    },
+    snapshot: () => last,
+  };
 }
