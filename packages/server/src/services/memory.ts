@@ -318,7 +318,7 @@ const ENDINGS = [
 
 /**
  * 러너 recall 에서만 거르는 상투어. 요청문마다 붙어 다니는 말이라 본문 1점이 쌓여 아무 기억이나
- * 끌어올렸다(감사 ⑤ (b)). 사람·에이전트·팀 이름은 여기 적지 않는다 — 계정 표에서 읽는다
+ * 끌어올렸다(감사 ⑤ (b)). 사람 이름은 여기 적지 않는다 — 계정 표에서 읽는다
  * (`recallExcludedNames`). 에이전트가 직접 부르는 `memory.search` 에는 걸지 않는다: 거기서
  * "jaebin" 을 찾으면 찾아져야 한다.
  */
@@ -387,17 +387,18 @@ export function searchTerms(query: string, opts: { exclude?: ReadonlySet<string>
 }
 
 /**
- * recall 에서 뺄 이름. 요청문의 "task_manager:"·"jaebin 결정" 같은 이름 낱말이 기억 본문에 흔해서
- * recall 을 오염시켰다(감사 ⑤ (a)). 이름은 바뀌므로 표에서 읽는다.
- * - **사람**(지워지지 않은 계정): handle·표시 이름 통째와 낱말로 편 조각까지.
- * - **에이전트·팀**: handle 통째만. 조각으로 펴면 `rcms`·`forge`·`homelab`·`server`·`claude` 같은
- *   도메인 낱말이 빠져 `rcms-deploy-pipeline` 류가 안 걸렸다(qa 리뷰 ①, 09-30). 에이전트 이름은
- *   대개 그 에이전트가 맡은 주제의 이름이기도 하다.
+ * recall 에서 뺄 이름 — **사람 계정만**(지워지지 않은 것), handle·표시 이름 통째와 낱말로 편 조각까지.
+ * 요청문의 "jaebin 결정" 같은 사람 이름이 기억 본문에 흔해서 recall 을 오염시켰다(감사 ⑤ (a)).
+ * 이름은 바뀌므로 표에서 읽는다.
+ *
+ * 에이전트·팀 이름은 빼지 않는다(qa 리뷰 ①, 09-30). `forge`·`rcms`·`homelab` 처럼 에이전트 이름이
+ * 곧 그 에이전트가 맡은 주제어라, 통째로만 빼도 `rcms 부가 서비스 forge 이관` 이 `[]` 가 됐다.
+ * 부른 이름은 `@멘션` 지우기가 이미 없애고, 러너 질의는 발화 본문이라 `이름:` 머리도 없다. 본문에
+ * 맨이름(`task_manager`)이 섞여도 이름·요약에 걸려야만 싣는 규칙이 거른다.
  */
 export async function recallExcludedNames(pool: Pool): Promise<Set<string>> {
   const res = await pool.query(
-    `select handle, display_name, kind from account where deleted_at is null
-     union all select handle, null, 'group' from handle_group`,
+    `select handle, display_name, kind from account where deleted_at is null and kind = 'human'`,
   );
   return excludedNamesFrom(res.rows as { handle: string; display_name: string | null; kind: string }[]);
 }
@@ -405,11 +406,7 @@ export async function recallExcludedNames(pool: Pool): Promise<Set<string>> {
 export function excludedNamesFrom(rows: { handle: string; display_name: string | null; kind: string }[]): Set<string> {
   const out = new Set<string>();
   for (const r of rows) {
-    if (r.kind !== 'human') {
-      const low = r.handle.toLowerCase().trim();
-      if (low.length >= 2) out.add(low);
-      continue;
-    }
+    if (r.kind !== 'human') continue;
     for (const name of [r.handle, r.display_name ?? '']) {
       const low = name.toLowerCase().trim();
       if (low.length >= 2) out.add(low);

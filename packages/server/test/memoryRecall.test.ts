@@ -30,17 +30,14 @@ describe('searchTerms', () => {
 });
 
 describe('excludedNamesFrom', () => {
-  it('사람은 조각까지, 에이전트·팀은 handle 통째만 뺀다 — rcms·server 같은 도메인 낱말은 살린다', () => {
+  it('사람만 조각까지 뺀다 — 에이전트·팀 이름(rcms·forge·server)은 주제어라 남긴다', () => {
     const names = excludedNamesFrom([
       { handle: 'jaebin', display_name: 'Jaebin Lee', kind: 'human' },
       { handle: 'rcms', display_name: 'rcms', kind: 'agent' },
       { handle: 'avcs-server', display_name: 'AVCS Server', kind: 'agent' },
-      { handle: 'task_manager', display_name: 'Task Manager', kind: 'agent' },
       { handle: 'core-team', display_name: null, kind: 'group' },
     ]);
-    expect([...names].sort()).toEqual(['avcs-server', 'core-team', 'jaebin', 'jaebin lee', 'lee', 'rcms', 'task_manager']);
-    // rcms 자체는 빠지지만, 요청의 `forge`·`server` 는 남는다
-    expect(searchTerms('forge server 배포', { exclude: names })).toEqual(['forge', 'server', '배포']);
+    expect([...names].sort()).toEqual(['jaebin', 'jaebin lee', 'lee']);
   });
 });
 
@@ -65,6 +62,22 @@ describe('rankRecall', () => {
   it('3자 이하 영문은 경계에서만 맞춘다 — pr 이 progress 에 걸리지 않는다', () => {
     const rows = [row('mem/mcp-ui-phase1-progress', null, ''), row('mem/pr-recipe', null, 'pr 만들기')];
     expect(rankRecall(['pr'], rows, 5).map((h) => [h.slug, h.score])).toEqual([['mem/pr-recipe', 4]]);
+  });
+
+  it('회귀(qa 09-30): 에이전트 이름이 주제어인 질의가 그 에이전트의 기억을 찾는다', () => {
+    const exclude = excludedNamesFrom([
+      { handle: 'jaebin', display_name: 'jaebin', kind: 'human' },
+      { handle: 'rcms', display_name: 'rcms', kind: 'agent' },
+      { handle: 'forge', display_name: 'forge', kind: 'agent' },
+    ]);
+    const terms = searchTerms('rcms 부가 서비스 forge 이관', { exclude });
+    const rows = [
+      row('mem/forge-side-services', null, ''), row('mem/rcms-deploy-pipeline', null, ''),
+      row('mem/rcms-frontend-dev', null, ''), row('mem/unrelated', null, 'rcms forge'),
+    ];
+    const slugs = rankRecall(terms, rows, 5).map((h) => h.slug);
+    expect(slugs).toContain('mem/forge-side-services');
+    expect(slugs).not.toContain('mem/unrelated');
   });
 
   it('동점은 이름 일치 수 → 본문 출현 수 → slug 로 가른다(최근 수정 순이 아니다)', () => {

@@ -298,12 +298,12 @@ describe('memory MCP tools', () => {
     const { pat } = await createAgent(app, adminToken, 'recall-agent');
     const client = await mcpClient(pat);
     try {
-      // 계정 handle(recall-agent·agent-1)과 상투어(task·지시)가 본문에 잔뜩 있는 기억 — 전에는 이것이 실렸다.
-      await callTool(client, 'memory.set', { slug: 'mem/noise', value: 'recall-agent agent-1 task 지시 task 지시', description: '잡담' });
+      // 사람 handle(admin)과 상투어(task·지시)가 본문에 잔뜩 있는 기억 — 전에는 이것이 실렸다.
+      await callTool(client, 'memory.set', { slug: 'mem/noise', value: 'admin task 지시 task 지시 admin', description: '잡담' });
       await callTool(client, 'memory.set', { slug: 'mem/body-only', value: '캐시 조사 기록' });
       await callTool(client, 'memory.set', { slug: 'mem/runner-cache', value: '캐시 캐시', description: '러너 캐시 조사' });
       await callTool(client, 'memory.set', { slug: 'mem/cache-pr-1', value: '캐시 경위', description: '캐시 PR 경위', kind: 'journal' });
-      const query = '@recall-agent agent-1: 캐시를 조사해 달라 (task 지시 경유) harkroom://message/0b07fe16-2df8-45af-a047-24e1577ddfeb';
+      const query = '@recall-agent admin: 캐시를 조사해 달라 (task 지시 경유) harkroom://message/0b07fe16-2df8-45af-a047-24e1577ddfeb';
 
       const old = await callTool(client, 'memory.search', { query });
       expect((old.hits as { slug: string }[]).map((h) => h.slug)).toContain('mem/noise');
