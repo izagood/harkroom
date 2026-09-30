@@ -3,9 +3,17 @@
  * 토큰은 각 오퍼레이터 머신의 `mcp-servers.json`(또는 `~/.claude.json`)에 있고, 여기 적힌 이름이
  * 에이전트의 `mcpServers` 가 고를 수 있는 전부다. 목록은 누구나 보고(에이전트 상세가 이 목록에서
  * 고른다), 넣고 빼는 것은 `agent.privileged` 뿐이다.
+ *
+ * 줄마다 **이 머신의** 정의와 OAuth 인증 상태도 보인다(2026-09-30). 인증은 머신 단위다 — 토큰은 이 머신의
+ * 오퍼레이터가 들고, 여기서 한 번 인증하면 이 머신에서 도는 모든 에이전트(계정 풀의 어느 계정이든)가
+ * 쓴다. 사람이 인증하러 먼저 찾는 곳이 이 페이지라 여기에 둔다 — 에이전트 상세에만 있던 동안 jaebin 이
+ * "인증이 없는데?" 라고 했다. 인증은 권한과 무관하다(내 머신의 토큰이다) — `canEdit` 로 막지 않는다.
  */
 import { useCallback, useEffect, useState } from 'react';
 import type { McpServerRow } from '@harkroom/shared';
+import type { OperatorMcpEntry } from '@harkroom/shared/daemonProtocol';
+import { hasOperatorLocalSurface, listLocalMcpServers } from '../../lib/operatorLocal';
+import { McpLocalAuth } from './McpLocalAuth';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { hasCapability } from '../../lib/capabilities';
@@ -24,9 +32,16 @@ export function McpServersSettings() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  /** 이 머신의 정의. `null` = 모른다(Tauri 표면 없음·읽기 실패) — 그때는 줄에 아무것도 덧붙이지 않는다. */
+  const [local, setLocal] = useState<OperatorMcpEntry[] | null>(null);
+  const reloadLocal = useCallback(() => {
+    if (!hasOperatorLocalSurface()) return;
+    void listLocalMcpServers().then((r) => setLocal(r.servers)).catch(() => setLocal(null));
+  }, []);
   const reload = useCallback(() => {
     void getController().mcpServers().then(setRows).catch(() => setRows('error'));
-  }, []);
+    reloadLocal();
+  }, [reloadLocal]);
   useEffect(() => { reload(); }, [reload]);
 
   const add = async () => {
@@ -54,6 +69,15 @@ export function McpServersSettings() {
             <span className="min-w-0 flex-1">
               <span className="block font-mono font-medium text-fg">{row.name}</span>
               <span className="mt-0.5 block text-meta text-fg-subtle">{t(`mcpServers.kind.${row.credentialKind}`)}</span>
+              {local && (() => {
+                const here = local.find((d) => d.name === row.name);
+                if (!here) return <span className="mt-0.5 block text-meta text-fg-subtle" data-testid={`mcp-server-local-${row.name}`}>{t('agents.mcp.missing')}</span>;
+                return (
+                  <span className="mt-1 flex flex-wrap items-center gap-2 text-meta" data-testid={`mcp-server-local-${row.name}`}>
+                    <McpLocalAuth entry={here} onChanged={reloadLocal} onError={setError} />
+                  </span>
+                );
+              })()}
             </span>
             {canEdit && (
               <button
