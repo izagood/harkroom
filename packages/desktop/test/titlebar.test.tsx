@@ -4,7 +4,7 @@ import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Workspace } from '../src/components/Workspace';
 import App from '../src/App';
-import { MAC_TRAFFIC_LIGHT_PL, MAC_TITLEBAR_H, TOP_BAR_H } from '../src/lib/platform';
+import { MAC_TRAFFIC_LIGHT_PL, MAC_TRAFFIC_LIGHT_POSITION, MAC_TITLEBAR_H, TOP_BAR_H } from '../src/lib/platform';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { acc, chan, scheduledApiStub } from './helpers/fakeApi';
 // 설정 파일은 **이 파일 기준**으로 끌어온다(`?raw`, Vite 가 변환 시점에 해석한다). `process.cwd()`
@@ -13,8 +13,6 @@ import { acc, chan, scheduledApiStub } from './helpers/fakeApi';
 import capabilitiesRaw from '../src-tauri/capabilities/default.json?raw';
 import baseConfRaw from '../src-tauri/tauri.conf.json?raw';
 import macConfRaw from '../src-tauri/tauri.macos.conf.json?raw';
-import mainRsRaw from '../src-tauri/src/main.rs?raw';
-import windowChromeRaw from '../src-tauri/src/window_chrome.rs?raw';
 
 /**
  * macOS 에서 OS 타이틀바를 없애고 앱 바를 창 손잡이로 쓴다(#270).
@@ -109,14 +107,12 @@ describe('#270 창 설정', () => {
   });
 
   /**
-   * 신호등의 **자리**는 설정 파일이 정하지 못한다(2026-09-30). macOS 26 은 툴바 없는 창의
-   * 신호등을 창 모서리에 바짝 붙이므로, 기동 때 빈 툴바를 단다(`window_chrome.rs` 머리 주석).
-   * 그 호출이 빠지면 창은 뜨지만 신호등만 조용히 옛 모양으로 돌아간다 — 그래서 여기서 막는다.
-   * 스타일이 바뀌면 신호등 자리가 달라져 `TOP_BAR_H`·`MAC_TITLEBAR_H` 의 측정값이 틀린다.
+   * 신호등 자리는 `trafficLightPosition` 한 줄이 정하고, 그 숫자의 이유는 `platform.ts` 의
+   * `MAC_TRAFFIC_LIGHT_POSITION` 이 진다(JSON 에는 주석이 없다). 한쪽만 고치면 설명과 실제가
+   * 갈리므로 둘이 같은지 여기서 본다. 숫자는 macOS·SDK 판마다 다시 재야 한다(같은 주석).
    */
-  it('기동 때 창에 빈 툴바(UnifiedCompact)를 단다 — 신호등 자리', () => {
-    expect(mainRsRaw).toMatch(/^\s*window_chrome::install\(app\);/m);
-    expect(windowChromeRaw).toContain('NSWindowToolbarStyle::UnifiedCompact');
+  it('신호등 자리가 설정과 platform.ts 에서 같다', () => {
+    expect(windowConf(macConfRaw).trafficLightPosition).toEqual(MAC_TRAFFIC_LIGHT_POSITION);
   });
 
   /**
@@ -187,7 +183,7 @@ describe('#270 드래그 손잡이', () => {
  * 단언도 `MAC_TRAFFIC_LIGHT_PL` 이 **두 바에 없다**는 쪽으로 바뀐다.
  *
  * **비우는 방법이 `pt-8` 에서 띠 하나로 바뀌었다**(2026-09-08, 사용자 요청 1·4). 레일 맨 위에
- * `TOP_BAR_H`(36px) 짜리 조각(`rail-titlebar`)이 서서 그 자리를 비우고, 동시에 브랜드 바·헤더와
+ * `TOP_BAR_H` 짜리 조각(`rail-titlebar`)이 서서 그 자리를 비우고, 동시에 브랜드 바·헤더와
  * 같은 색을 지며 오른쪽 테두리를 지지 않는다 — 그래야 세로선이 신호등을 지나가지 않는다.
  * 그래서 이 절의 단언은 `pt-8` 대신 그 띠를 본다. **플랫폼 분기도 사라졌다**: 띠는 신호등을
  * 피하기 위한 것만이 아니라 옆 두 바와 한 줄을 이루는 조각이라 Windows 에서도 서야 한다
@@ -383,19 +379,19 @@ describe('#359 최상단 바 정렬', () => {
 /**
  * 로그인 화면 손잡이 띠는 **원래 타이틀바가 있던 높이까지만** 끈다(#359).
  *
- * 초판은 38px 이었는데 당시 신호등 실측이 말하는 띠는 28px 이었다(지금은 툴바를 단 창의 신호등이라
- * 36px — `platform.ts`). 그보다 크면 그만큼 폼 위 빈 공간이 드래그에 먹혀, 사용자에게는 "끌리는 자리가 타이틀바보다
+ * 초판은 38px 이었는데 당시 신호등 실측이 말하는 띠는 28px 이었다(지금은 신호등 자리를 옮겨
+ * 40px — `platform.ts`). 그보다 크면 그만큼 폼 위 빈 공간이 드래그에 먹혀, 사용자에게는 "끌리는 자리가 타이틀바보다
  * 아래로 내려온다" 로 보인다.
  */
 describe('#359 띠 높이', () => {
-  it('띠가 타이틀바 높이(36px)를 쓴다', async () => {
+  it('띠가 타이틀바 높이(40px)를 쓴다', async () => {
     pretendMac();
     render(<App />);
     expect(await screen.findByText('Server URL')).toBeTruthy();
 
     const strip = document.querySelector('[data-testid="window-drag-strip"]')!;
     expect(strip.className).toContain(MAC_TITLEBAR_H);
-    expect(MAC_TITLEBAR_H).toBe('h-[36px]');
+    expect(MAC_TITLEBAR_H).toBe('h-[40px]');
   });
 });
 
