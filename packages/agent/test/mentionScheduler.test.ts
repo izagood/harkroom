@@ -611,3 +611,32 @@ describe('재시도 통지 (2026-09-09)', () => {
     expect(posted[0]!.body).toContain('(가림)');
   });
 });
+
+describe('mentionScheduler 스레드별 계정 순서(C ②)', () => {
+  /**
+   * 계정은 스레드 단위로 고정된다(`accountAssign.ts`). 스케줄러가 기동 때 축을 그대로 쓰면 모든
+   * 새 스레드가 첫 계정으로 몰린다 — 되돌려 RED: `runOne` 이 `deps.accountLane` 을 쓰면 첫
+   * 시도 계정이 'a' 가 된다.
+   */
+  it('laneFor 가 준 순서로 시도하고, 그 스레드 키를 넘긴다', async () => {
+    const a = { name: 'a', configDir: '/x/a' };
+    const b = { name: 'b', configDir: '/x/b' };
+    const asked: string[] = [];
+    const tried: (string | null)[] = [];
+    const scheduler = createMentionScheduler({
+      harkroom: { markRead: async (ids) => ids.length, post: async () => 1, fail: async () => 1 },
+      registry: new TurnRegistry(),
+      queue: new MentionQueue(),
+      accountLane: [a, b],
+      laneFor: async (key) => { asked.push(key); return [b, a]; },
+      runMentionTurn: async (d) => { tried.push(d as unknown as string); return { stopRequestedAt: null }; },
+      buildTurnDeps: ({ account }) => (account?.name ?? null) as never,
+      hooks: { stopRequested: () => {}, exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {} },
+      startedAtMs: 0,
+    });
+    await scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1', threadRootId: 'root-9' }]), ctx);
+    await scheduler.drain();
+    expect(asked).toEqual([`${CH}/root-9`]);
+    expect(tried).toEqual(['b']);
+  });
+});
