@@ -9,7 +9,8 @@ import { useT } from '../i18n/useT';
 
 interface ChannelDocPanelProps {
   channelId: string;
-  onClose: () => void;
+  /** 탭이 된 뒤로 패널 안에는 닫는 버튼이 없다(채널 머리의 [메시지] 탭). 부르는 쪽 호환으로만 남는다. */
+  onClose?: () => void;
   /** 문서 본문의 멘션을 눌렀을 때 갈 곳(#279). `MessageBody` 로 그대로 넘긴다. */
   onOpenDirectory?: (accountId: string | null) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
@@ -35,7 +36,7 @@ function expectationOf(doc: ChannelDoc | undefined | null): number | null {
  *    스토어에서 뜬다. 스토어를 `useEffect` 의존성으로 걸어 매번 맞추면 문서가 갱신되는
  *    순간 타이핑 중인 내용이 날아간다.
  */
-export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSettings }: ChannelDocPanelProps) {
+export function ChannelDocPanel({ channelId, onOpenDirectory, onOpenSettings }: ChannelDocPanelProps) {
   const t = useT();
   const accounts = useActiveStore((s) => s.accounts);
   const doc = useActiveStore((s) => s.channelDocs[channelId]);
@@ -138,12 +139,8 @@ export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSet
             {t('channel.doc.edit')}
           </button>
         )}
-        <button
-          className={`${!editing && !loading && !loadError ? '' : 'ml-auto '}shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken`}
-          onClick={onClose}
-        >
-          {t('channel.doc.close')}
-        </button>
+        {/* [닫기] 가 여기 있었다 — 탭이 된 뒤로는 [메시지] 탭과 같은 동작이라 겹쳤다(designer
+            ①-a). 나가는 길은 채널 머리의 탭 하나다. */}
       </div>
 
       {loading && <div className="p-3 text-fg-subtle">{t('channel.doc.loading')}</div>}

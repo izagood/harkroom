@@ -389,7 +389,8 @@ describe('Inbox 줄이 무엇을 말하는가 (#488 C2)', () => {
     // "시각이 있다"만 잰다.
     expect(row.textContent).toContain('#general');
     expect(row.textContent).toContain('스레드');
-    expect(row.textContent).toContain('2024');
+    // 줄에는 상대 시각이 서고(designer ①-a), 전체 시각은 `title` 에 있다.
+    expect(screen.getByTestId('inbox-time-1').getAttribute('title')).toContain('2024');
   });
 
   /**

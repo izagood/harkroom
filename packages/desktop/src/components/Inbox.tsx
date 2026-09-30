@@ -7,7 +7,7 @@ import { bodyWithHandles } from '../lib/mention';
 import { inboxStorage } from '../lib/prefs';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
-import { useT } from '../i18n/useT';
+import { useAgo, useT } from '../i18n/useT';
 
 /** 빈 배열 리터럴을 매 렌더 새로 만들지 않는다. */
 const INBOX_NO_TEAMS: never[] = [];
@@ -116,6 +116,7 @@ interface DraftItem {
 export function Inbox({ open, onClose }: Props) {
   // `inboxRow` 는 `lib/` 판정이라 훅을 못 쓴다 — 번역기를 여기서 만들어 넘긴다.
   const t = useT();
+  const ago = useAgo();
   const channels = useActiveStore((s) => s.channels);
   const dms = useActiveStore((s) => s.dms);
   const accounts = useActiveStore((s) => s.accounts);
@@ -505,14 +506,19 @@ export function Inbox({ open, onClose }: Props) {
               {row.label}
             </span>
             {/* **언제·어디.** */}
-            <span className="flex min-w-0 items-center gap-1.5 truncate text-meta text-fg-subtle">
-              <span>{channelLabel(e.channelId)}</span>
-              {e.threadRootId && <span>· {t('inbox.entries.thread')}</span>}
-              <span>· {new Date(e.createdAt).toLocaleString()}</span>
+            {/* 넘치면 **채널 이름부터** 줄인다(designer ①-a) — 시각·안 읽음은 짧고, 잘리면
+                뜻을 잃는다. 시각은 상대로("3분 전"), 전체 시각은 올려 두면(`title`). 초까지 찍은
+                절대 시각이 칸 끝에서 글자 중간이 잘렸다. */}
+            <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-meta text-fg-subtle">
+              <span className="min-w-0 truncate">{channelLabel(e.channelId)}</span>
+              {e.threadRootId && <span className="shrink-0">· {t('inbox.entries.thread')}</span>}
+              <span className="shrink-0" data-testid={`inbox-time-${e.id}`} title={new Date(e.createdAt).toLocaleString()}>
+                · {ago(new Date(e.createdAt).getTime())}
+              </span>
               {/* 안 읽음은 표시가 있어야 한다. 필터로 걸러 볼 수 있는 것이 목록에서는 안 보이면
                   "안 읽음만" 을 껐을 때 무엇이 안 읽은 것인지 알 수 없다. */}
               {e.readAt === null && (
-                <span data-testid={`inbox-unread-${e.id}`} className="text-accent">· {t('inbox.entries.unread')}</span>
+                <span data-testid={`inbox-unread-${e.id}`} className="shrink-0 text-accent">· {t('inbox.entries.unread')}</span>
               )}
             </span>
           </span>
