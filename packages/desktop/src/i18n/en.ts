@@ -690,7 +690,8 @@ export const en = {
 
   'skills.confirm.approve':
     'Approving installs this body as a SKILL.md file for every agent — the harness reads it when it needs it',
-  'skills.confirm.disable': 'Disabling means every agent deletes this skill\'s files and links',
+  /** 되돌릴 수 없다는 것을 적는다(designer ④c 판정 4) — 서버의 approve 는 `approved_at is null` 만 받아, 끈 스킬은 다시 제안(`proposeSkill` 의 on conflict 가 초기화)해야만 산다. */
+  'skills.confirm.disable': "Disabling removes this skill's file and link from every agent. It cannot be turned back on — an agent has to propose it again.",
   'skills.confirm.reject':
     'Rejecting drops this skill to disabled — to undo it an agent has to propose it again',
   'skills.confirm.approveStart': 'Confirm approve',

@@ -335,7 +335,8 @@ export const ko = {
 
   'skills.confirm.approve':
     '승인하면 이 본문이 모든 에이전트의 스킬 디렉터리에 SKILL.md 로 깔리고, 하네스가 필요할 때 읽는다',
-  'skills.confirm.disable': '비활성화하면 모든 에이전트가 이 스킬의 파일과 링크를 삭제한다',
+  /** 되돌릴 수 없다는 것을 적는다(designer ④c 판정 4) — 서버의 approve 는 `approved_at is null` 만 받아, 끈 스킬은 다시 제안(`proposeSkill` 의 on conflict 가 초기화)해야만 산다. */
+  'skills.confirm.disable': "비활성화하면 모든 에이전트가 이 스킬의 파일과 링크를 삭제한다. 다시 켤 수 없다 — 다시 쓰려면 에이전트가 새로 제안해야 한다",
   'skills.confirm.reject': '거부하면 이 스킬은 비활성으로 내려간다 — 되돌리려면 에이전트가 다시 제안해야 한다',
   'skills.confirm.approveStart': '승인 확인',
   'skills.confirm.cancel': '취소',
