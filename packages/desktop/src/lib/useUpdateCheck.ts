@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { getAppUpdater } from './appUpdater';
 
 /**
@@ -51,57 +51,122 @@ function describeError(err: unknown): string {
 
 export interface UseUpdateCheck {
   status: UpdateStatus;
-  /** 사람이 본 그 버전을 설치한다. 성공하면 앱이 다시 뜨므로 돌아오지 않는다. */
+  /** 마지막으로 **답을 받은** 시각(ms). 한 번도 못 받았으면 null — "아직 확인 안 함" 은 이때만이다. */
+  checkedAt: number | null;
+  /** 지금 묻고 있는가. `status` 와 따로 둔다 — 묻는 동안에도 앞의 답(있다·최신)은 여전히 참이다. */
+  checking: boolean;
+  /** 이 세션에서 사람이 "나중에" 를 누른 버전. 더 새 버전이 나오면 다시 말한다. */
+  dismissedVersion: string | null;
+  check(): Promise<void>;
   install(version: string): Promise<void>;
+  dismiss(version: string): void;
 }
 
 /**
- * @param intervalMs 주기 확인 간격. **주지 않으면 진입 시 한 번만** 확인한다 —
- *   로그인 전 화면은 오래 머무는 자리가 아니라 주기 확인이 의미 없다.
+ * **상태는 앱에 하나다**(UX ③ H4). 전에는 이 훅을 부르는 자리마다 상태를 따로 뒀고,
+ * 설정의 Updates 탭은 이 훅도 안 쓰고 제 상태를 또 뒀다 — 그래서 사이드바 알약은
+ * "v0.3.63 Update" 인데 같은 순간 Updates 탭은 "이번 세션에 아직 확인하지 않았다" 였다.
+ * 같은 질문(새 버전이 있나)에 한 화면이 두 답을 했다.
+ *
+ * 그래서 답을 모듈에 하나 두고 자리들은 구독만 한다. 누가 물어도 모두가 같은 답을 본다.
+ *
+ * **표면이 바뀌면 답을 버린다**(`owner`). 답은 그 업데이터가 한 말이다 — 테스트가
+ * `setAppUpdater` 로 갈아끼우거나 커뮤니티가 바뀌어 표면이 새로 서면, 앞 표면의 "있다" 를
+ * 새 표면의 사실로 들고 가지 않는다.
+ */
+interface Snapshot {
+  status: UpdateStatus;
+  checkedAt: number | null;
+  checking: boolean;
+  dismissedVersion: string | null;
+}
+const INITIAL: Snapshot = { status: { kind: 'idle' }, checkedAt: null, checking: false, dismissedVersion: null };
+let snap: Snapshot = INITIAL;
+let owner: ReturnType<typeof getAppUpdater> | null = null;
+let inflight: Promise<void> | null = null;
+let installing = false;
+const listeners = new Set<(s: Snapshot) => void>();
+
+function publish(next: Partial<Snapshot>): void {
+  snap = { ...snap, ...next };
+  for (const l of listeners) l(snap);
+}
+
+/** 지금 표면을 돌려주되, 앞 표면의 답이면 버린다(위 주석). */
+function updater(): ReturnType<typeof getAppUpdater> {
+  const u = getAppUpdater();
+  if (u !== owner) {
+    owner = u;
+    snap = INITIAL;
+    inflight = null;
+    installing = false;
+  }
+  return u;
+}
+
+/** 묻는다. 이미 묻고 있으면 그 물음에 합류한다 — 두 자리가 동시에 열려도 GitHub 에 한 번만 묻는다. */
+export function checkForUpdate(): Promise<void> {
+  const u = updater();
+  if (installing) return Promise.resolve();
+  if (inflight) return inflight;
+  publish({ checking: true });
+  const run = (async () => {
+    try {
+      const found = await u.check();
+      if (u !== owner || installing) return;
+      publish({ status: found ? { kind: 'available', version: found.version } : { kind: 'uptodate' }, checkedAt: Date.now() });
+    } catch (err) {
+      if (u !== owner || installing) return;
+      publish({ status: { kind: 'failed', message: describeError(err) } });
+    } finally {
+      if (u === owner) { inflight = null; publish({ checking: false }); }
+    }
+  })();
+  inflight = run;
+  return run;
+}
+
+async function installUpdate(version: string): Promise<void> {
+  const u = updater();
+  installing = true;
+  publish({ status: { kind: 'installing', version } });
+  try {
+    await u.downloadAndInstall();
+    // 성공하면 앱이 다시 뜨므로 여기로 돌아오지 않는다. 돌아왔다면 재시작이 일어나지
+    // 않은 것이고, 그것은 사람이 알아야 할 이상 상태다 — 조용히 넘기지 않는다.
+    installing = false;
+    publish({ status: { kind: 'failed', message: 'the app did not restart after installing' } });
+  } catch (err) {
+    installing = false;
+    publish({ status: { kind: 'failed', message: describeError(err) } });
+  }
+}
+
+/**
+ * 구독한다. 표면이 있고 **아직 아무도 묻지 않았으면** 한 번 묻는다. `intervalMs` 를 주면
+ * 그 주기로 다시 묻는다 — 주기는 앱을 쓰는 동안 늘 서 있는 자리(사이드바 알림) 하나만 준다.
  */
 export function useUpdateCheck({ intervalMs }: { intervalMs?: number } = {}): UseUpdateCheck {
-  const [status, setStatus] = useState<UpdateStatus>({ kind: 'idle' });
-  /**
-   * 설치 중에는 주기 확인의 결과로 상태를 덮지 않는다. 덮으면 내려받는 중에 화면이
-   * `available` 로 되돌아가 **사람이 Update 를 두 번 누를 수 있게** 된다.
-   */
-  const installing = useRef(false);
+  const [state, setState] = useState<Snapshot>(() => { updater(); return snap; });
+
+  useEffect(() => {
+    listeners.add(setState);
+    setState(snap);
+    return () => { listeners.delete(setState); };
+  }, []);
 
   useEffect(() => {
     if (!hasUpdateSurface()) return;
-    // 화면이 사라진 뒤 setState 하지 않는다 — 로그인 성공은 연결 화면을 곧 걷어낸다.
-    let alive = true;
-    const run = async (): Promise<void> => {
-      try {
-        const found = await getAppUpdater().check();
-        if (!alive || installing.current) return;
-        setStatus(found ? { kind: 'available', version: found.version } : { kind: 'uptodate' });
-      } catch (err) {
-        if (!alive || installing.current) return;
-        setStatus({ kind: 'failed', message: describeError(err) });
-      }
-    };
-
-    void run();
-    if (intervalMs === undefined) return () => { alive = false; };
-    const timer = setInterval(() => void run(), intervalMs);
-    return () => { alive = false; clearInterval(timer); };
+    if (snap.checkedAt === null && !inflight && snap.status.kind === 'idle') void checkForUpdate();
+    if (intervalMs === undefined) return;
+    const timer = setInterval(() => void checkForUpdate(), intervalMs);
+    return () => clearInterval(timer);
   }, [intervalMs]);
 
-  async function install(version: string): Promise<void> {
-    installing.current = true;
-    setStatus({ kind: 'installing', version });
-    try {
-      await getAppUpdater().downloadAndInstall();
-      // 성공하면 앱이 다시 뜨므로 여기로 돌아오지 않는다. 돌아왔다면 재시작이 일어나지
-      // 않은 것이고, 그것은 사람이 알아야 할 이상 상태다 — 조용히 넘기지 않는다.
-      installing.current = false;
-      setStatus({ kind: 'failed', message: 'the app did not restart after installing' });
-    } catch (err) {
-      installing.current = false;
-      setStatus({ kind: 'failed', message: describeError(err) });
-    }
-  }
-
-  return { status, install };
+  return {
+    ...state,
+    check: checkForUpdate,
+    install: installUpdate,
+    dismiss: (version) => publish({ dismissedVersion: version }),
+  };
 }

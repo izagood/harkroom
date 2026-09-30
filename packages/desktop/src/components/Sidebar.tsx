@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
+import { useMemo, useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { sidebarStorage, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from '../lib/prefs';
@@ -202,8 +202,13 @@ const memberErrorText = (err: unknown, fallback: string, t: Translate): string =
 
 export function Sidebar({
   panel, onOpenDirectory, onOpenChannelDirectory, onOpenInbox, onOpenAgentConfig, onOpenProfile,
-  onOpenProjectionSettings, collapsed, onToggleCollapse,
+  onOpenProjectionSettings, collapsed, onToggleCollapse, footer,
 }: {
+  /**
+   * 목록 **아래**, 흐름 안에 서는 칸(UX ③: 업데이트 알림). 목록은 그 위에서 스크롤하므로
+   * 이 칸은 아무것도 가리지 않는다. 옵셔널이다 — 알릴 것이 없으면 자리도 없다.
+   */
+  footer?: ReactNode;
   /**
    * 레일이 고른 칸(정본 문서 `docs/desktop-rail.html` 1단계). 이 패널은 **그 칸의 묶음만**
    * 그린다 — 문서의 해법이 "레일에서 고른 하나만 넓은 패널이 보여준다"이고, 그래야 각
@@ -2182,6 +2187,7 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
         */}
         <LeasePanel />
         </nav>
+        {footer}
         {/*
           **내 자리가 여기 있었다**(#488 A1). 레일 맨 아래로 갔다 — 정본 문서
           `docs/desktop-rail.html` 「레일 맨 아래 · 나」: *"내 얼굴이 레일 맨 아래로 내려온다.

@@ -1117,6 +1117,12 @@ export const ko = {
   // ---------------------------------------------------------------------------
 
   'projection.row.off': '꺼짐',
+  'update.available': '새 버전 있음',
+  'update.versions': '{from} → {to}',
+  'update.install': '다시 시작해 설치',
+  'update.installing': '설치하는 중…',
+  'update.later': '나중에',
+
   'projection.banner.stalled': '투영이 {ago}부터 멈춰 있다',
   /** 한 번도 못 폴링했다 — **모르는 것을 숫자로 꾸미지 않는다**. */
   'projection.banner.stalledUnknownSince': '투영이 언제부터인지 알 수 없지만 멈춰 있다',

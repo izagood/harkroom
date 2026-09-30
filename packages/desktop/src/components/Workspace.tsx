@@ -258,9 +258,13 @@ export function Workspace({ onLogout, onOpenSettings }: {
         것과 같다: 사이드바를 접으면(폭 0) 팝업까지 사라져, 업데이트를 알리는 자리가
         접기 상태에 따라 없어진다.
       */}
-      <div className="relative w-0 shrink-0">
-        <UpdateToast />
-      </div>
+      {/* 펼친 사이드바에서는 이 자리가 아니라 **사이드바 맨 아래 칸**이다(`footer`, UX ③ M5 —
+          떠 있는 알약이 목록을 덮었다). 접었을 때만 여기 떠 있다(위 주석의 이유). */}
+      {sidebarCollapsed && (
+        <div className="relative w-0 shrink-0">
+          <UpdateToast placement="floating" />
+        </div>
+      )}
       <Sidebar
         panel={railPanel}
         onOpenDirectory={() => handleOpenDirectory(null)}
@@ -276,6 +280,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
         onOpenProfile={(accountId) => handleOpenDirectory(accountId)}
         collapsed={sidebarCollapsed}
         onToggleCollapse={handleToggleSidebar}
+        footer={<UpdateToast placement="footer" />}
       />
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* 헤더: 뒤로/앞으로 버튼과 사이드바 펼치기 버튼(#270 에서 창 손잡이가 되었다).

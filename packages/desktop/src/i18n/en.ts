@@ -2404,6 +2404,13 @@ export const en = {
    * 이 사전이 시간을 제 손으로 적지 않는다.
    */
   'projection.row.off': 'Off',
+  /** 사이드바 맨 아래 업데이트 칸(UX ③). "받음" 이 아니라 "있음" 이다 — 받는 것은 설치를 누른 뒤다. */
+  'update.available': 'New version',
+  'update.versions': '{from} → {to}',
+  'update.install': 'Restart to install',
+  'update.installing': 'Installing…',
+  'update.later': 'Later',
+
   'projection.banner.stalled': 'Projection has been stalled for {ago}',
   /**
    * 폴링을 **한 번도 못 했다.** 모르는 것을 숫자로 꾸미지 않는다 — 위 문장과 조각을
