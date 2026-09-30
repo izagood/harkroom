@@ -108,6 +108,7 @@ export function McpServersSettings() {
           detail={t('mcpServers.confirmDetail')}
           confirmLabel={t('mcpServers.remove')}
           cancelLabel={t('mcpServers.cancel')}
+          detailKind="note"
           danger
           busy={removing}
           error={error}

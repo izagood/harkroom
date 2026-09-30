@@ -153,6 +153,7 @@ export function OperatorsSettings() {
           detail={t('operators.confirmDetail')}
           confirmLabel={t('operators.revoke')}
           cancelLabel={t('operators.cancel')}
+          detailKind="note"
           danger
           busy={revoking}
           error={revokeError}

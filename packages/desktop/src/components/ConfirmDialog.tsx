@@ -28,12 +28,18 @@ import { Overlay } from './Overlay';
  * 확인창이 스스로 무너뜨리는 셈이다. Esc·바깥 클릭도 취소다(`Overlay` 가 맡는다).
  */
 export function ConfirmDialog({
-  title, detail, confirmLabel, cancelLabel = 'Cancel', danger = false, busy = false, error = null, onConfirm, onCancel,
+  title, detail, detailKind = 'preview', confirmLabel, cancelLabel = 'Cancel', danger = false, busy = false, error = null, onConfirm, onCancel,
 }: {
   /** 무엇을 묻는지. `role="dialog"` 의 접근성 이름으로도 쓰인다. */
   title: string;
   /** 대상을 알아보게 하는 본문. 문자열이면 그대로, 노드면 그대로 그린다. */
   detail?: ReactNode;
+  /**
+   * `detail` 이 무엇인가. `preview`(기본)는 **대상 미리보기**라 상자 안에 담는다(지울 메시지 본문
+   * 같은 것). `note` 는 **무엇을 잃는지 한 줄 설명**이라 상자 없이 글로 둔다 — 설명을 상자에
+   * 담으면 입력창처럼 보인다(designer ④c-a).
+   */
+  detailKind?: 'preview' | 'note';
   confirmLabel: string;
   cancelLabel?: string;
   /** 되돌릴 수 없는 조작인가. 확인 버튼의 색만 바꾼다 — 배치는 같다. */
@@ -63,11 +69,12 @@ export function ConfirmDialog({
         <p className="text-name font-medium text-fg">{title}</p>
         {/* 대상 미리보기. 넘치면 잘린다 — 확인창은 메시지를 읽는 자리가 아니라
             "이것 맞나"를 알아보는 자리다. */}
-        {detail !== undefined && (
+        {detail !== undefined && detailKind === 'preview' && (
           <div className="max-h-24 overflow-hidden rounded border border-border bg-surface-sunken px-2 py-1.5 text-fg-muted">
             {detail}
           </div>
         )}
+        {detail !== undefined && detailKind === 'note' && <p className="text-fg-muted">{detail}</p>}
         {error && <p role="alert" data-testid="confirm-error" className="text-danger">{error}</p>}
         <div className="flex justify-end gap-2">
           <button
