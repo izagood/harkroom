@@ -2375,6 +2375,7 @@ export const en = {
    * 켜져 있는데 멈췄고, **언제부터인지 안다.** `{ago}` 는 `agoLabel` 이 낸 경과다 —
    * 이 사전이 시간을 제 손으로 적지 않는다.
    */
+  'projection.row.off': 'Off',
   'projection.banner.stalled': 'Projection has been stalled for {ago}',
   /**
    * 폴링을 **한 번도 못 했다.** 모르는 것을 숫자로 꾸미지 않는다 — 위 문장과 조각을

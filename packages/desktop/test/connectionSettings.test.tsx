@@ -43,8 +43,8 @@ describe('Connection 설정의 투영 행', () => {
   it('꺼져 있으면 무엇을 켜야 하는지 적는다', () => {
     useActiveStore.getState().set({ projectionStatus: status({ state: 'unconfigured', configured: false, repo: null }) });
     render(<ConnectionSettings onSignOut={vi.fn()} />);
-    // 띠와 **같은 판정·같은 말**이다(UX ②: shared 상수가 아니라 화면의 사전).
-    expect(row()).toContain('avcs 투영이 꺼져 있어 Collab 화면이 비어 있다.');
+    // 띠와 같은 판정이지만 **말은 상태 한 마디**다(designer ②-a) — 설명은 띠와 Collab 카드가 한다.
+    expect(row()).toBe('꺼짐');
   });
 
   /** 정상과 고장이 같은 말이면 이 행은 아무것도 알려 주지 않는다. */

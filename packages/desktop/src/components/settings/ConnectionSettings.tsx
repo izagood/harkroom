@@ -28,13 +28,20 @@ import { ProjectionUrl } from './ProjectionUrl';
 function ProjectionRow() {
   const status = useActiveStore((s) => s.projectionStatus);
   const error = useActiveStore((s) => s.projectionStatusError);
-  const banner = projectionBanner({ status, error, ago: useAgo(), t: useT() });
+  const t = useT();
+  const banner = projectionBanner({ status, error, ago: useAgo(), t });
 
   // 정상이다. **무엇을 보고 있는지**를 말한다 — "Running" 만으로는 어느 저장소를 향해
   // 돌고 있는지 알 수 없고, 엉뚱한 repo 를 보고 있는 것이 이 화면에서 안 보인다.
+  //
+  // **꺼짐은 상태 한 마디다**(designer ②-a). 설명("Collab 이 비어 있다")은 띠와 Collab 카드가
+  // 이미 한다 — 이 줄까지 그 문장을 주황으로 되풀이하면, 바로 아래 주소 칸의 상태 줄과 같은
+  // 말을 두 번 한다. 고칠 곳은 이 줄 아래 칸이므로 이 줄은 회색 "꺼짐" 이면 된다.
   const value = banner === null
     ? <span data-testid="projection-row">{status?.repo ?? '—'} · 투영이 돌고 있다</span>
-    : (
+    : banner.testid === 'projection-unconfigured'
+      ? <span data-testid="projection-row" className="text-fg-muted">{t('projection.row.off')}</span>
+      : (
       <span data-testid="projection-row" className={BANNER_TEXT_TONE[banner.tone]}>
         {banner.text}
         {/* 원문은 길 수 있다. 잘라 보여 주되 `title` 로 전문을 남긴다 — 띠와 같은 규칙. */}

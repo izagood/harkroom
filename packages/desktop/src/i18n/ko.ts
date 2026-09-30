@@ -1089,6 +1089,7 @@ export const ko = {
   // 닿을 수 없다(그 머리말의 '안 넣은 것').
   // ---------------------------------------------------------------------------
 
+  'projection.row.off': '꺼짐',
   'projection.banner.stalled': '투영이 {ago}부터 멈춰 있다',
   /** 한 번도 못 폴링했다 — **모르는 것을 숫자로 꾸미지 않는다**. */
   'projection.banner.stalledUnknownSince': '투영이 언제부터인지 알 수 없지만 멈춰 있다',
