@@ -165,25 +165,8 @@ export async function readTranscriptTurnState(
 ): Promise<'ended' | 'working' | null> {
   if (!readsSessionTranscript(harness)) return null;
   if (!sessionId) return null;
-  let text: string;
-  try {
-    const path = await claudeSessionFilePath(sessionId, opts);
-    if (path === null) return null;
-    const fh = await open(path, 'r');
-    try {
-      const { size } = await fh.stat();
-      const len = Math.min(size, TAIL_BYTES);
-      const buf = Buffer.alloc(len);
-      await fh.read(buf, 0, len, size - len);
-      text = buf.toString('utf8');
-      // 잘린 첫 줄은 버린다 — 반쪽 JSON 이다.
-      if (len < size) text = text.slice(text.indexOf('\n') + 1);
-    } finally {
-      await fh.close();
-    }
-  } catch {
-    return null;
-  }
+  const text = await readTranscriptTail(sessionId, opts);
+  if (text === null) return null;
   const lines = text.split('\n');
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const line = lines[i];
@@ -207,6 +190,158 @@ export async function readTranscriptTurnState(
 }
 
 const TAIL_BYTES = 256 * 1024;
+
+/** 기록 파일의 꼬리 `TAIL_BYTES` 를 읽는다. 잘린 첫 줄(반쪽 JSON)은 버린다. **던지지 않는다.** */
+async function readTranscriptTail(
+  sessionId: string,
+  opts: { projectsDir?: string; configDir?: string | null },
+): Promise<string | null> {
+  try {
+    const path = await claudeSessionFilePath(sessionId, opts);
+    if (path === null) return null;
+    const fh = await open(path, 'r');
+    try {
+      const { size } = await fh.stat();
+      const len = Math.min(size, TAIL_BYTES);
+      const buf = Buffer.alloc(len);
+      await fh.read(buf, 0, len, size - len);
+      const text = buf.toString('utf8');
+      return len < size ? text.slice(text.indexOf('\n') + 1) : text;
+    } finally {
+      await fh.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+type TranscriptRecord = {
+  type?: unknown; isSidechain?: unknown; isApiErrorMessage?: unknown; timestamp?: unknown;
+  message?: { stop_reason?: unknown; content?: unknown };
+};
+
+/** 꼬리의 줄들 중 `sinceMs` 이후의 주 대화(곁가지 아님) 레코드만, 앞에서부터. */
+function recordsSince(text: string, sinceMs: number | undefined): TranscriptRecord[] {
+  const out: TranscriptRecord[] = [];
+  for (const line of text.split('\n')) {
+    if (!line) continue;
+    let record: TranscriptRecord;
+    try { record = JSON.parse(line); } catch { continue; }
+    if (record.type !== 'user' && record.type !== 'assistant') continue;
+    if (record.isSidechain === true) continue;
+    if (sinceMs !== undefined) {
+      const at = typeof record.timestamp === 'string' ? Date.parse(record.timestamp) : NaN;
+      if (!Number.isFinite(at) || at < sinceMs) continue;
+    }
+    out.push(record);
+  }
+  return out;
+}
+
+/**
+ * 이 턴에서 하네스가 **자기 차례를 끝내며 남긴 마지막 말**(2026-09-30). 없으면 `null`.
+ *
+ * **왜 필요한가.** 예약으로 깨어난 턴이 발화 없이 끝나면 그 이유는 하네스의 마지막 말에만
+ * 있었다 — "새 소식이 없어서 글을 쓰지 않았어", "05:01Z 에 이미 보고해서 다시 올리지 않았어"
+ * (#task e3ecfdf7, 09-30). 그 말은 터미널에만 남고 스레드에는 안 갔다. PTY 꼬리(`result.tail`)
+ * 로도 볼 수 있지만 그쪽은 TUI 가 그린 화면이라 줄바꿈·테두리·모달이 섞인다. 기록의 말은 원문이다.
+ *
+ * `end_turn` 어시스턴트 레코드의 텍스트만 본다 — 도구 호출 사이의 혼잣말은 끝의 이유가 아니다.
+ */
+export async function readLastAssistantText(
+  harness: AgentHarness,
+  sessionId: string | null,
+  opts: { projectsDir?: string; configDir?: string | null; sinceMs?: number } = {},
+): Promise<string | null> {
+  if (!readsSessionTranscript(harness)) return null;
+  if (!sessionId) return null;
+  const text = await readTranscriptTail(sessionId, opts);
+  if (text === null) return null;
+  const records = recordsSince(text, opts.sinceMs);
+  for (const r of [...records].reverse()) {
+    if (r.type !== 'assistant' || r.isApiErrorMessage === true || r.message?.stop_reason !== 'end_turn') continue;
+    const said = textOf(r);
+    if (said) return said;
+  }
+  return null;
+}
+
+/** 권한 분류기가 거부한 도구 호출 하나. */
+export interface PermissionDenial {
+  /** 짝 맞춤과 중복 제거의 열쇠. */
+  toolUseId: string;
+  /** 도구 이름(`Bash`, `mcp__harkroom__message_read` …). */
+  tool: string;
+  /** 무엇을 하려 했는가 — Bash 는 명령, 그 밖은 입력의 앞부분. 원문이며 가리기는 호출자가 한다. */
+  input: string;
+  /** 분류기가 댄 이유(`[Merge Without Review]` 등). 원문 그대로. */
+  reason: string;
+}
+
+/**
+ * claude 가 auto mode 분류기 거부를 도구 결과에 적는 문구의 머리(2026-09-30 실측).
+ * 로컬 분류기(`Reason: [Merge Without Review].`)와 서버 쪽 분류기(`Reason: The server-side
+ * auto mode classifier judged this action dangerous (it gave no explanation).`)가 같은 머리를 쓴다.
+ */
+const DENIAL_HEAD = 'Permission for this action was denied by the Claude Code auto mode classifier.';
+const DENIAL_REASON = /Reason: (.+?)\. If you /s;
+
+/**
+ * 이 턴에 **권한 분류기가 거부한** 도구 호출들(2026-09-30). 앞에서부터, 없으면 빈 배열.
+ *
+ * **왜 필요한가.** 거부는 턴을 죽이지 않는다 — 하네스는 다른 길을 찾거나, 거부 문구가 시키는
+ * 대로 "같은 결과를 다른 도구로도 좇지 마라"를 지키다가 뒤따르는 읽기·발화까지 거부당한 채
+ * 말없이 끝난다(09-30: #945 머지 직후 `message_read` 가 같은 이유로 거부되고 기록이 끊겼다).
+ * 사람은 그 사실을 기록을 열어야만 알았다.
+ *
+ * 도구 결과(`tool_result`) 원문의 머리로만 판정한다 — 에이전트가 말 속에 같은 문장을 인용해도
+ * 그것은 어시스턴트 텍스트라 걸리지 않는다. 짝이 되는 `tool_use` 가 꼬리 밖이면 도구·입력은 모른다.
+ */
+export async function readPermissionDenials(
+  harness: AgentHarness,
+  sessionId: string | null,
+  opts: { projectsDir?: string; configDir?: string | null; sinceMs?: number } = {},
+): Promise<PermissionDenial[]> {
+  if (!readsSessionTranscript(harness)) return [];
+  if (!sessionId) return [];
+  const text = await readTranscriptTail(sessionId, opts);
+  if (text === null) return [];
+  const uses = new Map<string, { tool: string; input: string }>();
+  const out: PermissionDenial[] = [];
+  // 짝은 시각과 무관하게 모은다 — 거부 결과만 `sinceMs` 로 거른다.
+  for (const r of recordsSince(text, undefined)) {
+    const content = r.message?.content;
+    if (!Array.isArray(content)) continue;
+    const at = typeof r.timestamp === 'string' ? Date.parse(r.timestamp) : NaN;
+    for (const part of content as Array<Record<string, unknown>>) {
+      if (!part || typeof part !== 'object') continue;
+      if (part.type === 'tool_use' && typeof part.id === 'string') {
+        uses.set(part.id, { tool: String(part.name ?? '?'), input: describeInput(part.input) });
+        continue;
+      }
+      if (part.type !== 'tool_result' || typeof part.tool_use_id !== 'string') continue;
+      if (opts.sinceMs !== undefined && (!Number.isFinite(at) || at < opts.sinceMs)) continue;
+      const body = typeof part.content === 'string' ? part.content : textOf({ message: { content: part.content } }) ?? '';
+      if (!body.startsWith(DENIAL_HEAD)) continue;
+      const use = uses.get(part.tool_use_id);
+      out.push({
+        toolUseId: part.tool_use_id,
+        tool: use?.tool ?? '?',
+        input: use?.input ?? '',
+        reason: DENIAL_REASON.exec(body)?.[1]?.trim() ?? '(이유 없음)',
+      });
+    }
+  }
+  return out;
+}
+
+/** 도구 입력을 한 줄로. Bash 는 명령 그 자체가 가장 읽기 좋다. */
+function describeInput(input: unknown): string {
+  if (input && typeof input === 'object' && typeof (input as { command?: unknown }).command === 'string') {
+    return (input as { command: string }).command;
+  }
+  try { return JSON.stringify(input) ?? ''; } catch { return ''; }
+}
 
 /**
  * 이 세션의 기록 파일이 `sinceMs` **이후에 자랐는가**(2026-09-09).
