@@ -8,7 +8,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { readLastApiError, sessionTranscriptGrewSince } from '../src/harnessErrors.js';
+import { readLastApiError, readTranscriptTurnState, sessionTranscriptGrewSince } from '../src/harnessErrors.js';
 
 /** `isApiErrorMessage` 레코드 한 줄. 실물 세션 파일의 모양을 그대로 쓴다. */
 const rec = (timestamp: string, text: string): string => JSON.stringify({
@@ -192,5 +192,53 @@ describe('sessionTranscriptGrewSince', () => {
 
   it('sessionId 가 null 이면 참 — 볼 파일이 없는 턴을 고장으로 읽지 않는다', async () => {
     expect(await sessionTranscriptGrewSince('claude-code', null, Date.now(), {})).toBe(true);
+  });
+});
+
+// 실물 꼬리 모양(2026-09-30, work/lychee 세션 다섯 개): 끝난 턴은 `assistant(end_turn)` 뒤에
+// `system/turn_duration`·`cost-state`·`last-prompt` 가 붙고, 일하는 턴은 `tool_use`·`tool_result`·`attachment` 로 끝난다.
+describe('readTranscriptTurnState', () => {
+  const T0 = Date.parse('2026-09-30T05:00:00.000Z');
+  const at = (s: number) => new Date(T0 + s * 1000).toISOString();
+  const assistant = (s: number, stop: string, extra: object = {}) => ({
+    type: 'assistant', timestamp: at(s), message: { role: 'assistant', stop_reason: stop, content: [{ type: 'text', text: 'x' }] }, ...extra,
+  });
+  const toolResult = (s: number) => ({ type: 'user', timestamp: at(s), message: { role: 'user', content: [{ type: 'tool_result' }] } });
+  const tailNoise = [{ type: 'system', subtype: 'turn_duration', timestamp: at(99) }, { type: 'cost-state' }, { type: 'last-prompt' }];
+
+  it('end_turn 뒤에 붙는 회계 줄을 건너뛰고 ended', async () => {
+    const projectsDir = await seed([toolResult(1), assistant(2, 'end_turn'), ...tailNoise]);
+    expect(await readTranscriptTurnState('claude-code', SID, { projectsDir, sinceMs: T0 })).toBe('ended');
+  });
+
+  it('도구 호출·도구 결과로 끝나면 working — 긴 셸 명령을 기다리는 중이다', async () => {
+    expect(await readTranscriptTurnState('claude-code', SID, {
+      projectsDir: await seed([assistant(1, 'tool_use'), { type: 'attachment', timestamp: at(2) }]), sinceMs: T0,
+    })).toBe('working');
+    expect(await readTranscriptTurnState('claude-code', SID, {
+      projectsDir: await seed([assistant(1, 'tool_use'), toolResult(2)]), sinceMs: T0,
+    })).toBe('working');
+  });
+
+  it('앞 턴의 end_turn 은 이 턴의 끝이 아니다 — 되살린 세션에 프롬프트가 들어가기 전', async () => {
+    const projectsDir = await seed([assistant(-60, 'end_turn'), ...tailNoise]);
+    expect(await readTranscriptTurnState('claude-code', SID, { projectsDir, sinceMs: T0 })).toBe('working');
+  });
+
+  it('API 에러 레코드는 끝이 아니다 — 계정을 넘길 실패다', async () => {
+    const projectsDir = await seed([assistant(1, 'end_turn', { isApiErrorMessage: true })]);
+    expect(await readTranscriptTurnState('claude-code', SID, { projectsDir, sinceMs: T0 })).toBe('working');
+  });
+
+  it('사이드체인(서브에이전트) 줄은 본 대화의 끝이 아니다', async () => {
+    const projectsDir = await seed([assistant(1, 'tool_use'), assistant(2, 'end_turn', { isSidechain: true })]);
+    expect(await readTranscriptTurnState('claude-code', SID, { projectsDir, sinceMs: T0 })).toBe('working');
+  });
+
+  it('판정할 수 없으면 null — 파일 없음·기록을 못 읽는 하네스·세션 미상', async () => {
+    const projectsDir = await seed([assistant(1, 'end_turn')]);
+    expect(await readTranscriptTurnState('claude-code', 'ffffffff-0000-0000-0000-000000000000', { projectsDir })).toBeNull();
+    expect(await readTranscriptTurnState('codex', SID, { projectsDir })).toBeNull();
+    expect(await readTranscriptTurnState('claude-code', null, { projectsDir })).toBeNull();
   });
 });
