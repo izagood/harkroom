@@ -27,11 +27,11 @@ import { createMemoryCache } from './memoryCache.js';
 import { runPtyTurn } from './pty.js';
 import { SessionStore } from './sessions.js';
 import { ensureNameLink, resolveAgentStateDir } from './stateDir.js';
-import { assertHarnessContract, readExtraMcpServers, readMcpServers } from './turn.js';
+import { assertHarnessContract, readExtraMcpServers, readMcpServers, type McpServerEntry } from './turn.js';
 import { createStoppableSleep } from './stoppableSleep.js';
 import type { Exec } from './workspace.js';
 import { isCredentialFailure, nextBackoffMs } from './policy.js';
-import { harnessBinaryName } from '@harkroom/shared';
+import { harnessBinaryName, type AgentHarness } from '@harkroom/shared';
 import { runnerExitPlan } from './exit.js';
 import { stopRequestedForRunner } from './stop.js';
 import { harnessLoginNotice } from './prompt.js';
@@ -43,6 +43,7 @@ import { MentionQueue } from './mentionQueue.js';
 import { claudeAccountsRoot, loadClaudeAccountLane, presentAccounts } from './claudeAccounts.js';
 import { createAccountAssigner } from './accountAssign.js';
 import { syncCodexAuth } from './codexHome.js';
+import { usesXdgHome } from './adapters/index.js';
 import { ensureOpencodeHome } from './opencodeHome.js';
 import { createMentionScheduler, type BatchContext } from './mentionScheduler.js';
 
@@ -350,6 +351,15 @@ await store.load();
 // 파일을 못 받으므로 추가 항목을 여기서 한 번 읽어 `-c` 로 넘긴다(없거나 깨졌으면 여기서 죽는다).
 const mcpConfigPath = config.mcpConfigPath;
 const extraMcpServers = await readExtraMcpServers(mcpConfigPath);
+// **턴마다 다시 읽는다**(2026-09-30) — 오퍼레이터가 OAuth 토큰을 refresh 하면 이 파일에 새 토큰을
+// 넣는다. 위의 한 번 읽은 값은 읽기가 실패할 때의 바닥이다. opencode 는 표를 제 설정 파일로 번역해
+// 두므로 그 파일도 다시 쓴다(`ensureOpencodeHome` 은 같은 입력이면 같은 파일을 쓴다).
+const readTurnMcp = async (harness: AgentHarness): Promise<Record<string, McpServerEntry>> => {
+  const all = await readMcpServers(mcpConfigPath);
+  if (usesXdgHome(harness)) await ensureOpencodeHome({ opencodeHome: opencodeHomeDir, mcpServers: all });
+  const { harkroom: _harkroom, avcs: _avcs, ...extra } = all;
+  return extra;
+};
 
 /**
  * `node:child_process` 의 `execFile` 을 workspace.ts::Exec 계약으로 감싼 얇은 어댑터.
@@ -390,7 +400,7 @@ const mentionQueue = new MentionQueue();
 const attentionLedger = createAttentionLedger();
 interactive = createInteractiveManager({
   harkroom, store, exec, runTurn: runPtyTurn, me,
-  workspaceBaseDir, mcpConfigPath, extraMcpServers, codexHome, opencodeHome,
+  workspaceBaseDir, mcpConfigPath, extraMcpServers, readTurnMcp, codexHome, opencodeHome,
   syncCodexAuth: () => syncCodexAuth(codexHome),
   // **인터랙티브 턴은 페일오버하지 않는다.** 사람이 앉아 있고, 계정을 바꾸면 그 사람이
   // 보던 세션이 사라진다(세션 파일이 계정 디렉터리 안에 있다) — 관찰 도중에 화면을 갈아
@@ -456,7 +466,7 @@ const scheduler = createMentionScheduler({
   buildTurnDeps: ({ ctx, mention, account, isLastAccount }) => ({
     harkroom, memory: memoryCache, store, exec, runTurn: runPtyTurn, me, guide,
     channelName: ctx.channelName(mention.channelId),
-    handles: ctx.handles, workspaceBaseDir, mcpConfigPath, extraMcpServers,
+    handles: ctx.handles, workspaceBaseDir, mcpConfigPath, extraMcpServers, readTurnMcp,
     // 지시문 파일이 여기 쓰인다(#92) — 에이전트 워크스페이스가 아니라 러너의 상태
     // 디렉터리다. 워크스페이스 안에 두면 에이전트가 자기 지시문을 고칠 수 있다.
     stateDir: agentStateDir,

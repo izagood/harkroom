@@ -1207,6 +1207,48 @@ describe('runMentionTurn', () => {
     expect(plans[1]!.args).not.toContain('resume');
   });
 
+  // 2026-09-30: 오퍼레이터가 OAuth 토큰을 refresh 하면 MCP 설정 파일에 새 토큰을 넣는다. codex 는 그
+  // 표를 `-c` 로 받으므로, 러너가 뜰 때 읽은 표로 돌면 만료된 토큰을 계속 넘긴다.
+  it('codex 턴은 MCP 표를 턴마다 다시 읽는다 — refresh 된 토큰이 다음 턴에 간다', async () => {
+    const fake = new FakeHarkroom(defOf({ harness: 'codex' }));
+    fake.seedFrom('human-1', '@forge 첫 질문');
+    let token = 'OLD';
+    const seen: string[] = [];
+    const { deps, plans, runTurn } = await makeDeps(fake, {
+      extraMcpServers: { slack: { type: 'http', url: 'https://mcp.example.com/mcp', headers: { Authorization: 'Bearer STARTUP' } } },
+      readTurnMcp: async (harness) => {
+        seen.push(harness);
+        return { slack: { type: 'http', url: 'https://mcp.example.com/mcp', headers: { Authorization: `Bearer ${token}` } } };
+      },
+    });
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '답변', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    token = 'NEW';
+    fake.seedFrom('human-1', '두 번째 질문');
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(seen).toEqual(['codex', 'codex']);
+    expect(plans.map((p) => p.env.HARKROOM_MCP_BEARER_SLACK)).toEqual(['OLD', 'NEW']);
+  });
+
+  it('다시 읽기가 실패하면 기동 때 읽은 표로 돈다 — 도구 없이 뜨지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf({ harness: 'codex' }));
+    fake.seedFrom('human-1', '@forge 질문');
+    const { deps, plans, runTurn } = await makeDeps(fake, {
+      extraMcpServers: { slack: { type: 'http', url: 'https://mcp.example.com/mcp', headers: { Authorization: 'Bearer STARTUP' } } },
+      readTurnMcp: async () => { throw new Error('ENOENT'); },
+    });
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '답변', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(plans[0]!.env.HARKROOM_MCP_BEARER_SLACK).toBe('STARTUP');
+  });
+
   // #82 테스트: MAX_ATTEMPTS 소진 시 채널에 한 번만 통지한다.
   // 이 테스트는 notice 가 있다는 것만 확인하고, 실제 발화는 main.ts 가 한다.
   describe('실패 통지 (#82 수정)', () => {

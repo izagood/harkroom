@@ -186,6 +186,13 @@ export interface MentionTurnDeps {
   /** 그 파일의 harkroom·avcs 밖 항목 — codex 에만 `-c` 로 간다(`turn.ts::readExtraMcpServers`). */
   extraMcpServers?: Record<string, McpServerEntry>;
   /**
+   * **턴마다 MCP 표를 다시 읽는다**(2026-09-30). 오퍼레이터가 OAuth 토큰을 refresh 하면 이 파일에
+   * 새 토큰을 넣는다(`operator/src/mcpConfig.ts::rewriteMcpConfigTokens`) — claude 는 턴마다
+   * `--mcp-config` 를 읽어 저절로 받지만, codex(`-c`)·opencode(설정 파일)는 러너가 뜰 때 한 번 읽은
+   * 표로 돌아 만료된 토큰을 계속 들고 있었다. 없거나 실패하면 `extraMcpServers` 그대로다.
+   */
+  readTurnMcp?: (harness: AgentHarness) => Promise<Record<string, McpServerEntry>>;
+  /**
    * 러너의 상태 디렉터리(config.ts::stateDir). 지시문 파일을 여기 쓴다 —
    * **에이전트의 워크스페이스 안에 두면 안 된다**: `mentionPermission: 'auto'`
    * 인 에이전트가 자기 지시문을 읽고 고칠 수 있게 된다.
@@ -818,7 +825,9 @@ export async function runMentionTurn(
     effort: def.effort,
     mentionPermission: def.mentionPermission,
     mcpConfigPath: deps.mcpConfigPath,
-    extraMcpServers: deps.extraMcpServers,
+    extraMcpServers: deps.readTurnMcp
+      ? await deps.readTurnMcp(def.harness).catch(() => deps.extraMcpServers)
+      : deps.extraMcpServers,
     operatorBin: deps.operatorBin,
     codexHome: deps.codexHome,
     opencodeHome: deps.opencodeHome,
