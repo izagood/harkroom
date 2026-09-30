@@ -1,0 +1,98 @@
+# harkroom.com 소개 페이지(`apps/site`) 이미지를 ghcr 에 올린다.
+#
+# 서버 이미지(`image.yml`)와 따로 둔다: 릴리스 번호와 상관없이 페이지만 바뀌어도 나가야 하고,
+# 서버 코드만 바뀐 머지에 이 이미지를 다시 구울 이유가 없다(`paths`). 네이티브 애드온이 없는
+# nginx + 정적 파일이라 QEMU 로 두 아키텍처를 한 번에 구워도 1분 안쪽이다.
+#
+# 태그: `:sha-<7자>`(커밋마다, 배포는 이것으로 핀한다)와 main 이면 `:main`.
+# 배포는 homelab gitops 가 태그 한 줄로 가져간다 — 여기서는 배포하지 않는다.
+name: 소개 페이지 이미지
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/site/**
+      - .github/workflows/site-image.yml
+  pull_request:
+    paths:
+      - apps/site/**
+      - .github/workflows/site-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: site-image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/harkroom-site
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      # PR 에서는 굽고 띄워 보기만 한다(푸시하지 않는다). 포크 PR 의 토큰으로는 밀 수도 없다.
+      - name: 굽고 띄워 본다
+        run: |
+          set -euo pipefail
+          docker build -t site-check apps/site
+          docker run -d --rm --name site-check -p 8080:8080 site-check
+          for _ in $(seq 1 20); do curl -fsS localhost:8080/healthz && break; sleep 0.5; done
+          check() { # <경로> <기대 코드> [본문에 있어야 할 글자]
+            code="$(curl -s -o /tmp/body -w '%{http_code}' "localhost:8080$1")"
+            [ "$code" = "$2" ] || { echo "::error::$1 → $code (기대 $2)"; exit 1; }
+            if [ -n "${3:-}" ]; then grep -q "$3" /tmp/body || { echo "::error::$1 에 '$3' 가 없다"; exit 1; }; fi
+          }
+          check / 200 'lang="en"'
+          check /ko/ 200 'lang="ko"'
+          check /site.css 200
+          check /site.js 200
+          check /favicon.svg 200
+          check /nope 404
+          # 외부에서 **불러오는** 자원이 없어야 한다(추적·웹폰트 금지). <a href> 링크와
+          # canonical·hreflang(<link rel="canonical|alternate">)은 불러오지 않으므로 뺀다.
+          for p in / /ko/; do
+            if curl -s "localhost:8080$p" | grep -oE '<(script|link|img|iframe|source)[^>]*>' \
+                | grep -vE 'rel="(canonical|alternate)"' | grep -E '(src|href)="(https?:)?//'; then
+              echo "::error::$p 가 외부 자원을 불러온다"; exit 1
+            fi
+          done
+          docker stop site-check
+
+      - if: github.event_name != 'pull_request'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - if: github.event_name != 'pull_request'
+        name: 태그를 정한다
+        id: tags
+        run: |
+          set -euo pipefail
+          short="$(git rev-parse --short=7 HEAD)"
+          tags="${IMAGE}:sha-${short}"
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then tags="$tags,${IMAGE}:main"; fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+
+      - if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: apps/site
+          platforms: linux/amd64,linux/arm64
+          provenance: false
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
