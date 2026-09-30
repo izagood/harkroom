@@ -37,7 +37,7 @@ import {
   parseClaudePoolsConfig,
   type ClaudePoolsConfig,
 } from '@harkroom/shared/claudePools';
-import type { ProviderUsageSnapshot } from '@harkroom/shared/daemonProtocol';
+import type { ProviderAccountUsage, ProviderUsageSnapshot } from '@harkroom/shared/daemonProtocol';
 
 import { claudeCliUsage, type RunCommand } from './cliUsage.js';
 import { fetchClaudeProviderUsage, type ClaudeOAuthToken, type FetchLike } from './providerUsage.js';
@@ -137,6 +137,12 @@ export interface ClaudeAccountsPort {
    * (`usageChain.ts`). 계정끼리 **병렬로** 묻는다 — 하나가 느려도 나머지를 기다리게 하지 않는다.
    */
   providerUsage(): Promise<ProviderUsageSnapshot>;
+  /**
+   * 계정 **하나**의 사용률(`CLAUDE_CONFIG_DIR` 로 가리킨다). 사용량 폴러(`claudeUsagePoller.ts`)가
+   * 쓴다. `providerUsage()` 와 **같은 캐시**를 지난다 — 화면과 폴러가 같은 계정을 따로 재면
+   * `claude` 프로세스가 두 번 뜬다.
+   */
+  measureUsage(configDir: string): Promise<Omit<ProviderAccountUsage, 'account' | 'pool'>>;
   /** 진행 중인 로그인을 전부 회수한다. 데몬 종료 경로가 부른다. */
   shutdownLogins(): Promise<void>;
   onLoginEvent(cb: (e: ClaudeLoginEvent) => void): void;
@@ -285,17 +291,7 @@ export async function accountStatusFromDisk(
   configDir: string,
   hasKeychain: (configDir: string) => Promise<boolean> = nodeHasKeychainCredentials,
 ): Promise<ClaudeAuthStatus> {
-  let oauth: Record<string, unknown> | null = null;
-  try {
-    const raw = JSON.parse(await readFile(join(configDir, '.claude.json'), 'utf8')) as unknown;
-    if (typeof raw === 'object' && raw !== null) {
-      const oa = (raw as Record<string, unknown>).oauthAccount;
-      if (typeof oa === 'object' && oa !== null) oauth = oa as Record<string, unknown>;
-    }
-  } catch {
-    // 없거나 깨졌다. **던지지 않는다** — 목록 하나가 못 읽혀 화면 전체가 실패하면
-    // 사용자는 자기 계정이 사라진 줄 안다.
-  }
+  const oauth = await readOauthAccount(configDir);
   if (!oauth) return { loggedIn: false };
 
   const hasFile = await stat(join(configDir, '.credentials.json')).then(() => true, () => false);
@@ -313,6 +309,35 @@ export async function accountStatusFromDisk(
     ...(pick('organizationUuid') !== undefined ? { orgId: pick('organizationUuid')! } : {}),
     ...(pick('accountUuid') !== undefined ? { accountId: pick('accountUuid')! } : {}),
   };
+}
+
+/** `.claude.json` 의 `oauthAccount`. 없거나 깨졌으면 `null` — **던지지 않는다**. */
+async function readOauthAccount(configDir: string): Promise<Record<string, unknown> | null> {
+  try {
+    const raw = JSON.parse(await readFile(join(configDir, '.claude.json'), 'utf8')) as unknown;
+    if (typeof raw === 'object' && raw !== null) {
+      const oa = (raw as Record<string, unknown>).oauthAccount;
+      if (typeof oa === 'object' && oa !== null) return oa as Record<string, unknown>;
+    }
+  } catch {
+    // 없거나 깨졌다. 목록 하나가 못 읽혀 화면 전체가 실패하면 사용자는 자기 계정이
+    // 사라진 줄 안다.
+  }
+  return null;
+}
+
+/**
+ * "같은 로그인인가"의 비교 키(`usage.json` 의 `signIn`). uuid 둘(조직·계정)의 sha256 앞 16자다.
+ *
+ * 비교 키는 desktop `sameSignInAs` 와 같은 둘이다. **해시로 싣는 이유**: 이 값은 파일에 남고
+ * 러너가 읽는다 — 비교만 하면 되므로 식별자 원문을 퍼뜨릴 까닭이 없다. 못 읽으면 `null`.
+ */
+export async function readSignInKey(configDir: string): Promise<string | null> {
+  const oauth = await readOauthAccount(configDir);
+  const org = oauth?.organizationUuid;
+  const acct = oauth?.accountUuid;
+  if (typeof org !== 'string' || typeof acct !== 'string' || !org || !acct) return null;
+  return createHash('sha256').update(`${org}:${acct}`).digest('hex').slice(0, 16);
 }
 
 /**
@@ -476,6 +501,16 @@ export function createClaudeAccountsPort(opts: {
     for (const cb of loginListeners) { try { cb(e); } catch { /* 관찰은 부작용이 아니다 */ } }
   };
 
+  const measureUsage = (dir: string, at: number): Promise<Omit<ProviderAccountUsage, 'account' | 'pool'>> =>
+    usageCache(dir, () => cliThenApi(
+      () => claudeCliUsage({ configDir: dir, now: at, ...(opts.runCli ? { run: opts.runCli } : {}) }),
+      () => fetchClaudeProviderUsage({
+        configDir: dir, now: at,
+        fetchImpl: opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike),
+        ...(opts.readToken ? { readToken: opts.readToken } : {}),
+      }),
+    ));
+
   return {
     async list(): Promise<ClaudeAccountsSnapshot> {
       const layout = await readClaudeAccountsLayout(root);
@@ -504,16 +539,13 @@ export function createClaudeAccountsPort(opts: {
       const accounts = await Promise.all(targets.map(async (t) => ({
         account: t.name,
         pool: t.pool,
-        ...(await usageCache(t.dir, () => cliThenApi(
-          () => claudeCliUsage({ configDir: t.dir, now: at, ...(opts.runCli ? { run: opts.runCli } : {}) }),
-          () => fetchClaudeProviderUsage({
-            configDir: t.dir, now: at,
-            fetchImpl: opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike),
-            ...(opts.readToken ? { readToken: opts.readToken } : {}),
-          }),
-        ))),
+        ...(await measureUsage(t.dir, at)),
       })));
       return { measuredAtMs: at, accounts };
+    },
+
+    measureUsage(configDir: string) {
+      return measureUsage(configDir, now());
     },
 
     async configure(cfg: ClaudePoolsConfig): Promise<void> {
