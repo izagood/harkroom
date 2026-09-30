@@ -130,6 +130,9 @@ class StringsKo implements Strings {
   String get mentionPickerEmpty => '맞는 사람이 없습니다';
 
   @override
+  String get mentionUnknown => '@알 수 없음';
+
+  @override
   String get tabChannels => '채널';
 
   @override

@@ -131,6 +131,9 @@ class StringsEn implements Strings {
   String get mentionPickerEmpty => 'No match';
 
   @override
+  String get mentionUnknown => '@unknown';
+
+  @override
   String get tabChannels => 'Channels';
 
   @override

@@ -35,8 +35,8 @@ MockClient _server({
       }
       return _json({'id': 'me-1', 'handle': 'me', 'displayName': '나', 'isAdmin': false}, 200);
     }
-    if (path == '/channels') return _json(channels, 200);
-    if (path == '/accounts') return _json(accounts, 200);
+    if (path == '/channels') return _json({'channels': channels}, 200);
+    if (path == '/accounts') return _json({'accounts': accounts}, 200);
     if (path == '/reads') return _json({'reads': reads}, 200);
     if (path.startsWith('/inbox') && req.method == 'GET') {
       return _json({'entries': inbox}, 200);
@@ -48,7 +48,7 @@ MockClient _server({
         'id': 'att-${_uploaded.length}',
         'filename': '사진.png',
         'contentType': 'image/png',
-        'byteSize': 10,
+        'sizeBytes': 10,
       }, 200);
     }
     if (path.endsWith('/read') && req.method == 'PUT') return http.Response('', 204);

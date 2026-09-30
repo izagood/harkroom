@@ -42,16 +42,20 @@ MockClient _server() => MockClient((req) async {
         return _json({'id': 'me-1', 'handle': 'me', 'displayName': '나', 'isAdmin': false});
       }
       if (path == '/channels') {
-        return _json([
-          {'id': 'c1', 'name': 'harkroom', 'kind': 'standard'},
-          {'id': 'c2', 'name': 'random', 'kind': 'standard'},
-        ]);
+        return _json({
+          'channels': [
+            {'id': 'c1', 'name': 'harkroom', 'kind': 'standard'},
+            {'id': 'c2', 'name': 'random', 'kind': 'standard'},
+          ],
+        });
       }
       if (path == '/accounts') {
-        return _json([
-          {'id': 'a1', 'handle': 'forge', 'displayName': 'forge', 'kind': 'agent'},
-          {'id': 'me-1', 'handle': 'me', 'displayName': '나', 'kind': 'human'},
-        ]);
+        return _json({
+          'accounts': [
+            {'id': 'a1', 'handle': 'forge', 'displayName': 'forge', 'kind': 'agent'},
+            {'id': 'me-1', 'handle': 'me', 'displayName': '나', 'kind': 'human'},
+          ],
+        });
       }
       if (path == '/reads') return _json({'reads': <Object?>[]});
       if (path.startsWith('/inbox') && req.method == 'GET') {
