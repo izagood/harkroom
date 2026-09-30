@@ -20,8 +20,8 @@ import type { AgentView, McpServerRow } from '@harkroom/shared';
 import type { OperatorMcpEntry, OperatorMcpRemoteDefinition } from '@harkroom/shared/daemonProtocol';
 import { getController } from '../../state/controller';
 import { ApiError } from '../../lib/api';
-import { forgetLocalMcpAuth, hasOperatorLocalSurface, listLocalMcpServers, localMcpAuthStatus, setLocalMcpServer, startLocalMcpAuth } from '../../lib/operatorLocal';
-import { getExternalOpener } from '../../lib/openExternal';
+import { hasOperatorLocalSurface, listLocalMcpServers, setLocalMcpServer } from '../../lib/operatorLocal';
+import { McpLocalAuth } from './McpLocalAuth';
 import { MCP_PRESETS } from '../../lib/mcpPresets';
 import { useT } from '../../i18n/useT';
 
@@ -70,8 +70,6 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
   const [kind, setKind] = useState<'community' | 'personal'>(MCP_PRESETS[0]!.credentialKind);
 
   const [restarted, setRestarted] = useState(false);
-  /** 브라우저 인증을 기다리는 이름. 오퍼레이터가 콜백을 받을 때까지 상태를 묻는다. */
-  const [authWaiting, setAuthWaiting] = useState<string | null>(null);
   const restartNow = () => void (async () => {
     setBusy(true); setError(null);
     try { await getController().restartAgent(agent.id); setRestarted(true); }
@@ -87,40 +85,6 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
     }
   }, []);
   useEffect(() => { reload(); }, [reload]);
-
-  // 인증을 기다리는 동안 상태를 묻는다 — 끝나면(ok·error·expired) 목록을 다시 읽는다. 5분이면 오퍼레이터가 흐름을 닫는다.
-  useEffect(() => {
-    if (!authWaiting) return;
-    const until = Date.now() + 5 * 60_000;
-    const timer = setInterval(() => {
-      void localMcpAuthStatus(authWaiting).then((st) => {
-        if (st.state === 'pending' && Date.now() < until) return;
-        setAuthWaiting(null);
-        reload();
-      }).catch(() => { setAuthWaiting(null); reload(); });
-    }, 1500);
-    return () => clearInterval(timer);
-  }, [authWaiting, reload]);
-
-  /**
-   * 원격 MCP 인증(2026-09-30). 토큰은 오퍼레이터가 든다 — 계정 디렉터리마다 따로 인증하던 것을 여기 한 번으로.
-   * 인가 url 은 오퍼레이터가 만들고(PKCE·state), 앱은 브라우저로 열기만 한다.
-   */
-  const signIn = (n: string) => void (async () => {
-    setError(null);
-    try {
-      const { authUrl } = await startLocalMcpAuth(n);
-      setAuthWaiting(n);
-      reload();
-      await getExternalOpener().open(authUrl);
-    } catch (e) {
-      setAuthWaiting(null);
-      setError(t('agents.mcp.auth.failed', { reason: e instanceof Error ? e.message : String(e) }));
-    }
-  })();
-  const signOut = (n: string) => void forgetLocalMcpAuth(n).then(reload, (e: unknown) => {
-    setError(t('agents.mcp.auth.failed', { reason: e instanceof Error ? e.message : String(e) }));
-  });
 
   const mcpServers = agent.mcpServers ?? [];
   const off = busy || disabled;
@@ -239,8 +203,7 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
                 )}
                 {here && <span className="text-fg-subtle">{t(here.source === 'operator' ? 'agents.mcp.definedOperator' : 'agents.mcp.definedClaude')}</span>}
                 {here && here.transport !== 'stdio' && here.auth && (
-                  <McpAuthBadge entry={here} on={on} waiting={authWaiting === row.name} disabled={off}
-                    onSignIn={() => signIn(row.name)} onSignOut={() => signOut(row.name)} />
+                  <McpLocalAuth entry={here} warn={on} disabled={off} onChanged={reload} onError={setError} />
                 )}
               </li>
             );
@@ -315,46 +278,3 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
   );
 }
 
-/**
- * 원격 MCP 한 줄의 인증 상태와 버튼. `none` 이 곧 "인증 필요"는 아니다 — 인증을 요구하는지는 서버가
- * 안다. 정의에 `oauth` 가 적혀 있으면(slack 프리셋) 요구한다고 보고, 켠 줄에서는 경고로 보인다.
- */
-function McpAuthBadge({ entry, on, waiting, disabled, onSignIn, onSignOut }: {
-  entry: OperatorMcpEntry;
-  on: boolean;
-  waiting: boolean;
-  disabled?: boolean;
-  onSignIn: () => void;
-  onSignOut: () => void;
-}) {
-  const t = useT();
-  const st = waiting ? { state: 'pending' as const } : entry.auth!;
-  const button = (label: string, action: () => void, testid: string) => (
-    <button className="rounded border border-border px-1.5 py-0.5 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
-      data-testid={testid} disabled={disabled} onClick={action}>{label}</button>
-  );
-  const id = entry.name;
-  if (st.state === 'ok') {
-    return (
-      <span className="flex items-center gap-1" data-testid={`agent-mcp-auth-${id}`}>
-        <span className="text-fg-subtle">{t('agents.mcp.auth.ok')}</span>
-        {button(t('agents.mcp.auth.forget'), onSignOut, `agent-mcp-auth-forget-${id}`)}
-      </span>
-    );
-  }
-  if (st.state === 'pending') {
-    return <span className="text-fg-subtle" data-testid={`agent-mcp-auth-${id}`}>{t('agents.mcp.auth.pending')}</span>;
-  }
-  const text = st.state === 'expired'
-    ? t('agents.mcp.auth.expired')
-    : st.state === 'error'
-      ? t('agents.mcp.auth.error', { reason: st.reason })
-      : entry.oauth ? t('agents.mcp.auth.needed') : null;
-  const warn = on && st.state !== 'none' ? true : on && entry.oauth;
-  return (
-    <span className="flex items-center gap-1" data-testid={`agent-mcp-auth-${id}`} title={t('agents.mcp.auth.note')}>
-      {text && <span className={warn ? 'text-danger' : 'text-fg-subtle'}>{text}</span>}
-      {button(st.state === 'none' ? t('agents.mcp.auth.start') : t('agents.mcp.auth.again'), onSignIn, `agent-mcp-auth-start-${id}`)}
-    </span>
-  );
-}
