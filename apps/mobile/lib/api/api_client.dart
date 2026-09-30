@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' show MediaType;
 
 import 'api_error.dart';
+import 'content_type.dart';
 import 'models.dart';
 
 /// 서버 REST 클라이언트. 데스크탑 `api.ts` 의 **같은 규약**을 따른다:
@@ -104,10 +105,14 @@ class ApiClient {
   // ── 디렉터리 · 채널 ───────────────────────────────────────────────────
 
   Future<List<AccountView>> accounts() async =>
-      _list(await _send('GET', '/accounts')).map(AccountView.fromJson).toList(growable: false);
+      _list(_obj(await _send('GET', '/accounts'))['accounts'])
+          .map(AccountView.fromJson)
+          .toList(growable: false);
 
   Future<List<ChannelRow>> channels() async =>
-      _list(await _send('GET', '/channels')).map(ChannelRow.fromJson).toList(growable: false);
+      _list(_obj(await _send('GET', '/channels'))['channels'])
+          .map(ChannelRow.fromJson)
+          .toList(growable: false);
 
   // ── 메시지 ────────────────────────────────────────────────────────────
 
@@ -178,7 +183,12 @@ class ApiClient {
         'file',
         bytes,
         filename: filename,
-        contentType: contentType == null ? null : MediaType.parse(contentType),
+        // 형식을 모르면 이름으로 짐작한다 — 비워 보내면 서버가 octet-stream 으로 저장해
+        // 사진이 미리보기를 잃는다(`content_type.dart`).
+        contentType: switch (contentType ?? contentTypeFor(filename)) {
+          final String t => MediaType.parse(t),
+          null => null,
+        },
       ));
 
     final total = req.contentLength;

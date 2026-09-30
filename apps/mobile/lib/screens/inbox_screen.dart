@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
+import '../mention/render.dart';
 import 'message_list_screen.dart';
 import 'thread_screen.dart';
 
@@ -80,7 +81,7 @@ class _InboxRow extends StatelessWidget {
         who == null ? _reason(t, entry.reason) : '$who · ${_reason(t, entry.reason)}',
         style: theme.textTheme.labelMedium,
       ),
-      subtitle: Text(entry.body, maxLines: 2, overflow: TextOverflow.ellipsis),
+      subtitle: Text(renderMentions(entry.body, context.app.accounts, context.t.mentionUnknown), maxLines: 2, overflow: TextOverflow.ellipsis),
       onTap: () async {
         // 열면 읽음이 된다. **누르기 전에 읽음으로 만들지 않는다** — 목록을 훑기만
         // 해도 사라지면 사람은 무엇이 있었는지 모른다.

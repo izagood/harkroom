@@ -200,6 +200,9 @@ abstract class Strings {
   /// 접두에 맞는 사람이 없다.
   String get mentionPickerEmpty;
 
+  /// 본문의 멘션이 가리키는 대상을 모른다(지워졌거나, 모바일이 이름표를 안 받는 팀·집합).
+  String get mentionUnknown;
+
   // ── P0 ───────────────────────────────────────────────────────────────
   /// 로그인 화면 제목.
   String get loginTitle;
@@ -335,6 +338,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'threadRepliesOne': s.threadRepliesOne,
       'threadRepliesMany': s.threadRepliesMany,
       'mentionPickerEmpty': s.mentionPickerEmpty,
+      'mentionUnknown': s.mentionUnknown,
       'loginTitle': s.loginTitle,
       'loginIdLabel': s.loginIdLabel,
       'loginPasswordLabel': s.loginPasswordLabel,
