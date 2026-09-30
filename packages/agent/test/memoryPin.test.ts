@@ -198,6 +198,11 @@ describe('memoryPin — 시스템 프롬프트를 세션 동안 고정한다', (
       expect(recallLogLine('k', { hits: [hits[0]!] , terms: [] }, [], new Set(['mem/deploy'])))
         .toBe('[memoryPin] recall k: terms=- picked=- dropped=mem/deploy:6(이미)');
     });
+
+    it('로그: 비밀값처럼 생긴 낱말(20자 넘는 영숫자 덩어리)은 앞 4자만 남긴다', () => {
+      const line = recallLogLine('k', { hits: [], terms: ['hrki_w7G6Vl65h6NkKoAhkhKjxzXmw', '초대'] }, [], new Set());
+      expect(line).toBe('[memoryPin] recall k: terms=hrki…,초대 picked=-');
+    });
   });
 
   it('slug 와 core 를 이스케이프한다', async () => {

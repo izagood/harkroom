@@ -243,7 +243,9 @@ export function recallLogLine(key: string, found: RecallResult, picked: RecallHi
   const pickedSet = new Set(picked.map((h) => h.slug));
   const dropped = found.hits.filter((h) => !pickedSet.has(h.slug))
     .map((h) => `${hit(h)}${skip.has(h.slug) ? '(이미)' : ''}`);
-  return `[memoryPin] recall ${key}: terms=${found.terms ? found.terms.join(',') || '-' : '?'}`
+  // 낱말은 요청문에서 왔다 — 서버가 비밀값 같은 조각을 거르지만, 옛 서버·빠진 틈에 대비해 로그에서도 가린다.
+  const term = (t: string) => (/^[\w-]{20,}$/u.test(t) ? `${t.slice(0, 4)}…` : t);
+  return `[memoryPin] recall ${key}: terms=${found.terms ? found.terms.map(term).join(',') || '-' : '?'}`
     + ` picked=${picked.map(hit).join(' ') || '-'}${dropped.length ? ` dropped=${dropped.join(' ')}` : ''}`;
 }
 
