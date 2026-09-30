@@ -303,3 +303,31 @@ export async function loadClaudeAccountLane(opts: {
   }
   return { pool: null, accounts: [] };
 }
+
+/**
+ * 기동 때 읽은 계정 축에서 **지금 디렉터리가 있는 계정만** 남긴다. 턴마다 부른다.
+ *
+ * ## 왜 필요한가 — 지운 계정이 되살아났다(2026-09-29 실측)
+ *
+ * 러너는 계정 축을 기동 때 한 번 읽는다. 사람이 앱에서 계정을 지워도(데몬이 디렉터리를 지운다)
+ * 이미 떠 있는 러너는 그 계정을 **맨 앞에 든 채로** 다음 턴을 돌렸고, claude 는
+ * `CLAUDE_CONFIG_DIR` 이 없으면 **그 디렉터리를 새로 만든다.** 남은 Keychain 항목(서비스 이름이
+ * 경로의 해시다) 때문에 그 계정은 로그인된 채로 앱 목록에 다시 나타났다.
+ *
+ * 없는 디렉터리를 건너뛰면 러너는 절대 그 경로를 다시 만들지 않는다. **새로 추가된 계정을
+ * 줍지는 않는다** — 그것은 축을 다시 읽는 일이고, 페일오버 순서·인터랙티브 고정 계정이 러너
+ * 수명 동안 같다는 전제를 건드린다.
+ *
+ * 전부 사라지면 `[null]`(시스템 기본 로그인)이다 — 풀이 빈 채로 기동한 러너와 같은 동작이다.
+ * `null` 칸(애초에 풀이 비었다)은 디렉터리가 없으므로 그대로 둔다.
+ */
+export async function presentAccounts(
+  lane: readonly (ClaudeAccount | null)[],
+  isDir: (path: string) => Promise<boolean> = (p) => stat(p).then((s) => s.isDirectory(), () => false),
+): Promise<(ClaudeAccount | null)[]> {
+  const kept: (ClaudeAccount | null)[] = [];
+  for (const a of lane) {
+    if (a === null || (await isDir(a.configDir))) kept.push(a);
+  }
+  return kept.length ? kept : [null];
+}

@@ -17,6 +17,7 @@
 // 쓰기 같은 부작용을 곧바로 일으키므로, 그 흐름을 여기 두면 테스트가 import 하는 순간
 // 진짜 서버에 붙으려 든다.
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { access, readdir } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { loadConfig, runnerLabel } from './config.js';
@@ -39,7 +40,7 @@ import { createInteractiveManager, type InteractiveManager } from './interactive
 import { createAttentionLedger } from './attentionLedger.js';
 import { TurnRegistry } from './turnRegistry.js';
 import { MentionQueue } from './mentionQueue.js';
-import { loadClaudeAccountLane } from './claudeAccounts.js';
+import { loadClaudeAccountLane, presentAccounts } from './claudeAccounts.js';
 import { syncCodexAuth } from './codexHome.js';
 import { ensureOpencodeHome } from './opencodeHome.js';
 import { createMentionScheduler, type BatchContext } from './mentionScheduler.js';
@@ -400,7 +401,16 @@ interactive = createInteractiveManager({
   claudePool: lane.pool ?? null,
   // 다만 **세션이 다른 계정에서 만들어졌으면 그 계정을 따른다** — 멘션 턴의 페일오버가 옮긴
   // 세션을 첫 계정으로 resume 하면 죽는다(`InteractiveTurnDeps.configDirOf`, 실측 2026-09-21).
-  configDirOf: (name) => accountLane.find((a) => a?.name === name)?.configDir ?? null,
+  // 지운 계정은 따르지 않는다 — 없는 디렉터리로 띄우면 claude 가 그것을 다시 만든다
+  // (`presentAccounts` 주석). 그때는 아래 `currentAccount` 로 간다.
+  configDirOf: (name) => {
+    const dir = accountLane.find((a) => a?.name === name)?.configDir ?? null;
+    return dir && existsSync(dir) ? dir : null;
+  },
+  currentAccount: async () => {
+    const head = (await presentAccounts(accountLane))[0] ?? null;
+    return { configDir: head?.configDir ?? null, name: head?.name ?? null };
+  },
   operatorBin: config.operatorBin,
   relay, registry, queue: mentionQueue,
   orphanMs: config.interactiveOrphanMs,
@@ -421,7 +431,9 @@ const memoryCache = createMemoryCache({
 });
 
 const scheduler = createMentionScheduler({
-  harkroom, registry, queue: mentionQueue, accountLane, heldEntryIds,
+  harkroom, registry, queue: mentionQueue, heldEntryIds,
+  // **턴마다** 지운 계정을 걸러 낸다(`presentAccounts` — 지운 계정이 되살아나던 결함).
+  accountLane: () => presentAccounts(accountLane),
   runMentionTurn,
   // 계정별로 갈리는 두 필드(`claudeAccount`·`claudeConfigDir`)만 계정 축이 채운다 —
   // 나머지는 계정과 무관하므로 매번 같은 값이다.

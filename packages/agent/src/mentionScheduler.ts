@@ -106,8 +106,11 @@ export interface MentionSchedulerDeps {
   harkroom: SchedulerHarkroom;
   registry: TurnRegistry;
   queue: MentionQueue;
-  /** 계정 축. 비어 있으면 안 된다 — 호출자가 최소 `[null]` 을 넘긴다(claudeAccounts.ts). */
-  accountLane: readonly (ClaudeAccount | null)[];
+  /**
+   * 계정 축. 비어 있으면 안 된다 — 호출자가 최소 `[null]` 을 넘긴다(claudeAccounts.ts).
+   * 함수면 **턴마다** 불러 그 턴의 축을 얻는다 — 지운 계정을 건너뛰는 자리다(`presentAccounts`).
+   */
+  accountLane: readonly (ClaudeAccount | null)[] | (() => Promise<readonly (ClaudeAccount | null)[]>);
   runMentionTurn(deps: MentionTurnDeps, target: MentionTarget): Promise<MentionTurnResult>;
   /** 계정 두 필드까지 채운 완성 deps 를 만든다. 조립은 main 이 갖는다. */
   buildTurnDeps(args: {
@@ -275,7 +278,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
     };
     try {
       const turn = await withAccountFailover(
-        deps.accountLane,
+        typeof deps.accountLane === 'function' ? await deps.accountLane() : deps.accountLane,
         (account, isLastAccount) => deps.runMentionTurn(
           deps.buildTurnDeps({ ctx, mention, account, isLastAccount }), target,
         ),

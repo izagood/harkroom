@@ -19,8 +19,8 @@ import { createClaudeAccountsPort } from '../src/claudeAccounts.js';
 const LOGGED_IN = { loggedIn: true, email: 'a@b.c', orgName: 'Org', subscriptionType: 'team' };
 const LOGGED_OUT = { loggedIn: false };
 
-function port(root: string, status: unknown = LOGGED_IN) {
-  return createClaudeAccountsPort({ root, runStatus: vi.fn(async () => status) });
+function port(root: string, status: unknown = LOGGED_IN, deleteKeychain = vi.fn(async () => undefined)) {
+  return createClaudeAccountsPort({ root, runStatus: vi.fn(async () => status), deleteKeychain });
 }
 
 async function tmp(prefix = 'd-acc-'): Promise<string> {
@@ -159,6 +159,34 @@ describe('removeAccount · removePool', () => {
     const root = await poolsRoot();
     await port(root).removeAccount('work', 'aria');
     expect((await port(root).list()).pools[0]!.accounts.map((a) => a.name)).toEqual(['cedar']);
+  });
+
+  it('지운 계정의 Keychain 항목도 지운다 — 같은 경로가 다시 생겨도 로그인이 되살아나지 않게', async () => {
+    // 2026-09-29 실측: 디렉터리만 지웠더니 기동 때 목록을 읽은 러너가 그 경로로 claude 를
+    // 띄워 디렉터리가 다시 생겼고, 남은 Keychain 항목 때문에 로그인된 계정으로 보였다.
+    const root = await poolsRoot();
+    const deleteKeychain = vi.fn(async () => undefined);
+    await port(root, LOGGED_IN, deleteKeychain).removeAccount('work', 'aria');
+    expect(deleteKeychain).toHaveBeenCalledWith(join(root, 'work', 'aria'));
+  });
+
+  it('지운 계정을 pools.json 의 순서에서도 뺀다 — 나머지 설정은 그대로', async () => {
+    const root = await poolsRoot();
+    const agentId = '00000000-0000-4000-8000-000000000001';
+    await writeFile(join(root, 'pools.json'), JSON.stringify({
+      defaultPool: 'work', order: { work: ['aria', 'cedar'] }, agents: { [agentId]: 'work' },
+    }));
+    await port(root).removeAccount('work', 'aria');
+    expect(JSON.parse(await readFile(join(root, 'pools.json'), 'utf8'))).toEqual({
+      defaultPool: 'work', order: { work: ['cedar'] }, agents: { [agentId]: 'work' },
+    });
+  });
+
+  it('깨진 pools.json 은 덮어쓰지 않는다 — 빈 설정으로 읽은 것을 되쓰면 사람이 적은 것이 사라진다', async () => {
+    const root = await poolsRoot();
+    await writeFile(join(root, 'pools.json'), '{ not json');
+    await port(root).removeAccount('work', 'aria');
+    expect(await readFile(join(root, 'pools.json'), 'utf8')).toBe('{ not json');
   });
 
   it('풀 디렉터리를 지운다', async () => {

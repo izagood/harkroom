@@ -46,6 +46,10 @@ function harness(opts: {
   now?: () => number;
   /** 이관 중 앞 세대 러너가 들고 있는 entry — `heldEntryIds` 회귀선이 쓴다. */
   held?: Set<number>;
+  /** 계정 축. 없으면 `[null]`. 함수면 턴마다 불린다. */
+  lane?: Parameters<typeof createMentionScheduler>[0]['accountLane'];
+  /** buildTurnDeps 가 받은 계정 — 턴이 어느 계정으로 떴는지 본다. */
+  seenAccounts?: (string | null)[];
 }) {
   const markedRead: number[] = [];
   const posted: { channelId: string; body: string; anchor: string | null }[] = [];
@@ -65,9 +69,9 @@ function harness(opts: {
     },
     registry,
     queue: new MentionQueue(),
-    accountLane: [null],
+    accountLane: opts.lane ?? [null],
     runMentionTurn: opts.runTurn,
-    buildTurnDeps: () => ({}) as never,
+    buildTurnDeps: ({ account }) => { opts.seenAccounts?.push(account?.name ?? null); return {} as never; },
     hooks: {
       stopRequested: () => {},
       exitIfUnrecoverable: () => {},
@@ -101,6 +105,26 @@ describe('mentionScheduler 승인 관문', () => {
     held.clear();
     const 통과 = await h.scheduler.admit(batchOf([{ entryId: 41, messageId: 'm-41' }]), ctx);
     expect(통과).toMatchObject({ started: 1 });
+  });
+
+  /**
+   * 지운 계정이 되살아나던 결함(2026-09-29). 축이 함수면 **턴마다** 다시 불러 그 턴의 축을
+   * 쓴다 — 기동 때 값을 붙들면 사람이 지운 계정 경로로 claude 가 떠서 디렉터리를 다시 만든다.
+   *
+   * 되돌려 RED: 스케줄러가 함수를 한 번만 부르거나 배열만 받으면 두 번째 턴도 `lime` 으로 뜬다.
+   */
+  it('계정 축이 함수면 턴마다 다시 읽는다', async () => {
+    const seen: (string | null)[] = [];
+    let lane = [{ name: 'lime', configDir: '/x/lime' }, { name: 'plum', configDir: '/x/plum' }];
+    const h = harness({ runTurn: async () => ({ ok: true }) as never, lane: async () => lane, seenAccounts: seen });
+
+    await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await h.scheduler.drain();
+    lane = [{ name: 'plum', configDir: '/x/plum' }];
+    await h.scheduler.admit(batchOf([{ entryId: 2, messageId: 'm2' }]), ctx);
+    await h.scheduler.drain();
+
+    expect(seen).toEqual(['lime', 'plum']);
   });
 
   /** 물러나는 러너가 교체 러너에게 넘길 목록이다 — 없으면 오퍼레이터가 무엇을 넘길지 모른다. */
