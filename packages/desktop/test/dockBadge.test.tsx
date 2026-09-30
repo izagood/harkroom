@@ -131,6 +131,10 @@ describe('배지 표면', () => {
     expect(invoke).toHaveBeenCalledWith(BADGE_LABEL_COMMAND, { label: 'main', value: BADGE_DOT_LABEL });
   });
 
+  it('점은 작은 글머리 점(•)이다 — 큰 원(●)은 배지를 거의 채운다', () => {
+    expect(BADGE_DOT_LABEL).toBe('\u2022');
+  });
+
   it('빈 배지는 숫자와 라벨을 모두 지운다', async () => {
     const invoke = fakeTauri();
     await createBadger().set({ count: 0, dot: false });
