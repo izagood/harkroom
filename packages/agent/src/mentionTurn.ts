@@ -30,7 +30,7 @@ import { findOpencodeSessionId } from './opencodeSessions.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
 import type { MemoryCache } from './memoryCache.js';
-import { planMemory, RECALL_MAX_ITEMS, type RecallHit } from './memoryPin.js';
+import { planMemory, RECALL_MAX_ITEMS, type RecallResult } from './memoryPin.js';
 import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './harnessMemory.js';
 
 /** runMentionTurn 이 요구하는 harkroom 표면. HarkroomAgentClient 의 부분집합이라 실제 클래스를
@@ -59,7 +59,7 @@ export interface MentionTurnHarkroom {
   /** #139: core 본문과 mem/* slug 목록. 실패는 **던진다** — 호출자가 구분해야 한다. */
   readMemory(): Promise<{ core: string | null; slugs: string[] }>;
   /** 관련 기억 찾기(`memory.search`, 본문 포함). 없으면(테스트·옛 조립) 찾지 않는다. */
-  searchMemory?(query: string, limit: number): Promise<RecallHit[]>;
+  searchMemory?(query: string, limit: number): Promise<RecallResult>;
   /**
    * #140: 승인된 스킬 목록. **실패는 던진다** — 러너가 stderr 에 한 줄 남길 수 있어야 한다.
    * 여기서 빈 배열로 삼키면 "스킬이 없다"와 "서버를 못 읽었다"가 같은 값이 되고, 그러면
@@ -737,8 +737,12 @@ export async function runMentionTurn(
   // 관련 기억 찾기의 질의는 **이번에 새로 온 남의 말**이다 — 내 발화나 이미 먹인 말로 찾으면
   // 턴마다 같은 것이 걸린다. 길이를 자른다: 긴 붙여넣기 전체가 낱말 12개 상한을 채우면 정작
   // 요청의 낱말이 빠진다. 앞 턴에서 이미 실어 준 것은 memoryPin 이 거른다.
+  //
+  // **예약으로 깨어난 턴(`turn.wake`)은 찾지 않는다**(recall P1). 새로 온 남의 말이 없거나, 있어도
+  // 앞 턴이 이미 본 요청의 되풀이라 같은 것을 다시 고르거나 엉뚱한 것을 끌어온다 — 이어지는
+  // 세션은 필요한 기억을 이미 들고 있다.
   const fedFrom = rec.lastFedSeq;
-  const recallQuery = thread
+  const recallQuery = target.wake ? '' : thread
     .filter((m) => m.seq > fedFrom && m.authorId !== deps.me.id && m.kind !== 'progress')
     .slice(-3).map((m) => m.body).join('\n').slice(0, 1000);
   const search = deps.harkroom.searchMemory?.bind(deps.harkroom);

@@ -488,6 +488,29 @@ describe('runMentionTurn', () => {
     expect(prompt).toContain('CI 결과 확인');
   });
 
+  // recall P1: 예약으로 깨어난 턴은 관련 기억을 찾지 않는다 — 앞 턴 요청의 되풀이라 같은 것·엉뚱한 것을 고른다.
+  it('깨어난 턴은 memory.search(recall)를 부르지 않는다 — 평범한 멘션 턴은 부른다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    const queries: string[] = [];
+    Object.assign(fake, { searchMemory: async (q: string) => { queries.push(q); return { hits: [], terms: [] }; } });
+    fake.seedFrom('human-1', '@forge 배포 절차 확인해줘');
+    const { deps, runTurn } = await makeDeps(fake);
+    runTurn.script = async () => {
+      const m = fake.seedFrom(deps.me.id, 'CI 결과 확인', null);
+      m.kind = 'wake';
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(queries).toHaveLength(1);
+
+    fake.seedFrom('human-1', '참고로 배포는 내일이다');
+    runTurn.script = async () => ({ exitCode: 0, timedOut: false, tail: '' });
+    await runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION, wake: { reason: 'CI 결과 확인' },
+    });
+    expect(queries).toHaveLength(1);
+  });
+
   /**
    * **버려지던 마지막 출력이 통지에 붙는다** (2026-09-07 후속).
    *
