@@ -488,6 +488,12 @@ export function Inbox({ open, onClose }: Props) {
               뿌려지면 "내 차례"라는 신호가 죽고, 인박스는 그 신호가 가장 진해야 하는
               자리다.
             */}
+            {/* **누가** — 얼굴 옆에 이름을 한 번 더 적는다(UX ① 사양 "이름 동사"). 얼굴만으로는
+                같은 색 에이전트 여럿이 구분되지 않는다. */}
+            {e.authorId && accounts[e.authorId] && (
+              // `aria-hidden`: 얼굴(`Identity`)이 이미 handle 을 `sr-only` 로 낸다 — 두 번 읽히지 않게.
+              <span aria-hidden="true" className="shrink-0 font-semibold text-fg">{accounts[e.authorId]!.handle}</span>
+            )}
             <span
               data-testid={`inbox-reason-${e.id}`}
               // `shrink-0`: 라벨은 **줄지 않는다**(UX ① H2). 칸이 좁을 때 잘려야 하는 것은

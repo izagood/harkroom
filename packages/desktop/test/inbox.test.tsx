@@ -379,7 +379,8 @@ describe('Inbox 줄이 무엇을 말하는가 (#488 C2)', () => {
     // 누가 — 얼굴이 이름을 대신한다. 사진이 있으면 사진, 없으면 머리글자다. 어느 쪽이든
     // `Identity` 는 handle 을 `sr-only` 로 함께 낸다 — 사진의 유무는 이 테스트가 잴 것이
     // 아니고, 잰다면 첨부 로딩까지 끌고 들어와 무엇이 깨졌는지 흐려진다.
-    expect(within(row).getByText('alice')).toBeTruthy();
+    // 눈에 보이는 이름도 줄 첫머리에 선다(UX ① "이름 동사") — 그래서 둘이다.
+    expect(within(row).getAllByText('alice')).toHaveLength(2);
     // 무슨 말.
     expect(screen.getByTestId('inbox-reason-1').textContent).toBeTruthy();
     // 무엇을 — 본문 한 줄.

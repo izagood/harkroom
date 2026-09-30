@@ -678,38 +678,16 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
         {/* 채널 이름은 **이름줄단 15px** — 지금 무엇을 보고 있는지 말하는 자리이고,
             `MessageItem` 의 작성자 이름과 같은 단이다. 화면 제목단(17px)은 설정·로그인처럼
             화면 하나를 여는 자리에만 준다. 옆의 주제·꼬리표는 아랫단 11px 이다. */}
-        <span className="text-name font-bold">{title}</span>
+        {/* `shrink-0 whitespace-nowrap`: 좁은 열에서 "# task" 가 두 줄로 꺾이지 않는다 — 줄어야 하는 것은 옆의 주제다. */}
+        <span className="shrink-0 whitespace-nowrap text-name font-bold">{title}</span>
         {channel?.topic && <span className="truncate text-meta text-fg-subtle">{channel.topic}</span>}
         {channel?.repo && <span className="rounded bg-surface-sunken px-1.5 text-meta text-fg-muted">{channel.repo}</span>}
         {isArchived && <span className="rounded bg-surface-hover px-1.5 text-meta text-fg-muted">{t('channel.header.archived')}</span>}
-        {/* 대화·문서·파일 탭(UX ①). 문서는 채널에 붙는다(#188) — DM 에는 없다. `channel` 이
-            없을 때 문서 탭을 그리면 눌러도 아무 일이 없는 죽은 탭이 된다(아래 덮개와 같은
-            조건이어야 한다). 탭이 하나(대화)만 남는 DM 이라도 파일 탭이 있어 묶음은 선다. */}
-        <div role="tablist" aria-label={t('channel.header.views')} className="ml-auto flex shrink-0 items-center gap-0.5 rounded border border-border p-0.5">
-          {([
-            ['messages', t('channel.header.messages')],
-            ...(channel ? [['doc', t('channel.header.doc')] as const] : []),
-            ['files', t('channel.header.files')],
-          ] as const).map(([value, label]) => (
-            <button
-              key={value}
-              role="tab"
-              aria-selected={view === value}
-              data-testid={`channel-view-${value}`}
-              onClick={() => setView(value)}
-              className={`rounded px-2 py-0.5 text-meta ${view === value
-                ? 'bg-surface-sunken font-medium text-fg'
-                : 'text-fg-muted hover:bg-surface-sunken'}`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
         {/* 검색은 ⌘K 로도 열리지만 단축키만으로는 보이지 않는다(#258). 헤더 버튼은
             **지금 보는 대화로 좁힌 채** 열고, ⌘K 는 전역으로 남는다 — 두 진입점이 서로
             다른 뜻을 가지므로 title 에 그 차이를 적는다. DM 에도 같은 버튼이 나온다. */}
         <button
-          className="shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
+          className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
           onClick={() => onOpenSearch?.(true)}
           aria-label={t('channel.header.searchLabel')}
           title={t('channel.header.searchTitle')}
@@ -717,6 +695,31 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
           {t('channel.header.search')}
         </button>
       </header>
+      {/* 메시지·문서·파일 탭(UX ①) — **머리 아래 한 줄**이다(designer 사양). 머리 안에 두면
+          주제·저장소 꼬리표와 한 줄을 다툰다. 문서는 채널에 붙는다(#188) — DM 에는 없다.
+          `channel` 이 없을 때 문서 탭을 그리면 눌러도 아무 일이 없는 죽은 탭이 된다(아래
+          덮개와 같은 조건이어야 한다). DM 에도 파일 탭이 있어 묶음은 선다. */}
+      <div role="tablist" aria-label={t('channel.header.views')} className="flex shrink-0 items-center gap-1 border-b border-border px-3">
+        {([
+          ['messages', t('channel.header.messages')],
+          ...(channel ? [['doc', t('channel.header.doc')] as const] : []),
+          ['files', t('channel.header.files')],
+        ] as const).map(([value, label]) => (
+          <button
+            key={value}
+            role="tab"
+            aria-selected={view === value}
+            data-testid={`channel-view-${value}`}
+            onClick={() => setView(value)}
+            // 밑줄 탭: 고른 것만 강조색 밑줄. 칩 모양으로 두면 인박스 필터와 헷갈린다.
+            className={`-mb-px border-b-2 px-2 py-1.5 text-meta ${view === value
+              ? 'border-accent font-medium text-fg'
+              : 'border-transparent text-fg-muted hover:text-fg'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       {/* 헤더 아래 전부를 한 겹 싼다 — 문서·파일 탭은 이 상자를 **덮는다**(`absolute inset-0`).
           대화를 내리지(unmount) 않는 이유: 스크롤 자리·가상 목록의 측정·쓰던 초안이 그 안에
           산다. 내렸다가 다시 세우면 대화 탭으로 돌아올 때 바닥 고정이 처음부터 다시 돈다.
