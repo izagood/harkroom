@@ -259,6 +259,8 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onMana
         몸통. 오른쪽 테두리가 **여기**에 붙는다(위 띠 주석). `min-h-0` 은 아래 네 칸의
         `overflow-y-auto` 가 실제로 스크롤하게 하는 조건이다 — flex 자식의 기본
         `min-height: auto` 는 내용만큼 늘어나 스크롤이 창 밖으로 밀린다.
+        `relative` 는 커뮤니티 전환 팝오버의 기준이다 — 팝오버가 이 몸통의 오른쪽 바깥에
+        선다(`CommunitySwitcher`).
       */}
       <div className="relative flex min-h-0 flex-1 flex-col items-center gap-1 border-r border-border pb-1 pt-2">
         <CommunitySwitcher onManage={onManageCommunities} />

@@ -372,6 +372,35 @@ describe('커뮤니티 전환기 — 레일 하나 + 팝오버 (#165, 2026-09-30
     }
   });
 
+  it('5b. 마우스로 고정하면 행이 아니라 메뉴에 포커스 — 행에 테두리가 안 서고, ↓ 는 지금 행 다음부터', async () => {
+    const { a, b } = await twoCommunities();
+    seed(a, 'me-a', true);
+    seed(b, 'me-b', true);
+    renderWorkspace();
+
+    fireEvent.click(screen.getByTestId('rail-community-mark'), { detail: 1 });
+    const pop = screen.getByTestId('community-switcher');
+    expect(pop.dataset.mode).toBe('pinned');
+    expect(document.activeElement).toBe(pop);
+    fireEvent.keyDown(pop, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(screen.getByTestId(`community-tile-${b.id}`));
+  });
+
+  it('5c. 팝오버는 레일 오른쪽 바깥에 선다 — 타일 아래 칸(Home·DM…)을 덮지 않는다', async () => {
+    const { a, b } = await twoCommunities();
+    seed(a, 'me-a', true);
+    seed(b, 'me-b', true);
+    renderWorkspace();
+
+    const pop = openSwitcher();
+    // 기준은 레일 몸통이다 — 타일을 감싼 것이 `relative` 면 팝오버가 타일 밑에 붙는다.
+    const wrap = screen.getByTestId('rail-community-mark').parentElement!;
+    expect(wrap.className).not.toContain('relative');
+    expect(wrap.parentElement!.className).toContain('relative');
+    expect(pop.className).toContain('left-full');
+    expect(pop.className).not.toContain('top-full');
+  });
+
   it('6. 다른 커뮤니티에 나를 기다리는 것이 있으면 타일에 점, 수는 팝오버 행에 — 지금 커뮤니티 수는 Home 배지', async () => {
     const { a, b } = await twoCommunities();
     seed(a, 'me-a', true);

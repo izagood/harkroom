@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type Ref } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type Ref } from 'react';
 import { useStore } from 'zustand';
 import { communityLabel, useCommunityRegistry, type CommunityEntry } from '../state/communities';
 import { switchCommunity } from '../state/controller';
@@ -31,8 +31,9 @@ import { useT } from '../i18n/useT';
  * 둘이 서면 어느 쪽의 수인지 헷갈린다. 세는 규칙은 `blockingUnreadCount` 하나다(독 배지와 같다).
  */
 
-/** 호버에서 열기까지. 레일을 스쳐 지나가는 포인터마다 팝오버가 번쩍이지 않게 한다. */
-export const HOVER_OPEN_MS = 120;
+/** 호버에서 열기까지. 레일을 스쳐 지나가는 포인터마다 팝오버가 번쩍이지 않게 한다
+ *  (120ms 는 칸 위를 지나가는 손에도 열렸다 — designer 검토로 250ms). */
+export const HOVER_OPEN_MS = 250;
 /** 호버에서 닫기까지. 타일 → 팝오버 사이 틈을 건너는 동안 닫히지 않게 한다. */
 export const HOVER_CLOSE_MS = 200;
 
@@ -53,6 +54,10 @@ export function CommunitySwitcher({ onManage }: {
   const active = entries.find((e) => e.id === activeId);
   const others = useMemo(() => entries.filter((e) => e.id !== activeId), [entries, activeId]);
   const [mode, setMode] = useState<Mode>('closed');
+  /** 고정을 연 것이 포인터인가. 포인터면 행이 아니라 메뉴 자체에 포커스를 둬서 행에
+   *  포커스 테두리가 서지 않게 한다(면만으로 지금 커뮤니티가 보인다). 키보드면 행에 둔다. */
+  const [byPointer, setByPointer] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const tileRef = useRef<HTMLButtonElement>(null);
   const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -90,13 +95,15 @@ export function CommunitySwitcher({ onManage }: {
     };
   }, [mode, close]);
 
-  // 고정으로 열리면 지금 커뮤니티 행에 포커스 — ↑↓ 로 바로 고를 수 있다.
+  // 고정으로 열리면 포커스를 안으로 — ↑↓ 로 바로 고를 수 있다. 키보드로 열었으면 지금
+  // 커뮤니티 행에, 포인터로 열었으면 메뉴 자체에(행에 테두리를 세우지 않는다).
   useEffect(() => {
     if (mode !== 'pinned') return;
+    if (byPointer) { menuRef.current?.focus(); return; }
     const current = wrapRef.current?.querySelector<HTMLElement>('[data-current="true"]')
       ?? wrapRef.current?.querySelector<HTMLElement>('[role="menuitem"]');
     current?.focus();
-  }, [mode]);
+  }, [mode, byPointer]);
 
   useCommunityShortcuts(entries, activeId);
 
@@ -118,8 +125,10 @@ export function CommunitySwitcher({ onManage }: {
       setMode((m) => (m === 'hover' ? 'closed' : m));
     }, HOVER_CLOSE_MS);
   };
-  const onTileClick = (): void => {
+  const onTileClick = (e: ReactMouseEvent): void => {
     clearTimers();
+    // `detail` 은 클릭 횟수다 — 키보드(Enter·Space)로 누른 버튼은 0 이다.
+    setByPointer(e.detail > 0);
     setMode((m) => (m === 'pinned' ? 'closed' : 'pinned'));
   };
 
@@ -128,7 +137,10 @@ export function CommunitySwitcher({ onManage }: {
     const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'));
     if (items.length === 0) return;
     e.preventDefault();
-    const at = items.indexOf(document.activeElement as HTMLElement);
+    // 포인터로 열어 포커스가 메뉴 자체에 있으면 지금 커뮤니티 행에서 출발한다.
+    const current = items.findIndex((el) => el.dataset.current === 'true');
+    const found = items.indexOf(document.activeElement as HTMLElement);
+    const at = found >= 0 ? found : current;
     const next = e.key === 'ArrowDown'
       ? items[(at + 1) % items.length]
       : items[(at - 1 + items.length) % items.length];
@@ -138,7 +150,13 @@ export function CommunitySwitcher({ onManage }: {
   const numbered = entries.length > 1;
 
   return (
-    <div ref={wrapRef} className="relative" onMouseEnter={onEnter} onMouseLeave={onLeave}>
+    /*
+      **이 감싸개는 `relative` 가 아니다** — 팝오버의 기준이 레일 몸통(`Rail` 의 `relative`)이
+      되어야 레일 **오른쪽 바깥**에 열 수 있다. 타일 바로 아래에 열면 Home·DM·Agents 칸을
+      덮고, 호버로 열리니 Home 을 누르러 가던 손이 커뮤니티 행을 누르게 된다(designer 검토).
+      팝오버는 여전히 이 감싸개의 DOM 자식이라 포인터가 그 안에 들어가면 "안"이다.
+    */
+    <div ref={wrapRef} onMouseEnter={onEnter} onMouseLeave={onLeave}>
       <CommunityTile
         ref={tileRef}
         entry={active}
@@ -152,8 +170,17 @@ export function CommunitySwitcher({ onManage }: {
           data-testid="community-switcher"
           data-mode={mode}
           aria-label={t('rail.community.label')}
+          ref={menuRef}
+          tabIndex={-1}
+          /* 메뉴 자체는 포인터로 열었을 때 포커스를 받아 두는 자리일 뿐이라 링을 그리지 않는다.
+             유틸리티(`outline-none`)는 레이어 밖의 전역 `:focus-visible`(index.css)에 지므로
+             인라인으로 막는다. */
+          style={{ outline: 'none' }}
           onKeyDown={onMenuKeyDown}
-          className="absolute left-0 top-full z-50 mt-1 w-[288px] rounded-lg border border-border bg-surface-raised p-1.5 shadow-lg"
+          /* 레일 몸통 기준: `left-full` 은 몸통의 padding box 오른쪽(= 레일 70px − 오른쪽 테두리
+             1px)이라 7px 을 더해 레일 경계에서 6px 띄운다. `top-2` 는 몸통의 `pt-2` 와 같아
+             팝오버 위쪽 끝이 타일 위쪽 끝에 맞는다. */
+          className="absolute left-full top-2 z-50 ml-[7px] w-[288px] rounded-lg border border-border bg-surface-raised p-1.5 shadow-lg"
         >
           <div className="px-2 pb-1 pt-1.5 text-meta font-medium uppercase tracking-wide text-fg-subtle">
             {t('rail.community.title')}
@@ -257,7 +284,7 @@ function CommunityTile({ ref, entry, others, open, onClick }: {
   entry: CommunityEntry;
   others: CommunityEntry[];
   open: boolean;
-  onClick: () => void;
+  onClick: (e: ReactMouseEvent) => void;
 }) {
   const t = useT();
   const connected = useStore(entry.store, (s) => s.connected);
