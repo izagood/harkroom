@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { getAppUpdater } from '../../lib/appUpdater';
+import { useT } from '../../i18n/useT';
 import { Button, ReadonlyRow, SettingsGroup, SettingsPage } from './primitives';
 
 /**
@@ -37,6 +38,7 @@ function describe(err: unknown): string {
 }
 
 export function UpdatesSettings() {
+  const t = useT();
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
 
   async function check() {
@@ -64,7 +66,7 @@ export function UpdatesSettings() {
   const busy = status.kind === 'checking' || status.kind === 'installing';
 
   return (
-    <SettingsPage title="Updates" description="How this app gets to a newer version.">
+    <SettingsPage section="updates" description={t('settings.desc.updates')}>
       <SettingsGroup>
         <ReadonlyRow label="Version" value={__APP_VERSION__} />
         <ReadonlyRow label="Automatic updates" value="Available" />

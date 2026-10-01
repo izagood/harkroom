@@ -169,6 +169,38 @@ import type { Message } from './types';
  * 언어 고르개만 영어로 서면 그 화면 혼자 두 언어가 되기 때문이다.
  */
 export const en = {
+  // ---------------------------------------------------------------------------
+  // settings — 설정 목차와 페이지 머리(UX ④). **목차 이름 = 페이지 제목**이 한 키에서 나온다
+  // (`sections.navKey`, `SettingsPage section=…`).
+  // ---------------------------------------------------------------------------
+  'settings.back': 'Back to app',
+  'settings.group.personal': 'Personal',
+  'settings.group.app': 'App',
+  'settings.nav.profile': 'Profile',
+  'settings.nav.notifications': 'Notifications',
+  'settings.nav.messages': 'Messages',
+  'settings.nav.appearance': 'Appearance & language',
+  'settings.nav.connection': 'Connection',
+  'settings.nav.communities': 'Communities',
+  'settings.nav.workspace': 'Workspace',
+  'settings.nav.agents': 'Agents',
+  'settings.nav.agent-defaults': 'New agent defaults',
+  'settings.nav.operators': 'Operators',
+  'settings.nav.mcp-servers': 'MCP servers',
+  'settings.nav.claude-accounts': 'Provider accounts',
+  'settings.nav.handle-groups': 'Handle groups',
+  'settings.nav.invite': 'Invite',
+  'settings.nav.updates': 'Updates',
+  'settings.nav.skills': 'Skills',
+  'settings.nav.automations': 'Automations',
+  'settings.nav.gallery': 'Component gallery',
+  'settings.desc.communities': 'The harkroom servers this device knows. Each one keeps its own channels, messages and connection.',
+  'settings.desc.connection': 'The harkroom server this app talks to.',
+  'settings.desc.messages': 'These choices live on this device only.',
+  'settings.desc.notifications': 'harkroom only notifies you while its window is in the background.',
+  'settings.desc.profile': 'Who you are signed in as on this server.',
+  'settings.desc.updates': 'How this app gets to a newer version.',
+
   // providerUsage — 공급자 API 사용률 막대·토글(2단계). 2026-09-28.
   'providerUsage.session': '5-hour',
   'providerUsage.weekly': 'Weekly',
@@ -180,7 +212,6 @@ export const en = {
   'providerUsage.error.cliUnavailable': 'Could not run the CLI to read usage. Check that it is installed.',
   'providerUsage.error.cliUnparsed': 'The CLI did not report usage — sign in again, or update the CLI.',
   // providerAccounts — 설정 > 제공업체 계정(하네스별 카드). 2026-09-28.
-  'providerAccounts.page.title': 'Provider accounts',
   'providerAccounts.page.subtitle': 'Optional. Agents work with your existing provider logins. Add accounts only if you want Harkroom to switch between them.',
   'providerAccounts.badge.thisDevice': 'This device',
   'providerAccounts.badge.active': 'Active',
@@ -242,7 +273,7 @@ export const en = {
   // ---------------------------------------------------------------------------
 
   'appearance.colorMode': 'Color mode',
-  'appearance.description': 'Follow your system or choose a light or dark appearance',
+  'appearance.description': 'Pick colors, language and text size. Applies to this device only.',
   'appearance.language': 'Language',
   /** `{name}` 은 `LOCALE_NAMES` 의 값이다 — 그 언어로 적힌 이름이라 번역하지 않는다. */
   'appearance.languageOption': 'Use {name}',
@@ -252,7 +283,6 @@ export const en = {
    */
   'appearance.languageSystem': 'System',
   'appearance.mode': '{mode} appearance',
-  'appearance.title': 'Appearance',
   /**
    * 확대/축소. **`Zoom` 한 낱말이다** — `Text size` 로 적으면 글자만 커진다는 약속이 되고,
    * 실제로는 여백·아이콘·패널 폭이 함께 커진다(`lib/zoom.ts`).
@@ -415,7 +445,6 @@ export const en = {
     + 'shapes are pinned by samples, so they follow the rules — create two agents and the names '
     + 'fill in with real values too.',
   'gallery.page.subtitle': 'The eight kinds of speech and their edge states. If this breaks, the vocabulary broke.',
-  'gallery.page.title': 'Component gallery',
 
   /**
    * 여덟 가지 말. **이름을 `Ask`·`Failure`·`Report` 로 두고 갈래를 `—` 뒤에 적는다** —
@@ -629,7 +658,6 @@ export const en = {
   'skills.list.loadFailed': 'The skill list did not arrive',
   'skills.list.loading': 'Loading…',
   'skills.list.refresh': 'Refresh',
-  'automations.title': 'Automations',
   'automations.subtitle': 'When the time comes, a message is posted under your name to the channel or DM you pick. Start the body with @handle to hand the work to an agent.',
   'automations.list.new': 'New automation',
   'automations.list.loading': 'Loading…',

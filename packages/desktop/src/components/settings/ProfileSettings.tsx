@@ -233,9 +233,10 @@ function HandleRow() {
 
 export function ProfileSettings({ onSignOut }: { onSignOut(): void }) {
   const me = useActiveStore((s) => s.me);
+  const t = useT();
 
   return (
-    <SettingsPage title="Profile" description="Who you are signed in as on this server.">
+    <SettingsPage section="profile" description={t('settings.desc.profile')}>
       <SettingsGroup>
         <AvatarRow />
         <HandleRow />

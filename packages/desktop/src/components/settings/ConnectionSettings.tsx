@@ -53,13 +53,14 @@ function ProjectionRow() {
 }
 
 export function ConnectionSettings({ onSignOut }: { onSignOut(): void }) {
+  const t = useT();
   const connected = useActiveStore((s) => s.connected);
   // 보관된 값이 아니라 **지금 붙어 있는** 주소를 보여준다. 키체인 읽기가 비동기가 되면서
   // 렌더 중에 읽을 수 없게 됐고, 어차피 사용자가 알고 싶은 것은 실제 연결 대상이다.
   const baseUrl = getController().api.baseUrl || '—';
 
   return (
-    <SettingsPage title="Connection" description="The harkroom server this app talks to.">
+    <SettingsPage section="connection" description={t('settings.desc.connection')}>
       <SettingsGroup>
         {/* #165: 이 행은 계속 **활성 커뮤니티**를 보여 준다. 이 기기가 아는 서버 전부를
             보는 자리는 Communities 다 — 여기서 목록을 또 그리면 같은 사실이 두 곳에 산다. */}

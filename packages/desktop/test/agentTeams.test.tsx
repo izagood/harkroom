@@ -565,10 +565,11 @@ describe('설정 목차에서 Teams 가 사라졌다 (문서 4단계)', () => {
   beforeEach(() => seed(true));
 
   it('9. 목차에 Teams 항목이 없고 그 이름이 섹션으로 통과하지 않는다', () => {
-    const labels = SETTINGS_GROUPS.flatMap((g) => g.items.map((i) => i.label));
-    expect(labels).not.toContain('Teams');
-    // `Handle Groups` 는 **남는다** — 갈라 두기로 한 결정(`sections.ts` 의 근거).
-    expect(labels).toContain('Handle Groups');
+    // 목차 이름은 이제 사전 키다(UX ④) — 줄의 **id** 로 잰다.
+    const ids = SETTINGS_GROUPS.flatMap((g) => g.items.map((i) => i.id as string));
+    expect(ids).not.toContain('teams');
+    // `handle-groups` 는 **남는다** — 갈라 두기로 한 결정(`sections.ts` 의 근거).
+    expect(ids).toContain('handle-groups');
     // 옛 배선이 들고 오는 `'teams'` 는 섹션이 아니다.
     expect(isSectionId('teams')).toBe(false);
     expect(isSectionId('agents')).toBe(true);
@@ -582,7 +583,7 @@ describe('설정 목차에서 Teams 가 사라졌다 (문서 4단계)', () => {
     setController(new Controller(api, fakeWsFactory().makeWs));
     render(<SettingsScreen onBack={vi.fn()} onSignOut={vi.fn()} onCommunitiesEmpty={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Agents' }));
+    fireEvent.click(screen.getByRole('button', { name: '에이전트' }));
     // 기본 묶음은 **에이전트**다 — 그것이 이 화면의 오늘 모양이고, 팀이 기본이 되면
     // 에이전트를 보러 온 사람이 매번 탭을 눌러야 한다.
     await waitFor(() => expect(screen.getByTestId('agent-grid')).toBeTruthy());

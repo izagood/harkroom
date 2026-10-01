@@ -1,17 +1,19 @@
 import { usePrefsStore } from '../../state/prefsStore';
+import { useT } from '../../i18n/useT';
 import { SettingsGroup, SettingsPage, Toggle } from './primitives';
 
 /** Tauri v2 가 주입하는 표식. 브라우저 dev 모드에는 알림 플러그인 자체가 없다. */
 const hasNotificationSurface = (): boolean => '__TAURI_INTERNALS__' in window;
 
 export function NotificationSettings() {
+  const t = useT();
   const n = usePrefsStore((s) => s.notifications);
   const set = usePrefsStore((s) => s.setNotifications);
 
   return (
     <SettingsPage
-      title="Notifications"
-      description="harkroom only notifies you while its window is in the background."
+      section="notifications"
+      description={t('settings.desc.notifications')}
     >
       {!hasNotificationSurface() && (
         <p data-testid="no-notification-surface"

@@ -31,7 +31,7 @@ export function AppearanceSettings() {
   }`;
 
   return (
-    <SettingsPage title={t('appearance.title')} description={t('appearance.description')}>
+    <SettingsPage section="appearance" description={t('appearance.description')}>
       <SettingsGroup title={t('appearance.colorMode')}>
         {/*
           `radiogroup` 이 있어야 스크린리더가 "셋 중 하나를 고르는 자리"라고 말한다.

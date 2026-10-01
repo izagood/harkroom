@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { undoSendStorage } from '../../lib/prefs';
+import { useT } from '../../i18n/useT';
 import { SettingsGroup, SettingsPage } from './primitives';
 
 /**
@@ -15,6 +16,7 @@ const CHOICES = [0, 5_000, 10_000, 30_000];
  * 기다릴지는 이 기기에서 일하는 방식이라 서버가 알 이유가 없다.
  */
 export function MessageSettings() {
+  const t = useT();
   // 저장소를 한 번만 읽고 지역 state 로 끌고 간다. 이 값을 읽는 곳은 컴포저이고, 컴포저는
   // 전송할 때마다 저장소를 다시 읽으므로 여기서 전역 스토어를 늘릴 이유가 없다.
   const [windowMs, setWindowMs] = useState(() => undoSendStorage.loadWindowMs());
@@ -26,8 +28,8 @@ export function MessageSettings() {
 
   return (
     <SettingsPage
-      title="Messages"
-      description="These choices live on this device only."
+      section="messages"
+      description={t('settings.desc.messages')}
     >
       <SettingsGroup title="Undo send">
         <div className="px-4 py-3">

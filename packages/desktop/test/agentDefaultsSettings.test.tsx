@@ -47,7 +47,7 @@ afterEach(() => {
 
 describe('Agent defaults — 목차의 별도 항목이다', () => {
   it('설정 목차에 서 있고 Agents 바로 뒤다', () => {
-    const app = SETTINGS_GROUPS.find((g) => g.title === 'App')!;
+    const app = SETTINGS_GROUPS.find((g) => g.id === 'app')!;
     const ids = app.items.map((i) => i.id);
     expect(ids).toContain('agent-defaults');
     // 붙어 서야 둘의 관계가 읽힌다 — 하나는 개별, 하나는 워크스페이스 전체다.

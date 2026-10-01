@@ -91,7 +91,7 @@ export function OperatorsSettings() {
   };
 
   return (
-    <SettingsPage title="Operators" description={t('operators.description')}>
+    <SettingsPage section="operators" description={t('operators.description')}>
       <SettingsGroup>
         {operators === null && <p className="px-4 py-3 text-meta text-fg-muted">{t('operators.loading')}</p>}
         {operators === 'error' && <p role="alert" className="px-4 py-3 text-meta text-danger">{t('operators.listFailed')}</p>}

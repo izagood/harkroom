@@ -1,9 +1,18 @@
 import type { ReactNode } from 'react';
+import { useT } from '../../i18n/useT';
+import { navKey, type SectionId } from './sections';
 
 /** 섹션 한 장의 껍데기 — 제목·설명·본문. 섹션마다 다시 만들면 여백이 어긋난다. */
-export function SettingsPage({ title, description, width = 'default', children }: {
-  title: string; description?: string; width?: 'default' | 'wide'; children: ReactNode;
+export function SettingsPage({ section, description, width = 'default', children }: {
+  /**
+   * 이 페이지가 **목차의 어느 줄인가**. 제목은 그 줄과 같은 사전 키에서 나온다(`navKey`) —
+   * 제목을 따로 받으면 목차 이름과 페이지 제목이 다시 갈라진다(UX ④ H5: "Appearance" 를
+   * 눌렀는데 "모양" 이 열렸다). 목차에 없는 페이지는 없다.
+   */
+  section: SectionId; description?: string; width?: 'default' | 'wide'; children: ReactNode;
 }) {
+  const t = useT();
+  const title = t(navKey(section));
   return (
     /*
       **폭은 화면이 고른다.** 기본은 `max-w-3xl`(768px) 이고 대부분 그대로다 — 설정 화면
