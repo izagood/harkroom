@@ -44,7 +44,7 @@ export interface RunnerLinkDeps {
    */
   onRequest?(runnerId: string, agentId: string, req: RunnerLinkRequest): Promise<RunnerLinkResponse>;
   /**
-   * 단방향 통지(`runner.pollStopped`). **서버로 안 나간다** — 오퍼레이터 안에서 끝나는 말이다
+   * 단방향 통지(`runner.pollStopped`·`mcp.authRejected`). **서버로 안 나간다** — 오퍼레이터 안에서 끝나는 말이다
    * (`shared/runnerLink.ts` 의 `RunnerLinkNotice`). 없으면 그냥 버린다.
    */
   onNotice?(runnerId: string, agentId: string, notice: RunnerLinkNotice): void;

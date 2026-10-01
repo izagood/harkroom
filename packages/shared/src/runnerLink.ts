@@ -120,7 +120,27 @@ export type RunnerLinkResponse =
  * 여전히 미읽음이고, 그대로 두면 **교체 러너가 같은 멘션을 다시 집어 두 번 답한다.**
  * 오퍼레이터가 이 목록을 교체 러너에게 넘겨 그동안만 건너뛰게 한다.
  */
-export type RunnerLinkNotice = { type: 'runner.pollStopped'; holding: number[] };
+export type RunnerLinkNotice =
+  | { type: 'runner.pollStopped'; holding: number[] }
+  | McpAuthRejectedNotice;
+
+/**
+ * `mcp.authRejected`(2026-10-01): 하네스가 **오퍼레이터가 구워 준 `Authorization` 헤더를 MCP
+ * 서버에 거절당했다**(claude 기록의 `failedMcpServers[].errorCode === 'AUTH_HEADER_REJECTED'`).
+ *
+ * 헤더가 있으면 claude 는 자기 OAuth 로 물러나지 않는다 — 그 턴의 MCP 는 그냥 죽는다. 토큰은
+ * 오퍼레이터가 들고 있고(`operator/src/mcpOAuth.ts`), 오퍼레이터는 만료 시각만 보고 refresh
+ * 하므로 **만료 전에 무효가 된 토큰**(10-01 slack, 12:08~14:51 KST 연속 401)을 스스로는 모른다.
+ * 그래서 데스크톱도 "인증됨"을 띄웠다. 이 통지가 그 사실을 오퍼레이터에 돌려준다.
+ *
+ * `servers` — 거절당한 MCP 서버 **이름**(오퍼레이터 레지스트리의 키). 토큰도 에러 문구도
+ * 싣지 않는다: 이름이면 오퍼레이터가 무엇을 할지 정하기에 충분하다.
+ *
+ * `turnStartedAtMs` — 거절당한 턴이 **시작된 시각**(같은 기계의 시계). 그 턴의 하네스는 그때의
+ * 설정(그때의 토큰)으로 떴다. 오퍼레이터는 이것을 토큰을 받은 시각과 비교해, 이미 바꾼 옛
+ * 토큰에 대한 늦은 보고(동시에 돌던 다른 턴)를 새 토큰의 실패로 읽지 않는다.
+ */
+export type McpAuthRejectedNotice = { type: 'mcp.authRejected'; servers: string[]; turnStartedAtMs: number };
 
 /**
  * 오퍼레이터 → 러너 **단방향 통지.** 서버에서 오는 말이 아니라 오퍼레이터가 하는 말이다.
@@ -142,6 +162,10 @@ export function isOperatorToRunnerNotice(value: unknown): value is OperatorToRun
 export function isRunnerLinkNotice(value: unknown): value is RunnerLinkNotice {
   if (typeof value !== 'object' || value === null) return false;
   const m = value as Record<string, unknown>;
+  if (m.type === 'mcp.authRejected') {
+    return Array.isArray(m.servers) && m.servers.length > 0 && m.servers.every((v) => typeof v === 'string' && v.length > 0)
+      && typeof m.turnStartedAtMs === 'number' && Number.isFinite(m.turnStartedAtMs);
+  }
   if (m.type !== 'runner.pollStopped') return false;
   return Array.isArray(m.holding) && m.holding.every((v) => typeof v === 'number' && Number.isInteger(v));
 }

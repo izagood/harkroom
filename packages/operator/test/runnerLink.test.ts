@@ -147,6 +147,24 @@ describe('runnerLink 서버', () => {
     expect(bridge.destroyed()).toBe(true);
   });
 
+  it('mcp.authRejected 는 릴레이 프레임이 아니라 onNotice 로 간다 — 모양이 틀리면 통지로 안 친다', () => {
+    const frames: unknown[] = [];
+    const notices: unknown[] = [];
+    const link = createRunnerLinkServer({
+      onFrame: (_r, _a, f) => frames.push(f), onNotice: (r, a, n) => notices.push({ r, a, n }), log: () => {},
+    });
+    link.expect('r-1', 'agent-a', 'sec');
+    const s = fakeSocket();
+    link.accept(s.socket, hello('r-1', 'sec'), []);
+    s.feed({ type: 'mcp.authRejected', servers: ['slack'], turnStartedAtMs: 1_000 });
+    s.feed({ type: 'mcp.authRejected', servers: [], turnStartedAtMs: 1_000 });
+    s.feed({ type: 'mcp.authRejected', servers: [42], turnStartedAtMs: 1_000 });
+    s.feed({ type: 'mcp.authRejected', servers: ['slack'] });
+    expect(notices).toEqual([{ r: 'r-1', a: 'agent-a', n: { type: 'mcp.authRejected', servers: ['slack'], turnStartedAtMs: 1_000 } }]);
+    // 틀린 모양은 통지가 아니다 — 릴레이로 흘러가 서버 쪽 wrap 에서 버려진다(옛 오퍼레이터와 같은 결과).
+    expect(frames).toHaveLength(3);
+  });
+
   it('forget 하면 그 runnerId 는 다시 붙을 수 없다 — 죽은 러너의 secret 을 남기지 않는다', () => {
     const link = createRunnerLinkServer({ onFrame: () => {}, log: () => {} });
     link.expect('r-1', 'agent-a', 'sec');

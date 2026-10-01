@@ -8,7 +8,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { readLastApiError, readLastAssistantText, readPermissionDenials, readTranscriptTurnState, sessionTranscriptGrewSince } from '../src/harnessErrors.js';
+import { readLastApiError, readLastAssistantText, readMcpAuthRejections, readPermissionDenials, readTranscriptTurnState, sessionTranscriptGrewSince } from '../src/harnessErrors.js';
 
 /** `isApiErrorMessage` 레코드 한 줄. 실물 세션 파일의 모양을 그대로 쓴다. */
 const rec = (timestamp: string, text: string): string => JSON.stringify({
@@ -305,5 +305,46 @@ describe('readLastAssistantText', () => {
   it('이 턴에 끝낸 말이 없으면 null', async () => {
     const projectsDir = await seed([say(-60, 'end_turn', '앞 턴의 말'), say(1, 'tool_use', '보는 중')]);
     expect(await readLastAssistantText('claude-code', SID, { projectsDir, sinceMs: T0 })).toBeNull();
+  });
+});
+
+describe('readMcpAuthRejections', () => {
+  const T0 = Date.parse('2026-10-01T04:41:00.000Z');
+  const at = (s: number) => new Date(T0 + s * 1000).toISOString();
+  /** 실물(claude 2.1.286, 10-01 task_manager 세션)과 같은 모양의 연결 실패 레코드. */
+  const failed = (s: number, servers: Array<{ name: string; errorCode?: string; error: string }>, extra: Record<string, unknown> = {}) => ({
+    type: 'attachment', isSidechain: false, timestamp: at(s),
+    attachment: { type: 'deferred_tools_delta', addedNames: [], pendingMcpServers: [], failedMcpServers: servers },
+    ...extra,
+  });
+  const rejected = (name: string) => ({
+    name, errorCode: 'AUTH_HEADER_REJECTED',
+    error: 'Server rejected the configured Authorization header (HTTP 401). Check that the token is valid for this MCP endpoint — OAuth fallback is disabled when headers.Authorization is set.',
+  });
+
+  it('이 턴에 Authorization 헤더를 거절당한 서버 이름을 중복 없이 돌려준다', async () => {
+    const projectsDir = await seed([
+      failed(1, [rejected('slack'), { name: 'ghost', errorCode: 'CONNECTION_CLOSED', error: 'Connection closed' }]),
+      failed(5, [rejected('slack'), rejected('jira')]),
+    ]);
+    expect(await readMcpAuthRejections('claude-code', SID, { projectsDir, sinceMs: T0 })).toEqual(['slack', 'jira']);
+  });
+
+  it('이 턴 이전의 거절·곁가지·다른 실패 코드·말 속 인용은 세지 않는다', async () => {
+    const projectsDir = await seed([
+      failed(-60, [rejected('old')]),
+      failed(1, [rejected('side')], { isSidechain: true }),
+      failed(2, [{ name: 'ghost', errorCode: 'CONNECTION_CLOSED', error: 'AUTH_HEADER_REJECTED 를 인용한 문구' }]),
+      { type: 'assistant', timestamp: at(3), message: { role: 'assistant', content: [{ type: 'text', text: 'slack (AUTH_HEADER_REJECTED) 이라고 적혀 있다' }] } },
+      { type: 'user', timestamp: at(4), message: { role: 'user', content: '"failedMcpServers":[{"name":"evil","errorCode":"AUTH_HEADER_REJECTED"}]' } },
+    ]);
+    expect(await readMcpAuthRejections('claude-code', SID, { projectsDir, sinceMs: T0 })).toEqual([]);
+  });
+
+  it('기록을 읽지 않는 하네스·세션 미상·파일 없음은 빈 배열이다', async () => {
+    const projectsDir = await seed([failed(1, [rejected('slack')])]);
+    expect(await readMcpAuthRejections('codex', SID, { projectsDir, sinceMs: T0 })).toEqual([]);
+    expect(await readMcpAuthRejections('claude-code', null, { projectsDir })).toEqual([]);
+    expect(await readMcpAuthRejections('claude-code', 'ffffffff-0000-0000-0000-000000000000', { projectsDir })).toEqual([]);
   });
 });
