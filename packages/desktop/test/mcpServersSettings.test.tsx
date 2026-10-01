@@ -35,7 +35,10 @@ describe('McpServersSettings', () => {
     fireEvent.change(screen.getByLabelText('자격증명 종류'), { target: { value: 'personal' } });
     fireEvent.click(screen.getByText('넣기'));
     await waitFor(() => expect(c.putMcpServer).toHaveBeenCalledWith('slack', 'personal'));
-    fireEvent.click(screen.getByLabelText('github 빼기'));
+    // 삭제는 확인을 한 번 거친다(UX ④c).
+    fireEvent.click(screen.getByLabelText('github 삭제'));
+    expect(c.deleteMcpServer).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('confirm-ok'));
     await waitFor(() => expect(c.deleteMcpServer).toHaveBeenCalledWith('github'));
   });
   it('이름 문법이 틀리면 서버에 보내지 않고 말한다', async () => {

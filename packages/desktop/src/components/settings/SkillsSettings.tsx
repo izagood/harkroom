@@ -3,7 +3,7 @@ import { skillGroupOf, type SkillGroupId, type WorkspaceSkillView } from '@harkr
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { SettingsPage } from './primitives';
-import { useT } from '../../i18n/useT';
+import { useAgo, useT } from '../../i18n/useT';
 import type { Translate } from '../../i18n';
 
 /**
@@ -56,6 +56,7 @@ export const disableConfirmText = (t: Translate) => t('skills.confirm.disable');
 
 export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
   const t = useT();
+  const ago = useAgo();
   const [skills, setSkills] = useState<WorkspaceSkillView[] | 'error' | null>(null);
   // 제안 알림에서 왔으면 그 스킬의 본문을 처음부터 펼쳐 둔다 — 승인하러 온 사람이
   // 한 번 더 눌러야 본문을 보게 되면, 그 클릭이 곧 안 보고 승인하는 길이 된다.
@@ -147,8 +148,9 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                     <div className="min-w-0 flex-1">
                       <span className="font-mono font-medium text-fg">{skill.slug}</span>
                       <span className="ml-2 text-fg-muted">제안자 @{handleOf(skill.proposedBy)}</span>
-                      <span className="ml-2 text-fg-subtle">
-                        {new Date(skill.proposedAt).toLocaleString()}
+                      {/* 상대 시각으로(UX ④c). 전체 시각은 올려 두면 보인다. */}
+                      <span className="ml-2 text-fg-subtle" title={new Date(skill.proposedAt).toLocaleString()}>
+                        {ago(new Date(skill.proposedAt).getTime())}
                       </span>
                     </div>
 

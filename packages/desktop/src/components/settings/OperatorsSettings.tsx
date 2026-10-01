@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import type { OperatorCapabilities, OperatorView } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
-import { useT } from '../../i18n/useT';
+import { useAgo, useT } from '../../i18n/useT';
+import { ConfirmDialog } from '../ConfirmDialog';
 import { hasCapability } from '../../lib/capabilities';
 import { hasOperatorLocalSurface, registerLocalOperator } from '../../lib/operatorLocal';
 import { SettingsGroup, SettingsPage } from './primitives';
@@ -80,15 +81,24 @@ export function OperatorsSettings() {
     }
   };
 
+  /** 지우기 전에 한 번 묻는다(UX ④c) — `McpServersSettings` 와 같은 모양이다. */
+  const [confirming, setConfirming] = useState<OperatorView | null>(null);
+  const [revoking, setRevoking] = useState(false);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
   const revoke = async (op: OperatorView) => {
-    setError(null);
+    setRevokeError(null);
+    setRevoking(true);
     try {
       await getController().revokeOperator(op.id);
+      setConfirming(null);
       reload();
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('operators.revokeFailed'));
+      setRevokeError(e instanceof Error ? e.message : t('operators.revokeFailed'));
+    } finally {
+      setRevoking(false);
     }
   };
+  const ago = useAgo();
 
   return (
     <SettingsPage section="operators" description={t('operators.description')}>
@@ -107,7 +117,12 @@ export function OperatorsSettings() {
                     순간의 값이고, 끊긴 오퍼레이터의 배정은 서버가 오프라인으로 그린다. */}
                 <span className={`mr-1 inline-block h-2 w-2 rounded-full ${op.online ? 'bg-success' : 'bg-fg-subtle'}`} />
                 {op.online ? t('operators.online') : t('operators.offline')}
-                {op.lastSeenAt && !op.online && ` · ${t('operators.lastSeen', { at: new Date(op.lastSeenAt).toLocaleString() })}`}
+                {/* 상대 시각으로(UX ④c) — 초까지 찍은 절대 시각은 읽기 느리다. 전체 시각은 `title` 에. */}
+                {op.lastSeenAt && !op.online && (
+                  <span title={new Date(op.lastSeenAt).toLocaleString()}>
+                    {` · ${t('operators.lastSeen', { at: ago(new Date(op.lastSeenAt).getTime()) })}`}
+                  </span>
+                )}
               </span>
               {/* 능력(스펙 §3): 이 머신이 돌릴 수 있는 에이전트 수와 하네스. 배정이 409 로 거절되는
                   두 이유(로컬 설정에 없다·하네스가 없다)를 사람이 여기서 미리 본다. */}
@@ -125,13 +140,27 @@ export function OperatorsSettings() {
             <button
               className="shrink-0 rounded border border-border px-2 py-1 text-meta text-fg hover:bg-surface-sunken"
               aria-label={t('operators.revokeAction', { name: op.name })}
-              onClick={() => void revoke(op)}
+              onClick={() => { setRevokeError(null); setConfirming(op); }}
             >
               {t('operators.revoke')}
             </button>
           </div>
         ))}
       </SettingsGroup>
+      {confirming && (
+        <ConfirmDialog
+          title={t('operators.confirmTitle', { name: confirming.name })}
+          detail={t('operators.confirmDetail')}
+          confirmLabel={t('operators.revoke')}
+          cancelLabel={t('operators.cancel')}
+          detailKind="note"
+          danger
+          busy={revoking}
+          error={revokeError}
+          onConfirm={() => void revoke(confirming)}
+          onCancel={() => { setConfirming(null); setRevokeError(null); }}
+        />
+      )}
 
       {error && (
         <div className="mb-4 rounded border border-danger-border bg-danger-surface p-3">

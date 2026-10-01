@@ -68,10 +68,21 @@ describe('OperatorsSettings', () => {
     expect(screen.getByText(/지금만 보인다/)).toBeTruthy();
   });
 
-  it('폐기는 컨트롤러에 닿고 목록을 다시 읽는다', async () => {
+  /**
+   * **삭제는 한 번 묻고 간다**(UX ④c — 폐기·빼기·Remove 를 "삭제" 하나로). 누르자마자 지우지
+   * 않는다: 확인 창이 서고, 취소하면 아무 일도 없고, 확인해야 컨트롤러에 닿는다.
+   */
+  it('삭제는 확인을 거쳐 컨트롤러에 닿고 목록을 다시 읽는다', async () => {
     const c = fakeController([op('op-1', 'old-box')]);
     render(<OperatorsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: 'old-box 폐기' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'old-box 삭제' }));
+    expect(c.revokeOperator).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('confirm-cancel'));
+    expect(screen.queryByTestId('confirm-ok')).toBeNull();
+    expect(c.revokeOperator).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'old-box 삭제' }));
+    fireEvent.click(screen.getByTestId('confirm-ok'));
     await waitFor(() => {
       expect(c.revokeOperator).toHaveBeenCalledWith('op-1');
       expect(c.operators).toHaveBeenCalledTimes(2);

@@ -18,6 +18,7 @@ import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { hasCapability } from '../../lib/capabilities';
 import { SettingsGroup, SettingsPage } from './primitives';
+import { ConfirmDialog } from '../ConfirmDialog';
 import { useT } from '../../i18n/useT';
 
 const NAME_RE = /^[a-z0-9-]{1,32}$/;
@@ -52,10 +53,19 @@ export function McpServersSettings() {
     catch (e) { setError(t('mcpServers.saveFailed', { reason: e instanceof Error ? e.message : String(e) })); }
     finally { setBusy(false); }
   };
+  /**
+   * **지우기 전에 한 번 묻는다**(UX ④c). 전에는 "빼기" 를 누르는 순간 지워졌다 — 이 이름을
+   * 켠 에이전트는 다음 기동부터 그 MCP 없이 돈다. 실패하면 창을 닫지 않고 창 안에 적는다
+   * (`ConfirmDialog` 의 약속).
+   */
+  const [confirming, setConfirming] = useState<McpServerRow | null>(null);
+  const [removing, setRemoving] = useState(false);
   const remove = async (row: McpServerRow) => {
     setError(null);
-    try { await getController().deleteMcpServer(row.name); reload(); }
+    setRemoving(true);
+    try { await getController().deleteMcpServer(row.name); setConfirming(null); reload(); }
     catch (e) { setError(t('mcpServers.deleteFailed', { reason: e instanceof Error ? e.message : String(e) })); }
+    finally { setRemoving(false); }
   };
 
   return (
@@ -83,7 +93,7 @@ export function McpServersSettings() {
               <button
                 className="shrink-0 rounded border border-border px-2 py-1 text-meta text-fg hover:bg-surface-sunken"
                 aria-label={t('mcpServers.removeAction', { name: row.name })}
-                onClick={() => void remove(row)}
+                onClick={() => { setError(null); setConfirming(row); }}
               >
                 {t('mcpServers.remove')}
               </button>
@@ -92,7 +102,21 @@ export function McpServersSettings() {
         ))}
       </SettingsGroup>
 
-      {error && (
+      {confirming && (
+        <ConfirmDialog
+          title={t('mcpServers.confirmTitle', { name: confirming.name })}
+          detail={t('mcpServers.confirmDetail')}
+          confirmLabel={t('mcpServers.remove')}
+          cancelLabel={t('mcpServers.cancel')}
+          detailKind="note"
+          danger
+          busy={removing}
+          error={error}
+          onConfirm={() => void remove(confirming)}
+          onCancel={() => { setConfirming(null); setError(null); }}
+        />
+      )}
+      {error && !confirming && (
         <div className="mb-4 rounded border border-danger-border bg-danger-surface p-3">
           <p role="alert" className="text-meta text-danger">{error}</p>
         </div>

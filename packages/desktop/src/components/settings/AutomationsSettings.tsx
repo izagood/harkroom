@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AutomationGithubTrigger, AutomationIngressIssued, AutomationRunView, AutomationTrigger, AutomationView } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
-import { Button, Field, Segmented, Select, SettingsPage, TextInput } from './primitives';
+import { Button, Field, Segmented, Select, SettingsPage, Switch, TextInput } from './primitives';
 import { useLocale, useT } from '../../i18n/useT';
 import { describeTrigger, localTimeZone, weekdayName } from '../../lib/automation';
 
@@ -312,8 +312,8 @@ export function AutomationsSettings() {
                   {t('automations.proposal.approve')}
                 </Button>
               ) : <label className="flex items-center gap-2 text-meta text-fg-muted">
-                <input type="checkbox" role="switch" data-testid="automation-enabled" checked={a.enabled} disabled={busy}
-                  onChange={(e) => void act(() => getController().api.updateAutomation(a.id, { enabled: e.target.checked }), t('automations.form.saveFailed'))} />
+                <Switch testId="automation-enabled" checked={a.enabled} disabled={busy}
+                  onChange={(on) => void act(() => getController().api.updateAutomation(a.id, { enabled: on }), t('automations.form.saveFailed'))} />
                 {t('automations.row.enabled')}
               </label>}
             </div>

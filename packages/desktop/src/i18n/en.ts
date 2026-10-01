@@ -213,6 +213,12 @@ export const en = {
   'appearance.modeSystem': 'System',
   'appearance.modeLight': 'Light',
   'appearance.modeDark': 'Dark',
+  'mcpServers.confirmTitle': "Delete MCP server '{name}'?",
+  'mcpServers.confirmDetail': 'Agents that have this name turned on run without this MCP from their next start. The definition on operator machines stays.',
+  'operators.confirmTitle': "Delete operator '{name}'?",
+  'operators.confirmDetail': 'This machine cannot run agents until it is registered again. This cannot be undone.',
+  'mcpServers.cancel': 'Cancel',
+  'operators.cancel': 'Cancel',
   'settings.back': 'Back to app',
   'settings.group.personal': 'Personal',
   'settings.group.app': 'App',
@@ -684,7 +690,8 @@ export const en = {
 
   'skills.confirm.approve':
     'Approving installs this body as a SKILL.md file for every agent — the harness reads it when it needs it',
-  'skills.confirm.disable': 'Disabling means every agent deletes this skill\'s files and links',
+  /** 되돌릴 수 없다는 것을 적는다(designer ④c 판정 4) — 서버의 approve 는 `approved_at is null` 만 받아, 끈 스킬은 다시 제안(`proposeSkill` 의 on conflict 가 초기화)해야만 산다. */
+  'skills.confirm.disable': "Disabling removes this skill's file and link from every agent. It cannot be turned back on — an agent has to propose it again.",
   'skills.confirm.reject':
     'Rejecting drops this skill to disabled — to undo it an agent has to propose it again',
   'skills.confirm.approveStart': 'Confirm approve',
@@ -3872,9 +3879,9 @@ export const en = {
   'operators.harnessReady': 'installed, logged in',
   'operators.harnessNotLoggedIn': 'installed, not logged in',
   'operators.harnessMissing': 'not installed',
-  'operators.revoke': 'Revoke',
-  'operators.revokeAction': 'Revoke {name}',
-  'operators.revokeFailed': 'The operator was not revoked',
+  'operators.revoke': 'Delete',
+  'operators.revokeAction': 'Delete {name}',
+  'operators.revokeFailed': 'The operator was not deleted',
   'operators.registerNote':
     'A registration code is valid for five minutes and works once. Run the command it prints on the machine, '
     + 'and that machine shows up here as an operator.',
@@ -3974,8 +3981,8 @@ export const en = {
   'mcpServers.addNote': 'Then define it on each operator machine that runs an agent using it: <data dir>/operator/mcp-servers.json, or ~/.claude.json.',
   'mcpServers.badName': 'Names are [a-z0-9-], 1 to 32 characters',
   'mcpServers.saveFailed': 'Not saved: {reason}',
-  'mcpServers.remove': 'Remove',
-  'mcpServers.removeAction': 'Remove {name}',
+  'mcpServers.remove': 'Delete',
+  'mcpServers.removeAction': 'Delete {name}',
   'mcpServers.deleteFailed': 'Not removed: {reason}',
   'agents.assignment.heading': 'Where it runs',
   'agents.local.heading': 'This machine',
