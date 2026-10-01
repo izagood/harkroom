@@ -433,6 +433,8 @@ class StringsEn implements Strings {
 
   @override
   String get linkConfirmCancel => 'Cancel';
+  @override
+  String get markdownTableMoreRows => '…{n} more rows';
 
   @override
   String get linkUserInfoWarning => 'Something is prefixed to this address. It actually opens the bold host above.';

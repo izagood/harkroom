@@ -162,7 +162,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
                 align: alignOf(c)),
           ),
         );
-    return SingleChildScrollView(
+    final grid = SingleChildScrollView(
       key: const Key('md-table'),
       scrollDirection: Axis.horizontal,
       child: Table(
@@ -178,6 +178,21 @@ class _MarkdownBodyState extends State<MarkdownBody> {
             TableRow(children: [for (var c = 0; c < row.length; c++) cell(row[c], c)]),
         ],
       ),
+    );
+    if (t.omittedRows == 0) return grid;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        grid,
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            context.t.markdownTableMoreRows.replaceAll('{n}', '${t.omittedRows}'),
+            key: const Key('md-table-more'),
+            style: TextStyle(fontSize: HarkroomType.meta, color: k.mute),
+          ),
+        ),
+      ],
     );
   }
 

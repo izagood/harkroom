@@ -51,6 +51,19 @@ void main() {
       expect(outer.items[1].children, isEmpty);
     });
 
+    test('중첩은 상한 깊이까지만 — 더 깊은 항목은 그 깊이에 붙는다', () {
+      final src = List.generate(122, (d) => '${' ' * d}- 깊이$d').join('\n');
+      var list = parseMarkdown(src).single as MdList;
+      var depth = 1;
+      while (list.items.last.children.isNotEmpty) {
+        list = list.items.last.children.single;
+        depth++;
+      }
+      expect(depth, mdListMaxDepth);
+      expect(list.items.length, 122 - (mdListMaxDepth - 1));
+      expect(list.items.last.text, '깊이121');
+    });
+
     test('표시 종류가 바뀌면 다른 목록이다', () {
       final b = parseMarkdown('- 점\n1. 번호');
       expect(b.length, 2);
@@ -115,6 +128,42 @@ void main() {
       final b = parseMarkdown('| a | b |\n| --- | --- |\n| 하나 | 둘 |\n표 뒤의 문장');
       expect((b[0] as MdTable).rows.length, 1);
       expect((b[1] as MdParagraph).text, '표 뒤의 문장');
+    });
+
+    // security #1060 F1: `|` 만 있는 줄을 머리글 열 수만큼 빈 칸으로 채우면 8000자 글 하나가
+    // 200만 칸이 된다.
+    final bomb = '${'|a' * 1000}\n${'|-' * 1000}\n${List.filled(1999, '|').join('\n')}';
+
+    test('열이 상한을 넘는 표는 표가 아니다 — 글자 그대로 남는다', () {
+      final b = parseMarkdown(bomb);
+      expect(b.whereType<MdTable>(), isEmpty);
+      expect(b.whereType<MdParagraph>().first.text, startsWith('|a|a'));
+      String table(int cols) => '${'| a ' * cols}|\n${'|---' * cols}|\n${'| x ' * cols}|';
+      expect(parseMarkdown(table(mdTableMaxCols)).single, isA<MdTable>());
+      expect(parseMarkdown(table(mdTableMaxCols + 1)).whereType<MdTable>(), isEmpty);
+    });
+
+    test('행은 상한에서 자르고 숨긴 수를 센다 — 표 뒤 문장은 그대로 문장이다', () {
+      final rows = List.generate(500, (i) => '| $i | x |').join('\n');
+      final b = parseMarkdown('| a | b |\n|---|---|\n$rows\n표 뒤');
+      final t = b[0] as MdTable;
+      expect(t.rows.length, mdTableMaxRows);
+      expect(t.omittedRows, 500 - mdTableMaxRows);
+      expect((b[1] as MdParagraph).text, '표 뒤');
+    });
+
+    test('칸 합계도 상한 안이다 — 넓은 표는 행이 더 일찍 잘린다', () {
+      const cols = mdTableMaxCols;
+      final rows = List.filled(300, '|' * (cols + 1)).join('\n');
+      final t = parseMarkdown('${'|a' * cols}|\n${'|-' * cols}|\n$rows').single as MdTable;
+      expect((t.rows.length + 1) * cols, lessThanOrEqualTo(mdTableMaxCells));
+      expect(t.rows.length + t.omittedRows, 300);
+    });
+
+    test('넓은 열 + 수천 행 본문도 표 칸은 상한 안이다', () {
+      final b = parseMarkdown('${'|a' * mdTableMaxCols}\n${'|-' * mdTableMaxCols}\n${List.filled(1999, '|').join('\n')}');
+      final t = b.single as MdTable;
+      expect((t.rows.length + 1) * t.align.length, lessThanOrEqualTo(mdTableMaxCells));
     });
 
     test('문단 바로 뒤의 표도 표다', () {
@@ -314,6 +363,33 @@ void main() {
       await tester.pumpWidget(host(MarkdownBody('| $wide |\n|${List.filled(6, '---').join('|')}|\n| ${List.filled(6, 'x').join(' | ')} |')));
       expect(tester.takeException(), isNull);
       expect(tester.getSize(find.byType(Table)).width, greaterThan(390));
+    });
+
+    testWidgets('폭탄 본문(1000열×1999행)도 바로 그린다', (tester) async {
+      final bomb = '${'|a' * 1000}\n${'|-' * 1000}\n${List.filled(1999, '|').join('\n')}';
+      final wideBomb = '${'|a' * mdTableMaxCols}\n${'|-' * mdTableMaxCols}\n${List.filled(1999, '|').join('\n')}';
+      final sw = Stopwatch()..start();
+      await tester.pumpWidget(host(SingleChildScrollView(child: MarkdownBody(bomb))));
+      await tester.pumpWidget(host(SingleChildScrollView(child: MarkdownBody(wideBomb))));
+      expect(sw.elapsed, lessThan(const Duration(seconds: 5)));
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const Key('md-table-more')), findsOneWidget);
+    });
+
+    testWidgets('잘린 표는 숨긴 행 수를 말한다', (tester) async {
+      final rows = List.generate(205, (i) => '| $i |').join('\n');
+      await tester.pumpWidget(host(SingleChildScrollView(child: MarkdownBody('| a |\n|---|\n$rows'))));
+      expect(tester.widget<Text>(find.byKey(const Key('md-table-more'))).data, '…5행 더');
+    });
+
+    testWidgets('깊이 122 목록도 폰 폭에서 넘치지 않는다', (tester) async {
+      tester.view.physicalSize = const Size(390 * 3, 844 * 3);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final src = List.generate(122, (d) => '${' ' * d}- 깊이$d').join('\n');
+      await tester.pumpWidget(host(SingleChildScrollView(child: MarkdownBody(src))));
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const Key('md-list')), findsNWidgets(mdListMaxDepth));
     });
 
     testWidgets('취소선·구분선·중첩 목록을 그린다', (tester) async {

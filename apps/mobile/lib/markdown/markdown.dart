@@ -76,11 +76,29 @@ enum MdAlign { left, center, right }
 /// GFM 표. [align] 의 길이가 곧 **열 수**이고 모든 행이 그 길이로 맞춰져 들어온다 — 넘친 칸은
 /// 버리고 모자란 칸은 빈 칸이다. 칸은 아직 인라인 해석 전의 글이다.
 class MdTable extends MdBlock {
-  const MdTable(this.align, this.head, this.rows);
+  const MdTable(this.align, this.head, this.rows, {this.omittedRows = 0});
   final List<MdAlign?> align;
   final List<String> head;
   final List<List<String>> rows;
+
+  /// 상한([mdTableMaxRows]·[mdTableMaxCells])에 걸려 **그리지 않은 행 수**. 0 이 아니면
+  /// 그림이 "…n행 더"를 남긴다 — 말없이 자르면 사람은 표가 거기서 끝난 줄 안다.
+  final int omittedRows;
 }
+
+/// 표 크기 상한(security #1060 F1). 칸은 모두 위젯이 되고 `IntrinsicColumnWidth` 는 열마다
+/// 모든 칸을 잰다 — 짧은 글 하나(`|` 만 있는 줄 수천 개 + 넓은 머리글)가 행을 열 수만큼 빈 칸으로
+/// 채우면 수백만 칸이 되어 그 채널을 여는 폰이 멈춘다.
+///
+/// - 열이 [mdTableMaxCols] 를 넘으면 **표가 아니다** — 단락 글자 그대로 둔다(원문이 보이는 편이 낫다).
+/// - 행은 [mdTableMaxRows] 또는 칸 합계 [mdTableMaxCells](머리글 포함)에서 자른다.
+const mdTableMaxCols = 32;
+const mdTableMaxRows = 200;
+const mdTableMaxCells = 2000;
+
+/// 목록 중첩 깊이 상한(security #1060 F2). 더 깊이 들여 쓴 항목은 이 깊이에 붙는다 — 깊이마다
+/// 글머리표 폭만큼 오른쪽으로 밀려서, 상한이 없으면 폰 폭을 넘는다.
+const mdListMaxDepth = 8;
 
 final _fence = RegExp(r'^\s*(```|~~~)\s*([\w+-]*)\s*$');
 final _heading = RegExp(r'^(#{1,6})\s+(.*)$');
@@ -223,7 +241,7 @@ class _RawItem {
 int _indentWidth(String s) => s.runes.fold(0, (n, r) => n + (r == 0x09 ? 2 : 1));
 
 /// 연속한 항목들을 **중첩된** 목록으로 접는다. 돌려주는 둘째 값은 다음에 볼 항목.
-(MdList, int) _foldList(List<_RawItem> items, int from, int indent) {
+(MdList, int) _foldList(List<_RawItem> items, int from, int indent, [int depth = 0]) {
   final ordered = items[from].ordered;
   final start = items[from].start;
   final out = <({String text, List<MdList> children})>[];
@@ -231,8 +249,9 @@ int _indentWidth(String s) => s.runes.fold(0, (n, r) => n + (r == 0x09 ? 2 : 1))
   while (i < items.length) {
     final it = items[i];
     if (it.indent < indent) break;
-    if (it.indent > indent && out.isNotEmpty) {
-      final nested = _foldList(items, i, it.indent);
+    // 깊이 상한에 닿으면 더 깊은 항목도 이 목록의 항목이 된다(겹치지 않는다).
+    if (it.indent > indent && out.isNotEmpty && depth + 1 < mdListMaxDepth) {
+      final nested = _foldList(items, i, it.indent, depth + 1);
       out.last.children.add(nested.$1);
       i = nested.$2;
       continue;
@@ -306,18 +325,27 @@ List<MdAlign?>? _delimAligns(String line) {
   if (!piped || at + 1 >= lines.length) return null;
   final align = _delimAligns(lines[at + 1]);
   if (align == null || align.length != head.length) return null;
+  if (align.length > mdTableMaxCols) return null;
+  final maxRows = [mdTableMaxRows, mdTableMaxCells ~/ align.length - 1].reduce((a, b) => a < b ? a : b);
   final rows = <List<String>>[];
+  var omitted = 0;
   var j = at + 2;
   // 표는 `|` 가 없는 줄에서 끝난다(빈 줄도 그렇다). 그래야 표 뒤에 붙여 쓴 문장이 마지막
   // 행으로 끌려오지 않는다.
   while (j < lines.length) {
     final (cells, p) = _splitCells(lines[j]);
     if (!p) break;
+    j++;
+    // 상한 뒤의 행은 **세기만** 한다 — 표의 끝(`|` 없는 줄)까지는 표가 삼킨다. 거기서 끊으면
+    // 남은 행이 단락 글자로 쏟아진다.
+    if (rows.length >= maxRows) {
+      omitted++;
+      continue;
+    }
     // 행을 머리글의 열 수에 맞춘다 — 넘치는 칸은 버리고 모자란 칸은 빈 칸.
     rows.add([for (var c = 0; c < align.length; c++) c < cells.length ? cells[c].trim() : '']);
-    j++;
   }
-  return (MdTable(align, [for (final h in head) h.trim()], rows), j);
+  return (MdTable(align, [for (final h in head) h.trim()], rows, omittedRows: omitted), j);
 }
 
 /// 인라인 조각.

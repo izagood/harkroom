@@ -432,6 +432,8 @@ class StringsKo implements Strings {
 
   @override
   String get linkConfirmCancel => '취소';
+  @override
+  String get markdownTableMoreRows => '…{n}행 더';
 
   @override
   String get linkUserInfoWarning => '주소 앞에 다른 이름이 붙어 있다. 실제로 열리는 곳은 위의 굵은 주소다.';

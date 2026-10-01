@@ -97,6 +97,9 @@ abstract class Strings {
   /// 링크 확인: 취소.
   String get linkConfirmCancel;
 
+  /// 표가 행 상한에서 잘렸을 때 남는 줄. `{n}` 은 숨긴 행 수.
+  String get markdownTableMoreRows;
+
   /// userinfo 가 붙은 주소 경고.
   String get linkUserInfoWarning;
 
@@ -564,6 +567,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'linkConfirmTitle': s.linkConfirmTitle,
       'linkConfirmOpen': s.linkConfirmOpen,
       'linkConfirmCancel': s.linkConfirmCancel,
+      'markdownTableMoreRows': s.markdownTableMoreRows,
       'linkUserInfoWarning': s.linkUserInfoWarning,
       'linkNonAsciiWarning': s.linkNonAsciiWarning,
       'loadFailedServer': s.loadFailedServer,
