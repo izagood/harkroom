@@ -1170,6 +1170,12 @@ export interface MessageRow {
   lastKind: 'user' | 'system' | 'progress' | null;
   /** 그 마지막 말의 저자. 생존을 물어볼 대상이다. */
   lastAuthorId: string | null;
+  /**
+   * 스레드 상태 리액션(D안, `threadStatus.ts`). 루트에만, 언제나 하나. 사람 리액션(`reactions`)과
+   * 따로 실린다 — 화면은 맨 앞에 숫자 없이 그리고 누르면 토글되지 않는다. 답글 행·옛 서버는
+   * 키가 없거나 `null` 이다.
+   */
+  statusReaction?: import('./threadStatus.js').ThreadStatusReaction | null;
   /** 스레드 답을 채널에도 함께 올린다(#231). threadRootId 가 없으면 이 값은 항상 false 다. */
   alsoInChannel: boolean;
   /**
@@ -2164,6 +2170,7 @@ export interface SavedMessageRow {
   deleted: boolean;
   /**
    * `deleted` 가 true 면 **null** 이다 — 지워진 메시지의 본문은 내주지 않는다.
+   * 담은 뒤 그 채널을 볼 수 없게 된 경우(private 채널에서 빠짐)도 null 이다.
    * 옵셔널이 아니라 명시적 null 인 이유: 키가 사라지면 '아직 안 받았다'와 '삭제됐다'가
    * 한 화면이 된다.
    */
@@ -2588,6 +2595,9 @@ export type WsServerEvent =
    * 스레드 × 에이전트 모델 지정이 바뀌었다(079). `row` 가 null 이면 풀렸다. 채널을 볼 수
    * 있는 사람에게 간다 — 스레드 머리 칩이 다시 그린다.
    */
+  /** 스레드 상태 리액션이 바뀌었다(D안). `null` 이면 뗐다. */
+  | { type: 'thread.status'; channelId: string; rootId: string;
+      statusReaction: import('./threadStatus.js').ThreadStatusReaction | null; audience: 'all' | string[] }
   | { type: 'thread.agent_model.changed'; channelId: string; threadRootId: string; agentId: string;
       row: ThreadAgentModelView | null; audience: 'all' | string[] };
 
@@ -3501,6 +3511,7 @@ export type MemoryKind = typeof MEMORY_KINDS[number];
 export const MAX_JOURNAL_MEMORIES_PER_ACCOUNT = 60;
 
 export * from './permissions.js';
+export * from './threadStatus.js';
 import type { Capability, Role } from './permissions.js';
 
 /**

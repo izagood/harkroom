@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { AccountStatus, ChannelRow, MessageRow, ThreadAgentModelView } from '@harkroom/shared';
+import type { AccountStatus, ChannelRow, MessageRow, ThreadAgentModelView, ThreadStatusReaction } from '@harkroom/shared';
 import type { WorkspaceSkill } from './services/skills.js';
 
 export type WorkspaceEvent =
@@ -53,6 +53,9 @@ export type WorkspaceEvent =
   // 링크 미리보기 준비 완료(#215). 가져오기는 비동기라, 메시지가 먼저 뜨고 카드가 뒤에 온다.
   | { type: 'link_preview.ready'; url: string; audience: 'all' | string[] }
   // 스레드 × 에이전트 모델 지정(079). 모양은 shared 의 WsServerEvent 와 같다.
+  // 스레드 상태 리액션(D안, services/threadStatus.ts). null 이면 뗐다.
+  | { type: 'thread.status'; channelId: string; rootId: string;
+      statusReaction: ThreadStatusReaction | null; audience: 'all' | string[] }
   | { type: 'thread.agent_model.changed'; channelId: string; threadRootId: string; agentId: string;
       row: ThreadAgentModelView | null; audience: 'all' | string[] };
 
