@@ -11,8 +11,7 @@ export function SettingsPage({ section, description, width = 'default', children
    */
   section: SectionId; description?: string; width?: 'default' | 'wide'; children: ReactNode;
 }) {
-  const t = useT();
-  const title = t(navKey(section));
+
   return (
     /*
       **폭은 화면이 고른다.** 기본은 **640px** 이다(UX ⑤ designer 사양 — 768px `max-w-3xl` 이었고,
@@ -41,9 +40,25 @@ export function SettingsPage({ section, description, width = 'default', children
         내려가 제목과 본문의 비가 1.71 → 1.31 이 아니라, 그 비를 굵기(`font-bold`)와
         여백(`mb-8`)이 이미 나눠 지고 있었다.
       */}
-      <h2 className="text-title font-bold text-fg">{title}</h2>
-      <p className="mt-1 mb-8 text-fg-subtle">{description ?? ''}</p>
+      <SettingsHeader section={section} description={description} />
       {children}
+    </div>
+  );
+}
+
+/**
+ * 설정 페이지의 **머리 한 벌**(UX ⑤b) — 제목(목차 줄과 같은 키)과 부제. `SettingsPage` 가 쓰고,
+ * `SettingsPage` 를 못 쓰는 두 칸 화면(목록 + 상세: 핸들 그룹)도 이것을 위에 얹는다. 머리가
+ * 화면마다 달랐다(M2) — 어떤 화면은 17px 제목, 어떤 화면은 15px 칸 제목만 있었다.
+ */
+export function SettingsHeader({ section, description, className = '' }: {
+  section: SectionId; description?: string; className?: string;
+}) {
+  const t = useT();
+  return (
+    <div className={className}>
+      <h2 className="text-title font-bold text-fg">{t(navKey(section))}</h2>
+      <p className="mt-1 mb-8 text-fg-subtle">{description ?? ''}</p>
     </div>
   );
 }

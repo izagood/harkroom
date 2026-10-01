@@ -281,7 +281,7 @@ export const ko = {
   'groups.edit.renameFailed': '이름을 저장하지 못했다',
   'groups.list.empty': '아직 없다',
   'groups.list.heading': '집합',
-  'groups.list.subtitle': '사람 여럿을 한 이름으로 부르는 장치다. 에이전트를 묶으려면 설정 › Agents 의 팀 묶음이다 — 이름 자리는 둘이 함께 쓴다.',
+  'groups.list.subtitle': '사람 여럿을 한 이름으로 부르는 장치다. 에이전트를 묶으려면 설정 › 에이전트 의 팀 묶음이다 — 이름 자리는 둘이 함께 쓴다.',
   'groups.member.empty': '구성원이 없다',
   'groups.member.pick': '계정 선택…',
   'groups.member.remove': '제거',

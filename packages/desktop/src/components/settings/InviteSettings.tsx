@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { useT } from '../../i18n/useT';
+import { SettingsPage } from './primitives';
 
 export function InviteSettings() {
   const t = useT();
@@ -12,10 +13,7 @@ export function InviteSettings() {
 
   if (!me?.isAdmin) {
     return (
-      <div className="p-5">
-        <h2 className="mb-4 text-name font-bold">Invite</h2>
-        <p className="text-fg-subtle">{t('invite.notAdmin')}</p>
-      </div>
+      <SettingsPage section="invite" description={t('invite.notAdmin')}>{null}</SettingsPage>
     );
   }
 
@@ -34,12 +32,9 @@ export function InviteSettings() {
   };
 
   return (
-    <div className="p-5">
-      <h2 className="mb-4 text-name font-bold">Invite</h2>
-
-      <p className="mb-4 text-fg-muted">
-        {t('invite.note')}
-      </p>
+    // 공통 틀(UX ⑤b) — 제목이 목차 이름("초대")과 같은 키에서 오고, 설명이 부제 자리에 선다.
+    // 전에는 영어 `Invite` 15px 칸 제목에 여백도 다른 화면과 어긋났다(M2).
+    <SettingsPage section="invite" description={t('invite.note')}>
 
 
       {token && (
@@ -73,6 +68,6 @@ export function InviteSettings() {
       >
         {busy ? t('invite.busy') : token ? t('invite.createAgain') : t('invite.create')}
       </button>
-    </div>
+    </SettingsPage>
   );
 }

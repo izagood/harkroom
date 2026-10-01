@@ -443,7 +443,7 @@ describe('팀 설정 화면 (#172)', () => {
     setController(new Controller(api, fakeWsFactory().makeWs));
     const { HandleGroupsSettings } = await import('../src/components/settings/HandleGroupsSettings');
     render(<HandleGroupsSettings />);
-    expect(screen.getByText(/에이전트를 묶으려면 설정 › Agents/)).toBeTruthy();
+    expect(screen.getByText(/에이전트를 묶으려면 설정 › 에이전트/)).toBeTruthy();
   });
   /**
    * 팀장 지정(046).

@@ -5,6 +5,7 @@ import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { GroupBadge } from '../Identity';
 import { useT } from '../../i18n/useT';
+import { SettingsHeader } from './primitives';
 
 /**
  * 핸들 집합(#230)의 설정 화면(#285). 만들기·이름 바꾸기·구성원 추가/제거·삭제.
@@ -154,7 +155,10 @@ export function HandleGroupsSettings() {
   const humanAccounts = Object.values(accounts).filter((a) => a.kind === 'human');
 
   return (
-    <div className="flex h-full min-h-0 bg-surface-raised">
+    // 두 칸 화면이라 `SettingsPage` 를 못 쓴다 — 머리만 공통 한 벌을 얹는다(UX ⑤b, M2).
+    <div className="flex h-full min-h-0 flex-col bg-surface-raised">
+    <SettingsHeader section="handle-groups" description={t('groups.list.subtitle')} className="px-10 pt-10" />
+    <div className="flex min-h-0 flex-1 border-t border-border">
       <aside className="w-56 shrink-0 border-r border-border p-3">
         {isAdmin && (
           <div className="mb-3 space-y-2 rounded border border-border p-2">
@@ -200,12 +204,9 @@ export function HandleGroupsSettings() {
           `not_an_agent`). 그래서 이 줄이 적는 것은 그 차이 하나이고, `Teams` 항목이
           목차에서 사라졌으므로 **어디로 가야 하는지**까지 적어야 한다.
 
-          이 자리인 이유는 목록 머리라서다 — 만들려고 들어온 사람이 첫 칸을 채우기 전에
-          지나는 자리다.
+          그 줄은 이제 **페이지 부제**다(UX ⑤b, 위 `SettingsHeader`) — 목록 머리에 있던 것을
+          공통 머리로 올렸다. 만들려고 들어온 사람이 첫 칸을 채우기 전에 지나는 자리인 것은 같다.
         */}
-        <p className="mt-1 text-meta text-fg-subtle">
-          {t('groups.list.subtitle')}
-        </p>
         {/* 목록이 비어 있는 것과 못 읽은 것을 섞지 않는다: 목록은 스토어(기동 시 조회)에서
             오므로 여기서 "불러오는 중"을 그릴 것이 없고, 조회가 실패했으면 컨트롤러가
             연결 상태로 말한다. 이 자리에서 말할 수 있는 것은 "정말 하나도 없다" 뿐이다. */}
@@ -359,6 +360,7 @@ export function HandleGroupsSettings() {
           </>
         )}
       </div>
+    </div>
     </div>
   );
 }
