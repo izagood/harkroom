@@ -736,6 +736,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 {kindLabel(t, m.kind)}
               </span>
             )}
+            {/* 쓰기 검사(서버 080)에 걸린 판 — 사람이 확인할 때까지 에이전트 프롬프트에 안 실린다. */}
+            {m.flaggedAt && (
+              <span data-testid="memory-flag-badge" className="flex-none rounded bg-warning-surface px-1 text-meta text-warning">
+                {t('agents.memory.flaggedTag')}
+              </span>
+            )}
             {/* 요약(에이전트가 쓴 한 줄)이 있으면 그것을, 없으면 첫 줄을 제목처럼 쓴다. 넘치면 잘린다. */}
             <span className="min-w-0 flex-1 truncate text-meta text-fg-subtle">{m.description || memorySummary(m.value)}</span>
           </button>

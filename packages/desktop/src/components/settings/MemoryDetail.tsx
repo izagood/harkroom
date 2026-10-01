@@ -60,6 +60,17 @@ export function MemoryDetail({ agentId, entry, onChanged }: {
       .finally(() => setBusy(false));
   };
 
+  // 쓰기 검사(서버 080)에 걸린 판을 사람이 **확인**한다 — 표시가 풀리고 이 판이 다시 에이전트
+  // 프롬프트에 실린다. 고치는 길(편집·되돌리기)은 그대로다: 사람이 쓴 판은 검사하지 않는다.
+  const confirmFlag = () => {
+    setBusy(true);
+    setProblem(null);
+    void getController().confirmAgentMemory(agentId, entry.slug)
+      .then(() => onChanged())
+      .catch(() => setProblem(t('agents.memory.flagConfirmFailed')))
+      .finally(() => setBusy(false));
+  };
+
   const openRevisions = () => {
     if (revisions !== 'closed') { setRevisions('closed'); return; }
     setRevisions(null);
@@ -70,6 +81,19 @@ export function MemoryDetail({ agentId, entry, onChanged }: {
 
   return (
     <div className="mb-1 space-y-1 px-2" data-testid={`memory-detail-${entry.slug}`}>
+      {entry.flaggedAt && (
+        <div data-testid="memory-flagged" role="note" className="rounded border border-warning-border bg-warning-surface p-2 text-meta">
+          <p className="text-warning">{t('agents.memory.flaggedNote', { reason: entry.flagReason ?? '' })}</p>
+          <button
+            data-testid="memory-flag-confirm"
+            className="mt-1 rounded border border-border bg-surface px-2 text-meta text-fg disabled:opacity-50"
+            disabled={busy}
+            onClick={confirmFlag}
+          >
+            {t('agents.memory.flagConfirm')}
+          </button>
+        </div>
+      )}
       {(entry.readCount !== undefined || entry.description) && !editing && (
         <div className="flex flex-wrap gap-x-3 text-meta text-fg-subtle">
           {entry.description && <span data-testid="memory-description">{entry.description}</span>}
@@ -173,6 +197,7 @@ export function MemoryDetail({ agentId, entry, onChanged }: {
           <div className="flex items-baseline gap-2 text-meta text-fg-subtle">
             <span className="flex-1" title={new Date(r.updatedAt).toLocaleString(locale)}>
               {t('agents.memory.revisionAt', { ago: agoLabel(new Date(r.updatedAt).getTime(), Date.now(), locale, t) })}
+              {r.flagged && <span data-testid="memory-revision-flagged" className="ml-2 text-warning">{t('agents.memory.flaggedTag')}</span>}
             </span>
             <button
               data-testid="memory-revision-restore"

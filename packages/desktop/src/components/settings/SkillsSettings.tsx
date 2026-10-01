@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { skillGroupOf, type SkillGroupId, type WorkspaceSkillView } from '@harkroom/shared';
+import { skillGroupOf, type SkillGroupId, type SkillUsageView, type WorkspaceSkillView } from '@harkroom/shared';
+
+/** `GET /skills` 의 한 줄 — 서버 081 부터 사용 기록이 같이 온다(옛 서버는 없다). */
+type SkillRow = WorkspaceSkillView & Partial<SkillUsageView>;
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { SettingsPage } from './primitives';
@@ -57,7 +60,7 @@ export const disableConfirmText = (t: Translate) => t('skills.confirm.disable');
 export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
   const t = useT();
   const ago = useAgo();
-  const [skills, setSkills] = useState<WorkspaceSkillView[] | 'error' | null>(null);
+  const [skills, setSkills] = useState<SkillRow[] | 'error' | null>(null);
   // 제안 알림에서 왔으면 그 스킬의 본문을 처음부터 펼쳐 둔다 — 승인하러 온 사람이
   // 한 번 더 눌러야 본문을 보게 되면, 그 클릭이 곧 안 보고 승인하는 길이 된다.
   const [expandedSlug, setExpandedSlug] = useState<string | null>(targetId ?? null);
@@ -152,6 +155,31 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                       <span className="ml-2 text-fg-subtle" title={new Date(skill.proposedAt).toLocaleString()}>
                         {ago(new Date(skill.proposedAt).getTime())}
                       </span>
+                      {/* 사용 기록(서버 081, D3). 승인된 것만 — 깔려야 쓰인다. 옛 서버는 필드가 없다. */}
+                      {group.id === 'approved' && typeof skill.useCount === 'number' && (
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-meta text-fg-subtle" data-testid={`skill-usage-${skill.slug}`}>
+                          <span>
+                            {skill.lastUsedAt
+                              ? t('skills.usage.count', { n: skill.useCount, ago: ago(new Date(skill.lastUsedAt).getTime()) })
+                              : t('skills.usage.never')}
+                          </span>
+                          {skill.staleCandidate && (
+                            <span
+                              data-testid={`skill-stale-${skill.slug}`}
+                              className="rounded bg-warning-surface px-1 text-warning"
+                              title={t('skills.usage.staleHint')}
+                            >
+                              {t('skills.usage.stale')}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {/* 쓰기 검사(서버 080)에 걸린 제안 — 승인 전에 본문을 보라고 남긴 표시. */}
+                      {skill.flaggedAt && (
+                        <p data-testid={`skill-flagged-${skill.slug}`} role="note" className="mt-1 text-meta text-warning">
+                          {t('skills.flagged', { reason: skill.flagReason ?? '' })}
+                        </p>
+                      )}
                     </div>
 
                     {/*

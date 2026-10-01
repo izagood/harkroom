@@ -22,6 +22,9 @@ export interface MemoryEntry {
   kind?: 'topic' | 'procedure' | 'journal';
   readCount?: number;
   lastReadAt?: string | null;
+  /** 서버 080: 쓰기 검사에 걸린 판이면 시각과 이유. 사람이 확인할 때까지 에이전트 프롬프트에 안 실린다. */
+  flaggedAt?: string | null;
+  flagReason?: string | null;
 }
 
 /** 이전 판(서버 069). 최근 것부터 온다. */
@@ -30,6 +33,8 @@ export interface MemoryRevision {
   description: string | null;
   updatedAt: string;
   replacedAt: string;
+  /** 서버 080: 이 판이 쓰기 검사에 걸린 판이었나. */
+  flagged?: boolean;
 }
 
 /** 사람의 기억 편집(M5). `ifUpdatedAt` 은 화면이 연 판 — 그 사이 에이전트가 고쳤으면 409. */

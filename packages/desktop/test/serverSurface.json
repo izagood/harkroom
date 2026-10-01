@@ -139,5 +139,6 @@
   "PUT /teams/:p/invokers/:p": "0.3.29",
   "PUT /teams/:p/lead": "0.1.167",
   "PUT /teams/:p/members/:p": "0.1.167",
-  "PUT /teams/:p/scope": "0.3.29"
+  "PUT /teams/:p/scope": "0.3.29",
+  "POST /accounts/agents/:p/memory/:p/confirm": "0.3.81"
 }
