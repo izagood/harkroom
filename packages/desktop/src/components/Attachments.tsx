@@ -4,6 +4,7 @@ import type { AttachmentRow } from '@harkroom/shared';
 import { getController } from '../state/controller';
 import { ImageLightbox } from './ImageLightbox';
 import { useT } from '../i18n/useT';
+import { useLatestKnownVersion } from './ArtifactPreview';
 
 /**
  * 미리보기를 허용하는 타입. **화이트리스트다** — `image/*` 로 열면 `image/svg+xml` 이 들어오고,
@@ -185,11 +186,68 @@ function Attachment({ attachment }: { attachment: AttachmentRow }) {
   );
 }
 
+/**
+ * 미리보기(아티팩트) 카드(④, designer d8ca47be). 본문 아래 첨부 자리에 붙고 폭은 그림과 같은 28rem 이다.
+ * **목록 안에서 페이지를 띄우지 않는다** — 축소 iframe 을 깔면 스크롤할 때마다 스크립트가 돌고, 격리면도
+ * 열었을 때 하나만 있는 편이 낫다. 카드 전체가 누르는 자리다.
+ *
+ * 표지는 같은 글에 붙은 그림 첨부다(`coverAttachmentId`). 없으면 그림 칸을 비워 두지 않고 글 카드로만 그린다.
+ * 표지는 `canPreview` 화이트리스트(svg 없음)를 지난 것만 `<img>`(blob)로 그린다(security ④ 조건).
+ */
+function ArtifactCard({ attachment, cover }: { attachment: AttachmentRow; cover: AttachmentRow | null }) {
+  const t = useT();
+  const ref = attachment.artifact!;
+  const latest = useLatestKnownVersion(ref.artifactId, ref.latestVersion);
+  const coverOk = cover !== null && canPreview(cover);
+  const { url: coverUrl } = useAttachmentUrl(cover?.id ?? '', coverOk);
+  const newer = latest > ref.version;
+  // 최신 제목은 #1065(091) 서버부터 싣는다 — 공용 타입은 그 PR 이 더한다. 없으면 툴팁을 생략한다.
+  const latestTitle = (ref as { latestTitle?: string }).latestTitle;
+  return (
+    <button
+      type="button"
+      onClick={() => getController().openArtifactPreview(attachment)}
+      aria-label={t('artifact.card.open', { title: ref.title })}
+      data-testid="artifact-card"
+      className="block w-[min(28rem,100%)] overflow-hidden rounded border border-border bg-surface text-left hover:bg-surface-sunken"
+    >
+      {coverUrl && (
+        <img src={coverUrl} alt="" data-testid="artifact-card-cover" className="aspect-video w-full border-b border-border object-cover" />
+      )}
+      <span className="flex flex-col gap-0.5 px-3 py-2">
+        <span className="flex items-center gap-2">
+          <span className="truncate font-medium">{ref.title}</span>
+          <span className="shrink-0 text-meta text-fg-subtle">{t('artifact.card.version', { version: ref.version })}</span>
+          {newer && (
+            <span
+              className="ml-auto shrink-0 rounded-full border border-border px-1.5 text-meta text-fg-muted"
+              data-testid="artifact-card-latest"
+              title={latestTitle && latest === ref.latestVersion
+                ? t('artifact.card.latestTitle', { version: latest, title: latestTitle })
+                : undefined}
+            >{t('artifact.card.latest', { version: latest })}</span>
+          )}
+        </span>
+        {ref.summary && <span className="truncate text-meta text-fg-muted">{ref.summary}</span>}
+        <span className="text-meta text-fg-subtle">{t('artifact.card.html')} · {formatSize(attachment.sizeBytes)}</span>
+      </span>
+    </button>
+  );
+}
+
 export function Attachments({ attachments }: { attachments: AttachmentRow[] }) {
   if (!attachments.length) return null;
+  // 미리보기의 표지는 카드 안에 그린다 — 따로 그림으로 한 번 더 보이면 같은 것이 두 번이다.
+  const covers = new Set(attachments.map((a) => a.artifact?.coverAttachmentId).filter((v): v is string => !!v));
   return (
     <div className="mt-1 space-y-1">
-      {attachments.map((a) => <div key={a.id}><Attachment attachment={a} /></div>)}
+      {attachments.filter((a) => !covers.has(a.id)).map((a) => (
+        <div key={a.id}>
+          {a.artifact
+            ? <ArtifactCard attachment={a} cover={attachments.find((c) => c.id === a.artifact!.coverAttachmentId) ?? null} />
+            : <Attachment attachment={a} />}
+        </div>
+      ))}
     </div>
   );
 }

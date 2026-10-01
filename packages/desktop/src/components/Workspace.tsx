@@ -17,6 +17,7 @@ import { ServerCompatBanner } from './ServerCompatBanner';
 import { UpdateToast } from './UpdateToast';
 import { ThreadPanel } from './ThreadPanel';
 import { TerminalPanel } from './TerminalPanel';
+import { ArtifactPanel } from './ArtifactPreview';
 import { SearchPalette, type SearchScope } from './SearchPalette';
 import { Directory } from './Directory';
 import { ChannelSettingsSheet } from './ChannelSettingsSheet';
@@ -421,6 +422,8 @@ export function Workspace({ onLogout, onOpenSettings }: {
               채널 레이아웃 안에 심지 않는다 — `#189`(앱 안 터미널 패널이 어디서 도는가)가
               열려 있어서, 지금 심으면 그 결정이 코드로 먼저 굳는다. */}
           {terminalTarget && <TerminalPanel />}
+          {/* 미리보기(아티팩트) 패널(④) — 스레드·터미널과 같은 오른쪽 줄에 형제로 선다. 채팅을 보며 답할 수 있게. */}
+          <ArtifactPanel />
         </div>
       </div>
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} initialScope={searchInitialScope} />

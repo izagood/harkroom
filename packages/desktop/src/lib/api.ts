@@ -7,6 +7,17 @@ import { MENTION_EDIT_SKIPPED_HEADER, type GrantRow, type Capability } from '@ha
 import type { MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
+/** `POST /attachments/:id/preview` 의 답. `latestTitle` 은 091(#1065) 서버부터 싣는다. */
+export interface PreviewTicket {
+  path: string;
+  expiresAt: string;
+  artifactId: string;
+  version: number;
+  latestVersion: number;
+  title: string;
+  latestTitle?: string;
+}
+
 export class ApiError extends Error {
   /**
    * 서버가 오류와 **함께 보낸 것**. 응답 본문을 그대로 들고 온다.
@@ -587,6 +598,20 @@ export class ApiClient {
       xhr.onabort = () => reject(new ApiError(0, 'upload_aborted', 'aborted'));
       xhr.send(form);
     });
+  }
+
+  /**
+   * 미리보기(아티팩트) 서명 경로를 받는다(서버 0.3.131~, #1045). iframe 은 Bearer 헤더를 못 싣기 때문에
+   * 60초짜리 서명 경로를 받아 프레임에 띄운다 — 토큰은 그 URL 에 없다. 열 때마다 새로 받는다(만료는
+   * 오류가 아니라 재발급 사유다). 절대 URL 은 이 앱이 아는 서버 주소로 짓는다(`previewUrl`).
+   */
+  issuePreview(attachmentId: string): Promise<PreviewTicket> {
+    return this.req('POST', `/attachments/${attachmentId}/preview`);
+  }
+
+  /** 서명 경로 → 프레임에 넣을 절대 URL. 서버는 프록시 뒤라 자기 공개 주소를 모른다. */
+  previewUrl(path: string): string {
+    return `${this.baseUrl}${path}`;
   }
 
   /**

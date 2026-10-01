@@ -32,6 +32,7 @@
  *
  * | 값 | 왜 | 무엇이 깨지나 |
  * |---|---|---|
+ * | `0.3.133` | 미리보기(아티팩트) ④: `POST /attachments/:id/preview`·`GET /preview/:token`(#1045, v0.3.131)과 메시지 첨부의 `artifact{}`(#1050, v0.3.133)가 그 릴리스에 들어갔고, 첨부 카드와 오른쪽 미리보기 패널이 그것을 부른다. 버전마다 제목(`latestTitle`, #1065)은 그 뒤 릴리스이고, 옛 서버에서는 옛 카드가 최신 제목을 보일 뿐이다 | 카드는 보통 첨부 칩으로 남고(메타 없음), 열기가 404 |
  * | `0.3.125` | Inbox 보드 2/2: `PUT /inbox/threads/:rootId`(내 완료·나중에, 089)와 `GET /inbox?threads=1` 의 `threadStates` 가 그 릴리스에 들어갔고(#1035, v0.3.125), 보드 카드의 [완료]·[나중에]·[되돌리기](#1037)가 그것을 부른다 | 완료·나중에가 404, 접은 카드가 다시 열면 돌아온다 |
  * | `0.3.113` | 에이전트가 부르며 고르는 모델(087): `PUT /accounts/agents/:id/pickable-models` 와 `GET /agents/:id/model-options` 의 `pickable`·스레드 지정의 `setByKind` 가 그 릴리스에 들어갔고(#1010, v0.3.113), 에이전트 상세의 "다른 에이전트가 고를 수 있는 모델" 절과 칩 꼬리 `@lead 지정`(#③)이 그것을 부른다. 목록을 좁힐 때 정리(`clearOutside`·`outside`)는 그 뒤 릴리스이고, 옛 서버는 그 필드를 버리고 `outside` 를 싣지 않아 물음이 서지 않을 뿐이다 | 허용 목록 저장이 404, 칩 꼬리가 늘 `스레드 지정` |
  * | `0.3.95` | 스레드 × 에이전트 모델 지정(079): `GET/PUT /channels/:id/threads/:rootId/agent-models[/:agentId]`·`GET /agents/:id/model-options` 와 메시지의 `agentModels[]` 가 그 릴리스에 들어갔고(#967, v0.3.95), 앱의 스레드 모델 칩(#969)이 그것을 부른다 | 스레드 모델 칩이 서지 않고, 작성창 칩으로 고른 모델이 옛 서버에서 조용히 버려진다 |
@@ -58,7 +59,7 @@
  *
  * 근거 없이 높이지는 않는다 — 멀쩡한 서버가 고장으로 그려지면 그 순간 이 값은 소음이 된다.
  */
-export const MIN_SERVER_VERSION = '0.3.125';
+export const MIN_SERVER_VERSION = '0.3.133';
 
 /** `X.Y.Z` 만 견준다. 그 밖의 모양은 견주지 않는다(아래 `compareRelease` 주석). */
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;

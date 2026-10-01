@@ -1,0 +1,198 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { AttachmentRow } from '@harkroom/shared';
+import { getController } from '../state/controller';
+import { useActiveStore } from '../state/communities';
+import { ApiError } from '../lib/api';
+import { useT } from '../i18n/useT';
+import { formatSize } from './Attachments';
+
+/**
+ * 미리보기(아티팩트) 화면 ④ — 에이전트가 `artifact.publish` 로 올린 HTML 을 앱 안에서 본다.
+ * 사양: designer d8ca47be·abcc05cf, 구조·격리: harkroom 스레드 31121b84(#1045·#1050·#1065).
+ *
+ * ## 격리는 두 겹이다
+ * 1. 서버가 `GET /preview/:token` 에 CSP `sandbox allow-scripts allow-popups`(allow-same-origin 없음)를 단다
+ *    → 문서는 불투명 origin 에서 돈다(#1045).
+ * 2. 여기 iframe 의 `sandbox="allow-scripts"` — 서버 값과 **교집합**이 적용되므로 팝업(새 창)도 막힌다.
+ *    `allow-same-origin`·`allow-top-navigation`·`allow-popups`·`allow-forms` 를 주지 않는다. srcdoc 이 아니라
+ *    서버 URL 을 띄우는 이유: srcdoc 은 앱(Tauri) origin 아래에서 돌아 IPC 주입 여부를 따져야 하고, 원격
+ *    origin 은 Tauri capability 가 기본으로 막는다.
+ *
+ * ## 페이지가 다른 곳으로 가려 하면 막는다(security ④ 조건)
+ * sandbox 는 **프레임 자신의 이동**은 막지 않는다 — 페이지가 `location = …` 으로 가짜 로그인 화면을 띄울 수
+ * 있다. 교차 origin 프레임의 이동 대상은 앱이 읽을 수 없으므로, 첫 `load` 다음의 `load` 를 이동으로 보고
+ * 프레임을 내리고 그 사실을 말한다([다시 불러오기]). 대상 URL 을 모르니 시스템 브라우저로 넘기지는 못한다 —
+ * 새 창은 sandbox 가 이미 막는다.
+ *
+ * ## 토큰은 열 때마다 받는다
+ * 서명 경로는 60초짜리다. 패널을 연 채 오래 두다가 다시 불러오면 **새로 받는다** — 만료를 오류로 보이지
+ * 않는다(designer 기준). 그래서 경로를 상태에 오래 쥐지 않고 [다시 불러오기]가 언제나 `issuePreview` 를 부른다.
+ */
+
+type Phase =
+  | { kind: 'loading' }
+  | { kind: 'ready'; url: string; title: string }
+  | { kind: 'navigated' }
+  | { kind: 'error'; reason: 'tooLarge' | 'forbidden' | 'gone' | 'failed' };
+
+function reasonOf(err: unknown): 'tooLarge' | 'forbidden' | 'gone' | 'failed' {
+  if (err instanceof ApiError) {
+    if (err.status === 413) return 'tooLarge';
+    if (err.status === 403) return 'forbidden';
+    if (err.status === 404) return 'gone';
+  }
+  return 'failed';
+}
+
+/**
+ * 오른쪽 패널. 스레드 패널과 같은 자리에 형제로 선다(`Workspace.tsx`). ⤢ 로 창 전체를 덮고, Esc 는 한 단계씩
+ * 닫는다(창 전체 → 패널 → 닫힘). 머리줄·아래 줄은 **iframe 밖에서 앱이 그린다** — 페이지가 앱 화면을 흉내
+ * 내도 머리줄은 진짜라는 것이 보여야 한다.
+ */
+export function ArtifactPanel() {
+  const t = useT();
+  const attachment = useActiveStore((s) => s.artifactPreview);
+  const [expanded, setExpanded] = useState(false);
+  const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
+  const loads = useRef(0);
+  const attempt = useRef(0);
+
+  const load = useCallback((target: AttachmentRow) => {
+    const mine = ++attempt.current;
+    loads.current = 0;
+    setPhase({ kind: 'loading' });
+    getController().issuePreview(target.id).then((ticket) => {
+      if (attempt.current !== mine) return;
+      setPhase({ kind: 'ready', url: ticket.url, title: ticket.title });
+    }).catch((err: unknown) => {
+      if (attempt.current !== mine) return;
+      setPhase({ kind: 'error', reason: reasonOf(err) });
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!attachment) return;
+    setExpanded(false);
+    load(attachment);
+  }, [attachment, load]);
+
+  useEffect(() => {
+    if (!attachment) return;
+    const onKey = (e: KeyboardEvent) => {
+      // 겹창(Overlay)이 먼저 받아 막았으면 그쪽 일이다.
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      e.preventDefault();
+      if (expanded) setExpanded(false);
+      else getController().closeArtifactPreview();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [attachment, expanded]);
+
+  if (!attachment) return null;
+  const ref = attachment.artifact;
+  const title = phase.kind === 'ready' ? phase.title : ref?.title ?? attachment.filename;
+
+  return (
+    <section
+      aria-label={t('artifact.panel.label')}
+      data-testid="artifact-panel"
+      data-expanded={expanded ? 'true' : 'false'}
+      className={expanded
+        ? 'fixed inset-0 z-40 flex flex-col bg-surface'
+        : 'flex w-[min(40rem,45vw)] min-w-[22rem] shrink-0 flex-col border-l border-border bg-surface'}
+    >
+      <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+        <span className="truncate font-medium" data-testid="artifact-panel-title">{title}</span>
+        {ref && <span className="shrink-0 text-meta text-fg-subtle">{t('artifact.card.version', { version: ref.version })}</span>}
+        <span className="ml-auto" />
+        <button
+          type="button"
+          className="shrink-0 rounded px-2 text-fg-subtle hover:bg-surface-sunken"
+          onClick={() => setExpanded((v) => !v)}
+          aria-label={expanded ? t('artifact.panel.collapse') : t('artifact.panel.expand')}
+          data-testid="artifact-panel-expand"
+        >{expanded ? '⤡' : '⤢'}</button>
+        <button
+          type="button"
+          className="shrink-0 rounded px-2 text-fg-subtle hover:bg-surface-sunken"
+          onClick={() => getController().closeArtifactPreview()}
+          aria-label={t('artifact.panel.close')}
+          data-testid="artifact-panel-close"
+        >×</button>
+      </header>
+      <div className="relative min-h-0 flex-1 bg-surface-sunken">
+        {phase.kind === 'ready' ? (
+          <iframe
+            key={phase.url}
+            src={phase.url}
+            title={title}
+            data-testid="artifact-frame"
+            // 서버 CSP sandbox 와 교집합 — 새 창(allow-popups)도 여기서 막힌다. 아래 주석 머리 참고.
+            sandbox="allow-scripts"
+            referrerPolicy="no-referrer"
+            className="h-full w-full border-0 bg-white"
+            onLoad={() => {
+              loads.current += 1;
+              // 첫 load 는 우리가 띄운 문서다. 그 뒤의 load 는 페이지가 스스로 다른 곳으로 간 것이다.
+              if (loads.current > 1) setPhase({ kind: 'navigated' });
+            }}
+          />
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-body text-fg-muted" data-testid="artifact-panel-state" data-state={phase.kind === 'error' ? phase.reason : phase.kind}>
+            {phase.kind === 'loading' && <span>{t('artifact.panel.loading')}</span>}
+            {phase.kind === 'navigated' && <span>{t('artifact.panel.navigated')}</span>}
+            {phase.kind === 'error' && (
+              <span>{phase.reason === 'tooLarge'
+                ? t('artifact.panel.tooLarge', { size: formatSize(attachment.sizeBytes) })
+                : t(`artifact.panel.${phase.reason}`)}</span>
+            )}
+            {(phase.kind === 'navigated' || (phase.kind === 'error' && phase.reason === 'failed')) && (
+              <button
+                type="button"
+                className="rounded border border-border px-2 py-0.5 text-meta hover:bg-surface"
+                onClick={() => load(attachment)}
+                data-testid="artifact-panel-reload"
+              >{t('artifact.panel.reload')}</button>
+            )}
+          </div>
+        )}
+      </div>
+      <footer className="flex shrink-0 items-center gap-2 border-t border-border px-3 py-1.5 text-meta text-fg-subtle">
+        <span>{t('artifact.panel.madeBy')}</span>
+        {phase.kind === 'ready' && (
+          <button
+            type="button"
+            className="rounded px-1 hover:bg-surface-sunken"
+            onClick={() => load(attachment)}
+            data-testid="artifact-panel-reload"
+          >{t('artifact.panel.reload')}</button>
+        )}
+        <button
+          type="button"
+          className="ml-auto rounded px-1 hover:bg-surface-sunken"
+          onClick={() => void getController().saveAttachment(attachment)}
+          data-testid="artifact-panel-download"
+        >{t('artifact.panel.download')}</button>
+      </footer>
+    </section>
+  );
+}
+
+/**
+ * 같은 미리보기의 **알려진 가장 높은 버전**. 서버의 `latestVersion` 은 목록을 읽은 순간 값이라(#1050) 새 버전
+ * 글이 실시간으로 와도 옛 글의 값은 그대로다 — 그래서 지금 메모리에 있는 모든 글의 첨부를 함께 본다.
+ */
+export function useLatestKnownVersion(artifactId: string, fromServer: number): number {
+  return useActiveStore((s) => {
+    let best = fromServer;
+    for (const list of Object.values(s.messages)) {
+      for (const m of list ?? []) {
+        for (const a of m.attachments ?? []) {
+          if (a.artifact?.artifactId === artifactId && a.artifact.version > best) best = a.artifact.version;
+        }
+      }
+    }
+    return best;
+  });
+}
