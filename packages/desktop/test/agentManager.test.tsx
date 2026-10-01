@@ -113,10 +113,9 @@ describe('AgentsSettings', () => {
     const options = (await screen.findByLabelText('Agent harness')).querySelectorAll('option');
     const enabled = [...options].filter((o) => !(o as HTMLOptionElement).disabled);
 
-    expect(enabled).toHaveLength(3);
-    expect(enabled.some((o) => o.textContent?.includes('claude-code'))).toBe(true);
-    expect(enabled.some((o) => o.textContent?.includes('codex'))).toBe(true);
-    expect(enabled.some((o) => o.textContent?.includes('opencode'))).toBe(true);
+    // 켜진 선택지는 정확히 RUNNABLE_HARNESSES 이고, 각자 자기 이름표를 단다.
+    expect(enabled.map((o) => (o as HTMLOptionElement).value)).toEqual(['claude-code', 'codex', 'opencode', 'kilo']);
+    expect(enabled.find((o) => (o as HTMLOptionElement).value === 'kilo')?.textContent).toBe('kilo (default)');
     expect([...options].some((o) => o.textContent?.includes('지원 예정'))).toBe(true);
   });
 
