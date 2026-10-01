@@ -104,7 +104,10 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final t = context.t;
     final app = context.app;
 
-    MessageRow? root;
+    // 루트는 채널 목록의 것을 먼저 쓰고(채널 화면과 같은 줄), 없으면 스레드 응답에 함께 온
+    // 것을 쓴다 — 받은 것 탭에서 들어오면 루트가 채널의 최근 페이지 밖일 수 있다.
+    // 답글 목록(`threads`)에는 루트가 없다(`AppState.threadRoots` 주석).
+    MessageRow? root = app.threadRoots[widget.rootId];
     for (final m in app.messages[widget.channelId] ?? const <MessageRow>[]) {
       if (m.id == widget.rootId) {
         root = m;

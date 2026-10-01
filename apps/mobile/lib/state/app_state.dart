@@ -460,7 +460,7 @@ class AppState extends ChangeNotifier {
       try {
         final page = await api.messages(channelId, thread: entry.key, limit: 100);
         if (gen != _generation) return;
-        threads[entry.key] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
+        _storeThreadPage(entry.key, page.messages);
       } on Object {
         /* 위와 같다 */
       }
@@ -484,9 +484,11 @@ class AppState extends ChangeNotifier {
         if (m.id == rootId) return entry.key;
       }
     }
+    final root = threadRoots[rootId];
+    if (root != null) return root.channelId;
     for (final list in threads.values) {
       for (final m in list) {
-        if (m.id == rootId || m.threadRootId == rootId) return m.channelId;
+        if (m.threadRootId == rootId) return m.channelId;
       }
     }
     return null;
@@ -571,6 +573,11 @@ class AppState extends ChangeNotifier {
       list[idx] = list[idx].withReaction(emoji: emoji, accountId: accountId, added: added);
       notifyListeners();
     }
+    final root = threadRoots[messageId];
+    if (root != null && root.channelId == channelId) {
+      threadRoots[messageId] = root.withReaction(emoji: emoji, accountId: accountId, added: added);
+      notifyListeners();
+    }
   }
 
   /// 같은 메시지가 두 번 와도 한 줄로 남는다.
@@ -582,6 +589,11 @@ class AppState extends ChangeNotifier {
     // 스레드 답글이면 그 스레드에도 넣는다. **둘 다 갱신해야 한다** — 채널 화면의
     // 요약(답글 수)과 열려 있는 스레드가 같은 사실을 봐야 하기 때문이다.
     final rootId = message.threadRootId;
+    // 스레드 응답으로 받아 둔 루트도 같은 사실을 본다(수정·리액션이 이 경로로 온다).
+    if (rootId == null && threadRoots.containsKey(message.id)) {
+      threadRoots[message.id] = message;
+      notifyListeners();
+    }
     if (rootId != null) {
       final replies = threads[rootId];
       if (replies != null) {
@@ -810,7 +822,8 @@ class AppState extends ChangeNotifier {
         if (m.id == messageId) return m;
       }
     }
-    return null;
+    final root = threadRoots[messageId];
+    return root != null && root.channelId == channelId ? root : null;
   }
 
   /// 여기까지 읽었다고 알린다. **화면이 그 채널을 보고 있을 때만** 부른다.
@@ -976,6 +989,29 @@ class AppState extends ChangeNotifier {
   /// 한 곳에 섞으면 채널 화면이 답글까지 그리게 되고, 그건 스레드를 만든 이유를 지운다.
   final Map<String, List<MessageRow>> threads = {};
 
+  /// 스레드 루트 id → 스레드 응답에 함께 온 그 루트.
+  ///
+  /// **서버의 `?thread=` 응답은 루트를 맨 앞에 싣는다**(server `listMessages` 의 thread 갈래).
+  /// 그것을 [threads] 에 그대로 두면 스레드 화면이 루트를 머리에 한 번, 답글 자리에 또
+  /// 한 번 그린다(2026-10-02 jaebin iPhone). 그래서 받는 자리에서 갈라 둔다.
+  ///
+  /// 버리지 않고 여기 두는 이유: 받은 것 탭에서 들어오면 루트가 채널의 최근 페이지보다
+  /// 오래돼 [messages] 에 없을 수 있다. 그때 화면 머리는 이 값으로 선다.
+  final Map<String, MessageRow> threadRoots = {};
+
+  /// 스레드 응답 한 페이지를 루트([threadRoots])와 답글([threads])로 나눠 담는다.
+  void _storeThreadPage(String rootId, List<MessageRow> page) {
+    final replies = <MessageRow>[];
+    for (final m in page) {
+      if (m.id == rootId) {
+        threadRoots[rootId] = m;
+      } else {
+        replies.add(m);
+      }
+    }
+    threads[rootId] = replies..sort((a, b) => a.seq.compareTo(b.seq));
+  }
+
   /// 스레드를 연다.
   ///
   /// **첫 `await` 전에 `notifyListeners()` 를 부르지 않는다.** 이 함수를 부르는 자리는
@@ -994,7 +1030,7 @@ class AppState extends ChangeNotifier {
     try {
       final page = await _api!.messages(channelId, thread: rootId, limit: 100);
       if (gen != _generation) return;
-      threads[rootId] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
+      _storeThreadPage(rootId, page.messages);
       threadLoad[rootId] = LoadState.loaded;
     } on Object catch (e) {
       if (gen != _generation) return;
@@ -1065,6 +1101,7 @@ class AppState extends ChangeNotifier {
     inbox.clear();
     reads.clear();
     threads.clear();
+    threadRoots.clear();
     channels.clear();
     accounts.clear();
     messages.clear();
