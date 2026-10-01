@@ -135,7 +135,14 @@ class _Unreachable extends StatelessWidget {
       body: SafeArea(
         child: Column(
           children: [
-            Expanded(child: FailedState(title: t.bootUnreachableTitle, onRetry: app.retryBoot)),
+            Expanded(
+              child: FailedState(
+                title: t.bootUnreachableTitle,
+                // 어느 서버인지 보인다 — 주소를 잘못 넣었으면 그것이 원인이다.
+                detail: app.baseUrl,
+                onRetry: app.retryBoot,
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: TextButton(onPressed: app.signOut, child: Text(t.signOut)),

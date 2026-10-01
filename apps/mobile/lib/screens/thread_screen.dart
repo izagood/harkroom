@@ -111,6 +111,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                       height: 220,
                       child: FailedState(
                         title: t.threadLoadFailed,
+                        cause: app.failures[widget.rootId] ?? LoadFailure.network,
                         onRetry: () => app.openThread(widget.channelId, widget.rootId),
                       ),
                     )

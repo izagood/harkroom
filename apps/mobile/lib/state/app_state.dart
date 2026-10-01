@@ -49,6 +49,25 @@ enum AppPhase {
 /// "아직 … 없습니다" 였고, 못 읽은 채널은 다시 읽을 길도 없었다.
 enum LoadState { loading, loaded, failed }
 
+/// 못 읽은 **까닭**. 문구가 사람을 엉뚱한 곳으로 보내지 않게 가른다 — 서버가 5xx 를 줬는데
+/// "네트워크를 확인하라"고 하면 사람은 와이파이를 껐다 켠다(designer #977 권장).
+enum LoadFailure {
+  /// 서버에 닿지 못했다.
+  network,
+
+  /// 서버가 답했지만 실패다(5xx 등).
+  server,
+
+  /// 볼 권한이 없다(403·404). 다시 시도해도 낫지 않는다.
+  forbidden;
+
+  static LoadFailure of(Object error) => switch (error) {
+        ApiError(status: 403 || 404) => LoadFailure.forbidden,
+        ApiError() => LoadFailure.server,
+        _ => LoadFailure.network,
+      };
+}
+
 /// 보내지 못한 말. **작성칸으로 되돌리지 않고** 목록 안에 남긴다(재설계 §3.9) — 작성칸에
 /// 되돌리면 사람이 그 사이 새로 친 글과 섞이고, 무엇이 안 갔는지가 화면에서 사라진다.
 class FailedSend {
@@ -133,6 +152,9 @@ class AppState extends ChangeNotifier {
 
   /// 인박스를 읽는 상태.
   LoadState inboxLoad = LoadState.loading;
+
+  /// 못 읽은 까닭. 열쇠는 채널 id · 스레드 루트 id · `'inbox'` 다.
+  final Map<String, LoadFailure> failures = {};
 
   /// 작성칸 키(채널 id 또는 스레드 루트 id) → 보내지 못한 말들(오래된 것 먼저).
   final Map<String, List<FailedSend>> failedSends = {};
@@ -470,8 +492,9 @@ class AppState extends ChangeNotifier {
         ..clear()
         ..addAll(entries);
       inboxLoad = LoadState.loaded;
-    } on Object {
+    } on Object catch (e) {
       // 이미 보이는 목록이 있으면 그대로 둔다 — 다시 못 읽었다고 지우면 있던 것까지 사라진다.
+      failures['inbox'] = LoadFailure.of(e);
       if (inboxLoad != LoadState.loaded) inboxLoad = LoadState.failed;
     }
     notifyListeners();
@@ -525,8 +548,9 @@ class AppState extends ChangeNotifier {
       final page = await _api!.messages(channelId, limit: 50);
       messages[channelId] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
       channelLoad[channelId] = LoadState.loaded;
-    } on Object {
+    } on Object catch (e) {
       messages.remove(channelId);
+      failures[channelId] = LoadFailure.of(e);
       channelLoad[channelId] = LoadState.failed;
       notifyListeners();
       return;
@@ -732,7 +756,8 @@ class AppState extends ChangeNotifier {
       final page = await _api!.messages(channelId, thread: rootId, limit: 100);
       threads[rootId] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
       threadLoad[rootId] = LoadState.loaded;
-    } on Object {
+    } on Object catch (e) {
+      failures[rootId] = LoadFailure.of(e);
       if (threadLoad[rootId] != LoadState.loaded) threadLoad[rootId] = LoadState.failed;
     }
     notifyListeners();
@@ -770,6 +795,7 @@ class AppState extends ChangeNotifier {
     messages.clear();
     channelLoad.clear();
     threadLoad.clear();
+    failures.clear();
     inboxLoad = LoadState.loading;
     // 못 보낸 말도 버린다 — 다른 계정으로 들어온 뒤에 남은 말이 그 계정 이름으로 가면 안 된다.
     failedSends.clear();

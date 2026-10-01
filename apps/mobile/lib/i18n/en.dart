@@ -291,4 +291,10 @@ class StringsEn implements Strings {
 
   @override
   String get reactionFailed => 'Could not change the reaction';
+
+  @override
+  String get loadFailedServer => 'The server did not respond. Try again in a moment.';
+
+  @override
+  String get loadFailedForbidden => 'You don\'t have access to this.';
 }

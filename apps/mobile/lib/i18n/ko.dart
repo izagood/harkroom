@@ -290,4 +290,10 @@ class StringsKo implements Strings {
 
   @override
   String get reactionFailed => '리액션을 바꾸지 못했다';
+
+  @override
+  String get loadFailedServer => '서버가 응답하지 않았다. 잠시 뒤 다시 시도해 달라.';
+
+  @override
+  String get loadFailedForbidden => '이 대화를 볼 권한이 없다.';
 }

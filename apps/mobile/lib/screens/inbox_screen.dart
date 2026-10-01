@@ -54,7 +54,11 @@ class InboxScreen extends StatelessWidget {
                   : switch (app.inboxLoad) {
                       LoadState.loading => const LoadingSkeleton(rows: 3),
                       LoadState.failed =>
-                        FailedState(title: t.inboxLoadFailed, onRetry: app.loadInbox),
+                        FailedState(
+                          title: t.inboxLoadFailed,
+                          cause: app.failures['inbox'] ?? LoadFailure.network,
+                          onRetry: app.loadInbox,
+                        ),
                       LoadState.loaded => EmptyState(title: t.inboxEmpty, hint: t.inboxEmptyHint),
                     },
             ),

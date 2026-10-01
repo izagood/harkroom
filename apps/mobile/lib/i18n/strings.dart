@@ -64,6 +64,12 @@ abstract class Strings {
   /// 올리기 실패. **조용히 지나가지 않는다** — 칩이 사라진 이유를 사람이 알아야 한다.
   String get attachmentUploadFailed;
 
+  /// 못 읽음: 서버가 실패로 답했다.
+  String get loadFailedServer;
+
+  /// 못 읽음: 볼 권한이 없다.
+  String get loadFailedForbidden;
+
   /// 읽지 못한 것.
   String get loadFailedHint;
 
@@ -344,6 +350,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'commonRetry': s.commonRetry,
       'attachmentAdd': s.attachmentAdd,
       'attachmentUploadFailed': s.attachmentUploadFailed,
+      'loadFailedServer': s.loadFailedServer,
+      'loadFailedForbidden': s.loadFailedForbidden,
       'loadFailedHint': s.loadFailedHint,
       'messagesLoadFailed': s.messagesLoadFailed,
       'threadLoadFailed': s.threadLoadFailed,

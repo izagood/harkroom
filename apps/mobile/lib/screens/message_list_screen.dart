@@ -95,6 +95,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
                 null || LoadState.loading => const LoadingSkeleton(),
                 LoadState.failed => FailedState(
                     title: t.messagesLoadFailed,
+                    cause: app.failures[widget.channelId] ?? LoadFailure.network,
                     onRetry: () => app.openChannel(widget.channelId),
                   ),
                 LoadState.loaded => feed.isEmpty && failed.isEmpty

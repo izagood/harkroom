@@ -104,10 +104,22 @@ class EmptyState extends StatelessWidget {
 /// 못 읽음. 무엇을 못 읽었는지 + **다시 시도**. 다시 시도가 없으면 사람이 할 수 있는 일이
 /// 앱을 껐다 켜는 것뿐이다.
 class FailedState extends StatelessWidget {
-  const FailedState({super.key, required this.title, required this.onRetry});
+  const FailedState({
+    super.key,
+    required this.title,
+    required this.onRetry,
+    this.cause = LoadFailure.network,
+    this.detail,
+  });
 
   final String title;
   final VoidCallback onRetry;
+
+  /// 못 읽은 까닭. 안내 한 줄이 이것으로 갈린다.
+  final LoadFailure cause;
+
+  /// 제목 아래 작게 덧붙일 것(부팅 실패의 서버 주소). 주소를 잘못 넣은 경우 그것이 원인이다.
+  final String? detail;
 
   @override
   Widget build(BuildContext context) {
@@ -123,8 +135,20 @@ class FailedState extends StatelessWidget {
             Text(title,
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: k.fg)),
+            if (detail != null) ...[
+              const SizedBox(height: 4),
+              Text(detail!,
+                  key: const Key('state-failed-detail'),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: HarkroomType.meta, color: k.mute)),
+            ],
             const SizedBox(height: 6),
-            Text(t.loadFailedHint,
+            Text(
+                switch (cause) {
+                  LoadFailure.network => t.loadFailedHint,
+                  LoadFailure.server => t.loadFailedServer,
+                  LoadFailure.forbidden => t.loadFailedForbidden,
+                },
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: HarkroomType.meta, color: k.mute)),
             const SizedBox(height: 14),

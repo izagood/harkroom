@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/api/api_client.dart';
+import 'package:harkroom/api/api_error.dart';
 import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_state.dart';
@@ -153,6 +154,23 @@ void main() {
       expect(app.channelLoad['c1'], LoadState.loaded);
       expect(app.messages['c1'], isEmpty);
     });
+  });
+
+  test('못 읽은 까닭을 가른다 — 문구가 사람을 엉뚱한 곳으로 보내지 않게', () {
+    expect(LoadFailure.of(ApiError(503, 'x', 'x')), LoadFailure.server);
+    expect(LoadFailure.of(ApiError(403, 'x', 'x')), LoadFailure.forbidden);
+    expect(LoadFailure.of(ApiError(404, 'x', 'x')), LoadFailure.forbidden);
+    expect(LoadFailure.of(http.ClientException('x')), LoadFailure.network);
+  });
+
+  test('서버가 500 으로 답하면 까닭은 "서버"다', () async {
+    final server = _Server();
+    final app = _app(server);
+    addTearDown(app.dispose);
+    await app.boot();
+    server.messagesFail = true;
+    await app.openChannel('c1');
+    expect(app.failures['c1'], LoadFailure.server);
   });
 
   group('보내기', () {

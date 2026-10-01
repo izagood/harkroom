@@ -124,6 +124,27 @@ void main() {
     app.connection = SocketState.reconnecting;
     app.notifyListeners();
     await shot(tester, '14-band');
+    // 자격증명이 죽었다 — 빨간 띠 + 다시 로그인.
+    app.connection = SocketState.dead;
+    app.notifyListeners();
+    await shot(tester, '16-band-dead');
+    app.connection = SocketState.online;
+    app.notifyListeners();
+
+    // ask 답이 실패하면 토스트 + 다시 시도.
+    final option = find.byKey(const Key('ask-option-m4-a'));
+    await tester.scrollUntilVisible(option, 250,
+        scrollable: find
+            .descendant(of: find.byKey(const Key('channel-feed')), matching: find.byType(Scrollable))
+            .first);
+    await tester.tap(option);
+    await shot(tester, '17-toast');
+    await tester.tap(find.byType(BackButton));
+    await shot(tester, '17b-back');
+
+    // 읽는 중 — 답이 오지 않는 채널.
+    await tester.tap(find.byKey(const Key('channel-c2')));
+    await shot(tester, '18-loading');
   });
 
   testWidgets('부팅 실패', (tester) async {
@@ -188,6 +209,11 @@ Map<String, Object?> _m(String id, int seq, String author, String body,
 MockClient _server({bool states = false}) => MockClient((req) async {
       final path = req.url.path;
       if (states) {
+        // 읽는 중 자리표시를 찍으려고 `#harkroom` 은 **답하지 않는다**(타이머 없이 매달린다).
+        if (path == '/channels/c2/messages') return Completer<http.Response>().future;
+        if (path.contains('/ask-answer')) {
+          return _json({'error': {'code': 'unavailable', 'message': 'down'}}, 503);
+        }
         if (path == '/channels/c3/messages') {
           return _json({'error': {'code': 'unavailable', 'message': 'down'}}, 503);
         }
