@@ -835,4 +835,21 @@ void main() {
     await _settle(tester);
     expect(field().controller!.text, '안녕 @');
   });
+
+  testWidgets('원글이 채널 목록에 없으면(오래된 스레드) ?thread= 응답의 원글을 위에 한 번 그린다', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+    // 채널을 열지 않고 스레드로 바로 간다 — 인박스에서 오래된 스레드를 연 것과 같다(채널 목록에 원글 없음).
+    expect(state.messages['c1'], isNull);
+    Navigator.of(tester.element(find.byKey(const Key('channel-c1')))).push(
+      MaterialPageRoute<void>(builder: (_) => const ThreadScreen(channelId: 'c1', rootId: 'm1')),
+    );
+    await _settle(tester);
+    final screen = find.byType(ThreadScreen);
+    expect(find.descendant(of: screen, matching: find.byKey(const Key('message-m1'))), findsOneWidget);
+    expect(find.descendant(of: screen, matching: find.byKey(const Key('thread-replies-divider'))), findsOneWidget);
+    expect(find.descendant(of: screen, matching: find.byKey(const Key('message-r1'))), findsOneWidget);
+  });
 }
