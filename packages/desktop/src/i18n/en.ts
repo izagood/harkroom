@@ -3316,6 +3316,9 @@ export const en = {
   'channel.header.archived': 'Archived',
   'channel.header.doc': 'Document',
   'channel.header.files': 'Files',
+  'channel.header.messages': 'Messages',
+  /** 대화·문서·파일 탭 묶음의 이름(스크린리더가 읽는다). */
+  'channel.header.views': 'Channel views',
   'channel.header.search': 'Search',
   'channel.header.searchLabel': 'Search this channel',
   /** 두 진입점의 뜻이 다르므로 `title` 이 그 차이를 적는다(그 자리 주석). */

@@ -23,6 +23,8 @@ const fakeController = () => {
     editMessage: vi.fn(async () => undefined),
     deleteMessage: vi.fn(async () => undefined),
     loadOlder: vi.fn(async () => undefined),
+    // 문서 탭(UX ①)이 열 때 받아 온다.
+    loadChannelDoc: vi.fn(async () => null),
     // #222: 컴포저가 예약 목록을 읽는다 — 목에 이 표면이 없으면 화면이 뜨지 않는다.
     api: scheduledApiStub(),
   };
@@ -63,6 +65,42 @@ afterEach(() => {
 });
 
 describe('ChannelPane', () => {
+  /**
+   * **문서·파일은 탭이다**(UX ① H1). 곁창이던 때는 채널 열이 좁을 때 곁창이 320px 을 먼저
+   * 가져가 작성창이 20px 로 무너졌다. 탭은 채널 칸을 나눠 쓰지 않고 덮는다 — 그리고
+   * 대화는 **내리지 않는다**(스크롤 자리·초안이 그 안에 산다). 덮인 동안 밑의 작성창에
+   * 포커스가 새지 않게 `inert` 가 걸린다.
+   */
+  it('문서 탭은 대화를 내리지 않고 덮으며, 대화 탭으로 돌아오면 그대로다', async () => {
+    fakeController();
+    render(<ChannelPane />);
+    const composer = screen.getByPlaceholderText(/Message/);
+    expect(screen.getByTestId('channel-view-messages').getAttribute('aria-selected')).toBe('true');
+
+    fireEvent.click(screen.getByTestId('channel-view-doc'));
+    expect(screen.getByTestId('channel-view-doc').getAttribute('aria-selected')).toBe('true');
+    // 작성창은 **남아 있고**(같은 노드), 덮인 상자 안에 있다.
+    expect(screen.getByPlaceholderText(/Message/)).toBe(composer);
+    expect(composer.closest('[inert]')).not.toBeNull();
+
+    fireEvent.click(screen.getByTestId('channel-view-messages'));
+    expect(screen.getByPlaceholderText(/Message/)).toBe(composer);
+    expect(composer.closest('[inert]')).toBeNull();
+  });
+
+  it('DM 에는 문서 탭이 없다 — 눌러도 아무 일 없는 죽은 탭을 그리지 않는다', () => {
+    fakeController();
+    useAppStore.getState().set({
+      channels: [],
+      dms: [{ id: 'd1', memberIds: ['u1', 'u2'] } as never],
+      activeChannelId: 'd1',
+      messages: { d1: [] },
+    });
+    render(<ChannelPane />);
+    expect(screen.queryByTestId('channel-view-doc')).toBeNull();
+    expect(screen.getByTestId('channel-view-files')).toBeTruthy();
+  });
+
   // 최신 창 밖으로 밀려난 대화에 도달할 진입점. 남은 게 없으면 보이지 않아야 한다.
   it('offers a way back into older history when more remains', () => {
     const c = fakeController();

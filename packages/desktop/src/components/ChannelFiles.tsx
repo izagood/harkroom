@@ -27,7 +27,7 @@ export function FilesPanel({ files, loading, error, hasMore, onRetry, onLoadMore
   const accounts = useActiveStore((s) => s.accounts);
 
   return (
-    <section className="flex w-80 flex-col border-l border-border bg-surface-raised" aria-label={t('channel.files.label')}>
+    <section className="flex h-full w-full min-w-0 flex-col bg-surface-raised" aria-label={t('channel.files.label')}>
       <header className="flex items-center border-b border-border px-4 py-2">
         <span className="font-bold">{t('channel.files.heading')}</span>
         <button className="ml-auto rounded px-2 text-fg-subtle hover:bg-surface-sunken"

@@ -106,6 +106,12 @@ export const MAX_TERMINAL_WIDTH = 1000;
  * `min-width` 와 부딪쳐 줄이 넘치고, 부모가 `overflow-hidden` 이라 그것이 조용히 잘린다.
  */
 export const MIN_CHANNEL_WIDTH = 222;
+/**
+ * 인박스가 본문 자리에 설 때 남길 폭(UX ① H2). 인박스 줄 하나는 얼굴·라벨·본문 두 줄·
+ * "채널 · 시각" 을 담는다 — 대화의 하한(222px)에서는 라벨이 한 글자씩 세로로 꺾였다
+ * (2026-09-29 designer 실측, 약 210px). 스레드가 그 이상 넓어지지 못하게 이 값을 남긴다.
+ */
+export const MIN_INBOX_WIDTH = 420;
 
 /**
  * 오른쪽 패널(스레드·터미널)이 **실제로 커질 수 있는 상한**을 CSS 로 적는다.

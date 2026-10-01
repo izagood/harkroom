@@ -9,7 +9,8 @@ import { useT } from '../i18n/useT';
 
 interface ChannelDocPanelProps {
   channelId: string;
-  onClose: () => void;
+  /** 탭이 된 뒤로 패널 안에는 닫는 버튼이 없다(채널 머리의 [메시지] 탭). 부르는 쪽 호환으로만 남는다. */
+  onClose?: () => void;
   /** 문서 본문의 멘션을 눌렀을 때 갈 곳(#279). `MessageBody` 로 그대로 넘긴다. */
   onOpenDirectory?: (accountId: string | null) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
@@ -35,7 +36,7 @@ function expectationOf(doc: ChannelDoc | undefined | null): number | null {
  *    스토어에서 뜬다. 스토어를 `useEffect` 의존성으로 걸어 매번 맞추면 문서가 갱신되는
  *    순간 타이핑 중인 내용이 날아간다.
  */
-export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSettings }: ChannelDocPanelProps) {
+export function ChannelDocPanel({ channelId, onOpenDirectory, onOpenSettings }: ChannelDocPanelProps) {
   const t = useT();
   const accounts = useActiveStore((s) => s.accounts);
   const doc = useActiveStore((s) => s.channelDocs[channelId]);
@@ -114,7 +115,7 @@ export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSet
   const updatedAtLabel = doc?.updatedAt ? new Date(doc.updatedAt).toLocaleString() : null;
 
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col border-l border-border bg-surface">
+    <aside className="flex h-full w-full min-w-0 flex-col bg-surface">
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
         {/* 패널 제목은 **이름줄단 15px** 이다 — 화면 제목단(17px)은 설정 화면 제목처럼
             화면 하나를 여는 자리에만 준다. 이 패널은 채널 안에 붙는 곁창이고, 옆의 메타는
@@ -127,12 +128,19 @@ export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSet
             {updatedByHandle ?? t('channel.doc.unknownAuthor')} · {updatedAtLabel}
           </span>
         )}
-        <button
-          className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
-          onClick={onClose}
-        >
-          {t('channel.doc.close')}
-        </button>
+        {/* "편집" 은 **제목 줄 오른쪽**이다(UX ① 사양). 아래 줄에 있을 때는 좁은 칸에서
+            작성창과 겹쳤다. 못 읽었거나 읽는 중에는 없다 — 못 읽은 문서 위에 쓰면 남의 것을
+            지운다(아래 1번 약속). */}
+        {!editing && !loading && !loadError && (
+          <button
+            className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-sunken"
+            onClick={startEditing}
+          >
+            {t('channel.doc.edit')}
+          </button>
+        )}
+        {/* [닫기] 가 여기 있었다 — 탭이 된 뒤로는 [메시지] 탭과 같은 동작이라 겹쳤다(designer
+            ①-a). 나가는 길은 채널 머리의 탭 하나다. */}
       </div>
 
       {loading && <div className="p-3 text-fg-subtle">{t('channel.doc.loading')}</div>}
@@ -191,32 +199,23 @@ export function ChannelDocPanel({ channelId, onClose, onOpenDirectory, onOpenSet
             )}
           </div>
 
-          <div className="border-t border-border p-2">
-            {editing ? (
-              <div className="flex gap-2">
-                <button
-                  className="flex-1 rounded bg-surface-hover px-3 py-1.5 text-fg hover:bg-border"
-                  onClick={cancelEditing}
-                >
-                  {t('channel.doc.cancel')}
-                </button>
-                <button
-                  className="flex-1 rounded bg-accent px-3 py-1.5 text-fg-on-strong hover:bg-accent-hover disabled:opacity-50"
-                  onClick={() => void save()}
-                  disabled={saving}
-                >
-                  {saving ? t('channel.doc.saving') : t('channel.doc.save')}
-                </button>
-              </div>
-            ) : (
+          {editing && (
+            <div className="flex gap-2 border-t border-border p-2">
               <button
-                className="w-full rounded border border-border px-3 py-1.5 text-fg hover:bg-surface-sunken"
-                onClick={startEditing}
+                className="flex-1 rounded bg-surface-hover px-3 py-1.5 text-fg hover:bg-border"
+                onClick={cancelEditing}
               >
-                {t('channel.doc.edit')}
+                {t('channel.doc.cancel')}
               </button>
-            )}
-          </div>
+              <button
+                className="flex-1 rounded bg-accent px-3 py-1.5 text-fg-on-strong hover:bg-accent-hover disabled:opacity-50"
+                onClick={() => void save()}
+                disabled={saving}
+              >
+                {saving ? t('channel.doc.saving') : t('channel.doc.save')}
+              </button>
+            </div>
+          )}
         </>
       )}
     </aside>
