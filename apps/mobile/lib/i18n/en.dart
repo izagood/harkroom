@@ -288,7 +288,7 @@ class StringsEn implements Strings {
   String get artifactLoading => 'Loading…';
 
   @override
-  String get artifactTooLarge => 'Too large to preview ({size}).';
+  String get artifactTooLarge => 'Too large to preview ({size}). You can download it in the desktop app.';
 
   @override
   String get artifactForbidden => 'You cannot see this preview.';

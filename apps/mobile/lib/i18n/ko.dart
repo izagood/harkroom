@@ -287,7 +287,7 @@ class StringsKo implements Strings {
   String get artifactLoading => '불러오는 중…';
 
   @override
-  String get artifactTooLarge => '미리보기 한도를 넘는다({size}).';
+  String get artifactTooLarge => '미리보기 한도를 넘는다({size}). 데스크톱 앱에서 파일로 받아 볼 수 있다.';
 
   @override
   String get artifactForbidden => '이 미리보기를 볼 수 없다(채널 멤버가 아니다).';
