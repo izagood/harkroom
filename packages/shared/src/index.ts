@@ -1396,8 +1396,21 @@ export interface FailureMeta {
      * '다시 부르기'를 그리지 않는다 — 눌러도 안 되는 버튼은 없는 문을 그리는 것이다(규칙 06).
      */
     retryable: boolean;
+    /**
+     * **기계가 읽는 실패 갈래**(있을 때만). 화면이 문구(`what`)로 갈래를 가르면 문구를 다듬는
+     * 순간 조용히 안 맞는다 — 그래서 고칠 길이 정해진 실패만 여기 표지를 단다. 모르는 값은
+     * 화면이 무시한다(평문 실패 카드로 그린다).
+     *
+     * - `thread_model_rejected`: 이 스레드에 지정한 모델·effort 를 하네스가 받지 않았다(079,
+     *   결정 6). 화면은 [다시 부르기] 대신 [기본으로 되돌리고 다시 부르기]·[모델 고르기]를 준다.
+     */
+    code?: FailureCode;
   };
 }
+
+/** `FailureMeta.failure.code` 의 값들. 서버 `message.fail` 입력이 이 목록으로 받는다. */
+export const FAILURE_CODES = ['thread_model_rejected'] as const;
+export type FailureCode = (typeof FAILURE_CODES)[number];
 
 /**
  * `meta` 가 실패인지 판정한다. `readAskMeta` 와 같은 규약이다 — **모르는 `meta` 는 평문으로

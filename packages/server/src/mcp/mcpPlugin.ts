@@ -6,7 +6,7 @@ import { z } from 'zod';
 import {
   ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, MAX_MESSAGE_BODY_CHARS,
   MODEL_ID_MAX, REPORT_MAX_ITEMS, REPORT_MAX_NEXT, TEAM_ROUND_LIMIT,
-  type AccountView, type AskAudience, type AskMeta, type DelegationMeta, type FailureMeta,
+  FAILURE_CODES, type AccountView, type AskAudience, type AskMeta, type DelegationMeta, type FailureMeta,
   type MessageRow, type ModelMeta, type ReportMeta,
 } from '@harkroom/shared';
 import { CAUSE_HEADER } from '@harkroom/shared/runnerLink';
@@ -571,15 +571,17 @@ function buildMcpServer(
       what: z.string().min(1).max(500).optional(),
       reason: z.string().min(1).max(1000).optional(),
       retryable: z.boolean(),
+      // 기계가 읽는 실패 갈래(FailureMeta 주석). 러너가 스레드 지정 모델 거절 때 싣는다.
+      code: z.enum(FAILURE_CODES).optional(),
       model: MODEL_ARG,
     },
-  }, async ({ channelId, body, threadRootId, what, reason, retryable, model }) => {
+  }, async ({ channelId, body, threadRootId, what, reason, retryable, code, model }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
     const meta: FailureMeta & Partial<ModelMeta> = {
       kind: 'failure',
-      failure: { retryable, ...(what ? { what } : {}), ...(reason ? { reason } : {}) },
+      failure: { retryable, ...(what ? { what } : {}), ...(reason ? { reason } : {}), ...(code ? { code } : {}) },
       ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
     };
     const posted = await postMessage(pool, {

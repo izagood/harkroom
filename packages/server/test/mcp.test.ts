@@ -571,6 +571,24 @@ describe('message.fail — 실패의 계약', () => {
     }
   });
 
+  it('기계가 읽는 갈래(code)를 싣는다 — 모르는 값은 거절한다', async () => {
+    const client = await mcpClient(botPat);
+    try {
+      const posted = text(await client.callTool({
+        name: 'message.fail',
+        arguments: { channelId, body: '모델을 받지 않았다', retryable: false, code: 'thread_model_rejected' },
+      })) as { message: { meta: Record<string, unknown> } };
+      expect(readFailureMeta(posted.message.meta)?.code).toBe('thread_model_rejected');
+      const bad = await client.callTool({
+        name: 'message.fail',
+        arguments: { channelId, body: 'x', retryable: false, code: 'made_up' },
+      });
+      expect(bad.isError).toBe(true);
+    } finally {
+      await client.close();
+    }
+  });
+
   it('retryable 을 빠뜨리면 거절한다 — 서버가 기본값을 정하지 않는다', async () => {
     const client = await mcpClient(botPat);
     try {
