@@ -99,36 +99,97 @@ class _MarkdownBodyState extends State<MarkdownBody> {
             decoration: BoxDecoration(border: Border(left: BorderSide(color: k.line, width: 3))),
             child: _rich(text, base.copyWith(color: k.mute), k),
           ),
-        MdList(:final items, :final ordered, :final start) => Column(
-            key: const Key('md-list'),
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (var i = 0; i < items.length; i++)
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SizedBox(
-                        width: ordered ? 22 : 14,
-                        child: Text(ordered ? '${start + i}.' : '•', style: base.copyWith(color: k.mute)),
-                      ),
-                      Expanded(child: _rich(items[i], base, k)),
-                    ],
-                  ),
-                ),
-            ],
+        MdList() => _list(b, base, k, 0),
+        MdRule() => Container(
+            key: const Key('md-rule'),
+            height: 1,
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            color: k.line,
           ),
+        MdTable() => _table(b, base, k),
       };
 
-  Widget _rich(String text, TextStyle base, HarkroomTokens k) {
+  /// 목록. 중첩 목록은 **항목 안에** 겹쳐 그린다 — 번호가 깊이마다 따로 세고, 글머리표 모양이
+  /// 깊이를 말해 준다(• ◦ ▪).
+  Widget _list(MdList list, TextStyle base, HarkroomTokens k, int depth) => Column(
+        key: const Key('md-list'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (var i = 0; i < list.items.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: list.ordered ? 22 : 14,
+                    child: Text(list.ordered ? '${list.start + i}.' : _bullets[depth % _bullets.length],
+                        style: base.copyWith(color: k.mute)),
+                  ),
+                  Expanded(
+                    child: list.items[i].children.isEmpty
+                        ? _rich(list.items[i].text, base, k)
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _rich(list.items[i].text, base, k),
+                              for (final c in list.items[i].children) _list(c, base, k, depth + 1),
+                            ],
+                          ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      );
+
+  static const _bullets = ['•', '◦', '▪'];
+
+  /// 표. 폰은 좁다 — 칸을 짓눌러 한 글자씩 접지 않고 **표 전체를 옆으로 민다**(코드 블록과 같다).
+  /// 대신 칸 하나가 화면을 다 먹지 않게 폭에 상한을 두고, 그 안에서는 줄을 접는다.
+  Widget _table(MdTable t, TextStyle base, HarkroomTokens k) {
+    final cellStyle = base.copyWith(fontSize: 14, height: 1.35);
+    TextAlign alignOf(int c) => switch (t.align[c]) {
+          MdAlign.center => TextAlign.center,
+          MdAlign.right => TextAlign.right,
+          _ => TextAlign.left,
+        };
+    Widget cell(String text, int c, {bool head = false}) => ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 240),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: _rich(text, head ? cellStyle.copyWith(fontWeight: FontWeight.w700) : cellStyle, k,
+                align: alignOf(c)),
+          ),
+        );
+    return SingleChildScrollView(
+      key: const Key('md-table'),
+      scrollDirection: Axis.horizontal,
+      child: Table(
+        defaultColumnWidth: const IntrinsicColumnWidth(),
+        defaultVerticalAlignment: TableCellVerticalAlignment.top,
+        border: TableBorder.all(color: k.line),
+        children: [
+          TableRow(
+            decoration: BoxDecoration(color: k.soft),
+            children: [for (var c = 0; c < t.head.length; c++) cell(t.head[c], c, head: true)],
+          ),
+          for (final row in t.rows)
+            TableRow(children: [for (var c = 0; c < row.length; c++) cell(row[c], c)]),
+        ],
+      ),
+    );
+  }
+
+  Widget _rich(String text, TextStyle base, HarkroomTokens k, {TextAlign align = TextAlign.start}) {
     final spans = <InlineSpan>[];
     for (final piece in parseInline(text)) {
       switch (piece) {
-        case MdText(:final text, :final bold, :final italic):
+        case MdText(:final text, :final bold, :final italic, :final strike):
           final style = TextStyle(
             fontWeight: bold ? FontWeight.w700 : null,
             fontStyle: italic ? FontStyle.italic : null,
+            decoration: strike ? TextDecoration.lineThrough : null,
           );
           // `@handle` 은 **칩**으로 — 사람을 부르는 말이 본문에 묻히면 "나를 불렀나"를 다시
           // 읽어야 한다(사양 3.3). 코드 안의 `@` 는 여기 오지 않는다(코드 조각은 따로다).
@@ -174,7 +235,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
           }
       }
     }
-    return Text.rich(TextSpan(style: base, children: spans));
+    return Text.rich(TextSpan(style: base, children: spans), textAlign: align);
   }
 }
 

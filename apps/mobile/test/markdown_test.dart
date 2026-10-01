@@ -25,16 +25,101 @@ void main() {
     test('목록·번호 목록·인용·제목', () {
       final b = parseMarkdown('# 제목\n- 하나\n- 둘\n\n3. 셋\n4. 넷\n\n> 인용\n> 이어짐');
       expect((b[0] as MdHeading).level, 1);
-      expect((b[1] as MdList).items, ['하나', '둘']);
+      expect((b[1] as MdList).items.map((e) => e.text), ['하나', '둘']);
       final ol = b[2] as MdList;
       expect((ol.ordered, ol.start), (true, 3));
-      expect(ol.items, ['셋', '넷']);
+      expect(ol.items.map((e) => e.text), ['셋', '넷']);
       expect((b[3] as MdQuote).text, '인용\n이어짐');
     });
 
-    test('표·이미지·HTML 은 글자 그대로 단락에 남는다', () {
+    test('이미지·HTML 은 글자 그대로 단락에 남는다 — 구분줄 없는 | 도', () {
       final b = parseMarkdown('| a | b |\n![x](https://i.example.com/p.png)\n<b>hi</b>');
       expect(b.single, isA<MdParagraph>());
+      expect((b.single as MdParagraph).text, contains('![x](https://i.example.com/p.png)'));
+    });
+
+    // 아래는 데스크톱 `test/bodyMarkdown.test.tsx` 의 예시를 그대로 옮긴 것이다 — 같은 글이
+    // 폰과 데스크톱에서 같은 구조가 되는지 본다.
+    test('들여쓴 항목은 중첩 목록이 된다 — 안쪽이 바깥 항목 안에 있다', () {
+      final b = parseMarkdown('1. 바깥\n   - 안쪽 하나\n   - 안쪽 둘\n2. 다시 바깥');
+      final outer = b.single as MdList;
+      expect(outer.ordered, isTrue);
+      expect(outer.items.map((e) => e.text), ['바깥', '다시 바깥']);
+      final inner = outer.items[0].children.single;
+      expect(inner.ordered, isFalse);
+      expect(inner.items.map((e) => e.text), ['안쪽 하나', '안쪽 둘']);
+      expect(outer.items[1].children, isEmpty);
+    });
+
+    test('표시 종류가 바뀌면 다른 목록이다', () {
+      final b = parseMarkdown('- 점\n1. 번호');
+      expect(b.length, 2);
+      expect([for (final l in b.cast<MdList>()) l.ordered], [false, true]);
+    });
+
+    test('--- 만 있는 줄은 가로줄이다 — 글머리표가 아니다', () {
+      final b = parseMarkdown('위\n\n---\n\n아래');
+      expect(b.map((x) => x.runtimeType), [MdParagraph, MdRule, MdParagraph]);
+      expect(parseMarkdown('--').single, isA<MdParagraph>());
+    });
+  });
+
+  group('표', () {
+    const table = '| claim | 판단 | 근거 |\n'
+        '| --- | :---: | ---: |\n'
+        '| `model-cache-ax-k1` 50Gi | **버린다** | `.compile.lock` 하나다 |\n'
+        '| model-cache | 재바인딩 | 선언이 있다 |';
+
+    test('머리글 + 구분줄이면 표다 — 정렬은 구분줄이 말한 것만 따른다', () {
+      final t = parseMarkdown(table).single as MdTable;
+      expect(t.align, [null, MdAlign.center, MdAlign.right]);
+      expect(t.head, ['claim', '판단', '근거']);
+      expect(t.rows.length, 2);
+      expect(t.rows[1], ['model-cache', '재바인딩', '선언이 있다']);
+    });
+
+    test('칸 안의 코드·강조는 그대로 살아 있다', () {
+      final row = (parseMarkdown(table).single as MdTable).rows[0];
+      expect(parseInline(row[0]).whereType<MdInlineCode>().single.text, 'model-cache-ax-k1');
+      expect(parseInline(row[1]).whereType<MdText>().single.bold, isTrue);
+    });
+
+    test('구분줄이 없으면 표가 아니다 — 사람이 쓴 문장을 격자에 넣지 않는다', () {
+      const plain = '왼쪽 | 오른쪽\n위 | 아래';
+      expect((parseMarkdown(plain).single as MdParagraph).text, plain);
+    });
+
+    test('열 수가 어긋난 구분줄은 표를 만들지 않는다', () {
+      expect(parseMarkdown('a | b | c\n| --- |').whereType<MdTable>(), isEmpty);
+    });
+
+    test('행마다 칸 수가 달라도 머리글 열 수로 맞춘다', () {
+      final t = parseMarkdown('| a | b |\n| --- | --- |\n| 하나 |\n| 하나 | 둘 | 셋 |').single as MdTable;
+      expect(t.rows, [
+        ['하나', ''],
+        ['하나', '둘'],
+      ]);
+    });
+
+    test('인라인 코드 안의 | 는 칸 경계가 아니다 — \\| 는 글자 | 다', () {
+      final t = parseMarkdown('| cmd | 뜻 |\n| --- | --- |\n| `a|b` | x \\| y |').single as MdTable;
+      expect(t.rows.single, ['`a|b`', 'x | y']);
+    });
+
+    test('코드 블록 안의 표는 표가 아니다', () {
+      final b = parseMarkdown('```\n| a | b |\n| --- | --- |\n```');
+      expect((b.single as MdCode).text, contains('| --- | --- |'));
+    });
+
+    test('표는 | 가 없는 줄에서 끝난다 — 뒤 문장이 마지막 행으로 끌려오지 않는다', () {
+      final b = parseMarkdown('| a | b |\n| --- | --- |\n| 하나 | 둘 |\n표 뒤의 문장');
+      expect((b[0] as MdTable).rows.length, 1);
+      expect((b[1] as MdParagraph).text, '표 뒤의 문장');
+    });
+
+    test('문단 바로 뒤의 표도 표다', () {
+      final b = parseMarkdown('정리:\n| a | b |\n|---|---|\n| 1 | 2 |');
+      expect(b.map((x) => x.runtimeType), [MdParagraph, MdTable]);
     });
   });
 
@@ -45,6 +130,14 @@ void main() {
       expect(p.whereType<MdText>().where((t) => t.italic).single.text, '기울임');
       expect(p.whereType<MdInlineCode>().single.text, '코드');
       expect(p.whereType<MdLink>().single.uri.toString(), 'https://a.example.com/x');
+    });
+
+    test('~~ 는 취소선이다 — 기호는 남지 않고, 띄어 쓴 ~~ 는 짝이 아니다', () {
+      final p = parseInline('**굵게** 와 *기울임* 과 ~~취소~~');
+      expect(p.whereType<MdText>().where((t) => t.strike).single.text, '취소');
+      expect(p.whereType<MdText>().map((t) => t.text).join(), '굵게 와 기울임 과 취소');
+      expect(parseInline('a ~~ b ~~ c').whereType<MdText>().any((t) => t.strike), isFalse);
+      expect(parseInline('`~~x~~`').single, isA<MdInlineCode>());
     });
 
     test('코드 안의 별표·링크는 서식이 아니다', () {
@@ -91,14 +184,15 @@ void main() {
 
     /// 첫 번째 누를 수 있는 링크를 누른다.
     Future<void> tapFirstLink(WidgetTester tester) async {
-      final rich = tester.widget<RichText>(find.byType(RichText).first);
       TapGestureRecognizer? r;
-      rich.text.visitChildren((span) {
-        if (span is TextSpan && span.recognizer is TapGestureRecognizer) {
-          r ??= span.recognizer! as TapGestureRecognizer;
-        }
-        return true;
-      });
+      for (final rich in tester.widgetList<RichText>(find.byType(RichText))) {
+        rich.text.visitChildren((span) {
+          if (span is TextSpan && span.recognizer is TapGestureRecognizer) {
+            r ??= span.recognizer! as TapGestureRecognizer;
+          }
+          return true;
+        });
+      }
       r!.onTap!();
       await tester.pumpAndSettle();
     }
@@ -185,6 +279,58 @@ void main() {
         return true;
       });
       expect(tappable, isFalse);
+    });
+
+    testWidgets('표는 격자로 그리고 옆으로 민다 — 구분줄은 화면에 남지 않는다', (tester) async {
+      await tester.pumpWidget(host(const MarkdownBody(
+          '| 이름 | 상태 |\n|:--|--:|\n| **forge** | ~~멈춤~~ 돎 |\n| [문서](https://docs.example.com/a) | `ok` |')));
+      final scroll = tester.widget<SingleChildScrollView>(find.byKey(const Key('md-table')));
+      expect(scroll.scrollDirection, Axis.horizontal);
+      final table = tester.widget<Table>(find.byType(Table));
+      expect(table.children.length, 3);
+      final all = tester.widgetList<RichText>(find.byType(RichText)).map((r) => r.text.toPlainText()).toList();
+      expect(all, containsAll(['이름', '상태', 'forge', '멈춤 돎', '문서', 'ok']));
+      expect(all.any((t) => t.contains('|') || t.contains('--')), isFalse);
+      // 정렬은 구분줄대로: 첫 열 왼쪽, 둘째 열 오른쪽.
+      final align = {
+        for (final r in tester.widgetList<RichText>(find.byType(RichText))) r.text.toPlainText(): r.textAlign
+      };
+      expect(align['이름'], TextAlign.left);
+      expect(align['상태'], TextAlign.right);
+      // 칸 안의 [글](주소) 도 확인 시트를 거친다.
+      final opened = <Uri>[];
+      await tester.pumpWidget(host(MarkdownBody('| a |\n|---|\n| [문서](https://docs.example.com/a) |',
+          openLink: (u) async => opened.add(u))));
+      await tapFirstLink(tester);
+      expect(find.byKey(const Key('link-confirm')), findsOneWidget);
+      expect(opened, isEmpty);
+    });
+
+    testWidgets('넓은 표는 화면을 넘어도 넘침 오류 없이 옆으로 밀린다', (tester) async {
+      tester.view.physicalSize = const Size(390 * 3, 844 * 3);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final wide = List.filled(6, '아주 긴 열 이름이 들어간 칸입니다').join(' | ');
+      await tester.pumpWidget(host(MarkdownBody('| $wide |\n|${List.filled(6, '---').join('|')}|\n| ${List.filled(6, 'x').join(' | ')} |')));
+      expect(tester.takeException(), isNull);
+      expect(tester.getSize(find.byType(Table)).width, greaterThan(390));
+    });
+
+    testWidgets('취소선·구분선·중첩 목록을 그린다', (tester) async {
+      await tester.pumpWidget(host(const MarkdownBody('~~취소~~\n\n---\n\n- 바깥\n  - 안쪽')));
+      expect(find.byKey(const Key('md-rule')), findsOneWidget);
+      expect(find.byKey(const Key('md-list')), findsNWidgets(2));
+      var struck = false;
+      tester.widget<RichText>(find.byType(RichText).first).text.visitChildren((span) {
+        if (span is TextSpan && span.text == '취소' && span.style?.decoration == TextDecoration.lineThrough) {
+          struck = true;
+        }
+        return true;
+      });
+      expect(struck, isTrue);
+      // 안쪽 글머리표는 깊이가 다르다는 것을 모양으로 말한다.
+      expect(find.text('•'), findsOneWidget);
+      expect(find.text('◦'), findsOneWidget);
     });
 
     testWidgets('코드 블록·목록·인용을 그린다', (tester) async {
