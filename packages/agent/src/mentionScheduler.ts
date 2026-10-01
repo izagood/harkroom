@@ -10,7 +10,7 @@
 // markRead 만 await 한다. 이 계약이 깨지면 폴 루프가 다시 턴에 묶여, 이 모듈이 존재하는
 // 이유 자체가 사라진다.
 import type { FailOpts, InboxBatch } from './harkroom.js';
-import { mentionAnchor, type MentionTarget, type MentionTurnDeps, type MentionTurnResult } from './mentionTurn.js';
+import { AccountGateRequeueError, mentionAnchor, type MentionTarget, type MentionTurnDeps, type MentionTurnResult } from './mentionTurn.js';
 import { SessionStore } from './sessions.js';
 import type { TurnRegistry } from './turnRegistry.js';
 import type { MentionQueue } from './mentionQueue.js';
@@ -135,6 +135,11 @@ export interface MentionSchedulerDeps {
   accountAttention?: {
     mark(account: ClaudeAccount): Promise<void>;
     clear(account: ClaudeAccount): Promise<void>;
+    /**
+     * 그 config 디렉터리에 관문 표식이 서 있는가(2026-10-02). 관문 때문에 접은 멘션
+     * (`AccountGateRequeueError('queued')`)은 이것이 거짓이 될 때까지 다시 띄우지 않는다.
+     */
+    active?(configDir: string): Promise<boolean>;
   };
   runMentionTurn(deps: MentionTurnDeps, target: MentionTarget): Promise<MentionTurnResult>;
   /** 계정 두 필드까지 채운 완성 deps 를 만든다. 조립은 main 이 갖는다. */
@@ -208,6 +213,9 @@ function askAnsweredNote(mention: { body: string; meta?: unknown }): string {
   return `내가 낸 선택지에 답이 왔다 — 고른 것: ${label ?? picked}`;
 }
 
+/** 관문 때문에 접어 둔 멘션을 기다리는 상한. 그 뒤에는 읽음 처리한다(관문 통지는 이미 남았다). */
+export const GATE_WAIT_MAX_MS = 2 * 60 * 60 * 1000;
+
 export function createMentionScheduler(deps: MentionSchedulerDeps): MentionScheduler {
   const now = deps.now ?? Date.now;
   /**
@@ -222,6 +230,12 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
    * 매 시도마다 올리면 빠르게 실패하는 오류에서 스레드가 몇 초 만에 도배된다.
    */
   const attempts = new Map<number, { tried: number; notBefore: number; noticed?: boolean }>();
+  /**
+   * 계정 관문 때문에 접어 둔 멘션(2026-10-02) — 그 계정의 표식이 지워질 때까지 다시 띄우지 않는다.
+   * **읽음 처리하지 않는다**: inbox 의 at-least-once 가 그대로 큐다(조종 유예와 같은 판례). 한없이
+   * 기다리지 않는다(`GATE_WAIT_MAX_MS`) — 그 뒤에는 읽음 처리한다(관문 통지는 이미 스레드에 있다).
+   */
+  const gateWaits = new Map<number, { configDir: string; since: number }>();
   /** 지금 도는 턴의 entry id. markRead 가 완료 후라 같은 entry 가 다음 폴에 또 온다. */
   const inFlightEntries = new Set<number>();
   /**
@@ -346,6 +360,16 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       void deps.secretLeases?.release(mention.id);
       if (turn.stopRequestedAt) deps.hooks.stopRequested(turn.stopRequestedAt);
     } catch (err) {
+      // 계정 관문 때문에 접었다(2026-10-02) — **실패가 아니다.** 재시도 회계·실패 통지·읽음 처리를 하지
+      // 않고 같은 멘션을 다시 띄운다: `passed` 는 다음 폴에 바로, `queued` 는 그 계정의 표식이 지워진 뒤.
+      if (err instanceof AccountGateRequeueError) {
+        const prior = attempts.get(entryId);
+        attempts.set(entryId, { tried: Math.max(0, tried - 1), notBefore: 0, noticed: prior?.noticed });
+        if (err.why === 'queued' && err.configDir) gateWaits.set(entryId, { configDir: err.configDir, since: now() });
+        console.error(`  ${mention.id} 계정 관문 — 턴을 접고 다시 띄운다(${err.why})`);
+        void deps.secretLeases?.release(mention.id);
+        return;
+      }
       // **여기 도달했다는 것은 계정 축이 이미 소진됐다는 뜻이다** — withAccountFailover 가
       // 위를 감싸고 있으므로, 아직 안 써 본 계정이 있으면 그 오류는 여기 오지 않는다.
       //
@@ -543,6 +567,21 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         // 관문 0: 실패 백오프. `attempts` 를 **읽기만** 한다 — 증가는 모든 관문 뒤다.
         const record = attempts.get(entry.id);
         if (record && record.notBefore > now()) { out.blocked += 1; continue; }
+
+        // 관문 대기(2026-10-02): 그 계정의 표식이 지워질 때까지 이 멘션은 다시 띄우지 않는다.
+        const gw = gateWaits.get(entry.id);
+        if (gw) {
+          if (now() - gw.since > GATE_WAIT_MAX_MS) {
+            gateWaits.delete(entry.id);
+            attempts.delete(entry.id);
+            orphans.push(entry.id);
+            out.skipped += 1;
+            continue;
+          }
+          const still = await (deps.accountAttention?.active?.(gw.configDir) ?? Promise.resolve(false)).catch(() => false);
+          if (still) { out.blocked += 1; continue; }
+          gateWaits.delete(entry.id);
+        }
 
         if (inFlightEntries.has(entry.id)) { out.blocked += 1; continue; }
         // 앞 세대가 들고 있는 것은 **내 것이 아니다**(이관 중). 유예가 끝나면 이 집합이

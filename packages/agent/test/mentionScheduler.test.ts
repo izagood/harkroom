@@ -7,7 +7,8 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createMentionScheduler, type BatchContext } from '../src/mentionScheduler.js';
+import { createMentionScheduler, GATE_WAIT_MAX_MS, type BatchContext } from '../src/mentionScheduler.js';
+import { AccountGateRequeueError } from '../src/mentionTurn.js';
 import { TurnRegistry } from '../src/turnRegistry.js';
 import { MentionQueue } from '../src/mentionQueue.js';
 import type { InboxBatch } from '../src/harkroom.js';
@@ -791,3 +792,62 @@ describe('mentionScheduler 관문 표식 (사람이 지나야 하는 관문, 202
   });
 });
 
+
+
+// ── 계정 관문으로 접은 멘션(2026-10-02). 실패가 아니다 — 읽음 처리·실패 통지·재시도 회계 없이 다시 띄운다.
+describe('계정 관문으로 접은 멘션', () => {
+  function run(errs: unknown[], active: () => boolean, now: () => number = () => 1_000) {
+    const markedRead: number[] = [];
+    const failed: string[] = [];
+    let calls = 0;
+    const scheduler = createMentionScheduler({
+      harkroom: { markRead: async (ids) => { markedRead.push(...ids); return ids.length; }, post: async () => 1, fail: async (_c, b) => { failed.push(b); return 1; } },
+      registry: new TurnRegistry(),
+      queue: new MentionQueue(),
+      accountLane: [null],
+      accountAttention: { mark: async () => {}, clear: async () => {}, active: async () => active() },
+      runMentionTurn: async () => { calls += 1; const e = errs.shift(); if (e) throw e; return { stopRequestedAt: null }; },
+      buildTurnDeps: () => ({}) as never,
+      hooks: { stopRequested: () => {}, exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {} },
+      startedAtMs: 0,
+      now,
+    });
+    return { scheduler, markedRead, failed, calls: () => calls };
+  }
+  const batch = () => batchOf([{ entryId: 1, messageId: 'm1' }]);
+
+  it("'queued' 는 읽음 처리하지 않고, 표식이 서 있는 동안 다시 띄우지 않다가 지워지면 띄운다", async () => {
+    let active = true;
+    const h = run([new AccountGateRequeueError('queued', '/x/a')], () => active);
+    await h.scheduler.admit(batch(), ctx); await h.scheduler.drain();
+    expect(h.calls()).toBe(1);
+    expect(h.markedRead).toEqual([]);
+    expect(h.failed).toEqual([]);
+    expect((await h.scheduler.admit(batch(), ctx)).blocked).toBe(1);
+    active = false;
+    expect((await h.scheduler.admit(batch(), ctx)).started).toBe(1);
+    await h.scheduler.drain();
+    expect(h.calls()).toBe(2);
+    expect(h.markedRead).toEqual([1]);
+  });
+
+  it("'passed' 는 다음 폴에 바로 다시 띄운다 — 재시도 회계에 넣지 않는다", async () => {
+    const h = run([new AccountGateRequeueError('passed', '/x/a'), new AccountGateRequeueError('passed', '/x/a'), new AccountGateRequeueError('passed', '/x/a')], () => true);
+    for (let i = 0; i < 4; i += 1) { await h.scheduler.admit(batch(), ctx); await h.scheduler.drain(); }
+    // MAX_ATTEMPTS(3) 를 넘겨 네 번째에 성공한다 — 회계에 들어갔다면 세 번째 뒤 버려졌다.
+    expect(h.calls()).toBe(4);
+    expect(h.failed).toEqual([]);
+    expect(h.markedRead).toEqual([1]);
+  });
+
+  it('표식이 상한(GATE_WAIT_MAX_MS) 넘게 안 지워지면 읽음 처리한다 — 관문 통지는 이미 스레드에 있다', async () => {
+    let t = 1_000;
+    const h = run([new AccountGateRequeueError('queued', '/x/a')], () => true, () => t);
+    await h.scheduler.admit(batch(), ctx); await h.scheduler.drain();
+    t += GATE_WAIT_MAX_MS + 1;
+    const out = await h.scheduler.admit(batch(), ctx);
+    expect(out.skipped).toBe(1);
+    expect(h.markedRead).toEqual([1]);
+    expect(h.calls()).toBe(1);
+  });
+});
