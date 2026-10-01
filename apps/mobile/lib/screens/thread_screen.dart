@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
+import '../ui/parts.dart';
 import 'composer_attachments.dart';
 import 'message_feed.dart';
 import 'message_list_screen.dart';
@@ -127,7 +128,8 @@ class _ThreadScreenState extends State<ThreadScreen> {
                   IconButton(
                     key: const Key('thread-send'),
                     tooltip: t.composerSend,
-                    icon: const Icon(Icons.send),
+                    style: sendButtonStyle(context),
+                    icon: const Icon(Icons.send, size: 20),
                     onPressed: _sending ? null : _send,
                   ),
                 ],

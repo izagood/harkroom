@@ -20,7 +20,8 @@ void main() {
   });
 
   test('도는 중과 끝난 것을 갈라 적는다', () {
-    expect(runningLabel(const Duration(minutes: 4), t), 'running 4m');
+    // 진행 줄은 앞에 "작업 중 ·" 이 이미 붙는다 — 여기서 또 "작업 중"을 붙이면 겹친다(#976 ③).
+    expect(runningLabel(const Duration(minutes: 4), t), '4m');
     expect(tookLabel(const Duration(minutes: 4), t), 'took 4m');
   });
 

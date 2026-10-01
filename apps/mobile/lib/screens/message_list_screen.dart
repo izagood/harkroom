@@ -6,6 +6,7 @@ import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../mention/mention_suggest.dart';
 import '../state/app_scope.dart';
+import '../ui/parts.dart';
 import 'agent_rows.dart';
 import 'ask_card.dart';
 import 'composer_attachments.dart';
@@ -154,7 +155,8 @@ class _MessageListScreenState extends State<MessageListScreen> {
                   IconButton(
                     key: const Key('composer-send'),
                     tooltip: t.composerSend,
-                    icon: const Icon(Icons.send),
+                    style: sendButtonStyle(context),
+                    icon: const Icon(Icons.send, size: 20),
                     onPressed: _sending ? null : _send,
                   ),
                 ],

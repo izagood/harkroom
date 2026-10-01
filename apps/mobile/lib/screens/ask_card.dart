@@ -4,6 +4,7 @@ import '../api/ask.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
+import '../ui/tokens.dart';
 
 /// 선택 요청을 **누를 수 있는 것**으로 그린다.
 ///
@@ -82,6 +83,8 @@ class _AskCardState extends State<AskCard> {
                     width: double.infinity,
                     child: OutlinedButton(
                       key: Key('ask-option-${widget.message.id}-${o.id}'),
+                      // 옅은 주황 면 위에서 테두리만 있는 버튼은 묻힌다 — 바탕색으로 채워 띄운다.
+                      style: OutlinedButton.styleFrom(backgroundColor: context.tokens.bg),
                       onPressed: _busy
                           ? null
                           : () => _run(() =>
