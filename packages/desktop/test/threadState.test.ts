@@ -282,3 +282,21 @@ describe('threadStateFromFacts — 채널 요약의 판정', () => {
     }
   });
 });
+
+// 계정 관문(서버 #1039, 2026-10-02): 턴 시작 때 계정 설정 확인 화면이 사람을 기다린다 — 그 차례 주인에게는
+// 내 차례다. 실패가 풀리면(그 에이전트가 다시 말하면) 함께 풀린다.
+describe('계정 관문 — 차례 주인에게는 내 차례', () => {
+  const gate = (id: string, awaiting: string | null): MessageRow => msg(id, 'c1', 1, '관문', FORGE, {
+    meta: { kind: 'failure', failure: { retryable: false, code: 'account_gate', account: 'acct-1', ...(awaiting ? { awaitingAccountId: awaiting } : {}) } } as unknown as Record<string, unknown>,
+  });
+  it('메시지로 판정: 나를 기다리면 my-turn, 남을 기다리면 그대로 막힘, 풀리면 끝', () => {
+    expect(state([gate('g1', ME)])).toBe('my-turn');
+    expect(state([gate('g1', 'u-other')])).toBe('stuck');
+    expect(state([gate('g1', ME), msg('r1', 'c1', 2, '이어서 했다', FORGE)])).toBe('done');
+  });
+  it('서버 집계로 판정: openGateAccountIds 에 내가 있으면 my-turn — 옛 서버(칸 없음)는 그대로', () => {
+    const row = { openAskHumanCount: 0, openAskAccountIds: [], failureCount: 1, unresolvedFailureCount: 1, lastKind: 'user' as const, lastAuthorId: FORGE };
+    expect(threadStateFromFacts({ row: { ...row, openGateAccountIds: [ME] }, myAccountId: ME, isAgent, live: new Set([FORGE]) })).toBe('my-turn');
+    expect(threadStateFromFacts({ row, myAccountId: ME, isAgent, live: new Set([FORGE]) })).toBe('stuck');
+  });
+});

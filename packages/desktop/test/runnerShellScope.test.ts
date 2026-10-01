@@ -190,6 +190,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
     claude_account_login_submit: ['code: String', 'login_id: String'],
     claude_account_login_cancel: ['login_id: String'],
     claude_account_remove: ['account: String', 'pool: String'],
+    claude_account_open_terminal: ['account: String', 'pool: String'],
     claude_pool_remove: ['pool: String'],
     claude_account_move: ['account: String', 'to_pool: String'],
     // codex 계정(2026-09-28): 이름·로그인 id 뿐이다.
@@ -627,7 +628,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       expect(commands.filter((c) => c.webviewParams.length > 0).map((c) => c.fn).sort())
         .toEqual([
           'claude_account_login_cancel', 'claude_account_login_start',
-          'claude_account_login_submit', 'claude_account_move',
+          'claude_account_login_submit', 'claude_account_move', 'claude_account_open_terminal',
           'claude_account_remove', 'claude_accounts_configure', 'claude_pool_remove',
           'codex_account_activate', 'codex_account_login_cancel', 'codex_account_login_start',
           'codex_account_remove',

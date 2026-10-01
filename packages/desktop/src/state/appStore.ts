@@ -448,6 +448,7 @@ export function keepThreadFacts(prev: MessageRow | undefined, next: MessageRow):
       replyCount: prev.replyCount, activityCount: prev.activityCount, lastReplyAt: prev.lastReplyAt,
       participantIds: prev.participantIds, openAskHumanCount: prev.openAskHumanCount,
       openAskAccountIds: prev.openAskAccountIds, openAskLinks: prev.openAskLinks,
+      openGateAccountIds: prev.openGateAccountIds,
       failureCount: prev.failureCount, unresolvedFailureCount: prev.unresolvedFailureCount,
       lastKind: prev.lastKind, lastAuthorId: prev.lastAuthorId,
     };

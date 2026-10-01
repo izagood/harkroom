@@ -274,3 +274,11 @@ describe('미룬 카드가 다시 서는 시각', () => {
     expect(label).not.toBe(laterUntilLabel(local(0, 9).toISOString(), now, 'ko', tr));
   });
 });
+
+describe('계정 관문 — Inbox 내 차례(서버 #1039 openGateAccountIds)', () => {
+  it('차례 주인이 나면 남의 스레드여도 내 차례 열이다 — 지목된 물음과 같다', () => {
+    const cards = board([entry(1, { threadRootId: 'r1', reason: 'thread_reply' })],
+      [head('r1', { unresolvedFailureCount: 1, failureCount: 1, openGateAccountIds: [ME] })]);
+    expect(cards[0]!.column).toBe('mine');
+  });
+});

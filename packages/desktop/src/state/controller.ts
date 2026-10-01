@@ -1,6 +1,6 @@
 import type { AccountStatus, AddTeamToChannelResult, AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, AgentView, ThreadAgentModelView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
 import type { MemoryEdit, MemoryEntry, MemoryRevision } from '../lib/memoryList';
-import { countsAsReply, notifyLevelOf } from '@harkroom/shared';
+import { countsAsReply, notifyLevelOf, readFailureMeta } from '@harkroom/shared';
 import { ApiClient, ApiError } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
@@ -51,6 +51,11 @@ export interface OpenThreadOpts {
   prefetched?: Promise<{ messages: MessageRow[]; hasMore: boolean }>;
 }
 
+/** 같은 계정의 관문 알림을 다시 울리기까지의 간격(`announceAccountGate`). */
+export const GATE_NOTIFY_WINDOW_MS = 30 * 60 * 1000;
+/** 한 에이전트가 `GATE_NOTIFY_WINDOW_MS` 안에 울릴 수 있는 관문 알림 수(security #1053 권고). */
+export const GATE_NOTIFY_PER_AGENT = 3;
+
 export class Controller {
 
   /**
@@ -79,6 +84,17 @@ export class Controller {
    * 두 경로가 서로의 기록을 보므로 어느 쪽이 먼저 도착해도 한 번만 울린다.
    */
   private notifiedMessages = new Set<string>();
+  /**
+   * 계정 관문 알림을 마지막으로 보낸 시각(계정 이름표 → ms, 2026-10-02 관문 대응 PR-4). **계정당 한 번**이다 —
+   * 그 계정에 막힌 스레드가 여럿이어도(에이전트 여럿·멘션 여럿) 사람이 할 일은 그 계정 하나를 여는 것이다.
+   * `GATE_NOTIFY_WINDOW_MS` 가 지나면 다시 알린다(그때도 막혀 있으면 사람이 놓친 것이다).
+   */
+  private gateNotifiedAt = new Map<string, number>();
+  /**
+   * 에이전트마다 최근 `GATE_NOTIFY_WINDOW_MS` 안에 보낸 관문 알림 시각(security #1053). 이름표(`account`)는 에이전트가
+   * 정하는 값이라, 이름표를 바꿔 가며 실패 글을 올리는 에이전트는 계정 묶음을 피한다 — 그래서 에이전트당 상한을 함께 둔다.
+   */
+  private gateNotifiedByAgent = new Map<string, number[]>();
   private runnerLauncher: RunnerLauncher;
   /** 비동기 부트스트랩 도중 교체·해제된 컨트롤러가 뒤늦게 살아나는 것을 막는다. */
   private stopped = false;
@@ -674,10 +690,45 @@ export class Controller {
    * 한 번 도는 것이라 다시 훑는 일이 없다 — 한꺼번에 터질 목록 자체가 존재하지 않는다.
    * 되훑는 쪽(`announceNewMentions`)에만 그 기록이 있다.
    */
+  /**
+   * 계정 관문 실패면 **계정당 한 번** 알리고 `true`(이 메시지는 다른 알림으로 다시 울리지 않는다).
+   * 관문이 아니면 `false` — 호출자가 평소대로 알린다. 받는 사람은 서버가 정한 차례 주인뿐이다(#1039).
+   */
+  private async announceAccountGate(row: MessageRow): Promise<boolean> {
+    const failure = readFailureMeta(row.meta);
+    if (failure?.code !== 'account_gate') return false;
+    const store = this.store.getState();
+    this.notifiedMessages.add(row.id);
+    // 나에게 온 차례가 아니면 울리지 않는다(채널을 `all` 로 둔 다른 사람에게는 남의 관문이다).
+    if (!store.me || failure.awaitingAccountId !== store.me.id) return true;
+    if (!usePrefsStore.getState().notifications.enabled) return true;
+    const label = failure.account ?? row.authorId;
+    // 열쇠는 (에이전트, 이름표) — 이름표만 쓰면 다른 에이전트의 같은 이름표가 서로를 삼킨다.
+    const key = `${row.authorId}\u0000${label}`;
+    const at = Date.now();
+    const last = this.gateNotifiedAt.get(key);
+    if (last !== undefined && at - last < GATE_NOTIFY_WINDOW_MS) return true;
+    const recent = (this.gateNotifiedByAgent.get(row.authorId) ?? []).filter((t) => at - t < GATE_NOTIFY_WINDOW_MS);
+    if (recent.length >= GATE_NOTIFY_PER_AGENT) return true;
+    this.gateNotifiedAt.set(key, at);
+    this.gateNotifiedByAgent.set(row.authorId, [...recent, at]);
+    const author = store.accounts[row.authorId]?.handle;
+    await this.notifier.notify({
+      // 원문(조직 설정 값)은 싣지 않는다 — 계정 이름표와 에이전트만.
+      // 사람이 읽는 말이라 사전을 지난다(designer #1053 F3) — 한국어 화면에 영어 알림이 뜨지 않게.
+      title: this.t()('gate.notify.title', { account: label }) + this.communitySuffix(),
+      // handle 을 모르면 `@…` 대신 "에이전트가"로 떨어진다(designer #1053 nit).
+      body: author ? this.t()('gate.notify.body', { agent: author }) : this.t()('gate.notify.bodyNoAgent'),
+      target: this.notificationTarget(row.id),
+    });
+    return true;
+  }
+
   private async announceNewMessage(message: MessageRow): Promise<void> {
     const store = this.store.getState();
     // 내가 쓴 것은 알리지 않는다. 보고 있는 창에도 띄우지 않는다 — 배지가 그 일을 한다.
     if (message.authorId === store.me?.id || document.hasFocus()) return;
+    if (await this.announceAccountGate(message)) return;
     /**
      * 진행 한 줄·대기 줄은 알리지 않는다(2026-09-09). 채널을 `all` 로 둔 것은 **오가는
      * 말**을 다 받겠다는 뜻이지, 에이전트가 일하는 동안 남기는 상태 표시까지 받겠다는
@@ -785,9 +836,11 @@ export class Controller {
       if (notifyLevelOf(channelPrefs[e.channelId]) === 'none') continue;
       // `all` 채널이면 `announceNewMessage` 가 같은 메시지를 이미 알렸을 수 있다.
       if (this.notifiedMessages.has(e.messageId)) continue;
+      const row = (messages[e.channelId] ?? []).find((m) => m.id === e.messageId);
+      // 계정 관문은 사유(thread_reply) 토글과 무관하게 계정당 한 번이다 — 사람만 풀 수 있다.
+      if (row && await this.announceAccountGate(row)) continue;
       if (!prefs.enabled || !wanted[e.reason]) continue;
 
-      const row = (messages[e.channelId] ?? []).find((m) => m.id === e.messageId);
       const author = row ? accounts[row.authorId]?.handle : null;
       const channel = channels.find((c) => c.id === e.channelId);
       const dm = dms.find((d) => d.id === e.channelId);
