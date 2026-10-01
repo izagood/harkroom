@@ -2937,23 +2937,26 @@
    ]
   },
   {
-   "id": "ku-11",
+   "id": "ku-14",
    "source": "synthetic",
    "query": "@harkroom 에이전트끼리 서로 부르다 폭주하는 거 지금은 어떻게 막고 있어?",
    "gold": [
-    "mem/mention-chain-limit-rework",
-    "mem/mention-runaway-2026-09-10"
+    "mem/mention-chain-limit-rework"
    ],
    "tags": [
     "knowledge-update"
    ],
-   "note": "stale 은 같은 주제의 낡은 판 — 실리면 감점",
+   "note": "stale 은 같은 주제의 낡은 판 — 실리면 감점. 2차 판정: runaway 는 \"상한 4\"를 지금 사실처럼 적음, toplevel-scan 은 뒤 PR 에 밀린 중간 판",
    "goldRank": [
     "mem/mention-chain-limit-rework"
+   ],
+   "stale": [
+    "mem/mention-runaway-2026-09-10",
+    "mem/mention-depth-toplevel-scan"
    ]
   },
   {
-   "id": "ku-12",
+   "id": "ku-13",
    "source": "synthetic",
    "query": "@harkroom 하네스 붙이는 계약 지금 어떻게 되어 있어? 새 하네스 하나 더 붙이려고",
    "gold": [

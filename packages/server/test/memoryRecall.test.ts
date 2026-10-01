@@ -140,7 +140,7 @@ describe('recall 정답 세트 v2 (harkroom)', () => {
   it('정밀도 P@2·재현율 R@5 가 기준선 아래로 떨어지지 않는다', () => {
     console.log(`[recall v2] P@2 ${hit2}/${picked} R@5 ${hit5}/${gold}`);
     expect(hit2 / picked).toBeGreaterThanOrEqual(0.31); // 측정 18/50 = 36%
-    expect(hit5 / gold).toBeGreaterThanOrEqual(0.47); // 측정 24/46 = 52%
+    expect(hit5 / gold).toBeGreaterThanOrEqual(0.47); // 측정 24/45 = 53%
   });
 
   it('정답 없음 문항은 대부분 아무것도 싣지 않는다', () => {
