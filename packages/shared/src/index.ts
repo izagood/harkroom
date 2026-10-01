@@ -1737,6 +1737,19 @@ export interface ChannelDoc {
   updatedAt: string | null;
 }
 
+/**
+ * 스레드 하나에 대한 **나만의** 처리 상태(Inbox 보드 2/2, 마이그레이션 089). 완료는 보드에서
+ * 내리고(끝남 맨 아래 "치운 것"), 나중에는 `until` 까지 접는다. 그 뒤 새 말이 오면 카드는 다시
+ * 선다 — 그 판정은 화면이 `updatedAt` 과 항목 시각을 견주어 한다.
+ */
+export interface InboxThreadState {
+  rootId: string;
+  state: 'done' | 'later';
+  /** 나중에의 깨어날 시각. 완료면 null. */
+  until: string | null;
+  updatedAt: string;
+}
+
 export interface InboxEntry {
   id: number;
   messageId: string;
