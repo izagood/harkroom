@@ -10,7 +10,7 @@ import {
 } from '../services/automationIngress.js';
 import {
   approveAutomation, createAutomation, deleteAutomation, enqueueRun, getAutomation, listAutomations, listRuns,
-  timeVars, triggerSchema, updateAutomation,
+  runAutomationNow, triggerSchema, updateAutomation,
 } from '../services/automations.js';
 
 /**
@@ -111,16 +111,14 @@ export async function registerAutomationRoutes(
   /**
    * "지금 한 번 돌리기". 꺼진 자동화도 돌린다 — 켜기 전에 본문이 어떻게 나가는지 보는 것이
    * 이 버튼의 쓸모다. 회차로만 만들고 발송은 sweeper 가 한다(다음 박자, 15초 안쪽).
+   * 에이전트는 여기가 아니라 MCP `automation.run`(082)으로 온다 — 소유자가 시킨 턴인지를 거기서 본다.
    */
   app.post('/automations/:id/run', { preHandler: app.requireAccount }, async (req, reply) => {
     if (req.account!.kind === 'agent') return reply.code(403).send(agentRefused);
     const { id } = idParam.parse(req.params);
     const automation = await getAutomation(pool, id, req.account!.id);
     if (!automation) return reply.code(404).send(notFound);
-    const vars = automation.trigger.kind === 'schedule' ? timeVars(new Date(), automation.trigger.tz) : {};
-    const result = await enqueueRun(pool, {
-      automationId: id, eventKey: `manual:${randomUUID()}`, triggerKind: 'manual', vars, ignoreEnabled: true,
-    });
+    const result = await runAutomationNow(pool, automation);
     if (result.status === 'rate_limited') {
       return reply.code(429).send({ error: { code: 'rate_limited', message: 'too many runs in the last hour; automation paused' } });
     }

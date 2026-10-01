@@ -76,6 +76,12 @@ export interface PostMessageInput {
    * 스레드에서 짐작하지 않고 이 메시지에서 물려받는다(`mentionDepthFor`). 없으면 옛 셈이다.
    */
   causeMessageId?: string | null;
+  /**
+   * 에이전트가 돌린 자동화 회차(082)가 물려준 연쇄 깊이. 자동화 글은 **사람(소유자) 이름**으로
+   * 나가서 보통은 깊이 0 이다 — 그대로 두면 에이전트가 자동화를 돌려 연쇄 상한을 세탁할 수 있다.
+   * 이 값이 있으면 사람 글이어도 이 깊이로 저장하고 상한을 판정한다. 없으면(사람·시계·외부 이벤트) 옛 셈이다.
+   */
+  chainDepth?: number | null;
 }
 
 // 리액션을 COLS 에 넣는 이유: 메시지를 내주는 경로가 네 갈래(목록·POST·PATCH·idempotency
@@ -601,7 +607,8 @@ async function mentionDepthFor(
  */
 async function causeDepth(client: PoolClient, authorId: string, causeMessageId: string): Promise<number | null> {
   const row = (await client.query(
-    `select m.mention_depth as depth, (a.kind = 'agent') as author_is_agent
+    `select m.mention_depth as depth, (a.kind = 'agent') as author_is_agent,
+            (m.meta ? 'automation') as from_automation
        from message m join account a on a.id = m.author_id
       where m.id = $1 and m.deleted_at is null
         and exists (select 1 from inbox i
@@ -609,10 +616,11 @@ async function causeDepth(client: PoolClient, authorId: string, causeMessageId: 
                        and (i.reason in ('mention', 'dm', 'team_mention', 'team_delegated')
                             or (a.kind = 'human' and i.reason in ('thread_reply', 'ask_answered'))))`,
     [causeMessageId, authorId],
-  )).rows[0] as { depth: number; author_is_agent: boolean } | undefined;
+  )).rows[0] as { depth: number; author_is_agent: boolean; from_automation: boolean } | undefined;
   if (!row) return null;
-  // 사람은 언제나 0 이다(`mentionDepthFor`) — 저장된 값을 믿지 않고 규칙으로 센다.
-  return row.author_is_agent ? row.depth + 1 : 1;
+  // 사람은 언제나 0 이다(`mentionDepthFor`) — 저장된 값을 믿지 않고 규칙으로 센다. 예외는 에이전트가
+  // 돌린 자동화 글(082)이다: 사람 이름이지만 사슬의 고리라 저장된 깊이를 잇는다(시계·버튼 회차는 0 이다).
+  return row.author_is_agent || row.from_automation ? row.depth + 1 : 1;
 }
 
 /**
@@ -641,11 +649,16 @@ interface ResolvedMentionCalls {
 
 async function resolveMentionCalls(
   client: PoolClient,
-  input: { body: string; channelId: string; authorId: string; authorIsAgent: boolean; mentionDepth: number },
+  input: {
+    body: string; channelId: string; authorId: string; authorIsAgent: boolean; mentionDepth: number;
+    /** 사람 이름 글이지만 에이전트 사슬에서 나온 것(082, `PostMessageInput.chainDepth`) — 상한을 똑같이 본다. */
+    chainBound?: boolean;
+  },
 ): Promise<ResolvedMentionCalls> {
   const { authorIsAgent, mentionDepth } = input;
-  // 상한은 워크스페이스 설정이다(078). 에이전트 발화일 때만 읽는다 — 사람은 막히지 않는다.
-  const chainLimit = authorIsAgent ? (await getMentionPolicy(client)).chainLimit : MENTION_CHAIN_LIMIT;
+  const capsChain = authorIsAgent || input.chainBound === true;
+  // 상한은 워크스페이스 설정이다(078). 에이전트 사슬의 발화일 때만 읽는다 — 사람은 막히지 않는다.
+  const chainLimit = capsChain ? (await getMentionPolicy(client)).chainLimit : MENTION_CHAIN_LIMIT;
   /**
    * 멘션 정규화(#271). 저장되는 정본은 `<@id>` 다 — 그래야 handle 을 바꿔도 과거 본문을
    * 다시 쓰지 않는다.
@@ -713,7 +726,7 @@ async function resolveMentionCalls(
     부른 것으로 그린다 — 같은 메시지가 두 형식으로 존재하는 순간을 만들지 않는다는
     정규화 주석의 규율과 같다.
   */
-  const chainCapped = authorIsAgent && mentionDepth >= chainLimit;
+  const chainCapped = capsChain && mentionDepth >= chainLimit;
 
   /*
     **부름과 지칭을 가른다**(2026-09-09). 규칙과 근거는 `splitMentionCalls` 에 있다:
@@ -1149,15 +1162,18 @@ export async function postMessage(
       `select kind from account where id = $1`, [input.authorId],
     )).rows[0]?.kind as 'human' | 'agent' | undefined;
     const authorIsAgent = authorKind === 'agent';
-    const mentionDepth = await mentionDepthFor(client, {
+    const scannedDepth = await mentionDepthFor(client, {
       channelId: input.channelId,
       threadRootId: input.threadRootId ?? null,
       authorId: input.authorId,
       authorIsAgent,
       causeMessageId: input.causeMessageId ?? null,
     });
+    // 자동화 회차가 물려준 깊이(082)가 있으면 그것이 이 글의 자리다 — 사람 이름 글이라도 사슬의 고리다.
+    const chainBound = input.chainDepth != null;
+    const mentionDepth = chainBound ? Math.max(scannedDepth, input.chainDepth!) : scannedDepth;
     const calls = await resolveMentionCalls(client, {
-      body: input.body, channelId: input.channelId, authorId: input.authorId, authorIsAgent, mentionDepth,
+      body: input.body, channelId: input.channelId, authorId: input.authorId, authorIsAgent, mentionDepth, chainBound,
     });
     const inserted = await client.query(
       `insert into message (channel_id, thread_root_id, author_id, body, kind, meta, also_in_channel, mention_depth)

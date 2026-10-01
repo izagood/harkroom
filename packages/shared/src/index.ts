@@ -2378,6 +2378,10 @@ export interface AutomationRunView {
   error: string | null;
   createdAt: string;
   finishedAt: string | null;
+  /** 이 회차를 돌린 에이전트(082, MCP `automation.run`). 사람·시계·외부 이벤트 회차는 null. 옛 서버는 안 준다. */
+  initiatedBy?: string | null;
+  /** 그 턴을 띄운 소유자의 메시지(082). 이력이 "누가 시켰나"로 링크한다. */
+  causeMessageId?: string | null;
 }
 
 /** 자동화가 쓴 메시지의 `meta.automation`. 이름줄의 ⚡ 칩이 이것을 읽는다. */
@@ -2386,6 +2390,8 @@ export interface AutomationMessageMeta {
   name: string;
   trigger: AutomationTriggerKind | string;
   runId: string;
+  /** 에이전트가 돌린 회차면 그 에이전트 id(082). */
+  initiatedBy?: string;
 }
 
 export type WsServerEvent =

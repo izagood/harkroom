@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import type { AutomationRunView, AutomationSchedule, AutomationTrigger, AutomationView } from '@harkroom/shared';
 import { postMessage } from './messages.js';
+import { getMentionPolicy } from './mentionPolicy.js';
 import { channelPostGate } from './channels.js';
 
 /**
@@ -20,6 +22,21 @@ export const SWEEP_BATCH_SIZE = 20;
 export const RATE_LIMIT_PER_HOUR = 20;
 /** 이보다 오래 `pending` 인 회차는 보내지 않고 실패로 닫는다 — 한참 늦은 "지금 해 줘"는 틀린 요청이다. */
 export const PENDING_EXPIRY_MS = 60 * 60 * 1000;
+/**
+ * 에이전트가 돌리는 "지금 한 번"(082)의 상한 — 같은 자동화에 10분 1회·시간 3회. 넘으면 **거절만**
+ * 한다. 시간당 상한(`RATE_LIMIT_PER_HOUR`)처럼 일시정지하면 에이전트의 되풀이 호출이 사람의
+ * 자동화를 꺼 버린다.
+ */
+export const AGENT_RUN_MIN_GAP_MS = 10 * 60 * 1000;
+export const AGENT_RUNS_PER_HOUR = 3;
+/**
+ * 원인 메시지의 유효 기간(082, security 검토). 헤더는 에이전트 쪽 값이라, 시간 조건이 없으면 몇 주 전
+ * 소유자가 나를 부른 메시지 id 를 다른 턴에서 다시 실어 소유자 이름의 글을 낼 수 있다. "한참 늦은
+ * 지금은 틀린 요청"(`PENDING_EXPIRY_MS`)과 같은 기준이다.
+ */
+export const AGENT_RUN_CAUSE_MAX_AGE_MS = 60 * 60 * 1000;
+/** `automation.list` 가 주는 본문 앞부분 — 무엇을 돌리는지 고를 만큼만. */
+export const AGENT_LIST_BODY_CHARS = 200;
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -167,7 +184,8 @@ const COLS = `id, owner_id as "ownerId", channel_id as "channelId", name, body, 
 
 const RUN_COLS = `id, automation_id as "automationId", event_key as "eventKey",
   trigger_kind as "triggerKind", status, message_id as "messageId", error,
-  created_at as "createdAt", finished_at as "finishedAt"`;
+  created_at as "createdAt", finished_at as "finishedAt",
+  initiated_by as "initiatedBy", cause_message_id as "causeMessageId"`;
 
 function initialNextAt(trigger: AutomationTrigger, now: Date): Date | null {
   return trigger.kind === 'schedule' ? nextOccurrence(trigger, now) : null;
@@ -310,6 +328,10 @@ export async function enqueueRun(db: Pool | PoolClient, input: {
   automationId: string; eventKey: string; triggerKind: string; vars: Record<string, string>;
   /** 사람이 "지금 한 번" 누른 것은 꺼진 자동화도 돌린다(시험용이다). */
   ignoreEnabled?: boolean;
+  /** 에이전트가 돌린 회차(082): 실행한 에이전트·그 턴의 원인·물려줄 연쇄 깊이. */
+  initiatedBy?: string | null;
+  causeMessageId?: string | null;
+  chainDepth?: number | null;
 }): Promise<EnqueueResult> {
   const a = await db.query<{ enabled: boolean; debounce_sec: number | null }>(
     `select enabled, debounce_sec from automation where id = $1 and deleted_at is null`, [input.automationId],
@@ -338,17 +360,182 @@ export async function enqueueRun(db: Pool | PoolClient, input: {
   }
 
   const ins = await db.query(
-    `insert into automation_run (automation_id, event_key, trigger_kind, payload, not_before)
-     values ($1, $2, $3, $4, $5)
+    `insert into automation_run (automation_id, event_key, trigger_kind, payload, not_before,
+                                 initiated_by, cause_message_id, chain_depth)
+     values ($1, $2, $3, $4, $5, $6, $7, $8)
      on conflict (automation_id, event_key) do nothing
      returning ${RUN_COLS}`,
     [input.automationId, input.eventKey, input.triggerKind,
       JSON.stringify({ vars: input.vars, events: [{ key: input.eventKey, summary: eventSummary(input.vars, input.eventKey) }] }),
       row.debounce_sec && input.triggerKind !== 'manual' && input.triggerKind !== 'schedule'
-        ? new Date(Date.now() + row.debounce_sec * 1000).toISOString() : null],
+        ? new Date(Date.now() + row.debounce_sec * 1000).toISOString() : null,
+      input.initiatedBy ?? null, input.causeMessageId ?? null, input.chainDepth ?? null],
   );
   if (!ins.rows[0]) return { status: 'duplicate' };
   return { status: 'queued', run: ins.rows[0] };
+}
+
+/**
+ * "지금 한 번" — 사람 버튼(`POST /automations/:id/run`)과 에이전트 도구(`automation.run`)가 **함께**
+ * 부르는 입구. 꺼진 자동화도 돌린다(켜기 전에 본문이 어떻게 나가는지 보는 것이 쓸모다).
+ * 회차로만 만들고 발송은 sweeper 가 한다.
+ */
+export async function runAutomationNow(
+  db: Pool | PoolClient,
+  automation: Pick<AutomationView, 'id' | 'trigger'>,
+  by: { initiatedBy: string; causeMessageId: string; chainDepth: number } | null = null,
+): Promise<EnqueueResult> {
+  const vars = automation.trigger.kind === 'schedule' ? timeVars(new Date(), automation.trigger.tz) : {};
+  return enqueueRun(db, {
+    automationId: automation.id, eventKey: `manual:${randomUUID()}`, triggerKind: 'manual', vars, ignoreEnabled: true,
+    ...(by ?? {}),
+  });
+}
+
+// ── 에이전트가 돌리는 "지금 한 번"(082) ─────────────────────────────────────
+
+export type AgentRunRefusal =
+  | 'no_cause' | 'cause_stale' | 'cause_used' | 'cause_not_human' | 'automation_reentry'
+  | 'not_found' | 'not_approved' | 'agent_quota' | 'chain_capped' | 'rate_limited' | 'duplicate' | 'inactive';
+
+/**
+ * 에이전트가 돌린 회차의 연쇄 깊이. 원인이 사람(소유자)의 글이므로 이 에이전트의 발화는 사슬의
+ * 첫 고리(`causeDepth` 의 사람 → 1)이고, 자동화 글은 그 발화를 대신하므로 같은 자리에 선다.
+ */
+const AGENT_RUN_CHAIN_DEPTH = 1;
+
+/**
+ * 이 턴을 **소유자가 시켰나.** 권한의 전부가 이 판정이다(jaebin 결정 2026-10-01):
+ * 원인 메시지(`CAUSE_HEADER`)를 쓴 사람의 자동화만 돌릴 수 있다.
+ *
+ * - 헤더는 에이전트 쪽에서 오는 값이라 **그대로 믿지 않는다** — `causeDepth`(messages.ts)와 같이,
+ *   그 메시지가 이 에이전트에게 실제로 inbox 를 만들었는지 본다. 아니면 아무 사람 메시지 id 를
+ *   대서 남의 자동화를 돌릴 수 있다.
+ * - 원인이 에이전트면 거절한다(#task 경유 위임 포함). 사람이 직접 부른 턴만이다.
+ * - 원인이 **자동화가 낸 글**이면 거절한다. 그 글의 작성자는 소유자라 위 조건을 통과하므로,
+ *   따로 막지 않으면 "자동화 → 에이전트 → 다시 실행" 고리가 돈다.
+ * - 원인은 **1시간 안의 것**만 친다(`AGENT_RUN_CAUSE_MAX_AGE_MS`). 옛 부름을 다시 실어 쓰지 못한다.
+ *   한 원인으로 한 번만 돌리는 것은 `runAutomationForAgent` 가 본다.
+ */
+async function agentRunOwner(
+  db: Pool | PoolClient, agentId: string, causeMessageId: string | null,
+): Promise<{ ownerId: string } | { refused: AgentRunRefusal }> {
+  if (!causeMessageId) return { refused: 'no_cause' };
+  const row = (await db.query<{ author_id: string; author_is_agent: boolean; from_automation: boolean; fresh: boolean }>(
+    `select m.author_id, (a.kind = 'agent') as author_is_agent, (m.meta ? 'automation') as from_automation,
+            m.created_at > now() - make_interval(secs => $3) as fresh
+       from message m join account a on a.id = m.author_id
+      where m.id = $1 and m.deleted_at is null
+        and exists (select 1 from inbox i
+                     where i.message_id = m.id and i.account_id = $2
+                       and i.reason in ('mention', 'dm', 'team_mention', 'team_delegated', 'thread_reply', 'ask_answered'))`,
+    [causeMessageId, agentId, AGENT_RUN_CAUSE_MAX_AGE_MS / 1000],
+  )).rows[0];
+  if (!row) return { refused: 'no_cause' };
+  if (!row.fresh) return { refused: 'cause_stale' };
+  if (row.author_is_agent) return { refused: 'cause_not_human' };
+  if (row.from_automation) return { refused: 'automation_reentry' };
+  return { ownerId: row.author_id };
+}
+
+export interface AgentAutomationItem {
+  id: string; name: string; channelId: string; enabled: boolean; pausedReason: string | null;
+  trigger: AutomationTrigger; bodyPreview: string;
+  lastRun: { status: string; createdAt: string } | null;
+}
+
+/** `automation.list` — 이 턴을 시킨 소유자의 **승인된** 자동화. 돌릴 수 없는 것은 보이지 않는다. */
+export async function listAutomationsForAgent(
+  pool: Pool, input: { agentId: string; causeMessageId: string | null },
+): Promise<{ ownerId: string; automations: AgentAutomationItem[] } | { refused: AgentRunRefusal }> {
+  const who = await agentRunOwner(pool, input.agentId, input.causeMessageId);
+  if ('refused' in who) return who;
+  const res = await pool.query<{
+    id: string; name: string; channelId: string; enabled: boolean; pausedReason: string | null;
+    trigger: AutomationTrigger; body: string; lastStatus: string | null; lastAt: Date | null;
+  }>(
+    `select a.id, a.name, a.channel_id as "channelId", a.enabled, a.paused_reason as "pausedReason", a.trigger, a.body,
+            r.status as "lastStatus", r.created_at as "lastAt"
+       from automation a
+       left join lateral (select status, created_at from automation_run
+                           where automation_id = a.id order by created_at desc limit 1) r on true
+      where a.owner_id = $1 and a.deleted_at is null and a.approved_at is not null
+      order by a.created_at`,
+    [who.ownerId],
+  );
+  return {
+    ownerId: who.ownerId,
+    automations: res.rows.map((r) => ({
+      id: r.id, name: r.name, channelId: r.channelId, enabled: r.enabled, pausedReason: r.pausedReason,
+      trigger: r.trigger,
+      bodyPreview: r.body.length > AGENT_LIST_BODY_CHARS ? `${r.body.slice(0, AGENT_LIST_BODY_CHARS)}…` : r.body,
+      lastRun: r.lastStatus && r.lastAt ? { status: r.lastStatus, createdAt: new Date(r.lastAt).toISOString() } : null,
+    })),
+  };
+}
+
+/**
+ * `automation.run` — 에이전트가 돌리는 "지금 한 번". 버튼과 같은 회차(`runAutomationNow`)를 만들되
+ * 실행자·원인·연쇄 깊이를 함께 적는다. 글은 여전히 **소유자 이름**으로 나간다(승인한 그 글이다).
+ *
+ * 상한 셈과 회차 넣기를 자동화 행 잠금 아래 한 트랜잭션에서 한다 — 동시에 두 번 불러도 둘 다
+ * "아직 0회"를 보고 지나가지 못한다.
+ *
+ * **원인 하나에 실행 한 번**("지금 돌려" 한 마디가 한 번이다). 자동화가 달라도 같은 원인은 다시 못 쓴다.
+ * 행 잠금은 자동화마다라, 서로 다른 자동화로 동시에 오는 경합은 082 의 부분 유니크 인덱스가 막는다.
+ */
+export async function runAutomationForAgent(
+  pool: Pool, input: { automationId: string; agentId: string; causeMessageId: string | null },
+): Promise<{ status: 'queued'; run: AutomationRunView; automation: { id: string; name: string; channelId: string; ownerId: string } }
+  | { refused: AgentRunRefusal }> {
+  const who = await agentRunOwner(pool, input.agentId, input.causeMessageId);
+  if ('refused' in who) return who;
+  const automation = await getAutomation(pool, input.automationId, who.ownerId);
+  if (!automation) return { refused: 'not_found' };
+  if (!automation.approvedAt) return { refused: 'not_approved' };
+
+  const { chainLimit } = await getMentionPolicy(pool);
+  if (AGENT_RUN_CHAIN_DEPTH >= chainLimit) return { refused: 'chain_capped' };
+
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    await client.query(`select 1 from automation where id = $1 for update`, [automation.id]);
+    const recent = (await client.query<{ last: Date | null; n: number }>(
+      `select max(created_at) as last, count(*)::int as n from automation_run
+        where automation_id = $1 and initiated_by is not null and created_at > now() - interval '1 hour'`,
+      [automation.id],
+    )).rows[0]!;
+    const used = await client.query(
+      `select 1 from automation_run where cause_message_id = $1 and initiated_by is not null limit 1`,
+      [input.causeMessageId],
+    );
+    if (used.rowCount) {
+      await client.query('rollback');
+      return { refused: 'cause_used' };
+    }
+    if (recent.n >= AGENT_RUNS_PER_HOUR
+      || (recent.last && Date.now() - new Date(recent.last).getTime() < AGENT_RUN_MIN_GAP_MS)) {
+      await client.query('rollback');
+      return { refused: 'agent_quota' };
+    }
+    const result = await runAutomationNow(client, automation, {
+      initiatedBy: input.agentId, causeMessageId: input.causeMessageId!, chainDepth: AGENT_RUN_CHAIN_DEPTH,
+    });
+    await client.query('commit');
+    if (result.status !== 'queued') return { refused: result.status === 'merged' ? 'duplicate' : result.status };
+    return {
+      status: 'queued', run: result.run,
+      automation: { id: automation.id, name: automation.name, channelId: automation.channelId, ownerId: automation.ownerId },
+    };
+  } catch (err) {
+    await client.query('rollback').catch(() => {});
+    if ((err as { code?: string }).code === '23505'
+      && (err as { constraint?: string }).constraint === 'automation_run_agent_cause') return { refused: 'cause_used' };
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /** 병합 목록의 한 줄. 사람이 알아볼 이름을 고르고, 없으면 이벤트 키로 둔다. 값은 이미 `neutralize` 를 지났다. */
@@ -424,7 +611,7 @@ interface PendingRun {
   id: string; automation_id: string; trigger_kind: string;
   payload: { vars?: Record<string, string>; events?: Array<{ key: string; summary: string }> };
   created_at: Date; not_before: Date | null; owner_id: string; channel_id: string; name: string; body: string;
-  deleted_at: Date | null;
+  deleted_at: Date | null; initiated_by: string | null; chain_depth: number | null;
 }
 
 /**
@@ -491,7 +678,7 @@ export function createAutomationSweeper(pool: Pool, opts: { now?: () => Date } =
       await client.query('begin');
       const due = await client.query<PendingRun>(
         `select r.id, r.automation_id, r.trigger_kind, r.payload, r.created_at, r.not_before,
-                a.owner_id, a.channel_id, a.name, a.body, a.deleted_at
+                r.initiated_by, r.chain_depth, a.owner_id, a.channel_id, a.name, a.body, a.deleted_at
          from automation_run r join automation a on a.id = r.automation_id
          where r.status = 'pending' and not (r.id = any($1::uuid[]))
            and (r.not_before is null or r.not_before <= $2)
@@ -538,7 +725,14 @@ export function createAutomationSweeper(pool: Pool, opts: { now?: () => Date } =
         }),
         // 발송이 재시도돼도 같은 메시지를 돌려받는다(`scheduledMessages.ts` 와 같은 이유).
         idempotencyKey: `automation:${run.id}`,
-        meta: { automation: { id: run.automation_id, name: run.name, trigger: run.trigger_kind, runId: run.id } },
+        meta: {
+          automation: {
+            id: run.automation_id, name: run.name, trigger: run.trigger_kind, runId: run.id,
+            ...(run.initiated_by ? { initiatedBy: run.initiated_by } : {}),
+          },
+        },
+        // 에이전트가 돌린 회차는 그 에이전트의 사슬을 잇는다(082) — 사람 이름 글로 상한을 세탁하지 못하게.
+        chainDepth: run.chain_depth,
       });
       if (result.message) {
         await finish('sent', null, result.message.id);
