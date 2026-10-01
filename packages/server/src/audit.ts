@@ -14,6 +14,7 @@ export type AuditAction =
   // #139: 메모리 삭제. detail 에는 slug 만 남긴다 — 본문을 복사하면 삭제가 삭제가 아니다.
   | 'agent.memory.deleted'
   | 'agent.memory.edited'
+  | 'agent.memory.flag_cleared'
   // #171: 새 에이전트의 기본값 변경. 이미 만들어진 에이전트는 바뀌지 않으므로, 이 기록은
   // '앞으로 만들 것의 서식이 언제 누구 손에 바뀌었나' 를 답한다.
   | 'agent.defaults.updated'

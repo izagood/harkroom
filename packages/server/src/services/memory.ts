@@ -24,10 +24,14 @@ export interface MemoryEntry {
   readCount: number;
   lastReadAt: Date | null;
   kind: MemoryKind;
+  /** 쓰기 검사(080)에 걸린 판이면 그 시각과 이유. 사람이 확인할 때까지 프롬프트에 싣지 않는다. */
+  flaggedAt: Date | null;
+  flagReason: string | null;
 }
 
 const ENTRY_COLUMNS = `slug, value, updated_at as "updatedAt", description, created_at as "createdAt",
-  read_count as "readCount", last_read_at as "lastReadAt", kind`;
+  read_count as "readCount", last_read_at as "lastReadAt", kind,
+  flagged_at as "flaggedAt", flag_reason as "flagReason"`;
 
 /** 목록 한 줄 — 러너가 턴 프롬프트의 `<memory-index>` 에 싣는다(본문은 없다). */
 export interface MemoryIndexEntry {
@@ -38,7 +42,9 @@ export interface MemoryIndexEntry {
 
 export async function listMemoryIndex(pool: Pool, accountId: string): Promise<MemoryIndexEntry[]> {
   const res = await pool.query(
-    `select slug, description, kind from agent_memory where account_id = $1 order by slug`,
+    // 걸린 판(080)의 요약은 싣지 않는다 — 요약도 에이전트가 쓴 글이라 검사 대상이다.
+    `select slug, case when flagged_at is null then description end as description, kind
+     from agent_memory where account_id = $1 order by slug`,
     [accountId],
   );
   return res.rows as MemoryIndexEntry[];
@@ -138,9 +144,9 @@ async function deleteWithRevision(pool: Pool, accountId: string, slug: string): 
   await pool.query(
     `with d as (
        delete from agent_memory where account_id = $1 and slug = $2
-       returning slug, value, description, updated_at)
-     insert into agent_memory_revision (account_id, slug, value, description, updated_at)
-     select $1, slug, value, description, updated_at from d`,
+       returning slug, value, description, updated_at, flagged_at)
+     insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged)
+     select $1, slug, value, description, updated_at, flagged_at is not null from d`,
     [accountId, slug],
   );
   await pruneRevisions(pool, accountId, slug);
@@ -187,9 +193,14 @@ async function currentUpdatedAt(pool: Pool, accountId: string, slug: string): Pr
   return r.rowCount ? (r.rows[0].updated_at as Date) : null;
 }
 
+/**
+ * `flagReason` 은 쓰기 검사(080) 결과다. 문자열이면 이 판을 **걸린 판**으로 저장하고, 생략하거나
+ * null 이면 깨끗한 판이다 — 걸렸던 기억을 깨끗하게 다시 쓰면 표시가 풀린다(걸린 판은 이전 판에
+ * `flagged` 로 남는다). 사람이 고치는 길(route)은 검사하지 않는다: 사람이 쓴 것이 곧 확인이다.
+ */
 export async function setMemory(
   pool: Pool, accountId: string, slug: string, value: string | null, description?: string, kind?: MemoryKind,
-  expect?: MemoryExpectation,
+  expect?: MemoryExpectation, flagReason?: string | null,
 ): Promise<MemoryResult | MemoryConflict> {
   if (value === null) {
     if (expect) {
@@ -201,9 +212,9 @@ export async function setMemory(
       const d = await pool.query(
         `with d as (
            delete from agent_memory where account_id = $1 and slug = $2 and ${MS_EQ.replace('$EXPECT', '$3')}
-           returning slug, value, description, updated_at)
-         insert into agent_memory_revision (account_id, slug, value, description, updated_at)
-         select $1, slug, value, description, updated_at from d returning 1`,
+           returning slug, value, description, updated_at, flagged_at)
+         insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged)
+         select $1, slug, value, description, updated_at, flagged_at is not null from d returning 1`,
         [accountId, slug, expect.updatedAt],
       );
       if (d.rowCount) {
@@ -229,10 +240,10 @@ export async function setMemory(
   // 본문을 "이전 판"으로 적는다. `prev` 는 문장 시작 시점의 스냅숏이라 덮어쓰기 전 값이다.
   const res = await pool.query(
     `with prev as (
-       select slug, value, description, updated_at from agent_memory where account_id = $1 and slug = $2),
+       select slug, value, description, updated_at, flagged_at from agent_memory where account_id = $1 and slug = $2),
      ins as (
-       insert into agent_memory (account_id, slug, value, description, kind)
-       select $1, $2, $3, nullif($5, ''), coalesce($7, 'topic')
+       insert into agent_memory (account_id, slug, value, description, kind, flagged_at, flag_reason)
+       select $1, $2, $3, nullif($5, ''), coalesce($7, 'topic'), case when $10::text is null then null else now() end, $10::text
        where ((select count(*) from agent_memory where account_id = $1) < $4
           or exists (select 1 from prev))
          -- 기대가 있으면: 새로 만들기는 "기대가 null" 일 때만.
@@ -241,6 +252,8 @@ export async function setMemory(
          value = excluded.value,
          description = case when $6 then excluded.description else agent_memory.description end,
          kind = coalesce($7, agent_memory.kind),
+         flagged_at = excluded.flagged_at,
+         flag_reason = excluded.flag_reason,
          updated_at = now()
        -- **판 비교는 여기서 한다.** DO UPDATE 의 WHERE 는 잠근 뒤의 최신 행으로 다시 평가되므로,
        -- 두 턴이 같은 판을 들고 동시에 와도 한쪽만 통과한다(prev 스냅숏으로 비교하면 둘 다 통과).
@@ -248,13 +261,14 @@ export async function setMemory(
           or ($8 = 'at' and date_trunc('milliseconds', agent_memory.updated_at) = date_trunc('milliseconds', $9::timestamptz))
        returning 1),
      rev as (
-       insert into agent_memory_revision (account_id, slug, value, description, updated_at)
-       select $1, slug, value, description, updated_at from prev where exists (select 1 from ins)
+       insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged)
+       select $1, slug, value, description, updated_at, flagged_at is not null from prev where exists (select 1 from ins)
        returning 1)
      select (select count(*) from ins)::int as n`,
     [
       accountId, slug, value, MAX_MEMORY_ITEMS_PER_ACCOUNT, description ?? null, description !== undefined, kind ?? null,
       !expect ? 'none' : expect.updatedAt === null ? 'absent' : 'at', expect?.updatedAt ?? null,
+      flagReason ?? null,
     ],
   );
   if (!res.rows[0].n) {
@@ -284,9 +298,9 @@ async function pruneJournal(pool: Pool, accountId: string): Promise<void> {
        delete from agent_memory where account_id = $1 and kind = 'journal' and slug in (
          select slug from agent_memory where account_id = $1 and kind = 'journal'
          order by updated_at desc, slug offset $2)
-       returning slug, value, description, updated_at)
-     insert into agent_memory_revision (account_id, slug, value, description, updated_at)
-     select $1, slug, value, description, updated_at from d`,
+       returning slug, value, description, updated_at, flagged_at)
+     insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged)
+     select $1, slug, value, description, updated_at, flagged_at is not null from d`,
     [accountId, MAX_JOURNAL_MEMORIES_PER_ACCOUNT],
   );
 }
@@ -481,7 +495,7 @@ export async function searchMemory(
     // 이름·요약에 걸린 행만 가져온다 — 본문은 그 몇 행만 JS 로 센다.
     const res = await pool.query(
       `select slug, description, kind, value, updated_at as "updatedAt" from agent_memory m
-       where account_id = $1 and slug <> 'core' and kind <> 'journal'
+       where account_id = $1 and slug <> 'core' and kind <> 'journal' and flagged_at is null
          and exists (select 1 from unnest($2::text[]) as p
                      where lower(m.slug) like p or lower(coalesce(m.description, '')) like p)`,
       [accountId, patterns],
@@ -500,7 +514,7 @@ export async function searchMemory(
           + case when lower(m.value) like p then 1 else 0 end), 0)
         from unnest($2::text[]) as p)::int as score
      from agent_memory m
-     where account_id = $1 and slug <> 'core'
+     where account_id = $1 and slug <> 'core' and flagged_at is null
      order by score desc, updated_at desc
      limit $3`,
     [accountId, patterns, opts.limit],
@@ -513,6 +527,8 @@ export interface MemoryRevision {
   description: string | null;
   updatedAt: Date;
   replacedAt: Date;
+  /** 이 판이 쓰기 검사(080)에 걸린 판이었나. */
+  flagged: boolean;
 }
 
 /** slug 의 이전 판, 최근 것부터. 사람이 보는 화면과 정리 턴이 되돌릴 때 쓴다. */
@@ -520,12 +536,44 @@ export async function listMemoryRevisions(
   pool: Pool, accountId: string, slug: string,
 ): Promise<MemoryRevision[]> {
   const res = await pool.query(
-    `select value, description, updated_at as "updatedAt", replaced_at as "replacedAt"
+    `select value, description, updated_at as "updatedAt", replaced_at as "replacedAt", flagged
      from agent_memory_revision where account_id = $1 and slug = $2
      order by replaced_at desc, id desc`,
     [accountId, slug],
   );
   return res.rows as MemoryRevision[];
+}
+
+/**
+ * 걸린 기억(080)의 **걸리기 전 마지막 판**. 걸린 기억을 `memory.get` 하면 본문 대신 이것을 준다 —
+ * core 가 걸려도 러너는 그 전 판을 싣고, 걸린 글은 사람이 확인할 때까지 어느 프롬프트에도 안 간다.
+ * 깨끗한 판이 없으면(처음부터 걸린 기억) null.
+ */
+export async function lastCleanRevision(
+  pool: Pool, accountId: string, slug: string,
+): Promise<{ value: string; description: string | null } | null> {
+  const res = await pool.query(
+    `select value, description from agent_memory_revision
+     where account_id = $1 and slug = $2 and not flagged
+     order by replaced_at desc, id desc limit 1`,
+    [accountId, slug],
+  );
+  return res.rowCount ? (res.rows[0] as { value: string; description: string | null }) : null;
+}
+
+/**
+ * 사람이 걸린 기억을 **확인**한다(080) — 표시를 풀어 이 판을 다시 프롬프트에 싣는다. 본문은 그대로다.
+ * `updated_at` 은 건드리지 않는다: 에이전트가 들고 있는 판(ifUpdatedAt)이 확인 때문에 깨지면 안 된다.
+ * 판본(`memoryRev`)이 안 바뀌므로 러너 캐시가 옛 core(걸리기 전 판)를 계속 들 수 있다 — 다음
+ * 쓰기나 세션까지다. 확인은 드문 일이라 그 지연을 받아들인다. 걸린 것이 없으면 false.
+ */
+export async function clearMemoryFlag(pool: Pool, accountId: string, slug: string): Promise<boolean> {
+  const res = await pool.query(
+    `update agent_memory set flagged_at = null, flag_reason = null
+     where account_id = $1 and slug = $2 and flagged_at is not null`,
+    [accountId, slug],
+  );
+  return (res.rowCount ?? 0) > 0;
 }
 
 const MEMORY_SLUG_REGEX = /^core$|^mem\/[a-z0-9][a-z0-9_-]{0,63}((\/[a-z0-9][a-z0-9_-]{0,63})*)$/;
@@ -574,6 +622,8 @@ export interface MemoryAudit {
    * 이름·요약에 걸린 것만 싣으므로 요약이 없으면 이름 낱말로만 찾힌다. 채울 후보다.
    */
   undescribed: string[];
+  /** 쓰기 검사(080)에 걸려 사람 확인을 기다리는 것. 에이전트는 고쳐 쓰거나 사람에게 알린다. */
+  flagged: { slug: string; reason: string | null }[];
 }
 
 /** 이름을 낱말로 편다 — `mem/pr-896-memory-runner-cache` → {pr, memory, runner, cache}(숫자는 버린다). */
@@ -597,12 +647,14 @@ export async function auditMemory(
   pool: Pool, accountId: string, patterns: string[] = [],
 ): Promise<MemoryAudit> {
   const res = await pool.query(
-    `select slug, value, description, kind, read_count, last_read_at, created_at from agent_memory where account_id = $1 order by slug`,
+    `select slug, value, description, kind, read_count, last_read_at, created_at, flagged_at, flag_reason
+     from agent_memory where account_id = $1 order by slug`,
     [accountId],
   );
   const rows = res.rows as {
     slug: string; value: string; description: string | null; kind: MemoryKind;
     read_count: number; last_read_at: Date | null; created_at: Date;
+    flagged_at: Date | null; flag_reason: string | null;
   }[];
   const now = Date.now();
   const day = 86_400_000;
@@ -611,11 +663,12 @@ export async function auditMemory(
   const audit: MemoryAudit = {
     total: rows.length,
     core: coreRow ? { length: coreRow.value.length, limit: MAX_CORE_MEMORY_LENGTH } : null,
-    neverRead: [], stale: [], brokenLinks: [], similar: [], outdated: [], undescribed: [],
+    neverRead: [], stale: [], brokenLinks: [], similar: [], outdated: [], undescribed: [], flagged: [],
   };
   const lowered = patterns.map((p) => p.trim()).filter((p) => p.length >= 3).map((p) => [p, p.toLowerCase()] as const);
   for (const r of rows) {
     const judged = r.slug !== 'core' && r.kind !== 'journal';
+    if (r.flagged_at) audit.flagged.push({ slug: r.slug, reason: r.flag_reason });
     if (judged && r.read_count === 0 && now - r.created_at.getTime() > AUDIT_NEVER_READ_GRACE_DAYS * day) {
       audit.neverRead.push(r.slug);
     }
@@ -645,5 +698,6 @@ export async function auditMemory(
   audit.similar = audit.similar.slice(0, AUDIT_LIST_CAP);
   audit.outdated = audit.outdated.slice(0, AUDIT_LIST_CAP);
   audit.undescribed = audit.undescribed.slice(0, AUDIT_LIST_CAP);
+  audit.flagged = audit.flagged.slice(0, AUDIT_LIST_CAP);
   return audit;
 }

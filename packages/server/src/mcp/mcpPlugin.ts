@@ -32,9 +32,10 @@ import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '.
 import {
   listMemoryIndex, MAX_CORE_MEMORY_LENGTH, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MAX_MEMORY_DESCRIPTION_LENGTH,
   MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, memoryRev, readMemoryCounted, searchMemory, auditMemory,
-  setMemory,
+  setMemory, lastCleanRevision,
 } from '../services/memory.js';
 import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
+import { scanWrite } from '../services/contentScan.js';
 import { proposeAutomation, triggerSchema } from '../services/automations.js';
 import { channelPostGate } from '../services/channels.js';
 import { scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC } from '../services/agentWakes.js';
@@ -1009,6 +1010,20 @@ function buildMcpServer(
     if (!memory) {
       return jsonResult({ error: { code: 'not_found', message: 'memory not found' } });
     }
+    // 쓰기 검사(080)에 걸린 판은 사람이 확인할 때까지 **어느 프롬프트에도 싣지 않는다** — 이 응답이
+    // 곧 프롬프트다(러너는 core 를 이 도구로 받는다). 걸리기 전 마지막 판이 있으면 그것을 준다.
+    // updatedAt 은 지금 판의 것이다: 에이전트가 고쳐 쓸 때 ifUpdatedAt 으로 그대로 준다.
+    if (memory.flaggedAt) {
+      const clean = await lastCleanRevision(pool, account.id, slug);
+      return jsonResult({
+        slug: memory.slug, updatedAt: memory.updatedAt.toISOString(),
+        ...(clean ? { value: clean.value, ...(clean.description ? { description: clean.description } : {}) } : {}),
+        flagged: { reason: memory.flagReason, at: memory.flaggedAt.toISOString() },
+        notice: '지금 판은 쓰기 검사에 걸려 사람의 확인을 기다린다 — 본문을 싣지 않는다. '
+          + (clean ? 'value 는 걸리기 전 마지막 판이다. ' : '걸리기 전 판이 없다. ')
+          + '지시문·비밀 값 없이 다시 쓰면 표시가 풀린다.',
+      });
+    }
     return jsonResult({
       slug: memory.slug, value: memory.value, updatedAt: memory.updatedAt.toISOString(),
       ...(memory.description ? { description: memory.description } : {}),
@@ -1074,9 +1089,12 @@ function buildMcpServer(
         },
       });
     }
+    // 쓰기 검사(080, contentScan.ts). 걸려도 거절하지 않는다 — 저장하고 표시한다.
+    const flag = value === null ? null : scanWrite(value, description);
     const result = await setMemory(
       pool, account.id, slug, value, description, kind,
       ifUpdatedAt === undefined ? undefined : { updatedAt: ifUpdatedAt === null ? null : new Date(ifUpdatedAt) },
+      flag?.reason ?? null,
     );
     if (typeof result === 'object') {
       const now = result.conflict.updatedAt;
@@ -1094,6 +1112,15 @@ function buildMcpServer(
     if (result === 'too_many') {
       return jsonResult({
         error: { code: 'too_many', message: `at most ${MAX_MEMORY_ITEMS_PER_ACCOUNT} memories per account` },
+      });
+    }
+    if (flag) {
+      return jsonResult({
+        ok: true,
+        flagged: { reason: flag.reason, rules: flag.rules },
+        notice: `저장했지만 쓰기 검사에 걸렸다(${flag.reason}). 사람이 확인할 때까지 이 판은 목록 요약·recall·memory.get `
+          + '어디에도 실리지 않는다. 남의 글을 옮겨 적었거나 비밀 값을 넣었다면 빼고 다시 써라. 그대로 둬야 하면 '
+          + '사람에게 확인을 부탁해라(설정 › 에이전트 › 기억).',
       });
     }
     return jsonResult({ ok: true });
@@ -1114,7 +1141,13 @@ function buildMcpServer(
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this channel' } });
     }
-    const result = await proposeSkill(pool, { slug, body, proposedBy: account.id, channelId });
+    // 쓰기 검사(080). 스킬은 원래 사람이 승인해야 깔리므로 걸린 것도 승인 전에는 아무 데도 안 간다 —
+    // 표시는 승인하는 사람이 보라고 남긴다.
+    const flag = scanWrite(body);
+    const result = await proposeSkill(pool, { slug, body, proposedBy: account.id, channelId, flagReason: flag?.reason ?? null });
+    if (flag && 'ok' in result) {
+      return jsonResult({ ...result, flagged: { reason: flag.reason, rules: flag.rules } });
+    }
     return jsonResult(result);
   });
 

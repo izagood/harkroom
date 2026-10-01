@@ -15,7 +15,7 @@ import { mintPat } from '../services/pats.js';
 import { emitEvent } from '../events.js';
 import {
   deleteMemory, listMemoryEntries, listMemoryRevisions, MAX_CORE_MEMORY_LENGTH, MAX_MEMORY_DESCRIPTION_LENGTH,
-  isValidSlug, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, MEMORY_SLUG_HINT, setMemory,
+  isValidSlug, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, MEMORY_SLUG_HINT, setMemory, clearMemoryFlag,
 } from '../services/memory.js';
 import { getHandleGroupByHandle } from '../services/handleGroups.js';
 
@@ -805,6 +805,27 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     // 본문은 감사에 남기지 않는다 — 지우기와 같은 규칙(slug 만).
     await recordAudit(pool, {
       action: 'agent.memory.edited', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { slug },
+    }, req);
+    return { ok: true };
+  });
+
+  /**
+   * 쓰기 검사(080)에 걸린 기억을 사람이 **확인**한다 — 표시를 풀어 이 판을 다시 프롬프트에 싣는다.
+   * 에이전트 PAT 로는 못 부른다(`requireOwnerOrAdmin` 은 사람 소유자·admin 만): 걸린 글이 스스로
+   * 표시를 풀면 검사가 없는 것과 같다. 걸린 것이 없으면 404 — 화면이 낡은 상태를 알아차리게.
+   */
+  app.post('/accounts/agents/:id/memory/:slug/confirm', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
+    // 가드는 소유자·admin 이지만 **사람만** 확인할 수 있게 한 번 더 막는다 — 확인이 사람의 몫이라는 것이 이 표시의 전부다.
+    if (req.account!.kind !== 'human') {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'only a human can confirm a flagged memory' } });
+    }
+    const { id, slug } = z.object({ id: z.string().uuid(), slug: z.string().min(1).max(255) }).parse(req.params);
+    if (!(await clearMemoryFlag(pool, id, slug))) {
+      return reply.code(404).send({ error: { code: 'not_flagged', message: 'memory is not flagged' } });
+    }
+    await recordAudit(pool, {
+      action: 'agent.memory.flag_cleared', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: id, detail: { slug },
     }, req);
     return { ok: true };
