@@ -399,6 +399,9 @@ class CommunityHeader extends StatelessWidget {
       key: const Key('community-header-semantics'),
       button: true,
       label: label,
+      // `excludeSemantics` 는 아래 InkWell 의 탭 동작까지 버린다 — 그대로 두면 VoiceOver 가 「버튼」이라 읽고도
+      // 두 번 눌러 열리지 않는다(designer #1056). 탭을 여기서 다시 단다.
+      onTap: () => showCommunitySwitcher(context),
       excludeSemantics: true,
       child: InkWell(
       key: const Key('community-header'),

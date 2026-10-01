@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/api/api_client.dart';
 import 'package:harkroom/api/ws.dart';
@@ -450,6 +451,12 @@ void main() {
       final label = tester.getSemantics(find.byKey(const Key('community-header-semantics'))).label;
       expect(label, t.communitySwitcherLabel.replaceAll('{name}', 'acme.example.com') + t.communityOthersWaiting);
       expect(app.othersWaiting, isTrue);
+      // 스크린리더로도 열린다 — 이름만 읽히고 눌리지 않는 버튼이면 안 된다.
+      final node = tester.getSemantics(find.byKey(const Key('community-header-semantics')));
+      expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
+      tester.semantics.tap(find.semantics.byLabel(label));
+      await _settle(tester);
+      expect(find.byKey(const Key('community-switcher')), findsOneWidget);
     });
 
     test('다른 커뮤니티가 401 이면 그 커뮤니티를 만료로 표시한다 — 지금 커뮤니티는 그대로', () async {
