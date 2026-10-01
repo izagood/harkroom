@@ -828,3 +828,18 @@ describe('kilo 의 argv', () => {
     expect(p.env.XDG_DATA_HOME).toBe(join('/state/opencode-home', 'data'));
   });
 });
+
+describe('codex effort 오버라이드 인용 (security #968 ③)', () => {
+  it('effort 를 TOML 문자열로 인용한다 — 따옴표·개행이 든 값이 다른 키를 심지 못한다', () => {
+    const plan = buildTurnCommand({
+      ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true, effort: 'x"\nsandbox_mode="danger',
+    });
+    const i = plan.args.findIndex((a) => a.startsWith('model_reasoning_effort='));
+    expect(i).toBeGreaterThan(0);
+    expect(plan.args[i]).toBe('model_reasoning_effort="x\\"\\nsandbox_mode=\\"danger"');
+  });
+  it('평범한 값은 예전과 같은 모양이다', () => {
+    const plan = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true, effort: 'xhigh' });
+    expect(plan.args).toContain('model_reasoning_effort="xhigh"');
+  });
+});

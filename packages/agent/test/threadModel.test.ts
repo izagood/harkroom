@@ -24,6 +24,15 @@ describe('resolveTurnModel', () => {
     expect(usesThreadModel(got)).toBe(false);
     expect(lines[0]).toContain('404');
   });
+  it('모양이 틀린 스레드 축(`-` 시작·따옴표)은 쓰지 않고 그 축만 정의로 물러난다', async () => {
+    const lines: string[] = [];
+    const got = await resolveTurnModel({
+      threadModel: async () => ({ model: '--dangerously-skip-permissions', effort: 'high', source: { model: 'thread', effort: 'thread' } }),
+    }, def, 'm1', (l) => lines.push(l));
+    expect(got).toEqual({ model: 'sonnet', effort: 'high', source: { model: 'agent', effort: 'thread' } });
+    expect(lines).toHaveLength(1);
+  });
+
   it('앵커가 없으면 묻지 않는다', async () => {
     const got = await resolveTurnModel({ threadModel: async () => { throw new Error('부르면 안 된다'); } }, def, null);
     expect(got.model).toBe('sonnet');

@@ -29,11 +29,29 @@ export async function resolveTurnModel(
   const fromDef: TurnModel = { model: def.model, effort: def.effort, source: { model: 'agent', effort: 'agent' } };
   if (!messageId || !harkroom.threadModel) return fromDef;
   try {
-    return await harkroom.threadModel(messageId);
+    const got = await harkroom.threadModel(messageId);
+    // **러너도 모양을 본다**(security #967 ② 의 한 겹 더). 서버가 이미 막지만 이 값은 argv 로
+    // 가므로, 모양이 틀린 축은 쓰지 않고 정의로 물러난다 — `-` 로 시작하면 다른 플래그가 된다.
+    const model = got.source.model === 'thread' && !safeAxis(got.model) ? def.model : got.model;
+    const effort = got.source.effort === 'thread' && !safeAxis(got.effort) ? def.effort : got.effort;
+    if (model !== got.model || effort !== got.effort) {
+      log(`[threadModel] ${messageId}: 스레드 지정 값의 모양이 틀려 그 축은 에이전트 설정으로 돈다`);
+      return {
+        model, effort,
+        source: { model: model === got.model ? got.source.model : 'agent', effort: effort === got.effort ? got.source.effort : 'agent' },
+      };
+    }
+    return got;
   } catch (err: unknown) {
     log(`[threadModel] ${messageId}: 스레드 모델 지정을 못 읽어 에이전트 설정으로 돈다 — ${err instanceof Error ? err.message : String(err)}`);
     return fromDef;
   }
+}
+
+/** 서버 `AXIS_PATTERN` 과 같은 모양(영숫자 시작, 영숫자·._:/[]-). null 은 "지정 없음" 이라 통과. */
+const AXIS_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]*$/;
+function safeAxis(v: string | null): boolean {
+  return v === null || AXIS_PATTERN.test(v);
 }
 
 /** 스레드에 지정된 축이 하나라도 있나. */
