@@ -66,7 +66,7 @@ describe('thread agent model', () => {
     const list = await app.inject({ method: 'GET', url: modelsUrl(root), headers: auth(fizz.pat) });
     expect(list.json().agentModels).toHaveLength(1);
 
-    const thread = await app.inject({ method: 'GET', url: `/channels/${channelId}/messages?threadRootId=${root}`, headers: auth(member.token) });
+    const thread = await app.inject({ method: 'GET', url: `/channels/${channelId}/messages?thread=${root}`, headers: auth(member.token) });
     const sys = (thread.json().messages as Array<{ kind: string; body: string; meta: Record<string, unknown> }>).find((m) => m.kind === 'system');
     expect(sys?.meta).toMatchObject({ accountId: member.accountId, threadAgentModel: { agentId: fizz.accountId, model: 'opus', effort: 'xhigh' } });
     expect(sys?.body).not.toContain('@');
@@ -139,6 +139,23 @@ describe('thread agent model', () => {
     expect(eff.json()).toMatchObject({ model: 'opus', effort: 'max' });
     const rows = await pool.query(`select 1 from thread_agent_model where thread_root_id = $1`, [id]);
     expect(rows.rowCount).toBe(1);
+
+    // 두 축이 빈 값은 그 스레드의 지정 **해제**다(스레드 작성창의 [스레드 지정 풀기]) — 버리면 안 풀린다.
+    const reply = await post(member.token, { body: '@fizz 이어서', threadRootId: id, agentModels: [{ agentId: fizz.accountId, model: null, effort: null }] });
+    expect(reply.statusCode).toBe(201);
+    const after = await pool.query(`select 1 from thread_agent_model where thread_root_id = $1`, [id]);
+    expect(after.rowCount).toBe(0);
+    const effAfter = await app.inject({ method: 'GET', url: `/agent/thread-model?messageId=${id}`, headers: auth(fizz.pat) });
+    expect(effAfter.json()).toMatchObject({ model: 'sonnet', effort: 'medium', source: { model: 'agent', effort: 'agent' } });
+    const thread = await app.inject({ method: 'GET', url: `/channels/${channelId}/messages?thread=${id}`, headers: auth(member.token) });
+    const cleared = (thread.json().messages as Array<{ kind: string; meta: Record<string, unknown> }>)
+      .filter((m) => m.kind === 'system' && (m.meta.threadAgentModel as { model: unknown } | undefined)?.model === null);
+    expect(cleared).toHaveLength(1);
+    // 없던 것을 다시 풀면 시스템 줄을 남기지 않는다.
+    await post(member.token, { body: '@fizz 또', threadRootId: id, agentModels: [{ agentId: fizz.accountId, model: null, effort: null }] });
+    const again = await app.inject({ method: 'GET', url: `/channels/${channelId}/messages?thread=${id}`, headers: auth(member.token) });
+    expect((again.json().messages as Array<{ kind: string; meta: Record<string, unknown> }>)
+      .filter((m) => m.kind === 'system' && (m.meta.threadAgentModel as { model: unknown } | undefined)?.model === null)).toHaveLength(1);
 
     const byAgent = await post(fizz.pat, { body: 'x', agentModels: [{ agentId: fizz.accountId, model: 'opus' }] });
     expect(byAgent.statusCode).toBe(403);

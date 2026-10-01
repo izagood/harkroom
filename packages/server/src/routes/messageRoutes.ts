@@ -10,7 +10,7 @@ import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { normalizeSearchQuery } from '../services/mentions.js';
 import { extractUrls, queueLinkPreviewFetch } from '../services/linkPreview.js';
-import { cleanAxis, setThreadAgentModel } from '../services/threadAgentModels.js';
+import { cleanAxis, clearThreadAgentModel, setThreadAgentModel } from '../services/threadAgentModels.js';
 import { agentModelInput, announceChange, checkOffered, emitChanged } from './threadAgentModelRoutes.js';
 import type { OperatorHub } from '../ws/operatorHub.js';
 
@@ -42,9 +42,14 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
     }
     // 모델 지정은 사람만(결정 3). 글을 올리기 **전에** 거르는 이유: 올린 뒤에 거절하면 글은 남고
     // 지정만 빠져, 사람이 고른 모델이 아니라 기본값으로 턴이 돈다 — 그것이 결정 6 이 막는 조용한 폴백이다.
+    //
+    // **두 축이 다 빈 값은 버리지 않는다** — 그것은 "그 스레드의 지정 해제" 다(스레드 작성창의
+    // [스레드 지정 풀기], designer #969 재대조). 버리면 사람이 풀고 보냈는데 다음 턴이 그대로
+    // 옛 모델로 돈다. 해제는 고를 값이 없으므로 `checkOffered` 를 거치지 않는다(그 함수가 두 축이
+    // null 이면 바로 통과시킨다). 사람만 된다는 검사는 그대로다.
     const agentModels = (body.agentModels ?? []).map((m) => ({
       agentId: m.agentId, model: cleanAxis(m.model, MODEL_ID_MAX), effort: cleanAxis(m.effort, EFFORT_MAX),
-    })).filter((m) => m.model !== null || m.effort !== null);
+    }));
     if (agentModels.length > 0) {
       if (req.account!.kind !== 'human') {
         return reply.code(403).send({ error: { code: 'human_only', message: '모델 지정은 사람만 바꾼다' } });
@@ -73,6 +78,15 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
     if (!replayed && agentModels.length > 0) {
       const rootId = message.threadRootId ?? message.id;
       for (const m of agentModels) {
+        if (m.model === null && m.effort === null) {
+          // 해제 — REST `DELETE` 와 같은 함수·같은 시스템 줄. 없던 것을 풀면 아무 줄도 남기지 않는다
+          // (DELETE 의 404 와 같은 판단: 일어나지 않은 일을 알리지 않는다).
+          if (await clearThreadAgentModel(pool, rootId, m.agentId)) {
+            await announceChange(pool, id, rootId, req.account!.id, m.agentId, null);
+            await emitChanged(pool, id, rootId, m.agentId, null);
+          }
+          continue;
+        }
         const set = await setThreadAgentModel(pool, { channelId: id, threadRootId: rootId, agentId: m.agentId, model: m.model, effort: m.effort, setBy: req.account!.id });
         if (!set.ok) continue;
         await announceChange(pool, id, rootId, req.account!.id, m.agentId, set.row);
