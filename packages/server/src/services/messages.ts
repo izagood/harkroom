@@ -1539,6 +1539,21 @@ export async function hasOlderMessages(pool: Pool, channelId: string, oldestSeq:
   return (res.rowCount ?? 0) > 0;
 }
 
+/**
+ * 이 스레드에 `oldestSeq` 보다 오래된 답글이 남았나. 스레드 조회의 `hasMore` 다 — 채널의
+ * [hasOlderMessages] 를 쓰면 **다른 스레드·채널 글**까지 세어 늘 참이 된다.
+ */
+export async function hasOlderThreadReplies(
+  pool: Pool, channelId: string, threadRootId: string, oldestSeq: number,
+): Promise<boolean> {
+  const res = await pool.query(
+    `select 1 from message
+     where channel_id = $1 and thread_root_id = $2 and seq < $3 and deleted_at is null limit 1`,
+    [channelId, threadRootId, oldestSeq],
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
 export type MutationRefusal = 'not_found' | 'forbidden';
 
 /** 본문에 적힌 멘션 토큰 전부(`<@id>`·`<@team:id>`·`<@group:id>`)와 `@channel`. 수정으로 **새로 생긴** 부름이 있는지 보는 데만 쓴다. */
@@ -2239,6 +2254,24 @@ export async function listMessages(
       );
       return res.rows;
     }
+    /**
+     * 스레드의 **옛 답글 페이지**(위로 밀어 더 읽기). `before` 보다 오래된 답글 중 최신 limit 개.
+     * **이 스레드의 답글만** 본다(`thread_root_id = $2`) — 전에는 이 갈래가 없어 `before` 가
+     * 무시되고 최신 페이지가 다시 왔다. 루트는 첫 페이지(아래 기본 갈래)가 이미 싣고, 루트의
+     * seq 는 모든 답글보다 작으므로 옛 페이지에는 싣지 않는다.
+     */
+    if (opts.before !== undefined) {
+      const res = await pool.query(
+        `select * from (
+           select ${LIST_COLS} from message m ${THREAD_STATS}
+           where m.channel_id = $1 and m.thread_root_id = $2 and m.seq < $3 and ${LIST_VISIBLE}
+           order by m.seq desc limit $4
+         ) older
+         order by seq`,
+        [channelId, opts.threadRootId, opts.before, limit],
+      );
+      return res.rows;
+    }
     // 스레드 조회에서는 루트를 항상 포함한다 — limit 와 관계없이.
     if (opts.since !== undefined && opts.since > 0) {
       const res = await pool.query(
@@ -2249,14 +2282,16 @@ export async function listMessages(
       );
       return res.rows;
     }
+    // `limit` 은 **답글에만** 건다. 전에는 `order by … limit` 이 union 전체에 걸려 답글이 limit
+    // 을 넘는 스레드에서 루트가 잘려 나갔다(위 주석의 "항상 포함" 과 달리).
     const res = await pool.query(
       `select * from (
-        select ${LIST_COLS} from message m ${THREAD_STATS}
-        where m.channel_id = $1 and m.id = $2 and ${LIST_VISIBLE}
+        (select ${LIST_COLS} from message m ${THREAD_STATS}
+         where m.channel_id = $1 and m.id = $2 and ${LIST_VISIBLE})
         union all
-        select ${LIST_COLS} from message m ${THREAD_STATS}
-        where m.channel_id = $1 and m.thread_root_id = $2 and ${LIST_VISIBLE}
-        order by seq desc limit $3
+        (select ${LIST_COLS} from message m ${THREAD_STATS}
+         where m.channel_id = $1 and m.thread_root_id = $2 and ${LIST_VISIBLE}
+         order by m.seq desc limit $3)
       ) latest
       order by seq`,
       [channelId, opts.threadRootId, limit],

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { EFFORT_MAX, MAX_MESSAGE_BODY_CHARS, MENTION_EDIT_SKIPPED_HEADER, MODEL_ID_MAX, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@harkroom/shared';
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
-import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listInboxThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, SEARCH_MAX_OFFSET, BAD_THREAD_MESSAGE } from '../services/messages.js';
+import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, SEARCH_MAX_OFFSET, BAD_THREAD_MESSAGE } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -311,13 +311,19 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
     const messages = await listMessages(pool, id, {
       since: q.since, before: q.before, around: q.around, limit: q.limit, threadRootId: q.thread ?? null,
     });
-    // 스레드 조회는 '더 오래된 것'을 페이지로 돌려주는 경로가 없다 — before 분기가 스레드를
-    // 필터하지 않으므로 이 값을 true 로 올리면 클라이언트가 채널 전체를 거슬러 올라간다.
-    // 그래서 limit 을 넘는 긴 스레드는 최신 limit 개까지만 보인다(그 창이 오래된 쪽이 아니라
-    // 최신 쪽인 것이 이 커밋의 요지다). 스레드 역방향 페이지는 별도 과제다.
-    const hasMore = q.thread
-      ? false
-      : messages.length > 0 && (await hasOlderMessages(pool, id, messages[0]!.seq));
+    // 스레드 조회의 `hasMore` 는 **그 스레드의 답글**로만 센다 — 받은 답글 중 가장 오래된 것보다
+    // 앞선 답글이 남았나. 루트는 세지 않는다(루트는 첫 페이지에 늘 실린다). 다음 페이지는
+    // `?thread=<루트>&before=<그 seq>` 로 받는다(`listMessages` 의 스레드 before 갈래).
+    // 옛 클라이언트는 이 값을 읽지 않으므로(데스크탑·모바일 모두 스레드 응답의 hasMore 를 버린다)
+    // 참이 되어도 동작이 바뀌지 않는다. `since`(증분)·`around`(점프)는 과거를 말할 자격이 없어 false.
+    let hasMore: boolean;
+    if (q.thread) {
+      const oldestReply = messages.find((m) => m.threadRootId === q.thread);
+      hasMore = q.since === undefined && q.around === undefined && oldestReply !== undefined
+        && (await hasOlderThreadReplies(pool, id, q.thread, oldestReply.seq));
+    } else {
+      hasMore = messages.length > 0 && (await hasOlderMessages(pool, id, messages[0]!.seq));
+    }
     return { messages, hasMore };
   });
 

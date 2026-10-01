@@ -175,7 +175,8 @@ describe('messages', () => {
       await post(adminToken, `reply${i}`, { threadRootId: rootId }, {}, chId);
     }
     const latest = await listMessages(pool, chId, { threadRootId: rootId, limit: 3 });
-    expect(latest.map((m) => m.body)).toEqual(['reply8', 'reply9', 'reply10']);
+    // limit 은 답글에만 걸리고 루트는 늘 맨 앞에 실린다(전에는 limit 을 넘는 스레드에서 루트가 잘렸다).
+    expect(latest.map((m) => m.body)).toEqual(['root', 'reply8', 'reply9', 'reply10']);
     expect(latest[0]!.seq).toBeLessThan(latest[1]!.seq);
     expect(latest[1]!.seq).toBeLessThan(latest[2]!.seq);
   });
