@@ -79,6 +79,11 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   const runnerStates = useActiveStore((s) => s.runnerStates);
   const groups = useActiveStore((s) => s.groups);
   const teams = useActiveStore((s) => s.teams) ?? CHANNEL_NO_TEAMS;
+  /**
+   * 강조 점프가 걸린 커밋에 **이 화면도 함께 커밋되게** 구독한다. 그려지는 데는 쓰지 않는다 —
+   * `jumpedThisCommitRef` 를 그 커밋 끝에서 지우는 효과가 돌려면 이 컴포넌트가 커밋돼야 한다.
+   */
+  useActiveStore((s) => s.highlightedMessageId);
   const bottomRef = useRef<HTMLDivElement>(null);
   /** 스크롤 상자 자체. 바닥에서 얼마나 떨어졌는지는 이 요소만 안다. */
   const listRef = useRef<HTMLDivElement>(null);
@@ -341,7 +346,23 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * 닫는다 — 안 끄면 정착 루프·바닥 관찰자가 방금 옮긴 자리를 바닥으로 되끌어 간다. 사람이
    * 스스로 위로 올린 것과 같은 상태가 되므로 "아래로 내려가기" 버튼도 선다.
    */
+  /**
+   * **이 커밋에서 강조 점프가 일어났는가**(2026-10-01, Saved 클릭 이동이 중간에 멈춤).
+   *
+   * `openMessage` 는 around 창을 합치는 것과 강조를 거는 것을 같은 동기 구간에서 하므로 React 가
+   * 둘을 **한 커밋**으로 묶는다. 그 커밋에서는 자식(`MessageRows`)의 점프 효과가 먼저 돌아
+   * `onJump` 를 부르고, 이어서 이 화면의 `[roots.length]` 효과가 돈다. 그 효과의 "내가 쓴 것은
+   * 따라 내려간다" 예외가 마지막 뿌리 메시지의 작성자만 보므로, 마지막 최상위 글이 내 것인
+   * 채널에서는 방금 옮긴 자리를 바닥으로 되끌어 갔다(에이전트 답은 스레드에 달려 그런 채널이
+   * 흔하다). 줄 수가 는 까닭이 내가 보낸 글이 아니라 **점프가 불러온 창**이면 따라가지 않는다.
+   *
+   * 지우는 곳은 `[roots.length]` 효과 뒤의 딸림값 없는 효과다 — 남겨 두면 다음에 내가 보낸
+   * 글까지 안 따라간다.
+   */
+  const jumpedThisCommitRef = useRef(false);
+
   const onJump = () => {
+    jumpedThisCommitRef.current = true;
     endSettle();
     // 붙잡아 둔 줄은 **떠날 자리**다. 두면 옮긴 직후 높이 관찰자가 그 줄로 되돌려 놓는다.
     anchorRef.current = null;
@@ -400,7 +421,8 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * 없다). 바닥 여부와 마지막 작성자는 이 렌더의 값을 클로저로 읽으므로 딸림값이 아니다.
    */
   useEffect(() => {
-    if (atBottomRef.current || roots[roots.length - 1]?.authorId === me?.id) {
+    if (jumpedThisCommitRef.current) setJumpVisible(true);
+    else if (atBottomRef.current || roots[roots.length - 1]?.authorId === me?.id) {
       scrollToBottom();
       // 첫 페이지가 정착 창보다 늦게 올 수 있다(느린 서버·찬 채널). 도착한 줄과 **함께**
       // 자라는 그림·링크 카드가 같은 보정을 필요로 하므로 창을 다시 연다.
@@ -410,6 +432,8 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     else setJumpVisible(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roots.length]);
+  // 점프 표식은 **그 커밋 한 번**만 산다 — 위 효과보다 뒤에 선언해야 같은 커밋에서 위가 먼저 읽는다.
+  useEffect(() => { jumpedThisCommitRef.current = false; });
 
   /**
    * 채널을 옮기면 **바닥에서 시작한다.** 이 두 줄이 없으면 위를 보다 채널을 옮겼을 때

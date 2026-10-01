@@ -1087,7 +1087,14 @@ export class Controller {
     // 판정이 `Inbox.openEntry` 와 같은 술어여야 한다는 것도 거기 적혀 있다). 본문의 말이면
     // 목적지가 채널 타임라인이라, 인박스·관제탑이 서 있으면 방금 누른 것이 그 뒤에 숨는다.
     const inStore = (): boolean => (this.store.getState().messages[target.channelId] ?? []).some((m) => m.id === target.id);
-    const earlyAround = !inStore() && this.loadedChannels.has(target.channelId)
+    /**
+     * **채널 쪽 창이 필요한가**(2026-10-01, Saved 점프 C안). 채널에 안 올라온 답글은 채널
+     * 목록에 줄이 없다 — 강조가 걸릴 DOM 은 스레드 패널뿐이고, 그 창은 아래 스레드 조회가
+     * `around` 로 받는다. 채널 around 창은 왕복 하나를 더 쓰면서 아무 줄도 세우지 못한다.
+     * `alsoInChannel` 답글은 채널에도 줄이 있으므로 지금처럼 받는다.
+     */
+    const wantsChannelWindow = !target.threadRootId || target.alsoInChannel;
+    const earlyAround = wantsChannelWindow && !inStore() && this.loadedChannels.has(target.channelId)
       ? this.api.messages(target.channelId, { around: target.seq })
       : null;
     const earlyThread = target.threadRootId
@@ -1109,7 +1116,7 @@ export class Controller {
      * 사이를 메우는 '여기부터 새 메시지' 구분선은 별개 과제다(`loadOlder` 로 위로 올라가면
      * 메워진다).
      */
-    if (!inStore()) {
+    if (wantsChannelWindow && !inStore()) {
       try {
         const page = await (earlyAround ?? this.api.messages(target.channelId, { around: target.seq }));
         this.store.getState().upsertMessages(target.channelId, page.messages);

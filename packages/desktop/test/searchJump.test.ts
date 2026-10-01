@@ -67,4 +67,37 @@ describe('검색 결과로 점프 — 창을 받아 강조가 걸린다', () => 
     expect(threadCall).toBeDefined();
     expect(threadCall![1]).toMatchObject({ thread: 'root-1', around: 7 });
   });
+
+  /**
+   * 채널에 안 올라온 답글은 채널 목록에 줄이 없다 — 채널 around 창은 왕복만 쓰고 강조할 줄을
+   * 세우지 못한다(2026-10-01, Saved 점프 C안). `alsoInChannel` 답글은 채널에도 줄이 있어 받는다.
+   */
+  it('채널에 안 올라온 답글이면 채널 around 창을 받지 않는다', async () => {
+    const reply = msg('m-reply', 'c1', 7, '옛 답글');
+    reply.threadRootId = 'root-1';
+    const messages = vi.fn(async (_id: string, _opts?: { around?: number; thread?: string }) =>
+      ({ messages: [], hasMore: false }));
+    const api = fakeApi({ messages, message: vi.fn(async () => reply) });
+    const c = new Controller(api, fakeWsFactory().makeWs);
+    await c.start();
+
+    await c.openMessage('m-reply');
+
+    expect(messages.mock.calls.some(([, o]) => o?.around !== undefined && o?.thread === undefined)).toBe(false);
+  });
+
+  it('alsoInChannel 답글은 채널 around 창도 받는다', async () => {
+    const reply = msg('m-reply', 'c1', 7, '채널에도 올린 답글');
+    reply.threadRootId = 'root-1';
+    reply.alsoInChannel = true;
+    const messages = vi.fn(async (_id: string, _opts?: { around?: number; thread?: string }) =>
+      ({ messages: [], hasMore: false }));
+    const api = fakeApi({ messages, message: vi.fn(async () => reply) });
+    const c = new Controller(api, fakeWsFactory().makeWs);
+    await c.start();
+
+    await c.openMessage('m-reply');
+
+    expect(messages.mock.calls.some(([, o]) => o?.around === 7 && o?.thread === undefined)).toBe(true);
+  });
 });

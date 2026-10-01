@@ -137,10 +137,42 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
    * 위쪽을 읽는 중이면 화면을 건드리지 않는다. 내가 쓴 답글은 예외로 따라간다(위를 보다
    * 답을 보냈다면 그 사람의 관심은 방금 보낸 것에 있다).
    */
+  /**
+   * **강조 점프(saved·검색·링크)로 온 답글이면 바닥 추종을 끈다**(2026-10-01, Saved 클릭 이동이
+   * 중간에 멈춤 — 채널의 `onJump` 와 같은 일이다).
+   *
+   * `openThread` 는 답글 페이지를 넣는 것과 강조를 거는 것을 같은 동기 구간에서 하므로 React 가
+   * 둘을 **한 커밋**으로 묶는다. 그 커밋에서 자식 `MessageItem` 이 그 줄로 `scrollIntoView` 한 뒤
+   * 아래 `[thread.length]` 효과가 도는데, 그때 `atBottomRef` 는 스레드를 연 layout 효과가 세운
+   * 참 그대로라 방금 옮긴 자리를 바닥으로 되끌어 갔다. 고정(`stickyRef`)도 참으로 남아 늦게
+   * 자라는 그림·링크 카드가 바닥 관찰자를 통해 한 번 더 끌어내렸다.
+   *
+   * 그래서 강조된 줄이 이 스레드에 실린 **그 커밋에서** 사람이 위로 올린 것과 같은 상태로 만든다.
+   * 이 효과는 아래 길이 효과보다 **먼저 선언해야 한다**(같은 컴포넌트의 효과는 선언 순서대로 돈다).
+   * 한 강조에 한 번만 한다 — 그 뒤에 사람이 바닥으로 내려가 다시 붙는 것을 막지 않는다.
+   */
+  const highlightedId = useActiveStore((s) => s.highlightedMessageId);
+  const highlightInThread = !!highlightedId && thread.some((m) => m.id === highlightedId);
+  const jumpedForRef = useRef<string | null>(null);
+  const jumpedThisCommitRef = useRef(false);
   useEffect(() => {
+    if (!highlightedId) { jumpedForRef.current = null; return; }
+    if (!highlightInThread || jumpedForRef.current === highlightedId) return;
+    jumpedForRef.current = highlightedId;
+    jumpedThisCommitRef.current = true;
+    atBottomRef.current = false;
+    stickyRef.current = false;
+  }, [highlightedId, highlightInThread]);
+
+  useEffect(() => {
+    // 줄 수가 는 까닭이 점프가 불러온 답글 페이지면 따라가지 않는다 — "내가 쓴 답글은 따라
+    // 간다" 예외도 여기서는 뜻이 없다(마지막 답글이 내 것인 스레드에서 점프가 되끌려 갔다).
+    if (jumpedThisCommitRef.current) return;
     if (atBottomRef.current || thread[thread.length - 1]?.authorId === me?.id) scrollToBottom();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thread.length]);
+  // 점프 표식은 **그 커밋 한 번**만 산다 — 남겨 두면 다음에 내가 보낸 답글까지 안 따라간다.
+  useEffect(() => { jumpedThisCommitRef.current = false; });
 
   /**
    * **늦게 자라는 내용까지 따라간다**(#693 이 채널에 넣은 보정을 스레드에도 놓는다).
