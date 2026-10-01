@@ -131,11 +131,21 @@ const REACTIONS = `coalesce((
 
 // 첨부도 리액션과 같은 이유로 COLS 에 있다 — 조회 뒤에 붙이면 네 갈래 중 하나를 빼먹는다.
 // storage_key 는 **의도적으로 빼 두었다**: 스토리지 키가 응답에 새면 그 자체가 접근 경로다.
+//
+// 미리보기(090)의 버전이면 `artifact` 를 더한다 — 카드가 제목·버전·"최신 vN 있음"을 그린다. 보통
+// 첨부에는 키 자체가 없다(null 을 싣지 않는다): 첨부 모양을 정확히 비교하는 화면·시험이 많다.
+// `latestVersion` 은 읽는 순간의 값이다 — 새 버전이 올라와도 옛 글에 이벤트를 다시 치지 않는다.
 const ATTACHMENTS = `coalesce((
-  select json_agg(json_build_object(
+  select json_agg((jsonb_build_object(
     'id', a.id, 'filename', a.filename,
     'contentType', a.content_type, 'sizeBytes', a.size_bytes::int
-  ) order by a.attached_at, a.created_at)
+  ) || coalesce((
+    select jsonb_build_object('artifact', jsonb_build_object(
+      'artifactId', av.artifact_id, 'version', av.version, 'title', ar.title, 'summary', av.summary,
+      'coverAttachmentId', av.cover_attachment_id,
+      'latestVersion', (select max(av2.version) from artifact_version av2 where av2.artifact_id = av.artifact_id)))
+    from artifact_version av join artifact ar on ar.id = av.artifact_id where av.attachment_id = a.id
+  ), '{}'::jsonb)) order by a.attached_at, a.created_at)
   from attachment a where a.message_id = message.id
 ), '[]'::json) as attachments`;
 

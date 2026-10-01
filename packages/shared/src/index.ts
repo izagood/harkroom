@@ -1006,6 +1006,21 @@ export interface AttachmentRow {
   filename: string;
   contentType: string;
   sizeBytes: number;
+  /**
+   * 미리보기(아티팩트) 버전이면 있다(`artifact.publish` 가 있는 서버부터). 보통 첨부에는 키가 없다.
+   * `latestVersion` 은 목록을 읽은 순간의 값이다 — 새 버전 글이 와도 옛 글은 다시 오지 않는다.
+   */
+  artifact?: AttachmentArtifactRef;
+}
+
+export interface AttachmentArtifactRef {
+  artifactId: string;
+  version: number;
+  latestVersion: number;
+  title: string;
+  summary: string | null;
+  /** 같은 글에 함께 붙은 표지 그림 첨부. 없으면 글 카드로만 그린다. */
+  coverAttachmentId: string | null;
 }
 
 /**

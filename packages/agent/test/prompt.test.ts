@@ -546,6 +546,14 @@ describe('buildSystemPrompt', () => {
     expect(s).toContain('한 번에');
   });
 
+  // 미리보기 PR ②: claude.ai 링크는 폰에서 막힌다. 도구를 만들고 안 적으면 안 쓰인다(#762→#809).
+  it('사람이 볼 HTML 은 claude.ai 링크 대신 artifact.publish 로 올리라고 지시한다', () => {
+    const s = buildSystemPrompt({ handle: 'designer', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
+    expect(s).toContain('`artifact.publish`');
+    expect(s).toContain('claude.ai 아티팩트 링크로 주지 말고');
+    expect(s).toContain('`artifactId`');
+  });
+
   /**
    * 2026-09-07 15:08 의 실패가 이 문구들의 부재였다. 에이전트는 PR #533 을 올린 뒤 CI 대기
    * 루프를 **백그라운드로 띄우고** "결과 나오면 머지하겠다"는 계획으로 턴을 끝냈다 —
