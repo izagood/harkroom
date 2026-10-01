@@ -71,8 +71,12 @@ describe('UpdatesSettings', () => {
   // 확인 실패·최신·새 버전 발견·설치 실패 같은 흐름 전체의 회귀선은
   // `src/components/settings/UpdatesSettings.test.tsx` 에 있다(업데이트 표면을
   // 갈아끼워야 해서 그쪽에 모았다). 여기서는 이 섹션이 여전히 뜬다는 것만 잰다.
-  it('states plainly that automatic updates are available', () => {
+  // "Automatic updates · Available" 줄은 UX ③ 에서 뺐다 — 사양의 순서(지금 버전 → 새 버전 →
+  // 설치)에 없고, 설치 버튼이 서 있다는 것이 이미 그 말을 한다. 못 한다고 말하지 않는지는
+  // `UpdatesSettings.test.tsx` 의 첫 묶음이 잰다.
+  it('states the current version and offers a way to check', () => {
     render(<UpdatesSettings />);
-    expect(screen.getByText('Available')).toBeTruthy();
+    expect(screen.getByText('Current version')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /check now/i })).toBeTruthy();
   });
 });

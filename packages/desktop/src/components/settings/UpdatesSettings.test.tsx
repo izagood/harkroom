@@ -87,7 +87,7 @@ describe('UpdatesSettings — 확인 → 설치 흐름', () => {
     await waitFor(() => {
       expect(screen.getByRole('status').textContent).toContain('9.9.9');
     });
-    expect(screen.getByRole('button', { name: /download and install/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /restart to install/i })).toBeTruthy();
   });
 
   it('설치 버튼이 실제로 내려받기·설치를 부른다', async () => {
@@ -98,8 +98,8 @@ describe('UpdatesSettings — 확인 → 설치 흐름', () => {
     }));
     render(<UpdatesSettings />);
     fireEvent.click(screen.getByRole('button', { name: /check now/i }));
-    await waitFor(() => screen.getByRole('button', { name: /download and install/i }));
-    fireEvent.click(screen.getByRole('button', { name: /download and install/i }));
+    await waitFor(() => screen.getByRole('button', { name: /restart to install/i }));
+    fireEvent.click(screen.getByRole('button', { name: /restart to install/i }));
 
     await waitFor(() => expect(downloadAndInstall).toHaveBeenCalled());
   });
@@ -111,8 +111,8 @@ describe('UpdatesSettings — 확인 → 설치 흐름', () => {
     }));
     render(<UpdatesSettings />);
     fireEvent.click(screen.getByRole('button', { name: /check now/i }));
-    await waitFor(() => screen.getByRole('button', { name: /download and install/i }));
-    fireEvent.click(screen.getByRole('button', { name: /download and install/i }));
+    await waitFor(() => screen.getByRole('button', { name: /restart to install/i }));
+    fireEvent.click(screen.getByRole('button', { name: /restart to install/i }));
 
     await waitFor(() => {
       expect(screen.getByRole('status').textContent).toContain('signature mismatch');
@@ -160,5 +160,29 @@ describe('UpdatesSettings — 유효한 안내는 남아 있다(대조군)', () 
     setAppUpdater(stub());
     render(<UpdatesSettings />);
     expect(screen.getByText(__APP_VERSION__)).toBeTruthy();
+  });
+});
+
+/**
+ * **사이드바와 같은 답**(UX ③ H4). 사이드바 칸이 이미 "9.9.9 가 있다" 고 들었으면, 이
+ * 화면은 [지금 확인] 을 누르기 전에도 그것을 보여 준다 — "아직 확인 안 함" 이라고 하지 않는다.
+ * 전에는 둘이 따로 물어 같은 순간 서로 다른 말을 했다.
+ */
+describe('UpdatesSettings — 사이드바와 같은 답을 읽는다', () => {
+  it('다른 자리가 이미 받은 답을 누르지 않아도 보여 준다', async () => {
+    (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    try {
+      setAppUpdater(stub({ check: vi.fn(async () => ({ version: '9.9.9' })) }));
+      const { UpdateToast } = await import('../UpdateToast');
+      render(<UpdateToast placement="footer" />);
+      await screen.findByTestId('update-footer');
+
+      render(<UpdatesSettings />);
+      expect(screen.getByTestId('updates-new-version').textContent).toContain('9.9.9');
+      expect(screen.getByTestId('updates-new-version').textContent).not.toMatch(/not checked/i);
+      expect(screen.getAllByRole('button', { name: /restart to install/i }).length).toBeGreaterThan(0);
+    } finally {
+      delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
   });
 });

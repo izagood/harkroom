@@ -1,5 +1,4 @@
-import { useState } from 'react';
-import { getAppUpdater } from '../../lib/appUpdater';
+import { useUpdateCheck } from '../../lib/useUpdateCheck';
 import { useT } from '../../i18n/useT';
 import { Button, ReadonlyRow, SettingsGroup, SettingsPage } from './primitives';
 
@@ -22,74 +21,44 @@ import { Button, ReadonlyRow, SettingsGroup, SettingsPage } from './primitives';
  * 화면이 사람에게 보여 줄 수 있는 상태. **문자열이 아니라 태그**로 둔다 — 문자열이면
  * "확인 실패"와 "최신"이 같은 자리에 섞여 들어가는 것을 타입이 못 막는다.
  */
-type Status =
-  | { kind: 'idle' }
-  | { kind: 'checking' }
-  | { kind: 'uptodate' }
-  | { kind: 'available'; version: string }
-  | { kind: 'installing' }
-  /** 확인·설치가 실패했다. `message` 는 플러그인이 준 원문이다 — 우리가 해석하지 않는다. */
-  | { kind: 'failed'; message: string };
-
-/** 예외에서 사람에게 보여 줄 한 줄을 뽑는다. 형태를 모르는 값이 올 수 있다. */
-function describe(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
+/**
+ * **사이드바와 같은 답을 읽는다**(UX ③ H4). 전에는 이 화면이 제 상태를 따로 뒀다 — 사이드바가
+ * 이미 "0.3.63 이 있다" 고 말하는 순간에도 여기는 "이번 세션에 아직 확인하지 않았다" 였다.
+ * 이제 `useUpdateCheck` 의 공용 답을 읽고, "아직 확인 안 함" 은 **정말 한 번도 답을 못 받았을
+ * 때만** 쓴다. [지금 확인] 은 같은 물음에 합류한다(두 자리가 동시에 물어도 한 번만 묻는다).
+ */
+function checkedLabel(at: number): string {
+  return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 export function UpdatesSettings() {
   const t = useT();
-  const [status, setStatus] = useState<Status>({ kind: 'idle' });
+  const { status, checkedAt, checking, check, install } = useUpdateCheck();
+  const busy = checking || status.kind === 'installing';
 
-  async function check() {
-    setStatus({ kind: 'checking' });
-    try {
-      const found = await getAppUpdater().check();
-      setStatus(found ? { kind: 'available', version: found.version } : { kind: 'uptodate' });
-    } catch (err) {
-      setStatus({ kind: 'failed', message: describe(err) });
-    }
-  }
-
-  async function install() {
-    setStatus({ kind: 'installing' });
-    try {
-      await getAppUpdater().downloadAndInstall();
-      // 성공하면 앱이 다시 뜨므로 여기로 돌아오지 않는다. 돌아왔다면 재시작이 일어나지
-      // 않은 것이고, 그것은 사람이 알아야 할 이상 상태다 — 조용히 넘기지 않는다.
-      setStatus({ kind: 'failed', message: 'the app did not restart after installing' });
-    } catch (err) {
-      setStatus({ kind: 'failed', message: describe(err) });
-    }
-  }
-
-  const busy = status.kind === 'checking' || status.kind === 'installing';
+  let newVersion: string;
+  if (status.kind === 'available') newVersion = `${status.version} · checked ${checkedLabel(checkedAt ?? Date.now())}`;
+  else if (status.kind === 'installing') newVersion = `${status.version} · downloading and installing…`;
+  else if (status.kind === 'uptodate') newVersion = `None — up to date · checked ${checkedLabel(checkedAt ?? Date.now())}`;
+  // 실패는 실패라고 적는다. 원문을 붙여 사람이 원인을 직접 볼 수 있게 한다.
+  else if (status.kind === 'failed') newVersion = `Could not complete: ${status.message}`;
+  else newVersion = checking ? 'Checking…' : 'Not checked yet';
 
   return (
     <SettingsPage section="updates" description={t('settings.desc.updates')}>
       <SettingsGroup>
-        <ReadonlyRow label="Version" value={__APP_VERSION__} />
-        <ReadonlyRow label="Automatic updates" value="Available" />
-        <div className="flex items-center gap-4 px-4 py-3">
-          <span className="min-w-0 flex-1">
-            <span className="block font-medium text-fg">Check for updates</span>
-            <span className="mt-0.5 block text-fg-subtle" role="status">
-              {status.kind === 'idle' && 'harkroom has not checked yet in this session.'}
-              {status.kind === 'checking' && 'Checking…'}
-              {status.kind === 'uptodate' && `harkroom is up to date at ${__APP_VERSION__}.`}
-              {status.kind === 'available' && `Version ${status.version} is available.`}
-              {status.kind === 'installing' && 'Downloading and installing…'}
-              {/* 실패는 실패라고 적는다. 원문을 붙여 사람이 원인을 직접 볼 수 있게 한다. */}
-              {status.kind === 'failed' && `Could not complete: ${status.message}`}
-            </span>
-          </span>
-          {status.kind === 'available' ? (
-            <Button variant="primary" disabled={busy} onClick={() => void install()}>
-              {status.kind === 'available' ? 'Download and install' : 'Installing…'}
+        {/* 순서가 사양이다(UX ③): 지금 버전 → 새 버전(확인 시각) → 설치. 사이드바 칸의
+            "0.3.59 → 0.3.63" 을 세로로 편 모양이다. */}
+        <ReadonlyRow label="Current version" value={__APP_VERSION__} />
+        <ReadonlyRow label="New version" value={<span role="status" data-testid="updates-new-version">{newVersion}</span>} />
+        <div className="flex items-center justify-end gap-2 px-4 py-3">
+          {status.kind === 'available' || status.kind === 'installing' ? (
+            <Button variant="primary" disabled={busy} onClick={() => void install(status.version)}>
+              {status.kind === 'installing' ? 'Installing…' : 'Restart to install'}
             </Button>
           ) : (
             <Button disabled={busy} onClick={() => void check()}>
-              {status.kind === 'checking' ? 'Checking…' : 'Check now'}
+              {checking ? 'Checking…' : 'Check now'}
             </Button>
           )}
         </div>

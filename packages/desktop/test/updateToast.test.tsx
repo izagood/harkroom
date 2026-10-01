@@ -49,10 +49,10 @@ describe('UpdateToast — 쓰는 중에 새 버전을 말한다', () => {
     withSurface();
     setAppUpdater(stub({ check: vi.fn(async () => ({ version: '0.1.12' })) }));
 
-    render(<UpdateToast />);
+    render(<UpdateToast placement="footer" />);
 
     expect(await screen.findByText(/0\.1\.12/)).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Update' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Restart to install' })).toBeTruthy();
   });
 
   it('Update 를 누르면 설치를 부른다', async () => {
@@ -60,8 +60,8 @@ describe('UpdateToast — 쓰는 중에 새 버전을 말한다', () => {
     const updater = stub({ check: vi.fn(async () => ({ version: '0.1.12' })) });
     setAppUpdater(updater);
 
-    render(<UpdateToast />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Update' }));
+    render(<UpdateToast placement="footer" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Restart to install' }));
 
     await waitFor(() => expect(updater.downloadAndInstall).toHaveBeenCalled());
   });
@@ -70,8 +70,8 @@ describe('UpdateToast — 쓰는 중에 새 버전을 말한다', () => {
     withSurface();
     setAppUpdater(stub({ check: vi.fn(async () => ({ version: '0.1.12' })) }));
 
-    render(<UpdateToast />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Dismiss update notice' }));
+    render(<UpdateToast placement="footer" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Later' }));
 
     expect(screen.queryByText(/0\.1\.12/)).toBeNull();
   });
@@ -85,12 +85,12 @@ describe('UpdateToast — 쓰는 중에 새 버전을 말한다', () => {
     vi.useFakeTimers();
     setAppUpdater(stub({ check: vi.fn(async () => ({ version: '0.1.12' })) }));
 
-    render(<UpdateToast />);
+    render(<UpdateToast placement="footer" />);
     // **`act` 로 감싸야 한다.** 가짜 타이머는 React 스케줄러의 타이머까지 멈추므로,
     // `check()` 가 resolve 돼도 그 setState 가 화면에 반영되지 않는다 — `waitFor` 는
     // 그 상태로 그냥 20초를 기다리다 죽는다(실측). `act` 가 밀린 일을 비운다.
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    fireEvent.click(screen.getByRole('button', { name: 'Dismiss update notice' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Later' }));
 
     await act(async () => { await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL_MS + 1000); });
 
@@ -107,9 +107,9 @@ describe('UpdateToast — 쓰는 중에 새 버전을 말한다', () => {
     let version = '0.1.12';
     setAppUpdater(stub({ check: vi.fn(async () => ({ version })) }));
 
-    render(<UpdateToast />);
+    render(<UpdateToast placement="footer" />);
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    fireEvent.click(screen.getByRole('button', { name: 'Dismiss update notice' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Later' }));
 
     version = '0.1.13';
     await act(async () => { await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL_MS + 1000); });
@@ -123,7 +123,7 @@ describe('UpdateToast — 쓰는 중에 새 버전을 말한다', () => {
     const updater = stub({ check: vi.fn(async () => null) });
     setAppUpdater(updater);
 
-    const { container } = render(<UpdateToast />);
+    const { container } = render(<UpdateToast placement="footer" />);
 
     await waitFor(() => expect(updater.check).toHaveBeenCalled());
     expect(container.textContent).toBe('');
@@ -144,7 +144,7 @@ describe('UpdateToast — 쓰는 중에 새 버전을 말한다', () => {
     });
     setAppUpdater(updater);
 
-    const { container } = render(<UpdateToast />);
+    const { container } = render(<UpdateToast placement="footer" />);
 
     await waitFor(() => expect(updater.check).toHaveBeenCalled());
     expect(container.textContent).toBe('');
@@ -155,10 +155,41 @@ describe('UpdateToast — 쓰는 중에 새 버전을 말한다', () => {
     const updater = stub();
     setAppUpdater(updater);
 
-    const { container } = render(<UpdateToast />);
+    const { container } = render(<UpdateToast placement="footer" />);
 
     expect(container.textContent).toBe('');
     expect(updater.check).not.toHaveBeenCalled();
+  });
+});
+
+describe('자리 — 목록을 가리지 않는다 (UX ③)', () => {
+  /**
+   * **떠 있지 않다.** 알약이 사이드바 목록 위에 떠서 에이전트 이름을 덮었다(M5). 사이드바
+   * 맨 아래 칸은 흐름 안에 서야 한다 — `absolute`·`fixed` 가 돌아오면 다시 덮는다.
+   */
+  it('사이드바 칸은 흐름 안에 서고, 지금 버전 → 새 버전을 함께 적는다', async () => {
+    withSurface();
+    setAppUpdater(stub({ check: vi.fn(async () => ({ version: '9.9.9' })) }));
+    render(<UpdateToast placement="footer" />);
+
+    const box = await screen.findByTestId('update-footer');
+    const cls = box.className.split(/\s+/);
+    expect(cls).not.toContain('absolute');
+    expect(cls).not.toContain('fixed');
+    // 새 버전만 적으면 Updates 탭의 지금 버전과 다른 말처럼 보였다(H4).
+    expect(box.textContent).toContain(`${__APP_VERSION__} → 9.9.9`);
+  });
+
+  /** 닫기는 공용이다 — 사이드바를 접었다 펴서 자리가 바뀌어도 닫은 것이 풀리지 않는다. */
+  it('칸에서 닫은 버전은 떠 있는 알약에서도 닫혀 있다', async () => {
+    withSurface();
+    setAppUpdater(stub({ check: vi.fn(async () => ({ version: '9.9.9' })) }));
+    render(<UpdateToast placement="footer" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Later' }));
+    cleanup();
+
+    const { container } = render(<UpdateToast placement="floating" />);
+    expect(container.textContent).toBe('');
   });
 });
 
@@ -194,7 +225,10 @@ describe('Workspace 에 실제로 붙어 있다', () => {
 
     render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 
-    expect(await screen.findByRole('button', { name: 'Update' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Restart to install' })).toBeTruthy();
+    // 펼친 사이드바에서는 **맨 아래 칸**이다(떠 있는 알약이 아니다).
+    expect(screen.getByTestId('update-footer')).toBeTruthy();
+    expect(screen.queryByTestId('update-floating')).toBeNull();
   });
 
   /*
@@ -209,7 +243,7 @@ describe('Workspace 에 실제로 붙어 있다', () => {
   it('전송 버튼이 있는 우측 하단에 고정하지 않는다', async () => {
     withSurface();
     setAppUpdater(stub({ check: vi.fn(async () => ({ version: '9.9.9' })) }));
-    render(<UpdateToast />);
+    render(<UpdateToast placement="floating" />);
 
     const toast = (await screen.findByRole('status')) as HTMLElement;
     const cls = toast.className.split(/\s+/);
@@ -231,7 +265,7 @@ describe('Workspace 에 실제로 붙어 있다', () => {
   it('고정 폭을 쓰지 않는다 — 사이드바보다 넓어지면 다시 본문을 덮는다', async () => {
     withSurface();
     setAppUpdater(stub({ check: vi.fn(async () => ({ version: '9.9.9' })) }));
-    render(<UpdateToast />);
+    render(<UpdateToast placement="floating" />);
 
     const toast = (await screen.findByRole('status')) as HTMLElement;
     const cls = toast.className.split(/\s+/);
