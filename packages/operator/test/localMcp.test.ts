@@ -65,6 +65,7 @@ describe('localMcp 포트 — 원격 MCP 인증 (2026-09-30)', () => {
         status: async (name: string, url: string) => { calls.push(`status:${name}:${url}`); return { state: 'ok' as const }; },
         tokensFor: async () => ({ tokens: {}, expired: [] }),
         refreshDue: async () => ({}),
+        reportRejected: async () => ({ action: 'ignored' as const, reason: 'unknown' as const }),
         forget: async (name: string) => { calls.push(`forget:${name}`); },
         close: () => {},
       },

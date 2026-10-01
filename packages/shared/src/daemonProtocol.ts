@@ -676,6 +676,11 @@ export type OperatorMcpAuthState =
   | { state: 'pending' }
   | { state: 'ok'; expiresAt?: number }
   | { state: 'expired' }
+  /**
+   * MCP 서버가 토큰을 거절했고 즉시 refresh 한 것도 거절됐다(2026-10-01). `at` 은 그때(ms),
+   * `agentId` 는 그 거절을 본 에이전트. 사람이 다시 인증해야 한다.
+   */
+  | { state: 'rejected'; at: number; agentId?: string }
   | { state: 'error'; reason: string };
 export interface OperatorMcpAuthStartResult { authUrl: string }
 

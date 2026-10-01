@@ -51,10 +51,27 @@ export interface McpOAuthRecord {
   refreshToken?: string;
   /** ms. 모르면 없다 — 그때는 만료를 가정하지 않는다. */
   expiresAt?: number;
-  /** `expired` = refresh 가 거절됐다(invalid_grant 등). 사람이 다시 인증해야 한다. */
-  status: 'ok' | 'expired';
+  /**
+   * `expired` = refresh 가 거절됐다(invalid_grant 등). 사람이 다시 인증해야 한다.
+   * `rejected` = **MCP 서버가** 이 토큰을 거절했고(하네스의 `AUTH_HEADER_REJECTED`), 그 보고로
+   * 즉시 refresh 한 새 토큰도 다시 거절됐다(`reportRejected`). 역시 사람이 다시 인증해야 한다.
+   */
+  status: 'ok' | 'expired' | 'rejected';
+  /** 이 토큰을 받은 시각(ms). 하네스의 거절 보고가 이 토큰에 대한 것인지 가르는 기준이다. */
   updatedAt: number;
+  /** 이 토큰이 **거절 보고로 당겨 받은** 것인가. 이것이 다시 거절되면 `rejected` 다. */
+  refreshedOnReject?: boolean;
+  /** `rejected` 가 된 시각과 그 보고를 한 에이전트 id. 새 토큰이 들어오면 지운다. */
+  rejectedAt?: number;
+  rejectedBy?: string;
 }
+
+/** `reportRejected` 가 한 일. 운영 로그와 설정 재작성에 쓴다 — 토큰 값은 `refreshed` 에만 있다. */
+export type McpRejectOutcome =
+  | { action: 'ignored'; reason: 'unknown' | 'not_ok' | 'stale' | 'cooldown' | 'network' | 'no_refresh_token' }
+  | { action: 'refreshed'; url: string; accessToken: string }
+  | { action: 'expired' }
+  | { action: 'rejected' };
 
 export interface McpOAuth {
   /** 흐름을 연다. 돌려준 url 을 사람이 브라우저에서 연다(앱이 연다). */
@@ -67,6 +84,17 @@ export interface McpOAuth {
   tokensFor(defs: Record<string, { url?: string }>): Promise<{ tokens: Record<string, string>; expired: string[] }>;
   /** 만료가 가까운 것을 전부 refresh 한다. 새 토큰이 생긴 이름을 돌려준다(설정 재작성용). */
   refreshDue(): Promise<Record<string, { url: string; accessToken: string }>>;
+  /**
+   * 하네스가 이 이름의 토큰을 **MCP 서버에 거절당했다**(러너의 `mcp.authRejected`, 2026-10-01).
+   *
+   * 보고는 **신호일 뿐 사실이 아니다** — 세션 기록은 그 에이전트가 직접 쓸 수 있는 파일이고, 토큰
+   * 하나를 여러 러너가 같이 쓴다. 그래서 보고 하나로 할 수 있는 일을 좁힌다(security 검토, #989):
+   * - 저장소에 없는 이름은 버린다. 이미 `ok` 가 아닌 것도 그대로 둔다.
+   * - 그 턴이 **지금 토큰을 받기 전에** 떴으면(`turnStartedAtMs < updatedAt`) 옛 토큰의 늦은 보고다.
+   * - 즉시 refresh 는 이름마다 `rejectCooldownMs` 에 한 번이다 — 거짓 보고로 토큰을 계속 돌리지 못한다.
+   * - `rejected` 는 보고만으로 붙이지 않는다. **거절로 당겨 받은 토큰이 다시 거절됐을 때만** 붙인다.
+   */
+  reportRejected(name: string, report: { turnStartedAtMs: number; agentId: string }): Promise<McpRejectOutcome>;
   forget(name: string): Promise<void>;
   close(): void;
 }
@@ -80,6 +108,8 @@ export interface McpOAuthDeps {
   flowTimeoutMs?: number;
   /** 만료 몇 ms 전에 refresh 하나. 기본 5분. */
   refreshSkewMs?: number;
+  /** 거절 보고로 당기는 refresh 의 이름별 최소 간격. 기본 5분. */
+  rejectCooldownMs?: number;
   /** 흐름이 끝나 토큰이 생겼다 — 도는 러너의 설정 파일을 다시 쓴다. */
   onToken?: (name: string, record: { url: string; accessToken: string }) => void | Promise<void>;
 }
@@ -231,7 +261,7 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
     return { servers, port: actual };
   }
 
-  async function refreshOne(name: string, rec: McpOAuthRecord): Promise<McpOAuthRecord | null> {
+  async function refreshOne(name: string, rec: McpOAuthRecord, onReject = false): Promise<McpOAuthRecord | null> {
     const inflight = refreshing.get(name);
     if (inflight) return inflight;
     const p = (async () => {
@@ -256,8 +286,11 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
         await update((s) => { if (s[name]) s[name]!.status = 'expired'; });
         return null;
       }
+      // 거절 표시는 새 토큰과 함께 지운다 — 그것은 옛 토큰의 사실이다.
+      const { rejectedAt: _at, rejectedBy: _by, refreshedOnReject: _was, ...kept } = rec;
       const next: McpOAuthRecord = {
-        ...rec,
+        ...kept,
+        ...(onReject ? { refreshedOnReject: true } : {}),
         accessToken: r.body.access_token as string,
         // 회전하지 않는 서버는 새 refresh 토큰을 안 준다 — 있던 것을 그대로 쓴다.
         refreshToken: typeof r.body.refresh_token === 'string' ? r.body.refresh_token : rec.refreshToken,
@@ -273,6 +306,9 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
   }
 
   const due = (rec: McpOAuthRecord) => rec.expiresAt !== undefined && rec.expiresAt - now() <= skew;
+  const rejectCooldown = deps.rejectCooldownMs ?? 5 * 60_000;
+  /** 이름별로 거절 보고가 refresh 를 당긴 마지막 시각. 메모리에만 둔다 — 재기동은 드물고 그때 한 번 더 당겨도 된다. */
+  const lastRejectRefresh = new Map<string, number>();
 
   return {
     async start(name, definition) {
@@ -357,6 +393,9 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       const rec = (await load())[name];
       if (!rec || rec.url !== url) return { state: 'none' };
       if (rec.status === 'expired') return { state: 'expired' };
+      if (rec.status === 'rejected') {
+        return { state: 'rejected', at: rec.rejectedAt ?? rec.updatedAt, ...(rec.rejectedBy ? { agentId: rec.rejectedBy } : {}) };
+      }
       if (rec.expiresAt !== undefined && rec.expiresAt <= now() && !rec.refreshToken) return { state: 'expired' };
       return { state: 'ok', ...(rec.expiresAt !== undefined ? { expiresAt: rec.expiresAt } : {}) };
     },
@@ -368,7 +407,8 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       for (const [name, def] of Object.entries(defs)) {
         const rec = store[name];
         if (!rec || !def.url || rec.url !== def.url) continue;
-        if (rec.status === 'expired') { expired.push(name); continue; }
+        // 거절된 토큰은 구워 봐야 또 401 이다 — 만료와 같이 "인증 필요"로 낸다.
+        if (rec.status !== 'ok') { expired.push(name); continue; }
         const live = due(rec) ? await refreshOne(name, rec) : rec;
         if (live) tokens[name] = live.accessToken; else expired.push(name);
       }
@@ -384,6 +424,34 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
         if (next && next.accessToken !== rec.accessToken) out[name] = { url: next.url, accessToken: next.accessToken };
       }
       return out;
+    },
+
+    async reportRejected(name, report) {
+      const rec = (await load())[name];
+      if (!rec) return { action: 'ignored', reason: 'unknown' };
+      if (rec.status !== 'ok') return { action: 'ignored', reason: 'not_ok' };
+      if (!(report.turnStartedAtMs >= rec.updatedAt)) return { action: 'ignored', reason: 'stale' };
+      if (rec.refreshedOnReject) {
+        // 거절로 당겨 받은 토큰도 거절됐다 — refresh 로는 안 낫는다. 사람이 다시 인증해야 한다.
+        const at = now();
+        await update((s) => {
+          const cur = s[name];
+          if (cur && cur.accessToken === rec.accessToken) s[name] = { ...cur, status: 'rejected', rejectedAt: at, rejectedBy: report.agentId };
+        });
+        deps.log(`MCP OAuth: ${name} 새 토큰도 MCP 서버가 거절했다 — 데스크톱에서 다시 인증해야 한다 (agent=${report.agentId})`);
+        return { action: 'rejected' };
+      }
+      // refresh 토큰이 없으면 당길 것이 없다. 보고만으로 `expired` 를 붙이지 않는다(위의 원칙).
+      if (!rec.refreshToken) return { action: 'ignored', reason: 'no_refresh_token' };
+      const last = lastRejectRefresh.get(name);
+      if (last !== undefined && now() - last < rejectCooldown) return { action: 'ignored', reason: 'cooldown' };
+      lastRejectRefresh.set(name, now());
+      const next = await refreshOne(name, rec, true);
+      if (!next) return { action: 'expired' };
+      // 네트워크 실패는 들고 있던 것을 그대로 돌려준다 — 바뀐 것이 없다.
+      if (next.accessToken === rec.accessToken) return { action: 'ignored', reason: 'network' };
+      deps.log(`MCP OAuth: ${name} MCP 서버 거절 보고로 토큰을 새로 받았다 (agent=${report.agentId})`);
+      return { action: 'refreshed', url: next.url, accessToken: next.accessToken };
     },
 
     async forget(name) {
