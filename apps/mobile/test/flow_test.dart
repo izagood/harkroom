@@ -8,6 +8,7 @@ import 'package:harkroom/api/api_client.dart';
 import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/main.dart';
 import 'package:harkroom/screens/agent_model.dart';
+import 'package:harkroom/screens/message_tile.dart';
 import 'package:harkroom/screens/thread_screen.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_state.dart';
@@ -489,6 +490,8 @@ void main() {
     final screen = find.byType(ThreadScreen);
     expect(find.descendant(of: screen, matching: find.textContaining('# harkroom')), findsOneWidget);
     expect(tester.widget<ListView>(find.byKey(const Key('thread-feed'))).reverse, isTrue);
+    // S4d: 첫 답글 위에는 날짜 줄이 서지 않는다(구분 줄과 겹치지 않게).
+    expect(find.descendant(of: screen, matching: find.byType(DayDivider)), findsNothing);
     // **스레드 안에서는 또 들어갈 문을 그리지 않는다.**
     expect(
       find.descendant(

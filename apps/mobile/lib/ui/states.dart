@@ -270,6 +270,13 @@ class SendButton extends StatelessWidget {
   final String composerKey;
   final bool busy;
 
+  /// 작성칸 글자로 [empty] 를 정한다. 공백뿐이거나 `@` 한 글자뿐이면 보낼 말이 아니다(designer
+  /// #1040 — @ 버튼을 누른 직후 주황으로 켜졌다).
+  static bool nothingToSend(String text) {
+    final s = text.trim();
+    return s.isEmpty || s == '@';
+  }
+
   /// 보낼 글이 없다 — 버튼을 흐리게(soft) 그린다. 눌러도 아무 일이 없는데 주황이면 눌러 보게 된다.
   ///
   /// **잠그지는 않는다**(onPressed 는 그대로, 빈 글은 `_send` 가 버린다). 잠그면 글을 친 바로

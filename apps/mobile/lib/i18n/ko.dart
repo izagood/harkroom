@@ -355,6 +355,8 @@ class StringsKo implements Strings {
 
   @override
   String get threadLoadFailed => '답글을 불러오지 못했다';
+  @override
+  String get threadRootMissing => '원글을 불러오지 못했다';
 
   @override
   String get inboxLoadFailed => '인박스를 불러오지 못했다';

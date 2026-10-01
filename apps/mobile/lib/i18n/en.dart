@@ -356,6 +356,8 @@ class StringsEn implements Strings {
 
   @override
   String get threadLoadFailed => 'Could not load replies';
+  @override
+  String get threadRootMissing => 'Could not load the original message';
 
   @override
   String get inboxLoadFailed => 'Could not load your inbox';

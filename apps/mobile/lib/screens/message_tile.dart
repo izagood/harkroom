@@ -240,6 +240,26 @@ class _MentionDenied extends StatelessWidget {
   }
 }
 
+/// 날짜 줄의 글자: 오늘 · 어제 · 9월 28일. 스레드의 「답글 n개 · 오늘」도 같은 말을 쓴다.
+String dayLabel(Strings t, DateTime at) {
+  final local = at.toLocal();
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final day = DateTime(local.year, local.month, local.day);
+  return day == today
+      ? t.dayToday
+      : day == today.subtract(const Duration(days: 1))
+          ? t.dayYesterday
+          : t.dayDate.replaceFirst('{m}', '${local.month}').replaceFirst('{d}', '${local.day}');
+}
+
+/// 같은 현지 날짜인가.
+bool sameLocalDay(DateTime a, DateTime b) {
+  final x = a.toLocal();
+  final y = b.toLocal();
+  return x.year == y.year && x.month == y.month && x.day == y.day;
+}
+
 /// 날짜 줄. 날짜가 바뀌는 자리에 **가운데 한 줄**로 선다.
 class DayDivider extends StatelessWidget {
   const DayDivider({super.key, required this.at});
@@ -249,18 +269,7 @@ class DayDivider extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final k = context.tokens;
-    final t = context.t;
-    final local = at.toLocal();
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final day = DateTime(local.year, local.month, local.day);
-    final label = day == today
-        ? t.dayToday
-        : day == today.subtract(const Duration(days: 1))
-            ? t.dayYesterday
-            : t.dayDate
-                .replaceFirst('{m}', '${local.month}')
-                .replaceFirst('{d}', '${local.day}');
+    final label = dayLabel(context.t, at);
     Widget line() => Expanded(child: Container(height: 1, color: k.line));
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter, vertical: 8),

@@ -129,6 +129,9 @@ abstract class Strings {
   /// 스레드 답글을 못 읽음.
   String get threadLoadFailed;
 
+  /// 스레드의 원글을 끝내 못 찾았다(지워졌거나 채널·스레드 응답 둘 다에 없다). 회색 한 줄로 그 자리에 선다.
+  String get threadRootMissing;
+
   /// 인박스를 못 읽음.
   String get inboxLoadFailed;
 
@@ -509,6 +512,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'loadFailedHint': s.loadFailedHint,
       'messagesLoadFailed': s.messagesLoadFailed,
       'threadLoadFailed': s.threadLoadFailed,
+      'threadRootMissing': s.threadRootMissing,
       'inboxLoadFailed': s.inboxLoadFailed,
       'messagesEmptyHint': s.messagesEmptyHint,
       'channelStartLine': s.channelStartLine,
