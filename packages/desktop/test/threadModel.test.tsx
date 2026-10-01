@@ -14,7 +14,7 @@ import { formatModelValue, isModelShortcut, picksToSend } from '../src/lib/threa
 const A1 = '00000000-0000-4000-8000-0000000000a1';
 const row = (over: Partial<ThreadAgentModelView> = {}): ThreadAgentModelView => ({
   threadRootId: 'r1', agentId: A1, harness: 'claude-code', model: 'opus', effort: 'xhigh',
-  setBy: 'u1', setAt: '2026-10-01T00:00:00.000Z', stale: false, currentHarness: 'claude-code', ...over,
+  setBy: 'u1', setAt: '2026-10-01T00:00:00.000Z', stale: false, setByKind: 'human', currentHarness: 'claude-code', ...over,
 });
 
 const typeInto = (value: string) => {

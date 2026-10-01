@@ -622,7 +622,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // 원자료를 그대로 싣고 파생만 더한다 — 필드를 하나씩 베끼면 새 필드가 조용히 빠진다.
     return { ...runtime, state: projectionState(runtime) } satisfies ProjectionStatus;
   });
-  await registerMcp(app, deps.pool, lifecycle, agentPresence, storage, leakGuard);
+  await registerMcp(app, deps.pool, lifecycle, agentPresence, storage, leakGuard, operatorHub);
 
   return app;
 }

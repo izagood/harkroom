@@ -178,7 +178,7 @@ describe('thread agent model', () => {
   it('고르개 재료: 사람이면 누구나 하네스·기본값을 읽고, 오퍼레이터가 없으면 models 는 없다(모른다)', async () => {
     const res = await app.inject({ method: 'GET', url: `/agents/${fizz.accountId}/model-options`, headers: auth(member.token) });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ harness: 'claude-code', model: 'sonnet', effort: 'medium' });
+    expect(res.json()).toEqual({ harness: 'claude-code', model: 'sonnet', effort: 'medium', pickable: [] });
     const byAgent = await app.inject({ method: 'GET', url: `/agents/${fizz.accountId}/model-options`, headers: auth(fizz.pat) });
     expect(byAgent.statusCode).toBe(403);
   });

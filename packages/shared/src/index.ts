@@ -1547,6 +1547,8 @@ export interface ThreadAgentModelView {
   model: string | null;
   effort: string | null;
   setBy: string | null;
+  /** 누가 정했나(087) — 에이전트가 정한 지정은 칩 꼬리 `@lead 지정` 으로 갈라 보인다. */
+  setByKind: 'human' | 'agent';
   setAt: string;
   stale: boolean;
   /** 에이전트의 **지금** 하네스. `stale` 일 때 "하네스가 X 로 바뀌어…" 를 말하는 재료다. */

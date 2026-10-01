@@ -15,6 +15,7 @@ import { emitEvent, emitPosted } from '../events.js';
 import { assignmentOf } from '../services/agents.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { postMessage } from '../services/messages.js';
+import { readPickable } from '../services/agentModelPicks.js';
 import {
   axisValid, clearThreadAgentModel, cleanAxis, effectiveAgentModel, isChannelRoot, listThreadAgentModels, setThreadAgentModel, threadRootOf,
 } from '../services/threadAgentModels.js';
@@ -68,15 +69,18 @@ export async function checkOffered(
 export async function announceChange(
   pool: Pool, channelId: string, threadRootId: string, actorId: string, agentId: string,
   row: ThreadAgentModelView | null,
+  /** 누가 정했나(087). 에이전트가 정한 것은 문구 끝에 밝히고 meta 에 실어 칩이 갈라 그린다. */
+  byKind: 'human' | 'agent' = 'human',
 ): Promise<void> {
   const handle = (await pool.query<{ handle: string }>(`select handle from account where id = $1`, [agentId])).rows[0]?.handle ?? '';
+  const tag = byKind === 'agent' ? ' (에이전트 지정)' : '';
   const value = row ? [row.model ?? '설정 모델', row.effort].filter(Boolean).join(' · ') : null;
   const body = value
-    ? `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 이 스레드에서 ${handle} 의 모델을 ${value} 로 정했습니다. 다음 턴부터 적용됩니다.`
-    : `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 이 스레드에서 ${handle} 의 모델 지정을 풀었습니다. 다음 턴부터 기본값으로 돕니다.`;
+    ? `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 이 스레드에서 ${handle} 의 모델을 ${value} 로 정했습니다${tag}. 다음 턴부터 적용됩니다.`
+    : `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 이 스레드에서 ${handle} 의 모델 지정을 풀었습니다${tag}. 다음 턴부터 기본값으로 돕니다.`;
   const posted = await postMessage(pool, {
     channelId, authorId: actorId, body, threadRootId, kind: 'system',
-    meta: { accountId: actorId, threadAgentModel: { agentId, model: row?.model ?? null, effort: row?.effort ?? null } },
+    meta: { accountId: actorId, threadAgentModel: { agentId, model: row?.model ?? null, effort: row?.effort ?? null, byKind } },
   });
   if (!posted.failure && !posted.replayed) emitPosted(posted, await audienceFor(pool, channelId));
 }
@@ -85,6 +89,24 @@ export async function emitChanged(
   pool: Pool, channelId: string, threadRootId: string, agentId: string, row: ThreadAgentModelView | null,
 ): Promise<void> {
   emitEvent({ type: 'thread.agent_model.changed', channelId, threadRootId, agentId, row, audience: await audienceFor(pool, channelId) });
+}
+
+/**
+ * 고르개·에이전트 도구의 재료 하나. 하네스·설정값·하네스가 밝힌 목록(`models`, 모르면 없음)·
+ * 다른 에이전트가 고를 수 있는 목록(`pickable`, 087). 지시문·MCP·소유자는 싣지 않는다.
+ */
+export async function agentModelOptions(pool: Pool, hub: OperatorHub | undefined, agentId: string) {
+  const found = await pool.query<{ harness: string | null; model: string | null; effort: string | null; pickable: unknown }>(
+    `select c.harness, c.model, c.effort, c.agent_pickable_models as pickable
+       from account a left join agent_config c on c.account_id = a.id
+      where a.id = $1 and a.kind = 'agent' and a.deleted_at is null`, [agentId]);
+  if (!found.rowCount) return null;
+  const row = found.rows[0]!;
+  const harness = row.harness ?? 'claude-code';
+  const assignment = await assignmentOf(pool, agentId);
+  const caps = assignment && hub ? hub.capabilities(assignment.operatorId) : null;
+  const models = caps?.harnesses[harness]?.models;
+  return { harness, model: row.model, effort: row.effort, pickable: readPickable(row.pickable), ...(models ? { models } : {}) };
 }
 
 function refuse(reply: FastifyReply, status: number, code: string, message: string) {
@@ -169,16 +191,53 @@ export async function registerThreadAgentModelRoutes(
   app.get('/agents/:agentId/model-options', { preHandler: app.requireAccount }, async (req, reply) => {
     const { agentId } = z.object({ agentId: z.string().uuid() }).parse(req.params);
     if (req.account!.kind !== 'human') return refuse(reply, 403, 'human_only', '모델 지정은 사람만 바꾼다');
-    const found = await pool.query<{ harness: string | null; model: string | null; effort: string | null }>(
-      `select c.harness, c.model, c.effort from account a left join agent_config c on c.account_id = a.id
+    const opts = await agentModelOptions(pool, deps.operatorHub, agentId);
+    if (!opts) return refuse(reply, 404, 'not_found', 'no such agent');
+    return opts;
+  });
+
+  /**
+   * "다른 에이전트가 나를 부를 때 고를 수 있는 모델"(087, 결정 3·9) — **그 에이전트의 소유자만**
+   * 정한다. 빈 목록은 "고르지 못하게"다(opt-in 기본값). 값은 argv 로 가므로 사람 지정과 같은 모양
+   * 검사(`AXIS_PATTERN`)를 지난다.
+   */
+  app.put('/accounts/agents/:agentId/pickable-models', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { agentId } = z.object({ agentId: z.string().uuid() }).parse(req.params);
+    // 사람이 켠다(결정 9). 에이전트가 소유자인 경우(agent.create grant, 소유자를 에이전트로 정한
+    // 경우)에도 에이전트 PAT 은 이 목록을 못 연다(security #1010 권장 a).
+    if (req.account!.kind !== 'human') return refuse(reply, 403, 'human_only', '허용 목록은 사람이 켠다');
+    // (모델·effort) 조합(결정 11). `efforts` 가 비면 그 모델은 effort 를 고르지 못한다.
+    const parsed = z.object({
+      models: z.array(z.object({
+        model: z.string().min(1).max(MODEL_ID_MAX),
+        efforts: z.array(z.string().min(1).max(EFFORT_MAX)).max(8).default([]),
+      })).max(20),
+    }).safeParse(req.body ?? {});
+    if (!parsed.success) return refuse(reply, 400, 'bad_request', parsed.error.message);
+    const byModel = new Map<string, string[]>();
+    for (const e of parsed.data.models) {
+      const model = e.model.trim();
+      if (!model) continue;
+      const efforts = [...new Set([...(byModel.get(model) ?? []), ...e.efforts.map((x) => x.trim()).filter(Boolean)])];
+      byModel.set(model, efforts);
+    }
+    const models = [...byModel].map(([model, efforts]) => ({ model, efforts }));
+    if (models.some((e) => !axisValid(e.model) || e.efforts.some((x) => !axisValid(x)))) {
+      return refuse(reply, 400, 'bad_model_value', '모델·effort 는 영숫자로 시작하고 영숫자·._:/[]- 만 쓴다');
+    }
+    const owner = await pool.query<{ owner: string | null }>(
+      `select c.owner_account_id as owner from account a join agent_config c on c.account_id = a.id
         where a.id = $1 and a.kind = 'agent' and a.deleted_at is null`, [agentId]);
-    if (!found.rowCount) return refuse(reply, 404, 'not_found', 'no such agent');
-    const row = found.rows[0]!;
-    const harness = row.harness ?? 'claude-code';
-    const assignment = await assignmentOf(pool, agentId);
-    const caps = assignment && deps.operatorHub ? deps.operatorHub.capabilities(assignment.operatorId) : null;
-    const models = caps?.harnesses[harness]?.models;
-    return { harness, model: row.model, effort: row.effort, ...(models ? { models } : {}) };
+    if (!owner.rowCount) return refuse(reply, 404, 'not_found', 'no such agent');
+    if (owner.rows[0]!.owner !== req.account!.id) {
+      return refuse(reply, 403, 'owner_only', '이 에이전트의 소유자만 정한다');
+    }
+    await pool.query(`update agent_config set agent_pickable_models = $2::jsonb where account_id = $1`, [agentId, JSON.stringify(models)]);
+    await recordAudit(pool, {
+      action: 'agent.pickable_models.set', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: agentId, detail: { models },
+    }, req);
+    return { models };
   });
 
   /**
