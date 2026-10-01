@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import type { MessageRow } from '@harkroom/shared';
-import { postMessage } from './messages.js';
+import { BAD_THREAD_MESSAGE, postMessage } from './messages.js';
 import { emitEvent } from '../events.js';
 
 /**
@@ -34,7 +34,9 @@ export const WAKE_MAX_SEC = 6 * 60 * 60;
 export const MAX_CONSECUTIVE_WAKES = 20;
 
 export type WakeRefusal =
-  | { code: 'wake_limit'; message: string };
+  | { code: 'wake_limit'; message: string }
+  /** 스레드 머리가 이 채널의 최상위 글이 아니다 — 게시가 거절한 그 사유를 그대로 돌려준다. */
+  | { code: 'bad_thread'; message: string };
 
 /**
  * 이 스레드에서 **마지막으로 남이 말한 뒤** 내가 건 깨움의 수.
@@ -107,6 +109,11 @@ export async function scheduleWake(pool: Pool, input: ScheduleWakeInput): Promis
     // 서버의 시간대에 고정되고, 다른 시간대에서 읽는 사람에게 거짓이 된다.
     meta: { kind: 'wake', wake: { wakeAt: wakeAt.toISOString(), reason: input.reason } },
   });
+  if (posted.failure === 'bad_thread') {
+    // 원인을 그대로 전한다 — 예전에는 상한(wake_limit)으로 바꿔 말해서 에이전트가 "너무 많이
+    // 기다렸다"로 읽고 사람에게 넘겼다. 실제로는 고칠 수 있는 인자 문제다.
+    return { refusal: { code: 'bad_thread', message: BAD_THREAD_MESSAGE } };
+  }
   if (posted.failure) {
     // 깨움은 첨부를 받지 않으므로 여기 오는 것은 게시 자체가 거절된 경우다.
     return { refusal: { code: 'wake_limit', message: 'wake 메시지를 게시할 수 없다' } };

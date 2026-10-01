@@ -286,6 +286,26 @@ describe('turn.wake — 에이전트가 자기를 나중에 깨운다', () => {
     });
   });
 
+  // 게시가 스레드 머리를 거절하면(bad_thread) 그 사유를 그대로 돌려준다 — 상한(wake_limit)으로
+  // 바꿔 말하면 에이전트가 "너무 많이 기다렸다"로 읽고 사람에게 넘긴다.
+  it('다른 채널의 글을 스레드 머리로 주면 bad_thread 로 거절한다 — wake_limit 이 아니다', async () => {
+    const otherChannel = (await app.inject({
+      method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: `wake-other-${Date.now()}`, visibility: 'public' },
+    })).json().id as string;
+    const foreignRoot = (await app.inject({
+      method: 'POST', url: `/channels/${otherChannel}/messages`, headers: { authorization: `Bearer ${adminToken}` },
+      payload: { body: '다른 채널의 글' },
+    })).json().id as string;
+    const client = await mcpClient(botPat);
+    const res = text(await client.callTool({
+      name: 'turn.wake',
+      arguments: { channelId, threadRootId: foreignRoot, notBeforeSec: 60, reason: '엉뚱한 스레드' },
+    }));
+    await client.close();
+    expect(res.error).toMatchObject({ code: 'bad_thread' });
+  });
+
   it('사람의 새 발화 없이 연속으로 걸 수 있는 깨움에는 상한이 있다', async () => {
     const threadRootId = await newThread();
     const client = await mcpClient(botPat);

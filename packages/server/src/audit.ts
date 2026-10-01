@@ -184,7 +184,9 @@ export async function listAudit(
      from audit_log
      where ($1::bigint is null or id < $1::bigint)
        and ($2::text is null or action = $2::text)
-     order by id desc
+     -- 표의 열로 정렬한다 — 그냥 id 라고 쓰면 위의 별칭(id::text)을 가리켜 문자열 순이 된다
+     -- ("99" 가 "100" 보다 위). 커서(before)는 처음부터 bigint 로 비교했다.
+     order by audit_log.id desc
      limit $3`,
     [opts.before ?? null, opts.action ?? null, limit],
   );

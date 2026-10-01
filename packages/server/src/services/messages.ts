@@ -58,6 +58,19 @@ export type PostMessageResult =
 /** `bad_thread` 거절의 문구 — REST 와 MCP 가 같은 말을 한다. */
 export const BAD_THREAD_MESSAGE = 'threadRootId must be a top-level message in this channel';
 
+/**
+ * 이 글이 **이 채널의 최상위 글**이라 스레드 머리가 될 수 있나(`bad_thread` 판정). 게시와 예약
+ * 생성이 같은 이 함수를 본다 — 예약만 검사하지 않으면 나쁜 스레드 id 가 보낼 때가 돼서야
+ * `failed_reason=bad_thread` 로 떨어진다. 지워진 머리도 참이다(지워진 스레드에 답하는 경로가 있다).
+ */
+export async function isThreadRootOf(
+  db: Pick<PoolClient, 'query'>, channelId: string, threadRootId: string,
+): Promise<boolean> {
+  const res = await db.query(
+    `select 1 from message where id = $1 and channel_id = $2 and thread_root_id is null`, [threadRootId, channelId]);
+  return Boolean(res.rowCount);
+}
+
 export interface PostMessageInput {
   channelId: string;
   authorId: string;
@@ -1165,14 +1178,9 @@ export async function postMessage(
       채널에서 통과했다. 답글의 답글(머리가 답글)도 같은 이유로 막는다: 스레드는 한 단계다.
       지워진 머리는 받는다 — 지워진 스레드에 답이 달리는 경로가 따로 있다(`deletedRoot`).
     */
-    if (input.threadRootId) {
-      const root = await client.query<{ channel_id: string; thread_root_id: string | null }>(
-        `select channel_id, thread_root_id from message where id = $1`, [input.threadRootId]);
-      const r = root.rows[0];
-      if (!r || r.channel_id !== input.channelId || r.thread_root_id !== null) {
-        await client.query('rollback');
-        return { failure: 'bad_thread' };
-      }
+    if (input.threadRootId && !(await isThreadRootOf(client, input.channelId, input.threadRootId))) {
+      await client.query('rollback');
+      return { failure: 'bad_thread' };
     }
 
     // threadRootId 가 없으면 alsoInChannel 은 의미 없다 — 조용히 false 로 정규화한다.

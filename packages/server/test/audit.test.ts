@@ -262,6 +262,17 @@ describe('감사 추적 — append-only', () => {
 });
 
 describe('감사 추적 — 조회', () => {
+  // id 는 bigint 인데 응답에는 문자열로 싣는다. 정렬이 그 별칭을 따르면 "99" 가 "100" 보다 위로 온다.
+  it('id 가 자릿수를 넘어가도 숫자 순(최신순)이다 — 문자열 순이 아니다', async () => {
+    await pool.query(
+      `insert into audit_log (action, detail) select 'test.bulk', '{}'::jsonb from generate_series(1, 120)`);
+    const res = await app.inject({ method: 'GET', url: '/audit?limit=500', headers: auth(adminToken) });
+    const ids = (res.json().entries as { id: string }[]).map((e) => Number(e.id));
+    expect(ids.length).toBeGreaterThan(100);
+    expect(Math.max(...ids)).toBeGreaterThanOrEqual(100);
+    expect(ids).toEqual([...ids].sort((a, b) => b - a));
+  });
+
   it('serves the newest entries to an admin', async () => {
     const res = await app.inject({ method: 'GET', url: '/audit?limit=5', headers: auth(adminToken) });
 
