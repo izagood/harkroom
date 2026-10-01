@@ -412,6 +412,18 @@ abstract class Strings {
   /// 페이지가 스스로 다른 주소로 가려 했다.
   String get artifactOpenedOutside;
 
+  /// 미리보기 밖으로 넘기기 전 확인(security F2).
+  String get artifactLeaveTitle;
+
+  /// 미리보기 밖으로 넘기기 전 확인(security F2).
+  String get artifactLeaveBody;
+
+  /// 미리보기 밖으로 넘기기 전 확인(security F2).
+  String get artifactLeaveOpen;
+
+  /// 미리보기 밖으로 넘기기 전 확인(security F2).
+  String get artifactLeaveCancel;
+
   /// 이미 고른 물음. 고른 것이 무엇인지는 옆에 그린다.
   String get askAnswered;
 
@@ -738,6 +750,10 @@ Map<String, String> stringsToMap(Strings s) => {
       'artifactGone': s.artifactGone,
       'artifactFailed': s.artifactFailed,
       'artifactOpenedOutside': s.artifactOpenedOutside,
+      'artifactLeaveTitle': s.artifactLeaveTitle,
+      'artifactLeaveBody': s.artifactLeaveBody,
+      'artifactLeaveOpen': s.artifactLeaveOpen,
+      'artifactLeaveCancel': s.artifactLeaveCancel,
       'askAnswered': s.askAnswered,
       'askClosed': s.askClosed,
       'askDecline': s.askDecline,

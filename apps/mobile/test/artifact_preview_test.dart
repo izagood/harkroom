@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -74,8 +75,26 @@ void main() {
       expect(decide('https://example.com/?q=x', loaded: true), PreviewNavigation.openOutside);
       expect(decide('https://example.com/'), PreviewNavigation.openOutside);
     });
-    test('첫 로드가 끝난 뒤 같은 주소가 다시 와도 그것은 페이지의 이동이다', () {
-      expect(decide(initial, loaded: true), PreviewNavigation.openOutside);
+    // security F1: 서명 URL·미리보기 경로는 어떤 경우에도 밖(사파리)으로 넘기지 않는다 — 막기만 한다.
+    test('첫 로드가 끝난 뒤 같은 서명 URL 이 다시 오면 막기만 한다(밖으로 안 간다)', () {
+      expect(decide(initial, loaded: true), PreviewNavigation.block);
+    });
+    test('다른 미리보기 경로는 첫 로드 전이라도 막기만 한다', () {
+      expect(decide('$_base/preview/other'), PreviewNavigation.block);
+      expect(decide('https://SERVER.example.com:443//preview/other', loaded: true), PreviewNavigation.block);
+    });
+    // security F1: WKWebView 가 돌려주는 주소는 글자가 다를 수 있다 — 정규화해 견준다.
+    test('정규화만 다른 첫 로드는 허용한다', () {
+      for (final u in [
+        'https://SERVER.example.com/preview/tok',
+        'https://server.example.com:443/preview/tok',
+        'https://server.example.com//preview/tok',
+      ]) {
+        expect(decide(u), PreviewNavigation.allow, reason: u);
+      }
+      // scheme 만 바꾼 같은 서버의 미리보기 경로도 밖으로 넘기지 않는다(페이지는 자기 토큰을 안다).
+      expect(decide('http://server.example.com/preview/tok'), PreviewNavigation.block);
+      expect(decide('https://server.example.com:8443/preview/tok', loaded: true), PreviewNavigation.block);
     });
     test('하위 프레임은 전부 막는다', () {
       expect(decide(initial, main: false), PreviewNavigation.block);
@@ -85,6 +104,51 @@ void main() {
       for (final u in ['javascript:alert(1)', 'file:///etc/passwd', 'data:text/html,x', 'tel:123']) {
         expect(decide(u, loaded: true), PreviewNavigation.block, reason: u);
       }
+    });
+  });
+
+  // security F2: 밖으로 넘기기 전에 묻는다. 묻는 동안 들어온 이동은 버린다.
+  group('밖으로 넘기기', () {
+    test('확인 전에는 열지 않고, [브라우저로 열기]를 눌러야 연다', () async {
+      final launched = <Uri>[];
+      final answer = Completer<bool>();
+      final gate = OutsideNavigationGate(confirm: (_) => answer.future, launch: (u) async => launched.add(u));
+      final pending = gate.handle(Uri.parse('https://example.com/a'));
+      await Future<void>.delayed(Duration.zero);
+      expect(launched, isEmpty);
+      answer.complete(true);
+      await pending;
+      expect(launched, [Uri.parse('https://example.com/a')]);
+    });
+    test('[취소]면 열지 않는다', () async {
+      final launched = <Uri>[];
+      final gate = OutsideNavigationGate(confirm: (_) async => false, launch: (u) async => launched.add(u));
+      await gate.handle(Uri.parse('https://example.com/a'));
+      expect(launched, isEmpty);
+    });
+    test('물음이 떠 있는 동안의 이동은 조용히 버린다 — 사파리가 연달아 뜨지 않는다', () async {
+      final asked = <Uri>[];
+      final answer = Completer<bool>();
+      final gate = OutsideNavigationGate(
+        confirm: (u) { asked.add(u); return answer.future; },
+        launch: (_) async {},
+      );
+      final first = gate.handle(Uri.parse('https://example.com/1'));
+      expect(await gate.handle(Uri.parse('https://example.com/2')), isFalse);
+      answer.complete(false);
+      await first;
+      expect(asked, [Uri.parse('https://example.com/1')]);
+    });
+    testWidgets('묻는 창은 호스트를 보인다', (tester) async {
+      late BuildContext ctx;
+      await tester.pumpWidget(_wrap(_state(_server()), Builder(builder: (c) { ctx = c; return const SizedBox(); })));
+      final result = confirmLeavePreview(ctx, Uri.parse('https://evil.example.net/login?next=x'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('artifact-leave-dialog')), findsOneWidget);
+      expect(find.text('이 페이지가 evil.example.net 로 이동하려 한다.'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('artifact-leave-cancel')));
+      await tester.pumpAndSettle();
+      expect(await result, isFalse);
     });
   });
 

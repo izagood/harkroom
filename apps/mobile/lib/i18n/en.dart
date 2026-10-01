@@ -300,7 +300,19 @@ class StringsEn implements Strings {
   String get artifactFailed => 'The preview could not be opened.';
 
   @override
-  String get artifactOpenedOutside => 'The page tried to go elsewhere — opened in your browser.';
+  String get artifactOpenedOutside => 'Opened in your browser.';
+
+  @override
+  String get artifactLeaveTitle => 'Leave the preview?';
+
+  @override
+  String get artifactLeaveBody => 'This page wants to go to {host}.';
+
+  @override
+  String get artifactLeaveOpen => 'Open in browser';
+
+  @override
+  String get artifactLeaveCancel => 'Cancel';
 
   @override
   String get timeUnderMinute => 'under a minute';

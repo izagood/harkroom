@@ -299,7 +299,19 @@ class StringsKo implements Strings {
   String get artifactFailed => '미리보기를 열지 못했다.';
 
   @override
-  String get artifactOpenedOutside => '페이지가 다른 곳으로 가려 해서 브라우저로 넘겼다.';
+  String get artifactOpenedOutside => '브라우저로 열었다.';
+
+  @override
+  String get artifactLeaveTitle => '미리보기 밖으로 이동';
+
+  @override
+  String get artifactLeaveBody => '이 페이지가 {host} 로 이동하려 한다.';
+
+  @override
+  String get artifactLeaveOpen => '브라우저로 열기';
+
+  @override
+  String get artifactLeaveCancel => '취소';
 
   @override
   String get timeUnderMinute => '1분 미만';
