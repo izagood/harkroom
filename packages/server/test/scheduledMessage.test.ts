@@ -392,3 +392,37 @@ describe('예약 발송 (#222)', () => {
     expect(left.rowCount).toBe(0);
   });
 });
+
+// 스레드 머리는 만들 때 검사한다 — 아니면 보낼 시각에 가서야 failed_reason=bad_thread 로 떨어진다.
+describe('예약 글의 스레드 머리', () => {
+  it('다른 채널의 글·답글을 스레드 머리로 주면 만들 때 400 bad_thread 이고 행이 생기지 않는다', async () => {
+    const other = await makeChannel(app, adminToken, 'scheduled-other', userId);
+    const foreign = (await app.inject({
+      method: 'POST', url: `/channels/${other}/messages`, headers: { authorization: `Bearer ${userToken}` },
+      payload: { body: '다른 채널의 머리' },
+    })).json().id as string;
+    const root = (await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`, headers: { authorization: `Bearer ${userToken}` },
+      payload: { body: '이 채널의 머리' },
+    })).json().id as string;
+    const reply = (await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`, headers: { authorization: `Bearer ${userToken}` },
+      payload: { body: '답글', threadRootId: root },
+    })).json().id as string;
+    const before = await countScheduled(pool);
+    for (const threadRootId of [foreign, reply]) {
+      const res = await app.inject({
+        method: 'POST', url: `/channels/${channelId}/scheduled`, headers: { authorization: `Bearer ${userToken}` },
+        payload: { body: '나중에', sendAt: inAnHour(), threadRootId },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('bad_thread');
+    }
+    expect(await countScheduled(pool)).toBe(before);
+    const ok = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/scheduled`, headers: { authorization: `Bearer ${userToken}` },
+      payload: { body: '나중에', sendAt: inAnHour(), threadRootId: root },
+    });
+    expect(ok.statusCode).toBe(201);
+  });
+});

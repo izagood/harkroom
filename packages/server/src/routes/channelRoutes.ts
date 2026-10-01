@@ -25,7 +25,7 @@ import {
 } from '@harkroom/shared';
 import { recordAudit } from '../audit.js';
 import { emitEvent, emitPosted } from '../events.js';
-import { postMessage } from '../services/messages.js';
+import { BAD_THREAD_MESSAGE, isThreadRootOf, postMessage } from '../services/messages.js';
 
 /**
  * 섹션 이름의 길이 규칙(#157) — 만드는 경로(`PATCH /channels/:id/pref`)와 이름을 바꾸는
@@ -902,6 +902,12 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     }
     if (gate === 'archived') {
       return reply.code(403).send({ error: { code: 'channel_archived', message: 'archived channels are read-only' } });
+    }
+
+    // 스레드 머리는 보낼 때 `postMessage` 가 다시 본다. 여기서 먼저 보는 이유는 실패를 **만드는 사람
+    // 앞에서** 내려는 것이다 — 아니면 보낼 시각에 가서야 조용히 failed_reason 으로 떨어진다.
+    if (threadRootId && !(await isThreadRootOf(pool, id, threadRootId))) {
+      return reply.code(400).send({ error: { code: 'bad_thread', message: BAD_THREAD_MESSAGE } });
     }
 
     const sendTime = new Date(sendAt);
