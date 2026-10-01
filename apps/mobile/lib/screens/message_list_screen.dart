@@ -7,6 +7,7 @@ import '../i18n/i18n.dart';
 import '../mention/sticky.dart';
 import '../state/app_scope.dart';
 import '../state/app_state.dart';
+import '../ui/parts.dart';
 import '../ui/states.dart';
 import '../ui/tokens.dart';
 import 'agent_model.dart';
@@ -125,8 +126,10 @@ class _MessageListScreenState extends State<MessageListScreen> {
       }
     }
 
+    final label = channelLabel(channel);
     return Scaffold(
-      appBar: AppBar(title: Text(channel?.name ?? '')),
+      // 개정판 3.3: 왼쪽 정렬 "# task" + 부제(주제). 주제가 없으면 한 줄.
+      appBar: AppBar(title: ScreenTitle(title: label, subtitle: channel?.topic)),
       body: SafeArea(
         child: Column(
           children: [
@@ -203,12 +206,9 @@ class _MessageListScreenState extends State<MessageListScreen> {
                       minLines: 1,
                       maxLines: 5,
                       textInputAction: TextInputAction.newline,
-                      decoration: InputDecoration(
-                        // 에이전트를 부르는 방법이 **여기에만** 적혀 있다 — 별도 버튼이
-                        // 없으므로 화면이 말해 주지 않으면 알 길이 없다.
-                        hintText: t.composerHint,
-                        border: const OutlineInputBorder(),
-                        isDense: true,
+                      decoration: composerDecoration(
+                        context,
+                        t.composerHint.replaceAll('{name}', label),
                       ),
                     ),
                   ),
@@ -216,6 +216,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
                     key: const Key('composer-send'),
                     composerKey: widget.channelId,
                     busy: _sending,
+                    empty: _composer.text.trim().isEmpty,
                     onPressed: _send,
                   ),
                 ],
@@ -343,4 +344,11 @@ class FeedTopRow extends StatelessWidget {
         ),
     };
   }
+}
+
+/// 머리·자리표시에 쓰는 채널 이름. 채널은 "# task", DM 은 상대 이름 그대로.
+/// 채널이 목록에서 사라졌으면(다른 기기에서 나갔다) 빈 줄.
+String channelLabel(ChannelRow? channel) {
+  if (channel == null) return '';
+  return channel.isDm ? channel.name : '# ${channel.name}';
 }

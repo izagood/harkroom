@@ -73,7 +73,7 @@ class StringsKo implements Strings {
   String get messagesEmpty => '아직 메시지가 없다.';
 
   @override
-  String get composerHint => '메시지 — @ 로 에이전트를 부른다';
+  String get composerHint => '{name} 에 메시지';
 
   @override
   String get composerSend => '보내기';

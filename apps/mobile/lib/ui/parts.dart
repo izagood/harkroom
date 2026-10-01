@@ -236,6 +236,24 @@ class SectionHeader extends StatelessWidget {
 
 /// 보내기 버튼의 모양. **주황 원 + [HarkroomTokens.onAccent] 화살표**다(재설계 §3.4) — 보내기는
 /// 강조색을 쓰는 몇 안 되는 자리다. 채널·스레드 두 작성칸이 같은 것을 쓴다.
+/// 작성칸 테두리. 둥근 칸, 쉴 때 1px 선 · 포커스일 때 1px 회색(개정판 3.4 — 주황 2px 테두리는
+/// 보내기 버튼과 강조가 겹쳤다).
+InputDecoration composerDecoration(BuildContext context, String hint) {
+  final k = context.tokens;
+  OutlineInputBorder edge(Color c) => OutlineInputBorder(
+        borderRadius: BorderRadius.circular(18),
+        borderSide: BorderSide(color: c, width: 1),
+      );
+  return InputDecoration(
+    hintText: hint,
+    isDense: true,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+    border: edge(k.line),
+    enabledBorder: edge(k.line),
+    focusedBorder: edge(k.mute),
+  );
+}
+
 ButtonStyle sendButtonStyle(BuildContext context) {
   final k = context.tokens;
   return IconButton.styleFrom(

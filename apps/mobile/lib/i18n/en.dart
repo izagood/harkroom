@@ -74,7 +74,7 @@ class StringsEn implements Strings {
   String get messagesEmpty => 'No messages yet.';
 
   @override
-  String get composerHint => 'Message, or @mention an agent';
+  String get composerHint => 'Message {name}';
 
   @override
   String get composerSend => 'Send';

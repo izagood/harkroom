@@ -264,10 +264,14 @@ class SendButton extends StatelessWidget {
     required this.composerKey,
     required this.busy,
     required this.onPressed,
+    this.empty = false,
   });
 
   final String composerKey;
   final bool busy;
+
+  /// 보낼 글이 없다 — 버튼을 흐리게(soft) 둔다. 눌러도 아무 일이 없는데 주황이면 눌러 보게 된다.
+  final bool empty;
   final VoidCallback onPressed;
 
   @override
@@ -291,7 +295,7 @@ class SendButton extends StatelessWidget {
       tooltip: t.composerSend,
       style: sendButtonStyle(context),
       icon: const Icon(Icons.send, size: 20),
-      onPressed: busy ? null : onPressed,
+      onPressed: busy || empty ? null : onPressed,
     );
   }
 }

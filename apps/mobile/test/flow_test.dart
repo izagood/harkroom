@@ -280,6 +280,8 @@ void main() {
     expect(find.textContaining('#harkroom'), findsWidgets);
 
     await tester.enterText(find.byKey(const Key('composer')), '@forge 이거 해 줘');
+    // 친 글이 있어야 보내기가 살아난다(빈 칸이면 soft) — 그 한 프레임을 그린다.
+    await tester.pump();
     await tester.tap(find.byKey(const Key('composer-send')));
     await _settle(tester);
 
@@ -477,6 +479,8 @@ void main() {
     );
 
     await tester.enterText(find.byKey(const Key('thread-composer')), '답글이다');
+    // 친 글이 있어야 보내기가 살아난다(빈 칸이면 soft) — 그 한 프레임을 그린다.
+    await tester.pump();
     await tester.tap(find.byKey(const Key('thread-send')));
     await _settle(tester);
     expect(_sent, ['답글이다']);
@@ -757,5 +761,27 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('channel-c1')), findsOneWidget);
+  });
+
+  testWidgets('빈 작성칸이면 보내기가 흐리고(눌리지 않음), 글을 치면 살아난다', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await _settle(tester);
+    IconButton send() => tester.widget<IconButton>(
+        find.descendant(of: find.byKey(const Key('composer-send')), matching: find.byType(IconButton)));
+    expect(send().onPressed, isNull);
+    await tester.enterText(find.byKey(const Key('composer')), '   ');
+    await tester.pump();
+    expect(send().onPressed, isNull, reason: '공백만이면 보낼 것이 없다');
+    await tester.enterText(find.byKey(const Key('composer')), '안녕');
+    await tester.pump();
+    expect(send().onPressed, isNotNull);
+    // 자리표시는 채널 이름으로("# harkroom 에 메시지" / "Message # harkroom").
+    final hint = tester.widget<TextField>(find.byKey(const Key('composer'))).decoration!.hintText!;
+    expect(hint, contains('# harkroom'));
+    expect(hint, isNot(contains('{name}')));
   });
 }
