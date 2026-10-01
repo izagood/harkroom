@@ -117,12 +117,24 @@ iOS 는 평문 `http://`·`ws://` 를 막는다. `Info.plist` 에 `NSAllowsArbit
 - **로컬**: `tool/release-ios.sh`(E2E → `flutter build ipa` → 서명 체인 검사 → `altool --validate-app`
   → `--upload-app`). 서명 자료는 `~/.harkroom-signing`(또는 `HARKROOM_SIGNING_DIR`)에 둔다:
   `AuthKey_<KEY_ID>.p8` 와 `values.txt`(`ASC_KEY_ID=`·`ASC_ISSUER_ID=`·`ASC_APP_ID=`).
-- **CI**: `.github/workflows/testflight.yml`. 사람이 누르거나 `mobile-v*` 태그를 밀 때만 돌고,
-  **PR 에서는 돌지 않는다.** CI 에서는 E2E 를 건너뛰고 캐시를 쓰지 않는다. secret 목록은 그 파일 머리에 있다.
-  환경 `testflight` 에 사람이 걸 것:
-  - 필수 승인자
-  - 배포 대상 제한: `mobile-v*` 태그와 수동 실행용 `main`
+- **CI**: `.github/workflows/testflight.yml`. **PR 에서는 돌지 않는다.** CI 에서는 E2E 를 건너뛰고 캐시를 쓰지 않는다.
+  secret 목록은 그 파일 머리에 있다.
+
+  | 언제 | 무엇이 올라가나 |
+  |---|---|
+  | main 에 `apps/mobile/**` 가 머지될 때(시험·문서만 바뀐 것은 뺀다) | 그 main |
+  | `mobile-v*` 태그를 밀 때 | 그 태그 |
+  | Actions 에서 손으로 누를 때 | 고른 ref(배포 대상 제한에 걸린 것만) |
+
+  환경 `testflight` 에 사람이 걸 것(**이 워크플로가 main 에 들어가기 전에** — 환경이 없을 때 실행이 뜨면
+  GitHub 이 보호 규칙 없는 빈 환경을 만든다):
+  - 필수 승인자: 머지가 실행을 자동으로 띄우고, 승인 한 번이면 업로드까지 간다
+  - 배포 대상 제한: `main` 과 `mobile-v*` 태그
   - 태그 ruleset: `mobile-v*` 는 승인자만 만들 수 있게
+- **내부 테스터 배포**: App Store Connect › TestFlight › 내부 테스트 그룹에서 **자동 배포**를 켠다.
+  그러면 처리가 끝난 빌드가 그 그룹에 저절로 간다. 내부 테스트는 베타 심사가 없다.
+- **실패**: 실행 화면 맨 위 요약에 단계별 결과·빌드 번호·빠진 secret 이름이 나온다. 실패한 실행은
+  머지한 사람에게 GitHub 알림이 간다.
 - **API 키는 이 저장소 전용**으로 새로 만든다. 역할은 **App Manager** 면 된다(수동 서명이라 Admin 이
   필요 없다). 다른 앱과 키를 같이 쓰지 않아야 한쪽이 새도 이 키만 폐기하면 된다. CI 용 p12 도 로컬과 다른
   비밀번호로 다시 내보낸다 — 배포 인증서는 팀 전체의 것이다.

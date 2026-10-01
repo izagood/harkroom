@@ -5,29 +5,50 @@ name: TestFlight
 # 나는 실패가 없다.
 #
 # ## 언제 도나 — PR 에서는 절대 돌지 않는다
-# 저장소가 공개라 포크 PR 이 서명 키를 쥐는 길을 처음부터 없앤다. `pull_request`·`pull_request_target`
-# 트리거를 두지 않는다. 사람이 누르거나(`workflow_dispatch`) `mobile-v*` 태그를 밀 때만 돈다.
+# 저장소가 공개라 포크 PR 이 서명 키를 쥐는 길을 처음부터 없앤다. `pull_request`·`pull_request_target`·
+# `workflow_run` 트리거를 두지 않는다. 도는 때는 셋뿐이다:
+#   - main 에 앱 코드가 들어올 때(`push` + `paths`) — 머지마다 자동으로 올린다
+#   - `mobile-v*` 태그를 밀 때 — 이름 붙은 판을 올린다
+#   - 사람이 누를 때(`workflow_dispatch`) — 다시 올리기·첫 시험
+# 시험·문서만 바뀐 머지는 빌드가 같으므로 돌지 않는다. 포크에서는 `if:` 로 job 을 건너뛴다.
 #
 # ## 승인
-# job 이 환경 `testflight` 에 묶여 있다. 그 환경의 필수 승인자(jaebin)가 누르기 전에는 secret 을
-# 하나도 받지 못하고 시작하지 않는다. 환경 설정(사람이 건다):
-#   - 필수 승인자: jaebin
-#   - 배포 대상 제한: `mobile-v*` 태그 + 수동 실행용 `main`
+# job 이 환경 `testflight` 에 묶여 있다. 그 환경의 필수 승인자가 누르기 전에는 secret 을 하나도
+# 받지 못하고 시작하지 않는다. 환경 설정(사람이 건다):
+#   - 필수 승인자: jaebin — 머지가 자동으로 실행을 띄우고, 승인 한 번(모바일 앱에서도 된다)이면 끝까지 간다
+#   - 배포 대상 제한: `main` + `mobile-v*` 태그
 #   - 태그 ruleset: `mobile-v*` 는 jaebin 만 만들 수 있다(쓰기 권한자가 태그로 승인 요청을 띄우지 못하게)
+# **이 환경이 없을 때 실행이 뜨면 GitHub 이 보호 규칙 없는 빈 환경을 만들어 버린다.** 그래서 이 파일이
+# main 에 들어가기 전에 환경과 보호 규칙을 먼저 만든다.
 #
 # ## secret (환경 `testflight` 에 둔다, 저장소 secret 이 아니다)
 #   ASC_KEY_ID · ASC_ISSUER_ID · ASC_KEY_P8(.p8 내용) · ASC_APP_ID(앱의 숫자 Apple ID)
 #   IOS_DIST_P12_BASE64 · IOS_DIST_P12_PASSWORD(Apple Distribution 인증서)
 #   IOS_PROFILE_BASE64(프로비저닝 프로파일 "Harkroom Mobile App Store")
+# Team ID 는 secret 이 아니다 — `ios/ExportOptions.plist` 와 Xcode 프로젝트에 이미 있다.
 #
-# **어느 단계도 이 값들을 출력하지 않는다.** `set -x` 를 켜지 마라.
+# ## 실패는 어디서 보이나
+# 실행 요약(Actions 실행 화면 맨 위)에 단계별 결과와 빌드 번호를 표로 남긴다. 실패한 실행은 빨간
+# 표시가 되고, GitHub 이 실행을 띄운 사람(머지한 사람)에게 알림을 보낸다.
+#
+# **어느 단계도 secret 값을 출력하지 않는다.** `set -x` 를 켜지 마라.
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - 'mobile-v*'
+    # 태그 push 에는 paths 가 걸리지 않는다(태그는 늘 돈다). 아래는 main push 에만 걸린다.
+    paths:
+      - 'apps/mobile/**'
+      - '!apps/mobile/**/*.md'
+      - '!apps/mobile/test/**'
+      - '!apps/mobile/integration_test/**'
+      - '.github/workflows/testflight.yml'
 
 # 같은 앱을 두 번 동시에 올리면 빌드 번호(ASC 최대값 + 1)가 겹친다 — 하나씩만 돈다.
+# 기다리는 실행이 있는데 또 머지되면 GitHub 이 기다리던 쪽을 취소하고 새 것을 남긴다 — 최신 main 만 올라간다.
 concurrency:
   group: testflight
   cancel-in-progress: false
@@ -43,12 +64,38 @@ jobs:
   upload:
     name: build & upload
     runs-on: macos-latest
+    # 포크의 main 에 push 해도 돌지 않게 한다(secret 이 없어 어차피 실패하지만, 빨간 실행을 남기지 않는다).
+    if: github.repository == 'izagood/harkroom'
     environment: testflight
     timeout-minutes: 60
     defaults:
       run:
         working-directory: apps/mobile
     steps:
+      # 빠진 secret 을 **이름으로** 먼저 알린다. 서명 단계 한가운데서 base64 오류로 죽으면 원인이 안 보인다.
+      - name: check secrets
+        id: secrets
+        working-directory: .
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_APP_ID: ${{ secrets.ASC_APP_ID }}
+          IOS_DIST_P12_BASE64: ${{ secrets.IOS_DIST_P12_BASE64 }}
+          IOS_DIST_P12_PASSWORD: ${{ secrets.IOS_DIST_P12_PASSWORD }}
+          IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
+        run: |
+          missing=""
+          for name in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 ASC_APP_ID IOS_DIST_P12_BASE64 IOS_DIST_P12_PASSWORD IOS_PROFILE_BASE64; do
+            eval "v=\${$name:-}"
+            [ -n "$v" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "환경 testflight 에 없는 secret:$missing" >&2
+            echo "missing=$missing" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
@@ -103,6 +150,7 @@ jobs:
           echo "KEYCHAIN_PATH=$keychain" >> "$GITHUB_ENV"
 
       - name: release
+        id: release
         env:
           HARKROOM_SIGNING_DIR: ${{ runner.temp }}/signing
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -111,6 +159,46 @@ jobs:
         # **CI 에서는 E2E 를 돌리지 않는다** — 서명 키체인이 풀린 채로 시험 코드가 돌 이유가 없다.
         # E2E 는 PR 의 `mobile.yml` 과 로컬 릴리스가 맡는다.
         run: ./tool/release-ios.sh --skip-e2e
+
+      # 실행 화면 맨 위에 보이는 요약. 값이 아니라 단계 결과와 빌드 번호만 쓴다.
+      - name: summary
+        if: always()
+        working-directory: .
+        env:
+          OUT_SECRETS: ${{ steps.secrets.outcome }}
+          OUT_RELEASE: ${{ steps.release.outcome }}
+          MISSING: ${{ steps.secrets.outputs.missing }}
+          BUILD_NUMBER: ${{ steps.release.outputs.build_number }}
+          VERSION: ${{ steps.release.outputs.version }}
+          JOB_STATUS: ${{ job.status }}
+          REF: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          {
+            if [ "$JOB_STATUS" = success ]; then
+              echo "## ✅ TestFlight 업로드 — ${VERSION:-?} (${BUILD_NUMBER:-?})"
+              echo
+              echo "App Store Connect 가 처리하는 데 5~15분 걸린다. 처리가 끝나면 내부 테스트 그룹에 자동으로 배포된다(그룹의 자동 배포가 켜져 있을 때)."
+            else
+              echo "## ❌ TestFlight 업로드 실패"
+            fi
+            echo
+            echo "| 항목 | 값 |"
+            echo "|---|---|"
+            echo "| ref | \`$REF\` |"
+            echo "| commit | \`$SHA\` |"
+            echo "| secret 확인 | ${OUT_SECRETS:-skipped} |"
+            echo "| 빌드·서명·업로드 | ${OUT_RELEASE:-skipped} |"
+            [ -n "${BUILD_NUMBER:-}" ] && echo "| 빌드 번호 | $BUILD_NUMBER |"
+            if [ -n "${MISSING:-}" ]; then
+              echo
+              echo "환경 \`testflight\` 에 없는 secret:$MISSING"
+            fi
+            if [ "$JOB_STATUS" != success ] && [ "${OUT_RELEASE:-}" = failure ]; then
+              echo
+              echo "자주 나는 원인: 인증서·프로파일 만료(1년), API 키 폐기, 같은 빌드 번호가 이미 처리 중. 로그의 마지막 ▸ 단계를 본다."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: clean up signing material
         if: always()
