@@ -138,6 +138,16 @@ export interface ReviewUsage {
 }
 
 /** 원 턴의 argv 에서 세션·권한 인자를 빼고 리뷰 포크의 argv 를 만든다. 순수 함수다. */
+/** 원 턴 argv 의 `--permission-mode` 값(`--permission-mode x`·`--permission-mode=x` 둘 다). 없으면 null. */
+export function originalPermissionMode(args: readonly string[]): string | null {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === '--permission-mode') return args[i + 1] ?? null;
+    if (a.startsWith('--permission-mode=')) return a.slice('--permission-mode='.length);
+  }
+  return null;
+}
+
 export function reviewForkArgs(turnArgs: readonly string[], sessionId: string, systemPromptCopy: string | null): string[] {
   const drop = new Set(['--session-id', '-r', '--resume', '--permission-mode']);
   const kept: string[] = [];
@@ -241,6 +251,14 @@ export class ReviewFork {
     if (turn.skip) return null;
     if (!supportsReviewFork(turn.harness)) return null;
     if (!turn.sessionId) return null;
+    // 포크는 권한 모드를 dontAsk 로 **바꾼다**(reviewForkArgs). 원 턴이 readonly(`plan`)였다면 포크가
+    // 원래 없던 memory.set 권한을 얻는다(security 검토, #1009 참고 1). 그래서 원 턴이 `auto` 일 때만 —
+    // 이미 묻지 않고 기억을 쓸 수 있던 턴만 — 돌아본다. 모드를 모르면(인자가 없으면) 띄우지 않는다.
+    const mode = originalPermissionMode(turn.plan.args);
+    if (mode !== 'auto') {
+      this.log(`[reviewFork] 건너뜀 — 원 턴 권한 모드가 ${mode ?? '(없음)'} 이라 포크가 권한을 넓힐 수 있다`);
+      return null;
+    }
     if (!(await reviewForkEnabled(turn.agentId, this.deps.stateDir, this.deps.env))) return null;
 
     const state = await this.readState();

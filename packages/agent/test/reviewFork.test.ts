@@ -8,11 +8,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   REVIEW_ALLOWED_TOOLS, REVIEW_DISALLOWED_TOOLS, REVIEW_FORK_ENV, REVIEW_FORK_EVERY_TURNS, REVIEW_FORK_ON_FILE,
-  REVIEW_PROMPT, ReviewFork, parseForkResult, reviewForkArgs, reviewForkEnabled, type ReviewForkTurn,
+  REVIEW_PROMPT, ReviewFork, originalPermissionMode, parseForkResult, reviewForkArgs, reviewForkEnabled, type ReviewForkTurn,
 } from '../src/reviewFork.js';
 import { supportsReviewFork } from '../src/adapters/index.js';
 
-const AGENT = '653bcd95-ff98-452a-bb36-a55deac4b35e';
+const AGENT = '00000000-0000-4000-8000-0000000000aa';
 
 const TURN_ARGS = [
   '-r', 'sess-1', '--permission-mode', 'auto',
@@ -181,6 +181,27 @@ describe('ReviewFork.afterTurn', () => {
     expect(off.spawns.length + s.spawns.length).toBe(0);
     // 건너뛴 턴은 세지 않았다 — 카운터 파일이 아직 없다.
     await expect(readFile(join(s.stateDir, 'review-fork.json'), 'utf8')).rejects.toThrow();
+  });
+
+  // security 검토(#1009 참고 1): 포크는 권한 모드를 dontAsk 로 바꾼다 — readonly(plan) 턴을 포크하면
+  // 원래 없던 memory.set 권한이 생긴다. 원 턴이 auto 일 때만 띄운다.
+  it('원 턴이 auto 가 아니면(plan·모름) 세지도 띄우지도 않고 로그를 남긴다', async () => {
+    const s = await setup();
+    const withMode = (mode: string[]) => () => s.turn({
+      plan: { command: 'claude', args: ['-r', 'sess-1', ...mode, '--mcp-config', '/tmp/mcp.json'], env: {}, stdinFile: null },
+    });
+    expect(await turns(s.rf, withMode(['--permission-mode', 'plan']), REVIEW_FORK_EVERY_TURNS * 2)).toBeNull();
+    expect(await turns(s.rf, withMode(['--permission-mode=plan']), REVIEW_FORK_EVERY_TURNS * 2)).toBeNull();
+    expect(await turns(s.rf, withMode([]), REVIEW_FORK_EVERY_TURNS * 2)).toBeNull();
+    expect(s.spawns).toHaveLength(0);
+    expect(s.logs.some((l) => l.includes('권한 모드가 plan'))).toBe(true);
+    await expect(readFile(join(s.stateDir, 'review-fork.json'), 'utf8')).rejects.toThrow();
+  });
+
+  it('originalPermissionMode 는 두 꼴을 다 읽는다', () => {
+    expect(originalPermissionMode(['--permission-mode', 'auto'])).toBe('auto');
+    expect(originalPermissionMode(['--permission-mode=plan'])).toBe('plan');
+    expect(originalPermissionMode(['--model', 'x'])).toBeNull();
   });
 
   it('동시에 하나만 돈다 — 앞 포크가 돌면 이번엔 띄우지 않고 다음 턴에 다시 본다', async () => {
