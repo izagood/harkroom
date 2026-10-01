@@ -39,7 +39,7 @@ afterEach(() => {
 
 describe('컴포넌트 갤러리', () => {
   it('목차의 맨 끝에 선다 — 개발자용이라 찾아 들어갈 일이 없는 자리다', () => {
-    const app = SETTINGS_GROUPS.find((g) => g.id === 'app')!;
+    const app = SETTINGS_GROUPS.find((g) => g.id === 'agents')!;
     expect(app.items[app.items.length - 1]!.id).toBe('gallery');
   });
 
