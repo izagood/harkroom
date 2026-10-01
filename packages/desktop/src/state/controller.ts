@@ -53,6 +53,8 @@ export interface OpenThreadOpts {
 
 /** 같은 계정의 관문 알림을 다시 울리기까지의 간격(`announceAccountGate`). */
 export const GATE_NOTIFY_WINDOW_MS = 30 * 60 * 1000;
+/** 한 에이전트가 `GATE_NOTIFY_WINDOW_MS` 안에 울릴 수 있는 관문 알림 수(security #1053 권고). */
+export const GATE_NOTIFY_PER_AGENT = 3;
 
 export class Controller {
 
@@ -88,6 +90,11 @@ export class Controller {
    * `GATE_NOTIFY_WINDOW_MS` 가 지나면 다시 알린다(그때도 막혀 있으면 사람이 놓친 것이다).
    */
   private gateNotifiedAt = new Map<string, number>();
+  /**
+   * 에이전트마다 최근 `GATE_NOTIFY_WINDOW_MS` 안에 보낸 관문 알림 시각(security #1053). 이름표(`account`)는 에이전트가
+   * 정하는 값이라, 이름표를 바꿔 가며 실패 글을 올리는 에이전트는 계정 묶음을 피한다 — 그래서 에이전트당 상한을 함께 둔다.
+   */
+  private gateNotifiedByAgent = new Map<string, number[]>();
   private runnerLauncher: RunnerLauncher;
   /** 비동기 부트스트랩 도중 교체·해제된 컨트롤러가 뒤늦게 살아나는 것을 막는다. */
   private stopped = false;
@@ -695,15 +702,20 @@ export class Controller {
     // 나에게 온 차례가 아니면 울리지 않는다(채널을 `all` 로 둔 다른 사람에게는 남의 관문이다).
     if (!store.me || failure.awaitingAccountId !== store.me.id) return true;
     if (!usePrefsStore.getState().notifications.enabled) return true;
-    const key = failure.account ?? row.authorId;
+    const label = failure.account ?? row.authorId;
+    // 열쇠는 (에이전트, 이름표) — 이름표만 쓰면 다른 에이전트의 같은 이름표가 서로를 삼킨다.
+    const key = `${row.authorId}\u0000${label}`;
     const at = Date.now();
     const last = this.gateNotifiedAt.get(key);
     if (last !== undefined && at - last < GATE_NOTIFY_WINDOW_MS) return true;
+    const recent = (this.gateNotifiedByAgent.get(row.authorId) ?? []).filter((t) => at - t < GATE_NOTIFY_WINDOW_MS);
+    if (recent.length >= GATE_NOTIFY_PER_AGENT) return true;
     this.gateNotifiedAt.set(key, at);
+    this.gateNotifiedByAgent.set(row.authorId, [...recent, at]);
     const author = store.accounts[row.authorId]?.handle;
     await this.notifier.notify({
       // 원문(조직 설정 값)은 싣지 않는다 — 계정 이름표와 에이전트만.
-      title: `Claude account ${key} is waiting for you${this.communitySuffix()}`,
+      title: `Claude account ${label} is waiting for you${this.communitySuffix()}`,
       body: `${author ? `@${author} ` : ''}stopped at a setup screen — open the terminal to answer it`,
       target: this.notificationTarget(row.id),
     });

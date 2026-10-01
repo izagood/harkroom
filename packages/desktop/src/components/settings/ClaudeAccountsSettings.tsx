@@ -65,6 +65,7 @@ import { ProviderSection } from './ProviderSection';
 import { AccountRowsSkeleton, ProviderUsageBars, ProviderUsageSkeleton } from './ProviderUsageBars';
 import { ClaudeAssignThresholdsRow } from './ClaudeAssignThresholds';
 import { usageFor, useProviderUsage } from '../../lib/providerUsage';
+import { useT } from '../../i18n/useT';
 
 /** 제공업체 계정 화면 안의 Claude 칸. `SettingsPage` 와 같은 인자를 받아 `Shell` 로 갈아 끼운다. */
 function ClaudeSection({ description, children }: {
@@ -147,6 +148,7 @@ function StandalonePage({ description, width, children }: {
  * 껍데기(`SettingsPage`) 대신 하네스 칸(`ProviderSection`)을 쓴다 — 껍데기가 둘이면 제목이 둘이다.
  */
 export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolean } = {}) {
+  const t = useT();
   const Shell = embedded ? ClaudeSection : StandalonePage;
   // 한도 사용률: CLI(`/usage`) 먼저, 실패하면 같은 API(`usageChain.ts`). 사용량은 이것 하나다.
   const available = hasClaudeAccountsSurface();
@@ -575,16 +577,17 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                   data-testid="claude-account-attention"
                 >
                   <span className="text-warning">
-                    ⚠ Claude Code is waiting for your choice on a setup screen. New threads skip this account.
+                    {/* 안 2(2026-10-02): 막힌 계정은 빼지 않고 **맨 뒤로** 간다 — #1007 의 "건너뛴다"가 아니다. */}
+                    ⚠ {t('claudeAccounts.attention.notice')}
                   </span>
                   <button
                     type="button"
                     className="shrink-0 text-accent underline hover:text-fg"
-                    aria-label={`Open a terminal for ${a.name}`}
+                    aria-label={t('claudeAccounts.attention.openAria', { account: a.name })}
                     data-testid="claude-account-attention-open"
                     onClick={() => { void openTerminal(pool.name, a.name); }}
                   >
-                    Open terminal
+                    {t('gate.terminal.open')}
                   </button>
                 </div>
               )}

@@ -3280,6 +3280,8 @@ export const en = {
 
   'speech.failure.title': 'Could not finish it',
   'speech.failure.callAgain': 'Call again',
+  'claudeAccounts.attention.notice': 'Claude Code is waiting for your choice on a setup screen. New threads try this account last until you answer it.',
+  'claudeAccounts.attention.openAria': 'Open a terminal for {account}',
   'gate.terminal.open': 'Open terminal',
   'gate.terminal.opened': 'Opened in Terminal — answer the question there, the turn will start again',
   'gate.terminal.failed': 'Could not open the terminal',

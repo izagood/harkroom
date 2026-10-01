@@ -1495,6 +1495,8 @@ export const ko = {
 
   'speech.failure.title': '끝내지 못했다',
   'speech.failure.callAgain': '다시 부르기',
+  'claudeAccounts.attention.notice': 'Claude Code가 설정 화면에서 선택을 기다리고 있습니다. 답하기 전까지 새 스레드는 이 계정을 맨 뒤에 둡니다.',
+  'claudeAccounts.attention.openAria': '{account} 터미널 열기',
   'gate.terminal.open': '터미널 열기',
   'gate.terminal.opened': '터미널에서 열었습니다 — 거기서 물음에 답하면 턴이 다시 시작됩니다',
   'gate.terminal.failed': '터미널을 열지 못했습니다',

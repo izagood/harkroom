@@ -531,7 +531,9 @@ describe('사람이 지나야 하는 관문 (2026-10-01)', () => {
     const notes = await screen.findAllByTestId('claude-account-attention');
     expect(notes).toHaveLength(1);
     expect(notes[0]!.textContent).toMatch(/waiting for your choice/);
-    expect(notes[0]!.textContent).toMatch(/New threads skip this account/);
+    // 안 2: 막힌 계정은 빼지 않고 맨 뒤로 간다 — "건너뛴다"고 말하지 않는다.
+    expect(notes[0]!.textContent).toMatch(/New threads try this account last until you answer it/);
+    expect(notes[0]!.textContent).not.toMatch(/skip/);
     // 계정 줄 안에는 없다 — 메일 칸을 밀어내지 않는다(designer D1).
     expect(within(screen.getByTestId('claude-account-work-aria')).queryByTestId('claude-account-attention')).toBeNull();
   });

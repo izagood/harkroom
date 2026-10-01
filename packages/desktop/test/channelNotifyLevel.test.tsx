@@ -339,7 +339,7 @@ describe('계정 관문 — OS 알림은 계정당 한 번', () => {
     setFocus(false);
     const n = fakeNotifier();
     const { callbacks } = await started(n, [], [pref('c1', 'all')]);
-    for (const [id, account, awaiting] of [['g1', 'acct-1', 'u1'], ['g2', 'acct-1', 'u1'], ['g3', 'plum', 'u1'], ['g4', 'lime', 'u-other']] as const) {
+    for (const [id, account, awaiting] of [['g1', 'acct-1', 'u1'], ['g2', 'acct-1', 'u1'], ['g3', 'plum', 'u1'], ['g4', 'acct-2', 'u-other']] as const) {
       callbacks.current!.onEvent({ type: 'message.created', message: gate(id, account, awaiting), audience: 'all' });
       await drained();
     }
@@ -348,5 +348,26 @@ describe('계정 관문 — OS 알림은 계정당 한 번', () => {
     expect(n.sent[1]!.title).toContain('plum');
     // 목적지는 그 실패 카드 — 거기서 [터미널 열기].
     expect(n.sent[0]!.target?.messageId).toBe('g1');
+  });
+});
+
+describe('계정 관문 — 에이전트당 상한(security #1053)', () => {
+  const gateFrom = (id: string, author: string, account: string) => msg(id, 'c1', 9, '관문 통지', author, {
+    threadRootId: 'root-1',
+    meta: { kind: 'failure', failure: { retryable: false, code: 'account_gate', account, awaitingAccountId: 'u1' } } as unknown as Record<string, unknown>,
+  });
+  it('이름표를 바꿔 가며 올려도 한 에이전트는 30분에 3개까지만 울린다 — 다른 에이전트는 따로 센다', async () => {
+    setFocus(false);
+    const n = fakeNotifier();
+    const { callbacks } = await started(n, [], [pref('c1', 'all')]);
+    for (let i = 0; i < 6; i += 1) {
+      callbacks.current!.onEvent({ type: 'message.created', message: gateFrom(`a${i}`, 'u2', `acct-${i}`), audience: 'all' });
+      await drained();
+    }
+    expect(n.sent).toHaveLength(3);
+    // 다른 에이전트의 같은 이름표는 묶이지 않는다(열쇠는 에이전트+이름표).
+    callbacks.current!.onEvent({ type: 'message.created', message: gateFrom('b0', 'u3', 'acct-0'), audience: 'all' });
+    await drained();
+    expect(n.sent).toHaveLength(4);
   });
 });
