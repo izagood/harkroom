@@ -2497,6 +2497,9 @@ export interface WorkspaceSkillView {
   approvedBy: string | null;
   approvedAt: string | null;
   disabledAt: string | null;
+  /** 쓰기 검사(서버 080)에 걸린 제안이면 그 시각과 이유. 옛 서버는 주지 않는다. */
+  flaggedAt?: string | null;
+  flagReason?: string | null;
 }
 
 export type SkillGroupId = 'pending' | 'approved' | 'disabled';

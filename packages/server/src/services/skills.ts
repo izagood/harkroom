@@ -16,10 +16,14 @@ export interface WorkspaceSkill {
   approvedBy: string | null;
   approvedAt: Date | null;
   disabledAt: Date | null;
+  /** 쓰기 검사(080)에 걸린 제안이면 그 시각과 이유 — 승인하는 사람이 보라고 남긴다. */
+  flaggedAt: Date | null;
+  flagReason: string | null;
 }
 
 const RETURNING = `returning slug, body, proposed_by as "proposedBy", proposed_at as "proposedAt",
-  approved_by as "approvedBy", approved_at as "approvedAt", disabled_at as "disabledAt"`;
+  approved_by as "approvedBy", approved_at as "approvedAt", disabled_at as "disabledAt",
+  flagged_at as "flaggedAt", flag_reason as "flagReason"`;
 
 /**
  * 에이전트가 스킬을 제안한다(#140). **제안만** 한다 — 승인은 admin 의 일이다.
@@ -36,19 +40,20 @@ const RETURNING = `returning slug, body, proposed_by as "proposedBy", proposed_a
  */
 export async function proposeSkill(
   pool: Pool,
-  input: { slug: string; body: string; proposedBy: string; channelId: string },
+  input: { slug: string; body: string; proposedBy: string; channelId: string; flagReason?: string | null },
 ): Promise<{ ok: WorkspaceSkill } | { error: { code: string; message: string } }> {
   if (!isValidSkillSlug(input.slug)) {
     return { error: { code: 'invalid_slug', message: 'slug must be [a-z0-9-]{2,40}' } };
   }
 
   const res = await pool.query(
-    `insert into workspace_skill (slug, body, proposed_by)
-     values ($1, $2, $3)
+    `insert into workspace_skill (slug, body, proposed_by, flagged_at, flag_reason)
+     values ($1, $2, $3, case when $4::text is null then null else now() end, $4::text)
      on conflict (slug) do update set body = excluded.body, proposed_by = excluded.proposed_by,
-       proposed_at = now(), approved_by = null, approved_at = null, disabled_at = null
+       proposed_at = now(), approved_by = null, approved_at = null, disabled_at = null,
+       flagged_at = excluded.flagged_at, flag_reason = excluded.flag_reason
      ${RETURNING}`,
-    [input.slug, input.body, input.proposedBy],
+    [input.slug, input.body, input.proposedBy, input.flagReason ?? null],
   );
 
   const skill = res.rows[0] as WorkspaceSkill;
@@ -62,7 +67,8 @@ export async function proposeSkill(
   await postMessage(pool, {
     channelId: input.channelId,
     authorId: skill.proposedBy,
-    body: `스킬이 제안되었습니다: **${skill.slug}** — 승인을 기다리고 있습니다.`,
+    body: `스킬이 제안되었습니다: **${skill.slug}** — 승인을 기다리고 있습니다.`
+      + (skill.flagReason ? `\n⚠️ 쓰기 검사에 걸렸습니다(${skill.flagReason}). 승인 전에 본문을 확인하세요.` : ''),
     kind: 'system',
     meta: { skillSlug: skill.slug },
   });
@@ -150,7 +156,8 @@ export async function listSkills(
   options: { state: 'pending' | 'approved' | 'disabled' | null },
 ): Promise<WorkspaceSkill[]> {
   let query = `select slug, body, proposed_by as "proposedBy", proposed_at as "proposedAt",
-    approved_by as "approvedBy", approved_at as "approvedAt", disabled_at as "disabledAt"
+    approved_by as "approvedBy", approved_at as "approvedAt", disabled_at as "disabledAt",
+  flagged_at as "flaggedAt", flag_reason as "flagReason"
     from workspace_skill`;
 
   if (options.state === 'pending') {
@@ -173,7 +180,8 @@ export async function getSkill(
 ): Promise<WorkspaceSkill | null> {
   const res = await pool.query(
     `select slug, body, proposed_by as "proposedBy", proposed_at as "proposedAt",
-      approved_by as "approvedBy", approved_at as "approvedAt", disabled_at as "disabledAt"
+      approved_by as "approvedBy", approved_at as "approvedAt", disabled_at as "disabledAt",
+  flagged_at as "flaggedAt", flag_reason as "flagReason"
      from workspace_skill where slug = $1`,
     [slug],
   );

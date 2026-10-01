@@ -26,6 +26,8 @@ export async function registerSkillRoutes(app: FastifyInstance, pool: Pool): Pro
       approvedBy: s.approvedBy,
       approvedAt: s.approvedAt?.toISOString() ?? null,
       disabledAt: s.disabledAt?.toISOString() ?? null,
+      flaggedAt: s.flaggedAt?.toISOString() ?? null,
+      flagReason: s.flagReason ?? null,
     }));
   });
 
@@ -43,6 +45,8 @@ export async function registerSkillRoutes(app: FastifyInstance, pool: Pool): Pro
       approvedBy: skill.approvedBy,
       approvedAt: skill.approvedAt?.toISOString() ?? null,
       disabledAt: skill.disabledAt?.toISOString() ?? null,
+      flaggedAt: skill.flaggedAt?.toISOString() ?? null,
+      flagReason: skill.flagReason ?? null,
     };
   });
 
@@ -68,6 +72,8 @@ export async function registerSkillRoutes(app: FastifyInstance, pool: Pool): Pro
       approvedBy: result.ok.approvedBy,
       approvedAt: result.ok.approvedAt?.toISOString() ?? null,
       disabledAt: result.ok.disabledAt?.toISOString() ?? null,
+      flaggedAt: result.ok.flaggedAt?.toISOString() ?? null,
+      flagReason: result.ok.flagReason ?? null,
     };
   });
 
@@ -91,6 +97,8 @@ export async function registerSkillRoutes(app: FastifyInstance, pool: Pool): Pro
       approvedBy: result.ok.approvedBy,
       approvedAt: result.ok.approvedAt?.toISOString() ?? null,
       disabledAt: result.ok.disabledAt?.toISOString() ?? null,
+      flaggedAt: result.ok.flaggedAt?.toISOString() ?? null,
+      flagReason: result.ok.flagReason ?? null,
     };
   });
 }
