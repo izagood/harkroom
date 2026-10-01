@@ -63,6 +63,11 @@ export interface BoardCard {
    * 하면 남의 차례를 내가 가로챈다.
    */
   ask: { messageId: string; options: { id: string; label: string }[] } | null;
+  /**
+   * 미룬 카드가 **다시 서는 시각**(나중에의 `until`). 미루지 않았으면 null. 화면이 이것을 정보
+   * 줄 끝에 적는다(designer) — 언제 돌아오는지 보여야 되돌릴지 그냥 둘지 정할 수 있다.
+   */
+  laterUntil: string | null;
 }
 
 export interface BoardInput {
@@ -239,6 +244,7 @@ export function buildBoard(input: BoardInput): BoardCard[] {
       lastActivityAt,
       unread: list.some((e) => e.readAt === null),
       ask: openAsk && ask ? { messageId: openAsk.messageId, options: ask.options } : null,
+      laterUntil: fold === 'later' ? state?.until ?? null : null,
     });
   }
   // 내 차례·막힘은 **오래 기다린 것이 위**다(정정 2) — 어제부터 기다린 물음이 방금 온 답글
@@ -255,4 +261,25 @@ export function buildBoard(input: BoardInput): BoardCard[] {
 export function daysWaiting(sinceAt: string, nowMs: number): number | null {
   const days = Math.floor((nowMs - Date.parse(sinceAt)) / 86_400_000);
   return days >= 1 ? days : null;
+}
+
+/**
+ * 미룬 카드가 다시 서는 시각을 **짧게** 말한다 — 오늘이면 시각만(`오후 3시`), 내일이면
+ * `내일 9시`, 그 뒤면 날짜와 시각. 시각은 정각이면 분을 뺀다(`9시`, `9:30`).
+ *
+ * `nowMs` 를 인자로 받는다(`lib/time.ts::agoLabel` 과 같은 이유) — 시험이 "오늘/내일"의 경계를
+ * 고정된 시각으로 잴 수 있어야 한다. 날짜 경계는 **내 시계**(로컬 자정)로 가른다.
+ */
+export function laterUntilLabel(
+  untilIso: string, nowMs: number, locale: string, t: (key: 'inbox.board.tomorrowAt', vars: { time: string }) => string,
+): string {
+  const at = new Date(untilIso);
+  const time = at.toLocaleTimeString(locale, at.getMinutes() === 0
+    ? { hour: 'numeric' }
+    : { hour: 'numeric', minute: '2-digit' });
+  const dayOf = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((dayOf(at) - dayOf(new Date(nowMs))) / 86_400_000);
+  if (days <= 0) return time;
+  if (days === 1) return t('inbox.board.tomorrowAt', { time });
+  return `${at.toLocaleDateString(locale, { month: 'short', day: 'numeric' })} ${time}`;
 }
