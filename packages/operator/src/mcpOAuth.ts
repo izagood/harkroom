@@ -124,6 +124,14 @@ interface Flow {
   error?: string;
 }
 
+/**
+ * 저장소에서 이름 하나를 꺼낸다 — **자기 키일 때만.** 저장소는 `JSON.parse` 로 만든 평범한 객체라
+ * `store['constructor']`·`store['__proto__']` 가 prototype 값을 돌려준다. 이름은 러너의 보고에서도
+ * 오므로(`reportRejected`) 그런 이름이 "기록이 있다"로 읽히면 안 된다(security 검토 #990).
+ */
+const own = (store: Record<string, McpOAuthRecord>, name: string): McpOAuthRecord | undefined =>
+  (Object.hasOwn(store, name) ? store[name] : undefined);
+
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const b64url = (buf: Buffer) => buf.toString('base64url');
 
@@ -390,7 +398,7 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
     async status(name, url) {
       const f = flows.get(name);
       if (f && f.url === url) return f.state === 'pending' ? { state: 'pending' } : { state: 'error', reason: f.error ?? '' };
-      const rec = (await load())[name];
+      const rec = own(await load(), name);
       if (!rec || rec.url !== url) return { state: 'none' };
       if (rec.status === 'expired') return { state: 'expired' };
       if (rec.status === 'rejected') {
@@ -405,7 +413,7 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       const tokens: Record<string, string> = {};
       const expired: string[] = [];
       for (const [name, def] of Object.entries(defs)) {
-        const rec = store[name];
+        const rec = own(store, name);
         if (!rec || !def.url || rec.url !== def.url) continue;
         // 거절된 토큰은 구워 봐야 또 401 이다 — 만료와 같이 "인증 필요"로 낸다.
         if (rec.status !== 'ok') { expired.push(name); continue; }
@@ -427,7 +435,7 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
     },
 
     async reportRejected(name, report) {
-      const rec = (await load())[name];
+      const rec = own(await load(), name);
       if (!rec) return { action: 'ignored', reason: 'unknown' };
       if (rec.status !== 'ok') return { action: 'ignored', reason: 'not_ok' };
       if (!(report.turnStartedAtMs >= rec.updatedAt)) return { action: 'ignored', reason: 'stale' };
