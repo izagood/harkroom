@@ -427,7 +427,7 @@ class StringsKo implements Strings {
   String get mentionDeniedLine => '{handles} 를 부르지 않았다 — 부를 수 있는 범위 밖이다. 그 에이전트의 소유자에게 물어라.';
 
   @override
-  String get linkConfirmTitle => '이 주소를 연다';
+  String get linkConfirmTitle => '이 링크가 여는 곳';
 
   @override
   String get linkConfirmOpen => '열기';

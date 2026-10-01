@@ -428,7 +428,7 @@ class StringsEn implements Strings {
   String get mentionDeniedLine => 'Did not call {handles} — outside who may invoke them. Ask the owner of that agent.';
 
   @override
-  String get linkConfirmTitle => 'This opens';
+  String get linkConfirmTitle => 'Where this link goes';
 
   @override
   String get linkConfirmOpen => 'Open';
