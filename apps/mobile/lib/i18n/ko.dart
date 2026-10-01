@@ -462,7 +462,7 @@ class StringsKo implements Strings {
   String get communityCancel => '취소';
 
   @override
-  String get communitySignOutOne => '로그아웃: {name}';
+  String get communitySignOutOne => '{name} 에서 로그아웃';
 
   @override
   String get communitySwitchTo => '이 커뮤니티로 옮기기';
@@ -505,4 +505,10 @@ class StringsKo implements Strings {
 
   @override
   String get communityManage => '커뮤니티 관리';
+
+  @override
+  String get communitySwitcherLabel => '커뮤니티 전환, {name}';
+
+  @override
+  String get communityOthersWaiting => ', 다른 커뮤니티에 나를 기다리는 것이 있다';
 }

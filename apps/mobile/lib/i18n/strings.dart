@@ -292,6 +292,12 @@ abstract class Strings {
   /// 전환 시트 — 나 탭의 커뮤니티 목록으로 간다.
   String get communityManage;
 
+  /// 머리 타일의 스크린리더 이름. `{name}` 이 바뀐다.
+  String get communitySwitcherLabel;
+
+  /// 머리 타일에 점이 있을 때 이름 뒤에 붙는다(데스크탑 rail.community.tileOthers 와 같은 뜻).
+  String get communityOthersWaiting;
+
   /// 만료된 커뮤니티 행의 부제.
   String get communityExpiredSubtitle;
 
@@ -633,6 +639,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'communityCurrent': s.communityCurrent,
       'communityExpired': s.communityExpired,
       'communityManage': s.communityManage,
+      'communitySwitcherLabel': s.communitySwitcherLabel,
+      'communityOthersWaiting': s.communityOthersWaiting,
       'communityExpiredSubtitle': s.communityExpiredSubtitle,
       'communitySignOutAll': s.communitySignOutAll,
       'communitySignOutAllConfirm': s.communitySignOutAllConfirm,

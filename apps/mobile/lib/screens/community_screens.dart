@@ -390,7 +390,17 @@ class CommunityHeader extends StatelessWidget {
     final app = context.app;
     final k = context.tokens;
     final c = app.activeCommunity!;
-    return InkWell(
+    final t = context.t;
+    // 스크린리더에는 「커뮤니티 전환, acme」 — 이름만 읽히면 무엇을 하는 버튼인지 모른다. 점은 그림이라
+    // 읽히지 않으므로 뜻을 말로 붙인다(designer #1056).
+    final label = t.communitySwitcherLabel.replaceAll('{name}', c.displayLabel) +
+        (app.othersWaiting ? t.communityOthersWaiting : '');
+    return Semantics(
+      key: const Key('community-header-semantics'),
+      button: true,
+      label: label,
+      excludeSemantics: true,
+      child: InkWell(
       key: const Key('community-header'),
       borderRadius: BorderRadius.circular(8),
       onTap: () => showCommunitySwitcher(context),
@@ -433,6 +443,7 @@ class CommunityHeader extends StatelessWidget {
             Icon(Icons.expand_more, size: 20, color: k.mute),
           ],
         ),
+      ),
       ),
     );
   }

@@ -110,6 +110,7 @@ class AppState extends ChangeNotifier {
     ApiClient Function(String baseUrl, String? token)? apiFactory,
     WsConnector? connector,
     this.otherPollEvery = const Duration(seconds: 60),
+    this.otherRequestTimeout = const Duration(seconds: 10),
   })  : _sessions = sessions,
         _apiFactory = apiFactory ?? ((b, t) => ApiClient(baseUrl: b, token: t)),
         _connector = connector ?? RealWsConnection.connect;
@@ -155,6 +156,13 @@ class AppState extends ChangeNotifier {
 
   /// 다른 커뮤니티 수를 다시 받는 간격(홈 화면이 이 간격으로 [refreshOtherCounts] 를 부른다).
   final Duration otherPollEvery;
+
+  /// 다른 커뮤니티 하나에 묻는 시한. 한 서버가 답 없이 매달려도 다음 차례를 막지 않는다(security #1056).
+  final Duration otherRequestTimeout;
+
+  /// 지금 다른 커뮤니티 수를 받는 중인가. 앞 차례가 안 끝났으면 다음 차례는 건너뛴다 — 매달린 서버가
+  /// 있을 때 60초마다 차례가 쌓이지 않게(security #1056).
+  bool _countingOthers = false;
 
   /// 다른 커뮤니티 중 하나라도 기다리는 것이 있나 — 머리 타일의 점.
   bool get othersWaiting => otherWaiting.values.any((n) => n > 0);
@@ -563,7 +571,16 @@ class AppState extends ChangeNotifier {
   /// 커뮤니티 주소로만 간다. 401 이면 그 커뮤니티를 만료로 표시한다 — 전환 시트가 「다시 로그인」을
   /// 미리 보인다. 끊김·5xx 는 앞 수를 그대로 둔다(틀린 0 보다 낡은 수가 낫다).
   Future<void> refreshOtherCounts() async {
-    if (phase != AppPhase.ready) return;
+    if (phase != AppPhase.ready || _countingOthers) return;
+    _countingOthers = true;
+    try {
+      await _countOthers();
+    } finally {
+      _countingOthers = false;
+    }
+  }
+
+  Future<void> _countOthers() async {
     final targets = [
       for (final c in communities)
         if (c.key != activeKey && !c.isExpired) c,
@@ -573,12 +590,15 @@ class AppState extends ChangeNotifier {
     for (final c in targets) {
       final api = _apiFactory(c.baseUrl, c.token);
       try {
-        final entries = await api.inbox(unreadOnly: true);
+        final entries = await api.inbox(unreadOnly: true).timeout(otherRequestTimeout);
         // 기다리는 사이 그 커뮤니티로 옮겼거나 뺐다 — 남의 자리에 수를 쓰지 않는다.
         if (c.key == activeKey || !communities.any((x) => x.key == c.key)) continue;
         otherWaiting[c.key] = entries.where((e) => e.isUnread).length;
       } on ApiError catch (e) {
-        if (e.isCredentialFailure && c.key != activeKey) {
+        // 물을 때 쓴 토큰이 **지금도 그 행의 토큰일 때만** 만료로 친다. 그 사이 사람이 다시 로그인해
+        // 토큰이 바뀌었으면 늦게 온 401 은 옛 토큰의 것이다 — 새 토큰을 비우면 안 된다(security #1056).
+        final now = communities.where((x) => x.key == c.key).firstOrNull;
+        if (e.isCredentialFailure && c.key != activeKey && now?.token == c.token) {
           otherWaiting.remove(c.key);
           await _markExpired(c.key);
         }
