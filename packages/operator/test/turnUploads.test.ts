@@ -31,8 +31,9 @@ describe('turnUploads', () => {
 
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'hk-up-'));
-    workspace = join(base, 'workspace');
-    mkdirSync(workspace);
+    // 실제 모양과 같게 — `<상태 디렉터리>/workspaces/harkroom-<agent>-<hash>`.
+    workspace = join(base, 'workspaces', 'harkroom-agent1-1234abcd');
+    mkdirSync(workspace, { recursive: true });
     calls = [];
     status = 201;
     up = createTurnUploads({
@@ -86,7 +87,7 @@ describe('turnUploads', () => {
 
   it('refuses a file outside the workspace', async () => {
     writeFileSync(join(base, 'secret.txt'), 'outside');
-    for (const path of ['../secret.txt', join(base, 'secret.txt')]) {
+    for (const path of ['../../secret.txt', join(base, 'secret.txt')]) {
       const r = resultOf(await up.maybeHandle('agent-1', uploadCall({ path }, workspace)));
       expect(r.isError).toBe(true);
       expect(r.body.error.code).toBe('outside_workspace');
@@ -103,12 +104,24 @@ describe('turnUploads', () => {
     expect(calls).toHaveLength(0);
   });
 
-  // 기준 디렉터리 이름의 접두만 같은 형제(`workspace-evil`)는 안이 아니다.
+  // 기준 디렉터리 이름의 접두만 같은 형제(`…-evil`)는 안이 아니다.
   it('does not treat a sibling directory sharing the prefix as inside', async () => {
-    mkdirSync(join(base, 'workspace-evil'));
-    writeFileSync(join(base, 'workspace-evil', 'x.png'), PNG);
-    const r = resultOf(await up.maybeHandle('agent-1', uploadCall({ path: '../workspace-evil/x.png' }, workspace)));
+    const evil = `${workspace}-evil`;
+    mkdirSync(evil);
+    writeFileSync(join(evil, 'x.png'), PNG);
+    const r = resultOf(await up.maybeHandle('agent-1', uploadCall({ path: join(evil, 'x.png') }, workspace)));
     expect(r.body.error.code).toBe('outside_workspace');
+  });
+
+  // 못 잰 하네스가 브릿지를 워크스페이스가 아닌 곳(홈 등)에서 띄우면 그 아래 전부가 "안"이 되면 안 된다.
+  it('refuses when the bridge runs outside a turn workspace (fail-closed)', async () => {
+    writeFileSync(join(base, 'notes.txt'), 'x');
+    const r = resultOf(await up.maybeHandle('agent-1', uploadCall({ path: 'notes.txt' }, base)));
+    expect(r.body.error.code).toBe('no_workspace');
+    mkdirSync(join(base, 'repo'));
+    writeFileSync(join(base, 'repo', 'a.png'), PNG);
+    expect(resultOf(await up.maybeHandle('agent-1', uploadCall({ path: 'a.png' }, join(base, 'repo')))).body.error.code).toBe('no_workspace');
+    expect(calls).toHaveLength(0);
   });
 
   it('refuses when the bridge did not report its workspace (old bridge)', async () => {

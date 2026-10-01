@@ -22,7 +22,7 @@
 import { randomUUID } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import { open, realpath, type FileHandle } from 'node:fs/promises';
-import { basename, extname, isAbsolute, resolve, sep } from 'node:path';
+import { basename, dirname, extname, isAbsolute, resolve, sep } from 'node:path';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 
 export const ATTACHMENT_UPLOAD_TOOL = 'attachment.upload';
@@ -93,11 +93,27 @@ function multipart(filename: string, contentType: string, bytes: Buffer): { body
 
 type Resolved = { ok: true; path: string } | { ok: false; code: string; message: string };
 
+/**
+ * 기준 디렉터리가 **턴 워크스페이스 모양**인가 — `<에이전트 상태 디렉터리>/workspaces/harkroom-<…>`
+ * (`agent/workspace.ts` 의 `workspaceName`, `stateDir.ts` 의 `workspaceBaseDir`).
+ *
+ * 왜 보나: 기준은 브릿지가 실어 온 cwd 다. claude 는 턴 워크스페이스임을 실측했지만 못 잰 하네스가 브릿지를
+ * 홈 디렉터리 같은 곳에서 띄우면, 이 검사 없이는 **그 아래 전부**가 "안"이 된다. 모양이 아니면 올리지 않는다
+ * (fail-closed). 에이전트에 따로 작업 디렉터리를 정해 둔 경우도 여기서 거절된다 — 파일을 턴 워크스페이스로
+ * 복사하면 된다.
+ */
+export function looksLikeTurnWorkspace(root: string): boolean {
+  return basename(root).startsWith('harkroom-') && basename(dirname(root)) === 'workspaces';
+}
+
 /** `path` 를 `cwd` 아래의 실제 파일로 푼다. 둘 다 realpath 로 — 심링크로 밖을 가리키면 거절한다. */
 export async function resolveInsideWorkspace(cwd: string, path: string): Promise<Resolved> {
   let root: string;
   try { root = await realpath(cwd); } catch {
     return { ok: false, code: 'no_workspace', message: 'the turn workspace could not be resolved' };
+  }
+  if (!looksLikeTurnWorkspace(root)) {
+    return { ok: false, code: 'no_workspace', message: 'this harness does not run in a harkroom turn workspace; uploads are disabled here' };
   }
   let target: string;
   try { target = await realpath(isAbsolute(path) ? path : resolve(root, path)); } catch {
