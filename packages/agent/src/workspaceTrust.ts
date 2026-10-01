@@ -18,6 +18,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
+import { markClaudeAccountGates } from '@harkroom/shared/claudeGates';
+
 import { adapterFor } from './adapters/index.js';
 import type { AgentHarness } from '@harkroom/shared';
 
@@ -136,12 +138,26 @@ export async function ensureDangerousModeAccepted(opts: {
   harness: AgentHarness;
   claudeConfigDir: string | null;
 }): Promise<void> {
+  if (opts.harness !== 'claude-code') return;
   try {
-    if (opts.harness === 'claude-code') await acceptDangerousModeForClaude(opts.claudeConfigDir);
+    await acceptDangerousModeForClaude(opts.claudeConfigDir);
   } catch (err) {
     console.error(
       '[workspaceTrust] bypassPermissions 수락 기록 실패(턴은 계속한다 — 경고 화면이 뜨면 '
         + '준비 대기가 상한에서 사람을 부른다): '
+        + (err instanceof Error ? err.message : String(err)),
+    );
+  }
+  // 첫 실행 테마 선택·auto mode 안내 창(2026-10-01, `@harkroom/shared/claudeGates` 머리 주석).
+  // **풀 계정에만 적는다** — 풀이 없으면(`null`) 사람이 평소 쓰는 시스템 기본 로그인이고, 그 설정은
+  // 사람이 직접 지나온 것이라 러너가 손댈 이유가 없다.
+  if (opts.claudeConfigDir === null) return;
+  try {
+    await markClaudeAccountGates(opts.claudeConfigDir);
+  } catch (err) {
+    console.error(
+      '[workspaceTrust] 계정 관문(첫 실행·auto mode 안내) 기록 실패(턴은 계속한다 — 관문이 뜨면 '
+        + '준비 대기가 그 사실을 드러낸다): '
         + (err instanceof Error ? err.message : String(err)),
     );
   }

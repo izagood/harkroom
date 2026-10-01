@@ -12,7 +12,8 @@
     "./runnerLink": "./src/runnerLink.ts",
     "./claudePools": "./src/claudePools.ts",
     "./codexAccounts": "./src/codexAccounts.ts",
-    "./claudeUsage": "./src/claudeUsage.ts"
+    "./claudeUsage": "./src/claudeUsage.ts",
+    "./claudeGates": "./src/claudeGates.ts"
   },
   "scripts": { "test": "vitest run", "typecheck": "tsc -p ." },
   "devDependencies": {

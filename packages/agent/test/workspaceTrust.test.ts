@@ -183,3 +183,38 @@ describe('ensureDangerousModeAccepted — claude', () => {
     })).resolves.toBeUndefined();
   });
 });
+
+// 첫 실행 테마 선택·auto mode 안내 창(2026-10-01). 규칙 자체는 shared `claudeGates.test.ts` 가
+// 재고, 여기서는 **러너가 그것을 부르는 자리와 범위**를 잰다.
+describe('ensureDangerousModeAccepted — 계정 관문(첫 실행·auto mode 안내)', () => {
+  it('풀 계정의 .claude.json 에 두 키를 적는다 — 하네스가 담아 둔 값은 그대로', async () => {
+    const configDir = await mkdtemp(join(tmpdir(), 'gates-claude-'));
+    await writeFile(join(configDir, '.claude.json'), JSON.stringify({
+      numStartups: 3, autoModeEnvSetup: { denials: 5 }, projects: { [WS]: { hasTrustDialogAccepted: true } },
+    }));
+    await ensureDangerousModeAccepted({ harness: 'claude-code', claudeConfigDir: configDir });
+
+    const doc = JSON.parse(await readFile(join(configDir, '.claude.json'), 'utf8'));
+    expect(doc).toMatchObject({
+      numStartups: 3,
+      hasCompletedOnboarding: true,
+      autoModeEnvSetup: { denials: 5, dismissed: true },
+      projects: { [WS]: { hasTrustDialogAccepted: true } },
+    });
+  });
+
+  it('codex 에는 적지 않는다', async () => {
+    const configDir = await mkdtemp(join(tmpdir(), 'gates-codex-'));
+    await ensureDangerousModeAccepted({ harness: 'codex', claudeConfigDir: configDir });
+    expect(existsSync(join(configDir, '.claude.json'))).toBe(false);
+  });
+
+  it('깨진 .claude.json 은 건드리지 않는다 — 던지지도 않는다', async () => {
+    const configDir = await mkdtemp(join(tmpdir(), 'gates-broken-'));
+    await writeFile(join(configDir, '.claude.json'), '{ broken');
+    await expect(ensureDangerousModeAccepted({ harness: 'claude-code', claudeConfigDir: configDir }))
+      .resolves.toBeUndefined();
+    expect(await readFile(join(configDir, '.claude.json'), 'utf8')).toBe('{ broken');
+  });
+});
+

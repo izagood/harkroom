@@ -108,3 +108,48 @@ describe('관문이 덮인 화면에는 쓰지 않는다 (PTY 행동)', () => {
     expect(Buffer.concat(chunks).toString('utf8')).not.toContain('[200~');
   }, 20_000);
 });
+
+// ── 부를 사람이 없으면 관문 앞에서 상한까지 서 있지 않는다(2026-10-01).
+//
+// 풀의 앞 계정이 첫 실행 테마 선택에 막혀 배정마다 준비 상한(60초)을 다 태운 뒤에야 다음 계정
+// 으로 넘어갔다 — 그 화면은 번호 없이 `❯ ✔ Dark mode` 를 그려 관문으로도 안 보였다.
+describe('관문을 보면 상한을 기다리지 않는다 (부를 사람이 없을 때)', () => {
+  const themePlan = () => ({
+    command: process.execPath, args: [fake],
+    env: {
+      FAKE_MODE: 'gate-only',
+      FAKE_SCREEN: new URL('./fixtures/claude-tui-onboarding-theme-2.1.286.txt', import.meta.url).pathname,
+    },
+    stdinFile: null,
+  });
+
+  it('테마 선택 화면이 gateFailMs 동안 이어지면 바로 PromptNotDelivered — 아무것도 안 쓴다', async () => {
+    const chunks: Buffer[] = [];
+    const startedAt = Date.now();
+    await expect(runPtyTurn(themePlan(), {
+      cwd: process.cwd(),
+      timeoutMs: 20_000,
+      onData: (c) => chunks.push(c),
+      injectPrompt: { text: 'NEVER_SEND_THIS', readyTimeoutMs: 15_000, gateFailMs: 300 },
+    })).rejects.toThrow(/준비 신호/);
+    // 상한(15초)이 아니라 관문 시계로 접혔다.
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+    expect(Buffer.concat(chunks).toString('utf8')).not.toContain('NEVER_SEND_THIS');
+  }, 20_000);
+
+  it('부를 사람이 있으면 빨리 접지 않는다 — 화면을 살려 두고 상한에서 부른다', async () => {
+    const called: string[] = [];
+    const result = await runPtyTurn(themePlan(), {
+      cwd: process.cwd(),
+      timeoutMs: 20_000,
+      injectPrompt: {
+        text: 'NEVER_SEND_THIS', readyTimeoutMs: 1_500, gateFailMs: 200,
+        onAttention: (_screen, kind) => called.push(kind),
+      },
+    });
+    expect(called).toContain('startup');
+    // 가짜 하네스의 안전망으로 끝났다 = 러너가 죽이지 않았다.
+    expect(result.exitCode).toBe(22);
+  }, 20_000);
+});
+

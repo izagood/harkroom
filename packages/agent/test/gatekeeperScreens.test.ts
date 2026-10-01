@@ -26,6 +26,7 @@ const read = (name: string) => readFileSync(join(fixtures, name), 'utf8');
 describe('첫 실행 관문 화면은 준비가 아니다', () => {
   const 관문들 = [
     ['① 온보딩 테마 선택', 'claude-tui-onboarding-theme.txt'],
+    ['① 온보딩 테마 선택(2.1.286 — 번호 없이 `❯ ✔`)', 'claude-tui-onboarding-theme-2.1.286.txt'],
     ['② 폴더 신뢰', 'claude-tui-trust-modal.txt'],
     ['③ bypassPermissions 수락', 'claude-tui-bypass-warning.txt'],
   ] as const;
@@ -33,6 +34,14 @@ describe('첫 실행 관문 화면은 준비가 아니다', () => {
   for (const [label, file] of 관문들) {
     it(`${label} 화면에서 준비 신호가 거짓이다`, () => {
       expect(looksReadyForPrompt(read(file))).toBe(false);
+    });
+  }
+
+  // **관문으로도 보여야 한다**(2026-10-01). 준비가 아니기만 하면 앞 계정이 준비 상한(60초)을 다
+  // 태운 뒤에야 넘어간다 — 관문으로 보이면 부를 사람이 없을 때 곧바로 다음 계정으로 간다.
+  for (const [label, file] of 관문들) {
+    it(`${label} 화면은 관문이다`, () => {
+      expect(looksLikeGate(read(file))).toBe(true);
     });
   }
 

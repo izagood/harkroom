@@ -11,7 +11,7 @@
  */
 import { EventEmitter } from 'node:events';
 import { mkdtempSync } from 'node:fs';
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -117,6 +117,27 @@ describe('loginStart', () => {
     await expect(h.port.loginStart('work', 'aria')).rejects.toThrow();
     // 다른 계정은 괜찮다.
     await expect(h.port.loginStart('work', 'cedar')).resolves.toBeTruthy();
+  });
+});
+
+describe('로그인 성공 직후 계정 관문을 적는다 (2026-10-01)', () => {
+  // 러너보다 먼저 사람이 이 계정을 터미널로 열 수 있다 — 그때 첫 실행 테마 선택부터 만나지 않게.
+  it('loggedIn 으로 끝나면 .claude.json 에 hasCompletedOnboarding·autoModeEnvSetup.dismissed', async () => {
+    const h = harness({ loggedIn: true });
+    await h.port.loginStart('work', 'acct-0a1b2c3d');
+    h.children[0]!.emit('exit', 0, null);
+    await vi.waitFor(() => expect(h.events.some((e) => e.done)).toBe(true));
+    const doc = JSON.parse(await readFile(join(h.root, 'work', 'acct-0a1b2c3d', '.claude.json'), 'utf8'));
+    expect(doc).toMatchObject({ hasCompletedOnboarding: true, autoModeEnvSetup: { dismissed: true } });
+  });
+
+  it('미로그인으로 끝나면 적지 않는다 — 디렉터리는 원래대로 치운다', async () => {
+    const h = harness({ loggedIn: false });
+    await mkdir(join(h.root, 'work', 'aria'), { recursive: true });
+    await h.port.loginStart('work', 'aria');
+    h.children[0]!.emit('exit', 1, null);
+    await vi.waitFor(() => expect(h.events.some((e) => e.done)).toBe(true));
+    await expect(stat(join(h.root, 'work', 'aria', '.claude.json'))).rejects.toThrow();
   });
 });
 
