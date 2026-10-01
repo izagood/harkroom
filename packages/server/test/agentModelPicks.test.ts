@@ -258,4 +258,40 @@ describe('agent picks a model for the agent it calls (087)', () => {
     // 바꾸지 않는 지정(같은 값)·없던 지정 풀기는 세지 않는다.
     void other;
   });
+  it('목록을 좁히면 밖으로 나간 에이전트 지정 수를 알려 주고, clearOutside 면 그것만 푼다(사람 지정·목록 안은 남는다)', async () => {
+    const narrow = await createAgent(app, adminToken, 'narrow');
+    const put = (token: string, payload: Record<string, unknown>) => app.inject({
+      method: 'PUT', url: `/accounts/agents/${narrow.accountId}/pickable-models`, headers: auth(token), payload,
+    });
+    expect((await put(adminToken, { models: [{ model: 'fable', efforts: ['medium', 'high'] }, { model: 'opus' }] })).statusCode).toBe(200);
+    const keep = (await say({ body: '@narrow 좁힘-안', agentModels: [{ agentId: narrow.accountId, model: 'fable', effort: 'medium' }] })).message.id as string;
+    const hi = (await say({ body: '@narrow 좁힘-밖1', agentModels: [{ agentId: narrow.accountId, model: 'fable', effort: 'high' }] })).message.id as string;
+    const op = (await say({ body: '@narrow 좁힘-밖2', agentModels: [{ agentId: narrow.accountId, model: 'opus' }] })).message.id as string;
+    // 사람이 정한 행은 목록 밖 값이어도 정리 대상이 아니다(결정 4).
+    const human = (await say({ body: '@narrow 좁힘-사람' })).message.id as string;
+    expect((await app.inject({
+      method: 'PUT', url: `/channels/${channelId}/threads/${human}/agent-models/${narrow.accountId}`, headers: auth(member.token), payload: { model: 'opus' },
+    })).statusCode).toBe(200);
+
+    const narrowed = { models: [{ model: 'fable', efforts: ['medium'] }] };
+    const first = await put(adminToken, narrowed);
+    expect(first.json()).toMatchObject({ models: [{ model: 'fable', efforts: ['medium'] }], outside: 2, cleared: 0 });
+    expect(await rowOf(hi, narrow.accountId)).toMatchObject({ set_by_kind: 'agent' });
+
+    // 소유자가 아니면 정리도 못 한다 — 목록 저장과 같은 문을 지난다.
+    const byMember = await put(member.token, { ...narrowed, clearOutside: true });
+    expect(byMember.statusCode).toBe(403);
+    expect(await rowOf(op, narrow.accountId)).toMatchObject({ set_by_kind: 'agent' });
+
+    const second = await put(adminToken, { ...narrowed, clearOutside: true });
+    expect(second.json()).toMatchObject({ outside: 0, cleared: 2 });
+    expect(await rowOf(hi, narrow.accountId)).toBeUndefined();
+    expect(await rowOf(op, narrow.accountId)).toBeUndefined();
+    expect(await rowOf(keep, narrow.accountId)).toEqual({ model: 'fable', effort: 'medium', set_by_kind: 'agent' });
+    expect(await rowOf(human, narrow.accountId)).toEqual({ model: 'opus', effort: null, set_by_kind: 'human' });
+    // 풀린 스레드에는 사람 경로와 같은 시스템 줄이 남는다.
+    const sys = await pool.query(
+      `select meta from message where thread_root_id = $1 and kind = 'system' order by created_at desc limit 1`, [hi]);
+    expect(sys.rows[0].meta.threadAgentModel).toMatchObject({ agentId: narrow.accountId, model: null, byKind: 'human' });
+  });
 });
