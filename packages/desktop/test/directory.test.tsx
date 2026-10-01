@@ -191,12 +191,12 @@ describe('Directory (#226)', () => {
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('불러오지 못했다');
     expect(alert.textContent).toContain('boom');
-    expect(screen.queryByText('이 워크스페이스에 아직 계정이 없다')).toBeNull();
+    expect(screen.queryByText('이 커뮤니티에 아직 계정이 없다')).toBeNull();
   });
 
   it('정말 비어 있으면 실패가 아니라 비었다고 말한다', async () => {
     open();
-    await waitFor(() => expect(screen.getByText('이 워크스페이스에 아직 계정이 없다')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('이 커뮤니티에 아직 계정이 없다')).toBeTruthy());
     expect(screen.queryByRole('alert')).toBeNull();
   });
 

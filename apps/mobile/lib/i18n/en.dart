@@ -11,7 +11,7 @@ class StringsEn implements Strings {
   String get appName => 'Harkroom';
 
   @override
-  String get connectTitle => 'Connect to a workspace';
+  String get connectTitle => 'Connect to a community';
 
   @override
   String get connectServerUrlLabel => 'Server address';

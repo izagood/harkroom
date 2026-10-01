@@ -13,7 +13,7 @@ class StringsKo implements Strings {
   String get appName => 'Harkroom';
 
   @override
-  String get connectTitle => '워크스페이스에 연결';
+  String get connectTitle => '커뮤니티에 연결';
 
   @override
   String get connectServerUrlLabel => '서버 주소';

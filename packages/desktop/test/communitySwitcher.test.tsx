@@ -150,8 +150,8 @@ async function openCommunitySettingsInApp(handle: string) {
   expect(screen.getByTestId('me-row').textContent).toContain(handle);
   fireEvent.click(screen.getByTestId('me-row'));
   fireEvent.click(await screen.findByText('Settings'));
-  fireEvent.click(await screen.findByRole('button', { name: '커뮤니티' }));
-  expect(await screen.findByRole('heading', { name: '커뮤니티' })).toBeTruthy();
+  fireEvent.click(await screen.findByRole('button', { name: '커뮤니티 목록' }));
+  expect(await screen.findByRole('heading', { name: '커뮤니티 목록' })).toBeTruthy();
 }
 
 beforeEach(() => {
@@ -463,7 +463,7 @@ describe('커뮤니티 추가 (#165 결정 3)', () => {
 
     // **설정 화면이 그대로 서 있다.** `phase` 를 `connect` 로 되돌렸다면 이 화면 자체가
     // 사라지고 접속 화면 하나만 남는다 — 그것이 이 이슈가 막는 결함이다.
-    expect(screen.getByRole('heading', { name: '커뮤니티' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '커뮤니티 목록' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByText('Sign in to another community')).toBeNull());
@@ -487,7 +487,7 @@ describe('커뮤니티 추가 (#165 결정 3)', () => {
     // 이미 서버가 있는 사람이 새 서버를 부트스트랩하는 것은 다른 일이다 — 감춘다.
     expect(screen.queryByText('First run? Create the admin account')).toBeNull();
     // 초대 가입은 남는다 — 초대받은 커뮤니티를 하나 더 붙이는 것은 같은 일이다.
-    expect(screen.getByText('Have an invite token? Join this workspace')).toBeTruthy();
+    expect(screen.getByText('Have an invite token? Join this community')).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('Server URL'), { target: { value: 'https://b.example' } });
     fireEvent.change(screen.getByLabelText('Login ID'), { target: { value: 'me-b' } });
@@ -634,7 +634,7 @@ describe('커뮤니티 제거 (#165 결정 4)', () => {
 
     // 그때는 정말 세션이 없다 — 여기서만 `phase` 가 `connect` 로 돌아간다.
     expect(await screen.findByText('Server URL')).toBeTruthy();
-    expect(screen.queryByRole('heading', { name: '커뮤니티' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: '커뮤니티 목록' })).toBeNull();
   });
 });
 

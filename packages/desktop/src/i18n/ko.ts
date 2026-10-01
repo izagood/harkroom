@@ -89,14 +89,14 @@ export const ko = {
   'settings.back': '앱으로 돌아가기',
   'settings.group.me': '나',
   'settings.group.device': '이 기기',
-  'settings.group.workspace': '워크스페이스',
+  'settings.group.workspace': '커뮤니티',
   'settings.group.readOnly': '읽기 전용',
   'settings.group.agents': '에이전트',
   'settings.nav.profile': '프로필',
   'settings.nav.notifications': '알림',
   'settings.nav.messages': '메시지',
   'settings.nav.appearance': '모양과 언어',
-  'settings.nav.communities': '커뮤니티',
+  'settings.nav.communities': '커뮤니티 목록',
   'settings.nav.workspace': '일반',
   'settings.nav.agents': '목록',
   'settings.nav.agent-defaults': '새 에이전트 기본값',
@@ -110,7 +110,7 @@ export const ko = {
   'settings.nav.automations': '자동화',
   'settings.nav.gallery': '컴포넌트 갤러리',
   'settings.desc.communities': '이 기기가 아는 harkroom 서버들. 서버마다 채널·메시지·연결을 따로 가진다.',
-  'settings.desc.integrations': '워크스페이스가 바깥 도구와 잇는 곳 — avcs 투영과, 에이전트가 붙일 수 있는 MCP 서버.',
+  'settings.desc.integrations': '커뮤니티가 바깥 도구와 잇는 곳 — avcs 투영과, 에이전트가 붙일 수 있는 MCP 서버.',
   'integrations.projection': 'avcs 투영',
   'integrations.mcp': 'MCP 서버',
   'settings.desc.messages': '이 기기에만 저장되는 설정이다.',
@@ -323,8 +323,8 @@ export const ko = {
   'profileAvatar.removeCancel': '취소',
   'profileAvatar.removeConfirm': '정말 지우기',
 
-  'workspaceIcon.description': '이 워크스페이스의 설정이다. 모든 멤버에게 똑같이 걸린다.',
-  'workspaceIcon.label': '워크스페이스 아이콘',
+  'workspaceIcon.description': '이 커뮤니티의 설정이다. 모든 멤버에게 똑같이 걸린다.',
+  'workspaceIcon.label': '커뮤니티 아이콘',
   'workspaceIcon.adminOnly': '아이콘은 owner·admin 만 바꿀 수 있다. 없으면 커뮤니티 레일에 이름 첫 글자가 나온다.',
 
   'profileName.apply': '적용',
@@ -360,7 +360,7 @@ export const ko = {
   'skills.group.pending': '대기 중',
   'skills.group.pendingEmpty': '승인을 기다리는 스킬이 없다',
   'skills.group.subtitle':
-    '에이전트가 제안한 워크스페이스 스킬. 승인하면 본문이 모든 에이전트의 스킬 파일로 깔리고, 하네스가 필요할 때 읽는다.',
+    '에이전트가 제안한 커뮤니티 스킬. 승인하면 본문이 모든 에이전트의 스킬 파일로 깔리고, 하네스가 필요할 때 읽는다.',
   'skills.list.loadFailed': '스킬 목록을 불러오지 못했다',
   'skills.list.loading': '불러오는 중…',
   'skills.list.refresh': '새로고침',
@@ -927,8 +927,8 @@ export const ko = {
   'sidebar.find.none': '찾는 것이 없다',
   'sidebar.find.placeholder': '채널 · 사람 · 에이전트',
 
-  'sidebar.members.adminBadge': '워크스페이스 admin',
-  'sidebar.members.adminBadgeTitle': '워크스페이스 admin — 채널 역할이 아니다',
+  'sidebar.members.adminBadge': '커뮤니티 admin',
+  'sidebar.members.adminBadgeTitle': '커뮤니티 admin — 채널 역할이 아니다',
   'sidebar.members.agentDisabled': '비활성',
   'sidebar.members.autoMentionBadge': '자동',
   'sidebar.members.autoMentionMode': '이 채널이 @{handle} 를 데리는 방식',
@@ -1649,7 +1649,7 @@ export const ko = {
 
   'directory.close': '디렉터리 닫기',
   'directory.disabled': '비활성',
-  'directory.empty': '이 워크스페이스에 아직 계정이 없다',
+  'directory.empty': '이 커뮤니티에 아직 계정이 없다',
   'directory.label': '디렉터리',
   'directory.listFailed': '계정 목록을 불러오지 못했다 — {reason}',
   'directory.loading': '불러오는 중…',
@@ -1954,7 +1954,7 @@ export const ko = {
   'invite.failed': '초대 토큰을 발급하지 못했다',
   'invite.notAdmin': '이 화면은 admin 만 볼 수 있다',
   'invite.note':
-    '초대 토큰을 만들어 다른 사람을 이 워크스페이스로 부를 수 있다. 토큰은 발급 직후 한 번만 '
+    '초대 토큰을 만들어 다른 사람을 이 커뮤니티로 부를 수 있다. 토큰은 발급 직후 한 번만 '
     + '보이고 다시 볼 수 없다. 한 번 쓰면 소진된다.',
   'invite.tokenNextStep': '받는 사람이 가입할 때 이 토큰이 필요하다. 지금 복사해 둔다.',
   'invite.tokenWarning': '이 토큰은 지금만 보인다 — 창을 벗어나면 다시 볼 수 없다',

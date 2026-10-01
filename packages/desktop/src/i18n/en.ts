@@ -236,7 +236,7 @@ export const en = {
   'settings.back': 'Back to app',
   'settings.group.me': 'You',
   'settings.group.device': 'This device',
-  'settings.group.workspace': 'Workspace',
+  'settings.group.workspace': 'Community',
   'settings.group.readOnly': 'read-only',
   'settings.group.agents': 'Agents',
   'settings.nav.profile': 'Profile',
@@ -257,7 +257,7 @@ export const en = {
   'settings.nav.automations': 'Automations',
   'settings.nav.gallery': 'Component gallery',
   'settings.desc.communities': 'The harkroom servers this device knows. Each one keeps its own channels, messages and connection.',
-  'settings.desc.integrations': 'Where the workspace connects to outside tools — the avcs projection, and the MCP servers agents may attach.',
+  'settings.desc.integrations': 'Where the community connects to outside tools — the avcs projection, and the MCP servers agents may attach.',
   'integrations.projection': 'avcs projection',
   'integrations.mcp': 'MCP servers',
   'settings.desc.messages': 'These choices live on this device only.',
@@ -663,8 +663,8 @@ export const en = {
   'profileAvatar.removeConfirm': 'Delete for good',
 
   // 워크스페이스 아이콘 — 커뮤니티 레일의 사진(설정 › Workspace).
-  'workspaceIcon.description': 'Settings for this workspace, shared by every member.',
-  'workspaceIcon.label': 'Workspace icon',
+  'workspaceIcon.description': 'Settings for this community, shared by every member.',
+  'workspaceIcon.label': 'Community icon',
   'workspaceIcon.adminOnly': 'Only owners and admins can change the icon. Without one, the community rail shows the first letter of the name.',
 
   'profileName.apply': 'Apply',
@@ -716,7 +716,7 @@ export const en = {
   'skills.group.pending': 'Pending',
   'skills.group.pendingEmpty': 'No skills waiting for approval',
   'skills.group.subtitle':
-    'Workspace skills proposed by agents. Approving installs the body as a skill file for every agent, which the harness reads when it needs it.',
+    'Community skills proposed by agents. Approving installs the body as a skill file for every agent, which the harness reads when it needs it.',
   'skills.list.loadFailed': 'The skill list did not arrive',
   'skills.list.loading': 'Loading…',
   'skills.list.refresh': 'Refresh',
@@ -1782,9 +1782,9 @@ export const en = {
    */
   'sidebar.find.placeholder': 'Channels · people · agents',
 
-  'sidebar.members.adminBadge': 'Workspace admin',
+  'sidebar.members.adminBadge': 'Community admin',
   /** 채널 역할이 아니라 계정 속성이다 — 원래 `title` 이 그것을 말하고 있었다. */
-  'sidebar.members.adminBadgeTitle': 'Workspace admin — not a channel role',
+  'sidebar.members.adminBadgeTitle': 'Community admin — not a channel role',
   /**
    * 꺼진 에이전트 배지. **`Off` 가 아니다** — 이것은 자동 멘션 체크박스의 켬/끔이
    * 아니라 **계정 자체가 꺼진 것**이고, 두 상태가 같은 줄에 나란히 선다. 같은 낱말을
@@ -3600,7 +3600,7 @@ export const en = {
 
   'directory.close': 'Close the directory',
   'directory.disabled': 'Disabled',
-  'directory.empty': 'No accounts in this workspace yet',
+  'directory.empty': 'No accounts in this community yet',
   'directory.label': 'Directory',
   'directory.listFailed': 'The account list did not arrive — {reason}',
   'directory.loading': 'Loading…',
@@ -3895,7 +3895,7 @@ export const en = {
   // | 한국어 | 영어 | 왜 |
   // |---|---|---|
   // | 이 화면은 관리자만 볼 수 있습니다 | `Only an admin can see this screen` | `admin` 은 안 옮긴다. 원래 한국어의 `관리자` 가 그 값을 가리키는 말이었고, 이 저장소는 그 자리에 `admin` 을 쓴다(`agents` 머리말) |
-  // | 초대 토큰을 만들어 … 한 번 쓰면 소진됩니다 | `Create an invite token to bring someone into this workspace. The token is shown once, right after it is minted, and never again. It is used up the first time someone signs up with it.` | **세 사실을 다 진다**: 무엇을 하나 · 한 번만 보인다 · 한 번 쓰면 끝이다. 셋 다 되돌릴 수 없는 것에 관한 말이라 하나도 못 뺀다 |
+  // | 초대 토큰을 만들어 … 한 번 쓰면 소진됩니다 | `Create an invite token to bring someone into this community. The token is shown once, right after it is minted, and never again. It is used up the first time someone signs up with it.` | **세 사실을 다 진다**: 무엇을 하나 · 한 번만 보인다 · 한 번 쓰면 끝이다. 셋 다 되돌릴 수 없는 것에 관한 말이라 하나도 못 뺀다 |
   // | 이 토큰은 지금만 보입니다 — 창을 벗어나면 다시 볼 수 없습니다 | `This token is on screen only now — leave this view and it is gone` | **놓치면 되돌릴 수 없다**는 것이 이 줄의 전부다(그 자리 주석이 크기를 안 내린 이유로 적었다) |
   // | 받는 사람이 가입할 때 이 토큰이 필요합니다. 지금 복사해 두세요. | `Whoever you invite needs this token to sign up. Copy it now.` | 뒤 문장이 **지금 할 일**이다 |
   // | 새 토큰 발급 (앞 토큰은 화면에서 사라집니다) | `Mint a new token (the one above disappears)` | 괄호가 **버튼을 누르면 무엇을 잃는지** 말한다(그 자리 주석: 그래서 버튼을 잠그지 않는다) |
@@ -4083,7 +4083,7 @@ export const en = {
   'invite.notAdmin': 'Only an admin can see this screen',
   /** **세 사실을 다 진다** — 무엇을 하나 · 한 번만 보인다 · 한 번 쓰면 끝이다. */
   'invite.note':
-    'Create an invite token to bring someone into this workspace. The token is shown once, right '
+    'Create an invite token to bring someone into this community. The token is shown once, right '
     + 'after it is minted, and never again. It is used up the first time someone signs up with it.',
   'invite.tokenNextStep': 'Whoever you invite needs this token to sign up. Copy it now.',
   /** **놓치면 되돌릴 수 없다**는 것이 이 줄의 전부다. */
