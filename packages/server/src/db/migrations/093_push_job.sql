@@ -11,11 +11,12 @@
 --
 -- `inbox_id` 가 비면 inbox 를 거치지 않는 사유다(`ask` — to:human 물음은 받는 사람이 정해져 있지 않아
 -- inbox 를 만들지 않는다. 차례 주인에게만 보낸다, G4).
+-- 글·inbox·기기가 지워지면 job 도 함께 지운다(cascade). 채널 삭제가 FK 에 걸리지 않고, 지운 글은 어차피 안 보낸다.
 -- `device_id` 가 차 있으면 그 기기 하나만 다시 보내는 재시도다(429·5xx).
 create table push_job (
   id bigint generated always as identity primary key,
   account_id uuid not null references account(id),
-  message_id uuid not null references message(id),
+  message_id uuid not null references message(id) on delete cascade,
   inbox_id bigint references inbox(id) on delete cascade,
   device_id uuid references push_device(id) on delete cascade,
   reason text not null check (reason in ('mention', 'thread_reply', 'dm', 'ask')),
