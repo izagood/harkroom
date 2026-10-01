@@ -201,8 +201,8 @@ function ArtifactCard({ attachment, cover }: { attachment: AttachmentRow; cover:
   const coverOk = cover !== null && canPreview(cover);
   const { url: coverUrl } = useAttachmentUrl(cover?.id ?? '', coverOk);
   const newer = latest > ref.version;
-  // 최신 제목은 #1065(091) 서버부터 싣는다 — 공용 타입은 그 PR 이 더한다. 없으면 툴팁을 생략한다.
-  const latestTitle = (ref as { latestTitle?: string }).latestTitle;
+  // 최신 제목은 #1065(091) 서버부터 싣는다. 없으면 툴팁을 생략한다.
+  const latestTitle = ref.latestTitle;
   return (
     <button
       type="button"
