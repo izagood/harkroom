@@ -5,6 +5,7 @@ import { useT } from '../i18n/useT';
 import { getController } from '../state/controller';
 import { threadRowFor } from '../lib/threadModels';
 import { AgentModelChip } from './AgentModelChip';
+import { GateTerminalButton } from './GateTerminalButton';
 
 /**
  * 실패 카드 — 에이전트가 **스스로 못 끝냈다**(규칙 03).
@@ -66,6 +67,13 @@ export function FailureCard({ message, inThread = false }: {
 
       <div className="flex items-center gap-2 p-2 pt-1.5">
         <TerminalChip account={author} message={message} />
+        {/*
+          **계정 관문**(2026-10-02, 관문 대응 PR-4): 턴 시작 때 그 계정의 설정 확인 화면이 사람을 기다린다.
+          그 계정의 터미널을 열면 사람이 거기서 고르고, 러너가 같은 멘션을 다시 띄운다(#1047).
+        */}
+        {failure.code === 'account_gate' && failure.account && (
+          <GateTerminalButton label={failure.account} agentId={message.authorId} />
+        )}
         {/*
           다시 부르기는 **작성창을 채우는 방식**으로 둔다(완료 보고의 다음 제안 칩과 같은 규약):
           누르자마자 보내면 사람이 무엇이 나갈지 보지 못한 채 러너가 또 돈다. 한 번의 확인을 남긴다.

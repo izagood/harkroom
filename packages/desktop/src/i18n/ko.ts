@@ -1495,6 +1495,13 @@ export const ko = {
 
   'speech.failure.title': '끝내지 못했다',
   'speech.failure.callAgain': '다시 부르기',
+  'gate.terminal.open': '터미널 열기',
+  'gate.terminal.opened': '터미널에서 열었습니다 — 거기서 물음에 답하면 턴이 다시 시작됩니다',
+  'gate.terminal.failed': '터미널을 열지 못했습니다',
+  'gate.terminal.missing': '이 맥에 없는 계정입니다',
+  'gate.terminal.ambiguous': '같은 이름의 계정이 여러 풀에 있습니다 — 설정 › Claude 계정에서 여세요',
+  'gate.terminal.elsewhere': '{operator}에서 열기',
+  'gate.terminal.elsewhereUnknown': '이 에이전트를 돌리는 맥에서 여세요',
   'speech.failure.retryDraft': '@{handle} 다시 해 줘',
 
   'speech.progress.working': '작업 중',

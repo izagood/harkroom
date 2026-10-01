@@ -3280,6 +3280,13 @@ export const en = {
 
   'speech.failure.title': 'Could not finish it',
   'speech.failure.callAgain': 'Call again',
+  'gate.terminal.open': 'Open terminal',
+  'gate.terminal.opened': 'Opened in Terminal — answer the question there, the turn will start again',
+  'gate.terminal.failed': 'Could not open the terminal',
+  'gate.terminal.missing': 'This account is not on this Mac',
+  'gate.terminal.ambiguous': 'More than one pool has an account with this name — open it from Settings › Claude accounts',
+  'gate.terminal.elsewhere': 'Open it on {operator}',
+  'gate.terminal.elsewhereUnknown': 'Open it on the Mac that runs this agent',
   /**
    * **화면 문구가 아니라 초안이다** — 눌러도 안 보내고 작성창을 채운다(그 자리 주석).
    * 그래서 사람이 보내기 전에 읽고 고칠 글이고, 말투가 부탁이다.
