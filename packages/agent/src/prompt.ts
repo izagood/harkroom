@@ -11,8 +11,52 @@ import { messagePermalink, type MessageRow, type InboxTeamCall, type InboxDelega
 /** 서버의 메시지 본문 상한(`POST /channels/:id/messages` 의 zod `max(8000)`). 넘기면 발화가 실패한다. */
 export const BODY_LIMIT = 8000;
 
-/** 답을 올리지 않고 프로세스가 끝났을 때 러너가 에이전트 계정으로 스레드에 남기는 문구(spec §4 발화 경로). */
-export const NO_REPLY_NOTICE = '(답 없이 턴을 끝냈습니다 — 프로세스는 정상 종료, 발화 없음)';
+/**
+ * 답을 올리지 않고 턴이 정상 종료했을 때 러너가 에이전트 계정으로 앵커에 남기는 통지(spec §4 발화 경로).
+ *
+ * ## 왜 세 갈래인가 (2026-10-01, designer 검토안·jaebin 승인)
+ *
+ * 옛 통지는 `(답 없이 턴을 끝냈습니다 — 프로세스는 정상 종료, 발화 없음)` 한 줄 + TUI 꼬리 원문이었다.
+ * 10-01 하루에만 40건이 넘었고 대부분은 **에이전트끼리 주고받은 FYI 멘션**이었다 — 덧붙일 말이 없어
+ * 답하지 않은 것이 정상인데, 사람 눈에는 오류 카드가 줄줄이 쌓였다. 그래서 부른 쪽과 정황으로 나눈다:
+ *
+ * - 부른 쪽이 **에이전트** → `progress` 로 낮춘다(결과 발화로 세지 않고, 스레드를 막힘으로 칠하지 않는다).
+ * - 부른 쪽이 **사람**이고 다른 스레드에 답했다 → 보통 답글로 그 링크를 준다.
+ * - 부른 쪽이 **사람**이고 정말 답이 없다 → 보통 답글로 그 사실과 마지막 말 한 줄.
+ *
+ * TUI 꼬리 원문은 본문에 싣지 않는다 — 화면 찌꺼기(상태줄·입력창·이스케이프 잔여)가 대부분이라 사람이
+ * 읽을 수 없었다. 대신 하네스 기록의 **마지막 말 한 줄**(`readLastAssistantText`, `silentWakeNotice` 와
+ * 같은 방식)을 싣고, 원문 꼬리는 러너 로그에만 남긴다(호출자).
+ */
+export type SilentTurnNotice = { kind: 'progress' | 'post'; body: string };
+
+export function silentTurnNotice(opts: {
+  /** 이 턴을 부른 쪽. 모르면 `'human'` — 사람에게 안 보이는 쪽으로 틀리는 것이 더 나쁘다. */
+  caller: 'agent' | 'human';
+  /** 하네스가 끝내며 남긴 말(`readLastAssistantText`). 못 읽었으면 `null`. */
+  lastSaid: string | null;
+  /** `offAnchorNotice` 의 결과 — 이 턴이 다른 스레드에 답했으면 그 링크 문장. */
+  offAnchor: string | null;
+  pat: string;
+}): SilentTurnNotice {
+  const said = opts.lastSaid === null ? '' : oneLine(opts.lastSaid, opts.pat);
+  if (opts.caller === 'agent') {
+    return {
+      kind: 'progress',
+      body: opts.offAnchor
+        ?? (said
+          ? `확인함 — 덧붙일 말이 없어 답글은 달지 않았습니다 ("${said}")`
+          : '확인함 — 덧붙일 말이 없어 답글은 달지 않았습니다'),
+    };
+  }
+  if (opts.offAnchor !== null) return { kind: 'post', body: opts.offAnchor };
+  return {
+    kind: 'post',
+    body: said
+      ? `답을 남기지 못하고 끝났습니다. 마지막 말: "${said}" — 다시 부르면 이어서 합니다.`
+      : '답을 남기지 못하고 끝났습니다 — 다시 부르면 이어서 합니다.',
+  };
+}
 
 
 /** 통지에 실을 하네스 출력의 상한. 이 길이를 넘으면 앞을 자르고 뒤를 남긴다. */
@@ -48,7 +92,12 @@ export function harnessTailNotice(tail: string, pat: string, secrets: readonly s
   let text = tail
     // CSI/OSC 등 ANSI 이스케이프. 색·커서 제어가 그대로 흐르면 사람이 읽을 수 없다.
     .replace(/\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)/g, '')
-    .replace(/\x1B[[\]()#;?]*[0-9;?]*[A-Za-z@-~]/g, '')
+    // CSI 는 ECMA-48 모양 그대로 지운다: 매개변수 바이트 0x30–0x3F(`<`·`=`·`>`·`?` 포함), 중간 바이트
+    // 0x20–0x2F, 끝 바이트 0x40–0x7E. 옛 식은 매개변수에 `<`·`>` 를 안 넣어 claude TUI 의 kitty 키보드
+    // 시퀀스(`ESC[<u`·`ESC[>1u`)와 modifyOtherKeys(`ESC[>4m`)에서 `ESC[` 만 지우고 `<u>4m` 을 남겼다(10-01).
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '')
+    // 나머지 두 바이트짜리 ESC 시퀀스(`ESC(B`·`ESC=`·`ESC7` …).
+    .replace(/\x1B[ -/]*[0-~]/g, '')
     // PTY 는 줄바꿈을 `\r\n` 으로 낸다. `\r` 만 남으면 채팅에서 줄이 겹쳐 보인다.
     .replace(/\r\n?/g, '\n')
     // 남은 제어문자(벨 등). 개행·탭은 뜻이 있으므로 남긴다.
@@ -120,7 +169,7 @@ function oneLine(text: string, pat: string, max = NOTICE_LINE_MAX_CHARS): string
 /**
  * **예약으로 깨어난 턴이 말없이 끝났다**(2026-09-30).
  *
- * 그 턴이 다시 깨움을 걸었으면 `NO_REPLY_NOTICE` 는 나가지 않는다(대기 줄이 보이므로). 그런데
+ * 그 턴이 다시 깨움을 걸었으면 `silentTurnNotice` 는 나가지 않는다(대기 줄이 보이므로). 그런데
  * 그 사이 무엇을 확인했는지는 아무 데도 없었다 — 09-30 #task e3ecfdf7·5f5fc126 에서 깨어난 턴이
  * "새 소식이 없어서 글을 쓰지 않았어"를 터미널에만 남기고 끝났고, 사람은 약속한 보고가 사라진
  * 것으로 읽었다. 한 줄로 **확인은 했다**는 사실과 하네스가 남긴 이유를 싣는다.
@@ -302,7 +351,7 @@ export function retryReason(message: string): string | null {
 
 /**
  * 사람이 조종 중인 스레드에 온 멘션의 대기 통지(#337, 스펙 §5-2 결정 6). 러너가
- * **에이전트 계정으로** 스레드에 올린다 — NO_REPLY_NOTICE 와 같은 판례다: 시스템 계정을
+ * **에이전트 계정으로** 스레드에 올린다 — silentTurnNotice 와 같은 판례다: 시스템 계정을
  * 새로 만들지 않고, 그 스레드에서 말하던 바로 그 목소리가 자기 사정을 말한다.
  * entry 당 1회만 올린다(중복 판정은 mentionQueue 가 갖는다).
  *
@@ -1117,12 +1166,12 @@ export function buildTurnPrompt(opts: {
  * 이유: 시작 전에 이미 있던 자기 발화까지 세면 아무것도 안 한 턴도 "발화했다"가 된다.
  *
  * 불리언이 아니라 개수인 이유(#90): 호출부가 두 가지를 물어야 한다 — "발화가 있었나"(> 0,
- * NO_REPLY_NOTICE 와 커서 전진 판단)와 "여러 번 발화했나"(> 1, 중복 발화 관측). 불리언만
+ * silentTurnNotice 와 커서 전진 판단)와 "여러 번 발화했나"(> 1, 중복 발화 관측). 불리언만
  * 두면 후자를 알 수 없고, 두 함수가 각자 세면 규칙이 둘로 갈린다. 세는 곳은 여기 하나다.
  *
  * progress 메시지는 **결과 발화로 세지 않는다.** 에이전트가 `message.progress` 로 올린
  * 진행 설명이고, 그것을 결과로 세면 "설명만 올리고 결과를 못 올린 턴"이 침묵으로
- * 취급되지 않아 NO_REPLY_NOTICE 가 억제된다 — #144 가 가장 비싸다고 지목한 문제다.
+ * 취급되지 않아 silentTurnNotice 가 억제된다 — #144 가 가장 비싸다고 지목한 문제다.
  *
  * 플래그로 두지 않는 이유: progress 를 결과로 세고 싶은 호출자가 없다. 끌 수 있게 두면
  * 그 인자가 잘못 넘어오는 경로가 생길 뿐이다.
@@ -1144,7 +1193,7 @@ export function countOwnPostsSince(messages: MessageRow[], meId: string, sinceSe
  * ## 왜 필요한가 (2026-09-08 실측)
  *
  * 서로 다른 앵커를 받은 턴 둘이 자기 앵커 대신 채널의 다른 요청을 구현하고, 결과도 **그쪽
- * 스레드에** 올렸다. 그 두 턴의 앵커에는 `NO_REPLY_NOTICE` 한 줄만 남았다 — 사람이 본 것은
+ * 스레드에** 올렸다. 그 두 턴의 앵커에는 옛 침묵 통지 한 줄만 남았다 — 사람이 본 것은
  * "답 없이 턴을 끝냈습니다" 였고, 그 턴이 실제로는 30분을 일해서 옆 스레드에 답을 올렸다는
  * 사실은 어디에도 없었다. 침묵의 **이유**가 러너에게는 보이는데 사람에게 안 보였다.
  *
@@ -1173,7 +1222,7 @@ export function offAnchorPosts(
 }
 
 /**
- * `offAnchorPosts` 가 잡은 것을 `NO_REPLY_NOTICE` 뒤에 붙일 한 문단으로 만든다.
+ * `offAnchorPosts` 가 잡은 것을 침묵 통지(`silentTurnNotice`)에 실을 한 줄로 만든다.
  *
  * 스레드 링크를 싣는다 — "다른 스레드에 썼다"만 말하면 사람이 그것을 찾을 방법이 없다.
  * 형식은 데스크탑이 이미 여는 permalink(`messagePermalink`)다: 붙여넣으면 그 스레드가 열린다.
@@ -1184,11 +1233,9 @@ export function offAnchorNotice(posts: MessageRow[]): string | null {
   if (posts.length === 0) return null;
   const roots = [...new Set(posts.map((m) => m.threadRootId ?? m.id))];
   const links = roots.map((id) => messagePermalink(id));
-  return [
-    `다만 이 턴이 도는 동안 **다른 스레드에** 내 발화가 ${posts.length}건 있었다 —`,
-    '이 턴이 자기 앵커 대신 그쪽 요청을 했을 수 있다(같은 계정의 다른 턴일 수도 있다):',
-    ...links.map((l) => `- ${l}`),
-  ].join('\n');
+  // 짧게 단정한다(2026-10-01, designer 검토안). "같은 계정의 다른 턴일 수도 있다"는 정황의 단서는
+  // 사람이 할 일을 바꾸지 않으므로 러너 로그(`offAnchorEvidence`)에만 남긴다.
+  return `이 요청의 답은 다른 스레드에 올렸습니다: ${links.join(' · ')}`;
 }
 
 /**
@@ -1212,7 +1259,7 @@ export function hasOwnWakeSince(messages: MessageRow[], meId: string, sinceSeq: 
  * "이 턴에 결과 발화가 있었나". `countOwnPostsSince` 위에 얹은 얇은 판정이다 — 세는 규칙이
  * 두 곳에 생기지 않게 한다. 실패 경로(커서를 전진시킬지 정하는 자리)가 이 불리언을 쓴다.
  *
- * #144: progress 메시지는 제외되므로, 진행 설명만 있고 결과가 없는 턴은 NO_REPLY_NOTICE 를 표시한다.
+ * #144: progress 메시지는 제외되므로, 진행 설명만 있고 결과가 없는 턴은 silentTurnNotice 를 표시한다.
  *
  * #174: 같은 에이전트를 **여러 인스턴스**로 돌리면 이 판정이 둘을 구분하지 못한다 —
  * 인스턴스 A 가 올린 발화를 B 도 "내 발화"로 본다(계정이 같기 때문이다). 그래서 두

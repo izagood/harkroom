@@ -70,6 +70,8 @@ const DEFER_WARN_PENDING = 3;
 export interface BatchContext {
   channelName(channelId: string): string;
   handles: Record<string, string>;
+  /** 에이전트 계정 id 들 — 침묵 통지가 부른 쪽을 가른다(`MentionTurnDeps.agentIds`). */
+  agentIds?: ReadonlySet<string>;
 }
 
 export interface AdmitOutcome {
