@@ -4,6 +4,7 @@ import { TerminalChip } from './TerminalChip';
 import { useT } from '../i18n/useT';
 import { getController } from '../state/controller';
 import { threadRowFor } from '../lib/threadModels';
+import { AgentModelChip } from './AgentModelChip';
 
 /**
  * 실패 카드 — 에이전트가 **스스로 못 끝냈다**(규칙 03).
@@ -39,6 +40,12 @@ export function FailureCard({ message, inThread = false }: {
   // 그 모델을 거절했으면 러너가 재시도하지 않고 여기로 온다(결정 6).
   const modelRow = useActiveStore((s) => threadRowFor(s.threadAgentModels[rootId], message.authorId));
   if (!failure) return null;
+  /*
+    **표지로 가른다**(designer 검토 1). 러너가 스레드 지정 모델 거절을 알릴 때 `code` 를 싣는다 —
+    한도·정지 같은 다른 실패에 되돌리기를 띄우면 멀쩡한 지정을 풀게 된다. 문구(`what`)로 가르면
+    문구를 다듬는 순간 조용히 안 맞는다.
+  */
+  const modelRejected = failure.code === 'thread_model_rejected';
   const scope = inThread ? `thread:${rootId}` : message.channelId;
 
   /* 폭 상한을 여기서 다시 두지 않는다 — 부모(`MessageItem` 의 본문 열)가 이미 상한을 쥐고
@@ -63,7 +70,8 @@ export function FailureCard({ message, inThread = false }: {
           다시 부르기는 **작성창을 채우는 방식**으로 둔다(완료 보고의 다음 제안 칩과 같은 규약):
           누르자마자 보내면 사람이 무엇이 나갈지 보지 못한 채 러너가 또 돈다. 한 번의 확인을 남긴다.
         */}
-        {failure.retryable && author && (
+        {/* 모델 거절이면 [다시 부르기]를 숨긴다 — 같은 모델로 또 실패한다. */}
+        {failure.retryable && author && !modelRejected && (
           <button
             data-testid="failure-retry"
             className="rounded border border-border bg-surface-raised px-2 py-0.5 text-meta
@@ -86,11 +94,10 @@ export function FailureCard({ message, inThread = false }: {
           두면 사람은 다시 부르는 것을 잊고, 다시 부르기만 두면 같은 모델로 또 실패한다. 다시 부르기는
           위 버튼과 같은 규약이다: 보내지 않고 작성창만 채운다.
         */}
-        {modelRow && !modelRow.stale && author && (
+        {modelRejected && author && (
           <button
             data-testid="failure-reset-model"
-            className="rounded border border-border bg-surface-raised px-2 py-0.5 text-meta
-                       font-medium text-fg hover:bg-surface-hover"
+            className="rounded bg-accent px-2 py-0.5 text-meta font-medium text-fg-on-strong hover:bg-accent-hover"
             onClick={() => {
               void getController().setThreadAgentModel(message.channelId, rootId, message.authorId, null, null)
                 .then(() => setDraft(scope, t('speech.failure.retryDraft', { handle: author.handle })))
@@ -99,6 +106,19 @@ export function FailureCard({ message, inThread = false }: {
           >
             {t('failure.resetModelAndRetry')}
           </button>
+        )}
+        {/* 다른 모델로 바꾸는 길 — 스레드 머리의 칩과 같은 고르개다. */}
+        {modelRejected && author && (
+          <AgentModelChip
+            agentId={message.authorId}
+            handle={author.handle}
+            value={modelRow}
+            mode="thread"
+            trigger={t('threadModel.pickModel')}
+            onApply={(v) => getController().setThreadAgentModel(message.channelId, rootId, message.authorId, v.model, v.effort)
+              .then(() => setDraft(scope, t('speech.failure.retryDraft', { handle: author.handle })))}
+            onReset={() => getController().setThreadAgentModel(message.channelId, rootId, message.authorId, null, null)}
+          />
         )}
       </div>
     </div>

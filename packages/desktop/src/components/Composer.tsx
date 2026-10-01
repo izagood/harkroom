@@ -517,6 +517,9 @@ export function Composer({
   const modelPicks = modelPicksByScope[scopeKey] ?? NO_PICKS;
   const threadRoot = scopeKey.startsWith('thread:') ? scopeKey.slice('thread:'.length) : null;
   const threadModelRows = useActiveStore((s) => (threadRoot ? s.threadAgentModels[threadRoot] : undefined));
+  /** 자동완성으로 방금 부른 에이전트와 그때의 초안 — 초안이 바뀌면 힌트·강조를 거둔다. */
+  const [hintFor, setHintFor] = useState<string | null>(null);
+  const [hintDraft, setHintDraft] = useState('');
   /** ⌘⇧M 이나 칩 클릭으로 연 고르개의 주인(에이전트 id). */
   const [openModelFor, setOpenModelFor] = useState<string | null>(null);
   const setPick = (agentId: string, v: ModelValue | null) => setModelPicksByScope((prev) => {
@@ -673,6 +676,10 @@ export function Composer({
     const next = applyMention(draft, query, handle);
     setDraftLocal(next.text);
     pendingCaret.current = next.caret;
+    // 에이전트를 확정했으면 그 칩을 잠깐 강조하고 ⌘⇧M 힌트를 세운다 — 다음 글자에 거둔다.
+    const agentId = agentIdOf(handle);
+    setHintFor(agentId);
+    setHintDraft(next.text);
     // 고른 뒤에는 닫는다 — 열린 채로 두면 다음 Enter 가 전송으로 가지 못한다.
     setQuery(null);
     setActive(0);
@@ -932,7 +939,16 @@ export function Composer({
       고급 모델로 뜬다. 스레드 작성창은 서버에 지정이 남으므로 칩이 그 값을 이어 보여 준다.
     */
     const calledAgents = new Set(bodyMentionList.map((r) => agentIdOf(r.handle)).filter((id): id is string => !!id));
-    const agentModels = picksToSend(Object.fromEntries(Object.entries(modelPicks).filter(([id]) => calledAgents.has(id))));
+    const calledPicks = Object.fromEntries(Object.entries(modelPicks).filter(([id]) => calledAgents.has(id)));
+    /*
+      **풀기를 싣는다**(designer 검토 2). 스레드 작성창에서 이어받은 지정을 [스레드 지정 풀기]로
+      비웠으면 `{model:null, effort:null}` 이 그 글과 함께 가야 실제로 풀린다 — `picksToSend` 는
+      빈 값을 "손대지 않음" 으로 보고 빼므로, 지정이 걸린 상대의 빈 값만 따로 되살린다.
+    */
+    const clears = Object.entries(calledPicks)
+      .filter(([id, v]) => v.model === null && v.effort === null && threadRowFor(threadModelRows, id))
+      .map(([agentId]) => ({ agentId, model: null, effort: null }));
+    const agentModels = [...picksToSend(calledPicks), ...clears];
     if (Object.keys(modelPicks).length) setModelPicksByScope((prev) => ({ ...prev, [scopeKey]: {} }));
     setOpenModelFor(null);
     const item: HeldMessage = { body, typed, attachments, scope: scopeKey, send: onSend, agentModels };
@@ -1484,13 +1500,17 @@ export function Composer({
               {(() => {
                 const agentId = r.kind === 'account' ? agentIdOf(r.handle) : null;
                 if (!agentId) return null;
-                const inherited = threadRowFor(threadModelRows, agentId);
-                const value = modelPicks[agentId] ?? (inherited && !inherited.stale ? inherited : null);
+                const row = threadRowFor(threadModelRows, agentId);
+                const own = modelPicks[agentId];
+                const inherited = !own && row && !row.stale ? row : null;
+                const value = own ?? inherited;
                 return (
                   <AgentModelChip
                     agentId={agentId}
                     handle={r.handle}
                     value={value}
+                    inherited={inherited !== null}
+                    highlight={hintFor === agentId && draft === hintDraft}
                     mode="composer"
                     placement="above"
                     open={openModelFor === agentId}
@@ -1500,7 +1520,9 @@ export function Composer({
                       if (!o) requestAnimationFrame(() => ref.current?.focus());
                     }}
                     onApply={(v) => setPick(agentId, v)}
-                    onReset={() => setPick(agentId, null)}
+                    // 이어받은 값이면 "스레드 지정 풀기" — 빈 값을 남겨 보낼 때 실제로 푼다. 아니면 이 글의
+                    // 고른 값만 지운다(다시 이어받거나 기본이 된다).
+                    onReset={() => setPick(agentId, inherited ? { model: null, effort: null } : null)}
                   />
                 );
               })()}
@@ -1530,7 +1552,9 @@ export function Composer({
             </li>
           ))}
           {/* 부른 에이전트가 있으면 고르는 길을 알린다(결정 13 · 안 1). 기본값으로 부를 사람은 손을 멈추지 않는다. */}
-          {bodyMentionList.some((r) => r.kind === 'account' && agentIdOf(r.handle)) && (
+          {/* 부른 **직후에만** 고르는 길을 알린다(designer 검토 4) — 다음 글자를 치면 거둔다. 늘 붙어
+              있으면 그 줄은 곧 안 읽힌다. 단축키는 칩의 title 에도 있다. */}
+          {hintFor && draft === hintDraft && (
             <li data-testid="model-chip-hint" className="text-fg-subtle">{t('threadModel.chipHint')}</li>
           )}
         </ul>

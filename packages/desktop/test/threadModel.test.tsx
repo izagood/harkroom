@@ -14,7 +14,7 @@ import { formatModelValue, isModelShortcut, picksToSend } from '../src/lib/threa
 const A1 = '00000000-0000-4000-8000-0000000000a1';
 const row = (over: Partial<ThreadAgentModelView> = {}): ThreadAgentModelView => ({
   threadRootId: 'r1', agentId: A1, harness: 'claude-code', model: 'opus', effort: 'xhigh',
-  setBy: 'u1', setAt: '2026-10-01T00:00:00.000Z', stale: false, ...over,
+  setBy: 'u1', setAt: '2026-10-01T00:00:00.000Z', stale: false, currentHarness: 'claude-code', ...over,
 });
 
 const typeInto = (value: string) => {
@@ -77,7 +77,8 @@ describe('작성창 "부를 상대" 모델 칩 (결정 1·C·12·13)', () => {
     typeInto('@fizz @rusalka 고도화해 줘');
     expect(screen.getByTestId('model-chip-fizz').textContent).toContain('기본');
     expect(screen.queryByTestId('model-chip-rusalka')).toBeNull();
-    expect(screen.getByTestId('model-chip-hint')).toBeTruthy();
+    // 힌트는 자동완성으로 **부른 직후에만** 선다(designer 검토 4) — 손으로 친 글에는 없다.
+    expect(screen.queryByTestId('model-chip-hint')).toBeNull();
 
     fireEvent.click(screen.getByTestId('model-chip-fizz'));
     await waitFor(() => expect(screen.getByTestId('model-agent-default').textContent).toContain('sonnet · medium'));
@@ -101,6 +102,33 @@ describe('작성창 "부를 상대" 모델 칩 (결정 1·C·12·13)', () => {
     fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
     await waitFor(() => expect(onSend).toHaveBeenCalled());
     expect(onSend.mock.calls[0]).toHaveLength(2);
+  });
+
+  it('자동완성으로 부른 직후에만 칩을 강조하고 ⌘⇧M 힌트를 세우고, 다음 글자에 거둔다', () => {
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('@fi');
+    fireEvent.click(screen.getAllByRole('option').find((o) => o.getAttribute('data-handle') === 'fizz')!);
+    expect(screen.getByTestId('model-chip-hint')).toBeTruthy();
+    expect(screen.getByTestId('model-chip-fizz').className).toContain('ring-2');
+    typeInto('@fizz 고도화');
+    expect(screen.queryByTestId('model-chip-hint')).toBeNull();
+  });
+
+  it('스레드에서 이어받은 값은 옅게·`스레드` 꼬리로 서고, [스레드 지정 풀기]는 보낼 때 실제로 푼다', async () => {
+    useAppStore.getState().set({ threadAgentModels: { r1: [row()] } });
+    const onSend = vi.fn();
+    render(<Composer onSend={onSend} scopeKey="thread:r1" />);
+    typeInto('@fizz 이어서');
+    const chip = screen.getByTestId('model-chip-fizz');
+    expect(chip.getAttribute('data-inherited')).toBe('true');
+    expect(chip.textContent).toContain('스레드 지정');
+    fireEvent.click(chip);
+    await waitFor(() => expect(screen.getByTestId('model-reset').textContent).toBe('스레드 지정 풀기'));
+    fireEvent.click(screen.getByTestId('model-reset'));
+    await waitFor(() => expect(screen.getByTestId('model-chip-fizz').textContent).toContain('기본'));
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+    await waitFor(() => expect(onSend).toHaveBeenCalled());
+    expect(onSend.mock.calls[0]![2]).toEqual([{ agentId: A1, model: null, effort: null }]);
   });
 
   it('⌘⇧M 은 마지막으로 부른 에이전트의 고르개를 연다', async () => {
@@ -146,9 +174,14 @@ describe('스레드 머리 모델 줄 (결정 1·A·9·10)', () => {
   });
 
   it('하네스가 바뀐 지정은 취소선과 안내로 남는다 — 지우지 않는다', () => {
-    useAppStore.getState().set({ threadAgentModels: { r1: [row({ stale: true })] } });
+    useAppStore.getState().set({ threadAgentModels: { r1: [row({ stale: true, currentHarness: 'codex' })] } });
     render(<ThreadModelRow channelId="c1" rootId="r1" thread={thread} expanded={false} />);
     expect(screen.getByTestId('model-chip-fizz').getAttribute('data-stale')).toBe('true');
-    expect(screen.getByTestId('thread-models-stale')).toBeTruthy();
+    // 빨강이 아니라 경고 색이고, 무엇으로 바뀌었는지와 [다시 고르기]가 있다(designer 검토 3).
+    const note = screen.getByTestId('thread-models-stale');
+    expect(note.className).toContain('text-warning');
+    expect(note.className).not.toContain('danger');
+    expect(note.textContent).toContain('codex');
+    expect(screen.getByTestId('model-trigger-fizz').textContent).toBe('다시 고르기');
   });
 });

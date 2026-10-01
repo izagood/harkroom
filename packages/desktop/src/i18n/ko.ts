@@ -1002,6 +1002,10 @@ export const ko = {
   // **`명` 을 뺐다.** 그 단위는 사람만 세는 말인데 집합에는 에이전트도 든다 — 영어가
   // 숫자만 남긴 것과 같은 판단이고, 원래 문구의 부정확을 여기서 함께 고친다.
   'composer.mention.groupCount': '({count})',
+  'threadModel.picker.clearThread': "스레드 지정 풀기",
+  'threadModel.pickModel': "모델 고르기",
+  'threadModel.staleDetail': "에이전트의 하네스가 {harness} 로 바뀌어 이 스레드의 지정을 쓰지 않는다.",
+  'threadModel.repick': "다시 고르기",
   'threadModel.rowLabel': "모델",
   'threadModel.allDefault': "모델 · 모두 기본",
   'threadModel.default': "기본",

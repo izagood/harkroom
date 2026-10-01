@@ -60,7 +60,6 @@ export function ThreadModelRow({ channelId, rootId, thread, expanded }: {
   if (!rows) return null;
   if (rows.length === 0 && !expanded) return null;
   if (agentIds.length === 0) return null;
-  const anyStale = rows.some((r) => r.stale);
 
   return (
     <div data-testid="thread-models" className="border-b border-border px-4 py-1.5">
@@ -83,9 +82,24 @@ export function ThreadModelRow({ channelId, rootId, thread, expanded }: {
           );
         })}
       </div>
-      {anyStale && (
-        <p role="note" data-testid="thread-models-stale" className="mt-1 text-meta text-danger">{t('threadModel.stale')}</p>
-      )}
+      {/* 무효는 실패가 아니다 — 경고 색으로, 왜(하네스가 무엇으로 바뀌었나)와 할 일([다시 고르기])을
+          함께 둔다(designer 검토 3). 다시 고르기는 그 에이전트의 칩을 연다 — 고르개는 지금 하네스의
+          목록을 보이므로 거기서 고르면 행이 새 하네스로 다시 적힌다. */}
+      {rows.filter((r) => r.stale).map((r) => (
+        <p key={r.agentId} role="note" data-testid="thread-models-stale"
+          className="mt-1 flex flex-wrap items-center gap-2 rounded border border-warning-border bg-warning-surface px-2 py-1 text-meta text-warning">
+          <span>@{accounts[r.agentId]?.handle ?? ''} — {t('threadModel.staleDetail', { harness: r.currentHarness })}</span>
+          <AgentModelChip
+            agentId={r.agentId}
+            handle={accounts[r.agentId]?.handle ?? ''}
+            value={null}
+            mode="thread"
+            trigger={t('threadModel.repick')}
+            onApply={(v) => getController().setThreadAgentModel(channelId, rootId, r.agentId, v.model, v.effort)}
+            onReset={() => getController().setThreadAgentModel(channelId, rootId, r.agentId, null, null)}
+          />
+        </p>
+      ))}
     </div>
   );
 }

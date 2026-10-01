@@ -10,7 +10,7 @@
  * 그 길로는 일반 멤버의 고르개가 늘 자유 입력으로 떨어진다. 목록을 모르면(`models` 없음)
  * `ModelPicker` 가 직접 입력으로 물러선다 — "고를 것이 없다" 고 그리지 않는다.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { AgentModelOptions } from '@harkroom/shared';
 import { getController } from '../state/controller';
 import { ModelPicker } from './settings/ModelPicker';
@@ -20,7 +20,8 @@ import { useT } from '../i18n/useT';
 const FIELD = 'w-full rounded border border-border bg-surface px-2 py-1 text-meta';
 
 export function AgentModelChip({
-  agentId, handle, value, stale = false, mode, placement = 'below', open: openProp, onOpenChange, onApply, onReset,
+  agentId, handle, value, stale = false, inherited = false, highlight = false, mode, placement = 'below',
+  open: openProp, onOpenChange, onApply, onReset, trigger,
 }: {
   agentId: string;
   handle: string;
@@ -28,6 +29,16 @@ export function AgentModelChip({
   value: ModelValue | null;
   /** 지정 뒤 하네스가 바뀌어 쓰지 않는 값(결정 9). 취소선으로 그린다. */
   stale?: boolean;
+  /**
+   * 스레드 작성창이 **스레드 지정을 이어받아** 보이는 값이다(designer 검토 2). 새로 고른 값과 같은
+   * 모양이면 사람은 "이 글이 바꾼다" 로 읽는다 — 옅게 칠하고 `스레드` 꼬리를 붙인다. 이때 되돌리기는
+   * "스레드 지정 풀기" 이고, 그 글이 실제로 지정을 푼다.
+   */
+  inherited?: boolean;
+  /** 방금 부른 상대다 — 칩을 잠깐 강조해 고르는 길을 보인다(designer 검토 4). */
+  highlight?: boolean;
+  /** 칩 대신 다른 단추로 연다(실패 카드의 [모델 고르기]). */
+  trigger?: string;
   mode: 'thread' | 'composer';
   placement?: 'below' | 'above';
   /** 바깥에서 열 수 있다(⌘⇧M). 없으면 칩이 스스로 연다. */
@@ -42,27 +53,42 @@ export function AgentModelChip({
   const setOpen = (next: boolean) => { onOpenChange?.(next); if (openProp === undefined) setOpenSelf(next); };
   const label = formatModelValue(value);
   const set = label !== null;
+  const style = trigger
+    ? 'border border-border bg-surface-raised font-medium text-fg hover:bg-surface-hover'
+    : stale
+      // 무효는 실패가 아니다 — 빨강이 아니라 경고 색이다(designer 검토 3).
+      ? 'border border-warning-border bg-warning-surface text-warning'
+      : set && inherited
+        ? 'bg-accent-surface/50 text-fg-muted'
+        : set
+          ? 'bg-accent-surface font-medium text-fg'
+          : 'border border-dashed border-border text-fg-subtle';
 
   return (
     <span className="relative inline-flex">
       <button
         type="button"
-        data-testid={`model-chip-${handle}`}
+        data-testid={trigger ? `model-trigger-${handle}` : `model-chip-${handle}`}
         data-stale={stale || undefined}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={t('threadModel.chipLabel', { handle, value: label ?? t('threadModel.default') })}
+        data-inherited={(inherited && set) || undefined}
+        aria-label={trigger ?? t('threadModel.chipLabel', { handle, value: label ?? t('threadModel.default') })}
+        // 단축키는 칩에 적는다 — 줄 끝의 힌트는 부른 직후에만 선다(designer 검토 4).
+        title={mode === 'composer' ? t('threadModel.chipHint') : undefined}
         onClick={() => setOpen(!open)}
-        className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-meta ${
-          set && !stale
-            ? 'bg-accent-surface font-medium text-fg'
-            : 'border border-dashed border-border text-fg-subtle'
+        className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-meta ${style} ${
+          highlight ? 'ring-2 ring-accent' : ''
         } hover:bg-surface-sunken`}
       >
-        {mode === 'thread' && <span className="text-fg-muted">@{handle} ·</span>}
-        <span className={stale ? 'line-through' : undefined}>{label ?? t('threadModel.default')}</span>
-        {set && mode === 'thread' && !stale && <span className="text-fg-subtle">{t('threadModel.threadSet')}</span>}
-        <span aria-hidden className="text-fg-subtle">▾</span>
+        {trigger ? trigger : (
+          <>
+            {mode === 'thread' && <span className="text-fg-muted">@{handle} ·</span>}
+            <span className={stale ? 'line-through' : undefined}>{label ?? t('threadModel.default')}</span>
+            {set && (mode === 'thread' || inherited) && !stale && <span className="text-fg-subtle">{t('threadModel.threadSet')}</span>}
+            <span aria-hidden className="text-fg-subtle">▾</span>
+          </>
+        )}
       </button>
       {open && (
         <AgentModelPicker
@@ -71,6 +97,7 @@ export function AgentModelChip({
           value={value}
           mode={mode}
           placement={placement}
+          clearsThread={inherited && set}
           onClose={() => setOpen(false)}
           onApply={onApply}
           onReset={onReset}
@@ -80,15 +107,27 @@ export function AgentModelChip({
   );
 }
 
-function AgentModelPicker({ agentId, handle, value, mode, placement, onClose, onApply, onReset }: {
+type PickerOptions = Omit<AgentModelOptions, 'harness'> & { harness: AgentModelOptions['harness'] | null };
+
+function AgentModelPicker({ agentId, handle, value, mode, placement, clearsThread, onClose, onApply, onReset }: {
   agentId: string; handle: string; value: ModelValue | null; mode: 'thread' | 'composer';
-  placement: 'below' | 'above'; onClose: () => void;
+  placement: 'below' | 'above'; clearsThread: boolean; onClose: () => void;
   onApply: (next: ModelValue) => void | Promise<unknown>;
   onReset: () => void | Promise<unknown>;
 }) {
   const t = useT();
   const ref = useRef<HTMLDivElement>(null);
-  const [options, setOptions] = useState<AgentModelOptions | null>(null);
+  const [options, setOptions] = useState<PickerOptions | null>(null);
+  // 칩이 오른쪽에 있으면 왼쪽 맞춤으로는 패널 밖으로 넘친다 — 열 때 재서 오른쪽 맞춤으로 바꾼다.
+  const [alignRight, setAlignRight] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const parent = el?.parentElement;
+    if (!el || !parent) return;
+    const pane = el.closest('section') ?? document.body;
+    const room = pane.getBoundingClientRect().right - parent.getBoundingClientRect().left;
+    setAlignRight(room < el.offsetWidth);
+  }, []);
   const [model, setModel] = useState(value?.model ?? '');
   const [effort, setEffort] = useState(value?.effort ?? '');
   const [busy, setBusy] = useState(false);
@@ -99,7 +138,7 @@ function AgentModelPicker({ agentId, handle, value, mode, placement, onClose, on
     getController().agentModelOptions(agentId)
       .then((o) => { if (alive) setOptions(o); })
       // 못 받으면 "모른다" 로 둔다 — 직접 입력은 그대로 된다.
-      .catch(() => { if (alive) setOptions({ harness: 'claude-code', model: null, effort: null }); });
+      .catch(() => { if (alive) setOptions({ harness: null, model: null, effort: null }); });
     return () => { alive = false; };
   }, [agentId]);
 
@@ -142,13 +181,16 @@ function AgentModelPicker({ agentId, handle, value, mode, placement, onClose, on
         // select 안의 Enter 는 목록을 닫는 데 쓰인다 — 버튼·입력에서만 적용한다.
         if (e.key === 'Enter' && (e.target as HTMLElement).tagName !== 'SELECT' && !busy) { e.preventDefault(); void apply(); }
       }}
-      className={`absolute left-0 z-30 w-80 rounded-md border border-border bg-surface-raised p-3 shadow-lg ${
+      className={`absolute ${alignRight ? 'right-0' : 'left-0'} z-30 w-80 rounded-md border border-border bg-surface-raised p-3 shadow-lg ${
         placement === 'above' ? 'bottom-full mb-1' : 'top-full mt-1'
       }`}
       style={{ maxHeight: 'min(26rem, 60vh)', overflowY: 'auto' }}
     >
       <p className="mb-2 font-medium">
         {t(mode === 'thread' ? 'threadModel.picker.title' : 'threadModel.picker.composerTitle', { handle })}
+      </p>
+      <p className="-mt-1 mb-2 text-meta text-fg-subtle" data-testid="model-agent-default">
+        {t('threadModel.picker.agentDefault', { value: agentDefault })}
       </p>
       <label className="mb-1 block text-meta text-fg-muted">{t('threadModel.picker.model')}</label>
       <div className="mb-2 flex flex-col gap-1">
@@ -170,9 +212,6 @@ function AgentModelPicker({ agentId, handle, value, mode, placement, onClose, on
           onChange={(e) => setEffort(e.target.value)}
         />
       )}
-      <p className="mb-2 text-meta text-fg-subtle" data-testid="model-agent-default">
-        {t('threadModel.picker.agentDefault', { value: agentDefault })}
-      </p>
       <ul className="mb-2 list-disc pl-4 text-meta text-fg-subtle">
         <li>{t('threadModel.picker.costWeekly')}</li>
         <li>{t('threadModel.picker.costCache')}</li>
@@ -184,10 +223,10 @@ function AgentModelPicker({ agentId, handle, value, mode, placement, onClose, on
         <button type="button" data-testid="model-reset" disabled={busy}
           className="rounded px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
           onClick={() => void run(onReset)}>
-          {t('threadModel.picker.reset')}
+          {t(clearsThread ? 'threadModel.picker.clearThread' : 'threadModel.picker.reset')}
         </button>
         <button type="button" data-testid="model-apply" disabled={busy}
-          className="rounded bg-accent px-2 py-1 text-meta font-medium text-white hover:bg-accent-hover"
+          className="rounded bg-accent px-2 py-1 text-meta font-medium text-fg-on-strong hover:bg-accent-hover"
           onClick={() => void apply()}>
           {t('threadModel.picker.apply')}
         </button>

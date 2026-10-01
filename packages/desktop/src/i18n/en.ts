@@ -2071,6 +2071,10 @@ export const en = {
    * 한국어의 `명`은 앞엣것만 세는 말이라 원래 문구가 이미 부정확했다(위 표).
    */
   'composer.mention.groupCount': '({count})',
+  'threadModel.picker.clearThread': "Clear the thread's model",
+  'threadModel.pickModel': "Choose model",
+  'threadModel.staleDetail': "The agent's harness changed to {harness}, so this thread's model is not used.",
+  'threadModel.repick': "Choose again",
   'threadModel.rowLabel': "Model",
   'threadModel.allDefault': "Model · all default",
   'threadModel.default': "Default",

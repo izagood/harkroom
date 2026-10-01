@@ -55,18 +55,27 @@ describe('FailureCard', () => {
     setController({ setThreadAgentModel } as unknown as Controller);
     useAppStore.getState().set({ threadAgentModels: { 'm-root': [{
       threadRootId: 'm-root', agentId: FORGE, harness: 'claude-code', model: 'bogus', effort: null,
-      setBy: ME, setAt: '2026-10-01T00:00:00.000Z', stale: false,
+      setBy: ME, setAt: '2026-10-01T00:00:00.000Z', stale: false, currentHarness: 'claude-code',
     }] } });
-    const m = { ...failMsg(failMeta({ retryable: false })), threadRootId: 'm-root' };
+    const m = { ...failMsg(failMeta({ retryable: true, code: 'thread_model_rejected' })), threadRootId: 'm-root' };
     render(<MessageItem message={m} inThread />);
+    // 같은 모델로 또 실패하므로 일반 [다시 부르기]는 숨고 [모델 고르기]가 선다.
+    expect(screen.queryByTestId('failure-retry')).toBeNull();
+    expect(screen.getByTestId('model-trigger-forge').textContent).toBe('모델 고르기');
     fireEvent.click(screen.getByTestId('failure-reset-model'));
     expect(setThreadAgentModel).toHaveBeenCalledWith('c1', 'm-root', FORGE, null, null);
     await vi.waitFor(() => expect(useAppStore.getState().drafts['thread:m-root']).toContain('@forge'));
   });
 
-  it('지정이 없으면 그 버튼은 서지 않는다', () => {
-    render(<MessageItem message={failMsg(failMeta())} />);
+  it('표지가 없는 실패(한도·정지)에는 지정이 있어도 그 버튼이 서지 않는다 — 문구로 가르지 않는다', () => {
+    useAppStore.getState().set({ threadAgentModels: { 'm-root': [{
+      threadRootId: 'm-root', agentId: FORGE, harness: 'claude-code', model: 'opus', effort: null,
+      setBy: ME, setAt: '2026-10-01T00:00:00.000Z', stale: false, currentHarness: 'claude-code',
+    }] } });
+    const m = { ...failMsg(failMeta({ what: '이 스레드에 지정한 모델을 하네스가 받지 않았다' })), threadRootId: 'm-root' };
+    render(<MessageItem message={m} inThread />);
     expect(screen.queryByTestId('failure-reset-model')).toBeNull();
+    expect(screen.getByTestId('failure-retry')).toBeTruthy();
   });
 
   it('강조와 함께 무엇을·왜를 말한다', () => {
