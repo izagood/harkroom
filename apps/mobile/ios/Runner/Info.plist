@@ -76,6 +76,8 @@
 	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>Harkroom uses the camera so you can take a photo and attach it to a message.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Harkroom needs access to your photos so you can attach them to a message.</string>
 </dict>

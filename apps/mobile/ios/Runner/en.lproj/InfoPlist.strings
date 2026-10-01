@@ -1,2 +1,4 @@
 /* 사진 권한을 묻는 글. Info.plist 의 기본값과 같다. */
 "NSPhotoLibraryUsageDescription" = "Harkroom needs access to your photos so you can attach them to a message.";
+/* 카메라 권한을 묻는 글. Info.plist 의 기본값과 같다. */
+"NSCameraUsageDescription" = "Harkroom uses the camera so you can take a photo and attach it to a message.";

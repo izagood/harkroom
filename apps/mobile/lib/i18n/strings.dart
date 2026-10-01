@@ -64,6 +64,27 @@ abstract class Strings {
   /// 올리기 실패. **조용히 지나가지 않는다** — 칩이 사라진 이유를 사람이 알아야 한다.
   String get attachmentUploadFailed;
 
+  /// 첨부 시트: 사진 보관함(PHPicker — 권한을 묻지 않는다).
+  String get attachLibrary;
+
+  /// 첨부 시트: 카메라로 사진 찍기.
+  String get attachCamera;
+
+  /// 첨부 시트: 파일 앱에서 고르기.
+  String get attachFile;
+
+  /// 카메라 줄이 비활성일 때의 보조 문구(시뮬레이터).
+  String get attachCameraUnavailable;
+
+  /// 카메라 권한이 꺼진 상태: 시트 제목·본문·버튼.
+  String get cameraDeniedTitle;
+  String get cameraDeniedBody;
+  String get cameraDeniedClose;
+  String get cameraDeniedOpenSettings;
+
+  /// 권한 말고 다른 이유로 카메라가 안 열렸다.
+  String get cameraOpenFailed;
+
   /// 링크 확인 시트의 머리.
   String get linkConfirmTitle;
 
@@ -442,6 +463,15 @@ Map<String, String> stringsToMap(Strings s) => {
       'commonRetry': s.commonRetry,
       'attachmentAdd': s.attachmentAdd,
       'attachmentUploadFailed': s.attachmentUploadFailed,
+      'attachLibrary': s.attachLibrary,
+      'attachCamera': s.attachCamera,
+      'attachFile': s.attachFile,
+      'attachCameraUnavailable': s.attachCameraUnavailable,
+      'cameraDeniedTitle': s.cameraDeniedTitle,
+      'cameraDeniedBody': s.cameraDeniedBody,
+      'cameraDeniedClose': s.cameraDeniedClose,
+      'cameraDeniedOpenSettings': s.cameraDeniedOpenSettings,
+      'cameraOpenFailed': s.cameraOpenFailed,
       'linkConfirmTitle': s.linkConfirmTitle,
       'linkConfirmOpen': s.linkConfirmOpen,
       'linkConfirmCancel': s.linkConfirmCancel,

@@ -301,10 +301,37 @@ class StringsKo implements Strings {
   String get failureNeedsHand => '손이 필요하다';
 
   @override
-  String get attachmentAdd => '파일 첨부';
+  String get attachmentAdd => '첨부 추가';
 
   @override
   String get attachmentUploadFailed => '파일을 올리지 못했다.';
+
+  @override
+  String get attachLibrary => '사진 보관함';
+
+  @override
+  String get attachCamera => '사진 찍기';
+
+  @override
+  String get attachFile => '파일 선택';
+
+  @override
+  String get attachCameraUnavailable => '이 기기에는 카메라가 없다';
+
+  @override
+  String get cameraDeniedTitle => '카메라를 쓸 수 없다';
+
+  @override
+  String get cameraDeniedBody => '설정 › Harkroom 에서 카메라를 켜면 사진을 찍어 붙일 수 있다.';
+
+  @override
+  String get cameraDeniedClose => '닫기';
+
+  @override
+  String get cameraDeniedOpenSettings => '설정 열기';
+
+  @override
+  String get cameraOpenFailed => '카메라를 열지 못했다.';
 
   @override
   String get loadFailedHint => '네트워크를 확인한 뒤 다시 시도해 달라.';
