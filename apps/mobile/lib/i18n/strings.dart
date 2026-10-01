@@ -329,6 +329,12 @@ abstract class Strings {
   /// 모델 지정(서버 079): 스레드에 지정된 값임을 밝히는 꼬리.
   String get modelThreadSet;
 
+  /// 모델 지정(087): **에이전트가** 정한 지정의 꼬리. {handle} 은 정한 에이전트(`@lead 지정`).
+  String get modelAgentSet;
+
+  /// 모델 지정(087): 정한 에이전트를 모를 때(지워졌거나 목록에 없음)의 꼬리.
+  String get modelAgentSetUnknown;
+
   /// 모델 지정(서버 079): 지정이 하나도 없는 스레드의 접힌 칩.
   String get modelAllDefault;
 
@@ -524,6 +530,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'composerSend': s.composerSend,
       'modelDefault': s.modelDefault,
       'modelThreadSet': s.modelThreadSet,
+      'modelAgentSet': s.modelAgentSet,
+      'modelAgentSetUnknown': s.modelAgentSetUnknown,
       'modelAllDefault': s.modelAllDefault,
       'modelMore': s.modelMore,
       'modelEffort': s.modelEffort,

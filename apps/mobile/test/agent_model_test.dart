@@ -25,6 +25,21 @@ void main() {
     expect(out, {'a1': (model: null, effort: null)});
   });
 
+  test('칩 꼬리의 "정한 에이전트"(087 결정 7): 에이전트 지정만, 모르는 계정은 빈 문자열', () {
+    final byId = {for (final a in accounts) a.id: a};
+    ThreadAgentModel row({String? by, String kind = 'human'}) => ThreadAgentModel(
+          agentId: 'a1', model: 'opus', effort: null, stale: false, setBy: by, setByKind: kind,
+        );
+    expect(setByAgentHandle(row(by: 'a2', kind: 'agent'), byId), 'codex');
+    expect(setByAgentHandle(row(by: 'gone', kind: 'agent'), byId), '');
+    expect(setByAgentHandle(row(by: null, kind: 'agent'), byId), '');
+    expect(setByAgentHandle(row(by: 'u1'), byId), isNull);
+    expect(setByAgentHandle(null, byId), isNull);
+    // 옛 서버는 setByKind 를 싣지 않는다 — 사람 지정으로 읽는다.
+    expect(ThreadAgentModel.fromJson({'agentId': 'a1', 'model': 'opus'}).setByKind, 'human');
+    expect(ThreadAgentModel.fromJson({'agentId': 'a1', 'model': 'opus', 'setByKind': 'agent', 'setBy': 'a2'}).setBy, 'a2');
+  });
+
   test('부르는 에이전트는 사람을 빼고 순서대로', () {
     expect(calledAgentIds('@mina @codex @forge', accounts), ['a2', 'a1']);
   });
