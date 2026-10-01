@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
 import '../state/app_state.dart';
+import '../ui/states.dart';
 import '../ui/tokens.dart';
 import 'attach_pickers.dart';
 
@@ -108,6 +109,8 @@ class AttachButton extends StatelessWidget {
   Future<void> _open(BuildContext context) async {
     final t = context.t;
     final messenger = ScaffoldMessenger.of(context);
+    // await 뒤에는 context 를 쓰지 않는다 — 토스트 여백(작성칸 위)도 미리 잰다.
+    final margin = toastMargin(context);
     final deliver = onPicked ??
         (String name, Uint8List bytes) {
           final app = context.app;
@@ -124,7 +127,7 @@ class AttachButton extends StatelessWidget {
       case _AttachChoice.library:
         final picked = await pickers.library();
         for (final f in picked) {
-          await _deliver(messenger, t, () async {
+          await _deliver(messenger, t, margin, () async {
             final bytes = await f.read();
             await deliver(libraryFilename(f.name, bytes), bytes);
           });
@@ -137,27 +140,40 @@ class AttachButton extends StatelessWidget {
           if (e.code == 'camera_access_denied' && context.mounted) {
             await _showCameraDenied(context, openSettings ?? _openAppSettings);
           } else {
-            messenger.showSnackBar(SnackBar(content: Text(t.cameraOpenFailed)));
+            messenger.showSnackBar(SnackBar(
+              content: Text(t.cameraOpenFailed),
+              behavior: SnackBarBehavior.floating,
+              margin: margin,
+            ));
           }
           return;
         }
         if (shot == null) return;
         final name = cameraFilename(now());
-        await _deliver(messenger, t, () async => deliver(name, await shot!.read()));
+        await _deliver(messenger, t, margin, () async => deliver(name, await shot!.read()));
       case _AttachChoice.file:
         final picked = await pickers.files();
         for (final f in picked) {
-          await _deliver(messenger, t, () async => deliver(f.name, await f.read()));
+          await _deliver(messenger, t, margin, () async => deliver(f.name, await f.read()));
         }
     }
   }
 
-  Future<void> _deliver(ScaffoldMessengerState messenger, Strings t, Future<void> Function() run) async {
+  Future<void> _deliver(
+    ScaffoldMessengerState messenger,
+    Strings t,
+    EdgeInsets margin,
+    Future<void> Function() run,
+  ) async {
     try {
       await run();
     } on Object {
       // **조용히 지나가지 않는다.** 칩이 사라진 이유를 사람이 알아야 한다.
-      messenger.showSnackBar(SnackBar(content: Text(t.attachmentUploadFailed)));
+      messenger.showSnackBar(SnackBar(
+        content: Text(t.attachmentUploadFailed),
+        behavior: SnackBarBehavior.floating,
+        margin: margin,
+      ));
     }
   }
 }

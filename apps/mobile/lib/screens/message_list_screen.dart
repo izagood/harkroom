@@ -130,7 +130,8 @@ class _MessageListScreenState extends State<MessageListScreen> {
     return Scaffold(
       // 개정판 3.3: 왼쪽 정렬 "# task" + 부제(주제). 주제가 없으면 한 줄.
       appBar: AppBar(title: ScreenTitle(title: label, subtitle: channel?.topic)),
-      body: SafeArea(
+      // 토스트를 작성칸 위로 올린다(states.dart ComposerScope).
+      body: ComposerScope(child: SafeArea(
         child: Column(
           children: [
             const ConnectionBand(),
@@ -224,7 +225,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
             ),
           ],
         ),
-      ),
+      )),
     );
   }
 }

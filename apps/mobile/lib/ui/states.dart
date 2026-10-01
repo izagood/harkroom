@@ -309,6 +309,48 @@ void showFailureToast(BuildContext context, String text, {VoidCallback? retry}) 
   final t = context.t;
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(
     content: Text(text),
+    behavior: SnackBarBehavior.floating,
+    margin: toastMargin(context),
     action: retry == null ? null : SnackBarAction(label: t.commonRetry, onPressed: retry),
   ));
+}
+
+/// 작성칸이 있는 화면(채널·스레드)의 몸통을 감싼다. 그 안에서 뜨는 토스트는 작성칸 **위**에
+/// 선다(개정판 3.3) — 작성칸은 Scaffold 몸통 안에 있어서, 그냥 띄우면 토스트가 작성칸을 덮는다.
+class ComposerScope extends StatelessWidget {
+  const ComposerScope({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => child;
+}
+
+/// 작성칸 한 줄(칸 + 위아래 여백)만큼. 여러 줄로 늘어난 작성칸은 덮을 수 있다 — 토스트는 잠깐이다.
+const composerToastLift = 76.0;
+
+/// 토스트 바깥 여백. [ComposerScope] 안이면 작성칸만큼 올린다.
+EdgeInsets toastMargin(BuildContext context) {
+  final lift = context.findAncestorWidgetOfExactType<ComposerScope>() != null ? composerToastLift : 0.0;
+  return EdgeInsets.fromLTRB(12, 0, 12, 12 + lift);
+}
+
+/// 화면을 옮기면(들어가거나 나오면) 떠 있던 토스트를 내린다. 앞 화면의 "다시 시도" 가 다음
+/// 화면에 남아 있으면 누르는 사람은 지금 화면의 일로 읽는다.
+class ToastDismisser extends NavigatorObserver {
+  ToastDismisser(this.messenger);
+
+  final GlobalKey<ScaffoldMessengerState> messenger;
+
+  void _drop() => messenger.currentState?.removeCurrentSnackBar();
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (route is PageRoute) _drop();
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (route is PageRoute) _drop();
+  }
 }

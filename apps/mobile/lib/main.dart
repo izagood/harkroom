@@ -32,6 +32,10 @@ class _HarkroomAppState extends State<HarkroomApp> {
   /// 바꾸는 것이 유일한 수단이면 그것은 설정이 아니다. 고르는 화면은 P1 이후).
   final Locale? _override = null;
 
+  /// 토스트를 화면 옮길 때 내리려고 쥔다([ToastDismisser]).
+  final _messenger = GlobalKey<ScaffoldMessengerState>();
+  late final _toastDismisser = ToastDismisser(_messenger);
+
   @override
   void initState() {
     super.initState();
@@ -43,6 +47,8 @@ class _HarkroomAppState extends State<HarkroomApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      scaffoldMessengerKey: _messenger,
+      navigatorObservers: [_toastDismisser],
       // **`context.t` 를 쓰지 않는다.** 이 콜백은 아래 `builder` 보다 **위**에서 불리므로
       // 거기서 세우는 `I18n` 이 아직 없다 — `context.t` 를 쓰면 앱이 첫 프레임에 죽는다
       // (시험이 잡았다). `Localizations` 는 MaterialApp 이 이 위에 둔다.

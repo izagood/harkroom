@@ -129,7 +129,8 @@ class _ThreadScreenState extends State<ThreadScreen> {
 
     return Scaffold(
       appBar: AppBar(title: Text(t.threadTitle)),
-      body: SafeArea(
+      // 토스트를 작성칸 위로 올린다(states.dart ComposerScope).
+      body: ComposerScope(child: SafeArea(
         child: Column(
           children: [
             ThreadModelBar(channelId: widget.channelId, rootId: widget.rootId, agentIds: threadAgents),
@@ -200,7 +201,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
             ),
           ],
         ),
-      ),
+      )),
     );
   }
 
