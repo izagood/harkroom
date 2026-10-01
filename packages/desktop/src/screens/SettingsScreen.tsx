@@ -17,7 +17,7 @@ import { ProfileSettings } from '../components/settings/ProfileSettings';
 import { SkillsSettings } from '../components/settings/SkillsSettings';
 import { AutomationsSettings } from '../components/settings/AutomationsSettings';
 import { UpdatesSettings } from '../components/settings/UpdatesSettings';
-import { DEFAULT_SECTION, SETTINGS_GROUPS, isSectionId, navKey, type SectionId } from '../components/settings/sections';
+import { DEFAULT_SECTION, SETTINGS_GROUPS, isSectionId, navKey, workspaceEditable, type SectionId } from '../components/settings/sections';
 import { useActiveStore } from '../state/communities';
 import { WindowDragStrip } from '../components/WindowDragStrip';
 import { useT } from '../i18n/useT';
@@ -68,10 +68,13 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
               <div key={g.id} className="mb-4">
                 <div className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">
                   {t(g.titleKey)}
-                  {/* 관리자가 아니면 워크스페이스 묶음은 **읽기 전용**이다(UX ⑥b, designer) — 모든 멤버에게
-                      걸리는 설정이라 관리자만 고친다. 페이지마다 이미 막고 있지만(초대·아이콘 등) 들어가
-                      보기 전에는 몰랐다. 묶음 머리에서 먼저 말한다. */}
-                  {g.id === 'workspace' && !me?.isAdmin && (
+                  {/* 워크스페이스 묶음에서 **아무것도 고칠 수 없으면** 읽기 전용이라고 머리에서 먼저 말한다
+                      (UX ⑥b, designer). 페이지마다 이미 막고 있지만 들어가 보기 전에는 몰랐다.
+                      판정은 `isAdmin` 하나가 아니라 **서버가 실제로 보는 능력**이다
+                      (`workspaceEditable`) — 멤버도 초대·집합·MCP 능력을 따로 받을 수 있어, `isAdmin`
+                      으로만 가르면 고칠 수 있는 사람에게 "읽기 전용" 이라고 거짓말한다.
+                      화면 표시일 뿐이다 — 권한 경계는 서버의 requireAdmin·requireCap 이다. */}
+                  {g.id === 'workspace' && !workspaceEditable(me) && (
                     <span data-testid="settings-group-readonly" className="ml-1 normal-case tracking-normal">· {t('settings.group.readOnly')}</span>
                   )}
                 </div>

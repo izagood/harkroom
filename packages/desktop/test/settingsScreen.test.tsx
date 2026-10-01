@@ -64,8 +64,17 @@ describe('SettingsScreen', () => {
    * 있어도 들어가 보기 전에는 몰랐다. 관리자에게는 붙지 않는다 — 고칠 수 있는 사람에게 "읽기
    * 전용" 이라고 하면 거짓이다.
    */
-  it.each([[false, true], [true, false]] as const)('isAdmin=%s 이면 읽기 전용 표시 %s', (isAdmin, shown) => {
-    useAppStore.getState().set({ me: { ...acc('u1', 'me'), isAdmin } });
+  /*
+   * 멤버라도 워크스페이스 묶음의 쓰기 능력을 하나 받았으면(초대·집합·MCP) 읽기 전용이 아니다 —
+   * 서버가 그 능력으로 허락하기 때문이다(`workspaceEditable`).
+   */
+  it.each([
+    ['관리자', { isAdmin: true }, false],
+    ['능력 없는 멤버', { isAdmin: false, capabilities: [] }, true],
+    ['초대 능력을 받은 멤버', { isAdmin: false, capabilities: ['member.invite'] }, false],
+    ['집합 능력을 받은 멤버', { isAdmin: false, capabilities: ['channel.manage'] }, false],
+  ] as const)('%s → 읽기 전용 표시 %s', (_who, over, shown) => {
+    useAppStore.getState().set({ me: { ...acc('u1', 'me'), ...over } as never });
     usePrefsStore.getState().setLocale('ko');
     try {
       render(<SettingsScreen onBack={vi.fn()} onSignOut={vi.fn()} onCommunitiesEmpty={vi.fn()} />);
