@@ -51,4 +51,7 @@ export const CLAUDE_CODE_ADAPTER: HarnessAdapter = {
   // 이 표가 말하고, 그 합집합이 현재 동작과 같은지는 패리티 테스트가 지킨다.
   skillDirs: ['.claude/skills'],
   interactiveHandoff: true,
+  // `-p --resume <id> --fork-session --output-format json` — 새 session id, 앞 대화 유지,
+  // cache_read 99.6%(2026-10-01 실측, -p 세션끼리). TUI 원 세션과의 캐시 공유는 D1 실험이 잰다.
+  reviewFork: true,
 };

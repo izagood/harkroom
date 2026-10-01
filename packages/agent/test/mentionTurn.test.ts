@@ -2108,6 +2108,74 @@ describe('runMentionTurn: 스킬 사용 기록(D3)', () => {
   });
 });
 
+// D1(2026-10-01): 성공한 턴 뒤 리뷰 포크에 센다 — 기다리지 않고, 깨어난 턴·자동화 턴은 건너뛴다.
+describe('runMentionTurn: 턴 뒤 리뷰 포크(D1)', () => {
+  type Seen = Parameters<NonNullable<MentionTurnDeps['reviewFork']>['afterTurn']>[0];
+  function spy(): { seen: Seen[]; reviewFork: NonNullable<MentionTurnDeps['reviewFork']> } {
+    const seen: Seen[] = [];
+    return { seen, reviewFork: { afterTurn: async (t) => { seen.push(t); return null; } } };
+  }
+
+  it('성공한 턴의 세션·cwd·plan 을 넘기고, 평범한 멘션은 건너뛰지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { seen, reviewFork } = spy();
+    const { deps } = await makeDeps(fake, { reviewFork });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(seen).toHaveLength(1);
+    const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
+    expect(seen[0]).toMatchObject({ agentId: deps.me.id, harness: 'claude-code', sessionId: rec.sessionId, cwd: rec.workspaceDir, skip: false });
+    expect(seen[0]!.plan.command).toBeTruthy();
+  });
+
+  it('예약으로 깨어난 턴은 건너뛴다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { seen, reviewFork } = spy();
+    const { deps } = await makeDeps(fake, { reviewFork });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION, wake: { reason: 'CI 확인' } });
+
+    expect(seen.map((t) => t.skip)).toEqual([true]);
+  });
+
+  it('자동화가 띄운 턴(meta.automation)은 건너뛴다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    const m = fake.seedFrom('human-1', '@forge 주간 정리');
+    m.meta = { automation: { id: 'a1', name: '주간', trigger: 'schedule', runId: 'r1' } };
+    const { seen, reviewFork } = spy();
+    const { deps } = await makeDeps(fake, { reviewFork });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: m.id });
+
+    expect(seen.map((t) => t.skip)).toEqual([true]);
+  });
+
+  it('실패한 턴은 세지 않고, 세는 쪽이 던져도 턴은 성공한다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { seen, reviewFork } = spy();
+    const failing = await makeDeps(fake, { reviewFork });
+    failing.runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: 'boom' });
+    await expect(
+      runMentionTurn(failing.deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
+    ).rejects.toThrow(/harness 종료 1/);
+    expect(seen).toHaveLength(0);
+
+    const fake2 = new FakeHarkroom(defOf());
+    fake2.seedFrom('human-1', '@forge 안녕');
+    const { deps, runTurn } = await makeDeps(fake2, { reviewFork: { afterTurn: async () => { throw new Error('disk full'); } } });
+    runTurn.script = async () => {
+      await fake2.post(CHANNEL, '답이다', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(deps.store.get(SessionStore.threadKey(CHANNEL, null))!.turnsRun).toBe(1);
+  });
+});
+
 describe('HarkroomAgentClient.recordSkillUse(D3)', () => {
   it('POST /skills/usage 에 slug 만 JSON 으로 싣는다 — 대상 id 는 보내지 않는다', async () => {
     const link = fakeLink({ http: () => ({ status: 200, body: '{"recorded":[]}' }) });
