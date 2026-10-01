@@ -44,6 +44,10 @@ export type AuditAction =
   | 'pat.issued' | 'pat.revoked'
   // 권한(스펙 2026-09-20 §6). 값은 비밀이 아니라 그대로 남긴다 — 준 기록이 없으면 사고를 못 되짚는다.
   | 'grant.given' | 'grant.revoked' | 'role.changed'
+  // 비밀 보관소(085). detail 에는 이름·판·대상 id 만 — **값도 값의 해시도 넣지 않는다**(짧은 토큰은
+  // 해시로 역산된다).
+  | 'secret.created' | 'secret.updated' | 'secret.value.replaced' | 'secret.deleted'
+  | 'secret.grant.given' | 'secret.grant.revoked'
   // 오퍼레이터·배정(스펙 2026-09-20 §3).
   | 'operator.registered' | 'operator.revoked' | 'agent.assigned' | 'agent.unassigned'
   // 호출 명단(스펙 2026-09-20 §6).
