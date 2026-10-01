@@ -117,11 +117,13 @@ function columnFromHead(head: MessageRow, input: BoardInput, scope: Scope): Boar
   const mine = scope.opened || scope.calledMe;
   const links = head.openAskLinks ?? [];
   const accountIds = head.openAskAccountIds ?? [];
+  // 계정 관문 실패의 차례 주인(서버 #1039, 2026-10-02) — 지목된 물음과 같은 대접이다.
+  const gateIds = head.openGateAccountIds ?? [];
   const humanAsks = head.openAskHumanCount ?? 0;
   const failures = head.unresolvedFailureCount ?? 0;
   // 내 차례: 나를 지목한 열린 물음·위임은 어디서든, 수신자 없는 물음·실패는 내 스레드에서만.
   // 실패는 언제나 사람에게 온다(`FailureMeta` 에 `to` 가 없다).
-  if ((myId != null && accountIds.includes(myId))
+  if ((myId != null && (accountIds.includes(myId) || gateIds.includes(myId)))
     || (myId != null && links.some((l) => l.blockedBy === myId))
     || (human && mine && (humanAsks > 0 || failures > 0))) return 'mine';
   // 막힘: **내가 열었거나 내가 위임한** 스레드가 남을 기다린다. 남의 스레드의 기다림은 빼낸다.

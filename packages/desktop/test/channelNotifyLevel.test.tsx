@@ -328,3 +328,25 @@ describe('채널 알림 수준 — 미읽음 배지', () => {
     expect(screen.getByText('quiet')).toBeTruthy();
   });
 });
+
+// 계정 관문 알림(2026-10-02, 관문 대응 PR-4): 계정당 한 번, 차례 주인에게만, 원문 없이.
+describe('계정 관문 — OS 알림은 계정당 한 번', () => {
+  const gate = (id: string, account: string, awaiting: string) => msg(id, 'c1', 9, '관문 통지', 'u2', {
+    threadRootId: 'root-1',
+    meta: { kind: 'failure', failure: { retryable: false, code: 'account_gate', account, awaitingAccountId: awaiting } } as unknown as Record<string, unknown>,
+  });
+  it('같은 계정의 관문이 여럿 와도 한 번, 다른 계정은 따로 — 남의 차례는 울리지 않는다', async () => {
+    setFocus(false);
+    const n = fakeNotifier();
+    const { callbacks } = await started(n, [], [pref('c1', 'all')]);
+    for (const [id, account, awaiting] of [['g1', 'acct-1', 'u1'], ['g2', 'acct-1', 'u1'], ['g3', 'plum', 'u1'], ['g4', 'lime', 'u-other']] as const) {
+      callbacks.current!.onEvent({ type: 'message.created', message: gate(id, account, awaiting), audience: 'all' });
+      await drained();
+    }
+    expect(n.sent).toHaveLength(2);
+    expect(n.sent[0]!.title).toContain('acct-1');
+    expect(n.sent[1]!.title).toContain('plum');
+    // 목적지는 그 실패 카드 — 거기서 [터미널 열기].
+    expect(n.sent[0]!.target?.messageId).toBe('g1');
+  });
+});

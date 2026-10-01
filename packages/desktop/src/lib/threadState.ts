@@ -74,14 +74,19 @@ export function threadState(input: ThreadStateInput): ThreadState | null {
   // 누적으로 세면 한 번 실패한 스레드가 영원히 붉다(`resolvesFailure` 의 주석 참고).
   let failed = false;
   let failedBy: string | null = null;
+  let gateMine = false;
 
   for (const m of messages) {
-    if (readFailureMeta(m.meta) != null) {
+    const fm = readFailureMeta(m.meta);
+    if (fm != null) {
       failed = true;
       failedBy = m.authorId;
+      // 계정 관문(서버 #1039): 그 차례 주인에게는 내 차례다 — 실패가 풀리면 함께 풀린다(아래).
+      gateMine = fm.code === 'account_gate' && myAccountId != null && fm.awaitingAccountId === myAccountId;
     } else if (failed && resolvesFailure(m, failedBy)) {
       failed = false;
       failedBy = null;
+      gateMine = false;
     }
     const ask = readAskMeta(m.meta);
     if (!ask || ask.answeredWith != null) continue;
@@ -95,7 +100,7 @@ export function threadState(input: ThreadStateInput): ThreadState | null {
 
   const last = messages[messages.length - 1]!;
   return decide({
-    myTurn,
+    myTurn: myTurn || gateMine,
     othersTurn,
     failed,
     lastIsProgress: last.kind === 'progress' && isAgent(last.authorId),
@@ -142,7 +147,7 @@ function resolvesFailure(m: MessageRow, failedBy: string | null): boolean {
 export function threadStateFromFacts(input: {
   row: Pick<MessageRow,
     'openAskHumanCount' | 'openAskAccountIds' | 'failureCount' | 'lastKind' | 'lastAuthorId'>
-    & Partial<Pick<MessageRow, 'unresolvedFailureCount'>>;
+    & Partial<Pick<MessageRow, 'unresolvedFailureCount' | 'openGateAccountIds'>>;
   myAccountId: string | null;
   isAgent: (accountId: string) => boolean;
   live: Liveness;
@@ -153,7 +158,9 @@ export function threadStateFromFacts(input: {
     return null;
   }
 
-  const toMe = row.openAskAccountIds.some((id) => id === myAccountId);
+  // 계정 관문 실패의 차례 주인(서버 #1039) — 지목된 물음과 같은 대접이다. 옛 서버는 칸이 없다.
+  const toMe = row.openAskAccountIds.some((id) => id === myAccountId)
+    || (row.openGateAccountIds ?? []).some((id) => id === myAccountId);
   // '사람 아무나'는 내가 사람이면 내 차례다(위와 같은 판정).
   const humanTurn = row.openAskHumanCount > 0 && myAccountId != null;
 
