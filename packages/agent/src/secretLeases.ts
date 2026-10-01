@@ -35,6 +35,13 @@ export interface SecretLeases {
   noteTranscript(causeMessageId: string, path: string): void;
   /** 가리고 놓는다. 던지지 않는다 — 가리기가 실패해도 임대는 놓는다(값을 오래 붙들지 않는다). */
   release(causeMessageId: string): Promise<void>;
+  /**
+   * 그 멘션에 마운트된 값의 바늘(긴 것부터). 실패 통지에 싣는 PTY 꼬리를 가릴 때 쓴다(`harnessTailNotice`).
+   * 임대가 없거나 마운트가 없으면 빈 목록이다. 결과를 오래 들고 있지 마라.
+   */
+  needles(causeMessageId: string): Promise<string[]>;
+  /** 종료 경로: 진행 중인 놓기(가리기)를 최대 `ms` 기다린다. 넘으면 그냥 돌아온다 — 종료를 막지 않는다. */
+  drain(ms: number): Promise<void>;
 }
 
 interface Held { leaseId: string | null; transcripts: Set<string> }
@@ -44,19 +51,27 @@ export function createSecretLeases(deps: SecretLeaseDeps): SecretLeases {
   const held = new Map<string, Held>();
   const log = deps.log ?? ((line: string) => console.error(line));
 
-  const scrub = async (h: Held): Promise<void> => {
-    if (!deps.turnSecretsDir || !h.leaseId || !h.transcripts.size) return;
-    const dir = join(deps.turnSecretsDir, h.leaseId);
+  /** 턴 디렉터리의 값으로 바늘을 만든다(긴 것부터). 값 자체는 이 함수 밖으로 나가지 않는다. */
+  const needlesOf = async (leaseId: string | null): Promise<string[]> => {
+    if (!deps.turnSecretsDir || !leaseId) return [];
+    const dir = join(deps.turnSecretsDir, leaseId);
     const names = await readdir(dir).catch(() => [] as string[]);
-    if (!names.length) return;
     const needles = new Set<string>();
     for (const n of names) {
       const value = await readFile(join(dir, n)).catch(() => null);
       if (value) for (const x of scrubNeedles(value)) needles.add(x);
     }
-    const sorted = [...needles].sort((a, b) => b.length - a.length);
+    return [...needles].sort((a, b) => b.length - a.length);
+  };
+  const inFlight = new Set<Promise<void>>();
+
+  const scrub = async (h: Held): Promise<void> => {
+    if (!h.transcripts.size) return;
+    const sorted = await needlesOf(h.leaseId);
+    if (!sorted.length) return;
+    const onSkip = (path: string) => log(`[secretLeases] ${path}: 64MB 를 넘어 가리지 않았다`);
     for (const path of h.transcripts) {
-      const n = await scrubPath(path, sorted).catch((e: unknown) => {
+      const n = await scrubPath(path, sorted, onSkip).catch((e: unknown) => {
         log(`[secretLeases] 기록 가리기 실패(${path}) — ${e instanceof Error ? e.message : String(e)}`);
         return 0;
       });
@@ -82,8 +97,24 @@ export function createSecretLeases(deps: SecretLeaseDeps): SecretLeases {
       const h = held.get(cause);
       held.delete(cause);
       if (!h?.leaseId) return;
-      await scrub(h).catch(() => {});
-      deps.notifyEnded(cause);
+      const work = (async () => {
+        await scrub(h).catch(() => {});
+        deps.notifyEnded(cause);
+      })();
+      inFlight.add(work);
+      try { await work; } finally { inFlight.delete(work); }
+    },
+    async needles(cause) {
+      return needlesOf(held.get(cause)?.leaseId ?? null).catch(() => []);
+    },
+    async drain(ms) {
+      if (!inFlight.size) return;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        Promise.allSettled([...inFlight]),
+        new Promise<void>((r) => { timer = setTimeout(r, ms); }),
+      ]);
+      if (timer) clearTimeout(timer);
     },
   };
 }

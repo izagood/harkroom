@@ -268,6 +268,8 @@ export interface MentionTurnDeps {
    * (`secretLeases.ts`). claude 는 세션 jsonl, codex 는 rollout. 세션이 sqlite 인 하네스(opencode 계열)는 없다.
    */
   noteTranscript?: (causeMessageId: string, path: string) => void;
+  /** 이 멘션에 마운트된 비밀 값의 바늘(D7 후속). 실패 통지·로그에 싣는 PTY 꼬리를 가린다. */
+  secretNeedles?: (causeMessageId: string) => Promise<string[]>;
   /** 테스트가 sinceMs 캡처 시점을 결정론적으로 만들기 위한 시계 주입. 생략하면 Date.now. */
   now?: () => number;
   /**
@@ -1565,6 +1567,10 @@ export async function runMentionTurn(
   // 턴이 끝난 뒤에 재면 방금 만들어진 rollout 파일이 그보다 오래돼 보여 발견이 조용히
   // 실패하고, codex 스레드가 매 턴 새 세션으로 시작한다(에러 없이) — 브리프가 짚은 함정.
   const sinceMs = turnStartMs;
+  // 실패 통지·로그에 PTY 꼬리를 실을 때 마운트한 비밀 값을 가린다(D7 후속). 한 번만 읽는다.
+  let tailSecretsMemo: Promise<string[]> | null = null;
+  const tailSecrets = (): Promise<string[]> =>
+    (tailSecretsMemo ??= deps.secretNeedles ? deps.secretNeedles(mentionId).catch(() => []) : Promise.resolve([]));
 
   if (discoversSessionIdAfterTurn(def.harness) && rec.sessionId === null) {
     // codex 는 세션 id 를 사전 할당할 수 없다 — 방금 끝난 턴이 만든 rollout 파일에서
@@ -1759,7 +1765,7 @@ export async function runMentionTurn(
       쓰는 이유가 자르기보다 그 가리기다.
     */
     if (end.stalled) {
-      const 화면 = harnessTailNotice(result.tail, deps.runnerSecret);
+      const 화면 = harnessTailNotice(result.tail, deps.runnerSecret, await tailSecrets());
       console.error(
         `[mentionTurn] ${key}: 정지 당시 마지막 화면 —\n${화면 ?? '(출력이 없었다)'}`,
       );
@@ -1841,7 +1847,7 @@ export async function runMentionTurn(
       //
       // 해석이 아니라 **증거 첨부**다(`harnessTailNotice` 주석). 통지가 먼저 서는 순서도
       // 뜻이 있다: 사실("발화가 없었다")이 먼저고, 출력은 그 사실의 정황이다.
-      const evidence = harnessTailNotice(result.tail, deps.runnerSecret);
+      const evidence = harnessTailNotice(result.tail, deps.runnerSecret, await tailSecrets());
       // **침묵의 이유가 옆 스레드에 있을 수 있다**(2026-09-08 실측, `offAnchorPosts` 주석).
       // 여기서만 채널 전체를 훑는 이유는 값이 싸지 않아서다: 이 경로는 드물게 도는 침묵
       // 경로이고, 그때는 사람에게 어차피 통지가 나가므로 한 왕복을 더 쓸 값어치가 있다.
