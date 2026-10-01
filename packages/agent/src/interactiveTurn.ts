@@ -17,6 +17,7 @@
 // **exit 을 기다리지 않는다.** 이 함수의 반환은 "떴다"이지 "끝났다"가 아니다 — 서버는
 // 티켓을 발급해야 하고 사람은 그 티켓으로 attach 한다. 턴의 끝은 둘이다(스펙 §5-2 결정 5):
 // 1차 exit(사람이 하네스 안에서 종료), 2차 고아 회수(viewer 0 → 유예 → SIGTERM→SIGKILL).
+import { resolveTurnModel, rootFromThreadKey, type TurnModel } from './threadModel.js';
 import { randomUUID } from 'node:crypto';
 import type { AgentHarness, AgentView, MessageRow } from '@harkroom/shared';
 import type { Me } from './harkroom.js';
@@ -110,6 +111,8 @@ export interface InteractiveRelay {
 export interface InteractiveTurnDeps {
   harkroom: {
     definition(): Promise<AgentView>;
+    /** 스레드 × 에이전트 모델 지정의 실효값(서버 079). */
+    threadModel?(messageId: string): Promise<TurnModel>;
     readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]>;
   };
   store: SessionStore;
@@ -288,6 +291,8 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
     // 것이 곧 "직접 개입"의 값이고 사람이 터미널에서 답한다), 프롬프트·stdin 파일 없음
     // (사람이 직접 친다). codex 는 여기서 명확한 거절을 던진다(§5-2 결정 8) — 그 메시지가
     // relay 의 interactive.error 로 사람 화면까지 그대로 간다.
+    // 사람이 연 터미널 턴도 스레드 지정을 따른다(결정 7). 채널 최상위 세션(`_root`)에는 루트가 없다.
+    const turnModel = await resolveTurnModel(deps.harkroom, def, rootFromThreadKey(key));
     const plan = buildTurnCommand({
       harness: def.harness,
       mode: 'interactive',
@@ -297,8 +302,8 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       systemPromptFile: null,
       promptCtx: '',
       stdinFile: null,
-      model: def.model,
-      effort: def.effort,
+      model: turnModel.model,
+      effort: turnModel.effort,
       mentionPermission: def.mentionPermission,
       mcpConfigPath: deps.mcpConfigPath,
       extraMcpServers: deps.readTurnMcp

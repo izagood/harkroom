@@ -223,6 +223,26 @@ export function isHarnessStall(err: unknown): { stallMs: number } | null {
 }
 
 /**
+ * **스레드에서 지정한 모델·effort 를 하네스가 거절했나**(결정 6, 2026-10-01).
+ *
+ * 재시도로 낫지 않는다 — 같은 이름을 다시 넘기면 같은 자리에서 죽는다. 그래서 정지·세션 충돌과
+ * 같은 갈래로 크게 실패하고, 사람이 스레드 칩에서 기본으로 되돌리게 한다. **기본값으로 조용히
+ * 바꿔 다시 돌리지 않는다**: 사람이 고른 비용이 아닌 비용으로 일이 끝난다.
+ *
+ * 재료는 셋이 다 있어야 한다: 이 턴이 스레드 지정으로 돌았고(`threadModel`, mentionTurn 이 붙인
+ * 표시), 하네스가 기록에 API 에러를 남겼고(`harnessApiError`, 사람 말이 섞이지 않는 자리 —
+ * 위 `isCredentialFailure` 주석), 그 에러가 모델·effort 를 말한다. 마지막 조건이 없으면 지정한
+ * 스레드에서 난 일시 장애(과부하 등)까지 "모델 거절" 로 읽혀 사람이 멀쩡한 지정을 푼다.
+ */
+export function isThreadModelRejected(err: unknown): { model: string | null; effort: string | null; apiError: string } | null {
+  if (!(err instanceof Error)) return null;
+  const e = err as Error & { harnessApiError?: unknown; threadModel?: { model: string | null; effort: string | null } };
+  if (!e.threadModel || typeof e.harnessApiError !== 'string') return null;
+  if (!/\bmodel\b|effort|reasoning/i.test(e.harnessApiError)) return null;
+  return { model: e.threadModel.model, effort: e.threadModel.effort, apiError: e.harnessApiError };
+}
+
+/**
  * 운영자가 개입해야 하는 실패인가(자격증명). 재시도로 낫지 않으므로 러너는 즉시 크게 실패해야
  * 한다 — 무한 재시도로 감추면 로그만 쌓이고 "왜 답이 없지"의 원인이 묻힌다.
  *

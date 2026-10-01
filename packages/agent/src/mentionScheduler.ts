@@ -17,9 +17,9 @@ import type { MentionQueue } from './mentionQueue.js';
 import { withAccountFailover, type ClaudeAccount } from './claudeAccounts.js';
 import {
   controlHeldNotice, controlledNotice, FAILURE_NOTICE, quotaNotice, retryNotice, retryReason,
-  sessionConflictNotice, stallNotice,
+  sessionConflictNotice, stallNotice, threadModelRejectedNotice,
 } from './prompt.js';
-import { exhausted, isHarnessStall, isQuotaExhausted, isSessionIdConflict, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
+import { exhausted, isHarnessStall, isQuotaExhausted, isSessionIdConflict, isThreadModelRejected, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
 
 /**
  * `tried` 번 실패한 entry 가 다음 시도까지 쉬는 시간(ms).
@@ -116,7 +116,11 @@ export interface MentionSchedulerDeps {
    * 스레드마다 묻는 이유: 계정은 스레드 단위로 고정된다 — 세션 파일이 계정 디렉터리 안에 있다.
    * 지운 계정 걸러 내기(`presentAccounts`)는 이 함수가 맡는다.
    */
-  laneFor?(threadKey: string): Promise<readonly (ClaudeAccount | null)[]>;
+  /**
+   * `anchorMessageId` 는 이 턴의 앵커(채널 최상위면 그 멘션) — 스레드 지정 모델(079)을 찾는 열쇠다.
+   * 모델별 주간 창(Opus 등)을 **이 턴이 실제로 쓸 모델**로 봐야 지정한 스레드가 찬 계정을 피한다.
+   */
+  laneFor?(threadKey: string, anchorMessageId?: string): Promise<readonly (ClaudeAccount | null)[]>;
   runMentionTurn(deps: MentionTurnDeps, target: MentionTarget): Promise<MentionTurnResult>;
   /** 계정 두 필드까지 채운 완성 deps 를 만든다. 조립은 main 이 갖는다. */
   buildTurnDeps(args: {
@@ -284,7 +288,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
     };
     try {
       const lane = deps.laneFor
-        ? await deps.laneFor(threadKey)
+        ? await deps.laneFor(threadKey, anchor)
         : typeof deps.accountLane === 'function' ? await deps.accountLane() : deps.accountLane;
       const turn = await withAccountFailover(
         lane,
@@ -361,6 +365,22 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
        * **`markRead` 를 여기서 한다.** 안 하면 이 항목이 큐에 남아 다음 폴에서 다시 뜨고,
        * 재시도를 안 하겠다고 한 것이 무의미해진다(한도·충돌 분기와 같은 처리).
        */
+      // 스레드 지정 모델 거절(결정 6) — 정지와 같은 갈래: 재시도하지 않고 사람이 할 일을 남긴다.
+      const rejected = isThreadModelRejected(err);
+      if (rejected) {
+        console.error(`  ${mention.id} 스레드 지정 모델 거절 — 재시도하지 않는다 (${rejected.model ?? '-'}·${rejected.effort ?? '-'}): ${rejected.apiError}`);
+        await deps.harkroom.fail(mention.channelId, threadModelRejectedNotice(rejected.model, rejected.effort, rejected.apiError), anchor, {
+          retryable: false,
+          what: '이 스레드에 지정한 모델을 하네스가 받지 않았다',
+          reason: '스레드 머리의 모델 칩에서 기본으로 되돌리거나 다른 모델을 골라야 한다 — 같은 지정으로는 다시 실패한다',
+        }).catch((e: unknown) => {
+          console.error(`  ${mention.id} 모델 거절 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);
+        });
+        await deps.harkroom.markRead([entryId]);
+        attempts.delete(entryId);
+        return;
+      }
+
       const stall = isHarnessStall(err);
       if (stall) {
         console.error(`  ${mention.id} 하네스 정지 — 재시도하지 않는다 (사람이 그 터미널을 봐야 한다): ${err instanceof Error ? err.message : String(err)}`);

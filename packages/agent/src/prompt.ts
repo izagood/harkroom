@@ -171,6 +171,17 @@ export function sessionConflictNotice(): string {
   return '(하네스 세션 상태가 어긋나 답할 수 없었습니다 — 운영자가 러너 로그를 확인해야 합니다)';
 }
 
+/**
+ * 스레드 지정 모델을 하네스가 거절했다는 통지(결정 6). 사람이 할 일(스레드 칩에서 되돌리기)을
+ * 말한다 — 앱은 이 실패 카드에 [기본으로 되돌리고 다시 부르기] 를 단다.
+ */
+export function threadModelRejectedNotice(model: string | null, effort: string | null, apiError: string): string {
+  const value = [model ?? '설정 모델', effort].filter(Boolean).join(' · ');
+  const why = apiError.replace(/\s+/g, ' ').trim().slice(0, RETRY_REASON_MAX_CHARS);
+  return `(이 스레드에 지정한 모델 ${value} 을 하네스가 받지 않아 답하지 못했습니다 — 다시 시도하지 않습니다. `
+    + `스레드 머리의 모델 칩에서 기본으로 되돌리거나 다른 모델을 골라 다시 불러 주세요. 하네스: ${why})`;
+}
+
 /** 재시도 통지에 싣는 사유의 최대 길이. 한 줄로 읽히는 만큼만 남긴다. */
 const RETRY_REASON_MAX_CHARS = 160;
 

@@ -8,6 +8,7 @@
 // MCP 는 링크 위의 트랜스포트(`mcp.request`)로, 몇 안 되는 REST(`/agent/config` 등)는
 // `http.forward` 로 간다. 인증(오퍼레이터 토큰 + `X-Harkroom-Agent`)은 오퍼레이터가 붙인다 —
 // 그래서 이 파일에 PAT 도 URL 도 없다.
+import type { TurnModel } from './threadModel.js';
 import type { RecallHit, RecallResult } from './memoryPin.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { AccountView, AgentView, InboxEntry, MessageRow } from '@harkroom/shared';
@@ -157,6 +158,15 @@ export class HarkroomAgentClient {
   /** 서버가 들고 있는 자기 정의(UI 로 수정된다). REST 다 — MCP 에는 이 도구가 없다. */
   definition(): Promise<AgentView> {
     return this.rest<AgentView>('GET', '/agent/config', 'agent/config');
+  }
+
+  /**
+   * 이 스레드에서 이 에이전트가 쓸 모델·effort(서버 079 의 실효값). `messageId` 는 앵커 아무것이나
+   * — 서버가 그 루트를 찾는다. REST 인 이유는 `definition()` 과 같다. 실패는 던진다 — 물러날지는
+   * 호출자(`threadModel.ts::resolveTurnModel`)가 정한다.
+   */
+  threadModel(messageId: string): Promise<TurnModel> {
+    return this.rest<TurnModel>('GET', `/agent/thread-model?messageId=${encodeURIComponent(messageId)}`, 'agent/thread-model');
   }
 
   /**

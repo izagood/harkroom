@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import type { AgentHarness, AgentView, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow } from '@harkroom/shared';
 import type { Me } from './harkroom.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts, permissionDenialNotice, silentWakeNotice } from './prompt.js';
+import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, harnessPath, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
 import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readsSessionTranscript, usesTuiForMention, usesXdgHome } from './adapters/index.js';
@@ -38,6 +39,8 @@ import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './h
  * 그대로 넘겨도 되고, 테스트는 인메모리 fake 를 넘긴다(프로세스 경계·네트워크 없이 검증). */
 export interface MentionTurnHarkroom {
   definition(): Promise<AgentView>;
+  /** 스레드 × 에이전트 모델 지정의 실효값(서버 079). 옛 서버를 흉내 내는 테스트 더블은 없어도 된다. */
+  threadModel?(messageId: string): Promise<TurnModel>;
   /**
    * 관문에 걸린 사실을 스레드에 남긴다(`gateNotice`). **평문이 아니라 실패여야 한다** —
    * 이유는 `harkroom.ts::fail` 주석에 있다.
@@ -837,6 +840,9 @@ export async function runMentionTurn(
     stdinFile = await writePromptFile(deps.stateDir, promptForHarness);
   }
 
+  // **턴마다** 읽는다 — 사람이 스레드 칩을 바꾸면 다음 턴부터 먹는다(결정 11). 도는 턴의 argv 는
+  // 여기서 정해지므로 도중에 바꾼 값은 이 턴에 닿지 않는다. 채널 최상위 멘션이면 그 글이 루트다.
+  const turnModel = await resolveTurnModel(deps.harkroom, def, anchor ?? mentionId);
   const plan = buildTurnCommand({
     harness: def.harness,
     mode: 'mention',
@@ -846,8 +852,8 @@ export async function runMentionTurn(
     systemPromptFile,
     promptCtx: turnPrompt,
     stdinFile,
-    model: def.model,
-    effort: def.effort,
+    model: turnModel.model,
+    effort: turnModel.effort,
     mentionPermission: def.mentionPermission,
     mcpConfigPath: deps.mcpConfigPath,
     extraMcpServers: deps.readTurnMcp
@@ -864,7 +870,9 @@ export async function runMentionTurn(
   // #126: 턴 시작 로그 (어느 채널·스레드·하네스·워크스페이스에서 PTY 를 띄우는가)
   const turnStartMs = (deps.now ?? Date.now)();
   console.log(
-    `[mentionTurn] ${key}: 턴 시작 (채널=${channelId}, 앵커=${anchor ?? 'null'}, 하네스=${def.harness}, 워크스페이스=${rec.workspaceDir})`,
+    `[mentionTurn] ${key}: 턴 시작 (채널=${channelId}, 앵커=${anchor ?? 'null'}, 하네스=${def.harness}, `
+      + `모델=${turnModel.model ?? '(하네스 기본)'}${turnModel.effort ? `·${turnModel.effort}` : ''}${usesThreadModel(turnModel) ? '(스레드 지정)' : ''}, `
+      + `워크스페이스=${rec.workspaceDir})`,
   );
 
   // 💬 신호: 턴이 도는 중. 임계를 물려받지 않는다 — 위 지연 ack 의 임계는 "짧은 턴에
@@ -1681,7 +1689,7 @@ export async function runMentionTurn(
               : end.silenced
               ? `harness 무발화 ${deps.turnTimeoutMs}ms — 답 없이 시간 한도를 넘겼다`
               : `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
-    ) as Error & { harnessApiError?: string; harnessStalledMs?: number };
+    ) as Error & { harnessApiError?: string; harnessStalledMs?: number; threadModel?: TurnModel };
     /*
       **정지의 마지막 화면은 러너 로그에 남긴다**(2026-09-09).
 
@@ -1719,6 +1727,9 @@ export async function runMentionTurn(
     // 에러를 집을 수 있다 — 지금 턴의 사실을 이미 손에 쥐었으면 그것을 쓴다.
     if (end.apiError) failure.harnessApiError = end.apiError;
     else if (apiError) failure.harnessApiError = apiError.text;
+    // 스레드 지정으로 돈 턴이면 그 값을 함께 넘긴다 — 하네스가 그 모델을 거절했을 때 스케줄러가
+    // 재시도 대신 "지정 모델이 거절됐다" 로 크게 실패하는 재료다(결정 6, `policy.ts::isThreadModelRejected`).
+    if (usesThreadModel(turnModel)) failure.threadModel = turnModel;
     throw failure;
   }
 
