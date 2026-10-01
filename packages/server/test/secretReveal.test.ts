@@ -79,19 +79,28 @@ describe('턴 임대·reveal (086)', () => {
     expect(res.headers['cache-control']).toBe('no-store');
     // 남의 멘션·오래된 멘션에는 안 준다.
     expect((await lease(await mention(privCh, otherAgentId))).statusCode).toBe(403);
-    expect((await lease(await mention(privCh, agentId, 2 * 60 * 60_000))).json().error.code).toBe('not_invoked');
+    expect((await lease(await mention(privCh, agentId, 11 * 60_000))).json().error.code).toBe('not_invoked');
   });
 
-  it('같은 멘션에 살아 있는 임대는 하나 — 두 번째는 409 이고 감사에 남는다. 끝내면 다시 받는다', async () => {
+  it('S1: 멘션 하나에 임대는 평생 하나 — 살아 있든 끝났든 두 번째는 409 lease_used 이고 감사에 남는다', async () => {
     const m = await mention(privCh);
     const first = (await lease(m)).json().lease;
     const second = await lease(m);
     expect(second.statusCode).toBe(409);
+    expect(second.json().error.code).toBe('lease_used');
     expect((await pool.query(`select 1 from audit_log where action = 'secret.lease.conflict'`)).rowCount).toBeGreaterThan(0);
     // 토큰이 틀리면 끝내지 못한다.
     expect((await app.inject({ method: 'POST', url: `/agent/turn-leases/${first.id}/end`, headers: asAgent(op), payload: { token: 'x' } })).statusCode).toBe(404);
     expect((await app.inject({ method: 'POST', url: `/agent/turn-leases/${first.id}/end`, headers: asAgent(op), payload: { token: first.token } })).statusCode).toBe(204);
-    expect((await lease(m)).statusCode).toBe(200);
+    // 끝난 멘션으로 다시 받지 못한다 — 다른 턴의 셸이 지난 비공개 멘션을 재임대하는 길(S1).
+    const again = await lease(m);
+    expect(again.statusCode).toBe(409);
+    expect(again.json().error.code).toBe('lease_used');
+    // 만료된 것도 같다.
+    const m2 = await mention(privCh);
+    await lease(m2);
+    await pool.query(`update secret_turn_lease set expires_at = now() - interval '1 second' where cause_message_id = $1`, [m2]);
+    expect((await lease(m2)).json().error.code).toBe('lease_used');
     // 끝난 임대로는 받지 못한다.
     expect((await reveal(first)).json().error.code).toBe('lease_invalid');
   });
@@ -196,6 +205,16 @@ describe('턴 임대·reveal (086)', () => {
     expect(patch.statusCode).toBe(200);
     expect(await live()).toBe(0);
     expect((await pool.query(`select suspend_reason from secret_grant where agent_id = $1`, [agentId])).rows[0].suspend_reason).toBe('definition_changed');
+    await grant({ channelId: privCh });
+    // S2: 작업 디렉터리가 바뀌어도 선다.
+    await app.inject({ method: 'PATCH', url: `/accounts/agents/${agentId}`, headers: auth(admin.token), payload: { workingDir: '/srv/other' } });
+    expect(await live()).toBe(0);
+    await grant({ channelId: privCh });
+    // S2: MCP 목록이 바뀌어도 선다.
+    expect((await app.inject({ method: 'PUT', url: '/mcp-servers/linear', headers: auth(admin.token), payload: { credentialKind: 'community' } })).statusCode).toBe(200);
+    const mcp = await app.inject({ method: 'PATCH', url: `/accounts/agents/${agentId}`, headers: auth(admin.token), payload: { mcpServers: ['linear'] } });
+    expect(mcp.statusCode).toBe(200);
+    expect(await live()).toBe(0);
     await grant({ channelId: privCh });
     // 같은 값으로 다시 저장하면 세우지 않는다.
     await app.inject({ method: 'PATCH', url: `/accounts/agents/${agentId}`, headers: auth(admin.token), payload: { instructions: 'new job' } });

@@ -352,16 +352,17 @@ export async function registerSecretRoutes(
     if (!parsed.success) return reply.code(400).send({ error: { code: 'bad_request', message: parsed.error.message } });
     const issued = await issueTurnLease(pool, { ...who, causeMessageId: parsed.data.causeMessageId });
     if (!issued.ok) {
-      // 충돌은 사건이다 — 러너가 아닌 누군가(같은 자격을 쥔 셸)가 먼저 받아 갔을 수 있다(H2).
-      if (issued.code === 'lease_taken') {
+      // 충돌은 사건이다 — 러너가 아닌 누군가(같은 자격을 쥔 셸)가 먼저 받아 갔거나, 끝난 멘션으로
+      // 다시 받으려 했다(H2·S1).
+      if (issued.code === 'lease_used') {
         await recordAudit(pool, {
           action: 'secret.lease.conflict', ...actorOf(req), target: who.agentId,
           detail: { causeMessageId: parsed.data.causeMessageId, operatorId: who.operatorId },
         }, req);
       }
-      return reply.code(issued.code === 'lease_taken' ? 409 : 403).send({
-        error: { code: issued.code, message: issued.code === 'lease_taken'
-          ? 'a live lease already exists for this mention'
+      return reply.code(issued.code === 'lease_used' ? 409 : 403).send({
+        error: { code: issued.code, message: issued.code === 'lease_used'
+          ? 'this mention has already had a lease; a lease is issued once per mention'
           : 'this agent was not recently invoked by that message' },
       });
     }

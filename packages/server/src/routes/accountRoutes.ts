@@ -510,8 +510,11 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
      * **무엇으로 도는지**(하네스)·**누구의 것인지**(소유자)가 바뀌면, 비밀 소유자가 믿었던 그 에이전트가
      * 아니다. 지우지 않고 세운다 — 소유자가 보고 다시 주면 풀린다. 꺼진 에이전트도 같다.
      */
+    // MCP 목록(S2): 붙인 stdio MCP 는 그 에이전트의 프로세스 트리에서 돌며 턴 마운트 파일을 읽을 수 있다.
+    // 작업 디렉터리(S2): 어느 코드 위에서 셸이 도는지가 바뀐다. 목록은 이름순으로 오므로 이어 붙여 비교한다.
     if (updated.instructions !== before.instructions || updated.harness !== before.harness
-      || updated.ownerAccountId !== before.ownerAccountId) {
+      || updated.ownerAccountId !== before.ownerAccountId || updated.workingDir !== before.workingDir
+      || [...updated.mcpServers].sort().join('\n') !== [...before.mcpServers].sort().join('\n')) {
       await suspendSecretGrants(pool, { agentId: id }, 'definition_changed');
     }
     if (patch.disabled === true && !before.disabled) await suspendSecretGrants(pool, { agentId: id }, 'agent_disabled');

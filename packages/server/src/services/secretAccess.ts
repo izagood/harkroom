@@ -14,18 +14,22 @@ import type { SecretKeyring } from './secretKeyring.js';
 
 /** 턴 예산 30분 + 여유. 이 뒤에는 임대가 살아 있어도 reveal 이 거절된다. */
 export const LEASE_TTL_MS = 35 * 60_000;
-/** 이보다 오래된 인박스 항목에는 임대를 주지 않는다 — 지난 멘션으로 새 턴을 사칭하지 못하게. */
-export const LEASE_INBOX_FRESH_MS = 60 * 60_000;
+/**
+ * 이보다 오래된 인박스 항목에는 임대를 주지 않는다(S1). 러너는 멘션을 집는 즉시 받으므로 짧아도 된다 —
+ * 길수록 "아직 집지 않은 멘션을 셸이 먼저 받는" 창(H2)이 넓어진다.
+ */
+export const LEASE_INBOX_FRESH_MS = 10 * 60_000;
 
 const sha256 = (s: string): string => createHash('sha256').update(s, 'utf8').digest('hex');
 
 export type LeaseIssue =
   | { ok: true; leaseId: string; token: string; channelId: string; threadRootId: string; expiresAt: string }
-  | { ok: false; code: 'not_invoked' | 'lease_taken' };
+  | { ok: false; code: 'not_invoked' | 'lease_used' };
 
 /**
  * 이 에이전트가 **실제로 불린** 메시지(최근 인박스 항목)에만 임대를 준다. 채널·스레드는 그 메시지에서
- * 읽는다. 같은 멘션에 살아 있는 임대가 있으면 `lease_taken` — 충돌은 호출부가 감사에 남긴다.
+ * 읽는다. 그 멘션에 **한 번이라도** 임대를 줬으면(끝났든 만료됐든) `lease_used` 다(S1) — 충돌은
+ * 호출부가 감사에 남긴다.
  */
 export async function issueTurnLease(
   pool: Pool, args: { agentId: string; operatorId: string; causeMessageId: string; now?: Date },
@@ -43,11 +47,10 @@ export async function issueTurnLease(
         limit 1`,
       [args.agentId, args.causeMessageId, new Date(now.getTime() - LEASE_INBOX_FRESH_MS)]);
     if (!msg.rowCount) { await client.query('rollback'); return { ok: false, code: 'not_invoked' }; }
-    const live = await client.query(
-      `select 1 from secret_turn_lease
-        where agent_id = $1 and cause_message_id = $2 and ended_at is null and expires_at > $3`,
-      [args.agentId, args.causeMessageId, now]);
-    if (live.rowCount) { await client.query('rollback'); return { ok: false, code: 'lease_taken' }; }
+    const used = await client.query(
+      `select 1 from secret_turn_lease where agent_id = $1 and cause_message_id = $2`,
+      [args.agentId, args.causeMessageId]);
+    if (used.rowCount) { await client.query('rollback'); return { ok: false, code: 'lease_used' }; }
     const token = randomBytes(32).toString('base64url');
     const expiresAt = new Date(now.getTime() + LEASE_TTL_MS);
     const { channelId, threadRootId } = msg.rows[0] as { channelId: string; threadRootId: string };
