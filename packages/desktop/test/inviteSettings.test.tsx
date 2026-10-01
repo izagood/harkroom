@@ -69,6 +69,36 @@ describe('InviteSettings', () => {
     await waitFor(() => expect(c.refreshAccounts).toHaveBeenCalledWith({ force: true }));
   });
 
+  it('불러오는 동안 목록이 비었으면 묶음 제목에 숫자를 달지 않는다 — 0 은 "아무도 없다" 로 읽힌다', async () => {
+    let resolve!: () => void;
+    const c = { createInvite: vi.fn(async () => 't'), refreshAccounts: vi.fn(() => new Promise<void>((r) => { resolve = r; })) };
+    setController(c as unknown as Controller);
+    render(<InviteSettings />);
+    expect(screen.getByText('멤버')).toBeTruthy();
+    expect(screen.queryByText('멤버 (0)')).toBeNull();
+    resolve();
+    // 다 받은 뒤에도 비었으면 그때는 0 이 사실이다.
+    expect(await screen.findByText('멤버 (0)')).toBeTruthy();
+  });
+
+  it('조회가 실패하고 목록이 비었으면 제목에 숫자를 달지 않는다', async () => {
+    const c = { createInvite: vi.fn(async () => 't'), refreshAccounts: vi.fn(async () => { throw new Error('503'); }) };
+    setController(c as unknown as Controller);
+    render(<InviteSettings />);
+    await screen.findByRole('alert');
+    expect(screen.getByText('멤버')).toBeTruthy();
+    expect(screen.queryByText('멤버 (0)')).toBeNull();
+  });
+
+  it('멤버 줄에는 종류 칩(HUMAN)을 달지 않는다 — 사람만 싣는 목록이다', () => {
+    fakeController();
+    const me = acc('u1', 'zed', true);
+    useAppStore.getState().set({ me, accounts: { u1: me } });
+    render(<InviteSettings />);
+    expect(screen.getByTestId('directory-row-u1')).toBeTruthy();
+    expect(screen.queryByTestId('directory-kind-u1')).toBeNull();
+  });
+
   it('목록 조회가 실패하면 빈 목록 대신 실패를 말하고 다시 시도할 수 있다', async () => {
     let n = 0;
     const c = {

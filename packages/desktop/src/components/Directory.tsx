@@ -173,7 +173,11 @@ export function Directory({ open, onClose, accountId }: Props) {
  * 때문이다. 줄을 거기서 다시 짜면 비활성·낡은 presence 같은 규칙(#443)이 한쪽에서만 산다.
  * 보여 주는 것의 경계(`AccountView` 가 주는 것만)는 위 `Directory` 주석 그대로다.
  */
-export function DirectoryRow({ account: a, selected: isSelected = false }: { account: AccountView; selected?: boolean }) {
+export function DirectoryRow({ account: a, selected: isSelected = false, showKind = true }: {
+  account: AccountView; selected?: boolean;
+  /** 종류 칩(`HUMAN`/`AGENT`). 사람만 싣는 목록(멤버와 초대)에서는 모든 줄에 같은 칩이 서서 소음이다. */
+  showKind?: boolean;
+}) {
   const t = useT();
   const online = useActiveStore((s) => s.online);
   // `#443`: presence 는 **서버가 주는 것**이라 소켓이 끊기면 낡는다. `online` 만 읽으면
@@ -210,12 +214,14 @@ export function DirectoryRow({ account: a, selected: isSelected = false }: { acc
     />
     <span className="font-medium text-fg">{a.displayName}</span>
     <span className="text-fg-muted">@{a.handle}</span>
-    <span
-      data-testid={`directory-kind-${a.id}`}
-      className="rounded bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted"
-    >
-      {a.kind}
-    </span>
+    {showKind && (
+      <span
+        data-testid={`directory-kind-${a.id}`}
+        className="rounded bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted"
+      >
+        {a.kind}
+      </span>
+    )}
     {a.isAdmin && (
       <span className="rounded bg-warning-surface px-1 text-meta text-warning">admin</span>
     )}

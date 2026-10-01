@@ -108,7 +108,11 @@ export function InviteSettings() {
         </div>
       </SettingsGroup>
 
-      <SettingsGroup title={t('members.list.title', { count: String(people.length) })}>
+      {/* 숫자는 **아는 때만** 단다 — 처음 열 때 store 가 비어 있으면 "멤버 (0)" 이 "불러오는 중" 과
+          함께 섰다가 바뀐다. 0 은 "아무도 없다" 로 읽힌다(designer #1034). 실패하고 비었을 때도 같다. */}
+      <SettingsGroup title={people.length === 0 && load.kind !== 'ready'
+        ? t('members.list.heading')
+        : t('members.list.title', { count: String(people.length) })}>
         <div className="px-2 py-2" data-testid="members-list">
           {/* 실패는 목록 위에 남긴다 — 실패를 빈 목록으로 삼키면 "아무도 없다" 로 읽힌다. */}
           {load.kind === 'error' && (
@@ -124,7 +128,7 @@ export function InviteSettings() {
           )}
           {people.length === 0
             ? <p className="px-2 py-1 text-fg-subtle">{load.kind === 'loading' ? t('directory.loading') : t('members.list.empty')}</p>
-            : <ul>{people.map((a) => <DirectoryRow key={a.id} account={a} />)}</ul>}
+            : <ul>{people.map((a) => <DirectoryRow key={a.id} account={a} showKind={false} />)}</ul>}
         </div>
       </SettingsGroup>
     </SettingsPage>

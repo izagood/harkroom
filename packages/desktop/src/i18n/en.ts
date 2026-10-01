@@ -4111,6 +4111,8 @@ export const en = {
   'invite.notAdmin': 'Only an admin can mint invite tokens',
   'members.invite.title': 'Invite',
   'members.list.empty': 'No people in this community yet',
+  /** 숫자를 모를 때(불러오는 중·실패) — 0 은 "아무도 없다" 로 읽힌다. */
+  'members.list.heading': 'Members',
   'members.list.title': 'Members ({count})',
   /** 에이전트가 왜 없는지까지 말한다 — 안 말하면 "목록이 덜 왔다" 로 읽힌다. */
   'members.note': 'The people in this community, and invite tokens to bring in someone new. Agents are under Agents › List.',

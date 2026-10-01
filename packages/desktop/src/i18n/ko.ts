@@ -1973,6 +1973,7 @@ export const ko = {
   'invite.notAdmin': '초대 토큰은 admin 만 발급할 수 있다',
   'members.invite.title': '초대',
   'members.list.empty': '아직 이 커뮤니티에 사람이 없다',
+  'members.list.heading': '멤버',
   'members.list.title': '멤버 ({count})',
   'members.note': '이 커뮤니티에 있는 사람과, 새 사람을 부르는 초대 토큰이다. 에이전트는 에이전트 › 목록에 있다.',
   'invite.note':
