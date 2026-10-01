@@ -1,0 +1,118 @@
+name: TestFlight
+
+# iOS 앱을 서명해서 TestFlight 로 올린다. 단계는 `apps/mobile/tool/release-ios.sh` 가 전부 갖고 있고,
+# 이 워크플로는 **서명 자료를 깔고 그 스크립트를 부른다** — 로컬과 CI 가 같은 단계를 밟아야 한쪽에서만
+# 나는 실패가 없다.
+#
+# ## 언제 도나 — PR 에서는 절대 돌지 않는다
+# 저장소가 공개라 포크 PR 이 서명 키를 쥐는 길을 처음부터 없앤다. `pull_request`·`pull_request_target`
+# 트리거를 두지 않는다. 사람이 누르거나(`workflow_dispatch`) `mobile-v*` 태그를 밀 때만 돈다.
+#
+# ## 승인
+# job 이 환경 `testflight` 에 묶여 있다. 그 환경의 필수 승인자(jaebin)가 누르기 전에는 secret 을
+# 하나도 받지 못하고 시작하지 않는다. 환경과 승인자는 저장소 설정에서 사람이 건다.
+#
+# ## secret (환경 `testflight` 에 둔다, 저장소 secret 이 아니다)
+#   ASC_KEY_ID · ASC_ISSUER_ID · ASC_KEY_P8(.p8 내용) · ASC_APP_ID(앱의 숫자 Apple ID)
+#   IOS_DIST_P12_BASE64 · IOS_DIST_P12_PASSWORD(Apple Distribution 인증서)
+#   IOS_PROFILE_BASE64(프로비저닝 프로파일 "Harkroom Mobile App Store")
+#
+# **어느 단계도 이 값들을 출력하지 않는다.** `set -x` 를 켜지 마라.
+on:
+  workflow_dispatch:
+    inputs:
+      skip_e2e:
+        description: 시뮬레이터 E2E 를 건너뛴다
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'mobile-v*'
+
+# 같은 앱을 두 번 동시에 올리면 빌드 번호(ASC 최대값 + 1)가 겹친다 — 하나씩만 돈다.
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # `mobile.yml` 과 같은 SDK 다. 둘을 함께 올린다.
+  FLUTTER_VERSION: 3.47.5
+
+jobs:
+  upload:
+    name: build & upload
+    runs-on: macos-latest
+    environment: testflight
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      # 서명 자료를 **이 실행만의 임시 키체인**에 넣는다. 끝나면(실패해도) 지운다.
+      - name: install signing material
+        env:
+          P12_BASE64: ${{ secrets.IOS_DIST_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.IOS_DIST_P12_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          set -eu
+          signing="$RUNNER_TEMP/signing"
+          mkdir -p "$signing"
+          chmod 700 "$signing"
+
+          keychain="$RUNNER_TEMP/release.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+
+          printf '%s' "$P12_BASE64" | base64 --decode > "$signing/dist.p12"
+          security import "$signing/dist.p12" -k "$keychain" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          rm -f "$signing/dist.p12"
+          # WWDR 중간 인증서 — 없으면 "0 valid identities" 가 된다.
+          curl -fsSL -o "$signing/wwdr.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          security import "$signing/wwdr.cer" -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+
+          profiles="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$profiles"
+          printf '%s' "$PROFILE_BASE64" | base64 --decode > "$signing/app.mobileprovision"
+          uuid=$(security cms -D -i "$signing/app.mobileprovision" | plutil -extract UUID raw -)
+          mv "$signing/app.mobileprovision" "$profiles/$uuid.mobileprovision"
+
+          printf '%s' "$ASC_KEY_P8" > "$signing/AuthKey_$ASC_KEY_ID.p8"
+          chmod 600 "$signing/AuthKey_$ASC_KEY_ID.p8"
+          echo "KEYCHAIN_PATH=$keychain" >> "$GITHUB_ENV"
+
+      - name: release
+        env:
+          HARKROOM_SIGNING_DIR: ${{ runner.temp }}/signing
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_APP_ID: ${{ secrets.ASC_APP_ID }}
+          SKIP_E2E: ${{ inputs.skip_e2e && '1' || '0' }}
+        run: |
+          set -eu
+          if [ "$SKIP_E2E" = 1 ]; then ./tool/release-ios.sh --skip-e2e; else ./tool/release-ios.sh; fi
+
+      - name: clean up signing material
+        if: always()
+        run: |
+          [ -n "${KEYCHAIN_PATH:-}" ] && security delete-keychain "$KEYCHAIN_PATH" || true
+          rm -rf "$RUNNER_TEMP/signing" ~/.appstoreconnect/private_keys

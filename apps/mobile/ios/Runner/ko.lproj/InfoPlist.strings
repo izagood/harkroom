@@ -1,0 +1,2 @@
+/* 사진 권한을 묻는 글(한국어 기기). */
+"NSPhotoLibraryUsageDescription" = "메시지에 사진을 붙이려면 사진 보관함에 접근해야 한다.";

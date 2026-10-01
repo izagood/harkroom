@@ -69,6 +69,13 @@
 	<!-- 사진을 첨부할 때 iOS 가 사람에게 보여 주는 문장.
 	     **없으면 앱이 그 자리에서 죽는다** — 권한 거부가 아니라 크래시다.
 	     문구는 "왜 필요한가" 를 말한다: 권한 창은 사람이 읽고 정하는 자리다. -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>ko</string>
+	</array>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Harkroom needs access to your photos so you can attach them to a message.</string>
 </dict>

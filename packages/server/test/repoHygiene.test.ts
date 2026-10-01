@@ -124,6 +124,9 @@ describe('repo hygiene', () => {
       /^opencode\.ai$/i, // opencode 설정 파일이 가리키는 공개 스키마 URL
       /^(?:app\.)?kilo\.ai$/i, // Kilo Code CLI 의 공개 설정 스키마 URL·설치 안내(installHint)
       /^engineering\.block\.xyz$/i,
+      // Apple 1st-party: App Store Connect API(빌드 번호 조회)·WWDR 중간 인증서·개발자 문서
+      // (2026-10-01, `apps/mobile/tool/` 와 TestFlight 안내).
+      /^(?:(?:api\.)?appstoreconnect|developer|www)\.apple\.com$/i,
     ];
 
     /** 도메인이 아닌 것들. IP 리터럴은 SSRF 회귀선이 10진·16진 표기까지 쓴다. */

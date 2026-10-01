@@ -105,11 +105,23 @@ iOS 는 평문 `http://`·`ws://` 를 막는다. `Info.plist` 에 `NSAllowsArbit
 **저장소는 공개다.** `.gitignore` 가 `*.p8`·`*.p12`·`*.mobileprovision`·`*.cer` 를 막지만,
 막는 것과 올리지 않는 것은 다르다. 커밋 전에 `git status` 로 목록을 본다.
 
-## 번들 id 는 아직 자리표다
+## TestFlight 로 올리기
 
-지금 `com.example.harkroom` 이다(`ios/Runner.xcodeproj/project.pbxproj`).
+번들 id 는 **`com.harkroom.app`** 이다(테스트 대상은 `.RunnerTests`). App Store Connect 에 앱
+레코드를 만든 뒤로는 바꿀 수 없다.
 
-**App Store Connect 에 앱 레코드를 만들기 전까지는 바꿀 수 있다.** 그 뒤로는 못 바꾼다 —
-앱을 새로 만들어야 한다. 그래서 이것은 계획서 §9 에서 jaebin 과 **함께** 정하고, 그때 한 번에
-고친다. 그 전까지 자리표를 그럴듯한 이름으로 바꿔 두지 않는다 — 자리표는 자리표로 보여야
-누가 정해야 한다는 것이 눈에 남는다.
+- **서명**: Release 만 Manual(`Apple Distribution` + 프로파일 `Harkroom Mobile App Store`),
+  Debug·Profile 은 자동 서명 그대로다. 매핑은 `ios/ExportOptions.plist`(`app-store-connect`).
+- **빌드 번호**: App Store Connect 의 최대값 + 1 이다(`tool/next-build-number.mjs`). CI 의
+  `run_number` 를 쓰지 않는다 — 워크플로마다 1 부터 세서 이미 올라간 번호와 부딪힌다.
+- **로컬**: `tool/release-ios.sh`(E2E → `flutter build ipa` → 서명 체인 검사 → `altool --validate-app`
+  → `--upload-app`). 서명 자료는 `~/.harkroom-signing`(또는 `HARKROOM_SIGNING_DIR`)에 둔다:
+  `AuthKey_<KEY_ID>.p8` 와 `values.txt`(`ASC_KEY_ID=`·`ASC_ISSUER_ID=`·`ASC_APP_ID=`).
+- **CI**: `.github/workflows/testflight.yml`. 사람이 누르거나 `mobile-v*` 태그를 밀 때만 돌고,
+  **PR 에서는 돌지 않는다.** 환경 `testflight` 의 승인자가 눌러야 시작한다. secret 목록은 그 파일 머리에 있다.
+- 수출 규정은 `ITSAppUsesNonExemptEncryption = false`(OS 의 HTTPS 만 쓴다), 개인정보 매니페스트는
+  `ios/Runner/PrivacyInfo.xcprivacy`, 사진 권한 문구는 `ios/Runner/{en,ko}.lproj/InfoPlist.strings` 다.
+- 아이콘 원본은 `assets/icon/AppIcon.svg` 다. 1024 는 **알파 채널이 없어야** 업로드가 통과한다.
+
+**테스터에게 알릴 것**: 버그를 신고하며 찍는 스크린샷에는 **워크스페이스 주소가 보인다**(부팅 실패
+화면·설정 등). 공개된 곳에 올리기 전에 주소를 가린다.
