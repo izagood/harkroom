@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -171,5 +172,99 @@ describe('Codex wham/usage', () => {
     expect(snap.accounts.every((a) => a.source === 'api')).toBe(true);
     expect(snap.accounts.map((a) => a.account)).toEqual(['', 'work']);
     expect(snap.accounts.every((a) => a.weekly?.usedPercent === 9)).toBe(true);
+  });
+});
+
+/**
+ * 지운 계정 → 같은 이름으로 다시 붙인 계정에 **옛 로그인의 사용률이 나가지 않는다**(2026-10-01, #993 security 후속).
+ *
+ * 캐시 TTL 을 길게 잡는다 — 캐시를 버리지 않으면 같은 키(계정 디렉터리)라 옛 값이 그대로 나온다. 화면 경로는
+ * stale-while-revalidate 라 TTL 이 지나도 옛 값을 한 번 더 내준다. 버리는 것이 유일한 방어다.
+ */
+describe('계정을 지우거나 다시 로그인하면 사용량 캐시를 버린다', () => {
+  const cliSays = (pct: number) => `Current session: ${pct}% used · resets 7pm (UTC)\nCurrent week (all models): ${pct}% used\n`;
+
+  const claudeSetup = async () => {
+    const root = await temp();
+    await writeFile(join(root, 'pools.json'), JSON.stringify({ defaultPool: 'work', order: {}, agents: {} }));
+    await mkdir(join(root, 'work', 'aria'), { recursive: true });
+    const state = { pct: 11 };
+    const port = createClaudeAccountsPort({
+      root, now: () => NOW, fetchImpl: fakeFetch({}), usageCacheMs: 60 * 60 * 1000,
+      readToken: async () => null,
+      deleteKeychain: async () => undefined,
+      runCli: async () => ({ code: 0, stdout: cliSays(state.pct) }),
+    });
+    return { root, port, state };
+  };
+
+  it('claude: removeAccount 뒤 같은 이름으로 다시 만들면 새 로그인의 % 다', async () => {
+    const { root, port, state } = await claudeSetup();
+    expect((await port.providerUsage()).accounts[0]!.weekly?.usedPercent).toBe(11);
+    await port.removeAccount('work', 'aria');
+    await mkdir(join(root, 'work', 'aria'), { recursive: true });
+    state.pct = 64;
+    expect((await port.providerUsage()).accounts[0]!.weekly?.usedPercent).toBe(64);
+  });
+
+  it('claude: removePool 은 그 풀 아래 계정의 캐시를 전부 버린다 · 다른 풀은 건드리지 않는다', async () => {
+    const { root, port, state } = await claudeSetup();
+    await mkdir(join(root, 'workshop', 'aria'), { recursive: true });
+    await writeFile(join(root, 'pools.json'), JSON.stringify({ defaultPool: 'work', order: { work: [], workshop: [] }, agents: {} }));
+    const pctOf = async (pool: string) => (await port.providerUsage()).accounts.find((a) => a.pool === pool)!.weekly?.usedPercent;
+    expect(await pctOf('work')).toBe(11);
+    expect(await pctOf('workshop')).toBe(11);
+    await port.removePool('work');
+    await mkdir(join(root, 'work', 'aria'), { recursive: true });
+    state.pct = 64;
+    expect(await pctOf('work')).toBe(64);
+    // 이름 앞부분이 같은 풀(`work` ⊂ `workshop`)의 캐시는 남는다 — 경로 구분자로 자른다.
+    expect(await pctOf('workshop')).toBe(11);
+  });
+
+  const codexBody = (pct: number) => ({
+    rate_limit: { primary_window: { used_percent: pct, reset_after_seconds: 60 }, secondary_window: { used_percent: pct, reset_after_seconds: 60 } },
+  });
+
+  const codexSetup = async () => {
+    const root = await temp();
+    const systemHome = await temp();
+    await mkdir(join(root, 'work'));
+    const state = { pct: 11 };
+    const fetchImpl: FetchLike = async () => ({ ok: true, status: 200, json: async () => codexBody(state.pct) }) as never;
+    const children: (EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill(): boolean })[] = [];
+    const port = createCodexAccountsPort({
+      root, systemHome, now: () => NOW, fetchImpl, usageCacheMs: 60 * 60 * 1000,
+      readToken: async () => ({ accessToken: 'T', accountId: null }),
+      spawnRpc: () => { throw new Error('codex 없음'); },
+      status: async (home) => ({ loggedIn: home.startsWith(root) }) as never,
+      spawnLogin: () => {
+        const c = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter(), kill: () => true });
+        children.push(c);
+        return c as never;
+      },
+    });
+    const pctOf = async () => (await port.providerUsage()).accounts.find((a) => a.account === 'work')!.weekly?.usedPercent;
+    return { root, port, state, children, pctOf };
+  };
+
+  it('codex: removeAccount 뒤 같은 이름으로 다시 만들면 새 로그인의 % 다', async () => {
+    const { root, port, state, pctOf } = await codexSetup();
+    expect(await pctOf()).toBe(11);
+    await port.removeAccount('work');
+    await mkdir(join(root, 'work'));
+    state.pct = 64;
+    expect(await pctOf()).toBe(64);
+  });
+
+  it('codex: 로그인이 끝나면(다시 로그인) 그 계정의 캐시를 버린다', async () => {
+    const { port, state, children, pctOf } = await codexSetup();
+    expect(await pctOf()).toBe(11);
+    const done = new Promise<void>((res) => port.onLoginEvent((e) => { if (e.done) res(); }));
+    await port.loginStart('work');
+    state.pct = 64;
+    children[0]!.emit('exit', 0);
+    await done;
+    expect(await pctOf()).toBe(64);
   });
 });

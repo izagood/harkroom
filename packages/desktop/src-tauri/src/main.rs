@@ -350,12 +350,6 @@ fn app_version(app: tauri::AppHandle) -> String {
     app.package_info().version.to_string()
 }
 
-/// daemon 을 확보하고 러너를 띄우라고 시킨다.
-///
-/// **daemon 이 없으면 띄우고 있으면 붙는다**(`ensure_daemon`). 실패하면 그대로 `Err` 다 —
-/// 앱이 직접 러너를 띄우는 폴백은 **없다**(이 파일 위쪽 "그 자리는 폴백으로도 남기지
-/// 않았다" 참조). 그 `Err` 문자열이 화면의 `failed` + `message` 로 그대로 올라간다.
-///
 // ── daemon 을 부르는 커맨드는 전부 블로킹 풀에서 돈다(2026-10-01) ──────────────────────
 //
 // 아래 커맨드들은 모두 `ensure_daemon`(상태 락 + `ping` 왕복, daemon 이 없으면 띄우고 최대 30초
@@ -699,6 +693,12 @@ async fn claude_account_move(
     .await
 }
 
+/// daemon 을 확보하고 러너를 띄우라고 시킨다.
+///
+/// **daemon 이 없으면 띄우고 있으면 붙는다**(`ensure_daemon`). 실패하면 그대로 `Err` 다 —
+/// 앱이 직접 러너를 띄우는 폴백은 **없다**(이 파일 위쪽 "그 자리는 폴백으로도 남기지
+/// 않았다" 참조). 그 `Err` 문자열이 화면의 `failed` + `message` 로 그대로 올라간다.
+///
 /// **exit 통지 콜백을 여기서 안 넘긴다**(`#431` 2단계 A). 넘기던 시절에는 이 커맨드가
 /// 언제나 `ensure_daemon` 의 첫 호출자여서 우연히 맞았지만, 이제 `daemon_ensure` 가 앱
 /// 기동 직후 먼저 붙는다 — 콜백은 `ensure_daemon` 안에서 하나로 조립된다
