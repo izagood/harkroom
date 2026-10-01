@@ -463,13 +463,13 @@ class StringsEn implements Strings {
   String get communityCancel => 'Cancel';
 
   @override
-  String get communitySignOutOne => 'Sign out of {name}';
+  String get communitySignOutOne => 'Sign out: {name}';
 
   @override
   String get communitySwitchTo => 'Switch to this community';
 
   @override
-  String get communitySwitched => 'Switched to {name} · @{handle}';
+  String get communitySwitched => 'Now in {name} · @{handle}';
 
   @override
   String get communityLabel => 'Display name';

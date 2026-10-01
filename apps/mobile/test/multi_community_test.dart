@@ -7,7 +7,7 @@ import 'package:harkroom/api/api_client.dart';
 import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/main.dart';
 import 'package:harkroom/session/session_store.dart';
-import 'package:harkroom/screens/community_screens.dart';
+import 'package:harkroom/i18n/i18n.dart';
 import 'package:harkroom/state/app_state.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -404,16 +404,12 @@ void main() {
       expect(app.activeKey, _acmeKey);
     });
 
-    test('조사 로/으로', () {
-      expect(koreanRo('회사'), '로');
-      expect(koreanRo('연구실'), '로');
-      expect(koreanRo('본부'), '로');
-      expect(koreanRo('학교 팀'), '으로');
-      expect(koreanRo('lab'), '으로');
-      expect(koreanRo('acme'), '로');
-      expect(koreanRo('beta.example.com'), '으로');
-      expect(koreanRo('team2'), '로');
-      expect(koreanRo('v3'), '으로');
+    test('토스트·로그아웃 문구에 이름 뒤 조사가 없다(designer #1056)', () {
+      for (final t in [stringsFor('ko'), stringsFor('en')]) {
+        expect(t.communitySwitched, isNot(contains('{ro}')));
+        expect(t.communitySwitched, matches(RegExp(r'\{name\} · @\{handle\}$')));
+        expect(t.communitySignOutOne, endsWith('{name}'));
+      }
     });
   });
 

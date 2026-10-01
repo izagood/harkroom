@@ -310,7 +310,8 @@ abstract class Strings {
   /// 커뮤니티 화면에서 그리로 옮긴다.
   String get communitySwitchTo;
 
-  /// 옮긴 직후 토스트. `{name}`·`{handle}` 과 조사 `{ro}`(로/으로 — 쓰지 않는 언어는 빼도 된다)가 바뀐다.
+  /// 옮긴 직후 토스트. `{name}`·`{handle}` 이 바뀐다. **이름 뒤에 조사를 붙이지 않는다** — 커뮤니티 이름은
+  /// 대개 로마자라 받침을 가릴 수 없다(designer #1056).
   String get communitySwitched;
 
   /// 이 기기에서만 쓰는 커뮤니티 이름.

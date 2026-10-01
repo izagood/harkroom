@@ -57,7 +57,6 @@ void showSwitchedToast(
     ..showSnackBar(SnackBar(
       key: const Key('community-switched-toast'),
       content: Text(t.communitySwitched
-          .replaceAll('{ro}', koreanRo(community.displayLabel))
           .replaceAll('{name}', community.displayLabel)
           .replaceAll('{handle}', handle ?? community.handle)),
       behavior: SnackBarBehavior.floating,
@@ -379,22 +378,6 @@ class _CommunityDetailScreenState extends State<CommunityDetailScreen> {
       ),
     );
   }
-}
-
-/// 한국어 조사 「로/으로」. 받침이 있으면(ㄹ 받침은 빼고) 「으로」다 — "회사로", "lab으로".
-/// 한글이 아니면 끝소리를 어림한다: 영문 모음·숫자 2·4·5·9 와 1·7·8(ㄹ)은 「로」.
-String koreanRo(String word) {
-  final w = word.trim();
-  if (w.isEmpty) return '로';
-  final code = w.runes.last;
-  if (code >= 0xAC00 && code <= 0xD7A3) {
-    final jong = (code - 0xAC00) % 28;
-    return jong == 0 || jong == 8 ? '로' : '으로';
-  }
-  final ch = String.fromCharCode(code).toLowerCase();
-  if ('aeiouyl'.contains(ch)) return '로';
-  if ('1245789'.contains(ch)) return '로';
-  return '으로';
 }
 
 /// 채널 탭 머리 왼쪽(설계 ①): 지금 커뮤니티 타일 + 이름 ▾. 다른 커뮤니티에 나를 기다리는 것이

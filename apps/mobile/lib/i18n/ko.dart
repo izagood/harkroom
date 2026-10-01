@@ -462,13 +462,13 @@ class StringsKo implements Strings {
   String get communityCancel => '취소';
 
   @override
-  String get communitySignOutOne => '{name} 에서 로그아웃';
+  String get communitySignOutOne => '로그아웃: {name}';
 
   @override
   String get communitySwitchTo => '이 커뮤니티로 옮기기';
 
   @override
-  String get communitySwitched => '{name}{ro} 옮겼다 · @{handle}';
+  String get communitySwitched => '지금 커뮤니티: {name} · @{handle}';
 
   @override
   String get communityLabel => '표시 이름';
