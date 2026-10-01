@@ -440,4 +440,67 @@ class StringsEn implements Strings {
   @override
   String get linkNonAsciiWarning => 'This address has non-Latin characters. It may imitate another site.';
 
+
+  @override
+  String get meCommunitiesSection => 'Communities on this device';
+
+  @override
+  String get communityAdd => 'Add community';
+
+  @override
+  String get communityCurrent => 'Current community';
+
+  @override
+  String get communityExpired => 'Sign in again';
+
+  @override
+  String get communitySignOutAll => 'Sign out of all communities';
+
+  @override
+  String get communitySignOutAllConfirm => 'You\'ll be signed out of {count} communities on this device. To use one again, sign in to it again.';
+
+  @override
+  String get communityCancel => 'Cancel';
+
+  @override
+  String get communitySignOutOne => 'Sign out of {name}';
+
+  @override
+  String get communitySwitchTo => 'Switch to this community';
+
+  @override
+  String get communitySwitched => 'Switched to {name} · @{handle}';
+
+  @override
+  String get communityLabel => 'Display name';
+
+  @override
+  String get communityLabelHint => 'Only on this device. Leave empty to use the host name.';
+
+  @override
+  String get communityAccount => 'Account';
+
+  @override
+  String get communityServer => 'Server';
+
+  @override
+  String get communityVersion => 'Version';
+
+  @override
+  String get communityVersionUnknown => 'Unknown';
+
+  @override
+  String get communityAddSubmit => 'Sign in and switch';
+
+  @override
+  String get communityAddClose => 'Close';
+
+  @override
+  String get communitySave => 'Save';
+
+  @override
+  String get loginOtherCommunity => 'Use another community';
+
+  @override
+  String get communityExpiredSubtitle => 'Signed out — session expired';
 }

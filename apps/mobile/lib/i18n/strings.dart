@@ -277,6 +277,69 @@ abstract class Strings {
   /// 어느 계정으로 들어와 있나. `{handle}` 이 바뀐다.
   String get meSignedInAs;
 
+  /// 나 탭 — 이 기기에 로그인해 둔 커뮤니티 목록의 머리.
+  String get meCommunitiesSection;
+
+  /// 커뮤니티를 하나 더 로그인한다(데스크탑 레일과 같은 말).
+  String get communityAdd;
+
+  /// 목록에서 지금 쓰는 커뮤니티(✓ 의 읽기 이름).
+  String get communityCurrent;
+
+  /// 토큰이 죽은 커뮤니티. 지우지 않고 이 말로 남긴다.
+  String get communityExpired;
+
+  /// 만료된 커뮤니티 행의 부제.
+  String get communityExpiredSubtitle;
+
+  /// 이 기기의 커뮤니티 전부에서 로그아웃.
+  String get communitySignOutAll;
+
+  /// 모두 로그아웃 확인. `{count}` 가 바뀐다.
+  String get communitySignOutAllConfirm;
+
+  /// 확인 시트의 취소.
+  String get communityCancel;
+
+  /// 커뮤니티 하나에서만 로그아웃. `{name}` 이 바뀐다.
+  String get communitySignOutOne;
+
+  /// 커뮤니티 화면에서 그리로 옮긴다.
+  String get communitySwitchTo;
+
+  /// 옮긴 직후 토스트. `{name}`·`{handle}` 이 바뀐다.
+  String get communitySwitched;
+
+  /// 이 기기에서만 쓰는 커뮤니티 이름.
+  String get communityLabel;
+
+  /// 표시 이름 칸 설명.
+  String get communityLabelHint;
+
+  /// 커뮤니티 화면 — 로그인한 계정.
+  String get communityAccount;
+
+  /// 커뮤니티 화면 — 서버 주소.
+  String get communityServer;
+
+  /// 커뮤니티 화면 — 서버 릴리스 번호.
+  String get communityVersion;
+
+  /// 서버 버전을 못 읽었다.
+  String get communityVersionUnknown;
+
+  /// 추가 화면의 제출 버튼.
+  String get communityAddSubmit;
+
+  /// 추가 화면을 닫는다(원래 커뮤니티로 돌아간다).
+  String get communityAddClose;
+
+  /// 표시 이름 저장.
+  String get communitySave;
+
+  /// 만료된 커뮤니티의 로그인 화면에서 다른 커뮤니티로 옮긴다.
+  String get loginOtherCommunity;
+
   /// 첨부를 크게 보기.
   String get attachmentOpen;
 
@@ -561,6 +624,27 @@ Map<String, String> stringsToMap(Strings s) => {
       'inboxReasonAskClosed': s.inboxReasonAskClosed,
       'inboxReasonOther': s.inboxReasonOther,
       'meSignedInAs': s.meSignedInAs,
+      'meCommunitiesSection': s.meCommunitiesSection,
+      'communityAdd': s.communityAdd,
+      'communityCurrent': s.communityCurrent,
+      'communityExpired': s.communityExpired,
+      'communityExpiredSubtitle': s.communityExpiredSubtitle,
+      'communitySignOutAll': s.communitySignOutAll,
+      'communitySignOutAllConfirm': s.communitySignOutAllConfirm,
+      'communityCancel': s.communityCancel,
+      'communitySignOutOne': s.communitySignOutOne,
+      'communitySwitchTo': s.communitySwitchTo,
+      'communitySwitched': s.communitySwitched,
+      'communityLabel': s.communityLabel,
+      'communityLabelHint': s.communityLabelHint,
+      'communityAccount': s.communityAccount,
+      'communityServer': s.communityServer,
+      'communityVersion': s.communityVersion,
+      'communityVersionUnknown': s.communityVersionUnknown,
+      'communityAddSubmit': s.communityAddSubmit,
+      'communityAddClose': s.communityAddClose,
+      'communitySave': s.communitySave,
+      'loginOtherCommunity': s.loginOtherCommunity,
       'attachmentOpen': s.attachmentOpen,
       'attachmentFailed': s.attachmentFailed,
       'askAnswered': s.askAnswered,

@@ -439,4 +439,67 @@ class StringsKo implements Strings {
   @override
   String get linkNonAsciiWarning => '주소에 영문이 아닌 글자가 있다. 닮은 글자로 꾸민 주소일 수 있다.';
 
+
+  @override
+  String get meCommunitiesSection => '이 기기의 커뮤니티';
+
+  @override
+  String get communityAdd => '커뮤니티 추가';
+
+  @override
+  String get communityCurrent => '지금 커뮤니티';
+
+  @override
+  String get communityExpired => '다시 로그인';
+
+  @override
+  String get communitySignOutAll => '모든 커뮤니티에서 로그아웃';
+
+  @override
+  String get communitySignOutAllConfirm => '이 기기의 커뮤니티 {count}개에서 모두 로그아웃한다. 다시 쓰려면 하나씩 다시 로그인해야 한다.';
+
+  @override
+  String get communityCancel => '취소';
+
+  @override
+  String get communitySignOutOne => '{name} 에서 로그아웃';
+
+  @override
+  String get communitySwitchTo => '이 커뮤니티로 옮기기';
+
+  @override
+  String get communitySwitched => '{name} 로 옮겼다 · @{handle}';
+
+  @override
+  String get communityLabel => '표시 이름';
+
+  @override
+  String get communityLabelHint => '이 기기에서만 쓴다. 비우면 호스트명을 쓴다.';
+
+  @override
+  String get communityAccount => '계정';
+
+  @override
+  String get communityServer => '서버';
+
+  @override
+  String get communityVersion => '버전';
+
+  @override
+  String get communityVersionUnknown => '알 수 없음';
+
+  @override
+  String get communityAddSubmit => '로그인하고 옮기기';
+
+  @override
+  String get communityAddClose => '닫기';
+
+  @override
+  String get communitySave => '저장';
+
+  @override
+  String get loginOtherCommunity => '다른 커뮤니티로';
+
+  @override
+  String get communityExpiredSubtitle => '로그인이 만료됐다';
 }

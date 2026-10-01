@@ -1,45 +1,126 @@
 import 'package:flutter/material.dart';
 
 import '../i18n/i18n.dart';
+import '../session/session_store.dart';
 import '../state/app_scope.dart';
+import '../ui/parts.dart';
+import '../ui/tokens.dart';
+import 'community_screens.dart';
 
-/// 나 · 연결.
+/// 나 · 이 기기의 커뮤니티(designer ⑧).
 ///
 /// **데스크탑 설정의 대부분이 여기 없다**(계획서 §6): 에이전트 등록, Claude 계정,
 /// 오퍼레이터, MCP, 스킬. 폰에서 **할 수 없는 일**이지 잠긴 일이 아니므로 회색으로도
 /// 그리지 않는다 — 회색 항목은 "언젠가 열린다"는 거짓 약속이다.
+///
+/// 로그아웃은 **커뮤니티 하나 단위**다(D7). 전부 빼는 것은 맨 아래 따로 두고 확인을 거친다 —
+/// 한 번 잘못 누르면 모든 서버에 다시 로그인해야 한다.
 class MeScreen extends StatelessWidget {
   const MeScreen({super.key});
+
+  Future<void> _confirmSignOutAll(BuildContext context) async {
+    final t = context.t;
+    final k = context.tokens;
+    final app = AppScope.read(context);
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+          child: Column(
+            key: const Key('me-sign-out-all-sheet'),
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(t.communitySignOutAll,
+                  style: const TextStyle(fontSize: HarkroomType.screenTitle, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              Text(t.communitySignOutAllConfirm.replaceAll('{count}', '${app.communities.length}'),
+                  style: TextStyle(color: k.mute)),
+              const SizedBox(height: 16),
+              FilledButton(
+                key: const Key('me-sign-out-all-confirm'),
+                style: FilledButton.styleFrom(backgroundColor: k.err, foregroundColor: Colors.white),
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: Text(t.communitySignOutAll),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: Text(t.communityCancel),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (ok == true) await app.signOutAll();
+  }
+
+  /// 만료된 행도 **상세를 연다**(designer 1) — 「다시 로그인」과 「로그아웃」이 둘 다 거기 있다. 바로
+  /// 로그인 모달로 보내면 비밀번호를 잊은 서버의 행을 뺄 길이 「모두 로그아웃」뿐이다.
+  void _open(BuildContext context, StoredCommunity c) {
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CommunityDetailScreen(communityKey: c.key),
+    ));
+  }
 
   @override
   Widget build(BuildContext context) {
     final t = context.t;
+    final k = context.tokens;
     final app = context.app;
-    final me = app.me;
 
     return Scaffold(
       appBar: AppBar(title: Text(t.tabMe)),
       body: SafeArea(
         child: ListView(
           children: [
-            if (me != null)
+            // 맨 위의 "@핸들 계정으로 로그인했다" 줄은 뺐다(designer 3) — 커뮤니티가 여럿이면 어느
+            // 커뮤니티 얘기인지 모호하고, 목록이 ✓ 와 `@핸들` 로 이미 말한다.
+            SectionHeader(label: t.meCommunitiesSection),
+            for (final c in app.communities)
               ListTile(
-                key: const Key('me-handle'),
-                leading: const Icon(Icons.person_outline),
-                title: Text(t.meSignedInAs.replaceFirst('{handle}', me.handle)),
-                subtitle: Text(me.displayName),
+                key: Key('me-community-${c.key}'),
+                leading: CommunityTile(community: c),
+                title: Text(c.displayLabel, maxLines: 1, overflow: TextOverflow.ellipsis),
+                subtitle: Text(
+                  c.isExpired
+                      ? t.communityExpiredSubtitle
+                      : '@${c.handle} · ${Uri.tryParse(c.baseUrl)?.host ?? c.baseUrl}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                // 만료는 **상태**다 — ✓(지금 커뮤니티)와 같은 강조색을 쓰면 둘이 같은 뜻으로 읽힌다.
+                // warn 칩으로 가른다(designer 4).
+                trailing: c.isExpired
+                    ? Container(
+                        key: Key('me-community-expired-${c.key}'),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: k.warnSoft,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(t.communityExpired,
+                            style: TextStyle(
+                                color: k.warn, fontSize: 12, fontWeight: FontWeight.w600)),
+                      )
+                    : c.key == app.activeKey
+                        ? Icon(Icons.check, color: k.accent, semanticLabel: t.communityCurrent)
+                        : const Icon(Icons.chevron_right),
+                onTap: () => _open(context, c),
               ),
-            if (app.baseUrl != null)
-              ListTile(
-                leading: const Icon(Icons.dns_outlined),
-                title: Text(app.baseUrl!),
-              ),
+            ListTile(
+              key: const Key('me-community-add'),
+              leading: const SizedBox(width: 36, child: Icon(Icons.add)),
+              title: Text(t.communityAdd),
+              onTap: () => openAddCommunity(context),
+            ),
             const Divider(),
             ListTile(
-              key: const Key('me-sign-out'),
-              leading: const Icon(Icons.logout),
-              title: Text(t.signOut),
-              onTap: () => app.signOut(),
+              key: const Key('me-sign-out-all'),
+              leading: Icon(Icons.logout, color: k.err),
+              title: Text(t.communitySignOutAll, style: TextStyle(color: k.err)),
+              onTap: () => _confirmSignOutAll(context),
             ),
           ],
         ),

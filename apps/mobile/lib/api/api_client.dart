@@ -102,6 +102,17 @@ class ApiClient {
 
   Future<MeView> me() async => MeView.fromJson(_obj(await _send('GET', '/auth/me')));
 
+  /// 이 토큰의 서버 세션을 끊는다(서버는 이 토큰만 지운다 — 다른 기기는 그대로다).
+  Future<void> logout() async {
+    await _send('POST', '/auth/logout');
+  }
+
+  /// 서버 릴리스 번호(`/healthz` 의 `version`). 인증 없이 읽힌다. 모르면 `null`.
+  Future<String?> serverVersion() async {
+    final v = _obj(await _send('GET', '/healthz'))['version'];
+    return v is String && v.isNotEmpty ? v : null;
+  }
+
   // ── 디렉터리 · 채널 ───────────────────────────────────────────────────
 
   Future<List<AccountView>> accounts() async =>

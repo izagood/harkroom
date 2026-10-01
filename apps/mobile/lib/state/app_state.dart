@@ -127,6 +127,21 @@ class AppState extends ChangeNotifier {
   String? baseUrl;
   MeView? me;
 
+  /// 이 기기에 로그인해 둔 커뮤니티들(보관소와 같은 순서). 토큰이 죽은 것도 남는다
+  /// ([StoredCommunity.isExpired]) — 「다시 로그인」 행으로 선다.
+  List<StoredCommunity> communities = const [];
+
+  /// 지금 쓰는 커뮤니티의 열쇠([StoredCommunity.key] — origin + 계정 id). 연결 화면에서 새 주소를
+  /// 넣은 직후(아직 로그인 전)는 비어 있다.
+  String? activeKey;
+
+  StoredCommunity? get activeCommunity {
+    for (final c in communities) {
+      if (c.key == activeKey) return c;
+    }
+    return null;
+  }
+
   ApiClient? _api;
   WsClient? _ws;
 
@@ -300,10 +315,13 @@ class AppState extends ChangeNotifier {
 
   Future<void> boot() async {
     final stored = await _sessions.load();
+    communities = stored?.communities ?? const [];
     final current = stored?.current;
-    if (current == null || current.token.isEmpty) {
-      phase = stored?.communities.isNotEmpty == true ? AppPhase.needsLogin : AppPhase.needsServer;
+    activeKey = current?.key;
+    if (current == null || current.isExpired) {
+      phase = current != null ? AppPhase.needsLogin : AppPhase.needsServer;
       baseUrl = current?.baseUrl;
+      _api = current == null ? null : _apiFactory(current.baseUrl, null);
       notifyListeners();
       return;
     }
@@ -340,18 +358,116 @@ class AppState extends ChangeNotifier {
     api.token = token;
     final who = await api.me();
 
+    final c = await _remember(StoredCommunity(
+      accountId: who.id,
+      baseUrl: baseUrl!,
+      token: token,
+      handle: who.handle,
+    ));
+    activeKey = c.key;
+    me = who;
+    await _enter();
+  }
+
+  /// 커뮤니티 하나를 보관소와 [communities] 에 넣는다. 같은 열쇠(origin + 계정 id)면 **제자리에서**
+  /// 갱신한다(designer 판정 4 — 다시 로그인할 때마다 행이 늘면 사람은 어느 것이 산 것인지 모른다).
+  /// origin 이 다르면 계정 id 가 같아도 새 행이다(security F1 — 서버가 대는 id 로 남의 행을 차지하지 못하게).
+  ///
+  /// 보관에 실패해도 이번 실행의 목록에는 넣는다 — 전환이 메모리의 토큰으로 돈다.
+  Future<StoredCommunity> _remember(StoredCommunity community) async {
+    final idx = communities.indexWhere((c) => c.key == community.key);
+    final merged = idx >= 0 && community.label == null
+        ? community.copyWith(label: communities[idx].label)
+        : community;
+    final next = [...communities];
+    if (idx >= 0) {
+      next[idx] = merged;
+    } else {
+      next.add(merged);
+    }
+    communities = next;
     try {
-      await _sessions.upsert(StoredCommunity(
-        accountId: who.id,
-        baseUrl: baseUrl!,
-        token: token,
-        handle: who.handle,
-      ));
+      await _sessions.upsert(merged);
     } on SessionSaveFailure {
       noticeKey = 'noticeSessionNotSaved';
     }
-    me = who;
+    return merged;
+  }
+
+  // ── 여러 커뮤니티 ──────────────────────────────────────────────────────
+
+  /// 커뮤니티를 하나 더 로그인한다. **지금 커뮤니티는 건드리지 않는다** — 옮기는 것은
+  /// 부르는 쪽이 [switchTo] 로 한다(추가 화면이 닫힌 뒤에). 실패는 그대로 던진다 — 추가
+  /// 화면이 그 자리에서 사유를 보인다.
+  ///
+  /// 같은 계정이면 새 행을 만들지 않고 그 행을 갱신한다(만료된 커뮤니티의 「다시 로그인」도 이 길이다).
+  Future<StoredCommunity> addCommunity(String url, String loginId, String password) async {
+    final api = _apiFactory(url, null);
+    final token = await api.login(loginId, password);
+    api.token = token;
+    final who = await api.me();
+    final c = await _remember(StoredCommunity(
+      accountId: who.id,
+      baseUrl: url,
+      token: token,
+      handle: who.handle,
+    ));
+    notifyListeners();
+    return c;
+  }
+
+  /// 다른 커뮤니티로 옮긴다. API·소켓을 바꾸고 그 커뮤니티의 목록을 새로 읽는다.
+  ///
+  /// 옮기면 지금 커뮤니티의 화면 상태(읽어 둔 메시지·못 보낸 말·고정 멘션)는 **버린다** — 다른
+  /// 계정 이름으로 가면 안 된다는 로그아웃의 판단과 같다. 토큰은 남으므로 돌아오면 다시 읽는다.
+  ///
+  /// 들어가면 `true`. 만료된 커뮤니티면 아무것도 바꾸지 않고 `false` — 부르는 쪽이 다시 로그인을 띄운다.
+  Future<bool> switchTo(String key) async {
+    final target = communities.where((c) => c.key == key).firstOrNull;
+    if (target == null || target.isExpired) return false;
+    if (key == activeKey && phase == AppPhase.ready) return true;
+    _generation++;
+    _dropSocket();
+    _generation++;
+    _resetSession();
+    activeKey = target.key;
+    baseUrl = target.baseUrl;
+    _api = _apiFactory(target.baseUrl, target.token);
+    phase = AppPhase.booting;
+    notifyListeners();
+    try {
+      await _sessions.setActive(target.key);
+    } on SessionSaveFailure {
+      // 다음 기동에 앞 커뮤니티가 열릴 뿐이다 — 옮기기는 막지 않는다.
+    }
     await _enter();
+    return phase == AppPhase.ready && activeKey == target.key;
+  }
+
+  /// 이 기기에서만 쓰는 이름을 붙인다. 빈 글이면 이름을 지운다(호스트명으로 돌아간다).
+  Future<void> renameCommunity(String key, String label) async {
+    final trimmed = label.trim();
+    StoredCommunity change(StoredCommunity c) =>
+        trimmed.isEmpty ? c.copyWith(clearLabel: true) : c.copyWith(label: trimmed);
+    communities = [
+      for (final c in communities) c.key == key ? change(c) : c,
+    ];
+    notifyListeners();
+    try {
+      await _sessions.update(key, change);
+    } on SessionSaveFailure {
+      noticeKey = 'noticeSessionNotSaved';
+      notifyListeners();
+    }
+  }
+
+  /// 그 커뮤니티 서버의 릴리스 번호(`/healthz`). 모르면 `null`.
+  Future<String?> serverVersionOf(StoredCommunity community) async {
+    try {
+      return await _apiFactory(community.baseUrl, null).serverVersion();
+    } on Object {
+      return null;
+    }
   }
 
   /// 목록을 채우고 소켓을 연다.
@@ -380,8 +496,12 @@ class AppState extends ChangeNotifier {
       // 토큰이 죽었다. **보관본을 지우고** 로그인으로 돌린다 — 안 지우면 다음 기동에
       // 같은 실패를 반복한다.
       if (e.isCredentialFailure) {
-        await _sessions.clear();
+        // **이 커뮤니티만** 만료로 표시한다. 보관본을 통째로 지우면 셋 중 하나가 만료될 때
+        // 나머지 둘의 토큰까지 잃는다(designer 판정 1). 행은 남는다 — 「다시 로그인」.
+        if (gen != _generation) return;
+        await _markExpired(activeKey);
         _api = _apiFactory(baseUrl!, null);
+        me = null;
         phase = AppPhase.needsLogin;
         notifyListeners();
         return;
@@ -1092,15 +1212,116 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 로그아웃. 보관본을 지우고 소켓을 닫는다.
+  Future<void> _markExpired(String? key) async {
+    if (key == null) return;
+    communities = [
+      for (final c in communities) c.key == key ? c.copyWith(token: '') : c,
+    ];
+    try {
+      await _sessions.update(key, (c) => c.copyWith(token: ''));
+    } on SessionSaveFailure {
+      // 다음 기동에 같은 401 을 한 번 더 겪고 다시 표시한다.
+    }
+  }
+
+  /// 지금 커뮤니티에서 로그아웃한다(다른 커뮤니티는 그대로). 남은 것이 있으면 그리로 옮긴다.
   Future<void> signOut() async {
+    final key = activeKey;
+    if (key == null) return signOutAll();
+    return signOutCommunity(key);
+  }
+
+  /// 커뮤니티 하나에서 로그아웃한다 — 보관소에서 그 행을 뺀다.
+  ///
+  /// 지금 커뮤니티가 아니면 목록에서만 빠진다. 지금 커뮤니티면 다음 커뮤니티로 옮기고(산 것 먼저),
+  /// 마지막 하나였으면 연결 화면으로 간다(designer ⑨).
+  Future<void> signOutCommunity(String key) async {
+    final gone = communities.where((c) => c.key == key).firstOrNull;
+    final rest = communities.where((c) => c.key != key).toList(growable: false);
+    if (key != activeKey) {
+      communities = rest;
+      notifyListeners();
+      await _revoke(gone);
+      await _sessions.remove(key);
+      return;
+    }
     _generation++;
-    await _ws?.close();
-    _ws = null;
-    await _sessions.clear();
+    _dropSocket();
+    await _revoke(gone);
+    await _sessions.remove(key);
     // 위 두 await 사이에 화면이 부른 요청은 첫 줄에서 올린 세대를 쥐고 옛 토큰으로 간다.
     // 비우기 직전에 한 번 더 올려 그 답도 버린다.
     _generation++;
+    _resetSession();
+    communities = rest;
+    final next = rest.where((c) => !c.isExpired).firstOrNull ?? rest.firstOrNull;
+    activeKey = next?.key;
+    baseUrl = next?.baseUrl;
+    if (next == null) {
+      _api = null;
+      phase = AppPhase.needsServer;
+      notifyListeners();
+      return;
+    }
+    if (next.isExpired) {
+      _api = _apiFactory(next.baseUrl, null);
+      phase = AppPhase.needsLogin;
+      notifyListeners();
+      return;
+    }
+    _api = _apiFactory(next.baseUrl, next.token);
+    phase = AppPhase.booting;
+    notifyListeners();
+    try {
+      await _sessions.setActive(next.key);
+    } on SessionSaveFailure {
+      /* 다음 기동에 첫 커뮤니티로 떨어질 뿐이다 */
+    }
+    await _enter();
+  }
+
+  /// 이 기기의 모든 커뮤니티에서 로그아웃한다. 보관본을 지우고 연결 화면으로 간다.
+  Future<void> signOutAll() async {
+    _generation++;
+    _dropSocket();
+    await Future.wait([for (final c in communities) _revoke(c)]);
+    await _sessions.clear();
+    _generation++;
+    _resetSession();
+    communities = const [];
+    activeKey = null;
+    baseUrl = null;
+    _api = null;
+    phase = AppPhase.needsServer;
+    notifyListeners();
+  }
+
+  /// 서버에 이 토큰의 세션을 끊으라고 한다(`POST /auth/logout`, security F2). 토큰만 지우면 서버 쪽
+  /// 세션은 만료(14일)까지 살고, 지운 뒤에는 거둘 길이 없다.
+  ///
+  /// **짧게만 기다리고, 실패해도 로그아웃을 막지 않는다** — 서버가 죽었거나 망이 없을 때 로그아웃이
+  /// 안 되면 사람은 기기에서 토큰을 지울 방법을 잃는다.
+  Future<void> _revoke(StoredCommunity? c) async {
+    if (c == null || c.isExpired) return;
+    final api = _apiFactory(c.baseUrl, c.token);
+    try {
+      await api.logout().timeout(const Duration(seconds: 2));
+    } on Object {
+      // 끊긴 망·5xx·시한 — 서버 세션은 TTL 로 죽는다.
+    }
+  }
+
+  /// 소켓을 닫되 **닫힘 인사를 기다리지 않는다.** `close()` 의 동기 부분이 재연결을 끊고 구독을
+  /// 걷으므로 그 뒤로 이벤트는 안 온다. 기다리면 망이 나쁠 때 서버의 답을 기다리느라 전환·로그아웃이
+  /// 멈춘다(위젯 시험이 잡았다 — 대역 소켓의 닫힘이 끝나지 않자 옮기기가 그대로 섰다).
+  void _dropSocket() {
+    final ws = _ws;
+    _ws = null;
+    if (ws != null) unawaited(ws.close());
+  }
+
+  /// 한 커뮤니티 세션의 화면 상태를 비운다(로그아웃·전환이 함께 쓴다). 단계·주소는 부르는 쪽이 정한다.
+  void _resetSession() {
     me = null;
     inbox.clear();
     reads.clear();
@@ -1124,9 +1345,6 @@ class AppState extends ChangeNotifier {
     channelAutoMentions.clear();
     autoSkipped.clear();
     openChannelId = null;
-    _api = baseUrl == null ? null : _apiFactory(baseUrl!, null);
-    phase = baseUrl == null ? AppPhase.needsServer : AppPhase.needsLogin;
-    notifyListeners();
   }
 
   @override

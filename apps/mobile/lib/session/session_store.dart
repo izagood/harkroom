@@ -3,11 +3,14 @@
 /// 데스크탑 `packages/desktop/src/lib/session.ts` 의 판단을 그대로 베낀다. 베끼는 것이
 /// 모양이 아니라 **왜 그 모양인가** 라서, 그 근거를 여기 다시 적는다.
 ///
-/// ## 키는 **계정 id** 다. URL 이 아니다
+/// ## 키는 **(서버 origin, 계정 id)** 다
 ///
-/// 같은 서버가 여러 주소로 닿을 수 있다(사내망 이름, 공개 도메인, 포트 다른 것). URL 로
-/// 키를 두면 **같은 커뮤니티가 목록에 두 번 선다.** 계정 id 는 서버 DB 의 UUID 라 어느
-/// 주소로 들어가든 같고, 다른 서버와는 다르다.
+/// 계정 id 는 서버가 `/auth/me` 로 **스스로 대는 값**이다. id 만 열쇠로 두면 낯선 서버 B 가 기존
+/// 커뮤니티 A 의 id 를 대는 것만으로 A 의 행(토큰·붙인 이름)을 차지한다 — 사람은 「회사」 행에 쓴다고
+/// 믿고 B 에 쓴다(security #1046 F1). 그래서 origin 까지 같아야 같은 행이다.
+///
+/// 대가: 같은 서버를 다른 주소(사내망 이름과 공개 도메인)로 들어가면 행이 둘 선다. 주소가 다르면
+/// 다른 서버일 수 있다는 쪽을 택했다 — 둘 중 하나를 로그아웃하면 된다.
 ///
 /// ## 저장에 실패하면 **평문으로 내려가지 않는다**
 ///
@@ -35,7 +38,7 @@ class StoredCommunity {
     this.label,
   });
 
-  /// **목록의 열쇠.** 서버 DB 의 UUID 다.
+  /// 서버 DB 의 계정 UUID. **혼자서는 열쇠가 아니다** — [key] 를 쓴다.
   final String accountId;
   final String baseUrl;
   final String token;
@@ -63,6 +66,28 @@ class StoredCommunity {
         label: j['label'] as String?,
       );
 
+  /// `scheme://host[:port]`. 못 읽는 주소면 주소 그대로다.
+  String get origin {
+    final u = Uri.tryParse(baseUrl);
+    if (u == null || !u.hasScheme || u.host.isEmpty) return baseUrl;
+    return u.hasPort ? '${u.scheme}://${u.host}:${u.port}' : '${u.scheme}://${u.host}';
+  }
+
+  /// **목록의 열쇠** — (origin, 계정 id). 화면·상태·보관소가 모두 이것으로 행을 가리킨다.
+  String get key => '$origin#$accountId';
+
+  /// 토큰이 죽어 다시 로그인해야 하는 커뮤니티. **목록에서 빼지 않는다** — 빼면 사람은
+  /// 그 커뮤니티가 있었다는 것조차 잊고, 서버 주소를 처음부터 다시 쳐야 한다. 토큰만 비워
+  /// 「다시 로그인」 행으로 남긴다(designer 판정 2).
+  bool get isExpired => token.isEmpty;
+
+  /// 화면에 세울 이름 — 붙인 이름이 없으면 호스트명이다(데스크탑 레일과 같다).
+  String get displayLabel {
+    final l = label?.trim();
+    if (l != null && l.isNotEmpty) return l;
+    return Uri.tryParse(baseUrl)?.host.nullIfEmpty ?? baseUrl;
+  }
+
   StoredCommunity copyWith({String? handle, String? token, String? label, bool clearLabel = false}) =>
       StoredCommunity(
         accountId: accountId,
@@ -77,7 +102,8 @@ class StoredCommunity {
 class StoredSessions {
   const StoredSessions({required this.active, required this.communities});
 
-  /// 마지막으로 쓰던 커뮤니티의 계정 id. 없으면 첫 번째로 떨어진다.
+  /// 마지막으로 쓰던 커뮤니티의 [StoredCommunity.key]. 없으면 첫 번째로 떨어진다.
+  /// 옛 저장본은 계정 id 만 담았다 — [current] 가 그것도 알아본다.
   final String? active;
   final List<StoredCommunity> communities;
 
@@ -87,6 +113,9 @@ class StoredSessions {
   /// **고아 포인터로 빈 화면을 띄우지 않는다.**
   StoredCommunity? get current {
     if (communities.isEmpty) return null;
+    for (final c in communities) {
+      if (c.key == active) return c;
+    }
     for (final c in communities) {
       if (c.accountId == active) return c;
     }
@@ -153,37 +182,71 @@ abstract class SessionStore {
   /// 하나가 죽었다고 나머지 토큰까지 지우면, 이 설계가 막으려던 것("셋 중 하나가 죽었는데
   /// 전부 잃는다")의 데이터 버전이 된다. 지운 것이 활성이었으면 `active` 를 비운다 —
   /// 다음 기동이 첫 커뮤니티로 떨어진다.
-  Future<void> remove(String accountId) async {
+  Future<void> remove(String key) async {
     final current = await load();
     if (current == null) return;
-    final rest = current.communities.where((c) => c.accountId != accountId).toList(growable: false);
+    final rest = current.communities.where((c) => c.key != key).toList(growable: false);
     if (rest.isEmpty) return clear();
     await save(StoredSessions(
-      active: current.active == accountId ? null : current.active,
+      active: current.current?.key == key ? null : current.active,
       communities: rest,
     ));
   }
 
+  /// 커뮤니티 하나를 고친다(토큰 비우기·이름 붙이기). **`active` 는 건드리지 않는다** —
+  /// 다른 커뮤니티의 이름을 고쳤다고 지금 보던 커뮤니티가 바뀌면 안 된다.
+  Future<StoredSessions?> update(
+      String key, StoredCommunity Function(StoredCommunity) change) async {
+    final current = await load();
+    if (current == null) return null;
+    final idx = current.communities.indexWhere((c) => c.key == key);
+    if (idx < 0) return current;
+    final next = [...current.communities];
+    next[idx] = change(next[idx]);
+    final sessions = StoredSessions(active: current.active, communities: next);
+    await save(sessions);
+    return sessions;
+  }
+
+  /// 지금 쓰는 커뮤니티를 바꾼다. 없는 id 면 그대로 둔다.
+  Future<StoredSessions?> setActive(String key) async {
+    final current = await load();
+    if (current == null || current.communities.every((c) => c.key != key)) {
+      return current;
+    }
+    final sessions = StoredSessions(active: key, communities: current.communities);
+    await save(sessions);
+    return sessions;
+  }
+
   /// 커뮤니티 하나를 더하거나 덮어쓴다.
   ///
-  /// 같은 계정 id 면 **자리를 지키며 갱신한다** — 뒤로 밀면 다시 로그인할 때마다 목록
+  /// 같은 열쇠(origin + 계정 id)면 **자리를 지키며 갱신한다** — 뒤로 밀면 다시 로그인할 때마다 목록
   /// 순서가 바뀌고, 사람은 자기가 무엇을 건드렸는지 모른다.
   Future<StoredSessions> upsert(StoredCommunity community) async {
     final current = await load() ?? const StoredSessions(active: null, communities: []);
-    final idx = current.communities.indexWhere((c) => c.accountId == community.accountId);
+    // 같은 계정 id 라도 origin 이 다르면 **새 행**이다 — 기존 행의 토큰·주소·이름을 건드리지 않는다.
+    final idx = current.communities.indexWhere((c) => c.key == community.key);
     final next = [...current.communities];
     if (idx >= 0) {
-      next[idx] = community;
+      // 다시 로그인한 것이면 이 기기에서 붙인 이름을 지킨다 — 로그인 응답에는 이름이 없다.
+      next[idx] = community.label == null
+          ? community.copyWith(label: next[idx].label)
+          : community;
     } else {
       next.add(community);
     }
-    final sessions = StoredSessions(active: community.accountId, communities: next);
+    final sessions = StoredSessions(active: community.key, communities: next);
     await save(sessions);
     return sessions;
   }
 }
 
 const String _key = 'harkroom.sessions';
+
+extension on String {
+  String? get nullIfEmpty => isEmpty ? null : this;
+}
 
 class KeychainSessionStore extends SessionStore {
   KeychainSessionStore();

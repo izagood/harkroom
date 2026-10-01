@@ -272,6 +272,9 @@ void main() {
     final booting = app.boot();
     await Future<void>.delayed(Duration.zero);
     await app.signOut();
+    // 마지막 커뮤니티를 빼면 연결 화면이다(여러 커뮤니티 M1, designer ⑨) — 주소부터 다시 넣는다.
+    expect(app.phase, AppPhase.needsServer);
+    app.setServer('https://h.example.com');
     await app.login('b', 'pw');
     expect(app.phase, AppPhase.ready);
     // 이제 A 의 `/channels` 가 401 로 늦게 끝난다.
