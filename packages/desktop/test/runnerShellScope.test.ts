@@ -354,6 +354,43 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
   });
 
   /**
+   * **daemon 을 부르는 커맨드도 메인 스레드를 잡으면 안 된다**(2026-10-01).
+   *
+   * 실측: 설정 › Provider accounts 를 열면 usage 명령(계정마다 `claude -p /usage`·`codex
+   * app-server` 를 띄운다)이 동기 `fn` 이라 메인 스레드에서 데몬 응답을 기다렸고, 그동안 창
+   * 전체가 굳어 화면이 "로딩"에 멈췄다. `ensure_daemon`·`request` 는 각각 최대 30초까지 기다린다.
+   *
+   * 위 키체인 검사와 같은 **성질 검사**다 — 동기로 되돌려도 `invoke` 는 여전히 `Promise` 라
+   * 타입이 못 잡는다. 그래서 "`ensure_daemon` 을 부르는 커맨드는 전부 `async fn` 이고 블로킹
+   * 풀(`on_daemon_pool` → `spawn_blocking`)을 지난다"를 소스에서 센다. 새 daemon 커맨드를 동기로
+   * 더해도 여기서 빨개진다.
+   */
+  it('`ensure_daemon` 을 부르는 커맨드는 전부 `async` 이고 `on_daemon_pool` 위에서 돈다', () => {
+    // `mod tests` 안에는 `#[tauri::command]` 가 없다 — 그대로 센다.
+    const stripped = mainRs;
+    const starts = [...stripped.matchAll(/#\[tauri::command\]\s*\n/g)].map((m) => m.index!);
+    const blocks = starts.map((at, i) => stripped.slice(at, starts[i + 1] ?? stripped.indexOf('fn main()', at)));
+    const daemonCommands = blocks.filter((b) => b.includes('ensure_daemon('));
+    // 지금 26개다. 줄면 누가 daemon 을 안 거치게 바꾼 것이니 그때 숫자를 고친다 — 0 이 되어
+    // 조용히 통과하는 것만 막는다.
+    expect(daemonCommands.length).toBeGreaterThanOrEqual(20);
+    const offenders = daemonCommands
+      .filter((b) => !/^#\[tauri::command\]\s*\n\s*async fn /.test(b) || !b.includes('on_daemon_pool(app, move |app, state|'))
+      .map((b) => /fn ([a-z0-9_]+)\(/.exec(b)?.[1]);
+    expect(offenders).toEqual([]);
+    // `ensure_daemon` 은 블로킹 풀 **안에서** 불려야 한다 — 클로저 밖에서 먼저 부르면 async
+    // 워커가 막힌다.
+    for (const b of daemonCommands) {
+      expect(b.indexOf('ensure_daemon(')).toBeGreaterThan(b.indexOf('on_daemon_pool('));
+    }
+    const helper = stripped.slice(
+      stripped.indexOf('async fn on_daemon_pool'),
+      stripped.indexOf('\n}\n', stripped.indexOf('async fn on_daemon_pool')),
+    );
+    expect(helper).toContain('tauri::async_runtime::spawn_blocking');
+  });
+
+  /**
    * **폴백이 없다** — 앱이 러너를 직접 띄우는 옛 경로(`runner_spawn`)가 사라졌는지 잰다.
    *
    * 남아 있으면 daemon 기동 실패가 조용히 그쪽으로 흘러 "daemon 이 도는 줄 알았는데

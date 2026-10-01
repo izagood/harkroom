@@ -15,6 +15,8 @@ mod notification;
 
 use std::collections::HashMap;
 
+use tauri::Manager;
+
 /// 키체인 서비스 이름은 **`daemon_client` 가 정한다** — 상수가 여기 없는 것이 요점이다.
 ///
 /// `#515`: 이름이 번들 ID 하나(`app.harkroom.desktop`)뿐이라 개발 빌드와 설치된 `.app` 이
@@ -354,6 +356,36 @@ fn app_version(app: tauri::AppHandle) -> String {
 /// 앱이 직접 러너를 띄우는 폴백은 **없다**(이 파일 위쪽 "그 자리는 폴백으로도 남기지
 /// 않았다" 참조). 그 `Err` 문자열이 화면의 `failed` + `message` 로 그대로 올라간다.
 ///
+// ── daemon 을 부르는 커맨드는 전부 블로킹 풀에서 돈다(2026-10-01) ──────────────────────
+//
+// 아래 커맨드들은 모두 `ensure_daemon`(상태 락 + `ping` 왕복, daemon 이 없으면 띄우고 최대 30초
+// 기다린다)과 `DaemonConnection::request`(응답을 최대 30초 기다린다)를 지난다. 그것을 동기
+// `#[tauri::command] fn` 으로 두면 Tauri 가 **메인 스레드에서** 돌려 그동안 창 전체가 굳는다 —
+// 위 `secret_*` 와 같은 결함이다. 실측(2026-10-01): 설정 › Provider accounts 를 열면 계정마다
+// `claude -p /usage`·`codex app-server` 를 띄우는 usage 명령이 메인 스레드를 잡아 화면이
+// "로딩"에 멈췄다.
+//
+// 그래서 `async fn` + `spawn_blocking` 이다(`secret_*` 머리 주석의 "왜 `async fn` 만으로는
+// 부족한가"와 같은 이유 — 소켓 대기도 동기다). `tauri::State` 는 빌린 값이라 블로킹 풀로 못
+// 넘기므로 `AppHandle` 만 넘기고 거기서 다시 꺼낸다.
+//
+// 동시성: 메인 스레드가 직렬로 줄 세우던 것이 이제 겹칠 수 있다. `ensure_daemon` 은 상태 락으로
+// 하나씩 지나고, 소켓 요청은 id 로 짝짓는 대기표(`Pending`)라 겹쳐도 안전하다.
+//
+// **동기로 되돌려도 타입이 못 잡는다** — `invoke` 는 언제나 `Promise` 다. `runnerShellScope.test.ts`
+// 가 "`ensure_daemon` 을 부르는 커맨드는 `async fn` 이고 이 함수를 지난다"를 소스에서 고정한다.
+async fn on_daemon_pool<T: Send + 'static>(
+    app: tauri::AppHandle,
+    f: impl FnOnce(&tauri::AppHandle, &daemon_client::DaemonState) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<daemon_client::DaemonState>();
+        f(&app, &state)
+    })
+    .await
+    .map_err(|e| format!("daemon 호출 스레드가 끊겼다: {e}"))?
+}
+
 // ── claude 계정 풀(2026-09-08) ────────────────────────────────────────────────
 //
 // **여덟 명령이 하는 일은 소켓으로 넘기는 것뿐이다.** 프로세스를 띄우지도, 파일을 읽지도
@@ -369,78 +401,92 @@ fn app_version(app: tauri::AppHandle) -> String {
 // 대해 아무 판단도 하지 않는다. 구조체로 받으면 필드가 하나 늘 때마다 Rust 를 고쳐야 하고
 // 그 고침은 아무것도 지켜 주지 않는다.
 #[tauri::command]
-fn claude_accounts_list(
+async fn claude_accounts_list(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.claude_accounts_list()
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.claude_accounts_list()
+    })
+    .await
 }
 
 #[tauri::command]
-fn claude_accounts_configure(
+async fn claude_accounts_configure(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
     config: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    // `config` 는 **경로가 아니라 이름들의 표**다(기본 풀·순서·배정). 이름 문법은 데몬이
-    // 잰다 — 여기서 재면 두 곳에 같은 규칙이 생기고 한쪽만 고쳐지는 날이 온다.
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.claude_accounts_configure(config)
+    on_daemon_pool(app, move |app, state| {
+        // `config` 는 **경로가 아니라 이름들의 표**다(기본 풀·순서·배정). 이름 문법은 데몬이
+        // 잰다 — 여기서 재면 두 곳에 같은 규칙이 생기고 한쪽만 고쳐지는 날이 온다.
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.claude_accounts_configure(config)
+    })
+    .await
 }
 
 #[tauri::command]
-fn claude_account_login_start(
+async fn claude_account_login_start(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
     pool: String,
     account: String,
     reauth: Option<bool>,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.claude_account_login_start(&pool, &account, reauth.unwrap_or(false))
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.claude_account_login_start(&pool, &account, reauth.unwrap_or(false))
+    })
+    .await
 }
 
 #[tauri::command]
-fn claude_account_login_submit(
+async fn claude_account_login_submit(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
     login_id: String,
     code: String,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.claude_account_login_submit(&login_id, &code)
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.claude_account_login_submit(&login_id, &code)
+    })
+    .await
 }
 
 #[tauri::command]
-fn claude_account_login_cancel(
+async fn claude_account_login_cancel(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
     login_id: String,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.claude_account_login_cancel(&login_id)
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.claude_account_login_cancel(&login_id)
+    })
+    .await
 }
 
 #[tauri::command]
-fn claude_account_remove(
+async fn claude_account_remove(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
     pool: String,
     account: String,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.claude_account_remove(&pool, &account)
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.claude_account_remove(&pool, &account)
+    })
+    .await
 }
 
 #[tauri::command]
-fn claude_pool_remove(
+async fn claude_pool_remove(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
     pool: String,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.claude_pool_remove(&pool)
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.claude_pool_remove(&pool)
+    })
+    .await
 }
 
 // ── codex 계정(2026-09-28) ────────────────────────────────────────────────────
@@ -450,175 +496,207 @@ fn claude_pool_remove(
 // 한도 사용률(2026-09-28). 웹뷰는 아무것도 넘기지 않는다 — CLI 를 띄우고 (실패하면) 토큰을 읽어
 // API 를 부르는 것은 데몬이다.
 #[tauri::command]
-fn claude_accounts_provider_usage(
+async fn claude_accounts_provider_usage(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.claude_accounts_provider_usage()
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.claude_accounts_provider_usage()
+    })
+    .await
 }
 
 #[tauri::command]
-fn codex_accounts_provider_usage(
+async fn codex_accounts_provider_usage(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.codex_accounts_provider_usage()
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.codex_accounts_provider_usage()
+    })
+    .await
 }
 
 #[tauri::command]
-fn codex_accounts_list(
+async fn codex_accounts_list(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.codex_accounts_list()
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.codex_accounts_list()
+    })
+    .await
 }
 
 #[tauri::command]
-fn codex_account_login_start(
+async fn codex_account_login_start(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
     account: String,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.codex_account_login_start(&account)
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.codex_account_login_start(&account)
+    })
+    .await
 }
 
 #[tauri::command]
-fn codex_account_login_cancel(
+async fn codex_account_login_cancel(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
     login_id: String,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.codex_account_login_cancel(&login_id)
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.codex_account_login_cancel(&login_id)
+    })
+    .await
 }
 
 #[tauri::command]
-fn codex_account_remove(
+async fn codex_account_remove(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
     account: String,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.codex_account_remove(&account)
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.codex_account_remove(&account)
+    })
+    .await
 }
 
 #[tauri::command]
-fn codex_account_activate(
+async fn codex_account_activate(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
     account: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.codex_account_activate(account.as_deref())
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.codex_account_activate(account.as_deref())
+    })
+    .await
 }
 
 // 오퍼레이터 로컬 설정(스펙 2026-09-20 §3 능력). 웹뷰가 넘기는 것은 서버 URL·에이전트 id·
 // 작업 디렉터리 문자열뿐이고 파일은 데몬이 쓴다 — `runnerShellScope.test.ts` 의 경계 그대로.
 #[tauri::command]
-fn operator_register(
+async fn operator_register(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
     base_url: String,
     code: String,
     name: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.operator_register(&base_url, &code, name.as_deref())
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.operator_register(&base_url, &code, name.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
-fn operator_agents_list(
+async fn operator_agents_list(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.operator_agents_list()
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.operator_agents_list()
+    })
+    .await
 }
 
 #[tauri::command]
-fn operator_agent_set(
+async fn operator_agent_set(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
     base_url: String,
     agent_id: String,
     config: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.operator_agent_set(&base_url, &agent_id, config)
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.operator_agent_set(&base_url, &agent_id, config)
+    })
+    .await
 }
 
 #[tauri::command]
-fn operator_agent_remove(
+async fn operator_agent_remove(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
     base_url: String,
     agent_id: String,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.operator_agent_remove(&base_url, &agent_id)
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.operator_agent_remove(&base_url, &agent_id)
+    })
+    .await
 }
 
 #[tauri::command]
-fn operator_mcp_list(
+async fn operator_mcp_list(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.operator_mcp_list()
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.operator_mcp_list()
+    })
+    .await
 }
 
 #[tauri::command]
-fn operator_mcp_set(
+async fn operator_mcp_set(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
     name: String,
     definition: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.operator_mcp_set(&name, definition)
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.operator_mcp_set(&name, definition)
+    })
+    .await
 }
 
 #[tauri::command]
-fn operator_mcp_remove(
+async fn operator_mcp_remove(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
     name: String,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.operator_mcp_remove(&name)
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.operator_mcp_remove(&name)
+    })
+    .await
 }
 
 /// 원격 MCP 의 OAuth — `action` 은 start·status·forget. 웹뷰가 넘기는 것은 이름 하나다.
 #[tauri::command]
-fn operator_mcp_auth(
+async fn operator_mcp_auth(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
     action: String,
     name: String,
 ) -> Result<serde_json::Value, String> {
-    let method = match action.as_str() {
-        "start" => "operatorMcpAuthStart",
-        "status" => "operatorMcpAuthStatus",
-        "forget" => "operatorMcpAuthForget",
-        _ => return Err(format!("알 수 없는 MCP 인증 동작: {action}")),
-    };
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.operator_mcp_auth(method, &name)
+    on_daemon_pool(app, move |app, state| {
+        let method = match action.as_str() {
+            "start" => "operatorMcpAuthStart",
+            "status" => "operatorMcpAuthStatus",
+            "forget" => "operatorMcpAuthForget",
+            _ => return Err(format!("알 수 없는 MCP 인증 동작: {action}")),
+        };
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.operator_mcp_auth(method, &name)
+    })
+    .await
 }
 
 #[tauri::command]
-fn claude_account_move(
+async fn claude_account_move(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
     account: String,
     to_pool: String,
 ) -> Result<serde_json::Value, String> {
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.claude_account_move(&account, &to_pool)
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.claude_account_move(&account, &to_pool)
+    })
+    .await
 }
 
 /// **exit 통지 콜백을 여기서 안 넘긴다**(`#431` 2단계 A). 넘기던 시절에는 이 커맨드가
@@ -626,37 +704,39 @@ fn claude_account_move(
 /// 기동 직후 먼저 붙는다 — 콜백은 `ensure_daemon` 안에서 하나로 조립된다
 /// (`daemon_client::runner_exit_emitter`).
 #[tauri::command]
-fn daemon_spawn_runner(
+async fn daemon_spawn_runner(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
     agent_id: String,
     harkroom_pat: String,
     harkroom_url: String,
     path: String,
     agent_version: Option<String>,
 ) -> Result<daemon_client::SpawnRunnerResult, String> {
-    // **여기서 배치를 손보지 않는다**(`#433` — 위의 큰 주석). `node-pty` 를 찾는 것은
-    // 러너 자신의 일이 됐고(`nodePtyLoader.ts`), 그래서 이 커맨드는 daemon 을 확보해
-    // 러너를 띄우라고 말하는 것만 한다. 번들에 쓰는 자리가 없어야 서명·공증이 성립한다.
-    let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
+    on_daemon_pool(app, move |app, state| {
+        // **여기서 배치를 손보지 않는다**(`#433` — 위의 큰 주석). `node-pty` 를 찾는 것은
+        // 러너 자신의 일이 됐고(`nodePtyLoader.ts`), 그래서 이 커맨드는 daemon 을 확보해
+        // 러너를 띄우라고 말하는 것만 한다. 번들에 쓰는 자리가 없어야 서명·공증이 성립한다.
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
 
-    let mut env = HashMap::new();
-    env.insert("HARKROOM_PAT".to_string(), harkroom_pat);
-    env.insert("HARKROOM_URL".to_string(), harkroom_url);
-    env.insert("PATH".to_string(), path);
-    // `agent_version` 만 `Option` 인 이유: 나머지 셋은 없으면 러너가 아예 못 뜨지만
-    // 이것은 **없을 수 있는 값**이다(`AppVersionReader` 가 `null` 을 돌려주는 경우).
-    // 그때 빈 문자열을 심으면 러너가 빈 버전을 보고하고, 화면은 '모른다'와 구별할 수
-    // 없는 값을 얻는다 — 없으면 **넣지 않는다**(docs/design.md §4).
-    //
-    // 이 파라미터가 없던 시절에는 웹뷰가 `env.AGENT_VERSION` 을 채워도 이 자리에서
-    // 통째로 사라졌고, 그래서 모든 러너가 자기 버전을 `'unknown'` 으로 보고했다.
-    // 그 누락이 조용했던 이유는 위층 테스트가 가짜 spawner 만 봤기 때문이다
-    // (`test/daemonSpawner.test.ts` 가 이제 실제 invoke 인자를 단언한다).
-    if let Some(version) = agent_version.filter(|v| !v.is_empty()) {
-        env.insert("AGENT_VERSION".to_string(), version);
-    }
-    conn.spawn_runner(&agent_id, env)
+        let mut env = HashMap::new();
+        env.insert("HARKROOM_PAT".to_string(), harkroom_pat);
+        env.insert("HARKROOM_URL".to_string(), harkroom_url);
+        env.insert("PATH".to_string(), path);
+        // `agent_version` 만 `Option` 인 이유: 나머지 셋은 없으면 러너가 아예 못 뜨지만
+        // 이것은 **없을 수 있는 값**이다(`AppVersionReader` 가 `null` 을 돌려주는 경우).
+        // 그때 빈 문자열을 심으면 러너가 빈 버전을 보고하고, 화면은 '모른다'와 구별할 수
+        // 없는 값을 얻는다 — 없으면 **넣지 않는다**(docs/design.md §4).
+        //
+        // 이 파라미터가 없던 시절에는 웹뷰가 `env.AGENT_VERSION` 을 채워도 이 자리에서
+        // 통째로 사라졌고, 그래서 모든 러너가 자기 버전을 `'unknown'` 으로 보고했다.
+        // 그 누락이 조용했던 이유는 위층 테스트가 가짜 spawner 만 봤기 때문이다
+        // (`test/daemonSpawner.test.ts` 가 이제 실제 invoke 인자를 단언한다).
+        if let Some(version) = agent_version.filter(|v| !v.is_empty()) {
+            env.insert("AGENT_VERSION".to_string(), version);
+        }
+        conn.spawn_runner(&agent_id, env)
+    })
+    .await
 }
 
 /// **세대를 실어 보낸다** — 없으면 daemon 이 "지금 것"을 죽이고, 그 사이 새로 뜬 러너가
@@ -666,14 +746,16 @@ fn daemon_spawn_runner(
 /// 말하는 것뿐이고, 유예를 자르거나 SIGKILL 로 승격하는 경로는 이쪽에도 daemon 쪽에도
 /// 없다 — 러너만이 자기 턴이 끝났는지 안다.
 #[tauri::command]
-fn daemon_kill_runner(
+async fn daemon_kill_runner(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
     agent_id: String,
     incarnation_id: Option<String>,
 ) -> Result<(), String> {
-    let (conn, _) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.kill_runner(&agent_id, incarnation_id.as_deref())
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _) = daemon_client::ensure_daemon(app, state)?;
+        conn.kill_runner(&agent_id, incarnation_id.as_deref())
+    })
+    .await
 }
 
 /// daemon 이 지금 들고 있는 러너들. **관측이지 판단이 아니다** — daemon 은
@@ -690,20 +772,22 @@ fn daemon_kill_runner(
 /// **daemon 은 러너의 부산물이 아니라 상주 프로세스다**(`runnerLauncher.ts::observeDaemon`
 /// 주석의 순환 참조).
 #[tauri::command]
-fn daemon_list_runners(
+async fn daemon_list_runners(
     app: tauri::AppHandle,
-    state: tauri::State<daemon_client::DaemonState>,
 ) -> Result<serde_json::Value, String> {
-    let paths = daemon_client::resolve_endpoint_paths(&app)?;
-    let (conn, kind) = daemon_client::ensure_daemon(&app, &state)?;
-    let runners = conn.list_runners()?;
-    Ok(serde_json::json!({
-        "daemonPid": conn.daemon_pid,
-        "attached": kind == daemon_client::EnsureKind::Attached,
-        "socketPath": paths.socket,
-        "logPath": paths.log,
-        "runners": runners.get("runners").cloned().unwrap_or(serde_json::Value::Null),
-    }))
+    on_daemon_pool(app, move |app, state| {
+        let paths = daemon_client::resolve_endpoint_paths(app)?;
+        let (conn, kind) = daemon_client::ensure_daemon(app, state)?;
+        let runners = conn.list_runners()?;
+        Ok(serde_json::json!({
+            "daemonPid": conn.daemon_pid,
+            "attached": kind == daemon_client::EnsureKind::Attached,
+            "socketPath": paths.socket,
+            "logPath": paths.log,
+            "runners": runners.get("runners").cloned().unwrap_or(serde_json::Value::Null),
+        }))
+    })
+    .await
 }
 
 fn main() {
