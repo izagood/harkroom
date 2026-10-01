@@ -1,7 +1,7 @@
 import type {
   AutomationIngressIssued, AutomationRunView, AutomationTrigger, AutomationView,
   McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, MentionPolicy,
-  AgentModelOptions, AgentModelPick, ThreadAgentModelView,
+  AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, ThreadAgentModelView,
   AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
 import { MENTION_EDIT_SKIPPED_HEADER } from '@harkroom/shared';
 import type { MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
@@ -841,6 +841,10 @@ export class ApiClient {
   /** 고르개 재료 — 하네스·기본값·하네스가 밝힌 모델 목록. */
   agentModelOptions(agentId: string): Promise<AgentModelOptions> {
     return this.req('GET', `/agents/${agentId}/model-options`);
+  }
+  /** 다른 에이전트가 고를 수 있는 (모델·effort)(087). 소유자만. `clearOutside` 면 목록 밖 에이전트 지정을 푼다. */
+  setAgentPickableModels(agentId: string, models: AgentPickableModel[], clearOutside = false): Promise<AgentPickableSaved> {
+    return this.req('PUT', `/accounts/agents/${agentId}/pickable-models`, { models, ...(clearOutside ? { clearOutside: true } : {}) });
   }
   async channelAutoMentions(channelId: string): Promise<ChannelAutoMentionRow[]> {
     return (await this.req<{ autoMentions: ChannelAutoMentionRow[] }>('GET', `/channels/${channelId}/auto-mentions`)).autoMentions;

@@ -26,6 +26,19 @@ export function threadRowFor(
 }
 
 /**
+ * 칩 꼬리에 적을 "정한 에이전트"(087, 결정 7). 사람이 정했거나 행이 없으면 null(꼬리는 `스레드 지정`).
+ * 정한 계정을 모르면(지워졌거나 목록에 없음) 빈 문자열 — 꼬리는 `에이전트 지정` 이다. 사람 지정으로
+ * 떨어뜨리지 않는다: 그러면 에이전트가 올린 값을 사람이 정한 것으로 읽는다.
+ */
+export function setByAgentHandle(
+  row: Pick<ThreadAgentModelView, 'setBy' | 'setByKind'> | null | undefined,
+  accounts: Readonly<Record<string, { handle: string } | undefined>>,
+): string | null {
+  if (!row || row.setByKind !== 'agent') return null;
+  return (row.setBy && accounts[row.setBy]?.handle) || '';
+}
+
+/**
  * 작성창 칩으로 고른 값을 보낼 모양으로. 두 축이 다 빈 것은 뺀다 — 그것은 "지정 없음" 이고,
  * 서버에 실으면 그 스레드의 지정을 **푼다**. 작성창 칩의 `기본` 은 "손대지 않음" 이지 "풀기" 가
  * 아니다(풀기는 스레드 칩의 [기본으로 되돌리기] 다).

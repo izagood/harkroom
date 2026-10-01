@@ -130,6 +130,26 @@ describe('소유자의 에이전트 설정 화면 (#299)', () => {
     expect(screen.queryByText('저장하지 못했다')).toBeNull();
   });
 
+  it('087: "다른 에이전트가 고를 수 있는 모델" 은 소유자에게만 선다 — admin 이어도 소유자가 아니면 없다', async () => {
+    const options = vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null, pickable: [{ model: 'opus', efforts: [] }] }));
+    await openAsOwner({ agentModelOptions: options });
+    expect(await screen.findByTestId('pickable-row-opus')).toBeTruthy();
+    // 상세의 [저장]과 이름이 겹치지 않는다 — 겹치면 어느 저장인지 모른다.
+    expect(screen.getAllByRole('button', { name: '저장' })).toHaveLength(1);
+    cleanup();
+
+    useAppStore.getState().set({
+      me: acc('u1', 'admin', 'human', true),
+      accounts: { u1: acc('u1', 'admin', 'human', true) },
+    });
+    fakeController({ agentModelOptions: options, agentDefaults: vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null })) });
+    render(<AgentsSettings />);
+    await screen.findByTestId('agent-card-mybot');
+    fireEvent.click(screen.getByTestId('agent-card-mybot'));
+    await screen.findByLabelText('Mention permission');
+    expect(screen.queryByTestId('agent-pickable')).toBeNull();
+  });
+
   it('admin 의 저장 본문에는 admin 전용 키가 그대로 실린다', async () => {
     useAppStore.getState().set({
       me: acc('u1', 'admin', 'human', true),

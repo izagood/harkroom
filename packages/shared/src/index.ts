@@ -1576,6 +1576,24 @@ export interface AgentModelOptions {
   model: string | null;
   effort: string | null;
   models?: HarnessModel[];
+  /**
+   * 다른 에이전트가 이 에이전트를 부르며 고를 수 있는 (모델·effort)(087, 결정 3·9·11). 소유자가 켠다.
+   * 비면 못 고른다. 옛 서버(0.3.113 전)는 싣지 않는다.
+   */
+  pickable?: AgentPickableModel[];
+}
+
+/** 허용 목록 한 줄 — 서버 `agent_pickable_models` jsonb 의 모양 그대로. `efforts` 가 비면 effort 는 못 고른다. */
+export interface AgentPickableModel {
+  model: string;
+  efforts: string[];
+}
+
+/** `PUT /accounts/agents/:id/pickable-models` 의 답. `outside` 는 남아 있는 목록 밖 에이전트 지정 수. */
+export interface AgentPickableSaved {
+  models: AgentPickableModel[];
+  outside?: number;
+  cleared?: number;
 }
 
 export interface EffectiveAgentModel {

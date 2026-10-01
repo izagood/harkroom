@@ -1,4 +1,4 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentModelOptions, AgentModelPick, AgentView, ThreadAgentModelView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, AgentView, ThreadAgentModelView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
 import type { MemoryEdit, MemoryEntry, MemoryRevision } from '../lib/memoryList';
 import { countsAsReply, notifyLevelOf } from '@harkroom/shared';
 import { ApiClient, ApiError } from '../lib/api';
@@ -1875,6 +1875,9 @@ export class Controller {
   /** 칩 고르개의 재료(079) — 하네스·기본값·하네스가 밝힌 모델 목록. */
   agentModelOptions(agentId: string): Promise<AgentModelOptions> {
     return this.api.agentModelOptions(agentId);
+  }
+  setAgentPickableModels(agentId: string, models: AgentPickableModel[], clearOutside = false): Promise<AgentPickableSaved> {
+    return this.api.setAgentPickableModels(agentId, models, clearOutside);
   }
 
   /** 스레드 × 에이전트 모델 지정(079)을 받아 둔다. 실패는 던진다 — 삼킬지는 부르는 쪽이 정한다. */
