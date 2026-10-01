@@ -1405,8 +1405,21 @@ export interface FailureMeta {
      * '다시 부르기'를 그리지 않는다 — 눌러도 안 되는 버튼은 없는 문을 그리는 것이다(규칙 06).
      */
     retryable: boolean;
+    /**
+     * **기계가 읽는 실패 갈래**(있을 때만). 화면이 문구(`what`)로 갈래를 가르면 문구를 다듬는
+     * 순간 조용히 안 맞는다 — 그래서 고칠 길이 정해진 실패만 여기 표지를 단다. 모르는 값은
+     * 화면이 무시한다(평문 실패 카드로 그린다).
+     *
+     * - `thread_model_rejected`: 이 스레드에 지정한 모델·effort 를 하네스가 받지 않았다(079,
+     *   결정 6). 화면은 [다시 부르기] 대신 [기본으로 되돌리고 다시 부르기]·[모델 고르기]를 준다.
+     */
+    code?: FailureCode;
   };
 }
+
+/** `FailureMeta.failure.code` 의 값들. 서버 `message.fail` 입력이 이 목록으로 받는다. */
+export const FAILURE_CODES = ['thread_model_rejected'] as const;
+export type FailureCode = (typeof FAILURE_CODES)[number];
 
 /**
  * `meta` 가 실패인지 판정한다. `readAskMeta` 와 같은 규약이다 — **모르는 `meta` 는 평문으로
@@ -1513,6 +1526,40 @@ export interface ModelMeta {
 
 /** 모델 ID 의 상한. 하네스가 긴 ID 를 쓰더라도 meta 가 본문만큼 커지지는 않게 한다. */
 export const MODEL_ID_MAX = 120;
+
+/** effort 값의 상한. 하네스마다 값 집합이 달라(`low`·`xhigh`·`ultra`) 목록 대신 길이만 묶는다. */
+export const EFFORT_MAX = 32;
+
+/**
+ * 스레드 × 에이전트의 모델 지정(마이그레이션 079). 사람이 스레드 머리·작성창 칩에서 정한다.
+ *
+ * `model`·`effort` 의 null 은 "그 축은 에이전트 설정을 따른다"이다. `stale` 은 지정한 뒤
+ * 에이전트의 하네스가 바뀌어 **이 값을 쓰지 않는다**는 뜻이다 — 행은 남긴다(하네스를 되돌리면
+ * 다시 쓰인다). 화면은 취소선으로 그린다.
+ */
+export interface ThreadAgentModelView {
+  threadRootId: string;
+  agentId: string;
+  harness: AgentHarness;
+  model: string | null;
+  effort: string | null;
+  setBy: string | null;
+  setAt: string;
+  stale: boolean;
+  /** 에이전트의 **지금** 하네스. `stale` 일 때 "하네스가 X 로 바뀌어…" 를 말하는 재료다. */
+  currentHarness: AgentHarness;
+}
+
+/**
+ * 러너가 턴 시작에 받는 **실효값**(`GET /agent/thread-model`). 스레드 지정이 살아 있으면
+ * 그 축은 그 값이고, 없거나 무효면 에이전트 설정값이다. `source` 는 축마다 따로다 —
+ * 모델만 지정하고 effort 는 설정을 따를 수 있다.
+ */
+export interface EffectiveAgentModel {
+  model: string | null;
+  effort: string | null;
+  source: { model: 'thread' | 'agent'; effort: 'thread' | 'agent' };
+}
 
 /**
  * `meta` 가 모델을 싣고 있는지 판정한다. `readAskMeta` 와 같은 규약이다 — **모르는 `meta` 는
@@ -2495,7 +2542,13 @@ export type WsServerEvent =
    */
   | { type: 'skill.proposed'; skill: WorkspaceSkillView; channelId: string }
   | { type: 'skill.approved'; skill: WorkspaceSkillView }
-  | { type: 'skill.disabled'; skill: WorkspaceSkillView };
+  | { type: 'skill.disabled'; skill: WorkspaceSkillView }
+  /**
+   * 스레드 × 에이전트 모델 지정이 바뀌었다(079). `row` 가 null 이면 풀렸다. 채널을 볼 수
+   * 있는 사람에게 간다 — 스레드 머리 칩이 다시 그린다.
+   */
+  | { type: 'thread.agent_model.changed'; channelId: string; threadRootId: string; agentId: string;
+      row: ThreadAgentModelView | null; audience: 'all' | string[] };
 
 /**
  * 워크스페이스 스킬 하나의 뷰(#140·#311).
@@ -3454,6 +3507,12 @@ export interface HarnessModel {
   id: string;
   /** 사람이 읽는 이름. 하네스가 주지 않으면 없다(화면은 id 를 쓴다). */
   label?: string;
+  /**
+   * 이 모델이 받는 effort 값(하네스가 밝힌 순서). 없으면 "모른다"다 — 화면은 직접 입력으로
+   * 물러선다. codex 는 모델마다 다르고(`supported_reasoning_levels`), claude 는 `--effort`
+   * 도움말의 다섯이 모든 별칭에 같다.
+   */
+  efforts?: string[];
 }
 
 /** 에이전트 → 오퍼레이터 배정(§3). 에이전트당 하나. */

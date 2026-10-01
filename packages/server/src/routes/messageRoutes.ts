@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { MAX_MESSAGE_BODY_CHARS, MENTION_EDIT_SKIPPED_HEADER, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@harkroom/shared';
+import { EFFORT_MAX, MAX_MESSAGE_BODY_CHARS, MENTION_EDIT_SKIPPED_HEADER, MODEL_ID_MAX, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@harkroom/shared';
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages, SEARCH_MAX_OFFSET, BAD_THREAD_MESSAGE } from '../services/messages.js';
@@ -10,8 +10,11 @@ import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { normalizeSearchQuery } from '../services/mentions.js';
 import { extractUrls, queueLinkPreviewFetch } from '../services/linkPreview.js';
+import { axisValid, cleanAxis, clearThreadAgentModel, isChannelRoot, setThreadAgentModel } from '../services/threadAgentModels.js';
+import { agentModelInput, announceChange, checkOffered, emitChanged } from './threadAgentModelRoutes.js';
+import type { OperatorHub } from '../ws/operatorHub.js';
 
-export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
+export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, deps: { operatorHub?: OperatorHub } = {}): Promise<void> {
   app.post('/channels/:id/messages', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const body = z.object({
@@ -20,6 +23,11 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
       threadRootId: z.string().uuid().optional(),
       attachmentIds: z.array(z.string().uuid()).max(10).optional(),
       alsoInChannel: z.boolean().optional(),
+      /**
+       * 작성창 칩(결정 1·C)으로 고른 에이전트별 모델. 이 글이 속할 스레드에 저장한다 — 채널
+       * 최상위 글이면 이 글 자체가 루트다. 그래서 첫 멘션부터 지정된다.
+       */
+      agentModels: z.array(agentModelInput.extend({ agentId: z.string().uuid() })).max(8).optional(),
     }).refine((v) => v.body.trim().length > 0 || (v.attachmentIds?.length ?? 0) > 0, {
       message: 'a message needs a body or an attachment',
     }).parse(req.body);
@@ -31,6 +39,36 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
     }
     if (gate === 'archived') {
       return reply.code(403).send({ error: { code: 'channel_archived', message: 'archived channels are read-only' } });
+    }
+    // 모델 지정은 사람만(결정 3). 글을 올리기 **전에** 거르는 이유: 올린 뒤에 거절하면 글은 남고
+    // 지정만 빠져, 사람이 고른 모델이 아니라 기본값으로 턴이 돈다 — 그것이 결정 6 이 막는 조용한 폴백이다.
+    //
+    // **두 축이 다 빈 값은 버리지 않는다** — 그것은 "그 스레드의 지정 해제" 다(스레드 작성창의
+    // [스레드 지정 풀기], designer #969 재대조). 버리면 사람이 풀고 보냈는데 다음 턴이 그대로
+    // 옛 모델로 돈다. 해제는 고를 값이 없으므로 `checkOffered` 를 거치지 않는다(그 함수가 두 축이
+    // null 이면 바로 통과시킨다). 사람만 된다는 검사는 그대로다.
+    const agentModels = (body.agentModels ?? []).map((m) => ({
+      agentId: m.agentId, model: cleanAxis(m.model, MODEL_ID_MAX), effort: cleanAxis(m.effort, EFFORT_MAX),
+    }));
+    if (agentModels.length > 0) {
+      if (req.account!.kind !== 'human') {
+        return reply.code(403).send({ error: { code: 'human_only', message: '모델 지정은 사람만 바꾼다' } });
+      }
+      // **루트를 이 채널에 묶는다**(security #967 ④). `postMessage` 는 `threadRootId` 가 이 채널의
+      // 글인지 보지 않으므로, 여기서 묶지 않으면 채널 A 경로에 비공개 채널 B 의 루트를 실어 B 스레드의
+      // 지정을 바꾸거나 풀 수 있다(①에서 막은 DELETE 를 우회하는 길). 최상위 글이면 루트가 이 글
+      // 자신이라 볼 것이 없다.
+      if (body.threadRootId && !(await isChannelRoot(pool, id, body.threadRootId))) {
+        return reply.code(404).send({ error: { code: 'not_a_root', message: '그 채널의 최상위 글이 아니다' } });
+      }
+      for (const m of agentModels) {
+        // argv 로 가는 값의 모양(security 검토 ②) — PUT 과 같은 검사다.
+        if (!axisValid(m.model) || !axisValid(m.effort)) {
+          return reply.code(400).send({ error: { code: 'bad_model_value', message: '모델·effort 는 영숫자로 시작하고 영숫자·._:/[]- 만 쓴다' } });
+        }
+        const offered = await checkOffered(pool, deps.operatorHub, m.agentId, m.model, m.effort);
+        if (!offered.ok) return reply.code(400).send({ error: { code: offered.code, message: offered.message } });
+      }
     }
     const idempotencyKey = (req.headers['idempotency-key'] as string | undefined) ?? null;
     const posted = await postMessage(pool, {
@@ -49,6 +87,26 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
       });
     }
     const { message, notified, replayed } = posted;
+    // 지정을 **알림보다 먼저** 저장한다 — 러너는 `inbox.updated` 를 받고 턴을 띄우며 그 턴 시작에
+    // 지정을 읽는다. 순서가 바뀌면 첫 턴만 기본값으로 돈다.
+    if (!replayed && agentModels.length > 0) {
+      const rootId = message.threadRootId ?? message.id;
+      for (const m of agentModels) {
+        if (m.model === null && m.effort === null) {
+          // 해제 — REST `DELETE` 와 같은 함수·같은 시스템 줄. 없던 것을 풀면 아무 줄도 남기지 않는다
+          // (DELETE 의 404 와 같은 판단: 일어나지 않은 일을 알리지 않는다).
+          if (await clearThreadAgentModel(pool, rootId, m.agentId)) {
+            await announceChange(pool, id, rootId, req.account!.id, m.agentId, null);
+            await emitChanged(pool, id, rootId, m.agentId, null);
+          }
+          continue;
+        }
+        const set = await setThreadAgentModel(pool, { channelId: id, threadRootId: rootId, agentId: m.agentId, model: m.model, effort: m.effort, setBy: req.account!.id });
+        if (!set.ok) continue;
+        await announceChange(pool, id, rootId, req.account!.id, m.agentId, set.row);
+        await emitChanged(pool, id, rootId, m.agentId, set.row);
+      }
+    }
     if (!replayed) {
       const audience = await audienceFor(pool, id);
       emitPosted(posted, audience);

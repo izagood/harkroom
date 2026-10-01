@@ -23,13 +23,31 @@ import { HARNESS_BINARIES } from './harnesses.js';
 
 type Harness = keyof typeof HARNESS_BINARIES;
 
+/**
+ * `claude --help` 의 `--effort` 설명이 밝힌 값(claude 2.1.283: "low, medium, high, xhigh, max").
+ * 모델마다 따로 밝히지 않으므로 별칭 넷이 같은 목록을 쓴다.
+ */
+export const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+
 /** `claude --help` 의 `--model` 설명이 예로 드는 별칭(claude 2.1.283). */
 export const CLAUDE_MODEL_ALIASES: HarnessModel[] = [
-  { id: 'fable', label: 'Fable (latest)' },
-  { id: 'opus', label: 'Opus (latest)' },
-  { id: 'sonnet', label: 'Sonnet (latest)' },
-  { id: 'haiku', label: 'Haiku (latest)' },
+  { id: 'fable', label: 'Fable (latest)', efforts: CLAUDE_EFFORTS },
+  { id: 'opus', label: 'Opus (latest)', efforts: CLAUDE_EFFORTS },
+  { id: 'sonnet', label: 'Sonnet (latest)', efforts: CLAUDE_EFFORTS },
+  { id: 'haiku', label: 'Haiku (latest)', efforts: CLAUDE_EFFORTS },
 ];
+
+/**
+ * codex 카탈로그의 `supported_reasoning_levels`(모델마다 다르다, 2026-10-01 실측:
+ * `[{ effort: 'low', description }, …, { effort: 'ultra' }]`). 모양이 다르면 `undefined`(모른다).
+ */
+function codexEfforts(levels: unknown): string[] | undefined {
+  if (!Array.isArray(levels)) return undefined;
+  const out = levels
+    .map((l) => (typeof l === 'object' && l !== null ? (l as { effort?: unknown }).effort : undefined))
+    .filter((e): e is string => typeof e === 'string' && e.length > 0);
+  return out.length > 0 ? out : undefined;
+}
 
 /** `codex debug models` 의 출력 → 사람이 고르는 목록. 모양이 다르면 `undefined`. */
 export function parseCodexModels(stdout: string): HarnessModel[] | undefined {
@@ -38,11 +56,18 @@ export function parseCodexModels(stdout: string): HarnessModel[] | undefined {
   const models = (doc as { models?: unknown } | null)?.models;
   if (!Array.isArray(models)) return undefined;
   return models
-    .filter((m): m is { slug: string; display_name?: unknown; visibility?: unknown; priority?: unknown } =>
+    .filter((m): m is { slug: string; display_name?: unknown; visibility?: unknown; priority?: unknown; supported_reasoning_levels?: unknown } =>
       typeof m === 'object' && m !== null && typeof (m as { slug?: unknown }).slug === 'string')
     .filter((m) => m.visibility === undefined || m.visibility === 'list')
     .sort((a, b) => (typeof a.priority === 'number' ? a.priority : Infinity) - (typeof b.priority === 'number' ? b.priority : Infinity))
-    .map((m) => ({ id: m.slug, ...(typeof m.display_name === 'string' && m.display_name ? { label: m.display_name } : {}) }));
+    .map((m) => {
+      const efforts = codexEfforts(m.supported_reasoning_levels);
+      return {
+        id: m.slug,
+        ...(typeof m.display_name === 'string' && m.display_name ? { label: m.display_name } : {}),
+        ...(efforts ? { efforts } : {}),
+      };
+    });
 }
 
 /** `opencode models` 의 출력 → 목록. `provider/model` 모양이 아닌 줄(경고 등)은 버린다. */
