@@ -29,7 +29,7 @@ import { hasCapability } from '../../lib/capabilities';
  * 그 한 줄이 **두 화면에 각각** 있다: `TeamDetail` 의 `team-mention-note`(팀 → 집합)와
  * `HandleGroupsSettings` 의 목록 머리(집합 → 팀).
  */
-export type SectionId = 'workspace' | 'profile' | 'notifications' | 'messages' | 'appearance' | 'connection' | 'communities' | 'agents' | 'agent-defaults' | 'operators' | 'integrations' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'automations' | 'gallery' | 'this-operator';
+export type SectionId = 'workspace' | 'profile' | 'notifications' | 'messages' | 'appearance' | 'communities' | 'agents' | 'agent-defaults' | 'operators' | 'integrations' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'automations' | 'gallery' | 'this-operator';
 
 /**
  * 목차 한 줄의 **이름은 사전 키 하나다**(UX ④ H5). 전에는 목차가 영어 문자열(`Appearance`)을,
@@ -67,10 +67,9 @@ export const SETTINGS_GROUPS: { id: 'me' | 'device' | 'workspace' | 'agents'; ti
     id: 'device',
     titleKey: 'settings.group.device',
     items: [
-      // #165: `Connection` 은 "지금 붙은 서버 하나", `Communities` 는 "이 기기가 아는 서버 전부" 다.
-      // ⑥b 에서 커뮤니티로 흡수한다 — 그때까지는 이웃으로 선다.
+      // `Connection`(지금 붙은 서버 하나)은 커뮤니티로 흡수됐다(UX ⑥b-3). 커뮤니티 줄마다 이미
+      // 주소·연결 상태·서버 버전이 있었다 — 같은 사실이 두 페이지에 살았다. 로그아웃은 프로필 한 곳이다.
       { id: 'communities' },
-      { id: 'connection' },
       { id: 'updates' },
       // 이 머신을 오퍼레이터로 등록하는 자리(UX ⑥b-2). 오퍼레이터 **목록**은 워크스페이스 전체의 것이라
       // 에이전트 묶음에 남고, "이 머신" 은 이 기기에만 걸리므로 여기다(designer 사양 ⑥).

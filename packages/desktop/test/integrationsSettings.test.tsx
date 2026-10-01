@@ -17,7 +17,6 @@ import { PROJECTION_UNCONFIGURED_HEADLINE } from '@harkroom/shared';
 import type { ProjectionStatus } from '@harkroom/shared';
 import { useActiveStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
-import { ConnectionSettings } from '../src/components/settings/ConnectionSettings';
 import { IntegrationsSettings } from '../src/components/settings/IntegrationsSettings';
 import { usePrefsStore } from '../src/state/prefsStore';
 
@@ -42,17 +41,17 @@ afterEach(() => {
 const row = () => screen.getByTestId('projection-row').textContent ?? '';
 
 describe('연동 설정의 투영 행 (UX ⑥b-4 — Connection 에서 옮겨 왔다)', () => {
-  it('투영 행은 연동 페이지의 "avcs 투영" 묶음에 있고, Connection 에는 더 없다', () => {
+  it('투영 행은 연동 페이지의 "avcs 투영" 묶음에 있고, 행 이름은 묶음 이름을 되풀이하지 않는다', () => {
     useActiveStore.getState().set({ projectionStatus: status({ state: 'ok' }) });
     const { unmount } = render(<IntegrationsSettings />);
     expect(screen.getByRole('heading', { name: '연동' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'avcs 투영' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'MCP 서버' })).toBeTruthy();
     expect(screen.getByTestId('projection-row')).toBeTruthy();
+    // 묶음 제목이 "avcs 투영" 이라 행 이름은 "상태" 다(designer #1023 선택 제안, ⑥b-3 에서 반영).
+    expect(screen.getByText('상태')).toBeTruthy();
+    expect(screen.queryByText('투영')).toBeNull();
     unmount();
-    render(<ConnectionSettings onSignOut={vi.fn()} />);
-    expect(screen.queryByTestId('projection-row')).toBeNull();
-    expect(screen.getByTestId('connection-state')).toBeTruthy();
   });
 
   it('꺼져 있으면 무엇을 켜야 하는지 적는다', () => {

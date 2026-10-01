@@ -270,7 +270,7 @@ AVCS_BASE_URL=https://your-avcs-server.example.com
 - "투영이 설정되지 않았다 / 앱 설정이나 AVCS_BASE_URL 로 켠다" 문구가 화면에 뜬다. **판정은
   `desktop/src/lib/projectionBanner.ts` 한 곳이 하고**, 그리는 자리는 여럿이다
   (`ProjectionBanner.tsx` 의 상단 띠, `LeasePanel.tsx` 의 ACTIVE WORK 구역,
-  `settings/ConnectionSettings.tsx`, 그리고 repo 바인딩 폼) — 사정을 가르는 코드가
+  `settings/IntegrationsSettings.tsx`, 그리고 repo 바인딩 폼) — 사정을 가르는 코드가
   한 벌이라 문구가 자리마다 갈라지지 않는다
 
 이 자리들이 **모두 필요한 이유**: 예전에는 투영이 꺼져 있어도 화면이 평소와 똑같이

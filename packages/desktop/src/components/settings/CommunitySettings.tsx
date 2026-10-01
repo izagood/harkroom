@@ -265,7 +265,7 @@ function CommunityRow(props: {
             <span className="min-w-0 truncate font-mono text-meta">{entry.baseUrl || '—'}</span>
             <span className={`h-2 w-2 shrink-0 rounded-full ${connected ? 'bg-success' : 'bg-danger'}`} />
             <span data-testid={`community-state-${entry.id}`}>
-              {connected ? 'Connected' : 'Disconnected'}
+              {connected ? t('connection.connected') : t('connection.disconnected')}
             </span>
           </span>
           {/* 버전은 **연결 상태와 같은 줄에 두지 않는다.** 그 줄은 이미 주소·점·상태로
