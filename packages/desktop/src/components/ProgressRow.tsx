@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { selectAccountNames } from '../lib/accountNames';
@@ -34,7 +34,29 @@ export function ProgressRow({ messages, endedAt = null }: {
    */
   endedAt?: string | null;
 }) {
-  const [open, setOpen] = useState(false);
+  /**
+   * 강조 점프의 대상이 이 묶음 안이면 **펼치고 그 줄을 보인다**(원인 3 — `AgentExchange` 의
+   * 같은 자리 주석). 진행 줄은 `MessageItem` 이 아니라 글줄(`<li>`)이라 강조가 스스로 화면에
+   * 서지 못한다 — 그래서 여기서 그 줄로 옮기고 강조 색을 입힌다. 강조가 풀려도 접지 않는다.
+   */
+  const highlightedId = useActiveStore((s) =>
+    s.highlightedMessageId !== null && messages.some((m) => m.id === s.highlightedMessageId)
+      ? s.highlightedMessageId : null);
+  const [open, setOpen] = useState(highlightedId !== null);
+  useEffect(() => { if (highlightedId) setOpen(true); }, [highlightedId]);
+  const highlightRef = useRef<HTMLLIElement>(null);
+  // `block: 'nearest'` 인 이유는 `MessageItem` 의 같은 호출에 있다(문서까지 밀지 않는다).
+  useEffect(() => { if (open && highlightedId) highlightRef.current?.scrollIntoView?.({ block: 'nearest' }); }, [open, highlightedId]);
+  // 몇 초 뒤 강조를 푸는 것도 `MessageItem` 과 같다(#397) — 그 줄이 `MessageItem` 이 아니라
+  // 거기 있는 타이머가 돌지 않으므로 여기서 건다. 안 걸면 강조가 다음 이동까지 남는다.
+  useEffect(() => {
+    if (!highlightedId) return;
+    const timeout = setTimeout(() => {
+      const store = useActiveStore.getState();
+      if (store.highlightedMessageId === highlightedId) store.set({ highlightedMessageId: null });
+    }, 5000);
+    return () => clearTimeout(timeout);
+  }, [highlightedId]);
   const author = useActiveStore((s) => s.accounts[messages[0]!.authorId]);
   // 진행 본문도 본문 렌더러를 지나지 않는다 — `<@id>` 를 여기서 푼다(`lib/mention` 주석).
   // 이름 쪽만 구독한다 — 상태·아바타 이벤트에 행마다 다시 그려지지 않도록(`lib/accountNames`).
@@ -101,7 +123,14 @@ export function ProgressRow({ messages, endedAt = null }: {
       {open && (
         <ul data-testid="progress-detail" className="mt-1 space-y-0.5 border-l border-border-agent pl-2">
           {messages.map((m) => (
-            <li key={m.id} className="text-meta text-fg-subtle">{displayBody(m, accounts, groups, teams)}</li>
+            <li
+              key={m.id}
+              ref={m.id === highlightedId ? highlightRef : undefined}
+              data-highlighted={m.id === highlightedId ? 'true' : undefined}
+              className={`text-meta text-fg-subtle${m.id === highlightedId ? ' rounded bg-warning-surface-strong ring-1 ring-warning-border' : ''}`}
+            >
+              {displayBody(m, accounts, groups, teams)}
+            </li>
           ))}
         </ul>
       )}

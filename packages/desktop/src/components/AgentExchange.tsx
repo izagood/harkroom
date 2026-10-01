@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { exchangeParticipants, exchangeConclusion } from '../lib/agentExchange';
@@ -39,7 +39,21 @@ export function AgentExchange({ messages, onOpenDirectory, onOpenSettings, inThr
 }) {
   const t = useT();
   const locale = useLocale();
-  const [open, setOpen] = useState(false);
+  /**
+   * **강조 점프(saved·검색·링크)의 대상이 이 안에 있으면 펼친다**(2026-10-01, Saved 클릭 이동이
+   * 중간에 멈춤 — 원인 3). 접힌 줄은 `MessageItem` 을 그리지 않으므로 그 말의 강조도
+   * `scrollIntoView` 도 일어나지 않았다 — 점프가 아무 데도 닿지 않고 패널은 열 때 간 바닥에
+   * 남았다. 에이전트 답을 담아 두는 일이 많고, 그 답은 흔히 이 접힌 구간 안에 있다.
+   *
+   * 고르는 값은 불리언이라 다른 강조·스토어 변화에는 다시 그려지지 않는다. 처음부터 강조된
+   * 채로 마운트되면(창 밖에서 들어온 줄) 첫 렌더부터 펼친다 — 접힌 한 프레임을 건너뛴다.
+   * 강조가 풀려도 **다시 접지 않는다** — 사람은 아직 그것을 읽는 중이고, 접고 펴는 것은
+   * 그 뒤로 사람의 손이다.
+   */
+  const holdsHighlight = useActiveStore((s) =>
+    s.highlightedMessageId !== null && messages.some((m) => m.id === s.highlightedMessageId));
+  const [open, setOpen] = useState(holdsHighlight);
+  useEffect(() => { if (holdsHighlight) setOpen(true); }, [holdsHighlight]);
   const accounts = useActiveStore((s) => s.accounts);
 
   const names = exchangeParticipants(messages).map((id) => accounts[id]?.handle ?? '…');

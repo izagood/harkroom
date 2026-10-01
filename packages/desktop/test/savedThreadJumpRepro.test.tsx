@@ -63,7 +63,7 @@ beforeEach(() => {
   useAppStore.getState().reset();
   useAppStore.getState().set({
     me: acc('u1', 'admin'),
-    accounts: { u1: acc('u1', 'admin'), u3: acc('u3', 'kim'), u4: acc('u4', 'lee') },
+    accounts: { u1: acc('u1', 'admin'), u3: acc('u3', 'kim'), u4: acc('u4', 'lee'), a1: acc('a1', 'harkroom', 'agent'), a2: acc('a2', 'qa', 'agent') },
     activeChannelId: 'c1',
   });
 });
@@ -150,5 +150,17 @@ describe('QA 재현: Saved → 스레드 답글 점프(원인 1)', () => {
     act(() => { useAppStore.getState().set({ highlightedMessageId: TARGET }); });
     await settle();
     expect({ visible: targetVisible(), scrollTop: box().scrollTop }).toMatchObject({ visible: true });
+  });
+
+  it('③ 대상이 에이전트끼리 주고받기(접힌 줄) 안에 있으면 펼쳐져서 보여야 한다', async () => {
+    const ex = Array.from({ length: 6 }, (_, i) =>
+      msg(`x${i}`, 'c1', 100 + i, `주고받기 x${i}`, i % 2 ? 'a2' : 'a1', { threadRootId: 'm1' }));
+    useAppStore.getState().set({ threadRootId: 'm1', messages: { c1: [root(), ...replies(), ...ex] } });
+    render(<ThreadPanel />);
+    await settle();
+    act(() => { useAppStore.getState().set({ highlightedMessageId: 'x2' }); });
+    await settle();
+    // 접힌 줄이면 MessageItem 이 없어 강조도 scrollIntoView 도 일어나지 않는다.
+    expect(screen.queryByText('주고받기 x2')).not.toBeNull();
   });
 });
