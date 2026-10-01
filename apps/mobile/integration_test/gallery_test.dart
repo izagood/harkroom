@@ -131,13 +131,17 @@ void main() {
     app.connection = SocketState.online;
     app.notifyListeners();
 
-    // ask 답이 실패하면 토스트 + 다시 시도.
+    // ask 답이 실패하면 토스트 + 다시 시도. 작성칸의 키보드를 먼저 내린다 — 토스트가 키보드
+    // 자리에 가려진다.
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump(const Duration(milliseconds: 400));
     final option = find.byKey(const Key('ask-option-m4-a'));
     await tester.scrollUntilVisible(option, 250,
         scrollable: find
             .descendant(of: find.byKey(const Key('channel-feed')), matching: find.byType(Scrollable))
             .first);
     await tester.tap(option);
+    await tester.pump(const Duration(milliseconds: 300));
     await shot(tester, '17-toast');
     await tester.tap(find.byType(BackButton));
     await shot(tester, '17b-back');
