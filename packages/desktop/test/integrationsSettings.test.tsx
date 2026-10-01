@@ -7,8 +7,9 @@
  * 그 방은 투영에 대해 한 마디도 하지 않는다(docs/design.md §4: 배선을 잊은 문은
  * 아무 일도 없는 항목이 된다).
  *
- * 이 화면이 그 자리인 이유: `Connection` 은 "이 앱이 말을 거는 서버 하나" 를 말하는
- * 자리고, 투영은 **그 서버가 avcs 를 향해 돌리는 것**이다.
+ * 이 화면이 그 자리인 이유: 투영은 서버가 avcs 를 향해 돌리고 모든 멤버의 Collab 이 읽는
+ * **워크스페이스 전체의 바깥 연결**이다 — 그래서 설정 › 워크스페이스 › 연동이다(UX ⑥b-4,
+ * 전에는 이 기기 묶음의 `Connection`).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
@@ -17,6 +18,7 @@ import type { ProjectionStatus } from '@harkroom/shared';
 import { useActiveStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { ConnectionSettings } from '../src/components/settings/ConnectionSettings';
+import { IntegrationsSettings } from '../src/components/settings/IntegrationsSettings';
 import { usePrefsStore } from '../src/state/prefsStore';
 
 const status = (over: Partial<ProjectionStatus>): ProjectionStatus => ({
@@ -30,7 +32,7 @@ beforeEach(() => {
   // **언어를 고정한다**(`#619` 후속으로 `N분 전` 이 앱 언어를 따른다). 이 파일이 재는 것은
   // 이 행이 사정을 말하는가이지 그 문구의 언어가 아니다.
   usePrefsStore.getState().setLocale('ko');
-  setController({ api: { baseUrl: 'http://localhost:3400' } } as unknown as Controller);
+  setController({ api: { baseUrl: 'http://localhost:3400' }, mcpServers: async () => [] } as unknown as Controller);
 });
 afterEach(() => {
   cleanup();
@@ -39,10 +41,23 @@ afterEach(() => {
 
 const row = () => screen.getByTestId('projection-row').textContent ?? '';
 
-describe('Connection 설정의 투영 행', () => {
+describe('연동 설정의 투영 행 (UX ⑥b-4 — Connection 에서 옮겨 왔다)', () => {
+  it('투영 행은 연동 페이지의 "avcs 투영" 묶음에 있고, Connection 에는 더 없다', () => {
+    useActiveStore.getState().set({ projectionStatus: status({ state: 'ok' }) });
+    const { unmount } = render(<IntegrationsSettings />);
+    expect(screen.getByRole('heading', { name: '연동' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'avcs 투영' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'MCP 서버' })).toBeTruthy();
+    expect(screen.getByTestId('projection-row')).toBeTruthy();
+    unmount();
+    render(<ConnectionSettings onSignOut={vi.fn()} />);
+    expect(screen.queryByTestId('projection-row')).toBeNull();
+    expect(screen.getByTestId('connection-state')).toBeTruthy();
+  });
+
   it('꺼져 있으면 무엇을 켜야 하는지 적는다', () => {
     useActiveStore.getState().set({ projectionStatus: status({ state: 'unconfigured', configured: false, repo: null }) });
-    render(<ConnectionSettings onSignOut={vi.fn()} />);
+    render(<IntegrationsSettings />);
     // 띠와 같은 판정이지만 **말은 상태 한 마디**다(designer ②-a) — 설명은 띠와 Collab 카드가 한다.
     expect(row()).toBe('꺼짐');
   });
@@ -50,7 +65,7 @@ describe('Connection 설정의 투영 행', () => {
   /** 정상과 고장이 같은 말이면 이 행은 아무것도 알려 주지 않는다. */
   it('돌고 있으면 무엇을 보고 있는지 말한다', () => {
     useActiveStore.getState().set({ projectionStatus: status({ state: 'ok' }) });
-    render(<ConnectionSettings onSignOut={vi.fn()} />);
+    render(<IntegrationsSettings />);
     expect(row()).toContain('izagood/harkroom');
     expect(row()).not.toContain(PROJECTION_UNCONFIGURED_HEADLINE);
   });
@@ -59,14 +74,14 @@ describe('Connection 설정의 투영 행', () => {
     useActiveStore.getState().set({
       projectionStatus: status({ state: 'stalled', lastPolledAt: Date.now() - 10 * 60_000 }),
     });
-    render(<ConnectionSettings onSignOut={vi.fn()} />);
+    render(<IntegrationsSettings />);
     expect(row()).toContain('10분 전부터');
   });
 
   /** 못 읽은 것을 "꺼졌다"로 부르면 화면이 없는 사실을 주장한다. */
   it('상태를 못 읽었으면 그렇게 말한다', () => {
     useActiveStore.getState().set({ projectionStatusError: 'boom' });
-    render(<ConnectionSettings onSignOut={vi.fn()} />);
+    render(<IntegrationsSettings />);
     expect(row()).toContain('읽지 못했다');
   });
 });

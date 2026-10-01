@@ -166,7 +166,7 @@ update projection_cursor set last_log_index = 0
 ## 6. AVCS_BASE_URL — 투영 활성화와 그 상태 읽기
 
 harkroom 는 avcs 서버를 폴링해 **`lease` 객체를 `active_lease` 상태로** 투영한다. 이 투영을
-켜는 값에는 **두 출처**가 있다: 데스크탑 앱 `설정 › Connection` 에서 admin 이 저장한 값과,
+켜는 값에는 **두 출처**가 있다: 데스크탑 앱 `설정 › 연동`(avcs 투영) 에서 admin 이 저장한 값과,
 환경변수 하나:
 
 ```bash

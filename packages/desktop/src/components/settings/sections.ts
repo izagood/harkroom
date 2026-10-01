@@ -29,7 +29,7 @@ import { hasCapability } from '../../lib/capabilities';
  * 그 한 줄이 **두 화면에 각각** 있다: `TeamDetail` 의 `team-mention-note`(팀 → 집합)와
  * `HandleGroupsSettings` 의 목록 머리(집합 → 팀).
  */
-export type SectionId = 'workspace' | 'profile' | 'notifications' | 'messages' | 'appearance' | 'connection' | 'communities' | 'agents' | 'agent-defaults' | 'operators' | 'mcp-servers' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'automations' | 'gallery' | 'this-operator';
+export type SectionId = 'workspace' | 'profile' | 'notifications' | 'messages' | 'appearance' | 'connection' | 'communities' | 'agents' | 'agent-defaults' | 'operators' | 'integrations' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'automations' | 'gallery' | 'this-operator';
 
 /**
  * 목차 한 줄의 **이름은 사전 키 하나다**(UX ④ H5). 전에는 목차가 영어 문자열(`Appearance`)을,
@@ -87,9 +87,9 @@ export const SETTINGS_GROUPS: { id: 'me' | 'device' | 'workspace' | 'agents'; ti
       // `Teams` 가 여기 있었다. 지금은 `Agents` 안의 묶음이다 — 근거는 위 `SectionId` 주석.
       // 사람 묶음(집합)은 워크스페이스 전체에 걸리므로 이 묶음이다(⑩a 에서 팀과 "그룹" 으로 합친다).
       { id: 'handle-groups' },
-      // 스펙 2026-09-20 §6: 에이전트가 붙일 수 있는 MCP 의 **이름** 목록. 워크스페이스 전체에 걸리는
-      // 목록이라 여기다(정의는 오퍼레이터 머신에 있다). ⑥b 에서 "연동" 으로 투영과 합친다.
-      { id: 'mcp-servers' },
+      // 연동(UX ⑥b-4): avcs 투영 + MCP 서버 이름 목록(스펙 2026-09-20 §6). 둘 다 워크스페이스 전체에
+      // 걸리는 바깥 연결이다 — 투영은 서버가 돌리고, MCP 정의는 오퍼레이터 머신에 있다.
+      { id: 'integrations' },
     ],
   },
   {
