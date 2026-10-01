@@ -4,6 +4,7 @@ import { useActiveStore } from '../../state/communities';
 import { useT } from '../../i18n/useT';
 import { hasCapability } from '../../lib/capabilities';
 import { hasOperatorLocalSurface, listLocalAgents, registerLocalOperator } from '../../lib/operatorLocal';
+import { ConfirmDialog } from '../ConfirmDialog';
 import type { SectionId } from './sections';
 import { SettingsGroup, SettingsPage } from './primitives';
 
@@ -46,6 +47,7 @@ export function ThisOperatorSettings({ onOpenSection }: {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<LocalStatus>({ kind: 'checking' });
+  const [askAgain, setAskAgain] = useState(false);
 
   const loadStatus = useCallback(async (): Promise<void> => {
     const baseUrl = getController().api?.baseUrl ?? null;
@@ -65,6 +67,8 @@ export function ThisOperatorSettings({ onOpenSection }: {
   }, []);
   useEffect(() => { if (localAvailable) void loadStatus(); }, [localAvailable, loadStatus]);
   const isRegistered = status.kind === 'registered';
+  // 확인 중에는 어느 쪽 버튼인지 아직 모른다 — 누르게 두면 등록된 머신을 확인 창 없이 한 번 더 등록한다.
+  const checking = status.kind === 'checking';
 
   const registerHere = async () => {
     setError(null); setRegistered(null);
@@ -102,15 +106,21 @@ export function ThisOperatorSettings({ onOpenSection }: {
           {localAvailable && canRegister && (
             <>
               {/* 지금 상태 한 줄(designer) — "등록됨 · 이름 · 연결됨" / "아직 등록 안 됨" / 모름. */}
-              <p className="mb-3 font-medium text-fg" data-testid="this-operator-status" data-state={status.kind}>
-                {status.kind === 'checking' && t('thisOperator.statusChecking')}
-                {status.kind === 'unknown' && t('thisOperator.statusUnknown')}
-                {status.kind === 'none' && t('thisOperator.statusNone')}
-                {status.kind === 'registered' && [
-                  t('thisOperator.statusRegistered'),
-                  status.name,
-                  status.online === null ? null : status.online ? t('operators.online') : t('operators.offline'),
-                ].filter(Boolean).join(' · ')}
+              <p className="mb-3 flex items-center gap-2 font-medium text-fg" data-testid="this-operator-status" data-state={status.kind}>
+                {/* 연결됨·끊김 앞의 점(designer) — 사이드바의 연결 점과 같은 뜻의 색. */}
+                {status.kind === 'registered' && status.online !== null && (
+                  <span aria-hidden data-testid="this-operator-dot" className={`h-2 w-2 shrink-0 rounded-full ${status.online ? 'bg-success' : 'bg-fg-subtle'}`} />
+                )}
+                <span>
+                  {status.kind === 'checking' && t('thisOperator.statusChecking')}
+                  {status.kind === 'unknown' && t('thisOperator.statusUnknown')}
+                  {status.kind === 'none' && t('thisOperator.statusNone')}
+                  {status.kind === 'registered' && [
+                    t('thisOperator.statusRegistered'),
+                    status.name,
+                    status.online === null ? null : status.online ? t('operators.online') : t('operators.offline'),
+                  ].filter(Boolean).join(' · ')}
+                </span>
               </p>
               <p className="mb-3 text-meta text-fg-muted">{t('operators.registerHereNote')}</p>
               {registered && (
@@ -120,11 +130,11 @@ export function ThisOperatorSettings({ onOpenSection }: {
                 {/* 이미 등록돼 있으면 **다시 등록** 으로 낮춘다(회색 테두리) — 같은 머신을 두 번 등록하지 않게. */}
                 <button
                   data-testid="this-operator-register"
-                  className={isRegistered
+                  className={isRegistered || checking
                     ? 'rounded border border-border px-4 py-2 font-medium text-fg hover:bg-surface-sunken disabled:opacity-50'
                     : 'rounded bg-accent px-4 py-2 font-medium text-fg-on-strong disabled:opacity-50'}
-                  disabled={busy}
-                  onClick={() => void registerHere()}
+                  disabled={busy || checking}
+                  onClick={() => (isRegistered ? setAskAgain(true) : void registerHere())}
                 >
                   {busy ? t('operators.registerBusy') : isRegistered ? t('thisOperator.registerAgain') : t('operators.registerHere')}
                 </button>
@@ -139,11 +149,30 @@ export function ThisOperatorSettings({ onOpenSection }: {
                   </button>
                 )}
               </div>
+              {isRegistered && (
+                <p className="mt-2 text-meta text-fg-muted" data-testid="this-operator-again-note">{t('thisOperator.registerAgainNote')}</p>
+              )}
             </>
           )}
           {error && <p role="alert" className="mt-3 text-meta text-danger">{error}</p>}
         </div>
       </SettingsGroup>
+      {/*
+        다시 등록은 **옛 등록을 폐기하지 않는다**(security #1021): `POST /operators/claim` 은 claim 마다
+        새 행을 넣고, 오퍼레이터는 이 머신의 토큰·operatorId 를 새것으로 덮을 뿐이다. 옛 행은
+        `revoked_at` 이 빈 채 목록에 "끊김" 으로 남고 그 토큰도 서버에선 유효하다 — 그래서 묻는다.
+      */}
+      {askAgain && (
+        <ConfirmDialog
+          title={t('thisOperator.registerAgainTitle')}
+          detail={t('thisOperator.registerAgainDetail')}
+          detailKind="note"
+          confirmLabel={t('thisOperator.registerAgain')}
+          cancelLabel={t('thisOperator.registerAgainCancel')}
+          onConfirm={() => { setAskAgain(false); void registerHere(); }}
+          onCancel={() => setAskAgain(false)}
+        />
+      )}
     </SettingsPage>
   );
 }

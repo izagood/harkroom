@@ -88,6 +88,48 @@ describe('이 머신의 오퍼레이터 (UX ⑥b-2)', () => {
     await waitFor(() => expect(status.dataset.state).toBe('registered'));
     expect(status.textContent).toBe('등록됨 · this-mac · 연결됨');
     expect(screen.getByTestId('this-operator-register').textContent).toBe('다시 등록');
+    expect(screen.getByTestId('this-operator-dot').className).toContain('bg-success');
+    expect(screen.getByTestId('this-operator-again-note').textContent).toContain('오퍼레이터 목록에서 직접 지워야 한다');
+  });
+
+  /**
+   * 다시 등록은 옛 등록을 폐기하지 않는다(서버 claim 은 매번 새 행) — 그래서 한 번 묻고, 기본 초점은
+   * [취소] 다(designer·security #1021). 취소하면 코드도 발급하지 않는다.
+   */
+  it('"다시 등록" 은 확인 창을 먼저 띄우고(기본 초점 취소), 확인해야 등록한다', async () => {
+    const invoke = vi.fn(async (cmd: string) => (cmd === 'operator_register'
+      ? { operatorId: 'op-8', name: 'this-mac', baseUrl: 'https://example.com' }
+      : cmd === 'operator_agents_list' ? local(true) : {}));
+    withTauri(invoke);
+    const c = fakeController([{ id: 'op-7', name: 'this-mac', online: true }]);
+    render(<ThisOperatorSettings />);
+    await waitFor(() => expect(screen.getByTestId('this-operator-status').dataset.state).toBe('registered'));
+    fireEvent.click(screen.getByTestId('this-operator-register'));
+    const dialog = await screen.findByRole('dialog', { name: '이 머신을 다시 등록할까?' });
+    expect(dialog.textContent).toContain('오퍼레이터 목록에서 직접 지워야 한다');
+    expect(document.activeElement).toBe(screen.getByTestId('confirm-cancel'));
+    fireEvent.click(screen.getByTestId('confirm-cancel'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(c.operatorRegisterCode).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('this-operator-register'));
+    fireEvent.click(await screen.findByTestId('confirm-ok'));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_register', expect.objectContaining({ code: 'hkreg_abc' })));
+  });
+
+  it('등록 상태를 확인하는 동안에는 버튼이 회색으로 막혀 있다 — 확인 창 없이 두 번 등록하지 않게', async () => {
+    let release: (v: unknown) => void = () => {};
+    withTauri(vi.fn((cmd: string) => (cmd === 'operator_agents_list'
+      ? new Promise((r) => { release = r; }) : Promise.resolve({}))));
+    fakeController([{ id: 'op-7', name: 'this-mac', online: true }]);
+    render(<ThisOperatorSettings />);
+    const button = screen.getByTestId('this-operator-register') as HTMLButtonElement;
+    expect(screen.getByTestId('this-operator-status').dataset.state).toBe('checking');
+    expect(button.disabled).toBe(true);
+    expect(button.className).toContain('border-border');
+    expect(button.className).not.toContain('bg-accent');
+    release(local(true));
+    await waitFor(() => expect(screen.getByTestId('this-operator-status').dataset.state).toBe('registered'));
+    expect(button.disabled).toBe(false);
   });
 
   it('로컬 설정을 못 읽으면 "알 수 없다" 고 말한다 — 등록 안 됨으로 지어내지 않는다', async () => {
