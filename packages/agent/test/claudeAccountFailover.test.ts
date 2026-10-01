@@ -2,9 +2,9 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { switchesAccount, withAccountFailover } from '../src/claudeAccounts.js';
+import { accountFailureOf, accountTrailOf, switchesAccount, withAccountFailover } from '../src/claudeAccounts.js';
 import type { ClaudeAccount } from '../src/claudeAccounts.js';
-import { ExecutableNotFoundError, HARKROOM_ERROR_SOURCE } from '../src/policy.js';
+import { ExecutableNotFoundError, HARKROOM_ERROR_SOURCE, isQuotaExhausted } from '../src/policy.js';
 import { PromptNotDeliveredError } from '../src/pty.js';
 
 /**
@@ -247,5 +247,67 @@ describe('withAccountFailover 의 마지막 계정 표시', () => {
     });
     expect(r).toBe('ok');
     expect(본것).toEqual([false]);
+  });
+});
+
+// ── 계정마다의 이유(2026-10-02). 축이 다 돌면 마지막 오류만 남아 원인이 가려졌다 —
+// 2026-10-01 에 배정 1등 계정은 첫 실행 승인 화면에 서 있었는데 스레드에는 마지막 계정의
+// "11pm 에 풀립니다"만 남았다. 이 회귀선들이 그 기록과 "원문은 싣지 않는다"를 못박는다.
+describe('계정 축이 남기는 이유', () => {
+  const acct = (name: string): ClaudeAccount => ({ name, configDir: `/tmp/${name}` });
+  const quota = (at: string) => Object.assign(new Error('harness 종료 1'), {
+    harnessApiError: `You've hit your session limit · resets ${at} (Asia/Seoul)`,
+  });
+  const SECRET = 'ORG-SETTING-https://collector.example.com/v1';
+
+  it('다 돌면 마지막 오류를 그대로 던지고, 계정마다 종류를 옆에 남긴다', async () => {
+    const errs = [new PromptNotDeliveredError(300, SECRET, 'waiting'), quota('11:10pm'), quota('11pm')];
+    const switched: (string | null)[] = [];
+    const err = await withAccountFailover(
+      [acct('a'), acct('b'), acct('c')],
+      async () => { throw errs.shift(); },
+      (_from, _to, why) => switched.push(why),
+    ).catch((e: unknown) => e);
+
+    // 호출자의 판정이 그대로 읽는다 — 오류의 모양을 바꾸지 않는다.
+    expect(isQuotaExhausted(err)).toEqual({ resetsAt: '11pm (Asia/Seoul)' });
+    expect(accountTrailOf(err)).toEqual([
+      { account: 'a', kind: 'gate', resetsAt: null },
+      { account: 'b', kind: 'quota', resetsAt: '11:10pm (Asia/Seoul)' },
+      { account: 'c', kind: 'quota', resetsAt: '11pm (Asia/Seoul)' },
+    ]);
+    // 전환 로그도 왜 넘겼는지 안다.
+    expect(switched).toEqual(['gate', 'quota']);
+    // 원문(화면 꼬리)은 기록 어디에도 없다.
+    expect(JSON.stringify(accountTrailOf(err))).not.toContain('collector');
+  });
+
+  it('상한으로 접힌 준비 실패는 timeout, 로그인 실패는 credential 이다', () => {
+    expect(accountFailureOf(new PromptNotDeliveredError(60_000, '(빈 화면)'))?.kind).toBe('timeout');
+    expect(accountFailureOf(harnessErr('Not logged in · Please run /login'))?.kind).toBe('credential');
+    expect(accountFailureOf(new Error('평범한 실패'))).toBeNull();
+  });
+
+  it('계정이 하나면 이유를 남기지 않는다 — 그 오류 자신이 이유다', async () => {
+    const err = await withAccountFailover([acct('only')], async () => { throw quota('4pm'); })
+      .catch((e: unknown) => e);
+    expect(accountTrailOf(err)).toEqual([]);
+  });
+
+  it('중간에 전환 못 할 실패가 나도 앞 계정의 이유는 함께 넘긴다', async () => {
+    const errs: unknown[] = [new PromptNotDeliveredError(300, SECRET, 'waiting'), new Error('평범한 실패')];
+    const err = await withAccountFailover([acct('a'), acct('b'), acct('c')], async () => { throw errs.shift(); })
+      .catch((e: unknown) => e);
+    expect((err as Error).message).toBe('평범한 실패');
+    expect(accountTrailOf(err)).toEqual([{ account: 'a', kind: 'gate', resetsAt: null }]);
+  });
+
+  it('성공하면 아무것도 남지 않는다', async () => {
+    const errs: unknown[] = [quota('11pm')];
+    const r = await withAccountFailover([acct('a'), acct('b')], async (a) => {
+      if (errs.length) throw errs.shift();
+      return a?.name;
+    });
+    expect(r).toBe('b');
   });
 });

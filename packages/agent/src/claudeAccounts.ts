@@ -142,6 +142,60 @@ export function switchesAccount(err: unknown): boolean {
 }
 
 /**
+ * 계정을 바꾸게 만든 실패의 **종류**(2026-10-02). 사람에게 "계정마다 왜 못 했나"를 말할 때 쓴다.
+ *
+ * ## 왜 필요한가 — 마지막 계정의 오류가 원인을 가렸다(2026-10-01 실측)
+ * work 풀 세 계정 가운데 배정 1등(acct-ddb9b523)이 첫 실행 승인 화면에 서 있었고, 나머지 둘은
+ * 한도였다. 축이 다 돌면 `withAccountFailover` 는 **마지막 오류**를 던지므로 스레드에는
+ * "11pm 에 풀립니다"만 남았다 — 사람이 하면 풀리는 계정이 있다는 사실은 어디에도 없었다.
+ *
+ * **종류만 담는다.** `PromptNotDeliveredError.tail`·`err.message` 는 화면 원문이고 조직 설정
+ * 값이 들어 있을 수 있다. 사람이 보는 자리(스레드·로그)에는 이 종류만 간다.
+ */
+export type AccountFailureKind =
+  /** 관문 화면이 서서 사람의 선택을 기다린다(첫 실행 승인 등). 사람이 한 번 답하면 풀린다. */
+  | 'gate'
+  /** 사용량 한도. `resetsAt` 은 하네스가 적은 풀리는 시각(못 읽으면 `null`). */
+  | 'quota'
+  /** 하네스 로그인이 풀렸다·없다. */
+  | 'credential'
+  /** 상한까지 입력창을 못 봤다(관문인지 느린 부팅인지 모른다). */
+  | 'timeout';
+
+export interface AccountFailure {
+  /** 계정 이름. 풀이 없는 러너(`[null]`)면 `null`. */
+  account: string | null;
+  kind: AccountFailureKind;
+  resetsAt: string | null;
+}
+
+/** 이 오류가 계정 전환 방아쇠라면 그 종류. 아니면 `null`(판정은 `switchesAccount` 와 같다). */
+export function accountFailureOf(err: unknown): Omit<AccountFailure, 'account'> | null {
+  if (isExecutableNotFound(err) === 'executable-not-found') return null;
+  const quota = isQuotaExhausted(err);
+  if (quota !== null) return { kind: 'quota', resetsAt: quota.resetsAt };
+  if (err instanceof PromptNotDeliveredError) {
+    return { kind: err.kind === 'waiting' ? 'gate' : 'timeout', resetsAt: null };
+  }
+  if (isCredentialFailure(err) === 'harness-credential') return { kind: 'credential', resetsAt: null };
+  return null;
+}
+
+/**
+ * 계정 축이 돈 기록. 오류 객체에 **필드를 붙이지 않고** 옆 장부에 둔다 — 호출자의 판정
+ * (`isQuotaExhausted` 등)은 그 오류를 그대로 읽어야 하고, 그 모양을 바꾸지 않는다.
+ */
+const trails = new WeakMap<object, readonly AccountFailure[]>();
+
+/**
+ * 이 오류가 나오기까지 계정 축이 남긴 이유들(시도 순서). 축을 한 칸이라도 넘겼을 때만 있다 —
+ * 계정 하나로 끝난 실패는 그 오류 자신이 이유이므로 빈 배열이다.
+ */
+export function accountTrailOf(err: unknown): readonly AccountFailure[] {
+  return typeof err === 'object' && err !== null ? trails.get(err) ?? [] : [];
+}
+
+/**
  * 계정 축을 돌며 `attempt` 를 시도한다. 계정을 바꿔서 나을 실패(`switchesAccount`)면 다음
  * 계정으로 **같은 일**을 다시 시도하고, 아니면 즉시 그 오류를 던진다.
  *
@@ -172,25 +226,38 @@ export async function withAccountFailover<T>(
    * (풀 미구성 `[null]` 포함)는 첫 시도가 곧 마지막이다.
    */
   attempt: (account: ClaudeAccount | null, isLast: boolean) => Promise<T>,
-  onSwitch?: (from: ClaudeAccount | null, to: ClaudeAccount | null) => void,
+  /** `why` 는 앞 계정을 떠난 이유의 종류다(원문 없음 — `AccountFailureKind`). */
+  onSwitch?: (from: ClaudeAccount | null, to: ClaudeAccount | null, why: AccountFailureKind | null) => void,
 ): Promise<T> {
   if (!accounts.length) {
     throw new Error('withAccountFailover: 계정 축이 비어 있다 — 호출자는 최소 [null] 을 넘겨야 한다');
   }
   let last: unknown;
+  const trail: AccountFailure[] = [];
+  /** 축을 한 칸이라도 넘겼으면 그 기록을 오류 옆에 둔다. 원시값 오류에는 둘 곳이 없다. */
+  const withTrail = (err: unknown): unknown => {
+    if (trail.length && typeof err === 'object' && err !== null) trails.set(err, [...trail]);
+    return err;
+  };
   for (const [idx, account] of accounts.entries()) {
-    if (idx > 0) onSwitch?.(accounts[idx - 1] ?? null, account);
+    if (idx > 0) onSwitch?.(accounts[idx - 1] ?? null, account, trail.at(-1)?.kind ?? null);
     try {
       return await attempt(account, idx === accounts.length - 1);
     } catch (err) {
       last = err;
       // 계정을 바꿔서 나을 실패가 아니면 축을 헛돌지 않는다 — 호출자의 기존 실패 경로가
       // 이 오류를 받아야 한다(재시도 회계, 러너 물러남, 실행 파일 부재 안내).
-      if (!switchesAccount(err)) throw err;
+      // 앞 계정들의 이유는 함께 넘긴다 — 그 실패 통지도 "앞 계정은 왜 못 했나"를 말할 수 있다.
+      if (!switchesAccount(err)) throw withTrail(err);
+      const failure = accountFailureOf(err);
+      if (failure) trail.push({ account: account?.name ?? null, ...failure });
     }
   }
   // 모든 계정이 방아쇠에 걸렸다. 마지막 오류를 던져 호출자의 한도·자격증명 경로가 받게 한다.
-  throw last;
+  // 계정이 둘 이상이었으면 계정마다의 이유를 함께 넘긴다 — 마지막 오류만으로는 앞 계정이
+  // 사람 손으로 풀리는 관문이었다는 사실이 사라진다(위 `AccountFailureKind` 주석).
+  if (accounts.length < 2) throw last;
+  throw withTrail(last);
 }
 
 /**

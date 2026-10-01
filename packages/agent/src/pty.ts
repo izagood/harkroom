@@ -125,8 +125,18 @@ export function acceptsPtyInput(plan: TurnPlan): boolean {
  * 사전 확인을 만들지 않는다.
  */
 export class PromptNotDeliveredError extends Error {
-  constructor(public readonly waitedMs: number, public readonly tail: string) {
-    super(`TUI 준비 신호를 ${waitedMs}ms 안에 못 봤다 — 프롬프트를 넣지 못했다. 마지막 출력: ${tail}`);
+  constructor(
+    public readonly waitedMs: number,
+    public readonly tail: string,
+    /**
+     * **왜 못 넣었나**(2026-10-02). `waiting` = 관문 화면이 서서 사람의 선택을 기다린다,
+     * `timeout` = 상한까지 입력창을 못 봤다. 계정 축이 다 돈 뒤 사람에게 계정마다 이유를
+     * 말할 때 쓴다(`claudeAccounts.ts::accountFailureOf`) — `tail` 은 화면 원문이라(조직 설정
+     * 값이 들어 있을 수 있다) 사람이 보는 자리에 싣지 않고, 이 종류만 싣는다.
+     */
+    public readonly kind: 'waiting' | 'timeout' = 'timeout',
+  ) {
+    super(`TUI 준비 신호를 ${waitedMs}ms 안에 못 봤다 — 프롬프트를 넣지 못했다(${kind}). 마지막 출력: ${tail}`);
     this.name = 'PromptNotDeliveredError';
   }
 }
@@ -942,7 +952,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       }, readyTimeoutMs);
       readyTimer.unref?.();
       /** 프롬프트를 못 넣은 채로 접는다. 상한과 관문 빠른 실패(`gateFailMs`)가 같은 길로 온다. */
-      function failUndelivered(screen: string): void {
+      function failUndelivered(screen: string, kind: 'waiting' | 'timeout' = 'timeout'): void {
         if (injected || settled) return;
         clearTimeout(readyTimer);
         if (gateFailTimer) clearTimeout(gateFailTimer);
@@ -954,7 +964,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         exitListener.dispose();
         relay.stop();
         try { proc.kill('SIGKILL'); } catch { /* 이미 죽었으면 회수할 것도 없다 */ }
-        reject(new PromptNotDeliveredError(Date.now() - startedAt, screen));
+        reject(new PromptNotDeliveredError(Date.now() - startedAt, screen, kind));
       }
       /** 관문 빠른 실패 시계. 부를 사람이 없을 때만 걸린다. */
       let gateFailTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1136,7 +1146,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
           gateFailTimer = setTimeout(() => {
             gateFailTimer = null;
             const later = decodeTailText(tail.snapshot());
-            if (looksLikeGate(later, gatePattern, readyPattern)) failUndelivered(later);
+            if (looksLikeGate(later, gatePattern, readyPattern)) failUndelivered(later, 'waiting');
           }, gateFailMs);
           gateFailTimer.unref?.();
         }
