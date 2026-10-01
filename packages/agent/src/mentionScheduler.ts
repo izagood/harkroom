@@ -309,7 +309,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       );
       await deps.harkroom.markRead([entryId]);
       attempts.delete(entryId);
-      deps.secretLeases?.release(mention.id);
+      void deps.secretLeases?.release(mention.id);
       if (turn.stopRequestedAt) deps.hooks.stopRequested(turn.stopRequestedAt);
     } catch (err) {
       // **여기 도달했다는 것은 계정 축이 이미 소진됐다는 뜻이다** — withAccountFailover 가
@@ -343,7 +343,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         });
         await deps.harkroom.markRead([entryId]);
         attempts.delete(entryId);
-        deps.secretLeases?.release(mention.id);
+        void deps.secretLeases?.release(mention.id);
         return;
       }
 
@@ -361,7 +361,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         });
         await deps.harkroom.markRead([entryId]);
         attempts.delete(entryId);
-        deps.secretLeases?.release(mention.id);
+        void deps.secretLeases?.release(mention.id);
         return;
       }
 
@@ -391,7 +391,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         });
         await deps.harkroom.markRead([entryId]);
         attempts.delete(entryId);
-        deps.secretLeases?.release(mention.id);
+        void deps.secretLeases?.release(mention.id);
         return;
       }
 
@@ -409,7 +409,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         });
         await deps.harkroom.markRead([entryId]);
         attempts.delete(entryId);
-        deps.secretLeases?.release(mention.id);
+        void deps.secretLeases?.release(mention.id);
         return;
       }
 
@@ -426,7 +426,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         });
         await deps.harkroom.markRead([entryId]);
         attempts.delete(entryId);
-        deps.secretLeases?.release(mention.id);
+        void deps.secretLeases?.release(mention.id);
         return;
       }
       // 아직 시도가 남았다 — 다음 시도 시각을 찍는다. 이 entry 만 쉬고 나머지는 흐른다.

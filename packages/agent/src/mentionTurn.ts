@@ -9,7 +9,7 @@
 // 하네스 출력은 파싱하지 않는다 — 에이전트가 스스로 harkroom MCP 로 답을 올린다(spec §4).
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { AgentHarness, AgentView, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow } from '@harkroom/shared';
 import type { Me } from './harkroom.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts, permissionDenialNotice, silentWakeNotice } from './prompt.js';
@@ -19,8 +19,8 @@ import { buildTurnCommand, harnessPath, preassignsSessionId, writePromptFile, wr
 import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readsSessionTranscript, usesTuiForMention, usesXdgHome } from './adapters/index.js';
 import { acceptsPtyInput } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
-import { findCodexSessionId } from './codexSessions.js';
-import { claudeSessionMaterialized } from './claudeSessions.js';
+import { codexRolloutFileFor, findCodexSessionId } from './codexSessions.js';
+import { claudeSessionFilePath, claudeSessionMaterialized } from './claudeSessions.js';
 import { readLastApiError } from './harnessErrors.js';
 import type { AttentionLedger } from './attentionLedger.js';
 import { readSkillUses } from './skillUsage.js';
@@ -263,6 +263,11 @@ export interface MentionTurnDeps {
    * 다 재현할 수 있어야 한다.
    */
   sessionMaterialized?: (harness: AgentHarness, sessionId: string, claudeConfigDir: string | null) => Promise<boolean>;
+  /**
+   * 이 턴의 하네스 기록 파일을 알린다(비밀 보관소 D7). 멘션이 끝날 때 러너가 그 파일에서 마운트한 값을 가린다
+   * (`secretLeases.ts`). claude 는 세션 jsonl, codex 는 rollout. 세션이 sqlite 인 하네스(opencode 계열)는 없다.
+   */
+  noteTranscript?: (causeMessageId: string, path: string) => void;
   /** 테스트가 sinceMs 캡처 시점을 결정론적으로 만들기 위한 시계 주입. 생략하면 Date.now. */
   now?: () => number;
   /**
@@ -1596,6 +1601,22 @@ export async function runMentionTurn(
       );
     }
     rec = { ...rec, sessionId: discovered };
+  }
+
+  // 비밀 보관소 D7: 이 턴의 기록 파일을 적어 둔다 — 멘션이 끝날 때 마운트한 값을 가린다. 하네스 이름이 아니라
+  // 표(세션 id 를 미리 주는가·뒤에 찾는가·XDG 인가)로 가른다. 못 찾으면 적지 않는다(가릴 파일이 없다).
+  if (deps.noteTranscript && rec.sessionId) {
+    const transcript = preassignsSessionId(def.harness)
+      ? await claudeSessionFilePath(rec.sessionId, { configDir: deps.claudeConfigDir }).catch(() => null)
+      : discoversSessionIdAfterTurn(def.harness) && !usesXdgHome(def.harness)
+        ? await codexRolloutFileFor(codexSessionsDir(deps.codexHome), rec.sessionId).catch(() => null)
+        : null;
+    if (transcript) {
+      deps.noteTranscript(mentionId, transcript);
+      // claude 는 jsonl 옆 `<sessionId>/` 에 큰 도구 출력(tool-results)·서브에이전트 전사(subagents)를 따로
+      // 남긴다(security T1, 실측). 그 디렉터리도 가린다 — 없으면 가리기가 그냥 지나간다.
+      if (preassignsSessionId(def.harness)) deps.noteTranscript(mentionId, join(dirname(transcript), rec.sessionId));
+    }
   }
 
   // `end.silenced` 를 함께 본다(2026-09-08): 무발화로 회수한 턴은 SIGTERM 으로 죽으므로

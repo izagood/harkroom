@@ -194,7 +194,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   // 턴 비밀 마운트(비밀 보관소 PR 3). 브릿지의 `secret.mount` 를 여기서 받아 턴 전용 파일로 쓴다 —
   // 서버로 넘기지 않는다. 임대는 러너가 relay 로 맡긴다(`turnSecrets.ts`).
   const turnSecrets = createTurnSecrets({
-    root: join(appDataDir, 'turn-secrets'),
+    root: join(appDataDir, 'turn-secrets'),  // assignments 의 HARKROOM_TURN_SECRETS_DIR 와 같은 자리다
     forward: async (agentId, req) => {
       const c = communities.find((x) => x.knowsAgent(agentId));
       return c ? c.forward(agentId, req) : { type: 'http.response', id: req.id, status: 0, body: '이 에이전트를 아는 커뮤니티가 없다' };
@@ -550,6 +550,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
         appDataDir, registry, host: options.host ?? nodeRunnerHost,
         appVersion: args.appVersion ?? null, log,
         runnerLink, socketPath: outcome.paths.socketPath, operatorBin: entryPath, mcpOAuth,
+        turnSecretsDir: join(appDataDir, 'turn-secrets'),
       });
       communities = runtime.communities;
       startCommunity = runtime.startOne;

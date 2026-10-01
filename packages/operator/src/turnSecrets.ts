@@ -22,7 +22,10 @@
  *   relay 소켓이 끊길 때 지우지 않는 이유: 러너는 다시 붙는다 — 그 사이 도는 턴의 파일을 빼앗지 않는다.
  *
  * 경계(H2): 같은 오퍼레이터의 셸 가능 에이전트끼리는 이 디렉터리·이 소켓을 서로 막지 못한다. grant 의
- * 경계는 오퍼레이터다.
+ * 경계는 오퍼레이터다. **같은 에이전트의 동시 턴 사이도 경계가 아니다**(security P1): 공개 채널 턴의 셸이
+ * 진행 중인 비공개 채널 턴의 cause 를 넣은 브릿지를 직접 띄우면 그 턴의 임대로 마운트할 수 있고, 이미
+ * 마운트된 파일은 같은 uid 라 그냥 읽힌다. OS 격리 없이는 막지 못한다 — access_log 에 그 임대의 채널이
+ * 찍히므로 사후 추적만 된다.
  */
 import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
@@ -115,11 +118,18 @@ export function createTurnSecrets(deps: TurnSecretsDeps): TurnSecrets {
       return { ok: false, value: { error: { code, message: `secret not mounted: ${code}` } } };
     }
     const dir = dirOf(lease.leaseId);
+    // 루트도 0700 으로 박는다(P4) — recursive mkdir 의 mode 는 umask 를 탄다.
+    await mkdir(deps.root, { recursive: true, mode: 0o700 });
+    await chmod(deps.root, 0o700);
     await mkdir(dir, { recursive: true, mode: 0o700 });
     await chmod(dir, 0o700);
     // 파일 이름은 secret id 다 — 사람이 정한 이름·파일 이름으로 경로를 짓지 않는다(M5).
     const path = join(dir, body.secret.id);
-    await writeFile(path, Buffer.from(body.valueBase64, 'base64'), { mode: 0o600 });
+    // **심링크를 따라가지 않는다**(P3). 같은 uid 셸이 이 자리에 심링크를 미리 두면 값이 그 대상(저장소 안
+    // 파일 등)에 써져 실수로 커밋되는 길이 생긴다. 먼저 지우고(심링크면 링크만 지워진다) `wx` 로 새로 만든다 —
+    // 그 사이에 다시 무언가가 생기면 EEXIST 로 실패한다(쓰지 않는 쪽이 맞다).
+    await rm(path, { force: true });
+    await writeFile(path, Buffer.from(body.valueBase64, 'base64'), { mode: 0o600, flag: 'wx' });
     await chmod(path, 0o600);
     body.valueBase64 = '';
     return {

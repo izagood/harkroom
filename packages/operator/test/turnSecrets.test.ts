@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync, readFileSync, statSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, statSync, lstatSync, existsSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
@@ -71,9 +71,23 @@ describe('turnSecrets', () => {
     expect(readFileSync(r.body.path, 'utf8')).toBe(VALUE);
     expect(statSync(r.body.path).mode & 0o777).toBe(0o600);
     expect(statSync(join(root, 'lease-1')).mode & 0o777).toBe(0o700);
+    expect(statSync(root).mode & 0o777).toBe(0o700);
     // 서버에 낸 것은 임대 id·토큰·이름뿐이다.
     expect(calls[0]).toMatchObject({ path: '/agent/secrets/reveal' });
     expect(JSON.parse((calls[0] as { body: string }).body)).toEqual({ leaseId: 'lease-1', token: 'tok-1', name: 'gh' });
+  });
+
+  it('P3: 자리에 미리 둔 심링크를 따라가지 않는다 — 대상은 그대로, 값은 새 파일에', async () => {
+    lease();
+    const target = join(root, '..', 'decoy.txt');
+    writeFileSync(target, 'untouched');
+    mkdirSync(join(root, 'lease-1'), { recursive: true });
+    symlinkSync(target, join(root, 'lease-1', SECRET_ID));
+    const r = resultOf(await ts.maybeHandle('r1', 'a1', mountCall('gh')));
+    expect(r.isError).toBe(false);
+    expect(readFileSync(target, 'utf8')).toBe('untouched');
+    expect(lstatSync(r.body.path).isSymbolicLink()).toBe(false);
+    expect(readFileSync(r.body.path, 'utf8')).toBe(VALUE);
   });
 
   it('다른 러너·다른 cause·cause 없는 브릿지는 그 임대를 못 쓴다', async () => {
