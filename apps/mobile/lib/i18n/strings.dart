@@ -69,6 +69,17 @@ abstract class Strings {
 
   /// 못 읽음: 볼 권한이 없다.
   String get loadFailedForbidden;
+  /// 날짜 줄: 오늘.
+  String get dayToday;
+
+  /// 날짜 줄: 어제.
+  String get dayYesterday;
+
+  /// 날짜 줄: 그 밖의 날. {m}·{d} 가 월·일.
+  String get dayDate;
+
+  /// 멘션 거절 줄(데스크탑 message.mentionDenied 와 같은 말). {handles} 가 @이름들.
+  String get mentionDeniedLine;
 
   /// 읽지 못한 것.
   String get loadFailedHint;
@@ -352,6 +363,10 @@ Map<String, String> stringsToMap(Strings s) => {
       'attachmentUploadFailed': s.attachmentUploadFailed,
       'loadFailedServer': s.loadFailedServer,
       'loadFailedForbidden': s.loadFailedForbidden,
+      'dayToday': s.dayToday,
+      'dayYesterday': s.dayYesterday,
+      'dayDate': s.dayDate,
+      'mentionDeniedLine': s.mentionDeniedLine,
       'loadFailedHint': s.loadFailedHint,
       'messagesLoadFailed': s.messagesLoadFailed,
       'threadLoadFailed': s.threadLoadFailed,
