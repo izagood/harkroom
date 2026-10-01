@@ -29,18 +29,34 @@
 import { chmod, lstat, mkdir, readFile, readlink, symlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import type { XdgApp } from './adapters/contract.js';
+
+/**
+ * opencode 자신의 이름표. Kilo(포크)는 `adapters/kilo.ts` 의 `xdgApp` 을 넘긴다 — 모양은 같고
+ * XDG 아래 하위 디렉터리·파일 이름만 다르다. 기본값이 opencode 인 것은 옛 호출부를 그대로 두려는 것이다.
+ */
+const OPENCODE_APP: XdgApp = {
+  dir: 'opencode',
+  configFile: 'opencode.jsonc',
+  schema: 'https://opencode.ai/config.json',
+  userConfigFiles: ['opencode.json'],
+};
 
 /** 읽기 전용 멘션 턴이 고르는 에이전트 이름. `OPENCODE_PRESET.permission.readonly` 와 짝이다. */
 export const OPENCODE_READONLY_AGENT = 'harkroom-readonly';
 
 /** 사람이 쓰는 opencode 설정 파일(provider 정의가 여기 있다). */
-export function sourceOpencodeConfig(env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
-  return join(env.XDG_CONFIG_HOME ?? join(home, '.config'), 'opencode', 'opencode.json');
+export function sourceOpencodeConfig(
+  env: NodeJS.ProcessEnv = process.env, home = homedir(), app: XdgApp = OPENCODE_APP,
+): string {
+  return join(env.XDG_CONFIG_HOME ?? join(home, '.config'), app.dir, app.userConfigFiles[0] ?? app.configFile);
 }
 
 /** 사람이 쓰는 opencode data 루트. 로그인(`auth.json`)이 그 아래 `opencode/` 에 있다. */
-export function sourceOpencodeData(env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
-  return join(env.XDG_DATA_HOME ?? join(home, '.local', 'share'), 'opencode');
+export function sourceOpencodeData(
+  env: NodeJS.ProcessEnv = process.env, home = homedir(), app: XdgApp = OPENCODE_APP,
+): string {
+  return join(env.XDG_DATA_HOME ?? join(home, '.local', 'share'), app.dir);
 }
 
 /** 러너 전용 루트 안의 세 XDG 디렉터리. 이 셋이 곧 자식에게 줄 env 다. */
@@ -55,8 +71,8 @@ export function opencodeDirs(opencodeHome: string): {
 }
 
 /** 이 루트에서 opencode 가 읽는 설정 파일(실측: `mcp add` 도 이 자리에 쓴다). */
-export function opencodeConfigFile(opencodeHome: string): string {
-  return join(opencodeDirs(opencodeHome).XDG_CONFIG_HOME, 'opencode', 'opencode.jsonc');
+export function opencodeConfigFile(opencodeHome: string, app: XdgApp = OPENCODE_APP): string {
+  return join(opencodeDirs(opencodeHome).XDG_CONFIG_HOME, app.dir, app.configFile);
 }
 
 interface ClaudeStyleStdio { type?: 'stdio'; command: string; args?: string[]; env?: Record<string, string> }
@@ -95,11 +111,49 @@ export function toOpencodeMcp(
 /** 사람 설정에서 **물려받을 키만** 고른다. 목록을 늘릴 때는 위 머리말의 판단을 다시 읽어라. */
 const INHERITED_KEYS = ['provider', 'model', 'small_model'] as const;
 
-async function readJson(path: string): Promise<Record<string, unknown>> {
+/**
+ * JSONC(주석·끝 쉼표)를 JSON 으로. Kilo 의 사람 설정은 `kilo.jsonc` 이다(실측 — 처음 뜰 때
+ * 그 이름으로 만든다). 문자열 안의 `//`(URL)는 건드리지 않는다.
+ */
+export function stripJsonc(text: string): string {
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+      out += text.slice(i, j + 1);
+      i = j;
+    } else if (c === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i++;
+      out += '\n';
+    } else if (c === '/' && text[i + 1] === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
+      i++;
+    } else {
+      out += c;
+    }
+  }
+  return out.replace(/,(\s*[}\]])/g, '$1');
+}
+
+async function readJson(path: string): Promise<Record<string, unknown> | null> {
   return readFile(path, 'utf8').then(
-    (text) => JSON.parse(text) as Record<string, unknown>,
-    () => ({}),
+    (text) => JSON.parse(stripJsonc(text)) as Record<string, unknown>,
+    () => null,
   );
+}
+
+/** 사람 설정을 `userConfigFiles` 순서로 찾는다. 하나도 못 읽으면 빈 표다. */
+async function readUserConfig(app: XdgApp, sourceConfig?: string): Promise<Record<string, unknown>> {
+  if (sourceConfig) return (await readJson(sourceConfig)) ?? {};
+  const dir = join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), app.dir);
+  for (const file of app.userConfigFiles) {
+    const found = await readJson(join(dir, file));
+    if (found) return found;
+  }
+  return {};
 }
 
 /**
@@ -113,19 +167,22 @@ export async function ensureOpencodeHome(opts: {
   mcpServers: Record<string, ClaudeStyleServer>;
   sourceConfig?: string;
   sourceData?: string;
+  /** 어느 하네스의 이름표로 쓰나(어댑터의 `xdgApp`). 없으면 opencode. */
+  app?: XdgApp;
 }): Promise<string> {
   const { opencodeHome } = opts;
+  const app = opts.app ?? OPENCODE_APP;
   const dirs = opencodeDirs(opencodeHome);
   await mkdir(opencodeHome, { recursive: true, mode: 0o700 });
   await chmod(opencodeHome, 0o700);
   for (const dir of Object.values(dirs)) await mkdir(dir, { recursive: true, mode: 0o700 });
 
-  const user = await readJson(opts.sourceConfig ?? sourceOpencodeConfig());
+  const user = await readUserConfig(app, opts.sourceConfig);
   const inherited: Record<string, unknown> = {};
   for (const key of INHERITED_KEYS) if (user[key] !== undefined) inherited[key] = user[key];
 
   const config = {
-    $schema: 'https://opencode.ai/config.json',
+    $schema: app.schema,
     ...inherited,
     mcp: toOpencodeMcp(opts.mcpServers),
     agent: {
@@ -142,12 +199,12 @@ export async function ensureOpencodeHome(opts: {
       },
     },
   };
-  await mkdir(join(dirs.XDG_CONFIG_HOME, 'opencode'), { recursive: true });
-  await writeFile(opencodeConfigFile(opencodeHome), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  await mkdir(join(dirs.XDG_CONFIG_HOME, app.dir), { recursive: true });
+  await writeFile(opencodeConfigFile(opencodeHome, app), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 
   // 로그인은 링크로 재사용한다. **자리가 한 단계 깊다** — `<data>/opencode/auth.json` 이다.
-  const sourceAuth = join(opts.sourceData ?? sourceOpencodeData(), 'auth.json');
-  const targetDir = join(dirs.XDG_DATA_HOME, 'opencode');
+  const sourceAuth = join(opts.sourceData ?? sourceOpencodeData(process.env, homedir(), app), 'auth.json');
+  const targetDir = join(dirs.XDG_DATA_HOME, app.dir);
   const targetAuth = join(targetDir, 'auth.json');
   if (!(await lstat(sourceAuth).catch(() => null))) return opencodeHome;
   await mkdir(targetDir, { recursive: true, mode: 0o700 });
@@ -163,7 +220,7 @@ export async function ensureOpencodeHome(opts: {
     const target = await readlink(targetAuth);
     if (resolve(targetDir, target) !== resolve(sourceAuth)) {
       throw new Error(
-        `Harkroom opencode auth 링크가 예상과 다르다: ${targetAuth} -> ${target}. `
+        `Harkroom ${app.dir} auth 링크가 예상과 다르다: ${targetAuth} -> ${target}. `
           + `예상 대상은 ${sourceAuth} 이다. 파일을 확인한 뒤 러너를 다시 시작해라.`,
       );
     }

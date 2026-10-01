@@ -14,8 +14,9 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  ensureOpencodeHome, opencodeConfigFile, opencodeDirs, OPENCODE_READONLY_AGENT, toOpencodeMcp,
+  ensureOpencodeHome, opencodeConfigFile, opencodeDirs, OPENCODE_READONLY_AGENT, stripJsonc, toOpencodeMcp,
 } from '../src/opencodeHome.js';
+import { allXdgApps, xdgAppFor } from '../src/adapters/index.js';
 
 const BRIDGE = { harkroom: { type: 'stdio' as const, command: '/opt/harkroom/harkroom-operator', args: ['mcp-bridge'] } };
 
@@ -111,5 +112,59 @@ describe('격리 홈이 물려받는 것과 안 받는 것', () => {
     const config = JSON.parse(await readFile(opencodeConfigFile(home), 'utf8')) as Record<string, any>;
     expect(config.provider).toBeUndefined();
     expect(Object.keys(config.mcp)).toEqual(['harkroom']);
+  });
+});
+
+describe('Kilo(opencode 포크) — 같은 루트, 다른 이름표', () => {
+  const KILO = xdgAppFor('kilo')!;
+
+  async function kiloFixture(): Promise<{ home: string; sourceConfig: string; sourceData: string }> {
+    const root = await mkdtemp(join(tmpdir(), 'kilo-home-'));
+    const sourceDir = join(root, 'user-config');
+    const sourceData = join(root, 'user-data');
+    await mkdir(sourceDir, { recursive: true });
+    await mkdir(sourceData, { recursive: true });
+    // Kilo 의 사람 설정은 **JSONC** 다(처음 뜰 때 `kilo.jsonc` 를 만든다 — 실측).
+    await writeFile(join(sourceDir, 'kilo.jsonc'), [
+      '{',
+      '  // 사람이 단 주석',
+      '  "$schema": "https://app.kilo.ai/config.json",',
+      '  "provider": { "rro": { "options": { "baseURL": "https://gateway.example/v1" } } }, /* 끝 */',
+      '  "model": "rro/some/model",',
+      '}',
+    ].join('\n'));
+    await writeFile(join(sourceData, 'auth.json'), '{"rro":{"type":"api","key":"x"}}');
+    return { home: join(root, 'runner-home'), sourceConfig: join(sourceDir, 'kilo.jsonc'), sourceData };
+  }
+
+  it('설정은 `<config>/kilo/kilo.jsonc`, 로그인은 `<data>/kilo/auth.json` 이다', async () => {
+    const { home, sourceConfig, sourceData } = await kiloFixture();
+    await ensureOpencodeHome({ opencodeHome: home, mcpServers: BRIDGE, sourceConfig, sourceData, app: KILO });
+
+    const file = opencodeConfigFile(home, KILO);
+    expect(file).toBe(join(opencodeDirs(home).XDG_CONFIG_HOME, 'kilo', 'kilo.jsonc'));
+    const config = JSON.parse(await readFile(file, 'utf8')) as Record<string, any>;
+    // 주석·끝 쉼표가 있는 사람 설정에서도 제공자를 물려받는다 — 못 읽으면 조용히 기본 모델로 돈다.
+    expect(config.model).toBe('rro/some/model');
+    expect(config.provider?.rro).toBeDefined();
+    expect(Object.keys(config.mcp)).toEqual(['harkroom']);
+    expect(config.agent[OPENCODE_READONLY_AGENT].permission).toEqual({ edit: 'deny', bash: 'deny', webfetch: 'deny' });
+
+    const auth = join(opencodeDirs(home).XDG_DATA_HOME, 'kilo', 'auth.json');
+    expect(await readlink(auth)).toBe(join(sourceData, 'auth.json'));
+  });
+
+  it('opencode 와 한 루트에 함께 산다 — 서로의 설정을 덮지 않는다', async () => {
+    const { home, sourceConfig, sourceData } = await kiloFixture();
+    for (const app of allXdgApps()) {
+      await ensureOpencodeHome({ opencodeHome: home, mcpServers: BRIDGE, sourceConfig, sourceData, app });
+    }
+    expect(allXdgApps().map((a) => a.dir).sort()).toEqual(['kilo', 'opencode']);
+    await lstat(opencodeConfigFile(home)); // opencode 것
+    await lstat(opencodeConfigFile(home, KILO)); // kilo 것
+  });
+
+  it('JSONC 를 벗길 때 문자열 안의 `//` 는 건드리지 않는다', () => {
+    expect(JSON.parse(stripJsonc('{"u":"https://a.example/v1", // x\n "b":[1,2,],}'))).toEqual({ u: 'https://a.example/v1', b: [1, 2] });
   });
 });

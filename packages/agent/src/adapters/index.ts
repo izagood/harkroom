@@ -18,9 +18,10 @@ import type { AgentHarness } from '@harkroom/shared';
 import { CLAUDE_CODE_ADAPTER } from './claudeCode.js';
 import { CODEX_ADAPTER } from './codex.js';
 import { OPENCODE_ADAPTER } from './opencode.js';
-import type { ExecutionModel, HarnessAdapter } from './contract.js';
+import { KILO_ADAPTER } from './kilo.js';
+import type { ExecutionModel, HarnessAdapter, XdgApp } from './contract.js';
 
-export type { HarnessAdapter, ExecutionModel, TrustLedger, TranscriptSource, AccountAxis } from './contract.js';
+export type { HarnessAdapter, ExecutionModel, TrustLedger, TranscriptSource, AccountAxis, XdgApp } from './contract.js';
 export { GATE_PATTERN } from './gate.js';
 
 /**
@@ -32,6 +33,8 @@ export const ADAPTERS: Record<AgentHarness, HarnessAdapter | 'unsupported'> = {
   codex: CODEX_ADAPTER,
   // 표에는 있고 `RUNNABLE_HARNESSES` 에는 없다 — 그 둘은 다른 질문이다(어댑터 머리 주석).
   opencode: OPENCODE_ADAPTER,
+  // opencode 포크(실측 2026-10-01). 표의 모양이 같고 이름(`xdgApp`·`command`)만 다르다.
+  kilo: KILO_ADAPTER,
   // `-r` 이 UUID 를 받지 못해 `--session-id` 와 짝을 이루지 못한다(실측, task-1).
   gemini: 'unsupported',
 };
@@ -213,6 +216,20 @@ export function harnessCommand(harness: AgentHarness): string {
 export function usesXdgHome(harness: AgentHarness): boolean {
   const account = ADAPTERS[harness] === 'unsupported' ? null : adapterFor(harness).account;
   return account?.configDirEnv.includes('XDG_CONFIG_HOME') === true;
+}
+
+/** XDG 하네스의 이름표(`xdgApp`). XDG 하네스가 아니거나 어댑터가 없으면 `null`. */
+export function xdgAppFor(harness: AgentHarness): XdgApp | null {
+  const adapter = ADAPTERS[harness];
+  return adapter === 'unsupported' ? null : adapter.xdgApp;
+}
+
+/**
+ * 러너 루트 하나에 **함께 사는** XDG 하네스들의 이름표. 하위 디렉터리가 달라 서로를 덮지
+ * 않으므로, 러너는 기동 때 전부 적어 둔다(에이전트의 하네스가 바뀌어도 다음 턴이 바로 돈다).
+ */
+export function allXdgApps(): XdgApp[] {
+  return Object.values(ADAPTERS).flatMap((a) => (a === 'unsupported' || a.xdgApp === null ? [] : [a.xdgApp]));
 }
 
 export function adapterFor(harness: AgentHarness): HarnessAdapter {

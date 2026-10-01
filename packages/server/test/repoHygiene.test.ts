@@ -122,6 +122,7 @@ describe('repo hygiene', () => {
       // Cursor 공급자 대시보드 — 설정 › 제공업체 계정의 Cursor 카드 링크(표시만).
       /^cursor\.com$/i,
       /^opencode\.ai$/i, // opencode 설정 파일이 가리키는 공개 스키마 URL
+      /^(?:app\.)?kilo\.ai$/i, // Kilo Code CLI 의 공개 설정 스키마 URL·설치 안내(installHint)
       /^engineering\.block\.xyz$/i,
     ];
 

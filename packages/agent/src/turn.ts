@@ -411,11 +411,23 @@ const OPENCODE_PRESET: HarnessPreset = {
   prompt: () => [],
 };
 
+/**
+ * Kilo Code CLI (7.8.1 실측, 2026-10-01) — opencode 포크라 **실행 파일 이름만** 다르다.
+ * 플래그(`-s`·`--auto`·`--agent`·`-m`·`--variant`)가 그대로이고, 설정·로그인 자리는 표의
+ * `xdgApp` 이 가른다(`adapters/kilo.ts`).
+ *
+ * **`--auto` 와 읽기 전용 에이전트를 같이 주지 않는 것이 여기서는 보안 경계다**(실측): Kilo 는
+ * 둘을 같이 받으면 deny 된 bash 를 그대로 실행했다. opencode 프리셋도 둘을 따로 주므로
+ * 그 규칙을 그대로 물려받는다 — 회귀선 `test/turn.test.ts` 의 kilo readonly 줄.
+ */
+const KILO_PRESET: HarnessPreset = { ...OPENCODE_PRESET, command: 'kilo' };
+
 const PRESETS: Record<AgentHarness, HarnessPreset | 'unsupported'> = {
   'claude-code': CLAUDE_PRESET,
   codex: CODEX_PRESET,
   // 실물로 재고 열었다(2026-09-22): 브릿지 MCP · 붙여넣기 주입 · readonly 에이전트 · 세션 발견.
   opencode: OPENCODE_PRESET,
+  kilo: KILO_PRESET,
   gemini: 'unsupported',
 };
 

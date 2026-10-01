@@ -66,6 +66,15 @@ describe('AgentDefaultsSettings', () => {
   /**
    * **이 계약이 이 화면의 실질이다**(#171). `AgentsSettings` 에서 옮겨 온 회귀선이다.
    */
+  it('기본 하네스 선택지는 러너가 돌릴 수 있는 전부다 — 따로 적은 목록이 뒤처지지 않는다', async () => {
+    fakeController();
+    render(<AgentDefaultsSettings />);
+    await screen.findByLabelText('기본 model');
+    const group = screen.getByRole('radiogroup', { name: '기본 harness' });
+    const labels = [...group.querySelectorAll('[role="radio"]')].map((b) => b.textContent);
+    expect(labels).toEqual(['claude-code', 'codex', 'opencode', 'kilo']);
+  });
+
   it('기본 model 을 비우면 명시적 null 을 보낸다 — 키를 빼면 서버가 손대지 않는다', async () => {
     const c = fakeController();
     render(<AgentDefaultsSettings />);

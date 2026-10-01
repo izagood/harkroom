@@ -43,7 +43,7 @@ import { MentionQueue } from './mentionQueue.js';
 import { claudeAccountsRoot, createLiveAccountLane, loadClaudeAccountLane, presentAccounts } from './claudeAccounts.js';
 import { createAccountAssigner } from './accountAssign.js';
 import { syncCodexAuth } from './codexHome.js';
-import { usesXdgHome } from './adapters/index.js';
+import { allXdgApps, usesXdgHome, xdgAppFor } from './adapters/index.js';
 import { ensureOpencodeHome } from './opencodeHome.js';
 import { createMentionScheduler, type BatchContext } from './mentionScheduler.js';
 
@@ -279,10 +279,12 @@ const { codexHome } = await syncCodexAuth(codexHomeDir);
 // **설정 파일**로만 등록되므로 오퍼레이터가 쓴 표를 그 파일로 번역해 둔다(`opencodeHome.ts`).
 // 사람 설정에서 물려받는 것은 `provider`·`model` 뿐이다 — `mcp` 를 물려받으면 운영자 개인
 // MCP 가 에이전트 턴에 붙는다(claude 의 `--strict-mcp-config` 와 같은 자리).
-const opencodeHome = await ensureOpencodeHome({
-  opencodeHome: opencodeHomeDir,
-  mcpServers: await readMcpServers(config.mcpConfigPath),
-});
+// 루트 하나에 opencode 와 Kilo(포크)가 **하위 디렉터리만 달리해** 함께 산다(`xdgApp`) — 둘 다 적는다.
+const startupMcp = await readMcpServers(config.mcpConfigPath);
+let opencodeHome = opencodeHomeDir;
+for (const app of allXdgApps()) {
+  opencodeHome = await ensureOpencodeHome({ opencodeHome: opencodeHomeDir, mcpServers: startupMcp, app });
+}
 
 // claude 계정 풀. **비어 있는 것이 정상이다** — 그때는 `CLAUDE_CONFIG_DIR` 를 주입하지 않아
 // 자식이 시스템 기본(`~/.claude`)을 쓴다(기존 동작).
@@ -365,7 +367,8 @@ const extraMcpServers = await readExtraMcpServers(mcpConfigPath);
 // 두므로 그 파일도 다시 쓴다(`ensureOpencodeHome` 은 같은 입력이면 같은 파일을 쓴다).
 const readTurnMcp = async (harness: AgentHarness): Promise<Record<string, McpServerEntry>> => {
   const all = await readMcpServers(mcpConfigPath);
-  if (usesXdgHome(harness)) await ensureOpencodeHome({ opencodeHome: opencodeHomeDir, mcpServers: all });
+  const app = xdgAppFor(harness);
+  if (usesXdgHome(harness) && app) await ensureOpencodeHome({ opencodeHome: opencodeHomeDir, mcpServers: all, app });
   const { harkroom: _harkroom, avcs: _avcs, ...extra } = all;
   return extra;
 };

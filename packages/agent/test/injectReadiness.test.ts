@@ -66,6 +66,20 @@ describe('표가 말하는 주입 하한', () => {
   });
 });
 
+describe('Kilo(opencode 포크)의 준비 표시 — 실측 2026-10-01, kilo 7.8.1', () => {
+  it('첫 화면과 되살린 화면 둘 다에 걸린다 — 되살린 화면엔 자리표시자가 없다', () => {
+    const 첫화면 = readFileSync(new URL('./fixtures/kilo-tui-ready.txt', import.meta.url), 'utf8');
+    const 되살린화면 = readFileSync(new URL('./fixtures/kilo-tui-resumed.txt', import.meta.url), 'utf8');
+
+    expect(첫화면).toContain('Ask anything');
+    expect(되살린화면).not.toContain('Ask anything');
+    expect(injectionFactsFor('kilo').readyPattern.test(첫화면)).toBe(true);
+    expect(injectionFactsFor('kilo').readyPattern.test(되살린화면)).toBe(true);
+    // 기본 패턴에는 안 걸린다 — 표의 값을 넘기지 않으면 60초를 세다 죽는다(harkroom#863 과 같은 모양).
+    expect(injectionFactsFor('claude-code').readyPattern.test(첫화면)).toBe(false);
+  });
+});
+
 describe('하한 전에는 쓰지 않는다', () => {
   it('준비 표시를 즉시 봐도 하한까지 기다린다', async () => {
     const chunks: Buffer[] = [];

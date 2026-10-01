@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { MENTION_CHAIN_LIMIT_MAX, MENTION_CHAIN_LIMIT_MIN, type AgentDefaults, type MentionPolicy } from '@harkroom/shared';
+import { MENTION_CHAIN_LIMIT_MAX, MENTION_CHAIN_LIMIT_MIN, RUNNABLE_HARNESSES, type AgentDefaults, type MentionPolicy } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { Button, Field, Segmented, Select, SettingsGroup, SettingsPage, TextInput } from './primitives';
 import { useT } from '../../i18n/useT';
 
-/** 러너가 실제로 띄울 수 있는 하네스. `AgentsSettings` 와 같은 목록이어야 한다. */
-const RUNNABLE_HARNESSES = ['claude-code', 'codex'] as const;
+// 러너가 실제로 띄울 수 있는 하네스는 `@harkroom/shared` 의 `RUNNABLE_HARNESSES` 하나다. 여기에
+// 따로 적어 뒀더니 opencode 가 열린 뒤에도 이 화면엔 claude-code·codex 만 남았다(2026-10-01, kilo 를 열며 발견).
 const EFFORTS = ['low', 'medium', 'high'] as const;
 
 /**
@@ -85,7 +85,7 @@ export function AgentDefaultsSettings() {
         )}
         {isAdmin && form && defaults !== 'error' && (
           <div className="max-w-md space-y-3">
-            {/* 하네스는 둘뿐이라 펼치지 않고 전부 보인다 — 고르기 전에 무엇이 있는지 안다. */}
+            {/* 하네스는 몇 개뿐이라 펼치지 않고 전부 보인다 — 고르기 전에 무엇이 있는지 안다. */}
             <Field label={t('defaults.field.harness')}>
               <Segmented
                 label={t('defaults.field.harness')}
