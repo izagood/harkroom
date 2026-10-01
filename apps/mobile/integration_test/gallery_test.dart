@@ -48,7 +48,7 @@ void main() {
         seed: jsonEncode({
           'active': '00000000-0000-4000-8000-000000000001',
           'communities': [
-            {'accountId': '00000000-0000-4000-8000-000000000001', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'jaebin'},
+            {'accountId': '00000000-0000-4000-8000-000000000001', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'me'},
           ],
         }),
       ),
@@ -285,7 +285,7 @@ AppState _galleryApp(http.Client client) => AppState(
               'accountId': '00000000-0000-4000-8000-000000000001',
               'baseUrl': 'https://h.example.com',
               'token': 'tok',
-              'handle': 'jaebin',
+              'handle': 'me',
             },
           ],
         }),
@@ -302,7 +302,7 @@ http.Response _json(Object body, [int status = 200]) =>
         headers: {'content-type': 'application/json'});
 
 const _accounts = [
-  {'id': '00000000-0000-4000-8000-000000000001', 'handle': 'jaebin', 'displayName': 'jaebin', 'kind': 'human'},
+  {'id': '00000000-0000-4000-8000-000000000001', 'handle': 'me', 'displayName': 'me', 'kind': 'human'},
   {'id': '00000000-0000-4000-8000-000000000002', 'handle': 'task_manager', 'displayName': 'task_manager', 'kind': 'agent'},
   {'id': '00000000-0000-4000-8000-000000000003', 'handle': 'harkroom', 'displayName': 'harkroom', 'kind': 'agent'},
   {'id': '00000000-0000-4000-8000-000000000004', 'handle': 'designer', 'displayName': 'designer', 'kind': 'agent'},
@@ -344,7 +344,7 @@ MockClient _server({bool states = false}) => MockClient((req) async {
         }
       }
       if (path == '/auth/me') {
-        return _json({'id': '00000000-0000-4000-8000-000000000001', 'handle': 'jaebin', 'displayName': 'jaebin', 'isAdmin': true});
+        return _json({'id': '00000000-0000-4000-8000-000000000001', 'handle': 'me', 'displayName': 'me', 'isAdmin': true});
       }
       if (path == '/channels') {
         return _json({
@@ -442,7 +442,7 @@ MockClient _server({bool states = false}) => MockClient((req) async {
                 },
                 ago: 35),
             _m('m8', 8, '00000000-0000-4000-8000-000000000003',
-                '## 고칠 것\n**둘**이다. @jaebin 확인해 줘:\n1. 다크 `ink` 값을 올린다\n2. 배지 글자는 `onAccent`\n\n```\nflutter test\n```\n> 사양은 재설계 §2 에 있다.\n자세한 건 [PR](https://example.com/pr/1).',
+                '## 고칠 것\n**둘**이다. @me 확인해 줘:\n1. 다크 `ink` 값을 올린다\n2. 배지 글자는 `onAccent`\n\n```\nflutter test\n```\n> 사양은 재설계 §2 에 있다.\n자세한 건 [PR](https://example.com/pr/1).',
                 ago: 3),
             _m('m9', 9, '00000000-0000-4000-8000-000000000004', '화면을 찍는 중이다', kind: 'progress', ago: 2),
           ],
@@ -495,7 +495,7 @@ MockClient _busyServer() {
   }
   return MockClient((req) async {
     final path = req.url.path;
-    if (path == '/auth/me') return _json({'id': me, 'handle': 'jaebin', 'displayName': 'jaebin', 'isAdmin': true});
+    if (path == '/auth/me') return _json({'id': me, 'handle': 'me', 'displayName': 'me', 'isAdmin': true});
     if (path == '/channels') {
       return _json({
         'channels': [
@@ -506,7 +506,7 @@ MockClient _busyServer() {
     if (path == '/accounts') {
       return _json({
         'accounts': [
-          {'id': me, 'handle': 'jaebin', 'displayName': 'jaebin', 'kind': 'human'},
+          {'id': me, 'handle': 'me', 'displayName': 'me', 'kind': 'human'},
           {'id': tm, 'handle': 'task_manager', 'displayName': 'task_manager', 'kind': 'agent'},
         ],
       });
@@ -560,7 +560,7 @@ class _EdgeServer {
   MockClient get client => MockClient((req) async {
         const me = '00000000-0000-4000-8000-000000000001';
         final path = req.url.path;
-        if (path == '/auth/me') return _json({'id': me, 'handle': 'jaebin', 'displayName': 'jaebin', 'isAdmin': true});
+        if (path == '/auth/me') return _json({'id': me, 'handle': 'me', 'displayName': 'me', 'isAdmin': true});
         if (path == '/channels') {
           return _json({
             'channels': [
@@ -611,7 +611,7 @@ class _LongThreadServer {
 
   MockClient get client => MockClient((req) async {
         final path = req.url.path;
-        if (path == '/auth/me') return _json({'id': me, 'handle': 'jaebin', 'displayName': 'jaebin', 'isAdmin': true});
+        if (path == '/auth/me') return _json({'id': me, 'handle': 'me', 'displayName': 'me', 'isAdmin': true});
         if (path == '/channels') {
           return _json({
             'channels': [
