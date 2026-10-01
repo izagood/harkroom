@@ -125,13 +125,16 @@ describe('관문을 보면 상한을 기다리지 않는다 (부를 사람이 �
 
   it('테마 선택 화면이 waitingQuietMs 동안 조용하면 바로 PromptNotDelivered(waiting) — 아무것도 안 쓴다', async () => {
     const chunks: Buffer[] = [];
+    let injectedCalls = 0;
     const startedAt = Date.now();
     await expect(runPtyTurn(themePlan(), {
       cwd: process.cwd(),
       timeoutMs: 20_000,
       onData: (c) => chunks.push(c),
-      injectPrompt: { text: 'NEVER_SEND_THIS', readyTimeoutMs: 15_000, waitingQuietMs: 300 },
+      injectPrompt: { text: 'NEVER_SEND_THIS', readyTimeoutMs: 15_000, waitingQuietMs: 300, onInjected: () => { injectedCalls += 1; } },
     })).rejects.toMatchObject({ name: 'PromptNotDeliveredError', kind: 'waiting' });
+    // 넣지 않았으니 "입력창에 들어갔다"도 없다 — 관문 표식 지우기의 근거가 생기지 않는다(#1047 F1).
+    expect(injectedCalls).toBe(0);
     // 상한(15초)이 아니라 관문 시계로 접혔다.
     expect(Date.now() - startedAt).toBeLessThan(5_000);
     expect(Buffer.concat(chunks).toString('utf8')).not.toContain('NEVER_SEND_THIS');

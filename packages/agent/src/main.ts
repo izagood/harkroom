@@ -506,7 +506,8 @@ const scheduler = createMentionScheduler({
   runMentionTurn,
   // 계정별로 갈리는 두 필드(`claudeAccount`·`claudeConfigDir`)만 계정 축이 채운다 —
   // 나머지는 계정과 무관하므로 매번 같은 값이다.
-  buildTurnDeps: ({ ctx, mention, account, isLastAccount }) => ({
+  buildTurnDeps: ({ ctx, mention, account, isLastAccount, onPromptDelivered }) => ({
+    ...(onPromptDelivered ? { onPromptDelivered } : {}),
     // 비밀 보관소 D7 — 이 턴의 기록 파일을 멘션 장부에 적는다(멘션이 끝날 때 가린다).
     noteTranscript: (cause: string, path: string) => secretLeases.noteTranscript(cause, path),
     secretNeedles: (cause: string) => secretLeases.needles(cause),

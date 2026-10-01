@@ -346,6 +346,11 @@ export interface MentionTurnDeps {
    * 접고 `AccountGateRequeueError('passed')` 로 다시 띄운다. 없으면 보지 않는다(풀 없는 러너).
    */
   accountGateCleared?: () => Promise<boolean>;
+  /**
+   * 프롬프트가 입력창에 들어갔다(2026-10-02, `pty.ts::injectPrompt.onInjected`). 스케줄러가 이것을 본
+   * 시도에서만 그 계정의 관문 표식을 지운다(#1047 security F1).
+   */
+  onPromptDelivered?: () => void;
   /** `accountGateCleared` 를 묻는 주기(ms, 기본 5초). 시험이 줄인다. */
   gateWatchMs?: number;
   /**
@@ -1477,6 +1482,7 @@ export async function runMentionTurn(
       // 주입은 `runPtyTurn` 이 준비 신호를 본 뒤에 한다(pty.ts::injectPrompt).
       ...(usesTui ? {
         injectPrompt: {
+          onInjected: () => deps.onPromptDelivered?.(),
           // 지시문이 필요한 하네스에는 여기가 **유일한 길**이다(위 `promptForHarness`).
           text: promptForHarness,
           // 언제 넣을지·갔는지 어떻게 볼지는 **하네스의 성질**이다(어댑터 표).

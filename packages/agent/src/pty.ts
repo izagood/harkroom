@@ -560,6 +560,11 @@ export interface RunPtyTurnOptions {
    */
   injectPrompt?: {
     text: string;
+    /**
+     * 프롬프트를 **입력창에 넣은 순간** 한 번 부른다(2026-10-02). 계정 관문 표식은 이 뒤에만 지운다 —
+     * 관문 앞에서 접히거나 시간이 다 된 턴이 표식을 지우면 막힌 계정이 다시 앞줄로 온다(#1047 security F1).
+     */
+    onInjected?: () => void;
     /** 준비로 볼 패턴. 생략하면 claude TUI 의 입력 프롬프트. */
     readyPattern?: RegExp;
     /** 준비 상한. 넘기면 `PromptNotDeliveredError`. 생략하면 60초. */
@@ -1052,6 +1057,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         gateBlocked = false;
 
         injected = true;
+        try { opts.injectPrompt?.onInjected?.(); } catch { /* 알림이 주입을 막지 않는다 */ }
         clearTimeout(readyTimer);
         if (quietTimer) clearTimeout(quietTimer);
         readyProbe?.dispose();

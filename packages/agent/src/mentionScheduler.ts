@@ -152,6 +152,8 @@ export interface MentionSchedulerDeps {
      * 앞 계정에서 부르면, 준비된 계정이 뒤에 있는데도 사람을 깨운다.
      */
     isLastAccount: boolean;
+    /** 이 시도의 프롬프트가 입력창에 들어갔다(`MentionTurnDeps.onPromptDelivered`). 관문 표식 지우기의 근거다. */
+    onPromptDelivered?: () => void;
   }): MentionTurnDeps;
   hooks: {
     stopRequested(at: string): void;
@@ -215,6 +217,8 @@ function askAnsweredNote(mention: { body: string; meta?: unknown }): string {
 
 /** 관문 때문에 접어 둔 멘션을 기다리는 상한. 그 뒤에는 읽음 처리한다(관문 통지는 이미 남았다). */
 export const GATE_WAIT_MAX_MS = 2 * 60 * 60 * 1000;
+/** 한 멘션을 관문 때문에 접어 다시 띄우는 횟수 상한(#1047 security F1 안전판). */
+export const GATE_REQUEUE_MAX = 5;
 
 export function createMentionScheduler(deps: MentionSchedulerDeps): MentionScheduler {
   const now = deps.now ?? Date.now;
@@ -236,6 +240,12 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
    * 기다리지 않는다(`GATE_WAIT_MAX_MS`) — 그 뒤에는 읽음 처리한다(관문 통지는 이미 스레드에 있다).
    */
   const gateWaits = new Map<number, { configDir: string; since: number }>();
+  /**
+   * 한 멘션을 관문 때문에 접은 횟수와 처음 접은 시각(#1047 security F1). `queued`·`passed` 모두 센다.
+   * 상한(`GATE_REQUEUE_MAX`·`GATE_WAIT_MAX_MS`)을 넘으면 읽음 처리한다 — 다음 결함이나 같은 uid 가 표식을
+   * 건드려도 재기동·알림이 끝없이 번지지 않게 하는 안전판이다. 재시도 회계(`tried`)와 따로 센다.
+   */
+  const gateRequeues = new Map<number, { count: number; since: number }>();
   /** 지금 도는 턴의 entry id. markRead 가 완료 후라 같은 entry 가 다음 폴에 또 온다. */
   const inFlightEntries = new Set<number>();
   /**
@@ -328,28 +338,36 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       await deps.secretLeases?.acquire(mention.id);
       const turn = await withAccountFailover(
         lane,
-        (account, isLastAccount) => deps.runMentionTurn(
-          deps.buildTurnDeps({ ctx, mention, account, isLastAccount }), target,
-        ).then(
-          (result) => {
-            if (account) void deps.accountAttention?.clear(account).catch(() => undefined);
-            return result;
-          },
-          (err: unknown) => {
-            // 화면이 **사람의 선택을 기다린다**(`kind: 'waiting'` — 입력창이 아닌 화면을 그리고 멈췄다,
-            // 문구가 아니라 상태로 판정한다: `pty.ts::waitingQuietMs`). 상한에 닿은 것(`timeout`)은
-            // 표시하지 않는다 — 그 계정을 맨 뒤로 보낼 근거가 없다. 화면 원문은 넘기지 않는다 —
-            // 조직 설정 값이 들어 있을 수 있다(`claudeGates.ts`).
-            if (account && err instanceof PromptNotDeliveredError && err.kind === 'waiting') {
-              void deps.accountAttention?.mark(account).catch(() => undefined);
-            } else if (account && !(err instanceof PromptNotDeliveredError)) {
-              // 준비 실패가 아닌 실패(한도·하네스 오류 등)는 **입력창까지 갔다**는 뜻이다 — 그 계정의
-              // 관문은 지나 있다. 표식을 지운다(2026-10-02, 지우는 곳 ① 준비 신호를 봤을 때).
-              void deps.accountAttention?.clear(account).catch(() => undefined);
-            }
-            throw err;
-          },
-        ),
+        (account, isLastAccount) => {
+          /*
+            **표식은 입력창까지 간 것이 확실할 때만 지운다**(#1047 security F1). 근거는 이 시도에서 프롬프트가
+            실제로 들어갔다는 신호(`onPromptDelivered`) 하나다. 관문 앞에서 접은 턴(`AccountGateRequeueError`)·
+            사람을 기다리다 시간이 다 된 턴은 이 신호가 없으므로 표식을 남긴다 — 그 둘이 지우면 같은 계정에
+            막힌 턴들이 서로의 표식을 지우며 끝없이 다시 뜨고, 그때마다 관문 글·🙋·Inbox 가 쌓인다.
+          */
+          let delivered = false;
+          return deps.runMentionTurn(
+            deps.buildTurnDeps({ ctx, mention, account, isLastAccount, onPromptDelivered: () => { delivered = true; } }), target,
+          ).then(
+            (result) => {
+              if (account && delivered) void deps.accountAttention?.clear(account).catch(() => undefined);
+              return result;
+            },
+            (err: unknown) => {
+              // 화면이 **사람의 선택을 기다린다**(`kind: 'waiting'` — 입력창이 아닌 화면을 그리고 멈췄다,
+              // 문구가 아니라 상태로 판정한다: `pty.ts::waitingQuietMs`). 상한에 닿은 것(`timeout`)은
+              // 표시하지 않는다 — 그 계정을 맨 뒤로 보낼 근거가 없다. 화면 원문은 넘기지 않는다 —
+              // 조직 설정 값이 들어 있을 수 있다(`claudeGates.ts`).
+              if (account && err instanceof PromptNotDeliveredError && err.kind === 'waiting') {
+                void deps.accountAttention?.mark(account).catch(() => undefined);
+              } else if (account && delivered) {
+                // 입력창까지 간 뒤의 실패(한도·하네스 오류 등) — 그 계정의 관문은 지나 있다.
+                void deps.accountAttention?.clear(account).catch(() => undefined);
+              }
+              throw err;
+            },
+          );
+        },
         // 이유는 종류만 적는다 — 화면 원문은 조직 설정 값을 담을 수 있다(`AccountFailureKind`).
         (from, to, why) => console.error(
           `  ${mention.id} 계정 전환: ${from?.name ?? '(기본)'} → ${to?.name ?? '(기본)'} (이유: ${why ?? '알 수 없음'})`,
@@ -357,17 +375,30 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       );
       await deps.harkroom.markRead([entryId]);
       attempts.delete(entryId);
+      gateRequeues.delete(entryId);
       void deps.secretLeases?.release(mention.id);
       if (turn.stopRequestedAt) deps.hooks.stopRequested(turn.stopRequestedAt);
     } catch (err) {
       // 계정 관문 때문에 접었다(2026-10-02) — **실패가 아니다.** 재시도 회계·실패 통지·읽음 처리를 하지
       // 않고 같은 멘션을 다시 띄운다: `passed` 는 다음 폴에 바로, `queued` 는 그 계정의 표식이 지워진 뒤.
       if (err instanceof AccountGateRequeueError) {
+        void deps.secretLeases?.release(mention.id);
+        const rq = gateRequeues.get(entryId) ?? { count: 0, since: now() };
+        rq.count += 1;
+        gateRequeues.set(entryId, rq);
+        if (rq.count > GATE_REQUEUE_MAX || now() - rq.since > GATE_WAIT_MAX_MS) {
+          // 안전판: 관문 통지는 이미 스레드에 있다 — 더 띄우지 않고 흘려보낸다.
+          console.error(`  ${mention.id} 계정 관문 — 다시 띄우기 상한(${rq.count}회) — 읽음 처리한다`);
+          gateRequeues.delete(entryId);
+          gateWaits.delete(entryId);
+          attempts.delete(entryId);
+          await deps.harkroom.markRead([entryId]);
+          return;
+        }
         const prior = attempts.get(entryId);
         attempts.set(entryId, { tried: Math.max(0, tried - 1), notBefore: 0, noticed: prior?.noticed });
-        if (err.why === 'queued' && err.configDir) gateWaits.set(entryId, { configDir: err.configDir, since: now() });
-        console.error(`  ${mention.id} 계정 관문 — 턴을 접고 다시 띄운다(${err.why})`);
-        void deps.secretLeases?.release(mention.id);
+        if (err.why === 'queued' && err.configDir) gateWaits.set(entryId, { configDir: err.configDir, since: rq.since });
+        console.error(`  ${mention.id} 계정 관문 — 턴을 접고 다시 띄운다(${err.why}, ${rq.count}/${GATE_REQUEUE_MAX})`);
         return;
       }
       // **여기 도달했다는 것은 계정 축이 이미 소진됐다는 뜻이다** — withAccountFailover 가
@@ -573,6 +604,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         if (gw) {
           if (now() - gw.since > GATE_WAIT_MAX_MS) {
             gateWaits.delete(entry.id);
+            gateRequeues.delete(entry.id);
             attempts.delete(entry.id);
             orphans.push(entry.id);
             out.skipped += 1;

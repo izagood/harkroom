@@ -7,7 +7,7 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createMentionScheduler, GATE_WAIT_MAX_MS, type BatchContext } from '../src/mentionScheduler.js';
+import { createMentionScheduler, GATE_REQUEUE_MAX, GATE_WAIT_MAX_MS, type BatchContext } from '../src/mentionScheduler.js';
 import { AccountGateRequeueError } from '../src/mentionTurn.js';
 import { TurnRegistry } from '../src/turnRegistry.js';
 import { MentionQueue } from '../src/mentionQueue.js';
@@ -736,7 +736,8 @@ describe('mentionScheduler 관문 표식 (사람이 지나야 하는 관문, 202
   const b = { name: 'b', configDir: '/x/b' };
   const GATE_SCREEN = 'Managed settings require approval\n\u276f 1. Yes, I trust these settings\n  2. No, exit\nEnter to confirm';
 
-  function run(failA: Error | null) {
+  /** `deliveredA`: a 계정 시도에서 프롬프트가 입력창에 들어갔는가(관문 표식 지우기의 근거). b 는 언제나 들어간다. */
+  function run(failA: Error | null, deliveredA = true) {
     const marked: string[] = [];
     const cleared: string[] = [];
     const scheduler = createMentionScheduler({
@@ -749,10 +750,12 @@ describe('mentionScheduler 관문 표식 (사람이 지나야 하는 관문, 202
         clear: async (acc) => { cleared.push(acc.name); },
       },
       runMentionTurn: async (d) => {
-        if ((d as unknown as string) === 'a' && failA) throw failA;
+        const { name, delivered } = d as unknown as { name: string | null; delivered?: () => void };
+        if (name !== 'a' || deliveredA) delivered?.();
+        if (name === 'a' && failA) throw failA;
         return { stopRequestedAt: null };
       },
-      buildTurnDeps: ({ account }) => (account?.name ?? null) as never,
+      buildTurnDeps: ({ account, onPromptDelivered }) => ({ name: account?.name ?? null, delivered: onPromptDelivered }) as never,
       hooks: { stopRequested: () => {}, exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {} },
       startedAtMs: 0,
     });
@@ -760,7 +763,7 @@ describe('mentionScheduler 관문 표식 (사람이 지나야 하는 관문, 202
   }
 
   it('선택 대기(waiting)로 넘긴 계정은 표시하고, 돌아간 계정의 표식은 지운다', async () => {
-    const h = run(new PromptNotDeliveredError(3_000, GATE_SCREEN, 'waiting'));
+    const h = run(new PromptNotDeliveredError(3_000, GATE_SCREEN, 'waiting'), false);
     await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
     await h.scheduler.drain();
     expect(h.marked).toEqual(['a']);
@@ -768,7 +771,7 @@ describe('mentionScheduler 관문 표식 (사람이 지나야 하는 관문, 202
   });
 
   it('상한에 닿은 준비 실패(timeout)는 표시하지 않는다 — 화면에 관문 글자가 있어도 상태가 기준이다', async () => {
-    const h = run(new PromptNotDeliveredError(60_000, GATE_SCREEN, 'timeout'));
+    const h = run(new PromptNotDeliveredError(60_000, GATE_SCREEN, 'timeout'), false);
     await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
     await h.scheduler.drain();
     expect(h.marked).toEqual([]);
@@ -781,6 +784,22 @@ describe('mentionScheduler 관문 표식 (사람이 지나야 하는 관문, 202
     await h.scheduler.drain();
     expect(h.marked).toEqual([]);
     expect(h.cleared).toContain('a');
+  });
+
+  it('관문 때문에 접힌 턴(queued·passed)은 표식을 지우지 않는다 — 막힌 턴끼리 서로 지우며 끝없이 다시 뜨지 않게(#1047 F1)', async () => {
+    for (const why of ['queued', 'passed'] as const) {
+      const h = run(new AccountGateRequeueError(why, '/x/a'), false);
+      await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+      await h.scheduler.drain();
+      expect(h.cleared).toEqual([]);
+    }
+  });
+
+  it('관문 앞에서 사람을 기다리다 시간이 다 된 턴(주입 없음)은 표식을 남긴다(#1047 F1)', async () => {
+    const h = run(new Error('harness 무발화 1800000ms — 답 없이 시간 한도를 넘겼다'), false);
+    await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.cleared).not.toContain('a');
   });
 
   it('성공한 첫 계정의 표식도 지운다 — 사람이 지난 뒤 다시 후보가 된다', async () => {
@@ -838,6 +857,18 @@ describe('계정 관문으로 접은 멘션', () => {
     expect(h.calls()).toBe(4);
     expect(h.failed).toEqual([]);
     expect(h.markedRead).toEqual([1]);
+  });
+
+  it('한 멘션을 관문 때문에 다시 띄우는 횟수에는 상한(GATE_REQUEUE_MAX)이 있다 — 넘으면 읽음 처리한다(#1047 F1)', async () => {
+    const errs = Array.from({ length: GATE_REQUEUE_MAX + 3 }, () => new AccountGateRequeueError('passed', '/x/a'));
+    const h = run(errs, () => false);
+    // 실제 inbox 는 읽음 처리한 항목을 다시 주지 않는다 — 그때 멈춘다.
+    for (let i = 0; i < GATE_REQUEUE_MAX + 3 && !h.markedRead.includes(1); i += 1) {
+      await h.scheduler.admit(batch(), ctx); await h.scheduler.drain();
+    }
+    expect(h.calls()).toBe(GATE_REQUEUE_MAX + 1);
+    expect(h.markedRead).toEqual([1]);
+    expect(h.failed).toEqual([]);
   });
 
   it('표식이 상한(GATE_WAIT_MAX_MS) 넘게 안 지워지면 읽음 처리한다 — 관문 통지는 이미 스레드에 있다', async () => {
