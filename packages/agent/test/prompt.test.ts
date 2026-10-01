@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT, buildSystemPrompt, harnessTailNotice, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, type MemoryContext } from '../src/prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -837,7 +837,64 @@ describe('sessionConflictNotice', () => {
  * 아니라 **증거 첨부**다 — 옛 `reply.ts::extractReply` 가 모델 응답을 파싱해 대신 올리던
  * 것과 다르다: 무슨 뜻인지 판정하지 않고, 마지막에 무엇이 찍혔는지를 그대로 보인다.
  */
+describe('silentTurnNotice — 부른 쪽으로 가르는 침묵 통지', () => {
+  const base = { lastSaid: null, offAnchor: null, pat: 'murp_secret' } as const;
+  const post = (n: ReturnType<typeof silentTurnNotice>) => (n.kind === 'post' ? n.body : `(react ${n.emoji})`);
+
+  it('에이전트가 불렀고 다른 스레드 답도 없으면 글 없이 ✅ 리액션이다 — progress 는 스레드를 작업 중에 묶는다', () => {
+    expect(silentTurnNotice({ ...base, caller: 'agent', lastSaid: '할 말 없음' })).toEqual({ kind: 'react', emoji: '✅' });
+  });
+
+  it('다른 스레드에 답했으면 부른 쪽과 무관하게 그 링크를 보통 답글로 준다', () => {
+    const offAnchor = '이 요청의 답은 다른 스레드에 올렸습니다: harkroom://message/T2';
+    for (const caller of ['agent', 'human'] as const) {
+      expect(silentTurnNotice({ ...base, caller, offAnchor, lastSaid: '무시됨' })).toEqual({ kind: 'post', body: offAnchor });
+    }
+  });
+
+  it('사람이 불렀고 정말 답이 없으면 그 사실과 마지막 말을 보통 답글로 남긴다', () => {
+    expect(silentTurnNotice({ ...base, caller: 'human', lastSaid: '권한이 막혀서\n멈췄다' })).toEqual({
+      kind: 'post', body: '답을 남기지 못하고 끝났습니다. 마지막 말: "권한이 막혀서 멈췄다" — 다시 부르면 이어서 합니다.',
+    });
+    expect(silentTurnNotice({ ...base, caller: 'human' })).toEqual({
+      kind: 'post', body: '답을 남기지 못하고 끝났습니다 — 다시 부르면 이어서 합니다.',
+    });
+  });
+
+  it('마지막 말의 PAT 는 가리고 한 줄 상한으로 자른다', () => {
+    const body = post(silentTurnNotice({ ...base, caller: 'human', lastSaid: `PAT=murp_secret 그리고 ${'가'.repeat(500)}` }));
+    expect(body).not.toContain('murp_secret');
+    expect(body.length).toBeLessThan(300);
+  });
+
+  // security #1015: 자른 뒤에 가리면 200자 경계에 걸친 비밀의 앞 조각이 남고, 서버 D5 는 통째 값만 본다.
+  const SECRET = 'sk-live-ABCDEFGHIJKLMNOPQRSTUVWX';
+  it('마운트한 비밀이 200자 경계에 걸쳐도 조각이 남지 않는다 — 자르기 전에 가린다', () => {
+    const body = post(silentTurnNotice({ ...base, caller: 'human', lastSaid: `${'가'.repeat(185)}${SECRET} 끝`, secrets: [SECRET] }));
+    expect(body).not.toContain('sk-live-');
+    expect(body).not.toContain('ABCDEFGH');
+  });
+
+  it('마운트한 비밀이 통째로 들면 가리고, 조각만 보이면 인용을 통째로 뺀다', () => {
+    expect(post(silentTurnNotice({ ...base, caller: 'human', lastSaid: `값은 ${SECRET} 이다`, secrets: [SECRET] })))
+      .toBe('답을 남기지 못하고 끝났습니다. 마지막 말: "값은 (가림) 이다" — 다시 부르면 이어서 합니다.');
+    // TUI 가 줄을 접어 값이 갈라진 경우 — 통째 값은 안 맞지만 조각이 보인다.
+    expect(post(silentTurnNotice({ ...base, caller: 'human', lastSaid: `값은 sk-live-ABCDEFGH\nIJKLMNOPQRSTUVWX 이다`, secrets: [SECRET] })))
+      .toBe('답을 남기지 못하고 끝났습니다 — 다시 부르면 이어서 합니다.');
+  });
+
+  it('silentWakeNotice 도 같은 가림을 쓴다(#963)', () => {
+    const n = silentWakeNotice(`${'가'.repeat(185)}${SECRET}`, 'murp_secret', [SECRET]);
+    expect(n).not.toContain('sk-live-');
+  });
+});
+
 describe('harnessTailNotice — 버려지던 마지막 출력', () => {
+  it('kitty 키보드·modifyOtherKeys 시퀀스(ESC[<u · ESC[>4m)도 찌꺼기 없이 지운다(10-01)', () => {
+    const n = harnessTailNotice('\x1B[<u\x1B[>4m\x1B[>1u\x1B[=0c\x1B(B\x1B[?25h\x1B[1;32m끝', 'murp_x');
+    expect(n).toBe('끝');
+  });
+
   it('마지막 출력을 통지에 붙인다', () => {
     const n = harnessTailNotice('PR #533 을 올렸고 CI 가 도는 중입니다', 'murp_secret');
     expect(n).toContain('PR #533');
@@ -934,16 +991,9 @@ describe('앵커 밖 발화 관측 (2026-09-08)', () => {
 
   it('통지는 스레드 루트를 중복 없이 permalink 로 싣는다 — 링크가 없으면 찾을 방법이 없다', () => {
     const posts = [inThread(41, 'a1', 'T2'), inThread(42, 'a1', 'T2'), inThread(43, 'a1', 'T3')];
-    const n = offAnchorNotice(posts)!;
-    expect(n).toContain('3건');
-    expect(n).toContain('harkroom://message/T2');
-    expect(n).toContain('harkroom://message/T3');
-    expect(n.match(/harkroom:\/\/message\/T2/g)).toHaveLength(1);
-  });
-
-  it('통지는 단정하지 않는다 — 같은 계정의 다른 턴일 수도 있다', () => {
-    const n = offAnchorNotice([inThread(51, 'a1', 'T2')])!;
-    expect(n).toMatch(/수 있다/);
+    expect(offAnchorNotice(posts)).toBe(
+      '이 요청의 답은 다른 스레드에 올렸습니다: harkroom://message/T2 · harkroom://message/T3',
+    );
   });
 
   it('잡힌 것이 없으면 null 이다 — 빈 상자는 거짓 신호다', () => {

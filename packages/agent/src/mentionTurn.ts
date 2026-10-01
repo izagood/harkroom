@@ -12,7 +12,7 @@ import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs
 import { dirname, join } from 'node:path';
 import type { AgentHarness, AgentView, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow } from '@harkroom/shared';
 import type { Me } from './harkroom.js';
-import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts, permissionDenialNotice, silentWakeNotice } from './prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, harnessPath, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
@@ -190,6 +190,12 @@ export interface MentionTurnDeps {
   /** accountId → handle. 배치 단위로 한 번 채운다(main.ts, GET /accounts) — 매 턴 새로
    * 받을 필요는 없다(핸들이 턴 사이에 바뀌는 일은 없다). */
   handles: Record<string, string>;
+  /**
+   * 에이전트 계정 id 들(`handles` 와 같은 배치의 GET /accounts 에서 `kind === 'agent'`). 침묵 통지가
+   * 부른 쪽을 가른다(`silentTurnNotice`) — 에이전트가 부른 FYI 에 답이 없으면 progress 로 낮춘다.
+   * 없으면 모두 사람으로 본다(통지가 사람 눈에 보이는 쪽으로 틀린다).
+   */
+  agentIds?: ReadonlySet<string>;
   /** avcs 워크스페이스들이 사는 상위 디렉터리. */
   workspaceBaseDir: string;
   /** 오퍼레이터가 spawn 전에 쓴 MCP 설정 파일(`HARKROOM_MCP_CONFIG`). 매 턴 그대로 재사용한다. */
@@ -529,6 +535,21 @@ async function offAnchorEvidence(
     );
     return null;
   }
+}
+
+/**
+ * 침묵 통지를 받을 쪽이 에이전트인가 사람인가(`silentTurnNotice`). 멘션 메시지의 작성자로 정한다.
+ *
+ * 예약(`wake`)·넘긴 일의 결말(`delegation`)로 깨어난 턴은 멘션이 내 대기 줄이거나 결말 줄이라
+ * 작성자가 부른 쪽이 아니다 — 그 기다림의 끝을 보는 것은 원래 요청한 사람이므로 사람으로 둔다.
+ * 멘션 행을 못 찾거나 계정 종류를 모르면 사람이다(통지가 보이는 쪽으로 틀린다).
+ */
+function silentTurnCaller(
+  deps: Pick<MentionTurnDeps, 'agentIds'>, target: MentionTarget, thread: MessageRow[],
+): 'agent' | 'human' {
+  if (target.wake || target.delegation || !deps.agentIds) return 'human';
+  const author = thread.find((m) => m.id === target.mentionId)?.authorId;
+  return author !== undefined && deps.agentIds.has(author) ? 'agent' : 'human';
 }
 
 function warnOnDuplicatePosts(key: string, postCount: number): void {
@@ -1674,7 +1695,7 @@ export async function runMentionTurn(
   // 아는 두 사실을 함께 본다 — 우리가 죽였는가(`reclaimed`), 그리고 답했는가(`spoke`).
   // 무발화 회수는 `spoke` 가 거짓이므로 아래 실패 경로에 그대로 남는다.
   // **말없이 `end_turn` 한 턴도 회수로 끝난 정상 턴이다**(2026-09-30, c0853e6f). 깨움만 걸고
-  // 끝난 턴이 그렇다 — 아래 성공 경로가 깨움 여부를 보고 NO_REPLY_NOTICE 를 정한다.
+  // 끝난 턴이 그렇다 — 아래 성공 경로가 깨움 여부를 보고 침묵 통지(`silentTurnNotice`) 를 정한다.
   const 회수로끝났다 = end.reclaimed && (end.spoke || end.finished) && !end.silenced && !end.stalled && !end.apiError;
 
   if (!회수로끝났다 && (result.exitCode !== 0 || result.timedOut || end.silenced || end.stalled || end.apiError)) {
@@ -1711,7 +1732,7 @@ export async function runMentionTurn(
       const after = await deps.harkroom.readThread(channelId, anchor, turnStartSeq);
       // #144: progress 메시지는 결과 발화로 세지 않는다 — 에이전트가 message.progress 로 올린
       // 진행 설명은 .kind='progress'로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
-      // 따라서 "progress 메시지만 있고 결과가 없는 턴"은 NO_REPLY_NOTICE 로 처리된다.
+      // 따라서 "progress 메시지만 있고 결과가 없는 턴"은 침묵 통지(`silentTurnNotice`) 로 처리된다.
       const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq);
       // 실패한 턴에서도 중복 발화는 일어난다(답을 두 번 올리고 나서 죽는다) — 성공 경로와
       // 같은 관측을 여기서도 한다. 안 하면 "실패했으니 안 보였다"가 되어 #90 의 관측이
@@ -1880,18 +1901,18 @@ export async function runMentionTurn(
   }
 
   // 관측·통보는 best-effort 다 — 방금 저장한 상태를 좌우하지 않으므로 여기서 던진 예외로
-  // 턴 전체를 실패(재시도 대상)로 만들 이유가 없다. 조용히 삼키면 "왜 NO_REPLY_NOTICE 가
+  // 턴 전체를 실패(재시도 대상)로 만들 이유가 없다. 조용히 삼키면 "왜 침묵 통지(`silentTurnNotice`) 가
   // 안 남았지"의 원인이 사라지므로 러너 로그에는 남긴다.
   try {
     // #80: 턴 시작 이후의 메시지만 읽으면 turnStartSeq 이후 발화가 있는지 정확히 판정한다.
     const after = await deps.harkroom.readThread(channelId, anchor, turnStartSeq);
     // #144: progress 메시지는 결과 발화로 세지 않는다 — 에이전트가 message.progress 로 올린
     // 진행 설명은 .kind='progress'로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
-    // 따라서 "progress 메시지만 있고 결과가 없는 턴"은 NO_REPLY_NOTICE 로 처리된다.
+    // 따라서 "progress 메시지만 있고 결과가 없는 턴"은 침묵 통지(`silentTurnNotice`) 로 처리된다.
     const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq);
     warnOnDuplicatePosts(key, postCount);
     // 이번 턴에 깨움을 걸었다면 침묵이 아니다 — 스레드에 대기 줄이 보이므로 사람은 무슨
-    // 일인지 안다. 여기에 NO_REPLY_NOTICE 까지 더하면 CI 를 10분 기다리는 사이 "발화 없음"
+    // 일인지 안다. 여기에 침묵 통지(`silentTurnNotice`) 까지 더하면 CI 를 10분 기다리는 사이 "발화 없음"
     // 이 줄줄이 쌓이고, 그 소음이 정작 진짜 침묵을 가린다.
     //
     // 커서(lastFedSeq)는 **위에서 이미 전진**했다(발화가 있었든 없었든 성공한 턴은 전진한다) —
@@ -1900,34 +1921,41 @@ export async function runMentionTurn(
       // 여기는 정상 종료 경로뿐이다(실패는 위에서 던졌다). 정상 종료했는데 스스로 발화하지 않았다 — 이유는 하나로 좁혀지지 않는다
       // (쓸 말이 없었거나, 안전 거부(exit 0)이거나). 옛 reply.ts::extractReply 가 안전
       // 거부를 사실로 남기던 자리를 이 경로가 대신한다: 침묵을 침묵으로 남기지 않는다.
-      // **버려지던 마지막 출력을 함께 싣는다**(2026-09-07 후속). 그날 사람이 본 것은
-      // 이 통지 한 줄이었고, `PR #533 을 올렸고 CI 가 도는 중입니다` 는 stdout 에만
-      // 남아 사라졌다 — 그 말은 이미 `result.tail` 안에 있었다.
-      //
-      // 해석이 아니라 **증거 첨부**다(`harnessTailNotice` 주석). 통지가 먼저 서는 순서도
-      // 뜻이 있다: 사실("발화가 없었다")이 먼저고, 출력은 그 사실의 정황이다.
+      // **TUI 꼬리 원문은 통지에 싣지 않는다**(2026-10-01, `silentTurnNotice` 주석). 화면 찌꺼기가 대부분이라
+      // 사람이 못 읽었다 — 하네스 기록의 마지막 말 한 줄을 싣고, 꼬리는 운영이 보는 러너 로그에만 남긴다.
+      // 로그에도 가린 사본을 쓴다: 로그 파일도 디스크에 남는 자리다.
       const evidence = harnessTailNotice(result.tail, deps.runnerSecret, await tailSecrets());
+      if (evidence !== null) console.log(`[mentionTurn] ${key}: 발화 없이 끝났다 — 하네스가 마지막에 남긴 출력:\n${evidence}`);
+      const lastSaid = await (deps.readLastSaid ?? readLastAssistantText)(def.harness, rec.sessionId, {
+        configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
+      }).catch(() => null);
       // **침묵의 이유가 옆 스레드에 있을 수 있다**(2026-09-08 실측, `offAnchorPosts` 주석).
       // 여기서만 채널 전체를 훑는 이유는 값이 싸지 않아서다: 이 경로는 드물게 도는 침묵
       // 경로이고, 그때는 사람에게 어차피 통지가 나가므로 한 왕복을 더 쓸 값어치가 있다.
       // 실패해도 통지 자체는 그대로 나간다 — 정황이 없다고 사실을 못 남기면 본말이 뒤집힌다.
       const offAnchor = await offAnchorEvidence(deps, key, channelId, anchor, turnStartSeq);
-      const body = [
-        NO_REPLY_NOTICE,
-        ...(offAnchor === null ? [] : ['', offAnchor]),
-        ...(evidence === null ? [] : ['', `하네스가 마지막에 남긴 출력:\n${evidence}`]),
-      ].join('\n');
-      // 상한을 넘기면 서버가 거절해 **통지 자체가 사라진다** — 이 기능이 막으려던 것과
-      // 같은 결과다. `harnessTailNotice` 가 이미 1000자로 줄이지만, 상한 판정을 그 함수의
-      // 상수에 맡기지 않는다: 여기가 서버 계약을 아는 자리다.
-      await deps.harkroom.post(channelId, body.slice(0, BODY_LIMIT), anchor);
+      const notice = silentTurnNotice({
+        caller: silentTurnCaller(deps, target, thread), lastSaid, offAnchor,
+        pat: deps.runnerSecret, secrets: await tailSecrets(),
+      });
+      if (notice.kind === 'react') {
+        // 에이전트가 부른 FYI — 글 없이 멘션에 ✅ 만 단다(`silentTurnNotice` 주석). 마지막 말은 로그에만.
+        // 로그에도 가린 한 줄만 쓴다(꼬리와 같은 판단: 로그 파일도 디스크에 남는다).
+        const said = quotedLine(lastSaid, deps.runnerSecret, await tailSecrets());
+        console.log(`[mentionTurn] ${key}: 에이전트 호출에 덧붙일 말 없이 끝났다 — ✅ 만 단다${said ? ` (마지막 말: ${said})` : ''}`);
+        await deps.harkroom.addReaction(channelId, mentionId, notice.emoji);
+      } else {
+        // 상한을 넘기면 서버가 거절해 **통지 자체가 사라진다**. 본문은 이제 한 줄 요약뿐이지만
+        // 상한 판정을 그 함수의 상수에 맡기지 않는다: 여기가 서버 계약을 아는 자리다.
+        await deps.harkroom.post(channelId, notice.body.slice(0, BODY_LIMIT), anchor);
+      }
     } else if (postCount === 0 && target.wake) {
       // **예약으로 깨어난 턴이 다시 깨움만 걸고 말없이 끝났다**(2026-09-30, `silentWakeNotice` 주석).
       // 대기 줄은 보이지만 "확인은 했다"와 그 이유는 안 보였다 — 한 줄로 남긴다.
       const lastSaid = await (deps.readLastSaid ?? readLastAssistantText)(def.harness, rec.sessionId, {
         configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
       }).catch(() => null);
-      await deps.harkroom.progress(channelId, silentWakeNotice(lastSaid, deps.runnerSecret), anchor);
+      await deps.harkroom.progress(channelId, silentWakeNotice(lastSaid, deps.runnerSecret, await tailSecrets()), anchor);
     }
   } catch (err) {
     console.error(

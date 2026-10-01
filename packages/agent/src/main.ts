@@ -505,7 +505,7 @@ const scheduler = createMentionScheduler({
     secretNeedles: (cause: string) => secretLeases.needles(cause),
     harkroom, memory: memoryCache, store, exec, runTurn: runPtyTurn, me, guide,
     channelName: ctx.channelName(mention.channelId),
-    handles: ctx.handles, workspaceBaseDir, mcpConfigPath, extraMcpServers, readTurnMcp,
+    handles: ctx.handles, agentIds: ctx.agentIds, workspaceBaseDir, mcpConfigPath, extraMcpServers, readTurnMcp,
     // 지시문 파일이 여기 쓰인다(#92) — 에이전트 워크스페이스가 아니라 러너의 상태
     // 디렉터리다. 워크스페이스 안에 두면 에이전트가 자기 지시문을 고칠 수 있다.
     stateDir: agentStateDir,
@@ -602,6 +602,7 @@ while (running) {
     const ctx: BatchContext = {
       channelName: (channelId) => byId.get(channelId) ?? 'dm',
       handles,
+      agentIds: new Set(accounts.filter((a) => a.kind === 'agent').map((a) => a.id)),
     };
     const outcome = await scheduler.admit(batch, ctx);
 

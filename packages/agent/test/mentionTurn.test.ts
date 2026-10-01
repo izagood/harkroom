@@ -13,7 +13,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentHarness, AgentView, MessageRow } from '@harkroom/shared';
 import { mentionAnchor, runMentionTurn, syncSkills, type MentionTurnDeps, type MentionTurnHarkroom, type RunTurn } from '../src/mentionTurn.js';
-import { BODY_LIMIT, NO_REPLY_NOTICE } from '../src/prompt.js';
+import { BODY_LIMIT } from '../src/prompt.js';
+
+/** 사람이 부른 턴이 마지막 말도 못 읽고 답 없이 끝났을 때의 통지(`silentTurnNotice`). */
+const NO_REPLY_NOTICE = '답을 남기지 못하고 끝났습니다 — 다시 부르면 이어서 합니다.';
 import { HarkroomAgentClient } from '../src/harkroom.js';
 import { fakeLink } from './helpers/fakeLink.js';
 import { SessionStore } from '../src/sessions.js';
@@ -407,11 +410,11 @@ describe('runMentionTurn', () => {
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
-    const notice = fake.posts.find((p) => p.body.startsWith(NO_REPLY_NOTICE));
+    const notice = fake.posts.find((p) => p.body.startsWith('이 요청의 답은 다른 스레드에 올렸습니다'));
     expect(notice, '침묵 통지가 있어야 한다').toBeDefined();
     expect(notice!.threadRootId).toBeNull(); // 통지는 **내 앵커**에 남는다
-    expect(notice!.body).toContain('다른 스레드에');
-    expect(notice!.body).toContain('harkroom://message/other-root');
+    expect(notice!.body).toBe('이 요청의 답은 다른 스레드에 올렸습니다: harkroom://message/other-root');
+    expect(fake.messages.at(-1)?.kind).toBe('user'); // 사람이 불렀으니 보통 답글이다
   });
 
   it('앵커 안에서만 말한 침묵 턴에는 앵커 밖 문단이 붙지 않는다 — 없는 사고를 지어내지 않는다', async () => {
@@ -540,29 +543,76 @@ describe('runMentionTurn', () => {
   });
 
   /**
-   * **버려지던 마지막 출력이 통지에 붙는다** (2026-09-07 후속).
-   *
-   * 그날 사람이 스레드에서 본 것은 `(답 없이 턴을 끝냈습니다)` 한 줄이었고, `PR #533 을
-   * 올렸고 CI 가 도는 중입니다` 는 stdout 에만 남아 사라졌다. `tail` 은 이미 러너의 손에
-   * 있었다 — 성공 경로가 쓰지 않았을 뿐이다.
+   * **TUI 꼬리 원문은 통지에 싣지 않는다** (2026-10-01). 09-07 에는 버려지던 출력을 살리려 꼬리를 붙였지만,
+   * 실제로 붙은 것은 상태줄·입력창·이스케이프 잔여(`<u>4m…`)라 사람이 못 읽었다. 이제 하네스 기록의
+   * 마지막 말 한 줄을 싣고, 꼬리는 러너 로그에만 남긴다.
    */
-  it('발화 없이 끝나면 하네스의 마지막 출력을 통지에 붙인다', async () => {
+  it('발화 없이 끝나면 TUI 꼬리 대신 하네스의 마지막 말 한 줄을 싣는다 — 꼬리는 로그에만', async () => {
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge PR 올려줘');
-    const { deps, runTurn } = await makeDeps(fake);
-
+    const { deps, runTurn } = await makeDeps(fake, {
+      readLastSaid: async () => 'PR #533 을 올렸고\nCI 두 잡이 도는 중입니다',
+    });
     runTurn.script = async () => ({
-      exitCode: 0,
-      timedOut: false,
-      tail: 'PR #533 을 올렸고 CI 두 잡이 도는 중입니다',
+      exitCode: 0, timedOut: false, tail: '\x1B[<u\x1B[>4m⏵⏵ auto mode on · 화면 찌꺼기',
+    });
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { logs.push(a.join(' ')); });
+    try {
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    } finally { spy.mockRestore(); }
+
+    expect(fake.posts.map((p) => p.body)).toEqual([
+      '답을 남기지 못하고 끝났습니다. 마지막 말: "PR #533 을 올렸고 CI 두 잡이 도는 중입니다" — 다시 부르면 이어서 합니다.',
+    ]);
+    expect(fake.messages.at(-1)?.kind).toBe('user');
+    expect(logs.some((l) => l.includes('화면 찌꺼기'))).toBe(true);
+  });
+
+  /**
+   * **에이전트가 부른 FYI 에 답이 없으면 글 없이 ✅ 만 단다** (2026-10-01). 그날 40건 넘게 쌓인 "발화 없음"
+   * 카드는 대부분 에이전트끼리의 FYI 멘션이었다. progress 줄로 낮추면 데스크톱이 그 스레드를 끝나지 않는
+   * '작업 중'으로 칠한다(designer 재검토) — 그래서 칸을 쓰지 않는 리액션이다.
+   */
+  it('에이전트가 부른 턴이 답 없이 끝나면 글 0건, 멘션에 ✅ 하나다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('agent-peer', '@forge FYI — #1013 머지됨').id = MENTION;
+    const { deps } = await makeDeps(fake, {
+      agentIds: new Set(['agent-peer']), readLastSaid: async () => 'FYI 라 할 말 없음',
     });
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
-    expect(fake.posts).toHaveLength(1);
-    // 통지는 그대로 앞에 선다 — "발화가 없었다"는 사실이 먼저다.
-    expect(fake.posts[0]!.body.startsWith(NO_REPLY_NOTICE)).toBe(true);
-    expect(fake.posts[0]!.body).toContain('PR #533');
+    expect(fake.posts).toEqual([]);
+    expect(fake.reactions.filter((r) => r.emoji === '✅')).toEqual([
+      { channelId: CHANNEL, messageId: MENTION, emoji: '✅', action: 'add' },
+    ]);
+  });
+
+  it('에이전트가 불렀어도 다른 스레드에 답했으면 보통 답글로 링크를 준다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('agent-peer', '@forge 이 일 해줘').id = MENTION;
+    const { deps } = await makeDeps(fake, { agentIds: new Set(['agent-peer']), readLastSaid: async () => null });
+    deps.runTurn = (() => fake.post(CHANNEL, '옆 스레드에 답합니다', 'other-root')
+      .then(() => ({ exitCode: 0, timedOut: false, tail: '' }))) as typeof deps.runTurn;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    const mine = fake.posts.filter((p) => p.threadRootId === null);
+    expect(mine.map((p) => p.body)).toEqual(['이 요청의 답은 다른 스레드에 올렸습니다: harkroom://message/other-root']);
+    expect(fake.reactions.filter((r) => r.emoji === '✅')).toEqual([]);
+  });
+
+  it('부른 쪽이 사람이면 agentIds 가 있어도 보통 답글이다 — 멘션 작성자로 가른다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('agent-peer', '앞선 동료의 말');
+    fake.seedFrom('human-1', '@forge 답해줘').id = MENTION;
+    const { deps } = await makeDeps(fake, { agentIds: new Set(['agent-peer']), readLastSaid: async () => null });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(fake.posts.map((p) => p.body)).toEqual([NO_REPLY_NOTICE]);
+    expect(fake.messages.at(-1)?.kind).toBe('user');
   });
 
   it('남길 출력이 없으면 통지만 남는다 — 빈 상자를 덧붙이지 않는다', async () => {
