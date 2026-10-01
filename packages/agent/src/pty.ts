@@ -168,6 +168,25 @@ const DEFAULT_READY_PATTERN = /[❯›]\u00a0|Ask\s+\S+\s+to\s+do\s+anything/;
  * 문자를 표시로 오인한다. `tail` 은 사람이 읽는 로그이자 여기서 쓰는 판정 재료이므로,
  * 그 두 용도를 가르는 자리가 여기다.
  */
+/**
+ * bracketed paste 로 감쌀 본문에서 **제어 문자를 걷는다**(security 지적 2026-10-01, #1011 별건).
+ *
+ * 본문은 채팅 메시지·기억·지시문으로 짓고, 그 어디에서도 제어 문자를 걷지 않는다. 본문에
+ * 끝 표식 `ESC[201~` 가 들어 있으면 붙여넣기가 거기서 끝나고 **나머지가 키 입력으로 들어간다** —
+ * `\r` 로 제출하고 `!…` 를 치면 TUI 의 셸 모드(pi 는 `--tools` 와 상관없이, claude 의 `!` 도
+ * 권한 장치 밖)로 빠질 수 있다. 첫 글자만 보는 `guardInjectedPrompt` 로는 못 막는다.
+ *
+ * 남기는 것: 개행(`\n`)·탭. `\r`(단독·`\r\n`)은 `\n` 으로 바꾼다 — 붙여넣기 안의 줄바꿈 뜻은
+ * 같고, 제출 키와 같은 바이트를 본문에 두지 않는다. 걷는 것: 나머지 C0(ESC 포함)·DEL·C1
+ * (`U+0080`–`U+009F` — 8비트 CSI `U+009B` 도 표식을 열 수 있다).
+ */
+export function sanitizePasteText(text: string): string {
+  return text
+    .replace(/\r\n?/g, '\n')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
+}
+
 function stripAnsi(text: string): string {
   return text
     .replace(/\u001b\][0-9]*;[^\u0007]*\u0007/g, '')
@@ -998,7 +1017,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         // 감싼 본문과 전송을 나눠 쓴다: 붙여 쓰면 일부 TUI 가 끝 표식과 개행을 한 덩어리로
         // 읽어 전송을 건너뛴다.
         try {
-          proc.write(`\u001b[200~${text}\u001b[201~`);
+          proc.write(`\u001b[200~${sanitizePasteText(text)}\u001b[201~`);
           proc.write('\r');
         } catch { /* 그 사이에 죽었으면 exit 리스너가 결과를 정한다 */ }
 

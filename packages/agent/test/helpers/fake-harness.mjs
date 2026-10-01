@@ -1,5 +1,4 @@
-import { writeFileSync } from 'node:fs';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 // PTY 계약 테스트용 가짜 하네스. 시나리오는 env FAKE_MODE 로 고른다 —
 // 인자 파싱을 흉내내지 않는다(그건 turn.ts 의 몫이고 여기선 프로세스 행동만 필요하다).
 const mode = process.env.FAKE_MODE ?? 'ok';
@@ -39,6 +38,22 @@ if (mode === 'hang')    { setInterval(() => {}, 1_000); }            // 타임�
 // TUI 흉내(2026-09-08 실행 모델 교체). 준비 신호를 찍고 stdin 을 읽어 되뱉는다 —
 // 러너가 "준비를 본 뒤에만 주입한다" 를 지키는지 재는 데 쓴다. 준비 신호를 **늦게** 찍는
 // 것이 요점이다: 즉시 찍으면 고정 슬립으로도 통과해 조건 대기를 검증하지 못한다.
+// **받은 바이트를 그대로 적는다**(2026-10-01, 붙여넣기 탈출 회귀선). raw 모드라 tty 가 ESC 를 `^[` 로
+// 바꾸거나 `\r` 을 개행으로 바꾸지 않는다 — 러너가 PTY 에 실제로 쓴 바이트를 그대로 본다.
+if (mode === 'record-stdin') {
+  setTimeout(() => process.stdout.write('READY\n\u276f\u00a0'), 200);
+  if (process.stdin.isTTY) process.stdin.setRawMode(true);
+  const got = [];
+  process.stdin.on('data', (d) => {
+    got.push(d);
+    // 끝 표식 + 제출(`\r`) 이 오면 조금 더 받고(탈출한 나머지가 있으면 그것까지) 적고 끝낸다.
+    if (Buffer.concat(got).includes(Buffer.from('\u001b[201~\r'))) {
+      setTimeout(() => { writeFileSync(process.env.RECORD_FILE, Buffer.concat(got)); process.exit(0); }, 400);
+    }
+  });
+  setTimeout(() => process.exit(21), 8_000);
+}
+
 if (mode === 'ready-then-echo') {
   // 'READY' 는 pty.test 가 명시 패턴으로 쓰고, '❯ ' 는 러너의 기본 패턴이 찾는 것이다
   // (claude TUI 의 입력 프롬프트 표시). 둘을 함께 찍어 두 경로를 같은 픽스처로 잰다.
