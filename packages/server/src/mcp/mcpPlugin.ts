@@ -1376,6 +1376,18 @@ function buildMcpServer(
     return jsonResult({ secrets: await listGrantedSecrets(pool, account.id) });
   });
 
+  /**
+   * 비밀을 **이 턴 전용 파일**로 받는다(비밀 보관소 PR 3). 실제 일은 오퍼레이터가 한다 — 브릿지가 넘긴
+   * 이 호출을 오퍼레이터가 가로채 턴 임대로 값을 받고 파일에 쓴 뒤 경로만 돌려준다(`operator/turnSecrets.ts`).
+   * 서버까지 왔다는 것은 오퍼레이터를 거치지 않았거나(PAT 러너) 옛 오퍼레이터라는 뜻이다 — 값은 주지 않는다.
+   */
+  server.registerTool('secret.mount', {
+    description: '비밀 하나를 이 턴 전용 파일로 받는다 — 값이 아니라 파일 경로를 준다. 이름은 secret.list 에 있다. 파일 내용을 출력·복사하지 마라',
+    inputSchema: { name: z.string().min(1).max(64) },
+  }, async () => jsonResult({
+    error: { code: 'operator_required', message: 'secret.mount is handled by the harkroom operator; this runner is not connected through one that supports it' },
+  }));
+
   server.registerTool('attachment.fetch', {
     description: '첨부 바이트 받기 — 이미지는 그림으로, 텍스트는 글로 실린다. id 는 프롬프트의 [첨부: …] 에 있다',
     inputSchema: { attachmentId: z.string().uuid() },

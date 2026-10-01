@@ -143,7 +143,7 @@ describe('mcp surface', () => {
       'account.list', 'account.me', 'attachment.fetch', 'automation.list', 'automation.propose', 'automation.run', 'channel.doc', 'channel.list', 'inbox.poll', 'inbox.read',
       'memory.audit', 'memory.get', 'memory.list', 'memory.search', 'memory.set',
       'message.ask', 'message.delegate', 'message.fail', 'message.post', 'message.progress', 'message.react', 'message.read', 'message.report', 'message.search', 'message.unreact',
-      'secret.list', 'skill.propose', 'turn.wake', 'workspace.guide',
+      'secret.list', 'secret.mount', 'skill.propose', 'turn.wake', 'workspace.guide',
     ]);
 
     const posted = text(await client.callTool({

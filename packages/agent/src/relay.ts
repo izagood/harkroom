@@ -244,6 +244,13 @@ export interface RelayClient {
    */
   notifyMcpAuthRejected(servers: readonly string[], turnStartedAtMs: number): void;
   /**
+   * 턴 임대를 오퍼레이터에 맡긴다·놓는다(비밀 보관소 PR 3, `secretLeases.ts`). **relay 소켓으로만** 간다 —
+   * 토큰을 하네스 env 에 싣지 않으려고 이 길을 쓴다(R2). 끈끈하지 않다: 링크가 없으면 버린다(그 턴은
+   * 비밀 없이 돈다, fail-closed).
+   */
+  notifySecretLease(cause: string, lease: { id: string; token: string; expiresAt: string }): void;
+  notifySecretLeaseEnded(cause: string): void;
+  /**
    * 링크가 붙을 때까지 기다린다(기동 경로용). 이미 붙어 있으면 즉시, `timeoutMs` 안에 못 붙으면
    * false — 던지지 않는다: 기동은 계속되고, 그 뒤의 호출이 status 0 으로 거절되며 poll 루프가
    * 백오프로 다시 부른다. `request` 가 큐를 두지 않는 대신 이것이 기동의 첫 왕복을 지킨다.
@@ -524,6 +531,18 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
       if (!transport || servers.length === 0) return;
       try { transport.send(JSON.stringify({ type: 'mcp.authRejected', servers: [...servers], turnStartedAtMs })); }
       catch { /* 끊겼다 — 다음 턴이 다시 알린다 */ }
+    },
+
+    notifySecretLease(cause, lease) {
+      if (!transport) return;
+      try { transport.send(JSON.stringify({ type: 'secret.lease', cause, leaseId: lease.id, token: lease.token, expiresAt: lease.expiresAt })); }
+      catch { /* 끊겼다 — 이 턴은 비밀 없이 돈다 */ }
+    },
+
+    notifySecretLeaseEnded(cause) {
+      if (!transport) return;
+      try { transport.send(JSON.stringify({ type: 'secret.leaseEnded', cause })); }
+      catch { /* 끊겼다 — 오퍼레이터의 만료 쓸기가 치운다 */ }
     },
 
     stop() {

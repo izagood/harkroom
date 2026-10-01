@@ -47,6 +47,7 @@ import { syncCodexAuth } from './codexHome.js';
 import { allXdgApps, usesXdgHome, xdgAppFor } from './adapters/index.js';
 import { ensureOpencodeHome } from './opencodeHome.js';
 import { createMentionScheduler, type BatchContext } from './mentionScheduler.js';
+import { createSecretLeases } from './secretLeases.js';
 
 const config = loadConfig();
 // 릴레이(오퍼레이터 링크)가 곧 서버로 가는 유일한 길이다(스펙 2026-09-20 §5) — MCP 도 REST 도 이
@@ -465,8 +466,15 @@ const accountAssigner = createAccountAssigner({
   pinnedOf: (key) => store.get(key)?.claudeAccount ?? null,
 });
 
+// 턴 임대(비밀 보관소 PR 3). 멘션마다 한 번 받아 오퍼레이터에 맡긴다 — 토큰은 relay 로만 간다(R2).
+const secretLeases = createSecretLeases({
+  issue: (cause) => harkroom.issueTurnLease(cause),
+  notifyLease: (cause, lease) => relay.notifySecretLease(cause, lease),
+  notifyEnded: (cause) => relay.notifySecretLeaseEnded(cause),
+});
+
 const scheduler = createMentionScheduler({
-  harkroom, registry, queue: mentionQueue, heldEntryIds,
+  harkroom, registry, queue: mentionQueue, heldEntryIds, secretLeases,
   // **턴마다** 축을 다시 읽는다 — 지운 계정은 빠지고 새 계정은 들어온다(`createLiveAccountLane`).
   accountLane: async () => (await liveLane.current()).lane,
   // 모델은 매 턴 정의에서 읽는다 — 모델별 주간 창(Opus 등)이 있으면 그것까지 본다. 못 읽으면
