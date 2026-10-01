@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
-import { CLAUDE_ATTENTION_FILE, CLAUDE_ATTENTION_TTL_MS } from '@harkroom/shared/claudeGates';
+import { CLAUDE_ATTENTION_FILE } from '@harkroom/shared/claudeGates';
 
 import { createClaudeAccountsPort, terminalScript } from '../src/claudeAccounts.js';
 
@@ -31,14 +31,14 @@ async function setup() {
 }
 
 describe('목록이 관문 표식을 싣는다', () => {
-  it('유효한 표식만 attention 으로 — 지난 표식·없는 표식은 싣지 않는다', async () => {
+  it('서 있는 표식만 attention 으로 — 오래된 표식도 싣고(시한 없음), 없는 표식은 싣지 않는다', async () => {
     const h = await setup();
     await writeFile(join(h.root, 'work', 'aria', CLAUDE_ATTENTION_FILE), JSON.stringify({ kind: 'gate', atMs: NOW - 1_000 }));
     await writeFile(join(h.root, 'work', 'cedar', CLAUDE_ATTENTION_FILE),
-      JSON.stringify({ kind: 'gate', atMs: NOW - CLAUDE_ATTENTION_TTL_MS - 1 }));
+      JSON.stringify({ kind: 'gate', atMs: NOW - 24 * 60 * 60 * 1000 }));
     const accounts = (await h.port.list()).pools[0]!.accounts;
     expect(accounts.find((a) => a.name === 'aria')!.attention).toEqual({ atMs: NOW - 1_000 });
-    expect(accounts.find((a) => a.name === 'cedar')!.attention).toBeUndefined();
+    expect(accounts.find((a) => a.name === 'cedar')!.attention).toEqual({ atMs: NOW - 24 * 60 * 60 * 1000 });
   });
 });
 

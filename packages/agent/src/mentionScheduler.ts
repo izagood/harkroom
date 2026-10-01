@@ -9,7 +9,7 @@
 // **admit 의 계약 한 줄: 턴 길이의 일을 절대 await 하지 않는다.** 유예 통지와 고아 entry 의
 // markRead 만 await 한다. 이 계약이 깨지면 폴 루프가 다시 턴에 묶여, 이 모듈이 존재하는
 // 이유 자체가 사라진다.
-import type { InboxBatch } from './harkroom.js';
+import type { FailOpts, InboxBatch } from './harkroom.js';
 import { mentionAnchor, type MentionTarget, type MentionTurnDeps, type MentionTurnResult } from './mentionTurn.js';
 import { SessionStore } from './sessions.js';
 import type { TurnRegistry } from './turnRegistry.js';
@@ -103,7 +103,7 @@ export interface SchedulerHarkroom {
     channelId: string,
     body: string,
     threadRootId: string | null,
-    opts: { retryable: boolean; what?: string; reason?: string; code?: 'thread_model_rejected' },
+    opts: FailOpts,
   ): Promise<number>;
 }
 
@@ -324,10 +324,14 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
           (err: unknown) => {
             // 화면이 **사람의 선택을 기다린다**(`kind: 'waiting'` — 입력창이 아닌 화면을 그리고 멈췄다,
             // 문구가 아니라 상태로 판정한다: `pty.ts::waitingQuietMs`). 상한에 닿은 것(`timeout`)은
-            // 표시하지 않는다 — 그 계정을 30분 빼 둘 근거가 없다. 화면 원문은 넘기지 않는다 —
+            // 표시하지 않는다 — 그 계정을 맨 뒤로 보낼 근거가 없다. 화면 원문은 넘기지 않는다 —
             // 조직 설정 값이 들어 있을 수 있다(`claudeGates.ts`).
             if (account && err instanceof PromptNotDeliveredError && err.kind === 'waiting') {
               void deps.accountAttention?.mark(account).catch(() => undefined);
+            } else if (account && !(err instanceof PromptNotDeliveredError)) {
+              // 준비 실패가 아닌 실패(한도·하네스 오류 등)는 **입력창까지 갔다**는 뜻이다 — 그 계정의
+              // 관문은 지나 있다. 표식을 지운다(2026-10-02, 지우는 곳 ① 준비 신호를 봤을 때).
+              void deps.accountAttention?.clear(account).catch(() => undefined);
             }
             throw err;
           },
@@ -372,7 +376,11 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       // 여기서 할 일은 기다리는 것뿐이다.
       const quota = isQuotaExhausted(err);
       if (quota) {
-        console.error(`  ${mention.id} 사용량 한도 — 재시도하지 않는다 (풀림: ${quota.resetsAt ?? '알 수 없음'}) tail: ${err instanceof Error ? err.message : String(err)}`);
+        // `err.message` 는 싣지 않는다 — 화면·메시지 원문을 담을 수 있다(security, #1036). 시각을 못 읽었을
+        // 때만 **하네스가 자기 기록에 적은 오류 한 줄**(`harnessApiError` — 화면이 아니다)을 붙인다: 판정이
+        // 어디서 어긋났는지 보려면 그 원문이 있어야 한다(2026-09-07 19:03 사건).
+        const apiLine = quota.resetsAt === null ? (err as { harnessApiError?: unknown }).harnessApiError : null;
+        console.error(`  ${mention.id} 사용량 한도 — 재시도하지 않는다 (풀림: ${quota.resetsAt ?? '알 수 없음'})${typeof apiLine === 'string' ? ` 하네스 오류: ${apiLine.slice(0, 200)}` : ''}`);
         // **평문이 아니라 실패로 남긴다**(2026-09-09) — 아래 세 통지가 모두 같은 이유로
         // 바뀌었다: 러너가 답을 못 낸 사실을 평문으로 올리면 스레드 머리는 `끝남` 이 된다
         // (`harkroom.ts::fail` 주석의 실측). 한도는 풀린 뒤 다시 부르면 되므로 retryable 이다.

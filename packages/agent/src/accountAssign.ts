@@ -33,7 +33,7 @@ import {
   parseClaudeUsageFile,
   type ClaudeUsageEntry,
 } from '@harkroom/shared/claudeUsage';
-import { isAttentionFresh, readAccountAttention, type ClaudeAccountAttention } from '@harkroom/shared/claudeGates';
+import { isAttentionActive, readAccountAttention, type ClaudeAccountAttention } from '@harkroom/shared/claudeGates';
 import type { ProviderUsageWindow } from '@harkroom/shared/daemonProtocol';
 
 import type { ClaudeAccount } from './claudeAccounts.js';
@@ -134,6 +134,17 @@ function modelWindow(entry: ClaudeUsageEntry, model: string | null | undefined):
  * 값을 모두가 쓰고, 최근 배정 수도 묶음으로 합치고, **후보 자리도 하나만 차지한다**(아래 `reps`).
  */
 export function pickAccount(input: PickInput): PickResult {
+  const res = pickAccountInner(input);
+  const blocked = input.blocked;
+  if (!blocked?.size) return res;
+  // 관문 표식이 선 계정은 **언제나 맨 뒤**다(2026-10-02, 관문 대응 안 2 — 빼지 않는다). 다른 계정이
+  // 다 실패하면 그 계정이 마지막에 서서 사람을 부른다(`callsForHuman`). 모두 막혔으면 순서 그대로다.
+  const open = res.order.filter((n) => !blocked.has(n));
+  if (!open.length) return res;
+  return { ...res, order: [...open, ...res.order.filter((n) => blocked.has(n))] };
+}
+
+function pickAccountInner(input: PickInput): PickResult {
   const { accounts, usage, pinned, policy, now, model } = input;
   if (!accounts.length) throw new Error('pickAccount: 계정이 비어 있다');
 
@@ -345,7 +356,7 @@ export function createAccountAssigner(deps: AccountAssignerDeps): AccountAssigne
         readUsage(pool ?? ''), readPolicy(pool),
         Promise.all(accounts.map(async (a) => [a.name, await readAttention(a.configDir).catch(() => null)] as const)),
       ]);
-      const blocked = new Set(attention.filter(([, at]) => isAttentionFresh(at, t)).map(([name]) => name));
+      const blocked = new Set(attention.filter(([, at]) => isAttentionActive(at, t)).map(([name]) => name));
       while (assigned.length && t - assigned[0]!.atMs > ASSIGNMENT_MEMORY_MS) assigned.shift();
       const recent = new Map<string, number>();
       for (const a of assigned) {

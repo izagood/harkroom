@@ -773,6 +773,15 @@ describe('mentionScheduler 관문 표식 (사람이 지나야 하는 관문, 202
     expect(h.marked).toEqual([]);
   });
 
+  it('입력창까지 간 실패(한도)면 그 계정의 표식을 지운다 — 관문은 이미 지나 있다(2026-10-02)', async () => {
+    const quota = Object.assign(new Error('harness 종료 1'), { harnessApiError: "You've hit your session limit · resets 11pm" });
+    const h = run(quota);
+    await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.marked).toEqual([]);
+    expect(h.cleared).toContain('a');
+  });
+
   it('성공한 첫 계정의 표식도 지운다 — 사람이 지난 뒤 다시 후보가 된다', async () => {
     const h = run(null);
     await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);

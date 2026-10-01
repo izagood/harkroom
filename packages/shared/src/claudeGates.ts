@@ -91,12 +91,6 @@ export async function markClaudeAccountGates(configDir: string): Promise<boolean
 /** 계정 config 디렉터리 안의 표식 파일. claude 가 쓰는 이름과 겹치지 않게 접두를 붙였다. */
 export const CLAUDE_ATTENTION_FILE = '.harkroom-attention.json';
 
-/**
- * 표식이 이만큼 지나면 다시 배정 후보로 돌린다. 사람이 우리 밖에서(직접 터미널로) 관문을 지났을
- * 수도 있다 — 영영 빼 두면 그 계정이 다시는 안 쓰인다. 아직 막혀 있으면 3초 만에 다시 표식이 선다.
- */
-export const CLAUDE_ATTENTION_TTL_MS = 30 * 60 * 1000;
-
 export interface ClaudeAccountAttention {
   kind: 'gate';
   atMs: number;
@@ -128,9 +122,15 @@ export async function readAccountAttention(configDir: string): Promise<ClaudeAcc
   }
 }
 
-/** 표식이 지금 유효한가(`CLAUDE_ATTENTION_TTL_MS`). */
-export function isAttentionFresh(a: ClaudeAccountAttention | null, now: number): boolean {
-  return a !== null && now - a.atMs < CLAUDE_ATTENTION_TTL_MS && a.atMs <= now + 60_000;
+/**
+ * 표식이 서 있는가. **시한은 없다**(2026-10-02, 관문 대응 안 2 — jaebin 이 #1007 의 30분 제외를 거절).
+ * 표식은 배정에서 빼는 것이 아니라 **맨 뒤로 보낸다**(`accountAssign.ts`) — 그래서 오래 서 있어도
+ * 그 계정이 영영 안 쓰이지 않는다: 다른 계정이 다 실패하면 마지막에 서서 사람을 부른다.
+ * 지우는 곳은 셋이다: 그 계정에서 준비 신호를 봤을 때(러너), 데몬 터미널이 끝났을 때(스크립트),
+ * 다시 로그인했을 때(operator). 미래 시각이 1분 넘게 찍힌 표식은 깨진 것으로 본다.
+ */
+export function isAttentionActive(a: ClaudeAccountAttention | null, now: number): boolean {
+  return a !== null && a.atMs <= now + 60_000;
 }
 
 /** 표식을 지운다. 없으면 아무 일도 없다. 지웠으면 `true`. */

@@ -40,7 +40,7 @@ import {
 import {
   CLAUDE_ATTENTION_FILE,
   clearAccountAttention,
-  isAttentionFresh,
+  isAttentionActive,
   markClaudeAccountGates,
   markClaudeWorkspaceTrusted,
   readAccountAttention,
@@ -77,7 +77,7 @@ export interface ClaudeAccountView {
   status: ClaudeAuthStatus;
   /**
    * **사람이 관문을 지나야 한다**(2026-10-01). 러너가 이 계정의 턴을 관문 화면에서 넘긴 시각.
-   * 유효할 때만 싣는다(`CLAUDE_ATTENTION_TTL_MS`). 화면은 "승인 필요"와 [터미널 열기]를 보인다.
+   * 서 있을 때만 싣는다(`isAttentionActive`, 시한 없음). 화면은 "승인 필요"와 [터미널 열기]를 보인다.
    */
   attention?: { atMs: number };
 }
@@ -593,7 +593,7 @@ export function createClaudeAccountsPort(opts: {
           accounts.push({
             name: a.name,
             status: readStatus(await runStatus(a.dir)),
-            ...(attention && isAttentionFresh(attention, now()) ? { attention: { atMs: attention.atMs } } : {}),
+            ...(attention && isAttentionActive(attention, now()) ? { attention: { atMs: attention.atMs } } : {}),
           });
         }
         pools.push({ name: p.name, accounts });

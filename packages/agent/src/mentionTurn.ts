@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { AgentHarness, AgentView, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow } from '@harkroom/shared';
-import type { Me } from './harkroom.js';
+import type { FailOpts, Me } from './harkroom.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore } from './sessions.js';
@@ -51,7 +51,7 @@ export interface MentionTurnHarkroom {
     channelId: string,
     body: string,
     threadRootId: string | null,
-    opts: { retryable: boolean; what?: string; reason?: string },
+    opts: FailOpts,
   ): Promise<number>;
   readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]>;
   /**
@@ -336,6 +336,11 @@ export interface MentionTurnDeps {
    * 두 정책(죽이고 던진다 / 살리고 부른다)을 가르기 때문이다.
    */
   callsForHuman?: boolean;
+  /**
+   * 턴 **시작** 관문으로 사람을 불렀을 때 그 계정에 표식을 세운다(2026-10-02, `claudeGates.ts`).
+   * 앞 계정의 관문은 던져서 스케줄러가 세운다 — 이것은 사람을 부르는(던지지 않는) 마지막 계정용이다.
+   */
+  markAccountGate?: () => void;
   /**
    * 하네스가 자기 세션 파일에 남긴 API 에러를 읽는다(기본 `readLastApiError`).
    * 주입 가능한 이유는 `sessionMaterialized` 와 같다 — 테스트가 디스크를 세우지 않고
@@ -676,6 +681,21 @@ async function linkSkill(target: string, linkPath: string): Promise<void> {
 export interface MentionTurnResult {
   /** 이 턴에 읽은 정의에 실려 온 종료 요청 시각. null 은 '요청 없음'. */
   stopRequestedAt: string | null;
+}
+
+/**
+ * 관문 통지에 붙는 기계용 칸(2026-10-02, 관문 대응 안 2). **턴 시작 관문(`'startup'`)에만** 붙인다 —
+ * 그때만 "그 계정의 설정 확인 화면이 사람을 기다린다"(서버가 🙋·차례 주인으로 읽는다)가 참이다.
+ * 턴 **도중** 권한 확인(`'gate'`)은 명령 하나에 대한 물음이라 계정 관문이 아니다 — 붙이면 명령마다 🙋 가 선다.
+ *
+ * `account` 는 **계정 id 만** 싣는다(풀 이름은 사람 이름일 수 있다 — security, #1039). 화면은 이 id 를
+ * 그 기기의 실제 계정 목록과 대조해 터미널 계정을 고른다(PR-4).
+ */
+export function gateFailExtras(
+  kind: AttentionKind, mentionId: string, account: string | null,
+): Pick<FailOpts, 'code' | 'mentionId' | 'account'> {
+  if (kind !== 'startup') return {};
+  return { code: 'account_gate', mentionId, ...(account ? { account } : {}) };
 }
 
 export async function runMentionTurn(
@@ -1465,6 +1485,8 @@ export async function runMentionTurn(
               // 정지 시계를 계속 재면 사람이 오기 전에 접힌다(위 `awaitingHuman` 주석).
               end.awaitingHuman = true;
               const label = deps.accountLabel ?? '(기본)';
+              // 턴 시작 관문이면 그 계정에 표식을 세운다 — 다음 배정부터 맨 뒤로 간다(`accountAssign.ts`).
+              if (kind === 'startup') deps.markAccountGate?.();
 
               /**
                * **스레드에 남기는 것은 원장보다 앞이다**(2026-09-09).
@@ -1488,6 +1510,7 @@ export async function runMentionTurn(
                   retryable: false,
                   what: '하네스가 사람의 확인을 기다린다',
                   reason: '그 터미널에서 화면의 물음에 답하면 이 턴이 그 자리에서 이어진다',
+                  ...gateFailExtras(kind, mentionId, deps.claudeAccount ?? null),
                 }).catch((e: unknown) => {
                   console.error(`[mentionTurn] ${key}: 관문 통지 발화 실패(턴은 그대로 기다린다):`,
                     e instanceof Error ? e.message : e);

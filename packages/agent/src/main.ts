@@ -533,6 +533,7 @@ const scheduler = createMentionScheduler({
     // 살아남아 전환 자체가 일어나지 않는다 — 부르는 경로는 던지지 않기 때문이다.
     attentionLedger: isLastAccount ? attentionLedger : undefined,
     callsForHuman: isLastAccount,
+    ...(account ? { markAccountGate: () => { void markAccountNeedsAttention(account.configDir, Date.now()).catch(() => undefined); } } : {}),
     operatorBin: config.operatorBin, runnerSecret: config.operatorLink.secret,
     turnTimeoutMs: config.turnTimeoutMs,
     harnessStallMs: config.harnessStallMs,
