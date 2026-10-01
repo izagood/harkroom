@@ -80,10 +80,10 @@ class StringsEn implements Strings {
   String get composerSend => 'Send';
 
   @override
-  String get stickyMentionsLabel => 'Keeps calling';
+  String get stickyMentionsLabel => 'Kept mentions';
 
   @override
-  String get stickyMentionRemove => 'Stop calling {handle}';
+  String get stickyMentionRemove => 'Stop mentioning {handle}';
 
   @override
   String get modelDefault => 'Default';

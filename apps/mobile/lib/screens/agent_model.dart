@@ -4,7 +4,6 @@ import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../mention/mention.dart';
 import '../mention/mention_suggest.dart';
-import '../mention/sticky.dart';
 import '../state/app_scope.dart';
 import '../ui/tokens.dart';
 
@@ -193,6 +192,52 @@ class _MentionModelBarState extends State<MentionModelBar> {
     );
   }
 
+  /// 고정 멘션 줄 — **이 작성칸이 다음 글에서도 부를 상대**(데스크탑 `sticky-mention` 칩).
+  ///
+  /// 칩이 보여야 한다: 보이지 않는 접두는 사람이 모르는 사이에 에이전트를 깨운다. × 는 그 상대를
+  /// 그만 부른다(고정에서 뺀다). 다시 부르고 싶으면 `@` 로 다시 부르면 된다.
+  ///
+  /// 에이전트 칩은 **모델 칩을 겸한다**(`📌 @forge · 기본 ×`) — 몸통을 누르면 모델 시트가 열리고,
+  /// 지정·상속·`@lead 지정`·stale 표시도 모델 칩과 같다. 사람은 모델이 없으니 `@handle ×` 뿐이다.
+  Widget _stickyRow(String composerKey, List<AccountView> accounts) {
+    final t = context.t;
+    final app = context.app;
+    return Semantics(
+      container: true,
+      label: t.stickyMentionsLabel,
+      child: SizedBox(
+        key: const Key('sticky-mentions'),
+        height: 44,
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          children: [
+            for (final a in accounts)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                child: _ModelChip(
+                  key: Key('sticky-mention-${a.handle}'),
+                  handle: a.handle,
+                  pinned: true,
+                  person: !a.isAgent,
+                  value: a.isAgent
+                      ? formatModelPick(_effective(a.id)?.model, _effective(a.id)?.effort)
+                      : null,
+                  inherited: a.isAgent && _inherited(a.id) != null,
+                  setByAgent: !a.isAgent || _inherited(a.id) == null
+                      ? null
+                      : setByAgentHandle(_threadRow(a.id), app.accounts),
+                  onPressed: a.isAgent ? () => _openSheet(a.id) : null,
+                  deleteTooltip: t.stickyMentionRemove.replaceAll('{handle}', '@${a.handle}'),
+                  onDeleted: () => app.dropStickyMention(composerKey, a.id),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final app = context.app;
@@ -204,7 +249,7 @@ class _MentionModelBarState extends State<MentionModelBar> {
     final stickyKey = widget.composerKey;
     if (stickyKey != null) {
       final stuck = app.stickyAccounts(stickyKey);
-      if (stuck.isNotEmpty) rows.add(_StickyRow(composerKey: stickyKey, accounts: stuck));
+      if (stuck.isNotEmpty) rows.add(_stickyRow(stickyKey, stuck));
     }
     if (_quickFor != null) {
       rows.add(
@@ -280,11 +325,18 @@ class _MentionModelBarState extends State<MentionModelBar> {
       }
     }
 
-    // "부를 상대" 칩은 **보낼 본문**(고정 멘션이 붙은 것) 기준이다 — 고정으로 부르는 에이전트도
-    // 모델을 고를 수 있어야 하고, 보낼 때 `picksForBody` 도 같은 본문으로 센다.
+    // "부를 상대" 칩 줄에는 **고정되지 않은 채 본문에서 부른** 에이전트만 둔다. 고정된 에이전트의
+    // 모델 칩은 위 고정 칩이 겸한다(designer #1028 검토) — 두 줄에 같은 이름이 서면 어느 것을
+    // 눌러야 할지 헷갈리고, 키보드가 올라온 화면에서 세로 한 줄을 늘 더 먹는다. 보낼 때
+    // `picksForBody` 는 여전히 접두가 붙은 본문으로 세므로 고정 칩에서 고른 모델도 함께 간다.
     final key = widget.composerKey;
-    final sticky = key == null ? const <String>[] : app.stickyHandles(key);
-    final called = calledAgentIds(withStickyMentions(c.text, sticky), app.accounts.values);
+    final pinned = key == null
+        ? const <String>{}
+        : {for (final a in app.stickyAccounts(key)) a.id};
+    final called = [
+      for (final id in calledAgentIds(c.text, app.accounts.values))
+        if (!pinned.contains(id)) id,
+    ];
     if (called.isNotEmpty) {
       rows.add(
         SizedBox(
@@ -321,56 +373,6 @@ class _MentionModelBarState extends State<MentionModelBar> {
     }
     if (rows.isEmpty) return const SizedBox.shrink();
     return Column(mainAxisSize: MainAxisSize.min, children: rows);
-  }
-}
-
-/// 고정 멘션 줄 — **이 작성칸이 다음 글에서도 부를 상대**(데스크탑 `sticky-mention` 칩).
-///
-/// 칩이 보여야 한다: 보이지 않는 접두는 사람이 모르는 사이에 에이전트를 깨운다. × 는 그 상대를
-/// 그만 부른다(고정에서 뺀다). 다시 부르고 싶으면 `@` 로 다시 부르면 된다.
-class _StickyRow extends StatelessWidget {
-  const _StickyRow({required this.composerKey, required this.accounts});
-
-  final String composerKey;
-  final List<AccountView> accounts;
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.t;
-    final app = context.app;
-    return Semantics(
-      container: true,
-      label: t.stickyMentionsLabel,
-      child: SizedBox(
-        key: const Key('sticky-mentions'),
-        height: 44,
-        child: ListView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(left: 4, right: 2),
-              child: Icon(
-                Icons.push_pin_outlined,
-                size: 16,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-            for (final a in accounts)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-                child: InputChip(
-                  key: Key('sticky-mention-${a.handle}'),
-                  label: Text('@${a.handle}'),
-                  deleteButtonTooltipMessage:
-                      t.stickyMentionRemove.replaceAll('{handle}', '@${a.handle}'),
-                  onDeleted: () => app.dropStickyMention(composerKey, a.id),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
   }
 }
 
@@ -852,7 +854,19 @@ class _ModelChip extends StatelessWidget {
     this.stale = false,
     this.threadTail = false,
     this.setByAgent,
+    this.pinned = false,
+    this.person = false,
+    this.onDeleted,
+    this.deleteTooltip,
   });
+
+  /// 고정 멘션 칩이다 — 앞에 📌 를 세운다(× 는 [onDeleted]).
+  final bool pinned;
+
+  /// 사람이다 — 모델이 없으므로 `@handle` 만 쓴다.
+  final bool person;
+  final VoidCallback? onDeleted;
+  final String? deleteTooltip;
 
   final String handle;
 
@@ -860,7 +874,7 @@ class _ModelChip extends StatelessWidget {
   /// 빈 문자열(`에이전트 지정`). 사람 지정이면 null(`스레드 지정`).
   final String? setByAgent;
   final String? value;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
   final bool inherited;
   final bool stale;
   final bool threadTail;
@@ -869,7 +883,7 @@ class _ModelChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.t;
     final scheme = Theme.of(context).colorScheme;
-    final set = value != null;
+    final set = !person && value != null;
     final tail = set && !stale && (inherited || threadTail)
         ? ' · ${setByAgent == null
               ? t.modelThreadSet
@@ -891,8 +905,16 @@ class _ModelChip extends StatelessWidget {
             ? warningColor(context)
             : (set ? Colors.transparent : scheme.outline),
       ),
+      // 📌 는 줄의 Semantics 이름(`stickyMentionsLabel`)이 이미 말한다 — 아이콘은 읽지 않는다.
+      avatar: pinned
+          ? ExcludeSemantics(
+              child: Icon(Icons.push_pin_outlined, size: 16, color: scheme.onSurfaceVariant),
+            )
+          : null,
+      onDeleted: onDeleted,
+      deleteButtonTooltipMessage: deleteTooltip,
       label: Text(
-        '@$handle · ${value ?? t.modelDefault}$tail',
+        person ? '@$handle' : '@$handle · ${value ?? t.modelDefault}$tail',
         style: TextStyle(
           decoration: stale ? TextDecoration.lineThrough : null,
           color: stale
