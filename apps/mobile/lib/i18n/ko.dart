@@ -315,6 +315,8 @@ class StringsKo implements Strings {
   @override
   String get attachmentAdd => '첨부 추가';
   @override
+  String get reactionAdd => '이모지 달기';
+  @override
   String get mentionAdd => '사람·에이전트 부르기';
 
   @override

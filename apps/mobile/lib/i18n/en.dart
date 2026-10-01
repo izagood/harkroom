@@ -316,6 +316,8 @@ class StringsEn implements Strings {
   @override
   String get attachmentAdd => 'Add attachment';
   @override
+  String get reactionAdd => 'Add reaction';
+  @override
   String get mentionAdd => 'Mention a person or agent';
 
   @override
