@@ -35,6 +35,7 @@ import { useState } from 'react';
 import type { AgentSessionView } from '@harkroom/shared';
 import type { AgentTurnsSnapshot } from '../lib/agentTurns';
 import { groupTurnsByThread } from '../lib/agentTurns';
+import { Menu } from './Menu';
 import { ConfirmDialog } from './ConfirmDialog';
 import { runningLabel } from '../lib/time';
 import { useLocale, useT } from '../i18n/useT';
@@ -278,19 +279,10 @@ export function AgentTurns({
                   </div>
                 )}
                 {/*
-                  **스레드가 중단의 정본 단위다.** 폭주는 스레드에 갇혀 일어나므로 사람이
-                  실제로 쓰게 될 버튼은 대개 이것 하나다. 여기에는 확인을 두지 않는다 —
-                  무엇을 멈추는지 보면서 누르는 자리이고, 확인이 세 곳에 다 있으면 확인이
-                  장식이 된다(`전부` 만 목록 밖까지 멈추므로 확인을 받는다).
+                  묶음 머리에 있던 [스레드 중단] 은 **줄의 [멈추기 ▾] 안으로** 들어갔다(UX ⑨a, designer: 멈추기는 줄마다
+                  하나). 스레드가 여전히 중단의 정본 단위라 그 항목은 확인 없이 바로 보낸다 — 무엇을 멈추는지 보면서
+                  고르는 자리다(`전부` 만 목록 밖까지 멈추므로 확인을 받는다).
                 */}
-                {onCancelTurns && stoppable(group.turns).length > 0 && (
-                  <button type="button" data-testid={`agent-turns-cancel-group-${group.channelId}-${root ?? 'root'}`}
-                    onClick={() => onCancelTurns(stoppable(group.turns))}
-                    title={t('agentTurns.cancelThreadTitle')}
-                    className="shrink-0 rounded px-1.5 py-0.5 text-meta text-danger hover:bg-danger-surface">
-                    {t('agentTurns.cancelThread')}
-                  </button>
-                )}
               </div>
               <ul>
                 {group.turns.map((turn) => {
@@ -384,11 +376,34 @@ export function AgentTurns({
                           {t('agentTurns.endControl')}
                         </button>
                       ) : (
-                        <button type="button" data-testid={`agent-turn-cancel-${turn.sessionId}`}
-                          onClick={() => onCancelTurns([turn])}
-                          className="shrink-0 rounded px-1 text-danger hover:bg-danger-surface">
-                          {t('agentTurns.cancel')}
-                        </button>
+                        stoppable(group.turns).length > 1 ? (
+                          <Menu
+                            placement="bottom"
+                            items={[
+                              { label: t('agentTurns.cancelOne'), onSelect: () => onCancelTurns([turn]) },
+                              // 범위가 큰 쪽이라 빨강이다 — "이 턴만" 과 무게가 갈린다(designer #1054).
+                              {
+                                label: t('agentTurns.cancelThread', { n: stoppable(group.turns).length }),
+                                onSelect: () => onCancelTurns(stoppable(group.turns)),
+                                tone: 'danger' as const,
+                              },
+                            ]}
+                            renderTrigger={(props) => (
+                              <button type="button" {...props} data-testid={`agent-turn-cancel-${turn.sessionId}`}
+                                className="shrink-0 rounded px-1 text-danger hover:bg-danger-surface">
+                                {t('agentTurns.cancel')} <span aria-hidden="true">▾</span>
+                              </button>
+                            )}
+                          />
+                        ) : (
+                          /* 스레드에 멈출 턴이 이것 하나면 **고를 것이 없다** — 항목 하나짜리 메뉴는 누르는 횟수만 늘린다
+                             (designer #1054). ▾ 없는 버튼이 바로 멈춘다(옛 동작). */
+                          <button type="button" data-testid={`agent-turn-cancel-${turn.sessionId}`}
+                            onClick={() => onCancelTurns([turn])}
+                            className="shrink-0 rounded px-1 text-danger hover:bg-danger-surface">
+                            {t('agentTurns.cancel')}
+                          </button>
+                        )
                       ))}
                     </li>
                   );
