@@ -139,6 +139,16 @@ const ATTACHMENTS = `coalesce((
   from attachment a where a.message_id = message.id
 ), '[]'::json) as attachments`;
 
+/**
+ * 스레드 상태 리액션(D안, `services/threadStatus.ts`). 루트 하나에 한 행이라 PK 조회 하나다.
+ * `COLS` 에도 싣는 이유: 실시간 `message.updated` 가 이 값을 null 로 덮으면 화면의 상태가
+ * 깜빡인다(판정 재료가 그렇게 사라져 채널 줄 배지가 안 그려졌다 — 0.3.107).
+ */
+function statusReactionOf(alias: string): string {
+  return `(select json_build_object('status', ts.status, 'emoji', ts.emoji, 'accountId', ts.account_id,
+    'reason', ts.reason, 'updatedAt', ts.updated_at) from thread_status ts where ts.root_id = ${alias}.id)`;
+}
+
 // #218: 핀 목록도 이 컬럼 집합으로 메시지를 내주기 때문에 export 다. 핀 전용으로 컬럼을
 // 다시 적으면 위에 적은 "네 갈래" 가 다섯이 되고, 리액션·첨부가 그 응답에서만 빠진다.
 //
@@ -156,6 +166,7 @@ export const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root
   null::int as "openAskHumanCount", null::text[] as "openAskAccountIds", null::jsonb as "openAskLinks",
   null::int as "failureCount", null::int as "unresolvedFailureCount",
   null::text as "lastKind", null::text as "lastAuthorId",
+  ${statusReactionOf('message')} as "statusReaction",
   also_in_channel as "alsoInChannel", deleted_at as "deletedAt"`;
 
 /**
@@ -394,6 +405,7 @@ const LIST_COLS = `m.id, m.seq::int as seq, m.channel_id as "channelId", m.threa
   case when m.thread_root_id is null then thread_state.open_ask_links end as "openAskLinks",
   case when m.thread_root_id is null then thread_last.last_kind end as "lastKind",
   case when m.thread_root_id is null then thread_last.last_author_id end as "lastAuthorId",
+  case when m.deleted_at is null then ${statusReactionOf('m')} end as "statusReaction",
   m.also_in_channel as "alsoInChannel", m.deleted_at as "deletedAt"`;
 
 /**

@@ -34,6 +34,7 @@ import { registerAutomationRoutes } from './routes/automationRoutes.js';
 import { registerWs } from './ws/wsPlugin.js';
 import { registerMcp } from './mcp/mcpPlugin.js';
 import { createAgentPresence } from './mcp/presence.js';
+import { startThreadStatusWatcher } from './services/threadStatus.js';
 import { Lifecycle } from './lifecycle.js';
 import { loggerConfig } from './logging.js';
 import { createRateLimiter, type RateLimitRule } from './rateLimit.js';
@@ -452,6 +453,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     now: deps.now,
   });
   agentPresence.startSweep(app);
+
+  // 스레드 상태 리액션(D안). 메시지·presence 이벤트로 루트를 다시 판정한다.
+  const threadStatusWatcher = startThreadStatusWatcher(deps.pool, agentPresence);
+  app.addHook('onClose', async () => { threadStatusWatcher.stop(); });
 
   const scheduledSweeper = createScheduledMessageSweeper(deps.pool);
   scheduledSweeper.startSweep(app);
