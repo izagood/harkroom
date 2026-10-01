@@ -56,12 +56,22 @@ class _Server {
   /// 있으면 인박스 답을 미룬다.
   Future<void>? holdInbox;
 
+  /// 있으면 **다음 한 번의** `/channels` 답을 이것이 끝날 때까지 미루고, 401 로 끝낸다.
+  Future<void>? holdChannelsThen401;
+
   MockClient get client => MockClient((req) async {
         final path = req.url.path;
         if (path == '/auth/me') {
           return _json({'id': 'me-1', 'handle': 'me', 'displayName': '나', 'isAdmin': false});
         }
+        if (path == '/auth/login') return _json({'token': 'tok-b'});
         if (path == '/channels') {
+          final held = holdChannelsThen401;
+          if (held != null) {
+            holdChannelsThen401 = null;
+            await held;
+            return _json({'error': {'code': 'unauthorized', 'message': 'expired'}}, 401);
+          }
           return _json({
             'channels': [
               {'id': 'c1', 'name': 'task', 'kind': 'standard'},
@@ -238,5 +248,36 @@ void main() {
     // 옛 답이 들어왔다면 loaded 로 바뀐다. 로그아웃이 둔 읽는 중 그대로여야 한다.
     expect(app.inboxLoad, LoadState.loading);
     expect(app.inbox, isEmpty);
+  });
+
+  test('들어가던 옛 세션의 늦은 401 이 새로 로그인한 계정의 보관본을 지우지 않는다(security 🟡)', () async {
+    final server = _Server(_channel(50, 1));
+    final store = SessionStore.inMemory(
+      seed: jsonEncode({
+        'active': 'me-1',
+        'communities': [
+          {'accountId': 'me-1', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'me'},
+        ],
+      }),
+    );
+    final app = AppState(
+      sessions: store,
+      apiFactory: (b, t) => ApiClient(baseUrl: b, token: t, httpClient: server.client),
+      connector: (_) async => throw StateError('소켓 없음'),
+    );
+    addTearDown(app.dispose);
+    final gate = Completer<void>();
+    server.holdChannelsThen401 = gate.future;
+    // A 로 들어가는 중(`/channels` 가 매달림) → 로그아웃 → B 로 로그인.
+    final booting = app.boot();
+    await Future<void>.delayed(Duration.zero);
+    await app.signOut();
+    await app.login('b', 'pw');
+    expect(app.phase, AppPhase.ready);
+    // 이제 A 의 `/channels` 가 401 로 늦게 끝난다.
+    gate.complete();
+    await booting;
+    expect(app.phase, AppPhase.ready, reason: '옛 세션의 실패가 B 의 화면을 로그인으로 내리면 안 된다');
+    expect((await store.load())?.communities, isNotEmpty, reason: 'B 의 보관본이 남아 있어야 한다');
   });
 }

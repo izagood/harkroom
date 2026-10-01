@@ -315,6 +315,8 @@ class StringsEn implements Strings {
 
   @override
   String get attachmentAdd => 'Add attachment';
+  @override
+  String get mentionAdd => 'Mention a person or agent';
 
   @override
   String get attachmentUploadFailed => 'Could not upload that file.';

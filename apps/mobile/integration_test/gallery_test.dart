@@ -75,6 +75,13 @@ void main() {
     await shot(tester, '02a-channel-top');
     await tester.tap(open);
     await shot(tester, '03-thread');
+    // @ 버튼(S4c): 누르면 칸에 @ 가 들어가 후보 줄이 선다. 키보드는 내려서 찍는다.
+    await tester.tap(find.byKey(const Key('mention-add')).last);
+    await tester.pump(const Duration(milliseconds: 300));
+    FocusManager.instance.primaryFocus?.unfocus();
+    await shot(tester, '03a-thread-mention');
+    await tester.enterText(find.byKey(const Key('thread-composer')), '');
+    await tester.pump();
     await tester.tap(find.byType(BackButton));
     await shot(tester, '02b-channel-back');
     await tester.tap(find.byType(BackButton));

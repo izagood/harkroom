@@ -7,8 +7,10 @@ import '../state/app_scope.dart';
 import '../state/app_state.dart';
 import '../ui/parts.dart';
 import '../ui/states.dart';
+import '../ui/tokens.dart';
 import 'agent_model.dart';
 import 'composer_attachments.dart';
+import 'mention_button.dart';
 import 'message_feed.dart';
 import 'message_list_screen.dart';
 
@@ -31,6 +33,8 @@ class ThreadScreen extends StatefulWidget {
 
 class _ThreadScreenState extends State<ThreadScreen> {
   final _composer = TextEditingController();
+  /// @ 버튼이 칸에 포커스를 주려고 쥔다.
+  final _composerFocus = FocusNode();
   bool _sending = false;
   /// 작성칸 모델 칩으로 고른 값(서버 079). 서버의 스레드 지정이 되므로 보낸 뒤에도 칩은 그 값을 이어 보인다.
   Map<String, ModelPick> _picks = const {};
@@ -57,6 +61,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
   @override
   void dispose() {
     _composer.dispose();
+    _composerFocus.dispose();
     super.dispose();
   }
 
@@ -130,8 +135,49 @@ class _ThreadScreenState extends State<ThreadScreen> {
       }
     }
 
+    ChannelRow? channel;
+    for (final c in app.channels) {
+      if (c.id == widget.channelId) {
+        channel = c;
+        break;
+      }
+    }
+    // 답글 수는 서버가 센 원글의 `replyCount` 를 믿는다. 아직 없으면 받은 말풍선 수(진행 줄 묶음은 빼고).
+    final replyCount = root?.replyCount ?? replies.whereType<FeedMessage>().length;
+    final countLabel = repliesCountLabel(t, replyCount);
+    final where = channelLabel(channel);
+
+    // 위에서 아래로 놓을 줄들. 화면에는 **뒤집어서**(아래부터) 쌓는다 — 열면 최신 답글이 작성칸
+    // 바로 위에 오고, 새 답글이 와도 맨 아래에 붙은 채로 따라간다(개정판 3.5). 짧은 스레드는
+    // 아래로 붙는다(사양 목업과 같다).
+    final rows = <Widget>[
+      if (root != null) buildFeedItem(context, FeedMessage(root)),
+      if (root != null) ThreadRepliesDivider(label: countLabel),
+      // 원글은 채널에서 이미 왔으니 늘 보인다. **답글 자리만** 상태 셋으로 나눈다.
+      if (load == null || load == LoadState.loading)
+        const SizedBox(height: 200, child: LoadingSkeleton(rows: 2))
+      else if (load == LoadState.failed)
+        SizedBox(
+          height: 220,
+          child: FailedState(
+            title: t.threadLoadFailed,
+            cause: app.failures[widget.rootId] ?? LoadFailure.network,
+            onRetry: () => app.openThread(widget.channelId, widget.rootId),
+          ),
+        )
+      else
+        ...replies.map((item) => buildFeedItem(context, item)),
+      ...failed.map((item) => FailedSendRow(item: item)),
+    ];
+
     return Scaffold(
-      appBar: AppBar(title: Text(t.threadTitle)),
+      // 개정판 3.5: 「스레드」 + 부제 「# task · 답글 n개」.
+      appBar: AppBar(
+        title: ScreenTitle(
+          title: t.threadTitle,
+          subtitle: where.isEmpty ? countLabel : '$where · $countLabel',
+        ),
+      ),
       // 토스트를 작성칸 위로 올린다(states.dart ComposerScope).
       body: ComposerScope(child: SafeArea(
         child: Column(
@@ -141,26 +187,10 @@ class _ThreadScreenState extends State<ThreadScreen> {
             const ConnectionBand(),
             Expanded(
               child: ListView(
+                key: const Key('thread-feed'),
+                reverse: true,
                 padding: const EdgeInsets.symmetric(vertical: 8),
-                children: [
-                  if (root != null) buildFeedItem(context, FeedMessage(root)),
-                  if (root != null) const Divider(),
-                  // 원글은 채널에서 이미 왔으니 늘 보인다. **답글 자리만** 상태 셋으로 나눈다.
-                  if (load == null || load == LoadState.loading)
-                    const SizedBox(height: 200, child: LoadingSkeleton(rows: 2))
-                  else if (load == LoadState.failed)
-                    SizedBox(
-                      height: 220,
-                      child: FailedState(
-                        title: t.threadLoadFailed,
-                        cause: app.failures[widget.rootId] ?? LoadFailure.network,
-                        onRetry: () => app.openThread(widget.channelId, widget.rootId),
-                      ),
-                    )
-                  else
-                    ...replies.map((item) => buildFeedItem(context, item)),
-                  ...failed.map((item) => FailedSendRow(item: item)),
-                ],
+                children: rows.reversed.toList(growable: false),
               ),
             ),
             // **스레드의 작성칸은 자기 키를 쓴다** — 채널에서 고른 사진이 답글에
@@ -182,10 +212,16 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   AttachButton(composerKey: widget.rootId),
+                  MentionButton(
+                    controller: _composer,
+                    focusNode: _composerFocus,
+                    onInserted: () => setState(() {}),
+                  ),
                   Expanded(
                     child: TextField(
                       key: const Key('thread-composer'),
                       controller: _composer,
+                      focusNode: _composerFocus,
                       onChanged: (_) => setState(() {}),
                       minLines: 1,
                       maxLines: 5,
@@ -209,3 +245,30 @@ class _ThreadScreenState extends State<ThreadScreen> {
   }
 
 }
+
+/// 원글과 답글 사이의 구분 줄 「답글 n개」(개정판 3.5).
+class ThreadRepliesDivider extends StatelessWidget {
+  const ThreadRepliesDivider({super.key, required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    return Padding(
+      key: const Key('thread-replies-divider'),
+      padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 8, HarkroomSize.gutter, 4),
+      child: Row(
+        children: [
+          Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.mute)),
+          const SizedBox(width: 8),
+          Expanded(child: Divider(height: 1, color: k.line)),
+        ],
+      ),
+    );
+  }
+}
+
+/// 「답글 n개」. 0 도 숫자로 쓴다 — 스레드 안에서 "답글 달기" 는 할 일이 아니라 이미 하는 중이다.
+String repliesCountLabel(Strings t, int count) =>
+    count == 1 ? t.threadRepliesOne : t.threadRepliesMany.replaceFirst('{n}', '$count');

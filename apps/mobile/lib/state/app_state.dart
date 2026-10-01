@@ -374,6 +374,9 @@ class AppState extends ChangeNotifier {
         ..clear()
         ..addEntries((results[2] as List<ReadState>).map((r) => MapEntry(r.channelId, r)));
     } on ApiError catch (e) {
+      // 옛 세션의 늦은 실패다 — 그 사이 로그아웃하고 다른 계정으로 들어왔으면 **새 계정의 보관본을
+      // 지우거나 화면을 내리면 안 된다**(security #1032 🟡).
+      if (gen != _generation) return;
       // 토큰이 죽었다. **보관본을 지우고** 로그인으로 돌린다 — 안 지우면 다음 기동에
       // 같은 실패를 반복한다.
       if (e.isCredentialFailure) {
@@ -388,6 +391,7 @@ class AppState extends ChangeNotifier {
       notifyListeners();
       return;
     } on Object {
+      if (gen != _generation) return;
       // 서버에 닿지 못했다. **던지지 않는다** — 받을 사람이 없어 부팅 화면이 멈춘다.
       phase = AppPhase.unreachable;
       notifyListeners();
@@ -993,7 +997,7 @@ class AppState extends ChangeNotifier {
   ///
   /// **서버의 `?thread=` 응답은 루트를 맨 앞에 싣는다**(server `listMessages` 의 thread 갈래).
   /// 그것을 [threads] 에 그대로 두면 스레드 화면이 루트를 머리에 한 번, 답글 자리에 또
-  /// 한 번 그린다(2026-10-02 jaebin iPhone). 그래서 받는 자리에서 갈라 둔다.
+  /// 한 번 그린다(2026-10-02 실기기). 그래서 받는 자리에서 갈라 둔다.
   ///
   /// 버리지 않고 여기 두는 이유: 받은 것 탭에서 들어오면 루트가 채널의 최근 페이지보다
   /// 오래돼 [messages] 에 없을 수 있다. 그때 화면 머리는 이 값으로 선다.

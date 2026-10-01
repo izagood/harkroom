@@ -482,6 +482,13 @@ void main() {
     );
     expect(inThread, findsOneWidget);
     expect(find.byKey(const Key('message-r1')), findsOneWidget);
+    // S4c: 원글은 위에 **한 번만**(응답에 실린 원글을 답글로 또 그리지 않는다), 그 아래 「답글 1개」.
+    expect(find.descendant(of: find.byType(ThreadScreen), matching: find.text('먼저 있던 말')), findsOneWidget);
+    expect(find.byKey(const Key('thread-replies-divider')), findsOneWidget);
+    // 머리 부제에 채널과 답글 수. 목록은 아래부터 쌓는다.
+    final screen = find.byType(ThreadScreen);
+    expect(find.descendant(of: screen, matching: find.textContaining('# harkroom')), findsOneWidget);
+    expect(tester.widget<ListView>(find.byKey(const Key('thread-feed'))).reverse, isTrue);
     // **스레드 안에서는 또 들어갈 문을 그리지 않는다.**
     expect(
       find.descendant(
@@ -804,5 +811,44 @@ void main() {
     final hint = tester.widget<TextField>(find.byKey(const Key('composer'))).decoration!.hintText!;
     expect(hint, contains('# harkroom'));
     expect(hint, isNot(contains('{name}')));
+  });
+
+  testWidgets('@ 버튼을 누르면 칸에 @ 가 들어가 후보가 뜬다(앞 글자가 있으면 띄우고)', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await _settle(tester);
+
+    expect(find.byKey(const Key('mention-picker')), findsNothing);
+    await tester.tap(find.byKey(const Key('mention-add')));
+    await _settle(tester);
+    TextField field() => tester.widget<TextField>(find.byKey(const Key('composer')));
+    expect(field().controller!.text, '@');
+    expect(find.byKey(const Key('mention-candidate-forge')), findsOneWidget);
+
+    await tester.enterText(find.byKey(const Key('composer')), '안녕');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('mention-add')));
+    await _settle(tester);
+    expect(field().controller!.text, '안녕 @');
+  });
+
+  testWidgets('원글이 채널 목록에 없으면(오래된 스레드) ?thread= 응답의 원글을 위에 한 번 그린다', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+    // 채널을 열지 않고 스레드로 바로 간다 — 인박스에서 오래된 스레드를 연 것과 같다(채널 목록에 원글 없음).
+    expect(state.messages['c1'], isNull);
+    Navigator.of(tester.element(find.byKey(const Key('channel-c1')))).push(
+      MaterialPageRoute<void>(builder: (_) => const ThreadScreen(channelId: 'c1', rootId: 'm1')),
+    );
+    await _settle(tester);
+    final screen = find.byType(ThreadScreen);
+    expect(find.descendant(of: screen, matching: find.byKey(const Key('message-m1'))), findsOneWidget);
+    expect(find.descendant(of: screen, matching: find.byKey(const Key('thread-replies-divider'))), findsOneWidget);
+    expect(find.descendant(of: screen, matching: find.byKey(const Key('message-r1'))), findsOneWidget);
   });
 }
