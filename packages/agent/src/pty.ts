@@ -217,8 +217,20 @@ export function looksReadyForPrompt(rawOutput: string, pattern: RegExp = DEFAULT
  * 그 사고가 말하는 것은 패턴 하나가 아니다: **모르는 화면에는 아무것도 치지 않는다** 가
  * 규칙이어야 한다. 그래서 `runPtyTurn` 이 주입 **직전에** 이 판정을 한 번 더 한다.
  */
+/*
+ * **`Enter to confirm` 와 `❯✔` 가 왜 여기 있나(2026-10-01 실측, claude 2.1.286).**
+ *
+ * 첫 실행 테마 선택 화면은 고른 줄에 `✔` 를 붙인다 — 2.1.286 은 `❯ ✔ Dark mode`(번호 없음),
+ * 2.1.263 은 `❯ 2. Dark mode ✔`(ANSI 를 걷으면 `❯2.Darkmode✔` 라 번호 패턴의 `\.\s` 에 안 걸렸다).
+ * 커서 줄에 `✔` 가 있으면 관문으로 본다. 입력창(`❯` 다음 NBSP)은 뺀다.
+ * 그래서 준비로도 관문으로도 안 보였고, 앞 계정에서는 준비 상한(60초)을 다 태운 뒤에야
+ * 다음 계정으로 넘어갔다 — 풀의 세 번째 계정이 배정마다 그렇게 60초씩 버리고 한 번도 돌지
+ * 않았다. 폴더 신뢰·auto mode 안내 같은 선택 창은 바닥에 `Enter to confirm · Esc to cancel`
+ * 을 그린다. TUI 는 단어 사이를 공백이 아니라 커서 이동으로 놓으므로 ANSI 를 걷으면
+ * `Entertoconfirm` 처럼 붙는다 — 그래서 `\s*` 다. 둘 다 채팅 입력창에는 없다.
+ */
 const DEFAULT_GATE_PATTERN =
-  /Do you want to (?:proceed|continue)\?|requires confirmation|Press enter to continue|^\s*[❯›]\s*\d+\.\s/m;
+  /Do you want to (?:proceed|continue)\?|requires confirmation|Press enter to continue|Enter\s*to\s*confirm|[❯›](?!\u00a0)[^\n]*✔|^\s*[❯›]\s*\d+\.\s/m;
 
 /** 패턴이 **마지막으로** 맞은 위치. 없으면 -1. */
 function lastMatchIndex(text: string, pattern: RegExp): number {
@@ -521,6 +533,17 @@ export interface RunPtyTurnOptions {
     readyPattern?: RegExp;
     /** 준비 상한. 넘기면 `PromptNotDeliveredError`. 생략하면 60초. */
     readyTimeoutMs?: number;
+    /**
+     * **부를 사람이 없을 때** 관문 화면이 이만큼 이어지면 상한을 기다리지 않고 바로 실패한다
+     * (ms, 기본 3초, 2026-10-01). `onAttention` 이 있으면 쓰지 않는다 — 그때는 화면을 살려 두고
+     * 사람을 부르는 것이 옳다(아래 `onAttention` 주석).
+     *
+     * 계정 축의 앞 계정이 이 경로다: 관문을 사람이 지나 줄 수 없으니 기다려 봐야 상한까지 태울
+     * 뿐이고, 실패가 곧 다음 계정으로 옮겨 타는 방아쇠다(`claudeAccounts.ts::switchesAccount`).
+     * 한 번 본 것으로 끝내지 않고 이만큼 이어지기를 보는 이유는 부팅 중 화면이 잠깐 관문처럼
+     * 스칠 수 있어서다(`gateProbeMs` 가 두 번 연속을 보는 것과 같은 규율).
+     */
+    gateFailMs?: number;
     /**
      * 관문으로 볼 패턴. 생략하면 기본. **주입 직전에** 이것으로 화면을 한 번 더 보고,
      * 물음이면 넣지 않고 사람을 부른다(`DEFAULT_GATE_PATTERN` 주석의 사고).
@@ -864,7 +887,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       const { text, readyPattern = DEFAULT_READY_PATTERN, readyTimeoutMs = 60_000,
               readyQuietMs = 300, readyQuietMaxMs = 2_000, gatePattern = DEFAULT_GATE_PATTERN,
               readyMinMs = 0, unsentHint, unsentProbeMs = 1_500, unsentRetries = 3,
-              onAttention } = opts.injectPrompt;
+              gateFailMs = 3_000, onAttention } = opts.injectPrompt;
       let injected = false;
       /**
        * **관문 때문에 주입을 미루고 있는가**(2026-09-11).
@@ -896,6 +919,14 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
           return;
         }
         // 준비를 못 봤고 부를 사람도 없다 — 이 턴은 프롬프트 없이 도는 것이 아니라 실패다.
+        failUndelivered(screen);
+      }, readyTimeoutMs);
+      readyTimer.unref?.();
+      /** 프롬프트를 못 넣은 채로 접는다. 상한과 관문 빠른 실패(`gateFailMs`)가 같은 길로 온다. */
+      function failUndelivered(screen: string): void {
+        if (injected || settled) return;
+        clearTimeout(readyTimer);
+        if (gateFailTimer) clearTimeout(gateFailTimer);
         readyProbe?.dispose();
         settled = true;
         if (timeoutTimer) clearTimeout(timeoutTimer);
@@ -905,8 +936,9 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         relay.stop();
         try { proc.kill('SIGKILL'); } catch { /* 이미 죽었으면 회수할 것도 없다 */ }
         reject(new PromptNotDeliveredError(Date.now() - startedAt, screen));
-      }, readyTimeoutMs);
-      readyTimer.unref?.();
+      }
+      /** 관문 빠른 실패 시계. 부를 사람이 없을 때만 걸린다. */
+      let gateFailTimer: ReturnType<typeof setTimeout> | null = null;
       /**
        * 실제 주입. 준비 표시를 본 **뒤** 화면이 잠잠해지면(또는 정적 상한에 닿으면) 온다.
        * 두 경로가 한 곳으로 모여야 한다 — 갈라 두면 한쪽만 `injected` 를 세우거나 타이머를
@@ -1078,7 +1110,18 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
 
       readyProbe = proc.onData(() => {
         if (injected || settled) return;
-        if (!readyPattern.test(stripAnsi(decodeTailText(tail.snapshot())))) return;
+        const now = decodeTailText(tail.snapshot());
+        // 부를 사람이 없으면 관문 앞에서 상한까지 서 있을 이유가 없다(`gateFailMs`). 시계가
+        // 다 돌았을 때 **다시 보고** 그래도 관문이면 접는다 — 그 사이 준비로 바뀌었으면 아무 일도 없다.
+        if (!onAttention && gateFailTimer === null && looksLikeGate(now, gatePattern, readyPattern)) {
+          gateFailTimer = setTimeout(() => {
+            gateFailTimer = null;
+            const later = decodeTailText(tail.snapshot());
+            if (looksLikeGate(later, gatePattern, readyPattern)) failUndelivered(later);
+          }, gateFailMs);
+          gateFailTimer.unref?.();
+        }
+        if (!readyPattern.test(stripAnsi(now))) return;
         if (readySeenAt === null) readySeenAt = Date.now();
         // 쉬지 않고 그리는 화면에서 정적이 영영 안 올 수 있다 — 상한에 닿으면 지금까지의
         // 동작(표시를 보면 곧바로 넣는다)으로 되돌아간다.

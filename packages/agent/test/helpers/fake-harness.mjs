@@ -274,6 +274,15 @@ if (mode === 'gatekeeper') {
 }
 
 // 2026-09-08 프로덕션의 무발화 30분 모양. 준비 신호를 찍고, 주입을 받고, **그 뒤로
+if (mode === 'gate-only') {
+  // **관문만 그리고 준비는 끝내 안 그린다**(2026-10-01). 실물 화면 바이트를 그대로 쓴다 —
+  // `FAKE_SCREEN` 이 그 픽스처 경로다(첫 실행 테마 선택). 받은 것은 되뱉는다.
+  setTimeout(() => process.stdout.write(readFileSync(process.env.FAKE_SCREEN, 'utf8')), 100);
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (d) => process.stdout.write(`GOT:${d}`));
+  setTimeout(() => process.exit(22), 8_000); // 안전망
+}
+
 if (mode === 'gate-covers-ready') {
   // **준비 표시를 먼저 내고, 그 위를 관문이 덮는다**(2026-09-11 실물 재현).
   //

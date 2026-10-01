@@ -7,4 +7,9 @@
 // 값의 출처와 근거는 `pty.ts::DEFAULT_GATE_PATTERN` 이다 — 이 상수는 그것을 어댑터 표에서
 // 가리키기 위한 사본이고, 동일성은 `test/adapterParity.test.ts` 가 실물 화면 fixture 로
 // 대조해 지킨다(문자열 비교가 아니라 **같은 판정을 내는가**로 잰다).
-export const GATE_PATTERN = /Do you want to (?:proceed|continue)\?|requires confirmation|^\s*❯\s*\d+\.\s/m;
+//
+// 2026-10-01: 사본이 프로덕션보다 뒤처져 있었다(`›`·`Press enter to continue` 가 빠져 있었다 —
+// 그때까지의 fixture 로는 판정이 갈리지 않아 패리티가 초록이었다). 첫 실행 테마 선택(`❯ ✔`)·
+// `Enter to confirm` 를 더하면서 fixture 로 갈리게 되어 프로덕션 값과 맞췄다.
+export const GATE_PATTERN =
+  /Do you want to (?:proceed|continue)\?|requires confirmation|Press enter to continue|Enter\s*to\s*confirm|[❯›](?!\u00a0)[^\n]*✔|^\s*[❯›]\s*\d+\.\s/m;

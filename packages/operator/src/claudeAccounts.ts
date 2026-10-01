@@ -37,6 +37,7 @@ import {
   parseClaudePoolsConfig,
   type ClaudePoolsConfig,
 } from '@harkroom/shared/claudePools';
+import { markClaudeAccountGates } from '@harkroom/shared/claudeGates';
 import type { ProviderAccountUsage, ProviderUsageSnapshot } from '@harkroom/shared/daemonProtocol';
 
 import { claudeCliUsage, type RunCommand } from './cliUsage.js';
@@ -697,6 +698,12 @@ export function createClaudeAccountsPort(opts: {
             await rm(configDir, { recursive: true, force: true }).catch(() => undefined);
           }
           if (status.loggedIn) {
+            // 첫 실행 테마 선택·auto mode 안내 창을 미리 지나 둔다(`@harkroom/shared/claudeGates`).
+            // 러너도 턴마다 같은 것을 적지만, 그 전에 사람이 이 계정을 터미널로 열 수 있다 —
+            // 그때 테마 화면부터 만나지 않게 여기서도 적는다. 실패해도 로그인은 성공이다.
+            await markClaudeAccountGates(configDir).catch((err: unknown) => {
+              console.warn(`[claudeAccounts] 계정 관문 기록 실패(로그인은 성공): ${err instanceof Error ? err.message : String(err)}`);
+            });
             // 같은 디렉터리의 사용량 캐시는 옛 로그인의 값이다(다시 로그인했다면). 버리고 알린다.
             usageCache.forget(configDir);
             try { opts.onSignedIn?.(configDir); } catch { /* 관찰은 로그인을 실패시키지 않는다 */ }
