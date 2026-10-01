@@ -68,7 +68,8 @@ export function useGateTerminalTarget(label: string, agentId: string): GateTermi
     let alive = true;
     void (async () => {
       const hasLocalSurface = hasOperatorLocalSurface();
-      const baseUrl = getController().api?.baseUrl ?? null;
+      let baseUrl: string | null = null;
+      try { baseUrl = getController().api?.baseUrl ?? null; } catch { /* 컨트롤러가 아직 없다 */ }
       let agentIsLocal: boolean | null = hasLocalSurface ? null : false;
       let localPool: string | null = null;
       if (hasLocalSurface && baseUrl) {
@@ -83,9 +84,9 @@ export function useGateTerminalTarget(label: string, agentId: string): GateTermi
       // 문구용 오퍼레이터 이름 — 여기서만 쓰고, 못 읽으면 이름 없는 문구로 물러선다.
       let operatorName: string | null = null;
       if (agentIsLocal === false) {
-        const agents = await getController().listAgents().catch(() => null);
+        const agents = await Promise.resolve().then(() => getController().listAgents()).catch(() => null);
         const opId = agents?.find((a) => a.id === agentId)?.assignment?.operatorId ?? null;
-        if (opId) operatorName = (await getController().operators().catch(() => null))?.find((o) => o.id === opId)?.name ?? null;
+        if (opId) operatorName = (await Promise.resolve().then(() => getController().operators()).catch(() => null))?.find((o) => o.id === opId)?.name ?? null;
       }
       if (!alive) return;
       setTarget(resolveGateTerminalTarget({ label, agentId, hasLocalSurface, agentIsLocal, operatorName, snapshot, localPool }));

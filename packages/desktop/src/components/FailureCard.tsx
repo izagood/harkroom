@@ -47,6 +47,12 @@ export function FailureCard({ message, inThread = false }: {
     문구를 다듬는 순간 조용히 안 맞는다.
   */
   const modelRejected = failure.code === 'thread_model_rejected';
+  /*
+    **계정 관문은 실패가 아니라 내 차례다**(designer #1053 F1). 서버(#1039)가 🙋 로 읽는 상태라 카드도 선택
+    카드(AskCard)의 내 차례 모양을 쓴다 — 빨간 "끝내지 못했다"는 고장으로 읽힌다(10-01 오독). 이유 줄도
+    러너의 what·reason 대신 계정 이름을 말하는 한 줄로 대신한다(F2).
+  */
+  const gate = failure.code === 'account_gate' && !!failure.account;
   const scope = inThread ? `thread:${rootId}` : message.channelId;
 
   /* 폭 상한을 여기서 다시 두지 않는다 — 부모(`MessageItem` 의 본문 열)가 이미 상한을 쥐고
@@ -56,14 +62,23 @@ export function FailureCard({ message, inThread = false }: {
     <div
       data-testid="failure-card"
       data-retryable={failure.retryable}
-      className="mt-1.5 rounded-lg border border-state-stuck bg-danger-surface"
+      data-gate={gate || undefined}
+      className={`mt-1.5 rounded-lg border ${gate ? 'border-state-turn bg-accent-surface' : 'border-state-stuck bg-danger-surface'}`}
     >
       <div className="flex items-baseline gap-2 px-3 pt-2">
-        <span className="text-meta font-semibold text-state-stuck">{t('speech.failure.title')}</span>
-        {failure.what && <span className="text-meta text-fg-muted">{failure.what}</span>}
+        <span className={`text-meta font-semibold ${gate ? 'text-state-turn' : 'text-state-stuck'}`}>
+          {t(gate ? 'gate.card.title' : 'speech.failure.title')}
+        </span>
+        {!gate && failure.what && <span className="text-meta text-fg-muted">{failure.what}</span>}
       </div>
-      {/* 이유는 **사람이 읽는 말**이다 — 스택트레이스가 아니다. 자세한 것은 터미널이 답한다. */}
-      {failure.reason && <p className="px-3 pt-1 text-body text-fg-muted">{failure.reason}</p>}
+      {gate ? (
+        <p data-testid="gate-card-line" className="px-3 pt-1 text-body text-fg-muted">
+          {gateLine(t('gate.card.line', { account: GATE_ACCOUNT_SLOT }), failure.account!)}
+        </p>
+      ) : (
+        /* 이유는 **사람이 읽는 말**이다 — 스택트레이스가 아니다. 자세한 것은 터미널이 답한다. */
+        failure.reason && <p className="px-3 pt-1 text-body text-fg-muted">{failure.reason}</p>
+      )}
 
       <div className="flex items-center gap-2 p-2 pt-1.5">
         <TerminalChip account={author} message={message} />
@@ -131,4 +146,11 @@ export function FailureCard({ message, inThread = false }: {
       </div>
     </div>
   );
+}
+
+/** 번역문 안의 계정 자리. 번역기가 넣은 이 표식을 굵은 계정 이름으로 바꾼다(문장 순서는 언어마다 다르다). */
+const GATE_ACCOUNT_SLOT = '\u0001';
+function gateLine(text: string, account: string) {
+  const [before, after] = text.split(GATE_ACCOUNT_SLOT);
+  return <>{before}<strong className="font-semibold text-fg">{account}</strong>{after ?? ''}</>;
 }

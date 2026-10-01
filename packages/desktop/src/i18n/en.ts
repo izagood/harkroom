@@ -3282,13 +3282,17 @@ export const en = {
   'speech.failure.callAgain': 'Call again',
   'claudeAccounts.attention.notice': 'Claude Code is waiting for your choice on a setup screen. New threads try this account last until you answer it.',
   'claudeAccounts.attention.openAria': 'Open a terminal for {account}',
+  'gate.card.title': 'Needs your choice',
+  'gate.card.line': '{account} stopped at a Claude Code setup screen. Answer it in the terminal and this turn starts again.',
+  'gate.notify.title': '{account} is waiting for your choice',
+  'gate.notify.body': '@{agent} stopped at a setup screen — open it to answer',
   'gate.terminal.open': 'Open terminal',
   'gate.terminal.opened': 'Opened in Terminal — answer the question there, the turn will start again',
   'gate.terminal.failed': 'Could not open the terminal',
   'gate.terminal.missing': 'This account is not on this Mac',
   'gate.terminal.ambiguous': 'More than one pool has an account with this name — open it from Settings › Claude accounts',
-  'gate.terminal.elsewhere': 'Open it on {operator}',
-  'gate.terminal.elsewhereUnknown': 'Open it on the Mac that runs this agent',
+  'gate.terminal.elsewhere': 'Open the terminal on {operator}',
+  'gate.terminal.elsewhereUnknown': 'Open the terminal on the Mac that runs this agent',
   /**
    * **화면 문구가 아니라 초안이다** — 눌러도 안 보내고 작성창을 채운다(그 자리 주석).
    * 그래서 사람이 보내기 전에 읽고 고칠 글이고, 말투가 부탁이다.

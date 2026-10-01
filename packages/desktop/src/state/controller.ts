@@ -715,8 +715,9 @@ export class Controller {
     const author = store.accounts[row.authorId]?.handle;
     await this.notifier.notify({
       // 원문(조직 설정 값)은 싣지 않는다 — 계정 이름표와 에이전트만.
-      title: `Claude account ${label} is waiting for you${this.communitySuffix()}`,
-      body: `${author ? `@${author} ` : ''}stopped at a setup screen — open the terminal to answer it`,
+      // 사람이 읽는 말이라 사전을 지난다(designer #1053 F3) — 한국어 화면에 영어 알림이 뜨지 않게.
+      title: this.t()('gate.notify.title', { account: label }) + this.communitySuffix(),
+      body: this.t()('gate.notify.body', { agent: author ?? '…' }),
       target: this.notificationTarget(row.id),
     });
     return true;
