@@ -151,13 +151,18 @@ void main() {
     expect(app.olderThreadFailed, isEmpty);
   });
 
-  test('다시 붙을 때(catchUp) 밀어 올려 받은 옛 답글을 지우지 않는다', () async {
+  test('다시 붙을 때(catchUp)는 최신 페이지로 갈고, 옛 답글은 다시 밀어 받게 한다 — 끊긴 사이 지운 답글이 남지 않게', () async {
     final server = _Server(replies: 150);
     final app = await _open(server);
     addTearDown(app.dispose);
     await app.loadOlderThread('c1', 'root');
     expect(app.threads['root']!.length, 150);
+    expect(app.threadHasMore['root'], isFalse);
     await app.catchUp();
+    // 앞부분은 버리고, 서버가 아직 있다고 하니 다시 밀면 받는다.
+    expect(app.threads['root']!.length, 100);
+    expect(app.threadHasMore['root'], isTrue);
+    expect(await app.loadOlderThread('c1', 'root'), isTrue);
     expect(app.threads['root']!.length, 150);
   });
 

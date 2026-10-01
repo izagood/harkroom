@@ -595,7 +595,10 @@ class AppState extends ChangeNotifier {
       try {
         final page = await api.messages(channelId, thread: entry.key, limit: 100);
         if (gen != _generation) return;
-        _storeThreadPage(entry.key, page.messages, keepOlder: true);
+        // 최신 페이지로 **통째로 간다**. 밀어 올려 받아 둔 옛 답글은 버리고 `hasMore` 를 다시 세워
+        // 다시 밀면 받게 한다 — 남겨 두면 끊긴 사이 지워진 옛 답글이 화면에 남는다(security #1051).
+        _storeThreadPage(entry.key, page.messages);
+        threadHasMore[entry.key] = page.hasMore;
       } on Object {
         /* 위와 같다 */
       }
@@ -1135,10 +1138,7 @@ class AppState extends ChangeNotifier {
   final Map<String, MessageRow> threadRoots = {};
 
   /// 스레드 응답 한 페이지를 루트([threadRoots])와 답글([threads])로 나눠 담는다.
-  ///
-  /// [keepOlder] 면 이 페이지보다 오래된, 이미 받아 둔 답글(위로 밀어 받은 옛 페이지)은 남긴다 —
-  /// 다시 붙을 때(`catchUp`) 최신 페이지로 통째로 갈면 사람이 밀어 올려 받은 앞부분이 사라진다.
-  void _storeThreadPage(String rootId, List<MessageRow> page, {bool keepOlder = false}) {
+  void _storeThreadPage(String rootId, List<MessageRow> page) {
     final replies = <MessageRow>[];
     for (final m in page) {
       if (m.id == rootId) {
@@ -1146,10 +1146,6 @@ class AppState extends ChangeNotifier {
       } else {
         replies.add(m);
       }
-    }
-    if (keepOlder && replies.isNotEmpty) {
-      final oldest = replies.map((m) => m.seq).reduce((a, b) => a < b ? a : b);
-      replies.addAll((threads[rootId] ?? const <MessageRow>[]).where((m) => m.seq < oldest));
     }
     threads[rootId] = replies..sort((a, b) => a.seq.compareTo(b.seq));
   }

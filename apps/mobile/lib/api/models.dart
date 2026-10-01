@@ -174,6 +174,8 @@ class MessageRow {
     required this.attachments,
     required this.replyCount,
     this.alsoInChannel = false,
+    this.participantIds = const [],
+    this.lastReplyAt,
   });
 
   final String id;
@@ -201,6 +203,13 @@ class MessageRow {
   /// 아니다"다. 둘을 0 으로 뭉치면 모든 답글이 스레드 진입점을 갖게 된다.
   final int? replyCount;
 
+  /// **스레드 루트에만**: 답글을 단 사람들의 id(서버가 센다, 최근 순). 요약 줄의 아바타가 쓴다.
+  /// 옛 서버나 답글이면 비어 있다.
+  final List<String> participantIds;
+
+  /// **스레드 루트에만**: 마지막 답글 시각. 요약 줄 「· 2분 전」 이 쓴다.
+  final DateTime? lastReplyAt;
+
   /// 스레드 답글인데 **채널에도 보이라고** 올린 것(#231). 채널 화면은 루트와 이것만 그린다.
   final bool alsoInChannel;
 
@@ -225,6 +234,8 @@ class MessageRow {
         attachments: attachments,
         replyCount: n < 0 ? 0 : n,
         alsoInChannel: alsoInChannel,
+        participantIds: participantIds,
+        lastReplyAt: lastReplyAt,
       );
 
   bool get isThreadRoot => threadRootId == null;
@@ -270,6 +281,8 @@ class MessageRow {
       attachments: attachments,
       replyCount: replyCount,
       alsoInChannel: alsoInChannel,
+      participantIds: participantIds,
+      lastReplyAt: lastReplyAt,
     );
   }
 
@@ -301,6 +314,10 @@ class MessageRow {
             : const [],
         replyCount: j['replyCount'] is num ? (j['replyCount']! as num).toInt() : null,
         alsoInChannel: j['alsoInChannel'] == true,
+        participantIds: j['participantIds'] is List
+            ? (j['participantIds']! as List).whereType<String>().toList(growable: false)
+            : const [],
+        lastReplyAt: DateTime.tryParse(_str(j['lastReplyAt']))?.toUtc(),
       );
 }
 

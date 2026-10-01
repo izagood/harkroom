@@ -76,17 +76,39 @@ class MessageTile extends StatelessWidget {
                     child: _Reactions(message: message),
                   ),
                 if (onOpenThread != null && _replyLabel(t, message) != null)
-                  TextButton(
+                  // 스레드 요약 줄(개정판 3.3): 참여자 아바타 몇 개 · 「답글 n개」 · 마지막 답글 시각.
+                  InkWell(
                     key: Key('thread-open-${message.id}'),
-                    onPressed: onOpenThread,
-                    style: TextButton.styleFrom(
-                      foregroundColor: k.link,
-                      padding: EdgeInsets.zero,
-                      minimumSize: const Size(44, 32),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                    onTap: onOpenThread,
+                    borderRadius: BorderRadius.circular(6),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(minHeight: 32),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (final id in message.participantIds.take(3))
+                            Padding(
+                              key: Key('thread-participant-${message.id}-$id'),
+                              padding: const EdgeInsets.only(right: 3),
+                              child: HarkroomAvatar(
+                                id: id,
+                                name: app.accounts[id]?.handle ?? app.displayNameOf(id),
+                                size: 18,
+                              ),
+                            ),
+                          if (message.participantIds.isNotEmpty) const SizedBox(width: 3),
+                          Text(
+                            _replyLabel(t, message)!,
+                            style: TextStyle(color: k.link, fontWeight: FontWeight.w600, fontSize: 13),
+                          ),
+                          if (message.lastReplyAt != null && (message.replyCount ?? 0) > 0)
+                            Text(
+                              ' · ${agoLabel(message.lastReplyAt!, DateTime.now().toUtc(), t)}',
+                              style: TextStyle(color: k.mute, fontSize: 12),
+                            ),
+                        ],
+                      ),
                     ),
-                    child: Text(_replyLabel(t, message)!),
                   ),
               ],
             ),
@@ -151,8 +173,57 @@ class _Reactions extends StatelessWidget {
               }
             },
           ),
+        // 이모지 더하기(개정판 3.3 「☺＋」). 이미 있는 칸을 누르는 것 말고는 새 이모지를 달 길이 없었다.
+        ActionChip(
+          key: Key('reaction-add-${message.id}'),
+          visualDensity: VisualDensity.compact,
+          tooltip: context.t.reactionAdd,
+          label: const Icon(Icons.add_reaction_outlined, size: 16),
+          onPressed: () => pickReaction(context, message),
+        ),
       ],
     );
+  }
+}
+
+/// 자주 쓰는 이모지에서 하나를 고른다. 고르면 그 칸을 누른 것과 같다(이미 눌렀으면 뗀다).
+const quickReactions = ['👍', '✅', '👀', '🎉', '❤️', '😂'];
+
+Future<void> pickReaction(BuildContext context, MessageRow message) async {
+  final app = context.app;
+  final emoji = await showModalBottomSheet<String>(
+    context: context,
+    builder: (sheet) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter, vertical: 12),
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final e in quickReactions)
+              InkWell(
+                key: Key('reaction-pick-$e'),
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => Navigator.of(sheet).pop(e),
+                child: SizedBox(
+                  width: 48,
+                  height: 48,
+                  child: Center(child: Text(e, style: const TextStyle(fontSize: 26))),
+                ),
+              ),
+          ],
+        ),
+      ),
+    ),
+  );
+  if (emoji == null) return;
+  Future<void> go() => app.toggleReaction(message.channelId, message.id, emoji);
+  try {
+    await go();
+  } on Object {
+    if (context.mounted) {
+      showFailureToast(context, context.t.reactionFailed, retry: () => go().ignore());
+    }
   }
 }
 

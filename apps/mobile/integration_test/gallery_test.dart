@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/api/api_client.dart';
 import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/main.dart';
+import 'package:harkroom/markdown/markdown_view.dart';
 import 'package:harkroom/screens/thread_screen.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_state.dart';
@@ -48,7 +49,7 @@ void main() {
         seed: jsonEncode({
           'active': '00000000-0000-4000-8000-000000000001',
           'communities': [
-            {'accountId': '00000000-0000-4000-8000-000000000001', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'jaebin'},
+            {'accountId': '00000000-0000-4000-8000-000000000001', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'me'},
           ],
         }),
       ),
@@ -74,6 +75,21 @@ void main() {
             .descendant(of: find.byKey(const Key('channel-feed')), matching: find.byType(Scrollable))
             .first);
     await shot(tester, '02a-channel-top');
+    // S4e: 리액션 줄 끝 「이모지 달기」 시트.
+    await tester.tap(find.byKey(const Key('reaction-add-m1')));
+    await shot(tester, '02e-emoji-sheet');
+    await tester.tapAt(const Offset(20, 120));
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    // S4e: 링크 시트 — 사용자 정보와 영문 아닌 글자가 둘 다 있는 주소면 경고가 두 줄.
+    showLinkConfirm(tester.element(find.byKey(const Key('channel-feed'))),
+        Uri.parse('https://user@ex\u0430mple.com/login'));
+    await shot(tester, '02f-link-warnings');
+    await tester.tap(find.byKey(const Key('link-cancel')));
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
     await tester.tap(open);
     await shot(tester, '03-thread');
     // @ 버튼(S4c): 누르면 칸에 @ 가 들어가 후보 줄이 선다. 키보드는 내려서 찍는다.
@@ -285,7 +301,7 @@ AppState _galleryApp(http.Client client) => AppState(
               'accountId': '00000000-0000-4000-8000-000000000001',
               'baseUrl': 'https://h.example.com',
               'token': 'tok',
-              'handle': 'jaebin',
+              'handle': 'me',
             },
           ],
         }),
@@ -302,14 +318,15 @@ http.Response _json(Object body, [int status = 200]) =>
         headers: {'content-type': 'application/json'});
 
 const _accounts = [
-  {'id': '00000000-0000-4000-8000-000000000001', 'handle': 'jaebin', 'displayName': 'jaebin', 'kind': 'human'},
+  {'id': '00000000-0000-4000-8000-000000000001', 'handle': 'me', 'displayName': 'me', 'kind': 'human'},
   {'id': '00000000-0000-4000-8000-000000000002', 'handle': 'task_manager', 'displayName': 'task_manager', 'kind': 'agent'},
   {'id': '00000000-0000-4000-8000-000000000003', 'handle': 'harkroom', 'displayName': 'harkroom', 'kind': 'agent'},
   {'id': '00000000-0000-4000-8000-000000000004', 'handle': 'designer', 'displayName': 'designer', 'kind': 'agent'},
 ];
 
 Map<String, Object?> _m(String id, int seq, String author, String body,
-        {String kind = 'user', Map<String, Object?>? meta, int? replyCount, String? root, int ago = 5}) =>
+        {String kind = 'user', Map<String, Object?>? meta, int? replyCount, String? root, int ago = 5,
+        List<String>? participants, int? lastReplyAgo, List<Map<String, Object?>> reactions = const []}) =>
     {
       'id': id,
       'seq': seq,
@@ -320,8 +337,10 @@ Map<String, Object?> _m(String id, int seq, String author, String body,
       'kind': kind,
       'meta': ?meta,
       'replyCount': ?replyCount,
+      'participantIds': ?participants,
+      'lastReplyAt': lastReplyAgo == null ? null : _ago(lastReplyAgo),
       'createdAt': _ago(ago),
-      'reactions': <Object?>[],
+      'reactions': reactions,
       'attachments': <Object?>[],
     };
 
@@ -344,7 +363,7 @@ MockClient _server({bool states = false}) => MockClient((req) async {
         }
       }
       if (path == '/auth/me') {
-        return _json({'id': '00000000-0000-4000-8000-000000000001', 'handle': 'jaebin', 'displayName': 'jaebin', 'isAdmin': true});
+        return _json({'id': '00000000-0000-4000-8000-000000000001', 'handle': 'me', 'displayName': 'me', 'isAdmin': true});
       }
       if (path == '/channels') {
         return _json({
@@ -396,7 +415,14 @@ MockClient _server({bool states = false}) => MockClient((req) async {
       if (path.endsWith('/messages') && req.url.queryParameters['thread'] != null) {
         return _json({
           'messages': [
-            _m('m1', 1, '00000000-0000-4000-8000-000000000001', '<@00000000-0000-4000-8000-000000000002> 모바일 앱 UI 검토를 designer 에게 맡겨 줘', replyCount: 2, ago: 90),
+            _m('m1', 1, '00000000-0000-4000-8000-000000000001', '<@00000000-0000-4000-8000-000000000002> 모바일 앱 UI 검토를 designer 에게 맡겨 줘', replyCount: 2, ago: 90,
+                // S4e: 요약 줄 아바타·마지막 답글 시각, 리액션(+ 이모지 달기 칩).
+                participants: ['00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000004'],
+                lastReplyAgo: 10,
+                reactions: [
+                  {'emoji': '👀', 'accountIds': ['00000000-0000-4000-8000-000000000002']},
+                  {'emoji': '✅', 'accountIds': ['00000000-0000-4000-8000-000000000001']},
+                ]),
             _m('r1', 7, '00000000-0000-4000-8000-000000000002', '맡겼다. 범위는 apps/mobile 전체다.', root: 'm1', ago: 60),
             _m('r2', 8, '00000000-0000-4000-8000-000000000004', '끝나면 이 스레드에 링크를 남긴다.', root: 'm1', ago: 10),
           ],
@@ -406,7 +432,14 @@ MockClient _server({bool states = false}) => MockClient((req) async {
       if (path.endsWith('/messages') && req.method == 'GET') {
         return _json({
           'messages': [
-            _m('m1', 1, '00000000-0000-4000-8000-000000000001', '<@00000000-0000-4000-8000-000000000002> 모바일 앱 UI 검토를 designer 에게 맡겨 줘', replyCount: 2, ago: 90),
+            _m('m1', 1, '00000000-0000-4000-8000-000000000001', '<@00000000-0000-4000-8000-000000000002> 모바일 앱 UI 검토를 designer 에게 맡겨 줘', replyCount: 2, ago: 90,
+                // S4e: 요약 줄 아바타·마지막 답글 시각, 리액션(+ 이모지 달기 칩).
+                participants: ['00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000004'],
+                lastReplyAgo: 10,
+                reactions: [
+                  {'emoji': '👀', 'accountIds': ['00000000-0000-4000-8000-000000000002']},
+                  {'emoji': '✅', 'accountIds': ['00000000-0000-4000-8000-000000000001']},
+                ]),
             _m('m2', 2, '00000000-0000-4000-8000-000000000002', '<@00000000-0000-4000-8000-000000000003> 에게 넘겼다. 범위는 apps/mobile 전체다.',
                 meta: {
                   'mentionDenied': ['harkroom'],
@@ -442,7 +475,7 @@ MockClient _server({bool states = false}) => MockClient((req) async {
                 },
                 ago: 35),
             _m('m8', 8, '00000000-0000-4000-8000-000000000003',
-                '## 고칠 것\n**둘**이다. @jaebin 확인해 줘:\n1. 다크 `ink` 값을 올린다\n2. 배지 글자는 `onAccent`\n\n```\nflutter test\n```\n> 사양은 재설계 §2 에 있다.\n자세한 건 [PR](https://example.com/pr/1).',
+                '## 고칠 것\n**둘**이다. @me 확인해 줘:\n1. 다크 `ink` 값을 올린다\n2. 배지 글자는 `onAccent`\n\n```\nflutter test\n```\n> 사양은 재설계 §2 에 있다.\n자세한 건 [PR](https://example.com/pr/1).',
                 ago: 3),
             _m('m9', 9, '00000000-0000-4000-8000-000000000004', '화면을 찍는 중이다', kind: 'progress', ago: 2),
           ],
@@ -495,7 +528,7 @@ MockClient _busyServer() {
   }
   return MockClient((req) async {
     final path = req.url.path;
-    if (path == '/auth/me') return _json({'id': me, 'handle': 'jaebin', 'displayName': 'jaebin', 'isAdmin': true});
+    if (path == '/auth/me') return _json({'id': me, 'handle': 'me', 'displayName': 'me', 'isAdmin': true});
     if (path == '/channels') {
       return _json({
         'channels': [
@@ -506,7 +539,7 @@ MockClient _busyServer() {
     if (path == '/accounts') {
       return _json({
         'accounts': [
-          {'id': me, 'handle': 'jaebin', 'displayName': 'jaebin', 'kind': 'human'},
+          {'id': me, 'handle': 'me', 'displayName': 'me', 'kind': 'human'},
           {'id': tm, 'handle': 'task_manager', 'displayName': 'task_manager', 'kind': 'agent'},
         ],
       });
@@ -560,7 +593,7 @@ class _EdgeServer {
   MockClient get client => MockClient((req) async {
         const me = '00000000-0000-4000-8000-000000000001';
         final path = req.url.path;
-        if (path == '/auth/me') return _json({'id': me, 'handle': 'jaebin', 'displayName': 'jaebin', 'isAdmin': true});
+        if (path == '/auth/me') return _json({'id': me, 'handle': 'me', 'displayName': 'me', 'isAdmin': true});
         if (path == '/channels') {
           return _json({
             'channels': [
@@ -611,7 +644,7 @@ class _LongThreadServer {
 
   MockClient get client => MockClient((req) async {
         final path = req.url.path;
-        if (path == '/auth/me') return _json({'id': me, 'handle': 'jaebin', 'displayName': 'jaebin', 'isAdmin': true});
+        if (path == '/auth/me') return _json({'id': me, 'handle': 'me', 'displayName': 'me', 'isAdmin': true});
         if (path == '/channels') {
           return _json({
             'channels': [

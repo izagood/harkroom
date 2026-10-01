@@ -195,4 +195,26 @@ void main() {
       expect(find.text('flutter test'), findsOneWidget);
     });
   });
+
+  testWidgets('링크 시트: 「이 링크가 여는 곳」 · 해당하는 경고는 한 줄씩 둘 다 · [열기] 는 테두리 (S4e)', (tester) async {
+    late BuildContext ctx;
+    await tester.pumpWidget(MaterialApp(
+      theme: harkroomTheme(Brightness.light),
+      home: I18n(
+        strings: stringsFor('ko'),
+        child: Scaffold(body: Builder(builder: (c) {
+          ctx = c;
+          return const SizedBox();
+        })),
+      ),
+    ));
+    // 사용자 정보(@ 앞) + 영문 아닌 글자(키릴 а) 둘 다.
+    showLinkConfirm(ctx, Uri.parse('https://user@ex\u0430mple.com/a'));
+    await tester.pumpAndSettle();
+    expect(find.text('이 링크가 여는 곳'), findsOneWidget);
+    expect(find.byKey(const Key('link-warn-userinfo')), findsOneWidget);
+    expect(find.byKey(const Key('link-warn-nonascii')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const Key('link-open')), matching: find.byType(Text)), findsOneWidget);
+    expect(tester.widget(find.byKey(const Key('link-open'))), isA<OutlinedButton>());
+  });
 }

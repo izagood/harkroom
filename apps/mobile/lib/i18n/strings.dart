@@ -61,6 +61,9 @@ abstract class Strings {
   /// 파일 고르기 버튼의 접근성 이름.
   String get attachmentAdd;
 
+  /// 리액션 줄 끝의 「이모지 달기」 칩의 접근성 이름.
+  String get reactionAdd;
+
   /// 작성칸 왼쪽 @ 버튼(개정판 3.4)의 접근성 이름. 누르면 칸에 `@` 를 넣어 후보 줄을 연다.
   String get mentionAdd;
 
@@ -550,6 +553,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'commonBack': s.commonBack,
       'commonRetry': s.commonRetry,
       'attachmentAdd': s.attachmentAdd,
+      'reactionAdd': s.reactionAdd,
       'mentionAdd': s.mentionAdd,
       'attachmentUploadFailed': s.attachmentUploadFailed,
       'attachLibrary': s.attachLibrary,

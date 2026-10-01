@@ -201,33 +201,38 @@ Future<bool?> showLinkConfirm(BuildContext context, Uri uri) {
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: k.fg)),
             const SizedBox(height: 4),
             SelectableText(uri.toString(), style: TextStyle(fontSize: HarkroomType.meta, color: k.mute)),
-            if (uri.userInfo.isNotEmpty || hostLooksSpoofable(uri)) ...[
+            // 경고는 **해당하는 것마다 한 줄씩** — 둘 다 해당하는데 하나만 보이면 나머지 위험을 모른다.
+            for (final (key, text) in [
+              if (uri.userInfo.isNotEmpty) ('link-warn-userinfo', t.linkUserInfoWarning),
+              if (hostLooksSpoofable(uri)) ('link-warn-nonascii', t.linkNonAsciiWarning),
+            ]) ...[
               const SizedBox(height: 8),
               Container(
+                key: Key(key),
+                width: double.infinity,
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 decoration: BoxDecoration(color: k.warnSoft, borderRadius: BorderRadius.circular(6)),
-                child: Text(
-                  uri.userInfo.isNotEmpty ? t.linkUserInfoWarning : t.linkNonAsciiWarning,
-                  style: TextStyle(fontSize: HarkroomType.meta, color: k.warn),
-                ),
+                child: Text(text, style: TextStyle(fontSize: HarkroomType.meta, color: k.warn)),
               ),
             ],
             const SizedBox(height: 12),
             Row(
               children: [
                 Expanded(
-                  child: OutlinedButton(
+                  child: TextButton(
                     key: const Key('link-cancel'),
                     onPressed: () => Navigator.of(ctx).pop(false),
                     child: Text(t.linkConfirmCancel),
                   ),
                 ),
                 const SizedBox(width: 8),
+                // [열기] 는 **테두리 버튼**(개정판) — 확인을 묻는 자리에서 주황으로 칠하면 보지 않고
+                // 누르게 된다.
                 Expanded(
-                  child: FilledButton(
+                  child: OutlinedButton(
                     key: const Key('link-open'),
                     onPressed: () => Navigator.of(ctx).pop(true),
-                    child: Text(t.linkConfirmOpen),
+                    child: Text(t.linkConfirmOpen, style: const TextStyle(fontWeight: FontWeight.w600)),
                   ),
                 ),
               ],
