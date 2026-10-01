@@ -117,7 +117,7 @@ export function SavedMessages({ open, onClose }: Props) {
             <span className="rounded bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted">
               {channelLabel(e.channelId)}
             </span>
-            <span className="flex-1 italic text-fg-subtle">{t('saved.deleted')}</span>
+            <span className="flex-1 italic text-fg-subtle">{e.deleted ? t('saved.deleted') : t('saved.unavailable')}</span>
             <span className="text-meta text-fg-subtle">{time}</span>
           </span>
         ) : (
