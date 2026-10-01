@@ -114,6 +114,12 @@ class ApiClient {
           .map(ChannelRow.fromJson)
           .toList(growable: false);
 
+  /// 채널 자동 멘션(#173). 채널을 볼 수 있는 사람 누구나 읽는다 — 작성칸이 칩을 그려야 한다.
+  Future<List<ChannelAutoMention>> channelAutoMentions(String channelId) async =>
+      _list(_obj(await _send('GET', '/channels/$channelId/auto-mentions'))['autoMentions'])
+          .map(ChannelAutoMention.fromJson)
+          .toList(growable: false);
+
   // ── 메시지 ────────────────────────────────────────────────────────────
 
   /// 한 페이지를 읽는다.

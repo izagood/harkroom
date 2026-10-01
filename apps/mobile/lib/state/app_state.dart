@@ -183,10 +183,6 @@ class AppState extends ChangeNotifier {
   List<AccountView> stickyAccounts(String key) =>
       liveStickyAccounts(stickyMentions[key] ?? const [], accounts, myId: me?.id);
 
-  /// 위의 handle(소문자) — 본문 앞에 붙일 것.
-  List<String> stickyHandles(String key) =>
-      [for (final a in stickyAccounts(key)) a.handle.toLowerCase()];
-
   /// 방금 보낸 글([typed] — 사람이 친 글)에서 새로 부른 상대를 고정에 더한다.
   void keepStickyMentions(String key, String typed) {
     final cur = stickyMentions[key] ?? const <String>[];
@@ -194,6 +190,80 @@ class AppState extends ChangeNotifier {
     if (identical(next, cur)) return;
     stickyMentions[key] = next;
     notifyListeners();
+  }
+
+  /// "이 채널의 에이전트"(`available`) 칩을 눌렀다 — 그 상대를 고정한다. 그때부터는 사람이
+  /// `@` 로 부른 것과 구분되지 않는다(데스크탑 `callChannelAgent` 와 같다: 부른 것은 사람이다).
+  void pinStickyMention(String key, String accountId) {
+    final cur = stickyMentions[key] ?? const <String>[];
+    if (cur.contains(accountId)) return;
+    stickyMentions[key] = [...cur, accountId];
+    notifyListeners();
+  }
+
+  // ── 채널 자동 멘션(#173) ───────────────────────────────────────────────
+
+  /// 채널 id → 자동 멘션 행. 키가 없으면 아직 못 받았다(그동안은 자동 멘션 없이 보낸다).
+  final Map<String, List<ChannelAutoMention>> channelAutoMentions = {};
+
+  /// 작성칸 키 → **이번 글에서만** 뺀 자동 멘션(계정 id). 보내면 비운다 — 다음 글에는 다시 붙는다.
+  /// 설정을 지우는 것이 아니다: 설정은 admin 의 것이고, 사람에게 필요한 것은 "이 한 줄은 안 부르기"다.
+  final Map<String, Set<String>> autoSkipped = {};
+
+  /// 자동 멘션을 읽는다. 바뀌어도 소켓 이벤트가 없으므로 **채널을 열 때마다** 다시 읽는다(데스크탑도
+  /// 채널을 열 때 읽는다). 실패는 삼킨다 — 칩이 안 설 뿐 작성칸은 돈다.
+  Future<void> loadChannelAutoMentions(String channelId) async {
+    try {
+      channelAutoMentions[channelId] = await _api!.channelAutoMentions(channelId);
+      notifyListeners();
+    } on Object {
+      // 끊김·권한. 앞에 받은 것이 있으면 그대로 둔다.
+    }
+  }
+
+  /// 지금 깨울 수 있는 자동 멘션 상대. 비활성·지워진 계정과 나는 뺀다 — 깨어나지 못하는 상대를 매
+  /// 줄에 붙이면 죽은 handle 만 남는다(데스크탑 `liveAutoRows`).
+  List<AccountView> _liveAuto(String channelId, {required bool always}) => [
+        for (final r in channelAutoMentions[channelId] ?? const <ChannelAutoMention>[])
+          if (r.isAlways == always)
+            if (accounts[r.agentAccountId] case final a? when !a.isDisabled && a.id != me?.id) a,
+      ];
+
+  /// 이 작성칸의 글에 실제로 붙을 자동 멘션(`always` 에서 이번만 뺀 것을 제한 것).
+  List<AccountView> autoAccounts(String channelId, String key) {
+    final skipped = autoSkipped[key] ?? const <String>{};
+    return [for (final a in _liveAuto(channelId, always: true)) if (!skipped.contains(a.id)) a];
+  }
+
+  /// 이 작성칸의 고정 칩. **자동 멘션(`always`) 상대는 뺀다** — 같은 상대에 칩이 둘 서면 × 하나로
+  /// 어느 쪽이 빠지는지 알 수 없다. 자동 칩이 그 자리를 대신한다(데스크탑 `sticky` 와 같다).
+  /// 이번만 뺀 자동 상대도 고정 칩으로 되살아나지 않는다 — 되살아나면 × 가 듣지 않는 것처럼 보인다.
+  List<AccountView> composerSticky(String channelId, String key) {
+    final auto = {for (final a in _liveAuto(channelId, always: true)) a.id};
+    return [for (final a in stickyAccounts(key)) if (!auto.contains(a.id)) a];
+  }
+
+  /// "이 채널의 에이전트"(`available`) 중 아직 부르고 있지 않은 상대 — 누르면 고정된다.
+  List<AccountView> availableAccounts(String channelId, String key) {
+    final stuck = {for (final a in stickyAccounts(key)) a.id};
+    return [for (final a in _liveAuto(channelId, always: false)) if (!stuck.contains(a.id)) a];
+  }
+
+  /// 보낼 때 본문 앞에 붙일 handle — 자동이 먼저, 고정이 뒤(데스크탑 `[...autoActive, ...sticky]`).
+  List<String> composerPrefix(String channelId, String key) => [
+        for (final a in [...autoAccounts(channelId, key), ...composerSticky(channelId, key)])
+          a.handle.toLowerCase(),
+      ];
+
+  /// 자동 칩의 × — 이번 글에서만 뺀다.
+  void skipAutoOnce(String key, String accountId) {
+    (autoSkipped[key] ??= <String>{}).add(accountId);
+    notifyListeners();
+  }
+
+  /// 보냈다 — 이번만 뺀 자동 멘션은 이 글로 끝이다.
+  void clearAutoSkips(String key) {
+    if (autoSkipped.remove(key) != null) notifyListeners();
   }
 
   /// 칩의 × — 이 상대를 그만 부른다.
@@ -596,6 +666,9 @@ class AppState extends ChangeNotifier {
   /// 채널을 연다. 이미 읽어 둔 것이 있으면 **다시 읽지 않는다** — 소켓이 그 뒤를 잇는다.
   Future<void> openChannel(String channelId) async {
     openChannelId = channelId;
+    // 자동 멘션은 소켓이 알려 주지 않으므로 열 때마다 새로 읽는다 — 아래의 "이미 읽은 채널" 조기
+    // 반환보다 앞이어야 admin 이 바꾼 설정이 다시 열 때 잡힌다.
+    unawaited(loadChannelAutoMentions(channelId));
     // 이미 읽어 둔 채널은 다시 읽지 않는다 — 소켓이 그 뒤를 잇는다. **못 읽었던 채널은
     // 다시 읽는다**: 전에는 한 번 실패하면 빈 목록이 남아 "메시지가 없다"로 굳었다.
     if (channelLoad[channelId] == LoadState.loaded ||
@@ -956,6 +1029,8 @@ class AppState extends ChangeNotifier {
     pending.clear();
     // 누구와 이야기하던 자리인가도 그 계정의 것이다 — 다른 계정이 이어받으면 엉뚱한 상대를 부른다.
     stickyMentions.clear();
+    channelAutoMentions.clear();
+    autoSkipped.clear();
     openChannelId = null;
     _api = baseUrl == null ? null : _apiFactory(baseUrl!, null);
     phase = baseUrl == null ? AppPhase.needsServer : AppPhase.needsLogin;
