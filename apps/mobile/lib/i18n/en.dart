@@ -264,6 +264,45 @@ class StringsEn implements Strings {
   String get attachmentFailed => 'Could not load this file.';
 
   @override
+  String get artifactVersion => 'v{v}';
+
+  @override
+  String get artifactVersionWithPrev => 'v{v} · {prev} earlier';
+
+  @override
+  String get artifactLatest => 'Latest v{v}';
+
+  @override
+  String get artifactOpen => 'Open preview';
+
+  @override
+  String get artifactMadeBy => 'A page made by an agent';
+
+  @override
+  String get artifactReload => 'Reload';
+
+  @override
+  String get artifactClose => 'Close preview';
+
+  @override
+  String get artifactLoading => 'Loading…';
+
+  @override
+  String get artifactTooLarge => 'Too large to preview ({size}).';
+
+  @override
+  String get artifactForbidden => 'You cannot see this preview.';
+
+  @override
+  String get artifactGone => 'This preview was deleted.';
+
+  @override
+  String get artifactFailed => 'The preview could not be opened.';
+
+  @override
+  String get artifactOpenedOutside => 'The page tried to go elsewhere — opened in your browser.';
+
+  @override
   String get timeUnderMinute => 'under a minute';
 
   @override

@@ -312,6 +312,14 @@ class ApiClient {
   /// 남는다.
   String attachmentUrl(String attachmentId) => '$baseUrl/attachments/$attachmentId';
 
+  /// 미리보기 서명 경로를 받는다(서버 0.3.131~, #1045). WebView 는 Bearer 헤더를 못 싣기 때문에 60초짜리
+  /// 서명 경로를 받아 연다 — 토큰은 그 URL 에 없다. 열 때·다시 불러올 때마다 새로 받는다(만료는 오류가 아니다).
+  Future<PreviewTicket> issuePreview(String attachmentId) async =>
+      PreviewTicket.fromJson(_obj(await _send('POST', '/attachments/$attachmentId/preview')));
+
+  /// 서명 경로 → WebView 에 넣을 절대 URL. 서버는 프록시 뒤라 자기 공개 주소를 모른다.
+  String previewUrl(String path) => '$baseUrl$path';
+
   /// 이미지 위젯에 넘길 헤더.
   Map<String, String> get authHeaders => _headers();
 

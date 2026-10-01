@@ -373,6 +373,45 @@ abstract class Strings {
   /// 첨부를 못 불러왔다. **조용히 빈칸을 두지 않는다.**
   String get attachmentFailed;
 
+  /// 미리보기 버전 표기. {v} 를 번호로 바꾼다.
+  String get artifactVersion;
+
+  /// 고쳐 올린 안의 버전 표기.
+  String get artifactVersionWithPrev;
+
+  /// 옛 카드 알약 — 같은 안의 더 높은 버전이 있다.
+  String get artifactLatest;
+
+  /// 카드를 눌러 연다(접근성 이름).
+  String get artifactOpen;
+
+  /// 보는 화면 머리에 출처를 밝힌다.
+  String get artifactMadeBy;
+
+  /// 새 서명 경로를 받아 다시 연다.
+  String get artifactReload;
+
+  /// 닫기 버튼 이름.
+  String get artifactClose;
+
+  /// 여는 중.
+  String get artifactLoading;
+
+  /// 413.
+  String get artifactTooLarge;
+
+  /// 403.
+  String get artifactForbidden;
+
+  /// 404.
+  String get artifactGone;
+
+  /// 그 밖의 실패.
+  String get artifactFailed;
+
+  /// 페이지가 스스로 다른 주소로 가려 했다.
+  String get artifactOpenedOutside;
+
   /// 이미 고른 물음. 고른 것이 무엇인지는 옆에 그린다.
   String get askAnswered;
 
@@ -550,6 +589,8 @@ abstract class Strings {
 /// 무조건 빨개지고, 그 시험을 끄면 진짜로 번역이 빠진 키도 함께 통과한다. 예외를
 /// **값으로** 적어 두는 것이 시험을 끄는 것보다 낫다 — 늘어나면 눈에 보인다.
 const Set<String> i18nAllowSameAsEnglish = {
+  // 버전 표기 `v3` — 기호라 두 언어가 같다(데스크톱 `artifact.card.version` 과 같다).
+  'artifactVersion',
   // 고유명사.
   'appName',
   // 주소 예시다. 번역할 말이 없다 — `https://example.com` 은 어느 언어에서도 같다.
@@ -684,6 +725,19 @@ Map<String, String> stringsToMap(Strings s) => {
       'loginOtherCommunity': s.loginOtherCommunity,
       'attachmentOpen': s.attachmentOpen,
       'attachmentFailed': s.attachmentFailed,
+      'artifactVersion': s.artifactVersion,
+      'artifactVersionWithPrev': s.artifactVersionWithPrev,
+      'artifactLatest': s.artifactLatest,
+      'artifactOpen': s.artifactOpen,
+      'artifactMadeBy': s.artifactMadeBy,
+      'artifactReload': s.artifactReload,
+      'artifactClose': s.artifactClose,
+      'artifactLoading': s.artifactLoading,
+      'artifactTooLarge': s.artifactTooLarge,
+      'artifactForbidden': s.artifactForbidden,
+      'artifactGone': s.artifactGone,
+      'artifactFailed': s.artifactFailed,
+      'artifactOpenedOutside': s.artifactOpenedOutside,
       'askAnswered': s.askAnswered,
       'askClosed': s.askClosed,
       'askDecline': s.askDecline,
