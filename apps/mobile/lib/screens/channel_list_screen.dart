@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
-import '../state/app_state.dart';
+import '../ui/states.dart';
 import '../ui/parts.dart';
 import '../ui/tokens.dart';
 import 'message_list_screen.dart';
@@ -19,16 +19,13 @@ class ChannelListScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: Text(t.channelsTitle),
-        // 연결 상태를 **제목 줄에 둔다.** 메시지가 안 오는 것과 소켓이 끊긴 것을 사람이
-        // 구별할 수 있어야 한다 — 구별할 수 없으면 "조용한 채널"과 "죽은 앱"이 같아 보인다.
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(22),
-          child: _ConnectionLine(state: app.connection),
-        ),
       ),
       body: SafeArea(
         child: Column(
           children: [
+            // 끊김은 **모든 화면 공통 띠**다(제목 줄 아래 작은 회색 글씨였다 — 늘 22px 를 차지했고
+            // 끊겼을 때도 잘 안 읽혔다).
+            const ConnectionBand(),
             if (app.noticeKey != null) _Notice(messageKey: app.noticeKey!),
             Expanded(
               child: app.channels.isEmpty
@@ -67,36 +64,6 @@ class ChannelListScreen extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-/// 소켓 상태 한 줄. **끊김을 한 가지로 뭉치지 않는다** — 기다리면 낫는 것과 다시
-/// 로그인해야 하는 것은 사람이 할 일이 다르다.
-class _ConnectionLine extends StatelessWidget {
-  const _ConnectionLine({required this.state});
-
-  final SocketState state;
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.t;
-    final scheme = Theme.of(context).colorScheme;
-    final (String label, Color color) = switch (state) {
-      SocketState.online => (t.connectionOnline, scheme.primary),
-      SocketState.connecting => (t.connectionConnecting, scheme.outline),
-      SocketState.reconnecting => (t.connectionReconnecting, scheme.tertiary),
-      SocketState.dead => (t.connectionDead, scheme.error),
-    };
-    // 붙어 있는 것은 **기본 상태**다. 늘 띄워 두면 그 줄은 곧 안 보이는 것이 되고,
-    // 정작 끊겼을 때의 같은 줄도 안 읽힌다.
-    if (state == SocketState.online) return const SizedBox(height: 0);
-    return Container(
-      key: const Key('connection-line'),
-      width: double.infinity,
-      padding: const EdgeInsets.only(bottom: 4),
-      alignment: Alignment.center,
-      child: Text(label, style: TextStyle(color: color, fontSize: 12)),
     );
   }
 }

@@ -259,11 +259,12 @@ void main() {
     await tester.pumpAndSettle();
     addTearDown(state.dispose);
 
-    // 붙어 있는 것은 기본 상태라 줄을 세우지 않는다. 끊겼을 때만 말한다.
+    // 붙어 있는 것은 기본 상태라 띠를 세우지 않는다. 끊겼을 때만 말한다.
+    expect(find.byKey(const Key('connection-band')), findsNothing);
     state.connection = SocketState.reconnecting;
     state.notifyListeners();
     await tester.pump();
-    expect(find.byKey(const Key('connection-line')), findsOneWidget);
+    expect(find.byKey(const Key('connection-band')), findsOneWidget);
   });
 
   testWidgets('진행은 말풍선이 아니라 한 줄로 접힌다', (tester) async {

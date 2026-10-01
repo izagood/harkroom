@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
-import '../ui/parts.dart';
+import '../state/app_state.dart';
+import '../ui/states.dart';
 import 'composer_attachments.dart';
 import 'message_feed.dart';
 import 'message_list_screen.dart';
@@ -57,14 +58,15 @@ class _ThreadScreenState extends State<ThreadScreen> {
   Future<void> _send() async {
     final text = _composer.text.trim();
     if (text.isEmpty || _sending) return;
+    final app = context.app;
+    // 첨부가 올라가는 중이면 비우지 않고 멈춘다(채널 화면과 같은 이유).
+    if (app.isUploading(widget.rootId)) return;
     setState(() => _sending = true);
-    // 먼저 비운다 — 남아 있으면 사람은 안 갔다고 생각하고 다시 누른다.
+    // 먼저 비운다 — 남아 있으면 사람은 안 갔다고 생각하고 다시 누른다. 못 보낸 말은 목록에 남는다.
     _composer.clear();
     try {
-      await context.app.send(widget.channelId, text, threadRootId: widget.rootId);
-    } on Object {
-      if (mounted) _composer.text = text;
-      rethrow;
+      final went = await app.send(widget.channelId, text, threadRootId: widget.rootId);
+      if (!went && mounted && _composer.text.isEmpty) _composer.text = text;
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -85,6 +87,8 @@ class _ThreadScreenState extends State<ThreadScreen> {
     // 채널 화면에서 들어온 답글은 **말풍선이 되는 것만** 그린다(`progress`·`wake` 제외) —
     // 채널에서와 같은 기준이어야 같은 스레드가 두 화면에서 달라 보이지 않는다.
     final replies = buildFeed(app.threads[widget.rootId] ?? const <MessageRow>[]);
+    final failed = app.failedSends[widget.rootId] ?? const <FailedSend>[];
+    final load = app.threadLoad[widget.rootId];
 
     return Scaffold(
       appBar: AppBar(title: Text(t.threadTitle)),
@@ -92,13 +96,27 @@ class _ThreadScreenState extends State<ThreadScreen> {
         child: Column(
           children: [
             // `onOpenThread` 를 주지 않는다 — **이미 스레드 안이라 들어갈 곳이 없다.**
+            const ConnectionBand(),
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 children: [
                   if (root != null) buildFeedItem(context, FeedMessage(root)),
                   if (root != null) const Divider(),
-                  ...replies.map((item) => buildFeedItem(context, item)),
+                  // 원글은 채널에서 이미 왔으니 늘 보인다. **답글 자리만** 상태 셋으로 나눈다.
+                  if (load == null || load == LoadState.loading)
+                    const SizedBox(height: 200, child: LoadingSkeleton(rows: 2))
+                  else if (load == LoadState.failed)
+                    SizedBox(
+                      height: 220,
+                      child: FailedState(
+                        title: t.threadLoadFailed,
+                        onRetry: () => app.openThread(widget.channelId, widget.rootId),
+                      ),
+                    )
+                  else
+                    ...replies.map((item) => buildFeedItem(context, item)),
+                  ...failed.map((item) => FailedSendRow(item: item)),
                 ],
               ),
             ),
@@ -125,12 +143,11 @@ class _ThreadScreenState extends State<ThreadScreen> {
                       ),
                     ),
                   ),
-                  IconButton(
+                  SendButton(
                     key: const Key('thread-send'),
-                    tooltip: t.composerSend,
-                    style: sendButtonStyle(context),
-                    icon: const Icon(Icons.send, size: 20),
-                    onPressed: _sending ? null : _send,
+                    composerKey: widget.rootId,
+                    busy: _sending,
+                    onPressed: _send,
                   ),
                 ],
               ),

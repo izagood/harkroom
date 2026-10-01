@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
+import '../ui/states.dart';
+import '../state/app_state.dart';
 import '../ui/tokens.dart';
 import '../mention/render.dart';
 import 'message_list_screen.dart';
@@ -35,15 +37,29 @@ class InboxScreen extends StatelessWidget {
         ],
       ),
       body: SafeArea(
-        child: app.inbox.isEmpty
-            ? Center(child: Text(t.inboxEmpty))
-            : RefreshIndicator(
-                onRefresh: app.loadInbox,
-                child: ListView.builder(
-                  itemCount: app.inbox.length,
-                  itemBuilder: (context, i) => _InboxRow(entry: app.inbox[i]),
-                ),
-              ),
+        child: Column(
+          children: [
+            const ConnectionBand(),
+            Expanded(
+              // 이미 읽은 목록이 있으면 상태와 관계없이 그것을 보인다 — 다시 읽다 실패했다고
+              // 있던 줄을 지우지 않는다(`loadInbox` 의 같은 판단).
+              child: app.inbox.isNotEmpty
+                  ? RefreshIndicator(
+                      onRefresh: app.loadInbox,
+                      child: ListView.builder(
+                        itemCount: app.inbox.length,
+                        itemBuilder: (context, i) => _InboxRow(entry: app.inbox[i]),
+                      ),
+                    )
+                  : switch (app.inboxLoad) {
+                      LoadState.loading => const LoadingSkeleton(rows: 3),
+                      LoadState.failed =>
+                        FailedState(title: t.inboxLoadFailed, onRetry: app.loadInbox),
+                      LoadState.loaded => EmptyState(title: t.inboxEmpty, hint: t.inboxEmptyHint),
+                    },
+            ),
+          ],
+        ),
       ),
     );
   }

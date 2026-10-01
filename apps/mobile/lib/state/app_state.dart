@@ -35,6 +35,40 @@ enum AppPhase {
 
   /// 들어왔다.
   ready,
+
+  /// 보관된 세션은 있는데 **서버에 닿지 못했다**(네트워크·서버 다운). 자격증명이 죽은 것이
+  /// 아니므로 로그인으로 돌리지 않는다 — 사람에게 "다시 시도"를 준다.
+  ///
+  /// 이 단계가 없을 때는 부팅 화면의 회전자가 **영원히 돌았다**: `_enter` 가 던진 오류를
+  /// 아무도 받지 않아 단계가 `booting` 에 남았다(지하철에서 앱을 켜면 그대로 멈춘 앱이다).
+  unreachable,
+}
+
+/// 한 화면 분량을 읽는 상태. **셋을 한 문구로 뭉치지 않는다** — 읽는 중·비어 있음·못 읽음은
+/// 사람이 할 일이 다르다(기다린다 / 첫 말을 건넨다 / 다시 시도한다). 전에는 셋 다
+/// "아직 … 없습니다" 였고, 못 읽은 채널은 다시 읽을 길도 없었다.
+enum LoadState { loading, loaded, failed }
+
+/// 보내지 못한 말. **작성칸으로 되돌리지 않고** 목록 안에 남긴다(재설계 §3.9) — 작성칸에
+/// 되돌리면 사람이 그 사이 새로 친 글과 섞이고, 무엇이 안 갔는지가 화면에서 사라진다.
+class FailedSend {
+  FailedSend({
+    required this.localId,
+    required this.channelId,
+    required this.body,
+    required this.attachmentIds,
+    this.threadRootId,
+  });
+
+  /// 화면이 줄을 집는 열쇠. 서버 id 가 없으니 앱이 짓는다.
+  final String localId;
+  final String channelId;
+  final String? threadRootId;
+  final String body;
+  final List<String> attachmentIds;
+
+  /// 다시 보내는 중이면 버튼을 잠근다 — 두 번 누르면 두 번 간다.
+  bool retrying = false;
 }
 
 /// 소켓이 지금 어떤가. **끊김을 한 가지로 뭉치지 않는다** — 기다리면 낫는 것과 그렇지
@@ -91,6 +125,19 @@ class AppState extends ChangeNotifier {
   /// 안 본 채널까지 메모리에 들고 있을 이유가 없다(읽지 않은 수는 서버가 센다).
   String? openChannelId;
 
+  /// 채널 id → 그 채널을 읽는 상태. 없으면 아직 연 적이 없다.
+  final Map<String, LoadState> channelLoad = {};
+
+  /// 스레드 루트 id → 그 스레드를 읽는 상태.
+  final Map<String, LoadState> threadLoad = {};
+
+  /// 인박스를 읽는 상태.
+  LoadState inboxLoad = LoadState.loading;
+
+  /// 작성칸 키(채널 id 또는 스레드 루트 id) → 보내지 못한 말들(오래된 것 먼저).
+  final Map<String, List<FailedSend>> failedSends = {};
+  int _localSeq = 0;
+
   ApiClient? get api => _api;
 
   /// 작성자 id 를 이름으로 푼다. **모르는 id 는 id 를 그대로 보여 준다** — 빈칸을 두면
@@ -111,6 +158,14 @@ class AppState extends ChangeNotifier {
     }
     baseUrl = current.baseUrl;
     _api = _apiFactory(current.baseUrl, current.token);
+    await _enter();
+  }
+
+  /// 닿지 못해 멈춘 부팅을 다시 해 본다.
+  Future<void> retryBoot() async {
+    if (_api == null) return;
+    phase = AppPhase.booting;
+    notifyListeners();
     await _enter();
   }
 
@@ -173,7 +228,15 @@ class AppState extends ChangeNotifier {
         notifyListeners();
         return;
       }
-      rethrow;
+      // 서버가 답은 했지만 실패다(5xx 등). 기다리면 나을 수 있으니 닿지 못한 것과 같이 둔다.
+      phase = AppPhase.unreachable;
+      notifyListeners();
+      return;
+    } on Object {
+      // 서버에 닿지 못했다. **던지지 않는다** — 받을 사람이 없어 부팅 화면이 멈춘다.
+      phase = AppPhase.unreachable;
+      notifyListeners();
+      return;
     }
     phase = AppPhase.ready;
     notifyListeners();
@@ -190,8 +253,13 @@ class AppState extends ChangeNotifier {
       getTicket: () => _api!.wsTicket(),
       connect: _connector,
       onOpen: () {
+        final wasDown = connection == SocketState.reconnecting;
         connection = SocketState.online;
         notifyListeners();
+        // **다시 붙으면 빠진 것을 읽는다.** 끊긴 사이의 이벤트는 서버가 다시 보내 주지
+        // 않는다 — 안 읽으면 그 사이의 말이 영영 화면에 없다. 처음 붙을 때는 방금 읽었으므로
+        // 하지 않는다.
+        if (wasDown) unawaited(catchUp());
       },
       onDown: (reason) {
         connection =
@@ -201,6 +269,68 @@ class AppState extends ChangeNotifier {
       onEvent: applyEvent,
     );
     unawaited(_ws!.start());
+  }
+
+  /// 지금 다시 붙어 본다(끊김 띠의 "다시"). 백오프를 기다리지 않는다.
+  void reconnectNow() {
+    if (phase != AppPhase.ready) return;
+    _openSocket();
+    notifyListeners();
+  }
+
+  /// 끊긴 사이에 빠진 것을 다시 읽는다: 읽어 둔 채널은 마지막 `seq` 뒤부터, 열어 둔
+  /// 스레드는 통째로, 그리고 안 읽은 수와 인박스.
+  ///
+  /// 하나가 실패해도 나머지는 읽는다 — 한 채널 때문에 인박스가 낡은 채로 남으면 안 된다.
+  Future<void> catchUp() async {
+    final api = _api;
+    if (api == null) return;
+    for (final entry in messages.entries.toList()) {
+      final list = entry.value;
+      if (list.isEmpty) continue;
+      try {
+        final page = await api.messages(entry.key, since: list.last.seq, limit: 200);
+        for (final m in page.messages) {
+          _upsertMessage(m);
+        }
+      } on Object {
+        // 다음에 다시 붙을 때 또 읽는다.
+      }
+    }
+    for (final entry in threads.entries.toList()) {
+      final channelId = _channelOfThread(entry.key);
+      if (channelId == null) continue;
+      try {
+        final page = await api.messages(channelId, thread: entry.key, limit: 100);
+        threads[entry.key] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
+      } on Object {
+        /* 위와 같다 */
+      }
+    }
+    try {
+      final fresh = await api.reads();
+      reads
+        ..clear()
+        ..addEntries(fresh.map((r) => MapEntry(r.channelId, r)));
+    } on Object {
+      /* 위와 같다 */
+    }
+    notifyListeners();
+    await loadInbox();
+  }
+
+  String? _channelOfThread(String rootId) {
+    for (final entry in messages.entries) {
+      for (final m in entry.value) {
+        if (m.id == rootId) return entry.key;
+      }
+    }
+    for (final list in threads.values) {
+      for (final m in list) {
+        if (m.id == rootId || m.threadRootId == rootId) return m.channelId;
+      }
+    }
+    return null;
   }
 
   // ── 이벤트 ────────────────────────────────────────────────────────────
@@ -328,10 +458,22 @@ class AppState extends ChangeNotifier {
   Future<void> loadInbox() async {
     final api = _api;
     if (api == null) return;
-    final entries = await api.inbox();
-    inbox
-      ..clear()
-      ..addAll(entries);
+    // 이미 한 번 읽었으면 다시 읽는 동안 **읽는 중으로 되돌리지 않는다** — 이벤트마다
+    // 목록이 자리표시로 깜빡인다.
+    if (inboxLoad != LoadState.loaded) {
+      inboxLoad = LoadState.loading;
+      notifyListeners();
+    }
+    try {
+      final entries = await api.inbox();
+      inbox
+        ..clear()
+        ..addAll(entries);
+      inboxLoad = LoadState.loaded;
+    } on Object {
+      // 이미 보이는 목록이 있으면 그대로 둔다 — 다시 못 읽었다고 지우면 있던 것까지 사라진다.
+      if (inboxLoad != LoadState.loaded) inboxLoad = LoadState.failed;
+    }
     notifyListeners();
   }
 
@@ -370,14 +512,25 @@ class AppState extends ChangeNotifier {
   /// 채널을 연다. 이미 읽어 둔 것이 있으면 **다시 읽지 않는다** — 소켓이 그 뒤를 잇는다.
   Future<void> openChannel(String channelId) async {
     openChannelId = channelId;
-    if (messages.containsKey(channelId)) {
+    // 이미 읽어 둔 채널은 다시 읽지 않는다 — 소켓이 그 뒤를 잇는다. **못 읽었던 채널은
+    // 다시 읽는다**: 전에는 한 번 실패하면 빈 목록이 남아 "메시지가 없다"로 굳었다.
+    if (channelLoad[channelId] == LoadState.loaded ||
+        channelLoad[channelId] == LoadState.loading) {
       notifyListeners();
       return;
     }
-    messages[channelId] = [];
+    channelLoad[channelId] = LoadState.loading;
     notifyListeners();
-    final page = await _api!.messages(channelId, limit: 50);
-    messages[channelId] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
+    try {
+      final page = await _api!.messages(channelId, limit: 50);
+      messages[channelId] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
+      channelLoad[channelId] = LoadState.loaded;
+    } on Object {
+      messages.remove(channelId);
+      channelLoad[channelId] = LoadState.failed;
+      notifyListeners();
+      return;
+    }
     notifyListeners();
     await markRead(channelId);
   }
@@ -439,7 +592,10 @@ class AppState extends ChangeNotifier {
   /// 말한다. 멘션이 들어 있으면 **이것이 에이전트를 부르는 것**이다.
   ///
   /// [threadRootId] 를 주면 그 스레드의 답글이 된다. 붙여 둔 첨부가 있으면 함께 간다.
-  Future<void> send(String channelId, String body, {String? threadRootId}) async {
+  ///
+  /// 보낼 수 없으면(첨부가 아직 올라가는 중) `false` 다 — 그때 화면은 작성칸을 **비우지 않는다.**
+  /// 보내다 실패한 것은 `true` 다: 그 말은 [failedSends] 에 남아 목록 안에서 다시 보낸다.
+  Future<bool> send(String channelId, String body, {String? threadRootId}) async {
     final key = threadRootId ?? channelId;
     final ids = (pending[key] ?? const <PendingAttachment>[])
         .where((p) => p.attachment != null)
@@ -447,17 +603,65 @@ class AppState extends ChangeNotifier {
         .toList(growable: false);
     // **올리는 중인 것이 남아 있으면 보내지 않는다.** 보내 버리면 그 파일은 메시지에
     // 안 붙고, 사람은 붙였다고 믿는다.
-    if ((pending[key] ?? const <PendingAttachment>[]).any((p) => p.attachment == null)) {
-      return;
-    }
-    final sent = await _api!.postMessage(
-      channelId,
-      body,
-      threadRootId: threadRootId,
-      attachmentIds: ids,
-    );
+    // 화면이 보내기 버튼을 잠그므로(`isUploading`) 여기 닿는 것은 버그다 — 그래도 글을
+    // 잃지 않게 `false` 를 돌려 작성칸이 비우지 않게 한다.
+    if (isUploading(key)) return false;
     pending.remove(key);
-    _upsertMessage(sent);
+    await _post(FailedSend(
+      localId: 'local-${_localSeq++}',
+      channelId: channelId,
+      threadRootId: threadRootId,
+      body: body,
+      attachmentIds: ids,
+    ));
+    return true;
+  }
+
+  /// 이 작성칸에 아직 올라가는 첨부가 있는가. 있으면 보내기 버튼이 잠긴다.
+  bool isUploading(String key) =>
+      (pending[key] ?? const <PendingAttachment>[]).any((p) => p.attachment == null);
+
+  /// 보낸다. 실패하면 **던지지 않고** [failedSends] 에 남긴다 — 던지면 받을 사람이 없어
+  /// 글이 조용히 사라졌다(지난 검토의 "조용한 실패").
+  Future<void> _post(FailedSend item) async {
+    try {
+      final sent = await _api!.postMessage(
+        item.channelId,
+        item.body,
+        threadRootId: item.threadRootId,
+        attachmentIds: item.attachmentIds,
+      );
+      _removeFailed(item);
+      _upsertMessage(sent);
+    } on Object {
+      final key = item.threadRootId ?? item.channelId;
+      final list = failedSends.putIfAbsent(key, () => []);
+      item.retrying = false;
+      if (!list.contains(item)) list.add(item);
+      notifyListeners();
+    }
+  }
+
+  /// 못 보낸 말을 다시 보낸다.
+  Future<void> resend(FailedSend item) async {
+    if (item.retrying) return;
+    item.retrying = true;
+    notifyListeners();
+    await _post(item);
+  }
+
+  /// 못 보낸 말을 버린다.
+  void discardFailed(FailedSend item) {
+    _removeFailed(item);
+    notifyListeners();
+  }
+
+  void _removeFailed(FailedSend item) {
+    final key = item.threadRootId ?? item.channelId;
+    final list = failedSends[key];
+    if (list == null) return;
+    list.remove(item);
+    if (list.isEmpty) failedSends.remove(key);
   }
 
   // ── 붙여 둔 첨부 ──────────────────────────────────────────────────────
@@ -521,8 +725,16 @@ class AppState extends ChangeNotifier {
   /// 그려지고, 답글이 도착하면 아래에서 알린다.
   Future<void> openThread(String channelId, String rootId) async {
     threads.putIfAbsent(rootId, () => []);
-    final page = await _api!.messages(channelId, thread: rootId, limit: 100);
-    threads[rootId] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
+    // 여기서 **알리지 않는다** — 화면이 `didChangeDependencies`(빌드 중)에서 부르므로 알리면
+    // "빌드 중 setState" 가 된다. 아직 상태가 없으면 화면은 읽는 중으로 그린다.
+    if (threadLoad[rootId] == LoadState.failed) threadLoad[rootId] = LoadState.loading;
+    try {
+      final page = await _api!.messages(channelId, thread: rootId, limit: 100);
+      threads[rootId] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
+      threadLoad[rootId] = LoadState.loaded;
+    } on Object {
+      if (threadLoad[rootId] != LoadState.loaded) threadLoad[rootId] = LoadState.failed;
+    }
     notifyListeners();
   }
 
@@ -556,6 +768,12 @@ class AppState extends ChangeNotifier {
     channels.clear();
     accounts.clear();
     messages.clear();
+    channelLoad.clear();
+    threadLoad.clear();
+    inboxLoad = LoadState.loading;
+    // 못 보낸 말도 버린다 — 다른 계정으로 들어온 뒤에 남은 말이 그 계정 이름으로 가면 안 된다.
+    failedSends.clear();
+    pending.clear();
     openChannelId = null;
     _api = baseUrl == null ? null : _apiFactory(baseUrl!, null);
     phase = baseUrl == null ? AppPhase.needsServer : AppPhase.needsLogin;

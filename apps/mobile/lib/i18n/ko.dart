@@ -239,4 +239,55 @@ class StringsKo implements Strings {
 
   @override
   String get attachmentUploadFailed => '파일을 올리지 못했다.';
+
+  @override
+  String get loadFailedHint => '네트워크를 확인한 뒤 다시 시도해 달라.';
+
+  @override
+  String get messagesLoadFailed => '메시지를 불러오지 못했다';
+
+  @override
+  String get threadLoadFailed => '답글을 불러오지 못했다';
+
+  @override
+  String get inboxLoadFailed => '인박스를 불러오지 못했다';
+
+  @override
+  String get messagesEmptyHint => '첫 말을 남기거나 @ 로 에이전트를 불러 본다.';
+
+  @override
+  String get inboxEmptyHint => '누가 부르거나 답을 기다리면 여기 선다.';
+
+  @override
+  String get bootUnreachableTitle => '서버에 닿지 못했다';
+
+  @override
+  String get connectionLostBand => '연결 끊김 · 다시 붙으면 놓친 메시지를 읽어 온다';
+
+  @override
+  String get connectionRetryNow => '다시';
+
+  @override
+  String get connectionSignInAgain => '다시 로그인';
+
+  @override
+  String get sendFailed => '보내지 못했다';
+
+  @override
+  String get sending => '보내는 중…';
+
+  @override
+  String get resend => '다시 보내기';
+
+  @override
+  String get discard => '지우기';
+
+  @override
+  String get sendWaitsForUpload => '첨부를 올리는 중이다 — 끝나면 보낼 수 있다';
+
+  @override
+  String get askFailed => '고르지 못했다';
+
+  @override
+  String get reactionFailed => '리액션을 바꾸지 못했다';
 }

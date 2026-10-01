@@ -125,11 +125,13 @@ class ApiClient {
   Future<MessagePage> messages(
     String channelId, {
     int? before,
+    int? since,
     int? limit,
     String? thread,
   }) async {
     final q = <String, String>{
       if (before != null) 'before': '$before',
+      if (since != null) 'since': '$since',
       if (limit != null) 'limit': '$limit',
       'thread': ?thread,
     };

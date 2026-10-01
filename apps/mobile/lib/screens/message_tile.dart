@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
+import '../ui/states.dart';
 import '../mention/render.dart';
 import 'attachments.dart';
 
@@ -116,7 +117,17 @@ class _Reactions extends StatelessWidget {
             backgroundColor:
                 mine != null && r.accountIds.contains(mine) ? theme.colorScheme.primaryContainer : null,
             label: Text('${r.emoji} ${r.accountIds.length}'),
-            onPressed: () => app.toggleReaction(message.channelId, message.id, r.emoji),
+            onPressed: () async {
+              Future<void> go() => app.toggleReaction(message.channelId, message.id, r.emoji);
+              try {
+                await go();
+              } on Object {
+                // 조용히 지나가면 사람은 눌렀는데 안 바뀐 이유를 모른다.
+                if (context.mounted) {
+                  showFailureToast(context, context.t.reactionFailed, retry: () => go().ignore());
+                }
+              }
+            },
           ),
       ],
     );
