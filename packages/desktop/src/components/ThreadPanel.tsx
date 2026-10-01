@@ -141,10 +141,15 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings }: {
    * **강조 점프(saved·검색·링크)로 온 답글이면 바닥 추종을 끈다**(2026-10-01, Saved 클릭 이동이
    * 중간에 멈춤 — 채널의 `onJump` 와 같은 일이다).
    *
-   * `openThread` 는 답글 페이지를 넣는 것과 강조를 거는 것을 같은 동기 구간에서 하므로 React 가
-   * 둘을 **한 커밋**으로 묶는다. 그 커밋에서 자식 `MessageItem` 이 그 줄로 `scrollIntoView` 한 뒤
-   * 아래 `[thread.length]` 효과가 도는데, 그때 `atBottomRef` 는 스레드를 연 layout 효과가 세운
-   * 참 그대로라 방금 옮긴 자리를 바닥으로 되끌어 갔다. 고정(`stickyRef`)도 참으로 남아 늦게
+   * **어느 길로 왔는가에 따라 커밋이 다르다**(qa_manager 실측, 2026-10-01):
+   * - `openThread(…, { focusMessageId })`(채널에 함께 올라온 답의 "최근 댓글 보기")는 답글
+   *   페이지를 넣는 것과 강조를 **같은 동기 구간에서** 건다 → React 가 한 커밋으로 묶는다.
+   * - `openMessage`(Saved·검색·링크)는 `await this.openThread()` 가 재개된 **뒤에** 강조를 건다 →
+   *   실측에서 답글 커밋과 강조 커밋이 **둘로 갈렸다.** 이 길의 멈춤은 주로 접힌 묶음 안의
+   *   대상이었다(`AgentExchange`·`ProgressRow` 의 펼침).
+   * 한 커밋이면 자식 `MessageItem` 이 그 줄로 `scrollIntoView` 한 뒤 아래 `[thread.length]` 효과가
+   * 도는데, 그때 `atBottomRef` 는 스레드를 연 layout 효과가 세운 참 그대로라 방금 옮긴 자리를
+   * 바닥으로 되끌어 갔다. 두 커밋이어도 이 효과는 무해하고, 커밋 순서가 바뀌는 날의 방어선이다. 고정(`stickyRef`)도 참으로 남아 늦게
    * 자라는 그림·링크 카드가 바닥 관찰자를 통해 한 번 더 끌어내렸다.
    *
    * 그래서 강조된 줄이 이 스레드에 실린 **그 커밋에서** 사람이 위로 올린 것과 같은 상태로 만든다.
