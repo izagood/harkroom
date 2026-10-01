@@ -59,7 +59,10 @@ export async function registerAttachmentRoutes(
       for await (const c of await storage.read(stored.key)) chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
       const hits = await leakGuard.findInBytes(req.account!.id, Buffer.concat(chunks));
       if (hits.length) {
-        await storage.remove(stored.key).catch(() => {});
+        // 지우기가 실패하면 값이 든 파일이 디스크에 남는다 — key 만 남겨 사람이 치우게 한다(security N2).
+        await storage.remove(stored.key).catch((e: unknown) => {
+          req.log.warn(`secret leak upload: could not remove stored file ${stored.key}: ${e instanceof Error ? e.message : String(e)}`);
+        });
         await leakGuard.record(req, req.account!.id, req.operator?.id ?? null, hits, 'upload');
         return reply.code(400).send({ error: SECRET_IN_BODY });
       }

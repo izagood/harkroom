@@ -122,7 +122,22 @@ export type RunnerLinkResponse =
  */
 export type RunnerLinkNotice =
   | { type: 'runner.pollStopped'; holding: number[] }
-  | McpAuthRejectedNotice;
+  | McpAuthRejectedNotice
+  | SecretLeaseNotice
+  | SecretLeaseEndedNotice;
+
+/**
+ * 비밀 보관소(PR 3): 러너가 멘션을 집으며 받은 **턴 임대**를 오퍼레이터에 맡긴다.
+ *
+ * 토큰은 **러너 → 오퍼레이터 relay 소켓으로만** 간다. 하네스의 env·프롬프트·argv 어디에도 싣지
+ * 않는다(security R2) — 모델 문맥에 실리면 transcript 에 남는다. 브릿지가 `secret.mount` 를 부르면
+ * 오퍼레이터가 이 임대로 서버에서 값을 받아 턴 전용 파일에 쓰고, 모델에게는 경로만 준다.
+ * `cause` 는 그 턴의 원인 메시지 id(`RUNNER_TURN_CAUSE_ENV`)다 — 브릿지 요청과 임대를 잇는 키다.
+ * 브릿지 소켓으로 온 통지는 오퍼레이터가 버린다(`runnerLink.ts` 의 kind 분기) — relay 만 맡길 수 있다.
+ */
+export type SecretLeaseNotice = { type: 'secret.lease'; cause: string; leaseId: string; token: string; expiresAt: string };
+/** 그 멘션의 일이 끝났다 — 오퍼레이터는 임대를 끝내고 턴 디렉터리를 지운다. */
+export type SecretLeaseEndedNotice = { type: 'secret.leaseEnded'; cause: string };
 
 /**
  * `mcp.authRejected`(2026-10-01): 하네스가 **오퍼레이터가 구워 준 `Authorization` 헤더를 MCP
@@ -166,6 +181,9 @@ export function isRunnerLinkNotice(value: unknown): value is RunnerLinkNotice {
     return Array.isArray(m.servers) && m.servers.length > 0 && m.servers.every((v) => typeof v === 'string' && v.length > 0)
       && typeof m.turnStartedAtMs === 'number' && Number.isFinite(m.turnStartedAtMs);
   }
+  const str = (v: unknown, max = 200) => typeof v === 'string' && v.length > 0 && v.length <= max;
+  if (m.type === 'secret.lease') return str(m.cause) && str(m.leaseId) && str(m.token) && str(m.expiresAt);
+  if (m.type === 'secret.leaseEnded') return str(m.cause);
   if (m.type !== 'runner.pollStopped') return false;
   return Array.isArray(m.holding) && m.holding.every((v) => typeof v === 'number' && Number.isInteger(v));
 }

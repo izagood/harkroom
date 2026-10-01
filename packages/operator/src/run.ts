@@ -42,6 +42,7 @@ import { claudeConfigPath } from './mcpConfig.js';
 import { fileSecrets } from './secrets.js';
 import { createRunnerLinkServer } from './runnerLink.js';
 import type { CommunityInstance } from './community.js';
+import { createTurnSecrets } from './turnSecrets.js';
 
 /**
  * 채택한 러너의 생사를 확인하는 주기(`#431` 2-c).
@@ -190,6 +191,21 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   /** 등록 직후 그 커뮤니티를 띄우는 손잡이 — `startCommunities` 가 준다. 그 전엔 아무것도 안 한다. */
   let startCommunity: (baseUrl: string) => Promise<CommunityInstance | null> = async () => null;
 
+  // 턴 비밀 마운트(비밀 보관소 PR 3). 브릿지의 `secret.mount` 를 여기서 받아 턴 전용 파일로 쓴다 —
+  // 서버로 넘기지 않는다. 임대는 러너가 relay 로 맡긴다(`turnSecrets.ts`).
+  const turnSecrets = createTurnSecrets({
+    root: join(appDataDir, 'turn-secrets'),
+    forward: async (agentId, req) => {
+      const c = communities.find((x) => x.knowsAgent(agentId));
+      return c ? c.forward(agentId, req) : { type: 'http.response', id: req.id, status: 0, body: '이 에이전트를 아는 커뮤니티가 없다' };
+    },
+    log,
+  });
+  // 앞 오퍼레이터가 남긴 턴 디렉터리는 이 프로세스가 모르는 임대의 것이다 — 기동 때 지운다.
+  void turnSecrets.sweepAll().then((n) => { if (n) log(`turn-secrets: 앞 오퍼레이터가 남긴 턴 디렉터리 ${n}개를 지웠다`); });
+  const turnSecretsTimer = setInterval(() => { void turnSecrets.sweepExpired(); }, 60_000);
+  turnSecretsTimer.unref?.();
+
   // 러너 링크(스펙 2026-09-20 §5). 러너 프레임은 그 에이전트를 아는 커뮤니티로 간다 — 에이전트
   // id 는 서버별 UUID 라 두 커뮤니티가 같은 id 를 알 일은 없다.
   const runnerLink = createRunnerLinkServer({
@@ -198,7 +214,9 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     },
     // 러너의 MCP·REST 요청 — 그 에이전트를 아는 커뮤니티의 서버로 나른다(스펙 §5). 인증은
     // 그 커뮤니티의 오퍼레이터 토큰 + 에이전트 id 로 바뀐다.
-    onRequest: async (_runnerId, agentId, req) => {
+    onRequest: async (runnerId, agentId, req) => {
+      const mounted = await turnSecrets.maybeHandle(runnerId, agentId, req);
+      if (mounted) return mounted;
       const c = communities.find((x) => x.knowsAgent(agentId));
       if (!c) {
         return req.type === 'mcp.request'
@@ -211,6 +229,9 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     // 같은 멘션을 둘이 집지 않는다 — 프로세스가 죽기를 기다리던 공백이 여기서 사라진다.
     // `registry` 는 아래에서 만들어지지만 이 콜백은 그 뒤에만 불린다(러너가 붙어야 온다).
     onNotice: (runnerId, agentId, notice) => {
+      // 턴 임대를 맡긴다·놓는다(비밀 보관소). relay 소켓에서만 온다 — 브릿지의 통지는 링크가 버린다.
+      if (notice.type === 'secret.lease') { turnSecrets.noteLease(runnerId, agentId, notice); return; }
+      if (notice.type === 'secret.leaseEnded') { void turnSecrets.leaseEnded(runnerId, notice.cause); return; }
       if (notice.type === 'mcp.authRejected') {
         // 하네스가 우리가 구운 Authorization 헤더를 거절당했다. 보고는 신호일 뿐이라 판단은
         // `mcpOAuth.reportRejected` 가 한다(저장소에 없는 이름·옛 토큰·쿨다운은 거기서 버린다).
@@ -546,6 +567,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     adoptedAtStartup,
     async shutdown() {
       clearInterval(pollTimer);
+      clearInterval(turnSecretsTimer);
       usagePoller?.stop();
       // 서버 링크를 먼저 끊는다 — 러너는 데려가지 않는다(이 파일 머리 주석). 링크가 살아
       // 있으면 종료 중에 assign 이 와서 새 러너를 띄울 수 있다.

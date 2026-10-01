@@ -20,6 +20,7 @@ import {
   sessionConflictNotice, stallNotice, threadModelRejectedNotice,
 } from './prompt.js';
 import { exhausted, isHarnessStall, isQuotaExhausted, isSessionIdConflict, isThreadModelRejected, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
+import type { SecretLeases } from './secretLeases.js';
 
 /**
  * `tried` 번 실패한 entry 가 다음 시도까지 쉬는 시간(ms).
@@ -145,6 +146,11 @@ export interface MentionSchedulerDeps {
    * 같은 멘션에 두 번 답한다 — 이관을 빠르게 하려다 `#430`·`#174` 의 중복을 되살리는 자리다.
    */
   heldEntryIds?: () => ReadonlySet<number>;
+  /**
+   * 턴 임대(비밀 보관소 PR 3, `secretLeases.ts`). 멘션의 첫 시도 전에 받고, 그 멘션이 **끝날 때**(읽음
+   * 처리) 놓는다 — 재시도로 미룬 동안은 쥐고 있다(R1: 같은 멘션의 재시도는 받은 임대를 다시 쓴다).
+   */
+  secretLeases?: SecretLeases;
   /** 종료 요청이 나를 향한 것인지 가르는 기준(stop.ts). */
   startedAtMs: number;
   /** 테스트가 백오프 경계를 결정론적으로 재현하기 위한 시계 주입. 생략하면 Date.now. */
@@ -290,6 +296,8 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       const lane = deps.laneFor
         ? await deps.laneFor(threadKey, anchor)
         : typeof deps.accountLane === 'function' ? await deps.accountLane() : deps.accountLane;
+      // 비밀이 없어도 턴은 돈다 — 임대 실패는 여기서 삼킨다(acquire 가 던지지 않는다).
+      await deps.secretLeases?.acquire(mention.id);
       const turn = await withAccountFailover(
         lane,
         (account, isLastAccount) => deps.runMentionTurn(
@@ -301,6 +309,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       );
       await deps.harkroom.markRead([entryId]);
       attempts.delete(entryId);
+      deps.secretLeases?.release(mention.id);
       if (turn.stopRequestedAt) deps.hooks.stopRequested(turn.stopRequestedAt);
     } catch (err) {
       // **여기 도달했다는 것은 계정 축이 이미 소진됐다는 뜻이다** — withAccountFailover 가
@@ -334,6 +343,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         });
         await deps.harkroom.markRead([entryId]);
         attempts.delete(entryId);
+        deps.secretLeases?.release(mention.id);
         return;
       }
 
@@ -351,6 +361,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         });
         await deps.harkroom.markRead([entryId]);
         attempts.delete(entryId);
+        deps.secretLeases?.release(mention.id);
         return;
       }
 
@@ -380,6 +391,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         });
         await deps.harkroom.markRead([entryId]);
         attempts.delete(entryId);
+        deps.secretLeases?.release(mention.id);
         return;
       }
 
@@ -397,6 +409,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         });
         await deps.harkroom.markRead([entryId]);
         attempts.delete(entryId);
+        deps.secretLeases?.release(mention.id);
         return;
       }
 
@@ -413,6 +426,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         });
         await deps.harkroom.markRead([entryId]);
         attempts.delete(entryId);
+        deps.secretLeases?.release(mention.id);
         return;
       }
       // 아직 시도가 남았다 — 다음 시도 시각을 찍는다. 이 entry 만 쉬고 나머지는 흐른다.

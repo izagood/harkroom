@@ -180,6 +180,25 @@ export class HarkroomAgentClient {
    * 못한다 — **턴을 실패로 만들지 않는 판단은 호출자(mentionTurn)의 몫이고**, 거기서
    * 로그로 남긴다(`readMemory` 가 같은 이유로 던진다).
    */
+  /**
+   * 턴 임대(비밀 보관소 086). 이 멘션에 대해 **한 번만** 받을 수 있다 — 거절(403 not_invoked·409 lease_used)
+   * 이든 서버가 보관소를 안 켰든(404·409) 비밀 없이 돌면 되므로 null 이다. 토큰은 어디에도 찍지 않는다.
+   */
+  async issueTurnLease(causeMessageId: string): Promise<{ id: string; token: string; expiresAt: string } | null> {
+    const res = await this.link.request({
+      type: 'http.forward', method: 'POST', path: '/agent/turn-leases',
+      body: JSON.stringify({ causeMessageId }), contentType: 'application/json',
+    });
+    if (res.status !== 200 || !res.body) return null;
+    try {
+      const lease = (JSON.parse(res.body) as { lease?: { id?: unknown; token?: unknown; expiresAt?: unknown } }).lease;
+      return lease && typeof lease.id === 'string' && typeof lease.token === 'string' && typeof lease.expiresAt === 'string'
+        ? { id: lease.id, token: lease.token, expiresAt: lease.expiresAt } : null;
+    } catch {
+      return null;
+    }
+  }
+
   async reportActivity(): Promise<void> {
     await this.rest<unknown>('POST', '/agent/activity', 'agent/activity');
   }

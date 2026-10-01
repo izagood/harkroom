@@ -131,6 +131,15 @@ describe('본문 거절 (D5)', () => {
     expect(audit.rows[0].detail).not.toContain(VALUE);
   });
 
+  it('REST: text/plain 문자열 본문도 본다(N1)', async () => {
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`,
+      headers: { ...auth(agent.pat), 'content-type': 'text/plain' }, payload: `x ${VALUE}`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('secret_in_body');
+  });
+
   it('grant 가 없는 에이전트·사람의 글은 거절하지 않는다(사람에게는 desktop 경고)', async () => {
     expect((await post(bystander.pat, `x ${VALUE}`)).statusCode).not.toBe(400);
     expect((await post(alice.token, `x ${VALUE}`)).statusCode).toBe(201);
