@@ -11,6 +11,12 @@
  * | list | `agent_invoker` 에 호출자가 있다 |
  * | owner | 호출자 = `owner_account_id`, 또는 같은 소유자의 owner 에이전트 — 대상이 형제를 믿으면(`trust_siblings`, 083 기본) 명단 없이, 아니면 `agent_owner_delegate`(073) 명단에 있을 때 |
  *
+ * **회신권(084)** — 위 표를 못 지나도, 대상이 **이 스레드에서** 호출자를 불렀으면(그리고 호출자가
+ * 아직 결과를 내지 않았으면) 통과한다. 직접 멘션·스레드 답글에만 적용된다. 시작은 언제나 범위가
+ * 좁은 쪽이 하므로 "아무나 → 공개 에이전트 → owner 에이전트" 우회는 여전히 막힌다
+ * (`services/replyGrants.ts`). 결과 발화만 쓸 수 있고(진행 줄은 못 쓴다), 스레드 머리는
+ * `postMessage` 가 같은 채널의 최상위 글로 검사하므로 다른 채널에서 같은 T 를 달아 쓸 수 없다.
+ *
  * **집합·auto-mention·@channel 을 거쳐 온 부름은 `community` 만 통과한다.** 그것들은 전부
  * "소유자가 아닌 무언가가 부르는 것"이다(auto-mention 은 넣는 시점에 400 으로도 막힌다).
  *
@@ -23,6 +29,7 @@
  */
 import type { PoolClient } from 'pg';
 import type { InvokeScope } from '@harkroom/shared';
+import { hasReplyGrant } from './replyGrants.js';
 
 export type InvokeVia = 'mention' | 'team' | 'group' | 'channel_all' | 'auto_mention';
 
@@ -46,7 +53,12 @@ export async function invokeFactsFor(client: PoolClient, agentIds: readonly stri
 export async function mayInvoke(
   client: PoolClient,
   facts: AgentInvokeFacts,
-  ctx: { callerId: string; channelId: string; via: InvokeVia },
+  /**
+   * `replyGrantThreadId` — 회신권(084)을 찾을 스레드. 부르는 쪽이 **결과 발화(`countsAsReply`)일
+   * 때만** 넘긴다: 진행 줄은 회신권을 닫지 않으므로, 그것으로 지나가게 두면 결과 한 번이 아니라
+   * 기한 동안 몇 번이든 대상을 깨운다(보안 검토 ①). 없으면 회신권 길은 닫혀 있다.
+   */
+  ctx: { callerId: string; channelId: string; via: InvokeVia; replyGrantThreadId?: string | null },
 ): Promise<boolean> {
   if (facts.invokeScope === 'community') return true;
   // 팀도 호출자가 작성자 그대로다 — 직접 멘션과 같은 판정을 탄다(위 머리 주석 ②).
@@ -54,7 +66,10 @@ export async function mayInvoke(
   if (await passesScope(client, facts.invokeScope, facts.ownerAccountId, ctx,
     `select 1 from agent_invoker where agent_id = $1 and account_id = $2`, facts.agentId)) return true;
   // owner 의 두 번째 길 — 같은 소유자의 owner 에이전트(073 명단, 또는 083 형제 기본 신뢰).
-  return facts.invokeScope === 'owner' && isEligibleDelegate(client, facts, ctx.callerId, { listed: true });
+  if (facts.invokeScope === 'owner' && await isEligibleDelegate(client, facts, ctx.callerId, { listed: true })) return true;
+  // 회신권(084) — 대상이 이 스레드에서 호출자를 불렀다. 팀 부름에는 쓰지 않는다(팀은 회신이 아니다).
+  return ctx.via === 'mention' && ctx.replyGrantThreadId != null
+    && hasReplyGrant(client, { granteeId: ctx.callerId, granterId: facts.agentId, threadRootId: ctx.replyGrantThreadId });
 }
 
 /**

@@ -9,6 +9,7 @@ import { emitEvent } from '../events.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
 import { getTeam, getTeamByName, listTeamMembers } from './teams.js';
 import { invokeFactsFor, mayInvoke, mayInvokeTeam, type InvokeVia } from './invokeGate.js';
+import { closeReplyGrants, openReplyGrants } from './replyGrants.js';
 
 /**
  * 채널 안에서 `seq` 발급을 직렬화하는 advisory lock 의 classid(#523).
@@ -52,7 +53,10 @@ export type PostMessageResult =
      */
     rootBack: MessageRow | null;
   }
-  | { failure: AttachFailure; message?: undefined };
+  | { failure: AttachFailure | 'bad_thread'; message?: undefined };
+
+/** `bad_thread` 거절의 문구 — REST 와 MCP 가 같은 말을 한다. */
+export const BAD_THREAD_MESSAGE = 'threadRootId must be a top-level message in this channel';
 
 export interface PostMessageInput {
   channelId: string;
@@ -653,6 +657,11 @@ async function resolveMentionCalls(
     body: string; channelId: string; authorId: string; authorIsAgent: boolean; mentionDepth: number;
     /** 사람 이름 글이지만 에이전트 사슬에서 나온 것(082, `PostMessageInput.chainDepth`) — 상한을 똑같이 본다. */
     chainBound?: boolean;
+    /**
+     * 회신권(084)을 찾을 스레드 — **결과 발화일 때만** 넘긴다(`invokeGate.mayInvoke` 의 ctx 주석).
+     * 수정은 넘기지 않는다(에이전트 글의 수정은 부르지 않는다).
+     */
+    replyGrantThreadId?: string | null;
   },
 ): Promise<ResolvedMentionCalls> {
   const { authorIsAgent, mentionDepth } = input;
@@ -781,7 +790,9 @@ async function resolveMentionCalls(
   const deniedIds = new Set<string>();
   const gateFacts = await invokeFactsFor(client, [...calledIds].filter((id) => id !== input.authorId && !cappedIds.has(id)));
   for (const [id, fact] of gateFacts) {
-    if (!(await mayInvoke(client, fact, { callerId: input.authorId, channelId: input.channelId, via: 'mention' }))) deniedIds.add(id);
+    if (!(await mayInvoke(client, fact, {
+      callerId: input.authorId, channelId: input.channelId, via: 'mention', replyGrantThreadId: input.replyGrantThreadId,
+    }))) deniedIds.add(id);
   }
   const deniedHandles = calledAccounts.filter((a) => deniedIds.has(a.id)).map((a) => a.handle);
 
@@ -1147,6 +1158,23 @@ export async function postMessage(
       }
     }
 
+    /*
+      **스레드 머리는 같은 채널의 최상위 글이어야 한다**(084 보안 검토). 예전에는 확인하지 않아서
+      다른 채널의 글 id 를 threadRootId 로 달 수 있었다 — 그 답글은 머리 주인에게 thread_reply 를
+      보내고, 회신권(084)·위임 닫기·깨움 선점처럼 "그 스레드 안에서"를 전제한 판정을 다른
+      채널에서 통과했다. 답글의 답글(머리가 답글)도 같은 이유로 막는다: 스레드는 한 단계다.
+      지워진 머리는 받는다 — 지워진 스레드에 답이 달리는 경로가 따로 있다(`deletedRoot`).
+    */
+    if (input.threadRootId) {
+      const root = await client.query<{ channel_id: string; thread_root_id: string | null }>(
+        `select channel_id, thread_root_id from message where id = $1`, [input.threadRootId]);
+      const r = root.rows[0];
+      if (!r || r.channel_id !== input.channelId || r.thread_root_id !== null) {
+        await client.query('rollback');
+        return { failure: 'bad_thread' };
+      }
+    }
+
     // threadRootId 가 없으면 alsoInChannel 은 의미 없다 — 조용히 false 로 정규화한다.
     // threadRootId 없이 true 를 보내는 것은 이미 채널 메시지이기 때문이다.
     const alsoInChannel = input.threadRootId ? (input.alsoInChannel ?? false) : false;
@@ -1174,6 +1202,7 @@ export async function postMessage(
     const mentionDepth = chainBound ? Math.max(scannedDepth, input.chainDepth!) : scannedDepth;
     const calls = await resolveMentionCalls(client, {
       body: input.body, channelId: input.channelId, authorId: input.authorId, authorIsAgent, mentionDepth, chainBound,
+      replyGrantThreadId: countsAsReply(input.kind ?? 'user') ? input.threadRootId ?? null : null,
     });
     const inserted = await client.query(
       `insert into message (channel_id, thread_root_id, author_id, body, kind, meta, also_in_channel, mention_depth)
@@ -1213,6 +1242,18 @@ export async function postMessage(
 
     const notified = new Set<string>();
     await fanOutCalls(client, { channelId: input.channelId, authorId: input.authorId, messageId: message.id }, calls, notified);
+    /*
+      회신권(084)을 연다 — 실제로 inbox 가 간 상대에게만(막힌·상한 걸린 부름은 열지 않는다). 최상위
+      글이면 그 글 자신이 스레드 머리다: 불린 쪽은 그 아래에 답한다. 작성자가 게이트에 걸리는
+      에이전트가 아니면 `openReplyGrants` 가 아무것도 만들지 않는다.
+    */
+    if (authorIsAgent) {
+      await openReplyGrants(client, {
+        granterId: input.authorId,
+        threadRootId: input.threadRootId ?? message.id,
+        granteeIds: calls.calledIds.filter((id) => notified.has(id)),
+      });
+    }
 
 
     /**
@@ -1268,7 +1309,10 @@ export async function postMessage(
           그대로 받는다. 막힌 답글은 meta 에 남기지 않는다 — 답글은 부르려던 것이 아니다.
         */
         const rootFact = (await invokeFactsFor(client, [rootAuthor])).get(rootAuthor);
-        if (!rootFact || (await mayInvoke(client, rootFact, { callerId: input.authorId, channelId: input.channelId, via: 'mention' }))) {
+        if (!rootFact || (await mayInvoke(client, rootFact, {
+          // 이 자리는 `isReply` 안이다 — 결과 발화만 온다.
+          callerId: input.authorId, channelId: input.channelId, via: 'mention', replyGrantThreadId: input.threadRootId,
+        }))) {
           await insertInbox(client, rootAuthor, message.id, 'thread_reply', notified);
         }
       }
@@ -1313,6 +1357,11 @@ export async function postMessage(
      * (`readAskMeta` 계열이 여기 산다), 그 판정이 `delegations.ts` 로 새면 meta 규약이
      * 두 곳에 살게 된다.
      */
+    // 결과를 냈으면 이 스레드에서 받은 회신권을 닫는다(084) — 이 발화는 위에서 이미 게이트를 지났다.
+    if (input.threadRootId && isReply && authorIsAgent) {
+      await closeReplyGrants(client, { granteeId: input.authorId, threadRootId: input.threadRootId });
+    }
+
     const wokeByDelegation = input.threadRootId
       ? await closeDelegationsForReply(client, {
         threadRootId: input.threadRootId,
