@@ -280,6 +280,24 @@ abstract class Strings {
   String get sectionStarred;
   String get sectionChannels;
 
+  /// 바로가기 카드(S5c): 나를 기다리는 것(인박스 안 본 수).
+  String get cardMyTurn;
+
+  /// 바로가기 카드(S5c): 안 읽은 말이 있는 채널.
+  String get cardNew;
+
+  /// 떠 있는 새 메시지 버튼(S5c).
+  String get newMessage;
+
+  /// 새 메시지 시트의 사람 묶음.
+  String get newMessagePeople;
+
+  /// DM 을 열지 못했을 때.
+  String get newMessageDmFailed;
+
+  /// 「새로 온 것」 만 볼 때 안 읽은 채널이 없다.
+  String get unreadOnlyEmpty;
+
   /// 부른 사람이 없다.
   String get inboxEmpty;
 
@@ -791,6 +809,12 @@ Map<String, String> stringsToMap(Strings s) => {
       'dmsEmpty': s.dmsEmpty,
       'sectionStarred': s.sectionStarred,
       'sectionChannels': s.sectionChannels,
+      'cardMyTurn': s.cardMyTurn,
+      'cardNew': s.cardNew,
+      'newMessage': s.newMessage,
+      'newMessagePeople': s.newMessagePeople,
+      'newMessageDmFailed': s.newMessageDmFailed,
+      'unreadOnlyEmpty': s.unreadOnlyEmpty,
       'inboxEmpty': s.inboxEmpty,
       'inboxMarkAllRead': s.inboxMarkAllRead,
       'inboxReasonMention': s.inboxReasonMention,

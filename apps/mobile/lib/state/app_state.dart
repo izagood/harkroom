@@ -198,6 +198,26 @@ class AppState extends ChangeNotifier {
   /// 홈에서 접어 둔 묶음(섹션 키). 이 기기·이 세션만 기억한다.
   final Set<String> collapsedSections = {};
 
+  /// 홈을 「새로 온 것」(안 읽은 채널)만으로 좁혔는가 — 바로가기 카드(S5c)가 켜고 끈다. 세션 동안만.
+  bool homeUnreadOnly = false;
+
+  void toggleHomeUnreadOnly() {
+    homeUnreadOnly = !homeUnreadOnly;
+    notifyListeners();
+  }
+
+  /// 그 사람과의 DM 을 열거나 만들고 id 를 준다. 목록에 없던 DM 이면 더한다(이름은 상대로).
+  Future<String> openDmWith(String accountId) async {
+    final id = await _api!.openDm([accountId]);
+    if (!channels.any((c) => c.id == id)) {
+      final myId = me?.id ?? '';
+      final row = ChannelRow(id: id, name: '', isPrivate: true, isDm: true, topic: null, memberIds: [myId, accountId]);
+      channels.add(row.withName(dmTitle(row, myId)));
+      notifyListeners();
+    }
+    return id;
+  }
+
   void toggleSection(String key) {
     if (!collapsedSections.remove(key)) collapsedSections.add(key);
     notifyListeners();
@@ -1594,6 +1614,7 @@ class AppState extends ChangeNotifier {
     reads.clear();
     channelPrefs.clear();
     collapsedSections.clear();
+    homeUnreadOnly = false;
     threads.clear();
     threadRoots.clear();
     threadHasMore.clear();

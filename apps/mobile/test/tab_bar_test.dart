@@ -43,6 +43,11 @@ MockClient _server() => MockClient((req) async {
         });
       }
       // 실제 서버처럼 DM 은 `GET /channels` 가 아니라 `GET /dms` 로만 온다(이름 없이 명단만).
+      if (path == '/dms' && req.method == 'POST') {
+        final ids = (jsonDecode(req.body) as Map)['accountIds'] as List;
+        if (ids.length == 1 && ids.first == 'a-qa') return _json({'id': 'd2', 'kind': 'dm', 'name': ''}, 201);
+        return _json({'error': {'code': 'bad_request', 'message': 'x'}}, 400);
+      }
       if (path == '/dms') {
         return _json({
           'dms': [
@@ -54,6 +59,7 @@ MockClient _server() => MockClient((req) async {
         return _json({
           'accounts': [
             {'id': 'a-designer', 'handle': 'designer', 'displayName': 'designer', 'kind': 'agent'},
+            {'id': 'a-qa', 'handle': 'qa', 'displayName': 'qa', 'kind': 'agent'},
           ],
         });
       }
@@ -61,6 +67,7 @@ MockClient _server() => MockClient((req) async {
         return _json({
           'reads': [
             {'channelId': 'd1', 'lastReadSeq': 0, 'unread': 3},
+            {'channelId': 'c1', 'lastReadSeq': 0, 'unread': 2},
           ],
         });
       }
@@ -157,5 +164,47 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('channel-c2')), findsNothing);
     expect(find.byKey(const Key('channel-c1')), findsOneWidget);
+  });
+
+  testWidgets('S5c 카드: 「내 차례」 는 인박스 탭, 「새로 온 것」 은 안 읽은 채널만', (tester) async {
+    await _pump(tester);
+    expect(find.byKey(const Key('card-my-turn')), findsOneWidget);
+    // 안 읽은 채널은 c1 하나다(DM 은 DM 탭이 센다).
+    expect(find.descendant(of: find.byKey(const Key('card-new')), matching: find.text('1')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('card-new')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('channel-c1')), findsOneWidget);
+    expect(find.byKey(const Key('channel-c2')), findsNothing);
+    expect(find.byKey(const Key('section-starred')), findsNothing);
+    await tester.tap(find.byKey(const Key('card-new')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('channel-c2')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('card-my-turn')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('inbox-mark-all')).evaluate().isEmpty, isTrue);
+    expect(find.byKey(const Key('card-my-turn')), findsNothing, reason: '인박스 탭으로 옮겼다');
+  });
+
+  testWidgets('S5c 새 메시지: 사람을 고르면 POST /dms 로 DM 을 열고 DM 탭에 선다', (tester) async {
+    await _pump(tester);
+    expect(find.byKey(const Key('new-message')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('new-message')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('new-message-channel-c1')), findsOneWidget);
+    expect(find.byKey(const Key('new-message-channel-c3')), findsNothing, reason: '치운 채널');
+    expect(find.byKey(const Key('new-message-person-me-1')), findsNothing, reason: '나는 없다');
+    await tester.tap(find.byKey(const Key('new-message-person-a-qa')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('new-message-sheet')), findsNothing);
+    expect(find.byType(BackButton), findsOneWidget);
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('tab-dms')));
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: find.byKey(const Key('channel-d2')), matching: find.text('qa')), findsOneWidget);
+    // 인박스·에이전트 탭에는 새 메시지 버튼이 없다.
+    await tester.tap(find.byKey(const Key('tab-inbox')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('new-message')), findsNothing);
   });
 }

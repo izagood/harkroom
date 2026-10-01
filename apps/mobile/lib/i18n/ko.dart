@@ -232,6 +232,18 @@ class StringsKo implements Strings {
   String get sectionStarred => '즐겨찾기';
   @override
   String get sectionChannels => '채널';
+  @override
+  String get cardMyTurn => '내 차례';
+  @override
+  String get cardNew => '새로 온 것';
+  @override
+  String get newMessage => '새 메시지';
+  @override
+  String get newMessagePeople => '사람';
+  @override
+  String get newMessageDmFailed => 'DM 을 열지 못했다.';
+  @override
+  String get unreadOnlyEmpty => '새로 온 것이 없다.';
 
   @override
   String get inboxEmpty => '인박스가 비어 있다.';
