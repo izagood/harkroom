@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createClaudeAccountsPort } from '../src/claudeAccounts.js';
 import { createCodexAccountsPort } from '../src/codexAccounts.js';
@@ -112,9 +112,14 @@ describe('Claude /api/oauth/usage', () => {
     expect(f.calls).toEqual([]);
 
     cliOut = 'Not logged in';
-    const fallback = await port.providerUsage();
-    expect(fallback.accounts[0]).toMatchObject({ source: 'api', weekly: { usedPercent: 18 } });
-    expect(f.calls).toHaveLength(1);
+    // 화면 경로는 stale-while-revalidate 다 — TTL 이 지나도 지난 값(CLI)을 곧바로 주고 뒤에서 다시 잰다.
+    const stale = await port.providerUsage();
+    expect(stale.accounts[0]).toMatchObject({ source: 'cli', weekly: { usedPercent: 7 } });
+    await vi.waitFor(async () => {
+      const fallback = await port.providerUsage();
+      expect(fallback.accounts[0]).toMatchObject({ source: 'api', weekly: { usedPercent: 18 } });
+    });
+    expect(f.calls.length).toBeGreaterThanOrEqual(1);
   });
 });
 

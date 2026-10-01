@@ -327,7 +327,8 @@ export function createCodexAccountsPort(opts: {
             fetchImpl: opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike),
             ...(opts.readToken ? { readToken: opts.readToken } : {}),
           }),
-        ))),
+          // 화면 경로 — 지난 값을 곧바로 돌려주고 뒤에서 다시 잰다(`createUsageCache` 의 `stale`).
+        ), { stale: true })),
       })));
       return { measuredAtMs: at, accounts };
     },

@@ -145,4 +145,62 @@ describe('usageChain', () => {
     await cache('k', load);
     expect(calls).toBe(2);
   });
+
+  it('캐시 `stale`: TTL 이 지나면 지난 값을 곧바로 주고 뒤에서 한 번만 다시 잰다', async () => {
+    let t = 0;
+    let calls = 0;
+    let release: ((v: typeof ok) => void) | null = null;
+    const cache = createUsageCache(1000, () => t);
+    const first = { ...ok, fetchedAtMs: 1 };
+    await cache('k', async () => { calls += 1; return first; });
+    t = 1500;
+    const slow = () => { calls += 1; return new Promise<typeof ok>((r) => { release = r; }); };
+    // 다시 재는 것이 끝나지 않았는데도 지난 값이 곧바로 온다.
+    expect(await cache('k', slow, { stale: true })).toBe(first);
+    expect(await cache('k', slow, { stale: true })).toBe(first);
+    expect(calls).toBe(2); // 뒤에서 하나만 돈다
+    const second = { ...ok, fetchedAtMs: 2 };
+    release!(second);
+    await Promise.resolve(); await Promise.resolve();
+    expect(await cache('k', slow, { stale: true })).toBe(second);
+    expect(calls).toBe(2);
+  });
+
+  it('캐시 `stale`: 값이 없으면 기다린다 · `stale` 없이 부르면 TTL 뒤엔 새 값을 기다린다(폴러 경로)', async () => {
+    let t = 0;
+    const cache = createUsageCache(1000, () => t);
+    const a = { ...ok, fetchedAtMs: 1 };
+    const b = { ...ok, fetchedAtMs: 2 };
+    expect(await cache('k', async () => a, { stale: true })).toBe(a);
+    t = 1500;
+    expect(await cache('k', async () => b)).toBe(b);
+  });
+
+  it('캐시 `stale`: 뒤에서 재는 사이 `forget` 하면 옛 시도가 값을 되살리지 않는다', async () => {
+    let t = 0;
+    let release: ((v: typeof ok) => void) | null = null;
+    const cache = createUsageCache(1000, () => t);
+    const old = { ...ok, fetchedAtMs: 1 };
+    await cache('k', async () => old);
+    t = 1500;
+    await cache('k', () => new Promise<typeof ok>((r) => { release = r; }), { stale: true });
+    cache.forget('k');
+    release!({ ...ok, fetchedAtMs: 2 });
+    await Promise.resolve(); await Promise.resolve();
+    const fresh = { ...ok, fetchedAtMs: 3 };
+    expect(await cache('k', async () => fresh, { stale: true })).toBe(fresh);
+  });
+
+  it('캐시 `stale`: 뒤에서 재기가 던지면 지난 값을 지키고 다음에 다시 시도한다', async () => {
+    let t = 0;
+    let calls = 0;
+    const cache = createUsageCache(1000, () => t);
+    const old = { ...ok, fetchedAtMs: 1 };
+    await cache('k', async () => old);
+    t = 1500;
+    expect(await cache('k', async () => { calls += 1; throw new Error('끊김'); }, { stale: true })).toBe(old);
+    await Promise.resolve(); await Promise.resolve();
+    expect(await cache('k', async () => { calls += 1; return ok; }, { stale: true })).toBe(old);
+    expect(calls).toBe(2);
+  });
 });

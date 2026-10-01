@@ -33,9 +33,15 @@ const COMMAND: Record<ProviderKind, string> = {
  */
 export function useProviderUsage(kind: ProviderKind, enabled: boolean): {
   snap: ProviderUsageSnapshot | null;
+  /**
+   * 첫 답을 아직 못 받았는가. 화면은 이 동안 막대 자리에 스켈레톤을 그린다 — 비워 두면 "한도 정보가
+   * 없는 계정"과 구분되지 않는다. 첫 답이 실패로 끝나도 내려간다(그때는 막대가 없는 것이 사실이다).
+   */
+  loading: boolean;
   refresh(): Promise<void>;
 } {
   const [snap, setSnap] = useState<ProviderUsageSnapshot | null>(null);
+  const [settled, setSettled] = useState(false);
   const refresh = useCallback(async () => {
     const call = invoke();
     if (!call) return;
@@ -43,11 +49,13 @@ export function useProviderUsage(kind: ProviderKind, enabled: boolean): {
       setSnap((await call(COMMAND[kind])) as ProviderUsageSnapshot);
     } catch {
       // 스냅샷을 지우지 않는다 — 한 번의 실패로 막대가 사라지면 사람은 한도가 풀린 줄 안다.
+    } finally {
+      setSettled(true);
     }
   }, [kind]);
 
   useEffect(() => {
-    if (!enabled) { setSnap(null); return; }
+    if (!enabled) { setSnap(null); setSettled(false); return; }
     void refresh();
     const id = setInterval(() => { if (!document.hidden) void refresh(); }, PROVIDER_USAGE_POLL_MS);
     const onVis = (): void => { if (!document.hidden) void refresh(); };
@@ -55,7 +63,7 @@ export function useProviderUsage(kind: ProviderKind, enabled: boolean): {
     return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
   }, [enabled, refresh]);
 
-  return { snap, refresh };
+  return { snap, loading: enabled && !settled && snap === null, refresh };
 }
 
 /** claude 는 `(pool, account)`, codex 는 `('', account)` — 시스템 기본은 account `''`. */

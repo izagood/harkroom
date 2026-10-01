@@ -121,6 +121,39 @@ describe('사용량', () => {
     expect(box.textContent).toContain('7%');
   });
 
+  it('첫 답 전에는 스켈레톤 — 목록을 먼저 그리고, 사용량은 와야 막대로 바뀐다', async () => {
+    let listDone: (v: unknown) => void = () => {};
+    let usageDone: (v: unknown) => void = () => {};
+    vi.stubGlobal('__TAURI_INTERNALS__', {
+      transformCallback: () => 1,
+      invoke: vi.fn((cmd: string) => {
+        if (cmd === 'claude_accounts_list') return new Promise((r) => { listDone = r; });
+        if (cmd === 'claude_accounts_provider_usage') return new Promise((r) => { usageDone = r; });
+        return Promise.resolve({});
+      }),
+    });
+    render(<ClaudeAccountsSettings />);
+    // 목록 전: 빈 화면("계정이 없다")이 아니라 자리표시.
+    expect(screen.getByTestId('provider-accounts-skeleton')).toBeTruthy();
+
+    listDone(POOLS_SNAPSHOT);
+    await screen.findByTestId('claude-account-work-aria');
+    expect(screen.queryByTestId('provider-accounts-skeleton')).toBeNull();
+    // 사용량을 기다리는 동안 계정마다 막대 자리표시가 선다(3계정).
+    expect(screen.getAllByTestId('provider-usage-skeleton')).toHaveLength(3);
+
+    usageDone({
+      measuredAtMs: NOW,
+      accounts: [{
+        account: 'aria', pool: 'work', source: 'cli', fetchedAtMs: NOW,
+        session: { usedPercent: 42, resetsAtMs: null }, weekly: null,
+      }],
+    });
+    expect((await screen.findByTestId('claude-provider-usage-work-aria')).textContent).toContain('42%');
+    // 첫 답이 왔으면 값이 없는 계정의 자리표시도 거둔다 — 그 계정은 "모른다"가 사실이다.
+    expect(screen.queryByTestId('provider-usage-skeleton')).toBeNull();
+  });
+
   it('트랜스크립트를 세는 옛 경로를 부르지 않고, 토큰 열도 그리지 않는다', async () => {
     stubTauri();
     render(<ClaudeAccountsSettings />);

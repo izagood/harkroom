@@ -37,6 +37,51 @@ beforeEach(() => { localStorage.clear(); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Codex 카드', () => {
+  it('첫 답 전에는 스켈레톤 — 목록이 오면 줄을 먼저 그리고, 사용량은 따로 채운다', async () => {
+    let listDone: (v: unknown) => void = () => {};
+    let usageDone: (v: unknown) => void = () => {};
+    vi.stubGlobal('__TAURI_INTERNALS__', {
+      transformCallback: () => 1,
+      invoke: vi.fn((cmd: string) => {
+        if (cmd === 'codex_accounts_list') return new Promise((r) => { listDone = r; });
+        if (cmd === 'codex_accounts_provider_usage') return new Promise((r) => { usageDone = r; });
+        return Promise.resolve({});
+      }),
+    });
+    render(<CodexAccountsSettings />);
+    // 목록 전: "로그아웃됨"이라고 단언하지 않고 자리표시를 그린다.
+    expect(screen.getByTestId('provider-accounts-skeleton')).toBeTruthy();
+    expect(screen.getByTestId('codex-system-skeleton')).toBeTruthy();
+    expect(screen.queryByText('Not signed in')).toBeNull();
+
+    listDone(SNAP);
+    const work = await screen.findByTestId('codex-account-work');
+    expect(screen.queryByTestId('provider-accounts-skeleton')).toBeNull();
+    // 사용량은 아직 — 막대 자리에 스켈레톤.
+    expect(within(work).getByTestId('provider-usage-skeleton')).toBeTruthy();
+
+    usageDone({
+      measuredAtMs: 0,
+      accounts: [{ account: 'work', fetchedAtMs: 0, source: 'cli', session: { usedPercent: 40, resetsAtMs: null }, weekly: null }],
+    });
+    await waitFor(() => expect(within(work).getByTestId('provider-usage')).toBeTruthy());
+    expect(screen.queryByTestId('provider-usage-skeleton')).toBeNull();
+  });
+
+  it('사용량 첫 답이 실패하면 스켈레톤을 거둔다 — 영원히 "불러오는 중"이 아니다', async () => {
+    vi.stubGlobal('__TAURI_INTERNALS__', {
+      transformCallback: () => 1,
+      invoke: vi.fn((cmd: string) => {
+        if (cmd === 'codex_accounts_list') return Promise.resolve(SNAP);
+        if (cmd === 'codex_accounts_provider_usage') return Promise.reject(new Error('daemon 이 답하지 않는다'));
+        return Promise.resolve({});
+      }),
+    });
+    render(<CodexAccountsSettings />);
+    await screen.findByTestId('codex-account-work');
+    await waitFor(() => expect(screen.queryByTestId('provider-usage-skeleton')).toBeNull());
+  });
+
   it('시스템 기본값 줄이 맨 위에 서고, 활성 배지는 활성 계정에만 붙는다', async () => {
     stubTauri();
     render(<CodexAccountsSettings />);
