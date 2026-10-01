@@ -5,6 +5,7 @@ import { getController } from '../state/controller';
 import { ImageLightbox } from './ImageLightbox';
 import { useT } from '../i18n/useT';
 import { useLatestKnownVersion } from './ArtifactPreview';
+import { useActiveStore } from '../state/communities';
 
 /**
  * 미리보기를 허용하는 타입. **화이트리스트다** — `image/*` 로 열면 `image/svg+xml` 이 들어오고,
@@ -194,22 +195,28 @@ function Attachment({ attachment }: { attachment: AttachmentRow }) {
  * 표지는 같은 글에 붙은 그림 첨부다(`coverAttachmentId`). 없으면 그림 칸을 비워 두지 않고 글 카드로만 그린다.
  * 표지는 `canPreview` 화이트리스트(svg 없음)를 지난 것만 `<img>`(blob)로 그린다(security ④ 조건).
  */
-function ArtifactCard({ attachment, cover }: { attachment: AttachmentRow; cover: AttachmentRow | null }) {
+function ArtifactCard({ attachment, cover, from }: {
+  attachment: AttachmentRow; cover: AttachmentRow | null; from: 'channel' | 'thread';
+}) {
   const t = useT();
   const ref = attachment.artifact!;
   const latest = useLatestKnownVersion(ref.artifactId, ref.latestVersion);
   const coverOk = cover !== null && canPreview(cover);
   const { url: coverUrl } = useAttachmentUrl(cover?.id ?? '', coverOk);
   const newer = latest > ref.version;
+  // 지금 패널에 떠 있는 카드 — 같은 안의 v1·v2 가 나란히 있을 때 무엇을 보고 있는지 보인다(designer c).
+  const selected = useActiveStore((st) => st.artifactPreview?.id === attachment.id);
   // 최신 제목은 #1065(091) 서버부터 싣는다. 없으면 툴팁을 생략한다.
   const latestTitle = ref.latestTitle;
   return (
     <button
       type="button"
-      onClick={() => getController().openArtifactPreview(attachment)}
+      onClick={() => getController().openArtifactPreview(attachment, from)}
       aria-label={t('artifact.card.open', { title: ref.title })}
+      aria-pressed={selected}
       data-testid="artifact-card"
-      className="block w-[min(28rem,100%)] overflow-hidden rounded border border-border bg-surface text-left hover:bg-surface-sunken"
+      data-selected={selected ? 'true' : 'false'}
+      className={`block w-[min(28rem,100%)] overflow-hidden rounded border bg-surface text-left hover:bg-surface-sunken ${selected ? 'border-accent ring-1 ring-accent' : 'border-border'}`}
     >
       {coverUrl && (
         <img src={coverUrl} alt="" data-testid="artifact-card-cover" className="aspect-video w-full border-b border-border object-cover" />
@@ -217,7 +224,10 @@ function ArtifactCard({ attachment, cover }: { attachment: AttachmentRow; cover:
       <span className="flex flex-col gap-0.5 px-3 py-2">
         <span className="flex items-center gap-2">
           <span className="truncate font-medium">{ref.title}</span>
-          <span className="shrink-0 text-meta text-fg-subtle">{t('artifact.card.version', { version: ref.version })}</span>
+          <span className="shrink-0 text-meta text-fg-subtle">{ref.version > 1
+            // 고쳐 올린 안인지 첫 판인지 카드에서 보이게(designer a).
+            ? t('artifact.card.versionWithPrev', { version: ref.version, prev: ref.version - 1 })
+            : t('artifact.card.version', { version: ref.version })}</span>
           {newer && (
             <span
               className="ml-auto shrink-0 rounded-full border border-border px-1.5 text-meta text-fg-muted"
@@ -235,7 +245,11 @@ function ArtifactCard({ attachment, cover }: { attachment: AttachmentRow; cover:
   );
 }
 
-export function Attachments({ attachments }: { attachments: AttachmentRow[] }) {
+export function Attachments({ attachments, from = 'channel' }: {
+  attachments: AttachmentRow[];
+  /** 이 목록이 놓인 칸 — 미리보기가 열린 동안 남길 칸을 정한다(`Workspace.tsx`). */
+  from?: 'channel' | 'thread';
+}) {
   if (!attachments.length) return null;
   // 미리보기의 표지는 카드 안에 그린다 — 따로 그림으로 한 번 더 보이면 같은 것이 두 번이다.
   const covers = new Set(attachments.map((a) => a.artifact?.coverAttachmentId).filter((v): v is string => !!v));
@@ -244,7 +258,7 @@ export function Attachments({ attachments }: { attachments: AttachmentRow[] }) {
       {attachments.filter((a) => !covers.has(a.id)).map((a) => (
         <div key={a.id}>
           {a.artifact
-            ? <ArtifactCard attachment={a} cover={attachments.find((c) => c.id === a.artifact!.coverAttachmentId) ?? null} />
+            ? <ArtifactCard attachment={a} from={from} cover={attachments.find((c) => c.id === a.artifact!.coverAttachmentId) ?? null} />
             : <Attachment attachment={a} />}
         </div>
       ))}

@@ -5,6 +5,7 @@ import { useActiveStore } from '../state/communities';
 import { ApiError } from '../lib/api';
 import { useT } from '../i18n/useT';
 import { formatSize } from './Attachments';
+import { isMacOS, MAC_TRAFFIC_LIGHT_PL } from '../lib/platform';
 
 /**
  * 미리보기(아티팩트) 화면 ④ — 에이전트가 `artifact.publish` 로 올린 HTML 을 앱 안에서 본다.
@@ -49,7 +50,10 @@ function reasonOf(err: unknown): 'tooLarge' | 'forbidden' | 'gone' | 'failed' {
  * 닫는다(창 전체 → 패널 → 닫힘). 머리줄·아래 줄은 **iframe 밖에서 앱이 그린다** — 페이지가 앱 화면을 흉내
  * 내도 머리줄은 진짜라는 것이 보여야 한다.
  */
-export function ArtifactPanel() {
+export function ArtifactPanel({ fill = false }: {
+  /** 곁의 내용 칸이 고정 폭(스레드)일 때 남는 폭을 미리보기가 채운다(`Workspace.tsx` 수정 1). */
+  fill?: boolean;
+} = {}) {
   const t = useT();
   const attachment = useActiveStore((s) => s.artifactPreview);
   const [expanded, setExpanded] = useState(false);
@@ -78,6 +82,8 @@ export function ArtifactPanel() {
 
   useEffect(() => {
     if (!attachment) return;
+    // 페이지 안을 한 번 누르면 키 입력은 교차 origin iframe 으로 가고 Esc 는 앱에 오지 않는다 — 막을 길이 없다.
+    // 그때 닫는 길은 머리줄의 ×다. 시험은 "프레임에 포커스가 없을 때"를 전제로 한다.
     const onKey = (e: KeyboardEvent) => {
       // 겹창(Overlay)이 먼저 받아 막았으면 그쪽 일이다.
       if (e.key !== 'Escape' || e.defaultPrevented) return;
@@ -100,22 +106,32 @@ export function ArtifactPanel() {
       data-expanded={expanded ? 'true' : 'false'}
       className={expanded
         ? 'fixed inset-0 z-40 flex flex-col bg-surface'
-        : 'flex w-[min(40rem,45vw)] min-w-[22rem] shrink-0 flex-col border-l border-border bg-surface'}
+        : fill
+          ? 'flex min-w-[22rem] flex-1 flex-col border-l border-border bg-surface'
+          : 'flex w-[min(40rem,45vw)] min-w-[22rem] shrink-0 flex-col border-l border-border bg-surface'}
     >
-      <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+      {/*
+        창 전체로 펼치면 이 머리줄이 창의 좌상단이다 — macOS 는 신호등이 콘텐츠 위에 뜨므로(titleBarStyle Overlay)
+        그 폭을 비우고, 창을 끌 자리가 되도록 drag region 을 단다(designer 수정 2). 버튼은 drag 를 받지 않는다.
+      */}
+      <header
+        className={`flex shrink-0 items-center gap-2 border-b border-border py-2 pr-2 ${expanded && isMacOS() ? `${MAC_TRAFFIC_LIGHT_PL} min-h-[40px]` : 'pl-3'}`}
+        {...(expanded ? { 'data-tauri-drag-region': true } : {})}
+        data-testid="artifact-panel-header"
+      >
         <span className="truncate font-medium" data-testid="artifact-panel-title">{title}</span>
         {ref && <span className="shrink-0 text-meta text-fg-subtle">{t('artifact.card.version', { version: ref.version })}</span>}
         <span className="ml-auto" />
         <button
           type="button"
-          className="shrink-0 rounded px-2 text-fg-subtle hover:bg-surface-sunken"
+          className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded text-body text-fg-muted hover:bg-surface-sunken"
           onClick={() => setExpanded((v) => !v)}
           aria-label={expanded ? t('artifact.panel.collapse') : t('artifact.panel.expand')}
           data-testid="artifact-panel-expand"
         >{expanded ? '⤡' : '⤢'}</button>
         <button
           type="button"
-          className="shrink-0 rounded px-2 text-fg-subtle hover:bg-surface-sunken"
+          className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded text-name leading-none text-fg-muted hover:bg-surface-sunken"
           onClick={() => getController().closeArtifactPreview()}
           aria-label={t('artifact.panel.close')}
           data-testid="artifact-panel-close"
@@ -147,6 +163,15 @@ export function ArtifactPanel() {
                 ? t('artifact.panel.tooLarge', { size: formatSize(attachment.sizeBytes) })
                 : t(`artifact.panel.${phase.reason}`)}</span>
             )}
+            {phase.kind === 'error' && phase.reason === 'tooLarge' && (
+              // 한도 초과에서 할 수 있는 일은 이것 하나다 — 아래 줄 구석에만 두지 않는다(designer f).
+              <button
+                type="button"
+                className="rounded border border-border px-2 py-0.5 text-meta hover:bg-surface"
+                onClick={() => void getController().saveAttachment(attachment)}
+                data-testid="artifact-panel-download-body"
+              >{t('artifact.panel.download')}</button>
+            )}
             {(phase.kind === 'navigated' || (phase.kind === 'error' && phase.reason === 'failed')) && (
               <button
                 type="button"
@@ -159,18 +184,19 @@ export function ArtifactPanel() {
         )}
       </div>
       <footer className="flex shrink-0 items-center gap-2 border-t border-border px-3 py-1.5 text-meta text-fg-subtle">
+        {/* 왼쪽에는 출처를 밝히는 말만 둔다 — 버튼이 붙으면 한 문장처럼 읽힌다(designer d). */}
         <span>{t('artifact.panel.madeBy')}</span>
         {phase.kind === 'ready' && (
           <button
             type="button"
-            className="rounded px-1 hover:bg-surface-sunken"
+            className="ml-auto rounded px-1 hover:bg-surface-sunken"
             onClick={() => load(attachment)}
             data-testid="artifact-panel-reload"
           >{t('artifact.panel.reload')}</button>
         )}
         <button
           type="button"
-          className="ml-auto rounded px-1 hover:bg-surface-sunken"
+          className={`${phase.kind === 'ready' ? '' : 'ml-auto '}rounded px-1 hover:bg-surface-sunken`}
           onClick={() => void getController().saveAttachment(attachment)}
           data-testid="artifact-panel-download"
         >{t('artifact.panel.download')}</button>

@@ -8,6 +8,7 @@ import { Attachments } from '../src/components/Attachments';
 import { ArtifactPanel } from '../src/components/ArtifactPreview';
 import { ApiError } from '../src/lib/api';
 import { acc, msg } from './helpers/fakeApi';
+import { previewLayout } from '../src/lib/previewLayout';
 
 // 미리보기 ④ — 카드·오른쪽 패널. 사양 designer d8ca47be·abcc05cf, 조건 security(스레드 31121b84).
 
@@ -64,7 +65,7 @@ describe('the preview card in a message', () => {
     const c = fakeController();
     render(<Attachments attachments={[page()]} />);
     fireEvent.click(screen.getByTestId('artifact-card'));
-    expect(c.openArtifactPreview).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }));
+    expect(c.openArtifactPreview).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }), 'channel');
   });
 
   it('draws the cover inside the card and not again as a picture', async () => {
@@ -102,6 +103,29 @@ describe('the preview card in a message', () => {
     render(<Attachments attachments={[page({}, { latestVersion: 2 })]} />);
     expect(screen.getByTestId('artifact-card').textContent).toContain('Inbox 보드 v1');
     expect(screen.getByTestId('artifact-card-latest').textContent).toBe('최신 v2 있음');
+  });
+
+  it('says which pane the card was pressed in', () => {
+    const c = fakeController();
+    render(<Attachments attachments={[page()]} from="thread" />);
+    fireEvent.click(screen.getByTestId('artifact-card'));
+    expect(c.openArtifactPreview).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }), 'thread');
+  });
+
+  // designer a: 고쳐 올린 안인지 첫 판인지 카드에서 보인다.
+  it('shows how many earlier versions a revised card has', () => {
+    fakeController();
+    render(<Attachments attachments={[page({}, { version: 3, latestVersion: 3 })]} />);
+    expect(screen.getByTestId('artifact-card').textContent).toContain('v3 · 이전 2개');
+  });
+
+  // designer c: 지금 패널에 떠 있는 카드에 선택 표시.
+  it('marks the card whose page is open in the panel', () => {
+    fakeController();
+    render(<Attachments attachments={[page(), page({ id: 'p2' }, { version: 2, latestVersion: 2 })]} />);
+    act(() => { useAppStore.getState().set({ artifactPreview: page({ id: 'p2' }, { version: 2 }) }); });
+    const cards = screen.getAllByTestId('artifact-card');
+    expect(cards.map((c) => c.getAttribute('data-selected'))).toEqual(['false', 'true']);
   });
 
   it('leaves a plain attachment as it was', () => {
@@ -190,11 +214,47 @@ describe('the preview panel', () => {
     expect(screen.queryByTestId('artifact-panel')).toBeNull();
   });
 
+  // designer f: 한도 초과에서 할 수 있는 유일한 일을 본문에도 둔다.
+  it('offers the download in the body when the page is too large', async () => {
+    const c = fakeController({ issuePreview: vi.fn(async () => { throw new ApiError(413, 'too_large', 'x'); }) });
+    render(<ArtifactPanel />);
+    open();
+    fireEvent.click(await screen.findByTestId('artifact-panel-download-body'));
+    expect(c.saveAttachment).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }));
+  });
+
+  // designer 수정 2: 창 전체로 펼친 머리줄은 창을 끄는 자리다.
+  it('makes the expanded header a window drag region', async () => {
+    fakeController();
+    render(<ArtifactPanel />);
+    open();
+    await screen.findByTestId('artifact-frame');
+    expect(screen.getByTestId('artifact-panel-header').hasAttribute('data-tauri-drag-region')).toBe(false);
+    fireEvent.click(screen.getByTestId('artifact-panel-expand'));
+    expect(screen.getByTestId('artifact-panel-header').hasAttribute('data-tauri-drag-region')).toBe(true);
+  });
+
   it('downloads the file from the footer', async () => {
     const c = fakeController();
     render(<ArtifactPanel />);
     open();
     fireEvent.click(await screen.findByTestId('artifact-panel-download'));
     expect(c.saveAttachment).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }));
+  });
+});
+
+// designer 수정 1: 미리보기가 열린 동안 내용 칸은 둘(누른 칸 + 미리보기), 닫으면 그대로 돌아온다.
+describe('which panes stay beside the preview', () => {
+  it('keeps everything when no preview is open', () => {
+    expect(previewLayout(null, true)).toEqual({ hideMain: false, hideThread: false, hideTerminal: false, fillPreview: false });
+  });
+  it('keeps the thread and folds the channel when the card was in the thread', () => {
+    expect(previewLayout('thread', true)).toEqual({ hideMain: true, hideThread: false, hideTerminal: true, fillPreview: true });
+  });
+  it('keeps the channel and folds the thread when the card was in the channel', () => {
+    expect(previewLayout('channel', true)).toEqual({ hideMain: false, hideThread: true, hideTerminal: true, fillPreview: false });
+  });
+  it('keeps the channel when the thread the card came from has since closed', () => {
+    expect(previewLayout('thread', false).hideMain).toBe(false);
   });
 });
