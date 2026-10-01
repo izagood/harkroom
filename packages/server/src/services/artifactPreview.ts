@@ -129,12 +129,19 @@ const FONT_HOSTS = ['https://fonts.gstatic.com', ...SCRIPT_HOSTS];
  * 이 단어 하나를 빼면 에이전트가 쓴 스크립트가 서버 origin 에서 돈다 — 시험이 지킨다.
  *
  * - `allow-scripts`: 시안은 대개 스크립트로 움직인다.
- * - `allow-popups`: 페이지 안 링크를 새 창으로 열게 한다(앱이 시스템 브라우저로 넘긴다).
+ * - `allow-popups`: 모바일 WebView 가 새 창 요청을 받아 시스템 브라우저로 넘길지 판단하게 남긴다. 데스크톱은
+ *   iframe 의 `sandbox="allow-scripts"` 와 교집합이라 새 창이 아예 열리지 않는다(④).
  *   `allow-top-navigation`·`allow-forms`·`allow-modals` 는 주지 않는다.
  * - `connect-src 'none'`·`form-action 'none'`: 페이지가 밖으로 말을 거는 길을 닫는다.
- * - `frame-ancestors` 는 걸지 않는다: 데스크톱 앱의 origin 은 플랫폼마다 다르고, 이 URL 은
- *   로그인한 멤버만 60초짜리로 받는다 — 남이 끼워 넣어도 열 토큰이 없다.
+ * - `frame-ancestors`: 이 문서를 프레임에 넣을 수 있는 것은 **데스크톱 앱**뿐이다(④, security 권고). 앱 origin 은
+ *   macOS·Linux 가 `tauri://localhost`, Windows 가 `http://tauri.localhost` 이고, 개발 중 vite 는
+ *   `http://localhost:5173`(tauri.conf.json devUrl)이다. 모바일은 WebView 최상위로 열어 이 지시문과 무관하다.
+ *   토큰 없이는 열리지 않으니 끼워 넣기로 얻을 것은 적지만, 남의 페이지가 우리 문서를 감싸 머리줄을 흉내 내는
+ *   길을 닫는다.
  */
+/** 미리보기 문서를 프레임에 넣을 수 있는 앱 origin(위 주석). */
+const FRAME_ANCESTORS = ['tauri://localhost', 'http://tauri.localhost', 'http://localhost:5173'];
+
 export const PREVIEW_CSP = [
   'sandbox allow-scripts allow-popups',
   "default-src 'none'",
@@ -146,4 +153,5 @@ export const PREVIEW_CSP = [
   "connect-src 'none'",
   "form-action 'none'",
   "base-uri 'none'",
+  `frame-ancestors ${FRAME_ANCESTORS.join(' ')}`,
 ].join('; ');

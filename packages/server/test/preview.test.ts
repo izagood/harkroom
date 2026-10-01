@@ -128,6 +128,9 @@ describe('opening a preview', () => {
     expect(directives).toContain("connect-src 'none'");
     expect(directives).toContain("default-src 'none'");
     expect(directives).toContain("form-action 'none'");
+    // 프레임에 넣을 수 있는 것은 데스크톱 앱 origin 뿐이다(④, security 권고). 와일드카드가 끼면 안 된다.
+    const ancestors = directives.find((d) => d.startsWith('frame-ancestors'));
+    expect(ancestors).toBe('frame-ancestors tauri://localhost http://tauri.localhost http://localhost:5173');
     expect(page.headers['x-content-type-options']).toBe('nosniff');
     expect(page.headers['referrer-policy']).toBe('no-referrer');
     expect(page.headers['cache-control']).toBe('no-store');
