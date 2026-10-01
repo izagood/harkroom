@@ -12,5 +12,10 @@ alter table automation_run add column initiated_by uuid null references account(
 alter table automation_run add column cause_message_id uuid null references message(id) on delete set null;
 alter table automation_run add column chain_depth int null;
 
+-- 원인 하나에 실행 한 번(security 검토) — "지금 돌려" 한 마디로 여러 번 돌지 못한다. 서비스가 먼저
+-- 보고 거절하지만, 행 잠금이 자동화마다라 서로 다른 자동화로 동시에 오는 경합은 이 인덱스가 막는다.
+create unique index automation_run_agent_cause on automation_run (cause_message_id)
+  where initiated_by is not null and cause_message_id is not null;
+
 create index automation_run_agent_recent on automation_run (automation_id, created_at desc)
   where initiated_by is not null;

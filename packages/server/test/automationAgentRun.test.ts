@@ -145,6 +145,24 @@ describe('automation.run (082)', () => {
     expect((await tool(runner.pat, forHelper, 'automation.list')).error.code).toBe('no_cause');
   });
 
+  it('1시간 넘은 원인은 cause_stale — 옛 부름을 다시 실어 쓰지 못한다', async () => {
+    const id = await create(boss.token, '오래된 원인');
+    const old = await say(boss.token, '@runner 지난번 부름');
+    await pool.query(`update message set created_at = now() - interval '61 minutes' where id = $1`, [old]);
+    expect((await tool(runner.pat, old, 'automation.run', { automationId: id })).error.code).toBe('cause_stale');
+    expect((await tool(runner.pat, old, 'automation.list')).error.code).toBe('cause_stale');
+  });
+
+  it('원인 하나로는 한 번만 — 다른 자동화·다른 에이전트로 바꿔도 cause_used', async () => {
+    const first = await create(boss.token, '첫째');
+    const second = await create(boss.token, '둘째');
+    const cause = await say(boss.token, '@runner @helper 돌려');
+    expect((await tool(runner.pat, cause, 'automation.run', { automationId: first })).run.status).toBe('pending');
+    expect((await tool(runner.pat, cause, 'automation.run', { automationId: second })).error.code).toBe('cause_used');
+    // 같은 메시지가 helper 도 깨웠지만, 원인 하나에 실행 하나다.
+    expect((await tool(helper.pat, cause, 'automation.run', { automationId: second })).error.code).toBe('cause_used');
+  });
+
   it('에이전트가 원인이면(위임) cause_not_human', async () => {
     const id = await create(boss.token, '위임');
     const delegated = (await tool(helper.pat, await say(boss.token, '@helper 맡긴다'), 'message.post', {

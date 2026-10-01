@@ -29,6 +29,12 @@ export const PENDING_EXPIRY_MS = 60 * 60 * 1000;
  */
 export const AGENT_RUN_MIN_GAP_MS = 10 * 60 * 1000;
 export const AGENT_RUNS_PER_HOUR = 3;
+/**
+ * 원인 메시지의 유효 기간(082, security 검토). 헤더는 에이전트 쪽 값이라, 시간 조건이 없으면 몇 주 전
+ * 소유자가 나를 부른 메시지 id 를 다른 턴에서 다시 실어 소유자 이름의 글을 낼 수 있다. "한참 늦은
+ * 지금은 틀린 요청"(`PENDING_EXPIRY_MS`)과 같은 기준이다.
+ */
+export const AGENT_RUN_CAUSE_MAX_AGE_MS = 60 * 60 * 1000;
 /** `automation.list` 가 주는 본문 앞부분 — 무엇을 돌리는지 고를 만큼만. */
 export const AGENT_LIST_BODY_CHARS = 200;
 
@@ -389,7 +395,7 @@ export async function runAutomationNow(
 // ── 에이전트가 돌리는 "지금 한 번"(082) ─────────────────────────────────────
 
 export type AgentRunRefusal =
-  | 'no_cause' | 'cause_not_human' | 'automation_reentry'
+  | 'no_cause' | 'cause_stale' | 'cause_used' | 'cause_not_human' | 'automation_reentry'
   | 'not_found' | 'not_approved' | 'agent_quota' | 'chain_capped' | 'rate_limited' | 'duplicate' | 'inactive';
 
 /**
@@ -408,21 +414,25 @@ const AGENT_RUN_CHAIN_DEPTH = 1;
  * - 원인이 에이전트면 거절한다(#task 경유 위임 포함). 사람이 직접 부른 턴만이다.
  * - 원인이 **자동화가 낸 글**이면 거절한다. 그 글의 작성자는 소유자라 위 조건을 통과하므로,
  *   따로 막지 않으면 "자동화 → 에이전트 → 다시 실행" 고리가 돈다.
+ * - 원인은 **1시간 안의 것**만 친다(`AGENT_RUN_CAUSE_MAX_AGE_MS`). 옛 부름을 다시 실어 쓰지 못한다.
+ *   한 원인으로 한 번만 돌리는 것은 `runAutomationForAgent` 가 본다.
  */
 async function agentRunOwner(
   db: Pool | PoolClient, agentId: string, causeMessageId: string | null,
 ): Promise<{ ownerId: string } | { refused: AgentRunRefusal }> {
   if (!causeMessageId) return { refused: 'no_cause' };
-  const row = (await db.query<{ author_id: string; author_is_agent: boolean; from_automation: boolean }>(
-    `select m.author_id, (a.kind = 'agent') as author_is_agent, (m.meta ? 'automation') as from_automation
+  const row = (await db.query<{ author_id: string; author_is_agent: boolean; from_automation: boolean; fresh: boolean }>(
+    `select m.author_id, (a.kind = 'agent') as author_is_agent, (m.meta ? 'automation') as from_automation,
+            m.created_at > now() - make_interval(secs => $3) as fresh
        from message m join account a on a.id = m.author_id
       where m.id = $1 and m.deleted_at is null
         and exists (select 1 from inbox i
                      where i.message_id = m.id and i.account_id = $2
                        and i.reason in ('mention', 'dm', 'team_mention', 'team_delegated', 'thread_reply', 'ask_answered'))`,
-    [causeMessageId, agentId],
+    [causeMessageId, agentId, AGENT_RUN_CAUSE_MAX_AGE_MS / 1000],
   )).rows[0];
   if (!row) return { refused: 'no_cause' };
+  if (!row.fresh) return { refused: 'cause_stale' };
   if (row.author_is_agent) return { refused: 'cause_not_human' };
   if (row.from_automation) return { refused: 'automation_reentry' };
   return { ownerId: row.author_id };
@@ -470,6 +480,9 @@ export async function listAutomationsForAgent(
  *
  * 상한 셈과 회차 넣기를 자동화 행 잠금 아래 한 트랜잭션에서 한다 — 동시에 두 번 불러도 둘 다
  * "아직 0회"를 보고 지나가지 못한다.
+ *
+ * **원인 하나에 실행 한 번**("지금 돌려" 한 마디가 한 번이다). 자동화가 달라도 같은 원인은 다시 못 쓴다.
+ * 행 잠금은 자동화마다라, 서로 다른 자동화로 동시에 오는 경합은 082 의 부분 유니크 인덱스가 막는다.
  */
 export async function runAutomationForAgent(
   pool: Pool, input: { automationId: string; agentId: string; causeMessageId: string | null },
@@ -493,6 +506,14 @@ export async function runAutomationForAgent(
         where automation_id = $1 and initiated_by is not null and created_at > now() - interval '1 hour'`,
       [automation.id],
     )).rows[0]!;
+    const used = await client.query(
+      `select 1 from automation_run where cause_message_id = $1 and initiated_by is not null limit 1`,
+      [input.causeMessageId],
+    );
+    if (used.rowCount) {
+      await client.query('rollback');
+      return { refused: 'cause_used' };
+    }
     if (recent.n >= AGENT_RUNS_PER_HOUR
       || (recent.last && Date.now() - new Date(recent.last).getTime() < AGENT_RUN_MIN_GAP_MS)) {
       await client.query('rollback');
@@ -509,6 +530,8 @@ export async function runAutomationForAgent(
     };
   } catch (err) {
     await client.query('rollback').catch(() => {});
+    if ((err as { code?: string }).code === '23505'
+      && (err as { constraint?: string }).constraint === 'automation_run_agent_cause') return { refused: 'cause_used' };
     throw err;
   } finally {
     client.release();

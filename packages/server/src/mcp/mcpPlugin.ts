@@ -1204,6 +1204,8 @@ function buildMcpServer(
    */
   const automationRefusal: Record<string, string> = {
     no_cause: 'only the automation owner can ask you to run it — this turn was not started by a human message that called you',
+    cause_stale: 'the request that started this turn is more than an hour old; ask the owner to ask again',
+    cause_used: 'this request already ran an automation once; ask the owner to ask again',
     cause_not_human: 'this turn was started by an agent; the automation owner must ask you directly',
     automation_reentry: 'this turn was started by an automation post; automations cannot re-run themselves through agents',
     not_found: 'no automation with this id owned by the person who asked',
