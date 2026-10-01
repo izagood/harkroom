@@ -17,7 +17,7 @@ import { usePrefsStore } from '../src/state/prefsStore';
 beforeEach(() => usePrefsStore.getState().setLocale('ko'));
 afterEach(() => usePrefsStore.getState().setLocale('system'));
 
-const acc = (id: string, handle: string, isAdmin: boolean) => ({ ...baseAcc(id, handle), isAdmin });
+const acc = (id: string, handle: string, isAdmin: boolean) => baseAcc(id, handle, 'human', isAdmin);
 
 const fakeController = (token = 'invite_token_abc') => {
   const c = {
@@ -43,10 +43,18 @@ describe('InviteSettings', () => {
     // **`관리자` 가 `admin` 으로 바뀌었다** — 이 저장소는 그 값을 옮기지 않는다
     // (`agents` 영역 머리말의 고유어 규율). 재는 것은 낱말이 아니라 **admin 이 아닌
     // 사람에게 초대가 닫혀 있다고 말하는가** 이므로, 그 사실을 그대로 잰다.
-    expect(screen.getByText(/admin 만 발급할 수 있다/)).toBeTruthy();
+    expect(screen.getByText(/초대 권한이 있는 사람만 발급할 수 있다/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: /초대 토큰 발급/ })).toBeNull();
     // UX ⑥b-5: 전에는 페이지 전체가 닫혔다. 목록은 `GET /accounts`(모두에게 열림)의 것이라 닫을 이유가 없다.
     expect(screen.getByTestId('members-list').textContent).toContain('@user');
+  });
+
+  it('admin 이 아니어도 member.invite 능력이 있으면 발급 버튼이 선다 — 서버 판정과 같다', () => {
+    fakeController();
+    const me = { ...acc('u1', 'user', false), capabilities: ['member.invite' as const] };
+    useAppStore.getState().set({ me, accounts: { u1: me } });
+    render(<InviteSettings />);
+    expect(screen.getByRole('button', { name: /초대 토큰 발급/ })).toBeTruthy();
   });
 
   it('멤버 목록은 사람만 이름순으로 싣는다 — 에이전트는 에이전트 › 목록의 것이다', async () => {

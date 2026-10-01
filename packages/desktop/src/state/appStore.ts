@@ -118,6 +118,8 @@ export interface AppState {
    * 같은 시트를 열어야 하므로 화면 지역 상태가 아니라 여기 둔다. 커뮤니티 스토어라 커뮤니티를 바꾸면 함께 닫힌다.
    */
   channelSheetId: string | null;
+  /** 시트를 어느 탭으로 여는가. `leave` 는 멤버 탭에서 나가기 절차를 바로 시작한다(메뉴의 "나가기"). null = 정보. */
+  channelSheetTab: 'info' | 'members' | 'notify' | 'agents' | 'leave' | null;
   leases: LeaseRow[];
   connected: boolean;
   /**
@@ -419,7 +421,7 @@ export const NO_TEAMS: AgentTeamRow[] = [];
 const initial = {
   me: null, accounts: {}, groups: [], teams: null, channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], inboxRevision: 0, reads: {}, dividerSeq: {},
-  online: [], terminalTarget: null, channelSheetId: null, leases: [], connected: false, serverVersion: null, workspaceIconUrl: null,
+  online: [], terminalTarget: null, channelSheetId: null, channelSheetTab: null, leases: [], connected: false, serverVersion: null, workspaceIconUrl: null,
   projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, drafts: {}, stickyMentions: {}, uploads: {},
   history: [], historyIndex: -1, notice: null, notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,

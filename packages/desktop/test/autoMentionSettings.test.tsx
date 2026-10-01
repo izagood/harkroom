@@ -4,6 +4,10 @@ import type { ChannelAutoMentionRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
+import { ChannelSettingsSheet } from '../src/components/ChannelSettingsSheet';
+
+/** 멤버·편집·나가기는 채널 설정 시트가 연다(UX ⑦b-2) — 시트는 Workspace 에 서므로 여기서 함께 그린다. */
+const SidebarWithSheet = (p: Parameters<typeof Sidebar>[0]) => (<><Sidebar {...p} /><ChannelSettingsSheet /></>);
 import { usePrefsStore } from '../src/state/prefsStore';
 import { acc, chan } from './helpers/fakeApi';
 
@@ -53,9 +57,9 @@ const fakeController = (rows: ChannelAutoMentionRow[]) => {
 const seed = (opts: { admin: boolean }) => {
   useAppStore.getState().reset();
   useAppStore.getState().set({
-    me: { ...acc('u1', 'me'), isAdmin: opts.admin },
+    me: acc('u1', 'me', 'human', opts.admin),
     accounts: {
-      u1: { ...acc('u1', 'me'), isAdmin: opts.admin },
+      u1: acc('u1', 'me', 'human', opts.admin),
       u2: acc('u2', 'other'),
       a1: acc('a1', 'fizz', 'agent'),
       a2: acc('a2', 'honey', 'agent'),
@@ -67,13 +71,15 @@ const seed = (opts: { admin: boolean }) => {
 };
 
 const sidebar = () => render(
-  <Sidebar panel="home" onOpenDirectory={vi.fn()} onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
+  <SidebarWithSheet panel="home" onOpenDirectory={vi.fn()} onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 
 const openSection = async (): Promise<HTMLElement> => {
   // 행 자체가 트리거다(`⋯` 버튼은 없앴다) — 우클릭으로 연다.
   fireEvent.contextMenu(screen.getByRole('button', { name: /# general\b/ }));
   fireEvent.click(screen.getByRole('menuitem', { name: '멤버 보기' }));
+  // 자동 멘션은 채널 설정 시트의 **에이전트** 탭이다(UX ⑦b-2).
+  fireEvent.click(await screen.findByTestId('channel-sheet-tab-agents'));
   return await screen.findByTestId('auto-mentions-c1');
 };
 
