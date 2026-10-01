@@ -2254,6 +2254,37 @@ export async function listMessages(
   return res.rows;
 }
 
+/**
+ * 인박스 항목들이 속한 **스레드의 머리**(Inbox 상태 보드, 2026-10-01).
+ *
+ * 보드는 메시지가 아니라 **일(스레드)** 단위로 선다 — 같은 일에서 온 다섯 줄이 카드 하나가
+ * 된다. 카드를 어느 열(내 차례·막힘·진행·끝남)에 둘지는 줄의 `meta` 가 아니라 **스레드의
+ * 지금 상태**가 정한다: 답한 물음, 풀린 실패는 옛 줄의 `meta` 로는 알 수 없다. 그 상태는
+ * 채널 목록이 이미 머리에 싣는 `THREAD_STATS` 그대로라, 같은 열(`LIST_COLS`)을 머리에서만 읽는다
+ * — 판정을 새로 적으면 채널의 배지와 보드의 열이 갈린다.
+ *
+ * 머리 수만큼만 돈다(항목 수가 아니라). 머리마다의 LATERAL 은 062 의
+ * `(thread_root_id, seq)` 색인을 탄다.
+ *
+ * **볼 수 있는가는 지금 다시 잰다**(`channelVisibleSql`, security F1). 인박스 항목은 부를 때의
+ * 가시성으로 만들어지고 그 뒤로 남는다 — 비공개 채널에서 내보내지거나(`removeChannelMember` 는
+ * inbox 행을 안 지운다) 채널이 비공개로 바뀌어도 항목은 그대로다. 머리는 **계속 갱신되는**
+ * 스레드 상태(본문·리액션·참여자·열린 물음)라, 거르지 않으면 나간 사람이 그 스레드를 계속 지켜본다.
+ * 걸러진 머리의 카드는 보드에 서지 않는다(화면의 "머리가 안 오면 세우지 않는다").
+ */
+export async function listInboxThreads(pool: Pool, accountId: string, entries: InboxEntry[]): Promise<MessageRow[]> {
+  const rootIds = [...new Set(entries.map((e) => e.threadRootId ?? e.messageId))];
+  if (rootIds.length === 0) return [];
+  const res = await pool.query(
+    `select ${LIST_COLS} from message m ${THREAD_STATS}
+       join channel c on c.id = m.channel_id
+      where m.id = any($1::uuid[]) and m.thread_root_id is null and ${LIST_VISIBLE}
+        and ${channelVisibleSql('c', '$2')}`,
+    [rootIds, accountId],
+  );
+  return res.rows;
+}
+
 export async function listInbox(
   pool: Pool, accountId: string, opts: { unreadOnly?: boolean },
 ): Promise<InboxEntry[]> {

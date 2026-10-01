@@ -160,7 +160,7 @@ const ALLOWED: { file: string; contains: string; why: string }[] = [
   },
   {
     file: 'components/Inbox.tsx',
-    contains: '<Identity account={accounts[e.authorId]} className="mt-0.5 h-5 w-5 text-[10px]"',
+    contains: '<Identity account={who} className="h-5 w-5 shrink-0 text-[10px]"',
     why: '아바타 상자(h-5)와 글리프를 한 쌍으로 넘기는 호출부',
   },
   {

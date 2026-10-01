@@ -2864,6 +2864,32 @@ export const en = {
   //   자기 말로 적을 수 있어야 하고, 지금 영어인 것은 우연이지 계약이 아니다
   // ---------------------------------------------------------------------------
 
+  // 상태 보드(C안, 2026-10-01). 열 이름은 designer 사양 그대로다.
+  'inbox.board.col.mine': 'Your turn',
+  'inbox.board.col.blocked': 'Blocked',
+  'inbox.board.col.active': 'In progress',
+  'inbox.board.col.done': 'Done',
+  /** 열 머리의 수. **내 차례만 센다** — 다른 열은 줄지 않는 숫자라 아무 말도 하지 않는다. */
+  'inbox.board.mineCount': '{count} waiting on you',
+  /** 열이 비었을 때. 내 차례가 0 이 되는 것이 이 화면의 목적이다. */
+  'inbox.board.empty.mine': 'Nothing is waiting on you',
+  'inbox.board.empty.other': 'Nothing here',
+  /** 처음부터 아무것도 없을 때(걸러 낸 것과 다르다). */
+  'inbox.board.empty.all': 'Nothing has called you',
+  /** "N일째" — 이 열에 들어오게 한 말부터 센다. */
+  'inbox.board.days': '{count}d waiting',
+  /** 카드에 쌓인 말의 수 — 같은 일에서 온 것이 여럿이면 한 장에 모인다는 표시. */
+  'inbox.board.more': '+{count} more',
+  'inbox.board.unread': 'New',
+  /** 치움 — 머리에 ✅ 를 달아 보드에서 내린다(끝남 맨 아래 접힘). 2/2 의 서버 완료가 대신한다. */
+  'inbox.board.clear': 'Clear',
+  'inbox.board.unclear': 'Put back',
+  /** 열 맨 아래 접힘 줄. 접힌 카드도 수로 남는다. */
+  'inbox.board.fold.quiet': 'Quiet for a week ({count})',
+  'inbox.board.fold.old': 'Older ({count})',
+  'inbox.board.fold.cleared': 'Cleared ({count})',
+  /** 쓰다 만 초안 — 보드 밖 한 줄. */
+  'inbox.board.drafts': 'Unfinished drafts ({count})',
   'inbox.drafts.badge': 'Draft',
   'inbox.drafts.empty': 'No unfinished drafts',
   /**
