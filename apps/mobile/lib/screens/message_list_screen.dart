@@ -4,10 +4,10 @@ import '../api/agent_meta.dart';
 import '../api/ask.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
-import '../mention/mention_suggest.dart';
 import '../state/app_scope.dart';
 import '../state/app_state.dart';
 import '../ui/states.dart';
+import 'agent_model.dart';
 import 'agent_rows.dart';
 import 'ask_card.dart';
 import 'composer_attachments.dart';
@@ -32,6 +32,8 @@ class _MessageListScreenState extends State<MessageListScreen> {
   final _composer = TextEditingController();
   final _scroll = ScrollController();
   bool _sending = false;
+  /// 작성칸 모델 칩으로 고른 값(서버 079). 보내면 비운다(결정 12).
+  Map<String, ModelPick> _picks = const {};
 
   @override
   void dispose() {
@@ -51,9 +53,19 @@ class _MessageListScreenState extends State<MessageListScreen> {
     // **먼저 비운다.** 보내는 동안 글자가 남아 있으면 사람은 안 갔다고 생각하고 다시
     // 누른다. 못 보낸 말은 작성칸이 아니라 목록 안에 "보내지 못했다"로 남는다.
     _composer.clear();
+    final picks = _picks;
+    setState(() => _picks = const {});
     try {
-      final went = await app.send(widget.channelId, text);
-      if (!went && mounted && _composer.text.isEmpty) _composer.text = text;
+      final went = await app.send(
+        widget.channelId,
+        text,
+        agentModels: picksForBody(picks, text, app.accounts.values),
+      );
+      // 못 보냈으면(첨부가 올라가는 중) 친 글과 고른 모델을 작성칸에 되돌린다.
+      if (!went && mounted) {
+        if (_composer.text.isEmpty) _composer.text = text;
+        setState(() => _picks = picks);
+      }
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -128,20 +140,10 @@ class _MessageListScreenState extends State<MessageListScreen> {
                     ),
               },
             ),
-            _MentionPicker(
+            MentionModelBar(
               controller: _composer,
-              onPicked: (handle) {
-                final sel = _composer.selection;
-                final cursor = sel.isValid ? sel.baseOffset : _composer.text.length;
-                final query = mentionQueryAt(_composer.text, cursor);
-                if (query == null) return;
-                final next = applyMention(_composer.text, query, handle);
-                _composer.value = TextEditingValue(
-                  text: next.text,
-                  selection: TextSelection.collapsed(offset: next.cursor),
-                );
-                setState(() {});
-              },
+              picks: _picks,
+              onPicksChanged: (next) => setState(() => _picks = next),
             ),
             ComposerAttachments(composerKey: widget.channelId),
             const Divider(height: 1),
@@ -181,58 +183,6 @@ class _MessageListScreenState extends State<MessageListScreen> {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-/// 컴포저 위에 서는 멘션 후보 줄.
-///
-/// **없을 때는 자리를 차지하지 않는다**(`SizedBox.shrink`). 늘 떠 있으면 그 줄은 곧
-/// 안 보이는 것이 되고, 화면 높이만 먹는다.
-class _MentionPicker extends StatelessWidget {
-  const _MentionPicker({required this.controller, required this.onPicked});
-
-  final TextEditingController controller;
-  final void Function(String handle) onPicked;
-
-  @override
-  Widget build(BuildContext context) {
-    final sel = controller.selection;
-    final cursor = sel.isValid ? sel.baseOffset : controller.text.length;
-    final query = mentionQueryAt(controller.text, cursor);
-    if (query == null) return const SizedBox.shrink();
-
-    final app = context.app;
-    // **비활성 계정은 후보에서 뺀다.** 디렉터리에는 남아 있어야 하지만(과거 메시지의
-    // 작성자를 푸는 표다) 부를 수는 없다.
-    final candidates = rankMentionCandidates(
-      app.accounts.values.where((a) => !a.isDisabled),
-      query.prefix,
-      handleOf: (a) => a.handle,
-      displayNameOf: (a) => a.displayName,
-    );
-    if (candidates.isEmpty) return const SizedBox.shrink();
-
-    return SizedBox(
-      key: const Key('mention-picker'),
-      height: 52,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        itemCount: candidates.length,
-        itemBuilder: (context, i) {
-          final a = candidates[i];
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-            child: ActionChip(
-              key: Key('mention-candidate-${a.handle}'),
-              avatar: a.isAgent ? const Icon(Icons.smart_toy_outlined, size: 16) : null,
-              label: Text('@${a.handle}'),
-              onPressed: () => onPicked(a.handle),
-            ),
-          );
-        },
       ),
     );
   }

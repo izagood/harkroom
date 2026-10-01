@@ -323,6 +323,66 @@ abstract class Strings {
   /// 보내기 버튼의 접근성 이름.
   String get composerSend;
 
+  /// 모델 지정(서버 079): "기본" 칩 — 이 에이전트의 설정 모델로 돈다.
+  String get modelDefault;
+
+  /// 모델 지정(서버 079): 스레드에 지정된 값임을 밝히는 꼬리.
+  String get modelThreadSet;
+
+  /// 모델 지정(서버 079): 지정이 하나도 없는 스레드의 접힌 칩.
+  String get modelAllDefault;
+
+  /// 모델 지정(서버 079): 빠른 줄의 마지막 칩 — 바텀시트를 연다.
+  String get modelMore;
+
+  /// 모델 지정(서버 079): effort 칸 이름.
+  String get modelEffort;
+
+  /// 모델 지정(서버 079): effort 를 비워 둘 때의 이름.
+  String get modelEffortDefault;
+
+  /// 모델 지정(서버 079): 에이전트 기본값을 밝히는 줄의 머리.
+  String get modelAgentDefault;
+
+  /// 모델 지정(서버 079): 에이전트 설정도 비었을 때.
+  String get modelHarnessDefault;
+
+  /// 모델 지정(서버 079): 비용 도움말(주간 한도·캐시·문맥).
+  String get modelCostNote;
+
+  /// 모델 지정(서버 079): 스레드 지정은 다음 턴부터다.
+  String get modelNextTurn;
+
+  /// 모델 지정(서버 079): 지정을 푼다.
+  String get modelReset;
+
+  /// 모델 지정(서버 079): 고른 값을 적용한다.
+  String get modelApply;
+
+  /// 모델 지정(서버 079): 목록 밖 이름을 직접 적는 칸.
+  String get modelCustom;
+
+  /// 모델 지정(서버 079): 하네스가 바뀐 지정.
+  String get modelStale;
+
+  /// 모델 지정(서버 079): 바텀시트 제목(스레드 칩). {handle} 자리에 @handle.
+  String get modelSheetTitleThread;
+
+  /// 모델 지정(서버 079): 바텀시트 제목(작성칸 칩).
+  String get modelSheetTitleComposer;
+
+  /// 모델 지정(서버 079): 빠른 줄 맨 앞 라벨.
+  String get modelQuickLabel;
+
+  /// 모델 지정(서버 079): 이어받은 스레드 지정을 푼다.
+  String get modelClearThread;
+
+  /// 모델 지정(서버 079): 무효 지정 안내. {harness} 는 지금 하네스.
+  String get modelStaleDetail;
+
+  /// 모델 지정(서버 079): 무효 지정을 다시 고른다.
+  String get modelRepick;
+
   /// 소켓이 붙어 있다.
   String get connectionOnline;
 
@@ -462,6 +522,26 @@ Map<String, String> stringsToMap(Strings s) => {
       'messagesEmpty': s.messagesEmpty,
       'composerHint': s.composerHint,
       'composerSend': s.composerSend,
+      'modelDefault': s.modelDefault,
+      'modelThreadSet': s.modelThreadSet,
+      'modelAllDefault': s.modelAllDefault,
+      'modelMore': s.modelMore,
+      'modelEffort': s.modelEffort,
+      'modelEffortDefault': s.modelEffortDefault,
+      'modelAgentDefault': s.modelAgentDefault,
+      'modelHarnessDefault': s.modelHarnessDefault,
+      'modelCostNote': s.modelCostNote,
+      'modelNextTurn': s.modelNextTurn,
+      'modelReset': s.modelReset,
+      'modelApply': s.modelApply,
+      'modelCustom': s.modelCustom,
+      'modelStale': s.modelStale,
+      'modelSheetTitleThread': s.modelSheetTitleThread,
+      'modelSheetTitleComposer': s.modelSheetTitleComposer,
+      'modelQuickLabel': s.modelQuickLabel,
+      'modelClearThread': s.modelClearThread,
+      'modelStaleDetail': s.modelStaleDetail,
+      'modelRepick': s.modelRepick,
       'connectionOnline': s.connectionOnline,
       'connectionConnecting': s.connectionConnecting,
       'connectionReconnecting': s.connectionReconnecting,

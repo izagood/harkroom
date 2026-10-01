@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import type { AccountView, AgentTeamRow, HandleGroupRow } from '@harkroom/shared';
 import type { MentionQuery } from '../lib/mention';
 import { GroupBadge, TeamBadge } from './Identity';
@@ -157,10 +157,16 @@ interface ListProps {
    * (음수 방향 넘침은 스크롤 영역이 되지 않는다), 맨 위 메시지를 고칠 때 목록이 잘린다.
    */
   placement: 'above' | 'below';
+  /**
+   * 계정 후보 줄 오른쪽에 덧붙일 것(있을 때만). 스레드 작성창이 그 스레드의 모델 지정을 옅게
+   * 적는 자리다(스레드별 모델 지정 결정 13). 지정이 없는 상대에는 `null` 을 돌려 아무것도
+   * 붙이지 않는다 — #455(사람과 에이전트를 가르지 않는다)를 지정 없는 줄에서까지 깨지 않는다.
+   */
+  trailing?: (item: Extract<Candidate, { kind: 'account' }>) => ReactNode;
 }
 
 /** 후보 목록. 열지 말지는 부르는 쪽이 정한다 — 이 컴포넌트는 그려지면 열린 것이다. */
-export function MentionSuggestList({ id, label, options, active, onActive, onChoose, placement }: ListProps) {
+export function MentionSuggestList({ id, label, options, active, onActive, onChoose, placement, trailing }: ListProps) {
   const listRef = useRef<HTMLUListElement>(null);
   /**
    * 키보드로 옮긴 후보를 목록 안으로 끌어온다.
@@ -233,8 +239,8 @@ export function MentionSuggestList({ id, label, options, active, onActive, onCho
                  배지(🤖 + 소유자 @핸들)를 뺐다 — 화면은 부르려는 상대가 사람인지
                  에이전트인지 말하지 않는다(design doc 2, #455). 사람 후보는 이미
                  핸들만 서 있었고(#365), 이제 둘이 같은 줄로 선다. 소유자를 확인해야
-                 하면 프로필(#475)을 연다. */
-              null
+                 하면 프로필(#475)을 연다. 덧붙임(`trailing`)은 부르는 쪽이 정한다. */
+              trailing?.(item) ?? null
             )}
           </button>
         </li>

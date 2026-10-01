@@ -127,6 +127,10 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     })),
     channelPrefs: vi.fn(async () => []),
     agentDefaults: vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null })),
+    // 스레드 × 에이전트 모델 지정(079). 기본은 "지정 없음" — 머리 줄이 `모두 기본` 으로 접힌다.
+    threadAgentModels: vi.fn(async () => []),
+    setThreadAgentModel: vi.fn(async () => null),
+    agentModelOptions: vi.fn(async () => ({ harness: 'claude-code' as const, model: null, effort: null })),
     updateAgentDefaults: vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null })),
     agentMemory: vi.fn(async () => []),
     deleteAgentMemory: vi.fn(async () => undefined),

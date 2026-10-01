@@ -32,6 +32,7 @@
  *
  * | 값 | 왜 | 무엇이 깨지나 |
  * |---|---|---|
+ * | `0.3.95` | 스레드 × 에이전트 모델 지정(079): `GET/PUT /channels/:id/threads/:rootId/agent-models[/:agentId]`·`GET /agents/:id/model-options` 와 메시지의 `agentModels[]` 가 그 릴리스에 들어갔고(#967, v0.3.95), 앱의 스레드 모델 칩(#969)이 그것을 부른다 | 스레드 모델 칩이 서지 않고, 작성창 칩으로 고른 모델이 옛 서버에서 조용히 버려진다 |
  * | `0.3.57` | `GET /workspace/icon`·`PUT /settings/workspace-icon` 이 그 릴리스에 들어갔고(#929, 077), 커뮤니티 레일 사진과 설정 › Workspace(#931)가 그것을 부른다 | 레일은 이니셜로 남고(404 폴백), 아이콘 올리기가 404 |
  * | `0.3.57` | `GET/PUT /settings/mention-policy` 가 그 릴리스에 들어갔고(#932, 078), 설정 › Agent defaults 의 멘션 연쇄 상한 칸이 그것을 부른다 | 상한 칸이 "불러오지 못했다"로 뜨고 저장이 404 |
  * | `0.3.42` | `PUT/DELETE /accounts/agents/:id/delegates/:agentId` 가 그 릴리스에 들어갔고(#909, 073), 에이전트 상세의 "대신 부를 수 있는 내 에이전트" 절(#910)이 그것을 부른다. | 대리 호출자 추가·빼기가 404 |
@@ -55,7 +56,7 @@
  *
  * 근거 없이 높이지는 않는다 — 멀쩡한 서버가 고장으로 그려지면 그 순간 이 값은 소음이 된다.
  */
-export const MIN_SERVER_VERSION = '0.3.57';
+export const MIN_SERVER_VERSION = '0.3.95';
 
 /** `X.Y.Z` 만 견준다. 그 밖의 모양은 견주지 않는다(아래 `compareRelease` 주석). */
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;

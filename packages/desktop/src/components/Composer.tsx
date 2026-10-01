@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { MAX_MESSAGE_BODY_CHARS, messagePermalink, parseMessagePermalink, type ScheduledMessageView } from '@harkroom/shared';
-import type { AttachmentRow } from '@harkroom/shared';
+import type { AgentModelPick, AttachmentRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { NO_TEAMS } from '../state/appStore';
 import { getController } from '../state/controller';
@@ -30,6 +30,8 @@ import { toggleLink, linkFromPaste, applyPastedLink, type PastedLink } from '../
 import { isFileDrag } from '../lib/fileDrag';
 import { ConfirmDialog } from './ConfirmDialog';
 import { useT } from '../i18n/useT';
+import { AgentModelChip } from './AgentModelChip';
+import { formatModelValue, isModelShortcut, picksToSend, threadRowFor, type ModelValue } from '../lib/threadModels';
 
 /**
  * 남은 글자를 세어 보이기 시작하는 지점 — 상한의 9할이다.
@@ -46,6 +48,7 @@ const BODY_COUNT_FROM = Math.floor(MAX_MESSAGE_BODY_CHARS * 0.9);
  * (`appStore.ts::NO_TEAMS` 와 같은 근거).
  */
 const NO_STICKY: string[] = [];
+const NO_PICKS: Record<string, ModelValue> = {};
 
 /**
  * 이만큼 긴 글을 붙여넣으면 **파일로 넘길 길을 제안한다.**
@@ -127,7 +130,7 @@ interface Props {
    * 실패를 reject 로 알리면 초안을 되돌린다 — 쓴 글이 조용히 사라지지 않게.
    * 두 번째 인자는 이미 업로드된 첨부의 id 들이다(업로드는 파일을 고른 순간 끝나 있다).
    */
-  onSend: (body: string, attachmentIds: string[]) => void | Promise<unknown>;
+  onSend: (body: string, attachmentIds: string[], agentModels?: AgentModelPick[]) => void | Promise<unknown>;
   placeholder?: string;
   rows?: number;
   autoFocus?: boolean;
@@ -182,6 +185,8 @@ interface HeldMessage {
    * 이미 새 채널을 가리킨다. 그러면 A 에서 쓴 것이 B 로 나간다 — #184 가 닫은 결함이다.
    */
   send: Props['onSend'];
+  /** "부를 상대" 칩으로 고른 모델(079). 이 글과 함께 간다 — 되돌리면 버린다(다시 고른다). */
+  agentModels: AgentModelPick[];
 }
 
 export function Composer({
@@ -497,6 +502,32 @@ export function Composer({
     [draft, allHandles, groupHandleList, myHandle],
   );
 
+  /** "부를 상대" 의 handle(소문자) → 에이전트 계정 id. 사람·집합이면 null — 모델 칩은 에이전트에만 선다. */
+  const agentIdOf = (handle: string): string | null => {
+    const lower = handle.toLowerCase();
+    const found = Object.values(accounts).find((a) => a.kind === 'agent' && a.handle.toLowerCase() === lower);
+    return found?.id ?? null;
+  };
+  /**
+   * 이 자리에서 고른 에이전트별 모델(079). **자리별로 둔다** — 채널을 옮기면 그 채널의 칩이다.
+   * 스레드 작성창은 서버의 스레드 지정(`threadAgentModels`)을 이어받아 보여 주고, 여기 값이 있으면
+   * 그것이 이긴다.
+   */
+  const [modelPicksByScope, setModelPicksByScope] = useState<Record<string, Record<string, ModelValue>>>({});
+  const modelPicks = modelPicksByScope[scopeKey] ?? NO_PICKS;
+  const threadRoot = scopeKey.startsWith('thread:') ? scopeKey.slice('thread:'.length) : null;
+  const threadModelRows = useActiveStore((s) => (threadRoot ? s.threadAgentModels[threadRoot] : undefined));
+  /** 자동완성으로 방금 부른 에이전트와 그때의 초안 — 초안이 바뀌면 힌트·강조를 거둔다. */
+  const [hintFor, setHintFor] = useState<string | null>(null);
+  const [hintDraft, setHintDraft] = useState('');
+  /** ⌘⇧M 이나 칩 클릭으로 연 고르개의 주인(에이전트 id). */
+  const [openModelFor, setOpenModelFor] = useState<string | null>(null);
+  const setPick = (agentId: string, v: ModelValue | null) => setModelPicksByScope((prev) => {
+    const cur = { ...(prev[scopeKey] ?? {}) };
+    if (v) cur[agentId] = v; else delete cur[agentId];
+    return { ...prev, [scopeKey]: cur };
+  });
+
   /**
    * handle → 구성원 수. "부를 상대" 줄이 집합 옆에 수를 적는 데 쓴다.
    *
@@ -645,6 +676,10 @@ export function Composer({
     const next = applyMention(draft, query, handle);
     setDraftLocal(next.text);
     pendingCaret.current = next.caret;
+    // 에이전트를 확정했으면 그 칩을 잠깐 강조하고 ⌘⇧M 힌트를 세운다 — 다음 글자에 거둔다.
+    const agentId = agentIdOf(handle);
+    setHintFor(agentId);
+    setHintDraft(next.text);
     // 고른 뒤에는 닫는다 — 열린 채로 두면 다음 Enter 가 전송으로 가지 못한다.
     setQuery(null);
     setActive(0);
@@ -756,7 +791,10 @@ export function Composer({
 
   /** 여기를 지나야만 메시지가 존재하기 시작한다 — 그 전에는 서버도 알림도 이 글을 모른다. */
   const dispatch = (item: HeldMessage) => {
-    void Promise.resolve(item.send(item.body, item.attachments.map((a) => a.id))).catch((err: unknown) => {
+    void Promise.resolve(item.agentModels.length
+      // 고른 모델이 없으면 셋째 인자를 아예 넘기지 않는다 — 부르는 쪽 모양이 지금까지와 같다.
+      ? item.send(item.body, item.attachments.map((a) => a.id), item.agentModels)
+      : item.send(item.body, item.attachments.map((a) => a.id))).catch((err: unknown) => {
       /**
        * **사유를 말한다.** 여기서 실패를 삼키면 화면에는 아무 일도 일어나지 않은 것으로
        * 보인다 — 초안만 조용히 돌아오므로, 사람은 글이 안 나갔다는 것조차 모른 채 답을
@@ -894,7 +932,26 @@ export function Composer({
     if (skippedAuto.length) setSkippedAutoByScope((prev) => ({ ...prev, [scopeKey]: [] }));
 
     // `onSend` 를 **지금** 붙잡는다. 타이머가 터질 때 읽으면 그 사이 옮긴 채널을 가리킨다.
-    const item: HeldMessage = { body, typed, attachments, scope: scopeKey, send: onSend };
+    /*
+      "부를 상대" 칩으로 고른 모델(결정 1·C). 지금 본문이 부르는 에이전트 것만 싣는다 — 고른 뒤
+      본문에서 지운 상대의 값까지 실으면 부르지도 않은 에이전트의 스레드 지정이 바뀐다.
+      보냈으면 이 자리의 고른 값은 끝이다(결정 12): 남겨 두면 모르는 사이에 다음 글들이 모두
+      고급 모델로 뜬다. 스레드 작성창은 서버에 지정이 남으므로 칩이 그 값을 이어 보여 준다.
+    */
+    const calledAgents = new Set(bodyMentionList.map((r) => agentIdOf(r.handle)).filter((id): id is string => !!id));
+    const calledPicks = Object.fromEntries(Object.entries(modelPicks).filter(([id]) => calledAgents.has(id)));
+    /*
+      **풀기를 싣는다**(designer 검토 2). 스레드 작성창에서 이어받은 지정을 [스레드 지정 풀기]로
+      비웠으면 `{model:null, effort:null}` 이 그 글과 함께 가야 실제로 풀린다 — `picksToSend` 는
+      빈 값을 "손대지 않음" 으로 보고 빼므로, 지정이 걸린 상대의 빈 값만 따로 되살린다.
+    */
+    const clears = Object.entries(calledPicks)
+      .filter(([id, v]) => v.model === null && v.effort === null && threadRowFor(threadModelRows, id))
+      .map(([agentId]) => ({ agentId, model: null, effort: null }));
+    const agentModels = [...picksToSend(calledPicks), ...clears];
+    if (Object.keys(modelPicks).length) setModelPicksByScope((prev) => ({ ...prev, [scopeKey]: {} }));
+    setOpenModelFor(null);
+    const item: HeldMessage = { body, typed, attachments, scope: scopeKey, send: onSend, agentModels };
     const windowMs = undoSendStorage.loadWindowMs();
     // 0 이면 창을 끈 것이다 — 예전처럼 누른 즉시 나간다.
     if (windowMs <= 0) {
@@ -1141,6 +1198,13 @@ export function Composer({
       커서 복원은 `requestAnimationFrame` 뒤다(`quotePastedCalls` 와 같은 이유): 초안을
       바꾼 렌더가 끝나기 전에 선택 범위를 주면 옛 글자 수 기준으로 잡혀 자리가 어긋난다.
     */
+    // ⌘⇧M: 마지막으로 부른 에이전트의 모델 고르개를 연다(결정 13 · 안 1). 부른 에이전트가
+    // 없으면 아무것도 하지 않는다 — 고를 대상이 없는 고르개는 열 이유가 없다.
+    if (isModelShortcut(e)) {
+      const last = [...bodyMentionList].reverse().map((r) => agentIdOf(r.handle)).find((id): id is string => !!id);
+      if (last) { e.preventDefault(); setOpenModelFor(last); }
+      return;
+    }
     if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key === 'e') {
       e.preventDefault();
       const el = e.currentTarget;
@@ -1306,6 +1370,17 @@ export function Composer({
           onChoose={choose}
           /* 작성창은 화면 맨 아래에 있으므로 목록은 위로 연다. */
           placement="above"
+          /* 스레드에 이 상대의 모델 지정이 있으면 옅게 적는다(결정 13). 부르기 전에
+             "이 스레드에서는 opus 로 돈다" 를 알아야 비용을 안다. */
+          trailing={(item) => {
+            const row = threadRowFor(threadModelRows, item.id);
+            const v = row && !row.stale ? formatModelValue(row) : null;
+            return v ? (
+              <span data-testid="mention-thread-model" className="ml-auto truncate text-meta text-fg-subtle">
+                {v} · {t('threadModel.threadSet')}
+              </span>
+            ) : null;
+          }}
         />
       )}
       {/*
@@ -1422,6 +1497,35 @@ export function Composer({
               }`}
             >
               <span>@{r.handle}</span>
+              {(() => {
+                const agentId = r.kind === 'account' ? agentIdOf(r.handle) : null;
+                if (!agentId) return null;
+                const row = threadRowFor(threadModelRows, agentId);
+                const own = modelPicks[agentId];
+                const inherited = !own && row && !row.stale ? row : null;
+                const value = own ?? inherited;
+                return (
+                  <AgentModelChip
+                    agentId={agentId}
+                    handle={r.handle}
+                    value={value}
+                    inherited={inherited !== null}
+                    highlight={hintFor === agentId && draft === hintDraft}
+                    mode="composer"
+                    placement="above"
+                    open={openModelFor === agentId}
+                    onOpenChange={(o) => {
+                      setOpenModelFor(o ? agentId : null);
+                      // 닫으면 포커스는 본문으로 — 키보드만 쓰는 흐름이 끊기지 않게.
+                      if (!o) requestAnimationFrame(() => ref.current?.focus());
+                    }}
+                    onApply={(v) => setPick(agentId, v)}
+                    // 이어받은 값이면 "스레드 지정 풀기" — 빈 값을 남겨 보낼 때 실제로 푼다. 아니면 이 글의
+                    // 고른 값만 지운다(다시 이어받거나 기본이 된다).
+                    onReset={() => setPick(agentId, inherited ? { model: null, effort: null } : null)}
+                  />
+                );
+              })()}
               {/*
                 집합·채널 전체는 **사람 하나가 아니라는 것이 보여야 한다** — `@oncall` 이
                 사람 이름처럼 보이면 몇 명을 부르는지 모르고 보낸다.
@@ -1447,6 +1551,12 @@ export function Composer({
               {r.kind === 'channel' && <span className="text-fg-subtle">{t('composer.mention.channelAll')}</span>}
             </li>
           ))}
+          {/* 부른 에이전트가 있으면 고르는 길을 알린다(결정 13 · 안 1). 기본값으로 부를 사람은 손을 멈추지 않는다. */}
+          {/* 부른 **직후에만** 고르는 길을 알린다(designer 검토 4) — 다음 글자를 치면 거둔다. 늘 붙어
+              있으면 그 줄은 곧 안 읽힌다. 단축키는 칩의 title 에도 있다. */}
+          {hintFor && draft === hintDraft && (
+            <li data-testid="model-chip-hint" className="text-fg-subtle">{t('threadModel.chipHint')}</li>
+          )}
         </ul>
       )}
       {uploadError && (

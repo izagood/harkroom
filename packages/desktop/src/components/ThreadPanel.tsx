@@ -11,6 +11,7 @@ import { threadState } from '../lib/threadState';
 import { WaitChainLine } from './WaitChain';
 import { waitChain } from '../lib/waitChain';
 import { ThreadParticipants } from './ThreadParticipants';
+import { ThreadModelCollapsed, ThreadModelRow } from './ThreadModelRow';
 import { Composer } from './Composer';
 import { PaneResizer } from './PaneResizer';
 import { paneStorage, paneMaxWidth, MIN_THREAD_WIDTH, MAX_THREAD_WIDTH, MIN_CHANNEL_WIDTH } from '../lib/prefs';
@@ -35,6 +36,9 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
   /** 채널과 같은 판정을 쓴다 — 모르는 계정은 에이전트로 치지 않는다(`lib/agentExchange`). */
   const isAgent = (id: string): boolean => accounts[id]?.kind === 'agent';
   const [alsoInChannel, setAlsoInChannel] = useState(false);
+  // 접힌 `모델 · 모두 기본` 칩을 눌러 연 줄(결정 10). 스레드를 바꾸면 다시 접는다.
+  const [modelsOpen, setModelsOpen] = useState(false);
+  useEffect(() => { setModelsOpen(false); }, [threadRootId]);
 
   /**
    * 패널 폭. 사이드바와 같은 모양으로 **바꿀 때마다 저장**한다 — 드래그가 끝날 때
@@ -285,6 +289,7 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
         {/* 참여자 줄과 터미널 선택자는 **헤더**다 — 세션이 (에이전트, 스레드)당 하나이므로
             문이 달릴 자리가 여기다(규칙 06). */}
         <div className="ml-auto flex items-center gap-2">
+          <ThreadModelCollapsed rootId={threadRootId} expanded={modelsOpen} onToggle={() => setModelsOpen((v) => !v)} />
           <ThreadParticipants messages={thread} live={live} />
         </div>
         <button className="ml-2 rounded px-2 text-fg-subtle hover:bg-surface-sunken"
@@ -293,6 +298,10 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
         </button>
       </header>
       {/* 사슬은 헤더 **바로 아래**다 — "무엇을 기다리는가"는 대화를 읽기 전에 알아야 한다. */}
+      {/* 모델 줄은 사슬보다 **위**다 — 이 스레드가 어떤 비용으로 도는지가 기다림보다 먼저 정해진다. */}
+      {activeChannelId && (
+        <ThreadModelRow channelId={activeChannelId} rootId={threadRootId} thread={thread} expanded={modelsOpen} />
+      )}
       <WaitChainLine chain={chain} />
       <div
         ref={listRef}
@@ -360,8 +369,10 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
           placeholder="Reply…"
           // 채널과 스레드 뿌리를 지금 것으로 붙인다(#223) — 창이 도는 동안 패널을 닫으면
           // 스토어의 `threadRootId` 는 null 이 되어 답글이 조용히 사라진다.
-          onSend={(body, attachmentIds) =>
-            getController().reply(body, attachmentIds, activeChannelId ?? undefined, threadRootId, alsoInChannel)}
+          onSend={(body, attachmentIds, agentModels) =>
+            (agentModels?.length
+              ? getController().reply(body, attachmentIds, activeChannelId ?? undefined, threadRootId, alsoInChannel, agentModels)
+              : getController().reply(body, attachmentIds, activeChannelId ?? undefined, threadRootId, alsoInChannel))}
         />
       </div>
     </section>

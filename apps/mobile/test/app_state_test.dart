@@ -60,6 +60,7 @@ MockClient _server({
       _postedAttachmentIds.add(
         (body['attachmentIds'] as List?)?.cast<String>().toList() ?? const <String>[],
       );
+      _postedAgentModels.add(body['agentModels']);
       return _json({
         'id': 'posted',
         'seq': 99,
@@ -94,6 +95,7 @@ String _seed({String token = 'tok'}) => jsonEncode({
 
 final _uploaded = <int>[];
 final _postedAttachmentIds = <List<String>>[];
+final _postedAgentModels = <Object?>[];
 
 void main() {
   group('부팅', () {
@@ -462,5 +464,28 @@ void main() {
 
       expect(app.messages['c1']!.single.body, '@forge 이거 해 줘');
     });
+  });
+
+  test('모델 지정(서버 079): 두 축이 빈 값(스레드 지정 풀기)도 그대로 싣는다 — 걸러 내면 풀리지 않는다', () async {
+    final store = SessionStore.inMemory(seed: _seed());
+    final app = _app(
+      store: store,
+      client: _server(channels: [
+        {'id': 'c1', 'name': 'general', 'kind': 'standard'},
+      ]),
+    );
+    await app.boot();
+    await app.openChannel('c1');
+    await app.send('c1', '@forge 이어서', agentModels: {
+      'a1': (model: null, effort: null),
+      'a2': (model: 'opus', effort: 'xhigh'),
+    });
+    expect(_postedAgentModels.last, [
+      {'agentId': 'a1', 'model': null, 'effort': null},
+      {'agentId': 'a2', 'model': 'opus', 'effort': 'xhigh'},
+    ]);
+    // 고른 것이 없으면 키를 싣지 않는다(옛 서버 호환).
+    await app.send('c1', '그냥');
+    expect(_postedAgentModels.last, isNull);
   });
 }

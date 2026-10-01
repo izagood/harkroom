@@ -671,6 +671,8 @@ describe('부를 상대 미리보기 (#278)', () => {
     render(<Composer onSend={vi.fn()} />);
     typeInto('@fizz @rusalka 안녕');
     const line = screen.getByTestId('body-mentions');
-    expect(line.querySelectorAll('button')).toHaveLength(0);
+    // 에이전트 옆의 **모델 칩**(079)은 빼고 센다 — 그것은 항목을 지우는 손잡이가 아니라 그 글과
+    // 함께 갈 모델을 고르는 자리다. 이 회귀선이 막는 것(본문과 화면이 어긋나는 지우기)과 무관하다.
+    expect(line.querySelectorAll('button:not([data-testid^="model-chip-"])')).toHaveLength(0);
   });
 });

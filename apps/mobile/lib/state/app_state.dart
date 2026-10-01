@@ -77,6 +77,7 @@ class FailedSend {
     required this.body,
     required this.attachmentIds,
     this.threadRootId,
+    this.agentModels = const [],
   });
 
   /// 화면이 줄을 집는 열쇠. 서버 id 가 없으니 앱이 짓는다.
@@ -85,6 +86,10 @@ class FailedSend {
   final String? threadRootId;
   final String body;
   final List<String> attachmentIds;
+
+  /// 이 글과 함께 갈 모델 지정(서버 079). 다시 보낼 때도 같이 간다 — 빠지면 고른 모델이 아니라
+  /// 기본값으로 턴이 돈다.
+  final List<Map<String, Object?>> agentModels;
 
   /// 다시 보내는 중이면 버튼을 잠근다 — 두 번 누르면 두 번 간다.
   bool retrying = false;
@@ -396,6 +401,17 @@ class AppState extends ChangeNotifier {
           avatarAttachmentId: existing.avatarAttachmentId,
         );
         notifyListeners();
+      case 'thread.agent_model.changed':
+        final rootId = event['threadRootId'];
+        final agentId = event['agentId'];
+        if (rootId is! String || agentId is! String) return;
+        final prev = threadAgentModels[rootId];
+        if (prev == null) return;
+        final rest = prev.where((r) => r.agentId != agentId).toList();
+        final row = event['row'];
+        if (row is Map) rest.add(ThreadAgentModel.fromJson(Map<String, Object?>.from(row)));
+        threadAgentModels[rootId] = rest;
+        notifyListeners();
       default:
       // 모르는 이벤트. 무시한다.
     }
@@ -619,7 +635,15 @@ class AppState extends ChangeNotifier {
   ///
   /// 보낼 수 없으면(첨부가 아직 올라가는 중) `false` 다 — 그때 화면은 작성칸을 **비우지 않는다.**
   /// 보내다 실패한 것은 `true` 다: 그 말은 [failedSends] 에 남아 목록 안에서 다시 보낸다.
-  Future<bool> send(String channelId, String body, {String? threadRootId}) async {
+  ///
+  /// [agentModels] 는 작성칸 모델 칩으로 고른 값(서버 079)이다. 두 축이 다 빈 값은 "그 스레드의
+  /// 지정 해제" 이므로 **걸러 내지 않는다** — 무엇을 실을지는 화면(`picksForBody`)이 이미 정했다.
+  Future<bool> send(
+    String channelId,
+    String body, {
+    String? threadRootId,
+    Map<String, ({String? model, String? effort})> agentModels = const {},
+  }) async {
     final key = threadRootId ?? channelId;
     final ids = (pending[key] ?? const <PendingAttachment>[])
         .where((p) => p.attachment != null)
@@ -637,6 +661,10 @@ class AppState extends ChangeNotifier {
       threadRootId: threadRootId,
       body: body,
       attachmentIds: ids,
+      agentModels: [
+        for (final e in agentModels.entries)
+          {'agentId': e.key, 'model': e.value.model, 'effort': e.value.effort},
+      ],
     ));
     return true;
   }
@@ -654,6 +682,7 @@ class AppState extends ChangeNotifier {
         item.body,
         threadRootId: item.threadRootId,
         attachmentIds: item.attachmentIds,
+        agentModels: item.agentModels,
       );
       _removeFailed(item);
       _upsertMessage(sent);
@@ -761,7 +790,37 @@ class AppState extends ChangeNotifier {
       if (threadLoad[rootId] != LoadState.loaded) threadLoad[rootId] = LoadState.failed;
     }
     notifyListeners();
+    unawaited(loadThreadAgentModels(channelId, rootId));
   }
+
+  /// 스레드 루트 id → 에이전트 모델 지정(서버 079). 키가 없으면 아직 못 받았다.
+  final Map<String, List<ThreadAgentModel>> threadAgentModels = {};
+
+  /// 스레드의 모델 지정을 읽는다. 실패는 삼킨다 — 칩이 안 설 뿐 스레드는 열린다.
+  Future<void> loadThreadAgentModels(String channelId, String rootId) async {
+    try {
+      threadAgentModels[rootId] = await _api!.threadAgentModels(channelId, rootId);
+      notifyListeners();
+    } on Object {
+      // 옛 서버(404)·끊김. 키를 남기지 않아 "모른다" 로 둔다.
+    }
+  }
+
+  /// 스레드 칩에서 정한다(다음 턴부터). 응답으로 바로 고친다 — 같은 사실이 이벤트로 다시 와도 같은 값이다.
+  Future<void> setThreadAgentModel(
+    String channelId, String rootId, String agentId, String? model, String? effort,
+  ) async {
+    final row = await _api!.setThreadAgentModel(channelId, rootId, agentId, model, effort);
+    final rest = (threadAgentModels[rootId] ?? const <ThreadAgentModel>[])
+        .where((r) => r.agentId != agentId)
+        .toList();
+    if (row != null) rest.add(row);
+    threadAgentModels[rootId] = rest;
+    notifyListeners();
+  }
+
+  /// 칩 고르개의 재료.
+  Future<AgentModelOptions> agentModelOptions(String agentId) => _api!.agentModelOptions(agentId);
 
   // ── 선택 요청 ─────────────────────────────────────────────────────────
 

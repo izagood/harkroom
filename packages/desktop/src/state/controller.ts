@@ -1,4 +1,4 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
+import type { AccountStatus, AddTeamToChannelResult, AgentModelOptions, AgentModelPick, AgentView, ThreadAgentModelView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
 import type { MemoryEdit, MemoryEntry, MemoryRevision } from '../lib/memoryList';
 import { countsAsReply, notifyLevelOf } from '@harkroom/shared';
 import { ApiClient, ApiError } from '../lib/api';
@@ -545,6 +545,9 @@ export class Controller {
         // 집합 목록과 구성원 수를 갱신한다(#300).
         this.swallow(this.refreshAccounts({ force: true }));
         break;
+      case 'thread.agent_model.changed':
+        this.applyThreadAgentModel(e.threadRootId, e.agentId, e.row);
+        break;
       case 'agent_team.changed':
         // 팀 목록과 팀원 수를 갱신한다(#172). 집합과 **같은 경로**를 탄다 — 둘이 한
         // 응답에 오므로(`GET /accounts`) 여기서 따로 부를 것이 없고, 따로 부르면 두
@@ -991,6 +994,8 @@ export class Controller {
       return;
     }
     this.store.getState().upsertMessages(channelId, page.messages);
+    // 머리 줄의 모델 칩(079). 열기를 막지 않는다 — 못 받으면 키가 없어 칩이 서지 않을 뿐이다.
+    this.swallow(this.loadThreadAgentModels(channelId, rootId));
     /**
      * **한 줄도 없으면 스레드가 아니다.** 여기 걸리는 것은 그 채널에 아예 없는 뿌리(위
      * 사고)와 흔적까지 사라진 스레드다. 둘 다 사람이 할 일은 같다: 이 패널을 닫고 왜
@@ -1178,11 +1183,13 @@ export class Controller {
    *
    * 인자를 생략하면 예전처럼 활성 채널로 간다 — 즉시 보내는 호출부는 그 편이 짧다.
    */
-  async send(body: string, attachmentIds: string[] = [], channelId?: string): Promise<void> {
+  async send(body: string, attachmentIds: string[] = [], channelId?: string, agentModels: AgentModelPick[] = []): Promise<void> {
     const target = channelId ?? this.store.getState().activeChannelId;
     // 파일만 보내는 것은 자연스럽다 — 본문이 비었다고 막으면 첨부를 보낼 길이 없다.
     if (!target || (!body.trim() && !attachmentIds.length)) return;
-    const { message, notified } = await this.api.postMessage(target, body, undefined, crypto.randomUUID(), attachmentIds);
+    const { message, notified } = await (agentModels.length
+      ? this.api.postMessage(target, body, undefined, crypto.randomUUID(), attachmentIds, undefined, agentModels)
+      : this.api.postMessage(target, body, undefined, crypto.randomUUID(), attachmentIds));
     this.store.getState().upsertMessages(target, [message]);
     this.recordNotifiedGap(message.id, body, notified);
   }
@@ -1234,13 +1241,15 @@ export class Controller {
    */
   async reply(
     body: string, attachmentIds: string[] = [], channelId?: string, threadRootId?: string,
-    alsoInChannel = false,
+    alsoInChannel = false, agentModels: AgentModelPick[] = [],
   ): Promise<void> {
     const state = this.store.getState();
     const target = channelId ?? state.activeChannelId;
     const root = threadRootId ?? state.threadRootId;
     if (!target || !root || (!body.trim() && !attachmentIds.length)) return;
-    const { message, notified } = await this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds, alsoInChannel);
+    const { message, notified } = await (agentModels.length
+      ? this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds, alsoInChannel, agentModels)
+      : this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds, alsoInChannel));
     this.store.getState().upsertMessages(target, [message]);
     // 스레드 답글도 집합을 부를 수 있다 — 채널 최상위만 재면 스레드에서 부른 집합의
     // 조용한 실패가 그대로 삼켜진다. 여기서 서버가 `thread_reply` 로 루트 작성자까지
@@ -1859,6 +1868,40 @@ export class Controller {
    * — admin 이 다른 기기에서 바꾼 것도 섞여 들어오므로 로컬 델타는 갈라진다.
    * **실패를 빈 목록으로 삼키지 않는다** — 빈 목록은 "아무도 안 부른다"는 거짓 사실이 된다.
    */
+  /** 칩 고르개의 재료(079) — 하네스·기본값·하네스가 밝힌 모델 목록. */
+  agentModelOptions(agentId: string): Promise<AgentModelOptions> {
+    return this.api.agentModelOptions(agentId);
+  }
+
+  /** 스레드 × 에이전트 모델 지정(079)을 받아 둔다. 실패는 던진다 — 삼킬지는 부르는 쪽이 정한다. */
+  async loadThreadAgentModels(channelId: string, rootId: string): Promise<ThreadAgentModelView[]> {
+    const rows = await this.api.threadAgentModels(channelId, rootId);
+    const store = this.store.getState();
+    store.set({ threadAgentModels: { ...store.threadAgentModels, [rootId]: rows } });
+    return rows;
+  }
+
+  /**
+   * 스레드 칩에서 정한다(결정 1·A). 두 축이 다 비면 푼다. 다음 턴부터 먹는다(결정 11) — 도는
+   * 턴은 이미 argv 가 정해졌다. 스토어는 응답으로 바로 고치고, 같은 사실이 이벤트로 다시 와도
+   * 같은 값으로 덮일 뿐이다.
+   */
+  async setThreadAgentModel(
+    channelId: string, rootId: string, agentId: string, model: string | null, effort: string | null,
+  ): Promise<void> {
+    const row = await this.api.setThreadAgentModel(channelId, rootId, agentId, model, effort);
+    this.applyThreadAgentModel(rootId, agentId, row);
+  }
+
+  private applyThreadAgentModel(rootId: string, agentId: string, row: ThreadAgentModelView | null): void {
+    const store = this.store.getState();
+    const prev = store.threadAgentModels[rootId];
+    // 받아 둔 적 없는 스레드는 건드리지 않는다 — 한 행만 넣으면 "지정이 이것뿐" 으로 읽힌다.
+    if (!prev) return;
+    const rest = prev.filter((r) => r.agentId !== agentId);
+    store.set({ threadAgentModels: { ...store.threadAgentModels, [rootId]: row ? [...rest, row] : rest } });
+  }
+
   async loadChannelAutoMentions(channelId: string): Promise<ChannelAutoMentionRow[]> {
     const rows = await this.api.channelAutoMentions(channelId);
     const store = this.store.getState();
