@@ -1017,7 +1017,11 @@ export interface AttachmentArtifactRef {
   artifactId: string;
   version: number;
   latestVersion: number;
+  /** 이 글의 버전 제목 — 옛 카드는 그때 이름을 보인다. */
   title: string;
+  /** 최신 버전 제목(`artifact.title`). 옛 서버(091 전)는 싣지 않는다. */
+  latestTitle?: string;
+  /** 이 버전에서 무엇을 고쳤나 한 줄. */
   summary: string | null;
   /** 같은 글에 함께 붙은 표지 그림 첨부. 없으면 글 카드로만 그린다. */
   coverAttachmentId: string | null;

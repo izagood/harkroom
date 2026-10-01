@@ -135,13 +135,14 @@ const REACTIONS = `coalesce((
 // 미리보기(090)의 버전이면 `artifact` 를 더한다 — 카드가 제목·버전·"최신 vN 있음"을 그린다. 보통
 // 첨부에는 키 자체가 없다(null 을 싣지 않는다): 첨부 모양을 정확히 비교하는 화면·시험이 많다.
 // `latestVersion` 은 읽는 순간의 값이다 — 새 버전이 올라와도 옛 글에 이벤트를 다시 치지 않는다.
+// `title`·`summary` 는 **그 글의 버전** 것이다(091) — 옛 카드는 그때 이름을 보인다. 최신 이름은 `latestTitle`.
 const ATTACHMENTS = `coalesce((
   select json_agg((jsonb_build_object(
     'id', a.id, 'filename', a.filename,
     'contentType', a.content_type, 'sizeBytes', a.size_bytes::int
   ) || coalesce((
     select jsonb_build_object('artifact', jsonb_build_object(
-      'artifactId', av.artifact_id, 'version', av.version, 'title', ar.title, 'summary', av.summary,
+      'artifactId', av.artifact_id, 'version', av.version, 'title', coalesce(av.title, ar.title), 'latestTitle', ar.title, 'summary', av.summary,
       'coverAttachmentId', av.cover_attachment_id,
       'latestVersion', (select max(av2.version) from artifact_version av2 where av2.artifact_id = av.artifact_id)))
     from artifact_version av join artifact ar on ar.id = av.artifact_id where av.attachment_id = a.id

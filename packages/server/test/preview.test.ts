@@ -82,8 +82,9 @@ async function asVersion(attachmentId: string, opts: { artifactId?: string; chan
     artifactId = a.rows[0].id as string;
   }
   await pool.query(
-    `insert into artifact_version (artifact_id, version, attachment_id)
-     values ($1, coalesce((select max(version) from artifact_version where artifact_id = $1), 0) + 1, $2)`,
+    `insert into artifact_version (artifact_id, version, attachment_id, title)
+     values ($1, coalesce((select max(version) from artifact_version where artifact_id = $1), 0) + 1, $2,
+             (select title from artifact where id = $1))`,
     [artifactId, attachmentId],
   );
   return artifactId;
@@ -160,6 +161,15 @@ describe('opening a preview', () => {
     } finally {
       clock = saved;
     }
+  });
+
+  // 091 은 null 을 허용한다 — 롤링 배포 중 옛 파드가 제목 없이 쓴 버전 행은 최신 제목으로 메운다.
+  it('falls back to the artifact title for a version row written without one', async () => {
+    const { attachmentId } = await postFile(PAGE);
+    const artifactId = await asVersion(attachmentId);
+    await pool.query(`update artifact_version set title = null where attachment_id = $1`, [attachmentId]);
+    await pool.query(`update artifact set title = '최신 이름' where id = $1`, [artifactId]);
+    expect((await issue(attachmentId)).json()).toMatchObject({ title: '최신 이름', latestTitle: '최신 이름' });
   });
 
   it('can be reloaded within its lifetime and not after', async () => {
