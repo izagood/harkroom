@@ -471,7 +471,7 @@ class StringsEn implements Strings {
   String get communitySwitchTo => 'Switch to this community';
 
   @override
-  String get communitySwitched => 'Switched to {name} · @{handle}';
+  String get communitySwitched => 'Now in {name} · @{handle}';
 
   @override
   String get communityLabel => 'Display name';
@@ -505,4 +505,13 @@ class StringsEn implements Strings {
 
   @override
   String get communityExpiredSubtitle => 'Signed out — session expired';
+
+  @override
+  String get communityManage => 'Manage communities';
+
+  @override
+  String get communitySwitcherLabel => 'Switch community, {name}';
+
+  @override
+  String get communityOthersWaiting => ', another community has something waiting for you';
 }

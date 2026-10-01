@@ -31,8 +31,12 @@ class CommunityTile extends StatelessWidget {
 ///
 /// 먼저 맨 아래 화면까지 걷는다: 옮기는 동안 앞 커뮤니티의 화면(커뮤니티 상세·스레드)이 위에
 /// 남아 있으면 새 커뮤니티의 상태로 옛 화면을 그린다.
-Future<void> enterCommunity(BuildContext context, String key) async {
+///
+/// [toChannels] 면 채널 탭으로 간다(머리 타일의 전환 시트, 설계 ④). 나 탭·커뮤니티 화면에서 옮기면
+/// 사람은 목록을 관리하는 중이므로 탭을 그대로 둔다(designer #1046).
+Future<void> enterCommunity(BuildContext context, String key, {bool toChannels = false}) async {
   final app = AppScope.read(context);
+  if (toChannels) app.selectTab(0);
   final messenger = ScaffoldMessenger.of(context);
   final t = context.t;
   final margin = toastMargin(context);
@@ -92,6 +96,8 @@ class _AddCommunityScreenState extends State<AddCommunityScreen> {
   final _password = TextEditingController();
   bool _busy = false;
   ServerUrlProblem? _urlProblem;
+
+  bool get _fixedUrl => widget.initialUrl != null;
 
   /// 로그인 실패 사유 — 키로 든다(화면이 문장을 짓지 않는다).
   String? _errorKey;
@@ -158,14 +164,37 @@ class _AddCommunityScreenState extends State<AddCommunityScreen> {
             TextField(
               key: const Key('community-add-url'),
               controller: _url,
-              readOnly: widget.initialUrl != null,
+              readOnly: _fixedUrl,
               autocorrect: false,
               keyboardType: TextInputType.url,
               textInputAction: TextInputAction.next,
+              // 고칠 수 없는 칸은 고칠 수 있는 칸과 **다르게 생겨야** 한다 — 똑같으면 눌러도 아무 일이
+              // 없어 고장 난 것처럼 보인다(designer #1046 후속). 옅은 바탕·테두리 없음·자물쇠.
               decoration: InputDecoration(
                 labelText: t.connectServerUrlLabel,
                 hintText: t.connectServerUrlHint,
                 errorText: problem == null ? null : _urlMessage(t, problem),
+                filled: _fixedUrl,
+                fillColor: _fixedUrl ? context.tokens.soft : null,
+                border: _fixedUrl ? InputBorder.none : null,
+                enabledBorder: _fixedUrl
+                    ? OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide.none,
+                      )
+                    : null,
+                focusedBorder: _fixedUrl
+                    ? OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide.none,
+                      )
+                    : null,
+                suffixIcon: _fixedUrl
+                    ? Icon(Icons.lock_outline,
+                        key: const Key('community-add-url-locked'),
+                        size: 18,
+                        color: context.tokens.mute)
+                    : null,
               ),
             ),
             const SizedBox(height: 12),
@@ -347,6 +376,180 @@ class _CommunityDetailScreenState extends State<CommunityDetailScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 채널 탭 머리 왼쪽(설계 ①): 지금 커뮤니티 타일 + 이름 ▾. 다른 커뮤니티에 나를 기다리는 것이
+/// 있으면 타일에 주황 점 하나 — 수는 시트에서 본다(데스크탑 레일과 같다).
+class CommunityHeader extends StatelessWidget {
+  const CommunityHeader({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.app;
+    final k = context.tokens;
+    final c = app.activeCommunity!;
+    final t = context.t;
+    // 스크린리더에는 「커뮤니티 전환, acme」 — 이름만 읽히면 무엇을 하는 버튼인지 모른다. 점은 그림이라
+    // 읽히지 않으므로 뜻을 말로 붙인다(designer #1056).
+    final label = t.communitySwitcherLabel.replaceAll('{name}', c.displayLabel) +
+        (app.othersWaiting ? t.communityOthersWaiting : '');
+    return Semantics(
+      key: const Key('community-header-semantics'),
+      button: true,
+      label: label,
+      // `excludeSemantics` 는 아래 InkWell 의 탭 동작까지 버린다 — 그대로 두면 VoiceOver 가 「버튼」이라 읽고도
+      // 두 번 눌러 열리지 않는다(designer #1056). 탭을 여기서 다시 단다.
+      onTap: () => showCommunitySwitcher(context),
+      excludeSemantics: true,
+      child: InkWell(
+      key: const Key('community-header'),
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => showCommunitySwitcher(context),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                CommunityTile(community: c, size: 28),
+                if (app.othersWaiting)
+                  Positioned(
+                    right: -3,
+                    top: -3,
+                    child: Container(
+                      key: const Key('community-header-dot'),
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: k.accent,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: k.bg, width: 2),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                c.displayLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: HarkroomType.screenTitle, fontWeight: FontWeight.w700, color: k.fg),
+              ),
+            ),
+            Icon(Icons.expand_more, size: 20, color: k.mute),
+          ],
+        ),
+      ),
+      ),
+    );
+  }
+}
+
+/// 전환 시트(설계 ②). 행마다 타일·이름·`@핸들 · 호스트`, 지금 것 ✓, 다른 것은 기다리는 수, 만료는
+/// 「다시 로그인」. 아래에 ＋추가와 ⚙관리.
+Future<void> showCommunitySwitcher(BuildContext context) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    builder: (sheet) => const _CommunitySwitcher(),
+  ).then((_) {});
+}
+
+class _CommunitySwitcher extends StatelessWidget {
+  const _CommunitySwitcher();
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final k = context.tokens;
+    final app = context.app;
+    // 시트를 닫은 뒤에 쓸 맥락 — 시트의 context 는 닫히면 죽는다.
+    final root = Navigator.of(context, rootNavigator: true).context;
+
+    void close() => Navigator.of(context).pop();
+
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.8),
+        child: ListView(
+          key: const Key('community-switcher'),
+          shrinkWrap: true,
+          padding: const EdgeInsets.only(top: 8, bottom: 8),
+          children: [
+            SectionHeader(label: t.meCommunitiesSection),
+            for (final c in app.communities)
+              ListTile(
+                key: Key('switcher-${c.key}'),
+                leading: CommunityTile(community: c),
+                title: Text(c.displayLabel, maxLines: 1, overflow: TextOverflow.ellipsis),
+                subtitle: Text(
+                  c.isExpired
+                      ? t.communityExpiredSubtitle
+                      : '@${c.handle} · ${Uri.tryParse(c.baseUrl)?.host ?? c.baseUrl}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: c.isExpired
+                    ? ExpiredChip(label: t.communityExpired)
+                    : c.key == app.activeKey
+                        ? Icon(Icons.check, color: k.accent, semanticLabel: t.communityCurrent)
+                        : UnreadBadge(count: app.otherWaiting[c.key] ?? 0),
+                onTap: () {
+                  close();
+                  if (c.isExpired) {
+                    openAddCommunity(root, initialUrl: c.baseUrl);
+                  } else if (c.key != app.activeKey) {
+                    enterCommunity(root, c.key, toChannels: true);
+                  }
+                },
+              ),
+            const Divider(),
+            ListTile(
+              key: const Key('switcher-add'),
+              leading: const SizedBox(width: 36, child: Icon(Icons.add)),
+              title: Text(t.communityAdd),
+              onTap: () {
+                close();
+                openAddCommunity(root);
+              },
+            ),
+            ListTile(
+              key: const Key('switcher-manage'),
+              leading: const SizedBox(width: 36, child: Icon(Icons.settings_outlined)),
+              title: Text(t.communityManage),
+              onTap: () {
+                close();
+                app.selectTab(2);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 만료 상태 칩 — warn 바탕. ✓(지금 커뮤니티)의 강조색과 갈라 놓는다(designer #1046).
+class ExpiredChip extends StatelessWidget {
+  const ExpiredChip({super.key, required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(color: k.warnSoft, borderRadius: BorderRadius.circular(999)),
+      child: Text(label,
+          style: TextStyle(color: k.warn, fontSize: 12, fontWeight: FontWeight.w600)),
     );
   }
 }

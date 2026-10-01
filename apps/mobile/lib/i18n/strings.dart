@@ -292,6 +292,15 @@ abstract class Strings {
   /// 토큰이 죽은 커뮤니티. 지우지 않고 이 말로 남긴다.
   String get communityExpired;
 
+  /// 전환 시트 — 나 탭의 커뮤니티 목록으로 간다.
+  String get communityManage;
+
+  /// 머리 타일의 스크린리더 이름. `{name}` 이 바뀐다.
+  String get communitySwitcherLabel;
+
+  /// 머리 타일에 점이 있을 때 이름 뒤에 붙는다(데스크탑 rail.community.tileOthers 와 같은 뜻).
+  String get communityOthersWaiting;
+
   /// 만료된 커뮤니티 행의 부제.
   String get communityExpiredSubtitle;
 
@@ -310,7 +319,8 @@ abstract class Strings {
   /// 커뮤니티 화면에서 그리로 옮긴다.
   String get communitySwitchTo;
 
-  /// 옮긴 직후 토스트. `{name}`·`{handle}` 이 바뀐다.
+  /// 옮긴 직후 토스트. `{name}`·`{handle}` 이 바뀐다. **이름 뒤에 조사를 붙이지 않는다** — 커뮤니티 이름은
+  /// 대개 로마자라 받침을 가릴 수 없다(designer #1056).
   String get communitySwitched;
 
   /// 이 기기에서만 쓰는 커뮤니티 이름.
@@ -632,6 +642,9 @@ Map<String, String> stringsToMap(Strings s) => {
       'communityAdd': s.communityAdd,
       'communityCurrent': s.communityCurrent,
       'communityExpired': s.communityExpired,
+      'communityManage': s.communityManage,
+      'communitySwitcherLabel': s.communitySwitcherLabel,
+      'communityOthersWaiting': s.communityOthersWaiting,
       'communityExpiredSubtitle': s.communityExpiredSubtitle,
       'communitySignOutAll': s.communitySignOutAll,
       'communitySignOutAllConfirm': s.communitySignOutAllConfirm,

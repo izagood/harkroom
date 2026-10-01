@@ -93,17 +93,8 @@ class MeScreen extends StatelessWidget {
                 // 만료는 **상태**다 — ✓(지금 커뮤니티)와 같은 강조색을 쓰면 둘이 같은 뜻으로 읽힌다.
                 // warn 칩으로 가른다(designer 4).
                 trailing: c.isExpired
-                    ? Container(
-                        key: Key('me-community-expired-${c.key}'),
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: k.warnSoft,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(t.communityExpired,
-                            style: TextStyle(
-                                color: k.warn, fontSize: 12, fontWeight: FontWeight.w600)),
-                      )
+                    ? ExpiredChip(
+                        key: Key('me-community-expired-${c.key}'), label: t.communityExpired)
                     : c.key == app.activeKey
                         ? Icon(Icons.check, color: k.accent, semanticLabel: t.communityCurrent)
                         : const Icon(Icons.chevron_right),
