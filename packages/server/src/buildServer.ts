@@ -43,6 +43,7 @@ import { createAutomationSweeper } from './services/automations.js';
 import { createSecretBox } from './services/secretBox.js';
 import { loadSecretKeyring, type SecretKeyring } from './services/secretKeyring.js';
 import { registerSecretRoutes } from './routes/secretRoutes.js';
+import { createSecretLeakGuard, leakGuardHook } from './services/secretLeakGuard.js';
 import type { RevealLimiter } from './services/secretAccess.js';
 import { createAgentWakeSweeper } from './services/agentWakes.js';
 import { emitEvent } from './events.js';
@@ -428,6 +429,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   await registerAuth(app, deps.pool);
 
+  // 비밀 보관소(085~). 키 묶음은 여기서 한 번 읽어 라우트·본문 거절(D5)이 같은 것을 쓴다.
+  const secretKeyring = deps.secretKeyring !== undefined
+    ? deps.secretKeyring
+    : loadSecretKeyring(process.env.HARKROOM_SECRET_KEYS_DIR, process.env.HARKROOM_SECRET_KEY_ID);
+  const leakGuard = createSecretLeakGuard(deps.pool, secretKeyring);
+  // 에이전트의 REST 쓰기 본문에 grant 받은 비밀 값이 있으면 거절한다(D5). 루트 훅이라 모든 라우트에
+  // 걸리고, 인증(onRequest) 뒤에 돈다. 보관소가 꺼져 있으면(키 없음) 볼 비밀도 없다.
+  if (leakGuard) app.addHook('preHandler', leakGuardHook(leakGuard));
+
   // 에이전트 presence 레지스트리를 한 번 만들고 두 곳에 넘긴다.
   // - registerWs: presence.snapshot 에 에이전트를 합집합으로 얹는다.
   // - registerMcp: /mcp 요청마다 mark() 를 부른다(도구 하나가 아니라 게이트에서).
@@ -509,7 +519,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // 채널·메시지 라우트가 createLocalStorage 뒤로 내려왔다.
   await registerChannelRoutes(app, deps.pool, storage);
   await registerMessageRoutes(app, deps.pool, { operatorHub });
-  await registerAttachmentRoutes(app, deps.pool, storage);
+  await registerAttachmentRoutes(app, deps.pool, storage, leakGuard);
   // 아바타는 같은 스토리지를 쓴다 — 파일 저장소를 하나로 유지하기 위해서다(avatarRoutes 주석).
   await registerAvatarRoutes(app, deps.pool, storage);
   await registerWorkspaceRoutes(app, deps.pool, storage);
@@ -525,9 +535,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     secretBox: createSecretBox(deps.secretKey !== undefined ? deps.secretKey : process.env.HARKROOM_SECRET_KEY),
   });
   await registerSecretRoutes(app, deps.pool, {
-    keyring: deps.secretKeyring !== undefined
-      ? deps.secretKeyring
-      : loadSecretKeyring(process.env.HARKROOM_SECRET_KEYS_DIR, process.env.HARKROOM_SECRET_KEY_ID),
+    keyring: secretKeyring,
     limiter: deps.secretRevealLimiter,
   });
 
@@ -614,7 +622,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // 원자료를 그대로 싣고 파생만 더한다 — 필드를 하나씩 베끼면 새 필드가 조용히 빠진다.
     return { ...runtime, state: projectionState(runtime) } satisfies ProjectionStatus;
   });
-  await registerMcp(app, deps.pool, lifecycle, agentPresence, storage);
+  await registerMcp(app, deps.pool, lifecycle, agentPresence, storage, leakGuard);
 
   return app;
 }

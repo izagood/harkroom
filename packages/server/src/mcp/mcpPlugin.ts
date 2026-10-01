@@ -52,6 +52,7 @@ import type { Readable } from 'node:stream';
 // slug 문법과 거절 문구는 services/memory.ts 에 있다 — 사람용 REST(accountRoutes)도 같은 것을 쓴다.
 import { isValidSlug, MEMORY_SLUG_HINT } from '../services/memory.js';
 import { listGrantedSecrets } from '../services/secretAccess.js';
+import { collectStrings, SECRET_IN_BODY, type SecretLeakGuard } from '../services/secretLeakGuard.js';
 import type { AgentPresence } from './presence.js';
 
 /**
@@ -304,8 +305,34 @@ function buildMcpServer(
   presence: Pick<AgentPresence, 'online'>,
   /** 이 요청을 낸 턴의 원인 메시지(`CAUSE_HEADER`). 발화 도구가 `postMessage` 에 넘긴다. */
   cause: string | null = null,
+  /** 본문 거절(D5). null 이면 보관소가 꺼져 있다. */
+  leakGuard: SecretLeakGuard | null = null,
+  operatorId: string | null = null,
 ): McpServer {
   const server = new McpServer({ name: 'harkroom', version: '0.1.0' });
+  /**
+   * 비밀 보관소 D5: 에이전트의 **모든 도구 인자**에 grant 받은 비밀 값이 있으면 그 도구를 돌리지 않는다.
+   * 도구마다 검사를 흩지 않고 등록 자리에서 감싼다 — 새 도구가 생겨도 빠지지 않는다. 오류는 고정 문장이고
+   * 어느 비밀인지 되비추지 않는다. 입력 스키마가 없는 도구는 첫 인자가 extra 라 볼 것이 없다.
+   */
+  if (leakGuard && account.kind === 'agent') {
+    const guard = leakGuard;
+    const register = server.registerTool.bind(server) as (...a: unknown[]) => unknown;
+    (server as unknown as { registerTool: (...a: unknown[]) => unknown }).registerTool = (name: unknown, config: unknown, handler: unknown) => {
+      const hasInput = !!(config as { inputSchema?: unknown }).inputSchema;
+      const run = handler as (...a: unknown[]) => unknown;
+      return register(name, config, async (...a: unknown[]) => {
+        if (hasInput) {
+          const hits = await guard.findInTexts(account.id, collectStrings(a[0]));
+          if (hits.length) {
+            await guard.record(null, account.id, operatorId, hits, `mcp:${String(name)}`);
+            return jsonResult({ error: SECRET_IN_BODY });
+          }
+        }
+        return run(...a);
+      });
+    };
+  }
 
   /**
    * 워크스페이스 규칙. `mode` 로 독자를 가른다(`guide.ts` 머리의 실측 참고) — 러너가 띄운
@@ -1443,6 +1470,7 @@ export async function registerMcp(
   lifecycle: Lifecycle,
   agentPresence: AgentPresence,
   storage: StorageBackend,
+  leakGuard: SecretLeakGuard | null = null,
 ): Promise<void> {
   app.post('/mcp', async (req, reply) => {
     if (!req.account || req.account.kind !== 'agent') {
@@ -1467,7 +1495,7 @@ export async function registerMcp(
     */
     const rawCause = req.headers[CAUSE_HEADER];
     const cause = typeof rawCause === 'string' && UUID_RE.test(rawCause) ? rawCause : null;
-    const server = buildMcpServer(pool, req.account, lifecycle, storage, agentPresence, cause);
+    const server = buildMcpServer(pool, req.account, lifecycle, storage, agentPresence, cause, leakGuard, req.operator?.id ?? null);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     reply.hijack();
     reply.raw.on('close', () => {
