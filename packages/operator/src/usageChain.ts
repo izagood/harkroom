@@ -13,6 +13,8 @@
 //
 // **캐시를 둔다.** CLI 경로는 계정마다 프로세스를 하나씩 띄운다(claude 는 node 앱). 화면이 1분마다
 // 폴링해도 한도 창은 분 단위로 움직이므로, 같은 계정은 `USAGE_CACHE_MS` 안에서 한 번만 잰다.
+import { sep } from 'node:path';
+
 import type { ProviderAccountUsage } from '@harkroom/shared/daemonProtocol';
 
 import type { UsageResult } from './cliUsage.js';
@@ -83,5 +85,13 @@ export function createUsageCache(ttlMs: number = USAGE_CACHE_MS, now: () => numb
   };
   /** 그 키의 값을 버린다 — 다시 로그인한 계정은 옛 로그인의 %를 돌려주면 안 된다. */
   cache.forget = (key: string): void => { entries.delete(key); };
+  /**
+   * `dir` 과 그 아래 키를 전부 버린다 — 풀을 통째로 지울 때. 키는 계정 디렉터리 경로다. 같은 이름으로
+   * 다시 만든 계정에 지운 로그인의 % 가 (SWR 로) 한 번 더 나가면 안 된다.
+   */
+  cache.forgetUnder = (dir: string): void => {
+    const prefix = dir.endsWith(sep) ? dir : dir + sep;
+    for (const key of [...entries.keys()]) if (key === dir || key.startsWith(prefix)) entries.delete(key);
+  };
   return cache;
 }

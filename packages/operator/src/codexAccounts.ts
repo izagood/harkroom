@@ -247,6 +247,8 @@ export function createCodexAccountsPort(opts: {
         if (state.killTimer) clearTimeout(state.killTimer);
         void (async () => {
           const s = await status(codexHome);
+          // 같은 디렉터리의 사용량 캐시는 옛 로그인의 값이다(다시 로그인했다면) — claude 쪽과 같다.
+          if (s.loggedIn) usageCache.forget(codexHome);
           emit({
             loginId, done: true, status: s,
             ...(s.loggedIn ? {} : { error: `로그인이 끝나지 않았다 (종료 코드 ${code ?? '없음'}) — 다시 시도해라` }),
@@ -290,6 +292,8 @@ export function createCodexAccountsPort(opts: {
       // 사라진 계정을 가리킨다.
       if ((await readActive()) === account) await writeActive(null);
       await rm(dir, { recursive: true, force: true });
+      // 같은 이름으로 다시 붙인 계정에 지운 로그인의 % 가 나가지 않게 버린다.
+      usageCache.forget(dir);
     },
 
     async activate(account: string | null): Promise<void> {

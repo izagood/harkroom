@@ -612,6 +612,8 @@ export function createClaudeAccountsPort(opts: {
         throw new Error(`계정이 없다: ${pool}/${account}`);
       }
       await rm(dir, { recursive: true, force: true });
+      // 사용량 캐시도 그 디렉터리의 값이다 — 같은 이름으로 다시 붙인 계정에 옛 로그인의 % 가 나가지 않게 버린다.
+      usageCache.forget(dir);
       // 디렉터리만 지우면 두 흔적이 남아 지운 계정이 되살아난다(2026-09-29):
       // Keychain 항목(같은 경로에 디렉터리가 다시 생기면 로그인된 채로 보인다)과
       // `order` 의 이름(같은 이름을 다시 만들면 옛 순서 자리로 돌아간다).
@@ -629,6 +631,7 @@ export function createClaudeAccountsPort(opts: {
         throw new Error(`풀이 없다: ${pool}`);
       }
       await rm(dir, { recursive: true, force: true });
+      usageCache.forgetUnder(dir);
     },
 
     async move(account: string, toPool: string): Promise<{ loggedIn: boolean }> {
