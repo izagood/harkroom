@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PR 커밋의 신원(author·committer)과 Co-authored-by 메일을 허용 목록과 대조한다.
+# PR 커밋의 신원(author·committer)과 Co-authored-by 메일을 허용 목록과 대조한다(pr-guard.yml).
 #
 # 왜: 공개 저장소의 커밋 메타데이터는 지울 수 없다 — 2026-10 에 회사 메일이 들어간 커밋을
 # 지우려고 히스토리를 통째로 다시 썼다. 다시 들어오지 않게 PR 단계에서 막는다.
