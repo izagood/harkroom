@@ -158,6 +158,15 @@ class AppState extends ChangeNotifier {
   /// 채널 id → 이전 페이지를 받는 중인가. 두 번 겹쳐 받지 않는다.
   final Set<String> loadingOlder = {};
 
+  /// 채널 id → 이전 페이지를 못 받았다. 이 채널은 **스크롤로는 다시 부르지 않는다** — 화면이
+  /// "다시 시도" 줄을 세우고, 사람이 누를 때만 [retryOlder] 로 다시 간다. 스크롤마다 다시 부르면
+  /// 서버가 아플 때 요청이 거듭 간다(security #996).
+  final Set<String> olderFailed = {};
+
+  /// 세션 세대. 로그인·로그아웃·다시 들어오기마다 올린다. 받는 데 걸린 사이에 계정이 바뀌면
+  /// **그 응답을 버린다** — 안 버리면 옛 계정의 말이 새 계정 화면에 섞인다(security #996).
+  int _generation = 0;
+
   /// 스레드 루트 id → 그 스레드를 읽는 상태.
   final Map<String, LoadState> threadLoad = {};
 
@@ -238,6 +247,7 @@ class AppState extends ChangeNotifier {
 
   /// 목록을 채우고 소켓을 연다.
   Future<void> _enter() async {
+    _generation++;
     final api = _api!;
     try {
       me ??= await api.me();
@@ -318,11 +328,13 @@ class AppState extends ChangeNotifier {
   Future<void> catchUp() async {
     final api = _api;
     if (api == null) return;
+    final gen = _generation;
     for (final entry in messages.entries.toList()) {
       final list = entry.value;
       if (list.isEmpty) continue;
       try {
         final page = await api.messages(entry.key, since: list.last.seq, limit: 200);
+        if (gen != _generation) return;
         for (final m in page.messages) {
           _upsertMessage(m);
         }
@@ -335,6 +347,7 @@ class AppState extends ChangeNotifier {
       if (channelId == null) continue;
       try {
         final page = await api.messages(channelId, thread: entry.key, limit: 100);
+        if (gen != _generation) return;
         threads[entry.key] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
       } on Object {
         /* 위와 같다 */
@@ -565,13 +578,17 @@ class AppState extends ChangeNotifier {
       return;
     }
     channelLoad[channelId] = LoadState.loading;
+    olderFailed.remove(channelId);
     notifyListeners();
+    final gen = _generation;
     try {
       final page = await _api!.messages(channelId, limit: channelPageSize);
+      if (gen != _generation) return;
       messages[channelId] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
       channelHasMore[channelId] = page.hasMore;
       channelLoad[channelId] = LoadState.loaded;
     } on Object catch (e) {
+      if (gen != _generation) return;
       messages.remove(channelId);
       failures[channelId] = LoadFailure.of(e);
       channelLoad[channelId] = LoadState.failed;
@@ -587,6 +604,7 @@ class AppState extends ChangeNotifier {
       if (roots >= minVisibleRoots || channelHasMore[channelId] != true) break;
       if (!await loadOlder(channelId)) break;
     }
+    if (gen != _generation) return;
     await markRead(channelId);
   }
 
@@ -604,15 +622,21 @@ class AppState extends ChangeNotifier {
   /// 이전 페이지(더 오래된 것)를 받는다. 받은 것이 있으면 `true`.
   ///
   /// 채널 화면이 목록 맨 위에 닿으면 부른다. 겹쳐 부르면 한 번만 간다. 실패해도 **던지지 않는다**
-  /// — 이미 보이는 것을 지우지 않고, 다음에 위로 밀 때 다시 해 본다.
+  /// — 이미 보이는 것을 지우지 않고 [olderFailed] 에 적는다. 그 뒤로는 [retryOlder] 만 다시 간다.
   Future<bool> loadOlder(String channelId) async {
     final list = messages[channelId];
     if (list == null || list.isEmpty) return false;
-    if (channelHasMore[channelId] != true || loadingOlder.contains(channelId)) return false;
+    if (channelHasMore[channelId] != true ||
+        loadingOlder.contains(channelId) ||
+        olderFailed.contains(channelId)) {
+      return false;
+    }
     loadingOlder.add(channelId);
     notifyListeners();
+    final gen = _generation;
     try {
       final page = await _api!.messages(channelId, before: list.first.seq, limit: channelPageSize);
+      if (gen != _generation) return false;
       channelHasMore[channelId] = page.hasMore;
       final current = messages[channelId];
       if (current == null) return false;
@@ -622,11 +646,18 @@ class AppState extends ChangeNotifier {
       messages[channelId] = [...older, ...current]..sort((a, b) => a.seq.compareTo(b.seq));
       return true;
     } on Object {
+      if (gen == _generation) olderFailed.add(channelId);
       return false;
     } finally {
       loadingOlder.remove(channelId);
       notifyListeners();
     }
+  }
+
+  /// "이전 메시지를 불러오지 못했다 · 다시 시도" 를 눌렀다. 못 받은 표시를 걷고 한 번 더 간다.
+  Future<bool> retryOlder(String channelId) {
+    olderFailed.remove(channelId);
+    return loadOlder(channelId);
   }
 
   /// 이모지를 누르거나 뗀다.
@@ -835,11 +866,14 @@ class AppState extends ChangeNotifier {
     // 여기서 **알리지 않는다** — 화면이 `didChangeDependencies`(빌드 중)에서 부르므로 알리면
     // "빌드 중 setState" 가 된다. 아직 상태가 없으면 화면은 읽는 중으로 그린다.
     if (threadLoad[rootId] == LoadState.failed) threadLoad[rootId] = LoadState.loading;
+    final gen = _generation;
     try {
       final page = await _api!.messages(channelId, thread: rootId, limit: 100);
+      if (gen != _generation) return;
       threads[rootId] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
       threadLoad[rootId] = LoadState.loaded;
     } on Object catch (e) {
+      if (gen != _generation) return;
       failures[rootId] = LoadFailure.of(e);
       if (threadLoad[rootId] != LoadState.loaded) threadLoad[rootId] = LoadState.failed;
     }
@@ -896,6 +930,7 @@ class AppState extends ChangeNotifier {
 
   /// 로그아웃. 보관본을 지우고 소켓을 닫는다.
   Future<void> signOut() async {
+    _generation++;
     await _ws?.close();
     _ws = null;
     await _sessions.clear();
@@ -909,6 +944,7 @@ class AppState extends ChangeNotifier {
     channelLoad.clear();
     channelHasMore.clear();
     loadingOlder.clear();
+    olderFailed.clear();
     threadLoad.clear();
     failures.clear();
     inboxLoad = LoadState.loading;

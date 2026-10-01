@@ -262,6 +262,9 @@ void main() {
     // 먼저 있던 말은 뜨고, **진행 줄은 말풍선이 되지 않는다**.
     expect(find.byKey(const Key('message-m1')), findsOneWidget);
     expect(find.byKey(const Key('message-m2')), findsNothing);
+    // 서버가 더 오래된 것이 없다고 했다 → 맨 위에 채널 시작 줄이 선다(designer #996).
+    expect(find.byKey(const Key('channel-start')), findsOneWidget);
+    expect(find.textContaining('#harkroom'), findsWidgets);
 
     await tester.enterText(find.byKey(const Key('composer')), '@forge 이거 해 줘');
     await tester.tap(find.byKey(const Key('composer-send')));
