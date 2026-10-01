@@ -20,6 +20,7 @@ import {
 import { RUNNER_LINK_ENV_KEYS, RUNNER_TURN_CAUSE_ENV } from '@harkroom/shared/runnerLink';
 
 import { executionModelFor, readonlyToolsFor, usesPiHome, usesXdgHome } from './adapters/index.js';
+import { piSessionsDir } from './piHome.js';
 import { OPENCODE_READONLY_AGENT, opencodeDirs } from './opencodeHome.js';
 
 /**
@@ -573,6 +574,9 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     ...preset.alwaysArgs(opts.mode),
     ...(opts.mode === 'mention' ? preset.permission[opts.mentionPermission] : []),
     ...(readonlyByList ? ['--tools', opts.readonlyToolList as string] : []),
+    // pi 의 세션 자리는 **저장소가 정할 수 있다**(`.pi/settings.json` 의 `sessionDir`, 신뢰 판정 전) —
+    // CLI 인자로 러너 루트에 못박는다(`piHome.ts::piSessionsDir`, security U1).
+    ...(usesPiHome(opts.harness) ? ['--session-dir', piSessionsDir(opts.piHome as string)] : []),
     ...preset.mcp({ mcpConfigPath: opts.mcpConfigPath, operatorBin: opts.operatorBin, extraMcpServers: opts.extraMcpServers ?? {} }),
     ...preset.model(opts.model),
     ...preset.effort(opts.effort),
@@ -710,10 +714,8 @@ function childEnv(
   // opencode 는 한 변수가 아니라 **XDG 셋**이다. 하나라도 빼면 자격증명만 갈리고 세션은
   // 사람 것과 공유되는 반쪽 격리가 된다(`opencodeHome.ts` 머리말).
   if (homes.opencodeHome !== null) Object.assign(env, opencodeDirs(homes.opencodeHome));
-  // pi 는 한 변수지만 세션 자리는 따로 바꿀 수 있다(`PI_CODING_AGENT_SESSION_DIR`). 부모 env 에 그
-  // 값이 있으면 세션만 사람 것과 섞이므로 **지운다** — 그러면 `<PI_CODING_AGENT_DIR>/sessions/--<cwd>--/`
-  // 에 쌓인다(재개를 잰 바로 그 배치). 값을 주지 않는 이유: 주면 pi 가 cwd 별 폴더 없이 평평하게
-  // 쌓는데(실측 2026-10-01), 그 배치에서의 재개는 재 보지 않았다.
+  // pi 는 한 변수지만 세션 자리는 따로 바꿀 수 있다(`PI_CODING_AGENT_SESSION_DIR`). 부모 env 의 그
+  // 값은 지운다 — 세션 자리는 argv 의 `--session-dir` 하나가 정한다(위 buildTurnCommand, security U1).
   if (homes.piHome) {
     env.PI_CODING_AGENT_DIR = homes.piHome;
     delete env.PI_CODING_AGENT_SESSION_DIR;

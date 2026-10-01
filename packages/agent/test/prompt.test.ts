@@ -970,3 +970,22 @@ describe('buildTurnPrompt — 수정으로 추가된 멘션(076)', () => {
     expect(prompt.split('이것도 봐 달라')).toHaveLength(2);
   });
 });
+
+// security(2026-10-01, #1011): TUI 는 입력이 `!` 로 시작하면 셸로(pi 는 `--tools` 와 상관없이), `/` 로
+// 시작하면 슬래시 명령으로 읽는다. 주입 텍스트의 첫 글자가 그 둘이 되지 않게 막는다.
+describe('guardInjectedPrompt — 주입 첫 글자가 `!`·`/` 가 되지 않는다', () => {
+  it('`!`·`/` 로 시작하면 이름표 한 줄을 앞에 붙인다(앞 공백도 본다)', async () => {
+    const { guardInjectedPrompt } = await import('../src/prompt.js');
+    for (const t of ['!rm -rf .', '/login', '  !touch x', '\n/model']) {
+      const g = guardInjectedPrompt(t);
+      expect(g.trimStart()[0]).not.toBe('!');
+      expect(g.trimStart()[0]).not.toBe('/');
+      expect(g.endsWith(t)).toBe(true);
+    }
+  });
+
+  it('보통 프롬프트는 그대로다', async () => {
+    const { guardInjectedPrompt } = await import('../src/prompt.js');
+    expect(guardInjectedPrompt('channelId: x\n본문')).toBe('channelId: x\n본문');
+  });
+});

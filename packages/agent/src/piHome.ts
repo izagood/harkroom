@@ -13,7 +13,7 @@
 // pi 에는 권한 승인 장치가 없다. 읽기 전용은 `--tools <닫힌 목록>` 으로 건다(jaebin 결정 10-01).
 // MCP 도구에는 `*` 가 안 먹으므로(실측) 턴 직전에 `pi mcp list --json` 으로 이름을 받아 적는다.
 import { execFile } from 'node:child_process';
-import { chmod, lstat, mkdir, readFile, readlink, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, readdir, readlink, symlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -26,9 +26,27 @@ export function sourcePiDir(env: NodeJS.ProcessEnv = process.env, home = homedir
   return env.PI_CODING_AGENT_DIR || join(home, '.pi', 'agent');
 }
 
-/** 러너 루트 안의 세션 자리(pi 기본 배치 — `sessions/--<cwd>--/<시각>_<id>.jsonl`). */
+/**
+ * 러너 루트 안의 세션 자리. **매 턴 `--session-dir` 로 못박는다**(`turn.ts`, security U1 2026-10-01).
+ *
+ * pi 는 세션을 고를 때 cwd 의 `.pi/settings.json` 의 `sessionDir` 을 **프로젝트 신뢰 판정 전에**
+ * 읽는다(`--no-approve` 로도 안 막힌다 — pi `docs/security.md` "cannot undo that initial
+ * session-directory lookup"). 저장소가 `"sessionDir": "./notes"` 를 심으면 지시문·대화·MCP 결과가
+ * 저장소 안에 쌓이고 `git add -A` 한 번에 공개된다. CLI 인자는 프로젝트 설정을 이긴다.
+ *
+ * 이 인자를 주면 배치가 평평해진다: `<dir>/<시각>_<id>.jsonl`(cwd 폴더 없음). id 로 찾는 것은
+ * 그대로 되고(`SessionManager.findById` 가 cwd 도 대조한다 — security 실측), 재개도 실물로 쟀다.
+ */
 export function piSessionsDir(piHome: string): string {
   return join(piHome, 'sessions');
+}
+
+/** 이 세션 id 의 기록 파일(`<시각>_<id>.jsonl`). 비밀 보관소 D7 의 가리기 대상이다. 없으면 `null`. */
+export async function piSessionFile(piHome: string, sessionId: string): Promise<string | null> {
+  const dir = piSessionsDir(piHome);
+  const names = await readdir(dir).catch(() => [] as string[]);
+  const hit = names.filter((n) => n.endsWith(`_${sessionId}.jsonl`)).sort().at(-1);
+  return hit ? join(dir, hit) : null;
 }
 
 interface ClaudeStyleStdio { type?: 'stdio'; command: string; args?: string[]; env?: Record<string, string> }

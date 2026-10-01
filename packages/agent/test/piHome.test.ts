@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  ensurePiHome, parsePiMcpList, piToolName, readonlyToolList, toPiMcp,
+  ensurePiHome, parsePiMcpList, piSessionFile, piSessionsDir, piToolName, readonlyToolList, toPiMcp,
 } from '../src/piHome.js';
 import { readonlyToolsFor } from '../src/adapters/index.js';
 
@@ -38,6 +38,18 @@ describe('읽기 전용 허용 목록 — 닫힌 목록이다', () => {
     const out = JSON.stringify({ servers: [{ name: 'harkroom', state: 'connected', tools: ['message.post'] }], errors: [] });
     expect(parsePiMcpList(out)).toEqual({ harkroom: ['message.post'] });
     expect(parsePiMcpList('not json')).toBeNull();
+  });
+});
+
+describe('세션 기록 파일 찾기 — 비밀 보관소 D7 의 가리기 대상(security U2)', () => {
+  it('`--session-dir` 배치(`<시각>_<id>.jsonl`, cwd 폴더 없음)에서 id 로 찾는다', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'pi-sess-'));
+    await mkdir(piSessionsDir(home), { recursive: true });
+    const id = '2cecdc12-f8b5-4d04-8cc3-e6ca28a9e816';
+    await writeFile(join(piSessionsDir(home), `2026-10-01T10-42-41-940Z_${id}.jsonl`), '{}\n');
+    await writeFile(join(piSessionsDir(home), '2026-10-01T10-00-00-000Z_other.jsonl'), '{}\n');
+    expect(await piSessionFile(home, id)).toBe(join(piSessionsDir(home), `2026-10-01T10-42-41-940Z_${id}.jsonl`));
+    expect(await piSessionFile(home, 'missing')).toBeNull();
   });
 });
 

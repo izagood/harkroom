@@ -868,6 +868,20 @@ describe('pi 의 argv', () => {
     expect(() => pi({ mentionPermission: 'auto', systemPromptFile: null })).toThrow(/파일로만/);
   });
 
+  // security U1(2026-10-01): pi 는 cwd 의 `.pi/settings.json` 의 `sessionDir` 을 신뢰 판정 **전에** 읽는다
+  // (`--no-approve` 로 안 막힌다). 저장소가 그 값을 심으면 대화·지시문·MCP 결과가 저장소 안에 쌓인다.
+  // CLI 인자가 이기므로 **모든 턴**에 러너 루트를 못박는다 — 워크스페이스에 무엇이 있든 argv 가 같아야 한다.
+  it('세션 자리는 매 턴 `--session-dir <piHome>/sessions` — 저장소의 `.pi/settings.json` 이 못 바꾼다', () => {
+    for (const mentionPermission of ['auto', 'readonly'] as const) {
+      for (const isFirstTurn of [true, false]) {
+        const p = pi({ mentionPermission, isFirstTurn, readonlyToolList: 'read,grep,find,ls' });
+        const i = p.args.indexOf('--session-dir');
+        expect(i).toBeGreaterThanOrEqual(0);
+        expect(p.args[i + 1]).toBe(join('/state/pi-home', 'sessions'));
+      }
+    }
+  });
+
   it('auto 는 도구를 제한하지 않는다', () => {
     expect(pi({ mentionPermission: 'auto' }).args).not.toContain('--tools');
   });

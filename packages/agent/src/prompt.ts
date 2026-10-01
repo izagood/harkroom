@@ -381,6 +381,19 @@ export type MemoryContext =
   | 'unavailable';
 
 /**
+ * PTY 에 주입할 텍스트가 **입력창의 명령 문법으로 읽히지 않게** 한다.
+ *
+ * TUI 하네스는 입력이 `!` 로 시작하면 셸로, `/` 로 시작하면 슬래시 명령으로 읽는다 — pi 는 `!` 를
+ * `--tools` 와 상관없이 셸로 실행한다(security 지적 2026-10-01, `interactive-mode.js`), claude 도 `!` 가
+ * bash 모드다. 지금 주입하는 프롬프트의 첫 줄은 러너가 짓지만, 그 첫 줄이 기억·안내 문구로 바뀌는
+ * 순간 읽기 전용 경계가 우연에 기대게 된다 — 그래서 첫 글자를 보고 막는다.
+ * 앞에 붙이는 것은 뜻 없는 이름표 한 줄이다(모델에게도 사람에게도 읽힌다).
+ */
+export function guardInjectedPrompt(text: string): string {
+  return /^\s*[!/]/.test(text) ? `[harkroom]\n${text}` : text;
+}
+
+/**
  * 프롬프트에 넣기 전 이스케이프.
  *
  * 에이전트가 쓴 메모리를 **자기가 나중에 읽는다** — 저장된 프롬프트 인젝션 경로다.
