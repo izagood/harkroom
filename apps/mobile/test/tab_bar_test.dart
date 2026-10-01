@@ -107,4 +107,16 @@ void main() {
     expect(find.byType(BackButton), findsOneWidget);
     expect(find.text('나').evaluate().isNotEmpty || find.text('You').evaluate().isNotEmpty, isTrue);
   });
+
+  testWidgets('프로필 사진은 탭 넷 모두의 머리에 있다 — 인박스도', (tester) async {
+    await _pump(tester);
+    for (final tab in ['tab-home', 'tab-dms', 'tab-inbox', 'tab-agents']) {
+      await tester.tap(find.byKey(Key(tab)));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('open-me')), findsOneWidget, reason: tab);
+    }
+    await tester.tap(find.byKey(const Key('open-me')));
+    await tester.pumpAndSettle();
+    expect(find.byType(BackButton), findsOneWidget);
+  });
 }

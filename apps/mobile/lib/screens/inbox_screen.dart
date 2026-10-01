@@ -7,6 +7,7 @@ import '../ui/states.dart';
 import '../state/app_state.dart';
 import '../ui/tokens.dart';
 import '../mention/render.dart';
+import 'channel_list_screen.dart';
 import 'message_list_screen.dart';
 import 'thread_screen.dart';
 
@@ -34,6 +35,10 @@ class InboxScreen extends StatelessWidget {
               ),
               child: Text(t.inboxMarkAllRead),
             ),
+          // 「나」 로 가는 길은 머리 오른쪽 사진 하나다 — 탭 넷 모두 같은 자리에 둔다.
+          // [모두 읽음] 이 보였다 사라져도 사진은 움직이지 않게 맨 끝에 선다.
+          const OpenMeButton(),
+          const SizedBox(width: 8),
         ],
       ),
       body: SafeArea(
