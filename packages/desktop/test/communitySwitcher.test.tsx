@@ -487,7 +487,7 @@ describe('커뮤니티 추가 (#165 결정 3)', () => {
     // 이미 서버가 있는 사람이 새 서버를 부트스트랩하는 것은 다른 일이다 — 감춘다.
     expect(screen.queryByText('First run? Create the admin account')).toBeNull();
     // 초대 가입은 남는다 — 초대받은 커뮤니티를 하나 더 붙이는 것은 같은 일이다.
-    expect(screen.getByText('Have an invite token? Join this workspace')).toBeTruthy();
+    expect(screen.getByText('Have an invite token? Join this community')).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('Server URL'), { target: { value: 'https://b.example' } });
     fireEvent.change(screen.getByLabelText('Login ID'), { target: { value: 'me-b' } });

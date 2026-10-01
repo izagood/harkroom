@@ -16,9 +16,9 @@ afterEach(() => {
 
 /** 만들기 폼을 열고 네 칸을 채운다. */
 function fillCreateForm() {
-  fireEvent.click(screen.getByRole('button', { name: /Create a hosted workspace/ }));
+  fireEvent.click(screen.getByRole('button', { name: /Create a hosted community/ }));
   fireEvent.change(screen.getByLabelText('Provisioning service URL'), { target: { value: GATE } });
-  fireEvent.change(screen.getByLabelText('Workspace name'), { target: { value: 'mine' } });
+  fireEvent.change(screen.getByLabelText('Community name'), { target: { value: 'mine' } });
   fireEvent.change(screen.getByLabelText('Invite code'), { target: { value: 'hrg_ok' } });
   fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'me@example.com' } });
 }
@@ -63,7 +63,7 @@ describe('ConnectScreen — 호스팅 워크스페이스 만들기', () => {
     const onConnected = vi.fn();
     render(<ConnectScreen onConnected={onConnected} />);
     fillCreateForm();
-    fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
 
     // 서버가 준 문장을 **그대로** 보여 준다 — 화면이 자기 말로 바꾸면 무엇을 기다리는지
     // 알 수 없다.
@@ -99,7 +99,7 @@ describe('ConnectScreen — 호스팅 워크스페이스 만들기', () => {
     )));
     render(<ConnectScreen onConnected={vi.fn()} />);
     fillCreateForm();
-    fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
 
     const shown = await screen.findByText(/invite code cannot be used/i);
     expect(shown).toBeTruthy();
@@ -114,7 +114,7 @@ describe('ConnectScreen — 호스팅 워크스페이스 만들기', () => {
     )));
     render(<ConnectScreen onConnected={vi.fn()} />);
     fillCreateForm();
-    fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
     expect(await screen.findByText(/already taken/i)).toBeTruthy();
   });
 
@@ -136,7 +136,7 @@ describe('ConnectScreen — 호스팅 워크스페이스 만들기', () => {
     }));
     render(<ConnectScreen onConnected={vi.fn()} />);
     fillCreateForm();
-    fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
     expect(await screen.findByText('push rejected', {}, { timeout: 8000 })).toBeTruthy();
   }, 15000);
 
@@ -182,11 +182,11 @@ describe('ConnectScreen — 호스팅 워크스페이스 만들기', () => {
   /** 네 칸이 다 차기 전에는 보내지 않는다 — gate 가 400 으로 돌려보낼 요청이다. */
   it('빈 칸이 있으면 제출되지 않는다', () => {
     render(<ConnectScreen onConnected={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: /Create a hosted workspace/ }));
-    const submit = screen.getByRole('button', { name: 'Create workspace' }) as HTMLButtonElement;
+    fireEvent.click(screen.getByRole('button', { name: /Create a hosted community/ }));
+    const submit = screen.getByRole('button', { name: 'Create community' }) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText('Provisioning service URL'), { target: { value: GATE } });
-    expect((screen.getByRole('button', { name: 'Create workspace' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Create community' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   /**
@@ -195,12 +195,12 @@ describe('ConnectScreen — 호스팅 워크스페이스 만들기', () => {
    */
   it('서비스 칸에 워크스페이스 주소를 넣으면 칸 밑에서 알려 준다', () => {
     render(<ConnectScreen onConnected={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: /Create a hosted workspace/ }));
-    fireEvent.change(screen.getByLabelText('Workspace name'), { target: { value: 'mine' } });
+    fireEvent.click(screen.getByRole('button', { name: /Create a hosted community/ }));
+    fireEvent.change(screen.getByLabelText('Community name'), { target: { value: 'mine' } });
     fireEvent.change(screen.getByLabelText('Provisioning service URL'), { target: { value: WS } });
-    expect(screen.getByText(/looks like the new workspace's own address/)).toBeTruthy();
+    expect(screen.getByText(/looks like the new community's own address/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Provisioning service URL'), { target: { value: GATE } });
-    expect(screen.queryByText(/looks like the new workspace's own address/)).toBeNull();
+    expect(screen.queryByText(/looks like the new community's own address/)).toBeNull();
   });
 
   /** 응답을 못 받으면(CORS·DNS) 네트워크 탓만 하지 않고 무엇을 넣는 칸인지 말한다. */
@@ -208,14 +208,14 @@ describe('ConnectScreen — 호스팅 워크스페이스 만들기', () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
     render(<ConnectScreen onConnected={vi.fn()} />);
     fillCreateForm();
-    fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
-    expect(await screen.findByText(/not the new workspace's address/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
+    expect(await screen.findByText(/not the new community's address/)).toBeTruthy();
     expect(pendingWorkspace.read()).toBeNull();
   });
 
   /** `add` 겹창에서는 새 워크스페이스를 만들 자리가 아니다(부트스트랩과 같은 근거). */
   it('add 모드에는 만들기 입구가 없다', () => {
     render(<ConnectScreen mode="add" onAdded={vi.fn()} onCancel={vi.fn()} />);
-    expect(screen.queryByRole('button', { name: /Create a hosted workspace/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Create a hosted community/ })).toBeNull();
   });
 });

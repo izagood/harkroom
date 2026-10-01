@@ -230,7 +230,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
               화면 하나가 무엇을 하는 중인지 말하는 유일한 줄이라 맨 윗단이 맞다 —
               `SettingsPage` 의 제목과 같은 단이다(그 파일에 근거를 적어 뒀다). */}
           <h1 className="text-title font-bold">
-            {authMode === 'create' ? 'Create a workspace' : adding ? 'Sign in to another community' : 'Harkroom'}
+            {authMode === 'create' ? 'Create a community' : adding ? 'Sign in to another community' : 'Harkroom'}
           </h1>
         </div>
         {/* 로그인 **전**에도 업데이트할 수 있어야 한다(실측 2026-09-07): 서버에 못 붙는
@@ -251,7 +251,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
             <>
               {/* 만들어지는 중이거나, 준비돼 클레임을 기다리는 자리. */}
               <div className="rounded border border-border bg-field px-3 py-2">
-                <p className="text-meta text-fg-subtle">Workspace</p>
+                <p className="text-meta text-fg-subtle">Community</p>
                 <p className="text-fg">{pending.url}</p>
               </div>
               {progress && <p className="text-meta text-fg-subtle">{progress}</p>}
@@ -259,7 +259,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
                 <>
                   {/* 준비됐다. 이제 첫 관리자를 만든다 — **토큰은 화면이 들고 있다.** */}
                   <p className="text-meta text-fg-subtle">
-                    Ready. Create the first admin account for this workspace.
+                    Ready. Create the first admin account for this community.
                   </p>
                   <label className="block text-meta font-medium">
                     Login ID
@@ -306,12 +306,12 @@ export function ConnectScreen(props: ConnectScreenProps) {
                 </label>
                 <p id="gate-url-hint" className="mt-1 text-meta text-fg-subtle">
                   {looksLikeWorkspaceAddress(gateUrl, wsName)
-                    ? 'This looks like the new workspace\'s own address — it does not exist yet. Enter the service that creates workspaces.'
-                    : 'The service that creates workspaces — not your new workspace\'s address. It comes with your invite code.'}
+                    ? 'This looks like the new community\'s own address — it does not exist yet. Enter the service that creates communities.'
+                    : 'The service that creates communities — not your new community\'s address. It comes with your invite code.'}
                 </p>
               </div>
               <label className="block text-meta font-medium">
-                Workspace name
+                Community name
                 <input className={field} value={wsName} onChange={(e) => setWsName(e.target.value)} placeholder="my-team" />
               </label>
               <label className="block text-meta font-medium">
@@ -387,7 +387,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
           className="w-full rounded bg-accent py-2 font-medium text-fg-on-strong disabled:opacity-50"
         >
           {authMode === 'create'
-            ? (pending ? (claimable ? 'Create admin account' : 'Waiting…') : 'Create workspace')
+            ? (pending ? (claimable ? 'Create admin account' : 'Waiting…') : 'Create community')
             : authMode === 'signin' ? 'Sign in' : authMode === 'bootstrap' ? 'Create account' : 'Join with invite'}
         </button>
         {authMode === 'signin' ? (
@@ -397,7 +397,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
               className="w-full text-meta text-fg-subtle underline"
               onClick={() => setAuthMode('register')}
             >
-              Have an invite token? Join this workspace
+              Have an invite token? Join this community
             </button>
             {/* 부트스트랩은 `add` 에서 **감춘다**(#165 결정 3). 이미 서버가 있는 사람이 새
                 서버의 첫 관리자 계정을 만드는 것은 "커뮤니티를 하나 더 붙인다" 와 다른 일이고,
@@ -420,7 +420,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
                 className="w-full text-meta text-fg-subtle underline"
                 onClick={() => setAuthMode('create')}
               >
-                Have an invite code? Create a hosted workspace
+                Have an invite code? Create a hosted community
               </button>
             )}
           </div>

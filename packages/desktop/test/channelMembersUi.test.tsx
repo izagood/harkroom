@@ -104,7 +104,7 @@ describe('채널 멤버 화면 (#183)', () => {
     expect(within(memberRow(panel, 'me')).queryByText('에이전트')).toBeNull();
   });
 
-  it('admin 계정은 워크스페이스 admin 으로 표시된다 — 채널 역할이 아니다', async () => {
+  it('admin 계정은 커뮤니티 admin 으로 표시된다 — 채널 역할이 아니다', async () => {
     seed({ admin: false });
     fakeController([
       { accountId: 'u1', handle: 'me' },
@@ -114,10 +114,10 @@ describe('채널 멤버 화면 (#183)', () => {
 
     const panel = await openMembers(/# general\b/, 'c1');
 
-    // 라벨이 '워크스페이스 admin' 인 것이 요점이다: 채널별 역할은 아직 없으므로
+    // 라벨이 '커뮤니티 admin' 인 것이 요점이다: 채널별 역할은 아직 없으므로
     // 이 배지를 '관리자'로 적으면 없는 개념을 있다고 말하는 것이 된다.
-    expect(within(memberRow(panel, 'boss')).getByText('워크스페이스 admin')).toBeTruthy();
-    expect(within(memberRow(panel, 'me')).queryByText('워크스페이스 admin')).toBeNull();
+    expect(within(memberRow(panel, 'boss')).getByText('커뮤니티 admin')).toBeTruthy();
+    expect(within(memberRow(panel, 'me')).queryByText('커뮤니티 admin')).toBeNull();
   });
 
   it('멤버는 초대할 수 있다', async () => {
