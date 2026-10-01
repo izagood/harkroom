@@ -317,7 +317,8 @@ export function Inbox({ open, onClose }: Props) {
             {who && <Identity account={who} className="h-5 w-5 shrink-0 text-[10px]" variant="avatar" />}
             {/* 좁으면 **작성자부터** 줄인다(designer) — 얼굴이 이미 누군지 말하고, 채널은 대신할 것이 없다. */}
             {who && <span aria-hidden="true" className="min-w-0 shrink-[10] truncate font-medium text-fg-muted">{who.handle}</span>}
-            <span className="min-w-0 truncate">{channelLabel(card.channelId)}</span>
+            {/* 채널은 줄지 않는다 — 다만 아주 긴 이름이 줄을 다 먹지 않게 폭의 절반 가까이에서 자른다. */}
+            <span className="max-w-[45%] shrink-0 truncate">{channelLabel(card.channelId)}</span>
             <span
               className={`shrink-0 ${days != null && card.column === 'mine' ? 'text-state-turn' : ''}`}
               data-testid={`inbox-card-age-${card.rootId}`}
