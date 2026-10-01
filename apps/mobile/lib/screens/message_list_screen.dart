@@ -14,6 +14,7 @@ import 'agent_model.dart';
 import 'agent_rows.dart';
 import 'ask_card.dart';
 import 'composer_attachments.dart';
+import 'mention_button.dart';
 import 'message_feed.dart';
 import 'message_tile.dart';
 import 'thread_screen.dart';
@@ -33,6 +34,8 @@ class MessageListScreen extends StatefulWidget {
 
 class _MessageListScreenState extends State<MessageListScreen> {
   final _composer = TextEditingController();
+  /// @ 버튼이 칸에 포커스를 주려고 쥔다.
+  final _composerFocus = FocusNode();
   final _scroll = ScrollController();
   bool _sending = false;
   /// 작성칸 모델 칩으로 고른 값(서버 079). 보내면 비운다(결정 12).
@@ -58,6 +61,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
   void dispose() {
     _scroll.removeListener(_maybeLoadOlder);
     _composer.dispose();
+    _composerFocus.dispose();
     _scroll.dispose();
     super.dispose();
   }
@@ -197,10 +201,16 @@ class _MessageListScreenState extends State<MessageListScreen> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   AttachButton(composerKey: widget.channelId),
+                  MentionButton(
+                    controller: _composer,
+                    focusNode: _composerFocus,
+                    onInserted: () => setState(() {}),
+                  ),
                   Expanded(
                     child: TextField(
                       key: const Key('composer'),
                       controller: _composer,
+                      focusNode: _composerFocus,
                       // 글자가 바뀔 때마다 후보를 다시 세운다. 커서만 움직여도 바뀌므로
                       // `onChanged` 로는 모자라지만, 그 경우는 다음 입력에 따라잡힌다.
                       onChanged: (_) => setState(() {}),

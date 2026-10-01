@@ -10,6 +10,7 @@ import '../ui/states.dart';
 import '../ui/tokens.dart';
 import 'agent_model.dart';
 import 'composer_attachments.dart';
+import 'mention_button.dart';
 import 'message_feed.dart';
 import 'message_list_screen.dart';
 
@@ -32,6 +33,8 @@ class ThreadScreen extends StatefulWidget {
 
 class _ThreadScreenState extends State<ThreadScreen> {
   final _composer = TextEditingController();
+  /// @ 버튼이 칸에 포커스를 주려고 쥔다.
+  final _composerFocus = FocusNode();
   bool _sending = false;
   /// 작성칸 모델 칩으로 고른 값(서버 079). 서버의 스레드 지정이 되므로 보낸 뒤에도 칩은 그 값을 이어 보인다.
   Map<String, ModelPick> _picks = const {};
@@ -58,6 +61,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
   @override
   void dispose() {
     _composer.dispose();
+    _composerFocus.dispose();
     super.dispose();
   }
 
@@ -213,10 +217,16 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   AttachButton(composerKey: widget.rootId),
+                  MentionButton(
+                    controller: _composer,
+                    focusNode: _composerFocus,
+                    onInserted: () => setState(() {}),
+                  ),
                   Expanded(
                     child: TextField(
                       key: const Key('thread-composer'),
                       controller: _composer,
+                      focusNode: _composerFocus,
                       onChanged: (_) => setState(() {}),
                       minLines: 1,
                       maxLines: 5,

@@ -314,6 +314,8 @@ class StringsKo implements Strings {
 
   @override
   String get attachmentAdd => '첨부 추가';
+  @override
+  String get mentionAdd => '사람·에이전트 부르기';
 
   @override
   String get attachmentUploadFailed => '파일을 올리지 못했다.';

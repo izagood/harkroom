@@ -61,6 +61,9 @@ abstract class Strings {
   /// 파일 고르기 버튼의 접근성 이름.
   String get attachmentAdd;
 
+  /// 작성칸 왼쪽 @ 버튼(개정판 3.4)의 접근성 이름. 누르면 칸에 `@` 를 넣어 후보 줄을 연다.
+  String get mentionAdd;
+
   /// 올리기 실패. **조용히 지나가지 않는다** — 칩이 사라진 이유를 사람이 알아야 한다.
   String get attachmentUploadFailed;
 
@@ -481,6 +484,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'commonBack': s.commonBack,
       'commonRetry': s.commonRetry,
       'attachmentAdd': s.attachmentAdd,
+      'mentionAdd': s.mentionAdd,
       'attachmentUploadFailed': s.attachmentUploadFailed,
       'attachLibrary': s.attachLibrary,
       'attachCamera': s.attachCamera,

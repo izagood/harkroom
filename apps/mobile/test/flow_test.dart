@@ -813,4 +813,26 @@ void main() {
     expect(hint, contains('# harkroom'));
     expect(hint, isNot(contains('{name}')));
   });
+
+  testWidgets('@ 버튼을 누르면 칸에 @ 가 들어가 후보가 뜬다(앞 글자가 있으면 띄우고)', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await _settle(tester);
+
+    expect(find.byKey(const Key('mention-picker')), findsNothing);
+    await tester.tap(find.byKey(const Key('mention-add')));
+    await _settle(tester);
+    TextField field() => tester.widget<TextField>(find.byKey(const Key('composer')));
+    expect(field().controller!.text, '@');
+    expect(find.byKey(const Key('mention-candidate-forge')), findsOneWidget);
+
+    await tester.enterText(find.byKey(const Key('composer')), '안녕');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('mention-add')));
+    await _settle(tester);
+    expect(field().controller!.text, '안녕 @');
+  });
 }
