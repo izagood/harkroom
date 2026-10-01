@@ -39,11 +39,24 @@ MockClient _server() => MockClient((req) async {
             {'id': 'c1', 'name': 'task', 'kind': 'standard'},
             {'id': 'c2', 'name': 'ops', 'kind': 'standard'},
             {'id': 'c3', 'name': 'old', 'kind': 'standard'},
-            {'id': 'd1', 'name': 'designer', 'kind': 'dm'},
           ],
         });
       }
-      if (path == '/accounts') return _json({'accounts': <Object?>[]});
+      // 실제 서버처럼 DM 은 `GET /channels` 가 아니라 `GET /dms` 로만 온다(이름 없이 명단만).
+      if (path == '/dms') {
+        return _json({
+          'dms': [
+            {'id': 'd1', 'memberIds': ['me-1', 'a-designer'], 'lastMessageAt': '2026-10-01T00:00:00Z'},
+          ],
+        });
+      }
+      if (path == '/accounts') {
+        return _json({
+          'accounts': [
+            {'id': 'a-designer', 'handle': 'designer', 'displayName': 'designer', 'kind': 'agent'},
+          ],
+        });
+      }
       if (path == '/reads') {
         return _json({
           'reads': [
@@ -101,6 +114,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('channel-d1')), findsOneWidget);
     expect(find.byKey(const Key('channel-c1')), findsNothing);
+    // 이름은 서버가 주지 않는다 — 나를 뺀 상대의 이름으로 짓는다.
+    expect(find.descendant(of: find.byKey(const Key('channel-d1')), matching: find.text('designer')), findsOneWidget);
   });
 
   testWidgets('에이전트 탭은 S7 전까지 「곧」 한 줄', (tester) async {

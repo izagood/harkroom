@@ -81,11 +81,15 @@ class ChannelRow {
     required this.isPrivate,
     required this.isDm,
     required this.topic,
+    this.memberIds = const [],
   });
 
   final String id;
   final String name;
   final bool isPrivate;
+
+  /// DM 의 참여자(나 포함). 채널이면 비어 있다 — `GET /channels` 는 명단을 주지 않는다.
+  final List<String> memberIds;
 
   /// DM 은 이름이 아니라 **상대**로 그려야 한다 — 화면이 갈라져야 하므로 값으로 둔다.
   final bool isDm;
@@ -98,6 +102,20 @@ class ChannelRow {
         isDm: _str(j['kind']) == 'dm',
         topic: j['topic'] as String?,
       );
+
+  /// `GET /dms` 의 한 줄(`id`·`memberIds`). **`GET /channels` 는 DM 을 주지 않는다**(kind standard 만) —
+  /// DM 은 이 길로만 온다. 이름은 서버가 주지 않으므로 [name] 은 비워 두고 화면 쪽이 상대 이름으로 채운다.
+  static ChannelRow fromDmJson(Map<String, Object?> j) => ChannelRow(
+        id: _str(j['id']),
+        name: '',
+        isPrivate: true,
+        isDm: true,
+        topic: null,
+        memberIds: _strList(j['memberIds']),
+      );
+
+  ChannelRow withName(String n) =>
+      ChannelRow(id: id, name: n, isPrivate: isPrivate, isDm: isDm, topic: topic, memberIds: memberIds);
 }
 
 /// 리액션 한 칸. 누가 눌렀는지까지 온다 — 내가 눌렀는지를 화면이 알아야 한다.

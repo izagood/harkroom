@@ -150,6 +150,12 @@ class ApiClient {
           .map(ChannelRow.fromJson)
           .toList(growable: false);
 
+  /// 내 DM 들(최근 말 순). 데스크탑 사이드바의 DM 묶음과 같은 출처다.
+  Future<List<ChannelRow>> dms() async =>
+      _list(_obj(await _send('GET', '/dms'))['dms'])
+          .map(ChannelRow.fromDmJson)
+          .toList(growable: false);
+
   /// 내 채널 선호(즐겨찾기·섹션·순서·치움). 데스크탑 사이드바와 같은 값이다.
   Future<List<ChannelPref>> channelPrefs() async =>
       _list(_obj(await _send('GET', '/channels/prefs'))['prefs'])
