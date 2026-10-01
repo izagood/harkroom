@@ -73,10 +73,18 @@ void main() {
     expect(painted.center.dx, closeTo(area.center.dx, 0.5));
   });
 
-  testWidgets('화면보다 작은 이미지도 칸에 맞춰 키운다', (tester) async {
+  testWidgets('작은 이미지는 원래 크기로 가운데에 선다', (tester) async {
     final painted = await open(tester, 100, 50);
     final area = body(tester);
-    expectInside(painted, area);
-    expect(painted.width, closeTo(area.width, 0.5));
+    expect(painted.size, const Size(100, 50));
+    expect(painted.center.dx, closeTo(area.center.dx, 0.5));
+    expect(painted.center.dy, closeTo(area.center.dy, 0.5));
+  });
+
+  testWidgets('맞춤보다 작게 오므릴 수 없고 6배까지 키운다', (tester) async {
+    await open(tester, 3456, 2234);
+    final viewer = tester.widget<InteractiveViewer>(find.byType(InteractiveViewer));
+    expect(viewer.minScale, 1);
+    expect(viewer.maxScale, 6);
   });
 }
