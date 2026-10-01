@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import type { AttachmentRow } from '@harkroom/shared';
-import { useActiveStore as useAppStore } from '../src/state/communities';
+import { useActiveStore as useAppStore, useCommunityRegistry, resetCommunityRegistry } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { Controller, setController } from '../src/state/controller';
 import { Composer } from '../src/components/Composer';
-import { MAX_PARALLEL_UPLOADS } from '../src/lib/attachmentUploads';
+import { MAX_PARALLEL_UPLOADS, uploadPercent } from '../src/lib/attachmentUploads';
+import type { PendingUpload } from '../src/state/appStore';
 import { acc } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';
 
@@ -53,6 +54,7 @@ const typeAndSend = (text: string) => {
 };
 
 beforeEach(() => {
+  resetCommunityRegistry();
   undoSendStorage.saveWindowMs(0);
   usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
@@ -92,7 +94,11 @@ describe('uploading without blocking the composer', () => {
     // 작성창은 곧바로 비고 다음 글을 받는다. 글은 아직 안 나갔다.
     expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('');
     expect(screen.queryByTestId('pending-attachment')).toBeNull();
-    expect(screen.getByTestId('waiting-uploads').textContent).toContain('0/1');
+    // 길이를 아직 모른다 — 가짜 비율 대신 `…`.
+    expect(screen.getByTestId('waiting-uploads').textContent).toContain('첨부 올리는 중…');
+    // 바이트로 잰 % 가 대기 줄에 선다(칩은 작성창에서 빠졌으므로 볼 곳은 여기뿐이다).
+    act(() => d.calls[0]!.progress!(0.42));
+    expect(screen.getByTestId('waiting-uploads').textContent).toContain('첨부 올리는 중 42%');
     expect(onSend).not.toHaveBeenCalled();
 
     await act(async () => { d.calls[0]!.resolve(att({ id: 'up-9' })); });
@@ -163,7 +169,7 @@ describe('uploading without blocking the composer', () => {
     await waitFor(() => expect(d.calls).toHaveLength(1));
     typeAndSend('잠깐');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel sending' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo send' }));
     await act(async () => { d.calls[0]!.resolve(att({ id: 'up-3' })); });
 
     expect(onSend).not.toHaveBeenCalled();
@@ -216,5 +222,143 @@ describe('uploading without blocking the composer', () => {
 
     expect(signal!.aborted).toBe(true);
     expect(screen.queryByTestId('pending-attachment')).toBeNull();
+  });
+
+  it('weighs the waiting percentage by bytes, not by count', () => {
+    const u = (id: string, size: number, status: PendingUpload['status'], fraction: number | null): PendingUpload =>
+      ({ localId: id, scope: null, file: new File(['x'.repeat(size)], `${id}.bin`), status, fraction, row: null });
+    const uploads = { a: u('a', 100, 'done', 1), b: u('b', 900, 'uploading', 0.5) };
+    // (100 + 450) / 1000
+    expect(uploadPercent(uploads, ['a', 'b'])).toBe(55);
+    expect(uploadPercent({ ...uploads, b: u('b', 900, 'uploading', null) }, ['a', 'b'])).toBeNull();
+    // 다 가도 서버가 저장하는 동안은 100 을 말하지 않는다.
+    expect(uploadPercent({ a: u('a', 10, 'uploading', 1) }, ['a'])).toBe(99);
+  });
+
+  it('shows one red line, not two, when a waited-for upload fails — the file name moves into it', async () => {
+    const d = deferredUploads();
+    fakeController({ upload: d.upload });
+    render(<Composer onSend={vi.fn()} scopeKey="c1" />);
+    pick('big.txt');
+    await waitFor(() => expect(d.calls).toHaveLength(1));
+    typeAndSend('그림');
+    await act(async () => { d.calls[0]!.reject(new Error('413')); });
+
+    await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(1));
+    expect(screen.getByTestId('send-error').textContent).toContain('big.txt');
+  });
+
+  it('counts the failures when more than one upload failed', async () => {
+    const d = deferredUploads();
+    fakeController({ upload: d.upload });
+    render(<Composer onSend={vi.fn()} scopeKey="c1" />);
+    const input = screen.getByLabelText('Attach a file') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['x'], 'a.txt'), new File(['x'], 'b.txt')] } });
+    await waitFor(() => expect(d.calls).toHaveLength(2));
+    await act(async () => { d.calls[0]!.reject(new Error('x')); d.calls[1]!.reject(new Error('x')); });
+
+    expect((await screen.findByRole('alert')).textContent).toContain('첨부 2개를 올리지 못했다');
+  });
+
+  it('keeps drawing the picked image after the upload finishes until the server bytes arrive (no 📎 flash)', async () => {
+    const d = deferredUploads();
+    const created: string[] = [];
+    const origCreate = URL.createObjectURL;
+    const origRevoke = URL.revokeObjectURL;
+    const revoked: string[] = [];
+    URL.createObjectURL = vi.fn(() => { const u = `blob:local-${created.length}`; created.push(u); return u; });
+    URL.revokeObjectURL = vi.fn((u: string) => { revoked.push(u); });
+    try {
+      // 서버 바이트는 끝까지 안 온다 — 그 사이에 무엇이 그려지는지 본다.
+      fakeController({ upload: d.upload, fetchAttachment: vi.fn(() => new Promise<Blob>(() => {})) });
+      render(<Composer onSend={vi.fn()} scopeKey="c1" />);
+      const input = screen.getByLabelText('Attach a file') as HTMLInputElement;
+      fireEvent.change(input, { target: { files: [new File(['x'], 'shot.png', { type: 'image/png' })] } });
+      await waitFor(() => expect(d.calls).toHaveLength(1));
+      const uploading = screen.getByTestId('attachment-local-thumb');
+      expect(uploading.className).toContain('opacity-60');
+
+      await act(async () => { d.calls[0]!.resolve(att({ id: 'img-1', filename: 'shot.png', contentType: 'image/png' })); });
+
+      const placeholder = screen.getByTestId('attachment-local-thumb');
+      expect(placeholder.className).not.toContain('opacity-60');
+      expect(placeholder.getAttribute('src')).toBe(created[0]);
+      // 떼면 미리보기 URL 을 놓는다.
+      fireEvent.click(screen.getByRole('button', { name: /remove shot\.png/i }));
+      expect(revoked).toContain(created[0]);
+    } finally {
+      URL.createObjectURL = origCreate;
+      URL.revokeObjectURL = origRevoke;
+    }
+  });
+
+  it('drops a waiting message and aborts its upload on logout — nothing is sent, no draft comes back', async () => {
+    let signal: AbortSignal | undefined;
+    const onSend = vi.fn();
+    fakeController({ upload: vi.fn((_f: File, _p?: (f: number) => void, s?: AbortSignal) => {
+      signal = s;
+      return new Promise<AttachmentRow>((_r, reject) => { open.push(reject); s?.addEventListener('abort', () => reject(new Error('aborted'))); });
+    }) });
+    render(<Composer onSend={onSend} scopeKey="c1" />);
+    pick('big.txt');
+    await waitFor(() => expect(signal).toBeDefined());
+    typeAndSend('비밀');
+
+    await act(async () => { useAppStore.getState().reset(); });
+
+    expect(signal!.aborted).toBe(true);
+    await waitFor(() => expect(screen.queryByTestId('waiting-uploads')).toBeNull());
+    expect(onSend).not.toHaveBeenCalled();
+    expect(useAppStore.getState().drafts.c1).toBeUndefined();
+  });
+
+  it('puts a waiting message back into the draft when the window closes, and warns', async () => {
+    const d = deferredUploads();
+    const onSend = vi.fn();
+    fakeController({ upload: d.upload });
+    render(<Composer onSend={onSend} scopeKey="c1" />);
+    pick('big.txt');
+    await waitFor(() => expect(d.calls).toHaveLength(1));
+    typeAndSend('닫기 전에');
+
+    const ev = new Event('beforeunload', { cancelable: true });
+    act(() => { window.dispatchEvent(ev); });
+
+    expect(ev.defaultPrevented).toBe(true);
+    expect(useAppStore.getState().drafts.c1).toBe('닫기 전에');
+    await act(async () => { d.calls[0]!.resolve(att({ id: 'late' })); });
+    expect(onSend).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 기다리던 글은 **쓴 커뮤니티로** 나간다(PR #997 security 검토). 대기 중에 커뮤니티를 옮겼을 때
+ * 활성 컨트롤러로 보내면 A 의 본문·첨부 id 가 B 서버에 POST 된다.
+ */
+describe('a waiting message stays with its community', () => {
+  it('sends through the community it was written in, not the one now active', async () => {
+    const { ChannelPane } = await import('../src/components/ChannelPane');
+    const { scheduledApiStub, chan } = await import('./helpers/fakeApi');
+    const d = deferredUploads();
+    const a = fakeController({
+      upload: d.upload, openChannel: vi.fn(), api: scheduledApiStub(),
+    } as unknown as Partial<Controller>);
+    useAppStore.getState().set({ channels: [chan('c1', 'general')] });
+    render(<ChannelPane />);
+    pick('big.txt');
+    await waitFor(() => expect(d.calls).toHaveLength(1));
+    typeAndSend('A 에만');
+
+    // B 커뮤니티로 옮긴다.
+    const reg = useCommunityRegistry.getState();
+    const b = reg.register({ baseUrl: 'https://b.example.com' });
+    const bController = { send: vi.fn(async () => undefined), api: scheduledApiStub(), openChannel: vi.fn() };
+    reg.attachController(b.id, bController as unknown as Controller);
+    act(() => { useCommunityRegistry.getState().setActive(b.id); });
+
+    await act(async () => { d.calls[0]!.resolve(att({ id: 'up-a' })); });
+
+    await waitFor(() => expect(a.send).toHaveBeenCalledWith('A 에만', ['up-a'], 'c1'));
+    expect(bController.send).not.toHaveBeenCalled();
   });
 });

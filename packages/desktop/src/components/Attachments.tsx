@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { previewUrlFor } from '../lib/attachmentUploads';
 import type { AttachmentRow } from '@harkroom/shared';
 import { getController } from '../state/controller';
 import { Overlay } from './Overlay';
@@ -65,10 +66,18 @@ function useAttachmentUrl(id: string, enabled: boolean): { url: string | null; f
  * 같은 📎 로 덮으면, 네트워크가 끊겨 그림이 빠진 자리를 사람이 "이 파일은 원래 이렇다"로
  * 읽고 그대로 보낸다. 본문 미리보기가 `(불러오기 실패)` 로 가르는 것과 같은 규칙이다.
  */
-export function AttachmentThumb({ attachment }: { attachment: AttachmentRow }) {
+export function AttachmentThumb({ attachment, placeholderFile }: {
+  attachment: AttachmentRow;
+  /**
+   * 방금 올린 그 파일. 서버 바이트가 올 때까지 이것으로 그린다 — 작성창 칩이 업로드를 끝낸
+   * 순간 📎 로 꺼졌다 켜지지 않게 한다. 받아 오기가 실패하면 지금처럼 실패를 말한다.
+   */
+  placeholderFile?: File;
+}) {
   const t = useT();
   const previewable = canPreview(attachment);
   const { url, failed } = useAttachmentUrl(attachment.id, previewable);
+  if (!url && placeholderFile && previewable && !failed) return <LocalFileThumb file={placeholderFile} />;
   if (!url) {
     return (
       // 그림이 올 자리는 미리 그림 높이(h-6)로 잡는다 — 바이트가 도착하는 순간 11px 이모지가
@@ -95,15 +104,11 @@ export function AttachmentThumb({ attachment }: { attachment: AttachmentRow }) {
  * 다 올라가면 칩이 `AttachmentThumb`(실제로 붙은 것)으로 바뀐다. 그릴 수 있는 종류는
  * `canPreview` 와 같은 목록이다: 여기서만 더 그리면 올라간 뒤에 그림이 사라진다.
  */
-export function LocalFileThumb({ file }: { file: File }) {
+export function LocalFileThumb({ file, dim = false }: { file: File; dim?: boolean }) {
   const previewable = canPreview({ contentType: file.type } as AttachmentRow);
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!previewable || typeof URL.createObjectURL !== 'function') return;
-    const objectUrl = URL.createObjectURL(file);
-    setUrl(objectUrl);
-    return () => { URL.revokeObjectURL(objectUrl); };
-  }, [file, previewable]);
+  // 파일마다 하나인 URL 을 **렌더 중에** 받는다 — effect 로 미루면 첫 그림 전에 📎 가 한 번 낀다.
+  // 해제는 첨부가 작성창에서 사라질 때 `attachmentUploads` 가 한다.
+  const url = previewable ? previewUrlFor(file) : null;
   if (!url) {
     return (
       <span className={previewable ? 'inline-flex h-6 items-center' : 'inline-flex items-center'}>
@@ -116,7 +121,8 @@ export function LocalFileThumb({ file }: { file: File }) {
       src={url}
       alt=""
       data-testid="attachment-local-thumb"
-      className="h-6 w-6 shrink-0 rounded-sm border border-border object-cover opacity-60"
+      // 흐리게는 **올리는 중일 때만**이다. 다 올라간 뒤 자리 지킴으로 쓸 때는 진하게.
+      className={`h-6 w-6 shrink-0 rounded-sm border border-border object-cover${dim ? ' opacity-60' : ''}`}
     />
   );
 }

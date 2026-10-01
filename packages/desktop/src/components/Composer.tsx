@@ -1,7 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
 import { MAX_MESSAGE_BODY_CHARS, messagePermalink, parseMessagePermalink, type ScheduledMessageView } from '@harkroom/shared';
 import type { AgentModelPick, AttachmentRow } from '@harkroom/shared';
-import { useActiveStore } from '../state/communities';
+import { getActiveStore, useActiveStore, useCommunityRegistry, type AppStore } from '../state/communities';
 import { NO_TEAMS } from '../state/appStore';
 import { getController } from '../state/controller';
 import { ApiError } from '../lib/api';
@@ -11,7 +11,7 @@ import {
 } from './MentionSuggest';
 import { AttachmentThumb, LocalFileThumb, formatSize } from './Attachments';
 import {
-  discardUploads, retryUpload, returnUploads, startUploads, takeUploads, uploadsDone, waitForUploads,
+  discardUploads, retryUpload, returnUploads, startUploads, takeUploads, uploadPercent, waitForUploads,
   UploadFailedError,
 } from '../lib/attachmentUploads';
 import {
@@ -193,6 +193,12 @@ interface HeldMessage {
    * 이미 새 채널을 가리킨다. 그러면 A 에서 쓴 것이 B 로 나간다 — #184 가 닫은 결함이다.
    */
   send: Props['onSend'];
+  /**
+   * 쓴 커뮤니티와 그 스토어. 글이 첨부를 기다리는 사이에 커뮤니티를 옮기면 활성 스토어는 남의
+   * 것이다 — 실패한 글을 되돌릴 자리도, 로그아웃으로 사라졌는지 볼 자리도 **쓴 쪽**이어야 한다.
+   */
+  communityId: string;
+  store: AppStore;
   /** "부를 상대" 칩으로 고른 모델(079). 이 글과 함께 간다 — 되돌리면 버린다(다시 고른다). */
   agentModels: AgentModelPick[];
 }
@@ -261,14 +267,22 @@ export function Composer({
     () => Object.values(uploads).filter((u) => u.scope === scopeKey),
     [uploads, scopeKey],
   );
-  const failedUpload = pending.find((u) => u.status === 'failed') ?? null;
+  const failedUploads = pending.filter((u) => u.status === 'failed');
+  const failedUpload = failedUploads[0] ?? null;
+  const communityId = useCommunityRegistry((s) => s.activeId);
   // "파일로 옮기기" 의 실패만 여기 남는다 — 그 길은 실패하면 칩을 세우지 않는다(`moveToFile`).
   const [uploadError, setUploadError] = useState<string | null>(null);
   /**
    * 첨부를 기다리며 아직 안 나간 글. 보냄 취소 창이 끝난 뒤에도 첨부가 올라가는 중이면
    * 여기에 선다 — 표시가 없으면 사람은 글이 사라진 줄로 안다.
    */
-  const [waiting, setWaiting] = useState<{ key: number; item: HeldMessage }[]>([]);
+  const [waiting, setWaitingState] = useState<{ key: number; item: HeldMessage }[]>([]);
+  // 창 닫기 처리(`beforeunload`)는 렌더 밖에서 돈다 — 그 자리에서 최신 목록을 보려면 ref 다.
+  const waitingRef = useRef(waiting);
+  const setWaiting = (fn: (cur: { key: number; item: HeldMessage }[]) => { key: number; item: HeldMessage }[]) => {
+    waitingRef.current = fn(waitingRef.current);
+    setWaitingState(waitingRef.current);
+  };
   const waitSeq = useRef(0);
   const cancelledWaits = useRef(new Set<number>());
   /**
@@ -814,7 +828,7 @@ export function Composer({
       실패하면 보내지 않고 초안·첨부를 쓴 자리로 돌려놓는다. 반쯤 붙은 글을 내보내면 사람은
       그림까지 갔다고 믿는다.
     */
-    const now = useActiveStore.getState().uploads;
+    const now = item.store.getState().uploads;
     const needsWait = item.attachments.some((id) => now[id]?.status !== 'done');
     // 기다릴 것이 없으면 **지금 바로** 보낸다(예전과 같다). 앞의 글이 그 자리에서 아직 첨부를
     // 기다리는 중이면 이 글도 줄을 선다 — 순서가 뒤집히지 않게.
@@ -829,15 +843,29 @@ export function Composer({
     const next = prev.then(() => waitForUploads(item.attachments)).then((rows) => {
       if (cancelledWaits.current.delete(key)) return;
       setWaiting((cur) => cur.filter((w) => w.key !== key));
+      // 기다리는 사이에 로그아웃했으면 **보내지 않는다** — 그 세션은 끝났다.
+      if (!alive()) return;
       return send(rows.map((r) => r.id));
     }, (err: unknown) => {
       setWaiting((cur) => cur.filter((w) => w.key !== key));
       if (cancelledWaits.current.delete(key)) return;
+      if (!alive()) return;
       fail(err);
     }).finally(() => {
       chainBusy.current[item.scope] = (chainBusy.current[item.scope] ?? 1) - 1;
     });
     sendChain.current[item.scope] = next.catch(() => {});
+
+    /**
+     * 쓴 커뮤니티가 아직 있고 첨부가 그 스토어에 남아 있는가. 로그아웃(`reset`)은 `uploads` 를
+     * 비우고 진행 중인 업로드를 끊는다(`attachmentUploads` 의 구독). 그 뒤에 초안을 되살리면
+     * 끝난 세션의 글이 다음 사람의 작성창(영속되는 초안)에 남는다.
+     */
+    function alive() {
+      if (!useCommunityRegistry.getState().entries.some((e) => e.id === item.communityId)) return false;
+      const uploads = item.store.getState().uploads;
+      return item.attachments.every((id) => id in uploads);
+    }
 
     function send(ids: string[]) {
       return Promise.resolve(item.agentModels.length
@@ -857,12 +885,12 @@ export function Composer({
       setSendErrorByScope((prev) => ({
         ...prev,
         [item.scope]: err instanceof UploadFailedError
-          ? t('composer.send.uploadFailed')
+          ? t('composer.send.uploadFailed', { filename: err.filename })
           : errorText(err, t('composer.send.failed')),
       }));
       // 실패하면 사용자가 친 것만 되돌린다 — 접두사까지 남기면 다음 전송에서 두 번 붙는다.
       // **쓴 자리로** 되돌린다: 대기 중에 채널을 옮겼다면 지금 입력창은 남의 자리다.
-      const store = useActiveStore.getState();
+      const store = item.store.getState();
       if (!(store.drafts[item.scope] ?? '')) store.setDraft(item.scope, item.typed);
       // 첨부도 **쓴 자리로** 되돌린다 — 첨부가 자리별로 스토어에 있으므로 지금 입력창이 남의
       // 자리여도 섞이지 않는다. 실패한 첨부는 칩에서 [다시]를 누를 수 있다.
@@ -871,16 +899,18 @@ export function Composer({
   };
 
   /** 첨부를 기다리던 글을 거둔다 — 보냄 취소와 같다: 원문과 첨부가 쓴 자리로 돌아온다. */
-  const cancelWaiting = (key: number) => {
-    const entry = waiting.find((w) => w.key === key);
+  const cancelWaiting = (key: number, focus = true) => {
+    const entry = waitingRef.current.find((w) => w.key === key);
     if (!entry) return;
     cancelledWaits.current.add(key);
     setWaiting((cur) => cur.filter((w) => w.key !== key));
-    const store = useActiveStore.getState();
+    const store = entry.item.store.getState();
     if (!(store.drafts[entry.item.scope] ?? '')) store.setDraft(entry.item.scope, entry.item.typed);
     returnUploads(entry.item.scope, entry.item.attachments);
-    ref.current?.focus();
+    if (focus) ref.current?.focus();
   };
+  const cancelWaitingRef = useRef(cancelWaiting);
+  cancelWaitingRef.current = cancelWaiting;
 
   /**
    * 대기 중인 것을 지금 내보낸다(#223).
@@ -921,7 +951,20 @@ export function Composer({
    * 수는 없지만, 시도조차 하지 않고 버리는 것보다 낫다.
    */
   useEffect(() => {
-    const onUnload = () => { flushRef.current(); };
+    const onUnload = (e: BeforeUnloadEvent) => {
+      flushRef.current();
+      /*
+        첨부를 기다리던 글은 **보내지 못한 채 닫힌다** — 업로드가 창과 함께 죽는다. 조용히 잃지
+        않게 원문을 쓴 자리의 초안으로 되돌린다(초안은 보관소에 남으므로 다시 열면 그 자리에
+        있다). 첨부 파일 자체는 남길 수 없다. 브라우저가 닫기를 물어볼 수 있게 경고도 세운다 —
+        닫기를 거두면 원문과 첨부 칩이 작성창에 돌아와 있으므로 다시 보내면 된다.
+      */
+      if (waitingRef.current.length) {
+        for (const w of [...waitingRef.current]) cancelWaitingRef.current(w.key, false);
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
     window.addEventListener('beforeunload', onUnload);
     return () => {
       window.removeEventListener('beforeunload', onUnload);
@@ -941,7 +984,9 @@ export function Composer({
     // 올리지 못한 첨부를 든 채로는 보내지 않는다 — 보내면 그 글은 기다리다 곧장 실패해 돌아온다.
     // 무엇을 하면 되는지 지금 말한다(칩에 [다시]·[×] 가 있다).
     if (failedUpload) {
-      setSendErrorByScope((prev) => ({ ...prev, [scopeKey]: t('composer.send.hasFailedUpload') }));
+      setSendErrorByScope((prev) => ({
+        ...prev, [scopeKey]: t('composer.send.hasFailedUpload', { filename: failedUpload.file.name }),
+      }));
       return;
     }
     /**
@@ -1022,7 +1067,10 @@ export function Composer({
     const agentModels = [...picksToSend(calledPicks), ...clears];
     if (Object.keys(modelPicks).length) setModelPicksByScope((prev) => ({ ...prev, [scopeKey]: {} }));
     setOpenModelFor(null);
-    const item: HeldMessage = { body, typed, attachments, scope: scopeKey, send: onSend, agentModels };
+    const item: HeldMessage = {
+      body, typed, attachments, scope: scopeKey, send: onSend, agentModels,
+      communityId: useCommunityRegistry.getState().activeId, store: getActiveStore(),
+    };
     const windowMs = undoSendStorage.loadWindowMs();
     // 0 이면 창을 끈 것이다 — 예전처럼 누른 즉시 나간다.
     if (windowMs <= 0) {
@@ -1632,9 +1680,13 @@ export function Composer({
           )}
         </ul>
       )}
-      {(uploadError || failedUpload) && (
+      {/* 전송 실패 줄이 서 있으면 첨부 실패 줄은 숨긴다 — 같은 실패를 빨간 줄 두 개가 말하게
+          된다(designer 검토 C). 파일 이름은 전송 실패 줄이 싣는다. */}
+      {(uploadError || failedUpload) && !sendError && (
         <p role="alert" className="mb-1 text-meta text-danger">
-          {uploadError ?? t('composer.attach.uploadFailed', { filename: failedUpload!.file.name })}
+          {uploadError ?? (failedUploads.length > 1
+            ? t('composer.attach.uploadFailedMany', { count: failedUploads.length })
+            : t('composer.attach.uploadFailed', { filename: failedUpload!.file.name }))}
         </p>
       )}
       {/* 전송 실패 사유. `role="alert"` 로 두어 **색을 못 보는 사람에게도** 읽힌다 —
@@ -1661,13 +1713,17 @@ export function Composer({
                 className={`inline-flex items-center gap-1 rounded border bg-surface px-1.5 py-0.5 text-meta text-fg ${
                   u.status === 'failed' ? 'border-danger' : 'border-border'}`}
               >
-                {u.row ? <AttachmentThumb attachment={u.row} /> : <LocalFileThumb file={u.file} />}
+                {/* 다 올라간 뒤 서버 바이트가 올 때까지는 고른 파일로 **진하게** 그린다 — 안 그러면
+                    `흐린 그림 → 📎 → 그림` 으로 한 번 꺼졌다 켜진다(designer 검토 A). */}
+                {u.row
+                  ? <AttachmentThumb attachment={u.row} placeholderFile={u.file} />
+                  : <LocalFileThumb file={u.file} dim />}
                 {name}
                 {u.status === 'done' && u.row && (
                   <span className="text-fg-subtle">{formatSize(u.row.sizeBytes)}</span>
                 )}
                 {u.status === 'uploading' && (
-                  <span className="text-fg-subtle" role="status">
+                  <span className="text-fg-subtle tabular-nums" role="status">
                     {pct === null || pct >= 100
                       ? t('composer.attach.uploading')
                       : t('composer.attach.uploadingPct', { pct })}
@@ -1856,7 +1912,9 @@ export function Composer({
         </div>
       )}
 
-      {waiting.filter((w) => w.item.scope === scopeKey).map(({ key, item }) => (
+      {waiting.filter((w) => w.item.scope === scopeKey && w.item.communityId === communityId).map(({ key, item }) => {
+        const pct = uploadPercent(uploads, item.attachments);
+        return (
         /* 첨부를 기다리는 글. 보냄 취소 줄과 **같은 자리·같은 모양**이다 — 둘 다 "아직 안 나간
            내 글" 이다. 몇 개가 올라갔는지 세어 보여야 멈춘 것과 가는 중인 것이 갈린다. */
         <div
@@ -1866,22 +1924,28 @@ export function Composer({
           className="mb-1 flex items-center gap-2 rounded bg-surface-sunken px-2 py-1 text-meta text-fg-muted"
         >
           <span className="min-w-0 flex-1 truncate">
-            {t('composer.send.waitingUploads', {
-              done: uploadsDone(uploads, item.attachments), total: item.attachments.length,
-            })}{' '}
+            {/* 개수가 아니라 **바이트로 잰 %** 다(designer 검토 B) — 큰 그림 한 장이면 `0/1` 이
+                끝날 때까지 그대로라 멈춘 것과 가는 중인 것이 갈리지 않는다. */}
+            <span className="tabular-nums">
+              {pct === null
+                ? t('composer.send.waitingUploadsUnknown')
+                : t('composer.send.waitingUploads', { pct })}
+            </span>{' '}
             {item.typed || t('composer.send.attachmentsOnly', { count: item.attachments.length })}
           </span>
           <button
             type="button"
-            aria-label="Cancel sending"
+            // 보냄 취소 줄과 **같은 이름**이다 — 하는 일(원문·첨부가 작성창으로 돌아온다)이 같다.
+            aria-label="Undo send"
             className="rounded px-1.5 py-0.5 font-medium text-accent hover:bg-surface-hover"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => cancelWaiting(key)}
           >
-            {t('composer.send.cancelWaiting')}
+            {t('composer.send.undo')}
           </button>
         </div>
-      ))}
+        );
+      })}
 
       {held && (
         /* 대기 중인 것은 **메시지 목록에 그리지 않는다.** "서버가 받아들인 뒤에만 화면이

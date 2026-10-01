@@ -191,6 +191,18 @@ export function getActiveStore(): AppStore {
 }
 
 /** 문구는 기존 `getController()` 의 것을 그대로 쓴다 — 이 이슈는 오류 표면을 바꾸지 않는다. */
+/**
+ * 그 커뮤니티의 컨트롤러. **활성이 아니어도** 돌려준다 — 작성창의 글은 첨부가 다 올라가기를
+ * 기다렸다가 나가는데, 그 사이에 커뮤니티를 옮기면 활성 컨트롤러는 이미 남의 서버다. 거기로
+ * 보내면 이 커뮤니티의 본문·첨부 id 가 다른 운영자의 서버에 도착한다(PR #997 security 검토).
+ * 지운(로그아웃한) 커뮤니티면 던진다 — 보낼 곳이 없다.
+ */
+export function getCommunityController(id: string): Controller {
+  const c = useCommunityRegistry.getState().entries.find((e) => e.id === id)?.controller;
+  if (!c) throw new Error('controller not initialized');
+  return c;
+}
+
 export function getActiveController(): Controller {
   const c = getActiveEntry().controller;
   if (!c) throw new Error('controller not initialized');

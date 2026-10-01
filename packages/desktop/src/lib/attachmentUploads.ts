@@ -30,9 +30,53 @@ interface Track {
   /** 마지막 시도의 결과. 다시 올리면 갈아 끼운다. */
   promise: Promise<AttachmentRow>;
   abort: AbortController;
+  file: File;
 }
 
 const tracks = new Map<string, Track>();
+
+/**
+ * 고른 파일의 미리보기 objectURL. **파일 하나에 하나**다 — 칩이 올리는 중(흐림)에서 다 올라감
+ * (서버 바이트 자리 지킴)으로 바뀌며 부품이 갈려도 같은 URL 을 써야 그 사이에 📎 가 끼지 않는다.
+ * 해제는 첨부가 작성창에서 사라질 때 한 번(`discardUploads`·로그아웃) 한다.
+ */
+const previewUrls = new WeakMap<File, string>();
+
+export function previewUrlFor(file: File): string | null {
+  if (typeof URL.createObjectURL !== 'function') return null;
+  let url = previewUrls.get(file);
+  if (!url) {
+    url = URL.createObjectURL(file);
+    previewUrls.set(file, url);
+  }
+  return url;
+}
+
+function releasePreviewUrl(file: File | undefined): void {
+  if (!file) return;
+  const url = previewUrls.get(file);
+  if (!url) return;
+  previewUrls.delete(file);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * 스토어에서 첨부가 사라지면(로그아웃 `reset`) 그 업로드를 끊는다. 안 끊으면 끝난 세션의
+ * XHR 이 끝까지 돌고, 동시 업로드 자리도 그만큼 잡힌다. 스토어마다 한 번만 건다.
+ */
+const watched = new WeakSet<AppStore>();
+function watch(store: AppStore): void {
+  if (watched.has(store)) return;
+  watched.add(store);
+  store.subscribe((state) => {
+    for (const [id, track] of tracks) {
+      if (track.store !== store || id in state.uploads) continue;
+      tracks.delete(id);
+      track.abort.abort();
+      releasePreviewUrl(track.file);
+    }
+  });
+}
 let seq = 0;
 let running = 0;
 const queue: (() => void)[] = [];
@@ -74,13 +118,14 @@ export function startUploads(scope: string, files: File[]): string[] {
   if (!files.length) return [];
   const store = getActiveStore();
   const controller = getActiveController();
+  watch(store);
   return files.map((file) => {
     seq += 1;
     const localId = `up-${Date.now().toString(36)}-${seq}`;
     const item: PendingUpload = { localId, scope, file, status: 'uploading', fraction: null, row: null };
     store.getState().patchUpload(localId, item);
     const abort = new AbortController();
-    tracks.set(localId, { store, controller, abort, promise: run(localId, store, controller, file, abort) });
+    tracks.set(localId, { store, controller, abort, file, promise: run(localId, store, controller, file, abort) });
     return localId;
   });
 }
@@ -104,6 +149,7 @@ export function discardUploads(localIds: string[]): void {
     const track = tracks.get(id);
     tracks.delete(id);
     track?.abort.abort();
+    releasePreviewUrl(track?.file);
     (track?.store ?? getActiveStore()).getState().patchUpload(id, null);
   }
 }
@@ -132,7 +178,23 @@ export function waitForUploads(localIds: string[]): Promise<AttachmentRow[]> {
   }));
 }
 
-/** 한 업로드의 지금 상태(대기 줄이 "n/m 올라감" 을 세는 데 쓴다). */
-export function uploadsDone(uploads: Record<string, PendingUpload>, localIds: string[]): number {
-  return localIds.filter((id) => uploads[id]?.status === 'done').length;
+/**
+ * 첨부들의 진행률(0~100, 바이트로 잰다). 대기 줄이 쓴다 — 개수로 세면 큰 그림 한 장은 끝날
+ * 때까지 `0/1` 이다. 길이를 모르는 것이 하나라도 있으면 `null`(가짜 비율을 그리지 않는다).
+ */
+export function uploadPercent(uploads: Record<string, PendingUpload>, localIds: string[]): number | null {
+  let total = 0;
+  let sent = 0;
+  for (const id of localIds) {
+    const u = uploads[id];
+    if (!u) continue;
+    const size = Math.max(1, u.file.size);
+    const fraction = u.status === 'done' ? 1 : u.fraction;
+    if (fraction === null) return null;
+    total += size;
+    sent += size * fraction;
+  }
+  if (!total) return null;
+  // 다 가기 전에는 100 을 보이지 않는다 — 서버가 저장하는 동안 `100%` 에 멈춘 줄은 끝난 것처럼 읽힌다.
+  return Math.min(99, Math.floor((sent / total) * 100));
 }

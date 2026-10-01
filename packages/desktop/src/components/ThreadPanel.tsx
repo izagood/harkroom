@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useActiveStore } from '../state/communities';
+import { getCommunityController, useActiveStore, useCommunityRegistry } from '../state/communities';
 import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
 import { ProgressRow } from './ProgressRow';
@@ -33,6 +33,8 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
 } = {}) {
   const t = useT();
   const { activeChannelId, threadRootId, messages, accounts, me, online, connected } = useActiveStore();
+  // 답글을 보낼 커뮤니티 — 보낸 순간의 것을 붙잡는다(PR #997, ChannelPane 과 같은 이유).
+  const communityId = useCommunityRegistry((s) => s.activeId);
   /** 채널과 같은 판정을 쓴다 — 모르는 계정은 에이전트로 치지 않는다(`lib/agentExchange`). */
   const isAgent = (id: string): boolean => accounts[id]?.kind === 'agent';
   const [alsoInChannel, setAlsoInChannel] = useState(false);
@@ -371,8 +373,8 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
           // 스토어의 `threadRootId` 는 null 이 되어 답글이 조용히 사라진다.
           onSend={(body, attachmentIds, agentModels) =>
             (agentModels?.length
-              ? getController().reply(body, attachmentIds, activeChannelId ?? undefined, threadRootId, alsoInChannel, agentModels)
-              : getController().reply(body, attachmentIds, activeChannelId ?? undefined, threadRootId, alsoInChannel))}
+              ? getCommunityController(communityId).reply(body, attachmentIds, activeChannelId ?? undefined, threadRootId, alsoInChannel, agentModels)
+              : getCommunityController(communityId).reply(body, attachmentIds, activeChannelId ?? undefined, threadRootId, alsoInChannel))}
         />
       </div>
     </section>
