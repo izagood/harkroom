@@ -541,6 +541,14 @@ describe('buildSystemPrompt', () => {
 
   // #90: 한 턴에서 여러 번 message.post 를 부르면 같은 스레드에 답이 여러 개 남는다.
   // "한 번에 정리해서 올려라"는 실행 가능한 지시다.
+  // 미리보기 PR ③: 에이전트가 파일을 글에 붙이는 길. 도구를 만들고 안 적으면 안 쓰인다(#762→#809).
+  it('파일은 워크스페이스에 두고 attachment.upload → message.post attachmentIds 로 붙이라고 지시한다', () => {
+    const s = buildSystemPrompt({ handle: 'designer', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
+    expect(s).toContain('`attachment.upload`');
+    expect(s).toContain('`attachmentIds`');
+    expect(s).toContain('워크스페이스 밖 파일은 거절되니');
+  });
+
   it('한 턴에 한 번만 발화하라고 지시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
     expect(s).toContain('한 번에');

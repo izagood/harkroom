@@ -98,8 +98,13 @@ export function checkRunnerHello(value: unknown): { runnerId: string; secret: st
 
 export type RunnerLinkRequest =
   /** `cause` — 이 요청을 낸 턴을 띄운 메시지 id(`RUNNER_TURN_CAUSE_ENV`). 옛 브릿지는 싣지 않는다. */
-  | { type: 'mcp.request'; id: string; payload: unknown; cause?: string }
-  | { type: 'http.forward'; id: string; method: string; path: string; body?: string; contentType?: string };
+  /**
+   * `cwd` — 브릿지 프로세스의 작업 디렉터리(= 하네스가 띄운 턴 워크스페이스, claude 실측 2026-10-02).
+   * 오퍼레이터의 `attachment.upload` 가 경로를 이 아래로만 받는 데 쓴다. 옛 브릿지·러너 코어는 싣지 않는다.
+   */
+  | { type: 'mcp.request'; id: string; payload: unknown; cause?: string; cwd?: string }
+  /** `bodyBase64` — 이진 본문(multipart 업로드). 있으면 `body` 대신 이것을 바이트로 풀어 보낸다. */
+  | { type: 'http.forward'; id: string; method: string; path: string; body?: string; bodyBase64?: string; contentType?: string };
 
 export type RunnerLinkResponse =
   /** 서버가 돌려준 JSON-RPC 메시지들. 알림(202)이면 빈 배열. */

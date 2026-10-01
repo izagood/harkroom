@@ -78,7 +78,11 @@ import {
 } from '@harkroom/shared/runnerLink';
 
 /** `cause` — 이 브릿지를 띄운 턴의 원인 메시지(`RUNNER_TURN_CAUSE_ENV`). 모든 요청에 싣는다. */
-export interface BridgeLink { socketPath: string; runnerId: string; secret: string; cause?: string | null }
+export interface BridgeLink {
+  socketPath: string; runnerId: string; secret: string; cause?: string | null;
+  /** 하네스가 이 브릿지를 띄운 작업 디렉터리 — `attachment.upload` 의 경로 기준(`turnUploads.ts`). */
+  cwd?: string | null;
+}
 
 export interface BridgeStdio { stdin: Readable; stdout: Writable; stderr: Writable }
 
@@ -293,9 +297,12 @@ export function runMcpBridge(link: BridgeLink, io: BridgeStdio, tuning: BridgeTu
           );
         }, requestTimeoutMs);
         pending.set(id, { rpcId, timer });
-        const req: RunnerLinkRequest = link.cause
-          ? { type: 'mcp.request', id, payload, cause: link.cause }
-          : { type: 'mcp.request', id, payload };
+        // cwd 는 하네스가 이 브릿지를 띄운 자리다 — 오퍼레이터의 `attachment.upload` 가 경로를 그 아래로만 받는다.
+        const req: RunnerLinkRequest = {
+          type: 'mcp.request', id, payload,
+          ...(link.cause ? { cause: link.cause } : {}),
+          ...(link.cwd ? { cwd: link.cwd } : {}),
+        };
         const text = `${JSON.stringify(req)}\n`;
         if (connected && socket !== null) socket.write(text);
         else queued.push({ id, line: text });

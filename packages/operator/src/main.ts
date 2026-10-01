@@ -40,7 +40,7 @@ async function mcpBridgeMain(): Promise<void> {
   }
   // 턴의 원인은 없어도 된다 — 옛 러너·대화형 턴은 심지 않는다(서버는 옛 셈으로 간다).
   const cause = process.env[RUNNER_TURN_CAUSE_ENV] || null;
-  await runMcpBridge({ socketPath, runnerId, secret, cause }, { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr });
+  await runMcpBridge({ socketPath, runnerId, secret, cause, cwd: process.cwd() }, { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr });
 }
 
 /**

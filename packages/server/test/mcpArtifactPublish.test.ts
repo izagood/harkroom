@@ -200,6 +200,34 @@ describe('artifact.publish', () => {
   });
 });
 
+// security #1050 a: /mcp 만 본문 한도를 키웠다. 그 한도는 에이전트에게만 열려야 한다 — 본문을 읽기 **전에**
+// 끊는지(onRequest)를 본다. 핸들러 안으로 옮기면 413 이 아니라 401/403 이 나오던 것이 413 으로 바뀐다.
+describe('the larger /mcp body limit', () => {
+  // 라우트 한도(≈4.5MB)보다 크다 — 읽기 전에 끊으면 401/403, 읽은 뒤에 끊으면 413 이 나온다. 그 차이를 잰다.
+  const big = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', pad: 'x'.repeat(5 * 1024 * 1024) });
+  const send = (headers: Record<string, string>) => app.inject({
+    method: 'POST', url: '/mcp', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...headers },
+    payload: big,
+  });
+
+  it('turns away an anonymous big body before reading it', async () => {
+    expect((await send({})).statusCode).toBe(401);
+  });
+
+  it('turns away a human token with a big body before reading it', async () => {
+    expect((await send(auth(adminToken))).statusCode).toBe(403);
+  });
+
+  it('still refuses a body past the limit for an agent', async () => {
+    const huge = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', pad: 'x'.repeat(5 * 1024 * 1024) });
+    const res = await app.inject({
+      method: 'POST', url: '/mcp', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...auth(botPat) },
+      payload: huge,
+    });
+    expect(res.statusCode).toBe(413);
+  });
+});
+
 describe('message.post with attachments', () => {
   it('attaches the agent’s own uploads in the given order', async () => {
     const bot = await mcpClient(botPat);
