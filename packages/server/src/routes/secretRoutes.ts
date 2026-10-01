@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { actorOf, recordAudit } from '../audit.js';
 import { scanWrite } from '../services/contentScan.js';
 import type { SecretKeyring } from '../services/secretKeyring.js';
+import { needlesFor } from '../services/secretLeakGuard.js';
 import { endTurnLease, issueTurnLease, revealSecret, RevealLimiter } from '../services/secretAccess.js';
 
 /** 계획 D6. 파일·텍스트 공통 상한(바이트). */
@@ -23,6 +24,7 @@ const disabled = {
   error: { code: 'secret_store_disabled', message: 'HARKROOM_SECRET_KEYS_DIR is not set on the server; the secret store is off' },
 };
 const notFound = { error: { code: 'not_found', message: 'no such secret' } };
+const descriptionLeak = { error: { code: 'secret_in_description', message: 'the description looks like it contains a secret value' } };
 
 const idParam = z.object({ id: z.string().uuid() });
 const NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -140,6 +142,8 @@ export async function registerSecretRoutes(
     }
     const bytes = valueBytes(b.kind, b);
     if (typeof bytes === 'string') return reply.code(400).send({ error: { code: 'bad_value', message: bytes } });
+    // 설명에 **이 비밀의 값**이 들어 있어도 거절한다 — 토큰 패턴이 아닌 값(비밀번호 등)은 위 검사가 못 본다.
+    if (needlesFor(bytes).some((n) => b.description.includes(n))) return reply.code(400).send(descriptionLeak);
 
     const id = randomUUID();
     const sealed = keyring.seal(bytes, { secretId: id, version: 1, kind: b.kind });
@@ -183,6 +187,13 @@ export async function registerSecretRoutes(
     if (p.description !== undefined && scanWrite(p.description)?.rules.includes('secret')) {
       return reply.code(400).send({ error: { code: 'secret_in_description', message: 'the description looks like it contains a secret value' } });
     }
+    if (p.description !== undefined && keyring) {
+      const cur = (await pool.query(
+        `select version, sealed from secret_version where secret_id = $1 and sealed is not null order by version desc limit 1`,
+        [s.id])).rows[0] as { version: number; sealed: string } | undefined;
+      const value = cur ? keyring.open(cur.sealed, { secretId: s.id, version: cur.version, kind: s.kind }) : null;
+      if (value && needlesFor(value).some((n) => p.description!.includes(n))) return reply.code(400).send(descriptionLeak);
+    }
     await pool.query(
       `update secret set description = coalesce($2, description),
          expires_at = case when $3::boolean then $4::timestamptz else expires_at end, updated_at = now()
@@ -205,6 +216,8 @@ export async function registerSecretRoutes(
     if (!parsed.success) return reply.code(400).send({ error: { code: 'bad_request', message: parsed.error.message } });
     const bytes = valueBytes(s.kind, parsed.data);
     if (typeof bytes === 'string') return reply.code(400).send({ error: { code: 'bad_value', message: bytes } });
+    // 새 값이 이미 적힌 설명 안에 있으면 거절한다 — 설명은 에이전트에게 보인다(secret.list).
+    if (needlesFor(bytes).some((n) => s.description.includes(n))) return reply.code(400).send(descriptionLeak);
 
     const client = await pool.connect();
     let version: number;

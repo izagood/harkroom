@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { assertChannelVisible } from '../services/channels.js';
 import { listChannelFiles, recordUpload, resolveAttachmentFor } from '../services/attachments.js';
 import { StorageLimitError, AttachmentMissingError, type StorageBackend } from '../storage/local.js';
+import { SECRET_IN_BODY, type SecretLeakGuard } from '../services/secretLeakGuard.js';
 
 /**
  * 절대 inline 으로 내주지 않는 타입. SVG 는 `<script>` 를 담을 수 있어 이미지처럼 보이지만
@@ -19,7 +20,7 @@ function dispositionFor(filename: string): string {
 }
 
 export async function registerAttachmentRoutes(
-  app: FastifyInstance, pool: Pool, storage: StorageBackend,
+  app: FastifyInstance, pool: Pool, storage: StorageBackend, leakGuard: SecretLeakGuard | null = null,
 ): Promise<void> {
   app.post('/uploads', { preHandler: app.requireAccount }, async (req, reply) => {
     const part = await req.file();
@@ -49,6 +50,19 @@ export async function registerAttachmentRoutes(
       return reply.code(413).send({
         error: { code: 'too_large', message: 'file exceeds the size limit' },
       });
+    }
+
+    // 에이전트가 올린 파일에 grant 받은 비밀 값이 들어 있으면 거절한다(D5). multipart 라 루트 훅이 본문을
+    // 못 본다 — 저장한 바이트를 다시 읽어 본다. 사람의 업로드는 보지 않는다(경고는 desktop 몫).
+    if (leakGuard && req.account!.kind === 'agent') {
+      const chunks: Buffer[] = [];
+      for await (const c of await storage.read(stored.key)) chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
+      const hits = await leakGuard.findInBytes(req.account!.id, Buffer.concat(chunks));
+      if (hits.length) {
+        await storage.remove(stored.key).catch(() => {});
+        await leakGuard.record(req, req.account!.id, req.operator?.id ?? null, hits, 'upload');
+        return reply.code(400).send({ error: SECRET_IN_BODY });
+      }
     }
 
     try {
