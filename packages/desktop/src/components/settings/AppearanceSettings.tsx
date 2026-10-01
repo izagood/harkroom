@@ -2,7 +2,7 @@ import { usePrefsStore } from '../../state/prefsStore';
 import { SettingsGroup, SettingsPage } from './primitives';
 import type { ColorMode } from '../../lib/prefs';
 import { DEFAULT_ZOOM, ZOOM_STEPS } from '../../lib/zoom';
-import { LOCALES, LOCALE_NAMES } from '../../i18n';
+import { LOCALES, LOCALE_NAMES, type MessageKey } from '../../i18n';
 import { useT } from '../../i18n/useT';
 
 /**
@@ -15,7 +15,8 @@ import { useT } from '../../i18n/useT';
 const COLOR_MODES: ColorMode[] = ['system', 'light', 'dark'];
 
 /** 그 언어의 이름을 그 언어로. `System` 만 지금 언어를 따른다 — 그것은 언어가 아니라 **결정**이다. */
-const MODE_NAME: Record<ColorMode, string> = { system: 'System', light: 'Light', dark: 'Dark' };
+/** 색 모드 이름은 **지금 언어로**(UX ④b) — 언어 이름과 달리 이것은 그 언어로 읽어야 하는 말이다. */
+const MODE_NAME: Record<ColorMode, MessageKey> = { system: 'appearance.modeSystem', light: 'appearance.modeLight', dark: 'appearance.modeDark' };
 
 export function AppearanceSettings() {
   const t = useT();
@@ -44,11 +45,11 @@ export function AppearanceSettings() {
               key={mode}
               role="radio"
               aria-checked={colorMode === mode}
-              aria-label={t('appearance.mode', { mode: MODE_NAME[mode] })}
+              aria-label={t('appearance.mode', { mode: t(MODE_NAME[mode]) })}
               className={pill(colorMode === mode)}
               onClick={() => setColorMode(mode)}
             >
-              {MODE_NAME[mode]}
+              {t(MODE_NAME[mode])}
             </button>
           ))}
         </div>

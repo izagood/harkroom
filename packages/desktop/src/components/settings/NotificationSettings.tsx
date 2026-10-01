@@ -18,33 +18,32 @@ export function NotificationSettings() {
       {!hasNotificationSurface() && (
         <p data-testid="no-notification-surface"
           className="mb-8 rounded-xl border border-warning-border bg-warning-surface px-4 py-3 text-warning">
-          This build has no system notification surface, so nothing is delivered here.
-          Your choices are still saved and apply once you run the desktop app.
+          {t('notifications.noSurface')}
         </p>
       )}
 
       <SettingsGroup>
         <Toggle
-          label="Enable notifications"
-          description="Turn this off to stay quiet without losing the choices below."
+          label={t('notifications.enabled')}
+          description={t('notifications.enabledNote')}
           checked={n.enabled}
           onChange={(v) => set({ enabled: v })}
         />
       </SettingsGroup>
 
-      <SettingsGroup title="Notify me about">
-        <Toggle label="Mentions" description="Someone writes @you in a channel."
+      <SettingsGroup title={t('notifications.group.about')}>
+        <Toggle label={t('notifications.mention')} description={t('notifications.mentionNote')}
           checked={n.mention} disabled={!n.enabled} onChange={(v) => set({ mention: v })} />
-        <Toggle label="Thread replies" description="A reply lands in a thread you are part of."
+        <Toggle label={t('notifications.threadReply')} description={t('notifications.threadReplyNote')}
           checked={n.threadReply} disabled={!n.enabled} onChange={(v) => set({ threadReply: v })} />
-        <Toggle label="Direct messages" description="Someone messages you directly."
+        <Toggle label={t('notifications.dm')} description={t('notifications.dmNote')}
           checked={n.dm} disabled={!n.enabled} onChange={(v) => set({ dm: v })} />
       </SettingsGroup>
 
-      <SettingsGroup title="Content">
+      <SettingsGroup title={t('notifications.group.content')}>
         <Toggle
-          label="Show message preview"
-          description="Off keeps the message text off your lock screen — you still see who wrote it and where."
+          label={t('notifications.preview')}
+          description={t('notifications.previewNote')}
           checked={n.showPreview} disabled={!n.enabled} onChange={(v) => set({ showPreview: v })}
         />
       </SettingsGroup>
