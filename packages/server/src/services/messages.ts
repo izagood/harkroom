@@ -164,6 +164,7 @@ export const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root
   null::int as "replyCount", null::int as "activityCount",
   null::text as "lastReplyAt", null::text[] as "participantIds",
   null::int as "openAskHumanCount", null::text[] as "openAskAccountIds", null::jsonb as "openAskLinks",
+  null::text[] as "openGateAccountIds",
   null::int as "failureCount", null::int as "unresolvedFailureCount",
   null::text as "lastKind", null::text as "lastAuthorId",
   ${statusReactionOf('message')} as "statusReaction",
@@ -249,6 +250,23 @@ const THREAD_STATE_FACTS = `LEFT JOIN LATERAL (
               OR r.author_id = t.author_id)
         )
     )::int as unresolved_failure_count,
+    -- 안 풀린 account_gate 실패의 차례 주인들(2026-10-02). 해소 규칙은 바로 위와 **같다** —
+    -- 갈라지면 🙋 가 풀린 뒤에도 Inbox 의 내 차례에 남는다. 차례 주인을 못 정한 실패
+    -- (awaitingAccountId 없음)는 넣지 않는다: 아무 계정 id 로 채우면 그 사람만 강조를 받는다.
+    COALESCE(ARRAY_AGG(DISTINCT t.meta->'failure'->>'awaitingAccountId') FILTER (
+      WHERE t.meta->>'kind' = 'failure'
+        AND t.meta->'failure'->>'code' = 'account_gate'
+        AND t.meta->'failure'->>'awaitingAccountId' IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM message r
+          WHERE (r.id = m.id OR r.thread_root_id = m.id)
+            AND r.deleted_at IS NULL
+            AND r.seq > t.seq
+            AND (r.kind IN ('progress', 'wake')
+              OR r.meta->>'kind' = 'report'
+              OR r.author_id = t.author_id)
+        )
+    ), '{}'::text[]) as open_gate_account_ids,
     -- 마디들: 누가 → 누구를 기다리는가(#488 A3-b). 위의 두 집계로는 부족하다 —
     -- open_ask_account_ids 는 '답해야 하는 쪽'만 모은 집합이라 누가 물었는지가
     -- 지워지고, 사슬을 이으려면 짝이 필요하다.
@@ -400,6 +418,7 @@ const LIST_COLS = `m.id, m.seq::int as seq, m.channel_id as "channelId", m.threa
   case when m.thread_root_id is null then thread_stats.participant_ids end as "participantIds",
   case when m.thread_root_id is null then thread_state.open_ask_human_count end as "openAskHumanCount",
   case when m.thread_root_id is null then thread_state.open_ask_account_ids end as "openAskAccountIds",
+  case when m.thread_root_id is null then thread_state.open_gate_account_ids end as "openGateAccountIds",
   case when m.thread_root_id is null then thread_state.failure_count end as "failureCount",
   case when m.thread_root_id is null then thread_state.unresolved_failure_count end as "unresolvedFailureCount",
   case when m.thread_root_id is null then thread_state.open_ask_links end as "openAskLinks",
@@ -453,6 +472,46 @@ const LIST_VISIBLE = `(m.deleted_at is null or (m.thread_root_id is null and exi
  * 사실상 그것이다.
  */
 const REVEAL_REASONS: ReadonlySet<InboxEntry['reason']> = new Set(['mention', 'thread_reply']);
+
+/**
+ * `account_gate` 실패의 **차례 주인**(2026-10-02, 관문 대응 안 2) — 그 턴을 띄운 멘션을 쓴 사람.
+ *
+ * **믿기 전에 확인한다**(원인 헤더와 같은 규율): 그 메시지가 이 에이전트를 **실제로 깨웠고**
+ * (inbox), 같은 채널이며, 작성자가 **사람**이고 **지금도 그 채널을 볼 수 있을** 때만 그 사람이다
+ * (security F1 — 턴이 도는 사이 채널에서 빠진 사람의 Inbox 에 그 채널 글 본문이 실리지 않게). 아니면 `null` — 에이전트가
+ * 아무 메시지 id 나 대서 남의 Inbox 에 "내 차례"를 꽂지 못하게 한다.
+ */
+export async function gateAwaitingAccount(
+  pool: Pool, agentId: string, channelId: string, mentionId: string,
+): Promise<string | null> {
+  const res = await pool.query(
+    `select m.author_id
+       from inbox i
+       join message m on m.id = i.message_id
+       join account a on a.id = m.author_id
+       join channel c on c.id = m.channel_id
+      where i.account_id = $1 and i.message_id = $2 and m.channel_id = $3
+        and a.kind = 'human' and m.deleted_at is null
+        and ${channelVisibleSql('c', 'm.author_id')}
+      limit 1`,
+    [agentId, mentionId, channelId],
+  );
+  return (res.rows[0]?.author_id as string | undefined) ?? null;
+}
+
+/**
+ * 차례 주인에게 이 실패를 Inbox 로 알린다 — `postMessage` 의 `beforeCommit` 안에서 부른다
+ * (같은 트랜잭션, 팬아웃이 끝난 뒤). 이미 이 글로 알림을 받았으면(스레드 주인 등) 두 번 넣지 않는다.
+ *
+ * 사유가 `thread_reply` 인 이유: 사람이 받는 것은 "나를 지목했다"가 아니라 "내가 부른 스레드에
+ * 답(실패)이 왔다"이고, 그 사유는 숨긴 채널도 다시 보이게 한다(`REVEAL_REASONS`).
+ */
+export async function notifyGateAwaiting(
+  client: PoolClient, accountId: string, messageId: string, notified: ReadonlySet<string>,
+): Promise<void> {
+  if (notified.has(accountId)) return;
+  await insertInbox(client, accountId, messageId, 'thread_reply', notified as Set<string>);
+}
 
 async function insertInbox(
   client: PoolClient, accountId: string, messageId: string, reason: InboxEntry['reason'], notified: Set<string>,

@@ -59,6 +59,24 @@ describe('스레드 상태 리액션', () => {
     expect(await rows(id)).toEqual([]);
   });
 
+  it('account_gate 실패는 🙋 로 읽고, 목록 행에 차례 주인을 싣고, 에이전트가 다시 말하면 풀린다', async () => {
+    const id = await seed(adminId, '부탁');
+    const gate: FailureMeta = {
+      kind: 'failure',
+      failure: { retryable: false, what: '계정 설정 확인 대기', code: 'account_gate', awaitingAccountId: adminId, account: 'work/acct-1' },
+    };
+    await seed(botId, '관문', { root: id, meta: gate });
+    expect(await refreshThreadStatus(pool, id, live()))
+      .toMatchObject({ status: 'my-turn', emoji: '🙋', accountId: botId, reason: '계정 설정 확인 대기' });
+    const rowOf = async () => (await listMessages(pool, channelId, { limit: 200 })).find((m) => m.id === id)!;
+    expect((await rowOf()).openGateAccountIds).toEqual([adminId]);
+
+    // 같은 에이전트가 다시 말하면 실패가 풀린다 — 내 차례에서도 빠진다.
+    await seed(botId, '이어서 했다', { root: id });
+    expect(await refreshThreadStatus(pool, id, live())).toMatchObject({ status: 'done' });
+    expect((await rowOf()).openGateAccountIds).toEqual([]);
+  });
+
   it('💬 → 🙋 → ✅ — 루트에 언제나 한 행, 바뀌면 이전 것을 덮는다', async () => {
     const id = await seed(adminId, '부탁');
     await seed(botId, '시작', { root: id, kind: 'progress' });

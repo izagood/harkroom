@@ -34,7 +34,8 @@ select
          or (t.meta->'ask'->'to'->>'kind' = 'account'
            and exists (select 1 from account x where x.id::text = t.meta->'ask'->'to'->>'accountId' and x.kind = 'human')))
      order by t.seq limit 1) as human_ask,
-  (select json_build_object('accountId', t.author_id, 'what', coalesce(t.meta->'failure'->>'what', t.meta->'failure'->>'reason'))
+  (select json_build_object('accountId', t.author_id, 'what', coalesce(t.meta->'failure'->>'what', t.meta->'failure'->>'reason'),
+                            'gate', coalesce(t.meta->'failure'->>'code' = 'account_gate', false))
      from t
      where t.meta->>'kind' = 'failure'
        and not exists (
