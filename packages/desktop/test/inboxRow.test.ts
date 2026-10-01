@@ -7,7 +7,7 @@
 // 이 파일이 지키는 것은 **줄이 갈리는 것**과 **막는 순 정렬**이다.
 import { describe, it, expect } from 'vitest';
 import type { AskMeta, FailureMeta, InboxEntry, ReportMeta } from '@harkroom/shared';
-import { inboxRow, matchesFilter } from '../src/lib/inboxRow';
+import { inboxRow } from '../src/lib/inboxRow';
 import { translator } from '../src/i18n';
 
 /**
@@ -152,34 +152,5 @@ describe('선택은 줄에서 끝난다', () => {
   it('남에게 간 물음은 내가 줄에서 고를 수 없다', () => {
     const r = inboxRow(entry({ meta: ask({ kind: 'account', accountId: OTHER }, 2) }), ME, ko);
     expect(r.options).toBeNull();
-  });
-});
-
-describe('필터 칩이 정렬과 같은 축을 쓴다', () => {
-  const blocking = inboxRow(entry({ meta: failure }), ME, ko);
-  const reading = inboxRow(entry({ meta: report }), ME, ko);
-  const background = inboxRow(entry({ reason: 'thread_reply' }), ME, ko);
-
-  it('막는 것 · 읽을 것 · 배경이 서로 다른 rank 를 받는다', () => {
-    expect([blocking.rank, reading.rank, background.rank]).toEqual([0, 1, 2]);
-  });
-
-  it("'나를 막는 것' 칩은 막는 줄만 남긴다", () => {
-    expect(matchesFilter(blocking, 'blocking')).toBe(true);
-    expect(matchesFilter(reading, 'blocking')).toBe(false);
-    expect(matchesFilter(background, 'blocking')).toBe(false);
-  });
-
-  it("'전부' 는 배경까지 남긴다", () => {
-    expect([blocking, reading, background].every((r) => matchesFilter(r, 'all'))).toBe(true);
-  });
-
-  // 'unread' 만 rank 가 아니라 **호출부가 넘긴 읽음 상태**를 본다. 안 넘기면 아무것도
-  // 맞지 않는다 — 잊은 자리에서 조용히 전부 통과하면 "안 읽은 것"이 전부가 된다.
-  it('안 읽음 칩은 읽음 상태로 가른다', () => {
-    expect(matchesFilter(blocking, 'unread', true)).toBe(true);
-    expect(matchesFilter(blocking, 'unread', false)).toBe(false);
-    expect(matchesFilter(background, 'unread', true)).toBe(true);
-    expect(matchesFilter(blocking, 'unread')).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import { isAskOpen, readAskMeta, readFailureMeta, type InboxEntry, type MessageRow } from '@harkroom/shared';
+import { isAskOpen, readAskMeta, readFailureMeta, type InboxEntry, type InboxThreadState, type MessageRow } from '@harkroom/shared';
 
 /**
  * Inbox **상태 보드**(C안, 2026-10-01 jaebin 선택 · designer 정정 1~5 반영).
@@ -22,20 +22,23 @@ export type BoardColumn = 'mine' | 'blocked' | 'active' | 'done';
 export const BOARD_COLUMNS: readonly BoardColumn[] = ['mine', 'blocked', 'active', 'done'];
 
 /**
- * **치움** 표시(designer 정정 3, 10-01). ✅ 는 "끝남"이 아니라 **보드에서 내린다**는 뜻이다 —
- * 끝남 열은 결과를 보러 가는 곳이고, ✅ 로만 끝남을 세우면 결과가 나와도 진행에 머문다.
- * 치운 카드는 끝남 맨 아래 접힘으로 간다. 2/2 의 서버 "완료" 상태가 이 표시를 대신한다.
+ * **완료(치움)·나중에**는 서버의 내 상태다(2/2, `InboxThreadState`). 1/2 는 머리에 단 ✅ 를
+ * 치움으로 읽었는데, ✅ 는 남에게 보이는 표시라 개인 정리가 대화에 흔적을 남기고 다른 뜻의 ✅ 와
+ * 갈리지 않았다. 이제 리액션은 보지 않는다.
+ *
+ * 두 상태 모두 **그 뒤로 나에게 새 말이 오면 풀린다** — 치웠거나 미룬 일에 새 부름이 오면 그것은
+ * 다시 볼 일이다. 나중에는 `until` 이 지나도 풀린다.
  */
-export const CLEAR_EMOJI = '✅';
 
 /** 진행·끝남에 펼쳐 두는 기간. 그보다 오래 조용한 것은 열 맨 아래 한 줄로 접는다(정정 4). */
 export const RECENT_MS = 7 * 86_400_000;
 
 /**
  * 열 안에서 접힌 자리. `quiet` = 진행인데 7일 넘게 조용하다 · `old` = 7일 넘은 끝남 ·
- * `cleared` = 내가 ✅ 로 치웠다. 접힌 카드는 **사라지지 않는다** — 수와 함께 한 줄로 남는다.
+ * `cleared` = 내가 완료로 치웠다(끝남 맨 아래) · `later` = 내가 나중으로 미뤘다(그 열 맨 아래,
+ * **내 차례 수에서 빠진다**). 접힌 카드는 **사라지지 않는다** — 수와 함께 한 줄로 남는다.
  */
-export type BoardFold = 'quiet' | 'old' | 'cleared';
+export type BoardFold = 'quiet' | 'old' | 'cleared' | 'later';
 
 export interface BoardCard {
   /** 스레드 머리 id — 카드의 열쇠이자 여는 곳. */
@@ -67,6 +70,8 @@ export interface BoardInput {
   /** `null` 이면 서버가 머리를 안 줬다(옛 서버) — 항목 `meta` 로 판정한다. */
   threads: MessageRow[] | null;
   me: { id: string; kind: 'human' | 'agent' } | null;
+  /** 내 완료·나중에. 옛 서버면 비어 있다(그때는 접는 상태가 없다). */
+  threadStates: InboxThreadState[];
   /** 끝남(에이전트의 답으로 끝났다)을 가르는 데 쓴다. 모르는 계정은 에이전트가 아니다. */
   isAgent: (accountId: string) => boolean;
   nowMs: number;
@@ -164,9 +169,22 @@ export function oneSentence(body: string): string {
   return pick.length > MAX_SUMMARY ? `${pick.slice(0, MAX_SUMMARY - 1)}…` : pick;
 }
 
+/**
+ * 지금도 뜻이 있는 상태인가. **그 뒤로 나에게 새 말이 왔으면 풀린다**(새 부름은 다시 볼 일이다) —
+ * 견주는 것은 스레드의 아무 말이 아니라 **나에게 온 항목**의 시각이다: 내가 남긴 답글로 치운 일이
+ * 되살아나면 안 된다. 나중에는 깨어날 시각이 지나도 풀린다.
+ */
+function effectiveState(s: InboxThreadState | undefined, latestEntryAt: string, nowMs: number): InboxThreadState | null {
+  if (!s) return null;
+  if (Date.parse(latestEntryAt) > Date.parse(s.updatedAt)) return null;
+  if (s.state === 'later' && (s.until == null || Date.parse(s.until) <= nowMs)) return null;
+  return s;
+}
+
 export function buildBoard(input: BoardInput): BoardCard[] {
   const { entries, threads, me, nowMs } = input;
   const heads = new Map((threads ?? []).map((m) => [m.id, m]));
+  const states = new Map(input.threadStates.map((s) => [s.rootId, s]));
   const groups = new Map<string, InboxEntry[]>();
   for (const e of entries) {
     const key = rootOf(e);
@@ -190,10 +208,12 @@ export function buildBoard(input: BoardInput): BoardCard[] {
       .reduce((a, b) => (Date.parse(a) >= Date.parse(b) ? a : b));
     const stale = nowMs - Date.parse(lastActivityAt) > RECENT_MS;
     const running = head?.lastKind === 'progress';
-    const cleared = myId != null && (head?.reactions ?? []).some((r) => r.emoji === CLEAR_EMOJI && r.accountIds.includes(myId));
+    const state = effectiveState(states.get(rootId), list[0]!.createdAt, nowMs);
     let fold: BoardFold | null = null;
-    // 치운 것은 끝남 맨 아래로 간다 — 내 차례만은 치움을 이긴다(위 `columnFromHead`).
-    if (cleared && column !== 'mine') { column = 'done'; fold = 'cleared'; }
+    // 나중에는 어느 열이든 그 열 맨 아래로 접는다 — 내 차례도 미룰 수 있어야 수가 0 이 된다.
+    // 치운 것은 끝남 맨 아래로 간다 — 내 차례만은 치움을 이긴다(물음이 열려 있으면 치울 수 없다).
+    if (state?.state === 'later') fold = 'later';
+    else if (state?.state === 'done' && column !== 'mine') { column = 'done'; fold = 'cleared'; }
     else if (column === 'active' && stale && !running) fold = 'quiet';
     else if (column === 'done' && stale) fold = 'old';
 

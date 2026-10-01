@@ -46,7 +46,7 @@ const entry = (id: number, channelId: string): InboxEntry => ({
 const mount = (rows: InboxEntry[], extra: Record<string, unknown> = {}) => {
   const api = fakeApi();
   setController({
-    api: { ...api, inbox: vi.fn(async () => rows), inboxBoard: vi.fn(async () => ({ entries: rows, threads: null })) },
+    api: { ...api, inbox: vi.fn(async () => rows), inboxBoard: vi.fn(async () => ({ entries: rows, threads: null, threadStates: [] })) },
     openMessage: vi.fn(async () => undefined),
     openChannel: vi.fn().mockResolvedValue(undefined),
     openThread: vi.fn(),

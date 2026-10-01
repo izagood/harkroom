@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
-import type { AskMeta, InboxEntry, MessageRow } from '@harkroom/shared';
+import type { AskMeta, InboxEntry, InboxThreadState, MessageRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
@@ -28,9 +28,12 @@ const askMeta = (to: AskMeta['ask']['to'], prompt?: string) => ({
   ask: { prompt, options: [{ id: 'a', label: '이대로' }, { id: 'b', label: '다시' }], to },
 } as unknown as Record<string, unknown>);
 
-const fakeController = (load: () => Promise<{ entries: InboxEntry[]; threads: MessageRow[] | null }>) => {
+const fakeController = (load: () => Promise<{ entries: InboxEntry[]; threads: MessageRow[] | null; threadStates?: InboxThreadState[] }>) => {
   const c = {
-    api: { inboxBoard: vi.fn(load) },
+    api: {
+      inboxBoard: vi.fn(async () => ({ threadStates: [], ...(await load()) })),
+      setInboxThreadState: vi.fn(async () => ({ state: null })),
+    },
     openMessage: vi.fn(async () => undefined),
     openThread: vi.fn(async () => undefined),
     openChannel: vi.fn(async () => undefined),
@@ -75,7 +78,7 @@ describe('Inbox 상태 보드 (C안)', () => {
     expect(within(col('mine')).getByTestId('inbox-card-r1')).toBeTruthy();
   });
 
-  it('열 넷이 내 차례 → 막힘 → 진행 → 끝남 순서로 서고, 수는 내 차례만 센다', async () => {
+  it('열 넷이 내 차례 → 기다리는 중 → 진행 → 끝남 순서로 서고, 수는 내 차례만 센다', async () => {
     fakeController(async () => ({
       entries: ['r1', 'r2', 'r3', 'r4'].map((r, i) => entry(i + 1, { threadRootId: r })),
       threads: [
@@ -120,8 +123,9 @@ describe('Inbox 상태 보드 (C안)', () => {
     fireEvent.click(await screen.findByTestId('inbox-card-answer-r1-a'));
     await waitFor(() => expect(c.answerAsk).toHaveBeenCalledWith('m1', 'a', 'c1'));
     expect(c.openThread).not.toHaveBeenCalled();
-    // 내 차례에는 치우기가 없다 — 눌러도 그 자리에 남는다.
-    expect(screen.queryByTestId('inbox-card-clear-r1')).toBeNull();
+    // 내 차례에는 완료가 없다(눌러도 그 자리에 남는다) — 나중에는 있다(수에서 뺄 수 있게).
+    expect(screen.queryByTestId('inbox-card-done-r1')).toBeNull();
+    expect(screen.getByTestId('inbox-card-later-r1')).toBeTruthy();
   });
 
   it('남에게 간 물음은 카드에 선택지가 없다', async () => {
@@ -134,23 +138,49 @@ describe('Inbox 상태 보드 (C안)', () => {
     expect(screen.queryByTestId('inbox-card-answer-r1-a')).toBeNull();
   });
 
-  it('치우기는 머리에 ✅ 를 달고, 치운 카드는 끝남 맨 아래 접힘으로 간다', async () => {
-    let cleared = false;
+  it('완료는 서버의 내 상태를 정하고, 치운 카드는 끝남 맨 아래 접힘에서 되돌린다', async () => {
+    let states: InboxThreadState[] = [];
     const c = fakeController(async () => ({
-      entries: [entry(1, { threadRootId: 'r1' })],
-      threads: [head('r1', { lastAuthorId: BOT, reactions: cleared ? [{ emoji: '✅', accountIds: [ME] }] : [] })],
+      entries: [entry(1, { threadRootId: 'r1', createdAt: new Date(Date.now() - 3_600_000).toISOString() })],
+      threads: [head('r1', { lastAuthorId: BOT })],
+      threadStates: states,
     }));
     open();
-    fireEvent.click(await screen.findByTestId('inbox-card-clear-r1'));
-    await waitFor(() => expect(c.toggleReaction).toHaveBeenCalledWith('c1', 'r1', '✅', true));
-    cleared = true;
-    // 치운 뒤의 재조회를 흉내낸다.
+    fireEvent.click(await screen.findByTestId('inbox-card-done-r1'));
+    await waitFor(() => expect(c.api.setInboxThreadState).toHaveBeenCalledWith('r1', { state: 'done' }));
+    // 리액션은 건드리지 않는다 — 남에게 보이는 흔적이 남지 않는다.
+    expect(c.toggleReaction).not.toHaveBeenCalled();
+    states = [{ rootId: 'r1', state: 'done', until: null, updatedAt: new Date().toISOString() }];
     cleanup();
     open();
     const fold = await screen.findByTestId('inbox-fold-cleared');
     expect(fold.textContent).toContain('치운 것 1');
+    fireEvent.click(within(fold).getByTestId('inbox-card-undo-r1'));
+    await waitFor(() => expect(c.api.setInboxThreadState).toHaveBeenLastCalledWith('r1', { state: null }));
+  });
+
+  it('나중에는 내일 아침으로 미루고, 미룬 내 차례는 수에서 빠진다', async () => {
+    let states: InboxThreadState[] = [];
+    const c = fakeController(async () => ({
+      entries: [entry(1, { threadRootId: 'r1', createdAt: new Date(Date.now() - 3_600_000).toISOString() })],
+      threads: [head('r1', { openAskAccountIds: [ME] })],
+      threadStates: states,
+    }));
+    open();
+    expect((await screen.findByTestId('inbox-mine-count')).textContent).toBe('나를 기다리는 일 1');
+    fireEvent.click(screen.getByTestId('inbox-card-later-r1'));
+    await waitFor(() => expect(c.api.setInboxThreadState).toHaveBeenCalled());
+    const [, body] = c.api.setInboxThreadState.mock.calls[0] as unknown as [string, { state: string; until: string }];
+    expect(body.state).toBe('later');
+    const until = new Date(body.until);
+    expect(until.getHours()).toBe(9);
+    expect(until.getTime()).toBeGreaterThan(Date.now());
+    states = [{ rootId: 'r1', state: 'later', until: body.until, updatedAt: new Date().toISOString() }];
+    cleanup();
+    open();
+    const fold = await screen.findByTestId('inbox-fold-later');
     expect(within(fold).getByTestId('inbox-card-r1')).toBeTruthy();
-    expect(within(fold).getByTestId('inbox-card-clear-r1').textContent).toBe('되돌리기');
+    expect(screen.getByTestId('inbox-mine-count').textContent).toBe('나를 기다리는 일 0');
   });
 
   it('스레드 카드를 누르면 그 스레드를 열고 보드는 남는다', async () => {
