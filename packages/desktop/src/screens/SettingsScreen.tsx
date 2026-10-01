@@ -17,6 +17,7 @@ import { ProfileSettings } from '../components/settings/ProfileSettings';
 import { SkillsSettings } from '../components/settings/SkillsSettings';
 import { AutomationsSettings } from '../components/settings/AutomationsSettings';
 import { UpdatesSettings } from '../components/settings/UpdatesSettings';
+import { ThisOperatorSettings } from '../components/settings/ThisOperatorSettings';
 import { DEFAULT_SECTION, SETTINGS_GROUPS, isSectionId, navKey, workspaceEditable, type SectionId } from '../components/settings/sections';
 import { useActiveStore } from '../state/communities';
 import { WindowDragStrip } from '../components/WindowDragStrip';
@@ -117,6 +118,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
           {section === 'handle-groups' && <HandleGroupsSettings />}
           {section === 'invite' && <InviteSettings />}
           {section === 'updates' && <UpdatesSettings />}
+          {section === 'this-operator' && <ThisOperatorSettings />}
           {section === 'skills' && <SkillsSettings targetId={targetId} />}
           {section === 'automations' && <AutomationsSettings />}
           {section === 'gallery' && <GallerySettings />}
