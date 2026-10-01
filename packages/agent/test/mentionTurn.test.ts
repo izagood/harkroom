@@ -570,10 +570,11 @@ describe('runMentionTurn', () => {
   });
 
   /**
-   * **에이전트가 부른 FYI 에 답이 없으면 progress 로 낮춘다** (2026-10-01). 그날 40건 넘게 쌓인 "발화 없음"
-   * 카드는 대부분 에이전트끼리의 FYI 멘션이었다 — 덧붙일 말이 없는 것이 정상인데 오류처럼 보였다.
+   * **에이전트가 부른 FYI 에 답이 없으면 글 없이 ✅ 만 단다** (2026-10-01). 그날 40건 넘게 쌓인 "발화 없음"
+   * 카드는 대부분 에이전트끼리의 FYI 멘션이었다. progress 줄로 낮추면 데스크톱이 그 스레드를 끝나지 않는
+   * '작업 중'으로 칠한다(designer 재검토) — 그래서 칸을 쓰지 않는 리액션이다.
    */
-  it('에이전트가 부른 턴이 답 없이 끝나면 progress 한 줄로 남는다', async () => {
+  it('에이전트가 부른 턴이 답 없이 끝나면 글 0건, 멘션에 ✅ 하나다', async () => {
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('agent-peer', '@forge FYI — #1013 머지됨').id = MENTION;
     const { deps } = await makeDeps(fake, {
@@ -582,8 +583,24 @@ describe('runMentionTurn', () => {
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
-    expect(fake.posts.map((p) => p.body)).toEqual(['확인함 — 덧붙일 말이 없어 답글은 달지 않았습니다 ("FYI 라 할 말 없음")']);
-    expect(fake.messages.at(-1)?.kind).toBe('progress');
+    expect(fake.posts).toEqual([]);
+    expect(fake.reactions.filter((r) => r.emoji === '✅')).toEqual([
+      { channelId: CHANNEL, messageId: MENTION, emoji: '✅', action: 'add' },
+    ]);
+  });
+
+  it('에이전트가 불렀어도 다른 스레드에 답했으면 보통 답글로 링크를 준다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('agent-peer', '@forge 이 일 해줘').id = MENTION;
+    const { deps } = await makeDeps(fake, { agentIds: new Set(['agent-peer']), readLastSaid: async () => null });
+    deps.runTurn = (() => fake.post(CHANNEL, '옆 스레드에 답합니다', 'other-root')
+      .then(() => ({ exitCode: 0, timedOut: false, tail: '' }))) as typeof deps.runTurn;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    const mine = fake.posts.filter((p) => p.threadRootId === null);
+    expect(mine.map((p) => p.body)).toEqual(['이 요청의 답은 다른 스레드에 올렸습니다: harkroom://message/other-root']);
+    expect(fake.reactions.filter((r) => r.emoji === '✅')).toEqual([]);
   });
 
   it('부른 쪽이 사람이면 agentIds 가 있어도 보통 답글이다 — 멘션 작성자로 가른다', async () => {

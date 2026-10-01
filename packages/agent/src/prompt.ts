@@ -20,15 +20,21 @@ export const BODY_LIMIT = 8000;
  * 10-01 하루에만 40건이 넘었고 대부분은 **에이전트끼리 주고받은 FYI 멘션**이었다 — 덧붙일 말이 없어
  * 답하지 않은 것이 정상인데, 사람 눈에는 오류 카드가 줄줄이 쌓였다. 그래서 부른 쪽과 정황으로 나눈다:
  *
- * - 부른 쪽이 **에이전트** → `progress` 로 낮춘다(결과 발화로 세지 않고, 스레드를 막힘으로 칠하지 않는다).
- * - 부른 쪽이 **사람**이고 다른 스레드에 답했다 → 보통 답글로 그 링크를 준다.
+ * - 부른 쪽이 **에이전트**이고 다른 스레드 답도 없다 → 글 없이 멘션 메시지에 ✅ 리액션만 단다. 처음 안은
+ *   progress 줄이었지만, 데스크톱은 마지막 줄이 에이전트의 progress 인 스레드를 그 러너가 살아 있는지로
+ *   `running`/`stuck` 이라 칠하고(`desktop/src/lib/threadState.ts::decide`) progress 묶음은 같은 저자의 보통
+ *   글이 와야 닫힌다(`progressGroup.ts`) — FYI 스레드가 끝나지 않는 '작업 중'으로 남는다(designer 재검토).
+ * - 다른 스레드에 답했다 → 부른 쪽과 무관하게 보통 답글로 그 링크를 준다(드물고, 링크는 사람에게도 쓸모 있다).
  * - 부른 쪽이 **사람**이고 정말 답이 없다 → 보통 답글로 그 사실과 마지막 말 한 줄.
  *
  * TUI 꼬리 원문은 본문에 싣지 않는다 — 화면 찌꺼기(상태줄·입력창·이스케이프 잔여)가 대부분이라 사람이
  * 읽을 수 없었다. 대신 하네스 기록의 **마지막 말 한 줄**(`readLastAssistantText`, `silentWakeNotice` 와
  * 같은 방식)을 싣고, 원문 꼬리는 러너 로그에만 남긴다(호출자).
  */
-export type SilentTurnNotice = { kind: 'progress' | 'post'; body: string };
+export type SilentTurnNotice = { kind: 'react'; emoji: string } | { kind: 'post'; body: string };
+
+/** 에이전트가 부른 턴이 덧붙일 말 없이 끝났다는 표시 — 멘션 메시지에 단다(👀 받았음·💬 도는 중의 끝). */
+export const SILENT_ACK_EMOJI = '✅';
 
 export function silentTurnNotice(opts: {
   /** 이 턴을 부른 쪽. 모르면 `'human'` — 사람에게 안 보이는 쪽으로 틀리는 것이 더 나쁘다. */
@@ -38,18 +44,13 @@ export function silentTurnNotice(opts: {
   /** `offAnchorNotice` 의 결과 — 이 턴이 다른 스레드에 답했으면 그 링크 문장. */
   offAnchor: string | null;
   pat: string;
+  /** 이 턴에 마운트한 비밀 값(`secretLeases.needles`). 마지막 말 인용에서 가린다(`quotedLine`). */
+  secrets?: readonly string[];
 }): SilentTurnNotice {
-  const said = opts.lastSaid === null ? '' : oneLine(opts.lastSaid, opts.pat);
-  if (opts.caller === 'agent') {
-    return {
-      kind: 'progress',
-      body: opts.offAnchor
-        ?? (said
-          ? `확인함 — 덧붙일 말이 없어 답글은 달지 않았습니다 ("${said}")`
-          : '확인함 — 덧붙일 말이 없어 답글은 달지 않았습니다'),
-    };
-  }
   if (opts.offAnchor !== null) return { kind: 'post', body: opts.offAnchor };
+  // 에이전트 쪽은 글이 없으니 마지막 말을 실을 자리도 없다 — 호출자가 러너 로그에 남긴다.
+  if (opts.caller === 'agent') return { kind: 'react', emoji: SILENT_ACK_EMOJI };
+  const said = quotedLine(opts.lastSaid, opts.pat, opts.secrets);
   return {
     kind: 'post',
     body: said
@@ -153,9 +154,15 @@ export function tailHasSecretFragment(text: string, secrets: readonly string[]):
 /** 한 줄 요약의 상한. 스레드에 남는 러너 통지는 한눈에 읽혀야 한다. */
 const NOTICE_LINE_MAX_CHARS = 200;
 
-/** 비밀을 가리고 한 줄로 접는다(`harnessTailNotice` 와 같은 가리기 규칙). */
-function oneLine(text: string, pat: string, max = NOTICE_LINE_MAX_CHARS): string {
-  let t = text;
+/**
+ * 비밀을 가리고 한 줄로 접는다(`harnessTailNotice` 와 같은 가리기 규칙).
+ *
+ * 마운트한 비밀(`secrets`)은 **자르기 전에** 통째로 가린다 — 자른 뒤에 가리면 경계에 걸친 값의 앞 조각이
+ * 남고, 서버 D5(`secret_in_body`)는 통째 값만 보므로 그 조각이 그대로 나간다(security #1015 재현).
+ * 조각(접힘·앞 잘림) 판정은 인용하는 쪽(`quotedLine`)이 한다.
+ */
+function oneLine(text: string, pat: string, max = NOTICE_LINE_MAX_CHARS, secrets: readonly string[] = []): string {
+  let t = maskWhole(text, secrets);
   if (pat.length > 0) t = t.split(pat).join('(가림)');
   t = t
     .replace(/(?:hrkp|murp)_[A-Za-z0-9_-]+/g, '(가림)')
@@ -164,6 +171,23 @@ function oneLine(text: string, pat: string, max = NOTICE_LINE_MAX_CHARS): string
     .replace(/\s+/g, ' ')
     .trim();
   return t.length > max ? `${t.slice(0, max)}…` : t;
+}
+
+/** 마운트한 비밀 값을 통째로 가린다(긴 것부터 온다 — `secretLeases.needles`). */
+function maskWhole(text: string, secrets: readonly string[]): string {
+  let t = text;
+  for (const n of secrets) if (n && t.includes(n)) t = t.split(n).join('(가림)');
+  return t;
+}
+
+/**
+ * 통지에 인용할 마지막 말 — 없으면 빈 문자열. 통째로 가린 뒤에도 비밀의 12자 조각이 보이면 **인용을 통째로
+ * 뺀다**(`tailHasSecretFragment`) — 조각만 가리면 나머지가 남는다(`harnessTailNotice` 판례).
+ */
+export function quotedLine(lastSaid: string | null, pat: string, secrets: readonly string[] = []): string {
+  if (lastSaid === null) return '';
+  if (secrets.length > 0 && tailHasSecretFragment(maskWhole(lastSaid, secrets), secrets)) return '';
+  return oneLine(lastSaid, pat, NOTICE_LINE_MAX_CHARS, secrets);
 }
 
 /**
@@ -176,8 +200,8 @@ function oneLine(text: string, pat: string, max = NOTICE_LINE_MAX_CHARS): string
  *
  * progress 로 올린다(호출자) — 결과 발화가 아니므로 발화로 세지 않고, 스레드를 `막힘` 으로 칠하지 않는다.
  */
-export function silentWakeNotice(lastSaid: string | null, pat: string): string {
-  const said = lastSaid === null ? '' : oneLine(lastSaid, pat);
+export function silentWakeNotice(lastSaid: string | null, pat: string, secrets: readonly string[] = []): string {
+  const said = quotedLine(lastSaid, pat, secrets);
   return said
     ? `(예약된 확인 턴이 발화 없이 끝났습니다 — 하네스의 마지막 말: "${said}")`
     : '(예약된 확인 턴이 발화 없이 끝났습니다)';

@@ -12,7 +12,7 @@ import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs
 import { dirname, join } from 'node:path';
 import type { AgentHarness, AgentView, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow } from '@harkroom/shared';
 import type { Me } from './harkroom.js';
-import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, silentTurnNotice, silentWakeNotice } from './prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, harnessPath, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
@@ -1935,20 +1935,27 @@ export async function runMentionTurn(
       // 실패해도 통지 자체는 그대로 나간다 — 정황이 없다고 사실을 못 남기면 본말이 뒤집힌다.
       const offAnchor = await offAnchorEvidence(deps, key, channelId, anchor, turnStartSeq);
       const notice = silentTurnNotice({
-        caller: silentTurnCaller(deps, target, thread), lastSaid, offAnchor, pat: deps.runnerSecret,
+        caller: silentTurnCaller(deps, target, thread), lastSaid, offAnchor,
+        pat: deps.runnerSecret, secrets: await tailSecrets(),
       });
-      // 상한을 넘기면 서버가 거절해 **통지 자체가 사라진다**. 본문은 이제 한 줄 요약뿐이지만
-      // 상한 판정을 그 함수의 상수에 맡기지 않는다: 여기가 서버 계약을 아는 자리다.
-      const body = notice.body.slice(0, BODY_LIMIT);
-      if (notice.kind === 'progress') await deps.harkroom.progress(channelId, body, anchor);
-      else await deps.harkroom.post(channelId, body, anchor);
+      if (notice.kind === 'react') {
+        // 에이전트가 부른 FYI — 글 없이 멘션에 ✅ 만 단다(`silentTurnNotice` 주석). 마지막 말은 로그에만.
+        // 로그에도 가린 한 줄만 쓴다(꼬리와 같은 판단: 로그 파일도 디스크에 남는다).
+        const said = quotedLine(lastSaid, deps.runnerSecret, await tailSecrets());
+        console.log(`[mentionTurn] ${key}: 에이전트 호출에 덧붙일 말 없이 끝났다 — ✅ 만 단다${said ? ` (마지막 말: ${said})` : ''}`);
+        await deps.harkroom.addReaction(channelId, mentionId, notice.emoji);
+      } else {
+        // 상한을 넘기면 서버가 거절해 **통지 자체가 사라진다**. 본문은 이제 한 줄 요약뿐이지만
+        // 상한 판정을 그 함수의 상수에 맡기지 않는다: 여기가 서버 계약을 아는 자리다.
+        await deps.harkroom.post(channelId, notice.body.slice(0, BODY_LIMIT), anchor);
+      }
     } else if (postCount === 0 && target.wake) {
       // **예약으로 깨어난 턴이 다시 깨움만 걸고 말없이 끝났다**(2026-09-30, `silentWakeNotice` 주석).
       // 대기 줄은 보이지만 "확인은 했다"와 그 이유는 안 보였다 — 한 줄로 남긴다.
       const lastSaid = await (deps.readLastSaid ?? readLastAssistantText)(def.harness, rec.sessionId, {
         configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
       }).catch(() => null);
-      await deps.harkroom.progress(channelId, silentWakeNotice(lastSaid, deps.runnerSecret), anchor);
+      await deps.harkroom.progress(channelId, silentWakeNotice(lastSaid, deps.runnerSecret, await tailSecrets()), anchor);
     }
   } catch (err) {
     console.error(
