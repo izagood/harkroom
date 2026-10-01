@@ -39,6 +39,24 @@ export interface PickChange {
   row: ThreadAgentModelView | null;
 }
 
+/** 허용 목록 한 줄(087, 결정 11). */
+export interface PickableEntry {
+  model: string;
+  efforts: string[];
+}
+
+/** 저장된 jsonb 를 읽는다. 모양이 틀린 줄은 버린다 — 틀린 줄로 허용이 넓어지지 않게. */
+export function readPickable(raw: unknown): PickableEntry[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((e) => {
+    if (!e || typeof e !== 'object') return [];
+    const model = (e as { model?: unknown }).model;
+    const efforts = (e as { efforts?: unknown }).efforts;
+    if (typeof model !== 'string' || !model) return [];
+    return [{ model, efforts: Array.isArray(efforts) ? efforts.filter((x): x is string => typeof x === 'string') : [] }];
+  });
+}
+
 /** 다듬은 값. 두 축이 다 null 이면 "풀기" 다. */
 export function cleanPicks(picks: readonly AgentModelPickInput[]): Array<{ agentId: string; model: string | null; effort: string | null }> {
   return picks.map((p) => ({
@@ -71,14 +89,28 @@ export async function applyAgentPicks(
     if (!axisValid(p.model) || !axisValid(p.effort)) {
       return reject(400, 'bad_model_value', '모델·effort 는 영숫자로 시작하고 영숫자·._:/[]- 만 쓴다');
     }
-    const cfg = await client.query<{ pickable: string[] | null }>(
-      `select agent_pickable_models as pickable from agent_config where account_id = $1`, [p.agentId]);
-    const pickable = cfg.rows[0]?.pickable ?? [];
-    if (pickable.length === 0) {
-      return reject(403, 'not_pickable', '그 에이전트의 소유자가 다른 에이전트가 고를 수 있는 모델을 켜지 않았다');
-    }
-    if (p.model !== null && !pickable.includes(p.model)) {
-      return reject(403, 'not_pickable', `허용 목록에 없는 모델이다(${pickable.join('·')})`);
+    const clearing = p.model === null && p.effort === null;
+    if (!clearing) {
+      const cfg = await client.query<{ pickable: unknown }>(
+        `select agent_pickable_models as pickable from agent_config where account_id = $1`, [p.agentId]);
+      const pickable = readPickable(cfg.rows[0]?.pickable);
+      if (pickable.length === 0) {
+        return reject(403, 'not_pickable', '그 에이전트의 소유자가 다른 에이전트가 고를 수 있는 모델을 켜지 않았다');
+      }
+      // (모델·effort) 조합으로 본다(결정 11). 모델 없이 effort 만 올리는 길은 없다 — 그것이 모델만 묶을 때
+      // 비용 상한을 비켜 가던 길이다. 하네스 목록을 몰라도(오퍼레이터 오프라인) 이 판정은 그대로다.
+      if (p.model === null) {
+        return reject(403, 'not_pickable', 'effort 만 고를 수는 없다 — 허용 목록의 모델을 함께 고른다');
+      }
+      const entry = pickable.find((e) => e.model === p.model);
+      if (!entry) {
+        return reject(403, 'not_pickable', `허용 목록에 없는 모델이다(${pickable.map((e) => e.model).join('·')})`);
+      }
+      if (p.effort !== null && !entry.efforts.includes(p.effort)) {
+        return reject(403, 'not_pickable', entry.efforts.length
+          ? `${p.model} 에 허용된 effort 가 아니다(${entry.efforts.join('·')})`
+          : `${p.model} 은 effort 를 고를 수 없다(에이전트 설정 effort 그대로)`);
+      }
     }
     const row = await getThreadAgentModel(client, input.threadRootId, p.agentId);
     if (row && row.setByKind === 'human') {

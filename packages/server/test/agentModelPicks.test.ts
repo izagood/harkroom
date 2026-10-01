@@ -78,25 +78,30 @@ describe('agent picks a model for the agent it calls (087)', () => {
 
   it('허용 목록은 그 에이전트의 소유자만 정한다', async () => {
     const byMember = await app.inject({
-      method: 'PUT', url: `/accounts/agents/${fable.accountId}/pickable-models`, headers: auth(member.token), payload: { models: ['fable'] },
+      method: 'PUT', url: `/accounts/agents/${fable.accountId}/pickable-models`, headers: auth(member.token), payload: { models: [{ model: 'fable', efforts: ['medium'] }] },
     });
     expect(byMember.statusCode).toBe(403);
     const bad = await app.inject({
-      method: 'PUT', url: `/accounts/agents/${fable.accountId}/pickable-models`, headers: auth(adminToken), payload: { models: ['-x'] },
+      method: 'PUT', url: `/accounts/agents/${fable.accountId}/pickable-models`, headers: auth(adminToken), payload: { models: [{ model: '-x' }] },
     });
     expect(bad.statusCode).toBe(400);
     const ok = await app.inject({
-      method: 'PUT', url: `/accounts/agents/${fable.accountId}/pickable-models`, headers: auth(adminToken), payload: { models: ['fable', 'opus'] },
+      method: 'PUT', url: `/accounts/agents/${fable.accountId}/pickable-models`, headers: auth(adminToken), payload: { models: [{ model: 'fable', efforts: ['medium', 'high'] }, { model: 'opus' }] },
     });
     expect(ok.statusCode).toBe(200);
-    expect(ok.json().models).toEqual(['fable', 'opus']);
+    expect(ok.json().models).toEqual([{ model: 'fable', efforts: ['medium', 'high'] }, { model: 'opus', efforts: [] }]);
+    const badEffort = await app.inject({
+      method: 'PUT', url: `/accounts/agents/${fable.accountId}/pickable-models`, headers: auth(adminToken),
+      payload: { models: [{ model: 'fable', efforts: ['"max'] }] },
+    });
+    expect(badEffort.statusCode).toBe(400);
   });
 
   it('agent.modelOptions 가 고를 수 있는 것을 알려 준다 — 자기 자신은 빈 목록', async () => {
     const c = await mcp(lead.pat);
     try {
       const opts = text(await c.callTool({ name: 'agent.modelOptions', arguments: { handle: 'reviewer' } }));
-      expect(opts.pickable.map((m: { id: string }) => m.id)).toEqual(['fable', 'opus']);
+      expect(opts.pickable).toEqual([{ id: 'fable', efforts: ['medium', 'high'] }, { id: 'opus', efforts: [] }]);
       const self = text(await c.callTool({ name: 'agent.modelOptions', arguments: { handle: 'lead' } }));
       expect(self.pickable).toEqual([]);
     } finally {
@@ -113,6 +118,20 @@ describe('agent picks a model for the agent it calls (087)', () => {
     expect(eff.json()).toMatchObject({ model: 'fable', effort: 'medium', source: { model: 'thread', effort: 'thread' } });
     const sys = await pool.query(`select meta from message where thread_root_id = $1 and kind = 'system'`, [root]);
     expect(sys.rows[0].meta.threadAgentModel).toMatchObject({ agentId: fable.accountId, model: 'fable', byKind: 'agent' });
+  });
+
+  it('effort 도 허용 목록으로 묶는다 — 목록 밖 effort·effort 만 올리기·effort 못 고르는 모델은 403(결정 11)', async () => {
+    // 이 시험 환경에는 오퍼레이터가 없다 — 하네스 목록을 모를 때도 허용 목록 밖 effort 는 거절해야 한다.
+    const outside = await say({ body: '@reviewer effort-1', agentModels: [{ agentId: fable.accountId, model: 'fable', effort: 'max' }] });
+    expect(outside.error?.code).toBe('not_pickable');
+    const effortOnly = await say({ body: '@reviewer effort-2', agentModels: [{ agentId: fable.accountId, model: null, effort: 'high' }] });
+    expect(effortOnly.error?.code).toBe('not_pickable');
+    const noEffort = await say({ body: '@reviewer effort-3', agentModels: [{ agentId: fable.accountId, model: 'opus', effort: 'high' }] });
+    expect(noEffort.error?.code).toBe('not_pickable');
+    for (const n of [1, 2, 3]) expect(await countBody(`effort-${n}`)).toBe(0);
+    const ok = await say({ body: '@reviewer effort-4', agentModels: [{ agentId: fable.accountId, model: 'fable', effort: 'high' }] });
+    expect(ok.error).toBeUndefined();
+    expect(await rowOf(ok.message.id, fable.accountId)).toMatchObject({ model: 'fable', effort: 'high', set_by_kind: 'agent' });
   });
 
   it('목록 밖 모델·자기 자신·부르지 않는 에이전트는 거절하고 글을 남기지 않는다', async () => {
@@ -220,7 +239,7 @@ describe('agent picks a model for the agent it calls (087)', () => {
   it('허용 목록은 에이전트 PAT 으로 못 연다 — 그 에이전트가 소유자여도(결정 9, 권장 a)', async () => {
     await pool.query(`update agent_config set owner_account_id = $1 where account_id = $2`, [lead.accountId, other.accountId]);
     const res = await app.inject({
-      method: 'PUT', url: `/accounts/agents/${other.accountId}/pickable-models`, headers: auth(lead.pat), payload: { models: ['opus'] },
+      method: 'PUT', url: `/accounts/agents/${other.accountId}/pickable-models`, headers: auth(lead.pat), payload: { models: [{ model: 'opus' }] },
     });
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe('human_only');

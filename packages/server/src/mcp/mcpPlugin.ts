@@ -402,10 +402,14 @@ function buildMcpServer(
     }
     const opts = await agentModelOptions(pool, operatorHub, agentId);
     if (!opts) return jsonResult({ error: { code: 'unknown_handle', message: `no agent with handle @${handle}` } });
-    const pickable = opts.models
-      ? opts.models.filter((m) => opts.pickable.includes(m.id))
-        .map((m) => ({ id: m.id, ...(m.label ? { label: m.label } : {}), ...(m.efforts ? { efforts: m.efforts } : {}) }))
-      : opts.pickable.map((id) => ({ id }));
+    // (모델·effort) 조합(결정 11): 허용 목록의 effort 를 주되, 하네스가 그 모델에 대해 밝힌 effort 가 있으면
+    // 그 교집합만 준다. 하네스 목록을 모르면 허용 목록 그대로다(서버는 그래도 목록 밖을 거절한다).
+    const pickable = opts.pickable.flatMap((e) => {
+      const offered = opts.models?.find((m) => m.id === e.model);
+      if (opts.models && !offered) return [];
+      const efforts = offered?.efforts ? e.efforts.filter((x) => offered.efforts!.includes(x)) : e.efforts;
+      return [{ id: e.model, ...(offered?.label ? { label: offered.label } : {}), efforts }];
+    });
     return jsonResult({
       agentId, harness: opts.harness, defaultModel: opts.model, defaultEffort: opts.effort, pickable,
       ...(pickable.length ? {} : { reason: '그 에이전트의 소유자가 고를 수 있는 모델을 켜지 않았다' }),

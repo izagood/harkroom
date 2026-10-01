@@ -15,6 +15,7 @@ import { emitEvent, emitPosted } from '../events.js';
 import { assignmentOf } from '../services/agents.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { postMessage } from '../services/messages.js';
+import { readPickable } from '../services/agentModelPicks.js';
 import {
   axisValid, clearThreadAgentModel, cleanAxis, effectiveAgentModel, isChannelRoot, listThreadAgentModels, setThreadAgentModel, threadRootOf,
 } from '../services/threadAgentModels.js';
@@ -95,7 +96,7 @@ export async function emitChanged(
  * 다른 에이전트가 고를 수 있는 목록(`pickable`, 087). 지시문·MCP·소유자는 싣지 않는다.
  */
 export async function agentModelOptions(pool: Pool, hub: OperatorHub | undefined, agentId: string) {
-  const found = await pool.query<{ harness: string | null; model: string | null; effort: string | null; pickable: string[] | null }>(
+  const found = await pool.query<{ harness: string | null; model: string | null; effort: string | null; pickable: unknown }>(
     `select c.harness, c.model, c.effort, c.agent_pickable_models as pickable
        from account a left join agent_config c on c.account_id = a.id
       where a.id = $1 and a.kind = 'agent' and a.deleted_at is null`, [agentId]);
@@ -105,7 +106,7 @@ export async function agentModelOptions(pool: Pool, hub: OperatorHub | undefined
   const assignment = await assignmentOf(pool, agentId);
   const caps = assignment && hub ? hub.capabilities(assignment.operatorId) : null;
   const models = caps?.harnesses[harness]?.models;
-  return { harness, model: row.model, effort: row.effort, pickable: row.pickable ?? [], ...(models ? { models } : {}) };
+  return { harness, model: row.model, effort: row.effort, pickable: readPickable(row.pickable), ...(models ? { models } : {}) };
 }
 
 function refuse(reply: FastifyReply, status: number, code: string, message: string) {
@@ -205,11 +206,24 @@ export async function registerThreadAgentModelRoutes(
     // 사람이 켠다(결정 9). 에이전트가 소유자인 경우(agent.create grant, 소유자를 에이전트로 정한
     // 경우)에도 에이전트 PAT 은 이 목록을 못 연다(security #1010 권장 a).
     if (req.account!.kind !== 'human') return refuse(reply, 403, 'human_only', '허용 목록은 사람이 켠다');
-    const parsed = z.object({ models: z.array(z.string().min(1).max(MODEL_ID_MAX)).max(20) }).safeParse(req.body ?? {});
+    // (모델·effort) 조합(결정 11). `efforts` 가 비면 그 모델은 effort 를 고르지 못한다.
+    const parsed = z.object({
+      models: z.array(z.object({
+        model: z.string().min(1).max(MODEL_ID_MAX),
+        efforts: z.array(z.string().min(1).max(EFFORT_MAX)).max(8).default([]),
+      })).max(20),
+    }).safeParse(req.body ?? {});
     if (!parsed.success) return refuse(reply, 400, 'bad_request', parsed.error.message);
-    const models = [...new Set(parsed.data.models.map((m) => m.trim()).filter((m) => m.length > 0))];
-    if (models.some((m) => !axisValid(m))) {
-      return refuse(reply, 400, 'bad_model_value', '모델 이름은 영숫자로 시작하고 영숫자·._:/[]- 만 쓴다');
+    const byModel = new Map<string, string[]>();
+    for (const e of parsed.data.models) {
+      const model = e.model.trim();
+      if (!model) continue;
+      const efforts = [...new Set([...(byModel.get(model) ?? []), ...e.efforts.map((x) => x.trim()).filter(Boolean)])];
+      byModel.set(model, efforts);
+    }
+    const models = [...byModel].map(([model, efforts]) => ({ model, efforts }));
+    if (models.some((e) => !axisValid(e.model) || e.efforts.some((x) => !axisValid(x)))) {
+      return refuse(reply, 400, 'bad_model_value', '모델·effort 는 영숫자로 시작하고 영숫자·._:/[]- 만 쓴다');
     }
     const owner = await pool.query<{ owner: string | null }>(
       `select c.owner_account_id as owner from account a join agent_config c on c.account_id = a.id
@@ -218,7 +232,7 @@ export async function registerThreadAgentModelRoutes(
     if (owner.rows[0]!.owner !== req.account!.id) {
       return refuse(reply, 403, 'owner_only', '이 에이전트의 소유자만 정한다');
     }
-    await pool.query(`update agent_config set agent_pickable_models = $2 where account_id = $1`, [agentId, models]);
+    await pool.query(`update agent_config set agent_pickable_models = $2::jsonb where account_id = $1`, [agentId, JSON.stringify(models)]);
     await recordAudit(pool, {
       action: 'agent.pickable_models.set', actorId: req.account!.id, actorHandle: req.account!.handle,
       target: agentId, detail: { models },
