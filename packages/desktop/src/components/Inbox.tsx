@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Identity } from './Identity';
 import type { InboxEntry, MessageRow } from '@harkroom/shared';
-import { BOARD_COLUMNS, DONE_EMOJI, buildBoard, daysWaiting, type BoardCard, type BoardColumn } from '../lib/inboxBoard';
+import { BOARD_COLUMNS, CLEAR_EMOJI, buildBoard, daysWaiting, type BoardCard, type BoardColumn, type BoardFold } from '../lib/inboxBoard';
 import { bodyWithHandles } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
@@ -24,6 +24,17 @@ type LoadState = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; mess
 const THREAD_PREFIX = 'thread:';
 
 /** 열 이름 키. 화면이 제 손으로 글자를 적지 않는다. */
+/** 열 맨 아래 접힘 줄의 이름. 접힌 카드는 사라지지 않는다 — 수와 함께 한 줄로 남는다. */
+const FOLD_KEY = {
+  quiet: 'inbox.board.fold.quiet',
+  old: 'inbox.board.fold.old',
+  cleared: 'inbox.board.fold.cleared',
+} as const satisfies Record<BoardFold, string>;
+/** 열마다 접힘 줄의 순서. 진행은 조용한 것, 끝남은 지난 것 → 치운 것. */
+const COLUMN_FOLDS: Record<BoardColumn, readonly BoardFold[]> = {
+  mine: [], blocked: [], active: ['quiet'], done: ['old', 'cleared'],
+};
+
 const COLUMN_KEY = {
   mine: 'inbox.board.col.mine',
   blocked: 'inbox.board.col.blocked',
@@ -42,8 +53,8 @@ const COLUMN_KEY = {
  * "Waiting on" 목록은 없앴다 — 줄지 않는 숫자와 내용 없는 목록이 이 화면을 소음으로 만들었다
  * (designer 진단). **숫자는 내 차례만 센다** — 0 이 될 수 있는 수만 뜻이 있다.
  *
- * 카드에서 그 자리 처리: 나에게 온 물음은 카드에서 고르고, 완료는 머리에 ✅ 를 단다
- * (1/2 의 임시 완료 — 서버의 완료·나중에 상태는 2/2).
+ * 카드에서 그 자리 처리: 나에게 온 물음은 카드에서 고르고, 치움은 머리에 ✅ 를 단다
+ * (끝남 맨 아래로 접힌다 — 서버의 완료·나중에 상태는 2/2).
  *
  * ## 모달이 아니라 **자리**다 (#488 C2)
  *
@@ -180,8 +191,13 @@ export function Inbox({ open, onClose }: Props) {
   }, [channels, dms, accounts, me]);
 
   const cards = useMemo(
-    () => buildBoard({ entries, threads, me: me ? { id: me.id, kind: me.kind } : null }),
-    [entries, threads, me],
+    () => buildBoard({
+      entries, threads,
+      me: me ? { id: me.id, kind: me.kind } : null,
+      isAgent: (id) => accounts[id]?.kind === 'agent',
+      nowMs: Date.now(),
+    }),
+    [entries, threads, me, accounts],
   );
   const byColumn = useMemo(() => {
     const out: Record<BoardColumn, BoardCard[]> = { mine: [], blocked: [], active: [], done: [] };
@@ -251,11 +267,14 @@ export function Inbox({ open, onClose }: Props) {
     } finally { setBusy(null); }
   };
 
-  /** 1/2 의 임시 완료 — 머리에 ✅ 를 달거나 뗀다(사람이 이미 그렇게 끝냄을 적는다). */
-  const setDone = async (card: BoardCard, on: boolean): Promise<void> => {
+  /**
+   * **치움** — 머리에 ✅ 를 달거나 뗀다(designer 정정 3). 보드에서 내려 끝남 맨 아래 접힘으로
+   * 보낸다. 사람이 이미 ✅ 로 그렇게 적고 있다. 2/2 의 서버 "완료"가 이것을 대신한다.
+   */
+  const setCleared = async (card: BoardCard, on: boolean): Promise<void> => {
     setBusy(card.rootId);
     try {
-      await getController().toggleReaction(card.channelId, card.rootId, DONE_EMOJI, on);
+      await getController().toggleReaction(card.channelId, card.rootId, CLEAR_EMOJI, on);
       reload({ quiet: true });
     } finally { setBusy(null); }
   };
@@ -311,12 +330,12 @@ export function Inbox({ open, onClose }: Props) {
             </button>
           ))}
           <button
-            data-testid={`inbox-card-done-${card.rootId}`}
+            data-testid={`inbox-card-clear-${card.rootId}`}
             disabled={busy === card.rootId}
-            onClick={() => void setDone(card, card.column !== 'done')}
+            onClick={() => void setCleared(card, card.fold !== 'cleared')}
             className="ml-auto rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
           >
-            {card.column === 'done' ? t('inbox.board.reopen') : t('inbox.board.markDone')}
+            {card.fold === 'cleared' ? t('inbox.board.unclear') : t('inbox.board.clear')}
           </button>
         </div>
       </li>
@@ -372,26 +391,47 @@ export function Inbox({ open, onClose }: Props) {
         <p data-testid="inbox-empty" className="p-3 text-fg-subtle">{t('inbox.board.empty.all')}</p>
       )}
       {/*
-        열 넷. 좁은 창에서는 가로로 밀린다(열 하나가 읽히는 폭 아래로 줄지 않는다) — 열이 겹쳐
-        한 줄로 접히면 "어느 열인가" 가 사라진다.
+        열 넷. **넓은 창에서는 나란히**, 좁은 창에서는 **세로 구획으로 쌓는다**(designer) — 순서가
+        곧 열 순서라 내 차례가 맨 위다. 끌어 옮기기는 없다: 카드는 판정을 따라 저절로 옮긴다.
       */}
       {load.kind === 'ready' && cards.length > 0 && (
-        <div className="flex min-h-0 flex-1 gap-2 overflow-x-auto p-2">
-          {BOARD_COLUMNS.map((col) => (
-            <section
-              key={col}
-              data-testid={`inbox-col-${col}`}
-              aria-label={t(COLUMN_KEY[col])}
-              className="flex min-h-0 w-64 min-w-56 flex-1 flex-col"
-            >
-              <h3 className={`px-1 pb-1 text-meta font-medium uppercase tracking-wide ${col === 'mine' ? 'text-state-turn' : 'text-fg-subtle'}`}>
-                {t(COLUMN_KEY[col])}
-              </h3>
-              {byColumn[col].length === 0
-                ? <p className="px-1 text-meta text-fg-subtle">{t(col === 'mine' ? 'inbox.board.empty.mine' : 'inbox.board.empty.other')}</p>
-                : <ul className="flex min-h-0 flex-col gap-1.5 overflow-y-auto">{byColumn[col].map(cardView)}</ul>}
-            </section>
-          ))}
+        <div
+          data-testid="inbox-board"
+          className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2 lg:flex-row lg:gap-2 lg:overflow-y-hidden lg:overflow-x-auto"
+        >
+          {BOARD_COLUMNS.map((col) => {
+            const shown = byColumn[col].filter((c) => c.fold === null);
+            return (
+              <section
+                key={col}
+                data-testid={`inbox-col-${col}`}
+                aria-label={t(COLUMN_KEY[col])}
+                className="flex shrink-0 flex-col lg:min-h-0 lg:w-64 lg:min-w-56 lg:flex-1 lg:shrink"
+              >
+                <h3 className={`px-1 pb-1 text-meta font-medium uppercase tracking-wide ${col === 'mine' ? 'text-state-turn' : 'text-fg-subtle'}`}>
+                  {t(COLUMN_KEY[col])}
+                </h3>
+                <div className="flex flex-col gap-1.5 lg:min-h-0 lg:overflow-y-auto">
+                  {shown.length === 0
+                    ? <p className="px-1 text-meta text-fg-subtle">{t(col === 'mine' ? 'inbox.board.empty.mine' : 'inbox.board.empty.other')}</p>
+                    : <ul className="flex flex-col gap-1.5">{shown.map(cardView)}</ul>}
+                  {/* 접힘 줄 — 열 맨 아래. 펼치면 같은 카드 모양으로 선다. */}
+                  {COLUMN_FOLDS[col].map((fold) => {
+                    const folded = byColumn[col].filter((c) => c.fold === fold);
+                    if (folded.length === 0) return null;
+                    return (
+                      <details key={fold} data-testid={`inbox-fold-${fold}`} className="px-1">
+                        <summary className="cursor-pointer text-meta text-fg-subtle hover:text-fg-muted">
+                          {t(FOLD_KEY[fold], { count: folded.length })}
+                        </summary>
+                        <ul className="mt-1.5 flex flex-col gap-1.5">{folded.map(cardView)}</ul>
+                      </details>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
         </div>
       )}
       {/* 쓰다 만 초안 — 보드 밖 한 줄. 누르면 가장 최근 초안 자리로 간다. */}

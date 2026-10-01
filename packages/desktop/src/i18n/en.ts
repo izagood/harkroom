@@ -2866,9 +2866,13 @@ export const en = {
   /** 카드에 쌓인 말의 수 — 같은 일에서 온 것이 여럿이면 한 장에 모인다는 표시. */
   'inbox.board.more': '+{count} more',
   'inbox.board.unread': 'New',
-  /** 1/2 의 임시 완료 — 머리에 ✅ 를 단다. */
-  'inbox.board.markDone': 'Done',
-  'inbox.board.reopen': 'Reopen',
+  /** 치움 — 머리에 ✅ 를 달아 보드에서 내린다(끝남 맨 아래 접힘). 2/2 의 서버 완료가 대신한다. */
+  'inbox.board.clear': 'Clear',
+  'inbox.board.unclear': 'Put back',
+  /** 열 맨 아래 접힘 줄. 접힌 카드도 수로 남는다. */
+  'inbox.board.fold.quiet': 'Quiet for a week ({count})',
+  'inbox.board.fold.old': 'Older ({count})',
+  'inbox.board.fold.cleared': 'Cleared ({count})',
   /** 쓰다 만 초안 — 보드 밖 한 줄. */
   'inbox.board.drafts': 'Unfinished drafts ({count})',
   'inbox.drafts.badge': 'Draft',
