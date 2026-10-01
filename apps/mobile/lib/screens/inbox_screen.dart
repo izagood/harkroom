@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
+import '../ui/tokens.dart';
 import '../mention/render.dart';
 import 'message_list_screen.dart';
 import 'thread_screen.dart';
@@ -75,7 +76,7 @@ class _InboxRow extends StatelessWidget {
       key: Key('inbox-${entry.id}'),
       // 안 본 것에만 점을 찍는다.
       leading: entry.isUnread
-          ? Icon(Icons.circle, size: 10, color: theme.colorScheme.primary)
+          ? Icon(Icons.circle, size: 8, color: context.tokens.accent)
           : const SizedBox(width: 10),
       title: Text(
         who == null ? _reason(t, entry.reason) : '$who · ${_reason(t, entry.reason)}',

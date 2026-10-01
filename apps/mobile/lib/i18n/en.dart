@@ -98,19 +98,19 @@ class StringsEn implements Strings {
   String get agentBadge => 'agent';
 
   @override
-  String get askAnswered => 'Answered';
+  String get askAnswered => 'Decided';
 
   @override
-  String get askClosed => 'Declined';
+  String get askClosed => 'Closed without an answer';
 
   @override
-  String get askDecline => 'Not now';
+  String get askDecline => 'Don\u2019t answer this';
 
   @override
   String get askToYou => 'Waiting on you';
 
   @override
-  String get askToAnyone => 'Waiting on someone';
+  String get askToAnyone => 'A person picks';
 
   @override
   String get threadTitle => 'Thread';
@@ -149,13 +149,13 @@ class StringsEn implements Strings {
   String get inboxMarkAllRead => 'Mark all read';
 
   @override
-  String get inboxReasonMention => 'Mentioned you';
+  String get inboxReasonMention => 'Called you';
 
   @override
-  String get inboxReasonThreadReply => 'Replied in your thread';
+  String get inboxReasonThreadReply => 'Reply';
 
   @override
-  String get inboxReasonDm => 'Direct message';
+  String get inboxReasonDm => 'DM';
 
   @override
   String get inboxReasonAskAnswered => 'Answered your question';
@@ -218,7 +218,7 @@ class StringsEn implements Strings {
   String get reportChecks => 'Checked';
 
   @override
-  String get reportFiles => 'Changed';
+  String get reportFiles => 'Files changed';
 
   @override
   String get reportRemaining => 'Still open';
@@ -227,7 +227,7 @@ class StringsEn implements Strings {
   String get reportNext => 'Next';
 
   @override
-  String get failureTitle => 'Failed';
+  String get failureTitle => 'Could not finish it';
 
   @override
   String get failureRetryable => 'Can be retried';

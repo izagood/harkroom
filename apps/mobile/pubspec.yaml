@@ -55,6 +55,9 @@ dev_dependencies:
   # 첫 화면이 빨간 오류였다 — 로케일·플러그인 채널·ATS 는 진짜 런타임에서만 드러난다.
   integration_test:
     sdk: flutter
+  # 화면 갤러리를 찍을 때 `flutter drive` 가 쓴다(`test_driver/integration_test.dart`).
+  flutter_driver:
+    sdk: flutter
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is

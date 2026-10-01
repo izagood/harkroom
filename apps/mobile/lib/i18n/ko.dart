@@ -25,13 +25,13 @@ class StringsKo implements Strings {
   String get connectContinue => '계속';
 
   @override
-  String get connectErrorEmpty => '서버 주소를 입력하세요.';
+  String get connectErrorEmpty => '서버 주소가 비어 있다.';
 
   @override
-  String get connectErrorMalformed => '서버 주소 형식이 아닙니다.';
+  String get connectErrorMalformed => '서버 주소 형식이 아니다.';
 
   @override
-  String get connectErrorInsecure => 'iOS는 http:// 연결을 차단합니다. https:// 주소를 사용하세요.';
+  String get connectErrorInsecure => 'iOS 는 http:// 연결을 막는다. https:// 주소여야 한다.';
 
   @override
   String get commonLoading => '불러오는 중…';
@@ -55,10 +55,10 @@ class StringsKo implements Strings {
   String get loginSubmit => '로그인';
 
   @override
-  String get loginErrorRejected => '로그인 아이디 또는 비밀번호가 맞지 않습니다.';
+  String get loginErrorRejected => '로그인 아이디나 비밀번호가 맞지 않다.';
 
   @override
-  String get loginErrorUnreachable => '서버에 연결하지 못했습니다. 주소와 네트워크를 확인하세요.';
+  String get loginErrorUnreachable => '서버에 연결하지 못했다. 주소와 네트워크를 확인해 달라.';
 
   @override
   String get signOut => '로그아웃';
@@ -67,13 +67,13 @@ class StringsKo implements Strings {
   String get channelsTitle => '채널';
 
   @override
-  String get channelsEmpty => '아직 들어간 채널이 없습니다.';
+  String get channelsEmpty => '아직 들어간 채널이 없다.';
 
   @override
-  String get messagesEmpty => '아직 메시지가 없습니다.';
+  String get messagesEmpty => '아직 메시지가 없다.';
 
   @override
-  String get composerHint => '메시지, 또는 @로 에이전트 호출';
+  String get composerHint => '메시지 — @ 로 에이전트를 부른다';
 
   @override
   String get composerSend => '보내기';
@@ -88,34 +88,34 @@ class StringsKo implements Strings {
   String get connectionReconnecting => '다시 연결 중…';
 
   @override
-  String get connectionDead => '연결 끊김 — 다시 로그인하세요';
+  String get connectionDead => '연결 끊김 — 다시 로그인해야 한다';
 
   @override
-  String get noticeSessionNotSaved => '세션을 키체인에 저장하지 못했습니다. 지금은 계속 사용할 수 있지만, 앱을 다시 열면 다시 로그인해야 합니다.';
+  String get noticeSessionNotSaved => '세션을 키체인에 저장하지 못했다. 지금은 계속 쓸 수 있지만, 앱을 다시 열면 다시 로그인해야 한다.';
 
   @override
   String get agentBadge => '에이전트';
 
   @override
-  String get askAnswered => '답함';
+  String get askAnswered => '정해졌다';
 
   @override
-  String get askClosed => '답하지 않음';
+  String get askClosed => '답 없이 닫혔다';
 
   @override
-  String get askDecline => '나중에';
+  String get askDecline => '답하지 않기';
 
   @override
   String get askToYou => '내 차례';
 
   @override
-  String get askToAnyone => '누군가의 차례';
+  String get askToAnyone => '사람이 고른다';
 
   @override
   String get threadTitle => '스레드';
 
   @override
-  String get threadReplyHint => '스레드에 답하기';
+  String get threadReplyHint => '스레드에 답글';
 
   @override
   String get threadRepliesZero => '답글 달기';
@@ -127,7 +127,7 @@ class StringsKo implements Strings {
   String get threadRepliesMany => '답글 {n}개';
 
   @override
-  String get mentionPickerEmpty => '맞는 사람이 없습니다';
+  String get mentionPickerEmpty => '맞는 사람이 없다';
 
   @override
   String get mentionUnknown => '@알 수 없음';
@@ -136,43 +136,43 @@ class StringsKo implements Strings {
   String get tabChannels => '채널';
 
   @override
-  String get tabInbox => '받은 것';
+  String get tabInbox => '인박스';
 
   @override
   String get tabMe => '나';
 
   @override
-  String get inboxEmpty => '아직 받은 것이 없습니다.';
+  String get inboxEmpty => '인박스가 비어 있다.';
 
   @override
   String get inboxMarkAllRead => '모두 읽음';
 
   @override
-  String get inboxReasonMention => '나를 불렀습니다';
+  String get inboxReasonMention => '불렀다';
 
   @override
-  String get inboxReasonThreadReply => '내 스레드에 답글';
+  String get inboxReasonThreadReply => '답글';
 
   @override
   String get inboxReasonDm => '다이렉트 메시지';
 
   @override
-  String get inboxReasonAskAnswered => '내 물음에 답함';
+  String get inboxReasonAskAnswered => '내 물음에 답했다';
 
   @override
-  String get inboxReasonAskClosed => '내 물음을 접음';
+  String get inboxReasonAskClosed => '내 물음을 닫았다';
 
   @override
-  String get inboxReasonOther => '나를 불렀습니다';
+  String get inboxReasonOther => '불렀다';
 
   @override
-  String get meSignedInAs => '@{handle} 로 로그인됨';
+  String get meSignedInAs => '@{handle} 로 로그인했다';
 
   @override
   String get attachmentOpen => '열기';
 
   @override
-  String get attachmentFailed => '이 파일을 불러오지 못했습니다.';
+  String get attachmentFailed => '이 파일을 불러오지 못했다.';
 
   @override
   String get timeUnderMinute => '1분 미만';
@@ -211,13 +211,13 @@ class StringsKo implements Strings {
   String get agentWaiting => '대기 중';
 
   @override
-  String get reportTitle => '완료';
+  String get reportTitle => '끝남';
 
   @override
   String get reportChecks => '확인한 것';
 
   @override
-  String get reportFiles => '바뀐 것';
+  String get reportFiles => '바뀐 파일';
 
   @override
   String get reportRemaining => '남은 것';
@@ -226,17 +226,17 @@ class StringsKo implements Strings {
   String get reportNext => '다음';
 
   @override
-  String get failureTitle => '실패';
+  String get failureTitle => '끝내지 못했다';
 
   @override
-  String get failureRetryable => '다시 해 볼 수 있음';
+  String get failureRetryable => '다시 해 볼 수 있다';
 
   @override
-  String get failureNeedsHand => '손이 필요함';
+  String get failureNeedsHand => '손이 필요하다';
 
   @override
   String get attachmentAdd => '파일 첨부';
 
   @override
-  String get attachmentUploadFailed => '파일을 올리지 못했습니다.';
+  String get attachmentUploadFailed => '파일을 올리지 못했다.';
 }
