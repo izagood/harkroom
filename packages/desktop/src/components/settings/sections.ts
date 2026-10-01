@@ -82,6 +82,7 @@ export const SETTINGS_GROUPS: { id: 'me' | 'device' | 'workspace' | 'agents'; ti
     items: [
       // 워크스페이스 자체의 설정 — 지금은 커뮤니티 레일에 걸리는 아이콘 하나다(owner/admin 이 바꾼다).
       { id: 'workspace' },
+      // 멤버와 초대(UX ⑥b-5): 초대 토큰 + Directory 의 사람 목록. id 는 바깥 배선 때문에 `invite` 그대로다.
       { id: 'invite' },
       // `Teams` 가 여기 있었다. 지금은 `Agents` 안의 묶음이다 — 근거는 위 `SectionId` 주석.
       // 사람 묶음(집합)은 워크스페이스 전체에 걸리므로 이 묶음이다(⑩a 에서 팀과 "그룹" 으로 합친다).
