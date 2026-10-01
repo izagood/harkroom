@@ -44,7 +44,9 @@ class _Target {
     if (u == null || u.host.isEmpty) return null;
     final scheme = u.scheme.toLowerCase();
     final port = u.hasPort ? u.port : (scheme == 'https' ? 443 : scheme == 'http' ? 80 : 0);
-    return _Target(scheme, u.host.toLowerCase(), port, u.path.replaceAll(RegExp('/{2,}'), '/'), u.query);
+    // 끝 점(`host.`)은 같은 호스트다 — 견줄 때 지운다(security 후속).
+    final host = u.host.toLowerCase().replaceFirst(RegExp(r'\.+$'), '');
+    return _Target(scheme, host, port, u.path.replaceAll(RegExp('/{2,}'), '/'), u.query);
   }
 
   bool sameOrigin(_Target o) => scheme == o.scheme && host == o.host && port == o.port;
@@ -71,10 +73,11 @@ PreviewNavigation decidePreviewNavigation({
   final req = _Target.parse(requested);
   final first = _Target.parse(initial);
   if (req == null || (req.scheme != 'http' && req.scheme != 'https')) return PreviewNavigation.block;
-  // 호스트만 본다(scheme·port 는 보지 않는다) — 페이지는 자기 주소(토큰 포함)를 읽을 수 있으므로 `http://` 로 바꾼
-  // 같은 경로를 밖으로 넘기게 하면 토큰이 사파리로 간다.
-  final isPreviewPath = first != null && req.host == first.host && req.path.startsWith('/preview/');
-  if (isPreviewPath) {
+  // **우리 서버 호스트면 경로와 상관없이** 밖으로 넘기지 않는다(security 후속). 경로를 글자로 견주면
+  // `/%70review/…` 같은 표기를 놓친다. 이 화면에서 우리 서버의 다른 경로로 갈 일도 없다. scheme·port 도 보지
+  // 않는다 — 페이지는 자기 주소(토큰 포함)를 읽을 수 있으므로 `http://` 로 바꾼 같은 경로도 막아야 한다.
+  final ourServer = first != null && req.host == first.host;
+  if (ourServer) {
     return isMainFrame && !initialLoaded && req.sameAs(first) ? PreviewNavigation.allow : PreviewNavigation.block;
   }
   if (!isMainFrame) return PreviewNavigation.block;
@@ -104,6 +107,17 @@ class OutsideNavigationGate {
   }
 }
 
+/// `{host}` 자리를 굵게 채운 글.
+TextSpan _withBoldHost(String template, String host) {
+  final at = template.indexOf('{host}');
+  if (at < 0) return TextSpan(text: template);
+  return TextSpan(children: [
+    TextSpan(text: template.substring(0, at)),
+    TextSpan(text: host, style: const TextStyle(fontWeight: FontWeight.w700)),
+    TextSpan(text: template.substring(at + '{host}'.length)),
+  ]);
+}
+
 /// 묻는 창. 호스트만 크게 보인다 — 경로·쿼리는 페이지가 지은 값이라 사람이 판단할 재료가 아니다.
 Future<bool> confirmLeavePreview(BuildContext context, Uri uri) async {
   final t = context.t;
@@ -112,7 +126,8 @@ Future<bool> confirmLeavePreview(BuildContext context, Uri uri) async {
     builder: (context) => AlertDialog(
       key: const Key('artifact-leave-dialog'),
       title: Text(t.artifactLeaveTitle),
-      content: Text(t.artifactLeaveBody.replaceAll('{host}', uri.host)),
+      // 사람이 판단할 근거는 호스트 한 낱말이다 — 굵게(designer c).
+      content: Text.rich(_withBoldHost(t.artifactLeaveBody, uri.host), key: const Key('artifact-leave-body')),
       actions: [
         TextButton(
           key: const Key('artifact-leave-cancel'),
@@ -327,13 +342,26 @@ class _PreviewWebViewState extends State<_PreviewWebView> {
               return NavigationDecision.prevent;
           }
         },
-        onPageFinished: (_) => _initialLoaded = true,
+        onPageFinished: (_) {
+          _initialLoaded = true;
+          if (mounted) setState(() => _painting = false);
+        },
       ))
       ..loadRequest(Uri.parse(widget.url));
   }
 
+  /// 첫 그림 전 흰 화면에 머리줄 아래 얇은 막대를 둔다(designer b). 첫 로드가 끝나면 내린다.
+  bool _painting = true;
+
   @override
-  Widget build(BuildContext context) => WebViewWidget(controller: _controller);
+  Widget build(BuildContext context) => Stack(children: [
+        WebViewWidget(controller: _controller),
+        if (_painting)
+          const Positioned(
+            left: 0, right: 0, top: 0,
+            child: LinearProgressIndicator(key: Key('artifact-painting'), minHeight: 2),
+          ),
+      ]);
 }
 
 /// 사람이 읽는 크기(데스크톱 `formatSize` 와 같은 셈).

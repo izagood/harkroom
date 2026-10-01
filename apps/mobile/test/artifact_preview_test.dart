@@ -96,6 +96,19 @@ void main() {
       expect(decide('http://server.example.com/preview/tok'), PreviewNavigation.block);
       expect(decide('https://server.example.com:8443/preview/tok', loaded: true), PreviewNavigation.block);
     });
+    // security 후속: 우리 서버 호스트면 경로·표기와 상관없이 밖으로 넘기지 않는다.
+    test('우리 서버의 다른 경로·바꾼 표기도 막기만 한다', () {
+      for (final u in [
+        '$_base/%70review/tok',
+        '$_base/channels',
+        'https://server.example.com./preview/tok',
+        'https://SERVER.example.com../anything',
+      ]) {
+        expect(decide(u, loaded: true), PreviewNavigation.block, reason: u);
+      }
+      expect(decide('https://server.example.com./preview/tok'), PreviewNavigation.allow,
+          reason: '끝 점만 다른 첫 로드는 같은 주소다');
+    });
     test('하위 프레임은 전부 막는다', () {
       expect(decide(initial, main: false), PreviewNavigation.block);
       expect(decide('https://example.com/', main: false), PreviewNavigation.block);
@@ -145,7 +158,12 @@ void main() {
       final result = confirmLeavePreview(ctx, Uri.parse('https://evil.example.net/login?next=x'));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('artifact-leave-dialog')), findsOneWidget);
-      expect(find.text('이 페이지가 evil.example.net 로 이동하려 한다.'), findsOneWidget);
+      final body = tester.widget<Text>(find.byKey(const Key('artifact-leave-body')));
+      expect(body.textSpan!.toPlainText(), '이 페이지가 evil.example.net 로 이동하려 한다.');
+      // 호스트만 굵게(designer c).
+      final bold = (body.textSpan! as TextSpan).children!.whereType<TextSpan>()
+          .where((t) => t.style?.fontWeight == FontWeight.w700).map((t) => t.text).toList();
+      expect(bold, ['evil.example.net']);
       await tester.tap(find.byKey(const Key('artifact-leave-cancel')));
       await tester.pumpAndSettle();
       expect(await result, isFalse);
