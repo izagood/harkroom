@@ -24,6 +24,7 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
     required this.mute,
     required this.accent,
     required this.accentSoft,
+    required this.onAccent,
     required this.link,
     required this.mentionSoft,
     required this.warn,
@@ -50,6 +51,10 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
   /// **강조는 이것 하나다.** 안 읽음 배지·보내기·내 차례에만 쓴다.
   final Color accent;
   final Color accentSoft;
+
+  /// 주황 **위의** 글자(배지 숫자·보내기 화살표). 밝은 판은 흰색이고 굵게 쓴다(3.7:1). 다크 판의
+  /// 밝은 주황 위 흰 글자는 2.6:1 이라 먹색으로 뒤집는다(6.9:1) — designer #976 판정 ①.
+  final Color onAccent;
   final Color link;
   final Color mentionSoft;
   final Color warn;
@@ -70,6 +75,7 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
     mute: Color(0xFF76716B),
     accent: Color(0xFFE4572E),
     accentSoft: Color(0xFFFDEBE4),
+    onAccent: Color(0xFFFFFFFF),
     link: Color(0xFF2563C9),
     mentionSoft: Color(0xFFE8F0FD),
     warn: Color(0xFF8A5A00),
@@ -80,12 +86,12 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
     okSoft: Color(0xFFE6F6EC),
   );
 
-  /// 다크 판은 사양에 숫자가 없어서 같은 관계로 뒤집었다: 먹색 머리는 그대로 두고(이미
-  /// 어둡다), 바탕을 한 단 올리고, 상태 색은 **옅은 면 대신 어두운 면 + 밝은 글자**로.
-  /// 주황은 어두운 바탕에서 대비가 떨어지지 않게 한 단 밝힌다(데스크탑 다크의 `#ff7a4a` 쪽).
+  /// 다크 판(designer #976 판정 ①). 먹색 면은 **바탕보다 한 단 밝게** 들뜬다 — 밝은 판의
+  /// 먹색을 그대로 쓰면 다크 바탕(`#1C1B19`)과 거의 같아 스낵바·머리·떠 있는 버튼이 묻힌다.
+  /// 상태 색은 옅은 면 대신 어두운 면 + 밝은 글자, 주황은 한 단 밝힌다(데스크탑 다크의 `#ff7a4a`).
   static const dark = HarkroomTokens(
-    ink: Color(0xFF18181B),
-    ink2: Color(0xFF27272C),
+    ink: Color(0xFF2A2A2F),
+    ink2: Color(0xFF34343A),
     bg: Color(0xFF1C1B19),
     soft: Color(0xFF2A2826),
     line: Color(0xFF34312E),
@@ -93,6 +99,7 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
     mute: Color(0xFF9A938B),
     accent: Color(0xFFFF7A4A),
     accentSoft: Color(0xFF3A2219),
+    onAccent: Color(0xFF18181B),
     link: Color(0xFF7AA7F0),
     mentionSoft: Color(0xFF1E2A3D),
     warn: Color(0xFFF0B43C),

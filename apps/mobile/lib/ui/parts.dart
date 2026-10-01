@@ -99,8 +99,8 @@ class UnreadBadge extends StatelessWidget {
         // 세 자리가 넘으면 줄인다 — 정확한 수보다 "많다"가 더 읽힌다.
         count > 99 ? '99+' : '$count',
         textAlign: TextAlign.center,
-        style: const TextStyle(
-            color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600, height: 1.1),
+        style: TextStyle(
+            color: k.onAccent, fontSize: 11, fontWeight: FontWeight.w700, height: 1.1),
       ),
     );
   }
@@ -232,4 +232,17 @@ class SectionHeader extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 보내기 버튼의 모양. **주황 원 + [HarkroomTokens.onAccent] 화살표**다(재설계 §3.4) — 보내기는
+/// 강조색을 쓰는 몇 안 되는 자리다. 채널·스레드 두 작성칸이 같은 것을 쓴다.
+ButtonStyle sendButtonStyle(BuildContext context) {
+  final k = context.tokens;
+  return IconButton.styleFrom(
+    backgroundColor: k.accent,
+    foregroundColor: k.onAccent,
+    disabledBackgroundColor: k.soft,
+    disabledForegroundColor: k.mute,
+    minimumSize: const Size(40, 40),
+  );
 }

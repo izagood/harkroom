@@ -33,7 +33,7 @@ ThemeData harkroomTheme(Brightness brightness) {
     primary: dark ? k.fg : k.ink,
     onPrimary: dark ? k.ink : Colors.white,
     secondary: k.accent,
-    onSecondary: Colors.white,
+    onSecondary: k.onAccent,
     // 손으로 채우는 이상 **컨테이너 색도 빠짐없이** 채운다 — 비워 두면 Material 이 먹색
     // 바탕을 지어내 "내 차례" 카드가 검은 면에 검은 글자가 됐다(첫 갤러리에서 그랬다).
     // 강조 면(내 차례)은 주황의 옅은 판이다.
@@ -137,7 +137,11 @@ ThemeData harkroomTheme(Brightness brightness) {
       behavior: SnackBarBehavior.floating,
     ),
     // 탭의 숫자 배지도 **주황**이다. 기본은 오류 빨강이라 "인박스에 3개"가 "오류 3개"로 읽혔다.
-    badgeTheme: BadgeThemeData(backgroundColor: k.accent, textColor: Colors.white),
+    badgeTheme: BadgeThemeData(
+      backgroundColor: k.accent,
+      textColor: k.onAccent,
+      textStyle: const TextStyle(fontWeight: FontWeight.w700),
+    ),
     progressIndicatorTheme: ProgressIndicatorThemeData(color: k.mute),
   );
 }

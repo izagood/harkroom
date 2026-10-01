@@ -55,7 +55,7 @@ class StringsKo implements Strings {
   String get loginSubmit => '로그인';
 
   @override
-  String get loginErrorRejected => '로그인 아이디나 비밀번호가 맞지 않다.';
+  String get loginErrorRejected => '로그인 아이디나 비밀번호가 맞지 않는다.';
 
   @override
   String get loginErrorUnreachable => '서버에 연결하지 못했다. 주소와 네트워크를 확인해 달라.';
@@ -166,7 +166,7 @@ class StringsKo implements Strings {
   String get inboxReasonOther => '불렀다';
 
   @override
-  String get meSignedInAs => '@{handle} 로 로그인했다';
+  String get meSignedInAs => '@{handle} 계정으로 로그인했다';
 
   @override
   String get attachmentOpen => '열기';
@@ -187,7 +187,7 @@ class StringsKo implements Strings {
   String get timeDays => '{n}일';
 
   @override
-  String get timeRunning => '{duration}째 작업 중';
+  String get timeRunning => '{duration}째';
 
   @override
   String get timeTook => '{duration} 걸림';

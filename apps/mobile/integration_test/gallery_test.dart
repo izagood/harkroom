@@ -82,6 +82,18 @@ void main() {
 
     await tester.tap(find.byKey(const Key('tab-me')));
     await shot(tester, '05-me');
+
+    // ── 다크 판. 기기 밝기를 바꾸면 `MaterialApp.darkTheme` 이 선다.
+    tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
+    addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+    // 밝기가 바뀌면 테마가 200ms 동안 넘어간다 — 그 사이에 찍으면 반쯤 바뀐 화면이 찍힌다.
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    await tester.tap(find.byKey(const Key('tab-channels')));
+    await shot(tester, '06-dark-channels');
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await shot(tester, '07-dark-channel');
   });
 }
 

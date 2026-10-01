@@ -188,7 +188,7 @@ class StringsEn implements Strings {
   String get timeDays => '{n}d';
 
   @override
-  String get timeRunning => 'running {duration}';
+  String get timeRunning => '{duration}';
 
   @override
   String get timeTook => 'took {duration}';

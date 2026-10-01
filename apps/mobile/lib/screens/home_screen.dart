@@ -52,7 +52,13 @@ class _HomeScreenState extends State<HomeScreen> {
               isLabelVisible: unread > 0,
               child: const Icon(Icons.inbox_outlined),
             ),
-            selectedIcon: const Icon(Icons.inbox),
+            // 고른 탭에서도 수를 보인다 — 인박스에 들어가 있는 동안 배지가 사라지면 몇 개가
+            // 남았는지 알 수 없다(designer #976 판정 ②).
+            selectedIcon: Badge.count(
+              count: unread,
+              isLabelVisible: unread > 0,
+              child: const Icon(Icons.inbox),
+            ),
             label: t.tabInbox,
           ),
           NavigationDestination(

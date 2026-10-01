@@ -38,7 +38,6 @@ class ChannelListScreen extends StatelessWidget {
                       itemBuilder: (context, i) {
                         final channel = app.channels[i];
                         final unread = app.reads[channel.id]?.unread ?? 0;
-                        final k = context.tokens;
                         return ListTile(
                           // 글자로 줄을 집지 않는다 — 이름은 번역되고 바뀐다.
                           key: Key('channel-${channel.id}'),
@@ -49,13 +48,7 @@ class ChannelListScreen extends StatelessWidget {
                                   : Icons.tag),
                           // **안 읽은 채널은 굵게, 읽은 채널은 회색.** 배지만으로는 눈이 오른쪽
                           // 끝까지 가야 안다 — 이름의 굵기가 왼쪽에서 먼저 말한다.
-                          title: Text(
-                            channel.name,
-                            style: TextStyle(
-                              fontWeight: unread > 0 ? FontWeight.w700 : FontWeight.w400,
-                              color: unread > 0 ? k.fg : k.mute,
-                            ),
-                          ),
+                          title: _ChannelName(name: channel.name, unread: unread > 0),
                           // 주제는 줄을 두 줄로 늘린다 — 44 줄에 넣지 않는다. 채널 머리의
                           // 부제가 그 자리다(S4).
                           // 안 읽은 수는 **서버가 센다.** 클라이언트가 세면 열지 않은
@@ -127,3 +120,27 @@ class _Notice extends StatelessWidget {
   }
 }
 
+/// 채널 이름. **안 읽은 채널은 굵게, 읽은 채널은 회색.** 배지만으로는 눈이 오른쪽 끝까지 가야
+/// 안다 — 이름의 굵기가 왼쪽에서 먼저 말한다.
+///
+/// 따로 위젯인 이유: 색을 `itemBuilder` 안에서 토큰으로 집으면 **밝기가 바뀌어도 그 줄이
+/// 다시 그려지지 않았다**(다크로 바꾸자 안 읽은 채널 이름이 밝은 판의 먹색으로 남아 바탕에
+/// 묻혔다 — 갤러리 다크 그림에서 잡았다). 제 `build` 에서 테마를 읽어야 테마를 구독한다.
+class _ChannelName extends StatelessWidget {
+  const _ChannelName({required this.name, required this.unread});
+
+  final String name;
+  final bool unread;
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    return Text(
+      name,
+      style: TextStyle(
+        fontWeight: unread ? FontWeight.w700 : FontWeight.w400,
+        color: unread ? k.fg : k.mute,
+      ),
+    );
+  }
+}
