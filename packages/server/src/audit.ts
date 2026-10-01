@@ -101,7 +101,7 @@ export type AuditAction =
   // 관리 행위라 기록이 남아야 한다. detail 에는 **에이전트 handle 만** 남긴다 — 그 채널의
   // 메시지 본문도, topic 도 넣지 않는다(같은 파일 위 규칙).
   | 'channel.auto_mention.set' | 'channel.auto_mention.unset'
-  | 'thread.agent_model.set' | 'thread.agent_model.clear'
+  | 'thread.agent_model.set' | 'thread.agent_model.clear' | 'agent.pickable_models.set'
   // #141: 진행 중인 에이전트 터미널에 사람이 붙었다·떠났다(스펙 §5 "감사").
   //
   // detail 에는 sessionId·channelId 만 남긴다 — **PTY 바이트는 절대 넣지 않는다.** PTY

@@ -53,7 +53,9 @@ export type PostMessageResult =
      */
     rootBack: MessageRow | null;
   }
-  | { failure: AttachFailure | 'bad_thread'; message?: undefined };
+  | { failure: AttachFailure | 'bad_thread'; message?: undefined; rejection?: undefined }
+  /** `beforeCommit` 이 거절했다 — 트랜잭션은 롤백됐고 글은 없다. */
+  | { failure: 'rejected'; rejection: { status: number; code: string; message: string }; message?: undefined };
 
 /** `bad_thread` 거절의 문구 — REST 와 MCP 가 같은 말을 한다. */
 export const BAD_THREAD_MESSAGE = 'threadRootId must be a top-level message in this channel';
@@ -72,6 +74,14 @@ export async function isThreadRootOf(
 }
 
 export interface PostMessageInput {
+  /**
+   * 커밋 **직전**에, 같은 트랜잭션으로 부른다. 팬아웃이 끝나 실제로 깨운 계정(`notified`)이 정해진
+   * 뒤다. 거절을 돌려주면 게시 전체를 롤백한다 — 에이전트의 모델 고르기(087)가 "이 글이 실제로
+   * 깨우는 상대에게만" 을 그 자리에서 판정하고, 거절이면 글 자체를 남기지 않으려고 쓴다(결정 6).
+   */
+  beforeCommit?: (
+    client: PoolClient, ctx: { message: MessageRow; notified: ReadonlySet<string> },
+  ) => Promise<{ status: number; code: string; message: string } | null>;
   channelId: string;
   authorId: string;
   body: string;
@@ -1379,6 +1389,14 @@ export async function postMessage(
         isFailure: (input.meta as { kind?: unknown } | undefined)?.kind === 'failure',
       })
       : [];
+
+    if (input.beforeCommit) {
+      const rejection = await input.beforeCommit(client, { message, notified });
+      if (rejection) {
+        await client.query('rollback');
+        return { failure: 'rejected', rejection };
+      }
+    }
 
     await client.query('commit');
 

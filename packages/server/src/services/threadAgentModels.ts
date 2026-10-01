@@ -12,7 +12,7 @@ import { EFFORT_MAX, MODEL_ID_MAX, type EffectiveAgentModel, type ThreadAgentMod
  */
 
 const COLS = `t.thread_root_id as "threadRootId", t.agent_id as "agentId", t.harness, t.model, t.effort,
-  t.set_by as "setBy", t.set_at as "setAt",
+  t.set_by as "setBy", t.set_by_kind as "setByKind", t.set_at as "setAt",
   coalesce(c.harness, 'claude-code') as "currentHarness",
   (t.harness is distinct from coalesce(c.harness, 'claude-code')) as stale`;
 const FROM = `from thread_agent_model t left join agent_config c on c.account_id = t.agent_id`;
@@ -82,7 +82,11 @@ export type SetThreadAgentModelResult =
  */
 export async function setThreadAgentModel(
   db: Pool | PoolClient,
-  input: { channelId: string; threadRootId: string; agentId: string; model: string | null; effort: string | null; setBy: string },
+  input: {
+    channelId: string; threadRootId: string; agentId: string; model: string | null; effort: string | null; setBy: string;
+    /** 누가 정했나(087). 사람 경로는 기본값 그대로다 — 에이전트 경로(`agentModelPicks.ts`)만 'agent' 를 준다. */
+    setByKind?: 'human' | 'agent';
+  },
 ): Promise<SetThreadAgentModelResult> {
   const root = await db.query(
     `select 1 from message where id = $1 and channel_id = $2 and thread_root_id is null and deleted_at is null`,
@@ -104,12 +108,12 @@ export async function setThreadAgentModel(
     return { ok: true, row: null };
   }
   await db.query(
-    `insert into thread_agent_model (thread_root_id, agent_id, harness, model, effort, set_by)
-     values ($1, $2, $3, $4, $5, $6)
+    `insert into thread_agent_model (thread_root_id, agent_id, harness, model, effort, set_by, set_by_kind)
+     values ($1, $2, $3, $4, $5, $6, $7)
      on conflict (thread_root_id, agent_id) do update set
        harness = excluded.harness, model = excluded.model, effort = excluded.effort,
-       set_by = excluded.set_by, set_at = now()`,
-    [input.threadRootId, input.agentId, agent.rows[0]!.harness ?? 'claude-code', model, effort, input.setBy],
+       set_by = excluded.set_by, set_by_kind = excluded.set_by_kind, set_at = now()`,
+    [input.threadRootId, input.agentId, agent.rows[0]!.harness ?? 'claude-code', model, effort, input.setBy, input.setByKind ?? 'human'],
   );
   return { ok: true, row: await getThreadAgentModel(db, input.threadRootId, input.agentId) };
 }

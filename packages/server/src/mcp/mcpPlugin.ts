@@ -46,7 +46,10 @@ import { recordClaudeLane } from '../services/claudeLane.js';
 import { recordRunnerVersion } from '../services/runnerVersion.js';
 import { resolveAttachmentFor } from '../services/attachments.js';
 import { reportedModelMeta } from '../services/reportedModel.js';
-import { getThreadAgentModel } from '../services/threadAgentModels.js';
+import { axisValid, getThreadAgentModel } from '../services/threadAgentModels.js';
+import { applyAgentPicks, cleanPicks, type PickChange } from '../services/agentModelPicks.js';
+import { agentModelOptions, announceChange, checkOffered, emitChanged } from '../routes/threadAgentModelRoutes.js';
+import type { OperatorHub } from '../ws/operatorHub.js';
 import { AttachmentMissingError, type StorageBackend } from '../storage/local.js';
 import type { Readable } from 'node:stream';
 
@@ -292,6 +295,16 @@ function forwardOffSurrogate(s: string): string {
 /** 파일이 DB 가 기억하는 크기보다 큰 경우. 이 하나만 위 `collect` 가 던진다. */
 class OversizeError extends Error {}
 
+/**
+ * 다른 에이전트를 부르며 그 스레드의 모델을 고른다(087, 결정 1). 두 축이 다 null 이면 "풀기" 다.
+ * 사람 작성창의 `agentModels[]` 와 같은 모양이다.
+ */
+const AGENT_MODELS_ARG = z.array(z.object({
+  agentId: z.string().uuid(),
+  model: z.string().max(MODEL_ID_MAX).nullable().optional(),
+  effort: z.string().max(64).nullable().optional(),
+})).max(8).optional();
+
 function buildMcpServer(
   pool: Pool,
   account: AccountView,
@@ -309,8 +322,27 @@ function buildMcpServer(
   /** 본문 거절(D5). null 이면 보관소가 꺼져 있다. */
   leakGuard: SecretLeakGuard | null = null,
   operatorId: string | null = null,
+  /** 오퍼레이터 능력(하네스가 밝힌 모델·effort) — 에이전트의 모델 고르기가 `checkOffered` 로 본다. */
+  operatorHub?: OperatorHub,
 ): McpServer {
   const server = new McpServer({ name: 'harkroom', version: '0.1.0' });
+
+  /**
+   * 고른 값을 다듬고, **하네스가 밝힌 목록**(`checkOffered`)을 게시 전에 본다 — 사람 경로와 같은
+   * 함수다. 나머지 판정(대상·허용 목록·사람 우선·횟수)은 게시 트랜잭션 안의 `applyAgentPicks` 가 한다.
+   */
+  async function preparePicks(raw: z.infer<typeof AGENT_MODELS_ARG>) {
+    const list = cleanPicks(raw ?? []);
+    for (const p of list) {
+      if (p.model === null && p.effort === null) continue;
+      if (!axisValid(p.model) || !axisValid(p.effort)) {
+        return { error: { code: 'bad_model_value', message: '모델·effort 는 영숫자로 시작하고 영숫자·._:/[]- 만 쓴다' } };
+      }
+      const offered = await checkOffered(pool, operatorHub, p.agentId, p.model, p.effort);
+      if (!offered.ok) return { error: { code: offered.code, message: offered.message } };
+    }
+    return { list };
+  }
   /**
    * 비밀 보관소 D5: 에이전트의 **모든 도구 인자**에 grant 받은 비밀 값이 있으면 그 도구를 돌리지 않는다.
    * 도구마다 검사를 흩지 않고 등록 자리에서 감싼다 — 새 도구가 생겨도 빠지지 않는다. 오류는 고정 문장이고
@@ -349,6 +381,36 @@ function buildMcpServer(
 
   server.registerTool('account.me', { description: '내 계정 정보' },
     async () => jsonResult(account));
+
+  /**
+   * 다른 에이전트를 부르며 고를 수 있는 모델(087, 결정 1·3). 그 에이전트 **소유자가 켠 목록**과
+   * 하네스가 밝힌 목록의 교집합만 준다 — 둘 중 하나라도 비면 고를 것이 없다(`pickable: []`).
+   * 하네스 목록을 모르면(오퍼레이터가 오프라인) 소유자 목록을 그대로 주고 `efforts` 는 싣지 않는다.
+   * 자기 자신의 모델은 고를 수 없으므로 자기 handle 이면 빈 목록과 그 사유를 준다.
+   */
+  server.registerTool('agent.modelOptions', {
+    description: '다른 에이전트를 부를 때 agentModels 로 고를 수 있는 모델(그 소유자가 켠 것). handle 로 묻는다',
+    inputSchema: { handle: z.string().min(1).max(64) },
+  }, async ({ handle }) => {
+    const found = await pool.query<{ id: string }>(
+      `select id from account where lower(handle) = lower($1) and kind = 'agent' and deleted_at is null`,
+      [handle.replace(/^@/, '')]);
+    if (!found.rowCount) return jsonResult({ error: { code: 'unknown_handle', message: `no agent with handle @${handle}` } });
+    const agentId = found.rows[0]!.id;
+    if (agentId === account.id) {
+      return jsonResult({ agentId, pickable: [], reason: '자기 자신의 모델은 고를 수 없다 — 사람만 바꾼다' });
+    }
+    const opts = await agentModelOptions(pool, operatorHub, agentId);
+    if (!opts) return jsonResult({ error: { code: 'unknown_handle', message: `no agent with handle @${handle}` } });
+    const pickable = opts.models
+      ? opts.models.filter((m) => opts.pickable.includes(m.id))
+        .map((m) => ({ id: m.id, ...(m.label ? { label: m.label } : {}), ...(m.efforts ? { efforts: m.efforts } : {}) }))
+      : opts.pickable.map((id) => ({ id }));
+    return jsonResult({
+      agentId, harness: opts.harness, defaultModel: opts.model, defaultEffort: opts.effort, pickable,
+      ...(pickable.length ? {} : { reason: '그 에이전트의 소유자가 고를 수 있는 모델을 켜지 않았다' }),
+    });
+  });
 
   /**
    * handle → id 를 푸는 표. 워크스페이스 가이드의 「이름이 아니라 id 로」 절이 이 도구를 가리킨다 —
@@ -434,16 +496,32 @@ function buildMcpServer(
       threadRootId: z.string().uuid().optional(),
       alsoInChannel: z.boolean().optional(),
       model: MODEL_ARG,
+      agentModels: AGENT_MODELS_ARG,
     },
-  }, async ({ channelId, body, threadRootId, alsoInChannel, model }) => {
+  }, async ({ channelId, body, threadRootId, alsoInChannel, model, agentModels }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
+    const picks = await preparePicks(agentModels);
+    if ('error' in picks) return jsonResult({ error: picks.error });
+    let changes: PickChange[] = [];
     const posted = await postMessage(pool, {
       causeMessageId: cause,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null, alsoInChannel,
       meta: await reportedModelMeta(pool, account.id, model, threadRootId ?? null),
+      ...(picks.list.length ? {
+        beforeCommit: async (client, ctx) => {
+          const out = await applyAgentPicks(client, {
+            channelId, threadRootId: threadRootId ?? ctx.message.id, actorId: account.id,
+            picks: picks.list, notified: ctx.notified,
+          });
+          if (!out.ok) return out.rejection;
+          changes = out.changes;
+          return null;
+        },
+      } : {}),
     });
+    if (posted.failure === 'rejected') return jsonResult({ error: { code: posted.rejection.code, message: posted.rejection.message } });
     // 에이전트는 첨부를 붙이지 않는다(도구에 그 입력이 없다). 그래도 합 타입이므로 확인해야
     // 하고, 확인 자체가 나중에 도구가 첨부를 받게 될 때의 자리를 남겨 둔다.
     if (posted.failure) return postFailureResult(posted.failure);
@@ -451,6 +529,12 @@ function buildMcpServer(
     if (!replayed) {
       const audience = await audienceFor(pool, channelId);
       emitPosted(posted, audience);
+      // 지정이 바뀌었으면 시스템 줄·이벤트(커밋 뒤). 러너는 턴 시작에 실효값을 읽으므로 이 순서가
+      // 첫 턴에 닿는다 — 행은 이미 위 트랜잭션에서 커밋됐다.
+      for (const c of changes) {
+        await announceChange(pool, channelId, threadRootId ?? message.id, account.id, c.agentId, c.row, 'agent');
+        await emitChanged(pool, channelId, threadRootId ?? message.id, c.agentId, c.row);
+      }
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
     /**
@@ -675,8 +759,9 @@ function buildMcpServer(
       deadlineSec: z.number().int()
         .min(DELEGATION_DEADLINE_MIN_SEC).max(DELEGATION_DEADLINE_MAX_SEC).optional(),
       model: MODEL_ARG,
+      agentModels: AGENT_MODELS_ARG,
     },
-  }, async ({ channelId, threadRootId, body, to, deadlineSec, model }) => {
+  }, async ({ channelId, threadRootId, body, to, deadlineSec, model, agentModels }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
@@ -720,6 +805,10 @@ function buildMcpServer(
       return jsonResult({ delegated: [], unreachable, message: null });
     }
 
+    const picks = await preparePicks(agentModels);
+    if ('error' in picks) return jsonResult({ error: picks.error });
+    let pickChanges: PickChange[] = [];
+
     const deadlineAt = new Date(Date.now() + (deadlineSec ?? DELEGATION_DEADLINE_DEFAULT_SEC) * 1000);
     const meta: DelegationMeta & Partial<ModelMeta> = {
       kind: 'delegation',
@@ -737,7 +826,23 @@ function buildMcpServer(
       causeMessageId: cause,
       channelId, authorId: account.id, body, threadRootId,
       meta: meta as unknown as Record<string, unknown>,
+      /*
+        위임에서 "이 글이 깨우는 상대"는 팬아웃이 아니라 **넘겨받는 팀원**이다 — 그들의 부름은 아래
+        `createDelegation` 이 만든다. 그래서 판정의 `notified` 로 그 명단(도달 가능한 팀원)을 준다.
+      */
+      ...(picks.list.length ? {
+        beforeCommit: async (txn, ctx) => {
+          const out = await applyAgentPicks(txn, {
+            channelId, threadRootId, actorId: account.id, picks: picks.list,
+            notified: new Set([...ctx.notified, ...delegates.map((d) => d.accountId)]),
+          });
+          if (!out.ok) return out.rejection;
+          pickChanges = out.changes;
+          return null;
+        },
+      } : {}),
     });
+    if (posted.failure === 'rejected') return jsonResult({ error: { code: posted.rejection.code, message: posted.rejection.message } });
     if (posted.failure || !posted.message) {
       return jsonResult({ error: { code: 'post_failed', message: posted.failure ?? 'could not post' } });
     }
@@ -779,6 +884,11 @@ function buildMcpServer(
 
     const channelAudience = await audienceFor(pool, channelId);
     emitPosted(posted, channelAudience);
+    // 고른 모델(087) — 지정 행은 게시 트랜잭션에서 이미 커밋됐다. 시스템 줄·이벤트는 여기서.
+    for (const c of pickChanges) {
+      await announceChange(pool, channelId, threadRootId, account.id, c.agentId, c.row, 'agent');
+      await emitChanged(pool, channelId, threadRootId, c.agentId, c.row);
+    }
     for (const accountId of posted.notified ?? []) emitEvent({ type: 'inbox.updated', accountId });
     // 넘겨받은 팀원의 부름은 `createDelegation` 이 직접 만들었으므로 위 `notified` 에 없다 —
     // 그들의 러너가 즉시 폴하도록 여기서 따로 친다(치지 않으면 다음 롱폴까지 최대 25초 늦다).
@@ -1494,6 +1604,7 @@ export async function registerMcp(
   agentPresence: AgentPresence,
   storage: StorageBackend,
   leakGuard: SecretLeakGuard | null = null,
+  operatorHub?: OperatorHub,
 ): Promise<void> {
   app.post('/mcp', async (req, reply) => {
     if (!req.account || req.account.kind !== 'agent') {
@@ -1518,7 +1629,7 @@ export async function registerMcp(
     */
     const rawCause = req.headers[CAUSE_HEADER];
     const cause = typeof rawCause === 'string' && UUID_RE.test(rawCause) ? rawCause : null;
-    const server = buildMcpServer(pool, req.account, lifecycle, storage, agentPresence, cause, leakGuard, req.operator?.id ?? null);
+    const server = buildMcpServer(pool, req.account, lifecycle, storage, agentPresence, cause, leakGuard, req.operator?.id ?? null, operatorHub);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     reply.hijack();
     reply.raw.on('close', () => {

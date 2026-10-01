@@ -55,7 +55,7 @@ describe('FailureCard', () => {
     setController({ setThreadAgentModel } as unknown as Controller);
     useAppStore.getState().set({ threadAgentModels: { 'm-root': [{
       threadRootId: 'm-root', agentId: FORGE, harness: 'claude-code', model: 'bogus', effort: null,
-      setBy: ME, setAt: '2026-10-01T00:00:00.000Z', stale: false, currentHarness: 'claude-code',
+      setBy: ME, setAt: '2026-10-01T00:00:00.000Z', stale: false, setByKind: 'human', currentHarness: 'claude-code',
     }] } });
     const m = { ...failMsg(failMeta({ retryable: true, code: 'thread_model_rejected' })), threadRootId: 'm-root' };
     render(<MessageItem message={m} inThread />);
@@ -70,7 +70,7 @@ describe('FailureCard', () => {
   it('표지가 없는 실패(한도·정지)에는 지정이 있어도 그 버튼이 서지 않는다 — 문구로 가르지 않는다', () => {
     useAppStore.getState().set({ threadAgentModels: { 'm-root': [{
       threadRootId: 'm-root', agentId: FORGE, harness: 'claude-code', model: 'opus', effort: null,
-      setBy: ME, setAt: '2026-10-01T00:00:00.000Z', stale: false, currentHarness: 'claude-code',
+      setBy: ME, setAt: '2026-10-01T00:00:00.000Z', stale: false, setByKind: 'human', currentHarness: 'claude-code',
     }] } });
     const m = { ...failMsg(failMeta({ what: '이 스레드에 지정한 모델을 하네스가 받지 않았다' })), threadRootId: 'm-root' };
     render(<MessageItem message={m} inThread />);
