@@ -6,6 +6,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
+import { applyAgentPicks } from '../src/services/agentModelPicks.js';
 
 /**
  * 에이전트가 다른 에이전트를 부르며 그 스레드의 모델을 고른다(087, jaebin 승인 결정 1~9).
@@ -168,6 +169,61 @@ describe('agent picks a model for the agent it calls (087)', () => {
       await c.close();
       await ping.close();
     }
+  });
+
+  /**
+   * 경쟁 조건(security #1010 ①): 판정(사람 행 없음)과 쓰기 사이에 사람이 칩으로 정하고 커밋하면,
+   * 에이전트 쓰기는 그 행을 덮거나 지우지 못하고 409 로 끝나야 한다. 다른 커넥션으로 커밋된 사람 행을
+   * **쓰기 질의 직전에** 끼워 넣어 그 순간을 재현한다(READ COMMITTED 의 on conflict 는 최신 판을 다시 본다).
+   */
+  for (const mode of ['set', 'clear'] as const) {
+    it(`판정 뒤·쓰기 전에 사람이 정하면 에이전트 ${mode === 'set' ? '지정' : '풀기'}는 409 이고 사람 행이 그대로다`, async () => {
+      const root = (await say({ body: `@reviewer 경쟁-${mode}`, ...(mode === 'clear' ? { agentModels: [{ agentId: fable.accountId, model: 'fable' }] } : {}) })).message.id as string;
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const raw = client.query.bind(client) as (...a: unknown[]) => Promise<unknown>;
+        let injected = false;
+        const wrapped = new Proxy(client, {
+          get(target, prop, recv) {
+            if (prop !== 'query') return Reflect.get(target, prop, recv);
+            return async (sql: unknown, params?: unknown) => {
+              const text = typeof sql === 'string' ? sql : '';
+              if (!injected && /^\s*(insert into thread_agent_model|delete from thread_agent_model)/.test(text)) {
+                injected = true;
+                await pool.query(
+                  `insert into thread_agent_model (thread_root_id, agent_id, harness, model, effort, set_by, set_by_kind)
+                   values ($1, $2, 'claude-code', 'opus', null, $3, 'human')
+                   on conflict (thread_root_id, agent_id) do update set model = 'opus', set_by_kind = 'human', set_by = $3`,
+                  [root, fable.accountId, member.accountId],
+                );
+              }
+              return raw(sql, params);
+            };
+          },
+        });
+        const out = await applyAgentPicks(wrapped as typeof client, {
+          channelId, threadRootId: root, actorId: lead.accountId,
+          picks: [{ agentId: fable.accountId, model: mode === 'set' ? 'fable' : null, effort: null }],
+          notified: new Set([fable.accountId]),
+        });
+        expect(injected).toBe(true);
+        expect(out).toMatchObject({ ok: false, rejection: { status: 409, code: 'human_pinned' } });
+        await client.query('rollback');
+      } finally {
+        client.release();
+      }
+      expect(await rowOf(root, fable.accountId)).toEqual({ model: 'opus', effort: null, set_by_kind: 'human' });
+    });
+  }
+
+  it('허용 목록은 에이전트 PAT 으로 못 연다 — 그 에이전트가 소유자여도(결정 9, 권장 a)', async () => {
+    await pool.query(`update agent_config set owner_account_id = $1 where account_id = $2`, [lead.accountId, other.accountId]);
+    const res = await app.inject({
+      method: 'PUT', url: `/accounts/agents/${other.accountId}/pickable-models`, headers: auth(lead.pat), payload: { models: ['opus'] },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('human_only');
   });
 
   it('에이전트가 정한 행은 에이전트가 풀 수 있고, 한 스레드에 3번까지만 바꾼다(429)', async () => {

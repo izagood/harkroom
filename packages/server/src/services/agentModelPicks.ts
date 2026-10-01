@@ -113,7 +113,10 @@ export async function applyAgentPicks(
   const changes: PickChange[] = [];
   for (const p of effective) {
     if (p.model === null && p.effort === null) {
-      await clearThreadAgentModel(client, input.threadRootId, p.agentId);
+      // 판정 뒤에 사람이 정했으면 지워지지 않는다 — 그때는 거절하고 롤백한다(결정 4·8).
+      if (!(await clearThreadAgentModel(client, input.threadRootId, p.agentId, { onlyAgentRows: true }))) {
+        return reject(409, 'human_pinned', '사람이 정한 지정이다 — 에이전트는 덮지도 풀지도 못한다');
+      }
       changes.push({ agentId: p.agentId, row: null });
       continue;
     }
@@ -121,6 +124,9 @@ export async function applyAgentPicks(
       channelId: input.channelId, threadRootId: input.threadRootId, agentId: p.agentId,
       model: p.model, effort: p.effort, setBy: input.actorId, setByKind: 'agent',
     });
+    if (!set.ok && set.reason === 'human_pinned') {
+      return reject(409, 'human_pinned', '사람이 정한 지정이다 — 에이전트는 덮지도 풀지도 못한다');
+    }
     if (!set.ok) return reject(403, 'not_called', '그 대상에는 모델을 정할 수 없다');
     changes.push({ agentId: p.agentId, row: set.row });
   }

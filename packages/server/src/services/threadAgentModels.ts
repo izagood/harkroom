@@ -71,7 +71,7 @@ export async function isChannelRoot(db: Pool | PoolClient, channelId: string, ro
 
 export type SetThreadAgentModelResult =
   | { ok: true; row: ThreadAgentModelView | null }
-  | { ok: false; reason: 'not_found' | 'not_an_agent' | 'not_a_root' };
+  | { ok: false; reason: 'not_found' | 'not_an_agent' | 'not_a_root' | 'human_pinned' };
 
 /**
  * 정한다. 두 축이 다 비면 **푼다**(행이 없는 것이 "지정 없음"이다 — 둘 다 null 인 행은 표가
@@ -107,22 +107,30 @@ export async function setThreadAgentModel(
       [input.threadRootId, input.agentId]);
     return { ok: true, row: null };
   }
-  await db.query(
+  const written = await db.query(
     `insert into thread_agent_model (thread_root_id, agent_id, harness, model, effort, set_by, set_by_kind)
      values ($1, $2, $3, $4, $5, $6, $7)
      on conflict (thread_root_id, agent_id) do update set
        harness = excluded.harness, model = excluded.model, effort = excluded.effort,
-       set_by = excluded.set_by, set_by_kind = excluded.set_by_kind, set_at = now()`,
+       set_by = excluded.set_by, set_by_kind = excluded.set_by_kind, set_at = now()
+     -- 에이전트 쓰기는 **에이전트가 정한 행만** 덮는다(결정 4, security #1010 ①). 판정과 쓰기 사이에
+     -- 사람이 칩으로 정하고 커밋하면, 그 행은 여기서 갱신되지 않는다(영향 행 0 → human_pinned).
+     -- 사람 쓰기(기본값)는 조건 없이 덮는다 — 사람은 에이전트 지정을 언제든 덮는다.
+     ${input.setByKind === 'agent' ? `where thread_agent_model.set_by_kind = 'agent'` : ''}`,
     [input.threadRootId, input.agentId, agent.rows[0]!.harness ?? 'claude-code', model, effort, input.setBy, input.setByKind ?? 'human'],
-  );
+  ).then((r) => r.rowCount ?? 0);
+  if (written === 0) return { ok: false, reason: 'human_pinned' };
   return { ok: true, row: await getThreadAgentModel(db, input.threadRootId, input.agentId) };
 }
 
 /** 푼다. 없던 것을 풀면 false. */
 export async function clearThreadAgentModel(
   db: Pool | PoolClient, threadRootId: string, agentId: string,
+  /** 에이전트 풀기는 에이전트가 정한 행만 지운다(결정 8, security #1010 ①). */
+  opts: { onlyAgentRows?: boolean } = {},
 ): Promise<boolean> {
-  const res = await db.query(`delete from thread_agent_model where thread_root_id = $1 and agent_id = $2`,
+  const res = await db.query(
+    `delete from thread_agent_model where thread_root_id = $1 and agent_id = $2${opts.onlyAgentRows ? ` and set_by_kind = 'agent'` : ''}`,
     [threadRootId, agentId]);
   return (res.rowCount ?? 0) > 0;
 }

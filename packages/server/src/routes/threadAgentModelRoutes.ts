@@ -202,6 +202,9 @@ export async function registerThreadAgentModelRoutes(
    */
   app.put('/accounts/agents/:agentId/pickable-models', { preHandler: app.requireAccount }, async (req, reply) => {
     const { agentId } = z.object({ agentId: z.string().uuid() }).parse(req.params);
+    // 사람이 켠다(결정 9). 에이전트가 소유자인 경우(agent.create grant, 소유자를 에이전트로 정한
+    // 경우)에도 에이전트 PAT 은 이 목록을 못 연다(security #1010 권장 a).
+    if (req.account!.kind !== 'human') return refuse(reply, 403, 'human_only', '허용 목록은 사람이 켠다');
     const parsed = z.object({ models: z.array(z.string().min(1).max(MODEL_ID_MAX)).max(20) }).safeParse(req.body ?? {});
     if (!parsed.success) return refuse(reply, 400, 'bad_request', parsed.error.message);
     const models = [...new Set(parsed.data.models.map((m) => m.trim()).filter((m) => m.length > 0))];
