@@ -36,60 +36,82 @@ export type SectionId = 'workspace' | 'profile' | 'notifications' | 'messages' |
  */
 export const navKey = (id: SectionId): MessageKey => `settings.nav.${id}` as MessageKey;
 
-export const SETTINGS_GROUPS: { id: 'personal' | 'app'; titleKey: MessageKey; items: { id: SectionId }[] }[] = [
+/**
+ * 목차는 **"누구에게 적용되나"** 로 묶는다(UX ⑥a, designer 사양). 묶음 이름이 곧 적용 범위다.
+ * 전에는 `개인`·`앱` 둘이었는데, 이 기기 설정(연결·커뮤니티)이 `개인` 에, 이 기기(업데이트)와
+ * 워크스페이스 전체(초대·스킬)가 `앱` 에 섞여 있어 페이지를 열어야 범위를 알았다(L2).
+ *
+ * - 나 — 내 계정에만 걸린다.
+ * - 이 기기 — 이 앱이 깔린 기기에만 걸린다(다른 기기·다른 사람과 무관).
+ * - 워크스페이스 — 모든 멤버에게 걸린다(관리자가 고친다).
+ * - 에이전트 — 에이전트를 만들고 돌리는 것.
+ *
+ * **줄 이름과 페이지는 이 단계에서 바꾸지 않는다** — 사양의 새 이름("일반"·"멤버와 초대"·"그룹"·
+ * "연동")은 그 페이지가 실제로 합쳐지는 ⑥b·⑩a 에서 바꾼다. 이름이 내용보다 먼저 바뀌면 이름이
+ * 약속한 것이 페이지에 없다.
+ */
+export const SETTINGS_GROUPS: { id: 'me' | 'device' | 'workspace' | 'agents'; titleKey: MessageKey; items: { id: SectionId }[] }[] = [
   {
-    id: 'personal',
-    titleKey: 'settings.group.personal',
+    id: 'me',
+    titleKey: 'settings.group.me',
     items: [
       { id: 'profile' },
       { id: 'notifications' },
       { id: 'messages' },
       { id: 'appearance' },
-      { id: 'connection' },
-      // #165: 커뮤니티 목록·추가·전환. `Connection` 바로 뒤에 두는 이유는 그 화면이
-      // "지금 붙은 서버 하나" 를 말하고 이 화면이 "이 기기가 아는 서버 전부" 를 말해서다.
-      { id: 'communities' },
     ],
   },
   {
-    id: 'app',
-    titleKey: 'settings.group.app',
+    id: 'device',
+    titleKey: 'settings.group.device',
+    items: [
+      // #165: `Connection` 은 "지금 붙은 서버 하나", `Communities` 는 "이 기기가 아는 서버 전부" 다.
+      // ⑥b 에서 커뮤니티로 흡수한다 — 그때까지는 이웃으로 선다.
+      { id: 'communities' },
+      { id: 'connection' },
+      { id: 'updates' },
+    ],
+  },
+  {
+    id: 'workspace',
+    titleKey: 'settings.group.workspace',
     items: [
       // 워크스페이스 자체의 설정 — 지금은 커뮤니티 레일에 걸리는 아이콘 하나다(owner/admin 이 바꾼다).
       { id: 'workspace' },
+      { id: 'invite' },
+      // `Teams` 가 여기 있었다. 지금은 `Agents` 안의 묶음이다 — 근거는 위 `SectionId` 주석.
+      // 사람 묶음(집합)은 워크스페이스 전체에 걸리므로 이 묶음이다(⑩a 에서 팀과 "그룹" 으로 합친다).
+      { id: 'handle-groups' },
+      // 스펙 2026-09-20 §6: 에이전트가 붙일 수 있는 MCP 의 **이름** 목록. 워크스페이스 전체에 걸리는
+      // 목록이라 여기다(정의는 오퍼레이터 머신에 있다). ⑥b 에서 "연동" 으로 투영과 합친다.
+      { id: 'mcp-servers' },
+    ],
+  },
+  {
+    id: 'agents',
+    titleKey: 'settings.group.agents',
+    items: [
       { id: 'agents' },
       // #171 · identity 문서 원칙 04: **개별 에이전트의 설정이 아니다.** 한 에이전트를
       // 고치는 화면 안에 워크스페이스 전체에 걸리는 값이 앉아 있으면 지금 무엇을 고치고
       // 있는지가 사라진다 — 그래서 목차의 별도 항목으로 두고 Agents 바로 뒤에 세운다.
       { id: 'agent-defaults' },
-      // 스펙 2026-09-20 §3: 에이전트를 **어디서** 돌릴지. 러너를 띄우는 것은 이제 오퍼레이터라
-      // 사람이 앱에서 하는 일은 등록·배정뿐이고, 그 목록이 이 화면이다. Agents 옆에 두는
-      // 이유는 배정이 에이전트 상세에서 이 목록을 가리키기 때문이다.
-      { id: 'operators' },
-      // 스펙 2026-09-20 §6: 에이전트가 붙일 수 있는 MCP 의 **이름** 목록. 정의는 오퍼레이터
-      // 머신에 있으므로 Operators 바로 뒤다 — 이름을 여기 적고 정의는 그 머신에 적는다.
-      { id: 'mcp-servers' },
-      // 계정 풀은 **기기 로컬 자원**이다 — 이 기기의 디렉터리와 그 안의 자격증명이고,
-      // 서버에도 다른 기기에도 없다. Agents 옆에 두는 이유는 러너가 그것을 쓰기 때문이고,
-      // Agents 안에 넣지 않는 이유는 개별 에이전트의 설정이 아니기 때문이다
-      // (`agent-defaults` 를 별 항목으로 세운 것과 같은 판단이다).
-      // 2026-09-28: Claude 만이 아니라 하네스별 계정(Codex …)을 한 화면에 모았다. id 는 그대로다
-      // (`ProviderAccountsSettings` 머리말).
+      // 계정 풀은 **기기 로컬 자원**이지만(이 기기의 디렉터리와 자격증명) 에이전트를 돌리는 데만
+      // 쓰인다 — 찾는 사람은 에이전트 쪽에서 찾는다. 2026-09-28: 하네스별 계정을 한 화면에 모았다.
       { id: 'claude-accounts' },
-      // `Teams` 가 여기 있었다. 지금은 `Agents` 안의 묶음이다 — 근거는 위 `SectionId` 주석.
-      { id: 'handle-groups' },
-      { id: 'invite' },
-      { id: 'updates' },
+      // 스펙 2026-09-20 §3: 에이전트를 **어디서** 돌릴지. 등록·배정 목록이다.
+      { id: 'operators' },
       { id: 'skills' },
       // 자동화(064): 만든 사람 이름으로 반복해서 글을 올린다. 에이전트에게 맡기는 반복 요청이라
       // 스킬 옆에 둔다 — 둘 다 "에이전트가 매번 같은 일을 하게" 하는 자리다.
       { id: 'automations' },
       /**
-       * 컴포넌트 갤러리(Task 11). **개발자용이라 목록의 맨 끝**에 둔다 — 배포본에서도
-       * 보이지만 쓰는 사람이 찾아 들어갈 일이 없는 자리다. 숨기지 않는 이유: 숨긴 화면은
-       * 곧 깨지고, 깨진 것을 아무도 모른다(그 화면이 지키려는 것이 어휘 그 자체다).
+       * 컴포넌트 갤러리(Task 11). **개발 빌드에서만** 목차에 선다(UX ⑥a, designer L1) — 배포본의
+       * 설정 목차에 개발자용 화면이 섞여 있었다. 화면 자체는 지우지 않는다: 숨긴 화면은 곧 깨지고
+       * 깨진 것을 아무도 모르기 때문이다(그 화면이 지키려는 것이 어휘 그 자체다) — 그래서
+       * `gallery.test.tsx` 가 계속 그것을 그린다.
        */
-      { id: 'gallery' },
+      ...(import.meta.env.DEV ? [{ id: 'gallery' as const }] : []),
     ],
   },
 ];
