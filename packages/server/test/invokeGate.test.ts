@@ -447,6 +447,40 @@ describe('회신권(invoke_reply_grant)', () => {
     expect((await inThread(worker.pat, ask.id, `<@${lead.accountId}> 3차 끝`)).meta.mentionDenied).toEqual(['rg-lead5']);
   });
 
+  // #1014 보안 검토: 채널 락을 insert 앞으로 옮긴 뒤 회신권 판정이 락 밖이 됐다. 같은 결과를 동시에
+  // 두 번 내도 상대는 한 번만 깨어야 한다. 채널 락을 밖에서 쥐어 두 게시를 **확실히** 겹치게 한다 —
+  // 그 락은 게시가 회신권을 읽은 **뒤**에 잡히므로, (작성자, 스레드) 락이 없으면 둘 다 "열림"을 읽는다.
+  it('같은 결과를 동시에 두 번 내도 회신권은 한 번만 통과한다', async () => {
+    const lead = await agentWith('rg-lead-race', owner.accountId, 'owner');
+    const worker = await agentWith('rg-worker-race', owner.accountId, 'community');
+    const ask = await post(lead.pat, `<@${worker.accountId}> 해 줘`);
+
+    const holder = await pool.connect();
+    let posts: Promise<Awaited<ReturnType<typeof postMessage>>[]> | undefined;
+    try {
+      await holder.query('select pg_advisory_lock($1, hashtext($2))', [0x6d736571, channelId]);
+      const send = (body: string) => postMessage(pool, {
+        channelId, authorId: worker.accountId, threadRootId: ask.id, body: `<@${lead.accountId}> ${body}`,
+      });
+      posts = Promise.all([send('끝났다 A'), send('끝났다 B')]);
+      // 두 게시가 모두 advisory 락 앞에 멈출 때까지 기다린다(어느 락인지는 고침 여부에 따라 다르다).
+      for (let i = 0; ; i++) {
+        const waiting = await pool.query(`select count(*)::int as n from pg_locks where locktype = 'advisory' and not granted`);
+        if (waiting.rows[0].n >= 2) break;
+        if (i > 200) throw new Error('두 게시가 락 앞에 서지 않았다');
+        await new Promise((r) => setTimeout(r, 10));
+      }
+    } finally {
+      await holder.query('select pg_advisory_unlock($1, hashtext($2))', [0x6d736571, channelId]);
+      holder.release();
+    }
+    const results = await posts!;
+
+    const woke = await Promise.all(results.map((r) => inboxHas(lead.pat, r.message!.id)));
+    expect(woke.filter(Boolean)).toHaveLength(1);
+    expect(results.filter((r) => (r.message!.meta as { mentionDenied?: string[] }).mentionDenied)).toHaveLength(1);
+  });
+
   // 보안 검토 ①: 진행 줄은 회신권을 닫지 않으므로 쓰지도 못한다 — 아니면 6h 동안 몇 번이든 깨운다.
   it('진행 줄(progress)로 멘션하면 막히고 회신권은 그대로 남는다 — 그 뒤 결과 발화는 통과한다', async () => {
     const lead = await agentWith('rg-lead7', owner.accountId, 'owner');

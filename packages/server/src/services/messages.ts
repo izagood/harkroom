@@ -33,6 +33,12 @@ const SEQ_LOCK_CLASS = 0x6d736571; // 'mseq'
 export const lockChannelForSeq = (client: PoolClient, channelId: string): Promise<unknown> =>
   client.query('select pg_advisory_xact_lock($1, hashtext($2))', [SEQ_LOCK_CLASS, channelId]);
 
+/** 회신권 판정과 닫기를 (작성자, 스레드) 단위로 직렬화한다 — `postMessage` 의 주석 참고. */
+const REPLY_LOCK_CLASS = 0x6d72706c; // 'mrpl'
+
+const lockReplyGrantsFor = (client: PoolClient, authorId: string, threadRootId: string): Promise<unknown> =>
+  client.query('select pg_advisory_xact_lock($1, hashtext($2))', [REPLY_LOCK_CLASS, `${authorId}:${threadRootId}`]);
+
 /**
  * 게시 결과. 첨부 연결이 거절되면 메시지 자체가 만들어지지 않는다(트랜잭션 롤백) —
  * 그래서 성공/실패가 배타적인 합 타입이다. 둘을 optional 필드로 섞으면 호출부가
@@ -1146,6 +1152,18 @@ export async function postMessage(
       `select kind from account where id = $1`, [input.authorId],
     )).rows[0]?.kind as 'human' | 'agent' | undefined;
     const authorIsAgent = authorKind === 'agent';
+    /*
+      **회신권 "결과 한 번"을 지키는 락**(084, 2026-10-01 보안 검토). 아래 멘션 해석이 회신권을
+      읽고(`hasReplyGrant`), 결과 발화는 커밋 직전에 그것을 닫는다(`closeReplyGrants`). 예전에는
+      채널 락이 이 읽기보다 앞에 있어서 같은 에이전트의 동시 결과 두 개가 줄을 섰고, 두 번째는
+      첫 번째가 닫은 것을 봤다. 채널 락을 insert 앞으로 옮긴 뒤로는 둘 다 "열림"을 읽고 통과해
+      좁은 범위의 에이전트를 두 번 깨울 수 있었다. 그래서 **같은 작성자·같은 스레드**만 여기서
+      줄을 세운다 — 채널 전체가 서던 줄(풀 포화)은 되살리지 않는다.
+      락 순서는 언제나 이것 → 채널 락이라 서로를 기다리며 막히지 않는다.
+    */
+    if (authorIsAgent && input.threadRootId && countsAsReply(input.kind ?? 'user')) {
+      await lockReplyGrantsFor(client, input.authorId, input.threadRootId);
+    }
     const scannedDepth = await mentionDepthFor(client, {
       channelId: input.channelId,
       threadRootId: input.threadRootId ?? null,
