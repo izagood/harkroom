@@ -80,6 +80,12 @@ class StringsEn implements Strings {
   String get composerSend => 'Send';
 
   @override
+  String get stickyMentionsLabel => 'Keeps calling';
+
+  @override
+  String get stickyMentionRemove => 'Stop calling {handle}';
+
+  @override
   String get modelDefault => 'Default';
 
   @override

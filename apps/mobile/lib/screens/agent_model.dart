@@ -4,6 +4,7 @@ import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../mention/mention.dart';
 import '../mention/mention_suggest.dart';
+import '../mention/sticky.dart';
 import '../state/app_scope.dart';
 import '../ui/tokens.dart';
 
@@ -81,10 +82,14 @@ class MentionModelBar extends StatefulWidget {
     required this.controller,
     required this.picks,
     required this.onPicksChanged,
+    this.composerKey,
     this.threadRootId,
   });
 
   final TextEditingController controller;
+
+  /// 이 작성칸의 키(채널 id 또는 스레드 루트 id) — 고정 멘션 칩을 이 키로 찾는다. 없으면 칩이 없다.
+  final String? composerKey;
   final Map<String, ModelPick> picks;
   final ValueChanged<Map<String, ModelPick>> onPicksChanged;
 
@@ -196,6 +201,11 @@ class _MentionModelBarState extends State<MentionModelBar> {
     if (_quickFor != null && c.text != _quickAt) _quickFor = null;
 
     final rows = <Widget>[];
+    final stickyKey = widget.composerKey;
+    if (stickyKey != null) {
+      final stuck = app.stickyAccounts(stickyKey);
+      if (stuck.isNotEmpty) rows.add(_StickyRow(composerKey: stickyKey, accounts: stuck));
+    }
     if (_quickFor != null) {
       rows.add(
         _QuickRow(
@@ -270,7 +280,11 @@ class _MentionModelBarState extends State<MentionModelBar> {
       }
     }
 
-    final called = calledAgentIds(c.text, app.accounts.values);
+    // "부를 상대" 칩은 **보낼 본문**(고정 멘션이 붙은 것) 기준이다 — 고정으로 부르는 에이전트도
+    // 모델을 고를 수 있어야 하고, 보낼 때 `picksForBody` 도 같은 본문으로 센다.
+    final key = widget.composerKey;
+    final sticky = key == null ? const <String>[] : app.stickyHandles(key);
+    final called = calledAgentIds(withStickyMentions(c.text, sticky), app.accounts.values);
     if (called.isNotEmpty) {
       rows.add(
         SizedBox(
@@ -307,6 +321,56 @@ class _MentionModelBarState extends State<MentionModelBar> {
     }
     if (rows.isEmpty) return const SizedBox.shrink();
     return Column(mainAxisSize: MainAxisSize.min, children: rows);
+  }
+}
+
+/// 고정 멘션 줄 — **이 작성칸이 다음 글에서도 부를 상대**(데스크탑 `sticky-mention` 칩).
+///
+/// 칩이 보여야 한다: 보이지 않는 접두는 사람이 모르는 사이에 에이전트를 깨운다. × 는 그 상대를
+/// 그만 부른다(고정에서 뺀다). 다시 부르고 싶으면 `@` 로 다시 부르면 된다.
+class _StickyRow extends StatelessWidget {
+  const _StickyRow({required this.composerKey, required this.accounts});
+
+  final String composerKey;
+  final List<AccountView> accounts;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final app = context.app;
+    return Semantics(
+      container: true,
+      label: t.stickyMentionsLabel,
+      child: SizedBox(
+        key: const Key('sticky-mentions'),
+        height: 44,
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(left: 4, right: 2),
+              child: Icon(
+                Icons.push_pin_outlined,
+                size: 16,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            for (final a in accounts)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                child: InputChip(
+                  key: Key('sticky-mention-${a.handle}'),
+                  label: Text('@${a.handle}'),
+                  deleteButtonTooltipMessage:
+                      t.stickyMentionRemove.replaceAll('{handle}', '@${a.handle}'),
+                  onDeleted: () => app.dropStickyMention(composerKey, a.id),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

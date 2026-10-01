@@ -4,6 +4,7 @@ import '../api/agent_meta.dart';
 import '../api/ask.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
+import '../mention/sticky.dart';
 import '../state/app_scope.dart';
 import '../state/app_state.dart';
 import '../ui/states.dart';
@@ -72,12 +73,19 @@ class _MessageListScreenState extends State<MessageListScreen> {
     _composer.clear();
     final picks = _picks;
     setState(() => _picks = const {});
+    // **고정 멘션은 보내는 순간 본문에 들어간다**(데스크탑 `Composer.tsx` 의 `send` 와 같다).
+    // 서버는 본문의 멘션만 읽으므로, 붙이지 않으면 한 번 부른 에이전트가 다음 줄에 깨지 않는다.
+    // 모델 지정도 붙인 본문으로 센다 — 친 글로 세면 고정으로 부른 상대의 지정이 빠진다.
+    final body = withStickyMentions(text, app.stickyHandles(widget.channelId));
     try {
       final went = await app.send(
         widget.channelId,
-        text,
-        agentModels: picksForBody(picks, text, app.accounts.values),
+        body,
+        agentModels: picksForBody(picks, body, app.accounts.values),
       );
+      // 이번에 부른 상대는 다음 줄부터 고정이다. 고정에 더하는 것은 **사람이 친 글**에서 —
+      // 접두는 이미 고정된 것이다.
+      if (went) app.keepStickyMentions(widget.channelId, text);
       // 못 보냈으면(첨부가 올라가는 중) 친 글과 고른 모델을 작성칸에 되돌린다.
       if (!went && mounted) {
         if (_composer.text.isEmpty) _composer.text = text;
@@ -174,6 +182,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
             MentionModelBar(
               controller: _composer,
               picks: _picks,
+              composerKey: widget.channelId,
               onPicksChanged: (next) => setState(() => _picks = next),
             ),
             ComposerAttachments(composerKey: widget.channelId),

@@ -466,6 +466,98 @@ void main() {
     expect(_sent, ['답글이다']);
   });
 
+  testWidgets('한 번 부른 에이전트는 다음 줄부터 저절로 불린다 — 칩이 서고, × 로 그만 부른다', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await _settle(tester);
+
+    expect(find.byKey(const Key('sticky-mentions')), findsNothing);
+    await tester.enterText(find.byKey(const Key('composer')), '@forge 이거 해 줘');
+    await tester.tap(find.byKey(const Key('composer-send')));
+    await _settle(tester);
+    expect(find.byKey(const Key('sticky-mention-forge')), findsOneWidget);
+
+    // 서버는 본문의 멘션만 읽는다 — 다음 줄 본문에 `@forge` 가 실려야 에이전트가 깬다.
+    await tester.enterText(find.byKey(const Key('composer')), '이어서 해 줘');
+    await tester.tap(find.byKey(const Key('composer-send')));
+    await _settle(tester);
+    expect(_sent.last, '@forge 이어서 해 줘');
+
+    // × 를 누르면 더는 안 붙는다.
+    final chip = tester.widget<InputChip>(find.byKey(const Key('sticky-mention-forge')));
+    chip.onDeleted!();
+    await _settle(tester);
+    expect(find.byKey(const Key('sticky-mentions')), findsNothing);
+    await tester.enterText(find.byKey(const Key('composer')), '혼잣말');
+    await tester.tap(find.byKey(const Key('composer-send')));
+    await _settle(tester);
+    expect(_sent.last, '혼잣말');
+  });
+
+  testWidgets('스레드에서 부른 에이전트는 스레드를 나갔다 와도 이어서 불린다', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('thread-open-m1')));
+    await _settle(tester);
+
+    await tester.enterText(find.byKey(const Key('thread-composer')), '@forge 봐 줘');
+    await tester.tap(find.byKey(const Key('thread-send')));
+    await _settle(tester);
+    expect(_sent.last, '@forge 봐 줘');
+
+    // 스레드 화면은 나가면 버려진다 — 고정이 화면에 살면 여기서 사라진다.
+    await tester.pageBack();
+    await _settle(tester);
+    await _settle(tester);
+    expect(find.byType(ThreadScreen), findsNothing);
+    // 스레드의 고정은 채널 작성칸으로 새지 않는다.
+    expect(find.byKey(const Key('sticky-mentions')), findsNothing);
+    await tester.tap(find.byKey(const Key('thread-open-m1')));
+    await _settle(tester);
+    expect(find.byKey(const Key('sticky-mention-forge')), findsOneWidget);
+
+    await tester.enterText(find.byKey(const Key('thread-composer')), '이어서');
+    await tester.tap(find.byKey(const Key('thread-send')));
+    await _settle(tester);
+    expect(_sent.last, '@forge 이어서');
+  });
+
+  testWidgets('고정으로 부르는 에이전트에게 고른 모델도 그 글과 함께 간다(접두가 붙은 본문으로 센다)', (tester) async {
+    _sentModels.clear();
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await _settle(tester);
+    await tester.enterText(find.byKey(const Key('composer')), '@forge 시작');
+    await tester.tap(find.byKey(const Key('composer-send')));
+    await _settle(tester);
+
+    // 본문에 `@forge` 를 안 쳐도 "부를 상대" 칩이 선다 — 고정으로 부르기 때문이다.
+    await tester.enterText(find.byKey(const Key('composer')), '고도화');
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('model-chip-forge')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('model-option-opus')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('model-apply')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('composer-send')));
+    await _settle(tester);
+    expect(_sent.last, '@forge 고도화');
+    expect(_sentModels.last, [
+      {'agentId': 'a1', 'model': 'opus', 'effort': null},
+    ]);
+  });
+
   testWidgets('보내도 아무도 안 깨울 자리에서는 후보를 안 띄운다', (tester) async {
     final state = _state();
     await tester.pumpWidget(HarkroomApp(state: state));

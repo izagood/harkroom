@@ -79,6 +79,12 @@ class StringsKo implements Strings {
   String get composerSend => '보내기';
 
   @override
+  String get stickyMentionsLabel => '계속 부르는 상대';
+
+  @override
+  String get stickyMentionRemove => '{handle} 그만 부르기';
+
+  @override
   String get modelDefault => '기본';
 
   @override
