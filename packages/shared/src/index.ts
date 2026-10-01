@@ -2505,6 +2505,19 @@ export interface WorkspaceSkillView {
   flagReason?: string | null;
 }
 
+/**
+ * 스킬 사용 기록(D3, 2026-10-01). `GET /skills` 목록의 각 항목에 `WorkspaceSkillView` 와 함께
+ * 실린다 — 단건 조회·이벤트에는 없고, 이 기록이 생기기 전 서버도 안 준다. 그래서 받는 쪽은
+ * `Partial` 로 읽고, 없으면 "모른다"로 그린다. 사용은 claude 하네스만 센다(codex·opencode 는
+ * 기록이 남지 않는다).
+ */
+export interface SkillUsageView {
+  useCount: number;
+  lastUsedAt: string | null;
+  /** 안 쓰는 후보 — 승인 14일 경과·최근 30일 사용 없음. 자동으로 끄지 않는다(사람이 끈다). */
+  staleCandidate: boolean;
+}
+
 export type SkillGroupId = 'pending' | 'approved' | 'disabled';
 
 /**

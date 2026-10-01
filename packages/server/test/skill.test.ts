@@ -371,3 +371,88 @@ describe('MCP 표면에 스킬 쓰기 도구가 없다', () => {
     }
   });
 });
+
+// D3(2026-10-01): 스킬 사용 기록과 "안 쓰는 후보". 후보는 **표시일 뿐**이다 — 무엇도 자동으로
+// 꺼지지 않는다는 것까지 여기서 고정한다.
+describe('스킬 사용 기록(D3)', () => {
+  async function seed(slug: string, opts: { approvedDaysAgo: number | null; disabled?: boolean }): Promise<void> {
+    await pool.query(
+      `insert into workspace_skill (slug, body, proposed_by, approved_by, approved_at, disabled_at)
+       values ($1, '# s', $2, $3, $4, $5)`,
+      [
+        slug, agentAccountId,
+        opts.approvedDaysAgo === null ? null : agentAccountId,
+        opts.approvedDaysAgo === null ? null : new Date(Date.now() - opts.approvedDaysAgo * 86_400_000),
+        opts.disabled ? new Date() : null,
+      ],
+    );
+  }
+  const usage = (token: string, slugs: unknown) => app.inject({
+    method: 'POST', url: '/skills/usage', headers: { authorization: `Bearer ${token}` }, payload: { slugs },
+  });
+  async function listed(slug: string): Promise<Record<string, unknown>> {
+    const res = await app.inject({ method: 'GET', url: '/skills', headers: { authorization: `Bearer ${adminToken}` } });
+    return (res.json() as Record<string, unknown>[]).find((s) => s.slug === slug)!;
+  }
+
+  it('승인·활성 스킬만 남기고 모르는·미승인·비활성 slug 는 조용히 버린다', async () => {
+    await seed('use-live', { approvedDaysAgo: 1 });
+    await seed('use-pending', { approvedDaysAgo: null });
+    await seed('use-off', { approvedDaysAgo: 1, disabled: true });
+    const res = await usage(agentPat, ['use-live', 'use-live', 'use-pending', 'use-off', 'artifact-design', 'plugin:x']);
+    expect(res.statusCode).toBe(200);
+    // 같은 턴에 두 번 불러도 한 번이다 — 턴 단위 사용.
+    expect(res.json()).toEqual({ recorded: ['use-live'] });
+    const rows = await pool.query('select slug, account_id from workspace_skill_usage where slug like $1', ['use-%']);
+    expect(rows.rows).toEqual([{ slug: 'use-live', account_id: agentAccountId }]);
+    const live = await listed('use-live');
+    expect(live.useCount).toBe(1);
+    expect(typeof live.lastUsedAt).toBe('string');
+  });
+
+  it('사람 계정은 400 이고 아무것도 남지 않는다 — 에이전트 턴의 보고다', async () => {
+    const res = await usage(adminToken, ['use-live']);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('invalid_account');
+    const n = await pool.query('select count(*)::int as n from workspace_skill_usage where slug = $1', ['use-live']);
+    expect(n.rows[0].n).toBe(1);
+  });
+
+  it('인증 없이는 401', async () => {
+    const res = await app.inject({ method: 'POST', url: '/skills/usage', payload: { slugs: ['use-live'] } });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('후보: 승인 14일 경과 + 최근 30일 사용 없음만 — 새 스킬·최근에 쓴 스킬·미승인은 아니다', async () => {
+    await seed('stale-old', { approvedDaysAgo: 40 });
+    await seed('stale-new', { approvedDaysAgo: 3 });
+    await seed('stale-used', { approvedDaysAgo: 40 });
+    await seed('stale-oldused', { approvedDaysAgo: 60 });
+    await usage(agentPat, ['stale-used']);
+    await pool.query(
+      `insert into workspace_skill_usage (slug, account_id, used_at) values ('stale-oldused', $1, now() - interval '31 days')`,
+      [agentAccountId],
+    );
+
+    expect((await listed('stale-old')).staleCandidate).toBe(true);
+    expect((await listed('stale-new')).staleCandidate).toBe(false);
+    expect((await listed('stale-used')).staleCandidate).toBe(false);
+    expect((await listed('stale-oldused')).staleCandidate).toBe(true);
+    expect((await listed('stale-oldused')).useCount).toBe(1);
+    expect((await listed('use-pending')).staleCandidate).toBe(false);
+    expect((await listed('use-off')).staleCandidate).toBe(false);
+  });
+
+  it('후보여도 꺼지지 않는다 — 여전히 state=approved 에 있다(끄는 것은 사람)', async () => {
+    const res = await app.inject({ method: 'GET', url: '/skills?state=approved', headers: { authorization: `Bearer ${agentPat}` } });
+    expect((res.json() as { slug: string }[]).map((s) => s.slug)).toContain('stale-old');
+  });
+
+  it('모르는 키는 400 이다', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/skills/usage', headers: { authorization: `Bearer ${agentPat}` },
+      payload: { slugs: [], accountId: agentAccountId },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});

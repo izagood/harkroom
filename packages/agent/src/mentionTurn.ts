@@ -22,6 +22,7 @@ import { findCodexSessionId } from './codexSessions.js';
 import { claudeSessionMaterialized } from './claudeSessions.js';
 import { readLastApiError } from './harnessErrors.js';
 import type { AttentionLedger } from './attentionLedger.js';
+import { readSkillUses } from './skillUsage.js';
 import { readLastAssistantText, readPermissionDenials, readTranscriptTurnState, sessionTranscriptGrewSince, sessionTranscriptMtimeMs, type PermissionDenial } from './harnessErrors.js';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
@@ -80,6 +81,11 @@ export interface MentionTurnHarkroom {
    * "보고했다"와 "보고가 실패했다"가 구분되지 않아 로그에도 남지 않는다.
    */
   reportActivity(): Promise<void>;
+  /**
+   * 이번 턴에 부른 스킬을 보고한다(D3, 2026-10-01). 없으면(테스트·옛 조립) 보내지 않는다.
+   * 실패는 던진다 — 삼키는 판단은 호출자가 한다(`reportActivity` 와 같다).
+   */
+  recordSkillUse?(slugs: string[]): Promise<void>;
 }
 
 /** 한 턴을 실제로 돌리는 함수. 프로덕션은 pty.ts::runPtyTurn 을 그대로 넘기고, 테스트는
@@ -324,6 +330,11 @@ export interface MentionTurnDeps {
     harness: AgentHarness, sessionId: string | null,
     opts: { configDir?: string | null; sinceMs?: number },
   ) => Promise<PermissionDenial[]>;
+  /** 이 턴에 하네스가 부른 스킬을 읽는다(기본 `readSkillUses`). 주입 이유는 `readApiError` 와 같다. */
+  readSkillUses?: (
+    harness: AgentHarness, sessionId: string | null,
+    opts: { configDir?: string | null; sinceMs?: number },
+  ) => Promise<string[]>;
   /** 이 턴에서 하네스가 끝내며 남긴 말을 읽는다(기본 `readLastAssistantText`). */
   readLastSaid?: (
     harness: AgentHarness, sessionId: string | null,
@@ -1721,6 +1732,23 @@ export async function runMentionTurn(
   // 넘긴다: codex 는 첫 턴이 끝나야 id 가 생긴다.
   await memoryPlan.commit(rec.sessionId);
   await harnessNotice?.commit();
+
+  // 이 턴에 부른 스킬을 서버에 남긴다(D3) — 안 쓰는 스킬을 "후보"로 띄우는 재료다. 성공한 턴만
+  // 센다: 실패한 턴은 재시도가 같은 기록을 다시 읽어 두 번 세게 된다. 셀 수 없는 하네스는
+  // `readSkillUses` 가 빈 배열을 준다. **best-effort 다** — 기록이 안 됐다고 턴을 실패로 만들지
+  // 않는다(위 활동 보고와 같은 판단). 조용히 삼키지는 않는다: 후보가 왜 틀렸는지 답할 곳이 이 로그다.
+  if (deps.harkroom.recordSkillUse) {
+    try {
+      const used = await (deps.readSkillUses ?? readSkillUses)(def.harness, rec.sessionId, {
+        configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
+      });
+      if (used.length > 0) await deps.harkroom.recordSkillUse(used);
+    } catch (err) {
+      console.error(
+        `[mentionTurn] ${key}: 스킬 사용 기록 실패(턴은 계속한다) — ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 
   // 관측·통보는 best-effort 다 — 방금 저장한 상태를 좌우하지 않으므로 여기서 던진 예외로
   // 턴 전체를 실패(재시도 대상)로 만들 이유가 없다. 조용히 삼키면 "왜 NO_REPLY_NOTICE 가

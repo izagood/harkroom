@@ -106,11 +106,14 @@ export class HarkroomAgentClient {
 
   /**
    * REST 한 번 — 오퍼레이터가 `http.forward` 로 서버에 넘긴다. 이 클라이언트가 REST 를 쓰는
-   * 자리는 MCP 에 그 표면이 없는 넷뿐이다(`definition`·`reportActivity`·`accounts`·
-   * `listApprovedSkills`). 실패는 status 를 실어 던진다 — `isCredentialFailure` 가 읽는다.
+   * 자리는 MCP 에 그 표면이 없는 것뿐이다(`definition`·`reportActivity`·`accounts`·
+   * `listApprovedSkills`·`recordSkillUse`). 실패는 status 를 실어 던진다 — `isCredentialFailure` 가 읽는다.
    */
-  private async rest<T>(method: string, path: string, what: string): Promise<T> {
-    const res = await this.link.request({ type: 'http.forward', method, path });
+  private async rest<T>(method: string, path: string, what: string, body?: unknown): Promise<T> {
+    const res = await this.link.request({
+      type: 'http.forward', method, path,
+      ...(body !== undefined ? { body: JSON.stringify(body), contentType: 'application/json' } : {}),
+    });
     if (res.status < 200 || res.status >= 300) {
       throw harkroomError(`${what} 실패: ${res.status}${res.status === 0 ? ` (${res.body})` : ''}`, res.status || undefined);
     }
@@ -248,6 +251,14 @@ export class HarkroomAgentClient {
    */
   listApprovedSkills(): Promise<{ slug: string; body: string }[]> {
     return this.rest<{ slug: string; body: string }[]>('GET', '/skills?state=approved', 'skills');
+  }
+
+  /**
+   * 이번 턴에 부른 스킬을 보고한다(D3). 대상 id 를 보내지 않는다 — 서버가 PAT 의 주인 이름으로만
+   * 남긴다. 실패는 던진다(`reportActivity` 와 같다) — 삼키는 판단은 호출자(mentionTurn)의 몫이다.
+   */
+  async recordSkillUse(slugs: string[]): Promise<void> {
+    await this.rest<unknown>('POST', '/skills/usage', 'skills/usage', { slugs });
   }
 
   /**
