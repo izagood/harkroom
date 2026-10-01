@@ -1364,7 +1364,7 @@ export async function postMessage(
 
     // 연결 뒤에 읽는다 — COLS 가 첨부를 함께 가져오므로 순서가 뒤바뀌면 빈 배열이 나간다.
     const read = await client.query(`select ${COLS} from message where id = $1`, [messageId]);
-    const message: MessageRow = read.rows[0];
+    let message: MessageRow = read.rows[0];
 
     if (input.idempotencyKey) {
       await client.query(
@@ -1511,6 +1511,14 @@ export async function postMessage(
         await client.query('rollback');
         return { failure: 'rejected', rejection };
       }
+      /*
+        `beforeCommit` 은 이 글에 딸린 행을 더 쓸 수 있다 — `artifact.publish` 가 첨부를 미리보기 버전으로
+        건다(090). 위에서 읽은 행은 그 전 것이라, 그대로 내보내면 실시간 `message.created` 와 도구 결과의
+        첨부에 `artifact{}` 가 빠지고 앱은 새로 읽기 전까지 카드 대신 html 칩을 그린다(2026-10-02 실측:
+        발행 응답의 첨부에 artifact 가 없었다). 같은 트랜잭션에서 다시 읽는다.
+      */
+      const reread = await client.query(`select ${COLS} from message where id = $1`, [message.id]);
+      if (reread.rowCount) message = reread.rows[0];
     }
 
     await client.query('commit');
