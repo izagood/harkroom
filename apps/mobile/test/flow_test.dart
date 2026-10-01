@@ -98,6 +98,7 @@ MockClient _server() => MockClient((req) async {
         // `m.id = $2` 와 `thread_root_id = $2` 를 합친다). 예전 가짜는 답글만 줘서, 화면이
         // 루트를 두 번 그리는 것을 시험이 못 봤다.
         return _json({
+          // 서버의 `?thread=` 는 **원글도 싣는다**(`id = m.id OR thread_root_id = m.id`).
           'messages': [
             {
               'id': 'm1',
@@ -482,6 +483,13 @@ void main() {
     );
     expect(inThread, findsOneWidget);
     expect(find.byKey(const Key('message-r1')), findsOneWidget);
+    // S4c: 원글은 위에 **한 번만**(응답에 실린 원글을 답글로 또 그리지 않는다), 그 아래 「답글 1개」.
+    expect(find.descendant(of: find.byType(ThreadScreen), matching: find.text('먼저 있던 말')), findsOneWidget);
+    expect(find.byKey(const Key('thread-replies-divider')), findsOneWidget);
+    // 머리 부제에 채널과 답글 수. 목록은 아래부터 쌓는다.
+    final screen = find.byType(ThreadScreen);
+    expect(find.descendant(of: screen, matching: find.textContaining('# harkroom')), findsOneWidget);
+    expect(tester.widget<ListView>(find.byKey(const Key('thread-feed'))).reverse, isTrue);
     // **스레드 안에서는 또 들어갈 문을 그리지 않는다.**
     expect(
       find.descendant(
