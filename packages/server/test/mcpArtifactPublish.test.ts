@@ -111,7 +111,7 @@ describe('artifact.publish', () => {
     expect(att.contentType).toBe('text/html');
     expect(att.artifact).toEqual({
       artifactId: out.artifact.artifactId, version: 1, latestVersion: 1,
-      title: 'Inbox 상태 보드', summary: '열 이름 정정', coverAttachmentId: null,
+      title: 'Inbox 상태 보드', latestTitle: 'Inbox 상태 보드', summary: '열 이름 정정', coverAttachmentId: null,
     });
 
     const issued = await app.inject({ method: 'POST', url: `/attachments/${att.id}/preview`, headers: auth(adminToken) });
@@ -127,8 +127,15 @@ describe('artifact.publish', () => {
 
     expect(v2.artifact).toEqual({ artifactId: v1.artifact.artifactId, version: 2 });
     expect(v2.message.id).not.toBe(v1.message.id);
+    // 옛 카드는 그때 이름 그대로다(091, designer: "옛 카드는 그 시점 버전 고정"에 제목도 든다).
     const old = (await messageById(v1.message.id)).attachments[0].artifact;
-    expect(old).toMatchObject({ version: 1, latestVersion: 2, title: '보드 고침' });
+    expect(old).toMatchObject({ version: 1, latestVersion: 2, title: 'Inbox 상태 보드', latestTitle: '보드 고침' });
+    const fresh = (await messageById(v2.message.id)).attachments[0].artifact;
+    expect(fresh).toMatchObject({ version: 2, title: '보드 고침', latestTitle: '보드 고침' });
+    // 열기 응답도 그 버전의 제목을 준다 — 패널 머리줄이 보고 있는 버전의 이름을 보인다.
+    const v1Att = (await messageById(v1.message.id)).attachments[0].id;
+    const issued = await app.inject({ method: 'POST', url: `/attachments/${v1Att}/preview`, headers: auth(adminToken) });
+    expect(issued.json()).toMatchObject({ version: 1, title: 'Inbox 상태 보드', latestTitle: '보드 고침' });
   });
 
   it('takes a page uploaded as a file, with a cover image', async () => {

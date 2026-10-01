@@ -56,6 +56,7 @@ export async function registerPreviewRoutes(
       version: ref.version,
       latestVersion: ref.latestVersion,
       title: ref.title,
+      latestTitle: ref.latestTitle,
     });
   });
 

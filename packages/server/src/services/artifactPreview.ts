@@ -14,7 +14,10 @@ export interface ArtifactVersionRef {
   artifactId: string;
   version: number;
   latestVersion: number;
+  /** 이 버전의 제목(091). 옛 버전을 열어도 그때 이름이 보인다. */
   title: string;
+  /** 최신 버전의 제목(`artifact.title`). */
+  latestTitle: string;
 }
 
 /** 이 첨부가 어느 미리보기의 몇 번째 버전인가. 미리보기가 아니면 null. */
@@ -22,7 +25,7 @@ export async function artifactVersionForAttachment(
   pool: Pool, attachmentId: string,
 ): Promise<ArtifactVersionRef | null> {
   const res = await pool.query(
-    `select v.artifact_id as "artifactId", v.version, a.title,
+    `select v.artifact_id as "artifactId", v.version, coalesce(v.title, a.title) as title, a.title as "latestTitle",
             (select max(v2.version) from artifact_version v2 where v2.artifact_id = v.artifact_id) as "latestVersion"
        from artifact_version v join artifact a on a.id = v.artifact_id
       where v.attachment_id = $1`,
@@ -30,7 +33,10 @@ export async function artifactVersionForAttachment(
   );
   if (!res.rowCount) return null;
   const row = res.rows[0];
-  return { artifactId: row.artifactId, version: row.version, latestVersion: row.latestVersion, title: row.title };
+  return {
+    artifactId: row.artifactId, version: row.version, latestVersion: row.latestVersion,
+    title: row.title, latestTitle: row.latestTitle,
+  };
 }
 
 /**

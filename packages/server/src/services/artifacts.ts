@@ -64,7 +64,7 @@ export async function attachArtifactVersion(
     if (!row) return { ok: false, code: 'artifact_not_found' };
     if (row.channelId !== input.channelId) return { ok: false, code: 'artifact_other_channel' };
     if (row.createdBy !== input.actorId) return { ok: false, code: 'artifact_not_yours' };
-    // 제목은 최신 버전의 것을 따른다 — 카드·패널 머리줄이 같은 이름을 보인다.
+    // `artifact.title` 은 최신 버전의 제목이다(091). 옛 카드는 자기 버전의 제목(`artifact_version.title`)을 쓴다.
     await client.query(`update artifact set title = $2 where id = $1`, [artifactId, input.title]);
   } else {
     const created = await client.query<{ id: string }>(
@@ -75,10 +75,10 @@ export async function attachArtifactVersion(
   }
 
   const version = await client.query<{ version: number }>(
-    `insert into artifact_version (artifact_id, version, attachment_id, cover_attachment_id, summary)
-     values ($1, coalesce((select max(version) from artifact_version where artifact_id = $1), 0) + 1, $2, $3, $4)
+    `insert into artifact_version (artifact_id, version, attachment_id, cover_attachment_id, summary, title)
+     values ($1, coalesce((select max(version) from artifact_version where artifact_id = $1), 0) + 1, $2, $3, $4, $5)
      returning version`,
-    [artifactId, input.htmlAttachmentId, input.coverAttachmentId ?? null, input.summary ?? null],
+    [artifactId, input.htmlAttachmentId, input.coverAttachmentId ?? null, input.summary ?? null, input.title],
   );
   return { ok: true, artifactId, version: version.rows[0]!.version };
 }
