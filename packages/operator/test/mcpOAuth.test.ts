@@ -340,6 +340,12 @@ describe('MCP 서버 거절 보고(reportRejected, 2026-10-01)', () => {
   it('저장소에 없는 이름·이미 ok 가 아닌 것은 버린다 — refresh 를 부르지 않는다', async () => {
     await authed();
     expect(await oauth.reportRejected('jira', { turnStartedAtMs: after(), agentId: 'agent-a' })).toEqual({ action: 'ignored', reason: 'unknown' });
+    // prototype 의 키는 기록이 아니다(security 검토 #990).
+    for (const name of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+      expect(await oauth.reportRejected(name, { turnStartedAtMs: after(), agentId: 'agent-a' })).toEqual({ action: 'ignored', reason: 'unknown' });
+      expect(await oauth.status(name, fake.mcpUrl)).toEqual({ state: 'none' });
+    }
+    expect(await oauth.tokensFor({ constructor: { url: fake.mcpUrl }, toString: { url: fake.mcpUrl } })).toEqual({ tokens: {}, expired: [] });
     fake.revoke();
     clock += 60_000;
     expect(await oauth.reportRejected('slack', { turnStartedAtMs: after(), agentId: 'agent-a' })).toEqual({ action: 'expired' });

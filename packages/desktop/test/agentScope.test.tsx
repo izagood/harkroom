@@ -330,6 +330,42 @@ describe('AgentMcpSection — 원격 MCP 인증', () => {
     }
   });
 
+  it('MCP 서버가 거절했으면 "거부됨 · 시각 · 에이전트" 를 빨갛게, [다시 인증] 과 함께 보인다', async () => {
+    const at = new Date(2026, 9, 1, 14, 51).getTime();
+    fakeAuth({ state: 'rejected', at, agentId: 'agent-tm' });
+    setup();
+    const prev = useActiveStore.getState().accounts;
+    useActiveStore.getState().set({ accounts: { ...prev, 'agent-tm': { id: 'agent-tm', handle: 'task_manager', displayName: 'task_manager', kind: 'agent', isAdmin: false, avatarUrl: null, createdAt: '2026-09-01T00:00:00.000Z' } } as never });
+    render(<AgentScopeSection agent={agent({ mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+    const badge = await screen.findByTestId('agent-mcp-auth-slack');
+    expect(badge.textContent).toContain('거부됨');
+    expect(badge.textContent).toContain('task_manager');
+    expect(badge.textContent).toMatch(/2:51/);
+    expect(badge.querySelector('.text-danger')).toBeTruthy();
+    expect(screen.getByTestId('agent-mcp-auth-start-slack').textContent).toBe('다시 인증');
+  });
+
+  it('거부를 본 에이전트를 모르면 이름 없이 시각만 보인다', async () => {
+    fakeAuth({ state: 'rejected', at: Date.now(), agentId: 'unknown-agent' });
+    setup();
+    render(<AgentScopeSection agent={agent({ mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+    const badge = await screen.findByTestId('agent-mcp-auth-slack');
+    expect(badge.textContent).toContain('거부됨');
+    expect(badge.textContent).not.toContain('unknown-agent');
+  });
+
+  it('인증됨에도 [다시 인증] 이 있다 — 화면이 맞다고 해도 실제 실패를 본 사람이 곧바로 다시 인증한다', async () => {
+    const opened: string[] = [];
+    setExternalOpener({ open: async (u) => { opened.push(u); } });
+    fakeAuth({ state: 'ok' });
+    setup();
+    render(<AgentScopeSection agent={agent({ mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+    expect((await screen.findByTestId('agent-mcp-auth-slack')).textContent).toContain('인증됨');
+    expect(screen.getByTestId('agent-mcp-auth-forget-slack').textContent).toBe('인증 해제');
+    fireEvent.click(screen.getByTestId('agent-mcp-auth-start-slack'));
+    await waitFor(() => expect(opened).toEqual(['https://auth.example.com/authorize?x=1']));
+  });
+
   it('만료면 "다시 인증", 인증됨이면 [인증 해제] 가 forget 에 닿는다', async () => {
     const f = fakeAuth({ state: 'expired' });
     setup();
