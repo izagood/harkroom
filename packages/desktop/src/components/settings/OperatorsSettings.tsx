@@ -21,7 +21,10 @@ import { SettingsGroup, SettingsPage } from './primitives';
  * 등록 코드는 서버가 메모리에만 5분 들고 있고 한 번 쓰면 사라진다. 그래서 초대 토큰과
  * 같은 규율로 그린다(`InviteSettings`): 지금 안 옮기면 다시 못 본다는 말을 코드 옆에 둔다.
  */
-export function OperatorsSettings() {
+export function OperatorsSettings({ onOpenSection }: {
+  /** 이 머신 등록 자리(이 기기 › 이 머신의 오퍼레이터)로 간다(UX ⑥b-2 후속). 없으면 글로만 안내한다. */
+  onOpenSection?: (id: import('./sections').SectionId) => void;
+} = {}) {
   const t = useT();
   const me = useActiveStore((s) => s.me);
   const canRegister = hasCapability(me, 'operator.register');
@@ -150,6 +153,15 @@ export function OperatorsSettings() {
         <SettingsGroup>
           <div className="px-4 py-3">
             <p className="mb-3 text-meta text-fg-muted">{t(localAvailable ? 'operators.registerElsewhereNote' : 'operators.registerNote')}</p>
+            {localAvailable && onOpenSection && (
+              <button
+                data-testid="operators-open-this-operator"
+                className="mb-3 rounded px-2 py-1 text-meta text-accent hover:bg-surface-sunken"
+                onClick={() => onOpenSection('this-operator')}
+              >
+                {t('operators.openThisOperator')}
+              </button>
+            )}
             {code && (
               <div className="mb-3 rounded border border-warning-border bg-warning-surface p-3">
                 <div className="font-semibold text-warning">{t('operators.codeWarning')}</div>

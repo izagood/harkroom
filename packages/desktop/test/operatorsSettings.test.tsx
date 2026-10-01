@@ -121,4 +121,12 @@ describe('이 머신 등록은 이 페이지에 없다 (UX ⑥b-2)', () => {
     expect(screen.queryByText('이 머신을 등록')).toBeNull();
     expect(screen.getByText(/이 기기 › 이 머신의 오퍼레이터/)).toBeTruthy();
   });
+  it('새 자리로 가는 버튼이 있다(onOpenSection 을 받으면)', async () => {
+    (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke: vi.fn(), metadata: { currentWindow: { label: 'main' } } };
+    fakeController();
+    const onOpenSection = vi.fn();
+    render(<OperatorsSettings onOpenSection={onOpenSection} />);
+    fireEvent.click(await screen.findByTestId('operators-open-this-operator'));
+    expect(onOpenSection).toHaveBeenCalledWith('this-operator');
+  });
 });
