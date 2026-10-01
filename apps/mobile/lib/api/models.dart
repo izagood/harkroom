@@ -359,6 +359,39 @@ class ReadState {
       );
 }
 
+/// 채널 하나에 대한 **내** 선호. `GET /channels/prefs`(데스크탑 사이드바와 같은 값).
+/// 모바일은 S5b 에서 읽기만 한다 — 별표·섹션 편집은 S9 채널 시트.
+class ChannelPref {
+  const ChannelPref({
+    required this.channelId,
+    required this.starred,
+    required this.section,
+    required this.sortOrder,
+    required this.hidden,
+  });
+
+  final String channelId;
+
+  /// 즐겨찾기(`starredAt` 이 있다).
+  final bool starred;
+
+  /// 사용자 섹션 이름. null 이면 섹션 없음(맨 아래 「채널」).
+  final String? section;
+
+  /// 섹션 안 수동 순서. null 이면 이름순 뒤.
+  final int? sortOrder;
+
+  /// 사이드바에서 치웠다(`hiddenAt` 이 있다) — 목록에 세우지 않는다.
+  final bool hidden;
+
+  static ChannelPref fromJson(Map<String, Object?> j) => ChannelPref(
+        channelId: _str(j['channelId']),
+        starred: j['starredAt'] is String,
+        section: j['section'] is String && (j['section']! as String).trim().isNotEmpty ? j['section']! as String : null,
+        sortOrder: j['sortOrder'] is num ? (j['sortOrder']! as num).toInt() : null,
+        hidden: j['hiddenAt'] is String,
+      );
+}
 
 /// 내가 **불린 이유**. 러너가 프롬프트를 다르게 조립하려고 서버가 갈라 둔 값이고,
 /// 화면도 같은 이유로 갈라 그린다 — "멘션"과 "내가 낸 물음에 답이 왔다"는 다른 일이다.

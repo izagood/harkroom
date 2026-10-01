@@ -229,6 +229,10 @@ class StringsEn implements Strings {
   String get agentsSoon => 'See what your agents are doing here. Coming soon.';
   @override
   String get dmsEmpty => 'No direct messages yet.';
+  @override
+  String get sectionStarred => 'Starred';
+  @override
+  String get sectionChannels => 'Channels';
 
   @override
   String get inboxEmpty => 'Nothing here yet.';

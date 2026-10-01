@@ -37,6 +37,8 @@ MockClient _server() => MockClient((req) async {
         return _json({
           'channels': [
             {'id': 'c1', 'name': 'task', 'kind': 'standard'},
+            {'id': 'c2', 'name': 'ops', 'kind': 'standard'},
+            {'id': 'c3', 'name': 'old', 'kind': 'standard'},
             {'id': 'd1', 'name': 'designer', 'kind': 'dm'},
           ],
         });
@@ -46,6 +48,14 @@ MockClient _server() => MockClient((req) async {
         return _json({
           'reads': [
             {'channelId': 'd1', 'lastReadSeq': 0, 'unread': 3},
+          ],
+        });
+      }
+      if (path == '/channels/prefs') {
+        return _json({
+          'prefs': [
+            {'channelId': 'c2', 'starredAt': '2026-10-01T00:00:00Z'},
+            {'channelId': 'c3', 'hiddenAt': '2026-10-01T00:00:00Z'},
           ],
         });
       }
@@ -118,5 +128,19 @@ void main() {
     await tester.tap(find.byKey(const Key('open-me')));
     await tester.pumpAndSettle();
     expect(find.byType(BackButton), findsOneWidget);
+  });
+
+  testWidgets('S5b 홈: 즐겨찾기 묶음이 위에, 치운 채널은 없고, 묶음 머리를 누르면 접힌다', (tester) async {
+    await _pump(tester);
+    expect(find.byKey(const Key('section-starred')), findsOneWidget);
+    expect(find.byKey(const Key('section-channels')), findsOneWidget);
+    expect(find.byKey(const Key('channel-c2')), findsOneWidget);
+    expect(find.byKey(const Key('channel-c3')), findsNothing, reason: '치운 채널');
+    expect(tester.getTopLeft(find.byKey(const Key('channel-c2'))).dy,
+        lessThan(tester.getTopLeft(find.byKey(const Key('channel-c1'))).dy));
+    await tester.tap(find.byKey(const Key('section-starred')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('channel-c2')), findsNothing);
+    expect(find.byKey(const Key('channel-c1')), findsOneWidget);
   });
 }

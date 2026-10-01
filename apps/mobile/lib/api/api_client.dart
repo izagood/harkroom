@@ -125,6 +125,12 @@ class ApiClient {
           .map(ChannelRow.fromJson)
           .toList(growable: false);
 
+  /// 내 채널 선호(즐겨찾기·섹션·순서·치움). 데스크탑 사이드바와 같은 값이다.
+  Future<List<ChannelPref>> channelPrefs() async =>
+      _list(_obj(await _send('GET', '/channels/prefs'))['prefs'])
+          .map(ChannelPref.fromJson)
+          .toList(growable: false);
+
   /// 채널 자동 멘션(#173). 채널을 볼 수 있는 사람 누구나 읽는다 — 작성칸이 칩을 그려야 한다.
   Future<List<ChannelAutoMention>> channelAutoMentions(String channelId) async =>
       _list(_obj(await _send('GET', '/channels/$channelId/auto-mentions'))['autoMentions'])
