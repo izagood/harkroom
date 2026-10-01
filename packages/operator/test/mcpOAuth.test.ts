@@ -271,6 +271,83 @@ describe('refresh', () => {
   });
 });
 
+describe('MCP 서버 거절 보고(reportRejected, 2026-10-01)', () => {
+  async function authed(): Promise<void> {
+    const { authUrl } = await oauth.start('slack', { type: 'http', url: fake.mcpUrl });
+    await approve(fake, authUrl);
+    await until(async () => (await oauth.status('slack', fake.mcpUrl)).state === 'ok');
+  }
+  const after = () => clock + 1;
+
+  it('보고를 받으면 만료 전이어도 곧바로 refresh 한다 — 새 토큰을 돌려주고 상태는 ok 다', async () => {
+    await authed();
+    clock += 60_000;
+    expect(await oauth.reportRejected('slack', { turnStartedAtMs: after(), agentId: 'agent-a' }))
+      .toEqual({ action: 'refreshed', url: fake.mcpUrl, accessToken: 'A2' });
+    expect(fake.calls.refresh).toBe(1);
+    expect(await oauth.status('slack', fake.mcpUrl)).toMatchObject({ state: 'ok' });
+    expect((await oauth.tokensFor({ slack: { url: fake.mcpUrl } })).tokens).toEqual({ slack: 'A2' });
+    // 로그에 토큰 값이 없다.
+    expect(logs.join('\n')).not.toMatch(/A1|A2|R1|R2/);
+  });
+
+  it('거절로 당겨 받은 토큰이 다시 거절되면 rejected — 시각과 보고한 에이전트를 남긴다', async () => {
+    await authed();
+    clock += 60_000;
+    await oauth.reportRejected('slack', { turnStartedAtMs: after(), agentId: 'agent-a' });
+    clock += 60_000;
+    expect(await oauth.reportRejected('slack', { turnStartedAtMs: after(), agentId: 'agent-b' })).toEqual({ action: 'rejected' });
+    expect(fake.calls.refresh).toBe(1);
+    expect(await oauth.status('slack', fake.mcpUrl)).toEqual({ state: 'rejected', at: clock, agentId: 'agent-b' });
+    // 구워 봐야 또 401 이다 — "인증 필요"로 낸다.
+    expect(await oauth.tokensFor({ slack: { url: fake.mcpUrl } })).toEqual({ tokens: {}, expired: ['slack'] });
+    // 시간 refresh 도 돌리지 않는다. 다시 인증하면 표시가 지워진다.
+    clock += 3600_000;
+    expect(await oauth.refreshDue()).toEqual({});
+    await authed();
+    expect(await oauth.status('slack', fake.mcpUrl)).toMatchObject({ state: 'ok' });
+  });
+
+  it('지금 토큰을 받기 전에 뜬 턴의 보고는 옛 토큰의 것이다 — 아무것도 하지 않는다', async () => {
+    await authed();
+    const before = clock - 1;
+    clock += 60_000;
+    expect(await oauth.reportRejected('slack', { turnStartedAtMs: before, agentId: 'agent-a' })).toEqual({ action: 'ignored', reason: 'stale' });
+    // 거절로 새 토큰을 받은 뒤, 그 전에 뜬 다른 턴이 늦게 보고해도 rejected 로 읽지 않는다.
+    const turnOnOld = clock;
+    clock += 1_000;
+    await oauth.reportRejected('slack', { turnStartedAtMs: after(), agentId: 'agent-a' });
+    expect(await oauth.reportRejected('slack', { turnStartedAtMs: turnOnOld, agentId: 'agent-b' })).toEqual({ action: 'ignored', reason: 'stale' });
+    expect(await oauth.status('slack', fake.mcpUrl)).toMatchObject({ state: 'ok' });
+  });
+
+  it('보고가 refresh 를 당기는 것은 이름마다 쿨다운에 한 번이다 — 거짓 보고로 토큰을 계속 돌리지 못한다', async () => {
+    // 쿨다운이 토큰 수명보다 길어야 "플래그가 지워진 뒤의 보고"를 잴 수 있다 — 이 인스턴스만 2시간.
+    oauth.close();
+    oauth = createMcpOAuth({ storePath: join(dir, 'secrets', 'mcp-oauth.json'), now: () => clock, log: (l) => logs.push(l), rejectCooldownMs: 2 * 3600_000 });
+    await authed();
+    clock += 60_000;
+    expect(await oauth.reportRejected('slack', { turnStartedAtMs: after(), agentId: 'agent-a' })).toMatchObject({ action: 'refreshed', accessToken: 'A2' });
+    // 시간 refresh 가 새 토큰을 주면 "거절로 당긴 토큰" 표시는 지워진다 — 그래도 쿨다운은 남는다.
+    clock += 3600_000;
+    expect(await oauth.refreshDue()).toEqual({ slack: { url: fake.mcpUrl, accessToken: 'A3' } });
+    expect(await oauth.reportRejected('slack', { turnStartedAtMs: after(), agentId: 'agent-a' })).toEqual({ action: 'ignored', reason: 'cooldown' });
+    clock += 3600_000;
+    expect(await oauth.reportRejected('slack', { turnStartedAtMs: after(), agentId: 'agent-a' })).toMatchObject({ action: 'refreshed', accessToken: 'A4' });
+    expect(fake.calls.refresh).toBe(3);
+  });
+
+  it('저장소에 없는 이름·이미 ok 가 아닌 것은 버린다 — refresh 를 부르지 않는다', async () => {
+    await authed();
+    expect(await oauth.reportRejected('jira', { turnStartedAtMs: after(), agentId: 'agent-a' })).toEqual({ action: 'ignored', reason: 'unknown' });
+    fake.revoke();
+    clock += 60_000;
+    expect(await oauth.reportRejected('slack', { turnStartedAtMs: after(), agentId: 'agent-a' })).toEqual({ action: 'expired' });
+    expect(await oauth.reportRejected('slack', { turnStartedAtMs: after() + 6 * 60_000, agentId: 'agent-a' })).toEqual({ action: 'ignored', reason: 'not_ok' });
+    expect(fake.calls.refresh).toBe(1);
+  });
+});
+
 describe('합격 기준 — 한 번 인증하면 모든 풀 계정 턴에서 된다', () => {
   const BIN = '/Applications/Harkroom.app/Contents/MacOS/harkroom-operator';
 

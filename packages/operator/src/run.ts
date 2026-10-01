@@ -55,6 +55,8 @@ import type { CommunityInstance } from './community.js';
  * 않는다는 성질과 충돌하지 않는다.
  */
 const ADOPTED_POLL_MS = 2_000;
+/** `mcp.authRejected` 한 통에서 볼 이름의 상한. 러너가 실제로 쓰는 원격 MCP 는 몇 개뿐이다. */
+const MAX_REJECTED_PER_NOTICE = 16;
 
 /**
  * 종료 코드. **숫자에 뜻이 있다** — 앱이 이 값으로 "왜 안 떴는가"를 가른다.
@@ -210,9 +212,10 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     // `registry` 는 아래에서 만들어지지만 이 콜백은 그 뒤에만 불린다(러너가 붙어야 온다).
     onNotice: (runnerId, agentId, notice) => {
       if (notice.type === 'mcp.authRejected') {
-        // 하네스가 우리가 구운 Authorization 헤더를 거절당했다. 지금은 기록만 한다 — 즉시
-        // refresh·상태 표시는 다음 단계(B)가 이 자리에 붙인다.
-        log(`MCP 인증 거절: agent=${agentId} runnerId=${runnerId} — ${notice.servers.join(', ')} (Authorization 헤더 401)`);
+        // 하네스가 우리가 구운 Authorization 헤더를 거절당했다. 보고는 신호일 뿐이라 판단은
+        // `mcpOAuth.reportRejected` 가 한다(저장소에 없는 이름·옛 토큰·쿨다운은 거기서 버린다).
+        // 개수에 상한을 두고, 로그에는 저장소에 있는 이름만 남긴다 — 보고의 문자열을 그대로 찍지 않는다.
+        void handleMcpAuthRejected(agentId, runnerId, notice.servers.slice(0, MAX_REJECTED_PER_NOTICE), notice.turnStartedAtMs);
         return;
       }
       registry.notePollStopped(agentId, runnerId, notice.holding);
@@ -410,6 +413,17 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     log,
     onToken: (name, rec) => pushTokens({ [name]: rec }),
   });
+  const handleMcpAuthRejected = async (agentId: string, runnerId: string, servers: string[], turnStartedAtMs: number) => {
+    for (const name of new Set(servers)) {
+      const out = await mcpOAuth.reportRejected(name, { turnStartedAtMs, agentId }).catch((err: unknown) => {
+        log(`MCP OAuth: 거절 보고 처리 실패: ${err instanceof Error ? err.message : String(err)}`);
+        return null;
+      });
+      if (!out || (out.action === 'ignored' && out.reason === 'unknown')) continue;
+      log(`MCP 인증 거절 보고: agent=${agentId} runnerId=${runnerId} — ${name}: ${out.action === 'ignored' ? `무시(${out.reason})` : out.action}`);
+      if (out.action === 'refreshed') await pushTokens({ [name]: { url: out.url, accessToken: out.accessToken } });
+    }
+  };
   // 1분마다 만료가 가까운 것을 refresh 한다. 턴이 없는 동안에도 돈다 — 긴 턴 도중에 만료되지 않게.
   const oauthTimer = setInterval(() => {
     void mcpOAuth.refreshDue().then(pushTokens).catch((err: unknown) => {
