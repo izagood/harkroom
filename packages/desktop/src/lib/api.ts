@@ -381,7 +381,7 @@ export class ApiClient {
 
   /** `mcpServers` 는 정의(AgentConfig)가 아니라 레지스트리 이름의 부분집합이라 따로 받는다(스펙 §6). */
   updateAgent(
-    id: string, patch: Partial<AgentConfig> & { handle?: string; displayName?: string; mcpServers?: string[] },
+    id: string, patch: Partial<AgentConfig> & { handle?: string; displayName?: string; mcpServers?: string[]; trustSiblings?: boolean },
   ): Promise<AgentView> {
     return this.req('PATCH', `/accounts/agents/${id}`, patch);
   }

@@ -7,7 +7,7 @@ import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { ACCOUNT_STATUSES, CREDENTIAL_SCOPES, INVOKE_SCOPES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@harkroom/shared';
 import {
   ackAgentStop, assignmentOf, createAgentAccount, definitionFor, deleteAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
-  revokeAllPats, setAgentMcpServers, setDelegate, setInvoker, undoAgentStopRequest, updateAgent, validateMcpServers, validateScopeChange,
+  revokeAllPats, setAgentMcpServers, setDelegate, setInvoker, setTrustSiblings, undoAgentStopRequest, updateAgent, validateMcpServers, validateScopeChange,
 } from '../services/agents.js';
 import { isEligibleDelegate } from '../services/invokeGate.js';
 import { actorOf, recordAudit } from '../audit.js';
@@ -222,10 +222,11 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
    * - `ownerAccountId`: 누가 이 에이전트의 진행 중 턴에 터미널로 attach 할 수 있는지의 게이트.
    * - `harness`: 어느 CLI 바이너리가 실제로 실행되는지.
    * - `instructions`: 에이전트가 무엇을 하도록 지시받는지. 원문은 남기지 않는다.
+   * - `trustSiblings`: 같은 소유자의 owner 에이전트가 명단 없이 이 에이전트를 깨우는지(083).
    */
   const AUDITED_FIELDS = {
     mentionPermission: 'value', workingDir: 'value', ownerAccountId: 'value',
-    harness: 'value', instructions: 'changed',
+    harness: 'value', instructions: 'changed', trustSiblings: 'value',
   } as const;
 
   type AuditedField = keyof typeof AUDITED_FIELDS;
@@ -380,6 +381,10 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
       // MCP 이름 목록(스펙 2026-09-20 §6). 레지스트리의 부분집합이어야 하고, personal 이름은
       // credentialScope=personal 을 요구한다 — `validateMcpServers`.
       mcpServers: z.array(z.string().regex(/^[a-z0-9-]{1,32}$/)).max(32).optional(),
+      // 형제 기본 신뢰(083). 소유자·admin 이 정한다 — 누가 내 에이전트를 깨우는지는 그 에이전트를
+      // 가진 사람이 정한다(명단 PUT 과 같은 규칙). owner 범위가 아니어도 받는다: 값은 남고
+      // 판정에만 안 쓰인다(invokers 명단과 같다).
+      trustSiblings: z.boolean().optional(),
     }).parse(req.body);
 
     const account = req.account!;
@@ -453,6 +458,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
       if (mcpError) return reply.code(400).send({ error: mcpError });
     }
     if (patch.mcpServers !== undefined) await setAgentMcpServers(pool, id, patch.mcpServers);
+    if (patch.trustSiblings !== undefined) await setTrustSiblings(pool, id, patch.trustSiblings);
 
     let revokedLabels: string[] = [];
     if (patch.disabled !== undefined && patch.disabled !== before.disabled) {

@@ -9,7 +9,7 @@
  * | community | 누구나 |
  * | channel | 호출자가 그 채널의 멤버(`channel_member`) |
  * | list | `agent_invoker` 에 호출자가 있다 |
- * | owner | 호출자 = `owner_account_id`, 또는 소유자가 지정한 자기 에이전트(`agent_owner_delegate`, 073) |
+ * | owner | 호출자 = `owner_account_id`, 또는 같은 소유자의 owner 에이전트 — 대상이 형제를 믿으면(`trust_siblings`, 083 기본) 명단 없이, 아니면 `agent_owner_delegate`(073) 명단에 있을 때 |
  *
  * **집합·auto-mention·@channel 을 거쳐 온 부름은 `community` 만 통과한다.** 그것들은 전부
  * "소유자가 아닌 무언가가 부르는 것"이다(auto-mention 은 넣는 시점에 400 으로도 막힌다).
@@ -53,15 +53,17 @@ export async function mayInvoke(
   if (ctx.via !== 'mention' && ctx.via !== 'team') return false;
   if (await passesScope(client, facts.invokeScope, facts.ownerAccountId, ctx,
     `select 1 from agent_invoker where agent_id = $1 and account_id = $2`, facts.agentId)) return true;
-  // owner 의 두 번째 길 — 소유자가 지정한 자기 에이전트(073).
+  // owner 의 두 번째 길 — 같은 소유자의 owner 에이전트(073 명단, 또는 083 형제 기본 신뢰).
   return facts.invokeScope === 'owner' && isEligibleDelegate(client, facts, ctx.callerId, { listed: true });
 }
 
 /**
- * 대리 호출자 판정(073). `listed` 면 명단에 있어야 하고, 아니면(명단에 넣기 전 검사) 조건만 본다.
+ * 대리 호출자 판정(073). `listed` 면 명단에 있거나 대상이 형제를 믿어야 하고(`trust_siblings`,
+ * 083 — 기본 true), 아니면(명단에 넣기 전 검사) 조건만 본다.
  * 조건은 **부를 때마다 다시** 본다 — 대리자의 범위나 소유자는 명단에 넣은 뒤에도 바뀐다:
  * (a) 에이전트 (b) 소유자가 같다 (c) 대리자도 owner 범위다. (c) 가 없으면 누구나 대리자를
- * 불러 대상을 부르게 할 수 있다 — 개인 자격증명을 남에게 여는 우회로다.
+ * 불러 대상을 부르게 할 수 있다 — 개인 자격증명을 남에게 여는 우회로다. 형제 신뢰도 이 셋을
+ * 건너뛰지 않는다: 넓히는 것은 "명단에 적어야 한다" 하나뿐이다.
  */
 export async function isEligibleDelegate(
   client: Pick<PoolClient, 'query'>,
@@ -74,8 +76,9 @@ export async function isEligibleDelegate(
     `select 1 from account a join agent_config c on c.account_id = a.id
       where a.id = $1 and a.kind = 'agent' and a.deleted_at is null
         and c.invoke_scope = 'owner' and c.owner_account_id = $2
-        and ($4::bool = false or exists (
-          select 1 from agent_owner_delegate d where d.agent_id = $3 and d.delegate_id = a.id))`,
+        and ($4::bool = false
+          or exists (select 1 from agent_config t where t.account_id = $3 and t.trust_siblings)
+          or exists (select 1 from agent_owner_delegate d where d.agent_id = $3 and d.delegate_id = a.id))`,
     [delegateId, target.ownerAccountId, target.agentId, opts.listed]);
   return Boolean(res.rowCount);
 }
