@@ -44,14 +44,15 @@ import { listTeams } from '../services/teams.js';
 import { listHandleGroups } from '../services/handleGroups.js';
 import { recordClaudeLane } from '../services/claudeLane.js';
 import { recordRunnerVersion } from '../services/runnerVersion.js';
-import { resolveAttachmentFor } from '../services/attachments.js';
+import { recordUpload, resolveAttachmentFor } from '../services/attachments.js';
+import { ARTIFACT_PUBLISH_ARG_MAX_BYTES, ARTIFACT_REJECTION_MESSAGES, attachArtifactVersion } from '../services/artifacts.js';
 import { reportedModelMeta } from '../services/reportedModel.js';
 import { axisValid, getThreadAgentModel } from '../services/threadAgentModels.js';
 import { applyAgentPicks, cleanPicks, type PickChange } from '../services/agentModelPicks.js';
 import { agentModelOptions, announceChange, checkOffered, emitChanged } from '../routes/threadAgentModelRoutes.js';
 import type { OperatorHub } from '../ws/operatorHub.js';
 import { AttachmentMissingError, type StorageBackend } from '../storage/local.js';
-import type { Readable } from 'node:stream';
+import { Readable } from 'node:stream';
 
 // slug 문법과 거절 문구는 services/memory.ts 에 있다 — 사람용 REST(accountRoutes)도 같은 것을 쓴다.
 import { isValidSlug, MEMORY_SLUG_HINT } from '../services/memory.js';
@@ -71,11 +72,20 @@ const MODEL_ARG = z.string().min(1).max(MODEL_ID_MAX).optional();
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** 미리보기 제목을 파일명으로 — 받은 파일이 무엇인지 보이게. 경로 성분·제어문자는 `displayName` 이 한 번 더 지운다. */
+function slugFilename(title: string): string {
+  const slug = title.replace(/[\\/:*?"<>|\x00-\x1f]+/g, ' ').trim().replace(/\s+/g, '-').slice(0, 80);
+  return slug || 'preview';
+}
+
 function jsonResult(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }] };
 }
 
 /** 게시 거절을 도구 결과로. 첨부 사유 셋은 한 코드로 합친다(라우트와 같은 이유 — 존재 여부를 흘리지 않는다). */
+/** `/mcp` 본문 상한 — `artifact.publish` 의 2MB 인자가 JSON 이스케이프로 부풀어도 들어가게. */
+const MCP_BODY_LIMIT_BYTES = 2 * ARTIFACT_PUBLISH_ARG_MAX_BYTES + 512 * 1024;
+
 function postFailureResult(failure: string) {
   if (failure === 'bad_thread') return jsonResult({ error: { code: 'bad_thread', message: BAD_THREAD_MESSAGE } });
   return jsonResult({ error: { code: 'bad_attachment', message: 'attachments must be your own, unused uploads' } });
@@ -90,7 +100,7 @@ function postFailureResult(failure: string) {
  * 그래서 사유와 다음 할 일을 문장으로 준다. JSON 의 맨 앞 키로 두는 것은 에이전트가 결과를
  * 끝까지 읽지 않아도 보게 하려는 것이다.
  */
-function postedResult(message: MessageRow, notified: string[]) {
+function postedResult(message: MessageRow, notified: string[], extra: Record<string, unknown> = {}) {
   const meta = (message.meta ?? {}) as Record<string, unknown>;
   const capped = Array.isArray(meta.mentionChainCapped) ? meta.mentionChainCapped as string[] : [];
   const denied = Array.isArray(meta.mentionDenied) ? meta.mentionDenied as string[] : [];
@@ -107,7 +117,7 @@ function postedResult(message: MessageRow, notified: string[]) {
       + ' 사람에게 message.ask 로 넘기거나 소유자에게 호출 범위를 물어라.',
     );
   }
-  return jsonResult(warnings.length ? { warnings, message, notified } : { message, notified });
+  return jsonResult(warnings.length ? { warnings, message, notified, ...extra } : { message, notified, ...extra });
 }
 
 /**
@@ -499,10 +509,12 @@ function buildMcpServer(
       body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
       threadRootId: z.string().uuid().optional(),
       alsoInChannel: z.boolean().optional(),
+      // 내가 올린, 아직 아무 글에도 안 붙은 업로드(`attachment.upload` 가 돌려준 id). REST 와 같은 상한이다.
+      attachmentIds: z.array(z.string().uuid()).max(10).optional(),
       model: MODEL_ARG,
       agentModels: AGENT_MODELS_ARG,
     },
-  }, async ({ channelId, body, threadRootId, alsoInChannel, model, agentModels }) => {
+  }, async ({ channelId, body, threadRootId, alsoInChannel, attachmentIds, model, agentModels }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
@@ -512,6 +524,7 @@ function buildMcpServer(
     const posted = await postMessage(pool, {
       causeMessageId: cause,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null, alsoInChannel,
+      attachmentIds: attachmentIds ?? [],
       meta: await reportedModelMeta(pool, account.id, model, threadRootId ?? null),
       ...(picks.list.length ? {
         beforeCommit: async (client, ctx) => {
@@ -526,8 +539,7 @@ function buildMcpServer(
       } : {}),
     });
     if (posted.failure === 'rejected') return jsonResult({ error: { code: posted.rejection.code, message: posted.rejection.message } });
-    // 에이전트는 첨부를 붙이지 않는다(도구에 그 입력이 없다). 그래도 합 타입이므로 확인해야
-    // 하고, 확인 자체가 나중에 도구가 첨부를 받게 될 때의 자리를 남겨 둔다.
+    // 첨부 연결 실패(남의 업로드·이미 붙은 업로드·없는 id)는 REST 와 같은 판정이다(`attachToMessage`).
     if (posted.failure) return postFailureResult(posted.failure);
     const { message, notified, replayed } = posted;
     if (!replayed) {
@@ -582,6 +594,97 @@ function buildMcpServer(
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
     return postedResult(message, notified);
+  });
+
+  /**
+   * 미리보기(아티팩트) 올리기(2026-10-02). 디자인 안·보고서 같은 HTML 한 장을 **글 하나로** 올린다 —
+   * 사람은 그 글의 카드를 눌러 앱 안에서 바로 본다(`GET /preview/:token`, 격리는 previewRoutes 주석).
+   * claude.ai 아티팩트 링크는 그 브라우저에 로그인한 사람만 열고, 폰에서는 막힌다 — 이 도구가 그 대신이다.
+   *
+   * 페이지는 둘 중 하나로 받는다: `html` 글자(2MB 까지 — 모델이 어차피 글자로 쓴다) 또는 `attachmentId`
+   * (브릿지 `attachment.upload` 로 올린 내 파일, 5MB 까지). 표지 그림은 선택이다.
+   *
+   * 고쳐 올릴 때는 `artifactId` 를 준다 → 같은 안의 v(n+1) 이 **새 글**로 올라간다. 옛 글은 그때
+   * 버전을 그대로 가리킨다. 같은 채널·내가 만든 안에만 얹을 수 있다(`attachArtifactVersion`).
+   *
+   * 메시지·첨부 연결·버전 행은 `postMessage` 의 한 트랜잭션이다. `html` 로 받은 바이트는 그보다 먼저
+   * 디스크·업로드 행으로 쓰고, 게시가 실패하면 지운다(실패해도 붙지 않은 업로드라 GC 대상이기도 하다).
+   */
+  server.registerTool('artifact.publish', {
+    description: 'HTML 미리보기(디자인 안 등)를 글로 올린다 — 사람이 앱 안에서 바로 연다. claude.ai 아티팩트 링크 대신 쓴다. html 글자 또는 attachment.upload 로 올린 파일 id, 고쳐 올릴 땐 artifactId',
+    inputSchema: {
+      channelId: z.string().uuid(),
+      threadRootId: z.string().uuid().optional(),
+      title: z.string().trim().min(1).max(200),
+      body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
+      html: z.string().min(1).optional(),
+      attachmentId: z.string().uuid().optional(),
+      coverAttachmentId: z.string().uuid().optional(),
+      artifactId: z.string().uuid().optional(),
+      summary: z.string().trim().min(1).max(500).optional(),
+      model: MODEL_ARG,
+    },
+  }, async ({ channelId, threadRootId, title, body, html, attachmentId, coverAttachmentId, artifactId, summary, model }) => {
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    if ((html === undefined) === (attachmentId === undefined)) {
+      return jsonResult({ error: { code: 'bad_request', message: 'give exactly one of html or attachmentId' } });
+    }
+
+    // html 글자로 받았으면 먼저 업로드 행으로 만든다 — 그래야 아래가 파일로 받은 경우와 한 길이다.
+    let uploaded: { id: string; storageKey: string } | null = null;
+    if (html !== undefined) {
+      const bytes = Buffer.from(html, 'utf8');
+      if (bytes.length > ARTIFACT_PUBLISH_ARG_MAX_BYTES) {
+        return jsonResult({ error: { code: 'too_large', message: `html exceeds ${ARTIFACT_PUBLISH_ARG_MAX_BYTES / 1024 / 1024}MB — write it to a file and use attachment.upload` } });
+      }
+      const stored = await storage.write(Readable.from([bytes]));
+      try {
+        const row = await recordUpload(pool, {
+          uploaderId: account.id, filename: `${slugFilename(title)}.html`, contentType: 'text/html',
+          sizeBytes: stored.bytes, storageKey: stored.key,
+        });
+        uploaded = { id: row.id, storageKey: stored.key };
+      } catch (err) {
+        await storage.remove(stored.key).catch(() => {});
+        throw err;
+      }
+    }
+    const htmlId = uploaded?.id ?? attachmentId!;
+
+    let published: { artifactId: string; version: number } | null = null;
+    const posted = await postMessage(pool, {
+      causeMessageId: cause,
+      channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
+      attachmentIds: [htmlId, ...(coverAttachmentId ? [coverAttachmentId] : [])],
+      meta: await reportedModelMeta(pool, account.id, model, threadRootId ?? null),
+      beforeCommit: async (client) => {
+        const out = await attachArtifactVersion(client, {
+          channelId, actorId: account.id, title, htmlAttachmentId: htmlId,
+          coverAttachmentId: coverAttachmentId ?? null, summary: summary ?? null, artifactId: artifactId ?? null,
+        });
+        if (!out.ok) return { status: 400, code: out.code, message: ARTIFACT_REJECTION_MESSAGES[out.code] };
+        published = { artifactId: out.artifactId, version: out.version };
+        return null;
+      },
+    });
+    if (posted.failure) {
+      // 글이 안 생겼다 — 이 도구가 만든 업로드는 아무도 가리키지 않는다. 지금 지운다.
+      if (uploaded) {
+        await pool.query(`delete from attachment where id = $1 and message_id is null`, [uploaded.id]).catch(() => {});
+        await storage.remove(uploaded.storageKey).catch(() => {});
+      }
+      if (posted.failure === 'rejected') return jsonResult({ error: { code: posted.rejection.code, message: posted.rejection.message } });
+      return postFailureResult(posted.failure);
+    }
+    const { message, notified, replayed } = posted;
+    if (!replayed) {
+      const audience = await audienceFor(pool, channelId);
+      emitPosted(posted, audience);
+      for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
+    }
+    return postedResult(message, notified, { artifact: published });
   });
 
   /**
@@ -1636,7 +1739,21 @@ export async function registerMcp(
   leakGuard: SecretLeakGuard | null = null,
   operatorHub?: OperatorHub,
 ): Promise<void> {
-  app.post('/mcp', async (req, reply) => {
+  app.post('/mcp', {
+    /**
+     * 전역 1MB(buildServer)보다 크게 둔다 — `artifact.publish` 의 `html` 인자가 2MB 까지이고, JSON 으로
+     * 실리면 따옴표·줄바꿈이 두 글자가 되어 최악에 두 배가 된다. 이 한도에 먼저 걸리면 에이전트는
+     * "파일로 올려라"라는 도구의 답 대신 fastify 의 413 을 받는다.
+     * 본문을 읽기 **전에** 에이전트가 아닌 요청을 끊는다(아래 onRequest) — 큰 한도를 익명에게 열지 않는다.
+     */
+    bodyLimit: MCP_BODY_LIMIT_BYTES,
+    onRequest: async (req, reply) => {
+      if (!req.account || req.account.kind !== 'agent') {
+        return reply.code(req.account ? 403 : 401)
+          .send({ error: { code: 'agent_only', message: 'MCP surface requires an agent PAT or an operator assignment' } });
+      }
+    },
+  }, async (req, reply) => {
     if (!req.account || req.account.kind !== 'agent') {
       return reply.code(req.account ? 403 : 401)
         .send({ error: { code: 'agent_only', message: 'MCP surface requires an agent PAT or an operator assignment' } });
