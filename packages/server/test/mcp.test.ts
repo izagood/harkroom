@@ -687,6 +687,45 @@ describe('message.fail — 실패의 계약', () => {
     }
   });
 
+  it('account_gate — 채널에서 내보낸 사람은 차례 주인이 되지 않고 Inbox 도 받지 않는다(security F1)', async () => {
+    // 턴이 도는 사이 그 사람이 비공개 채널에서 빠지면, 그 채널 글 본문이 그 사람의 Inbox 로 새면 안 된다.
+    const client = await mcpClient(botPat);
+    try {
+      const leaver = await createMember(app, adminToken, 'gate-leaver');
+      const botId = (await pool.query<{ id: string }>(`select id from account where handle = 'mcpbot'`)).rows[0]!.id;
+      const priv = (await app.inject({
+        method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
+        payload: { name: 'gate-private', visibility: 'private' },
+      })).json().id as string;
+      await pool.query(`insert into channel_member (channel_id, account_id) values ($1, $2), ($1, $3) on conflict do nothing`, [priv, botId, leaver.accountId]);
+      // 머리는 admin 이 세운다 — 머리 주인 thread_reply 는 이 PR 범위 밖(원래 경로)이라 섞지 않는다.
+      const root = (await app.inject({
+        method: 'POST', url: `/channels/${priv}/messages`, headers: { authorization: `Bearer ${adminToken}` },
+        payload: { body: '비공개 스레드' },
+      })).json().id as string;
+      const mention = (await app.inject({
+        method: 'POST', url: `/channels/${priv}/messages`, headers: { authorization: `Bearer ${leaver.token}` },
+        payload: { body: '@mcpbot 비공개 부탁', threadRootId: root },
+      })).json().id as string;
+      // 내보낸다.
+      await pool.query(`delete from channel_member where channel_id = $1 and account_id = $2`, [priv, leaver.accountId]);
+
+      const posted = text(await client.callTool({
+        name: 'message.fail',
+        arguments: {
+          channelId: priv, threadRootId: root, body: '비공개 채널의 관문 실패 본문', retryable: false,
+          code: 'account_gate', mentionId: mention, account: 'acct-1',
+        },
+      })) as { message: { id: string; meta: Record<string, unknown> } };
+      expect(readFailureMeta(posted.message.meta)?.code).toBe('account_gate');
+      expect(readFailureMeta(posted.message.meta)?.awaitingAccountId).toBeUndefined();
+      const leaked = await pool.query(`select 1 from inbox where account_id = $1 and message_id = $2`, [leaver.accountId, posted.message.id]);
+      expect(leaked.rowCount).toBe(0);
+    } finally {
+      await client.close();
+    }
+  });
+
   it('retryable 을 빠뜨리면 거절한다 — 서버가 기본값을 정하지 않는다', async () => {
     const client = await mcpClient(botPat);
     try {

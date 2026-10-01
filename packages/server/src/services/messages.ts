@@ -477,7 +477,8 @@ const REVEAL_REASONS: ReadonlySet<InboxEntry['reason']> = new Set(['mention', 't
  * `account_gate` 실패의 **차례 주인**(2026-10-02, 관문 대응 안 2) — 그 턴을 띄운 멘션을 쓴 사람.
  *
  * **믿기 전에 확인한다**(원인 헤더와 같은 규율): 그 메시지가 이 에이전트를 **실제로 깨웠고**
- * (inbox), 같은 채널이며, 작성자가 **사람**일 때만 그 사람이다. 아니면 `null` — 에이전트가
+ * (inbox), 같은 채널이며, 작성자가 **사람**이고 **지금도 그 채널을 볼 수 있을** 때만 그 사람이다
+ * (security F1 — 턴이 도는 사이 채널에서 빠진 사람의 Inbox 에 그 채널 글 본문이 실리지 않게). 아니면 `null` — 에이전트가
  * 아무 메시지 id 나 대서 남의 Inbox 에 "내 차례"를 꽂지 못하게 한다.
  */
 export async function gateAwaitingAccount(
@@ -488,8 +489,10 @@ export async function gateAwaitingAccount(
        from inbox i
        join message m on m.id = i.message_id
        join account a on a.id = m.author_id
+       join channel c on c.id = m.channel_id
       where i.account_id = $1 and i.message_id = $2 and m.channel_id = $3
         and a.kind = 'human' and m.deleted_at is null
+        and ${channelVisibleSql('c', 'm.author_id')}
       limit 1`,
     [agentId, mentionId, channelId],
   );
