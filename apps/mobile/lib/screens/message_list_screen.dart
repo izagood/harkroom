@@ -227,7 +227,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
                     key: const Key('composer-send'),
                     composerKey: widget.channelId,
                     busy: _sending,
-                    empty: _composer.text.trim().isEmpty,
+                    empty: SendButton.nothingToSend(_composer.text),
                     onPressed: _send,
                   ),
                 ],

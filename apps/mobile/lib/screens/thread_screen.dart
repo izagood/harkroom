@@ -13,6 +13,7 @@ import 'composer_attachments.dart';
 import 'mention_button.dart';
 import 'message_feed.dart';
 import 'message_list_screen.dart';
+import 'message_tile.dart';
 
 /// 스레드 하나. 루트를 맨 위에 두고 그 아래 답글이 붙는다.
 ///
@@ -121,7 +122,15 @@ class _ThreadScreenState extends State<ThreadScreen> {
     }
     // 채널 화면에서 들어온 답글은 **말풍선이 되는 것만** 그린다(`progress`·`wake` 제외) —
     // 채널에서와 같은 기준이어야 같은 스레드가 두 화면에서 달라 보이지 않는다.
-    final replies = buildFeed(app.threads[widget.rootId] ?? const <MessageRow>[]);
+    // 원글은 상태층이 `threadRoots` 로 갈라 둔다 — `threads` 에는 답글만 있다.
+    final built = buildFeed(app.threads[widget.rootId] ?? const <MessageRow>[]);
+    // **첫 답글 위에는 날짜 줄을 세우지 않는다** — 바로 위 「답글 n개」 줄과 구분선이 둘 연달아 서면
+    // 위계가 흐려진다(designer #1040). 원글과 날짜가 다르면 그 날짜를 구분 줄 글자에 붙인다.
+    final first = built.isEmpty ? null : built.first;
+    final replies = first is FeedMessage && first.dayBreak
+        ? [FeedMessage(first.message, continued: first.continued), ...built.skip(1)]
+        : built;
+    final firstReplyAt = first is FeedMessage ? first.message.createdAt : null;
     final failed = app.failedSends[widget.rootId] ?? const <FailedSend>[];
     final load = app.threadLoad[widget.rootId];
     // 머리 모델 줄에 세울 에이전트: 스레드 글의 작성자 중 에이전트 + 본문이 부른 에이전트.
@@ -145,14 +154,19 @@ class _ThreadScreenState extends State<ThreadScreen> {
     // 답글 수는 서버가 센 원글의 `replyCount` 를 믿는다. 아직 없으면 받은 말풍선 수(진행 줄 묶음은 빼고).
     final replyCount = root?.replyCount ?? replies.whereType<FeedMessage>().length;
     final countLabel = repliesCountLabel(t, replyCount);
+    final dividerLabel = threadDividerLabel(t, replyCount, rootAt: root?.createdAt, firstReplyAt: firstReplyAt);
     final where = channelLabel(channel);
 
     // 위에서 아래로 놓을 줄들. 화면에는 **뒤집어서**(아래부터) 쌓는다 — 열면 최신 답글이 작성칸
     // 바로 위에 오고, 새 답글이 와도 맨 아래에 붙은 채로 따라간다(개정판 3.5). 짧은 스레드는
     // 아래로 붙는다(사양 목업과 같다).
     final rows = <Widget>[
-      if (root != null) buildFeedItem(context, FeedMessage(root)),
-      if (root != null) ThreadRepliesDivider(label: countLabel),
+      if (root != null)
+        buildFeedItem(context, FeedMessage(root))
+      // 원글을 끝내 못 찾았다(지워졌거나 둘 다에 없다) — 답글만 덩그러니 남지 않게 그 자리를 말한다.
+      else if (load == LoadState.loaded)
+        ThreadRootMissing(text: t.threadRootMissing),
+      if (root != null || load == LoadState.loaded) ThreadRepliesDivider(label: dividerLabel),
       // 원글은 채널에서 이미 왔으니 늘 보인다. **답글 자리만** 상태 셋으로 나눈다.
       if (load == null || load == LoadState.loading)
         const SizedBox(height: 200, child: LoadingSkeleton(rows: 2))
@@ -232,7 +246,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                     key: const Key('thread-send'),
                     composerKey: widget.rootId,
                     busy: _sending,
-                    empty: _composer.text.trim().isEmpty,
+                    empty: SendButton.nothingToSend(_composer.text),
                     onPressed: _send,
                   ),
                 ],
@@ -272,3 +286,28 @@ class ThreadRepliesDivider extends StatelessWidget {
 /// 「답글 n개」. 0 도 숫자로 쓴다 — 스레드 안에서 "답글 달기" 는 할 일이 아니라 이미 하는 중이다.
 String repliesCountLabel(Strings t, int count) =>
     count == 1 ? t.threadRepliesOne : t.threadRepliesMany.replaceFirst('{n}', '$count');
+
+/// 원글을 못 찾았을 때 그 자리의 회색 한 줄(designer #1040).
+class ThreadRootMissing extends StatelessWidget {
+  const ThreadRootMissing({super.key, required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      key: const Key('thread-root-missing'),
+      padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 12, HarkroomSize.gutter, 4),
+      child: Text(text, style: TextStyle(fontSize: 12, color: context.tokens.mute)),
+    );
+  }
+}
+
+/// 「답글 n개」 구분 줄의 글자. 첫 답글이 원글과 다른 날이면(또는 원글을 모르면) 그 날짜를 붙인다 —
+/// 「답글 2개 · 오늘」. 첫 답글 위에는 날짜 줄을 따로 세우지 않으므로 날짜는 여기서만 말한다.
+String threadDividerLabel(Strings t, int count, {DateTime? rootAt, DateTime? firstReplyAt}) {
+  final label = repliesCountLabel(t, count);
+  if (firstReplyAt == null) return label;
+  if (rootAt != null && sameLocalDay(rootAt, firstReplyAt)) return label;
+  return '$label · ${dayLabel(t, firstReplyAt)}';
+}
