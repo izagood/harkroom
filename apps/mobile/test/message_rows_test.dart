@@ -87,6 +87,8 @@ void main() {
       ]).cast<FeedMessage>();
       expect(feed[1].dayBreak, isTrue);
       expect(feed[1].continued, isFalse);
+      // 불러온 첫 줄 위에도 날짜가 선다(designer #980).
+      expect(feed[0].dayBreak, isTrue);
     });
   });
 

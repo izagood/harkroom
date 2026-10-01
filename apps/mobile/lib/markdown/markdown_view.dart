@@ -3,7 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../ui/tokens.dart';
+import '../i18n/i18n.dart';
 import 'markdown.dart';
+
+/// 본문 속 `@handle`. 앞에 handle 글자가 오면 부름이 아니다(`a@b.io`). 원본 `HANDLE_PATTERN` 과 같은 폭.
+final _mention = RegExp(r'(^|[^A-Za-z0-9_@-])@[A-Za-z0-9_-]{2,32}');
 
 /// 본문을 마크다운으로 그린다. 메시지 줄이 쓴다.
 ///
@@ -33,10 +37,15 @@ class _MarkdownBodyState extends State<MarkdownBody> {
     super.dispose();
   }
 
-  Future<void> _open(Uri uri) async {
+  Future<void> _open(MdLink link) async {
     // 열기 직전에 **한 번 더** 거른다 — 파서가 걸렀어도, 이 함수가 받는 것은 늘 http(s) 여야 한다.
-    final safe = safeLinkUri(uri.toString());
+    final safe = link.uri == null ? null : safeLinkUri(link.uri.toString());
     if (safe == null) return;
+    // 보이는 글자와 실제 주소가 다를 수 있으면 **열기 전에 실제 주소를 보이고 묻는다.**
+    if (linkNeedsConfirm(link)) {
+      final ok = await showLinkConfirm(context, safe);
+      if (ok != true || !mounted) return;
+    }
     final open = widget.openLink ?? (u) => launchUrl(u, mode: LaunchMode.externalApplication);
     await open(safe);
   }
@@ -117,13 +126,27 @@ class _MarkdownBodyState extends State<MarkdownBody> {
     for (final piece in parseInline(text)) {
       switch (piece) {
         case MdText(:final text, :final bold, :final italic):
-          spans.add(TextSpan(
-            text: text,
-            style: TextStyle(
-              fontWeight: bold ? FontWeight.w700 : null,
-              fontStyle: italic ? FontStyle.italic : null,
-            ),
-          ));
+          final style = TextStyle(
+            fontWeight: bold ? FontWeight.w700 : null,
+            fontStyle: italic ? FontStyle.italic : null,
+          );
+          // `@handle` 은 **칩**으로 — 사람을 부르는 말이 본문에 묻히면 "나를 불렀나"를 다시
+          // 읽어야 한다(사양 3.3). 코드 안의 `@` 는 여기 오지 않는다(코드 조각은 따로다).
+          var last = 0;
+          for (final m in _mention.allMatches(text)) {
+            final at = m.start + m.group(1)!.length;
+            if (at > last) spans.add(TextSpan(text: text.substring(last, at), style: style));
+            spans.add(TextSpan(
+              text: text.substring(at, m.end),
+              style: style.copyWith(
+                color: k.link,
+                backgroundColor: k.mentionSoft,
+                fontWeight: FontWeight.w600,
+              ),
+            ));
+            last = m.end;
+          }
+          if (last < text.length) spans.add(TextSpan(text: text.substring(last), style: style));
         case MdInlineCode(:final text):
           spans.add(TextSpan(
             text: text,
@@ -140,7 +163,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
             // 열 수 없는 스킴: **글자만** 남긴다. 누를 수 있게 그리면 사람은 열린다고 믿는다.
             spans.add(TextSpan(text: text));
           } else {
-            final r = TapGestureRecognizer()..onTap = () => _open(uri);
+            final r = TapGestureRecognizer()..onTap = () => _open(piece);
             _recognizers.add(r);
             spans.add(TextSpan(
               text: text,
@@ -153,4 +176,65 @@ class _MarkdownBodyState extends State<MarkdownBody> {
     }
     return Text.rich(TextSpan(style: base, children: spans));
   }
+}
+
+/// 링크를 열기 전에 **실제 주소**를 보이고 묻는 시트. 호스트를 크게, 전체 주소를 작게 둔다 —
+/// 사람이 확인할 것은 "어디로 가는가"이고, 그것은 호스트다.
+Future<bool?> showLinkConfirm(BuildContext context, Uri uri) {
+  final t = context.t;
+  final k = context.tokens;
+  return showModalBottomSheet<bool>(
+    context: context,
+    showDragHandle: true,
+    builder: (ctx) => SafeArea(
+      child: Padding(
+        key: const Key('link-confirm'),
+        padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 0, HarkroomSize.gutter, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(t.linkConfirmTitle, style: TextStyle(fontSize: HarkroomType.meta, color: k.mute)),
+            const SizedBox(height: 4),
+            Text(uri.host,
+                key: const Key('link-confirm-host'),
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: k.fg)),
+            const SizedBox(height: 4),
+            SelectableText(uri.toString(), style: TextStyle(fontSize: HarkroomType.meta, color: k.mute)),
+            if (uri.userInfo.isNotEmpty || hostLooksSpoofable(uri)) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: BoxDecoration(color: k.warnSoft, borderRadius: BorderRadius.circular(6)),
+                child: Text(
+                  uri.userInfo.isNotEmpty ? t.linkUserInfoWarning : t.linkNonAsciiWarning,
+                  style: TextStyle(fontSize: HarkroomType.meta, color: k.warn),
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    key: const Key('link-cancel'),
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    child: Text(t.linkConfirmCancel),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton(
+                    key: const Key('link-open'),
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    child: Text(t.linkConfirmOpen),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }

@@ -55,7 +55,9 @@ List<FeedItem> buildFeed(List<MessageRow> messages) {
   for (final m in messages) {
     final local = m.createdAt.toLocal();
     final day = DateTime(local.year, local.month, local.day);
-    final dayBreak = prevDay != null && day != prevDay;
+    // **첫 줄 위에도** 날짜를 세운다 — 맨 위에 날짜가 없으면 위로 밀었을 때 언제 한 말인지
+    // 알 수 없다(designer #980).
+    final dayBreak = prevDay == null || day != prevDay;
     prevDay = day;
     if (m.kind == MessageKind.progress) {
       if (run.isNotEmpty && run.last.authorId != m.authorId) flush();

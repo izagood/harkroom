@@ -308,4 +308,19 @@ class StringsKo implements Strings {
 
   @override
   String get mentionDeniedLine => '{handles} 를 부르지 않았다 — 부를 수 있는 범위 밖이다. 그 에이전트의 소유자에게 물어라.';
+
+  @override
+  String get linkConfirmTitle => '이 주소를 연다';
+
+  @override
+  String get linkConfirmOpen => '열기';
+
+  @override
+  String get linkConfirmCancel => '취소';
+
+  @override
+  String get linkUserInfoWarning => '주소 앞에 다른 이름이 붙어 있다. 실제로 열리는 곳은 위의 굵은 주소다.';
+
+  @override
+  String get linkNonAsciiWarning => '주소에 영문이 아닌 글자가 있다. 닮은 글자로 꾸민 주소일 수 있다.';
 }

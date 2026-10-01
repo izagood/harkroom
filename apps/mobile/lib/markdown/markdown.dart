@@ -168,10 +168,33 @@ class MdInlineCode extends MdInline {
 
 /// 링크. [uri] 가 `null` 이면 **열 수 없는 링크**다(http(s) 가 아니다) — 글자만 보이고 누를 수 없다.
 class MdLink extends MdInline {
-  const MdLink(this.text, this.uri);
+  const MdLink(this.text, this.uri, {this.labelled = false});
   final String text;
   final Uri? uri;
+
+  /// `[글](주소)` 처럼 **보이는 글자와 주소가 따로**인 링크. 맨 주소는 `false` 다.
+  final bool labelled;
 }
+
+/// 열기 전에 **실제 주소를 보여 주고 물어야 하는가**(security #980).
+///
+/// - `[글](주소)` 는 늘 묻는다 — 보이는 글자는 아무 주소나 흉내 낼 수 있다
+///   (`[https://github.com/…](https://github-login.evil.example)`).
+/// - 맨 주소라도 `user@host` 꼴(userinfo)이면 묻는다 — `https://github.com@evil.example`
+///   은 앞이 github 처럼 보이지만 열리는 곳은 `evil.example` 이다.
+/// - 호스트에 ASCII 가 아닌 글자가 있으면 묻는다 — 닮은 글자로 꾸민 도메인일 수 있다.
+bool linkNeedsConfirm(MdLink link) {
+  final uri = link.uri;
+  if (uri == null) return false;
+  return link.labelled || uri.userInfo.isNotEmpty || hostLooksSpoofable(uri);
+}
+
+/// 호스트에 ASCII 가 아닌 글자(또는 퓨니코드 `xn--`)가 있다. Dart 의 `Uri` 는 비ASCII 호스트를
+/// **퍼센트 인코딩**해서 들고 있으므로(`а` → `%D0%B0`) `%` 도 같은 신호로 본다.
+bool hostLooksSpoofable(Uri uri) =>
+    uri.host.contains('%') ||
+    uri.host.runes.any((r) => r > 0x7f) ||
+    uri.host.split('.').any((p) => p.startsWith('xn--'));
 
 /// 열어도 되는 주소인가. **http·https 만** 연다 — `javascript:`·`file:`·`tel:`·앱 스킴은
 /// 남이 쓴 글이 폰에서 무엇을 실행하게 하는 길이다. 호스트가 없는 것도 막는다.
@@ -203,7 +226,7 @@ List<MdInline> parseInline(String text) {
     if (m.group(1) != null) {
       out.add(MdInlineCode(m.group(1)!));
     } else if (m.group(2) != null) {
-      out.add(MdLink(m.group(2)!, safeLinkUri(m.group(3)!)));
+      out.add(MdLink(m.group(2)!, safeLinkUri(m.group(3)!), labelled: true));
     } else if (m.group(4) != null || m.group(5) != null) {
       out.add(MdText(m.group(4) ?? m.group(5)!, bold: true));
     } else if (m.group(6) != null) {
