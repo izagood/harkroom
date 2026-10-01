@@ -153,7 +153,9 @@ describe('다시 등록 — commit 뒤 부수 효과가 던져도', () => {
     const op = await registerOperator(app, adminToken, '던질기기');
     const ws = await connect(op.token);
     const done = new Promise<number>((resolve) => ws.once('close', (code) => resolve(code)));
-    const off = onEvent((e) => { if (e.type === 'operator.changed') throw new Error('구독자 고장'); });
+    // claim 이 내는 첫 이벤트(새 등록, audience = 소유자 목록)에서만 던진다. 소켓 close 핸들러의
+    // `operator.changed`(audience 'all')는 요청 밖에서 돌아 던지면 처리되지 않은 예외가 된다.
+    const off = onEvent((e) => { if (e.type === 'operator.changed' && Array.isArray(e.audience)) throw new Error('구독자 고장'); });
     try {
       const code = (await app.inject({ method: 'POST', url: '/operators/register-codes', headers: auth(adminToken) })).json().code as string;
       const res = await app.inject({ method: 'POST', url: '/operators/claim', payload: { code, name: '던질기기', replaces: op.operatorId } });
