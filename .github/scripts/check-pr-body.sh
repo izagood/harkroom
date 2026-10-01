@@ -8,13 +8,21 @@
 #    `<tenant>.harkroom.com` 처럼 자리표시자로 쓴다. 공개 호스트만 허용 목록에 둔다.
 #    TENANT_HOST_CHECK=off 이면 건너뛴다(테넌트를 다루는 비공개 저장소용).
 set -euo pipefail
+set -f
 body=${PR_BODY:-}
 ALLOWED_HOSTS_RE=${ALLOWED_HOSTS_RE:-'^(gate|www|example)\.harkroom\.com$'}
 bad=0
 
-img=$(printf '%s\n' "$body" | grep -niE '!\[[^]]*\]\(|<img[[:space:]/>]|user-attachments|raw\.githubusercontent\.com|github\.com/[^[:space:])]*/raw/' || true)
+# 마크다운 이미지(인라인·참조형)·HTML 이미지 태그(<img>·<picture>·<source>·<video>, srcset)·
+# GitHub 첨부와 githubusercontent 전체·raw 링크(/raw/, ?raw=true).
+IMG_RE='!\[[^]]*\][[(]|<img([[:space:]/>]|$)|<(picture|source|video)([[:space:]/>]|$)|srcset[[:space:]]*=|user-attachments|githubusercontent\.com|github\.com/[^[:space:])]*/raw/|[?&]raw=true'
+img=$(printf '%s\n' "$body" | grep -niE "$IMG_RE" || true)
 if [ -n "$img" ]; then
   while IFS= read -r l; do echo "::error::PR 본문 ${l%%:*}번째 줄에 이미지·첨부·raw 링크가 있다 — 스크린샷은 저장소 밖(채팅 첨부)에 둔다"; done <<<"$img"
+  bad=1
+elif printf '%s' "$body" | tr '\r\n' '  ' | grep -qiE "$IMG_RE"; then
+  # 줄바꿈으로 쪼갠 것(![a⏎b](url) 등)은 한 줄로 합쳐서 다시 본다
+  echo "::error::PR 본문에 여러 줄에 걸친 이미지·첨부 표기가 있다 — 스크린샷은 저장소 밖(채팅 첨부)에 둔다"
   bad=1
 fi
 

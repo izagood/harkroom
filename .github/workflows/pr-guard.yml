@@ -27,6 +27,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
@@ -44,6 +45,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: install gitleaks
         run: |
           f=gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz
@@ -54,8 +56,18 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
-        # --redact: 찾은 값을 로그에 찍지 않는다(로그도 공개다).
-        run: '"$RUNNER_TEMP/gitleaks" git --no-banner --redact --verbose --log-opts="$BASE..$HEAD" .'
+        # --redact 는 비밀 값만 가린다. --verbose 는 커밋 author 메일까지 찍으므로 쓰지 않고,
+        # JSON 보고서에서 파일·줄·규칙만 꺼내 찍는다(로그도 공개다).
+        run: |
+          set +e
+          "$RUNNER_TEMP/gitleaks" git --no-banner --redact --log-opts="$BASE..$HEAD" \
+            --report-format json --report-path "$RUNNER_TEMP/gitleaks.json" .
+          rc=$?
+          set -e
+          if [ "$rc" != 0 ] && [ -s "$RUNNER_TEMP/gitleaks.json" ]; then
+            jq -r '.[] | "::error file=\(.File),line=\(.StartLine)::gitleaks \(.RuleID) (커밋 \(.Commit[0:9]))"' "$RUNNER_TEMP/gitleaks.json"
+          fi
+          exit "$rc"
 
   pr-body:
     runs-on: ubuntu-latest
@@ -64,6 +76,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           sparse-checkout: .github/scripts
+          persist-credentials: false
       - env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: .github/scripts/check-pr-body.sh
