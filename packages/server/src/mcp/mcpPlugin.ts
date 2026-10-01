@@ -1642,6 +1642,19 @@ function buildMcpServer(
     error: { code: 'operator_required', message: 'secret.mount is handled by the harkroom operator; this runner is not connected through one that supports it' },
   }));
 
+  /**
+   * 파일 올리기(미리보기 PR ③). 실제 일은 오퍼레이터가 한다 — 브릿지가 넘긴 이 호출을 오퍼레이터가 가로채
+   * 턴 워크스페이스 안의 파일을 읽어 `/uploads` 에 올리고 첨부 id 를 돌려준다(`operator/turnUploads.ts`).
+   * 여기 등록하는 이유는 `tools/list` 에 보이게 하려는 것이다(`secret.mount` 와 같은 모양). 서버까지 왔다는
+   * 것은 오퍼레이터를 거치지 않았거나(PAT 러너) 옛 오퍼레이터라는 뜻이다.
+   */
+  server.registerTool('attachment.upload', {
+    description: '턴 워크스페이스 안의 파일(그림·PDF·HTML 등)을 올려 첨부 id 를 받는다 — 아직 글에 붙지 않는다. message.post 의 attachmentIds 나 artifact.publish 의 attachmentId 로 쓴다',
+    inputSchema: { path: z.string().min(1).max(4096), filename: z.string().min(1).max(255).optional() },
+  }, async () => jsonResult({
+    error: { code: 'operator_required', message: 'attachment.upload is handled by the harkroom operator; this runner is not connected through one that supports it' },
+  }));
+
   server.registerTool('attachment.fetch', {
     description: '첨부 바이트 받기 — 이미지는 그림으로, 텍스트는 글로 실린다. id 는 프롬프트의 [첨부: …] 에 있다',
     inputSchema: { attachmentId: z.string().uuid() },
