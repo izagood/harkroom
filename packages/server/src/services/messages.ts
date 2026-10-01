@@ -2423,7 +2423,6 @@ export async function listInbox(
   return rows;
 }
 
-/** 읽음 처리된 항목 수를 돌려준다. account_id 스코프이므로 남의 entry id 는 아무 것도 지우지 않는다. */
 /**
  * 내 스레드 처리 상태들(089) — `GET /inbox?threads=1` 이 머리와 함께 싣는다. **지금 볼 수 있는
  * 채널의 것만** 낸다(`listInboxThreads` 와 같은 이유, security F1): 나간 채널의 상태 행이 남아
@@ -2492,6 +2491,7 @@ export async function setInboxThreadState(
   };
 }
 
+/** 읽음 처리된 항목 수를 돌려준다. account_id 스코프이므로 남의 entry id 는 아무 것도 지우지 않는다. */
 export async function markInboxRead(pool: Pool, accountId: string, ids: number[]): Promise<number> {
   const res = await pool.query(
     `update inbox set read_at = now() where account_id = $1 and id = any($2) and read_at is null`,

@@ -131,6 +131,7 @@
   "PUT /channels/:p/read": "0.1.167",
   "PUT /channels/:p/threads/:p/agent-models/:p": "0.3.95",
   "PUT /channels/:p/unread": "0.1.167",
+  "PUT /inbox/threads/:p": "0.3.125",
   "PUT /mcp-servers/:p": "0.2.9",
   "PUT /saved/:p": "0.1.167",
   "PUT /settings/agent-defaults": "0.1.167",
