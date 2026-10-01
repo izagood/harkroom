@@ -23,6 +23,13 @@ export interface MenuItem {
    * 맨 앞 항목에 달려 있으면 긋지 않는다(빈 위쪽에 선만 서는 것을 막는다).
    */
   separatorBefore?: boolean;
+  /** 되돌리기 어려운 동작(삭제)을 빨간 글씨로(UX ⑦b, designer). 기본은 보통 항목이다. */
+  tone?: 'danger';
+  /**
+   * 고를 수 있는 줄 중 **지금 고르지 않은** 줄 — 라벨 앞에 `✓ ` 폭의 보이지 않는 칸을 둔다. 고른 줄은 라벨이
+   * 이미 `✓ ` 로 시작하므로 세 줄의 글자 시작이 맞는다. 칸은 CSS 의사 요소라 접근성 이름·textContent 에 안 섞인다.
+   */
+  checkable?: boolean;
 }
 
 /**
@@ -322,10 +329,12 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
               // 항목은 본문단(앱 기본값 13px), 단축키는 이미 아랫단 11px 이다 — 고르려면
               // 항목을 읽어야 하고 단축키는 한 번 배우면 안 읽는다.
               className={`flex w-full items-center gap-4 px-3 py-2 text-left ${MENU_ITEM_FOCUS} ${
-                item.disabled ? 'cursor-not-allowed text-fg-subtle' : 'text-fg-muted hover:bg-surface-hover hover:text-fg'
+                item.disabled ? 'cursor-not-allowed text-fg-subtle'
+                  : item.tone === 'danger' ? 'text-danger hover:bg-danger-surface'
+                  : 'text-fg-muted hover:bg-surface-hover hover:text-fg'
               }`}
             >
-              <span>{item.label}</span>
+              <span className={item.checkable ? "before:invisible before:content-['✓_']" : undefined}>{item.label}</span>
               {item.shortcut && (
                 <span aria-hidden="true" className="ml-auto text-meta text-fg-subtle">{item.shortcut}</span>
               )}

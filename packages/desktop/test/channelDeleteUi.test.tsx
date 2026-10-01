@@ -73,7 +73,8 @@ describe('채널 삭제 UI (#155)', () => {
 
     fireEvent.contextMenu(screen.getAllByRole('button', { name: /^# / })[0]!);
     const menu = screen.getByRole('menu');
-    expect(within(menu).getByText('보관')).toBeTruthy();
+    // admin 묶음이 서 있는데(편집) 삭제만 없다 — 보관은 채널 설정 시트로 옮겼다(UX ⑦b-1).
+    expect(within(menu).getByText('채널 편집')).toBeTruthy();
     expect(within(menu).queryByText('삭제')).toBeNull();
   });
 

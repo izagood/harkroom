@@ -681,7 +681,19 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
             `MessageItem` 의 작성자 이름과 같은 단이다. 화면 제목단(17px)은 설정·로그인처럼
             화면 하나를 여는 자리에만 준다. 옆의 주제·꼬리표는 아랫단 11px 이다. */}
         {/* `shrink-0 whitespace-nowrap`: 좁은 열에서 "# task" 가 두 줄로 꺾이지 않는다 — 줄어야 하는 것은 옆의 주제다. */}
-        <span className="shrink-0 whitespace-nowrap text-name font-bold">{title}</span>
+        {/* 채널이면 제목이 **채널 설정 시트를 여는 버튼**이다(UX ⑦b, designer: "# task ⌄"). DM 에는 시트가 없다. */}
+        {channel ? (
+          <button
+            data-testid="channel-title"
+            onClick={() => useActiveStore.getState().set({ channelSheetId: channel.id })}
+            aria-label={t('channelSheet.open', { name: channel.name ?? '' })}
+            className="shrink-0 whitespace-nowrap rounded px-1 text-name font-bold hover:bg-surface-sunken"
+          >
+            {title} <span aria-hidden="true" className="text-meta text-fg-subtle">⌄</span>
+          </button>
+        ) : (
+          <span className="shrink-0 whitespace-nowrap text-name font-bold">{title}</span>
+        )}
         {channel?.topic && <span className="truncate text-meta text-fg-subtle">{channel.topic}</span>}
         {channel?.repo && <span className="rounded bg-surface-sunken px-1.5 text-meta text-fg-muted">{channel.repo}</span>}
         {isArchived && <span className="rounded bg-surface-hover px-1.5 text-meta text-fg-muted">{t('channel.header.archived')}</span>}

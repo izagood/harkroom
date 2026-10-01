@@ -113,6 +113,11 @@ export interface AppState {
    * 채널 최상위 멘션은 그 멘션 메시지 자신이 루트다.
    */
   terminalTarget: { agentAccountId: string; channelId: string; threadRootId: string } | null;
+  /**
+   * 열린 채널 설정 시트의 채널 id(UX ⑦b). 채널 머리의 "# 이름 ⌄" 과 사이드바 메뉴의 "채널 설정…" 두 진입점이
+   * 같은 시트를 열어야 하므로 화면 지역 상태가 아니라 여기 둔다. 커뮤니티 스토어라 커뮤니티를 바꾸면 함께 닫힌다.
+   */
+  channelSheetId: string | null;
   leases: LeaseRow[];
   connected: boolean;
   /**
@@ -414,7 +419,7 @@ export const NO_TEAMS: AgentTeamRow[] = [];
 const initial = {
   me: null, accounts: {}, groups: [], teams: null, channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, unread: [], inboxRevision: 0, reads: {}, dividerSeq: {},
-  online: [], terminalTarget: null, leases: [], connected: false, serverVersion: null, workspaceIconUrl: null,
+  online: [], terminalTarget: null, channelSheetId: null, leases: [], connected: false, serverVersion: null, workspaceIconUrl: null,
   projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, drafts: {}, stickyMentions: {}, uploads: {},
   history: [], historyIndex: -1, notice: null, notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,
