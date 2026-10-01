@@ -450,6 +450,58 @@ void main() {
     });
   });
 
+  group('스레드 응답의 루트', () {
+    // 실서버의 `?thread=` 는 **루트를 맨 앞에** 함께 준다(server `listMessages`).
+    // 채널 목록은 비워 둔다 — 받은 것 탭에서 오래된 스레드로 들어온 경우다.
+    MockClient threadServer() {
+      final base = _server(channels: [
+        {'id': 'c1', 'name': 'general', 'kind': 'standard'},
+      ]);
+      return MockClient((req) async {
+        if (req.url.path.endsWith('/messages') &&
+            req.method == 'GET' &&
+            req.url.queryParameters['thread'] == 'm1') {
+          return _json({
+            'messages': [
+              {'id': 'r1', 'seq': 5, 'channelId': 'c1', 'threadRootId': 'm1', 'authorId': 'a1', 'body': '답', 'kind': 'user'},
+              {'id': 'm1', 'seq': 1, 'channelId': 'c1', 'authorId': 'a1', 'body': '루트', 'kind': 'user', 'replyCount': 1},
+            ],
+            'hasMore': false,
+          }, 200);
+        }
+        return base.send(req).then(http.Response.fromStream);
+      });
+    }
+
+    late AppState app;
+    setUp(() async {
+      app = _app(store: SessionStore.inMemory(seed: _seed()), client: threadServer());
+      await app.boot();
+      await app.openChannel('c1');
+      await app.openThread('c1', 'm1');
+    });
+
+    test('답글 목록에는 루트가 없다 — 있으면 화면이 루트를 두 번 그린다', () {
+      expect(app.threads['m1']!.map((m) => m.id), ['r1']);
+      expect(app.threadRoots['m1']!.body, '루트');
+    });
+
+    test('따로 둔 루트도 리액션·수정을 받는다', () {
+      app.applyEvent({'type': 'reaction.added', 'channelId': 'c1', 'messageId': 'm1', 'emoji': '👀', 'accountId': 'a1'});
+      expect(app.threadRoots['m1']!.reactions.single.emoji, '👀');
+      app.applyEvent({
+        'type': 'message.updated',
+        'message': {'id': 'm1', 'seq': 1, 'channelId': 'c1', 'authorId': 'a1', 'body': '고친 루트', 'kind': 'user'},
+      });
+      expect(app.threadRoots['m1']!.body, '고친 루트');
+    });
+
+    test('다시 붙어 따라잡아도 루트가 답글로 섞이지 않는다', () async {
+      await app.catchUp();
+      expect(app.threads['m1']!.map((m) => m.id), ['r1']);
+    });
+  });
+
   group('보내기', () {
     test('POST 응답이 바로 목록에 선다', () async {
       final app = _app(

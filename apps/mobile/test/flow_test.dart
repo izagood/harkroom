@@ -94,8 +94,20 @@ MockClient _server() => MockClient((req) async {
       if (path == '/inbox/read') return _json(<String, Object?>{});
       if (path.endsWith('/read') && req.method == 'PUT') return _json(<String, Object?>{});
       if (path.endsWith('/messages') && req.method == 'GET' && req.url.queryParameters['thread'] != null) {
+        // **실서버처럼 루트를 맨 앞에 함께 준다**(server `listMessages` 의 thread 갈래 —
+        // `m.id = $2` 와 `thread_root_id = $2` 를 합친다). 예전 가짜는 답글만 줘서, 화면이
+        // 루트를 두 번 그리는 것을 시험이 못 봤다.
         return _json({
           'messages': [
+            {
+              'id': 'm1',
+              'seq': 1,
+              'channelId': 'c1',
+              'authorId': 'a1',
+              'body': '먼저 있던 말',
+              'kind': 'user',
+              'replyCount': 1,
+            },
             {
               'id': 'r1',
               'seq': 5,
