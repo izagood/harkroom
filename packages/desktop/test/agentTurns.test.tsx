@@ -183,18 +183,26 @@ describe('중단 — 줄 · 스레드 · 전부', () => {
     expect(screen.queryByTestId('agent-turns-cancel-all')).toBeNull();
   });
 
-  it('줄의 [중단] 은 그 턴 하나만 보낸다', () => {
+  // 줄마다 [멈추기 ▾] 하나다(UX ⑨a) — 안에 "이 턴만" 과, 같은 스레드에 둘 이상이면 "이 스레드 전부".
+  const pick = (sessionId: string, name: RegExp) => {
+    fireEvent.click(screen.getByTestId(`agent-turn-cancel-${sessionId}`));
+    fireEvent.click(screen.getByRole('menuitem', { name }));
+  };
+
+  it('줄의 [멈추기 ▾ › 이 턴만] 은 그 턴 하나만 보낸다', () => {
     const onCancel = vi.fn();
     renderTurns({ kind: 'known', turns: twoThreads() }, vi.fn(), onCancel);
-    fireEvent.click(screen.getByTestId('agent-turn-cancel-s2'));
+    pick('s2', /^(이 턴만|This turn only)$/);
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onCancel.mock.calls[0]![0].map((t: AgentSessionView) => t.sessionId)).toEqual(['s2']);
   });
 
-  it('[스레드 중단] 은 그 스레드의 턴만 보낸다 — 다른 스레드는 건드리지 않는다', () => {
+  it('[멈추기 ▾ › 이 스레드 전부] 는 그 스레드의 턴만 보낸다 — 다른 스레드는 건드리지 않는다', () => {
     const onCancel = vi.fn();
     renderTurns({ kind: 'known', turns: twoThreads() }, vi.fn(), onCancel);
-    fireEvent.click(screen.getByTestId('agent-turns-cancel-group-c1-t1'));
+    // 묶음 머리의 버튼은 없다 — 그 일은 줄의 메뉴 안으로 들어갔다.
+    expect(screen.queryByTestId('agent-turns-cancel-group-c1-t1')).toBeNull();
+    pick('s1', /\(2\)/);
     expect(onCancel.mock.calls[0]![0].map((t: AgentSessionView) => t.sessionId)).toEqual(['s1', 's2']);
   });
 
@@ -205,7 +213,10 @@ describe('중단 — 줄 · 스레드 · 전부', () => {
       turn({ sessionId: 's-human', agentAccountId: 'a2', mode: 'interactive' }),
     ] }, vi.fn(), onCancel);
     expect(screen.queryByTestId('agent-turn-cancel-s-human')).toBeNull();
-    fireEvent.click(screen.getByTestId('agent-turns-cancel-group-c1-t1'));
+    // 같은 스레드의 멈출 턴은 s1 하나뿐이다(조종 중인 턴은 빠진다) — "이 스레드 전부" 항목이 서지 않는다.
+    fireEvent.click(screen.getByTestId('agent-turn-cancel-s1'));
+    expect(screen.getAllByRole('menuitem')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('menuitem'));
     expect(onCancel.mock.calls[0]![0].map((t: AgentSessionView) => t.sessionId)).toEqual(['s1']);
   });
 
