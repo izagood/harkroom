@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createPool } from '../src/db/pool.js';
+import { createPool, POOL_CONNECT_TIMEOUT_MS, POOL_MAX } from '../src/db/pool.js';
 
 describe('pool 에러 가드', () => {
   // pg 문서의 요구사항: 유휴 클라이언트의 에러는 Pool 이 대신 emit 하고, **리스너가 없으면
@@ -35,5 +35,16 @@ describe('pool 에러 가드', () => {
 
     // pg 는 connectionString 을 즉시 파싱하지 않는다(첫 연결 때 푼다) — 보관된 값을 본다.
     expect((pool.options as { connectionString?: string }).connectionString).toBe(url);
+  });
+
+  // 기본값(10개·무제한 대기)으로 돌아가면 풀이 찼을 때 `/readyz` 까지 끝없이 줄을 선다.
+  it('sizes the pool and bounds the wait for a client', () => {
+    const pool = createPool('postgres://nobody@127.0.0.1:1/none', vi.fn());
+    const opts = pool.options as { max?: number; connectionTimeoutMillis?: number };
+
+    expect(opts.max).toBe(POOL_MAX);
+    expect(POOL_MAX).toBeGreaterThan(10);
+    expect(opts.connectionTimeoutMillis).toBe(POOL_CONNECT_TIMEOUT_MS);
+    expect(POOL_CONNECT_TIMEOUT_MS).toBeGreaterThan(0);
   });
 });

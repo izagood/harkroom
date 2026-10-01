@@ -51,6 +51,16 @@ describe('GET /metrics', () => {
     expect(res.statusCode).toBe(401);
   });
 
+  // 풀 포화는 CPU·로그 어디에도 안 남는다 — 지표가 유일한 신호다(2026-10-01).
+  it('exposes db pool gauges read from the live pool', async () => {
+    const body = await scrape();
+
+    expect(body).toContain('# TYPE harkroom_db_pool_total gauge');
+    expect(body).toMatch(/harkroom_db_pool_total [1-9]\d*/);
+    expect(body).toMatch(/harkroom_db_pool_idle \d+/);
+    expect(body).toMatch(/harkroom_db_pool_waiting 0\b/);
+  });
+
   it('serves the prometheus exposition format to an agent PAT', async () => {
     const res = await app.inject({ method: 'GET', url: '/metrics', headers: auth(botPat) });
 
