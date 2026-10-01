@@ -2,6 +2,12 @@ export interface Config {
   databaseUrl: string;
   port: number;
   avcsBaseUrl: string | null;
+  /**
+   * `hosted` 저장소의 데이터 루트(`avcs/host.ts`). **이 디렉터리는 백업 대상이다** —
+   * 여기 들어가는 것은 코드의 역사(op 그래프)이고, 잃으면 파일은 미러에 남아도 그 그래프는
+   * 복원되지 않는다(`docs/hub-seat.md` §5 결정 2). hosted 저장소가 없으면 만들어지지도 않는다.
+   */
+  hostedAvcsDataDir: string;
   /** null 이면 모든 origin 을 반영한다(셀프호스트 기본). 목록이면 CORS·WS 핸드셰이크 양쪽에 적용된다. */
   corsOrigins: string[] | null;
   logLevel: string;
@@ -25,6 +31,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     databaseUrl,
     port: Number(env.PORT ?? 3400),
     avcsBaseUrl: env.AVCS_BASE_URL ?? null,
+    hostedAvcsDataDir: env.AVCS_HOSTED_DATA ?? './data/avcs',
     corsOrigins: parseOrigins(env.CORS_ORIGINS),
     logLevel: env.LOG_LEVEL ?? 'info',
     trustProxy: env.TRUST_PROXY === '1' || env.TRUST_PROXY === 'true',
