@@ -166,11 +166,21 @@ export function startThreadStatusWatcher(
   const inflight = new Set<Promise<unknown>>();
   const onError = opts.onError ?? ((err) => console.error('thread status refresh error:', err));
 
+  // **루트마다 한 번에 하나만 돈다**(#1030 security N1). 겹쳐 돌면 먼저 읽은 낡은 사실이
+  // 나중에 써질 수 있다. 도는 중에 또 요청이 오면 표시만 해 두고, 끝난 뒤 한 번 더 돈다.
+  const running = new Map<string, Promise<unknown>>();
+  const again = new Set<string>();
   const run = (rootId: string) => {
     pending.delete(rootId);
-    const p = refreshThreadStatus(pool, rootId, new Set(presence.online())).catch(onError);
+    if (running.has(rootId)) { again.add(rootId); return; }
+    const p = refreshThreadStatus(pool, rootId, new Set(presence.online())).catch(onError)
+      .finally(() => {
+        running.delete(rootId);
+        inflight.delete(p);
+        if (again.delete(rootId)) run(rootId);
+      });
+    running.set(rootId, p);
     inflight.add(p);
-    void p.finally(() => inflight.delete(p));
   };
   const schedule = (rootId: string) => {
     const prev = pending.get(rootId);
@@ -199,7 +209,7 @@ export function startThreadStatusWatcher(
     /** 미뤄 둔 판정을 지금 돌리고 끝날 때까지 기다린다(테스트용). */
     async flush() {
       for (const [rootId, t] of [...pending]) { clearTimeout(t); run(rootId); }
-      await Promise.all([...inflight]);
+      while (inflight.size) await Promise.all([...inflight]);
     },
   };
 }

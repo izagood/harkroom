@@ -7,9 +7,10 @@ import type { Pool } from 'pg';
 import type { AskMeta, FailureMeta } from '@harkroom/shared';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
-import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 import { listMessages, postMessage } from '../src/services/messages.js';
-import { refreshThreadStatus } from '../src/services/threadStatus.js';
+import { refreshThreadStatus, startThreadStatusWatcher } from '../src/services/threadStatus.js';
+import { listSavedMessages } from '../src/services/savedMessages.js';
 import { onEvent, type WorkspaceEvent } from '../src/events.js';
 
 let app: FastifyInstance;
@@ -127,5 +128,63 @@ describe('스레드 상태 리액션', () => {
       expect(res.statusCode).toBeLessThan(300);
       await expect.poll(() => seen.find((e) => e.type === 'thread.status' && e.rootId === id), { timeout: 3000 }).toBeTruthy();
     } finally { off(); }
+  });
+
+  it('저장 목록 — private 채널에서 빠진 뒤에는 상태 이유도 본문도 안 실린다(#1030 F1·N2), 행은 남는다', async () => {
+    const auth = { authorization: `Bearer ${adminToken}` };
+    const { token: memberToken, accountId: memberId } = await createMember(app, adminToken, 'statusleaver');
+    const priv = (await app.inject({ method: 'POST', url: '/channels', headers: auth, payload: { name: 'status-private', visibility: 'private' } })).json().id as string;
+    const add = await app.inject({ method: 'POST', url: `/channels/${priv}/members`, headers: auth, payload: { accountId: memberId } });
+    expect(add.statusCode).toBeLessThan(300);
+    const posted = await postMessage(pool, { channelId: priv, authorId: adminId, body: '비밀 부탁', threadRootId: null, meta: {} } as Parameters<typeof postMessage>[1]);
+    const id = (posted as { message: { id: string } }).message.id;
+    const save = await app.inject({ method: 'PUT', url: `/saved/${id}`, headers: { authorization: `Bearer ${memberToken}` } });
+    expect(save.statusCode).toBeLessThan(300);
+
+    // 멤버일 때는 실린다 — 시험의 이빨: 아래 null 이 '원래 안 실려서'가 아님을 보인다.
+    await postMessage(pool, { channelId: priv, authorId: botId, body: '물음', threadRootId: id, meta: ask({ kind: 'human' }, '비밀 물음') as unknown as Record<string, unknown> } as Parameters<typeof postMessage>[1]);
+    await refreshThreadStatus(pool, id, live());
+    const before = await listSavedMessages(pool, memberId, 'open');
+    expect(before.find((r) => r.messageId === id)?.message?.statusReaction?.reason).toBe('비밀 물음');
+
+    const del = await app.inject({ method: 'DELETE', url: `/channels/${priv}/members/${memberId}`, headers: auth });
+    expect(del.statusCode).toBeLessThan(300);
+    await postMessage(pool, { channelId: priv, authorId: botId, body: '실패', threadRootId: id, meta: failure as unknown as Record<string, unknown> } as Parameters<typeof postMessage>[1]);
+    await refreshThreadStatus(pool, id, live());
+
+    const after = (await listSavedMessages(pool, memberId, 'open')).find((r) => r.messageId === id);
+    expect(after).toBeDefined();          // 행은 남는다 — 사람이 지울 길
+    expect(after!.message).toBeNull();     // 본문(N2)과 statusReaction(F1) 둘 다 없다
+    expect(after!.deleted).toBe(false);
+    const res = await app.inject({ method: 'GET', url: '/saved?state=open', headers: { authorization: `Bearer ${memberToken}` } });
+    expect(JSON.stringify(res.json())).not.toContain('비밀');
+    expect(JSON.stringify(res.json())).not.toContain('MCP 인증 필요');
+  });
+
+  it('같은 루트의 판정은 겹쳐 돌지 않는다(#1030 N1) — 몰려온 요청이 끝나면 마지막 사실로 맞는다', async () => {
+    const presence = { online: () => [botId, bot2Id] } as unknown as Parameters<typeof startThreadStatusWatcher>[1];
+    let concurrent = 0; let peak = 0;
+    const realQuery = pool.query.bind(pool);
+    const spy = { ...pool, query: async (...a: unknown[]) => {
+      const sql = String(a[0]);
+      if (!sql.includes('human_ask')) return (realQuery as (...x: unknown[]) => unknown)(...a);
+      concurrent++; peak = Math.max(peak, concurrent);
+      try { await new Promise((r) => setTimeout(r, 30)); return await (realQuery as (...x: unknown[]) => unknown)(...a); } finally { concurrent--; }
+    } } as unknown as Pool;
+    const w = startThreadStatusWatcher(spy, presence, { debounceMs: 0 });
+    try {
+      const id = await seed(adminId, '부탁');
+      await seed(botId, '시작', { root: id, kind: 'progress' });
+      const row = { id, threadRootId: null } as unknown as import('@harkroom/shared').MessageRow;
+      const { emitEvent } = await import('../src/events.js');
+      for (let i = 0; i < 5; i++) {
+        emitEvent({ type: 'message.updated', message: row, audience: 'all' });
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      await new Promise((r) => setTimeout(r, 10));
+      await w.flush();
+      expect(peak).toBe(1);
+      expect((await rows(id)).map((r) => r.emoji)).toEqual(['💬']);
+    } finally { w.stop(); }
   });
 });

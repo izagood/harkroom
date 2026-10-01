@@ -2170,6 +2170,7 @@ export interface SavedMessageRow {
   deleted: boolean;
   /**
    * `deleted` 가 true 면 **null** 이다 — 지워진 메시지의 본문은 내주지 않는다.
+   * 담은 뒤 그 채널을 볼 수 없게 된 경우(private 채널에서 빠짐)도 null 이다.
    * 옵셔널이 아니라 명시적 null 인 이유: 키가 사라지면 '아직 안 받았다'와 '삭제됐다'가
    * 한 화면이 된다.
    */
