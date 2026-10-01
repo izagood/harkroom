@@ -494,6 +494,7 @@ const scheduler = createMentionScheduler({
   buildTurnDeps: ({ ctx, mention, account, isLastAccount }) => ({
     // 비밀 보관소 D7 — 이 턴의 기록 파일을 멘션 장부에 적는다(멘션이 끝날 때 가린다).
     noteTranscript: (cause: string, path: string) => secretLeases.noteTranscript(cause, path),
+    secretNeedles: (cause: string) => secretLeases.needles(cause),
     harkroom, memory: memoryCache, store, exec, runTurn: runPtyTurn, me, guide,
     channelName: ctx.channelName(mention.channelId),
     handles: ctx.handles, workspaceBaseDir, mcpConfigPath, extraMcpServers, readTurnMcp,
@@ -629,5 +630,8 @@ while (running) {
 // 아직 도는 턴의 entry 는 함께 넘겨 교체 러너가 그것만 건너뛰게 한다.
 relay.notifyPollStopped(scheduler.holdingEntries());
 await scheduler.drain();
+// 멘션을 놓는 길에 기록 가리기(D7)가 돌고 있을 수 있다 — 끝 통지도 그 뒤에 나간다. relay 를 끊기 전에
+// 짧게 기다린다. 넘으면 그냥 물러난다: 임대는 만료되고 오퍼레이터가 파일을 지운다(기록은 가려지지 않은 채 남는다).
+await secretLeases.drain(5_000);
 relay.stop();
 console.log('종료');

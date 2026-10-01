@@ -87,15 +87,21 @@ export const SCRUB_MAX_FILE_BYTES = 64 * 1024 * 1024;
  * `cat` 같은 긴 출력으로 읽은 값은 jsonl 이 아니라 그쪽에 남는다. 심링크는 따라가지 않고(파일·디렉터리 모두),
  * 깊이와 파일 크기에 상한을 둔다. 바꾼 횟수의 합을 준다.
  */
-export async function scrubPath(path: string, needles: readonly string[], depth = 0): Promise<number> {
+export async function scrubPath(
+  path: string, needles: readonly string[], onSkip?: (path: string, reason: 'too_large') => void, depth = 0,
+): Promise<number> {
   if (!needles.length) return 0;
   let info;
   try { info = await lstat(path); } catch { return 0; }
-  if (info.isFile()) return info.size > SCRUB_MAX_FILE_BYTES ? 0 : scrubFile(path, needles);
+  if (info.isFile()) {
+    // 말없이 건너뛰지 않는다 — 가리지 못한 파일이 있다는 사실은 남아야 한다(경로만, 값은 아니다).
+    if (info.size > SCRUB_MAX_FILE_BYTES) { onSkip?.(path, 'too_large'); return 0; }
+    return scrubFile(path, needles);
+  }
   if (!info.isDirectory() || depth >= SCRUB_MAX_DEPTH) return 0;
   let total = 0;
   for (const name of await readdir(path).catch(() => [] as string[])) {
-    total += await scrubPath(join(path, name), needles, depth + 1);
+    total += await scrubPath(join(path, name), needles, onSkip, depth + 1);
   }
   return total;
 }

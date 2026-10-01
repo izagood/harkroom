@@ -44,7 +44,7 @@ const TAIL_NOTICE_MAX_CHARS = 1000;
  *
  * 남길 것이 없으면 `null` — 빈 상자는 "여기 뭔가 있다"는 거짓 신호다(`readAskMeta` 판례).
  */
-export function harnessTailNotice(tail: string, pat: string): string | null {
+export function harnessTailNotice(tail: string, pat: string, secrets: readonly string[] = []): string | null {
   let text = tail
     // CSI/OSC 등 ANSI 이스케이프. 색·커서 제어가 그대로 흐르면 사람이 읽을 수 없다.
     .replace(/\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)/g, '')
@@ -56,6 +56,17 @@ export function harnessTailNotice(tail: string, pat: string): string | null {
 
   // 비밀 가리기. **정확한 PAT 를 먼저** 지운다 — 아래 모양 규칙이 못 잡는 형태여도 이건 잡힌다.
   if (pat.length > 0) text = text.split(pat).join('(가림)');
+  /**
+   * 마운트한 비밀 값(비밀 보관소 D7 후속). 바늘은 러너가 그 턴의 디렉터리에서 만든다(`secretLeases.needles`) —
+   * 긴 것부터 온다. 가리지 않으면 이 통지가 서버 D5(`secret_in_body`)에 통째로 막혀 실패 안내가 사라진다.
+   * PTY 는 긴 줄을 화면 폭에서 접는다 — 접힌 값은 바늘에 안 맞는다. 줄바꿈을 걷어 낸 사본에서 걸리면 **출력을
+   * 통째로 싣지 않는다**(일부만 가리면 나머지 조각이 남는다).
+   */
+  if (secrets.length > 0) {
+    for (const n of secrets) if (text.includes(n)) text = text.split(n).join('(가림)');
+    const flat = text.replace(/\n/g, '');
+    if (secrets.some((n) => flat.includes(n))) return '(마지막 출력에 비밀 값이 섞여 있어 싣지 않았다)';
+  }
   text = text
     .replace(/(?:hrkp|murp)_[A-Za-z0-9_-]+/g, '(가림)')
     .replace(/(Bearer\s+)\S+/gi, '$1(가림)');

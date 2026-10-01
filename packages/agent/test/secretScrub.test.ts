@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, readFileSync, writeFileSync, symlinkSync, statSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { scrubFile, scrubNeedles, scrubPath, scrubText, SCRUB_MAX_DEPTH } from '../src/secretScrub.js';
+import { scrubFile, scrubNeedles, scrubPath, scrubText, SCRUB_MAX_DEPTH, SCRUB_MAX_FILE_BYTES } from '../src/secretScrub.js';
+import { truncateSync } from 'node:fs';
+import { harnessTailNotice } from '../src/prompt.js';
 import { codexRolloutFileFor } from '../src/codexSessions.js';
 import { mkdirSync } from 'node:fs';
 
@@ -83,5 +85,23 @@ describe('secretScrub', () => {
     expect(readFileSync(outside, 'utf8')).toBe(VALUE);
     expect(readFileSync(join(deep, 'too-deep.txt'), 'utf8')).toBe(VALUE);
     expect(await scrubPath(join(root, 'nope'), scrubNeedles(Buffer.from(VALUE)))).toBe(0);
+  });
+
+  it('64MB 를 넘는 파일은 건너뛰되 경로를 알린다', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hk-big-'));
+    const big = join(dir, 'big.txt');
+    writeFileSync(big, '');
+    truncateSync(big, SCRUB_MAX_FILE_BYTES + 1);   // 희소 파일 — 디스크를 쓰지 않는다
+    const skipped: string[] = [];
+    expect(await scrubPath(dir, scrubNeedles(Buffer.from(VALUE)), (p) => skipped.push(p))).toBe(0);
+    expect(skipped).toEqual([big]);
+  });
+
+  it('실패 통지의 PTY 꼬리: 마운트한 값은 가리고, 화면 폭에서 접힌 값이면 출력을 싣지 않는다', () => {
+    const needles = scrubNeedles(Buffer.from(VALUE));
+    expect(harnessTailNotice(`$ cat k\r\n${VALUE}\r\ndone`, '', needles)).toBe('$ cat k\n(가림)\ndone');
+    const wrapped = `$ cat k\r\n${VALUE.slice(0, 20)}\r\n${VALUE.slice(20)}\r\ndone`;
+    expect(harnessTailNotice(wrapped, '', needles)).toBe('(마지막 출력에 비밀 값이 섞여 있어 싣지 않았다)');
+    expect(harnessTailNotice('plain output', '', needles)).toBe('plain output');
   });
 });

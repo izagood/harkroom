@@ -94,4 +94,34 @@ describe('secretLeases', () => {
     expect(readFileSync(t1, 'utf8')).toBe(VALUE);
     expect(h.log.at(-1)).toBe('ended:m1');
   });
+
+  it('needles: 그 멘션에 마운트된 값의 바늘을 준다 — 임대가 없거나 놓았으면 빈 목록', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'hk-lease-'));
+    const dir = join(root, 'turn-secrets');
+    mkdirSync(join(dir, 'l1'), { recursive: true });
+    writeFileSync(join(dir, 'l1', 'sid'), VALUE);
+    const h = harness(L, dir);
+    expect(await h.leases.needles('m1')).toEqual([]);
+    await h.leases.acquire('m1');
+    expect(await h.leases.needles('m1')).toContain(VALUE);
+    await h.leases.release('m1');
+    expect(await h.leases.needles('m1')).toEqual([]);
+  });
+
+  it('drain: 진행 중인 놓기(가리기 → 끝 통지)를 기다린다', async () => {
+    const ended: string[] = [];
+    const slow = createSecretLeases({
+      issue: async () => L,
+      notifyLease: () => {},
+      notifyEnded: (c) => ended.push(c),
+      turnSecretsDir: null,
+      log: () => {},
+    });
+    await slow.acquire('m1');
+    const p = slow.release('m1');
+    await slow.drain(1000);
+    expect(ended).toEqual(['m1']);
+    await p;
+    await slow.drain(10);              // 진행 중인 것이 없으면 곧바로 돌아온다
+  });
 });
