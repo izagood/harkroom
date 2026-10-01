@@ -81,7 +81,7 @@ const renderSidebar = () => render(
 const renderRail = () => render(
   <Rail
     panel="home" onPanelChange={() => {}} onOpenSaved={() => {}}
-    onOpenSettings={() => {}} onOpenCommunityMark={() => {}} onLogout={() => {}}
+    onOpenSettings={() => {}} onManageCommunities={() => {}} onLogout={() => {}}
   />,
 );
 

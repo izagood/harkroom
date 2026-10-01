@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
-import { CommunityRail } from '../src/components/CommunityRail';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { CommunitySwitcher } from '../src/components/CommunitySwitcher';
 import { resetCommunityRegistry, useCommunityRegistry } from '../src/state/communities';
 import { Controller } from '../src/state/controller';
 import type { ApiClient } from '../src/lib/api';
@@ -19,19 +19,31 @@ function twoCommunities() {
   return { a, b };
 }
 
-describe('커뮤니티 레일 아이콘', () => {
-  it('사진이 없으면 이니셜, 있으면 그 커뮤니티의 사진만 그린다', () => {
+describe('커뮤니티 전환기 아이콘', () => {
+  it('사진이 없으면 이니셜, 있으면 그 커뮤니티의 사진만 그린다 — 레일 타일과 팝오버 행 모두', () => {
     const { a, b } = twoCommunities();
     b.store.getState().set({ workspaceIconUrl: 'blob:jinbin' });
-    render(<CommunityRail />);
+    render(<CommunitySwitcher onManage={() => {}} />);
 
-    expect(screen.getByTestId(`community-tile-${a.id}`).textContent).toBe('J');
+    // 레일 타일은 지금 커뮤니티(a)다 — 사진이 없으니 이니셜.
+    expect(screen.getByTestId('rail-community-mark').textContent).toBe('J');
     expect(screen.queryByTestId(`community-icon-${a.id}`)).toBeNull();
-    const img = screen.getByTestId(`community-icon-${b.id}`) as HTMLImageElement;
+
+    fireEvent.click(screen.getByTestId('rail-community-mark'));
+    expect(screen.getByTestId(`community-tile-${a.id}`).textContent).toContain('J');
+    expect(screen.queryByTestId(`community-row-icon-${a.id}`)).toBeNull();
+    const img = screen.getByTestId(`community-row-icon-${b.id}`) as HTMLImageElement;
     expect(img.getAttribute('src')).toBe('blob:jinbin');
     // 이름은 버튼이 말한다 — img 가 같은 이름을 한 번 더 읽히지 않게 alt 는 비운다.
     expect(img.getAttribute('alt')).toBe('');
     expect(screen.getByTestId(`community-tile-${b.id}`).getAttribute('aria-label')).toContain('jinbin');
+  });
+
+  it('지금 커뮤니티에 사진이 있으면 레일 타일이 그 사진이다', () => {
+    const { a } = twoCommunities();
+    a.store.getState().set({ workspaceIconUrl: 'blob:jaebin' });
+    render(<CommunitySwitcher onManage={() => {}} />);
+    expect((screen.getByTestId(`community-icon-${a.id}`) as HTMLImageElement).getAttribute('src')).toBe('blob:jaebin');
   });
 });
 

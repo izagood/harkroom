@@ -101,7 +101,7 @@ import type { Message } from './types';
  * | 설정 목차 14개 · `Save`·`Cancel`·`Invite` 등 | 소수 | 이미 영어다 — **키만 씌우면 된다.** 둘 이상이 쓰므로 `common.*` 로 간다 |
  * | ~~`ChannelPane`·`ChannelDocPanel`·`ChannelFiles`·`ChannelEmptyState`~~ | — | **끝났다**(아래 `channel.*`). 곁창 둘을 따로 안 연 근거가 그 머리말에 있다 |
  * | ~~`SearchPalette` · `ChannelDirectory` · `Directory` · `SavedMessages`~~ | — | **끝났다**(아래 `search`·`channelDirectory`·`directory`·`saved`). 넷 다 겹창이지만 **묻는 것이 달라** 영역이 넷이다 |
- * | ~~`SidebarFind` · `Rail` · `CommunityRail`~~ | — | **끝났다.** 찾기 줄은 `Sidebar` 가 그리므로 `sidebar.find.*` 로 갔고(새 영역을 안 열었다), 레일 둘은 사이드바 **밖**이라 `rail.*` 을 함께 쓴다 |
+ * | ~~`SidebarFind` · `Rail` · `CommunityRail`(지금은 `CommunitySwitcher`)~~ | — | **끝났다.** 찾기 줄은 `Sidebar` 가 그리므로 `sidebar.find.*` 로 갔고(새 영역을 안 열었다), 레일 둘은 사이드바 **밖**이라 `rail.*` 을 함께 쓴다 |
  * | ~~`StatusPicker` · `Identity` · `Workspace` · `BootNotice` · `InviteSettings`~~ | — | **끝났다**(아래 `status`·`identity`·`workspace`·`boot`·`invite`). 앞 둘이 한 벌의 어휘라 `status` 가 화면 이름을 안 쓴다 |
  * | 나머지 설정 화면들(`Gallery`·`Skills`·`HandleGroups`·`AgentDefaults` 등) | 42 · 19 · 16 · 11 | 각각 자기 영역(`gallery`·`skills`·…)을 연다. 영역 이름을 `settings.*` 로 묶지 않는 근거는 아래 `agents` 머리말에 있다 |
  * | ~~`RunnerStatus.tsx::runnerStatusLabel` · `lib/presenceView.ts::PRESENCE_LABEL`~~ | — | **끝났다**(아래 `runnerState.*` · `presence.*`). 둘이 **다르게** 풀렸다: 앞은 함수로 내리고 뒤는 표를 남긴 채 값만 키로 바꿨다 — 갈리는 근거(자리표시자와 갈래의 유무)는 `runnerState` 머리말에 있다. `common.*` 후보라던 이 표의 예상은 **틀렸다**: 셋 이상이 쓰는 것은 맞지만 그것들은 `lib/` 판정이 내는 말이라 판단 순서 2번(판정 이름)에 먼저 걸린다 |
@@ -3524,13 +3524,11 @@ export const en = {
   'status.value.dnd': 'Do not disturb',
 
   // ---------------------------------------------------------------------------
-  // rail — **화면 이름이다.** `components/Rail.tsx` 와 `components/CommunityRail.tsx`.
+  // rail — **화면 이름이다.** `components/Rail.tsx` 와 `components/CommunitySwitcher.tsx`.
   //
-  // 둘을 한 영역에 둔 이유: **같은 자리에 서는 같은 물건**이다. 커뮤니티가 하나면
-  // `Rail` 이 마크를 그리고 둘 이상이면 `CommunityRail` 이 그 왼쪽에 서는데, 두 파일이
-  // 내는 말이 실제로 **같은 문장**이다(`{label} — 연결됨/연결 끊김`). 영역을 가르면 그
-  // 한 문장이 두 곳에 적히고, 두 파일의 주석이 이미 그 중복을 위험으로 적어 뒀다
-  // (*"같은 일을 하는 두 번째 표면을 만들면 어느 쪽이 정본인지 알 수 없게 된다"*).
+  // 둘을 한 영역에 둔 이유: **같은 자리에 서는 같은 물건**이다. 전환기는 레일 맨 위
+  // 타일과 그 팝오버이고(2026-09-30 레일 통합 — 예전 `CommunityRail` 은 없어졌다), 타일과
+  // 팝오버 행이 내는 말이 **같은 문장**이다(`{label} — 연결됨/연결 끊김`).
   //
   // 사이드바에 안 붙인 것은 자리 때문이다 — 레일은 `Workspace` 가 사이드바 **밖에**
   // 세우고(그 파일 주석), 사이드바를 접어도 남는다.
@@ -3635,6 +3633,12 @@ export const en = {
   'rail.community.disconnected': 'disconnected',
   /** `{name}` 은 커뮤니티 이름, `{state}` 에 위 둘 중 하나가 든다. */
   'rail.community.tile': '{name} — {state}',
+  /** 전환 팝오버(`CommunitySwitcher`)의 머리·아래 두 줄. */
+  'rail.community.title': 'Communities',
+  'rail.community.add': 'Add community',
+  'rail.community.manage': 'Manage communities…',
+  /** 타일 이름 뒤에 다른 커뮤니티의 수를 붙인다 — `{tile}` 은 위 `rail.community.tile` 문장이다. */
+  'rail.community.tileOthers': '{tile}, {count} waiting for you in other communities',
   'rail.me.menu': 'Your account menu',
   'rail.me.menuFor': '{handle} — your account menu',
   'rail.me.profile': 'Your profile',

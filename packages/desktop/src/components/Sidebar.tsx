@@ -263,7 +263,7 @@ export function Sidebar({
   /*
    * macOS 신호등 여백(#270)이 여기 있었다. **더 이상 이 바가 창의 좌상단이 아니다** —
    * 레일이 항상 왼쪽에 서므로 좌상단은 레일이고, 여백은 레일이 진다(`Rail.tsx` 의
-   * `macTrafficLightRoom`, `CommunityRail` 이 이미 쓰던 방법과 같다).
+   * `macTrafficLightRoom`).
    *
    * 여백을 여기에 남겨 두면 **78px 이 두 번 든다** — #270 이 접힘 여부로 판정을 갈랐던
    * 이유가 정확히 그것이고, 이제 그 판정의 답이 늘 "레일"이 되었을 뿐이다.

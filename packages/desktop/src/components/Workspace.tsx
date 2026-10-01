@@ -6,7 +6,6 @@ import { usePrefsStore } from '../state/prefsStore';
 import { DEFAULT_ZOOM, stepZoom } from '../lib/zoom';
 // `isMacOS`·`MAC_TRAFFIC_LIGHT_PL` 이 여기 있었다 — 좌상단은 이제 늘 레일이다(아래 주석).
 import { TOP_BAR_BG, TOP_BAR_H } from '../lib/platform';
-import { CommunityRail } from './CommunityRail';
 import { Rail, type RailPanel } from './Rail';
 import { Sidebar } from './Sidebar';
 import { SidebarToggleIcon } from './SidebarToggleIcon';
@@ -226,14 +225,11 @@ export function Workspace({ onLogout, onOpenSettings }: {
    */
   return (
     <div className="flex h-full text-body">
-      {/* 전환기 레일은 **사이드바 밖**에 둔다(#165). 사이드바 안에 넣으면 사이드바를 접는
-          순간(폭 0) 전환기까지 함께 사라져, 커뮤니티를 바꾸려면 먼저 사이드바를 펴야 한다.
-          커뮤니티가 하나면 이 컴포넌트는 아무것도 그리지 않으므로 오늘 화면과 같다. */}
-      <CommunityRail />
       {/*
-        레일도 **사이드바 밖**이다(정본 문서 1단계). `CommunityRail`(#165) 이 같은 이유로
-        이미 밖에 있다: 사이드바 안에 넣으면 사이드바를 접는 순간(폭 0) 레일까지 함께
-        사라져, 칸을 바꾸려면 먼저 사이드바를 펴야 한다.
+        레일은 **사이드바 밖**이다(정본 문서 1단계): 사이드바 안에 넣으면 사이드바를 접는
+        순간(폭 0) 레일까지 함께 사라져, 칸을 바꾸려면 먼저 사이드바를 펴야 한다. 커뮤니티
+        전환기도 이 레일 맨 위 타일이라(`CommunitySwitcher`, 2026-09-30 레일 통합) 같은
+        이유로 접기와 무관하게 남는다. 예전의 별도 `CommunityRail`(56px)은 없어졌다.
 
         문서가 스스로 적어 둔 손해가 여기서 갈린다 — *"좁은 창에서는 레일만 남기고 패널을
         접는 단계가 하나 더 필요하다."* 그 단계가 이미 있다: `⌘\` 로 사이드바를 접으면
@@ -245,9 +241,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
         onPanelChange={setRailPanel}
         onOpenSaved={() => setSavedOpen(true)}
         onOpenSettings={onOpenSettings}
-        /* 전환 목록은 문서의 4단계다. 그때까지 마크는 설정 › 커뮤니티로 보낸다 —
-           눌러도 아무 일이 없는 마크를 두지 않는다(design.md §4). */
-        onOpenCommunityMark={() => onOpenSettings('communities')}
+        onManageCommunities={() => onOpenSettings('communities')}
         onLogout={onLogout}
       />
       {/*
@@ -257,10 +251,10 @@ export function Workspace({ onLogout, onOpenSettings }: {
 
         원래는 팝업 자신이 `fixed bottom-4 right-4` 였고, 그 자리가 컴포저의 `전송` 을
         덮었다. 왼쪽으로 옮기면서 `fixed left-[62px]` 로 레일 폭을 베낄 수도 있었지만,
-        커뮤니티가 둘 이상일 때 `CommunityRail`(56px)이 하나 더 서므로 그 숫자는 곧
-        틀린다. 폭을 아는 것은 레이아웃이니 자리도 레이아웃이 정하게 둔다.
+        커뮤니티가 둘 이상이면 56px 레일이 하나 더 서던 때가 있었듯(`CommunityRail`, 지금은
+        없다) 그런 숫자는 곧 틀린다. 폭을 아는 것은 레이아웃이니 자리도 레이아웃이 정하게 둔다.
 
-        사이드바 **안**에 넣지 않는 이유는 `CommunityRail`·`Rail` 이 사이드바 밖에 있는
+        사이드바 **안**에 넣지 않는 이유는 `Rail` 이 사이드바 밖에 있는
         것과 같다: 사이드바를 접으면(폭 0) 팝업까지 사라져, 업데이트를 알리는 자리가
         접기 상태에 따라 없어진다.
       */}

@@ -255,7 +255,7 @@ describe('담아 둔 메시지 — 툴바와 사이드바 (#219)', () => {
     render(
       <Rail
         panel="home" onPanelChange={vi.fn()} onOpenSaved={vi.fn()}
-        onOpenSettings={vi.fn()} onOpenCommunityMark={vi.fn()} onLogout={vi.fn()}
+        onOpenSettings={vi.fn()} onManageCommunities={vi.fn()} onLogout={vi.fn()}
       />,
     );
 
@@ -272,7 +272,7 @@ describe('담아 둔 메시지 — 툴바와 사이드바 (#219)', () => {
     render(
       <Rail
         panel="home" onPanelChange={vi.fn()} onOpenSaved={vi.fn()}
-        onOpenSettings={vi.fn()} onOpenCommunityMark={vi.fn()} onLogout={vi.fn()}
+        onOpenSettings={vi.fn()} onManageCommunities={vi.fn()} onLogout={vi.fn()}
       />,
     );
     expect(screen.getByTestId('rail-saved').getAttribute('aria-label')).not.toContain('담아 둔');
