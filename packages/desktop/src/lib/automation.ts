@@ -8,7 +8,11 @@ import type { Translate } from '../i18n';
 export function readAutomationMeta(meta: Record<string, unknown>): AutomationMessageMeta | null {
   const a = meta.automation as Partial<AutomationMessageMeta> | undefined;
   if (!a || typeof a !== 'object' || typeof a.id !== 'string' || typeof a.name !== 'string') return null;
-  return { id: a.id, name: a.name, trigger: typeof a.trigger === 'string' ? a.trigger : 'schedule', runId: String(a.runId ?? '') };
+  return {
+    id: a.id, name: a.name, trigger: typeof a.trigger === 'string' ? a.trigger : 'schedule', runId: String(a.runId ?? ''),
+    // 에이전트가 `automation.run` 으로 돌린 회차(082). 옛 서버의 글에는 없다.
+    ...(typeof a.initiatedBy === 'string' ? { initiatedBy: a.initiatedBy } : {}),
+  };
 }
 
 /** 요일 이름은 `Intl` 이 푼다 — 사전에 일곱 낱말을 두 벌 적지 않는다. 2023-01-01 이 일요일이다. */

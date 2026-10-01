@@ -728,7 +728,12 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
             <span
               data-testid="automation-chip"
               className="rounded border border-border px-1 text-meta text-fg-subtle"
-              title={t('message.automation.tooltip', { name: automation.name, trigger: automation.trigger })}
+              title={automation.initiatedBy
+                // 에이전트가 돌린 회차(082) — 글은 소유자 이름이지만 누가 눌렀는지는 여기서 말한다.
+                ? t('message.automation.tooltipByAgent', {
+                    name: automation.name, agent: accounts[automation.initiatedBy]?.handle ?? '…',
+                  })
+                : t('message.automation.tooltip', { name: automation.name, trigger: automation.trigger })}
             >⚡ {t('message.automation.chip')}</span>
           )}
           {/*

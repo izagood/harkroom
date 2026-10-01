@@ -374,7 +374,18 @@ export function AutomationsSettings() {
                   {runsFor.runs.map((r) => (
                     <tr key={r.id} className="border-t border-border">
                       <td className="py-1 pr-3 text-fg-muted">{fmt(r.createdAt)}</td>
-                      <td className="py-1 pr-3">{r.triggerKind}</td>
+                      <td className="py-1 pr-3">
+                        {r.triggerKind}
+                        {r.initiatedBy && (
+                          // 에이전트가 돌린 회차(082). 원인 메시지는 링크 글자로 hover 에 둔다 —
+                          // 설정 화면에서 채널로 건너가는 길은 이 화면에 아직 없다.
+                          <span
+                            data-testid="automation-run-initiator"
+                            className="ml-1 text-fg-muted"
+                            title={r.causeMessageId ? t('automations.runs.causeTooltip', { link: `harkroom://message/${r.causeMessageId}` }) : undefined}
+                          >{t('automations.runs.byAgent', { who: `@${accounts[r.initiatedBy]?.handle ?? '…'}` })}</span>
+                        )}
+                      </td>
                       <td className={`py-1 pr-3 ${r.status === 'failed' ? 'text-danger' : 'text-fg'}`}>{r.status}</td>
                       <td className="py-1 text-fg-subtle">{r.error ?? ''}</td>
                     </tr>
