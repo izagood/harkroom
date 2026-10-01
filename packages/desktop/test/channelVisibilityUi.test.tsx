@@ -3,6 +3,10 @@ import { render, screen, fireEvent, cleanup, within } from '@testing-library/rea
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
+import { ChannelSettingsSheet } from '../src/components/ChannelSettingsSheet';
+
+/** 멤버·편집·나가기는 채널 설정 시트가 연다(UX ⑦b-2) — 시트는 Workspace 에 서므로 여기서 함께 그린다. */
+const SidebarWithSheet = (p: Parameters<typeof Sidebar>[0]) => (<><Sidebar {...p} /><ChannelSettingsSheet /></>);
 import { usePrefsStore } from '../src/state/prefsStore';
 import { acc, chan } from './helpers/fakeApi';
 
@@ -37,7 +41,7 @@ const fakeController = (members: { accountId: string; handle: string }[]) => {
 const seed = () => {
   useAppStore.getState().reset();
   useAppStore.getState().set({
-    me: { ...acc('u1', 'me'), isAdmin: true },
+    me: acc('u1', 'me', 'human', true),
     accounts: { u1: acc('u1', 'me'), u2: acc('u2', 'other') },
     channels: [chan('c1', 'general'), chan('c2', 'secret', null, 'private')],
     dms: [], connected: true,
@@ -45,7 +49,7 @@ const seed = () => {
 };
 
 const sidebar = () => render(
-  <Sidebar panel="home" onOpenDirectory={vi.fn()} onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
+  <SidebarWithSheet panel="home" onOpenDirectory={vi.fn()} onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 
 const openMenuFor = (accessibleName: RegExp): void => {

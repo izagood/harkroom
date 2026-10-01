@@ -463,7 +463,7 @@ describe('사이드바 — 기본은 영어다', () => {
     render(<Sidebar panel="home" {...sidebarProps} />);
     const items = [...openChannelMenu().querySelectorAll('[role="menuitem"]')]
       .map((el) => el.textContent);
-    expect(items).toContain('Edit channel');
+    expect(items).toContain('Channel settings…');
     expect(items).toContain('View members');
     expect(items).toContain('Copy channel name');
     // 사이드바 메뉴에는 한국어가 한 글자도 없다 — 섹션 이름 같은 사람이 지은 값은 없는 상태다.
@@ -512,7 +512,7 @@ describe('사이드바 — 언어를 한국어로 바꾸면 한국어로 뜬다'
     render(<Sidebar panel="home" {...sidebarProps} />);
     const items = [...openChannelMenu().querySelectorAll('[role="menuitem"]')]
       .map((el) => el.textContent);
-    expect(items).toContain('채널 편집');
+    expect(items).toContain('채널 설정…');
     expect(items).toContain('멤버 보기');
     expect(items).toContain('채널명 복사');
   });
@@ -2818,7 +2818,8 @@ describe('팀 상세 — 이름의 뜻을 두 언어가 다 말한다', () => {
    * `admin` 으로 되돌린 것도 같은 규율이고, 그 자리를 함께 잰다.
    */
   it('admin 이 두 언어에서 같은 글자다', () => {
-    for (const key of ['agents.teams.memberReadOnly', 'invite.notAdmin'] as (keyof typeof en)[]) {
+    // `invite.notAdmin` 이 빠졌다(UX ⑦b-2) — 판정이 admin 이 아니라 `member.invite` 능력이 되어 문구에 admin 이 없다.
+    for (const key of ['agents.teams.memberReadOnly'] as (keyof typeof en)[]) {
       expect(en[key], `en.${key}`).toContain('admin');
       expect(ko[key], `ko.${key}`).toContain('admin');
       expect(ko[key], `ko.${key}`).not.toContain('관리자');

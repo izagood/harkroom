@@ -3,6 +3,10 @@ import { render, screen, fireEvent, cleanup, within } from '@testing-library/rea
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
+import { ChannelSettingsSheet } from '../src/components/ChannelSettingsSheet';
+
+/** 멤버·편집·나가기는 채널 설정 시트가 연다(UX ⑦b-2) — 시트는 Workspace 에 서므로 여기서 함께 그린다. */
+const SidebarWithSheet = (p: Parameters<typeof Sidebar>[0]) => (<><Sidebar {...p} /><ChannelSettingsSheet /></>);
 import { usePrefsStore } from '../src/state/prefsStore';
 import { acc, chan } from './helpers/fakeApi';
 import type { ChannelMemberRow } from '@harkroom/shared';
@@ -46,9 +50,9 @@ const fakeController = (members: ChannelMemberRow[]) => {
 const seed = (opts: { admin: boolean }) => {
   useAppStore.getState().reset();
   useAppStore.getState().set({
-    me: { ...acc('u1', 'me'), isAdmin: opts.admin },
+    me: acc('u1', 'me', 'human', opts.admin),
     accounts: {
-      u1: { ...acc('u1', 'me'), isAdmin: opts.admin },
+      u1: acc('u1', 'me', 'human', opts.admin),
       u2: acc('u2', 'other'),
       a1: acc('a1', 'bot', 'agent'),
       ad: acc('ad', 'boss', 'human', true),
@@ -59,7 +63,7 @@ const seed = (opts: { admin: boolean }) => {
 };
 
 const sidebar = () => render(
-  <Sidebar panel="home" onOpenDirectory={vi.fn()} onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
+  <SidebarWithSheet panel="home" onOpenDirectory={vi.fn()} onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 
 const openMenuFor = (accessibleName: RegExp): void => {
@@ -150,7 +154,7 @@ describe('채널 멤버 화면 (#183)', () => {
 
     // 멤버가 아닌 것이 확인된 뒤에는 메뉴에서도 초대가 사라진다. 패널은 채널 행을
     // 대신 그리므로 먼저 닫아야 메뉴에 닿는다.
-    fireEvent.click(within(panel).getByRole('button', { name: '닫기' }));
+    fireEvent.click(screen.getByRole('button', { name: '채널 설정 닫기' }));
     openMenuFor(/비공개 채널 secret\b/);
     expect(screen.queryByRole('menuitem', { name: '초대' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: '나가기' })).toBeNull();
@@ -201,7 +205,7 @@ describe('채널 멤버 화면 (#183)', () => {
     expect(within(openPanel).getByText(/구독한 사람이지, 볼 수 있는 사람의 전부가 아니다/)).toBeTruthy();
     expect(within(openPanel).queryByText(/이 목록이 이 채널을 볼 수 있는 사람의 전부다/)).toBeNull();
 
-    fireEvent.click(within(openPanel).getByRole('button', { name: '닫기' }));
+    fireEvent.click(screen.getByRole('button', { name: '채널 설정 닫기' }));
 
     // private: 이 목록이 곧 볼 수 있는 사람의 전부다.
     const privatePanel = await openMembers(/비공개 채널 secret\b/, 'c2');

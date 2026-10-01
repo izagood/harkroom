@@ -3,6 +3,7 @@ import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { useT } from '../../i18n/useT';
 import { DirectoryRow } from '../Directory';
+import { hasCapability } from '../../lib/capabilities';
 import { SettingsGroup, SettingsPage } from './primitives';
 
 /**
@@ -66,7 +67,8 @@ export function InviteSettings() {
     <SettingsPage section="invite" description={t('members.note')}>
       <SettingsGroup title={t('members.invite.title')}>
         <div className="px-4 py-3" data-testid="members-invite">
-          {!me?.isAdmin ? (
+          {/* 서버 `POST /invites` 는 `requireCap('member.invite')` 다 — admin 이 아니어도 그 능력을 받았으면 발급한다(UX ⑦b-2). */}
+          {!hasCapability(me, 'member.invite') ? (
             <p className="text-fg-subtle">{t('invite.notAdmin')}</p>
           ) : (
             <>

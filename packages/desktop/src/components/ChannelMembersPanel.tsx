@@ -37,8 +37,15 @@ const memberErrorText = (err: unknown, fallback: string, t: Translate): string =
  * 패널을 **그대로** 꺼냈다(규칙과 근거 주석은 옮기기 전과 같다). 열리면(마운트) 목록을 받는다 — 전에는
  * `openMembers` 가 그 일을 했다. `startLeave` 면 열자마자 나가기 절차를 시작한다(메뉴의 "나가기").
  */
-export function ChannelMembersPanel({ channel, onClose, startLeave = false }: {
+export function ChannelMembersPanel({ channel, onClose, startLeave = false, part = 'all', showClose = true }: {
   channel: ChannelRow; onClose: () => void; startLeave?: boolean;
+  /**
+   * 어느 몫을 그리나(UX ⑦b-2). 채널 설정 시트는 **멤버**(목록·초대·팀·나가기)와 **에이전트**(자동 멘션)를
+   * 다른 탭에 둔다. 조회·절차는 한 벌이다 — 몫을 나눠도 같은 목록을 두 번 받지 않는다.
+   */
+  part?: 'all' | 'members' | 'agents';
+  /** 시트 안에서는 시트가 닫기를 가진다 — 패널의 [닫기] 를 또 두면 닫는 길이 둘이다. */
+  showClose?: boolean;
 }) {
   const t = useT();
   const ch = channel;
@@ -227,6 +234,7 @@ export function ChannelMembersPanel({ channel, onClose, startLeave = false }: {
       const canInvite = members !== undefined && (ch.visibility === 'public' || isMember);
   return (
         <div data-testid={`members-${ch.id}`} className="mt-1 rounded border border-border bg-surface-raised p-1">
+          {part !== 'agents' && (<>
           <div className="mb-1 text-meta text-fg-muted">
             {t('sidebar.members.title', { name: `${ch.visibility === 'private' ? '🔒' : '#'}${ch.name}` })}
           </div>
@@ -283,6 +291,8 @@ export function ChannelMembersPanel({ channel, onClose, startLeave = false }: {
                 })}
               </ul>
             )}
+          </>)}
+          {part !== 'members' && (<>
           {/* 자동 멘션(#173). 채널 설정 화면이 따로 없어 채널의 관리 표면인 이 패널에 둔다 —
               admin 전용 편집 폼에 두면 admin 이 아닌 사람은 "이 채널이 누구를 자동으로 부르나"를
               어디에서도 볼 수 없다. admin 은 토글, 나머지는 읽기 전용이다: 서버가 403 을 줄
@@ -361,6 +371,8 @@ export function ChannelMembersPanel({ channel, onClose, startLeave = false }: {
               </div>
             );
           })()}
+          </>)}
+          {part !== 'agents' && (<>
           {leaveConfirmId === ch.id && (
             <p role="alert" className="mb-1 text-meta text-warning">
               {t('sidebar.members.lastMemberWarning')}
@@ -442,13 +454,16 @@ export function ChannelMembersPanel({ channel, onClose, startLeave = false }: {
                 {leaveConfirmId === ch.id ? t('sidebar.members.leaveConfirm') : t('sidebar.members.leave')}
               </button>
             )}
-            <button
-              className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
-              onClick={onClose}
-            >
-              {t('sidebar.members.close')}
-            </button>
+            {showClose && (
+              <button
+                className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
+                onClick={onClose}
+              >
+                {t('sidebar.members.close')}
+              </button>
+            )}
           </div>
+          </>)}
         </div>
   );
 }

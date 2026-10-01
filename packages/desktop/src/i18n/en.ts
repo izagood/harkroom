@@ -3542,6 +3542,9 @@ export const en = {
   'channelSheet.save': 'Save',
   'channelSheet.tab.info': 'Info',
   'channelSheet.tab.notify': 'Notifications',
+  'channelSheet.tab.members': 'Members',
+  'channelSheet.tab.membersCount': 'Members {count}',
+  'channelSheet.tab.agents': 'Agents',
   'channel.header.doc': 'Document',
   'channel.header.files': 'Files',
   'channel.header.messages': 'Messages',
@@ -4156,7 +4159,7 @@ export const en = {
   'invite.createAgain': 'Mint a new token (the one above disappears)',
   'invite.failed': 'The token was not minted',
   /** 화면 전체가 아니라 **초대 묶음**만 닫힌다(UX ⑥b-5) — 멤버 목록은 모두에게 보인다. */
-  'invite.notAdmin': 'Only an admin can mint invite tokens',
+  'invite.notAdmin': 'Only people with the invite permission can mint invite tokens',
   'members.invite.title': 'Invite',
   'members.list.empty': 'No people in this community yet',
   /** 숫자를 모를 때(불러오는 중·실패) — 0 은 "아무도 없다" 로 읽힌다. */

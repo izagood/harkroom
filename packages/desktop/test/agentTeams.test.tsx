@@ -5,6 +5,10 @@ import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController } from '../src/state/controller';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
 import { Sidebar } from '../src/components/Sidebar';
+import { ChannelSettingsSheet } from '../src/components/ChannelSettingsSheet';
+
+/** 멤버·편집·나가기는 채널 설정 시트가 연다(UX ⑦b-2) — 시트는 Workspace 에 서므로 여기서 함께 그린다. */
+const SidebarWithSheet = (p: Parameters<typeof Sidebar>[0]) => (<><Sidebar {...p} /><ChannelSettingsSheet /></>);
 import { SettingsScreen } from '../src/screens/SettingsScreen';
 import { SETTINGS_GROUPS, isSectionId } from '../src/components/settings/sections';
 import { usePrefsStore } from '../src/state/prefsStore';
@@ -640,7 +644,7 @@ describe('멤버 패널 팀 추가 (#172)', () => {
   };
 
   const sidebar = () => render(
-    <Sidebar panel="home" onOpenDirectory={vi.fn()}
+    <SidebarWithSheet panel="home" onOpenDirectory={vi.fn()}
       onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
       collapsed={false} onToggleCollapse={vi.fn()} />,
   );

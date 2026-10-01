@@ -7,8 +7,6 @@ import { ApiError } from '../lib/api';
 import { TOP_BAR_BG, TOP_BAR_H } from '../lib/platform';
 import { LeasePanel } from './LeasePanel';
 import { Menu, type MenuItem } from './Menu';
-import { ChannelEditForm } from './ChannelEditForm';
-import { ChannelMembersPanel } from './ChannelMembersPanel';
 // `StatusPicker` 가 여기 있었다 — 계정 행과 함께 `Rail.tsx` 로 갔다.
 // `Identity` 가 **돌아왔다**: 합쳐진 DM 목록의 상태를 아바타가 말한다(`dmRow` 주석).
 // `StatusMark` 도 남는다 — presence 와 다른 사실이라 아바타가 대신할 수 없다.
@@ -260,11 +258,6 @@ export function Sidebar({
   const [newChannelPrivate, setNewChannelPrivate] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  // 멤버 패널(`ChannelMembersPanel`). 열려 있는 채널 id 하나만 둔다 — 여러 채널의 패널이 동시에
-  // 열리면 어느 목록을 보고 있는지가 화면에서 사라진다(편집 패널과 같은 규칙).
-  const [membersChannelId, setMembersChannelId] = useState<string | null>(null);
-  // 메뉴의 "나가기" 로 열었는가 — 그러면 패널이 열리자마자 나가기 절차를 시작한다.
-  const [membersLeave, setMembersLeave] = useState(false);
   /**
    * 채널 삭제 확인(#155). 확인 단계를 **화면 안에** 둔다 — `window.confirm` 은 Tauri
    * 웹뷰에서 막힐 수 있고, 이 저장소의 선례(`MessageItem` 의 '정말 삭제', 바로 위
@@ -281,7 +274,6 @@ export function Sidebar({
   // 숨긴 채널 묶음(#376)도 접혀 있는 채로 시작한다 — 치운 것이 열린 채로 보이면 치운 뜻이 없다.
   const [hiddenOpen, setHiddenOpen] = useState(false);
 
-  const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
 
   /*
    * `⌘,` 배선이 여기 있었다(#488 A1). **레일로 갔다** — 그 단축키를 가르치는 메뉴가
@@ -347,10 +339,12 @@ export function Sidebar({
     setCreateError(null);
   };
 
-  const closeMembers = (): void => { setMembersChannelId(null); setMembersLeave(false); };
-  const openMembers = (channelId: string): void => { setMembersLeave(false); setMembersChannelId(channelId); };
-  // 나가기는 멤버 패널이 연다 — 마지막 멤버 확인·오류가 그 패널의 자리다(`ChannelMembersPanel`).
-  const requestLeave = (channelId: string): void => { setMembersLeave(true); setMembersChannelId(channelId); };
+  // 멤버·나가기는 **채널 설정 시트**가 연다(UX ⑦b-2) — 사이드바 안의 인라인 패널은 없앴다. 나가기는 시트의
+  // 멤버 탭에서 절차를 바로 시작한다: 마지막 멤버 확인·오류가 그 패널(`ChannelMembersPanel`)의 자리다.
+  const openSheet = (channelId: string, tab: 'info' | 'members' | 'leave'): void =>
+    useActiveStore.getState().set({ channelSheetId: channelId, channelSheetTab: tab });
+  const openMembers = (channelId: string): void => openSheet(channelId, 'members');
+  const requestLeave = (channelId: string): void => openSheet(channelId, 'leave');
 
   const startDelete = (channelId: string): void => {
     setDeletingChannelId(channelId);
@@ -381,8 +375,6 @@ export function Sidebar({
   };
 
 
-  const closeEdit = (): void => setEditingChannelId(null);
-  const startEdit = (channel: ChannelRow): void => setEditingChannelId(channel.id);
 
   /**
    * Enter 와 [만들기] 가 같은 일을 한다 — 두 핸들러에 같은 절차를 각각 적으면 한쪽만 고치는
@@ -801,10 +793,6 @@ export function Sidebar({
     const pref = channelPrefs[ch.id];
     const notifyLevel = notifyLevelOf(pref);
     const isStarred = !!pref?.starredAt;
-    const isEditing = editingChannelId === ch.id;
-    if (isEditing) {
-      return <div key={ch.id} className="mt-1"><ChannelEditForm channel={ch} onDone={closeEdit} /></div>;
-    }
     if (deletingChannelId === ch.id) {
       return (
         <div key={ch.id} data-testid={`delete-${ch.id}`} className="mt-1 rounded border border-danger bg-surface-raised p-1">
@@ -838,13 +826,6 @@ export function Sidebar({
               {t('sidebar.delete.cancel')}
             </button>
           </div>
-        </div>
-      );
-    }
-    if (membersChannelId === ch.id) {
-      return (
-        <div key={ch.id} className="mt-1">
-          <ChannelMembersPanel channel={ch} startLeave={membersLeave} onClose={closeMembers} />
         </div>
       );
     }
@@ -966,10 +947,9 @@ export function Sidebar({
       { label: t('sidebar.menu.copyId'), onSelect: copyChannelId },
       ],
       [
-      // 채널 설정 시트(UX ⑦b-1)를 여는 줄 — 누구나 연다(정보·알림·나가기, 보관은 시트 안에서 admin 에게만).
-      // 보관은 시트로 옮겼다. 편집은 ⑦b-2 에서 시트로 옮기면 이 묶음은 이 한 줄 + 삭제가 된다.
-      { label: t('sidebar.menu.settings'), onSelect: () => useActiveStore.getState().set({ channelSheetId: ch.id }) },
-      ...(me?.isAdmin ? [{ label: t('sidebar.menu.edit'), onSelect: () => startEdit(ch) }] : []),
+      // 채널 설정 시트를 여는 줄 — 누구나 연다. 편집·보관은 시트 정보 탭에서 `channel.manage` 능력이 있을 때만
+      // 선다(UX ⑦b-2). 그래서 이 묶음은 이 한 줄 + 보관된 채널의 삭제다.
+      { label: t('sidebar.menu.settings'), onSelect: () => openSheet(ch.id, 'info') },
       /**
        * 삭제(#155). **보관된 채널에만** 만든다 — 서버가 보관되지 않은 채널의 삭제를 409 로
        * 거절하므로, 눌러도 거절되는 항목을 남겨 두면 "할 수 있다"는 거짓 신호가 된다
