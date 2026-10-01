@@ -42,6 +42,23 @@ class _ThreadScreenState extends State<ThreadScreen> {
 
   bool _loaded = false;
 
+  /// 목록 맨 위(reverse 라 끝)에 닿으면 옛 답글을 받는다 — 채널 화면의 `_maybeLoadOlder` 와 같다.
+  final _scroll = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll.addListener(_maybeLoadOlder);
+  }
+
+  void _maybeLoadOlder() {
+    if (!_scroll.hasClients) return;
+    final pos = _scroll.position;
+    if (pos.pixels < pos.maxScrollExtent - 400) return;
+    // 듣는 자리는 빌드 밖이라 `context.app`(구독)을 부르지 않는다.
+    AppScope.read(context).loadOlderThread(widget.channelId, widget.rootId);
+  }
+
   /// **`initState` 가 아니라 여기서 읽는다.**
   ///
   /// `context.app` 은 `InheritedWidget` 을 구독하는 일이고, Flutter 는 그것을
@@ -61,6 +78,8 @@ class _ThreadScreenState extends State<ThreadScreen> {
 
   @override
   void dispose() {
+    _scroll.removeListener(_maybeLoadOlder);
+    _scroll.dispose();
     _composer.dispose();
     _composerFocus.dispose();
     super.dispose();
@@ -167,6 +186,16 @@ class _ThreadScreenState extends State<ThreadScreen> {
       else if (load == LoadState.loaded)
         ThreadRootMissing(text: t.threadRootMissing),
       if (root != null || load == LoadState.loaded) ThreadRepliesDivider(label: dividerLabel),
+      // 옛 답글을 받는 중·못 받음 — 채널 맨 위와 같은 44 줄. 「처음」 줄은 세우지 않는다: 바로 위의
+      // 원글이 스레드의 처음이다. 옛 서버(hasMore 를 안 줌)에서는 둘 다 서지 않아 지금과 같다.
+      if (app.loadingOlderThread.contains(widget.rootId))
+        FeedTopRow(top: FeedTop.loading, channelName: '', onRetry: () {})
+      else if (app.olderThreadFailed.contains(widget.rootId))
+        FeedTopRow(
+          top: FeedTop.failed,
+          channelName: '',
+          onRetry: () => app.retryOlderThread(widget.channelId, widget.rootId),
+        ),
       // 원글은 채널에서 이미 왔으니 늘 보인다. **답글 자리만** 상태 셋으로 나눈다.
       if (load == null || load == LoadState.loading)
         const SizedBox(height: 200, child: LoadingSkeleton(rows: 2))
@@ -202,6 +231,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
             Expanded(
               child: ListView(
                 key: const Key('thread-feed'),
+                controller: _scroll,
                 reverse: true,
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 children: rows.reversed.toList(growable: false),
