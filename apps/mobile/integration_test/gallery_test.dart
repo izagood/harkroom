@@ -109,6 +109,11 @@ void main() {
 
     await tester.tap(find.byKey(const Key('tab-inbox')));
     await shot(tester, '04-inbox');
+    // S5a: DM 탭 · 에이전트 탭(S7 전 빈 자리).
+    await tester.tap(find.byKey(const Key('tab-dms')));
+    await shot(tester, '04b-dms');
+    await tester.tap(find.byKey(const Key('tab-agents')));
+    await shot(tester, '04c-agents');
 
     // S5a: 「나」 는 머리의 프로필 사진으로 연다.
     await tester.tap(find.byKey(const Key('tab-home')));
