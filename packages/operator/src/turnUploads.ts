@@ -94,26 +94,37 @@ function multipart(filename: string, contentType: string, bytes: Buffer): { body
 type Resolved = { ok: true; path: string } | { ok: false; code: string; message: string };
 
 /**
- * 기준 디렉터리가 **턴 워크스페이스 모양**인가 — `<에이전트 상태 디렉터리>/workspaces/harkroom-<…>`
- * (`agent/workspace.ts` 의 `workspaceName`, `stateDir.ts` 의 `workspaceBaseDir`).
+ * 기준 디렉터리가 **이 에이전트의 턴 워크스페이스**인가 —
+ * `<상태 루트>/(<id>|<handle>-<id>)[/<instance>]/workspaces/harkroom-<…>`
+ * (`agent/stateDir.ts` 의 `resolveAgentStateDir`·`workspaceBaseDir`, `agent/workspace.ts` 의 `workspaceName`).
  *
  * 왜 보나: 기준은 브릿지가 실어 온 cwd 다. claude 는 턴 워크스페이스임을 실측했지만 못 잰 하네스가 브릿지를
  * 홈 디렉터리 같은 곳에서 띄우면, 이 검사 없이는 **그 아래 전부**가 "안"이 된다. 모양이 아니면 올리지 않는다
  * (fail-closed). 에이전트에 따로 작업 디렉터리를 정해 둔 경우도 여기서 거절된다 — 파일을 턴 워크스페이스로
  * 복사하면 된다.
+ *
+ * `agentId` 는 브릿지가 실은 값이 아니라 **링크가 인증한 값**이다(security #1052 후속). 그래서 다른 에이전트의
+ * 턴 워크스페이스를 cwd 로 대도 거절된다. 상태 뿌리 이름은 지금 모양(`<id>`)과 옛 모양(`<handle>-<id>`, 이미
+ * 있으면 그대로 쓴다 — `resolveAgentStateDir` 의 `adopted`) 둘이고, 그 아래 인스턴스 한 단계가 있을 수 있다.
  */
-export function looksLikeTurnWorkspace(root: string): boolean {
-  return basename(root).startsWith('harkroom-') && basename(dirname(root)) === 'workspaces';
+export function isAgentTurnWorkspace(root: string, agentId: string): boolean {
+  if (!agentId || !basename(root).startsWith('harkroom-')) return false;
+  const base = dirname(root);
+  if (basename(base) !== 'workspaces') return false;
+  const owns = (name: string) => name === agentId || name.endsWith(`-${agentId}`);
+  const stateDir = dirname(base);
+  // `<id>/workspaces` 또는 `<id>/<instance>/workspaces`.
+  return owns(basename(stateDir)) || owns(basename(dirname(stateDir)));
 }
 
 /** `path` 를 `cwd` 아래의 실제 파일로 푼다. 둘 다 realpath 로 — 심링크로 밖을 가리키면 거절한다. */
-export async function resolveInsideWorkspace(cwd: string, path: string): Promise<Resolved> {
+export async function resolveInsideWorkspace(cwd: string, path: string, agentId: string): Promise<Resolved> {
   let root: string;
   try { root = await realpath(cwd); } catch {
     return { ok: false, code: 'no_workspace', message: 'the turn workspace could not be resolved' };
   }
-  if (!looksLikeTurnWorkspace(root)) {
-    return { ok: false, code: 'no_workspace', message: 'this harness does not run in a harkroom turn workspace; uploads are disabled here' };
+  if (!isAgentTurnWorkspace(root, agentId)) {
+    return { ok: false, code: 'no_workspace', message: 'this harness does not run in your harkroom turn workspace; uploads are disabled here' };
   }
   let target: string;
   try { target = await realpath(isAbsolute(path) ? path : resolve(root, path)); } catch {
@@ -143,7 +154,7 @@ export function createTurnUploads(deps: TurnUploadsDeps): TurnUploads {
       // 기준이 없으면 올리지 않는다 — 옛 브릿지는 cwd 를 싣지 않는다.
       if (!req.cwd) return fail('no_workspace', 'this bridge does not report its workspace; update the harkroom app');
 
-      const resolved = await resolveInsideWorkspace(req.cwd, args.path);
+      const resolved = await resolveInsideWorkspace(req.cwd, args.path, agentId);
       if (!resolved.ok) return fail(resolved.code, resolved.message);
       // 판정한 경로를 **심링크를 따라가지 않고** 연다(O_NOFOLLOW) — realpath 와 열기 사이에 그 자리가 밖을
       // 가리키는 심링크로 바뀌면 열기가 실패한다. 크기·종류도 연 핸들에서 본다(경로를 다시 보지 않는다).

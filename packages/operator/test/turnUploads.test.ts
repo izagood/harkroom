@@ -12,6 +12,9 @@ const PNG = Buffer.from(
   'base64',
 );
 
+const AGENT = '4527ba9a-ac07-4aba-b347-bddd972fb969';
+const OTHER = 'fe7719ae-7d8c-412b-9e4d-a5d595a16fb8';
+
 const uploadCall = (args: Record<string, unknown>, cwd: string | undefined, id = 9): RunnerLinkRequest => ({
   type: 'mcp.request', id: 'link-1', ...(cwd ? { cwd } : {}),
   payload: { jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'attachment.upload', arguments: args } },
@@ -31,8 +34,8 @@ describe('turnUploads', () => {
 
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'hk-up-'));
-    // 실제 모양과 같게 — `<상태 디렉터리>/workspaces/harkroom-<agent>-<hash>`.
-    workspace = join(base, 'workspaces', 'harkroom-agent1-1234abcd');
+    // 실제 모양과 같게 — `<상태 루트>/<agentId>/workspaces/harkroom-<agentId>-<hash>`.
+    workspace = join(base, AGENT, 'workspaces', `harkroom-${AGENT}-1234abcd`);
     mkdirSync(workspace, { recursive: true });
     calls = [];
     status = 201;
@@ -56,13 +59,13 @@ describe('turnUploads', () => {
       type: 'mcp.request', id: 'x', cwd: workspace,
       payload: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'message.post', arguments: {} } },
     };
-    expect(await up.maybeHandle('agent-1', req)).toBeNull();
+    expect(await up.maybeHandle(AGENT, req)).toBeNull();
     expect(calls).toHaveLength(0);
   });
 
   it('uploads a workspace file as multipart through the forward path and returns the attachment id', async () => {
     writeFileSync(join(workspace, 'shot.png'), PNG);
-    const r = resultOf(await up.maybeHandle('agent-1', uploadCall({ path: 'shot.png' }, workspace)));
+    const r = resultOf(await up.maybeHandle(AGENT, uploadCall({ path: 'shot.png' }, workspace)));
 
     expect(r.isError).toBe(false);
     expect(r.id).toBe(9);
@@ -81,14 +84,14 @@ describe('turnUploads', () => {
   it('accepts an absolute path that is inside the workspace', async () => {
     mkdirSync(join(workspace, 'out'));
     writeFileSync(join(workspace, 'out', 'a.png'), PNG);
-    const r = resultOf(await up.maybeHandle('agent-1', uploadCall({ path: join(workspace, 'out', 'a.png') }, workspace)));
+    const r = resultOf(await up.maybeHandle(AGENT, uploadCall({ path: join(workspace, 'out', 'a.png') }, workspace)));
     expect(r.isError).toBe(false);
   });
 
   it('refuses a file outside the workspace', async () => {
     writeFileSync(join(base, 'secret.txt'), 'outside');
-    for (const path of ['../../secret.txt', join(base, 'secret.txt')]) {
-      const r = resultOf(await up.maybeHandle('agent-1', uploadCall({ path }, workspace)));
+    for (const path of ['../../../secret.txt', join(base, 'secret.txt')]) {
+      const r = resultOf(await up.maybeHandle(AGENT, uploadCall({ path }, workspace)));
       expect(r.isError).toBe(true);
       expect(r.body.error.code).toBe('outside_workspace');
     }
@@ -99,7 +102,7 @@ describe('turnUploads', () => {
   it('refuses a symlink in the workspace that points outside', async () => {
     writeFileSync(join(base, 'id_rsa'), 'key');
     symlinkSync(join(base, 'id_rsa'), join(workspace, 'innocent.png'));
-    const r = resultOf(await up.maybeHandle('agent-1', uploadCall({ path: 'innocent.png' }, workspace)));
+    const r = resultOf(await up.maybeHandle(AGENT, uploadCall({ path: 'innocent.png' }, workspace)));
     expect(r.body.error.code).toBe('outside_workspace');
     expect(calls).toHaveLength(0);
   });
@@ -109,24 +112,52 @@ describe('turnUploads', () => {
     const evil = `${workspace}-evil`;
     mkdirSync(evil);
     writeFileSync(join(evil, 'x.png'), PNG);
-    const r = resultOf(await up.maybeHandle('agent-1', uploadCall({ path: join(evil, 'x.png') }, workspace)));
+    const r = resultOf(await up.maybeHandle(AGENT, uploadCall({ path: join(evil, 'x.png') }, workspace)));
     expect(r.body.error.code).toBe('outside_workspace');
   });
 
   // 못 잰 하네스가 브릿지를 워크스페이스가 아닌 곳(홈 등)에서 띄우면 그 아래 전부가 "안"이 되면 안 된다.
   it('refuses when the bridge runs outside a turn workspace (fail-closed)', async () => {
     writeFileSync(join(base, 'notes.txt'), 'x');
-    const r = resultOf(await up.maybeHandle('agent-1', uploadCall({ path: 'notes.txt' }, base)));
+    const r = resultOf(await up.maybeHandle(AGENT, uploadCall({ path: 'notes.txt' }, base)));
     expect(r.body.error.code).toBe('no_workspace');
     mkdirSync(join(base, 'repo'));
     writeFileSync(join(base, 'repo', 'a.png'), PNG);
-    expect(resultOf(await up.maybeHandle('agent-1', uploadCall({ path: 'a.png' }, join(base, 'repo')))).body.error.code).toBe('no_workspace');
+    expect(resultOf(await up.maybeHandle(AGENT, uploadCall({ path: 'a.png' }, join(base, 'repo')))).body.error.code).toBe('no_workspace');
     expect(calls).toHaveLength(0);
+  });
+
+  // security #1052 후속: 기준은 링크가 인증한 agentId 의 워크스페이스여야 한다.
+  it('refuses a bridge sitting in another agent’s turn workspace', async () => {
+    const theirs = join(base, OTHER, 'workspaces', `harkroom-${OTHER}-5678abcd`);
+    mkdirSync(theirs, { recursive: true });
+    writeFileSync(join(theirs, 'mcp.json'), '{"token":"x"}');
+    const r = resultOf(await up.maybeHandle(AGENT, uploadCall({ path: 'mcp.json' }, theirs)));
+    expect(r.body.error.code).toBe('no_workspace');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('refuses the workspaces directory itself as a base', async () => {
+    writeFileSync(join(base, AGENT, 'workspaces', 'x.png'), PNG);
+    const r = resultOf(await up.maybeHandle(AGENT, uploadCall({ path: 'x.png' }, join(base, AGENT, 'workspaces'))));
+    expect(r.body.error.code).toBe('no_workspace');
+  });
+
+  // 옛 상태 뿌리 `<handle>-<id>`(이미 있으면 그대로 쓴다)와 인스턴스 한 단계도 이 에이전트의 것이다.
+  it('accepts the legacy <handle>-<id> root and an instance level', async () => {
+    for (const ws of [
+      join(base, `murmur-${AGENT}`, 'workspaces', 'harkroom-murmur-68dcec12'),
+      join(base, AGENT, 'second', 'workspaces', `harkroom-${AGENT}-9abc0000`),
+    ]) {
+      mkdirSync(ws, { recursive: true });
+      writeFileSync(join(ws, 'shot.png'), PNG);
+      expect(resultOf(await up.maybeHandle(AGENT, uploadCall({ path: 'shot.png' }, ws))).isError).toBe(false);
+    }
   });
 
   it('refuses when the bridge did not report its workspace (old bridge)', async () => {
     writeFileSync(join(workspace, 'shot.png'), PNG);
-    const r = resultOf(await up.maybeHandle('agent-1', uploadCall({ path: 'shot.png' }, undefined)));
+    const r = resultOf(await up.maybeHandle(AGENT, uploadCall({ path: 'shot.png' }, undefined)));
     expect(r.body.error.code).toBe('no_workspace');
     expect(calls).toHaveLength(0);
   });
@@ -134,24 +165,24 @@ describe('turnUploads', () => {
   it('refuses a directory, a missing file, and a file over the limit before reading it', async () => {
     mkdirSync(join(workspace, 'dir'));
     writeFileSync(join(workspace, 'big.bin'), Buffer.alloc(2048));
-    expect(resultOf(await up.maybeHandle('a', uploadCall({ path: 'dir' }, workspace))).body.error.code).toBe('not_a_file');
-    expect(resultOf(await up.maybeHandle('a', uploadCall({ path: 'nope.png' }, workspace))).body.error.code).toBe('not_found');
-    expect(resultOf(await up.maybeHandle('a', uploadCall({ path: 'big.bin' }, workspace))).body.error.code).toBe('too_large');
-    expect(resultOf(await up.maybeHandle('a', uploadCall({}, workspace))).body.error.code).toBe('bad_request');
+    expect(resultOf(await up.maybeHandle(AGENT, uploadCall({ path: 'dir' }, workspace))).body.error.code).toBe('not_a_file');
+    expect(resultOf(await up.maybeHandle(AGENT, uploadCall({ path: 'nope.png' }, workspace))).body.error.code).toBe('not_found');
+    expect(resultOf(await up.maybeHandle(AGENT, uploadCall({ path: 'big.bin' }, workspace))).body.error.code).toBe('too_large');
+    expect(resultOf(await up.maybeHandle(AGENT, uploadCall({}, workspace))).body.error.code).toBe('bad_request');
     expect(calls).toHaveLength(0);
   });
 
   it('passes the server refusal code through (e.g. the secret leak guard)', async () => {
     status = 400;
     writeFileSync(join(workspace, 'notes.txt'), 'x');
-    const r = resultOf(await up.maybeHandle('a', uploadCall({ path: 'notes.txt' }, workspace)));
+    const r = resultOf(await up.maybeHandle(AGENT, uploadCall({ path: 'notes.txt' }, workspace)));
     expect(r.isError).toBe(true);
     expect(r.body.error.code).toBe('secret_in_body');
   });
 
   it('uses a given filename, stripped of header-breaking characters', async () => {
     writeFileSync(join(workspace, 'tmp1'), PNG);
-    await up.maybeHandle('a', uploadCall({ path: 'tmp1', filename: 'before\r\n"x".png' }, workspace));
+    await up.maybeHandle(AGENT, uploadCall({ path: 'tmp1', filename: 'before\r\n"x".png' }, workspace));
     const sent = calls[0]!;
     if (sent.type !== 'http.forward') throw new Error('expected http.forward');
     const head = Buffer.from(sent.bodyBase64!, 'base64').toString('latin1');
