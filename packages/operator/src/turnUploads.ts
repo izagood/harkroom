@@ -20,7 +20,8 @@
  * - 비밀 누출 검사는 서버 `/uploads` 가 에이전트 업로드에 이미 한다(D5). 여기서 다시 하지 않는다.
  */
 import { randomUUID } from 'node:crypto';
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { open, realpath, type FileHandle } from 'node:fs/promises';
 import { basename, extname, isAbsolute, resolve, sep } from 'node:path';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 
@@ -128,16 +129,29 @@ export function createTurnUploads(deps: TurnUploadsDeps): TurnUploads {
 
       const resolved = await resolveInsideWorkspace(req.cwd, args.path);
       if (!resolved.ok) return fail(resolved.code, resolved.message);
-      const info = await stat(resolved.path).catch(() => null);
-      if (!info || !info.isFile()) return fail('not_a_file', `not a regular file: ${args.path}`);
-      if (info.size > maxBytes) return fail('too_large', `the file exceeds ${Math.floor(maxBytes / 1024 / 1024)}MB`);
+      // 판정한 경로를 **심링크를 따라가지 않고** 연다(O_NOFOLLOW) — realpath 와 열기 사이에 그 자리가 밖을
+      // 가리키는 심링크로 바뀌면 열기가 실패한다. 크기·종류도 연 핸들에서 본다(경로를 다시 보지 않는다).
+      // 남는 틈: 중간 디렉터리를 바꿔치기하는 것은 막지 못한다 — 같은 uid 경계(H2) 안의 일이다.
+      let handle: FileHandle;
+      try { handle = await open(resolved.path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW); } catch {
+        return fail('read_failed', `could not open ${args.path}`);
+      }
+      let bytes: Buffer;
+      try {
+        const info = await handle.stat();
+        if (!info.isFile()) return fail('not_a_file', `not a regular file: ${args.path}`);
+        if (info.size > maxBytes) return fail('too_large', `the file exceeds ${Math.floor(maxBytes / 1024 / 1024)}MB`);
+        bytes = await handle.readFile();
+        // 열고 나서 자란 파일 — 한도를 다시 본다.
+        if (bytes.length > maxBytes) return fail('too_large', `the file exceeds ${Math.floor(maxBytes / 1024 / 1024)}MB`);
+      } catch {
+        return fail('read_failed', `could not read ${args.path}`);
+      } finally {
+        await handle.close().catch(() => {});
+      }
 
       const filename = safeFilename(typeof args.filename === 'string' ? args.filename : resolved.path);
       const contentType = contentTypeFor(filename);
-      let bytes: Buffer;
-      try { bytes = await readFile(resolved.path); } catch {
-        return fail('read_failed', `could not read ${args.path}`);
-      }
       const form = multipart(filename, contentType, bytes);
       const res = await deps.forward(agentId, {
         type: 'http.forward', id: randomUUID(), method: 'POST', path: '/uploads',

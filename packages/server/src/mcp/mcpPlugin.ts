@@ -679,6 +679,12 @@ function buildMcpServer(
       return postFailureResult(posted.failure);
     }
     const { message, notified, replayed } = posted;
+    if (replayed && uploaded) {
+      // 같은 요청의 재생이다 — 글은 앞서 만든 것이고, 방금 쓴 업로드는 아무 글에도 붙지 않았다. 지금 지운다
+      // (security #1050 b: GC 가 치우긴 하지만 남길 이유가 없다).
+      await pool.query(`delete from attachment where id = $1 and message_id is null`, [uploaded.id]).catch(() => {});
+      await storage.remove(uploaded.storageKey).catch(() => {});
+    }
     if (!replayed) {
       const audience = await audienceFor(pool, channelId);
       emitPosted(posted, audience);
