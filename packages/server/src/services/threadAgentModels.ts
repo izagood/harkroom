@@ -46,6 +46,29 @@ export function cleanAxis(value: string | null | undefined, max: number): string
   return v.length === 0 ? null : v.slice(0, max);
 }
 
+/**
+ * 모델·effort 값의 문자 집합(security 검토 ②). 이 값은 **러너 argv** 로 간다(`--model X`·`-m X`·
+ * `-c model_reasoning_effort=…`). 결정 3 으로 채널의 사람 누구나 넣을 수 있고, 하네스 목록이
+ * 없으면 자유 입력을 받으므로, 여기서 모양을 묶는다:
+ * - 첫 글자가 영숫자여야 한다 — `-` 로 시작하면 하네스가 **다른 플래그**로 읽는다.
+ * - 따옴표·공백·개행·`=` 를 받지 않는다 — TOML 오버라이드(`-c`)와 argv 경계를 깨지 않게.
+ * 실재 이름은 다 들어온다: `opus` · `claude-opus-5[1m]` · `gpt-5.5` · `rro/openai/gpt-oss-120b` · `xhigh`.
+ */
+export const AXIS_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]*$/;
+
+export function axisValid(value: string | null): boolean {
+  return value === null || AXIS_PATTERN.test(value);
+}
+
+/** 이 채널의 **최상위** 글인가 — 스레드 루트로 받는 모든 경로가 이것으로 채널과 묶는다(security 검토 ①). */
+export async function isChannelRoot(db: Pool | PoolClient, channelId: string, rootId: string): Promise<boolean> {
+  const res = await db.query(
+    `select 1 from message where id = $1 and channel_id = $2 and thread_root_id is null and deleted_at is null`,
+    [rootId, channelId],
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
 export type SetThreadAgentModelResult =
   | { ok: true; row: ThreadAgentModelView | null }
   | { ok: false; reason: 'not_found' | 'not_an_agent' | 'not_a_root' };

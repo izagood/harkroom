@@ -88,6 +88,40 @@ describe('thread agent model', () => {
     expect(onReply.statusCode).toBe(404);
   });
 
+  it('루트는 경로의 채널에 묶인다 — 다른(비공개) 채널의 rootId 로 GET·DELETE 하면 404 (security ①)', async () => {
+    // 비공개 채널 B: admin 만 멤버다. mina 는 B 를 못 본다.
+    const priv = await app.inject({ method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'secret-b', visibility: 'private' } });
+    expect(priv.statusCode).toBe(201);
+    const chB = priv.json().id as string;
+    const rootB = (await app.inject({ method: 'POST', url: `/channels/${chB}/messages`, headers: auth(adminToken), payload: { body: 'b root' } })).json().id as string;
+    const putB = await app.inject({ method: 'PUT', url: `/channels/${chB}/threads/${rootB}/agent-models/${fizz.accountId}`, headers: auth(adminToken), payload: { model: 'opus' } });
+    expect(putB.statusCode).toBe(200);
+    // mina 는 볼 수 있는 채널(models)의 경로에 B 의 rootId 를 넣는다.
+    const peek = await app.inject({ method: 'GET', url: modelsUrl(rootB), headers: auth(member.token) });
+    expect(peek.statusCode).toBe(404);
+    const wipe = await app.inject({ method: 'DELETE', url: modelsUrl(rootB, fizz.accountId), headers: auth(member.token) });
+    expect(wipe.statusCode).toBe(404);
+    const still = await pool.query(`select 1 from thread_agent_model where thread_root_id = $1`, [rootB]);
+    expect(still.rowCount).toBe(1);
+  });
+
+  it('argv 로 갈 값의 모양을 묶는다 — `-` 로 시작·따옴표·공백·개행·`=` 는 400, 실재 이름은 받는다 (security ②)', async () => {
+    const root = (await post(member.token, { body: 'root-argv' })).json().id as string;
+    for (const bad of ['--dangerously-skip-permissions', 'opus"', 'a b', 'a\nb', 'x=y']) {
+      const res = await app.inject({ method: 'PUT', url: modelsUrl(root, fizz.accountId), headers: auth(member.token), payload: { model: bad } });
+      expect(res.statusCode, bad).toBe(400);
+      expect(res.json().error.code).toBe('bad_model_value');
+    }
+    const badEffort = await app.inject({ method: 'PUT', url: modelsUrl(root, fizz.accountId), headers: auth(member.token), payload: { effort: '"; rm' } });
+    expect(badEffort.statusCode).toBe(400);
+    const viaPost = await post(member.token, { body: '@fizz x', agentModels: [{ agentId: fizz.accountId, model: '-c', effort: null }] });
+    expect(viaPost.statusCode).toBe(400);
+    for (const ok of ['claude-opus-5[1m]', 'rro/openai/gpt-oss-120b', 'gpt-5.5']) {
+      const res = await app.inject({ method: 'PUT', url: modelsUrl(root, fizz.accountId), headers: auth(member.token), payload: { model: ok } });
+      expect(res.statusCode, ok).toBe(200);
+    }
+  });
+
   it('두 축을 다 비우면 풀리고, 없던 것을 DELETE 하면 404', async () => {
     const root = (await post(member.token, { body: 'root3' })).json().id as string;
     await app.inject({ method: 'PUT', url: modelsUrl(root, fizz.accountId), headers: auth(member.token), payload: { model: 'opus' } });

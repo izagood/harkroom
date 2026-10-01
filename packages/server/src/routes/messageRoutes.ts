@@ -10,7 +10,7 @@ import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { normalizeSearchQuery } from '../services/mentions.js';
 import { extractUrls, queueLinkPreviewFetch } from '../services/linkPreview.js';
-import { cleanAxis, clearThreadAgentModel, setThreadAgentModel } from '../services/threadAgentModels.js';
+import { axisValid, cleanAxis, clearThreadAgentModel, setThreadAgentModel } from '../services/threadAgentModels.js';
 import { agentModelInput, announceChange, checkOffered, emitChanged } from './threadAgentModelRoutes.js';
 import type { OperatorHub } from '../ws/operatorHub.js';
 
@@ -55,6 +55,10 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
         return reply.code(403).send({ error: { code: 'human_only', message: '모델 지정은 사람만 바꾼다' } });
       }
       for (const m of agentModels) {
+        // argv 로 가는 값의 모양(security 검토 ②) — PUT 과 같은 검사다.
+        if (!axisValid(m.model) || !axisValid(m.effort)) {
+          return reply.code(400).send({ error: { code: 'bad_model_value', message: '모델·effort 는 영숫자로 시작하고 영숫자·._:/[]- 만 쓴다' } });
+        }
         const offered = await checkOffered(pool, deps.operatorHub, m.agentId, m.model, m.effort);
         if (!offered.ok) return reply.code(400).send({ error: { code: offered.code, message: offered.message } });
       }

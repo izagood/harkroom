@@ -16,7 +16,7 @@ import { assignmentOf } from '../services/agents.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { postMessage } from '../services/messages.js';
 import {
-  clearThreadAgentModel, cleanAxis, effectiveAgentModel, listThreadAgentModels, setThreadAgentModel, threadRootOf,
+  axisValid, clearThreadAgentModel, cleanAxis, effectiveAgentModel, isChannelRoot, listThreadAgentModels, setThreadAgentModel, threadRootOf,
 } from '../services/threadAgentModels.js';
 import type { OperatorHub } from '../ws/operatorHub.js';
 
@@ -100,6 +100,9 @@ export async function registerThreadAgentModelRoutes(
     if (!(await assertChannelVisible(pool, id, req.account!.id))) {
       return refuse(reply, 403, 'forbidden', 'not a member of this dm channel');
     }
+    // **루트를 이 채널에 묶는다**(security 검토 ①). 채널 권한만 보면 볼 수 있는 채널 A 의 경로에
+    // 비공개 채널 B 의 rootId 를 넣어 B 스레드의 지정을 읽을 수 있다.
+    if (!(await isChannelRoot(pool, id, rootId))) return refuse(reply, 404, 'not_a_root', '그 채널의 최상위 글이 아니다');
     return { agentModels: await listThreadAgentModels(pool, rootId) };
   });
 
@@ -114,6 +117,9 @@ export async function registerThreadAgentModelRoutes(
     if (gate === 'archived') return refuse(reply, 403, 'channel_archived', 'archived channels are read-only');
     const model = cleanAxis(parsed.data.model, MODEL_ID_MAX);
     const effort = cleanAxis(parsed.data.effort, EFFORT_MAX);
+    if (!axisValid(model) || !axisValid(effort)) {
+      return refuse(reply, 400, 'bad_model_value', '모델·effort 는 영숫자로 시작하고 영숫자·._:/[]- 만 쓴다');
+    }
     const offered = await checkOffered(pool, deps.operatorHub, agentId, model, effort);
     if (!offered.ok) return refuse(reply, 400, offered.code, offered.message);
     const result = await setThreadAgentModel(pool, { channelId: id, threadRootId: rootId, agentId, model, effort, setBy: req.account!.id });
@@ -138,6 +144,8 @@ export async function registerThreadAgentModelRoutes(
     const gate = await channelPostGate(pool, id, req.account!.id);
     if (gate === 'forbidden') return refuse(reply, 403, 'forbidden', 'not a member of this dm channel');
     if (gate === 'archived') return refuse(reply, 403, 'channel_archived', 'archived channels are read-only');
+    // 루트를 이 채널에 묶는다(security 검토 ①) — 남의 비공개 채널 스레드의 지정을 지우지 못하게.
+    if (!(await isChannelRoot(pool, id, rootId))) return refuse(reply, 404, 'not_a_root', '그 채널의 최상위 글이 아니다');
     if (!(await clearThreadAgentModel(pool, rootId, agentId))) {
       return refuse(reply, 404, 'not_found', 'no model is set for that agent in this thread');
     }
