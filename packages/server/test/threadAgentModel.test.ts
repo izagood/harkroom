@@ -118,7 +118,7 @@ describe('thread agent model', () => {
     await app.inject({ method: 'PUT', url: modelsUrl(root, other.accountId), headers: auth(member.token), payload: { model: 'opus' } });
     await app.inject({ method: 'PATCH', url: `/accounts/agents/${other.accountId}`, headers: auth(adminToken), payload: { harness: 'codex', model: 'gpt-5.5' } });
     const list = await app.inject({ method: 'GET', url: modelsUrl(root), headers: auth(member.token) });
-    expect(list.json().agentModels[0]).toMatchObject({ model: 'opus', harness: 'claude-code', stale: true });
+    expect(list.json().agentModels[0]).toMatchObject({ model: 'opus', harness: 'claude-code', currentHarness: 'codex', stale: true });
     const eff = await app.inject({ method: 'GET', url: `/agent/thread-model?messageId=${root}`, headers: auth(other.pat) });
     expect(eff.json().model).toBe('gpt-5.5');
   });

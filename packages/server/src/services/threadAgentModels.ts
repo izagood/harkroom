@@ -13,6 +13,7 @@ import { EFFORT_MAX, MODEL_ID_MAX, type EffectiveAgentModel, type ThreadAgentMod
 
 const COLS = `t.thread_root_id as "threadRootId", t.agent_id as "agentId", t.harness, t.model, t.effort,
   t.set_by as "setBy", t.set_at as "setAt",
+  coalesce(c.harness, 'claude-code') as "currentHarness",
   (t.harness is distinct from coalesce(c.harness, 'claude-code')) as stale`;
 const FROM = `from thread_agent_model t left join agent_config c on c.account_id = t.agent_id`;
 

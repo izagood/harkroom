@@ -1537,6 +1537,8 @@ export interface ThreadAgentModelView {
   setBy: string | null;
   setAt: string;
   stale: boolean;
+  /** 에이전트의 **지금** 하네스. `stale` 일 때 "하네스가 X 로 바뀌어…" 를 말하는 재료다. */
+  currentHarness: AgentHarness;
 }
 
 /**
