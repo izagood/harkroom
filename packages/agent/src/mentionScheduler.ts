@@ -14,13 +14,15 @@ import { mentionAnchor, type MentionTarget, type MentionTurnDeps, type MentionTu
 import { SessionStore } from './sessions.js';
 import type { TurnRegistry } from './turnRegistry.js';
 import type { MentionQueue } from './mentionQueue.js';
-import { withAccountFailover, type ClaudeAccount } from './claudeAccounts.js';
+import { accountFailureOf, accountTrailOf, withAccountFailover, type ClaudeAccount } from './claudeAccounts.js';
 import {
-  controlHeldNotice, controlledNotice, FAILURE_NOTICE, quotaNotice, retryNotice, retryReason,
+  accountTrailReason, controlHeldNotice, controlledNotice, FAILURE_NOTICE, quotaNotice, retryNotice, retryReason,
+  withAccountTrail,
   sessionConflictNotice, stallNotice, threadModelRejectedNotice,
 } from './prompt.js';
 import { exhausted, isHarnessStall, isQuotaExhausted, isSessionIdConflict, isThreadModelRejected, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
 import type { SecretLeases } from './secretLeases.js';
+import { PromptNotDeliveredError } from './pty.js';
 
 /**
  * `tried` 번 실패한 entry 가 다음 시도까지 쉬는 시간(ms).
@@ -305,8 +307,9 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         (account, isLastAccount) => deps.runMentionTurn(
           deps.buildTurnDeps({ ctx, mention, account, isLastAccount }), target,
         ),
-        (from, to) => console.error(
-          `  ${mention.id} 계정 전환: ${from?.name ?? '(기본)'} → ${to?.name ?? '(기본)'}`,
+        // 이유는 종류만 적는다 — 화면 원문은 조직 설정 값을 담을 수 있다(`AccountFailureKind`).
+        (from, to, why) => console.error(
+          `  ${mention.id} 계정 전환: ${from?.name ?? '(기본)'} → ${to?.name ?? '(기본)'} (이유: ${why ?? '알 수 없음'})`,
         ),
       );
       await deps.harkroom.markRead([entryId]);
@@ -327,6 +330,18 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       await deps.hooks.noticeHarnessLogin(err, mention.channelId, anchor, mention.id);
       deps.hooks.exitIfUnrecoverable(err);
 
+      // 계정 축을 넘겼으면 계정마다의 이유(종류만)를 한 줄로 남긴다 — 마지막 오류만 보면
+      // 앞 계정이 사람 손으로 풀리는 관문이었다는 사실이 사라진다(2026-10-01, `AccountFailureKind`).
+      const trail = accountTrailOf(err);
+      if (trail.length) {
+        console.error(`  ${mention.id} 계정 축 소진: ${trail.map((f) => `${f.account ?? '(기본)'}=${f.kind}${f.resetsAt ? `(${f.resetsAt})` : ''}`).join(', ')}`);
+      }
+      // 사람이 보는 자리(스레드·로그)에 싣는 오류 문장. **준비 실패는 화면 원문을 담으므로**
+      // (`PromptNotDeliveredError.tail` — 조직 설정 값이 있을 수 있다) 종류만 남긴다.
+      const errText = err instanceof PromptNotDeliveredError
+        ? `TUI 준비 신호를 못 봤다(${accountFailureOf(err)?.kind ?? err.kind}, ${err.waitedMs}ms)`
+        : err instanceof Error ? err.message : String(err);
+
       // 사용량 한도는 **재시도 회계에 넣지 않는다.** 3회가 5초 안에 끝나므로 한도가 풀릴 리
       // 없고, 태운 끝에 남는 "운영자 확인이 필요합니다"는 사람이 할 일을 잘못 가리킨다 —
       // 여기서 할 일은 기다리는 것뿐이다.
@@ -336,10 +351,11 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         // **평문이 아니라 실패로 남긴다**(2026-09-09) — 아래 세 통지가 모두 같은 이유로
         // 바뀌었다: 러너가 답을 못 낸 사실을 평문으로 올리면 스레드 머리는 `끝남` 이 된다
         // (`harkroom.ts::fail` 주석의 실측). 한도는 풀린 뒤 다시 부르면 되므로 retryable 이다.
-        await deps.harkroom.fail(mention.channelId, quotaNotice(quota.resetsAt), anchor, {
+        await deps.harkroom.fail(mention.channelId, withAccountTrail(quotaNotice(quota.resetsAt), trail), anchor, {
           retryable: true,
           what: '사용량 한도로 답하지 못했다',
-          reason: quota.resetsAt === null ? '한도가 풀리는 시각을 읽지 못했다' : `${quota.resetsAt} 에 풀린다`,
+          reason: accountTrailReason(trail)
+            ?? (quota.resetsAt === null ? '한도가 풀리는 시각을 읽지 못했다' : `${quota.resetsAt} 에 풀린다`),
         }).catch((e: unknown) => {
           console.error(`  ${mention.id} 한도 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);
         });
@@ -415,14 +431,14 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         return;
       }
 
-      console.error(`  ${mention.id} 답변 실패 (${tried}/${MAX_ATTEMPTS}):`, err instanceof Error ? err.message : err);
+      console.error(`  ${mention.id} 답변 실패 (${tried}/${MAX_ATTEMPTS}):`, errText);
       if (exhausted(tried)) {
         // 한도까지 실패하면 읽음 처리해 흘려보낸다 — 안 그러면 이 항목이 큐를 막는다.
         console.error(`  ${mention.id} 포기하고 읽음 처리한다`);
-        await deps.harkroom.fail(mention.channelId, FAILURE_NOTICE, anchor, {
+        await deps.harkroom.fail(mention.channelId, withAccountTrail(FAILURE_NOTICE, trail), anchor, {
           retryable: false,
           what: `${MAX_ATTEMPTS}회 시도 끝에 답하지 못했다`,
-          reason: retryReason(err instanceof Error ? err.message : String(err)) ?? undefined,
+          reason: retryReason(errText) ?? undefined,
         }).catch((e: unknown) => {
           console.error(`  ${mention.id} 실패 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);
         });
@@ -460,12 +476,12 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
          */
         await deps.harkroom.fail(
           mention.channelId,
-          retryNotice(tried, MAX_ATTEMPTS, retryReason(err instanceof Error ? err.message : String(err))),
+          withAccountTrail(retryNotice(tried, MAX_ATTEMPTS, retryReason(errText)), trail),
           anchor,
           {
             retryable: true,
             what: '멘션에 답하지 못하고 턴이 끝났다',
-            reason: retryReason(err instanceof Error ? err.message : String(err)) ?? undefined,
+            reason: retryReason(errText) ?? undefined,
           },
         ).catch((e: unknown) => {
           console.error(`  ${mention.id} 재시도 통지 발화 실패(재시도는 계속된다):`,

@@ -21,7 +21,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-import { looksLikeGate, looksReadyForPrompt, runPtyTurn } from '../src/pty.js';
+import { looksLikeGate, looksReadyForPrompt, PromptNotDeliveredError, runPtyTurn } from '../src/pty.js';
 
 /** 가짜 하네스. `pty.test.ts` 가 쓰는 것과 같은 파일이다. */
 const fake = new URL('./helpers/fake-harness.mjs', import.meta.url).pathname;
@@ -135,6 +135,18 @@ describe('관문을 보면 상한을 기다리지 않는다 (부를 사람이 �
     // 상한(15초)이 아니라 관문 시계로 접혔다.
     expect(Date.now() - startedAt).toBeLessThan(5_000);
     expect(Buffer.concat(chunks).toString('utf8')).not.toContain('NEVER_SEND_THIS');
+  }, 20_000);
+
+  it('관문으로 접힌 실패는 kind=waiting 이다 — 상한으로 접힌 것(timeout)과 사람에게 다르게 말한다', async () => {
+    // 2026-10-02: 계정 축이 다 돈 뒤 "계정마다 이유"를 말할 재료(`accountFailureOf`). 관문이면
+    // 사람이 한 번 답하면 풀리고, timeout 이면 그렇다고 말할 근거가 없다.
+    const err = await runPtyTurn(themePlan(), {
+      cwd: process.cwd(),
+      timeoutMs: 20_000,
+      injectPrompt: { text: 'NEVER_SEND_THIS', readyTimeoutMs: 15_000, gateFailMs: 300 },
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(PromptNotDeliveredError);
+    expect((err as PromptNotDeliveredError).kind).toBe('waiting');
   }, 20_000);
 
   it('부를 사람이 있으면 빨리 접지 않는다 — 화면을 살려 두고 상한에서 부른다', async () => {

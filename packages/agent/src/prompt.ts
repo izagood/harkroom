@@ -8,6 +8,8 @@
 // 스스로 올린다 — 그래서 시스템 프롬프트가 "어디에 쓸지"까지 알려줘야 한다.
 import { messagePermalink, type MessageRow, type InboxTeamCall, type InboxDelegationOutcome, type InboxDelegatedBy } from '@harkroom/shared';
 
+import type { AccountFailure } from './claudeAccounts.js';
+
 /** 서버의 메시지 본문 상한(`POST /channels/:id/messages` 의 zod `max(8000)`). 넘기면 발화가 실패한다. */
 export const BODY_LIMIT = 8000;
 
@@ -285,6 +287,38 @@ export function threadModelRejectedNotice(model: string | null, effort: string |
   const why = apiError.replace(/\s+/g, ' ').trim().slice(0, RETRY_REASON_MAX_CHARS);
   return `(이 스레드에 지정한 모델 ${value} 을 하네스가 받지 않아 답하지 못했습니다 — 다시 시도하지 않습니다. `
     + `스레드 머리의 모델 칩에서 기본으로 되돌리거나 다른 모델을 골라 다시 불러 주세요. 하네스: ${why})`;
+}
+
+/** 계정 이유 한 칸의 말(종류만 — 화면 원문은 싣지 않는다, `claudeAccounts.ts::AccountFailureKind`). */
+function accountFailureText(f: AccountFailure): string {
+  const who = f.account ?? '(기본 계정)';
+  switch (f.kind) {
+    case 'gate': return `${who}: 설정 확인 화면에서 사람의 선택을 기다림`;
+    case 'quota': return f.resetsAt === null ? `${who}: 사용량 한도` : `${who}: 사용량 한도(${f.resetsAt} 에 풀림)`;
+    case 'credential': return `${who}: 로그인이 풀림`;
+    case 'timeout': return `${who}: 입력창이 뜨지 않음(시간 초과)`;
+  }
+}
+
+/**
+ * 계정 축이 다 돈 뒤 **계정마다 왜 못 했나**를 덧붙인다(2026-10-02). 축을 안 넘겼으면 원문 그대로다.
+ *
+ * 2026-10-01 에 스레드에는 마지막 계정의 "11pm 에 풀립니다"만 남았고, 사람 손으로 바로 풀리는
+ * 계정(첫 실행 승인 화면)이 있다는 사실은 러너 로그에도 없었다. 관문이 하나라도 있으면 할 일을
+ * 함께 적는다 — 기다리는 것보다 그쪽이 빠르다.
+ */
+export function withAccountTrail(notice: string, trail: readonly AccountFailure[]): string {
+  if (!trail.length) return notice;
+  const lines = trail.map((f) => `- ${accountFailureText(f)}`);
+  const gate = trail.some((f) => f.kind === 'gate')
+    ? ['설정 확인 화면에 선 계정은 그 계정으로 claude 를 터미널에서 한 번 실행해 화면의 물음에 답하면 풀립니다. 그 뒤 다시 불러 주세요.']
+    : [];
+  return [notice, '계정별 이유:', ...lines, ...gate].join('\n');
+}
+
+/** 실패 카드의 `reason` 한 줄 — 같은 사실을 짧게(종류만). */
+export function accountTrailReason(trail: readonly AccountFailure[]): string | null {
+  return trail.length ? trail.map(accountFailureText).join(' · ') : null;
 }
 
 /** 재시도 통지에 싣는 사유의 최대 길이. 한 줄로 읽히는 만큼만 남긴다. */

@@ -12,6 +12,7 @@ import { TurnRegistry } from '../src/turnRegistry.js';
 import { MentionQueue } from '../src/mentionQueue.js';
 import type { InboxBatch } from '../src/harkroom.js';
 import type { MentionTurnResult } from '../src/mentionTurn.js';
+import { PromptNotDeliveredError } from '../src/pty.js';
 
 const CH = 'ch-1';
 
@@ -670,5 +671,60 @@ describe('mentionScheduler 스레드별 계정 순서(C ②)', () => {
     await scheduler.drain();
     expect(asked).toEqual([`${CH}/root-9`]);
     expect(tried).toEqual(['b']);
+  });
+});
+
+// ── 계정 축이 다 돈 실패의 통지(2026-10-02). 2026-10-01 에 배정 1등 계정이 첫 실행 승인
+// 화면에 서 있었는데, 스레드에는 마지막 계정의 "11pm 에 풀립니다"만 남아 사람이 바로 풀 수
+// 있는 계정이 있다는 사실이 가려졌다.
+describe('계정 축 소진 통지', () => {
+  const SECRET = 'ORG-SETTING-https://collector.example.com/v1';
+  const quota = (at: string) => Object.assign(new Error('harness 종료 1'), {
+    harnessApiError: `You've hit your session limit · resets ${at} (Asia/Seoul)`,
+  });
+  const lane = ['gated', 'plum', 'lychee'].map((name) => ({ name, configDir: `/tmp/${name}` }));
+
+  it('한도로 끝나도 계정마다 이유를 싣고, 관문 계정이 있으면 할 일을 적는다 — 화면 원문은 싣지 않는다', async () => {
+    const errs: unknown[] = [new PromptNotDeliveredError(300, SECRET, 'waiting'), quota('11:10pm'), quota('11pm')];
+    const h = harness({ runTurn: async () => { throw errs.shift(); }, lane });
+    await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await h.scheduler.drain();
+
+    expect(h.failed).toHaveLength(1);
+    const body = h.failed[0]!.body;
+    expect(body).toContain('11pm (Asia/Seoul) 에 풀립니다');
+    expect(body).toContain('gated: 설정 확인 화면에서 사람의 선택을 기다림');
+    expect(body).toContain('plum: 사용량 한도(11:10pm (Asia/Seoul) 에 풀림)');
+    expect(body).toContain('lychee: 사용량 한도(11pm (Asia/Seoul) 에 풀림)');
+    expect(body).toContain('터미널에서 한 번 실행해');
+    expect(body).not.toContain('collector');
+    // 한도는 기다리면 낫는다 — 재시도 가능으로 남기고 읽음 처리한다(기존 갈래 그대로).
+    expect(h.failed[0]!.retryable).toBe(true);
+    expect(h.markedRead).toEqual([1]);
+  });
+
+  it('관문이 없으면 할 일 줄을 싣지 않는다', async () => {
+    const errs: unknown[] = [quota('11:10pm'), quota('11pm'), quota('10pm')];
+    const h = harness({ runTurn: async () => { throw errs.shift(); }, lane });
+    await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.failed[0]!.body).toContain('계정별 이유:');
+    expect(h.failed[0]!.body).not.toContain('터미널');
+  });
+
+  it('계정이 하나면 지금 문구 그대로다', async () => {
+    const h = harness({ runTurn: async () => { throw quota('11pm'); }, lane: [lane[0]!] });
+    await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.failed[0]!.body).toBe('(사용량 한도에 걸렸습니다 — 11pm (Asia/Seoul) 에 풀립니다. 그 뒤에 다시 불러 주세요)');
+  });
+
+  it('준비 실패가 재시도 통지로 가도 화면 원문 대신 종류만 싣는다', async () => {
+    const h = harness({ runTurn: async () => { throw new PromptNotDeliveredError(60_000, SECRET); } });
+    await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.failed).toHaveLength(1);
+    expect(h.failed[0]!.body).toContain('TUI 준비 신호를 못 봤다(timeout, 60000ms)');
+    expect(h.failed[0]!.body).not.toContain('collector');
   });
 });
