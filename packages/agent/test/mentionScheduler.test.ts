@@ -477,6 +477,38 @@ describe('mentionScheduler 승인 관문', () => {
     expect(발화[0]!.body).toContain('10분');
   });
 
+  it('스레드 지정 모델 거절은 재시도하지 않고 기계가 읽는 표지(code)를 실어 실패로 남긴다(결정 6)', async () => {
+    const markedRead: number[] = [];
+    const 발화: { body: string; retryable: boolean; code?: string }[] = [];
+    let 시도 = 0;
+    const scheduler = createMentionScheduler({
+      harkroom: {
+        markRead: async (ids) => { markedRead.push(...ids); return ids.length; },
+        post: async () => 1,
+        fail: async (_c, body, _a, o) => { 발화.push({ body, retryable: o.retryable, code: o.code }); return 1; },
+      },
+      registry: new TurnRegistry(),
+      queue: new MentionQueue(),
+      accountLane: [null],
+      runMentionTurn: async () => {
+        시도 += 1;
+        throw Object.assign(new Error('harness API 에러'), {
+          harnessApiError: "There's an issue with the selected model (bogus).",
+          threadModel: { model: 'bogus', effort: null, source: { model: 'thread', effort: 'agent' } },
+        });
+      },
+      buildTurnDeps: () => ({}) as never,
+      hooks: { stopRequested: () => {}, exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {} },
+      startedAtMs: 0,
+    });
+    await scheduler.admit(batchOf([{ entryId: 7, messageId: 'm-model' }]), ctx);
+    await scheduler.drain();
+    expect(시도).toBe(1);
+    expect(markedRead).toEqual([7]);
+    expect(발화).toEqual([expect.objectContaining({ retryable: false, code: 'thread_model_rejected' })]);
+    expect(발화[0]!.body).toContain('bogus');
+  });
+
   it('정지 분기는 재시도 회계 앞에서 빠진다 — 순서가 계약이다', async () => {
     // `credentialNoticeWiring` 의 한도 회귀선과 같은 판례다: 분기가 `답변 실패 (n/MAX)`
     // 줄 **앞**에서 `return` 해야 3회를 태우지 않는다. 뒤로 밀리면 통지 문구는 그대로인데

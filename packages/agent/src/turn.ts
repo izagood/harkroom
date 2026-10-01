@@ -321,7 +321,10 @@ const CODEX_PRESET: HarnessPreset = {
   // 실물로 봤을 뿐 나머지는 모른다. 값이 틀려도 조용하지 않다 — codex 가 알 수 없는 값이면
   // 턴 시작 자체가 크게 실패하므로(무시된 채 다른 값으로 도는 조용한 오동작이 아니다) 이
   // 미확인은 감수 가능하다고 판단했다.
-  effort: (effort) => (effort ? ['-c', `model_reasoning_effort="${effort}"`] : []),
+  // **값을 TOML 문자열로 인용한다**(security #968 ③). `"${effort}"` 로 끼우면 따옴표·개행이 든 값이
+  // 오버라이드를 깨고 다른 키를 심는다 — 스레드 지정(079)으로 채널의 사람이 넣는 값이 여기로 온다.
+  // JSON 문자열은 TOML 기본 문자열과 이스케이프가 같다.
+  effort: (effort) => (effort ? ['-c', `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
   // avcs workspace 는 git 저장소가 아니다 — codex 가 cwd 를 "신뢰되지 않은 디렉터리"
   // ("Not inside a trusted directory and --skip-git-repo-check was not specified.")로
   // 거부한다. `avcs workspace project` 가 만드는 격리 경로가 정확히 이 경우고, 그건 폴백이

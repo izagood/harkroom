@@ -16,6 +16,7 @@
 // mentionTurn.ts::runMentionTurn 에 있다: main.ts 는 top-level await 로 접속·설정 파일
 // 쓰기 같은 부작용을 곧바로 일으키므로, 그 흐름을 여기 두면 테스트가 import 하는 순간
 // 진짜 서버에 붙으려 든다.
+import { resolveTurnModel } from './threadModel.js';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { access, readdir } from 'node:fs/promises';
@@ -471,8 +472,11 @@ const scheduler = createMentionScheduler({
   // 모델은 매 턴 정의에서 읽는다 — 모델별 주간 창(Opus 등)이 있으면 그것까지 본다. 못 읽으면
   // `weekly` 만 본다(턴은 어차피 정의를 다시 읽는다). 배정기도 같은 축을 받고, 고른 뒤에도
   // 지운 계정을 한 번 더 거른다(읽은 뒤 턴 사이에 지워질 수 있다).
-  laneFor: async (key) => presentAccounts(await accountAssigner.laneFor(
-    key, await harkroom.definition().then((d) => d.model, () => null),
+  // 스레드 지정(079)이 있으면 그 모델로 본다 — 실패하면 정의로, 그것도 못 읽으면 `weekly` 만 본다.
+  laneFor: async (key, anchor) => presentAccounts(await accountAssigner.laneFor(
+    key, await harkroom.definition()
+      .then((d) => resolveTurnModel(harkroom, d, anchor ?? null))
+      .then((m) => m.model, () => null),
   )),
   runMentionTurn,
   // 계정별로 갈리는 두 필드(`claudeAccount`·`claudeConfigDir`)만 계정 축이 채운다 —

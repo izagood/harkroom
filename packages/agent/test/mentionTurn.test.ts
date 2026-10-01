@@ -315,6 +315,34 @@ async function getPlanContent(
 }
 
 describe('runMentionTurn', () => {
+  it('스레드 지정 모델(079)이 argv 로 간다 — 채널 최상위 멘션이면 그 멘션 id 로 묻는다', async () => {
+    const fake = new FakeHarkroom(defOf({ model: 'sonnet', effort: 'medium' }));
+    fake.seedFrom('human-1', '@forge 고도화');
+    const asked: string[] = [];
+    Object.assign(fake, {
+      threadModel: async (id: string) => {
+        asked.push(id);
+        return { model: 'opus', effort: 'xhigh', source: { model: 'thread', effort: 'thread' } };
+      },
+    });
+    const { deps, plans, runTurn } = await makeDeps(fake);
+    runTurn.script = async () => { await fake.post(CHANNEL, '네', null); return { exitCode: 0, timedOut: false, tail: '' }; };
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(asked).toEqual([MENTION]);
+    expect(plans[0]!.args.join(' ')).toContain('--model opus');
+    expect(plans[0]!.args.join(' ')).toContain('--effort xhigh');
+  });
+
+  it('스레드 지정을 못 읽으면(옛 서버) 에이전트 설정으로 돈다', async () => {
+    const fake = new FakeHarkroom(defOf({ model: 'sonnet', effort: null }));
+    fake.seedFrom('human-1', '@forge 안녕');
+    Object.assign(fake, { threadModel: async () => { throw new Error('agent/thread-model 실패: 404'); } });
+    const { deps, plans, runTurn } = await makeDeps(fake);
+    runTurn.script = async () => { await fake.post(CHANNEL, '네', null); return { exitCode: 0, timedOut: false, tail: '' }; };
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(plans[0]!.args.join(' ')).toContain('--model sonnet');
+  });
+
   // 시나리오 1
   it('첫 멘션: ensureWorkspace 1회 + 세션 생성 + 에이전트가 스스로 답을 올리면 NO_REPLY 없음', async () => {
     const fake = new FakeHarkroom(defOf());
