@@ -105,6 +105,9 @@ describe('artifact.publish', () => {
 
     expect(out.error).toBeUndefined();
     expect(out.artifact).toMatchObject({ version: 1 });
+    // 도구 결과(= 실시간 message.created 와 같은 행)에도 미리보기 메타가 실린다 — 빠지면 앱이 새로 읽기 전까지
+    // 카드 대신 html 칩을 그린다(2026-10-02 실측).
+    expect(out.message.attachments[0].artifact).toMatchObject({ artifactId: out.artifact.artifactId, version: 1 });
     const msg = await messageById(out.message.id);
     expect(msg.attachments).toHaveLength(1);
     const [att] = msg.attachments;
