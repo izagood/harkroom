@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { EFFORT_MAX, MAX_MESSAGE_BODY_CHARS, MENTION_EDIT_SKIPPED_HEADER, MODEL_ID_MAX, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@harkroom/shared';
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
-import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listInboxThreads, listMessages, markInboxRead, postMessage, searchMessages, SEARCH_MAX_OFFSET, BAD_THREAD_MESSAGE } from '../services/messages.js';
+import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listInboxThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, SEARCH_MAX_OFFSET, BAD_THREAD_MESSAGE } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -467,7 +467,39 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
     }).parse(req.query);
     const entries = await listInbox(pool, req.account!.id, { unreadOnly: q.unread ?? false });
     if (q.threads !== '1') return { entries };
-    return { entries, threads: await listInboxThreads(pool, req.account!.id, entries) };
+    const threads = await listInboxThreads(pool, req.account!.id, entries);
+    // 내 완료·나중에(089). 머리가 실린 스레드의 것만 — 걸러진 머리의 상태가 따로 새지 않게.
+    const threadStates = await listInboxThreadStates(pool, req.account!.id, threads.map((m) => m.id));
+    return { entries, threads, threadStates };
+  });
+
+  /**
+   * 스레드 하나의 **내** 처리 상태(Inbox 보드 2/2, 089). `state: null` 이면 지운다(되돌리기).
+   * 바꾸는 행은 언제나 부른 계정의 것이다 — 계정을 몸통으로 받지 않는다.
+   *
+   * 나중에는 깨어날 시각이 필수이고 **지금보다 뒤, 90일 안**이어야 한다: 지난 시각은 접자마자
+   * 다시 서는 버튼이 되고, 끝없는 미룸은 완료와 구별되지 않는다.
+   */
+  app.put('/inbox/threads/:rootId', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { rootId } = z.object({ rootId: z.string().uuid() }).parse(req.params);
+    const body = z.union([
+      z.object({ state: z.literal('done') }),
+      z.object({ state: z.literal('later'), until: z.string().datetime() }),
+      z.object({ state: z.null() }),
+    ]).parse(req.body);
+    if (body.state === 'later') {
+      const at = Date.parse(body.until);
+      if (!(at > Date.now()) || at > Date.now() + 90 * 86_400_000) {
+        return reply.code(400).send({ error: { code: 'bad_until', message: 'until must be in the future and within 90 days' } });
+      }
+    }
+    const result = await setInboxThreadState(pool, req.account!.id, rootId, body.state === null ? null : body);
+    if (result === 'not_found') return reply.code(404).send({ error: { code: 'not_found', message: 'no such message' } });
+    if (result === 'forbidden') return reply.code(403).send({ error: { code: 'forbidden', message: 'not visible' } });
+    if (result === 'not_root') return reply.code(400).send({ error: { code: 'not_root', message: 'not a thread root' } });
+    // 내 다른 기기의 보드도 따라오게 한다 — 같은 신호가 이미 보드의 조용한 재조회를 부른다.
+    emitEvent({ type: 'inbox.updated', accountId: req.account!.id });
+    return { state: result };
   });
 
   app.post('/inbox/read', { preHandler: app.requireAccount }, async (req, reply) => {

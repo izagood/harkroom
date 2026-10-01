@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type MessageRow } from '@harkroom/shared';
+import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow } from '@harkroom/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { getMentionPolicy } from './mentionPolicy.js';
 import { preemptWakesForThread } from './agentWakes.js';
@@ -2424,6 +2424,74 @@ export async function listInbox(
 }
 
 /** 읽음 처리된 항목 수를 돌려준다. account_id 스코프이므로 남의 entry id 는 아무 것도 지우지 않는다. */
+/**
+ * 내 스레드 처리 상태들(089) — `GET /inbox?threads=1` 이 머리와 함께 싣는다. **지금 볼 수 있는
+ * 채널의 것만** 낸다(`listInboxThreads` 와 같은 이유, security F1): 나간 채널의 상태 행이 남아
+ * 있어도 그 존재가 응답에 새지 않게 한다.
+ */
+export async function listInboxThreadStates(pool: Pool, accountId: string, rootIds: string[]): Promise<InboxThreadState[]> {
+  if (rootIds.length === 0) return [];
+  const res = await pool.query(
+    `select s.root_id as "rootId", s.state, s.until, s.updated_at as "updatedAt"
+       from inbox_thread_state s
+       join message m on m.id = s.root_id
+       join channel c on c.id = m.channel_id
+      where s.account_id = $1 and s.root_id = any($2::uuid[]) and ${channelVisibleSql('c', '$1')}`,
+    [accountId, rootIds],
+  );
+  return res.rows.map((r) => ({
+    rootId: r.rootId, state: r.state,
+    until: r.until ? new Date(r.until).toISOString() : null,
+    updatedAt: new Date(r.updatedAt).toISOString(),
+  }));
+}
+
+/** `setInboxThreadState` 가 거절한 이유. 라우트가 404·403 으로 옮긴다. */
+export type InboxThreadStateRefusal = 'not_found' | 'not_root' | 'forbidden';
+
+/**
+ * 내 스레드 처리 상태를 정한다(`null` 이면 지운다). **바꾸는 것은 언제나 부른 계정 자신의 행**이다 —
+ * 계정을 인자로 받지 않고 라우트가 `req.account` 를 넘기므로 남의 보드를 바꿀 길이 없다.
+ *
+ * 볼 수 없는 채널의 루트는 거절한다(`channelVisibleSql`). 안 그러면 루트 id 만 알면 그 채널에
+ * 무엇이 있는지(있다는 사실)를 응답 코드로 떠볼 수 있다 — 그래서 없는 것과 볼 수 없는 것을
+ * 가르지만, 볼 수 없는 채널의 루트인지는 루트가 있을 때만 말한다(메시지 링크 라우트와 같다).
+ */
+export async function setInboxThreadState(
+  pool: Pool, accountId: string, rootId: string,
+  next: { state: 'done' } | { state: 'later'; until: string } | null,
+): Promise<InboxThreadState | null | InboxThreadStateRefusal> {
+  const root = await pool.query<{ thread_root_id: string | null; visible: boolean }>(
+    `select m.thread_root_id, ${channelVisibleSql('c', '$2')} as visible
+       from message m join channel c on c.id = m.channel_id
+      where m.id = $1 and m.deleted_at is null`,
+    [rootId, accountId],
+  );
+  const row = root.rows[0];
+  if (!row) return 'not_found';
+  if (!row.visible) return 'forbidden';
+  if (row.thread_root_id !== null) return 'not_root';
+  if (next === null) {
+    await pool.query(`delete from inbox_thread_state where account_id = $1 and root_id = $2`, [accountId, rootId]);
+    return null;
+  }
+  const until = next.state === 'later' ? next.until : null;
+  const res = await pool.query(
+    `insert into inbox_thread_state (account_id, root_id, state, until)
+     values ($1, $2, $3, $4)
+     on conflict (account_id, root_id)
+       do update set state = excluded.state, until = excluded.until, updated_at = now()
+     returning root_id as "rootId", state, until, updated_at as "updatedAt"`,
+    [accountId, rootId, next.state, until],
+  );
+  const r = res.rows[0];
+  return {
+    rootId: r.rootId, state: r.state,
+    until: r.until ? new Date(r.until).toISOString() : null,
+    updatedAt: new Date(r.updatedAt).toISOString(),
+  };
+}
+
 export async function markInboxRead(pool: Pool, accountId: string, ids: number[]): Promise<number> {
   const res = await pool.query(
     `update inbox set read_at = now() where account_id = $1 and id = any($2) and read_at is null`,
