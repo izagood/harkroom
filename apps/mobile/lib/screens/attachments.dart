@@ -122,17 +122,50 @@ class _FullScreen extends StatelessWidget {
     final t = context.t;
     final api = context.app.api;
     return Scaffold(
+      // 레터박스는 검정이다. 흰 바탕 스크린샷이 흰 여백에 섞여 그림 끝이 안 보이지 않게.
+      backgroundColor: Colors.black,
       appBar: AppBar(title: Text(attachment.filename)),
-      body: Center(
-        child: api == null
-            ? Text(t.attachmentFailed)
-            : InteractiveViewer(
-                child: Image.network(
-                  api.attachmentUrl(attachment.id),
-                  headers: api.authHeaders,
-                  errorBuilder: (context, error, stack) => Text(t.attachmentFailed),
-                ),
-              ),
+      body: api == null
+          ? Center(child: Text(t.attachmentFailed, style: const TextStyle(color: Colors.white)))
+          : ImageViewport(
+              image: NetworkImage(api.attachmentUrl(attachment.id), headers: api.authHeaders),
+              errorText: t.attachmentFailed,
+            ),
+    );
+  }
+}
+
+/// 이미지를 본문 영역에 **맞춰(contain)** 띄우고 핀치로 키운다.
+///
+/// 크기를 이미지에게 맡기지 않는다. 예전에는 `Center > InteractiveViewer > Image`
+/// 로 fit 없이 두어 그림 크기가 이미지의 고유 크기와 느슨한 제약의 셈에 달려 있었다.
+/// 여기서는 본문 크기 그대로의 칸을 만들고 `BoxFit.scaleDown` 으로 그 안에 넣는다 —
+/// 가로로 긴 것도 세로로 긴 것도 처음에는 통째로 보이고, 남는 쪽은 띠로 남는다.
+/// 칸보다 작은 이미지는 **키우지 않는다** — 늘리면 뭉개져 깨진 것처럼 읽힌다.
+/// 더 보고 싶으면 핀치로 키운다. 맞춤보다 작게 오므리는 것은 쓸모가 없어 막는다.
+class ImageViewport extends StatelessWidget {
+  const ImageViewport({super.key, required this.image, required this.errorText});
+
+  final ImageProvider image;
+  final String errorText;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, box) => InteractiveViewer(
+        minScale: 1,
+        maxScale: 6,
+        child: SizedBox(
+          width: box.maxWidth,
+          height: box.maxHeight,
+          child: Image(
+            key: const Key('attachment-fullscreen-image'),
+            image: image,
+            fit: BoxFit.scaleDown,
+            errorBuilder: (context, error, stack) =>
+                Center(child: Text(errorText, style: const TextStyle(color: Colors.white))),
+          ),
+        ),
       ),
     );
   }
