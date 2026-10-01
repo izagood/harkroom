@@ -405,6 +405,10 @@ export class Controller {
         if (store.threadRootId === e.messageId) store.set({ threadRootId: null });
         break;
       }
+      case 'thread.status':
+        // 상태 리액션(D안) — 서버가 바뀐 순간에만 보낸다. 루트가 아직 없으면(안 받은 채널) 무시한다.
+        store.applyThreadStatus(e.channelId, e.rootId, e.statusReaction);
+        break;
       case 'reaction.added':
       case 'reaction.removed':
         store.applyReaction(e.channelId, e.messageId, e.emoji, e.accountId, e.type === 'reaction.added');

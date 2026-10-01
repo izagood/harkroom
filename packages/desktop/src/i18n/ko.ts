@@ -1539,6 +1539,20 @@ export const ko = {
   'thread.state.running': '도는 중',
   'thread.state.done': '끝남',
 
+  'threadStatus.label.received': '받음',
+  'threadStatus.label.running': '작업 중',
+  'threadStatus.label.waiting': '기다림',
+  'threadStatus.label.myTurn': '내 차례',
+  'threadStatus.label.stuck': '막힘',
+  'threadStatus.label.done': '완료',
+  'threadStatus.tip.myTurn': '{who:이가} 묻는다',
+  'threadStatus.tip.stuck': '{who} 실패',
+  'threadStatus.tip.waitingOn': '{other} 답을 기다림',
+  'threadStatus.tip.waitingWake': '{time}에 다시 본다',
+  'threadStatus.someone': '에이전트',
+  'threadStatus.aria': '스레드 상태: {sentence}',
+  'saved.unavailable': '이 채널을 볼 수 없어 내용을 보여 줄 수 없다',
+
   // ---------------------------------------------------------------------------
   // inbox — **키 순서는 `en.ts` 와 같다**. 여섯이 서로 달라야 한다는 것이 이 판정의
   // 존재 이유이고(*"네 줄이 글자 하나까지 똑같다"*), 원래 화면의 낱말이 이미 그렇다.

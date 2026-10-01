@@ -1,10 +1,12 @@
-import type { MessageRow } from '@harkroom/shared';
+import { THREAD_STATUS_EMOJI, type MessageRow, type ThreadStatusReaction } from '@harkroom/shared';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useActiveStore } from '../state/communities';
 import { selectAccountNames } from '../lib/accountNames';
 import { getController } from '../state/controller';
-import { useT } from '../i18n/useT';
+import { useLocale, useT } from '../i18n/useT';
+import type { Translate } from '../i18n';
+import type { AccountNames } from '../lib/accountNames';
 import { reactionSentence, reactorNames } from '../lib/reactionNames';
 import { clipBounds, PLACEMENT_GAP } from './Menu';
 
@@ -216,11 +218,14 @@ export function Reactions({ message }: { message: MessageRow }) {
     return a.displayName || a.handle;
   };
 
-  if (!message.reactions.length) return null;
+  const status = message.threadRootId === null ? message.statusReaction ?? null : null;
+  const chips = status ? withoutAgentStatusEchoes(message.reactions, accounts) : message.reactions;
+  if (!chips.length && !status) return null;
 
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1" data-testid="reactions">
-      {message.reactions.map((r) => (
+      {status && <StatusReactionChip status={status} accounts={accounts} />}
+      {chips.map((r) => (
         <ReactionChip
           key={r.emoji}
           emoji={r.emoji}
@@ -231,6 +236,130 @@ export function Reactions({ message }: { message: MessageRow }) {
         />
       ))}
     </div>
+  );
+}
+
+/** 상태 리액션이 쓰는 이모지들. 루트에 상태가 있으면 에이전트만 단 같은 이모지 칩은 숨긴다. */
+const STATUS_EMOJI_SET = new Set(Object.values(THREAD_STATUS_EMOJI));
+
+/**
+ * 루트에 상태 리액션이 있으면 **에이전트만 단** 👀·💬·✅ 칩은 그리지 않는다 — 러너가 멘션을
+ * 받았다고 단 👀 와 상태 💬 가 나란히 서면 "루트에 언제나 하나"(D안 규칙 1)가 화면에서 깨진다.
+ * 사람이 하나라도 단 칩은 그대로 둔다(사람 리액션은 건드리지 않는다). 모르는 계정은 사람으로 친다.
+ */
+export function withoutAgentStatusEchoes(
+  reactions: MessageRow['reactions'], accounts: AccountNames,
+): MessageRow['reactions'] {
+  return reactions.filter((r) => !STATUS_EMOJI_SET.has(r.emoji)
+    || r.accountIds.some((id) => accounts[id]?.kind !== 'agent'));
+}
+
+/** 이유는 80자에서 자른다 — 긴 물음이 말풍선을 화면만큼 키우지 않게(designer). */
+const REASON_MAX = 80;
+const clip = (x: string) => (x.length > REASON_MAX ? `${x.slice(0, REASON_MAX)}…` : x);
+
+/** 상태 → 낱말 키. 화면의 다섯 배지(`thread.state.*`)와 달리 스레드 기준 여섯 상태다. */
+const STATUS_LABEL = {
+  received: 'threadStatus.label.received',
+  running: 'threadStatus.label.running',
+  waiting: 'threadStatus.label.waiting',
+  'my-turn': 'threadStatus.label.myTurn',
+  stuck: 'threadStatus.label.stuck',
+  done: 'threadStatus.label.done',
+} as const;
+
+/**
+ * 마우스를 올리면 뜨는 한 줄 — **상태 낱말 · 누구 · 이유** 순(designer 확정 문구).
+ * 예: "내 차례 · task_manager가 묻는다 · 수정안 둘 중 어느 것?", "기다림 · security 답을 기다림".
+ * 순수 함수라 시험이 문장을 직접 잰다.
+ */
+export function statusSentence(
+  s: ThreadStatusReaction, accounts: AccountNames, t: Translate, locale: string,
+): string {
+  const nameOf = (id: string | null) => {
+    const a = id ? accounts[id] : undefined;
+    return a ? (a.displayName || a.handle) : null;
+  };
+  const who = nameOf(s.accountId) ?? t('threadStatus.someone');
+  const parts: string[] = [t(STATUS_LABEL[s.status])];
+  switch (s.status) {
+    case 'my-turn':
+      parts.push(t('threadStatus.tip.myTurn', { who }));
+      if (s.reason) parts.push(clip(s.reason));
+      break;
+    case 'stuck':
+      parts.push(t('threadStatus.tip.stuck', { who }));
+      if (s.reason) parts.push(clip(s.reason));
+      break;
+    case 'waiting': {
+      // 이유는 기다리는 상대의 id 이거나 깨움 시각(ISO)이다 — 서버가 그 둘만 싣는다.
+      const other = nameOf(s.reason);
+      const at = s.reason ? Date.parse(s.reason) : NaN;
+      if (other) parts.push(t('threadStatus.tip.waitingOn', { other }));
+      else if (!Number.isNaN(at)) {
+        const time = new Date(at).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false });
+        parts.push(t('threadStatus.tip.waitingWake', { time }));
+      } else parts.push(who);
+      break;
+    }
+    default:
+      parts.push(who);
+  }
+  return parts.join(' · ');
+}
+
+/**
+ * **상태 리액션 칩**(D안) — 맨 앞에, 숫자 없이, 누를 수 없다.
+ *
+ * - 버튼이 아니라 `span` 이다: 사람이 눌러 토글하면 서버 판정과 화면이 갈라진다(규칙 4).
+ *   포커스는 받는다(`tabIndex=0`) — 키보드로도 이유를 읽을 수 있어야 한다.
+ * - 🙋·🚨 만 색 테두리와 낱말을 받는다. 나머지 넷은 사람을 부르지 않으므로 이모지 하나다
+ *   (`isBlocking` 과 같은 강조 예산).
+ * - 말풍선은 사람 칩과 **같은 틀**(`ReactionTooltip`)을 쓴다 — 두 모양이면 어느 것이 무엇인지 배워야 한다.
+ */
+function StatusReactionChip({ status, accounts }: { status: ThreadStatusReaction; accounts: AccountNames }) {
+  const t = useT();
+  const locale = useLocale();
+  const ref = useRef<HTMLSpanElement>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [anchor, setAnchor] = useState<DOMRect | null>(null);
+  const clear = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
+  const openSoon = () => {
+    clear();
+    timer.current = setTimeout(() => {
+      if (ref.current) setAnchor(ref.current.getBoundingClientRect());
+    }, TOOLTIP_OPEN_DELAY_MS);
+  };
+  const close = () => { clear(); setAnchor(null); };
+  useEffect(() => clear, []);
+
+  const sentence = statusSentence(status, accounts, t, locale);
+  const label = status.status === 'my-turn' || status.status === 'stuck' ? t(STATUS_LABEL[status.status]) : null;
+  const tone = status.status === 'my-turn'
+    ? 'border-state-turn text-state-turn font-medium'
+    : status.status === 'stuck'
+      ? 'border-state-stuck text-state-stuck font-medium'
+      : 'border-border text-fg-muted';
+  return (
+    <>
+      <span
+        ref={ref}
+        role="status"
+        tabIndex={0}
+        data-testid="status-reaction"
+        data-status={status.status}
+        aria-label={t('threadStatus.aria', { sentence })}
+        onMouseEnter={openSoon}
+        onMouseLeave={close}
+        onFocus={openSoon}
+        onBlur={close}
+        className={`flex cursor-default select-none items-center gap-1 rounded-full border bg-surface px-1.5 text-meta ${tone}`}
+      >
+        <span>{status.emoji}</span>
+        {label && <span data-testid="status-reaction-label">{label}</span>}
+      </span>
+      {anchor && <ReactionTooltip emoji={status.emoji} text={sentence} anchor={anchor} />}
+    </>
   );
 }
 
@@ -314,7 +443,7 @@ function ReactionChip({ emoji, accountIds, nameOf, myId, onToggle }: {
         <span>{accountIds.length}</span>
       </button>
       {anchor && (
-        <ReactionTooltip emoji={emoji} accountIds={accountIds} nameOf={nameOf} myId={myId} anchor={anchor} />
+        <ReactionTooltip emoji={emoji} who={{ accountIds, nameOf, myId }} anchor={anchor} />
       )}
     </>
   );
@@ -346,17 +475,20 @@ const EDGE_GAP = 8;
  * - 스크린리더는 이 말풍선을 따로 읽지 않는다(`aria-hidden`) — 칩의 `aria-label` 이 같은 목록을
  *   이미 말한다. 둘 다 읽히면 같은 이름이 두 번 들린다.
  */
-function ReactionTooltip({ emoji, accountIds, nameOf, myId, anchor }: {
+function ReactionTooltip({ emoji, who, text, anchor }: {
   emoji: string;
-  accountIds: string[];
-  nameOf: (id: string) => string | null;
-  myId: string | null;
+  /** 사람 칩: 누가 달았는지로 문장을 만든다. */
+  who?: { accountIds: string[]; nameOf: (id: string) => string | null; myId: string | null };
+  /** 상태 칩: 이미 만든 문장(`statusSentence`). */
+  text?: string;
   anchor: DOMRect;
 }) {
   const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   const [below, setBelow] = useState(false);
-  const { hint, sentence } = reactionSentence(emoji, accountIds, nameOf, myId, t);
+  const { hint, sentence } = who
+    ? reactionSentence(emoji, who.accountIds, who.nameOf, who.myId, t)
+    : { hint: null, sentence: text ?? '' };
 
   useLayoutEffect(() => {
     const height = ref.current?.getBoundingClientRect().height ?? 0;

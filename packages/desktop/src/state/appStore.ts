@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { draftsStorage, stickyMentionsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ThreadAgentModelView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus, ServerVersion } from '@harkroom/shared';
+import type { AccountStatus, AccountView, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ThreadAgentModelView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus, ServerVersion, ThreadStatusReaction } from '@harkroom/shared';
 import type { ObservedRunner, RunnerState } from '../lib/runnerLauncher';
 import type { NotifiedSummary } from '../lib/notified';
 
@@ -367,6 +367,8 @@ export interface AppState {
    */
   bumpThreadCounts(channelId: string, messageId: string, delta: 1 | -1, countsAsReply: boolean): void;
   applyReaction(channelId: string, messageId: string, emoji: string, accountId: string, on: boolean): void;
+  /** 스레드 상태 리액션(D안, `thread.status` 이벤트)을 루트에 갈아 끼운다. `null` 이면 뗀다. */
+  applyThreadStatus(channelId: string, rootId: string, statusReaction: ThreadStatusReaction | null): void;
   removeMessage(channelId: string, messageId: string): void;
   /**
    * 사람이 고른 상태를 반영한다(#186). `online` 은 **건드리지 않는다** — 연결 여부는
@@ -422,6 +424,34 @@ const initial = {
 };
 
 /**
+ * **실시간 행이 스레드 재료를 null 로 덮지 않게 한다**(0.3.107 채널 줄 배지 누락의 원인).
+ *
+ * 서버는 판정 재료(`openAsk*`·`*failureCount`·`last*`·`replyCount` …)를 목록 응답에만 싣고,
+ * `message.created`·`message.updated` 로 오는 단건 행에서는 전부 `null` 이다(`COLS`). 그 행으로
+ * 기존 행을 통째로 바꾸면, ask 에 답하거나 루트를 고친 순간 `threadStateFromFacts` 가 `null` 을
+ * 받아 배지가 사라졌다. 재료가 비어 온 루트 행은 **알던 재료를 유지**한다 — 모르는 것으로
+ * 아는 것을 지우지 않는다. 상태 리액션(`statusReaction`)은 키가 없을 때(옛 서버)만 유지한다.
+ */
+export function keepThreadFacts(prev: MessageRow | undefined, next: MessageRow): MessageRow {
+  if (!prev || next.threadRootId !== null) return next;
+  let out = next;
+  if (next.openAskHumanCount === null && prev.openAskHumanCount !== null) {
+    out = {
+      ...out,
+      replyCount: prev.replyCount, activityCount: prev.activityCount, lastReplyAt: prev.lastReplyAt,
+      participantIds: prev.participantIds, openAskHumanCount: prev.openAskHumanCount,
+      openAskAccountIds: prev.openAskAccountIds, openAskLinks: prev.openAskLinks,
+      failureCount: prev.failureCount, unresolvedFailureCount: prev.unresolvedFailureCount,
+      lastKind: prev.lastKind, lastAuthorId: prev.lastAuthorId,
+    };
+  }
+  if (next.statusReaction === undefined && prev.statusReaction !== undefined) {
+    out = { ...out, statusReaction: prev.statusReaction };
+  }
+  return out;
+}
+
+/**
  * 커뮤니티 하나의 세계를 담는 스토어를 만든다(#166).
  *
  * 예전에는 이 자리에 모듈 최상위 싱글턴 `useAppStore` 가 있었고, 그 하나가 곧 "그 서버"
@@ -437,7 +467,7 @@ export function createAppStore() {
     set: (partial) => set(partial),
     upsertMessages: (channelId, rows) => {
       const byId = new Map((get().messages[channelId] ?? []).map((m) => [m.id, m]));
-      for (const r of rows) byId.set(r.id, r);
+      for (const r of rows) byId.set(r.id, keepThreadFacts(byId.get(r.id), r));
       const merged = [...byId.values()].sort((a, b) => a.seq - b.seq);
       set({ messages: { ...get().messages, [channelId]: merged } });
     },
@@ -462,6 +492,12 @@ export function createAppStore() {
      * 리액션 델타를 적용한다. 같은 사람이 두 번 들어오지 않게 하는 것이 핵심이다 — 내가 누른
      * 것은 로컬 갱신과 소켓 이벤트로 두 번 도착하고, 두 번 세면 1 이 2 로 보인다.
      */
+    applyThreadStatus: (channelId, rootId, statusReaction) => {
+      const rows = get().messages[channelId];
+      if (!rows || !rows.some((m) => m.id === rootId)) return;
+      const next = rows.map((m) => (m.id === rootId ? { ...m, statusReaction } : m));
+      set({ messages: { ...get().messages, [channelId]: next } });
+    },
     applyReaction: (channelId, messageId, emoji, accountId, on) => {
       const rows = get().messages[channelId];
       if (!rows) return;

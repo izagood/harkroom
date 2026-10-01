@@ -3371,6 +3371,26 @@ export const en = {
   'thread.state.running': 'Running',
   'thread.state.done': 'Done',
 
+  // ---------------------------------------------------------------------------
+  // 스레드 상태 리액션(D안) — 루트에 하나, 서버가 단다(`shared/threadStatus.ts`).
+  // 칩의 글자는 🙋·🚨 둘만 받는다(강조 예산: 사람을 부르는 두 상태). 나머지는 이모지만이고
+  // 마우스를 올리면 아래 문장이 뜬다. `{who}` 는 그 상태의 주인 에이전트, `{reason}` 은
+  // ask 물음·fail 사유·기다리는 상대·깨움 시각이다.
+  // ---------------------------------------------------------------------------
+  'threadStatus.label.received': 'Received',
+  'threadStatus.label.running': 'Working',
+  'threadStatus.label.waiting': 'Waiting',
+  'threadStatus.label.myTurn': 'Your turn',
+  'threadStatus.label.stuck': 'Stuck',
+  'threadStatus.label.done': 'Done',
+  'threadStatus.tip.myTurn': '{who} asks',
+  'threadStatus.tip.stuck': '{who} failed',
+  'threadStatus.tip.waitingOn': 'waiting for {other}',
+  'threadStatus.tip.waitingWake': 'checks back at {time}',
+  'threadStatus.someone': 'An agent',
+  'threadStatus.aria': 'Thread status: {sentence}',
+  'saved.unavailable': 'You no longer have access to this channel',
+
   /**
    * 채널 요약의 말 슬롯 — **"누가 누구를 기다린다"**. `waitChain.link` 와 **같은 문장**을
    * 다른 재료(`openAskLinks`)에서 내는 자리라, 키를 따로 두지 않고 그것을 부른다.
