@@ -3286,6 +3286,7 @@ export const en = {
   'gate.card.line': '{account} stopped at a Claude Code setup screen. Answer it in the terminal and this turn starts again.',
   'gate.notify.title': '{account} is waiting for your choice',
   'gate.notify.body': '@{agent} stopped at a setup screen — open it to answer',
+  'gate.notify.bodyNoAgent': 'An agent stopped at a setup screen — open it to answer',
   'gate.terminal.open': 'Open terminal',
   'gate.terminal.opened': 'Opened in Terminal — answer the question there, the turn will start again',
   'gate.terminal.failed': 'Could not open the terminal',

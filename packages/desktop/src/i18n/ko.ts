@@ -1501,6 +1501,7 @@ export const ko = {
   'gate.card.line': '{account} 계정이 Claude Code 설정 화면에서 멈췄습니다. 터미널에서 답하면 이 턴이 다시 시작됩니다.',
   'gate.notify.title': '{account} 계정이 선택을 기다립니다',
   'gate.notify.body': '@{agent} 가 설정 화면에서 멈췄습니다 — 눌러서 답하기',
+  'gate.notify.bodyNoAgent': '에이전트가 설정 화면에서 멈췄습니다 — 눌러서 답하기',
   'gate.terminal.open': '터미널 열기',
   'gate.terminal.opened': '터미널에서 열었습니다 — 거기서 물음에 답하면 턴이 다시 시작됩니다',
   'gate.terminal.failed': '터미널을 열지 못했습니다',

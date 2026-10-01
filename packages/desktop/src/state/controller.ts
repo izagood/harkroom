@@ -717,7 +717,8 @@ export class Controller {
       // 원문(조직 설정 값)은 싣지 않는다 — 계정 이름표와 에이전트만.
       // 사람이 읽는 말이라 사전을 지난다(designer #1053 F3) — 한국어 화면에 영어 알림이 뜨지 않게.
       title: this.t()('gate.notify.title', { account: label }) + this.communitySuffix(),
-      body: this.t()('gate.notify.body', { agent: author ?? '…' }),
+      // handle 을 모르면 `@…` 대신 "에이전트가"로 떨어진다(designer #1053 nit).
+      body: author ? this.t()('gate.notify.body', { agent: author }) : this.t()('gate.notify.bodyNoAgent'),
       target: this.notificationTarget(row.id),
     });
     return true;

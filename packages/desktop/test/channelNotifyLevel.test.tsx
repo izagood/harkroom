@@ -348,6 +348,7 @@ describe('계정 관문 — OS 알림은 계정당 한 번', () => {
     expect(n.sent[1]!.title).toContain('plum');
     // 목적지는 그 실패 카드 — 거기서 [터미널 열기].
     expect(n.sent[0]!.target?.messageId).toBe('g1');
+    expect(n.sent[0]!.body).toContain('@bot');
   });
 });
 
@@ -369,5 +370,8 @@ describe('계정 관문 — 에이전트당 상한(security #1053)', () => {
     callbacks.current!.onEvent({ type: 'message.created', message: gateFrom('b0', 'u3', 'acct-0'), audience: 'all' });
     await drained();
     expect(n.sent).toHaveLength(4);
+    // handle 을 모르는 에이전트(u3)면 `@…` 대신 일반 주어로 떨어진다(designer #1053 nit).
+    expect(n.sent[3]!.body).not.toContain('@');
+    expect(n.sent[3]!.body).toMatch(/^(An agent|에이전트가) /);
   });
 });
