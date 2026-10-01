@@ -301,49 +301,61 @@ class FeedTopRow extends StatelessWidget {
   final String channelName;
   final VoidCallback onRetry;
 
+  /// 세 상태가 같이 쓰는 줄 높이(누르는 영역 44 와 같다).
+  static const rowHeight = 44.0;
+
   @override
   Widget build(BuildContext context) {
     final k = context.tokens;
     final t = context.t;
     final muted = TextStyle(fontSize: 12, color: k.mute);
-    return switch (top) {
-      FeedTop.loading => const Padding(
-          key: Key('loading-older'),
-          padding: EdgeInsets.all(12),
-          child: Center(
-            child: SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          ),
+    // **세 상태가 같은 높이 상자에 선다**(designer #1026 후속). 높이가 다르면 받는 중 → 못 받음 →
+    // 처음 으로 바뀔 때 목록이 그만큼 움직였다(다시 시도 +14pt, 시작 줄 −4pt).
+    final Widget child = switch (top) {
+      FeedTop.loading => const SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
         ),
-      FeedTop.failed => Padding(
-          key: const Key('older-failed'),
-          padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter, vertical: 4),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Flexible(child: Text(t.olderLoadFailed, style: muted)),
-              Text(' · ', style: muted),
-              TextButton(
-                key: const Key('older-retry'),
-                onPressed: onRetry,
-                child: Text(t.commonRetry),
+      FeedTop.failed => Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Flexible(child: Text(t.olderLoadFailed, style: muted)),
+            // 가운뎃점 양옆을 같게 — 버튼 안쪽 여백을 빼고 띄움은 여기서만 준다.
+            const SizedBox(width: 6),
+            Text('·', style: muted),
+            const SizedBox(width: 6),
+            TextButton(
+              key: const Key('older-retry'),
+              onPressed: onRetry,
+              // 기본 최소 높이 48 이 줄을 키웠다. 누르는 높이는 바깥 44 상자가 맡는다.
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(0, rowHeight),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-            ],
-          ),
+              child: Text(t.commonRetry),
+            ),
+          ],
         ),
-      FeedTop.start => Padding(
-          key: const Key('channel-start'),
-          padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 16, HarkroomSize.gutter, 4),
-          child: Text(
-            t.channelStartLine.replaceFirst('{name}', channelName),
-            textAlign: TextAlign.center,
-            style: muted,
-          ),
+      FeedTop.start => Text(
+          t.channelStartLine.replaceFirst('{name}', channelName),
+          textAlign: TextAlign.center,
+          style: muted,
         ),
     };
+    return SizedBox(
+      key: Key(switch (top) {
+        FeedTop.loading => 'loading-older',
+        FeedTop.failed => 'older-failed',
+        FeedTop.start => 'channel-start',
+      }),
+      height: rowHeight,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter),
+        child: Center(child: child),
+      ),
+    );
   }
 }
 
