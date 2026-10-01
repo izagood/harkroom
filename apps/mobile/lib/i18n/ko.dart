@@ -79,6 +79,66 @@ class StringsKo implements Strings {
   String get composerSend => '보내기';
 
   @override
+  String get modelDefault => '기본';
+
+  @override
+  String get modelThreadSet => '스레드 지정';
+
+  @override
+  String get modelAllDefault => '모델 · 모두 기본';
+
+  @override
+  String get modelMore => '더보기…';
+
+  @override
+  String get modelEffort => 'effort';
+
+  @override
+  String get modelEffortDefault => '에이전트 설정';
+
+  @override
+  String get modelAgentDefault => '에이전트 기본값:';
+
+  @override
+  String get modelHarnessDefault => '하네스 기본값';
+
+  @override
+  String get modelCostNote => '고급 모델은 주간 한도를 빨리 쓴다. 도중에 바꾸면 캐시가 한 번 빗나가고, 작은 모델은 긴 스레드를 다 못 담을 수 있다.';
+
+  @override
+  String get modelNextTurn => '다음 턴부터 적용된다.';
+
+  @override
+  String get modelReset => '기본으로 되돌리기';
+
+  @override
+  String get modelApply => '적용';
+
+  @override
+  String get modelCustom => '모델 이름';
+
+  @override
+  String get modelStale => '쓰지 않음 — 지정한 뒤 에이전트의 하네스가 바뀌었다.';
+
+  @override
+  String get modelSheetTitleThread => "이 스레드의 {handle} 모델";
+
+  @override
+  String get modelSheetTitleComposer => "이 글로 부를 {handle} 모델";
+
+  @override
+  String get modelQuickLabel => "{handle} 모델";
+
+  @override
+  String get modelClearThread => "스레드 지정 풀기";
+
+  @override
+  String get modelStaleDetail => "하네스가 {harness} 로 바뀌어 이 지정을 쓰지 않는다.";
+
+  @override
+  String get modelRepick => "다시 고르기";
+
+  @override
   String get connectionOnline => '연결됨';
 
   @override
@@ -323,4 +383,5 @@ class StringsKo implements Strings {
 
   @override
   String get linkNonAsciiWarning => '주소에 영문이 아닌 글자가 있다. 닮은 글자로 꾸민 주소일 수 있다.';
+
 }

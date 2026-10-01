@@ -151,14 +151,40 @@ class ApiClient {
     String body, {
     String? threadRootId,
     List<String> attachmentIds = const [],
+    List<Map<String, Object?>> agentModels = const [],
   }) async {
     final res = await _send('POST', '/channels/$channelId/messages', body: {
       'body': body,
       'threadRootId': ?threadRootId,
       if (attachmentIds.isNotEmpty) 'attachmentIds': attachmentIds,
+      // 작성칸 모델 칩(서버 079). 빈 목록은 싣지 않는다 — 옛 서버는 모르는 키를 받지 않는다.
+      if (agentModels.isNotEmpty) 'agentModels': agentModels,
     });
     return MessageRow.fromJson(_obj(res));
   }
+
+  /// 스레드 × 에이전트 모델 지정(서버 079).
+  Future<List<ThreadAgentModel>> threadAgentModels(String channelId, String rootId) async {
+    final res = _obj(await _send('GET', '/channels/$channelId/threads/$rootId/agent-models'));
+    final list = res['agentModels'];
+    return list is List
+        ? list.whereType<Map>().map((m) => ThreadAgentModel.fromJson(Map<String, Object?>.from(m))).toList()
+        : const [];
+  }
+
+  /// 스레드 칩에서 정한다. 두 축이 다 비면 서버가 푼다. 사람만 된다.
+  Future<ThreadAgentModel?> setThreadAgentModel(
+    String channelId, String rootId, String agentId, String? model, String? effort,
+  ) async {
+    final res = _obj(await _send('PUT', '/channels/$channelId/threads/$rootId/agent-models/$agentId',
+        body: {'model': model, 'effort': effort}));
+    final row = res['row'];
+    return row is Map ? ThreadAgentModel.fromJson(Map<String, Object?>.from(row)) : null;
+  }
+
+  /// 칩 고르개의 재료 — 하네스가 밝힌 모델 목록과 에이전트 기본값.
+  Future<AgentModelOptions> agentModelOptions(String agentId) async =>
+      AgentModelOptions.fromJson(_obj(await _send('GET', '/agents/$agentId/model-options')));
 
   /// 파일 하나를 올린다(`POST /uploads`, multipart 필드 이름은 `file`).
   ///

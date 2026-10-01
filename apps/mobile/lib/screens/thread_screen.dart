@@ -5,6 +5,7 @@ import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
 import '../state/app_state.dart';
 import '../ui/states.dart';
+import 'agent_model.dart';
 import 'composer_attachments.dart';
 import 'message_feed.dart';
 import 'message_list_screen.dart';
@@ -29,6 +30,8 @@ class ThreadScreen extends StatefulWidget {
 class _ThreadScreenState extends State<ThreadScreen> {
   final _composer = TextEditingController();
   bool _sending = false;
+  /// 작성칸 모델 칩으로 고른 값(서버 079). 서버의 스레드 지정이 되므로 보낸 뒤에도 칩은 그 값을 이어 보인다.
+  Map<String, ModelPick> _picks = const {};
 
   bool _loaded = false;
 
@@ -64,9 +67,22 @@ class _ThreadScreenState extends State<ThreadScreen> {
     setState(() => _sending = true);
     // 먼저 비운다 — 남아 있으면 사람은 안 갔다고 생각하고 다시 누른다. 못 보낸 말은 목록에 남는다.
     _composer.clear();
+    final picks = _picks;
+    setState(() => _picks = const {});
     try {
-      final went = await app.send(widget.channelId, text, threadRootId: widget.rootId);
-      if (!went && mounted && _composer.text.isEmpty) _composer.text = text;
+      final went = await app.send(
+        widget.channelId,
+        text,
+        threadRootId: widget.rootId,
+        agentModels: picksForBody(
+          picks, text, app.accounts.values,
+          threadRows: app.threadAgentModels[widget.rootId] ?? const [],
+        ),
+      );
+      if (!went && mounted) {
+        if (_composer.text.isEmpty) _composer.text = text;
+        setState(() => _picks = picks);
+      }
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -89,12 +105,23 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final replies = buildFeed(app.threads[widget.rootId] ?? const <MessageRow>[]);
     final failed = app.failedSends[widget.rootId] ?? const <FailedSend>[];
     final load = app.threadLoad[widget.rootId];
+    // 머리 모델 줄에 세울 에이전트: 스레드 글의 작성자 중 에이전트 + 본문이 부른 에이전트.
+    final threadAgents = <String>[];
+    for (final m in [?root, ...?app.threads[widget.rootId]]) {
+      if (app.accounts[m.authorId]?.isAgent ?? false) {
+        if (!threadAgents.contains(m.authorId)) threadAgents.add(m.authorId);
+      }
+      for (final id in calledAgentIds(m.body, app.accounts.values)) {
+        if (!threadAgents.contains(id)) threadAgents.add(id);
+      }
+    }
 
     return Scaffold(
       appBar: AppBar(title: Text(t.threadTitle)),
       body: SafeArea(
         child: Column(
           children: [
+            ThreadModelBar(channelId: widget.channelId, rootId: widget.rootId, agentIds: threadAgents),
             // `onOpenThread` 를 주지 않는다 — **이미 스레드 안이라 들어갈 곳이 없다.**
             const ConnectionBand(),
             Expanded(
@@ -123,6 +150,13 @@ class _ThreadScreenState extends State<ThreadScreen> {
             ),
             // **스레드의 작성칸은 자기 키를 쓴다** — 채널에서 고른 사진이 답글에
             // 딸려 가지 않게.
+            // 스레드 화면에도 `@` 후보 줄을 둔다 — 없던 동안 스레드 안에서는 모델을 고를 길이 없었다.
+            MentionModelBar(
+              controller: _composer,
+              picks: _picks,
+              threadRootId: widget.rootId,
+              onPicksChanged: (next) => setState(() => _picks = next),
+            ),
             ComposerAttachments(composerKey: widget.rootId),
             const Divider(height: 1),
             Padding(
@@ -135,6 +169,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                     child: TextField(
                       key: const Key('thread-composer'),
                       controller: _composer,
+                      onChanged: (_) => setState(() {}),
                       minLines: 1,
                       maxLines: 5,
                       decoration: InputDecoration(

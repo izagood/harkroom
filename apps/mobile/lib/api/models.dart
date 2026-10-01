@@ -416,3 +416,65 @@ class InboxEntry {
         readAt: j['readAt'] as String?,
       );
 }
+
+/// 스레드 × 에이전트 모델 지정 한 줄(서버 079). 값이 null 인 축은 에이전트 설정을 따른다.
+/// [stale] 은 지정 뒤 에이전트의 하네스가 바뀌어 쓰지 않는 값이다 — 칩이 취소선으로 그린다.
+class ThreadAgentModel {
+  const ThreadAgentModel({
+    required this.agentId,
+    required this.model,
+    required this.effort,
+    required this.stale,
+    this.currentHarness = '',
+  });
+
+  final String agentId;
+  /// 에이전트의 **지금** 하네스 — 무효 안내("하네스가 X 로 바뀌어…")의 재료.
+  final String currentHarness;
+  final String? model;
+  final String? effort;
+  final bool stale;
+
+  factory ThreadAgentModel.fromJson(Map<String, Object?> j) => ThreadAgentModel(
+        agentId: _str(j['agentId']),
+        model: j['model'] is String ? j['model'] as String : null,
+        effort: j['effort'] is String ? j['effort'] as String : null,
+        stale: j['stale'] == true,
+        currentHarness: _str(j['currentHarness']),
+      );
+}
+
+/// 하네스가 밝힌 모델 하나와 그 모델이 받는 effort(없으면 모른다).
+class HarnessModelOption {
+  const HarnessModelOption({required this.id, this.label, this.efforts});
+  final String id;
+  final String? label;
+  final List<String>? efforts;
+}
+
+/// 칩 고르개의 재료(`GET /agents/:id/model-options`). [models] 가 null 이면 "모른다" —
+/// 고르개는 직접 입력으로 물러선다.
+class AgentModelOptions {
+  const AgentModelOptions({this.model, this.effort, this.models});
+  final String? model;
+  final String? effort;
+  final List<HarnessModelOption>? models;
+
+  factory AgentModelOptions.fromJson(Map<String, Object?> j) {
+    final raw = j['models'];
+    return AgentModelOptions(
+      model: j['model'] is String ? j['model'] as String : null,
+      effort: j['effort'] is String ? j['effort'] as String : null,
+      models: raw is List
+          ? raw.whereType<Map>().map((m) {
+              final e = m['efforts'];
+              return HarnessModelOption(
+                id: _str(m['id']),
+                label: m['label'] is String ? m['label'] as String : null,
+                efforts: e is List ? e.whereType<String>().toList(growable: false) : null,
+              );
+            }).toList(growable: false)
+          : null,
+    );
+  }
+}

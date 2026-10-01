@@ -80,6 +80,66 @@ class StringsEn implements Strings {
   String get composerSend => 'Send';
 
   @override
+  String get modelDefault => 'Default';
+
+  @override
+  String get modelThreadSet => 'this thread';
+
+  @override
+  String get modelAllDefault => 'Model · all default';
+
+  @override
+  String get modelMore => 'More…';
+
+  @override
+  String get modelEffort => 'Effort';
+
+  @override
+  String get modelEffortDefault => 'Agent setting';
+
+  @override
+  String get modelAgentDefault => 'Agent default:';
+
+  @override
+  String get modelHarnessDefault => 'harness default';
+
+  @override
+  String get modelCostNote => 'Stronger models use weekly limits faster; switching mid-thread misses the cache once; a smaller model may not fit a long thread.';
+
+  @override
+  String get modelNextTurn => 'Applies from the next turn.';
+
+  @override
+  String get modelReset => 'Reset to default';
+
+  @override
+  String get modelApply => 'Apply';
+
+  @override
+  String get modelCustom => 'Model name';
+
+  @override
+  String get modelStale => 'Not used — the agent\'s harness changed since this was set.';
+
+  @override
+  String get modelSheetTitleThread => "This thread's model for {handle}";
+
+  @override
+  String get modelSheetTitleComposer => "Model for {handle} in this message";
+
+  @override
+  String get modelQuickLabel => "{handle} model";
+
+  @override
+  String get modelClearThread => "Clear the thread's model";
+
+  @override
+  String get modelStaleDetail => "Harness changed to {harness} — this thread's model is not used.";
+
+  @override
+  String get modelRepick => "Choose again";
+
+  @override
   String get connectionOnline => 'Connected';
 
   @override
@@ -324,4 +384,5 @@ class StringsEn implements Strings {
 
   @override
   String get linkNonAsciiWarning => 'This address has non-Latin characters. It may imitate another site.';
+
 }

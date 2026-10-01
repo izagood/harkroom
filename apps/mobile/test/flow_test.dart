@@ -35,6 +35,9 @@ Future<void> _settle(WidgetTester tester) async {
 
 final _sent = <String>[];
 final _answered = <String>[];
+/// 보낸 글에 실린 `agentModels`(서버 079). 글마다 하나 — 없으면 null.
+final _sentModels = <Object?>[];
+final _threadModelPuts = <Object?>[];
 
 MockClient _server() => MockClient((req) async {
       final path = req.url.path;
@@ -162,6 +165,7 @@ MockClient _server() => MockClient((req) async {
       if (path.endsWith('/messages') && req.method == 'POST') {
         final body = (jsonDecode(req.body) as Map)['body'] as String;
         _sent.add(body);
+        _sentModels.add((jsonDecode(req.body) as Map)['agentModels']);
         return _json({
           'id': 'm3',
           'seq': 3,
@@ -169,6 +173,23 @@ MockClient _server() => MockClient((req) async {
           'authorId': 'me-1',
           'body': body,
           'kind': 'user',
+        });
+      }
+      if (path == '/agents/a1/model-options') {
+        return _json({
+          'harness': 'claude-code', 'model': 'sonnet', 'effort': null,
+          'models': [
+            {'id': 'opus', 'efforts': ['low', 'xhigh']},
+            {'id': 'sonnet', 'efforts': ['low']},
+          ],
+        });
+      }
+      if (path.endsWith('/agent-models') && req.method == 'GET') return _json({'agentModels': <Object?>[]});
+      if (path.contains('/agent-models/') && req.method == 'PUT') {
+        final b = jsonDecode(req.body) as Map;
+        _threadModelPuts.add(b);
+        return _json({
+          'row': {'agentId': 'a1', 'harness': 'claude-code', 'model': b['model'], 'effort': b['effort'], 'stale': false},
         });
       }
       if (path == '/ws-ticket') return _json({'ticket': 'tk'});
@@ -325,6 +346,85 @@ void main() {
     expect(text, '@forge ');
     // 고른 뒤에는 후보가 사라진다 — 이름이 끝났으므로.
     expect(find.byKey(const Key('mention-picker')), findsNothing);
+  });
+
+  testWidgets('@ 로 에이전트를 고르면 그 자리가 모델 빠른 줄이 되고, 고른 모델이 그 글과 함께 간다', (tester) async {
+    _sentModels.clear();
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await _settle(tester);
+
+    await tester.enterText(find.byKey(const Key('composer')), '@fo');
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('mention-candidate-forge')));
+    await _settle(tester);
+    // 빠른 줄: 기본 / 목록 앞 / 더보기.
+    expect(find.byKey(const Key('model-quick-row')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('model-quick-opus')));
+    await _settle(tester);
+    expect(find.textContaining('@forge · opus'), findsOneWidget);
+
+    await tester.enterText(find.byKey(const Key('composer')), '@forge 고도화해 줘');
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('composer-send')));
+    await _settle(tester);
+    expect(_sentModels.last, [
+      {'agentId': 'a1', 'model': 'opus', 'effort': null},
+    ]);
+    // 결정 12: 보낸 뒤 칩은 기본이다.
+    await tester.enterText(find.byKey(const Key('composer')), '@forge 다음');
+    await _settle(tester);
+    expect(find.byKey(const Key('model-chip-forge')), findsOneWidget);
+    expect(find.textContaining('@forge · opus'), findsNothing);
+  });
+
+  testWidgets('고르지 않고 계속 쓰면 기본으로 부른다 — agentModels 를 싣지 않는다', (tester) async {
+    _sentModels.clear();
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await _settle(tester);
+    await tester.enterText(find.byKey(const Key('composer')), '@forge 안녕');
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('composer-send')));
+    await _settle(tester);
+    expect(_sentModels.last, isNull);
+  });
+
+  testWidgets('스레드 화면에도 @ 후보 줄과 머리 모델 줄이 있고, 바텀시트로 스레드 지정을 바꾼다', (tester) async {
+    _threadModelPuts.clear();
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('thread-open-m1')));
+    await _settle(tester);
+
+    await tester.enterText(find.byKey(const Key('thread-composer')), '@fo');
+    await _settle(tester);
+    expect(find.byKey(const Key('mention-candidate-forge')), findsOneWidget);
+
+    // 지정이 없으면 접힌 칩 하나 → 누르면 에이전트 칩.
+    await tester.tap(find.byKey(const Key('thread-models-collapsed')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('thread-model-chip-forge')));
+    await _settle(tester);
+    expect(find.byKey(const Key('model-sheet')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('model-option-opus')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('effort-option-xhigh')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('model-apply')));
+    await _settle(tester);
+    expect(_threadModelPuts.last, {'model': 'opus', 'effort': 'xhigh'});
+    expect(find.textContaining('@forge · opus · xhigh'), findsWidgets);
   });
 
   testWidgets('답글 줄을 누르면 스레드가 열리고, 거기서 답한다', (tester) async {
