@@ -10,6 +10,7 @@ import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.j
 import { getTeam, getTeamByName, listTeamMembers } from './teams.js';
 import { invokeFactsFor, mayInvoke, mayInvokeTeam, type InvokeVia } from './invokeGate.js';
 import { closeReplyGrants, openReplyGrants } from './replyGrants.js';
+import { enqueueInboxPush } from './push/pushJobs.js';
 
 /**
  * 채널 안에서 `seq` 발급을 직렬화하는 advisory lock 의 classid(#523).
@@ -534,10 +535,13 @@ async function insertInbox(
    */
   teamId?: string,
 ): Promise<void> {
-  await client.query(
-    `insert into inbox (account_id, message_id, reason, team_id) values ($1, $2, $3, $4)`,
+  const inserted = await client.query<{ id: string }>(
+    `insert into inbox (account_id, message_id, reason, team_id) values ($1, $2, $3, $4) returning id`,
     [accountId, messageId, reason, teamId ?? null],
   );
+  // 푸시(093): 같은 트랜잭션에 job 을 넣는다. 사람이고 기기가 있을 때만 행이 생긴다.
+  // 이 관문이 부름을 만드는 유일한 자리라 "알림을 받은 사람"과 "폰이 울리는 사람"이 갈리지 않는다.
+  await enqueueInboxPush(client, inserted.rows[0]!.id, accountId, messageId, reason);
   /**
    * 숨김 되돌리기(#376 결정 B) — **부름은 숨김을 뚫는다.** 이 자리인 이유: inbox 항목을
    * 만드는 관문이 이 함수 하나이므로, "알림을 받은 사람"과 "사이드바에 다시 나타나는 사람"이

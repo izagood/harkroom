@@ -2451,6 +2451,8 @@ export interface ServerVersion {
 export interface ServerHealth extends ServerVersion {
   ok: true;
   avcs: { connected: boolean };
+  /** 모바일 푸시(093). `off` 는 APNS_* 가 없다는 뜻, `degraded` 는 APNs 가 키를 거절했다는 뜻이다. 옛 서버엔 없다. */
+  push?: 'off' | 'ok' | 'degraded';
 }
 
 export interface ScheduledMessageView {
