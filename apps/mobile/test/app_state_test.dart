@@ -121,14 +121,17 @@ void main() {
       expect(app.accounts['a1']!.isAgent, isTrue);
     });
 
-    test('토큰이 죽었으면 보관본을 지우고 로그인으로 돌린다', () async {
-      // 안 지우면 다음 기동에 같은 실패를 반복한다.
+    test('토큰이 죽었으면 그 토큰만 비우고 로그인으로 돌린다 — 행은 남는다', () async {
+      // 토큰을 안 비우면 다음 기동에 같은 실패를 반복한다. 행을 지우면 「다시 로그인」 자리가 없다.
       final store = SessionStore.inMemory(seed: _seed(token: '폐기된토큰'));
       final app = _app(store: store, client: _server(meStatus: 401));
       await app.boot();
 
       expect(app.phase, AppPhase.needsLogin);
-      expect(await store.load(), isNull);
+      final kept = (await store.load())!.communities.single;
+      expect(kept.accountId, 'me-1');
+      expect(kept.isExpired, isTrue);
+      expect(app.communities.single.isExpired, isTrue);
     });
   });
 

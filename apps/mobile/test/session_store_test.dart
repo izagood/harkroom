@@ -100,4 +100,37 @@ void main() {
       expect(loaded!.current!.accountId, 'a');
     });
   });
+
+  group('여러 커뮤니티', () {
+    test('update 는 active 를 건드리지 않는다', () async {
+      final store = SessionStore.inMemory();
+      await store.upsert(_c('a'));
+      await store.upsert(_c('b'));
+      final after = await store.update('a', (c) => c.copyWith(token: ''));
+      expect(after!.active, 'b');
+      expect(after.communities.first.isExpired, isTrue);
+      expect(after.communities.last.isExpired, isFalse);
+    });
+
+    test('setActive 는 없는 id 를 무시한다', () async {
+      final store = SessionStore.inMemory();
+      await store.upsert(_c('a'));
+      await store.upsert(_c('b'));
+      expect((await store.setActive('a'))!.active, 'a');
+      expect((await store.setActive('없음'))!.active, 'a');
+    });
+
+    test('다시 로그인해도 이 기기에서 붙인 이름은 남는다', () async {
+      final store = SessionStore.inMemory();
+      await store.upsert(_c('a', label: '회사'));
+      final after = await store.upsert(_c('a'));
+      expect(after.communities.single.label, '회사');
+    });
+
+    test('이름이 없으면 호스트명을 보인다', () {
+      expect(_c('a', url: 'https://acme.example.com').displayLabel, 'acme.example.com');
+      expect(_c('a', label: '  ').displayLabel, 'a.example.com');
+      expect(_c('a', label: '회사').displayLabel, '회사');
+    });
+  });
 }

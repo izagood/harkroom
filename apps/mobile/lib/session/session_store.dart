@@ -63,6 +63,18 @@ class StoredCommunity {
         label: j['label'] as String?,
       );
 
+  /// 토큰이 죽어 다시 로그인해야 하는 커뮤니티. **목록에서 빼지 않는다** — 빼면 사람은
+  /// 그 커뮤니티가 있었다는 것조차 잊고, 서버 주소를 처음부터 다시 쳐야 한다. 토큰만 비워
+  /// 「다시 로그인」 행으로 남긴다(designer 판정 2).
+  bool get isExpired => token.isEmpty;
+
+  /// 화면에 세울 이름 — 붙인 이름이 없으면 호스트명이다(데스크탑 레일과 같다).
+  String get displayLabel {
+    final l = label?.trim();
+    if (l != null && l.isNotEmpty) return l;
+    return Uri.tryParse(baseUrl)?.host.nullIfEmpty ?? baseUrl;
+  }
+
   StoredCommunity copyWith({String? handle, String? token, String? label, bool clearLabel = false}) =>
       StoredCommunity(
         accountId: accountId,
@@ -164,6 +176,32 @@ abstract class SessionStore {
     ));
   }
 
+  /// 커뮤니티 하나를 고친다(토큰 비우기·이름 붙이기). **`active` 는 건드리지 않는다** —
+  /// 다른 커뮤니티의 이름을 고쳤다고 지금 보던 커뮤니티가 바뀌면 안 된다.
+  Future<StoredSessions?> update(
+      String accountId, StoredCommunity Function(StoredCommunity) change) async {
+    final current = await load();
+    if (current == null) return null;
+    final idx = current.communities.indexWhere((c) => c.accountId == accountId);
+    if (idx < 0) return current;
+    final next = [...current.communities];
+    next[idx] = change(next[idx]);
+    final sessions = StoredSessions(active: current.active, communities: next);
+    await save(sessions);
+    return sessions;
+  }
+
+  /// 지금 쓰는 커뮤니티를 바꾼다. 없는 id 면 그대로 둔다.
+  Future<StoredSessions?> setActive(String accountId) async {
+    final current = await load();
+    if (current == null || current.communities.every((c) => c.accountId != accountId)) {
+      return current;
+    }
+    final sessions = StoredSessions(active: accountId, communities: current.communities);
+    await save(sessions);
+    return sessions;
+  }
+
   /// 커뮤니티 하나를 더하거나 덮어쓴다.
   ///
   /// 같은 계정 id 면 **자리를 지키며 갱신한다** — 뒤로 밀면 다시 로그인할 때마다 목록
@@ -173,7 +211,10 @@ abstract class SessionStore {
     final idx = current.communities.indexWhere((c) => c.accountId == community.accountId);
     final next = [...current.communities];
     if (idx >= 0) {
-      next[idx] = community;
+      // 다시 로그인한 것이면 이 기기에서 붙인 이름을 지킨다 — 로그인 응답에는 이름이 없다.
+      next[idx] = community.label == null
+          ? community.copyWith(label: next[idx].label)
+          : community;
     } else {
       next.add(community);
     }
@@ -184,6 +225,10 @@ abstract class SessionStore {
 }
 
 const String _key = 'harkroom.sessions';
+
+extension on String {
+  String? get nullIfEmpty => isEmpty ? null : this;
+}
 
 class KeychainSessionStore extends SessionStore {
   KeychainSessionStore();
