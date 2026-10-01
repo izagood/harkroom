@@ -225,6 +225,7 @@ export const en = {
   'settings.group.me': 'You',
   'settings.group.device': 'This device',
   'settings.group.workspace': 'Workspace',
+  'settings.group.readOnly': 'read-only',
   'settings.group.agents': 'Agents',
   'settings.nav.profile': 'Profile',
   'settings.nav.notifications': 'Notifications',
@@ -232,8 +233,8 @@ export const en = {
   'settings.nav.appearance': 'Appearance & language',
   'settings.nav.connection': 'Connection',
   'settings.nav.communities': 'Communities',
-  'settings.nav.workspace': 'Workspace',
-  'settings.nav.agents': 'Agents',
+  'settings.nav.workspace': 'General',
+  'settings.nav.agents': 'List',
   'settings.nav.agent-defaults': 'New agent defaults',
   'settings.nav.operators': 'Operators',
   'settings.nav.mcp-servers': 'MCP servers',
@@ -1051,7 +1052,6 @@ export const en = {
   'agents.delete.cancel': 'Cancel',
   'agents.delete.failed': 'The agent was not deleted',
 
-  'agents.grid.heading': 'Agents',
   'agents.grid.listFailed': 'The agent list did not arrive',
   /** 격자 머리. **이름이 무엇을 하는지**를 말한다 — 카드를 눌러도 되는지가 여기서 온다. */
   'agents.grid.note': 'Call one with @name in a channel. Click a card to open its settings.',

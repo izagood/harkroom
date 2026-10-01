@@ -50,6 +50,7 @@ import { Button } from './primitives';
 import { AvatarStatus, useAvatarEdit } from './avatarEdit';
 import { useAgentPool } from './useAgentPool';
 import { copyText } from '../../lib/clipboard';
+import { navKey } from './sections';
 
 /** #177: 클립보드가 없거나 거부되면 **조용히 실패하지 않는다** — 화면에 있는 그 명령
  *  텍스트를 선택 상태로 만들어 사람이 ⌘C 할 수 있게 하고, 오류를 눈에 보이게 남긴다.
@@ -1255,7 +1256,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               직접 짜므로, 여기 `h2` 는 화면 제목이 아니라 왼쪽 칸의 이름이다 —
               `primitives.tsx` 의 `SettingsPage` 제목(17px)과 갈라 둔 근거를 그 파일에
               적어 뒀다. 16px(`text-base`)이었고 4단 밖이었다. */}
-          <h2 className="text-name font-bold">{t('agents.grid.heading')}</h2>
+          {/* 칸 제목은 목차 줄과 같은 키다(UX ④a 규칙, ⑥b 에서 줄 이름이 "목록" 이 됐다). */}
+          <h2 className="text-name font-bold">{t(navKey('agents'))}</h2>
           <p className="text-meta text-fg-subtle">{t('agents.grid.note')}</p>
         </div>
         {error && <p role="alert" className="mb-2 text-meta text-danger">{error}</p>}

@@ -583,7 +583,7 @@ describe('설정 목차에서 Teams 가 사라졌다 (문서 4단계)', () => {
     setController(new Controller(api, fakeWsFactory().makeWs));
     render(<SettingsScreen onBack={vi.fn()} onSignOut={vi.fn()} onCommunitiesEmpty={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole('button', { name: '에이전트' }));
+    fireEvent.click(screen.getByRole('button', { name: '목록' }));
     // 기본 묶음은 **에이전트**다 — 그것이 이 화면의 오늘 모양이고, 팀이 기본이 되면
     // 에이전트를 보러 온 사람이 매번 탭을 눌러야 한다.
     await waitFor(() => expect(screen.getByTestId('agent-grid')).toBeTruthy());

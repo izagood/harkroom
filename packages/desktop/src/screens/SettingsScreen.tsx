@@ -66,7 +66,15 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
           <nav className="flex-1 overflow-y-auto px-2 pb-4">
             {SETTINGS_GROUPS.map((g) => (
               <div key={g.id} className="mb-4">
-                <div className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">{t(g.titleKey)}</div>
+                <div className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">
+                  {t(g.titleKey)}
+                  {/* 관리자가 아니면 워크스페이스 묶음은 **읽기 전용**이다(UX ⑥b, designer) — 모든 멤버에게
+                      걸리는 설정이라 관리자만 고친다. 페이지마다 이미 막고 있지만(초대·아이콘 등) 들어가
+                      보기 전에는 몰랐다. 묶음 머리에서 먼저 말한다. */}
+                  {g.id === 'workspace' && !me?.isAdmin && (
+                    <span data-testid="settings-group-readonly" className="ml-1 normal-case tracking-normal">· {t('settings.group.readOnly')}</span>
+                  )}
+                </div>
                 {g.items.map((item) => (
                   <button
                     key={item.id}

@@ -59,6 +59,24 @@ describe('SettingsScreen', () => {
     },
   );
 
+  /**
+   * **관리자가 아니면 워크스페이스 묶음은 읽기 전용이라고 머리에서 말한다**(UX ⑥b). 페이지마다 막혀
+   * 있어도 들어가 보기 전에는 몰랐다. 관리자에게는 붙지 않는다 — 고칠 수 있는 사람에게 "읽기
+   * 전용" 이라고 하면 거짓이다.
+   */
+  it.each([[false, true], [true, false]] as const)('isAdmin=%s 이면 읽기 전용 표시 %s', (isAdmin, shown) => {
+    useAppStore.getState().set({ me: { ...acc('u1', 'me'), isAdmin } });
+    usePrefsStore.getState().setLocale('ko');
+    try {
+      render(<SettingsScreen onBack={vi.fn()} onSignOut={vi.fn()} onCommunitiesEmpty={vi.fn()} />);
+      const mark = screen.queryByTestId('settings-group-readonly');
+      expect(mark !== null).toBe(shown);
+      if (shown) expect(mark!.textContent).toContain('읽기 전용');
+    } finally {
+      usePrefsStore.getState().setLocale('system');
+    }
+  });
+
   it('returns to the app', () => {
     const onBack = vi.fn();
     render(<SettingsScreen onBack={onBack} onSignOut={vi.fn()} onCommunitiesEmpty={vi.fn()} />);
