@@ -186,7 +186,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
   const 계정명령파라미터: Record<string, string[]> = {
     claude_accounts_list: [],
     claude_accounts_configure: ['config: serde_json::Value'],
-    claude_account_login_start: ['account: String', 'pool: String'],
+    claude_account_login_start: ['account: String', 'pool: String', 'reauth: Option<bool>'],
     claude_account_login_submit: ['code: String', 'login_id: String'],
     claude_account_login_cancel: ['login_id: String'],
     claude_account_remove: ['account: String', 'pool: String'],

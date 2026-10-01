@@ -364,7 +364,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
 
   // claude 계정 풀(2026-09-08). 뿌리는 env 로 옮길 수 있고 기본은 홈 아래다 — 이 포트가
   // 파일시스템을 아는 유일한 자리이고, 서버는 그것을 모른다(`DaemonServerDeps` 주석).
-  const claudeAccounts = createClaudeAccountsPort();
+  // 로그인이 끝나면 그 계정의 사용량을 다시 잰다 — 폴러는 아래에서 만든다(호출은 그 뒤다).
+  const claudeAccounts = createClaudeAccountsPort({ onSignedIn: (dir) => { void usagePoller?.forget(dir); } });
   const codexAccounts = createCodexAccountsPort();
 
   // 계정별 사용률을 뒤에서 재서 `usage.json` 에 쓴다(C ①) — 러너가 새 스레드의 계정을 고를 때 읽는다.

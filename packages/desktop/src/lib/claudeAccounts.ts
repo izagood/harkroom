@@ -141,8 +141,16 @@ export function sameSignInAs(accounts: readonly ClaudeAccountView[], name: strin
     && a.status.orgId === me.status.orgId && a.status.accountId === me.status.accountId) ?? null;
 }
 
-export function startClaudeLogin(pool: string, account: string): Promise<{ loginId: string }> {
-  return call('claude_account_login_start', { pool, account }) as Promise<{ loginId: string }>;
+/**
+ * `reauth` = 이미 있는 계정에 다시 로그인한다 — 이름·풀·순서·세션은 그대로, 인증만 바뀐다.
+ * 데몬은 그 계정이 없으면 거절한다(지운 계정을 되살리지 않게).
+ */
+export function startClaudeLogin(
+  pool: string, account: string, opts: { reauth?: boolean } = {},
+): Promise<{ loginId: string }> {
+  return call('claude_account_login_start', {
+    pool, account, ...(opts.reauth ? { reauth: true } : {}),
+  }) as Promise<{ loginId: string }>;
 }
 
 export function submitClaudeLoginCode(loginId: string, code: string): Promise<void> {

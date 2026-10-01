@@ -144,6 +144,22 @@ describe('payload 검증', () => {
   });
 });
 
+describe('다시 로그인(reauth)', () => {
+  it('reauth: true 만 포트로 넘기고, 없으면 지금까지와 같은 로그인이다', async () => {
+    const loginStart = vi.fn(async () => ({ loginId: 'lid' }));
+    const { send } = server(fakePort({ loginStart }));
+    await send('claudeAccountLoginStart', { pool: 'work', account: 'aria', reauth: true });
+    await send('claudeAccountLoginStart', { pool: 'work', account: 'aria' });
+    // 참이 아닌 값(옛 앱이 실수로 보낸 문자열 등)은 다시 로그인으로 읽지 않는다.
+    await send('claudeAccountLoginStart', { pool: 'work', account: 'aria', reauth: 'yes' });
+    expect(loginStart.mock.calls).toEqual([
+      ['work', 'aria', { reauth: true }],
+      ['work', 'aria', undefined],
+      ['work', 'aria', undefined],
+    ]);
+  });
+});
+
 describe('포트가 던지면 bad-request 갈래로 답한다', () => {
   it('삭제 실패가 소켓을 끊지 않는다', async () => {
     // 포트는 "없는 것을 지우려 하면" 던진다. 그것으로 연결이 끊기면 UI 가 다시 붙어야 한다.

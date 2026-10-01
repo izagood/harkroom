@@ -33,7 +33,7 @@ export async function cliThenApi(
 /** 키(계정)별로 결과를 잠시 들고 있는다. 진행 중인 요청도 공유한다 — 폴 둘이 겹쳐도 CLI 는 하나다. */
 export function createUsageCache(ttlMs: number = USAGE_CACHE_MS, now: () => number = Date.now) {
   const entries = new Map<string, { at: number; value: Promise<Omit<ProviderAccountUsage, 'account' | 'pool'>> }>();
-  return (key: string, load: () => Promise<Omit<ProviderAccountUsage, 'account' | 'pool'>>) => {
+  const cache = (key: string, load: () => Promise<Omit<ProviderAccountUsage, 'account' | 'pool'>>) => {
     const hit = entries.get(key);
     if (hit && now() - hit.at < ttlMs) return hit.value;
     const value = load();
@@ -42,4 +42,7 @@ export function createUsageCache(ttlMs: number = USAGE_CACHE_MS, now: () => numb
     value.catch(() => entries.delete(key));
     return value;
   };
+  /** 그 키의 값을 버린다 — 다시 로그인한 계정은 옛 로그인의 %를 돌려주면 안 된다. */
+  cache.forget = (key: string): void => { entries.delete(key); };
+  return cache;
 }

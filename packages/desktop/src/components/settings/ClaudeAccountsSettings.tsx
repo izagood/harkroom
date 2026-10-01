@@ -88,10 +88,21 @@ type Pending =
   | { kind: 'pool'; pool: string }
   | null;
 
+/**
+ * 다시 로그인을 묻는 중인 계정. 삭제(`Pending`)와 따로 둔다 — 되돌릴 수 없는 일이 아니라서
+ * 확인창의 색·버튼이 다르고, 확인하면 곧바로 아래 로그인 패널이 선다.
+ */
+interface ReauthAsk { pool: string; account: string; label: string }
+
 /** 진행 중인 로그인 하나. 화면에 둘을 동시에 두지 않는다 — 코드 입력란이 둘이면 헷갈린다. */
 interface LoginState {
   pool: string;
   account: string;
+  /**
+   * 있는 계정에 **다시** 로그인하는가(이름·풀·순서·세션은 그대로, 인증만 바뀐다). 아니면 추가다.
+   * `label` 은 패널 제목에 쓰는 그 계정의 지금 정체다.
+   */
+  reauth?: { label: string };
   loginId: string | null;
   url: string | null;
   error: string | null;
@@ -135,6 +146,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
   const [pendingBusy, setPendingBusy] = useState(false);
   const [pendingError, setPendingError] = useState<string | null>(null);
   const [login, setLogin] = useState<LoginState | null>(null);
+  const [reauthAsk, setReauthAsk] = useState<ReauthAsk | null>(null);
   const [newPool, setNewPool] = useState<string | null>(null);
   const [moveNote, setMoveNote] = useState<string | null>(null);
 
@@ -228,6 +240,21 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
     setLogin({ pool, account, loginId: null, url: null, error: null, done: false });
     try {
       const { loginId } = await startClaudeLogin(pool, account);
+      setLogin((cur) => (cur && cur.account === account ? { ...cur, loginId } : cur));
+    } catch (err) {
+      setLogin(null);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  /**
+   * 있는 계정에 다시 로그인한다. 이름을 새로 짓지 않는 것 말고는 추가와 같은 길이다 — 상태를
+   * 먼저 세우는 이유도 같다(위 `beginLogin`). 데몬은 그 계정이 없으면 거절한다(`reauth`).
+   */
+  const beginReauth = async ({ pool, account, label }: ReauthAsk): Promise<void> => {
+    setLogin({ pool, account, reauth: { label }, loginId: null, url: null, error: null, done: false });
+    try {
+      const { loginId } = await startClaudeLogin(pool, account, { reauth: true });
       setLogin((cur) => (cur && cur.account === account ? { ...cur, loginId } : cur));
     } catch (err) {
       setLogin(null);
@@ -437,12 +464,27 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                       same sign-in as {dup.name}
                     </span>
                   )}
+                  {/* 경고를 본 자리에서 고친다 — 프로필을 지우지 않고 로그인만 바꾸는 길이 이것이다. */}
+                  {dup && (
+                    <button
+                      type="button"
+                      className="shrink-0 text-accent underline hover:text-fg"
+                      aria-label={`Sign in again to ${a.name}`}
+                      data-testid="claude-account-duplicate-reauth"
+                      onClick={() => setReauthAsk({ pool: pool.name, account: a.name, label: accountLabel(a) })}
+                    >
+                      Sign in again
+                    </button>
+                  )}
                 </span>
 
                 <span className="relative flex justify-end">
                   <Menu
                     placement="bottom"
                     items={[{
+                      label: `Sign in again to ${a.name}`,
+                      onSelect: () => setReauthAsk({ pool: pool.name, account: a.name, label: accountLabel(a) }),
+                    }, {
                       label: `Remove account ${a.name}`,
                       onSelect: () => askPending({
                         kind: 'account', pool: pool.name, account: a.name, label: accountLabel(a),
@@ -514,7 +556,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
 
       {/* 계정 추가 — URL 을 링크로 보여 주고 코드를 받는다. */}
       {login && (
-        <SettingsGroup title={`Add account to ${login.pool}`}>
+        <SettingsGroup title={login.reauth ? `Sign in again — ${login.reauth.label}` : `Add account to ${login.pool}`}>
           {login.loginId === null ? (
             <div className="px-4 py-3">
               {/*
@@ -538,8 +580,9 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                     {login.url}
                   </a>
                   <div className="mt-2 text-meta text-warning">
-                    Use a private (incognito) browser window when adding a second account.
-                    Otherwise the existing session signs you into the same account again.
+                    {login.reauth
+                      ? 'Use a private (incognito) browser window. Otherwise the existing session signs this account into the same login again.'
+                      : 'Use a private (incognito) browser window when adding a second account. Otherwise the existing session signs you into the same account again.'}
                   </div>
                   <div className="mt-3">
                     <LoginCodeForm
@@ -575,6 +618,31 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
         아래 "Confirm" 카드로 붙였는데, 누른 `⋯` 에서 멀고 스크롤해야 보일 때도 있어서 오류
         배너로 읽혔다(2026-09-29 jaebin). 버튼 이름은 "Confirm" 이 아니라 **하는 일**이다.
       */}
+      {/*
+        다시 로그인 확인(2026-10-01 jaebin: 막지 않고 알린다). 세 가지를 말한다 — 무엇이 남는가,
+        왜 시크릿 창인가(그러지 않으면 같은 로그인으로 돌아와 `same sign-in` 이 그대로다), 돌던
+        턴은 어떻게 되는가. 턴을 막지 않는 이유: 데몬은 어느 턴이 어느 계정을 쓰는지 모르고,
+        다시 로그인하려는 때는 대개 그 계정이 이미 실패하는 중이다. claude 2.1.286 은 토큰을
+        갱신하기 전에 저장소를 다시 읽고 값이 바뀌었으면 그것을 따른다(`refresh_race_resolved`)
+        — 돌던 턴이 Keychain 을 옛 로그인으로 되덮지 않는다.
+      */}
+      {reauthAsk && (
+        <ConfirmDialog
+          title={`Sign in again to ${reauthAsk.account}?`}
+          detail={
+            // 겹창의 미리보기 칸은 높이가 정해져 있다(`max-h-24`) — 세 줄을 짧게 둔다.
+            <div className="flex flex-col gap-1">
+              <span>Name, pool and order stay; only the sign-in changes.</span>
+              <span>Use a private browser window, or you get the same login again.</span>
+              <span>Turns already running on this account are not stopped.</span>
+            </div>
+          }
+          confirmLabel="Sign in again"
+          onConfirm={() => { const ask = reauthAsk; setReauthAsk(null); void beginReauth(ask); }}
+          onCancel={() => setReauthAsk(null)}
+        />
+      )}
+
       {pending && (
         <ConfirmDialog
           danger

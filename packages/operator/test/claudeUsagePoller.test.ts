@@ -125,6 +125,20 @@ describe('claudeUsagePoller', () => {
     expect((await readFileAt(root)).accounts.map((a) => a.account)).toEqual(['aria']);
   });
 
+  it('forget 은 기한 전이어도 그 계정만 곧바로 다시 잰다 — 다시 로그인한 계정', async () => {
+    const root = await poolsRoot(['aria', 'cedar']);
+    const s = setup(root);
+    s.pct.aria = 40;
+    await s.poller.tick();
+    s.calls.length = 0;
+    s.pct.aria = 5; // 새 로그인의 값
+    s.advance(1000);
+    await s.poller.forget(join(root, 'work', 'aria'));
+    expect(s.calls).toEqual(['aria']);
+    const file = await readFileAt(root);
+    expect(file?.accounts.find((a) => a.account === 'aria')?.session?.usedPercent).toBe(5);
+  });
+
   it('겹쳐 부르면 조회는 한 번이다', async () => {
     const root = await poolsRoot(['aria']);
     const s = setup(root);

@@ -131,7 +131,11 @@ export interface ClaudeAccountsPort {
   removeAccount(pool: string, account: string): Promise<void>;
   removePool(pool: string): Promise<void>;
   move(account: string, toPool: string): Promise<{ loggedIn: boolean }>;
-  loginStart(pool: string, account: string): Promise<{ loginId: string }>;
+  /**
+   * `reauth` = **이미 있는 계정**에 다시 로그인한다(이름·풀·순서·세션은 그대로, 인증만 바뀐다).
+   * 디렉터리가 없으면 거절한다 — 새로 만들면 지운 계정이 되살아난다(2026-09-29).
+   */
+  loginStart(pool: string, account: string, opts?: { reauth?: boolean }): Promise<{ loginId: string }>;
   loginSubmit(loginId: string, code: string): Promise<void>;
   loginCancel(loginId: string): Promise<void>;
   /**
@@ -482,6 +486,11 @@ export function createClaudeAccountsPort(opts: {
   usageCacheMs?: number;
   /** Keychain 항목 삭제. 테스트가 가짜를 끼운다 — 진짜 Keychain 을 건드리지 않게. */
   deleteKeychain?: (configDir: string) => Promise<void>;
+  /**
+   * 로그인이 **성공으로** 끝났다(`CLAUDE_CONFIG_DIR`). 사용량 폴러가 그 계정을 곧바로 다시 재게
+   * 한다 — 다시 로그인한 계정의 `usage.json` 값은 옛 로그인의 것이라, 러너가 그것으로 점수를 매긴다.
+   */
+  onSignedIn?: (configDir: string) => void;
 } = {}): ClaudeAccountsPort {
   const root = opts.root ?? claudeAccountsRoot();
   const runStatus = opts.runStatus ?? nodeRunStatus;
@@ -642,9 +651,14 @@ export function createClaudeAccountsPort(opts: {
       return { loggedIn: readStatus(await runStatus(to)).loggedIn };
     },
 
-    async loginStart(pool: string, account: string): Promise<{ loginId: string }> {
+    async loginStart(pool: string, account: string, startOpts: { reauth?: boolean } = {}): Promise<{ loginId: string }> {
       const configDir = under(root, pool, account);
       const slot = `${pool}/${account}`;
+      // **다시 로그인은 있는 계정에만.** 화면이 낡은 목록을 들고 있다가 지운 계정에 누르면
+      // 아래 mkdir 이 그 계정을 되살린다 — 남은 Keychain 항목과 만나면 로그인된 채로(2026-09-29).
+      if (startOpts.reauth && !(await stat(configDir).then((s) => s.isDirectory(), () => false))) {
+        throw new Error(`다시 로그인할 계정이 없다: ${slot}`);
+      }
       // **같은 계정에 둘이 붙는 것을 막는다.** 둘이 같은 디렉터리를 밟으면 어느 쪽 자격증명이
       // 남는지 알 수 없다.
       for (const live of logins.values()) {
@@ -680,6 +694,11 @@ export function createClaudeAccountsPort(opts: {
           const status = readStatus(await runStatus(configDir));
           if (!status.loggedIn && state.created) {
             await rm(configDir, { recursive: true, force: true }).catch(() => undefined);
+          }
+          if (status.loggedIn) {
+            // 같은 디렉터리의 사용량 캐시는 옛 로그인의 값이다(다시 로그인했다면). 버리고 알린다.
+            usageCache.forget(configDir);
+            try { opts.onSignedIn?.(configDir); } catch { /* 관찰은 로그인을 실패시키지 않는다 */ }
           }
           emit({
             loginId, done: true, status,
