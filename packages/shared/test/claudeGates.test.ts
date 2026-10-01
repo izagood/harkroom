@@ -4,7 +4,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { markClaudeAccountGates, withClaudeAccountGates } from '../src/claudeGates.js';
+import {
+  CLAUDE_ATTENTION_FILE,
+  clearAccountAttention,
+  isAttentionActive,
+  markAccountNeedsAttention,
+  markClaudeAccountGates,
+  markClaudeWorkspaceTrusted,
+  readAccountAttention,
+  withClaudeAccountGates,
+} from '../src/claudeGates.js';
 
 describe('withClaudeAccountGates', () => {
   it('빈 문서에 두 키를 채운다', () => {
@@ -59,5 +68,42 @@ describe('markClaudeAccountGates', () => {
     await writeFile(path, '{ not json');
     await expect(markClaudeAccountGates(d)).rejects.toThrow();
     expect(await readFile(path, 'utf8')).toBe('{ not json');
+  });
+});
+
+describe('관문 표식 (사람이 지나야 하는 관문, 2026-10-01)', () => {
+  const dir = () => mkdtemp(join(tmpdir(), 'attn-'));
+
+  it('남기고 읽고 지운다 — 시각만 담는다', async () => {
+    const d = await dir();
+    expect(await readAccountAttention(d)).toBeNull();
+    await markAccountNeedsAttention(d, 1_000);
+    expect(await readAccountAttention(d)).toEqual({ kind: 'gate', atMs: 1_000 });
+    expect(JSON.parse(await readFile(join(d, CLAUDE_ATTENTION_FILE), 'utf8'))).toEqual({ kind: 'gate', atMs: 1_000 });
+    expect(await clearAccountAttention(d)).toBe(true);
+    expect(await readAccountAttention(d)).toBeNull();
+    expect(await clearAccountAttention(d)).toBe(false);
+  });
+
+  it('깨진 표식은 없는 것으로 본다 — 깨진 파일로 계정을 빼지 않는다', async () => {
+    const d = await dir();
+    await writeFile(join(d, CLAUDE_ATTENTION_FILE), '{ nope');
+    expect(await readAccountAttention(d)).toBeNull();
+  });
+
+  it('시한이 없다 — 오래된 표식도 서 있다(지우는 곳이 따로 있다), 미래 시각은 깨진 것', () => {
+    const a = { kind: 'gate' as const, atMs: 0 };
+    expect(isAttentionActive(a, 24 * 60 * 60 * 1000)).toBe(true);
+    expect(isAttentionActive({ kind: 'gate', atMs: 120_000 }, 0)).toBe(false);
+    expect(isAttentionActive(null, 0)).toBe(false);
+  });
+
+  it('작업 폴더 신뢰를 없을 때만 적고 다른 값은 보존한다', async () => {
+    const d = await dir();
+    await writeFile(join(d, '.claude.json'), JSON.stringify({ x: 1, projects: { '/a': { y: 2 } } }));
+    expect(await markClaudeWorkspaceTrusted(d, '/w')).toBe(true);
+    const doc = JSON.parse(await readFile(join(d, '.claude.json'), 'utf8'));
+    expect(doc).toEqual({ x: 1, projects: { '/a': { y: 2 }, '/w': { hasTrustDialogAccepted: true } } });
+    expect(await markClaudeWorkspaceTrusted(d, '/w')).toBe(false);
   });
 });

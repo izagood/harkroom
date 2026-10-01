@@ -92,6 +92,22 @@ function tagTransportError(err: unknown): never {
   throw err;
 }
 
+/**
+ * `message.fail` 의 선택 칸들. `code` 는 서버 `FAILURE_CODES` 의 부분집합이다.
+ * - `account_gate`(2026-10-02, 서버 0.3.x #1039 부터): 턴 **시작** 때 계정 설정 확인 화면이 사람을
+ *   기다린다. `mentionId`(그 턴을 띄운 멘션 — 서버가 차례 주인을 확인한다)·`account`(계정 id 만)와
+ *   짝이다. **옛 서버는 모르는 code 값을 거절한다**(키는 걸러지지만 enum 값은 아니다) — 그래서 이
+ *   값은 그 서버 릴리스 뒤에만 싣는다.
+ */
+export interface FailOpts {
+  retryable: boolean;
+  what?: string;
+  reason?: string;
+  code?: 'thread_model_rejected' | 'account_gate';
+  mentionId?: string;
+  account?: string;
+}
+
 export class HarkroomAgentClient {
   private mcp: Client | null = null;
 
@@ -360,7 +376,7 @@ export class HarkroomAgentClient {
      * 옛 서버의 도구 입력 검증은 모르는 키를 걸러 낼 뿐 거절하지 않는다 — 실패 통지는 그대로
      * 나가고 표지만 빠진다(화면이 평문 실패 카드로 그린다). 있을 때만 싣는다.
      */
-    opts: { retryable: boolean; what?: string; reason?: string; code?: 'thread_model_rejected' },
+    opts: FailOpts,
   ): Promise<number> {
     const res = await this.call<{ message: { seq: number } }>('message.fail', {
       channelId,
@@ -370,6 +386,8 @@ export class HarkroomAgentClient {
       ...(opts.what ? { what: opts.what } : {}),
       ...(opts.reason ? { reason: opts.reason } : {}),
       ...(opts.code ? { code: opts.code } : {}),
+      ...(opts.mentionId ? { mentionId: opts.mentionId } : {}),
+      ...(opts.account ? { account: opts.account } : {}),
     });
     return res.message.seq;
   }

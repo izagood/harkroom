@@ -732,13 +732,14 @@ describe('injectPrompt — TUI 에 프롬프트를 넣는다 (2026-09-08)', () =
 // 하네스의 것이라 열거로 끝나지 않으므로, 모르는 관문에서 사람이 개입할 길을 남긴다.
 describe('준비 상한 — onAttention 이 있으면 죽이지 않는다', () => {
   it('상한을 넘기면 onAttention 을 부르고, 사람이 관문을 지나면 그 자리에서 주입된다', async () => {
+    let injectedCalls = 0;
     const 화면: string[] = [];
     let writer: PtyWriter | null = null;
     const turn = runPtyTurn(plan('gatekeeper'), {
       cwd: process.cwd(),
       timeoutMs: 0,
       onSpawn: (c) => { writer = c; },
-      injectPrompt: { text: '안녕', readyTimeoutMs: 300, onAttention: (s) => 화면.push(s) },
+      injectPrompt: { text: '안녕', readyTimeoutMs: 300, onAttention: (s) => 화면.push(s), onInjected: () => { injectedCalls += 1; } },
     });
 
     // 조건으로 기다린다 — 고정 슬립은 느린 CI 에서 샌다.
@@ -754,6 +755,8 @@ describe('준비 상한 — onAttention 이 있으면 죽이지 않는다', () =
     // 관문을 지난 **뒤에** 프롬프트가 실제로 들어갔다 — 사람의 개입이 턴을 대체하지 않고
     // 통과시킨다는 것이 이 설계의 값 대부분이다.
     expect(r.tail).toContain('injected:');
+    // 주입 순간을 한 번 알린다 — 관문 표식은 이 뒤에만 지운다(#1047 F1).
+    expect(injectedCalls).toBe(1);
   }, 30_000);
 
   it('onAttention 이 없으면 지금대로 죽고 던진다 — 콜백 유무가 두 정책을 가른다', async () => {

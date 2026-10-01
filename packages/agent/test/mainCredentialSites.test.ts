@@ -141,7 +141,10 @@ describe('한도 판정은 tail 을 로그에 남긴다', () => {
     const at = schedulerSource.indexOf('사용량 한도 — 재시도하지 않는다');
     expect(at).toBeGreaterThan(0);
     const line = schedulerSource.slice(at, schedulerSource.indexOf('\n', at));
-    expect(line).toContain('err instanceof Error');
+    // 2026-10-02(security, #1036): 원문은 `err.message`(화면 꼬리를 담는다)가 아니라 하네스가 자기
+    // 기록에 적은 오류 한 줄(`harnessApiError`)이다 — 판정이 읽는 바로 그 재료다.
+    expect(line).toContain('apiLine');
+    expect(line).not.toContain('err.message');
   });
 });
 

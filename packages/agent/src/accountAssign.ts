@@ -33,6 +33,7 @@ import {
   parseClaudeUsageFile,
   type ClaudeUsageEntry,
 } from '@harkroom/shared/claudeUsage';
+import { isAttentionActive, readAccountAttention, type ClaudeAccountAttention } from '@harkroom/shared/claudeGates';
 import type { ProviderUsageWindow } from '@harkroom/shared/daemonProtocol';
 
 import type { ClaudeAccount } from './claudeAccounts.js';
@@ -81,6 +82,12 @@ export interface PickInput {
   model?: string | null;
   /** [0,1) 난수. 러너끼리의 몰림을 상위 둘 무작위로 흩는다. */
   random: () => number;
+  /**
+   * **사람이 관문을 지나야 하는 계정**(2026-10-01, `@harkroom/shared/claudeGates` 표식). 새 배정에서
+   * 빼고, 고정된 스레드도 옮긴다 — 그 계정으로는 턴이 프롬프트조차 못 넣는다. 페일오버 꼬리에는
+   * 남긴다(다른 계정이 다 실패하면 마지막 수단으로 다시 재 본다). 생략하면 없다.
+   */
+  blocked?: ReadonlySet<string>;
 }
 
 export interface PickResult {
@@ -127,6 +134,17 @@ function modelWindow(entry: ClaudeUsageEntry, model: string | null | undefined):
  * 값을 모두가 쓰고, 최근 배정 수도 묶음으로 합치고, **후보 자리도 하나만 차지한다**(아래 `reps`).
  */
 export function pickAccount(input: PickInput): PickResult {
+  const res = pickAccountInner(input);
+  const blocked = input.blocked;
+  if (!blocked?.size) return res;
+  // 관문 표식이 선 계정은 **언제나 맨 뒤**다(2026-10-02, 관문 대응 안 2 — 빼지 않는다). 다른 계정이
+  // 다 실패하면 그 계정이 마지막에 서서 사람을 부른다(`callsForHuman`). 모두 막혔으면 순서 그대로다.
+  const open = res.order.filter((n) => !blocked.has(n));
+  if (!open.length) return res;
+  return { ...res, order: [...open, ...res.order.filter((n) => blocked.has(n))] };
+}
+
+function pickAccountInner(input: PickInput): PickResult {
   const { accounts, usage, pinned, policy, now, model } = input;
   if (!accounts.length) throw new Error('pickAccount: 계정이 비어 있다');
 
@@ -146,9 +164,17 @@ export function pickAccount(input: PickInput): PickResult {
     if (!prev || (e.readAtMs ?? 0) > (prev.readAtMs ?? 0)) groupEntry.set(g, e);
   }
 
+  const blocked = input.blocked ?? new Set<string>();
   const scored: Scored[] = accounts.map((name, index) => {
     const g = groupOf(name);
     const e = groupEntry.get(g);
+    if (blocked.has(name)) {
+      return {
+        name, index, known: Boolean(e?.weekly), sessionPct: e?.session?.usedPercent ?? null,
+        weeklyPct: e?.weekly?.usedPercent ?? null,
+        score: 0, eligible: false, mustMove: true, unblockAtMs: Infinity,
+      };
+    }
     if (!e || !e.weekly) {
       return {
         name, index, known: false, sessionPct: null, weeklyPct: null,
@@ -176,17 +202,18 @@ export function pickAccount(input: PickInput): PickResult {
     };
   });
 
-  const known = scored.filter((s) => s.known);
+  const known = scored.filter((s) => s.known && !blocked.has(s.name));
   const describe = (s: Scored): string => s.known
     ? `${s.name}(5h ${Math.round(s.sessionPct ?? 0)}% · 주간 ${Math.round(s.weeklyPct ?? 0)}% · 점수 ${s.score.toFixed(2)}/h)`
     : `${s.name}(모름)`;
 
   // 믿을 만한 값이 하나도 없으면 지금 동작 그대로 — 풀 순서, 고정 계정이 있으면 그것부터.
   if (!known.length) {
-    const order = pinned && accounts.includes(pinned)
-      ? [pinned, ...accounts.filter((a) => a !== pinned)]
-      : [...accounts];
-    return { order, reason: pinned && accounts.includes(pinned) ? 'kept' : 'unknown', detail: '사용량을 모른다 — 풀 순서' };
+    // 막힌 계정은 맨 뒤로 — 풀 순서로 떨어져도 그 계정부터 시도해 3초를 버리지 않는다.
+    const open = accounts.filter((a) => !blocked.has(a));
+    const keep = pinned && open.includes(pinned) ? pinned : null;
+    const order = [...(keep ? [keep] : []), ...open.filter((a) => a !== keep), ...accounts.filter((a) => blocked.has(a))];
+    return { order, reason: keep ? 'kept' : 'unknown', detail: '사용량을 모른다 — 풀 순서' };
   }
 
   // 모르는 계정은 "순서상 먼저"가 아니라 **풀의 중간 점수**다.
@@ -194,7 +221,7 @@ export function pickAccount(input: PickInput): PickResult {
   const mid = sortedScores.length % 2
     ? sortedScores[(sortedScores.length - 1) / 2]!
     : (sortedScores[sortedScores.length / 2 - 1]! + sortedScores[sortedScores.length / 2]!) / 2;
-  for (const s of scored) if (!s.known) s.score = mid;
+  for (const s of scored) if (!s.known && !blocked.has(s.name)) s.score = mid;
 
   // 점수 내림차순. 1등의 tieRatio 안쪽끼리는 5시간 사용률이 낮은 쪽(모르면 50%), 그다음 풀 순서.
   const byScore = (list: Scored[]): Scored[] => {
@@ -270,6 +297,8 @@ export interface AccountAssignerDeps {
   now?: () => number;
   random?: () => number;
   log?: (line: string) => void;
+  /** 관문 표식 읽기(`@harkroom/shared/claudeGates`). 테스트가 가짜를 끼운다. */
+  readAttention?: (configDir: string) => Promise<ClaudeAccountAttention | null>;
 }
 
 export interface AccountAssigner {
@@ -322,7 +351,12 @@ export function createAccountAssigner(deps: AccountAssignerDeps): AccountAssigne
       // 계정이 하나 이하면 고를 것이 없다.
       if (accounts.length < 2) return lane;
       const t = now();
-      const [usage, policy] = await Promise.all([readUsage(pool ?? ''), readPolicy(pool)]);
+      const readAttention = deps.readAttention ?? readAccountAttention;
+      const [usage, policy, attention] = await Promise.all([
+        readUsage(pool ?? ''), readPolicy(pool),
+        Promise.all(accounts.map(async (a) => [a.name, await readAttention(a.configDir).catch(() => null)] as const)),
+      ]);
+      const blocked = new Set(attention.filter(([, at]) => isAttentionActive(at, t)).map(([name]) => name));
       while (assigned.length && t - assigned[0]!.atMs > ASSIGNMENT_MEMORY_MS) assigned.shift();
       const recent = new Map<string, number>();
       for (const a of assigned) {
@@ -334,7 +368,7 @@ export function createAccountAssigner(deps: AccountAssignerDeps): AccountAssigne
       const pinned = pinnedRaw && byName.has(pinnedRaw) ? pinnedRaw : null;
       const res = pickAccount({
         accounts: accounts.map((a) => a.name), usage, pinned, policy, now: t,
-        recentAssignments: recent, model: model ?? null, random,
+        recentAssignments: recent, model: model ?? null, random, blocked,
       });
       const first = res.order[0]!;
       if (res.reason === 'new' || res.reason === 'moved' || res.reason === 'all-hot') {

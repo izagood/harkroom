@@ -129,10 +129,12 @@ export class PromptNotDeliveredError extends Error {
     public readonly waitedMs: number,
     public readonly tail: string,
     /**
-     * **왜 못 넣었나**(2026-10-02). `waiting` = 관문 화면이 서서 사람의 선택을 기다린다,
-     * `timeout` = 상한까지 입력창을 못 봤다. 계정 축이 다 돈 뒤 사람에게 계정마다 이유를
-     * 말할 때 쓴다(`claudeAccounts.ts::accountFailureOf`) — `tail` 은 화면 원문이라(조직 설정
-     * 값이 들어 있을 수 있다) 사람이 보는 자리에 싣지 않고, 이 종류만 싣는다.
+     * 왜 못 넣었나(2026-10-01).
+     * - `waiting`: 화면이 **사람의 선택을 기다린다** — 입력창이 아닌 화면을 그린 뒤 조용해졌다
+     *   (`waitingQuietMs`). 승인·첫 실행·로그인 메뉴처럼 처음 보는 화면도 여기로 온다.
+     * - `timeout`: 준비 상한(`readyTimeoutMs`)에 닿았다 — 부팅이 느렸거나 아무것도 안 그렸다.
+     * 계정 축이 다 돈 뒤 사람에게 계정마다 이유를 말할 때도 이 종류만 쓴다(`accountFailureOf`) —
+     * `tail` 은 화면 원문이라(조직 설정 값이 있을 수 있다) 사람이 보는 자리에 싣지 않는다.
      */
     public readonly kind: 'waiting' | 'timeout' = 'timeout',
   ) {
@@ -558,21 +560,34 @@ export interface RunPtyTurnOptions {
    */
   injectPrompt?: {
     text: string;
+    /**
+     * 프롬프트를 **입력창에 넣은 순간** 한 번 부른다(2026-10-02). 계정 관문 표식은 이 뒤에만 지운다 —
+     * 관문 앞에서 접히거나 시간이 다 된 턴이 표식을 지우면 막힌 계정이 다시 앞줄로 온다(#1047 security F1).
+     */
+    onInjected?: () => void;
     /** 준비로 볼 패턴. 생략하면 claude TUI 의 입력 프롬프트. */
     readyPattern?: RegExp;
     /** 준비 상한. 넘기면 `PromptNotDeliveredError`. 생략하면 60초. */
     readyTimeoutMs?: number;
     /**
-     * **부를 사람이 없을 때** 관문 화면이 이만큼 이어지면 상한을 기다리지 않고 바로 실패한다
-     * (ms, 기본 3초, 2026-10-01). `onAttention` 이 있으면 쓰지 않는다 — 그때는 화면을 살려 두고
-     * 사람을 부르는 것이 옳다(아래 `onAttention` 주석).
+     * **사람의 선택을 기다리는 화면**을 문구가 아니라 상태로 잡는다(ms, 기본 3초, 2026-10-01).
      *
-     * 계정 축의 앞 계정이 이 경로다: 관문을 사람이 지나 줄 수 없으니 기다려 봐야 상한까지 태울
-     * 뿐이고, 실패가 곧 다음 계정으로 옮겨 타는 방아쇠다(`claudeAccounts.ts::switchesAccount`).
-     * 한 번 본 것으로 끝내지 않고 이만큼 이어지기를 보는 이유는 부팅 중 화면이 잠깐 관문처럼
-     * 스칠 수 있어서다(`gateProbeMs` 가 두 번 연속을 보는 것과 같은 규율).
+     * 부팅한 TUI 가 할 수 있는 일은 둘뿐이다: 입력창을 그리거나(준비), 다른 화면을 그리고 사람을
+     * 기다린다. 둘 다 **그린 뒤 조용해진다** — 실측(claude 2.1.286): 정상 부팅은 0.44초에 입력창을
+     * 그리고 멈췄고, 첫 실행 테마 화면은 0.49초에 다 그리고 멈췄다. 그러니 가르는 것은 "입력창
+     * 표시(`readyPattern`)가 있는가" 하나다. **입력창 없이 화면이 이만큼 조용하면 선택 대기다** —
+     * 관문 문구 목록(`gatePattern`)에 없는 처음 보는 승인 화면도 잡힌다. 문구 목록은 "입력창이 그려진
+     * 뒤 그 위를 덮은 화면"(codex 업데이트 사고)을 잡는 데만 쓰고, 그것도 같은 시간 이어져야 한다.
+     *
+     * **부를 사람이 없을 때만** 이 판정으로 접는다(`kind: 'waiting'`). 계정 축의 앞 계정이 이
+     * 경로다 — 실패가 곧 다음 계정으로 옮겨 타는 방아쇠다. `onAttention` 이 있으면 지금처럼 화면을
+     * 살려 두고 상한에서 사람을 부른다.
+     *
+     * 틀리게 잡는 경우: 입력창을 그리기 **전에** 아무 출력 없이 이만큼 멈춘 부팅(네트워크 지연 등).
+     * 그때 결과는 "다음 계정으로 넘기고 30분 승인 필요로 표시"이고, 사람이 터미널을 열면 그 사실이
+     * 보인다. 아무것도 안 그린 부팅은 이 판정에 걸리지 않는다(상한 `timeout` 으로 간다).
      */
-    gateFailMs?: number;
+    waitingQuietMs?: number;
     /**
      * 관문으로 볼 패턴. 생략하면 기본. **주입 직전에** 이것으로 화면을 한 번 더 보고,
      * 물음이면 넣지 않고 사람을 부른다(`DEFAULT_GATE_PATTERN` 주석의 사고).
@@ -916,7 +931,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       const { text, readyPattern = DEFAULT_READY_PATTERN, readyTimeoutMs = 60_000,
               readyQuietMs = 300, readyQuietMaxMs = 2_000, gatePattern = DEFAULT_GATE_PATTERN,
               readyMinMs = 0, unsentHint, unsentProbeMs = 1_500, unsentRetries = 3,
-              gateFailMs = 3_000, onAttention } = opts.injectPrompt;
+              waitingQuietMs = 3_000, onAttention } = opts.injectPrompt;
       let injected = false;
       /**
        * **관문 때문에 주입을 미루고 있는가**(2026-09-11).
@@ -951,11 +966,11 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         failUndelivered(screen);
       }, readyTimeoutMs);
       readyTimer.unref?.();
-      /** 프롬프트를 못 넣은 채로 접는다. 상한과 관문 빠른 실패(`gateFailMs`)가 같은 길로 온다. */
+      /** 프롬프트를 못 넣은 채로 접는다. 상한과 선택 대기(`waitingQuietMs`)가 같은 길로 온다. */
       function failUndelivered(screen: string, kind: 'waiting' | 'timeout' = 'timeout'): void {
         if (injected || settled) return;
         clearTimeout(readyTimer);
-        if (gateFailTimer) clearTimeout(gateFailTimer);
+        if (waitingProbe) clearInterval(waitingProbe);
         readyProbe?.dispose();
         settled = true;
         if (timeoutTimer) clearTimeout(timeoutTimer);
@@ -966,8 +981,29 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         try { proc.kill('SIGKILL'); } catch { /* 이미 죽었으면 회수할 것도 없다 */ }
         reject(new PromptNotDeliveredError(Date.now() - startedAt, screen, kind));
       }
-      /** 관문 빠른 실패 시계. 부를 사람이 없을 때만 걸린다. */
-      let gateFailTimer: ReturnType<typeof setTimeout> | null = null;
+      /** 마지막으로 바이트가 온 시각. 0 이면 아직 아무것도 안 그렸다. */
+      let lastDataAt = 0;
+      /** 덮은 관문(`gatePattern`)이 처음 보인 시각. 이어져야 접는다. */
+      let gateSince: number | null = null;
+      /**
+       * 선택 대기 판정(`waitingQuietMs`). **조용함은 데이터가 안 오는 것이라 데이터 콜백으로는 못
+       * 잰다** — 그래서 주기로 본다. 부를 사람이 없을 때만 돈다.
+       */
+      const waitingProbe: ReturnType<typeof setInterval> | null = onAttention ? null : setInterval(() => {
+        if (injected || settled) { if (waitingProbe) clearInterval(waitingProbe); return; }
+        const t = Date.now();
+        const screen = decodeTailText(tail.snapshot());
+        if (looksLikeGate(screen, gatePattern, readyPattern)) {
+          gateSince ??= t;
+          if (t - gateSince >= waitingQuietMs) { failUndelivered(screen, 'waiting'); return; }
+        } else {
+          gateSince = null;
+        }
+        if (readySeenAt === null && lastDataAt > 0 && t - lastDataAt >= waitingQuietMs) {
+          failUndelivered(screen, 'waiting');
+        }
+      }, Math.max(50, Math.min(250, Math.floor(waitingQuietMs / 4))));
+      waitingProbe?.unref?.();
       /**
        * 실제 주입. 준비 표시를 본 **뒤** 화면이 잠잠해지면(또는 정적 상한에 닿으면) 온다.
        * 두 경로가 한 곳으로 모여야 한다 — 갈라 두면 한쪽만 `injected` 를 세우거나 타이머를
@@ -1021,6 +1057,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         gateBlocked = false;
 
         injected = true;
+        try { opts.injectPrompt?.onInjected?.(); } catch { /* 알림이 주입을 막지 않는다 */ }
         clearTimeout(readyTimer);
         if (quietTimer) clearTimeout(quietTimer);
         readyProbe?.dispose();
@@ -1139,17 +1176,8 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
 
       readyProbe = proc.onData(() => {
         if (injected || settled) return;
+        lastDataAt = Date.now();
         const now = decodeTailText(tail.snapshot());
-        // 부를 사람이 없으면 관문 앞에서 상한까지 서 있을 이유가 없다(`gateFailMs`). 시계가
-        // 다 돌았을 때 **다시 보고** 그래도 관문이면 접는다 — 그 사이 준비로 바뀌었으면 아무 일도 없다.
-        if (!onAttention && gateFailTimer === null && looksLikeGate(now, gatePattern, readyPattern)) {
-          gateFailTimer = setTimeout(() => {
-            gateFailTimer = null;
-            const later = decodeTailText(tail.snapshot());
-            if (looksLikeGate(later, gatePattern, readyPattern)) failUndelivered(later, 'waiting');
-          }, gateFailMs);
-          gateFailTimer.unref?.();
-        }
         if (!readyPattern.test(stripAnsi(now))) return;
         if (readySeenAt === null) readySeenAt = Date.now();
         // 쉬지 않고 그리는 화면에서 정적이 영영 안 올 수 있다 — 상한에 닿으면 지금까지의

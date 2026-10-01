@@ -27,7 +27,7 @@
 // 된다. 구조를 읽고 쓰는 일은 상태와 무관하므로 그 경계를 갈라 둔다.
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -37,7 +37,14 @@ import {
   parseClaudePoolsConfig,
   type ClaudePoolsConfig,
 } from '@harkroom/shared/claudePools';
-import { markClaudeAccountGates } from '@harkroom/shared/claudeGates';
+import {
+  CLAUDE_ATTENTION_FILE,
+  clearAccountAttention,
+  isAttentionActive,
+  markClaudeAccountGates,
+  markClaudeWorkspaceTrusted,
+  readAccountAttention,
+} from '@harkroom/shared/claudeGates';
 import type { ProviderAccountUsage, ProviderUsageSnapshot } from '@harkroom/shared/daemonProtocol';
 
 import { claudeCliUsage, type RunCommand } from './cliUsage.js';
@@ -68,6 +75,11 @@ export interface ClaudeAuthStatus {
 export interface ClaudeAccountView {
   name: string;
   status: ClaudeAuthStatus;
+  /**
+   * **사람이 관문을 지나야 한다**(2026-10-01). 러너가 이 계정의 턴을 관문 화면에서 넘긴 시각.
+   * 서 있을 때만 싣는다(`isAttentionActive`, 시한 없음). 화면은 "승인 필요"와 [터미널 열기]를 보인다.
+   */
+  attention?: { atMs: number };
 }
 
 export interface ClaudePoolView {
@@ -150,6 +162,12 @@ export interface ClaudeAccountsPort {
    * `claude` 프로세스가 두 번 뜬다.
    */
   measureUsage(configDir: string): Promise<Omit<ProviderAccountUsage, 'account' | 'pool'>>;
+  /**
+   * 그 계정의 `CLAUDE_CONFIG_DIR` 로 **사람에게** Terminal.app 의 `claude` 를 연다(2026-10-01).
+   * 러너가 넘긴 관문(조직 관리 설정 승인 등)을 사람이 직접 고르게 하는 자리다 — 우리는 아무것도
+   * 누르지 않는다. 그 세션이 끝나면 스크립트가 관문 표식을 지워 다시 배정 후보가 된다.
+   */
+  openTerminal(pool: string, account: string): Promise<void>;
   /** 진행 중인 로그인을 전부 회수한다. 데몬 종료 경로가 부른다. */
   shutdownLogins(): Promise<void>;
   onLoginEvent(cb: (e: ClaudeLoginEvent) => void): void;
@@ -472,6 +490,38 @@ export async function readClaudeAccountsLayout(root: string): Promise<ClaudeAcco
   };
 }
 
+/** 셸 단일따옴표 인용. 경로에 `'` 가 들어 있어도 깨지지 않는다. */
+function shQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * 사람에게 여는 터미널의 스크립트. **경로는 우리가 조립한 값뿐이다**(`under` 로 잰 계정 디렉터리) —
+ * 웹뷰가 넘긴 문자열이 셸에 들어가지 않는다. `claude` 가 끝나면 관문 표식을 지운다: 사람이 그
+ * 화면을 지났든 아니든 다음 턴이 다시 재 보고, 아직 막혀 있으면 러너가 표식을 다시 세운다.
+ */
+export function terminalScript(o: { configDir: string; workDir: string; label: string }): string {
+  return [
+    '#!/bin/zsh -l',
+    `cd ${shQuote(o.workDir)} || exit 1`,
+    `export CLAUDE_CONFIG_DIR=${shQuote(o.configDir)}`,
+    `echo ${shQuote(`harkroom: ${o.label} 계정의 Claude Code 다. 뜨는 화면을 직접 고르고, 끝나면 /exit 로 나온다.`)}`,
+    'claude',
+    `rm -f ${shQuote(join(o.configDir, CLAUDE_ATTENTION_FILE))}`,
+    // 막 만든 작업 폴더를 치운다. 비었을 때만 지워진다(`rmdir`) — 사람이 무언가 남겼으면 그대로 둔다.
+    `cd / && rmdir ${shQuote(o.workDir)} 2>/dev/null`,
+    `echo ${shQuote('harkroom: 끝났다. 이 창은 닫아도 된다 — 다음 턴부터 이 계정을 다시 쓴다.')}`,
+    '',
+  ].join('\n');
+}
+
+/** macOS: `.command` 파일은 `open -a Terminal` 로 연다 — AppleScript 권한(자동화 승인)이 필요 없다. */
+function nodeOpenInTerminal(scriptPath: string): Promise<void> {
+  return new Promise((resolveP, rejectP) => {
+    execFile('open', ['-a', 'Terminal', scriptPath], (err) => (err ? rejectP(err) : resolveP()));
+  });
+}
+
 export function createClaudeAccountsPort(opts: {
   root?: string;
   runStatus?: (configDir: string) => Promise<unknown>;
@@ -492,6 +542,8 @@ export function createClaudeAccountsPort(opts: {
    * 한다 — 다시 로그인한 계정의 `usage.json` 값은 옛 로그인의 것이라, 러너가 그것으로 점수를 매긴다.
    */
   onSignedIn?: (configDir: string) => void;
+  /** `.command` 파일을 Terminal.app 으로 연다. 테스트가 가짜를 끼운다 — 진짜 창을 띄우지 않게. */
+  openInTerminal?: (scriptPath: string) => Promise<void>;
 } = {}): ClaudeAccountsPort {
   const root = opts.root ?? claudeAccountsRoot();
   const runStatus = opts.runStatus ?? nodeRunStatus;
@@ -537,7 +589,12 @@ export function createClaudeAccountsPort(opts: {
       for (const p of layout.pools) {
         const accounts: ClaudeAccountView[] = [];
         for (const a of p.accounts) {
-          accounts.push({ name: a.name, status: readStatus(await runStatus(a.dir)) });
+          const attention = await readAccountAttention(a.dir).catch(() => null);
+          accounts.push({
+            name: a.name,
+            status: readStatus(await runStatus(a.dir)),
+            ...(attention && isAttentionActive(attention, now()) ? { attention: { atMs: attention.atMs } } : {}),
+          });
         }
         pools.push({ name: p.name, accounts });
       }
@@ -602,6 +659,30 @@ export function createClaudeAccountsPort(opts: {
       }
 
       await writePoolsConfig(root, norm);
+    },
+
+    async openTerminal(pool: string, account: string): Promise<void> {
+      const dir = under(root, pool, account);
+      if (!(await stat(dir).then((s) => s.isDirectory(), () => false))) {
+        throw new Error(`계정이 없다: ${pool}/${account}`);
+      }
+      // 작업 폴더는 **열 때마다 새로 만든 빈 폴더**다(`mkdtemp`, security 권고 10-01). 그 계정이
+      // 이 폴더를 신뢰했다고 적어 둔다 — 폴더 신뢰 화면이 먼저 뜨면 사람이 고쳐야 할 관문이 그 뒤에
+      // 가린다. 첫 실행 화면도 같은 이유로 미리 지난다.
+      //
+      // **한 폴더를 계속 신뢰해 두지 않는 이유**: 신뢰한 폴더의 `.claude/settings.json`(훅)·`.mcp.json`·
+      // `CLAUDE.md` 는 확인 없이 읽힌다. 남아 있는 폴더면 누가(프롬프트 주입에 넘어간 에이전트 등)
+      // 파일 하나로 사람의 대화 세션에 훅을 심을 수 있다. 막 만든 빈 폴더에는 그런 것이 없다.
+      // 스크립트도 그 폴더 **밖**(`.terminal/` 바로 밑)에 둔다. 뿌리의 점 디렉터리라 풀·계정 문법에
+      // 안 걸린다(`[a-z0-9-]`). 세션이 끝나면 스크립트가 빈 작업 폴더를 지운다(`rmdir` — 비었을 때만).
+      const base = join(root, '.terminal');
+      await mkdir(base, { recursive: true, mode: 0o700 });
+      const workDir = await mkdtemp(join(base, 'session-'));
+      await markClaudeAccountGates(dir).catch(() => undefined);
+      await markClaudeWorkspaceTrusted(dir, workDir).catch(() => undefined);
+      const script = join(base, `${pool}-${account}.command`);
+      await writeFile(script, terminalScript({ configDir: dir, workDir, label: `${pool}/${account}` }), { mode: 0o700 });
+      await (opts.openInTerminal ?? nodeOpenInTerminal)(script);
     },
 
     async removeAccount(pool: string, account: string): Promise<void> {
@@ -701,6 +782,8 @@ export function createClaudeAccountsPort(opts: {
             await rm(configDir, { recursive: true, force: true }).catch(() => undefined);
           }
           if (status.loggedIn) {
+            // 다시 로그인했다 = 관문 표식은 옛 로그인의 사정이다. 아직 막혀 있으면 러너가 다시 세운다.
+            await clearAccountAttention(configDir).catch(() => undefined);
             // 첫 실행 테마 선택·auto mode 안내 창을 미리 지나 둔다(`@harkroom/shared/claudeGates`).
             // 러너도 턴마다 같은 것을 적지만, 그 전에 사람이 이 계정을 터미널로 열 수 있다 —
             // 그때 테마 화면부터 만나지 않게 여기서도 적는다. 실패해도 로그인은 성공이다.
