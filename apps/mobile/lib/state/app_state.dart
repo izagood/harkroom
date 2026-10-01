@@ -167,6 +167,31 @@ class AppState extends ChangeNotifier {
     if (tab == 3) unawaited(loadAgents());
   }
 
+  /// 쓰던 글(D8): 커뮤니티 열쇠 → 작성칸 키(채널 id · 스레드 루트 id) → 글.
+  ///
+  /// **열쇠는 커뮤니티 key(origin#계정 id)다** — 채널 id 만으로 두면 다른 서버의 같은 id 작성칸에 글이
+  /// 샌다. 커뮤니티를 옮겨도 남고(돌아오면 이어 쓴다), 그 커뮤니티에서 로그아웃하면 지운다(모두
+  /// 로그아웃이면 전부). 메모리에만 둔다 — 앱을 껐다 켜면 비는 것은 전과 같다.
+  final Map<String, Map<String, String>> _drafts = {};
+
+  /// 지금(또는 [community]) 커뮤니티의 그 작성칸에 쓰던 글. 없으면 빈 글.
+  String draftFor(String composerKey, {String? community}) =>
+      _drafts[community ?? activeKey]?[composerKey] ?? '';
+
+  /// 쓰던 글을 적어 둔다. [community] 는 **화면이 열릴 때 쥔** 커뮤니티 key 다 — 옮긴 뒤에 닫히는 화면이
+  /// 지금 커뮤니티 자리에 앞 커뮤니티의 글을 쓰지 않게. 이미 빠진 커뮤니티면 버린다(로그아웃 뒤에 닫히는
+  /// 화면이 지운 글을 되살리지 않게).
+  void saveDraft(String community, String composerKey, String text) {
+    if (!communities.any((c) => c.key == community)) return;
+    if (text.isEmpty) {
+      final m = _drafts[community];
+      m?.remove(composerKey);
+      if (m != null && m.isEmpty) _drafts.remove(community);
+      return;
+    }
+    (_drafts[community] ??= {})[composerKey] = text;
+  }
+
   /// 다른 커뮤니티의 열쇠 → 나를 기다리는 것(안 읽은 부름) 수. 지금 커뮤니티는 [inboxUnread] 가 센다.
   ///
   /// **소켓은 지금 커뮤니티 것만 연다**(D5) — 커뮤니티마다 소켓을 쥐면 배터리가 든다. 나머지는
@@ -1617,6 +1642,7 @@ class AppState extends ChangeNotifier {
     final rest = communities.where((c) => c.key != key).toList(growable: false);
     if (key != activeKey) {
       communities = rest;
+      _dropDrafts(key);
       otherWaiting.remove(key);
       notifyListeners();
       await _revoke(gone);
@@ -1634,6 +1660,7 @@ class AppState extends ChangeNotifier {
     _generation++;
     _resetSession();
     communities = rest;
+    _dropDrafts(key);
     final next = rest.where((c) => !c.isExpired).firstOrNull ?? rest.firstOrNull;
     activeKey = next?.key;
     baseUrl = next?.baseUrl;
@@ -1660,6 +1687,12 @@ class AppState extends ChangeNotifier {
     await _enter();
   }
 
+  /// 그 커뮤니티에서 쓰던 글을 지운다 — 다시 로그인해도 되살아나지 않는다.
+  ///
+  /// **목록에서 그 행을 뺀 뒤에** 부른다(security #1066). 먼저 지우면 `_revoke`(최대 2초)를 기다리는
+  /// 동안 key 가 아직 목록에 있어서, 열린 작성칸의 `saveDraft` 가 지운 자리에 글을 다시 남긴다.
+  void _dropDrafts(String key) => _drafts.remove(key);
+
   /// 이 기기의 모든 커뮤니티에서 로그아웃한다. 보관본을 지우고 연결 화면으로 간다.
   Future<void> signOutAll() async {
     for (final c in communities) {
@@ -1668,6 +1701,7 @@ class AppState extends ChangeNotifier {
     _generation++;
     _dropSocket();
     otherWaiting.clear();
+    _drafts.clear();
     homeTab = 0;
     await Future.wait([for (final c in communities) _revoke(c)]);
     await _sessions.clear();
@@ -1675,6 +1709,8 @@ class AppState extends ChangeNotifier {
     _generation++;
     _resetSession();
     communities = const [];
+    // 위 await 동안 열린 작성칸이 적은 것도 지운다(목록이 비기 전까지는 `saveDraft` 가 받는다).
+    _drafts.clear();
     activeKey = null;
     baseUrl = null;
     _api = null;

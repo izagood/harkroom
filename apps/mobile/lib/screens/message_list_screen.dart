@@ -47,6 +47,19 @@ class _MessageListScreenState extends State<MessageListScreen> {
   void initState() {
     super.initState();
     _scroll.addListener(_maybeLoadOlder);
+    // 쓰던 글(D8)을 되살리고, 칠 때마다 적어 둔다. 커뮤니티 key 는 **지금** 쥔다 — 옮긴 뒤 이 화면이
+    // 닫혀도 글은 이 커뮤니티 자리에 남는다.
+    final app = AppScope.read(context);
+    _community = app.activeKey;
+    _composer.text = app.draftFor(widget.channelId);
+    _composer.addListener(_keepDraft);
+  }
+
+  String? _community;
+
+  void _keepDraft() {
+    final c = _community;
+    if (c != null) AppScope.read(context).saveDraft(c, widget.channelId, _composer.text);
   }
 
   /// 목록 **맨 위**(reverse 라 끝)에 가까워지면 이전 페이지를 받는다. 데스크탑 `ChannelPane` 의
@@ -62,6 +75,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
   @override
   void dispose() {
     _scroll.removeListener(_maybeLoadOlder);
+    _composer.removeListener(_keepDraft);
     _composer.dispose();
     _composerFocus.dispose();
     _scroll.dispose();

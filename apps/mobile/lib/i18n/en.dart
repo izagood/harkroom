@@ -709,4 +709,10 @@ class StringsEn implements Strings {
 
   @override
   String get searchShortcuts => 'Go to';
+
+  @override
+  String get inboxOtherCommunity => '{count} waiting for you in {name}';
+
+  @override
+  String get inboxOtherView => 'View';
 }
