@@ -8,6 +8,7 @@ import '../ui/parts.dart';
 import '../ui/tokens.dart';
 import '../ui/states.dart';
 import '../mention/render.dart';
+import '../markdown/markdown_view.dart';
 import 'attachments.dart';
 
 /// 말풍선 한 줄. **채널 화면과 스레드 화면이 같은 것을 쓴다.**
@@ -64,12 +65,8 @@ class MessageTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (!continued) _Header(message: message, isAgent: author?.isAgent == true),
-                // 마크다운은 아직 그리지 않는다. 평문으로 흘리는 것이, 반쯤 해석해서 원문을
-                // 잃는 것보다 낫다.
-                if (body.isNotEmpty)
-                  Text(body,
-                      style: TextStyle(
-                          fontSize: HarkroomType.body, height: HarkroomType.bodyHeight, color: k.fg)),
+                // 작은 마크다운(코드·목록·인용·굵게·링크). 모르는 것은 글자 그대로 둔다.
+                if (body.isNotEmpty) MarkdownBody(body),
                 if (denied.isNotEmpty) _MentionDenied(handles: denied),
                 if (card != null) Padding(padding: const EdgeInsets.only(top: 6), child: card),
                 AttachmentStrip(attachments: message.attachments),

@@ -46,6 +46,9 @@ dependencies:
   flutter_secure_storage: ^11.2.0
   file_picker: ^13.1.0
   http_parser: ^4.1.2
+  # 메시지 본문의 링크를 **앱 밖 브라우저로** 연다(마크다운). flutter.dev 의 1st-party 플러그인이다.
+  # http(s) 만 넘긴다 — `lib/markdown/markdown.dart` 의 `safeLinkUri`.
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:
