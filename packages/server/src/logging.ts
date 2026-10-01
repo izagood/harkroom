@@ -8,8 +8,15 @@
  */
 const SENSITIVE_QUERY = /([?&](?:ticket|token|idempotency-key)=)[^&]*/gi;
 
+/**
+ * 경로 자체가 자격증명인 라우트. 미리보기 URL(`/preview/<토큰>`)은 iframe·WebView 가 헤더를
+ * 못 싣기 때문에 토큰이 **경로**에 있다 — 쿼리 규칙으로는 안 잡힌다. 토큰은 60초 동안 다시 쓸
+ * 수 있으므로, 로그에 남으면 로그 열람자가 그 문서를 연다(security F1, 2026-10-02).
+ */
+const SENSITIVE_PATH = /^\/preview\/[^/?#]+/i;
+
 export function redactUrl(url: string): string {
-  return url.replace(SENSITIVE_QUERY, '$1REDACTED');
+  return url.replace(SENSITIVE_PATH, '/preview/REDACTED').replace(SENSITIVE_QUERY, '$1REDACTED');
 }
 
 export interface LoggerOptions {
