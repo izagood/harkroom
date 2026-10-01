@@ -265,7 +265,9 @@ describe('repo hygiene', () => {
     // 계정명으로 쓴다(`claude` 가 그 이름으로 저장한다 — 실측). `HOME`·`SHELL` 과 같은
     // 부류로 **OS 가 주는 값이고 harkroom 가 설정하는 값이 아니다** — 표에 적으면 사람이
     // 그것을 우리가 읽는 설정 손잡이로 읽는다.
-    const TOOLCHAIN_VARS = new Set(['NODE_ENV', 'CI', 'PATH', 'HOME', 'TERM', 'SHELL', 'USER']);
+    // `DEV` 는 Vite 가 빌드 때 굽는 `import.meta.env.DEV` 다(desktop 설정 목차가 개발 빌드에서만
+    // Component gallery 를 보인다, UX ⑥a). 사람이 정하는 환경변수가 아니라 README 표에 둘 값이 아니다.
+    const TOOLCHAIN_VARS = new Set(['NODE_ENV', 'CI', 'PATH', 'HOME', 'TERM', 'SHELL', 'USER', 'DEV']);
 
     function collectSourceFiles(dir: string, out: string[]): void {
       if (!existsSync(dir)) return;
