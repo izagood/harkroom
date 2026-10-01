@@ -395,9 +395,10 @@ fn claude_account_login_start(
     state: tauri::State<daemon_client::DaemonState>,
     pool: String,
     account: String,
+    reauth: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let (conn, _kind) = daemon_client::ensure_daemon(&app, &state)?;
-    conn.claude_account_login_start(&pool, &account)
+    conn.claude_account_login_start(&pool, &account, reauth.unwrap_or(false))
 }
 
 #[tauri::command]

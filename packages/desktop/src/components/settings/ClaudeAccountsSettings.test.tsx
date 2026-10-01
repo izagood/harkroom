@@ -298,6 +298,74 @@ describe('계정 추가', () => {
   });
 });
 
+describe('다시 로그인', () => {
+  const starts = () => calls.filter((c) => c.cmd === 'claude_account_login_start');
+
+  async function openReauthFromMenu(): Promise<void> {
+    render(<ClaudeAccountsSettings />);
+    await screen.findByText('aria');
+    fireEvent.click(screen.getByRole('button', { name: /actions for account aria/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /sign in again to aria/i }));
+  }
+
+  it('⋯ 메뉴에서 묻고, 확인하면 같은 이름으로 reauth 로그인을 띄운다 — 새 이름을 짓지 않는다', async () => {
+    stubTauri();
+    await openReauthFromMenu();
+    // 확인 전에는 아무것도 띄우지 않는다.
+    expect(starts()).toHaveLength(0);
+    const dialog = screen.getByRole('dialog', { name: 'Sign in again to aria?' });
+    // 무엇이 남는가 · 시크릿 창 · 돌던 턴 — 셋을 말한다(jaebin 2026-10-01: 막지 않고 알린다).
+    expect(dialog.textContent).toMatch(/only the sign-in changes/);
+    expect(dialog.textContent).toMatch(/private browser window/);
+    expect(dialog.textContent).toMatch(/not stopped/);
+    expect(screen.getByTestId('confirm-ok').textContent).toBe('Sign in again');
+    fireEvent.click(screen.getByTestId('confirm-ok'));
+    await waitFor(() => expect(starts()).toHaveLength(1));
+    expect(starts()[0]!.args).toEqual({ pool: 'work', account: 'aria', reauth: true });
+    emitLogin({ loginId: 'lid-1', url: 'https://claude.com/oauth?x=1' });
+    // 패널 제목은 추가가 아니라 그 계정이다.
+    expect(await screen.findByText(/Sign in again — me@corp\.example/)).toBeTruthy();
+    expect(screen.queryByText(/Add account to work/)).toBeNull();
+  });
+
+  it('취소하면 로그인을 띄우지 않고 계정도 지우지 않는다', async () => {
+    stubTauri();
+    await openReauthFromMenu();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(starts()).toHaveLength(0);
+    expect(calls.some((c) => c.cmd === 'claude_account_remove')).toBe(false);
+  });
+
+  it('same sign-in 경고 옆에서 바로 누를 수 있다', async () => {
+    const acct = (name: string) => ({
+      name,
+      status: { loggedIn: true, email: 'me@corp.example', orgName: 'Corp', orgId: 'o1', accountId: 'a1' },
+    });
+    stubTauri({ ...POOLS_SNAPSHOT, pools: [{ name: 'work', accounts: [acct('lime'), acct('lychee')] }] });
+    render(<ClaudeAccountsSettings />);
+    await screen.findByTestId('claude-account-work-lychee');
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in again to lychee' }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Sign in again to lychee?' })).getByTestId('confirm-ok'));
+    await waitFor(() => expect(starts()).toHaveLength(1));
+    expect(starts()[0]!.args).toEqual({ pool: 'work', account: 'lychee', reauth: true });
+  });
+
+  it('데몬이 거절하면(지운 계정 등) 패널을 닫고 사유를 보인다', async () => {
+    stubTauri();
+    const internals = (globalThis as unknown as { __TAURI_INTERNALS__: { invoke: ReturnType<typeof vi.fn> } }).__TAURI_INTERNALS__;
+    const base = internals.invoke.getMockImplementation()!;
+    internals.invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === 'claude_account_login_start') { calls.push({ cmd, args }); throw new Error('다시 로그인할 계정이 없다: work/aria'); }
+      return base(cmd, args);
+    });
+    await openReauthFromMenu();
+    fireEvent.click(screen.getByTestId('confirm-ok'));
+    expect(await screen.findByText(/다시 로그인할 계정이 없다/)).toBeTruthy();
+    expect(screen.queryByText(/Sign in again —/)).toBeNull();
+  });
+});
+
 describe('정체 표시', () => {
   const withLogin = (name: string, orgName: string | undefined, ids: [string, string]) => ({
     name,

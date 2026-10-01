@@ -1992,10 +1992,17 @@ impl DaemonConnection {
         self.request("claudeAccountsConfigure", config)
     }
 
-    pub fn claude_account_login_start(&self, pool: &str, account: &str) -> Result<Value, String> {
+    /// `reauth` = 이미 있는 계정에 다시 로그인한다. 옛 데몬은 이 칸을 모르고 무시한다 —
+    /// 그래도 같은 디렉터리로 로그인을 띄우므로 동작은 같다(없는 계정 거절만 빠진다).
+    pub fn claude_account_login_start(
+        &self,
+        pool: &str,
+        account: &str,
+        reauth: bool,
+    ) -> Result<Value, String> {
         self.request(
             "claudeAccountLoginStart",
-            json!({ "pool": pool, "account": account }),
+            json!({ "pool": pool, "account": account, "reauth": reauth }),
         )
     }
 

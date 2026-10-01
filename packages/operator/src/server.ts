@@ -481,9 +481,11 @@ export class DaemonServer {
         if (isDaemonError(port)) return port;
         const ref = readAccountRef(req.payload);
         if (isDaemonError(ref)) return ref;
+        // 옛 앱은 `reauth` 를 싣지 않는다 — 그때는 지금까지와 같은 로그인이다.
+        const reauth = (req.payload as { reauth?: unknown }).reauth === true;
         try {
-          const result = await port.loginStart(ref.pool, ref.account);
-          this.log(`계정 로그인 시작: ${ref.pool}/${ref.account}`);
+          const result = await port.loginStart(ref.pool, ref.account, reauth ? { reauth } : undefined);
+          this.log(`계정 ${reauth ? '다시 ' : ''}로그인 시작: ${ref.pool}/${ref.account}`);
           return result;
         } catch (err) {
           return daemonError('bad-payload', err instanceof Error ? err.message : String(err));

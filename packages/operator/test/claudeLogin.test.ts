@@ -151,6 +151,49 @@ describe('실패한 추가를 치운다', () => {
   });
 });
 
+describe('다시 로그인(reauth)', () => {
+  const exists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
+
+  it('없는 계정에는 거절하고 디렉터리를 만들지 않는다 — 지운 계정이 되살아나면 안 된다', async () => {
+    const h = harness();
+    await expect(h.port.loginStart('work', 'ghost', { reauth: true })).rejects.toThrow(/없다/);
+    expect(h.spawned).toEqual([]);
+    expect(await exists(join(h.root, 'work', 'ghost'))).toBe(false);
+  });
+
+  it('있는 계정이면 그 디렉터리로 로그인을 띄운다', async () => {
+    const h = harness();
+    await mkdir(join(h.root, 'work', 'aria'), { recursive: true });
+    await h.port.loginStart('work', 'aria', { reauth: true });
+    expect(h.spawned).toEqual([join(h.root, 'work', 'aria')]);
+  });
+
+  it('성공으로 끝날 때만 onSignedIn 을 그 디렉터리로 부른다', async () => {
+    for (const loggedIn of [true, false]) {
+      const root = mkdtempSync(join(tmpdir(), 'd-login-'));
+      await mkdir(join(root, 'work', 'aria'), { recursive: true });
+      const signedIn: string[] = [];
+      const children: FakeChild[] = [];
+      const events: ClaudeLoginEvent[] = [];
+      const port = createClaudeAccountsPort({
+        root,
+        runStatus: vi.fn(async () => ({ loggedIn })),
+        spawnLogin: vi.fn((): ClaudeLoginChild => {
+          const c = new FakeChild();
+          children.push(c);
+          return c as unknown as ClaudeLoginChild;
+        }),
+        onSignedIn: (dir) => signedIn.push(dir),
+      });
+      port.onLoginEvent((e) => events.push(e));
+      await port.loginStart('work', 'aria', { reauth: true });
+      children[0]!.emit('exit', loggedIn ? 0 : 1, null);
+      await vi.waitFor(() => expect(events.some((e) => e.done)).toBe(true));
+      expect(signedIn).toEqual(loggedIn ? [join(root, 'work', 'aria')] : []);
+    }
+  });
+});
+
 describe('loginSubmit', () => {
   it('코드를 stdin 에 한 줄로 쓴다', async () => {
     const h = harness();

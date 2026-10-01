@@ -52,6 +52,11 @@ interface AccountState {
 export interface ClaudeUsagePoller {
   /** 기한이 된 계정을 재고 파일을 쓴다. 테스트가 직접 부른다. */
   tick(): Promise<void>;
+  /**
+   * 그 계정(`CLAUDE_CONFIG_DIR`)의 값을 버리고 곧바로 다시 잰다. 다시 로그인한 계정이 부른다 —
+   * 그러지 않으면 기한(쉬는 계정 10분)까지 `usage.json` 이 **옛 로그인의 %**를 싣는다.
+   */
+  forget(configDir: string): Promise<void>;
   start(): void;
   stop(): void;
 }
@@ -150,6 +155,13 @@ export function createClaudeUsagePoller(opts: {
 
   return {
     tick,
+    forget(configDir: string): Promise<void> {
+      // 돌던 조회가 끝난 **뒤에** 버린다 — 그 조회가 로그인 전에 잰 값을 다시 넣을 수 있다.
+      return (running ?? Promise.resolve()).then(() => {
+        states.delete(configDir);
+        return tick();
+      });
+    },
     start() {
       if (timer || stopped) return;
       schedule(USAGE_POLL_FIRST_DELAY_MS);
