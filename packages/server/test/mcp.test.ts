@@ -571,14 +571,44 @@ describe('message.fail — 실패의 계약', () => {
     }
   });
 
-  it('기계가 읽는 갈래(code)를 싣는다 — 모르는 값은 거절한다', async () => {
+  it('기계가 읽는 갈래(code) — thread_model_rejected 는 살아 있는 지정이 있을 때만 싣고, 모르는 값은 거절한다', async () => {
     const client = await mcpClient(botPat);
     try {
+      // 결정 10: 그 스레드에 이 에이전트의 살아 있는 지정이 있을 때만 표지를 싣는다.
+      const root = (await app.inject({
+        method: 'POST', url: `/channels/${channelId}/messages`, headers: { authorization: `Bearer ${adminToken}` },
+        payload: { body: '모델 지정 스레드' },
+      })).json().id as string;
+      const botId = (await pool.query<{ id: string }>(`select id from account where handle = 'mcpbot'`)).rows[0]!.id;
+      // 지정이 없으면 — 글은 올라가고(사람에게 닿아야 한다) 표지만 빠진다.
+      const bare = text(await client.callTool({
+        name: 'message.fail',
+        arguments: { channelId, threadRootId: root, body: '모델을 받지 않았다', retryable: false, code: 'thread_model_rejected' },
+      })) as { message: { meta: Record<string, unknown> } };
+      expect(readFailureMeta(bare.message.meta)).toMatchObject({ retryable: false });
+      expect(readFailureMeta(bare.message.meta)?.code).toBeUndefined();
+      // 스레드 없이도 빠진다.
+      const noThread = text(await client.callTool({
+        name: 'message.fail', arguments: { channelId, body: 'x', retryable: false, code: 'thread_model_rejected' },
+      })) as { message: { meta: Record<string, unknown> } };
+      expect(readFailureMeta(noThread.message.meta)?.code).toBeUndefined();
+      // 지정이 있으면 싣는다.
+      await pool.query(
+        `insert into thread_agent_model (thread_root_id, agent_id, harness, model, effort, set_by) values ($1, $2, 'claude-code', 'opus', null, $3)`,
+        [root, botId, adminAccountId],
+      );
       const posted = text(await client.callTool({
         name: 'message.fail',
-        arguments: { channelId, body: '모델을 받지 않았다', retryable: false, code: 'thread_model_rejected' },
+        arguments: { channelId, threadRootId: root, body: '모델을 받지 않았다', retryable: false, code: 'thread_model_rejected' },
       })) as { message: { meta: Record<string, unknown> } };
       expect(readFailureMeta(posted.message.meta)?.code).toBe('thread_model_rejected');
+      // 무효(하네스가 바뀐) 지정이면 다시 빠진다.
+      await pool.query(`update thread_agent_model set harness = 'codex' where thread_root_id = $1`, [root]);
+      const stale = text(await client.callTool({
+        name: 'message.fail',
+        arguments: { channelId, threadRootId: root, body: 'x', retryable: false, code: 'thread_model_rejected' },
+      })) as { message: { meta: Record<string, unknown> } };
+      expect(readFailureMeta(stale.message.meta)?.code).toBeUndefined();
       const bad = await client.callTool({
         name: 'message.fail',
         arguments: { channelId, body: 'x', retryable: false, code: 'made_up' },

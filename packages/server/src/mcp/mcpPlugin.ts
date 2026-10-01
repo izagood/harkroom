@@ -46,6 +46,7 @@ import { recordClaudeLane } from '../services/claudeLane.js';
 import { recordRunnerVersion } from '../services/runnerVersion.js';
 import { resolveAttachmentFor } from '../services/attachments.js';
 import { reportedModelMeta } from '../services/reportedModel.js';
+import { getThreadAgentModel } from '../services/threadAgentModels.js';
 import { AttachmentMissingError, type StorageBackend } from '../storage/local.js';
 import type { Readable } from 'node:stream';
 
@@ -608,9 +609,19 @@ function buildMcpServer(
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
+    /*
+      **`thread_model_rejected` 는 그 스레드에 이 에이전트의 살아 있는 모델 지정이 있을 때만 싣는다**
+      (결정 10, 2026-10-01). 이 표지가 붙으면 앱 실패 카드가 [기본으로 되돌리고 다시 부르기]를 주
+      버튼으로 띄운다 — 지정이 없는데(또는 무효인데) 붙으면 그 버튼이 사람이 **막 정한** 지정을 지운다
+      (설계 검토 스레드 b64632ac 에서 에이전트가 스스로 붙인 실측). 실패 통지 자체는 사람에게 닿아야
+      하므로 글은 그대로 올리고 표지만 뺀다.
+    */
+    const keepCode = code === 'thread_model_rejected'
+      ? !!threadRootId && !!(await getThreadAgentModel(pool, threadRootId, account.id).then((r) => r && !r.stale))
+      : !!code;
     const meta: FailureMeta & Partial<ModelMeta> = {
       kind: 'failure',
-      failure: { retryable, ...(what ? { what } : {}), ...(reason ? { reason } : {}), ...(code ? { code } : {}) },
+      failure: { retryable, ...(what ? { what } : {}), ...(reason ? { reason } : {}), ...(code && keepCode ? { code } : {}) },
       ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
     };
     const posted = await postMessage(pool, {
