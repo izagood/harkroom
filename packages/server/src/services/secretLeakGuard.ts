@@ -132,7 +132,8 @@ export function leakGuardHook(guard: SecretLeakGuard) {
     if (req.account?.kind !== 'agent') return;
     if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'PATCH') return;
     if (req.url === '/mcp' || req.url.startsWith('/mcp?')) return;
-    if (req.body === undefined || req.body === null || typeof req.body !== 'object') return;
+    // 문자열 본문(`text/plain` — fastify 기본 파서가 문자열로 준다)도 본다(security N1).
+    if (req.body === undefined || req.body === null || (typeof req.body !== 'object' && typeof req.body !== 'string')) return;
     const hits = await guard.findInTexts(req.account.id, collectStrings(req.body));
     if (!hits.length) return;
     await guard.record(req, req.account.id, req.operator?.id ?? null, hits, `rest:${req.method} ${req.routeOptions.url ?? req.url}`);
