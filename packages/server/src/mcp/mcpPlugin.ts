@@ -6,7 +6,7 @@ import { z } from 'zod';
 import {
   ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, MAX_MESSAGE_BODY_CHARS,
   MODEL_ID_MAX, REPORT_MAX_ITEMS, REPORT_MAX_NEXT, TEAM_ROUND_LIMIT,
-  FAILURE_CODES, type AccountView, type AskAudience, type AskMeta, type DelegationMeta, type FailureMeta,
+  ACCOUNT_GATE_LABEL_PATTERN, FAILURE_CODES, type AccountView, type AskAudience, type AskMeta, type DelegationMeta, type FailureMeta,
   type MessageRow, type ModelMeta, type ReportMeta,
 } from '@harkroom/shared';
 import { CAUSE_HEADER } from '@harkroom/shared/runnerLink';
@@ -14,7 +14,7 @@ import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js
 import { emitEvent, emitPosted, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '../services/channels.js';
-import { BAD_THREAD_MESSAGE, checkAskMirror, listInbox, listMessages, markInboxRead, postMessage, searchMessages, syncAskMirrors, type AskMirrorRefusal } from '../services/messages.js';
+import { BAD_THREAD_MESSAGE, checkAskMirror, gateAwaitingAccount, listInbox, listMessages, markInboxRead, notifyGateAwaiting, postMessage, searchMessages, syncAskMirrors, type AskMirrorRefusal } from '../services/messages.js';
 
 /** `message.ask` 의 `mirrorOf` 거절 사유 — 에이전트가 읽고 고칠 수 있게 무엇을 바꾸면 되는지 적는다. */
 const MIRROR_REFUSAL_MESSAGE: Record<AskMirrorRefusal, string> = {
@@ -689,11 +689,17 @@ function buildMcpServer(
       what: z.string().min(1).max(500).optional(),
       reason: z.string().min(1).max(1000).optional(),
       retryable: z.boolean(),
-      // 기계가 읽는 실패 갈래(FailureMeta 주석). 러너가 스레드 지정 모델 거절 때 싣는다.
+      // 기계가 읽는 실패 갈래(FailureMeta 주석). 러너가 스레드 지정 모델 거절·계정 관문 때 싣는다.
       code: z.enum(FAILURE_CODES).optional(),
+      /**
+       * `account_gate` 때만: 그 턴을 띄운 멘션(차례 주인을 정할 재료 — 서버가 확인한다)과 관문이 선
+       * 계정의 이름표(`풀/계정`). 러너의 자기 호출에는 원인 헤더가 없어서 멘션을 직접 싣는다.
+       */
+      mentionId: z.string().uuid().optional(),
+      account: z.string().regex(ACCOUNT_GATE_LABEL_PATTERN).optional(),
       model: MODEL_ARG,
     },
-  }, async ({ channelId, body, threadRootId, what, reason, retryable, code, model }) => {
+  }, async ({ channelId, body, threadRootId, what, reason, retryable, code, mentionId, account: gateAccount, model }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
@@ -707,15 +713,35 @@ function buildMcpServer(
     const keepCode = code === 'thread_model_rejected'
       ? !!threadRootId && !!(await getThreadAgentModel(pool, threadRootId, account.id).then((r) => r && !r.stale))
       : !!code;
+    /*
+      **`account_gate` 의 차례 주인은 서버가 정한다**(2026-10-02, 관문 대응 안 2). 그 턴을 띄운 멘션
+      (`mentionId`, 없으면 원인 헤더)이 이 에이전트를 실제로 깨웠고 작성자가 사람이면 그 사람이다
+      (`gateAwaitingAccount`). 못 정해도 표지는 남긴다 — 사람이 풀어야 하는 관문이라는 사실은 같다.
+      이름표·차례 주인은 이 표지에만 붙는다: 다른 실패에 계정 사실이 따라 올라가지 않게.
+    */
+    const gate = code === 'account_gate' && keepCode;
+    const gateSource = mentionId ?? cause;
+    const awaiting = gate && gateSource ? await gateAwaitingAccount(pool, account.id, channelId, gateSource) : null;
     const meta: FailureMeta & Partial<ModelMeta> = {
       kind: 'failure',
-      failure: { retryable, ...(what ? { what } : {}), ...(reason ? { reason } : {}), ...(code && keepCode ? { code } : {}) },
+      failure: {
+        retryable, ...(what ? { what } : {}), ...(reason ? { reason } : {}), ...(code && keepCode ? { code } : {}),
+        ...(awaiting ? { awaitingAccountId: awaiting } : {}),
+        ...(gate && gateAccount ? { account: gateAccount } : {}),
+      },
       ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
     };
     const posted = await postMessage(pool, {
       causeMessageId: cause,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
       meta: meta as unknown as Record<string, unknown>,
+      // 차례 주인이 이 글로 알림을 못 받는 자리(남이 세운 스레드에서 불렀다 등)면 Inbox 에 넣는다.
+      ...(awaiting ? {
+        beforeCommit: async (client, ctx) => {
+          await notifyGateAwaiting(client, awaiting, ctx.message.id, ctx.notified);
+          return null;
+        },
+      } : {}),
     });
     if (posted.failure) return postFailureResult(posted.failure);
     const { message, notified, replayed } = posted;

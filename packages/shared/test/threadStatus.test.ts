@@ -22,6 +22,12 @@ describe('decideThreadStatus — 위에서부터 이긴다', () => {
     expect(decideThreadStatus(f({ failure: { accountId: 'bot', what: 'MCP 인증' } }), live)?.status).toBe('stuck');
     expect(decideThreadStatus(f({ deniedMention: { authorId: 'h', targets: ['bot'] } }), live)?.status).toBe('stuck');
   });
+  it('계정 관문(account_gate) 실패는 🚨 가 아니라 🙋 — 그 터미널에서 한 번 답하면 풀린다', () => {
+    expect(decideThreadStatus(f({ failure: { accountId: 'bot', what: '설정 확인 대기', gate: true } }), live))
+      .toEqual({ status: 'my-turn', accountId: 'bot', reason: '설정 확인 대기' });
+    // 관문이 아닌 실패는 그대로 막힘이다.
+    expect(decideThreadStatus(f({ failure: { accountId: 'bot', what: 'x', gate: false } }), live)?.status).toBe('stuck');
+  });
   it('마지막 말이 진행인데 러너가 죽었으면 막힘, 모르면 도는 중', () => {
     const progress = f({ last: { kind: 'progress', authorId: 'bot', authorIsAgent: true } });
     expect(decideThreadStatus(progress, new Set())?.status).toBe('stuck');

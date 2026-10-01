@@ -1142,6 +1142,13 @@ export interface MessageRow {
    */
   openAskLinks: OpenAskLink[] | null;
   /**
+   * 안 풀린 `account_gate` 실패(`FailureMeta.failure.code`)의 **차례 주인들**(2026-10-02) —
+   * 하네스가 계정 설정 확인 화면에 서서 그 사람의 선택을 기다린다. 화면은 `openAskAccountIds`
+   * 와 같이 "이것이 내 차례인가"를 여기서 가른다(Inbox 내 차례). 해소 규칙은 `unresolvedFailureCount`
+   * 와 같다. **선택 필드다** — 이 칸을 모르는 옛 서버·픽스처는 없다로 읽는다.
+   */
+  openGateAccountIds?: string[] | null;
+  /**
    * 이 스레드에 실패(`meta.kind === 'failure'`)가 **몇 번 있었는가**. 0 이면 없다.
    *
    * **누적이다 — 상태가 아니다.** 화면이 이것으로 '막힘'을 칠하면 한 번 실패한 스레드는
@@ -1421,14 +1428,36 @@ export interface FailureMeta {
      *
      * - `thread_model_rejected`: 이 스레드에 지정한 모델·effort 를 하네스가 받지 않았다(079,
      *   결정 6). 화면은 [다시 부르기] 대신 [기본으로 되돌리고 다시 부르기]·[모델 고르기]를 준다.
+     * - `account_gate`: 하네스가 **턴 시작 때** 계정의 설정 확인 화면(첫 실행 승인 등)에 서서
+     *   사람의 선택을 기다린다(2026-10-02, 관문 대응 안 2). 사람이 그 터미널에서 한 번 답하면
+     *   풀린다 — 그래서 상태는 🚨 가 아니라 🙋(`awaitingAccountId` 의 차례)다. 턴 **도중**의
+     *   권한 확인에는 붙지 않는다(러너가 'startup' 일 때만 싣는다).
      */
     code?: FailureCode;
+    /**
+     * `account_gate` 의 **차례 주인** — 그 턴을 띄운 멘션을 쓴 사람(계정 id). 서버가 정한다:
+     * 그 멘션이 이 에이전트를 실제로 깨웠고(inbox) 작성자가 사람일 때만 싣는다. 못 정하면 없다
+     * (그래도 🙋 다 — 누구 차례인지 모를 뿐 사람이 풀어야 하는 것은 같다).
+     */
+    awaitingAccountId?: string;
+    /**
+     * `account_gate` 가 선 계정의 **이름표**(`pool/id` 또는 `id`, `ACCOUNT_GATE_LABEL_PATTERN`).
+     * 화면이 [터미널 열기]로 그 계정을 고를 재료다. 이메일·조직명은 싣지 않는다 — 이 문법이
+     * `@`·`.` 을 받지 않는 것으로 막는다(계정 디렉터리 이름 문법과 같다).
+     */
+    account?: string;
   };
 }
 
 /** `FailureMeta.failure.code` 의 값들. 서버 `message.fail` 입력이 이 목록으로 받는다. */
-export const FAILURE_CODES = ['thread_model_rejected'] as const;
+export const FAILURE_CODES = ['thread_model_rejected', 'account_gate'] as const;
 export type FailureCode = (typeof FAILURE_CODES)[number];
+
+/**
+ * `FailureMeta.failure.account` 의 문법 — 계정 디렉터리 이름(`[a-z0-9-]{1,32}`, 러너
+ * `CLAUDE_ACCOUNT_PATTERN`) 하나 또는 `풀/계정` 둘. **서버로 올라가는 계정 사실은 이것뿐이다.**
+ */
+export const ACCOUNT_GATE_LABEL_PATTERN = /^[a-z0-9-]{1,32}(?:\/[a-z0-9-]{1,32})?$/;
 
 /**
  * `meta` 가 실패인지 판정한다. `readAskMeta` 와 같은 규약이다 — **모르는 `meta` 는 평문으로

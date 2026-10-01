@@ -5,7 +5,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
-import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 import { onEvent } from '../src/events.js';
 import { readAskMeta, readFailureMeta, readModelMeta, readReportMeta } from '@harkroom/shared';
 import { recordAskAnswer } from '../src/services/messages.js';
@@ -614,6 +614,74 @@ describe('message.fail — 실패의 계약', () => {
         arguments: { channelId, body: 'x', retryable: false, code: 'made_up' },
       });
       expect(bad.isError).toBe(true);
+    } finally {
+      await client.close();
+    }
+  });
+
+  /**
+   * 계정 관문(2026-10-02, 관문 대응 안 2). 차례 주인은 **서버가** 정한다 — 그 턴을 띄운 멘션이 이
+   * 에이전트를 실제로 깨웠고 작성자가 사람이면 그 사람. 그 사람이 남의 스레드에서 불렀으면 이 글로는
+   * 알림을 못 받으므로 Inbox 에 넣는다. 계정 사실은 `풀/계정` 이름표 하나뿐이다.
+   */
+  it('account_gate — 차례 주인은 깨운 멘션의 사람, 이름표는 풀/계정만, 다른 실패에는 안 붙는다', async () => {
+    const client = await mcpClient(botPat);
+    try {
+      const other = await createMember(app, adminToken, 'gate-root-owner');
+      const auth = (t: string) => ({ authorization: `Bearer ${t}` });
+      // 남(other)이 세운 스레드에서 admin 이 봇을 부른다 — admin 은 머리 주인이 아니다.
+      const root = (await app.inject({
+        method: 'POST', url: `/channels/${channelId}/messages`, headers: auth(other.token), payload: { body: '스레드 머리' },
+      })).json().id as string;
+      const mention = (await app.inject({
+        method: 'POST', url: `/channels/${channelId}/messages`, headers: auth(adminToken),
+        payload: { body: '@mcpbot 이거 봐 줘', threadRootId: root },
+      })).json().id as string;
+      const inboxOf = async (accountId: string) => (await pool.query<{ reason: string }>(
+        `select i.reason from inbox i join message m on m.id = i.message_id
+          where i.account_id = $1 and m.meta->'failure'->>'code' = 'account_gate'`, [accountId],
+      )).rows;
+      const before = (await inboxOf(adminAccountId)).length;
+
+      const posted = text(await client.callTool({
+        name: 'message.fail',
+        arguments: {
+          channelId, threadRootId: root, body: '계정 설정 확인 화면이 사람을 기다린다', retryable: false,
+          code: 'account_gate', mentionId: mention, account: 'work/acct-ddb9b523',
+        },
+      })) as { message: { meta: Record<string, unknown> } };
+      expect(readFailureMeta(posted.message.meta)).toMatchObject({
+        code: 'account_gate', awaitingAccountId: adminAccountId, account: 'work/acct-ddb9b523',
+      });
+      // 머리 주인이 아닌 차례 주인에게도 Inbox 가 간다.
+      expect((await inboxOf(adminAccountId)).length).toBe(before + 1);
+      expect((await inboxOf(adminAccountId)).at(-1)!.reason).toBe('thread_reply');
+
+      // 이 봇을 깨우지 않은 글(머리)을 대면 차례 주인을 정하지 않는다 — 남의 Inbox 에 꽂을 수 없다.
+      const forged = text(await client.callTool({
+        name: 'message.fail',
+        arguments: { channelId, threadRootId: root, body: 'x', retryable: false, code: 'account_gate', mentionId: root },
+      })) as { message: { meta: Record<string, unknown> } };
+      expect(readFailureMeta(forged.message.meta)?.code).toBe('account_gate');
+      expect(readFailureMeta(forged.message.meta)?.awaitingAccountId).toBeUndefined();
+      // 차례 주인을 못 정했으니 admin 에게 더 가지 않는다(머리 주인 other 는 평소대로 답글 알림을 받는다).
+      expect((await inboxOf(adminAccountId)).length).toBe(before + 1);
+
+      // 이름표 문법 밖(이메일 꼴)은 거절한다 — 계정 사실은 풀/계정 이름표뿐이다.
+      const email = await client.callTool({
+        name: 'message.fail',
+        arguments: { channelId, body: 'x', retryable: false, code: 'account_gate', account: 'me@example.com' },
+      });
+      expect(email.isError).toBe(true);
+
+      // 다른 실패에는 이름표·차례 주인이 따라 올라가지 않는다.
+      const plain = text(await client.callTool({
+        name: 'message.fail',
+        arguments: { channelId, threadRootId: root, body: 'x', retryable: true, mentionId: mention, account: 'work/plum' },
+      })) as { message: { meta: Record<string, unknown> } };
+      const f = readFailureMeta(plain.message.meta)!;
+      expect(f.account).toBeUndefined();
+      expect(f.awaitingAccountId).toBeUndefined();
     } finally {
       await client.close();
     }

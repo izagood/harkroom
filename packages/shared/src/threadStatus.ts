@@ -41,8 +41,11 @@ export interface ThreadStatusReaction {
 export interface ThreadStatusFacts {
   /** 사람(아무나 또는 특정 사람)에게 간 가장 오래된 미답 물음. */
   humanAsk: { askerId: string; prompt: string | null } | null;
-  /** 안 풀린 가장 최근 실패. */
-  failure: { accountId: string; what: string | null } | null;
+  /**
+   * 안 풀린 가장 최근 실패. `gate` 는 그 실패가 `account_gate`(턴 시작 때 계정 설정 확인 화면이
+   * 사람의 선택을 기다린다)인가다 — 사람이 한 번 답하면 풀리므로 🚨 가 아니라 🙋 다.
+   */
+  failure: { accountId: string; what: string | null; gate?: boolean } | null;
   /** 가장 최근 말에 실린 막힌 부름(`mentionDenied`·`mentionChainCapped`) — 그 뒤에 말이 없을 때만. */
   deniedMention: { authorId: string; targets: string[] } | null;
   /** 에이전트에게 간 미답 물음·열린 위임. */
@@ -67,6 +70,7 @@ export interface ThreadStatusDecision {
  * 판정. **위에서부터 이긴다** — 하나의 스레드는 한 상태만 받는다.
  *
  * 1. 🙋 사람에게 간 미답 물음 — 답 한 번으로 풀리므로 가장 세다(`threadState` 와 같은 이유)
+ *    · 안 풀린 실패가 `account_gate` 면 그것도 🙋 다(그 터미널에서 한 번 답하면 풀린다)
  * 2. 🚨 안 풀린 실패 · 막힌 부름 · 마지막 말이 진행인데 그 에이전트가 죽었다
  * 3. ⏳ 에이전트를 기다리는 물음·위임 · 열린 깨움
  * 4. 💬 마지막 말이 진행이고 그 에이전트가 살아 있다(모르면 살아 있다고 둔다)
@@ -78,6 +82,8 @@ export interface ThreadStatusDecision {
 export function decideThreadStatus(f: ThreadStatusFacts, live: ReadonlySet<string> | null): ThreadStatusDecision | null {
   if (!f.agentInvolved) return null;
   if (f.humanAsk) return { status: 'my-turn', accountId: f.humanAsk.askerId, reason: f.humanAsk.prompt };
+  // 관문 대기는 물음과 같은 결이다 — 사람이 한 번 답하면 풀린다(2026-10-02, 관문 대응 안 2).
+  if (f.failure?.gate) return { status: 'my-turn', accountId: f.failure.accountId, reason: f.failure.what };
   if (f.failure) return { status: 'stuck', accountId: f.failure.accountId, reason: f.failure.what };
   if (f.deniedMention) {
     return { status: 'stuck', accountId: f.deniedMention.authorId, reason: f.deniedMention.targets.join(', ') || null };
