@@ -48,6 +48,19 @@ describe('요청 로깅', () => {
     expect((done!.res as { statusCode: number }).statusCode).toBe(200);
   });
 
+  // 미리보기 토큰은 경로에 있고 60초 동안 다시 쓸 수 있다 — 로그에 남으면 로그 열람자가 그 문서를 연다.
+  it('never writes a preview token from the path into the log', async () => {
+    const log = capture();
+    const app = await buildServer({ pool, logStream: log.stream, logLevel: 'info' });
+    const token = 'C29wwxyzPreviewTokenShapedValue_-0123456789abcdefABCDEF';
+    await app.inject({ method: 'GET', url: `/preview/${token}` });
+    await app.inject({ method: 'GET', url: `/preview/${token}?x=1` });
+    await app.close();
+
+    expect(log.text()).toContain('/preview/REDACTED');
+    expect(log.text()).not.toContain(token);
+  });
+
   // 로그는 오래 남고 널리 읽힌다. Bearer 토큰이 거기 적히면 로그 열람 권한이 곧 계정 권한이 된다.
   it('never writes the authorization header into the log', async () => {
     const log = capture();

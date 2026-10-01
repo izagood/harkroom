@@ -144,6 +144,24 @@ describe('opening a preview', () => {
     expect((await issue(v2.attachmentId)).json()).toMatchObject({ artifactId, version: 2, latestVersion: 2 });
   });
 
+  // 패널을 오래 열어 둔 뒤 버전을 바꾸거나 다시 불러오면 앱은 새 경로를 받는다 — 발급은 몇 번이든 된다.
+  it('issues a fresh path for the same version as often as asked, each one opening', async () => {
+    const { attachmentId } = await postFile(PAGE);
+    await asVersion(attachmentId);
+    const first = (await issue(attachmentId)).json().path as string;
+    const saved = clock;
+    try {
+      clock += PREVIEW_TOKEN_TTL_MS;
+      expect((await app.inject({ method: 'GET', url: first })).statusCode).toBe(404);
+      const again = await issue(attachmentId);
+      expect(again.statusCode).toBe(201);
+      expect(again.json().path).not.toBe(first);
+      expect((await app.inject({ method: 'GET', url: again.json().path })).statusCode).toBe(200);
+    } finally {
+      clock = saved;
+    }
+  });
+
   it('can be reloaded within its lifetime and not after', async () => {
     const { attachmentId } = await postFile(PAGE);
     await asVersion(attachmentId);
