@@ -1555,6 +1555,24 @@ export interface ThreadAgentModelView {
  * 그 축은 그 값이고, 없거나 무효면 에이전트 설정값이다. `source` 는 축마다 따로다 —
  * 모델만 지정하고 effort 는 설정을 따를 수 있다.
  */
+/** 작성창 칩(결정 1·C)으로 고른 에이전트 하나의 모델 — `POST /channels/:id/messages` 의 `agentModels[]`. */
+export interface AgentModelPick {
+  agentId: string;
+  model: string | null;
+  effort: string | null;
+}
+
+/**
+ * 스레드 칩 고르개의 재료(`GET /agents/:id/model-options`). `model`·`effort` 는 그 에이전트의
+ * 설정값(null = 하네스 기본). `models` 가 없으면 "모른다"다 — 고르개는 직접 입력으로 물러선다.
+ */
+export interface AgentModelOptions {
+  harness: AgentHarness;
+  model: string | null;
+  effort: string | null;
+  models?: HarnessModel[];
+}
+
 export interface EffectiveAgentModel {
   model: string | null;
   effort: string | null;

@@ -1,6 +1,7 @@
 import type {
   AutomationIngressIssued, AutomationRunView, AutomationTrigger, AutomationView,
   McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, MentionPolicy,
+  AgentModelOptions, AgentModelPick, ThreadAgentModelView,
   AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
 import { MENTION_EDIT_SKIPPED_HEADER } from '@harkroom/shared';
 import type { MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
@@ -272,7 +273,7 @@ export class ApiClient {
    */
   async postMessage(
     channelId: string, body: string, threadRootId?: string, idempotencyKey?: string,
-    attachmentIds: string[] = [], alsoInChannel?: boolean,
+    attachmentIds: string[] = [], alsoInChannel?: boolean, agentModels: AgentModelPick[] = [],
   ): Promise<{ message: MessageRow; notified: NotifiedResult }> {
     const res = await this.reqWithHeaders<MessageRow>('POST', `/channels/${channelId}/messages`,
       {
@@ -281,6 +282,8 @@ export class ApiClient {
         // 빈 배열은 보내지 않는다 — 첨부를 쓰지 않는 요청의 본문을 넓히지 않는다.
         ...(attachmentIds.length ? { attachmentIds } : {}),
         ...(alsoInChannel ? { alsoInChannel } : {}),
+        // 작성창 칩(079). 빈 배열은 보내지 않는다 — 옛 서버는 모르는 키를 받지 않는다.
+        ...(agentModels.length ? { agentModels } : {}),
       },
       idempotencyKey ? { 'idempotency-key': idempotencyKey } : undefined);
     return { message: res.body, notified: readNotifiedHeaders(res.headers) };
@@ -813,6 +816,22 @@ export class ApiClient {
    * 채널이 자동으로 멘션하는 에이전트들(#173). 핀과 같은 채널 전역 사실이라 채널을 볼 수
    * 있는 사람 누구나 받는다 — 작성창이 칩을 그려야 하기 때문이다.
    */
+  /** 스레드 × 에이전트 모델 지정(079). 채널을 볼 수 있으면 누구나 읽는다. */
+  async threadAgentModels(channelId: string, rootId: string): Promise<ThreadAgentModelView[]> {
+    return (await this.req<{ agentModels: ThreadAgentModelView[] }>('GET', `/channels/${channelId}/threads/${rootId}/agent-models`)).agentModels;
+  }
+  /** 정한다. 두 축이 다 비면 서버가 풀고 `null` 을 준다. 사람만 된다. */
+  async setThreadAgentModel(
+    channelId: string, rootId: string, agentId: string, model: string | null, effort: string | null,
+  ): Promise<ThreadAgentModelView | null> {
+    return (await this.req<{ row: ThreadAgentModelView | null }>(
+      'PUT', `/channels/${channelId}/threads/${rootId}/agent-models/${agentId}`, { model, effort },
+    )).row;
+  }
+  /** 고르개 재료 — 하네스·기본값·하네스가 밝힌 모델 목록. */
+  agentModelOptions(agentId: string): Promise<AgentModelOptions> {
+    return this.req('GET', `/agents/${agentId}/model-options`);
+  }
   async channelAutoMentions(channelId: string): Promise<ChannelAutoMentionRow[]> {
     return (await this.req<{ autoMentions: ChannelAutoMentionRow[] }>('GET', `/channels/${channelId}/auto-mentions`)).autoMentions;
   }

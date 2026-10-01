@@ -50,6 +50,25 @@ afterEach(() => {
 });
 
 describe('FailureCard', () => {
+  it('스레드에 그 에이전트의 모델 지정이 있으면 [기본으로 되돌리고 다시 부르기] 하나로 묶는다(결정 6)', async () => {
+    const setThreadAgentModel = vi.fn(async () => undefined);
+    setController({ setThreadAgentModel } as unknown as Controller);
+    useAppStore.getState().set({ threadAgentModels: { 'm-root': [{
+      threadRootId: 'm-root', agentId: FORGE, harness: 'claude-code', model: 'bogus', effort: null,
+      setBy: ME, setAt: '2026-10-01T00:00:00.000Z', stale: false,
+    }] } });
+    const m = { ...failMsg(failMeta({ retryable: false })), threadRootId: 'm-root' };
+    render(<MessageItem message={m} inThread />);
+    fireEvent.click(screen.getByTestId('failure-reset-model'));
+    expect(setThreadAgentModel).toHaveBeenCalledWith('c1', 'm-root', FORGE, null, null);
+    await vi.waitFor(() => expect(useAppStore.getState().drafts['thread:m-root']).toContain('@forge'));
+  });
+
+  it('지정이 없으면 그 버튼은 서지 않는다', () => {
+    render(<MessageItem message={failMsg(failMeta())} />);
+    expect(screen.queryByTestId('failure-reset-model')).toBeNull();
+  });
+
   it('강조와 함께 무엇을·왜를 말한다', () => {
     render(<MessageItem message={failMsg(failMeta({ what: '008 적용', reason: '스테이징 DB 에 붙지 못했다' }))} />);
     expect(screen.getByTestId('failure-card')).toBeTruthy();
