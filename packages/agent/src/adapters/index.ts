@@ -149,6 +149,12 @@ export function fileMemoryDirUnderConfig(harness: AgentHarness): string | null {
   return adapterFor(harness).fileMemory?.dirUnderConfig ?? null;
 }
 
+/** **턴 뒤 리뷰 포크를 띄울 수 있는가**(`reviewFork.ts`). 어댑터가 없거나 재 보지 않았으면 거짓. */
+export function supportsReviewFork(harness: AgentHarness): boolean {
+  const adapter = ADAPTERS[harness];
+  return adapter !== 'unsupported' && adapter.reviewFork === true;
+}
+
 export function hasAccountPool(harness: AgentHarness): boolean {
   return adapterFor(harness).account?.pooled === true;
 }

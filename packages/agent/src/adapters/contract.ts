@@ -266,4 +266,10 @@ export interface HarnessAdapter {
   readonly skillDirs: readonly string[];
   /** 인터랙티브 이어받기가 열려 있는가. 거짓이면 그 사유가 사람에게 간다. */
   readonly interactiveHandoff: boolean;
+  /**
+   * 턴 뒤 리뷰 포크(`reviewFork.ts`)를 띄울 수 있는가 — 세션을 **포크해서** 비대화형으로 이어 갈
+   * 수단(claude 의 `-p --resume <id> --fork-session`)이 있고 그것을 재 봤는가. 생략은 "없다/모른다"다.
+   * codex(`exec resume` 은 포크가 아니라 같은 세션을 잇는다)·opencode 는 재 보지 않았다.
+   */
+  readonly reviewFork?: boolean;
 }

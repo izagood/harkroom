@@ -24,6 +24,7 @@ import { claudeSessionFilePath, claudeSessionMaterialized } from './claudeSessio
 import { readLastApiError } from './harnessErrors.js';
 import type { AttentionLedger } from './attentionLedger.js';
 import { readSkillUses } from './skillUsage.js';
+import type { ReviewFork } from './reviewFork.js';
 import { readLastAssistantText, readMcpAuthRejections, readPermissionDenials, readTranscriptTurnState, sessionTranscriptGrewSince, sessionTranscriptMtimeMs, type PermissionDenial } from './harnessErrors.js';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
@@ -350,6 +351,11 @@ export interface MentionTurnDeps {
    * 오퍼레이터라 고칠 수 있는 쪽도 거기다. 없으면 알리지 않는다(테스트·구식 조립).
    */
   reportMcpAuthRejected?: (servers: readonly string[], turnStartedAtMs: number) => void;
+  /**
+   * 턴 뒤 리뷰 포크(D1 실험, `reviewFork.ts`). 성공한 턴마다 센다 — 켠 에이전트·포크할 수 있는
+   * 하네스에서만 돈다. 없으면 안 센다(테스트·구식 조립).
+   */
+  reviewFork?: Pick<ReviewFork, 'afterTurn'>;
   /** 이 턴에 하네스가 부른 스킬을 읽는다(기본 `readSkillUses`). 주입 이유는 `readApiError` 와 같다. */
   readSkillUses?: (
     harness: AgentHarness, sessionId: string | null,
@@ -1818,6 +1824,27 @@ export async function runMentionTurn(
         `[mentionTurn] ${key}: 스킬 사용 기록 실패(턴은 계속한다) — ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+  }
+
+  // 턴 뒤 리뷰 포크(D1 실험). **기다리지 않는다** — 세고, 때가 되면 포크를 띄우고 바로 돌아온다.
+  // 예약으로 깨어난 턴·넘긴 일의 결말로 깨어난 턴·자동화가 띄운 턴은 세지 않는다: 사람과의
+  // 대화가 아니라 돌아볼 교정이 없고, 주기만 당긴다(Hermes 도 cron 턴엔 리뷰를 끈다).
+  if (deps.reviewFork) {
+    const mentionRow = thread.find((m) => m.id === mentionId);
+    const byAutomation = Boolean(mentionRow?.meta && (mentionRow.meta as Record<string, unknown>).automation);
+    void deps.reviewFork.afterTurn({
+      agentId: deps.me.id,
+      harness: def.harness,
+      sessionId: rec.sessionId,
+      cwd: rec.workspaceDir,
+      plan,
+      claudeConfigDir: deps.claudeConfigDir,
+      skip: Boolean(target.wake) || Boolean(target.delegation) || byAutomation,
+    }).catch((err: unknown) => {
+      console.error(
+        `[mentionTurn] ${key}: 리뷰 포크 준비 실패(턴은 계속한다) — ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
   }
 
   // 관측·통보는 best-effort 다 — 방금 저장한 상태를 좌우하지 않으므로 여기서 던진 예외로

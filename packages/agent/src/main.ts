@@ -24,6 +24,7 @@ import { basename, dirname, join } from 'node:path';
 import { loadConfig, runnerLabel } from './config.js';
 import { applySelfRename, HarkroomAgentClient } from './harkroom.js';
 import { runMentionTurn, type MentionTurnDeps } from './mentionTurn.js';
+import { ReviewFork } from './reviewFork.js';
 import { createMemoryCache } from './memoryCache.js';
 import { runPtyTurn } from './pty.js';
 import { SessionStore } from './sessions.js';
@@ -412,6 +413,9 @@ const mentionQueue = new MentionQueue();
 // 설정에 기록되므로 한 계정이 한 번 지나면 그 계정의 모든 턴이 풀린다. 턴마다 새로 만들면
 // 매번 처음이 되어 사람이 같은 승인을 스레드 수만큼 반복하게 된다.
 const attentionLedger = createAttentionLedger();
+// 턴 뒤 리뷰 포크(D1 실험, `reviewFork.ts`). 켜는 법: 오퍼레이터 env `HARKROOM_REVIEW_FORK_AGENTS=<에이전트 id>`
+// 또는 이 상태 디렉터리에 `review-fork.on` 파일. 둘 다 없으면 세기만 안 하고 아무것도 안 한다.
+const reviewFork = new ReviewFork({ stateDir: agentStateDir });
 interactive = createInteractiveManager({
   harkroom, store, exec, runTurn: runPtyTurn, me,
   workspaceBaseDir, mcpConfigPath, extraMcpServers, readTurnMcp, codexHome, opencodeHome,
@@ -526,6 +530,8 @@ const scheduler = createMentionScheduler({
     reportMcpAuthRejected: (servers, turnStartedAtMs) => relay.notifyMcpAuthRejected(servers, turnStartedAtMs),
     // #337: 멘션 턴도 자기 존재를 등록해야 인터랙티브 open 이 그 PTY 에 합류한다.
     registry,
+    // 턴 뒤 리뷰 포크(D1 실험) — 러너 수명 동안 하나(동시에 하나만 돈다). 켠 에이전트만.
+    reviewFork,
   } satisfies MentionTurnDeps),
   hooks: {
     // #129: 종료 요청은 턴이 끝난 **지금** 본다. 진행 중인 다른 턴은 아래 drain 이 기다린다.
