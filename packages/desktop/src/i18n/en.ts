@@ -1199,6 +1199,9 @@ export const en = {
   'agents.model.listUnknown': 'Could not get this harness\'s model list from the operator running it — type the exact model name.',
   'agents.run.note': 'What it runs on.',
   'agents.run.title': 'Run',
+  /** 영어 값 그대로 — 사전으로 옮긴 것은 한국어 화면에서 "모델" 로 읽히게 하려는 것이다(designer #1059). */
+  'agents.run.model': 'Model',
+  'agents.run.effort': 'Effort',
 
   'agents.runner.copied': 'Copied',
   'agents.runner.copy': 'Copy',
@@ -4038,6 +4041,7 @@ export const en = {
   'agents.scope.heading': 'Who can call it, what it holds',
   'agents.scope.summaryInvokers': '{count} on the list',
   'agents.scope.summaryDelegates': '{count} delegate callers',
+  'agents.scope.summaryMcp': '{count} MCP',
   'agents.scope.note': 'Saved on change. Personal credentials require owner-only calls, and a scope can only narrow.',
   'agents.scope.invoke': 'Who can call this agent',
   'agents.scope.invoke.community': 'Anyone in the community',

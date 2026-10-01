@@ -1532,7 +1532,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             {customized && (
               <div className="grid grid-cols-2 gap-3">
                 <label className={label}>
-                  Model
+                  {t('agents.run.model')}
                   <ModelPicker
                     className={field}
                     value={draft.model}
@@ -1541,7 +1541,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   />
                 </label>
                 <label className={label}>
-                  Effort
+                  {t('agents.run.effort')}
                   <select
                     className={field}
                     aria-label="Effort"
