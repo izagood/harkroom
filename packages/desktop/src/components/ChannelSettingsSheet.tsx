@@ -34,36 +34,45 @@ export function ChannelSettingsSheet() {
   const channel = useActiveStore((s) => s.channels.find((c) => c.id === s.channelSheetId));
   const me = useActiveStore((s) => s.me);
   const pref = useActiveStore((s) => (s.channelSheetId ? s.channelPrefs[s.channelSheetId] : undefined));
+  const knownMembers = useActiveStore((s) => (s.channelSheetId ? s.channelMembers[s.channelSheetId] : undefined));
   const [tab, setTab] = useState<Tab>('info');
   const [error, setError] = useState<string | null>(null);
   const [leaveConfirm, setLeaveConfirm] = useState(false);
+  // 조회·요청이 도는 동안 버튼을 잠근다 — 느린 서버에서 두 번 누르지 않게(designer #1041).
+  const [busy, setBusy] = useState(false);
 
   // 다른 채널로 열리면 처음부터 — 앞 채널의 나가기 확인이 남으면 엉뚱한 채널을 떠난다.
-  useEffect(() => { setTab('info'); setError(null); setLeaveConfirm(false); }, [channelId]);
+  useEffect(() => { setTab('info'); setError(null); setLeaveConfirm(false); setBusy(false); }, [channelId]);
 
   if (!channelId || !channel) return null;
   const close = () => useActiveStore.getState().set({ channelSheetId: null });
   const isArchived = channel.archivedAt != null;
   const level = notifyLevelOf(pref);
+  // 사이드바 메뉴와 **같은 규칙**(designer #1041): 목록을 아직 못 받았으면 '모른다'라 버튼을 둔다.
+  // 받은 목록에 내가 없을 때만 뺀다 — 눌러도 "멤버가 아니다" 로 끝나는 버튼은 거짓 신호다(design.md §4).
+  const knownMember = knownMembers === undefined || (!!me && knownMembers.some((m) => m.accountId === me.id));
 
   const archive = async () => {
-    setError(null);
+    setError(null); setBusy(true);
     try { await getController().archiveChannel(channel.id, !isArchived); }
     catch (err) { setError(err instanceof Error ? err.message : t('channelSheet.archiveFailed')); }
+    finally { setBusy(false); }
   };
 
   const leave = async (confirmed: boolean) => {
     if (!me) return;
-    setError(null);
-    if (!confirmed) {
-      let members;
-      try { members = await getController().loadChannelMembers(channel.id); }
-      catch (err) { setError(err instanceof Error ? err.message : t('sidebar.members.listFailed')); return; }
-      if (!members.some((m) => m.accountId === me.id)) { setError(t('sidebar.members.notAMember')); return; }
-      if (members.length === 1) { setLeaveConfirm(true); return; }
-    }
-    try { await getController().leaveChannel(channel.id, me.id); close(); }
-    catch (err) { setError(err instanceof Error ? err.message : t('sidebar.members.leaveFailed')); }
+    setError(null); setBusy(true);
+    try {
+      if (!confirmed) {
+        let members;
+        try { members = await getController().loadChannelMembers(channel.id); }
+        catch (err) { setError(err instanceof Error ? err.message : t('sidebar.members.listFailed')); return; }
+        if (!members.some((m) => m.accountId === me.id)) { setError(t('sidebar.members.notAMember')); return; }
+        if (members.length === 1) { setLeaveConfirm(true); return; }
+      }
+      try { await getController().leaveChannel(channel.id, me.id); close(); }
+      catch (err) { setError(err instanceof Error ? err.message : t('sidebar.members.leaveFailed')); }
+    } finally { setBusy(false); }
   };
 
   const tabButton = (id: Tab, label: string) => (
@@ -108,21 +117,23 @@ export function ChannelSettingsSheet() {
                 <div className="mt-6 rounded border border-warning-border bg-warning-surface p-3">
                   <p className="text-warning">{t('channelSheet.leaveLast')}</p>
                   <div className="mt-2 flex gap-2">
-                    <button onClick={() => void leave(true)} className="rounded bg-danger px-3 py-1 text-fg-on-strong hover:bg-danger-hover">{t('channelSheet.leaveAnyway')}</button>
+                    <button disabled={busy} onClick={() => void leave(true)} className="rounded bg-danger px-3 py-1 text-fg-on-strong hover:bg-danger-hover">{t('channelSheet.leaveAnyway')}</button>
                     <button autoFocus onClick={() => setLeaveConfirm(false)} className="rounded border border-border px-3 py-1 text-fg-muted hover:bg-surface-hover">{t('channelSheet.cancel')}</button>
                   </div>
                 </div>
               ) : (
                 <div className="mt-6 flex gap-2 border-t border-border pt-4">
                   {me?.isAdmin && (
-                    <button data-testid="channel-sheet-archive" onClick={() => void archive()} className="rounded border border-border px-3 py-1 text-fg-muted hover:bg-surface-hover">
+                    <button data-testid="channel-sheet-archive" disabled={busy} onClick={() => void archive()} className="rounded border border-border px-3 py-1 text-fg-muted hover:bg-surface-hover disabled:opacity-50">
                       {isArchived ? t('sidebar.menu.unarchive') : t('sidebar.menu.archive')}
                     </button>
                   )}
                   {/* 되돌리기 어려운 쪽이라 빨강이다(designer ⑦: [채널 나가기(빨강)]). */}
-                  <button data-testid="channel-sheet-leave" onClick={() => void leave(false)} className="rounded border border-danger-border px-3 py-1 text-danger hover:bg-danger-surface">
-                    {t('channelSheet.leave')}
-                  </button>
+                  {knownMember && (
+                    <button data-testid="channel-sheet-leave" disabled={busy} onClick={() => void leave(false)} className="rounded border border-danger-border px-3 py-1 text-danger hover:bg-danger-surface disabled:opacity-50">
+                      {t('channelSheet.leave')}
+                    </button>
+                  )}
                 </div>
               )}
             </div>

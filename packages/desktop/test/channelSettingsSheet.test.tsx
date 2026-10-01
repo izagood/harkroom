@@ -76,6 +76,30 @@ describe('채널 설정 시트 (UX ⑦b-1)', () => {
     expect(c.leaveChannel).not.toHaveBeenCalled();
   });
 
+  it('받아 온 멤버 목록에 내가 없으면 [채널 나가기] 가 없다 — 사이드바 메뉴와 같은 규칙', () => {
+    fake(); seed(false);
+    useAppStore.getState().set({ channelMembers: { c1: [{ accountId: 'u2' } as never] } });
+    render(<ChannelSettingsSheet />);
+    expect(screen.queryByTestId('channel-sheet-leave')).toBeNull();
+  });
+
+  it('목록을 아직 못 받았으면 [채널 나가기] 를 둔다 — 모르는 것을 아니라고 단정하지 않는다', () => {
+    fake(); seed(false);
+    render(<ChannelSettingsSheet />);
+    expect(screen.getByTestId('channel-sheet-leave')).toBeTruthy();
+  });
+
+  it('나가기 조회가 도는 동안 버튼을 잠근다', async () => {
+    let resolve!: (m: { accountId: string }[]) => void;
+    const c = fake(); seed(false);
+    c.loadChannelMembers.mockImplementationOnce(() => new Promise((r) => { resolve = r; }));
+    render(<ChannelSettingsSheet />);
+    fireEvent.click(screen.getByTestId('channel-sheet-leave'));
+    expect((screen.getByTestId('channel-sheet-leave') as HTMLButtonElement).disabled).toBe(true);
+    resolve([{ accountId: 'u1' }, { accountId: 'u2' }]);
+    await waitFor(() => expect(c.leaveChannel).toHaveBeenCalledTimes(1));
+  });
+
   it('알림 탭에서 고르면 그 수준을 저장한다', () => {
     const c = fake(); seed(false);
     render(<ChannelSettingsSheet />);
