@@ -1762,6 +1762,10 @@ export class Controller {
     return this.api.putAgentMemory(agentId, slug, edit);
   }
 
+  confirmAgentMemory(agentId: string, slug: string): Promise<{ ok: true }> {
+    return this.api.confirmAgentMemory(agentId, slug);
+  }
+
   agentMemoryRevisions(agentId: string, slug: string): Promise<MemoryRevision[]> {
     return this.api.agentMemoryRevisions(agentId, slug);
   }

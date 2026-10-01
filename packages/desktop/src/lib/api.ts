@@ -780,6 +780,11 @@ export class ApiClient {
     return this.req('PUT', `/accounts/agents/${agentId}/memory/${encodeURIComponent(slug)}`, edit);
   }
 
+  /** 서버 080: 쓰기 검사에 걸린 기억을 사람이 확인한다 — 표시를 풀어 다시 프롬프트에 싣는다. */
+  confirmAgentMemory(agentId: string, slug: string): Promise<{ ok: true }> {
+    return this.req('POST', `/accounts/agents/${agentId}/memory/${encodeURIComponent(slug)}/confirm`);
+  }
+
   async agentMemoryRevisions(agentId: string, slug: string): Promise<MemoryRevision[]> {
     return (await this.req<{ revisions: MemoryRevision[] }>(
       'GET', `/accounts/agents/${agentId}/memory/${encodeURIComponent(slug)}/revisions`,

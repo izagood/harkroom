@@ -477,3 +477,41 @@ describe('7. `skill.*` 이벤트를 받으면 목록이 갱신된다', () => {
     }
   });
 });
+
+/** 사용 기록(서버 081, D3)과 쓰기 검사 표시(080). 자동으로 끄는 것은 없다 — 화면은 보이기만 한다. */
+describe('스킬 사용 기록·검사 표시', () => {
+  beforeEach(() => { usePrefsStore.getState().setLocale('ko'); signIn(true); });
+
+  it('승인된 스킬에 사용 횟수와 안 쓰는 후보 표시가 선다, 기록 없는 옛 서버면 아무것도 없다', async () => {
+    fakeController({
+      listSkills: vi.fn(async () => [
+        { ...APPROVED, useCount: 3, lastUsedAt: '2026-09-20T00:00:00.000Z', staleCandidate: false },
+        { ...skill('idle-one', { approvedBy: 'u1', approvedAt: '2026-08-01T00:00:00.000Z' }), useCount: 0, lastUsedAt: null, staleCandidate: true },
+        skill('old-server', { approvedBy: 'u1', approvedAt: '2026-08-01T00:00:00.000Z' }),
+      ]),
+    });
+    render(<SkillsSettings />);
+    expect((await screen.findByTestId('skill-usage-approved-one')).textContent).toContain('3번 쓰임');
+    expect(screen.queryByTestId('skill-stale-approved-one')).toBeNull();
+    expect(screen.getByTestId('skill-usage-idle-one').textContent).toContain('아직 쓴 기록이 없다');
+    expect(screen.getByTestId('skill-stale-idle-one').textContent).toBe('안 쓰는 후보');
+    expect(screen.getByTestId('skill-stale-idle-one').getAttribute('title')).toContain('Claude Code 에이전트 기준');
+    expect(screen.queryByTestId('skill-usage-old-server')).toBeNull();
+  });
+
+  it('검사에 걸린 제안에 이유가 붙는다', async () => {
+    fakeController({
+      listSkills: vi.fn(async () => [skill('bad-one', { flaggedAt: '2026-09-20T00:00:00.000Z', flagReason: '비밀 토큰 값' })]),
+    });
+    render(<SkillsSettings />);
+    expect((await screen.findByTestId('skill-flagged-bad-one')).textContent).toContain('비밀 토큰 값');
+  });
+
+  it('두 사전에 같은 키가 있다', () => {
+    for (const k of ['skills.usage.count', 'skills.usage.never', 'skills.usage.stale', 'skills.usage.staleHint', 'skills.flagged'] as const) {
+      expect(ko(k)).not.toBe(k);
+      expect(en(k)).not.toBe(k);
+    }
+  });
+});
+
