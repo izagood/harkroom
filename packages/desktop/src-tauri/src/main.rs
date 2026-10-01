@@ -472,6 +472,19 @@ async fn claude_account_remove(
 }
 
 #[tauri::command]
+async fn claude_account_open_terminal(
+    app: tauri::AppHandle,
+    pool: String,
+    account: String,
+) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.claude_account_open_terminal(&pool, &account)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn claude_pool_remove(
     app: tauri::AppHandle,
     pool: String,
@@ -833,6 +846,7 @@ fn main() {
             claude_account_login_submit,
             claude_account_login_cancel,
             claude_account_remove,
+            claude_account_open_terminal,
             claude_pool_remove,
             claude_account_move,
             claude_accounts_provider_usage,

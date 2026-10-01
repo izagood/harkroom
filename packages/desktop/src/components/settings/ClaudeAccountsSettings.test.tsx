@@ -510,3 +510,74 @@ describe('Tauri 표면이 없을 때', () => {
     expect(screen.queryByRole('button', { name: /new pool/i })).toBeNull();
   });
 });
+
+describe('사람이 지나야 하는 관문 (2026-10-01)', () => {
+  // 러너가 관문(조직 관리 설정 승인 등)에서 넘긴 계정. 러너는 대신 누르지 않는다 — 사람이 그 계정의
+  // 터미널을 열어 고른다.
+  const GATED = {
+    ...POOLS_SNAPSHOT,
+    pools: [{
+      name: 'work',
+      accounts: [
+        { name: 'aria', status: { loggedIn: true, email: 'me@corp.example', orgName: 'Corp' }, attention: { atMs: 1 } },
+        { name: 'cedar', status: { loggedIn: false } },
+      ],
+    }],
+  };
+
+  it('표식이 있는 계정에만 이유 줄과 [Open terminal] 이 선다 — 계정 줄(메일 칸) 밖 둘째 줄이다', async () => {
+    stubTauri(GATED);
+    render(<ClaudeAccountsSettings />);
+    const notes = await screen.findAllByTestId('claude-account-attention');
+    expect(notes).toHaveLength(1);
+    expect(notes[0]!.textContent).toMatch(/waiting for your choice/);
+    expect(notes[0]!.textContent).toMatch(/New threads skip this account/);
+    // 계정 줄 안에는 없다 — 메일 칸을 밀어내지 않는다(designer D1).
+    expect(within(screen.getByTestId('claude-account-work-aria')).queryByTestId('claude-account-attention')).toBeNull();
+  });
+
+  it('[Open terminal] 은 이름만 넘긴다 — 경로·명령은 데몬이 조립한다', async () => {
+    stubTauri(GATED);
+    render(<ClaudeAccountsSettings />);
+    fireEvent.click(await screen.findByTestId('claude-account-attention-open'));
+    await waitFor(() => expect(calls.filter((c) => c.cmd === 'claude_account_open_terminal')).toEqual([
+      { cmd: 'claude_account_open_terminal', args: { pool: 'work', account: 'aria' } },
+    ]));
+    expect(await screen.findByTestId('claude-account-terminal-note')).toBeTruthy();
+  });
+
+  it('창에서 돌아오면 다시 읽고, 표식이 사라졌으면 "돌아왔다"로 바꾸고 더는 포커스마다 읽지 않는다', async () => {
+    let current: unknown = GATED;
+    calls = [];
+    vi.stubGlobal('__TAURI_INTERNALS__', {
+      transformCallback: () => 1,
+      invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
+        calls.push({ cmd, args });
+        if (cmd === 'claude_accounts_list') return current;
+        return {};
+      }),
+    });
+    render(<ClaudeAccountsSettings />);
+    fireEvent.click(await screen.findByTestId('claude-account-attention-open'));
+    await screen.findByTestId('claude-account-terminal-note');
+    const lists = () => calls.filter((c) => c.cmd === 'claude_accounts_list').length;
+    // 아직 고르지 않았다 — 안내는 그대로, 포커스마다 다시 읽는다.
+    let before = lists();
+    window.dispatchEvent(new Event('focus'));
+    await waitFor(() => expect(lists()).toBe(before + 1));
+    expect(screen.getByTestId('claude-account-terminal-note')).toBeTruthy();
+    // 사람이 고르고 나왔다 — 표식이 사라졌다.
+    current = { ...GATED, pools: [{ name: 'work', accounts: GATED.pools[0]!.accounts.map(({ attention: _a, ...rest }) => rest) }] };
+    before = lists();
+    window.dispatchEvent(new Event('focus'));
+    expect((await screen.findByTestId('claude-account-terminal-back')).textContent).toMatch(/is back/);
+    expect(screen.queryByTestId('claude-account-terminal-note')).toBeNull();
+    expect(screen.queryByTestId('claude-account-attention')).toBeNull();
+    // 끝났으니 포커스로 더 읽지 않는다(D3).
+    const after = lists();
+    window.dispatchEvent(new Event('focus'));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(lists()).toBe(after);
+  });
+});
+

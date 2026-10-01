@@ -34,6 +34,11 @@ export interface ClaudeAuthStatus {
 export interface ClaudeAccountView {
   name: string;
   status: ClaudeAuthStatus;
+  /**
+   * 러너가 이 계정을 **사람이 지나야 하는 관문**(조직 관리 설정 승인·첫 실행 등) 때문에 넘겼다
+   * (2026-10-01). 있으면 화면이 "승인 필요"와 [터미널 열기]를 보인다. 옛 데몬은 싣지 않는다.
+   */
+  attention?: { atMs: number };
 }
 
 export interface ClaudePoolView {
@@ -163,6 +168,11 @@ export function cancelClaudeLogin(loginId: string): Promise<void> {
 
 export function removeClaudeAccount(pool: string, account: string): Promise<void> {
   return call('claude_account_remove', { pool, account }) as Promise<void>;
+}
+
+/** 그 계정의 Claude Code 를 Terminal.app 에서 연다 — 관문은 사람이 직접 고른다(2026-10-01). */
+export function openClaudeAccountTerminal(pool: string, account: string): Promise<void> {
+  return call('claude_account_open_terminal', { pool, account }) as Promise<void>;
 }
 
 export function removeClaudePool(pool: string): Promise<void> {
