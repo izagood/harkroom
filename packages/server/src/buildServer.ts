@@ -31,6 +31,7 @@ import { registerHandleGroupRoutes } from './routes/handleGroupRoutes.js';
 import { registerLinkPreviewRoutes } from './routes/linkPreviewRoutes.js';
 import { registerAgentRelayRoutes } from './routes/agentRelayRoutes.js';
 import { registerSkillRoutes } from './routes/skillRoutes.js';
+import { registerPushRoutes } from './routes/pushRoutes.js';
 import { registerAutomationRoutes } from './routes/automationRoutes.js';
 import { registerWs } from './ws/wsPlugin.js';
 import { registerMcp } from './mcp/mcpPlugin.js';
@@ -545,6 +546,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerHandleGroupRoutes(app, deps.pool);
   await registerLinkPreviewRoutes(app, deps.pool);
   await registerSkillRoutes(app, deps.pool);
+  await registerPushRoutes(app, deps.pool);
   // 외부 수신(065)의 GitHub 서명 검증 키. 없으면 GitHub 수신은 켤 수 없다(범용 hook 은 해시라 된다).
   await registerAutomationRoutes(app, deps.pool, {
     secretBox: createSecretBox(deps.secretKey !== undefined ? deps.secretKey : process.env.HARKROOM_SECRET_KEY),
