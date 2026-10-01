@@ -151,6 +151,29 @@ export async function registerThreadAgentModelRoutes(
   });
 
   /**
+   * 스레드 칩 고르개의 재료 — 그 에이전트의 하네스·기본값·하네스가 밝힌 모델 목록(effort 포함).
+   *
+   * **사람이면 누구나** 읽는다. 결정 3 이 "채널의 사람 누구나 바꾼다" 이므로 고를 목록도 그만큼
+   * 열려야 한다 — 오퍼레이터 능력(`/operators/:id/capabilities`)은 operator.manage 전용이라 그
+   * 길로는 일반 멤버의 고르개가 늘 자유 입력으로 떨어진다. 여기서 내주는 것은 모델 이름과 기본값
+   * 뿐이다(지시문·MCP·소유자는 싣지 않는다). `models` 가 없으면 "모른다"다(오프라인·옛 오퍼레이터).
+   */
+  app.get('/agents/:agentId/model-options', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { agentId } = z.object({ agentId: z.string().uuid() }).parse(req.params);
+    if (req.account!.kind !== 'human') return refuse(reply, 403, 'human_only', '모델 지정은 사람만 바꾼다');
+    const found = await pool.query<{ harness: string | null; model: string | null; effort: string | null }>(
+      `select c.harness, c.model, c.effort from account a left join agent_config c on c.account_id = a.id
+        where a.id = $1 and a.kind = 'agent' and a.deleted_at is null`, [agentId]);
+    if (!found.rowCount) return refuse(reply, 404, 'not_found', 'no such agent');
+    const row = found.rows[0]!;
+    const harness = row.harness ?? 'claude-code';
+    const assignment = await assignmentOf(pool, agentId);
+    const caps = assignment && deps.operatorHub ? deps.operatorHub.capabilities(assignment.operatorId) : null;
+    const models = caps?.harnesses[harness]?.models;
+    return { harness, model: row.model, effort: row.effort, ...(models ? { models } : {}) };
+  });
+
+  /**
    * 러너가 턴 시작에 읽는 실효값. PAT 의 주인(에이전트) 것만 준다 — 대상 id 를 받지 않는다
    * (`/agent/config` 와 같은 규칙). `messageId` 는 앵커 아무것이나 된다: 스레드 답글이면 그
    * 루트를, 최상위 글이면 그 글을 루트로 본다. 없으면(채널 최상위 턴의 옛 러너) 설정값이다.

@@ -123,6 +123,14 @@ describe('thread agent model', () => {
     expect(eff.json().model).toBe('gpt-5.5');
   });
 
+  it('고르개 재료: 사람이면 누구나 하네스·기본값을 읽고, 오퍼레이터가 없으면 models 는 없다(모른다)', async () => {
+    const res = await app.inject({ method: 'GET', url: `/agents/${fizz.accountId}/model-options`, headers: auth(member.token) });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ harness: 'claude-code', model: 'sonnet', effort: 'medium' });
+    const byAgent = await app.inject({ method: 'GET', url: `/agents/${fizz.accountId}/model-options`, headers: auth(fizz.pat) });
+    expect(byAgent.statusCode).toBe(403);
+  });
+
   it('작성창 칩: 채널 최상위 글이면 그 글이 루트다, 에이전트가 실으면 403', async () => {
     const res = await post(member.token, { body: '@fizz 고도화해 줘', agentModels: [{ agentId: fizz.accountId, model: 'opus', effort: 'max' }] });
     expect(res.statusCode).toBe(201);
