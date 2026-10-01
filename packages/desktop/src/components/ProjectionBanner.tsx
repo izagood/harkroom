@@ -5,10 +5,10 @@ import { projectionBannerStorage } from '../lib/prefs';
 import { useAgo, useT } from '../i18n/useT';
 
 /**
- * 고치는 문이 **지목하는 자리**. 투영은 "이 앱이 말을 거는 서버" 가 avcs 를 향해 돌리는
- * 것이므로 `Connection` 이 그 방이다(`sections.ts` 의 배치 이유와 같은 결).
+ * 고치는 문이 **지목하는 자리**. 투영은 워크스페이스 전체에 걸리는 바깥 연결이라 설정 ›
+ * 워크스페이스 › **연동** 이 그 방이다(UX ⑥b-4 — 전에는 `Connection`).
  */
-const PROJECTION_SECTION: SectionId = 'connection';
+export const PROJECTION_SECTION: SectionId = 'integrations';
 
 /**
  * 투영이 정상이 아니라는 것을 **화면 위쪽 띠**로 말한다(#488 A3-a).

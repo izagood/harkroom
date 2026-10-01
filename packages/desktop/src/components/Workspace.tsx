@@ -12,7 +12,7 @@ import { SidebarToggleIcon } from './SidebarToggleIcon';
 import { ChannelPane } from './ChannelPane';
 import { AgentTower } from './AgentTower';
 import { Notice } from './Notice';
-import { ProjectionBanner } from './ProjectionBanner';
+import { PROJECTION_SECTION, ProjectionBanner } from './ProjectionBanner';
 import { ServerCompatBanner } from './ServerCompatBanner';
 import { UpdateToast } from './UpdateToast';
 import { ThreadPanel } from './ThreadPanel';
@@ -274,7 +274,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
            를 **재사용**한다 — 프로필의 `에이전트 설정` 버튼과 본문 멘션이 이미 그것으로 같은
            자리를 열고 있으므로, 새 신호를 만들면 같은 문에 손잡이가 셋이 된다. */
         onOpenAgentConfig={(agentId) => onOpenSettings('agents', agentId)}
-        onOpenProjectionSettings={() => onOpenSettings('connection')}
+        onOpenProjectionSettings={() => onOpenSettings(PROJECTION_SECTION)}
         /* 설정을 볼 수 없는 사람이 카드를 눌렀을 때. 프로필을 여는 함수는 이미 하나다
            (`handleOpenDirectory` — id 를 주면 프로필, 안 주면 디렉터리). */
         onOpenProfile={(accountId) => handleOpenDirectory(accountId)}

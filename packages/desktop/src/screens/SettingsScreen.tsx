@@ -10,7 +10,7 @@ import { ConnectionSettings } from '../components/settings/ConnectionSettings';
 import { HandleGroupsSettings } from '../components/settings/HandleGroupsSettings';
 import { InviteSettings } from '../components/settings/InviteSettings';
 import { OperatorsSettings } from '../components/settings/OperatorsSettings';
-import { McpServersSettings } from '../components/settings/McpServersSettings';
+import { IntegrationsSettings } from '../components/settings/IntegrationsSettings';
 import { NotificationSettings } from '../components/settings/NotificationSettings';
 import { MessageSettings } from '../components/settings/MessageSettings';
 import { ProfileSettings } from '../components/settings/ProfileSettings';
@@ -114,7 +114,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
           {section === 'agent-defaults' && <AgentDefaultsSettings />}
           {section === 'workspace' && <WorkspaceSettings />}
           {section === 'operators' && <OperatorsSettings onOpenSection={setSection} />}
-          {section === 'mcp-servers' && <McpServersSettings />}
+          {section === 'integrations' && <IntegrationsSettings />}
           {section === 'handle-groups' && <HandleGroupsSettings />}
           {section === 'invite' && <InviteSettings />}
           {section === 'updates' && <UpdatesSettings />}

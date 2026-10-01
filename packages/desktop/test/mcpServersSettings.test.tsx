@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import { McpServersSettings } from '../src/components/settings/McpServersSettings';
+import { McpServersSection } from '../src/components/settings/McpServersSettings';
 import { setController, type Controller } from '../src/state/controller';
 import { resetCommunityRegistry, useActiveStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
@@ -29,7 +29,7 @@ describe('McpServersSettings', () => {
   it('agent.privileged 는 이름을 넣고 뺀다', async () => {
     useActiveStore.getState().set({ me: me(['agent.privileged']) as never });
     const c = fake([{ name: 'github', credentialKind: 'community' }]);
-    render(<McpServersSettings />);
+    render(<McpServersSection />);
     expect(await screen.findByTestId('mcp-server-github')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('이름'), { target: { value: 'slack' } });
     fireEvent.change(screen.getByLabelText('자격증명 종류'), { target: { value: 'personal' } });
@@ -44,7 +44,7 @@ describe('McpServersSettings', () => {
   it('이름 문법이 틀리면 서버에 보내지 않고 말한다', async () => {
     useActiveStore.getState().set({ me: me(['agent.privileged']) as never });
     const c = fake();
-    render(<McpServersSettings />);
+    render(<McpServersSection />);
     fireEvent.change(await screen.findByLabelText('이름'), { target: { value: 'Bad_Name' } });
     fireEvent.click(screen.getByText('넣기'));
     expect(await screen.findByRole('alert')).toBeTruthy();
@@ -53,7 +53,7 @@ describe('McpServersSettings', () => {
   it('능력이 없으면 목록만 본다 — 넣기·빼기 버튼이 없다', async () => {
     useActiveStore.getState().set({ me: me([]) as never });
     fake([{ name: 'github', credentialKind: 'community' }]);
-    render(<McpServersSettings />);
+    render(<McpServersSection />);
     expect(await screen.findByTestId('mcp-server-github')).toBeTruthy();
     expect(screen.queryByLabelText('github 빼기')).toBeNull();
     expect(screen.queryByLabelText('이름')).toBeNull();
@@ -89,7 +89,7 @@ describe('McpServersSettings — 이 머신의 인증', () => {
     useActiveStore.getState().set({ me: me([]) as never });
     local([remote('slack', { state: 'none' }), remote('jira', { state: 'ok' }, false)]);
     fake([{ name: 'slack', credentialKind: 'personal' }, { name: 'jira', credentialKind: 'personal' }]);
-    render(<McpServersSettings />);
+    render(<McpServersSection />);
     expect((await screen.findByTestId('agent-mcp-auth-slack')).textContent).toContain('인증 필요');
     expect(screen.getByTestId('agent-mcp-auth-start-slack').textContent).toBe('인증');
     expect(screen.getByTestId('agent-mcp-auth-jira').textContent).toContain('인증됨');
@@ -101,7 +101,7 @@ describe('McpServersSettings — 이 머신의 인증', () => {
     const opened: string[] = [];
     setExternalOpener({ open: async (u) => { opened.push(u); } });
     fake([{ name: 'slack', credentialKind: 'personal' }]);
-    render(<McpServersSettings />);
+    render(<McpServersSection />);
     fireEvent.click(await screen.findByTestId('agent-mcp-auth-start-slack'));
     await waitFor(() => expect(opened).toEqual(['https://auth.example.com/authorize']));
     expect(calls).toContainEqual({ cmd: 'operator_mcp_auth', args: { action: 'start', name: 'slack' } });
@@ -112,7 +112,7 @@ describe('McpServersSettings — 이 머신의 인증', () => {
     useActiveStore.getState().set({ me: me([]) as never });
     local([]);
     fake([{ name: 'github', credentialKind: 'community' }]);
-    render(<McpServersSettings />);
+    render(<McpServersSection />);
     expect((await screen.findByTestId('mcp-server-local-github')).textContent).toContain('이 머신에 정의 없음');
     expect(screen.queryByTestId('agent-mcp-auth-start-github')).toBeNull();
   });
@@ -120,7 +120,7 @@ describe('McpServersSettings — 이 머신의 인증', () => {
   it('Tauri 표면이 없으면(웹) 줄에 덧붙이지 않는다', async () => {
     useActiveStore.getState().set({ me: me([]) as never });
     fake([{ name: 'slack', credentialKind: 'personal' }]);
-    render(<McpServersSettings />);
+    render(<McpServersSection />);
     await screen.findByTestId('mcp-server-slack');
     expect(screen.queryByTestId('mcp-server-local-slack')).toBeNull();
   });

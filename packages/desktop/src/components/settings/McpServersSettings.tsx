@@ -17,13 +17,14 @@ import { McpLocalAuth } from './McpLocalAuth';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { hasCapability } from '../../lib/capabilities';
-import { SettingsGroup, SettingsPage } from './primitives';
+import { SettingsGroup } from './primitives';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { useT } from '../../i18n/useT';
 
 const NAME_RE = /^[a-z0-9-]{1,32}$/;
 
-export function McpServersSettings() {
+/** 연동 페이지(`IntegrationsSettings`)의 **MCP 서버** 묶음이다(UX ⑥b-4). 전에는 페이지 하나였다. */
+export function McpServersSection() {
   const t = useT();
   const me = useActiveStore((s) => s.me);
   const canEdit = hasCapability(me, 'agent.privileged');
@@ -69,8 +70,9 @@ export function McpServersSettings() {
   };
 
   return (
-    <SettingsPage section="mcp-servers" description={t('mcpServers.description')}>
-      <SettingsGroup>
+    <>
+      <SettingsGroup title={t('integrations.mcp')}>
+        <p className="px-4 py-3 text-meta text-fg-subtle" data-testid="mcp-servers-description">{t('mcpServers.description')}</p>
         {rows === null && <p className="px-4 py-3 text-meta text-fg-muted">{t('mcpServers.loading')}</p>}
         {rows === 'error' && <p role="alert" className="px-4 py-3 text-meta text-danger">{t('mcpServers.listFailed')}</p>}
         {Array.isArray(rows) && rows.length === 0 && <p className="px-4 py-3 text-meta text-fg-subtle">{t('mcpServers.none')}</p>}
@@ -154,6 +156,6 @@ export function McpServersSettings() {
           <p className="px-4 pb-3 text-meta text-fg-subtle">{t('mcpServers.addNote')}</p>
         </SettingsGroup>
       )}
-    </SettingsPage>
+    </>
   );
 }

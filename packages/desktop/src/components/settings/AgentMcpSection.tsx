@@ -1,7 +1,7 @@
 /**
  * 에이전트 상세의 **MCP** 절 — 설정을 한 자리에서 끝낸다(MCP 설정 UI 1차, 2026-09-28).
  *
- * 전에는 세 군데였다: 서버 레지스트리(설정 › MCP servers), 이 머신의 `operator/mcp-servers.json`
+ * 전에는 세 군데였다: 서버 레지스트리(설정 › 연동 › MCP 서버), 이 머신의 `operator/mcp-servers.json`
  * (손으로), 에이전트의 체크. 게다가 personal 서버는 credentialScope 를 **먼저** 바꿔야 했고,
  * 정의 없는 이름을 켜면 오퍼레이터가 그 에이전트를 **띄우지 않았다**(`mcp_server_missing`).
  *
