@@ -335,9 +335,9 @@ class ThreadRootMissing extends StatelessWidget {
 
 /// 「답글 n개」 구분 줄의 글자. 첫 답글이 원글과 다른 날이면(또는 원글을 모르면) 그 날짜를 붙인다 —
 /// 「답글 2개 · 오늘」. 첫 답글 위에는 날짜 줄을 따로 세우지 않으므로 날짜는 여기서만 말한다.
-String threadDividerLabel(Strings t, int count, {DateTime? rootAt, DateTime? firstReplyAt}) {
+String threadDividerLabel(Strings t, int count, {DateTime? rootAt, DateTime? firstReplyAt, DateTime? now}) {
   final label = repliesCountLabel(t, count);
   if (firstReplyAt == null) return label;
   if (rootAt != null && sameLocalDay(rootAt, firstReplyAt)) return label;
-  return '$label · ${dayLabel(t, firstReplyAt)}';
+  return '$label · ${dayLabel(t, firstReplyAt, now: now)}';
 }
