@@ -739,7 +739,14 @@ export function readOperatorMcpRemovePayload(payload: unknown): { name: string }
   return typeof name === 'string' ? { name } : name;
 }
 
-export interface OperatorRegisterResult { operatorId: string; name: string; baseUrl: string }
+export interface OperatorRegisterResult {
+  operatorId: string; name: string; baseUrl: string;
+  /**
+   * 다시 등록했을 때 서버가 옛 등록을 폐기했나. `null`·없음 = 폐기하지 않았다 — 옛 등록이 없었거나,
+   * 서버가 `replaces` 를 모르는 옛 서버다. 그때 화면은 "목록에서 직접 지워라"로 물러난다.
+   */
+  replaced?: { operatorId: string; movedAssignments: number } | null;
+}
 
 export function readOperatorRegisterPayload(payload: unknown): { baseUrl: string; code: string; name?: string } | DaemonError {
   const p = payload as { baseUrl?: unknown; code?: unknown; name?: unknown } | null;

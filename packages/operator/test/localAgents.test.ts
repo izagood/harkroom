@@ -52,7 +52,7 @@ describe('localAgents.register — 앱이 넘긴 코드로 claim 하고 곧바�
     const secrets: OperatorSecrets = { getToken: async (u) => tokens[u] ?? null, setToken: async (u, t) => { tokens[u] = t; }, clearToken: async () => {} };
     const port = createLocalAgentsPort({ configPath: join(dir, 'operator', 'operator.json'), secrets, dataDir: dir, fetchImpl, onChanged: () => {}, onRegistered: async (b) => { registered.push(b); } });
     const out = await port.register('https://example.com/', 'CODE', 'mac');
-    expect(out).toEqual({ operatorId: 'op-9', name: 'mac', baseUrl: 'https://example.com' });
+    expect(out).toEqual({ operatorId: 'op-9', name: 'mac', baseUrl: 'https://example.com', replaced: null });
     expect(tokens['https://example.com']).toBe('hkop_t');
     expect(registered).toEqual(['https://example.com']);
     // 등록이 id 를 함께 적어 둔다 — 앱의 '이 기기' 기본값이 그것 하나를 근거로 선다.

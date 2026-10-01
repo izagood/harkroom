@@ -120,3 +120,27 @@ describe('/operator 채널', () => {
     await expect(connect(token)).rejects.toThrow('http 401');
   });
 });
+
+// 폐기는 인증을 다시 보지 않는 붙은 소켓까지 닿아야 한다 — 두면 죽은 토큰으로 계속 산다.
+describe('폐기된 오퍼레이터의 소켓', () => {
+  const closed = (ws: WebSocket) => new Promise<number>((resolve) => ws.once('close', (code) => resolve(code)));
+
+  it('DELETE /operators/:id 는 붙은 소켓을 끊는다', async () => {
+    const op = await registerOperator(app, adminToken, '지울기기');
+    const ws = await connect(op.token);
+    const done = closed(ws);
+    const del = await app.inject({ method: 'DELETE', url: `/operators/${op.operatorId}`, headers: auth(adminToken) });
+    expect(del.statusCode).toBe(204);
+    expect(await done).toBe(4401);
+  });
+
+  it('다시 등록(replaces)은 옛 소켓을 끊는다', async () => {
+    const op = await registerOperator(app, adminToken, '바꿀기기');
+    const ws = await connect(op.token);
+    const done = closed(ws);
+    const code = (await app.inject({ method: 'POST', url: '/operators/register-codes', headers: auth(adminToken) })).json().code as string;
+    const res = await app.inject({ method: 'POST', url: '/operators/claim', payload: { code, name: '바꿀기기', replaces: op.operatorId } });
+    expect(res.json().replaced.operatorId).toBe(op.operatorId);
+    expect(await done).toBe(4401);
+  });
+});

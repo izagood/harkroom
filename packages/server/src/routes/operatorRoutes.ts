@@ -16,11 +16,20 @@ import { newToken } from '../auth/tokens.js';
 import { can } from '../auth/permissions.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
+import { suspendSecretGrants } from '../services/secretAccess.js';
 import { createHeartbeat } from '../ws/heartbeat.js';
 import type { OperatorHub } from '../ws/operatorHub.js';
 
 const REGISTER_CODE_TTL_MS = 5 * 60_000;
-const claimBody = z.object({ code: z.string().startsWith('hkreg_'), name: z.string().min(1).max(64) });
+/**
+ * `replaces` 는 다시 등록하는 머신이 들고 있던 **옛 operatorId** 다(오퍼레이터 `register` 가
+ * `operator.json` 에서 읽어 싣는다). 옛 서버는 zod 가 모르는 키를 걷어 내므로 그대로 무시한다.
+ */
+const claimBody = z.object({
+  code: z.string().startsWith('hkreg_'),
+  name: z.string().min(1).max(64),
+  replaces: z.string().uuid().optional(),
+});
 const idParam = z.object({ id: z.string().uuid() });
 
 const OP_COLS = `id, owner_account_id as "ownerAccountId", name, created_at as "createdAt",
@@ -119,16 +128,63 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
     const claim = codes.consume(parsed.data.code);
     if (!claim) return reply.code(401).send({ error: { code: 'invalid_code', message: '등록 코드가 없거나 만료됐다' } });
     const { token, hash } = newToken('hkop');
-    const res = await pool.query(
-      `insert into operator (owner_account_id, name, token_hash) values ($1, $2, $3) returning ${OP_COLS}`,
-      [claim.ownerAccountId, parsed.data.name, hash]);
-    const operator = view(res.rows[0]);
+    // 새 행과 옛 행 폐기·배정 이동은 한 트랜잭션이다 — 중간에 죽으면 둘 다 없던 일이 된다.
+    const client = await pool.connect();
+    let row: Omit<OperatorView, 'online'>;
+    let replaced: { operatorId: string; movedAgentIds: string[] } | null = null;
+    try {
+      await client.query('begin');
+      const res = await client.query(
+        `insert into operator (owner_account_id, name, token_hash) values ($1, $2, $3) returning ${OP_COLS}`,
+        [claim.ownerAccountId, parsed.data.name, hash]);
+      row = res.rows[0];
+      if (parsed.data.replaces) {
+        // **코드를 발급한 사람의 것일 때만** 폐기한다. 아니면(남의 id·이미 폐기·없는 id) 조용히
+        // 넘어간다 — 무엇이 걸렸는지 말하면 남의 operatorId 가 있는지 떠보는 길이 된다.
+        const old = await client.query(
+          `update operator set revoked_at = now()
+            where id = $1 and owner_account_id = $2 and revoked_at is null returning id`,
+          [parsed.data.replaces, claim.ownerAccountId]);
+        if (old.rowCount) {
+          // 배정은 새 등록으로 옮긴다. 옛 행이 이 사람의 것임을 위에서 확인했으므로 같은 소유 조건 안이다.
+          const moved = await client.query<{ agent_id: string }>(
+            `update agent_assignment set operator_id = $2 where operator_id = $1 returning agent_id`,
+            [parsed.data.replaces, row.id]);
+          const movedAgentIds = moved.rows.map((r) => r.agent_id);
+          // 옛 operator 에 묶인 비밀 grant 는 세운다(M1, 배정 라우트와 같다) — 소유자가 믿은 것은
+          // 그 등록이었다. 다시 주면 풀린다.
+          for (const agentId of movedAgentIds) {
+            await suspendSecretGrants(client, { agentId, exceptOperatorId: row.id }, 'assignment_changed');
+          }
+          replaced = { operatorId: parsed.data.replaces, movedAgentIds };
+        }
+      }
+      await client.query('commit');
+    } catch (err) {
+      await client.query('rollback').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+    const operator = view(row);
     await recordAudit(pool, {
       action: 'operator.registered', actorId: claim.ownerAccountId, actorHandle: null,
-      target: operator.id, detail: { name: operator.name },
+      target: operator.id, detail: { name: operator.name, ...(replaced ? { replaces: replaced.operatorId } : {}) },
     }, req);
     emitEvent({ type: 'operator.changed', operatorId: operator.id, audience: [claim.ownerAccountId] });
-    return { operator, token };
+    if (replaced) {
+      await recordAudit(pool, {
+        action: 'operator.revoked', actorId: claim.ownerAccountId, actorHandle: null, target: replaced.operatorId,
+        detail: { replacedBy: operator.id, movedAssignments: replaced.movedAgentIds.length },
+      }, req);
+      // 폐기된 토큰의 소켓은 지금 끊는다(`DELETE /operators/:id` 와 같다).
+      deps.hub.disconnect(replaced.operatorId, 4401, 'operator revoked');
+      emitEvent({ type: 'operator.changed', operatorId: replaced.operatorId, audience: 'all' });
+      for (const agentId of replaced.movedAgentIds) emitEvent({ type: 'agent_assignment.changed', agentId, audience: 'all' });
+    }
+    // `replaced` 는 클라이언트가 "옛 등록이 정말 폐기됐나"를 아는 유일한 길이다 — 옛 서버는 이 키를
+    // 주지 않으므로 화면이 "직접 지워라"로 물러난다. 남의 id 였을 때도 null 이라 구별되지 않는다.
+    return { operator, token, replaced: replaced ? { operatorId: replaced.operatorId, movedAssignments: replaced.movedAgentIds.length } : null };
   });
 
   app.get('/operators', { preHandler: app.requireAccount }, async (req) => {
@@ -160,6 +216,8 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
         `update operator set revoked_at = now() where id = $1 and revoked_at is null returning id`, [id]);
       if (!res.rowCount) return reply.code(404).send({ error: { code: 'not_found', message: '그런 오퍼레이터가 없다' } });
       await recordAudit(pool, { action: 'operator.revoked', ...actorOf(req), target: id, detail: {} }, req);
+      // 폐기한 토큰으로 붙어 있던 소켓을 끊는다. 인증은 붙을 때만 보므로 두면 계속 산다.
+      deps.hub.disconnect(id, 4401, 'operator revoked');
       emitEvent({ type: 'operator.changed', operatorId: id, audience: 'all' });
       return reply.code(204).send();
     });
