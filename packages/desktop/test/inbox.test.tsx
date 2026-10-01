@@ -120,6 +120,8 @@ describe('Inbox 상태 보드 (C안)', () => {
     fireEvent.click(await screen.findByTestId('inbox-card-answer-r1-a'));
     await waitFor(() => expect(c.answerAsk).toHaveBeenCalledWith('m1', 'a', 'c1'));
     expect(c.openThread).not.toHaveBeenCalled();
+    // 내 차례에는 치우기가 없다 — 눌러도 그 자리에 남는다.
+    expect(screen.queryByTestId('inbox-card-clear-r1')).toBeNull();
   });
 
   it('남에게 간 물음은 카드에 선택지가 없다', async () => {

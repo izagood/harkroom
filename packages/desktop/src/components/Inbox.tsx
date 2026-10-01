@@ -329,14 +329,15 @@ export function Inbox({ open, onClose }: Props) {
               {o.label}
             </button>
           ))}
-          <button
+          {/* 내 차례에는 치우기가 없다 — 내 차례가 치움을 이기므로 눌러도 카드가 그 자리에 남는다. */}
+          {card.column !== 'mine' && <button
             data-testid={`inbox-card-clear-${card.rootId}`}
             disabled={busy === card.rootId}
             onClick={() => void setCleared(card, card.fold !== 'cleared')}
             className="ml-auto rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
           >
             {card.fold === 'cleared' ? t('inbox.board.unclear') : t('inbox.board.clear')}
-          </button>
+          </button>}
         </div>
       </li>
     );
