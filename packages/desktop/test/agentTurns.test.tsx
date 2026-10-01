@@ -197,6 +197,16 @@ describe('중단 — 줄 · 스레드 · 전부', () => {
     expect(onCancel.mock.calls[0]![0].map((t: AgentSessionView) => t.sessionId)).toEqual(['s2']);
   });
 
+  it('스레드에 멈출 턴이 하나면 메뉴 없이 [멈추기] 가 바로 그 턴을 보낸다 (designer #1054)', () => {
+    const onCancel = vi.fn();
+    renderTurns({ kind: 'known', turns: twoThreads() }, vi.fn(), onCancel);
+    // s3 는 c2/t9 스레드에 혼자다.
+    expect(screen.getByTestId('agent-turn-cancel-s3').textContent).not.toContain('▾');
+    fireEvent.click(screen.getByTestId('agent-turn-cancel-s3'));
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(onCancel.mock.calls[0]![0].map((t: AgentSessionView) => t.sessionId)).toEqual(['s3']);
+  });
+
   it('[멈추기 ▾ › 이 스레드 전부] 는 그 스레드의 턴만 보낸다 — 다른 스레드는 건드리지 않는다', () => {
     const onCancel = vi.fn();
     renderTurns({ kind: 'known', turns: twoThreads() }, vi.fn(), onCancel);
@@ -213,10 +223,9 @@ describe('중단 — 줄 · 스레드 · 전부', () => {
       turn({ sessionId: 's-human', agentAccountId: 'a2', mode: 'interactive' }),
     ] }, vi.fn(), onCancel);
     expect(screen.queryByTestId('agent-turn-cancel-s-human')).toBeNull();
-    // 같은 스레드의 멈출 턴은 s1 하나뿐이다(조종 중인 턴은 빠진다) — "이 스레드 전부" 항목이 서지 않는다.
+    // 같은 스레드의 멈출 턴은 s1 하나뿐이다(조종 중인 턴은 빠진다) — 메뉴 없이 버튼이 바로 멈춘다.
     fireEvent.click(screen.getByTestId('agent-turn-cancel-s1'));
-    expect(screen.getAllByRole('menuitem')).toHaveLength(1);
-    fireEvent.click(screen.getByRole('menuitem'));
+    expect(screen.queryByRole('menu')).toBeNull();
     expect(onCancel.mock.calls[0]![0].map((t: AgentSessionView) => t.sessionId)).toEqual(['s1']);
   });
 

@@ -376,23 +376,34 @@ export function AgentTurns({
                           {t('agentTurns.endControl')}
                         </button>
                       ) : (
-                        <Menu
-                          placement="bottom"
-                          items={[
-                            { label: t('agentTurns.cancelOne'), onSelect: () => onCancelTurns([turn]) },
-                            // 같은 스레드에 멈출 턴이 둘 이상일 때만 — 하나뿐이면 위 항목과 같은 일이다.
-                            ...(stoppable(group.turns).length > 1 ? [{
-                              label: t('agentTurns.cancelThread', { n: stoppable(group.turns).length }),
-                              onSelect: () => onCancelTurns(stoppable(group.turns)),
-                            }] : []),
-                          ]}
-                          renderTrigger={(props) => (
-                            <button type="button" {...props} data-testid={`agent-turn-cancel-${turn.sessionId}`}
-                              className="shrink-0 rounded px-1 text-danger hover:bg-danger-surface">
-                              {t('agentTurns.cancel')} <span aria-hidden="true">▾</span>
-                            </button>
-                          )}
-                        />
+                        stoppable(group.turns).length > 1 ? (
+                          <Menu
+                            placement="bottom"
+                            items={[
+                              { label: t('agentTurns.cancelOne'), onSelect: () => onCancelTurns([turn]) },
+                              // 범위가 큰 쪽이라 빨강이다 — "이 턴만" 과 무게가 갈린다(designer #1054).
+                              {
+                                label: t('agentTurns.cancelThread', { n: stoppable(group.turns).length }),
+                                onSelect: () => onCancelTurns(stoppable(group.turns)),
+                                tone: 'danger' as const,
+                              },
+                            ]}
+                            renderTrigger={(props) => (
+                              <button type="button" {...props} data-testid={`agent-turn-cancel-${turn.sessionId}`}
+                                className="shrink-0 rounded px-1 text-danger hover:bg-danger-surface">
+                                {t('agentTurns.cancel')} <span aria-hidden="true">▾</span>
+                              </button>
+                            )}
+                          />
+                        ) : (
+                          /* 스레드에 멈출 턴이 이것 하나면 **고를 것이 없다** — 항목 하나짜리 메뉴는 누르는 횟수만 늘린다
+                             (designer #1054). ▾ 없는 버튼이 바로 멈춘다(옛 동작). */
+                          <button type="button" data-testid={`agent-turn-cancel-${turn.sessionId}`}
+                            onClick={() => onCancelTurns([turn])}
+                            className="shrink-0 rounded px-1 text-danger hover:bg-danger-surface">
+                            {t('agentTurns.cancel')}
+                          </button>
+                        )
                       ))}
                     </li>
                   );

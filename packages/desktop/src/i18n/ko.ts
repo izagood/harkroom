@@ -489,7 +489,7 @@ export const ko = {
   'agentTurns.cancelAll': '전부 멈추기…',
   'agentTurns.cancelAllTitle': '도는 턴 {n}개를 멈출까?',
   'agentTurns.cancelConfirm': '멈추기',
-  'agentTurns.cancelDetail': '턴만 끊는다 — 러너는 살아 있어 다음 멘션을 정상으로 받는다. 중단된 턴은 그 스레드에 실패 카드로 남는다. 사람이 직접 조종 중인 턴은 건드리지 않는다.',
+  'agentTurns.cancelDetail': '턴만 끊는다 — 러너는 살아 있어 다음 멘션을 정상으로 받는다. 멈춘 턴은 그 스레드에 실패 카드로 남는다. 사람이 직접 조종 중인 턴은 건드리지 않는다.',
   'agentTurns.cancelKeep': '그대로 두기',
   'agentTurns.endControl': '조종 끝내기',
   'agentTurns.endControlTitle': '@{handle} 의 조종을 끝낼까?',
