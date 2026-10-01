@@ -36,7 +36,24 @@ class _MessageListScreenState extends State<MessageListScreen> {
   Map<String, ModelPick> _picks = const {};
 
   @override
+  void initState() {
+    super.initState();
+    _scroll.addListener(_maybeLoadOlder);
+  }
+
+  /// 목록 **맨 위**(reverse 라 끝)에 가까워지면 이전 페이지를 받는다. 데스크탑 `ChannelPane` 의
+  /// `maybeLoadOlder` 와 같은 일이다 — 없으면 첫 페이지 밖의 말은 영영 볼 수 없다.
+  void _maybeLoadOlder() {
+    if (!_scroll.hasClients) return;
+    final pos = _scroll.position;
+    if (pos.pixels < pos.maxScrollExtent - 400) return;
+    // 듣는 자리는 빌드 밖이라 `context.app`(구독)을 부르지 않는다.
+    AppScope.read(context).loadOlder(widget.channelId);
+  }
+
+  @override
   void dispose() {
+    _scroll.removeListener(_maybeLoadOlder);
     _composer.dispose();
     _scroll.dispose();
     super.dispose();
@@ -83,6 +100,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
     // 스레드가 조용해 보였다 — 진행은 한 줄로 접히고 대기는 대기 줄이 된다.
     final feed = buildFeed(all.where((m) => m.inChannelFeed).toList(growable: false));
     final failed = app.failedSends[widget.channelId] ?? const <FailedSend>[];
+    final olderBusy = app.loadingOlder.contains(widget.channelId);
     // `firstOrNull` 은 `package:collection` 것이다. 의존성 하나를 이것 때문에 들이지
     // 않는다 — 채널이 목록에서 사라지는 경우(다른 기기에서 나갔다)가 있으므로 null 은
     // 정상이고, 그때 제목은 빈 줄로 둔다.
@@ -113,7 +131,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
                 LoadState.loaded => feed.isEmpty && failed.isEmpty
                   ? EmptyState(title: t.messagesEmpty, hint: t.messagesEmptyHint)
                   // **아래에서부터 쌓는다**(`reverse`). 위에서부터면 채널을 열었을 때 불러온
-                  // 50개 중 **가장 오래된 것**이 보이고, 새 말은 화면 밖 아래로 붙는다 —
+                  // 첫 페이지 중 **가장 오래된 것**이 보이고, 새 말은 화면 밖 아래로 붙는다 —
                   // 채팅에서 사람이 보려는 것은 늘 맨 아래다. 짧은 시험 목록에서는 한 화면에
                   // 다 들어가서 드러나지 않았다.
                   : ListView.builder(
@@ -121,9 +139,22 @@ class _MessageListScreenState extends State<MessageListScreen> {
                       controller: _scroll,
                       reverse: true,
                       padding: const EdgeInsets.symmetric(vertical: 8),
-                      // 못 보낸 말이 **맨 아래**(reverse 라 앞쪽)에 선다 — 보낸 자리다.
-                      itemCount: feed.length + failed.length,
-                      itemBuilder: (context, i) => i < failed.length
+                      // 못 보낸 말이 **맨 아래**(reverse 라 앞쪽)에 선다 — 보낸 자리다. 맨 위(끝)에는
+                      // 이전 페이지를 받는 동안 회전자 한 줄을 둔다.
+                      itemCount: feed.length + failed.length + (olderBusy ? 1 : 0),
+                      itemBuilder: (context, i) => i == feed.length + failed.length
+                          ? const Padding(
+                              key: Key('loading-older'),
+                              padding: EdgeInsets.all(12),
+                              child: Center(
+                                child: SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                              ),
+                            )
+                          : i < failed.length
                           ? FailedSendRow(item: failed[failed.length - 1 - i])
                           : buildFeedItem(
                         context,

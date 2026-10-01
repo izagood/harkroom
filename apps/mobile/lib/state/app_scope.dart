@@ -16,6 +16,14 @@ class AppScope extends InheritedNotifier<AppState> {
     assert(scope?.notifier != null, 'AppScope 가 위젯 나무에 없다 — 앱 루트에 두어야 한다.');
     return scope!.notifier!;
   }
+
+  /// **구독하지 않고** 읽는다. 스크롤 듣기처럼 빌드 밖에서 부를 때 쓴다 — 거기서 [of] 를 부르면
+  /// 의존이 빌드 밖에서 생긴다.
+  static AppState read(BuildContext context) {
+    final scope = context.getInheritedWidgetOfExactType<AppScope>();
+    assert(scope?.notifier != null, 'AppScope 가 위젯 나무에 없다 — 앱 루트에 두어야 한다.');
+    return scope!.notifier!;
+  }
 }
 
 extension AppScopeContext on BuildContext {

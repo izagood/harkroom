@@ -158,6 +158,19 @@ void main() {
     await shot(tester, '18-loading');
   });
 
+  // ── 답글이 많은 채널(실기기 #task 의 모양). 최근 500 줄 대부분이 스레드 답글이다.
+  testWidgets('답글 많은 채널', (tester) async {
+    final app = _galleryApp(_busyServer());
+    addTearDown(app.dispose);
+    await tester.pumpWidget(HarkroomApp(state: app));
+    await shot(tester, '20a-busy-list');
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    for (var i = 0; i < 30; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    await shot(tester, '20-busy-channel');
+  });
+
   testWidgets('부팅 실패', (tester) async {
     final app = _galleryApp(MockClient((_) async => throw http.ClientException('네트워크 없음')));
     addTearDown(app.dispose);
@@ -359,4 +372,60 @@ class _IdleConnection implements WsConnection {
   Future<void> close() async {
     if (!_ctrl.isClosed) await _ctrl.close();
   }
+}
+
+/// 1500 줄 중 50 줄마다 최상위, 나머지는 답글. `before`·`limit` 을 서버와 같은 뜻으로 받는다.
+MockClient _busyServer() {
+  const me = '00000000-0000-4000-8000-000000000001';
+  const tm = '00000000-0000-4000-8000-000000000002';
+  final all = <Map<String, Object?>>[];
+  String? root;
+  for (var seq = 1; seq <= 1500; seq++) {
+    final isRoot = seq % 50 == 1;
+    final id = 'b$seq';
+    if (isRoot) root = id;
+    all.add({
+      'id': id,
+      'seq': seq,
+      'channelId': 'c1',
+      'threadRootId': isRoot ? null : root,
+      'authorId': isRoot ? me : tm,
+      'body': isRoot ? '최상위 글 ${seq ~/ 50 + 1} — 답글이 49개 달렸다' : '답글 $seq',
+      'kind': 'user',
+      'replyCount': isRoot ? 49 : null,
+      'createdAt': _ago((1500 - seq) ~/ 5),
+    });
+  }
+  return MockClient((req) async {
+    final path = req.url.path;
+    if (path == '/auth/me') return _json({'id': me, 'handle': 'jaebin', 'displayName': 'jaebin', 'isAdmin': true});
+    if (path == '/channels') {
+      return _json({
+        'channels': [
+          {'id': 'c1', 'name': 'task', 'kind': 'standard', 'visibility': 'public'},
+        ],
+      });
+    }
+    if (path == '/accounts') {
+      return _json({
+        'accounts': [
+          {'id': me, 'handle': 'jaebin', 'displayName': 'jaebin', 'kind': 'human'},
+          {'id': tm, 'handle': 'task_manager', 'displayName': 'task_manager', 'kind': 'agent'},
+        ],
+      });
+    }
+    if (path == '/reads') return _json({'reads': <Object?>[]});
+    if (path.startsWith('/inbox')) return _json({'entries': <Object?>[]});
+    if (path.endsWith('/read')) return _json(<String, Object?>{});
+    if (path == '/channels/c1/messages') {
+      final q = req.url.queryParameters;
+      final limit = int.parse(q['limit'] ?? '200');
+      final before = q['before'] == null ? null : int.parse(q['before']!);
+      final pool = all.where((m) => before == null || (m['seq']! as int) < before).toList();
+      final page = pool.length > limit ? pool.sublist(pool.length - limit) : pool;
+      return _json({'messages': page, 'hasMore': page.isNotEmpty && (page.first['seq']! as int) > 1});
+    }
+    if (path == '/ws-ticket') return _json({'ticket': 'tk'});
+    return _json({'error': {'code': 'not_found', 'message': path}}, 404);
+  });
 }
