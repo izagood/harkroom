@@ -6,6 +6,7 @@ import {
 import type { AgentDefinition } from '@harkroom/shared/operatorProtocol';
 import { getAgentDefaults } from './agentDefaults.js';
 import { getHandleGroupByHandle } from './handleGroups.js';
+import { suspendSecretGrants } from './secretAccess.js';
 
 const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admin as "isAdmin",
   a.role,
@@ -504,6 +505,8 @@ export async function deleteAgentAccount(
     await client.query(`delete from agent_team_member where agent_account_id = $1`, [id]);
     await client.query(`delete from channel_auto_mention where agent_account_id = $1`, [id]);
     await client.query(`delete from agent_assignment where agent_id = $1`, [id]);
+    // 비밀 grant 는 soft delete 라 cascade 가 돌지 않는다 — 세워 둔다(비밀 보관소 PR 2).
+    await suspendSecretGrants(client, { agentId: id }, 'agent_deleted');
     await client.query(`delete from agent_invoker where agent_id = $1`, [id]);
     // 대리 명단은 양쪽 다 지운다 — 삭제는 soft delete 라 FK cascade 가 돌지 않는다.
     await client.query(`delete from agent_owner_delegate where agent_id = $1 or delegate_id = $1`, [id]);

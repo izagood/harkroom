@@ -43,6 +43,7 @@ import { createAutomationSweeper } from './services/automations.js';
 import { createSecretBox } from './services/secretBox.js';
 import { loadSecretKeyring, type SecretKeyring } from './services/secretKeyring.js';
 import { registerSecretRoutes } from './routes/secretRoutes.js';
+import type { RevealLimiter } from './services/secretAccess.js';
 import { createAgentWakeSweeper } from './services/agentWakes.js';
 import { emitEvent } from './events.js';
 import { createStaleRequestSweeper } from './services/staleRequests.js';
@@ -89,6 +90,8 @@ export interface ServerDeps {
    * `null` 이면 끈다(라우트는 409). 디렉터리를 지정했는데 키가 잘못됐으면 기동이 실패한다.
    */
   secretKeyring?: SecretKeyring | null;
+  /** reveal 속도 제한(테스트가 상한을 바꾼다). 생략하면 에이전트마다 10분에 30회. */
+  secretRevealLimiter?: RevealLimiter;
   /** avcs 연결 상태 — /healthz 에서 쓴다. */
   getAvcsStatus?: () => { connected: boolean };
   /**
@@ -525,6 +528,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     keyring: deps.secretKeyring !== undefined
       ? deps.secretKeyring
       : loadSecretKeyring(process.env.HARKROOM_SECRET_KEYS_DIR, process.env.HARKROOM_SECRET_KEY_ID),
+    limiter: deps.secretRevealLimiter,
   });
 
   // 오퍼레이터 신원과 채널(스펙 2026-09-20 §3·§4). 릴레이와 같은 이유로 registerWs·registerAuth
