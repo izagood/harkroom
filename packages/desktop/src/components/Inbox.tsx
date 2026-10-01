@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Identity } from './Identity';
-import { WaitChainSection } from './WaitChainSection';
-import type { InboxEntry } from '@harkroom/shared';
-import { inboxRow, matchesFilter, type InboxFilter } from '../lib/inboxRow';
+import type { InboxEntry, MessageRow } from '@harkroom/shared';
+import { BOARD_COLUMNS, DONE_EMOJI, buildBoard, daysWaiting, type BoardCard, type BoardColumn } from '../lib/inboxBoard';
 import { bodyWithHandles } from '../lib/mention';
-import { inboxStorage } from '../lib/prefs';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { useAgo, useT } from '../i18n/useT';
@@ -19,29 +17,33 @@ interface Props {
 
 /**
  * 조회 상태를 셋으로 나눈다(#226 의 Directory 와 같은 모양). 둘로 두면 **"못 불러왔다"가
- * "아무도 안 불렀다"로 보인다** — inbox 에서는 그 거짓말의 값이 특히 비싸다. 나를 부른 것이
- * 없다는 화면과 부른 것을 못 물어본 화면은 사람이 다음에 할 일이 정반대다(`design.md` §4).
+ * "아무도 안 불렀다"로 보인다** — inbox 에서는 그 거짓말의 값이 특히 비싸다.
  */
 type LoadState = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string };
 
-// `ReasonFilter`·`REASON_LABEL` 이 여기 있었다(#488 C2 에서 지웠다). `reason` 은 값이
-// 셋뿐이라 **무엇을 그려도 네 줄이 갈리지 않았고**, 그것이 문서가 지적한 결함이었다.
-// 말의 종류는 이제 `lib/inboxRow` 가 `meta` 에서 읽는다.
-
 const THREAD_PREFIX = 'thread:';
 
-/** 목록에 낼 초안 하나. scopeKey 를 풀어 어디로 갈 것인지까지 담는다. */
-interface DraftItem {
-  scopeKey: string;
-  body: string;
-  /** `thread:<rootId>` 초안의 루트 메시지 id. 채널 초안이면 null. */
-  threadRootId: string | null;
-  /** 채널 필터가 볼 채널. 스레드 초안은 알아내지 못할 수 있어 null 이 된다. */
-  channelId: string | null;
-}
+/** 열 이름 키. 화면이 제 손으로 글자를 적지 않는다. */
+const COLUMN_KEY = {
+  mine: 'inbox.board.col.mine',
+  blocked: 'inbox.board.col.blocked',
+  active: 'inbox.board.col.active',
+  done: 'inbox.board.col.done',
+} as const satisfies Record<BoardColumn, string>;
 
 /**
- * 나를 부른 것을 모아 걸러 보는 표면(#185).
+ * 나를 부른 것을 **일(스레드) 단위 상태 보드**로 보는 표면(#185 → C안, 2026-10-01).
+ *
+ * ## 보드 (C안)
+ *
+ * 열 넷 — **내 차례 / 막힘 / 진행 / 끝남**. 카드 하나가 스레드 하나이고, 해야 할 일 한 문장과
+ * 채널·누가·얼마나 기다렸나를 말한다. 묶기와 열 판정은 `lib/inboxBoard` 가 하고, 열은
+ * 스레드 머리의 지금 상태(`GET /inbox?threads=1`)가 정한다. 옛 칩 넷·"To read" 수·
+ * "Waiting on" 목록은 없앴다 — 줄지 않는 숫자와 내용 없는 목록이 이 화면을 소음으로 만들었다
+ * (designer 진단). **숫자는 내 차례만 센다** — 0 이 될 수 있는 수만 뜻이 있다.
+ *
+ * 카드에서 그 자리 처리: 나에게 온 물음은 카드에서 고르고, 완료는 머리에 ✅ 를 단다
+ * (1/2 의 임시 완료 — 서버의 완료·나중에 상태는 2/2).
  *
  * ## 모달이 아니라 **자리**다 (#488 C2)
  *
@@ -91,116 +93,54 @@ interface DraftItem {
  * **`⌘\` 를 삼키지 않는 것**이 여기서 지켜야 할 것이고, `inboxPane.test.tsx` 가 그것을
  * 잰다.
  *
- * **서버 표면을 새로 만들지 않는다** — `GET /inbox` 가 이미 전체를 준다. 필터는 전부
- * 클라이언트에서 한다. 없던 것은 질의 능력이 아니라 목록 자체였다.
- *
- * 스토어의 `unread` 를 읽지 않고 이 화면이 직접 조회하는 이유: 그 배열은 `?unread=1` 로만
- * 채워져 **안 읽은 것밖에 없다.** 그것만 보면 "안 읽음만" 필터가 항상 참이라 아무것도
- * 거르지 않는 스위치가 된다. 배지·알림이 기대는 `unread` 의 뜻은 그대로 두고, 이 화면은
- * 읽은 것까지 포함한 자기 목록을 갖는다.
- *
- * 필터는 **오늘 데이터로 되는 것만** 있다: 종류(`reason`), 안 읽음(`readAt === null`),
- * 채널(`channelId`). 시간·작성자는 없다 — 뷰가 `created_at` 을 안 내려주고 작성자는
- * 엔트리에 없다. 있는 척하는 필터를 두는 것보다 없는 편이 정직하다.
- *
- * **안 읽음은 오래 이 주석에만 있었다** — 칩은 rank 축 셋뿐이었다. 그래서 '전부' 로 열면
- * 이미 본 수백 줄이 새 줄과 **같은 모양으로** 섞여 나왔다. 지금은 칩 하나('안 읽은 것')로
- * 좁힐 수 있고, 좁히지 않아도 읽은 줄은 물러나 보인다(`entryRow`).
- *
- * **고른 칩은 기기에 남는다**(`inboxStorage`). 오래 "닫았다 열면 처음으로" 였고 그 이유가
- * 여기 적혀 있었다 — *"좁혀 둔 것을 기억해 두면 다음에 열었을 때 걸러져 사라진 항목이 없는
- * 항목으로 보인다."* 그 걱정은 칩마다 **개수가 붙은 뒤로** 근거를 잃었다(좁혀진 화면에서도
- * 다른 칩의 수가 보인다). 남은 것은 손해뿐이었다: '안 읽은 것'으로 좁혀 훑던 사람이
- * 인박스를 접었다 펴면 수백 줄이 다시 쏟아진다(2026-09-09 보고).
  */
 export function Inbox({ open, onClose }: Props) {
-  // `inboxRow` 는 `lib/` 판정이라 훅을 못 쓴다 — 번역기를 여기서 만들어 넘긴다.
   const t = useT();
   const ago = useAgo();
   const channels = useActiveStore((s) => s.channels);
   const dms = useActiveStore((s) => s.dms);
   const accounts = useActiveStore((s) => s.accounts);
-  // 미리보기의 집합·팀 토큰(#845). 안 주면 그 자리가 `@알 수 없음` 이 된다.
+  // 문장의 집합·팀 토큰(#845). 안 주면 그 자리가 `@알 수 없음` 이 된다.
   const groups = useActiveStore((s) => s.groups);
   const teams = useActiveStore((s) => s.teams) ?? INBOX_NO_TEAMS;
   const me = useActiveStore((s) => s.me);
   const drafts = useActiveStore((s) => s.drafts);
-  const myId = me?.id ?? null;
-  /** 지금 답을 보내는 중인 항목. 두 번 눌러 두 번 보내지 않게 한다. */
-  const [answering, setAnswering] = useState<number | null>(null);
-
-  /**
-   * **줄에서 바로 답한다**(#488 C2). 스레드를 열지 않는다 — 문서: *"스레드를 열어야만
-   * 답할 수 있으면 인박스는 알림 목록일 뿐"* 이다.
-   *
-   * 답한 뒤 목록을 다시 읽는다: 그 물음은 더 이상 나를 막지 않으므로 줄의 종류와
-   * 순서가 함께 바뀐다.
-   */
-  const answer = async (e: InboxEntry, optionId: string): Promise<void> => {
-    setAnswering(e.id);
-    try {
-      await getController().answerAsk(e.messageId, optionId, e.channelId);
-      reload();
-    } finally { setAnswering(null); }
-  };
-  const messages = useActiveStore((s) => s.messages);
-  /** 서버의 인박스가 바뀐 횟수. 이 화면이 열려 있는 동안 "다시 읽어라"로 쓴다(아래 effect). */
+  /** 서버의 인박스가 바뀐 횟수. 열려 있는 동안 "다시 읽어라"로 쓴다(아래 effect). */
   const inboxRevision = useActiveStore((s) => s.inboxRevision);
+  /** 지금 손대는 카드(답·완료). 두 번 눌러 두 번 보내지 않게 한다. */
+  const [busy, setBusy] = useState<string | null>(null);
 
   const [entries, setEntries] = useState<InboxEntry[]>([]);
+  /** `null` = 서버가 머리를 안 줬다(옛 서버). 보드가 항목 `meta` 로 판정한다. */
+  const [threads, setThreads] = useState<MessageRow[] | null>(null);
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
-  /**
-   * **칩 하나가 정렬 축을 그대로 쓴다**(#488 C2·B3). 네이티브 `select` 둘과 체크박스가
-   * 사라진 자리다 — 고르는 축과 보이는 순서가 어긋나지 않는다.
-   */
-  const [filter, setFilter] = useState<InboxFilter>(() => inboxStorage.loadFilter());
-  const [channelFilter, setChannelFilter] = useState('all');
-  /** 칩을 고르면 기기에도 적는다. 화면 상태와 저장을 한 함수로 묶는다 — 둘로 두면 갈린다. */
-  const chooseFilter = useCallback((next: InboxFilter): void => {
-    setFilter(next);
-    inboxStorage.saveFilter(next);
-  }, []);
-  /**
-   * 이 세션에서 **방금 읽음이 된** 항목. '안 읽은 것' 칩에서 줄을 붙잡아 두는 데만 쓴다.
-   *
-   * 줄을 누르면 서버는 그 채널의 안 읽은 인박스 항목을 **전부** 읽음으로 바꾼다
-   * (`controller.openChannel`). 그것을 화면에 그대로 반영하면 '안 읽은 것'으로 좁혀 보던
-   * 목록이 한 번의 클릭에 통째로 비고, 방금 무엇을 눌렀는지까지 사라진다. 그래서 읽음
-   * **표시**는 즉시 걷되(줄이 물러난다) 줄 자체는 다시 열 때까지 남긴다 — 이 파일이 이미
-   * 세워 둔 규칙과 같다(`entryRow`: *"방금 읽은 것을 다시 찾는 것도 이 목록의 일이다"*).
-   *
-   * 칩의 숫자는 붙잡지 않는다(진짜 안 읽은 수를 센다). 표시와 수가 함께 거짓말하면 무엇이
-   * 사실인지 화면 어디에도 남지 않는다.
-   */
-  const [justRead, setJustRead] = useState<ReadonlySet<number>>(() => new Set());
 
   /**
-   * 나간 순서를 재는 번호. 열려 있는 동안 서버가 알려 올 때마다 다시 조회하게 된 뒤로
-   * (아래 `inboxRevision` effect) **두 조회가 겹쳐 도착할 수 있다** — 먼저 나간 응답이
-   * 나중에 도착하면 낡은 목록이 새 목록을 덮는다. 취소 플래그(`alive`)만으로는 못 막는다:
-   * 그것은 "이 화면이 아직 사나"만 알고 "이 응답이 아직 최신인가"는 모른다.
+   * 나간 순서를 재는 번호 — 겹친 두 조회 중 **먼저 나간 응답이 나중에 도착하면** 낡은
+   * 보드가 새 보드를 덮는다. 취소 플래그(`alive`)는 "이 화면이 아직 사나"만 안다.
    */
   const reloadSeq = useRef(0);
 
   /**
-   * `quiet` 는 **읽음 상태를 맞추러 도는 재조회**다(`openEntry`). 사람이 조회를 기다리고
-   * 있지 않으므로 화면을 "불러오는 중"으로 되돌리지 않고, 실패도 화면에 세우지 않는다 —
-   * 줄을 눌러 스레드를 읽는 길에 목록이 오류 상자로 바뀌면, 고칠 것도 없는 실패가 방금
-   * 누른 자리를 덮는다. 낙관적 표시는 그대로 서고, 다음에 열 때 제대로 다시 읽는다.
-   *
-   * 열려 있는 동안의 **라이브 재조회**도 같은 이유로 `quiet` 다(아래 `inboxRevision` effect).
+   * `quiet` 는 사람이 기다리지 않는 재조회다(라이브 갱신·카드를 연 뒤 읽음 맞추기). 화면을
+   * "불러오는 중"으로 되돌리지 않고 실패도 세우지 않는다 — 읽던 자리가 사라지지 않게.
    */
   const reload = useCallback((opts: { quiet?: boolean } = {}): (() => void) => {
     let alive = true;
     const seq = ++reloadSeq.current;
     if (!opts.quiet) setLoad({ kind: 'loading' });
-    getController().api.inbox().then(
-      (rows) => { if (alive && seq === reloadSeq.current) { setEntries(rows); setLoad({ kind: 'ready' }); } },
+    getController().api.inboxBoard().then(
+      (res) => {
+        if (!alive || seq !== reloadSeq.current) return;
+        setEntries(res.entries);
+        setThreads(res.threads);
+        setLoad({ kind: 'ready' });
+      },
       (err: unknown) => {
         if (!alive || opts.quiet || seq !== reloadSeq.current) return;
-        // 실패했을 때 앞선 결과를 남겨 두면 낡은 목록이 지금 사실인 척한다. 비우고,
-        // 비었다는 말 대신 오류를 보여 준다.
+        // 실패했을 때 앞선 결과를 남겨 두면 낡은 보드가 지금 사실인 척한다.
         setEntries([]);
+        setThreads(null);
         setLoad({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
       },
     );
@@ -209,37 +149,13 @@ export function Inbox({ open, onClose }: Props) {
 
   useEffect(() => {
     if (!open) return;
-    // **칩은 되돌리지 않는다**(위 주석). 채널 좁힘만 되돌린다 — 그 목록은 다시 열 때마다
-    // 채널이 바뀌어 있을 수 있다.
-    setChannelFilter('all');
-    // 붙잡아 둔 줄은 여는 순간 놓는다. 이 목록의 뜻이 "지금 안 읽은 것"으로 돌아가야
-    // 하고, 방금 읽은 줄을 다음 열림까지 데려가면 그 칩이 무엇인지 말하지 못한다.
-    setJustRead(new Set());
     return reload();
   }, [open, reload]);
 
   /**
-   * **열려 있는 동안 새로 온 것을 그린다**(2026-09-10 신고: *"메시지가 왔는데 Inbox 를
-   * 닫았다 열어야 반영돼"*).
-   *
-   * 위 effect 는 `open` 이 바뀔 때만 돈다 — 그것이 신고의 원인 그대로다. 실시간 신호는
-   * 이미 있었다: 서버가 `inbox.updated` 를 보내고 컨트롤러가 그때마다 `refreshUnread` 를
-   * 돌린다(레일 배지·독 배지가 그것으로 즉시 움직인다). 이 화면만 그 신호를 듣지 않아
-   * 배지는 늘었는데 목록은 그대로인 상태가 됐다 — 화면 두 곳이 **같은 사실을 다르게**
-   * 말하는 것이라 사람은 어느 쪽도 믿을 수 없다.
-   *
-   * 스토어의 `unread` 배열을 의존에 두지 않는 이유: 이 화면은 읽은 줄까지 필요해 자기
-   * 목록을 따로 조회하고(위 주석), 그 배열의 **정체성이 바뀌는 것**을 신호로 쓰면 신호와
-   * 신호원의 관계가 우연에 기댄다(`refreshUnread` 가 나중에 같은 값이면 안 쓰게 되면 이
-   * 화면이 조용히 멈춘다). 세는 수 하나가 "다시 읽어라"를 명시한다.
-   *
-   * `quiet` 인 이유: 사람이 이 조회를 기다리고 있지 않다. 목록이 "불러오는 중"으로
-   * 되돌아가면 읽던 자리가 사라지고, 실패가 상자로 서면 고칠 것도 없는 실패가 화면을 덮는다.
-   * `justRead` 도 비우지 않는다 — 방금 읽어 물러난 줄이 새 멘션 하나에 목록에서 튀어나가면
-   * 그 붙잡음이 뜻을 잃는다.
-   *
-   * **닫혀 있을 때도 번호는 따라간다**(아래 `seenRevision.current = ...`). 그래야 다시 열
-   * 때 위 effect 의 온전한 조회 하나로 끝난다 — 안 그러면 열자마자 같은 조회가 둘 나간다.
+   * **열려 있는 동안 새로 온 것을 그린다**(2026-09-10 신고). 서버의 `inbox.updated` 를
+   * 컨트롤러가 `inboxRevision` 으로 세고, 이 화면은 그 수가 바뀔 때 조용히 다시 읽는다.
+   * 닫혀 있을 때도 번호는 따라간다 — 다시 열 때 위 effect 의 조회 하나로 끝나게.
    */
   const seenRevision = useRef(inboxRevision);
   useEffect(() => {
@@ -263,82 +179,29 @@ export function Inbox({ open, onClose }: Props) {
     return ch?.name ? `#${ch.name}` : id;
   }, [channels, dms, accounts, me]);
 
-  const draftItems = useMemo<DraftItem[]>(() => Object.entries(drafts)
-    // **내용이 비어 있지 않은 것만** 항목이 된다. `setDraft` 가 빈 문자열은 지우지만
-    // 공백만 남은 초안은 truthy 라 살아남는다 — 그것은 쓰다 만 답글이 아니라 흔적이다.
-    .filter(([, body]) => body.trim().length > 0)
-    .map(([scopeKey, body]) => {
-      const isThread = scopeKey.startsWith(THREAD_PREFIX);
-      const threadRootId = isThread ? scopeKey.slice(THREAD_PREFIX.length) : null;
-      // 스레드 초안의 채널은 scopeKey 에 없다. 이미 받아 둔 메시지에서 루트를 찾아본다 —
-      // 채널 필터가 초안에도 정직하게 걸리게 하려면 이것이 필요하다. 못 찾으면 null 로
-      // 두고, 특정 채널로 좁혔을 때는 내보내지 않는다(좁힌다는 것은 확실한 것만 남긴다는 뜻).
-      const channelId = isThread
-        ? Object.keys(messages).find((cid) =>
-            (messages[cid] ?? []).some((m) => m.id === threadRootId)) ?? null
-        : scopeKey;
-      return { scopeKey, body, threadRootId, channelId };
-    }), [drafts, messages]);
+  const cards = useMemo(
+    () => buildBoard({ entries, threads, me: me ? { id: me.id, kind: me.kind } : null }),
+    [entries, threads, me],
+  );
+  const byColumn = useMemo(() => {
+    const out: Record<BoardColumn, BoardCard[]> = { mine: [], blocked: [], active: [], done: [] };
+    for (const c of cards) out[c.column].push(c);
+    return out;
+  }, [cards]);
 
-  /**
-   * **정렬은 막는 순이다**(#488 C2). 문서: *"시간순이 아니라 나를 막는 것 → 읽을 것 →
-   * 배경. 필터 칩이 그 순서를 그대로 쓴다."*
-   *
-   * 시간은 `rank` 가 같을 때만 본다 — 그 안에서는 **최근이 위**다. 시간을 첫 축으로
-   * 두면 방금 온 답글 하나가 어제부터 나를 막고 있던 물음을 아래로 밀어낸다.
-   */
-  const shownEntries = useMemo(() => entries
-    .map((e) => ({ e, row: inboxRow(e, myId, t) }))
-    .filter(({ e, row }) => {
-      // `justRead` 를 얹는 이유는 위 상태 주석에 있다 — 방금 읽은 줄이 눈앞에서
-      // 사라지지 않게 붙잡는다. 칩의 숫자는 이 보정을 쓰지 않는다(진짜 안 읽은 수).
-      if (!matchesFilter(row, filter, e.readAt === null || justRead.has(e.id))) return false;
-      if (channelFilter !== 'all' && e.channelId !== channelFilter) return false;
-      return true;
-    })
-    .sort((a, b) => a.row.rank - b.row.rank
-      || Date.parse(b.e.createdAt) - Date.parse(a.e.createdAt))
-    .map(({ e }) => e),
-  // `t` 가 의존성에 있어야 한다 — 언어를 바꾸면 말표가 바뀌고, 그것이 정렬의 재료인
-  // `rank` 와 같은 함수에서 나온다. 빼면 언어를 바꿔도 이 목록만 옛 말표로 남는다.
-  [entries, filter, channelFilter, justRead, myId, t]);
+  /** 쓰다 만 초안. 보드 밖 한 줄이다 — 남이 나를 부른 것이 아니라 내가 쓰다 만 것이라 열이 없다. */
+  const draftKeys = useMemo(
+    () => Object.entries(drafts).filter(([, body]) => body.trim().length > 0).map(([k]) => k),
+    [drafts],
+  );
 
-  const shownDrafts = useMemo(() => draftItems.filter((d) => {
-    // **칩으로 좁히면 초안은 빠진다.** 초안은 남이 나를 부른 것이 아니라 내가 쓰다 만
-    // 것이라 '나를 막는 것'도 '읽을 것'도 아니다. "막는 것만" 이라고 물었는데 초안이
-    // 남아 있으면 그 목록은 자기가 무엇인지 답하지 못한다.
-    if (filter !== 'all') return false;
-    if (channelFilter !== 'all' && d.channelId !== channelFilter) return false;
-    return true;
-  }), [draftItems, filter, channelFilter]);
-
-  /** 이 자리의 뿌리. 열 때 포커스를 옮기는 곳이고, Esc 가 자기 것인지 재는 기준이다. */
+  /** 이 자리의 뿌리. 열 때 포커스를 옮기는 곳이다. */
   const paneRef = useRef<HTMLElement | null>(null);
 
   /**
-   * **Esc 로 접는다** — `Overlay` 를 벗고도 잃지 않아야 하는 것(위 표).
-   *
-   * `Overlay` 와 **같은 방식으로** document 리스너를 쓴다. 그 파일의 주석이 이유를 이미
-   * 실측해 뒀다: 패널 `onKeyDown` 은 포커스가 패널 안에 있을 때만 도는 핸들러라, 목록의
-   * 한 줄을 누르고 나면 **조용히 죽는다.** 자리는 모달보다 그 위험이 크다 — 옆의 채널·
-   * 스레드를 읽는 동안 포커스는 늘 인박스 밖에 있다.
-   *
-   * ## 오버레이에 Esc 를 양보한다
-   *
-   * `Overlay` 는 열린 순서를 모듈 스코프 스택으로 들고 맨 위만 닫는다. 자리는 그 스택의
-   * 일부가 아니고 **되어서도 안 된다**(오버레이가 아니므로). 대신 규칙 하나로 충분하다 —
-   * **오버레이가 하나라도 떠 있으면 Esc 는 내 것이 아니다.** 자리는 늘 오버레이보다
-   * 아래에 있으므로 이 판정은 언제나 옳다. 이것을 빼면 인박스 위에 뜬 디렉터리를 닫으려
-   * 누른 Esc 가 **보고 있지 않은 인박스까지** 함께 접는다.
-   *
-   * 판정은 DOM 을 직접 본다(`[role="dialog"]`). `Overlay.tsx` 를 고쳐 스택을 내보내게
-   * 하는 쪽이 더 정확해 보이지만, 그러면 그 프리미티브가 **자기 사용자가 아닌 것**(자리)의
-   * 사정을 알게 된다. 지금 필요한 것은 "위에 무언가 떠 있나" 한 가지이고, 그것은 열린
-   * 다이얼로그의 존재로 정확히 관찰된다.
-   *
-   * **`⌘\` 를 삼키지 않는다.** Escape 하나만 본다 — 좁은 창에서 빠져나오는 길이 그
-   * 단축키이므로, 인박스가 열려 있는 동안 그것이 막히면 문서가 적어 둔 좁은 창 대책이
-   * 사라진다(`inboxPane.test.tsx` 가 잰다).
+   * **Esc 로 접는다.** document 리스너인 이유: 옆의 채널·스레드를 읽는 동안 포커스는 늘
+   * 인박스 밖에 있다. **오버레이가 떠 있으면 Esc 는 내 것이 아니다** — 자리는 늘 오버레이
+   * 아래에 있다. `⌘\` 는 삼키지 않는다(좁은 창에서 빠져나오는 길이다, `inboxPane.test.tsx`).
    */
   useEffect(() => {
     if (!open) return;
@@ -352,381 +215,200 @@ export function Inbox({ open, onClose }: Props) {
     return () => document.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
-  /**
-   * **열면 포커스가 이 자리로 들어온다.** 모달의 포커스 트랩을 대신하는 것이 이것이다 —
-   * 트랩은 두지 않는다(위 표: 트랩이 있으면 스레드로 탭해 갈 수 없고, 그것이 이 작업이
-   * 없애려던 제약 그 자체다).
-   *
-   * 뿌리에 포커스를 준다(`tabIndex={-1}`). 첫 번째 항목이 아닌 이유: 목록은 조회가 끝난
-   * 뒤에 채워지므로 열자마자는 줄이 없고, 있다 해도 첫 줄에 포커스를 박으면 **누르지도
-   * 않은 것을 고른 것처럼** 보인다. 뿌리에 두면 스크린리더가 구획 이름("인박스")부터
-   * 읽고, 탭 한 번으로 첫 손잡이에 닿는다.
-   */
+  /** **열면 포커스가 이 자리로 들어온다**(모달의 포커스 트랩 대신). */
   useEffect(() => {
     if (!open) return;
-    // `preventScroll`: 포커스는 기본으로 **대상을 보이게 스크롤한다** — 이 자리는 창을
-    // 꽉 채우므로 스크롤할 이유가 없고, 문서가 스크롤 가능한 상태라면 여는 것만으로
-    // 껍데기가 밀린다(`ChannelPane` 의 `scrollIntoView` 주석과 같은 사고다).
     paneRef.current?.focus({ preventScroll: true });
   }, [open]);
 
   if (!open) return null;
 
   /**
-   * 한 채널의 안 읽은 줄을 화면에서 읽음으로 만든다.
+   * 카드를 연다. **스레드면 오른쪽 패널로 열고 보드는 남는다** — 보드와 그 일을 나란히 보며
+   * 처리하는 것이 기본 동작이다. 채널 바로 밑의 말 하나뿐이면 목적지가 본문이라 보드가
+   * 자리를 내준다(누른 것이 보드 뒤에 숨으면 아무 일도 안 한 것과 구별되지 않는다).
    *
-   * **채널 단위인 이유**는 서버가 그 단위로 바꾸기 때문이다(`controller.openChannel` 이
-   * 그 채널의 안 읽은 항목 전체를 `markRead` 로 넘긴다). 누른 줄만 바꾸면 같은 채널의
-   * 형제 줄들이 재조회가 돌아올 때까지 안 읽음이라고 거짓말한다.
+   * 읽음은 서버가 채널 단위로 바꾼다(`controller.openChannel`). 화면에서 그 채널의 줄을 바로
+   * 읽음으로 걷고, 조용한 재조회로 서버 사실에 맞춘다.
    */
-  const markChannelReadLocally = (channelId: string): void => {
-    const hit = entries.filter((r) => r.channelId === channelId && r.readAt === null).map((r) => r.id);
-    if (hit.length === 0) return;
+  const openCard = (card: BoardCard): void => {
     const at = new Date().toISOString();
-    setEntries((rows) => rows.map((r) => (hit.includes(r.id) ? { ...r, readAt: at } : r)));
-    setJustRead((prev) => new Set([...prev, ...hit]));
+    setEntries((rows) => rows.map((r) => (r.channelId === card.channelId && r.readAt === null ? { ...r, readAt: at } : r)));
+    const isThread = card.entries.some((e) => e.threadRootId != null)
+      || (threads?.find((m) => m.id === card.rootId)?.replyCount ?? 0) > 0;
+    const go = isThread
+      ? getController().openThread(card.rootId, { channelId: card.channelId })
+      : (onClose(), getController().openMessage(card.entries[0]!.messageId));
+    void go.then(() => reload({ quiet: true }));
   };
 
-  const openEntry = (e: InboxEntry): void => {
-    // #178·#228 이 이미 만든 이동 경로다. 채널을 열고, 답글이면 스레드까지 열고, 강조를
-    // 건다. 실패도 그 안에서 사람에게 보인다.
-    //
-    // **닫는가는 목적지가 정한다**(2026-09-11, 위 머리말 "누른 것은 반드시 보인다").
-    //
-    // 모달 시절에는 무조건 `onClose()` 였고 그것이 문서가 지적한 결함의 절반이었다 —
-    // *"막는 말을 확인하면서 그 스레드를 여는 것이 기본 동작"* 인데 여는 순간 확인하던
-    // 목록이 사라졌다. 그래서 왼쪽 열 시절에는 **무조건 남겼다.**
-    //
-    // 인박스가 본문을 차지하게 된 지금은 둘 다 틀렸다. 답글은 스레드 패널이 **오른쪽에**
-    // 서므로 남는 것이 맞다(둘이 함께 보인다 — 문서의 기본 동작 그대로). 채널이나 DM
-    // 본문의 말은 목적지가 **본문**이라, 남으면 방금 누른 것이 인박스 뒤에 숨는다 —
-    // 누른 것이 안 보이는 이동은 아무 일도 안 한 것과 구별되지 않는다.
-    //
-    // 판정에 `threadRootId` 를 쓰는 이유: `openMessage` 가 스레드 패널을 여는 조건이
-    // **정확히 그것**이다(`controller.openMessage`: *"답글은 스레드 패널까지 연다"*).
-    // 여기서 다른 술어를 세우면 둘이 갈리는 날 인박스만 엉뚱하게 접히거나 남는다.
-    //
-    // **읽음은 여기서 화면에 반영한다.** 이동하는 길에 `openChannel` 이 그 채널의 안 읽은
-    // 인박스 항목을 읽음으로 바꾸는데(`api.markRead`), 이 화면은 자기 목록을 따로 들고
-    // 있어 그 사실을 모른다 — 그래서 누른 줄이 계속 '안 읽음'이라고 말하고, 인박스를
-    // 닫았다 열면 그때서야 사라졌다(2026-09-09 보고).
-    markChannelReadLocally(e.channelId);
-    // **이 줄은 이제 혼자가 아니다**(2026-09-16). 인박스 **밖**에서 시작한 이동(사이드바·
-    // 검색·링크·뒤로/앞으로)도 같은 규칙을 지켜야 해서, `controller.openChannel` 이
-    // "본문은 채널의 것"이라는 신호를 내고 `Workspace` 가 그것으로 자리를 비운다
-    // (`channelRevealSeq`). 그 신호도 같은 술어(`threadRootId`)를 쓰므로 판정이 갈리지
-    // 않는다 — 여기 남겨 두는 이유는 **빠르기**다: 저쪽은 `api.message` 왕복 뒤에야 알고,
-    // 여기서는 누른 즉시 접힌다. 한쪽을 지우면 그 왕복만큼 옛 화면이 남는다.
-    //
-    // 자리를 내주는 것은 **이 한 줄**이고, 나머지 길은 목적지와 무관하게 같다. 아래 재조회를
-    // 접었을 때도 그대로 거는 이유: 읽음 표시를 서버 사실로 맞추는 것은 이 화면이 보이느냐와
-    // 다른 문제다(호출부가 접힌 인박스를 언마운트하지 않을 수도 있다). 갈린 표시를 들고
-    // 접혀 있다가 다시 펴는 것이 이 안전장치가 막는 것이다.
-    if (!e.threadRootId) onClose();
-    void getController().openMessage(e.messageId).then(() => {
-      // 낙관적 표시를 서버 사실로 맞춘다. **못 연 메시지**(지워짐·권한 없음·연결 실패)면
-      // 읽음 처리도 없었으므로 이 재조회가 방금 걷은 표시를 되돌린다 — 낙관적 표시가
-      // 거짓으로 남지 않는 유일한 길이다(`openMessage` 는 실패를 통지로 삼키고 resolve 한다).
+  const answer = async (card: BoardCard, optionId: string): Promise<void> => {
+    if (!card.ask) return;
+    setBusy(card.rootId);
+    try {
+      await getController().answerAsk(card.ask.messageId, optionId, card.channelId);
       reload({ quiet: true });
-    });
+    } finally { setBusy(null); }
   };
 
-  const openDraft = (d: DraftItem): void => {
-    // 스레드 초안의 scopeKey 에 든 rootId 는 **메시지 id 다.** 그래서 채널을 몰라도
-    // openMessage 가 알아서 채널을 열고 스레드를 편다 — 새 이동 경로를 만들 이유가 없다.
-    //
-    // 닫는가도 `openEntry` 와 같은 규칙이다 — 목적지가 본문(채널 초안)이면 자리를 내주고,
-    // 스레드 초안이면 남는다. 쓰다 만 것이 여럿이면 스레드 쪽은 하나씩 훑을 수 있다.
-    if (d.threadRootId) { void getController().openMessage(d.threadRootId); return; }
-    onClose();
-    void getController().openChannel(d.scopeKey);
-    // (초안에는 낙관적 읽음 표시가 없다 — 되돌릴 것이 없으므로 재조회도 없다.)
+  /** 1/2 의 임시 완료 — 머리에 ✅ 를 달거나 뗀다(사람이 이미 그렇게 끝냄을 적는다). */
+  const setDone = async (card: BoardCard, on: boolean): Promise<void> => {
+    setBusy(card.rootId);
+    try {
+      await getController().toggleReaction(card.channelId, card.rootId, DONE_EMOJI, on);
+      reload({ quiet: true });
+    } finally { setBusy(null); }
   };
 
-  /**
-   * 인박스 줄 하나 — **네 가지를 말한다**(#488 C2): 누가(얼굴) · 무슨 말 · 무엇을(본문
-   * 한 줄) · 언제·어디.
-   *
-   * 전에는 `[스레드 답글] #general` 뿐이라 **네 줄이 글자까지 똑같았다.** 그 셋은
-   * "어떻게 나에게 왔는가"를 말하지 "무슨 말인가"를 말하지 않는다 — 종류는 `meta` 가
-   * 답하고(`lib/inboxRow`), 나머지 재료는 서버가 실어 준다.
-   */
-  const entryRow = (e: InboxEntry) => {
-    const row = inboxRow(e, myId, t);
-    /**
-     * 이미 본 줄인가. **'전부' 로 보면 목록의 대부분이 이것**이라(실측 238줄 중 대다수),
-     * 새 줄과 같은 대접을 받으면 새 줄이 그 안에 묻힌다 — "본 것도 계속 나와서 뭐가 새로
-     * 온 것인지 알 수 없다"는 말이 그 뜻이었다.
-     *
-     * 읽은 줄을 **숨기지는 않는다**: 방금 읽은 것을 다시 찾는 것도 이 목록의 일이다.
-     * 대신 물러나게 한다(본문이 흐려지고, 왼쪽 표시선이 없다).
-     */
-    const isUnread = e.readAt === null;
+  const cardView = (card: BoardCard) => {
+    const who = card.whoId ? accounts[card.whoId] : undefined;
+    const days = daysWaiting(card.sinceAt, Date.now());
+    const more = card.entries.length - 1;
     return (
-    <li key={e.id}>
-      <button
-        data-testid={`inbox-entry-${e.id}`}
-        data-kind={row.kind}
-        data-rank={row.rank}
-        data-unread={isUnread ? 'true' : 'false'}
-        onClick={() => openEntry(e)}
-        // 왼쪽 표시선이 새 줄을 **훑어 내려가며** 찾게 해 준다 — 줄 끝의 '· 안 읽음'
-        // 글자는 눈이 한 줄씩 끝까지 가야 보인다. 읽은 줄도 같은 두께의 투명한 선을
-        // 두어(`border-transparent`) 글자가 좌우로 밀리지 않게 한다.
-        className={`flex w-full items-start gap-2 rounded border-l-2 px-2 py-1.5 text-left hover:bg-surface-hover ${
-          isUnread ? 'border-accent' : 'border-transparent'}`}
-      >
-        {/* **누가** — 얼굴이 이름을 대신한다(identity 문서와 같은 규칙). */}
-        {e.authorId && (
-          <Identity account={accounts[e.authorId]} className="mt-0.5 h-5 w-5 text-[10px]" variant="avatar" />
-        )}
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          {/* 첫 줄: **무슨 말 · 언제·어디.** 한 줄로만 선다 — 넘치면 끝이 잘린다(줄마다 높이가
-              달라지지 않게). */}
-          <span className="flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap">
-            {/*
-              **무슨 말.** 나를 막는 것만 강조를 받는다(규칙 04) — 강조가 여러 줄에
-              뿌려지면 "내 차례"라는 신호가 죽고, 인박스는 그 신호가 가장 진해야 하는
-              자리다.
-            */}
-            {/* **누가** — 얼굴 옆에 이름을 한 번 더 적는다(UX ① 사양 "이름 동사"). 얼굴만으로는
-                같은 색 에이전트 여럿이 구분되지 않는다. */}
-            {e.authorId && accounts[e.authorId] && (
-              // `aria-hidden`: 얼굴(`Identity`)이 이미 handle 을 `sr-only` 로 낸다 — 두 번 읽히지 않게.
-              <span aria-hidden="true" className="shrink-0 font-semibold text-fg">{accounts[e.authorId]!.handle}</span>
-            )}
-            <span
-              data-testid={`inbox-reason-${e.id}`}
-              // `shrink-0`: 라벨은 **줄지 않는다**(UX ① H2). 칸이 좁을 때 잘려야 하는 것은
-              // 옆의 메타다 — 라벨이 줄면 "불렀다" 가 한 글자씩 세로로 선다.
-              className={`shrink-0 rounded px-1 text-meta ${row.rank === 0
-                ? 'bg-accent-surface font-medium text-state-turn'
-                : 'bg-surface-sunken text-fg-muted'}`}
-            >
-              {row.label}
-            </span>
-            {/* **언제·어디.** */}
-            {/* 넘치면 **채널 이름부터** 줄인다(designer ①-a) — 시각·안 읽음은 짧고, 잘리면
-                뜻을 잃는다. 시각은 상대로("3분 전"), 전체 시각은 올려 두면(`title`). 초까지 찍은
-                절대 시각이 칸 끝에서 글자 중간이 잘렸다. */}
-            <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-meta text-fg-subtle">
-              <span className="min-w-0 truncate">{channelLabel(e.channelId)}</span>
-              {e.threadRootId && <span className="shrink-0">· {t('inbox.entries.thread')}</span>}
-              <span className="shrink-0" data-testid={`inbox-time-${e.id}`} title={new Date(e.createdAt).toLocaleString()}>
-                · {ago(new Date(e.createdAt).getTime())}
-              </span>
-              {/* 안 읽음은 표시가 있어야 한다. 필터로 걸러 볼 수 있는 것이 목록에서는 안 보이면
-                  "안 읽음만" 을 껐을 때 무엇이 안 읽은 것인지 알 수 없다. */}
-              {e.readAt === null && (
-                <span data-testid={`inbox-unread-${e.id}`} className="shrink-0 text-accent">· {t('inbox.entries.unread')}</span>
-              )}
-            </span>
+      <li key={card.rootId} className="rounded border border-border bg-surface-raised">
+        <button
+          data-testid={`inbox-card-${card.rootId}`}
+          data-column={card.column}
+          data-unread={card.unread ? 'true' : 'false'}
+          onClick={() => openCard(card)}
+          className={`flex w-full flex-col gap-1 rounded border-l-2 px-2 py-1.5 text-left hover:bg-surface-hover ${
+            card.unread ? 'border-accent' : 'border-transparent'}`}
+        >
+          {/* **해야 할 일 한 문장.** 잘라 낸 본문 두 줄이 아니라 고른 한 문장이다(`oneSentence`). */}
+          <span data-testid={`inbox-card-summary-${card.rootId}`} className="line-clamp-2 break-words text-fg">
+            {bodyWithHandles(card.summary, accounts, groups, teams)}
           </span>
-          {/* **무엇을** — 본문 **두 줄**(UX ①: 한 줄로는 무슨 말인지 서지 않는다). 자르는 폭은
-              화면이 정한다(서버는 안 자른다).
-
-              `bodyWithHandles` 를 지나는 이유: 서버가 싣는 본문은 정본 형식(`<@id>`)이고,
-              이 줄은 `MessageBody` 를 지나지 않아 그 치환을 스스로 해야 한다. 안 하면
-              줄마다 `<@2c8c1910-…>` 만 보이고 "무엇을" 이 사라진다(2026-09-08 실측).
-
-              이미 본 줄은 여기서 물러난다 — 색만 옮기고 글자는 그대로 둔다(줄이는 것은
-              숨기는 것이고, 다시 찾을 길을 없앤다). */}
-          <span className={`line-clamp-2 break-words ${isUnread ? 'text-fg' : 'text-fg-muted'}`}>{bodyWithHandles(e.body, accounts, groups, teams)}</span>
-        </span>
-      </button>
-      {/*
-        **선택은 줄에서 끝난다**(문서). *"선택지가 둘뿐이면 인박스에서 바로 누른다.
-        스레드를 열어야만 답할 수 있으면 인박스는 알림 목록일 뿐이고, 컨셉이 말한
-        '막는 말을 푸는 자리'가 되지 못한다."*
-
-        버튼을 줄 **바깥**에 두는 이유: 안에 넣으면 `<button>` 안의 `<button>` 이 되어
-        HTML 이 허용하지 않고, 고르려다 스레드가 열린다.
-      */}
-      {row.options && (
-        <div className="flex gap-1 px-2 pb-1.5 pl-9">
-          {row.options.map((o) => (
+          {/* 채널 · 누가 · 얼마나. 넘치면 채널 이름부터 줄인다 — 시각은 잘리면 뜻을 잃는다. */}
+          <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-meta text-fg-subtle">
+            {who && <Identity account={who} className="h-4 w-4 shrink-0 text-[9px]" variant="avatar" />}
+            {who && <span aria-hidden="true" className="shrink-0 font-medium text-fg-muted">{who.handle}</span>}
+            <span className="min-w-0 truncate">{channelLabel(card.channelId)}</span>
+            <span
+              className={`shrink-0 ${days != null && card.column === 'mine' ? 'text-state-turn' : ''}`}
+              data-testid={`inbox-card-age-${card.rootId}`}
+              title={new Date(card.sinceAt).toLocaleString()}
+            >
+              · {days != null ? t('inbox.board.days', { count: days }) : ago(new Date(card.sinceAt).getTime())}
+            </span>
+            {more > 0 && <span className="shrink-0">· {t('inbox.board.more', { count: more })}</span>}
+            {card.unread && <span className="shrink-0 text-accent">· {t('inbox.board.unread')}</span>}
+          </span>
+        </button>
+        {/*
+          그 자리 처리. 버튼은 카드 **바깥**에 둔다 — `<button>` 안의 `<button>` 은 HTML 이
+          허용하지 않고, 고르려다 스레드가 열린다.
+        */}
+        <div className="flex flex-wrap gap-1 px-2 pb-1.5">
+          {card.ask?.options.map((o) => (
             <button
               key={o.id}
-              data-testid={`inbox-answer-${e.id}-${o.id}`}
-              disabled={answering === e.id}
-              onClick={() => void answer(e, o.id)}
-              className="rounded border border-border px-2 py-0.5 text-meta text-fg
-                         hover:bg-surface-hover disabled:opacity-50"
+              data-testid={`inbox-card-answer-${card.rootId}-${o.id}`}
+              disabled={busy === card.rootId}
+              onClick={() => void answer(card, o.id)}
+              className="rounded border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-hover disabled:opacity-50"
             >
               {o.label}
             </button>
           ))}
+          <button
+            data-testid={`inbox-card-done-${card.rootId}`}
+            disabled={busy === card.rootId}
+            onClick={() => void setDone(card, card.column !== 'done')}
+            className="ml-auto rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
+          >
+            {card.column === 'done' ? t('inbox.board.reopen') : t('inbox.board.markDone')}
+          </button>
         </div>
-      )}
-    </li>
+      </li>
     );
   };
 
-  const draftRow = (d: DraftItem) => (
-    <li key={d.scopeKey}>
-      <button
-        data-testid={`inbox-draft-${d.scopeKey}`}
-        onClick={() => openDraft(d)}
-        className="flex w-full items-center gap-2 rounded border-l-2 border-warning-border px-2 py-1.5 text-left hover:bg-surface-hover"
-      >
-        {/* 초안은 inbox 항목과 **눈으로 구분돼야 한다.** 하나는 남이 나를 부른 것이고
-            하나는 내가 쓰다 만 것이다. 섞이면 목록이 무엇을 말하는지 알 수 없다.
-            색만으로는 부족해 글자 표를 함께 단다. */}
-        <span
-          data-testid={`inbox-draft-badge-${d.scopeKey}`}
-          className="rounded bg-warning-surface px-1 text-meta uppercase tracking-wide text-warning"
-        >
-          {t('inbox.drafts.badge')}
-        </span>
-        <span className="text-fg-muted">
-          {d.channelId ? channelLabel(d.channelId) : d.threadRootId ? t('inbox.drafts.thread') : d.scopeKey}
-        </span>
-        <span className="truncate text-fg-subtle">{d.body}</span>
-      </button>
-    </li>
-  );
+  const mineCount = byColumn.mine.length;
 
   return (
     <aside
       ref={paneRef}
       data-testid="inbox-pane"
-      /*
-        `<aside>` 는 `role="complementary"` 를 스스로 준다 — `role="dialog"` 를 잃은 자리를
-        메우는 랜드마크다(위 표). 이름을 함께 달아 스크린리더가 **무엇의** 구획인지 말한다.
-
-        `tabIndex={-1}`: 탭 순서에는 들어가지 않고 스크립트로만 포커스를 받는다(열 때 한 번).
-        `0` 으로 두면 채널·스레드를 오가는 탭 경로에 뜻 없는 정류장이 하나 생긴다.
-
-        폭은 **본문 열 그대로**다(`flex-1`). 400px 고정과 `MIN_INBOX_PANE_WIDTH` 가
-        여기 있었는데, 그 둘은 **열이 하나 더 있던 시절**의 값이다 — 이제 이 자리가 본문이라
-        하한은 오른쪽 패널들이 이미 지킨다(`ThreadPanel` 의 `paneMaxWidth`). `min-w-0` 은
-        `ChannelPane` 이 같은 자리에서 쓰는 것과 같다: 없으면 긴 본문 한 줄이 flex 기본
-        `min-width: auto` 를 밀어 올려 **오른쪽 패널을 화면 밖으로 내보낸다**(고치려던 그것이다).
-
-        `border-r` 이 여기 있었다 — 채널의 왼쪽에 설 때의 경계선이다. 본문이 된 지금은
-        오른쪽에 스레드의 `border-l` 이 이미 서 있어, 남겨 두면 선이 두 겹으로 보인다.
-
-        `outline-none` 뒤에 `focus-visible` 을 두는 것은 앱 전체 규칙이다(규칙 03: 포커스
-        링은 시스템 파랑이 아니라 앱의 강조색). 뿌리가 포커스를 받는 것은 **여는 순간**뿐이라
-        평소에는 아무 링도 보이지 않는다.
-      */
+      // `<aside>` 가 랜드마크(`complementary`)다. `tabIndex={-1}`: 스크립트로만 포커스를 받는다.
+      // 폭은 본문 열 그대로(`flex-1`), `min-w-0` 이 없으면 긴 카드가 오른쪽 패널을 밀어낸다.
       tabIndex={-1}
       aria-label={t('inbox.pane.title')}
-      className="flex min-w-0 flex-1 flex-col overflow-hidden bg-surface-raised
+      className="flex min-w-0 flex-1 flex-col overflow-hidden bg-surface-sunken
                  text-fg outline-none focus-visible:outline-solid focus-visible:outline-2
                  focus-visible:outline-accent focus-visible:-outline-offset-2"
     >
-        <div className="flex items-center gap-2 border-b border-border p-3">
-          {/* 머리글과 구획 이름이 **같은 키**다 — 같은 말을 두 번 적으면 하나가 낡는다. */}
-          <span className="font-bold">{t('inbox.pane.title')}</span>
-          {/* 닫는 길 둘 중 마우스의 몫. Esc 는 위 `useEffect` 가 진다 — 마우스만 쓰는
-              사람에게 Esc 는 없는 길이고, 자리에는 걷어낼 스크림도 없다. */}
+      <div className="flex items-center gap-2 border-b border-border bg-surface-raised p-3">
+        <span className="font-bold">{t('inbox.pane.title')}</span>
+        {/* **숫자는 내 차례 하나뿐이다** — 0 이 될 수 있는 수만 뜻이 있다. */}
+        {load.kind === 'ready' && (
+          <span data-testid="inbox-mine-count" className={`text-meta ${mineCount > 0 ? 'font-medium text-state-turn' : 'text-fg-subtle'}`}>
+            {t('inbox.board.mineCount', { count: mineCount })}
+          </span>
+        )}
+        <button
+          onClick={onClose}
+          className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover
+                     focus-visible:outline-solid focus-visible:outline-2
+                     focus-visible:outline-accent"
+          aria-label={t('inbox.pane.close')}
+        >
+          ✕
+        </button>
+      </div>
+      {/* 실패는 보드 위에 남긴다 — 조회 실패를 빈 보드로 삼키지 않는다. */}
+      {load.kind === 'error' && (
+        <div role="alert" className="m-3 rounded border border-danger-border bg-danger-surface p-2 text-danger">
+          {t('inbox.pane.loadFailed', { reason: load.message })}
           <button
-            onClick={onClose}
-            className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover
-                       focus-visible:outline-solid focus-visible:outline-2
-                       focus-visible:outline-accent"
-            aria-label={t('inbox.pane.close')}
+            onClick={() => { reload(); }}
+            className="ml-2 rounded bg-danger px-2 py-0.5 text-fg-on-strong hover:bg-danger-hover"
           >
-            ✕
+            {t('inbox.pane.retry')}
           </button>
         </div>
-        {/*
-          **필터 칩이 정렬 순서를 그대로 쓴다**(#488 C2). 네이티브 `select` 둘과
-          체크박스가 사라진 자리다(B3) — 고르는 축과 보이는 순서가 어긋나지 않는다.
-        */}
-        <div className="flex flex-wrap items-center gap-1.5 border-b border-border p-3">
-          {([
-            ['blocking', t('inbox.filter.blocking')],
-            // **새로 온 것을 묻는 칩**. 나머지 셋은 줄의 종류(rank)를 묻는데 이것만 내
-            // 읽음 상태를 묻는다 — 축이 다르다는 것을 알면서 둔다(`matchesFilter` 주석).
-            // 이것 없이는 이미 본 수백 줄 사이에서 새 줄을 골라낼 길이 화면에 없었다.
-            ['unread', t('inbox.filter.unread')],
-            ['reading', t('inbox.filter.reading')],
-            ['all', t('inbox.filter.all')],
-          ] as const).map(([value, label]) => (
-            <button
-              key={value}
-              data-testid={`inbox-filter-${value}`}
-              data-selected={filter === value}
-              aria-pressed={filter === value}
-              onClick={() => chooseFilter(value)}
-              // 칩은 **아랫단 11px** — 아래 구획 제목들이 이미 그 단이고, 칩과 제목은
-              // 목록을 어떻게 자를지 말하는 같은 층이다. 목록 안의 글자가 본문단이다.
-              className={`rounded-full border px-2.5 py-0.5 text-meta ${filter === value
-                ? 'border-border bg-surface-sunken font-medium text-fg'
-                : 'border-border text-fg-muted hover:bg-surface-hover'}`}
+      )}
+      {load.kind === 'loading' && <p className="p-3 text-fg-subtle">{t('inbox.pane.loading')}</p>}
+      {load.kind === 'ready' && cards.length === 0 && (
+        <p data-testid="inbox-empty" className="p-3 text-fg-subtle">{t('inbox.board.empty.all')}</p>
+      )}
+      {/*
+        열 넷. 좁은 창에서는 가로로 밀린다(열 하나가 읽히는 폭 아래로 줄지 않는다) — 열이 겹쳐
+        한 줄로 접히면 "어느 열인가" 가 사라진다.
+      */}
+      {load.kind === 'ready' && cards.length > 0 && (
+        <div className="flex min-h-0 flex-1 gap-2 overflow-x-auto p-2">
+          {BOARD_COLUMNS.map((col) => (
+            <section
+              key={col}
+              data-testid={`inbox-col-${col}`}
+              aria-label={t(COLUMN_KEY[col])}
+              className="flex min-h-0 w-64 min-w-56 flex-1 flex-col"
             >
-              {label}
-              {value !== 'all' && (
-                <span className="ml-1 text-fg-subtle">
-                  {entries.filter((e) => matchesFilter(inboxRow(e, myId, t), value, e.readAt === null)).length}
-                </span>
-              )}
-            </button>
+              <h3 className={`px-1 pb-1 text-meta font-medium uppercase tracking-wide ${col === 'mine' ? 'text-state-turn' : 'text-fg-subtle'}`}>
+                {t(COLUMN_KEY[col])}
+              </h3>
+              {byColumn[col].length === 0
+                ? <p className="px-1 text-meta text-fg-subtle">{t(col === 'mine' ? 'inbox.board.empty.mine' : 'inbox.board.empty.other')}</p>
+                : <ul className="flex min-h-0 flex-col gap-1.5 overflow-y-auto">{byColumn[col].map(cardView)}</ul>}
+            </section>
           ))}
         </div>
-        <div className="flex-1 overflow-y-auto p-2">
-          {/* 실패는 목록 위에 남긴다. 실패했는데 빈 목록만 보이면 사람은 "아무도 나를
-              부르지 않았다" 로 읽는다 — 조회 실패를 빈 목록으로 삼키지 않는다. */}
-          {load.kind === 'error' && (
-            <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-danger">
-              {t('inbox.pane.loadFailed', { reason: load.message })}
-              <button
-                onClick={() => { reload(); }}
-                className="ml-2 rounded bg-danger px-2 py-0.5 text-fg-on-strong hover:bg-danger-hover"
-              >
-                {t('inbox.pane.retry')}
-              </button>
-            </div>
-          )}
-          {/* 오류·대기·'없다' 는 목록이 비었을 때 **화면에 남는 유일한 글자**다. 색이
-              subtle 이라고 아랫단으로 내리면 그 순간 화면에서 가장 작은 글자가 유일한
-              설명이 된다 — 본문단(앱 기본값 13px)이라 크기를 안 적는다. */}
-          {load.kind === 'loading' && <p className="px-2 text-fg-subtle">{t('inbox.pane.loading')}</p>}
-
-          {/* **구획 이름에는 수가 없고 머리글에는 있다** — `WaitChainSection` 이 이미 그
-              모양이다(`waitChain.sectionTitle` / `sectionTitleCount`). 랜드마크는 자리의
-              이름이라 그 안의 개수가 섞이면 목록이 바뀔 때마다 이름이 달라지고, 자리를
-              이름으로 찾는 사람에게 그것은 매번 다른 구획이 된다. */}
-          <section aria-label={t('inbox.entries.heading')} className="mb-4">
-            <h3 className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">
-              {t('inbox.entries.headingCount', { count: shownEntries.length })}
-            </h3>
-            {/* '없다' 는 조회가 성공했을 때만 말할 수 있다. 실패·대기 중에 이 문장을 내면
-                모르는 것을 아는 것처럼 말하는 것이다. */}
-            {load.kind === 'ready' && shownEntries.length === 0 && (
-              <p data-testid="inbox-empty" className="px-2 text-fg-subtle">
-                {entries.length === 0 ? t('inbox.entries.empty') : t('inbox.entries.noMatch')}
-              </p>
-            )}
-            {shownEntries.length > 0 && <ul>{shownEntries.map(entryRow)}</ul>}
-          </section>
-
-          {/* 초안은 나란한 **별도 구획**이다. 하나는 서버 진실이고 하나는 로컬 상태라
-              정렬 기준(시간)을 공유하지 않는다 — 한 목록에 섞으면 순서가 거짓말이 된다. */}
-          {/*
-            **나에게 오지 않았지만 무언가를 멈추고 있는 것**(#488 A3-b). 위 구획은
-            나를 부른 것만 담으므로 `codex → forge → alpha` 처럼 나와 무관하게 얽힌
-            사슬은 어디에도 안 보인다 — 인박스가 "막는 말이 모이는 자리"이려면 그것도
-            여기 있어야 한다.
-          */}
-          {/* 이름이 `waitChain.*` 것이다 — 이 구획을 그리는 것은 `WaitChainSection` 이고,
-              그 판정의 이름을 화면이 제 손으로 다시 적으면 둘이 갈린다(`en.ts` 의
-              waitChain 머리말: 판정 이름이지 화면 이름이 아니다). */}
-          <section aria-label={t('waitChain.sectionTitle')} className="mb-4">
-            <WaitChainSection />
-          </section>
-
-          <section aria-label={t('inbox.drafts.heading')}>
-            <h3 className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">
-              {t('inbox.drafts.headingCount', { count: shownDrafts.length })}
-            </h3>
-            {shownDrafts.length === 0
-              ? <p className="px-2 text-fg-subtle">{t('inbox.drafts.empty')}</p>
-              : <ul>{shownDrafts.map(draftRow)}</ul>}
-          </section>
-        </div>
+      )}
+      {/* 쓰다 만 초안 — 보드 밖 한 줄. 누르면 가장 최근 초안 자리로 간다. */}
+      {draftKeys.length > 0 && (
+        <button
+          data-testid="inbox-drafts"
+          onClick={() => {
+            const key = draftKeys[0]!;
+            if (key.startsWith(THREAD_PREFIX)) { void getController().openMessage(key.slice(THREAD_PREFIX.length)); return; }
+            onClose();
+            void getController().openChannel(key);
+          }}
+          className="border-t border-border bg-surface-raised px-3 py-2 text-left text-meta text-fg-muted hover:bg-surface-hover"
+        >
+          {t('inbox.board.drafts', { count: draftKeys.length })}
+        </button>
+      )}
     </aside>
   );
 }

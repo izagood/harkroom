@@ -1324,6 +1324,20 @@ export const ko = {
   // inbox — 사슬 구획은 여기 없다(`waitChain.*` 이 진다, `en.ts` 머리말).
   // ---------------------------------------------------------------------------
 
+  'inbox.board.col.mine': '내 차례',
+  'inbox.board.col.blocked': '막힘',
+  'inbox.board.col.active': '진행',
+  'inbox.board.col.done': '끝남',
+  'inbox.board.mineCount': '나를 기다리는 일 {count}',
+  'inbox.board.empty.mine': '나를 기다리는 일이 없다',
+  'inbox.board.empty.other': '없음',
+  'inbox.board.empty.all': '나를 부른 것이 없다',
+  'inbox.board.days': '{count}일째',
+  'inbox.board.more': '+{count}개 더',
+  'inbox.board.unread': '새 말',
+  'inbox.board.markDone': '완료',
+  'inbox.board.reopen': '다시 열기',
+  'inbox.board.drafts': '쓰다 만 초안 ({count})',
   'inbox.drafts.badge': '초안',
   'inbox.drafts.empty': '쓰다 만 초안이 없다',
   'inbox.drafts.heading': '쓰다 만 초안',

@@ -315,6 +315,15 @@ export class ApiClient {
     return (await this.req<{ entries: InboxEntry[] }>('GET', '/inbox')).entries;
   }
   /**
+   * 상태 보드(2026-10-01)의 재료 — 전체 항목 + 그 항목들이 속한 **스레드 머리**(지금 상태).
+   * 열은 머리가 정한다(`lib/inboxBoard`). 옛 서버는 `threads` 를 모르고 `entries` 만 준다 —
+   * 그때 `null` 로 내려 보드가 항목 `meta` 로 판정하게 한다(그래서 하한 판을 올리지 않는다).
+   */
+  async inboxBoard(): Promise<{ entries: InboxEntry[]; threads: MessageRow[] | null }> {
+    const res = await this.req<{ entries: InboxEntry[]; threads?: MessageRow[] }>('GET', '/inbox?threads=1');
+    return { entries: res.entries, threads: res.threads ?? null };
+  }
+  /**
    * 메시지를 고친다. `postMessage` 처럼 **부름의 결과를 함께** 낸다 — 수정으로 넣은 멘션도
    * 부르기 때문이다(076). 결과가 헤더로 오는 이유는 게시와 같다(`NOTIFIED_HEADER` 주석).
    *
