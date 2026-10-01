@@ -179,6 +179,17 @@ class AppState extends ChangeNotifier {
   /// 서버가 아플 때 요청이 거듭 간다(security #996).
   final Set<String> olderFailed = {};
 
+  /// 스레드 루트 id → 서버에 더 오래된 답글이 남았는가(스레드 응답의 `hasMore`). 옛 서버는 늘
+  /// `false` 를 주므로 그때는 지금처럼 최신 100 줄만 보인다.
+  final Map<String, bool> threadHasMore = {};
+
+  /// 스레드 루트 id → 옛 답글을 받는 중. 겹쳐 받지 않는다.
+  final Set<String> loadingOlderThread = {};
+
+  /// 스레드 루트 id → 옛 답글을 못 받았다. 채널의 [olderFailed] 와 같이 스크롤로는 다시 부르지
+  /// 않고 "다시 시도" 를 누를 때만 간다.
+  final Set<String> olderThreadFailed = {};
+
   /// 세션 세대. 로그인·로그아웃·다시 들어오기마다 올린다. 받는 데 걸린 사이에 계정이 바뀌면
   /// **그 응답을 버린다** — 안 버리면 옛 계정의 말이 새 계정 화면에 섞인다(security #996).
   int _generation = 0;
@@ -584,7 +595,7 @@ class AppState extends ChangeNotifier {
       try {
         final page = await api.messages(channelId, thread: entry.key, limit: 100);
         if (gen != _generation) return;
-        _storeThreadPage(entry.key, page.messages);
+        _storeThreadPage(entry.key, page.messages, keepOlder: true);
       } on Object {
         /* 위와 같다 */
       }
@@ -1124,7 +1135,10 @@ class AppState extends ChangeNotifier {
   final Map<String, MessageRow> threadRoots = {};
 
   /// 스레드 응답 한 페이지를 루트([threadRoots])와 답글([threads])로 나눠 담는다.
-  void _storeThreadPage(String rootId, List<MessageRow> page) {
+  ///
+  /// [keepOlder] 면 이 페이지보다 오래된, 이미 받아 둔 답글(위로 밀어 받은 옛 페이지)은 남긴다 —
+  /// 다시 붙을 때(`catchUp`) 최신 페이지로 통째로 갈면 사람이 밀어 올려 받은 앞부분이 사라진다.
+  void _storeThreadPage(String rootId, List<MessageRow> page, {bool keepOlder = false}) {
     final replies = <MessageRow>[];
     for (final m in page) {
       if (m.id == rootId) {
@@ -1132,6 +1146,10 @@ class AppState extends ChangeNotifier {
       } else {
         replies.add(m);
       }
+    }
+    if (keepOlder && replies.isNotEmpty) {
+      final oldest = replies.map((m) => m.seq).reduce((a, b) => a < b ? a : b);
+      replies.addAll((threads[rootId] ?? const <MessageRow>[]).where((m) => m.seq < oldest));
     }
     threads[rootId] = replies..sort((a, b) => a.seq.compareTo(b.seq));
   }
@@ -1155,6 +1173,8 @@ class AppState extends ChangeNotifier {
       final page = await _api!.messages(channelId, thread: rootId, limit: 100);
       if (gen != _generation) return;
       _storeThreadPage(rootId, page.messages);
+      threadHasMore[rootId] = page.hasMore;
+      olderThreadFailed.remove(rootId);
       threadLoad[rootId] = LoadState.loaded;
     } on Object catch (e) {
       if (gen != _generation) return;
@@ -1163,6 +1183,49 @@ class AppState extends ChangeNotifier {
     }
     notifyListeners();
     unawaited(loadThreadAgentModels(channelId, rootId));
+  }
+
+  /// 스레드의 옛 답글 한 페이지를 받는다(`?thread=&before=<가장 오래된 답글>`). 받은 것이 있으면 `true`.
+  ///
+  /// 채널의 [loadOlder] 와 같은 규칙이다: 겹쳐 부르면 한 번, 실패하면 [olderThreadFailed] 에 적고
+  /// 던지지 않는다, 세대가 바뀌면 답을 버린다. 서버가 `hasMore` 를 주지 않으면(옛 서버) 아예 가지 않는다.
+  Future<bool> loadOlderThread(String channelId, String rootId) async {
+    final list = threads[rootId];
+    if (list == null || list.isEmpty) return false;
+    if (threadHasMore[rootId] != true ||
+        loadingOlderThread.contains(rootId) ||
+        olderThreadFailed.contains(rootId)) {
+      return false;
+    }
+    loadingOlderThread.add(rootId);
+    notifyListeners();
+    final gen = _generation;
+    try {
+      final page = await _api!.messages(channelId, thread: rootId, before: list.first.seq, limit: 100);
+      if (gen != _generation) return false;
+      threadHasMore[rootId] = page.hasMore;
+      final current = threads[rootId] ?? const <MessageRow>[];
+      final seen = current.map((m) => m.seq).toSet();
+      // 루트는 옛 페이지에 실리지 않지만, 실려도 답글로 넣지 않는다.
+      final older = page.messages.where((m) => m.id != rootId && !seen.contains(m.seq)).toList();
+      if (older.isEmpty) return false;
+      threads[rootId] = [...older, ...current]..sort((a, b) => a.seq.compareTo(b.seq));
+      return true;
+    } on Object {
+      if (gen == _generation) olderThreadFailed.add(rootId);
+      return false;
+    } finally {
+      if (gen == _generation) {
+        loadingOlderThread.remove(rootId);
+        notifyListeners();
+      }
+    }
+  }
+
+  /// 스레드의 "다시 시도". 못 받은 표시를 걷고 한 번 더 간다.
+  Future<bool> retryOlderThread(String channelId, String rootId) {
+    olderThreadFailed.remove(rootId);
+    return loadOlderThread(channelId, rootId);
   }
 
   /// 스레드 루트 id → 에이전트 모델 지정(서버 079). 키가 없으면 아직 못 받았다.
@@ -1327,6 +1390,9 @@ class AppState extends ChangeNotifier {
     reads.clear();
     threads.clear();
     threadRoots.clear();
+    threadHasMore.clear();
+    loadingOlderThread.clear();
+    olderThreadFailed.clear();
     channels.clear();
     accounts.clear();
     messages.clear();

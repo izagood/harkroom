@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/api/api_client.dart';
 import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/main.dart';
+import 'package:harkroom/screens/thread_screen.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_state.dart';
 import 'package:http/http.dart' as http;
@@ -224,6 +225,47 @@ void main() {
     }
     await toTop();
     await shot(tester, '23-channel-start');
+  });
+
+  // ── 긴 스레드(서버 #1048): 원글이 어제라 구분 줄이 「답글 n개 · 오늘」, 위로 밀면 옛 답글 회전자·실패 줄.
+  testWidgets('긴 스레드', (tester) async {
+    final srv = _LongThreadServer();
+    final app = _galleryApp(srv.client);
+    addTearDown(app.dispose);
+    await tester.pumpWidget(HarkroomApp(state: app));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    Navigator.of(tester.element(find.byKey(const Key('channel-c1')))).push(
+      MaterialPageRoute<void>(builder: (_) => const ThreadScreen(channelId: 'c1', rootId: 'lt-root')),
+    );
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    ScrollPosition pos() =>
+        tester.state<ScrollableState>(find.descendant(of: find.byKey(const Key('thread-feed')), matching: find.byType(Scrollable)).first).position;
+    // 옛 답글을 받는 중(서버가 답을 미룬다) — 「답글 n개」 아래 회전자. 미루기를 먼저 걸고 민다.
+    srv.hold = Completer<void>();
+    pos().jumpTo(pos().maxScrollExtent);
+    await tester.pump(const Duration(milliseconds: 60));
+    pos().jumpTo(pos().maxScrollExtent);
+    await shot(tester, '31-thread-older-loading');
+    // 못 받았다 — 다시 시도 줄.
+    srv.fail = true;
+    srv.hold!.complete();
+    srv.hold = null;
+    await tester.pump(const Duration(milliseconds: 200));
+    pos().jumpTo(pos().maxScrollExtent);
+    await shot(tester, '32-thread-older-failed');
+    await tester.tap(find.byType(BackButton));
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    // 원글을 끝내 못 찾은 스레드 — 「원글을 불러오지 못했다」 + 구분 줄.
+    Navigator.of(tester.element(find.byKey(const Key('channel-c1')))).push(
+      MaterialPageRoute<void>(builder: (_) => const ThreadScreen(channelId: 'c1', rootId: 'gone-root')),
+    );
+    await shot(tester, '33-thread-root-missing');
   });
 
   testWidgets('부팅 실패', (tester) async {
@@ -542,6 +584,77 @@ class _EdgeServer {
           final pool = all.where((m) => before == null || (m['seq']! as int) < before).toList();
           final page = pool.length > limit ? pool.sublist(pool.length - limit) : pool;
           return _json({'messages': page, 'hasMore': page.isNotEmpty && (page.first['seq']! as int) > 1});
+        }
+        if (path == '/ws-ticket') return _json({'ticket': 'tk'});
+        return _json({'error': {'code': 'not_found', 'message': path}}, 404);
+      });
+}
+
+/// 긴 스레드 하나(답글 150, 원글은 어제)와 원글이 사라진 스레드 하나. 서버 #1048 과 같은 뜻으로 준다.
+class _LongThreadServer {
+  Completer<void>? hold;
+  bool fail = false;
+
+  static const me = '00000000-0000-4000-8000-000000000001';
+  static const tm = '00000000-0000-4000-8000-000000000002';
+
+  Map<String, Object?> _reply(int seq, String root, int minutesAgo) => {
+        'id': '$root-r$seq',
+        'seq': seq,
+        'channelId': 'c1',
+        'threadRootId': root,
+        'authorId': seq.isEven ? me : tm,
+        'body': '답글 ${seq - 1}',
+        'kind': 'user',
+        'createdAt': _ago(minutesAgo),
+      };
+
+  MockClient get client => MockClient((req) async {
+        final path = req.url.path;
+        if (path == '/auth/me') return _json({'id': me, 'handle': 'jaebin', 'displayName': 'jaebin', 'isAdmin': true});
+        if (path == '/channels') {
+          return _json({
+            'channels': [
+              {'id': 'c1', 'name': 'task', 'kind': 'standard', 'visibility': 'public'},
+            ],
+          });
+        }
+        if (path == '/accounts') return _json({'accounts': _accounts});
+        if (path == '/reads') return _json({'reads': <Object?>[]});
+        if (path.startsWith('/inbox')) return _json({'entries': <Object?>[]});
+        if (path.endsWith('/read')) return _json(<String, Object?>{});
+        if (path.contains('/agent-models')) return _json({'agentModels': <Object?>[]});
+        if (path == '/channels/c1/messages') {
+          final q = req.url.queryParameters;
+          final thread = q['thread'];
+          if (thread == 'gone-root') {
+            // 원글은 지워져 응답에 없고 채널 목록에도 없다.
+            return _json({'messages': [_reply(900, 'gone-root', 30), _reply(901, 'gone-root', 20)], 'hasMore': false});
+          }
+          if (thread == 'lt-root') {
+            final before = q['before'] == null ? null : int.parse(q['before']!);
+            if (before != null) {
+              final h = hold;
+              if (h != null) await h.future;
+              if (fail) return _json({'error': {'code': 'unavailable', 'message': 'down'}}, 503);
+            }
+            final limit = int.parse(q['limit'] ?? '100');
+            final pool = [for (var s = 2; s <= 151; s++) if (before == null || s < before) s];
+            final page = pool.length > limit ? pool.sublist(pool.length - limit) : pool;
+            return _json({
+              'messages': [
+                if (before == null)
+                  {
+                    'id': 'lt-root', 'seq': 1, 'channelId': 'c1', 'threadRootId': null, 'authorId': me,
+                    'body': '어제 연 긴 스레드', 'kind': 'user', 'replyCount': 150, 'createdAt': _ago(24 * 60),
+                  },
+                // 답글은 모두 오늘(최근 15분 안) — 원글(어제)과 날이 달라 구분 줄이 「답글 150개 · 오늘」.
+                ...page.map((s) => _reply(s, 'lt-root', (151 - s) ~/ 10)),
+              ],
+              'hasMore': page.isNotEmpty && page.first > 2,
+            });
+          }
+          return _json({'messages': <Object?>[], 'hasMore': false});
         }
         if (path == '/ws-ticket') return _json({'ticket': 'tk'});
         return _json({'error': {'code': 'not_found', 'message': path}}, 404);

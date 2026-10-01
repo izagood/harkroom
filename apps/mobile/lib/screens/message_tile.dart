@@ -241,9 +241,11 @@ class _MentionDenied extends StatelessWidget {
 }
 
 /// 날짜 줄의 글자: 오늘 · 어제 · 9월 28일. 스레드의 「답글 n개 · 오늘」도 같은 말을 쓴다.
-String dayLabel(Strings t, DateTime at) {
+///
+/// [now] 는 시험이 고정 시각을 넣는 자리다(없으면 지금) — 자정 근처에 돌아도 「오늘」 이 흔들리지 않게.
+String dayLabel(Strings t, DateTime at, {DateTime? now}) {
   final local = at.toLocal();
-  final now = DateTime.now();
+  now ??= DateTime.now();
   final today = DateTime(now.year, now.month, now.day);
   final day = DateTime(local.year, local.month, local.day);
   return day == today
