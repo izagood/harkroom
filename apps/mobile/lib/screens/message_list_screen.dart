@@ -7,6 +7,7 @@ import '../i18n/i18n.dart';
 import '../mention/sticky.dart';
 import '../state/app_scope.dart';
 import '../state/app_state.dart';
+import '../ui/parts.dart';
 import '../ui/states.dart';
 import '../ui/tokens.dart';
 import 'agent_model.dart';
@@ -125,9 +126,12 @@ class _MessageListScreenState extends State<MessageListScreen> {
       }
     }
 
+    final label = channelLabel(channel);
     return Scaffold(
-      appBar: AppBar(title: Text(channel?.name ?? '')),
-      body: SafeArea(
+      // 개정판 3.3: 왼쪽 정렬 "# task" + 부제(주제). 주제가 없으면 한 줄.
+      appBar: AppBar(title: ScreenTitle(title: label, subtitle: channel?.topic)),
+      // 토스트를 작성칸 위로 올린다(states.dart ComposerScope).
+      body: ComposerScope(child: SafeArea(
         child: Column(
           children: [
             const ConnectionBand(),
@@ -203,12 +207,9 @@ class _MessageListScreenState extends State<MessageListScreen> {
                       minLines: 1,
                       maxLines: 5,
                       textInputAction: TextInputAction.newline,
-                      decoration: InputDecoration(
-                        // 에이전트를 부르는 방법이 **여기에만** 적혀 있다 — 별도 버튼이
-                        // 없으므로 화면이 말해 주지 않으면 알 길이 없다.
-                        hintText: t.composerHint,
-                        border: const OutlineInputBorder(),
-                        isDense: true,
+                      decoration: composerDecoration(
+                        context,
+                        t.composerHint.replaceAll('{name}', label),
                       ),
                     ),
                   ),
@@ -216,6 +217,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
                     key: const Key('composer-send'),
                     composerKey: widget.channelId,
                     busy: _sending,
+                    empty: _composer.text.trim().isEmpty,
                     onPressed: _send,
                   ),
                 ],
@@ -223,7 +225,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
             ),
           ],
         ),
-      ),
+      )),
     );
   }
 }
@@ -299,48 +301,67 @@ class FeedTopRow extends StatelessWidget {
   final String channelName;
   final VoidCallback onRetry;
 
+  /// 세 상태가 같이 쓰는 줄 높이(누르는 영역 44 와 같다).
+  static const rowHeight = 44.0;
+
   @override
   Widget build(BuildContext context) {
     final k = context.tokens;
     final t = context.t;
     final muted = TextStyle(fontSize: 12, color: k.mute);
-    return switch (top) {
-      FeedTop.loading => const Padding(
-          key: Key('loading-older'),
-          padding: EdgeInsets.all(12),
-          child: Center(
-            child: SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          ),
+    // **세 상태가 같은 높이 상자에 선다**(designer #1026 후속). 높이가 다르면 받는 중 → 못 받음 →
+    // 처음 으로 바뀔 때 목록이 그만큼 움직였다(다시 시도 +14pt, 시작 줄 −4pt).
+    final Widget child = switch (top) {
+      FeedTop.loading => const SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
         ),
-      FeedTop.failed => Padding(
-          key: const Key('older-failed'),
-          padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter, vertical: 4),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Flexible(child: Text(t.olderLoadFailed, style: muted)),
-              Text(' · ', style: muted),
-              TextButton(
-                key: const Key('older-retry'),
-                onPressed: onRetry,
-                child: Text(t.commonRetry),
+      FeedTop.failed => Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Flexible(child: Text(t.olderLoadFailed, style: muted)),
+            // 가운뎃점 양옆을 같게 — 버튼 안쪽 여백을 빼고 띄움은 여기서만 준다.
+            const SizedBox(width: 6),
+            Text('·', style: muted),
+            const SizedBox(width: 6),
+            TextButton(
+              key: const Key('older-retry'),
+              onPressed: onRetry,
+              // 기본 최소 높이 48 이 줄을 키웠다. 누르는 높이는 바깥 44 상자가 맡는다.
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(0, rowHeight),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-            ],
-          ),
+              child: Text(t.commonRetry),
+            ),
+          ],
         ),
-      FeedTop.start => Padding(
-          key: const Key('channel-start'),
-          padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 16, HarkroomSize.gutter, 4),
-          child: Text(
-            t.channelStartLine.replaceFirst('{name}', channelName),
-            textAlign: TextAlign.center,
-            style: muted,
-          ),
+      FeedTop.start => Text(
+          t.channelStartLine.replaceFirst('{name}', channelName),
+          textAlign: TextAlign.center,
+          style: muted,
         ),
     };
+    return SizedBox(
+      key: Key(switch (top) {
+        FeedTop.loading => 'loading-older',
+        FeedTop.failed => 'older-failed',
+        FeedTop.start => 'channel-start',
+      }),
+      height: rowHeight,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter),
+        child: Center(child: child),
+      ),
+    );
   }
+}
+
+/// 머리·자리표시에 쓰는 채널 이름. 채널은 "# task", DM 은 상대 이름 그대로.
+/// 채널이 목록에서 사라졌으면(다른 기기에서 나갔다) 빈 줄.
+String channelLabel(ChannelRow? channel) {
+  if (channel == null) return '';
+  return channel.isDm ? channel.name : '# ${channel.name}';
 }

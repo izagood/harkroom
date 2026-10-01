@@ -5,6 +5,7 @@ import '../i18n/i18n.dart';
 import '../mention/sticky.dart';
 import '../state/app_scope.dart';
 import '../state/app_state.dart';
+import '../ui/parts.dart';
 import '../ui/states.dart';
 import 'agent_model.dart';
 import 'composer_attachments.dart';
@@ -128,7 +129,8 @@ class _ThreadScreenState extends State<ThreadScreen> {
 
     return Scaffold(
       appBar: AppBar(title: Text(t.threadTitle)),
-      body: SafeArea(
+      // 토스트를 작성칸 위로 올린다(states.dart ComposerScope).
+      body: ComposerScope(child: SafeArea(
         child: Column(
           children: [
             ThreadModelBar(channelId: widget.channelId, rootId: widget.rootId, agentIds: threadAgents),
@@ -184,17 +186,14 @@ class _ThreadScreenState extends State<ThreadScreen> {
                       onChanged: (_) => setState(() {}),
                       minLines: 1,
                       maxLines: 5,
-                      decoration: InputDecoration(
-                        hintText: t.threadReplyHint,
-                        border: const OutlineInputBorder(),
-                        isDense: true,
-                      ),
+                      decoration: composerDecoration(context, t.threadReplyHint),
                     ),
                   ),
                   SendButton(
                     key: const Key('thread-send'),
                     composerKey: widget.rootId,
                     busy: _sending,
+                    empty: _composer.text.trim().isEmpty,
                     onPressed: _send,
                   ),
                 ],
@@ -202,7 +201,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
             ),
           ],
         ),
-      ),
+      )),
     );
   }
 

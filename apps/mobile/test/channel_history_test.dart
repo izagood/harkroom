@@ -50,6 +50,12 @@ class _Server {
   /// 있으면 `before` 가 붙은 요청의 답을 이것이 끝날 때까지 미룬다.
   Future<void>? holdOlder;
 
+  /// 있으면 `before` 없는 채널 요청(첫 페이지)의 답을 미룬다.
+  Future<void>? holdFirst;
+
+  /// 있으면 인박스 답을 미룬다.
+  Future<void>? holdInbox;
+
   MockClient get client => MockClient((req) async {
         final path = req.url.path;
         if (path == '/auth/me') {
@@ -64,7 +70,10 @@ class _Server {
         }
         if (path == '/accounts') return _json({'accounts': <Object?>[]});
         if (path == '/reads') return _json({'reads': <Object?>[]});
-        if (path.startsWith('/inbox')) return _json({'entries': <Object?>[]});
+        if (path.startsWith('/inbox')) {
+          if (holdInbox != null) await holdInbox;
+          return _json({'entries': <Object?>[]});
+        }
         if (path.endsWith('/read')) return _json(<String, Object?>{});
         if (path == '/channels/c1/messages') {
           // 서버와 같은 뜻: 최신 limit 줄(before 가 있으면 그보다 오래된 것 중 최신 limit 줄),
@@ -74,6 +83,7 @@ class _Server {
           final limit = int.parse(q['limit'] ?? '200');
           final before = q['before'] == null ? null : int.parse(q['before']!);
           if (before != null && holdOlder != null) await holdOlder;
+          if (before == null && holdFirst != null) await holdFirst;
           if (before != null && failOlder) {
             return _json({'error': {'code': 'internal', 'message': 'boom'}}, 500);
           }
@@ -87,7 +97,7 @@ class _Server {
       });
 }
 
-Future<AppState> _open(_Server server) async {
+Future<AppState> _open(_Server server, {bool openFirst = true}) async {
   final app = AppState(
     sessions: SessionStore.inMemory(
       seed: jsonEncode({
@@ -101,7 +111,7 @@ Future<AppState> _open(_Server server) async {
     connector: (_) async => throw StateError('소켓 없음'),
   );
   await app.boot();
-  await app.openChannel('c1');
+  if (openFirst) await app.openChannel('c1');
   return app;
 }
 
@@ -196,5 +206,37 @@ void main() {
     expect(app.messages['c1'], isNull);
     expect(app.channelHasMore, isEmpty);
     expect(app.olderFailed, isEmpty);
+  });
+
+  test('로그아웃 도중에 연 채널의 답도 버린다(security F1)', () async {
+    final server = _Server(_channel(50, 1));
+    final app = await _open(server, openFirst: false);
+    addTearDown(app.dispose);
+    final gate = Completer<void>();
+    server.holdFirst = gate.future;
+    // signOut 은 첫 줄에서 세대를 올린 뒤 소켓·보관본을 기다린다. 그 틈에 화면이 채널을 연다.
+    final out = app.signOut();
+    final open = app.openChannel('c1');
+    await out;
+    gate.complete();
+    await open;
+    expect(app.messages['c1'], isNull);
+    expect(app.channelHasMore, isEmpty);
+  });
+
+  test('로그아웃 뒤 늦게 온 인박스는 붓지 않는다(security F2)', () async {
+    final server = _Server(_channel(50, 1));
+    final app = await _open(server);
+    addTearDown(app.dispose);
+    final gate = Completer<void>();
+    server.holdInbox = gate.future;
+    final pending = app.loadInbox();
+    await Future<void>.delayed(Duration.zero);
+    await app.signOut();
+    gate.complete();
+    await pending;
+    // 옛 답이 들어왔다면 loaded 로 바뀐다. 로그아웃이 둔 읽는 중 그대로여야 한다.
+    expect(app.inboxLoad, LoadState.loading);
+    expect(app.inbox, isEmpty);
   });
 }
