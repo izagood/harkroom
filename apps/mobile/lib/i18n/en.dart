@@ -498,4 +498,7 @@ class StringsEn implements Strings {
 
   @override
   String get loginOtherCommunity => 'Use another community';
+
+  @override
+  String get communityExpiredSubtitle => 'Signed out — session expired';
 }

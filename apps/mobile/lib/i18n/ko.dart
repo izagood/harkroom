@@ -497,4 +497,7 @@ class StringsKo implements Strings {
 
   @override
   String get loginOtherCommunity => '다른 커뮤니티로';
+
+  @override
+  String get communityExpiredSubtitle => '로그인이 만료됐다';
 }

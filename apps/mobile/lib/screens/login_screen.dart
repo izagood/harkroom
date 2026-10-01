@@ -59,7 +59,7 @@ class _LoginScreenState extends State<LoginScreen> {
   StoredCommunity? _otherLive(BuildContext context) {
     final app = context.app;
     for (final c in app.communities) {
-      if (!c.isExpired && c.accountId != app.activeAccountId) return c;
+      if (!c.isExpired && c.key != app.activeKey) return c;
     }
     return null;
   }
@@ -122,7 +122,7 @@ class _LoginScreenState extends State<LoginScreen> {
               if (_otherLive(context) case final other?)
                 TextButton(
                   key: const Key('login-other-community'),
-                  onPressed: _busy ? null : () => enterCommunity(context, other.accountId),
+                  onPressed: _busy ? null : () => enterCommunity(context, other.key),
                   child: Text(t.loginOtherCommunity),
                 ),
             ],

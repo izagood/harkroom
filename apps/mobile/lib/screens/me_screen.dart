@@ -56,13 +56,11 @@ class MeScreen extends StatelessWidget {
     if (ok == true) await app.signOutAll();
   }
 
+  /// 만료된 행도 **상세를 연다**(designer 1) — 「다시 로그인」과 「로그아웃」이 둘 다 거기 있다. 바로
+  /// 로그인 모달로 보내면 비밀번호를 잊은 서버의 행을 뺄 길이 「모두 로그아웃」뿐이다.
   void _open(BuildContext context, StoredCommunity c) {
-    if (c.isExpired) {
-      openAddCommunity(context, initialUrl: c.baseUrl);
-      return;
-    }
     Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => CommunityDetailScreen(accountId: c.accountId),
+      builder: (_) => CommunityDetailScreen(communityKey: c.key),
     ));
   }
 
@@ -71,36 +69,42 @@ class MeScreen extends StatelessWidget {
     final t = context.t;
     final k = context.tokens;
     final app = context.app;
-    final me = app.me;
 
     return Scaffold(
       appBar: AppBar(title: Text(t.tabMe)),
       body: SafeArea(
         child: ListView(
           children: [
-            if (me != null)
-              ListTile(
-                key: const Key('me-handle'),
-                leading: const Icon(Icons.person_outline),
-                title: Text(t.meSignedInAs.replaceFirst('{handle}', me.handle)),
-                subtitle: Text(me.displayName),
-              ),
+            // 맨 위의 "@핸들 계정으로 로그인했다" 줄은 뺐다(designer 3) — 커뮤니티가 여럿이면 어느
+            // 커뮤니티 얘기인지 모호하고, 목록이 ✓ 와 `@핸들` 로 이미 말한다.
             SectionHeader(label: t.meCommunitiesSection),
             for (final c in app.communities)
               ListTile(
-                key: Key('me-community-${c.accountId}'),
+                key: Key('me-community-${c.key}'),
                 leading: CommunityTile(community: c),
                 title: Text(c.displayLabel, maxLines: 1, overflow: TextOverflow.ellipsis),
                 subtitle: Text(
-                  '@${c.handle} · ${Uri.tryParse(c.baseUrl)?.host ?? c.baseUrl}',
+                  c.isExpired
+                      ? t.communityExpiredSubtitle
+                      : '@${c.handle} · ${Uri.tryParse(c.baseUrl)?.host ?? c.baseUrl}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
+                // 만료는 **상태**다 — ✓(지금 커뮤니티)와 같은 강조색을 쓰면 둘이 같은 뜻으로 읽힌다.
+                // warn 칩으로 가른다(designer 4).
                 trailing: c.isExpired
-                    ? Text(t.communityExpired,
-                        key: Key('me-community-expired-${c.accountId}'),
-                        style: TextStyle(color: k.accent, fontWeight: FontWeight.w600))
-                    : c.accountId == app.activeAccountId
+                    ? Container(
+                        key: Key('me-community-expired-${c.key}'),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: k.warnSoft,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(t.communityExpired,
+                            style: TextStyle(
+                                color: k.warn, fontSize: 12, fontWeight: FontWeight.w600)),
+                      )
+                    : c.key == app.activeKey
                         ? Icon(Icons.check, color: k.accent, semanticLabel: t.communityCurrent)
                         : const Icon(Icons.chevron_right),
                 onTap: () => _open(context, c),

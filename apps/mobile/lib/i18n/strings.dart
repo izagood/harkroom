@@ -286,6 +286,9 @@ abstract class Strings {
   /// 토큰이 죽은 커뮤니티. 지우지 않고 이 말로 남긴다.
   String get communityExpired;
 
+  /// 만료된 커뮤니티 행의 부제.
+  String get communityExpiredSubtitle;
+
   /// 이 기기의 커뮤니티 전부에서 로그아웃.
   String get communitySignOutAll;
 
@@ -621,6 +624,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'communityAdd': s.communityAdd,
       'communityCurrent': s.communityCurrent,
       'communityExpired': s.communityExpired,
+      'communityExpiredSubtitle': s.communityExpiredSubtitle,
       'communitySignOutAll': s.communitySignOutAll,
       'communitySignOutAllConfirm': s.communitySignOutAllConfirm,
       'communityCancel': s.communityCancel,

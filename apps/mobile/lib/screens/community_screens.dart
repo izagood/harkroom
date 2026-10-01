@@ -31,13 +31,13 @@ class CommunityTile extends StatelessWidget {
 ///
 /// 먼저 맨 아래 화면까지 걷는다: 옮기는 동안 앞 커뮤니티의 화면(커뮤니티 상세·스레드)이 위에
 /// 남아 있으면 새 커뮤니티의 상태로 옛 화면을 그린다.
-Future<void> enterCommunity(BuildContext context, String accountId) async {
+Future<void> enterCommunity(BuildContext context, String key) async {
   final app = AppScope.read(context);
   final messenger = ScaffoldMessenger.of(context);
   final t = context.t;
   final margin = toastMargin(context);
   Navigator.of(context).popUntil((r) => r.isFirst);
-  if (!await app.switchTo(accountId)) return;
+  if (!await app.switchTo(key)) return;
   showSwitchedToast(messenger, t, app.activeCommunity!, app.me?.handle, margin);
 }
 
@@ -71,13 +71,15 @@ Future<void> openAddCommunity(BuildContext context, {String? initialUrl}) async 
     builder: (_) => AddCommunityScreen(initialUrl: initialUrl),
   ));
   if (added == null || !context.mounted) return;
-  await enterCommunity(context, added.accountId);
+  await enterCommunity(context, added.key);
 }
 
 /// 서버 주소와 로그인을 **한 장에** 받는다(③). 지금 커뮤니티는 로그인된 채 남는다.
 class AddCommunityScreen extends StatefulWidget {
   const AddCommunityScreen({super.key, this.initialUrl});
 
+  /// 채워 두면 「다시 로그인」이다 — 제목이 바뀌고 주소 칸은 고칠 수 없다(designer 2). 주소를 바꾸고
+  /// 싶으면 그것은 다른 커뮤니티이므로 「커뮤니티 추가」로 간다.
   final String? initialUrl;
 
   @override
@@ -147,7 +149,7 @@ class _AddCommunityScreenState extends State<AddCommunityScreen> {
           icon: const Icon(Icons.close),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: Text(t.communityAdd),
+        title: Text(widget.initialUrl == null ? t.communityAdd : t.communityExpired),
       ),
       body: SafeArea(
         child: ListView(
@@ -156,6 +158,7 @@ class _AddCommunityScreenState extends State<AddCommunityScreen> {
             TextField(
               key: const Key('community-add-url'),
               controller: _url,
+              readOnly: widget.initialUrl != null,
               autocorrect: false,
               keyboardType: TextInputType.url,
               textInputAction: TextInputAction.next,
@@ -207,9 +210,10 @@ class _AddCommunityScreenState extends State<AddCommunityScreen> {
 
 /// 커뮤니티 하나(⑨): 표시 이름·계정·서버·버전, 옮기기·로그아웃.
 class CommunityDetailScreen extends StatefulWidget {
-  const CommunityDetailScreen({super.key, required this.accountId});
+  const CommunityDetailScreen({super.key, required this.communityKey});
 
-  final String accountId;
+  /// [StoredCommunity.key] — origin + 계정 id.
+  final String communityKey;
 
   @override
   State<CommunityDetailScreen> createState() => _CommunityDetailScreenState();
@@ -228,7 +232,7 @@ class _CommunityDetailScreenState extends State<CommunityDetailScreen> {
 
   StoredCommunity? _find(AppState app) {
     for (final c in app.communities) {
-      if (c.accountId == widget.accountId) return c;
+      if (c.key == widget.communityKey) return c;
     }
     return null;
   }
@@ -258,14 +262,14 @@ class _CommunityDetailScreenState extends State<CommunityDetailScreen> {
       ),
     );
     controller.dispose();
-    if (next != null) await app.renameCommunity(c.accountId, next);
+    if (next != null) await app.renameCommunity(c.key, next);
   }
 
   Future<void> _signOut(StoredCommunity c) async {
     final app = AppScope.read(context);
     final nav = Navigator.of(context);
-    if (c.accountId != app.activeAccountId) {
-      await app.signOutCommunity(c.accountId);
+    if (c.key != app.activeKey) {
+      await app.signOutCommunity(c.key);
       if (nav.mounted) nav.pop();
       return;
     }
@@ -274,7 +278,7 @@ class _CommunityDetailScreenState extends State<CommunityDetailScreen> {
     final t = context.t;
     final margin = toastMargin(context);
     nav.popUntil((r) => r.isFirst);
-    await app.signOutCommunity(c.accountId);
+    await app.signOutCommunity(c.key);
     final now = app.activeCommunity;
     if (now != null && app.me != null) showSwitchedToast(messenger, t, now, app.me!.handle, margin);
   }
@@ -286,7 +290,7 @@ class _CommunityDetailScreenState extends State<CommunityDetailScreen> {
     final app = context.app;
     final c = _find(app);
     if (c == null) return const Scaffold();
-    final isCurrent = c.accountId == app.activeAccountId;
+    final isCurrent = c.key == app.activeKey;
 
     return Scaffold(
       key: const Key('community-detail'),
@@ -327,7 +331,7 @@ class _CommunityDetailScreenState extends State<CommunityDetailScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                 child: FilledButton(
                   key: const Key('community-switch'),
-                  onPressed: () => enterCommunity(context, c.accountId),
+                  onPressed: () => enterCommunity(context, c.key),
                   child: Text(t.communitySwitchTo),
                 ),
               ),
