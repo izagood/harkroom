@@ -17,7 +17,7 @@ import { ProfileSettings } from '../components/settings/ProfileSettings';
 import { SkillsSettings } from '../components/settings/SkillsSettings';
 import { AutomationsSettings } from '../components/settings/AutomationsSettings';
 import { UpdatesSettings } from '../components/settings/UpdatesSettings';
-import { DEFAULT_SECTION, SETTINGS_GROUPS, isSectionId, navKey, type SectionId } from '../components/settings/sections';
+import { DEFAULT_SECTION, SETTINGS_GROUPS, isSectionId, navKey, workspaceEditable, type SectionId } from '../components/settings/sections';
 import { useActiveStore } from '../state/communities';
 import { WindowDragStrip } from '../components/WindowDragStrip';
 import { useT } from '../i18n/useT';
@@ -66,7 +66,20 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
           <nav className="flex-1 overflow-y-auto px-2 pb-4">
             {SETTINGS_GROUPS.map((g) => (
               <div key={g.id} className="mb-4">
-                <div className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">{t(g.titleKey)}</div>
+                <div className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">
+                  {t(g.titleKey)}
+                  {/* 워크스페이스 묶음에서 **아무것도 고칠 수 없으면** 읽기 전용이라고 머리에서 먼저 말한다
+                      (UX ⑥b, designer). 페이지마다 이미 막고 있지만 들어가 보기 전에는 몰랐다.
+                      판정은 `isAdmin` 하나가 아니라 **서버가 실제로 보는 능력**이다
+                      (`workspaceEditable`) — 멤버도 초대·집합·MCP 능력을 따로 받을 수 있어, `isAdmin`
+                      으로만 가르면 고칠 수 있는 사람에게 "읽기 전용" 이라고 거짓말한다.
+                      화면 표시일 뿐이다 — 권한 경계는 서버의 requireAdmin·requireCap 이다.
+                      **`me` 를 아직 모르면 붙이지 않는다**(designer) — 모를 때 붙이면 관리자에게도
+                      설정을 열 때마다 "읽기 전용" 이 잠깐 떴다가 사라진다. */}
+                  {g.id === 'workspace' && me && !workspaceEditable(me) && (
+                    <span data-testid="settings-group-readonly" className="ml-1 normal-case tracking-normal">· {t('settings.group.readOnly')}</span>
+                  )}
+                </div>
                 {g.items.map((item) => (
                   <button
                     key={item.id}

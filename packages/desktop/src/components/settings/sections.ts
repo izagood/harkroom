@@ -1,4 +1,6 @@
+import type { AccountView, MeView } from '@harkroom/shared';
 import type { MessageKey } from '../../i18n';
+import { hasCapability } from '../../lib/capabilities';
 /** 설정 화면의 목차. 새 섹션은 여기에 한 줄 더하고 SettingsScreen 의 렌더 분기에 한 줄 더하면 붙는다.
  *  타입이 화면(SettingsScreen)이 아니라 여기 사는 이유는, Sidebar·App 이 섹션을 지목하면서
  *  화면 컴포넌트를 import 하게 되면 의존 방향이 거꾸로 서기 때문이다. */
@@ -132,3 +134,17 @@ export function isSectionId(value: unknown): value is SectionId {
 
 /** 아무 말도 없을 때 서는 자리. `SettingsScreen` 의 기본값과 **같은 한 벌**이다. */
 export const DEFAULT_SECTION: SectionId = 'profile';
+
+/**
+ * 워크스페이스 묶음에서 **하나라도 고칠 수 있는가**(UX ⑥b 의 읽기 전용 표시). 서버가 그 묶음의
+ * 쓰기를 막는 조건과 같아야 한다 — 일반(아이콘)은 `requireAdmin`, 초대는 `member.invite`, 핸들
+ * 그룹은 `channel.manage`, MCP 서버는 `agent.privileged`(각 라우트의 preHandler). 묶음에 줄을
+ * 더하면 여기에도 그 줄의 쓰기 조건을 더한다.
+ */
+export function workspaceEditable(me: AccountView | MeView | null | undefined): boolean {
+  if (!me) return false;
+  return me.isAdmin
+    || hasCapability(me, 'member.invite')
+    || hasCapability(me, 'channel.manage')
+    || hasCapability(me, 'agent.privileged');
+}

@@ -811,7 +811,7 @@ describe('에이전트 설정 — 기본은 영어다', () => {
     seedAgents([agentView()]);
     render(<AgentsSettings />);
     await screen.findByTestId('agent-card-forge');
-    expect(screen.getByRole('heading', { name: 'Agents' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'List' })).toBeTruthy();
     expect(screen.getByRole('tablist', { name: 'Agents and teams' })).toBeTruthy();
     expect(screen.getByText('Call one with @name in a channel. Click a card to open its settings.'))
       .toBeTruthy();
@@ -901,7 +901,7 @@ describe('에이전트 설정 — 언어를 한국어로 바꾸면 한국어로 
     seedAgents([agentView()]);
     render(<AgentsSettings />);
     await screen.findByTestId('agent-card-forge');
-    expect(screen.getByRole('heading', { name: '에이전트' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '목록' })).toBeTruthy();
     expect(screen.getByRole('tablist', { name: '에이전트와 팀' })).toBeTruthy();
   });
 
