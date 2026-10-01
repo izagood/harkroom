@@ -70,6 +70,8 @@ export interface AgentStatePaths {
   codexHomeDir: string;
   /** opencode 의 러너 전용 XDG 루트(config·data·state 세 디렉터리가 그 아래 선다). */
   opencodeHomeDir: string;
+  /** pi 의 러너 전용 `PI_CODING_AGENT_DIR`(`piHome.ts`). */
+  piHomeDir: string;
   /** 서버별로 갈리기 **전** 경로(handle 만으로 스코프). 존재 확인용이고 자동 이전은 하지 않는다. */
   legacyPath: string;
 }
@@ -96,6 +98,7 @@ export function resolveAgentStateDir(
     workspaceBaseDir: join(agentStateDir, 'workspaces'),
     codexHomeDir: join(agentStateDir, 'codex-home'),
     opencodeHomeDir: join(agentStateDir, 'opencode-home'),
+    piHomeDir: join(agentStateDir, 'pi-home'),
     legacyPath: join(baseDir, handle),
   };
 }

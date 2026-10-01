@@ -12,11 +12,11 @@ import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs
 import { dirname, join } from 'node:path';
 import type { AgentHarness, AgentView, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow } from '@harkroom/shared';
 import type { Me } from './harkroom.js';
-import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts, permissionDenialNotice, silentWakeNotice } from './prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, NO_REPLY_NOTICE, offAnchorNotice, offAnchorPosts, permissionDenialNotice, silentWakeNotice } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, harnessPath, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
-import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readsSessionTranscript, usesTuiForMention, usesXdgHome } from './adapters/index.js';
+import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesPiHome, usesTuiForMention, usesXdgHome } from './adapters/index.js';
 import { acceptsPtyInput } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
 import { codexRolloutFileFor, findCodexSessionId } from './codexSessions.js';
@@ -29,6 +29,7 @@ import { readLastAssistantText, readMcpAuthRejections, readPermissionDenials, re
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
 import { opencodeDirs } from './opencodeHome.js';
+import { listPiMcpTools, piSessionFile, readonlyToolList } from './piHome.js';
 import { findOpencodeSessionId } from './opencodeSessions.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
@@ -217,6 +218,8 @@ export interface MentionTurnDeps {
   syncCodexAuth?: () => Promise<{ account: string | null }>;
   /** opencode 의 러너 전용 XDG 루트(`opencodeHome.ts`). codex 의 홈과 같은 자리·같은 이유다. */
   opencodeHome: string;
+  /** pi 의 러너 전용 상태 루트(`piHome.ts`). pi 를 안 돌리는 테스트는 비워 둔다. */
+  piHome?: string;
   /**
    * 이 턴을 돌릴 claude 계정 이름(`claudeAccounts.ts`). `null` 은 계정 지정 없음(시스템
    * 기본)이다. **세션 무효화 판정이 이 값을 쓴다** — 계정이 바뀌면 그 스레드의 claude
@@ -855,9 +858,9 @@ export async function runMentionTurn(
    * UI 로 지시문을 바꾸면 다음 턴부터 반영돼야 하고, 기억·채널 이름이 턴마다 다르다.
    * 되살린 세션이 앞 턴의 지시문을 들고 있다고 해서 **그 내용이 지금 것이라는 보장은 없다.**
    */
-  const promptForHarness = prefixesSystemPrompt(def.harness)
+  const promptForHarness = guardInjectedPrompt(prefixesSystemPrompt(def.harness)
     ? [systemPrompt, turnPrompt].filter((s) => s.length > 0).join('\n\n')
-    : turnPrompt;
+    : turnPrompt);
   let stdinFile: string | null = null;
   if (!usesTui) {
     stdinFile = await writePromptFile(deps.stateDir, promptForHarness);
@@ -866,6 +869,32 @@ export async function runMentionTurn(
   // **턴마다** 읽는다 — 사람이 스레드 칩을 바꾸면 다음 턴부터 먹는다(결정 11). 도는 턴의 argv 는
   // 여기서 정해지므로 도중에 바꾼 값은 이 턴에 닿지 않는다. 채널 최상위 멘션이면 그 글이 루트다.
   const turnModel = await resolveTurnModel(deps.harkroom, def, anchor ?? mentionId);
+  const extraMcpServers = deps.readTurnMcp
+    ? await deps.readTurnMcp(def.harness).catch(() => deps.extraMcpServers)
+    : deps.extraMcpServers;
+  // **허용 도구 목록으로 읽기 전용을 거는 하네스(pi)** — 턴 직전에 그 하네스에게 MCP 도구 이름을
+  // 묻는다. MCP 이름에 `*` 가 안 먹어서(실측) 이름을 다 적어야 한다. 못 받으면 내장 읽기 도구만
+  // 남긴다(`readonlyToolList`) — 답할 길을 잃는 쪽이 쓰기가 열리는 쪽보다 낫다. 로그엔 남긴다.
+  const allowlist = readonlyToolsFor(def.harness);
+  let turnReadonlyTools: string | null = null;
+  if (allowlist && def.mentionPermission === 'readonly') {
+    const discovered = await listPiMcpTools({
+      command: harnessCommand(def.harness),
+      args: allowlist.list,
+      env: {
+        ...process.env,
+        ...(deps.piHome ? { PI_CODING_AGENT_DIR: deps.piHome } : {}),
+        PATH: harnessPath(def.harness, process.env.PATH),
+      } as Record<string, string>,
+      // 워크스페이스가 아니라 러너 루트에서 묻는다 — 저장소의 `.pi/` 를 아예 안 보게(security 낮음).
+      // 이 명령은 `--no-approve` 를 받지 않는다(실측 `Unknown option`).
+      cwd: deps.piHome ?? rec.workspaceDir,
+    });
+    if (discovered === null || allowlist.mcpServers.some((s) => !(discovered[s]?.length))) {
+      console.warn(`[mentionTurn] ${key}: ${def.harness} 읽기 전용 — MCP 도구 이름을 못 받아 내장 읽기 도구만 연다 (${JSON.stringify(discovered)})`);
+    }
+    turnReadonlyTools = readonlyToolList(allowlist, discovered);
+  }
   const plan = buildTurnCommand({
     harness: def.harness,
     mode: 'mention',
@@ -879,12 +908,12 @@ export async function runMentionTurn(
     effort: turnModel.effort,
     mentionPermission: def.mentionPermission,
     mcpConfigPath: deps.mcpConfigPath,
-    extraMcpServers: deps.readTurnMcp
-      ? await deps.readTurnMcp(def.harness).catch(() => deps.extraMcpServers)
-      : deps.extraMcpServers,
+    extraMcpServers,
     operatorBin: deps.operatorBin,
     codexHome: deps.codexHome,
     opencodeHome: deps.opencodeHome,
+    piHome: deps.piHome,
+    readonlyToolList: turnReadonlyTools,
     claudeConfigDir: deps.claudeConfigDir,
     // 연쇄 깊이의 앞 고리 — 이 턴을 띄운 멘션이다(앵커가 아니다: 앵커는 스레드 루트일 수 있다).
     causeMessageId: mentionId,
@@ -1618,7 +1647,10 @@ export async function runMentionTurn(
   // 비밀 보관소 D7: 이 턴의 기록 파일을 적어 둔다 — 멘션이 끝날 때 마운트한 값을 가린다. 하네스 이름이 아니라
   // 표(세션 id 를 미리 주는가·뒤에 찾는가·XDG 인가)로 가른다. 못 찾으면 적지 않는다(가릴 파일이 없다).
   if (deps.noteTranscript && rec.sessionId) {
-    const transcript = preassignsSessionId(def.harness)
+    // pi 도 세션 id 를 미리 주지만 기록은 claude 의 `projects/` 가 아니라 자기 루트에 있다(security U2).
+    const transcript = usesPiHome(def.harness) && deps.piHome
+      ? await piSessionFile(deps.piHome, rec.sessionId).catch(() => null)
+      : preassignsSessionId(def.harness)
       ? await claudeSessionFilePath(rec.sessionId, { configDir: deps.claudeConfigDir }).catch(() => null)
       : discoversSessionIdAfterTurn(def.harness) && !usesXdgHome(def.harness)
         ? await codexRolloutFileFor(codexSessionsDir(deps.codexHome), rec.sessionId).catch(() => null)
@@ -1627,7 +1659,7 @@ export async function runMentionTurn(
       deps.noteTranscript(mentionId, transcript);
       // claude 는 jsonl 옆 `<sessionId>/` 에 큰 도구 출력(tool-results)·서브에이전트 전사(subagents)를 따로
       // 남긴다(security T1, 실측). 그 디렉터리도 가린다 — 없으면 가리기가 그냥 지나간다.
-      if (preassignsSessionId(def.harness)) deps.noteTranscript(mentionId, join(dirname(transcript), rec.sessionId));
+      if (preassignsSessionId(def.harness) && !usesPiHome(def.harness)) deps.noteTranscript(mentionId, join(dirname(transcript), rec.sessionId));
     }
   }
 

@@ -45,7 +45,8 @@ import { MentionQueue } from './mentionQueue.js';
 import { claudeAccountsRoot, createLiveAccountLane, loadClaudeAccountLane, presentAccounts } from './claudeAccounts.js';
 import { createAccountAssigner } from './accountAssign.js';
 import { syncCodexAuth } from './codexHome.js';
-import { allXdgApps, usesXdgHome, xdgAppFor } from './adapters/index.js';
+import { allXdgApps, usesPiHome, usesXdgHome, xdgAppFor } from './adapters/index.js';
+import { ensurePiHome } from './piHome.js';
 import { ensureOpencodeHome } from './opencodeHome.js';
 import { createMentionScheduler, type BatchContext } from './mentionScheduler.js';
 import { createSecretLeases } from './secretLeases.js';
@@ -265,7 +266,7 @@ const [me, guide] = await (async () => {
 // 뿌리가 아직 없는 첫 기동이면 읽을 것이 없다 — 그때는 빈 목록이고 새 이름으로 만든다.
 const stateDirNames = await readdir(config.stateDir).catch(() => [] as string[]);
 const {
-  agentStateDir, legacyPath, sessionsPath, workspaceBaseDir, codexHomeDir, opencodeHomeDir,
+  agentStateDir, legacyPath, sessionsPath, workspaceBaseDir, codexHomeDir, opencodeHomeDir, piHomeDir,
 } = resolveAgentStateDir(config.stateDir, me.handle, me.id, config.agentInstance, stateDirNames);
 
 // 뿌리 이름이 id 하나라(#850) 사람이 눈으로 찾을 길을 따로 낸다: `by-name/<handle> -> ../<뿌리>`.
@@ -288,6 +289,8 @@ let opencodeHome = opencodeHomeDir;
 for (const app of allXdgApps()) {
   opencodeHome = await ensureOpencodeHome({ opencodeHome: opencodeHomeDir, mcpServers: startupMcp, app });
 }
+// pi 도 같은 이유로 격리한다 — 한 변수(`PI_CODING_AGENT_DIR`)이고 MCP 는 그 안의 `mcp.json` 뿐이다(`piHome.ts`).
+const piHome = await ensurePiHome({ piHome: piHomeDir, mcpServers: startupMcp });
 
 // claude 계정 풀. **비어 있는 것이 정상이다** — 그때는 `CLAUDE_CONFIG_DIR` 를 주입하지 않아
 // 자식이 시스템 기본(`~/.claude`)을 쓴다(기존 동작).
@@ -372,6 +375,7 @@ const readTurnMcp = async (harness: AgentHarness): Promise<Record<string, McpSer
   const all = await readMcpServers(mcpConfigPath);
   const app = xdgAppFor(harness);
   if (usesXdgHome(harness) && app) await ensureOpencodeHome({ opencodeHome: opencodeHomeDir, mcpServers: all, app });
+  if (usesPiHome(harness)) await ensurePiHome({ piHome: piHomeDir, mcpServers: all });
   const { harkroom: _harkroom, avcs: _avcs, ...extra } = all;
   return extra;
 };
@@ -418,7 +422,7 @@ const attentionLedger = createAttentionLedger();
 const reviewFork = new ReviewFork({ stateDir: agentStateDir });
 interactive = createInteractiveManager({
   harkroom, store, exec, runTurn: runPtyTurn, me,
-  workspaceBaseDir, mcpConfigPath, extraMcpServers, readTurnMcp, codexHome, opencodeHome,
+  workspaceBaseDir, mcpConfigPath, extraMcpServers, readTurnMcp, codexHome, opencodeHome, piHome,
   syncCodexAuth: () => syncCodexAuth(codexHome),
   // **인터랙티브 턴은 페일오버하지 않는다.** 사람이 앉아 있고, 계정을 바꾸면 그 사람이
   // 보던 세션이 사라진다(세션 파일이 계정 디렉터리 안에 있다) — 관찰 도중에 화면을 갈아
@@ -508,6 +512,7 @@ const scheduler = createMentionScheduler({
     codexHome,
     syncCodexAuth: () => syncCodexAuth(codexHome),
     opencodeHome,
+    piHome,
     claudeAccount: account?.name ?? null,
     claudeConfigDir: account?.configDir ?? null,
     // 풀은 계정과 달리 축을 따라 바뀌지 않는다(축 자체가 한 풀이다) — 기동 때 정한 lane

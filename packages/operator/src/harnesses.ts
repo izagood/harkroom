@@ -12,11 +12,12 @@ import { join } from 'node:path';
 import { harnessFallbackBinDirs, type OperatorCapabilities, type AgentHarness } from '@harkroom/shared';
 
 /** 러너가 실제로 부르는 실행 파일 이름(`turn.ts::PRESETS.command`). */
-export const HARNESS_BINARIES: Record<Extract<AgentHarness, 'claude-code' | 'codex' | 'opencode' | 'kilo'>, string> = {
+export const HARNESS_BINARIES: Record<Extract<AgentHarness, 'claude-code' | 'codex' | 'opencode' | 'kilo' | 'pi'>, string> = {
   'claude-code': 'claude',
   codex: 'codex',
   opencode: 'opencode',
   kilo: 'kilo',
+  pi: 'pi',
 };
 
 /**
@@ -57,6 +58,10 @@ function credentialFile(harness: keyof typeof HARNESS_BINARIES, env: NodeJS.Proc
     // `<data>/kilo/auth.json` 을 가리킨다). Kilo Gateway 로그인은 못 쟀다 — BYOK 만 확인.
     case 'kilo':
       return join(env.XDG_DATA_HOME || join(home, '.local', 'share'), 'kilo', 'auth.json');
+    // pi 는 `/login` 이 `<PI_CODING_AGENT_DIR>/auth.json` 에 쓴다(기본 `~/.pi/agent`). 제공자를
+    // `models.json` 의 `apiKey` 나 환경변수로만 주는 사람은 이 파일이 없다 — 그 경우는 아래에서 함께 본다.
+    case 'pi':
+      return join(env.PI_CODING_AGENT_DIR || join(home, '.pi', 'agent'), 'auth.json');
   }
 }
 
@@ -73,7 +78,9 @@ export async function detectHarnesses(deps: DetectDeps): Promise<OperatorCapabil
       const known = knownInstallDir(harness, deps.home);
       if (known && await deps.exists(join(known, bin))) installed = true;
     }
-    const loggedIn = await deps.exists(credentialFile(harness, deps.env, deps.home));
+    const loggedIn = await deps.exists(credentialFile(harness, deps.env, deps.home))
+      // pi: 사람이 정의한 제공자(`models.json`)도 자격의 자리다(키를 그 안에 적거나 `${ENV}` 로 댄다).
+      || (harness === 'pi' && await deps.exists(join(deps.env.PI_CODING_AGENT_DIR || join(deps.home, '.pi', 'agent'), 'models.json')));
     out[harness] = { installed, loggedIn };
   }
   return out;

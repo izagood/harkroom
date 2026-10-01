@@ -45,6 +45,8 @@ function 계획(harness: (typeof RUNNABLE_HARNESSES)[number]): string {
     operatorBin: '/opt/harkroom/harkroom-operator',
     codexHome: '/tmp/codex-home',
     opencodeHome: '/tmp/opencode-home',
+    piHome: '/tmp/pi-home',
+    readonlyToolList: 'read,grep,find,ls',
     claudeConfigDir: null,
   }).command;
 }

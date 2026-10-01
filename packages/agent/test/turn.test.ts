@@ -843,3 +843,65 @@ describe('codex effort 오버라이드 인용 (security #968 ③)', () => {
     expect(plan.args).toContain('model_reasoning_effort="xhigh"');
   });
 });
+
+// pi (실측 2026-10-01). 권한 승인 장치가 없어 **읽기 전용 = 허용 도구 목록**이다(jaebin 결정).
+describe('pi 의 argv', () => {
+  const pi = (over: Record<string, unknown>) => buildTurnCommand({
+    ...base, harness: 'pi', mode: 'mention', sessionId: 'b2bc89d1-0000-4000-8000-000000000001', isFirstTurn: true,
+    piHome: '/state/pi-home', systemPrompt: 'SYS', systemPromptFile: '/state/sys.txt', ...over,
+  } as Parameters<typeof buildTurnCommand>[0]);
+
+  it('첫 턴도 이후 턴도 `--session-id <uuid>` 하나 — 러너가 미리 발급한다', () => {
+    expect(preassignsSessionId('pi')).toBe(true);
+    const first = pi({ mentionPermission: 'auto' });
+    const later = pi({ mentionPermission: 'auto', isFirstTurn: false });
+    expect(first.command).toBe('pi');
+    expect(first.args.join(' ')).toContain('--session-id b2bc89d1-0000-4000-8000-000000000001');
+    expect(later.args.join(' ')).toContain('--session-id b2bc89d1-0000-4000-8000-000000000001');
+  });
+
+  it('지시문은 파일 경로로만, 워크스페이스의 `.pi/` 는 안 들인다', () => {
+    const p = pi({ mentionPermission: 'auto' });
+    expect(p.args.join(' ')).toContain('--append-system-prompt /state/sys.txt');
+    expect(p.args).not.toContain('SYS');
+    expect(p.args).toContain('--no-approve');
+    expect(() => pi({ mentionPermission: 'auto', systemPromptFile: null })).toThrow(/파일로만/);
+  });
+
+  // security U1(2026-10-01): pi 는 cwd 의 `.pi/settings.json` 의 `sessionDir` 을 신뢰 판정 **전에** 읽는다
+  // (`--no-approve` 로 안 막힌다). 저장소가 그 값을 심으면 대화·지시문·MCP 결과가 저장소 안에 쌓인다.
+  // CLI 인자가 이기므로 **모든 턴**에 러너 루트를 못박는다 — 워크스페이스에 무엇이 있든 argv 가 같아야 한다.
+  it('세션 자리는 매 턴 `--session-dir <piHome>/sessions` — 저장소의 `.pi/settings.json` 이 못 바꾼다', () => {
+    for (const mentionPermission of ['auto', 'readonly'] as const) {
+      for (const isFirstTurn of [true, false]) {
+        const p = pi({ mentionPermission, isFirstTurn, readonlyToolList: 'read,grep,find,ls' });
+        const i = p.args.indexOf('--session-dir');
+        expect(i).toBeGreaterThanOrEqual(0);
+        expect(p.args[i + 1]).toBe(join('/state/pi-home', 'sessions'));
+      }
+    }
+  });
+
+  it('auto 는 도구를 제한하지 않는다', () => {
+    expect(pi({ mentionPermission: 'auto' }).args).not.toContain('--tools');
+  });
+
+  it('readonly 는 `--tools <닫힌 목록>` — 목록이 없으면 조립을 거절한다(열린 채로 뜨지 않는다)', () => {
+    const p = pi({ mentionPermission: 'readonly', readonlyToolList: 'read,grep,find,ls,mcp__harkroom__message_post' });
+    const i = p.args.indexOf('--tools');
+    expect(p.args[i + 1]).toBe('read,grep,find,ls,mcp__harkroom__message_post');
+    expect(() => pi({ mentionPermission: 'readonly' })).toThrow(/허용 도구 목록이 없다/);
+  });
+
+  it('PI_CODING_AGENT_DIR 을 러너 루트로, 사람의 세션 자리 변수는 물려주지 않는다', () => {
+    const before = process.env.PI_CODING_AGENT_SESSION_DIR;
+    process.env.PI_CODING_AGENT_SESSION_DIR = '/home/someone/pi-sessions';
+    try {
+      const p = pi({ mentionPermission: 'auto' });
+      expect(p.env.PI_CODING_AGENT_DIR).toBe('/state/pi-home');
+      expect(p.env.PI_CODING_AGENT_SESSION_DIR).toBeUndefined();
+    } finally {
+      if (before === undefined) delete process.env.PI_CODING_AGENT_SESSION_DIR; else process.env.PI_CODING_AGENT_SESSION_DIR = before;
+    }
+  });
+});

@@ -72,7 +72,7 @@ export interface AccountView {
 }
 
 /** harkroom 가 스키마·설정 차원에서 아는 harness 이름 전체. 실제 실행 가능 여부는 `RUNNABLE_HARNESSES` 를 본다. */
-export const AGENT_HARNESSES = ['claude-code', 'codex', 'gemini', 'opencode', 'kilo'] as const;
+export const AGENT_HARNESSES = ['claude-code', 'codex', 'gemini', 'opencode', 'kilo', 'pi'] as const;
 export type AgentHarness = (typeof AGENT_HARNESSES)[number];
 
 /**
@@ -91,9 +91,12 @@ export type AgentHarness = (typeof AGENT_HARNESSES)[number];
  * kilo(Kilo Code CLI 7.8.1)는 2026-10-01 실물로 첫 턴 → `-s <id>` 재개 → 읽기 전용 에이전트까지 쟀다.
  * opencode 포크라 같은 어댑터 모양을 쓴다(`packages/agent/src/adapters/kilo.ts`).
  *
+ * pi(0.99.2)는 2026-10-01 실물로 첫 턴 → `--session-id` 재개 → 허용 도구 목록 읽기 전용까지 쟀다
+ * (`packages/agent/src/adapters/pi.ts`).
+ *
  * gemini 는 `PRESETS.gemini === 'unsupported'` 로 구현 자체가 없다.
  */
-export const RUNNABLE_HARNESSES = ['claude-code', 'codex', 'opencode', 'kilo'] as const satisfies readonly AgentHarness[];
+export const RUNNABLE_HARNESSES = ['claude-code', 'codex', 'opencode', 'kilo', 'pi'] as const satisfies readonly AgentHarness[];
 
 /**
  * **이 하네스에 계정 풀 표면이 있는가.**
@@ -3309,6 +3312,8 @@ export function harnessBinaryName(harness: string | undefined | null): string | 
       return 'opencode';
     case 'kilo':
       return 'kilo';
+    case 'pi':
+      return 'pi';
     // `gemini` 는 `RUNNABLE_HARNESSES` 에 없어 러너가 실행하지 않는다(`PRESETS.gemini
     // === 'unsupported'`). 실행하지 않는 것의 실행 파일 이름을 말할 이유가 없다.
     default:
@@ -3385,6 +3390,8 @@ export function installHint(binary: string | undefined | null): string | null {
       return 'OpenAI Codex CLI 를 설치하면 함께 깔린다: https://developers.openai.com/codex/cli';
     case 'kilo':
       return 'Kilo Code CLI 를 설치하면 함께 깔린다: https://kilo.ai/docs/cli';
+    case 'pi':
+      return 'pi 코딩 에이전트를 설치하면 함께 깔린다: https://github.com/earendil-works/pi';
     case 'node':
       // 사이드카가 셔뱅(`#!/usr/bin/env node`)이라 **`node` 가 없으면 러너 자체가 안 뜬다.**
       // harkroom 가 동봉하지 않는 것 셋 중 하나다.
