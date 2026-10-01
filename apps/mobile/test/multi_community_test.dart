@@ -339,7 +339,7 @@ void main() {
       // 시트 전환은 어느 탭에서 왔든 채널 탭으로 간다.
       await tester.tap(find.byKey(const Key('tab-inbox')));
       await _settle(tester);
-      await tester.tap(find.byKey(const Key('tab-channels')));
+      await tester.tap(find.byKey(const Key('tab-home')));
       await _settle(tester);
       await tester.tap(find.byKey(const Key('community-header')));
       await _settle(tester);
@@ -354,9 +354,13 @@ void main() {
       expect(find.byKey(const Key('community-switched-toast')), findsOneWidget);
     });
 
-    testWidgets('나 탭에서 옮기면 부팅 화면을 거쳐도 나 탭에 남는다', (tester) async {
+    // S5a: 「나」 는 탭이 아니라 머리의 프로필 사진으로 여는 화면이다. 옮기면 그 화면을 닫고 홈으로
+    // 돌아오되, 보던 탭은 그대로 둔다.
+    testWidgets('나 화면에서 옮기면 부팅 화면을 거쳐 홈으로 돌아오고, 보던 탭은 그대로다', (tester) async {
       final app = await pumpHome(tester, _seed());
-      await tester.tap(find.byKey(const Key('tab-me')));
+      app.selectTab(1); // DM 탭 — 머리에 프로필 사진이 있다.
+      await _settle(tester);
+      await tester.tap(find.byKey(const Key('open-me')).last);
       await _settle(tester);
       final gate = Completer<void>();
       _beta.holdChannels = gate.future;
@@ -366,13 +370,14 @@ void main() {
       await _settle(tester);
       // 부팅 화면이 서 있다 — 홈이 통째로 내려갔다.
       expect(app.phase, AppPhase.booting);
-      expect(find.byKey(const Key('tab-me')), findsNothing);
+      expect(find.byKey(const Key('tab-home')), findsNothing);
 
       gate.complete();
       await _settle(tester);
       expect(app.phase, AppPhase.ready);
-      expect(app.homeTab, 2);
-      expect(find.byKey(const Key('me-community-add')), findsOneWidget);
+      expect(app.homeTab, 1);
+      expect(find.byKey(const Key('tab-dms')), findsOneWidget);
+      expect(find.byKey(const Key('me-community-add')), findsNothing);
     });
 
     testWidgets('다른 커뮤니티 수는 들어올 때와 60초마다 받고, 있으면 머리 타일에 점이 선다', (tester) async {
@@ -392,9 +397,9 @@ void main() {
       expect(find.byKey(const Key('community-header-dot')), findsNothing);
     });
 
-    testWidgets('시트는 다른 커뮤니티의 수와 만료 칩을 보이고, ⚙ 관리는 나 탭으로 간다', (tester) async {
+    testWidgets('시트는 다른 커뮤니티의 수와 만료 칩을 보이고, ⚙ 관리는 나 화면으로 간다', (tester) async {
       _beta.unreadInbox = 3;
-      final app = await pumpHome(tester, _seed());
+      await pumpHome(tester, _seed());
       await tester.tap(find.byKey(const Key('community-header')));
       await _settle(tester);
       expect(
@@ -403,7 +408,7 @@ void main() {
       );
       await tester.tap(find.byKey(const Key('switcher-manage')));
       await _settle(tester);
-      expect(app.homeTab, 2);
+      // S5a: 나 화면을 밀어 넣는다(탭이 아니다).
       expect(find.byKey(const Key('me-community-add')), findsOneWidget);
     });
 
@@ -486,7 +491,7 @@ void main() {
       addTearDown(app.dispose);
       await tester.pumpWidget(HarkroomApp(state: app));
       await _settle(tester);
-      await tester.tap(find.byKey(const Key('tab-me')));
+      await tester.tap(find.byKey(const Key('open-me')).first);
       await _settle(tester);
       return app;
     }

@@ -780,7 +780,7 @@ void main() {
     await _settle(tester);
     await tester.tap(find.byKey(const Key('tab-inbox')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('tab-channels')));
+    await tester.tap(find.byKey(const Key('tab-home')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('channel-c1')), findsOneWidget);

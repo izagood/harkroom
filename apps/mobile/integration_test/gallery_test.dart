@@ -109,9 +109,19 @@ void main() {
 
     await tester.tap(find.byKey(const Key('tab-inbox')));
     await shot(tester, '04-inbox');
+    // S5a: DM 탭 · 에이전트 탭(S7 전 빈 자리).
+    await tester.tap(find.byKey(const Key('tab-dms')));
+    await shot(tester, '04b-dms');
+    await tester.tap(find.byKey(const Key('tab-agents')));
+    await shot(tester, '04c-agents');
 
-    await tester.tap(find.byKey(const Key('tab-me')));
+    // S5a: 「나」 는 머리의 프로필 사진으로 연다.
+    await tester.tap(find.byKey(const Key('tab-home')));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(find.byKey(const Key('open-me')).first);
     await shot(tester, '05-me');
+    await tester.tap(find.byType(BackButton));
+    await tester.pump(const Duration(milliseconds: 400));
 
     // ── 다크 판. 기기 밝기를 바꾸면 `MaterialApp.darkTheme` 이 선다.
     tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
@@ -120,7 +130,7 @@ void main() {
     for (var i = 0; i < 20; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
-    await tester.tap(find.byKey(const Key('tab-channels')));
+    await tester.tap(find.byKey(const Key('tab-home')));
     await shot(tester, '06-dark-channels');
     await tester.tap(find.byKey(const Key('channel-c1')));
     await shot(tester, '07-dark-channel');

@@ -6,22 +6,33 @@ import '../ui/states.dart';
 import '../ui/parts.dart';
 import '../ui/tokens.dart';
 import 'community_screens.dart';
+import 'me_screen.dart';
 import 'message_list_screen.dart';
 
 /// 채널 목록. 폰의 루트 화면이고, 여기서 채널을 **밀어 넣어** 연다(옆 패널이 아니다).
 class ChannelListScreen extends StatelessWidget {
-  const ChannelListScreen({super.key});
+  const ChannelListScreen({super.key, this.dms = false});
+
+  /// DM 탭이면 DM 만, 홈이면 DM 을 뺀 채널만(개정판 3.2 — DM 은 홈 목록에서 빼서 DM 탭으로).
+  final bool dms;
 
   @override
   Widget build(BuildContext context) {
     final t = context.t;
     final app = context.app;
+    final rows = app.channels.where((c) => c.isDm == dms).toList(growable: false);
 
     return Scaffold(
       // 머리 왼쪽이 커뮤니티 자리다(설계 ①) — 데스크탑 레일 맨 위 타일과 같은 규칙.
       appBar: AppBar(
         titleSpacing: 8,
-        title: app.activeCommunity == null ? Text(t.channelsTitle) : const CommunityHeader(),
+        title: dms
+            ? Text(t.tabDms)
+            : app.activeCommunity == null
+                ? Text(t.channelsTitle)
+                : const CommunityHeader(),
+        // 「나」 는 탭이 아니라 머리 오른쪽의 프로필 사진이다(개정판 3.1·3.8).
+        actions: const [OpenMeButton(), SizedBox(width: 8)],
       ),
       body: SafeArea(
         child: Column(
@@ -31,14 +42,14 @@ class ChannelListScreen extends StatelessWidget {
             const ConnectionBand(),
             if (app.noticeKey != null) _Notice(messageKey: app.noticeKey!),
             Expanded(
-              child: app.channels.isEmpty
-                  ? Center(child: Text(t.channelsEmpty))
+              child: rows.isEmpty
+                  ? Center(child: Text(dms ? t.dmsEmpty : t.channelsEmpty))
                   : ListView.builder(
                       // 커뮤니티를 옮기면 맨 위부터 — 앞 커뮤니티의 스크롤 자리를 이어받지 않는다(설계 ④).
-                      key: PageStorageKey('channels-${app.activeKey}'),
-                      itemCount: app.channels.length,
+                      key: PageStorageKey('${dms ? 'dms' : 'channels'}-${app.activeKey}'),
+                      itemCount: rows.length,
                       itemBuilder: (context, i) {
-                        final channel = app.channels[i];
+                        final channel = rows[i];
                         final unread = app.reads[channel.id]?.unread ?? 0;
                         return ListTile(
                           // 글자로 줄을 집지 않는다 — 이름은 번역되고 바뀐다.
@@ -113,6 +124,25 @@ class _ChannelName extends StatelessWidget {
         fontWeight: unread ? FontWeight.w700 : FontWeight.w400,
         color: unread ? k.fg : k.mute,
       ),
+    );
+  }
+}
+
+/// 머리 오른쪽의 내 프로필 사진. 누르면 「나」 화면을 밀어 넣는다(시트 모양은 S6).
+class OpenMeButton extends StatelessWidget {
+  const OpenMeButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.app;
+    final me = app.me;
+    return IconButton(
+      key: const Key('open-me'),
+      tooltip: context.t.tabMe,
+      onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const MeScreen())),
+      icon: me == null
+          ? const Icon(Icons.account_circle_outlined)
+          : HarkroomAvatar(id: me.id, name: me.handle, size: 28),
     );
   }
 }
