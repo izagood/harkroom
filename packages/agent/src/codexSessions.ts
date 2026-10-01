@@ -159,6 +159,15 @@ async function matchRolloutFile(filePath: string, targetCwd: string): Promise<st
 }
 
 /**
+ * 세션 id 로 rollout 파일을 찾는다(비밀 보관소 D7 — 턴이 끝난 뒤 그 기록의 값을 가린다). codex 는
+ * 파일 이름 끝에 세션 id 를 붙인다(`rollout-<시각>-<id>.jsonl`). 없으면 null.
+ */
+export async function codexRolloutFileFor(sessionsDir: string, sessionId: string): Promise<string | null> {
+  const files = await walkRolloutFiles(sessionsDir);
+  return files.find((f) => extractFilenameUuid(f) === sessionId) ?? null;
+}
+
+/**
  * 방금 끝난 codex 턴이 만든(또는 이어받은) 세션의 id 를 찾는다.
  *
  * `<sessionsDir>/**\/rollout-*.jsonl` 을 mtime 역순(최신 우선)으로 훑어, 첫 줄의

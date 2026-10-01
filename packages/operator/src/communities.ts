@@ -36,6 +36,8 @@ export interface StartCommunitiesDeps {
   /** 러너 링크(스펙 §5)와 그 소켓 경로 — 러너가 붙는 곳. */
   runnerLink: RunnerLinkServer;
   socketPath: string;
+  /** 턴 비밀 루트 — 러너 env `HARKROOM_TURN_SECRETS_DIR` 로 간다(D7). */
+  turnSecretsDir?: string;
   /** `harkroom-operator` 실행 파일 — 러너가 하네스에 `mcp-bridge` 명령으로 굽는다. */
   operatorBin: string;
   /** 원격 MCP 의 OAuth 토큰(`mcpOAuth.ts`). 없으면 토큰을 굽지 않는다 — 하네스가 제 손으로 인증한다(옛 동작). */
@@ -114,6 +116,7 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
     appVersion: deps.appVersion,
     link: deps.runnerLink,
     socketPath: deps.socketPath,
+    ...(deps.turnSecretsDir ? { turnSecretsDir: deps.turnSecretsDir } : {}),
     operatorBin: deps.operatorBin,
     operatorOwnerId: () => community.current?.ownerAccountId() ?? Promise.resolve(null),
     async mcpConfig(definition) {

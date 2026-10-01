@@ -31,6 +31,8 @@ export interface AssignmentDeps {
   link: { expect(runnerId: string, agentId: string, secret: string): void; forget(runnerId: string): void };
   /** 오퍼레이터 소켓 경로 — 러너 env 에 실린다. */
   socketPath: string;
+  /** 턴 비밀 루트(`turnSecrets.ts`). 러너가 멘션을 놓기 전 기록을 가릴 때 값을 거기서 읽는다(D7). */
+  turnSecretsDir?: string;
   /** `harkroom-operator` 실행 파일 — 러너가 하네스의 MCP 설정에 `mcp-bridge` 명령으로 굽는다. */
   operatorBin: string;
   /**
@@ -141,6 +143,7 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
         [RUNNER_LINK_ENV.secret]: secret,
         HARKROOM_OPERATOR_BIN: deps.operatorBin,
         HARKROOM_MCP_CONFIG: mcp.path,
+        ...(deps.turnSecretsDir ? { HARKROOM_TURN_SECRETS_DIR: deps.turnSecretsDir } : {}),
         ...(deps.loginPath ? { PATH: deps.loginPath } : {}),
         // 없으면 넣지 않는다 — 거짓 버전을 심는 것보다 '모른다'가 낫다(design.md §4).
         ...(deps.appVersion ? { AGENT_VERSION: deps.appVersion } : {}),

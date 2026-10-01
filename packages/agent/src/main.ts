@@ -471,6 +471,8 @@ const secretLeases = createSecretLeases({
   issue: (cause) => harkroom.issueTurnLease(cause),
   notifyLease: (cause, lease) => relay.notifySecretLease(cause, lease),
   notifyEnded: (cause) => relay.notifySecretLeaseEnded(cause),
+  // 오퍼레이터가 spawn 때 준다. 없으면(옛 오퍼레이터) 기록을 가리지 않는다 — 마운트도 그 오퍼레이터에는 없다.
+  turnSecretsDir: process.env.HARKROOM_TURN_SECRETS_DIR ?? null,
 });
 
 const scheduler = createMentionScheduler({
@@ -490,6 +492,8 @@ const scheduler = createMentionScheduler({
   // 계정별로 갈리는 두 필드(`claudeAccount`·`claudeConfigDir`)만 계정 축이 채운다 —
   // 나머지는 계정과 무관하므로 매번 같은 값이다.
   buildTurnDeps: ({ ctx, mention, account, isLastAccount }) => ({
+    // 비밀 보관소 D7 — 이 턴의 기록 파일을 멘션 장부에 적는다(멘션이 끝날 때 가린다).
+    noteTranscript: (cause: string, path: string) => secretLeases.noteTranscript(cause, path),
     harkroom, memory: memoryCache, store, exec, runTurn: runPtyTurn, me, guide,
     channelName: ctx.channelName(mention.channelId),
     handles: ctx.handles, workspaceBaseDir, mcpConfigPath, extraMcpServers, readTurnMcp,
