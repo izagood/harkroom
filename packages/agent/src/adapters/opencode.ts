@@ -99,6 +99,12 @@ export const OPENCODE_ADAPTER: HarnessAdapter = {
     configDirEnv: ['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME'],
     pooled: false,
   },
+  xdgApp: {
+    dir: 'opencode',
+    configFile: 'opencode.jsonc',
+    schema: 'https://opencode.ai/config.json',
+    userConfigFiles: ['opencode.json'],
+  },
 
   // `--variant`("provider-specific reasoning effort, e.g. high, max, minimal"). harkroom 의
   // 다섯 값과 어떻게 맞물리는지는 미측정 — codex 의 `model_reasoning_effort` 와 같은 상태다.

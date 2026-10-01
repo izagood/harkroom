@@ -89,6 +89,7 @@ export const CODEX_ADAPTER: HarnessAdapter = {
    * 하네스를 보지 않아 정확히 그렇다).
    */
   account: { configDirEnv: ['CODEX_HOME'], pooled: false },
+  xdgApp: null,
 
   // `--effort` 플래그가 없다. `-c model_reasoning_effort="…"` 로 넘긴다 — 키는 실측했지만
   // 받는 값 집합은 `xhigh` 하나만 봤다(`turn.ts` 의 "절반만 확인됐다").

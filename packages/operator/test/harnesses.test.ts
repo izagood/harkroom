@@ -17,6 +17,7 @@ describe('detectHarnesses', () => {
       'claude-code': { installed: true, loggedIn: true },
       codex: { installed: true, loggedIn: false },
       opencode: { installed: false, loggedIn: false },
+      kilo: { installed: false, loggedIn: false },
     });
   });
   it('PATH 를 못 읽었으면(null) 아무것도 installed 가 아니다 — 모르는 것을 있다고 하지 않는다', async () => {
@@ -32,6 +33,7 @@ describe('detectHarnesses', () => {
       'claude-code': { installed: true, loggedIn: true },
       codex: { installed: true, loggedIn: true },
       opencode: { installed: false, loggedIn: false },
+      kilo: { installed: false, loggedIn: false },
     });
   });
 
@@ -65,5 +67,13 @@ describe('detectHarnesses', () => {
     // 목록을 손으로 적지 않는다 — 러너가 돌리는 하네스가 늘면 여기도 늘어야 하고,
     // 그 사실을 사람이 옮겨 적게 두면 언젠가 한쪽만 늘어난다(그때 증상은 409 거절이다).
     expect(Object.keys(HARNESS_BINARIES).sort()).toEqual([...RUNNABLE_HARNESSES].sort());
+  });
+
+  it('kilo(opencode 포크)의 자격증명은 `<data>/kilo/auth.json` 이다 — 실측 `kilo auth list`', async () => {
+    const out = await detectHarnesses({
+      path: '/usr/bin', env: {}, home: '/home/u',
+      exists: existsIn(['/usr/bin/kilo', '/home/u/.local/share/kilo/auth.json']),
+    });
+    expect(out.kilo).toEqual({ installed: true, loggedIn: true });
   });
 });

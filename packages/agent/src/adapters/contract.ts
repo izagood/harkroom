@@ -123,6 +123,13 @@ export interface TranscriptCli {
  * 조용하다 — 계정을 바꿨다고 믿는 러너가 남의 세션을 이어받는다. 그래서 축을 "환경변수
  * 하나"로 적지 않고 **함께 세팅해야 하는 목록**으로 적는다.
  */
+export interface XdgApp {
+  readonly dir: string;
+  readonly configFile: string;
+  readonly schema: string;
+  readonly userConfigFiles: readonly string[];
+}
+
 export interface AccountAxis {
   /** 자격증명·세션·설정을 한꺼번에 바꾸는 환경변수들. **전부 함께** 세팅해야 뜻이 있다. */
   configDirEnv: readonly string[];
@@ -237,6 +244,19 @@ export interface HarnessAdapter {
   // ── T2: 없으면 계정 하나로 돈다 ──────────────────────────────────────────────
 
   readonly account: AccountAxis | null;
+
+  /**
+   * XDG 로 상태를 옮기는 하네스(opencode 계열)가 **XDG 루트 아래 어느 이름으로** 사는가.
+   *
+   * opencode 와 그 포크 Kilo 는 같은 모양(XDG 셋 · `<config>/<dir>/<configFile>` ·
+   * `<data>/<dir>/auth.json`)인데 **하위 디렉터리와 파일 이름만** 다르다(실측 2026-10-01,
+   * Kilo 7.8.1: `kilo/kilo.jsonc`, `kilo/auth.json`). 그 차이를 이름 비교 대신 이 칸이 든다.
+   * 이름이 달라 한 러너 루트를 둘이 함께 써도 서로의 설정을 덮지 않는다.
+   *
+   * `userConfigFiles` — 사람 설정(제공자 정의)을 물려받을 때 볼 파일들, 앞의 것이 이긴다.
+   * XDG 하네스가 아니면 `null`.
+   */
+  readonly xdgApp: XdgApp | null;
 
   // ── T3: 없으면 기본값으로 돈다 ───────────────────────────────────────────────
 

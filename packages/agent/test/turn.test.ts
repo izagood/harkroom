@@ -793,3 +793,38 @@ describe('상태 디렉터리가 도는 중에 사라졌을 때 (2026-09-14)', (
     expect(existsSync(없는디렉터리)).toBe(false);
   });
 });
+
+// Kilo(opencode 포크, 실측 2026-10-01). **`--auto` 와 읽기 전용 에이전트를 같이 주면 Kilo 는
+// deny 된 bash 를 그대로 실행했다** — 화면엔 "denied" 가 뜨는데 파일이 생겼다. 그래서 이
+// 둘이 한 argv 에 같이 오르지 않는 것이 이 하네스의 읽기 전용 보증 그 자체다.
+describe('kilo 의 argv', () => {
+  const kilo = (over: Record<string, unknown>) => buildTurnCommand({
+    ...base, harness: 'kilo', mode: 'mention', sessionId: null, isFirstTurn: true,
+    opencodeHome: '/state/opencode-home', ...over,
+  } as Parameters<typeof buildTurnCommand>[0]);
+
+  it('실행 파일은 kilo 이고, 첫 턴은 id 없이 뜬다(사후 발견)', () => {
+    const p = kilo({ mentionPermission: 'auto' });
+    expect(p.command).toBe('kilo');
+    expect(p.args).toContain('--auto');
+    expect(p.args).not.toContain('-s');
+    expect(preassignsSessionId('kilo')).toBe(false);
+  });
+
+  it('재개는 `-s <id>`', () => {
+    const p = kilo({ sessionId: 'ses_abc', isFirstTurn: false, mentionPermission: 'auto' });
+    expect(p.args.join(' ')).toContain('-s ses_abc');
+  });
+
+  it('readonly 는 deny 에이전트 **단독** — `--auto` 가 같이 오르면 deny 가 뚫린다', () => {
+    const p = kilo({ mentionPermission: 'readonly' });
+    expect(p.args.join(' ')).toContain('--agent harkroom-readonly');
+    expect(p.args).not.toContain('--auto');
+  });
+
+  it('XDG 셋을 러너 루트로 옮긴다 — 사람의 kilo 설정·MCP 를 물려받지 않는다', () => {
+    const p = kilo({ mentionPermission: 'auto' });
+    expect(p.env.XDG_CONFIG_HOME).toBe(join('/state/opencode-home', 'config'));
+    expect(p.env.XDG_DATA_HOME).toBe(join('/state/opencode-home', 'data'));
+  });
+});

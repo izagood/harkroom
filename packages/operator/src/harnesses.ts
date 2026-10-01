@@ -12,10 +12,11 @@ import { join } from 'node:path';
 import { harnessFallbackBinDirs, type OperatorCapabilities, type AgentHarness } from '@harkroom/shared';
 
 /** 러너가 실제로 부르는 실행 파일 이름(`turn.ts::PRESETS.command`). */
-export const HARNESS_BINARIES: Record<Extract<AgentHarness, 'claude-code' | 'codex' | 'opencode'>, string> = {
+export const HARNESS_BINARIES: Record<Extract<AgentHarness, 'claude-code' | 'codex' | 'opencode' | 'kilo'>, string> = {
   'claude-code': 'claude',
   codex: 'codex',
   opencode: 'opencode',
+  kilo: 'kilo',
 };
 
 /**
@@ -52,6 +53,10 @@ function credentialFile(harness: keyof typeof HARNESS_BINARIES, env: NodeJS.Proc
     // opencode 는 XDG 를 따른다 — 자리가 한 단계 깊다(`<data>/opencode/auth.json`).
     case 'opencode':
       return join(env.XDG_DATA_HOME || join(home, '.local', 'share'), 'opencode', 'auth.json');
+    // Kilo(opencode 포크)도 같은 자리, 이름만 `kilo` 다(실측 2026-10-01: `kilo auth list` 가
+    // `<data>/kilo/auth.json` 을 가리킨다). Kilo Gateway 로그인은 못 쟀다 — BYOK 만 확인.
+    case 'kilo':
+      return join(env.XDG_DATA_HOME || join(home, '.local', 'share'), 'kilo', 'auth.json');
   }
 }
 

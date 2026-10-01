@@ -43,6 +43,7 @@ export const CLAUDE_CODE_ADAPTER: HarnessAdapter = {
 
   // 계정 하나 = `CLAUDE_CONFIG_DIR` 하나. 목록·로그인·사용량·페일오버 표면이 다 있다.
   account: { configDirEnv: ['CLAUDE_CONFIG_DIR'], pooled: true },
+  xdgApp: null,
 
   effort: { via: 'flag', flag: '--effort' },
   // claude 는 `.claude/skills/<slug>/SKILL.md` 를 읽는다. 지금 `syncSkills` 는 하네스를 보지
