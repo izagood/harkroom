@@ -263,6 +263,57 @@ class StringsKo implements Strings {
   String get attachmentFailed => '이 파일을 불러오지 못했다.';
 
   @override
+  String get artifactVersion => 'v{v}';
+
+  @override
+  String get artifactVersionWithPrev => 'v{v} · 이전 {prev}개';
+
+  @override
+  String get artifactLatest => '최신 v{v} 있음';
+
+  @override
+  String get artifactOpen => '미리보기 열기';
+
+  @override
+  String get artifactMadeBy => '에이전트가 만든 페이지';
+
+  @override
+  String get artifactReload => '다시 불러오기';
+
+  @override
+  String get artifactClose => '미리보기 닫기';
+
+  @override
+  String get artifactLoading => '불러오는 중…';
+
+  @override
+  String get artifactTooLarge => '미리보기 한도를 넘는다({size}).';
+
+  @override
+  String get artifactForbidden => '이 미리보기를 볼 수 없다(채널 멤버가 아니다).';
+
+  @override
+  String get artifactGone => '지워진 미리보기다.';
+
+  @override
+  String get artifactFailed => '미리보기를 열지 못했다.';
+
+  @override
+  String get artifactOpenedOutside => '브라우저로 열었다.';
+
+  @override
+  String get artifactLeaveTitle => '미리보기 밖으로 이동';
+
+  @override
+  String get artifactLeaveBody => '이 페이지가 {host} 로 이동하려 한다.';
+
+  @override
+  String get artifactLeaveOpen => '브라우저로 열기';
+
+  @override
+  String get artifactLeaveCancel => '취소';
+
+  @override
   String get timeUnderMinute => '1분 미만';
 
   @override

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
+import 'artifact_preview.dart';
 
 /// 메시지에 달린 첨부.
 ///
@@ -27,15 +28,145 @@ class AttachmentStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (attachments.isEmpty) return const SizedBox.shrink();
+    // 미리보기의 표지는 카드 안에 그린다 — 따로 그림으로 한 번 더 보이면 같은 것이 두 번이다.
+    final covers = {for (final a in attachments) if (a.artifact?.coverAttachmentId != null) a.artifact!.coverAttachmentId!};
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         for (final a in attachments)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: canPreview(a) ? _Preview(attachment: a) : _FileRow(attachment: a),
-          ),
+          if (!covers.contains(a.id))
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: a.artifact != null
+                  ? ArtifactCard(
+                      attachment: a,
+                      cover: attachments.where((c) => c.id == a.artifact!.coverAttachmentId).firstOrNull,
+                    )
+                  : canPreview(a)
+                      ? _Preview(attachment: a)
+                      : _FileRow(attachment: a),
+            ),
       ],
+    );
+  }
+}
+
+/// 같은 미리보기의 **알려진 가장 높은 버전**. 서버의 `latestVersion` 은 목록을 읽은 순간 값이라 새 버전 글이
+/// 실시간으로 와도 옛 글의 값은 그대로다 — 그래서 지금 메모리에 있는 채널·스레드 글을 함께 본다.
+int latestKnownVersion(Iterable<List<MessageRow>> lists, ArtifactRef ref) {
+  var best = ref.latestVersion;
+  for (final list in lists) {
+    for (final m in list) {
+      for (final a in m.attachments) {
+        final r = a.artifact;
+        if (r != null && r.artifactId == ref.artifactId && r.version > best) best = r.version;
+      }
+    }
+  }
+  return best;
+}
+
+/// 미리보기(아티팩트) 카드(⑤, designer d8ca47be). **목록 안에서 페이지를 띄우지 않는다** — 축소 WebView 를
+/// 깔면 스크롤할 때마다 스크립트가 돌고 폰이 무거워진다. 카드 전체가 누르는 자리다. 표지는 같은 글의 그림
+/// 첨부이고, SVG 는 [AttachmentStrip.canPreview] 가 거른다(security). 없으면 그림 칸 없이 글 카드로 그린다.
+class ArtifactCard extends StatelessWidget {
+  const ArtifactCard({super.key, required this.attachment, this.cover});
+
+  final AttachmentRow attachment;
+  final AttachmentRow? cover;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final app = context.app;
+    final ref = attachment.artifact!;
+    final latest = latestKnownVersion([...app.messages.values, ...app.threads.values], ref);
+    final api = app.api;
+    final coverOk = cover != null && AttachmentStrip.canPreview(cover!) && api != null;
+    final theme = Theme.of(context);
+    final version = ref.version > 1
+        ? t.artifactVersionWithPrev.replaceAll('{v}', '${ref.version}').replaceAll('{prev}', '${ref.version - 1}')
+        : t.artifactVersion.replaceAll('{v}', '${ref.version}');
+    return Semantics(
+      button: true,
+      label: '${t.artifactOpen} ${ref.title}',
+      child: InkWell(
+        key: Key('artifact-card-${attachment.id}'),
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => openArtifactPreview(context, attachment),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 448),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border.all(color: theme.dividerColor),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (coverOk)
+                  ClipRRect(
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                    child: AspectRatio(
+                      aspectRatio: 16 / 9,
+                      child: Image.network(
+                        api.attachmentUrl(cover!.id),
+                        key: const Key('artifact-card-cover'),
+                        headers: api.authHeaders,
+                        fit: BoxFit.cover,
+                        // 표지를 못 받으면 칸을 비워 두지 않는다 — 글 카드만 남긴다.
+                        errorBuilder: (context, error, stack) => const SizedBox.shrink(),
+                      ),
+                    ),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.all(10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(ref.title,
+                                style: theme.textTheme.titleSmall, overflow: TextOverflow.ellipsis),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(version, style: theme.textTheme.bodySmall),
+                        ],
+                      ),
+                      if (latest > ref.version)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Container(
+                            key: const Key('artifact-card-latest'),
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: theme.dividerColor),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(t.artifactLatest.replaceAll('{v}', '$latest'),
+                                style: theme.textTheme.labelSmall),
+                          ),
+                        ),
+                      if (ref.summary != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(ref.summary!,
+                              style: theme.textTheme.bodySmall, maxLines: 2, overflow: TextOverflow.ellipsis),
+                        ),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text('HTML · ${formatBytes(attachment.byteSize)}', style: theme.textTheme.labelSmall),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

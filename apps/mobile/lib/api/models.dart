@@ -120,12 +120,16 @@ class AttachmentRow {
     required this.filename,
     required this.contentType,
     required this.byteSize,
+    this.artifact,
   });
 
   final String id;
   final String filename;
   final String contentType;
   final int byteSize;
+
+  /// 미리보기(아티팩트) 버전이면 있다(서버 0.3.133~, `artifact.publish`). 보통 첨부에는 없다.
+  final ArtifactRef? artifact;
 
   bool get isImage => contentType.startsWith('image/');
 
@@ -134,6 +138,54 @@ class AttachmentRow {
         filename: _str(j['filename']),
         contentType: _str(j['contentType'], 'application/octet-stream'),
         byteSize: _int(j['sizeBytes']),
+        artifact: j['artifact'] is Map ? ArtifactRef.fromJson((j['artifact']! as Map).cast<String, Object?>()) : null,
+      );
+}
+
+/// 첨부가 가리키는 미리보기 버전. `title`·`summary` 는 **그 글의 버전** 것이다(#1065) — 옛 카드는 그때 이름을
+/// 보인다. `latestVersion` 은 목록을 읽은 순간 값이라, 화면은 더 높은 버전 글이 들어오면 스스로 알약을 갱신한다.
+class ArtifactRef {
+  const ArtifactRef({
+    required this.artifactId,
+    required this.version,
+    required this.latestVersion,
+    required this.title,
+    this.latestTitle,
+    this.summary,
+    this.coverAttachmentId,
+  });
+
+  final String artifactId;
+  final int version;
+  final int latestVersion;
+  final String title;
+  final String? latestTitle;
+  final String? summary;
+  final String? coverAttachmentId;
+
+  static ArtifactRef fromJson(Map<String, Object?> j) => ArtifactRef(
+        artifactId: _str(j['artifactId']),
+        version: _int(j['version'], 1),
+        latestVersion: _int(j['latestVersion'], _int(j['version'], 1)),
+        title: _str(j['title']),
+        latestTitle: j['latestTitle'] is String ? j['latestTitle']! as String : null,
+        summary: j['summary'] is String ? j['summary']! as String : null,
+        coverAttachmentId: j['coverAttachmentId'] is String ? j['coverAttachmentId']! as String : null,
+      );
+}
+
+/// `POST /attachments/:id/preview` 의 답 — 60초짜리 서명 경로. 열 때마다 새로 받는다.
+class PreviewTicket {
+  const PreviewTicket({required this.path, required this.title, required this.version});
+
+  final String path;
+  final String title;
+  final int version;
+
+  static PreviewTicket fromJson(Map<String, Object?> j) => PreviewTicket(
+        path: _str(j['path']),
+        title: _str(j['title']),
+        version: _int(j['version'], 1),
       );
 }
 
