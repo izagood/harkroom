@@ -50,6 +50,9 @@ export interface CommunityRuntime {
   /**
    * 설정·토큰을 다시 읽어 그 커뮤니티를 띄운다(앱의 `operatorRegister` 뒤). 이미 떠 있으면 그것,
    * 토큰이 없으면 null. 오퍼레이터를 다시 띄우지 않고 등록을 반영하는 유일한 길이다.
+   * **토큰이 바뀌었으면(다시 등록) 떠 있던 것을 내리고 새 토큰으로 다시 붙는다** — 서버는 옛 등록을
+   * 폐기하고 소켓을 끊으므로, 옛 토큰을 쥔 채 남으면 재접속마다 401 이다. 러너는 레지스트리가
+   * 들고 있어 그대로 살고, 새 연결의 assign 이 멱등 spawn 으로 그것을 다시 잡는다.
    */
   startOne(baseUrl: string): Promise<CommunityInstance | null>;
 }
@@ -145,12 +148,21 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
   });
 
   const started: CommunityInstance[] = [];
+  /** 인스턴스가 붙을 때 쓴 토큰 — 다시 등록을 알아보는 기준이다. */
+  const tokens = new WeakMap<CommunityInstance, string>();
   const startOne = async (rawUrl: string, section?: { agents: Record<string, import('./config.js').LocalAgentConfig> }): Promise<CommunityInstance | null> => {
     const baseUrl = communityKey(rawUrl);
-    const existing = started.find((c) => c.baseUrl === baseUrl);
-    if (existing) return existing;
-    const agents = section?.agents ?? (await readConfig(configPath)).communities[baseUrl]?.agents ?? {};
     const token = await secrets.getToken(baseUrl);
+    const existingAt = started.findIndex((c) => c.baseUrl === baseUrl);
+    if (existingAt >= 0) {
+      const existing = started[existingAt]!;
+      if (!token || tokens.get(existing) === token) return existing;
+      deps.log(`다시 등록 — 새 토큰으로 다시 붙는다: ${baseUrl}`);
+      existing.stop();
+      // 같은 배열에서 뺀다 — run.ts 가 이 참조로 러너 프레임·exit 를 커뮤니티에 나눈다.
+      started.splice(existingAt, 1);
+    }
+    const agents = section?.agents ?? (await readConfig(configPath)).communities[baseUrl]?.agents ?? {};
     if (!token) { deps.log(`커뮤니티 건너뜀(토큰 없음 — 등록이 필요하다): ${baseUrl}`); return null; }
     const ref: { current: CommunityInstance | null } = { current: null };
     const reconciler = createAssignmentReconciler(runnerDeps(ref));
@@ -166,6 +178,7 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
       },
     });
     ref.current = community;
+    tokens.set(community, token);
     community.start();
     started.push(community);
     return community;

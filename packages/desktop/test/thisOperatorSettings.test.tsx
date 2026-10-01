@@ -89,34 +89,59 @@ describe('이 머신의 오퍼레이터 (UX ⑥b-2)', () => {
     expect(status.textContent).toBe('등록됨 · this-mac · 연결됨');
     expect(screen.getByTestId('this-operator-register').textContent).toBe('다시 등록');
     expect(screen.getByTestId('this-operator-dot').className).toContain('bg-success');
-    expect(screen.getByTestId('this-operator-again-note').textContent).toContain('오퍼레이터 목록에서 직접 지워야 한다');
+    expect(screen.getByTestId('this-operator-again-note').textContent).toBe('다시 등록하면 옛 등록은 자동으로 폐기되고 배정은 새 등록으로 옮겨진다.');
   });
 
   /**
-   * 다시 등록은 옛 등록을 폐기하지 않는다(서버 claim 은 매번 새 행) — 그래서 한 번 묻고, 기본 초점은
-   * [취소] 다(designer·security #1021). 취소하면 코드도 발급하지 않는다.
+   * 다시 등록은 서버가 옛 등록을 폐기하고 배정을 옮긴다(`replaces`) — 확인 창 없이 바로 등록한다.
+   * 결과는 서버의 답(`replaced`)으로 말한다. 옛 서버는 그 키를 주지 않으므로 "직접 지워라" 로 물러난다.
    */
-  it('"다시 등록" 은 확인 창을 먼저 띄우고(기본 초점 취소), 확인해야 등록한다', async () => {
+  it('"다시 등록" 은 확인 창 없이 등록하고, 서버가 폐기했다고 답하면 옮긴 배정 수를 말한다', async () => {
+    const invoke = vi.fn(async (cmd: string) => (cmd === 'operator_register'
+      ? { operatorId: 'op-8', name: 'this-mac', baseUrl: 'https://example.com', replaced: { operatorId: 'op-7', movedAssignments: 2 } }
+      : cmd === 'operator_agents_list' ? local(true) : {}));
+    withTauri(invoke);
+    fakeController([{ id: 'op-7', name: 'this-mac', online: true }]);
+    render(<ThisOperatorSettings />);
+    await waitFor(() => expect(screen.getByTestId('this-operator-status').dataset.state).toBe('registered'));
+    fireEvent.click(screen.getByTestId('this-operator-register'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_register', expect.objectContaining({ code: 'hkreg_abc' })));
+    expect((await screen.findByTestId('this-operator-replaced')).textContent).toBe('옛 등록을 폐기했다. 배정 2개를 새 등록으로 옮겼다.');
+    expect(screen.queryByTestId('this-operator-kept')).toBeNull();
+    // 옛 id 는 비교·결과에만 쓰이고 화면에 그려지지 않는다.
+    expect(document.body.textContent).not.toContain('op-7');
+  });
+
+  it('옛 서버라 폐기 답이 없으면 옛 등록이 토큰째 남았다고, 직접 지우라고 말한다', async () => {
     const invoke = vi.fn(async (cmd: string) => (cmd === 'operator_register'
       ? { operatorId: 'op-8', name: 'this-mac', baseUrl: 'https://example.com' }
       : cmd === 'operator_agents_list' ? local(true) : {}));
     withTauri(invoke);
-    const c = fakeController([{ id: 'op-7', name: 'this-mac', online: true }]);
+    fakeController([{ id: 'op-7', name: 'this-mac', online: true }]);
     render(<ThisOperatorSettings />);
     await waitFor(() => expect(screen.getByTestId('this-operator-status').dataset.state).toBe('registered'));
     fireEvent.click(screen.getByTestId('this-operator-register'));
-    const dialog = await screen.findByRole('dialog', { name: '이 머신을 다시 등록할까?' });
-    expect(dialog.textContent).toContain('오퍼레이터 목록에서 직접 지워야 한다');
-    expect(document.activeElement).toBe(screen.getByTestId('confirm-cancel'));
-    fireEvent.click(screen.getByTestId('confirm-cancel'));
-    expect(screen.queryByRole('dialog')).toBeNull();
-    expect(c.operatorRegisterCode).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByTestId('this-operator-register'));
-    fireEvent.click(await screen.findByTestId('confirm-ok'));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_register', expect.objectContaining({ code: 'hkreg_abc' })));
+    const kept = await screen.findByTestId('this-operator-kept');
+    expect(kept.textContent).toContain('오퍼레이터 목록에서 직접 지워라');
+    expect(kept.textContent).toContain('토큰도 살아 있다');
+    expect(screen.queryByTestId('this-operator-replaced')).toBeNull();
   });
 
-  it('등록 상태를 확인하는 동안에는 버튼이 회색으로 막혀 있다 — 확인 창 없이 두 번 등록하지 않게', async () => {
+  it('처음 등록(옛 등록 없음)에는 폐기 문구가 없다', async () => {
+    const invoke = vi.fn(async (cmd: string) => (cmd === 'operator_register'
+      ? { operatorId: 'op-7', name: 'this-mac', baseUrl: 'https://example.com', replaced: null }
+      : cmd === 'operator_agents_list' ? local(false) : {}));
+    withTauri(invoke);
+    fakeController();
+    render(<ThisOperatorSettings />);
+    fireEvent.click(await screen.findByText('이 머신을 등록'));
+    await screen.findByTestId('operator-registered-here');
+    expect(screen.queryByTestId('this-operator-kept')).toBeNull();
+    expect(screen.queryByTestId('this-operator-replaced')).toBeNull();
+  });
+
+  it('등록 상태를 확인하는 동안에는 버튼이 회색으로 막혀 있다 — 등록된 머신을 모르고 누르지 않게', async () => {
     let release: (v: unknown) => void = () => {};
     withTauri(vi.fn((cmd: string) => (cmd === 'operator_agents_list'
       ? new Promise((r) => { release = r; }) : Promise.resolve({}))));

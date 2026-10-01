@@ -64,7 +64,7 @@ describe('register', () => {
       return new Response(JSON.stringify({ operator: { id: 'op-1', name: 'lab' }, token: 'hkop_secret' }), { status: 200 });
     }) as unknown as typeof fetch;
     const out = await register({ baseUrl: 'https://example.com', code: 'ABCD-1234', name: 'lab' }, { dataDir: dir, fetchImpl });
-    expect(out).toEqual({ operatorId: 'op-1', name: 'lab', baseUrl: 'https://example.com' });
+    expect(out).toEqual({ operatorId: 'op-1', name: 'lab', baseUrl: 'https://example.com', replaced: null });
     expect(calls).toEqual([{ url: 'https://example.com/operators/claim', body: { code: 'ABCD-1234', name: 'lab' } }]);
     expect(await fileSecrets(join(dir, 'operator', 'secrets')).getToken('https://example.com')).toBe('hkop_secret');
     const cfg = JSON.parse(await readFile(join(dir, 'operator', 'operator.json'), 'utf8'));
@@ -79,6 +79,31 @@ describe('register', () => {
     await register({ baseUrl: 'https://example.com', code: 'C', name: 'lab' }, { dataDir: dir, fetchImpl });
     const cfg = JSON.parse(await readFile(join(dir, 'operator', 'operator.json'), 'utf8'));
     expect(cfg.communities['https://example.com'].agents).toEqual({ 'a-1': { workingDir: '~/x' } });
+  });
+  it('다시 등록이면 옛 operatorId 를 replaces 로 싣고, 서버가 폐기했다는 답을 그대로 돌려준다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'op-cli-'));
+    const { writeConfig } = await import('../src/config.js');
+    await writeConfig(join(dir, 'operator', 'operator.json'), { communities: { 'https://example.com': { agents: {}, operatorId: 'op-old' } } });
+    let sent: unknown = null;
+    const fetchImpl = (async (_u: unknown, init?: RequestInit) => {
+      sent = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({
+        operator: { id: 'op-new', name: 'lab' }, token: 'hkop_new', replaced: { operatorId: 'op-old', movedAssignments: 2 },
+      }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const out = await register({ baseUrl: 'https://example.com', code: 'C', name: 'lab' }, { dataDir: dir, fetchImpl });
+    expect(sent).toEqual({ code: 'C', name: 'lab', replaces: 'op-old' });
+    expect(out.replaced).toEqual({ operatorId: 'op-old', movedAssignments: 2 });
+    const cfg = JSON.parse(await readFile(join(dir, 'operator', 'operator.json'), 'utf8'));
+    expect(cfg.communities['https://example.com'].operatorId).toBe('op-new');
+  });
+  it('옛 서버(replaced 를 모른다)면 replaced 는 null — 화면이 "직접 지워라"로 물러난다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'op-cli-'));
+    const { writeConfig } = await import('../src/config.js');
+    await writeConfig(join(dir, 'operator', 'operator.json'), { communities: { 'https://example.com': { agents: {}, operatorId: 'op-old' } } });
+    const fetchImpl = (async () => new Response(JSON.stringify({ operator: { id: 'op-new', name: 'lab' }, token: 'hkop_new' }), { status: 200 })) as unknown as typeof fetch;
+    const out = await register({ baseUrl: 'https://example.com', code: 'C', name: 'lab' }, { dataDir: dir, fetchImpl });
+    expect(out.replaced).toBeNull();
   });
   it('서버가 거절하면(코드 만료 등) 던지고 아무것도 쓰지 않는다', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'op-cli-'));

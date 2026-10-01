@@ -41,6 +41,11 @@ export interface OperatorHub {
   refusalOf(agentId: string): { reason: string; at: string } | null;
   /** 파싱된 모든 프레임을 구독한다. 배정 라우트(hello 에 배정 재전송)와 릴레이(단계 3)가 쓴다. */
   onFrame(listener: (operatorId: string, frame: OperatorToServerFrame) => void): () => void;
+  /**
+   * 그 오퍼레이터의 소켓을 서버가 끊는다(폐기). 등록은 소켓의 close 핸들러가 지운다 — 여기서
+   * 지우면 close 가 두 번 퍼진다. 붙어 있지 않으면 아무 일도 없다.
+   */
+  disconnect(operatorId: string, code: number, reason: string): void;
   /** 오퍼레이터가 떨어졌다(소켓 close·교체). 릴레이가 그 오퍼레이터의 러너 세션을 접는 근거다. */
   onClose(listener: (operatorId: string) => void): () => void;
 }
@@ -88,6 +93,10 @@ export function createOperatorHub(): OperatorHub {
         if (frame.reason && frame.agentId) refusals.set(frame.agentId, { reason: frame.reason, at: new Date().toISOString() });
       }
       bus.emit('frame', operatorId, frame);
+    },
+
+    disconnect(operatorId, code, reason) {
+      try { live.get(operatorId)?.socket.close(code, reason); } catch { /* 이미 죽은 소켓 */ }
     },
 
     isOnline: (operatorId) => live.has(operatorId),
