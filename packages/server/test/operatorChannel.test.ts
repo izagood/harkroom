@@ -13,15 +13,15 @@ import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, registerOperator } from './helpers/fixtures.js';
 import { onEvent } from '../src/events.js';
 
-let app: FastifyInstance; let stop: () => Promise<void>;
+let app: FastifyInstance; let stop: () => Promise<void>; let pool: Pool;
 let adminToken: string; let opToken: string; let operatorId: string; let baseUrl: string;
 /** `/ws` 와 같은 값이어야 한다(buildServer 의 wsHeartbeatMs) — 갈라 두면 수명이 갈린다. */
 const HEARTBEAT_MS = 120;
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 
 beforeAll(async () => {
-  const db = await startTestDb(); stop = db.stop;
-  app = await buildServer({ pool: db.pool as Pool, wsHeartbeatMs: HEARTBEAT_MS });
+  const db = await startTestDb(); stop = db.stop; pool = db.pool as Pool;
+  app = await buildServer({ pool, wsHeartbeatMs: HEARTBEAT_MS });
   ({ token: adminToken } = await bootstrapAdmin(app));
   ({ token: opToken, operatorId } = await registerOperator(app, adminToken, '테스트기기'));
   await app.listen({ port: 0, host: '127.0.0.1' });
@@ -164,5 +164,20 @@ describe('다시 등록 — commit 뒤 부수 효과가 던져도', () => {
       expect(res.json().replaced.operatorId).toBe(op.operatorId);
     } finally { off(); }
     expect(await done).toBe(4401);
+  });
+
+  it('구독자가 던져도 옛 토큰 폐기(operator.revoked) 감사 행은 남는다', async () => {
+    const op = await registerOperator(app, adminToken, '감사기기');
+    const off = onEvent((e) => { if (e.type === 'operator.changed' && Array.isArray(e.audience)) throw new Error('구독자 고장'); });
+    try {
+      const code = (await app.inject({ method: 'POST', url: '/operators/register-codes', headers: auth(adminToken) })).json().code as string;
+      const res = await app.inject({ method: 'POST', url: '/operators/claim', payload: { code, name: '감사기기', replaces: op.operatorId } });
+      expect(res.statusCode).toBe(200);
+      const { rows } = await pool.query<{ detail: { replacedBy: string } }>(
+        `select detail from audit_log where action = 'operator.revoked' and target = $1`, [op.operatorId],
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.detail.replacedBy).toBe(res.json().operator.id);
+    } finally { off(); }
   });
 });

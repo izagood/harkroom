@@ -177,16 +177,20 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
     // 하나가 던져도 끊기는 건너뛰지 않는다(disconnect 는 스스로 던지지 않는다).
     if (replaced) deps.hub.disconnect(replaced.operatorId, 4401, 'operator revoked');
     try {
+      // 감사 두 건을 이벤트보다 **먼저** 쓴다 — 구독자 하나가 던져도 옛 토큰 폐기라는 보안 사건이
+      // 감사에서 빠지지 않게(security #1025).
       await recordAudit(pool, {
         action: 'operator.registered', actorId: claim.ownerAccountId, actorHandle: null,
         target: operator.id, detail: { name: operator.name, ...(replaced ? { replaces: replaced.operatorId } : {}) },
       }, req);
-      emitEvent({ type: 'operator.changed', operatorId: operator.id, audience: [claim.ownerAccountId] });
       if (replaced) {
         await recordAudit(pool, {
           action: 'operator.revoked', actorId: claim.ownerAccountId, actorHandle: null, target: replaced.operatorId,
           detail: { replacedBy: operator.id, movedAssignments: replaced.movedAgentIds.length },
         }, req);
+      }
+      emitEvent({ type: 'operator.changed', operatorId: operator.id, audience: [claim.ownerAccountId] });
+      if (replaced) {
         emitEvent({ type: 'operator.changed', operatorId: replaced.operatorId, audience: 'all' });
         for (const agentId of replaced.movedAgentIds) emitEvent({ type: 'agent_assignment.changed', agentId, audience: 'all' });
       }
