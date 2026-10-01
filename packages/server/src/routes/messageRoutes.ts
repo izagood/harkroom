@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { MAX_MESSAGE_BODY_CHARS, MENTION_EDIT_SKIPPED_HEADER, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@harkroom/shared';
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
-import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages, SEARCH_MAX_OFFSET } from '../services/messages.js';
+import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages, SEARCH_MAX_OFFSET, BAD_THREAD_MESSAGE } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -38,6 +38,9 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool): P
       threadRootId: body.threadRootId ?? null, idempotencyKey,
       attachmentIds: body.attachmentIds ?? [], alsoInChannel: body.alsoInChannel,
     });
+    if (posted.failure === 'bad_thread') {
+      return reply.code(400).send({ error: { code: 'bad_thread', message: BAD_THREAD_MESSAGE } });
+    }
     if (posted.failure) {
       // 세 사유를 400 하나로 합친다 — 어느 쪽인지 알려 주면 남의 업로드 id 의 존재 여부를
       // 확인하는 신호가 된다(not_found 와 not_yours 가 구분되면 그렇다).

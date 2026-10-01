@@ -14,7 +14,7 @@ import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js
 import { emitEvent, emitPosted, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '../services/channels.js';
-import { checkAskMirror, listInbox, listMessages, markInboxRead, postMessage, searchMessages, syncAskMirrors, type AskMirrorRefusal } from '../services/messages.js';
+import { BAD_THREAD_MESSAGE, checkAskMirror, listInbox, listMessages, markInboxRead, postMessage, searchMessages, syncAskMirrors, type AskMirrorRefusal } from '../services/messages.js';
 
 /** `message.ask` 의 `mirrorOf` 거절 사유 — 에이전트가 읽고 고칠 수 있게 무엇을 바꾸면 되는지 적는다. */
 const MIRROR_REFUSAL_MESSAGE: Record<AskMirrorRefusal, string> = {
@@ -67,6 +67,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 function jsonResult(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }] };
+}
+
+/** 게시 거절을 도구 결과로. 첨부 사유 셋은 한 코드로 합친다(라우트와 같은 이유 — 존재 여부를 흘리지 않는다). */
+function postFailureResult(failure: string) {
+  if (failure === 'bad_thread') return jsonResult({ error: { code: 'bad_thread', message: BAD_THREAD_MESSAGE } });
+  return jsonResult({ error: { code: 'bad_attachment', message: 'attachments must be your own, unused uploads' } });
 }
 
 /**
@@ -411,9 +417,7 @@ function buildMcpServer(
     });
     // 에이전트는 첨부를 붙이지 않는다(도구에 그 입력이 없다). 그래도 합 타입이므로 확인해야
     // 하고, 확인 자체가 나중에 도구가 첨부를 받게 될 때의 자리를 남겨 둔다.
-    if (posted.failure) {
-      return jsonResult({ error: { code: 'bad_attachment', message: 'attachments must be your own, unused uploads' } });
-    }
+    if (posted.failure) return postFailureResult(posted.failure);
     const { message, notified, replayed } = posted;
     if (!replayed) {
       const audience = await audienceFor(pool, channelId);
@@ -453,9 +457,7 @@ function buildMcpServer(
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null, kind: 'progress',
       meta: await reportedModelMeta(pool, account.id, model),
     });
-    if (posted.failure) {
-      return jsonResult({ error: { code: 'bad_attachment', message: 'attachments must be your own, unused uploads' } });
-    }
+    if (posted.failure) return postFailureResult(posted.failure);
     const { message, notified, replayed } = posted;
     if (!replayed) {
       const audience = await audienceFor(pool, channelId);
@@ -539,9 +541,7 @@ function buildMcpServer(
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
       meta: meta as unknown as Record<string, unknown>,
     });
-    if (posted.failure) {
-      return jsonResult({ error: { code: 'bad_attachment', message: 'attachments must be your own, unused uploads' } });
-    }
+    if (posted.failure) return postFailureResult(posted.failure);
     const { message, notified, replayed } = posted;
     if (!replayed) {
       const channelAudience = await audienceFor(pool, channelId);
@@ -588,9 +588,7 @@ function buildMcpServer(
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
       meta: meta as unknown as Record<string, unknown>,
     });
-    if (posted.failure) {
-      return jsonResult({ error: { code: 'bad_attachment', message: 'attachments must be your own, unused uploads' } });
-    }
+    if (posted.failure) return postFailureResult(posted.failure);
     const { message, notified, replayed } = posted;
     if (!replayed) {
       const channelAudience = await audienceFor(pool, channelId);
@@ -797,9 +795,7 @@ function buildMcpServer(
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
       meta: meta as unknown as Record<string, unknown>,
     });
-    if (posted.failure) {
-      return jsonResult({ error: { code: 'bad_attachment', message: 'attachments must be your own, unused uploads' } });
-    }
+    if (posted.failure) return postFailureResult(posted.failure);
     const { message, notified, replayed } = posted;
     if (!replayed) {
       const channelAudience = await audienceFor(pool, channelId);

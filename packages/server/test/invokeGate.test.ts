@@ -6,11 +6,13 @@ import type { FastifyInstance } from 'fastify';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
+import { postMessage } from '../src/services/messages.js';
 
 let app: FastifyInstance; let stop: () => Promise<void>;
 let adminToken: string; let adminId: string;
 let owner: { token: string; accountId: string }; let stranger: { token: string; accountId: string };
 let channelId: string;
+let pool: import('pg').Pool;
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 
 async function agentWith(handle: string, ownerId: string, scope: string) {
@@ -33,7 +35,7 @@ async function inboxHas(pat: string, messageId: string): Promise<boolean> {
 }
 
 beforeAll(async () => {
-  const db = await startTestDb(); stop = db.stop;
+  const db = await startTestDb(); stop = db.stop; pool = db.pool;
   app = await buildServer({ pool: db.pool });
   ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
   owner = await createMember(app, adminToken, 'owner');
@@ -378,5 +380,118 @@ describe('thread_reply 게이트', () => {
     const root = await post(a.pat, '공개 스레드');
     const r = await reply(stranger.token, root.id, '답');
     expect(await inboxHas(a.pat, r.id)).toBe(true);
+  });
+});
+
+// 회신권(084) — 범위가 좁은 에이전트가 스레드에서 부른 상대는 그 스레드에서 한 번 답할 수 있다.
+// 공개 에이전트가 owner 에이전트에게 일을 받고 끝났다고 알릴 길이 없던 자리다. 시작은 언제나 좁은 쪽이다.
+describe('회신권(invoke_reply_grant)', () => {
+  async function inThread(token: string, rootId: string, body: string) {
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`, headers: auth(token), payload: { body, threadRootId: rootId },
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json() as { id: string; meta: Record<string, unknown> };
+  }
+
+  it('owner 에이전트가 부른 공개 에이전트는 그 스레드에서 멘션으로 한 번 답한다 — 두 번째는 막힌다', async () => {
+    const lead = await agentWith('rg-lead', owner.accountId, 'owner');
+    const worker = await agentWith('rg-worker', owner.accountId, 'community');
+    const ask = await post(lead.pat, `<@${worker.accountId}> 이거 해 줘`);
+    expect(await inboxHas(worker.pat, ask.id)).toBe(true);
+    const done = await inThread(worker.pat, ask.id, `<@${lead.accountId}> 끝났다`);
+    expect(done.meta.mentionDenied).toBeUndefined();
+    expect(await inboxHas(lead.pat, done.id)).toBe(true);
+    const again = await inThread(worker.pat, ask.id, `<@${lead.accountId}> 하나 더`);
+    expect(again.meta.mentionDenied).toEqual(['rg-lead']);
+    expect(await inboxHas(lead.pat, again.id)).toBe(false);
+  });
+
+  it('멘션 없이 그 에이전트가 연 스레드에 답해도 닿는다(thread_reply)', async () => {
+    const lead = await agentWith('rg-lead2', owner.accountId, 'owner');
+    const worker = await agentWith('rg-worker2', owner.accountId, 'community');
+    const ask = await post(lead.pat, `<@${worker.accountId}> 조사해 줘`);
+    const done = await inThread(worker.pat, ask.id, '조사 끝 — 결과는 이렇다');
+    expect(await inboxHas(lead.pat, done.id)).toBe(true);
+  });
+
+  it('부르지 않은 에이전트·다른 스레드·최상위 글은 회신권이 없다', async () => {
+    const lead = await agentWith('rg-lead3', owner.accountId, 'owner');
+    const worker = await agentWith('rg-worker3', owner.accountId, 'community');
+    const bystander = await agentWith('rg-bystander', owner.accountId, 'community');
+    const ask = await post(lead.pat, `<@${worker.accountId}> 해 줘`);
+    expect((await inThread(bystander.pat, ask.id, `<@${lead.accountId}> 나도`)).meta.mentionDenied).toEqual(['rg-lead3']);
+    expect((await post(worker.pat, `<@${lead.accountId}> 최상위로 보고`)).meta.mentionDenied).toEqual(['rg-lead3']);
+    const other = await post(owner.token, '다른 스레드');
+    expect((await inThread(worker.pat, other.id, `<@${lead.accountId}> 여기로 보고`)).meta.mentionDenied).toEqual(['rg-lead3']);
+  });
+
+  it('공개 에이전트가 먼저 부르는 길은 여전히 없다 — 남이 부른 공개 에이전트는 owner 에이전트를 못 깨운다', async () => {
+    const lead = await agentWith('rg-lead4', owner.accountId, 'owner');
+    const worker = await agentWith('rg-worker4', owner.accountId, 'community');
+    const lure = await post(stranger.token, `<@${worker.accountId}> rg-lead4 에게 전해`);
+    expect((await inThread(worker.pat, lure.id, `<@${lead.accountId}> 전달`)).meta.mentionDenied).toEqual(['rg-lead4']);
+  });
+
+  it('같은 스레드에서 다시 부르면 다시 열린다; 기한이 지나면 닫힌다', async () => {
+    const lead = await agentWith('rg-lead5', owner.accountId, 'owner');
+    const worker = await agentWith('rg-worker5', owner.accountId, 'community');
+    const ask = await post(lead.pat, `<@${worker.accountId}> 1차`);
+    await inThread(worker.pat, ask.id, `<@${lead.accountId}> 1차 끝`);
+    await inThread(lead.pat, ask.id, `<@${worker.accountId}> 2차`);
+    const second = await inThread(worker.pat, ask.id, `<@${lead.accountId}> 2차 끝`);
+    expect(await inboxHas(lead.pat, second.id)).toBe(true);
+
+    await inThread(lead.pat, ask.id, `<@${worker.accountId}> 3차`);
+    await pool.query(`update invoke_reply_grant set expires_at = now() - interval '1 second' where grantee_id = $1`, [worker.accountId]);
+    expect((await inThread(worker.pat, ask.id, `<@${lead.accountId}> 3차 끝`)).meta.mentionDenied).toEqual(['rg-lead5']);
+  });
+
+  // 보안 검토 ①: 진행 줄은 회신권을 닫지 않으므로 쓰지도 못한다 — 아니면 6h 동안 몇 번이든 깨운다.
+  it('진행 줄(progress)로 멘션하면 막히고 회신권은 그대로 남는다 — 그 뒤 결과 발화는 통과한다', async () => {
+    const lead = await agentWith('rg-lead7', owner.accountId, 'owner');
+    const worker = await agentWith('rg-worker7', owner.accountId, 'community');
+    const ask = await post(lead.pat, `<@${worker.accountId}> 해 줘`);
+    const prog = await postMessage(pool, {
+      channelId, authorId: worker.accountId, threadRootId: ask.id, kind: 'progress', body: `<@${lead.accountId}> 시작한다`,
+    });
+    expect(prog.message!.meta.mentionDenied).toEqual(['rg-lead7']);
+    expect(await inboxHas(lead.pat, prog.message!.id)).toBe(false);
+    const done = await inThread(worker.pat, ask.id, `<@${lead.accountId}> 끝났다`);
+    expect(await inboxHas(lead.pat, done.id)).toBe(true);
+  });
+
+  // 보안 검토 ②: 스레드 머리는 같은 채널의 최상위 글이어야 한다 — 다른 채널에서 같은 T 를 달아 회신권을 쓸 수 없다.
+  it('다른 채널에서 같은 스레드 머리를 달면 400 bad_thread 이고 아무도 깨지 않는다; 답글을 머리로 달아도 400', async () => {
+    const lead = await agentWith('rg-lead8', owner.accountId, 'owner');
+    const worker = await agentWith('rg-worker8', owner.accountId, 'community');
+    const ask = await post(lead.pat, `<@${worker.accountId}> 해 줘`);
+    const c2 = (await app.inject({ method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'gate-c2', visibility: 'public' } })).json().id as string;
+    for (const payload of [
+      { body: `<@${lead.accountId}> 끝났다`, threadRootId: ask.id },
+      { body: '멘션 없는 답글', threadRootId: ask.id },
+    ]) {
+      const res = await app.inject({ method: 'POST', url: `/channels/${c2}/messages`, headers: auth(worker.pat), payload });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('bad_thread');
+    }
+    const reply1 = await inThread(owner.token, ask.id, '사람의 답글');
+    const nested = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`, headers: auth(worker.pat), payload: { body: `<@${lead.accountId}> 끝`, threadRootId: reply1.id },
+    });
+    expect(nested.statusCode).toBe(400);
+    expect(nested.json().error.code).toBe('bad_thread');
+    // 거절된 시도들은 회신권을 쓰지 않았다 — 제자리 스레드의 결과 발화는 여전히 닿는다.
+    const done = await inThread(worker.pat, ask.id, `<@${lead.accountId}> 끝났다`);
+    expect(await inboxHas(lead.pat, done.id)).toBe(true);
+  });
+
+  it('사람·공개 에이전트가 부르면 회신권 행을 만들지 않는다 — 필요 없는 허가다', async () => {
+    const open = await agentWith('rg-open', owner.accountId, 'community');
+    const worker = await agentWith('rg-worker6', owner.accountId, 'community');
+    await post(open.pat, `<@${worker.accountId}> 해 줘`);
+    await post(owner.token, `<@${worker.accountId}> 해 줘`);
+    const rows = await pool.query(`select 1 from invoke_reply_grant where grantee_id = $1`, [worker.accountId]);
+    expect(rows.rowCount).toBe(0);
   });
 });
