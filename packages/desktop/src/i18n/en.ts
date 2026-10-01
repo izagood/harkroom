@@ -172,6 +172,8 @@ export const en = {
   // providerUsage — 공급자 API 사용률 막대·토글(2단계). 2026-09-28.
   'providerUsage.session': '5-hour',
   'providerUsage.weekly': 'Weekly',
+  'providerUsage.loading': 'Loading usage…',
+  'providerAccounts.loading': 'Loading accounts…',
   'providerUsage.resetsAt': 'Resets {time}',
   'providerUsage.error.noCredentials': 'No readable login for usage.',
   'providerUsage.error.tokenExpired': 'Login token expired — the next turn refreshes it.',

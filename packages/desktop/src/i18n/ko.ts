@@ -25,6 +25,8 @@ export const ko = {
   // providerUsage — 공급자 API 사용률 막대·토글(2단계). 2026-09-28.
   'providerUsage.session': '5시간',
   'providerUsage.weekly': '주간',
+  'providerUsage.loading': '사용량을 불러오는 중…',
+  'providerAccounts.loading': '계정을 불러오는 중…',
   'providerUsage.resetsAt': '{time}에 초기화',
   'providerUsage.error.noCredentials': '사용량을 읽을 로그인이 없습니다.',
   'providerUsage.error.tokenExpired': '로그인 토큰이 만료됐습니다 — 다음 턴이 갱신합니다.',

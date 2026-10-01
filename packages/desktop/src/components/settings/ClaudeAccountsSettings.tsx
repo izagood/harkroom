@@ -61,7 +61,7 @@ import { ConfirmDialog } from '../ConfirmDialog';
 import { Menu } from '../Menu';
 import { Button, Field, SettingsGroup, SettingsPage, TextInput } from './primitives';
 import { ProviderSection } from './ProviderSection';
-import { ProviderUsageBars } from './ProviderUsageBars';
+import { AccountRowsSkeleton, ProviderUsageBars, ProviderUsageSkeleton } from './ProviderUsageBars';
 import { ClaudeAssignThresholdsRow } from './ClaudeAssignThresholds';
 import { usageFor, useProviderUsage } from '../../lib/providerUsage';
 
@@ -138,7 +138,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
   const Shell = embedded ? ClaudeSection : SettingsPage;
   // 한도 사용률: CLI(`/usage`) 먼저, 실패하면 같은 API(`usageChain.ts`). 사용량은 이것 하나다.
   const available = hasClaudeAccountsSurface();
-  const { snap: providerSnap } = useProviderUsage('claude', available);
+  const { snap: providerSnap, loading: usageLoading } = useProviderUsage('claude', available);
   const [snap, setSnap] = useState<ClaudeAccountsSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending>(null);
@@ -337,6 +337,13 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
         </SettingsGroup>
       )}
 
+      {/* 첫 목록을 기다리는 동안 — 비워 두면 "계정이 없다"로 읽힌다. 실패면 위 오류가 대신 선다. */}
+      {!snap && !error && (
+        <SettingsGroup>
+          <AccountRowsSkeleton />
+        </SettingsGroup>
+      )}
+
       {snap?.pools.map((pool) => {
         // 카드 제목을 쓰지 않는다 — 풀 이름을 카드 제목과 본문에 두 번 그리면 화면이
         // 같은 말을 반복하고, 이름으로 요소를 찾는 쪽(테스트·스크린리더)이 둘 중 어느
@@ -503,7 +510,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                   />
                 </span>
               </div>
-              {pu && (
+              {pu ? (
                 <div className="px-4 pb-2.5" data-testid={`claude-provider-usage-${pool.name}-${a.name}`}>
                   <ProviderUsageBars usage={pu} nowMs={providerSnap!.measuredAtMs} />
                   <AssignScore
@@ -515,7 +522,9 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                     show={pool.accounts.length > 1}
                   />
                 </div>
-              )}
+              ) : usageLoading ? (
+                <div className="px-4 pb-2.5"><ProviderUsageSkeleton /></div>
+              ) : null}
               </div>
             );
           })}

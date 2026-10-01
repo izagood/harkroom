@@ -519,7 +519,7 @@ export function createClaudeAccountsPort(opts: {
     for (const cb of loginListeners) { try { cb(e); } catch { /* 관찰은 부작용이 아니다 */ } }
   };
 
-  const measureUsage = (dir: string, at: number): Promise<Omit<ProviderAccountUsage, 'account' | 'pool'>> =>
+  const measureUsage = (dir: string, at: number, stale = false): Promise<Omit<ProviderAccountUsage, 'account' | 'pool'>> =>
     usageCache(dir, () => cliThenApi(
       () => claudeCliUsage({ configDir: dir, now: at, ...(opts.runCli ? { run: opts.runCli } : {}) }),
       () => fetchClaudeProviderUsage({
@@ -527,7 +527,7 @@ export function createClaudeAccountsPort(opts: {
         fetchImpl: opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike),
         ...(opts.readToken ? { readToken: opts.readToken } : {}),
       }),
-    ));
+    ), { stale });
 
   return {
     async list(): Promise<ClaudeAccountsSnapshot> {
@@ -558,7 +558,8 @@ export function createClaudeAccountsPort(opts: {
       const accounts = await Promise.all(targets.map(async (t) => ({
         account: t.name,
         pool: t.pool,
-        ...(await measureUsage(t.dir, at)),
+        // 화면 경로 — 지난 값을 곧바로 돌려주고 뒤에서 다시 잰다(`createUsageCache` 의 `stale`).
+        ...(await measureUsage(t.dir, at, true)),
       })));
       return { measuredAtMs: at, accounts };
     },

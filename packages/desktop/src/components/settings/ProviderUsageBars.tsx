@@ -66,3 +66,36 @@ export function ProviderUsageBars({ usage, nowMs }: { usage: ProviderAccountUsag
     </div>
   );
 }
+
+/**
+ * 첫 사용량 답을 기다리는 동안 막대 자리에 서는 **자리표시**(2026-10-01). 비워 두면 "한도 정보가 없는
+ * 계정"으로 읽히고, 다 그려진 뒤 막대가 튀어나오며 줄이 밀린다 — 같은 높이의 회색 막대 둘로 자리를 잡는다.
+ */
+export function ProviderUsageSkeleton() {
+  const t = useT();
+  return (
+    <div className="flex items-start gap-6" data-testid="provider-usage-skeleton" role="status" aria-label={t('providerUsage.loading')}>
+      {[0, 1].map((i) => (
+        <div key={i} className="min-w-0 flex-1" aria-hidden="true">
+          <div className="h-3 w-16 animate-pulse rounded bg-border" />
+          <div className="mt-1.5 h-1.5 animate-pulse rounded-full bg-border" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** 계정 목록 첫 답을 기다리는 동안의 줄 자리표시. 줄 수는 의미가 없다 — "아직 모른다"만 말한다. */
+export function AccountRowsSkeleton({ rows = 2 }: { rows?: number }) {
+  const t = useT();
+  return (
+    <div className="space-y-3 px-4 py-3" data-testid="provider-accounts-skeleton" role="status" aria-label={t('providerAccounts.loading')}>
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="flex items-center gap-4" aria-hidden="true">
+          <div className="h-3.5 w-24 animate-pulse rounded bg-border" />
+          <div className="h-3.5 flex-1 animate-pulse rounded bg-border" />
+        </div>
+      ))}
+    </div>
+  );
+}

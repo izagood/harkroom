@@ -29,7 +29,7 @@ import {
 import { getExternalOpener } from '../../lib/openExternal';
 import { Button, TextInput } from './primitives';
 import { ProviderSection } from './ProviderSection';
-import { ProviderUsageBars } from './ProviderUsageBars';
+import { AccountRowsSkeleton, ProviderUsageBars, ProviderUsageSkeleton } from './ProviderUsageBars';
 import { usageFor, useProviderUsage } from '../../lib/providerUsage';
 
 interface LoginState {
@@ -60,10 +60,12 @@ export function CodexAccountsSettings() {
   const [name, setName] = useState('');
   const [login, setLogin] = useState<LoginState | null>(null);
   const [pendingRemove, setPendingRemove] = useState<string | null>(null);
-  const { snap: providerSnap } = useProviderUsage('codex', available);
+  const { snap: providerSnap, loading: usageLoading } = useProviderUsage('codex', available);
   const bars = (account: string) => {
     const u = providerSnap ? usageFor(providerSnap, account) : null;
-    return u ? <div className="mt-2"><ProviderUsageBars usage={u} nowMs={providerSnap!.measuredAtMs} /></div> : null;
+    if (u) return <div className="mt-2"><ProviderUsageBars usage={u} nowMs={providerSnap!.measuredAtMs} /></div>;
+    // 첫 답 전에는 자리표시 — 비워 두면 "한도 정보가 없는 계정"으로 읽힌다.
+    return usageLoading ? <div className="mt-2"><ProviderUsageSkeleton /></div> : null;
   };
 
   const refresh = useCallback(async () => {
@@ -198,9 +200,12 @@ export function CodexAccountsSettings() {
                   {snap?.active === null && <Badge tone="strong">{t('providerAccounts.badge.active')}</Badge>}
                 </div>
                 <div className="truncate text-fg-subtle">
-                  {snap?.system.loggedIn
-                    ? (snap.system.email ?? detail(snap.system))
-                    : t('providerAccounts.codex.systemSignedOut')}
+                  {/* 첫 목록 전에는 "로그아웃됨"이라고 단언하지 않는다 — 아직 모른다. */}
+                  {!snap
+                    ? (error ? null : <span className="inline-block h-3.5 w-40 animate-pulse rounded bg-border align-middle" data-testid="codex-system-skeleton" aria-hidden="true" />)
+                    : snap.system.loggedIn
+                      ? (snap.system.email ?? detail(snap.system))
+                      : t('providerAccounts.codex.systemSignedOut')}
                 </div>
                 {snap?.system.loggedIn && bars('')}
               </div>
@@ -208,6 +213,12 @@ export function CodexAccountsSettings() {
                 <Button onClick={() => void act(() => activateCodexAccount(null))}>{t('providerAccounts.use')}</Button>
               )}
             </div>
+
+            {!snap && !error && (
+              <div className="rounded-lg border border-border">
+                <AccountRowsSkeleton rows={1} />
+              </div>
+            )}
 
             {snap && snap.accounts.length === 0 && (
               <div className="rounded-lg border border-dashed border-border px-4 py-3 text-fg-subtle" data-testid="codex-accounts-empty">
