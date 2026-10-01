@@ -46,6 +46,7 @@ import {
   listenClaudeLogin,
   moveClaudeAccount,
   newClaudeAccountId,
+  openClaudeAccountTerminal,
   removeClaudeAccount,
   removeClaudePool,
   sameSignInAs,
@@ -160,6 +161,12 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
   const [reauthAsk, setReauthAsk] = useState<ReauthAsk | null>(null);
   const [newPool, setNewPool] = useState<string | null>(null);
   const [moveNote, setMoveNote] = useState<string | null>(null);
+  /**
+   * 사람이 [터미널 열기]로 연 계정(`pool/account`, 2026-10-01). 그 창에서 고르고 돌아오면 데몬이
+   * 표식을 지웠을 것이라, **이 화면으로 포커스가 돌아올 때만** 목록을 다시 읽는다 — 목록 조회는
+   * 계정마다 `claude auth status` 를 띄우므로 평소에 포커스마다 돌리지 않는다.
+   */
+  const [terminalOpened, setTerminalOpened] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!available) return;
@@ -174,6 +181,23 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
   }, [available]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (!terminalOpened) return;
+    const onFocus = (): void => { void refresh(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [terminalOpened, refresh]);
+
+  const openTerminal = useCallback(async (pool: string, account: string) => {
+    try {
+      await openClaudeAccountTerminal(pool, account);
+      setTerminalOpened(`${pool}/${account}`);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
 
   // 로그인 진행을 듣는다. 화면이 살아 있는 동안만 — 떠날 때 떼지 않으면 다음 마운트가
   // 두 번 듣는다.
@@ -494,6 +518,30 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                       Sign in again
                     </button>
                   )}
+                  {/*
+                    러너가 이 계정을 **사람이 지나야 하는 관문** 때문에 건너뛰었다(조직 관리 설정 승인 등).
+                    러너는 그 화면을 대신 누르지 않는다 — 여기서 그 계정의 터미널을 열어 사람이 고른다.
+                  */}
+                  {a.attention && (
+                    <span
+                      className="shrink-0 text-warning"
+                      data-testid="claude-account-attention"
+                      title="A runner skipped this account because Claude Code is waiting for your choice on a setup or approval screen. New threads skip it until you deal with it."
+                    >
+                      needs your approval
+                    </span>
+                  )}
+                  {a.attention && (
+                    <button
+                      type="button"
+                      className="shrink-0 text-accent underline hover:text-fg"
+                      aria-label={`Open a terminal for ${a.name}`}
+                      data-testid="claude-account-attention-open"
+                      onClick={() => { void openTerminal(pool.name, a.name); }}
+                    >
+                      Open terminal
+                    </button>
+                  )}
                 </span>
 
                 <span className="relative flex justify-end">
@@ -502,6 +550,9 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                     items={[{
                       label: `Sign in again to ${a.name}`,
                       onSelect: () => setReauthAsk({ pool: pool.name, account: a.name, label: accountLabel(a) }),
+                    }, {
+                      label: `Open a terminal for ${a.name}`,
+                      onSelect: () => { void openTerminal(pool.name, a.name); },
                     }, {
                       label: `Remove account ${a.name}`,
                       onSelect: () => askPending({
@@ -539,6 +590,11 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
               </div>
             );
           })}
+          {terminalOpened && pool.accounts.some((a) => `${pool.name}/${a.name}` === terminalOpened) && (
+            <div className="px-4 py-3 text-meta text-fg" data-testid="claude-account-terminal-note">
+              Opened Terminal for {terminalOpened}. Make your choice there, then type /exit — new threads use this account again after that.
+            </div>
+          )}
         </SettingsGroup>
         );
       })}

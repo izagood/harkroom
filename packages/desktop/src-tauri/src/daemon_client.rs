@@ -2026,6 +2026,14 @@ impl DaemonConnection {
         )
     }
 
+    /// 그 계정의 터미널을 사람에게 연다(2026-10-01). 이름만 넘긴다 — 경로·명령은 데몬이 조립한다.
+    pub fn claude_account_open_terminal(&self, pool: &str, account: &str) -> Result<Value, String> {
+        self.request(
+            "claudeAccountOpenTerminal",
+            json!({ "pool": pool, "account": account }),
+        )
+    }
+
     pub fn claude_pool_remove(&self, pool: &str) -> Result<Value, String> {
         self.request("claudePoolRemove", json!({ "pool": pool }))
     }

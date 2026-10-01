@@ -7,6 +7,7 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { PromptNotDeliveredError } from '../src/pty.js';
 import { createMentionScheduler, type BatchContext } from '../src/mentionScheduler.js';
 import { TurnRegistry } from '../src/turnRegistry.js';
 import { MentionQueue } from '../src/mentionQueue.js';
@@ -672,3 +673,57 @@ describe('mentionScheduler 스레드별 계정 순서(C ②)', () => {
     expect(tried).toEqual(['b']);
   });
 });
+
+describe('mentionScheduler 관문 표식 (사람이 지나야 하는 관문, 2026-10-01)', () => {
+  // 설정 화면의 [터미널 열기]가 이 표식을 보고 선다. 화면 원문은 넘기지 않는다.
+  const a = { name: 'a', configDir: '/x/a' };
+  const b = { name: 'b', configDir: '/x/b' };
+  const GATE_SCREEN = 'Managed settings require approval\n\u276f 1. Yes, I trust these settings\n  2. No, exit\nEnter to confirm';
+
+  function run(failA: Error | null) {
+    const marked: string[] = [];
+    const cleared: string[] = [];
+    const scheduler = createMentionScheduler({
+      harkroom: { markRead: async (ids) => ids.length, post: async () => 1, fail: async () => 1 },
+      registry: new TurnRegistry(),
+      queue: new MentionQueue(),
+      accountLane: [a, b],
+      accountAttention: {
+        mark: async (acc) => { marked.push(acc.name); },
+        clear: async (acc) => { cleared.push(acc.name); },
+      },
+      runMentionTurn: async (d) => {
+        if ((d as unknown as string) === 'a' && failA) throw failA;
+        return { stopRequestedAt: null };
+      },
+      buildTurnDeps: ({ account }) => (account?.name ?? null) as never,
+      hooks: { stopRequested: () => {}, exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {} },
+      startedAtMs: 0,
+    });
+    return { scheduler, marked, cleared };
+  }
+
+  it('관문 화면에서 넘긴 계정은 표시하고, 돌아간 계정의 표식은 지운다', async () => {
+    const h = run(new PromptNotDeliveredError(3_000, GATE_SCREEN));
+    await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.marked).toEqual(['a']);
+    expect(h.cleared).toEqual(['b']);
+  });
+
+  it('관문이 아닌 준비 실패(부팅이 느려 상한)는 표시하지 않는다 — 30분 빼 둘 이유가 없다', async () => {
+    const h = run(new PromptNotDeliveredError(60_000, 'Loading...'));
+    await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.marked).toEqual([]);
+  });
+
+  it('성공한 첫 계정의 표식도 지운다 — 사람이 지난 뒤 다시 후보가 된다', async () => {
+    const h = run(null);
+    await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.marked).toEqual([]);
+    expect(h.cleared).toEqual(['a']);
+  });
+});
+

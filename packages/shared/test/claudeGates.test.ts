@@ -4,7 +4,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { markClaudeAccountGates, withClaudeAccountGates } from '../src/claudeGates.js';
+import {
+  CLAUDE_ATTENTION_FILE,
+  CLAUDE_ATTENTION_TTL_MS,
+  clearAccountAttention,
+  isAttentionFresh,
+  markAccountNeedsAttention,
+  markClaudeAccountGates,
+  markClaudeWorkspaceTrusted,
+  readAccountAttention,
+  withClaudeAccountGates,
+} from '../src/claudeGates.js';
 
 describe('withClaudeAccountGates', () => {
   it('빈 문서에 두 키를 채운다', () => {
@@ -59,5 +69,42 @@ describe('markClaudeAccountGates', () => {
     await writeFile(path, '{ not json');
     await expect(markClaudeAccountGates(d)).rejects.toThrow();
     expect(await readFile(path, 'utf8')).toBe('{ not json');
+  });
+});
+
+describe('관문 표식 (사람이 지나야 하는 관문, 2026-10-01)', () => {
+  const dir = () => mkdtemp(join(tmpdir(), 'attn-'));
+
+  it('남기고 읽고 지운다 — 시각만 담는다', async () => {
+    const d = await dir();
+    expect(await readAccountAttention(d)).toBeNull();
+    await markAccountNeedsAttention(d, 1_000);
+    expect(await readAccountAttention(d)).toEqual({ kind: 'gate', atMs: 1_000 });
+    expect(JSON.parse(await readFile(join(d, CLAUDE_ATTENTION_FILE), 'utf8'))).toEqual({ kind: 'gate', atMs: 1_000 });
+    expect(await clearAccountAttention(d)).toBe(true);
+    expect(await readAccountAttention(d)).toBeNull();
+    expect(await clearAccountAttention(d)).toBe(false);
+  });
+
+  it('깨진 표식은 없는 것으로 본다 — 깨진 파일로 계정을 빼지 않는다', async () => {
+    const d = await dir();
+    await writeFile(join(d, CLAUDE_ATTENTION_FILE), '{ nope');
+    expect(await readAccountAttention(d)).toBeNull();
+  });
+
+  it('30분이 지나면 유효하지 않다 — 우리 밖에서 지났을 수도 있으니 다시 재 본다', () => {
+    const a = { kind: 'gate' as const, atMs: 0 };
+    expect(isAttentionFresh(a, CLAUDE_ATTENTION_TTL_MS - 1)).toBe(true);
+    expect(isAttentionFresh(a, CLAUDE_ATTENTION_TTL_MS)).toBe(false);
+    expect(isAttentionFresh(null, 0)).toBe(false);
+  });
+
+  it('작업 폴더 신뢰를 없을 때만 적고 다른 값은 보존한다', async () => {
+    const d = await dir();
+    await writeFile(join(d, '.claude.json'), JSON.stringify({ x: 1, projects: { '/a': { y: 2 } } }));
+    expect(await markClaudeWorkspaceTrusted(d, '/w')).toBe(true);
+    const doc = JSON.parse(await readFile(join(d, '.claude.json'), 'utf8'));
+    expect(doc).toEqual({ x: 1, projects: { '/a': { y: 2 }, '/w': { hasTrustDialogAccepted: true } } });
+    expect(await markClaudeWorkspaceTrusted(d, '/w')).toBe(false);
   });
 });

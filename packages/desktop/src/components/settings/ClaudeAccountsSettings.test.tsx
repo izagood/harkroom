@@ -510,3 +510,47 @@ describe('Tauri 표면이 없을 때', () => {
     expect(screen.queryByRole('button', { name: /new pool/i })).toBeNull();
   });
 });
+
+describe('사람이 지나야 하는 관문 (2026-10-01)', () => {
+  // 러너가 관문(조직 관리 설정 승인 등)에서 넘긴 계정. 러너는 대신 누르지 않는다 — 사람이 그 계정의
+  // 터미널을 열어 고른다.
+  const GATED = {
+    ...POOLS_SNAPSHOT,
+    pools: [{
+      name: 'work',
+      accounts: [
+        { name: 'aria', status: { loggedIn: true, email: 'me@corp.example', orgName: 'Corp' }, attention: { atMs: 1 } },
+        { name: 'cedar', status: { loggedIn: false } },
+      ],
+    }],
+  };
+
+  it('표식이 있는 계정에만 "needs your approval" 과 [Open terminal] 이 선다', async () => {
+    stubTauri(GATED);
+    render(<ClaudeAccountsSettings />);
+    const row = await screen.findByTestId('claude-account-work-aria');
+    expect(within(row).getByTestId('claude-account-attention').textContent).toMatch(/needs your approval/);
+    expect(within(screen.getByTestId('claude-account-work-cedar')).queryByTestId('claude-account-attention')).toBeNull();
+  });
+
+  it('[Open terminal] 은 이름만 넘긴다 — 경로·명령은 데몬이 조립한다', async () => {
+    stubTauri(GATED);
+    render(<ClaudeAccountsSettings />);
+    fireEvent.click(await screen.findByTestId('claude-account-attention-open'));
+    await waitFor(() => expect(calls.filter((c) => c.cmd === 'claude_account_open_terminal')).toEqual([
+      { cmd: 'claude_account_open_terminal', args: { pool: 'work', account: 'aria' } },
+    ]));
+    expect(await screen.findByTestId('claude-account-terminal-note')).toBeTruthy();
+  });
+
+  it('창에서 돌아오면 목록을 다시 읽는다 — 표식이 지워졌으면 배지가 사라진다', async () => {
+    stubTauri(GATED);
+    render(<ClaudeAccountsSettings />);
+    fireEvent.click(await screen.findByTestId('claude-account-attention-open'));
+    await screen.findByTestId('claude-account-terminal-note');
+    const before = calls.filter((c) => c.cmd === 'claude_accounts_list').length;
+    window.dispatchEvent(new Event('focus'));
+    await waitFor(() => expect(calls.filter((c) => c.cmd === 'claude_accounts_list').length).toBe(before + 1));
+  });
+});
+
