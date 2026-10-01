@@ -36,7 +36,7 @@ import {
 } from '../services/memory.js';
 import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
 import { scanWrite } from '../services/contentScan.js';
-import { proposeAutomation, triggerSchema } from '../services/automations.js';
+import { listAutomationsForAgent, proposeAutomation, runAutomationForAgent, triggerSchema } from '../services/automations.js';
 import { channelPostGate } from '../services/channels.js';
 import { scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC } from '../services/agentWakes.js';
 import { guideFor } from './guide.js';
@@ -1192,6 +1192,47 @@ function buildMcpServer(
       ownerId, proposedBy: account.id, channelId, name, body, trigger, debounceSec: debounceSec ?? null,
     });
     return jsonResult({ automation, next: 'Tell the approver in chat: Settings › Automations › Approve.' });
+  });
+
+  /**
+   * automation.list · automation.run(082) — 승인된 자동화를 **소유자가 시킨 턴에서만** "지금 한 번" 돌린다.
+   *
+   * 판정은 이 턴의 원인(`cause`, `CAUSE_HEADER`)이 그 자동화의 소유자가 쓴 글인지다 — 사람이
+   * "지금 돌려"라고 했는데 에이전트가 같은 절차를 손으로 흉내 내던 것(10-01 #task)을 대신한다.
+   * 원인이 에이전트(위임)거나 자동화가 낸 글이면 거절한다. 글은 버튼과 똑같이 소유자 이름으로
+   * 나가고, 실행자는 회차와 `meta.automation.initiatedBy` 에 남는다. 규칙과 근거는 `automations.ts`.
+   */
+  const automationRefusal: Record<string, string> = {
+    no_cause: 'only the automation owner can ask you to run it — this turn was not started by a human message that called you',
+    cause_not_human: 'this turn was started by an agent; the automation owner must ask you directly',
+    automation_reentry: 'this turn was started by an automation post; automations cannot re-run themselves through agents',
+    not_found: 'no automation with this id owned by the person who asked',
+    not_approved: 'the proposal is not approved yet (Settings › Automations › Approve)',
+    agent_quota: 'agents may run one automation at most once per 10 minutes and 3 times per hour',
+    chain_capped: 'the mention chain limit is reached',
+    rate_limited: 'too many runs in the last hour; the automation is paused',
+    duplicate: 'not queued', inactive: 'not queued',
+  };
+
+  server.registerTool('automation.list', {
+    description: '이 턴을 시킨 사람의 승인된 자동화 목록(id·이름·대상 채널·켜짐·본문 앞 200자·마지막 회차). automation.run 에 줄 id 를 여기서 찾는다',
+    inputSchema: {},
+  }, async () => {
+    const out = await listAutomationsForAgent(pool, { agentId: account.id, causeMessageId: cause });
+    if ('refused' in out) return jsonResult({ error: { code: out.refused, message: automationRefusal[out.refused] } });
+    return jsonResult(out);
+  });
+
+  server.registerTool('automation.run', {
+    description: '승인된 자동화를 지금 한 번 돌린다(설정 › Automations 의 버튼과 같다). 그 자동화의 주인이 직접 시킨 턴에서만 된다. 글은 주인 이름으로 15초 안에 나간다',
+    inputSchema: { automationId: z.string().uuid() },
+  }, async ({ automationId }) => {
+    const out = await runAutomationForAgent(pool, { automationId, agentId: account.id, causeMessageId: cause });
+    if ('refused' in out) return jsonResult({ error: { code: out.refused, message: automationRefusal[out.refused] } });
+    return jsonResult({
+      run: out.run, automation: out.automation,
+      next: 'Queued. The post goes out under the owner\'s name within ~15s; tell the requester in chat.',
+    });
   });
 
   /**

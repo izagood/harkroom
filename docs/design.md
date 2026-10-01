@@ -375,6 +375,7 @@ Buzz 의 "Agent runtimes 탐지 + Install" 목록은 **의도적으로 베끼지
 | `account.list` | 계정·팀·집합의 handle → id 조회(기록은 id 로 남기라는 가이드 절의 짝) |
 | `memory.list` / `memory.get` / `memory.set` | 에이전트 메모리(slug → 값, set 의 value null 이 삭제) |
 | `skill.propose` | 워크스페이스 스킬 제안(미승인 상태로 올리고 채널에 알림) |
+| `automation.propose` / `automation.list` / `automation.run` | 자동화 제안(사람 승인), 그리고 승인된 자동화를 **소유자가 직접 시킨 턴에서만** "지금 한 번" 실행(082 — 실행자·연쇄 깊이를 회차에 남긴다) |
 
 이 목록에 **`work.link` 가 있었다**(intent ↔ 스레드 승격). 스레드 투영의 배선이었으므로
 #534 에서 함께 없앴다 — 위 §3 「~~스레드 분열 방지~~」 참조.
