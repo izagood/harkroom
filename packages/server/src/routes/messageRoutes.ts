@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { EFFORT_MAX, MAX_MESSAGE_BODY_CHARS, MENTION_EDIT_SKIPPED_HEADER, MODEL_ID_MAX, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@harkroom/shared';
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
-import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages, SEARCH_MAX_OFFSET, BAD_THREAD_MESSAGE } from '../services/messages.js';
+import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listInboxThreads, listMessages, markInboxRead, postMessage, searchMessages, SEARCH_MAX_OFFSET, BAD_THREAD_MESSAGE } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -459,8 +459,15 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
   });
 
   app.get('/inbox', { preHandler: app.requireAccount }, async (req) => {
-    const q = z.object({ unread: z.coerce.boolean().optional() }).parse(req.query);
-    return { entries: await listInbox(pool, req.account!.id, { unreadOnly: q.unread ?? false }) };
+    const q = z.object({
+      unread: z.coerce.boolean().optional(),
+      // 상태 보드(2026-10-01)가 스레드의 지금 상태를 함께 받는다. 묻는 쪽만 값을 치른다 —
+      // 러너의 폴(`unread=1`)은 머리를 쓰지 않는다. 옛 앱은 이 키를 안 보내 응답이 그대로다.
+      threads: z.enum(['1']).optional(),
+    }).parse(req.query);
+    const entries = await listInbox(pool, req.account!.id, { unreadOnly: q.unread ?? false });
+    if (q.threads !== '1') return { entries };
+    return { entries, threads: await listInboxThreads(pool, entries) };
   });
 
   app.post('/inbox/read', { preHandler: app.requireAccount }, async (req, reply) => {

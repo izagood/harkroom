@@ -2205,6 +2205,30 @@ export async function listMessages(
   return res.rows;
 }
 
+/**
+ * 인박스 항목들이 속한 **스레드의 머리**(Inbox 상태 보드, 2026-10-01).
+ *
+ * 보드는 메시지가 아니라 **일(스레드)** 단위로 선다 — 같은 일에서 온 다섯 줄이 카드 하나가
+ * 된다. 카드를 어느 열(내 차례·막힘·진행·끝남)에 둘지는 줄의 `meta` 가 아니라 **스레드의
+ * 지금 상태**가 정한다: 답한 물음, 풀린 실패는 옛 줄의 `meta` 로는 알 수 없다. 그 상태는
+ * 채널 목록이 이미 머리에 싣는 `THREAD_STATS` 그대로라, 같은 열(`LIST_COLS`)을 머리에서만 읽는다
+ * — 판정을 새로 적으면 채널의 배지와 보드의 열이 갈린다.
+ *
+ * 머리 수만큼만 돈다(항목 수가 아니라). 머리마다의 LATERAL 은 062 의
+ * `(thread_root_id, seq)` 색인을 탄다. 볼 수 있는가는 항목이 이미 내 인박스에 있다는 것으로
+ * 충분하다 — 머리는 그 항목과 같은 채널에 있다.
+ */
+export async function listInboxThreads(pool: Pool, entries: InboxEntry[]): Promise<MessageRow[]> {
+  const rootIds = [...new Set(entries.map((e) => e.threadRootId ?? e.messageId))];
+  if (rootIds.length === 0) return [];
+  const res = await pool.query(
+    `select ${LIST_COLS} from message m ${THREAD_STATS}
+      where m.id = any($1::uuid[]) and m.thread_root_id is null and ${LIST_VISIBLE}`,
+    [rootIds],
+  );
+  return res.rows;
+}
+
 export async function listInbox(
   pool: Pool, accountId: string, opts: { unreadOnly?: boolean },
 ): Promise<InboxEntry[]> {
