@@ -177,6 +177,48 @@ void main() {
     await shot(tester, '20-busy-channel');
   });
 
+  // ── 채널 맨 위(S4a): 위로 밀어 이전 페이지를 받는 순간 · 못 받았을 때 · 끝까지 받은 뒤.
+  testWidgets('채널 맨 위', (tester) async {
+    final edge = _EdgeServer();
+    final app = _galleryApp(edge.client);
+    addTearDown(app.dispose);
+    await tester.pumpWidget(HarkroomApp(state: app));
+    await shot(tester, '21a-edge-list');
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    for (var i = 0; i < 30; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    ScrollPosition pos() => tester
+        .state<ScrollableState>(find
+            .descendant(of: find.byKey(const Key('channel-feed')), matching: find.byType(Scrollable))
+            .first)
+        .position;
+    Future<void> toTop() async {
+      pos().jumpTo(pos().maxScrollExtent);
+      await tester.pump(const Duration(milliseconds: 60));
+      pos().jumpTo(pos().maxScrollExtent);
+    }
+
+    // 1) 받는 동안: 서버가 답을 미룬다 → 맨 위에 회전자.
+    edge.hold = Completer<void>();
+    await toTop();
+    await shot(tester, '21-older-loading');
+    // 2) 못 받았다: 같은 요청을 500 으로 끝낸다 → "다시 시도" 줄.
+    edge.fail = true;
+    edge.hold!.complete();
+    edge.hold = null;
+    await toTop();
+    await shot(tester, '22-older-failed');
+    // 3) 다시 시도 → 끝까지 받았다 → 시작 줄과 그 아래 첫 날짜 줄.
+    edge.fail = false;
+    await tester.tap(find.byKey(const Key('older-retry')));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    await toTop();
+    await shot(tester, '23-channel-start');
+  });
+
   testWidgets('부팅 실패', (tester) async {
     final app = _galleryApp(MockClient((_) async => throw http.ClientException('네트워크 없음')));
     addTearDown(app.dispose);
@@ -434,4 +476,67 @@ MockClient _busyServer() {
     if (path == '/ws-ticket') return _json({'ticket': 'tk'});
     return _json({'error': {'code': 'not_found', 'message': path}}, 404);
   });
+}
+
+/// 900 줄 · 5 줄마다 최상위. 첫 페이지(500)로 최상위가 충분해 더 받지 않고, 위로 한 번 밀면
+/// 끝(seq 1)에 닿는다. [hold]·[fail] 로 **이전 페이지 요청만** 미루거나 실패시킨다.
+class _EdgeServer {
+  _EdgeServer() {
+    const me = '00000000-0000-4000-8000-000000000001';
+    const tm = '00000000-0000-4000-8000-000000000002';
+    String? root;
+    for (var seq = 1; seq <= 900; seq++) {
+      final isRoot = seq % 5 == 1;
+      final id = 'e$seq';
+      if (isRoot) root = id;
+      all.add({
+        'id': id,
+        'seq': seq,
+        'channelId': 'c1',
+        'threadRootId': isRoot ? null : root,
+        'authorId': (seq ~/ 5).isEven ? me : tm,
+        'body': isRoot ? '최상위 글 ${seq ~/ 5 + 1}' : '답글 $seq',
+        'kind': 'user',
+        'replyCount': isRoot ? 4 : null,
+        // 앞 절반은 사흘 전 — 끝까지 밀면 첫 날짜 줄이 "오늘" 이 아니다.
+        'createdAt': _ago(seq < 450 ? 3 * 24 * 60 + (900 - seq) : (900 - seq) ~/ 2),
+      });
+    }
+  }
+
+  final all = <Map<String, Object?>>[];
+  Completer<void>? hold;
+  bool fail = false;
+
+  MockClient get client => MockClient((req) async {
+        const me = '00000000-0000-4000-8000-000000000001';
+        final path = req.url.path;
+        if (path == '/auth/me') return _json({'id': me, 'handle': 'jaebin', 'displayName': 'jaebin', 'isAdmin': true});
+        if (path == '/channels') {
+          return _json({
+            'channels': [
+              {'id': 'c1', 'name': 'task', 'kind': 'standard', 'visibility': 'public'},
+            ],
+          });
+        }
+        if (path == '/accounts') return _json({'accounts': _accounts});
+        if (path == '/reads') return _json({'reads': <Object?>[]});
+        if (path.startsWith('/inbox')) return _json({'entries': <Object?>[]});
+        if (path.endsWith('/read')) return _json(<String, Object?>{});
+        if (path == '/channels/c1/messages') {
+          final q = req.url.queryParameters;
+          final limit = int.parse(q['limit'] ?? '200');
+          final before = q['before'] == null ? null : int.parse(q['before']!);
+          if (before != null) {
+            final h = hold;
+            if (h != null) await h.future;
+            if (fail) return _json({'error': {'code': 'unavailable', 'message': 'down'}}, 503);
+          }
+          final pool = all.where((m) => before == null || (m['seq']! as int) < before).toList();
+          final page = pool.length > limit ? pool.sublist(pool.length - limit) : pool;
+          return _json({'messages': page, 'hasMore': page.isNotEmpty && (page.first['seq']! as int) > 1});
+        }
+        if (path == '/ws-ticket') return _json({'ticket': 'tk'});
+        return _json({'error': {'code': 'not_found', 'message': path}}, 404);
+      });
 }

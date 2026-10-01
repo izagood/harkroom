@@ -356,11 +356,14 @@ class AppState extends ChangeNotifier {
 
   /// 목록을 채우고 소켓을 연다.
   Future<void> _enter() async {
-    _generation++;
+    final gen = ++_generation;
     final api = _api!;
     try {
-      me ??= await api.me();
+      final who = me ?? await api.me();
       final results = await Future.wait([api.channels(), api.accounts(), api.reads()]);
+      // 기다리는 사이 로그아웃했거나 다른 계정으로 들어왔다 — 옛 답을 새 세션에 붓지 않는다.
+      if (gen != _generation) return;
+      me = who;
       channels
         ..clear()
         ..addAll(results[0] as List<ChannelRow>);
@@ -464,6 +467,7 @@ class AppState extends ChangeNotifier {
     }
     try {
       final fresh = await api.reads();
+      if (gen != _generation) return;
       reads
         ..clear()
         ..addEntries(fresh.map((r) => MapEntry(r.channelId, r)));
@@ -630,13 +634,18 @@ class AppState extends ChangeNotifier {
       inboxLoad = LoadState.loading;
       notifyListeners();
     }
+    final gen = _generation;
     try {
       final entries = await api.inbox();
+      // 로그인 직후 로그아웃하고 다른 계정으로 들어왔을 때, 옛 계정의 인박스가 늦게 와서
+      // 새 화면에 남으면 안 된다.
+      if (gen != _generation) return;
       inbox
         ..clear()
         ..addAll(entries);
       inboxLoad = LoadState.loaded;
     } on Object catch (e) {
+      if (gen != _generation) return;
       // 이미 보이는 목록이 있으면 그대로 둔다 — 다시 못 읽었다고 지우면 있던 것까지 사라진다.
       failures['inbox'] = LoadFailure.of(e);
       if (inboxLoad != LoadState.loaded) inboxLoad = LoadState.failed;
@@ -761,8 +770,11 @@ class AppState extends ChangeNotifier {
       if (gen == _generation) olderFailed.add(channelId);
       return false;
     } finally {
-      loadingOlder.remove(channelId);
-      notifyListeners();
+      // 세대가 바뀌었으면 새 세션의 잠금이다 — 옛 요청이 풀지 않는다.
+      if (gen == _generation) {
+        loadingOlder.remove(channelId);
+        notifyListeners();
+      }
     }
   }
 
@@ -1046,6 +1058,9 @@ class AppState extends ChangeNotifier {
     await _ws?.close();
     _ws = null;
     await _sessions.clear();
+    // 위 두 await 사이에 화면이 부른 요청은 첫 줄에서 올린 세대를 쥐고 옛 토큰으로 간다.
+    // 비우기 직전에 한 번 더 올려 그 답도 버린다.
+    _generation++;
     me = null;
     inbox.clear();
     reads.clear();
