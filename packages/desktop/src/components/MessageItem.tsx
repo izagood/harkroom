@@ -21,6 +21,7 @@ import { SavedIcon } from './RailIcons';
 import { Attachments } from './Attachments';
 
 import { ConfirmDialog } from './ConfirmDialog';
+import { MessageEditBox } from './MessageEditBox';
 import { bodyAsHandles, displayBody } from '../lib/mention';
 import { selectAccountNames } from '../lib/accountNames';
 import { accountOpen } from '../lib/accountOpen';
@@ -997,22 +998,13 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
             )}
           </>
         ) : (
-          <div className="space-y-1">
-            <textarea
-              className="w-full resize-none rounded border border-border bg-field px-2 py-1"
-              rows={2}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); save(); }
-                if (e.key === 'Escape') setDraft(null);
-              }}
-            />
-            <div className="flex gap-1">
-              <button className="rounded border border-border px-1.5 text-meta text-fg-muted" onClick={save}>Save</button>
-              <button className="rounded border border-border px-1.5 text-meta text-fg-muted" onClick={() => setDraft(null)}>Cancel</button>
-            </div>
-          </div>
+          <MessageEditBox
+            value={draft}
+            onChange={setDraft}
+            onSave={save}
+            onCancel={() => setDraft(null)}
+            channelId={message.channelId}
+          />
         )}
       </div>
 
