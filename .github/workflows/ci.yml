@@ -22,6 +22,19 @@ permissions:
   contents: read
 
 jobs:
+  # 공개 저장소라 커밋 메타데이터의 메일은 한 번 들어오면 히스토리를 다시 써야만 지워진다
+  # (2026-10 에 그렇게 했다). PR 커밋의 author·committer·Co-authored-by 를 허용 목록과
+  # 대조한다 — 목록과 이유는 스크립트 머리에 있다.
+  commit-emails:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - run: .github/scripts/check-commit-emails.sh "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}"
+
   check:
     # 서버 테스트가 testcontainers로 Postgres를 띄운다 — Docker가 있는 러너여야 한다.
     runs-on: ubuntu-latest
