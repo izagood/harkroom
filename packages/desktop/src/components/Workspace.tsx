@@ -19,6 +19,7 @@ import { ThreadPanel } from './ThreadPanel';
 import { TerminalPanel } from './TerminalPanel';
 import { SearchPalette, type SearchScope } from './SearchPalette';
 import { Directory } from './Directory';
+import { ChannelSettingsSheet } from './ChannelSettingsSheet';
 import { Profile } from './Profile';
 import { ChannelDirectory } from './ChannelDirectory';
 import { Inbox } from './Inbox';
@@ -421,6 +422,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
         </div>
       </div>
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} initialScope={searchInitialScope} />
+      <ChannelSettingsSheet />
       <Directory open={directoryOpen} onClose={() => { setDirectoryOpen(false); setDirectoryAccountId(null); }} accountId={directoryAccountId} />
       {profileAccountId && (
         <Profile

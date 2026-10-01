@@ -1494,6 +1494,8 @@ export function Sidebar({
           level: t(NOTIFY_LEVEL_KEY[level]),
         }),
         onSelect: () => void getController().setChannelNotifyLevel(ch.id, level),
+        // 고르지 않은 줄에도 ✓ 폭의 빈 칸 — 세 줄의 글자 시작이 가지런하다(designer ⑦a).
+        checkable: notifyLevel !== level,
       })),
       ],
       [
@@ -1507,18 +1509,17 @@ export function Sidebar({
       { label: t('sidebar.menu.copyId'), onSelect: copyChannelId },
       ],
       [
+      // 채널 설정 시트(UX ⑦b-1)를 여는 줄 — 누구나 연다(정보·알림·나가기, 보관은 시트 안에서 admin 에게만).
+      // 보관은 시트로 옮겼다. 편집은 ⑦b-2 에서 시트로 옮기면 이 묶음은 이 한 줄 + 삭제가 된다.
+      { label: t('sidebar.menu.settings'), onSelect: () => useActiveStore.getState().set({ channelSheetId: ch.id }) },
       ...(me?.isAdmin ? [{ label: t('sidebar.menu.edit'), onSelect: () => startEdit(ch) }] : []),
-      ...(me?.isAdmin ? [isArchived
-        ? { label: t('sidebar.menu.unarchive'), onSelect: () => void getController().archiveChannel(ch.id, false) }
-        : { label: t('sidebar.menu.archive'), onSelect: () => void getController().archiveChannel(ch.id, true) }]
-      : []),
       /**
        * 삭제(#155). **보관된 채널에만** 만든다 — 서버가 보관되지 않은 채널의 삭제를 409 로
        * 거절하므로, 눌러도 거절되는 항목을 남겨 두면 "할 수 있다"는 거짓 신호가 된다
        * (docs/design.md 4절). DM 은 이 목록(`sortedChannels`)에 없어 애초에 닿지 않는다.
        */
       ...(me?.isAdmin && isArchived
-        ? [{ label: t('sidebar.menu.delete'), onSelect: () => startDelete(ch.id) }] : []),
+        ? [{ label: t('sidebar.menu.delete'), onSelect: () => startDelete(ch.id), tone: 'danger' as const }] : []),
       ],
       [
       /*

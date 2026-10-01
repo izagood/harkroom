@@ -58,15 +58,17 @@ describe('채널 우클릭 메뉴 묶음 (UX ⑦a)', () => {
     expect(groups[2]!.filter((l) => /복사/.test(l))).toHaveLength(2);
   });
 
-  it('admin 이 아니면 채널 바꾸기 묶음이 통째로 빠지고 선이 겹치지 않는다', () => {
+  it('admin 이 아니면 채널 묶음에 "채널 설정…" 만 남고 선이 겹치지 않는다', () => {
     seed(false);
     sidebar();
     fireEvent.contextMenu(screen.getByRole('button', { name: /general/ }));
     const groups = menuGroups();
-    expect(groups).toHaveLength(4);
+    // ⑦b-1: 시트는 누구나 연다 — 넷째 묶음이 비admin 에게도 "채널 설정…" 한 줄로 선다.
+    expect(groups).toHaveLength(5);
+    expect(groups[3]).toEqual(['채널 설정…']);
     expect(groups.every((g) => g.length > 0)).toBe(true);
     // 맨 앞에는 선이 없다.
-    expect(within(screen.getByRole('menu')).getAllByRole('separator')).toHaveLength(3);
+    expect(within(screen.getByRole('menu')).getAllByRole('separator')).toHaveLength(4);
     expect(screen.getByRole('menu').firstElementChild?.getAttribute('role')).not.toBe('separator');
   });
 });

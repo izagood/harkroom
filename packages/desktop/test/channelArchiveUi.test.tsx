@@ -3,6 +3,7 @@ import { render, screen, fireEvent, cleanup, within } from '@testing-library/rea
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
+import { ChannelSettingsSheet } from '../src/components/ChannelSettingsSheet';
 import { ChannelPane } from '../src/components/ChannelPane';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { acc, chan } from './helpers/fakeApi';
@@ -85,8 +86,12 @@ describe('채널 보관 UI (#153)', () => {
     const c = fakeController();
     sidebar();
 
+    render(<ChannelSettingsSheet />);
+
+    // 보관은 채널 설정 시트로 옮겼다(UX ⑦b-1) — 메뉴의 "채널 설정…" 이 그 시트를 연다.
     fireEvent.contextMenu(screen.getAllByRole('button', { name: /^# / })[0]!);
-    fireEvent.click(screen.getByText('보관'));
+    fireEvent.click(screen.getByRole('menuitem', { name: '채널 설정…' }));
+    fireEvent.click(screen.getByTestId('channel-sheet-archive'));
 
     expect(c.archiveChannel).toHaveBeenCalledWith('c1', true);
   });
