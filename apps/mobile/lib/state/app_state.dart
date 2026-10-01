@@ -20,6 +20,7 @@ import '../api/api_error.dart';
 import '../api/models.dart';
 import '../api/ws.dart';
 import '../api/ws_socket.dart';
+import '../mention/sticky.dart';
 import '../session/session_store.dart';
 
 /// 앱이 지금 어느 단계에 있나. 화면 하나가 이것만 보고 무엇을 그릴지 정한다.
@@ -169,6 +170,44 @@ class AppState extends ChangeNotifier {
 
   /// 작성칸 키(채널 id 또는 스레드 루트 id) → 보내지 못한 말들(오래된 것 먼저).
   final Map<String, List<FailedSend>> failedSends = {};
+
+  /// 작성칸 키(채널 id 또는 스레드 루트 id) → 고정 멘션(**계정 id**, 부른 순서).
+  ///
+  /// 한 번 부른 상대는 그 작성칸의 다음 줄부터 저절로 불린다(`lib/mention/sticky.dart`).
+  /// 화면(`State`)이 아니라 여기 두는 이유: 스레드 화면은 나가면 통째로 버려진다 — 거기 두면
+  /// 스레드를 한 번 나갔다 오는 것만으로 칩이 사라지고, 사람은 부르던 줄 알고 보낸 글이
+  /// 아무도 깨우지 않는다(데스크탑 #706 이 겪은 것). 앱을 껐다 켜면 비는 것은 작성칸 글과 같다.
+  final Map<String, List<String>> stickyMentions = {};
+
+  /// 이 작성칸이 지금 부를 고정 상대. 비활성·지워진 계정과 나는 뺀다(저장본은 그대로 둔다).
+  List<AccountView> stickyAccounts(String key) =>
+      liveStickyAccounts(stickyMentions[key] ?? const [], accounts, myId: me?.id);
+
+  /// 위의 handle(소문자) — 본문 앞에 붙일 것.
+  List<String> stickyHandles(String key) =>
+      [for (final a in stickyAccounts(key)) a.handle.toLowerCase()];
+
+  /// 방금 보낸 글([typed] — 사람이 친 글)에서 새로 부른 상대를 고정에 더한다.
+  void keepStickyMentions(String key, String typed) {
+    final cur = stickyMentions[key] ?? const <String>[];
+    final next = keepMentioned(cur, typed, accounts.values, myId: me?.id);
+    if (identical(next, cur)) return;
+    stickyMentions[key] = next;
+    notifyListeners();
+  }
+
+  /// 칩의 × — 이 상대를 그만 부른다.
+  void dropStickyMention(String key, String accountId) {
+    final cur = stickyMentions[key];
+    if (cur == null || !cur.contains(accountId)) return;
+    final next = cur.where((id) => id != accountId).toList(growable: false);
+    if (next.isEmpty) {
+      stickyMentions.remove(key);
+    } else {
+      stickyMentions[key] = next;
+    }
+    notifyListeners();
+  }
   int _localSeq = 0;
 
   ApiClient? get api => _api;
@@ -915,6 +954,8 @@ class AppState extends ChangeNotifier {
     // 못 보낸 말도 버린다 — 다른 계정으로 들어온 뒤에 남은 말이 그 계정 이름으로 가면 안 된다.
     failedSends.clear();
     pending.clear();
+    // 누구와 이야기하던 자리인가도 그 계정의 것이다 — 다른 계정이 이어받으면 엉뚱한 상대를 부른다.
+    stickyMentions.clear();
     openChannelId = null;
     _api = baseUrl == null ? null : _apiFactory(baseUrl!, null);
     phase = baseUrl == null ? AppPhase.needsServer : AppPhase.needsLogin;

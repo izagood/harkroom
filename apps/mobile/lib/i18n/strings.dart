@@ -323,6 +323,12 @@ abstract class Strings {
   /// 보내기 버튼의 접근성 이름.
   String get composerSend;
 
+  /// 고정 멘션 줄의 접근성 이름 — 이 작성칸이 다음 글에서도 저절로 부르는 상대들.
+  String get stickyMentionsLabel;
+
+  /// 고정 멘션 칩 × 의 설명. {handle} 은 `@forge` 꼴.
+  String get stickyMentionRemove;
+
   /// 모델 지정(서버 079): "기본" 칩 — 이 에이전트의 설정 모델로 돈다.
   String get modelDefault;
 
@@ -528,6 +534,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'messagesEmpty': s.messagesEmpty,
       'composerHint': s.composerHint,
       'composerSend': s.composerSend,
+      'stickyMentionsLabel': s.stickyMentionsLabel,
+      'stickyMentionRemove': s.stickyMentionRemove,
       'modelDefault': s.modelDefault,
       'modelThreadSet': s.modelThreadSet,
       'modelAgentSet': s.modelAgentSet,
