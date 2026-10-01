@@ -137,6 +137,8 @@ export interface InteractiveTurnDeps {
   syncCodexAuth?: () => Promise<{ account: string | null }>;
   /** opencode 의 러너 전용 XDG 루트(`opencodeHome.ts`). codex 의 홈과 같은 자리·같은 이유다. */
   opencodeHome: string;
+  /** pi 의 러너 전용 상태 루트(`piHome.ts`). */
+  piHome?: string;
   /**
    * 이 턴을 돌릴 claude 계정의 `CLAUDE_CONFIG_DIR`(`claudeAccounts.ts`). `null` 은 계정
    * 지정 없음(시스템 기본)이다.
@@ -312,6 +314,7 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       operatorBin: deps.operatorBin,
       codexHome: deps.codexHome,
     opencodeHome: deps.opencodeHome,
+      piHome: deps.piHome,
       claudeConfigDir,
     });
 

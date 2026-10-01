@@ -16,7 +16,7 @@ import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_T
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, harnessPath, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
-import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readsSessionTranscript, usesTuiForMention, usesXdgHome } from './adapters/index.js';
+import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesTuiForMention, usesXdgHome } from './adapters/index.js';
 import { acceptsPtyInput } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
 import { codexRolloutFileFor, findCodexSessionId } from './codexSessions.js';
@@ -28,6 +28,7 @@ import { readLastAssistantText, readMcpAuthRejections, readPermissionDenials, re
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
 import { opencodeDirs } from './opencodeHome.js';
+import { listPiMcpTools, readonlyToolList } from './piHome.js';
 import { findOpencodeSessionId } from './opencodeSessions.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
@@ -216,6 +217,8 @@ export interface MentionTurnDeps {
   syncCodexAuth?: () => Promise<{ account: string | null }>;
   /** opencode 의 러너 전용 XDG 루트(`opencodeHome.ts`). codex 의 홈과 같은 자리·같은 이유다. */
   opencodeHome: string;
+  /** pi 의 러너 전용 상태 루트(`piHome.ts`). pi 를 안 돌리는 테스트는 비워 둔다. */
+  piHome?: string;
   /**
    * 이 턴을 돌릴 claude 계정 이름(`claudeAccounts.ts`). `null` 은 계정 지정 없음(시스템
    * 기본)이다. **세션 무효화 판정이 이 값을 쓴다** — 계정이 바뀌면 그 스레드의 claude
@@ -860,6 +863,30 @@ export async function runMentionTurn(
   // **턴마다** 읽는다 — 사람이 스레드 칩을 바꾸면 다음 턴부터 먹는다(결정 11). 도는 턴의 argv 는
   // 여기서 정해지므로 도중에 바꾼 값은 이 턴에 닿지 않는다. 채널 최상위 멘션이면 그 글이 루트다.
   const turnModel = await resolveTurnModel(deps.harkroom, def, anchor ?? mentionId);
+  const extraMcpServers = deps.readTurnMcp
+    ? await deps.readTurnMcp(def.harness).catch(() => deps.extraMcpServers)
+    : deps.extraMcpServers;
+  // **허용 도구 목록으로 읽기 전용을 거는 하네스(pi)** — 턴 직전에 그 하네스에게 MCP 도구 이름을
+  // 묻는다. MCP 이름에 `*` 가 안 먹어서(실측) 이름을 다 적어야 한다. 못 받으면 내장 읽기 도구만
+  // 남긴다(`readonlyToolList`) — 답할 길을 잃는 쪽이 쓰기가 열리는 쪽보다 낫다. 로그엔 남긴다.
+  const allowlist = readonlyToolsFor(def.harness);
+  let turnReadonlyTools: string | null = null;
+  if (allowlist && def.mentionPermission === 'readonly') {
+    const discovered = await listPiMcpTools({
+      command: harnessCommand(def.harness),
+      args: allowlist.list,
+      env: {
+        ...process.env,
+        ...(deps.piHome ? { PI_CODING_AGENT_DIR: deps.piHome } : {}),
+        PATH: harnessPath(def.harness, process.env.PATH),
+      } as Record<string, string>,
+      cwd: rec.workspaceDir,
+    });
+    if (discovered === null || allowlist.mcpServers.some((s) => !(discovered[s]?.length))) {
+      console.warn(`[mentionTurn] ${key}: ${def.harness} 읽기 전용 — MCP 도구 이름을 못 받아 내장 읽기 도구만 연다 (${JSON.stringify(discovered)})`);
+    }
+    turnReadonlyTools = readonlyToolList(allowlist, discovered);
+  }
   const plan = buildTurnCommand({
     harness: def.harness,
     mode: 'mention',
@@ -873,12 +900,12 @@ export async function runMentionTurn(
     effort: turnModel.effort,
     mentionPermission: def.mentionPermission,
     mcpConfigPath: deps.mcpConfigPath,
-    extraMcpServers: deps.readTurnMcp
-      ? await deps.readTurnMcp(def.harness).catch(() => deps.extraMcpServers)
-      : deps.extraMcpServers,
+    extraMcpServers,
     operatorBin: deps.operatorBin,
     codexHome: deps.codexHome,
     opencodeHome: deps.opencodeHome,
+    piHome: deps.piHome,
+    readonlyToolList: turnReadonlyTools,
     claudeConfigDir: deps.claudeConfigDir,
     // 연쇄 깊이의 앞 고리 — 이 턴을 띄운 멘션이다(앵커가 아니다: 앵커는 스레드 루트일 수 있다).
     causeMessageId: mentionId,

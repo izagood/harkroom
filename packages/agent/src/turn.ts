@@ -19,7 +19,7 @@ import {
 } from '@harkroom/shared';
 import { RUNNER_LINK_ENV_KEYS, RUNNER_TURN_CAUSE_ENV } from '@harkroom/shared/runnerLink';
 
-import { executionModelFor, usesXdgHome } from './adapters/index.js';
+import { executionModelFor, readonlyToolsFor, usesPiHome, usesXdgHome } from './adapters/index.js';
 import { OPENCODE_READONLY_AGENT, opencodeDirs } from './opencodeHome.js';
 
 /**
@@ -86,6 +86,14 @@ export interface BuildTurnCommandOptions {
    * 같은 이유다 — 사람의 설정·세션과 갈라 두지 않으면 개인 MCP 가 에이전트 턴에 붙는다.
    */
   opencodeHome?: string;
+  /** pi 의 러너 전용 상태 루트(`piHome.ts`, `PI_CODING_AGENT_DIR`). 같은 자리·같은 이유다. */
+  piHome?: string;
+  /**
+   * 읽기 전용 멘션 턴의 **허용 도구 목록**(`piHome.ts::readonlyToolList`) — 어댑터의 `readonlyTools`
+   * 가 있는 하네스(pi)에만 쓴다. 그 하네스의 읽기 전용 턴에 이 값이 없으면 **조립을 거절한다**:
+   * pi 에는 다른 권한 장치가 없어, 목록 없이 뜨면 쓰기·셸이 다 열린 채 돈다.
+   */
+  readonlyToolList?: string | null;
   /**
    * 이 턴을 돌릴 claude 계정의 `CLAUDE_CONFIG_DIR`(`claudeAccounts.ts`). **`null` 은 '계정
    * 지정 없음'** 이고, 그때 자식은 시스템 기본(`~/.claude`)을 쓴다 — 계정 풀을 안 만든
@@ -425,12 +433,44 @@ const OPENCODE_PRESET: HarnessPreset = {
  */
 const KILO_PRESET: HarnessPreset = { ...OPENCODE_PRESET, command: 'kilo' };
 
+/**
+ * pi (0.99.2 실측, 2026-10-01). 앞의 하네스들과 다른 점:
+ *
+ * 1. **세션 인자가 하나다.** `--session-id <uuid>` 가 "있으면 이어 가고 없으면 만든다" — 첫 턴과
+ *    이후 턴이 같은 인자다(claude 는 `--session-id`/`-r` 로 갈린다). 그래도 러너가 첫 턴에 uuid 를
+ *    미리 발급하므로 `allowsNullSessionOnFirstTurn` 은 거짓이다.
+ * 2. **권한 플래그가 없다.** auto 는 아무것도 안 붙이는 것이고(원래 묻지 않는다), 읽기 전용은
+ *    `buildTurnCommand` 가 `--tools <readonlyToolList>` 를 붙인다 — 목록이 턴마다 하네스에게 물어
+ *    얻는 값이라(MCP 도구 이름) 이 표에 정적으로 못 둔다.
+ * 3. **`--no-approve`** — 워크스페이스의 `.pi/`(확장·설정)를 들이지 않는다. 확장은 pi 프로세스 안에서
+ *    도는 코드라 저장소가 심어 둔 것을 실행하게 되고, 들일지 묻는 화면이 뜨면 주입이 그 모달에 들어간다.
+ */
+const PI_PRESET: HarnessPreset = {
+  command: 'pi',
+  session: (sessionId) => ['--session-id', sessionId as string],
+  allowsNullSessionOnFirstTurn: false,
+  permission: { auto: [], readonly: [] },
+  mcp: () => [],
+  model: (model) => (model ? ['--model', model] : []),
+  effort: (effort) => (effort ? ['--thinking', effort] : []),
+  alwaysArgs: () => ['--no-approve'],
+  // 지시문은 파일 경로로 — `--append-system-prompt` 는 경로를 받으면 **파일 내용을** 붙인다(실측).
+  // 본문은 PTY 주입으로 간다(argv 로 넘기면 `ps` 에 샌다, #117).
+  prompt: (systemPrompt, _promptCtx, _mode, systemPromptFile) => {
+    if (systemPrompt && !systemPromptFile) {
+      throw new Error('buildTurnCommand: pi 는 지시문을 파일로만 받는다 — systemPromptFile 이 비어 있다(#92)');
+    }
+    return systemPromptFile ? ['--append-system-prompt', systemPromptFile] : [];
+  },
+};
+
 const PRESETS: Record<AgentHarness, HarnessPreset | 'unsupported'> = {
   'claude-code': CLAUDE_PRESET,
   codex: CODEX_PRESET,
   // 실물로 재고 열었다(2026-09-22): 브릿지 MCP · 붙여넣기 주입 · readonly 에이전트 · 세션 발견.
   opencode: OPENCODE_PRESET,
   kilo: KILO_PRESET,
+  pi: PI_PRESET,
   gemini: 'unsupported',
 };
 
@@ -514,6 +554,16 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
   if (usesXdgHome(opts.harness) && !opts.opencodeHome) {
     throw new Error('buildTurnCommand: opencodeHome 이 비어 있다 — 개인 opencode 설정·MCP 를 격리할 수 없다');
   }
+  if (usesPiHome(opts.harness) && !opts.piHome) {
+    throw new Error('buildTurnCommand: piHome 이 비어 있다 — 개인 pi 설정·확장·MCP 를 격리할 수 없다');
+  }
+  const allowlist = readonlyToolsFor(opts.harness);
+  const readonlyByList = allowlist !== null && opts.mode === 'mention' && opts.mentionPermission === 'readonly';
+  if (readonlyByList && !opts.readonlyToolList) {
+    throw new Error(
+      `buildTurnCommand: ${opts.harness} 의 읽기 전용 턴에 허용 도구 목록이 없다 — 그대로 뜨면 쓰기·셸이 열린다`,
+    );
+  }
   if (opts.harness === 'codex' && !opts.codexHome) {
     throw new Error('buildTurnCommand: codexHome 이 비어 있다 — 개인 Codex 설정을 격리할 수 없다');
   }
@@ -522,6 +572,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     ...preset.session(opts.sessionId, opts.isFirstTurn, opts.mode),
     ...preset.alwaysArgs(opts.mode),
     ...(opts.mode === 'mention' ? preset.permission[opts.mentionPermission] : []),
+    ...(readonlyByList ? ['--tools', opts.readonlyToolList as string] : []),
     ...preset.mcp({ mcpConfigPath: opts.mcpConfigPath, operatorBin: opts.operatorBin, extraMcpServers: opts.extraMcpServers ?? {} }),
     ...preset.model(opts.model),
     ...preset.effort(opts.effort),
@@ -539,6 +590,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
       harness: opts.harness,
       codexHome: opts.harness === 'codex' ? opts.codexHome : null,
       opencodeHome: usesXdgHome(opts.harness) ? (opts.opencodeHome ?? null) : null,
+      piHome: usesPiHome(opts.harness) ? (opts.piHome ?? null) : null,
       claudeConfigDir: opts.harness === 'claude-code' ? opts.claudeConfigDir : null,
       causeMessageId: opts.causeMessageId ?? null,
       }),
@@ -638,6 +690,7 @@ function childEnv(
     codexHome: string | null;
     claudeConfigDir: string | null;
     opencodeHome: string | null;
+    piHome?: string | null;
     causeMessageId: string | null;
   },
 ): Record<string, string> {
@@ -657,6 +710,14 @@ function childEnv(
   // opencode 는 한 변수가 아니라 **XDG 셋**이다. 하나라도 빼면 자격증명만 갈리고 세션은
   // 사람 것과 공유되는 반쪽 격리가 된다(`opencodeHome.ts` 머리말).
   if (homes.opencodeHome !== null) Object.assign(env, opencodeDirs(homes.opencodeHome));
+  // pi 는 한 변수지만 세션 자리는 따로 바꿀 수 있다(`PI_CODING_AGENT_SESSION_DIR`). 부모 env 에 그
+  // 값이 있으면 세션만 사람 것과 섞이므로 **지운다** — 그러면 `<PI_CODING_AGENT_DIR>/sessions/--<cwd>--/`
+  // 에 쌓인다(재개를 잰 바로 그 배치). 값을 주지 않는 이유: 주면 pi 가 cwd 별 폴더 없이 평평하게
+  // 쌓는데(실측 2026-10-01), 그 배치에서의 재개는 재 보지 않았다.
+  if (homes.piHome) {
+    env.PI_CODING_AGENT_DIR = homes.piHome;
+    delete env.PI_CODING_AGENT_SESSION_DIR;
+  }
   // **`null` 이면 키 자체를 넣지 않는다.** 빈 문자열을 넣으면 claude 가 그것을 경로로 읽어
   // 엉뚱한 자리에 설정을 만든다 — "계정 지정 없음"은 부재로 표현해야 시스템 기본으로 떨어진다.
   // 계정 풀을 안 만든 러너의 하위 호환이 이 한 줄에 걸려 있다(`claudeAccounts.ts`).

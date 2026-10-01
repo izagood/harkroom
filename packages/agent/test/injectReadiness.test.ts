@@ -80,6 +80,18 @@ describe('Kilo(opencode 포크)의 준비 표시 — 실측 2026-10-01, kilo 7.8
   });
 });
 
+describe('pi 의 준비 표시 — 실측 2026-10-01, pi 0.99.2', () => {
+  it('첫 화면과 되살린 화면 둘 다 상태줄의 컨텍스트 칸(`0.0%/197k`)에 걸린다', () => {
+    for (const f of ['pi-tui-ready.txt', 'pi-tui-resumed.txt']) {
+      const 화면 = readFileSync(new URL(`./fixtures/${f}`, import.meta.url), 'utf8');
+      expect(injectionFactsFor('pi').readyPattern.test(화면)).toBe(true);
+      expect(injectionFactsFor('claude-code').readyPattern.test(화면)).toBe(false);
+    }
+    // MCP 가 붙기 전 첫 입력을 피하는 하한(어댑터 주석).
+    expect(injectionFactsFor('pi').readyMinMs).toBe(1000);
+  });
+});
+
 describe('하한 전에는 쓰지 않는다', () => {
   it('준비 표시를 즉시 봐도 하한까지 기다린다', async () => {
     const chunks: Buffer[] = [];

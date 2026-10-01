@@ -123,6 +123,15 @@ export interface TranscriptCli {
  * 조용하다 — 계정을 바꿨다고 믿는 러너가 남의 세션을 이어받는다. 그래서 축을 "환경변수
  * 하나"로 적지 않고 **함께 세팅해야 하는 목록**으로 적는다.
  */
+export interface ReadonlyTools {
+  /** 읽기 전용 턴에 켜 둘 내장 도구. */
+  readonly builtins: readonly string[];
+  /** 도구를 전부 켜 둘 MCP 서버 이름. 답하는 길(harkroom)이 여기 있어야 한다. */
+  readonly mcpServers: readonly string[];
+  /** MCP 서버·도구 이름을 JSON 으로 내는 하네스 명령(인자). */
+  readonly list: readonly string[];
+}
+
 export interface XdgApp {
   readonly dir: string;
   readonly configFile: string;
@@ -257,6 +266,18 @@ export interface HarnessAdapter {
    * XDG 하네스가 아니면 `null`.
    */
   readonly xdgApp: XdgApp | null;
+
+  /**
+   * **읽기 전용을 "허용 도구 목록"으로 거는 하네스**(pi — 권한 승인 장치가 아예 없다)의 재료.
+   *
+   * pi 의 `--tools` 는 닫힌 목록이라 이름을 다 적어야 하고, **MCP 도구에는 `*` 가 안 먹는다**
+   * (실측 2026-10-01: `mcp__harkroom__*` 를 주면 MCP 도구가 하나도 선언되지 않았다). 그래서
+   * 턴 직전에 하네스 자신에게 MCP 도구 이름을 묻고(`list`), `mcpServers` 의 것만 목록에 더한다.
+   * 그 밖의 MCP(avcs·에이전트 개인 서버)는 넣지 않는다 — 쓰기 도구가 있을 수 있다.
+   *
+   * 승인 장치가 있는 하네스(claude·codex·opencode 계열)는 `null` 이다.
+   */
+  readonly readonlyTools: ReadonlyTools | null;
 
   // ── T3: 없으면 기본값으로 돈다 ───────────────────────────────────────────────
 

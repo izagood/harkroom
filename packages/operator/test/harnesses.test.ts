@@ -18,6 +18,7 @@ describe('detectHarnesses', () => {
       codex: { installed: true, loggedIn: false },
       opencode: { installed: false, loggedIn: false },
       kilo: { installed: false, loggedIn: false },
+      pi: { installed: false, loggedIn: false },
     });
   });
   it('PATH 를 못 읽었으면(null) 아무것도 installed 가 아니다 — 모르는 것을 있다고 하지 않는다', async () => {
@@ -34,6 +35,7 @@ describe('detectHarnesses', () => {
       codex: { installed: true, loggedIn: true },
       opencode: { installed: false, loggedIn: false },
       kilo: { installed: false, loggedIn: false },
+      pi: { installed: false, loggedIn: false },
     });
   });
 
@@ -75,5 +77,18 @@ describe('detectHarnesses', () => {
       exists: existsIn(['/usr/bin/kilo', '/home/u/.local/share/kilo/auth.json']),
     });
     expect(out.kilo).toEqual({ installed: true, loggedIn: true });
+  });
+
+  it('pi 의 자격은 `~/.pi/agent/auth.json`, 없으면 `models.json`(BYOK 제공자)이다 — PI_CODING_AGENT_DIR 존중', async () => {
+    const byAuth = await detectHarnesses({
+      path: '/usr/bin', env: {}, home: '/home/u',
+      exists: existsIn(['/usr/bin/pi', '/home/u/.pi/agent/auth.json']),
+    });
+    expect(byAuth.pi).toEqual({ installed: true, loggedIn: true });
+    const byModels = await detectHarnesses({
+      path: '/usr/bin', env: { PI_CODING_AGENT_DIR: '/x/pi' }, home: '/home/u',
+      exists: existsIn(['/x/pi/models.json']),
+    });
+    expect(byModels.pi).toEqual({ installed: false, loggedIn: true });
   });
 });

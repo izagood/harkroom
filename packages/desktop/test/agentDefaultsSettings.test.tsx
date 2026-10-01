@@ -72,7 +72,7 @@ describe('AgentDefaultsSettings', () => {
     await screen.findByLabelText('기본 model');
     const group = screen.getByRole('radiogroup', { name: '기본 harness' });
     const labels = [...group.querySelectorAll('[role="radio"]')].map((b) => b.textContent);
-    expect(labels).toEqual(['claude-code', 'codex', 'opencode', 'kilo']);
+    expect(labels).toEqual(['claude-code', 'codex', 'opencode', 'kilo', 'pi']);
   });
 
   it('기본 model 을 비우면 명시적 null 을 보낸다 — 키를 빼면 서버가 손대지 않는다', async () => {

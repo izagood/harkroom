@@ -287,6 +287,7 @@ set these by hand:
 | `HARKROOM_TURN_SECRETS_DIR` | Where the operator writes secrets mounted for a turn (`<appDataDir>/turn-secrets`). The operator sets it at spawn; the runner reads mounted values from it to scrub them out of the harness transcript before releasing the turn lease. Unset (older operator) means no scrubbing | - | No |
 | `CLAUDE_CONFIG_DIR` | Not read by the runner — **set on the child** `claude` process to the selected account's directory. Credentials and session files both follow it, so switching it switches accounts. Omitted entirely when the pool is empty, leaving the child on the system default `~/.claude` | - | No |
 | `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` | Source opencode home whose `opencode/auth.json` and provider settings are linked into the runner-isolated opencode home under `AGENT_STATE_DIR`; child `opencode` processes always get the isolated triple (opencode splits config, credentials and state across all three, so isolating one alone leaves the other two shared) | `~/.config`, `~/.local/share`, `~/.local/state` | No |
+| `PI_CODING_AGENT_DIR` | Source pi home whose `auth.json` and `models.json` are linked into the runner-isolated pi home (`pi-home` under `AGENT_STATE_DIR`), along with only `defaultProvider`/`defaultModel` from its `settings.json`; child `pi` processes always get the isolated home. `PI_CODING_AGENT_SESSION_DIR` is removed from the child so sessions stay inside it | `~/.pi/agent` | No |
 
 </details>
 

@@ -52,6 +52,9 @@ function plan(harness: AgentHarness, over: Partial<BuildTurnCommandOptions> = {}
     operatorBin: '/opt/harkroom/harkroom-operator',
     codexHome: join(dir, 'codex-home'),
     opencodeHome: join(dir, 'opencode-home'),
+    piHome: join(dir, 'pi-home'),
+    // 허용 목록으로 읽기 전용을 거는 하네스(pi)는 이 값이 없으면 조립을 거절한다 — 다른 하네스는 안 본다.
+    readonlyToolList: 'read,grep,find,ls',
     claudeConfigDir: null,
     ...over,
   });
@@ -109,7 +112,10 @@ describe('T0 — 실행 조립', () => {
     await writeFile(file, '지시문');
     for (const [harness, adapter] of PAIRS) {
       const args = plan(harness, { systemPrompt: '지시문', systemPromptFile: file }).args;
-      expect(args.includes('--append-system-prompt-file')).toBe(adapter.systemPromptDelivery === 'flag-file');
+      // 플래그 이름은 하네스마다 다르다(claude `--append-system-prompt-file`, pi `--append-system-prompt`) —
+      // 재는 것은 "지시문 **파일 경로**가 argv 에 오르는가"이고, 본문은 어느 쪽이든 오르면 안 된다.
+      expect(args.includes(file)).toBe(adapter.systemPromptDelivery === 'flag-file');
+      expect(args).not.toContain('지시문');
     }
   });
 

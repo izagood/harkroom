@@ -19,9 +19,10 @@ import { CLAUDE_CODE_ADAPTER } from './claudeCode.js';
 import { CODEX_ADAPTER } from './codex.js';
 import { OPENCODE_ADAPTER } from './opencode.js';
 import { KILO_ADAPTER } from './kilo.js';
-import type { ExecutionModel, HarnessAdapter, XdgApp } from './contract.js';
+import { PI_ADAPTER } from './pi.js';
+import type { ExecutionModel, HarnessAdapter, ReadonlyTools, XdgApp } from './contract.js';
 
-export type { HarnessAdapter, ExecutionModel, TrustLedger, TranscriptSource, AccountAxis, XdgApp } from './contract.js';
+export type { HarnessAdapter, ExecutionModel, TrustLedger, TranscriptSource, AccountAxis, XdgApp, ReadonlyTools } from './contract.js';
 export { GATE_PATTERN } from './gate.js';
 
 /**
@@ -35,6 +36,8 @@ export const ADAPTERS: Record<AgentHarness, HarnessAdapter | 'unsupported'> = {
   opencode: OPENCODE_ADAPTER,
   // opencode 포크(실측 2026-10-01). 표의 모양이 같고 이름(`xdgApp`·`command`)만 다르다.
   kilo: KILO_ADAPTER,
+  // 권한 승인 장치가 없는 첫 하네스(실측 2026-10-01). 읽기 전용은 `readonlyTools` 로 건다.
+  pi: PI_ADAPTER,
   // `-r` 이 UUID 를 받지 못해 `--session-id` 와 짝을 이루지 못한다(실측, task-1).
   gemini: 'unsupported',
 };
@@ -216,6 +219,21 @@ export function harnessCommand(harness: AgentHarness): string {
 export function usesXdgHome(harness: AgentHarness): boolean {
   const account = ADAPTERS[harness] === 'unsupported' ? null : adapterFor(harness).account;
   return account?.configDirEnv.includes('XDG_CONFIG_HOME') === true;
+}
+
+/** 읽기 전용을 허용 도구 목록으로 거는 하네스의 재료(`readonlyTools`). 아니면 `null`. */
+export function readonlyToolsFor(harness: AgentHarness): ReadonlyTools | null {
+  const adapter = ADAPTERS[harness];
+  return adapter === 'unsupported' ? null : adapter.readonlyTools;
+}
+
+/**
+ * 이 하네스가 **`PI_CODING_AGENT_DIR` 하나로 상태를 옮기는가**(pi). `usesXdgHome` 과 같은 이유로
+ * 이름이 아니라 표에 묻는다.
+ */
+export function usesPiHome(harness: AgentHarness): boolean {
+  const adapter = ADAPTERS[harness];
+  return adapter !== 'unsupported' && adapter.account?.configDirEnv.includes('PI_CODING_AGENT_DIR') === true;
 }
 
 /** XDG 하네스의 이름표(`xdgApp`). XDG 하네스가 아니거나 어댑터가 없으면 `null`. */

@@ -43,6 +43,7 @@ export const CLAUDE_CODE_ADAPTER: HarnessAdapter = {
 
   // 계정 하나 = `CLAUDE_CONFIG_DIR` 하나. 목록·로그인·사용량·페일오버 표면이 다 있다.
   account: { configDirEnv: ['CLAUDE_CONFIG_DIR'], pooled: true },
+  readonlyTools: null,
   xdgApp: null,
 
   effort: { via: 'flag', flag: '--effort' },

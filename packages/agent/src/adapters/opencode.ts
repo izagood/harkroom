@@ -99,6 +99,7 @@ export const OPENCODE_ADAPTER: HarnessAdapter = {
     configDirEnv: ['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME'],
     pooled: false,
   },
+  readonlyTools: null,
   xdgApp: {
     dir: 'opencode',
     configFile: 'opencode.jsonc',
