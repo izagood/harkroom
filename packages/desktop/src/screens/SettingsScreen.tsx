@@ -18,7 +18,7 @@ import { AutomationsSettings } from '../components/settings/AutomationsSettings'
 import { UpdatesSettings } from '../components/settings/UpdatesSettings';
 import { ThisOperatorSettings } from '../components/settings/ThisOperatorSettings';
 import { DEFAULT_SECTION, SETTINGS_GROUPS, isSectionId, navKey, workspaceEditable, type SectionId } from '../components/settings/sections';
-import { useActiveStore } from '../state/communities';
+import { useActiveStore, useCommunityRegistry } from '../state/communities';
 import { WindowDragStrip } from '../components/WindowDragStrip';
 import { useT } from '../i18n/useT';
 
@@ -45,6 +45,13 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
     isSectionId(initialSection) ? initialSection : DEFAULT_SECTION,
   );
   const me = useActiveStore((s) => s.me);
+  /**
+   * 설정이 열린 채 커뮤니티가 바뀌면(알림 클릭은 설정을 닫지 않고 전환한다) 본문을 **새로 띄운다.**
+   * 섹션들은 목록을 마운트 때 한 번 읽고 쓰기는 `getController()`(= 그 순간의 활성 커뮤니티)로
+   * 한다 — 다시 띄우지 않으면 화면은 옛 커뮤니티의 에이전트를 보이면서 저장은 새 커뮤니티 서버로
+   * 보낸다. 에이전트 사진이 그렇게 남의 서버로 가서 "사진을 바꿨습니다"만 남았다(2026-10-02).
+   */
+  const communityId = useCommunityRegistry((r) => r.activeId);
 
   return (
     /* #342: 설정도 `Workspace` 를 **대체해서** 그려진다(겹창이 아니다) — 그래서 여기 있는
@@ -100,7 +107,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1 overflow-y-auto">
+        <main key={communityId} className="min-w-0 flex-1 overflow-y-auto">
           {section === 'profile' && <ProfileSettings onSignOut={onSignOut} />}
           {section === 'notifications' && <NotificationSettings />}
           {section === 'messages' && <MessageSettings />}
