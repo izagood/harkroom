@@ -186,3 +186,22 @@ describe('강조는 나를 막을 때만', () => {
     expect(screen.queryByTestId('thread-state')).toBeNull();
   });
 });
+
+// D안(designer 결정): 상태 리액션이 있는 루트에서는 요약 칸(사슬 줄·배지)을 그리지 않는다 —
+// 상태는 리액션 줄의 칩 하나가 말한다. 상태가 아직 없으면(배포 전·판정 전) 배지가 받친다.
+describe('상태 리액션이 있으면 요약 칸을 비운다', () => {
+  const status = { status: 'my-turn', emoji: '🙋', accountId: BETA, reason: '어느 쪽?', updatedAt: new Date().toISOString() } as const;
+
+  it('상태가 있으면 사슬 줄도 배지도 없고, 칩과 답글 수는 있다', () => {
+    summary([link(BETA, ME)], { openAskAccountIds: [ME], statusReaction: status });
+    expect(screen.queryByTestId('speech-slot')).toBeNull();
+    expect(screen.queryByTestId('thread-state')).toBeNull();
+    expect(screen.getByTestId('status-reaction')).toBeTruthy();
+    expect(screen.getByTestId('reply-summary-count')).toBeTruthy();
+  });
+
+  it('상태가 null 이면 지금 배지가 받친다', () => {
+    summary(null, { unresolvedFailureCount: 1, failureCount: 1, statusReaction: null });
+    expect(screen.getByTestId('thread-state')).toBeTruthy();
+  });
+});

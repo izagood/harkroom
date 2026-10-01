@@ -926,7 +926,13 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                   사슬이 있으면 그것이 배지보다 구체적인 말이다: 배지는 "내 차례"까지만
                   말하고, 이 줄은 **누구를 기다리는지**까지 말한다.
                 */}
-                {ends ? (
+                {/*
+                  **상태 리액션이 있으면 이 칸을 그리지 않는다**(D안, designer 결정). 상태는 리액션 줄의
+                  칩 하나가 말한다 — 여기서 또 그리면 한 행에 상태가 두 번이고, 두 판정이 엇갈리면
+                  서로 다른 말을 한다. "누가 누구를 기다리나"는 칩 말풍선에 있다. 상태가 아직 없는
+                  루트(배포 전·판정 전)는 지금 배지가 받친다.
+                */}
+                {message.statusReaction ? null : ends ? (
                   <span
                     data-testid="speech-slot"
                     data-mine={ends.mine}
