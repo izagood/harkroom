@@ -96,7 +96,7 @@ export const ko = {
   'settings.nav.notifications': '알림',
   'settings.nav.messages': '메시지',
   'settings.nav.appearance': '모양과 언어',
-  'settings.nav.communities': '커뮤니티',
+  'settings.nav.communities': '커뮤니티 목록',
   'settings.nav.workspace': '일반',
   'settings.nav.agents': '목록',
   'settings.nav.agent-defaults': '새 에이전트 기본값',
