@@ -114,7 +114,9 @@ class AttachButton extends StatelessWidget {
           return app.attach(composerKey, PendingAttachment(filename: name), bytes);
         };
 
-    final choice = await _showAttachSheet(context, hasCamera: pickers.hasCamera);
+    final hasCamera = await pickers.hasCamera();
+    if (!context.mounted) return;
+    final choice = await _showAttachSheet(context, hasCamera: hasCamera);
     // 시트는 이미 닫혔다(항목을 누르면 먼저 닫고 picker 를 연다).
     switch (choice) {
       case null:

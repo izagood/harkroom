@@ -8,10 +8,11 @@ import 'package:harkroom/theme.dart';
 
 /// 진짜 picker 는 플랫폼 채널이라 열 수 없다. 어느 길을 불렀는지만 적는다.
 class _FakePickers implements AttachPickers {
-  _FakePickers({this.hasCamera = true, this.cameraError, this.libraryBytes});
+  _FakePickers({bool hasCamera = true, this.cameraError, this.libraryBytes}) : _hasCamera = hasCamera;
 
+  final bool _hasCamera;
   @override
-  final bool hasCamera;
+  Future<bool> hasCamera() async => _hasCamera;
   final PlatformException? cameraError;
   final Uint8List? libraryBytes;
   final calls = <String>[];

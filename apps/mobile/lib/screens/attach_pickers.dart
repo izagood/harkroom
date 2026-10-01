@@ -1,7 +1,5 @@
-import 'dart:io' show Platform;
-import 'dart:typed_data';
-
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 /// 고른 것 하나. 이름과, 바이트를 읽는 길.
@@ -19,7 +17,7 @@ class PickedAttachment {
 abstract class AttachPickers {
   /// 이 기기에 카메라가 있는가. 시뮬레이터에는 없다 — 그때 카메라 줄은 **숨기지 않고
   /// 비활성**으로 둔다(실기기와 배치가 같아야 스크린샷·시험이 대조된다).
-  bool get hasCamera;
+  Future<bool> hasCamera();
 
   /// 사진 보관함(PHPicker). 권한을 묻지 않으므로 거절 상태가 없다. 취소하면 빈 목록.
   Future<List<PickedAttachment>> library();
@@ -35,9 +33,25 @@ abstract class AttachPickers {
 class PlatformAttachPickers implements AttachPickers {
   const PlatformAttachPickers();
 
-  /// iOS 시뮬레이터는 앱 프로세스에 이 값을 넣는다. 실기기에는 없다.
+  static const _device = MethodChannel('harkroom/device');
+
+  /// iOS 에 직접 묻는다(`AppDelegate.swift`: 시뮬레이터면 false, 아니면
+  /// `UIImagePickerController.isSourceTypeAvailable`).
+  /// `Platform.environment` 의 `SIMULATOR_DEVICE_NAME` 으로는 못 가른다 — iOS 의 Dart 는
+  /// 환경 변수를 **빈 맵**으로 준다(시뮬레이터에서 실측).
+  ///
+  /// 묻지 못하면 있다고 본다. 실기기에서 카메라 줄이 잠기는 것보다, 없는 기기에서 눌러
+  /// "카메라를 열지 못했다" 를 보는 편이 낫다.
   @override
-  bool get hasCamera => !Platform.environment.containsKey('SIMULATOR_DEVICE_NAME');
+  Future<bool> hasCamera() async {
+    try {
+      return await _device.invokeMethod<bool>('hasCamera') ?? true;
+    } on PlatformException {
+      return true;
+    } on MissingPluginException {
+      return true;
+    }
+  }
 
   @override
   Future<List<PickedAttachment>> library() async {
