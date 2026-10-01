@@ -255,7 +255,7 @@ export function Inbox({ open, onClose }: Props) {
     const go = isThread
       ? getController().openThread(card.rootId, { channelId: card.channelId })
       : (onClose(), getController().openMessage(card.entries[0]!.messageId));
-    void go.then(() => reload({ quiet: true }));
+    void Promise.resolve(go).then(() => reload({ quiet: true }));
   };
 
   const answer = async (card: BoardCard, optionId: string): Promise<void> => {
@@ -299,7 +299,7 @@ export function Inbox({ open, onClose }: Props) {
           </span>
           {/* 채널 · 누가 · 얼마나. 넘치면 채널 이름부터 줄인다 — 시각은 잘리면 뜻을 잃는다. */}
           <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-meta text-fg-subtle">
-            {who && <Identity account={who} className="h-4 w-4 shrink-0 text-[9px]" variant="avatar" />}
+            {who && <Identity account={who} className="h-5 w-5 shrink-0 text-[10px]" variant="avatar" />}
             {who && <span aria-hidden="true" className="shrink-0 font-medium text-fg-muted">{who.handle}</span>}
             <span className="min-w-0 truncate">{channelLabel(card.channelId)}</span>
             <span

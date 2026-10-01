@@ -1778,10 +1778,13 @@ describe('daemon 사실 — 판정이 두 언어로 말한다', () => {
 const AGENT = 'a-mine';
 
 /** 이 넷은 컨트롤러를 만진다 — 문자열만 재므로 부르는 것만 있으면 된다. */
+/** 인박스 보드가 받을 재료 — 기본은 비었다. 열 이름을 재는 시험만 카드 하나를 넣는다. */
+let inboxBoardRows: { entries: InboxEntry[]; threads: null } = { entries: [], threads: null };
+
 function stubController() {
   setController({
     // `Composer` 는 채널이 있으면 예약 목록을 곧바로 조회한다 — 없으면 그 화면이 뜨다 만다.
-    api: { inbox: async () => [], scheduledMessages: async () => [] },
+    api: { inbox: async () => [], inboxBoard: async () => inboxBoardRows, scheduledMessages: async () => [] },
     listAgents: async () => [],
     openMessage: async () => undefined,
     openChannel: async () => undefined,
@@ -1968,6 +1971,7 @@ describe('작성창 — 두 언어로 뜬다', () => {
 
 describe('인박스 — 두 언어로 뜬다', () => {
   beforeEach(() => {
+    inboxBoardRows = { entries: [], threads: null };
     stubController();
     useActiveStore.getState().set({
       me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') },
@@ -1975,49 +1979,42 @@ describe('인박스 — 두 언어로 뜬다', () => {
     });
   });
 
-  it('필터 칩과 구획이 영어로 뜬다', async () => {
+  it('빈 보드가 두 언어로 뜬다', async () => {
     render(<Inbox open onClose={() => {}} />);
-    expect(screen.getByTestId('inbox-filter-blocking').textContent).toContain('Blocking you');
-    expect(screen.getByTestId('inbox-filter-all').textContent).toContain('Everything');
-    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent)
-      .toBe('Nothing has called you'));
+    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent).toBe('Nothing has called you'));
     // 자리의 이름이자 머리글이다 — 랜드마크로 찾을 수 있어야 한다.
     expect(screen.getByRole('complementary', { name: 'Inbox' })).toBeTruthy();
-  });
-
-  it('필터 칩과 구획이 한국어로 바뀐다', async () => {
+    cleanup();
     speak('ko');
     render(<Inbox open onClose={() => {}} />);
-    expect(screen.getByTestId('inbox-filter-blocking').textContent).toContain('나를 막는 것');
-    expect(screen.getByTestId('inbox-filter-all').textContent).toContain('전부');
-    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent)
-      .toBe('나를 부른 것이 없다'));
+    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent).toBe('나를 부른 것이 없다'));
     expect(screen.getByRole('complementary', { name: '인박스' })).toBeTruthy();
   });
 
   /**
-   * **사슬 구획의 이름은 `waitChain.*` 것이다** — 인박스가 그 이름을 제 손으로 다시
-   * 적으면 스레드 패널과 갈린다(그 영역이 화면 이름이 아니라 판정 이름인 이유).
-   * 두 언어 모두 그 사전의 말이 나오는지 잰다.
+   * **열 이름은 구획 이름(랜드마크)이다** — 개수가 섞이지 않는다. 수는 머리글의 "내 차례"
+   * 하나뿐이다(그 수만 0 이 될 수 있다).
    */
-  it('사슬 구획 이름이 사슬 사전에서 온다 — 인박스가 다시 적지 않는다', () => {
+  it('열 넷과 내 차례 수가 두 언어로 뜬다', async () => {
+    inboxBoardRows = {
+      entries: [{
+        id: 1, messageId: 'm1', reason: 'mention', readAt: null, channelId: 'c1', authorId: ME,
+        body: '봐 줘', meta: {}, createdAt: new Date().toISOString(), threadRootId: null,
+      }],
+      threads: null,
+    };
     render(<Inbox open onClose={() => {}} />);
-    expect(screen.getByRole('region', { name: en['waitChain.sectionTitle'] as string })).toBeTruthy();
+    for (const name of ['Your turn', 'Blocked', 'In progress', 'Done']) {
+      expect(await screen.findByRole('region', { name })).toBeTruthy();
+    }
+    expect(screen.getByTestId('inbox-mine-count').textContent).toBe('0 waiting on you');
     cleanup();
     speak('ko');
     render(<Inbox open onClose={() => {}} />);
-    expect(screen.getByRole('region', { name: ko['waitChain.sectionTitle'] as string })).toBeTruthy();
-  });
-
-  /**
-   * **랜드마크 이름에 개수가 없다.** 구획 이름은 자리의 이름이고, 개수가 섞이면 목록이
-   * 바뀔 때마다 이름이 달라져 자리를 이름으로 찾는 사람에게 매번 다른 구획이 된다.
-   * 보이는 머리글은 개수를 단다 — 그 둘이 갈려 있는 것이 이 축이 지키는 것이다.
-   */
-  it('구획 이름에는 개수가 없고 머리글에는 있다', async () => {
-    render(<Inbox open onClose={() => {}} />);
-    const region = await screen.findByRole('region', { name: 'Called you' });
-    expect(region.querySelector('h3')?.textContent).toContain('(0)');
+    for (const name of ['내 차례', '막힘', '진행', '끝남']) {
+      expect(await screen.findByRole('region', { name })).toBeTruthy();
+    }
+    expect(screen.getByTestId('inbox-mine-count').textContent).toBe('나를 기다리는 일 0');
   });
 });
 

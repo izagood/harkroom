@@ -154,7 +154,9 @@ export function oneSentence(body: string): string {
       .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
       .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
       .replace(/\*\*|__|~~|`/g, '')
-      .replace(/(^|\s)[*_]([^*_\s][^*_]*)[*_](?=\s|$|[.,!?])/g, '$1$2')
+      // `*기울임*` 은 붙은 조사가 흔해 어디서든 벗긴다. `_` 는 snake_case 를 깨지 않게 낱말 경계에서만.
+      .replace(/\*([^*\s][^*]*?)\*/g, '$1')
+      .replace(/(^|\s)_([^_\s][^_]*)_(?=\s|$|[.,!?])/g, '$1$2')
       .trim();
     if (text) lines.push(text);
   }
