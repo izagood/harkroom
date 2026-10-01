@@ -113,12 +113,12 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
           {section === 'claude-accounts' && <ProviderAccountsSettings />}
           {section === 'agent-defaults' && <AgentDefaultsSettings />}
           {section === 'workspace' && <WorkspaceSettings />}
-          {section === 'operators' && <OperatorsSettings />}
+          {section === 'operators' && <OperatorsSettings onOpenSection={setSection} />}
           {section === 'mcp-servers' && <McpServersSettings />}
           {section === 'handle-groups' && <HandleGroupsSettings />}
           {section === 'invite' && <InviteSettings />}
           {section === 'updates' && <UpdatesSettings />}
-          {section === 'this-operator' && <ThisOperatorSettings />}
+          {section === 'this-operator' && <ThisOperatorSettings onOpenSection={setSection} />}
           {section === 'skills' && <SkillsSettings targetId={targetId} />}
           {section === 'automations' && <AutomationsSettings />}
           {section === 'gallery' && <GallerySettings />}
