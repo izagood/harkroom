@@ -20,7 +20,7 @@ import { useT } from '../i18n/useT';
 const FIELD = 'w-full rounded border border-border bg-surface px-2 py-1 text-meta';
 
 export function AgentModelChip({
-  agentId, handle, value, stale = false, inherited = false, highlight = false, mode, placement = 'below',
+  agentId, handle, value, stale = false, inherited = false, setByAgent = null, highlight = false, mode, placement = 'below',
   open: openProp, onOpenChange, onApply, onReset, trigger,
 }: {
   agentId: string;
@@ -35,6 +35,12 @@ export function AgentModelChip({
    * "스레드 지정 풀기" 이고, 그 글이 실제로 지정을 푼다.
    */
   inherited?: boolean;
+  /**
+   * 이 지정을 **에이전트가** 정했으면 그 에이전트의 handle(087, 결정 7). 꼬리가 `스레드 지정` 대신
+   * `@lead 지정` 이 된다 — 사람이 정한 값과 같은 모양이면 "누가 이 스레드를 비싼 모델로 올렸나"를
+   * 시스템 줄을 거슬러 찾아야 한다. 정한 계정이 지워졌으면 빈 문자열(`에이전트 지정`).
+   */
+  setByAgent?: string | null;
   /** 방금 부른 상대다 — 칩을 잠깐 강조해 고르는 길을 보인다(designer 검토 4). */
   highlight?: boolean;
   /** 칩 대신 다른 단추로 연다(실패 카드의 [모델 고르기]). */
@@ -85,7 +91,12 @@ export function AgentModelChip({
           <>
             {mode === 'thread' && <span className="text-fg-muted">@{handle} ·</span>}
             <span className={stale ? 'line-through' : undefined}>{label ?? t('threadModel.default')}</span>
-            {set && (mode === 'thread' || inherited) && !stale && <span className="text-fg-subtle">{t('threadModel.threadSet')}</span>}
+            {set && (mode === 'thread' || inherited) && !stale && (
+              <span className="text-fg-subtle" data-testid={setByAgent !== null ? 'model-chip-agent-set' : undefined}>
+                {setByAgent === null ? t('threadModel.threadSet')
+                  : setByAgent ? t('threadModel.agentSet', { handle: setByAgent }) : t('threadModel.agentSetUnknown')}
+              </span>
+            )}
             <span aria-hidden className="text-fg-subtle">▾</span>
           </>
         )}

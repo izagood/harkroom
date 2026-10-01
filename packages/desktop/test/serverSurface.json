@@ -121,6 +121,7 @@
   "PUT /accounts/agents/:p/delegates/:p": "0.3.42",
   "PUT /accounts/agents/:p/invokers/:p": "0.2.9",
   "PUT /accounts/agents/:p/memory/:p": "0.3.41",
+  "PUT /accounts/agents/:p/pickable-models": "0.3.113",
   "PUT /accounts/me/avatar": "0.1.167",
   "PUT /accounts/me/status": "0.1.167",
   "PUT /channels/:p/auto-mentions/:p": "0.1.167",

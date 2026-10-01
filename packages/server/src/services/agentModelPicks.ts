@@ -57,6 +57,18 @@ export function readPickable(raw: unknown): PickableEntry[] {
   });
 }
 
+/**
+ * 이 (모델·effort)가 허용 목록 안인가(결정 11). `applyAgentPicks` 의 판정과 같은 규칙이다 — 목록을
+ * 좁힐 때 이미 저장된 에이전트 지정이 새 목록 밖인지 가르는 데 쓴다(③, security 참고 의견).
+ * 모델 없는 지정(effort 만)은 목록 안일 수 없다 — 그 길이 애초에 막혀 있다.
+ */
+export function pickAllowed(pickable: readonly PickableEntry[], model: string | null, effort: string | null): boolean {
+  if (model === null) return false;
+  const entry = pickable.find((e) => e.model === model);
+  if (!entry) return false;
+  return effort === null || entry.efforts.includes(effort);
+}
+
 /** 다듬은 값. 두 축이 다 null 이면 "풀기" 다. */
 export function cleanPicks(picks: readonly AgentModelPickInput[]): Array<{ agentId: string; model: string | null; effort: string | null }> {
   return picks.map((p) => ({

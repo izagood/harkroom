@@ -15,7 +15,7 @@ import { emitEvent, emitPosted } from '../events.js';
 import { assignmentOf } from '../services/agents.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { postMessage } from '../services/messages.js';
-import { readPickable } from '../services/agentModelPicks.js';
+import { pickAllowed, readPickable } from '../services/agentModelPicks.js';
 import {
   axisValid, clearThreadAgentModel, cleanAxis, effectiveAgentModel, isChannelRoot, listThreadAgentModels, setThreadAgentModel, threadRootOf,
 } from '../services/threadAgentModels.js';
@@ -212,6 +212,9 @@ export async function registerThreadAgentModelRoutes(
         model: z.string().min(1).max(MODEL_ID_MAX),
         efforts: z.array(z.string().min(1).max(EFFORT_MAX)).max(8).default([]),
       })).max(20),
+      // 목록을 좁히면 이미 저장된 **에이전트 지정** 중 새 목록 밖인 것을 풀지(③). 사람 지정은 건드리지
+      // 않는다(결정 4) — 사람이 정한 값은 허용 목록과 무관하다.
+      clearOutside: z.boolean().optional(),
     }).safeParse(req.body ?? {});
     if (!parsed.success) return refuse(reply, 400, 'bad_request', parsed.error.message);
     const byModel = new Map<string, string[]>();
@@ -232,12 +235,49 @@ export async function registerThreadAgentModelRoutes(
     if (owner.rows[0]!.owner !== req.account!.id) {
       return refuse(reply, 403, 'owner_only', '이 에이전트의 소유자만 정한다');
     }
-    await pool.query(`update agent_config set agent_pickable_models = $2::jsonb where account_id = $1`, [agentId, JSON.stringify(models)]);
+    // 목록 저장과 정리는 한 트랜잭션이다 — 판정(밖인가)과 지우기 사이에 에이전트가 새 지정을 쓰거나
+    // 사람이 그 행을 가져가면(set_by_kind 가 'human' 으로) 어긋난다. 행을 잠그고, 지우기도 다시
+    // `set_by_kind = 'agent'` 를 조건에 둔다(security #1010 ① 과 같은 규칙).
+    const client = await pool.connect();
+    let outside: Array<{ root: string; channel: string }> = [];
+    let cleared: typeof outside = [];
+    try {
+      await client.query('begin');
+      await client.query(`update agent_config set agent_pickable_models = $2::jsonb where account_id = $1`, [agentId, JSON.stringify(models)]);
+      const rows = await client.query<{ root: string; channel: string; model: string | null; effort: string | null }>(
+        `select t.thread_root_id as root, m.channel_id as channel, t.model, t.effort
+           from thread_agent_model t join message m on m.id = t.thread_root_id
+          where t.agent_id = $1 and t.set_by_kind = 'agent'
+          for update of t`, [agentId]);
+      outside = rows.rows.filter((r) => !pickAllowed(models, r.model, r.effort)).map(({ root, channel }) => ({ root, channel }));
+      if (parsed.data.clearOutside && outside.length) {
+        const gone = await client.query<{ root: string }>(
+          `delete from thread_agent_model
+            where agent_id = $1 and set_by_kind = 'agent' and thread_root_id = any($2::uuid[])
+            returning thread_root_id as root`, [agentId, outside.map((r) => r.root)]);
+        const goneSet = new Set(gone.rows.map((r) => r.root));
+        cleared = outside.filter((r) => goneSet.has(r.root));
+        outside = outside.filter((r) => !goneSet.has(r.root));
+      }
+      await client.query('commit');
+    } catch (err) {
+      await client.query('rollback').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
     await recordAudit(pool, {
       action: 'agent.pickable_models.set', actorId: req.account!.id, actorHandle: req.account!.handle,
-      target: agentId, detail: { models },
+      target: agentId, detail: { models, cleared: cleared.length },
     }, req);
-    return { models };
+    // 풀린 스레드마다 사람 경로와 같은 시스템 줄·이벤트를 낸다 — 칩이 조용히 사라지면 그 스레드의
+    // 사람은 왜 기본값으로 돌아갔는지 모른다. 푼 사람은 소유자다.
+    for (const r of cleared) {
+      await emitChanged(pool, r.channel, r.root, agentId, null);
+      await announceChange(pool, r.channel, r.root, req.account!.id, agentId, null, 'human');
+    }
+    // `outside` 는 **남아 있는** 목록 밖 에이전트 지정 수다 — 앱이 "정리할까?" 를 묻는 근거다.
+    return { models, outside: outside.length, cleared: cleared.length };
   });
 
   /**

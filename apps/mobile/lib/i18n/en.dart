@@ -86,6 +86,12 @@ class StringsEn implements Strings {
   String get modelThreadSet => 'this thread';
 
   @override
+  String get modelAgentSet => 'set by {handle}';
+
+  @override
+  String get modelAgentSetUnknown => 'set by an agent';
+
+  @override
   String get modelAllDefault => 'Model · all default';
 
   @override

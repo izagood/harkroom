@@ -67,7 +67,9 @@ Map<String, ModelPick> picksForBody(
 /// 들인 [HarkroomTokens]). 토큰이 없는 테마(시험의 맨 MaterialApp)에서는 amber 로 물러난다.
 Color warningColor(BuildContext context) =>
     Theme.of(context).extension<HarkroomTokens>()?.warn ??
-    (Theme.of(context).brightness == Brightness.dark ? Colors.amber.shade300 : Colors.amber.shade900);
+    (Theme.of(context).brightness == Brightness.dark
+        ? Colors.amber.shade300
+        : Colors.amber.shade900);
 
 /// 작성칸 위의 줄 — `@` 후보 줄, 고른 직후의 모델 빠른 줄, "부를 상대" 모델 칩 줄을 한 자리에서.
 ///
@@ -127,6 +129,16 @@ class _MentionModelBarState extends State<MentionModelBar> {
   }
 
   /// 스레드에서 **이어받은** 값(이 글에서 고른 것이 없을 때만). 새로 고른 값과 다른 모양으로 그린다.
+  ThreadAgentModel? _threadRow(String agentId) {
+    final root = widget.threadRootId;
+    if (root == null) return null;
+    for (final r
+        in context.app.threadAgentModels[root] ?? const <ThreadAgentModel>[]) {
+      if (r.agentId == agentId) return r;
+    }
+    return null;
+  }
+
   ModelPick? _inherited(String agentId) {
     if (widget.picks.containsKey(agentId)) return null;
     final root = widget.threadRootId;
@@ -282,6 +294,9 @@ class _MentionModelBarState extends State<MentionModelBar> {
                       _effective(id)?.effort,
                     ),
                     inherited: _inherited(id) != null,
+                    setByAgent: _inherited(id) == null
+                        ? null
+                        : setByAgentHandle(_threadRow(id), app.accounts),
                     onPressed: () => _openSheet(id),
                   ),
                 ),
@@ -677,6 +692,7 @@ class _ThreadModelBarState extends State<ThreadModelBar> {
                         value: value,
                         stale: row?.stale ?? false,
                         threadTail: true,
+                        setByAgent: setByAgentHandle(row, app.accounts),
                         onPressed: () async {
                           final result = await showAgentModelSheet(
                             context,
@@ -747,6 +763,18 @@ class _ThreadModelBarState extends State<ThreadModelBar> {
   }
 }
 
+/// 칩 꼬리에 적을 "정한 에이전트"(087, 결정 7). 사람이 정했거나 행이 없으면 null(`스레드 지정`).
+/// 정한 계정을 모르면 빈 문자열(`에이전트 지정`) — 사람 지정으로 떨어뜨리면 에이전트가 올린 값을 사람이
+/// 정한 것으로 읽는다. 데스크톱 `lib/threadModels.ts::setByAgentHandle` 과 같은 규칙이다.
+String? setByAgentHandle(
+  ThreadAgentModel? row,
+  Map<String, AccountView> accounts,
+) {
+  if (row == null || row.setByKind != 'agent') return null;
+  final by = row.setBy;
+  return by == null ? '' : (accounts[by]?.handle ?? '');
+}
+
 /// 모델 칩 하나 — **세 모양**(designer 검토 6): 지정(강조 면) / 기본(테두리만) / 이어받음(옅은 강조 +
 /// `스레드` 꼬리). 무효(stale)는 경고 색 취소선이다. 같은 모양이면 사람은 "이 글이 바꾼다" 와
 /// "스레드가 이미 그렇다" 를 구별하지 못한다.
@@ -759,9 +787,14 @@ class _ModelChip extends StatelessWidget {
     this.inherited = false,
     this.stale = false,
     this.threadTail = false,
+    this.setByAgent,
   });
 
   final String handle;
+
+  /// 이 지정을 **에이전트가** 정했으면 그 handle(087, 결정 7) — 꼬리가 `@lead 지정` 이 된다. 모르면
+  /// 빈 문자열(`에이전트 지정`). 사람 지정이면 null(`스레드 지정`).
+  final String? setByAgent;
   final String? value;
   final VoidCallback onPressed;
   final bool inherited;
@@ -774,7 +807,11 @@ class _ModelChip extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final set = value != null;
     final tail = set && !stale && (inherited || threadTail)
-        ? ' · ${t.modelThreadSet}'
+        ? ' · ${setByAgent == null
+              ? t.modelThreadSet
+              : setByAgent!.isEmpty
+              ? t.modelAgentSetUnknown
+              : t.modelAgentSet.replaceAll('{handle}', '@$setByAgent')}'
         : '';
     final Color? bg = stale
         ? null

@@ -35,7 +35,7 @@ import { isFileDrag } from '../lib/fileDrag';
 import { ConfirmDialog } from './ConfirmDialog';
 import { useT } from '../i18n/useT';
 import { AgentModelChip } from './AgentModelChip';
-import { formatModelValue, isModelShortcut, picksToSend, threadRowFor, type ModelValue } from '../lib/threadModels';
+import { formatModelValue, isModelShortcut, picksToSend, setByAgentHandle, threadRowFor, type ModelValue } from '../lib/threadModels';
 
 /**
  * 남은 글자를 세어 보이기 시작하는 지점 — 상한의 9할이다.
@@ -1631,6 +1631,7 @@ export function Composer({
                     handle={r.handle}
                     value={value}
                     inherited={inherited !== null}
+                    setByAgent={inherited ? setByAgentHandle(inherited, accounts) : null}
                     highlight={hintFor === agentId && draft === hintDraft}
                     mode="composer"
                     placement="above"

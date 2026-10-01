@@ -1,11 +1,12 @@
 // 스레드 × 에이전트 모델 지정(서버 079, jaebin 승인 결정 1~13) — 데스크톱 화면 회귀선.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import type { ThreadAgentModelView } from '@harkroom/shared';
+import type { AgentPickableModel, ThreadAgentModelView } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { Composer } from '../src/components/Composer';
 import { ThreadModelCollapsed, ThreadModelRow, threadAgentIds } from '../src/components/ThreadModelRow';
+import { AgentPickableSection } from '../src/components/settings/AgentPickableSection';
 import { Controller, setController } from '../src/state/controller';
 import { acc, fakeApi } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';
@@ -30,7 +31,7 @@ beforeEach(() => {
   useAppStore.getState().reset();
   useAppStore.getState().set({
     me: acc('u1', 'me'),
-    accounts: { u1: acc('u1', 'me'), [A1]: acc(A1, 'fizz', 'agent'), u2: acc('u2', 'rusalka') },
+    accounts: { u1: acc('u1', 'me'), [A1]: acc(A1, 'fizz', 'agent'), u2: acc('u2', 'rusalka'), a2: acc('a2', 'lead', 'agent') },
   });
   api = fakeApi({
     agentModelOptions: vi.fn(async () => ({
@@ -173,6 +174,20 @@ describe('스레드 머리 모델 줄 (결정 1·A·9·10)', () => {
     await waitFor(() => expect(api.setThreadAgentModel).toHaveBeenCalledWith('c1', 'r1', A1, null, null));
   });
 
+  it('에이전트가 정한 지정은 꼬리가 `@lead 지정` 이다(087 결정 7) — 사람 지정은 `스레드 지정`', () => {
+    useAppStore.getState().set({ threadAgentModels: { r1: [row({ setBy: 'a2', setByKind: 'agent' })] } });
+    const { rerender } = render(<ThreadModelRow channelId="c1" rootId="r1" thread={thread} expanded={false} />);
+    expect(screen.getByTestId('model-chip-agent-set').textContent).toBe('@lead 지정');
+    // 정한 계정을 모르면 사람 지정으로 떨어뜨리지 않는다.
+    useAppStore.getState().set({ threadAgentModels: { r1: [row({ setBy: null, setByKind: 'agent' })] } });
+    rerender(<ThreadModelRow channelId="c1" rootId="r1" thread={thread} expanded={false} />);
+    expect(screen.getByTestId('model-chip-agent-set').textContent).toBe('에이전트 지정');
+    useAppStore.getState().set({ threadAgentModels: { r1: [row()] } });
+    rerender(<ThreadModelRow channelId="c1" rootId="r1" thread={thread} expanded={false} />);
+    expect(screen.queryByTestId('model-chip-agent-set')).toBeNull();
+    expect(screen.getByTestId('model-chip-fizz').textContent).toContain('스레드 지정');
+  });
+
   it('하네스가 바뀐 지정은 취소선과 안내로 남는다 — 지우지 않는다', () => {
     useAppStore.getState().set({ threadAgentModels: { r1: [row({ stale: true, currentHarness: 'codex' })] } });
     render(<ThreadModelRow channelId="c1" rootId="r1" thread={thread} expanded={false} />);
@@ -183,5 +198,69 @@ describe('스레드 머리 모델 줄 (결정 1·A·9·10)', () => {
     expect(note.className).not.toContain('danger');
     expect(note.textContent).toContain('codex');
     expect(screen.getByTestId('model-trigger-fizz').textContent).toBe('다시 고르기');
+  });
+});
+
+describe('설정 › 에이전트: 다른 에이전트가 고를 수 있는 모델 (087 결정 3·9·11)', () => {
+  const agent = { id: A1, handle: 'fizz', ownerAccountId: 'u1' } as never;
+  const withOptions = (pickable: Array<{ model: string; efforts: string[] }>) => {
+    vi.mocked(api.agentModelOptions).mockImplementation(async () => ({
+      harness: 'claude-code' as const, model: 'sonnet', effort: 'medium', pickable,
+      models: [{ id: 'opus', efforts: ['low', 'high', 'xhigh'] }, { id: 'sonnet', efforts: ['low', 'high'] }],
+    }));
+  };
+
+  it('줄은 (모델·effort 묶음)이고, 서버 jsonb 와 같은 모양으로 저장한다', async () => {
+    withOptions([{ model: 'opus', efforts: ['high'] }]);
+    render(<AgentPickableSection agent={agent} />);
+    await waitFor(() => expect(screen.getByTestId('pickable-row-opus')).toBeTruthy());
+    // 하네스가 밝힌 effort 만 고를 칸으로 선다.
+    expect(screen.getByLabelText('opus 에 effort xhigh 허용')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('opus 에 effort low 허용'));
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'sonnet' } });
+    fireEvent.click(screen.getByTestId('pickable-add'));
+    // 새 줄은 effort 없이 시작한다(비싼 effort 는 손으로 켠다).
+    expect(screen.getByTestId('pickable-row-sonnet').textContent).toContain('effort 는 못 고른다');
+    fireEvent.click(screen.getByTestId('pickable-save'));
+    // 하네스 순서(낮은 것부터)를 지킨다 — 누른 순서가 아니다.
+    await waitFor(() => expect(api.setAgentPickableModels).toHaveBeenCalledWith(
+      A1, [{ model: 'opus', efforts: ['low', 'high'] }, { model: 'sonnet', efforts: [] }], false));
+  });
+
+  it('좁힌 뒤 목록 밖 에이전트 지정이 남으면 풀지 묻고, [풀기]는 clearOutside 로 다시 저장한다', async () => {
+    withOptions([{ model: 'opus', efforts: ['high'] }, { model: 'sonnet', efforts: [] }]);
+    vi.mocked(api.setAgentPickableModels)
+      .mockImplementationOnce(async (_id: string, models: AgentPickableModel[]) => ({ models, outside: 2, cleared: 0 }))
+      .mockImplementationOnce(async (_id: string, models: AgentPickableModel[]) => ({ models, outside: 0, cleared: 2 }));
+    render(<AgentPickableSection agent={agent} />);
+    await waitFor(() => expect(screen.getByTestId('pickable-row-sonnet')).toBeTruthy());
+    fireEvent.click(screen.getByLabelText('sonnet 빼기'));
+    fireEvent.click(screen.getByTestId('pickable-save'));
+    const ask = await screen.findByTestId('pickable-outside');
+    expect(ask.textContent).toContain('2곳');
+    expect(ask.textContent).toContain('사람이 정한 지정은 건드리지 않는다');
+    fireEvent.click(screen.getByTestId('pickable-clear'));
+    await waitFor(() => expect(api.setAgentPickableModels).toHaveBeenLastCalledWith(A1, [{ model: 'opus', efforts: ['high'] }], true));
+    expect((await screen.findByTestId('pickable-cleared')).textContent).toContain('2곳');
+    expect(screen.queryByTestId('pickable-outside')).toBeNull();
+  });
+
+  it('[그대로 둔다]는 아무것도 보내지 않고 물음만 닫는다', async () => {
+    withOptions([{ model: 'opus', efforts: [] }]);
+    vi.mocked(api.setAgentPickableModels).mockImplementationOnce(async (_id: string, models: AgentPickableModel[]) => ({ models, outside: 1, cleared: 0 }));
+    render(<AgentPickableSection agent={agent} />);
+    await waitFor(() => expect(screen.getByTestId('pickable-row-opus')).toBeTruthy());
+    fireEvent.click(screen.getByLabelText('opus 빼기'));
+    fireEvent.click(screen.getByTestId('pickable-save'));
+    fireEvent.click(await screen.findByTestId('pickable-keep'));
+    expect(screen.queryByTestId('pickable-outside')).toBeNull();
+    expect(api.setAgentPickableModels).toHaveBeenCalledTimes(1);
+  });
+
+  it('못 읽으면 빈 목록으로 그리지 않는다 — 저장 단추도 없다', async () => {
+    vi.mocked(api.agentModelOptions).mockImplementation(async () => { throw new Error('offline'); });
+    render(<AgentPickableSection agent={agent} />);
+    expect((await screen.findByRole('alert')).textContent).toContain('불러오지 못했다');
+    expect(screen.queryByTestId('pickable-save')).toBeNull();
   });
 });

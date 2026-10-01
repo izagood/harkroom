@@ -13,7 +13,7 @@ import { MENTION_TOKEN_PATTERN, type MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { AgentModelChip } from './AgentModelChip';
-import { threadRowFor } from '../lib/threadModels';
+import { setByAgentHandle, threadRowFor } from '../lib/threadModels';
 import { useT } from '../i18n/useT';
 
 export function threadAgentIds(thread: readonly MessageRow[], isAgent: (id: string) => boolean, setIds: readonly string[]): string[] {
@@ -75,6 +75,7 @@ export function ThreadModelRow({ channelId, rootId, thread, expanded }: {
               handle={handle}
               value={row}
               stale={row?.stale ?? false}
+              setByAgent={setByAgentHandle(row, accounts)}
               mode="thread"
               onApply={(v) => getController().setThreadAgentModel(channelId, rootId, id, v.model, v.effort)}
               onReset={() => getController().setThreadAgentModel(channelId, rootId, id, null, null)}

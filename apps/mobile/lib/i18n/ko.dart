@@ -85,6 +85,12 @@ class StringsKo implements Strings {
   String get modelThreadSet => '스레드 지정';
 
   @override
+  String get modelAgentSet => '{handle} 지정';
+
+  @override
+  String get modelAgentSetUnknown => '에이전트 지정';
+
+  @override
   String get modelAllDefault => '모델 · 모두 기본';
 
   @override

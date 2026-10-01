@@ -131,6 +131,7 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     threadAgentModels: vi.fn(async () => []),
     setThreadAgentModel: vi.fn(async () => null),
     agentModelOptions: vi.fn(async () => ({ harness: 'claude-code' as const, model: null, effort: null })),
+    setAgentPickableModels: vi.fn(async (_id: string, models: unknown) => ({ models, outside: 0, cleared: 0 })),
     updateAgentDefaults: vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null })),
     agentMemory: vi.fn(async () => []),
     deleteAgentMemory: vi.fn(async () => undefined),

@@ -426,9 +426,17 @@ class ThreadAgentModel {
     required this.effort,
     required this.stale,
     this.currentHarness = '',
+    this.setBy,
+    this.setByKind = 'human',
   });
 
   final String agentId;
+
+  /// 정한 계정(087). 지워졌으면 null.
+  final String? setBy;
+
+  /// `human` | `agent`(087). 옛 서버는 싣지 않는다 — 사람 지정으로 읽는다(그 서버에는 에이전트 지정이 없다).
+  final String setByKind;
   /// 에이전트의 **지금** 하네스 — 무효 안내("하네스가 X 로 바뀌어…")의 재료.
   final String currentHarness;
   final String? model;
@@ -441,6 +449,8 @@ class ThreadAgentModel {
         effort: j['effort'] is String ? j['effort'] as String : null,
         stale: j['stale'] == true,
         currentHarness: _str(j['currentHarness']),
+        setBy: j['setBy'] is String ? j['setBy'] as String : null,
+        setByKind: j['setByKind'] == 'agent' ? 'agent' : 'human',
       );
 }
 

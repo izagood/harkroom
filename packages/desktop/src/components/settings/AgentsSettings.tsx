@@ -35,6 +35,7 @@ import { LocalOperatorRow } from './LocalOperatorRow';
 import { ModelPicker } from './ModelPicker';
 import { hasOperatorLocalSurface, listLocalAgents } from '../../lib/operatorLocal';
 import { AgentScopeSection } from './AgentScopeSection';
+import { AgentPickableSection } from './AgentPickableSection';
 import { kindLabel, MemoryDetail } from './MemoryDetail';
 import { canSeeAgentConfig } from '../../lib/agentConfigGate';
 // 팀 묶음(`docs/desktop-agent-cards.html` 4단계). 카드가 `AgentGrid` 를 재사용하지 않은
@@ -2272,6 +2273,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   setAgents((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
                 }}
               />
+            )}
+
+            {/* 087: 다른 에이전트가 부르며 고를 수 있는 (모델·effort). 서버 문이 사람·**소유자**라서
+                admin 이어도 소유자가 아니면 그리지 않는다(저장이 403 owner_only). */}
+            {selected && myId !== undefined && selected.ownerAccountId === myId && (
+              <AgentPickableSection agent={selected} disabled={busy} />
             )}
 
             {selected && (isAdmin || isOwner) && (
