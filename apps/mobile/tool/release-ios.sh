@@ -85,6 +85,11 @@ build_number=$(
   ASC_PRIVATE_KEY_PATH="$key_path" node tool/next-build-number.mjs
 )
 echo "빌드 번호: $build_number"
+# CI 실행 요약이 이 번호를 쓴다(값이 아니라 공개 정보다).
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+  echo "build_number=$build_number" >> "$GITHUB_OUTPUT"
+  echo "version=$(sed -n 's/^version: *\([^+]*\).*/\1/p' pubspec.yaml)" >> "$GITHUB_OUTPUT"
+fi
 
 # --- E2E -------------------------------------------------------------------
 if [ "$skip_e2e" -eq 0 ]; then
