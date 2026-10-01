@@ -1348,6 +1348,8 @@ export const ko = {
   'inbox.board.done': '완료',
   'inbox.board.later': '나중에',
   'inbox.board.undo': '되돌리기',
+  'inbox.board.laterUntil': '{when}에 다시',
+  'inbox.board.tomorrowAt': '내일 {time}',
   'inbox.board.fold.quiet': '조용한 것 {count}',
   'inbox.board.fold.old': '지난 것 {count}',
   'inbox.board.fold.cleared': '치운 것 {count}',

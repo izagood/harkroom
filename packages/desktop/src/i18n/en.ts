@@ -2885,6 +2885,9 @@ export const en = {
   'inbox.board.later': 'Later',
   /** 치운 것·미룬 것을 되돌린다. */
   'inbox.board.undo': 'Put back',
+  /** 미룬 카드가 다시 서는 시각. `{when}` 은 `오늘 시각 · tomorrowAt · 날짜 시각` 중 하나다. */
+  'inbox.board.laterUntil': 'back {when}',
+  'inbox.board.tomorrowAt': 'tomorrow {time}',
   /** 열 맨 아래 접힘 줄. 접힌 카드도 수로 남는다. */
   'inbox.board.fold.quiet': 'Quiet for a week ({count})',
   'inbox.board.fold.old': 'Older ({count})',

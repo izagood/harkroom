@@ -180,6 +180,8 @@ describe('Inbox 상태 보드 (C안)', () => {
     open();
     const fold = await screen.findByTestId('inbox-fold-later');
     expect(within(fold).getByTestId('inbox-card-r1')).toBeTruthy();
+    // 언제 다시 서는지 말한다(designer) — 내일 아침 9시.
+    expect(within(fold).getByTestId('inbox-card-later-until-r1').textContent).toMatch(/내일 \S+ ?9시에 다시/); // 오전/AM 표기는 ICU 데이터에 따라 갈린다
     expect(screen.getByTestId('inbox-mine-count').textContent).toBe('나를 기다리는 일 0');
   });
 

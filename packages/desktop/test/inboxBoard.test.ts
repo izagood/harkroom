@@ -4,7 +4,7 @@
 // 순수 함수다. 화면이 그 결과를 그리는지는 `inbox.test.tsx` 가 잰다.
 import { describe, it, expect } from 'vitest';
 import type { InboxEntry, InboxThreadState, MessageRow } from '@harkroom/shared';
-import { buildBoard, oneSentence, daysWaiting, RECENT_MS, type BoardInput } from '../src/lib/inboxBoard';
+import { buildBoard, oneSentence, daysWaiting, laterUntilLabel, RECENT_MS, type BoardInput } from '../src/lib/inboxBoard';
 import { msg } from './helpers/fakeApi';
 
 const ME = 'me';
@@ -230,5 +230,47 @@ describe('N일째', () => {
   it('하루 안이면 null, 넘으면 날 수', () => {
     expect(daysWaiting(ago(DAY / 2), NOW)).toBeNull();
     expect(daysWaiting(ago(3 * DAY + 1), NOW)).toBe(3);
+  });
+});
+
+describe('미룬 카드가 다시 서는 시각', () => {
+  const tr = (_k: 'inbox.board.tomorrowAt', v: { time: string }) => `내일 ${v.time}`;
+  /** 로컬 시계 기준의 날짜 하나 — 오늘/내일 경계가 시험 기계의 시간대에 휘둘리지 않게. */
+  const local = (dayOffset: number, h: number, m = 0): Date => {
+    const d = new Date(2026, 9, 2, 0, 0, 0, 0);
+    d.setDate(d.getDate() + dayOffset);
+    d.setHours(h, m, 0, 0);
+    return d;
+  };
+  const now = local(0, 14).getTime();
+
+  it('카드가 until 을 싣는다 — 미룬 것만', () => {
+    const until = new Date(NOW + DAY).toISOString();
+    const cards = board([entry(1, { threadRootId: 'r1' }), entry(2, { threadRootId: 'r2' })],
+      [head('r1', { openAskAccountIds: [ME] }), head('r2', { openAskAccountIds: [ME] })],
+      { threadStates: [st('r1', 'later', ago(0), until)] });
+    expect(cards.find((c) => c.rootId === 'r1')!.laterUntil).toBe(until);
+    expect(cards.find((c) => c.rootId === 'r2')!.laterUntil).toBeNull();
+  });
+
+  it('내일이면 "내일 …", 정각이면 분을 뺀다', () => {
+    const label = laterUntilLabel(local(1, 9).toISOString(), now, 'ko', tr);
+    expect(label.startsWith('내일 ')).toBe(true);
+    expect(label).toContain('9');
+    expect(label).not.toContain(':');
+  });
+
+  it('오늘이면 시각만, 분이 있으면 분까지', () => {
+    const label = laterUntilLabel(local(0, 18, 30).toISOString(), now, 'en', tr);
+    expect(label).not.toContain('내일');
+    expect(label).toContain('6:30');
+  });
+
+  it('그 뒤면 날짜가 붙는다', () => {
+    const label = laterUntilLabel(local(3, 9).toISOString(), now, 'ko', tr);
+    expect(label).not.toContain('내일');
+    // 날짜 모양(`10월 5일`·`Oct 5`)은 ICU 데이터에 따라 갈린다 — 날이 들어가는지만 잰다.
+    expect(label).toMatch(/5/);
+    expect(label).not.toBe(laterUntilLabel(local(0, 9).toISOString(), now, 'ko', tr));
   });
 });

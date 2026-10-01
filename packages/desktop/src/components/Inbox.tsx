@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Identity } from './Identity';
 import type { InboxEntry, InboxThreadState, MessageRow } from '@harkroom/shared';
-import { BOARD_COLUMNS, buildBoard, daysWaiting, type BoardCard, type BoardColumn, type BoardFold } from '../lib/inboxBoard';
+import { BOARD_COLUMNS, buildBoard, daysWaiting, laterUntilLabel, type BoardCard, type BoardColumn, type BoardFold } from '../lib/inboxBoard';
 import { bodyWithHandles } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
-import { useAgo, useT } from '../i18n/useT';
+import { useAgo, useLocale, useT } from '../i18n/useT';
 
 /** 빈 배열 리터럴을 매 렌더 새로 만들지 않는다. */
 const INBOX_NO_TEAMS: never[] = [];
@@ -117,6 +117,7 @@ const COLUMN_KEY = {
 export function Inbox({ open, onClose }: Props) {
   const t = useT();
   const ago = useAgo();
+  const locale = useLocale();
   const channels = useActiveStore((s) => s.channels);
   const dms = useActiveStore((s) => s.dms);
   const accounts = useActiveStore((s) => s.accounts);
@@ -328,6 +329,12 @@ export function Inbox({ open, onClose }: Props) {
             </span>
             {more > 0 && <span className="shrink-0">· {t('inbox.board.more', { count: more })}</span>}
             {card.unread && <span className="shrink-0 text-accent">· {t('inbox.board.unread')}</span>}
+            {/* 미룬 카드는 **언제 다시 서는지** 말한다(designer) — 되돌릴지 그냥 둘지 정하는 근거다. */}
+            {card.laterUntil && (
+              <span className="shrink-0" data-testid={`inbox-card-later-until-${card.rootId}`} title={new Date(card.laterUntil).toLocaleString()}>
+                · {t('inbox.board.laterUntil', { when: laterUntilLabel(card.laterUntil, Date.now(), locale, t) })}
+              </span>
+            )}
           </span>
         </button>
         {/*
