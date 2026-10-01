@@ -570,6 +570,11 @@ describe('buildSystemPrompt', () => {
     expect(s).toContain('콜백 URL');
   });
 
+  it('message.fail 의 code 는 러너 몫이라 에이전트는 싣지 말라고 한다 (결정 10, 2026-10-01)', () => {
+    const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] }, turnBudgetMs: 30 * 60_000 });
+    expect(s).toContain('`message.fail` 의 `code` 는 러너가 붙이는 표지다');
+  });
+
   it('기다릴 것이 있으면 turn.wake 로 예약하라고 지시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] }, turnBudgetMs: 30 * 60_000 });
     expect(s).toContain('turn.wake');
