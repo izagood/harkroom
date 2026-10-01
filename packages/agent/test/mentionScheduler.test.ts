@@ -703,16 +703,16 @@ describe('mentionScheduler 관문 표식 (사람이 지나야 하는 관문, 202
     return { scheduler, marked, cleared };
   }
 
-  it('관문 화면에서 넘긴 계정은 표시하고, 돌아간 계정의 표식은 지운다', async () => {
-    const h = run(new PromptNotDeliveredError(3_000, GATE_SCREEN));
+  it('선택 대기(waiting)로 넘긴 계정은 표시하고, 돌아간 계정의 표식은 지운다', async () => {
+    const h = run(new PromptNotDeliveredError(3_000, GATE_SCREEN, 'waiting'));
     await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
     await h.scheduler.drain();
     expect(h.marked).toEqual(['a']);
     expect(h.cleared).toEqual(['b']);
   });
 
-  it('관문이 아닌 준비 실패(부팅이 느려 상한)는 표시하지 않는다 — 30분 빼 둘 이유가 없다', async () => {
-    const h = run(new PromptNotDeliveredError(60_000, 'Loading...'));
+  it('상한에 닿은 준비 실패(timeout)는 표시하지 않는다 — 화면에 관문 글자가 있어도 상태가 기준이다', async () => {
+    const h = run(new PromptNotDeliveredError(60_000, GATE_SCREEN, 'timeout'));
     await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
     await h.scheduler.drain();
     expect(h.marked).toEqual([]);

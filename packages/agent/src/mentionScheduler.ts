@@ -15,7 +15,7 @@ import { SessionStore } from './sessions.js';
 import type { TurnRegistry } from './turnRegistry.js';
 import type { MentionQueue } from './mentionQueue.js';
 import { withAccountFailover, type ClaudeAccount } from './claudeAccounts.js';
-import { looksLikeGate, PromptNotDeliveredError } from './pty.js';
+import { PromptNotDeliveredError } from './pty.js';
 import {
   controlHeldNotice, controlledNotice, FAILURE_NOTICE, quotaNotice, retryNotice, retryReason,
   sessionConflictNotice, stallNotice, threadModelRejectedNotice,
@@ -319,10 +319,11 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
             return result;
           },
           (err: unknown) => {
-            // 준비 신호를 못 봤고 **마지막 화면이 관문**이다 = 그 계정이 사람 손을 기다린다. 부팅이
-            // 느려 상한에 닿은 것(관문 아님)은 표시하지 않는다 — 그 계정을 30분 빼 둘 이유가 없다.
-            // 화면 원문은 넘기지 않는다 — 조직 설정 값이 들어 있을 수 있다(`claudeGates.ts`).
-            if (account && err instanceof PromptNotDeliveredError && looksLikeGate(err.tail)) {
+            // 화면이 **사람의 선택을 기다린다**(`kind: 'waiting'` — 입력창이 아닌 화면을 그리고 멈췄다,
+            // 문구가 아니라 상태로 판정한다: `pty.ts::waitingQuietMs`). 상한에 닿은 것(`timeout`)은
+            // 표시하지 않는다 — 그 계정을 30분 빼 둘 근거가 없다. 화면 원문은 넘기지 않는다 —
+            // 조직 설정 값이 들어 있을 수 있다(`claudeGates.ts`).
+            if (account && err instanceof PromptNotDeliveredError && err.kind === 'waiting') {
               void deps.accountAttention?.mark(account).catch(() => undefined);
             }
             throw err;
