@@ -72,9 +72,14 @@ describe('secretLeases', () => {
     h.leases.noteTranscript('m1', t1);
     h.leases.noteTranscript('m1', t2);     // 같은 멘션의 재시도가 남긴 두 번째 기록
     h.leases.noteTranscript('other', t1);  // 장부에 없는 멘션은 무시
+    const sessDir = join(root, 'sess', 'tool-results');
+    mkdirSync(sessDir, { recursive: true });
+    writeFileSync(join(sessDir, 'x.txt'), VALUE);
+    h.leases.noteTranscript('m1', join(root, 'sess'));   // 디렉터리도 받는다(T1)
     await h.leases.release('m1');
     expect(readFileSync(t1, 'utf8')).not.toContain(VALUE);
     expect(readFileSync(t2, 'utf8')).not.toContain(Buffer.from(VALUE).toString('base64'));
+    expect(readFileSync(join(sessDir, 'x.txt'), 'utf8')).toBe('***');
     expect(h.log.at(-1)).toBe('ended:m1');
   });
 

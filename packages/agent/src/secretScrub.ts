@@ -14,7 +14,7 @@
  * 하네스별 실측 항목이다(PR 3b 본문).
  */
 import { randomBytes } from 'node:crypto';
-import { lstat, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 export const SCRUB_MIN_BYTES = 8;
@@ -74,4 +74,28 @@ export async function scrubFile(path: string, needles: readonly string[]): Promi
     throw e;
   }
   return replaced;
+}
+
+/** 디렉터리를 내려가는 깊이 상한. claude 세션 디렉터리는 `tool-results/`·`subagents/` 한두 단이다. */
+export const SCRUB_MAX_DEPTH = 4;
+/** 이보다 큰 파일은 읽지 않는다 — 기록 한 조각이 이만큼 크면 비정상이고, 통째로 메모리에 올리지 않는다. */
+export const SCRUB_MAX_FILE_BYTES = 64 * 1024 * 1024;
+
+/**
+ * 파일이면 가리고, 디렉터리면 그 아래 **일반 파일**을 전부 가린다(security T1). claude 는 큰 도구 출력을
+ * `<sessionId>/tool-results/*.txt` 에, 서브에이전트 전사를 `<sessionId>/subagents/` 에 jsonl 과 따로 남긴다 —
+ * `cat` 같은 긴 출력으로 읽은 값은 jsonl 이 아니라 그쪽에 남는다. 심링크는 따라가지 않고(파일·디렉터리 모두),
+ * 깊이와 파일 크기에 상한을 둔다. 바꾼 횟수의 합을 준다.
+ */
+export async function scrubPath(path: string, needles: readonly string[], depth = 0): Promise<number> {
+  if (!needles.length) return 0;
+  let info;
+  try { info = await lstat(path); } catch { return 0; }
+  if (info.isFile()) return info.size > SCRUB_MAX_FILE_BYTES ? 0 : scrubFile(path, needles);
+  if (!info.isDirectory() || depth >= SCRUB_MAX_DEPTH) return 0;
+  let total = 0;
+  for (const name of await readdir(path).catch(() => [] as string[])) {
+    total += await scrubPath(join(path, name), needles, depth + 1);
+  }
+  return total;
 }

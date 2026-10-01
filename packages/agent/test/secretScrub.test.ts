@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, readFileSync, writeFileSync, symlinkSync, statSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { scrubFile, scrubNeedles, scrubText } from '../src/secretScrub.js';
+import { scrubFile, scrubNeedles, scrubPath, scrubText, SCRUB_MAX_DEPTH } from '../src/secretScrub.js';
 import { codexRolloutFileFor } from '../src/codexSessions.js';
 import { mkdirSync } from 'node:fs';
 
@@ -57,5 +57,31 @@ describe('secretScrub', () => {
     writeFileSync(f, '{}\n');
     expect(await codexRolloutFileFor(dir, id)).toBe(f);
     expect(await codexRolloutFileFor(dir, '0199a2b3-c4d5-7e6f-8a9b-000000000000')).toBeNull();
+  });
+
+  it('T1: 세션 디렉터리 아래 tool-results·subagents 파일도 가리고, 심링크·깊이 상한 밖은 건드리지 않는다', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'hk-sess-'));
+    const sess = join(root, '11111111-2222-4333-8444-555555555555');
+    mkdirSync(join(sess, 'tool-results'), { recursive: true });
+    mkdirSync(join(sess, 'subagents'), { recursive: true });
+    const tool = join(sess, 'tool-results', 'toolu_01.txt');
+    const sub = join(sess, 'subagents', 'agent-1.jsonl');
+    writeFileSync(tool, `long output\n${VALUE}\nmore`);
+    writeFileSync(sub, `${JSON.stringify({ text: VALUE })}\n`);
+    const outside = join(root, 'outside.txt');
+    writeFileSync(outside, VALUE);
+    symlinkSync(outside, join(sess, 'tool-results', 'link.txt'));
+    symlinkSync(root, join(sess, 'loop'));
+    let deep = sess;
+    for (let i = 0; i < SCRUB_MAX_DEPTH; i++) deep = join(deep, `d${i}`);
+    mkdirSync(deep, { recursive: true });
+    writeFileSync(join(deep, 'too-deep.txt'), VALUE);
+    const n = await scrubPath(sess, scrubNeedles(Buffer.from(VALUE)));
+    expect(n).toBe(2);
+    expect(readFileSync(tool, 'utf8')).toBe('long output\n***\nmore');
+    expect(readFileSync(sub, 'utf8')).not.toContain(VALUE);
+    expect(readFileSync(outside, 'utf8')).toBe(VALUE);
+    expect(readFileSync(join(deep, 'too-deep.txt'), 'utf8')).toBe(VALUE);
+    expect(await scrubPath(join(root, 'nope'), scrubNeedles(Buffer.from(VALUE)))).toBe(0);
   });
 });

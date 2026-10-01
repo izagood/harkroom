@@ -15,7 +15,7 @@
  */
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { scrubFile, scrubNeedles } from './secretScrub.js';
+import { scrubNeedles, scrubPath } from './secretScrub.js';
 
 export interface TurnLease { id: string; token: string; expiresAt: string }
 
@@ -31,7 +31,7 @@ export interface SecretLeaseDeps {
 
 export interface SecretLeases {
   acquire(causeMessageId: string): Promise<void>;
-  /** 그 멘션의 하네스 기록 파일. 같은 멘션의 재시도가 여럿 남길 수 있다. */
+  /** 그 멘션의 하네스 기록(파일 또는 디렉터리 — 디렉터리면 그 아래 일반 파일 전부). 같은 멘션의 재시도가 여럿 남길 수 있다. */
   noteTranscript(causeMessageId: string, path: string): void;
   /** 가리고 놓는다. 던지지 않는다 — 가리기가 실패해도 임대는 놓는다(값을 오래 붙들지 않는다). */
   release(causeMessageId: string): Promise<void>;
@@ -56,7 +56,7 @@ export function createSecretLeases(deps: SecretLeaseDeps): SecretLeases {
     }
     const sorted = [...needles].sort((a, b) => b.length - a.length);
     for (const path of h.transcripts) {
-      const n = await scrubFile(path, sorted).catch((e: unknown) => {
+      const n = await scrubPath(path, sorted).catch((e: unknown) => {
         log(`[secretLeases] 기록 가리기 실패(${path}) — ${e instanceof Error ? e.message : String(e)}`);
         return 0;
       });
