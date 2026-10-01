@@ -6,7 +6,8 @@ import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../mention/mention_suggest.dart';
 import '../state/app_scope.dart';
-import '../ui/parts.dart';
+import '../state/app_state.dart';
+import '../ui/states.dart';
 import 'agent_rows.dart';
 import 'ask_card.dart';
 import 'composer_attachments.dart';
@@ -42,15 +43,17 @@ class _MessageListScreenState extends State<MessageListScreen> {
   Future<void> _send() async {
     final text = _composer.text.trim();
     if (text.isEmpty || _sending) return;
+    final app = context.app;
+    // 첨부가 올라가는 중이면 **비우지 않고 멈춘다**(버튼도 잠겨 있다) — 전에는 비운 뒤에
+    // 보내기가 조용히 멈춰 친 글이 사라졌다.
+    if (app.isUploading(widget.channelId)) return;
     setState(() => _sending = true);
     // **먼저 비운다.** 보내는 동안 글자가 남아 있으면 사람은 안 갔다고 생각하고 다시
-    // 누른다. 실패하면 아래에서 되돌린다 — 친 글을 잃는 것이 더 나쁘다.
+    // 누른다. 못 보낸 말은 작성칸이 아니라 목록 안에 "보내지 못했다"로 남는다.
     _composer.clear();
     try {
-      await context.app.send(widget.channelId, text);
-    } on Object {
-      if (mounted) _composer.text = text;
-      rethrow;
+      final went = await app.send(widget.channelId, text);
+      if (!went && mounted && _composer.text.isEmpty) _composer.text = text;
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -67,6 +70,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
     // **이제 전부 그린다.** P1 까지는 `progress`·`wake` 를 버렸는데, 그러면 오래 도는
     // 스레드가 조용해 보였다 — 진행은 한 줄로 접히고 대기는 대기 줄이 된다.
     final feed = buildFeed(all.where((m) => m.inChannelFeed).toList(growable: false));
+    final failed = app.failedSends[widget.channelId] ?? const <FailedSend>[];
     // `firstOrNull` 은 `package:collection` 것이다. 의존성 하나를 이것 때문에 들이지
     // 않는다 — 채널이 목록에서 사라지는 경우(다른 기기에서 나갔다)가 있으므로 null 은
     // 정상이고, 그때 제목은 빈 줄로 둔다.
@@ -83,9 +87,19 @@ class _MessageListScreenState extends State<MessageListScreen> {
       body: SafeArea(
         child: Column(
           children: [
+            const ConnectionBand(),
             Expanded(
-              child: feed.isEmpty
-                  ? Center(child: Text(t.messagesEmpty))
+              child: switch (app.channelLoad[widget.channelId]) {
+                // 아직 판정 전(열자마자)도 읽는 중으로 본다 — 그 한 프레임에 "비어 있다"가
+                // 스쳐 지나가면 사람은 빈 채널로 읽는다.
+                null || LoadState.loading => const LoadingSkeleton(),
+                LoadState.failed => FailedState(
+                    title: t.messagesLoadFailed,
+                    cause: app.failures[widget.channelId] ?? LoadFailure.network,
+                    onRetry: () => app.openChannel(widget.channelId),
+                  ),
+                LoadState.loaded => feed.isEmpty && failed.isEmpty
+                  ? EmptyState(title: t.messagesEmpty, hint: t.messagesEmptyHint)
                   // **아래에서부터 쌓는다**(`reverse`). 위에서부터면 채널을 열었을 때 불러온
                   // 50개 중 **가장 오래된 것**이 보이고, 새 말은 화면 밖 아래로 붙는다 —
                   // 채팅에서 사람이 보려는 것은 늘 맨 아래다. 짧은 시험 목록에서는 한 화면에
@@ -95,10 +109,13 @@ class _MessageListScreenState extends State<MessageListScreen> {
                       controller: _scroll,
                       reverse: true,
                       padding: const EdgeInsets.symmetric(vertical: 8),
-                      itemCount: feed.length,
-                      itemBuilder: (context, i) => buildFeedItem(
+                      // 못 보낸 말이 **맨 아래**(reverse 라 앞쪽)에 선다 — 보낸 자리다.
+                      itemCount: feed.length + failed.length,
+                      itemBuilder: (context, i) => i < failed.length
+                          ? FailedSendRow(item: failed[failed.length - 1 - i])
+                          : buildFeedItem(
                         context,
-                        feed[feed.length - 1 - i],
+                        feed[feed.length - 1 - (i - failed.length)],
                         onOpenThread: (m) => Navigator.of(context).push(
                           MaterialPageRoute<void>(
                             builder: (_) => ThreadScreen(
@@ -109,6 +126,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
                         ),
                       ),
                     ),
+              },
             ),
             _MentionPicker(
               controller: _composer,
@@ -152,12 +170,11 @@ class _MessageListScreenState extends State<MessageListScreen> {
                       ),
                     ),
                   ),
-                  IconButton(
+                  SendButton(
                     key: const Key('composer-send'),
-                    tooltip: t.composerSend,
-                    style: sendButtonStyle(context),
-                    icon: const Icon(Icons.send, size: 20),
-                    onPressed: _sending ? null : _send,
+                    composerKey: widget.channelId,
+                    busy: _sending,
+                    onPressed: _send,
                   ),
                 ],
               ),

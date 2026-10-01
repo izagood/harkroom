@@ -9,6 +9,7 @@ import 'session/session_store.dart';
 import 'state/app_scope.dart';
 import 'state/app_state.dart';
 import 'theme.dart';
+import 'ui/states.dart';
 
 void main() => runApp(HarkroomApp(state: AppState(sessions: SessionStore.keychain())));
 
@@ -97,6 +98,7 @@ class _Root extends StatelessWidget {
         AppPhase.needsServer => const ConnectScreen(),
         AppPhase.needsLogin => const LoginScreen(),
         AppPhase.ready => const HomeScreen(),
+        AppPhase.unreachable => const _Unreachable(),
       };
 }
 
@@ -116,4 +118,38 @@ class _Booting extends StatelessWidget {
           ),
         ),
       );
+}
+
+/// 보관된 세션은 있는데 서버에 닿지 못했다. **로그인으로 돌리지 않는다** — 자격증명은 멀쩡하고,
+/// 다시 로그인하라고 하면 비밀번호를 다시 치게 할 뿐이다. 다시 시도하거나, 다른 계정으로
+/// 들어가려면 로그아웃한다.
+class _Unreachable extends StatelessWidget {
+  const _Unreachable();
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.app;
+    final t = context.t;
+    return Scaffold(
+      key: const Key('boot-unreachable'),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: FailedState(
+                title: t.bootUnreachableTitle,
+                // 어느 서버인지 보인다 — 주소를 잘못 넣었으면 그것이 원인이다.
+                detail: app.baseUrl,
+                onRetry: app.retryBoot,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: TextButton(onPressed: app.signOut, child: Text(t.signOut)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

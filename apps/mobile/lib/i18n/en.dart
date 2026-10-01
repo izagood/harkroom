@@ -240,4 +240,61 @@ class StringsEn implements Strings {
 
   @override
   String get attachmentUploadFailed => 'Could not upload that file.';
+
+  @override
+  String get loadFailedHint => 'Check your connection and try again.';
+
+  @override
+  String get messagesLoadFailed => 'Could not load messages';
+
+  @override
+  String get threadLoadFailed => 'Could not load replies';
+
+  @override
+  String get inboxLoadFailed => 'Could not load your inbox';
+
+  @override
+  String get messagesEmptyHint => 'Say something, or call an agent with @.';
+
+  @override
+  String get inboxEmptyHint => 'When someone calls you or waits on you, it shows up here.';
+
+  @override
+  String get bootUnreachableTitle => 'Could not reach the server';
+
+  @override
+  String get connectionLostBand => 'Disconnected · missed messages load when it reconnects';
+
+  @override
+  String get connectionRetryNow => 'Retry';
+
+  @override
+  String get connectionSignInAgain => 'Sign in again';
+
+  @override
+  String get sendFailed => 'Not sent';
+
+  @override
+  String get sending => 'Sending…';
+
+  @override
+  String get resend => 'Send again';
+
+  @override
+  String get discard => 'Discard';
+
+  @override
+  String get sendWaitsForUpload => 'Uploading — you can send when it finishes';
+
+  @override
+  String get askFailed => 'Could not send your choice';
+
+  @override
+  String get reactionFailed => 'Could not change the reaction';
+
+  @override
+  String get loadFailedServer => 'The server did not respond. Try again in a moment.';
+
+  @override
+  String get loadFailedForbidden => 'You don\'t have access to this.';
 }

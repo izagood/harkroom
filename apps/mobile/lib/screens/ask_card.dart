@@ -4,6 +4,7 @@ import '../api/ask.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
+import '../ui/states.dart';
 import '../ui/tokens.dart';
 
 /// 선택 요청을 **누를 수 있는 것**으로 그린다.
@@ -33,6 +34,10 @@ class _AskCardState extends State<AskCard> {
     setState(() => _busy = true);
     try {
       await action();
+    } on Object {
+      // **조용히 지나가지 않는다.** 버튼이 그대로 서 있으면 사람은 눌린 줄 모르고, 그 턴은
+      // 답을 못 받은 채 멈춰 있다. 같은 동작을 "다시 시도"로 단다.
+      if (mounted) showFailureToast(context, context.t.askFailed, retry: () => _run(action));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

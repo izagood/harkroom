@@ -95,7 +95,87 @@ void main() {
     await tester.tap(find.byKey(const Key('channel-c1')));
     await shot(tester, '07-dark-channel');
   });
+
+  // ── S2: 상태 셋과 실패 ────────────────────────────────────────────────
+  testWidgets('상태', (tester) async {
+    final app = _galleryApp(_server(states: true));
+    addTearDown(app.dispose);
+    await tester.pumpWidget(HarkroomApp(state: app));
+    await shot(tester, '10-boot');
+
+    // 못 읽은 채널 — "다시 시도".
+    await tester.tap(find.byKey(const Key('channel-c3')));
+    await shot(tester, '11-channel-failed');
+    await tester.tap(find.byType(BackButton));
+    await shot(tester, '11b-back');
+
+    // 비어 있는 채널 — 할 일 한 줄.
+    await tester.tap(find.byKey(const Key('channel-c4')));
+    await shot(tester, '12-channel-empty');
+    await tester.tap(find.byType(BackButton));
+    await shot(tester, '12b-back');
+
+    // 보내지 못한 말 + 끊김 띠.
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await shot(tester, '13a-open');
+    await tester.enterText(find.byKey(const Key('composer')), '@forge 이거 해 줘');
+    await tester.tap(find.byKey(const Key('composer-send')));
+    await shot(tester, '13-send-failed');
+    app.connection = SocketState.reconnecting;
+    app.notifyListeners();
+    await shot(tester, '14-band');
+    // 자격증명이 죽었다 — 빨간 띠 + 다시 로그인.
+    app.connection = SocketState.dead;
+    app.notifyListeners();
+    await shot(tester, '16-band-dead');
+    app.connection = SocketState.online;
+    app.notifyListeners();
+
+    // ask 답이 실패하면 토스트 + 다시 시도. 작성칸의 키보드를 먼저 내린다 — 토스트가 키보드
+    // 자리에 가려진다.
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump(const Duration(milliseconds: 400));
+    final option = find.byKey(const Key('ask-option-m4-a'));
+    await tester.scrollUntilVisible(option, 250,
+        scrollable: find
+            .descendant(of: find.byKey(const Key('channel-feed')), matching: find.byType(Scrollable))
+            .first);
+    await tester.tap(option);
+    await tester.pump(const Duration(milliseconds: 300));
+    await shot(tester, '17-toast');
+    await tester.tap(find.byType(BackButton));
+    await shot(tester, '17b-back');
+
+    // 읽는 중 — 답이 오지 않는 채널.
+    await tester.tap(find.byKey(const Key('channel-c2')));
+    await shot(tester, '18-loading');
+  });
+
+  testWidgets('부팅 실패', (tester) async {
+    final app = _galleryApp(MockClient((_) async => throw http.ClientException('네트워크 없음')));
+    addTearDown(app.dispose);
+    await tester.pumpWidget(HarkroomApp(state: app));
+    await shot(tester, '15-boot-unreachable');
+  });
 }
+
+AppState _galleryApp(http.Client client) => AppState(
+      sessions: SessionStore.inMemory(
+        seed: jsonEncode({
+          'active': '00000000-0000-4000-8000-000000000001',
+          'communities': [
+            {
+              'accountId': '00000000-0000-4000-8000-000000000001',
+              'baseUrl': 'https://h.example.com',
+              'token': 'tok',
+              'handle': 'jaebin',
+            },
+          ],
+        }),
+      ),
+      apiFactory: (b, t) => ApiClient(baseUrl: b, token: t, httpClient: client),
+      connector: (_) async => _IdleConnection(),
+    );
 
 String _ago(int minutes) =>
     DateTime.now().toUtc().subtract(Duration(minutes: minutes)).toIso8601String();
@@ -128,8 +208,24 @@ Map<String, Object?> _m(String id, int seq, String author, String body,
       'attachments': <Object?>[],
     };
 
-MockClient _server() => MockClient((req) async {
+/// [states] 가 참이면 **실패를 일부러 섞는다**(S2 상태 화면을 찍으려고): `#testbed` 는 못 읽고,
+/// `#homelab` 은 비어 있고, 보내기는 실패한다.
+MockClient _server({bool states = false}) => MockClient((req) async {
       final path = req.url.path;
+      if (states) {
+        // 읽는 중 자리표시를 찍으려고 `#harkroom` 은 **답하지 않는다**(타이머 없이 매달린다).
+        if (path == '/channels/c2/messages') return Completer<http.Response>().future;
+        if (path.contains('/ask-answer')) {
+          return _json({'error': {'code': 'unavailable', 'message': 'down'}}, 503);
+        }
+        if (path == '/channels/c3/messages') {
+          return _json({'error': {'code': 'unavailable', 'message': 'down'}}, 503);
+        }
+        if (path == '/channels/c4/messages') return _json({'messages': <Object?>[], 'hasMore': false});
+        if (path.endsWith('/messages') && req.method == 'POST') {
+          return _json({'error': {'code': 'unavailable', 'message': 'down'}}, 503);
+        }
+      }
       if (path == '/auth/me') {
         return _json({'id': '00000000-0000-4000-8000-000000000001', 'handle': 'jaebin', 'displayName': 'jaebin', 'isAdmin': true});
       }

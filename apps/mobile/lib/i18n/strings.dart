@@ -64,6 +64,63 @@ abstract class Strings {
   /// 올리기 실패. **조용히 지나가지 않는다** — 칩이 사라진 이유를 사람이 알아야 한다.
   String get attachmentUploadFailed;
 
+  /// 못 읽음: 서버가 실패로 답했다.
+  String get loadFailedServer;
+
+  /// 못 읽음: 볼 권한이 없다.
+  String get loadFailedForbidden;
+
+  /// 읽지 못한 것.
+  String get loadFailedHint;
+
+  /// 채널 메시지를 못 읽음.
+  String get messagesLoadFailed;
+
+  /// 스레드 답글을 못 읽음.
+  String get threadLoadFailed;
+
+  /// 인박스를 못 읽음.
+  String get inboxLoadFailed;
+
+  /// 빈 채널에서 할 일.
+  String get messagesEmptyHint;
+
+  /// 빈 인박스의 뜻.
+  String get inboxEmptyHint;
+
+  /// 부팅 때 서버에 못 닿음.
+  String get bootUnreachableTitle;
+
+  /// 끊김 띠.
+  String get connectionLostBand;
+
+  /// 끊김 띠의 지금 다시 붙기.
+  String get connectionRetryNow;
+
+  /// 자격증명이 죽었을 때.
+  String get connectionSignInAgain;
+
+  /// 보내기 실패 줄의 머리.
+  String get sendFailed;
+
+  /// 다시 보내는 중.
+  String get sending;
+
+  /// 못 보낸 말을 다시 보내기.
+  String get resend;
+
+  /// 못 보낸 말을 버리기.
+  String get discard;
+
+  /// 첨부가 올라가는 동안 잠긴 보내기.
+  String get sendWaitsForUpload;
+
+  /// ask 답 실패 토스트.
+  String get askFailed;
+
+  /// 리액션 실패 토스트.
+  String get reactionFailed;
+
   /// 1분 미만. 숫자를 쓰지 않는다 — 그 정밀도는 쓸모가 없다.
   String get timeUnderMinute;
 
@@ -293,6 +350,25 @@ Map<String, String> stringsToMap(Strings s) => {
       'commonRetry': s.commonRetry,
       'attachmentAdd': s.attachmentAdd,
       'attachmentUploadFailed': s.attachmentUploadFailed,
+      'loadFailedServer': s.loadFailedServer,
+      'loadFailedForbidden': s.loadFailedForbidden,
+      'loadFailedHint': s.loadFailedHint,
+      'messagesLoadFailed': s.messagesLoadFailed,
+      'threadLoadFailed': s.threadLoadFailed,
+      'inboxLoadFailed': s.inboxLoadFailed,
+      'messagesEmptyHint': s.messagesEmptyHint,
+      'inboxEmptyHint': s.inboxEmptyHint,
+      'bootUnreachableTitle': s.bootUnreachableTitle,
+      'connectionLostBand': s.connectionLostBand,
+      'connectionRetryNow': s.connectionRetryNow,
+      'connectionSignInAgain': s.connectionSignInAgain,
+      'sendFailed': s.sendFailed,
+      'sending': s.sending,
+      'resend': s.resend,
+      'discard': s.discard,
+      'sendWaitsForUpload': s.sendWaitsForUpload,
+      'askFailed': s.askFailed,
+      'reactionFailed': s.reactionFailed,
       'timeUnderMinute': s.timeUnderMinute,
       'timeMinutes': s.timeMinutes,
       'timeHours': s.timeHours,
