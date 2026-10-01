@@ -270,7 +270,10 @@ class SendButton extends StatelessWidget {
   final String composerKey;
   final bool busy;
 
-  /// 보낼 글이 없다 — 버튼을 흐리게(soft) 둔다. 눌러도 아무 일이 없는데 주황이면 눌러 보게 된다.
+  /// 보낼 글이 없다 — 버튼을 흐리게(soft) 그린다. 눌러도 아무 일이 없는데 주황이면 눌러 보게 된다.
+  ///
+  /// **잠그지는 않는다**(onPressed 는 그대로, 빈 글은 `_send` 가 버린다). 잠그면 글을 친 바로
+  /// 그 프레임에는 아직 잠긴 버튼이 남아 있어, 빠르게 친 뒤 누른 손이 헛돈다.
   final bool empty;
   final VoidCallback onPressed;
 
@@ -293,9 +296,9 @@ class SendButton extends StatelessWidget {
     }
     return IconButton(
       tooltip: t.composerSend,
-      style: sendButtonStyle(context),
+      style: sendButtonStyle(context, soft: empty),
       icon: const Icon(Icons.send, size: 20),
-      onPressed: busy || empty ? null : onPressed,
+      onPressed: busy ? null : onPressed,
     );
   }
 }

@@ -11,6 +11,7 @@ import 'package:harkroom/screens/agent_model.dart';
 import 'package:harkroom/screens/thread_screen.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_state.dart';
+import 'package:harkroom/ui/tokens.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -763,22 +764,30 @@ void main() {
     expect(find.byKey(const Key('channel-c1')), findsOneWidget);
   });
 
-  testWidgets('빈 작성칸이면 보내기가 흐리고(눌리지 않음), 글을 치면 살아난다', (tester) async {
+  testWidgets('빈 작성칸이면 보내기가 흐리고 아무것도 안 가며, 글을 치면 주황이 된다', (tester) async {
     final state = _state();
     await tester.pumpWidget(HarkroomApp(state: state));
     await tester.pumpAndSettle();
     addTearDown(state.dispose);
     await tester.tap(find.byKey(const Key('channel-c1')));
     await _settle(tester);
-    IconButton send() => tester.widget<IconButton>(
-        find.descendant(of: find.byKey(const Key('composer-send')), matching: find.byType(IconButton)));
-    expect(send().onPressed, isNull);
+    final soft = tester.element(find.byKey(const Key('composer'))).tokens.soft;
+    Color? bg() => tester
+        .widget<IconButton>(
+            find.descendant(of: find.byKey(const Key('composer-send')), matching: find.byType(IconButton)))
+        .style!
+        .backgroundColor!
+        .resolve(<WidgetState>{});
+    expect(bg(), soft);
     await tester.enterText(find.byKey(const Key('composer')), '   ');
     await tester.pump();
-    expect(send().onPressed, isNull, reason: '공백만이면 보낼 것이 없다');
+    expect(bg(), soft, reason: '공백만이면 보낼 것이 없다');
+    await tester.tap(find.byKey(const Key('composer-send')));
+    await _settle(tester);
+    expect(_sent, isEmpty);
     await tester.enterText(find.byKey(const Key('composer')), '안녕');
     await tester.pump();
-    expect(send().onPressed, isNotNull);
+    expect(bg(), isNot(soft));
     // 자리표시는 채널 이름으로("# harkroom 에 메시지" / "Message # harkroom").
     final hint = tester.widget<TextField>(find.byKey(const Key('composer'))).decoration!.hintText!;
     expect(hint, contains('# harkroom'));

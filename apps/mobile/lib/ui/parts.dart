@@ -254,11 +254,12 @@ InputDecoration composerDecoration(BuildContext context, String hint) {
   );
 }
 
-ButtonStyle sendButtonStyle(BuildContext context) {
+/// [soft] 는 보낼 글이 없을 때의 흐린 모양(잠긴 모양과 같은 색).
+ButtonStyle sendButtonStyle(BuildContext context, {bool soft = false}) {
   final k = context.tokens;
   return IconButton.styleFrom(
-    backgroundColor: k.accent,
-    foregroundColor: k.onAccent,
+    backgroundColor: soft ? k.soft : k.accent,
+    foregroundColor: soft ? k.mute : k.onAccent,
     disabledBackgroundColor: k.soft,
     disabledForegroundColor: k.mute,
     minimumSize: const Size(40, 40),
