@@ -52,6 +52,10 @@ app.*.map.json
 # 계획서 `docs/plans/2026-09-22-mobile-flutter.md` §9 의 결정이다.
 *.mobileprovision
 *.p8
+# 서명 폴더를 실수로 저장소 안에 두는 것을 막는다(HARKROOM_SIGNING_DIR). values.txt 에는 키 id·앱 id 가 있다.
+values.txt
+AuthKey_*
+*-password.txt
 *.p12
 *.cer
 *.certSigningRequest

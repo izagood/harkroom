@@ -10,7 +10,10 @@ name: TestFlight
 #
 # ## 승인
 # job 이 환경 `testflight` 에 묶여 있다. 그 환경의 필수 승인자(jaebin)가 누르기 전에는 secret 을
-# 하나도 받지 못하고 시작하지 않는다. 환경과 승인자는 저장소 설정에서 사람이 건다.
+# 하나도 받지 못하고 시작하지 않는다. 환경 설정(사람이 건다):
+#   - 필수 승인자: jaebin
+#   - 배포 대상 제한: `mobile-v*` 태그 + 수동 실행용 `main`
+#   - 태그 ruleset: `mobile-v*` 는 jaebin 만 만들 수 있다(쓰기 권한자가 태그로 승인 요청을 띄우지 못하게)
 #
 # ## secret (환경 `testflight` 에 둔다, 저장소 secret 이 아니다)
 #   ASC_KEY_ID · ASC_ISSUER_ID · ASC_KEY_P8(.p8 내용) · ASC_APP_ID(앱의 숫자 Apple ID)
@@ -20,11 +23,6 @@ name: TestFlight
 # **어느 단계도 이 값들을 출력하지 않는다.** `set -x` 를 켜지 마라.
 on:
   workflow_dispatch:
-    inputs:
-      skip_e2e:
-        description: 시뮬레이터 E2E 를 건너뛴다
-        type: boolean
-        default: false
   push:
     tags:
       - 'mobile-v*'
@@ -59,7 +57,9 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
-          cache: true
+          # **이 job 은 캐시를 쓰지 않는다** — 서명된 빌드에 남이 만든 캐시(pub 패키지)가 섞이면
+          # 그 코드가 우리 인증서로 서명된다.
+          cache: false
 
       # 서명 자료를 **이 실행만의 임시 키체인**에 넣는다. 끝나면(실패해도) 지운다.
       - name: install signing material
@@ -71,6 +71,7 @@ jobs:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
         run: |
           set -eu
+          umask 077
           signing="$RUNNER_TEMP/signing"
           mkdir -p "$signing"
           chmod 700 "$signing"
@@ -95,6 +96,7 @@ jobs:
           printf '%s' "$PROFILE_BASE64" | base64 --decode > "$signing/app.mobileprovision"
           uuid=$(security cms -D -i "$signing/app.mobileprovision" | plutil -extract UUID raw -)
           mv "$signing/app.mobileprovision" "$profiles/$uuid.mobileprovision"
+          echo "PROFILE_PATH=$profiles/$uuid.mobileprovision" >> "$GITHUB_ENV"
 
           printf '%s' "$ASC_KEY_P8" > "$signing/AuthKey_$ASC_KEY_ID.p8"
           chmod 600 "$signing/AuthKey_$ASC_KEY_ID.p8"
@@ -106,13 +108,13 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_APP_ID: ${{ secrets.ASC_APP_ID }}
-          SKIP_E2E: ${{ inputs.skip_e2e && '1' || '0' }}
-        run: |
-          set -eu
-          if [ "$SKIP_E2E" = 1 ]; then ./tool/release-ios.sh --skip-e2e; else ./tool/release-ios.sh; fi
+        # **CI 에서는 E2E 를 돌리지 않는다** — 서명 키체인이 풀린 채로 시험 코드가 돌 이유가 없다.
+        # E2E 는 PR 의 `mobile.yml` 과 로컬 릴리스가 맡는다.
+        run: ./tool/release-ios.sh --skip-e2e
 
       - name: clean up signing material
         if: always()
         run: |
           [ -n "${KEYCHAIN_PATH:-}" ] && security delete-keychain "$KEYCHAIN_PATH" || true
+          [ -n "${PROFILE_PATH:-}" ] && rm -f "$PROFILE_PATH" || true
           rm -rf "$RUNNER_TEMP/signing" ~/.appstoreconnect/private_keys

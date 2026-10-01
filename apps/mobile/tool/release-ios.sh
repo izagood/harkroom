@@ -35,6 +35,16 @@ done
 cd "$(dirname "$0")/.."
 say() { printf '\n\033[1;32m▸ %s\033[0m\n' "$1"; }
 
+# 끝날 때(실패해도) 치울 것을 **한 곳**에 모은다. trap 을 두 번 걸면 앞의 것이 덮인다.
+sim_udid=""
+copied_key=""
+cleanup() {
+  [ -n "$sim_udid" ] && xcrun simctl shutdown "$sim_udid" 2>/dev/null || true
+  # altool 이 읽도록 복사한 API 키 사본을 지운다 — 서명 폴더 밖에 키가 남지 않게.
+  [ -n "$copied_key" ] && rm -f "$copied_key" || true
+}
+trap cleanup EXIT
+
 # values.txt 에서 한 줄을 읽는다. 환경 변수가 있으면 그것이 먼저다.
 value() {
   eval "current=\${$1:-}"
@@ -78,7 +88,7 @@ echo "빌드 번호: $build_number"
 
 # --- E2E -------------------------------------------------------------------
 if [ "$skip_e2e" -eq 0 ]; then
-  # 지난 실행이 남긴 Runner 를 먼저 치운다 — 오래 산 Runner 가 E2E 를 멈춰 세운 일이 있다.
+  # 지난 실행이 남긴 Runner 를 먼저 치운다 — 살아남은 Runner 는 다음 E2E 를 멈춰 세운다.
   stale=$(pgrep -f 'CoreSimulator/Devices/.*/Runner\.app/Runner' || true)
   if [ -n "$stale" ]; then
     say "지난 실행이 남긴 시뮬레이터 프로세스 정리"
@@ -89,9 +99,10 @@ if [ "$skip_e2e" -eq 0 ]; then
 
   say "시뮬레이터 E2E"
   # 이름을 안 주면 쓸 수 있는 첫 iPhone 을 고른다.
-  udid=$(xcrun simctl list devices available --json | python3 -c "
-import sys, json
-want = '$SIMULATOR_NAME'
+  # 이름은 **환경 변수로** 넘긴다 — 파이썬 코드 문자열에 끼워 넣지 않는다.
+  udid=$(xcrun simctl list devices available --json | HARKROOM_SIMULATOR="$SIMULATOR_NAME" python3 -c "
+import sys, json, os
+want = os.environ.get('HARKROOM_SIMULATOR', '')
 for runtime, devices in json.load(sys.stdin)['devices'].items():
     for d in devices:
         if (want and d['name'] == want) or (not want and d['name'].startswith('iPhone')):
@@ -99,7 +110,7 @@ for runtime, devices in json.load(sys.stdin)['devices'].items():
 sys.exit(1)")
   xcrun simctl boot "$udid" 2>/dev/null || true
   xcrun simctl bootstatus "$udid" -b
-  trap 'xcrun simctl shutdown "$udid" 2>/dev/null || true' EXIT
+  sim_udid="$udid"
 
   # 상한을 둔다. 멈춘 E2E 는 느린 E2E 와 화면상 구별되지 않는다. macOS 에는 `timeout` 이
   # 기본으로 없어서, 있으면 쓰고 없으면 그냥 돌린다.
@@ -144,9 +155,12 @@ fi
 
 # --- 업로드 ----------------------------------------------------------------
 # altool 은 이 고정 경로에서만 키를 찾는다. 경로와 파일명 모두 규칙이다.
+# 사본은 끝나면 cleanup 이 지운다.
 mkdir -p ~/.appstoreconnect/private_keys
-cp "$key_path" ~/.appstoreconnect/private_keys/
-chmod 600 ~/.appstoreconnect/private_keys/"AuthKey_$key_id.p8"
+chmod 700 ~/.appstoreconnect/private_keys
+copied_key="$HOME/.appstoreconnect/private_keys/AuthKey_$key_id.p8"
+cp "$key_path" "$copied_key"
+chmod 600 "$copied_key"
 
 # 업로드는 되돌릴 수 없다(빌드 삭제 불가, 만료 처리만 가능). 검증을 먼저 통과시킨다.
 say "업로드 전 검증"

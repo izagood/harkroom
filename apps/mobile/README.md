@@ -118,7 +118,14 @@ iOS 는 평문 `http://`·`ws://` 를 막는다. `Info.plist` 에 `NSAllowsArbit
   → `--upload-app`). 서명 자료는 `~/.harkroom-signing`(또는 `HARKROOM_SIGNING_DIR`)에 둔다:
   `AuthKey_<KEY_ID>.p8` 와 `values.txt`(`ASC_KEY_ID=`·`ASC_ISSUER_ID=`·`ASC_APP_ID=`).
 - **CI**: `.github/workflows/testflight.yml`. 사람이 누르거나 `mobile-v*` 태그를 밀 때만 돌고,
-  **PR 에서는 돌지 않는다.** 환경 `testflight` 의 승인자가 눌러야 시작한다. secret 목록은 그 파일 머리에 있다.
+  **PR 에서는 돌지 않는다.** CI 에서는 E2E 를 건너뛰고 캐시를 쓰지 않는다. secret 목록은 그 파일 머리에 있다.
+  환경 `testflight` 에 사람이 걸 것:
+  - 필수 승인자
+  - 배포 대상 제한: `mobile-v*` 태그와 수동 실행용 `main`
+  - 태그 ruleset: `mobile-v*` 는 승인자만 만들 수 있게
+- **API 키는 이 저장소 전용**으로 새로 만든다. 역할은 **App Manager** 면 된다(수동 서명이라 Admin 이
+  필요 없다). 다른 앱과 키를 같이 쓰지 않아야 한쪽이 새도 이 키만 폐기하면 된다. CI 용 p12 도 로컬과 다른
+  비밀번호로 다시 내보낸다 — 배포 인증서는 팀 전체의 것이다.
 - 수출 규정은 `ITSAppUsesNonExemptEncryption = false`(OS 의 HTTPS 만 쓴다), 개인정보 매니페스트는
   `ios/Runner/PrivacyInfo.xcprivacy`, 사진 권한 문구는 `ios/Runner/{en,ko}.lproj/InfoPlist.strings` 다.
 - 아이콘 원본은 `assets/icon/AppIcon.svg` 다. 1024 는 **알파 채널이 없어야** 업로드가 통과한다.
