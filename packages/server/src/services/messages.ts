@@ -2215,16 +2215,23 @@ export async function listMessages(
  * — 판정을 새로 적으면 채널의 배지와 보드의 열이 갈린다.
  *
  * 머리 수만큼만 돈다(항목 수가 아니라). 머리마다의 LATERAL 은 062 의
- * `(thread_root_id, seq)` 색인을 탄다. 볼 수 있는가는 항목이 이미 내 인박스에 있다는 것으로
- * 충분하다 — 머리는 그 항목과 같은 채널에 있다.
+ * `(thread_root_id, seq)` 색인을 탄다.
+ *
+ * **볼 수 있는가는 지금 다시 잰다**(`channelVisibleSql`, security F1). 인박스 항목은 부를 때의
+ * 가시성으로 만들어지고 그 뒤로 남는다 — 비공개 채널에서 내보내지거나(`removeChannelMember` 는
+ * inbox 행을 안 지운다) 채널이 비공개로 바뀌어도 항목은 그대로다. 머리는 **계속 갱신되는**
+ * 스레드 상태(본문·리액션·참여자·열린 물음)라, 거르지 않으면 나간 사람이 그 스레드를 계속 지켜본다.
+ * 걸러진 머리의 카드는 보드에 서지 않는다(화면의 "머리가 안 오면 세우지 않는다").
  */
-export async function listInboxThreads(pool: Pool, entries: InboxEntry[]): Promise<MessageRow[]> {
+export async function listInboxThreads(pool: Pool, accountId: string, entries: InboxEntry[]): Promise<MessageRow[]> {
   const rootIds = [...new Set(entries.map((e) => e.threadRootId ?? e.messageId))];
   if (rootIds.length === 0) return [];
   const res = await pool.query(
     `select ${LIST_COLS} from message m ${THREAD_STATS}
-      where m.id = any($1::uuid[]) and m.thread_root_id is null and ${LIST_VISIBLE}`,
-    [rootIds],
+       join channel c on c.id = m.channel_id
+      where m.id = any($1::uuid[]) and m.thread_root_id is null and ${LIST_VISIBLE}
+        and ${channelVisibleSql('c', '$2')}`,
+    [rootIds, accountId],
   );
   return res.rows;
 }

@@ -467,7 +467,7 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
     }).parse(req.query);
     const entries = await listInbox(pool, req.account!.id, { unreadOnly: q.unread ?? false });
     if (q.threads !== '1') return { entries };
-    return { entries, threads: await listInboxThreads(pool, entries) };
+    return { entries, threads: await listInboxThreads(pool, req.account!.id, entries) };
   });
 
   app.post('/inbox/read', { preHandler: app.requireAccount }, async (req, reply) => {

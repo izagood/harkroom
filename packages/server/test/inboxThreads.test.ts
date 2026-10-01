@@ -8,11 +8,13 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 import { postMessage } from '../src/services/messages.js';
+import { removeChannelMember } from '../src/services/channels.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
 let pool: Pool;
 let adminToken: string;
+let adminId: string;
 let botId: string;
 let channelId: string;
 
@@ -23,7 +25,7 @@ beforeAll(async () => {
   stop = db.stop;
   pool = db.pool;
   app = await buildServer({ pool: db.pool });
-  ({ token: adminToken } = await bootstrapAdmin(app));
+  ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
   ({ accountId: botId } = await createAgent(app, adminToken, 'boardbot'));
   const ch = await app.inject({
     method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'inbox-board' },
@@ -76,5 +78,27 @@ describe('GET /inbox?threads=1', () => {
     await pool.query('update message set deleted_at = now() where id = $1', [root]);
     const body = await inbox('?threads=1');
     expect(body.threads!.some((m) => m.id === root)).toBe(false);
+  });
+
+  /**
+   * **나간 사람은 머리를 못 받는다**(security F1). 인박스 항목은 남지만, 머리는 계속 갱신되는
+   * 스레드 상태라 지금의 가시성으로 거른다.
+   */
+  it('비공개 채널에서 내보내지면 그 스레드 머리가 빠진다', async () => {
+    const ch = await app.inject({
+      method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'board-private', visibility: 'private' },
+    });
+    expect(ch.statusCode).toBe(201);
+    const privateId = ch.json().id as string;
+    const posted = await postMessage(pool, { channelId: privateId, authorId: botId, body: '@admin 비공개 일', threadRootId: null, meta: {} });
+    const root = (posted as { message: { id: string } }).message.id;
+
+    const before = await inbox('?threads=1');
+    expect(before.entries.some((e) => e.messageId === root)).toBe(true);
+    expect(before.threads!.some((m) => m.id === root)).toBe(true);
+
+    await removeChannelMember(pool, privateId, adminId);
+    const after = await inbox('?threads=1');
+    expect(after.threads!.some((m) => m.id === root)).toBe(false);
   });
 });
