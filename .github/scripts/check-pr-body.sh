@@ -13,9 +13,9 @@ body=${PR_BODY:-}
 ALLOWED_HOSTS_RE=${ALLOWED_HOSTS_RE:-'^(gate|www|example)\.harkroom\.com$'}
 bad=0
 
-# 마크다운 이미지(인라인·참조형)·HTML 이미지 태그(<img>·<picture>·<source>·<video>, srcset)·
+# 마크다운 이미지(`![` — 인라인·참조형·단축 참조형 모두)·HTML 이미지 태그(<img>·<picture>·<source>·<video>, srcset)·
 # GitHub 첨부와 githubusercontent 전체·raw 링크(/raw/, ?raw=true).
-IMG_RE='!\[[^]]*\][[(]|<img([[:space:]/>]|$)|<(picture|source|video)([[:space:]/>]|$)|srcset[[:space:]]*=|user-attachments|githubusercontent\.com|github\.com/[^[:space:])]*/raw/|[?&]raw=true'
+IMG_RE='!\[|<img([[:space:]/>]|$)|<(picture|source|video)([[:space:]/>]|$)|srcset[[:space:]]*=|user-attachments|githubusercontent\.com|github\.com/[^[:space:])]*/raw/|[?&]raw=true'
 img=$(printf '%s\n' "$body" | grep -niE "$IMG_RE" || true)
 if [ -n "$img" ]; then
   while IFS= read -r l; do echo "::error::PR 본문 ${l%%:*}번째 줄에 이미지·첨부·raw 링크가 있다 — 스크린샷은 저장소 밖(채팅 첨부)에 둔다"; done <<<"$img"
