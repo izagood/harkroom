@@ -86,6 +86,13 @@ describe('SettingsScreen', () => {
     }
   });
 
+  /** 내 계정을 아직 모르면(불러오는 중) 붙이지 않는다 — 관리자에게 잠깐 떴다 사라지는 깜빡임. */
+  it('me 를 아직 모르면 읽기 전용 표시를 붙이지 않는다', () => {
+    useAppStore.getState().set({ me: null });
+    render(<SettingsScreen onBack={vi.fn()} onSignOut={vi.fn()} onCommunitiesEmpty={vi.fn()} />);
+    expect(screen.queryByTestId('settings-group-readonly')).toBeNull();
+  });
+
   it('returns to the app', () => {
     const onBack = vi.fn();
     render(<SettingsScreen onBack={onBack} onSignOut={vi.fn()} onCommunitiesEmpty={vi.fn()} />);

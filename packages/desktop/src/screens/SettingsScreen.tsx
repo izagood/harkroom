@@ -73,8 +73,10 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
                       판정은 `isAdmin` 하나가 아니라 **서버가 실제로 보는 능력**이다
                       (`workspaceEditable`) — 멤버도 초대·집합·MCP 능력을 따로 받을 수 있어, `isAdmin`
                       으로만 가르면 고칠 수 있는 사람에게 "읽기 전용" 이라고 거짓말한다.
-                      화면 표시일 뿐이다 — 권한 경계는 서버의 requireAdmin·requireCap 이다. */}
-                  {g.id === 'workspace' && !workspaceEditable(me) && (
+                      화면 표시일 뿐이다 — 권한 경계는 서버의 requireAdmin·requireCap 이다.
+                      **`me` 를 아직 모르면 붙이지 않는다**(designer) — 모를 때 붙이면 관리자에게도
+                      설정을 열 때마다 "읽기 전용" 이 잠깐 떴다가 사라진다. */}
+                  {g.id === 'workspace' && me && !workspaceEditable(me) && (
                     <span data-testid="settings-group-readonly" className="ml-1 normal-case tracking-normal">· {t('settings.group.readOnly')}</span>
                   )}
                 </div>
