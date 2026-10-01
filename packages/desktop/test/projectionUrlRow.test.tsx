@@ -98,7 +98,7 @@ describe('투영 URL 편집 줄', () => {
   it('저장하면 입력한 URL 로 부른다', async () => {
     mount();
     fireEvent.click(await screen.findByRole('button', { name: '편집' }));
-    fireEvent.change(screen.getByLabelText('avcs 주소'), {
+    fireEvent.change(screen.getByLabelText('avcs 서버 주소'), {
       target: { value: 'http://app.example:5000' },
     });
     fireEvent.click(screen.getByRole('button', { name: '저장' }));
@@ -113,13 +113,29 @@ describe('투영 URL 편집 줄', () => {
   it('저장 후 투영 상태를 다시 읽는다', async () => {
     mount();
     fireEvent.click(await screen.findByRole('button', { name: '편집' }));
-    fireEvent.change(screen.getByLabelText('avcs 주소'), { target: { value: 'http://app.example:5000' } });
+    fireEvent.change(screen.getByLabelText('avcs 서버 주소'), { target: { value: 'http://app.example:5000' } });
     fireEvent.click(screen.getByRole('button', { name: '저장' }));
 
     await waitFor(() => expect(refreshProjection).toHaveBeenCalled());
   });
 
   /** 지우기는 빈 문자열이 아니라 null 이다 — 서버가 빈 문자열을 400 으로 거절한다. */
+  /**
+   * **아직 아무도 정하지 않았으면 바로 넣는 줄**(UX ② H3). 빈 상태·띠를 따라 온 사람이
+   * [편집] 을 한 번 더 누르지 않는다 — 라벨·입력·[연결] 이 한 줄에 서고, 비어 있으면
+   * [연결] 은 눌리지 않는다.
+   */
+  it('정해진 값이 없으면 라벨·입력·연결이 바로 선다', async () => {
+    mount({ config: view({ source: null, url: null, appUrl: null, envUrl: null }) });
+    const input = await screen.findByLabelText('avcs 서버 주소');
+    const connect = screen.getByRole('button', { name: '연결' }) as HTMLButtonElement;
+    expect(connect.disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: '편집' })).toBeNull();
+    fireEvent.change(input, { target: { value: 'http://avcs.example:4000' } });
+    fireEvent.click(connect);
+    await waitFor(() => expect(setProjectionConfig).toHaveBeenCalledWith('http://avcs.example:4000'));
+  });
+
   it('지우기는 null 로 부른다', async () => {
     mount({ config: view({ source: 'app', appUrl: 'http://app.example:5000', url: 'http://app.example:5000' }) });
 
@@ -139,7 +155,7 @@ describe('투영 URL 편집 줄', () => {
     mount();
     setProjectionConfig.mockRejectedValueOnce(new Error('nope'));
     fireEvent.click(await screen.findByRole('button', { name: '편집' }));
-    fireEvent.change(screen.getByLabelText('avcs 주소'), { target: { value: 'http://x.example' } });
+    fireEvent.change(screen.getByLabelText('avcs 서버 주소'), { target: { value: 'http://x.example' } });
     fireEvent.click(screen.getByRole('button', { name: '저장' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('저장하지 못했다');

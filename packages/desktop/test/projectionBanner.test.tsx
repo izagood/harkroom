@@ -28,6 +28,7 @@ const status = (over: Partial<ProjectionStatus>): ProjectionStatus => ({
 
 beforeEach(() => {
   useActiveStore.getState().reset();
+  localStorage.clear(); // "나중에" 는 기기에 남는다(UX ②) — 테스트끼리 새지 않게.
   // **언어를 고정한다**(`#619` 후속으로 `N분 전` 이 앱 언어를 따른다). 이 파일이 재는 것은
   // 네 사정을 뭉개지 않는가이지 그 문구의 언어가 아니다.
   usePrefsStore.getState().setLocale('ko');
@@ -178,6 +179,33 @@ describe('고치는 문과 닫기', () => {
     useActiveStore.getState().set({
       projectionStatus: status({ state: 'stalled', lastPolledAt: Date.now() - 60_000 }),
     });
+    mount();
+    expect(screen.getByTestId('strip-projection-stalled')).toBeTruthy();
+  });
+
+  /**
+   * **"나중에" 는 꺼짐만 이 기기에 남긴다**(UX ②). 스토어를 새로 세워도(= 앱을 다시 켜도)
+   * 꺼짐 띠는 다시 안 선다. 멈춤은 남기지 않는다 — 지금 벌어진 고장까지 기억하면 "나중에"
+   * 가 곧 알림 끄기가 된다.
+   */
+  it('꺼짐의 "나중에" 는 다시 켜도 남고, 멈춤의 닫기는 남지 않는다', () => {
+    useActiveStore.getState().set({ projectionStatus: status({ state: 'unconfigured', configured: false }) });
+    mount();
+    fireEvent.click(screen.getByTestId('projection-dismiss'));
+    cleanup();
+    useActiveStore.getState().set({ projectionBannerDismissed: null });
+    const again = mount();
+    expect(again.container.firstChild).toBeNull();
+    cleanup();
+
+    useActiveStore.getState().set({
+      projectionStatus: status({ state: 'stalled', lastPolledAt: Date.now() - 60_000 }),
+      projectionBannerDismissed: null,
+    });
+    mount();
+    fireEvent.click(screen.getByTestId('projection-dismiss'));
+    cleanup();
+    useActiveStore.getState().set({ projectionBannerDismissed: null });
     mount();
     expect(screen.getByTestId('strip-projection-stalled')).toBeTruthy();
   });

@@ -1,6 +1,7 @@
 import { useActiveStore } from '../state/communities';
 import type { SectionId } from './settings/sections';
 import { projectionBanner } from '../lib/projectionBanner';
+import { projectionBannerStorage } from '../lib/prefs';
 import { useAgo, useT } from '../i18n/useT';
 
 /**
@@ -58,6 +59,7 @@ export function ProjectionBanner({ onOpenSettings }: {
   if (!banner || !banner.strip) return null;
   // 같은 사정을 다시 세우지 않는다. 다른 사정이면 열쇠가 달라 다시 선다.
   if (dismissed === banner.testid) return null;
+  if (banner.testid === 'projection-unconfigured' && projectionBannerStorage.isSnoozed(banner.testid)) return null;
 
   const tone = banner.tone === 'danger'
     ? 'border-danger-border bg-danger-surface text-danger'
@@ -94,9 +96,13 @@ export function ProjectionBanner({ onOpenSettings }: {
         data-testid="projection-dismiss"
         aria-label={t('projection.banner.dismiss')}
         className="shrink-0 rounded px-1 hover:bg-warning-surface-strong"
-        onClick={() => useActiveStore.getState().set({ projectionBannerDismissed: banner.testid })}
+        onClick={() => {
+          // 꺼짐만 이 기기에 남긴다(`projectionBannerStorage` 주석). 세션 닫기는 모든 사정에 건다.
+          if (banner.testid === 'projection-unconfigured') projectionBannerStorage.snooze(banner.testid);
+          useActiveStore.getState().set({ projectionBannerDismissed: banner.testid });
+        }}
       >
-        ×
+        {t('projection.banner.dismiss')} ×
       </button>
     </div>
   );

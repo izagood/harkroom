@@ -80,17 +80,42 @@ export function ProjectionUrl() {
       {config === 'error' && (
         <p role="alert" className="text-meta text-danger">{t('projection.url.loadFailed')}</p>
       )}
-      {config !== null && config !== 'error' && !editing && (
+      {/*
+        **아직 아무도 정하지 않았으면 바로 넣는 줄을 준다**(UX ② H3). 전에는 라벨 없이
+        "아직 정해지지 않았다" 와 [편집] 만 있어, 빈 상태·띠를 따라 여기 온 사람이 무엇을
+        넣는 칸인지 한 번 더 눌러야 알았다. 라벨 · 입력 · [연결] 한 줄, 그 아래 상태 한 줄.
+      */}
+      {config !== null && config !== 'error' && !editing && config.source === null && (
+        <div className="space-y-1.5">
+          <form
+            className="flex flex-wrap items-center gap-2"
+            onSubmit={(e) => { e.preventDefault(); if (draft.trim()) void commit(draft); }}
+          >
+            <span className="shrink-0 font-medium text-fg">{t('projection.url.field')}</span>
+            <span className="min-w-[12rem] flex-1">
+              <TextInput
+                ariaLabel={t('projection.url.field')}
+                placeholder={t('projection.url.placeholder')}
+                value={draft}
+                disabled={busy}
+                onChange={setDraft}
+              />
+            </span>
+            <Button variant="primary" type="submit" disabled={busy || !draft.trim()}>
+              {t('projection.url.connect')}
+            </Button>
+          </form>
+          <p data-testid="projection-source" className="text-meta text-fg-muted">{t('projection.url.statusOff')}</p>
+        </div>
+      )}
+      {config !== null && config !== 'error' && !editing && config.source !== null && (
         <div className="flex items-center gap-3">
           <span data-testid="projection-source" className="min-w-0 flex-1 truncate text-meta text-fg-muted">
-            {/* 출처가 없다는 것도 사정이다 — '아직 아무도 정하지 않았다'. */}
-            {config.source === null
-              ? t('projection.url.sourceNone')
-              /* 틀과 출처 이름을 갈라 둔다 — 한국어는 `출처: X` 이고 영어는 `Source: X` 라
-                 지금은 어순이 같지만, 이 자리를 조각으로 이어 붙이면 그 어순이 코드에
-                 굳는다(`waitChain.link` 가 금지한 그것). 틀이 자리표시자를 받으므로
-                 어순 전체가 각 언어의 것이다. */
-              : t('projection.url.sourceOf', { source: t(SOURCE_LABEL[config.source]) })}
+            {/* 틀과 출처 이름을 갈라 둔다 — 한국어는 `출처: X` 이고 영어는 `Source: X` 라
+                지금은 어순이 같지만, 이 자리를 조각으로 이어 붙이면 그 어순이 코드에
+                굳는다(`waitChain.link` 가 금지한 그것). 틀이 자리표시자를 받으므로
+                어순 전체가 각 언어의 것이다. */}
+            {t('projection.url.sourceOf', { source: t(SOURCE_LABEL[config.source]) })}
           </span>
           <Button disabled={busy} onClick={() => { setEditing(true); setError(null); }}>
             {t('projection.url.edit')}

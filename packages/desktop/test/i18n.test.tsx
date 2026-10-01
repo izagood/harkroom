@@ -2321,22 +2321,23 @@ describe('투영 — 네 사정이 두 언어 모두 뭉개지지 않는다', ()
   });
 
   /**
-   * **꺼짐만 사전을 안 지난다** — `packages/shared` 의 상수라 데스크탑 사전이 닿을 수
-   * 없다(`runner.exit.notFound` 뒤의 `installHint()` 와 같은 경계). 그 사실을 회귀선에
-   * 박아 둔다: 다음 사람이 "왜 이것만 한국어인가"를 결함으로 읽지 않도록, 그리고 그
-   * 경계가 풀리는 날 이 축이 그 자리를 가리키도록.
+   * **꺼짐 띠도 사전을 지난다**(UX ② H3). 전에는 `packages/shared` 의 상수(서버·러너 로그의
+   * 말)를 그대로 썼고 그것만 언어를 안 따라왔다. 띠는 이 화면의 말이라 이제 사전 키다 —
+   * shared 상수는 서버·러너 쪽에 그대로 남는다(그래서 여기서 **그것이 아님**을 잰다).
    */
-  it('꺼짐 문구는 shared 의 상수 그대로다 — 이 패키지 밖이라 아직 못 옮긴다', () => {
+  it('꺼짐 띠 문구는 사전을 지나고 언어를 따라온다 — shared 상수가 아니다', () => {
+    const texts: string[] = [];
     for (const locale of ['ko', 'en'] as const) {
       const b = banner(locale, {
         status: { state: 'unconfigured', configured: false, lastPolledAt: null, lastError: null } as ProjectionStatus,
         error: null,
         ago: () => 'x',
       })!;
-      expect(b.text, locale).toBe(PROJECTION_UNCONFIGURED_HEADLINE);
-      // **목록 줄은 이 파일의 말이라 사전을 지난다** — 둘의 출처가 다르다는 것이 요점이다.
+      expect(b.text, locale).not.toBe(PROJECTION_UNCONFIGURED_HEADLINE);
+      texts.push(b.text);
       expect(b.listNote, locale).not.toBe(PROJECTION_UNCONFIGURED_HEADLINE);
     }
+    expect(texts[0]).not.toBe(texts[1]);
     // 그 목록 줄은 언어를 따라온다 — 위 `text` 가 안 따라오는 것과 대비된다.
     const koNote = banner('ko', {
       status: { state: 'unconfigured', configured: false, lastPolledAt: null, lastError: null } as ProjectionStatus,
