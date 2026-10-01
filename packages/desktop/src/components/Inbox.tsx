@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Identity } from './Identity';
-import type { InboxEntry, MessageRow } from '@harkroom/shared';
-import { BOARD_COLUMNS, CLEAR_EMOJI, buildBoard, daysWaiting, type BoardCard, type BoardColumn, type BoardFold } from '../lib/inboxBoard';
+import type { InboxEntry, InboxThreadState, MessageRow } from '@harkroom/shared';
+import { BOARD_COLUMNS, buildBoard, daysWaiting, type BoardCard, type BoardColumn, type BoardFold } from '../lib/inboxBoard';
 import { bodyWithHandles } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
@@ -23,18 +23,27 @@ type LoadState = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; mess
 
 const THREAD_PREFIX = 'thread:';
 
-/** 열 이름 키. 화면이 제 손으로 글자를 적지 않는다. */
 /** 열 맨 아래 접힘 줄의 이름. 접힌 카드는 사라지지 않는다 — 수와 함께 한 줄로 남는다. */
 const FOLD_KEY = {
   quiet: 'inbox.board.fold.quiet',
   old: 'inbox.board.fold.old',
   cleared: 'inbox.board.fold.cleared',
+  later: 'inbox.board.fold.later',
 } as const satisfies Record<BoardFold, string>;
-/** 열마다 접힘 줄의 순서. 진행은 조용한 것, 끝남은 지난 것 → 치운 것. */
+/** 열마다 접힘 줄의 순서. 나중에는 어느 열에나 서고, 진행은 조용한 것, 끝남은 지난 것 → 치운 것. */
 const COLUMN_FOLDS: Record<BoardColumn, readonly BoardFold[]> = {
-  mine: [], blocked: [], active: ['quiet'], done: ['old', 'cleared'],
+  mine: ['later'], blocked: ['later'], active: ['quiet', 'later'], done: ['old', 'later', 'cleared'],
 };
 
+/** 나중에의 깨어날 시각 — **다음 날 아침 9시**(내 시계). 하루 미룸이 가장 흔한 뜻이다. */
+function tomorrowMorning(nowMs: number): string {
+  const d = new Date(nowMs);
+  d.setDate(d.getDate() + 1);
+  d.setHours(9, 0, 0, 0);
+  return d.toISOString();
+}
+
+/** 열 이름 키. 화면이 제 손으로 글자를 적지 않는다. */
 const COLUMN_KEY = {
   mine: 'inbox.board.col.mine',
   blocked: 'inbox.board.col.blocked',
@@ -53,7 +62,7 @@ const COLUMN_KEY = {
  * "Waiting on" 목록은 없앴다 — 줄지 않는 숫자와 내용 없는 목록이 이 화면을 소음으로 만들었다
  * (designer 진단). **숫자는 내 차례만 센다** — 0 이 될 수 있는 수만 뜻이 있다.
  *
- * 카드에서 그 자리 처리: 나에게 온 물음은 카드에서 고르고, 치움은 머리에 ✅ 를 단다
+ * 카드에서 그 자리 처리: 나에게 온 물음은 카드에서 고르고, 완료·나중에는 서버의 내 상태다
  * (끝남 맨 아래로 접힌다 — 서버의 완료·나중에 상태는 2/2).
  *
  * ## 모달이 아니라 **자리**다 (#488 C2)
@@ -124,6 +133,8 @@ export function Inbox({ open, onClose }: Props) {
   const [entries, setEntries] = useState<InboxEntry[]>([]);
   /** `null` = 서버가 머리를 안 줬다(옛 서버). 보드가 항목 `meta` 로 판정한다. */
   const [threads, setThreads] = useState<MessageRow[] | null>(null);
+  /** 내 완료·나중에(서버, 2/2). */
+  const [threadStates, setThreadStates] = useState<InboxThreadState[]>([]);
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
 
   /**
@@ -145,6 +156,7 @@ export function Inbox({ open, onClose }: Props) {
         if (!alive || seq !== reloadSeq.current) return;
         setEntries(res.entries);
         setThreads(res.threads);
+        setThreadStates(res.threadStates);
         setLoad({ kind: 'ready' });
       },
       (err: unknown) => {
@@ -152,6 +164,7 @@ export function Inbox({ open, onClose }: Props) {
         // 실패했을 때 앞선 결과를 남겨 두면 낡은 보드가 지금 사실인 척한다.
         setEntries([]);
         setThreads(null);
+        setThreadStates([]);
         setLoad({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
       },
     );
@@ -192,12 +205,12 @@ export function Inbox({ open, onClose }: Props) {
 
   const cards = useMemo(
     () => buildBoard({
-      entries, threads,
+      entries, threads, threadStates,
       me: me ? { id: me.id, kind: me.kind } : null,
       isAgent: (id) => accounts[id]?.kind === 'agent',
       nowMs: Date.now(),
     }),
-    [entries, threads, me, accounts],
+    [entries, threads, threadStates, me, accounts],
   );
   const byColumn = useMemo(() => {
     const out: Record<BoardColumn, BoardCard[]> = { mine: [], blocked: [], active: [], done: [] };
@@ -268,13 +281,15 @@ export function Inbox({ open, onClose }: Props) {
   };
 
   /**
-   * **치움** — 머리에 ✅ 를 달거나 뗀다(designer 정정 3). 보드에서 내려 끝남 맨 아래 접힘으로
-   * 보낸다. 사람이 이미 ✅ 로 그렇게 적고 있다. 2/2 의 서버 "완료"가 이것을 대신한다.
+   * **완료·나중에·되돌리기** — 서버의 내 상태다(2/2). 남에게 보이는 표시를 남기지 않는다(1/2 의
+   * ✅ 를 대신한다). 바꾼 뒤 조용히 다시 읽는다 — 서버가 내 다른 기기에도 `inbox.updated` 를 보낸다.
    */
-  const setCleared = async (card: BoardCard, on: boolean): Promise<void> => {
+  const setState = async (
+    card: BoardCard, next: { state: 'done' } | { state: 'later'; until: string } | { state: null },
+  ): Promise<void> => {
     setBusy(card.rootId);
     try {
-      await getController().toggleReaction(card.channelId, card.rootId, CLEAR_EMOJI, on);
+      await getController().api.setInboxThreadState(card.rootId, next);
       reload({ quiet: true });
     } finally { setBusy(null); }
   };
@@ -300,8 +315,10 @@ export function Inbox({ open, onClose }: Props) {
           {/* 채널 · 누가 · 얼마나. 넘치면 채널 이름부터 줄인다 — 시각은 잘리면 뜻을 잃는다. */}
           <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-meta text-fg-subtle">
             {who && <Identity account={who} className="h-5 w-5 shrink-0 text-[10px]" variant="avatar" />}
-            {who && <span aria-hidden="true" className="shrink-0 font-medium text-fg-muted">{who.handle}</span>}
-            <span className="min-w-0 truncate">{channelLabel(card.channelId)}</span>
+            {/* 좁으면 **작성자부터** 줄인다(designer) — 얼굴이 이미 누군지 말하고, 채널은 대신할 것이 없다. */}
+            {who && <span aria-hidden="true" className="min-w-0 shrink-[10] truncate font-medium text-fg-muted">{who.handle}</span>}
+            {/* 채널은 줄지 않는다 — 다만 아주 긴 이름이 줄을 다 먹지 않게 폭의 절반 가까이에서 자른다. */}
+            <span className="max-w-[45%] shrink-0 truncate">{channelLabel(card.channelId)}</span>
             <span
               className={`shrink-0 ${days != null && card.column === 'mine' ? 'text-state-turn' : ''}`}
               data-testid={`inbox-card-age-${card.rootId}`}
@@ -329,21 +346,51 @@ export function Inbox({ open, onClose }: Props) {
               {o.label}
             </button>
           ))}
-          {/* 내 차례에는 치우기가 없다 — 내 차례가 치움을 이기므로 눌러도 카드가 그 자리에 남는다. */}
-          {card.column !== 'mine' && <button
-            data-testid={`inbox-card-clear-${card.rootId}`}
-            disabled={busy === card.rootId}
-            onClick={() => void setCleared(card, card.fold !== 'cleared')}
-            className="ml-auto rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
-          >
-            {card.fold === 'cleared' ? t('inbox.board.unclear') : t('inbox.board.clear')}
-          </button>}
+          {/*
+            접힌 카드(치움·나중에)는 **되돌리기** 하나. 펼친 카드는 나중에 + 완료 — 단, 내 차례에는
+            완료가 없다(내 차례가 치움을 이겨 눌러도 그 자리에 남는다). 나중에는 내 차례에도 있다:
+            그래야 지금 못 할 일을 수에서 뺄 수 있다.
+          */}
+          {card.fold === 'cleared' || card.fold === 'later'
+            ? (
+              <button
+                data-testid={`inbox-card-undo-${card.rootId}`}
+                disabled={busy === card.rootId}
+                onClick={() => void setState(card, { state: null })}
+                className="ml-auto rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
+              >
+                {t('inbox.board.undo')}
+              </button>
+            )
+            : (
+              <span className="ml-auto flex gap-1">
+                <button
+                  data-testid={`inbox-card-later-${card.rootId}`}
+                  disabled={busy === card.rootId}
+                  onClick={() => void setState(card, { state: 'later', until: tomorrowMorning(Date.now()) })}
+                  className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
+                >
+                  {t('inbox.board.later')}
+                </button>
+                {card.column !== 'mine' && (
+                  <button
+                    data-testid={`inbox-card-done-${card.rootId}`}
+                    disabled={busy === card.rootId}
+                    onClick={() => void setState(card, { state: 'done' })}
+                    className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
+                  >
+                    {t('inbox.board.done')}
+                  </button>
+                )}
+              </span>
+            )}
         </div>
       </li>
     );
   };
 
-  const mineCount = byColumn.mine.length;
+  // 접힌 것(나중에)은 세지 않는다 — 미룬 일은 지금 나를 기다리는 일이 아니다.
+  const mineCount = byColumn.mine.filter((c) => c.fold === null).length;
 
   return (
     <aside

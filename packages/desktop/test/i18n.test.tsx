@@ -41,7 +41,6 @@ import { interpolate } from '../src/i18n/format';
 import { useActiveStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, Controller } from '../src/state/controller';
-import { WaitChainSection } from '../src/components/WaitChainSection';
 import { WaitChainLine } from '../src/components/WaitChain';
 import { Sidebar } from '../src/components/Sidebar';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
@@ -238,17 +237,6 @@ const CODEX = 'a-codex';
 const link = (waiter: string, blockedBy: string | null): OpenAskLink =>
   ({ waiter, blockedBy, askedAt: new Date(Date.now() - 3 * 60_000).toISOString() });
 
-function seed(links: OpenAskLink[] | null) {
-  useActiveStore.getState().set({
-    me: acc(ME, 'me'),
-    accounts: { [ME]: acc(ME, 'me'), [FORGE]: acc(FORGE, 'forge'), [CODEX]: acc(CODEX, 'codex') },
-    channels: [chan('c1', 'general')],
-    messages: { c1: [msg('root-1', 'c1', 1, '루트', FORGE, { openAskLinks: links })] },
-    online: [FORGE, CODEX],
-    connected: true,
-  });
-}
-
 /** 언어를 정한다. `'system'` 을 안 쓰는 이유: 시험이 브라우저 설정에 매달리면 안 된다. */
 const speak = (locale: Locale) => usePrefsStore.getState().setLocale(locale);
 
@@ -260,87 +248,6 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   usePrefsStore.getState().setLocale('system');
-});
-
-describe('화면 — 기본은 영어다', () => {
-  it('빈 구획이 영어로 뜬다', () => {
-    useActiveStore.getState().set({
-      me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') },
-      channels: [chan('c1', 'general')], messages: { c1: [] }, online: [], connected: true,
-    });
-    render(<WaitChainSection />);
-    expect(screen.getByText('Nothing is waiting')).toBeTruthy();
-    expect(screen.getByTestId('wait-chain-section').querySelector('h3')?.textContent)
-      .toBe('Waiting on (0)');
-  });
-
-  /**
-   * **경과 표기도 이제 영어다**(`#619` 후속). 그 PR 이 남긴 주의점이 여기 있었다 —
-   * *"경과 표기(`3분째`)는 아직 한국어라 이 축은 사슬 줄만 재고 행 전체를 재지 않는다."*
-   *
-   * 시간 표기가 `lib/time.ts` 한 벌로 합쳐지면서 그 예외가 없어졌으므로 **행 전체**를
-   * 잰다. 예외를 남겨 두면 다음 사람이 그 자리에 한국어를 다시 넣어도 초록이다.
-   */
-  it('사슬 줄이 영어 어순으로 뜬다 — 조사가 안 붙고, 경과도 영어다', () => {
-    seed([link(FORGE, ME)]);
-    render(<WaitChainSection />);
-    const row = screen.getByTestId('wait-chain-root-1');
-    expect(row.textContent).toContain('#general');
-    expect(row.textContent).toContain('forge');
-    // **행 전체**에 한국어가 없다 — 빼 두는 자리가 하나도 없다.
-    expect(row.textContent).not.toMatch(/[가-힣]/);
-  });
-
-  it('몇 개가 풀리는지 영어로 말한다', () => {
-    seed([link(CODEX, FORGE), link(FORGE, ME)]);
-    render(<WaitChainSection />);
-    expect(screen.getByTestId('wait-chain-root-1').textContent)
-      .toContain('answering unblocks 2 threads');
-  });
-});
-
-describe('화면 — 언어를 한국어로 바꾸면 한국어로 뜬다', () => {
-  it('빈 구획이 한국어로 바뀐다', () => {
-    useActiveStore.getState().set({
-      me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') },
-      channels: [chan('c1', 'general')], messages: { c1: [] }, online: [], connected: true,
-    });
-    speak('ko');
-    render(<WaitChainSection />);
-    expect(screen.getByText('기다리는 것이 없다')).toBeTruthy();
-    expect(screen.getByTestId('wait-chain-section').querySelector('h3')?.textContent)
-      .toBe('기다리는 것 (0)');
-  });
-
-  it('몇 개가 풀리는지 한국어로 말한다', () => {
-    seed([link(CODEX, FORGE), link(FORGE, ME)]);
-    speak('ko');
-    render(<WaitChainSection />);
-    expect(screen.getByTestId('wait-chain-root-1').textContent).toContain('답하면 2개가 풀린다');
-  });
-
-  /**
-   * **"없다"와 "아직 안 봤다"는 다른 사실이다**(design.md §4). 그 구별이 언어를
-   * 바꿔도 남는지 — 뼈대가 뜻을 옮겼지 낱말만 옮긴 것이 아님을 재는 축이다.
-   */
-  it('"아직 다 보지 못했다"가 두 언어에 다 있다', () => {
-    const twoChannels = {
-      me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') },
-      channels: [chan('c1', 'general'), chan('c2', 'design')],
-      messages: { c1: [] }, online: [], connected: true,
-    };
-    useActiveStore.getState().set(twoChannels);
-    render(<WaitChainSection />);
-    expect(screen.getByText('Not everything has been checked yet')).toBeTruthy();
-    // 모를 때는 제목이 수를 말하지 않는다 — 그 규율도 언어를 건너 살아남는다.
-    expect(screen.getByTestId('wait-chain-section').querySelector('h3')?.textContent)
-      .not.toContain('0');
-
-    cleanup();
-    speak('ko');
-    render(<WaitChainSection />);
-    expect(screen.getByText('아직 다 보지 못했다')).toBeTruthy();
-  });
 });
 
 /**
@@ -1779,7 +1686,7 @@ const AGENT = 'a-mine';
 
 /** 이 넷은 컨트롤러를 만진다 — 문자열만 재므로 부르는 것만 있으면 된다. */
 /** 인박스 보드가 받을 재료 — 기본은 비었다. 열 이름을 재는 시험만 카드 하나를 넣는다. */
-let inboxBoardRows: { entries: InboxEntry[]; threads: null } = { entries: [], threads: null };
+let inboxBoardRows: { entries: InboxEntry[]; threads: null; threadStates: [] } = { entries: [], threads: null, threadStates: [] };
 
 function stubController() {
   setController({
@@ -1971,7 +1878,7 @@ describe('작성창 — 두 언어로 뜬다', () => {
 
 describe('인박스 — 두 언어로 뜬다', () => {
   beforeEach(() => {
-    inboxBoardRows = { entries: [], threads: null };
+    inboxBoardRows = { entries: [], threads: null, threadStates: [] };
     stubController();
     useActiveStore.getState().set({
       me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') },
@@ -2002,16 +1909,17 @@ describe('인박스 — 두 언어로 뜬다', () => {
         body: '봐 줘', meta: {}, createdAt: new Date().toISOString(), threadRootId: null,
       }],
       threads: null,
+      threadStates: [],
     };
     render(<Inbox open onClose={() => {}} />);
-    for (const name of ['Your turn', 'Blocked', 'In progress', 'Done']) {
+    for (const name of ['Your turn', 'Waiting', 'In progress', 'Done']) {
       expect(await screen.findByRole('region', { name })).toBeTruthy();
     }
     expect(screen.getByTestId('inbox-mine-count').textContent).toBe('0 waiting on you');
     cleanup();
     speak('ko');
     render(<Inbox open onClose={() => {}} />);
-    for (const name of ['내 차례', '막힘', '진행', '끝남']) {
+    for (const name of ['내 차례', '기다리는 중', '진행', '끝남']) {
       expect(await screen.findByRole('region', { name })).toBeTruthy();
     }
     expect(screen.getByTestId('inbox-mine-count').textContent).toBe('나를 기다리는 일 0');

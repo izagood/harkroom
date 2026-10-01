@@ -2004,14 +2004,6 @@ export const en = {
     other: 'answering unblocks {count} threads',
   },
 
-  'waitChain.sectionTitle': 'Waiting on',
-  'waitChain.sectionTitleCount': 'Waiting on ({count})',
-  'waitChain.empty': 'Nothing is waiting',
-  /** **"없다"가 아니라 "모른다"** 다(design.md §4). */
-  'waitChain.unseen': 'Not everything has been checked yet',
-  'waitChain.dm': 'DM',
-  'waitChain.reasonCycle': 'waiting on each other',
-  'waitChain.reasonDeadRunner': 'the answering side has stopped',
 
   // ---------------------------------------------------------------------------
   // message — **메시지 행 하나에 매달린 말**(`components/MessageItem.tsx` 와 그 행이
@@ -2870,7 +2862,8 @@ export const en = {
 
   // 상태 보드(C안, 2026-10-01). 열 이름은 designer 사양 그대로다.
   'inbox.board.col.mine': 'Your turn',
-  'inbox.board.col.blocked': 'Blocked',
+  /** 남을 기다리는 열. "막힘" 이 아니다 — 스레드 상태 리액션(088)에서 막힘은 실패를 뜻한다(designer). */
+  'inbox.board.col.blocked': 'Waiting',
   'inbox.board.col.active': 'In progress',
   'inbox.board.col.done': 'Done',
   /** 열 머리의 수. **내 차례만 센다** — 다른 열은 줄지 않는 숫자라 아무 말도 하지 않는다. */
@@ -2886,45 +2879,21 @@ export const en = {
   'inbox.board.more': '+{count} more',
   'inbox.board.unread': 'New',
   /** 치움 — 머리에 ✅ 를 달아 보드에서 내린다(끝남 맨 아래 접힘). 2/2 의 서버 완료가 대신한다. */
-  'inbox.board.clear': 'Clear',
-  'inbox.board.unclear': 'Put back',
+  /** 완료 — 서버의 내 상태(2/2). 보드에서 내려 끝남 맨 아래 "치운 것" 으로 접는다. */
+  'inbox.board.done': 'Done',
+  /** 나중에 — 내일 아침까지 그 열 맨 아래로 접고, 내 차례 수에서 뺀다. */
+  'inbox.board.later': 'Later',
+  /** 치운 것·미룬 것을 되돌린다. */
+  'inbox.board.undo': 'Put back',
   /** 열 맨 아래 접힘 줄. 접힌 카드도 수로 남는다. */
   'inbox.board.fold.quiet': 'Quiet for a week ({count})',
   'inbox.board.fold.old': 'Older ({count})',
   'inbox.board.fold.cleared': 'Cleared ({count})',
+  'inbox.board.fold.later': 'Later ({count})',
   /** 쓰다 만 초안 — 보드 밖 한 줄. */
   'inbox.board.drafts': 'Unfinished drafts ({count})',
-  'inbox.drafts.badge': 'Draft',
-  'inbox.drafts.empty': 'No unfinished drafts',
-  /**
-   * 구획 이름(랜드마크)과 눈에 보이는 머리글을 **가른다** — `waitChain.sectionTitle` /
-   * `sectionTitleCount` 가 이미 그 모양이다. 랜드마크는 **자리의 이름**이라 그 안의
-   * 개수가 섞이면 목록이 바뀔 때마다 이름이 달라지고, 스크린리더로 자리를 오가는
-   * 사람에게는 매번 다른 구획처럼 들린다.
-   */
-  'inbox.drafts.heading': 'Unfinished drafts',
-  'inbox.drafts.headingCount': 'Unfinished drafts ({count})',
-  /** 채널을 못 알아낸 스레드 초안. **`scopeKey` 를 그대로 내는 자리의 앞말이다.** */
-  'inbox.drafts.thread': 'thread',
 
-  /** 목록이 비었다 — **걸러 낸 것과 다른 사실이다**(아래 `noMatch`). */
-  'inbox.entries.empty': 'Nothing has called you',
-  /** 위 `drafts.heading` 과 같은 이유로 갈라 둔다 — 랜드마크 이름에 수를 안 섞는다. */
-  'inbox.entries.heading': 'Called you',
-  'inbox.entries.headingCount': 'Called you ({count})',
-  /** 걸러 냈을 때. 칩을 되돌리면 다시 나온다는 것이 이 문장과 빈 목록의 차이다. */
-  'inbox.entries.noMatch': 'Nothing matches the filter',
-  /** 줄이 스레드에서 왔다. 앞의 `·` 는 화면이 붙인다. */
-  'inbox.entries.thread': 'thread',
-  /** 줄 끝의 안 읽음 표시. **칩(`filter.unread`)과 같은 말이다** — 한 키로 둔다. */
-  'inbox.entries.unread': 'Unread',
 
-  'inbox.filter.all': 'Everything',
-  'inbox.filter.blocking': 'Blocking you',
-  /** **rank 축이 아니라 읽음 축이다**(원래 주석이 그 어긋남을 알면서 뒀다). */
-  'inbox.filter.unread': 'Unread',
-  /** rank 축. **위 `unread` 와 이름이 겹치면 안 된다**(위 표). */
-  'inbox.filter.reading': 'To read',
 
   'inbox.pane.close': 'Close the inbox',
   /**

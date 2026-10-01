@@ -3,7 +3,7 @@
 // 화면을 띄우지 않는다 — 여기서 재는 것은 **어느 카드가 어느 열에 서는가**이고, 그 판정은
 // 순수 함수다. 화면이 그 결과를 그리는지는 `inbox.test.tsx` 가 잰다.
 import { describe, it, expect } from 'vitest';
-import type { InboxEntry, MessageRow } from '@harkroom/shared';
+import type { InboxEntry, InboxThreadState, MessageRow } from '@harkroom/shared';
 import { buildBoard, oneSentence, daysWaiting, RECENT_MS, type BoardInput } from '../src/lib/inboxBoard';
 import { msg } from './helpers/fakeApi';
 
@@ -24,8 +24,12 @@ const head = (id: string, extra: Partial<MessageRow> = {}): MessageRow =>
     unresolvedFailureCount: 0, failureCount: 0, lastKind: 'user', lastAuthorId: OTHER, ...extra,
   });
 
+/** 내 상태 하나. 기본은 항목들(반나절 전)보다 **뒤에** 정한 것이다. */
+const st = (rootId: string, state: 'done' | 'later', updatedAt = ago(0), until: string | null = null): InboxThreadState =>
+  ({ rootId, state, updatedAt, until: state === 'later' ? until ?? new Date(NOW + DAY).toISOString() : null });
+
 const board = (entries: InboxEntry[], threads: MessageRow[] | null, over: Partial<BoardInput> = {}) => buildBoard({
-  entries, threads, me: { id: ME, kind: 'human' }, isAgent: (id) => id === BOT, nowMs: NOW, ...over,
+  entries, threads, threadStates: [], me: { id: ME, kind: 'human' }, isAgent: (id) => id === BOT, nowMs: NOW, ...over,
 });
 
 describe('묶기 — 카드 하나 = 스레드 하나', () => {
@@ -100,7 +104,7 @@ describe('막힘 — 내가 열었거나 위임한 스레드만', () => {
   });
 });
 
-describe('끝남 = 결과가 나온 것, ✅ = 치움 (정정 3)', () => {
+describe('끝남 = 결과가 나온 것, 완료 = 치움 (정정 3 · 2/2)', () => {
   it('열린 것이 없고 마지막 말이 에이전트의 답이면 끝남이다', () => {
     const cards = board([entry(1, { threadRootId: 'r1' })], [head('r1', { lastKind: 'user', lastAuthorId: BOT })]);
     expect(cards[0]!.column).toBe('done');
@@ -117,23 +121,44 @@ describe('끝남 = 결과가 나온 것, ✅ = 치움 (정정 3)', () => {
     expect(cards[0]!.column).toBe('active');
   });
 
-  it('내가 ✅ 를 단 카드는 끝남 맨 아래 치운 것으로 접힌다', () => {
-    const cards = board([entry(1, { threadRootId: 'r1' })],
-      [head('r1', { lastAuthorId: ME, reactions: [{ emoji: '✅', accountIds: [ME] }] })]);
+  it('완료한 카드는 끝남 맨 아래 치운 것으로 접힌다', () => {
+    const cards = board([entry(1, { threadRootId: 'r1' })], [head('r1', { lastAuthorId: ME })],
+      { threadStates: [st('r1', 'done')] });
     expect(cards[0]!.column).toBe('done');
     expect(cards[0]!.fold).toBe('cleared');
   });
 
-  it('남이 단 ✅ 는 내 보드를 치우지 않는다', () => {
+  it('머리의 ✅ 리액션은 더 이상 치움이 아니다 — 서버의 내 상태만 본다', () => {
     const cards = board([entry(1, { threadRootId: 'r1' })],
-      [head('r1', { lastAuthorId: ME, reactions: [{ emoji: '✅', accountIds: [OTHER] }] })]);
+      [head('r1', { lastAuthorId: ME, reactions: [{ emoji: '✅', accountIds: [ME] }] })]);
     expect(cards[0]!.fold).toBeNull();
   });
 
   it('치운 뒤 다시 나에게 물음이 오면 내 차례가 이긴다', () => {
-    const cards = board([entry(1, { threadRootId: 'r1' })],
-      [head('r1', { openAskAccountIds: [ME], reactions: [{ emoji: '✅', accountIds: [ME] }] })]);
+    const cards = board([entry(1, { threadRootId: 'r1' })], [head('r1', { openAskAccountIds: [ME] })],
+      { threadStates: [st('r1', 'done')] });
     expect(cards[0]!.column).toBe('mine');
+    expect(cards[0]!.fold).toBeNull();
+  });
+
+  it('치운 뒤 나에게 새 말이 오면 다시 선다', () => {
+    const cards = board([entry(1, { threadRootId: 'r1', createdAt: ago(DAY / 4) })], [head('r1', { lastAuthorId: ME })],
+      { threadStates: [st('r1', 'done', ago(DAY / 2))] });
+    expect(cards[0]!.fold).toBeNull();
+  });
+});
+
+describe('나중에 (2/2)', () => {
+  it('미룬 내 차례는 내 차례 열 맨 아래로 접힌다 — 수에서 빠질 수 있게', () => {
+    const cards = board([entry(1, { threadRootId: 'r1' })], [head('r1', { openAskAccountIds: [ME] })],
+      { threadStates: [st('r1', 'later', ago(0), new Date(NOW + DAY).toISOString())] });
+    expect(cards[0]!.column).toBe('mine');
+    expect(cards[0]!.fold).toBe('later');
+  });
+
+  it('깨어날 시각이 지나면 다시 선다', () => {
+    const cards = board([entry(1, { threadRootId: 'r1' })], [head('r1', { openAskAccountIds: [ME] })],
+      { threadStates: [st('r1', 'later', ago(0), ago(1000))] });
     expect(cards[0]!.fold).toBeNull();
   });
 });

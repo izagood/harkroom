@@ -2,7 +2,7 @@ import type {
   AutomationIngressIssued, AutomationRunView, AutomationTrigger, AutomationView,
   McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, MentionPolicy,
   AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, ThreadAgentModelView,
-  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
+  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InboxThreadState, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
 import { MENTION_EDIT_SKIPPED_HEADER } from '@harkroom/shared';
 import type { MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
@@ -319,9 +319,15 @@ export class ApiClient {
    * 열은 머리가 정한다(`lib/inboxBoard`). 옛 서버는 `threads` 를 모르고 `entries` 만 준다 —
    * 그때 `null` 로 내려 보드가 항목 `meta` 로 판정하게 한다(그래서 하한 판을 올리지 않는다).
    */
-  async inboxBoard(): Promise<{ entries: InboxEntry[]; threads: MessageRow[] | null }> {
-    const res = await this.req<{ entries: InboxEntry[]; threads?: MessageRow[] }>('GET', '/inbox?threads=1');
-    return { entries: res.entries, threads: res.threads ?? null };
+  async inboxBoard(): Promise<{ entries: InboxEntry[]; threads: MessageRow[] | null; threadStates: InboxThreadState[] }> {
+    const res = await this.req<{ entries: InboxEntry[]; threads?: MessageRow[]; threadStates?: InboxThreadState[] }>('GET', '/inbox?threads=1');
+    return { entries: res.entries, threads: res.threads ?? null, threadStates: res.threadStates ?? [] };
+  }
+  /** 스레드 하나의 **내** 완료·나중에(2/2, 089). `state: null` 이면 되돌린다. */
+  setInboxThreadState(
+    rootId: string, body: { state: 'done' } | { state: 'later'; until: string } | { state: null },
+  ): Promise<{ state: InboxThreadState | null }> {
+    return this.req('PUT', `/inbox/threads/${rootId}`, body);
   }
   /**
    * 메시지를 고친다. `postMessage` 처럼 **부름의 결과를 함께** 낸다 — 수정으로 넣은 멘션도

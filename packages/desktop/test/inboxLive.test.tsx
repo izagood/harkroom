@@ -29,7 +29,7 @@ const entry = (id: number, channelId = 'c1'): InboxEntry => ({
  */
 const mount = (rows: InboxEntry[]) => {
   const server = { rows };
-  const inbox = vi.fn(async () => ({ entries: server.rows, threads: null }));
+  const inbox = vi.fn(async () => ({ entries: server.rows, threads: null, threadStates: [] }));
   setController({
     api: { inboxBoard: inbox },
     openMessage: vi.fn(async () => undefined),
