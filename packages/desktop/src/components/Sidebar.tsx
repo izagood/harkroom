@@ -6,7 +6,7 @@ import { ApiError } from '../lib/api';
 // `isMacOS`·`MAC_TRAFFIC_LIGHT_PL` 이 여기 있었다 — 신호등 여백은 이제 레일이 진다(아래 주석).
 import { TOP_BAR_BG, TOP_BAR_H } from '../lib/platform';
 import { LeasePanel } from './LeasePanel';
-import { Menu } from './Menu';
+import { Menu, type MenuItem } from './Menu';
 // `StatusPicker` 가 여기 있었다 — 계정 행과 함께 `Rail.tsx` 로 갔다.
 // `Identity` 가 **돌아왔다**: 합쳐진 DM 목록의 상태를 아바타가 말한다(`dmRow` 주석).
 // `StatusMark` 도 남는다 — presence 와 다른 사실이라 아바타가 대신할 수 없다.
@@ -1432,54 +1432,22 @@ export function Sidebar({
     // 목록을 아직 못 받았으면 undefined 다 — 그때는 '모른다'이지 '아니다'가 아니다.
     const knownMembers = channelMembers[ch.id];
     const knownMember = knownMembers === undefined || (!!me && knownMembers.some((m) => m.accountId === me.id));
-    const menuItems = [
+    /*
+     * 메뉴를 **다섯 묶음**으로 나눈다(UX ⑦, designer 사양). 전에는 열여섯 항목이 한 줄로 섰고,
+     * 나가기·삭제 같은 되돌리기 어려운 항목이 복사·알림 사이에 섞여 있었다.
+     *   1 이 채널을 내 목록에서 다루기(미읽음·즐겨찾기·섹션) | 2 알림 | 3 사람·링크(멤버·초대·복사)
+     *   | 4 채널 자체 바꾸기(admin: 고치기·보관·삭제) | 5 치우기(숨기기·나가기, 맨 아래)
+     * 4 는 ⑦b 의 채널 설정 시트가 생기면 "채널 설정…" 한 항목으로 줄어든다.
+     * 조건으로 빠지는 항목이 많으므로 빈 묶음은 버리고, **남은** 묶음의 첫 항목에만 구분선을 단다.
+     */
+    const menuGroups: MenuItem[][] = [
+      [
       ...(lastSeq > 0 ? [{
         // 마지막 메시지부터 미읽음 — 결과는 미읽음 1, 즉 "이 채널 다시 보라"는 표시다.
         // 특정 메시지를 골라 그 지점부터 미읽음으로 만드는 것은 #179 다.
         label: t('sidebar.menu.markUnread'),
         onSelect: () => void getController().markChannelUnread(ch.id, lastSeq),
       }] : []),
-      ...(me?.isAdmin ? [{ label: t('sidebar.menu.edit'), onSelect: () => startEdit(ch) }] : []),
-      ...(me?.isAdmin ? [isArchived
-        ? { label: t('sidebar.menu.unarchive'), onSelect: () => void getController().archiveChannel(ch.id, false) }
-        : { label: t('sidebar.menu.archive'), onSelect: () => void getController().archiveChannel(ch.id, true) }]
-      : []),
-      /**
-       * 삭제(#155). **보관된 채널에만** 만든다 — 서버가 보관되지 않은 채널의 삭제를 409 로
-       * 거절하므로, 눌러도 거절되는 항목을 남겨 두면 "할 수 있다"는 거짓 신호가 된다
-       * (docs/design.md 4절). DM 은 이 목록(`sortedChannels`)에 없어 애초에 닿지 않는다.
-       */
-      ...(me?.isAdmin && isArchived
-        ? [{ label: t('sidebar.menu.delete'), onSelect: () => startDelete(ch.id) }] : []),
-      { label: t('sidebar.menu.members'), onSelect: () => void openMembers(ch.id) },
-      // 초대와 나가기는 **그 채널의 멤버**여야 하는 동작이다(public 채널의 초대는 예외 —
-      // 서버 게이트가 누구나 통과시킨다). 메뉴는 목록을 받기 전에도 그려지므로 아직
-      // 모르는 것을 '아니다'로 단정하지 않는다: 목록을 받아 아닌 것이 확인된 때만 뺀다.
-      ...(ch.visibility === 'public' || knownMember
-        ? [{ label: t('sidebar.menu.invite'), onSelect: () => void openMembers(ch.id) }] : []),
-      ...(knownMember ? [{ label: t('sidebar.menu.leave'), onSelect: () => void requestLeave(ch.id) }] : []),
-      /*
-       * 숨기기(#376). **나가기 바로 옆에 둔다** — 두 항목이 같은 자리에 있어야 "관심 없다"를
-       * 표현하는 길이 나가기 하나뿐이 아니라는 것이 보인다. 멤버십을 보지 않는다: 멤버가
-       * 아닌 public 채널도 사이드바에 있으므로 치울 수 있어야 하고, 숨김은 멤버십을 건드리지
-       * 않으므로 게이트가 필요 없다. 확인 절차도 없다 — 되돌리는 값이 클릭 한 번이다.
-       */
-      isHidden(ch.id)
-        ? { label: t('sidebar.menu.unhide'), onSelect: () => void getController().setChannelHidden(ch.id, false) }
-        : { label: t('sidebar.menu.hide'), onSelect: () => void getController().setChannelHidden(ch.id, true) },
-      { label: t('sidebar.menu.copyName'), onSelect: copyChannelName },
-      { label: t('sidebar.menu.copyId'), onSelect: copyChannelId },
-      // 음소거 토글 하나가 아니라 세 수준을 나란히 둔다(#224). 켬/끔 스위치와 수준을 같이
-      // 두면 "음소거 껐는데 왜 아직 조용하지"가 생긴다 — 여기가 유일한 조작 자리다.
-      ...NOTIFY_LEVELS.map((level) => ({
-        // `✓ ` 는 **화면의 것이다** — 사전에 넣으면 켠 것과 안 켠 것이 각각 사전 항목이
-        // 되어 항목 수가 두 배가 된다(그리고 두 항목이 갈라진다).
-        label: t('sidebar.notify.item', {
-          check: notifyLevel === level ? '✓ ' : '',
-          level: t(NOTIFY_LEVEL_KEY[level]),
-        }),
-        onSelect: () => void getController().setChannelNotifyLevel(ch.id, level),
-      })),
       { label: isStarred ? t('sidebar.menu.unstar') : t('sidebar.menu.star'), onSelect: () => void getController().toggleChannelStar(ch.id) },
       /*
        * 섹션 이동(#157). DM 은 섹션을 가질 수 없다 — kind 로 거르고, 서버도 400 을 준다.
@@ -1514,7 +1482,60 @@ export function Sidebar({
        * 또 아무 일도 하지 않는다.
        */
       ...(ch.kind === 'standard' ? sectionMoveItems(ch) : []),
+      ],
+      [
+      // 음소거 토글 하나가 아니라 세 수준을 나란히 둔다(#224). 켬/끔 스위치와 수준을 같이
+      // 두면 "음소거 껐는데 왜 아직 조용하지"가 생긴다 — 여기가 유일한 조작 자리다.
+      ...NOTIFY_LEVELS.map((level) => ({
+        // `✓ ` 는 **화면의 것이다** — 사전에 넣으면 켠 것과 안 켠 것이 각각 사전 항목이
+        // 되어 항목 수가 두 배가 된다(그리고 두 항목이 갈라진다).
+        label: t('sidebar.notify.item', {
+          check: notifyLevel === level ? '✓ ' : '',
+          level: t(NOTIFY_LEVEL_KEY[level]),
+        }),
+        onSelect: () => void getController().setChannelNotifyLevel(ch.id, level),
+      })),
+      ],
+      [
+      { label: t('sidebar.menu.members'), onSelect: () => void openMembers(ch.id) },
+      // 초대와 나가기는 **그 채널의 멤버**여야 하는 동작이다(public 채널의 초대는 예외 —
+      // 서버 게이트가 누구나 통과시킨다). 메뉴는 목록을 받기 전에도 그려지므로 아직
+      // 모르는 것을 '아니다'로 단정하지 않는다: 목록을 받아 아닌 것이 확인된 때만 뺀다.
+      ...(ch.visibility === 'public' || knownMember
+        ? [{ label: t('sidebar.menu.invite'), onSelect: () => void openMembers(ch.id) }] : []),
+      { label: t('sidebar.menu.copyName'), onSelect: copyChannelName },
+      { label: t('sidebar.menu.copyId'), onSelect: copyChannelId },
+      ],
+      [
+      ...(me?.isAdmin ? [{ label: t('sidebar.menu.edit'), onSelect: () => startEdit(ch) }] : []),
+      ...(me?.isAdmin ? [isArchived
+        ? { label: t('sidebar.menu.unarchive'), onSelect: () => void getController().archiveChannel(ch.id, false) }
+        : { label: t('sidebar.menu.archive'), onSelect: () => void getController().archiveChannel(ch.id, true) }]
+      : []),
+      /**
+       * 삭제(#155). **보관된 채널에만** 만든다 — 서버가 보관되지 않은 채널의 삭제를 409 로
+       * 거절하므로, 눌러도 거절되는 항목을 남겨 두면 "할 수 있다"는 거짓 신호가 된다
+       * (docs/design.md 4절). DM 은 이 목록(`sortedChannels`)에 없어 애초에 닿지 않는다.
+       */
+      ...(me?.isAdmin && isArchived
+        ? [{ label: t('sidebar.menu.delete'), onSelect: () => startDelete(ch.id) }] : []),
+      ],
+      [
+      /*
+       * 숨기기(#376). **나가기 바로 옆에 둔다**(UX ⑦: 둘 다 맨 아래 묶음) — 두 항목이 같은 자리에 있어야 "관심 없다"를
+       * 표현하는 길이 나가기 하나뿐이 아니라는 것이 보인다. 멤버십을 보지 않는다: 멤버가
+       * 아닌 public 채널도 사이드바에 있으므로 치울 수 있어야 하고, 숨김은 멤버십을 건드리지
+       * 않으므로 게이트가 필요 없다. 확인 절차도 없다 — 되돌리는 값이 클릭 한 번이다.
+       */
+      isHidden(ch.id)
+        ? { label: t('sidebar.menu.unhide'), onSelect: () => void getController().setChannelHidden(ch.id, false) }
+        : { label: t('sidebar.menu.hide'), onSelect: () => void getController().setChannelHidden(ch.id, true) },
+      ...(knownMember ? [{ label: t('sidebar.menu.leave'), onSelect: () => void requestLeave(ch.id) }] : []),
+      ],
     ];
+    const menuItems = menuGroups
+      .filter((g) => g.length > 0)
+      .flatMap((g, gi) => g.map((item, i) => (gi > 0 && i === 0 ? { ...item, separatorBefore: true } : item)));
     const submitSection = () => {
       const name = sectionDraft.trim();
       setSectionEditFor(null);

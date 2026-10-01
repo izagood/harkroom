@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useLayoutEffect, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { Fragment, useState, useRef, useEffect, useCallback, useLayoutEffect, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 
 export interface MenuItem {
   label: string;
@@ -16,6 +16,13 @@ export interface MenuItem {
    * `Settings ⌘,` 가 아니고, 스크린리더는 글리프를 "커맨드 콤마"로 읽지 못한다.
    */
   shortcut?: string;
+  /**
+   * 이 항목 **앞에** 구분선을 긋는다(UX ⑦, designer 사양: 채널 우클릭 메뉴를 묶음으로 나눈다).
+   * 묶음을 배열의 배열로 받지 않고 항목의 표시로 둔 이유: 조건부로 빠지는 항목이 많아(권한·상태)
+   * 묶음 첫 항목이 그때그때 다르다 — 그래서 소비자가 **실제로 남은** 항목 중 첫 것에 단다.
+   * 맨 앞 항목에 달려 있으면 긋지 않는다(빈 위쪽에 선만 서는 것을 막는다).
+   */
+  separatorBefore?: boolean;
 }
 
 /**
@@ -272,7 +279,7 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
     ? (() => {
         // 머리가 있으면 그만큼 더 높다(약 44px). 좌표로 여는 소비자(#111)는 아직 머리를
         // 쓰지 않지만, 어림값을 항목 수에만 매어 두면 다음 소비자가 조용히 화면 밖으로 나간다.
-        const height = items.length * 28 + (header ? 44 : 0) + 8;
+        const height = items.length * 28 + items.filter((it, i) => i > 0 && it.separatorBefore).length * 9 + (header ? 44 : 0) + 8;
         const x = Math.max(EDGE_GAP, Math.min(openAt.x, window.innerWidth - MENU_WIDTH - EDGE_GAP));
         const y = Math.max(EDGE_GAP, Math.min(openAt.y, window.innerHeight - height - EDGE_GAP));
         return { position: 'fixed' as const, left: x, top: y };
@@ -302,8 +309,11 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
             <div className="border-b border-border px-3 pb-2 pt-1">{header}</div>
           )}
           {items.map((item, index) => (
+            <Fragment key={item.label}>
+            {index > 0 && item.separatorBefore && (
+              <div role="separator" className="my-1 border-t border-border" />
+            )}
             <button
-              key={item.label}
               ref={(el) => { itemRefs.current[index] = el; }}
               role="menuitem"
               disabled={item.disabled}
@@ -320,6 +330,7 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
                 <span aria-hidden="true" className="ml-auto text-meta text-fg-subtle">{item.shortcut}</span>
               )}
             </button>
+            </Fragment>
           ))}
         </div>
       )}
