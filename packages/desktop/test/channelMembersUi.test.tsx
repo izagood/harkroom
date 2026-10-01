@@ -162,7 +162,7 @@ describe('채널 멤버 화면 (#183)', () => {
     expect(screen.getByRole('menuitem', { name: '멤버 보기' })).toBeTruthy();
   });
 
-  it('admin 이 아니면 남을 빼는 항목이 없고 자기 나가기만 있다', async () => {
+  it('admin 이 아니면 남을 빼는 항목이 없고, 나가기는 멤버 탭이 아니라 정보 탭에 있다', async () => {
     seed({ admin: false });
     fakeController([
       { accountId: 'u1', handle: 'me' },
@@ -174,8 +174,11 @@ describe('채널 멤버 화면 (#183)', () => {
 
     // 남을 빼는 것은 admin 만이다(#156). 항목을 내주면 눌렀을 때 403 이다.
     expect(within(panel).queryByLabelText('other 내보내기')).toBeNull();
-    // 자기 자신은 언제나 나갈 수 있다 — 그것까지 막으면 private 채널이 편도가 된다.
-    expect(within(panel).getByRole('button', { name: '나가기' })).toBeTruthy();
+    // 자기 자신은 언제나 나갈 수 있다 — 그것까지 막으면 private 채널이 편도가 된다. 그 자리는 시트 **정보 탭**
+    // 하나다(designer #1049): 멤버 탭에 또 두면 마지막 멤버 확인이 두 벌이 된다.
+    expect(within(panel).queryByRole('button', { name: '나가기' })).toBeNull();
+    fireEvent.click(screen.getByTestId('channel-sheet-tab-info'));
+    expect(screen.getByTestId('channel-sheet-leave')).toBeTruthy();
   });
 
   it('admin 은 남을 빼는 항목을 받는다', async () => {

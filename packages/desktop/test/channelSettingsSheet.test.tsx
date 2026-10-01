@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { ChannelSettingsSheet } from '../src/components/ChannelSettingsSheet';
@@ -131,6 +131,35 @@ describe('채널 설정 시트 (UX ⑦b-1)', () => {
     useAppStore.getState().set({ channelMembers: { c1: [{ accountId: 'u1' } as never, { accountId: 'u2' } as never] } });
     render(<ChannelSettingsSheet />);
     expect(screen.getByTestId('channel-sheet-tab-members').textContent).toBe('멤버 2');
+  });
+
+  it('멤버 탭에는 나가기도 사이드바 상자 제목도 없다 — 나가기는 정보 탭 한 곳', async () => {
+    fake(); seed(false);
+    render(<ChannelSettingsSheet />);
+    fireEvent.click(screen.getByTestId('channel-sheet-tab-members'));
+    const panel = await screen.findByTestId('members-c1');
+    expect(within(panel).queryByRole('button', { name: /나가기/ })).toBeNull();
+    expect(panel.textContent).not.toContain('#general 멤버');
+    expect(panel.className).not.toContain('border');
+  });
+
+  it('탭을 바꾸면 위쪽 오류 줄이 지워진다', async () => {
+    const c = fake(); seed(false);
+    c.loadChannelMembers.mockRejectedValueOnce(new Error('503'));
+    render(<ChannelSettingsSheet />);
+    fireEvent.click(screen.getByTestId('channel-sheet-leave'));
+    expect((await screen.findByRole('alert')).textContent).toContain('503');
+    fireEvent.click(screen.getByTestId('channel-sheet-tab-notify'));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('메뉴 "나가기" 로 열면(channelSheetTab leave) 정보 탭에서 마지막 멤버 확인을 띄운다', async () => {
+    const c = fake([{ accountId: 'u1' }]); seed(false);
+    useAppStore.getState().set({ channelSheetTab: 'leave' });
+    render(<ChannelSettingsSheet />);
+    expect(await screen.findByText(/마지막 멤버다/)).toBeTruthy();
+    expect(screen.getByTestId('channel-sheet-tab-info').getAttribute('aria-selected')).toBe('true');
+    expect(c.leaveChannel).not.toHaveBeenCalled();
   });
 
   it('알림 탭에서 고르면 그 수준을 저장한다', () => {

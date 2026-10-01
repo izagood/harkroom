@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { NOTIFY_LEVELS, notifyLevelOf, type NotifyLevel } from '@harkroom/shared';
 import { Overlay } from './Overlay';
 import { useActiveStore } from '../state/communities';
@@ -24,11 +24,11 @@ const TABS: Tab[] = ['info', 'members', 'notify', 'agents'];
  * 같은 것을 연다(`channelSheetId`).
  *
  * 탭은 넷이다(⑦b-2): 정보(+ 편집 `ChannelEditForm`) · 멤버 N · 알림 · 에이전트. 멤버·에이전트 탭은 사이드바에
- * 있던 멤버 패널(`ChannelMembersPanel`)을 몫으로 나눠 그린다 — 목록·초대·팀·나가기 / 자동 멘션. 사이드바의
+ * 있던 멤버 패널(`ChannelMembersPanel`)을 몫으로 나눠 그린다 — 목록·초대·팀 / 자동 멘션. 사이드바의
  * 인라인 편집·멤버 자리는 없앴다: 같은 조작이 두 자리에 살지 않는다.
  *
- * 어느 탭으로 여는가는 `channelSheetTab` 이 정한다(메뉴의 "멤버 보기"·"초대" 는 멤버 탭, "나가기" 는 멤버 탭에서
- * 나가기 절차를 바로 시작 — 마지막 멤버 확인과 오류가 그 패널의 자리다).
+ * 어느 탭으로 여는가는 `channelSheetTab` 이 정한다(메뉴의 "멤버 보기"·"초대" 는 멤버 탭, "나가기" 는
+ * **정보 탭에서** 나가기 절차를 바로 시작 — 나가기와 마지막 멤버 확인은 시트에 한 곳이다, designer #1049).
  *
  * 규칙은 사이드바의 나가기와 같다(그 자리 주석이 근거다):
  * - 나가기 전에 멤버 목록을 받아 **마지막 멤버면 한 번 묻는다**. 조회 실패를 빈 목록으로 삼키지 않는다.
@@ -52,10 +52,20 @@ export function ChannelSettingsSheet() {
 
   // 다른 채널로 열리면 처음부터 — 앞 채널의 나가기 확인이 남으면 엉뚱한 채널을 떠난다.
   useEffect(() => {
-    setTab(openTab === 'leave' ? 'members' : (openTab ?? 'info'));
+    // "나가기" 는 **정보 탭**에서 그 자리의 나가기 절차를 바로 시작한다(designer #1049 — 나가기는 시트에 한 곳).
+    setTab(openTab === 'leave' || !openTab ? 'info' : openTab);
     setStartLeave(openTab === 'leave');
     setError(null); setLeaveConfirm(false); setBusy(false); setEditing(false);
   }, [channelId, openTab]);
+
+  // 메뉴 "나가기" 로 열렸으면 정보 탭의 나가기 절차를 한 번 시작한다. 절차(`leave`)는 아래(채널이 있을 때)에서
+  // 정의되므로 ref 로 넘긴다 — 효과는 렌더가 끝난 뒤에 돌아 그때는 ref 가 채워져 있다.
+  const leaveRef = useRef<((confirmed: boolean) => Promise<void>) | null>(null);
+  useEffect(() => {
+    if (!startLeave || !channel) return;
+    setStartLeave(false);
+    void leaveRef.current?.(false);
+  }, [startLeave, channel]);
 
   if (!channelId || !channel) return null;
   const close = () => useActiveStore.getState().set({ channelSheetId: null, channelSheetTab: null });
@@ -93,13 +103,15 @@ export function ChannelSettingsSheet() {
    * 탭 목록은 WAI-ARIA 탭 패턴이다(designer #1041): 탭마다 `aria-controls` 로 패널을 가리키고, 고른 탭만
    * Tab 순서에 서며(`tabIndex`), ←/→ 로 옮긴다(끝에서 돌아간다).
    */
+  leaveRef.current = leave;
+
   const tabId = (id: Tab) => `channel-sheet-tab-${id}`;
   const panelId = (id: Tab) => `channel-sheet-panel-${id}`;
   const onTabKey = (e: KeyboardEvent<HTMLButtonElement>, id: Tab) => {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
     e.preventDefault();
     const next = TABS[(TABS.indexOf(id) + (e.key === 'ArrowRight' ? 1 : TABS.length - 1)) % TABS.length]!;
-    setTab(next); setStartLeave(false);
+    setTab(next); setStartLeave(false); setError(null);
     document.getElementById(tabId(next))?.focus();
   };
   const tabButton = (id: Tab, label: string) => (
@@ -110,7 +122,7 @@ export function ChannelSettingsSheet() {
       aria-controls={panelId(id)}
       tabIndex={tab === id ? 0 : -1}
       data-testid={`channel-sheet-tab-${id}`}
-      onClick={() => { setTab(id); setStartLeave(false); }}
+      onClick={() => { setTab(id); setStartLeave(false); setError(null); }}
       onKeyDown={(e) => onTabKey(e, id)}
       className={`border-b-2 px-3 py-2 ${tab === id ? 'border-accent font-semibold text-fg' : 'border-transparent text-fg-muted hover:text-fg'}`}
     >
@@ -186,13 +198,13 @@ export function ChannelSettingsSheet() {
 
           {tab === 'members' && (
             <div role="tabpanel" id={panelId('members')} aria-labelledby={tabId('members')}>
-              <ChannelMembersPanel channel={channel} part="members" showClose={false} startLeave={startLeave} onClose={close} />
+              <ChannelMembersPanel channel={channel} part="members" />
             </div>
           )}
 
           {tab === 'agents' && (
             <div role="tabpanel" id={panelId('agents')} aria-labelledby={tabId('agents')}>
-              <ChannelMembersPanel channel={channel} part="agents" showClose={false} onClose={close} />
+              <ChannelMembersPanel channel={channel} part="agents" />
             </div>
           )}
 

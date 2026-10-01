@@ -35,17 +35,19 @@ const memberErrorText = (err: unknown, fallback: string, t: Translate): string =
 /**
  * 채널 멤버 패널 — 멤버 목록 · 내보내기 · 자동 멘션 · 초대 · 팀 추가 · 나가기(UX ⑦b-2). `Sidebar` 의 인라인
  * 패널을 **그대로** 꺼냈다(규칙과 근거 주석은 옮기기 전과 같다). 열리면(마운트) 목록을 받는다 — 전에는
- * `openMembers` 가 그 일을 했다. `startLeave` 면 열자마자 나가기 절차를 시작한다(메뉴의 "나가기").
+ * `openMembers` 가 그 일을 했다.
+ *
+ * **시트 전용이다**(designer #1049): 사이드바의 상자(테두리·"#이름 멤버" 제목)는 그리지 않는다 — 시트 머리가 이미
+ * 채널 이름을 말하고, 상자 안의 상자가 된다. **나가기도 여기 없다** — 채널 나가기는 시트 정보 탭 한 곳이다
+ * (마지막 멤버 확인도 그 자리 하나). 같은 조작이 두 자리에 살면 확인 문구가 갈라진다.
  */
-export function ChannelMembersPanel({ channel, onClose, startLeave = false, part = 'all', showClose = true }: {
-  channel: ChannelRow; onClose: () => void; startLeave?: boolean;
+export function ChannelMembersPanel({ channel, part = 'all' }: {
+  channel: ChannelRow;
   /**
-   * 어느 몫을 그리나(UX ⑦b-2). 채널 설정 시트는 **멤버**(목록·초대·팀·나가기)와 **에이전트**(자동 멘션)를
-   * 다른 탭에 둔다. 조회·절차는 한 벌이다 — 몫을 나눠도 같은 목록을 두 번 받지 않는다.
+   * 어느 몫을 그리나(UX ⑦b-2). 채널 설정 시트는 **멤버**(목록·초대·팀)와 **에이전트**(자동 멘션)를
+   * 다른 탭에 둔다. 조회·절차는 한 벌이다.
    */
   part?: 'all' | 'members' | 'agents';
-  /** 시트 안에서는 시트가 닫기를 가진다 — 패널의 [닫기] 를 또 두면 닫는 길이 둘이다. */
-  showClose?: boolean;
 }) {
   const t = useT();
   const ch = channel;
@@ -68,7 +70,6 @@ export function ChannelMembersPanel({ channel, onClose, startLeave = false, part
   // 실패했는지가 화면에서 사라진다.
   const [teamError, setTeamError] = useState<string | null>(null);
   // '마지막 멤버가 나간다'는 되돌릴 수 없는 조작이라 한 번 더 묻는다.
-  const [leaveConfirmId, setLeaveConfirmId] = useState<string | null>(null);
   // 패널은 열린 채널 하나만 그리므로 "어느 채널의 패널인가" 는 prop 이다. 옮겨 온 절차가 부르던 자리만 남긴다.
   const setMembersChannelId = (_id: string | null): void => {};
 
@@ -76,7 +77,6 @@ export function ChannelMembersPanel({ channel, onClose, startLeave = false, part
     setMembersChannelId(null);
     setMemberError(null);
     setInviteAccountId('');
-    setLeaveConfirmId(null);
     setTeams([]);
     setSelectedTeamId('');
     setTeamAddResult(null);
@@ -96,7 +96,6 @@ export function ChannelMembersPanel({ channel, onClose, startLeave = false, part
       .catch((err: unknown) => setAutoMentionError(err instanceof Error ? err.message : t('sidebar.members.autoMentionListFailed')));
     setMemberError(null);
     setInviteAccountId('');
-    setLeaveConfirmId(null);
     setTeams([]);
     setSelectedTeamId('');
     setTeamAddResult(null);
@@ -153,43 +152,6 @@ export function ChannelMembersPanel({ channel, onClose, startLeave = false, part
   };
 
   /**
-   * 나가기 요청. 마지막 멤버면 바로 나가지 않고 **그 사실을 알린다** — 나간 뒤에는
-   * admin 만 목록에서 볼 수 있는 채널이 되고, 채널 자체는 남는다(삭제는 #155).
-   */
-  const requestLeave = async (channelId: string): Promise<void> => {
-    if (!me) return;
-    setMembersChannelId(channelId);
-    setMemberError(null);
-    setLeaveConfirmId(null);
-    let members;
-    try {
-      members = await getController().loadChannelMembers(channelId);
-    } catch (err) {
-      setMemberError(err instanceof Error ? err.message : t('sidebar.members.listFailed'));
-      return;
-    }
-    if (!members.some((m) => m.accountId === me.id)) {
-      setMemberError(t('sidebar.members.notAMember'));
-      return;
-    }
-    if (members.length === 1) {
-      setLeaveConfirmId(channelId);
-      return;
-    }
-    await confirmLeave(channelId);
-  };
-
-  const confirmLeave = async (channelId: string): Promise<void> => {
-    if (!me) return;
-    try {
-      await getController().leaveChannel(channelId, me.id);
-      onClose();
-    } catch (err) {
-      setMemberError(memberErrorText(err, t('sidebar.members.leaveFailed'), t));
-    }
-  };
-
-  /**
    * 자동 멘션을 켜고 끈다(#173). admin 만 부를 수 있다 — 화면도 admin 에게만 토글을 내준다.
    * 실패는 그 절 안에 보여 준다: 서버가 400(에이전트 아님·비활성)이나 403 을 줄 수 있고,
    * 그 사유가 조용히 사라지면 사용자는 체크박스가 고장 났다고 여긴다.
@@ -214,11 +176,10 @@ export function ChannelMembersPanel({ channel, onClose, startLeave = false, part
   };
 
   useEffect(() => {
-    if (startLeave) void requestLeave(ch.id);
-    else void openMembers(ch.id);
+    void openMembers(ch.id);
     return () => resetMembers();
     // 채널·진입 방식이 바뀔 때만 다시 연다 — 절차 함수의 신원은 렌더마다 바뀐다.
-  }, [ch.id, startLeave]);
+  }, [ch.id]);
 
       const members = channelMembers[ch.id];
       const memberIds = new Set((members ?? []).map((m) => m.accountId));
@@ -233,11 +194,8 @@ export function ChannelMembersPanel({ channel, onClose, startLeave = false, part
        */
       const canInvite = members !== undefined && (ch.visibility === 'public' || isMember);
   return (
-        <div data-testid={`members-${ch.id}`} className="mt-1 rounded border border-border bg-surface-raised p-1">
+        <div data-testid={`members-${ch.id}`}>
           {part !== 'agents' && (<>
-          <div className="mb-1 text-meta text-fg-muted">
-            {t('sidebar.members.title', { name: `${ch.visibility === 'private' ? '🔒' : '#'}${ch.name}` })}
-          </div>
           {/* public 과 private 에서 이 목록의 **뜻이 다르다**. public 채널은 멤버가 아니어도
               읽고 쓸 수 있으므로 여기 적힌 사람들은 "볼 수 있는 사람"이 아니라 구독자다 —
               그 말을 하지 않으면 목록에 없는 사람은 못 본다는 뜻으로 읽힌다. private 은
@@ -373,11 +331,6 @@ export function ChannelMembersPanel({ channel, onClose, startLeave = false, part
           })()}
           </>)}
           {part !== 'agents' && (<>
-          {leaveConfirmId === ch.id && (
-            <p role="alert" className="mb-1 text-meta text-warning">
-              {t('sidebar.members.lastMemberWarning')}
-            </p>
-          )}
           {canInvite && (
             <div className="mb-1 flex items-center gap-1">
               <select
@@ -443,26 +396,6 @@ export function ChannelMembersPanel({ channel, onClose, startLeave = false, part
               )}
             </div>
           )}
-          <div className="flex gap-1">
-            {/* 멤버가 아니면 나갈 것이 없다. public 채널에서 비멤버의 '나가기'는 서버가
-                200 으로 받아 주지만 아무 일도 일어나지 않는다 — 그런 항목은 만들지 않는다. */}
-            {isMember && (
-              <button
-                className="rounded px-2 py-0.5 text-meta text-danger hover:bg-surface-raised"
-                onClick={() => void (leaveConfirmId === ch.id ? confirmLeave(ch.id) : requestLeave(ch.id))}
-              >
-                {leaveConfirmId === ch.id ? t('sidebar.members.leaveConfirm') : t('sidebar.members.leave')}
-              </button>
-            )}
-            {showClose && (
-              <button
-                className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
-                onClick={onClose}
-              >
-                {t('sidebar.members.close')}
-              </button>
-            )}
-          </div>
           </>)}
         </div>
   );
