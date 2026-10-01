@@ -144,3 +144,23 @@ describe('폐기된 오퍼레이터의 소켓', () => {
     expect(await done).toBe(4401);
   });
 });
+
+// commit 뒤의 실패(security #1025 권장): 옛 행이 이미 폐기·배정이 옮겨진 뒤라, 응답이 500 이면 새 토큰이
+// 머신에 가지 않고 배정이 아무도 토큰을 모르는 행에 갇힌다. 이벤트 구독자가 던지는 것은 실제로
+// `emitEvent` 를 뚫고 올라온다(EventEmitter 는 구독자 예외를 그대로 던진다).
+describe('다시 등록 — commit 뒤 부수 효과가 던져도', () => {
+  it('200 과 새 토큰을 돌려주고, 옛 소켓은 그래도 끊는다', async () => {
+    const op = await registerOperator(app, adminToken, '던질기기');
+    const ws = await connect(op.token);
+    const done = new Promise<number>((resolve) => ws.once('close', (code) => resolve(code)));
+    const off = onEvent((e) => { if (e.type === 'operator.changed') throw new Error('구독자 고장'); });
+    try {
+      const code = (await app.inject({ method: 'POST', url: '/operators/register-codes', headers: auth(adminToken) })).json().code as string;
+      const res = await app.inject({ method: 'POST', url: '/operators/claim', payload: { code, name: '던질기기', replaces: op.operatorId } });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().token).toMatch(/^hkop_/);
+      expect(res.json().replaced.operatorId).toBe(op.operatorId);
+    } finally { off(); }
+    expect(await done).toBe(4401);
+  });
+});

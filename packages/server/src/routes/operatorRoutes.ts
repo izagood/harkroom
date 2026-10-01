@@ -167,20 +167,31 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
       client.release();
     }
     const operator = view(row);
-    await recordAudit(pool, {
-      action: 'operator.registered', actorId: claim.ownerAccountId, actorHandle: null,
-      target: operator.id, detail: { name: operator.name, ...(replaced ? { replaces: replaced.operatorId } : {}) },
-    }, req);
-    emitEvent({ type: 'operator.changed', operatorId: operator.id, audience: [claim.ownerAccountId] });
-    if (replaced) {
+    // **commit 뒤의 일은 응답을 막지 못한다**(security #1025). 옛 행은 이미 폐기됐고 배정도 옮겨졌다 —
+    // 여기서 던져 500 이 나가면 새 토큰이 머신에 가지 않고, 배정은 아무도 토큰을 모르는 새 행에
+    // 갇힌다(다시 등록해도 replaces 는 이미 폐기된 옛 id 라 no-op). 그래서 감사·이벤트·소켓 끊기는
+    // 실패해도 로그만 남기고 토큰은 언제나 돌려준다. 로그에 토큰을 싣지 않는다.
+    // 감사를 트랜잭션 안으로 넣지 않은 이유: `recordAudit` 는 실패를 삼키는데, 트랜잭션 안에서 삼킨
+    // 실패는 트랜잭션을 abort 시키고 commit 이 조용히 rollback 이 된다 — 없는 행의 토큰을 주게 된다.
+    // 폐기된 토큰의 소켓은 지금 끊는다(`DELETE /operators/:id` 와 같다). 아래 try 의 **앞**이다 — 이벤트
+    // 하나가 던져도 끊기는 건너뛰지 않는다(disconnect 는 스스로 던지지 않는다).
+    if (replaced) deps.hub.disconnect(replaced.operatorId, 4401, 'operator revoked');
+    try {
       await recordAudit(pool, {
-        action: 'operator.revoked', actorId: claim.ownerAccountId, actorHandle: null, target: replaced.operatorId,
-        detail: { replacedBy: operator.id, movedAssignments: replaced.movedAgentIds.length },
+        action: 'operator.registered', actorId: claim.ownerAccountId, actorHandle: null,
+        target: operator.id, detail: { name: operator.name, ...(replaced ? { replaces: replaced.operatorId } : {}) },
       }, req);
-      // 폐기된 토큰의 소켓은 지금 끊는다(`DELETE /operators/:id` 와 같다).
-      deps.hub.disconnect(replaced.operatorId, 4401, 'operator revoked');
-      emitEvent({ type: 'operator.changed', operatorId: replaced.operatorId, audience: 'all' });
-      for (const agentId of replaced.movedAgentIds) emitEvent({ type: 'agent_assignment.changed', agentId, audience: 'all' });
+      emitEvent({ type: 'operator.changed', operatorId: operator.id, audience: [claim.ownerAccountId] });
+      if (replaced) {
+        await recordAudit(pool, {
+          action: 'operator.revoked', actorId: claim.ownerAccountId, actorHandle: null, target: replaced.operatorId,
+          detail: { replacedBy: operator.id, movedAssignments: replaced.movedAgentIds.length },
+        }, req);
+        emitEvent({ type: 'operator.changed', operatorId: replaced.operatorId, audience: 'all' });
+        for (const agentId of replaced.movedAgentIds) emitEvent({ type: 'agent_assignment.changed', agentId, audience: 'all' });
+      }
+    } catch (err) {
+      req.log.warn({ err, operatorId: operator.id, replaces: replaced?.operatorId ?? null }, 'claim 뒤 감사·이벤트 실패 — 응답은 그대로 보낸다');
     }
     // `replaced` 는 클라이언트가 "옛 등록이 정말 폐기됐나"를 아는 유일한 길이다 — 옛 서버는 이 키를
     // 주지 않으므로 화면이 "직접 지워라"로 물러난다. 남의 id 였을 때도 null 이라 구별되지 않는다.
