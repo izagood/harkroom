@@ -61,6 +61,12 @@ describe('AgentScopeSection', () => {
       .toBe('아래 명단의 사람만 · 커뮤니티 공용 자격증명 · 명단 1명 · 대리 호출자 1');
   });
 
+  it('MCP 가 붙어 있으면 요약에 그 수가 붙는다 — 접힌 채로도 보인다', () => {
+    setup();
+    render(<AgentScopeSection agent={agent({ mcpServers: ['github', 'slack'] })} onUpdated={vi.fn()} />);
+    expect(screen.getByTestId('agent-scope-summary').textContent).toBe('커뮤니티의 누구나 · 자격증명 없음 · MCP 2');
+  });
+
   it('명단·대리 호출자가 없으면 요약은 두 값만', () => {
     setup();
     render(<AgentScopeSection agent={agent()} onUpdated={vi.fn()} />);

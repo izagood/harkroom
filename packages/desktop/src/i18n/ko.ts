@@ -685,6 +685,8 @@ export const ko = {
   'agents.model.listUnknown': '이 에이전트를 돌리는 오퍼레이터에게서 하네스의 모델 목록을 받지 못했다 — 모델 이름을 정확히 입력한다.',
   'agents.run.note': '무엇으로 도는가.',
   'agents.run.title': '실행',
+  'agents.run.model': '모델',
+  'agents.run.effort': 'Effort',
 
   'agents.runner.copied': '복사됨',
   'agents.runner.copy': '복사',
@@ -1892,6 +1894,7 @@ export const ko = {
   'agents.scope.heading': '누가 부를 수 있고, 무엇을 쥐나',
   'agents.scope.summaryInvokers': '명단 {count}명',
   'agents.scope.summaryDelegates': '대리 호출자 {count}',
+  'agents.scope.summaryMcp': 'MCP {count}',
   'agents.scope.note': '고르면 바로 저장된다. 개인 자격증명은 소유자 전용 호출과 짝이고, 범위는 좁히기만 된다.',
   'agents.scope.invoke': '이 에이전트를 부를 수 있는 사람',
   'agents.scope.invoke.community': '커뮤니티의 누구나',

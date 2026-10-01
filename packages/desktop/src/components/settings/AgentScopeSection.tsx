@@ -74,15 +74,17 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
         고르는 칸이 넷(부르는 사람·자격증명·명단·대리 호출자)에 MCP 까지 서서 가장 길었다 — 대부분은 읽기만
         한다. 지금 값은 접혀 있어도 요약 줄이 말하고, 고칠 때만 편다. 오류는 접힘 밖에 둔다(아래).
       */}
-      <details data-testid="agent-scope-details">
+      <details data-testid="agent-scope-details" className="group">
       <summary className="cursor-pointer list-none">
-        <div className="text-meta font-medium text-fg-muted">{t('agents.scope.heading')} <span aria-hidden="true">▾</span></div>
+        <div className="text-meta font-medium text-fg-muted">{t('agents.scope.heading')} <span aria-hidden="true" className="inline-block transition-transform group-open:rotate-180">▾</span></div>
         <p data-testid="agent-scope-summary" className="mt-1 text-meta text-fg">
           {[
             t(`agents.scope.invoke.${agent.invokeScope}`),
             t(`agents.scope.credential.${agent.credentialScope}`),
             ...(agent.invokeScope === 'list' ? [t('agents.scope.summaryInvokers', { count: String(invokers.length) })] : []),
             ...(delegates.length ? [t('agents.scope.summaryDelegates', { count: String(delegates.length) })] : []),
+            // MCP 절도 이 접힘 안이다 — 접힌 채로 몇 개 붙었는지 말한다(designer #1059).
+            ...((agent.mcpServers ?? []).length ? [t('agents.scope.summaryMcp', { count: String((agent.mcpServers ?? []).length) })] : []),
           ].join(' · ')}
         </p>
       </summary>
