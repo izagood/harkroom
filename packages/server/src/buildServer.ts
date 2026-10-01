@@ -40,6 +40,8 @@ import { createMetrics } from './metrics.js';
 import { createScheduledMessageSweeper } from './services/scheduledMessages.js';
 import { createAutomationSweeper } from './services/automations.js';
 import { createSecretBox } from './services/secretBox.js';
+import { loadSecretKeyring, type SecretKeyring } from './services/secretKeyring.js';
+import { registerSecretRoutes } from './routes/secretRoutes.js';
 import { createAgentWakeSweeper } from './services/agentWakes.js';
 import { emitEvent } from './events.js';
 import { createStaleRequestSweeper } from './services/staleRequests.js';
@@ -81,6 +83,11 @@ export interface ServerDeps {
    * 자동화 수신(065)의 비밀 봉투 키. 생략하면 `HARKROOM_SECRET_KEY` env 를 읽고, `null` 이면 끈다(테스트용).
    */
   secretKey?: string | null;
+  /**
+   * 비밀 보관소(085)의 키 묶음. 생략하면 `HARKROOM_SECRET_KEYS_DIR`·`HARKROOM_SECRET_KEY_ID` 를 읽고,
+   * `null` 이면 끈다(라우트는 409). 디렉터리를 지정했는데 키가 잘못됐으면 기동이 실패한다.
+   */
+  secretKeyring?: SecretKeyring | null;
   /** avcs 연결 상태 — /healthz 에서 쓴다. */
   getAvcsStatus?: () => { connected: boolean };
   /**
@@ -512,6 +519,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // 외부 수신(065)의 GitHub 서명 검증 키. 없으면 GitHub 수신은 켤 수 없다(범용 hook 은 해시라 된다).
   await registerAutomationRoutes(app, deps.pool, {
     secretBox: createSecretBox(deps.secretKey !== undefined ? deps.secretKey : process.env.HARKROOM_SECRET_KEY),
+  });
+  await registerSecretRoutes(app, deps.pool, {
+    keyring: deps.secretKeyring !== undefined
+      ? deps.secretKeyring
+      : loadSecretKeyring(process.env.HARKROOM_SECRET_KEYS_DIR, process.env.HARKROOM_SECRET_KEY_ID),
   });
 
   // 오퍼레이터 신원과 채널(스펙 2026-09-20 §3·§4). 릴레이와 같은 이유로 registerWs·registerAuth
