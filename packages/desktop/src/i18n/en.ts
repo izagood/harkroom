@@ -257,7 +257,7 @@ export const en = {
   'settings.nav.automations': 'Automations',
   'settings.nav.gallery': 'Component gallery',
   'settings.desc.communities': 'The harkroom servers this device knows. Each one keeps its own channels, messages and connection.',
-  'settings.desc.integrations': 'Where the workspace connects to outside tools — the avcs projection, and the MCP servers agents may attach.',
+  'settings.desc.integrations': 'Where the community connects to outside tools — the avcs projection, and the MCP servers agents may attach.',
   'integrations.projection': 'avcs projection',
   'integrations.mcp': 'MCP servers',
   'settings.desc.messages': 'These choices live on this device only.',

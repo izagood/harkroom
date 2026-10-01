@@ -110,7 +110,7 @@ export const ko = {
   'settings.nav.automations': '자동화',
   'settings.nav.gallery': '컴포넌트 갤러리',
   'settings.desc.communities': '이 기기가 아는 harkroom 서버들. 서버마다 채널·메시지·연결을 따로 가진다.',
-  'settings.desc.integrations': '워크스페이스가 바깥 도구와 잇는 곳 — avcs 투영과, 에이전트가 붙일 수 있는 MCP 서버.',
+  'settings.desc.integrations': '커뮤니티가 바깥 도구와 잇는 곳 — avcs 투영과, 에이전트가 붙일 수 있는 MCP 서버.',
   'integrations.projection': 'avcs 투영',
   'integrations.mcp': 'MCP 서버',
   'settings.desc.messages': '이 기기에만 저장되는 설정이다.',
