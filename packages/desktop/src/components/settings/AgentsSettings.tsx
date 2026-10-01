@@ -1527,6 +1527,34 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               </div>
             </div>
 
+            {/* 모델·Effort 는 **무엇으로 도는가**의 답이라 이 묶음이다(UX ⑨b, designer 사양 ⑨). 전에는 "권한" 묶음에
+                서 있었다 — 바로 위의 [하네스 기본값 / 이 에이전트만] 고르기와 그것이 여는 칸이 두 묶음으로 갈렸다. */}
+            {customized && (
+              <div className="grid grid-cols-2 gap-3">
+                <label className={label}>
+                  Model
+                  <ModelPicker
+                    className={field}
+                    value={draft.model}
+                    models={modelCaps === null ? null : modelCaps === 'unknown' ? undefined : modelCaps[draft.harness]?.models}
+                    onChange={(model) => setDraft({ ...draft, model })}
+                  />
+                </label>
+                <label className={label}>
+                  Effort
+                  <select
+                    className={field}
+                    aria-label="Effort"
+                    value={draft.effort}
+                    onChange={(e) => setDraft({ ...draft, effort: e.target.value })}
+                  >
+                    <option value="">{t('agents.run.harnessDefault')}</option>
+                    {EFFORTS.map((e) => <option key={e} value={e}>{e}</option>)}
+                  </select>
+                </label>
+              </div>
+            )}
+
             <label className={label}>
               Agent harness
               <select
@@ -1653,31 +1681,6 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               </label>
             )}
 
-            {customized && (
-              <div className="grid grid-cols-2 gap-3">
-                <label className={label}>
-                  Model
-                  <ModelPicker
-                    className={field}
-                    value={draft.model}
-                    models={modelCaps === null ? null : modelCaps === 'unknown' ? undefined : modelCaps[draft.harness]?.models}
-                    onChange={(model) => setDraft({ ...draft, model })}
-                  />
-                </label>
-                <label className={label}>
-                  Effort
-                  <select
-                    className={field}
-                    aria-label="Effort"
-                    value={draft.effort}
-                    onChange={(e) => setDraft({ ...draft, effort: e.target.value })}
-                  >
-                    <option value="">{t('agents.run.harnessDefault')}</option>
-                    {EFFORTS.map((e) => <option key={e} value={e}>{e}</option>)}
-                  </select>
-                </label>
-              </div>
-            )}
 
             <label className={label}>
               Working directory

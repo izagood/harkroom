@@ -53,6 +53,20 @@ beforeEach(() => {
 afterEach(() => { usePrefsStore.getState().setLocale('system'); cleanup(); });
 
 describe('AgentScopeSection', () => {
+  it('접힌 채로 한 줄 요약이 지금 값을 말한다 — 부르는 사람 · 자격증명 · 명단 수 · 대리 호출자 수 (UX ⑨b)', () => {
+    setup();
+    render(<AgentScopeSection agent={agent({ invokeScope: 'list', credentialScope: 'community', invokers: ['u-2'], delegates: ['a-9'] })} onUpdated={vi.fn()} />);
+    expect(screen.getByTestId('agent-scope-details').hasAttribute('open')).toBe(false);
+    expect(screen.getByTestId('agent-scope-summary').textContent)
+      .toBe('아래 명단의 사람만 · 커뮤니티 공용 자격증명 · 명단 1명 · 대리 호출자 1');
+  });
+
+  it('명단·대리 호출자가 없으면 요약은 두 값만', () => {
+    setup();
+    render(<AgentScopeSection agent={agent()} onUpdated={vi.fn()} />);
+    expect(screen.getByTestId('agent-scope-summary').textContent).toBe('커뮤니티의 누구나 · 자격증명 없음');
+  });
+
   it('호출 범위를 고르면 그 자리에서 updateAgent 에 닿고 응답이 앉는다', async () => {
     const c = setup();
     const onUpdated = vi.fn();
