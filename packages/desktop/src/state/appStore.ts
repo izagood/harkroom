@@ -1,8 +1,29 @@
 import { create } from 'zustand';
 import { draftsStorage, stickyMentionsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, AgentTeamRow, ChannelAutoMentionRow, ThreadAgentModelView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus, ServerVersion } from '@harkroom/shared';
+import type { AccountStatus, AccountView, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ThreadAgentModelView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus, ServerVersion } from '@harkroom/shared';
 import type { ObservedRunner, RunnerState } from '../lib/runnerLauncher';
 import type { NotifiedSummary } from '../lib/notified';
+
+/**
+ * 작성창에 붙인 첨부 하나 — **올리는 중인 것까지** 담는다.
+ *
+ * 왜 작성창 지역 state 가 아니라 여기인가: 예전 작성창은 업로드가 **끝난 뒤에야** 칩을
+ * 세웠다. 올리는 동안 화면에는 아무것도 없어서 그 사이에 Enter 를 누르면 그림 없이 글만
+ * 나갔고, 사람은 칩이 뜰 때까지 손을 놓고 기다렸다 — "첨부하면 채팅이 막힌다"의 실체다.
+ * 그리고 채널 작성창은 채널을 옮겨도 같은 인스턴스라, 올리던 중에 옮기면 끝난 첨부가
+ * **옮겨 간 채널**에 붙었다. 자리(scope)를 들고 여기 살아야 둘 다 풀린다.
+ */
+export interface PendingUpload {
+  localId: string;
+  /** 붙은 자리(scopeKey). `null` 이면 전송이 가져가서 **작성창에는 안 보이는** 것이다. */
+  scope: string | null;
+  /** 다시 올리기와 미리보기에 쓴다. 서버 바이트가 아니라 사람이 고른 그것이다. */
+  file: File;
+  status: 'uploading' | 'done' | 'failed';
+  /** 0~1. 모르면(서버가 길이를 안 줌) `null` — 가짜 비율을 그리지 않는다. */
+  fraction: number | null;
+  row: AttachmentRow | null;
+}
 
 export interface HistoryEntry {
   channelId: string;
@@ -191,6 +212,11 @@ export interface AppState {
    * 고정한 사실 그대로다.
    */
   stickyMentions: Record<string, string[]>;
+  /**
+   * 작성창 첨부(올리는 중 포함), 키는 `localId`. 넣은 순서가 칩 순서다.
+   * 파일을 들고 있으므로 **영속하지 않는다** — 로그아웃(`reset`)에 함께 비운다.
+   */
+  uploads: Record<string, PendingUpload>;
   /** 뒤로/앞으로 탐색용 이력 스택. 채널·스레드만 담고 스크롤 위치는 담지 않는다.
    * 뒤로/앞으로 이동 시에는 push 하지 않는다 — 그렇게 하면 뒤로 갈 때마다 스택이 자라
    * 영원히 빠져나오지 못한다. openChannel/openThread 에서만 새 항목을 밀어 넣는다.
@@ -353,6 +379,8 @@ export interface AppState {
   /** 그 계정의 handle 을 바꾼다(#271). */
   applyHandle(accountId: string, handle: string): void;
   reset(): void;
+  /** 첨부 하나를 고친다(없으면 만든다). `null` 이면 지운다. 지워진 것을 고치려 들면 무시한다. */
+  patchUpload(localId: string, patch: Partial<PendingUpload> | PendingUpload | null): void;
   clearDrafts(): void;
   setDraft(scopeKey: string, draft: string): void;
   /** 기동 시 보관소에서 초안을 읽어 온다. */
@@ -386,7 +414,7 @@ const initial = {
   messages: {}, typing: {}, hasMore: {}, unread: [], inboxRevision: 0, reads: {}, dividerSeq: {},
   online: [], terminalTarget: null, leases: [], connected: false, serverVersion: null, workspaceIconUrl: null,
   projectionStatus: null, projectionStatusError: null,
-  channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, drafts: {}, stickyMentions: {},
+  channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, drafts: {}, stickyMentions: {}, uploads: {},
   history: [], historyIndex: -1, notice: null, notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,
   highlightedMessageId: null, channelRevealSeq: 0,
   runnerStates: {}, daemonRunners: {}, appVersion: null, savedIds: [], savedCount: 0,
@@ -501,6 +529,20 @@ export function createAppStore() {
       });
     },
     reset: () => set({ ...initial }),
+    patchUpload: (localId, patch) => {
+      const cur = get().uploads;
+      if (patch === null) {
+        if (!(localId in cur)) return;
+        const next = { ...cur };
+        delete next[localId];
+        set({ uploads: next });
+        return;
+      }
+      const prev = cur[localId];
+      // 지운 뒤에 늦게 도착한 진행률·결과가 칩을 되살리면 안 된다 — 만들기는 온전한 값으로만.
+      if (!prev && !('file' in patch && patch.file)) return;
+      set({ uploads: { ...cur, [localId]: { ...(prev as PendingUpload), ...patch } } });
+    },
     clearDrafts: () => { set({ drafts: {} }); draftsStorage.clear(); },
     /**
      * 스토어가 초안의 **단일 원천**이다. 영속도 여기서 한다 — 컴포저가 지역 state 와

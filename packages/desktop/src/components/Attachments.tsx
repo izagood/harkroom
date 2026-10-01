@@ -91,6 +91,37 @@ export function AttachmentThumb({ attachment }: { attachment: AttachmentRow }) {
 }
 
 /**
+ * 올리는 중인 첨부의 미리보기 — **고른 파일**로 곧장 그린다. 서버 바이트는 아직 없고,
+ * 다 올라가면 칩이 `AttachmentThumb`(실제로 붙은 것)으로 바뀐다. 그릴 수 있는 종류는
+ * `canPreview` 와 같은 목록이다: 여기서만 더 그리면 올라간 뒤에 그림이 사라진다.
+ */
+export function LocalFileThumb({ file }: { file: File }) {
+  const previewable = canPreview({ contentType: file.type } as AttachmentRow);
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!previewable || typeof URL.createObjectURL !== 'function') return;
+    const objectUrl = URL.createObjectURL(file);
+    setUrl(objectUrl);
+    return () => { URL.revokeObjectURL(objectUrl); };
+  }, [file, previewable]);
+  if (!url) {
+    return (
+      <span className={previewable ? 'inline-flex h-6 items-center' : 'inline-flex items-center'}>
+        <span aria-hidden>📎</span>
+      </span>
+    );
+  }
+  return (
+    <img
+      src={url}
+      alt=""
+      data-testid="attachment-local-thumb"
+      className="h-6 w-6 shrink-0 rounded-sm border border-border object-cover opacity-60"
+    />
+  );
+}
+
+/**
  * 확대 보기(#첨부 확대). 본문의 그림은 `max-h-56` · `max-w-[28rem]` 로 줄여 그리므로 스크린샷 속 글자는
  * 대개 읽히지 않는다 — 크게 볼 자리가 없으면 사람은 그림을 디스크에 저장해 시스템 뷰어로
  * 열고, 그때 채팅을 떠난다.
