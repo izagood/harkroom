@@ -1890,6 +1890,8 @@ export const ko = {
   'agents.pickable.clear': "풀기",
   'agents.pickable.cleared': "{n}곳의 에이전트 지정을 풀었다. 그 스레드들은 다음 턴부터 기본값으로 돈다.",
   'agents.scope.heading': '누가 부를 수 있고, 무엇을 쥐나',
+  'agents.scope.summaryInvokers': '명단 {count}명',
+  'agents.scope.summaryDelegates': '대리 호출자 {count}',
   'agents.scope.note': '고르면 바로 저장된다. 개인 자격증명은 소유자 전용 호출과 짝이고, 범위는 좁히기만 된다.',
   'agents.scope.invoke': '이 에이전트를 부를 수 있는 사람',
   'agents.scope.invoke.community': '커뮤니티의 누구나',

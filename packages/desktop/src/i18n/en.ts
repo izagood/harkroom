@@ -4036,6 +4036,8 @@ export const en = {
   'agents.pickable.clear': "Clear",
   'agents.pickable.cleared': "Cleared the agent pick in {n} threads. They use the default from the next turn.",
   'agents.scope.heading': 'Who can call it, what it holds',
+  'agents.scope.summaryInvokers': '{count} on the list',
+  'agents.scope.summaryDelegates': '{count} delegate callers',
   'agents.scope.note': 'Saved on change. Personal credentials require owner-only calls, and a scope can only narrow.',
   'agents.scope.invoke': 'Who can call this agent',
   'agents.scope.invoke.community': 'Anyone in the community',

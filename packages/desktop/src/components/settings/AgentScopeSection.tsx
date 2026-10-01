@@ -69,7 +69,23 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
 
   return (
     <div className="rounded border border-border p-3" data-testid="agent-scope">
-      <div className="text-meta font-medium text-fg-muted">{t('agents.scope.heading')}</div>
+      {/*
+        **한 줄 요약 + 펼치기**(UX ⑨b, designer 사양 ⑨: "부를 수 있는 곳은 한 줄로 요약"). 상세 화면에서 이 절은
+        고르는 칸이 넷(부르는 사람·자격증명·명단·대리 호출자)에 MCP 까지 서서 가장 길었다 — 대부분은 읽기만
+        한다. 지금 값은 접혀 있어도 요약 줄이 말하고, 고칠 때만 편다. 오류는 접힘 밖에 둔다(아래).
+      */}
+      <details data-testid="agent-scope-details">
+      <summary className="cursor-pointer list-none">
+        <div className="text-meta font-medium text-fg-muted">{t('agents.scope.heading')} <span aria-hidden="true">▾</span></div>
+        <p data-testid="agent-scope-summary" className="mt-1 text-meta text-fg">
+          {[
+            t(`agents.scope.invoke.${agent.invokeScope}`),
+            t(`agents.scope.credential.${agent.credentialScope}`),
+            ...(agent.invokeScope === 'list' ? [t('agents.scope.summaryInvokers', { count: String(invokers.length) })] : []),
+            ...(delegates.length ? [t('agents.scope.summaryDelegates', { count: String(delegates.length) })] : []),
+          ].join(' · ')}
+        </p>
+      </summary>
       <p className="mt-1 text-meta text-fg-subtle">{t('agents.scope.note')}</p>
 
       <div className="mt-2 flex flex-wrap gap-4">
@@ -198,6 +214,7 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
 
       {/* MCP 는 한 절에서 끝낸다(레지스트리·이 머신 정의·scope) — `AgentMcpSection` 머리 주석. */}
       <AgentMcpSection agent={agent} disabled={disabled} onUpdated={onUpdated} />
+      </details>
 
       {error && <p role="alert" className="mt-2 text-meta text-danger" data-testid="agent-scope-error">{error}</p>}
     </div>
