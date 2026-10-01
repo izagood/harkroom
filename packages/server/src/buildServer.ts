@@ -19,6 +19,7 @@ import { registerChannelRoutes } from './routes/channelRoutes.js';
 import { registerTeamRoutes } from './routes/teamRoutes.js';
 import { registerMessageRoutes } from './routes/messageRoutes.js';
 import { registerAttachmentRoutes } from './routes/attachmentRoutes.js';
+import { registerPreviewRoutes } from './routes/previewRoutes.js';
 import { registerAvatarRoutes } from './routes/avatarRoutes.js';
 import { registerWorkspaceRoutes } from './routes/workspaceRoutes.js';
 import { createLocalStorage } from './storage/local.js';
@@ -170,6 +171,8 @@ export interface ServerDeps {
   storage?: { root: string; maxBytes: number };
   /** attach 티켓 수명(ms). 기본 30초 — `/ws` 티켓과 같다. 테스트에서 짧게 준다. */
   attachTicketTtlMs?: number;
+  /** 미리보기 서명 URL 의 시계(시험이 만료를 재려고 바꾼다). 미지정이면 Date.now. */
+  previewNow?: () => number;
   /** interactive.open 응답 대기 한도(ms, #337). 기본 10초 — 테스트에서 짧게 준다. */
   interactiveOpenTimeoutMs?: number;
 }
@@ -530,6 +533,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerChannelRoutes(app, deps.pool, storage);
   await registerMessageRoutes(app, deps.pool, { operatorHub });
   await registerAttachmentRoutes(app, deps.pool, storage, leakGuard);
+  // 미리보기(아티팩트) — 첨부와 같은 스토리지·같은 가시성 함수를 쓴다(previewRoutes 주석).
+  await registerPreviewRoutes(app, deps.pool, storage, { now: deps.previewNow });
   // 아바타는 같은 스토리지를 쓴다 — 파일 저장소를 하나로 유지하기 위해서다(avatarRoutes 주석).
   await registerAvatarRoutes(app, deps.pool, storage);
   await registerWorkspaceRoutes(app, deps.pool, storage);
