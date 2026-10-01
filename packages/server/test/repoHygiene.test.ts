@@ -102,6 +102,7 @@ describe('repo hygiene', () => {
       /^example\.(?:com|net|org)$/i,
       /\.example\.(?:com|net|org)$/i,
       /\.example$/i, // RFC 2606 예약
+      /^api(?:\.sandbox)?\.push\.apple\.com$/i, // APNs 운영 주소(services/push/apns.ts). Apple 이 공개한 고정 호스트다
       /\.invalid$/i,
       /\.internal$/i, // ICANN 이 사설용으로 예약한 TLD
       /\.[a-z0-9-]*test$/i, // `.test` 와 `avcs.status-test` 처럼 회귀선이 만든 도메인

@@ -59,6 +59,7 @@ import { isValidSlug, MEMORY_SLUG_HINT } from '../services/memory.js';
 import { listGrantedSecrets } from '../services/secretAccess.js';
 import { collectStrings, SECRET_IN_BODY, type SecretLeakGuard } from '../services/secretLeakGuard.js';
 import type { AgentPresence } from './presence.js';
+import { enqueueAskPush } from '../services/push/pushJobs.js';
 
 /**
  * 발화 도구가 공통으로 받는 `model` — 에이전트가 신고하는 **자기 모델 ID**(#600).
@@ -775,6 +776,19 @@ function buildMcpServer(
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
       // 검사와 발행 사이에 원본이 정해졌으면 방금 세운 거울을 곧바로 그 결과로 닫는다.
       if (mirrorOf) await syncAskMirrors(pool, mirrorOf);
+      /*
+        사람 앞 물음의 푸시(security G4). to:human 은 받는 사람이 정해져 있지 않다 — 그 턴을 띄운 멘션의
+        작성자(차례 주인, `gateAwaitingAccount`)에게만 보낸다. 원인 헤더가 없거나 차례 주인이 사람이
+        아니거나 그 채널이 안 보이면 보내지 않는다. 이 글로 이미 inbox 를 받았으면(멘션) 그 job 이 간다.
+      */
+      if (audience.kind === 'human' && cause) {
+        const awaiting = await gateAwaitingAccount(pool, account.id, channelId, cause);
+        if (awaiting && !notified.includes(awaiting)) await enqueueAskPush(pool, awaiting, message.id);
+      }
+      // 받는 사람을 이름으로 정한 물음이면 그 사람이다. 에이전트면 `enqueueAskPush` 가 아무것도 넣지 않는다.
+      if (audience.kind === 'account' && !notified.includes(audience.accountId)) {
+        await enqueueAskPush(pool, audience.accountId, message.id);
+      }
     }
     return postedResult(message, notified);
   });

@@ -57,6 +57,16 @@ describe('오퍼레이터 토큰 + X-Harkroom-Agent', () => {
     expect(res.statusCode).toBe(200);
   });
 
+  it('배정된 에이전트로 서도 푸시 기기 등록은 403 push_session_only 다 — 라우트까지 가서 authVia 로 막힌다', async () => {
+    // 배정이 있어야 plugin 의 not_assigned 를 지나 라우트의 관문(authVia·kind)에 닿는다(security #1067 후속).
+    const res = await app.inject({
+      method: 'PUT', url: '/push/devices', headers: auth(opToken, assignedId),
+      payload: { token: 'ab'.repeat(32), platform: 'ios', env: 'production' },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('push_session_only');
+  });
+
   it('배정되지 않은 에이전트는 403 not_assigned 다 — 즉시, 라우트에 닿기 전에', async () => {
     const res = await app.inject({ method: 'GET', url: '/agent/config', headers: auth(opToken, otherId) });
     expect(res.statusCode).toBe(403);

@@ -32,6 +32,8 @@ import { registerLinkPreviewRoutes } from './routes/linkPreviewRoutes.js';
 import { registerAgentRelayRoutes } from './routes/agentRelayRoutes.js';
 import { registerSkillRoutes } from './routes/skillRoutes.js';
 import { registerPushRoutes } from './routes/pushRoutes.js';
+import { createApnsTransport, loadApnsConfig, type PushTransport } from './services/push/apns.js';
+import { createPushSweeper, type PushHealth } from './services/push/pushJobs.js';
 import { registerAutomationRoutes } from './routes/automationRoutes.js';
 import { registerWs } from './ws/wsPlugin.js';
 import { registerMcp } from './mcp/mcpPlugin.js';
@@ -85,6 +87,11 @@ const LIMITED_ROUTES: { method: string; url: string; rule: keyof typeof DEFAULT_
 
 export interface ServerDeps {
   pool: Pool;
+  /**
+   * 모바일 푸시 전송부(093). 생략하면 `APNS_*` env 를 읽고(넷 다 없으면 끈다, 일부만 있으면 기동을
+   * 멈춘다), `null` 이면 끈다(테스트용).
+   */
+  push?: PushTransport | null;
   /**
    * 자동화 수신(065)의 비밀 봉투 키. 생략하면 `HARKROOM_SECRET_KEY` env 를 읽고, `null` 이면 끈다(테스트용).
    */
@@ -320,12 +327,17 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     exposedHeaders: [NOTIFIED_HEADER, NOTIFIED_COUNT_HEADER, MENTION_EDIT_SKIPPED_HEADER],
   });
 
+  // 푸시 worker 는 아래(비밀 가림을 만든 뒤)에서 만든다. healthz 는 그보다 먼저 등록되므로 늦게 묶는다.
+  let pushHealth: () => PushHealth = () => 'off';
+
   // 인증 **앞**에 둔다(그리고 그대로 둔다) — 배포가 낡았는지는 로그인 전에도 물을 수
   // 있어야 한다. 여기 실리는 것은 릴리스 번호·커밋·기동 시각뿐이고 셋 다 공개 저장소에
   // 이미 있는 사실이다(#693).
   app.get('/healthz', async (): Promise<ServerHealth> => ({
     ok: true,
     avcs: deps.getAvcsStatus?.() ?? { connected: false },
+    // 푸시는 상태 낱말 하나만 낸다(security) — 키 id·팀·APNs 사유·기기 토큰은 싣지 않는다.
+    push: pushHealth(),
     // 버전을 **별도 엔드포인트로 빼지 않는다.** 운영이 재배포를 확인할 때 이미 치는 것이
     // `/healthz` 이고(docs/operations.md), 표면을 둘로 두면 한쪽만 보고 낡은 판단을 한다.
     ...serverVersion(),
@@ -447,6 +459,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // 에이전트의 REST 쓰기 본문에 grant 받은 비밀 값이 있으면 거절한다(D5). 루트 훅이라 모든 라우트에
   // 걸리고, 인증(onRequest) 뒤에 돈다. 보관소가 꺼져 있으면(키 없음) 볼 비밀도 없다.
   if (leakGuard) app.addHook('preHandler', leakGuardHook(leakGuard));
+
+  const pushConfig = deps.push === undefined ? loadApnsConfig() : null;
+  const pushTransport = deps.push !== undefined ? deps.push : pushConfig ? createApnsTransport(pushConfig) : null;
+  const pushSweeper = createPushSweeper(deps.pool, { transport: pushTransport, leakGuard });
+  pushSweeper.startSweep(app);
+  pushHealth = pushSweeper.health;
 
   // 에이전트 presence 레지스트리를 한 번 만들고 두 곳에 넘긴다.
   // - registerWs: presence.snapshot 에 에이전트를 합집합으로 얹는다.
