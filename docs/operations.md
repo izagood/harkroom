@@ -344,6 +344,7 @@ AVCS_BASE_URL=https://your-avcs-server.example.com
 |---|---|
 | 요청 실패율·지연 | `GET /metrics` → `harkroom_http_requests_total{status=...}`, `harkroom_http_request_duration_seconds` |
 | 지금 몇 명이 붙어 있나 | `harkroom_ws_connections` |
+| **DB 풀이 찼나** | `harkroom_db_pool_waiting` — 0 보다 크게 머물면 풀 포화다(`harkroom_db_pool_total`·`_idle` 와 함께 본다). 이때 DB 를 거치는 요청과 `/readyz` 만 느려지고 `/healthz`·CPU·로그는 멀쩡하다. 풀은 최대 20개, 빈자리를 5초까지 기다린 뒤 실패한다(`db/pool.ts`) |
 | **투영이 멈췄나** | `harkroom_projection_cursor{repo=...}` — 값이 오르지 않으면 §3-B의 사일런트 스킵을 의심한다 |
 | **에이전트가 답하지 않나** | `harkroom_agent_oldest_unread_seconds{handle=...}` — 값이 커지면 그 에이전트의 **러너 프로세스가 죽었을 가능성이 가장 크다**. 서버는 정상이고 다른 지표도 정상인 채로 사용자만 답을 못 받는 상태다(2026-09-01 실제 발생). **답할 의무가 있는 계정만 센다** — 사람과, 정의(`agent_config`)가 없는 에이전트 계정은 없다(아래 §7) |
 | avcs 연결 상태 | `GET /healthz` → `avcs.connected` |

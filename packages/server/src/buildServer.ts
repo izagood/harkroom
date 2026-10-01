@@ -334,6 +334,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const metrics = createMetrics();
   let socketCount: () => number = () => 0;
   metrics.registerGauge('harkroom_ws_connections', 'live websocket connections', () => socketCount());
+  // DB 풀이 찼는지를 숫자로 본다(2026-10-01). 풀 포화는 CPU·메모리·로그 어디에도 안 남고
+  // DB 를 거치는 요청만 느려진다 — `waiting` 이 0 보다 크게 머물면 그것이다.
+  metrics.registerGauge('harkroom_db_pool_total', 'db pool clients (in use + idle)', () => deps.pool.totalCount);
+  metrics.registerGauge('harkroom_db_pool_idle', 'db pool idle clients', () => deps.pool.idleCount);
+  metrics.registerGauge('harkroom_db_pool_waiting', 'requests waiting for a db pool client', () => deps.pool.waitingCount);
   // 투영 커서를 스크레이프 시점에 읽는다. #48 이 고정한 결함(avcs 를 커서 뒤로 되돌리면
   // 조용히 건너뛴다)은 **관측되지 않기 때문에** 위험하다 — 채널에는 아무 일도 없어 보인다.
   // 커서가 숫자로 보이면 그 침묵이 눈에 띈다.

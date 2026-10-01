@@ -33,6 +33,12 @@ const SEQ_LOCK_CLASS = 0x6d736571; // 'mseq'
 export const lockChannelForSeq = (client: PoolClient, channelId: string): Promise<unknown> =>
   client.query('select pg_advisory_xact_lock($1, hashtext($2))', [SEQ_LOCK_CLASS, channelId]);
 
+/** 회신권 판정과 닫기를 (작성자, 스레드) 단위로 직렬화한다 — `postMessage` 의 주석 참고. */
+const REPLY_LOCK_CLASS = 0x6d72706c; // 'mrpl'
+
+const lockReplyGrantsFor = (client: PoolClient, authorId: string, threadRootId: string): Promise<unknown> =>
+  client.query('select pg_advisory_xact_lock($1, hashtext($2))', [REPLY_LOCK_CLASS, `${authorId}:${threadRootId}`]);
+
 /**
  * 게시 결과. 첨부 연결이 거절되면 메시지 자체가 만들어지지 않는다(트랜잭션 롤백) —
  * 그래서 성공/실패가 배타적인 합 타입이다. 둘을 optional 필드로 섞으면 호출부가
@@ -1123,63 +1129,11 @@ export async function postMessage(
   pool: Pool, input: PostMessageInput,
 ): Promise<PostMessageResult> {
   const client = await pool.connect();
+  // 커밋 뒤에는 커넥션을 **먼저 돌려준다** — 아래 `readListRow` 가 풀에서 하나를 더 빌리므로,
+  // 쥔 채로 빌리면 풀이 찬 순간 자기 자신을 기다린다(2026-10-01 풀 포화).
+  let released = false;
   try {
     await client.query('begin');
-
-    /**
-     * `seq` 발급을 채널 단위로 직렬화한다(#523).
-     *
-     * **왜 여기인가.** `seq` 는 `generated always as identity`(001_init.sql:57)라
-     * 시퀀스에서 나오고, 시퀀스는 트랜잭션 밖에서 값을 준다. 그래서 낮은 seq 를 받은
-     * 트랜잭션이 늦게 커밋할 수 있다 — 발급 순서와 커밋(가시성) 순서가 갈라진다.
-     * 커서가 `seq > $since` 인 이상(listMessages) 그 갈라짐은 곧 **건너뛴 메시지**다:
-     * B(높은 seq)가 먼저 커밋된 순간 리더가 폴하면 커서가 B 로 가고, 뒤늦게 커밋되는
-     * A 는 `seq > B` 에 영영 안 걸린다.
-     *
-     * 락을 `begin` 직후, **insert 보다 앞에** 잡는 것이 핵심이다. insert 뒤에 잡으면
-     * 이미 seq 가 나간 뒤라 아무것도 막지 못한다. 여기서 잡으면 "seq 를 받은 트랜잭션은
-     * 커밋할 때까지 다음 트랜잭션이 seq 를 못 받는다"가 되어 두 순서가 **같아진다**.
-     *
-     * `xact` 형태를 쓰므로 커밋이든 롤백이든 자동으로 풀린다. 첨부 거절 경로가
-     * `rollback` 으로 빠져나가는데(아래), 수동 해제였다면 그 경로마다 해제를 빠뜨릴
-     * 위험이 있고 한 번 빠뜨리면 그 채널의 게시가 통째로 멈춘다.
-     *
-     * **왜 채널 단위인가.** seq 는 전역이지만 커서는 채널·스레드 단위다. 다른 채널의
-     * 미커밋 seq 가 이 채널 커서를 지나칠 수는 없다 — 그 seq 는 이 채널 델타의
-     * `where channel_id = $1` 에 애초에 걸리지 않기 때문이다(실측 확인). 전역으로
-     * 잠그면 무관한 채널끼리 줄을 서게 되어 처치가 병보다 나빠진다.
-     *
-     * **버린 후보들.** ① 읽기 시점에 미커밋 구간을 피하기 — 불가능하다. 미커밋 행은
-     * 리더에게 **보이지 않으므로** 그 seq 를 알아낼 질의가 없다. `pg_sequence_last_value`
-     * 도 못 쓴다: 이 결함의 창에서는 B 가 가장 큰 seq 를 가져가 커밋하므로
-     * `last_value == max(보이는 seq)` 가 되어 구멍이 신호에 안 잡힌다(실측).
-     * ② "안 보이는 발급분" 을 구멍으로 보고 클램프 — 롤백이 **영구 구멍**을 남기므로
-     * (실측) 커서가 첫 롤백에서 영원히 멈춘다. postMessage 자신이 첨부 거절 때
-     * 롤백하므로 흔한 경로다. ③ `xmin` 을 커서로 — xid 는 커밋 순서가 아니라 시작
-     * 순서라 같은 결함이 그대로 있고, 순환(wraparound)까지 떠안는다. ④ 델타를 "안 본
-     * 것" 집합으로 — 커서가 스칼라 하나라는 클라이언트 계약(러너의 `lastFedSeq`,
-     * 데스크톱의 `since`)을 전부 바꿔야 한다.
-     *
-     * **읽기에 더한 비용은 없다.** 이 고침은 전부 쓰기 경로에 있고 `listMessages` 의
-     * 질의는 한 글자도 바뀌지 않는다 — "읽기가 흔하다"는 제약에 맞춘 선택이다.
-     */
-    await lockChannelForSeq(client, input.channelId);
-
-    if (input.idempotencyKey) {
-      // key는 클라이언트가 고르는 값이라 전역 유일하지 않다. 재생은 같은 author가 같은 채널로
-      // 보낸 재시도일 때만이며, 그 범위를 벗어난 조회는 남의 메시지를 읽는 경로가 된다.
-      const dup = await client.query(
-        `select message_id from idempotency_key
-         where key = $1 and author_id = $2 and channel_id = $3`,
-        [input.idempotencyKey, input.authorId, input.channelId],
-      );
-      if (dup.rowCount) {
-        const existing = await client.query(`select ${COLS} from message where id = $1`, [dup.rows[0].message_id]);
-        await client.query('commit');
-        // 재생은 새로 생긴 것이 없다 — 되돌아온 머리도 없다(그때 이미 처리됐다).
-        return { message: existing.rows[0], notified: [], replayed: true, rootBack: null };
-      }
-    }
 
     /*
       **스레드 머리는 같은 채널의 최상위 글이어야 한다**(084 보안 검토). 예전에는 확인하지 않아서
@@ -1208,6 +1162,18 @@ export async function postMessage(
       `select kind from account where id = $1`, [input.authorId],
     )).rows[0]?.kind as 'human' | 'agent' | undefined;
     const authorIsAgent = authorKind === 'agent';
+    /*
+      **회신권 "결과 한 번"을 지키는 락**(084, 2026-10-01 보안 검토). 아래 멘션 해석이 회신권을
+      읽고(`hasReplyGrant`), 결과 발화는 커밋 직전에 그것을 닫는다(`closeReplyGrants`). 예전에는
+      채널 락이 이 읽기보다 앞에 있어서 같은 에이전트의 동시 결과 두 개가 줄을 섰고, 두 번째는
+      첫 번째가 닫은 것을 봤다. 채널 락을 insert 앞으로 옮긴 뒤로는 둘 다 "열림"을 읽고 통과해
+      좁은 범위의 에이전트를 두 번 깨울 수 있었다. 그래서 **같은 작성자·같은 스레드**만 여기서
+      줄을 세운다 — 채널 전체가 서던 줄(풀 포화)은 되살리지 않는다.
+      락 순서는 언제나 이것 → 채널 락이라 서로를 기다리며 막히지 않는다.
+    */
+    if (authorIsAgent && input.threadRootId && countsAsReply(input.kind ?? 'user')) {
+      await lockReplyGrantsFor(client, input.authorId, input.threadRootId);
+    }
     const scannedDepth = await mentionDepthFor(client, {
       channelId: input.channelId,
       threadRootId: input.threadRootId ?? null,
@@ -1222,6 +1188,69 @@ export async function postMessage(
       body: input.body, channelId: input.channelId, authorId: input.authorId, authorIsAgent, mentionDepth, chainBound,
       replyGrantThreadId: countsAsReply(input.kind ?? 'user') ? input.threadRootId ?? null : null,
     });
+
+    /**
+     * `seq` 발급을 채널 단위로 직렬화한다(#523).
+     *
+     * **왜 여기인가.** `seq` 는 `generated always as identity`(001_init.sql:57)라
+     * 시퀀스에서 나오고, 시퀀스는 트랜잭션 밖에서 값을 준다. 그래서 낮은 seq 를 받은
+     * 트랜잭션이 늦게 커밋할 수 있다 — 발급 순서와 커밋(가시성) 순서가 갈라진다.
+     * 커서가 `seq > $since` 인 이상(listMessages) 그 갈라짐은 곧 **건너뛴 메시지**다:
+     * B(높은 seq)가 먼저 커밋된 순간 리더가 폴하면 커서가 B 로 가고, 뒤늦게 커밋되는
+     * A 는 `seq > B` 에 영영 안 걸린다.
+     *
+     * 락을 **insert 보다 앞에** 잡는 것이 핵심이다. insert 뒤에 잡으면
+     * 이미 seq 가 나간 뒤라 아무것도 막지 못한다. 여기서 잡으면 "seq 를 받은 트랜잭션은
+     * 커밋할 때까지 다음 트랜잭션이 seq 를 못 받는다"가 되어 두 순서가 **같아진다**.
+     *
+     * `xact` 형태를 쓰므로 커밋이든 롤백이든 자동으로 풀린다. 첨부 거절 경로가
+     * `rollback` 으로 빠져나가는데(아래), 수동 해제였다면 그 경로마다 해제를 빠뜨릴
+     * 위험이 있고 한 번 빠뜨리면 그 채널의 게시가 통째로 멈춘다.
+     *
+     * **왜 채널 단위인가.** seq 는 전역이지만 커서는 채널·스레드 단위다. 다른 채널의
+     * 미커밋 seq 가 이 채널 커서를 지나칠 수는 없다 — 그 seq 는 이 채널 델타의
+     * `where channel_id = $1` 에 애초에 걸리지 않기 때문이다(실측 확인). 전역으로
+     * 잠그면 무관한 채널끼리 줄을 서게 되어 처치가 병보다 나빠진다.
+     *
+     * **버린 후보들.** ① 읽기 시점에 미커밋 구간을 피하기 — 불가능하다. 미커밋 행은
+     * 리더에게 **보이지 않으므로** 그 seq 를 알아낼 질의가 없다. `pg_sequence_last_value`
+     * 도 못 쓴다: 이 결함의 창에서는 B 가 가장 큰 seq 를 가져가 커밋하므로
+     * `last_value == max(보이는 seq)` 가 되어 구멍이 신호에 안 잡힌다(실측).
+     * ② "안 보이는 발급분" 을 구멍으로 보고 클램프 — 롤백이 **영구 구멍**을 남기므로
+     * (실측) 커서가 첫 롤백에서 영원히 멈춘다. postMessage 자신이 첨부 거절 때
+     * 롤백하므로 흔한 경로다. ③ `xmin` 을 커서로 — xid 는 커밋 순서가 아니라 시작
+     * 순서라 같은 결함이 그대로 있고, 순환(wraparound)까지 떠안는다. ④ 델타를 "안 본
+     * 것" 집합으로 — 커서가 스칼라 하나라는 클라이언트 계약(러너의 `lastFedSeq`,
+     * 데스크톱의 `since`)을 전부 바꿔야 한다.
+     *
+     * **락은 insert 바로 앞에서 잡는다**(2026-10-01). 그 위의 읽기(머리 확인·작성자 종류·연쇄
+     * 깊이·멘션 해석)는 seq 순서와 무관하다 — 연쇄 깊이가 보는 "나를 부른 글"은 그 부름이
+     * 나의 턴을 띄우기 전에 이미 커밋돼 있다. 예전에는 그 읽기를 락 안에서 해서, 같은 채널에
+     * 글이 몰리면 줄 선 트랜잭션마다 풀 커넥션을 하나씩 쥐고 기다렸다(풀 10개가 차고
+     * `/readyz` 의 `select 1` 까지 줄을 섰다). 재생 확인(idempotency)은 락 **뒤**에 둔다 —
+     * 같은 키의 동시 재시도가 서로의 insert 를 봐야 한다.
+     *
+     * **읽기에 더한 비용은 없다.** 이 고침은 전부 쓰기 경로에 있고 `listMessages` 의
+     * 질의는 한 글자도 바뀌지 않는다 — "읽기가 흔하다"는 제약에 맞춘 선택이다.
+     */
+    await lockChannelForSeq(client, input.channelId);
+
+    if (input.idempotencyKey) {
+      // key는 클라이언트가 고르는 값이라 전역 유일하지 않다. 재생은 같은 author가 같은 채널로
+      // 보낸 재시도일 때만이며, 그 범위를 벗어난 조회는 남의 메시지를 읽는 경로가 된다.
+      const dup = await client.query(
+        `select message_id from idempotency_key
+         where key = $1 and author_id = $2 and channel_id = $3`,
+        [input.idempotencyKey, input.authorId, input.channelId],
+      );
+      if (dup.rowCount) {
+        const existing = await client.query(`select ${COLS} from message where id = $1`, [dup.rows[0].message_id]);
+        await client.query('commit');
+        // 재생은 새로 생긴 것이 없다 — 되돌아온 머리도 없다(그때 이미 처리됐다).
+        return { message: existing.rows[0], notified: [], replayed: true, rootBack: null };
+      }
+    }
+
     const inserted = await client.query(
       `insert into message (channel_id, thread_root_id, author_id, body, kind, meta, also_in_channel, mention_depth)
        values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
@@ -1399,6 +1428,8 @@ export async function postMessage(
     }
 
     await client.query('commit');
+    client.release();
+    released = true;
 
     // 이벤트는 **커밋 뒤**다 — 러너는 이것을 보고 즉시 폴하므로, 앞에서 치면 아직 안 보이는
     // inbox 를 읽고 빈손으로 돌아간다(sweep 이 같은 순서를 지키는 이유와 같다).
@@ -1421,10 +1452,10 @@ export async function postMessage(
     const rootBack = deletedRoot ? await readListRow(pool, input.channelId, deletedRoot) : null;
     return { message, notified: [...notified], replayed: false, rootBack };
   } catch (err) {
-    await client.query('rollback');
+    if (!released) await client.query('rollback');
     throw err;
   } finally {
-    client.release();
+    if (!released) client.release();
   }
 }
 
