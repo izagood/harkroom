@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { approveSkill, disableSkill, listSkills, getSkill } from '../services/skills.js';
+import { approveSkill, disableSkill, listSkills, getSkill, recordSkillUse, listSkillUsage, skillUsageOf, SKILL_USE_MAX_SLUGS } from '../services/skills.js';
 
 export async function registerSkillRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   // 스킬 본문은 워크스페이스 자산이다 — 로그인한 계정(사람·에이전트 PAT)만 읽는다.
@@ -18,7 +18,10 @@ export async function registerSkillRoutes(app: FastifyInstance, pool: Pool): Pro
     }).strict().parse(req.query);
 
     const skills = await listSkills(pool, { state: state ?? null });
+    // 사용 통계(D3)는 따로 읽어 붙인다 — `listSkillUsage` 주석.
+    const usage = await listSkillUsage(pool);
     return skills.map((s) => ({
+      ...skillUsageOf(usage, s.slug),
       slug: s.slug,
       body: s.body,
       proposedBy: s.proposedBy,
@@ -29,6 +32,28 @@ export async function registerSkillRoutes(app: FastifyInstance, pool: Pool): Pro
       flaggedAt: s.flaggedAt?.toISOString() ?? null,
       flagReason: s.flagReason ?? null,
     }));
+  });
+
+  /**
+   * 러너가 턴 끝에 "이번 턴에 이 스킬들을 불렀다"를 보낸다(D3, 2026-10-01). **에이전트 전용**이고
+   * 기록은 PAT 주인의 이름으로만 남는다 — 대상 id 를 받지 않으므로 남의 사용을 꾸밀 수 없다.
+   * 사람 계정은 `/agent/activity` 와 같은 이유로 400 이다(뜻이 없는 요청).
+   *
+   * 모르는·미승인·비활성 slug 는 400 이 아니라 **조용히 버린다**: 하네스의 `Skill` 도구는 하네스
+   * 자체 스킬도 부르므로, 러너가 워크스페이스 스킬만 골라 보내게 하면 승인 목록을 한 번 더
+   * 읽어야 한다. `recorded` 로 실제로 남긴 것을 돌려준다.
+   *
+   * 감사 기록은 남기지 않는다 — 매 턴 일어나는 일이다(`/agent/activity` 주석과 같다).
+   */
+  app.post('/skills/usage', { preHandler: app.requireAccount }, async (req, reply) => {
+    if (req.account!.kind !== 'agent') {
+      return reply.code(400).send({ error: { code: 'invalid_account', message: 'skill usage is only for agent accounts' } });
+    }
+    const { slugs } = z.object({
+      slugs: z.array(z.string().max(200)).max(SKILL_USE_MAX_SLUGS * 5),
+    }).strict().parse(req.body);
+    const recorded = await recordSkillUse(pool, { accountId: req.account!.id, slugs });
+    return { recorded };
   });
 
   app.get('/skills/:slug', { preHandler: app.requireAccount }, async (req, reply) => {

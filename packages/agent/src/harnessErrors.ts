@@ -192,7 +192,7 @@ export async function readTranscriptTurnState(
 const TAIL_BYTES = 256 * 1024;
 
 /** 기록 파일의 꼬리 `TAIL_BYTES` 를 읽는다. 잘린 첫 줄(반쪽 JSON)은 버린다. **던지지 않는다.** */
-async function readTranscriptTail(
+export async function readTranscriptTail(
   sessionId: string,
   opts: { projectsDir?: string; configDir?: string | null },
 ): Promise<string | null> {
@@ -215,13 +215,13 @@ async function readTranscriptTail(
   }
 }
 
-type TranscriptRecord = {
+export type TranscriptRecord = {
   type?: unknown; isSidechain?: unknown; isApiErrorMessage?: unknown; timestamp?: unknown;
   message?: { stop_reason?: unknown; content?: unknown };
 };
 
 /** 꼬리의 줄들 중 `sinceMs` 이후의 주 대화(곁가지 아님) 레코드만, 앞에서부터. */
-function recordsSince(text: string, sinceMs: number | undefined): TranscriptRecord[] {
+export function recordsSince(text: string, sinceMs: number | undefined): TranscriptRecord[] {
   const out: TranscriptRecord[] = [];
   for (const line of text.split('\n')) {
     if (!line) continue;

@@ -2012,6 +2012,89 @@ describe('활동 보고 (#176)', () => {
   });
 });
 
+// D3(2026-10-01): 성공한 턴 끝에 이번 턴에 부른 스킬을 서버에 남긴다 — "안 쓰는 후보"의 재료.
+describe('runMentionTurn: 스킬 사용 기록(D3)', () => {
+  function withUsage(fake: FakeHarkroom, error: Error | null = null): string[][] {
+    const sent: string[][] = [];
+    Object.assign(fake, {
+      recordSkillUse: (slugs: string[]) => { sent.push(slugs); return error ? Promise.reject(error) : Promise.resolve(); },
+    });
+    return sent;
+  }
+
+  it('성공한 턴이 부른 스킬을 이 턴 시작 이후 기록에서 읽어 보낸다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const sent = withUsage(fake);
+    const seen: { sinceMs?: number }[] = [];
+    const { deps } = await makeDeps(fake, {
+      readSkillUses: async (_h, _sid, opts) => { seen.push(opts); return ['deploy', 'pr-recipe']; },
+    });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(sent).toEqual([['deploy', 'pr-recipe']]);
+    expect(typeof seen[0]?.sinceMs).toBe('number');
+  });
+
+  it('부른 스킬이 없으면 보내지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const sent = withUsage(fake);
+    const { deps } = await makeDeps(fake, { readSkillUses: async () => [] });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(sent).toEqual([]);
+  });
+
+  it('보내기가 실패해도 턴은 성공으로 끝난다 — 사용 기록은 턴의 성패가 아니다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const sent = withUsage(fake, new Error('skills/usage 실패: 503'));
+    const { deps, runTurn } = await makeDeps(fake, { readSkillUses: async () => ['deploy'] });
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '답이다', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(sent).toEqual([['deploy']]);
+    expect(fake.posts.map((p) => p.body)).toEqual(['답이다']);
+    expect(deps.store.get(SessionStore.threadKey(CHANNEL, null))!.turnsRun).toBe(1);
+  });
+
+  it('실패한 턴은 세지 않는다 — 재시도가 같은 기록을 다시 읽어 두 번 세게 된다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const sent = withUsage(fake);
+    const { deps, runTurn } = await makeDeps(fake, { readSkillUses: async () => ['deploy'] });
+    runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: 'boom' });
+
+    await expect(
+      runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
+    ).rejects.toThrow(/harness 종료 1/);
+
+    expect(sent).toEqual([]);
+  });
+});
+
+describe('HarkroomAgentClient.recordSkillUse(D3)', () => {
+  it('POST /skills/usage 에 slug 만 JSON 으로 싣는다 — 대상 id 는 보내지 않는다', async () => {
+    const link = fakeLink({ http: () => ({ status: 200, body: '{"recorded":[]}' }) });
+    await new HarkroomAgentClient(link).recordSkillUse(['deploy']);
+    const req = link.requests[0] as unknown as { method: string; path: string; body?: string; contentType?: string };
+    expect([req.method, req.path, req.contentType]).toEqual(['POST', '/skills/usage', 'application/json']);
+    expect(JSON.parse(req.body!)).toEqual({ slugs: ['deploy'] });
+  });
+
+  it('실패는 던진다 — 삼키는 판단은 호출자 몫이다', async () => {
+    const client = new HarkroomAgentClient(fakeLink({ http: () => ({ status: 503, body: 'nope' }) }));
+    await expect(client.recordSkillUse(['deploy'])).rejects.toThrow(/503/);
+  });
+});
+
 // #140 워크스페이스 스킬 — 러너 쪽 보증.
 //
 // **전부 runMentionTurn 을 통과시킨다.** syncSkills 를 손으로만 부르는 테스트는 러너가

@@ -174,6 +174,80 @@ export async function listSkills(
   return res.rows as WorkspaceSkill[];
 }
 
+/** 승인한 지 이만큼 지나지 않은 스킬은 후보로 보지 않는다 — 새 스킬은 쓰일 기회가 아직 없었다. */
+export const SKILL_STALE_MIN_AGE_DAYS = 14;
+/** 이 기간 동안 한 번도 안 쓰였으면 "안 쓰는 후보"다(Hermes Curator 의 결정적 단계와 같은 값). */
+export const SKILL_STALE_UNUSED_DAYS = 30;
+/** 한 번에 받는 slug 상한. 한 턴에 부르는 스킬은 몇 개뿐이다 — 넘는 것은 버린다. */
+export const SKILL_USE_MAX_SLUGS = 20;
+
+export interface SkillUsage {
+  /** 지금까지 기록된 사용 횟수(턴 단위). 기록이 없으면 0. */
+  useCount: number;
+  lastUsedAt: Date | null;
+  /**
+   * 안 쓰는 후보(D3): 승인·활성이고, 승인한 지 `SKILL_STALE_MIN_AGE_DAYS` 일이 지났고,
+   * 최근 `SKILL_STALE_UNUSED_DAYS` 일 동안 기록된 사용이 없다. **후보일 뿐이다** — 끄는 것은
+   * 사람이다. 사용은 claude 하네스만 센다(codex·opencode 는 기록이 없다).
+   */
+  staleCandidate: boolean;
+}
+
+/**
+ * 한 에이전트가 이번 턴에 부른 스킬을 기록한다(D3). **승인·활성 스킬만** 남긴다 — 하네스의
+ * `Skill` 도구는 워크스페이스 스킬 말고도 하네스 자체·플러그인 스킬(`artifact-design`,
+ * `plugin:x`)을 부르므로, 모르는 slug 는 조용히 버린다. 같은 턴에 같은 스킬을 여러 번 불러도
+ * 한 번으로 센다(턴 단위 사용). 돌려주는 값은 실제로 남긴 slug 다.
+ */
+export async function recordSkillUse(
+  pool: Pool,
+  input: { accountId: string; slugs: string[] },
+): Promise<string[]> {
+  const slugs = [...new Set(input.slugs.filter(isValidSkillSlug))].slice(0, SKILL_USE_MAX_SLUGS);
+  if (slugs.length === 0) return [];
+  const res = await pool.query<{ slug: string }>(
+    `insert into workspace_skill_usage (slug, account_id)
+     select s.slug, $2 from workspace_skill s
+     where s.slug = any($1::text[]) and s.approved_at is not null and s.disabled_at is null
+     returning slug`,
+    [slugs, input.accountId],
+  );
+  return res.rows.map((r) => r.slug);
+}
+
+/**
+ * 스킬별 사용 통계(D3). `listSkills` 와 **따로 묻는다** — 스킬 행의 열 목록은 승인 게이트가
+ * 읽는 자리라, 통계 때문에 그 질의를 넓히지 않는다. 행이 없는 스킬은 맵에 없다(호출자가
+ * `skillUsageOf` 로 0/null 을 채운다).
+ *
+ * 후보 판정을 SQL 의 now() 로 하는 이유: 앱·러너의 시계가 아니라 기록을 찍은 시계(DB)와 같은
+ * 시계로 재야 경계에서 갈라지지 않는다.
+ */
+export async function listSkillUsage(pool: Pool): Promise<Map<string, SkillUsage>> {
+  const res = await pool.query<{ slug: string; useCount: number; lastUsedAt: Date | null; staleCandidate: boolean }>(
+    `select s.slug, coalesce(u.use_count, 0)::int as "useCount", u.last_used_at as "lastUsedAt",
+       (s.approved_at is not null and s.disabled_at is null
+         and s.approved_at <= now() - make_interval(days => $1::int)
+         and (u.last_used_at is null or u.last_used_at <= now() - make_interval(days => $2::int)))
+         as "staleCandidate"
+     from workspace_skill s
+     left join (
+       select slug, count(*) as use_count, max(used_at) as last_used_at
+       from workspace_skill_usage group by slug
+     ) u on u.slug = s.slug`,
+    [SKILL_STALE_MIN_AGE_DAYS, SKILL_STALE_UNUSED_DAYS],
+  );
+  return new Map(res.rows.map((r) => [r.slug, { useCount: r.useCount, lastUsedAt: r.lastUsedAt, staleCandidate: r.staleCandidate }]));
+}
+
+/** 응답에 실을 꼴. 통계 행이 없으면 "기록 없음"(0·null·후보 아님)이다. */
+export function skillUsageOf(usage: Map<string, SkillUsage>, slug: string): {
+  useCount: number; lastUsedAt: string | null; staleCandidate: boolean;
+} {
+  const u = usage.get(slug);
+  return { useCount: u?.useCount ?? 0, lastUsedAt: u?.lastUsedAt?.toISOString() ?? null, staleCandidate: u?.staleCandidate ?? false };
+}
+
 export async function getSkill(
   pool: Pool,
   slug: string,
