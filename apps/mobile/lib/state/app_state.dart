@@ -152,6 +152,12 @@ class AppState extends ChangeNotifier {
   /// 채널 id → 그 채널을 읽는 상태. 없으면 아직 연 적이 없다.
   final Map<String, LoadState> channelLoad = {};
 
+  /// 채널 id → 서버에 더 오래된 메시지가 남아 있는가(첫 페이지의 `hasMore`, 이전 페이지마다 갱신).
+  final Map<String, bool> channelHasMore = {};
+
+  /// 채널 id → 이전 페이지를 받는 중인가. 두 번 겹쳐 받지 않는다.
+  final Set<String> loadingOlder = {};
+
   /// 스레드 루트 id → 그 스레드를 읽는 상태.
   final Map<String, LoadState> threadLoad = {};
 
@@ -561,8 +567,9 @@ class AppState extends ChangeNotifier {
     channelLoad[channelId] = LoadState.loading;
     notifyListeners();
     try {
-      final page = await _api!.messages(channelId, limit: 50);
+      final page = await _api!.messages(channelId, limit: channelPageSize);
       messages[channelId] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
+      channelHasMore[channelId] = page.hasMore;
       channelLoad[channelId] = LoadState.loaded;
     } on Object catch (e) {
       messages.remove(channelId);
@@ -572,7 +579,54 @@ class AppState extends ChangeNotifier {
       return;
     }
     notifyListeners();
+    // 걸러서 남는 최상위 글이 너무 적으면 **더 받아 온다.** 서버는 최상위와 스레드 답글을 섞어
+    // 최근 N 줄을 주고, 채널 화면은 최상위만 그린다 — 답글이 많은 채널은 첫 페이지를 다 걸러도
+    // 한두 줄만 남는다(실기기 #task 에서 맨 아래 글 하나만 보였다).
+    for (var i = 0; i < maxBackfillPages; i++) {
+      final roots = (messages[channelId] ?? const <MessageRow>[]).where((m) => m.inChannelFeed).length;
+      if (roots >= minVisibleRoots || channelHasMore[channelId] != true) break;
+      if (!await loadOlder(channelId)) break;
+    }
     await markRead(channelId);
+  }
+
+  /// 한 번에 받는 줄 수. 서버 상한(500)이고 데스크탑의 `INITIAL_HISTORY_LIMIT` 과 같다 — 50 이면
+  /// 답글이 많은 채널에서 최상위가 거의 남지 않았다.
+  static const channelPageSize = 500;
+
+  /// 채널을 열었을 때 이만큼의 최상위 글은 보이게 한다. 모자라면 [maxBackfillPages] 까지 더 받는다.
+  static const minVisibleRoots = 20;
+
+  /// 채널을 열 때 더 받는 페이지 상한. 답글만 수천 줄인 채널에서 끝없이 받지 않게 한다 —
+  /// 그 뒤는 사람이 위로 밀 때 [loadOlder] 가 받는다.
+  static const maxBackfillPages = 3;
+
+  /// 이전 페이지(더 오래된 것)를 받는다. 받은 것이 있으면 `true`.
+  ///
+  /// 채널 화면이 목록 맨 위에 닿으면 부른다. 겹쳐 부르면 한 번만 간다. 실패해도 **던지지 않는다**
+  /// — 이미 보이는 것을 지우지 않고, 다음에 위로 밀 때 다시 해 본다.
+  Future<bool> loadOlder(String channelId) async {
+    final list = messages[channelId];
+    if (list == null || list.isEmpty) return false;
+    if (channelHasMore[channelId] != true || loadingOlder.contains(channelId)) return false;
+    loadingOlder.add(channelId);
+    notifyListeners();
+    try {
+      final page = await _api!.messages(channelId, before: list.first.seq, limit: channelPageSize);
+      channelHasMore[channelId] = page.hasMore;
+      final current = messages[channelId];
+      if (current == null) return false;
+      final seen = current.map((m) => m.seq).toSet();
+      final older = page.messages.where((m) => !seen.contains(m.seq)).toList();
+      if (older.isEmpty) return false;
+      messages[channelId] = [...older, ...current]..sort((a, b) => a.seq.compareTo(b.seq));
+      return true;
+    } on Object {
+      return false;
+    } finally {
+      loadingOlder.remove(channelId);
+      notifyListeners();
+    }
   }
 
   /// 이모지를 누르거나 뗀다.
@@ -853,6 +907,8 @@ class AppState extends ChangeNotifier {
     accounts.clear();
     messages.clear();
     channelLoad.clear();
+    channelHasMore.clear();
+    loadingOlder.clear();
     threadLoad.clear();
     failures.clear();
     inboxLoad = LoadState.loading;
