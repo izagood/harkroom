@@ -17,6 +17,7 @@ import { useActiveStore } from '../../state/communities';
 import { ApiError } from '../../lib/api';
 import { useT } from '../../i18n/useT';
 import { AgentMcpSection } from './AgentMcpSection';
+import { Toggle } from './primitives';
 
 export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
   agent: AgentView;
@@ -58,6 +59,13 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
   const delegates = agent.delegates ?? [];
   const delegateCandidates = agents.filter((a) => a.id !== agent.id && !delegates.includes(a.id)
     && a.invokeScope === 'owner' && agent.ownerAccountId != null && a.ownerAccountId === agent.ownerAccountId);
+  /*
+    형제 기본 신뢰(서버 083). 켜져 있으면 같은 소유자의 owner 에이전트는 명단 없이 부르므로 명단을
+    그리지 않는다 — 보이면 "여기 없는 에이전트는 못 부른다"로 읽힌다. 옛 서버는 필드를 주지 않고
+    (undefined) PATCH 의 모르는 키를 조용히 버리므로, 그때는 스위치를 그리지 않고 명단만 그린다.
+  */
+  const trustKnown = agent.trustSiblings !== undefined;
+  const showDelegates = agent.trustSiblings !== true;
 
   return (
     <div className="rounded border border-border p-3" data-testid="agent-scope">
@@ -136,7 +144,19 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
         </div>
       )}
 
-      {agent.invokeScope === 'owner' && (
+      {agent.invokeScope === 'owner' && trustKnown && (
+        <div className="-mx-4 mt-2 text-meta" data-testid="agent-trust-siblings">
+          <Toggle
+            label={t('agents.scope.trustSiblings')}
+            description={t(agent.trustSiblings ? 'agents.scope.trustSiblingsOn' : 'agents.scope.trustSiblingsOff')}
+            checked={agent.trustSiblings === true}
+            disabled={off}
+            onChange={(trustSiblings) => void run(() => getController().updateAgent(agent.id, { trustSiblings }))}
+          />
+        </div>
+      )}
+
+      {agent.invokeScope === 'owner' && showDelegates && (
         <div className="mt-3" data-testid="agent-delegates">
           <div className="text-meta text-fg-muted">{t('agents.scope.delegates')}</div>
           <p className="mt-1 text-meta text-fg-subtle">{t('agents.scope.delegatesNote')}</p>

@@ -217,12 +217,22 @@ describe('팀 — 팀도 에이전트와 같은 범위 규칙을 탄다(068)', (
 // owner 범위의 대리 호출자(073). 소유자가 지정한 **자기 에이전트**는 owner 에이전트를 부를 수 있다 —
 // 관리 에이전트(task_manager)가 담당 에이전트(rcms)를 직접 부르는 자리. 조건은 넣을 때와 부를 때
 // 둘 다 본다: 에이전트 · 같은 소유자 · 그 에이전트도 owner.
+// 이 묶음은 명단의 길을 시험하므로 대상의 형제 기본 신뢰(083)를 끈다 — 켜져 있으면 명단 없이도 통과한다.
+async function setTrust(agentId: string, on: boolean, token = owner.token) {
+  return app.inject({ method: 'PATCH', url: `/accounts/agents/${agentId}`, headers: auth(token), payload: { trustSiblings: on } });
+}
+async function distrusting(handle: string, ownerId: string) {
+  const made = await agentWith(handle, ownerId, 'owner');
+  expect((await setTrust(made.accountId, false, adminToken)).statusCode).toBe(200);
+  return made;
+}
+
 describe('owner 대리 호출자(agent_owner_delegate)', () => {
   const putDelegate = (agentId: string, delegateId: string, token = owner.token) =>
     app.inject({ method: 'PUT', url: `/accounts/agents/${agentId}/delegates/${delegateId}`, headers: auth(token) });
 
   it('지정한 같은 소유자의 owner 에이전트는 부를 수 있고, 지정 안 한 것은 막힌다', async () => {
-    const target = await agentWith('dg-target', owner.accountId, 'owner');
+    const target = await distrusting('dg-target', owner.accountId);
     const lead = await agentWith('dg-lead', owner.accountId, 'owner');
     const unlisted = await agentWith('dg-unlisted', owner.accountId, 'owner');
 
@@ -261,7 +271,7 @@ describe('owner 대리 호출자(agent_owner_delegate)', () => {
 
   // 명단은 남아도 조건이 깨지면 게이트가 막는다 — 대리자의 소유자가 바뀐 경우.
   it('넣은 뒤 대리자의 소유자가 바뀌면 부를 때 막힌다', async () => {
-    const target = await agentWith('dg-t4', owner.accountId, 'owner');
+    const target = await distrusting('dg-t4', owner.accountId);
     const lead = await agentWith('dg-l4', owner.accountId, 'owner');
     expect((await putDelegate(target.accountId, lead.accountId)).statusCode).toBe(200);
     const moved = await app.inject({
@@ -275,13 +285,71 @@ describe('owner 대리 호출자(agent_owner_delegate)', () => {
   });
 
   it('DELETE 로 빼면 다시 막힌다', async () => {
-    const target = await agentWith('dg-t5', owner.accountId, 'owner');
+    const target = await distrusting('dg-t5', owner.accountId);
     const lead = await agentWith('dg-l5', owner.accountId, 'owner');
     await putDelegate(target.accountId, lead.accountId);
     const del = await app.inject({ method: 'DELETE', url: `/accounts/agents/${target.accountId}/delegates/${lead.accountId}`, headers: auth(owner.token) });
     expect(del.statusCode).toBe(200);
     expect(del.json().delegates).toEqual([]);
     expect((await post(lead.pat, '@dg-t5 진행')).meta.mentionDenied).toEqual(['dg-t5']);
+  });
+});
+
+// 형제 기본 신뢰(083) — 같은 소유자의 owner 에이전트는 명단 없이 부른다. 에이전트마다 끌 수 있다.
+// 넓히는 것은 "명단에 적어야 한다" 하나뿐이고, 같은 소유자·그 에이전트도 owner 조건은 그대로다.
+describe('형제 기본 신뢰(trust_siblings)', () => {
+  it('기본은 켜져 있다 — 같은 소유자의 owner 에이전트가 명단 없이 부른다', async () => {
+    const target = await agentWith('sib-target', owner.accountId, 'owner');
+    const sib = await agentWith('sib-a', owner.accountId, 'owner');
+    const list = await app.inject({ method: 'GET', url: '/accounts/agents', headers: auth(owner.token) });
+    expect((list.json().agents as { id: string; trustSiblings: boolean }[]).find((a) => a.id === target.accountId)?.trustSiblings).toBe(true);
+    const ok = await post(sib.pat, `<@${target.accountId}> 진행해 주세요`);
+    expect(await inboxHas(target.pat, ok.id)).toBe(true);
+    expect(ok.meta.mentionDenied).toBeUndefined();
+  });
+
+  it('켜져 있어도 공개 에이전트·남의 에이전트·남은 못 부른다', async () => {
+    const target = await agentWith('sib-t2', owner.accountId, 'owner');
+    const open = await agentWith('sib-open', owner.accountId, 'community');
+    const foreign = await agentWith('sib-foreign', stranger.accountId, 'owner');
+    for (const token of [open.pat, foreign.pat, stranger.token]) {
+      const m = await post(token, '@sib-t2 진행해 주세요');
+      expect(await inboxHas(target.pat, m.id)).toBe(false);
+      expect(m.meta.mentionDenied).toEqual(['sib-t2']);
+    }
+  });
+
+  it('끄면 명단에 있는 것만 부른다', async () => {
+    const target = await agentWith('sib-t3', owner.accountId, 'owner');
+    const listed = await agentWith('sib-listed', owner.accountId, 'owner');
+    const other = await agentWith('sib-other', owner.accountId, 'owner');
+    const off = await setTrust(target.accountId, false);
+    expect(off.statusCode).toBe(200);
+    expect(off.json().trustSiblings).toBe(false);
+    await app.inject({ method: 'PUT', url: `/accounts/agents/${target.accountId}/delegates/${listed.accountId}`, headers: auth(owner.token) });
+    expect(await inboxHas(target.pat, (await post(listed.pat, '@sib-t3 진행')).id)).toBe(true);
+    expect((await post(other.pat, '@sib-t3 진행')).meta.mentionDenied).toEqual(['sib-t3']);
+  });
+
+  it('스레드 답글 게이트도 같다 — 대상이 연 스레드에 형제가 답하면 깬다', async () => {
+    const target = await agentWith('sib-t4', owner.accountId, 'owner');
+    const sib = await agentWith('sib-b', owner.accountId, 'owner');
+    const root = await post(target.pat, '작업 스레드');
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`, headers: auth(sib.pat), payload: { body: '끝났다', threadRootId: root.id },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(await inboxHas(target.pat, res.json().id)).toBe(true);
+  });
+
+  it('남은 스위치를 못 바꾼다(403), 끈 값은 감사에 남는다', async () => {
+    const target = await agentWith('sib-t5', owner.accountId, 'owner');
+    expect((await setTrust(target.accountId, false, stranger.token)).statusCode).toBe(403);
+    expect((await setTrust(target.accountId, false)).statusCode).toBe(200);
+    const audit = await app.inject({ method: 'GET', url: '/audit?action=agent.updated&limit=500', headers: auth(adminToken) });
+    const row = (audit.json().entries as { action: string; target: string; detail: Record<string, unknown> }[])
+      .find((e) => e.action === 'agent.updated' && e.target === target.accountId);
+    expect(row?.detail.trustSiblings).toEqual({ before: true, after: false });
   });
 });
 

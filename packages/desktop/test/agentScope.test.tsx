@@ -242,6 +242,34 @@ describe('AgentMcpSection — 한 절에서 끝낸다', () => {
     fireEvent.click(box.querySelectorAll('button')[0]!);
     expect((await screen.findByTestId('agent-scope-error')).textContent).toContain('소유자 전용');
   });
+
+  // 형제 기본 신뢰(서버 083). 켜져 있으면 명단이 필요 없으므로 명단을 숨기고, 끄면 명단이 돌아온다.
+  // 옛 서버는 필드를 주지 않는다 — 그때는 스위치 없이 예전 명단만 그린다(PATCH 가 조용히 버려지므로).
+  it('형제 신뢰가 켜져 있으면 스위치만 보이고 명단은 숨는다; 끄면 updateAgent 에 trustSiblings:false 가 간다', async () => {
+    const c = setup();
+    const onUpdated = vi.fn();
+    render(<AgentScopeSection agent={agent({ invokeScope: 'owner', trustSiblings: true })} agents={[]} onUpdated={onUpdated} />);
+    expect(screen.queryByTestId('agent-delegates')).toBeNull();
+    const sw = screen.getByRole('switch', { name: '내 다른 소유자 전용 에이전트가 부를 수 있다' }) as HTMLInputElement;
+    expect(sw.checked).toBe(true);
+    fireEvent.click(sw);
+    await waitFor(() => expect(c.updateAgent).toHaveBeenCalledWith('agent-1', { trustSiblings: false }));
+    expect(onUpdated).toHaveBeenCalledWith(expect.objectContaining({ trustSiblings: false }));
+  });
+
+  it('형제 신뢰가 꺼져 있으면 스위치와 명단이 함께 보인다', () => {
+    setup();
+    render(<AgentScopeSection agent={agent({ invokeScope: 'owner', trustSiblings: false })} agents={[]} onUpdated={vi.fn()} />);
+    expect((screen.getByRole('switch') as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByTestId('agent-delegates')).toBeTruthy();
+  });
+
+  it('옛 서버(trustSiblings 없음)에는 스위치를 그리지 않고 명단을 그린다', () => {
+    setup();
+    render(<AgentScopeSection agent={agent({ invokeScope: 'owner' })} agents={[]} onUpdated={vi.fn()} />);
+    expect(screen.queryByTestId('agent-trust-siblings')).toBeNull();
+    expect(screen.getByTestId('agent-delegates')).toBeTruthy();
+  });
 });
 
 // 원격 MCP 인증(2026-09-30, harkroom 스레드 ebb97c7b). 토큰은 오퍼레이터가 든다 — 앱은 인가 url 을

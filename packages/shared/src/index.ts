@@ -238,6 +238,12 @@ export interface AgentView extends AccountView, AgentConfig {
    * 깨진 id 는 통과하지 못한다. 다른 스코프에서는 판정에 안 쓰인다.
    */
   delegates: string[];
+  /**
+   * 같은 소유자의 owner 에이전트가 **명단 없이** 이 에이전트를 부를 수 있나(083, 기본 true).
+   * false 면 `delegates` 에 있는 것만 부른다. owner 범위가 아니면 판정에 안 쓰인다.
+   * 옛 서버(0.3.86 이전)는 이 필드를 주지 않는다 — 화면은 없으면 스위치를 그리지 않는다.
+   */
+  trustSiblings?: boolean;
   /** 이 에이전트에 붙는 MCP 서버 **이름**들 — `mcp_server` 레지스트리의 부분집합(스펙 §6). 정의는 오퍼레이터 머신에 있다. */
   mcpServers: string[];
 }

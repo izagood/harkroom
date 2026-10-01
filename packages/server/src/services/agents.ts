@@ -23,6 +23,8 @@ const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admi
   coalesce(c.credential_scope, 'none') as "credentialScope",
   coalesce((select json_agg(i.account_id order by i.account_id) from agent_invoker i where i.agent_id = a.id), '[]'::json) as invokers,
   coalesce((select json_agg(d.delegate_id order by d.delegate_id) from agent_owner_delegate d where d.agent_id = a.id), '[]'::json) as delegates,
+  -- 083. agent_config 행이 없는 계정은 owner 일 수 없어 판정에 안 쓰인다 — 기본값(true)을 보여 준다.
+  coalesce(c.trust_siblings, true) as "trustSiblings",
   coalesce((select json_agg(m.name order by m.name) from agent_mcp_server m where m.agent_id = a.id), '[]'::json) as "mcpServers",
   a.disabled_at is not null as disabled,
   -- 이 목록은 삭제된 것을 아예 빼므로 항상 false 다. 그래도 싣는 이유는 AgentView 가
@@ -193,6 +195,18 @@ export async function setDelegate(pool: Pool, agentId: string, delegateId: strin
     await pool.query(`delete from agent_owner_delegate where agent_id = $1 and delegate_id = $2`, [agentId, delegateId]);
   }
   return getAgent(pool, agentId);
+}
+
+/**
+ * 형제 기본 신뢰 스위치(083). upsert 다 — 정의 없이 만든 에이전트(행 없음)에 끄기를 보내고
+ * 나중에 owner 로 좁히면 그때 기본값 true 가 되살아나 끈 것이 조용히 사라지면 안 된다.
+ * 다른 컬럼은 전부 기본값이 있어 이 한 컬럼만으로 행을 만들 수 있다.
+ */
+export async function setTrustSiblings(db: Pool | PoolClient, agentId: string, on: boolean): Promise<void> {
+  await db.query(
+    `insert into agent_config (account_id, trust_siblings) values ($1, $2)
+     on conflict (account_id) do update set trust_siblings = excluded.trust_siblings, updated_at = now()`,
+    [agentId, on]);
 }
 
 /** invokers 명단 갱신. 멱등 — 이미 있으면 그대로다. 돌려주는 것은 갱신된 뷰다. */
