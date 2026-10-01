@@ -113,7 +113,8 @@ class ReportCard extends StatelessWidget {
 
     return Card(
       key: Key('report-${message.id}'),
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      // 메시지 줄 **안에** 덧붙는다(본문·이름은 줄이 그린다) — 바깥 여백이 없다.
+      margin: EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -129,10 +130,6 @@ class ReportCard extends StatelessWidget {
                   Text(tookLabel(report.duration!, t), style: theme.textTheme.labelSmall),
               ],
             ),
-            if (message.body.trim().isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(renderMentions(message.body, context.app.accounts, context.t.mentionUnknown)),
-            ],
             _Section(title: t.reportChecks, items: report.checks),
             _Section(title: t.reportFiles, items: report.files),
             // 남은 것은 **숨기지 않는다** — 숨기면 끝난 것처럼 보인다.
@@ -177,7 +174,7 @@ class FailureCard extends StatelessWidget {
 
     return Card(
       key: Key('failure-${message.id}'),
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      margin: EdgeInsets.zero,
       color: theme.colorScheme.errorContainer,
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -196,17 +193,14 @@ class FailureCard extends StatelessWidget {
                 ),
               ],
             ),
-            if (failure.what != null) ...[
+            // 본문은 줄이 위에 그린다. `what` 이 본문과 같으면 **두 번 그리지 않는다.**
+            if (failure.what != null && failure.what!.trim() != message.body.trim()) ...[
               const SizedBox(height: 8),
               Text(failure.what!),
             ],
             if (failure.reason != null) ...[
               const SizedBox(height: 4),
               Text(failure.reason!, style: theme.textTheme.bodySmall),
-            ],
-            if (failure.what == null && failure.reason == null && message.body.trim().isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(renderMentions(message.body, context.app.accounts, context.t.mentionUnknown)),
             ],
           ],
         ),

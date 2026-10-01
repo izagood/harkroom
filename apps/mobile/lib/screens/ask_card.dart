@@ -58,7 +58,8 @@ class _AskCardState extends State<AskCard> {
 
     return Card(
       key: Key('ask-${widget.message.id}'),
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      // 메시지 줄 안에 덧붙는다 — 무엇을 묻는지(본문)와 누가 묻는지(이름)는 줄이 그린다.
+      margin: EdgeInsets.zero,
       color: highlight ? theme.colorScheme.primaryContainer : null,
       child: Padding(
         padding: const EdgeInsets.all(12),

@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
+import '../time.dart';
+import '../ui/parts.dart';
+import '../ui/tokens.dart';
 import '../ui/states.dart';
 import '../mention/render.dart';
 import 'attachments.dart';
@@ -16,6 +19,8 @@ class MessageTile extends StatelessWidget {
     super.key,
     required this.message,
     this.onOpenThread,
+    this.continued = false,
+    this.card,
   });
 
   final MessageRow message;
@@ -24,61 +29,81 @@ class MessageTile extends StatelessWidget {
   /// 들어갈 곳이 없다.
   final void Function()? onOpenThread;
 
+  /// 같은 사람이 이어 말한 줄이다 — 아바타·이름·시각을 빼고 본문만 아바타 뒤에 붙인다.
+  final bool continued;
+
+  /// 본문 **아래에 덧붙는** 카드(ask·보고·실패). 카드는 메시지를 대신하지 않는다 —
+  /// 대신하면 무엇을 묻는지(본문)와 누가 물었는지(이름)가 화면에서 사라진다(designer #976).
+  final Widget? card;
+
   @override
   Widget build(BuildContext context) {
     final app = context.app;
     final t = context.t;
-    final theme = Theme.of(context);
+    final k = context.tokens;
     final author = app.accounts[message.authorId];
+    final body = renderMentions(message.body, app.accounts, t.mentionUnknown).trim();
+    final denied = _deniedHandles(message.meta);
 
     return Padding(
       key: Key('message-${message.id}'),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      child: Column(
+      padding: EdgeInsets.fromLTRB(
+          HarkroomSize.gutter, continued ? 1 : 8, HarkroomSize.gutter, 2),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Flexible(
-                child: Text(
-                  app.displayNameOf(message.authorId),
-                  style: theme.textTheme.labelLarge,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              // 사람과 에이전트를 **갈라 보여 준다** — 누구를 부르는지, 누가 답했는지가
-              // 이 앱의 주제다.
-              if (author?.isAgent == true) ...[
-                const SizedBox(width: 6),
-                Text(
-                  t.agentBadge,
-                  style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.primary),
-                ),
+          // 이어 말한 줄도 **같은 폭을 비워 둔다** — 본문이 아바타 뒤로 줄을 맞춰야 한 사람의
+          // 말로 읽힌다.
+          if (continued)
+            const SizedBox(width: HarkroomSize.avatar)
+          else
+            HarkroomAvatar(id: message.authorId, name: author?.handle ?? app.displayNameOf(message.authorId)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (!continued) _Header(message: message, isAgent: author?.isAgent == true),
+                // 마크다운은 아직 그리지 않는다. 평문으로 흘리는 것이, 반쯤 해석해서 원문을
+                // 잃는 것보다 낫다.
+                if (body.isNotEmpty)
+                  Text(body,
+                      style: TextStyle(
+                          fontSize: HarkroomType.body, height: HarkroomType.bodyHeight, color: k.fg)),
+                if (denied.isNotEmpty) _MentionDenied(handles: denied),
+                if (card != null) Padding(padding: const EdgeInsets.only(top: 6), child: card),
+                AttachmentStrip(attachments: message.attachments),
+                if (message.reactions.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: _Reactions(message: message),
+                  ),
+                if (onOpenThread != null && _replyLabel(t, message) != null)
+                  TextButton(
+                    key: Key('thread-open-${message.id}'),
+                    onPressed: onOpenThread,
+                    style: TextButton.styleFrom(
+                      foregroundColor: k.link,
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size(44, 32),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                    ),
+                    child: Text(_replyLabel(t, message)!),
+                  ),
               ],
-            ],
+            ),
           ),
-          const SizedBox(height: 2),
-          // 마크다운은 아직 그리지 않는다. 평문으로 흘리는 것이, 반쯤 해석해서 원문을
-          // 잃는 것보다 낫다.
-          Text(renderMentions(message.body, context.app.accounts, context.t.mentionUnknown)),
-          AttachmentStrip(attachments: message.attachments),
-          if (message.reactions.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: _Reactions(message: message),
-            ),
-          if (onOpenThread != null && _replyLabel(t, message) != null)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                key: Key('thread-open-${message.id}'),
-                onPressed: onOpenThread,
-                child: Text(_replyLabel(t, message)!),
-              ),
-            ),
         ],
       ),
     );
+  }
+
+  /// 서버가 붙인 "부르지 않은 이름들". 형식이 깨졌으면 없는 것으로 본다.
+  static List<String> _deniedHandles(Map<String, Object?> meta) {
+    final raw = meta['mentionDenied'];
+    if (raw is! List) return const [];
+    return raw.whereType<String>().where((h) => h.isNotEmpty).toList(growable: false);
   }
 
   /// 답글 수 줄의 문구. **`replyCount` 가 `null` 이면 아무것도 그리지 않는다** —
@@ -130,6 +155,129 @@ class _Reactions extends StatelessWidget {
             },
           ),
       ],
+    );
+  }
+}
+
+/// 이름 · (에이전트 표지) · 시각 한 줄.
+class _Header extends StatelessWidget {
+  const _Header({required this.message, required this.isAgent});
+
+  final MessageRow message;
+  final bool isAgent;
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.app;
+    final t = context.t;
+    final k = context.tokens;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.baseline,
+        textBaseline: TextBaseline.alphabetic,
+        children: [
+          Flexible(
+            child: Text(
+              app.displayNameOf(message.authorId),
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: k.fg),
+            ),
+          ),
+          // 사람과 에이전트를 **갈라 보여 준다** — 누구를 부르는지, 누가 답했는지가 이 앱의
+          // 주제다. 모양(아바타)이 아니라 글자로 가른다.
+          if (isAgent) ...[
+            const SizedBox(width: 5),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              decoration: BoxDecoration(
+                border: Border.all(color: k.accent.withValues(alpha: 0.45)),
+                borderRadius: BorderRadius.circular(3),
+              ),
+              child: Text(t.agentBadge,
+                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: k.accent)),
+            ),
+          ],
+          const SizedBox(width: 6),
+          // **상대 시각**이다. 서버는 ISO 시각만 주고, 글자는 여기서 폰 시간대로 짓는다.
+          Text(
+            agoLabel(message.createdAt, DateTime.now().toUtc(), t),
+            key: Key('time-${message.id}'),
+            style: TextStyle(fontSize: HarkroomType.meta, color: k.mute),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 멘션 거절 줄(재설계 §3.3, MH1). **노란 줄로 메시지 바로 아래에** 선다 — 이게 없으면 사람은
+/// 불렀다고 믿고 조용히 기다린다(서버는 `meta.mentionDenied` 로 이미 알려 주고 있었다).
+class _MentionDenied extends StatelessWidget {
+  const _MentionDenied({required this.handles});
+
+  final List<String> handles;
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    final t = context.t;
+    final names = handles.map((h) => '@$h').join(', ');
+    return Container(
+      key: const Key('mention-denied'),
+      margin: const EdgeInsets.only(top: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(color: k.warnSoft, borderRadius: BorderRadius.circular(6)),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.warning_amber_rounded, size: 14, color: k.warn),
+          const SizedBox(width: 5),
+          Expanded(
+            child: Text(t.mentionDeniedLine.replaceFirst('{handles}', names),
+                style: TextStyle(fontSize: HarkroomType.meta, height: 1.35, color: k.warn)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 날짜 줄. 날짜가 바뀌는 자리에 **가운데 한 줄**로 선다.
+class DayDivider extends StatelessWidget {
+  const DayDivider({super.key, required this.at});
+
+  final DateTime at;
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    final t = context.t;
+    final local = at.toLocal();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(local.year, local.month, local.day);
+    final label = day == today
+        ? t.dayToday
+        : day == today.subtract(const Duration(days: 1))
+            ? t.dayYesterday
+            : t.dayDate
+                .replaceFirst('{m}', '${local.month}')
+                .replaceFirst('{d}', '${local.day}');
+    Widget line() => Expanded(child: Container(height: 1, color: k.line));
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter, vertical: 8),
+      child: Row(
+        children: [
+          line(),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text(label,
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: k.mute)),
+          ),
+          line(),
+        ],
+      ),
     );
   }
 }

@@ -296,4 +296,16 @@ class StringsKo implements Strings {
 
   @override
   String get loadFailedForbidden => '이 대화를 볼 권한이 없다.';
+
+  @override
+  String get dayToday => '오늘';
+
+  @override
+  String get dayYesterday => '어제';
+
+  @override
+  String get dayDate => '{m}월 {d}일';
+
+  @override
+  String get mentionDeniedLine => '{handles} 를 부르지 않았다 — 부를 수 있는 범위 밖이다. 그 에이전트의 소유자에게 물어라.';
 }

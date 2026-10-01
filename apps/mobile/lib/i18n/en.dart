@@ -297,4 +297,16 @@ class StringsEn implements Strings {
 
   @override
   String get loadFailedForbidden => 'You don\'t have access to this.';
+
+  @override
+  String get dayToday => 'Today';
+
+  @override
+  String get dayYesterday => 'Yesterday';
+
+  @override
+  String get dayDate => '{m}/{d}';
+
+  @override
+  String get mentionDeniedLine => 'Did not call {handles} — outside who may invoke them. Ask the owner of that agent.';
 }

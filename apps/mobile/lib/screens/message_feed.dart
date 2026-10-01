@@ -11,9 +11,19 @@ sealed class FeedItem {
 
 /// 말풍선·카드처럼 **한 메시지가 한 줄**인 것.
 class FeedMessage extends FeedItem {
-  const FeedMessage(this.message);
+  const FeedMessage(this.message, {this.continued = false, this.dayBreak = false});
   final MessageRow message;
+
+  /// 바로 앞 말과 **같은 사람이 5분 안에 이어 말했다** — 아바타·이름 없이 붙인다(재설계 §2).
+  /// 매 줄에 이름을 달면 한 사람이 세 줄을 쓸 때 화면의 절반이 이름이 된다.
+  final bool continued;
+
+  /// 이 말 앞에서 **날짜가 바뀐다**(현지 시각 기준). 화면은 그 앞에 날짜 줄을 넣는다.
+  final bool dayBreak;
 }
+
+/// 이어 말한 것으로 볼 시간. Slack·데스크탑과 같은 5분이다.
+const continuationWindow = Duration(minutes: 5);
 
 /// 이어진 진행 묶음. 마지막 것이 "지금 하는 일"이다.
 class FeedProgressRun extends FeedItem {
@@ -38,14 +48,32 @@ List<FeedItem> buildFeed(List<MessageRow> messages) {
     run = <MessageRow>[];
   }
 
+  // 묶기의 기준은 **바로 앞의 말**이다. 사이에 진행 줄이 끼면 끊는다 — 그 사이에 일이
+  // 있었다는 것이 순서로 남아야 한다.
+  MessageRow? prev;
+  DateTime? prevDay;
   for (final m in messages) {
+    final local = m.createdAt.toLocal();
+    final day = DateTime(local.year, local.month, local.day);
+    final dayBreak = prevDay != null && day != prevDay;
+    prevDay = day;
     if (m.kind == MessageKind.progress) {
       if (run.isNotEmpty && run.last.authorId != m.authorId) flush();
       run.add(m);
+      prev = null;
       continue;
     }
     flush();
-    out.add(FeedMessage(m));
+    final continued = !dayBreak &&
+        prev != null &&
+        prev.authorId == m.authorId &&
+        prev.isSpeech &&
+        m.isSpeech &&
+        m.meta['kind'] == null &&
+        prev.meta['kind'] == null &&
+        m.createdAt.difference(prev.createdAt) < continuationWindow;
+    out.add(FeedMessage(m, continued: continued, dayBreak: dayBreak));
+    prev = m;
   }
   flush();
   return out;

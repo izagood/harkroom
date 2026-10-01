@@ -246,21 +246,37 @@ Widget buildFeedItem(
   void Function(MessageRow)? onOpenThread,
 }) {
   if (item is FeedProgressRun) return ProgressRow(run: item.run);
-  final m = (item as FeedMessage).message;
+  final feed = item as FeedMessage;
+  final m = feed.message;
 
-  // 판정 순서가 있다: `meta` 가 아는 모양이면 카드, 아니면 `kind`, 그것도 아니면 말풍선.
-  final ask = AskMeta.read(m.meta);
-  if (ask != null) return AskCard(message: m, ask: ask);
-  final report = ReportMeta.read(m.meta);
-  if (report != null) return ReportCard(message: m, report: report);
-  final failure = FailureMeta.read(m.meta);
-  if (failure != null) return FailureCard(message: m, failure: failure);
   final wake = WakeMeta.read(m.meta);
-  if (wake != null) return WakeRow(message: m, wake: wake);
-
-  // `meta` 를 못 알아본 `wake` 는 **평문으로 흘린다**(형식이 깨져도 사라지지 않게).
-  return MessageTile(
-    message: m,
-    onOpenThread: onOpenThread == null ? null : () => onOpenThread(m),
+  // 깨움은 사람의 말이 아니다 — 줄이 아니라 대기 줄로 둔다.
+  Widget row;
+  if (wake != null) {
+    row = WakeRow(message: m, wake: wake);
+  } else {
+    // 판정 순서가 있다: `meta` 가 아는 모양이면 카드를 **덧붙이고**, 아니면 본문만.
+    // 카드는 줄을 대신하지 않는다 — 대신하면 무엇을 묻는지와 누가 묻는지가 사라졌다.
+    final ask = AskMeta.read(m.meta);
+    final report = ask == null ? ReportMeta.read(m.meta) : null;
+    final failure = ask == null && report == null ? FailureMeta.read(m.meta) : null;
+    final Widget? card = ask != null
+        ? AskCard(message: m, ask: ask)
+        : report != null
+            ? ReportCard(message: m, report: report)
+            : failure != null
+                ? FailureCard(message: m, failure: failure)
+                : null;
+    row = MessageTile(
+      message: m,
+      continued: feed.continued,
+      card: card,
+      onOpenThread: onOpenThread == null ? null : () => onOpenThread(m),
+    );
+  }
+  if (!feed.dayBreak) return row;
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [DayDivider(at: m.createdAt), row],
   );
 }
