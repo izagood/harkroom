@@ -253,6 +253,17 @@ abstract class Strings {
   /// 탭 이름 — 나와 연결.
   String get tabMe;
 
+  /// 탭바(개정판 3.1): 홈 · DM · 인박스 · 에이전트. 「나」 는 탭이 아니라 머리의 프로필 사진이다.
+  String get tabHome;
+  String get tabDms;
+  String get tabAgents;
+
+  /// 에이전트 탭이 S7 전까지 서는 한 줄.
+  String get agentsSoon;
+
+  /// DM 탭이 빌 때.
+  String get dmsEmpty;
+
   /// 부른 사람이 없다.
   String get inboxEmpty;
 
@@ -629,6 +640,11 @@ Map<String, String> stringsToMap(Strings s) => {
       'tabChannels': s.tabChannels,
       'tabInbox': s.tabInbox,
       'tabMe': s.tabMe,
+      'tabHome': s.tabHome,
+      'tabDms': s.tabDms,
+      'tabAgents': s.tabAgents,
+      'agentsSoon': s.agentsSoon,
+      'dmsEmpty': s.dmsEmpty,
       'inboxEmpty': s.inboxEmpty,
       'inboxMarkAllRead': s.inboxMarkAllRead,
       'inboxReasonMention': s.inboxReasonMention,

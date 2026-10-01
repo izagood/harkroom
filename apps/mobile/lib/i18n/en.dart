@@ -219,6 +219,16 @@ class StringsEn implements Strings {
 
   @override
   String get tabMe => 'You';
+  @override
+  String get tabHome => 'Home';
+  @override
+  String get tabDms => 'DMs';
+  @override
+  String get tabAgents => 'Agents';
+  @override
+  String get agentsSoon => 'See what your agents are doing here. Coming soon.';
+  @override
+  String get dmsEmpty => 'No direct messages yet.';
 
   @override
   String get inboxEmpty => 'Nothing here yet.';

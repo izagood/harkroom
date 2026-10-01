@@ -9,6 +9,7 @@ import '../state/app_state.dart';
 import '../ui/parts.dart';
 import '../ui/states.dart';
 import '../ui/tokens.dart';
+import 'me_screen.dart';
 
 /// 여러 커뮤니티(designer 설계 harkroom://message/30621120-f955-4f07-8f23-9f1837ab99cd, M1 = ③⑧⑨).
 ///
@@ -526,7 +527,8 @@ class _CommunitySwitcher extends StatelessWidget {
               title: Text(t.communityManage),
               onTap: () {
                 close();
-                app.selectTab(2);
+                // 「나」 는 탭이 아니다(S5a) — 커뮤니티 관리는 나 화면 안에 있다.
+                Navigator.of(root).push(MaterialPageRoute<void>(builder: (_) => const MeScreen()));
               },
             ),
           ],
