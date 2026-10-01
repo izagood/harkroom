@@ -329,6 +329,12 @@ abstract class Strings {
   /// 고정 멘션 칩 × 의 설명. {handle} 은 `@forge` 꼴.
   String get stickyMentionRemove;
 
+  /// 자동 멘션 칩 × 의 설명 — 설정을 지우지 않고 **이번 글에서만** 뺀다. {handle} 은 `@forge` 꼴.
+  String get autoMentionSkip;
+
+  /// "이 채널의 에이전트"(`available`) 칩의 설명 — 누르면 고정되어 다음 글부터 부른다.
+  String get channelAgentTitle;
+
   /// 모델 지정(서버 079): "기본" 칩 — 이 에이전트의 설정 모델로 돈다.
   String get modelDefault;
 
@@ -536,6 +542,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'composerSend': s.composerSend,
       'stickyMentionsLabel': s.stickyMentionsLabel,
       'stickyMentionRemove': s.stickyMentionRemove,
+      'autoMentionSkip': s.autoMentionSkip,
+      'channelAgentTitle': s.channelAgentTitle,
       'modelDefault': s.modelDefault,
       'modelThreadSet': s.modelThreadSet,
       'modelAgentSet': s.modelAgentSet,

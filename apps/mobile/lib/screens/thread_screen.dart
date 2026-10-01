@@ -70,9 +70,9 @@ class _ThreadScreenState extends State<ThreadScreen> {
     _composer.clear();
     final picks = _picks;
     setState(() => _picks = const {});
-    // 고정 멘션을 붙인 것이 **서버로 가는 본문**이다(채널 화면과 같다). 모델 지정도 이 본문으로
+    // 자동·고정 멘션을 붙인 것이 **서버로 가는 본문**이다(채널 화면과 같다). 모델 지정도 이 본문으로
     // 센다 — 친 글로 세면 고정으로 부른 에이전트에게 고른 모델이 빠진다.
-    final body = withStickyMentions(text, app.stickyHandles(widget.rootId));
+    final body = withStickyMentions(text, app.composerPrefix(widget.channelId, widget.rootId));
     try {
       final went = await app.send(
         widget.channelId,
@@ -84,7 +84,11 @@ class _ThreadScreenState extends State<ThreadScreen> {
         ),
       );
       // 이번에 부른 상대는 다음 줄부터 고정이다.
-      if (went) app.keepStickyMentions(widget.rootId, text);
+      if (went) {
+        app.keepStickyMentions(widget.rootId, text);
+        // 이번만 뺀 자동 멘션은 이 글로 끝이다 — 다음 글에는 다시 붙는다.
+        app.clearAutoSkips(widget.rootId);
+      }
       if (!went && mounted) {
         if (_composer.text.isEmpty) _composer.text = text;
         setState(() => _picks = picks);
@@ -160,6 +164,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
             MentionModelBar(
               controller: _composer,
               picks: _picks,
+              channelId: widget.channelId,
               composerKey: widget.rootId,
               threadRootId: widget.rootId,
               onPicksChanged: (next) => setState(() => _picks = next),

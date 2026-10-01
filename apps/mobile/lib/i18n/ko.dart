@@ -85,6 +85,12 @@ class StringsKo implements Strings {
   String get stickyMentionRemove => '{handle} 그만 부르기';
 
   @override
+  String get autoMentionSkip => '이번만 {handle} 빼기';
+
+  @override
+  String get channelAgentTitle => '누르면 계속 부른다';
+
+  @override
   String get modelDefault => '기본';
 
   @override

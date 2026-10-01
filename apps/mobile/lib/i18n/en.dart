@@ -86,6 +86,12 @@ class StringsEn implements Strings {
   String get stickyMentionRemove => 'Stop mentioning {handle}';
 
   @override
+  String get autoMentionSkip => 'Skip {handle} this time';
+
+  @override
+  String get channelAgentTitle => 'Tap to keep mentioning';
+
+  @override
   String get modelDefault => 'Default';
 
   @override

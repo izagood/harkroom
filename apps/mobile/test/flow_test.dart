@@ -57,11 +57,23 @@ MockClient _server() => MockClient((req) async {
         return _json({
           'accounts': [
             {'id': 'a1', 'handle': 'forge', 'displayName': 'forge', 'kind': 'agent'},
+            {'id': 'a2', 'handle': 'scout', 'displayName': 'scout', 'kind': 'agent'},
+            {'id': 'a3', 'handle': 'lumen', 'displayName': 'lumen', 'kind': 'agent'},
             {'id': 'me-1', 'handle': 'me', 'displayName': '나', 'kind': 'human'},
           ],
         });
       }
       if (path == '/reads') return _json({'reads': <Object?>[]});
+      // 채널 자동 멘션(#173): c2 는 scout 를 매 글에 붙이고(always), lumen 을 데리고 있다(available).
+      if (path == '/channels/c2/auto-mentions') {
+        return _json({
+          'autoMentions': [
+            {'channelId': 'c2', 'agentAccountId': 'a2', 'handle': 'scout', 'mode': 'always'},
+            {'channelId': 'c2', 'agentAccountId': 'a3', 'handle': 'lumen', 'mode': 'available'},
+          ],
+        });
+      }
+      if (path.endsWith('/auto-mentions')) return _json({'autoMentions': <Object?>[]});
       if (path.startsWith('/inbox') && req.method == 'GET') {
         return _json({
           'entries': [
@@ -585,6 +597,105 @@ void main() {
     expect(_sentModels.last, [
       {'agentId': 'a1', 'model': 'opus', 'effort': null},
     ]);
+  });
+
+  testWidgets('채널 자동 멘션(always)은 매 글 앞에 붙고, 칩의 × 는 이번 글에서만 뺀다', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+    await tester.tap(find.byKey(const Key('channel-c2')));
+    await _settle(tester);
+
+    expect(find.byKey(const Key('auto-mention-scout')), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('composer')), '안녕');
+    await tester.tap(find.byKey(const Key('composer-send')));
+    await _settle(tester);
+    expect(_sent.last, '@scout 안녕');
+
+    InputChip chipOf(String key) => tester.widget<InputChip>(
+          find.descendant(of: find.byKey(Key(key)), matching: find.byType(InputChip)),
+        );
+    chipOf('auto-mention-scout').onDeleted!();
+    await _settle(tester);
+    expect(find.byKey(const Key('auto-mention-scout')), findsNothing);
+    await tester.enterText(find.byKey(const Key('composer')), '혼잣말');
+    await tester.tap(find.byKey(const Key('composer-send')));
+    await _settle(tester);
+    expect(_sent.last, '혼잣말');
+
+    // 설정은 그대로다 — 다음 글에는 다시 붙는다.
+    expect(find.byKey(const Key('auto-mention-scout')), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('composer')), '다시');
+    await tester.tap(find.byKey(const Key('composer-send')));
+    await _settle(tester);
+    expect(_sent.last, '@scout 다시');
+  });
+
+  testWidgets('"이 채널의 에이전트"(available)는 붙지 않고 후보로 서며, 누르면 고정된다', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+    await tester.tap(find.byKey(const Key('channel-c2')));
+    await _settle(tester);
+
+    expect(find.byKey(const Key('channel-agent-lumen')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('channel-agent-lumen')));
+    await _settle(tester);
+    // 칩이 고정 칩으로 옮겨 간다 — 같은 상대가 두 자리에 서지 않는다.
+    expect(find.byKey(const Key('channel-agent-lumen')), findsNothing);
+    expect(find.byKey(const Key('sticky-mention-lumen')), findsOneWidget);
+
+    await tester.enterText(find.byKey(const Key('composer')), '봐 줘');
+    await tester.tap(find.byKey(const Key('composer-send')));
+    await _settle(tester);
+    // 자동이 먼저, 고정이 뒤.
+    expect(_sent.last, '@scout @lumen 봐 줘');
+  });
+
+  testWidgets('자동 멘션 상대를 직접 불러도 칩은 하나다 — 고정 칩·모델 칩으로 두 번 서지 않는다', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+    await tester.tap(find.byKey(const Key('channel-c2')));
+    await _settle(tester);
+
+    await tester.enterText(find.byKey(const Key('composer')), '@scout 직접');
+    await tester.tap(find.byKey(const Key('composer-send')));
+    await _settle(tester);
+    // 본문이 이미 부르므로 접두를 또 붙이지 않는다.
+    expect(_sent.last, '@scout 직접');
+
+    final inBar = find.descendant(of: find.byType(MentionModelBar), matching: find.textContaining('@scout'));
+    expect(inBar, findsOneWidget);
+    expect(find.byKey(const Key('sticky-mention-scout')), findsNothing);
+    // 본문에 다시 쳐도 하나다.
+    await tester.enterText(find.byKey(const Key('composer')), '@scout 또');
+    await _settle(tester);
+    expect(inBar, findsOneWidget);
+    expect(find.byKey(const Key('called-model-chips')), findsNothing);
+  });
+
+  testWidgets('스레드 작성칸에도 그 채널의 자동 멘션이 붙는다', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+    await tester.tap(find.byKey(const Key('channel-c2')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('thread-open-m1')));
+    await _settle(tester);
+
+    expect(
+      find.descendant(of: find.byType(ThreadScreen), matching: find.byKey(const Key('auto-mention-scout'))),
+      findsOneWidget,
+    );
+    await tester.enterText(find.byKey(const Key('thread-composer')), '답글');
+    await tester.tap(find.byKey(const Key('thread-send')));
+    await _settle(tester);
+    expect(_sent.last, '@scout 답글');
   });
 
   testWidgets('보내도 아무도 안 깨울 자리에서는 후보를 안 띄운다', (tester) async {

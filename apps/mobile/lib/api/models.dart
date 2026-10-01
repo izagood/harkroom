@@ -417,6 +417,28 @@ class InboxEntry {
       );
 }
 
+/// 채널 자동 멘션 한 줄(`GET /channels/:id/auto-mentions`, #173 · 모드는 마이그레이션 048).
+///
+/// - `always`: 이 채널의 작성칸이 **매 글 앞에** `@handle` 을 붙인다.
+/// - `available`: 붙이지는 않고 "이 채널이 데리고 있는 에이전트"로 후보에 띄운다 — 누르면 고정된다.
+///
+/// 모드를 모르는 옛 서버(048 이전)는 `mode` 를 싣지 않는다. 그때의 자동 멘션은 전부 `always` 였다.
+class ChannelAutoMention {
+  const ChannelAutoMention({required this.agentAccountId, required this.handle, required this.mode});
+
+  final String agentAccountId;
+  final String handle;
+  final String mode;
+
+  bool get isAlways => mode != 'available';
+
+  factory ChannelAutoMention.fromJson(Map<String, Object?> j) => ChannelAutoMention(
+        agentAccountId: _str(j['agentAccountId']),
+        handle: _str(j['handle']),
+        mode: _str(j['mode'], 'always'),
+      );
+}
+
 /// 스레드 × 에이전트 모델 지정 한 줄(서버 079). 값이 null 인 축은 에이전트 설정을 따른다.
 /// [stale] 은 지정 뒤 에이전트의 하네스가 바뀌어 쓰지 않는 값이다 — 칩이 취소선으로 그린다.
 class ThreadAgentModel {
