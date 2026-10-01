@@ -109,6 +109,7 @@ class AppState extends ChangeNotifier {
     required SessionStore sessions,
     ApiClient Function(String baseUrl, String? token)? apiFactory,
     WsConnector? connector,
+    this.otherPollEvery = const Duration(seconds: 60),
   })  : _sessions = sessions,
         _apiFactory = apiFactory ?? ((b, t) => ApiClient(baseUrl: b, token: t)),
         _connector = connector ?? RealWsConnection.connect;
@@ -134,6 +135,29 @@ class AppState extends ChangeNotifier {
   /// 지금 쓰는 커뮤니티의 열쇠([StoredCommunity.key] — origin + 계정 id). 연결 화면에서 새 주소를
   /// 넣은 직후(아직 로그인 전)는 비어 있다.
   String? activeKey;
+
+  /// 홈의 탭(0 채널 · 1 인박스 · 2 나). **홈 위젯이 아니라 여기 둔다** — 커뮤니티를 옮기는 동안
+  /// 부팅 화면이 서면 홈이 통째로 다시 만들어지고, 위젯 안의 탭은 채널로 튄다. 망이 빠르면 안
+  /// 튀고 느리면 튀면, 같은 동작이 망 속도에 따라 다르게 보인다(designer #1046).
+  int homeTab = 0;
+
+  void selectTab(int tab) {
+    if (homeTab == tab) return;
+    homeTab = tab;
+    notifyListeners();
+  }
+
+  /// 다른 커뮤니티의 열쇠 → 나를 기다리는 것(안 읽은 부름) 수. 지금 커뮤니티는 [inboxUnread] 가 센다.
+  ///
+  /// **소켓은 지금 커뮤니티 것만 연다**(D5) — 커뮤니티마다 소켓을 쥐면 배터리가 든다. 나머지는
+  /// 들어올 때와 [otherPollEvery] 마다 수만 받는다. 값이 없으면 아직 모른다(점을 그리지 않는다).
+  final Map<String, int> otherWaiting = {};
+
+  /// 다른 커뮤니티 수를 다시 받는 간격(홈 화면이 이 간격으로 [refreshOtherCounts] 를 부른다).
+  final Duration otherPollEvery;
+
+  /// 다른 커뮤니티 중 하나라도 기다리는 것이 있나 — 머리 타일의 점.
+  bool get othersWaiting => otherWaiting.values.any((n) => n > 0);
 
   StoredCommunity? get activeCommunity {
     for (final c in communities) {
@@ -431,6 +455,7 @@ class AppState extends ChangeNotifier {
     _generation++;
     _resetSession();
     activeKey = target.key;
+    otherWaiting.remove(target.key);
     baseUrl = target.baseUrl;
     _api = _apiFactory(target.baseUrl, target.token);
     phase = AppPhase.booting;
@@ -522,6 +547,48 @@ class AppState extends ChangeNotifier {
     _openSocket();
     // 부팅을 막지 않는다 — 채널 목록이 먼저 서고 받은 것은 뒤따라 온다.
     unawaited(loadInbox());
+    _startOtherPolling();
+  }
+
+  // ── 다른 커뮤니티의 수(D5) ──────────────────────────────────────────────
+
+  /// 들어온 직후 한 번 받는다. 그 뒤 60초마다는 **홈 화면이** 부른다([HomeScreen]) — 시계를 화면
+  /// 수명에 묶어야 화면이 없을 때(로그인·부팅 화면) 돌지 않고, 시험에서도 남지 않는다.
+  void _startOtherPolling() {
+    if (!communities.any((c) => c.key != activeKey && !c.isExpired)) return;
+    unawaited(refreshOtherCounts());
+  }
+
+  /// 다른 커뮤니티마다 안 읽은 부름 수만 받는다(`GET /inbox?unread=1`). 그 커뮤니티의 토큰은 그
+  /// 커뮤니티 주소로만 간다. 401 이면 그 커뮤니티를 만료로 표시한다 — 전환 시트가 「다시 로그인」을
+  /// 미리 보인다. 끊김·5xx 는 앞 수를 그대로 둔다(틀린 0 보다 낡은 수가 낫다).
+  Future<void> refreshOtherCounts() async {
+    if (phase != AppPhase.ready) return;
+    final targets = [
+      for (final c in communities)
+        if (c.key != activeKey && !c.isExpired) c,
+    ];
+    final live = {for (final c in communities) c.key};
+    otherWaiting.removeWhere((k, _) => !live.contains(k) || k == activeKey);
+    for (final c in targets) {
+      final api = _apiFactory(c.baseUrl, c.token);
+      try {
+        final entries = await api.inbox(unreadOnly: true);
+        // 기다리는 사이 그 커뮤니티로 옮겼거나 뺐다 — 남의 자리에 수를 쓰지 않는다.
+        if (c.key == activeKey || !communities.any((x) => x.key == c.key)) continue;
+        otherWaiting[c.key] = entries.where((e) => e.isUnread).length;
+      } on ApiError catch (e) {
+        if (e.isCredentialFailure && c.key != activeKey) {
+          otherWaiting.remove(c.key);
+          await _markExpired(c.key);
+        }
+      } on Object {
+        // 다음 차례에 다시 받는다.
+      } finally {
+        api.close();
+      }
+    }
+    notifyListeners();
   }
 
   void _openSocket() {
@@ -1240,6 +1307,7 @@ class AppState extends ChangeNotifier {
     final rest = communities.where((c) => c.key != key).toList(growable: false);
     if (key != activeKey) {
       communities = rest;
+      otherWaiting.remove(key);
       notifyListeners();
       await _revoke(gone);
       await _sessions.remove(key);
@@ -1284,6 +1352,8 @@ class AppState extends ChangeNotifier {
   Future<void> signOutAll() async {
     _generation++;
     _dropSocket();
+    otherWaiting.clear();
+    homeTab = 0;
     await Future.wait([for (final c in communities) _revoke(c)]);
     await _sessions.clear();
     _generation++;

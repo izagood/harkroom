@@ -503,4 +503,7 @@ class StringsEn implements Strings {
 
   @override
   String get communityExpiredSubtitle => 'Signed out — session expired';
+
+  @override
+  String get communityManage => 'Manage communities';
 }

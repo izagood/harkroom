@@ -7,6 +7,7 @@ import 'package:harkroom/api/api_client.dart';
 import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/main.dart';
 import 'package:harkroom/session/session_store.dart';
+import 'package:harkroom/screens/community_screens.dart';
 import 'package:harkroom/state/app_state.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -25,6 +26,13 @@ class _Fake {
   /// 이 토큰이 아니면 401 — 만료를 흉내 낸다.
   String liveToken = 'tok';
   int meCalls = 0;
+
+  /// 안 읽은 부름 수(`/inbox`). 다른 커뮤니티 수(D5)를 흉내 낸다.
+  int unreadInbox = 0;
+  int inboxAsks = 0;
+
+  /// 채우면 `/channels` 가 그때까지 매달린다 — 부팅 화면이 실제로 서게 한다.
+  Future<void>? holdChannels;
 
   /// `/auth/logout` 에 실려 온 토큰들(security F2).
   final logouts = <String?>[];
@@ -56,6 +64,7 @@ class _Fake {
           return _json({'id': claimedId, 'handle': handle, 'displayName': handle, 'isAdmin': false});
         }
         if (path == '/channels') {
+          if (holdChannels case final hold?) await hold;
           return _json({
             'channels': [
               {'id': '$name-c1', 'name': '$name-general', 'kind': 'standard'},
@@ -65,7 +74,23 @@ class _Fake {
         if (path == '/ws-ticket') return _json({'ticket': 'tk'});
         if (path == '/accounts') return _json({'accounts': <Object?>[]});
         if (path == '/reads') return _json({'reads': <Object?>[]});
-        if (path.startsWith('/inbox')) return _json({'entries': <Object?>[]});
+        if (path.startsWith('/inbox')) {
+          inboxAsks++;
+          return _json({
+            'entries': [
+              for (var i = 0; i < unreadInbox; i++)
+                {
+                  'id': i + 1,
+                  'messageId': 'm$i',
+                  'reason': 'mention',
+                  'channelId': '$name-c1',
+                  'body': '부름 $i',
+                  'createdAt': '2026-10-01T00:00:00Z',
+                  'readAt': null,
+                },
+            ],
+          });
+        }
         if (path.endsWith('/messages')) return _json({'messages': <Object?>[], 'hasMore': false});
         if (path.endsWith('/auto-mentions')) return _json({'autoMentions': <Object?>[]});
         return _json({'error': {'code': 'not_found', 'message': path}}, 404);
@@ -136,6 +161,9 @@ void main() {
       f.logouts.clear();
       f.logoutStatus = 204;
       f.claimedId = f.meId;
+      f.unreadInbox = 0;
+      f.inboxAsks = 0;
+      f.holdChannels = null;
     }
   });
 
@@ -282,6 +310,113 @@ void main() {
     });
   });
 
+  group('M2 머리 타일·전환 시트', () {
+    Future<AppState> pumpHome(WidgetTester tester, String seed) async {
+      final app = _app(SessionStore.inMemory(seed: seed));
+      addTearDown(app.dispose);
+      await tester.pumpWidget(HarkroomApp(state: app));
+      await _settle(tester);
+      return app;
+    }
+
+    testWidgets('시트에서 옮기면 채널 탭·목록으로 가고 토스트가 선다', (tester) async {
+      final app = await pumpHome(tester, _seed());
+      // 나 탭에 있다가 머리로 갈 길은 없지만, 인박스 탭에서 채널 탭으로 돌아와 시트를 연다 —
+      // 시트 전환은 어느 탭에서 왔든 채널 탭으로 간다.
+      await tester.tap(find.byKey(const Key('tab-inbox')));
+      await _settle(tester);
+      await tester.tap(find.byKey(const Key('tab-channels')));
+      await _settle(tester);
+      await tester.tap(find.byKey(const Key('community-header')));
+      await _settle(tester);
+      expect(find.byKey(const Key('community-switcher')), findsOneWidget);
+      app.selectTab(1); // 시트가 떠 있는 동안 탭이 바뀌어도 시트 전환은 채널 탭으로 간다.
+      await tester.tap(find.byKey(Key('switcher-$_betaKey')));
+      await _settle(tester);
+
+      expect(app.activeKey, _betaKey);
+      expect(app.homeTab, 0);
+      expect(find.byKey(const Key('channel-beta-c1')), findsOneWidget);
+      expect(find.byKey(const Key('community-switched-toast')), findsOneWidget);
+    });
+
+    testWidgets('나 탭에서 옮기면 부팅 화면을 거쳐도 나 탭에 남는다', (tester) async {
+      final app = await pumpHome(tester, _seed());
+      await tester.tap(find.byKey(const Key('tab-me')));
+      await _settle(tester);
+      final gate = Completer<void>();
+      _beta.holdChannels = gate.future;
+      await tester.tap(find.byKey(Key('me-community-$_betaKey')));
+      await _settle(tester);
+      await tester.tap(find.byKey(const Key('community-switch')));
+      await _settle(tester);
+      // 부팅 화면이 서 있다 — 홈이 통째로 내려갔다.
+      expect(app.phase, AppPhase.booting);
+      expect(find.byKey(const Key('tab-me')), findsNothing);
+
+      gate.complete();
+      await _settle(tester);
+      expect(app.phase, AppPhase.ready);
+      expect(app.homeTab, 2);
+      expect(find.byKey(const Key('me-community-add')), findsOneWidget);
+    });
+
+    testWidgets('다른 커뮤니티 수는 들어올 때와 60초마다 받고, 있으면 머리 타일에 점이 선다', (tester) async {
+      _beta.unreadInbox = 2;
+      final app = await pumpHome(tester, _seed());
+      expect(app.otherWaiting[_betaKey], 2);
+      expect(find.byKey(const Key('community-header-dot')), findsOneWidget);
+
+      _beta.unreadInbox = 0;
+      final asked = _beta.inboxAsks;
+      await tester.pump(const Duration(seconds: 59));
+      expect(_beta.inboxAsks, asked, reason: '60초 전에는 다시 묻지 않는다');
+      await tester.pump(const Duration(seconds: 2));
+      await _settle(tester);
+      expect(_beta.inboxAsks, asked + 1);
+      expect(app.otherWaiting[_betaKey], 0);
+      expect(find.byKey(const Key('community-header-dot')), findsNothing);
+    });
+
+    testWidgets('시트는 다른 커뮤니티의 수와 만료 칩을 보이고, ⚙ 관리는 나 탭으로 간다', (tester) async {
+      _beta.unreadInbox = 3;
+      final app = await pumpHome(tester, _seed());
+      await tester.tap(find.byKey(const Key('community-header')));
+      await _settle(tester);
+      expect(
+        find.descendant(of: find.byKey(Key('switcher-$_betaKey')), matching: find.text('3')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('switcher-manage')));
+      await _settle(tester);
+      expect(app.homeTab, 2);
+      expect(find.byKey(const Key('me-community-add')), findsOneWidget);
+    });
+
+    test('다른 커뮤니티가 401 이면 그 커뮤니티를 만료로 표시한다 — 지금 커뮤니티는 그대로', () async {
+      final app = _app(SessionStore.inMemory(seed: _seed()));
+      await app.boot();
+      _beta.liveToken = '바뀜';
+      await app.refreshOtherCounts();
+      expect(app.communities.firstWhere((c) => c.key == _betaKey).isExpired, isTrue);
+      expect(app.otherWaiting.containsKey(_betaKey), isFalse);
+      expect(app.phase, AppPhase.ready);
+      expect(app.activeKey, _acmeKey);
+    });
+
+    test('조사 로/으로', () {
+      expect(koreanRo('회사'), '로');
+      expect(koreanRo('연구실'), '로');
+      expect(koreanRo('본부'), '로');
+      expect(koreanRo('학교 팀'), '으로');
+      expect(koreanRo('lab'), '으로');
+      expect(koreanRo('acme'), '로');
+      expect(koreanRo('beta.example.com'), '으로');
+      expect(koreanRo('team2'), '로');
+      expect(koreanRo('v3'), '으로');
+    });
+  });
+
   group('나 탭', () {
     Future<AppState> pumpApp(WidgetTester tester, String seed) async {
       final app = _app(SessionStore.inMemory(seed: seed));
@@ -355,6 +490,7 @@ void main() {
       final url = tester.widget<TextField>(find.byKey(const Key('community-add-url')));
       expect(url.controller!.text, _betaUrl);
       expect(url.readOnly, isTrue);
+      expect(find.byKey(const Key('community-add-url-locked')), findsOneWidget);
 
       await tester.enterText(find.byKey(const Key('community-add-login-id')), 'beta-jb');
       await tester.enterText(find.byKey(const Key('community-add-password')), 'pw');

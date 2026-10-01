@@ -289,6 +289,9 @@ abstract class Strings {
   /// 토큰이 죽은 커뮤니티. 지우지 않고 이 말로 남긴다.
   String get communityExpired;
 
+  /// 전환 시트 — 나 탭의 커뮤니티 목록으로 간다.
+  String get communityManage;
+
   /// 만료된 커뮤니티 행의 부제.
   String get communityExpiredSubtitle;
 
@@ -307,7 +310,7 @@ abstract class Strings {
   /// 커뮤니티 화면에서 그리로 옮긴다.
   String get communitySwitchTo;
 
-  /// 옮긴 직후 토스트. `{name}`·`{handle}` 이 바뀐다.
+  /// 옮긴 직후 토스트. `{name}`·`{handle}` 과 조사 `{ro}`(로/으로 — 쓰지 않는 언어는 빼도 된다)가 바뀐다.
   String get communitySwitched;
 
   /// 이 기기에서만 쓰는 커뮤니티 이름.
@@ -628,6 +631,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'communityAdd': s.communityAdd,
       'communityCurrent': s.communityCurrent,
       'communityExpired': s.communityExpired,
+      'communityManage': s.communityManage,
       'communityExpiredSubtitle': s.communityExpiredSubtitle,
       'communitySignOutAll': s.communitySignOutAll,
       'communitySignOutAllConfirm': s.communitySignOutAllConfirm,

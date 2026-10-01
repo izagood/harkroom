@@ -5,6 +5,7 @@ import '../state/app_scope.dart';
 import '../ui/states.dart';
 import '../ui/parts.dart';
 import '../ui/tokens.dart';
+import 'community_screens.dart';
 import 'message_list_screen.dart';
 
 /// 채널 목록. 폰의 루트 화면이고, 여기서 채널을 **밀어 넣어** 연다(옆 패널이 아니다).
@@ -17,8 +18,10 @@ class ChannelListScreen extends StatelessWidget {
     final app = context.app;
 
     return Scaffold(
+      // 머리 왼쪽이 커뮤니티 자리다(설계 ①) — 데스크탑 레일 맨 위 타일과 같은 규칙.
       appBar: AppBar(
-        title: Text(t.channelsTitle),
+        titleSpacing: 8,
+        title: app.activeCommunity == null ? Text(t.channelsTitle) : const CommunityHeader(),
       ),
       body: SafeArea(
         child: Column(
@@ -31,6 +34,8 @@ class ChannelListScreen extends StatelessWidget {
               child: app.channels.isEmpty
                   ? Center(child: Text(t.channelsEmpty))
                   : ListView.builder(
+                      // 커뮤니티를 옮기면 맨 위부터 — 앞 커뮤니티의 스크롤 자리를 이어받지 않는다(설계 ④).
+                      key: PageStorageKey('channels-${app.activeKey}'),
                       itemCount: app.channels.length,
                       itemBuilder: (context, i) {
                         final channel = app.channels[i];
