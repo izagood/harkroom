@@ -525,6 +525,19 @@ export class DaemonServer {
           return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
         }
       }
+      case 'claudeAccountOpenTerminal': {
+        const port = this.requireAccounts();
+        if (isDaemonError(port)) return port;
+        const ref = readAccountRef(req.payload);
+        if (isDaemonError(ref)) return ref;
+        try {
+          await port.openTerminal(ref.pool, ref.account);
+          this.log(`계정 터미널 열기: ${ref.pool}/${ref.account}`);
+          return {};
+        } catch (err) {
+          return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
+        }
+      }
       case 'claudePoolRemove': {
         const port = this.requireAccounts();
         if (isDaemonError(port)) return port;

@@ -11,7 +11,7 @@
  */
 import { EventEmitter } from 'node:events';
 import { mkdtempSync } from 'node:fs';
-import { mkdir, readFile, stat } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -129,6 +129,17 @@ describe('로그인 성공 직후 계정 관문을 적는다 (2026-10-01)', () =
     await vi.waitFor(() => expect(h.events.some((e) => e.done)).toBe(true));
     const doc = JSON.parse(await readFile(join(h.root, 'work', 'acct-0a1b2c3d', '.claude.json'), 'utf8'));
     expect(doc).toMatchObject({ hasCompletedOnboarding: true, autoModeEnvSetup: { dismissed: true } });
+  });
+
+  it('다시 로그인하면 관문 표식을 지운다 — 옛 로그인의 사정이다(아직 막혀 있으면 러너가 다시 세운다)', async () => {
+    const h = harness({ loggedIn: true });
+    const dir = join(h.root, 'work', 'aria');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, '.harkroom-attention.json'), JSON.stringify({ kind: 'gate', atMs: 1 }));
+    await h.port.loginStart('work', 'aria', { reauth: true });
+    h.children[0]!.emit('exit', 0, null);
+    await vi.waitFor(() => expect(h.events.some((e) => e.done)).toBe(true));
+    await expect(stat(join(dir, '.harkroom-attention.json'))).rejects.toThrow();
   });
 
   it('미로그인으로 끝나면 적지 않는다 — 디렉터리는 원래대로 치운다', async () => {

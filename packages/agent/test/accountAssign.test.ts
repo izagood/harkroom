@@ -182,6 +182,28 @@ describe('pickAccount — 같은 로그인은 후보 한 자리 (09-30 qa 실측
   });
 });
 
+describe('pickAccount — 관문에 막힌 계정 (2026-10-01)', () => {
+  it('새 배정에서 빠지고 꼬리 맨 뒤로 간다 — 점수가 1등이어도', () => {
+    const r = pickAccount(input([
+      entry('a', { weekly: 0, weeklyResetH: 10 }),
+      entry('b', { weekly: 50 }),
+      entry('c', { weekly: 60 }),
+    ], { blocked: new Set(['a']) }));
+    expect(r.order[0]).not.toBe('a');
+    expect(r.order.at(-1)).toBe('a');
+  });
+
+  it('고정된 스레드도 옮긴다 — 그 계정으로는 프롬프트조차 못 넣는다', () => {
+    const r = pickAccount(input([entry('a'), entry('b')], { accounts: ['a', 'b'], pinned: 'a', blocked: new Set(['a']) }));
+    expect(r).toMatchObject({ reason: 'moved', order: ['b', 'a'] });
+  });
+
+  it('사용량을 모를 때도 막힌 계정은 맨 뒤다', () => {
+    const r = pickAccount(input([], { accounts: ['a', 'b'], blocked: new Set(['a']) }));
+    expect(r.order).toEqual(['b', 'a']);
+  });
+});
+
 describe('createAccountAssigner', () => {
   const acct = (name: string) => ({ name, configDir: `/x/${name}` });
 
@@ -276,5 +298,21 @@ describe('createAccountAssigner', () => {
     expect((await as.laneFor('t1')).map((a) => a?.name)).toEqual(['a', 'b']);
     lane = [acct('b'), acct('c')]; // a 를 지우고 c 를 더했다
     expect((await as.laneFor('t2')).map((a) => a?.name)).toEqual(['c', 'b']);
+  });
+
+  it('관문 표식이 유효한 계정을 막힌 계정으로 넘긴다 — 30분 지난 표식은 무시', async () => {
+    const root = await rootWith([
+      { ...entry('a', { weekly: 0, weeklyResetH: 10 }), pool: 'work' },
+      { ...entry('b', { weekly: 50 }), pool: 'work' },
+    ]);
+    let atMs = NOW - 60_000;
+    const as = createAccountAssigner({
+      lane: [acct('a'), acct('b')], pool: 'work', root,
+      pinnedOf: () => null, now: () => NOW, random: () => 0, log: () => {},
+      readAttention: async (dir) => (dir === '/x/a' ? { kind: 'gate', atMs } : null),
+    });
+    expect((await as.laneFor('t1'))[0]!.name).toBe('b');
+    atMs = NOW - 31 * 60_000;
+    expect((await as.laneFor('t2'))[0]!.name).toBe('a');
   });
 });

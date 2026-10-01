@@ -22,7 +22,7 @@ import {
 } from './prompt.js';
 import { exhausted, isHarnessStall, isQuotaExhausted, isSessionIdConflict, isThreadModelRejected, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
 import type { SecretLeases } from './secretLeases.js';
-import { PromptNotDeliveredError } from './pty.js';
+import { looksLikeGate, PromptNotDeliveredError } from './pty.js';
 
 /**
  * `tried` 번 실패한 entry 가 다음 시도까지 쉬는 시간(ms).
@@ -126,6 +126,16 @@ export interface MentionSchedulerDeps {
    * 모델별 주간 창(Opus 등)을 **이 턴이 실제로 쓸 모델**로 봐야 지정한 스레드가 찬 계정을 피한다.
    */
   laneFor?(threadKey: string, anchorMessageId?: string): Promise<readonly (ClaudeAccount | null)[]>;
+  /**
+   * **사람이 지나야 하는 관문**의 표식(2026-10-01, `@harkroom/shared/claudeGates`). 이 계정의 턴이
+   * 프롬프트를 넣기 전 관문에 막혀 넘어가면 `mark`, 이 계정으로 턴이 끝까지 돌면 `clear` 를 부른다.
+   * 설정 화면이 그 표식으로 "승인 필요"와 [터미널 열기]를 보이고, 배정기는 그 계정을 새 배정에서 뺀다.
+   * 둘 다 **던지지 않아야 한다** — 표식은 관찰이지 턴의 조건이 아니다. 생략하면 아무것도 안 남긴다.
+   */
+  accountAttention?: {
+    mark(account: ClaudeAccount): Promise<void>;
+    clear(account: ClaudeAccount): Promise<void>;
+  };
   runMentionTurn(deps: MentionTurnDeps, target: MentionTarget): Promise<MentionTurnResult>;
   /** 계정 두 필드까지 채운 완성 deps 를 만든다. 조립은 main 이 갖는다. */
   buildTurnDeps(args: {
@@ -306,6 +316,21 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         lane,
         (account, isLastAccount) => deps.runMentionTurn(
           deps.buildTurnDeps({ ctx, mention, account, isLastAccount }), target,
+        ).then(
+          (result) => {
+            if (account) void deps.accountAttention?.clear(account).catch(() => undefined);
+            return result;
+          },
+          (err: unknown) => {
+            // 화면이 **사람의 선택을 기다린다**(`kind: 'waiting'` — 입력창이 아닌 화면을 그리고 멈췄다,
+            // 문구가 아니라 상태로 판정한다: `pty.ts::waitingQuietMs`). 상한에 닿은 것(`timeout`)은
+            // 표시하지 않는다 — 그 계정을 30분 빼 둘 근거가 없다. 화면 원문은 넘기지 않는다 —
+            // 조직 설정 값이 들어 있을 수 있다(`claudeGates.ts`).
+            if (account && err instanceof PromptNotDeliveredError && err.kind === 'waiting') {
+              void deps.accountAttention?.mark(account).catch(() => undefined);
+            }
+            throw err;
+          },
         ),
         // 이유는 종류만 적는다 — 화면 원문은 조직 설정 값을 담을 수 있다(`AccountFailureKind`).
         (from, to, why) => console.error(

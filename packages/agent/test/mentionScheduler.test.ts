@@ -728,3 +728,57 @@ describe('계정 축 소진 통지', () => {
     expect(h.failed[0]!.body).not.toContain('collector');
   });
 });
+
+describe('mentionScheduler 관문 표식 (사람이 지나야 하는 관문, 2026-10-01)', () => {
+  // 설정 화면의 [터미널 열기]가 이 표식을 보고 선다. 화면 원문은 넘기지 않는다.
+  const a = { name: 'a', configDir: '/x/a' };
+  const b = { name: 'b', configDir: '/x/b' };
+  const GATE_SCREEN = 'Managed settings require approval\n\u276f 1. Yes, I trust these settings\n  2. No, exit\nEnter to confirm';
+
+  function run(failA: Error | null) {
+    const marked: string[] = [];
+    const cleared: string[] = [];
+    const scheduler = createMentionScheduler({
+      harkroom: { markRead: async (ids) => ids.length, post: async () => 1, fail: async () => 1 },
+      registry: new TurnRegistry(),
+      queue: new MentionQueue(),
+      accountLane: [a, b],
+      accountAttention: {
+        mark: async (acc) => { marked.push(acc.name); },
+        clear: async (acc) => { cleared.push(acc.name); },
+      },
+      runMentionTurn: async (d) => {
+        if ((d as unknown as string) === 'a' && failA) throw failA;
+        return { stopRequestedAt: null };
+      },
+      buildTurnDeps: ({ account }) => (account?.name ?? null) as never,
+      hooks: { stopRequested: () => {}, exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {} },
+      startedAtMs: 0,
+    });
+    return { scheduler, marked, cleared };
+  }
+
+  it('선택 대기(waiting)로 넘긴 계정은 표시하고, 돌아간 계정의 표식은 지운다', async () => {
+    const h = run(new PromptNotDeliveredError(3_000, GATE_SCREEN, 'waiting'));
+    await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.marked).toEqual(['a']);
+    expect(h.cleared).toEqual(['b']);
+  });
+
+  it('상한에 닿은 준비 실패(timeout)는 표시하지 않는다 — 화면에 관문 글자가 있어도 상태가 기준이다', async () => {
+    const h = run(new PromptNotDeliveredError(60_000, GATE_SCREEN, 'timeout'));
+    await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.marked).toEqual([]);
+  });
+
+  it('성공한 첫 계정의 표식도 지운다 — 사람이 지난 뒤 다시 후보가 된다', async () => {
+    const h = run(null);
+    await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.marked).toEqual([]);
+    expect(h.cleared).toEqual(['a']);
+  });
+});
+

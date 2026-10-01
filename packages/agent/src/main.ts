@@ -44,6 +44,7 @@ import { TurnRegistry } from './turnRegistry.js';
 import { MentionQueue } from './mentionQueue.js';
 import { claudeAccountsRoot, createLiveAccountLane, loadClaudeAccountLane, presentAccounts } from './claudeAccounts.js';
 import { createAccountAssigner } from './accountAssign.js';
+import { clearAccountAttention, markAccountNeedsAttention } from '@harkroom/shared/claudeGates';
 import { syncCodexAuth } from './codexHome.js';
 import { allXdgApps, usesPiHome, usesXdgHome, xdgAppFor } from './adapters/index.js';
 import { ensurePiHome } from './piHome.js';
@@ -496,6 +497,11 @@ const scheduler = createMentionScheduler({
       .then((d) => resolveTurnModel(harkroom, d, anchor ?? null))
       .then((m) => m.model, () => null),
   )),
+  // 사람이 지나야 하는 관문에 막힌 계정을 표시한다(설정 › Claude 계정의 [터미널 열기], 2026-10-01).
+  accountAttention: {
+    mark: (a) => markAccountNeedsAttention(a.configDir, Date.now()),
+    clear: async (a) => { await clearAccountAttention(a.configDir); },
+  },
   runMentionTurn,
   // 계정별로 갈리는 두 필드(`claudeAccount`·`claudeConfigDir`)만 계정 축이 채운다 —
   // 나머지는 계정과 무관하므로 매번 같은 값이다.

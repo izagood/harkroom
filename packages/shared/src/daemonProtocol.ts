@@ -92,6 +92,8 @@ export const REQUEST_TYPES = [
   'claudeAccountRemove',
   'claudePoolRemove',
   'claudeAccountMove',
+  // 사람이 지나야 하는 관문을 그 계정의 터미널에서 고르게 한다(2026-10-01). 이름만 받는다.
+  'claudeAccountOpenTerminal',
   // codex 계정(2026-09-28). claude 와 달리 풀이 없고 `active.json` 이 한 계정을 가리킨다
   // (`codexAccounts.ts` 머리 주석). 로그인은 브라우저가 localhost 로 돌아오므로 코드 제출이 없다.
   'codexAccountsList',
