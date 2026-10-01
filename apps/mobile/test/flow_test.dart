@@ -98,7 +98,6 @@ MockClient _server() => MockClient((req) async {
         // `m.id = $2` 와 `thread_root_id = $2` 를 합친다). 예전 가짜는 답글만 줘서, 화면이
         // 루트를 두 번 그리는 것을 시험이 못 봤다.
         return _json({
-          // 서버의 `?thread=` 는 **원글도 싣는다**(`id = m.id OR thread_root_id = m.id`).
           'messages': [
             {
               'id': 'm1',

@@ -119,25 +119,9 @@ class _ThreadScreenState extends State<ThreadScreen> {
         break;
       }
     }
-    // 원글이 받은 채널 페이지보다 오래되면(인박스에서 오래된 스레드를 열 때) 채널 목록에 없다 —
-    // 그때는 `?thread=` 응답에 실린 원글을 쓴다. 답글 목록에서는 원글을 빼므로, 여기서 집지 않으면
-    // 원글이 어디에도 안 보인다(security #1040).
-    if (root == null) {
-      for (final m in app.threads[widget.rootId] ?? const <MessageRow>[]) {
-        if (m.id == widget.rootId) {
-          root = m;
-          break;
-        }
-      }
-    }
     // 채널 화면에서 들어온 답글은 **말풍선이 되는 것만** 그린다(`progress`·`wake` 제외) —
     // 채널에서와 같은 기준이어야 같은 스레드가 두 화면에서 달라 보이지 않는다.
-    // **원글은 빼고 그린다.** 서버의 `?thread=` 응답은 원글도 싣는다 — 위에 따로 그린 원글이
-    // 답글 맨 앞에 한 번 더 나왔다(designer S4b 그림).
-    final replyRows = (app.threads[widget.rootId] ?? const <MessageRow>[])
-        .where((m) => m.id != widget.rootId)
-        .toList(growable: false);
-    final replies = buildFeed(replyRows);
+    final replies = buildFeed(app.threads[widget.rootId] ?? const <MessageRow>[]);
     final failed = app.failedSends[widget.rootId] ?? const <FailedSend>[];
     final load = app.threadLoad[widget.rootId];
     // 머리 모델 줄에 세울 에이전트: 스레드 글의 작성자 중 에이전트 + 본문이 부른 에이전트.
