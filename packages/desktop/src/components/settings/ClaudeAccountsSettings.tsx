@@ -167,6 +167,8 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
    * 계정마다 `claude auth status` 를 띄우므로 평소에 포커스마다 돌리지 않는다.
    */
   const [terminalOpened, setTerminalOpened] = useState<string | null>(null);
+  /** 터미널에서 돌아와 표식이 사라진 계정(`pool/account`). 한 번 알리고 다음 조회 때 내린다. */
+  const [terminalBack, setTerminalBack] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!available) return;
@@ -182,6 +184,18 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  // 다시 읽은 목록에서 그 계정의 표식이 사라졌으면 끝이다 — 안내를 "돌아왔다"로 바꾸고 포커스마다
+  // 다시 읽기도 멈춘다(designer D3). 아직 남아 있으면(사람이 고르지 않고 나왔다) 그대로 둔다.
+  useEffect(() => {
+    if (!terminalOpened || !snap) return;
+    const [poolName, accountName] = terminalOpened.split('/');
+    const acct = snap.pools.find((p) => p.name === poolName)?.accounts.find((a) => a.name === accountName);
+    if (acct && !acct.attention) {
+      setTerminalOpened(null);
+      setTerminalBack(terminalOpened);
+    }
+  }, [snap, terminalOpened]);
+
   useEffect(() => {
     if (!terminalOpened) return;
     const onFocus = (): void => { void refresh(); };
@@ -193,6 +207,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
     try {
       await openClaudeAccountTerminal(pool, account);
       setTerminalOpened(`${pool}/${account}`);
+      setTerminalBack(null);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -518,30 +533,6 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                       Sign in again
                     </button>
                   )}
-                  {/*
-                    러너가 이 계정을 **사람이 지나야 하는 관문** 때문에 건너뛰었다(조직 관리 설정 승인 등).
-                    러너는 그 화면을 대신 누르지 않는다 — 여기서 그 계정의 터미널을 열어 사람이 고른다.
-                  */}
-                  {a.attention && (
-                    <span
-                      className="shrink-0 text-warning"
-                      data-testid="claude-account-attention"
-                      title="A runner skipped this account because Claude Code is waiting for your choice on a setup or approval screen. New threads skip it until you deal with it."
-                    >
-                      needs your approval
-                    </span>
-                  )}
-                  {a.attention && (
-                    <button
-                      type="button"
-                      className="shrink-0 text-accent underline hover:text-fg"
-                      aria-label={`Open a terminal for ${a.name}`}
-                      data-testid="claude-account-attention-open"
-                      onClick={() => { void openTerminal(pool.name, a.name); }}
-                    >
-                      Open terminal
-                    </button>
-                  )}
                 </span>
 
                 <span className="relative flex justify-end">
@@ -572,6 +563,31 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                   />
                 </span>
               </div>
+              {/*
+                러너가 이 계정을 **사람의 선택을 기다리는 화면** 때문에 건너뛰었다(조직 관리 설정 승인·첫 실행
+                등 — 판정은 문구가 아니라 상태다, `agent/src/pty.ts::waitingQuietMs`). 러너는 그 화면을 대신
+                누르지 않는다 — 여기서 그 계정의 터미널을 열어 사람이 고른다. 이유를 툴팁이 아니라 줄로
+                보인다(designer D1): 무슨 일이 생기는지가 늘 보여야 하고, 메일 칸을 밀어내지 않는다.
+              */}
+              {a.attention && (
+                <div
+                  className="flex flex-wrap items-baseline gap-x-2 px-4 pb-2.5 text-meta"
+                  data-testid="claude-account-attention"
+                >
+                  <span className="text-warning">
+                    ⚠ Claude Code is waiting for your choice on a setup screen. New threads skip this account.
+                  </span>
+                  <button
+                    type="button"
+                    className="shrink-0 text-accent underline hover:text-fg"
+                    aria-label={`Open a terminal for ${a.name}`}
+                    data-testid="claude-account-attention-open"
+                    onClick={() => { void openTerminal(pool.name, a.name); }}
+                  >
+                    Open terminal
+                  </button>
+                </div>
+              )}
               {pu ? (
                 <div className="px-4 pb-2.5" data-testid={`claude-provider-usage-${pool.name}-${a.name}`}>
                   <ProviderUsageBars usage={pu} nowMs={providerSnap!.measuredAtMs} />
@@ -593,6 +609,11 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
           {terminalOpened && pool.accounts.some((a) => `${pool.name}/${a.name}` === terminalOpened) && (
             <div className="px-4 py-3 text-meta text-fg" data-testid="claude-account-terminal-note">
               Opened Terminal for {terminalOpened}. Make your choice there, then type /exit — new threads use this account again after that.
+            </div>
+          )}
+          {terminalBack && pool.accounts.some((a) => `${pool.name}/${a.name}` === terminalBack) && (
+            <div className="px-4 py-3 text-meta text-fg" data-testid="claude-account-terminal-back">
+              {terminalBack} is back — new threads can use it again.
             </div>
           )}
         </SettingsGroup>

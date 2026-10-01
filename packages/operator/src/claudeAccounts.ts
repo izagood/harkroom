@@ -27,7 +27,7 @@
 // 된다. 구조를 읽고 쓰는 일은 상태와 무관하므로 그 경계를 갈라 둔다.
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -508,6 +508,8 @@ export function terminalScript(o: { configDir: string; workDir: string; label: s
     `echo ${shQuote(`harkroom: ${o.label} 계정의 Claude Code 다. 뜨는 화면을 직접 고르고, 끝나면 /exit 로 나온다.`)}`,
     'claude',
     `rm -f ${shQuote(join(o.configDir, CLAUDE_ATTENTION_FILE))}`,
+    // 막 만든 작업 폴더를 치운다. 비었을 때만 지워진다(`rmdir`) — 사람이 무언가 남겼으면 그대로 둔다.
+    `cd / && rmdir ${shQuote(o.workDir)} 2>/dev/null`,
     `echo ${shQuote('harkroom: 끝났다. 이 창은 닫아도 된다 — 다음 턴부터 이 계정을 다시 쓴다.')}`,
     '',
   ].join('\n');
@@ -664,14 +666,21 @@ export function createClaudeAccountsPort(opts: {
       if (!(await stat(dir).then((s) => s.isDirectory(), () => false))) {
         throw new Error(`계정이 없다: ${pool}/${account}`);
       }
-      // 작업 폴더는 harkroom 이 만든 빈 폴더다. 뿌리의 점 디렉터리라 풀·계정 문법에 안 걸린다
-      // (`[a-z0-9-]`). 그 계정이 이 폴더를 이미 신뢰했다고 적어 둔다 — 폴더 신뢰 화면이 먼저 뜨면
-      // 사람이 고쳐야 할 관문이 그 뒤에 가린다. 첫 실행 화면도 같은 이유로 미리 지난다.
-      const workDir = join(root, '.terminal');
-      await mkdir(workDir, { recursive: true, mode: 0o700 });
+      // 작업 폴더는 **열 때마다 새로 만든 빈 폴더**다(`mkdtemp`, security 권고 10-01). 그 계정이
+      // 이 폴더를 신뢰했다고 적어 둔다 — 폴더 신뢰 화면이 먼저 뜨면 사람이 고쳐야 할 관문이 그 뒤에
+      // 가린다. 첫 실행 화면도 같은 이유로 미리 지난다.
+      //
+      // **한 폴더를 계속 신뢰해 두지 않는 이유**: 신뢰한 폴더의 `.claude/settings.json`(훅)·`.mcp.json`·
+      // `CLAUDE.md` 는 확인 없이 읽힌다. 남아 있는 폴더면 누가(프롬프트 주입에 넘어간 에이전트 등)
+      // 파일 하나로 사람의 대화 세션에 훅을 심을 수 있다. 막 만든 빈 폴더에는 그런 것이 없다.
+      // 스크립트도 그 폴더 **밖**(`.terminal/` 바로 밑)에 둔다. 뿌리의 점 디렉터리라 풀·계정 문법에
+      // 안 걸린다(`[a-z0-9-]`). 세션이 끝나면 스크립트가 빈 작업 폴더를 지운다(`rmdir` — 비었을 때만).
+      const base = join(root, '.terminal');
+      await mkdir(base, { recursive: true, mode: 0o700 });
+      const workDir = await mkdtemp(join(base, 'session-'));
       await markClaudeAccountGates(dir).catch(() => undefined);
       await markClaudeWorkspaceTrusted(dir, workDir).catch(() => undefined);
-      const script = join(workDir, `${pool}-${account}.command`);
+      const script = join(base, `${pool}-${account}.command`);
       await writeFile(script, terminalScript({ configDir: dir, workDir, label: `${pool}/${account}` }), { mode: 0o700 });
       await (opts.openInTerminal ?? nodeOpenInTerminal)(script);
     },

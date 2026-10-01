@@ -4,7 +4,7 @@
 // 누르면 데몬이 그 계정의 `CLAUDE_CONFIG_DIR` 로 Terminal.app 의 `claude` 를 연다. 여기서 재는 것:
 // 목록이 표식을 싣는가, 스크립트가 무엇을 하는가(경로 인용·표식 지우기), 진짜 창은 띄우지 않는다.
 import { mkdtempSync } from 'node:fs';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -52,9 +52,19 @@ describe('openTerminal', () => {
     expect(script).toContain(`export CLAUDE_CONFIG_DIR='${acct}'`);
     expect(script).toContain(`rm -f '${join(acct, CLAUDE_ATTENTION_FILE)}'`);
     expect((await stat(h.opened[0]!)).mode & 0o777).toBe(0o700);
-    // 폴더 신뢰 화면이 먼저 떠서 진짜 관문을 가리지 않게.
+    // 작업 폴더는 열 때마다 새로 만든 빈 폴더이고, 그 폴더만 신뢰한다(security ★).
+    const cwd = /^cd '([^']+)'/m.exec(script)![1]!;
+    expect(cwd.startsWith(join(h.root, '.terminal', 'session-'))).toBe(true);
+    expect(await readdir(cwd)).toEqual([]);
     const doc = JSON.parse(await readFile(join(acct, '.claude.json'), 'utf8'));
-    expect(doc.projects[join(h.root, '.terminal')]).toEqual({ hasTrustDialogAccepted: true });
+    expect(doc.projects[cwd]).toEqual({ hasTrustDialogAccepted: true });
+    expect(doc.projects[join(h.root, '.terminal')]).toBeUndefined();
+    // 스크립트는 작업 폴더 밖에 있다 — 신뢰한 폴더 안에 실행 파일을 두지 않는다.
+    expect(h.opened[0]!.startsWith(cwd)).toBe(false);
+    // 두 번 열면 다른 폴더다 — 앞 세션이 남긴 것을 다음 세션이 읽지 않는다.
+    await h.port.openTerminal('work', 'aria');
+    const cwd2 = /^cd '([^']+)'/m.exec(await readFile(h.opened[1]!, 'utf8'))![1]!;
+    expect(cwd2).not.toBe(cwd);
     // 뿌리의 `.terminal` 은 풀도 계정도 아니다.
     expect((await h.port.list()).pools.map((p) => p.name)).toEqual(['work']);
   });
