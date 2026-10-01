@@ -575,6 +575,19 @@ describe('buildSystemPrompt', () => {
     expect(s).toContain('`message.fail` 의 `code` 는 러너가 붙이는 표지다');
   });
 
+  it('다른 에이전트를 부를 때 agentModels 로 모델을 고르는 법을 알려 준다 (스레드별 모델 지정 후속, 2026-10-01)', () => {
+    const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] }, turnBudgetMs: 30 * 60_000 });
+    // 도구 이름 셋 — 이름이 바뀌면 지시문이 없는 도구를 가리키게 된다.
+    expect(s).toContain('`agentModels`');
+    expect(s).toContain('`agent.modelOptions(handle)`');
+    expect(s).toContain('`message.delegate`');
+    // 지켜야 할 것: 목록이 비면 고르지 않는다 · 이유 한 줄 · 자기 자신 금지 · 사람 지정은 건드리지 않는다.
+    expect(s).toContain('목록이 비어 있으면 고르지 말고');
+    expect(s).toContain('이유를 본문에 한 줄');
+    expect(s).toContain('자기 자신의 모델은');
+    expect(s).toContain('사람이 그 스레드에 정해 둔 모델은 덮거나 풀지 마라');
+  });
+
   it('기다릴 것이 있으면 turn.wake 로 예약하라고 지시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] }, turnBudgetMs: 30 * 60_000 });
     expect(s).toContain('turn.wake');
