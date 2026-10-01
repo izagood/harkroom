@@ -59,13 +59,15 @@ export function harnessTailNotice(tail: string, pat: string, secrets: readonly s
   /**
    * 마운트한 비밀 값(비밀 보관소 D7 후속). 바늘은 러너가 그 턴의 디렉터리에서 만든다(`secretLeases.needles`) —
    * 긴 것부터 온다. 가리지 않으면 이 통지가 서버 D5(`secret_in_body`)에 통째로 막혀 실패 안내가 사라진다.
-   * PTY 는 긴 줄을 화면 폭에서 접는다 — 접힌 값은 바늘에 안 맞는다. 줄바꿈을 걷어 낸 사본에서 걸리면 **출력을
-   * 통째로 싣지 않는다**(일부만 가리면 나머지 조각이 남는다).
+   *
+   * 통째로 맞는 값은 가린다. 그다음 **조각**을 본다(security U1): PTY 는 긴 줄을 화면 폭에서 접고, claude TUI 는
+   * 도구 출력에 `⎿`·들여쓰기를 붙여 접으며, 꼬리 버퍼는 앞을 자르므로 값의 뒷부분으로 시작할 수 있다. 그러면
+   * 바늘 전체는 안 맞고 조각은 그대로 나간다(서버 D5 도 전체 값만 본다). 그래서 공백·박스 문자를 다 걷은 사본에서
+   * 바늘의 12자 조각 하나라도 보이면 **출력을 통째로 싣지 않는다** — 조각만 가리면 나머지가 남는다.
    */
   if (secrets.length > 0) {
     for (const n of secrets) if (text.includes(n)) text = text.split(n).join('(가림)');
-    const flat = text.replace(/\n/g, '');
-    if (secrets.some((n) => flat.includes(n))) return '(마지막 출력에 비밀 값이 섞여 있어 싣지 않았다)';
+    if (tailHasSecretFragment(text, secrets)) return '(마지막 출력에 비밀 값이 섞여 있어 싣지 않았다)';
   }
   text = text
     .replace(/(?:hrkp|murp)_[A-Za-z0-9_-]+/g, '(가림)')
@@ -78,6 +80,25 @@ export function harnessTailNotice(tail: string, pat: string, secrets: readonly s
   return text.length > TAIL_NOTICE_MAX_CHARS
     ? `…${text.slice(-TAIL_NOTICE_MAX_CHARS)}`
     : text;
+}
+
+/** 꼬리 판정에서 걷어 내는 글자 — 공백 전부와 TUI 의 상자·접힘 문자. */
+const TAIL_FLATTEN_RE = /[\s│⎿╭╮╰╯─]/g;
+/** 조각 길이. 짧을수록 앞 잘림·접힘에 강하고, 길수록 우연히 맞는 일이 적다. */
+export const TAIL_FRAGMENT_CHARS = 12;
+
+/** 바늘의 12자 조각(끝 조각은 마지막 12자) 중 하나라도 공백·박스 문자를 걷은 꼬리에 있는가. */
+export function tailHasSecretFragment(text: string, secrets: readonly string[]): boolean {
+  const flat = text.replace(TAIL_FLATTEN_RE, '');
+  for (const raw of secrets) {
+    const n = raw.replace(TAIL_FLATTEN_RE, '');
+    if (n.length <= TAIL_FRAGMENT_CHARS) { if (n && flat.includes(n)) return true; continue; }
+    for (let i = 0; i < n.length; i += TAIL_FRAGMENT_CHARS) {
+      const piece = i + TAIL_FRAGMENT_CHARS <= n.length ? n.slice(i, i + TAIL_FRAGMENT_CHARS) : n.slice(-TAIL_FRAGMENT_CHARS);
+      if (flat.includes(piece)) return true;
+    }
+  }
+  return false;
 }
 
 /** 한 줄 요약의 상한. 스레드에 남는 러너 통지는 한눈에 읽혀야 한다. */

@@ -103,5 +103,11 @@ describe('secretScrub', () => {
     const wrapped = `$ cat k\r\n${VALUE.slice(0, 20)}\r\n${VALUE.slice(20)}\r\ndone`;
     expect(harnessTailNotice(wrapped, '', needles)).toBe('(마지막 출력에 비밀 값이 섞여 있어 싣지 않았다)');
     expect(harnessTailNotice('plain output', '', needles)).toBe('plain output');
+    // U1 ① claude TUI 가 들여쓰기·⎿ 를 붙여 접은 값
+    const tui = `⏺ Bash(cat k)\r\n  ⎿  ${VALUE.slice(0, 18)}\r\n     ${VALUE.slice(18)}\r\n`;
+    expect(harnessTailNotice(tui, '', needles)).toBe('(마지막 출력에 비밀 값이 섞여 있어 싣지 않았다)');
+    // U1 ② 꼬리 버퍼가 앞을 잘라 값의 뒤 절반으로 시작하는 꼬리
+    const cut = `${VALUE.slice(VALUE.length / 2)}\r\n$ done`;
+    expect(harnessTailNotice(cut, '', needles)).toBe('(마지막 출력에 비밀 값이 섞여 있어 싣지 않았다)');
   });
 });
