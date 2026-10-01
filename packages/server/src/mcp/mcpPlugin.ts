@@ -51,6 +51,7 @@ import type { Readable } from 'node:stream';
 
 // slug 문법과 거절 문구는 services/memory.ts 에 있다 — 사람용 REST(accountRoutes)도 같은 것을 쓴다.
 import { isValidSlug, MEMORY_SLUG_HINT } from '../services/memory.js';
+import { listGrantedSecrets } from '../services/secretAccess.js';
 import type { AgentPresence } from './presence.js';
 
 /**
@@ -1336,6 +1337,18 @@ function buildMcpServer(
    * 셋 다 아니거나 크면 **바이트 대신 메타데이터**를 준다(아래 IMAGE_TYPES·
    * IMAGE_MAX_BYTES 주석). 실패가 아니라 "이렇게 받아라"까지 함께 답한다.
    */
+  /**
+   * 비밀 보관소(PR 2). **이름만** 준다 — 값은 이 도구로도, 다른 어떤 MCP 결과로도 나가지 않는다
+   * (MCP 결과는 모델 문맥·transcript·제공사로 간다). 값은 브릿지가 턴 임대로 받아 파일로만 쓴다(PR 3).
+   * `channelIds` 의 null 은 "어느 채널에서든"이다.
+   */
+  server.registerTool('secret.list', {
+    description: '내가 쓸 수 있는 비밀의 이름·종류·설명(값은 주지 않는다)',
+  }, async () => {
+    if (account.kind !== 'agent') return jsonResult({ secrets: [] });
+    return jsonResult({ secrets: await listGrantedSecrets(pool, account.id) });
+  });
+
   server.registerTool('attachment.fetch', {
     description: '첨부 바이트 받기 — 이미지는 그림으로, 텍스트는 글로 실린다. id 는 프롬프트의 [첨부: …] 에 있다',
     inputSchema: { attachmentId: z.string().uuid() },

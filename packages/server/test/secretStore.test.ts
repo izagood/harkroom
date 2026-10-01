@@ -118,10 +118,10 @@ describe('비밀 보관소 REST (085)', () => {
 
   it('같은 이름은 409, 설명에 값을 적으면 400, 이름 형식이 틀리면 400', async () => {
     expect((await create(bob.token, { name: 'gh-token', kind: 'text', value: 'x' })).statusCode).toBe(409);
-    const desc = await create(alice.token, { name: 'd', kind: 'text', value: 'x', description: 'token is ghp_abcdefghijklmnopqrstuvwxyz0123456789' });
+    const desc = await create(alice.token, { name: 'd', kind: 'text', value: 'x', description: `token is ghp_${'a'.repeat(36)}` });
     expect(desc.statusCode).toBe(400);
     expect(desc.json().error.code).toBe('secret_in_description');
-    expect(desc.body).not.toContain('ghp_abcdef');
+    expect(desc.body).not.toContain('ghp_aaaa');
     expect((await create(alice.token, { name: '../etc', kind: 'text', value: 'x' })).statusCode).toBe(400);
   });
 

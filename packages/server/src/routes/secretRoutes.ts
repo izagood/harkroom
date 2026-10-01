@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { actorOf, recordAudit } from '../audit.js';
 import { scanWrite } from '../services/contentScan.js';
 import type { SecretKeyring } from '../services/secretKeyring.js';
+import { endTurnLease, issueTurnLease, revealSecret, RevealLimiter } from '../services/secretAccess.js';
 
 /** 계획 D6. 파일·텍스트 공통 상한(바이트). */
 export const SECRET_MAX_BYTES = 64 * 1024;
@@ -89,9 +90,10 @@ function valueBytes(kind: 'text' | 'file', v: { value?: string; valueBase64?: st
 }
 
 export async function registerSecretRoutes(
-  app: FastifyInstance, pool: Pool, opts: { keyring: SecretKeyring | null },
+  app: FastifyInstance, pool: Pool, opts: { keyring: SecretKeyring | null; limiter?: RevealLimiter },
 ): Promise<void> {
   const { keyring } = opts;
+  const limiter = opts.limiter ?? new RevealLimiter();
 
   /** 사람만. 아니면 답을 보내고 false. */
   const human = (req: FastifyRequest, reply: FastifyReply): boolean => {
@@ -266,6 +268,10 @@ export async function registerSecretRoutes(
     const parsed = grantBody.safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: { code: 'bad_request', message: parsed.error.message } });
     const g = parsed.data;
+    // 만료된 비밀에는 주지 않는다(보안 검토 L2). reveal 도 만료를 따로 보지만, 여기서 받아 주면
+    // 소유자는 "줬다"고 읽고 에이전트는 영영 못 받는다.
+    const expired = await pool.query(`select 1 from secret where id = $1 and expires_at <= now()`, [s.id]);
+    if (expired.rowCount) return reply.code(409).send({ error: { code: 'secret_expired', message: 'the secret has expired; replace its value or extend expiresAt first' } });
     const agent = await pool.query(
       `select a.id, asg.operator_id as "operatorId" from account a
          left join agent_assignment asg on asg.agent_id = a.id
@@ -325,5 +331,76 @@ export async function registerSecretRoutes(
               channel_id as "channelId", thread_root_id as "threadRootId", result, reason, at
          from secret_access_log where secret_id = $1 order by at desc, id desc limit $2`, [s.id, limit]);
     return { access: r.rows };
+  });
+
+  // ─── 에이전트 쪽(PR 2) ────────────────────────────────────────────────────────────────
+  //
+  // **오퍼레이터를 거친 에이전트만.** 임대와 grant 가 오퍼레이터에 묶이므로(M1·H1) 어느 오퍼레이터에서
+  // 왔는지 모르는 요청(옛 PAT 경로)은 받지 않는다.
+  const viaOperator = (req: FastifyRequest, reply: FastifyReply): { agentId: string; operatorId: string } | null => {
+    if (req.account!.kind !== 'agent' || !req.operator) {
+      void reply.code(403).send({ error: { code: 'forbidden', message: 'only an agent through its operator can do this' } });
+      return null;
+    }
+    return { agentId: req.account!.id, operatorId: req.operator.id };
+  };
+
+  app.post('/agent/turn-leases', { preHandler: app.requireAccount }, async (req, reply) => {
+    const who = viaOperator(req, reply);
+    if (!who) return reply;
+    const parsed = z.object({ causeMessageId: z.string().uuid() }).safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: { code: 'bad_request', message: parsed.error.message } });
+    const issued = await issueTurnLease(pool, { ...who, causeMessageId: parsed.data.causeMessageId });
+    if (!issued.ok) {
+      // 충돌은 사건이다 — 러너가 아닌 누군가(같은 자격을 쥔 셸)가 먼저 받아 갔을 수 있다(H2).
+      if (issued.code === 'lease_taken') {
+        await recordAudit(pool, {
+          action: 'secret.lease.conflict', ...actorOf(req), target: who.agentId,
+          detail: { causeMessageId: parsed.data.causeMessageId, operatorId: who.operatorId },
+        }, req);
+      }
+      return reply.code(issued.code === 'lease_taken' ? 409 : 403).send({
+        error: { code: issued.code, message: issued.code === 'lease_taken'
+          ? 'a live lease already exists for this mention'
+          : 'this agent was not recently invoked by that message' },
+      });
+    }
+    void reply.header('cache-control', 'no-store');
+    return { lease: { id: issued.leaseId, token: issued.token, channelId: issued.channelId, threadRootId: issued.threadRootId, expiresAt: issued.expiresAt } };
+  });
+
+  app.post<{ Params: { id: string } }>('/agent/turn-leases/:id/end', { preHandler: app.requireAccount }, async (req, reply) => {
+    const who = viaOperator(req, reply);
+    if (!who) return reply;
+    const id = z.string().uuid().safeParse(req.params.id);
+    const body = z.object({ token: z.string().min(1).max(200) }).safeParse(req.body ?? {});
+    if (!id.success || !body.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'leaseId and token are required' } });
+    const ended = await endTurnLease(pool, { leaseId: id.data, token: body.data.token, agentId: who.agentId });
+    return ended ? reply.code(204).send() : reply.code(404).send({ error: { code: 'not_found', message: 'no such live lease' } });
+  });
+
+  /**
+   * 값을 주는 유일한 자리. 받는 쪽은 브릿지(PR 3)이고 모델이 아니다 — 브릿지는 이 값을 턴 전용
+   * 파일에 쓰고 경로만 모델에게 준다. 응답은 캐시하지 않는다. 거절 사유 코드는 비밀이 아니다
+   * (무엇을 고칠지 소유자·에이전트가 알아야 한다).
+   */
+  app.post('/agent/secrets/reveal', { preHandler: app.requireAccount }, async (req, reply) => {
+    const who = viaOperator(req, reply);
+    if (!who) return reply;
+    if (!keyring) return reply.code(409).send(disabled);
+    const parsed = z.object({
+      leaseId: z.string().uuid(), token: z.string().min(1).max(200), name: z.string().regex(NAME),
+    }).safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'leaseId, token and a valid name are required' } });
+    const r = await revealSecret(pool, keyring, { ...who, ...parsed.data, limiter });
+    void reply.header('cache-control', 'no-store');
+    if (!r.ok) {
+      const status = r.code === 'not_found' ? 404 : r.code === 'rate_limited' ? 429 : r.code === 'unreadable' ? 500 : 403;
+      return reply.code(status).send({ error: { code: r.code, message: `secret not revealed: ${r.code}` } });
+    }
+    return {
+      secret: { id: r.secretId, name: r.name, kind: r.kind, filename: r.filename, version: r.version },
+      valueBase64: r.value.toString('base64'),
+    };
   });
 }

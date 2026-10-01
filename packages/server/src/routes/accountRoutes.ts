@@ -11,6 +11,7 @@ import {
 } from '../services/agents.js';
 import { isEligibleDelegate } from '../services/invokeGate.js';
 import { actorOf, recordAudit } from '../audit.js';
+import { suspendSecretGrants } from '../services/secretAccess.js';
 import { mintPat } from '../services/pats.js';
 import { emitEvent } from '../events.js';
 import {
@@ -504,6 +505,16 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     }
     // 실제로 값이 바뀐 것만 남긴다 — 같은 값으로 다시 저장한 PATCH 까지 기록하면 감사 로그가
     // "무엇이 바뀌었나"를 답하지 못하는 잡음이 된다.
+    /**
+     * 비밀 grant 정지(D3·M1, 비밀 보관소 PR 2). 이 에이전트가 **무엇을 하도록 지시받는지**(지시문)·
+     * **무엇으로 도는지**(하네스)·**누구의 것인지**(소유자)가 바뀌면, 비밀 소유자가 믿었던 그 에이전트가
+     * 아니다. 지우지 않고 세운다 — 소유자가 보고 다시 주면 풀린다. 꺼진 에이전트도 같다.
+     */
+    if (updated.instructions !== before.instructions || updated.harness !== before.harness
+      || updated.ownerAccountId !== before.ownerAccountId) {
+      await suspendSecretGrants(pool, { agentId: id }, 'definition_changed');
+    }
+    if (patch.disabled === true && !before.disabled) await suspendSecretGrants(pool, { agentId: id }, 'agent_disabled');
     const changes = diffAudited(before, updated);
     if (Object.keys(changes).length > 0) {
       await recordAudit(pool, {

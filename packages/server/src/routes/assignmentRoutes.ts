@@ -13,6 +13,7 @@ import { can } from '../auth/permissions.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { assignmentOf, definitionFor } from '../services/agents.js';
+import { suspendSecretGrants } from '../services/secretAccess.js';
 import type { OperatorHub } from '../ws/operatorHub.js';
 
 const body = z.object({ operatorId: z.string().uuid() });
@@ -94,6 +95,8 @@ export async function registerAssignmentRoutes(app: FastifyInstance, pool: Pool,
       `insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)
        on conflict (agent_id) do update set operator_id = excluded.operator_id, assigned_by = excluded.assigned_by, assigned_at = now()`,
       [agentId, operatorId, req.account!.id]);
+    // 다른 오퍼레이터에 묶인 비밀 grant 는 세운다(M1) — 비밀 소유자가 믿은 것은 그 머신이었다.
+    await suspendSecretGrants(pool, { agentId, exceptOperatorId: operatorId }, 'assignment_changed');
     // 순서가 계약이다: 이전 곳이 먼저 놓고(drain), 새 곳이 잡는다.
     if (previous && previous.operatorId !== operatorId) hub.send(previous.operatorId, { type: 'unassign', agentId, drain: true });
     // 멈춰 둔 에이전트는 자리만 옮기고 띄우지 않는다 — 되돌리기가 새 자리에 민다.
