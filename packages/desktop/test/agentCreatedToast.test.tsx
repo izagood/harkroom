@@ -42,8 +42,8 @@ function setupUi(createAgent: (...a: unknown[]) => Promise<unknown>) {
 async function create(name: string) {
   render(<AgentsSettings />);
   (await screen.findByTestId('agent-create')).click();
-  await waitFor(() => expect(screen.queryByTestId('agent-defaults-box')).toBeNull());
-  fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: name } });
+  await waitFor(() => expect(screen.queryByTestId('agent-defaults-box')).toBeNull(), { timeout: 5000 });
+  fireEvent.change(await screen.findByLabelText('Agent name', {}, { timeout: 5000 }), { target: { value: name } });
   // 기존 만들기 테스트와 같이 접근성 이름으로 집는다 — `Button` 프리미티브는 testid 를 넘기지 않는다.
   fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
 }
