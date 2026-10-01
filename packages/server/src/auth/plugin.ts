@@ -15,6 +15,13 @@ declare module 'fastify' {
     operator: OperatorView | null;
     /** 이 요청을 인증한 자격증명의 해시. WS 티켓이 운반해 소켓 수명을 자격증명에 묶는다. */
     credentialHash: string | null;
+    /**
+     * 어느 자격증명 표로 섰나. `credentialHash` 는 세 경로가 똑같이 채우므로 그것만으로는
+     * "사람이 로그인한 기기에서 왔다"를 가를 수 없다 — 푸시 기기 등록(092)처럼 **세션에만**
+     * 열어야 하는 라우트가 이것을 본다(security G3, 2026-10-02). 오퍼레이터 토큰으로 에이전트가
+     * 선 요청은 `account` 가 있어도 'operator' 다.
+     */
+    authVia: 'session' | 'pat' | 'operator' | null;
   }
   interface FastifyInstance {
     requireAccount: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
@@ -42,6 +49,7 @@ export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<vo
   app.decorateRequest('account', null);
   app.decorateRequest('operator', null);
   app.decorateRequest('credentialHash', null);
+  app.decorateRequest('authVia', null);
 
   app.addHook('onRequest', async (req, reply) => {
     const header = req.headers.authorization;
@@ -59,6 +67,7 @@ export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<vo
       const operator: OperatorView = { ...op.rows[0], online: false };
       req.operator = operator;
       req.credentialHash = hash;
+      req.authVia = 'operator';
       /**
        * **배정이 곧 인가**(스펙 2026-09-20 §5). 오퍼레이터가 러너 대신 서버에 말할 때 `X-Harkroom-Agent`
        * 로 어느 에이전트인지 밝히고, 그 (오퍼레이터, 에이전트) 쌍이 `agent_assignment` 에 있으면
@@ -87,14 +96,14 @@ export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<vo
     const viaSession = await pool.query(
       `select ${ACCOUNT_COLS} from session s join account a on a.id = s.account_id
        where s.token_hash = $1 and s.expires_at > now() and a.deleted_at is null`, [hash]);
-    if (viaSession.rowCount) { req.account = viaSession.rows[0]; req.credentialHash = hash; return; }
+    if (viaSession.rowCount) { req.account = viaSession.rows[0]; req.credentialHash = hash; req.authVia = 'session'; return; }
     const viaPat = await pool.query(
       // 삭제된 계정은 어떤 자격증명으로도 서지 못한다(061). 삭제가 PAT 를 전부 폐기하므로
       // 이 조건은 보통 걸리지 않지만, 삭제 뒤에 발급된 PAT(소유자 라우트는 계정을 목록으로
       // 찾지 않는다) 하나가 지워진 에이전트를 되살리는 길이 되면 안 된다.
       `select ${ACCOUNT_COLS} from pat p join account a on a.id = p.account_id
        where p.token_hash = $1 and p.revoked_at is null and a.deleted_at is null`, [hash]);
-    if (viaPat.rowCount) { req.account = viaPat.rows[0]; req.credentialHash = hash; }
+    if (viaPat.rowCount) { req.account = viaPat.rows[0]; req.credentialHash = hash; req.authVia = 'pat'; }
   });
 
   app.decorate('requireAccount', async (req: FastifyRequest, reply: FastifyReply) => {

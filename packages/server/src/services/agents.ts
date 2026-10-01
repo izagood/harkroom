@@ -520,6 +520,9 @@ export async function deleteAgentAccount(
       [id],
     );
     await client.query(`delete from agent_memory where account_id = $1`, [id]);
+    // 푸시 기기(092). 에이전트는 등록 라우트가 막지만(사람 세션 전용), 삭제는 soft delete 라 세션
+    // cascade 가 돌지 않는다 — 지운 계정의 기기로 알림이 가는 길을 여기서도 닫는다(security G1).
+    await client.query(`delete from push_device where account_id = $1`, [id]);
     await client.query('commit');
     return { handle: before.handle, revokedPats };
   } catch (err) {
