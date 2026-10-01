@@ -24,7 +24,7 @@ import { claudeSessionMaterialized } from './claudeSessions.js';
 import { readLastApiError } from './harnessErrors.js';
 import type { AttentionLedger } from './attentionLedger.js';
 import { readSkillUses } from './skillUsage.js';
-import { readLastAssistantText, readPermissionDenials, readTranscriptTurnState, sessionTranscriptGrewSince, sessionTranscriptMtimeMs, type PermissionDenial } from './harnessErrors.js';
+import { readLastAssistantText, readMcpAuthRejections, readPermissionDenials, readTranscriptTurnState, sessionTranscriptGrewSince, sessionTranscriptMtimeMs, type PermissionDenial } from './harnessErrors.js';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
 import { opencodeDirs } from './opencodeHome.js';
@@ -333,6 +333,16 @@ export interface MentionTurnDeps {
     harness: AgentHarness, sessionId: string | null,
     opts: { configDir?: string | null; sinceMs?: number },
   ) => Promise<PermissionDenial[]>;
+  /** 이 턴에 Authorization 헤더를 거절당한 MCP 서버 이름을 읽는다(기본 `readMcpAuthRejections`). 주입 이유는 `readApiError` 와 같다. */
+  readMcpAuthRejections?: (
+    harness: AgentHarness, sessionId: string | null,
+    opts: { configDir?: string | null; sinceMs?: number },
+  ) => Promise<string[]>;
+  /**
+   * 그 이름들을 오퍼레이터에 알린다(`relay.notifyMcpAuthRejected`, 2026-10-01). 토큰을 든 쪽이
+   * 오퍼레이터라 고칠 수 있는 쪽도 거기다. 없으면 알리지 않는다(테스트·구식 조립).
+   */
+  reportMcpAuthRejected?: (servers: readonly string[], turnStartedAtMs: number) => void;
   /** 이 턴에 하네스가 부른 스킬을 읽는다(기본 `readSkillUses`). 주입 이유는 `readApiError` 와 같다. */
   readSkillUses?: (
     harness: AgentHarness, sessionId: string | null,
@@ -978,12 +988,14 @@ export async function runMentionTurn(
     deniedSeen: Set<string>;
     /** 이 턴에 올린 권한 거부 통지 수(`DENIAL_NOTICE_MAX_PER_TURN` 까지). */
     denialNotices: number;
+    /** 이미 오퍼레이터에 알린, 헤더를 거절당한 MCP 서버 이름. 턴마다 이름당 한 번만 알린다. */
+    mcpRejectedSeen: Set<string>;
     cancelReclaim: (() => void) | null; cancelProbe: (() => void) | null; cancelSilence: (() => void) | null;
   } = {
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
     apiError: null, canceledBy: null, stalled: false, awaitingHuman: false, gateNoticed: false,
     lastLifeMs: 0, lastDataAtMs: 0, stalledIdleMs: 0, finished: false, tail: null,
-    threadUnreadable: false, silenceDeferred: false, deniedSeen: new Set(), denialNotices: 0,
+    threadUnreadable: false, silenceDeferred: false, deniedSeen: new Set(), denialNotices: 0, mcpRejectedSeen: new Set(),
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
   };
 
@@ -1214,6 +1226,24 @@ export async function runMentionTurn(
       });
   };
 
+  /**
+   * **MCP 헤더 거절을 오퍼레이터에 알린다**(2026-10-01). 거절은 턴 시작 때 한 번 기록되므로
+   * 주기마다 보되 이름당 한 번만 보낸다. 스레드에는 안 쓴다 — 하네스가 같은 사실을 시스템 알림으로
+   * 받아 스스로 말할 수 있고, 고칠 수 있는 쪽(토큰 주인)은 오퍼레이터다. 던지지 않는다.
+   */
+  const probeMcpAuth = async (): Promise<void> => {
+    if (!deps.reportMcpAuthRejected) return;
+    const read = deps.readMcpAuthRejections ?? readMcpAuthRejections;
+    const names = await read(def.harness, sessionIdForProbe, {
+      configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
+    }).catch(() => [] as string[]);
+    const fresh = names.filter((n) => !end.mcpRejectedSeen.has(n));
+    if (fresh.length === 0) return;
+    for (const n of fresh) end.mcpRejectedSeen.add(n);
+    console.error(`[mentionTurn] ${key}: MCP 인증 헤더 거절 — ${fresh.join(', ')} (오퍼레이터에 알린다)`);
+    try { deps.reportMcpAuthRejected(fresh, turnStartedAtMs); } catch { /* 알리지 못했다고 턴을 죽이지 않는다 */ }
+  };
+
   const probeUtterance = (): void => {
     if (end.exited) return;
     const again = (): void => { if (!end.exited) end.cancelProbe = schedule(probeUtterance, probeMs); };
@@ -1238,6 +1268,7 @@ export async function runMentionTurn(
         end.threadUnreadable = spoke === null;
         if (spoke === true) end.spoke = true;
         await probeDenials();
+        await probeMcpAuth();
         if (end.exited) return;
         if (spoke === false) {
           // 발화가 없다 — 하네스가 말을 못 하는 이유가 디스크에 있을 수 있다. 끝 판정보다
@@ -1504,6 +1535,7 @@ export async function runMentionTurn(
 
   // 끝나기 직전의 거부는 주기 사이에 떨어질 수 있다 — 한 번 더 훑는다(TUI 가 아니면 여기가 유일하다).
   await probeDenials();
+  await probeMcpAuth();
 
   // #126: 턴 종료 로그 (경과 시간, exitCode, 발화 여부)
   const elapsedMs = (deps.now ?? Date.now)() - turnStartMs;

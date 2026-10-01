@@ -490,3 +490,17 @@ describe('관찰이 끊기면 뷰어 수를 모름(0)으로 되돌린다', () =>
     expect(() => d.drop()).not.toThrow();
   });
 });
+
+describe('mcp.authRejected 통지 (2026-10-01)', () => {
+  it('붙어 있으면 이름만 실어 보낸다 — 끊겨 있으면 버리고, 재접속해도 다시 보내지 않는다', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({ link: LINK, unixDial: d.dial, schedule: fakeSchedule().schedule });
+    client.start();
+    client.notifyMcpAuthRejected(['slack'], 1);         // 아직 안 붙었다 — 버린다
+    d.open();
+    client.notifyMcpAuthRejected(['slack', 'jira'], 1_000);
+    client.notifyMcpAuthRejected([], 2_000);            // 빈 목록은 보내지 않는다
+    const sent = d.sent.filter((f) => (f as { type: string }).type === 'mcp.authRejected');
+    expect(sent).toEqual([{ type: 'mcp.authRejected', servers: ['slack', 'jira'], turnStartedAtMs: 1_000 }]);
+  });
+});

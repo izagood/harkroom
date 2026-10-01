@@ -3725,6 +3725,29 @@ describe('러너가 턴의 사정을 스레드에 드러낸다 (2026-09-30)', ()
     expect(bodies.at(-1)).toBe(NO_REPLY_NOTICE);
   });
 
+  it('MCP 헤더 거절을 오퍼레이터에 이름당 한 번만 알린다 — 스레드에는 쓰지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge slack 에서 찾아 줘');
+    // 판독 횟수로 턴의 끝을 묶는다 — 시간에 기대면 주기 판독이 한 번도 안 돌 수 있다.
+    let reads = 0;
+    const t = tui(async () => { for (let i = 0; i < 100 && reads < 3; i += 1) await new Promise((r) => setTimeout(r, 5)); }, 1_000);
+    const reports: string[][] = [];
+    const starts = new Set<number>();
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 5, readTurnState: async () => (reads >= 3 ? 'ended' : 'working'),
+      readTranscriptMtime: async () => Date.now(),
+      readMcpAuthRejections: async () => ((reads += 1) === 1 ? ['slack'] : ['slack', 'jira']),
+      reportMcpAuthRejected: (servers, startedAt) => { reports.push([...servers]); starts.add(startedAt); },
+    });
+    runTurn.script = t.script;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(reports).toEqual([['slack'], ['jira']]);
+    // 두 보고 모두 같은 턴의 시작 시각을 싣는다 — 오퍼레이터가 옛 토큰의 늦은 보고를 가려낸다.
+    expect(starts.size).toBe(1);
+    expect(fake.posts.some((p) => p.body.includes('slack'))).toBe(false);
+  });
+
   it('권한 거부 통지는 턴마다 상한이 있다 — 거부는 줄줄이 번진다', async () => {
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 머지해');

@@ -335,6 +335,59 @@ export async function readPermissionDenials(
   return out;
 }
 
+/**
+ * claude 가 "헤더로 받은 토큰을 MCP 서버가 401 로 거절했다"에 붙이는 코드(2026-10-01 실측,
+ * claude 2.1.286). 문구는 `Server rejected the configured Authorization header (HTTP 401) …
+ * OAuth fallback is disabled when headers.Authorization is set.` 이다.
+ */
+const AUTH_HEADER_REJECTED = 'AUTH_HEADER_REJECTED';
+
+/**
+ * 이 턴에 **우리가 구운 `Authorization` 헤더를 거절당한** MCP 서버 이름들(2026-10-01). 중복 없이,
+ * 처음 본 순서로. 없으면 빈 배열.
+ *
+ * **왜 필요한가.** 오퍼레이터가 OAuth 토큰을 들고 러너 설정에 `headers.Authorization` 으로 굽는다
+ * (`operator/src/mcpConfig.ts`). 헤더가 있으면 claude 는 자기 OAuth 로 물러나지 않고 그 서버를 그냥
+ * 못 붙인다. 오퍼레이터는 만료 시각으로만 refresh 하므로, 만료 전에 무효가 된 토큰은 그 시각까지
+ * 매 턴 401 이었고 데스크톱은 "인증됨"이었다(10-01 slack: 12:08~14:51 KST, 사람이 다시 인증할 때까지).
+ * 그 사실은 이 기록에만 있었다.
+ *
+ * claude 는 연결 실패를 `type: 'attachment'` 레코드의 `attachment.failedMcpServers[]`
+ * (`{ name, errorCode, error }`)에 구조화해서 남긴다. **`errorCode` 로만** 판정한다 — 문구(`error`)는
+ * MCP 서버가 돌려준 본문이 섞인 것이라 해석하지 않는다. 다른 실패(`CONNECTION_CLOSED` 등)는
+ * 토큰 문제가 아니므로 세지 않는다.
+ */
+export async function readMcpAuthRejections(
+  harness: AgentHarness,
+  sessionId: string | null,
+  opts: { projectsDir?: string; configDir?: string | null; sinceMs?: number } = {},
+): Promise<string[]> {
+  if (!readsSessionTranscript(harness)) return [];
+  if (!sessionId) return [];
+  const text = await readTranscriptTail(sessionId, opts);
+  if (text === null) return [];
+  const out: string[] = [];
+  for (const line of text.split('\n')) {
+    // 싸게 먼저 거른다 — 꼬리는 256KB 이고 대부분은 이 코드가 없다.
+    if (!line.includes(AUTH_HEADER_REJECTED)) continue;
+    let record: { type?: unknown; isSidechain?: unknown; timestamp?: unknown; attachment?: { failedMcpServers?: unknown } };
+    try { record = JSON.parse(line); } catch { continue; }
+    if (record.type !== 'attachment' || record.isSidechain === true) continue;
+    if (opts.sinceMs !== undefined) {
+      const at = typeof record.timestamp === 'string' ? Date.parse(record.timestamp) : NaN;
+      if (!Number.isFinite(at) || at < opts.sinceMs) continue;
+    }
+    const failed = record.attachment?.failedMcpServers;
+    if (!Array.isArray(failed)) continue;
+    for (const f of failed as Array<Record<string, unknown>>) {
+      if (!f || typeof f !== 'object' || f.errorCode !== AUTH_HEADER_REJECTED) continue;
+      if (typeof f.name !== 'string' || !f.name || out.includes(f.name)) continue;
+      out.push(f.name);
+    }
+  }
+  return out;
+}
+
 /** 도구 입력을 한 줄로. Bash 는 명령 그 자체가 가장 읽기 좋다. */
 function describeInput(input: unknown): string {
   if (input && typeof input === 'object' && typeof (input as { command?: unknown }).command === 'string') {

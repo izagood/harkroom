@@ -509,6 +509,8 @@ const scheduler = createMentionScheduler({
     turnTimeoutMs: config.turnTimeoutMs,
     harnessStallMs: config.harnessStallMs,
     relay,
+    // 하네스가 MCP 에 우리 토큰을 거절당하면 토큰 주인(오퍼레이터)에게 알린다(2026-10-01).
+    reportMcpAuthRejected: (servers, turnStartedAtMs) => relay.notifyMcpAuthRejected(servers, turnStartedAtMs),
     // #337: 멘션 턴도 자기 존재를 등록해야 인터랙티브 open 이 그 PTY 에 합류한다.
     registry,
   } satisfies MentionTurnDeps),

@@ -235,6 +235,15 @@ export interface RelayClient {
    */
   notifyPollStopped(holding: readonly number[]): void;
   /**
+   * 하네스가 MCP 서버에 **우리가 구운 Authorization 헤더를 거절당했다**고 오퍼레이터에 알린다
+   * (`mcp.authRejected`, 2026-10-01). 토큰은 오퍼레이터가 들고 있으므로 고칠 수 있는 쪽도 거기다.
+   *
+   * `notifyPollStopped` 와 달리 **끈끈하지 않다**: 링크가 끊겨 있으면 버린다. 같은 토큰을 쓰는
+   * 다음 턴이 같은 거절을 다시 기록하므로 그때 다시 나간다 — 재접속마다 옛 거절을 되풀이해 보내면
+   * 이미 새 토큰을 받은 이름을 오퍼레이터가 다시 의심하게 된다.
+   */
+  notifyMcpAuthRejected(servers: readonly string[], turnStartedAtMs: number): void;
+  /**
    * 링크가 붙을 때까지 기다린다(기동 경로용). 이미 붙어 있으면 즉시, `timeoutMs` 안에 못 붙으면
    * false — 던지지 않는다: 기동은 계속되고, 그 뒤의 호출이 status 0 으로 거절되며 poll 루프가
    * 백오프로 다시 부른다. `request` 가 큐를 두지 않는 대신 이것이 기동의 첫 왕복을 지킨다.
@@ -509,6 +518,12 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
     notifyPollStopped(holding) {
       pollStopped = [...holding];
       sendPollStopped();
+    },
+
+    notifyMcpAuthRejected(servers, turnStartedAtMs) {
+      if (!transport || servers.length === 0) return;
+      try { transport.send(JSON.stringify({ type: 'mcp.authRejected', servers: [...servers], turnStartedAtMs })); }
+      catch { /* 끊겼다 — 다음 턴이 다시 알린다 */ }
     },
 
     stop() {
