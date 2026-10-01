@@ -10,7 +10,7 @@ import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { normalizeSearchQuery } from '../services/mentions.js';
 import { extractUrls, queueLinkPreviewFetch } from '../services/linkPreview.js';
-import { axisValid, cleanAxis, clearThreadAgentModel, setThreadAgentModel } from '../services/threadAgentModels.js';
+import { axisValid, cleanAxis, clearThreadAgentModel, isChannelRoot, setThreadAgentModel } from '../services/threadAgentModels.js';
 import { agentModelInput, announceChange, checkOffered, emitChanged } from './threadAgentModelRoutes.js';
 import type { OperatorHub } from '../ws/operatorHub.js';
 
@@ -53,6 +53,13 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
     if (agentModels.length > 0) {
       if (req.account!.kind !== 'human') {
         return reply.code(403).send({ error: { code: 'human_only', message: '모델 지정은 사람만 바꾼다' } });
+      }
+      // **루트를 이 채널에 묶는다**(security #967 ④). `postMessage` 는 `threadRootId` 가 이 채널의
+      // 글인지 보지 않으므로, 여기서 묶지 않으면 채널 A 경로에 비공개 채널 B 의 루트를 실어 B 스레드의
+      // 지정을 바꾸거나 풀 수 있다(①에서 막은 DELETE 를 우회하는 길). 최상위 글이면 루트가 이 글
+      // 자신이라 볼 것이 없다.
+      if (body.threadRootId && !(await isChannelRoot(pool, id, body.threadRootId))) {
+        return reply.code(404).send({ error: { code: 'not_a_root', message: '그 채널의 최상위 글이 아니다' } });
       }
       for (const m of agentModels) {
         // argv 로 가는 값의 모양(security 검토 ②) — PUT 과 같은 검사다.

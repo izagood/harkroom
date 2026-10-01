@@ -105,6 +105,24 @@ describe('thread agent model', () => {
     expect(still.rowCount).toBe(1);
   });
 
+  it('작성창 POST 의 agentModels 도 루트를 경로 채널에 묶는다 — 남의 비공개 스레드 지정을 풀거나 바꾸지 못한다 (security ④)', async () => {
+    const priv = await app.inject({ method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'secret-c', visibility: 'private' } });
+    const chC = priv.json().id as string;
+    const rootC = (await app.inject({ method: 'POST', url: `/channels/${chC}/messages`, headers: auth(adminToken), payload: { body: 'c root' } })).json().id as string;
+    await app.inject({ method: 'PUT', url: `/channels/${chC}/threads/${rootC}/agent-models/${fizz.accountId}`, headers: auth(adminToken), payload: { model: 'opus' } });
+    const before = await pool.query(`select count(*)::int as n from message where thread_root_id = $1`, [rootC]);
+    for (const pick of [{ model: null, effort: null }, { model: 'haiku', effort: null }]) {
+      const res = await post(member.token, { body: '@fizz x', threadRootId: rootC, agentModels: [{ agentId: fizz.accountId, ...pick }] });
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.code).toBe('not_a_root');
+    }
+    const row = await pool.query(`select model from thread_agent_model where thread_root_id = $1`, [rootC]);
+    expect(row.rows).toEqual([{ model: 'opus' }]);
+    // 거절은 글을 올리기 **전**이다 — B 스레드에 답글도 남지 않는다.
+    const after = await pool.query(`select count(*)::int as n from message where thread_root_id = $1`, [rootC]);
+    expect(after.rows[0].n).toBe(before.rows[0].n);
+  });
+
   it('argv 로 갈 값의 모양을 묶는다 — `-` 로 시작·따옴표·공백·개행·`=` 는 400, 실재 이름은 받는다 (security ②)', async () => {
     const root = (await post(member.token, { body: 'root-argv' })).json().id as string;
     for (const bad of ['--dangerously-skip-permissions', 'opus"', 'a b', 'a\nb', 'x=y']) {
