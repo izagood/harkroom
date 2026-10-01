@@ -309,4 +309,19 @@ class StringsEn implements Strings {
 
   @override
   String get mentionDeniedLine => 'Did not call {handles} — outside who may invoke them. Ask the owner of that agent.';
+
+  @override
+  String get linkConfirmTitle => 'This opens';
+
+  @override
+  String get linkConfirmOpen => 'Open';
+
+  @override
+  String get linkConfirmCancel => 'Cancel';
+
+  @override
+  String get linkUserInfoWarning => 'Something is prefixed to this address. It actually opens the bold host above.';
+
+  @override
+  String get linkNonAsciiWarning => 'This address has non-Latin characters. It may imitate another site.';
 }

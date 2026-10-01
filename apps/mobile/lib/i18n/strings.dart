@@ -64,6 +64,21 @@ abstract class Strings {
   /// 올리기 실패. **조용히 지나가지 않는다** — 칩이 사라진 이유를 사람이 알아야 한다.
   String get attachmentUploadFailed;
 
+  /// 링크 확인 시트의 머리.
+  String get linkConfirmTitle;
+
+  /// 링크 확인: 열기.
+  String get linkConfirmOpen;
+
+  /// 링크 확인: 취소.
+  String get linkConfirmCancel;
+
+  /// userinfo 가 붙은 주소 경고.
+  String get linkUserInfoWarning;
+
+  /// 호스트에 비ASCII 글자 경고.
+  String get linkNonAsciiWarning;
+
   /// 못 읽음: 서버가 실패로 답했다.
   String get loadFailedServer;
 
@@ -361,6 +376,11 @@ Map<String, String> stringsToMap(Strings s) => {
       'commonRetry': s.commonRetry,
       'attachmentAdd': s.attachmentAdd,
       'attachmentUploadFailed': s.attachmentUploadFailed,
+      'linkConfirmTitle': s.linkConfirmTitle,
+      'linkConfirmOpen': s.linkConfirmOpen,
+      'linkConfirmCancel': s.linkConfirmCancel,
+      'linkUserInfoWarning': s.linkUserInfoWarning,
+      'linkNonAsciiWarning': s.linkNonAsciiWarning,
       'loadFailedServer': s.loadFailedServer,
       'loadFailedForbidden': s.loadFailedForbidden,
       'dayToday': s.dayToday,

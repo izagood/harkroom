@@ -94,6 +94,13 @@ void main() {
     await shot(tester, '06-dark-channels');
     await tester.tap(find.byKey(const Key('channel-c1')));
     await shot(tester, '07-dark-channel');
+    // 다크에서 멘션 거절 노란 줄과 멘션 칩(designer #980).
+    final denied = find.byKey(const Key('mention-denied'));
+    await tester.scrollUntilVisible(denied, 250,
+        scrollable: find
+            .descendant(of: find.byKey(const Key('channel-feed')), matching: find.byType(Scrollable))
+            .first);
+    await shot(tester, '08-dark-denied');
   });
 
   // ── S2: 상태 셋과 실패 ────────────────────────────────────────────────
@@ -323,7 +330,10 @@ MockClient _server({bool states = false}) => MockClient((req) async {
                     'to': {'kind': 'account', 'accountId': '00000000-0000-4000-8000-000000000001'},
                   },
                 },
-                ago: 20),
+                ago: 35),
+            _m('m8', 8, '00000000-0000-4000-8000-000000000003',
+                '## 고칠 것\n**둘**이다. @jaebin 확인해 줘:\n1. 다크 `ink` 값을 올린다\n2. 배지 글자는 `onAccent`\n\n```\nflutter test\n```\n> 사양은 재설계 §2 에 있다.\n자세한 건 [PR](https://example.com/pr/1).',
+                ago: 3),
             _m('m9', 9, '00000000-0000-4000-8000-000000000004', '화면을 찍는 중이다', kind: 'progress', ago: 2),
           ],
           'hasMore': false,
