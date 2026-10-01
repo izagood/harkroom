@@ -16,6 +16,9 @@ const fake = (members: { accountId: string }[] = [{ accountId: 'u1' }, { account
     loadChannelMembers: vi.fn(async () => members),
     leaveChannel: vi.fn(async () => {}),
     setChannelNotifyLevel: vi.fn(async () => {}),
+    // 멤버·에이전트 탭이 열리면 `ChannelMembersPanel` 이 목록을 받는다(←/→ 로 에이전트 탭을 연다).
+    loadChannelAutoMentions: vi.fn(async () => []),
+    listTeams: vi.fn(async () => []),
   };
   setController(c as unknown as Controller);
   return c;
