@@ -254,7 +254,25 @@ export function withoutAgentStatusEchoes(
     || r.accountIds.some((id) => accounts[id]?.kind !== 'agent'));
 }
 
-/** 마우스를 올리면 뜨는 문장. 순수 함수라 시험이 문장을 직접 잰다. */
+/** 이유는 80자에서 자른다 — 긴 물음이 말풍선을 화면만큼 키우지 않게(designer). */
+const REASON_MAX = 80;
+const clip = (x: string) => (x.length > REASON_MAX ? `${x.slice(0, REASON_MAX)}…` : x);
+
+/** 상태 → 낱말 키. 화면의 다섯 배지(`thread.state.*`)와 달리 스레드 기준 여섯 상태다. */
+const STATUS_LABEL = {
+  received: 'threadStatus.label.received',
+  running: 'threadStatus.label.running',
+  waiting: 'threadStatus.label.waiting',
+  'my-turn': 'threadStatus.label.myTurn',
+  stuck: 'threadStatus.label.stuck',
+  done: 'threadStatus.label.done',
+} as const;
+
+/**
+ * 마우스를 올리면 뜨는 한 줄 — **상태 낱말 · 누구 · 이유** 순(designer 확정 문구).
+ * 예: "내 차례 · task_manager가 묻는다 · 수정안 둘 중 어느 것?", "기다림 · security 답을 기다림".
+ * 순수 함수라 시험이 문장을 직접 잰다.
+ */
 export function statusSentence(
   s: ThreadStatusReaction, accounts: AccountNames, t: Translate, locale: string,
 ): string {
@@ -263,28 +281,31 @@ export function statusSentence(
     return a ? (a.displayName || a.handle) : null;
   };
   const who = nameOf(s.accountId) ?? t('threadStatus.someone');
+  const parts: string[] = [t(STATUS_LABEL[s.status])];
   switch (s.status) {
-    case 'received': return t('threadStatus.tip.received', { who });
-    case 'running': return t('threadStatus.tip.running', { who });
-    case 'done': return t('threadStatus.tip.done', { who });
-    case 'my-turn': return s.reason
-      ? t('threadStatus.tip.myTurn', { who, reason: s.reason })
-      : t('threadStatus.tip.myTurnNoReason', { who });
-    case 'stuck': return s.reason
-      ? t('threadStatus.tip.stuck', { who, reason: s.reason })
-      : t('threadStatus.tip.stuckNoReason', { who });
+    case 'my-turn':
+      parts.push(t('threadStatus.tip.myTurn', { who }));
+      if (s.reason) parts.push(clip(s.reason));
+      break;
+    case 'stuck':
+      parts.push(t('threadStatus.tip.stuck', { who }));
+      if (s.reason) parts.push(clip(s.reason));
+      break;
     case 'waiting': {
       // 이유는 기다리는 상대의 id 이거나 깨움 시각(ISO)이다 — 서버가 그 둘만 싣는다.
       const other = nameOf(s.reason);
-      if (other) return t('threadStatus.tip.waitingOn', { who, reason: other });
       const at = s.reason ? Date.parse(s.reason) : NaN;
-      if (!Number.isNaN(at)) {
-        const time = new Date(at).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
-        return t('threadStatus.tip.waitingWake', { who, reason: time });
-      }
-      return t('threadStatus.tip.waiting', { who });
+      if (other) parts.push(t('threadStatus.tip.waitingOn', { other }));
+      else if (!Number.isNaN(at)) {
+        const time = new Date(at).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false });
+        parts.push(t('threadStatus.tip.waitingWake', { time }));
+      } else parts.push(who);
+      break;
     }
+    default:
+      parts.push(who);
   }
+  return parts.join(' · ');
 }
 
 /**
@@ -313,8 +334,7 @@ function StatusReactionChip({ status, accounts }: { status: ThreadStatusReaction
   useEffect(() => clear, []);
 
   const sentence = statusSentence(status, accounts, t, locale);
-  const label = status.status === 'my-turn' ? t('threadStatus.label.myTurn')
-    : status.status === 'stuck' ? t('threadStatus.label.stuck') : null;
+  const label = status.status === 'my-turn' || status.status === 'stuck' ? t(STATUS_LABEL[status.status]) : null;
   const tone = status.status === 'my-turn'
     ? 'border-state-turn text-state-turn font-medium'
     : status.status === 'stuck'

@@ -72,7 +72,7 @@ describe('상태 리액션 칩', () => {
     render(<Reactions message={root()} />);
     fireEvent.mouseEnter(screen.getByTestId('status-reaction'));
     act(() => { vi.advanceTimersByTime(200); });
-    expect(screen.getByTestId('reaction-tooltip').textContent).toContain('harkbot asks: 수정안 둘 중 어느 것?');
+    expect(screen.getByTestId('reaction-tooltip').textContent).toContain('Your turn · harkbot asks · 수정안 둘 중 어느 것?');
   });
 
   it('상태가 있으면 에이전트만 단 👀·💬 는 숨기고, 사람이 낀 칩은 둔다', () => {
@@ -90,11 +90,15 @@ describe('상태 리액션 칩', () => {
 
 describe('statusSentence', () => {
   const t = translator('ko');
-  it('기다리는 상대의 이름, 깨움 시각, 이유 없는 막힘', () => {
+  it('상태 낱말 · 누구 · 이유 — 기다리는 상대, 깨움 시각, 이유 없는 막힘, 80자 자르기', () => {
     const accounts = useAppStore.getState().accounts as never;
-    expect(statusSentence(st('waiting', '⏳', 'u2'), accounts, t, 'ko')).toBe('harkbot 가 someone 를 기다린다') // 영문 이름엔 띄어 붙인다(format.ts::applyParticle);
-    expect(statusSentence(st('waiting', '⏳', '2026-10-01T06:30:00.000Z'), accounts, t, 'ko')).toMatch(/^harkbot 가 .+에 다시 본다$/);
-    expect(statusSentence(st('stuck', '🚨'), accounts, t, 'ko')).toBe('harkbot 막힘');
+    expect(statusSentence(st('my-turn', '🙋', '어느 쪽?'), accounts, t, 'ko')).toBe('내 차례 · harkbot 가 묻는다 · 어느 쪽?');
+    expect(statusSentence(st('waiting', '⏳', 'u2'), accounts, t, 'ko')).toBe('기다림 · someone 답을 기다림');
+    expect(statusSentence(st('waiting', '⏳', '2026-10-01T06:30:00.000Z'), accounts, t, 'ko')).toMatch(/^기다림 · \d\d:\d\d에 다시 본다$/);
+    expect(statusSentence(st('stuck', '🚨'), accounts, t, 'ko')).toBe('막힘 · harkbot 실패');
+    expect(statusSentence(st('running', '💬'), accounts, t, 'ko')).toBe('작업 중 · harkbot');
+    const long = 'ㄱ'.repeat(120);
+    expect(statusSentence(st('stuck', '🚨', long), accounts, t, 'ko')).toBe(`막힘 · harkbot 실패 · ${'ㄱ'.repeat(80)}…`);
   });
 });
 

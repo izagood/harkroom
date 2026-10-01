@@ -135,7 +135,7 @@ describe('담아 둔 메시지 — 패널 (#219)', () => {
     });
     render(<SavedMessages open onClose={vi.fn()} />);
     const row = await screen.findByTestId('saved-entry-m1');
-    expect(row.textContent).toContain('더 이상 볼 수 없는 메시지');
+    expect(row.textContent).toContain('이 채널을 볼 수 없어 내용을 보여 줄 수 없다');
     expect(row.textContent).not.toContain('삭제된 메시지');
     expect(screen.getByTestId('saved-toggle-m1')).toBeTruthy();
   });

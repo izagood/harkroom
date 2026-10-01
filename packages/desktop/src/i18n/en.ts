@@ -3378,21 +3378,19 @@ export const en = {
   // 마우스를 올리면 아래 문장이 뜬다. `{who}` 는 그 상태의 주인 에이전트, `{reason}` 은
   // ask 물음·fail 사유·기다리는 상대·깨움 시각이다.
   // ---------------------------------------------------------------------------
+  'threadStatus.label.received': 'Received',
+  'threadStatus.label.running': 'Working',
+  'threadStatus.label.waiting': 'Waiting',
   'threadStatus.label.myTurn': 'Your turn',
   'threadStatus.label.stuck': 'Stuck',
-  'threadStatus.tip.received': '{who} received this',
-  'threadStatus.tip.running': '{who} is working on it',
-  'threadStatus.tip.waitingOn': '{who} is waiting on {reason}',
-  'threadStatus.tip.waitingWake': '{who} will check back at {reason}',
-  'threadStatus.tip.waiting': '{who} is waiting',
-  'threadStatus.tip.myTurn': '{who} asks: {reason}',
-  'threadStatus.tip.myTurnNoReason': '{who} is waiting for your answer',
-  'threadStatus.tip.stuck': '{who} is stuck: {reason}',
-  'threadStatus.tip.stuckNoReason': '{who} is stuck',
-  'threadStatus.tip.done': '{who} finished',
+  'threadStatus.label.done': 'Done',
+  'threadStatus.tip.myTurn': '{who} asks',
+  'threadStatus.tip.stuck': '{who} failed',
+  'threadStatus.tip.waitingOn': 'waiting for {other}',
+  'threadStatus.tip.waitingWake': 'checks back at {time}',
   'threadStatus.someone': 'An agent',
   'threadStatus.aria': 'Thread status: {sentence}',
-  'saved.unavailable': 'No longer visible to you',
+  'saved.unavailable': 'You no longer have access to this channel',
 
   /**
    * 채널 요약의 말 슬롯 — **"누가 누구를 기다린다"**. `waitChain.link` 와 **같은 문장**을
