@@ -98,7 +98,7 @@ export interface SchedulerHarkroom {
     channelId: string,
     body: string,
     threadRootId: string | null,
-    opts: { retryable: boolean; what?: string; reason?: string },
+    opts: { retryable: boolean; what?: string; reason?: string; code?: 'thread_model_rejected' },
   ): Promise<number>;
 }
 
@@ -372,6 +372,8 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         await deps.harkroom.fail(mention.channelId, threadModelRejectedNotice(rejected.model, rejected.effort, rejected.apiError), anchor, {
           retryable: false,
           what: '이 스레드에 지정한 모델을 하네스가 받지 않았다',
+          // 화면이 이 표지로 [기본으로 되돌리고 다시 부르기]·[모델 고르기]를 단다 — 문구로 가르지 않는다.
+          code: 'thread_model_rejected',
           reason: '스레드 머리의 모델 칩에서 기본으로 되돌리거나 다른 모델을 골라야 한다 — 같은 지정으로는 다시 실패한다',
         }).catch((e: unknown) => {
           console.error(`  ${mention.id} 모델 거절 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);

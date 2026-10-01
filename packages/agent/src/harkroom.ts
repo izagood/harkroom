@@ -336,7 +336,12 @@ export class HarkroomAgentClient {
     channelId: string,
     body: string,
     threadRootId: string | null,
-    opts: { retryable: boolean; what?: string; reason?: string },
+    /**
+     * `code` 는 기계가 읽는 실패 갈래(서버 FailureMeta.code) — 화면이 그 갈래의 고칠 길을 단다.
+     * 옛 서버의 도구 입력 검증은 모르는 키를 걸러 낼 뿐 거절하지 않는다 — 실패 통지는 그대로
+     * 나가고 표지만 빠진다(화면이 평문 실패 카드로 그린다). 있을 때만 싣는다.
+     */
+    opts: { retryable: boolean; what?: string; reason?: string; code?: 'thread_model_rejected' },
   ): Promise<number> {
     const res = await this.call<{ message: { seq: number } }>('message.fail', {
       channelId,
@@ -345,6 +350,7 @@ export class HarkroomAgentClient {
       ...(threadRootId ? { threadRootId } : {}),
       ...(opts.what ? { what: opts.what } : {}),
       ...(opts.reason ? { reason: opts.reason } : {}),
+      ...(opts.code ? { code: opts.code } : {}),
     });
     return res.message.seq;
   }
