@@ -368,7 +368,7 @@ describe('계정 메뉴 (#113) — 자리만 레일로 옮겼다', () => {
     mountRail({ onOpenSettings });
 
     fireEvent.click(screen.getByTestId('me-row'));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Settings' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '설정' }));
     // 섹션을 지목하지 않고 연다 — 설정 화면이 기본 섹션을 고른다.
     expect(onOpenSettings).toHaveBeenCalledWith();
   });
@@ -379,7 +379,7 @@ describe('계정 메뉴 (#113) — 자리만 레일로 옮겼다', () => {
     mountRail({ onLogout });
 
     fireEvent.click(screen.getByTestId('me-row'));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Sign out' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '로그아웃' }));
 
     expect(c.logout).toHaveBeenCalledTimes(1);
     expect(onLogout).toHaveBeenCalledTimes(1);

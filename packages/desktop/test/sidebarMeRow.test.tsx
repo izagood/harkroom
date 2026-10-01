@@ -196,7 +196,7 @@ describe('A1 · 내 자리가 얼굴을 갖고 눌린다', () => {
 
     fireEvent.click(screen.getByTestId('me-row'));
     const names = screen.getAllByRole('menuitem').map((el) => el.textContent);
-    expect(names).toEqual(['내 프로필', '상태 바꾸기', 'Settings⌘,', 'Sign out']);
+    expect(names).toEqual(['내 프로필', '상태 바꾸기', '설정⌘,', '로그아웃']);
   });
 
   it('메뉴에 아이콘을 두지 않는다 — 오른쪽 `⌘,` 만 남는다', () => {

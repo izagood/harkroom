@@ -321,8 +321,8 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onMana
             items={[
               { label: t('rail.me.profile'), onSelect: () => onOpenSettings('profile') },
               { label: t('rail.me.status'), onSelect: () => setStatusOpen(true) },
-              { label: 'Settings', shortcut: '⌘,', onSelect: () => onOpenSettings() },
-              { label: 'Sign out', onSelect: () => { getController().logout(); onLogout(); } },
+              { label: t('rail.me.settings'), shortcut: '⌘,', onSelect: () => onOpenSettings() },
+              { label: t('rail.me.signOut'), onSelect: () => { getController().logout(); onLogout(); } },
             ]}
           />
           {/* 상태 고르기는 메뉴 항목이 **여는 것**이다. 레일 안에 두면 62px 에 눌려 입력칸이

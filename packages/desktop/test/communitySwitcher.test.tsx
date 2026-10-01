@@ -149,7 +149,7 @@ async function openCommunitySettingsInApp(handle: string) {
   // 이 테스트가 확인하려는 것은 "설정까지 눌러 간다"이지 그 행의 문구가 아니다.
   expect(screen.getByTestId('me-row').textContent).toContain(handle);
   fireEvent.click(screen.getByTestId('me-row'));
-  fireEvent.click(await screen.findByText('Settings'));
+  fireEvent.click(await screen.findByRole('menuitem', { name: '설정' }));
   fireEvent.click(await screen.findByRole('button', { name: '커뮤니티 목록' }));
   expect(await screen.findByRole('heading', { name: '커뮤니티 목록' })).toBeTruthy();
 }

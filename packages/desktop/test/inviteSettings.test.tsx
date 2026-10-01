@@ -22,6 +22,7 @@ const acc = (id: string, handle: string, isAdmin: boolean) => ({ ...baseAcc(id, 
 const fakeController = (token = 'invite_token_abc') => {
   const c = {
     createInvite: vi.fn(async () => token),
+    refreshAccounts: vi.fn(async () => {}),
   };
   setController(c as unknown as Controller);
   return c;
@@ -34,13 +35,53 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('InviteSettings', () => {
-  it('초대 섹션은 admin에게만 보인다 — 일반 사용자에게는 접근 제한 메시지가 보인다', () => {
-    useAppStore.getState().set({ me: acc('u1', 'user', false) });
+  it('초대 발급은 admin 에게만 열린다 — 일반 사용자에게는 초대 묶음만 닫히고 멤버 목록은 보인다', () => {
+    fakeController();
+    const me = acc('u1', 'user', false);
+    useAppStore.getState().set({ me, accounts: { u1: me } });
     render(<InviteSettings />);
     // **`관리자` 가 `admin` 으로 바뀌었다** — 이 저장소는 그 값을 옮기지 않는다
     // (`agents` 영역 머리말의 고유어 규율). 재는 것은 낱말이 아니라 **admin 이 아닌
-    // 사람에게 이 화면이 닫혀 있다고 말하는가** 이므로, 그 사실을 그대로 잰다.
-    expect(screen.getByText(/admin 만 볼 수 있다/)).toBeTruthy();
+    // 사람에게 초대가 닫혀 있다고 말하는가** 이므로, 그 사실을 그대로 잰다.
+    expect(screen.getByText(/admin 만 발급할 수 있다/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /초대 토큰 발급/ })).toBeNull();
+    // UX ⑥b-5: 전에는 페이지 전체가 닫혔다. 목록은 `GET /accounts`(모두에게 열림)의 것이라 닫을 이유가 없다.
+    expect(screen.getByTestId('members-list').textContent).toContain('@user');
+  });
+
+  it('멤버 목록은 사람만 이름순으로 싣는다 — 에이전트는 에이전트 › 목록의 것이다', async () => {
+    const c = fakeController();
+    const me = acc('u1', 'zed', true);
+    useAppStore.getState().set({
+      me,
+      accounts: {
+        u1: me,
+        u2: acc('u2', 'amy', false),
+        a1: { ...baseAcc('a1', 'bot'), kind: 'agent' as const },
+      },
+    });
+    render(<InviteSettings />);
+    const list = screen.getByTestId('members-list');
+    const rows = [...list.querySelectorAll('[data-testid^="directory-row-"]')].map((el) => el.getAttribute('data-testid'));
+    expect(rows).toEqual(['directory-row-u2', 'directory-row-u1']);
+    expect(screen.getByText('멤버 (2)')).toBeTruthy();
+    // 열 때 한 번 새로 받는다 — 스로틀에 걸리면 묻지도 않고 끝나므로 force 다(Directory 와 같다).
+    await waitFor(() => expect(c.refreshAccounts).toHaveBeenCalledWith({ force: true }));
+  });
+
+  it('목록 조회가 실패하면 빈 목록 대신 실패를 말하고 다시 시도할 수 있다', async () => {
+    let n = 0;
+    const c = {
+      createInvite: vi.fn(async () => 't'),
+      refreshAccounts: vi.fn(async () => { if (++n === 1) throw new Error('503'); }),
+    };
+    setController(c as unknown as Controller);
+    render(<InviteSettings />);
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('503');
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(c.refreshAccounts).toHaveBeenCalledTimes(2);
   });
 
   it('admin이 초대 버튼을 누르면 createInvite가 호출되고 토큰이 화면에 보인다', async () => {
@@ -60,6 +101,7 @@ describe('InviteSettings', () => {
   it('실패하면 오류 메시지가 화면에 표시된다', async () => {
     const c = {
       createInvite: vi.fn(async () => { throw new Error('403 Forbidden'); }),
+      refreshAccounts: vi.fn(async () => {}),
     };
     setController(c as unknown as Controller);
 
@@ -77,7 +119,7 @@ describe('InviteSettings', () => {
   // 버튼을 잠그면 두 번째 사람을 부를 수 없다.
   it('토큰을 발급한 뒤에도 새 토큰을 다시 발급할 수 있다', async () => {
     let n = 0;
-    const c = { createInvite: vi.fn(async () => `muri_${++n}`) };
+    const c = { createInvite: vi.fn(async () => `muri_${++n}`), refreshAccounts: vi.fn(async () => {}) };
     setController(c as unknown as Controller);
 
     render(<InviteSettings />);

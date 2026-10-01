@@ -39,11 +39,6 @@ type LoadState = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; mess
 export function Directory({ open, onClose, accountId }: Props) {
   const t = useT();
   const accounts = useActiveStore((s) => s.accounts);
-  const online = useActiveStore((s) => s.online);
-  // `#443`: presence 는 **서버가 주는 것**이라 소켓이 끊기면 낡는다. `online` 만 읽으면
-  // 끊긴 뒤에도 마지막으로 들은 값이 지금 사실처럼 그려진다(실측 2026-09-06: 서버가 죽었는데
-  // 에이전트 6개가 전부 초록이었다). `connected` 가 그 낡음을 아는 유일한 문지기다.
-  const connected = useActiveStore((s) => s.connected);
   const [query, setQuery] = useState('');
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
 
@@ -103,65 +98,6 @@ export function Directory({ open, onClose, accountId }: Props) {
 
   const total = Object.keys(accounts).length;
 
-  const row = (a: AccountView) => {
-    const isSelected = accountId === a.id;
-    const presence = presenceView(a.id, online, connected);
-    return (
-      <li
-        key={a.id}
-        data-testid={`directory-row-${a.id}`}
-        data-selected={String(isSelected)}
-        // 강조만 하고 화면 밖에 두면 긴 목록에서는 아무 일도 안 일어난 것과 같다.
-        // `scrollIntoView?.` 인 이유: jsdom 에는 그 함수가 없다 — 옵셔널 호출을 빼면 이
-        // 화면을 띄우는 테스트가 렌더 도중 터진다(`MessageItem` 도 같은 이유로 그렇다).
-        ref={isSelected ? (el: HTMLLIElement | null) => { el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' }); } : undefined}
-        className={`flex items-center gap-2 rounded px-2 py-1.5 ${a.disabled ? 'opacity-60' : ''} ${isSelected ? 'bg-accent-surface ring-2 ring-accent' : ''}`}
-      >
-      {/* 여기 있던 `Identity variant="badge"`(🤖 + 소유자 @핸들)를 뺐다 — 화면은 계정이
-          사람인지 에이전트인지 말하지 않는다(design doc 2, #455). 소유자는 프로필(#475)이
-          답한다. 사람 행에서는 애초에 아무것도 그리지 않던 자리라(#365), 지우고 나면
-          두 종류의 행이 같은 모양으로 선다. */}
-      {/* 연결 점은 소켓이 붙어 있는가다. 사람이 고른 상태(StatusMark)와 나란히 둔다 —
-          합치면 "연결이 끊긴 사람"과 "방해 금지인 사람"이 한 표시로 뭉친다(#186).
-
-          `#443`: 값이 **셋**이다. 앞 판본은 `online.includes()` 하나로 갈라 끊긴 동안에도
-          낡은 배열이 초록을 그렸다. 색이 스크린리더에 아무 말도 안 하므로 `title` 로도
-          같은 말을 낸다 — 이 이슈의 본질이 "화면이 사람에게 말하지 않는다"이고,
-          점만 바꾸고 글자를 안 주면 그 절반이 남는다. */}
-      <span
-        data-testid={`directory-presence-${a.id}`}
-        data-online={presence}
-        title={t(PRESENCE_LABEL[presence])}
-        className={`h-2 w-2 shrink-0 rounded-full ${PRESENCE_DOT_CLASS[presence]}`}
-      />
-      <span className="font-medium text-fg">{a.displayName}</span>
-      <span className="text-fg-muted">@{a.handle}</span>
-      <span
-        data-testid={`directory-kind-${a.id}`}
-        className="rounded bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted"
-      >
-        {a.kind}
-      </span>
-      {a.isAdmin && (
-        <span className="rounded bg-warning-surface px-1 text-meta text-warning">admin</span>
-      )}
-      <StatusMark account={a} />
-      {a.statusText && <span className="truncate text-meta text-fg-subtle">{a.statusText}</span>}
-      {/* 비활성 계정은 목록에 남기되 **꺼져 있다는 것이 보여야 한다.** 감추면 "이 사람이
-          없다"와 "꺼져 있다"가 구분되지 않는다. 흐리게만 두는 것도 부족하다 — 대비를
-          못 보는 사람에게는 아무 신호도 아니다. */}
-      {a.disabled && (
-        <span
-          data-testid={`directory-disabled-${a.id}`}
-          className="rounded bg-surface-hover px-1 text-meta text-fg"
-        >
-          {t('directory.disabled')}
-        </span>
-      )}
-    </li>
-    );
-  };
-
   const section = (label: string, rows: AccountView[]) => (
     <section aria-label={label} className="mb-4">
       <h3 className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">
@@ -172,7 +108,7 @@ export function Directory({ open, onClose, accountId }: Props) {
           `Inbox`·`SavedMessages` 가 같은 짝을 쓴다. */}
       {rows.length === 0
         ? <p className="px-2 text-fg-subtle">{t('directory.sectionNoMatch', { label })}</p>
-        : <ul>{rows.map(row)}</ul>}
+        : <ul>{rows.map((a) => <DirectoryRow key={a.id} account={a} selected={accountId === a.id} />)}</ul>}
     </section>
   );
 
@@ -227,5 +163,75 @@ export function Directory({ open, onClose, accountId }: Props) {
           )}
         </div>
     </Overlay>
+  );
+}
+
+/**
+ * 디렉터리의 한 줄 — 연결 점 · 이름 · `@handle` · 종류 · admin · 상태 · 비활성.
+ *
+ * `Directory` 밖으로 꺼낸 이유는 **설정 › 멤버와 초대**(UX ⑥b-5)가 같은 사람 목록을 그리기
+ * 때문이다. 줄을 거기서 다시 짜면 비활성·낡은 presence 같은 규칙(#443)이 한쪽에서만 산다.
+ * 보여 주는 것의 경계(`AccountView` 가 주는 것만)는 위 `Directory` 주석 그대로다.
+ */
+export function DirectoryRow({ account: a, selected: isSelected = false }: { account: AccountView; selected?: boolean }) {
+  const t = useT();
+  const online = useActiveStore((s) => s.online);
+  // `#443`: presence 는 **서버가 주는 것**이라 소켓이 끊기면 낡는다. `online` 만 읽으면
+  // 끊긴 뒤에도 마지막으로 들은 값이 지금 사실처럼 그려진다(실측 2026-09-06: 서버가 죽었는데
+  // 에이전트 6개가 전부 초록이었다). `connected` 가 그 낡음을 아는 유일한 문지기다.
+  const connected = useActiveStore((s) => s.connected);
+  const presence = presenceView(a.id, online, connected);
+  return (
+    <li
+      data-testid={`directory-row-${a.id}`}
+      data-selected={String(isSelected)}
+      // 강조만 하고 화면 밖에 두면 긴 목록에서는 아무 일도 안 일어난 것과 같다.
+      // `scrollIntoView?.` 인 이유: jsdom 에는 그 함수가 없다 — 옵셔널 호출을 빼면 이
+      // 화면을 띄우는 테스트가 렌더 도중 터진다(`MessageItem` 도 같은 이유로 그렇다).
+      ref={isSelected ? (el: HTMLLIElement | null) => { el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' }); } : undefined}
+      className={`flex items-center gap-2 rounded px-2 py-1.5 ${a.disabled ? 'opacity-60' : ''} ${isSelected ? 'bg-accent-surface ring-2 ring-accent' : ''}`}
+    >
+    {/* 여기 있던 `Identity variant="badge"`(🤖 + 소유자 @핸들)를 뺐다 — 화면은 계정이
+        사람인지 에이전트인지 말하지 않는다(design doc 2, #455). 소유자는 프로필(#475)이
+        답한다. 사람 행에서는 애초에 아무것도 그리지 않던 자리라(#365), 지우고 나면
+        두 종류의 행이 같은 모양으로 선다. */}
+    {/* 연결 점은 소켓이 붙어 있는가다. 사람이 고른 상태(StatusMark)와 나란히 둔다 —
+        합치면 "연결이 끊긴 사람"과 "방해 금지인 사람"이 한 표시로 뭉친다(#186).
+
+        `#443`: 값이 **셋**이다. 앞 판본은 `online.includes()` 하나로 갈라 끊긴 동안에도
+        낡은 배열이 초록을 그렸다. 색이 스크린리더에 아무 말도 안 하므로 `title` 로도
+        같은 말을 낸다 — 이 이슈의 본질이 "화면이 사람에게 말하지 않는다"이고,
+        점만 바꾸고 글자를 안 주면 그 절반이 남는다. */}
+    <span
+      data-testid={`directory-presence-${a.id}`}
+      data-online={presence}
+      title={t(PRESENCE_LABEL[presence])}
+      className={`h-2 w-2 shrink-0 rounded-full ${PRESENCE_DOT_CLASS[presence]}`}
+    />
+    <span className="font-medium text-fg">{a.displayName}</span>
+    <span className="text-fg-muted">@{a.handle}</span>
+    <span
+      data-testid={`directory-kind-${a.id}`}
+      className="rounded bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted"
+    >
+      {a.kind}
+    </span>
+    {a.isAdmin && (
+      <span className="rounded bg-warning-surface px-1 text-meta text-warning">admin</span>
+    )}
+    <StatusMark account={a} />
+    {a.statusText && <span className="truncate text-meta text-fg-subtle">{a.statusText}</span>}
+    {/* 비활성 계정은 목록에 남기되 **꺼져 있다는 것이 보여야 한다.** 감추면 "이 사람이
+        없다"와 "꺼져 있다"가 구분되지 않는다. 흐리게만 두는 것도 부족하다 — 대비를
+        못 보는 사람에게는 아무 신호도 아니다. */}
+    {a.disabled && (
+      <span
+        data-testid={`directory-disabled-${a.id}`}
+        className="rounded bg-surface-hover px-1 text-meta text-fg"
+      >
+        {t('directory.disabled')}
+      </span>
+    )}
+  </li>
   );
 }

@@ -250,7 +250,7 @@ export const en = {
   'settings.nav.integrations': 'Integrations',
   'settings.nav.claude-accounts': 'Provider accounts',
   'settings.nav.handle-groups': 'Handle groups',
-  'settings.nav.invite': 'Invite',
+  'settings.nav.invite': 'Members & invites',
   'settings.nav.updates': 'Updates',
   'settings.nav.skills': 'Skills',
   'settings.nav.automations': 'Automations',
@@ -3834,6 +3834,8 @@ export const en = {
   'rail.me.menuFor': '{handle} — your account menu',
   'rail.me.profile': 'Your profile',
   'rail.me.status': 'Change your status',
+  'rail.me.settings': 'Settings',
+  'rail.me.signOut': 'Sign out',
   'rail.nav.label': 'Main navigation',
   /** 이름 뒤에 붙는 조각 — `{name}` 은 칸 이름(`Home`·`Saved`)이다. */
   'rail.cell.withCount': '{name} — {count}',
@@ -4105,7 +4107,13 @@ export const en = {
   'invite.create': 'Mint an invite token',
   'invite.createAgain': 'Mint a new token (the one above disappears)',
   'invite.failed': 'The token was not minted',
-  'invite.notAdmin': 'Only an admin can see this screen',
+  /** 화면 전체가 아니라 **초대 묶음**만 닫힌다(UX ⑥b-5) — 멤버 목록은 모두에게 보인다. */
+  'invite.notAdmin': 'Only an admin can mint invite tokens',
+  'members.invite.title': 'Invite',
+  'members.list.empty': 'No people in this community yet',
+  'members.list.title': 'Members ({count})',
+  /** 에이전트가 왜 없는지까지 말한다 — 안 말하면 "목록이 덜 왔다" 로 읽힌다. */
+  'members.note': 'The people in this community, and invite tokens to bring in someone new. Agents are under Agents › List.',
   /** **세 사실을 다 진다** — 무엇을 하나 · 한 번만 보인다 · 한 번 쓰면 끝이다. */
   'invite.note':
     'Create an invite token to bring someone into this community. The token is shown once, right '
