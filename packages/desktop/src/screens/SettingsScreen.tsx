@@ -6,7 +6,6 @@ import { WorkspaceSettings } from '../components/settings/WorkspaceSettings';
 import { GallerySettings } from '../components/settings/GallerySettings';
 import { AppearanceSettings } from '../components/settings/AppearanceSettings';
 import { CommunitySettings } from '../components/settings/CommunitySettings';
-import { ConnectionSettings } from '../components/settings/ConnectionSettings';
 import { HandleGroupsSettings } from '../components/settings/HandleGroupsSettings';
 import { InviteSettings } from '../components/settings/InviteSettings';
 import { OperatorsSettings } from '../components/settings/OperatorsSettings';
@@ -106,7 +105,6 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
           {section === 'notifications' && <NotificationSettings />}
           {section === 'messages' && <MessageSettings />}
           {section === 'appearance' && <AppearanceSettings />}
-          {section === 'connection' && <ConnectionSettings onSignOut={onSignOut} />}
           {section === 'communities' && <CommunitySettings onCommunitiesEmpty={onCommunitiesEmpty} />}
           {/* AgentsSettings 는 자체 2단 레이아웃이라 SettingsPage 여백을 쓰지 않는다. */}
           {section === 'agents' && <AgentsSettings targetId={targetId} />}

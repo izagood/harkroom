@@ -36,7 +36,7 @@ export function useLocale(): Locale {
  * **"얼마나 전"을 지금 언어로** 내는 함수(`11분 전` · `11 minutes ago`).
  *
  * 훅으로 두는 이유: 이 값을 쓰는 자리가 셋인데(`ProjectionBanner`·`LeasePanel`·
- * `ConnectionSettings`) 셋 다 그것을 **`projectionBanner()` 에 주입한다**(`(b)` 주입).
+ * `IntegrationsSettings`) 셋 다 그것을 **`projectionBanner()` 에 주입한다**(`(b)` 주입).
  * 세 화면이 각자 `agoLabel(ts, Date.now(), locale, t)` 를 적으면 인자 넷을 세 번 옮겨
  * 적는 것이고, 그중 하나가 `Date.now()` 를 빠뜨리면 그 화면만 조용히 다르게 된다.
  *

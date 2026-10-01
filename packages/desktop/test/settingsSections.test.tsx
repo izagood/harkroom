@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { ProfileSettings } from '../src/components/settings/ProfileSettings';
-import { ConnectionSettings } from '../src/components/settings/ConnectionSettings';
 import { UpdatesSettings } from '../src/components/settings/UpdatesSettings';
 import { setController, type Controller } from '../src/state/controller';
 import { acc, fakeApi } from './helpers/fakeApi';
@@ -36,30 +35,11 @@ describe('ProfileSettings', () => {
   });
 });
 
-describe('ConnectionSettings', () => {
-  // 주소는 보관된 값이 아니라 **지금 붙어 있는** 클라이언트에서 읽는다. 토큰 보관이 키체인으로
-  // 가면서 렌더 중 동기 읽기가 불가능해졌고, 어차피 사용자가 알고 싶은 것은 실제 연결 대상이다.
-  beforeEach(() => {
-    setController({
-      api: { ...fakeApi(), baseUrl: 'http://localhost:3400' },
-      // `ConnectionSettings` 가 `ProjectionUrl`(admin 전용)을 함께 그린다 — 바깥
-      // `beforeEach` 가 admin 계정을 심어 두므로 조회가 실제로 일어난다.
-      projectionConfig: vi.fn(async () => ({ url: null, source: null, appUrl: null, envUrl: null })),
-      setProjectionConfig: vi.fn(async () => ({ url: null, source: null, appUrl: null, envUrl: null })),
-      refreshProjection: vi.fn(async () => {}),
-    } as unknown as Controller);
-  });
-
-  it('shows the server it is connected to and the live socket state', () => {
-    render(<ConnectionSettings onSignOut={vi.fn()} />);
-    expect(screen.getByText('http://localhost:3400')).toBeTruthy();
-    expect(screen.getByTestId('connection-state').textContent).toBe('Connected');
-  });
-
-  it('reports a dropped socket', () => {
-    useAppStore.getState().set({ connected: false });
-    render(<ConnectionSettings onSignOut={vi.fn()} />);
-    expect(screen.getByTestId('connection-state').textContent).toBe('Disconnected');
+describe('Connection 흡수 (UX ⑥b-3)', () => {
+  // 로그아웃은 프로필 한 곳이다. 안내는 실제 동작을 적는다 — 명시적 로그아웃은 이 기기의 세션을 전부 비운다.
+  it('프로필의 로그아웃 안내는 이 기기의 커뮤니티가 모두 빠진다고 적는다', () => {
+    render(<ProfileSettings onSignOut={vi.fn()} />);
+    expect(screen.getByText(/Every community added on this device is removed/)).toBeTruthy();
   });
 });
 

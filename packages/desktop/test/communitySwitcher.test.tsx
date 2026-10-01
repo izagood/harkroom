@@ -5,7 +5,7 @@ import type { connectWs } from '../src/lib/ws';
 import App from '../src/App';
 import { Workspace } from '../src/components/Workspace';
 import { CommunitySettings } from '../src/components/settings/CommunitySettings';
-import { ConnectionSettings } from '../src/components/settings/ConnectionSettings';
+import { ProfileSettings } from '../src/components/settings/ProfileSettings';
 import { ConnectScreen, type ConnectScreenProps } from '../src/screens/ConnectScreen';
 import {
   resetCommunityRegistry,
@@ -72,8 +72,6 @@ const fakeController = (baseUrl: string) => ({
   openChannel: vi.fn(), startDm: vi.fn(), logout: vi.fn(), stop: vi.fn(),
   createChannel: vi.fn(), updateChannel: vi.fn(), goBack: vi.fn(), goForward: vi.fn(),
   setChannelNotifyLevel: vi.fn(), toggleChannelStar: vi.fn(),
-  // `ConnectionSettings` 가 `ProjectionUrl`(admin 전용)을 함께 그린다 — 이 스위트의
-  // 시드 계정이 admin 이라 조회가 실제로 일어난다.
   projectionConfig: vi.fn(async () => ({ url: null, source: null, appUrl: null, envUrl: null })),
   setProjectionConfig: vi.fn(async () => ({ url: null, source: null, appUrl: null, envUrl: null })),
   refreshProjection: vi.fn(async () => {}),
@@ -424,7 +422,7 @@ describe('커뮤니티 전환기 — 레일 하나 + 팝오버 (#165, 2026-09-30
     expect(screen.getByTestId(`community-tile-${b.id}`).getAttribute('aria-label')).toContain('나를 기다리는 것 3개');
   });
 
-  it('8. 끊긴 커뮤니티의 행에만 상태 표시가 붙고, Connection 에 옛 문구가 없다', async () => {
+  it('8. 끊긴 커뮤니티의 행에만 상태 표시가 붙고, 로그아웃 안내에 옛 문구가 없다', async () => {
     const { a, b } = await twoCommunities();
     seed(a, 'me-a', true);
     seed(b, 'me-b', false);
@@ -439,13 +437,16 @@ describe('커뮤니티 전환기 — 레일 하나 + 팝오버 (#165, 2026-09-30
     expect(screen.queryByTestId(`community-offline-${a.id}`)).toBeNull();
 
     cleanup();
-    render(<ConnectionSettings onSignOut={() => {}} />);
+    // 로그아웃은 프로필 한 곳이다(UX ⑥b-3, Connection 은 커뮤니티로 흡수됐다).
+    render(<ProfileSettings onSignOut={() => {}} />);
 
     // (A) 아래서 거짓 문장이 된 옛 문구가 화면에 남아 있으면 안 된다.
     expect(screen.queryByText('Use a different server')).toBeNull();
     expect(screen.queryByText('Sign out to enter another server address.')).toBeNull();
-    expect(screen.getByText('이 커뮤니티에서 로그아웃')).toBeTruthy();
-    expect(screen.getByText(/설정 › 커뮤니티/)).toBeTruthy();
+    // "이 커뮤니티에서 로그아웃" 도 거짓이었다 — 명시적 로그아웃은 이 기기의 세션을 **전부** 비운다
+    // (`controller.logout` → `clearLocal()` → `sessionStore.clear()`). 안내가 그 사실을 적는다.
+    expect(screen.queryByText('이 커뮤니티에서 로그아웃')).toBeNull();
+    expect(screen.getByText(/이 기기에 더해 둔 커뮤니티가 모두 빠지고/)).toBeTruthy();
   });
 });
 

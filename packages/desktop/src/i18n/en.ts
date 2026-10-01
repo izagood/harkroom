@@ -201,15 +201,11 @@ export const en = {
   'profile.roleAdmin': 'Administrator',
   'profile.readonlyNote': 'You can change your profile photo and your handle here. Your display name and login ID are set when the account is created and cannot be changed from the app yet.',
   'profile.signOut': 'Sign out',
-  'profile.signOutNote': 'Ends this session on this device only. Your other devices stay signed in.',
+  'profile.signOutNote': 'Signs out on this device. Every community added on this device is removed; your other devices stay signed in.',
   'connection.projectionRunning': '{repo} · projection is running',
-  'connection.projection': 'Projection',
-  'connection.server': 'Server',
-  'connection.realtime': 'Realtime connection',
+  'connection.projection': 'Status',
   'connection.connected': 'Connected',
   'connection.disconnected': 'Disconnected',
-  'connection.signOutTitle': 'Sign out of this community',
-  'connection.signOutNote': 'To use another server, add it in Settings › Communities — the switcher appears at the left of the sidebar once you are in more than one.',
   'appearance.modeSystem': 'System',
   'appearance.modeLight': 'Light',
   'appearance.modeDark': 'Dark',
@@ -247,7 +243,6 @@ export const en = {
   'settings.nav.notifications': 'Notifications',
   'settings.nav.messages': 'Messages',
   'settings.nav.appearance': 'Appearance & language',
-  'settings.nav.connection': 'Connection',
   'settings.nav.communities': 'Communities',
   'settings.nav.workspace': 'General',
   'settings.nav.agents': 'List',
@@ -265,7 +260,6 @@ export const en = {
   'settings.desc.integrations': 'Where the workspace connects to outside tools — the avcs projection, and the MCP servers agents may attach.',
   'integrations.projection': 'avcs projection',
   'integrations.mcp': 'MCP servers',
-  'settings.desc.connection': 'The harkroom server this app talks to.',
   'settings.desc.messages': 'These choices live on this device only.',
   'settings.desc.notifications': 'harkroom only notifies you while its window is in the background.',
   'settings.desc.profile': 'Who you are signed in as on this server.',
@@ -2465,7 +2459,7 @@ export const en = {
   // 화면 이름이 아니다.
   //
   // 그 판정을 그리는 화면이 **셋이다**: 화면 위쪽 띠(`ProjectionBanner`) · 리스 목록
-  // (`LeasePanel`) · 연결 설정(`ConnectionSettings`). 그 파일 머리말이 *"두 자리가 각자
+  // (`LeasePanel`) · 연동 설정(`IntegrationsSettings`). 그 파일 머리말이 *"두 자리가 각자
   // 판정하면 반드시 갈라진다"* 며 함수를 하나로 뽑은 그 이유가 키에도 그대로 걸린다.
   //
   // `url` 덩어리만 화면 하나(`settings/ProjectionUrl.tsx`)의 것이다. **그래도 여기 둔다** —
