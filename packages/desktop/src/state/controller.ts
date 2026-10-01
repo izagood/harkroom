@@ -1314,8 +1314,8 @@ export class Controller {
   }
 
   /** 파일을 고른 순간 올린다 — 전송 시점에 올리면 Enter 를 누르고 기다려야 한다. */
-  upload(file: File): Promise<AttachmentRow> {
-    return this.api.upload(file);
+  upload(file: File, onProgress?: (fraction: number) => void, signal?: AbortSignal): Promise<AttachmentRow> {
+    return this.api.upload(file, onProgress, signal);
   }
 
   fetchAttachment(id: string): Promise<Blob> {

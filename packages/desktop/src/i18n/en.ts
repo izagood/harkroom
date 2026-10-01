@@ -2096,6 +2096,17 @@ export const en = {
    * 그 모름을 지우면 사람은 파일을 줄여 다시 시도하다가 진짜 이유를 못 찾는다.
    */
   'composer.attach.uploadFailed': '{filename} was not uploaded — it may be over the size limit',
+  /** 올리는 중인 칩. 길이를 모르거나 바이트가 다 가고 서버가 저장하는 동안. */
+  'composer.attach.uploading': 'Uploading…',
+  'composer.attach.uploadingPct': 'Uploading {pct}%',
+  /** 실패한 칩 안의 짧은 표시. 사유는 칩 위 줄(`uploadFailed`)이 말한다. */
+  'composer.attach.failedShort': 'Failed',
+  'composer.attach.retry': 'Retry',
+  /** 실패가 둘 이상일 때. 첫 파일 이름만 말하면 나머지가 실패한 줄 모른다. */
+  'composer.attach.uploadFailedMany': {
+    one: '{count} attachment was not uploaded — it may be over the size limit',
+    other: '{count} attachments were not uploaded — they may be over the size limit',
+  },
 
   'composer.mention.autoBadge': 'Auto',
   /**
@@ -2223,6 +2234,16 @@ export const en = {
   'composer.send.submit': 'Send',
   /** 보이는 글자. 접근 이름이 이미 `Undo send` 였으므로 그와 어긋나지 않게 둔다(위 표). */
   'composer.send.undo': 'Undo',
+  /**
+   * 보냈지만 첨부가 아직 올라가는 중인 글. 다 올라가면 저절로 나간다. 개수가 아니라 바이트로 잰
+   * %다 — 큰 그림 한 장이면 개수는 끝날 때까지 0 이다. 길이를 모르면 `Unknown` 쪽.
+   */
+  'composer.send.waitingUploads': 'Uploading attachments {pct}% —',
+  'composer.send.waitingUploadsUnknown': 'Uploading attachments… —',
+  /** 기다리던 첨부가 실패해 글을 돌려놓았을 때. 첨부 실패 줄은 이때 숨으므로 이름을 여기 싣는다. */
+  'composer.send.uploadFailed': 'Not sent — {filename} was not uploaded. Retry or remove it, then send again',
+  /** 실패한 첨부를 든 채 누른 사람에게. */
+  'composer.send.hasFailedUpload': 'Retry or remove {filename} first',
 
   // ---------------------------------------------------------------------------
   // grid — **에이전트 격자다.** `settings/AgentGrid.tsx` 가 그리고, 이 컴포넌트는

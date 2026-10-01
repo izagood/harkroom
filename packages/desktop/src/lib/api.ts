@@ -537,11 +537,16 @@ export class ApiClient {
    * `onProgress` 는 0~1 이다. 서버가 total 을 안 주는 경우(`lengthComputable === false`)에는
    * **부르지 않는다** — 가짜 비율을 그리면 막대가 거짓말을 한다.
    */
-  upload(file: File, onProgress?: (fraction: number) => void): Promise<AttachmentRow> {
+  upload(file: File, onProgress?: (fraction: number) => void, signal?: AbortSignal): Promise<AttachmentRow> {
     const form = new FormData();
     form.append('file', file);
     return new Promise<AttachmentRow>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
+      // 작성창에서 칩을 떼면 끊는다 — 안 끊으면 버린 업로드가 동시 업로드 자리를 끝까지 잡는다.
+      if (signal) {
+        if (signal.aborted) { reject(new ApiError(0, 'upload_aborted', 'aborted')); return; }
+        signal.addEventListener('abort', () => xhr.abort(), { once: true });
+      }
       xhr.open('POST', `${this.baseUrl}/uploads`);
       if (this.token) xhr.setRequestHeader('authorization', `Bearer ${this.token}`);
       if (onProgress) {

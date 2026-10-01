@@ -1037,6 +1037,11 @@ export const ko = {
 
   'composer.attach.drop': '여기에 놓으면 첨부된다',
   'composer.attach.uploadFailed': '{filename} 을 올리지 못했다 (크기 제한을 넘었을 수 있다)',
+  'composer.attach.uploading': '올리는 중…',
+  'composer.attach.uploadingPct': '올리는 중 {pct}%',
+  'composer.attach.failedShort': '실패',
+  'composer.attach.retry': '다시',
+  'composer.attach.uploadFailedMany': { other: '첨부 {count}개를 올리지 못했다 (크기 제한을 넘었을 수 있다)' },
 
   'composer.mention.autoBadge': '자동',
   'composer.mention.autoTitle': '이 채널이 자동으로 멘션한다',
@@ -1124,6 +1129,10 @@ export const ko = {
   'composer.send.sending': '보내는 중…',
   'composer.send.submit': '전송',
   'composer.send.undo': '보냄 취소',
+  'composer.send.waitingUploads': '첨부 올리는 중 {pct}% —',
+  'composer.send.waitingUploadsUnknown': '첨부 올리는 중… —',
+  'composer.send.uploadFailed': '보내지 않았다 — {filename} 을 올리지 못했다. 다시 올리거나 빼고 보내라',
+  'composer.send.hasFailedUpload': '{filename} 을 먼저 다시 올리거나 빼라',
 
   // ---------------------------------------------------------------------------
   // grid — 에이전트 격자. 영역을 `agents` 에 안 붙인 근거는 `en.ts` 의 grid 머리말에 있다

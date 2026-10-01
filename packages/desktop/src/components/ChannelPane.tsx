@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useActiveStore } from '../state/communities';
+import { getCommunityController, useActiveStore, useCommunityRegistry } from '../state/communities';
 import { getController } from '../state/controller';
 import { MessageRows } from './MessageRows';
 import { groupProgress } from '../lib/progressGroup';
@@ -61,6 +61,8 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   // 날짜 구분선은 **앱 언어**를 따른다(`lib/day.ts` 의 근거).
   const locale = useLocale();
   const t = useT();
+  // 작성창이 보낼 커뮤니티(아래 `onSend`). 보낸 순간의 것을 붙잡아야 한다.
+  const communityId = useCommunityRegistry((s) => s.activeId);
   // `groups`·`teams` 는 고정 메시지 미리보기의 집합·팀 토큰을 이름으로 되돌리는 데 쓴다(#845).
   //
   // **필드마다 selector 로 구독한다**(채널 전환 버벅임, 2026-09-29). 예전에는 인자 없는
@@ -883,9 +885,11 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
             // 채널을 **지금 렌더된 것으로 붙여 준다**(#223). 보냄 취소 창이 도는 동안
             // 채널을 옮겨도 이 클로저가 든 채널로 나간다 — 컨트롤러가 스토어를 다시 읽으면
             // 옮긴 채널로 새어 나간다.
+            // 커뮤니티도 **지금 렌더된 것으로** 붙인다(PR #997). 글이 첨부를 기다리는 사이에
+            // 커뮤니티를 옮기면 `getController()` 는 남의 서버를 가리킨다.
             onSend={(body, attachmentIds, agentModels) => (agentModels?.length
-              ? getController().send(body, attachmentIds, activeChannelId, agentModels)
-              : getController().send(body, attachmentIds, activeChannelId))}
+              ? getCommunityController(communityId).send(body, attachmentIds, activeChannelId, agentModels)
+              : getCommunityController(communityId).send(body, attachmentIds, activeChannelId))}
           />
         )}
       </div>
