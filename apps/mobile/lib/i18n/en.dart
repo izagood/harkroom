@@ -314,10 +314,37 @@ class StringsEn implements Strings {
   String get failureNeedsHand => 'Needs a hand';
 
   @override
-  String get attachmentAdd => 'Attach a file';
+  String get attachmentAdd => 'Add attachment';
 
   @override
   String get attachmentUploadFailed => 'Could not upload that file.';
+
+  @override
+  String get attachLibrary => 'Photo Library';
+
+  @override
+  String get attachCamera => 'Take Photo';
+
+  @override
+  String get attachFile => 'Choose File';
+
+  @override
+  String get attachCameraUnavailable => 'This device has no camera';
+
+  @override
+  String get cameraDeniedTitle => 'Camera is off';
+
+  @override
+  String get cameraDeniedBody => 'Turn on Camera in Settings › Harkroom to take a photo and attach it.';
+
+  @override
+  String get cameraDeniedClose => 'Close';
+
+  @override
+  String get cameraDeniedOpenSettings => 'Open Settings';
+
+  @override
+  String get cameraOpenFailed => 'Could not open the camera.';
 
   @override
   String get loadFailedHint => 'Check your connection and try again.';

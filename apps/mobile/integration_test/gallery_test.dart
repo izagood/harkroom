@@ -61,6 +61,12 @@ void main() {
     await tester.tap(find.byKey(const Key('channel-c1')));
     await shot(tester, '02-channel');
 
+    // 첨부 시트. 시뮬레이터라 [사진 찍기] 줄이 비활성으로 선다 — 실기기와 배치가 같다.
+    await tester.tap(find.byKey(const Key('attach')));
+    await shot(tester, '02c-attach-sheet');
+    await tester.tapAt(const Offset(20, 120));
+    await shot(tester, '02d-attach-closed');
+
     final open = find.byKey(const Key('thread-open-m1'));
     await tester.scrollUntilVisible(open, 300,
         scrollable: find
