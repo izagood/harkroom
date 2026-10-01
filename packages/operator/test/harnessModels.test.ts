@@ -11,6 +11,13 @@ describe('parseCodexModels', () => {
     ] }));
     expect(out).toEqual([{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }, { id: 'gpt-5.5', label: 'GPT-5.5' }]);
   });
+  it('모델마다 supported_reasoning_levels 를 efforts 로 싣는다 — 모양이 다르면 싣지 않는다(모른다)', () => {
+    const out = parseCodexModels(JSON.stringify({ models: [
+      { slug: 'a', visibility: 'list', priority: 1, supported_reasoning_levels: [{ effort: 'low', description: 'x' }, { effort: 'ultra' }] },
+      { slug: 'b', visibility: 'list', priority: 2, supported_reasoning_levels: 'weird' },
+    ] }));
+    expect(out).toEqual([{ id: 'a', efforts: ['low', 'ultra'] }, { id: 'b' }]);
+  });
   it('모양이 다르면 undefined(모른다) — 빈 목록(없다)과 구별한다', () => {
     expect(parseCodexModels('not json')).toBeUndefined();
     expect(parseCodexModels('{"other":1}')).toBeUndefined();

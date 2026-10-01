@@ -13,6 +13,7 @@ import { registerGrantRoutes } from './routes/grantRoutes.js';
 import { registerOperatorRoutes } from './routes/operatorRoutes.js';
 import { createOperatorHub } from './ws/operatorHub.js';
 import { registerAssignmentRoutes } from './routes/assignmentRoutes.js';
+import { registerThreadAgentModelRoutes } from './routes/threadAgentModelRoutes.js';
 import { registerMcpServerRoutes } from './routes/mcpServerRoutes.js';
 import { registerChannelRoutes } from './routes/channelRoutes.js';
 import { registerTeamRoutes } from './routes/teamRoutes.js';
@@ -497,7 +498,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // 지워야 하고, 그 경로를 아는 것이 storage 다. 그래서 등록 순서가 main 과 다르다:
   // 채널·메시지 라우트가 createLocalStorage 뒤로 내려왔다.
   await registerChannelRoutes(app, deps.pool, storage);
-  await registerMessageRoutes(app, deps.pool);
+  await registerMessageRoutes(app, deps.pool, { operatorHub });
   await registerAttachmentRoutes(app, deps.pool, storage);
   // 아바타는 같은 스토리지를 쓴다 — 파일 저장소를 하나로 유지하기 위해서다(avatarRoutes 주석).
   await registerAvatarRoutes(app, deps.pool, storage);
@@ -523,6 +524,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
   // 배정(§3). 허브 뒤 — hello 에 배정을 다시 미는 구독이 허브에 걸린다.
   await registerAssignmentRoutes(app, deps.pool, operatorHub);
+  await registerThreadAgentModelRoutes(app, deps.pool, { operatorHub });
   // MCP 레지스트리(§6) — 이름만. 에이전트 PATCH 의 mcpServers 가 이것을 참조한다.
   await registerMcpServerRoutes(app, deps.pool);
 

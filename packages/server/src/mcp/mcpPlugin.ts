@@ -406,7 +406,7 @@ function buildMcpServer(
     const posted = await postMessage(pool, {
       causeMessageId: cause,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null, alsoInChannel,
-      meta: await reportedModelMeta(pool, account.id, model),
+      meta: await reportedModelMeta(pool, account.id, model, threadRootId ?? null),
     });
     // 에이전트는 첨부를 붙이지 않는다(도구에 그 입력이 없다). 그래도 합 타입이므로 확인해야
     // 하고, 확인 자체가 나중에 도구가 첨부를 받게 될 때의 자리를 남겨 둔다.
@@ -450,7 +450,7 @@ function buildMcpServer(
     const posted = await postMessage(pool, {
       causeMessageId: cause,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null, kind: 'progress',
-      meta: await reportedModelMeta(pool, account.id, model),
+      meta: await reportedModelMeta(pool, account.id, model, threadRootId ?? null),
     });
     if (posted.failure) {
       return jsonResult({ error: { code: 'bad_attachment', message: 'attachments must be your own, unused uploads' } });
@@ -531,7 +531,7 @@ function buildMcpServer(
     }
     const meta: AskMeta & Partial<ModelMeta> = {
       kind: 'ask', ask: { options, to: audience, ...(prompt ? { prompt } : {}), ...(mirrorOf ? { mirrorOf } : {}) },
-      ...(await reportedModelMeta(pool, account.id, model)),
+      ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
     };
     const posted = await postMessage(pool, {
       causeMessageId: cause,
@@ -580,7 +580,7 @@ function buildMcpServer(
     const meta: FailureMeta & Partial<ModelMeta> = {
       kind: 'failure',
       failure: { retryable, ...(what ? { what } : {}), ...(reason ? { reason } : {}) },
-      ...(await reportedModelMeta(pool, account.id, model)),
+      ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
     };
     const posted = await postMessage(pool, {
       causeMessageId: cause,
@@ -691,7 +691,7 @@ function buildMcpServer(
         unreachable,
         deadlineAt: deadlineAt.toISOString(),
       },
-      ...(await reportedModelMeta(pool, account.id, model)),
+      ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
     };
     const posted = await postMessage(pool, {
       causeMessageId: cause,
@@ -781,7 +781,7 @@ function buildMcpServer(
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
     const meta: ReportMeta & Partial<ModelMeta> = {
-      ...(await reportedModelMeta(pool, account.id, model)),
+      ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
       kind: 'report',
       report: {
         checks,
