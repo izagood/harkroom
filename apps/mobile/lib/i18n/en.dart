@@ -362,6 +362,12 @@ class StringsEn implements Strings {
   String get messagesEmptyHint => 'Say something, or call an agent with @.';
 
   @override
+  String get channelStartLine => 'This is the very beginning of #{name}';
+
+  @override
+  String get olderLoadFailed => "Couldn't load earlier messages";
+
+  @override
   String get inboxEmptyHint => 'When someone calls you or waits on you, it shows up here.';
 
   @override

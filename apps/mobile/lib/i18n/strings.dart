@@ -132,6 +132,12 @@ abstract class Strings {
   /// 빈 채널에서 할 일.
   String get messagesEmptyHint;
 
+  /// 채널 맨 위 — 더 오래된 말이 없다. `{name}` 은 채널 이름.
+  String get channelStartLine;
+
+  /// 채널 맨 위 — 이전 페이지를 못 받았다. 옆에 "다시 시도" 가 붙는다.
+  String get olderLoadFailed;
+
   /// 빈 인박스의 뜻.
   String get inboxEmptyHint;
 
@@ -500,6 +506,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'threadLoadFailed': s.threadLoadFailed,
       'inboxLoadFailed': s.inboxLoadFailed,
       'messagesEmptyHint': s.messagesEmptyHint,
+      'channelStartLine': s.channelStartLine,
+      'olderLoadFailed': s.olderLoadFailed,
       'inboxEmptyHint': s.inboxEmptyHint,
       'bootUnreachableTitle': s.bootUnreachableTitle,
       'connectionLostBand': s.connectionLostBand,

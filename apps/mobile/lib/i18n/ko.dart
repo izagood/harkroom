@@ -361,6 +361,12 @@ class StringsKo implements Strings {
   String get messagesEmptyHint => '첫 말을 남기거나 @ 로 에이전트를 불러 본다.';
 
   @override
+  String get channelStartLine => '여기가 #{name} 의 처음이다';
+
+  @override
+  String get olderLoadFailed => '이전 메시지를 불러오지 못했다';
+
+  @override
   String get inboxEmptyHint => '누가 부르거나 답을 기다리면 여기 선다.';
 
   @override

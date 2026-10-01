@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/api/api_client.dart';
+import 'package:harkroom/screens/message_list_screen.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_state.dart';
 import 'package:http/http.dart' as http;
@@ -42,6 +44,12 @@ class _Server {
   final List<Map<String, Object?>> all;
   final asked = <Map<String, String>>[];
 
+  /// 참이면 `before` 가 붙은 요청(이전 페이지)에 500 으로 답한다.
+  bool failOlder = false;
+
+  /// 있으면 `before` 가 붙은 요청의 답을 이것이 끝날 때까지 미룬다.
+  Future<void>? holdOlder;
+
   MockClient get client => MockClient((req) async {
         final path = req.url.path;
         if (path == '/auth/me') {
@@ -65,6 +73,10 @@ class _Server {
           asked.add(q);
           final limit = int.parse(q['limit'] ?? '200');
           final before = q['before'] == null ? null : int.parse(q['before']!);
+          if (before != null && holdOlder != null) await holdOlder;
+          if (before != null && failOlder) {
+            return _json({'error': {'code': 'internal', 'message': 'boom'}}, 500);
+          }
           final pool = all.where((m) => before == null || (m['seq']! as int) < before).toList();
           final page = pool.length > limit ? pool.sublist(pool.length - limit) : pool;
           final hasMore = page.isNotEmpty && (page.first['seq']! as int) > 1;
@@ -134,6 +146,7 @@ void main() {
     expect(seqs.toSet().length, 700);
     expect(seqs.first, 1);
     expect(app.channelHasMore['c1'], isFalse);
+    expect(feedTopOf(app, 'c1'), FeedTop.start);
 
     final before = server.asked.length;
     expect(await app.loadOlder('c1'), isFalse);
@@ -147,5 +160,41 @@ void main() {
     final before = server.asked.length;
     await Future.wait([app.loadOlder('c1'), app.loadOlder('c1')]);
     expect(server.asked.length, before + 1);
+  });
+
+  test('이전 페이지를 못 받으면 olderFailed 에 남고, 스크롤로는 다시 부르지 않는다 — 다시 시도만 간다', () async {
+    final server = _Server(_channel(1200, 1));
+    final app = await _open(server);
+    addTearDown(app.dispose);
+    server.failOlder = true;
+    expect(await app.loadOlder('c1'), isFalse);
+    expect(app.olderFailed, contains('c1'));
+    expect(app.messages['c1']!.length, 500); // 보이던 것은 그대로다.
+
+    final before = server.asked.length;
+    expect(await app.loadOlder('c1'), isFalse); // 스크롤이 다시 불러도
+    expect(server.asked.length, before); // 서버에 가지 않는다.
+
+    expect(feedTopOf(app, 'c1'), FeedTop.failed);
+    server.failOlder = false;
+    expect(await app.retryOlder('c1'), isTrue);
+    expect(server.asked.length, before + 1);
+    expect(app.olderFailed, isNot(contains('c1')));
+  });
+
+  test('받는 사이에 로그아웃하면 그 응답은 합치지 않는다(세션 세대)', () async {
+    final server = _Server(_channel(1200, 1));
+    final app = await _open(server);
+    addTearDown(app.dispose);
+    final gate = Completer<void>();
+    server.holdOlder = gate.future;
+    final pending = app.loadOlder('c1');
+    await Future<void>.delayed(Duration.zero);
+    await app.signOut();
+    gate.complete();
+    expect(await pending, isFalse);
+    expect(app.messages['c1'], isNull);
+    expect(app.channelHasMore, isEmpty);
+    expect(app.olderFailed, isEmpty);
   });
 }

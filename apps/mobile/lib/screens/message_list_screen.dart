@@ -8,6 +8,7 @@ import '../mention/sticky.dart';
 import '../state/app_scope.dart';
 import '../state/app_state.dart';
 import '../ui/states.dart';
+import '../ui/tokens.dart';
 import 'agent_model.dart';
 import 'agent_rows.dart';
 import 'ask_card.dart';
@@ -112,7 +113,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
     // 스레드가 조용해 보였다 — 진행은 한 줄로 접히고 대기는 대기 줄이 된다.
     final feed = buildFeed(all.where((m) => m.inChannelFeed).toList(growable: false));
     final failed = app.failedSends[widget.channelId] ?? const <FailedSend>[];
-    final olderBusy = app.loadingOlder.contains(widget.channelId);
+    final top = feedTopOf(app, widget.channelId);
     // `firstOrNull` 은 `package:collection` 것이다. 의존성 하나를 이것 때문에 들이지
     // 않는다 — 채널이 목록에서 사라지는 경우(다른 기기에서 나갔다)가 있으므로 null 은
     // 정상이고, 그때 제목은 빈 줄로 둔다.
@@ -152,19 +153,13 @@ class _MessageListScreenState extends State<MessageListScreen> {
                       reverse: true,
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       // 못 보낸 말이 **맨 아래**(reverse 라 앞쪽)에 선다 — 보낸 자리다. 맨 위(끝)에는
-                      // 이전 페이지를 받는 동안 회전자 한 줄을 둔다.
-                      itemCount: feed.length + failed.length + (olderBusy ? 1 : 0),
+                      // 회전자·"다시 시도"·채널 시작 중 하나를 둔다([FeedTop]).
+                      itemCount: feed.length + failed.length + (top == null ? 0 : 1),
                       itemBuilder: (context, i) => i == feed.length + failed.length
-                          ? const Padding(
-                              key: Key('loading-older'),
-                              padding: EdgeInsets.all(12),
-                              child: Center(
-                                child: SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
-                                ),
-                              ),
+                          ? FeedTopRow(
+                              top: top!,
+                              channelName: channel?.name ?? '',
+                              onRetry: () => app.retryOlder(widget.channelId),
                             )
                           : i < failed.length
                           ? FailedSendRow(item: failed[failed.length - 1 - i])
@@ -274,4 +269,78 @@ Widget buildFeedItem(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [DayDivider(at: m.createdAt), row],
   );
+}
+
+/// 채널 목록 맨 위에 서는 한 줄. 셋 중 하나이거나 없다.
+enum FeedTop {
+  /// 이전 페이지를 받는 중 — 작은 회전자.
+  loading,
+
+  /// 이전 페이지를 못 받았다 — "다시 시도". 스크롤로는 다시 부르지 않는다.
+  failed,
+
+  /// 더 오래된 말이 없다 — "여기가 #채널 의 처음이다". 없으면 끝에 닿았는지 아직 받는 중인지
+  /// 갈리지 않는다(designer #996).
+  start,
+}
+
+/// 지금 맨 위에 세울 줄. 아직 더 있지만 받는 중도 실패도 아니면 `null`(위로 밀면 받는다).
+FeedTop? feedTopOf(AppState app, String channelId) {
+  if (app.loadingOlder.contains(channelId)) return FeedTop.loading;
+  if (app.olderFailed.contains(channelId)) return FeedTop.failed;
+  if (app.channelHasMore[channelId] == false) return FeedTop.start;
+  return null;
+}
+
+class FeedTopRow extends StatelessWidget {
+  const FeedTopRow({super.key, required this.top, required this.channelName, required this.onRetry});
+
+  final FeedTop top;
+  final String channelName;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    final t = context.t;
+    final muted = TextStyle(fontSize: 12, color: k.mute);
+    return switch (top) {
+      FeedTop.loading => const Padding(
+          key: Key('loading-older'),
+          padding: EdgeInsets.all(12),
+          child: Center(
+            child: SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+        ),
+      FeedTop.failed => Padding(
+          key: const Key('older-failed'),
+          padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter, vertical: 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Flexible(child: Text(t.olderLoadFailed, style: muted)),
+              Text(' · ', style: muted),
+              TextButton(
+                key: const Key('older-retry'),
+                onPressed: onRetry,
+                child: Text(t.commonRetry),
+              ),
+            ],
+          ),
+        ),
+      FeedTop.start => Padding(
+          key: const Key('channel-start'),
+          padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 16, HarkroomSize.gutter, 4),
+          child: Text(
+            t.channelStartLine.replaceFirst('{name}', channelName),
+            textAlign: TextAlign.center,
+            style: muted,
+          ),
+        ),
+    };
+  }
 }
