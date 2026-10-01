@@ -26,6 +26,12 @@ class MarkdownBody extends StatefulWidget {
 }
 
 class _MarkdownBodyState extends State<MarkdownBody> {
+  /// 블록 위젯의 키. 같은 종류가 한 본문에 둘 이상 올 수 있으므로(표 둘·형제 목록 둘) **순번을
+  /// 붙인다** — 같은 `Key('md-list')` 를 형제가 나눠 가지면 debug 빌드가 `Duplicate keys` 로
+  /// 멈춘다(security #1060 N1). 시험은 [mdKind] 로 종류만 본다.
+  var _keySeq = 0;
+  Key _key(String kind) => ValueKey<(String, int)>((kind, _keySeq++));
+
   /// 링크마다 하나. **화면이 사라질 때 버린다** — 안 버리면 줄이 스크롤될 때마다 샌다.
   final _recognizers = <TapGestureRecognizer>[];
 
@@ -56,6 +62,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
       r.dispose();
     }
     _recognizers.clear();
+    _keySeq = 0;
 
     final k = context.tokens;
     final base = TextStyle(fontSize: HarkroomType.body, height: HarkroomType.bodyHeight, color: k.fg);
@@ -74,7 +81,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
         MdHeading(:final level, :final text) =>
           _rich(text, base.copyWith(fontWeight: FontWeight.w700, fontSize: level <= 2 ? 16 : 15), k),
         MdCode(:final text) => Container(
-            key: const Key('md-code'),
+            key: _key('md-code'),
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
@@ -94,14 +101,14 @@ class _MarkdownBodyState extends State<MarkdownBody> {
             ),
           ),
         MdQuote(:final text) => Container(
-            key: const Key('md-quote'),
+            key: _key('md-quote'),
             padding: const EdgeInsets.only(left: 10),
             decoration: BoxDecoration(border: Border(left: BorderSide(color: k.line, width: 3))),
             child: _rich(text, base.copyWith(color: k.mute), k),
           ),
         MdList() => _list(b, base, k, 0),
         MdRule() => Container(
-            key: const Key('md-rule'),
+            key: _key('md-rule'),
             height: 1,
             margin: const EdgeInsets.symmetric(vertical: 4),
             color: k.line,
@@ -112,7 +119,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
   /// 목록. 중첩 목록은 **항목 안에** 겹쳐 그린다 — 번호가 깊이마다 따로 세고, 글머리표 모양이
   /// 깊이를 말해 준다(• ◦ ▪).
   Widget _list(MdList list, TextStyle base, HarkroomTokens k, int depth) => Column(
-        key: const Key('md-list'),
+        key: _key('md-list'),
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           for (var i = 0; i < list.items.length; i++)
@@ -163,7 +170,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
           ),
         );
     final grid = SingleChildScrollView(
-      key: const Key('md-table'),
+      key: _key('md-table'),
       scrollDirection: Axis.horizontal,
       child: Table(
         defaultColumnWidth: const IntrinsicColumnWidth(),
@@ -188,7 +195,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
           padding: const EdgeInsets.only(top: 4),
           child: Text(
             context.t.markdownTableMoreRows.replaceAll('{n}', '${t.omittedRows}'),
-            key: const Key('md-table-more'),
+            key: _key('md-table-more'),
             style: TextStyle(fontSize: HarkroomType.meta, color: k.mute),
           ),
         ),
@@ -253,6 +260,9 @@ class _MarkdownBodyState extends State<MarkdownBody> {
     return Text.rich(TextSpan(style: base, children: spans), textAlign: align);
   }
 }
+
+/// 블록 위젯 [key] 의 종류(`md-table`·`md-list`…). 그 밖의 키면 `null`.
+String? mdKind(Key? key) => key is ValueKey<(String, int)> ? key.value.$1 : null;
 
 /// 링크를 열기 전에 **실제 주소**를 보이고 묻는 시트. 호스트를 크게, 전체 주소를 작게 둔다 —
 /// 사람이 확인할 것은 "어디로 가는가"이고, 그것은 호스트다.

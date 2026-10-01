@@ -91,7 +91,10 @@ class MdTable extends MdBlock {
 /// 채우면 수백만 칸이 되어 그 채널을 여는 폰이 멈춘다.
 ///
 /// - 열이 [mdTableMaxCols] 를 넘으면 **표가 아니다** — 단락 글자 그대로 둔다(원문이 보이는 편이 낫다).
-/// - 행은 [mdTableMaxRows] 또는 칸 합계 [mdTableMaxCells](머리글 포함)에서 자른다.
+/// - 행은 [mdTableMaxRows] 또는 칸 예산 [mdTableMaxCells](머리글 포함)에서 자른다.
+/// - 칸 예산은 **본문 하나(`parseMarkdown` 호출 하나)에 하나**다(security #1060 F3). 표마다 따로
+///   주면 상한에 딱 맞는 표 수십 개를 이어 붙인 글 하나가 다시 수만 칸이 된다. 앞 표들이 예산을
+///   쓰고 남은 것으로는 머리글 + 한 행도 못 그리는 표는 **표가 아니다** — 글자 그대로 둔다.
 const mdTableMaxCols = 32;
 const mdTableMaxRows = 200;
 const mdTableMaxCells = 2000;
@@ -115,6 +118,7 @@ List<MdBlock> parseMarkdown(String source) {
   final lines = source.replaceAll('\r\n', '\n').split('\n');
   final out = <MdBlock>[];
   final para = <String>[];
+  final cells = _CellBudget(mdTableMaxCells);
 
   void flushPara() {
     if (para.isEmpty) return;
@@ -179,7 +183,7 @@ List<MdBlock> parseMarkdown(String source) {
 
     // 표. **구분줄이 바로 다음 줄에 있을 때만** 표다 — 앞 줄만 보고는 머리글과 `a | b` 라고
     // 쓴 문장을 구별할 수 없다.
-    final table = _tryTable(lines, i);
+    final table = _tryTable(lines, i, cells);
     if (table != null) {
       flushPara();
       out.add(table.$1);
@@ -319,14 +323,22 @@ List<MdAlign?>? _delimAligns(String line) {
   return out.isEmpty ? null : out;
 }
 
-/// [at] 줄에서 표가 시작하면 그 블록과 다음에 볼 줄을, 아니면 `null`.
-(MdTable, int)? _tryTable(List<String> lines, int at) {
+/// 본문 하나의 남은 표 칸 수.
+class _CellBudget {
+  _CellBudget(this.left);
+  int left;
+}
+
+/// [at] 줄에서 표가 시작하면 그 블록과 다음에 볼 줄을, 아니면 `null`. 쓴 칸은 [budget] 에서 뺀다.
+(MdTable, int)? _tryTable(List<String> lines, int at, _CellBudget budget) {
   final (head, piped) = _splitCells(lines[at]);
   if (!piped || at + 1 >= lines.length) return null;
   final align = _delimAligns(lines[at + 1]);
   if (align == null || align.length != head.length) return null;
   if (align.length > mdTableMaxCols) return null;
-  final maxRows = [mdTableMaxRows, mdTableMaxCells ~/ align.length - 1].reduce((a, b) => a < b ? a : b);
+  final maxRows = [mdTableMaxRows, budget.left ~/ align.length - 1].reduce((a, b) => a < b ? a : b);
+  // 머리글 + 한 행도 못 그리면 표로 만들지 않는다 — 머리글만 남은 표는 내용이 사라진 것처럼 보인다.
+  if (maxRows < 1) return null;
   final rows = <List<String>>[];
   var omitted = 0;
   var j = at + 2;
@@ -345,6 +357,7 @@ List<MdAlign?>? _delimAligns(String line) {
     // 행을 머리글의 열 수에 맞춘다 — 넘치는 칸은 버리고 모자란 칸은 빈 칸.
     rows.add([for (var c = 0; c < align.length; c++) c < cells.length ? cells[c].trim() : '']);
   }
+  budget.left -= (rows.length + 1) * align.length;
   return (MdTable(align, [for (final h in head) h.trim()], rows, omittedRows: omitted), j);
 }
 

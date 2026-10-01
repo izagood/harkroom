@@ -7,6 +7,9 @@ import 'package:harkroom/i18n/i18n.dart';
 import 'package:harkroom/theme.dart';
 import 'package:harkroom/ui/tokens.dart';
 
+/// 종류가 [kind] 인 블록 위젯(키에 순번이 붙어 있어 `find.byKey` 로는 못 찾는다).
+Finder md(String kind) => find.byWidgetPredicate((w) => mdKind(w.key) == kind);
+
 void main() {
   group('블록', () {
     test('펜스 코드 — 안의 글은 해석하지 않는다', () {
@@ -164,6 +167,24 @@ void main() {
       final b = parseMarkdown('${'|a' * mdTableMaxCols}\n${'|-' * mdTableMaxCols}\n${List.filled(1999, '|').join('\n')}');
       final t = b.single as MdTable;
       expect((t.rows.length + 1) * t.align.length, lessThanOrEqualTo(mdTableMaxCells));
+    });
+
+    // security #1060 F3: 상한에 딱 맞는 표(32열 + `|` 줄 61개) 31개를 빈 줄로 이어 붙인 글.
+    final oneMax = '${'|a' * mdTableMaxCols}\n${'|-' * mdTableMaxCols}\n${List.filled(61, '|').join('\n')}';
+    final manyTables = List.filled(31, oneMax).join('\n\n');
+
+    test('칸 예산은 본문 하나에 하나다 — 표를 여러 개 이어 붙여도 칸 합은 상한 안', () {
+      final tables = parseMarkdown(manyTables).whereType<MdTable>().toList();
+      final total = tables.fold(0, (n, t) => n + (t.rows.length + 1) * t.align.length);
+      expect(total, lessThanOrEqualTo(mdTableMaxCells));
+      expect(tables.length, 1);
+      // 예산을 다 쓴 뒤의 표는 글자 그대로 남는다.
+      expect(parseMarkdown(manyTables).whereType<MdParagraph>(), isNotEmpty);
+    });
+
+    test('작은 표 여러 개는 예산 안에서 모두 표다', () {
+      final b = parseMarkdown(List.filled(10, '| a | b |\n|---|---|\n| 1 | 2 |').join('\n\n'));
+      expect(b.whereType<MdTable>().length, 10);
     });
 
     test('문단 바로 뒤의 표도 표다', () {
@@ -333,7 +354,7 @@ void main() {
     testWidgets('표는 격자로 그리고 옆으로 민다 — 구분줄은 화면에 남지 않는다', (tester) async {
       await tester.pumpWidget(host(const MarkdownBody(
           '| 이름 | 상태 |\n|:--|--:|\n| **forge** | ~~멈춤~~ 돎 |\n| [문서](https://docs.example.com/a) | `ok` |')));
-      final scroll = tester.widget<SingleChildScrollView>(find.byKey(const Key('md-table')));
+      final scroll = tester.widget<SingleChildScrollView>(md('md-table'));
       expect(scroll.scrollDirection, Axis.horizontal);
       final table = tester.widget<Table>(find.byType(Table));
       expect(table.children.length, 3);
@@ -373,13 +394,31 @@ void main() {
       await tester.pumpWidget(host(SingleChildScrollView(child: MarkdownBody(wideBomb))));
       expect(sw.elapsed, lessThan(const Duration(seconds: 5)));
       expect(tester.takeException(), isNull);
-      expect(find.byKey(const Key('md-table-more')), findsOneWidget);
+      expect(md('md-table-more'), findsOneWidget);
+    });
+
+    testWidgets('상한 표 31개를 이은 본문도 바로 그린다', (tester) async {
+      final oneMax = '${'|a' * mdTableMaxCols}\n${'|-' * mdTableMaxCols}\n${List.filled(61, '|').join('\n')}';
+      final sw = Stopwatch()..start();
+      await tester.pumpWidget(host(SingleChildScrollView(child: MarkdownBody(List.filled(31, oneMax).join('\n\n')))));
+      expect(sw.elapsed, lessThan(const Duration(seconds: 5)));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('같은 종류 블록이 둘씩 있어도 키가 겹치지 않는다', (tester) async {
+      await tester.pumpWidget(host(const MarkdownBody(
+          '| a |\n|---|\n| 1 |\n\n| b |\n|---|\n| 2 |\n\n- 점\n1. 번호\n\n- 바깥\n  - 안 하나\n  1. 안 둘\n\n```\nx\n```\n\n```\ny\n```\n\n> q1\n\n> q2\n\n---\n\n---')));
+      expect(tester.takeException(), isNull);
+      expect(md('md-table'), findsNWidgets(2));
+      expect(md('md-code'), findsNWidgets(2));
+      expect(md('md-list'), findsNWidgets(5));
+      expect(md('md-rule'), findsNWidgets(2));
     });
 
     testWidgets('잘린 표는 숨긴 행 수를 말한다', (tester) async {
       final rows = List.generate(205, (i) => '| $i |').join('\n');
       await tester.pumpWidget(host(SingleChildScrollView(child: MarkdownBody('| a |\n|---|\n$rows'))));
-      expect(tester.widget<Text>(find.byKey(const Key('md-table-more'))).data, '…5행 더');
+      expect(tester.widget<Text>(md('md-table-more')).data, '…5행 더');
     });
 
     testWidgets('깊이 122 목록도 폰 폭에서 넘치지 않는다', (tester) async {
@@ -389,13 +428,13 @@ void main() {
       final src = List.generate(122, (d) => '${' ' * d}- 깊이$d').join('\n');
       await tester.pumpWidget(host(SingleChildScrollView(child: MarkdownBody(src))));
       expect(tester.takeException(), isNull);
-      expect(find.byKey(const Key('md-list')), findsNWidgets(mdListMaxDepth));
+      expect(md('md-list'), findsNWidgets(mdListMaxDepth));
     });
 
     testWidgets('취소선·구분선·중첩 목록을 그린다', (tester) async {
       await tester.pumpWidget(host(const MarkdownBody('~~취소~~\n\n---\n\n- 바깥\n  - 안쪽')));
-      expect(find.byKey(const Key('md-rule')), findsOneWidget);
-      expect(find.byKey(const Key('md-list')), findsNWidgets(2));
+      expect(md('md-rule'), findsOneWidget);
+      expect(md('md-list'), findsNWidgets(2));
       var struck = false;
       tester.widget<RichText>(find.byType(RichText).first).text.visitChildren((span) {
         if (span is TextSpan && span.text == '취소' && span.style?.decoration == TextDecoration.lineThrough) {
@@ -411,9 +450,9 @@ void main() {
 
     testWidgets('코드 블록·목록·인용을 그린다', (tester) async {
       await tester.pumpWidget(host(const MarkdownBody('- 하나\n\n> 인용\n\n```\nflutter test\n```')));
-      expect(find.byKey(const Key('md-list')), findsOneWidget);
-      expect(find.byKey(const Key('md-quote')), findsOneWidget);
-      expect(find.byKey(const Key('md-code')), findsOneWidget);
+      expect(md('md-list'), findsOneWidget);
+      expect(md('md-quote'), findsOneWidget);
+      expect(md('md-code'), findsOneWidget);
       expect(find.text('flutter test'), findsOneWidget);
     });
   });
