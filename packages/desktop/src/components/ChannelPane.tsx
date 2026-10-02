@@ -1,4 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { GalleryScopeContext } from './Attachments';
+import type { GalleryScope } from '../lib/imageGallery';
 import { getCommunityController, useActiveStore, useCommunityRegistry } from '../state/communities';
 import { getController } from '../state/controller';
 import { MessageRows } from './MessageRows';
@@ -56,6 +58,9 @@ interface ChannelPaneProps {
 
 /** 빈 배열 리터럴을 매 렌더 새로 만들지 않는다. */
 const CHANNEL_NO_TEAMS: never[] = [];
+
+/** 채널 본문에서 연 그림은 채널 최상위 글의 그림을 넘긴다(그림 넘겨 보기 사양 1). */
+const CHANNEL_GALLERY: GalleryScope = { kind: 'channel' };
 
 export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: ChannelPaneProps) {
   // 날짜 구분선은 **앱 언어**를 따른다(`lib/day.ts` 의 근거).
@@ -670,6 +675,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   const channelPins = channelPinsRaw ?? [];
 
   return (
+    <GalleryScopeContext.Provider value={CHANNEL_GALLERY}>
     /* `data-testid` 는 **자리를 재는 회귀선**의 손잡이다(`inboxPane.test.tsx`). 인박스가
        자리가 되면서 한 가로줄에 서는 형제가 셋(인박스·채널·스레드)이 되었고, "누가 누구의
        왼쪽인가"를 잴 방법이 필요해졌다 — 글자(`#general` 같은 제목)로 잡으면 채널 이름이
@@ -929,5 +935,6 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       </div>
     </main>
     </div>
+    </GalleryScopeContext.Provider>
   );
 }

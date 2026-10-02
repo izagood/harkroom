@@ -834,7 +834,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                 {t('message.openSkillApproval')}
               </button>
             )}
-            <Attachments attachments={message.attachments} from={inThread ? 'thread' : 'channel'} />
+            <Attachments attachments={message.attachments} from={inThread ? 'thread' : 'channel'} message={message} />
             {/*
               **집합 호출의 결과**(정본 문서). 리액션·답글 요약보다 **앞**에 둔다: 이 줄은
               내가 방금 부른 것의 결과라 본문에 붙어 읽혀야 하고, 아래의 둘은 그 뒤에 남들이

@@ -3114,6 +3114,13 @@ export const en = {
   'artifact.panel.gone': 'This preview was deleted',
   'artifact.panel.failed': 'The preview could not be opened',
   'artifact.panel.navigated': 'The page tried to go somewhere else, so it was stopped.',
+  'message.attachment.goToMessage': 'Go to message',
+  'message.attachment.galleryAnnounce': 'Image {index} of {total}, sent by {sender}',
+  'message.attachment.loadFailedLong': 'Could not load this image',
+  'message.attachment.retry': 'Retry',
+  'message.attachment.loading': 'Loading image',
+  'message.attachment.prev': 'Previous image',
+  'message.attachment.next': 'Next image',
 
   /** 줄 머리 — 무엇을 불렀나. 셋 다 **부름의 대상**이지 사람 수가 아니다. */
   'message.notified.group': 'Handle group',

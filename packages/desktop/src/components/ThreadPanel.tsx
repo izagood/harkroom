@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { GalleryScopeContext } from './Attachments';
+import type { GalleryScope } from '../lib/imageGallery';
 import { getCommunityController, useActiveStore, useCommunityRegistry } from '../state/communities';
 import { getController } from '../state/controller';
 import { MessageItem } from './MessageItem';
@@ -253,6 +255,9 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
     if (el.scrollTop < prevTop) stickyRef.current = false;
   };
 
+  // 스레드 패널에서 연 그림은 이 스레드(루트+답글)의 그림을 넘긴다(그림 넘겨 보기 사양 1).
+  const gallery = useMemo<GalleryScope | null>(() => (threadRootId ? { kind: 'thread', rootId: threadRootId } : null), [threadRootId]);
+
   if (!threadRootId) return null;
 
   return (
@@ -266,6 +271,7 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
      * `flex-shrink` 기본값(1)을 그대로 둬서, 창이 좁아지면 고른 폭보다 줄어들되
      * `minWidth` 아래로는 안 간다 — 전에 `min-w-[480px] flex-1` 이 하던 일과 같다.
      */
+    <GalleryScopeContext.Provider value={gallery}>
     <section
       /* `ChannelPane` 과 같은 이유로 붙은 손잡이다(그 파일의 주석) — 인박스가 자리가 되면서
          한 줄의 형제가 셋이 되었고, 그 순서를 재는 회귀선이 생겼다. */
@@ -378,5 +384,6 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
         />
       </div>
     </section>
+    </GalleryScopeContext.Provider>
   );
 }

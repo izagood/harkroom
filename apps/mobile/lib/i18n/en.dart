@@ -288,6 +288,8 @@ class StringsEn implements Strings {
 
   @override
   String get attachmentFailed => 'Could not load this file.';
+  @override
+  String get attachmentGoToMessage => 'Go to message';
 
   @override
   String get artifactVersion => 'v{v}';

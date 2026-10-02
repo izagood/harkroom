@@ -19,6 +19,7 @@ import 'message_feed.dart';
 import 'message_tile.dart';
 import 'search_screen.dart';
 import 'thread_screen.dart';
+import 'attachments.dart';
 
 /// 한 채널의 말들 + 작성칸. P0 의 마지막 화면이다.
 ///
@@ -132,7 +133,10 @@ class _MessageListScreenState extends State<MessageListScreen> {
     }
 
     final label = channelLabel(channel);
-    return Scaffold(
+    return GallerySource(
+      // 크게 보기에서 넘겨 볼 그림의 범위(그림 넘겨 보기 사양 1·5).
+      messages: () => (app.messages[widget.channelId] ?? const <MessageRow>[]).where((m) => m.inChannelFeed).toList(),
+      child: Scaffold(
       // 개정판 3.3: 왼쪽 정렬 "# task" + 부제(주제). 주제가 없으면 한 줄.
       appBar: AppBar(
         title: ScreenTitle(title: label, subtitle: channel?.topic),
@@ -247,7 +251,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
           ],
         ),
       )),
-    );
+    ));
   }
 }
 
