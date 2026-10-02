@@ -636,6 +636,43 @@ abstract class Strings {
 
   /// 커뮤니티별 알림 스위치가 꺼져 있을 때의 설명.
   String get pushCommunityOff;
+
+  // ── 찾기 ─────────────────────────────────────────────────────────────
+  /// 메시지 찾기를 여는 버튼(탭 막대 오른쪽·채널/스레드 머리)의 이름.
+  String get searchButton;
+
+  /// 찾기 입력칸이 비었을 때.
+  String get searchHint;
+
+  /// 찾기 화면을 닫는다.
+  String get searchCancel;
+
+  /// 범위 칩: 볼 수 있는 대화 전부.
+  String get searchScopeAll;
+
+  /// 범위 칩: 지금 연 스레드 안.
+  String get searchScopeThread;
+
+  /// 아직 찾을 말을 덜 쳤다(두 글자부터 서버에 보낸다).
+  String get searchStart;
+
+  /// 맞는 것이 없다. {q} 는 찾은 말.
+  String get searchNoResults;
+
+  /// 두 글자로 찾아 0건일 때 — 서버는 두 글자를 낱말 앞부분으로만 맞춘다.
+  String get searchTwoLetterHint;
+
+  /// 범위를 좁혀 0건일 때 전체로 넓히는 버튼.
+  String get searchEverywhere;
+
+  /// 첫 결과를 못 받았다.
+  String get searchFailed;
+
+  /// 다음 결과 묶음을 못 받았다.
+  String get searchMoreFailed;
+
+  /// 결과 줄: 그 말이 스레드 답글이다.
+  String get searchInThread;
 }
 
 /// **영어와 같아도 되는 키.** 고유명사처럼 번역이 존재하지 않는 것들이다.
@@ -867,4 +904,16 @@ Map<String, String> stringsToMap(Strings s) => {
       'pushOpenSettings': s.pushOpenSettings,
       'pushCommunityOn': s.pushCommunityOn,
       'pushCommunityOff': s.pushCommunityOff,
+      'searchButton': s.searchButton,
+      'searchHint': s.searchHint,
+      'searchCancel': s.searchCancel,
+      'searchScopeAll': s.searchScopeAll,
+      'searchScopeThread': s.searchScopeThread,
+      'searchStart': s.searchStart,
+      'searchNoResults': s.searchNoResults,
+      'searchTwoLetterHint': s.searchTwoLetterHint,
+      'searchEverywhere': s.searchEverywhere,
+      'searchFailed': s.searchFailed,
+      'searchMoreFailed': s.searchMoreFailed,
+      'searchInThread': s.searchInThread,
     };

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/api_error.dart';
+import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
 import '../ui/states.dart';
@@ -46,6 +47,22 @@ Future<void> openMessageLink(BuildContext context, String messageId) async {
     return null;
   }();
   if (row == null || !context.mounted) return;
+  await _openRow(context, navigator, row);
+}
+
+/// 이미 손에 든 메시지로 간다(찾기 결과). [openMessageLink] 와 **같은 곳**으로 가되 메시지를
+/// 다시 묻지 않는다 — 찾기 결과가 그 행을 통째로 실어 왔다. 최상위 글이면 [AppState.threadRoots]
+/// 에 넣어 둔다: 채널에 아직 안 실린 옛 글이어도 스레드 화면이 루트를 바로 그린다
+/// (`locateMessage` 가 링크 길에서 하는 것과 같다).
+Future<void> openMessageRow(BuildContext context, MessageRow row) async {
+  if (!context.mounted) return;
+  final app = AppScope.read(context);
+  if (row.threadRootId == null) app.threadRoots.putIfAbsent(row.id, () => row);
+  await _openRow(context, Navigator.of(context), row);
+}
+
+Future<void> _openRow(BuildContext context, NavigatorState navigator, MessageRow row) async {
+  final app = AppScope.read(context);
   await app.openChannel(row.channelId);
   if (!context.mounted) return;
   await navigator.push(MaterialPageRoute<void>(

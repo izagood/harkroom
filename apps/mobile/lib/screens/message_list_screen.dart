@@ -17,6 +17,7 @@ import 'composer_attachments.dart';
 import 'mention_button.dart';
 import 'message_feed.dart';
 import 'message_tile.dart';
+import 'search_screen.dart';
 import 'thread_screen.dart';
 
 /// 한 채널의 말들 + 작성칸. P0 의 마지막 화면이다.
@@ -133,7 +134,14 @@ class _MessageListScreenState extends State<MessageListScreen> {
     final label = channelLabel(channel);
     return Scaffold(
       // 개정판 3.3: 왼쪽 정렬 "# task" + 부제(주제). 주제가 없으면 한 줄.
-      appBar: AppBar(title: ScreenTitle(title: label, subtitle: channel?.topic)),
+      appBar: AppBar(
+        title: ScreenTitle(title: label, subtitle: channel?.topic),
+        // 머리 돋보기 → **이 채널** 범위로 연다(데스크톱 채널 머리 버튼과 같은 물음).
+        actions: [
+          SearchButton(key: const Key('channel-search'), scope: SearchScope.channel, channelId: widget.channelId),
+          const SizedBox(width: 4),
+        ],
+      ),
       // 토스트를 작성칸 위로 올린다(states.dart ComposerScope).
       body: ComposerScope(child: SafeArea(
         child: Column(

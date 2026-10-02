@@ -618,4 +618,40 @@ class StringsKo implements Strings {
 
   @override
   String get pushCommunityOff => '알림 끔';
+
+  @override
+  String get searchButton => '찾기';
+
+  @override
+  String get searchHint => '메시지 찾기';
+
+  @override
+  String get searchCancel => '취소';
+
+  @override
+  String get searchScopeAll => '전체';
+
+  @override
+  String get searchScopeThread => '이 스레드';
+
+  @override
+  String get searchStart => '두 글자부터 찾는다.';
+
+  @override
+  String get searchNoResults => '‘{q}’에 맞는 메시지가 없다.';
+
+  @override
+  String get searchTwoLetterHint => '두 글자는 낱말 앞부분만 찾는다 — 한 글자 더 쳐 보라.';
+
+  @override
+  String get searchEverywhere => '전체에서 찾기';
+
+  @override
+  String get searchFailed => '찾지 못했다.';
+
+  @override
+  String get searchMoreFailed => '결과를 더 불러오지 못했다.';
+
+  @override
+  String get searchInThread => '스레드';
 }

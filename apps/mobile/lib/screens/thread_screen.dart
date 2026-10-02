@@ -14,6 +14,7 @@ import 'mention_button.dart';
 import 'message_feed.dart';
 import 'message_list_screen.dart';
 import 'message_tile.dart';
+import 'search_screen.dart';
 
 /// 스레드 하나. 루트를 맨 위에 두고 그 아래 답글이 붙는다.
 ///
@@ -220,6 +221,16 @@ class _ThreadScreenState extends State<ThreadScreen> {
           title: t.threadTitle,
           subtitle: where.isEmpty ? countLabel : '$where · $countLabel',
         ),
+        // 머리 돋보기 → **이 스레드** 범위로 연다(데스크톱 ⌘F 와 같은 물음).
+        actions: [
+          SearchButton(
+            key: const Key('thread-search'),
+            scope: SearchScope.thread,
+            channelId: widget.channelId,
+            threadRootId: widget.rootId,
+          ),
+          const SizedBox(width: 4),
+        ],
       ),
       // 토스트를 작성칸 위로 올린다(states.dart ComposerScope).
       body: ComposerScope(child: SafeArea(
