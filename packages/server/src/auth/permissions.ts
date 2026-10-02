@@ -81,6 +81,8 @@ export async function can(
 ): Promise<boolean> {
   // `repo.merge` 는 여기서 언제나 거짓이다 — 정확 일치 grant 만 보는 `mergeGrantFor` 가 판정한다(F1).
   if (cap === 'repo.merge') return false;
+  // `api.call` 도 같다 — 사슬과 limits 를 보는 `apiGrants.ts::apiGrantFor` 가 판정한다.
+  if (cap === 'api.call') return false;
   if (target && await isOwnerOf(pool, actor.id, target)) return true;
   // guest 는 기본 capability 가 없다 — 외부인을 채널 하나에만 들이는 자리다(스펙 §6, v2).
   if (actor.role !== 'guest' && MEMBER_DEFAULT_CAPABILITIES.includes(cap)) return true;

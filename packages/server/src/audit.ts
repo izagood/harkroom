@@ -46,6 +46,7 @@ export type AuditAction =
   | 'grant.given' | 'grant.revoked' | 'role.changed'
   // 비밀 보관소(085). detail 에는 이름·판·대상 id 만 — **값도 값의 해시도 넣지 않는다**(짧은 토큰은
   // 해시로 역산된다).
+  | 'connector.created' | 'connector.updated' | 'connector.deleted'
   | 'secret.created' | 'secret.updated' | 'secret.value.replaced' | 'secret.deleted'
   | 'secret.grant.given' | 'secret.grant.revoked'
   // 턴 임대 충돌(086) — 같은 멘션에 살아 있는 임대가 이미 있다. 러너가 아닌 누군가가 먼저 받아 갔을 수 있다.

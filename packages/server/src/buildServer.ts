@@ -10,6 +10,7 @@ import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
 import { registerAccountRoutes } from './routes/accountRoutes.js';
 import { registerGrantRoutes } from './routes/grantRoutes.js';
+import { registerConnectorRoutes } from './routes/connectorRoutes.js';
 import { registerOperatorRoutes } from './routes/operatorRoutes.js';
 import { createOperatorHub } from './ws/operatorHub.js';
 import { registerAssignmentRoutes } from './routes/assignmentRoutes.js';
@@ -568,6 +569,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerAccountRoutes(app, deps.pool, { operatorHub });
   // 권한 부여·회수·역할(스펙 2026-09-20 §6). 계정 라우트 바로 뒤 — 같은 `/accounts/:id/*` 표면이다.
   await registerGrantRoutes(app, deps.pool);
+  await registerConnectorRoutes(app, deps.pool);
   await registerTeamRoutes(app, deps.pool);
   const storageOpts = deps.storage ?? {
     root: defaultAttachmentRoot(app),
