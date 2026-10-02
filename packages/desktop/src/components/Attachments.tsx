@@ -1,12 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { previewUrlFor } from '../lib/attachmentUploads';
-import type { AttachmentRow } from '@harkroom/shared';
+import type { AttachmentRow, MessageRow } from '@harkroom/shared';
 import type { PendingUpload } from '../state/appStore';
 import { getController } from '../state/controller';
-import { ImageLightbox } from './ImageLightbox';
-import { useT } from '../i18n/useT';
-import { useLatestKnownVersion } from './ArtifactPreview';
 import { useActiveStore } from '../state/communities';
+import { collectGallery, type GalleryItem, type GalleryScope } from '../lib/imageGallery';
+import { stampLabel } from '../lib/day';
+import { ImageLightbox } from './ImageLightbox';
+import { useT, useLocale } from '../i18n/useT';
+import { useLatestKnownVersion } from './ArtifactPreview';
+
+/**
+ * 그림을 연 **칸**의 넘겨 보기 범위 — 채널 본문(`ChannelPane`)과 스레드 패널(`ThreadPanel`)이 준다.
+ * 없으면(그 밖의 자리) 지금처럼 그 그림 한 장만 본다.
+ */
+export const GalleryScopeContext = createContext<GalleryScope | null>(null);
 
 /**
  * 미리보기를 허용하는 타입. **화이트리스트다** — `image/*` 로 열면 `image/svg+xml` 이 들어오고,
@@ -210,11 +218,22 @@ export function PendingAttachmentTile({ upload, onRemove, onRetry }: {
 }
 
 /** 확대 보기는 `ImageLightbox.tsx` 에 있다(배율·끌기·단축키, designer 3192efed). */
-function Attachment({ attachment }: { attachment: AttachmentRow }) {
+function Attachment({ attachment, message }: { attachment: AttachmentRow; message?: MessageRow }) {
   const t = useT();
   const previewable = canPreview(attachment);
   const { url, failed } = useAttachmentUrl(attachment.id, previewable);
   const [zoomed, setZoomed] = useState(false);
+  const scope = useContext(GalleryScopeContext);
+  /** 연 순간의 목록(사양 1: 열 때 한 번 찍는다). 칸 밖이거나 글을 모르면 null — 한 장 보기. */
+  const [gallery, setGallery] = useState<{ items: GalleryItem[]; start: number } | null>(null);
+  const openZoom = () => {
+    if (scope && message) {
+      const items = collectGallery(useActiveStore.getState().messages[message.channelId] ?? [], scope, canPreview);
+      const start = items.findIndex((it) => it.attachment.id === attachment.id);
+      if (start >= 0 && items.length > 1) { setGallery({ items, start }); return; }
+    }
+    setZoomed(true);
+  };
 
   if (previewable && url) {
     return (
@@ -229,7 +248,7 @@ function Attachment({ attachment }: { attachment: AttachmentRow }) {
         */}
         <button
           type="button"
-          onClick={() => setZoomed(true)}
+          onClick={openZoom}
           aria-label={t('message.attachment.zoom', { filename: attachment.filename })}
           className="block cursor-zoom-in rounded border border-border"
         >
@@ -251,6 +270,9 @@ function Attachment({ attachment }: { attachment: AttachmentRow }) {
           />
         </button>
         {zoomed && <ImageLightbox attachment={attachment} url={url} onClose={() => setZoomed(false)} />}
+        {gallery && (
+          <ImageGallery items={gallery.items} start={gallery.start} startUrl={url} onClose={() => setGallery(null)} />
+        )}
       </>
     );
   }
@@ -325,10 +347,81 @@ function ArtifactCard({ attachment, cover, from }: {
   );
 }
 
-export function Attachments({ attachments, from = 'channel' }: {
+/**
+ * 넘겨 보기(designer 사양, 2026-10-02). 장(`index`)과 장마다의 바이트를 쥔다 — 라이트박스는 한 장을 그릴 뿐이다.
+ * 바이트: 연 그림은 본문이 받은 objectURL 을 그대로 쓰고(다시 받지 않는다), 나머지는 볼 때 받는다. 이웃(±1)은
+ * 미리 받아 넘기는 순간 바로 보이게 한다. 여기서 만든 objectURL 은 닫을 때 revoke 한다 — 본문 것은 본문이 한다.
+ */
+export function ImageGallery({ items, start, startUrl, onClose }: {
+  items: GalleryItem[];
+  start: number;
+  startUrl: string;
+  onClose: () => void;
+}) {
+  const locale = useLocale();
+  const [index, setIndex] = useState(start);
+  const startId = items[start]?.attachment.id;
+  const [urls, setUrls] = useState<Record<string, string>>(() => (startId ? { [startId]: startUrl } : {}));
+  const [failed, setFailed] = useState<Record<string, boolean>>({});
+  const asked = useRef(new Set<string>(startId ? [startId] : []));
+  const owned = useRef<string[]>([]);
+  const alive = useRef(true);
+  useEffect(() => () => {
+    alive.current = false;
+    for (const u of owned.current) URL.revokeObjectURL(u);
+  }, []);
+
+  const load = useCallback((id: string) => {
+    if (asked.current.has(id)) return;
+    asked.current.add(id);
+    setFailed((f) => ({ ...f, [id]: false }));
+    void getController().fetchAttachment(id).then((blob) => {
+      const u = URL.createObjectURL(blob);
+      if (!alive.current) { URL.revokeObjectURL(u); return; }
+      owned.current.push(u);
+      setUrls((m) => ({ ...m, [id]: u }));
+    }).catch(() => {
+      asked.current.delete(id);
+      if (alive.current) setFailed((f) => ({ ...f, [id]: true }));
+    });
+  }, []);
+
+  useEffect(() => {
+    for (const i of [index, index - 1, index + 1]) {
+      const it = items[i];
+      if (it) load(it.attachment.id);
+    }
+  }, [index, items, load]);
+
+  const item = items[index]!;
+  const id = item.attachment.id;
+  const author = useActiveStore((s) => s.accounts[item.message.authorId]);
+  return (
+    <ImageLightbox
+      attachment={item.attachment}
+      url={urls[id] ?? null}
+      failed={!!failed[id]}
+      onRetry={() => load(id)}
+      onClose={onClose}
+      nav={{
+        index,
+        total: items.length,
+        onPrev: index > 0 ? () => setIndex(index - 1) : undefined,
+        onNext: index < items.length - 1 ? () => setIndex(index + 1) : undefined,
+        sender: author?.handle ?? '…',
+        at: stampLabel(item.message.createdAt, locale),
+        onGoTo: () => { onClose(); void getController().openMessage(item.message.id, item.message); },
+      }}
+    />
+  );
+}
+
+export function Attachments({ attachments, from = 'channel', message }: {
   attachments: AttachmentRow[];
   /** 이 목록이 놓인 칸 — 미리보기가 열린 동안 남길 칸을 정한다(`Workspace.tsx`). */
   from?: 'channel' | 'thread';
+  /** 이 첨부가 달린 글 — 있으면 확대 보기에서 같은 칸의 그림을 넘겨 본다. */
+  message?: MessageRow;
 }) {
   if (!attachments.length) return null;
   // 미리보기의 표지는 카드 안에 그린다 — 따로 그림으로 한 번 더 보이면 같은 것이 두 번이다.
@@ -339,7 +432,7 @@ export function Attachments({ attachments, from = 'channel' }: {
         <div key={a.id}>
           {a.artifact
             ? <ArtifactCard attachment={a} from={from} cover={attachments.find((c) => c.id === a.artifact!.coverAttachmentId) ?? null} />
-            : <Attachment attachment={a} />}
+            : <Attachment attachment={a} message={message} />}
         </div>
       ))}
     </div>

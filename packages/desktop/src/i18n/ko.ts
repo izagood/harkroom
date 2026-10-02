@@ -1476,6 +1476,13 @@ export const ko = {
   'artifact.panel.gone': '지워진 미리보기다',
   'artifact.panel.failed': '미리보기를 열지 못했다',
   'artifact.panel.navigated': '페이지가 다른 곳으로 이동하려 해서 막았다.',
+  'message.attachment.goToMessage': '글로 가기',
+  'message.attachment.galleryAnnounce': '{total}장 중 {index}번째, 보낸 사람 {sender}',
+  'message.attachment.loadFailedLong': '그림을 불러오지 못했다',
+  'message.attachment.retry': '다시 받기',
+  'message.attachment.loading': '그림을 받는 중',
+  'message.attachment.prev': '이전 그림',
+  'message.attachment.next': '다음 그림',
 
   'message.notified.group': '집합',
   'message.notified.team': '팀',
