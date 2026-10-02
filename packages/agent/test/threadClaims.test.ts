@@ -97,7 +97,7 @@ function runner(server: ReturnType<typeof fakeServer>, holder: string, timers = 
     queue: new MentionQueue(),
     accountLane: [null],
     runMentionTurn: (_deps, target) => {
-      started.push(target.threadRootId);
+      started.push(target.threadRootId ?? '(top)');
       const d = deferred<MentionTurnResult>();
       pending.push(d);
       return d.promise;
