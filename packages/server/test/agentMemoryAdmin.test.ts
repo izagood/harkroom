@@ -10,6 +10,7 @@ let app: FastifyInstance;
 let stop: () => Promise<void>;
 let pool: Pool;
 let adminToken: string;
+let adminId: string;
 let agentId: string;
 let otherAgentId: string;
 let plainToken: string;
@@ -19,7 +20,7 @@ beforeAll(async () => {
   stop = db.stop;
   pool = db.pool;
   app = await buildServer({ pool: db.pool });
-  ({ token: adminToken } = await bootstrapAdmin(app));
+  ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
   ({ accountId: agentId } = await createAgent(app, adminToken, 'memorybot'));
   ({ accountId: otherAgentId } = await createAgent(app, adminToken, 'othermemorybot'));
 
@@ -156,8 +157,7 @@ describe('에이전트 기억 편집 REST (M5)', () => {
 
   it('사람 계정 id 나 없는 id 로는 기억 행을 만들지 않는다 — admin 이어도 404', async () => {
     // requireOwnerOrAdmin 은 이 둘에도 admin 을 통과시킨다. 라우트가 대상을 안 보면 사람 id 로 행이 생겼다.
-    const me = (await app.inject({ method: 'GET', url: '/accounts/me', headers: admin() })).json().id as string;
-    for (const id of [me, '00000000-0000-4000-8000-000000000000']) {
+    for (const id of [adminId, '00000000-0000-4000-8000-000000000000']) {
       const put = await app.inject({
         method: 'PUT', url: `/accounts/agents/${id}/memory/${encodeURIComponent('mem/stray')}`, headers: admin(), payload: { value: 'x' },
       });
