@@ -141,8 +141,15 @@ void main() {
     await tester.tap(find.byKey(const Key('tab-home')));
     await tester.pump(const Duration(milliseconds: 200));
     await tester.tap(find.byKey(const Key('open-me')).first);
+    // S6: 나 시트 — 처음 0.6 · 끝까지 끌어 올린 것 · [모두 로그아웃] 확인.
     await shot(tester, '05-me');
-    await tester.tap(find.byType(BackButton));
+    await tester.drag(find.byKey(const Key('me-sheet')), const Offset(0, -600));
+    await shot(tester, '05b-me-full');
+    await tester.scrollUntilVisible(find.byKey(const Key('me-sign-out-all')), 200,
+        scrollable: find.descendant(of: find.byKey(const Key('me-sheet')), matching: find.byType(Scrollable)).first);
+    await tester.tap(find.byKey(const Key('me-sign-out-all')));
+    await shot(tester, '05c-me-sign-out-confirm');
+    await tester.tap(find.byKey(const Key('me-sign-out-all-cancel')));
     await tester.pump(const Duration(milliseconds: 400));
 
     // ── 다크 판. 기기 밝기를 바꾸면 `MaterialApp.darkTheme` 이 선다.
