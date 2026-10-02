@@ -62,12 +62,17 @@ function wantsVisibleScope(query: unknown): boolean {
   return typeof query === 'object' && query !== null && (query as Record<string, unknown>).scope === 'visible';
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** 이 채널들 가운데 이 사람이 볼 수 있는 것. 메시지와 **같은 술어**(`channelVisibleSql`)다. */
 async function visibleChannelIds(pool: Pool, accountId: string, channelIds: string[]): Promise<Set<string>> {
-  if (!channelIds.length) return new Set();
+  // 채널 id 는 **러너가 announce 한 값**이다 — uuid 가 아니면 캐스트가 질의 전체를 500 으로 만든다.
+  // 그런 줄은 어느 채널에도 속하지 않으므로 보이지 않는 것으로 친다.
+  const ids = [...new Set(channelIds)].filter((id) => UUID_RE.test(id));
+  if (!ids.length) return new Set();
   const res = await pool.query<{ id: string }>(
     `select c.id from channel c where c.id = any($2::uuid[]) and ${channelVisibleSql('c', '$1')}`,
-    [accountId, [...new Set(channelIds)]],
+    [accountId, ids],
   );
   return new Set(res.rows.map((r) => r.id));
 }
