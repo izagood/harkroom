@@ -7,6 +7,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { ANY_MENTION_TOKEN_PATTERN } from '@harkroom/shared';
 import { channelVisibleSql } from '../channels.js';
+import { displayBodySql } from '../systemBody.js';
 import type { SecretLeakGuard } from '../secretLeakGuard.js';
 import { redactToken, type ApnsEnv, type PushTransport } from './apns.js';
 import {
@@ -114,7 +115,7 @@ export function createPushSweeper(pool: Pool, deps: {
    */
   async function liveCheck(client: PoolClient, job: JobRow): Promise<LiveRow | null> {
     const res = await client.query<LiveRow>(
-      `select m.channel_id as "channelId", m.thread_root_id as "threadRootId", m.body,
+      `select m.channel_id as "channelId", m.thread_root_id as "threadRootId", ${displayBodySql('m')} as body,
               m.author_id as "authorId", au.handle as "authorHandle", au.kind as "authorKind",
               c.kind as "channelKind", c.name as "channelName",
               m.meta->>'kind' as "metaKind", m.meta->'failure'->>'code' as "failureCode",
