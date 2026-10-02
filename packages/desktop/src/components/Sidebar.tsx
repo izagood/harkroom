@@ -32,6 +32,7 @@ import { canSeeAgentConfig } from '../lib/agentConfigGate';
 import { faceState, isFaceGreyed, type FaceState } from '../lib/faceState';
 // 인박스 줄의 배지가 **레일 홈 칸·독과 같은 함수로** 센다(`InboxRowBadge`). 여기서 다시
 // 적으면 같은 사실을 말하는 세 자리가 갈린다 — 그 규칙이 `state/unread.ts` 에 나온 이유다.
+import { blockingUnreadCount } from '../state/unread';
 import { anyPresenceView, PRESENCE_LABEL, type PresenceView } from '../lib/presenceView';
 import type { SectionId } from './settings/sections';
 import type {
@@ -126,7 +127,7 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
  * 화면에서 인박스 줄은 조용했고, 신고자가 본 것이 그것이다(#murmur 1 옆의 무표정한 Inbox).
  *
  * "같은 사실이 두 곳"은 **갈릴 때만** 문제다. 그래서 세는 함수를 새로 적지 않고 레일·독이
- * 읽는 `inboxMine`(보드의 `mineCount`, 배지 A 2026-10-02)을 그대로 쓴다 — 넷이 한 값을 읽으면 숫자가 갈릴 자리가 없다.
+ * 쓰는 `blockingUnreadCount` 를 그대로 쓴다 — 셋이 한 함수를 부르면 숫자가 갈릴 자리가 없다.
  *
  * ## 두 신호를 그대로 물려받는다
  *
@@ -143,8 +144,7 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
  * 그것으로 점을 켜면 인박스를 열었을 때 아무 새 줄도 없는 일이 생긴다.
  */
 function InboxRowBadge() {
-  // 내 차례 수(배지 A) — 보드의 "나를 기다리는 일 N" 과 같은 숫자다.
-  const blocking = useActiveStore((s) => s.inboxMine);
+  const blocking = useActiveStore((s) => blockingUnreadCount(s.unread));
   const unreadCount = useActiveStore((s) => s.unread.filter((e) => !e.readAt).length);
   const t = useT();
   if (blocking > 0) {

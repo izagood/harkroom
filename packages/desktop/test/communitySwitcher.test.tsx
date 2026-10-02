@@ -403,14 +403,14 @@ describe('커뮤니티 전환기 — 레일 하나 + 팝오버 (#165, 2026-09-30
     const { a, b } = await twoCommunities();
     seed(a, 'me-a', true);
     seed(b, 'me-b', true);
-    a.store.getState().set({ unread: [mention(1)], inboxMine: 1 });
+    a.store.getState().set({ unread: [mention(1)] });
     renderWorkspace();
 
     // 지금 커뮤니티의 것은 점이 아니다(Home 배지가 센다).
     expect(screen.queryByTestId('rail-community-dot')).toBeNull();
     expect(screen.getByTestId('rail-home-badge').textContent).toBe('1');
 
-    act(() => { b.store.getState().set({ unread: [mention(2), mention(3), mention(4)], inboxMine: 3 }); });
+    act(() => { b.store.getState().set({ unread: [mention(2), mention(3), mention(4)] }); });
     expect(screen.getByTestId('rail-community-dot')).toBeTruthy();
     expect(screen.getByTestId('rail-community-mark').getAttribute('aria-label'))
       .toBe('a.example — 연결됨, 다른 커뮤니티에 나를 기다리는 것 3개');

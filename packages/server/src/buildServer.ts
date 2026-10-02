@@ -48,6 +48,7 @@ import { createAutomationSweeper } from './services/automations.js';
 import { createSecretBox } from './services/secretBox.js';
 import { loadSecretKeyring, type SecretKeyring } from './services/secretKeyring.js';
 import { registerSecretRoutes } from './routes/secretRoutes.js';
+import { registerMergeRoutes } from './routes/mergeRoutes.js';
 import { createSecretLeakGuard, leakGuardHook } from './services/secretLeakGuard.js';
 import type { RevealLimiter } from './services/secretAccess.js';
 import { createAgentWakeSweeper } from './services/agentWakes.js';
@@ -573,6 +574,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     keyring: secretKeyring,
     limiter: deps.secretRevealLimiter,
   });
+  await registerMergeRoutes(app, deps.pool);
 
   // 오퍼레이터 신원과 채널(스펙 2026-09-20 §3·§4). 릴레이와 같은 이유로 registerWs·registerAuth
   // 뒤다. 허브는 연결이 살아 있는 동안의 사실(능력·러너)만 든다 — 저장하지 않는다.

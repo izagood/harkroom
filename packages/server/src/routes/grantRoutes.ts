@@ -10,23 +10,52 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { CAPABILITIES, ROLES, type GrantRow } from '@harkroom/shared';
+import { CAPABILITIES, ROLES, repoScope, type GrantRow } from '@harkroom/shared';
 import { actorOf, recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 
 const grantBody = z.object({
   capability: z.enum(CAPABILITIES),
-  // '' = 전역. 대상 한정은 첫 판에 channel·team·agent 만(스펙 §6 (2)).
-  scope: z.string().regex(/^(|channel:[0-9a-f-]{36}|team:[0-9a-f-]{36}|agent:[0-9a-f-]{36})$/).default(''),
+  // '' = 전역. 대상 한정은 첫 판에 channel·team·agent 만(스펙 §6 (2)). `repo:` 는 `repo.merge` 전용 — 아래서
+  // capability 와 짝을 맞춘다.
+  scope: z.string().regex(/^(|channel:[0-9a-f-]{36}|team:[0-9a-f-]{36}|agent:[0-9a-f-]{36}|repo:[^\s]{3,201})$/).default(''),
   expiresAt: z.string().datetime().nullable().optional(),
+  /** `repo.merge` 전용(090, security F4). 다른 capability 에 주면 400. */
+  allowAgentCause: z.boolean().optional(),
 });
+
+/**
+ * `repo.merge` grant 의 모양·권한(security F1·F2). 일반 grant 와 다른 점 둘:
+ * - scope 는 `repo:<owner>/<name>` 하나뿐이고 소문자로 정규화한다. 빈 scope 는 400 — 전역 머지 권한은 없다.
+ * - **주는 사람은 그 에이전트의 소유자인 사람**이다. admin 역할은 여기서 아무 힘이 없다(거두기만 한다).
+ *   에이전트 PAT·오퍼레이터 토큰은 사람이 아니므로 403.
+ */
+async function checkMergeGrant(
+  pool: Pool, req: { account?: { id: string; kind: string } | null }, targetId: string, scope: string,
+): Promise<{ ok: true; scope: string } | { ok: false; status: 400 | 403 | 404; code: string; message: string }> {
+  const normalized = repoScope(scope.replace(/^repo:/i, ''));
+  if (!scope || !normalized) {
+    return { ok: false, status: 400, code: 'bad_scope', message: 'repo.merge 의 scope 는 repo:<owner>/<name> 하나다 — 전역(빈 scope)은 없다' };
+  }
+  if (!req.account || req.account.kind !== 'human') {
+    return { ok: false, status: 403, code: 'forbidden', message: 'repo.merge 는 사람만 줄 수 있다' };
+  }
+  const agent = await pool.query<{ ownerAccountId: string | null }>(
+    `select c.owner_account_id as "ownerAccountId" from agent_config c join account a on a.id = c.account_id
+      where c.account_id = $1 and a.kind = 'agent'`, [targetId]);
+  if (!agent.rowCount) return { ok: false, status: 404, code: 'not_found', message: 'repo.merge 는 에이전트에게만 준다' };
+  if (agent.rows[0]!.ownerAccountId !== req.account.id) {
+    return { ok: false, status: 403, code: 'forbidden', message: 'repo.merge 는 그 에이전트의 소유자만 준다' };
+  }
+  return { ok: true, scope: normalized };
+}
 const roleBody = z.object({ role: z.enum(ROLES) });
 const idParam = z.object({ id: z.string().uuid() });
 
 async function listGrants(pool: Pool, accountId: string): Promise<GrantRow[]> {
   const res = await pool.query(
     `select account_id as "accountId", capability, scope, granted_by as "grantedBy",
-            granted_at as "grantedAt", expires_at as "expiresAt"
+            granted_at as "grantedAt", expires_at as "expiresAt", allow_agent_cause as "allowAgentCause"
        from account_grant where account_id = $1 order by capability, scope`, [accountId]);
   return res.rows;
 }
@@ -41,32 +70,54 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
     return { grants: await listGrants(pool, id) };
   });
 
-  app.put<{ Params: { id: string } }>('/accounts/:id/grants', { preHandler: app.requireAdmin }, async (req, reply) => {
+  // 관문이 `requireAccount` 인 이유: `repo.merge` 만은 admin 이 아니라 **소유자**가 준다(F2). 나머지
+  // capability 는 아래서 지금처럼 admin 을 요구한다 — 판정을 둘로 나눈 것이지 넓힌 것이 아니다.
+  app.put<{ Params: { id: string } }>('/accounts/:id/grants', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = idParam.parse(req.params);
     const parsed = grantBody.safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: { code: 'bad_request', message: parsed.error.message } });
-    const { capability, scope, expiresAt } = parsed.data;
+    const { capability, expiresAt, allowAgentCause } = parsed.data;
+    let { scope } = parsed.data;
+    if (capability === 'repo.merge') {
+      const check = await checkMergeGrant(pool, req, id, scope);
+      if (!check.ok) return reply.code(check.status).send({ error: { code: check.code, message: check.message } });
+      scope = check.scope;
+    } else {
+      if (!req.account!.isAdmin) return reply.code(403).send({ error: { code: 'forbidden', message: 'grant 는 admin 만 준다' } });
+      if (scope.startsWith('repo:') || allowAgentCause !== undefined) {
+        return reply.code(400).send({ error: { code: 'bad_request', message: 'repo: scope 와 allowAgentCause 는 repo.merge 전용이다' } });
+      }
+    }
     const target = await pool.query(`select 1 from account where id = $1`, [id]);
     if (!target.rowCount) return reply.code(404).send({ error: { code: 'not_found', message: '그런 계정이 없다' } });
     // 같은 (계정, capability, scope) 에 다시 주면 갱신이다 — 준 사람과 만료가 새 값으로 바뀐다.
     await pool.query(
-      `insert into account_grant (account_id, capability, scope, granted_by, expires_at)
-       values ($1, $2, $3, $4, $5)
+      `insert into account_grant (account_id, capability, scope, granted_by, expires_at, allow_agent_cause)
+       values ($1, $2, $3, $4, $5, $6)
        on conflict (account_id, capability, scope) do update
-         set granted_by = excluded.granted_by, granted_at = now(), expires_at = excluded.expires_at`,
-      [id, capability, scope, req.account!.id, expiresAt ?? null]);
+         set granted_by = excluded.granted_by, granted_at = now(), expires_at = excluded.expires_at,
+             allow_agent_cause = excluded.allow_agent_cause`,
+      [id, capability, scope, req.account!.id, expiresAt ?? null, allowAgentCause ?? false]);
     await recordAudit(pool, {
       action: 'grant.given', ...actorOf(req), target: id,
-      detail: { capability, scope, expiresAt: expiresAt ?? null },
+      detail: { capability, scope, expiresAt: expiresAt ?? null, ...(capability === 'repo.merge' ? { allowAgentCause: allowAgentCause ?? false } : {}) },
     }, req);
     emitEvent({ type: 'grant.changed', accountId: id, audience: 'all' });
     return { grants: await listGrants(pool, id) };
   });
 
   app.delete<{ Params: { id: string; capability: string }; Querystring: { scope?: string } }>(
-    '/accounts/:id/grants/:capability', { preHandler: app.requireAdmin }, async (req, reply) => {
+    '/accounts/:id/grants/:capability', { preHandler: app.requireAccount }, async (req, reply) => {
       const { id } = idParam.parse(req.params);
-      const scope = req.query.scope ?? '';
+      let scope = req.query.scope ?? '';
+      // 거두기: admin, 그리고 `repo.merge` 는 그 에이전트의 소유자도(F2 — 준 사람이 거둘 수 있어야 한다).
+      if (req.params.capability === 'repo.merge') {
+        scope = repoScope(scope.replace(/^repo:/i, '')) ?? scope;
+        const owner = await pool.query(`select 1 from agent_config where account_id = $1 and owner_account_id = $2`, [id, req.account!.id]);
+        if (!owner.rowCount && !req.account!.isAdmin) return reply.code(403).send({ error: { code: 'forbidden', message: '소유자나 admin 만 거둔다' } });
+      } else if (!req.account!.isAdmin) {
+        return reply.code(403).send({ error: { code: 'forbidden', message: 'grant 는 admin 만 거둔다' } });
+      }
       const res = await pool.query(
         `delete from account_grant where account_id = $1 and capability = $2 and scope = $3`,
         [id, req.params.capability, scope]);
