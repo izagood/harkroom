@@ -64,6 +64,21 @@ abstract class Strings {
   /// 리액션 줄 끝의 「이모지 달기」 칩의 접근성 이름.
   String get reactionAdd;
 
+  /// 메시지를 길게 눌러 여는 시트: `harkroom://message/<id>` 링크 복사.
+  String get messageCopyLink;
+
+  /// 같은 시트: 본문(마크다운 원문, 첨부·리액션 제외) 복사.
+  String get messageCopyBody;
+
+  /// 링크를 담았다는 짧은 확인.
+  String get messageLinkCopied;
+
+  /// 본문을 담았다는 짧은 확인.
+  String get messageBodyCopied;
+
+  /// 클립보드에 못 담았다. 조용히 지나가면 사람은 붙여넣고서야 안다.
+  String get messageCopyFailed;
+
   /// 작성칸 왼쪽 @ 버튼(개정판 3.4)의 접근성 이름. 누르면 칸에 `@` 를 넣어 후보 줄을 연다.
   String get mentionAdd;
 
@@ -786,6 +801,11 @@ Map<String, String> stringsToMap(Strings s) => {
       'commonRetry': s.commonRetry,
       'attachmentAdd': s.attachmentAdd,
       'reactionAdd': s.reactionAdd,
+      'messageCopyLink': s.messageCopyLink,
+      'messageCopyBody': s.messageCopyBody,
+      'messageLinkCopied': s.messageLinkCopied,
+      'messageBodyCopied': s.messageBodyCopied,
+      'messageCopyFailed': s.messageCopyFailed,
       'mentionAdd': s.mentionAdd,
       'attachmentUploadFailed': s.attachmentUploadFailed,
       'attachmentRemove': s.attachmentRemove,

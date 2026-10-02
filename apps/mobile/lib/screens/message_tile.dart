@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../api/models.dart';
 import '../i18n/i18n.dart';
@@ -38,8 +39,16 @@ class MessageTile extends StatelessWidget {
   /// 대신하면 무엇을 묻는지(본문)와 누가 물었는지(이름)가 화면에서 사라진다(designer #976).
   final Widget? card;
 
+  /// 길게 누르면 링크·본문 복사 시트(모바일 관례). 채널 최상위와 스레드 답글이 이 한 줄을
+  /// 같이 쓰므로 두 곳 다 된다. 본문 안 링크 탭·코드 선택은 그 안에서 먼저 잡힌다.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => InkWell(
+        key: Key('message-press-${message.id}'),
+        onLongPress: () => showMessageActions(context, message),
+        child: _row(context),
+      );
+
+  Widget _row(BuildContext context) {
     final app = context.app;
     final t = context.t;
     final k = context.tokens;
@@ -187,6 +196,70 @@ class _Reactions extends StatelessWidget {
     );
   }
 }
+
+/// 메시지 링크. 데스크톱 `messagePermalink`(shared)와 같은 모양이어야 한다 — 어느 쪽에서
+/// 복사했든 붙여넣은 곳에서 그 메시지로 이동된다.
+String messagePermalink(String messageId) => 'harkroom://message/$messageId';
+
+/// 메시지 길게 누르기 시트: 링크 복사 · 본문 복사.
+///
+/// 본문 복사는 **마크다운 원문**이다 — 그려진 글자가 아니라 다시 붙여넣을 수 있는 글이다.
+/// 멘션만 `@handle` 로 되돌린다([bodyAsHandles]). 첨부·리액션은 본문이 아니라 싣지 않는다.
+/// 본문이 비었으면(첨부만 있는 메시지) 본문 복사 줄을 세우지 않는다 — 눌러도 담을 것이 없다.
+Future<void> showMessageActions(BuildContext context, MessageRow message) async {
+  final t = context.t;
+  final app = context.app;
+  HapticFeedback.selectionClick().ignore();
+  final body = bodyAsHandles(message.body, app.accounts);
+  final choice = await showModalBottomSheet<_CopyWhat>(
+    context: context,
+    builder: (sheet) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            key: const Key('message-action-copy-link'),
+            leading: const Icon(Icons.link),
+            title: Text(t.messageCopyLink),
+            onTap: () => Navigator.of(sheet).pop(_CopyWhat.link),
+          ),
+          if (body.trim().isNotEmpty)
+            ListTile(
+              key: const Key('message-action-copy-body'),
+              leading: const Icon(Icons.content_copy),
+              title: Text(t.messageCopyBody),
+              onTap: () => Navigator.of(sheet).pop(_CopyWhat.body),
+            ),
+        ],
+      ),
+    ),
+  );
+  if (choice == null || !context.mounted) return;
+  final (text, done) = switch (choice) {
+    _CopyWhat.link => (messagePermalink(message.id), t.messageLinkCopied),
+    _CopyWhat.body => (body, t.messageBodyCopied),
+  };
+  final messenger = ScaffoldMessenger.of(context);
+  final margin = toastMargin(context);
+  try {
+    await Clipboard.setData(ClipboardData(text: text));
+  } on Object {
+    if (context.mounted) showFailureToast(context, t.messageCopyFailed);
+    return;
+  }
+  // 짧은 확인. 앞의 토스트를 밀어내고 선다 — 연달아 복사하면 마지막 것이 보여야 한다.
+  messenger
+    ..removeCurrentSnackBar()
+    ..showSnackBar(SnackBar(
+      key: const Key('message-copied'),
+      content: Text(done),
+      behavior: SnackBarBehavior.floating,
+      margin: margin,
+      duration: const Duration(seconds: 2),
+    ));
+}
+
+enum _CopyWhat { link, body }
 
 /// 자주 쓰는 이모지에서 하나를 고른다. 고르면 그 칸을 누른 것과 같다(이미 눌렀으면 뗀다).
 const quickReactions = ['👍', '✅', '👀', '🎉', '❤️', '😂'];
