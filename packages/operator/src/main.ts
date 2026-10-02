@@ -53,13 +53,16 @@ async function mcpBridgeMain(): Promise<void> {
  */
 async function mergeMain(argv: string[]): Promise<void> {
   const parsed = parseMergeArgs(argv);
-  if ('error' in parsed) { console.error(`merge: ${parsed.error}`); process.exit(2); }
+  if ('error' in parsed) {
+    console.log(JSON.stringify({ error: { code: 'bad_request', message: parsed.error }, merged: false, exit: 2 }));
+    process.exit(2);
+  }
   const socketPath = process.env[RUNNER_LINK_ENV.socketPath];
   const runnerId = process.env[RUNNER_LINK_ENV.runnerId];
   const secret = process.env[RUNNER_LINK_ENV.secret];
   const cause = process.env[RUNNER_TURN_CAUSE_ENV] || null;
   if (!socketPath || !runnerId || !secret || !cause) {
-    console.error(`merge: ${RUNNER_LINK_ENV_KEYS.join('·')}·${RUNNER_TURN_CAUSE_ENV} 이 필요하다 — 러너가 띄운 멘션 턴 안에서만 돈다`);
+    console.log(JSON.stringify({ error: { code: 'not_in_turn', message: `${RUNNER_LINK_ENV_KEYS.join('·')}·${RUNNER_TURN_CAUSE_ENV} are required — the wrapper only runs inside a runner-launched mention turn` }, merged: false, exit: 2 }));
     process.exit(2);
   }
   const stdin = new PassThrough();
@@ -88,8 +91,13 @@ async function mergeMain(argv: string[]): Promise<void> {
   })}\n`);
   const r = await done;
   await bridge;
-  console.log(r.text);
-  process.exit(r.ok ? 0 : 1);
+  // 결과 JSON 에 종료 코드와 머지 여부를 함께 싣는다(qa ②) — 에이전트가 `; echo $?` 를 붙일 이유를 없앤다. 그 꼬리는
+  // allow 규칙을 깨뜨려 분류기로 간다(2026-10-03 #1130 사고).
+  let out: Record<string, unknown> = {};
+  try { const v: unknown = JSON.parse(r.text); if (v && typeof v === 'object') out = v as Record<string, unknown>; } catch { out = { raw: r.text }; }
+  const exit = r.ok ? 0 : 1;
+  console.log(JSON.stringify({ ...out, merged: out.merged === true, exit }));
+  process.exit(exit);
 }
 
 /**

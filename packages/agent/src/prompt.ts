@@ -936,6 +936,11 @@ function mergeSection(merge: { operatorBin: string; repos: readonly string[] }):
     '',
     `    ${merge.operatorBin} merge <owner/name> <PR 번호> --head <40자 head sha>`,
     '',
+    // 2026-10-03 사고: `…merge … ; echo "exit=$?"` 처럼 꼬리를 붙이면 allow 규칙(`Bash(<경로> merge:*)`)이 안 맞아
+    // 분류기로 가고, 실제 머지는 "막힌 머지를 돌아가는 길"로 거부된다. 종료 코드·결과는 JSON 에 있다(exit·merged).
+    '**명령 하나로만 부른다.** 뒤에 `;`·`&&`·`||`·`$?`·파이프·리다이렉션을 붙이지 않는다 — 붙이면 허용 규칙에 맞지 않아',
+    '막힌다. 인자는 저장소·PR 번호·`--head` 셋뿐이다(`--approval`·`--admin` 같은 것은 없다). 결과는 JSON 한 줄로',
+    '나온다(`merged`·`exit`·거절이면 `error.code`).',
     '`gh pr merge`·`gh api …/merge`·`git push … main` 은 쓰지 않는다(막혀 있다). squash 로만 머지되고 head 가',
     '바뀌었으면 거절된다. 결과는 서버가 이 스레드에 시스템 줄로 남긴다. 허락되지 않은 저장소는 래퍼가 거절한다 —',
     '그때는 사람에게 넘겨라. 머지 전에 CI 가 초록이고 검토가 끝났는지 네가 먼저 확인한다.',
