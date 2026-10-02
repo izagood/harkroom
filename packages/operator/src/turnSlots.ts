@@ -13,6 +13,13 @@
  * - 자리가 없으면 409. 러너는 그 멘션을 `blocked` 로 세고 **읽음 처리하지 않는다** — 인박스가 곧 대기열이다.
  * - 자리의 키는 `(runnerId, key)` 다. runnerId 는 링크 인증이 정한 값이라 러너가 남의 자리를 놓을 수 없다.
  * - 러너의 relay 링크가 끊기면(러너가 죽었다) 그 러너의 자리를 전부 돌려받는다(`releaseRunner`).
+ *   relay 가 **다시 붙을 때도** 돌려받는다 — 끊긴 사이 놓기 요청이 사라졌으면 그 자리는 러너가 죽을 때까지
+ *   남아 상한이 조용히 줄고, 쌓이면 모든 턴이 막힌다(fail-closed, security #1127 L1). 돌려받으면 그 러너의
+ *   도는 턴을 잠깐 덜 세는데, 그쪽이 이 장부의 원칙(fail-open)과 맞다. 그 턴이 끝나며 보내는 놓기는 없는
+ *   자리를 놓는 것이라 아무것도 줄이지 않는다.
+ * - 자리는 **relay 소켓에서만** 잡고 놓는다. 브릿지 소켓은 하네스가 여는 것이라, 링크 secret 을 읽은 하네스가
+ *   키를 바꿔 가며 자리를 상한까지 쥘 수 있다(security #1127 L2). 브릿지에서 온 자리 요청은 403 으로 답하고
+ *   서버로도 넘기지 않는다.
  * - 상한은 **새로 띄우는 것만** 막는다. 오퍼레이터가 재기동하면 장부가 비어 채택한 러너의 도는 턴을 세지
  *   못한다 — 그 사이는 상한을 잠깐 넘을 수 있다. 막기보다 덜 위험한 쪽(일이 멈추지 않는 쪽)을 골랐다.
  * - 값이 없거나 0 이면 상한이 없다(지금까지와 같다).
@@ -43,7 +50,7 @@ export function parseMaxTurns(raw: string | undefined, log: (line: string) => vo
 
 export interface TurnSlots {
   /** 이 요청이 자리 요청이면 답을 만든다. 아니면 null(다음 처리자로 넘긴다). */
-  maybeHandle(runnerId: string, req: RunnerLinkRequest): RunnerLinkResponse | null;
+  maybeHandle(runnerId: string, req: RunnerLinkRequest, from: 'relay' | 'bridge'): RunnerLinkResponse | null;
   /** 러너가 죽었다 — 그 러너의 자리를 돌려받는다. */
   releaseRunner(runnerId: string): void;
   /** 지금 쥔 자리 수(상태 표시·시험용). */
@@ -74,10 +81,11 @@ export function createTurnSlots(opts: { max: number | null; log?: (line: string)
     max: opts.max,
     inUse: () => count,
 
-    maybeHandle(runnerId, req) {
+    maybeHandle(runnerId, req, from) {
       if (req.type !== 'http.forward' || req.method !== 'POST') return null;
       const path = req.path.split('?')[0];
       if (path !== TURN_SLOTS_PATH && path !== TURN_SLOTS_RELEASE_PATH) return null;
+      if (from !== 'relay') return answer(req, 403, { error: { code: 'forbidden', message: '턴 자리는 러너 relay 에서만 잡는다' } });
       const key = readKey(req);
       if (!key) return answer(req, 400, { error: { code: 'bad_request', message: 'key 가 없다' } });
       const mine = held.get(runnerId);
