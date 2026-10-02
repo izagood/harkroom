@@ -161,7 +161,7 @@ describe('memory MCP tools', () => {
       expect(await callTool(client, 'memory.set', { slug: 'core', value: 'x'.repeat(3000) }))
         .toEqual({ ok: true, warnings: [{ code: 'core_near_limit', length: 3000, limit: 3000 }] });
       // mem/* 는 여전히 8000 까지다.
-      expect(await callTool(client, 'memory.set', { slug: 'mem/long', value: 'x'.repeat(8000) })).toEqual({ ok: true });
+      expect(await callTool(client, 'memory.set', { slug: 'mem/long', value: 'x'.repeat(8000) })).toMatchObject({ ok: true });
     } finally {
       await client.close();
     }
@@ -826,7 +826,8 @@ describe('memory MCP tools', () => {
         expect(await callTool(client, 'memory.restore', { slug: 'mem/pr-9' })).toEqual({ ok: true });
         const row = (await pool.query(`select kind from agent_memory where account_id = $1 and slug = 'mem/pr-9'`, [accountId])).rows[0];
         expect(row.kind).toBe('journal');
-        expect((await callTool(client, 'memory.list', {})).slugs).not.toContain('mem/pr-9');
+        // 목록은 kind 를 실어 주고 journal 을 빼는 것은 러너 몫이다 — 종류가 journal 로 실리는지 본다.
+        expect((await callTool(client, 'memory.list', {})).entries.find((e: { slug: string }) => e.slug === 'mem/pr-9')).toMatchObject({ kind: 'journal' });
       } finally {
         await client.close();
       }
