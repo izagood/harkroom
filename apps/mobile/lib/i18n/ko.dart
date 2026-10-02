@@ -491,6 +491,15 @@ class StringsKo implements Strings {
   String get linkConfirmTitle => '이 링크가 여는 곳';
 
   @override
+  String get messageLinkGone => '그 메시지가 없다 — 지워졌거나, 링크가 아무것도 가리키지 않는다.';
+
+  @override
+  String get messageLinkForbidden => '그 메시지를 열 수 없다 — 내가 참여하지 않은 대화에 있다.';
+
+  @override
+  String get messageLinkFailed => '메시지를 열지 못했다. 연결을 확인하고 다시 시도해라.';
+
+  @override
   String get linkConfirmOpen => '열기';
 
   @override

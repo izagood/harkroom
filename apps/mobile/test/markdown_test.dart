@@ -340,6 +340,61 @@ void main() {
       expect(chips, ['@harkroom']);
     });
 
+    group('메시지 링크(harkroom://message/<id>)', () {
+      const id = '52f2a1af-734f-43cc-a165-939101436c59';
+
+      test('[글](harkroom://message/<uuid>) 는 앱 안 링크다 — OS 로 보낼 주소가 없다', () {
+        final l = parseInline('[#task 스레드](harkroom://message/$id) 참고').whereType<MdLink>().single;
+        expect(l.text, '#task 스레드');
+        expect(l.messageId, id);
+        expect(l.uri, isNull);
+      });
+
+      test('맨 메시지 링크도 잡는다 — 뒤에 붙은 문장부호는 링크가 아니다', () {
+        final parts = parseInline('여기 harkroom://message/$id.');
+        final l = parts.whereType<MdLink>().single;
+        expect(l.messageId, id);
+        expect(l.text, 'harkroom://message/$id');
+        expect((parts.last as MdText).text, '.');
+      });
+
+      test('uuid 꼴이 아니면 링크가 아니다 — 아무 글자나 서버 경로로 흘리지 않는다', () {
+        expect(parseMessagePermalink('harkroom://message/../../auth/me'), isNull);
+        expect(parseMessagePermalink('harkroom://message/$id/x'), isNull);
+        expect(parseMessagePermalink('harkroom://channel/$id'), isNull);
+        expect(parseMessagePermalink('  harkroom://message/$id\n'), id);
+        final bad = parseInline('[x](harkroom://message/nope)').whereType<MdLink>().single;
+        expect(bad.messageId, isNull);
+        expect(bad.uri, isNull);
+        // 36자 뒤에 id 글자가 더 붙은 것은 맨 링크로 잘라 잡지 않는다.
+        expect(parseInline('harkroom://message/${id}abc').whereType<MdLink>(), isEmpty);
+      });
+
+      testWidgets('누르면 확인 시트 없이 openMessage 로 간다 — 표 칸 안에서도', (tester) async {
+        final went = <String>[];
+        final opened = <Uri>[];
+        for (final body in ['[#task 스레드](harkroom://message/$id)', '| 칸 |\n|---|\n| harkroom://message/$id |']) {
+          await tester.pumpWidget(host(MarkdownBody(body,
+              openLink: (u) async => opened.add(u), openMessage: (m) async => went.add(m))));
+          await tapFirstLink(tester);
+          expect(find.byKey(const Key('link-confirm')), findsNothing);
+        }
+        expect(went, [id, id]);
+        expect(opened, isEmpty);
+      });
+
+      testWidgets('여는 길이 없으면 글자로만 남는다 — 죽은 링크를 그리지 않는다', (tester) async {
+        await tester.pumpWidget(host(const MarkdownBody('[#task](harkroom://message/$id)')));
+        var tappable = false;
+        tester.widget<RichText>(find.byType(RichText).first).text.visitChildren((span) {
+          if (span is TextSpan && span.recognizer != null) tappable = true;
+          return true;
+        });
+        expect(tappable, isFalse);
+        expect(find.text('#task'), findsOneWidget);
+      });
+    });
+
     testWidgets('javascript 링크는 누를 수 없다', (tester) async {
       await tester.pumpWidget(host(const MarkdownBody('[눌러](javascript:void)')));
       var tappable = false;
