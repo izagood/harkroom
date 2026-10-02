@@ -7,7 +7,7 @@
 "PUSH_REASON_FAIL" = "Couldn't finish the task";
 "PUSH_REASON_GATE" = "Sign-in needed";
 "PUSH_REASON_DONE" = "Finished the task";
-"PUSH_REASON_REPLIES" = "%@ replies waiting";
+"PUSH_REASON_REPLIES" = "New replies to read";
 
 /* Push subtitle `[kind] @sender` — subtitle-loc-key. */
 "PUSH_SUB_MENTION" = "@%@ mentioned you";

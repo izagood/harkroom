@@ -11,6 +11,7 @@ import type { SecretLeakGuard } from '../secretLeakGuard.js';
 import { redactToken, type ApnsEnv, type PushTransport } from './apns.js';
 import {
   buildPushPayload, classifyPush, isUrgentPush, pushCollapseId, pushThreadKey, PUSH_REPLY_SOUND_WINDOW_MS,
+  PUSH_URGENT_WINDOW_MS,
   type PushReason,
 } from './payload.js';
 import type { SweepHost } from '../scheduledMessages.js';
@@ -46,6 +47,7 @@ const mineThreadSql = (m: string, acct: string) => `(${m}.thread_root_id is not 
 const agentPlainSql = (m: string, au: string) =>
   `(${au}.kind = 'agent' and coalesce(${m}.meta->>'kind', '') not in ('ask', 'failure', 'report'))`;
 const SWEEP_BATCH = 50;
+const PUSH_SOUND_PRUNE_EVERY_MS = 60 * 60_000;
 
 /**
  * inbox 를 넣은 그 트랜잭션에서 부른다. **사람이고 기기가 하나라도 있을 때만** 넣는다 — 기기가 없는
@@ -172,15 +174,16 @@ export function createPushSweeper(pool: Pool, deps: {
   }
 
   /**
-   * 보통 답이 이번에 울려도 되나(jaebin D1: 스레드마다 10분에 첫 한 번). 울리는 쪽이 시각을 적는다 —
-   * 한 문장(upsert … where)이라 worker 가 둘이어도 둘 다 울리지 않는다.
+   * 이번에 울려도 되나 — 보통 답은 스레드마다 10분에 첫 한 번(jaebin D1, 키 = 스레드), 결정·실패·관문은
+   * 1분에 한 번(security L1, 키 = `urgent:<스레드>`). 울리는 쪽이 시각을 적는다 — 한 문장(upsert … where)이라
+   * worker 가 둘이어도 둘 다 울리지 않는다.
    */
-  async function claimSound(client: PoolClient, accountId: string, threadKey: string): Promise<boolean> {
+  async function claimSound(client: PoolClient, accountId: string, threadKey: string, windowMs: number): Promise<boolean> {
     const res = await client.query(
       `insert into push_thread_sound (account_id, thread_key, sounded_at) values ($1, $2, now())
        on conflict (account_id, thread_key) do update set sounded_at = now()
         where push_thread_sound.sounded_at <= now() - make_interval(secs => $3)
-       returning 1`, [accountId, threadKey, PUSH_REPLY_SOUND_WINDOW_MS / 1000]);
+       returning 1`, [accountId, threadKey, windowMs / 1000]);
     return (res.rowCount ?? 0) > 0;
   }
 
@@ -254,7 +257,9 @@ export function createPushSweeper(pool: Pool, deps: {
           if (kind === 'agent_reply') {
             replyCount = live.threadRootId ? await repliesFor(client, job.accountId, live.threadRootId) : 1;
             // 재시도(device_id 가 찬 job)는 이미 첫 시도에서 정한 몫이다 — 시각을 다시 적지 않고 조용히 보낸다.
-            sound = job.deviceId === null && await claimSound(client, job.accountId, threadKey);
+            sound = job.deviceId === null && await claimSound(client, job.accountId, threadKey, PUSH_REPLY_SOUND_WINDOW_MS);
+          } else if (isUrgentPush(kind)) {
+            sound = await claimSound(client, job.accountId, `urgent:${threadKey}`, PUSH_URGENT_WINDOW_MS);
           } else {
             sound = true;
           }
@@ -276,7 +281,7 @@ export function createPushSweeper(pool: Pool, deps: {
     const preview = devices.some((d) => d.preview) ? await safePreview(live) : null;
     for (const device of devices) {
       const payload = buildPushPayload({
-        kind, replyCount, optionCount: live.optionCount, sound: sound || isUrgentPush(kind),
+        kind, replyCount, optionCount: live.optionCount, sound,
         accountId: job.accountId, messageId: job.messageId,
         channelId: live.channelId, threadRootId: live.threadRootId,
         authorHandle: live.authorHandle, channelName: live.channelKind === 'dm' ? null : live.channelName,
@@ -327,12 +332,21 @@ export function createPushSweeper(pool: Pool, deps: {
     log(`[push] device ${redactToken(device.token)} rejected (${label})`);
   }
 
+  /** 하루 넘게 안 울린 스레드의 소리 기록은 지운다(security L2) — 간격이 10분이라 그 뒤로는 없는 것과 같다. 한 시간에 한 번. */
+  let prunedAt = 0;
+  async function pruneSounds(): Promise<void> {
+    if (Date.now() - prunedAt < PUSH_SOUND_PRUNE_EVERY_MS) return;
+    prunedAt = Date.now();
+    await pool.query(`delete from push_thread_sound where sounded_at < now() - interval '1 day'`);
+  }
+
   async function sweep(): Promise<void> {
     if (!deps.transport || running) return;
     running = true;
     try {
       const skip: string[] = [];
       for (let i = 0; i < SWEEP_BATCH; i++) if ((await sendOne(skip)) === 'none') break;
+      await pruneSounds();
     } catch (err) {
       log(`[push] sweep failed: ${(err as Error).message}`);
     } finally {
