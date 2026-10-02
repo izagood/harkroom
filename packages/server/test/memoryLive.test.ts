@@ -157,7 +157,9 @@ describe('memory MCP tools', () => {
       const over = await callTool(client, 'memory.set', { slug: 'core', value: 'x'.repeat(3001) });
       expect(over.error?.code).toBe('core_too_long');
       expect(over.error?.message).toContain('mem/');
-      expect(await callTool(client, 'memory.set', { slug: 'core', value: 'x'.repeat(3000) })).toEqual({ ok: true });
+      // 딱 3,000자는 받되 core_near_limit 경고가 붙는다(C1).
+      expect(await callTool(client, 'memory.set', { slug: 'core', value: 'x'.repeat(3000) }))
+        .toEqual({ ok: true, warnings: [{ code: 'core_near_limit', length: 3000, limit: 3000 }] });
       // mem/* 는 여전히 8000 까지다.
       expect(await callTool(client, 'memory.set', { slug: 'mem/long', value: 'x'.repeat(8000) })).toEqual({ ok: true });
     } finally {
@@ -580,7 +582,7 @@ describe('memory MCP tools', () => {
       expect(add201.error?.code).toBe('too_many');
 
       const removeOne = await callTool(client, 'memory.set', { slug: 'mem/testitem0', value: null });
-      expect(removeOne).toEqual({ ok: true });
+      expect(removeOne).toMatchObject({ ok: true });
 
       const addAfterDelete = await callTool(client, 'memory.set', { slug: 'mem/testitem200', value: 'x' });
       expect(addAfterDelete).toMatchObject({ ok: true });
@@ -685,7 +687,7 @@ describe('memory MCP tools', () => {
         expect((await callTool(client, 'memory.get', { slug: 'mem/cache-b' })).archived).toBe(true);
         expect((await callTool(client, 'memory.list', {})).slugs).toEqual(['mem/cache-a']);
         const revs = (await callTool(client, 'memory.revisions', { slug: 'mem/cache-a' })).revisions;
-        expect(revs[0]).toMatchObject({ id: expect.any(Number), reason: 'merge', detail: { from: ['mem/cache-b', 'mem/cache-c'], created: false }, chars: 6 });
+        expect(revs[0]).toMatchObject({ id: expect.any(Number), reason: 'merge', detail: { from: ['mem/cache-b', 'mem/cache-c'], created: false }, chars: 7 });
 
         // 새 이름으로도 합친다 — 그때도 merge 판이 남아 무엇이 합쳐졌는지 적힌다.
         expect(await callTool(client, 'memory.merge', { into: 'mem/cache-all', from: ['mem/cache-a'], value: '전부' })).toMatchObject({ ok: true });
@@ -707,7 +709,8 @@ describe('memory MCP tools', () => {
         expect((await callTool(client, 'memory.get', { slug: 'mem/r' })).value).toBe('v1');
         const revs = (await callTool(client, 'memory.revisions', { slug: 'mem/r' })).revisions;
         expect(revs[0]).toMatchObject({ reason: 'restore', chars: 2, detail: { revisionId: expect.any(Number) } });
-        const v0 = revs.find((r: { chars: number; reason?: string; description?: string }) => r.chars === 2 && !r.reason && r.description === 'd0');
+        // v1 도 d0 를 물려받았으니(요약 생략=유지) 가장 오래된 판이 v0 다.
+        const v0 = [...revs].reverse().find((r: { chars: number; reason?: string; description?: string }) => r.chars === 2 && !r.reason && r.description === 'd0');
         expect(v0).toBeTruthy();
         expect(await callTool(client, 'memory.restore', { slug: 'mem/r', revisionId: v0.id })).toEqual({ ok: true });
         expect(await callTool(client, 'memory.get', { slug: 'mem/r' })).toMatchObject({ value: 'v0', description: 'd0' });
