@@ -313,8 +313,13 @@ export class HarkroomAgentClient {
    * `memory.search` recall 모드, 본문 포함 — 러너가 관련 기억을 턴 프롬프트에 붙일 때 쓴다(`memoryPin.ts`).
    * 옛 서버는 `recall` 을 모르는 키로 버리고 옛 응답(terms·nameHits 없음)을 준다 — memoryPin 이 점수로 거른다.
    */
-  async searchMemory(query: string, limit: number): Promise<RecallResult> {
-    const res = await this.call<{ hits?: RecallHit[]; terms?: string[] }>('memory.search', { query, limit, includeValue: true, recall: true });
+  async searchMemory(query: string, limit: number, opts: { exclude?: string[]; recordTop?: number } = {}): Promise<RecallResult> {
+    const res = await this.call<{ hits?: RecallHit[]; terms?: string[] }>('memory.search', {
+      query, limit, includeValue: true, recall: true,
+      // #1126 이후 서버: 이미 실은 판을 빼고 실을 앞 N 개를 센다. 옛 서버는 버린다.
+      ...(opts.exclude?.length ? { exclude: opts.exclude.slice(-200) } : {}),
+      ...(opts.recordTop ? { recordTop: opts.recordTop } : {}),
+    });
     return { hits: res.hits ?? [], ...(Array.isArray(res.terms) ? { terms: res.terms } : {}) };
   }
 
