@@ -328,7 +328,9 @@ class _MentionModelBarState extends State<MentionModelBar> {
       );
       if (query != null) {
         final candidates = rankMentionCandidates(
-          app.accounts.values.where((a) => !a.isDisabled),
+          // 나는 후보가 아니다 — 스스로를 불러도 아무 턴도 뜨지 않는다. 데스크톱
+          // `MentionSuggest.tsx` 도 `a.id !== myId` 로 뺀다.
+          app.accounts.values.where((a) => !a.isDisabled && a.id != app.me?.id),
           query.prefix,
           handleOf: (a) => a.handle,
           displayNameOf: (a) => a.displayName,
