@@ -140,7 +140,7 @@ export function PendingAttachmentTile({ upload, onRemove, onRetry }: {
         data-testid="pending-attachment"
         data-status={status}
         title={`${name} · ${size}`}
-        className={`relative flex h-20 w-52 shrink-0 items-center gap-2 rounded-row border bg-surface px-2.5 text-meta text-fg ${border}`}
+        className={`relative flex h-20 w-52 shrink-0 items-center gap-2 rounded-card border bg-surface px-2.5 text-meta text-fg ${border}`}
       >
         <span aria-hidden className="text-title">📎</span>
         <span className="flex min-w-0 flex-col gap-0.5">
@@ -158,13 +158,13 @@ export function PendingAttachmentTile({ upload, onRemove, onRetry }: {
       data-testid="pending-attachment"
       data-status={status}
       title={`${name} · ${size}`}
-      className={`group relative h-20 w-20 shrink-0 rounded-row border bg-surface-sunken text-meta ${border}`}
+      className={`group relative h-20 w-20 shrink-0 rounded-card border bg-surface-sunken text-meta ${border}`}
     >
       {url ? (
         <button
           type="button"
           aria-label={t('message.attachment.zoom', { filename: name })}
-          className="block h-full w-full cursor-zoom-in overflow-hidden rounded-row focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          className="block h-full w-full cursor-zoom-in overflow-hidden rounded-card focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           onClick={() => setZoomed(true)}
         >
           {/* 이름은 띠가 글자로 말한다 — alt 까지 이름이면 스크린리더가 같은 파일을 두 번 읽는다. */}
@@ -318,7 +318,7 @@ function ArtifactCard({ attachment, cover, from }: {
       aria-pressed={selected}
       data-testid="artifact-card"
       data-selected={selected ? 'true' : 'false'}
-      className={`block w-[min(28rem,100%)] overflow-hidden rounded-row border bg-surface text-left hover:bg-surface-sunken ${selected ? 'border-accent ring-1 ring-accent' : 'border-border'}`}
+      className={`block w-[min(28rem,100%)] overflow-hidden rounded-card border bg-surface text-left hover:bg-surface-sunken ${selected ? 'border-accent ring-1 ring-accent' : 'border-border'}`}
     >
       {coverUrl && (
         <img src={coverUrl} alt="" data-testid="artifact-card-cover" className="aspect-video w-full border-b border-border object-cover" />
