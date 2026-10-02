@@ -673,6 +673,18 @@ abstract class Strings {
 
   /// 결과 줄: 그 말이 스레드 답글이다.
   String get searchInThread;
+
+  /// 빈 찾기 화면: 최근 찾은 말 묶음의 머리.
+  String get searchRecent;
+
+  /// 최근 찾은 말을 모두 지우는 버튼.
+  String get searchRecentClear;
+
+  /// 최근 찾은 말 하나를 지우는 버튼의 이름.
+  String get searchRecentRemove;
+
+  /// 이름이 맞는 채널·DM 묶음의 머리.
+  String get searchShortcuts;
 }
 
 /// **영어와 같아도 되는 키.** 고유명사처럼 번역이 존재하지 않는 것들이다.
@@ -916,4 +928,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'searchFailed': s.searchFailed,
       'searchMoreFailed': s.searchMoreFailed,
       'searchInThread': s.searchInThread,
+      'searchRecent': s.searchRecent,
+      'searchRecentClear': s.searchRecentClear,
+      'searchRecentRemove': s.searchRecentRemove,
+      'searchShortcuts': s.searchShortcuts,
     };

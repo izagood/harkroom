@@ -58,14 +58,14 @@ Future<void> openMessageRow(BuildContext context, MessageRow row) async {
   if (!context.mounted) return;
   final app = AppScope.read(context);
   if (row.threadRootId == null) app.threadRoots.putIfAbsent(row.id, () => row);
-  await _openRow(context, Navigator.of(context), row);
+  await _openRow(context, Navigator.of(context), row, highlight: true);
 }
 
-Future<void> _openRow(BuildContext context, NavigatorState navigator, MessageRow row) async {
+Future<void> _openRow(BuildContext context, NavigatorState navigator, MessageRow row, {bool highlight = false}) async {
   final app = AppScope.read(context);
   await app.openChannel(row.channelId);
   if (!context.mounted) return;
   await navigator.push(MaterialPageRoute<void>(
-    builder: (_) => ThreadScreen(channelId: row.channelId, rootId: row.threadRootId ?? row.id),
+    builder: (_) => ThreadScreen(channelId: row.channelId, rootId: row.threadRootId ?? row.id, highlightId: highlight ? row.id : null),
   ));
 }

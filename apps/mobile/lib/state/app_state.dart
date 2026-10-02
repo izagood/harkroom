@@ -22,6 +22,7 @@ import '../api/ws.dart';
 import '../api/ws_socket.dart';
 import '../mention/sticky.dart';
 import '../mention/usage.dart';
+import '../session/recent_search_store.dart';
 import '../session/session_store.dart';
 
 /// 앱이 지금 어느 단계에 있나. 화면 하나가 이것만 보고 무엇을 그릴지 정한다.
@@ -112,11 +113,21 @@ class AppState extends ChangeNotifier {
     WsConnector? connector,
     this.otherPollEvery = const Duration(seconds: 60),
     this.otherRequestTimeout = const Duration(seconds: 10),
+    RecentSearchStore? recentSearchStore,
   })  : _sessions = sessions,
+        _recentStore = recentSearchStore ?? RecentSearchStore.inMemory(),
         _apiFactory = apiFactory ?? ((b, t) => ApiClient(baseUrl: b, token: t)),
         _connector = connector ?? RealWsConnection.connect;
 
   final SessionStore _sessions;
+  final RecentSearchStore _recentStore;
+
+  /// 지금 커뮤니티의 최근 찾은 말(새것이 앞, [recentSearchMax] 개까지). [loadRecentSearches] 가 채운다.
+  List<String> recentSearches = const [];
+  String? _recentFor;
+
+  /// 최근 찾은 말을 몇 개까지 두나.
+  static const int recentSearchMax = 10;
   final ApiClient Function(String baseUrl, String? token) _apiFactory;
   final WsConnector _connector;
 
@@ -1061,6 +1072,43 @@ class AppState extends ChangeNotifier {
     if (gen != _generation) return null;
     if (found.threadRootId == null) threadRoots.putIfAbsent(found.id, () => found);
     return found;
+  }
+
+  /// 찾기 화면을 열 때 부른다. 커뮤니티가 바뀌었으면 그 커뮤니티 것으로 갈아 낀다.
+  Future<void> loadRecentSearches() async {
+    final key = activeKey;
+    if (key == null) return;
+    final list = await _recentStore.load(key);
+    if (key != activeKey) return;
+    recentSearches = list;
+    _recentFor = key;
+    notifyListeners();
+  }
+
+  /// 찾은 말을 앞에 세운다(같은 말은 한 번만, 대소문자 무시).
+  Future<void> rememberSearch(String query) async {
+    final q = query.trim();
+    final key = activeKey;
+    if (q.isEmpty || key == null) return;
+    final base = _recentFor == key ? recentSearches : await _recentStore.load(key);
+    final next = [q, ...base.where((s) => s.toLowerCase() != q.toLowerCase())].take(recentSearchMax).toList(growable: false);
+    await _setRecent(key, next);
+  }
+
+  /// 하나 지우기(`query` 가 null 이면 전부).
+  Future<void> forgetSearch(String? query) async {
+    final key = activeKey;
+    if (key == null) return;
+    await _setRecent(key, query == null ? const [] : recentSearches.where((s) => s != query).toList(growable: false));
+  }
+
+  Future<void> _setRecent(String key, List<String> next) async {
+    if (key == activeKey) {
+      recentSearches = next;
+      _recentFor = key;
+      notifyListeners();
+    }
+    await _recentStore.save(key, next);
   }
 
   /// 메시지 찾기. 실패는 **던진다** — 할 말(연결·서버·권한)은 화면이 정한다([LoadFailure.of]).

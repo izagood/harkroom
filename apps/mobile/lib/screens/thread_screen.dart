@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api/models.dart';
@@ -24,10 +26,13 @@ import 'search_screen.dart';
 /// 지워지고(긴 작업 하나가 채널을 덮는다), 목록 응답도 스레드 수만큼 부푼다.
 /// 그래서 여기서 `?thread=` 로 따로 읽는다.
 class ThreadScreen extends StatefulWidget {
-  const ThreadScreen({super.key, required this.channelId, required this.rootId});
+  const ThreadScreen({super.key, required this.channelId, required this.rootId, this.highlightId});
 
   final String channelId;
   final String rootId;
+
+  /// 열자마자 그 줄로 굴려 2초 강조할 메시지(찾기 결과). 루트여도 되고 답글이어도 된다.
+  final String? highlightId;
 
   @override
   State<ThreadScreen> createState() => _ThreadScreenState();
@@ -42,6 +47,12 @@ class _ThreadScreenState extends State<ThreadScreen> {
   Map<String, ModelPick> _picks = const {};
 
   bool _loaded = false;
+
+  /// [ThreadScreen.highlightId] 줄을 찾아 굴리는 열쇠. 한 번 굴리면 끝이다 — 사람이 굴린 뒤에 새 답글이
+  /// 와도 다시 끌고 가지 않는다.
+  final _hitKey = GlobalKey();
+  bool _hitDone = false;
+  int _hitTries = 0;
 
   /// 목록 맨 위(reverse 라 끝)에 닿으면 옛 답글을 받는다 — 채널 화면의 `_maybeLoadOlder` 와 같다.
   final _scroll = ScrollController();
@@ -125,10 +136,34 @@ class _ThreadScreenState extends State<ThreadScreen> {
     }
   }
 
+  /// 찾은 줄이면 강조로 감싼다.
+  Widget _mark(String? id, Widget child) =>
+      id != null && id == widget.highlightId ? HitFlash(key: _hitKey, child: child) : child;
+
+  /// 찾은 줄로 굴린다. 목록은 화면 밖 줄을 짓지 않으므로(지연 빌드) 아직 없으면 위로(reverse 라 끝 쪽으로)
+  /// 한 화면씩 밀며 찾는다 — 찾거나 끝에 닿으면 멈춘다.
+  void _scrollToHit() {
+    if (_hitDone || widget.highlightId == null || !mounted) return;
+    final ctx = _hitKey.currentContext;
+    if (ctx != null) {
+      _hitDone = true;
+      Scrollable.ensureVisible(ctx, alignment: 0.5, duration: const Duration(milliseconds: 250));
+      return;
+    }
+    if (!_scroll.hasClients || ++_hitTries > 30) return;
+    final pos = _scroll.position;
+    if (pos.pixels >= pos.maxScrollExtent) return;
+    _scroll.jumpTo((pos.pixels + pos.viewportDimension * 0.8).clamp(0, pos.maxScrollExtent));
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToHit());
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.t;
     final app = context.app;
+    if (!_hitDone && widget.highlightId != null && app.threadLoad[widget.rootId] == LoadState.loaded) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToHit());
+    }
 
     // 루트는 채널 목록의 것을 먼저 쓰고(채널 화면과 같은 줄), 없으면 스레드 응답에 함께 온
     // 것을 쓴다 — 받은 것 탭에서 들어오면 루트가 채널의 최근 페이지 밖일 수 있다.
@@ -182,7 +217,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     // 아래로 붙는다(사양 목업과 같다).
     final rows = <Widget>[
       if (root != null)
-        buildFeedItem(context, FeedMessage(root))
+        _mark(root.id, buildFeedItem(context, FeedMessage(root)))
       // 원글을 끝내 못 찾았다(지워졌거나 둘 다에 없다) — 답글만 덩그러니 남지 않게 그 자리를 말한다.
       else if (load == LoadState.loaded)
         ThreadRootMissing(text: t.threadRootMissing),
@@ -210,7 +245,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
           ),
         )
       else
-        ...replies.map((item) => buildFeedItem(context, item)),
+        ...replies.map((item) => _mark(item is FeedMessage ? item.message.id : null, buildFeedItem(context, item))),
       ...failed.map((item) => FailedSendRow(item: item)),
     ];
 
@@ -355,4 +390,49 @@ String threadDividerLabel(Strings t, int count, {DateTime? rootAt, DateTime? fir
   if (firstReplyAt == null) return label;
   if (rootAt != null && sameLocalDay(rootAt, firstReplyAt)) return label;
   return '$label · ${dayLabel(t, firstReplyAt, now: now)}';
+}
+
+/// 찾은 줄 강조: 옅은 강조 바탕 + 왼쪽 띠로 섰다가 2초 뒤 걷힌다(designer 찾기 안 ⑤).
+class HitFlash extends StatefulWidget {
+  const HitFlash({super.key, required this.child});
+
+  final Widget child;
+
+  /// 강조가 서 있는 시간.
+  static const Duration hold = Duration(seconds: 2);
+
+  @override
+  State<HitFlash> createState() => HitFlashState();
+}
+
+class HitFlashState extends State<HitFlash> {
+  bool on = true;
+  Timer? _off;
+
+  @override
+  void initState() {
+    super.initState();
+    _off = Timer(HitFlash.hold, () {
+      if (mounted) setState(() => on = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _off?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 400),
+      decoration: BoxDecoration(
+        color: on ? k.accentSoft : Colors.transparent,
+        border: Border(left: BorderSide(color: on ? k.accent : Colors.transparent, width: 3)),
+      ),
+      child: widget.child,
+    );
+  }
 }

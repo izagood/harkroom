@@ -655,4 +655,16 @@ class StringsEn implements Strings {
 
   @override
   String get searchInThread => 'thread';
+
+  @override
+  String get searchRecent => 'Recent';
+
+  @override
+  String get searchRecentClear => 'Clear';
+
+  @override
+  String get searchRecentRemove => 'Remove';
+
+  @override
+  String get searchShortcuts => 'Go to';
 }

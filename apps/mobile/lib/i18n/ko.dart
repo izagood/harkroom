@@ -654,4 +654,16 @@ class StringsKo implements Strings {
 
   @override
   String get searchInThread => '스레드';
+
+  @override
+  String get searchRecent => '최근 찾은 말';
+
+  @override
+  String get searchRecentClear => '모두 지우기';
+
+  @override
+  String get searchRecentRemove => '지우기';
+
+  @override
+  String get searchShortcuts => '바로 가기';
 }

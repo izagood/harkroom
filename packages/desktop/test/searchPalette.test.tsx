@@ -108,9 +108,13 @@ describe('SearchPalette', () => {
 
     await waitFor(() => {
       expect(screen.getByText('@bot')).toBeTruthy();
-      expect(screen.getByText('Hello world')).toBeTruthy();
+      // 본문은 찾은 낱말에서 갈라져 그려진다 — 줄 전체 글자로 본다.
+      expect(screen.getByTestId('search-result').textContent).toContain('Hello world');
       expect(screen.getByText('general')).toBeTruthy();
     }, { timeout: 1000 });
+    // 찾은 낱말 강조(대소문자 무시)와 시각.
+    expect(screen.getAllByTestId('search-hit').map((m) => m.textContent)).toEqual(['Hello']);
+    expect(screen.getByTestId('search-result-time').getAttribute('dateTime')).toBeTruthy();
   });
 
   it('결과가 0건이면 "없다"가 보인다 — 빈 화면이 아니다', async () => {
