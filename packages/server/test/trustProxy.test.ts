@@ -154,14 +154,14 @@ describe('TRUST_PROXY 읽기', () => {
   it('reads hop counts and proxy lists', () => {
     expect(parseTrustProxy('2')).toBe(2);
     expect(parseTrustProxy(' 3 ')).toBe(3);
-    expect(parseTrustProxy('hops:1')).toBe(1);
     expect(parseTrustProxy('10.244.0.0/16, 192.168.1.211')).toEqual(['10.244.0.0/16', '192.168.1.211']);
     expect(parseTrustProxy('fd00::/8')).toEqual(['fd00::/8']);
   });
 
   // 알 수 없는 값을 조용히 끄거나 켜면 둘 다 경고 없이 리밋이 틀어진다 — 기동을 멈춘다.
   it('refuses values it does not understand', () => {
-    for (const bad of ['yes', 'hops:0', '17', '10.0.0.0/33', '10.0.0.300', 'loopback']) {
+    // hop 1 은 숫자로 못 쓴다(`1` 은 이미 전부 믿기다) — 프록시 하나 뒤면 CIDR 로 준다.
+    for (const bad of ['yes', 'hops:1', 'hops:2', '17', '10.0.0.0/33', '10.0.0.300', 'loopback']) {
       expect(() => parseTrustProxy(bad), bad).toThrow(/TRUST_PROXY/);
     }
   });

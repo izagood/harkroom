@@ -67,10 +67,15 @@ import { createDelegationDeadlineSweeper } from './services/delegations.js';
  */
 const DEFAULT_RATE_LIMITS: Record<RateLimitName, RateLimitRule> = {
   login: { windowMs: 5 * 60_000, max: 20 },
-  // **계정 단위** 로그인 실패 상한. 주소 단위 리밋(`login`)은 `req.ip` 판정이 틀어지면(프록시 신뢰
-  // 설정 실수·XFF 위조) 같이 무너진다 — 이 리밋은 주소와 무관하게 한 login_id 에 대한 대입을 막는다.
-  // 성공 없이 이어진 시도를 센다(성공하면 지운다). 실제 적용은 `/auth/login` 핸들러(`authRoutes.ts`) 안이다.
-  loginAccount: { windowMs: 15 * 60_000, max: 10 },
+  // **계정 단위** 로그인 상한 둘. 성공 없이 이어진 시도를 센다(성공하면 지운다). 적용은 `/auth/login`
+  // 핸들러(`authRoutes.ts`) 안, Argon2 앞이다.
+  // - `loginAccountIp`: (계정, 주소) — 한 출처가 한 계정을 두드리는 것을 좁힌다. 주소 단위로 나눠
+  //   두는 이유는 **남이 내 계정을 잠그지 못하게** 하려는 것이다(계정 하나로만 세면 아무나 10번
+  //   틀려서 주인을 15분 내쫓는다).
+  // - `loginAccount`: 계정 전체 — 주소를 바꿔 가며(분산·XFF 위조) 한 계정을 노리는 것을 막는다.
+  //   주인이 잠기려면 그 사이 50번이 틀려야 한다.
+  loginAccountIp: { windowMs: 15 * 60_000, max: 10 },
+  loginAccount: { windowMs: 15 * 60_000, max: 50 },
   signup: { windowMs: 15 * 60_000, max: 10 },
   ticket: { windowMs: 60_000, max: 120 },
   // 첨부는 크기 제한(25MB)만으로 부족하다 — 그건 **한 번의** 업로드만 막고, 반복하면 디스크가
@@ -78,10 +83,10 @@ const DEFAULT_RATE_LIMITS: Record<RateLimitName, RateLimitRule> = {
   upload: { windowMs: 60_000, max: 20 },
 };
 
-type RateLimitName = 'login' | 'loginAccount' | 'signup' | 'ticket' | 'upload';
+type RateLimitName = 'login' | 'loginAccountIp' | 'loginAccount' | 'signup' | 'ticket' | 'upload';
 
 /** 어떤 경로에 어떤 리밋을 적용하는가. 인증 표면만 좁힌다 — 발화·조회는 건드리지 않는다. */
-const LIMITED_ROUTES: { method: string; url: string; rule: Exclude<RateLimitName, 'loginAccount'> }[] = [
+const LIMITED_ROUTES: { method: string; url: string; rule: Exclude<RateLimitName, 'loginAccount' | 'loginAccountIp'> }[] = [
   { method: 'POST', url: '/auth/login', rule: 'login' },
   { method: 'POST', url: '/auth/register', rule: 'signup' },
   { method: 'POST', url: '/bootstrap', rule: 'signup' },
@@ -553,7 +558,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     typingTtlMs: deps.typingTtlMs,
     agentPresence,
   });
-  await registerAuthRoutes(app, deps.pool, { limiter, loginAccountRule: rules.loginAccount });
+  await registerAuthRoutes(app, deps.pool, {
+    limiter, loginAccountRule: rules.loginAccount, loginAccountIpRule: rules.loginAccountIp,
+  });
   // 오퍼레이터 허브(스펙 2026-09-20 §4)를 여기서 만든다 — 계정 라우트가 배정 거절 사유를 여기서
   // 읽는다. 라우트 등록은 아래(릴레이 뒤)다: 허브는 소켓이 붙기 전엔 빈 표일 뿐이라 순서가 무관하다.
   const operatorHub = createOperatorHub();

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import argon2 from 'argon2';
+import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { newToken, hashToken } from '../auth/tokens.js';
 import { effectiveCapabilities } from '../auth/permissions.js';
@@ -26,22 +27,36 @@ const credentials = z.object({
 });
 
 export interface AuthRouteOpts {
-  /** 계정 단위 로그인 실패 상한(`DEFAULT_RATE_LIMITS.loginAccount`). 주소 단위 리밋과 같은 저장소를 쓴다. */
+  /** 계정 단위 로그인 상한(`DEFAULT_RATE_LIMITS.loginAccount*`). 주소 단위 리밋과 같은 저장소를 쓴다. */
   limiter: RateLimiter;
+  /** 계정 전체 상한. */
   loginAccountRule: RateLimitRule;
+  /** (계정, 주소) 상한. */
+  loginAccountIpRule: RateLimitRule;
 }
 
 /**
- * 계정 단위 키. **계정이 있든 없든 같은 키를 쓴다** — 없는 login_id 만 막히지 않거나(또는 반대로)
- * 하면 429 여부로 계정 존재가 드러난다. 길이를 자르는 것은 아무 문자열이나 키로 받아 메모리를
- * 늘리지 못하게 하려는 것이다(진짜 login_id 는 이보다 짧다).
+ * 계정 단위 키에 쓰는 login_id. **계정이 있든 없든 같은 규칙으로 만든다** — 없는 login_id 만
+ * 막히지 않거나(또는 반대로) 하면 429 여부로 계정 존재가 드러난다. 소문자·앞뒤 공백 제거는 조회
+ * (`lower(login_id)`)보다 넓게 묶는 쪽이라, 대소문자·공백만 바꿔 새 버킷을 얻을 수 없다. 길이를
+ * 자르는 것은 아무 문자열이나 키로 받아 메모리를 늘리지 못하게 하려는 것이다.
  */
-function loginAccountKey(loginId: string): string {
-  return `loginAccount:${loginId.toLowerCase().slice(0, 128)}`;
+function normalizeLoginKey(loginId: string): string {
+  return loginId.trim().toLowerCase().slice(0, 128);
+}
+
+/**
+ * 없는 계정에도 Argon2 검증을 한 번 돈다 — 건너뛰면 **응답 시간만으로** 계정이 있는지 알 수 있다.
+ * 해시는 기동 뒤 첫 실패 때 한 번 만든다(같은 기본 비용이라 진짜 검증과 시간이 맞는다).
+ */
+let dummyHash: Promise<string> | null = null;
+function verifyAgainstDummy(password: string): Promise<boolean> {
+  dummyHash ??= argon2.hash(randomBytes(32).toString('base64url'));
+  return dummyHash.then((h) => argon2.verify(h, password)).then(() => false);
 }
 
 export async function registerAuthRoutes(app: FastifyInstance, pool: Pool, opts: AuthRouteOpts): Promise<void> {
-  const { limiter, loginAccountRule } = opts;
+  const { limiter, loginAccountRule, loginAccountIpRule } = opts;
   app.post('/bootstrap', async (req, reply) => {
     const existing = await pool.query(`select 1 from account where kind = 'human' limit 1`);
     if (existing.rowCount) {
@@ -204,8 +219,13 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool, opts:
     // 먼저 세고, 성공하면 지운다 — 결과적으로 "성공 없이 이어진 시도"를 세는 것과 같다.
     // 막혀 있는 동안은 맞는 비밀번호도 거절한다. 그러지 않으면 대입이 계속 맞혀 볼 수 있다.
     // 응답은 주소 단위 리밋과 **같은 모양**이다 — 어느 리밋에 걸렸는지, 계정이 있는지를 말하지 않는다.
-    const accountKey = loginAccountKey(body.loginId);
-    const locked = limiter.hit(accountKey, loginAccountRule);
+    const loginKey = normalizeLoginKey(body.loginId);
+    const accountKey = `loginAccount:${loginKey}`;
+    const accountIpKey = `loginAccountIp:${loginKey}:${req.ip}`;
+    // (계정, 주소) 를 먼저 본다 — 한 출처의 장난이 계정 전체 버킷을 갉아먹지 않게 한다. 주소 상한에
+    // 걸린 시도는 계정 전체로 세지 않는다.
+    const perIp = limiter.hit(accountIpKey, loginAccountIpRule);
+    const locked = perIp.allowed ? limiter.hit(accountKey, loginAccountRule) : perIp;
     if (!locked.allowed) {
       await recordAudit(pool, {
         action: 'login.failed', actorId: null, actorHandle: body.loginId, detail: { reason: 'account_rate_limited' },
@@ -218,7 +238,10 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool, opts:
     const res = await pool.query(
       `select id, password_hash, handle from account where lower(login_id) = lower($1) and kind = 'human'`, [body.loginId]);
     const row = res.rows[0];
-    if (!row?.password_hash || !(await argon2.verify(row.password_hash, body.password))) {
+    const ok = row?.password_hash
+      ? await argon2.verify(row.password_hash, body.password)
+      : await verifyAgainstDummy(body.password);
+    if (!ok) {
       // 실패한 로그인이 안 남으면 브루트포스 흔적을 사후에 볼 수 없다. 레이트 리밋은 막기만 하고
       // 기록하지 않는다. 존재하지 않는 login_id 도 남긴다 — 계정 열거 시도 자체가 신호다.
       await recordAudit(pool, {
@@ -227,6 +250,7 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool, opts:
       return reply.code(401).send({ error: { code: 'invalid_credentials', message: 'wrong login ID or password' } });
     }
     limiter.reset(accountKey);
+    limiter.reset(accountIpKey);
     const { token, hash } = newToken('hrks');
     await pool.query(
       `insert into session (token_hash, account_id, expires_at)

@@ -16,8 +16,8 @@ export interface Config {
 }
 
 /**
- * `false` = 안 믿음 · `true` = **전부 믿음**(옛 `1`/`true`, 비권장) · 숫자 = 소켓에서부터 믿을
- * hop 수 · 문자열 목록 = 믿을 프록시의 IP/CIDR.
+ * `false` = 안 믿음 · `true` = **전부 믿음**(옛 `1`/`true`, 비권장) · 숫자(2 이상) = 소켓에서부터
+ * 믿을 hop 수 · 문자열 목록 = 믿을 프록시의 IP/CIDR.
  */
 export type TrustProxy = boolean | number | string[];
 
@@ -30,7 +30,9 @@ const CIDR = /^[0-9a-fA-F.:]+(\/\d{1,3})?$/;
  * 값으로 켜져 있어 호환으로 남긴다. 전부 믿으면 `X-Forwarded-For` 의 **맨 왼쪽**(클라이언트가
  * 마음대로 쓰는 칸)이 `req.ip` 가 되므로, 앞단 프록시가 들어온 XFF 를 덮어쓰지 않는 한 요청마다
  * 값을 바꿔 레이트 리밋을 무한히 우회할 수 있다(Cloudflare·envoy 는 덮어쓰지 않고 덧붙인다).
- * 그래서 hop 수(`2` 이상) 또는 CIDR 목록을 쓴다. hop 1 이 필요하면 `hops:1` 로 적는다.
+ * 그래서 hop 수(`2` 이상) 또는 CIDR 목록을 쓴다. **hop 1 은 숫자로 못 적는다** — `1` 이 이미
+ * "전부 믿음"이라, 같은 글자가 배포마다 다른 뜻이 되면 조용히 구멍이 난다. 프록시 하나 뒤라면 그
+ * 프록시의 주소·대역을 CIDR 로 준다(이쪽이 더 단단하다 — 직접 붙은 상대까지 검증한다).
  *
  * 알 수 없는 값은 **기동을 멈춘다.** 조용히 끄면 모든 사용자가 프록시 주소 하나로 묶여 서로의
  * 리밋을 나눠 쓰고, 조용히 켜면 위조가 통한다 — 둘 다 아무 경고 없이 일어난다.
@@ -39,16 +41,16 @@ export function parseTrustProxy(raw: string | undefined): TrustProxy {
   const v = (raw ?? '').trim();
   if (v === '' || v === '0' || v.toLowerCase() === 'false') return false;
   if (v === '1' || v.toLowerCase() === 'true') return true;
-  const hops = /^(?:hops:)?(\d+)$/i.exec(v);
+  const hops = /^\d+$/.test(v);
   if (hops) {
-    const n = Number(hops[1]);
-    if (n >= 1 && n <= 16) return n;
+    const n = Number(v);
+    if (n >= 2 && n <= 16) return n;
   }
   const list = v.split(',').map((s) => s.trim()).filter(Boolean);
   if (!hops && list.length && list.every((s) => CIDR.test(s) && isIpOrCidr(s))) return list;
   throw new Error(
-    `TRUST_PROXY=${JSON.stringify(v)} is not understood — use a hop count (2, or hops:1), `
-    + 'a comma-separated list of proxy IPs/CIDRs, or 0 to disable',
+    `TRUST_PROXY=${JSON.stringify(v)} is not understood — use a hop count of 2 or more, `
+    + 'a comma-separated list of proxy IPs/CIDRs (for a single proxy), or 0 to disable',
   );
 }
 
