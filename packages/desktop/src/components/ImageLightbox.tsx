@@ -92,10 +92,18 @@ export function ImageLightbox({ attachment, url, onClose }: {
         return;
       }
       if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomTo(stepUp(scale, fit)); }
-      else if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomTo(stepDown(scale, fit)); }
-      else if (e.key === '0') { e.preventDefault(); zoomTo('fit'); }
-      else if (e.key === '1') { e.preventDefault(); zoomTo(1); }
+      let handled = true;
+      if (e.key === '+' || e.key === '=') zoomTo(stepUp(scale, fit));
+      else if (e.key === '-' || e.key === '_') zoomTo(stepDown(scale, fit));
+      else if (e.key === '0') zoomTo('fit');
+      else if (e.key === '1') zoomTo(1);
+      else handled = false;
+      if (handled) {
+        // **앱 전체 배율(Workspace 의 ⌘+/⌘−/⌘0)까지 내려가지 않게 멈춘다**(designer 수정 1) — 같은 문서의 버블
+        // 리스너라 preventDefault 만으로는 돈다. 그림을 키우려다 앱 글자가 같이 커지고 닫아도 남았다.
+        e.preventDefault();
+        e.stopPropagation();
+      }
     };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
@@ -118,12 +126,14 @@ export function ImageLightbox({ attachment, url, onClose }: {
   const overflows = !!natural && !!bodyRef.current
     && (natural.w * scale > bodyRef.current.clientWidth + 1 || natural.h * scale > bodyRef.current.clientHeight + 1);
 
-  const onPointerDown = (e: React.MouseEvent) => {
+  const onPointerDown = (e: React.PointerEvent) => {
     const body = bodyRef.current;
     if (!body || e.button !== 0) return;
+    // 칸을 붙잡는다 — 빠르게 끌어 마우스가 칸 밖으로 나가도 끌기가 끊기지 않는다(designer b).
+    body.setPointerCapture?.(e.pointerId);
     drag.current = { x: e.clientX, y: e.clientY, left: body.scrollLeft, top: body.scrollTop, moved: false };
   };
-  const onPointerMove = (e: React.MouseEvent) => {
+  const onPointerMove = (e: React.PointerEvent) => {
     const d = drag.current;
     const body = bodyRef.current;
     if (!d || !body) return;
@@ -135,11 +145,13 @@ export function ImageLightbox({ attachment, url, onClose }: {
     body.scrollLeft = d.left - dx;
     body.scrollTop = d.top - dy;
   };
-  const onPointerUp = (e: React.MouseEvent) => {
+  const onPointerUp = (e: React.PointerEvent) => {
     const d = drag.current;
     drag.current = null;
     setDragging(false);
     if (!d || d.moved) return;
+    // 그림 위를 눌렀을 때만 배율을 바꾼다 — 작은 그림 옆 빈 자리를 눌러 배율이 바뀌면 안 된다(designer c).
+    if (!(e.target instanceof HTMLImageElement)) return;
     const body = bodyRef.current;
     if (!body) return;
     const rect = body.getBoundingClientRect();
@@ -147,7 +159,12 @@ export function ImageLightbox({ attachment, url, onClose }: {
     zoomTo(isFit ? 1 : 'fit', { x: e.clientX - rect.left, y: e.clientY - rect.top });
   };
 
-  const cursor = dragging ? 'grabbing' : overflows && !isFit ? 'grab' : isFit && fit < 1 ? 'zoom-in' : 'zoom-out';
+  // 맞춤이 곧 100% 인 그림(작은 그림)은 눌러도 바뀌는 것이 없다 — 그때는 기본 커서(designer a).
+  const nothingToToggle = Math.abs(fit - 1) < 1e-6 && Math.abs(scale - 1) < 1e-6;
+  const cursor = dragging ? 'grabbing'
+    : overflows && !isFit ? 'grab'
+      : nothingToToggle ? 'default'
+        : isFit ? 'zoom-in' : 'zoom-out';
   const btn = 'shrink-0 rounded px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken disabled:opacity-40';
 
   return (
@@ -186,11 +203,10 @@ export function ImageLightbox({ attachment, url, onClose }: {
         data-testid="zoom-body"
         className="min-h-0 flex-1 overflow-auto outline-none"
         style={{ cursor }}
-        // 마우스·트랙패드 끌기. 창 밖으로 나가면 끌기를 놓는다.
-        onMouseDown={onPointerDown}
-        onMouseMove={onPointerMove}
-        onMouseUp={onPointerUp}
-        onMouseLeave={() => { drag.current = null; setDragging(false); }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={() => { drag.current = null; setDragging(false); }}
       >
         {/* 그림이 칸보다 작으면 가운데, 크면 왼쪽 위부터 — `m-auto` 가 둘 다 한다. */}
         <div className="flex min-h-full min-w-full">

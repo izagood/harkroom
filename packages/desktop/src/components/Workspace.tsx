@@ -150,6 +150,8 @@ export function Workspace({ onLogout, onOpenSettings }: {
        * `=`·`+` 를 함께 받는 이유: macOS 에서 ⌘+ 는 Shift 를 함께 눌러야 `+` 가 되고,
        * 그냥 누르면 `=` 가 온다. 사람은 둘 다 "키우기"로 누른다.
        */
+      // 그림 보기처럼 자기 배율을 가진 겹창이 이미 받은 키는 앱 배율로 다시 쓰지 않는다(#1099 designer 수정 1).
+      if ((e.metaKey || e.ctrlKey) && e.defaultPrevented) return;
       if (e.metaKey || e.ctrlKey) {
         const zoomKey = e.key === '=' || e.key === '+' ? 1 : e.key === '-' || e.key === '_' ? -1 : 0;
         if (zoomKey !== 0) {
