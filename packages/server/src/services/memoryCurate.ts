@@ -27,6 +27,11 @@ export const MEMORY_ITEMS_WARN_COUNT = 180;
 /** 정리 임대의 기본 길이. 정리 턴 하나가 30분 예산이라 넉넉히 한 시간. */
 export const MEMORY_LEASE_DEFAULT_MINUTES = 60;
 export const MEMORY_LEASE_MAX_MINUTES = 180;
+/**
+ * 보관 항목 상한(security F2). 보관은 200 상한 밖이라 "200개 쓰고 200개 보관"을 되풀이하면 끝없이 쌓인다.
+ * 넘치면 가장 오래 보관된 것부터 이전 판으로 옮기며 지운다(journal 자르기와 같은 규칙).
+ */
+export const MAX_ARCHIVED_MEMORIES_PER_ACCOUNT = 300;
 
 export type MemoryWarning =
   | { code: 'core_near_limit'; length: number; limit: number }
@@ -121,8 +126,23 @@ export async function archiveMemory(
       `update agent_memory set archived_at = now(), updated_at = now() where account_id = $1 and slug = $2`,
       [accountId, slug],
     );
+    await pruneArchived(c, accountId);
     return 'ok';
   });
+}
+
+/** 보관이 상한을 넘으면 가장 오래 보관된 것부터 이전 판으로 옮기며 지운다(F2). 넘치지 않으면 지울 행이 없어 값싸다. */
+async function pruneArchived(c: PoolClient, accountId: string): Promise<void> {
+  await c.query(
+    `with d as (
+       delete from agent_memory where account_id = $1 and archived_at is not null and slug in (
+         select slug from agent_memory where account_id = $1 and archived_at is not null
+         order by archived_at desc, slug offset $2)
+       returning slug, value, description, updated_at, flagged_at, kind)
+     insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, kind)
+     select $1, slug, value, description, updated_at, flagged_at is not null, kind from d`,
+    [accountId, MAX_ARCHIVED_MEMORIES_PER_ACCOUNT],
+  );
 }
 
 export type UnarchiveResult = 'ok' | 'not_found' | 'too_many';
@@ -190,11 +210,15 @@ export async function mergeMemory(pool: Pool, accountId: string, input: MergeInp
       [accountId, input.into, input.value, input.description ?? null, input.kind ?? null, input.flagReason ?? null,
         input.description !== undefined],
     );
+    // into 가 새 slug 면 "이전 판"이 없다. 그래도 merge 판을 하나 남겨 무엇이 합쳐졌는지 적되, 본문은
+    // **지금 쓰는 본문**이므로 걸림 표시도 지금 검사 결과를 따른다 — 깨끗한 판으로 적으면
+    // `lastCleanRevision`·restore 가 걸린 글을 깨끗한 것처럼 돌려준다(security F1).
     await c.query(
-      `insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, reason, detail)
-       values ($1, $2, $3, $4, $5, $6, 'merge', $7::jsonb)`,
-      [accountId, input.into, prev?.value ?? input.value, prev?.description ?? null, prev?.updated_at ?? new Date(),
-        prev ? prev.flagged_at !== null : false, JSON.stringify({ from, created: !prev })],
+      `insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, reason, detail, kind)
+       values ($1, $2, $3, $4, $5, $6, 'merge', $7::jsonb, $8)`,
+      [accountId, input.into, prev?.value ?? input.value, prev ? prev.description : (input.description ?? null),
+        prev?.updated_at ?? new Date(), prev ? prev.flagged_at !== null : input.flagReason != null,
+        JSON.stringify({ from, created: !prev }), prev?.kind ?? input.kind ?? 'topic'],
     );
     if (from.length) {
       await c.query(
@@ -202,6 +226,7 @@ export async function mergeMemory(pool: Pool, accountId: string, input: MergeInp
          where account_id = $1 and slug = any($2::text[]) and archived_at is null`,
         [accountId, from],
       );
+      await pruneArchived(c, accountId);
     }
     return 'ok';
   }).then(async (r) => {
@@ -215,39 +240,45 @@ export type RestoreResult = 'ok' | 'not_found' | 'too_many';
 /**
  * 이전 판으로 되돌린다. `revisionId` 가 없으면 가장 최근 판. 지금 판은 `reason: 'restore'` 로 남겨
  * 되돌리기 자체도 되돌릴 수 있다. 지워졌던 slug 면 되살아나고(상한 검사), 보관됐던 것이면 풀린다.
- * 걸린 판(080)으로 되돌리면 걸린 채로 산다 — 검사를 우회하는 길이 되면 안 된다.
+ * 걸린 판(080)으로 되돌리면 걸린 채로 살고, 되살리는 본문은 지금 규칙으로 다시 검사한다(`scan`).
+ * 지워졌던 journal 은 판에 적힌 kind 로 되살아난다 — topic 이 되어 recall 에 들어가면 안 된다(security L2).
  */
 export async function restoreMemory(
-  pool: Pool, accountId: string, slug: string, revisionId?: number,
+  pool: Pool, accountId: string, slug: string, revisionId: number | undefined,
+  scan: (value: string, description: string | null) => string | null,
 ): Promise<RestoreResult> {
   const r = await withTx(pool, async (c) => {
     const rev = await c.query(
-      `select id::int as id, value, description, flagged from agent_memory_revision
+      `select id::int as id, value, description, flagged, kind from agent_memory_revision
        where account_id = $1 and slug = $2 ${revisionId !== undefined ? 'and id = $3' : ''}
        order by replaced_at desc, id desc limit 1`,
       revisionId !== undefined ? [accountId, slug, revisionId] : [accountId, slug],
     );
     if (!rev.rowCount) return 'not_found';
-    const target = rev.rows[0] as { id: number; value: string; description: string | null; flagged: boolean };
+    const target = rev.rows[0] as { id: number; value: string; description: string | null; flagged: boolean; kind: MemoryKind | null };
+    // 걸린 판은 걸린 채로, 깨끗했던 판도 **지금 규칙**으로 다시 검사한다(security L1) — 옛 판은 검사가
+    // 없거나 약하던 때 적힌 것일 수 있다.
+    const flagReason = target.flagged ? 'restored flagged revision' : scan(target.value, target.description);
     const cur = (await lockRows(c, accountId, [slug])).get(slug);
     if (!cur || cur.archived_at) {
       if ((await activeCount(c, accountId)) >= MAX_MEMORY_ITEMS_PER_ACCOUNT) return 'too_many';
     }
     if (cur) {
       await c.query(
-        `insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, reason, detail)
-         values ($1, $2, $3, $4, $5, $6, 'restore', $7::jsonb)`,
-        [accountId, slug, cur.value, cur.description, cur.updated_at, cur.flagged_at !== null, JSON.stringify({ revisionId: target.id })],
+        `insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, reason, detail, kind)
+         values ($1, $2, $3, $4, $5, $6, 'restore', $7::jsonb, $8)`,
+        [accountId, slug, cur.value, cur.description, cur.updated_at, cur.flagged_at !== null, JSON.stringify({ revisionId: target.id }), cur.kind],
       );
     }
     await c.query(
       `insert into agent_memory (account_id, slug, value, description, kind, flagged_at, flag_reason)
-       values ($1, $2, $3, $4, 'topic', case when $5 then now() end, case when $5 then 'restored flagged revision' end)
+       values ($1, $2, $3, $4, $5, case when $6::text is not null then now() end, $6::text)
        on conflict (account_id, slug) do update set
          value = excluded.value, description = excluded.description,
+         kind = excluded.kind,
          flagged_at = excluded.flagged_at, flag_reason = excluded.flag_reason,
          archived_at = null, updated_at = now()`,
-      [accountId, slug, target.value, target.description, target.flagged],
+      [accountId, slug, target.value, target.description, target.kind ?? cur?.kind ?? 'topic', flagReason],
     );
     return 'ok';
   });

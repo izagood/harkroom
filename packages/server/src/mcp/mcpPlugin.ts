@@ -36,7 +36,7 @@ import {
 } from '../services/memory.js';
 import {
   acquireMemoryLease, archiveMemory, memoryLeaseStatus, memoryWarnings, mergeMemory, releaseMemoryLease, restoreMemory,
-  unarchiveMemory, MEMORY_LEASE_DEFAULT_MINUTES, MEMORY_LEASE_MAX_MINUTES,
+  unarchiveMemory, MEMORY_LEASE_DEFAULT_MINUTES, MEMORY_LEASE_MAX_MINUTES, MAX_ARCHIVED_MEMORIES_PER_ACCOUNT,
 } from '../services/memoryCurate.js';
 import { randomUUID as newLeaseToken } from 'node:crypto';
 import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
@@ -1490,6 +1490,7 @@ function buildMcpServer(
 
   server.registerTool('memory.archive', {
     description: '기억을 보관한다(삭제 대신). 목록(<memory-index>)·recall·검색·200 상한에서 빠지지만 memory.get 으로 읽히고 memory.unarchive 로 돌아온다. '
+      + `보관은 ${MAX_ARCHIVED_MEMORIES_PER_ACCOUNT}개까지 — 넘치면 가장 오래 보관된 것부터 이전 판으로 밀려난다. `
       + '안 쓰는 것 같은데 지우기 아까우면 이것이다. core 는 보관할 수 없다. ifUpdatedAt 은 memory.get 의 updatedAt',
     inputSchema: { slug: slugArg, ifUpdatedAt: ifUpdatedAtArg },
   }, async ({ slug, ifUpdatedAt }) => {
@@ -1551,7 +1552,7 @@ function buildMcpServer(
     const revisions = await listMemoryRevisions(pool, account.id, slug);
     return jsonResult({
       revisions: revisions.map((r) => ({
-        id: r.id, updatedAt: r.updatedAt.toISOString(), replacedAt: r.replacedAt.toISOString(), chars: r.value.length,
+        id: r.id, updatedAt: r.updatedAt.toISOString(), replacedAt: r.replacedAt.toISOString(), chars: r.value.length, ...(r.kind ? { kind: r.kind } : {}),
         ...(r.description ? { description: r.description } : {}), ...(r.reason ? { reason: r.reason } : {}),
         ...(r.detail ? { detail: r.detail } : {}), ...(r.flagged ? { flagged: true } : {}),
       })),
@@ -1559,11 +1560,12 @@ function buildMcpServer(
   });
 
   server.registerTool('memory.restore', {
-    description: '이전 판으로 되돌린다(revisionId 생략=가장 최근 판). 지금 판은 reason=restore 로 남아 되돌리기도 되돌릴 수 있다. 지워졌거나 보관된 기억도 이것으로 살아난다',
+    description: '이전 판으로 되돌린다(revisionId 생략=가장 최근 판). 지금 판은 reason=restore 로 남아 되돌리기도 되돌릴 수 있다. 지워졌거나 보관된 기억도 이것으로 살아난다(종류는 판에 적힌 대로). 되살리는 본문은 쓰기 검사를 다시 거친다',
     inputSchema: { slug: slugArg, revisionId: z.number().int().positive().optional() },
   }, async ({ slug, revisionId }) => {
     if (!isValidSlug(slug)) return jsonResult({ error: { code: 'invalid_slug', message: MEMORY_SLUG_HINT } });
-    const r = await restoreMemory(pool, account.id, slug, revisionId);
+    // 되살리는 본문도 지금 규칙으로 검사한다(080, security L1) — 걸리면 걸린 채로 산다.
+    const r = await restoreMemory(pool, account.id, slug, revisionId, (v, d) => scanWrite(v, d)?.reason ?? null);
     if (r === 'not_found') return jsonResult({ error: { code: 'not_found', message: '그 판이 없다 — memory.revisions 로 확인해라' } });
     if (r === 'too_many') return jsonResult({ error: { code: 'too_many', message: `at most ${MAX_MEMORY_ITEMS_PER_ACCOUNT} active memories per account` } });
     return jsonResult({ ok: true });

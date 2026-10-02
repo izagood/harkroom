@@ -149,9 +149,9 @@ async function deleteWithRevision(pool: Pool, accountId: string, slug: string): 
   await pool.query(
     `with d as (
        delete from agent_memory where account_id = $1 and slug = $2
-       returning slug, value, description, updated_at, flagged_at)
-     insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged)
-     select $1, slug, value, description, updated_at, flagged_at is not null from d`,
+       returning slug, value, description, updated_at, flagged_at, kind)
+     insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, kind)
+     select $1, slug, value, description, updated_at, flagged_at is not null, kind from d`,
     [accountId, slug],
   );
   await pruneRevisions(pool, accountId, slug);
@@ -225,9 +225,9 @@ export async function setMemory(
       const d = await pool.query(
         `with d as (
            delete from agent_memory where account_id = $1 and slug = $2 and ${MS_EQ.replace('$EXPECT', '$3')}
-           returning slug, value, description, updated_at, flagged_at)
-         insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged)
-         select $1, slug, value, description, updated_at, flagged_at is not null from d returning 1`,
+           returning slug, value, description, updated_at, flagged_at, kind)
+         insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, kind)
+         select $1, slug, value, description, updated_at, flagged_at is not null, kind from d returning 1`,
         [accountId, slug, expect.updatedAt],
       );
       if (d.rowCount) {
@@ -253,7 +253,7 @@ export async function setMemory(
   // 본문을 "이전 판"으로 적는다. `prev` 는 문장 시작 시점의 스냅숏이라 덮어쓰기 전 값이다.
   const res = await pool.query(
     `with prev as (
-       select slug, value, description, updated_at, flagged_at, archived_at from agent_memory where account_id = $1 and slug = $2),
+       select slug, value, description, updated_at, flagged_at, archived_at, kind from agent_memory where account_id = $1 and slug = $2),
      ins as (
        insert into agent_memory (account_id, slug, value, description, kind, flagged_at, flag_reason)
        select $1, $2, $3, nullif($5, ''), coalesce($7, 'topic'), case when $10::text is null then null else now() end, $10::text
@@ -276,8 +276,8 @@ export async function setMemory(
           or ($8 = 'at' and date_trunc('milliseconds', agent_memory.updated_at) = date_trunc('milliseconds', $9::timestamptz))
        returning 1),
      rev as (
-       insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged)
-       select $1, slug, value, description, updated_at, flagged_at is not null from prev where exists (select 1 from ins)
+       insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, kind)
+       select $1, slug, value, description, updated_at, flagged_at is not null, kind from prev where exists (select 1 from ins)
        returning 1)
      select (select count(*) from ins)::int as n`,
     [
@@ -313,9 +313,9 @@ async function pruneJournal(pool: Pool, accountId: string): Promise<void> {
        delete from agent_memory where account_id = $1 and kind = 'journal' and archived_at is null and slug in (
          select slug from agent_memory where account_id = $1 and kind = 'journal' and archived_at is null
          order by updated_at desc, slug offset $2)
-       returning slug, value, description, updated_at, flagged_at)
-     insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged)
-     select $1, slug, value, description, updated_at, flagged_at is not null from d`,
+       returning slug, value, description, updated_at, flagged_at, kind)
+     insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, kind)
+     select $1, slug, value, description, updated_at, flagged_at is not null, kind from d`,
     [accountId, MAX_JOURNAL_MEMORIES_PER_ACCOUNT],
   );
 }
@@ -578,6 +578,8 @@ export interface MemoryRevision {
   reason: MemoryRevisionReason | null;
   /** merge 면 `{ from: string[] }` — 어떤 기억이 이 판에 합쳐졌나(측정의 gold 재매핑 근거). */
   detail: Record<string, unknown> | null;
+  /** 밀려날 때의 종류(097). 097 이전 판은 null — 되살릴 때 topic 으로 본다. */
+  kind: MemoryKind | null;
 }
 
 export const MEMORY_REVISION_REASONS = ['merge', 'restore'] as const;
@@ -588,7 +590,7 @@ export async function listMemoryRevisions(
   pool: Pool, accountId: string, slug: string,
 ): Promise<MemoryRevision[]> {
   const res = await pool.query(
-    `select id::int as id, value, description, updated_at as "updatedAt", replaced_at as "replacedAt", flagged, reason, detail
+    `select id::int as id, value, description, updated_at as "updatedAt", replaced_at as "replacedAt", flagged, reason, detail, kind
      from agent_memory_revision where account_id = $1 and slug = $2
      order by replaced_at desc, id desc`,
     [accountId, slug],
