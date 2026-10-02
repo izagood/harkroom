@@ -26,3 +26,29 @@ String renderMentions(
 final RegExp _token = RegExp(
   r'<@((?:group|team):[0-9a-f-]{36})>|<@([0-9a-f-]{36})>',
 );
+
+/// 시스템 메시지 본문에서 "이 계정"이 들어갈 자리. 원본은 `packages/shared` 의
+/// `SYSTEM_ACCOUNT_PLACEHOLDER` 다.
+const systemAccountPlaceholder = '{account}';
+
+/// 사람에게 보여 줄 메시지 본문 — 원본은 데스크톱 `lib/mention.ts` 의 `displayBody` 다.
+///
+/// 서버는 시스템 메시지(채널 입·퇴장, 스레드 모델 지정)의 본문에 이름을 박지 않고
+/// [systemAccountPlaceholder] 만 남긴 채 대상을 `meta.accountId` 로 싣는다 — 이름을 바꾸면
+/// 지난 줄도 새 이름으로 그려지게. 그래서 **화면이 채워야 한다**. 이 함수를 안 지나면 사람은
+/// `{account}님이 …` 라는 글자를 읽는다(TestFlight 실측).
+///
+/// 채운 이름에 `@` 를 붙이지 않는다 — 시스템 줄은 사실을 남기는 것이지 부르는 것이 아니다.
+/// `meta.accountId` 가 없는 옛 메시지는 본문에 이름이 박혀 있어 그대로 돌아온다.
+String displayBody(
+  MessageRow message,
+  Map<String, AccountView> accounts, {
+  required String unknownMention,
+  required String unknownAccount,
+}) {
+  final accountId = message.meta['accountId'];
+  final filled = message.kind == MessageKind.system && accountId is String
+      ? message.body.split(systemAccountPlaceholder).join(accounts[accountId]?.handle ?? unknownAccount)
+      : message.body;
+  return renderMentions(filled, accounts, unknownMention);
+}

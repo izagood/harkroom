@@ -211,6 +211,9 @@ class StringsKo implements Strings {
   String get mentionUnknown => '@알 수 없음';
 
   @override
+  String get systemAccountUnknown => '알 수 없음';
+
+  @override
   String get tabChannels => '채널';
 
   @override

@@ -44,7 +44,7 @@ class MessageTile extends StatelessWidget {
     final t = context.t;
     final k = context.tokens;
     final author = app.accounts[message.authorId];
-    final body = renderMentions(message.body, app.accounts, t.mentionUnknown).trim();
+    final body = displayBody(message, app.accounts, unknownMention: t.mentionUnknown, unknownAccount: t.systemAccountUnknown).trim();
     final denied = _deniedHandles(message.meta);
 
     return Padding(

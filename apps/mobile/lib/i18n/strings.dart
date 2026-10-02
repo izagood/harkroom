@@ -513,6 +513,10 @@ abstract class Strings {
   /// 본문의 멘션이 가리키는 대상을 모른다(지워졌거나, 모바일이 이름표를 안 받는 팀·집합).
   String get mentionUnknown;
 
+  /// 시스템 메시지(입·퇴장·모델 지정)가 가리키는 계정을 모른다. `@` 를 붙이지 않는다 —
+  /// 시스템 줄은 부르는 말이 아니다(`fillSystemAccount`).
+  String get systemAccountUnknown;
+
   // ── P0 ───────────────────────────────────────────────────────────────
   /// 로그인 화면 제목.
   String get loginTitle;
@@ -926,6 +930,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'threadRepliesMany': s.threadRepliesMany,
       'mentionPickerEmpty': s.mentionPickerEmpty,
       'mentionUnknown': s.mentionUnknown,
+      'systemAccountUnknown': s.systemAccountUnknown,
       'loginTitle': s.loginTitle,
       'loginIdLabel': s.loginIdLabel,
       'loginPasswordLabel': s.loginPasswordLabel,
