@@ -492,6 +492,11 @@ export interface MentionTarget {
    */
   wake?: { reason: string };
   /**
+   * 이 스레드의 임대를 **잃었다**는 신호(서버 095, `threadClaims.ts` 펜싱). 울리면 이 턴을 접는다 — 다른
+   * 러너가 이미 이 스레드를 넘겨받았으므로 계속 돌면 같은 스레드에 턴이 둘이다. 없으면(옛 서버·시험) 안 울린다.
+   */
+  fence?: AbortSignal;
+  /**
    * 이 턴이 **팀장으로서 불린 턴**이면 그 팀과 명단(마이그레이션 047). 서버가 inbox 항목에
    * 실어 주고(`InboxEntry.team`) 스케줄러가 그대로 옮긴다 — 러너가 팀을 다시 조회하지
    * 않는 이유는 그 필드의 주석에 있다(같은 판정을 두 번 하면 갈라진다).
@@ -1075,6 +1080,8 @@ export async function runMentionTurn(
      * 눌러서 끝난 것과 아무도 안 봐서 회수된 것은 스레드에 남길 말이 다르다.
      */
     canceledBy: string | null;
+    /** 스레드 임대를 잃어 접었는가(`target.fence`). 사람의 중단과 문장이 다르다 — 누른 사람이 없다. */
+    fencedOut: boolean;
     /**
      * **하네스가 멈춰서 우리가 접었는가**(2026-09-09). `silenced` 와 갈라야 하는 이유는
      * 사람이 읽을 문장이 다르기 때문이다 — 무발화는 "시간 안에 답을 못 했다"이고 이것은
@@ -1150,7 +1157,7 @@ export async function runMentionTurn(
     cancelGateWatch: (() => void) | null;
   } = {
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
-    apiError: null, canceledBy: null, stalled: false, awaitingHuman: false, gateNoticed: false,
+    apiError: null, canceledBy: null, fencedOut: false, stalled: false, awaitingHuman: false, gateNoticed: false,
     lastLifeMs: 0, lastDataAtMs: 0, stalledIdleMs: 0, finished: false, pending: null, reclaimGraceMs: 0, tail: null,
     threadUnreadable: false, silenceDeferred: false, deniedSeen: new Set(), denialNotices: 0, mcpRejectedSeen: new Set(),
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
@@ -1243,6 +1250,12 @@ export async function runMentionTurn(
   // ("멘션 턴 진행 중 → 그 PTY 에 attach")과 main 루프의 유예 판정이 이 등록을 본다.
   // 세션을 연 **뒤**여야 한다: 등록의 sessionId 가 곧 attach 대상이다(릴레이가 없으면 null).
   deps.registry?.register(key, { kind: 'mention', sessionId: session?.sessionId ?? null });
+
+  // 임대를 잃으면 사람의 [중단] 과 같은 길로 접는다 — 스폰 전이면 안 띄우고(`canceledBeforeSpawn`), 스폰
+  // 중이면 손잡이를 잡는 순간(`onSpawn`), 그 뒤면 지금 SIGTERM 이다. 표지는 스케줄러가 남긴다.
+  const onFenceLost = (): void => { end.fencedOut = true; reclaim(); };
+  if (target.fence?.aborted) end.fencedOut = true;
+  else target.fence?.addEventListener('abort', onFenceLost, { once: true });
 
   // 발화 폴링. 서버에만 있는 사실이라 물어보는 수밖에 없다 — 에이전트는 자기 PAT 로
   // 서버에 직접 발화하므로 러너의 PTY 출력에는 그 사실이 안 나타난다.
@@ -1521,7 +1534,7 @@ export async function runMentionTurn(
    * 문장은 `canceledBy` 가 정한다(실패 카드의 첫 분기).
    */
   const canceledBeforeSpawn = (): TurnResult | null =>
-    (end.canceledBy ? { exitCode: 143, timedOut: false, tail: '' } : null);
+    (end.canceledBy || end.fencedOut ? { exitCode: 143, timedOut: false, tail: '' } : null);
 
   let result: TurnResult;
   try {
@@ -1689,7 +1702,7 @@ export async function runMentionTurn(
         // 위 가드와 이 콜백 사이에도 창이 있다(실행 파일 해석·forkpty). 그 창에 들어온
         // 중단은 손잡이를 잡은 **바로 이 순간** 써야 한다 — 안 쓰면 그 턴은 아무도 다시
         // 죽여 주지 않는다(중단은 한 번 오고, 다시 오지 않는다).
-        if (end.canceledBy) {
+        if (end.canceledBy || end.fencedOut) {
           reclaim();
           return;
         }
@@ -1720,6 +1733,7 @@ export async function runMentionTurn(
   } finally {
     // 끝 상태의 타이머를 먼저 끈다 — 남기면 끝난 턴의 타이머가 다음 턴의 PTY 를 죽인다.
     end.exited = true;
+    target.fence?.removeEventListener('abort', onFenceLost);
     end.cancelProbe?.();
     end.cancelReclaim?.();
     end.cancelSilence?.();
@@ -1943,6 +1957,8 @@ export async function runMentionTurn(
       // 여럿이 같은 스레드를 보는 자리에서 "누가 멈췄나"는 다음 판단의 재료다.
       end.canceledBy
         ? `@${end.canceledBy} 가 이 턴을 중단했다`
+        : end.fencedOut
+          ? '다른 러너가 이 스레드를 넘겨받아 이 턴을 접었다(스레드 임대를 잃었다)'
         : end.apiError
           // 턴 도중에 관측한 에러가 있으면 그것이 원인이다(2026-09-09). tail 을 담지 않는
           // 이유는 무발화와 같다 — TUI 에서는 주입한 프롬프트가 에코돼 tail 에 섞인다.
@@ -1960,7 +1976,8 @@ export async function runMentionTurn(
               : end.silenced
               ? `harness 무발화 ${deps.turnTimeoutMs}ms — 답 없이 시간 한도를 넘겼다`
               : `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
-    ) as Error & { harnessApiError?: string; harnessStalledMs?: number; threadModel?: TurnModel };
+    ) as Error & { harnessApiError?: string; harnessStalledMs?: number; threadModel?: TurnModel; fencedOut?: boolean };
+    if (end.fencedOut) failure.fencedOut = true;
     /*
       **정지의 마지막 화면은 러너 로그에 남긴다**(2026-09-09).
 
