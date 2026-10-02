@@ -9,7 +9,7 @@ import {
   MentionSuggestList, mentionMatches, rankWithChannelFirst, asAccountCandidates, asGroupCandidates,
   asTeamCandidates, MAX_SUGGESTIONS, MAX_GROUP_SUGGESTIONS, type Candidate,
 } from './MentionSuggest';
-import { AttachmentThumb, LocalFileThumb, formatSize } from './Attachments';
+import { PendingAttachmentTile } from './Attachments';
 import {
   discardUploads, retryUpload, returnUploads, startUploads, takeUploads, uploadPercent, waitForUploads,
   UploadFailedError,
@@ -1697,63 +1697,16 @@ export function Composer({
       )}
 
       {pending.length > 0 && (
-        <div className="mb-1 flex flex-wrap gap-1">
-          {pending.map((u) => {
-            const name = u.row?.filename ?? u.file.name;
-            const pct = u.fraction === null ? null : Math.round(u.fraction * 100);
-            return (
-              <span
-                key={u.localId}
-                data-testid="pending-attachment"
-                data-status={u.status}
-                /* 이름만 있는 칩은 **무엇을 붙였는지 확인해 주지 못한다** — 스크린샷 파일명은
-                   서로 거의 같아서(`screenshot-20260908-151256.png`) 눈으로 가릴 수 없다.
-                   그래서 이미지면 칩 안에 작은 그림을 세운다. 다 올라간 칩은 **서버의 바이트**를
-                   받아 그린다: 고른 파일이 아니라 실제로 붙은 것을 보여야 한다. 올리는 중에는
-                   고른 파일로 흐리게 그린다 — 칩이 고른 순간 서야 사람이 기다리지 않는다. */
-                className={`inline-flex items-center gap-1 rounded border bg-surface px-1.5 py-0.5 text-meta text-fg ${
-                  u.status === 'failed' ? 'border-danger' : 'border-border'}`}
-              >
-                {/* 다 올라간 뒤 서버 바이트가 올 때까지는 고른 파일로 **진하게** 그린다 — 안 그러면
-                    `흐린 그림 → 📎 → 그림` 으로 한 번 꺼졌다 켜진다(designer 검토 A). */}
-                {u.row
-                  ? <AttachmentThumb attachment={u.row} placeholderFile={u.file} />
-                  : <LocalFileThumb file={u.file} dim />}
-                {name}
-                {u.status === 'done' && u.row && (
-                  <span className="text-fg-subtle">{formatSize(u.row.sizeBytes)}</span>
-                )}
-                {u.status === 'uploading' && (
-                  <span className="text-fg-subtle tabular-nums" role="status">
-                    {pct === null || pct >= 100
-                      ? t('composer.attach.uploading')
-                      : t('composer.attach.uploadingPct', { pct })}
-                  </span>
-                )}
-                {u.status === 'failed' && (
-                  <>
-                    <span className="text-danger">{t('composer.attach.failedShort')}</span>
-                    <button
-                      type="button"
-                      aria-label={`Retry ${name}`}
-                      className="rounded px-1 font-medium text-accent hover:bg-surface-hover"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => retryUpload(u.localId)}
-                    >
-                      {t('composer.attach.retry')}
-                    </button>
-                  </>
-                )}
-                <button
-                  aria-label={`Remove ${name}`}
-                  className="rounded px-0.5 text-fg-muted hover:bg-surface-hover"
-                  onClick={() => discardUploads([u.localId])}
-                >
-                  ×
-                </button>
-              </span>
-            );
-          })}
+        /* 붙인 순서대로, 넘치면 줄을 바꾼다. 위·오른쪽 여백은 모서리에 반 걸친 × 자리다. */
+        <div className="mb-2 flex flex-wrap gap-2 pr-2 pt-2">
+          {pending.map((u) => (
+            <PendingAttachmentTile
+              key={u.localId}
+              upload={u}
+              onRemove={() => discardUploads([u.localId])}
+              onRetry={() => retryUpload(u.localId)}
+            />
+          ))}
         </div>
       )}
 
