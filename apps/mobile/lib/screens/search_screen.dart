@@ -436,7 +436,7 @@ class _SearchScreenState extends State<SearchScreen> {
           ListTile(
             key: Key('search-shortcut-${c.id}'),
             dense: true,
-            leading: Icon(c.isDm ? Icons.person_outline : Icons.tag, size: 20, color: context.tokens.mute),
+            leading: Icon(c.isDm ? Icons.person_outline : Icons.tag, size: 20, color: context.tokens.fgMuted),
             title: Text(c.name),
             subtitle: c.isDm ? Text(context.t.tabDms) : null,
             onTap: () {

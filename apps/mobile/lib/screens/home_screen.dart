@@ -226,7 +226,7 @@ class AgentsScreen extends StatelessWidget {
     Widget head(String text, String key) => Padding(
           key: Key(key),
           padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 14, HarkroomSize.gutter, 4),
-          child: Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.mute)),
+          child: Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.fgMuted)),
         );
     String channelName(String id) {
       for (final c in app.channels) {
@@ -265,7 +265,7 @@ class AgentsScreen extends StatelessWidget {
             if (app.agentActivity.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter, vertical: 6),
-                child: Text(t.agentsNoneRunning, style: TextStyle(color: k.mute)),
+                child: Text(t.agentsNoneRunning, style: TextStyle(color: k.fgMuted)),
               ),
             for (final x in app.agentActivity)
               ListTile(
@@ -279,7 +279,7 @@ class AgentsScreen extends StatelessWidget {
                     if (x.startedAt != null) runningLabel(now.difference(x.startedAt!), t),
                     if (x.owned) t.agentsMine,
                   ].where((e) => e.isNotEmpty).join(' · '),
-                  style: TextStyle(color: k.mute),
+                  style: TextStyle(color: k.fgMuted),
                 ),
                 onTap: () => open(x.channelId, x.threadRootId),
               ),
@@ -298,7 +298,7 @@ class AgentsScreen extends StatelessWidget {
                   ].where((e) => e.isNotEmpty).join(' · '),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: k.mute),
+                  style: TextStyle(color: k.fgMuted),
                 ),
                 onTap: () => open(w.channelId, w.threadRootId),
               ),
