@@ -23,6 +23,16 @@ import type { OperatorToServerFrame, ServerToOperatorFrame } from './operatorPro
 export const RUNNER_LINK_PROTOCOL_VERSION = 1;
 
 /**
+ * 러너 링크(relay·bridge) 한 줄의 바이트 상한 — 데몬 제어 채널의 `MAX_LINE_BYTES`(1MiB)와 **따로** 둔다.
+ *
+ * 이 링크는 MCP 결과와 REST 본문을 그대로 나른다. 서버 `attachment.fetch` 는 3MiB 까지의 그림을
+ * base64(4/3배)로 한 줄에 싣고, 텍스트는 4MiB 까지 싣는다. 1MiB 를 같이 쓰던 동안 원본 약 786KB
+ * 를 넘는 그림의 답이 오퍼레이터에서 조용히 버려져 브릿지가 90초 뒤 시간 초과를 냈다(2026-10-02).
+ * 16MiB 는 그 최대치의 네 배이고, 폭주하는 상대를 막는 상한이라는 원래 뜻은 그대로 남는다.
+ */
+export const RUNNER_LINK_MAX_LINE_BYTES = 16 * 1024 * 1024;
+
+/**
  * 오퍼레이터가 러너를 spawn 할 때 심는 링크 env 셋의 **이름**(`assignments.ts`). 러너 코어
  * (`agent/src/config.ts`)와 하네스가 띄우는 `mcp-bridge`(`operator/src/main.ts`)가 같은 셋을 읽는다.
  *

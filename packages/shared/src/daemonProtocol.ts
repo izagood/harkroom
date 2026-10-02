@@ -361,6 +361,17 @@ export class NdjsonDecoder {
   get pendingBytes(): number {
     return this.buffer.length;
   }
+
+  /**
+   * 들고 있던 미완성 바이트를 꺼내고 비운다. 연결을 **다른 디코더에 넘길 때** 쓴다 —
+   * 넘기는 쪽이 이것을 버리면 같은 청크에 붙어 온 다음 줄의 머리가 사라지고, 받는 쪽은
+   * 그 꼬리를 깨진 JSON 으로 읽는다(`DaemonServer` → 러너 링크 인계).
+   */
+  takeBuffered(): Buffer {
+    const rest = this.discarding ? Buffer.alloc(0) : this.buffer;
+    this.buffer = Buffer.alloc(0);
+    return rest;
+  }
 }
 
 // ---------------------------------------------------------------------------

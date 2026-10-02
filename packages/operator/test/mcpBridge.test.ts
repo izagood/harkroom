@@ -10,6 +10,8 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { NdjsonDecoder, encodeLine } from '@harkroom/shared/daemonProtocol';
 import { runMcpBridge } from '../src/mcpBridge.js';
+import { createRunnerLinkServer } from '../src/runnerLink.js';
+import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 
 const dir = mkdtempSync(join(tmpdir(), 'hk-bridge-'));
 const socketPath = join(dir, 'op.sock');
@@ -206,5 +208,102 @@ describe('mcp-bridge', () => {
     });
     stdin.end();
     await done;
+  });
+});
+
+// 2026-10-02: 원본 ~786KB 를 넘는 그림의 `attachment.fetch` 가 90초 시한으로 실패했다 — 답 한 줄
+// (base64)이 링크의 1MiB 상한을 넘어 오퍼레이터가 조용히 버렸다. 여기서는 **실제 runnerLink 서버**
+// 를 unix 소켓 뒤에 두고 브릿지를 붙여, 그 길 전체를 잰다.
+describe('mcp-bridge ↔ runnerLink 줄 상한', () => {
+  async function realOperator(opts: { maxLineBytes?: number; respond: (req: RunnerLinkRequest) => RunnerLinkResponse }) {
+    const link = createRunnerLinkServer({
+      onFrame: () => {}, log: () => {}, ...(opts.maxLineBytes ? { maxLineBytes: opts.maxLineBytes } : {}),
+      onRequest: async (_r, _a, req) => opts.respond(req),
+    });
+    link.expect('r-1', 'agent-a', 'sec');
+    await new Promise<void>((resolve) => {
+      server = createServer((socket) => {
+        // `DaemonServer` 의 인계와 같은 모양: 첫 줄(hello)을 읽고 나머지·덜 끝난 머리를 넘긴다.
+        const decoder = new NdjsonDecoder();
+        const onData = (chunk: Buffer) => {
+          const lines = decoder.push(chunk);
+          if (lines.length === 0) return;
+          socket.removeListener('data', onData);
+          const rest = lines.slice(1).filter((l) => l.ok).map((l) => (l as { value: unknown }).value);
+          link.accept(socket, (lines[0] as { value: unknown }).value, rest, decoder.takeBuffered());
+        };
+        socket.on('data', onData);
+      });
+      server.listen(socketPath, () => resolve());
+    });
+    return link;
+  }
+
+  async function readOne(stdout: PassThrough): Promise<Record<string, unknown>> {
+    const decoder = new NdjsonDecoder(64 * 1024 * 1024);
+    return new Promise((resolve) => {
+      stdout.on('data', (chunk: Buffer) => {
+        for (const line of decoder.push(chunk)) if (line.ok) resolve(line.value as Record<string, unknown>);
+      });
+    });
+  }
+
+  it('그림 800KB 의 답(base64 ~1.07MB 한 줄)이 runnerLink → 브릿지를 지나 stdout 에 도착한다', async () => {
+    const data = 'A'.repeat(Math.ceil(800_000 / 3) * 4);
+    const link = await realOperator({
+      respond: (req) => ({ type: 'mcp.response', id: req.id, messages: [{ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'image', data, mimeType: 'image/png' }] } }] }),
+    });
+    const stdin = new PassThrough(); const stdout = new PassThrough();
+    const done = runMcpBridge({ socketPath, runnerId: 'r-1', secret: 'sec' }, { stdin, stdout, stderr: new PassThrough() }, { requestTimeoutMs: 5_000 });
+    const got = readOne(stdout);
+    stdin.write('{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"attachment.fetch"}}\n');
+    const out = await got;
+    expect(out.error).toBeUndefined();
+    expect(((out.result as { content: { data: string }[] }).content[0]!.data)).toHaveLength(data.length);
+    stdin.end();
+    await done;
+    link.close();
+  });
+
+  it('답이 링크 상한을 넘으면 시한을 기다리지 않고 바로 JSON-RPC 오류가 온다', async () => {
+    const link = await realOperator({
+      maxLineBytes: 4096,
+      respond: (req) => ({ type: 'mcp.response', id: req.id, messages: [{ jsonrpc: '2.0', id: 2, result: { pad: 'x'.repeat(10_000) } }] }),
+    });
+    const stdin = new PassThrough(); const stdout = new PassThrough();
+    // 시한을 길게 둔다 — 시한으로 끝나면 이 시험은 vitest 기본 시한에 걸려 실패한다.
+    const done = runMcpBridge({ socketPath, runnerId: 'r-1', secret: 'sec' }, { stdin, stdout, stderr: new PassThrough() }, { requestTimeoutMs: 60_000 });
+    const got = readOne(stdout);
+    stdin.write('{"jsonrpc":"2.0","id":2,"method":"tools/call"}\n');
+    const out = await got;
+    expect(out).toMatchObject({ id: 2, error: { code: -32000 } });
+    expect((out.error as { message: string }).message).toMatch(/상한\(4096 바이트\)을 넘어/);
+    stdin.end();
+    await done;
+    link.close();
+  });
+
+  it('요청이 링크 상한을 넘으면 보내지 않고 그 자리에서 거절한다 — 링크는 살아 있다', async () => {
+    const seen: string[] = [];
+    const link = await realOperator({
+      respond: (req) => { seen.push(req.id); return { type: 'mcp.response', id: req.id, messages: [{ jsonrpc: '2.0', id: 4, result: {} }] }; },
+    });
+    const stdin = new PassThrough(); const stdout = new PassThrough();
+    const outs: Record<string, unknown>[] = [];
+    const decoder = new NdjsonDecoder();
+    stdout.on('data', (c: Buffer) => { for (const l of decoder.push(c)) if (l.ok) outs.push(l.value as Record<string, unknown>); });
+    const done = runMcpBridge({ socketPath, runnerId: 'r-1', secret: 'sec' }, { stdin, stdout, stderr: new PassThrough() }, { requestTimeoutMs: 60_000, maxLineBytes: 2048 });
+    stdin.write(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"pad":"${'y'.repeat(1940)}"}}\n`);
+    await waitFor(() => outs.length === 1);
+    expect(outs[0]).toMatchObject({ id: 3, error: { code: -32000 } });
+    expect((outs[0]!.error as { message: string }).message).toMatch(/보내지 않았다/);
+    // 뒤따르는 작은 요청은 정상으로 간다.
+    stdin.write('{"jsonrpc":"2.0","id":4,"method":"tools/list"}\n');
+    await waitFor(() => outs.length === 2);
+    expect(outs[1]).toEqual({ jsonrpc: '2.0', id: 4, result: {} });
+    expect(seen).toHaveLength(1);
+    stdin.end();
+    await done;
+    link.close();
   });
 });
