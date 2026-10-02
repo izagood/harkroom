@@ -53,6 +53,8 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       // 떠 있는 막대 뒤로 목록이 흐르게 — 막대가 내용을 가리지 않도록 몸통 아래에 막대 높이만큼 비운다.
       extendBody: true,
+      // 새 메시지는 홈·DM 에서만(S5c). 막대 위에 선다 — Scaffold 가 bottomNavigationBar 위로 올린다.
+      floatingActionButton: tab <= 1 ? const NewMessageButton() : null,
       body: IndexedStack(
         index: tab,
         // **`IndexedStack` 이다.** 탭을 옮길 때마다 화면을 새로 만들면 스크롤 위치와

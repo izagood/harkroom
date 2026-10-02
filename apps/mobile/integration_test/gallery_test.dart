@@ -64,6 +64,16 @@ void main() {
     await tester.tap(find.byKey(const Key('section-starred')));
     await shot(tester, '01b-home-starred-folded');
     await tester.tap(find.byKey(const Key('section-starred')));
+    // S5c: 「새로 온 것」 카드로 좁힌 홈 · 새 메시지 시트.
+    await tester.tap(find.byKey(const Key('card-new')));
+    await shot(tester, '01d-home-new-only');
+    await tester.tap(find.byKey(const Key('card-new')));
+    await tester.tap(find.byKey(const Key('new-message')));
+    await shot(tester, '01e-new-message-sheet');
+    await tester.tapAt(const Offset(20, 80));
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
 
     await tester.tap(find.byKey(const Key('channel-c1')));
     await shot(tester, '02-channel');
@@ -412,6 +422,18 @@ MockClient _server({bool states = false}) => MockClient((req) async {
             {'id': 'c2', 'name': 'harkroom', 'kind': 'standard', 'visibility': 'public'},
             {'id': 'c3', 'name': 'testbed', 'kind': 'standard', 'visibility': 'private'},
             {'id': 'c4', 'name': 'homelab', 'kind': 'standard', 'visibility': 'public'},
+          ],
+        });
+      }
+      // S5c: DM 은 /dms 로만 온다(실서버와 같이 이름 없이 명단만).
+      if (path == '/dms' && req.method == 'GET') {
+        return _json({
+          'dms': [
+            {
+              'id': 'd1',
+              'memberIds': ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000004'],
+              'lastMessageAt': '2026-10-01T00:00:00Z',
+            },
           ],
         });
       }

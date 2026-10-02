@@ -233,6 +233,18 @@ class StringsEn implements Strings {
   String get sectionStarred => 'Starred';
   @override
   String get sectionChannels => 'Channels';
+  @override
+  String get cardMyTurn => 'My turn';
+  @override
+  String get cardNew => 'New';
+  @override
+  String get newMessage => 'New message';
+  @override
+  String get newMessagePeople => 'People';
+  @override
+  String get newMessageDmFailed => "Couldn't open the DM.";
+  @override
+  String get unreadOnlyEmpty => 'All caught up.';
 
   @override
   String get inboxEmpty => 'Nothing here yet.';

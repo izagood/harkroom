@@ -27,8 +27,12 @@ class ChannelListScreen extends StatelessWidget {
         .toList(growable: false);
     // 홈은 묶음으로(S5b): 즐겨찾기 → 사용자 섹션(이름순) → 채널. DM 탭은 한 묶음 그대로.
     final items = <Object>[];
+    // 「새로 온 것」 카드를 눌렀으면 안 읽은 채널만, 묶음 없이 한 줄로(S5c).
+    final unreadOnly = !dms && app.homeUnreadOnly;
     if (dms) {
       items.addAll(rows);
+    } else if (unreadOnly) {
+      items.addAll(rows.where((c) => (app.reads[c.id]?.unread ?? 0) > 0));
     } else {
       for (final sec in homeSections(rows, app.channelPrefs)) {
         items.add(sec);
@@ -55,9 +59,10 @@ class ChannelListScreen extends StatelessWidget {
             // 끊겼을 때도 잘 안 읽혔다).
             const ConnectionBand(),
             if (app.noticeKey != null) _Notice(messageKey: app.noticeKey!),
+            if (!dms) ShortcutCards(newCount: rows.where((c) => (app.reads[c.id]?.unread ?? 0) > 0).length),
             Expanded(
-              child: rows.isEmpty
-                  ? Center(child: Text(dms ? t.dmsEmpty : t.channelsEmpty))
+              child: rows.isEmpty || (unreadOnly && items.isEmpty)
+                  ? Center(child: Text(dms ? t.dmsEmpty : unreadOnly ? t.unreadOnlyEmpty : t.channelsEmpty))
                   : ListView.builder(
                       // 커뮤니티를 옮기면 맨 위부터 — 앞 커뮤니티의 스크롤 자리를 이어받지 않는다(설계 ④).
                       key: PageStorageKey('${dms ? 'dms' : 'channels'}-${app.activeKey}'),
@@ -265,6 +270,216 @@ class _SectionHeader extends StatelessWidget {
                     style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.fg)),
               ),
               Icon(collapsed ? Icons.expand_more : Icons.expand_less, size: 18, color: k.mute),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 홈 맨 위 바로가기 카드 둘(개정판 3.2, S5c): 「내 차례」 → 인박스 탭, 「새로 온 것」 → 안 읽은 채널만.
+/// 「초안」 은 초안 저장이 생길 때(S8), 「도는 에이전트」 는 S7 에서 더한다.
+class ShortcutCards extends StatelessWidget {
+  const ShortcutCards({super.key, required this.newCount});
+
+  /// 안 읽은 말이 있는 채널 수(DM 은 DM 탭 배지가 센다).
+  final int newCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final app = context.app;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 8, HarkroomSize.gutter, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: _ShortcutCard(
+              key: const Key('card-my-turn'),
+              icon: Icons.inbox_outlined,
+              label: t.cardMyTurn,
+              count: app.inboxUnread,
+              selected: false,
+              onTap: () => app.selectTab(2),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _ShortcutCard(
+              key: const Key('card-new'),
+              icon: Icons.mark_chat_unread_outlined,
+              label: t.cardNew,
+              count: newCount,
+              // 켜져 있는 동안은 카드가 눌린 모양이다 — 목록이 왜 줄었는지 카드가 말한다.
+              selected: app.homeUnreadOnly,
+              onTap: app.toggleHomeUnreadOnly,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShortcutCard extends StatelessWidget {
+  const _ShortcutCard({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: Material(
+        color: selected ? k.soft : k.bg,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: k.line)),
+        child: InkWell(
+          customBorder: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                Icon(icon, size: 18, color: k.mute),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: k.fg)),
+                ),
+                // 0 은 회색 숫자로 둔다 — 카드 자리가 늘 같아야 엄지가 외운다. 배지(빨강)는 쓰지 않는다.
+                Text('$count',
+                    style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: count > 0 ? FontWeight.w700 : FontWeight.w400,
+                        color: count > 0 ? k.fg : k.mute)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 떠 있는 새 메시지 버튼(S5c). 누르면 시트: 채널을 고르거나 사람을 골라 DM 을 연다.
+class NewMessageButton extends StatelessWidget {
+  const NewMessageButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    return FloatingActionButton(
+      key: const Key('new-message'),
+      tooltip: t.newMessage,
+      onPressed: () => showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (_) => const NewMessageSheet(),
+      ),
+      child: const Icon(Icons.edit_outlined),
+    );
+  }
+}
+
+class NewMessageSheet extends StatefulWidget {
+  const NewMessageSheet({super.key});
+
+  @override
+  State<NewMessageSheet> createState() => _NewMessageSheetState();
+}
+
+class _NewMessageSheetState extends State<NewMessageSheet> {
+  bool _busy = false;
+
+  void _push(NavigatorState nav, String channelId) {
+    context.app.openChannel(channelId);
+    nav.push(MaterialPageRoute<void>(builder: (_) => MessageListScreen(channelId: channelId)));
+  }
+
+  Future<void> _openDm(String accountId) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    final app = context.app;
+    final nav = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    final failed = context.t.newMessageDmFailed;
+    try {
+      final id = await app.openDmWith(accountId);
+      if (!mounted) return;
+      nav.pop();
+      _push(nav, id);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      messenger.showSnackBar(SnackBar(content: Text(failed), behavior: SnackBarBehavior.floating));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final app = context.app;
+    final k = context.tokens;
+    final channels = app.channels
+        .where((c) => !c.isDm && app.channelPrefs[c.id]?.hidden != true)
+        .toList(growable: false)
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    final people = app.accounts.values
+        .where((a) => a.id != app.me?.id && !a.isDisabled)
+        .toList(growable: false)
+      ..sort((a, b) => a.handle.toLowerCase().compareTo(b.handle.toLowerCase()));
+    Widget head(String text) => Padding(
+          padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 12, HarkroomSize.gutter, 4),
+          child: Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.mute)),
+        );
+    return SafeArea(
+      child: SizedBox(
+        height: MediaQuery.sizeOf(context).height * 0.7,
+        child: AbsorbPointer(
+          absorbing: _busy,
+          child: ListView(
+            key: const Key('new-message-sheet'),
+            children: [
+              head(t.sectionChannels),
+              for (final c in channels)
+                ListTile(
+                  key: Key('new-message-channel-${c.id}'),
+                  dense: true,
+                  leading: Icon(c.isPrivate ? Icons.lock_outline : Icons.tag, size: 20),
+                  title: Text(c.name),
+                  onTap: () {
+                    final nav = Navigator.of(context);
+                    nav.pop();
+                    _push(nav, c.id);
+                  },
+                ),
+              head(t.newMessagePeople),
+              for (final a in people)
+                ListTile(
+                  key: Key('new-message-person-${a.id}'),
+                  dense: true,
+                  leading: HarkroomAvatar(id: a.id, name: a.handle, size: 24),
+                  title: Text(a.displayName.isNotEmpty ? a.displayName : a.handle),
+                  subtitle: a.displayName.isNotEmpty && a.displayName != a.handle ? Text('@${a.handle}') : null,
+                  onTap: () => _openDm(a.id),
+                ),
             ],
           ),
         ),

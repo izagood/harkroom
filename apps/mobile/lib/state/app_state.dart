@@ -209,6 +209,26 @@ class AppState extends ChangeNotifier {
   /// 홈에서 접어 둔 묶음(섹션 키). 이 기기·이 세션만 기억한다.
   final Set<String> collapsedSections = {};
 
+  /// 홈을 「새로 온 것」(안 읽은 채널)만으로 좁혔는가 — 바로가기 카드(S5c)가 켜고 끈다. 세션 동안만.
+  bool homeUnreadOnly = false;
+
+  void toggleHomeUnreadOnly() {
+    homeUnreadOnly = !homeUnreadOnly;
+    notifyListeners();
+  }
+
+  /// 그 사람과의 DM 을 열거나 만들고 id 를 준다. 목록에 없던 DM 이면 더한다(이름은 상대로).
+  Future<String> openDmWith(String accountId) async {
+    final id = await _api!.openDm([accountId]);
+    if (!channels.any((c) => c.id == id)) {
+      final myId = me?.id ?? '';
+      final row = ChannelRow(id: id, name: '', isPrivate: true, isDm: true, topic: null, memberIds: [myId, accountId]);
+      channels.add(row.withName(dmTitle(row, myId)));
+      notifyListeners();
+    }
+    return id;
+  }
+
   void toggleSection(String key) {
     if (!collapsedSections.remove(key)) collapsedSections.add(key);
     notifyListeners();
@@ -554,6 +574,8 @@ class AppState extends ChangeNotifier {
         api.reads(),
         // 선호는 **못 받아도 들어간다** — 홈이 묶이지 않을 뿐 채널은 다 보인다(옛 서버·일시 실패).
         api.channelPrefs().catchError((Object _) => const <ChannelPref>[]),
+        // DM 도 못 받으면 채널만으로 들어간다 — DM 탭이 빌 뿐이다.
+        api.dms().catchError((Object _) => const <ChannelRow>[]),
       ]);
       // 기다리는 사이 로그아웃했거나 다른 계정으로 들어왔다 — 옛 답을 새 세션에 붓지 않는다.
       if (gen != _generation) return;
@@ -567,6 +589,8 @@ class AppState extends ChangeNotifier {
       accounts
         ..clear()
         ..addEntries((results[1] as List<AccountView>).map((a) => MapEntry(a.id, a)));
+      // DM 은 따로 온다(`GET /channels` 는 standard 만). 이름은 상대들로 짓는다 — 계정 목록을 받은 뒤라야 한다.
+      channels.addAll((results[4] as List<ChannelRow>).map((d) => d.withName(dmTitle(d, who.id))));
       reads
         ..clear()
         ..addEntries((results[2] as List<ReadState>).map((r) => MapEntry(r.channelId, r)));
@@ -955,6 +979,18 @@ class AppState extends ChangeNotifier {
     } on Object {
       // 다음 `loadInbox` 가 서버의 사실로 덮는다.
     }
+  }
+
+  /// DM 의 이름: 나를 뺀 상대들의 이름을 쉼표로. 나 혼자인 DM(메모)이면 내 이름.
+  String dmTitle(ChannelRow dm, String myId) {
+    String nameOf(String id) {
+      final a = accounts[id];
+      if (a == null) return id;
+      return a.displayName.isNotEmpty ? a.displayName : a.handle;
+    }
+
+    final others = dm.memberIds.where((id) => id != myId).toList(growable: false);
+    return (others.isEmpty ? [myId] : others).map(nameOf).join(', ');
   }
 
   // ── 채널 ──────────────────────────────────────────────────────────────
@@ -1630,6 +1666,7 @@ class AppState extends ChangeNotifier {
     reads.clear();
     channelPrefs.clear();
     collapsedSections.clear();
+    homeUnreadOnly = false;
     threads.clear();
     threadRoots.clear();
     threadHasMore.clear();

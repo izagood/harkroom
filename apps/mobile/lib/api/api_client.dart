@@ -150,6 +150,19 @@ class ApiClient {
           .map(ChannelRow.fromJson)
           .toList(growable: false);
 
+  /// 내 DM 들(최근 말 순). 데스크탑 사이드바의 DM 묶음과 같은 출처다.
+  Future<List<ChannelRow>> dms() async =>
+      _list(_obj(await _send('GET', '/dms'))['dms'])
+          .map(ChannelRow.fromDmJson)
+          .toList(growable: false);
+
+  /// 사람들과의 DM 을 열거나 만든다(`POST /dms` — 이미 있으면 그것을 준다). 나는 서버가 더한다.
+  Future<String> openDm(List<String> accountIds) async {
+    final id = _obj(await _send('POST', '/dms', body: {'accountIds': accountIds}))['id'];
+    if (id is! String || id.isEmpty) throw const FormatException('dm without id');
+    return id;
+  }
+
   /// 내 채널 선호(즐겨찾기·섹션·순서·치움). 데스크탑 사이드바와 같은 값이다.
   Future<List<ChannelPref>> channelPrefs() async =>
       _list(_obj(await _send('GET', '/channels/prefs'))['prefs'])
