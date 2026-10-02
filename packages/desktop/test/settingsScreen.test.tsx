@@ -110,7 +110,7 @@ describe('SettingsScreen', () => {
 
 /**
  * **설정이 열린 채 커뮤니티가 바뀌면 본문을 새로 띄운다**(2026-10-02 에이전트 사진 신고).
- * 알림 클릭은 설정을 닫지 않고 커뮤니티를 바꾼다. 다시 띄우지 않으면 에이전트 목록은 옛
+ * (알림 클릭은 이제 설정을 닫지만, 다른 길로 전환될 때를 위해 남긴다.) 다시 띄우지 않으면 에이전트 목록은 옛
  * 커뮤니티 것으로 남고, 사진 저장은 `getController()`(새 활성)로 가서 남의 서버에 떨어진다.
  */
 describe('SettingsScreen — 커뮤니티 전환', () => {
@@ -132,5 +132,28 @@ describe('SettingsScreen — 커뮤니티 전환', () => {
 
     act(() => { useCommunityRegistry.getState().setActive(b.id); });
     await waitFor(() => expect(listB).toHaveBeenCalled());
+  });
+
+  // 설정은 커뮤니티마다 다른 서버의 값이다 — 아래 줄이 지금 어느 커뮤니티인지 말한다(designer 후속).
+  it('아래 줄에 활성 커뮤니티 이름이 있고, 전환하면 따라 바뀐다', () => {
+    setController({ listAgents: vi.fn(async () => []) } as unknown as Controller);
+    const a = useCommunityRegistry.getState().register({
+      baseUrl: 'https://a.example.com', label: 'Alpha',
+      controller: { listAgents: vi.fn(async () => []) } as unknown as Controller,
+    });
+    const b = useCommunityRegistry.getState().register({
+      baseUrl: 'https://b.example.com',
+      controller: { listAgents: vi.fn(async () => []) } as unknown as Controller,
+    });
+    act(() => { useCommunityRegistry.getState().setActive(a.id); });
+    useCommunityRegistry.getState().entries.find((e) => e.id === a.id)!.store.getState().set({ me: acc('u1', 'admin') });
+    useCommunityRegistry.getState().entries.find((e) => e.id === b.id)!.store.getState().set({ me: acc('u2', 'bee') });
+
+    render(<SettingsScreen onBack={vi.fn()} onSignOut={vi.fn()} onCommunitiesEmpty={vi.fn()} />);
+    expect(screen.getByTestId('settings-footer').textContent).toMatch(/^Alpha · @admin · v/);
+
+    act(() => { useCommunityRegistry.getState().setActive(b.id); });
+    // 이름이 없으면 호스트로 떨어진다(communityLabel).
+    expect(screen.getByTestId('settings-footer').textContent).toMatch(/^b\.example\.com · @bee · v/);
   });
 });
