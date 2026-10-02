@@ -2,4 +2,4 @@
 "PUSH_REASON_MENTION" = "나를 불렀어요";
 "PUSH_REASON_THREAD_REPLY" = "스레드에 답했어요";
 "PUSH_REASON_DM" = "메시지를 보냈어요";
-"PUSH_REASON_ASK" = "고를 것을 기다리고 있어요";
+"PUSH_REASON_ASK" = "선택을 기다리고 있어요";

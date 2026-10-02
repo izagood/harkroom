@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 
 import '../state/app_state.dart' show AppPhase, AppState;
 import 'push_platform.dart';
@@ -18,7 +18,10 @@ class PushCoordinator extends ChangeNotifier {
   PushCoordinator(this.app, this.platform) {
     platform.listen(onOpen: open, shouldPresent: shouldPresent);
     app.addListener(_onApp);
+    _lifecycle = AppLifecycleListener(onResume: resumed);
   }
+
+  late final AppLifecycleListener _lifecycle;
 
   final AppState app;
   final PushPlatform platform;
@@ -43,6 +46,17 @@ class PushCoordinator extends ChangeNotifier {
       // 엔진이 없는 시험 환경 등 — 알림이 없는 것과 같다.
     }
     await sync();
+  }
+
+  /// 앱이 다시 앞에 왔다. 배경에 있는 동안 아이콘 배지는 **푸시가 실어 온 그 서버의 수**로 덮였다
+  /// (서버마다 따로 센다). 돌아오면 받은 것을 다시 읽고 배지를 이 앱이 아는 합으로 다시 세운다 —
+  /// 값이 같아 보여도 한 번은 OS 에 다시 적는다.
+  Future<void> resumed() async {
+    _badge = null;
+    if (app.phase != AppPhase.ready) return;
+    await app.loadInbox();
+    await app.refreshOtherCounts();
+    _onApp();
   }
 
   void _onApp() {
@@ -133,6 +147,7 @@ class PushCoordinator extends ChangeNotifier {
 
   @override
   void dispose() {
+    _lifecycle.dispose();
     app.removeListener(_onApp);
     super.dispose();
   }
