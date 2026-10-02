@@ -219,6 +219,8 @@ class StringsKo implements Strings {
   @override
   String get tabMe => '나';
   @override
+  String get meSettings => '나 · 설정';
+  @override
   String get tabHome => '홈';
   @override
   String get tabDms => 'DM';

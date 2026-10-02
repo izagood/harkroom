@@ -528,7 +528,7 @@ class _CommunitySwitcher extends StatelessWidget {
               onTap: () {
                 close();
                 // 「나」 는 탭이 아니다(S5a) — 커뮤니티 관리는 나 화면 안에 있다.
-                Navigator.of(root).push(MaterialPageRoute<void>(builder: (_) => const MeScreen()));
+                openMeSheet(root);
               },
             ),
           ],

@@ -165,8 +165,9 @@ class OpenMeButton extends StatelessWidget {
     final me = app.me;
     return IconButton(
       key: const Key('open-me'),
-      tooltip: context.t.tabMe,
-      onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const MeScreen())),
+      // 사진만 보이므로 스크린리더에는 이 이름이 들린다 — 무엇이 열리는지 말한다(designer S5a 후속).
+      tooltip: context.t.meSettings,
+      onPressed: () => openMeSheet(context),
       icon: me == null
           ? const Icon(Icons.account_circle_outlined)
           : HarkroomAvatar(id: me.id, name: me.handle, size: 28),

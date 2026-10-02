@@ -220,6 +220,8 @@ class StringsEn implements Strings {
   @override
   String get tabMe => 'You';
   @override
+  String get meSettings => 'Me · Settings';
+  @override
   String get tabHome => 'Home';
   @override
   String get tabDms => 'DMs';

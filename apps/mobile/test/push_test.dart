@@ -425,7 +425,7 @@ void main() {
           strings: stringsFor('ko'),
           child: AppScope(state: app, child: PushScope(push: push, child: child!)),
         ),
-        home: const MeScreen(),
+        home: const Scaffold(body: MeSheetBody()),
       ));
       await tester.pump();
       return fake;
