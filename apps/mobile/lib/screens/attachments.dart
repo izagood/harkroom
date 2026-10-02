@@ -3,7 +3,44 @@ import 'package:flutter/material.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
+import '../time.dart';
 import 'artifact_preview.dart';
+import 'message_link.dart';
+
+/// 그림 넘겨 보기의 **범위**(designer 사양 1·5, 2026-10-02) — 그림을 연 화면이 준다.
+/// 채널 화면은 최상위 글(+채널에도 올린 답글), 스레드 화면은 루트와 답글이다. 없으면 그 그림 한 장만 본다.
+class GallerySource extends InheritedWidget {
+  const GallerySource({super.key, required this.messages, required super.child});
+
+  /// 열 때 **한 번** 부른다 — 열려 있는 동안 새 글이 와도 순서가 흔들리지 않는다.
+  final List<MessageRow> Function() messages;
+
+  static GallerySource? maybeOf(BuildContext context) => context.getInheritedWidgetOfExactType<GallerySource>();
+
+  @override
+  bool updateShouldNotify(GallerySource oldWidget) => false;
+}
+
+class GalleryItem {
+  const GalleryItem(this.attachment, this.message);
+  final AttachmentRow attachment;
+
+  /// 글을 모르는 자리에서 열면 null — 머리줄 아랫줄과 [글로 가기]를 그리지 않는다.
+  final MessageRow? message;
+}
+
+/// 넘겨 볼 그림. 글은 seq 순, 한 글 안에서는 첨부 순서. 미리 볼 수 있는 그림만 넣고 미리보기 카드의 표지는 뺀다.
+List<GalleryItem> collectGallery(Iterable<MessageRow> messages) {
+  final sorted = [...messages]..sort((a, b) => a.seq.compareTo(b.seq));
+  return [
+    for (final m in sorted)
+      for (final a in m.attachments)
+        if (a.artifact == null &&
+            AttachmentStrip.canPreview(a) &&
+            !m.attachments.any((c) => c.artifact?.coverAttachmentId == a.id))
+          GalleryItem(a, m),
+  ];
+}
 
 /// 메시지에 달린 첨부.
 ///
@@ -18,9 +55,12 @@ import 'artifact_preview.dart';
 /// `image/` 로 시작하는 것만이고, **SVG 는 이미지가 아니다** — 스크립트를 품을 수 있어
 /// 미리보기의 대상이 아니라는 것이 데스크탑의 판단이고, 같은 선을 여기서도 지킨다.
 class AttachmentStrip extends StatelessWidget {
-  const AttachmentStrip({super.key, required this.attachments});
+  const AttachmentStrip({super.key, required this.attachments, this.message});
 
   final List<AttachmentRow> attachments;
+
+  /// 이 첨부가 달린 글. 있으면 크게 보기에서 같은 화면의 그림을 넘겨 본다.
+  final MessageRow? message;
 
   static bool canPreview(AttachmentRow a) =>
       a.isImage && a.contentType.toLowerCase() != 'image/svg+xml';
@@ -43,7 +83,7 @@ class AttachmentStrip extends StatelessWidget {
                       cover: attachments.where((c) => c.id == a.artifact!.coverAttachmentId).firstOrNull,
                     )
                   : canPreview(a)
-                      ? _Preview(attachment: a)
+                      ? _Preview(attachment: a, message: message)
                       : _FileRow(attachment: a),
             ),
       ],
@@ -172,9 +212,33 @@ class ArtifactCard extends StatelessWidget {
 }
 
 class _Preview extends StatelessWidget {
-  const _Preview({required this.attachment});
+  const _Preview({required this.attachment, this.message});
 
   final AttachmentRow attachment;
+  final MessageRow? message;
+
+  void _open(BuildContext context) {
+    final m = message;
+    final source = GallerySource.maybeOf(context);
+    var items = <GalleryItem>[];
+    var start = -1;
+    if (m != null && source != null) {
+      items = collectGallery(source.messages());
+      start = items.indexWhere((it) => it.attachment.id == attachment.id);
+    }
+    if (start < 0) {
+      items = [GalleryItem(attachment, m)];
+      start = 0;
+    }
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => ImageGallery(
+        items: items,
+        start: start,
+        // [글로 가기] 는 **이 화면의 context** 로 연다 — 갤러리는 그 전에 닫힌다.
+        onGoTo: m == null ? null : (id) => openMessageLink(context, id),
+      ),
+    ));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -184,9 +248,7 @@ class _Preview extends StatelessWidget {
 
     return GestureDetector(
       key: Key('attachment-preview-${attachment.id}'),
-      onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
-        builder: (_) => _FullScreen(attachment: attachment),
-      )),
+      onTap: () => _open(context),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
         child: ConstrainedBox(
@@ -242,25 +304,110 @@ class _Failed extends StatelessWidget {
       );
 }
 
-/// 크게 보기. 핀치 확대까지만 한다 — 편집도 공유도 이 단계의 일이 아니다.
-class _FullScreen extends StatelessWidget {
-  const _FullScreen({required this.attachment});
+/// 크게 보기 + 넘겨 보기(designer 사양 5, 2026-10-02). 핀치 확대까지만 한다 — 편집도 공유도 이 단계의 일이 아니다.
+///
+/// - 좌우 스와이프로 같은 화면의 그림을 넘긴다(`PageView`). **확대 중(배율 > 1)이면 넘기지 않는다** — 그 스와이프는
+///   그림을 움직이는 것이다. 맞춤으로 돌아오면(더블탭) 다시 넘긴다.
+/// - 끝에서 멈춘다. 새 장은 맞춤으로 연다(장마다 따로 사는 `ImageViewport`). 이웃(±1)은 미리 받는다.
+class ImageGallery extends StatefulWidget {
+  const ImageGallery({super.key, required this.items, required this.start, this.onGoTo});
 
-  final AttachmentRow attachment;
+  final List<GalleryItem> items;
+  final int start;
+  final void Function(String messageId)? onGoTo;
+
+  @override
+  State<ImageGallery> createState() => _ImageGalleryState();
+}
+
+class _ImageGalleryState extends State<ImageGallery> {
+  late final PageController _pages = PageController(initialPage: widget.start);
+  late int _index = widget.start;
+  bool _zoomed = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _precacheAround(_index);
+  }
+
+  @override
+  void dispose() {
+    _pages.dispose();
+    super.dispose();
+  }
+
+  ImageProvider? _image(int i) {
+    final api = context.app.api;
+    if (api == null || i < 0 || i >= widget.items.length) return null;
+    return NetworkImage(api.attachmentUrl(widget.items[i].attachment.id), headers: api.authHeaders);
+  }
+
+  void _precacheAround(int i) {
+    for (final n in [i - 1, i + 1]) {
+      final img = _image(n);
+      // 못 받아도 조용히 둔다 — 그 장에 가면 장 자체가 실패를 말한다.
+      if (img != null) precacheImage(img, context, onError: (_, _) {});
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final t = context.t;
-    final api = context.app.api;
+    final app = context.app;
+    final item = widget.items[_index];
+    final total = widget.items.length;
+    final m = item.message;
+    final sender = m == null ? null : (app.accounts[m.authorId]?.handle ?? app.displayNameOf(m.authorId));
     return Scaffold(
       // 레터박스는 검정이다. 흰 바탕 스크린샷이 흰 여백에 섞여 그림 끝이 안 보이지 않게.
       backgroundColor: Colors.black,
-      appBar: AppBar(title: Text(attachment.filename)),
-      body: api == null
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(total > 1 ? '${_index + 1} / $total' : item.attachment.filename,
+                key: const Key('gallery-title')),
+            if (m != null && sender != null)
+              Text('$sender · ${agoLabel(m.createdAt, DateTime.now().toUtc(), t)}',
+                  key: const Key('gallery-subtitle'), style: Theme.of(context).textTheme.bodySmall),
+          ],
+        ),
+        actions: [
+          if (m != null && widget.onGoTo != null)
+            PopupMenuButton<String>(
+              key: const Key('gallery-menu'),
+              onSelected: (_) {
+                Navigator.of(context).pop();
+                widget.onGoTo!(m.id);
+              },
+              itemBuilder: (_) => [
+                PopupMenuItem(value: 'goto', key: const Key('gallery-goto'), child: Text(t.attachmentGoToMessage)),
+              ],
+            ),
+        ],
+      ),
+      body: _image(_index) == null
           ? Center(child: Text(t.attachmentFailed, style: const TextStyle(color: Colors.white)))
-          : ImageViewport(
-              image: NetworkImage(api.attachmentUrl(attachment.id), headers: api.authHeaders),
-              errorText: t.attachmentFailed,
+          : PageView.builder(
+              key: const Key('gallery-pages'),
+              controller: _pages,
+              itemCount: total,
+              physics: _zoomed ? const NeverScrollableScrollPhysics() : const PageScrollPhysics(),
+              onPageChanged: (i) {
+                setState(() {
+                  _index = i;
+                  _zoomed = false;
+                });
+                _precacheAround(i);
+              },
+              itemBuilder: (context, i) => ImageViewport(
+                key: ValueKey(widget.items[i].attachment.id),
+                image: _image(i)!,
+                errorText: t.attachmentFailed,
+                onZoomChanged: i == _index ? (z) { if (z != _zoomed) setState(() => _zoomed = z); } : null,
+              ),
             ),
     );
   }
@@ -287,10 +434,13 @@ bool isTallImage(Size image, Size view) {
 /// **예외 — 세로로 많이 긴 그림**([isTallImage])은 폭에 맞추고 맨 위부터 세로로 움직인다. 더블탭은
 /// 맞춤 ↔ 2배다(누른 자리를 중심으로).
 class ImageViewport extends StatefulWidget {
-  const ImageViewport({super.key, required this.image, required this.errorText});
+  const ImageViewport({super.key, required this.image, required this.errorText, this.onZoomChanged});
 
   final ImageProvider image;
   final String errorText;
+
+  /// 맞춤보다 커졌는가(true)·맞춤으로 돌아왔는가(false). 넘겨 보기가 스와이프를 넘김으로 쓸지 정한다.
+  final ValueChanged<bool>? onZoomChanged;
 
   @override
   State<ImageViewport> createState() => _ImageViewportState();
@@ -303,8 +453,16 @@ class _ImageViewportState extends State<ImageViewport> {
     if (!mounted) return;
     setState(() => _size = Size(info.image.width.toDouble(), info.image.height.toDouble()));
   }, onError: (_, _) {});
-  final TransformationController _tc = TransformationController();
+  late final TransformationController _tc = TransformationController()..addListener(_onTransform);
   Offset _doubleTapAt = Offset.zero;
+  bool _zoomed = false;
+
+  void _onTransform() {
+    final z = _tc.value.getMaxScaleOnAxis() > 1.01;
+    if (z == _zoomed) return;
+    _zoomed = z;
+    widget.onZoomChanged?.call(z);
+  }
 
   @override
   void didChangeDependencies() {
@@ -367,6 +525,7 @@ class _ImageViewportState extends State<ImageViewport> {
           );
         }
         return InteractiveViewer(
+          transformationController: _tc,
           minScale: 1,
           maxScale: 6,
           child: SizedBox(

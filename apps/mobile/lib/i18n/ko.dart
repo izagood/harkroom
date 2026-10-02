@@ -287,6 +287,8 @@ class StringsKo implements Strings {
 
   @override
   String get attachmentFailed => '이 파일을 불러오지 못했다.';
+  @override
+  String get attachmentGoToMessage => '글로 가기';
 
   @override
   String get artifactVersion => 'v{v}';

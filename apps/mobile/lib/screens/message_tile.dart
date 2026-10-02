@@ -71,7 +71,7 @@ class MessageTile extends StatelessWidget {
                   MarkdownBody(body, openMessage: (id) => openMessageLink(context, id)),
                 if (denied.isNotEmpty) _MentionDenied(handles: denied),
                 if (card != null) Padding(padding: const EdgeInsets.only(top: 6), child: card),
-                AttachmentStrip(attachments: message.attachments),
+                AttachmentStrip(attachments: message.attachments, message: message),
                 if (message.reactions.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 6),

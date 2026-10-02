@@ -426,6 +426,9 @@ abstract class Strings {
   /// 첨부를 못 불러왔다. **조용히 빈칸을 두지 않는다.**
   String get attachmentFailed;
 
+  /// 그림 넘겨 보기의 메뉴 — 닫고 그 그림이 달린 글을 연다.
+  String get attachmentGoToMessage;
+
   /// 미리보기 버전 표기. {v} 를 번호로 바꾼다.
   String get artifactVersion;
 
@@ -897,6 +900,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'loginOtherCommunity': s.loginOtherCommunity,
       'attachmentOpen': s.attachmentOpen,
       'attachmentFailed': s.attachmentFailed,
+      'attachmentGoToMessage': s.attachmentGoToMessage,
       'artifactVersion': s.artifactVersion,
       'artifactVersionWithPrev': s.artifactVersionWithPrev,
       'artifactLatest': s.artifactLatest,

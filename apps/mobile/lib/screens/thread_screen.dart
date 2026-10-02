@@ -17,6 +17,7 @@ import 'message_feed.dart';
 import 'message_list_screen.dart';
 import 'message_tile.dart';
 import 'search_screen.dart';
+import 'attachments.dart';
 
 /// 스레드 하나. 루트를 맨 위에 두고 그 아래 답글이 붙는다.
 ///
@@ -250,7 +251,10 @@ class _ThreadScreenState extends State<ThreadScreen> {
       ...failed.map((item) => FailedSendRow(item: item)),
     ];
 
-    return Scaffold(
+    return GallerySource(
+      // 크게 보기에서 넘겨 볼 그림의 범위(그림 넘겨 보기 사양 1·5).
+      messages: () => [?root, ...?app.threads[widget.rootId]],
+      child: Scaffold(
       // 개정판 3.5: 「스레드」 + 부제 「# task · 답글 n개」.
       appBar: AppBar(
         title: ScreenTitle(
@@ -336,7 +340,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
           ],
         ),
       )),
-    );
+    ));
   }
 
 }
