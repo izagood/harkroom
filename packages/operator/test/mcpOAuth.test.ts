@@ -386,7 +386,7 @@ describe('합격 기준 — 한 번 인증하면 모든 풀 계정 턴에서 된
       const doc = JSON.parse(await readFile(join(mcpDir, `${agent}.json`), 'utf8')) as { mcpServers: Record<string, { headers?: Record<string, string> }> };
       expect(doc.mcpServers.slack?.headers?.Authorization).toBe('Bearer A2');
       // 브릿지 항목은 건드리지 않는다.
-      expect(doc.mcpServers.harkroom).toEqual({ type: 'stdio', command: BIN, args: ['mcp-bridge'] });
+      expect(doc.mcpServers.harkroom).toEqual({ type: 'stdio', command: BIN, args: ['mcp-bridge'], alwaysLoad: true });
     }
   });
 
