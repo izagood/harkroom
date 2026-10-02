@@ -84,6 +84,16 @@ describe('보내기 직전 다시 확인 (G1·G2)', () => {
     expect(await jobs()).toEqual([]);
   });
 
+  it('배지를 끈 기기에는 badge 를 싣지 않는다 — 나머지는 그대로', async () => {
+    await register(adminToken, { badge: false });
+    await post('@admin 배지 없이');
+    await due(); await sweeper().sweep();
+    await register(adminToken, { badge: true });
+    const aps = (sent[0]!.payload as { aps: Record<string, unknown> }).aps;
+    expect(aps).not.toHaveProperty('badge');
+    expect(aps.alert).toEqual({ title: '@pushbot · #push-ch', 'loc-key': 'PUSH_REASON_MENTION' });
+  });
+
   it('그 사이에 읽었으면 보내지 않는다', async () => {
     await post('@admin 읽을 것');
     await pool.query(`update inbox set read_at = now()`);

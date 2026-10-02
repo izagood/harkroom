@@ -24,7 +24,8 @@ export interface PushPayloadInput {
   authorHandle: string | null;
   /** 채널이면 이름, DM 이면 null. */
   channelName: string | null;
-  badge: number;
+  /** null 이면 싣지 않는다(기기가 배지를 끔 — 앱이 여러 커뮤니티의 합을 직접 적는다). */
+  badge: number | null;
   /** null 이면 미리보기를 싣지 않는다. 있으면 이미 가림을 거친 저장 본문(`<@id>` 형식)이다. */
   previewBody: string | null;
   idToHandle: Map<string, string>;
@@ -55,7 +56,7 @@ export function buildPushPayload(input: PushPayloadInput): Record<string, unknow
     ? { title, body: preview }
     : { title, 'loc-key': PUSH_LOC_KEYS[input.reason] };
   return {
-    aps: { alert, badge: input.badge, sound: 'default', 'thread-id': input.channelId },
+    aps: { alert, ...(input.badge !== null ? { badge: input.badge } : {}), sound: 'default', 'thread-id': input.channelId },
     hk: {
       v: 1,
       accountId: input.accountId,

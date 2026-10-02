@@ -64,7 +64,7 @@ interface LiveRow {
   authorHandle: string; authorKind: 'human' | 'agent'; channelKind: 'standard' | 'dm'; channelName: string;
 }
 
-interface DeviceRow { id: string; token: string; env: ApnsEnv; preview: boolean }
+interface DeviceRow { id: string; token: string; env: ApnsEnv; preview: boolean; badge: boolean }
 
 export type PushHealth = 'off' | 'ok' | 'degraded';
 
@@ -109,7 +109,8 @@ export function createPushSweeper(pool: Pool, deps: {
 
   async function devicesFor(client: PoolClient, job: JobRow): Promise<DeviceRow[]> {
     const res = await client.query<DeviceRow>(
-      `select d.id, d.token, d.apns_env as env, coalesce((d.prefs->>'preview')::boolean, false) as preview
+      `select d.id, d.token, d.apns_env as env, coalesce((d.prefs->>'preview')::boolean, false) as preview,
+              coalesce((d.prefs->>'badge')::boolean, true) as badge
          from push_device d join session s on s.token_hash = d.session_token_hash
         where d.account_id = $1 and s.expires_at > now()
           and coalesce((d.prefs->>$2)::boolean, true)
@@ -202,7 +203,7 @@ export function createPushSweeper(pool: Pool, deps: {
         reason: job.reason, accountId: job.accountId, messageId: job.messageId,
         channelId: live.channelId, threadRootId: live.threadRootId,
         authorHandle: live.authorHandle, channelName: live.channelKind === 'dm' ? null : live.channelName,
-        badge, previewBody: device.preview ? preview : null, idToHandle,
+        badge: device.badge ? badge : null, previewBody: device.preview ? preview : null, idToHandle,
       });
       const result = await deps.transport!.send({ token: device.token, env: device.env, payload, collapseId: job.messageId });
       await settle(job, device, result.status, result.reason);

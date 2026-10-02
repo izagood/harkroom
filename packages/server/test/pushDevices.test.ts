@@ -38,7 +38,7 @@ describe('PUT /push/devices', () => {
     const res = await put(token, { token: tok(1), platform: 'ios', env: 'production' });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.prefs).toEqual({ mention: true, dm: true, threadReply: true, ask: true, preview: false });
+    expect(body.prefs).toEqual({ mention: true, dm: true, threadReply: true, ask: true, preview: false, badge: true });
     expect(body.env).toBe('production');
     expect(JSON.stringify(body)).not.toContain(tok(1));
     expect(JSON.stringify(body)).not.toContain(hashToken(token));
@@ -52,7 +52,7 @@ describe('PUT /push/devices', () => {
     await put(token, { token: mixed, platform: 'ios', env: 'production', prefs: { preview: true } });
     const res = await put(token, { token: mixed.toUpperCase(), platform: 'ios', env: 'sandbox', prefs: { dm: false } });
     expect(res.statusCode).toBe(200);
-    expect(res.json().prefs).toEqual({ mention: true, dm: false, threadReply: true, ask: true, preview: true });
+    expect(res.json().prefs).toEqual({ mention: true, dm: false, threadReply: true, ask: true, preview: true, badge: true });
     expect(res.json().env).toBe('sandbox');
     expect(await rows(accountId)).toHaveLength(1);
   });
