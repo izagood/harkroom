@@ -132,6 +132,19 @@ describe('계정 단위 로그인 상한', () => {
     await app.close();
   });
 
+  // 등록 규칙(32자)보다 넉넉한 64자까지만 받는다 — 상한이 없으면 아무 길이의 문자열이 감사 로그에 들어간다.
+  it('refuses a login id longer than 64 characters before recording anything', async () => {
+    const app = await build();
+    const before = await pool.query(`select count(*)::int as n from audit_log`);
+
+    expect((await login(app, 'a'.repeat(65), 'wrong')).statusCode).toBe(400);
+    expect((await login(app, 'a'.repeat(64), 'wrong')).statusCode).toBe(401);
+
+    const after = await pool.query(`select count(*)::int as n from audit_log`);
+    expect(after.rows[0].n - before.rows[0].n).toBe(1); // 64자 실패 하나만 남는다
+    await app.close();
+  });
+
   it('counts each account on its own', async () => {
     const app = await build();
 

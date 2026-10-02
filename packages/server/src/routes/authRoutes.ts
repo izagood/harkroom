@@ -213,7 +213,9 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool, opts:
   });
 
   app.post('/auth/login', async (req, reply) => {
-    const body = z.object({ loginId: z.string(), password: z.string() }).parse(req.body);
+    // loginId 길이 상한: 등록 규칙은 32자다(`credentials`). 그보다 넉넉히 두되 끝은 둔다 — 상한이 없으면
+    // 1MB 짜리 loginId 가 감사 로그 `actorHandle` 에 그대로 들어간다(실패·리밋 거절 모두 기록한다).
+    const body = z.object({ loginId: z.string().max(64), password: z.string() }).parse(req.body);
     // 계정 단위 상한은 **Argon2 검증 앞**에서 센다 — 막힌 계정에 대해서는 비싼 검증도 안 한다.
     // 검증 뒤에 실패만 세면 동시에 보낸 요청이 모두 검사를 통과해 상한을 넘는다. 그래서 시도를
     // 먼저 세고, 성공하면 지운다 — 결과적으로 "성공 없이 이어진 시도"를 세는 것과 같다.
