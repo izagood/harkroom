@@ -14,6 +14,10 @@ import { describeTrigger, localTimeZone, weekdayName } from '../../lib/automatio
  * 결국 **본문**이고, 에이전트를 부르려면 본문 맨 앞에 `@handle` 을 쓴다.
  *
  * 만든 사람만 본다(서버가 `owner_id` 로 거른다). 남의 자동화가 이 목록에 없는 것은 결함이 아니다.
+ *
+ * 목록은 **최신이 위**이고 카드는 **접힌 채** 선다 — 이름·켜기 토글·일정 한 줄만 보이고, 본문과
+ * 버튼은 눌러 펼쳐야 보인다. 서버는 `created_at` 오름차순으로 주므로 정렬은 여기서 한다
+ * (옛 서버에도 그대로 듣는다).
  */
 
 type Kind = AutomationTrigger['kind'];
@@ -79,6 +83,13 @@ export function AutomationsSettings() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [runsFor, setRunsFor] = useState<{ id: string; runs: AutomationRunView[] } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  /** 펼친 카드 id. 기본은 전부 접힘이고, 다시 불러와도(reload) 펼친 것은 그대로 둔다. */
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleExpanded = (id: string) => setExpanded((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** 방금 받은 수신 키. **이 화면을 떠나면 다시 볼 수 없다** — 서버가 원문을 남기지 않는다. */
@@ -145,7 +156,9 @@ export function AutomationsSettings() {
     } catch (e) { setError(reason(e, t('automations.ingress.issueFailed'))); }
   };
 
-  const rows = Array.isArray(items) ? items : [];
+  /** 최신이 위. ISO 문자열이라 사전순 비교가 곧 시간순이다. 같으면 id 로 고정해 순서가 튀지 않게 한다. */
+  const rows = useMemo(() => (Array.isArray(items) ? [...items] : [])
+    .sort((x, y) => (y.createdAt > x.createdAt ? 1 : y.createdAt < x.createdAt ? -1 : y.id.localeCompare(x.id))), [items]);
   const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString(locale || undefined) : '—');
 
   return (
@@ -290,22 +303,29 @@ export function AutomationsSettings() {
         {rows.map((a) => (
           <li key={a.id} data-testid="automation-row" className="rounded-xl border border-border bg-surface-raised p-4">
             <div className="flex items-start gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="font-semibold text-fg">⚡ {a.name}</div>
-                <div className="text-fg-muted">{describeTrigger(a.trigger, locale, t)} → {targetLabel(a.channelId)}</div>
-                {!a.approvedAt && (
-                  <div data-testid="automation-proposal" className="mt-1 text-meta text-warning">
-                    {t('automations.proposal.pending', { who: `@${accounts[a.proposedBy ?? '']?.handle ?? '…'}` })}
-                  </div>
-                )}
-                <div className="text-meta text-fg-subtle">
-                  {a.enabled
-                    ? t('automations.row.next', { at: fmt(a.nextAt) })
-                    : a.pausedReason
-                      ? t('automations.row.paused', { reason: a.pausedReason })
-                      : t('automations.row.off')}
-                </div>
-              </div>
+              <button type="button" data-testid="automation-toggle-details"
+                aria-expanded={expanded.has(a.id)} aria-controls={`automation-details-${a.id}`}
+                title={expanded.has(a.id) ? t('automations.row.collapse') : t('automations.row.expand')}
+                className="flex min-w-0 flex-1 items-start gap-2 rounded text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                onClick={() => toggleExpanded(a.id)}>
+                <span aria-hidden className={`mt-0.5 inline-block w-3 shrink-0 text-fg-subtle transition-transform ${expanded.has(a.id) ? 'rotate-90' : ''}`}>▸</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-semibold text-fg">⚡ {a.name}</span>
+                  <span data-testid="automation-summary" className="block truncate text-meta text-fg-muted">
+                    {describeTrigger(a.trigger, locale, t)} → {targetLabel(a.channelId)}
+                    <span className="text-fg-subtle"> · {a.enabled
+                      ? t('automations.row.next', { at: fmt(a.nextAt) })
+                      : a.pausedReason
+                        ? t('automations.row.paused', { reason: a.pausedReason })
+                        : t('automations.row.off')}</span>
+                  </span>
+                  {!a.approvedAt && (
+                    <span data-testid="automation-proposal" className="mt-1 block text-meta text-warning">
+                      {t('automations.proposal.pending', { who: `@${accounts[a.proposedBy ?? '']?.handle ?? '…'}` })}
+                    </span>
+                  )}
+                </span>
+              </button>
               {!a.approvedAt ? (
                 <Button variant="primary" disabled={busy}
                   onClick={() => void act(() => getController().api.approveAutomation(a.id), t('automations.proposal.approveFailed'))}>
@@ -317,82 +337,84 @@ export function AutomationsSettings() {
                 {t('automations.row.enabled')}
               </label>}
             </div>
-            <pre className="mt-2 whitespace-pre-wrap rounded bg-surface p-2 text-meta text-fg-muted">{a.body}</pre>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Button disabled={busy} onClick={() => void act(() => getController().api.runAutomation(a.id), t('automations.row.runFailed'))}>
-                {t('automations.row.runNow')}
-              </Button>
-              <Button onClick={() => { setEditingId(a.id); setDraft(triggerToDraft(a)); }}>{t('automations.row.edit')}</Button>
-              <Button onClick={() => void openRuns(a.id)}>{t('automations.row.history')}</Button>
-              {confirmDelete === a.id ? (
-                <>
-                  <Button variant="danger" disabled={busy}
-                    onClick={() => void act(() => getController().api.deleteAutomation(a.id), t('automations.row.deleteFailed')).then(() => setConfirmDelete(null))}>
-                    {t('automations.row.confirmDelete')}
-                  </Button>
-                  <Button onClick={() => setConfirmDelete(null)}>{t('automations.form.cancel')}</Button>
-                </>
-              ) : (
-                <Button onClick={() => setConfirmDelete(a.id)}>{t('automations.row.delete')}</Button>
-              )}
-            </div>
-            {a.trigger.kind !== 'schedule' && (
-              <div data-testid="automation-ingress" className="mt-3 rounded border border-border p-3 text-meta">
-                <div className="mb-2 text-fg-muted">
-                  {a.ingressEnabledAt ? t('automations.ingress.on') : t('automations.ingress.off')}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button onClick={() => void issue(a.id)}>
-                    {a.ingressEnabledAt ? t('automations.ingress.reissue') : t('automations.ingress.enable')}
-                  </Button>
-                  {a.ingressEnabledAt && (
-                    <Button onClick={() => void act(async () => {
-                      await getController().api.revokeAutomationIngress(a.id);
-                      if (issued?.id === a.id) setIssued(null);
-                    }, t('automations.ingress.issueFailed'))}>{t('automations.ingress.disable')}</Button>
-                  )}
-                </div>
-                {issued?.id === a.id && (
-                  <div data-testid="automation-ingress-key" className="mt-3 space-y-1">
-                    <p className="text-warning">{t('automations.ingress.onceWarning')}</p>
-                    <pre className="whitespace-pre-wrap break-all rounded bg-surface p-2 text-fg">{[
-                      issued.ingress.githubPath ? `GitHub webhook URL: ${baseUrl}${issued.ingress.githubPath}` : null,
-                      issued.ingress.githubPath ? `Secret: ${issued.ingress.key}` : null,
-                      `curl -X POST ${baseUrl}${issued.ingress.genericPath} -H 'Authorization: Bearer ${issued.ingress.key}' -H 'Content-Type: application/json' -d '{}'`,
-                    ].filter(Boolean).join('\n')}</pre>
-                    {issued.ingress.githubPath && <p className="text-fg-subtle">{t('automations.ingress.githubHint')}</p>}
-                  </div>
+            {expanded.has(a.id) && <div id={`automation-details-${a.id}`} data-testid="automation-details">
+              <pre className="mt-3 whitespace-pre-wrap rounded bg-surface p-2 text-meta text-fg-muted">{a.body}</pre>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button disabled={busy} onClick={() => void act(() => getController().api.runAutomation(a.id), t('automations.row.runFailed'))}>
+                  {t('automations.row.runNow')}
+                </Button>
+                <Button onClick={() => { setEditingId(a.id); setDraft(triggerToDraft(a)); }}>{t('automations.row.edit')}</Button>
+                <Button onClick={() => void openRuns(a.id)}>{t('automations.row.history')}</Button>
+                {confirmDelete === a.id ? (
+                  <>
+                    <Button variant="danger" disabled={busy}
+                      onClick={() => void act(() => getController().api.deleteAutomation(a.id), t('automations.row.deleteFailed')).then(() => setConfirmDelete(null))}>
+                      {t('automations.row.confirmDelete')}
+                    </Button>
+                    <Button onClick={() => setConfirmDelete(null)}>{t('automations.form.cancel')}</Button>
+                  </>
+                ) : (
+                  <Button onClick={() => setConfirmDelete(a.id)}>{t('automations.row.delete')}</Button>
                 )}
               </div>
-            )}
-            {runsFor?.id === a.id && (
-              <table data-testid="automation-runs" className="mt-3 w-full text-meta">
-                <tbody>
-                  {runsFor.runs.length === 0 && (
-                    <tr><td className="text-fg-subtle">{t('automations.runs.empty')}</td></tr>
+              {a.trigger.kind !== 'schedule' && (
+                <div data-testid="automation-ingress" className="mt-3 rounded border border-border p-3 text-meta">
+                  <div className="mb-2 text-fg-muted">
+                    {a.ingressEnabledAt ? t('automations.ingress.on') : t('automations.ingress.off')}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={() => void issue(a.id)}>
+                      {a.ingressEnabledAt ? t('automations.ingress.reissue') : t('automations.ingress.enable')}
+                    </Button>
+                    {a.ingressEnabledAt && (
+                      <Button onClick={() => void act(async () => {
+                        await getController().api.revokeAutomationIngress(a.id);
+                        if (issued?.id === a.id) setIssued(null);
+                      }, t('automations.ingress.issueFailed'))}>{t('automations.ingress.disable')}</Button>
+                    )}
+                  </div>
+                  {issued?.id === a.id && (
+                    <div data-testid="automation-ingress-key" className="mt-3 space-y-1">
+                      <p className="text-warning">{t('automations.ingress.onceWarning')}</p>
+                      <pre className="whitespace-pre-wrap break-all rounded bg-surface p-2 text-fg">{[
+                        issued.ingress.githubPath ? `GitHub webhook URL: ${baseUrl}${issued.ingress.githubPath}` : null,
+                        issued.ingress.githubPath ? `Secret: ${issued.ingress.key}` : null,
+                        `curl -X POST ${baseUrl}${issued.ingress.genericPath} -H 'Authorization: Bearer ${issued.ingress.key}' -H 'Content-Type: application/json' -d '{}'`,
+                      ].filter(Boolean).join('\n')}</pre>
+                      {issued.ingress.githubPath && <p className="text-fg-subtle">{t('automations.ingress.githubHint')}</p>}
+                    </div>
                   )}
-                  {runsFor.runs.map((r) => (
-                    <tr key={r.id} className="border-t border-border">
-                      <td className="py-1 pr-3 text-fg-muted">{fmt(r.createdAt)}</td>
-                      <td className="py-1 pr-3">
-                        {r.triggerKind}
-                        {r.initiatedBy && (
-                          // 에이전트가 돌린 회차(082). 원인 메시지는 링크 글자로 hover 에 둔다 —
-                          // 설정 화면에서 채널로 건너가는 길은 이 화면에 아직 없다.
-                          <span
-                            data-testid="automation-run-initiator"
-                            className="ml-1 text-fg-muted"
-                            title={r.causeMessageId ? t('automations.runs.causeTooltip', { link: `harkroom://message/${r.causeMessageId}` }) : undefined}
-                          >{t('automations.runs.byAgent', { who: `@${accounts[r.initiatedBy]?.handle ?? '…'}` })}</span>
-                        )}
-                      </td>
-                      <td className={`py-1 pr-3 ${r.status === 'failed' ? 'text-danger' : 'text-fg'}`}>{r.status}</td>
-                      <td className="py-1 text-fg-subtle">{r.error ?? ''}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+                </div>
+              )}
+              {runsFor?.id === a.id && (
+                <table data-testid="automation-runs" className="mt-3 w-full text-meta">
+                  <tbody>
+                    {runsFor.runs.length === 0 && (
+                      <tr><td className="text-fg-subtle">{t('automations.runs.empty')}</td></tr>
+                    )}
+                    {runsFor.runs.map((r) => (
+                      <tr key={r.id} className="border-t border-border">
+                        <td className="py-1 pr-3 text-fg-muted">{fmt(r.createdAt)}</td>
+                        <td className="py-1 pr-3">
+                          {r.triggerKind}
+                          {r.initiatedBy && (
+                            // 에이전트가 돌린 회차(082). 원인 메시지는 링크 글자로 hover 에 둔다 —
+                            // 설정 화면에서 채널로 건너가는 길은 이 화면에 아직 없다.
+                            <span
+                              data-testid="automation-run-initiator"
+                              className="ml-1 text-fg-muted"
+                              title={r.causeMessageId ? t('automations.runs.causeTooltip', { link: `harkroom://message/${r.causeMessageId}` }) : undefined}
+                            >{t('automations.runs.byAgent', { who: `@${accounts[r.initiatedBy]?.handle ?? '…'}` })}</span>
+                          )}
+                        </td>
+                        <td className={`py-1 pr-3 ${r.status === 'failed' ? 'text-danger' : 'text-fg'}`}>{r.status}</td>
+                        <td className="py-1 text-fg-subtle">{r.error ?? ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>}
           </li>
         ))}
       </ul>

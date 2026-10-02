@@ -400,6 +400,8 @@ export const ko = {
   'automations.row.unknownTarget': '(볼 수 없는 채널)',
   'automations.row.runNow': '지금 한 번 돌리기',
   'automations.row.runFailed': '실행을 넣지 못했다',
+  'automations.row.expand': '펼치기',
+  'automations.row.collapse': '접기',
   'automations.row.edit': '고치기',
   'automations.row.history': '이력',
   'automations.row.delete': '삭제',

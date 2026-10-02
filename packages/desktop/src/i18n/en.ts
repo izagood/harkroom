@@ -756,6 +756,8 @@ export const en = {
   'automations.row.unknownTarget': '(a channel you cannot see)',
   'automations.row.runNow': 'Run once now',
   'automations.row.runFailed': 'The run was not queued',
+  'automations.row.expand': 'Expand',
+  'automations.row.collapse': 'Collapse',
   'automations.row.edit': 'Edit',
   'automations.row.history': 'History',
   'automations.row.delete': 'Delete',
