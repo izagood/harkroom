@@ -52,9 +52,11 @@ describe('사이드바 Inbox 줄의 표시', () => {
     expect(screen.queryByTestId('inbox-unread-dot')).toBeNull();
   });
 
-  it('안 읽은 멘션·DM 은 숫자로 센다', () => {
+  // 숫자는 보드의 "내 차례" 수다(배지 A, `inboxMine`) — 안 읽은 멘션 수가 아니다.
+  it('내 차례 수를 숫자로 센다', () => {
     useAppStore.getState().set({
-      unread: [entry(1, 'mention', null), entry(2, 'dm', null), entry(3, 'mention', '2024-01-02T00:00:00.000Z')],
+      inboxMine: 2,
+      unread: [entry(1, 'mention', null), entry(2, 'dm', null), entry(3, 'mention', null), entry(4, 'mention', null)],
     });
     renderSidebar();
     expect(screen.getByTestId('inbox-blocking-badge').textContent).toBe('2');
@@ -69,21 +71,18 @@ describe('사이드바 Inbox 줄의 표시', () => {
     expect(screen.getByTestId('inbox-unread-dot')).toBeTruthy();
   });
 
-  it('레일 홈 배지와 같은 수를 센다 — 두 자리가 갈리지 않는다', async () => {
-    const { blockingUnreadCount } = await import('../src/state/unread');
-    const unread = [entry(1, 'mention', null), entry(2, 'dm', null), entry(3, 'thread_reply', null)];
-    useAppStore.getState().set({ unread });
+  it('레일 홈 배지와 같은 수를 센다 — 두 자리가 갈리지 않는다', () => {
+    useAppStore.getState().set({ inboxMine: 3, unread: [entry(1, 'thread_reply', null)] });
     renderSidebar();
-    expect(screen.getByTestId('inbox-blocking-badge').textContent)
-      .toBe(String(blockingUnreadCount(unread)));
+    expect(screen.getByTestId('inbox-blocking-badge').textContent).toBe('3');
   });
 
   it('표시에는 글자가 없으므로 접근 이름이 두 신호를 갈라 말한다', () => {
-    useAppStore.getState().set({ unread: [entry(1, 'mention', null)] });
+    useAppStore.getState().set({ inboxMine: 1, unread: [entry(1, 'mention', null)] });
     renderSidebar();
     expect(screen.getByLabelText('인박스에 내 답을 기다리는 것 1개')).toBeTruthy();
     cleanup();
-    useAppStore.getState().set({ unread: [entry(1, 'thread_reply', null)] });
+    useAppStore.getState().set({ inboxMine: 0, unread: [entry(1, 'thread_reply', null)] });
     renderSidebar();
     expect(screen.getByLabelText('인박스에 안 읽은 것 1개')).toBeTruthy();
   });
