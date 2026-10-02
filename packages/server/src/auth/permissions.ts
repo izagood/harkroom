@@ -14,7 +14,7 @@
  */
 import type { Pool } from 'pg';
 import type { AccountView, Capability, PermissionTarget } from '@harkroom/shared';
-import { CAPABILITIES, MEMBER_DEFAULT_CAPABILITIES } from '@harkroom/shared';
+import { CAPABILITIES, MEMBER_DEFAULT_CAPABILITIES, repoScope } from '@harkroom/shared';
 
 export async function hasGrant(pool: Pool, accountId: string, cap: Capability, scope: string): Promise<boolean> {
   // scope 가 주어져도 전역('') grant 는 언제나 그 대상을 덮는다 — 전역이 대상 한정보다 넓다.
@@ -52,9 +52,35 @@ export async function isOwnerOf(pool: Pool, accountId: string, target: Permissio
   }
 }
 
+/**
+ * `repo.merge` 는 `can()` 을 타지 않는다(security F1·F2). 세 층 중 어느 것도 이 capability 를 열지 못한다:
+ * 소유(에이전트가 저장소를 "소유"하지 않는다) · 전역 grant('' — 전 저장소가 열리는 구멍) · admin 역할.
+ * 오직 (에이전트, 'repo.merge', 'repo:<owner>/<name>') 정확 일치 grant 하나다.
+ *
+ * 돌려주는 것은 판정에 쓴 grant 의 사실(누가·언제·에이전트 지시 허용 여부)이다 — 호출부가 감사·시스템 줄에
+ * 그대로 적는다. 없으면 null.
+ */
+export async function mergeGrantFor(
+  pool: Pool, agentId: string, repo: string,
+): Promise<{ scope: string; grantedBy: string; grantedAt: string; expiresAt: string | null; allowAgentCause: boolean } | null> {
+  const scope = repoScope(repo);
+  if (!scope) return null;
+  const res = await pool.query(
+    `select scope, granted_by as "grantedBy", granted_at as "grantedAt", expires_at as "expiresAt",
+            allow_agent_cause as "allowAgentCause"
+       from account_grant
+      where account_id = $1 and capability = 'repo.merge' and scope = $2
+        and (expires_at is null or expires_at > now()) limit 1`,
+    [agentId, scope],
+  );
+  return (res.rows[0] as { scope: string; grantedBy: string; grantedAt: string; expiresAt: string | null; allowAgentCause: boolean } | undefined) ?? null;
+}
+
 export async function can(
   pool: Pool, actor: AccountView, cap: Capability, target?: PermissionTarget,
 ): Promise<boolean> {
+  // `repo.merge` 는 여기서 언제나 거짓이다 — 정확 일치 grant 만 보는 `mergeGrantFor` 가 판정한다(F1).
+  if (cap === 'repo.merge') return false;
   if (target && await isOwnerOf(pool, actor.id, target)) return true;
   // guest 는 기본 capability 가 없다 — 외부인을 채널 하나에만 들이는 자리다(스펙 §6, v2).
   if (actor.role !== 'guest' && MEMBER_DEFAULT_CAPABILITIES.includes(cap)) return true;
@@ -70,7 +96,8 @@ export async function can(
  * 화면이 없는 권한을 그린다. 그쪽은 대상이 있을 때 `can()` 으로 묻는다.
  */
 export async function effectiveCapabilities(pool: Pool, actor: AccountView): Promise<Capability[]> {
-  if (actor.role === 'owner' || actor.role === 'admin') return [...CAPABILITIES];
+  // `repo.merge` 는 전역이 될 수 없다 — admin 이라도 화면에 그 권한을 그리지 않는다(F1).
+  if (actor.role === 'owner' || actor.role === 'admin') return CAPABILITIES.filter((c) => c !== 'repo.merge');
   const res = await pool.query<{ capability: Capability }>(
     `select distinct capability from account_grant
       where account_id = $1 and scope = '' and (expires_at is null or expires_at > now())`, [actor.id]);

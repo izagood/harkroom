@@ -16,6 +16,9 @@ export const CAPABILITIES = [
   'agent.create', 'agent.manage', 'agent.privileged',
   'member.invite', 'audit.read',
   'operator.register', 'operator.manage',
+  // 에이전트가 PR 을 머지한다(설계 스레드 3deac356). scope 는 `repo:<owner>/<name>` 만 — 전역('')은
+  // 이 capability 에 한해 아무것도 열지 않는다(security F1). 판정은 서버 `canMergeRepo` 하나다.
+  'repo.merge',
 ] as const;
 export type Capability = typeof CAPABILITIES[number];
 
@@ -29,11 +32,23 @@ export const MEMBER_DEFAULT_CAPABILITIES: readonly Capability[] = ['operator.reg
 export interface GrantRow {
   accountId: string;
   capability: Capability;
-  /** '' = 커뮤니티 전역. 'channel:<uuid>' | 'team:<uuid>' | 'agent:<uuid>' 만 첫 판에 쓴다. */
+  /** '' = 커뮤니티 전역. 'channel:<uuid>' | 'team:<uuid>' | 'agent:<uuid>' — `repo.merge` 는 'repo:<owner>/<name>' 만. */
   scope: string;
   grantedBy: string;
   grantedAt: string;
   expiresAt: string | null;
+  /** `repo.merge` 전용(090): 에이전트가 띄운 턴에서도 머지를 허용하나. 기본 false(security F4). */
+  allowAgentCause?: boolean;
+}
+
+/**
+ * `repo.merge` 의 scope 문법. 저장소 이름은 **소문자로 정규화**해서 저장·비교한다 — GitHub 은 대소문자를
+ * 구분하지 않으므로 `Izagood/Harkroom` 으로 준 grant 가 `izagood/harkroom` 머지에 안 맞는 일을 막는다.
+ */
+export const REPO_SCOPE_RE = /^repo:[a-z0-9][a-z0-9._-]{0,99}\/[a-z0-9._-]{1,100}$/;
+export function repoScope(repo: string): string | null {
+  const s = `repo:${repo.trim().toLowerCase()}`;
+  return REPO_SCOPE_RE.test(s) ? s : null;
 }
 
 /** `can()` 의 대상. `kind` 가 소유 판정의 테이블을 고른다. */

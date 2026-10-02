@@ -45,16 +45,13 @@ afterEach(() => {
 });
 
 describe('독 배지', () => {
-  // 숫자는 보드의 "내 차례" 수다(배지 A) — 안 읽은 멘션·DM 수가 아니다. 그 수를 세는 판정은
-  // `inboxBoard.test.ts`(mineCount)가 잰다. 여기서는 독이 **그 값을 그대로 쓰는가**만 잰다.
-  it('보드의 내 차례 수를 센다 — 안 읽은 멘션 수가 아니다', async () => {
+  it('안 읽은 멘션·DM 만 센다', async () => {
     const badger = fakeBadger();
     render(<Harness badger={badger} />);
 
     act(() => {
       useAppStore.getState().set({
-        inboxMine: 2,
-        unread: [entry(1, 'mention'), entry(2, 'dm'), entry(3, 'mention'), entry(4, 'mention')],
+        unread: [entry(1, 'mention'), entry(2, 'dm'), entry(3, 'thread_reply'), entry(4, 'mention', '2026-09-08T01:00:00.000Z')],
       });
     });
 
@@ -67,8 +64,8 @@ describe('독 배지', () => {
     render(<Harness badger={badger} />);
 
     act(() => {
-      useAppStore.getState().set({ inboxMine: 1 });
-      second.store.getState().set({ inboxMine: 2 });
+      useAppStore.getState().set({ unread: [entry(1, 'mention')] });
+      second.store.getState().set({ unread: [entry(2, 'mention'), entry(3, 'dm')] });
     });
 
     await waitFor(() => expect(badger.last()).toEqual({ count: 3, dot: false }));
@@ -91,7 +88,7 @@ describe('독 배지', () => {
 
     act(() => {
       useAppStore.getState().set({
-        inboxMine: 1,
+        unread: [entry(1, 'mention')],
         reads: { c1: { lastReadSeq: 3, unread: 2 } },
       });
     });
@@ -99,14 +96,14 @@ describe('독 배지', () => {
     await waitFor(() => expect(badger.last()).toEqual({ count: 1, dot: false }));
   });
 
-  it('내 차례가 0 이 되면 배지를 지운다', async () => {
+  it('다 읽으면 배지를 지운다', async () => {
     const badger = fakeBadger();
     render(<Harness badger={badger} />);
 
-    act(() => { useAppStore.getState().set({ inboxMine: 1 }); });
+    act(() => { useAppStore.getState().set({ unread: [entry(1, 'mention')] }); });
     await waitFor(() => expect(badger.last()).toEqual({ count: 1, dot: false }));
 
-    act(() => { useAppStore.getState().set({ inboxMine: 0 }); });
+    act(() => { useAppStore.getState().set({ unread: [] }); });
     await waitFor(() => expect(badger.last()).toEqual({ count: 0, dot: false }));
   });
 });

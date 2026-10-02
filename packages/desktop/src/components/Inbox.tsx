@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Identity } from './Identity';
 import type { InboxEntry, InboxThreadState, MessageRow } from '@harkroom/shared';
-import { BOARD_COLUMNS, buildBoard, daysWaiting, laterUntilLabel, mineCount, type BoardCard, type BoardColumn, type BoardFold } from '../lib/inboxBoard';
+import { BOARD_COLUMNS, buildBoard, daysWaiting, laterUntilLabel, type BoardCard, type BoardColumn, type BoardFold } from '../lib/inboxBoard';
 import { bodyWithHandles } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
@@ -397,8 +397,7 @@ export function Inbox({ open, onClose }: Props) {
   };
 
   // 접힌 것(나중에)은 세지 않는다 — 미룬 일은 지금 나를 기다리는 일이 아니다.
-  // 배지와 같은 함수다(`lib/inboxBoard::mineCount`) — 두 숫자가 갈릴 자리가 없게.
-  const mine = mineCount(cards);
+  const mineCount = byColumn.mine.filter((c) => c.fold === null).length;
 
   return (
     <aside
@@ -416,8 +415,8 @@ export function Inbox({ open, onClose }: Props) {
         <span className="font-bold">{t('inbox.pane.title')}</span>
         {/* **숫자는 내 차례 하나뿐이다** — 0 이 될 수 있는 수만 뜻이 있다. */}
         {load.kind === 'ready' && (
-          <span data-testid="inbox-mine-count" className={`text-meta ${mine > 0 ? 'font-medium text-state-turn' : 'text-fg-subtle'}`}>
-            {t('inbox.board.mineCount', { count: mine })}
+          <span data-testid="inbox-mine-count" className={`text-meta ${mineCount > 0 ? 'font-medium text-state-turn' : 'text-fg-subtle'}`}>
+            {t('inbox.board.mineCount', { count: mineCount })}
           </span>
         )}
         <button

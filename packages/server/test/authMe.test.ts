@@ -37,9 +37,9 @@ describe('/auth/me 의 capabilities', () => {
     const me = await app.inject({ method: 'GET', url: '/auth/me', headers: auth(memberToken) });
     expect(me.json().capabilities).not.toContain('team.manage');
   });
-  it('owner 는 전부 갖는다', async () => {
+  it('owner 는 전부 갖는다 — repo.merge 만 빼고(전역이 될 수 없는 capability, 090 F1)', async () => {
     const me = await app.inject({ method: 'GET', url: '/auth/me', headers: auth(adminToken) });
     expect(me.json().role).toBe('owner');
-    expect([...me.json().capabilities].sort()).toEqual([...CAPABILITIES].sort());
+    expect([...me.json().capabilities].sort()).toEqual(CAPABILITIES.filter((c) => c !== 'repo.merge').sort());
   });
 });
