@@ -188,6 +188,17 @@ function effectiveState(s: InboxThreadState | undefined, latestEntryAt: string, 
   return s;
 }
 
+/**
+ * **내 차례 수** — 보드 머리글의 "나를 기다리는 일 N" 이자 사이드바·레일·독 배지의 숫자다(배지 A,
+ * 2026-10-02 jaebin). 접힌 것(나중에)은 세지 않는다 — 미룬 일은 지금 나를 기다리는 일이 아니다.
+ *
+ * 한 함수로 두는 이유: 보드와 배지가 각자 세면 "배지 3, 보드 2" 가 되고, 그때 사람이 믿을 숫자가 없다
+ * (옛 배지가 그랬다 — 안 읽은 멘션·DM 을 세어 "219" 가 줄지 않았다).
+ */
+export function mineCount(cards: BoardCard[]): number {
+  return cards.filter((c) => c.column === 'mine' && c.fold === null).length;
+}
+
 export function buildBoard(input: BoardInput): BoardCard[] {
   const { entries, threads, me, nowMs } = input;
   const heads = new Map((threads ?? []).map((m) => [m.id, m]));

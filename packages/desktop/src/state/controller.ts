@@ -1,6 +1,10 @@
 import type { AccountStatus, AddTeamToChannelResult, AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, AgentView, ThreadAgentModelView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
 import type { MemoryEdit, MemoryEntry, MemoryRevision } from '../lib/memoryList';
-import { countsAsReply, notifyLevelOf, readFailureMeta } from '@harkroom/shared';
+import { countsAsReply, notifyLevelOf, readFailureMeta, type InboxThreadState } from '@harkroom/shared';
+import { buildBoard, mineCount } from '../lib/inboxBoard';
+
+/** 보드 한 판의 재료 — `GET /inbox?threads=1` 의 응답(`ApiClient.inboxBoard`). */
+export interface InboxBoardData { entries: InboxEntry[]; threads: MessageRow[] | null; threadStates: InboxThreadState[] }
 import { ApiClient, ApiError } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
@@ -74,6 +78,12 @@ export class Controller {
   }
   private ws: WsHandle | null = null;
   private unreadFetchSeq = 0;
+  /** 도는 중인 보드 조회 · 도는 동안 또 바뀌었나(`loadInboxBoard`). */
+  private boardInFlight: Promise<InboxBoardData> | null = null;
+  private boardDirty = false;
+  /** 마지막 보드 재료 — 시간만 흘러도(나중에의 시각이 지나도) 수를 다시 세려고 들고 있다. */
+  private mineInput: InboxBoardData | null = null;
+  private mineTick: ReturnType<typeof setInterval> | null = null;
   /** 히스토리를 이미 통째로 받은 채널. 이 집합에 없으면 openChannel이 증분이 아니라 전체를 받는다. */
   private loadedChannels = new Set<string>();
   /** 이미 알린 inbox 항목. 같은 항목을 두 번 알리면 알림이 쓸모없어진다. */
@@ -229,6 +239,10 @@ export class Controller {
     this.swallow(this.refreshChannelPrefs());
     // 담아 둔 메시지 요약(#219)도 같은 방식으로 fire-and-forget 으로 받는다.
     this.swallow(this.loadSavedSummary());
+    // 내 차례 수(배지 A)도 크리티컬 패스 밖이다 — 인박스 전체라 무겁고, 없어도 앱은 선다(배지가 0 일 뿐).
+    // 1분마다 다시 센다: 나중에로 미룬 일은 시각이 지나면 서버 신호 없이도 다시 내 차례다.
+    this.swallow(this.refreshInboxMine());
+    if (!this.mineTick) this.mineTick = setInterval(() => this.recountInboxMine(), 60_000);
     // 투영 상태도 60초마다 갱신한다(#267) — 앱 기동 시 한 번과 정기적으로.
     this.swallow(this.refreshProjectionStatus());
     this.projectionRefreshInterval = setInterval(() => {
@@ -276,6 +290,7 @@ export class Controller {
     this.ws?.close();
     this.ws = null;
     if (this.projectionRefreshInterval) { clearInterval(this.projectionRefreshInterval); this.projectionRefreshInterval = null; }
+    if (this.mineTick) { clearInterval(this.mineTick); this.mineTick = null; }
   }
 
   /**
@@ -445,6 +460,7 @@ export class Controller {
       case 'inbox.updated':
         if (e.accountId === store.me?.id) {
           this.swallow(this.refreshUnread().then(() => this.announceNewMentions()));
+          this.swallow(this.refreshInboxMine());
           // 선호도 다시 읽는다(#376). 나를 부르는 것이 오면 **서버가** 그 채널의 숨김을
           // 풀기 때문이다(`services/messages.ts` 의 `insertInbox`). 같은 판정을 여기서 다시
           // 구현하면 두 곳이 갈라져 "서버는 풀었는데 사이드바에는 안 보이는" 채널이 생긴다 —
@@ -618,6 +634,7 @@ export class Controller {
       this.store.getState().upsertMessages(activeChannelId, page.messages);
     }
     await this.refreshUnread();
+    this.swallow(this.refreshInboxMine());
     this.store.getState().set({ leases: await this.api.leases() });
   }
 
@@ -885,6 +902,72 @@ export class Controller {
    * stale 응답에서는 올리지 않는다 — 낡은 목록을 버리면서 "바뀌었다"고 알리면, 받는 쪽은
    * 아무것도 달라지지 않은 채로 조회를 한 번 더 낸다.
    */
+  /**
+   * **내 차례 수**를 다시 센다(배지 A). 보드와 같은 재료(`GET /inbox?threads=1`)·같은 판정
+   * (`buildBoard` → `mineCount`)이라 배지와 보드 머리글이 갈리지 않는다.
+   *
+   * 그 조회는 인박스 전체라 무겁다 — 이벤트가 몰리면 **하나만 돌리고** 도는 동안 온 것은 끝난 뒤
+   * 한 번으로 접는다. 실패는 삼킨다: 배지는 다음 신호에 다시 맞춰지고, 앞선 값을 0 으로 지우면
+   * 나를 기다리는 일이 없다고 거짓말한다.
+   */
+  private async refreshInboxMine(): Promise<void> {
+    await this.loadInboxBoard();
+  }
+
+  /**
+   * 보드 재료(`GET /inbox?threads=1`)를 **한 곳에서** 받는다 — 배지(`inboxMine`)와 열려 있는 보드가
+   * 같은 조회 하나를 나눠 쓴다(#1076 security a: 신호 하나에 조회 둘이 나가던 것을 하나로).
+   *
+   * - 도는 중에 또 부르면 **같은 약속**을 돌려주고, 끝난 뒤 한 번 더 받아 그 결과로 풀린다 — 도는
+   *   동안 바뀐 것(방금 누른 나중에 등)을 놓치지 않으면서 동시에 도는 조회는 늘 하나다.
+   * - 받을 때마다 배지를 다시 세고 `inboxBoardRevision` 을 올린다 — 열려 있는 보드는 그 수를 보고
+   *   `inboxBoardSnapshot()` 을 그린다(따로 조회하지 않는다). 보드가 연 순간 부르면 배지도 그 순간
+   *   보드와 맞춰진다(#1076 designer 메모).
+   * - 실패는 부른 쪽에 그대로 던진다 — 보드는 오류 상자를 세우고, 배지는 앞선 값을 지킨다.
+   */
+  loadInboxBoard(): Promise<InboxBoardData> {
+    if (this.boardInFlight) { this.boardDirty = true; return this.boardInFlight; }
+    const run = async (): Promise<InboxBoardData> => {
+      try {
+        let data: InboxBoardData;
+        do {
+          this.boardDirty = false;
+          data = await this.api.inboxBoard();
+          if (this.stopped) return data;
+          this.mineInput = data;
+          this.recountInboxMine();
+          const store = this.store.getState();
+          store.set({ inboxBoardRevision: store.inboxBoardRevision + 1 });
+        } while (this.boardDirty && !this.stopped);
+        return data;
+      } finally { this.boardInFlight = null; }
+    };
+    this.boardInFlight = run();
+    return this.boardInFlight;
+  }
+
+  /** 마지막으로 받은 보드 재료. 아직 없으면 null. 열려 있는 보드가 `inboxBoardRevision` 에 맞춰 읽는다. */
+  inboxBoardSnapshot(): InboxBoardData | null {
+    return this.mineInput;
+  }
+
+  /**
+   * 들고 있는 재료로 수만 다시 센다. **시간만 흘러도** 수가 바뀐다 — 나중에로 미룬 일은 그 시각이
+   * 지나면 다시 내 차례다. 그래서 1분마다 이것을 돌린다(서버 왕복 없음).
+   */
+  private recountInboxMine(): void {
+    if (!this.mineInput) return;
+    const store = this.store.getState();
+    const me = store.me;
+    const n = mineCount(buildBoard({
+      ...this.mineInput,
+      me: me ? { id: me.id, kind: me.kind } : null,
+      isAgent: (id) => store.accounts[id]?.kind === 'agent',
+      nowMs: Date.now(),
+    }));
+    if (n !== store.inboxMine) store.set({ inboxMine: n });
+  }
+
   private async refreshUnread(): Promise<void> {
     const seq = ++this.unreadFetchSeq;
     const entries = await this.api.inboxUnread();

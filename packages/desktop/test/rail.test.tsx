@@ -212,7 +212,8 @@ describe('홈 칸이 배지를 대신 받는다', () => {
       것 2개'가 계속 보인다."*
     */
     fakeController();
-    useAppStore.getState().set({ unread: [blocking(1, 'c1'), blocking(2, 'c2')] });
+    // 숫자는 보드의 내 차례 수(`inboxMine`, 배지 A)다.
+    useAppStore.getState().set({ inboxMine: 2, unread: [blocking(1, 'c1'), blocking(2, 'c2')] });
     mountRail({ panel: 'agents' });
 
     expect(screen.getByTestId('rail-home-badge').textContent).toBe('2');

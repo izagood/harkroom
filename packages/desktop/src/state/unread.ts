@@ -1,5 +1,3 @@
-import type { InboxEntry } from '@harkroom/shared';
-
 /**
  * 미읽음을 **두 가지 신호**로 읽는 규칙. 사이드바가 이미 이 둘을 나눠 그리고 있고
  * (`Sidebar.tsx` 의 `UnreadBadge` · `ChannelUnreadDot`), 그 주석이 이유를 적었다:
@@ -10,17 +8,6 @@ import type { InboxEntry } from '@harkroom/shared';
  * 사이드바, 그리고 독(Dock) 배지(`lib/useDockBadge.ts`). 한 곳이라도 자기 식으로 세면
  * 화면의 숫자와 독의 숫자가 갈라지고, 그때 사람이 믿는 것은 둘 중 아무것도 아니게 된다.
  */
-
-/**
- * **나를 막는 것**의 개수 — 안 읽은 `mention`·`dm` 만 센다.
- *
- * 문서의 규칙("배지는 나를 막는 것만 센다")이 그대로 여기 있다. `thread_reply` 를 넣지
- * 않는 이유는 레일 주석이 적은 그대로다: 이 앱에서 내 답을 기다린다고 **서버가 판정한**
- * 것이 멘션과 DM 이고, 나머지 사유는 "새 대화가 있다"에 가깝다.
- */
-export function blockingUnreadCount(unread: InboxEntry[]): number {
-  return unread.filter((e) => !e.readAt && (e.reason === 'mention' || e.reason === 'dm')).length;
-}
 
 /**
  * 숫자로 셀 것은 없지만 **새 대화가 있는가**. 사이드바의 회색 점과 같은 근거

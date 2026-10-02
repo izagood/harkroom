@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Identity } from './Identity';
 import type { InboxEntry, InboxThreadState, MessageRow } from '@harkroom/shared';
-import { BOARD_COLUMNS, buildBoard, daysWaiting, laterUntilLabel, type BoardCard, type BoardColumn, type BoardFold } from '../lib/inboxBoard';
+import { BOARD_COLUMNS, buildBoard, daysWaiting, laterUntilLabel, mineCount, type BoardCard, type BoardColumn, type BoardFold } from '../lib/inboxBoard';
 import { bodyWithHandles } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
@@ -126,8 +126,8 @@ export function Inbox({ open, onClose }: Props) {
   const teams = useActiveStore((s) => s.teams) ?? INBOX_NO_TEAMS;
   const me = useActiveStore((s) => s.me);
   const drafts = useActiveStore((s) => s.drafts);
-  /** 서버의 인박스가 바뀐 횟수. 열려 있는 동안 "다시 읽어라"로 쓴다(아래 effect). */
-  const inboxRevision = useActiveStore((s) => s.inboxRevision);
+  /** 컨트롤러가 보드 재료를 새로 받은 횟수. 열려 있는 동안 "다시 그려라"로 쓴다(아래 effect). */
+  const boardRevision = useActiveStore((s) => s.inboxBoardRevision);
   /** 지금 손대는 카드(답·완료). 두 번 눌러 두 번 보내지 않게 한다. */
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -148,11 +148,15 @@ export function Inbox({ open, onClose }: Props) {
    * `quiet` 는 사람이 기다리지 않는 재조회다(라이브 갱신·카드를 연 뒤 읽음 맞추기). 화면을
    * "불러오는 중"으로 되돌리지 않고 실패도 세우지 않는다 — 읽던 자리가 사라지지 않게.
    */
+  /**
+   * 조회는 **컨트롤러를 지난다**(`loadInboxBoard`) — 배지와 같은 조회 하나를 나눠 쓰고, 여는 순간
+   * 배지도 이 보드와 맞춰진다(#1076 후속).
+   */
   const reload = useCallback((opts: { quiet?: boolean } = {}): (() => void) => {
     let alive = true;
     const seq = ++reloadSeq.current;
     if (!opts.quiet) setLoad({ kind: 'loading' });
-    getController().api.inboxBoard().then(
+    getController().loadInboxBoard().then(
       (res) => {
         if (!alive || seq !== reloadSeq.current) return;
         setEntries(res.entries);
@@ -178,19 +182,28 @@ export function Inbox({ open, onClose }: Props) {
   }, [open, reload]);
 
   /**
-   * **열려 있는 동안 새로 온 것을 그린다**(2026-09-10 신고). 서버의 `inbox.updated` 를
-   * 컨트롤러가 `inboxRevision` 으로 세고, 이 화면은 그 수가 바뀔 때 조용히 다시 읽는다.
-   * 닫혀 있을 때도 번호는 따라간다 — 다시 열 때 위 effect 의 조회 하나로 끝나게.
+   * **열려 있는 동안 새로 온 것을 그린다**(2026-09-10 신고). 서버의 `inbox.updated` 에 컨트롤러가
+   * 보드 재료를 다시 받고(배지 때문에 어차피 받는다) `inboxBoardRevision` 을 올린다. 이 화면은
+   * **다시 조회하지 않고** 그 재료를 그린다 — 신호 하나에 조회 하나(#1076 security a).
+   *
+   * 조용히 그린다: "불러오는 중"으로 되돌리지 않는다. 이 화면이 낸 조회가 아직 돌고 있으면
+   * (`reloadSeq` 가 앞서 있다) 그 조회의 결과가 곧 같은 재료로 그리므로 여기서는 건너뛰지 않아도
+   * 된다 — 같은 컨트롤러 약속이라 순서가 거꾸로 올 수 없다.
    */
-  const seenRevision = useRef(inboxRevision);
+  const seenRevision = useRef(boardRevision);
   useEffect(() => {
-    if (!open || seenRevision.current === inboxRevision) {
-      seenRevision.current = inboxRevision;
+    if (!open || seenRevision.current === boardRevision) {
+      seenRevision.current = boardRevision;
       return;
     }
-    seenRevision.current = inboxRevision;
-    return reload({ quiet: true });
-  }, [open, inboxRevision, reload]);
+    seenRevision.current = boardRevision;
+    const snap = getController().inboxBoardSnapshot();
+    if (!snap) return;
+    setEntries(snap.entries);
+    setThreads(snap.threads);
+    setThreadStates(snap.threadStates);
+    setLoad({ kind: 'ready' });
+  }, [open, boardRevision]);
 
   /** 채널 하나의 사람이 읽을 이름. DM 은 이름이 없으므로 상대 handle 로 짓는다. */
   const channelLabel = useCallback((id: string): string => {
@@ -397,7 +410,8 @@ export function Inbox({ open, onClose }: Props) {
   };
 
   // 접힌 것(나중에)은 세지 않는다 — 미룬 일은 지금 나를 기다리는 일이 아니다.
-  const mineCount = byColumn.mine.filter((c) => c.fold === null).length;
+  // 배지와 같은 함수다(`lib/inboxBoard::mineCount`) — 두 숫자가 갈릴 자리가 없게.
+  const mine = mineCount(cards);
 
   return (
     <aside
@@ -415,8 +429,8 @@ export function Inbox({ open, onClose }: Props) {
         <span className="font-bold">{t('inbox.pane.title')}</span>
         {/* **숫자는 내 차례 하나뿐이다** — 0 이 될 수 있는 수만 뜻이 있다. */}
         {load.kind === 'ready' && (
-          <span data-testid="inbox-mine-count" className={`text-meta ${mineCount > 0 ? 'font-medium text-state-turn' : 'text-fg-subtle'}`}>
-            {t('inbox.board.mineCount', { count: mineCount })}
+          <span data-testid="inbox-mine-count" className={`text-meta ${mine > 0 ? 'font-medium text-state-turn' : 'text-fg-subtle'}`}>
+            {t('inbox.board.mineCount', { count: mine })}
           </span>
         )}
         <button

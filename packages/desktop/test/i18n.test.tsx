@@ -1692,6 +1692,8 @@ function stubController() {
   setController({
     // `Composer` 는 채널이 있으면 예약 목록을 곧바로 조회한다 — 없으면 그 화면이 뜨다 만다.
     api: { inbox: async () => [], inboxBoard: async () => inboxBoardRows, scheduledMessages: async () => [] },
+    loadInboxBoard: async () => inboxBoardRows,
+    inboxBoardSnapshot: () => null,
     listAgents: async () => [],
     openMessage: async () => undefined,
     openChannel: async () => undefined,
@@ -2842,6 +2844,7 @@ describe('레일 — 두 언어로 뜨고 칸 이름은 안 옮긴다', () => {
         me: acc(ME, 'me'),
         accounts: { [ME]: acc(ME, 'me') },
         unread: [inboxEntry(1, 'm1', 'mention'), inboxEntry(2, 'm2', 'dm')],
+        inboxMine: 2,
       });
     };
 
