@@ -98,8 +98,8 @@ export async function can(
  * 화면이 없는 권한을 그린다. 그쪽은 대상이 있을 때 `can()` 으로 묻는다.
  */
 export async function effectiveCapabilities(pool: Pool, actor: AccountView): Promise<Capability[]> {
-  // `repo.merge` 는 전역이 될 수 없다 — admin 이라도 화면에 그 권한을 그리지 않는다(F1).
-  if (actor.role === 'owner' || actor.role === 'admin') return CAPABILITIES.filter((c) => c !== 'repo.merge');
+  // `repo.merge`·`api.call` 은 전역이 될 수 없다 — admin 이라도 화면에 그 권한을 그리지 않는다(F1, #1136 L1).
+  if (actor.role === 'owner' || actor.role === 'admin') return CAPABILITIES.filter((c) => c !== 'repo.merge' && c !== 'api.call');
   const res = await pool.query<{ capability: Capability }>(
     `select distinct capability from account_grant
       where account_id = $1 and scope = '' and (expires_at is null or expires_at > now())`, [actor.id]);

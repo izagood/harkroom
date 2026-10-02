@@ -55,6 +55,8 @@ async function checkApiGrant(
   if ('error' in limits) return { ok: false, status: 400, code: 'bad_limits', message: limits.error };
   if (hasWriteMethod(limits.methods)) {
     if (!body.expiresAt) return { ok: false, status: 400, code: 'write_needs_expiry', message: '쓰기 메서드가 있는 api.call 은 만료가 필수다' };
+    // 상한 30일(security F3) — 만료가 있기만 하면 받으면 `9999-12-31` 로 D3 가 뚫린다. 시안의 7일·30일과 맞춘다.
+    if (Date.parse(body.expiresAt) > Date.now() + WRITE_MAX_MS) return { ok: false, status: 400, code: 'write_expiry_too_long', message: '쓰기 메서드가 있는 api.call 의 만료는 30일 안이다' };
   }
   if (body.expiresAt && Date.parse(body.expiresAt) <= Date.now()) return { ok: false, status: 400, code: 'bad_request', message: '만료가 이미 지났다' };
   return { ok: true, limits };
@@ -85,6 +87,8 @@ async function checkMergeGrant(
   }
   return { ok: true, scope: normalized };
 }
+/** 쓰기 api.call 의 만료 상한. 화면이 「30일」을 고른 순간과 요청이 서버에 닿는 순간의 차이로 거절되지 않게 1분 여유를 둔다. */
+const WRITE_MAX_MS = 30 * 86_400_000 + 60_000;
 const roleBody = z.object({ role: z.enum(ROLES) });
 const idParam = z.object({ id: z.string().uuid() });
 

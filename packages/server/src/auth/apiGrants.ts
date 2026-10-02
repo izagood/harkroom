@@ -49,8 +49,19 @@ export function safePath(path: string): boolean {
   if (!path.startsWith('/') || path.startsWith('//')) return false;
   if (/[\\\s#]/.test(path)) return false;
   const p = path.split('?')[0] ?? '';
-  if (/%2e|%2f|%5c/i.test(p)) return false;
+  // `;` — `/api/..;/admin` 을 Tomcat·Spring 계열이 상위로 푼다. `%25` — 이중 인코딩(`%252e%252e`)이 뒤에서 풀린다.
+  if (/%2e|%2f|%5c|%25/i.test(p) || p.includes(';')) return false;
   return !p.split('/').some((seg) => seg === '..' || seg === '.');
+}
+
+/**
+ * 경로가 접두 안에 드는가 — **마디 경계**를 본다. 접두가 `/` 로 끝나지 않으면 `/api` 는 `/api`·`/api/…` 만 받고
+ * `/api-admin`·`/apikeys` 는 받지 않는다(security F2①). 질의는 떼고 잰다.
+ */
+export function pathCovered(path: string, prefix: string): boolean {
+  const p = path.split('?')[0] ?? '';
+  if (prefix.endsWith('/')) return p.startsWith(prefix);
+  return p === prefix || p.startsWith(`${prefix}/`);
 }
 
 /** grant 의 limits 모양: 메서드는 연결이 허용한 것의 부분집합(비지 않음), 경로 접두는 안전한 경로. */
@@ -69,6 +80,7 @@ export function parseLimits(raw: unknown, connectorMethods: readonly string[]): 
 interface ChainRow {
   id: string; parentGrantId: string | null; accountId: string; capability: string; scope: string;
   grantedBy: string; granterKind: string | null; expired: boolean; suspended: boolean; depth: number;
+  limits: ApiGrantLimits | null; delegateDepth: number;
 }
 
 /**
@@ -95,17 +107,20 @@ export async function apiGrantFor(
   // 사슬: 이 줄에서 부모를 따라 루트까지. 깊이 상한(2단 위임 + 루트 = 3줄)을 넘는 사슬은 잘못 만든 것이다.
   const chain = (await pool.query(
     `with recursive up as (
-       select g.id, g.parent_grant_id, g.account_id, g.capability, g.scope, g.granted_by, g.expires_at, g.suspended_at, 0 as depth
+       select g.id, g.parent_grant_id, g.account_id, g.capability, g.scope, g.granted_by, g.expires_at, g.suspended_at,
+              g.limits, g.delegate_depth, 0 as depth
          from account_grant g where g.id = $1
        union all
-       select p.id, p.parent_grant_id, p.account_id, p.capability, p.scope, p.granted_by, p.expires_at, p.suspended_at, up.depth + 1
+       select p.id, p.parent_grant_id, p.account_id, p.capability, p.scope, p.granted_by, p.expires_at, p.suspended_at,
+              p.limits, p.delegate_depth, up.depth + 1
          from account_grant p join up on p.id = up.parent_grant_id
         where up.depth < 5
      )
      select up.id, up.parent_grant_id as "parentGrantId", up.account_id as "accountId", up.capability, up.scope,
             up.granted_by as "grantedBy", a.kind as "granterKind",
             (up.expires_at is not null and up.expires_at <= now()) as expired,
-            (up.suspended_at is not null) as suspended, up.depth
+            (up.suspended_at is not null) as suspended, up.depth,
+            up.limits, up.delegate_depth as "delegateDepth"
        from up left join account a on a.id = up.granted_by
       order by up.depth`, [leaf.id])).rows as ChainRow[];
 
@@ -113,9 +128,15 @@ export async function apiGrantFor(
   if (!root || root.parentGrantId !== null || chain.length > 3) return { ok: false, code: 'chain_broken' };
   if (chain.some((g) => g.capability !== 'api.call' || g.scope !== scope)) return { ok: false, code: 'chain_broken' };
   if (root.granterKind !== 'human' || root.grantedBy !== c.ownerAccountId) return { ok: false, code: 'chain_broken' };
-  // 위임된 줄은 부모 줄의 받은 쪽이 준 것이어야 한다(엉뚱한 에이전트가 남의 grant 아래에 매달 수 없다).
+  // 이웃한 두 줄마다(security F1): 위임된 줄은 부모 줄의 받은 쪽이 준 것이어야 하고, **지금의** 부모 범위 안이어야
+  // 한다. 사람이 부모를 좁혀 다시 주면(upsert — 줄 id 는 그대로) 자식이 넓은 범위를 들고 남는다 — 여기서 막는다.
   for (let i = 0; i < chain.length - 1; i++) {
-    if (chain[i]!.grantedBy !== chain[i + 1]!.accountId) return { ok: false, code: 'chain_broken' };
+    const child = chain[i]!; const parent = chain[i + 1]!;
+    if (child.grantedBy !== parent.accountId) return { ok: false, code: 'chain_broken' };
+    if (!child.limits || !parent.limits) return { ok: false, code: 'chain_broken' };
+    if (!child.limits.methods.every((m) => parent.limits!.methods.includes(m))) return { ok: false, code: 'chain_broken' };
+    if (!pathCovered(child.limits.pathPrefix, parent.limits.pathPrefix)) return { ok: false, code: 'chain_broken' };
+    if (parent.delegateDepth < 1 || child.delegateDepth > parent.delegateDepth - 1) return { ok: false, code: 'chain_broken' };
   }
   // E1: 사슬 위 모든 에이전트가 지금도 루트 사람의 것이어야 한다.
   const owners = (await pool.query(
@@ -128,7 +149,7 @@ export async function apiGrantFor(
   const limits = leaf.limits;
   if (!limits) return { ok: false, code: 'chain_broken' };
   if (!limits.methods.includes(args.method as ApiMethod) || !c.methods.includes(args.method)) return { ok: false, code: 'method_not_allowed' };
-  if (!(args.path.split('?')[0] ?? '').startsWith(limits.pathPrefix)) return { ok: false, code: 'path_not_allowed' };
+  if (!pathCovered(args.path, limits.pathPrefix)) return { ok: false, code: 'path_not_allowed' };
   if (c.authKind !== 'none' && !c.secretId) return { ok: false, code: 'no_secret' };
 
   return {

@@ -6,8 +6,8 @@ import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
-import { apiGrantFor, normalizeBaseUrl, parseLimits, safePath } from '../src/auth/apiGrants.js';
-import { can } from '../src/auth/permissions.js';
+import { apiGrantFor, normalizeBaseUrl, parseLimits, pathCovered, safePath } from '../src/auth/apiGrants.js';
+import { can, effectiveCapabilities } from '../src/auth/permissions.js';
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 const inWeek = () => new Date(Date.now() + 7 * 86_400_000).toISOString();
@@ -25,9 +25,19 @@ describe('apiGrants 순수 함수', () => {
   it('경로는 접두 검사를 속일 수 있는 모양을 거절한다', () => {
     expect(safePath('/api/clusters')).toBe(true);
     expect(safePath('/api/x?y=1')).toBe(true);
-    for (const p of ['api', '//evil.example', '/api/../admin', '/api/./x', '/api/%2e%2e/admin', '/api\\x', '/a b', '/a#b', '/api/%2Fx']) {
+    for (const p of ['api', '//evil.example', '/api/../admin', '/api/./x', '/api/%2e%2e/admin', '/api\\x', '/a b', '/a#b', '/api/%2Fx',
+      '/api/..;/admin', '/api;x', '/api/%252e%252e/admin', '/api/%25']) {
       expect(safePath(p), p).toBe(false);
     }
+  });
+  it('접두는 마디 경계를 본다(F2①)', () => {
+    expect(pathCovered('/api', '/api')).toBe(true);
+    expect(pathCovered('/api/x', '/api')).toBe(true);
+    expect(pathCovered('/api-admin/x', '/api')).toBe(false);
+    expect(pathCovered('/apikeys', '/api')).toBe(false);
+    expect(pathCovered('/api/x?y=1', '/api/')).toBe(true);
+    expect(pathCovered('/apix', '/api/')).toBe(false);
+    expect(pathCovered('/anything', '/')).toBe(true);
   });
   it('limits 는 연결이 허용한 메서드의 부분집합', () => {
     expect(parseLimits({ methods: ['GET'], pathPrefix: '/api/' }, ['GET', 'POST'])).toEqual({ methods: ['GET'], pathPrefix: '/api/' });
@@ -106,6 +116,14 @@ describe('API 연결 · api.call grant', () => {
     expect(global.statusCode).toBe(400);
     const anyAccount = { id: agentId, role: 'member' } as unknown as Parameters<typeof can>[1];
     expect(await can(pool, anyAccount, 'api.call')).toBe(false);
+    // 쓰기 grant 의 만료 상한 30일(F3). 읽기만은 무기한도 된다(D3).
+    const far = new Date(Date.now() + 31 * 86_400_000).toISOString();
+    expect((await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: far })).json().error.code).toBe('write_expiry_too_long');
+    expect((await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: '9999-12-31T00:00:00Z' })).json().error.code).toBe('write_expiry_too_long');
+    expect((await give(c, { limits: { methods: ['GET'], pathPrefix: '/api/' }, expiresAt: null })).statusCode).toBe(200);
+    // owner·admin 의 전역 능력 목록에도 api.call 은 없다(L1).
+    const adminView = { id: admin.accountId, role: 'owner' } as unknown as Parameters<typeof effectiveCapabilities>[1];
+    expect(await effectiveCapabilities(pool, adminView)).not.toContain('api.call');
   });
 
   it('판정: 메서드·경로·키 없음·만료·정지·사슬', async () => {
@@ -117,6 +135,7 @@ describe('API 연결 · api.call grant', () => {
     expect(await apiGrantFor(pool, { agentId, connectorId: c, method: 'POST', path: '/api/x' })).toEqual({ ok: false, code: 'method_not_allowed' });
     expect(await apiGrantFor(pool, { agentId, connectorId: c, method: 'GET', path: '/admin' })).toEqual({ ok: false, code: 'path_not_allowed' });
     expect(await apiGrantFor(pool, { agentId, connectorId: c, method: 'GET', path: '/api/../admin' })).toEqual({ ok: false, code: 'bad_path' });
+    expect(await apiGrantFor(pool, { agentId, connectorId: c, method: 'GET', path: '/api/..;/admin' })).toEqual({ ok: false, code: 'bad_path' });
 
     // 소유가 바뀌면 사슬이 끊긴다(E1 — 쓰는 순간 판정).
     await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [agentId, bob.accountId]);
@@ -153,6 +172,17 @@ describe('API 연결 · api.call grant', () => {
       `insert into account_grant (account_id, capability, scope, granted_by, limits, parent_grant_id)
        values ($1, 'api.call', $2, $3, $4, $5)`,
       [child, scope, agentId, JSON.stringify({ methods: ['GET'], pathPrefix: '/api/clusters' }), parentId]);
+    expect((await apiGrantFor(pool, { agentId: child, connectorId: c, method: 'GET', path: '/api/clusters/1' })).ok).toBe(true);
+    // F1: 사람이 부모를 좁혀 다시 주면(줄 id 그대로) 범위 밖의 자식은 막힌다.
+    await give(c, { limits: { methods: ['GET'], pathPrefix: '/api/nodes/' }, delegateDepth: 1 });
+    expect((await pool.query(`select id from account_grant where account_id = $1 and scope = $2`, [agentId, scope])).rows[0].id).toBe(parentId);
+    expect(await apiGrantFor(pool, { agentId: child, connectorId: c, method: 'GET', path: '/api/clusters/1' })).toEqual({ ok: false, code: 'chain_broken' });
+    await give(c, { limits: { methods: ['GET'], pathPrefix: '/api/' }, delegateDepth: 1 });
+    expect((await apiGrantFor(pool, { agentId: child, connectorId: c, method: 'GET', path: '/api/clusters/1' })).ok).toBe(true);
+    // F1: 부모의 다시 줄 단계를 0으로 줄이면 자식은 막힌다.
+    await give(c, { limits: { methods: ['GET'], pathPrefix: '/api/' }, delegateDepth: 0 });
+    expect(await apiGrantFor(pool, { agentId: child, connectorId: c, method: 'GET', path: '/api/clusters/1' })).toEqual({ ok: false, code: 'chain_broken' });
+    await give(c, { limits: { methods: ['GET'], pathPrefix: '/api/' }, delegateDepth: 1 });
     expect((await apiGrantFor(pool, { agentId: child, connectorId: c, method: 'GET', path: '/api/clusters/1' })).ok).toBe(true);
     await pool.query(`update account_grant set expires_at = now() - interval '1 minute' where id = $1`, [parentId]);
     expect(await apiGrantFor(pool, { agentId: child, connectorId: c, method: 'GET', path: '/api/clusters/1' })).toEqual({ ok: false, code: 'expired' });
