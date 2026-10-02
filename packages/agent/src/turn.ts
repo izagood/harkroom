@@ -249,7 +249,7 @@ const CLAUDE_PRESET: HarnessPreset = {
    * (`…/harkroom-operator merge:*` 는 `mergeall` 에 안 걸린다).
    *
    * - deny 는 **모든** auto 멘션 턴에: 권한 있는 에이전트도 `gh pr merge` 를 직접 못 부르고 래퍼로만 간다(D4).
-   *   `gh api` 는 머지 엔드포인트만 좁게 막는다 — `.mergeable` 같은 읽기 조회는 그대로 된다(T3).
+   *   `gh api` 는 PUT 접두만 막는다 — `.mergeable` 같은 읽기 조회는 그대로 된다(T3). 가운데 와일드카드는 안 맞는다(P2).
    * - allow 는 서버가 이 에이전트에 `repo.merge` grant 를 준 저장소가 하나라도 있을 때만, 래퍼의 **절대 경로 +
    *   서브커맨드** 접두로(T1c). 저장소 범위는 규칙이 아니라 서버·래퍼가 가른다.
    */
@@ -564,14 +564,25 @@ export function assertHarnessContract(runnableHarnesses?: readonly AgentHarness[
 }
 
 /**
- * 에이전트가 직접 main 을 바꾸는 길(실수 방지). 넓은 `gh api:*merge*` 는 읽기 조회까지 막아서(security) 머지
- * 엔드포인트와 `git push … main` 만 좁게 적는다. 우회가 쉬운 가드레일이다 — 경계는 아니다.
+ * 에이전트가 직접 main 을 바꾸는 길(실수 방지). 우회가 쉬운 가드레일이다 — 경계는 아니다.
+ *
+ * **규칙 문법은 접두(`:*` = 접두 + 단어 경계) 아니면 정확 일치뿐이다**(실측 2026-10-02 P2, claude 2.1.287):
+ * `Bash(git push:* main)`·`Bash(gh api:*pulls/…/merge*)` 같은 **가운데 와일드카드는 아무것도 맞추지 않는다** —
+ * 그 명령은 규칙이 아니라 분류기가 막았고(`git push origin main` 은 아예 실행됐다), 정확 일치 `Bash(git push origin
+ * main)` 은 "has been denied" 로 결정적으로 막았다. 그래서 여기엔 실제로 맞는 모양만 둔다:
+ * - `gh pr merge:*` 접두(T2) · `gh api -X PUT:*`/`--method PUT:*` 접두(머지 엔드포인트는 PUT 이다 — 읽기 `gh api` 는
+ *   그대로 된다, T3) · main 으로의 흔한 push 정확 일치 넷.
+ * - `gh api graphql …mergePullRequest` 와 그 밖의 push 모양(`--force-with-lease`, `-u`, 다른 리모트 이름)은 규칙으로
+ *   표현할 수 없어 **분류기에 남는다**. 넓은 `git push:*` 로 막으면 PR 올리기가 죽는다.
  */
 export const MERGE_DENY_RULES: readonly string[] = [
   'Bash(gh pr merge:*)',
-  'Bash(gh api:*pulls/*/merge*)',
-  'Bash(gh api graphql*mergePullRequest*)',
-  'Bash(git push:*main*)',
+  'Bash(gh api -X PUT:*)',
+  'Bash(gh api --method PUT:*)',
+  'Bash(git push origin main)',
+  'Bash(git push origin HEAD:main)',
+  'Bash(git push -u origin main)',
+  'Bash(git push --force origin main)',
 ];
 
 export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {

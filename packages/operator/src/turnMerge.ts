@@ -24,9 +24,8 @@
  * 서버가 둘 다 알므로 `checkMerge` 에 넣는 것이 맞고, 그 한 줄은 서버 후속 PR 로 둔다. 지금 영향은 없다
  * (사람이 jaebin 하나라 "grant 를 준 사람"과 "오퍼레이터 주인"이 같다). 문서 `docs/agent-merge.md`.
  *
- * gh 계정: 머지는 `operator.json` 의 `merge.ghUser` 로 지정한 gh 계정 토큰으로 한다(`gh auth token -u`).
- * 없으면 gh 의 활성 계정이다 — 이 머신은 활성 계정이 읽기 전용(rebel-jaebin)이라 머지가 403 으로 실패한다.
- * 그 실패도 서버에 보고된다(스레드에 "머지 실패" 줄).
+ * gh 계정: 머지는 `operator.json` 의 `merge.ghUser` 로 지정한 gh 계정 토큰으로만 한다(`gh auth token -u`).
+ * **없으면 거절한다**(`no_gh_user`, security P1) — 활성 계정으로 넘어가지 않는다. 그 거절도 서버에 보고된다.
  */
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -41,26 +40,27 @@ export const GH_PATH = ['/opt/homebrew/bin/gh', '/usr/local/bin/gh', '/usr/bin/g
 /** 래퍼가 받는 인자 모양(F3). 셸에서 온 문자열이라 여기서 전부 다시 잰다. */
 export const REPO_RE = /^[a-z0-9][a-z0-9._-]{0,99}\/[a-z0-9._-]{1,100}$/i;
 export const SHA_RE = /^[0-9a-f]{40}$/;
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export interface MergeArgs { repo: string; number: number; headSha: string; approval?: string }
+export interface MergeArgs { repo: string; number: number; headSha: string }
 
-/** `merge <owner/name> <n> --head <sha> [--approval <uuid>]` — 그 밖의 토큰이 하나라도 있으면 null. */
+/**
+ * `merge <owner/name> <n> --head <sha>` — 그 밖의 토큰이 하나라도 있으면 거절. `--approval` 은 **받지 않는다**
+ * (security P3): 승인 근거는 서버가 턴 임대의 cause 메시지(그 턴을 띄운 사람 글)로 판정하지, 에이전트가 고른 메시지
+ * id 가 아니다. 쓰이지 않는 인자를 받아 두면 감사 근거가 있는 것처럼 보일 뿐이다.
+ */
 export function parseMergeArgs(argv: readonly string[]): MergeArgs | { error: string } {
   const [repo, num, ...rest] = argv;
-  if (!repo || !num) return { error: '사용법: harkroom-operator merge <owner/name> <PR 번호> --head <40자 sha> [--approval <메시지 id>]' };
+  if (!repo || !num) return { error: '사용법: harkroom-operator merge <owner/name> <PR 번호> --head <40자 sha>' };
   if (!REPO_RE.test(repo)) return { error: `저장소 이름이 아니다: ${repo}` };
   if (!/^[1-9][0-9]{0,8}$/.test(num)) return { error: `PR 번호는 양의 정수 하나다: ${num}` };
-  let headSha: string | undefined; let approval: string | undefined;
+  let headSha: string | undefined;
   for (let i = 0; i < rest.length; i += 2) {
     const flag = rest[i]; const value = rest[i + 1];
     if (flag === '--head' && value !== undefined && headSha === undefined) { headSha = value; continue; }
-    if (flag === '--approval' && value !== undefined && approval === undefined) { approval = value; continue; }
-    return { error: `받지 않는 인자: ${flag ?? ''} — 래퍼는 --head 와 --approval 만 받는다(--admin·--auto·-R 없음)` };
+    return { error: `받지 않는 인자: ${flag ?? ''} — 래퍼는 --head 만 받는다(--admin·--auto·-R·--approval 없음)` };
   }
   if (!headSha || !SHA_RE.test(headSha)) return { error: '--head <40자 hex sha> 가 필요하다' };
-  if (approval !== undefined && !UUID_RE.test(approval)) return { error: '--approval 은 메시지 id(uuid) 다' };
-  return { repo: repo.toLowerCase(), number: Number(num), headSha, ...(approval ? { approval } : {}) };
+  return { repo: repo.toLowerCase(), number: Number(num), headSha };
 }
 
 export type ExecResult = { code: number; stdout: string; stderr: string };
@@ -120,10 +120,9 @@ function toolResult(id: string | number | undefined, value: unknown, isError: bo
 function argsOf(call: JsonRpcCall): MergeArgs | { error: string } {
   const a = call.params?.arguments;
   if (typeof a !== 'object' || a === null) return { error: 'arguments 가 없다' };
-  const { repo, number, headSha, approval } = a as Record<string, unknown>;
-  const argv = [String(repo ?? ''), String(number ?? ''), '--head', String(headSha ?? '')];
-  if (approval !== undefined && approval !== null) argv.push('--approval', String(approval));
-  return parseMergeArgs(argv);
+  const { repo, number, headSha, ...extra } = a as Record<string, unknown>;
+  if (Object.keys(extra).length) return { error: `받지 않는 인자: ${Object.keys(extra).join(', ')}` };
+  return parseMergeArgs([String(repo ?? ''), String(number ?? ''), '--head', String(headSha ?? '')]);
 }
 
 interface PrView {
@@ -142,13 +141,21 @@ function checkGreen(c: NonNullable<PrView['statusCheckRollup']>[number]): boolea
 export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
   const exec = deps.exec ?? defaultExec;
 
-  const tokenFor = async (): Promise<string | null> => {
+  /**
+   * 머지에 쓸 gh 토큰. **`merge.ghUser` 가 없으면 머지하지 않는다**(security P1, fail-closed). 활성 계정으로 넘어가면
+   * 그 계정이 무엇이든 — 이 머신은 회사 계정이고 회사 저장소에 쓰기 권한이 있다 — 그 신원으로 머지된다. 서버는
+   * 저장소 이름을 가리지 않으므로, "회사 저장소는 래퍼로 머지할 수 없다"를 기계로 지키는 자리가 바로 여기다:
+   * ghUser 를 izagood 로 고정하면 그 계정이 쓸 수 없는 저장소는 머지가 실패한다.
+   */
+  const tokenFor = async (): Promise<{ ok: true; token: string } | { ok: false; code: 'no_gh_user' | 'gh_token_failed'; message: string }> => {
     const user = await deps.ghUser();
-    if (!user) return null;
-    if (!/^[A-Za-z0-9-]{1,39}$/.test(user)) { deps.log(`merge: operator.json merge.ghUser 가 GitHub 사용자 이름이 아니다 — 무시한다`); return null; }
+    if (!user || !/^[A-Za-z0-9-]{1,39}$/.test(user)) {
+      return { ok: false, code: 'no_gh_user', message: 'operator.json merge.ghUser is not set — the wrapper never merges with the active gh account' };
+    }
     const r = await exec(deps.ghPath, ['auth', 'token', '-u', user], ghEnv(deps.home, null));
     const token = r.stdout.trim();
-    return r.code === 0 && token ? token : null;
+    if (r.code !== 0 || !token) return { ok: false, code: 'gh_token_failed', message: `gh auth token -u ${user} failed: ${r.stderr.trim().slice(0, 200)}` };
+    return { ok: true, token };
   };
 
   const gh = async (args: string[], env: Record<string, string>): Promise<ExecResult> => exec(deps.ghPath, args, env);
@@ -186,8 +193,10 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
       if (!res || res.type !== 'http.response' || res.status !== 201) deps.log(`merge: ${repo}#${number} ${result} 보고가 서버에 닿지 않았다(${res && res.type === 'http.response' ? res.status : 'no response'})`);
     };
 
-    // ④ 머지 전 확인. gh 는 절대 경로·빈 env 로만 부른다.
-    const env = ghEnv(deps.home, await tokenFor());
+    // ④ 머지 전 확인. gh 는 절대 경로·빈 env 로만 부른다. 토큰이 없으면 여기서 끝 — 활성 계정으로 넘어가지 않는다(P1).
+    const tok = await tokenFor();
+    if (!tok.ok) { await report('failed', null, `${tok.code}: ${tok.message}`); return fail(tok.code, tok.message); }
+    const env = ghEnv(deps.home, tok.token);
     const view = await gh(['pr', 'view', String(number), '-R', repo, '--json', 'state,isDraft,headRefOid,baseRefName,mergeStateStatus,statusCheckRollup'], env);
     if (view.code !== 0) { await report('failed', null, `gh pr view: ${view.stderr.trim().slice(0, 300)}`); return fail('pr_not_found', `gh pr view failed: ${view.stderr.trim().slice(0, 300)}`); }
     let pr: PrView = {};
@@ -197,8 +206,13 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     if (pr.isDraft) return refuse('draft', 'PR is a draft');
     if (pr.headRefOid !== headSha) return refuse('head_moved', `PR head is ${pr.headRefOid ?? '?'}, not ${headSha}`);
     if (pr.mergeStateStatus !== 'CLEAN') return refuse('not_mergeable', `mergeStateStatus is ${pr.mergeStateStatus ?? 'unknown'} (need CLEAN)`);
+    // 체크는 **이름별**로 본다 — 같은 이름의 취소된 중복 실행(CANCELLED, #1078·#1083 에서 실제로 남았다)이 있어도
+    // 그 이름에 초록 실행이 하나 있으면 초록이다. 이름이 없는 항목은 그 항목 하나로 판정한다.
     const checks = pr.statusCheckRollup ?? [];
-    if (!checks.length || !checks.every(checkGreen)) return refuse('ci_not_green', `${checks.filter((c) => !checkGreen(c)).length || 'no'} checks are not green`);
+    const byName = new Map<string, boolean>();
+    checks.forEach((c, i) => { const k = c.name ?? c.context ?? `#${i}`; byName.set(k, (byName.get(k) ?? false) || checkGreen(c)); });
+    const red = [...byName.entries()].filter(([, green]) => !green).map(([k]) => k);
+    if (!byName.size || red.length) return refuse('ci_not_green', byName.size ? `not green: ${red.join(', ').slice(0, 200)}` : 'no checks reported');
 
     // ⑤ squash 로만, head 를 못박고. `--admin` 은 문법에 없다.
     const merge = await gh(['pr', 'merge', String(number), '-R', repo, '--squash', '--match-head-commit', headSha], env);

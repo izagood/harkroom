@@ -84,7 +84,7 @@ async function mergeMain(argv: string[]): Promise<void> {
   const bridge = runMcpBridge({ socketPath, runnerId, secret, cause, cwd: process.cwd() }, { stdin, stdout, stderr: process.stderr });
   stdin.write(`${JSON.stringify({
     jsonrpc: '2.0', id: 1, method: 'tools/call',
-    params: { name: MERGE_TOOL, arguments: { repo: parsed.repo, number: parsed.number, headSha: parsed.headSha, ...(parsed.approval ? { approval: parsed.approval } : {}) } },
+    params: { name: MERGE_TOOL, arguments: { repo: parsed.repo, number: parsed.number, headSha: parsed.headSha } },
   })}\n`);
   const r = await done;
   await bridge;

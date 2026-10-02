@@ -15,11 +15,14 @@
    전역은 없다. admin 역할은 거두기만 한다.
 2. 러너가 멘션 턴을 띄울 때 `GET /agent/merge-grants` 를 읽는다. 저장소가 하나라도 있으면 claude 에
    `--allowedTools "Bash(<operatorBin> merge:*)"` 를 준다. 모든 auto 멘션 턴에는 `--disallowedTools` 로
-   `gh pr merge`·`gh api …/pulls/*/merge`·`gh api graphql …mergePullRequest`·`git push … main` 을 막는다.
+   `gh pr merge:*`·`gh api -X PUT:*`·`gh api --method PUT:*`·`git push origin main`(과 `HEAD:main`·`-u`·`--force` 꼴)을
+   막는다. 규칙 문법은 접두(`:*`) 아니면 정확 일치뿐이라(실측) 가운데 와일드카드로는 아무것도 못 막는다 — `gh api
+   graphql` 뮤테이션과 그 밖의 push 꼴은 분류기에 남는다.
    readonly(plan) 턴과 인터랙티브 턴은 argv 를 그대로 둔다. 파일(계정 config·워크스페이스 settings)에는 아무것도
    쓰지 않는다 — 파일에 쓰면 같은 계정 풀의 모든 에이전트에 퍼진다.
 3. 에이전트가 `<operatorBin> merge <owner/name> <n> --head <sha>` 를 부른다. 래퍼는 브릿지와 같은 소켓으로
-   오퍼레이터에 묻는다. 토큰도 임대도 래퍼 프로세스에는 없다.
+   오퍼레이터에 묻는다. 토큰도 임대도 래퍼 프로세스에는 없다. `--approval` 같은 승인 id 는 받지 않는다 — 승인 근거는
+   서버가 그 턴을 띄운 메시지로 판정한다.
 4. 오퍼레이터가 ① 인자 모양 ② 턴 임대 ③ 서버 `POST /agent/merge-checks`(grant 정확 일치, 그 턴을 띄운 메시지가
    사람 글인지) ④ `gh pr view`(OPEN·draft 아님·head 일치·CLEAN·체크 초록) ⑤ `gh pr merge --squash
    --match-head-commit` ⑥ `POST /agent/merge-results` 순으로 한다. 서버에 닿지 않으면 머지하지 않는다.
@@ -29,7 +32,10 @@
 ## 설정
 
 `operator.json` 의 `merge.ghUser` 에 머지에 쓸 gh 계정을 적는다(`gh auth token -u <ghUser>` 로 토큰을 받는다).
-없으면 gh 의 활성 계정이다. 활성 계정이 읽기 전용이면 머지는 실패하고 그 실패도 스레드에 남는다.
+**없으면 래퍼는 머지하지 않는다**(`no_gh_user`). gh 의 활성 계정으로 넘어가지 않는 이유: 활성 계정이 무엇이든 그
+신원으로 머지되고, 서버는 저장소 이름을 가리지 않는다. 이 머신의 활성 계정은 회사 계정이라 회사 저장소에 쓰기 권한이
+있다. `ghUser` 를 개인 계정으로 고정하면 그 계정이 쓸 수 없는 저장소(회사 저장소)는 래퍼로 머지할 수 없다 — "회사
+저장소는 상시 권한 없음"을 기계로 지키는 자리가 이 칸이다.
 
 ```json
 { "communities": { "…": { "agents": {} } }, "merge": { "ghUser": "the-merging-account" } }

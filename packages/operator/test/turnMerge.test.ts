@@ -20,8 +20,6 @@ const resultOf = (res: RunnerLinkResponse | null) => {
 describe('parseMergeArgs (F3)', () => {
   it('정해진 네 가지만 받고 그 밖은 거절한다 — --admin·--auto·-R 은 문법에 없다', () => {
     expect(parseMergeArgs(['Izagood/Harkroom', '12', '--head', SHA])).toEqual({ repo: 'izagood/harkroom', number: 12, headSha: SHA });
-    const u = '11111111-2222-4333-8444-555555555555';
-    expect(parseMergeArgs(['o/r', '1', '--head', SHA, '--approval', u])).toEqual({ repo: 'o/r', number: 1, headSha: SHA, approval: u });
     for (const bad of [
       ['o/r', '12', '--head', SHA, '--admin'],
       ['o/r', '12', '--head', SHA, '--auto'],
@@ -33,7 +31,8 @@ describe('parseMergeArgs (F3)', () => {
       ['o/r', '1.5', '--head', SHA],
       ['o r', '1', '--head', SHA],
       ['o/r;rm', '1', '--head', SHA],
-      ['o/r', '1', '--head', SHA, '--approval', 'not-a-uuid'],
+      // P3: --approval 은 받지 않는다 — 서버가 cause 메시지로 판정하지 에이전트가 고른 id 가 아니다.
+      ['o/r', '1', '--head', SHA, '--approval', '11111111-2222-4333-8444-555555555555'],
     ]) expect(parseMergeArgs(bad), bad.join(' ')).toHaveProperty('error');
   });
 });
@@ -57,7 +56,7 @@ describe('turnMerge', () => {
   let tm: TurnMerge;
 
   beforeEach(() => {
-    forwards = []; execs = []; checkStatus = 200; mergeCode = 0; ghUser = undefined;
+    forwards = []; execs = []; checkStatus = 200; mergeCode = 0; ghUser = 'izagood';
     lease = { leaseId: 'lease-1', token: 'tok-1', agentId: 'a1' };
     pr = { state: 'OPEN', isDraft: false, headRefOid: SHA, baseRefName: 'main', mergeStateStatus: 'CLEAN', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }, { state: 'SUCCESS' }] };
     tm = createTurnMerge({
@@ -77,7 +76,7 @@ describe('turnMerge', () => {
       },
       exec: async (file, args, env): Promise<ExecResult> => {
         execs.push({ file, args, env });
-        if (args[0] === 'auth') return { code: 0, stdout: 'tok-from-gh\n', stderr: '' };
+        if (args[0] === 'auth') return ghUser === 'broken' ? { code: 1, stdout: '', stderr: 'no oauth token' } : { code: 0, stdout: 'tok-from-gh\n', stderr: '' };
         if (args[0] === 'pr' && args[1] === 'view' && args.includes('mergeCommit')) return { code: 0, stdout: JSON.stringify({ mergeCommit: { oid: MERGE_SHA } }), stderr: '' };
         if (args[0] === 'pr' && args[1] === 'view') return { code: 0, stdout: JSON.stringify(pr), stderr: '' };
         if (args[0] === 'pr' && args[1] === 'merge') return { code: mergeCode, stdout: '', stderr: mergeCode ? 'GraphQL: Base branch was modified' : '' };
@@ -165,12 +164,39 @@ describe('turnMerge', () => {
     expect(merge.args).not.toContain('--admin');
     expect(merge.env.PATH).toBe('/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin');
     expect(merge.env.GH_REPO).toBeUndefined();
-    expect(merge.env.GH_TOKEN).toBeUndefined();  // ghUser 없음 → 활성 계정
+    expect(merge.env.GH_TOKEN).toBe('tok-from-gh');  // merge.ghUser 의 토큰으로만
     expect(results()).toEqual([expect.objectContaining({ result: 'merged', mergeSha: MERGE_SHA, leaseId: 'lease-1' })]);
   });
 
-  it('operator.json merge.ghUser 가 있으면 그 계정 토큰을 GH_TOKEN 으로 준다 — auth token 호출 자체는 토큰 없이', async () => {
-    ghUser = 'izagood';
+  it('P1: merge.ghUser 가 없으면 no_gh_user — 활성 계정으로 넘어가지 않는다. 서버 판정은 통과했으므로 실패를 보고한다', async () => {
+    ghUser = undefined;
+    expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('no_gh_user');
+    expect(execs).toHaveLength(0);
+    expect(results()).toEqual([expect.objectContaining({ result: 'failed', error: expect.stringContaining('no_gh_user') })]);
+  });
+
+  it('P1: gh auth token -u 가 실패해도 거절한다 — gh pr 명령 0건', async () => {
+    ghUser = 'broken';
+    expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('gh_token_failed');
+    expect(ghCalls()).toEqual([]);
+  });
+
+  it('arguments 에 받지 않는 키(approval 등)가 있으면 bad_request', async () => {
+    expect(resultOf(await tm.maybeHandle('r1', 'a1', mergeCall({ repo: 'izagood/harkroom', number: 7, headSha: SHA, approval: 'x' }))).body.error.code).toBe('bad_request');
+    expect(forwards).toHaveLength(0);
+  });
+
+  it('같은 이름의 취소된 중복 실행이 남아 있어도 그 이름에 초록 실행이 있으면 초록이다', async () => {
+    pr = { ...pr, statusCheckRollup: [
+      { name: 'check', status: 'COMPLETED', conclusion: 'CANCELLED' }, { name: 'check', status: 'COMPLETED', conclusion: 'SUCCESS' },
+      { name: 'secrets', status: 'COMPLETED', conclusion: 'SUCCESS' },
+    ] };
+    expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).isError).toBe(false);
+    pr = { ...pr, statusCheckRollup: [{ name: 'check', status: 'COMPLETED', conclusion: 'CANCELLED' }, { name: 'secrets', status: 'COMPLETED', conclusion: 'SUCCESS' }] };
+    expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('ci_not_green');
+  });
+
+  it('operator.json merge.ghUser 의 계정 토큰을 GH_TOKEN 으로 준다 — auth token 호출 자체는 토큰 없이', async () => {
     resultOf(await tm.maybeHandle('r1', 'a1', ok()));
     const auth = execs.find((e) => e.args[0] === 'auth')!;
     expect(auth.args).toEqual(['auth', 'token', '-u', 'izagood']);

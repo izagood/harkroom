@@ -943,11 +943,19 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
     expect(it_).not.toContain('--allowedTools');
   });
 
-  it('deny 는 좁다 — 읽기용 gh api 를 막는 넓은 패턴(gh api:*merge*)이 아니다', () => {
-    expect(MERGE_DENY_RULES).not.toContain('Bash(gh api:*merge*)');
-    expect(MERGE_DENY_RULES).toEqual([
-      'Bash(gh pr merge:*)', 'Bash(gh api:*pulls/*/merge*)', 'Bash(gh api graphql*mergePullRequest*)', 'Bash(git push:*main*)',
-    ]);
+  it('deny 는 실제로 맞는 모양만 — 접두(:*) 아니면 정확 일치. 가운데 와일드카드는 아무것도 안 맞춘다(실측 P2)', () => {
+    for (const r of MERGE_DENY_RULES) {
+      const inner = r.slice('Bash('.length, -1);
+      const star = inner.indexOf('*');
+      // 와일드카드는 맨 끝의 `:*` 하나뿐이어야 한다.
+      expect(star === -1 || (star === inner.length - 1 && inner.endsWith(':*')), r).toBe(true);
+    }
+    expect(MERGE_DENY_RULES).toContain('Bash(gh pr merge:*)');
+    expect(MERGE_DENY_RULES).toContain('Bash(git push origin main)');
+    expect(MERGE_DENY_RULES).toContain('Bash(git push origin HEAD:main)');
+    // 읽기용 gh api 와 브랜치 push 를 막는 넓은 패턴은 없다.
+    expect(MERGE_DENY_RULES).not.toContain('Bash(gh api:*)');
+    expect(MERGE_DENY_RULES).not.toContain('Bash(git push:*)');
   });
 
   it('codex 에는 규칙을 주지 않는다 — deny/allow 문법이 없다(한계는 docs/agent-merge.md)', () => {

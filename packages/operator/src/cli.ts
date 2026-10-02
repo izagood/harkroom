@@ -28,7 +28,7 @@ export type CliCommand =
   | { command: 'register'; baseUrl: string; code: string; name?: string }
   | { command: 'run'; dataDir: string | undefined }
   | { command: 'mcp-bridge' }
-  /** `merge <owner/name> <n> --head <sha> [--approval <uuid>]` — 인자 검증은 `turnMerge.parseMergeArgs`. */
+  /** `merge <owner/name> <n> --head <sha>` — 인자 검증은 `turnMerge.parseMergeArgs`. */
   | { command: 'merge'; argv: string[] }
   | { command: 'daemon'; argv: string[] };
 
