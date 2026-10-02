@@ -14,9 +14,15 @@ import 'state/app_state.dart';
 import 'theme.dart';
 import 'ui/states.dart';
 
-void main() {
-  final state = AppState(sessions: SessionStore.keychain());
-  runApp(HarkroomApp(state: state, push: PushCoordinator(state, MethodChannelPush())));
+void main() => runApp(bootApp());
+
+/// 앱을 짓는다. **바인딩부터 세운다** — [PushCoordinator] 가 `runApp` 전에 네이티브 채널 처리기를
+/// 단다(`harkroom/push`). 바인딩 없이 그러면 `main` 이 예외로 끝나 `runApp` 이 불리지 않고, 릴리스
+/// 빌드는 아무 오류도 없이 흰 화면에 멈춘다(TestFlight 281). 시험은 [sessions] 를 바꿔 끼운다.
+HarkroomApp bootApp({SessionStore? sessions}) {
+  WidgetsFlutterBinding.ensureInitialized();
+  final state = AppState(sessions: sessions ?? SessionStore.keychain());
+  return HarkroomApp(state: state, push: PushCoordinator(state, MethodChannelPush()));
 }
 
 /// 앱 루트.
