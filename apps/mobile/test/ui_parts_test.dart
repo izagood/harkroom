@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/theme.dart';
 import 'package:harkroom/ui/parts.dart';
+import 'package:harkroom/ui/states.dart';
 import 'package:harkroom/ui/tokens.dart';
 
 Widget _host(Widget child, {Brightness brightness = Brightness.light}) => MaterialApp(
@@ -100,5 +101,27 @@ void main() {
     expect(find.text('멤버 12'), findsOneWidget);
     await tester.pumpWidget(_host(const ScreenTitle(title: '# task')));
     expect(find.byType(Column), findsNothing);
+  });
+
+  testWidgets('목록 자리 탭 — 스크롤이 없는 자리(비어 있음·못 읽음)에서도 키보드만 내리고 글은 둔다', (tester) async {
+    final field = TextEditingController(text: '쓰던 글');
+    final focus = FocusNode();
+    addTearDown(field.dispose);
+    addTearDown(focus.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Column(children: [
+          const Expanded(child: FeedKeyboardDismiss(child: Center(child: Text('비어 있다')))),
+          TextField(controller: field, focusNode: focus),
+        ]),
+      ),
+    ));
+    focus.requestFocus();
+    await tester.pump();
+    expect(focus.hasFocus, isTrue);
+    await tester.tapAt(tester.getTopLeft(find.byType(FeedKeyboardDismiss)) + const Offset(20, 20));
+    await tester.pump();
+    expect(focus.hasFocus, isFalse);
+    expect(field.text, '쓰던 글');
   });
 }
