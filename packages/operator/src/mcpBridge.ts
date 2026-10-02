@@ -74,7 +74,7 @@ import { connect, type Socket } from 'node:net';
 import type { Readable, Writable } from 'node:stream';
 import { NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
 import {
-  RUNNER_LINK_PROTOCOL_VERSION, isRunnerLinkResponse, type RunnerHello, type RunnerLinkRequest,
+  RUNNER_LINK_MAX_LINE_BYTES, RUNNER_LINK_PROTOCOL_VERSION, isRunnerLinkResponse, type RunnerHello, type RunnerLinkRequest,
 } from '@harkroom/shared/runnerLink';
 
 /** `cause` — 이 브릿지를 띄운 턴의 원인 메시지(`RUNNER_TURN_CAUSE_ENV`). 모든 요청에 싣는다. */
@@ -95,6 +95,8 @@ export interface BridgeTuning {
   reconnectInitialMs?: number;
   reconnectMaxMs?: number;
   linkDownGraceMs?: number;
+  /** 한 줄 상한(stdin·소켓 양쪽). 기본은 `RUNNER_LINK_MAX_LINE_BYTES`. */
+  maxLineBytes?: number;
   schedule?: (fn: () => void, ms: number) => BridgeTimer;
 }
 
@@ -134,10 +136,11 @@ export function runMcpBridge(link: BridgeLink, io: BridgeStdio, tuning: BridgeTu
   const reconnectMaxMs = tuning.reconnectMaxMs ?? DEFAULT_RECONNECT_MAX_MS;
   const linkDownGraceMs = tuning.linkDownGraceMs ?? DEFAULT_LINK_DOWN_GRACE_MS;
   const schedule = tuning.schedule ?? defaultSchedule;
+  const maxLineBytes = tuning.maxLineBytes ?? RUNNER_LINK_MAX_LINE_BYTES;
 
   return new Promise<void>((resolve) => {
     const pending = new Map<string, PendingRequest>();
-    const stdinDecoder = new NdjsonDecoder();
+    const stdinDecoder = new NdjsonDecoder(maxLineBytes);
     /** 아직 소켓에 못 나간 줄들. **보낸 적이 없으므로** 재접속 뒤 그대로 보낸다. */
     const queued: { id: string; line: string }[] = [];
     let socket: Socket | null = null;
@@ -208,7 +211,7 @@ export function runMcpBridge(link: BridgeLink, io: BridgeStdio, tuning: BridgeTu
     const openSocket = (): void => {
       if (finished) return;
       const s = connect(link.socketPath);
-      const decoder = new NdjsonDecoder(); // 연결마다 새 프레임 경계다.
+      const decoder = new NdjsonDecoder(maxLineBytes); // 연결마다 새 프레임 경계다.
       socket = s;
       s.on('connect', () => {
         connected = true;
@@ -226,7 +229,9 @@ export function runMcpBridge(link: BridgeLink, io: BridgeStdio, tuning: BridgeTu
       });
       s.on('data', (chunk: Buffer) => {
         for (const line of decoder.push(chunk)) {
-          if (!line.ok || !isRunnerLinkResponse(line.value)) continue;
+          // 버린 줄은 말한다 — 조용히 넘기면 그 답을 기다리던 요청이 시한까지 매달린 이유가 안 남는다.
+          if (!line.ok) { note(`오퍼레이터 소켓에서 버린 줄: ${line.error.message}`); continue; }
+          if (!isRunnerLinkResponse(line.value)) continue;
           const res = line.value;
           const entry = forget(res.id);
           if (entry === undefined) continue;
@@ -280,7 +285,11 @@ export function runMcpBridge(link: BridgeLink, io: BridgeStdio, tuning: BridgeTu
 
     io.stdin.on('data', (chunk: Buffer | string) => {
       for (const line of stdinDecoder.push(chunk)) {
-        if (!line.ok) continue;
+        if (!line.ok) {
+          // 상한을 넘긴 줄은 이미 버려져 JSON-RPC id 를 모른다 — 답할 수 없으니 이유만 남긴다.
+          note(`하네스 stdin 에서 버린 줄: ${line.error.message}`);
+          continue;
+        }
         const payload = line.value;
         const id = randomUUID();
         const rpcId = typeof payload === 'object' && payload !== null ? (payload as { id?: unknown }).id ?? null : null;
@@ -304,6 +313,13 @@ export function runMcpBridge(link: BridgeLink, io: BridgeStdio, tuning: BridgeTu
           ...(link.cwd ? { cwd: link.cwd } : {}),
         };
         const text = `${JSON.stringify(req)}\n`;
+        const bytes = Buffer.byteLength(text, 'utf8') - 1;
+        if (bytes > maxLineBytes) {
+          // 오퍼레이터가 받으면 링크째 끊는다 — 보내지 않고 **지금** 이 요청만 거절한다.
+          forget(id);
+          answerError(rpcId, `요청이 ${bytes} 바이트로 러너 링크 한 줄 상한(${maxLineBytes} 바이트)을 넘어 보내지 않았다`);
+          continue;
+        }
         if (connected && socket !== null) socket.write(text);
         else queued.push({ id, line: text });
       }

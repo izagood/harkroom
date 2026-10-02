@@ -283,3 +283,17 @@ describe('요청 종류 — 2단계-c 의 범위', () => {
     expect(parseRequest({ id: '', type: 'ping' })).toMatchObject({ code: 'bad-payload' });
   });
 });
+
+describe('NdjsonDecoder.takeBuffered — 다른 디코더로 인계', () => {
+  it('끝난 줄 뒤의 덜 끝난 머리를 꺼내고 비운다 — 받는 쪽이 이어 붙이면 줄이 온전하다', () => {
+    const a = new NdjsonDecoder();
+    const line = encodeLine({ type: 'big', pad: 'p'.repeat(3000) });
+    const out = a.push(`${encodeLine({ type: 'hello' })}${line.slice(0, 100)}`);
+    expect(out).toEqual([{ ok: true, value: { type: 'hello' } }]);
+    const head = a.takeBuffered();
+    expect(a.pendingBytes).toBe(0);
+    const b = new NdjsonDecoder();
+    expect(b.push(head)).toEqual([]);
+    expect(b.push(line.slice(100))).toEqual([{ ok: true, value: { type: 'big', pad: 'p'.repeat(3000) } }]);
+  });
+});

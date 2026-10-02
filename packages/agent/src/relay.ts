@@ -29,7 +29,7 @@ import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import type { AgentHarness, AgentSessionView, RelayRunnerFrame, RelayServerFrame, RunnerCap } from '@harkroom/shared';
 import { NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
 import {
-  RUNNER_LINK_PROTOCOL_VERSION, isOperatorToRunnerNotice, isRunnerLinkResponse,
+  RUNNER_LINK_MAX_LINE_BYTES, RUNNER_LINK_PROTOCOL_VERSION, isOperatorToRunnerNotice, isRunnerLinkResponse,
   type RunnerHello, type RunnerLinkRequest, type RunnerLinkResponse,
 } from '@harkroom/shared/runnerLink';
 import { RingBuffer, type PtyWriter } from './pty.js';
@@ -665,7 +665,8 @@ export const unixDialer: RelayUnixDialer = (link, handlers) => {
   void (async () => {
     const { connect } = await import('node:net');
     const socket = connect(link.socketPath);
-    const decoder = new NdjsonDecoder();
+    // 데몬 제어 채널의 1MiB 가 아니라 링크 상한이다 — REST 본문·MCP 결과가 이 줄로 온다.
+    const decoder = new NdjsonDecoder(RUNNER_LINK_MAX_LINE_BYTES);
     let settled = false;
     const settle = (reason?: string) => {
       if (!settled) { settled = true; handlers.onClose(reason); }

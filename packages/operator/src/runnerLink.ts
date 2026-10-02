@@ -20,9 +20,9 @@
  */
 import { timingSafeEqual } from 'node:crypto';
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
-import { encodeLine, NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
+import { encodeLine, LineTooLongError, NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
 import {
-  checkRunnerHello, isRunnerLinkNotice, isRunnerLinkRequest,
+  RUNNER_LINK_MAX_LINE_BYTES, checkRunnerHello, isRunnerLinkNotice, isRunnerLinkRequest,
   type OperatorToRunnerNotice, type RunnerLinkNotice, type RunnerLinkRequest, type RunnerLinkResponse,
 } from '@harkroom/shared/runnerLink';
 
@@ -50,6 +50,8 @@ export interface RunnerLinkDeps {
   onNotice?(runnerId: string, agentId: string, notice: RunnerLinkNotice): void;
   onClose?(runnerId: string): void;
   log(line: string): void;
+  /** 한 줄 상한. 기본은 `RUNNER_LINK_MAX_LINE_BYTES` 이고, 주입은 회귀선의 몫이다. */
+  maxLineBytes?: number;
 }
 
 export interface RunnerLinkServer {
@@ -60,9 +62,10 @@ export interface RunnerLinkServer {
   /**
    * `DaemonServer` 가 첫 줄을 읽고 넘긴다. `pending` 은 같은 청크에 hello 뒤로 이미 풀린
    * 줄들이다 — 여기서 받지 않으면 그 줄들이 사라진다(첫 announce 가 정확히 그 자리에 온다).
-   * 거절이면 소켓을 끊고 false.
+   * `buffered` 는 그 뒤에 붙어 온 **아직 안 끝난 줄의 머리**다 — 큰 요청이 hello 와 한 청크로
+   * 오면 생긴다. 거절이면 소켓을 끊고 false.
    */
-  accept(socket: LinkSocket, hello: unknown, pending: unknown[]): boolean;
+  accept(socket: LinkSocket, hello: unknown, pending: unknown[], buffered?: Buffer): boolean;
   send(runnerId: string, frame: RelayServerFrame): boolean;
   /** 오퍼레이터 자신의 말(`handover.released`). 릴레이 소켓이 없으면 false. */
   sendNotice(runnerId: string, notice: OperatorToRunnerNotice): boolean;
@@ -79,6 +82,7 @@ function secretsMatch(expected: string, received: string): boolean {
 }
 
 export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
+  const maxLineBytes = deps.maxLineBytes ?? RUNNER_LINK_MAX_LINE_BYTES;
   const expected = new Map<string, { agentId: string; secret: string }>();
   const linked = new Map<string, LinkSocket>();
   /**
@@ -100,12 +104,31 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
       ? { type: 'mcp.error', id: req.id, status: 0, message }
       : { type: 'http.response', id: req.id, status: 0, body: message };
 
+  /**
+   * 답 한 줄을 쓴다. **상한 초과는 삼키지 않는다** — 같은 id 로 작은 거절을 대신 보낸다.
+   * 삼키면 상대(브릿지)는 오지 않는 답을 시한(90초)까지 기다리고, 원인은 어디에도 안 남는다
+   * (2026-10-02: 786KB 넘는 그림의 `attachment.fetch` 가 정확히 그렇게 사라졌다).
+   */
+  const writeAnswer = (socket: LinkSocket, req: RunnerLinkRequest, res: RunnerLinkResponse): void => {
+    let line: string;
+    try {
+      line = encodeLine(res, maxLineBytes);
+    } catch (err) {
+      const why = err instanceof LineTooLongError
+        ? `응답이 ${err.byteLength} 바이트로 러너 링크 한 줄 상한(${err.limit} 바이트)을 넘어 전달하지 못했다`
+        : `응답을 러너 링크 한 줄로 만들지 못했다: ${err instanceof Error ? err.message : String(err)}`;
+      deps.log(`러너 링크 답을 거절로 바꿔 보낸다: id=${req.id} — ${why}`);
+      line = encodeLine(refuse(req, why), maxLineBytes);
+    }
+    try { socket.write(line); } catch { /* 끊긴 소켓 — 답할 곳이 없다 */ }
+  };
+
   const handleLine = (runnerId: string, agentId: string, socket: LinkSocket, kind: 'relay' | 'bridge', value: unknown): void => {
     if (isRunnerLinkRequest(value)) {
       const answer = deps.onRequest
         ? deps.onRequest(runnerId, agentId, value).catch((err: unknown) => refuse(value, err instanceof Error ? err.message : String(err)))
         : Promise.resolve(refuse(value, '이 오퍼레이터에는 전달이 배선되지 않았다'));
-      void answer.then((res) => { try { socket.write(encodeLine(res)); } catch { /* 끊긴 소켓 — 답할 곳이 없다 */ } });
+      void answer.then((res) => { writeAnswer(socket, value, res); });
       return;
     }
     // 브릿지는 PTY 를 모른다 — 요청이 아닌 것은 버린다.
@@ -126,7 +149,7 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
       if (socket) { linked.delete(runnerId); socket.destroy(); }
     },
 
-    accept(socket, hello, pending) {
+    accept(socket, hello, pending, buffered) {
       const claim = checkRunnerHello(hello);
       const entry = claim ? expected.get(claim.runnerId) : undefined;
       if (!claim || !entry || !secretsMatch(entry.secret, claim.secret)) {
@@ -142,14 +165,24 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
         linked.set(runnerId, socket);
       }
 
-      const decoder = new NdjsonDecoder();
-      socket.removeAllListeners('data');
-      socket.on('data', (chunk) => {
+      const decoder = new NdjsonDecoder(maxLineBytes);
+      const onChunk = (chunk: Buffer): void => {
         for (const line of decoder.push(chunk)) {
-          if (!line.ok) { if (line.error.code === 'line-too-long') { if (kind === 'relay') drop(runnerId, socket); socket.destroy(); } continue; }
+          if (!line.ok) {
+            if (line.error.code === 'line-too-long') {
+              // 넘긴 줄은 이미 버려져 id 를 모른다 — 답 대신 끊고, 이유는 로그에 남긴다.
+              // 브릿지는 끊김을 보고 나간 요청 전부를 즉시 실패로 답한다(시한을 안 기다린다).
+              deps.log(`러너 링크(${kind}) 줄이 상한을 넘어 끊는다: runnerId=${runnerId} ${line.error.message}`);
+              if (kind === 'relay') drop(runnerId, socket);
+              socket.destroy();
+            }
+            continue;
+          }
           handleLine(runnerId, entry.agentId, socket, kind, line.value);
         }
-      });
+      };
+      socket.removeAllListeners('data');
+      socket.on('data', onChunk);
       accepted.add(socket);
       socket.on('close', () => accepted.delete(socket));
       if (kind === 'relay') {
@@ -159,6 +192,7 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
         socket.on('error', () => socket.destroy());
       }
       for (const value of pending) handleLine(runnerId, entry.agentId, socket, kind, value);
+      if (buffered !== undefined && buffered.length > 0) onChunk(buffered);
       deps.log(`러너 링크 연결(${kind}): runnerId=${runnerId} agent=${entry.agentId}`);
       return true;
     },
@@ -166,13 +200,13 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
     send(runnerId, frame) {
       const socket = linked.get(runnerId);
       if (!socket) return false;
-      try { socket.write(encodeLine(frame)); return true; } catch { return false; }
+      try { socket.write(encodeLine(frame, maxLineBytes)); return true; } catch { return false; }
     },
 
     sendNotice(runnerId, notice) {
       const socket = linked.get(runnerId);
       if (!socket) return false;
-      try { socket.write(encodeLine(notice)); return true; } catch { return false; }
+      try { socket.write(encodeLine(notice, maxLineBytes)); return true; } catch { return false; }
     },
 
     isLinked: (runnerId) => linked.has(runnerId),

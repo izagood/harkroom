@@ -100,7 +100,7 @@ export interface DaemonServerDeps {
    * 러너의 것이다 — 접속을 통째로 넘기고 이 서버는 더 보지 않는다. 없으면 그런 hello 는
    * 앱 hello 검사(`checkHello`)가 `bad-payload` 로 거절한다.
    */
-  runnerLink?: { accept(socket: Socket, hello: unknown, pending: unknown[]): boolean };
+  runnerLink?: { accept(socket: Socket, hello: unknown, pending: unknown[], buffered?: Buffer): boolean };
 }
 
 /** 접속 하나의 상태. **`hello` 전에는 아무 요청도 받지 않는다.** */
@@ -238,7 +238,8 @@ export class DaemonServer {
           this.connections.delete(conn);
           conn.socket.removeAllListeners('data');
           const rest = lines.slice(i + 1).filter((l) => l.ok).map((l) => (l as { value: unknown }).value);
-          this.deps.runnerLink.accept(conn.socket, line.value, rest);
+          // 덜 끝난 줄의 머리도 넘긴다 — 버리면 hello 와 한 청크로 온 큰 요청이 잘린다.
+          this.deps.runnerLink.accept(conn.socket, line.value, rest, conn.decoder.takeBuffered());
           return;
         }
         this.handleHello(conn, line.value);
