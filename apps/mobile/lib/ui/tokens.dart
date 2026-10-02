@@ -18,6 +18,7 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
     required this.surfaceInverse,
     required this.surfaceInverse2,
     required this.fgOnInverse,
+    required this.accentOnInverse,
     required this.surface,
     required this.surfaceRaised,
     required this.surfaceSunken,
@@ -57,6 +58,9 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
 
   /// 먹색 면(스낵바·떠 있는 막대) 위의 글자. 그 면이 두 모드 모두 어두우므로 같은 값이다.
   final Color fgOnInverse;
+
+  /// 먹색 면 위의 강조 글자(스낵바 동작). [fgOnInverse] 처럼 두 모드 같은 값이다.
+  final Color accentOnInverse;
   /// 화면 바탕.
   final Color surface;
 
@@ -122,6 +126,7 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
     surfaceInverse: Color(0xFF1B1A19),
     surfaceInverse2: Color(0xFF2B2927),
     fgOnInverse: Color(0xFFEBE7E2),
+    accentOnInverse: Color(0xFFFF9B76),
     surface: Color(0xFFFBFAF8),
     surfaceRaised: Color(0xFFFFFFFF),
     surfaceSunken: Color(0xFFF3F1EE),
@@ -161,6 +166,7 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
     surfaceInverse: Color(0xFF2E2B28),
     surfaceInverse2: Color(0xFF3D3934),
     fgOnInverse: Color(0xFFEBE7E2),
+    accentOnInverse: Color(0xFFFF9B76),
     surface: Color(0xFF1C1B19),
     surfaceRaised: Color(0xFF262422),
     surfaceSunken: Color(0xFF171614),
@@ -244,6 +250,7 @@ abstract final class HarkroomSize {
 
 /// 모서리. 선언만 — 화면에 입히는 것은 다음 PR 이다.
 abstract final class HarkroomRadius {
+  static const double sm = 4;
   static const double row = 8;
   static const double card = 12;
   static const double compose = 14;

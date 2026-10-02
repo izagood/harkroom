@@ -133,7 +133,7 @@ ThemeData harkroomTheme(Brightness brightness) {
     snackBarTheme: SnackBarThemeData(
       backgroundColor: k.surfaceInverse,
       contentTextStyle: TextStyle(color: k.fgOnInverse),
-      actionTextColor: const Color(0xFFFFB59C),
+      actionTextColor: k.accentOnInverse,
       behavior: SnackBarBehavior.floating,
     ),
     // 탭의 숫자 배지도 **주황**이다. 기본은 오류 빨강이라 "인박스에 3개"가 "오류 3개"로 읽혔다.

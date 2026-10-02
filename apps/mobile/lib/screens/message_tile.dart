@@ -262,7 +262,7 @@ class _Header extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
               decoration: BoxDecoration(
                 border: Border.all(color: k.accent.withValues(alpha: 0.45)),
-                borderRadius: BorderRadius.circular(HarkroomRadius.row),
+                borderRadius: BorderRadius.circular(HarkroomRadius.sm),
               ),
               child: Text(t.agentBadge,
                   style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: k.accent)),
