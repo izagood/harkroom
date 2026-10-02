@@ -17,10 +17,16 @@ export const PUSH_DEVICES_PER_ACCOUNT = 20;
  * 기본값: 사람에게 오는 사유는 다 켠다(데스크톱 알림 기본값과 같다). **본문 미리보기는 끈다**
  * (결정 3) — APNs 페이로드는 Apple 을 지나고 잠금 화면에 뜬다. 켜는 것은 기기 주인의 옵트인이다.
  */
-export const DEFAULT_PUSH_PREFS = { mention: true, dm: true, threadReply: true, ask: true, preview: false } as const;
+export const DEFAULT_PUSH_PREFS = { mention: true, dm: true, threadReply: true, ask: true, preview: false, badge: true } as const;
 
 const prefsInput = z.object({
   mention: z.boolean(), dm: z.boolean(), threadReply: z.boolean(), ask: z.boolean(), preview: z.boolean(),
+  /**
+   * 아이콘 배지를 이 서버가 정할지(기본 켬). 기기에 커뮤니티가 둘 이상이면 앱이 끈다 — 서버는 자기 미읽음만
+   * 세므로, 배경에서 이 서버의 알림이 오면 배지가 합계보다 **줄어든다**(designer #1087). 끄면 페이로드에
+   * `badge` 를 싣지 않고, 앱이 앞에 올 때 합계로 적는다.
+   */
+  badge: z.boolean(),
 }).partial().strict();
 
 const deviceInput = z.object({
