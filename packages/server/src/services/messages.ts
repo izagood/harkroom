@@ -2433,9 +2433,19 @@ export async function listInbox(
             -- 수정으로 생긴 부름(076). 참일 때만 싣는다 — 아래에서 거짓은 키째 지운다.
             i.via_edit as "viaEdit"
      from inbox i join message m on m.id = i.message_id
+     join channel c on c.id = m.channel_id
      -- 지워진 말은 인박스에도 남지 않는다. 본문을 싣기 시작했으므로 이 조건이 없으면
      -- 지운 글이 인박스 줄에 그대로 보인다(전에는 id 만 실어 보이지 않았다).
+     --
+     -- **지금 볼 수 있는 채널의 것만**(2026-10-02, #1018 security F1 후속). 항목은 부를 때의
+     -- 가시성으로 만들어지고 그 뒤로 남는다 — 비공개 채널에서 내보내지거나(removeChannelMember
+     -- 는 inbox 행을 안 지운다) 채널이 비공개로 바뀌어도 그대로다. 거르지 않으면 나간 사람이
+     -- 그 채널의 본문을 인박스로 계속 받는다. 행은 지우지 않는다: 다시 들어오면 다시 보인다.
+     --
+     -- 러너의 inbox.poll 도 이 함수를 쓴다 → 나간 채널의 부름으로는 **턴이 뜨지 않는다**.
+     -- 의도다: 그 턴은 그 채널을 읽지도 거기에 쓰지도 못한다.
      where i.account_id = $1 and m.deleted_at is null
+       and ${channelVisibleSql('c', '$1')}
        ${opts.unreadOnly ? 'and i.read_at is null' : ''}
      order by i.id`,
     [accountId],
