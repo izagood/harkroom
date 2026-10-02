@@ -42,7 +42,7 @@ class MeScreen extends StatelessWidget {
               const SizedBox(height: 16),
               FilledButton(
                 key: const Key('me-sign-out-all-confirm'),
-                style: FilledButton.styleFrom(backgroundColor: k.danger, foregroundColor: Colors.white),
+                style: FilledButton.styleFrom(backgroundColor: k.danger, foregroundColor: k.fgOnStrong),
                 onPressed: () => Navigator.of(ctx).pop(true),
                 child: Text(t.communitySignOutAll),
               ),

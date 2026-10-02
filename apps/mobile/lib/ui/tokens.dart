@@ -17,6 +17,7 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
   const HarkroomTokens({
     required this.surfaceInverse,
     required this.surfaceInverse2,
+    required this.fgOnInverse,
     required this.surface,
     required this.surfaceRaised,
     required this.surfaceSunken,
@@ -53,6 +54,9 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
   final Color surfaceInverse;
 
   final Color surfaceInverse2;
+
+  /// 먹색 면(스낵바·떠 있는 막대) 위의 글자. 그 면이 두 모드 모두 어두우므로 같은 값이다.
+  final Color fgOnInverse;
   /// 화면 바탕.
   final Color surface;
 
@@ -117,6 +121,7 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
   static const light = HarkroomTokens(
     surfaceInverse: Color(0xFF1B1A19),
     surfaceInverse2: Color(0xFF2B2927),
+    fgOnInverse: Color(0xFFEBE7E2),
     surface: Color(0xFFFBFAF8),
     surfaceRaised: Color(0xFFFFFFFF),
     surfaceSunken: Color(0xFFF3F1EE),
@@ -155,6 +160,7 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
   static const dark = HarkroomTokens(
     surfaceInverse: Color(0xFF2E2B28),
     surfaceInverse2: Color(0xFF3D3934),
+    fgOnInverse: Color(0xFFEBE7E2),
     surface: Color(0xFF1C1B19),
     surfaceRaised: Color(0xFF262422),
     surfaceSunken: Color(0xFF171614),
@@ -261,6 +267,10 @@ abstract final class HarkroomShadow {
   static List<BoxShadow> compose(Brightness b) => b == Brightness.dark
       ? const []
       : const [BoxShadow(offset: Offset(0, 1), blurRadius: 2, color: Color(0x0D1B1A19))];
+
+  /// [compose] 와 같이 쓰는 입력 칸의 1px 선. 다크는 그림자 없이 이 선만 남는다.
+  static BorderSide composeBorder(Brightness b) =>
+      BorderSide(color: b == Brightness.dark ? const Color(0xFF3D3934) : const Color(0xFFE0DBD4));
 }
 
 /// 움직임. 선언만.

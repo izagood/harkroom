@@ -148,7 +148,8 @@ class _ChannelName extends StatelessWidget {
     return Text(
       name,
       style: TextStyle(
-        fontWeight: unread ? FontWeight.w600 : FontWeight.w400,
+        // 채널 이름은 늘 600(A · Paper §4 ※5) — 안 읽음은 굵기가 아니라 글자색과 배지로 가른다.
+        fontWeight: FontWeight.w600,
         color: unread ? k.fg : k.fgMuted,
       ),
     );
@@ -346,9 +347,9 @@ class _ShortcutCard extends StatelessWidget {
       selected: selected,
       child: Material(
         color: selected ? k.surfaceHover : k.surface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: k.border)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(HarkroomRadius.card), side: BorderSide(color: k.border)),
         child: InkWell(
-          customBorder: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          customBorder: RoundedRectangleBorder(borderRadius: BorderRadius.circular(HarkroomRadius.card)),
           onTap: onTap,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),

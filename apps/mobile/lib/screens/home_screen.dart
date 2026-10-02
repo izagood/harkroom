@@ -122,11 +122,15 @@ class FloatingTabBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final k = context.tokens;
-    return Material(
+    final b = Theme.of(context).brightness;
+    // 떠 있는 막대 — 그림자는 `HarkroomShadow.float` 한 종류다(A · Paper §7). Material 의
+    // elevation 그림자는 모드마다 값을 고를 수 없어 상자 장식으로 그린다.
+    return DecoratedBox(
+      decoration: ShapeDecoration(shape: StadiumBorder(side: HarkroomShadow.floatBorder(b)), shadows: HarkroomShadow.float(b)),
+      child: Material(
       color: k.surface,
-      elevation: 3,
-      shadowColor: Colors.black26,
-      shape: StadiumBorder(side: BorderSide(color: k.border)),
+      shape: const StadiumBorder(),
+      clipBehavior: Clip.antiAlias,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
         child: Row(
@@ -173,6 +177,7 @@ class FloatingTabBar extends StatelessWidget {
           ],
         ),
       ),
+    ),
     );
   }
 }
@@ -189,17 +194,22 @@ class FloatingSearchButton extends StatelessWidget {
       button: true,
       label: context.t.searchButton,
       excludeSemantics: true,
-      child: Material(
+      child: DecoratedBox(
+        decoration: ShapeDecoration(
+          shape: CircleBorder(side: HarkroomShadow.floatBorder(Theme.of(context).brightness)),
+          shadows: HarkroomShadow.float(Theme.of(context).brightness),
+        ),
+        child: Material(
         color: k.surface,
-        elevation: 3,
-        shadowColor: Colors.black26,
-        shape: CircleBorder(side: BorderSide(color: k.border)),
+        shape: const CircleBorder(),
+        clipBehavior: Clip.antiAlias,
         child: InkWell(
           key: const Key('tab-search'),
           customBorder: const CircleBorder(),
           onTap: () => openSearch(context),
           child: SizedBox(width: 58, height: 58, child: Icon(Icons.search, size: 24, color: k.fg)),
         ),
+      ),
       ),
     );
   }

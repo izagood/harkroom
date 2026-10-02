@@ -6,6 +6,7 @@ import '../state/app_scope.dart';
 import '../time.dart';
 import 'artifact_preview.dart';
 import 'message_link.dart';
+import '../ui/tokens.dart';
 
 /// 그림 넘겨 보기의 **범위**(designer 사양 1·5, 2026-10-02) — 그림을 연 화면이 준다.
 /// 채널 화면은 최상위 글(+채널에도 올린 답글), 스레드 화면은 루트와 답글이다. 없으면 그 그림 한 장만 본다.
@@ -132,14 +133,14 @@ class ArtifactCard extends StatelessWidget {
       label: '${t.artifactOpen} ${ref.title}',
       child: InkWell(
         key: Key('artifact-card-${attachment.id}'),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(HarkroomRadius.card),
         onTap: () => openArtifactPreview(context, attachment),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 448),
           child: DecoratedBox(
             decoration: BoxDecoration(
               border: Border.all(color: theme.dividerColor),
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(HarkroomRadius.card),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -147,7 +148,7 @@ class ArtifactCard extends StatelessWidget {
               children: [
                 if (coverOk)
                   ClipRRect(
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(HarkroomRadius.card)),
                     child: AspectRatio(
                       aspectRatio: 16 / 9,
                       child: Image.network(
@@ -183,7 +184,7 @@ class ArtifactCard extends StatelessWidget {
                             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                             decoration: BoxDecoration(
                               border: Border.all(color: theme.dividerColor),
-                              borderRadius: BorderRadius.circular(999),
+                              borderRadius: BorderRadius.circular(HarkroomRadius.full),
                             ),
                             child: Text(t.artifactLatest.replaceAll('{v}', '$latest'),
                                 style: theme.textTheme.labelSmall),
@@ -250,7 +251,7 @@ class _Preview extends StatelessWidget {
       key: Key('attachment-preview-${attachment.id}'),
       onTap: () => _open(context),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(HarkroomRadius.card),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxHeight: 220),
           child: Image.network(

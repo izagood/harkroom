@@ -97,7 +97,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
               color: k.surfaceSunken,
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(HarkroomRadius.row),
               border: Border.all(color: k.border),
             ),
             // 긴 줄은 **접지 않고 옆으로 민다** — 코드를 접으면 들여쓰기의 뜻이 사라진다.
@@ -309,7 +309,7 @@ Future<bool?> showLinkConfirm(BuildContext context, Uri uri) {
                 key: Key(key),
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                decoration: BoxDecoration(color: k.warningSurface, borderRadius: BorderRadius.circular(6)),
+                decoration: BoxDecoration(color: k.warningSurface, borderRadius: BorderRadius.circular(HarkroomRadius.card)),
                 child: Text(text, style: TextStyle(fontSize: HarkroomType.meta, color: k.warning)),
               ),
             ],

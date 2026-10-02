@@ -180,13 +180,13 @@ class _AddCommunityScreenState extends State<AddCommunityScreen> {
                 border: _fixedUrl ? InputBorder.none : null,
                 enabledBorder: _fixedUrl
                     ? OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(HarkroomRadius.row),
                         borderSide: BorderSide.none,
                       )
                     : null,
                 focusedBorder: _fixedUrl
                     ? OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(HarkroomRadius.row),
                         borderSide: BorderSide.none,
                       )
                     : null,
@@ -406,7 +406,7 @@ class CommunityHeader extends StatelessWidget {
       excludeSemantics: true,
       child: InkWell(
       key: const Key('community-header'),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(HarkroomRadius.row),
       onTap: () => showCommunitySwitcher(context),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
@@ -549,7 +549,7 @@ class ExpiredChip extends StatelessWidget {
     final k = context.tokens;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(color: k.warningSurface, borderRadius: BorderRadius.circular(999)),
+      decoration: BoxDecoration(color: k.warningSurface, borderRadius: BorderRadius.circular(HarkroomRadius.full)),
       child: Text(label,
           style: TextStyle(color: k.warning, fontSize: 12, fontWeight: FontWeight.w600)),
     );

@@ -148,7 +148,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final ctx = _hitKey.currentContext;
     if (ctx != null) {
       _hitDone = true;
-      Scrollable.ensureVisible(ctx, alignment: 0.5, duration: const Duration(milliseconds: 250));
+      Scrollable.ensureVisible(ctx, alignment: 0.5, duration: HarkroomMotion.base, curve: HarkroomMotion.ease);
       return;
     }
     if (!_scroll.hasClients || ++_hitTries > 30) return;
@@ -432,7 +432,8 @@ class HitFlashState extends State<HitFlash> {
   Widget build(BuildContext context) {
     final k = context.tokens;
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 400),
+      duration: HarkroomMotion.base,
+      curve: HarkroomMotion.ease,
       decoration: BoxDecoration(
         color: on ? k.accentSurface : Colors.transparent,
         border: Border(left: BorderSide(color: on ? k.accent : Colors.transparent, width: 3)),
