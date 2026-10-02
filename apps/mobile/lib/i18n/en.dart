@@ -212,6 +212,9 @@ class StringsEn implements Strings {
   String get mentionUnknown => '@unknown';
 
   @override
+  String get systemAccountUnknown => 'unknown';
+
+  @override
   String get tabChannels => 'Channels';
 
   @override

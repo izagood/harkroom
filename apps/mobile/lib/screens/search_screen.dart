@@ -598,7 +598,7 @@ class SearchResultTile extends StatelessWidget {
     final who = app.displayNameOf(message.authorId);
     final when = dayLabel(t, message.createdAt);
     // 본문은 한 덩어리로 — 줄바꿈이 두 줄 칸을 첫 줄에서 다 먹지 않게.
-    final full = renderMentions(message.body, app.accounts, t.mentionUnknown).replaceAll(RegExp(r'\s+'), ' ').trim();
+    final full = displayBody(message, app.accounts, unknownMention: t.mentionUnknown, unknownAccount: t.systemAccountUnknown).replaceAll(RegExp(r'\s+'), ' ').trim();
     // 찾은 낱말이 두 줄 밖에 있으면 강조가 안 보여 왜 걸렸는지 모른다 — 첫 일치 앞에서 자른 발췌로 보인다.
     final body = searchExcerpt(full, query);
 
