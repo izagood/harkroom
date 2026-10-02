@@ -36,6 +36,7 @@
   "GET /agent-wakes": "0.1.167",
   "GET /agents/:p/model-options": "0.3.95",
   "GET /attachments/:p": "0.1.167",
+  "POST /attachments/:p/preview": "0.3.131",
   "GET /auth/me": "0.1.167",
   "GET /automations": "0.3.23",
   "GET /automations/:p": "0.3.23",

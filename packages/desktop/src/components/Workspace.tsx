@@ -17,6 +17,8 @@ import { ServerCompatBanner } from './ServerCompatBanner';
 import { UpdateToast } from './UpdateToast';
 import { ThreadPanel } from './ThreadPanel';
 import { TerminalPanel } from './TerminalPanel';
+import { ArtifactPanel } from './ArtifactPreview';
+import { previewLayout } from '../lib/previewLayout';
 import { SearchPalette, type SearchScope } from './SearchPalette';
 import { Directory } from './Directory';
 import { ChannelSettingsSheet } from './ChannelSettingsSheet';
@@ -37,6 +39,9 @@ export function Workspace({ onLogout, onOpenSettings }: {
   /** 본문을 채널에게 돌려 달라는 요구. 올라갈 때마다 아래 `useEffect` 가 자리를 비운다. */
   const channelRevealSeq = useActiveStore((s) => s.channelRevealSeq);
   const terminalTarget = useActiveStore((s) => s.terminalTarget);
+  // 미리보기가 열린 동안 내용 칸은 둘 — 누른 칸 + 미리보기(`lib/previewLayout.ts`, designer 수정 1).
+  const previewFrom = useActiveStore((s) => (s.artifactPreview ? s.artifactPreviewFrom ?? 'channel' : null));
+  const { hideMain, hideThread, hideTerminal, fillPreview } = previewLayout(previewFrom, !!threadRootId);
   const history = useActiveStore((s) => s.history);
   const historyIndex = useActiveStore((s) => s.historyIndex);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -390,7 +395,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
             목적지가 본문인 줄을 누르면 인박스가 스스로 접힌다 — 그 판정은 `Inbox.tsx` 의
             `openEntry` 에 있다(누른 것이 반드시 보여야 하기 때문이다).
           */}
-          {railPanel === 'agents' ? (
+          {hideMain ? null : railPanel === 'agents' ? (
             <AgentTower
               onOpenThread={(rootId) => {
                 // 칸을 **되돌린 뒤** 연다. 관제탑이 본문을 쥔 채로 스레드를 열면 스레드
@@ -409,7 +414,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
               onOpenSettings={onOpenSettings}
             />
           )}
-          {threadRootId && (
+          {threadRootId && !hideThread && (
             <ThreadPanel
               onOpenDirectory={handleOpenDirectory}
               onOpenSettings={onOpenSettings}
@@ -420,7 +425,9 @@ export function Workspace({ onLogout, onOpenSettings }: {
           {/* #141: 터미널은 스레드 패널과 **같은 자리**를 쓰고 둘이 나란히 열린다.
               채널 레이아웃 안에 심지 않는다 — `#189`(앱 안 터미널 패널이 어디서 도는가)가
               열려 있어서, 지금 심으면 그 결정이 코드로 먼저 굳는다. */}
-          {terminalTarget && <TerminalPanel />}
+          {terminalTarget && !hideTerminal && <TerminalPanel />}
+          {/* 미리보기(아티팩트) 패널(④) — 오른쪽 줄. 열린 동안 누른 칸 하나만 곁에 남는다(위 hideMain 주석). */}
+          <ArtifactPanel fill={fillPreview} />
         </div>
       </div>
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} initialScope={searchInitialScope} />

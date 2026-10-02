@@ -803,6 +803,23 @@ async fn daemon_list_runners(
     .await
 }
 
+/// 미리보기 패널(#1069)이 iframe 에 넣으려는 **서명 URL 하나**를 내비게이션 훅에 한 번 허용해 둔다(A′).
+/// 판정·수명·한 번은 `external_link::PreviewAllowance` 가 지킨다. **main 웹뷰에서만** 받는다 — 다른 웹뷰가 생겨도
+/// 그쪽이 앱 화면에 이동 허용을 꽂을 수 없게(capabilities 도 main 뿐이다).
+#[tauri::command]
+fn allow_preview_once(
+    webview: tauri::Webview,
+    state: tauri::State<'_, external_link::PreviewAllowance>,
+    url: String,
+) -> Result<(), String> {
+    if webview.label() != "main" {
+        return Err("allow_preview_once is only for the main webview".into());
+    }
+    state
+        .allow(&url, std::time::Instant::now())
+        .map_err(|e| e.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         // 알림 표면. **발신은 `notification::notification_send` 가 한다** — 이 플러그인의
@@ -831,6 +848,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            allow_preview_once,
             secret_get,
             secret_set,
             secret_delete,

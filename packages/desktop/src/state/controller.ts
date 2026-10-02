@@ -5,7 +5,7 @@ import { buildBoard, mineCount } from '../lib/inboxBoard';
 
 /** 보드 한 판의 재료 — `GET /inbox?threads=1` 의 응답(`ApiClient.inboxBoard`). */
 export interface InboxBoardData { entries: InboxEntry[]; threads: MessageRow[] | null; threadStates: InboxThreadState[] }
-import { ApiClient, ApiError } from '../lib/api';
+import { ApiClient, ApiError, type PreviewTicket } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type NotificationTarget, type Notifier } from '../lib/notify';
@@ -1478,6 +1478,24 @@ export class Controller {
 
   fetchAttachment(id: string): Promise<Blob> {
     return this.api.fetchAttachment(id);
+  }
+
+  /**
+   * 미리보기를 연다(④). 오른쪽 패널에 서고, 토큰은 패널이 열 때마다 받는다(`issuePreview`).
+   * 같은 첨부를 다시 누르면 그대로 둔다 — 닫는 것은 패널의 ✕·Esc 다.
+   */
+  openArtifactPreview(attachment: AttachmentRow, from: 'channel' | 'thread' = 'channel'): void {
+    this.store.getState().set({ artifactPreview: attachment, artifactPreviewFrom: from });
+  }
+
+  closeArtifactPreview(): void {
+    this.store.getState().set({ artifactPreview: null, artifactPreviewFrom: null });
+  }
+
+  /** 서명 경로를 받아 프레임에 넣을 절대 URL 과 함께 준다. 실패는 호출부(패널)가 상태로 말한다. */
+  async issuePreview(attachmentId: string): Promise<PreviewTicket & { url: string }> {
+    const ticket = await this.api.issuePreview(attachmentId);
+    return { ...ticket, url: this.api.previewUrl(ticket.path) };
   }
 
   fetchAvatar(accountId: string): Promise<Blob> {
