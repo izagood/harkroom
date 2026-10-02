@@ -2386,6 +2386,17 @@ export class Controller {
     return this.api.unassignAgent(agentId);
   }
 
+  // capability grant(055) — 에이전트 머지 권한 절(스레드 3deac356). 판정은 서버.
+  listGrants(accountId: string): Promise<import('@harkroom/shared').GrantRow[]> {
+    return this.api.listGrants(accountId);
+  }
+  putGrant(accountId: string, body: { capability: import('@harkroom/shared').Capability; scope: string; expiresAt?: string | null; allowAgentCause?: boolean }): Promise<import('@harkroom/shared').GrantRow[]> {
+    return this.api.putGrant(accountId, body);
+  }
+  deleteGrant(accountId: string, capability: import('@harkroom/shared').Capability, scope: string): Promise<void> {
+    return this.api.deleteGrant(accountId, capability, scope);
+  }
+
   // 호출 범위(스펙 2026-09-20 §6) — 전부 서버가 판정한다. 화면은 응답을 그대로 앉힌다.
   addInvoker(agentId: string, accountId: string): Promise<import('@harkroom/shared').AgentView> {
     return this.api.addInvoker(agentId, accountId);

@@ -196,6 +196,14 @@ describe('turnMerge', () => {
     expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('ci_not_green');
   });
 
+  it('C1: 같은 이름에 초록과 빨강(FAILURE·TIMED_OUT·ACTION_REQUIRED)이 함께 있으면 빨강이다 — 옛 초록이 새 빨강을 덮지 않는다', async () => {
+    for (const bad of ['FAILURE', 'TIMED_OUT', 'ACTION_REQUIRED']) {
+      pr = { ...pr, statusCheckRollup: [{ name: 'check', status: 'COMPLETED', conclusion: 'SUCCESS' }, { name: 'check', status: 'COMPLETED', conclusion: bad }] };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code, bad).toBe('ci_not_green');
+    }
+    expect(ghCalls().filter((c) => c === 'pr merge')).toEqual([]);
+  });
+
   it('operator.json merge.ghUser 의 계정 토큰을 GH_TOKEN 으로 준다 — auth token 호출 자체는 토큰 없이', async () => {
     resultOf(await tm.maybeHandle('r1', 'a1', ok()));
     const auth = execs.find((e) => e.args[0] === 'auth')!;

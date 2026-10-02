@@ -63,9 +63,11 @@ async function listGrants(pool: Pool, accountId: string): Promise<GrantRow[]> {
 export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   app.get<{ Params: { id: string } }>('/accounts/:id/grants', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = idParam.parse(req.params);
-    // 남의 grant 는 admin 만 본다 — 권한 목록은 곧 공격 표면의 지도다.
+    // 남의 grant 는 admin 만 본다 — 권한 목록은 곧 공격 표면의 지도다. 예외 하나: **자기 에이전트의 소유자**
+    // (`repo.merge` 를 주는 사람이 자기가 준 것을 못 보면 거둘 수도 없다 — 스레드 3deac356 PR 3).
     if (id !== req.account!.id && !req.account!.isAdmin) {
-      return reply.code(403).send({ error: { code: 'forbidden', message: '남의 권한은 admin 만 본다' } });
+      const owns = await pool.query(`select 1 from agent_config where account_id = $1 and owner_account_id = $2`, [id, req.account!.id]);
+      if (!owns.rowCount) return reply.code(403).send({ error: { code: 'forbidden', message: '남의 권한은 admin 과 그 에이전트의 소유자만 본다' } });
     }
     return { grants: await listGrants(pool, id) };
   });

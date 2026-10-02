@@ -3,7 +3,7 @@ import type {
   McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, MentionPolicy,
   AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, ThreadAgentModelView,
   AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InboxThreadState, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
-import { MENTION_EDIT_SKIPPED_HEADER } from '@harkroom/shared';
+import { MENTION_EDIT_SKIPPED_HEADER, type GrantRow, type Capability } from '@harkroom/shared';
 import type { MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
@@ -689,6 +689,20 @@ export class ApiClient {
   }
 
   // --- 호출 범위(스펙 2026-09-20 §6) ---------------------------------------------------
+
+  /**
+   * capability grant(055). 에이전트 머지 권한(`repo.merge`, 스레드 3deac356)이 첫 화면 사용자다 — scope 는
+   * `repo:<owner>/<name>`, 주는 사람은 그 에이전트의 소유자(사람), 거두기는 소유자나 admin. 판정은 전부 서버.
+   */
+  listGrants(accountId: string): Promise<GrantRow[]> {
+    return this.req<{ grants: GrantRow[] }>('GET', `/accounts/${accountId}/grants`).then((r) => r.grants);
+  }
+  putGrant(accountId: string, body: { capability: Capability; scope: string; expiresAt?: string | null; allowAgentCause?: boolean }): Promise<GrantRow[]> {
+    return this.req<{ grants: GrantRow[] }>('PUT', `/accounts/${accountId}/grants`, body).then((r) => r.grants);
+  }
+  deleteGrant(accountId: string, capability: Capability, scope: string): Promise<void> {
+    return this.req('DELETE', `/accounts/${accountId}/grants/${encodeURIComponent(capability)}?scope=${encodeURIComponent(scope)}`);
+  }
 
   /** `invokeScope: 'list'` 의 명단에 사람을 넣는다. 멱등. 답은 갱신된 AgentView. */
   addInvoker(agentId: string, accountId: string): Promise<AgentView> {

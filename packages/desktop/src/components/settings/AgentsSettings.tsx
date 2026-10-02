@@ -35,6 +35,7 @@ import { LocalOperatorRow } from './LocalOperatorRow';
 import { ModelPicker } from './ModelPicker';
 import { hasOperatorLocalSurface, listLocalAgents } from '../../lib/operatorLocal';
 import { AgentScopeSection } from './AgentScopeSection';
+import { AgentGrantsSection } from './AgentGrantsSection';
 import { AgentPickableSection } from './AgentPickableSection';
 import { kindLabel, MemoryDetail } from './MemoryDetail';
 import { canSeeAgentConfig } from '../../lib/agentConfigGate';
@@ -2275,6 +2276,17 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   setSelected(updated);
                   setAgents((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
                 }}
+              />
+            )}
+
+            {/* 에이전트 머지 권한(스레드 3deac356) — 「호출 범위·자격증명」 바로 아래(designer 안). 주는 것은 소유자인
+                사람만(서버 F2), 거두기는 소유자·admin. */}
+            {selected && (isAdmin || isOwner) && myId !== undefined && (
+              <AgentGrantsSection
+                agent={selected}
+                canGrant={selected.ownerAccountId === myId}
+                canRevoke={isAdmin || isOwner}
+                disabled={busy}
               />
             )}
 
