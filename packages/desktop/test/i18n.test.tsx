@@ -2842,6 +2842,7 @@ describe('레일 — 두 언어로 뜨고 칸 이름은 안 옮긴다', () => {
         me: acc(ME, 'me'),
         accounts: { [ME]: acc(ME, 'me') },
         unread: [inboxEntry(1, 'm1', 'mention'), inboxEntry(2, 'm2', 'dm')],
+        inboxMine: 2,
       });
     };
 
