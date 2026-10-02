@@ -89,10 +89,12 @@ class _PushPromptSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.t;
+    // 큰 글자·작은 화면에서도 넘치지 않게 스크롤로 둔다.
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         key: const Key('push-prompt'),
-        padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -115,6 +117,7 @@ class _PushPromptSheet extends StatelessWidget {
             ),
           ],
         ),
+      ),
       ),
     );
   }
