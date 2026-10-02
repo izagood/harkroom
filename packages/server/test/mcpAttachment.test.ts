@@ -4,6 +4,8 @@ import type { Pool } from 'pg';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import sharp from 'sharp';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { startTestDb } from './helpers/testDb.js';
@@ -40,7 +42,7 @@ beforeAll(async () => {
   stop = db.stop;
   pool = db.pool;
   storageRoot = await mkdtemp(join(tmpdir(), 'harkroom-mcp-att-'));
-  app = await buildServer({ pool: db.pool, storage: { root: storageRoot, maxBytes: 8 * 1024 * 1024 } });
+  app = await buildServer({ pool: db.pool, storage: { root: storageRoot, maxBytes: 16 * 1024 * 1024 } });
   ({ token: adminToken } = await bootstrapAdmin(app));
   ({ pat: botPat, accountId: botAccountId } = await createAgent(app, adminToken, 'attbot'));
   ({ pat: otherPat } = await createAgent(app, adminToken, 'nosybot'));
@@ -176,17 +178,54 @@ describe('mcp attachment.fetch', () => {
     expect(JSON.stringify(firstJson(res))).not.toContain('<script>');
   });
 
-  // 큰 파일을 base64 로 만들면 서버 메모리와 모델 컨텍스트를 함께 태운다. 한계를 넘으면
-  // 바이트 대신 받는 방법을 준다 — 이것도 실패가 아니다.
-  it('refuses to inline an image over the size limit but says how to get it', async () => {
-    const big = Buffer.concat([PNG, Buffer.alloc(3 * 1024 * 1024 + 1 - PNG.length)]);
-    const id = await attach('huge.png', big, 'image/png');
+  /**
+   * 폰 스크린샷이 3MiB 를 넘어 에이전트가 그림을 못 보던 결함(IMG_4957.png 4,612,118B).
+   * 진짜 큰 PNG(잡음이라 압축이 안 된다)를 올리고, 돌아온 그림을 **디코딩해서** 해상도를 잰다
+   * — 응답이 "줄였다"고 적기만 하고 원본을 그대로 실으면 여기서 걸린다.
+   */
+  it('downscales an image over the size limit and says it did', async () => {
+    const big = await sharp(randomBytes(2400 * 1800 * 3), { raw: { width: 2400, height: 1800, channels: 3 } })
+      .png().toBuffer();
+    expect(big.length).toBeGreaterThan(3 * 1024 * 1024);
+    const id = await attach('IMG_big.png', big, 'image/png');
+    const client = await mcpClient(botPat);
+
+    const res = await fetchTool(client, id);
+    const image = parts(res).find((c) => c.type === 'image');
+    expect(image).toBeDefined();
+    expect(image!.mimeType).toBe('image/jpeg');
+    const bytes = Buffer.from(image!.data!, 'base64');
+    expect(bytes.length).toBeLessThanOrEqual(3 * 1024 * 1024);
+    const got = await sharp(bytes).metadata();
+    expect(Math.max(got.width!, got.height!)).toBeLessThanOrEqual(2000);
+    expect(got.width! / got.height!).toBeCloseTo(2400 / 1800, 1);
+
+    const json = firstJson(res);
+    expect(json.attachment).toMatchObject({ id, sizeBytes: big.length, contentType: 'image/png' });
+    expect(json.downscaled).toMatchObject({
+      originalBytes: big.length,
+      originalResolution: '2400x1800',
+      bytes: bytes.length,
+      resolution: `${got.width}x${got.height}`,
+      mimeType: 'image/jpeg',
+    });
+
+    // 원본은 그대로다 — REST 는 올린 바이트를 그대로 내준다.
+    const raw = await app.inject({ method: 'GET', url: `/attachments/${id}`, headers: { authorization: `Bearer ${botPat}` } });
+    expect(raw.rawPayload.equals(big)).toBe(true);
+  });
+
+  // 줄일 수 없으면(이름만 그림인 바이트) 지금처럼 바이트 대신 받는 방법을 주고, **왜** 못 줄였는지 말한다.
+  it('falls back to metadata with the reason when an oversized image cannot be decoded', async () => {
+    const junk = Buffer.alloc(3 * 1024 * 1024 + 1, 0x41);
+    const id = await attach('huge.png', junk, 'image/png');
     const client = await mcpClient(botPat);
 
     const res = await fetchTool(client, id);
     expect(parts(res).some((c) => c.type === 'image')).toBe(false);
     const json = firstJson(res);
     expect(json.note).toContain('too large');
+    expect(json.note).toContain('could not be downscaled');
     expect(json.download).toContain(`/attachments/${id}`);
   });
 

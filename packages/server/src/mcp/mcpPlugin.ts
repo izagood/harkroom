@@ -53,6 +53,7 @@ import { agentModelOptions, announceChange, checkOffered, emitChanged } from '..
 import type { OperatorHub } from '../ws/operatorHub.js';
 import { AttachmentMissingError, type StorageBackend } from '../storage/local.js';
 import { Readable } from 'node:stream';
+import { downscaleImage, DOWNSCALE_READ_MAX_BYTES, tryAcquireDownscaleSlot } from './imageDownscale.js';
 
 // slug 문법과 거절 문구는 services/memory.ts 에 있다 — 사람용 REST(accountRoutes)도 같은 것을 쓴다.
 import { isValidSlug, MEMORY_SLUG_HINT } from '../services/memory.js';
@@ -135,7 +136,8 @@ const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
  * 그림으로 실어 줄 최대 원본 크기. base64 는 4/3 로 부풀므로 3MiB → 4MiB 가 되고,
  * 그것이 한 요청에 이미지 하나로 실리는 실질 한계 안이다.
  *
- * 넘는 것을 **거절하지 않는다** — 메타데이터로 떨어뜨린다. 그래야 에이전트가 "무엇이
+ * 넘는 것을 **거절하지 않는다** — 32MiB 까지는 줄인 사본을 싣고(`imageDownscale.ts`),
+ * 그보다 크거나 줄이지 못하면 메타데이터로 떨어뜨린다. 그래야 에이전트가 "무엇이
  * 왔는지"는 알고, 정말 필요하면 REST 로 스트리밍해 받는다. 여기서 200MB 를 통째로
  * base64 로 만들면 서버 메모리와 모델 컨텍스트를 함께 태운다.
  */
@@ -1702,7 +1704,7 @@ function buildMcpServer(
   }));
 
   server.registerTool('attachment.fetch', {
-    description: '첨부 바이트 받기 — 이미지는 그림으로, 텍스트는 글로 실린다. id 는 프롬프트의 [첨부: …] 에 있다',
+    description: '첨부 바이트 받기 — 이미지는 그림으로(3MiB 를 넘으면 줄인 사본), 텍스트는 글로 실린다. id 는 프롬프트의 [첨부: …] 에 있다',
     inputSchema: { attachmentId: z.string().uuid() },
   }, async ({ attachmentId }) => {
     const resolved = await resolveAttachmentFor(pool, attachmentId, account.id);
@@ -1750,6 +1752,54 @@ function buildMcpServer(
         ...(cut ? { download: `GET /attachments/${id} (Authorization: Bearer $HARKROOM_PAT)` } : {}),
         text: cut ? cut.text : decoded,
       });
+    }
+
+    /**
+     * 한도를 넘는 그림은 **줄여서** 싣는다(`imageDownscale.ts`). 폰 스크린샷이 그대로 3MiB 를
+     * 넘어, 줄이지 않으면 에이전트는 셸 다운로드 안내만 받고 — 그 길은 PAT 가 필요해 auto mode
+     * 에서 막힌다. 원본은 그대로 두고 이 응답만 줄인다. 줄였다는 사실과 원본 크기·해상도를
+     * 텍스트 줄에 적는다 — 에이전트가 "작은 글씨가 안 보인다"를 원본 탓으로 오해하지 않게.
+     */
+    if (IMAGE_TYPES.includes(contentType) && sizeBytes > IMAGE_MAX_BYTES && sizeBytes <= DOWNSCALE_READ_MAX_BYTES) {
+      const notInlined = (reason: string) => jsonResult({
+        attachment: meta,
+        note: `too large to inline (${sizeBytes}B > ${IMAGE_MAX_BYTES}B) and could not be downscaled: ${reason}`,
+        download: `GET /attachments/${id} (Authorization: Bearer $HARKROOM_PAT) — needs shell/HTTP access; if you have neither, say so and ask the human instead of guessing`,
+      });
+      // 원본을 읽기 **전에** 자리를 잡는다 — 기다리는 호출이 저마다 32MiB 를 쥐고 쌓이지 않게.
+      const release = tryAcquireDownscaleSlot();
+      if (!release) return notInlined('busy (too many downscales in flight); try again shortly');
+      let small: Awaited<ReturnType<typeof downscaleImage>>;
+      try {
+        const original = await readAttachment(meta, DOWNSCALE_READ_MAX_BYTES, resolved.attachment.storageKey);
+        if ('error' in original) return original.error;
+        small = await downscaleImage(original.body, IMAGE_MAX_BYTES);
+      } finally {
+        release();
+      }
+      if (small.ok) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                attachment: meta,
+                downscaled: {
+                  originalBytes: sizeBytes,
+                  originalResolution: `${small.original.width}x${small.original.height}`,
+                  bytes: small.data.length,
+                  resolution: `${small.resized.width}x${small.resized.height}`,
+                  mimeType: small.mimeType,
+                  ...(small.firstFrameOnly ? { firstFrameOnly: true } : {}),
+                  note: 'resized copy for this response only; the stored original is unchanged',
+                },
+              }),
+            },
+            { type: 'image' as const, data: small.data.toString('base64'), mimeType: small.mimeType },
+          ],
+        };
+      }
+      return notInlined(small.reason);
     }
 
     if (!IMAGE_TYPES.includes(contentType) || sizeBytes > IMAGE_MAX_BYTES) {
