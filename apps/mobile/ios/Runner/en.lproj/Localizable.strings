@@ -3,3 +3,17 @@
 "PUSH_REASON_THREAD_REPLY" = "Replied in a thread";
 "PUSH_REASON_DM" = "Sent you a message";
 "PUSH_REASON_ASK" = "Waiting for your choice";
+"PUSH_REASON_ASK_OPTIONS" = "Waiting for your decision · %@ options";
+"PUSH_REASON_FAIL" = "Couldn't finish the task";
+"PUSH_REASON_GATE" = "Sign-in needed";
+"PUSH_REASON_DONE" = "Finished the task";
+"PUSH_REASON_REPLIES" = "%@ replies waiting";
+
+/* Push subtitle `[kind] @sender` — subtitle-loc-key. */
+"PUSH_SUB_MENTION" = "@%@ mentioned you";
+"PUSH_SUB_THREAD_REPLY" = "@%@ replied";
+"PUSH_SUB_ASK" = "Decision · @%@";
+"PUSH_SUB_FAIL" = "Failed · @%@";
+"PUSH_SUB_GATE" = "Sign-in needed · @%@";
+"PUSH_SUB_DONE" = "Done · @%@";
+"PUSH_SUB_REPLIES" = "%1$@ replies · @%2$@";

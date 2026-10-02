@@ -47,6 +47,7 @@ afterAll(async () => { await app.close(); await stop(); });
 beforeEach(async () => {
   sent.length = 0; logs.length = 0; reply = { status: 200 };
   await pool.query(`delete from push_job`);
+  await pool.query(`delete from push_thread_sound`);
   await pool.query(`update inbox set read_at = now() where read_at is null`);
 });
 
@@ -76,10 +77,12 @@ describe('보내기 직전 다시 확인 (G1·G2)', () => {
     await due(); await sweeper().sweep();
     expect(sent).toHaveLength(1);
     const p = sent[0]!.payload as { aps: { alert: Record<string, string>; badge: number }; hk: Record<string, unknown> };
-    expect(p.aps.alert).toEqual({ title: '@pushbot · #push-ch', 'loc-key': 'PUSH_REASON_MENTION' });
+    expect(p.aps.alert).toEqual({ title: '#push-ch', 'subtitle-loc-key': 'PUSH_SUB_MENTION', 'subtitle-loc-args': ['pushbot'], 'loc-key': 'PUSH_REASON_MENTION' });
     expect(p.aps.badge).toBe(1);
     expect(p.hk).toEqual({ v: 1, accountId: adminId, messageId: id, channelId, threadRootId: null });
     expect(sent[0]!.collapseId).toBe(id);
+    // 다른 스레드에서 에이전트가 부름 — 사람의 부름과 같이 소리 내는 active, 묶음은 그 글(앞으로의 스레드 루트).
+    expect(p.aps).toMatchObject({ sound: 'default', 'interruption-level': 'active', 'thread-id': id });
     expect(JSON.stringify(p)).not.toContain('xyz');
     expect(await jobs()).toEqual([]);
   });
@@ -91,7 +94,7 @@ describe('보내기 직전 다시 확인 (G1·G2)', () => {
     await register(adminToken, { badge: true });
     const aps = (sent[0]!.payload as { aps: Record<string, unknown> }).aps;
     expect(aps).not.toHaveProperty('badge');
-    expect(aps.alert).toEqual({ title: '@pushbot · #push-ch', 'loc-key': 'PUSH_REASON_MENTION' });
+    expect(aps.alert).toEqual({ title: '#push-ch', 'subtitle-loc-key': 'PUSH_SUB_MENTION', 'subtitle-loc-args': ['pushbot'], 'loc-key': 'PUSH_REASON_MENTION' });
   });
 
   it('그 사이에 읽었으면 보내지 않는다', async () => {
@@ -161,7 +164,7 @@ describe('보내기 직전 다시 확인 (G1·G2)', () => {
     await pool.query(`update message set body = $2 where id = $1`, [id, `<@${adminId}> 고친 글`]);
     await due(); await sweeper().sweep();
     await register(adminToken, { preview: false });
-    expect((sent[0]!.payload as { aps: { alert: unknown } }).aps.alert).toEqual({ title: '@pushbot · #push-ch', body: '@admin 고친 글' });
+    expect((sent[0]!.payload as { aps: { alert: unknown } }).aps.alert).toEqual({ title: '#push-ch', 'subtitle-loc-key': 'PUSH_SUB_MENTION', 'subtitle-loc-args': ['pushbot'], body: '@admin 고친 글' });
   });
 
   it('미리보기에 그 에이전트의 비밀이 들어 있으면 본문을 빼고 사유만 보낸다', async () => {
@@ -240,7 +243,94 @@ describe('ask (G4)', () => {
     await enqueueAskPush(pool, memberId, id);
     expect(await jobs()).toEqual([{ reason: 'ask', attempts: 0, device_id: null }]);
     await due(); await sweeper().sweep();
-    expect((sent[0]!.payload as { aps: { alert: Record<string, string> } }).aps.alert['loc-key']).toBe('PUSH_REASON_ASK');
+    const askAps = (sent[0]!.payload as { aps: { alert: Record<string, string>; 'interruption-level': string } }).aps;
+    expect(askAps.alert['loc-key']).toBe('PUSH_REASON_ASK');
+    expect(askAps.alert['subtitle-loc-key']).toBe('PUSH_SUB_ASK');
+    expect(askAps['interruption-level']).toBe('time-sensitive');
+    expect(sent[0]!.collapseId).toBe(`ask:${id}`);
+  });
+});
+
+describe('종류별 규칙 (P1 — harkroom://message/5afd59e0-9e38-4273-8e9a-2aebcc426d55)', () => {
+  type Aps = { alert: Record<string, unknown>; sound?: string; badge?: number; 'interruption-level': string; 'thread-id': string };
+  const aps = (i: number) => (sent[i]!.payload as { aps: Aps }).aps;
+  /** admin 이 연 스레드. */
+  async function myThread(): Promise<string> {
+    const posted = await postMessage(pool, { channelId, authorId: adminId, body: '이것 좀 해 줘', threadRootId: null, meta: {} });
+    return (posted as { message: { id: string } }).message.id;
+  }
+  const reply = async (root: string, body: string, meta: Record<string, unknown> = {}) => {
+    const posted = await postMessage(pool, { channelId, authorId: botId, body, threadRootId: root, meta });
+    return (posted as { message: { id: string } }).message.id;
+  };
+
+  it('내 스레드의 에이전트 답은 부름이 아니라 "답 N" — 60초 뒤, 한 장을 갈아쓰고 10분에 첫 한 번만 운다', async () => {
+    const root = await myThread();
+    await reply(root, '@admin 첫 답');
+    const r = await pool.query(`select not_before > now() + interval '50 seconds' as later from push_job`);
+    expect(r.rows).toEqual([{ later: true }]);
+    await due(); await sweeper().sweep();
+    await reply(root, '@admin 둘째 답');
+    await due(); await sweeper().sweep();
+    expect(sent).toHaveLength(2);
+    expect(aps(0).alert).toEqual({
+      title: '#push-ch', 'subtitle-loc-key': 'PUSH_SUB_REPLIES', 'subtitle-loc-args': ['1', 'pushbot'],
+      'loc-key': 'PUSH_REASON_REPLIES', 'loc-args': ['1'],
+    });
+    expect(aps(0)).toMatchObject({ sound: 'default', 'interruption-level': 'active', 'thread-id': root });
+    expect(aps(1).alert).toMatchObject({ 'subtitle-loc-args': ['2', 'pushbot'], 'loc-args': ['2'] });
+    expect(aps(1)).not.toHaveProperty('sound');
+    expect(aps(1)['interruption-level']).toBe('passive');
+    expect(sent.map((x) => x.collapseId)).toEqual([`reply:${root}`, `reply:${root}`]);
+    // 배지: 같은 스레드의 답 둘은 하나로 센다.
+    expect(aps(1).badge).toBe(1);
+  });
+
+  it('10분이 지나면 다시 한 번 운다', async () => {
+    const root = await myThread();
+    await reply(root, '@admin 답');
+    await due(); await sweeper().sweep();
+    await pool.query(`update push_thread_sound set sounded_at = now() - interval '11 minutes'`);
+    await reply(root, '@admin 한참 뒤 답');
+    await due(); await sweeper().sweep();
+    expect(aps(1)).toMatchObject({ sound: 'default', 'interruption-level': 'active' });
+  });
+
+  it('실패는 "실패" — 15초, 소리 + time-sensitive, 글마다 따로 남는다', async () => {
+    const root = await myThread();
+    const id = await reply(root, '@admin 못 끝냈다', { kind: 'failure', failure: { retryable: true } });
+    const r = await pool.query(`select not_before < now() + interval '20 seconds' as soon from push_job`);
+    expect(r.rows).toEqual([{ soon: true }]);
+    await due(); await sweeper().sweep();
+    expect(aps(0).alert).toEqual({
+      title: '#push-ch', 'subtitle-loc-key': 'PUSH_SUB_FAIL', 'subtitle-loc-args': ['pushbot'], 'loc-key': 'PUSH_REASON_FAIL',
+    });
+    expect(aps(0)).toMatchObject({ sound: 'default', 'interruption-level': 'time-sensitive', 'thread-id': root });
+    expect(sent[0]!.collapseId).toBe(`fail:${id}`);
+  });
+
+  it('로그인 관문 실패는 "로그인 필요"', async () => {
+    const root = await myThread();
+    await reply(root, '@admin 로그인', { kind: 'failure', failure: { retryable: true, code: 'account_gate' } });
+    await due(); await sweeper().sweep();
+    expect(aps(0).alert).toMatchObject({ 'subtitle-loc-key': 'PUSH_SUB_GATE', 'loc-key': 'PUSH_REASON_GATE' });
+    expect(aps(0)['interruption-level']).toBe('time-sensitive');
+  });
+
+  it('완료 보고는 "완료" — 소리 있는 active, 답과 같은 한 장을 갈아쓴다', async () => {
+    const root = await myThread();
+    await reply(root, '@admin 끝났다', { kind: 'report', report: { checks: ['ok'] } });
+    await due(); await sweeper().sweep();
+    expect(aps(0).alert).toMatchObject({ 'subtitle-loc-key': 'PUSH_SUB_DONE', 'loc-key': 'PUSH_REASON_DONE' });
+    expect(aps(0)).toMatchObject({ sound: 'default', 'interruption-level': 'active' });
+    expect(sent[0]!.collapseId).toBe(`reply:${root}`);
+  });
+
+  it('미리보기가 꺼져 있으면 스레드 제목(루트 본문)도 싣지 않는다', async () => {
+    const root = await myThread();
+    await reply(root, '@admin 답');
+    await due(); await sweeper().sweep();
+    expect(JSON.stringify(sent[0]!.payload)).not.toContain('이것 좀');
   });
 });
 
