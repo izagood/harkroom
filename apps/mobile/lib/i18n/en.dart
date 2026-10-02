@@ -412,6 +412,8 @@ class StringsEn implements Strings {
   @override
   String get messageCopyLink => 'Copy link';
   @override
+  String get messageReplyInThread => 'Reply in thread';
+  @override
   String get messageCopyBody => 'Copy text';
   @override
   String get messageLinkCopied => 'Link copied';

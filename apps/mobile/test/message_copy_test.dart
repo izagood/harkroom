@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/api/models.dart';
@@ -131,6 +132,96 @@ void main() {
       await tester.pump();
       expect(find.text('복사하지 못했다'), findsOneWidget);
       expect(find.text('링크를 복사했다'), findsNothing);
+    });
+  });
+
+  group('기능 바 1단계', () {
+    late AppState app;
+    setUp(() {
+      app = AppState(sessions: SessionStore.inMemory());
+      app.accounts[_a1] = const AccountView(
+          id: _a1, handle: 'jaebin', displayName: 'jaebin', isAgent: false, isDisabled: false, avatarAttachmentId: null);
+    });
+
+    Future<void> pump(WidgetTester tester, MessageRow m,
+            {void Function(MessageRow)? open, void Function(MessageRow)? reply}) =>
+        tester.pumpWidget(MaterialApp(
+          theme: harkroomTheme(Brightness.light),
+          home: I18n(
+            strings: stringsFor('ko'),
+            child: AppScope(
+              state: app,
+              child: Scaffold(
+                body: Builder(
+                    builder: (c) => buildFeedItem(c, FeedMessage(m), onOpenThread: open, onReplyInThread: reply)),
+              ),
+            ),
+          ),
+        ));
+
+    testWidgets('채널에서 줄을 탭하면 스레드가 열린다(답글 없는 글도)', (tester) async {
+      final opened = <String>[];
+      await pump(tester, _m('t1'), open: (m) => opened.add(m.id));
+      await tester.tap(find.byKey(const Key('message-press-t1')));
+      expect(opened, ['t1']);
+    });
+
+    testWidgets('스레드 화면 안(onOpenThread 없음)에서는 탭해도 아무 일 없고 시트에 답글 줄이 없다', (tester) async {
+      await pump(tester, _m('t2'));
+      await tester.tap(find.byKey(const Key('message-press-t2')));
+      await tester.longPress(find.byKey(const Key('message-press-t2')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('message-action-reply')), findsNothing);
+      expect(find.byKey(const Key('message-action-copy-link')), findsOneWidget);
+    });
+
+    testWidgets('시트: 리액션 줄이 맨 위, 「스레드에서 답글」은 최상위 글에만', (tester) async {
+      final replied = <String>[];
+      await pump(tester, _m('t3'), open: (_) {}, reply: (m) => replied.add(m.id));
+      await tester.longPress(find.byKey(const Key('message-press-t3')));
+      await tester.pumpAndSettle();
+      for (final e in quickReactions) {
+        expect(find.byKey(Key('message-action-react-$e')), findsOneWidget);
+      }
+      final reactY = tester.getTopLeft(find.byKey(const Key('message-action-react-👍'))).dy;
+      final replyY = tester.getTopLeft(find.byKey(const Key('message-action-reply'))).dy;
+      final linkY = tester.getTopLeft(find.byKey(const Key('message-action-copy-link'))).dy;
+      expect(reactY < replyY && replyY < linkY, isTrue);
+      await tester.tap(find.byKey(const Key('message-action-reply')));
+      await tester.pumpAndSettle();
+      expect(replied, ['t3']);
+    });
+
+    testWidgets('답글(threadRootId 있음)에는 「스레드에서 답글」이 없다', (tester) async {
+      await pump(tester, _m('t4', threadRootId: 'root'), open: (_) {}, reply: (_) {});
+      await tester.longPress(find.byKey(const Key('message-press-t4')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('message-action-reply')), findsNothing);
+    });
+
+    testWidgets('시트가 떠 있는 동안 누른 줄을 칠하고, 닫으면 지운다', (tester) async {
+      await pump(tester, _m('t5'), open: (_) {});
+      Color? fill() => tester
+          .widget<Material>(find.ancestor(of: find.byKey(const Key('message-press-t5')), matching: find.byType(Material)).first)
+          .color;
+      expect(fill(), Colors.transparent);
+      await tester.longPress(find.byKey(const Key('message-press-t5')));
+      await tester.pumpAndSettle();
+      expect(fill(), isNot(Colors.transparent));
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+      expect(fill(), Colors.transparent);
+    });
+
+    testWidgets('VoiceOver 사용자 지정 동작: 답글·링크·본문', (tester) async {
+      final handle = tester.ensureSemantics();
+      await pump(tester, _m('t6'), open: (_) {}, reply: (_) {});
+      final data = tester.getSemantics(find.byKey(const Key('message-press-t6'))).getSemanticsData();
+      final labels = (data.customSemanticsActionIds ?? const <int>[])
+          .map((id) => CustomSemanticsAction.getAction(id)!.label)
+          .toList();
+      expect(labels, containsAll(['스레드에서 답글', '링크 복사', '본문 복사']));
+      handle.dispose();
     });
   });
 

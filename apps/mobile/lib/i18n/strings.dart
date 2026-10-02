@@ -64,6 +64,9 @@ abstract class Strings {
   /// 리액션 줄 끝의 「이모지 달기」 칩의 접근성 이름.
   String get reactionAdd;
 
+  /// 같은 시트: 스레드를 열고 작성칸에 키보드를 올린다(채널의 최상위 글만).
+  String get messageReplyInThread;
+
   /// 메시지를 길게 눌러 여는 시트: `harkroom://message/<id>` 링크 복사.
   String get messageCopyLink;
 
@@ -801,6 +804,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'commonRetry': s.commonRetry,
       'attachmentAdd': s.attachmentAdd,
       'reactionAdd': s.reactionAdd,
+      'messageReplyInThread': s.messageReplyInThread,
       'messageCopyLink': s.messageCopyLink,
       'messageCopyBody': s.messageCopyBody,
       'messageLinkCopied': s.messageLinkCopied,

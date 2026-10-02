@@ -203,11 +203,21 @@ class _MessageListScreenState extends State<MessageListScreen> {
                           : buildFeedItem(
                         context,
                         feed[feed.length - 1 - (i - failed.length)],
+                        // 채널에 올라온 답글(alsoInChannel)은 그 원글의 스레드로 간다.
                         onOpenThread: (m) => Navigator.of(context).push(
                           MaterialPageRoute<void>(
                             builder: (_) => ThreadScreen(
                               channelId: widget.channelId,
+                              rootId: m.threadRootId ?? m.id,
+                            ),
+                          ),
+                        ),
+                        onReplyInThread: (m) => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => ThreadScreen(
+                              channelId: widget.channelId,
                               rootId: m.id,
+                              focusComposer: true,
                             ),
                           ),
                         ),
@@ -275,6 +285,7 @@ Widget buildFeedItem(
   BuildContext context,
   FeedItem item, {
   void Function(MessageRow)? onOpenThread,
+  void Function(MessageRow)? onReplyInThread,
   Widget Function(Widget row)? mark,
 }) {
   if (item is FeedProgressRun) return ProgressRow(run: item.run);
@@ -304,6 +315,8 @@ Widget buildFeedItem(
       continued: feed.continued,
       card: card,
       onOpenThread: onOpenThread == null ? null : () => onOpenThread(m),
+      // 「스레드에서 답글」은 **최상위 글**에만 — 답글(채널에 올라온 것 포함)은 이미 어느 스레드의 말이다.
+      onReplyInThread: onReplyInThread == null || m.threadRootId != null ? null : () => onReplyInThread(m),
     );
   }
   // 찾은 줄 강조(`mark`)는 **줄에만** 씌운다 — 날짜 구분선까지 감싸면 구분선이 함께 번쩍여

@@ -411,6 +411,8 @@ class StringsKo implements Strings {
   @override
   String get messageCopyLink => '링크 복사';
   @override
+  String get messageReplyInThread => '스레드에서 답글';
+  @override
   String get messageCopyBody => '본문 복사';
   @override
   String get messageLinkCopied => '링크를 복사했다';
