@@ -31,8 +31,8 @@ describe('repo.merge grant', () => {
     return id;
   };
   /** 이 에이전트(또는 다른 에이전트)가 세운 선택 카드에 누군가 답한 상태 — `ask_answered` 로 깨어난 턴의 cause. */
-  const askCard = async (answeredBy: string | null, cardAuthor = agentId, forAgent = agentId): Promise<string> => {
-    const ask = { prompt: 'merge?', options: [{ id: 'yes', label: 'yes' }], ...(answeredBy ? { answeredWith: 'yes', answeredBy, answeredAt: new Date().toISOString() } : {}) };
+  const askCard = async (answeredBy: string | null, cardAuthor = agentId, forAgent = agentId, mirrorOf: string | null = null): Promise<string> => {
+    const ask = { prompt: 'merge?', options: [{ id: 'yes', label: 'yes' }], ...(mirrorOf ? { mirrorOf } : {}), ...(answeredBy ? { answeredWith: 'yes', answeredBy, answeredAt: new Date().toISOString() } : {}) };
     const m = await pool.query(
       `insert into message (channel_id, author_id, body, kind, meta) values ($1, $2, 'merge?', 'user', $3) returning id`,
       [ch, cardAuthor, JSON.stringify({ kind: 'ask', ask })]);
@@ -154,6 +154,15 @@ describe('repo.merge grant', () => {
       expect((await check(await lease(await askCard(alice.accountId, otherAgentId)))).json().error.code).toBe('cause_not_human');
       // 답한 사람이 사람이 아니면(에이전트 id 를 적어 넣어도) 아니다.
       expect((await check(await lease(await askCard(otherAgentId)))).json().error.code).toBe('cause_not_human');
+    });
+    it('③ F1: 남의 카드에 건 거울은 cause 가 아니다 — 소유자가 원본에 답해 거울이 answeredBy 를 물려받아도 cause_not_human', async () => {
+      // A(otherAgent)의 사람 카드에 B(이 에이전트)가 거울을 걸었다. syncAskMirrors 가 그 모양 그대로 만든다:
+      // 거울 작성자 = B, answeredBy = 소유자(원본에서 복사), B 는 거울 id 로 ask_answered 를 받는다.
+      const original = await askCard(alice.accountId, otherAgentId, otherAgentId);
+      const mirror = await askCard(alice.accountId, agentId, agentId, original);
+      const res = await check(await lease(mirror));
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('cause_not_human');
     });
     it('임대가 틀리거나 끝났으면 lease_invalid, 저장소 모양이 틀리면 400, 권한 없는 저장소는 not_granted', async () => {
       const l = await lease(await mention(alice.accountId));
