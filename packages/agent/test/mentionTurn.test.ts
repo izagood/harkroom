@@ -3268,6 +3268,62 @@ describe('턴의 끝 — 발화 + 관찰자 없음 (2026-09-08)', () => {
     expect(fake.posts.map((p) => p.body)).toEqual([NO_REPLY_NOTICE]);
   });
 
+  /**
+   * 끝난 턴의 즉시 회수(2026-10-02). 60초 유예는 같은 스레드의 다음 멘션을 그만큼 기다리게 했다
+   * (스레드당 턴 하나) — 끝났고 자식 작업이 0 으로 확인된 턴만 바로 거둔다.
+   * 되돌려 RED: `reconsiderEnd` 가 `pending` 을 안 보고 늘 `orphanMs` 를 쓰면 첫 시험이 유예(2초)를
+   * 다 기다려 시간 단언이 깨지고, `pending` 을 무시하고 늘 바로 거두면 둘째·셋째 시험이 깨진다.
+   */
+  it('end_turn 뒤 자식 작업이 없으면(pending 0) 유예 없이 바로 거둔다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 확인해 줘');
+    const t = tuiScript(() => {}, 5_000);
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 2_000, readTurnState: async () => 'ended', readPendingBackground: async () => 0,
+      harnessStallMs: 0, readTranscriptMtime: async () => null,
+    });
+    runTurn.script = t.script;
+
+    const started = Date.now();
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(t.killed()).toBe('SIGTERM');
+    expect(Date.now() - started).toBeLessThan(1_000);
+    // 회수로 끝난 정상 턴이다(실패 카드가 아니다).
+    expect(fake.posts.map((p) => p.body)).toEqual([NO_REPLY_NOTICE]);
+  });
+
+  it('end_turn 뒤 서브에이전트가 남아 있으면(pending > 0) 지금처럼 유예한다 — 10-01 사고의 재발 방지', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 확인해 줘');
+    const t = tuiScript(() => {}, 5_000);
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 150, readTurnState: async () => 'ended', readPendingBackground: async () => 2,
+      harnessStallMs: 0, readTranscriptMtime: async () => null,
+    });
+    runTurn.script = t.script;
+
+    const started = Date.now();
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(t.killed()).toBe('SIGTERM');
+    expect(Date.now() - started).toBeGreaterThanOrEqual(150);
+  });
+
+  it('자식 작업 수를 모르면(null) 유예한다 — 모르는 것을 "없다"로 읽지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 확인해 줘');
+    const t = tuiScript(() => {}, 5_000);
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 150, readTurnState: async () => 'ended', readPendingBackground: async () => null,
+      harnessStallMs: 0, readTranscriptMtime: async () => null,
+    });
+    runTurn.script = t.script;
+
+    const started = Date.now();
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(t.killed()).toBe('SIGTERM');
+    expect(Date.now() - started).toBeGreaterThanOrEqual(150);
+  });
+
   it('발화 뒤 꼬리가 working 이어도 기록·화면이 정지 한도만큼 멈추면 끝난 것으로 본다 — 답한 턴이 영원히 살지 않는다', async () => {
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
