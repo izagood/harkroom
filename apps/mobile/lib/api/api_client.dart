@@ -109,8 +109,21 @@ class ApiClient {
 
   /// 이 기기의 APNs 토큰을 지금 세션에 묶는다(서버 0.3.144~, `PUT /push/devices`). 다시 불러도 한 행이다.
   /// 사람 로그인 세션만 받는다 — 서버가 다른 자격증명이면 403 `push_session_only` 를 준다.
-  Future<void> registerPushDevice({required String token, required String env}) async {
-    await _send('PUT', '/push/devices', body: {'token': token, 'platform': 'ios', 'env': env});
+  ///
+  /// [badge] 가 있으면 `prefs.badge` 로 싣는다(서버 #1088~). 그 키를 모르는 옛 서버는 prefs 가 strict 라 400 을
+  /// 준다 — 그때는 prefs 없이 한 번 더 등록한다. 등록이 배지 설정 하나 때문에 깨지지 않게.
+  Future<void> registerPushDevice({required String token, required String env, bool? badge}) async {
+    final body = {'token': token, 'platform': 'ios', 'env': env};
+    if (badge == null) {
+      await _send('PUT', '/push/devices', body: body);
+      return;
+    }
+    try {
+      await _send('PUT', '/push/devices', body: {...body, 'prefs': {'badge': badge}});
+    } on ApiError catch (e) {
+      if (e.status != 400) rethrow;
+      await _send('PUT', '/push/devices', body: body);
+    }
   }
 
   /// 지금 세션에 묶인 이 기기의 푸시 등록을 푼다. 로그아웃은 서버 세션이 지워지며 함께 풀리지만,

@@ -598,4 +598,25 @@ class StringsEn implements Strings {
 
   @override
   String get pushPromptLater => 'Not now';
+
+  @override
+  String get pushSection => 'Notifications';
+
+  @override
+  String get pushNotAsked => 'Not turned on yet';
+
+  @override
+  String get pushTurnOn => 'Turn on';
+
+  @override
+  String get pushDenied => 'Turned off in iOS Settings';
+
+  @override
+  String get pushOpenSettings => 'Open iOS Settings';
+
+  @override
+  String get pushCommunityOn => 'Notifications on';
+
+  @override
+  String get pushCommunityOff => 'Notifications off';
 }

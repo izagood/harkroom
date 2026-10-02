@@ -99,7 +99,10 @@ class _HarkroomAppState extends State<HarkroomApp> {
       darkTheme: harkroomTheme(Brightness.dark),
       builder: (context, child) => I18n(
         strings: stringsFor(Localizations.localeOf(context).languageCode),
-        child: AppScope(state: widget.state, child: child ?? const SizedBox.shrink()),
+        child: AppScope(
+          state: widget.state,
+          child: PushScope(push: widget.push, child: child ?? const SizedBox.shrink()),
+        ),
       ),
       home: _Root(push: widget.push),
     );

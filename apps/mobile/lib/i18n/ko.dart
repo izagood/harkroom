@@ -597,4 +597,25 @@ class StringsKo implements Strings {
 
   @override
   String get pushPromptLater => '나중에';
+
+  @override
+  String get pushSection => '알림';
+
+  @override
+  String get pushNotAsked => '아직 켜지 않았어요';
+
+  @override
+  String get pushTurnOn => '켜기';
+
+  @override
+  String get pushDenied => 'iOS 설정에서 꺼져 있어요';
+
+  @override
+  String get pushOpenSettings => 'iOS 설정 열기';
+
+  @override
+  String get pushCommunityOn => '알림 받음';
+
+  @override
+  String get pushCommunityOff => '알림 끔';
 }

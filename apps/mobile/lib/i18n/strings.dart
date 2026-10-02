@@ -615,6 +615,27 @@ abstract class Strings {
 
   /// 지금은 묻지 않는다. 다시 띄우지 않는다.
   String get pushPromptLater;
+
+  /// 나 화면의 알림 절 머리.
+  String get pushSection;
+
+  /// 권한을 아직 묻지 않았을 때 「알림」 줄의 설명.
+  String get pushNotAsked;
+
+  /// OS 권한 창을 띄우는 버튼.
+  String get pushTurnOn;
+
+  /// 권한이 거부됐을 때 「알림」 줄의 설명.
+  String get pushDenied;
+
+  /// iOS 설정 앱의 이 앱 화면으로 보내는 버튼.
+  String get pushOpenSettings;
+
+  /// 커뮤니티별 알림 스위치가 켜져 있을 때의 설명.
+  String get pushCommunityOn;
+
+  /// 커뮤니티별 알림 스위치가 꺼져 있을 때의 설명.
+  String get pushCommunityOff;
 }
 
 /// **영어와 같아도 되는 키.** 고유명사처럼 번역이 존재하지 않는 것들이다.
@@ -839,4 +860,11 @@ Map<String, String> stringsToMap(Strings s) => {
       'pushPromptBody': s.pushPromptBody,
       'pushPromptEnable': s.pushPromptEnable,
       'pushPromptLater': s.pushPromptLater,
+      'pushSection': s.pushSection,
+      'pushNotAsked': s.pushNotAsked,
+      'pushTurnOn': s.pushTurnOn,
+      'pushDenied': s.pushDenied,
+      'pushOpenSettings': s.pushOpenSettings,
+      'pushCommunityOn': s.pushCommunityOn,
+      'pushCommunityOff': s.pushCommunityOff,
     };

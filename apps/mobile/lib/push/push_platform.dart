@@ -34,6 +34,10 @@ abstract class PushPlatform {
 
   Future<void> openSettings();
 
+  /// 푸시를 끈 커뮤니티의 열쇠들(이 기기에만 남는다). 서버에는 등록을 푸는 것으로 알린다.
+  Future<Set<String>> mutedCommunities();
+  Future<void> setMutedCommunities(Set<String> keys);
+
   /// 앱이 떠 있는 동안 누른 알림의 `hk`, 그리고 앞에 떠 있을 때 온 알림을 보일지 묻는 물음.
   /// `shouldPresent` 가 `false` 를 주면 배너를 숨긴다.
   void listen({
@@ -82,6 +86,14 @@ class MethodChannelPush implements PushPlatform {
 
   @override
   Future<void> openSettings() => _ch.invokeMethod<void>('openSettings');
+
+  @override
+  Future<Set<String>> mutedCommunities() async =>
+      ((await _ch.invokeMethod<List<Object?>>('mutedCommunities')) ?? const []).whereType<String>().toSet();
+
+  @override
+  Future<void> setMutedCommunities(Set<String> keys) =>
+      _ch.invokeMethod<void>('setMutedCommunities', keys.toList());
 
   @override
   void listen({
