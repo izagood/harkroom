@@ -9,8 +9,8 @@
 --   판은 "최근 5판" 계산에서 따로 센다(서비스 `pruneRevisions`) — 정리 한 바퀴가 되돌릴 판을 밀어내면
 --   안 된다. detail 은 merge 의 `{from: [...]}` 처럼 되돌리기·측정(gold 재매핑)에 쓰는 사실이다.
 -- - 보관 상한(서비스 `MAX_ARCHIVED_MEMORIES_PER_ACCOUNT`, security F2): 보관은 200 상한 밖이라 끝없이 쌓일 수 있다.
-  넘치면 가장 오래 보관된 것부터 이전 판으로 옮기며 지운다 — journal 자르기와 같은 규칙.
-- memory_lease: 정리 턴은 계정당 하나다. 주간 automation 과 경고를 본 턴이 같은 계정을 동시에 정리하면
+--   넘치면 가장 오래 보관된 것부터 이전 판으로 옮기며 지운다 — journal 자르기와 같은 규칙.
+-- - memory_lease: 정리 턴은 계정당 하나다. 주간 automation 과 경고를 본 턴이 같은 계정을 동시에 정리하면
 --   한쪽의 merge 가 다른 쪽의 ifUpdatedAt 을 계속 깨뜨린다. 임대는 사실만 적고 강제하지 않는다 —
 --   `memory.lease` 가 "다른 턴이 정리 중"이라고 알려 주면 에이전트가 물러난다.
 alter table agent_memory add column archived_at timestamptz;
