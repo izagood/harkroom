@@ -107,6 +107,18 @@ class ApiClient {
     await _send('POST', '/auth/logout');
   }
 
+  /// 이 기기의 APNs 토큰을 지금 세션에 묶는다(서버 0.3.144~, `PUT /push/devices`). 다시 불러도 한 행이다.
+  /// 사람 로그인 세션만 받는다 — 서버가 다른 자격증명이면 403 `push_session_only` 를 준다.
+  Future<void> registerPushDevice({required String token, required String env}) async {
+    await _send('PUT', '/push/devices', body: {'token': token, 'platform': 'ios', 'env': env});
+  }
+
+  /// 지금 세션에 묶인 이 기기의 푸시 등록을 푼다. 로그아웃은 서버 세션이 지워지며 함께 풀리지만,
+  /// 그 요청이 실패해도 이것이 먼저 닿게 따로 부른다.
+  Future<void> unregisterPushDevice() async {
+    await _send('DELETE', '/push/devices/current');
+  }
+
   /// 서버 릴리스 번호(`/healthz` 의 `version`). 인증 없이 읽힌다. 모르면 `null`.
   Future<String?> serverVersion() async {
     final v = _obj(await _send('GET', '/healthz'))['version'];

@@ -602,6 +602,19 @@ abstract class Strings {
 
   /// 에이전트 계정임을 나타내는 짧은 표. 사람과 갈라 보여야 누구를 부르는지 안다.
   String get agentBadge;
+
+  // ── 푸시 알림 ──────────────────────────────────────────────────────────
+  /// 첫 로그인 뒤 한 번 뜨는 안내 시트의 제목. OS 권한 창보다 먼저 이유를 말한다.
+  String get pushPromptTitle;
+
+  /// 안내 시트 본문. 무엇이 울리는지(부를 때·답할 때)만 말한다.
+  String get pushPromptBody;
+
+  /// OS 권한 창을 띄우는 버튼.
+  String get pushPromptEnable;
+
+  /// 지금은 묻지 않는다. 다시 띄우지 않는다.
+  String get pushPromptLater;
 }
 
 /// **영어와 같아도 되는 키.** 고유명사처럼 번역이 존재하지 않는 것들이다.
@@ -822,4 +835,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'connectionDead': s.connectionDead,
       'noticeSessionNotSaved': s.noticeSessionNotSaved,
       'agentBadge': s.agentBadge,
+      'pushPromptTitle': s.pushPromptTitle,
+      'pushPromptBody': s.pushPromptBody,
+      'pushPromptEnable': s.pushPromptEnable,
+      'pushPromptLater': s.pushPromptLater,
     };

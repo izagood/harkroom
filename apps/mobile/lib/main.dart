@@ -3,6 +3,9 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'connect/connect_screen.dart';
 import 'i18n/i18n.dart';
+import 'push/push_coordinator.dart';
+import 'push/push_gate.dart';
+import 'push/push_platform.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'session/session_store.dart';
@@ -11,17 +14,23 @@ import 'state/app_state.dart';
 import 'theme.dart';
 import 'ui/states.dart';
 
-void main() => runApp(HarkroomApp(state: AppState(sessions: SessionStore.keychain())));
+void main() {
+  final state = AppState(sessions: SessionStore.keychain());
+  runApp(HarkroomApp(state: state, push: PushCoordinator(state, MethodChannelPush())));
+}
 
 /// 앱 루트.
 ///
 /// **오퍼레이터가 아니라 대화 클라이언트다**(계획서 §1) — 이 앱은 에이전트를 돌리지
 /// 않고 부른다. 터미널·러너 제어·Claude 계정은 여기 들어오지 않는다.
 class HarkroomApp extends StatefulWidget {
-  const HarkroomApp({super.key, required this.state});
+  const HarkroomApp({super.key, required this.state, this.push});
 
   /// 시험이 바꿔 끼운다(메모리 보관소 + 가짜 소켓).
   final AppState state;
+
+  /// 푸시(`lib/push/`). 없으면(시험) 푸시 없이 돈다.
+  final PushCoordinator? push;
 
   @override
   State<HarkroomApp> createState() => _HarkroomAppState();
@@ -86,7 +95,7 @@ class _HarkroomAppState extends State<HarkroomApp> {
         strings: stringsFor(Localizations.localeOf(context).languageCode),
         child: AppScope(state: widget.state, child: child ?? const SizedBox.shrink()),
       ),
-      home: const _Root(),
+      home: _Root(push: widget.push),
     );
   }
 }
@@ -96,14 +105,16 @@ class _HarkroomAppState extends State<HarkroomApp> {
 /// 각 화면이 스스로 다음 화면으로 `Navigator.push` 하게 두면, 부팅으로 들어온 경로와
 /// 로그인으로 들어온 경로가 갈라지고 둘 중 하나에만 있는 버그가 생긴다.
 class _Root extends StatelessWidget {
-  const _Root();
+  const _Root({this.push});
+
+  final PushCoordinator? push;
 
   @override
   Widget build(BuildContext context) => switch (context.app.phase) {
         AppPhase.booting => const _Booting(),
         AppPhase.needsServer => const ConnectScreen(),
         AppPhase.needsLogin => const LoginScreen(),
-        AppPhase.ready => const HomeScreen(),
+        AppPhase.ready => PushGate(push: push, child: const HomeScreen()),
         AppPhase.unreachable => const _Unreachable(),
       };
 }
