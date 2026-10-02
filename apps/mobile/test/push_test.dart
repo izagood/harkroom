@@ -87,6 +87,11 @@ class _FakePush implements PushPlatform {
   Future<Set<String>> mutedCommunities() async => {...mutedStore};
   @override
   Future<void> setMutedCommunities(Set<String> keys) async => mutedStore = {...keys};
+  bool previewStore = false;
+  @override
+  Future<bool> showPreview() async => previewStore;
+  @override
+  Future<void> setShowPreview(bool on) async => previewStore = on;
   PushPermission perm = PushPermission.notDetermined;
   bool grant = true;
   bool prompted = false;
@@ -191,7 +196,7 @@ void main() {
       await c.sync();
       await c.sync();
       // 커뮤니티가 둘이라 서버 배지는 끈다(M4 배지 a).
-      expect(acme.pushCalls, ['PUT /push/devices {"token":"ab","platform":"ios","env":"sandbox","prefs":{"badge":false}}']);
+      expect(acme.pushCalls, ['PUT /push/devices {"token":"ab","platform":"ios","env":"sandbox","prefs":{"badge":false,"preview":false}}']);
       expect(beta.pushCalls, hasLength(1));
     });
 
@@ -202,14 +207,29 @@ void main() {
       await c.sync();
       await c.setCommunityEnabled('$_betaUrl#$_b', false);
       expect(beta.pushCalls.last, 'DELETE /push/devices/current');
-      expect(acme.pushCalls.last, endsWith('"prefs":{"badge":true}}'));
+      expect(acme.pushCalls.last, endsWith('"prefs":{"badge":true,"preview":false}}'));
       expect(push.mutedStore, {'$_betaUrl#$_b'});
       final betaCount = beta.pushCalls.length;
       await c.sync();
       expect(beta.pushCalls.length, betaCount);
       await c.setCommunityEnabled('$_betaUrl#$_b', true);
       expect(beta.pushCalls.last, startsWith('PUT'));
-      expect(acme.pushCalls.last, endsWith('"prefs":{"badge":false}}'));
+      expect(acme.pushCalls.last, endsWith('"prefs":{"badge":false,"preview":false}}'));
+    });
+
+    test('「내용 미리보기」를 켜면 기기에 적고 모든 커뮤니티에 preview 를 실어 다시 등록한다', () async {
+      await boot();
+      push.perm = PushPermission.authorized;
+      final c = PushCoordinator(app, push);
+      await c.sync();
+      await c.setPreview(true);
+      expect(push.previewStore, isTrue);
+      expect(acme.pushCalls.last, endsWith('"prefs":{"badge":false,"preview":true}}'));
+      expect(beta.pushCalls.last, endsWith('"preview":true}}'));
+      // 다음 실행은 기기에 적힌 값으로 시작한다.
+      final next = PushCoordinator(app, push);
+      await next.start();
+      expect(next.preview, isTrue);
     });
 
     test('옛 서버가 prefs 를 400 으로 거절하면 prefs 없이 다시 등록한다', () async {
@@ -416,6 +436,21 @@ void main() {
       await tester.pump();
       expect(fake.mutedStore, {'$_acmeUrl#$_a'});
       expect(find.text('알림 끔'), findsOneWidget);
+    });
+
+    testWidgets('「내용 미리보기」는 기본 꺼짐이고 누르면 켜진다', (tester) async {
+      final fake = await pumpMe(tester, PushPermission.authorized);
+      final tile = find.byKey(const Key('me-push-preview'));
+      expect(tester.widget<SwitchListTile>(tile).value, isFalse);
+      await tester.tap(tile);
+      await tester.pump();
+      expect(fake.previewStore, isTrue);
+      expect(tester.widget<SwitchListTile>(tile).value, isTrue);
+    });
+
+    testWidgets('권한이 없으면 「내용 미리보기」를 보이지 않는다', (tester) async {
+      await pumpMe(tester, PushPermission.denied);
+      expect(find.byKey(const Key('me-push-preview')), findsNothing);
     });
   });
 

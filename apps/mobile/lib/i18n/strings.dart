@@ -665,6 +665,12 @@ abstract class Strings {
   /// 커뮤니티별 알림 스위치가 꺼져 있을 때의 설명.
   String get pushCommunityOff;
 
+  /// 알림에 글 내용을 싣는 스위치의 이름(나 › 알림).
+  String get pushPreview;
+
+  /// 그 스위치의 설명 — 켜면 내용이 Apple 을 지난다는 것을 말한다.
+  String get pushPreviewHint;
+
   // ── 찾기 ─────────────────────────────────────────────────────────────
   /// 메시지 찾기를 여는 버튼(탭 막대 오른쪽·채널/스레드 머리)의 이름.
   String get searchButton;
@@ -954,6 +960,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'pushOpenSettings': s.pushOpenSettings,
       'pushCommunityOn': s.pushCommunityOn,
       'pushCommunityOff': s.pushCommunityOff,
+      'pushPreview': s.pushPreview,
+      'pushPreviewHint': s.pushPreviewHint,
       'searchButton': s.searchButton,
       'searchHint': s.searchHint,
       'searchCancel': s.searchCancel,

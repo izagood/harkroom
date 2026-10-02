@@ -38,6 +38,10 @@ abstract class PushPlatform {
   Future<Set<String>> mutedCommunities();
   Future<void> setMutedCommunities(Set<String> keys);
 
+  /// 알림에 글 내용(미리보기)을 실을지(이 기기에만 남는다, 기본 꺼짐). 켜면 본문이 Apple 을 지난다.
+  Future<bool> showPreview();
+  Future<void> setShowPreview(bool on);
+
   /// 앱이 떠 있는 동안 누른 알림의 `hk`, 그리고 앞에 떠 있을 때 온 알림을 보일지 묻는 물음.
   /// `shouldPresent` 가 `false` 를 주면 배너를 숨긴다.
   void listen({
@@ -94,6 +98,12 @@ class MethodChannelPush implements PushPlatform {
   @override
   Future<void> setMutedCommunities(Set<String> keys) =>
       _ch.invokeMethod<void>('setMutedCommunities', keys.toList());
+
+  @override
+  Future<bool> showPreview() async => (await _ch.invokeMethod<bool>('showPreview')) ?? false;
+
+  @override
+  Future<void> setShowPreview(bool on) => _ch.invokeMethod<void>('setShowPreview', on);
 
   @override
   void listen({

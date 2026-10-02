@@ -145,6 +145,11 @@ import UserNotifications
     case "setMutedCommunities":
       UserDefaults.standard.set((call.arguments as? [String]) ?? [], forKey: "harkroom.push.muted")
       result(nil)
+    case "showPreview":
+      result(UserDefaults.standard.bool(forKey: "harkroom.push.preview"))
+    case "setShowPreview":
+      UserDefaults.standard.set((call.arguments as? Bool) ?? false, forKey: "harkroom.push.preview")
+      result(nil)
     case "openSettings":
       if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
       result(nil)
