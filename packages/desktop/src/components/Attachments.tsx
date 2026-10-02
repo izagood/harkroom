@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { previewUrlFor } from '../lib/attachmentUploads';
 import type { AttachmentRow } from '@harkroom/shared';
+import type { PendingUpload } from '../state/appStore';
 import { getController } from '../state/controller';
 import { ImageLightbox } from './ImageLightbox';
 import { useT } from '../i18n/useT';
@@ -59,71 +60,150 @@ function useAttachmentUrl(id: string, enabled: boolean): { url: string | null; f
 }
 
 /**
- * 칩 안에 들어가는 작은 미리보기. **이름 옆에 놓이는 그림이므로 alt 는 비운다** — 이름을
- * 두 번 읽히면 스크린리더에서 칩 하나가 파일 두 개처럼 들린다.
+ * 작성창에 붙인 첨부 하나 — **그림은 80×80 타일, 그림이 아닌 것은 같은 높이의 파일 카드**다
+ * (designer 시안 24878e97, jaebin D1~D4 전부 추천). 24px 썸네일 옆에 이름을 늘어놓던 칩은
+ * 미리보기 효과가 거의 없었다 — 스크린샷끼리는 24px 에서 서로 구별되지 않는다.
  *
- * 그릴 수 없으면 📎 로 남되 **"원래 미리보기가 없는 것"과 "받지 못한 것"을 가른다** — 둘을
- * 같은 📎 로 덮으면, 네트워크가 끊겨 그림이 빠진 자리를 사람이 "이 파일은 원래 이렇다"로
- * 읽고 그대로 보낸다. 본문 미리보기가 `(불러오기 실패)` 로 가르는 것과 같은 규칙이다.
+ * - 이름·크기는 **호버·포커스 때만** 그림 아래 띠로 겹친다(`title` 도 단다). 그림을 가리지 않는다.
+ * - × 는 오른쪽 위 모서리에 반쯤 걸친 원이고 **늘 보인다** — 빼기는 자주 하는 일이라 숨기면 못 찾는다.
+ *   그림의 누르는 자리(확대)와 겹치지 않게 타일 밖으로 반 걸친다.
+ * - 올리는 중·실패는 **늘 보인다.** 상태를 호버 뒤로 숨기면 실패한 채로 보낸다.
+ *
+ * 그림은 다 올라간 뒤 **서버의 바이트**로 그린다: 고른 파일이 아니라 실제로 붙은 것을 보여야 한다.
+ * 그 바이트가 올 때까지는 고른 파일로 그린다(올리는 중에는 흐리게) — 안 그러면
+ * `흐린 그림 → 📎 → 그림` 으로 한 번 꺼졌다 켜진다(designer 검토 A).
  */
-export function AttachmentThumb({ attachment, placeholderFile }: {
-  attachment: AttachmentRow;
-  /**
-   * 방금 올린 그 파일. 서버 바이트가 올 때까지 이것으로 그린다 — 작성창 칩이 업로드를 끝낸
-   * 순간 📎 로 꺼졌다 켜지지 않게 한다. 받아 오기가 실패하면 지금처럼 실패를 말한다.
-   */
-  placeholderFile?: File;
+export function PendingAttachmentTile({ upload, onRemove, onRetry }: {
+  upload: PendingUpload;
+  onRemove: () => void;
+  onRetry: () => void;
 }) {
   const t = useT();
-  const previewable = canPreview(attachment);
-  const { url, failed } = useAttachmentUrl(attachment.id, previewable);
-  if (!url && placeholderFile && previewable && !failed) return <LocalFileThumb file={placeholderFile} />;
-  if (!url) {
-    return (
-      // 그림이 올 자리는 미리 그림 높이(h-6)로 잡는다 — 바이트가 도착하는 순간 11px 이모지가
-      // 24px 그림으로 바뀌면서 칩 줄 전체가 밀려 내려간다. 처음부터 그릴 수 없는 첨부는
-      // 자리를 잡지 않는다: 올 것이 없는데 비워 둔 여백이다.
-      <span className={previewable ? 'inline-flex h-6 items-center gap-1' : 'inline-flex items-center gap-1'}>
-        <span aria-hidden>📎</span>
-        {failed && <span className="text-danger">{t('message.attachment.previewFailed')}</span>}
-      </span>
-    );
-  }
-  return (
-    <img
-      src={url}
-      alt=""
-      data-testid="attachment-thumb"
-      className="h-6 w-6 shrink-0 rounded-sm border border-border object-cover"
-    />
-  );
-}
-
-/**
- * 올리는 중인 첨부의 미리보기 — **고른 파일**로 곧장 그린다. 서버 바이트는 아직 없고,
- * 다 올라가면 칩이 `AttachmentThumb`(실제로 붙은 것)으로 바뀐다. 그릴 수 있는 종류는
- * `canPreview` 와 같은 목록이다: 여기서만 더 그리면 올라간 뒤에 그림이 사라진다.
- */
-export function LocalFileThumb({ file, dim = false }: { file: File; dim?: boolean }) {
-  const previewable = canPreview({ contentType: file.type } as AttachmentRow);
+  const { file, row, status } = upload;
+  const name = row?.filename ?? file.name;
+  const size = formatSize(row?.sizeBytes ?? file.size);
+  const pct = upload.fraction === null ? null : Math.round(upload.fraction * 100);
+  const previewable = canPreview(row ?? ({ contentType: file.type } as AttachmentRow));
+  const server = useAttachmentUrl(row?.id ?? '', previewable && !!row);
   // 파일마다 하나인 URL 을 **렌더 중에** 받는다 — effect 로 미루면 첫 그림 전에 📎 가 한 번 낀다.
   // 해제는 첨부가 작성창에서 사라질 때 `attachmentUploads` 가 한다.
-  const url = previewable ? previewUrlFor(file) : null;
-  if (!url) {
+  const local = previewable && !server.url && !server.failed ? previewUrlFor(file) : null;
+  const url = server.url ?? local;
+  const [zoomed, setZoomed] = useState(false);
+
+  const progress = status === 'uploading' && (
+    <span className="text-fg-subtle tabular-nums" role="status">
+      {pct === null || pct >= 100 ? t('composer.attach.uploading') : t('composer.attach.uploadingPct', { pct })}
+    </span>
+  );
+  const failed = status === 'failed' && (
+    <span className="inline-flex items-center gap-1">
+      <span className="text-danger">{t('composer.attach.failedShort')}</span>
+      <button
+        type="button"
+        aria-label={`Retry ${name}`}
+        className="rounded px-1 font-medium text-accent hover:bg-surface-hover"
+        // 커서를 지킨다 — 다시 누른 뒤에도 초안을 이어서 쓴다.
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onRetry}
+      >
+        {t('composer.attach.retry')}
+      </button>
+    </span>
+  );
+  const remove = (
+    <button
+      type="button"
+      aria-label={`Remove ${name}`}
+      className="absolute -right-2 -top-2 z-10 flex h-5 w-5 items-center justify-center rounded-full border border-border bg-surface text-meta leading-none text-fg-muted shadow-sm hover:bg-surface-hover hover:text-fg"
+      onClick={onRemove}
+    >
+      ×
+    </button>
+  );
+  const border = status === 'failed' ? 'border-danger' : 'border-border';
+
+  if (!previewable) {
+    // 그림이 아닌 첨부 — 보여 줄 그림이 없으니 이름·크기가 곧 미리보기다. 늘 보인다.
     return (
-      <span className={previewable ? 'inline-flex h-6 items-center' : 'inline-flex items-center'}>
-        <span aria-hidden>📎</span>
-      </span>
+      <div
+        data-testid="pending-attachment"
+        data-status={status}
+        title={`${name} · ${size}`}
+        className={`relative flex h-20 w-52 shrink-0 items-center gap-2 rounded-md border bg-surface px-2.5 text-meta text-fg ${border}`}
+      >
+        <span aria-hidden className="text-title">📎</span>
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="line-clamp-2 break-all font-medium">{name}</span>
+          <span className="text-fg-subtle">{status === 'done' ? size : (progress || failed)}</span>
+        </span>
+        {remove}
+      </div>
     );
   }
+
   return (
-    <img
-      src={url}
-      alt=""
-      data-testid="attachment-local-thumb"
-      // 흐리게는 **올리는 중일 때만**이다. 다 올라간 뒤 자리 지킴으로 쓸 때는 진하게.
-      className={`h-6 w-6 shrink-0 rounded-sm border border-border object-cover${dim ? ' opacity-60' : ''}`}
-    />
+    <>
+    <div
+      data-testid="pending-attachment"
+      data-status={status}
+      title={`${name} · ${size}`}
+      className={`group relative h-20 w-20 shrink-0 rounded-md border bg-surface-sunken text-meta ${border}`}
+    >
+      {url ? (
+        <button
+          type="button"
+          aria-label={t('message.attachment.zoom', { filename: name })}
+          className="block h-full w-full cursor-zoom-in overflow-hidden rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          onClick={() => setZoomed(true)}
+        >
+          {/* 이름은 띠가 글자로 말한다 — alt 까지 이름이면 스크린리더가 같은 파일을 두 번 읽는다. */}
+          <img
+            src={url}
+            alt=""
+            data-testid={server.url ? 'attachment-thumb' : 'attachment-local-thumb'}
+            className={`h-full w-full object-cover${status === 'uploading' ? ' opacity-60' : ''}`}
+          />
+        </button>
+      ) : (
+        // 받지 못한 그림은 "원래 미리보기가 없는 것"과 갈라 말한다 — 같은 📎 로 덮으면 끊긴
+        // 자리를 사람이 "이 파일은 원래 이렇다"로 읽고 그대로 보낸다.
+        <span className="flex h-full w-full flex-col items-center justify-center gap-0.5 px-1 text-center">
+          <span aria-hidden>📎</span>
+          {server.failed && <span className="text-danger">{t('message.attachment.previewFailed')}</span>}
+        </span>
+      )}
+      {/* 이름·크기 띠 — 호버·포커스 때만. 누르는 자리를 막지 않게 포인터는 통과시킨다. */}
+      {status === 'done' && (
+        <span className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col rounded-b-md bg-black/65 px-1.5 py-1 leading-tight text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          <span className="truncate">{name}</span>
+          <span className="text-white/75">{size}</span>
+        </span>
+      )}
+      {/* 올리는 중·실패는 늘 보인다. */}
+      {status !== 'done' && (
+        <span className="absolute inset-x-0 bottom-0 flex justify-center rounded-b-md bg-surface/90 px-1 py-0.5">
+          {progress || failed}
+        </span>
+      )}
+      {status === 'uploading' && pct !== null && pct < 100 && (
+        <span aria-hidden className="pointer-events-none absolute inset-x-1 top-1 h-1 overflow-hidden rounded-full bg-black/20">
+          <span className="block h-full bg-accent" style={{ width: `${pct}%` }} />
+        </span>
+      )}
+      {remove}
+    </div>
+      {/* 겹창은 타일 **밖에** 둔다 — 안에 두면 타일의 `title` 툴팁이 확대 보기 위에 뜬다. */}
+      {zoomed && url && (
+        <ImageLightbox
+          attachment={row ?? ({ id: upload.localId, filename: name, sizeBytes: file.size, contentType: file.type } as AttachmentRow)}
+          url={url}
+          // 아직 서버에 없는 파일은 저장할 것이 없다 — 고른 그 파일이 사람 디스크에 있다.
+          saveable={!!row}
+          onClose={() => setZoomed(false)}
+        />
+      )}
+    </>
   );
 }
 

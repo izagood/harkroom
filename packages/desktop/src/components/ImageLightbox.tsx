@@ -20,10 +20,12 @@ import { clampScale, fitScale, percent, pinchFactor, scrollToKeep, stepDown, ste
  *
  * 바이트는 다시 받지 않는다 — 본문이 이미 받은 objectURL 을 그대로 쓴다(Attachments.tsx 의 같은 이유).
  */
-export function ImageLightbox({ attachment, url, onClose }: {
+export function ImageLightbox({ attachment, url, onClose, saveable = true }: {
   attachment: AttachmentRow;
   url: string;
   onClose: () => void;
+  /** 작성창에서 아직 올라가지 않은 파일은 저장할 것이 없다 — 고른 그 파일이 사람 디스크에 있다. */
+  saveable?: boolean;
 }) {
   const t = useT();
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -187,12 +189,14 @@ export function ImageLightbox({ attachment, url, onClose }: {
         </div>
         <span className="min-w-0 truncate font-medium">{attachment.filename}</span>
         <span className="shrink-0 text-fg-subtle">{formatSize(attachment.sizeBytes)}</span>
+        {saveable && (
+          <button
+            className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
+            onClick={() => void getController().saveAttachment(attachment)}
+          >{t('message.attachment.save')}</button>
+        )}
         <button
-          className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
-          onClick={() => void getController().saveAttachment(attachment)}
-        >{t('message.attachment.save')}</button>
-        <button
-          className="shrink-0 rounded px-2 text-fg-subtle hover:bg-surface-sunken"
+          className={`${saveable ? '' : 'ml-auto '}shrink-0 rounded px-2 text-fg-subtle hover:bg-surface-sunken`}
           onClick={onClose}
           aria-label={t('message.attachment.closeZoom')}
         >×</button>
