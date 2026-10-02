@@ -158,6 +158,8 @@ class AppState extends ChangeNotifier {
     if (homeTab == tab) return;
     homeTab = tab;
     notifyListeners();
+    // 에이전트 탭은 열 때마다 새로 읽는다 — 도는 턴은 분 단위로 바뀌고 소켓이 알려 주지 않는다.
+    if (tab == 3) unawaited(loadAgents());
   }
 
   /// 다른 커뮤니티의 열쇠 → 나를 기다리는 것(안 읽은 부름) 수. 지금 커뮤니티는 [inboxUnread] 가 센다.
@@ -925,6 +927,39 @@ class AppState extends ChangeNotifier {
 
   // ── 받은 것 ───────────────────────────────────────────────────────────
 
+  // ── 에이전트 탭(S7) ─────────────────────────────────────────────────────
+
+  final List<AgentActivity> agentActivity = [];
+  final List<AgentWake> agentWakes = [];
+  LoadState agentsLoad = LoadState.loading;
+
+  /// 에이전트 탭을 채운다. 소켓이 알려 주지 않으므로 **탭을 열 때와 당겨 새로 고칠 때** 읽는다.
+  Future<void> loadAgents() async {
+    final api = _api;
+    if (api == null) return;
+    if (agentsLoad != LoadState.loaded) {
+      agentsLoad = LoadState.loading;
+      notifyListeners();
+    }
+    final gen = _generation;
+    try {
+      final got = await Future.wait([api.agentActivity(), api.agentWakes()]);
+      if (gen != _generation) return;
+      agentActivity
+        ..clear()
+        ..addAll(got[0] as List<AgentActivity>);
+      agentWakes
+        ..clear()
+        ..addAll(got[1] as List<AgentWake>);
+      agentsLoad = LoadState.loaded;
+    } on Object catch (e) {
+      if (gen != _generation) return;
+      failures['agents'] = LoadFailure.of(e);
+      if (agentsLoad != LoadState.loaded) agentsLoad = LoadState.failed;
+    }
+    notifyListeners();
+  }
+
   Future<void> loadInbox() async {
     final api = _api;
     if (api == null) return;
@@ -1667,6 +1702,9 @@ class AppState extends ChangeNotifier {
   void _resetSession() {
     me = null;
     inbox.clear();
+    agentActivity.clear();
+    agentWakes.clear();
+    agentsLoad = LoadState.loading;
     reads.clear();
     channelPrefs.clear();
     collapsedSections.clear();

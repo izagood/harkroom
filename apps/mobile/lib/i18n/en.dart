@@ -226,7 +226,17 @@ class StringsEn implements Strings {
   @override
   String get tabAgents => 'Agents';
   @override
-  String get agentsSoon => 'See what your agents are doing here. Coming soon.';
+  String get agentsRunning => 'Working now';
+  @override
+  String get agentsWaiting => 'Scheduled';
+  @override
+  String get agentsAll => 'All agents';
+  @override
+  String get agentsNoneRunning => 'No agent is working right now.';
+  @override
+  String get agentsLoadFailed => "Couldn't load what agents are doing.";
+  @override
+  String get agentsMine => 'Mine';
   @override
   String get dmsEmpty => 'No direct messages yet.';
   @override

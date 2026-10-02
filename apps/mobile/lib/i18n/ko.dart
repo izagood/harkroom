@@ -225,7 +225,17 @@ class StringsKo implements Strings {
   @override
   String get tabAgents => '에이전트';
   @override
-  String get agentsSoon => '에이전트가 지금 무엇을 하는지 여기서 본다. 곧 들어온다.';
+  String get agentsRunning => '지금 도는 것';
+  @override
+  String get agentsWaiting => '예약';
+  @override
+  String get agentsAll => '에이전트 전체';
+  @override
+  String get agentsNoneRunning => '지금 도는 에이전트가 없다.';
+  @override
+  String get agentsLoadFailed => '에이전트 상태를 읽지 못했다.';
+  @override
+  String get agentsMine => '내 것';
   @override
   String get dmsEmpty => '아직 DM 이 없다.';
   @override

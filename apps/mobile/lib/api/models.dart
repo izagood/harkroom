@@ -630,3 +630,61 @@ class AgentModelOptions {
     );
   }
 }
+
+/// 에이전트가 지금 도는 턴 하나(`GET /agent-sessions?scope=visible`, S7). 읽기 전용이라 세션 id 를 받지 않는다.
+///
+/// **옛 서버**(scope 를 모르는 0.3.153 이하)는 소유자·admin 목록을 옛 모양으로 준다 — `owned` 가 없으면
+/// 그 목록은 원래 내 것만이므로 참으로 읽는다.
+class AgentActivity {
+  const AgentActivity({
+    required this.agentAccountId,
+    required this.channelId,
+    required this.threadRootId,
+    required this.harness,
+    required this.startedAt,
+    required this.owned,
+  });
+
+  final String agentAccountId;
+  final String channelId;
+  final String? threadRootId;
+  final String harness;
+  final DateTime? startedAt;
+  final bool owned;
+
+  static AgentActivity fromJson(Map<String, Object?> j) => AgentActivity(
+        agentAccountId: _str(j['agentAccountId']),
+        channelId: _str(j['channelId']),
+        threadRootId: j['threadRootId'] is String ? j['threadRootId'] as String : null,
+        harness: _str(j['harness']),
+        startedAt: j['startedAt'] is String ? DateTime.tryParse(j['startedAt'] as String) : null,
+        owned: j['owned'] is bool ? j['owned'] as bool : true,
+      );
+}
+
+/// 에이전트가 스스로 걸어 둔 다음 깨움(`GET /agent-wakes?scope=visible`).
+class AgentWake {
+  const AgentWake({
+    required this.agentAccountId,
+    required this.channelId,
+    required this.threadRootId,
+    required this.wakeAt,
+    required this.reason,
+  });
+
+  final String agentAccountId;
+  final String channelId;
+  final String threadRootId;
+  final DateTime? wakeAt;
+
+  /// wake 메시지 본문. 지워졌으면 null.
+  final String? reason;
+
+  static AgentWake fromJson(Map<String, Object?> j) => AgentWake(
+        agentAccountId: _str(j['agentAccountId']),
+        channelId: _str(j['channelId']),
+        threadRootId: _str(j['threadRootId']),
+        wakeAt: j['wakeAt'] is String ? DateTime.tryParse(j['wakeAt'] as String) : null,
+        reason: j['reason'] is String ? j['reason'] as String : null,
+      );
+}
