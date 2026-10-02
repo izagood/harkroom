@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { EFFORT_MAX, MAX_MESSAGE_BODY_CHARS, MENTION_EDIT_SKIPPED_HEADER, MODEL_ID_MAX, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@harkroom/shared';
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
-import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, SEARCH_MAX_OFFSET, SEARCH_MAX_AUTHORS, BAD_THREAD_MESSAGE } from '../services/messages.js';
+import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -523,19 +523,20 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
    */
   app.get('/search', { preHandler: app.requireAccount }, async (req, reply) => {
     const q = z.object({
-      q: z.string().min(1).max(256),
+      q: searchInput.query,
       channelId: z.string().uuid().optional(),
       // ⌘F 의 스코프. `channelId` 없이 와도 뜻이 서지만(스레드 id 하나로 채널이 정해진다)
       // 클라이언트는 늘 둘을 함께 보낸다 — 403 판정이 채널 단위이기 때문이다.
       threadRootId: z.string().uuid().optional(),
-      offset: z.coerce.number().int().min(0).max(SEARCH_MAX_OFFSET).optional(),
-      // 거르기(S1). 셋 다 결과를 좁히기만 한다(services/messages.ts SearchScope).
+      offset: z.coerce.number().pipe(searchInput.offset).optional(),
+      // 거르기(S1). 셋 다 결과를 좁히기만 한다(services/messages.ts SearchScope). 형식·상한은 MCP
+      // `message.search` 와 **같은 조각**(`searchInput`)이다 — 한쪽만 느슨해지지 않게.
       // `authorId` 는 되풀이해 여럿 보낸다(`?authorId=a&authorId=b`) — 하나면 문자열, 여럿이면 배열로 온다.
-      authorId: z.union([z.string().uuid(), z.array(z.string().uuid()).max(SEARCH_MAX_AUTHORS)]).optional(),
-      after: z.string().datetime({ offset: true }).optional(),
-      before: z.string().datetime({ offset: true }).optional(),
+      authorId: z.union([z.string().uuid(), searchInput.authorIds]).optional(),
+      after: searchInput.time.optional(),
+      before: searchInput.time.optional(),
       hasAttachment: z.enum(['true', 'false']).optional(),
-      sort: z.enum(['relevance', 'recent']).optional(),
+      sort: searchInput.sort.optional(),
     }).parse(req.query);
     if (q.channelId && !(await assertChannelVisible(pool, q.channelId, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
