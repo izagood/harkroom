@@ -1,0 +1,211 @@
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { AttachmentRow } from '@harkroom/shared';
+import { getController } from '../state/controller';
+import { Overlay } from './Overlay';
+import { useT } from '../i18n/useT';
+import { formatSize } from './Attachments';
+import { clampScale, fitScale, percent, pinchFactor, scrollToKeep, stepDown, stepUp } from '../lib/imageZoom';
+
+/**
+ * 확대 보기(라이트박스) — designer 사양 3192efed(2026-10-02).
+ *
+ * 왜 바뀌었나: 예전엔 그림 한 장을 `max-h-[80vh] object-contain` 으로 그렸다. 세로로 긴 캡처는 높이에 맞춰 줄어
+ * 폭이 수십 px 가 됐고 확대할 길이 없었다(jaebin "확대도 안되고 엄청 작게 보여"). 그래서
+ * - 처음 배율은 **폭 맞춤**(`fitScale`, 높이는 보지 않는다)이고 세로로 스크롤한다. 맨 위부터 보인다.
+ * - 크기는 `transform` 이 아니라 그림의 **실제 폭·높이**로 바꾼다 — 스크롤 칸이 그대로 움직여 스크롤바가 남고
+ *   끌기·화살표·Space·Home/End 가 같은 칸을 움직인다.
+ * - 클릭은 맞춤 ↔ 100%(누른 자리를 커서 밑에), ⌘+/⌘−/⌘0/⌘1, 트랙패드 핀치(ctrl+휠)·⌘+휠은 커서 중심 연속 확대.
+ *   **그냥 휠은 스크롤이다** — 확대로 빼앗지 않는다.
+ * - Esc 는 확대 상태면 먼저 맞춤으로, 맞춤이면 닫는다. ×·바깥 클릭은 바로 닫는다(`Overlay` 규칙).
+ *
+ * 바이트는 다시 받지 않는다 — 본문이 이미 받은 objectURL 을 그대로 쓴다(Attachments.tsx 의 같은 이유).
+ */
+export function ImageLightbox({ attachment, url, onClose }: {
+  attachment: AttachmentRow;
+  url: string;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
+  const [fit, setFit] = useState(1);
+  // null = 맞춤을 따라간다(창 크기가 바뀌면 같이 바뀐다). 숫자 = 사람이 고른 배율.
+  const [manual, setManual] = useState<number | null>(null);
+  const scale = manual ?? fit;
+  const pendingScroll = useRef<{ left: number; top: number } | null>(null);
+  const drag = useRef<{ x: number; y: number; left: number; top: number; moved: boolean } | null>(null);
+  const [dragging, setDragging] = useState(false);
+
+  const measure = useCallback(() => {
+    const body = bodyRef.current;
+    if (!body || !natural) return;
+    setFit(fitScale(body.clientWidth, natural.w));
+  }, [natural]);
+
+  useLayoutEffect(() => { measure(); }, [measure]);
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined' || !bodyRef.current) return;
+    const ro = new ResizeObserver(() => measure());
+    ro.observe(bodyRef.current);
+    return () => ro.disconnect();
+  }, [measure]);
+
+  // 배율을 바꾼 뒤 그 렌더에서 스크롤을 맞춘다 — 한 점을 커서 밑에 두기(`scrollToKeep`).
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    const want = pendingScroll.current;
+    if (!body || !want) return;
+    pendingScroll.current = null;
+    body.scrollLeft = want.left;
+    body.scrollTop = want.top;
+  }, [scale]);
+
+  // 포커스는 본문 칸에 둔다 — 화살표·Space·Home/End 가 바로 스크롤하고, Enter 로 [저장]이 눌리는 일이 없다.
+  useEffect(() => { bodyRef.current?.focus(); }, []);
+
+  /** 배율을 바꾼다. `at` 은 본문 칸 안의 기준점(px) — 없으면 칸 가운데. */
+  const zoomTo = useCallback((next: number | 'fit', at?: { x: number; y: number }) => {
+    const body = bodyRef.current;
+    const to = next === 'fit' ? fit : clampScale(next, fit);
+    if (body) {
+      const ox = at?.x ?? body.clientWidth / 2;
+      const oy = at?.y ?? body.clientHeight / 2;
+      pendingScroll.current = {
+        left: scrollToKeep(body.scrollLeft, ox, scale, to),
+        top: scrollToKeep(body.scrollTop, oy, scale, to),
+      };
+    }
+    setManual(next === 'fit' ? null : to);
+  }, [fit, scale]);
+
+  const isFit = manual === null || Math.abs(manual - fit) < 1e-6;
+
+  // ⌘ 단축키와 Esc 는 **문서 캡처 단계**에서 받는다 — `Overlay` 의 Esc(닫기)는 문서 버블 단계라, 확대 상태의
+  // Esc 를 여기서 멈춰야 "먼저 맞춤으로" 가 된다.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (isFit) return;
+        e.preventDefault();
+        e.stopPropagation();
+        zoomTo('fit');
+        return;
+      }
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomTo(stepUp(scale, fit)); }
+      else if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomTo(stepDown(scale, fit)); }
+      else if (e.key === '0') { e.preventDefault(); zoomTo('fit'); }
+      else if (e.key === '1') { e.preventDefault(); zoomTo(1); }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [isFit, scale, fit, zoomTo]);
+
+  // 핀치(ctrl+휠)·⌘+휠만 확대다. passive 가 아니어야 막을 수 있다 — React 의 onWheel 은 passive 라 직접 단다.
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      const rect = body.getBoundingClientRect();
+      zoomTo(scale * pinchFactor(e.deltaY), { x: e.clientX - rect.left, y: e.clientY - rect.top });
+    };
+    body.addEventListener('wheel', onWheel, { passive: false });
+    return () => body.removeEventListener('wheel', onWheel);
+  }, [scale, zoomTo]);
+
+  const overflows = !!natural && !!bodyRef.current
+    && (natural.w * scale > bodyRef.current.clientWidth + 1 || natural.h * scale > bodyRef.current.clientHeight + 1);
+
+  const onPointerDown = (e: React.MouseEvent) => {
+    const body = bodyRef.current;
+    if (!body || e.button !== 0) return;
+    drag.current = { x: e.clientX, y: e.clientY, left: body.scrollLeft, top: body.scrollTop, moved: false };
+  };
+  const onPointerMove = (e: React.MouseEvent) => {
+    const d = drag.current;
+    const body = bodyRef.current;
+    if (!d || !body) return;
+    const dx = e.clientX - d.x;
+    const dy = e.clientY - d.y;
+    // 4px 를 넘게 움직여야 끌기다 — 그 아래는 클릭(배율 바꾸기)으로 남긴다.
+    if (!d.moved && Math.hypot(dx, dy) <= 4) return;
+    if (!d.moved) { d.moved = true; setDragging(true); }
+    body.scrollLeft = d.left - dx;
+    body.scrollTop = d.top - dy;
+  };
+  const onPointerUp = (e: React.MouseEvent) => {
+    const d = drag.current;
+    drag.current = null;
+    setDragging(false);
+    if (!d || d.moved) return;
+    const body = bodyRef.current;
+    if (!body) return;
+    const rect = body.getBoundingClientRect();
+    // 클릭: 맞춤 ↔ 100%. 100% 로 갈 때 누른 자리가 커서 밑에 온다.
+    zoomTo(isFit ? 1 : 'fit', { x: e.clientX - rect.left, y: e.clientY - rect.top });
+  };
+
+  const cursor = dragging ? 'grabbing' : overflows && !isFit ? 'grab' : isFit && fit < 1 ? 'zoom-in' : 'zoom-out';
+  const btn = 'shrink-0 rounded px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken disabled:opacity-40';
+
+  return (
+    // 판 크기는 창의 92vw × 88vh 다. 머리줄은 고정이고 그 아래 본문 칸이 스크롤된다.
+    <Overlay label={attachment.filename} onClose={onClose} align="center" className="h-[88vh] w-[92vw]">
+      <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+        <div className="flex shrink-0 items-center gap-0.5" data-testid="zoom-controls">
+          <button type="button" className={btn} onClick={() => zoomTo(stepDown(scale, fit))}
+            aria-label={t('message.attachment.zoomOut')} data-testid="zoom-out">−</button>
+          <button type="button" className="min-w-[4.5rem] shrink-0 rounded px-1 text-meta tabular-nums text-fg hover:bg-surface-sunken"
+            onClick={() => zoomTo(isFit ? 1 : 'fit')} data-testid="zoom-level" aria-live="polite">
+            {isFit ? t('message.attachment.zoomFitLevel', { percent: percent(fit) }) : percent(scale)}
+          </button>
+          <button type="button" className={btn} onClick={() => zoomTo(stepUp(scale, fit))}
+            aria-label={t('message.attachment.zoomIn')} data-testid="zoom-in">+</button>
+          <button type="button" className={btn} onClick={() => zoomTo('fit')} disabled={isFit}
+            aria-label={t('message.attachment.zoomFit')} data-testid="zoom-fit">{t('message.attachment.zoomFitShort')}</button>
+          <button type="button" className={btn} onClick={() => zoomTo(1)} disabled={Math.abs(scale - 1) < 1e-6}
+            aria-label={t('message.attachment.zoomActual')} data-testid="zoom-actual">100%</button>
+        </div>
+        <span className="min-w-0 truncate font-medium">{attachment.filename}</span>
+        <span className="shrink-0 text-fg-subtle">{formatSize(attachment.sizeBytes)}</span>
+        <button
+          className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
+          onClick={() => void getController().saveAttachment(attachment)}
+        >{t('message.attachment.save')}</button>
+        <button
+          className="shrink-0 rounded px-2 text-fg-subtle hover:bg-surface-sunken"
+          onClick={onClose}
+          aria-label={t('message.attachment.closeZoom')}
+        >×</button>
+      </header>
+      <div
+        ref={bodyRef}
+        tabIndex={0}
+        data-testid="zoom-body"
+        className="min-h-0 flex-1 overflow-auto outline-none"
+        style={{ cursor }}
+        // 마우스·트랙패드 끌기. 창 밖으로 나가면 끌기를 놓는다.
+        onMouseDown={onPointerDown}
+        onMouseMove={onPointerMove}
+        onMouseUp={onPointerUp}
+        onMouseLeave={() => { drag.current = null; setDragging(false); }}
+      >
+        {/* 그림이 칸보다 작으면 가운데, 크면 왼쪽 위부터 — `m-auto` 가 둘 다 한다. */}
+        <div className="flex min-h-full min-w-full">
+          <img
+            src={url}
+            alt={attachment.filename}
+            data-testid="attachment-full"
+            data-scale={scale.toFixed(3)}
+            draggable={false}
+            onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+            className="m-auto block max-w-none select-none"
+            style={natural ? { width: natural.w * scale, height: natural.h * scale } : { maxWidth: '100%' }}
+          />
+        </div>
+      </div>
+    </Overlay>
+  );
+}

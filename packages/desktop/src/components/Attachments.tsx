@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { previewUrlFor } from '../lib/attachmentUploads';
 import type { AttachmentRow } from '@harkroom/shared';
 import { getController } from '../state/controller';
-import { Overlay } from './Overlay';
+import { ImageLightbox } from './ImageLightbox';
 import { useT } from '../i18n/useT';
 
 /**
@@ -127,72 +127,7 @@ export function LocalFileThumb({ file, dim = false }: { file: File; dim?: boolea
   );
 }
 
-/**
- * 확대 보기(#첨부 확대). 본문의 그림은 `max-h-56` · `max-w-[28rem]` 로 줄여 그리므로 스크린샷 속 글자는
- * 대개 읽히지 않는다 — 크게 볼 자리가 없으면 사람은 그림을 디스크에 저장해 시스템 뷰어로
- * 열고, 그때 채팅을 떠난다.
- *
- * 스크림 · Esc · 바깥 클릭은 **`Overlay` 가 정한다.** 여기서 다시 정하면 "겹쳐 열려도
- * 맨 위 하나만 닫힌다"는 규칙이 이 자리에서만 갈린다.
- *
- * **바이트를 다시 받지 않는다.** 확대할 그림은 이미 본문에 그려진 그것이므로 같은
- * objectURL 을 그대로 넘겨 쓴다. 다시 받으면 클릭마다 왕복이 붙고, URL 의 수명(revoke)을
- * 두 곳이 나눠 갖게 된다 — 그러면 닫는 쪽이 revoke 한 URL 을 본문이 계속 가리킨다.
- */
-function Lightbox({ attachment, url, onClose }: {
-  attachment: AttachmentRow;
-  url: string;
-  onClose: () => void;
-}) {
-  const t = useT();
-  /**
-   * **포커스를 겹창 안으로 옮긴다.** 안 옮기면 포커스는 스크림 뒤의 그림 버튼에 남는다 —
-   * 화살표·PageDown 으로 스크롤하면 보이지 않는 뒤쪽 목록이 움직이고, Tab 은 겹창이 아니라
-   * 뒤 화면의 다음 버튼으로 간다. 키보드로 열었을 때 닫는 길(`Esc` 는 document 에서 받지만
-   * `×` 는 아니다)이 손에 닿지 않는 것도 같은 이유다.
-   *
-   * 닫기 버튼을 고른다 — 겹창에서 사람이 가장 자주 하는 다음 동작이고, 저장을 먼저 잡으면
-   * Enter 한 번에 파일 저장이 시작된다.
-   */
-  const closeRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => { closeRef.current?.focus(); }, []);
-  return (
-    // 폭을 고정하지 않는다(기본값 `w-[42rem]` 를 물려받으면 작은 그림 옆에 빈 판이 남는다) —
-    // 화면보다 큰 그림만 뷰포트에서 잘라 낸다.
-    <Overlay label={attachment.filename} onClose={onClose} align="center" className="max-w-[92vw]">
-      <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
-        <span className="truncate font-medium">{attachment.filename}</span>
-        <span className="shrink-0 text-fg-subtle">{formatSize(attachment.sizeBytes)}</span>
-        {/*
-          이미지는 칩이 아니라 그림으로 그려지므로 **여기 말고는 저장할 자리가 없다.**
-          저장이 칩 분기에만 붙어 있으면, 미리보기가 되는 첨부일수록 내려받을 길이 없다.
-          실패 문구는 컨트롤러가 Notice 로 세운다(#257) — 여기서 다시 삼키지 않는다.
-        */}
-        <button
-          className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
-          onClick={() => void getController().saveAttachment(attachment)}
-        >{t('message.attachment.save')}</button>
-        <button
-          ref={closeRef}
-          className="shrink-0 rounded px-2 text-fg-subtle hover:bg-surface-sunken"
-          onClick={onClose}
-          aria-label={t('message.attachment.closeZoom')}
-        >×</button>
-      </header>
-      {/*
-        `max-h-[80vh]` 로 세로를 제한한다 — 높이를 열어 두면 세로로 긴 스크린샷에서 그림이
-        패널을 밀어내고 머리줄(이름 · 저장 · 닫기)이 화면 밖으로 나간다.
-      */}
-      <img
-        src={url}
-        alt={attachment.filename}
-        data-testid="attachment-full"
-        className="max-h-[80vh] max-w-full object-contain"
-      />
-    </Overlay>
-  );
-}
-
+/** 확대 보기는 `ImageLightbox.tsx` 에 있다(배율·끌기·단축키, designer 3192efed). */
 function Attachment({ attachment }: { attachment: AttachmentRow }) {
   const t = useT();
   const previewable = canPreview(attachment);
@@ -233,7 +168,7 @@ function Attachment({ attachment }: { attachment: AttachmentRow }) {
             className="max-h-56 max-w-[min(28rem,100%)] rounded"
           />
         </button>
-        {zoomed && <Lightbox attachment={attachment} url={url} onClose={() => setZoomed(false)} />}
+        {zoomed && <ImageLightbox attachment={attachment} url={url} onClose={() => setZoomed(false)} />}
       </>
     );
   }
