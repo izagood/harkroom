@@ -129,6 +129,13 @@ void main() {
     await shot(tester, '04b-dms');
     await tester.tap(find.byKey(const Key('tab-agents')));
     await shot(tester, '04c-agents');
+    // 찾기 n2: 바로 가기에 DM 이 없는 에이전트도 선다(한 글자라 서버에는 묻지 않는다).
+    await tester.tap(find.byKey(const Key('tab-search')));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.enterText(find.byKey(const Key('search-input')), 'h');
+    await shot(tester, '04d-search-shortcuts');
+    await tester.tap(find.byKey(const Key('search-cancel')));
+    await tester.pump(const Duration(milliseconds: 400));
 
     // S5a: 「나」 는 머리의 프로필 사진으로 연다.
     await tester.tap(find.byKey(const Key('tab-home')));
