@@ -2629,7 +2629,29 @@ export interface SearchScope {
   threadRootId?: string | null;
   limit?: number;
   offset?: number;
+  /**
+   * 거르기(S1). 전부 **가시성·스코프 술어 위에 얹는 `and` 조건**이다 — 결과를 좁히기만 하고 넓히는
+   * 갈래가 없다. 빈 배열·null 은 "거르지 않음"이다.
+   *
+   * - `authorIds`: 이 사람들이 쓴 것만. 개수는 [SEARCH_MAX_AUTHORS] 까지(라우트가 막고 여기서도 자른다).
+   * - `after`·`before`: `created_at` 의 [after, before) 반열린 구간(ISO 시각). 「오늘」·「7일」 칩이 그대로 쓴다.
+   * - `hasAttachment`: 첨부가 하나라도 붙은 것만.
+   */
+  authorIds?: readonly string[] | null;
+  after?: string | null;
+  before?: string | null;
+  hasAttachment?: boolean | null;
+  /** `relevance`(기본, 접두 일치 > ts_rank > 최신) · `recent`(최신순만). */
+  sort?: SearchSort | null;
 }
+
+export type SearchSort = 'relevance' | 'recent';
+
+/**
+ * `authorIds` 의 천장. 칩으로 고르는 사람 수라 이 정도면 넉넉하고, 상한이 없으면 질의 하나에
+ * uuid 수천 개를 실어 `= any($7)` 을 부풀릴 수 있다(security #1094 S1 ②).
+ */
+export const SEARCH_MAX_AUTHORS = 10;
 
 export interface SearchPage {
   messages: MessageRow[];
@@ -2717,10 +2739,21 @@ export async function searchMessages(
 ): Promise<SearchPage> {
   const limit = Math.min(scope.limit ?? 50, 100);
   const offset = Math.max(scope.offset ?? 0, 0);
+  const authorIds = scope.authorIds?.length ? scope.authorIds.slice(0, SEARCH_MAX_AUTHORS) : null;
+  // 정렬은 닫힌 두 값 중 하나다 — 문자열을 SQL 에 그대로 잇지 않고 여기서 고른다.
+  const order = scope.sort === 'recent'
+    ? `m.created_at desc, m.seq desc`
+    : `(m.search @@ ${PREFIX_TSQUERY}) desc,
+              ts_rank(m.search, ${PREFIX_TSQUERY}) desc,
+              m.seq desc`;
   const res = await pool.query(
     `select m.id, m.seq::int as seq, m.channel_id as "channelId", m.thread_root_id as "threadRootId",
        m.author_id as "authorId", m.body, m.kind, m.meta, m.created_at as "createdAt",
-       m.edited_at as "editedAt", '[]'::json as reactions, '[]'::json as attachments,
+       m.edited_at as "editedAt", '[]'::json as reactions,
+       -- 결과 카드가 사진·파일을 그릴 수 있게 첨부 요약을 싣는다(S1). 이 하위 질의는 **아래 where 를
+       -- 통과한 행**(볼 수 있고 지워지지 않은 메시지)에만 붙으므로 못 보는 메시지의 첨부를 끌어오지
+       -- 않는다(security S1 ③). 모양은 목록 응답과 같은 ATTACHMENTS 한 곳에서 온다.
+       ${ATTACHMENTS.replace(/message\./g, 'm.')},
        null::int as "replyCount", null::int as "activityCount",
   null::text as "lastReplyAt", null::text[] as "participantIds",
        m.also_in_channel as "alsoInChannel"
@@ -2742,17 +2775,24 @@ export async function searchMessages(
        -- 스레드 스코프는 루트 자신을 포함한다 — 루트에 있는 말을 못 찾으면 "이 스레드에서
        -- 찾기"가 아니다(listMessages 의 스레드 분기와 같은 문장).
        and ($5::uuid is null or m.id = $5 or m.thread_root_id = $5)
+       -- 거르기(S1)도 같은 자리다: 가시성·스코프 **위에** 얹는 and 뿐이라 결과를 좁히기만 한다
+       -- (security S1 ①). null 이면 상수로 접혀 계획이 그대로 남는다.
+       and ($7::uuid[] is null or m.author_id = any($7::uuid[]))
+       and ($8::timestamptz is null or m.created_at >= $8::timestamptz)
+       and ($9::timestamptz is null or m.created_at < $9::timestamptz)
+       and ($10::boolean is not true or exists (select 1 from attachment a where a.message_id = m.id))
      -- 정확 일치(1번)를 부분문자열-only 히트 앞에 세우고, 그 안에서 ts_rank, 그다음 최신순.
      -- seq desc 만 있던 때는 흔한 낱말이면 상위 50 이 전부 최근 것으로 차서 정작 찾던
      -- 옛 메시지가 응답에 들어오지도 않았다.
      --
      -- 페이지는 offset 이다(seq 커서가 아니다): 순서가 seq 가 아니라 rank 이므로 seq 커서는
      -- 이 정렬에서 뜻이 없다.
-     order by (m.search @@ ${PREFIX_TSQUERY}) desc,
-              ts_rank(m.search, ${PREFIX_TSQUERY}) desc,
-              m.seq desc
+     order by ${order}
      limit $2 offset $6`,
-    [query, limit + 1, requesterId, scope.channelId ?? null, scope.threadRootId ?? null, offset],
+    [
+      query, limit + 1, requesterId, scope.channelId ?? null, scope.threadRootId ?? null, offset,
+      authorIds, scope.after ?? null, scope.before ?? null, scope.hasAttachment ?? null,
+    ],
   );
   const rows = res.rows as MessageRow[];
   return { messages: rows.slice(0, limit), hasMore: searchHasMore(rows.length, limit, offset) };

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { EFFORT_MAX, MAX_MESSAGE_BODY_CHARS, MENTION_EDIT_SKIPPED_HEADER, MODEL_ID_MAX, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@harkroom/shared';
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
-import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, SEARCH_MAX_OFFSET, BAD_THREAD_MESSAGE } from '../services/messages.js';
+import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, SEARCH_MAX_OFFSET, SEARCH_MAX_AUTHORS, BAD_THREAD_MESSAGE } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -529,6 +529,13 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
       // 클라이언트는 늘 둘을 함께 보낸다 — 403 판정이 채널 단위이기 때문이다.
       threadRootId: z.string().uuid().optional(),
       offset: z.coerce.number().int().min(0).max(SEARCH_MAX_OFFSET).optional(),
+      // 거르기(S1). 셋 다 결과를 좁히기만 한다(services/messages.ts SearchScope).
+      // `authorId` 는 되풀이해 여럿 보낸다(`?authorId=a&authorId=b`) — 하나면 문자열, 여럿이면 배열로 온다.
+      authorId: z.union([z.string().uuid(), z.array(z.string().uuid()).max(SEARCH_MAX_AUTHORS)]).optional(),
+      after: z.string().datetime({ offset: true }).optional(),
+      before: z.string().datetime({ offset: true }).optional(),
+      hasAttachment: z.enum(['true', 'false']).optional(),
+      sort: z.enum(['relevance', 'recent']).optional(),
     }).parse(req.query);
     if (q.channelId && !(await assertChannelVisible(pool, q.channelId, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
@@ -539,6 +546,11 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
       channelId: q.channelId ?? null,
       threadRootId: q.threadRootId ?? null,
       offset: q.offset ?? 0,
+      authorIds: q.authorId === undefined ? null : Array.isArray(q.authorId) ? q.authorId : [q.authorId],
+      after: q.after ?? null,
+      before: q.before ?? null,
+      hasAttachment: q.hasAttachment === 'true',
+      sort: q.sort ?? 'relevance',
     });
   });
 
