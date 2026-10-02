@@ -70,6 +70,12 @@ abstract class Strings {
   /// 올리기 실패. **조용히 지나가지 않는다** — 칩이 사라진 이유를 사람이 알아야 한다.
   String get attachmentUploadFailed;
 
+  /// 작성칸 그림의 전체 화면 보기 아래 버튼 — 붙인 것을 뗀다(보낸 것을 지우는 것이 아니다).
+  String get attachmentRemove;
+
+  /// 작성칸 첨부의 × 의 접근성 이름.
+  String attachmentRemoveNamed(String name);
+
   /// 첨부 시트: 사진 보관함(PHPicker — 권한을 묻지 않는다).
   String get attachLibrary;
 
@@ -747,6 +753,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'reactionAdd': s.reactionAdd,
       'mentionAdd': s.mentionAdd,
       'attachmentUploadFailed': s.attachmentUploadFailed,
+      'attachmentRemove': s.attachmentRemove,
+      'attachmentRemoveNamed': s.attachmentRemoveNamed('{name}'),
       'attachLibrary': s.attachLibrary,
       'attachCamera': s.attachCamera,
       'attachFile': s.attachFile,

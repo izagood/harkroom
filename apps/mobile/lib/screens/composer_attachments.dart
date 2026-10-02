@@ -7,7 +7,9 @@ import '../state/app_scope.dart';
 import '../state/app_state.dart';
 import '../ui/states.dart';
 import '../ui/tokens.dart';
+import 'artifact_preview.dart' show formatBytes;
 import 'attach_pickers.dart';
+import 'attachments.dart' show ImageViewport;
 
 /// 작성칸에 붙여 둔 첨부와, 파일을 고르는 버튼.
 ///
@@ -29,38 +31,258 @@ class ComposerAttachments extends StatelessWidget {
     final items = app.pending[composerKey] ?? const <PendingAttachment>[];
     if (items.isEmpty) return const SizedBox.shrink();
 
+    // 줄 높이 86 — 64 타일 위·오른쪽으로 × 의 누르는 영역(44)이 반 걸칠 자리다(designer 시안 84 + 2).
     return SizedBox(
       key: const Key('composer-attachments'),
-      height: 56,
+      height: 86,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 8),
         itemCount: items.length,
-        itemBuilder: (context, i) {
-          final item = items[i];
-          final uploading = item.attachment == null;
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-            child: InputChip(
-              key: Key('pending-${item.filename}'),
-              avatar: uploading
-                  ? SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        // 총 길이를 모르면 `progress` 가 0 에 머문다 — 그때는 **길이 없는
-                        // 회전자**로 둔다. 0% 에 멈춘 막대는 "멈췄다"로 읽힌다.
-                        value: item.progress > 0 ? item.progress : null,
-                      ),
-                    )
-                  : const Icon(Icons.attach_file, size: 16),
-              label: Text(item.filename, overflow: TextOverflow.ellipsis),
-              // 올리는 중에도 뗄 수 있다 — 잘못 고른 것을 기다리게 하지 않는다.
-              onDeleted: () => app.detach(composerKey, item),
+        itemBuilder: (context, i) => _PendingTile(
+          item: items[i],
+          onRemove: () => app.detach(composerKey, items[i]),
+          onOpen: () => _openViewer(context, items, items[i], (item) => app.detach(composerKey, item)),
+        ),
+      ),
+    );
+  }
+}
+
+/// 작성칸의 첨부 한 칸. **그림은 64×64 타일, 그림이 아닌 것은 같은 높이의 파일 카드**다
+/// (designer 시안 24878e97, jaebin D4: 캡션 없음 — 이름은 탭해서 전체 화면에서 본다).
+/// 예전에는 클립 아이콘과 파일명 칩뿐이라, 사진 보관함에서 고른 `IMG_0001.jpg` 가 무엇인지
+/// 보내기 전에 확인할 길이 없었다.
+///
+/// × 는 22pt 원이고 누르는 영역은 44pt 다 — 터치에는 호버가 없어 늘 보인다.
+class _PendingTile extends StatelessWidget {
+  const _PendingTile({required this.item, required this.onRemove, required this.onOpen});
+
+  final PendingAttachment item;
+  final VoidCallback onRemove;
+  final VoidCallback onOpen;
+
+  static const double _tile = 64;
+  static const double _hit = 44;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final k = context.tokens;
+    final uploading = item.attachment == null;
+    final preview = item.preview;
+    // 총 길이를 모르면 `progress` 가 0 에 머문다 — 그때는 **길이 없는 회전자**로 둔다.
+    // 0% 에 멈춘 막대는 "멈췄다"로 읽힌다.
+    final spinner = SizedBox(
+      width: 24,
+      height: 24,
+      child: CircularProgressIndicator(strokeWidth: 2.5, value: item.progress > 0 ? item.progress : null),
+    );
+
+    final Widget body;
+    final double width;
+    if (preview != null) {
+      width = _tile;
+      body = Semantics(
+        button: true,
+        label: item.filename,
+        child: GestureDetector(
+          key: Key('pending-open-${item.filename}'),
+          onTap: onOpen,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Opacity(
+                  opacity: uploading ? 0.5 : 1,
+                  child: Image.memory(
+                    preview,
+                    key: Key('pending-thumb-${item.filename}'),
+                    fit: BoxFit.cover,
+                    // 64pt × 3배 — 고른 원본(수 MB)을 그대로 풀면 타일 하나가 메모리를 수십 MB 먹는다.
+                    cacheWidth: 192,
+                    gaplessPlayback: true,
+                    errorBuilder: (context, error, stack) =>
+                        ColoredBox(color: k.soft, child: Icon(Icons.image_not_supported_outlined, color: k.mute)),
+                  ),
+                ),
+                if (uploading) Center(child: spinner),
+              ],
             ),
-          );
-        },
+          ),
+        ),
+      );
+    } else {
+      width = 168;
+      body = Container(
+        key: Key('pending-file-${item.filename}'),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: k.soft,
+          border: Border.all(color: k.line),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            if (uploading) spinner else Icon(Icons.insert_drive_file_outlined, color: k.mute),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(item.filename,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: HarkroomType.meta, fontWeight: FontWeight.w600, color: k.fg)),
+                  if (item.byteSize != null)
+                    Text(formatBytes(item.byteSize!), style: TextStyle(fontSize: HarkroomType.meta, color: k.mute)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // 바깥 칸은 타일 + 누르는 영역 반쪽(22)이다 — 칸 밖으로 삐져나온 영역은 눌리지 않는다.
+    return SizedBox(
+      key: Key('pending-${item.filename}'),
+      width: width + _hit / 2,
+      height: _tile + _hit / 2,
+      child: Stack(
+        children: [
+          Positioned(left: 0, bottom: 0, width: width, height: _tile, child: body),
+          Positioned(
+            right: 0,
+            top: 0,
+            width: _hit,
+            height: _hit,
+            child: Semantics(
+              button: true,
+              label: t.attachmentRemoveNamed(item.filename),
+              child: GestureDetector(
+                key: Key('pending-remove-${item.filename}'),
+                behavior: HitTestBehavior.opaque,
+                // 올리는 중에도 뗄 수 있다 — 잘못 고른 것을 기다리게 하지 않는다.
+                onTap: onRemove,
+                child: Center(
+                  child: Container(
+                    width: 22,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      color: k.ink,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: k.bg, width: 1.5),
+                    ),
+                    child: Icon(Icons.close, size: 14, color: k.bg),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 그림 타일을 누르면 여는 전체 화면 보기. 보낸 첨부의 뷰어(#1044 [ImageViewport])를 그대로 쓴다.
+/// 이름은 위, 크기·n/전체·[첨부에서 빼기]는 아래 — 타일에 캡션을 달지 않은 대신 여기서 확인한다.
+void _openViewer(
+  BuildContext context,
+  List<PendingAttachment> items,
+  PendingAttachment start,
+  void Function(PendingAttachment) remove,
+) {
+  // 그림만 넘긴다 — 파일 카드는 펼칠 그림이 없다. 목록은 **연 순간의 사본**이다.
+  final images = [for (final p in items) if (p.preview != null) p];
+  final index = images.indexOf(start);
+  if (index < 0) return;
+  Navigator.of(context).push(MaterialPageRoute<void>(
+    builder: (_) => PendingViewer(items: images, initialIndex: index, onRemove: remove),
+  ));
+}
+
+/// 작성칸에 붙인 그림의 전체 화면 보기. 좌우로 넘긴다.
+class PendingViewer extends StatefulWidget {
+  const PendingViewer({super.key, required this.items, required this.initialIndex, required this.onRemove});
+
+  final List<PendingAttachment> items;
+  final int initialIndex;
+  final void Function(PendingAttachment) onRemove;
+
+  @override
+  State<PendingViewer> createState() => _PendingViewerState();
+}
+
+class _PendingViewerState extends State<PendingViewer> {
+  late final PageController _pages = PageController(initialPage: widget.initialIndex);
+  late final List<PendingAttachment> _items = [...widget.items];
+  late int _index = widget.initialIndex;
+
+  @override
+  void dispose() {
+    _pages.dispose();
+    super.dispose();
+  }
+
+  void _remove() {
+    final item = _items[_index];
+    widget.onRemove(item);
+    // 마지막 한 장을 빼면 볼 것이 없다 — 작성칸으로 돌아간다.
+    if (_items.length == 1) {
+      Navigator.of(context).pop();
+      return;
+    }
+    setState(() {
+      _items.removeAt(_index);
+      if (_index >= _items.length) _index = _items.length - 1;
+    });
+    _pages.jumpToPage(_index);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final item = _items[_index];
+    const white = TextStyle(color: Colors.white);
+    return Scaffold(
+      key: const Key('pending-viewer'),
+      // 레터박스는 검정이다 — 보낸 첨부의 뷰어와 같다.
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        title: Text(item.filename, overflow: TextOverflow.ellipsis),
+      ),
+      body: PageView.builder(
+        controller: _pages,
+        itemCount: _items.length,
+        onPageChanged: (i) => setState(() => _index = i),
+        itemBuilder: (context, i) => ImageViewport(
+          image: MemoryImage(_items[i].preview!),
+          errorText: t.attachmentFailed,
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 4, 8, 4),
+          child: Row(
+            children: [
+              if (item.byteSize != null) Text(formatBytes(item.byteSize!), style: white),
+              const SizedBox(width: 12),
+              Text('${_index + 1}/${_items.length}', key: const Key('pending-viewer-count'), style: white),
+              const Spacer(),
+              TextButton(
+                key: const Key('pending-viewer-remove'),
+                onPressed: _remove,
+                child: Text(t.attachmentRemove),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

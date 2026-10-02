@@ -1325,6 +1325,8 @@ class AppState extends ChangeNotifier {
   /// 실패하면 사람은 **친 글까지 잃는다.** 미리 올려 두면 보내기는 id 만 싣는다.
   Future<void> attach(String key, PendingAttachment item, Uint8List bytes) async {
     final list = pending.putIfAbsent(key, () => []);
+    item.byteSize ??= bytes.length;
+    if (item.preview == null && isPreviewableName(item.filename)) item.preview = bytes;
     list.add(item);
     notifyListeners();
     try {
@@ -1728,4 +1730,21 @@ class PendingAttachment {
 
   /// 올리기가 끝나면 채워진다.
   AttachmentRow? attachment;
+
+  /// 고른 그림의 바이트 — 작성칸 타일과 전체 화면 보기가 **서버 왕복 없이** 그린다.
+  /// 그릴 수 있는 그림([isPreviewableName])일 때만 채운다. 서버는 바뀌지 않는다.
+  Uint8List? preview;
+
+  /// 고른 파일의 바이트 수. 올리기 전에도 크기를 말할 수 있게.
+  int? byteSize;
+}
+
+/// 작성칸에서 그림으로 그릴 이름인가. 보낸 뒤의 [AttachmentStrip.canPreview] 와 같은 선을
+/// 지킨다 — **SVG 는 그림이 아니다**(스크립트를 품을 수 있다). 올리기 전에는 서버의
+/// `contentType` 이 없으므로 확장자로 가른다. 못 그리면 타일이 파일 카드로 물러난다.
+bool isPreviewableName(String filename) {
+  final dot = filename.lastIndexOf('.');
+  if (dot < 0) return false;
+  const exts = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif', 'bmp'};
+  return exts.contains(filename.substring(dot + 1).toLowerCase());
 }

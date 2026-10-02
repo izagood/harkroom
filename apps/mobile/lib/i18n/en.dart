@@ -401,6 +401,11 @@ class StringsEn implements Strings {
   String get attachmentUploadFailed => 'Could not upload that file.';
 
   @override
+  String get attachmentRemove => 'Remove from attachments';
+  @override
+  String attachmentRemoveNamed(String name) => 'Remove $name';
+
+  @override
   String get attachLibrary => 'Photo Library';
 
   @override
