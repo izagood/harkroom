@@ -251,6 +251,18 @@ void main() {
       expect(t.threadRootId, _root);
     });
 
+    test('다른 커뮤니티로 옮기기 전에 화면을 내리게 한다(security #1092 L1) — 같은 커뮤니티면 안 내린다', () async {
+      await boot();
+      final c = PushCoordinator(app, push);
+      final calls = <String?>[];
+      c.beforeSwitch = () => calls.add(app.activeKey);
+      await c.open(_hk(_a, root: _root));
+      expect(calls, isEmpty);
+      await c.open(_hk(_b, root: _root));
+      // 옮기기 **전** 의 커뮤니티에서 불렸다.
+      expect(calls, ['$_acmeUrl#$_a']);
+    });
+
     test('계정 id 가 겹치면 누름은 아무것도 하지 않는다 — 옮기지도, 열지도 않는다', () async {
       await boot();
       app.communities = [_c(_acmeUrl, _a), _c(_betaUrl, _a)];

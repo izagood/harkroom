@@ -99,6 +99,16 @@ class _SearchScreenState extends State<SearchScreen> {
   void initState() {
     super.initState();
     _scroll.addListener(_onScroll);
+    // 빌드 밖이라 구독하지 않고 읽는다.
+    AppScope.read(context).loadRecentSearches();
+  }
+
+  /// 최근 찾은 말을 누르면 그 말로 바로 찾는다.
+  void _useRecent(String q) {
+    _input.text = q;
+    _input.selection = TextSelection.collapsed(offset: q.length);
+    _debounce?.cancel();
+    _run(q);
   }
 
   @override
@@ -231,7 +241,10 @@ class _SearchScreenState extends State<SearchScreen> {
           onSubmitted: (_) {
             _debounce?.cancel();
             final q = _input.text.trim();
-            if (q.length >= searchMinChars) _run(q);
+            if (q.length >= searchMinChars) {
+              _run(q);
+              app.rememberSearch(q);
+            }
           },
           decoration: InputDecoration(
             hintText: t.searchHint,
@@ -306,58 +319,168 @@ class _SearchScreenState extends State<SearchScreen> {
     if (_failure != null) {
       return FailedState(title: t.searchFailed, cause: _failure!, onRetry: () => _run(_shown));
     }
+    final shortcuts = _input.text.trim().isEmpty ? const <ChannelRow>[] : searchShortcuts(context.app, _input.text);
     if (_shown.isEmpty) {
-      // 아직 아무것도 안 찾았다 — 찾는 중이면 빈 자리, 아니면 두 글자부터라는 말.
-      return _loading ? const SizedBox.shrink() : EmptyState(title: t.searchStart);
-    }
-    if (_results.isEmpty) {
-      return Center(
-        key: const Key('search-empty'),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(t.searchNoResults.replaceFirst('{q}', _shown),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: context.tokens.fg)),
-              // 두 글자는 서버가 낱말 앞부분으로만 맞춘다(중간일치는 세 글자부터). 숨기지 않고 말한다.
-              if (_shown.length == searchMinChars) ...[
-                const SizedBox(height: 6),
-                Text(t.searchTwoLetterHint,
-                    textAlign: TextAlign.center, style: TextStyle(fontSize: 13, color: context.tokens.mute)),
-              ],
-              if (_scope != SearchScope.all) ...[
-                const SizedBox(height: 12),
-                OutlinedButton(
-                  key: const Key('search-everywhere'),
-                  onPressed: () => _setScope(SearchScope.all),
-                  child: Text(t.searchEverywhere),
+      if (_loading) return const SizedBox.shrink();
+      final recent = context.app.recentSearches;
+      if (shortcuts.isEmpty && recent.isEmpty) return EmptyState(title: t.searchStart);
+      // 아직 아무것도 안 찾았다 — 이름이 맞는 대화(바로 가기)와 최근 찾은 말.
+      return ListView(
+        key: const Key('search-idle'),
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        children: [
+          ..._shortcutRows(context, shortcuts),
+          if (recent.isNotEmpty) ...[
+            _SectionHeader(
+              label: t.searchRecent,
+              trailing: TextButton(
+                key: const Key('search-recent-clear'),
+                onPressed: () => context.app.forgetSearch(null),
+                child: Text(t.searchRecentClear),
+              ),
+            ),
+            for (final q in recent)
+              ListTile(
+                key: Key('search-recent-$q'),
+                dense: true,
+                leading: Icon(Icons.history, size: 20, color: context.tokens.mute),
+                title: Text(q),
+                trailing: IconButton(
+                  tooltip: t.searchRecentRemove,
+                  icon: const Icon(Icons.close, size: 18),
+                  onPressed: () => context.app.forgetSearch(q),
                 ),
-              ],
-            ],
-          ),
-        ),
+                onTap: () => _useRecent(q),
+              ),
+          ],
+        ],
       );
     }
+    if (_results.isEmpty) {
+      final none = _noResults(context);
+      // 메시지는 없어도 이름이 맞는 대화는 있을 수 있다 — 그때는 바로 가기를 위에 두고 그 아래에 0건 말.
+      if (shortcuts.isEmpty) return none;
+      return ListView(children: [..._shortcutRows(context, shortcuts), none]);
+    }
+    return _resultList(context, shortcuts);
+  }
+
+  Widget _noResults(BuildContext context) {
+    final t = context.t;
+    return Center(
+      key: const Key('search-empty'),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(t.searchNoResults.replaceFirst('{q}', _shown),
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: context.tokens.fg)),
+            // 두 글자는 서버가 낱말 앞부분으로만 맞춘다(중간일치는 세 글자부터). 숨기지 않고 말한다.
+            if (_shown.length == searchMinChars) ...[
+              const SizedBox(height: 6),
+              Text(t.searchTwoLetterHint,
+                  textAlign: TextAlign.center, style: TextStyle(fontSize: 13, color: context.tokens.mute)),
+            ],
+            if (_scope != SearchScope.all) ...[
+              const SizedBox(height: 12),
+              OutlinedButton(
+                key: const Key('search-everywhere'),
+                onPressed: () => _setScope(SearchScope.all),
+                child: Text(t.searchEverywhere),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _resultList(BuildContext context, List<ChannelRow> shortcuts) {
     return ListView.separated(
       key: const Key('search-results'),
       controller: _scroll,
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.only(bottom: 24),
-      itemCount: _results.length + (_loadingMore ? 1 : 0),
+      itemCount: _results.length + (_loadingMore ? 1 : 0) + (shortcuts.isEmpty ? 0 : 1),
       separatorBuilder: (_, _) => Divider(height: 1, color: context.tokens.line),
       itemBuilder: (context, i) {
+        // 이름이 맞는 대화가 있으면 결과 위에 한 묶음으로.
+        if (shortcuts.isNotEmpty) {
+          if (i == 0) return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: _shortcutRows(context, shortcuts));
+          i -= 1;
+        }
         if (i == _results.length) {
           return const Padding(
             padding: EdgeInsets.all(16),
             child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
           );
         }
-        return SearchResultTile(message: _results[i], query: _shown);
+        return SearchResultTile(
+          message: _results[i],
+          query: _shown,
+          onOpened: () => context.app.rememberSearch(_shown),
+        );
       },
     );
   }
+
+  List<Widget> _shortcutRows(BuildContext context, List<ChannelRow> shortcuts) {
+    if (shortcuts.isEmpty) return const [];
+    return [
+      _SectionHeader(label: context.t.searchShortcuts),
+      for (final c in shortcuts)
+        ListTile(
+          key: Key('search-shortcut-${c.id}'),
+          dense: true,
+          leading: Icon(c.isDm ? Icons.person_outline : Icons.tag, size: 20, color: context.tokens.mute),
+          title: Text(c.name),
+          subtitle: c.isDm ? Text(context.t.tabDms) : null,
+          onTap: () {
+            context.app.openChannel(c.id);
+            Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => MessageListScreen(channelId: c.id)));
+          },
+        ),
+    ];
+  }
+}
+
+/// 바로 가기: 이름이 친 말을 담은 채널·DM(이미 받은 목록에서 — 서버를 묻지 않는다). 앞부분이 맞는 것을
+/// 먼저, 그 안에서 원래 순서. 많으면 산만하니 5개까지.
+List<ChannelRow> searchShortcuts(AppState app, String query) {
+  final q = query.trim().toLowerCase().replaceFirst(RegExp(r'^[#@]'), '');
+  if (q.isEmpty) return const [];
+  final starts = <ChannelRow>[];
+  final contains = <ChannelRow>[];
+  for (final c in app.channels) {
+    final name = c.name.toLowerCase();
+    if (name.startsWith(q)) {
+      starts.add(c);
+    } else if (name.contains(q)) {
+      contains.add(c);
+    }
+  }
+  return [...starts, ...contains].take(5).toList(growable: false);
+}
+
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.label, this.trailing});
+
+  final String label;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 10, 8, 2),
+        child: Row(children: [
+          Expanded(
+            child: Text(label,
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: context.tokens.mute)),
+          ),
+          ?trailing,
+        ]),
+      );
 }
 
 class _ScopeChip extends StatelessWidget {
@@ -368,20 +491,32 @@ class _ScopeChip extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => ChoiceChip(
-        label: Text(label),
-        selected: selected,
-        showCheckmark: false,
-        onSelected: (_) => onTap(),
-      );
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    // 고른 칩은 먹색 바탕 + 흰 글자 — 지금 어디서 찾는지가 이 화면의 첫 정보다(designer #1092 f2).
+    // 「흰」 은 다크에서도 바탕(`fg` = 밝은 글자색)과 맞서는 색이어야 하므로 `bg` 를 쓴다.
+    return ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      showCheckmark: false,
+      selectedColor: k.fg,
+      backgroundColor: k.bg,
+      side: BorderSide(color: selected ? k.fg : k.line),
+      labelStyle: TextStyle(color: selected ? k.bg : k.mute, fontWeight: selected ? FontWeight.w600 : FontWeight.w400),
+      onSelected: (_) => onTap(),
+    );
+  }
 }
 
 /// 결과 한 줄: **어디(채널·스레드) · 누가 · 언제** + 본문 두 줄, 찾은 낱말 강조.
 class SearchResultTile extends StatelessWidget {
-  const SearchResultTile({super.key, required this.message, required this.query});
+  const SearchResultTile({super.key, required this.message, required this.query, this.onOpened});
 
   final MessageRow message;
   final String query;
+
+  /// 눌러 열었을 때(최근 찾은 말에 넣는 자리).
+  final VoidCallback? onOpened;
 
   @override
   Widget build(BuildContext context) {
@@ -392,14 +527,18 @@ class SearchResultTile extends StatelessWidget {
     for (final c in app.channels) {
       if (c.id == message.channelId) channel = c;
     }
+    // DM 은 「DM · 이름」 — 이름만 두면 그 이름의 채널로 읽힌다(designer #1092 f3).
     final where = [
+      if (channel?.isDm ?? false) t.tabDms,
       channelLabel(channel),
       if (message.threadRootId != null) t.searchInThread,
     ].where((s) => s.isNotEmpty).join(' · ');
     final who = app.displayNameOf(message.authorId);
     final when = dayLabel(t, message.createdAt);
     // 본문은 한 덩어리로 — 줄바꿈이 두 줄 칸을 첫 줄에서 다 먹지 않게.
-    final body = renderMentions(message.body, app.accounts, t.mentionUnknown).replaceAll(RegExp(r'\s+'), ' ').trim();
+    final full = renderMentions(message.body, app.accounts, t.mentionUnknown).replaceAll(RegExp(r'\s+'), ' ').trim();
+    // 찾은 낱말이 두 줄 밖에 있으면 강조가 안 보여 왜 걸렸는지 모른다 — 첫 일치 앞에서 자른 발췌로 보인다.
+    final body = searchExcerpt(full, query);
 
     return Semantics(
       button: true,
@@ -408,7 +547,10 @@ class SearchResultTile extends StatelessWidget {
       label: [where, who, when, body].where((s) => s.isNotEmpty).join(', '),
       child: InkWell(
         key: Key('search-result-${message.id}'),
-        onTap: () => openMessageRow(context, message),
+        onTap: () {
+          onOpened?.call();
+          openMessageRow(context, message);
+        },
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter, vertical: 10),
           child: Column(
@@ -439,20 +581,60 @@ class SearchResultTile extends StatelessWidget {
   }
 }
 
+/// 결과 줄 본문 두 칸에 대략 들어가는 글자 수(한글 기준). 일치가 이 안에 끝나면 자르지 않는다.
+const int searchExcerptVisible = 40;
+
+/// 찾은 낱말이 보이게 자른 발췌(designer #1092 f1, Slack 과 같다).
+///
+/// - 첫 일치가 **보이는 칸([visible]) 안에서 끝나면 자르지 않는다** — 두 줄에 들어가는 글을 자르면
+///   잃기만 한다. 이 앱의 글은 거의 `@에이전트 …` 로 시작해 가장 흔한 줄이 그 꼴이다(#1094 D1).
+/// - 자르면 일치 앞 [lead] 글자쯤에서 「…」 로 시작한다. 그 자리가 낱말 가운데면 일치 앞의 첫 공백
+///   뒤로 물리고, 그런 공백이 없으면 앞쪽 가까운 공백으로, 그것도 없으면 **자르지 않는다**.
+String searchExcerpt(String text, String query, {int visible = searchExcerptVisible, int lead = 20}) {
+  final words = _queryWords(query);
+  final lower = text.toLowerCase();
+  if (lower.length != text.length) return text;
+  var first = -1;
+  var end = -1;
+  for (final w in words) {
+    final at = lower.indexOf(w);
+    if (at >= 0 && (first < 0 || at < first)) {
+      first = at;
+      end = at + w.length;
+    }
+  }
+  if (first < 0 || end <= visible || first <= lead) return text;
+  var start = first - lead;
+  if (text[start - 1] != ' ') {
+    final ahead = text.indexOf(' ', start);
+    final behind = text.lastIndexOf(' ', start - 1);
+    if (ahead >= 0 && ahead < first) {
+      start = ahead + 1;
+    } else if (behind >= 0 && first - behind <= lead + 10) {
+      start = behind + 1;
+    } else {
+      return text;
+    }
+  }
+  return '…${text.substring(start)}';
+}
+
+List<String> _queryWords(String query) => query
+    .split(RegExp(r'\s+'))
+    .map((w) => w.replaceAll(RegExp(r'^[-"]+|"+$'), '').toLowerCase())
+    .where((w) => w.isNotEmpty)
+    .toSet()
+    .toList()
+  // 긴 낱말을 먼저 — 「배포」 와 「배포해」 가 같이 있으면 긴 쪽이 이긴다.
+  ..sort((a, b) => b.length.compareTo(a.length));
+
 /// [text] 안에서 [query] 의 낱말(공백으로 나눈 것)이 나온 자리를 [mark] 로 칠한다. 대소문자는 가리지 않는다.
 ///
 /// 서버는 낱말 **앞부분**(접두)과 세 글자 이상 **중간일치**로 맞춘다 — 둘 다 결국 그 글자가 본문
 /// 어딘가에 있다는 뜻이라, 글자 그대로 찾아 칠하면 서버가 맞춘 자리와 같다. 따옴표·`-` 같은 검색
 /// 문법 기호는 낱말에서 떼고 칠한다(`"배포 순서"` 의 따옴표는 본문에 없다).
 List<InlineSpan> highlightSpans(String text, String query, TextStyle mark) {
-  final words = query
-      .split(RegExp(r'\s+'))
-      .map((w) => w.replaceAll(RegExp(r'^[-"]+|"+$'), '').toLowerCase())
-      .where((w) => w.isNotEmpty)
-      .toSet()
-      .toList()
-    // 긴 낱말을 먼저 — 「배포」 와 「배포해」 가 같이 있으면 긴 쪽이 이긴다.
-    ..sort((a, b) => b.length.compareTo(a.length));
+  final words = _queryWords(query);
   if (words.isEmpty) return [TextSpan(text: text)];
   final lower = text.toLowerCase();
   // 길이가 바뀌는 소문자화(드문 유니코드)면 자리가 어긋난다 — 그때는 칠하지 않는다.

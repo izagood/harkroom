@@ -10,8 +10,10 @@ import 'package:harkroom/main.dart';
 import 'package:harkroom/screens/message_list_screen.dart';
 import 'package:harkroom/screens/search_screen.dart';
 import 'package:harkroom/screens/thread_screen.dart';
+import 'package:harkroom/session/recent_search_store.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_state.dart';
+import 'package:harkroom/ui/tokens.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -61,7 +63,11 @@ class _Server {
 
   /// 「배포」 를 찾으면 답글 하나가 온다. 그 밖은 0건.
   Map<String, Object?> Function(Map<String, String> q) answer = (q) => {
-        'messages': q['q'] == '배포' ? [_row(_reply, 9, root: _root, body: '0.3.130 배포했다. 서버 헬스 OK')] : <Object?>[],
+        'messages': switch (q['q']) {
+          '배포' => [_row(_reply, 9, root: _root, body: '0.3.130 배포했다. 서버 헬스 OK')],
+          '시안' => [_row('dddddddd-dddd-4ddd-8ddd-dddddddddddd', 4, body: '시안 올렸다', channelId: 'd1')],
+          _ => <Object?>[],
+        },
         'hasMore': false,
       };
 
@@ -72,6 +78,8 @@ class _Server {
           return _json({
             'channels': [
               {'id': 'c1', 'name': 'task', 'kind': 'standard'},
+              {'id': 'd1', 'name': 'designer', 'kind': 'dm'},
+              {'id': 'c2', 'name': 'testbed', 'kind': 'standard'},
             ],
           });
         }
@@ -106,7 +114,7 @@ class _Server {
       });
 }
 
-Future<AppState> _boot(WidgetTester tester, _Server server) async {
+Future<AppState> _boot(WidgetTester tester, _Server server, {RecentSearchStore? recent}) async {
   final app = AppState(
     sessions: SessionStore.inMemory(
       seed: jsonEncode({
@@ -118,6 +126,7 @@ Future<AppState> _boot(WidgetTester tester, _Server server) async {
     ),
     apiFactory: (b, t) => ApiClient(baseUrl: b, token: t, httpClient: server.client),
     connector: (_) async => _Idle(),
+    recentSearchStore: recent,
   );
   addTearDown(app.dispose);
   await tester.runAsync(app.boot);
@@ -315,6 +324,141 @@ void main() {
       expect(marked(highlightSpans('배포 순서 정리', '"배포 순서"', mark)), '[배포] [순서] 정리');
       expect(marked(highlightSpans('배포', '-배포', mark)), '[배포]');
       expect(marked(highlightSpans('아무 말', '없음', mark)), '아무 말');
+    });
+  });
+
+  group('F2', () {
+    testWidgets('결과를 누르면 그 스레드에서 찾은 답글을 강조한다', (tester) async {
+      await _boot(tester, _Server());
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      await _type(tester, '배포');
+      await tester.tap(find.byKey(const Key('search-result-$_reply')));
+      await _settle(tester);
+      expect(tester.widget<ThreadScreen>(find.byType(ThreadScreen)).highlightId, _reply);
+      expect(find.byType(HitFlash), findsOneWidget);
+      await tester.pump(HitFlash.hold + const Duration(milliseconds: 10));
+      expect(tester.state<HitFlashState>(find.byType(HitFlash)).on, isFalse, reason: '2초 뒤 걷힌다');
+    });
+
+    testWidgets('DM 결과는 「DM · 이름」 으로 읽힌다', (tester) async {
+      await _boot(tester, _Server());
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      await _type(tester, '시안');
+      expect(tester.getSemantics(find.byType(SearchResultTile)).label, startsWith('${_t.tabDms} · designer, '));
+    });
+
+    testWidgets('고른 범위 칩은 먹색 바탕(fg), 안 고른 칩은 바탕색', (tester) async {
+      final app = await _boot(tester, _Server());
+      await _openChannel(tester, app);
+      await tester.tap(find.byKey(const Key('channel-search')));
+      await _settle(tester);
+      ChoiceChip chip(String k) =>
+          tester.widget<ChoiceChip>(find.descendant(of: find.byKey(Key(k)), matching: find.byType(ChoiceChip)));
+      final k = tester.element(find.byType(SearchScreen)).tokens;
+      expect(chip('search-scope-channel').selected, isTrue);
+      expect(chip('search-scope-channel').selectedColor, k.fg);
+      expect(chip('search-scope-channel').labelStyle?.color, k.bg);
+      expect(chip('search-scope-all').labelStyle?.color, k.mute);
+    });
+
+    testWidgets('최근 찾은 말: 결과를 열면 남고, 누르면 그 말로 찾고, 지울 수 있다', (tester) async {
+      final store = MemoryRecentSearchStore();
+      final server = _Server();
+      await _boot(tester, server, recent: store);
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      await _type(tester, '배포');
+      await tester.tap(find.byKey(const Key('search-result-$_reply')));
+      await _settle(tester);
+      expect(store.values.values.single, ['배포']);
+      await tester.pageBack();
+      await _settle(tester);
+      await tester.tap(find.byKey(const Key('search-cancel')));
+      await _settle(tester);
+
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      expect(find.byKey(const Key('search-recent-배포')), findsOneWidget);
+      final before = server.searches.length;
+      await tester.tap(find.byKey(const Key('search-recent-배포')));
+      await _settle(tester);
+      expect(server.searches.length, before + 1);
+      expect(server.searches.last['q'], '배포');
+
+      // 입력을 비우면 다시 최근 목록 — 모두 지우기.
+      await _type(tester, '');
+      await tester.tap(find.byKey(const Key('search-recent-clear')));
+      await _settle(tester);
+      expect(find.byKey(const Key('search-recent-배포')), findsNothing);
+      expect(store.values.values.single, isEmpty);
+    });
+
+    testWidgets('바로 가기: 이름이 맞는 채널·DM 을 세우고, 누르면 그 대화', (tester) async {
+      await _boot(tester, _Server());
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      await _type(tester, 't');
+      // 앞부분이 맞는 task·testbed. 한 글자라 서버에는 안 보낸다.
+      expect(find.byKey(const Key('search-shortcut-c1')), findsOneWidget);
+      expect(find.byKey(const Key('search-shortcut-c2')), findsOneWidget);
+      expect(find.byKey(const Key('search-shortcut-d1')), findsNothing);
+      await _type(tester, '#des');
+      expect(find.byKey(const Key('search-shortcut-d1')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('search-shortcut-d1')));
+      await _settle(tester);
+      expect(tester.widget<MessageListScreen>(find.byType(MessageListScreen)).channelId, 'd1');
+    });
+
+    for (final all in [false, true]) {
+      test('로그아웃(${all ? '모두' : '이 커뮤니티'})하면 최근 찾은 말을 기기에서 지운다(security #1094 F1·F2)', () async {
+        final store = MemoryRecentSearchStore();
+        final server = _Server();
+        final app = AppState(
+          sessions: SessionStore.inMemory(
+            seed: jsonEncode({
+              'active': 'me-1',
+              'communities': [
+                {'accountId': 'me-1', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'me'},
+              ],
+            }),
+          ),
+          apiFactory: (b, t) => ApiClient(baseUrl: b, token: t, httpClient: server.client),
+          connector: (_) async => _Idle(),
+          recentSearchStore: store,
+        );
+        addTearDown(app.dispose);
+        await app.boot();
+        final key = app.activeKey!;
+        await app.rememberSearch('배포');
+        expect(store.values[key], ['배포']);
+        if (all) {
+          await app.signOutAll();
+        } else {
+          await app.signOutCommunity(key);
+        }
+        expect(store.values.containsKey(key), isFalse);
+        // 화면 상태도 비었다 — 다음 커뮤니티에 앞 목록이 비치지 않는다.
+        expect(app.recentSearches, isEmpty);
+      });
+    }
+
+    test('발췌: 첫 일치가 두 줄 밖이면 그 앞에서 「…」 로 시작한다', () {
+      expect(searchExcerpt('짧은 배포 글', '배포'), '짧은 배포 글');
+      // 두 줄에 들어가는 글은 일치가 스무 글자 뒤여도 자르지 않는다(#1094 D1).
+      expect(searchExcerpt('@task_manager 서버 최신버전 배포해', '배포'), '@task_manager 서버 최신버전 배포해');
+      // 자를 자리 앞뒤로 공백이 없으면 자르지 않는다 — 낱말 가운데에서 「…ask」 가 되지 않는다.
+      final noSpace = '${'가' * 60}배포';
+      expect(searchExcerpt(noSpace, '배포'), noSpace);
+      final long = '${'가나다라 ' * 20}여기서 배포했다';
+      final ex = searchExcerpt(long, '배포');
+      expect(ex, startsWith('…'));
+      expect(ex, endsWith('여기서 배포했다'));
+      expect(ex.indexOf('배포'), lessThanOrEqualTo(31), reason: '찾은 말이 앞 스무 글자쯤 안에 온다');
+      // 낱말 가운데를 자르지 않는다.
+      expect(ex.substring(1, 5), '가나다라');
+      expect(searchExcerpt(long, '없는말'), long);
     });
   });
 }

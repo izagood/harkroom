@@ -22,6 +22,7 @@ import '../api/ws.dart';
 import '../api/ws_socket.dart';
 import '../mention/sticky.dart';
 import '../mention/usage.dart';
+import '../session/recent_search_store.dart';
 import '../session/session_store.dart';
 
 /// 앱이 지금 어느 단계에 있나. 화면 하나가 이것만 보고 무엇을 그릴지 정한다.
@@ -112,11 +113,21 @@ class AppState extends ChangeNotifier {
     WsConnector? connector,
     this.otherPollEvery = const Duration(seconds: 60),
     this.otherRequestTimeout = const Duration(seconds: 10),
+    RecentSearchStore? recentSearchStore,
   })  : _sessions = sessions,
+        _recentStore = recentSearchStore ?? RecentSearchStore.inMemory(),
         _apiFactory = apiFactory ?? ((b, t) => ApiClient(baseUrl: b, token: t)),
         _connector = connector ?? RealWsConnection.connect;
 
   final SessionStore _sessions;
+  final RecentSearchStore _recentStore;
+
+  /// 지금 커뮤니티의 최근 찾은 말(새것이 앞, [recentSearchMax] 개까지). [loadRecentSearches] 가 채운다.
+  List<String> recentSearches = const [];
+  String? _recentFor;
+
+  /// 최근 찾은 말을 몇 개까지 두나.
+  static const int recentSearchMax = 10;
   final ApiClient Function(String baseUrl, String? token) _apiFactory;
   final WsConnector _connector;
 
@@ -1084,6 +1095,44 @@ class AppState extends ChangeNotifier {
     return found;
   }
 
+  /// 찾기 화면을 열 때 부른다. 커뮤니티가 바뀌었으면 그 커뮤니티 것으로 갈아 낀다.
+  Future<void> loadRecentSearches() async {
+    final key = activeKey;
+    if (key == null) return;
+    final list = await _recentStore.load(key);
+    if (key != activeKey) return;
+    recentSearches = list;
+    _recentFor = key;
+    notifyListeners();
+  }
+
+  /// 찾은 말을 앞에 세운다(같은 말은 한 번만, 대소문자 무시).
+  Future<void> rememberSearch(String query) async {
+    final q = query.trim();
+    final key = activeKey;
+    if (q.isEmpty || key == null) return;
+    final base = _recentFor == key ? recentSearches : await _recentStore.load(key);
+    final next = [q, ...base.where((s) => s.toLowerCase() != q.toLowerCase())].take(recentSearchMax).toList(growable: false);
+    await _setRecent(key, next);
+  }
+
+  /// 하나 지우기(`query` 가 null 이면 전부).
+  Future<void> forgetSearch(String? query) async {
+    final key = activeKey;
+    if (key == null) return;
+    final base = _recentFor == key ? recentSearches : await _recentStore.load(key);
+    await _setRecent(key, query == null ? const [] : base.where((s) => s != query).toList(growable: false));
+  }
+
+  Future<void> _setRecent(String key, List<String> next) async {
+    if (key == activeKey) {
+      recentSearches = next;
+      _recentFor = key;
+      notifyListeners();
+    }
+    await _recentStore.save(key, next);
+  }
+
   /// 메시지 찾기. 실패는 **던진다** — 할 말(연결·서버·권한)은 화면이 정한다([LoadFailure.of]).
   /// 그 사이 커뮤니티·계정이 바뀌었으면 `null` — 옛 서버의 결과를 새 커뮤니티 화면에 그리면 안 된다.
   Future<MessagePage?> searchMessages(String query, {String? channelId, String? threadRootId, int offset = 0}) async {
@@ -1485,12 +1534,14 @@ class AppState extends ChangeNotifier {
       notifyListeners();
       await _revoke(gone);
       await _sessions.remove(key);
+      await _recentStore.delete(key);
       return;
     }
     _generation++;
     _dropSocket();
     await _revoke(gone);
     await _sessions.remove(key);
+    await _recentStore.delete(key);
     // 위 두 await 사이에 화면이 부른 요청은 첫 줄에서 올린 세대를 쥐고 옛 토큰으로 간다.
     // 비우기 직전에 한 번 더 올려 그 답도 버린다.
     _generation++;
@@ -1530,6 +1581,7 @@ class AppState extends ChangeNotifier {
     homeTab = 0;
     await Future.wait([for (final c in communities) _revoke(c)]);
     await _sessions.clear();
+    await Future.wait([for (final c in communities) _recentStore.delete(c.key)]);
     _generation++;
     _resetSession();
     communities = const [];
@@ -1598,6 +1650,10 @@ class AppState extends ChangeNotifier {
     pending.clear();
     // 누구와 이야기하던 자리인가도 그 계정의 것이다 — 다른 계정이 이어받으면 엉뚱한 상대를 부른다.
     stickyMentions.clear();
+    // 최근 찾은 말도 그 커뮤니티의 것이다 — 새 커뮤니티 것을 읽기 전까지 앞 목록이 보이거나, 그 목록이
+    // 새 커뮤니티 키에 저장되면 안 된다(security #1094 F2). 잠깐 비었다가 차는 것이 낫다.
+    recentSearches = const [];
+    _recentFor = null;
     channelAutoMentions.clear();
     autoSkipped.clear();
     openChannelId = null;

@@ -30,6 +30,7 @@ class _PushGateState extends State<PushGate> {
     final push = widget.push;
     if (push == null) return;
     push.addListener(_consume);
+    push.beforeSwitch = _popToHome;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       _consume();
@@ -41,7 +42,12 @@ class _PushGateState extends State<PushGate> {
   @override
   void dispose() {
     widget.push?.removeListener(_consume);
+    if (widget.push?.beforeSwitch == _popToHome) widget.push?.beforeSwitch = null;
     super.dispose();
+  }
+
+  void _popToHome() {
+    if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
   }
 
   Future<void> _maybePrompt(PushCoordinator push) async {

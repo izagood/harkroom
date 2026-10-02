@@ -182,12 +182,18 @@ class PushCoordinator extends ChangeNotifier {
     return granted;
   }
 
+  /// 다른 커뮤니티로 옮기기 **직전에** 부른다 — [PushGate] 가 쌓인 화면을 맨 아래까지 내린다.
+  /// 메뉴로 옮길 때(`enterCommunity`)와 같은 일이다. 안 내리면 찾기·채널·스레드 화면이 앞 커뮤니티의
+  /// 행을 든 채 남고, 그 줄을 누르면 앞 커뮤니티의 행이 새 커뮤니티 상태에 섞인다(security #1092 L1).
+  VoidCallback? beforeSwitch;
+
   /// 알림을 눌렀다.
   Future<void> open(Map<String, Object?> hk) async {
     final target = resolvePushTarget(hk, app.communities);
     if (target == null) return;
     pending = target;
     if (target.communityKey != app.activeKey || app.phase != AppPhase.ready) {
+      if (target.communityKey != app.activeKey) beforeSwitch?.call();
       final ok = await app.switchTo(target.communityKey);
       if (!ok) {
         // 만료된 커뮤니티 등 — 들어가지 못했으면 열 곳도 없다.
