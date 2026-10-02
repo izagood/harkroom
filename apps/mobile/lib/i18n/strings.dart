@@ -323,6 +323,12 @@ abstract class Strings {
   /// 부른 사람이 없다.
   String get inboxEmpty;
 
+  /// 인박스 맨 위 — 다른 커뮤니티에 안 읽은 부름이 있다. `{name}`·`{count}` 가 바뀐다(조사는 「에」만).
+  String get inboxOtherCommunity;
+
+  /// 인박스 맨 위 줄 — 그 커뮤니티로 옮긴다.
+  String get inboxOtherView;
+
   /// 전부 읽음으로.
   String get inboxMarkAllRead;
 
@@ -870,6 +876,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'newMessageDmFailed': s.newMessageDmFailed,
       'unreadOnlyEmpty': s.unreadOnlyEmpty,
       'inboxEmpty': s.inboxEmpty,
+      'inboxOtherCommunity': s.inboxOtherCommunity,
+      'inboxOtherView': s.inboxOtherView,
       'inboxMarkAllRead': s.inboxMarkAllRead,
       'inboxReasonMention': s.inboxReasonMention,
       'inboxReasonThreadReply': s.inboxReasonThreadReply,

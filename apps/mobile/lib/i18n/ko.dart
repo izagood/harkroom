@@ -708,4 +708,10 @@ class StringsKo implements Strings {
 
   @override
   String get searchShortcuts => '바로 가기';
+
+  @override
+  String get inboxOtherCommunity => '{name} 에 나를 기다리는 것 {count}';
+
+  @override
+  String get inboxOtherView => '보기';
 }

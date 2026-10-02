@@ -555,3 +555,63 @@ class ExpiredChip extends StatelessWidget {
     );
   }
 }
+
+/// 인박스 맨 위 한 줄(설계 ⑤): 「{name} 에 나를 기다리는 것 N · 보기 ›」. 누르면 그 커뮤니티로 옮기고
+/// **인박스 탭에 남는다** — 사람은 받은 것을 보러 온 것이다.
+class OtherCommunityInboxRow extends StatelessWidget {
+  const OtherCommunityInboxRow({super.key, required this.community, required this.count});
+
+  final StoredCommunity community;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final k = context.tokens;
+    final style = TextStyle(color: k.fg, fontWeight: FontWeight.w600);
+    return Material(
+      color: k.accentSurface,
+      child: InkWell(
+        key: Key('inbox-other-${community.key}'),
+        onTap: () => enterCommunity(context, community.key),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter, vertical: 10),
+          child: Row(
+            children: [
+              CommunityTile(community: community, size: 22),
+              const SizedBox(width: 10),
+              Expanded(child: _nameAndCount(t.inboxOtherCommunity.replaceAll('{count}', '$count'), style)),
+              Text(t.inboxOtherView, style: TextStyle(color: k.accent, fontWeight: FontWeight.w600)),
+              Icon(Icons.chevron_right, size: 18, color: k.accent),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 이름**만** 줄인다(designer #1066). 문장을 통째로 한 Text 에 넣고 줄이면 긴 이름에서 정작 수가
+  /// 잘린다. 문구를 `{name}` 앞뒤로 갈라 앞뒤는 그대로 두고 이름 칸만 남는 폭에 맞춘다 — 언어마다
+  /// 이름 자리가 달라도(ko 는 앞, en 은 뒤) 같은 코드로 된다.
+  Widget _nameAndCount(String line, TextStyle style) {
+    final at = line.indexOf('{name}');
+    final before = at < 0 ? line : line.substring(0, at);
+    final after = at < 0 ? '' : line.substring(at + '{name}'.length);
+    return Row(
+      children: [
+        if (before.isNotEmpty) Text(before, key: Key('inbox-other-before-${community.key}'), maxLines: 1, style: style),
+        if (at >= 0)
+          Flexible(
+            child: Text(
+              community.displayLabel,
+              key: Key('inbox-other-name-${community.key}'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: style,
+            ),
+          ),
+        if (after.isNotEmpty) Text(after, key: Key('inbox-other-after-${community.key}'), maxLines: 1, style: style),
+      ],
+    );
+  }
+}
