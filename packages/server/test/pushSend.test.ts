@@ -371,3 +371,17 @@ describe('/healthz', () => {
     expect(JSON.stringify(res.json())).not.toMatch(/APNS|keyId|teamId/i);
   });
 });
+
+describe('시스템 메시지의 자리표시자 (2026-10-02 TestFlight 실측)', () => {
+  it('미리보기에 {account} 가 아니라 지금의 handle 이 실린다', async () => {
+    const root = (await postMessage(pool, { channelId, authorId: adminId, body: '스레드', threadRootId: null, meta: {} }) as { message: { id: string } }).message.id;
+    await postMessage(pool, {
+      channelId, authorId: memberId, threadRootId: root, kind: 'system',
+      body: '{account}님이 이 스레드에서 pushbot 의 모델을 fable 로 정했습니다.', meta: { accountId: memberId },
+    });
+    await due(); await sweeper().sweep();
+    const bodies = sent.map((x) => (x.payload as { aps: { alert: { body?: string } } }).aps.alert.body);
+    expect(bodies).toContain('pm님이 이 스레드에서 pushbot 의 모델을 fable 로 정했습니다.');
+    expect(JSON.stringify(sent)).not.toContain('{account}');
+  });
+});

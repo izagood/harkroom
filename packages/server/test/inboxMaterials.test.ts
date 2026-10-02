@@ -120,3 +120,27 @@ describe('지워진 말은 인박스에도 없다', () => {
     expect((await inboxOf()).some((e) => e.messageId === id)).toBe(false);
   });
 });
+
+describe('시스템 메시지의 자리표시자 (2026-10-02 TestFlight 실측)', () => {
+  // `InboxEntry` 에는 `kind` 가 없어 화면이 `displayBody` 로 채울 수 없다 — 서버가 채워 내보낸다.
+  it('{account} 는 meta.accountId 의 지금 handle 로, 모르는 계정은 표시 문구로 나간다', async () => {
+    const root = (await postMessage(pool, { channelId, authorId: adminId, body: '내 스레드', threadRootId: null, meta: {} }) as { message: { id: string } }).message.id;
+    const sys = async (accountId: string) => (await postMessage(pool, {
+      channelId, authorId: botId, threadRootId: root, kind: 'system',
+      body: '{account}님이 이 스레드에서 모델을 정했습니다.', meta: { accountId },
+    }) as { message: { id: string } }).message.id;
+    const known = await sys(botId);
+    const gone = await sys('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
+    const rows = await inboxOf();
+    expect(rows.find((e) => e.messageId === known)?.body).toBe('inboxbot님이 이 스레드에서 모델을 정했습니다.');
+    expect(rows.find((e) => e.messageId === gone)?.body).toBe('알 수 없음님이 이 스레드에서 모델을 정했습니다.');
+    // 저장된 본문은 그대로다 — 이름이 바뀌면 지난 줄도 새 이름으로 나가야 한다.
+    const stored = await pool.query(`select body from message where id = $1`, [known]);
+    expect(stored.rows[0].body).toContain('{account}');
+  });
+
+  it('사람이 쓴 일반 글의 {account} 는 손대지 않는다', async () => {
+    const id = await callAdmin('@admin {account} 는 글자다', { accountId: botId });
+    expect((await inboxOf()).find((e) => e.messageId === id)?.body).toContain('{account} 는 글자다');
+  });
+});

@@ -12,6 +12,7 @@ import { getTeam, getTeamByName, listTeamMembers } from './teams.js';
 import { invokeFactsFor, mayInvoke, mayInvokeTeam, type InvokeVia } from './invokeGate.js';
 import { closeReplyGrants, openReplyGrants } from './replyGrants.js';
 import { enqueueInboxPush } from './push/pushJobs.js';
+import { displayBodySql } from './systemBody.js';
 
 /**
  * 채널 안에서 `seq` 발급을 직렬화하는 advisory lock 의 classid(#523).
@@ -2423,7 +2424,8 @@ export async function listInbox(
             m.channel_id as "channelId",
             -- 줄이 네 가지를 말할 재료(#488 C2): 누가 · 무슨 말 · 무엇을 · 언제·어디.
             -- 이미 message 를 join 하고 있었으므로 컬럼만 더한다 — 새 왕복이 없다.
-            m.author_id as "authorId", m.body, m.meta,
+            -- 시스템 메시지의 자리표시자는 여기서 채운다 — 인박스 항목에는 kind 가 없어 화면이 못 채운다.
+            m.author_id as "authorId", ${displayBodySql('m')} as body, m.meta,
             m.created_at as "createdAt", m.thread_root_id as "threadRootId",
             -- 팀 부름의 팀(047). 명단은 아래에서 한 번에 채운다 — 여기서 join 하면
             -- 팀원 수만큼 행이 불어나 항목이 여러 번 나온다.
