@@ -503,6 +503,21 @@ describe('buildSystemPrompt', () => {
 
   // 발화가 자율이 됐으므로, "어디에 쓸지"(harkroom MCP message.post)를 지시문이 명시하지
   // 않으면 턴이 조용히 끝난다 — 회귀를 막는 핵심 문구.
+  // 에이전트 머지 권한(스레드 3deac356): 새 어휘(래퍼)는 같은 PR 에서 프롬프트에 적고 옛 지시(gh pr merge)를
+  // 이름 대어 지운다(mem/new-vocabulary-needs-a-prompt). 허락이 없으면 "머지하지 마라"가 분명해야 한다.
+  it('머지 절: 허락된 저장소가 있으면 래퍼 명령을, 없으면 "머지하지 마라"를 — 옛 호출부(merge 없음)는 절 자체가 없다', () => {
+    const common = { handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } as MemoryContext };
+    const granted = buildSystemPrompt({ ...common, merge: { operatorBin: '/opt/harkroom/harkroom-operator', repos: ['izagood/harkroom'] } });
+    expect(granted).toContain('/opt/harkroom/harkroom-operator merge <owner/name> <PR 번호> --head <40자 head sha>');
+    expect(granted).toContain('izagood/harkroom');
+    expect(granted).toContain('`gh pr merge`');
+    const none = buildSystemPrompt({ ...common, merge: { operatorBin: '/opt/harkroom/harkroom-operator', repos: [] } });
+    expect(none).toContain('**PR 머지는 하지 마라.**');
+    expect(none).not.toContain('harkroom-operator merge');
+    const legacy = buildSystemPrompt(common);
+    expect(legacy).not.toContain('PR 머지');
+  });
+
   it('message.post 로 스스로 발화하라고 지시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
     expect(s).toContain('message.post');

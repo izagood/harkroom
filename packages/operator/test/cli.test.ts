@@ -15,6 +15,8 @@ describe('parseCliArgs', () => {
     expect(parseCliArgs(['run', '--data-dir', '/data'])).toEqual({ command: 'run', dataDir: '/data' });
     expect(parseCliArgs(['run'])).toEqual({ command: 'run', dataDir: undefined });
     expect(parseCliArgs(['mcp-bridge'])).toEqual({ command: 'mcp-bridge' });
+    // 머지 래퍼(스레드 3deac356) — 인자 검증은 `turnMerge.parseMergeArgs` 가 한다. 여기서는 분기만.
+    expect(parseCliArgs(['merge', 'o/r', '7', '--head', 'x'])).toEqual({ command: 'merge', argv: ['o/r', '7', '--head', 'x'] });
     expect(parseCliArgs(['--socket', '/x.sock'])).toEqual({ command: 'daemon', argv: ['--socket', '/x.sock'] });
   });
   it('register 에 URL 이나 코드가 없으면 던진다 — 반쯤 등록된 상태를 만들지 않는다', () => {
