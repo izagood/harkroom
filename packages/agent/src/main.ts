@@ -51,6 +51,8 @@ import { ensurePiHome } from './piHome.js';
 import { ensureOpencodeHome } from './opencodeHome.js';
 import { createMentionScheduler, type BatchContext } from './mentionScheduler.js';
 import { createSecretLeases } from './secretLeases.js';
+import { randomUUID } from 'node:crypto';
+import { createThreadClaims } from './threadClaims.js';
 
 const config = loadConfig();
 // 릴레이(오퍼레이터 링크)가 곧 서버로 가는 유일한 길이다(스펙 2026-09-20 §5) — MCP 도 REST 도 이
@@ -484,8 +486,12 @@ const secretLeases = createSecretLeases({
   turnSecretsDir: process.env.HARKROOM_TURN_SECRETS_DIR ?? null,
 });
 
+// 스레드 임대(서버 095). holder 는 **이 프로세스**다 — 앱 업데이트로 같은 에이전트의 옛 러너와 겹쳐 도는 동안
+// 둘을 가르는 값이라 기동마다 새로 짓는다(같은 에이전트 자격이라 계정 id 로는 못 가른다).
+const threadClaims = createThreadClaims({ client: harkroom, holder: randomUUID() });
+
 const scheduler = createMentionScheduler({
-  harkroom, registry, queue: mentionQueue, heldEntryIds, secretLeases,
+  harkroom, registry, queue: mentionQueue, heldEntryIds, secretLeases, threadClaims,
   // **턴마다** 축을 다시 읽는다 — 지운 계정은 빠지고 새 계정은 들어온다(`createLiveAccountLane`).
   accountLane: async () => (await liveLane.current()).lane,
   // 모델은 매 턴 정의에서 읽는다 — 모델별 주간 창(Opus 등)이 있으면 그것까지 본다. 못 읽으면
@@ -657,5 +663,7 @@ await scheduler.drain();
 // 멘션을 놓는 길에 기록 가리기(D7)가 돌고 있을 수 있다 — 끝 통지도 그 뒤에 나간다. relay 를 끊기 전에
 // 짧게 기다린다. 넘으면 그냥 물러난다: 임대는 만료되고 오퍼레이터가 파일을 지운다(기록은 가려지지 않은 채 남는다).
 await secretLeases.drain(5_000);
+// 스레드 임대 놓기도 relay 위로 간다 — 끊기 전에 짧게 기다린다. 못 놓은 것은 만료(90초)가 놓는다.
+await threadClaims.drain(3_000);
 relay.stop();
 console.log('종료');

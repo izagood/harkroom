@@ -228,6 +228,32 @@ export class HarkroomAgentClient {
     }
   }
 
+  /**
+   * 스레드 임대(서버 095, `threadClaims.ts`). 200 잡음(또는 밀음) · 409 남이 쥠 · 404 옛 서버(임대 없음).
+   * 그 밖(링크 끊김·5xx)은 던진다 — 확인하지 못한 것이고, 띄울지는 호출자가 정한다(fail-closed).
+   */
+  async claimThread(channelId: string, threadRootId: string, holder: string, ttlSec: number): Promise<'held' | 'taken' | 'unsupported'> {
+    const res = await this.link.request({
+      type: 'http.forward', method: 'POST', path: '/agent/thread-claims',
+      body: JSON.stringify({ channelId, threadRootId, holder, ttlSec }), contentType: 'application/json',
+    });
+    if (res.status === 200) return 'held';
+    if (res.status === 409) return 'taken';
+    if (res.status === 404) return 'unsupported';
+    throw harkroomError(`agent/thread-claims 실패: ${res.status}${res.status === 0 ? ` (${res.body})` : ''}`, res.status || undefined);
+  }
+
+  async releaseThread(channelId: string, threadRootId: string, holder: string): Promise<void> {
+    const res = await this.link.request({
+      type: 'http.forward', method: 'POST', path: '/agent/thread-claims/release',
+      body: JSON.stringify({ channelId, threadRootId, holder }), contentType: 'application/json',
+    });
+    // 404 는 옛 서버 — 놓을 것이 처음부터 없었다.
+    if ((res.status < 200 || res.status >= 300) && res.status !== 404) {
+      throw harkroomError(`agent/thread-claims/release 실패: ${res.status}`, res.status || undefined);
+    }
+  }
+
   async reportActivity(): Promise<void> {
     await this.rest<unknown>('POST', '/agent/activity', 'agent/activity');
   }
