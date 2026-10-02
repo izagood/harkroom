@@ -266,6 +266,15 @@ class _FullScreen extends StatelessWidget {
   }
 }
 
+/// 세로로 **많이** 긴 그림인가 — 높이/폭이 화면 높이/폭의 1.5배를 넘는다(designer 3192efed 6).
+///
+/// 그런 그림(HTML 시안 전체 캡처 같은 것)을 통째로 맞추면 화면 높이에 줄어 폭이 손가락 하나가 되고 글자가 안
+/// 읽힌다. 그래서 폭에 맞추고 세로로 움직이게 한다. 나머지 그림은 지금처럼 통째로 맞춘다.
+bool isTallImage(Size image, Size view) {
+  if (image.width <= 0 || view.width <= 0 || view.height <= 0) return false;
+  return image.height / image.width > (view.height / view.width) * 1.5;
+}
+
 /// 이미지를 본문 영역에 **맞춰(contain)** 띄우고 핀치로 키운다.
 ///
 /// 크기를 이미지에게 맡기지 않는다. 예전에는 `Center > InteractiveViewer > Image`
@@ -274,30 +283,105 @@ class _FullScreen extends StatelessWidget {
 /// 가로로 긴 것도 세로로 긴 것도 처음에는 통째로 보이고, 남는 쪽은 띠로 남는다.
 /// 칸보다 작은 이미지는 **키우지 않는다** — 늘리면 뭉개져 깨진 것처럼 읽힌다.
 /// 더 보고 싶으면 핀치로 키운다. 맞춤보다 작게 오므리는 것은 쓸모가 없어 막는다.
-class ImageViewport extends StatelessWidget {
+///
+/// **예외 — 세로로 많이 긴 그림**([isTallImage])은 폭에 맞추고 맨 위부터 세로로 움직인다. 더블탭은
+/// 맞춤 ↔ 2배다(누른 자리를 중심으로).
+class ImageViewport extends StatefulWidget {
   const ImageViewport({super.key, required this.image, required this.errorText});
 
   final ImageProvider image;
   final String errorText;
 
   @override
+  State<ImageViewport> createState() => _ImageViewportState();
+}
+
+class _ImageViewportState extends State<ImageViewport> {
+  Size? _size;
+  ImageStream? _stream;
+  late final ImageStreamListener _listener = ImageStreamListener((info, _) {
+    if (!mounted) return;
+    setState(() => _size = Size(info.image.width.toDouble(), info.image.height.toDouble()));
+  }, onError: (_, _) {});
+  final TransformationController _tc = TransformationController();
+  Offset _doubleTapAt = Offset.zero;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final stream = widget.image.resolve(createLocalImageConfiguration(context));
+    if (stream.key != _stream?.key) {
+      _stream?.removeListener(_listener);
+      _stream = stream..addListener(_listener);
+    }
+  }
+
+  @override
+  void dispose() {
+    _stream?.removeListener(_listener);
+    _tc.dispose();
+    super.dispose();
+  }
+
+  void _toggleZoom() {
+    if (_tc.value.getMaxScaleOnAxis() > 1.01) {
+      _tc.value = Matrix4.identity();
+      return;
+    }
+    // 누른 자리가 그 자리에 남게 2배로.
+    final p = _doubleTapAt;
+    _tc.value = Matrix4.identity()
+      ..translateByDouble(-p.dx, -p.dy, 0, 1)
+      ..scaleByDouble(2, 2, 1, 1);
+  }
+
+  @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
-      builder: (context, box) => InteractiveViewer(
-        minScale: 1,
-        maxScale: 6,
-        child: SizedBox(
-          width: box.maxWidth,
-          height: box.maxHeight,
-          child: Image(
-            key: const Key('attachment-fullscreen-image'),
-            image: image,
-            fit: BoxFit.scaleDown,
-            errorBuilder: (context, error, stack) =>
-                Center(child: Text(errorText, style: const TextStyle(color: Colors.white))),
+      builder: (context, box) {
+        final size = _size;
+        if (size != null && isTallImage(size, box.biggest)) {
+          final width = box.maxWidth;
+          final height = width * size.height / size.width;
+          return GestureDetector(
+            onDoubleTapDown: (d) => _doubleTapAt = d.localPosition,
+            onDoubleTap: _toggleZoom,
+            child: InteractiveViewer(
+              key: const Key('attachment-tall-viewport'),
+              transformationController: _tc,
+              constrained: false,
+              minScale: 1,
+              maxScale: 6,
+              child: SizedBox(
+                width: width,
+                height: height,
+                child: Image(
+                  key: const Key('attachment-fullscreen-image'),
+                  image: widget.image,
+                  fit: BoxFit.fill,
+                  errorBuilder: (context, error, stack) =>
+                      Center(child: Text(widget.errorText, style: const TextStyle(color: Colors.white))),
+                ),
+              ),
+            ),
+          );
+        }
+        return InteractiveViewer(
+          minScale: 1,
+          maxScale: 6,
+          child: SizedBox(
+            width: box.maxWidth,
+            height: box.maxHeight,
+            child: Image(
+              key: const Key('attachment-fullscreen-image'),
+              image: widget.image,
+              fit: BoxFit.scaleDown,
+              errorBuilder: (context, error, stack) =>
+                  Center(child: Text(widget.errorText, style: const TextStyle(color: Colors.white))),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
