@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
+import { z } from 'zod';
 import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow } from '@harkroom/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { getMentionPolicy } from './mentionPolicy.js';
@@ -2653,6 +2654,7 @@ export type SearchSort = 'relevance' | 'recent';
  */
 export const SEARCH_MAX_AUTHORS = 10;
 
+
 export interface SearchPage {
   messages: MessageRow[];
   /** 이 페이지 뒤에 더 있는가. `limit + 1` 을 떠서 판별한다(count 왕복을 만들지 않는다). */
@@ -2668,6 +2670,20 @@ export interface SearchPage {
  * 뜬다. 버튼이 아예 서지 않는 것이 맞다.
  */
 export const SEARCH_MAX_OFFSET = 1000;
+
+/**
+ * 검색 입력의 **형식과 상한 한 벌**(S2). REST `/search` 와 MCP `message.search` 가 같은 조각을 쓴다 —
+ * 서비스의 `slice` 는 두 번째 그물일 뿐이고, 형식 검증이 한쪽 표면에만 있으면 다른 표면이 그 구멍이 된다
+ * (security #1097). 쿼리 문자열과 JSON 인자는 모양이 달라(되풀이 키·`'true'` 대 배열·boolean) 감싸는
+ * 자리만 각자 둔다.
+ */
+export const searchInput = {
+  query: z.string().min(1).max(256),
+  authorIds: z.array(z.string().uuid()).max(SEARCH_MAX_AUTHORS),
+  time: z.string().datetime({ offset: true }),
+  sort: z.enum(['relevance', 'recent']),
+  offset: z.number().int().min(0).max(SEARCH_MAX_OFFSET),
+} as const;
 
 /**
  * `limit + 1` 을 떠 왔으므로 한 줄이 더 있으면 다음 페이지가 있다 — **천장 안쪽일 때만**.

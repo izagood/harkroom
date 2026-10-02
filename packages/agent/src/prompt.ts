@@ -844,6 +844,13 @@ export function buildSystemPrompt(opts: {
     // 계획을 낳았다. 이 세 문장이 그 공백을 메운다.
     // 2026-10-02(미리보기 PR ③): 에이전트는 글에 파일을 붙일 길이 없었다(message.post 에 첨부 인자가 없었다).
     // 바이너리를 base64 로 쓰게 하지 않고 경로로 올린다 — 오퍼레이터가 읽는다. 새 도구는 적어야 쓰인다(#762→#809).
+    // 2026-10-02(찾기 S2, 스레드 20323649): `message.search` 가 REST 와 같은 범위·거르기를 받게 됐다. 전에는
+    // 검색어 하나만 받아서, 에이전트는 "지난번에 그 말이 어디 있었나"를 채널을 통째로 `message.read` 로
+    // 넘겨 읽어 찾았다. 새 인자는 적어야 쓰인다(#762→#809).
+    '지난 대화에서 **무엇이 어디 있었는지 찾을 때**는 채널을 통째로 `message.read` 로 넘겨 읽지 말고',
+    '`message.search` 를 쓴다 — `channelId`·`threadRootId` 로 범위를, `authorIds`(계정 id, `account.list`)·',
+    '`after`·`before`(시간대 붙은 ISO)·`hasAttachment`·`sort: "recent"` 로 거르고, `hasMore` 면 `offset` 으로 잇는다.',
+    '',
     '그림·PDF·HTML 같은 **파일을 글에 붙이려면** 파일을 턴 워크스페이스(지금 작업 디렉터리) 안에 두고',
     'harkroom MCP 의 `attachment.upload`(path)로 올려 첨부 id 를 받은 뒤, `message.post` 의 `attachmentIds` 로',
     '붙인다. 워크스페이스 밖 파일은 거절되니 먼저 복사한다. 로컬 경로만 적어 두면 사람은 그 파일을 못 본다.',

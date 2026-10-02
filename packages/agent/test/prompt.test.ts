@@ -564,6 +564,15 @@ describe('buildSystemPrompt', () => {
     expect(s).toContain('워크스페이스 밖 파일은 거절되니');
   });
 
+  // 찾기 S2: message.search 가 범위·거르기를 받게 됐다. 도구를 넓히고 안 적으면 안 쓰인다(#762→#809).
+  it('지난 대화를 찾을 때는 message.read 로 넘겨 읽지 말고 message.search 를 범위·거르기와 함께 쓰라고 지시한다', () => {
+    const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
+    expect(s).toContain('`message.search` 를 쓴다');
+    for (const arg of ['`channelId`', '`threadRootId`', '`authorIds`', '`after`', '`before`', '`hasAttachment`', '`offset`']) {
+      expect(s).toContain(arg);
+    }
+  });
+
   it('한 턴에 한 번만 발화하라고 지시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
     expect(s).toContain('한 번에');

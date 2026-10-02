@@ -14,7 +14,7 @@ import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js
 import { emitEvent, emitPosted, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '../services/channels.js';
-import { BAD_THREAD_MESSAGE, checkAskMirror, gateAwaitingAccount, listInbox, listMessages, markInboxRead, notifyGateAwaiting, postMessage, searchMessages, syncAskMirrors, type AskMirrorRefusal } from '../services/messages.js';
+import { BAD_THREAD_MESSAGE, checkAskMirror, gateAwaitingAccount, listInbox, listMessages, markInboxRead, notifyGateAwaiting, postMessage, searchInput, searchMessages, syncAskMirrors, type AskMirrorRefusal } from '../services/messages.js';
 
 /** `message.ask` 의 `mirrorOf` 거절 사유 — 에이전트가 읽고 고칠 수 있게 무엇을 바꾸면 되는지 적는다. */
 const MIRROR_REFUSAL_MESSAGE: Record<AskMirrorRefusal, string> = {
@@ -494,13 +494,39 @@ function buildMcpServer(
     return jsonResult({ messages: await denormalizeBodies(pool, messages) });
   });
 
+  // REST `/search` 와 **같은 함수·같은 입력 조각**(`searchInput`)이다(S2). 가시성 판단은 `searchMessages`
+  // 하나에만 있고, 여기는 인자를 옮겨 줄 뿐이다 — 두 벌로 두면 한쪽만 고쳐지는 날이 온다.
   server.registerTool('message.search', {
-    description: '메시지 전문 검색',
-    inputSchema: { query: z.string().min(1).max(256) },
-  }, async ({ query }) => {
-    // 검색어도 본문과 같은 규칙으로 정본에 맞춘다 — REST `/search` 와 **같은 함수**다.
-    const page = await searchMessages(pool, account.id, await normalizeSearchQuery(pool, query));
-    return jsonResult({ messages: await denormalizeBodies(pool, page.messages) });
+    description: '메시지 전문 검색 — 볼 수 있는 대화 전체(channelId·threadRootId 로 좁힘). 보낸 사람(authorIds, 계정 id 최대 10개 — account.list 로 얻는다)·기간(after·before, 시간대 붙은 ISO, [after, before))·첨부 있는 것만(hasAttachment)·정렬(relevance 기본 | recent)으로 거른다. 50개씩, hasMore 면 offset 으로 다음 묶음',
+    inputSchema: {
+      query: searchInput.query,
+      channelId: z.string().uuid().optional(),
+      threadRootId: z.string().uuid().optional(),
+      offset: searchInput.offset.optional(),
+      authorIds: searchInput.authorIds.optional(),
+      after: searchInput.time.optional(),
+      before: searchInput.time.optional(),
+      hasAttachment: z.boolean().optional(),
+      sort: searchInput.sort.optional(),
+    },
+  }, async ({ query, channelId, threadRootId, offset, authorIds, after, before, hasAttachment, sort }) => {
+    // 볼 수 없는 채널을 범위로 주면 REST 의 403 과 같은 거절 — 빈 결과로 답하면 "못 보는 채널"과
+    // "일치가 없는 채널"이 구분되지 않는다(message.read 와 같은 문장).
+    if (channelId && !(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this channel' } });
+    }
+    // 검색어도 본문과 같은 규칙으로 정본에 맞춘다(`@handle` → `<@id>`).
+    const page = await searchMessages(pool, account.id, await normalizeSearchQuery(pool, query), {
+      channelId: channelId ?? null,
+      threadRootId: threadRootId ?? null,
+      offset: offset ?? 0,
+      authorIds: authorIds ?? null,
+      after: after ?? null,
+      before: before ?? null,
+      hasAttachment: hasAttachment ?? null,
+      sort: sort ?? 'relevance',
+    });
+    return jsonResult({ messages: await denormalizeBodies(pool, page.messages), hasMore: page.hasMore });
   });
 
   server.registerTool('message.post', {
