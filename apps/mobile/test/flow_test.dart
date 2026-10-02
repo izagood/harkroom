@@ -405,11 +405,15 @@ void main() {
 
     await tester.enterText(find.byKey(const Key('composer')), '@');
     await _settle(tester);
-    expect(chips().take(3), [
+    // 나(me)는 후보에 서지 않는다 — 데스크톱과 같다.
+    expect(chips(), [
       'mention-candidate-forge',
       'mention-candidate-lumen',
-      'mention-candidate-me',
+      'mention-candidate-scout',
     ]);
+    await tester.enterText(find.byKey(const Key('composer')), '@m');
+    await _settle(tester);
+    expect(find.byKey(const Key('mention-candidate-me')), findsNothing);
 
     await tester.enterText(find.byKey(const Key('composer')), '@lumen 봐 줘');
     await _settle(tester);
