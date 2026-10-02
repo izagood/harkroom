@@ -7,6 +7,7 @@ import '../i18n/i18n.dart';
 import '../mention/render.dart';
 import '../state/app_scope.dart';
 import '../state/app_state.dart';
+import '../ui/parts.dart';
 import '../ui/states.dart';
 import '../ui/tokens.dart';
 import 'message_link.dart';
@@ -319,7 +320,7 @@ class _SearchScreenState extends State<SearchScreen> {
     if (_failure != null) {
       return FailedState(title: t.searchFailed, cause: _failure!, onRetry: () => _run(_shown));
     }
-    final shortcuts = _input.text.trim().isEmpty ? const <ChannelRow>[] : searchShortcuts(context.app, _input.text);
+    final shortcuts = _input.text.trim().isEmpty ? const <SearchShortcut>[] : searchShortcuts(context.app, _input.text);
     if (_shown.isEmpty) {
       if (_loading) return const SizedBox.shrink();
       final recent = context.app.recentSearches;
@@ -397,7 +398,7 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  Widget _resultList(BuildContext context, List<ChannelRow> shortcuts) {
+  Widget _resultList(BuildContext context, List<SearchShortcut> shortcuts) {
     return ListView.separated(
       key: const Key('search-results'),
       controller: _scroll,
@@ -426,39 +427,100 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  List<Widget> _shortcutRows(BuildContext context, List<ChannelRow> shortcuts) {
+  List<Widget> _shortcutRows(BuildContext context, List<SearchShortcut> shortcuts) {
     if (shortcuts.isEmpty) return const [];
     return [
       _SectionHeader(label: context.t.searchShortcuts),
-      for (final c in shortcuts)
-        ListTile(
-          key: Key('search-shortcut-${c.id}'),
-          dense: true,
-          leading: Icon(c.isDm ? Icons.person_outline : Icons.tag, size: 20, color: context.tokens.mute),
-          title: Text(c.name),
-          subtitle: c.isDm ? Text(context.t.tabDms) : null,
-          onTap: () {
-            context.app.openChannel(c.id);
-            Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => MessageListScreen(channelId: c.id)));
-          },
-        ),
+      for (final x in shortcuts)
+        if (x.channel case final c?)
+          ListTile(
+            key: Key('search-shortcut-${c.id}'),
+            dense: true,
+            leading: Icon(c.isDm ? Icons.person_outline : Icons.tag, size: 20, color: context.tokens.mute),
+            title: Text(c.name),
+            subtitle: c.isDm ? Text(context.t.tabDms) : null,
+            onTap: () {
+              context.app.openChannel(c.id);
+              Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => MessageListScreen(channelId: c.id)));
+            },
+          )
+        else
+          ListTile(
+            key: Key('search-shortcut-${x.key}'),
+            dense: true,
+            leading: HarkroomAvatar(id: x.person!.id, name: x.person!.handle, size: 20),
+            title: Text(x.person!.displayName.isNotEmpty ? x.person!.displayName : x.person!.handle),
+            subtitle: Text('@${x.person!.handle}'),
+            onTap: () => _openPerson(context, x.person!.id),
+          ),
     ];
+  }
+
+  /// DM 이 없는 사람을 누르면 DM 을 연다(새 메시지 시트와 같은 `POST /dms` 길).
+  Future<void> _openPerson(BuildContext context, String accountId) async {
+    final app = context.app;
+    final nav = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    final failed = context.t.newMessageDmFailed;
+    try {
+      final id = await app.openDmWith(accountId);
+      await app.openChannel(id);
+      await nav.push(MaterialPageRoute<void>(builder: (_) => MessageListScreen(channelId: id)));
+    } catch (_) {
+      messenger.showSnackBar(SnackBar(content: Text(failed), behavior: SnackBarBehavior.floating));
+    }
   }
 }
 
-/// 바로 가기: 이름이 친 말을 담은 채널·DM(이미 받은 목록에서 — 서버를 묻지 않는다). 앞부분이 맞는 것을
-/// 먼저, 그 안에서 원래 순서. 많으면 산만하니 5개까지.
-List<ChannelRow> searchShortcuts(AppState app, String query) {
+/// 바로 가기 한 줄: 대화(채널·DM) 또는 **아직 DM 이 없는 사람·에이전트**(누르면 DM 을 연다, designer 찾기 F2 n2).
+class SearchShortcut {
+  const SearchShortcut.channel(ChannelRow this.channel) : person = null;
+  const SearchShortcut.person(AccountView this.person) : channel = null;
+
+  final ChannelRow? channel;
+  final AccountView? person;
+
+  String get key => channel?.id ?? 'person-${person!.id}';
+}
+
+/// 바로 가기: 이름이 친 말을 담은 채널·DM, 그리고 DM 이 아직 없는 사람·에이전트(이미 받은 목록에서 — 서버를
+/// 묻지 않는다. 에이전트는 S7 탭과 같은 계정 목록이다). 앞부분이 맞는 것을 먼저, 그 안에서 대화 → 사람 순.
+/// 많으면 산만하니 5개까지.
+List<SearchShortcut> searchShortcuts(AppState app, String query) {
   final q = query.trim().toLowerCase().replaceFirst(RegExp(r'^[#@]'), '');
   if (q.isEmpty) return const [];
-  final starts = <ChannelRow>[];
-  final contains = <ChannelRow>[];
+  final starts = <SearchShortcut>[];
+  final contains = <SearchShortcut>[];
+  void put(String name, SearchShortcut item) {
+    final n = name.toLowerCase();
+    if (n.startsWith(q)) {
+      starts.add(item);
+    } else if (n.contains(q)) {
+      contains.add(item);
+    }
+  }
+
   for (final c in app.channels) {
-    final name = c.name.toLowerCase();
-    if (name.startsWith(q)) {
-      starts.add(c);
-    } else if (name.contains(q)) {
-      contains.add(c);
+    put(c.name, SearchShortcut.channel(c));
+  }
+  // 이미 1:1 DM 이 있는 상대는 그 DM 줄이 맡는다 — 같은 사람이 두 줄로 서지 않게.
+  final myId = app.me?.id;
+  final hasDm = <String>{
+    for (final c in app.channels)
+      if (c.isDm && c.memberIds.length == 2) ...c.memberIds.where((id) => id != myId),
+  };
+  final people = app.accounts.values
+      .where((a) => a.id != myId && !a.isDisabled && !hasDm.contains(a.id))
+      .toList(growable: false)
+    ..sort((a, b) => a.handle.toLowerCase().compareTo(b.handle.toLowerCase()));
+  for (final a in people) {
+    final shortcut = SearchShortcut.person(a);
+    final h = a.handle.toLowerCase();
+    final d = a.displayName.toLowerCase();
+    if (h.startsWith(q) || d.startsWith(q)) {
+      starts.add(shortcut);
+    } else if (h.contains(q) || d.contains(q)) {
+      contains.add(shortcut);
     }
   }
   return [...starts, ...contains].take(5).toList(growable: false);

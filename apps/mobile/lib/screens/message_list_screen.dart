@@ -257,6 +257,7 @@ Widget buildFeedItem(
   BuildContext context,
   FeedItem item, {
   void Function(MessageRow)? onOpenThread,
+  Widget Function(Widget row)? mark,
 }) {
   if (item is FeedProgressRun) return ProgressRow(run: item.run);
   final feed = item as FeedMessage;
@@ -287,6 +288,9 @@ Widget buildFeedItem(
       onOpenThread: onOpenThread == null ? null : () => onOpenThread(m),
     );
   }
+  // 찾은 줄 강조(`mark`)는 **줄에만** 씌운다 — 날짜 구분선까지 감싸면 구분선이 함께 번쩍여
+  // 무엇을 찾았는지가 흐려진다(designer 찾기 F2 n1).
+  if (mark != null) row = mark(row);
   if (!feed.dayBreak) return row;
   return Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
