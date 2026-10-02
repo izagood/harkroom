@@ -119,7 +119,7 @@ export function OperatorsSettings({ onOpenSection }: {
               )}
             </span>
             <button
-              className="shrink-0 rounded border border-border px-2 py-1 text-meta text-fg hover:bg-surface-sunken"
+              className="shrink-0 rounded-row border border-border px-2 py-1 text-meta text-fg hover:bg-surface-sunken"
               aria-label={t('operators.revokeAction', { name: op.name })}
               onClick={() => { setRevokeError(null); setConfirming(op); }}
             >
@@ -144,7 +144,7 @@ export function OperatorsSettings({ onOpenSection }: {
       )}
 
       {error && (
-        <div className="mb-4 rounded border border-danger-border bg-danger-surface p-3">
+        <div className="mb-4 rounded-row border border-danger-border bg-danger-surface p-3">
           <p role="alert" className="text-meta text-danger">{error}</p>
         </div>
       )}
@@ -156,21 +156,21 @@ export function OperatorsSettings({ onOpenSection }: {
             {localAvailable && onOpenSection && (
               <button
                 data-testid="operators-open-this-operator"
-                className="mb-3 rounded px-2 py-1 text-meta text-accent hover:bg-surface-sunken"
+                className="mb-3 rounded-row px-2 py-1 text-meta text-accent hover:bg-surface-sunken"
                 onClick={() => onOpenSection('this-operator')}
               >
                 {t('operators.openThisOperator')}
               </button>
             )}
             {code && (
-              <div className="mb-3 rounded border border-warning-border bg-warning-surface p-3">
+              <div className="mb-3 rounded-row border border-warning-border bg-warning-surface p-3">
                 <div className="font-semibold text-warning">{t('operators.codeWarning')}</div>
-                <code className="mt-1 block break-all rounded bg-surface-raised p-2 text-meta">{code.code}</code>
+                <code className="mt-1 block break-all rounded-row bg-surface-raised p-2 text-meta">{code.code}</code>
                 {/* 다음에 할 일이 화면에 있어야 한다 — 코드만 주고 어디에 넣는지 말하지 않으면
                     사람은 문서를 찾으러 간다. 명령은 셸에 그대로 들어가는 값이라 번역하지 않는다. */}
                 <pre
                   data-testid="operator-register-command"
-                  className="mt-2 overflow-x-auto rounded bg-surface-raised p-2 font-mono text-meta text-fg"
+                  className="mt-2 overflow-x-auto rounded-row bg-surface-raised p-2 font-mono text-meta text-fg"
                 >
                   {`harkroom-operator register ${getController().api?.baseUrl ?? '<server>'} ${code.code}`}
                 </pre>
@@ -178,7 +178,7 @@ export function OperatorsSettings({ onOpenSection }: {
               </div>
             )}
             <button
-              className="rounded bg-accent px-4 py-2 font-medium text-fg-on-strong disabled:opacity-50"
+              className="rounded-row bg-accent px-4 py-2 font-medium text-fg-on-strong disabled:opacity-50"
               disabled={busy}
               onClick={() => void issue()}
             >

@@ -681,7 +681,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     confirmingSlug === slug ? (
       <span className="flex flex-none gap-1">
         <button
-          className="rounded border border-danger-border bg-danger-surface px-1.5 text-meta text-danger"
+          className="rounded-row border border-danger-border bg-danger-surface px-1.5 text-meta text-danger"
           onClick={() => {
             setConfirmingSlug(null);
             void getController().deleteAgentMemory(agentId, slug)
@@ -692,7 +692,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           {t('agents.memory.deleteConfirm')}
         </button>
         <button
-          className="rounded border border-border px-1.5 text-meta text-fg-muted"
+          className="rounded-row border border-border px-1.5 text-meta text-fg-muted"
           onClick={() => setConfirmingSlug(null)}
         >
           {t('agents.memory.keep')}
@@ -700,7 +700,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       </span>
     ) : (
       <button
-        className="flex-none rounded border border-border px-1.5 text-meta text-fg-muted"
+        className="flex-none rounded-row border border-border px-1.5 text-meta text-fg-muted"
         aria-label={t('agents.memory.deleteAction', { slug })}
         onClick={() => setConfirmingSlug(slug)}
       >
@@ -735,13 +735,13 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             <span className="flex-none text-meta font-medium">{m.slug}</span>
             {/* 종류(M5): 주제가 아닌 것만 표를 단다 — 대부분인 주제에까지 달면 표가 소음이 된다. */}
             {m.kind && m.kind !== 'topic' && (
-              <span data-testid="memory-kind" className="flex-none rounded bg-surface-hover px-1 text-meta text-fg-subtle">
+              <span data-testid="memory-kind" className="flex-none rounded-sm bg-surface-hover px-1 text-meta text-fg-subtle">
                 {kindLabel(t, m.kind)}
               </span>
             )}
             {/* 쓰기 검사(서버 080)에 걸린 판 — 사람이 확인할 때까지 에이전트 프롬프트에 안 실린다. */}
             {m.flaggedAt && (
-              <span data-testid="memory-flag-badge" className="flex-none rounded bg-warning-surface px-1 text-meta text-warning">
+              <span data-testid="memory-flag-badge" className="flex-none rounded-sm bg-warning-surface px-1 text-meta text-warning">
                 {t('agents.memory.flaggedTag')}
               </span>
             )}
@@ -1069,7 +1069,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 입력칸만 예외로 본문단 13px 이다(`field` 에 크기가 없어 앱 기본값을 물려받는다) —
    * 방금 친 글자를 다시 읽는 자리다. `settings/primitives.tsx` 가 같은 짝을 쓴다.
    */
-  const field = 'w-full rounded border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
+  const field = 'w-full rounded-row border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
   const label = 'block text-meta font-medium text-fg-muted';
 
   /**
@@ -1185,7 +1185,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       <div className="flex h-full min-h-0 flex-col bg-surface-raised p-5">
         {groupTabs}
         <div className="mb-4">
-          <h2 className="text-name font-bold">{t('agents.teams.heading')}</h2>
+          <h2 className="text-name font-semibold">{t('agents.teams.heading')}</h2>
           {/*
             **이름의 뜻을 말하는 자리 ①**(문서 4단계). 격자 머리에서 한 번, 이름을 정하는
             칸 아래에서 한 번 말한다(`TeamDetail` 의 `team-mention-note`) — 두 자리인 것이
@@ -1204,11 +1204,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           지금은 만들면 곧바로 상세가 열린다(`submitCreateTeam`).
         */}
         {creatingTeam && (
-          <div className="mb-4 flex items-center gap-2 rounded-lg border border-border p-3">
+          <div className="mb-4 flex items-center gap-2 rounded-card border border-border p-3">
             <input
               data-testid="team-name-input"
               aria-label={t('agents.teams.nameLabel')}
-              className="flex-1 rounded border border-border bg-field px-3 py-2"
+              className="flex-1 rounded-row border border-border bg-field px-3 py-2"
               placeholder="team-name"
               value={newTeamName}
               onChange={(e) => { setNewTeamName(e.target.value); setError(null); }}
@@ -1259,7 +1259,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               `primitives.tsx` 의 `SettingsPage` 제목(17px)과 갈라 둔 근거를 그 파일에
               적어 뒀다. 16px(`text-base`)이었고 4단 밖이었다. */}
           {/* 칸 제목은 목차 줄과 같은 키다(UX ④a 규칙, ⑥b 에서 줄 이름이 "목록" 이 됐다). */}
-          <h2 className="text-name font-bold">{t(navKey('agents'))}</h2>
+          <h2 className="text-name font-semibold">{t(navKey('agents'))}</h2>
           <p className="text-meta text-fg-subtle">{t('agents.grid.note')}</p>
         </div>
         {error && <p role="alert" className="mb-2 text-meta text-danger">{error}</p>}
@@ -1327,12 +1327,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             */}
             <button
               data-testid="agent-back"
-              className="rounded px-1.5 py-0.5 text-body text-fg-muted hover:bg-surface-hover"
+              className="rounded-row px-1.5 py-0.5 text-body text-fg-muted hover:bg-surface-hover"
               onClick={() => { setView('grid'); setSelected(null); setError(null); }}
             >
               {t('agents.detail.back')}
             </button>
-            <h2 className="text-name font-bold">
+            <h2 className="text-name font-semibold">
               {selected ? t('agents.detail.titleEdit', { handle: selected.handle }) : t('agents.detail.titleNew')}
             </h2>
             {/*
@@ -1404,7 +1404,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 // 크기를 안 적어 본문단 13px 을 물려받는다 — 이 상자가 뜨는 동안 오른쪽
                 // 칸의 **내용 전부**다(초안을 못 만들었으니 폼이 없다). 아래 묶음 상자들의
                 // 단(11px)을 여기 주면 화면 하나가 통째로 가장 작은 글자가 된다.
-                className={`rounded border border-border p-3 ${defaults === 'error' ? 'text-danger' : 'text-fg-subtle'}`}
+                className={`rounded-row border border-border p-3 ${defaults === 'error' ? 'text-danger' : 'text-fg-subtle'}`}
               >
                 {defaults === 'error'
                   ? t('agents.run.defaultsFailed')
@@ -1514,13 +1514,13 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               <div className={label}>AI configuration</div>
               <div className="mt-1 flex gap-1">
                 <button
-                  className={`flex-1 rounded px-3 py-2 ${customized ? 'bg-surface-sunken text-fg-muted' : 'bg-surface-raised shadow ring-1 ring-border'}`}
+                  className={`flex-1 rounded-row px-3 py-2 ${customized ? 'bg-surface-sunken text-fg-muted' : 'bg-surface-raised ring-1 ring-border'}`}
                   onClick={() => setCustomized(false)}
                 >
                   Use harness defaults
                 </button>
                 <button
-                  className={`flex-1 rounded px-3 py-2 ${customized ? 'bg-surface-raised shadow ring-1 ring-border' : 'bg-surface-sunken text-fg-muted'}`}
+                  className={`flex-1 rounded-row px-3 py-2 ${customized ? 'bg-surface-raised ring-1 ring-border' : 'bg-surface-sunken text-fg-muted'}`}
                   onClick={() => setCustomized(true)}
                 >
                   Customize for this agent
@@ -1713,7 +1713,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             )}
 
             {!isAdmin && selected && (
-              <div className="rounded border border-border bg-surface p-3">
+              <div className="rounded-row border border-border bg-surface p-3">
                 <div className="text-meta text-fg-subtle">
                   {draft.ownerAccountId
                     ? t('agents.permissions.ownerReadOnly', { handle: accounts[draft.ownerAccountId]?.handle ?? '?' })
@@ -1732,7 +1732,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             )}
 
             {selected && (isAdmin || isOwner) && (
-              <div className="rounded border border-border p-3">
+              <div className="rounded-row border border-border p-3">
                 <div className="flex items-baseline justify-between gap-2">
                   <div className="text-meta font-medium text-fg-muted">{t('agents.memory.heading')}</div>
                   {memoryAll !== null && memoryAll.length > 0 && (
@@ -1767,7 +1767,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   {memorySplit?.core && (
                     <div
                       data-testid="memory-core"
-                      className="rounded border border-border-agent bg-surface-agent px-2 py-1.5"
+                      className="rounded-row border border-border-agent bg-surface-agent px-2 py-1.5"
                     >
                       <div className="flex items-baseline gap-2">
                         <button
@@ -1828,7 +1828,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     <>
                       <div className="flex flex-wrap items-center gap-2">
                         <input
-                          className="min-w-0 flex-1 rounded border border-border bg-field px-2 py-1 text-meta"
+                          className="min-w-0 flex-1 rounded-row border border-border bg-field px-2 py-1 text-meta"
                           value={memQuery}
                           placeholder={t('agents.memory.search')}
                           aria-label={t('agents.memory.search')}
@@ -1836,7 +1836,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                         />
                         {/* 두 축뿐이라 고르는 자리를 접지 않는다 — 셀렉트로 두면 지금 무엇으로
                             정렬돼 있는지를 누르기 전에는 알 수 없다. */}
-                        <div className="flex flex-none overflow-hidden rounded border border-border" role="group" aria-label={t('agents.memory.sortLabel')}>
+                        <div className="flex flex-none overflow-hidden rounded-row border border-border" role="group" aria-label={t('agents.memory.sortLabel')}>
                           {(['recent', 'name'] as const).map((k) => (
                             <button
                               key={k}
@@ -1852,7 +1852,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                         </div>
                       </div>
 
-                      <div className="overflow-hidden rounded border border-border">
+                      <div className="overflow-hidden rounded-row border border-border">
                         {/* **"없다" 와 다르다** — 이 검색어에 걸리는 것이 없을 뿐이다. */}
                         {memoryVisible.length === 0 && (
                           <div className="px-2 py-1 text-meta text-fg-muted">{t('agents.memory.noMatch')}</div>
@@ -1891,7 +1891,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
             {/* #251: 에이전트 비활성화/활성화. 관리 행위이므로 admin 만 보인다. */}
             {selected && isAdmin && (
-              <div className={`rounded border p-3 ${selected.disabled ? 'border-border bg-surface' : 'border-danger-border bg-danger-surface'}`}>
+              <div className={`rounded-row border p-3 ${selected.disabled ? 'border-border bg-surface' : 'border-danger-border bg-danger-surface'}`}>
                 <div className="text-meta font-medium text-fg-muted">
                   {selected.disabled ? t('agents.disable.headingDisabled') : t('agents.disable.headingEnabled')}
                 </div>
@@ -1899,7 +1899,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   <div className="mt-2">
                     <p className="text-meta text-fg-subtle mb-2">{t('agents.disable.noteDisabled')}</p>
                     <button
-                      className="rounded border border-accent bg-accent-surface px-2 py-1 text-meta font-medium text-accent hover:bg-surface-hover disabled:opacity-50"
+                      className="rounded-row border border-accent bg-accent-surface px-2 py-1 text-meta font-medium text-accent hover:bg-surface-hover disabled:opacity-50"
                       aria-label={t('agents.disable.enableAction')}
                       disabled={busy}
                       onClick={() => void toggleDisabled()}
@@ -1917,7 +1917,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     </p>
                     <div className="flex gap-1">
                       <button
-                        className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                        className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
                         aria-label={t('agents.disable.confirm')}
                         disabled={busy}
                         onClick={() => void toggleDisabled()}
@@ -1925,7 +1925,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                         {t('agents.disable.confirm')}
                       </button>
                       <button
-                        className="rounded border border-border px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
+                        className="rounded-row border border-border px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
                         onClick={() => setConfirmingDisable(false)}
                       >
                         {t('agents.disable.cancel')}
@@ -1941,7 +1941,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       })}
                     </p>
                     <button
-                      className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                      className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
                       aria-label={t('agents.disable.disableAction')}
                       disabled={busy}
                       onClick={() => void toggleDisabled()}
@@ -1957,7 +1957,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 있는 것을 먼저 보여 주고 되돌릴 수 없는 것을 그 다음에 둔다. 관리 행위이므로
                 admin 만 보인다(비활성화와 같은 문). */}
             {selected && isAdmin && (
-              <div className="rounded border border-danger-border bg-danger-surface p-3">
+              <div className="rounded-row border border-danger-border bg-danger-surface p-3">
                 <div className="text-meta font-medium text-fg-muted">{t('agents.delete.heading')}</div>
                 {confirmingDelete ? (
                   <div className="mt-2">
@@ -1975,14 +1975,14 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     <input
                       id="agent-delete-confirm"
                       data-testid="agent-delete-confirm-input"
-                      className="mb-2 w-full rounded border border-border bg-surface px-2 py-1 text-meta text-fg"
+                      className="mb-2 w-full rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
                       value={deleteConfirmText}
                       autoComplete="off"
                       onChange={(e) => setDeleteConfirmText(e.target.value)}
                     />
                     <div className="flex gap-1">
                       <button
-                        className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                        className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
                         data-testid="agent-delete-confirm"
                         aria-label={t('agents.delete.confirm')}
                         disabled={busy || deleteConfirmText !== selected.handle}
@@ -1991,7 +1991,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                         {t('agents.delete.confirm')}
                       </button>
                       <button
-                        className="rounded border border-border px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
+                        className="rounded-row border border-border px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
                         onClick={() => { setConfirmingDelete(false); setDeleteConfirmText(''); }}
                       >
                         {t('agents.delete.cancel')}
@@ -2007,7 +2007,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       })}
                     </p>
                     <button
-                      className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                      className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
                       data-testid="agent-delete"
                       aria-label={t('agents.delete.action')}
                       disabled={busy}
@@ -2021,7 +2021,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             )}
 
             {selected && isAdmin && (
-              <div className="rounded border border-border p-3">
+              <div className="rounded-row border border-border p-3">
                 {/* #129 → #427 → #493: "재시작"을 금지한 원칙은 그대로 살아 있고, **사실관계만
                     바뀌었다.** 지우지 말고 이 이력을 읽어라 — 그러지 않으면 다음 사람이 이
                     자리를 또 뒤집는다.
@@ -2135,7 +2135,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 <div className="mt-2 flex gap-2">
                   {selected.stopRequestedAt ? (
                     <button
-                      className="rounded border border-border px-2 py-1 text-meta font-medium text-fg-default hover:bg-surface-sunken disabled:opacity-50"
+                      className="rounded-row border border-border px-2 py-1 text-meta font-medium text-fg-default hover:bg-surface-sunken disabled:opacity-50"
                       aria-label={t('agents.stop.startAction')}
                       disabled={busy}
                       onClick={() => void undoStopRequest()}
@@ -2144,7 +2144,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     </button>
                   ) : (
                     <button
-                      className="rounded border border-warning-border bg-warning-surface px-2 py-1 text-meta font-medium text-warning hover:bg-warning-surface-strong disabled:opacity-50"
+                      className="rounded-row border border-warning-border bg-warning-surface px-2 py-1 text-meta font-medium text-warning hover:bg-warning-surface-strong disabled:opacity-50"
                       aria-label={t('agents.stop.stopAction')}
                       disabled={busy}
                       onClick={() => void requestStop()}
@@ -2154,7 +2154,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   )}
                   {!selected.stopRequestedAt && (
                     <button
-                      className="rounded border border-border px-2 py-1 text-meta font-medium text-fg-default hover:bg-surface-sunken disabled:opacity-50"
+                      className="rounded-row border border-border px-2 py-1 text-meta font-medium text-fg-default hover:bg-surface-sunken disabled:opacity-50"
                       aria-label={t('agents.restart.action')}
                       data-testid="agent-restart"
                       disabled={busy}
@@ -2172,7 +2172,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 서버에 배정을 쓰면 그 오퍼레이터가 러너를 띄운다. 러너 실행·중지 절 바로 뒤에
                 두는 이유: 그 절의 '실행'이 실제로 무엇을 켜는지가 이 배정으로 정해진다. */}
             {selected && (isAdmin || isOwner) && (
-              <div className="rounded border border-border p-3">
+              <div className="rounded-row border border-border p-3">
                 <div className="text-meta font-medium text-fg-muted">{t('agents.assignment.heading')}</div>
                 <p className="mt-1 text-meta text-fg-subtle" data-testid="agent-assignment-current">
                   {(() => {
@@ -2204,7 +2204,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <select
                       aria-label={t('agents.assignment.label')}
-                      className="rounded border border-border bg-surface px-2 py-1 text-meta text-fg"
+                      className="rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
                       disabled={assigning || busy}
                       value={selected.assignment?.operatorId ?? ''}
                       onChange={(e) => {
@@ -2237,7 +2237,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     </select>
                     {selected.assignment && (
                       <button
-                        className="rounded border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
+                        className="rounded-row border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
                         disabled={assigning || busy}
                         onClick={() => {
                           setError(null);
@@ -2297,7 +2297,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             )}
 
             {selected && (isAdmin || isOwner) && (
-              <div className="rounded border border-border p-3">
+              <div className="rounded-row border border-border p-3">
                 <div className="text-meta font-medium text-fg-muted">PAT (Personal Access Token)</div>
                 <div className="mt-2 space-y-2">
                   {pats === null ? (
@@ -2316,7 +2316,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     </div>
                   ) : (
                     pats.map((p) => (
-                      <div key={`${p.label}:${p.createdAt}`} className="flex items-center justify-between rounded bg-surface px-2 py-1.5">
+                      <div key={`${p.label}:${p.createdAt}`} className="flex items-center justify-between rounded-row bg-surface px-2 py-1.5">
                         <div className="text-meta">
                           <span className="font-medium">{p.label}</span>
                           {p.revokedAt && (
@@ -2330,7 +2330,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                           revoking === p.label ? (
                             <div className="flex items-center gap-1">
                               <button
-                                className="rounded border border-danger-border bg-danger-surface px-1.5 py-0.5 text-meta text-danger"
+                                className="rounded-row border border-danger-border bg-danger-surface px-1.5 py-0.5 text-meta text-danger"
                                 onClick={() => void revokePat(p.label)}
                               >
                                {t('agents.pat.revokeConfirm')}
@@ -2358,14 +2358,14 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 <div className="mt-2 flex items-center gap-2">
                   <input
                     ref={newPatLabelRef}
-                    className="w-40 rounded border border-border bg-field px-2 py-1"
+                    className="w-40 rounded-row border border-border bg-field px-2 py-1"
                     aria-label={t('agents.pat.label')}
                     placeholder="runner"
                     value={newPatLabel}
                     onChange={(e) => setNewPatLabel(e.target.value)}
                   />
                   <button
-                    className="rounded bg-surface-sunken px-2 py-1 text-meta font-medium text-fg hover:bg-surface-hover disabled:opacity-50"
+                    className="rounded-row bg-surface-sunken px-2 py-1 text-meta font-medium text-fg hover:bg-surface-hover disabled:opacity-50"
                     disabled={busy || newPatLabel.trim() === ''}
                     onClick={() => void mintNewPat()}
                   >
@@ -2384,7 +2384,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
             {pat && (
               // 서버가 해시만 보관하므로 지금 놓치면 다시 볼 수 없다.
-              <div className="rounded border border-warning-border bg-warning-surface p-3">
+              <div className="rounded-row border border-warning-border bg-warning-surface p-3">
                 <div className="text-meta font-semibold text-warning">{t('agents.pat.shownOnce')}</div>
                 {/* 토큰 **자체**를 복사하는 버튼. 아래 명령 복사와 둘 다 남는 이유:
                     이 토큰이 가는 곳이 러너 명령만이 아니다 — 다른 기기의 `.env`,
@@ -2399,12 +2399,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 <div className="mt-1 flex items-start gap-2">
                   <code
                     ref={patRef}
-                    className="min-w-0 flex-1 break-all rounded bg-surface-raised p-2 text-meta"
+                    className="min-w-0 flex-1 break-all rounded-row bg-surface-raised p-2 text-meta"
                   >
                     {pat}
                   </code>
                   <button
-                    className="shrink-0 rounded border border-warning-border bg-warning-surface-strong px-1.5 py-0.5 text-meta text-warning hover:bg-warning-border"
+                    className="shrink-0 rounded-row border border-warning-border bg-warning-surface-strong px-1.5 py-0.5 text-meta text-warning hover:bg-warning-border"
                     aria-label={t('agents.pat.copyToken')}
                     onClick={async () => {
                       setError(null);
@@ -2446,7 +2446,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                    사유 한 줄로 말할 뿐 상태로 삼지 않는다(`runnerLauncher.ts::STRANGER_ATTACHED`).
                    판정을 presence 추측에서 daemon 관측으로 옮긴 것이 `#430` 의 핵심이었다. */}
             {selected && (isAdmin || (myId !== undefined && selected.ownerAccountId === myId)) && (
-              <div className="rounded border border-border p-3">
+              <div className="rounded-row border border-border p-3">
                 <div className="text-meta font-medium text-fg-muted">{t('agents.runner.heading')}</div>
                 {/* 상태 문구를 여기 하드코딩하지 않는다 — `runnerStatusLabel` 에서 받아 온다.
                     이 설명이 낡았던 이유가 정확히 그 하드코딩이었다: `#482` 가 `external` 을
@@ -2541,7 +2541,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           data-testid="agent-created-toast"
           // 확인이지 경보가 아니다 — `Notice` 의 `alert` 보다 약하게 둔다(`UpdateToast` 와 같은 판단).
           role="status"
-          className="absolute bottom-4 left-1/2 z-50 flex max-w-[90%] -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-surface-raised py-1.5 pl-3 pr-1.5 text-body shadow-md"
+          className="absolute bottom-4 left-1/2 z-50 flex max-w-[90%] -translate-x-1/2 items-center gap-2 rounded-full bg-surface-raised py-1.5 pl-3 pr-1.5 text-body shadow-float"
         >
           <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-accent-brand" />
           <span className="truncate">{t('agents.create.created', { handle: createdToast })}</span>
@@ -2706,7 +2706,7 @@ function StaleRunnerBar({ agents, runnerStates, operators, t }: {
   }).stale.length - stale.length;
 
   return (
-    <div className="mb-3 rounded border border-border p-3">
+    <div className="mb-3 rounded-row border border-border p-3">
       <p className="text-meta text-fg-subtle" data-testid="stale-runners-summary">
         {operators === null
           // 오퍼레이터 목록을 못 얻었으면 비교 기준이 없다. "전부 최신이다"로 적으면 확인하지

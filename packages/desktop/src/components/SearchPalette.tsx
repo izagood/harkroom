@@ -218,7 +218,7 @@ export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
       }}
     >
       <div
-        className="w-full max-w-xl rounded-lg border border-border bg-surface-raised shadow-xl"
+        className="w-full max-w-xl rounded-card bg-surface-raised shadow-float"
         role="dialog"
         aria-modal="true"
         aria-label={t('search.palette.label')}
@@ -259,7 +259,7 @@ export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
                 data-testid={`search-scope-${s}`}
                 aria-pressed={scope === s}
                 onClick={() => chooseScope(s)}
-                className={`rounded px-2 py-1 text-meta ${
+                className={`rounded-row px-2 py-1 text-meta ${
                   scope === s ? 'bg-surface-hover text-fg' : 'text-fg-muted hover:bg-surface-sunken'
                 }`}
               >
@@ -295,7 +295,7 @@ export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
               aria-selected={index === activeIndex}
               data-testid="search-result"
               onClick={() => openResult(msg)}
-              className={`cursor-pointer rounded px-3 py-2 ${
+              className={`cursor-pointer rounded-row px-3 py-2 ${
                 index === activeIndex ? 'bg-surface-hover' : 'hover:bg-surface-sunken'
               }`}
             >
@@ -333,7 +333,7 @@ export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
                 type="button"
                 data-testid="search-more"
                 onClick={() => search(query, scope, enabledResults.length)}
-                className="w-full rounded px-3 py-2 text-meta text-fg-muted hover:bg-surface-sunken"
+                className="w-full rounded-row px-3 py-2 text-meta text-fg-muted hover:bg-surface-sunken"
               >
                 {t('search.palette.more')}
               </button>

@@ -55,8 +55,8 @@ export function UpdateToast({ placement }: { placement: 'footer' | 'floating' })
       disabled={installing}
       onClick={() => void install(status.version)}
       className={placement === 'footer'
-        ? 'rounded bg-accent px-2 py-1 text-meta font-semibold text-fg-on-strong hover:bg-accent-hover disabled:bg-transparent disabled:text-fg-subtle'
-        : 'shrink-0 rounded px-1.5 py-0.5 text-meta font-semibold text-accent hover:bg-surface-hover disabled:text-fg-subtle disabled:hover:bg-transparent'}
+        ? 'rounded-row bg-accent px-2 py-1 text-meta font-semibold text-fg-on-strong hover:bg-accent-hover disabled:bg-transparent disabled:text-fg-subtle'
+        : 'shrink-0 rounded-row px-1.5 py-0.5 text-meta font-semibold text-accent hover:bg-surface-hover disabled:text-fg-subtle disabled:hover:bg-transparent'}
     >
       {installing ? t('update.installing') : t('update.install')}
     </button>
@@ -81,7 +81,7 @@ export function UpdateToast({ placement }: { placement: 'footer' | 'floating' })
             <button
               type="button"
               onClick={() => dismiss(status.version)}
-              className="rounded px-2 py-1 text-meta text-fg-muted hover:bg-surface-hover"
+              className="rounded-row px-2 py-1 text-meta text-fg-muted hover:bg-surface-hover"
             >
               {t('update.later')}
             </button>
@@ -99,7 +99,7 @@ export function UpdateToast({ placement }: { placement: 'footer' | 'floating' })
         자리: 사이드바를 접었을 때만 선다(위 머리말). 레일 오른쪽 발치다 — 컴포저의 `전송` 은
         오른쪽 끝이라 겹치지 않는다(우측 하단이었을 때 정확히 그 버튼을 덮었다).
       */
-      className="absolute bottom-3 left-2 z-50 flex items-center gap-1.5 rounded-full border border-border bg-surface-raised py-1 pl-2.5 pr-1 shadow-sm"
+      className="absolute bottom-3 left-2 z-50 flex items-center gap-1.5 rounded-full bg-surface-raised py-1 pl-2.5 pr-1 shadow-float"
     >
       <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-accent-brand" />
       <p className="min-w-0 max-w-44 truncate text-meta text-fg" title={versions}>
@@ -113,7 +113,7 @@ export function UpdateToast({ placement }: { placement: 'footer' | 'floating' })
         type="button"
         aria-label={t('update.later')}
         onClick={() => dismiss(status.version)}
-        className="shrink-0 rounded px-1 text-meta text-fg-muted hover:bg-surface-hover"
+        className="shrink-0 rounded-sm px-1 text-meta text-fg-muted hover:bg-surface-hover"
       >
         ×
       </button>

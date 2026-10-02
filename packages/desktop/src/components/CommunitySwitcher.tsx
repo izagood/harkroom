@@ -179,7 +179,7 @@ export function CommunitySwitcher({ onManage }: {
           /* 레일 몸통 기준: `left-full` 은 몸통의 padding box 오른쪽(= 레일 70px − 오른쪽 테두리
              1px)이라 7px 을 더해 레일 경계에서 6px 띄운다. `top-2` 는 몸통의 `pt-2` 와 같아
              팝오버 위쪽 끝이 타일 위쪽 끝에 맞는다. */
-          className="absolute left-full top-2 z-50 ml-[7px] w-[288px] rounded-lg border border-border bg-surface-raised p-1.5 shadow-lg"
+          className="absolute left-full top-2 z-50 ml-[7px] w-[288px] rounded-card bg-surface-raised p-1.5 shadow-float"
         >
           <div className="px-2 pb-1 pt-1.5 text-meta font-medium uppercase tracking-wide text-fg-subtle">
             {t('rail.community.title')}
@@ -204,9 +204,9 @@ export function CommunitySwitcher({ onManage }: {
             role="menuitem"
             data-testid="community-switcher-add"
             onClick={() => { close(); onManage(); }}
-            className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-body text-fg hover:bg-surface-hover focus:bg-surface-hover ${FOCUS_RING}`}
+            className={`flex w-full items-center gap-2.5 rounded-row px-2 py-1.5 text-left text-body text-fg hover:bg-surface-hover focus:bg-surface-hover ${FOCUS_RING}`}
           >
-            <span aria-hidden="true" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface-hover text-name">+</span>
+            <span aria-hidden="true" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-card bg-surface-hover text-name">+</span>
             {t('rail.community.add')}
           </button>
           <button
@@ -214,7 +214,7 @@ export function CommunitySwitcher({ onManage }: {
             role="menuitem"
             data-testid="community-switcher-manage"
             onClick={() => { close(); onManage(); }}
-            className={`flex w-full items-center rounded-md px-2 py-1.5 text-left text-meta text-fg-muted hover:bg-surface-hover focus:bg-surface-hover ${FOCUS_RING}`}
+            className={`flex w-full items-center rounded-row px-2 py-1.5 text-left text-meta text-fg-muted hover:bg-surface-hover focus:bg-surface-hover ${FOCUS_RING}`}
           >
             {t('rail.community.manage')}
           </button>
@@ -305,13 +305,13 @@ function CommunityTile({ ref, entry, others, open, onClick }: {
       onClick={onClick}
       // `text-sm` 은 4단이 아니라 **h-9 원에 묶인 머리글자**다 — `initial` 하나가 이 버튼의
       // 내용 전부이고 크기가 원의 지름에서 따라 나온다(`Identity.tsx` 와 같은 근거).
-      className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent text-sm font-bold text-fg-on-strong ${FOCUS_RING}
+      className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-compose bg-accent text-sm font-semibold text-fg-on-strong ${FOCUS_RING}
         ${open ? 'ring-2 ring-accent ring-offset-2 ring-offset-surface-rail' : ''}
         ${connected ? '' : 'border-2 border-danger'}`}
     >
       {/* 사진이 있으면 타일을 채운다. 이름은 aria-label 이 말하므로 alt 는 비운다. */}
       {iconUrl
-        ? <img src={iconUrl} alt="" data-testid={`community-icon-${entry.id}`} className="h-full w-full rounded-xl object-cover" />
+        ? <img src={iconUrl} alt="" data-testid={`community-icon-${entry.id}`} className="h-full w-full rounded-compose object-cover" />
         : initialOf(label)}
       {othersBlocking > 0 && (
         <span
@@ -365,12 +365,12 @@ function CommunityRow({ entry, current, shortcut, onSelect }: {
       aria-label={name}
       aria-keyshortcuts={shortcut ? shortcut.replace('⌥⌘', 'Alt+Meta+') : undefined}
       onClick={onSelect}
-      className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left ${FOCUS_RING}
+      className={`flex w-full items-center gap-2.5 rounded-row px-2 py-1.5 text-left ${FOCUS_RING}
         ${current ? 'bg-surface-hover' : 'hover:bg-surface-hover focus:bg-surface-hover'}`}
     >
       <span
         aria-hidden="true"
-        className={`flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg text-meta font-bold
+        className={`flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-card text-meta font-semibold
           ${current ? 'bg-accent text-fg-on-strong' : 'bg-surface-sunken text-fg-muted'}`}
       >
         {iconUrl
@@ -387,7 +387,7 @@ function CommunityRow({ entry, current, shortcut, onSelect }: {
           <span
             aria-hidden="true"
             data-testid={`community-count-${entry.id}`}
-            className="shrink-0 rounded-full bg-accent px-1.5 text-meta font-bold text-fg-on-strong"
+            className="shrink-0 rounded-full bg-accent px-1.5 text-meta font-semibold text-fg-on-strong"
           >
             {blocking}
           </span>

@@ -113,7 +113,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
     >
       <div className="mb-6 flex items-center gap-2">
         <button
-          className="rounded-lg border border-border px-3 py-1.5 font-medium text-fg hover:bg-surface-hover
+          className="rounded-card border border-border px-3 py-1.5 font-medium text-fg hover:bg-surface-hover
                      disabled:opacity-50"
           onClick={reload}
           // 불러오는 중에만 막는다. 실패했을 때야말로 다시 눌러야 하므로 그때는 열어 둔다.
@@ -125,12 +125,12 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
       </div>
 
       {skills === 'error' && (
-        <p role="alert" className="mb-6 rounded-lg border border-danger-border bg-danger-surface p-3 text-danger">
+        <p role="alert" className="mb-6 rounded-card border border-danger-border bg-danger-surface p-3 text-danger">
           {t('skills.list.loadFailed')}
         </p>
       )}
       {error && (
-        <p role="alert" className="mb-6 rounded-lg border border-danger-border bg-danger-surface p-3 text-danger">
+        <p role="alert" className="mb-6 rounded-card border border-danger-border bg-danger-surface p-3 text-danger">
           {error}
         </p>
       )}
@@ -142,7 +142,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
             <h3 className="mb-2 text-body font-semibold text-fg-subtle">
               {group.title} ({items.length})
             </h3>
-            <div className="divide-y divide-border rounded-xl border border-border bg-surface-raised">
+            <div className="divide-y divide-border rounded-compose border border-border bg-surface-raised">
               {items.length === 0 && <p className="px-4 py-3 text-fg-subtle">{group.empty}</p>}
 
               {items.map((skill) => (
@@ -166,7 +166,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                           {skill.staleCandidate && (
                             <span
                               data-testid={`skill-stale-${skill.slug}`}
-                              className="rounded bg-warning-surface px-1 text-warning"
+                              className="rounded-sm bg-warning-surface px-1 text-warning"
                               title={t('skills.usage.staleHint')}
                             >
                               {t('skills.usage.stale')}
@@ -192,7 +192,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                       <div className="flex shrink-0 items-center gap-2">
                         {group.id === 'pending' && confirmingApprove !== skill.slug && (
                           <button
-                            className="rounded-lg border border-border px-3 py-1.5 font-medium text-fg
+                            className="rounded-card border border-border px-3 py-1.5 font-medium text-fg
                                        hover:bg-surface-hover disabled:opacity-50"
                             disabled={busy === skill.slug}
                             onClick={() => {
@@ -207,7 +207,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                         )}
                         {group.id !== 'disabled' && (
                           <button
-                            className="rounded-lg border border-danger-border px-3 py-1.5 font-medium text-danger
+                            className="rounded-card border border-danger-border px-3 py-1.5 font-medium text-danger
                                        hover:bg-danger-surface disabled:opacity-50"
                             disabled={busy === skill.slug || confirmingDisable === skill.slug}
                             onClick={() => {
@@ -223,11 +223,11 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                   </div>
 
                   {isAdmin && confirmingApprove === skill.slug && (
-                    <div className="mt-2 rounded-lg border border-warning-border bg-warning-surface p-3">
+                    <div className="mt-2 rounded-card border border-warning-border bg-warning-surface p-3">
                       <p className="text-warning">{approveConfirmText(t)}</p>
                       <div className="mt-2 flex items-center gap-2">
                         <button
-                          className="rounded-lg bg-accent px-3 py-1.5 font-medium text-fg-on-strong
+                          className="rounded-card bg-accent px-3 py-1.5 font-medium text-fg-on-strong
                                      hover:bg-accent-hover disabled:opacity-50"
                           disabled={busy === skill.slug}
                           onClick={() => void run(
@@ -239,7 +239,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                           {t('skills.confirm.approveStart')}
                         </button>
                         <button
-                          className="rounded-lg border border-border px-3 py-1.5 font-medium text-fg
+                          className="rounded-card border border-border px-3 py-1.5 font-medium text-fg
                                      hover:bg-surface-hover disabled:opacity-50"
                           disabled={busy === skill.slug}
                           onClick={() => setConfirmingApprove(null)}
@@ -250,13 +250,13 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                     </div>
                   )}
                   {isAdmin && confirmingDisable === skill.slug && (
-                    <div className="mt-2 rounded-lg border border-warning-border bg-warning-surface p-3">
+                    <div className="mt-2 rounded-card border border-warning-border bg-warning-surface p-3">
                       <p className="text-warning">
                         {group.id === 'pending' ? rejectConfirmText(t) : disableConfirmText(t)}
                       </p>
                       <div className="mt-2 flex items-center gap-2">
                         <button
-                          className="rounded-lg bg-danger px-3 py-1.5 font-medium text-fg-on-strong
+                          className="rounded-card bg-danger px-3 py-1.5 font-medium text-fg-on-strong
                                      hover:bg-danger-hover disabled:opacity-50"
                           disabled={busy === skill.slug}
                           onClick={() => void run(
@@ -268,7 +268,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                           {group.id === 'pending' ? t('skills.row.confirmReject') : t('skills.row.confirmDisable')}
                         </button>
                         <button
-                          className="rounded-lg border border-border px-3 py-1.5 font-medium text-fg
+                          className="rounded-card border border-border px-3 py-1.5 font-medium text-fg
                                      hover:bg-surface-hover disabled:opacity-50"
                           disabled={busy === skill.slug}
                           onClick={() => setConfirmingDisable(null)}
@@ -302,7 +302,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                          `font-mono text-[12px]`)과 같은 규칙이다. 등폭은 같은 pt 에서
                          산세리프보다 크게 보여 13px 로 두면 옆의 13px 본문보다 커 보인다.
                          `test/typeScale.test.ts` 의 `ALLOWED` 가 그 근거를 적어 뒀다. */
-                      className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg
+                      className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-card
                                  border border-border bg-surface p-3 font-mono text-[12px] text-fg"
                     >
                       {skill.body}

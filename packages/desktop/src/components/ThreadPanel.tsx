@@ -291,7 +291,7 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
         onWidth={setThreadWidth}
       />
       <header className="flex items-center border-b border-border px-4 py-2">
-        <span className="font-bold">{t('thread.title')}</span>
+        <span className="font-semibold">{t('thread.title')}</span>
         {/* `null` 은 '아직 아무 말도 못 봤다' — 그때는 배지를 그리지 않는다(`threadState`). */}
         {state && <ThreadStateBadge state={state} className="ml-2" />}
         {/* 참여자 줄과 터미널 선택자는 **헤더**다 — 세션이 (에이전트, 스레드)당 하나이므로
@@ -300,7 +300,7 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
           <ThreadModelCollapsed rootId={threadRootId} expanded={modelsOpen} onToggle={() => setModelsOpen((v) => !v)} />
           <ThreadParticipants messages={thread} live={live} />
         </div>
-        <button className="ml-2 rounded px-2 text-fg-subtle hover:bg-surface-sunken"
+        <button className="ml-2 rounded-row px-2 text-fg-subtle hover:bg-surface-sunken"
           onClick={() => getController().closeThread()}>
           ×
         </button>
@@ -364,7 +364,7 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
             type="checkbox"
             checked={alsoInChannel}
             onChange={(e) => setAlsoInChannel(e.target.checked)}
-            className="rounded border-border"
+            className="rounded-row border-border"
           />
           {t('thread.alsoPostToChannel')}
         </label>

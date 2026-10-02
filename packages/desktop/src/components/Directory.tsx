@@ -115,10 +115,10 @@ export function Directory({ open, onClose, accountId }: Props) {
   return (
     <Overlay label={t('directory.label')} onClose={onClose}>
         <div className="flex items-center gap-2 border-b border-border p-3">
-          <span className="font-bold">Directory</span>
+          <span className="font-semibold">Directory</span>
           <button
             onClick={onClose}
-            className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover"
+            className="ml-auto rounded-row px-2 py-1 text-fg-muted hover:bg-surface-hover"
             aria-label={t('directory.close')}
           >
             ✕
@@ -129,7 +129,7 @@ export function Directory({ open, onClose, accountId }: Props) {
             type="text"
             aria-label={t('directory.search')}
             placeholder={t('directory.searchPlaceholder')}
-            className="w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
+            className="w-full rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             autoFocus
@@ -139,11 +139,11 @@ export function Directory({ open, onClose, accountId }: Props) {
           {/* 실패는 목록 위에 남긴다. 실패했는데 빈 목록만 보이면 사람은 "아무도 없다"로
               읽는다 — 조회 실패를 빈 목록으로 삼키지 않는다. */}
           {load.kind === 'error' && (
-            <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-danger">
+            <div role="alert" className="mb-3 rounded-row border border-danger-border bg-danger-surface p-2 text-danger">
               {t('directory.listFailed', { reason: load.message })}
               <button
                 onClick={() => { reload(); }}
-                className="ml-2 rounded bg-danger px-2 py-0.5 text-fg-on-strong hover:bg-danger-hover"
+                className="ml-2 rounded-row bg-danger px-2 py-0.5 text-fg-on-strong hover:bg-danger-hover"
               >
                 {t('directory.retry')}
               </button>
@@ -193,7 +193,7 @@ export function DirectoryRow({ account: a, selected: isSelected = false, showKin
       // `scrollIntoView?.` 인 이유: jsdom 에는 그 함수가 없다 — 옵셔널 호출을 빼면 이
       // 화면을 띄우는 테스트가 렌더 도중 터진다(`MessageItem` 도 같은 이유로 그렇다).
       ref={isSelected ? (el: HTMLLIElement | null) => { el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' }); } : undefined}
-      className={`flex items-center gap-2 rounded px-2 py-1.5 ${a.disabled ? 'opacity-60' : ''} ${isSelected ? 'bg-accent-surface ring-2 ring-accent' : ''}`}
+      className={`flex items-center gap-2 rounded-row px-2 py-1.5 ${a.disabled ? 'opacity-60' : ''} ${isSelected ? 'bg-accent-surface ring-2 ring-accent' : ''}`}
     >
     {/* 여기 있던 `Identity variant="badge"`(🤖 + 소유자 @핸들)를 뺐다 — 화면은 계정이
         사람인지 에이전트인지 말하지 않는다(design doc 2, #455). 소유자는 프로필(#475)이
@@ -217,13 +217,13 @@ export function DirectoryRow({ account: a, selected: isSelected = false, showKin
     {showKind && (
       <span
         data-testid={`directory-kind-${a.id}`}
-        className="rounded bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted"
+        className="rounded-sm bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted"
       >
         {a.kind}
       </span>
     )}
     {a.isAdmin && (
-      <span className="rounded bg-warning-surface px-1 text-meta text-warning">admin</span>
+      <span className="rounded-sm bg-warning-surface px-1 text-meta text-warning">admin</span>
     )}
     <StatusMark account={a} />
     {a.statusText && <span className="truncate text-meta text-fg-subtle">{a.statusText}</span>}
@@ -233,7 +233,7 @@ export function DirectoryRow({ account: a, selected: isSelected = false, showKin
     {a.disabled && (
       <span
         data-testid={`directory-disabled-${a.id}`}
-        className="rounded bg-surface-hover px-1 text-meta text-fg"
+        className="rounded-sm bg-surface-hover px-1 text-meta text-fg"
       >
         {t('directory.disabled')}
       </span>

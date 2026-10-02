@@ -85,7 +85,7 @@ export function ProjectionBanner({ onOpenSettings }: {
       {onOpenSettings && (
         <button
           data-testid="projection-open-settings"
-          className="shrink-0 rounded px-2 py-0.5 underline hover:bg-warning-surface-strong"
+          className="shrink-0 rounded-row px-2 py-0.5 underline hover:bg-warning-surface-strong"
           // 함수를 그대로 넘기지 않는다 — React 가 첫 인자로 `MouseEvent` 를 준다.
           onClick={() => onOpenSettings?.(PROJECTION_SECTION)}
         >
@@ -95,7 +95,7 @@ export function ProjectionBanner({ onOpenSettings }: {
       <button
         data-testid="projection-dismiss"
         aria-label={t('projection.banner.dismiss')}
-        className="shrink-0 rounded px-1 hover:bg-warning-surface-strong"
+        className="shrink-0 rounded-sm px-1 hover:bg-warning-surface-strong"
         onClick={() => {
           // 꺼짐만 이 기기에 남긴다(`projectionBannerStorage` 주석). 세션 닫기는 모든 사정에 건다.
           if (banner.testid === 'projection-unconfigured') projectionBannerStorage.snooze(banner.testid);

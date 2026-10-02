@@ -129,10 +129,10 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
    * 이유: 사이만 벌리면 툴바만 길어지고 과녁은 그대로라 겨누기가 쉬워지지 않는다.
    * 창(`ReactionPickerPanel`)이 이미 32px 칸에 4px 사이를 쓰므로, 사이 값은 그쪽과 같다.
    */
-  const slot = 'flex h-7 w-7 items-center justify-center rounded-md text-fg-muted'
+  const slot = 'flex h-7 w-7 items-center justify-center rounded-row text-fg-muted'
     + ' hover:bg-surface-hover hover:text-fg';
   /** 눌린 칸(담김·리액션)은 **가라앉은 면**으로 말한다. 강조색은 '내 차례'가 쓴다(규칙 04). */
-  const slotOn = 'flex h-7 w-7 items-center justify-center rounded-md bg-surface-sunken text-fg';
+  const slotOn = 'flex h-7 w-7 items-center justify-center rounded-row bg-surface-sunken text-fg';
 
   return (
     <div
@@ -144,8 +144,8 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
       onKeyDown={onArrow}
       /* 행의 **위쪽 경계에 걸친다**(`-top-3`). 앞 판은 `top-1` 이라 한 줄 긴 말의 오른쪽
          끝을 덮었다 — 여덟 칸이면 폭이 200px 을 넘으므로 그만큼 더 덮는다. */
-      className={`absolute -top-3 right-2 flex items-center gap-1 rounded-lg border border-border
-                  bg-surface-raised p-1 shadow-sm ${reveal}`}
+      className={`absolute -top-3 right-2 flex items-center gap-1 rounded-card
+                  bg-surface-raised p-1 shadow-float ${reveal}`}
     >
       {/* 창은 툴바의 **자식**이다 — 툴바가 사라지면 창도 사라져야 하고(고아 팝오버를 만들지
           않는다), 바깥 클릭 판정도 `rootRef` 하나로 끝난다. */}

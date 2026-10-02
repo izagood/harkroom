@@ -17,7 +17,7 @@ import { ModelPicker } from './settings/ModelPicker';
 import { formatModelValue, type ModelValue } from '../lib/threadModels';
 import { useT } from '../i18n/useT';
 
-const FIELD = 'w-full rounded border border-border bg-surface px-2 py-1 text-meta';
+const FIELD = 'w-full rounded-row border border-border bg-surface px-2 py-1 text-meta';
 
 export function AgentModelChip({
   agentId, handle, value, stale = false, inherited = false, setByAgent = null, highlight = false, mode, placement = 'below',
@@ -83,7 +83,7 @@ export function AgentModelChip({
         // 단축키는 칩에 적는다 — 줄 끝의 힌트는 부른 직후에만 선다(designer 검토 4).
         title={mode === 'composer' ? t('threadModel.chipHint') : undefined}
         onClick={() => setOpen(!open)}
-        className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-meta ${style} ${
+        className={`inline-flex items-center gap-1 rounded-row px-1.5 py-0.5 text-meta ${style} ${
           highlight ? 'ring-2 ring-accent' : ''
         } hover:bg-surface-sunken`}
       >
@@ -192,7 +192,7 @@ function AgentModelPicker({ agentId, handle, value, mode, placement, clearsThrea
         // select 안의 Enter 는 목록을 닫는 데 쓰인다 — 버튼·입력에서만 적용한다.
         if (e.key === 'Enter' && (e.target as HTMLElement).tagName !== 'SELECT' && !busy) { e.preventDefault(); void apply(); }
       }}
-      className={`absolute ${alignRight ? 'right-0' : 'left-0'} z-30 w-80 rounded-md border border-border bg-surface-raised p-3 shadow-lg ${
+      className={`absolute ${alignRight ? 'right-0' : 'left-0'} z-30 w-80 rounded-card bg-surface-raised p-3 shadow-float ${
         placement === 'above' ? 'bottom-full mb-1' : 'top-full mt-1'
       }`}
       style={{ maxHeight: 'min(26rem, 60vh)', overflowY: 'auto' }}
@@ -232,12 +232,12 @@ function AgentModelPicker({ agentId, handle, value, mode, placement, clearsThrea
       {error && <p role="alert" className="mb-2 text-meta text-danger">{error}</p>}
       <div className="flex items-center justify-end gap-2">
         <button type="button" data-testid="model-reset" disabled={busy}
-          className="rounded px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
+          className="rounded-row px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
           onClick={() => void run(onReset)}>
           {t(clearsThread ? 'threadModel.picker.clearThread' : 'threadModel.picker.reset')}
         </button>
         <button type="button" data-testid="model-apply" disabled={busy}
-          className="rounded bg-accent px-2 py-1 text-meta font-medium text-fg-on-strong hover:bg-accent-hover"
+          className="rounded-row bg-accent px-2 py-1 text-meta font-medium text-fg-on-strong hover:bg-accent-hover"
           onClick={() => void apply()}>
           {t('threadModel.picker.apply')}
         </button>

@@ -301,7 +301,7 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
           ref={menuRef}
           role="menu"
           onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } }}
-          className={`${openAt ? '' : `absolute ${resolvedPlacement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}`} z-10 min-w-32 rounded border border-border bg-surface-raised py-1 shadow-lg ${className}`}
+          className={`${openAt ? '' : `absolute ${resolvedPlacement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}`} z-10 min-w-32 rounded-card bg-surface-raised py-1 shadow-float ${className}`}
           style={menuStyle}
         >
           {/*

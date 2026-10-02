@@ -191,7 +191,7 @@ export function SidebarFind({ onOpenChannelDirectory }: {
              다시 읽는 자리이고, 이 저장소의 입력칸은 사이드바 안에서 12·14px 로 갈려
              있었다(실측 7곳). 하나로 맞추면 배울 규칙이 하나 줄어든다. 아래 결과 줄은
              사이드바 단(11px)을 그대로 쓴다. */
-          className="w-full rounded border border-border bg-field py-1 pl-7 pr-2
+          className="w-full rounded-row border border-border bg-field py-1 pl-7 pr-2
                      text-fg placeholder-fg-subtle"
         />
       </div>
@@ -213,7 +213,7 @@ export function SidebarFind({ onOpenChannelDirectory }: {
               {hit.kind === 'channel' ? (
                 <button
                   data-testid={`sidebar-find-channel-${hit.id}`}
-                  className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left hover:bg-surface-raised"
+                  className="flex w-full items-center gap-1.5 rounded-row px-2 py-1 text-left hover:bg-surface-raised"
                   onClick={() => pick(() => void getController().openChannel(hit.id))}
                 >
                   <span aria-hidden="true" className="shrink-0 text-fg-subtle">#</span>
@@ -223,7 +223,7 @@ export function SidebarFind({ onOpenChannelDirectory }: {
               ) : (
                 <button
                   data-testid={`sidebar-find-account-${hit.id}`}
-                  className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left hover:bg-surface-raised"
+                  className="flex w-full items-center gap-1.5 rounded-row px-2 py-1 text-left hover:bg-surface-raised"
                   /* 사람이든 에이전트든 **DM 을 연다** — 레일 문서 2단계가 정한 것이고
                      (*"DM 은 사람과 에이전트를 안 가른다"*), 에이전트 칸의 카드도 이미
                      `startDm` 이다(`Sidebar` 의 `onPick` 주석). 여기서 다른 것을 열면
@@ -252,7 +252,7 @@ export function SidebarFind({ onOpenChannelDirectory }: {
             */}
             <button
               data-testid="sidebar-find-all-channels"
-              className="w-full rounded px-2 py-1 text-left text-meta text-fg-muted hover:bg-surface-raised"
+              className="w-full rounded-row px-2 py-1 text-left text-meta text-fg-muted hover:bg-surface-raised"
               onClick={() => pick(onOpenChannelDirectory)}
             >
               {t('sidebar.find.allChannels')}

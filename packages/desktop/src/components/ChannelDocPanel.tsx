@@ -133,7 +133,7 @@ export function ChannelDocPanel({ channelId, onOpenDirectory, onOpenSettings }: 
             지운다(아래 1번 약속). */}
         {!editing && !loading && !loadError && (
           <button
-            className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-sunken"
+            className="ml-auto shrink-0 rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-sunken"
             onClick={startEditing}
           >
             {t('channel.doc.edit')}
@@ -150,13 +150,13 @@ export function ChannelDocPanel({ channelId, onOpenDirectory, onOpenSettings }: 
           사람이 무엇이 틀렸는지 읽어야 할 때 가장 작은 글자가 된다. 본문단 13px 이고,
           앱 기본값이 그 값이라 크기를 안 적는다(아래 saveError 도 같다). */}
       {loadError && (
-        <div role="alert" className="m-3 rounded bg-danger-surface px-2 py-1 text-danger">
+        <div role="alert" className="m-3 rounded-row bg-danger-surface px-2 py-1 text-danger">
           {t('channel.doc.loadFailed', { reason: loadError })}
         </div>
       )}
 
       {saveError && (
-        <div role="alert" className="m-3 rounded bg-warning-surface px-2 py-1 text-warning">
+        <div role="alert" className="m-3 rounded-row bg-warning-surface px-2 py-1 text-warning">
           {saveError}
         </div>
       )}
@@ -167,7 +167,7 @@ export function ChannelDocPanel({ channelId, onOpenDirectory, onOpenSettings }: 
             {editing ? (
               <textarea
                 aria-label={t('channel.doc.editLabel')}
-                className="w-full resize-none rounded border border-border bg-field p-2 focus:border-border focus:outline-none"
+                className="w-full resize-none rounded-row border border-border bg-field p-2 focus:border-border focus:outline-none"
                 rows={12}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
@@ -189,7 +189,7 @@ export function ChannelDocPanel({ channelId, onOpenDirectory, onOpenSettings }: 
             {/* 409 뒤에만 나온다. 내 편집은 위 편집칸에 그대로 있고 서버에 있는 것은 여기
                 있다 — 둘을 나란히 보고 사람이 정한다. */}
             {theirBody !== null && (
-              <section className="mt-3 rounded border border-warning-border bg-warning-surface p-2">
+              <section className="mt-3 rounded-row border border-warning-border bg-warning-surface p-2">
                 <h3 className="text-meta font-semibold text-warning">{t('channel.doc.theirs')}</h3>
                 {/* 서버에 있는 문서 본문 — 내 편집과 나란히 놓고 읽는 글자다. 본문단이다. */}
                 <pre className="mt-1 whitespace-pre-wrap break-words text-fg">
@@ -202,13 +202,13 @@ export function ChannelDocPanel({ channelId, onOpenDirectory, onOpenSettings }: 
           {editing && (
             <div className="flex gap-2 border-t border-border p-2">
               <button
-                className="flex-1 rounded bg-surface-hover px-3 py-1.5 text-fg hover:bg-border"
+                className="flex-1 rounded-row bg-surface-hover px-3 py-1.5 text-fg hover:bg-border"
                 onClick={cancelEditing}
               >
                 {t('channel.doc.cancel')}
               </button>
               <button
-                className="flex-1 rounded bg-accent px-3 py-1.5 text-fg-on-strong hover:bg-accent-hover disabled:opacity-50"
+                className="flex-1 rounded-row bg-accent px-3 py-1.5 text-fg-on-strong hover:bg-accent-hover disabled:opacity-50"
                 onClick={() => void save()}
                 disabled={saving}
               >

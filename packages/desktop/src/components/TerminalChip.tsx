@@ -50,7 +50,7 @@ export function TerminalChip({ account, message }: {
           threadRootId: message.threadRootId ?? message.id,
         },
       })}
-      className="rounded bg-surface-raised px-1.5 py-0.5 text-meta text-fg hover:bg-surface-hover"
+      className="rounded-row bg-surface-raised px-1.5 py-0.5 text-meta text-fg hover:bg-surface-hover"
       title={t('terminal.chip.open', { handle: account.handle })}
     >
       {t('terminal.chip.label')}

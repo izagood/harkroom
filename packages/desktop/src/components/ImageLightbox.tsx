@@ -232,8 +232,8 @@ export function ImageLightbox({ attachment, url, failed = false, onRetry, onClos
       : nothingToToggle ? 'default'
         : isFit ? 'zoom-in' : 'zoom-out';
   const arrow = 'absolute top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-surface/70 text-title '
-    + 'text-fg shadow opacity-40 transition-opacity group-hover:opacity-100 focus-visible:opacity-100';
-  const btn = 'shrink-0 rounded px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken disabled:opacity-40';
+    + 'text-fg shadow-float opacity-40 transition-opacity group-hover:opacity-100 focus-visible:opacity-100';
+  const btn = 'shrink-0 rounded-row px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken disabled:opacity-40';
 
   return (
     // 판 크기는 창의 92vw × 88vh 다. 머리줄은 고정이고 그 아래 본문 칸이 스크롤된다.
@@ -243,7 +243,7 @@ export function ImageLightbox({ attachment, url, failed = false, onRetry, onClos
         <div className="flex shrink-0 items-center gap-0.5" data-testid="zoom-controls">
           <button type="button" className={btn} onClick={() => zoomTo(stepDown(scale, fit))}
             aria-label={t('message.attachment.zoomOut')} data-testid="zoom-out">−</button>
-          <button type="button" className="min-w-[4.5rem] shrink-0 rounded px-1 text-meta tabular-nums text-fg hover:bg-surface-sunken"
+          <button type="button" className="min-w-[4.5rem] shrink-0 rounded-sm px-1 text-meta tabular-nums text-fg hover:bg-surface-sunken"
             onClick={() => zoomTo(isFit ? 1 : 'fit')} data-testid="zoom-level" aria-live="polite">
             {isFit ? t('message.attachment.zoomFitLevel', { percent: percent(fit) }) : percent(scale)}
           </button>
@@ -263,12 +263,12 @@ export function ImageLightbox({ attachment, url, failed = false, onRetry, onClos
         <span className="shrink-0 text-fg-subtle">{formatSize(attachment.sizeBytes)}</span>
         {saveable && (
           <button
-            className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
+            className="ml-auto shrink-0 rounded-row border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
             onClick={() => void getController().saveAttachment(attachment)}
           >{t('message.attachment.save')}</button>
         )}
         <button
-          className={`${saveable ? '' : 'ml-auto '}shrink-0 rounded px-2 text-fg-subtle hover:bg-surface-sunken`}
+          className={`${saveable ? '' : 'ml-auto '}shrink-0 rounded-row px-2 text-fg-subtle hover:bg-surface-sunken`}
           onClick={onClose}
           aria-label={t('message.attachment.closeZoom')}
         >×</button>

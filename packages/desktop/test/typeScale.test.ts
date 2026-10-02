@@ -251,7 +251,7 @@ const ALLOWED: { file: string; contains: string; why: string }[] = [
   //   예외로 등록할 것이 남지 않는다. 예외 목록은 짧을수록 좋고, 사라진 예외는 지운다.
   {
     file: 'components/CommunitySwitcher.tsx',
-    contains: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent text-sm font-bold',
+    contains: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-compose bg-accent text-sm font-semibold',
     why: '레일 맨 위 커뮤니티 타일(h-9) 안 머리글자 — 36px 원에 묶인 글리프다',
   },
   // ↓ **값이 4단과 같은 상자 글리프**(위 넷째 종류). 임의값이 위반이 된 이 판에서 새로

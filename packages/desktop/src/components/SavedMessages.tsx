@@ -105,7 +105,7 @@ export function SavedMessages({ open, onClose }: Props) {
     const preview = body.length > 100 ? `${body.slice(0, 100)}…` : body;
 
     return (
-      <li key={e.messageId} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-surface-hover">
+      <li key={e.messageId} className="flex items-center gap-2 rounded-row px-2 py-1.5 hover:bg-surface-hover">
         {/* #219 결정 3: 지워진 메시지도 자리가 남는다 — 담아 둔 사실은 내 기록이다.
             본문은 서버가 내주지 않으므로(`message: null`) 그릴 것이 없고, 갈 곳도 없어
             누를 수 없게 둔다. 눌러도 아무 일이 없는 버튼은 거짓 신호다(design.md §4). */}
@@ -114,7 +114,7 @@ export function SavedMessages({ open, onClose }: Props) {
             data-testid={`saved-entry-${e.messageId}`}
             className="flex flex-1 items-center gap-2 text-left"
           >
-            <span className="rounded bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted">
+            <span className="rounded-sm bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted">
               {channelLabel(e.channelId)}
             </span>
             <span className="flex-1 italic text-fg-subtle">{e.deleted ? t('saved.deleted') : t('saved.unavailable')}</span>
@@ -126,7 +126,7 @@ export function SavedMessages({ open, onClose }: Props) {
             onClick={() => openEntry(e)}
             className="flex min-w-0 flex-1 items-center gap-2 text-left"
           >
-            <span className="rounded bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted">
+            <span className="rounded-sm bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted">
               {channelLabel(e.channelId)}
             </span>
             <span className="text-fg-muted">@{accounts[e.message.authorId]?.handle ?? '…'}</span>
@@ -142,7 +142,7 @@ export function SavedMessages({ open, onClose }: Props) {
           data-testid={`saved-toggle-${e.messageId}`}
           aria-label={e.state === 'open' ? t('saved.markDone') : t('saved.markOpen')}
           onClick={() => { void toggleState(e); }}
-          className="shrink-0 rounded border border-border px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
+          className="shrink-0 rounded-row border border-border px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
         >
           {e.state === 'open' ? '✓' : '↺'}
         </button>
@@ -153,10 +153,10 @@ export function SavedMessages({ open, onClose }: Props) {
   return (
     <Overlay label={t('saved.label')} onClose={onClose}>
         <div className="flex items-center gap-2 border-b border-border p-3">
-          <span className="font-bold">Saved</span>
+          <span className="font-semibold">Saved</span>
           <button
             onClick={onClose}
-            className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover"
+            className="ml-auto rounded-row px-2 py-1 text-fg-muted hover:bg-surface-hover"
             aria-label={t('saved.close')}
           >
             ✕
@@ -164,13 +164,13 @@ export function SavedMessages({ open, onClose }: Props) {
         </div>
         <div className="flex items-center gap-3 border-b border-border p-3">
           <button
-            className={`rounded px-2 py-1 ${tab === 'open' ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:bg-surface-hover'}`}
+            className={`rounded-row px-2 py-1 ${tab === 'open' ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:bg-surface-hover'}`}
             onClick={() => setTab('open')}
           >
             {t('saved.tabOpen')}
           </button>
           <button
-            className={`rounded px-2 py-1 ${tab === 'done' ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:bg-surface-hover'}`}
+            className={`rounded-row px-2 py-1 ${tab === 'done' ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:bg-surface-hover'}`}
             onClick={() => setTab('done')}
           >
             {t('saved.tabDone')}
@@ -178,11 +178,11 @@ export function SavedMessages({ open, onClose }: Props) {
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {load.kind === 'error' && (
-            <div role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-danger">
+            <div role="alert" className="mb-3 rounded-row border border-danger-border bg-danger-surface p-2 text-danger">
               {t('saved.listFailed', { reason: load.message })}
               <button
                 onClick={() => setReloadSeq((n) => n + 1)}
-                className="ml-2 rounded bg-danger px-2 py-0.5 text-fg-on-strong hover:bg-danger-hover"
+                className="ml-2 rounded-row bg-danger px-2 py-0.5 text-fg-on-strong hover:bg-danger-hover"
               >
                 {t('saved.retry')}
               </button>

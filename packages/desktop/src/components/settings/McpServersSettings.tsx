@@ -93,7 +93,7 @@ export function McpServersSection() {
             </span>
             {canEdit && (
               <button
-                className="shrink-0 rounded border border-border px-2 py-1 text-meta text-fg hover:bg-surface-sunken"
+                className="shrink-0 rounded-row border border-border px-2 py-1 text-meta text-fg hover:bg-surface-sunken"
                 aria-label={t('mcpServers.removeAction', { name: row.name })}
                 onClick={() => { setError(null); setConfirming(row); }}
               >
@@ -119,7 +119,7 @@ export function McpServersSection() {
         />
       )}
       {error && !confirming && (
-        <div className="mb-4 rounded border border-danger-border bg-danger-surface p-3">
+        <div className="mb-4 rounded-row border border-danger-border bg-danger-surface p-3">
           <p role="alert" className="text-meta text-danger">{error}</p>
         </div>
       )}
@@ -129,7 +129,7 @@ export function McpServersSection() {
           <div className="flex flex-wrap items-center gap-2 px-4 py-3">
             <input
               aria-label={t('mcpServers.name')}
-              className="rounded border border-border bg-surface px-2 py-1 font-mono text-meta text-fg"
+              className="rounded-row border border-border bg-surface px-2 py-1 font-mono text-meta text-fg"
               placeholder="github"
               value={name}
               disabled={busy}
@@ -137,7 +137,7 @@ export function McpServersSection() {
             />
             <select
               aria-label={t('mcpServers.kindLabel')}
-              className="rounded border border-border bg-surface px-2 py-1 text-meta text-fg"
+              className="rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
               value={kind}
               disabled={busy}
               onChange={(e) => setKind(e.target.value as McpServerRow['credentialKind'])}
@@ -146,7 +146,7 @@ export function McpServersSection() {
               <option value="personal">{t('mcpServers.kind.personal')}</option>
             </select>
             <button
-              className="rounded bg-accent px-3 py-1 text-meta font-medium text-fg-on-strong disabled:opacity-50"
+              className="rounded-row bg-accent px-3 py-1 text-meta font-medium text-fg-on-strong disabled:opacity-50"
               disabled={busy || !name}
               onClick={() => void add()}
             >

@@ -308,7 +308,7 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onMana
                 aria-label={me
                   ? t('rail.me.menuFor', { handle: me.handle })
                   : t('rail.me.menu')}
-                className={`flex h-11 w-full items-center justify-center rounded hover:bg-surface-raised ${RAIL_FOCUS}`}
+                className={`flex h-11 w-full items-center justify-center rounded-row hover:bg-surface-raised ${RAIL_FOCUS}`}
               >
                 <span className="relative">
                   <Identity account={me ?? undefined} variant="avatar" className="h-7 w-7 shrink-0" />
@@ -328,7 +328,7 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onMana
           {/* 상태 고르기는 메뉴 항목이 **여는 것**이다. 레일 안에 두면 62px 에 눌려 입력칸이
               못 서므로 레일 오른쪽으로 띄운다 — 열려 있는 동안에만 그린다. */}
           {statusOpen && (
-            <div className="absolute bottom-full left-full z-20 mb-1 w-64 rounded border border-border bg-surface-raised p-2 shadow-lg">
+            <div className="absolute bottom-full left-full z-20 mb-1 w-64 rounded-card bg-surface-raised p-2 shadow-float">
               <StatusPicker onDone={() => setStatusOpen(false)} />
             </div>
           )}
@@ -409,7 +409,7 @@ function RailButton({ cell, active, badge, countInName, onClick, t }: {
       aria-label={name}
       title={name}
       onClick={onClick}
-      className={`relative flex w-[54px] flex-col items-center gap-0.5 rounded-lg py-1.5 ${RAIL_FOCUS} ${
+      className={`relative flex w-[54px] flex-col items-center gap-0.5 rounded-card py-1.5 ${RAIL_FOCUS} ${
         active ? 'bg-surface-raised text-fg' : 'text-fg-muted hover:bg-surface-hover'
       }`}
     >
@@ -443,7 +443,7 @@ function RailButton({ cell, active, badge, countInName, onClick, t }: {
         <span
           aria-hidden="true"
           data-testid={`${cell.testId}-badge`}
-          className="absolute right-1 top-0.5 rounded-full bg-accent px-1 text-meta font-bold text-fg-on-strong"
+          className="absolute right-1 top-0.5 rounded-full bg-accent px-1 text-meta font-semibold text-fg-on-strong"
         >
           {badge}
         </span>

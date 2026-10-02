@@ -90,7 +90,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
                 {g.items.map((item) => (
                   <button
                     key={item.id}
-                    className={`flex w-full items-center rounded-lg px-2 py-1.5 text-left
+                    className={`flex w-full items-center rounded-card px-2 py-1.5 text-left
                       ${section === item.id ? 'bg-surface-hover font-medium text-fg' : 'text-fg-muted hover:bg-surface-sunken'}`}
                     aria-current={section === item.id ? 'page' : undefined}
                     onClick={() => setSection(item.id)}

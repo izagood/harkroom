@@ -201,7 +201,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
     }
   };
 
-  const field = 'w-full rounded border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
+  const field = 'w-full rounded-row border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
   // `add` 는 겹창 안에서 그려진다 — 화면 전체를 차지하는 껍데기는 겹창이 이미 갖고 있고,
   // 여기서 창 높이(`h-full`)를 또 두면 모달 안에 빈 화면 하나가 더 생긴다.
   //
@@ -214,7 +214,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
   return (
     <div className={shell}>
       <form
-        className="w-80 space-y-3 rounded-lg bg-surface-raised p-6 shadow"
+        className="w-80 space-y-3 rounded-card bg-surface-raised p-6 shadow-float"
         onSubmit={(e) => {
           e.preventDefault();
           // `create` 는 두 단계다 — 만들기, 그리고 준비되면 클레임.
@@ -229,7 +229,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
           {/* **화면 제목단 17px.** 18px(`text-lg`)이었고 4단 중 아무것도 아니었다. 이 자리는
               화면 하나가 무엇을 하는 중인지 말하는 유일한 줄이라 맨 윗단이 맞다 —
               `SettingsPage` 의 제목과 같은 단이다(그 파일에 근거를 적어 뒀다). */}
-          <h1 className="text-title font-bold">
+          <h1 className="text-title font-semibold">
             {authMode === 'create' ? 'Create a community' : adding ? 'Sign in to another community' : 'Harkroom'}
           </h1>
         </div>
@@ -250,7 +250,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
           pending ? (
             <>
               {/* 만들어지는 중이거나, 준비돼 클레임을 기다리는 자리. */}
-              <div className="rounded border border-border bg-field px-3 py-2">
+              <div className="rounded-row border border-border bg-field px-3 py-2">
                 <p className="text-meta text-fg-subtle">Community</p>
                 <p className="text-fg">{pending.url}</p>
               </div>
@@ -384,7 +384,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
             // 준비되기 전에는 누를 것이 없다 — 기다리는 중에 버튼만 살아 있으면 눌러 보게 된다.
             || (authMode === 'create' && pending !== null && !claimable)
           }
-          className="w-full rounded bg-accent py-2 font-medium text-fg-on-strong disabled:opacity-50"
+          className="w-full rounded-row bg-accent py-2 font-medium text-fg-on-strong disabled:opacity-50"
         >
           {authMode === 'create'
             ? (pending ? (claimable ? 'Create admin account' : 'Waiting…') : 'Create community')
@@ -449,7 +449,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
         {props.mode === 'add' && (
           <button
             type="button"
-            className="w-full rounded border border-border py-1.5 text-meta font-medium hover:bg-surface"
+            className="w-full rounded-row border border-border py-1.5 text-meta font-medium hover:bg-surface"
             onClick={props.onCancel}
           >
             Cancel

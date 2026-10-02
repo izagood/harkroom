@@ -250,7 +250,7 @@ function Attachment({ attachment, message }: { attachment: AttachmentRow; messag
           type="button"
           onClick={openZoom}
           aria-label={t('message.attachment.zoom', { filename: attachment.filename })}
-          className="block cursor-zoom-in rounded border border-border"
+          className="block cursor-zoom-in rounded-row border border-border"
         >
           {/*
             **세로만이 아니라 가로도 묶는다.** 높이만 묶어 두면(`max-h-64` + `max-w-full`)
@@ -266,7 +266,7 @@ function Attachment({ attachment, message }: { attachment: AttachmentRow; messag
             src={url}
             alt={attachment.filename}
             data-testid="attachment-preview"
-            className="max-h-56 max-w-[min(28rem,100%)] rounded"
+            className="max-h-56 max-w-[min(28rem,100%)] rounded-row"
           />
         </button>
         {zoomed && <ImageLightbox attachment={attachment} url={url} onClose={() => setZoomed(false)} />}
@@ -278,7 +278,7 @@ function Attachment({ attachment, message }: { attachment: AttachmentRow; messag
   }
   return (
     <button
-      className="inline-flex items-center gap-2 rounded border border-border bg-surface px-2 py-1 text-body text-fg hover:bg-surface-sunken"
+      className="inline-flex items-center gap-2 rounded-row border border-border bg-surface px-2 py-1 text-body text-fg hover:bg-surface-sunken"
       onClick={() => void getController().saveAttachment(attachment)}
     >
       <span aria-hidden>📎</span>

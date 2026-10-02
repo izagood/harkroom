@@ -73,7 +73,7 @@ export function McpLocalAuth({ entry, warn, disabled, onChanged, onError }: {
   const id = entry.name;
   const st = waiting ? { state: 'pending' as const } : entry.auth;
   const button = (label: string, action: () => void, testid: string) => (
-    <button className="rounded border border-border px-1.5 py-0.5 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
+    <button className="rounded-row border border-border px-1.5 py-0.5 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
       data-testid={testid} disabled={disabled} onClick={action}>{label}</button>
   );
   if (st.state === 'ok') {

@@ -96,7 +96,7 @@ export function TeamMemberPicker({ candidates, runnerStates, online, connected, 
         <input
           data-testid="team-candidate-search"
           aria-label={t('agents.teams.candidateSearch')}
-          className="w-full rounded-lg border border-border bg-field py-2 pl-8 pr-3
+          className="w-full rounded-card border border-border bg-field py-2 pl-8 pr-3
                      text-fg placeholder-fg-subtle"
           placeholder={t('agents.teams.candidateSearchPlaceholder')}
           value={query}
@@ -124,7 +124,7 @@ export function TeamMemberPicker({ candidates, runnerStates, online, connected, 
       <div
         data-testid="team-candidate-grid"
         className="mt-2 grid max-h-64 grid-cols-[repeat(auto-fill,72px)] gap-x-3 gap-y-3
-                   overflow-y-auto rounded-lg bg-surface-sunken p-3"
+                   overflow-y-auto rounded-card bg-surface-sunken p-3"
       >
         {shown.map((a) => {
           const face = faceState(a.id, runnerStates, online, connected);
@@ -140,7 +140,7 @@ export function TeamMemberPicker({ candidates, runnerStates, online, connected, 
               */
               aria-label={t('agents.teams.memberPickAction', { handle: a.handle })}
               disabled={busy}
-              className="flex w-[72px] flex-col items-center gap-1 rounded-lg p-1
+              className="flex w-[72px] flex-col items-center gap-1 rounded-card p-1
                          hover:bg-surface-hover disabled:opacity-50"
               onClick={() => onAdd(a.id)}
             >

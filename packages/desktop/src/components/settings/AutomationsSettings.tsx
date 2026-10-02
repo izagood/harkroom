@@ -172,16 +172,16 @@ export function AutomationsSettings() {
       </div>
 
       {items === 'error' && (
-        <p role="alert" className="mb-6 rounded-lg border border-danger-border bg-danger-surface p-3 text-danger">
+        <p role="alert" className="mb-6 rounded-card border border-danger-border bg-danger-surface p-3 text-danger">
           {t('automations.list.loadFailed')}
         </p>
       )}
       {error && (
-        <p role="alert" className="mb-6 rounded-lg border border-danger-border bg-danger-surface p-3 text-danger">{error}</p>
+        <p role="alert" className="mb-6 rounded-card border border-danger-border bg-danger-surface p-3 text-danger">{error}</p>
       )}
 
       {draft && (
-        <section data-testid="automation-form" className="mb-8 space-y-4 rounded-xl border border-border bg-surface-raised p-4">
+        <section data-testid="automation-form" className="mb-8 space-y-4 rounded-compose border border-border bg-surface-raised p-4">
           <Field label={t('automations.form.name')}>
             <TextInput value={draft.name} onChange={(name) => setDraft({ ...draft, name })}
               placeholder={t('automations.form.namePlaceholder')} />
@@ -191,7 +191,7 @@ export function AutomationsSettings() {
           </Field>
           <Field label={t('automations.form.body')} hint={t('automations.form.bodyHint')}>
             <textarea
-              className="w-full rounded border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle"
+              className="w-full rounded-row border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle"
               rows={3} value={draft.body} placeholder={t('automations.form.bodyPlaceholder')}
               onChange={(e) => setDraft({ ...draft, body: e.target.value })}
             />
@@ -225,7 +225,7 @@ export function AutomationsSettings() {
               {draft.event === 'push' && (
                 <>
                   <Field label={t('automations.form.paths')} hint={t('automations.form.pathsHint')}>
-                    <textarea className="w-full rounded border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle"
+                    <textarea className="w-full rounded-row border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle"
                       rows={2} value={draft.paths} placeholder="packages/agent/src/adapters/*.ts"
                       onChange={(e) => setDraft({ ...draft, paths: e.target.value })} />
                   </Field>
@@ -263,7 +263,7 @@ export function AutomationsSettings() {
                 const on = draft.weekdays.includes(d);
                 return (
                   <button key={d} type="button" aria-pressed={on} data-testid={`weekday-${d}`}
-                    className={`rounded border px-2 py-1 ${on ? 'border-accent bg-accent-surface text-accent' : 'border-border text-fg-muted'}`}
+                    className={`rounded-row border px-2 py-1 ${on ? 'border-accent bg-accent-surface text-accent' : 'border-border text-fg-muted'}`}
                     onClick={() => setDraft({
                       ...draft,
                       weekdays: on ? draft.weekdays.filter((x) => x !== d) : [...draft.weekdays, d].sort(),
@@ -301,12 +301,12 @@ export function AutomationsSettings() {
 
       <ul className="space-y-3">
         {rows.map((a) => (
-          <li key={a.id} data-testid="automation-row" className="rounded-xl border border-border bg-surface-raised p-4">
+          <li key={a.id} data-testid="automation-row" className="rounded-compose border border-border bg-surface-raised p-4">
             <div className="flex items-start gap-3">
               <button type="button" data-testid="automation-toggle-details"
                 aria-expanded={expanded.has(a.id)} aria-controls={`automation-details-${a.id}`}
                 title={expanded.has(a.id) ? t('automations.row.collapse') : t('automations.row.expand')}
-                className="flex min-w-0 flex-1 items-start gap-2 rounded text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                className="flex min-w-0 flex-1 items-start gap-2 rounded-row text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                 onClick={() => toggleExpanded(a.id)}>
                 <span aria-hidden className={`mt-0.5 inline-block w-3 shrink-0 text-fg-subtle transition-transform ${expanded.has(a.id) ? 'rotate-90' : ''}`}>▸</span>
                 <span className="min-w-0 flex-1">
@@ -338,7 +338,7 @@ export function AutomationsSettings() {
               </label>}
             </div>
             {expanded.has(a.id) && <div id={`automation-details-${a.id}`} data-testid="automation-details">
-              <pre className="mt-3 whitespace-pre-wrap rounded bg-surface p-2 text-meta text-fg-muted">{a.body}</pre>
+              <pre className="mt-3 whitespace-pre-wrap rounded-row bg-surface p-2 text-meta text-fg-muted">{a.body}</pre>
               <div className="mt-2 flex flex-wrap gap-2">
                 <Button disabled={busy} onClick={() => void act(() => getController().api.runAutomation(a.id), t('automations.row.runFailed'))}>
                   {t('automations.row.runNow')}
@@ -358,7 +358,7 @@ export function AutomationsSettings() {
                 )}
               </div>
               {a.trigger.kind !== 'schedule' && (
-                <div data-testid="automation-ingress" className="mt-3 rounded border border-border p-3 text-meta">
+                <div data-testid="automation-ingress" className="mt-3 rounded-row border border-border p-3 text-meta">
                   <div className="mb-2 text-fg-muted">
                     {a.ingressEnabledAt ? t('automations.ingress.on') : t('automations.ingress.off')}
                   </div>
@@ -376,7 +376,7 @@ export function AutomationsSettings() {
                   {issued?.id === a.id && (
                     <div data-testid="automation-ingress-key" className="mt-3 space-y-1">
                       <p className="text-warning">{t('automations.ingress.onceWarning')}</p>
-                      <pre className="whitespace-pre-wrap break-all rounded bg-surface p-2 text-fg">{[
+                      <pre className="whitespace-pre-wrap break-all rounded-row bg-surface p-2 text-fg">{[
                         issued.ingress.githubPath ? `GitHub webhook URL: ${baseUrl}${issued.ingress.githubPath}` : null,
                         issued.ingress.githubPath ? `Secret: ${issued.ingress.key}` : null,
                         `curl -X POST ${baseUrl}${issued.ingress.genericPath} -H 'Authorization: Bearer ${issued.ingress.key}' -H 'Content-Type: application/json' -d '{}'`,

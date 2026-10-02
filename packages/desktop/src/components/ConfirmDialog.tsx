@@ -70,7 +70,7 @@ export function ConfirmDialog({
         {/* 대상 미리보기. 넘치면 잘린다 — 확인창은 메시지를 읽는 자리가 아니라
             "이것 맞나"를 알아보는 자리다. */}
         {detail !== undefined && detailKind === 'preview' && (
-          <div className="max-h-24 overflow-hidden rounded border border-border bg-surface-sunken px-2 py-1.5 text-fg-muted">
+          <div className="max-h-24 overflow-hidden rounded-row border border-border bg-surface-sunken px-2 py-1.5 text-fg-muted">
             {detail}
           </div>
         )}
@@ -83,7 +83,7 @@ export function ConfirmDialog({
             /* 시험이 버튼을 **글자로 집지 않게** 이름을 준다 — 로케일 기본값이 바뀌면
                글자로 집은 줄이 이유 없이 빨개진다(사전 이관이 세운 규율). */
             data-testid="confirm-cancel"
-            className="rounded px-3 py-1 text-fg-muted hover:bg-surface-sunken disabled:opacity-50"
+            className="rounded-row px-3 py-1 text-fg-muted hover:bg-surface-sunken disabled:opacity-50"
             onClick={onCancel}
           >
             {cancelLabel}
@@ -93,8 +93,8 @@ export function ConfirmDialog({
             disabled={busy}
             aria-busy={busy || undefined}
             className={`${danger
-              ? 'rounded border border-danger-border bg-danger-surface px-3 py-1 font-medium text-danger hover:bg-danger-surface-strong'
-              : 'rounded bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover'} disabled:opacity-50`}
+              ? 'rounded-row border border-danger-border bg-danger-surface px-3 py-1 font-medium text-danger hover:bg-danger-surface-strong'
+              : 'rounded-row bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover'} disabled:opacity-50`}
             onClick={onConfirm}
           >
             {confirmLabel}

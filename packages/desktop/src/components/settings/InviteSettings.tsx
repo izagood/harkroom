@@ -75,14 +75,14 @@ export function InviteSettings() {
               <p className="mb-3 text-fg-subtle">{t('invite.note')}</p>
 
               {token && (
-                <div className="mb-4 rounded border border-warning-border bg-warning-surface p-3">
+                <div className="mb-4 rounded-row border border-warning-border bg-warning-surface p-3">
                   {/* 크기를 안 적어 본문단 13px 을 물려받는다 — "지금 안 적으면 다시 못 본다"는
                       **놓치면 되돌릴 수 없는** 문장이다. 아래 토큰 자체는 등폭 11px 이라 이 경고와
                       값이 두 단으로 갈린다. */}
                   <div className="font-semibold text-warning">
                     {t('invite.tokenWarning')}
                   </div>
-                  <code className="mt-1 block break-all rounded bg-surface-raised p-2 text-meta">{token}</code>
+                  <code className="mt-1 block break-all rounded-row bg-surface-raised p-2 text-meta">{token}</code>
                   <div className="mt-2 text-meta text-warning">
                     {t('invite.tokenNextStep')}
                   </div>
@@ -90,13 +90,13 @@ export function InviteSettings() {
               )}
 
               {error && (
-                <div className="mb-4 rounded border border-danger-border bg-danger-surface p-3">
+                <div className="mb-4 rounded-row border border-danger-border bg-danger-surface p-3">
                   <p className="text-meta text-danger">{error}</p>
                 </div>
               )}
 
               <button
-                className="rounded bg-accent px-4 py-2 font-medium text-fg-on-strong disabled:opacity-50"
+                className="rounded-row bg-accent px-4 py-2 font-medium text-fg-on-strong disabled:opacity-50"
                 // 토큰이 하나 나왔다고 버튼을 잠그지 않는다 — 초대는 여러 사람에게 하는 일이고,
                 // 토큰은 한 번 쓰면 소진되므로 두 번째 사람에게는 새 토큰이 필요하다. 다시 누르면
                 // 앞 토큰은 화면에서 사라지므로(다시 볼 수 없다) 그 사실을 라벨로 알린다.
@@ -118,11 +118,11 @@ export function InviteSettings() {
         <div className="px-2 py-2" data-testid="members-list">
           {/* 실패는 목록 위에 남긴다 — 실패를 빈 목록으로 삼키면 "아무도 없다" 로 읽힌다. */}
           {load.kind === 'error' && (
-            <div role="alert" className="mb-2 rounded border border-danger-border bg-danger-surface p-2 text-danger">
+            <div role="alert" className="mb-2 rounded-row border border-danger-border bg-danger-surface p-2 text-danger">
               {t('directory.listFailed', { reason: load.message })}
               <button
                 onClick={() => setAttempt((n) => n + 1)}
-                className="ml-2 rounded bg-danger px-2 py-0.5 text-fg-on-strong hover:bg-danger-hover"
+                className="ml-2 rounded-row bg-danger px-2 py-0.5 text-fg-on-strong hover:bg-danger-hover"
               >
                 {t('directory.retry')}
               </button>

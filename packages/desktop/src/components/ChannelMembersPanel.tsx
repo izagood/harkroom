@@ -220,7 +220,7 @@ export function ChannelMembersPanel({ channel, part = 'all' }: {
                     <li key={m.accountId} className="flex items-center gap-1 text-meta text-fg-muted">
                       <span>@{m.handle}</span>
                       {account && (
-                        <span className="rounded bg-surface-raised px-1 text-meta text-fg">
+                        <span className="rounded-sm bg-surface-raised px-1 text-meta text-fg">
                           {account.kind === 'agent' ? t('sidebar.members.kindAgent') : t('sidebar.members.kindHuman')}
                         </span>
                       )}
@@ -228,7 +228,7 @@ export function ChannelMembersPanel({ channel, part = 'all' }: {
                           그래서 'admin' 이 아니라 '워크스페이스 admin' 이라고 적는다. */}
                       {account?.isAdmin && (
                         <span
-                          className="rounded bg-surface-raised px-1 text-meta text-warning"
+                          className="rounded-sm bg-surface-raised px-1 text-meta text-warning"
                           title={t('sidebar.members.adminBadgeTitle')}
                         >
                           {t('sidebar.members.adminBadge')}
@@ -236,7 +236,7 @@ export function ChannelMembersPanel({ channel, part = 'all' }: {
                       )}
                       {me?.isAdmin && m.accountId !== me?.id && (
                         <button
-                          className="ml-auto rounded px-1 text-meta text-fg-subtle hover:bg-surface-hover hover:text-danger"
+                          className="ml-auto rounded-sm px-1 text-meta text-fg-subtle hover:bg-surface-hover hover:text-danger"
                           aria-label={t('sidebar.members.removeAction', { handle: m.handle })}
                           onClick={() => void getController().leaveChannel(ch.id, m.accountId)
                             .catch((err: unknown) => setMemberError(memberErrorText(err, t('sidebar.members.removeFailed'), t)))}
@@ -299,7 +299,7 @@ export function ChannelMembersPanel({ channel, part = 'all' }: {
                               <span>@{a.handle}</span>
                               <select
                                 aria-label={t('sidebar.members.autoMentionMode', { handle: a.handle })}
-                                className="rounded border border-border bg-field px-1 py-0.5 text-meta text-fg"
+                                className="rounded-sm border border-border bg-field px-1 py-0.5 text-meta text-fg"
                                 value={modeOf.get(a.id) ?? 'off'}
                                 onChange={(e) => void changeAutoMention(ch.id, a.id, e.target.value as 'off' | ChannelAutoMentionMode)}
                               >
@@ -316,12 +316,12 @@ export function ChannelMembersPanel({ channel, part = 'all' }: {
                               선택과 반대되는 말을 한다. 두 값은 서로 다른 말을 해야 한다: 하나는
                               매 줄에 붙고 하나는 눌러야 부른다. */}
                           {modeOf.get(a.id) === 'always' && (
-                            <span className="rounded bg-accent-surface px-1 text-meta text-accent">{t('sidebar.members.autoMentionBadge')}</span>
+                            <span className="rounded-sm bg-accent-surface px-1 text-meta text-accent">{t('sidebar.members.autoMentionBadge')}</span>
                           )}
                           {modeOf.get(a.id) === 'available' && (
-                            <span className="rounded bg-surface-sunken px-1 text-meta text-fg-muted">{t('sidebar.members.autoMentionAvailableBadge')}</span>
+                            <span className="rounded-sm bg-surface-sunken px-1 text-meta text-fg-muted">{t('sidebar.members.autoMentionAvailableBadge')}</span>
                           )}
-                          {a.disabled && <span className="rounded bg-surface-hover px-1 text-meta text-fg-muted">{t('sidebar.members.agentDisabled')}</span>}
+                          {a.disabled && <span className="rounded-sm bg-surface-hover px-1 text-meta text-fg-muted">{t('sidebar.members.agentDisabled')}</span>}
                         </li>
                       ))}
                     </ul>
@@ -335,7 +335,7 @@ export function ChannelMembersPanel({ channel, part = 'all' }: {
             <div className="mb-1 flex items-center gap-1">
               <select
                 aria-label={t('sidebar.members.inviteSelect')}
-                className="flex-1 rounded border border-border bg-field px-1 py-0.5 text-fg"
+                className="flex-1 rounded-sm border border-border bg-field px-1 py-0.5 text-fg"
                 value={inviteAccountId}
                 onChange={(e) => setInviteAccountId(e.target.value)}
               >
@@ -343,7 +343,7 @@ export function ChannelMembersPanel({ channel, part = 'all' }: {
                 {invitable.map((a) => <option key={a.id} value={a.id}>@{a.handle}</option>)}
               </select>
               <button
-                className="rounded bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover disabled:opacity-40"
+                className="rounded-row bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover disabled:opacity-40"
                 disabled={!inviteAccountId}
                 onClick={() => void submitInvite(ch.id)}
               >
@@ -372,7 +372,7 @@ export function ChannelMembersPanel({ channel, part = 'all' }: {
               <div className="flex items-center gap-1">
                 <select
                   aria-label={t('sidebar.members.teamSelect')}
-                  className="flex-1 rounded border border-border bg-field px-1 py-0.5 text-fg"
+                  className="flex-1 rounded-sm border border-border bg-field px-1 py-0.5 text-fg"
                   value={selectedTeamId}
                   onChange={(e) => { setSelectedTeamId(e.target.value); setTeamAddResult(null); }}
                 >
@@ -380,7 +380,7 @@ export function ChannelMembersPanel({ channel, part = 'all' }: {
                   {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
                 <button
-                  className="rounded bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover disabled:opacity-40"
+                  className="rounded-row bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover disabled:opacity-40"
                   disabled={!selectedTeamId}
                   onClick={() => void submitTeamAdd(ch.id)}
                 >

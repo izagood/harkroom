@@ -80,7 +80,7 @@ export function ChannelDirectory({ open, onClose }: Props) {
     <li key={ch.id}>
       <button
         data-testid={`channel-row-${ch.id}`}
-        className="flex w-full items-start gap-2 rounded px-2 py-1.5 text-left hover:bg-surface-hover"
+        className="flex w-full items-start gap-2 rounded-row px-2 py-1.5 text-left hover:bg-surface-hover"
         onClick={() => handleChannelClick(ch)}
       >
         {ch.visibility === 'private'
@@ -106,15 +106,15 @@ export function ChannelDirectory({ open, onClose }: Props) {
       <div
         role="dialog"
         aria-label={t('channelDirectory.label')}
-        className="flex max-h-full w-[36rem] flex-col overflow-hidden rounded-lg border border-border bg-surface-raised text-fg"
+        className="flex max-h-full w-[36rem] flex-col overflow-hidden rounded-card border border-border bg-surface-raised text-fg"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
       >
         <div className="flex items-center gap-2 border-b border-border p-3">
-          <span className="font-bold">{t('channelDirectory.heading')}</span>
+          <span className="font-semibold">{t('channelDirectory.heading')}</span>
           <button
             onClick={onClose}
-            className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover"
+            className="ml-auto rounded-row px-2 py-1 text-fg-muted hover:bg-surface-hover"
             aria-label={t('channelDirectory.close')}
           >
             ✕
@@ -125,23 +125,23 @@ export function ChannelDirectory({ open, onClose }: Props) {
             type="text"
             aria-label={t('channelDirectory.search')}
             placeholder={t('channelDirectory.searchPlaceholder')}
-            className="flex-1 rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
+            className="flex-1 rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             autoFocus
           />
           {/* 정렬 토글은 **아랫단 11px** — 옆의 검색 입력(본문단)이 이 줄의 주역이고 이
               둘은 그 결과를 어떻게 늘어놓을지 고르는 곁 조작이다. */}
-          <div className="flex rounded bg-surface-sunken text-meta">
+          <div className="flex rounded-row bg-surface-sunken text-meta">
             <button
-              className={`rounded px-2 py-1 ${sortMode === 'name' ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:text-fg'}`}
+              className={`rounded-row px-2 py-1 ${sortMode === 'name' ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:text-fg'}`}
               aria-pressed={sortMode === 'name'}
               onClick={() => setSortMode('name')}
             >
               {t('channelDirectory.sortName')}
             </button>
             <button
-              className={`rounded px-2 py-1 ${sortMode === 'creation' ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:text-fg'}`}
+              className={`rounded-row px-2 py-1 ${sortMode === 'creation' ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:text-fg'}`}
               aria-pressed={sortMode === 'creation'}
               onClick={() => setSortMode('creation')}
             >

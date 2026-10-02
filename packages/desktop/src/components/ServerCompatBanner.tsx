@@ -63,7 +63,7 @@ export function ServerCompatBanner({ onOpenSettings }: {
       {onOpenSettings && (
         <button
           data-testid="server-compat-open-settings"
-          className="shrink-0 rounded px-2 py-0.5 underline hover:bg-danger-surface"
+          className="shrink-0 rounded-row px-2 py-0.5 underline hover:bg-danger-surface"
           // 함수를 그대로 넘기지 않는다 — React 가 첫 인자로 `MouseEvent` 를 준다.
           onClick={() => onOpenSettings?.(COMPAT_SECTION)}
         >
@@ -73,7 +73,7 @@ export function ServerCompatBanner({ onOpenSettings }: {
       <button
         data-testid="server-compat-dismiss"
         aria-label={t('community.compat.bannerDismiss')}
-        className="shrink-0 rounded px-1 hover:bg-danger-surface"
+        className="shrink-0 rounded-sm px-1 hover:bg-danger-surface"
         // **그 버전에 대해서만** 닫는다. 재배포했는데 아직도 모자라면 다시 선다.
         onClick={() => useActiveStore.getState().set({ serverCompatBannerDismissed: version })}
       >
