@@ -104,7 +104,7 @@ class _PendingTile extends StatelessWidget {
                     cacheWidth: 192,
                     gaplessPlayback: true,
                     errorBuilder: (context, error, stack) =>
-                        ColoredBox(color: k.soft, child: Icon(Icons.image_not_supported_outlined, color: k.mute)),
+                        ColoredBox(color: k.surfaceRaised, child: Icon(Icons.image_not_supported_outlined, color: k.fgMuted)),
                   ),
                 ),
                 if (uploading) Center(child: spinner),
@@ -119,13 +119,13 @@ class _PendingTile extends StatelessWidget {
         key: Key('pending-file-${item.filename}'),
         padding: const EdgeInsets.symmetric(horizontal: 10),
         decoration: BoxDecoration(
-          color: k.soft,
-          border: Border.all(color: k.line),
+          color: k.surfaceRaised,
+          border: Border.all(color: k.border),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Row(
           children: [
-            if (uploading) spinner else Icon(Icons.insert_drive_file_outlined, color: k.mute),
+            if (uploading) spinner else Icon(Icons.insert_drive_file_outlined, color: k.fgMuted),
             const SizedBox(width: 8),
             Expanded(
               child: Column(
@@ -137,7 +137,7 @@ class _PendingTile extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(fontSize: HarkroomType.meta, fontWeight: FontWeight.w600, color: k.fg)),
                   if (item.byteSize != null)
-                    Text(formatBytes(item.byteSize!), style: TextStyle(fontSize: HarkroomType.meta, color: k.mute)),
+                    Text(formatBytes(item.byteSize!), style: TextStyle(fontSize: HarkroomType.meta, color: k.fgMuted)),
                 ],
               ),
             ),
@@ -172,11 +172,11 @@ class _PendingTile extends StatelessWidget {
                     width: 22,
                     height: 22,
                     decoration: BoxDecoration(
-                      color: k.ink,
+                      color: k.surfaceInverse,
                       shape: BoxShape.circle,
-                      border: Border.all(color: k.bg, width: 1.5),
+                      border: Border.all(color: k.surface, width: 1.5),
                     ),
-                    child: Icon(Icons.close, size: 14, color: k.bg),
+                    child: Icon(Icons.close, size: 14, color: k.surface),
                   ),
                 ),
               ),
