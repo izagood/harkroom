@@ -156,11 +156,15 @@ export function createPushSweeper(pool: Pool, deps: {
   /** 배지 — 에이전트의 보통 답은 스레드마다 하나로 센다(알림 센터에서도 한 장이다). */
   async function badgeFor(client: PoolClient, accountId: string): Promise<number> {
     const res = await client.query<{ n: string }>(
+      // 지금 볼 수 있는 채널의 것만(listInbox 와 같은 경계, security F1) — 나간 채널의 항목은
+      // 읽음이 될 길이 없어 배지에 영원히 남는다.
       `select count(distinct case when m.thread_root_id is not null and ${agentPlainSql('m', 'au')}
                                   then 't:' || m.thread_root_id else 'i:' || i.id end) as n
          from inbox i join message m on m.id = i.message_id join account au on au.id = m.author_id
-        where i.account_id = $1 and i.read_at is null
-          and i.reason in ('mention', 'thread_reply', 'dm')`, [accountId]);
+         join channel ch on ch.id = m.channel_id
+        where i.account_id = $1 and i.read_at is null and m.deleted_at is null
+          and i.reason in ('mention', 'thread_reply', 'dm')
+          and ${channelVisibleSql('ch', 'i.account_id')}`, [accountId]);
     return Number(res.rows[0]?.n ?? 0);
   }
 

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { MENTION_EDIT_SKIPPED_HEADER, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, projectionState, type ProjectionRuntime, type ProjectionStatus, type ServerHealth } from '@harkroom/shared';
 import { serverVersion } from './version.js';
+import { channelVisibleSql } from './services/channels.js';
 import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
 import { registerAccountRoutes } from './routes/accountRoutes.js';
@@ -438,7 +439,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
          join account a on a.id = i.account_id
          -- 정의가 있는 에이전트만. join 이 곧 "harkroom 가 실행할 수 있는 에이전트"의 정의다.
          join agent_config ac on ac.account_id = a.id
+         -- 지금 볼 수 있는 채널의 것만(listInbox 와 같은 경계). 나간 채널의 항목은 폴에 안 나가
+         -- 읽음이 될 길이 없다 — 세면 살아 있는 러너도 이 게이지가 끝없이 커진다(security F1).
+         join message m on m.id = i.message_id
+         join channel ch on ch.id = m.channel_id
          where i.read_at is null and a.kind = 'agent'
+           and ${channelVisibleSql('ch', 'i.account_id')}
          group by a.handle`,
       );
       return Object.fromEntries(

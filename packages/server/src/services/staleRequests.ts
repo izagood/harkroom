@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import type { FailureMeta } from '@harkroom/shared';
 import { postMessage } from './messages.js';
-import { audienceFor } from './channels.js';
+import { audienceFor, channelVisibleSql } from './channels.js';
 import { emitEvent, emitPosted } from '../events.js';
 
 /**
@@ -166,7 +166,11 @@ export function createStaleRequestSweeper(pool: Pool, opts: {
          join message m on m.id = i.message_id
          join account a on a.id = i.account_id
          join agent_config c on c.account_id = a.id
+         join channel ch on ch.id = m.channel_id
         where i.read_at is null
+          -- 지금 볼 수 있는 채널의 것만(listInbox 와 같은 경계, security F1) — 나간 채널의 스레드에
+          -- "답 없는 요청" 줄을 남기지 않는다.
+          and ${channelVisibleSql('ch', 'i.account_id')}
           and i.stale_notified_at is null
           and i.reason = any($1)
           and i.created_at < now() - ($2::int * interval '1 millisecond')
