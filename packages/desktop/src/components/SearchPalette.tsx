@@ -169,7 +169,7 @@ export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
     // 이동은 `openMessage` 하나에 맡긴다 — 채널 전환·스레드 패널·강조·실패 통지가 전부
     // 그 안에 있다(인박스·저장·첨부가 이미 그 길로 간다). 여기서 openChannel/openThread 를
     // 직접 부르면 강조가 걸리지 않아 "눌렀는데 아무 일도 없다"가 된다.
-    void getController().openMessage(msg.id);
+    void getController().openMessage(msg.id, msg);
     close();
   }, [close]);
 
