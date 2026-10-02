@@ -3088,6 +3088,12 @@ export const en = {
   'message.attachment.loadFailed': '(could not load)',
   'message.attachment.zoom': 'View larger: {filename}',
   'message.attachment.closeZoom': 'Close the enlarged view',
+  'message.attachment.zoomIn': 'Zoom in',
+  'message.attachment.zoomOut': 'Zoom out',
+  'message.attachment.zoomFit': 'Fit to width',
+  'message.attachment.zoomFitShort': 'Fit',
+  'message.attachment.zoomActual': 'Actual size',
+  'message.attachment.zoomFitLevel': 'Fit {percent}',
   'message.attachment.save': 'Save',
 
   /** 줄 머리 — 무엇을 불렀나. 셋 다 **부름의 대상**이지 사람 수가 아니다. */

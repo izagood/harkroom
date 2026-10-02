@@ -747,11 +747,15 @@ describe('첨부 이미지를 눌러 크게 보기', () => {
    * 뒤의 목록을 움직이고, Tab 은 겹창이 아니라 뒤 화면의 다음 버튼으로 간다 — 키보드로
    * 열었을 때 `×` 가 손에 닿지 않는 것도 같은 이유다.
    */
-  it('열면 포커스가 겹창 안으로 들어온다', async () => {
+  // 포커스는 그림 칸이 받는다(designer 3192efed) — 화살표·Space·Home/End 가 바로 스크롤하고, Enter 로 [저장]이
+  // 눌리는 일이 없다(예전엔 닫기 버튼이 받았다 — 같은 이유로 저장 버튼을 피했다).
+  it('열면 포커스가 겹창 안의 그림 칸으로 들어온다', async () => {
     fakeController();
     fireEvent.click(await renderImage());
 
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: '확대 보기 닫기' }));
+    const dialog = screen.getByRole('dialog', { name: 'shot.png' });
+    expect(document.activeElement).toBe(screen.getByTestId('zoom-body'));
+    expect(dialog.contains(document.activeElement)).toBe(true);
   });
 
   /**

@@ -1450,6 +1450,12 @@ export const ko = {
   'message.attachment.loadFailed': '(불러오기 실패)',
   'message.attachment.zoom': '크게 보기: {filename}',
   'message.attachment.closeZoom': '확대 보기 닫기',
+  'message.attachment.zoomIn': '확대',
+  'message.attachment.zoomOut': '축소',
+  'message.attachment.zoomFit': '화면 폭에 맞춤',
+  'message.attachment.zoomFitShort': '맞춤',
+  'message.attachment.zoomActual': '실제 크기',
+  'message.attachment.zoomFitLevel': '맞춤 {percent}',
   'message.attachment.save': '저장',
 
   'message.notified.group': '집합',
