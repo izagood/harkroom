@@ -209,6 +209,12 @@ export class Controller {
 
   async start(): Promise<void> {
     const store = this.store.getState();
+    // WS 티켓을 **첫 묶음과 함께** 받는다. 예전에는 아래 묶음이 끝난 뒤 소켓을 만들 때에야 티켓을
+    // 물어 첫 진입에 왕복이 하나 더 직렬로 붙었다(왕복 하나 130~300ms). 티켓은 30초짜리 1회용이라
+    // 첫 연결에만 쓰고, 다시 붙을 때는 그때 새로 받는다. 묶음이 30초를 넘겨 만료됐으면 첫 연결이
+    // 실패하고 소켓의 재시도가 새 티켓으로 붙는다(지금 재접속과 같은 길).
+    let earlyTicket: Promise<string> | null = this.api.wsTicket();
+    earlyTicket.catch(() => undefined);
     const [me, { accounts, groups, teams }, channels, dms, leases, unread, reads] = await Promise.all([
       this.api.me(), this.api.accounts(), this.api.channels(),
       this.api.dms(), this.api.leases(), this.api.inboxUnread(), this.api.reads(),
@@ -251,7 +257,11 @@ export class Controller {
     // 앱을 열자마자 쌓여 있던 미읽음이 한꺼번에 터지면 알림이 소음이 된다.
     for (const e of unread) this.announced.add(e.id);
     // 장기 토큰은 ApiClient 가 헤더로만 쓴다 — WS URL 에는 단기 티켓만 실린다.
-    this.ws = this.makeWs(this.api.baseUrl, () => this.api.wsTicket(), {
+    this.ws = this.makeWs(this.api.baseUrl, () => {
+      const ticket = earlyTicket;
+      earlyTicket = null;
+      return ticket ?? this.api.wsTicket();
+    }, {
       onEvent: (e) => this.handleEvent(e),
       onOpen: () => {
         this.store.getState().set({ connected: true });
@@ -1118,12 +1128,18 @@ export class Controller {
     // 다른 채널의 스레드면 채널을 먼저 옮긴다 — 스레드 패널은 **활성 채널의** 목록에서
     // 그 뿌리를 찾으므로(`ThreadPanel`), 채널을 두고 뿌리만 세우면 찾을 것이 없다.
     // 목적지는 **오른쪽 스레드 패널**이다 — 본문(인박스·관제탑)을 뺏지 않는다.
+    //
+    // 스레드 조회는 채널 열기를 **기다리지 않고 같이 낸다** — 예전에는 채널 조회가 끝난 뒤에야 물어
+    // 다른 채널의 스레드(인박스에서 답글 열기)가 왕복 둘이었다. 두 응답은 같은 채널 목록에 upsert
+    // 로 합쳐지므로 어느 쪽이 먼저 와도 결과가 같다. 패널은 채널 열기가 끝난 뒤에 세운다(위 이유).
+    const pagePromise = opts.prefetched ?? this.api.messages(channelId, { thread: rootId, around: opts.aroundSeq });
+    pagePromise.catch(() => undefined);
     if (this.store.getState().activeChannelId !== channelId) await this.openChannel(channelId, { reveal: false });
     this.store.getState().pushHistory({ channelId, threadRootId: rootId });
     this.store.getState().set({ threadRootId: rootId });
     let page;
     try {
-      page = await (opts.prefetched ?? this.api.messages(channelId, { thread: rootId, around: opts.aroundSeq }));
+      page = await pagePromise;
     } catch {
       // 열다 만 패널을 남기지 않는다. 남기면 그 자리가 "답이 하나도 없는 끝난 스레드"로
       // 읽힌다 — 연결이 끊긴 것과 정반대의 사실이다.
@@ -1211,9 +1227,11 @@ export class Controller {
    *    처음 여는 채널은 최신 페이지에 대상이 있을 수 있어 지금까지처럼 **본 뒤에** 묻는다 —
    *    쓸데없는 왕복을 만들지 않는다는 규율(`searchJump.test.ts`)을 지킨다.
    */
-  async openMessage(messageId: string): Promise<void> {
+  async openMessage(messageId: string, known?: MessageRow): Promise<void> {
     let target: MessageRow;
-    const cached = this.findCachedMessage(messageId);
+    // 부르는 쪽이 그 행을 이미 들고 있으면(검색 결과) 선조회를 건너뛴다 — 왕복 하나가 준다. 쓰는
+    // 것은 id·채널·seq·스레드 뿌리·alsoInChannel 뿐이고, 모두 메시지가 사는 동안 바뀌지 않는다.
+    const cached = this.findCachedMessage(messageId) ?? (known?.id === messageId ? known : undefined);
     try {
       target = cached ?? await this.api.message(messageId);
     } catch (e) {

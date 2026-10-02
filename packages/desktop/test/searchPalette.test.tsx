@@ -168,7 +168,8 @@ describe('SearchPalette', () => {
     fireEvent.click(result);
 
     await waitFor(() => {
-      expect(mockController.openMessage).toHaveBeenCalledWith('m1');
+      // 검색 결과의 행을 함께 넘긴다 — openMessage 가 메시지를 다시 묻지 않게(왕복 하나 절약).
+      expect(mockController.openMessage).toHaveBeenCalledWith('m1', expect.objectContaining({ id: 'm1' }));
       // openChannel/openThread 를 직접 부르면 highlightedMessageId 가 안 걸려
       // "눌렀는데 아무 일도 없다"가 된다. 그 길로 가지 않는 것이 이 테스트의 요지다.
       expect(mockController.openChannel).not.toHaveBeenCalled();
@@ -196,7 +197,8 @@ describe('SearchPalette', () => {
     fireEvent.click(result);
 
     await waitFor(() => {
-      expect(mockController.openMessage).toHaveBeenCalledWith('m2');
+      // 검색 결과의 행을 함께 넘긴다 — openMessage 가 메시지를 다시 묻지 않게(왕복 하나 절약).
+      expect(mockController.openMessage).toHaveBeenCalledWith('m2', expect.objectContaining({ id: 'm2' }));
     }, { timeout: 1000 });
   });
 
@@ -253,7 +255,8 @@ describe('SearchPalette', () => {
 
     // 연 메시지가 `m2` 여야 한다 — 화살표가 실제로 두 번째 결과로 옮겨 갔다는 뜻이다.
     await waitFor(() => {
-      expect(mockController.openMessage).toHaveBeenCalledWith('m2');
+      // 검색 결과의 행을 함께 넘긴다 — openMessage 가 메시지를 다시 묻지 않게(왕복 하나 절약).
+      expect(mockController.openMessage).toHaveBeenCalledWith('m2', expect.objectContaining({ id: 'm2' }));
     }, { timeout: 1000 });
   });
 
