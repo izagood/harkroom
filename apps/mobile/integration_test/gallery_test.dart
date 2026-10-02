@@ -426,6 +426,28 @@ MockClient _server({bool states = false}) => MockClient((req) async {
         });
       }
       // S5c: DM 은 /dms 로만 온다(실서버와 같이 이름 없이 명단만).
+      // S7: 에이전트 탭(scope=visible 모양 — 세션 id 없음).
+      if (path == '/agent-sessions') {
+        return _json({
+          'sessions': [
+            {'agentAccountId': '00000000-0000-4000-8000-000000000003', 'channelId': 'c1', 'threadRootId': null,
+             'harness': 'claude-code', 'startedAt': DateTime.now().subtract(const Duration(minutes: 7)).toUtc().toIso8601String(),
+             'owned': true},
+            {'agentAccountId': '00000000-0000-4000-8000-000000000004', 'channelId': 'c2', 'threadRootId': null,
+             'harness': 'claude-code', 'startedAt': DateTime.now().subtract(const Duration(minutes: 2)).toUtc().toIso8601String(),
+             'owned': false},
+          ],
+        });
+      }
+      if (path == '/agent-wakes') {
+        return _json({
+          'wakes': [
+            {'id': 'w1', 'agentAccountId': '00000000-0000-4000-8000-000000000002', 'channelId': 'c1', 'threadRootId': 'm1',
+             'messageId': 'mw', 'wakeAt': DateTime.now().add(const Duration(minutes: 12)).toUtc().toIso8601String(),
+             'reason': 'CI 결과 확인'},
+          ],
+        });
+      }
       if (path == '/dms' && req.method == 'GET') {
         return _json({
           'dms': [
