@@ -181,6 +181,21 @@ class ApiClient {
     return MessagePage.fromJson(_obj(await _send('GET', '/channels/$channelId/messages$qs')));
   }
 
+  /// 메시지 찾기(`GET /search`). 데스크톱 `SearchPalette` 와 **같은 라우트·같은 인자**다.
+  ///
+  /// 순서는 서버가 정한다(접두 일치 > ts_rank > 최신순) — 받은 순서를 그대로 그린다. 그래서
+  /// 페이지는 seq 커서가 아니라 [offset] 이다(서버 천장 1000, `hasMore` 가 이미 그 천장을 안다).
+  /// [threadRootId] 를 줄 때도 [channelId] 를 같이 준다 — 서버의 403 판정이 채널 단위다.
+  Future<MessagePage> search(String query, {String? channelId, String? threadRootId, int offset = 0}) async {
+    final q = <String, String>{
+      'q': query,
+      'channelId': ?channelId,
+      'threadRootId': ?threadRootId,
+      if (offset > 0) 'offset': '$offset',
+    };
+    return MessagePage.fromJson(_obj(await _send('GET', '/search?${Uri(queryParameters: q).query}')));
+  }
+
   /// 링크(`harkroom://message/<id>`)가 가리키는 메시지 하나(#178 의 `GET /messages/:id`). 링크를 받은
   /// 사람은 채널을 모른다 — 그것을 알려 주는 것이 이 라우트다. 없으면 404, 못 보는 대화면 403.
   Future<MessageRow> message(String messageId) async =>

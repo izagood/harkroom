@@ -1063,6 +1063,15 @@ class AppState extends ChangeNotifier {
     return found;
   }
 
+  /// 메시지 찾기. 실패는 **던진다** — 할 말(연결·서버·권한)은 화면이 정한다([LoadFailure.of]).
+  /// 그 사이 커뮤니티·계정이 바뀌었으면 `null` — 옛 서버의 결과를 새 커뮤니티 화면에 그리면 안 된다.
+  Future<MessagePage?> searchMessages(String query, {String? channelId, String? threadRootId, int offset = 0}) async {
+    final gen = _generation;
+    final page = await _api!.search(query, channelId: channelId, threadRootId: threadRootId, offset: offset);
+    if (gen != _generation) return null;
+    return page;
+  }
+
   MessageRow? _findCachedMessage(String messageId) {
     for (final list in [...messages.values, ...threads.values]) {
       for (final m in list) {

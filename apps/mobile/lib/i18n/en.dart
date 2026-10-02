@@ -619,4 +619,40 @@ class StringsEn implements Strings {
 
   @override
   String get pushCommunityOff => 'Notifications off';
+
+  @override
+  String get searchButton => 'Search';
+
+  @override
+  String get searchHint => 'Search messages';
+
+  @override
+  String get searchCancel => 'Cancel';
+
+  @override
+  String get searchScopeAll => 'All';
+
+  @override
+  String get searchScopeThread => 'This thread';
+
+  @override
+  String get searchStart => 'Type two or more letters to search.';
+
+  @override
+  String get searchNoResults => 'No messages match ‘{q}’.';
+
+  @override
+  String get searchTwoLetterHint => 'Two letters only match the start of a word — try one more.';
+
+  @override
+  String get searchEverywhere => 'Search everywhere';
+
+  @override
+  String get searchFailed => 'Could not search.';
+
+  @override
+  String get searchMoreFailed => 'Could not load more results.';
+
+  @override
+  String get searchInThread => 'thread';
 }

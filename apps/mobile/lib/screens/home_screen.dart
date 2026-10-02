@@ -6,6 +6,7 @@ import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
 import 'channel_list_screen.dart';
 import 'inbox_screen.dart';
+import 'search_screen.dart';
 import '../ui/tokens.dart';
 
 /// 폰의 루트 — **탭 넷**(개정판 3.1: 홈 · DM · 인박스 · 에이전트). 「나」 는 머리의 프로필 사진이다.
@@ -64,12 +65,14 @@ class _HomeScreenState extends State<HomeScreen> {
           AgentsSoonScreen(),
         ],
       ),
-      // 개정판 3.1: 떠 있는 둥근 막대에 탭 넷. 검색 버튼은 검색 화면이 생기는 S10 에 단다.
+      // 개정판 3.1: 떠 있는 둥근 막대에 탭 넷 + 오른쪽 둥근 찾기 버튼. 찾기 버튼은 어느 탭에서나
+      // 같은 자리에 서고 **전체** 범위로 연다(채널·스레드 범위는 그 화면 머리의 돋보기).
       bottomNavigationBar: SafeArea(
         minimum: const EdgeInsets.only(bottom: 8),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
-          child: FloatingTabBar(
+          child: Row(children: [
+            Expanded(child: FloatingTabBar(
             selected: tab,
             onSelect: app.selectTab,
             items: [
@@ -80,7 +83,10 @@ class _HomeScreenState extends State<HomeScreen> {
               TabItem(key: const Key('tab-inbox'), icon: Icons.inbox_outlined, selectedIcon: Icons.inbox, label: t.tabInbox, badge: unread),
               TabItem(key: const Key('tab-agents'), icon: Icons.smart_toy_outlined, selectedIcon: Icons.smart_toy, label: t.tabAgents),
             ],
-          ),
+            )),
+            const SizedBox(width: 8),
+            const FloatingSearchButton(),
+          ]),
         ),
       ),
     );
@@ -157,6 +163,34 @@ class FloatingTabBar extends StatelessWidget {
                 ),
               ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 탭 막대 오른쪽의 둥근 찾기 버튼. 막대와 같은 바탕·그림자·테두리라 한 묶음으로 읽힌다.
+/// 높이는 막대(48 + 위아래 5)와 같다.
+class FloatingSearchButton extends StatelessWidget {
+  const FloatingSearchButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    return Semantics(
+      button: true,
+      label: context.t.searchButton,
+      excludeSemantics: true,
+      child: Material(
+        color: k.bg,
+        elevation: 3,
+        shadowColor: Colors.black26,
+        shape: CircleBorder(side: BorderSide(color: k.line)),
+        child: InkWell(
+          key: const Key('tab-search'),
+          customBorder: const CircleBorder(),
+          onTap: () => openSearch(context),
+          child: SizedBox(width: 58, height: 58, child: Icon(Icons.search, size: 24, color: k.fg)),
         ),
       ),
     );
