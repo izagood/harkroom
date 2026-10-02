@@ -276,8 +276,24 @@ abstract class Strings {
   String get tabDms;
   String get tabAgents;
 
-  /// 에이전트 탭이 S7 전까지 서는 한 줄.
-  String get agentsSoon;
+
+  /// 에이전트 탭(S7) 묶음: 지금 도는 턴.
+  String get agentsRunning;
+
+  /// 에이전트 탭 묶음: 스스로 걸어 둔 다음 깨움.
+  String get agentsWaiting;
+
+  /// 에이전트 탭 묶음: 이 커뮤니티의 에이전트 전부.
+  String get agentsAll;
+
+  /// 도는 턴이 없을 때.
+  String get agentsNoneRunning;
+
+  /// 에이전트 상태를 못 읽었을 때.
+  String get agentsLoadFailed;
+
+  /// 내 에이전트 표시(owned).
+  String get agentsMine;
 
   /// DM 탭이 빌 때.
   String get dmsEmpty;
@@ -831,7 +847,12 @@ Map<String, String> stringsToMap(Strings s) => {
       'tabHome': s.tabHome,
       'tabDms': s.tabDms,
       'tabAgents': s.tabAgents,
-      'agentsSoon': s.agentsSoon,
+      'agentsRunning': s.agentsRunning,
+      'agentsWaiting': s.agentsWaiting,
+      'agentsAll': s.agentsAll,
+      'agentsNoneRunning': s.agentsNoneRunning,
+      'agentsLoadFailed': s.agentsLoadFailed,
+      'agentsMine': s.agentsMine,
       'dmsEmpty': s.dmsEmpty,
       'sectionStarred': s.sectionStarred,
       'sectionChannels': s.sectionChannels,

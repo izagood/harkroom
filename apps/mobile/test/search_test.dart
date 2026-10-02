@@ -61,6 +61,9 @@ class _Server {
   /// 값이 있으면 그 상태로 실패한다.
   int? failWith;
 
+  /// 받은 `POST /dms` 의 accountIds 들.
+  final dmPosts = <List>[];
+
   /// 「배포」 를 찾으면 답글 하나가 온다. 그 밖은 0건.
   Map<String, Object?> Function(Map<String, String> q) answer = (q) => {
         'messages': switch (q['q']) {
@@ -87,10 +90,18 @@ class _Server {
           return _json({
             'accounts': [
               {'id': 'a1', 'handle': 'task_manager', 'displayName': 'task_manager', 'kind': 'agent'},
+              {'id': 'a2', 'handle': 'qa_manager', 'displayName': 'qa_manager', 'kind': 'agent'},
             ],
           });
         }
         if (path == '/reads') return _json({'reads': <Object?>[]});
+        // 실서버 모양: DM 은 `/dms`(명단만), 만들기는 `POST /dms {accountIds}` → 201 ChannelRow.
+        if (path == '/dms' && req.method == 'POST') {
+          dmPosts.add((jsonDecode(req.body) as Map)['accountIds'] as List);
+          return _json({'id': 'd9', 'kind': 'dm', 'name': ''}, 201);
+        }
+        if (path == '/dms') return _json({'dms': <Object?>[]});
+        if (path == '/channels/d9/messages') return _json({'messages': <Object?>[], 'hasMore': false});
         if (path.startsWith('/inbox')) return _json({'entries': <Object?>[]});
         if (path == '/ws-ticket') return _json({'ticket': 'tk'});
         if (path.contains('/agent-models') || path.contains('/auto-mentions')) {
@@ -411,6 +422,55 @@ void main() {
       expect(tester.widget<MessageListScreen>(find.byType(MessageListScreen)).channelId, 'd1');
     });
 
+    testWidgets('바로 가기: DM 이 없는 사람·에이전트도 서고, 누르면 POST /dms 로 그 DM 을 연다(designer 찾기 F2 n2)', (tester) async {
+      final server = _Server();
+      await _boot(tester, server);
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      await _type(tester, '@qa');
+      final row = find.byKey(const Key('search-shortcut-person-a2'));
+      expect(row, findsOneWidget);
+      // 나는 바로 가기에 서지 않는다.
+      await _type(tester, 'me');
+      expect(find.byKey(const Key('search-shortcut-person-me-1')), findsNothing);
+      await _type(tester, '@qa');
+      await tester.tap(find.byKey(const Key('search-shortcut-person-a2')));
+      await _settle(tester);
+      expect(server.dmPosts, [
+        ['a2'],
+      ]);
+      expect(tester.widget<MessageListScreen>(find.byType(MessageListScreen)).channelId, 'd9');
+    });
+
+    test('로그아웃과 겹친 최근 찾은 말 쓰기는 버린다 — 지운 말이 되살아나지 않는다(security 찾기 F2 r1)', () async {
+      final store = _GatedRecentStore();
+      final server = _Server();
+      final app = AppState(
+        sessions: SessionStore.inMemory(
+          seed: jsonEncode({
+            'active': 'me-1',
+            'communities': [
+              {'accountId': 'me-1', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'me'},
+            ],
+          }),
+        ),
+        apiFactory: (b, t) => ApiClient(baseUrl: b, token: t, httpClient: server.client),
+        connector: (_) async => _Idle(),
+        recentSearchStore: store,
+      );
+      addTearDown(app.dispose);
+      await app.boot();
+      final key = app.activeKey!;
+      // 찾기 화면을 열기 전이라 rememberSearch 는 보관본을 읽는다 — 그 읽기를 붙잡아 둔다.
+      store.gate = Completer<void>();
+      final pending = app.rememberSearch('배포');
+      await app.signOutCommunity(key);
+      expect(store.values.containsKey(key), isFalse);
+      store.gate!.complete();
+      await pending;
+      expect(store.values.containsKey(key), isFalse, reason: '로그아웃 뒤에 쓰면 지운 말이 되살아난다');
+    });
+
     for (final all in [false, true]) {
       test('로그아웃(${all ? '모두' : '이 커뮤니티'})하면 최근 찾은 말을 기기에서 지운다(security #1094 F1·F2)', () async {
         final store = MemoryRecentSearchStore();
@@ -461,4 +521,16 @@ void main() {
       expect(searchExcerpt(long, '없는말'), long);
     });
   });
+}
+
+/// 읽기를 붙잡아 둘 수 있는 보관소 — 로그아웃과 쓰기의 경쟁을 재현한다.
+class _GatedRecentStore extends MemoryRecentSearchStore {
+  Completer<void>? gate;
+
+  @override
+  Future<List<String>> load(String communityKey) async {
+    final g = gate;
+    if (g != null) await g.future;
+    return super.load(communityKey);
+  }
 }

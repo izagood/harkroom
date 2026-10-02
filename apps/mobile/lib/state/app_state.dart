@@ -128,6 +128,11 @@ class AppState extends ChangeNotifier {
 
   /// 최근 찾은 말을 몇 개까지 두나.
   static const int recentSearchMax = 10;
+
+  /// 커뮤니티마다 최근 찾은 말을 **지운 횟수**. 로그아웃이 올린다 — 그 전에 시작한 쓰기를 버리는 표지다.
+  final Map<String, int> _recentEpoch = {};
+
+  void _bumpRecent(String key) => _recentEpoch[key] = (_recentEpoch[key] ?? 0) + 1;
   final ApiClient Function(String baseUrl, String? token) _apiFactory;
   final WsConnector _connector;
 
@@ -158,6 +163,8 @@ class AppState extends ChangeNotifier {
     if (homeTab == tab) return;
     homeTab = tab;
     notifyListeners();
+    // 에이전트 탭은 열 때마다 새로 읽는다 — 도는 턴은 분 단위로 바뀌고 소켓이 알려 주지 않는다.
+    if (tab == 3) unawaited(loadAgents());
   }
 
   /// 다른 커뮤니티의 열쇠 → 나를 기다리는 것(안 읽은 부름) 수. 지금 커뮤니티는 [inboxUnread] 가 센다.
@@ -925,6 +932,39 @@ class AppState extends ChangeNotifier {
 
   // ── 받은 것 ───────────────────────────────────────────────────────────
 
+  // ── 에이전트 탭(S7) ─────────────────────────────────────────────────────
+
+  final List<AgentActivity> agentActivity = [];
+  final List<AgentWake> agentWakes = [];
+  LoadState agentsLoad = LoadState.loading;
+
+  /// 에이전트 탭을 채운다. 소켓이 알려 주지 않으므로 **탭을 열 때와 당겨 새로 고칠 때** 읽는다.
+  Future<void> loadAgents() async {
+    final api = _api;
+    if (api == null) return;
+    if (agentsLoad != LoadState.loaded) {
+      agentsLoad = LoadState.loading;
+      notifyListeners();
+    }
+    final gen = _generation;
+    try {
+      final got = await Future.wait([api.agentActivity(), api.agentWakes()]);
+      if (gen != _generation) return;
+      agentActivity
+        ..clear()
+        ..addAll(got[0] as List<AgentActivity>);
+      agentWakes
+        ..clear()
+        ..addAll(got[1] as List<AgentWake>);
+      agentsLoad = LoadState.loaded;
+    } on Object catch (e) {
+      if (gen != _generation) return;
+      failures['agents'] = LoadFailure.of(e);
+      if (agentsLoad != LoadState.loaded) agentsLoad = LoadState.failed;
+    }
+    notifyListeners();
+  }
+
   Future<void> loadInbox() async {
     final api = _api;
     if (api == null) return;
@@ -1149,20 +1189,26 @@ class AppState extends ChangeNotifier {
     final q = query.trim();
     final key = activeKey;
     if (q.isEmpty || key == null) return;
+    final epoch = _recentEpoch[key] ?? 0;
     final base = _recentFor == key ? recentSearches : await _recentStore.load(key);
     final next = [q, ...base.where((s) => s.toLowerCase() != q.toLowerCase())].take(recentSearchMax).toList(growable: false);
-    await _setRecent(key, next);
+    await _setRecent(key, next, epoch);
   }
 
   /// 하나 지우기(`query` 가 null 이면 전부).
   Future<void> forgetSearch(String? query) async {
     final key = activeKey;
     if (key == null) return;
+    final epoch = _recentEpoch[key] ?? 0;
     final base = _recentFor == key ? recentSearches : await _recentStore.load(key);
-    await _setRecent(key, query == null ? const [] : base.where((s) => s != query).toList(growable: false));
+    await _setRecent(key, query == null ? const [] : base.where((s) => s != query).toList(growable: false), epoch);
   }
 
-  Future<void> _setRecent(String key, List<String> next) async {
+  Future<void> _setRecent(String key, List<String> next, int epoch) async {
+    // 그 사이 이 커뮤니티에서 로그아웃했으면 쓰지 않는다 — `rememberSearch` 가 보관본을 읽는 await
+    // 사이에 로그아웃이 보관본을 지우면, 여기서 쓰는 순간 지운 최근 찾은 말이 되살아난다(security 찾기 F2 r1).
+    // 로그아웃은 **첫 await 전에** 이 수를 올리므로, 시작할 때 쥔 수와 다르면 버린다.
+    if ((_recentEpoch[key] ?? 0) != epoch) return;
     if (key == activeKey) {
       recentSearches = next;
       _recentFor = key;
@@ -1566,6 +1612,7 @@ class AppState extends ChangeNotifier {
   /// 지금 커뮤니티가 아니면 목록에서만 빠진다. 지금 커뮤니티면 다음 커뮤니티로 옮기고(산 것 먼저),
   /// 마지막 하나였으면 연결 화면으로 간다(designer ⑨).
   Future<void> signOutCommunity(String key) async {
+    _bumpRecent(key);
     final gone = communities.where((c) => c.key == key).firstOrNull;
     final rest = communities.where((c) => c.key != key).toList(growable: false);
     if (key != activeKey) {
@@ -1615,6 +1662,9 @@ class AppState extends ChangeNotifier {
 
   /// 이 기기의 모든 커뮤니티에서 로그아웃한다. 보관본을 지우고 연결 화면으로 간다.
   Future<void> signOutAll() async {
+    for (final c in communities) {
+      _bumpRecent(c.key);
+    }
     _generation++;
     _dropSocket();
     otherWaiting.clear();
@@ -1667,6 +1717,9 @@ class AppState extends ChangeNotifier {
   void _resetSession() {
     me = null;
     inbox.clear();
+    agentActivity.clear();
+    agentWakes.clear();
+    agentsLoad = LoadState.loading;
     reads.clear();
     channelPrefs.clear();
     collapsedSections.clear();

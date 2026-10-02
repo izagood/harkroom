@@ -166,6 +166,19 @@ class ApiClient {
     return id;
   }
 
+  /// 지금 도는 에이전트 턴들 — **그 채널을 볼 수 있는 것만**(`?scope=visible`, 서버 0.3.154~).
+  /// 이 범위만 쓴다: 기본 범위는 attach 용 세션 id 를 싣는 소유자 표면이다.
+  Future<List<AgentActivity>> agentActivity() async =>
+      _list(_obj(await _send('GET', '/agent-sessions?scope=visible'))['sessions'])
+          .map(AgentActivity.fromJson)
+          .toList(growable: false);
+
+  /// 앞으로 올 에이전트 깨움들(같은 범위).
+  Future<List<AgentWake>> agentWakes() async =>
+      _list(_obj(await _send('GET', '/agent-wakes?scope=visible'))['wakes'])
+          .map(AgentWake.fromJson)
+          .toList(growable: false);
+
   /// 내 채널 선호(즐겨찾기·섹션·순서·치움). 데스크탑 사이드바와 같은 값이다.
   Future<List<ChannelPref>> channelPrefs() async =>
       _list(_obj(await _send('GET', '/channels/prefs'))['prefs'])

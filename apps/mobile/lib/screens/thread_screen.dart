@@ -245,7 +245,8 @@ class _ThreadScreenState extends State<ThreadScreen> {
           ),
         )
       else
-        ...replies.map((item) => _mark(item is FeedMessage ? item.message.id : null, buildFeedItem(context, item))),
+        ...replies.map((item) => buildFeedItem(context, item,
+            mark: item is FeedMessage ? (row) => _mark(item.message.id, row) : null)),
       ...failed.map((item) => FailedSendRow(item: item)),
     ];
 

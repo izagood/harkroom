@@ -129,6 +129,13 @@ void main() {
     await shot(tester, '04b-dms');
     await tester.tap(find.byKey(const Key('tab-agents')));
     await shot(tester, '04c-agents');
+    // 찾기 n2: 바로 가기에 DM 이 없는 에이전트도 선다(한 글자라 서버에는 묻지 않는다).
+    await tester.tap(find.byKey(const Key('tab-search')));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.enterText(find.byKey(const Key('search-input')), 'h');
+    await shot(tester, '04d-search-shortcuts');
+    await tester.tap(find.byKey(const Key('search-cancel')));
+    await tester.pump(const Duration(milliseconds: 400));
 
     // S5a: 「나」 는 머리의 프로필 사진으로 연다.
     await tester.tap(find.byKey(const Key('tab-home')));
@@ -426,6 +433,28 @@ MockClient _server({bool states = false}) => MockClient((req) async {
         });
       }
       // S5c: DM 은 /dms 로만 온다(실서버와 같이 이름 없이 명단만).
+      // S7: 에이전트 탭(scope=visible 모양 — 세션 id 없음).
+      if (path == '/agent-sessions') {
+        return _json({
+          'sessions': [
+            {'agentAccountId': '00000000-0000-4000-8000-000000000003', 'channelId': 'c1', 'threadRootId': null,
+             'harness': 'claude-code', 'startedAt': DateTime.now().subtract(const Duration(minutes: 7)).toUtc().toIso8601String(),
+             'owned': true},
+            {'agentAccountId': '00000000-0000-4000-8000-000000000004', 'channelId': 'c2', 'threadRootId': null,
+             'harness': 'claude-code', 'startedAt': DateTime.now().subtract(const Duration(minutes: 2)).toUtc().toIso8601String(),
+             'owned': false},
+          ],
+        });
+      }
+      if (path == '/agent-wakes') {
+        return _json({
+          'wakes': [
+            {'id': 'w1', 'agentAccountId': '00000000-0000-4000-8000-000000000002', 'channelId': 'c1', 'threadRootId': 'm1',
+             'messageId': 'mw', 'wakeAt': DateTime.now().add(const Duration(minutes: 12)).toUtc().toIso8601String(),
+             'reason': 'CI 결과 확인'},
+          ],
+        });
+      }
       if (path == '/dms' && req.method == 'GET') {
         return _json({
           'dms': [

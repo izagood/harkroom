@@ -4,7 +4,13 @@ import 'package:flutter/material.dart';
 
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
+import '../state/app_state.dart';
+import '../time.dart';
+import '../ui/parts.dart';
+import '../ui/states.dart';
 import 'channel_list_screen.dart';
+import 'message_list_screen.dart';
+import 'thread_screen.dart';
 import 'inbox_screen.dart';
 import 'search_screen.dart';
 import '../ui/tokens.dart';
@@ -64,7 +70,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ChannelListScreen(),
           ChannelListScreen(dms: true),
           InboxScreen(),
-          AgentsSoonScreen(),
+          AgentsScreen(),
         ],
       ),
       // 개정판 3.1: 떠 있는 둥근 막대에 탭 넷 + 오른쪽 둥근 찾기 버튼. 찾기 버튼은 어느 탭에서나
@@ -200,21 +206,125 @@ class FloatingSearchButton extends StatelessWidget {
 }
 
 /// 에이전트 탭 — S7(도는 턴·기다리는 것) 전까지의 빈 자리.
-class AgentsSoonScreen extends StatelessWidget {
-  const AgentsSoonScreen({super.key});
+/// 에이전트 탭(개정판 3.7, S7) — **읽기 전용**. 지금 도는 턴 · 스스로 걸어 둔 예약 · 에이전트 전체.
+///
+/// 보이는 범위는 서버가 정한다: **그 채널을 볼 수 있으면 본다**(`?scope=visible`, 결정 A). 줄을 누르면
+/// 그 스레드로 간다. 터미널 붙기·그만두기 버튼은 **두지 않는다** — 그것은 소유자 문이고 데스크탑에 있다.
+class AgentsScreen extends StatelessWidget {
+  const AgentsScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     final t = context.t;
+    final app = context.app;
+    final k = context.tokens;
+    final now = DateTime.now();
+    final agents = app.accounts.values.where((a) => a.isAgent && !a.isDisabled).toList(growable: false)
+      ..sort((a, b) => a.handle.toLowerCase().compareTo(b.handle.toLowerCase()));
+    final running = {for (final x in app.agentActivity) x.agentAccountId};
+
+    Widget head(String text, String key) => Padding(
+          key: Key(key),
+          padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 14, HarkroomSize.gutter, 4),
+          child: Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.mute)),
+        );
+    String channelName(String id) {
+      for (final c in app.channels) {
+        if (c.id == id) return c.isDm ? c.name : '#${c.name}';
+      }
+      return '';
+    }
+
+    Future<void> open(String channelId, String? rootId) async {
+      final nav = Navigator.of(context);
+      await app.openChannel(channelId);
+      await nav.push(MaterialPageRoute<void>(
+        builder: (_) => rootId == null
+            ? MessageListScreen(channelId: channelId)
+            : ThreadScreen(channelId: channelId, rootId: rootId),
+      ));
+    }
+
+    final Widget body;
+    if (app.agentsLoad == LoadState.failed && app.agentActivity.isEmpty && app.agentWakes.isEmpty) {
+      body = FailedState(
+        title: t.agentsLoadFailed,
+        cause: app.failures['agents'] ?? LoadFailure.network,
+        onRetry: app.loadAgents,
+      );
+    } else if (app.agentsLoad == LoadState.loading && app.agentActivity.isEmpty) {
+      body = const LoadingSkeleton(rows: 3);
+    } else {
+      body = RefreshIndicator(
+        onRefresh: app.loadAgents,
+        child: ListView(
+          key: const Key('agents-list'),
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            head(t.agentsRunning, 'agents-running'),
+            if (app.agentActivity.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter, vertical: 6),
+                child: Text(t.agentsNoneRunning, style: TextStyle(color: k.mute)),
+              ),
+            for (final x in app.agentActivity)
+              ListTile(
+                key: Key('agent-run-${x.agentAccountId}-${x.channelId}-${x.threadRootId ?? ''}'),
+                dense: true,
+                leading: HarkroomAvatar(id: x.agentAccountId, name: app.displayNameOf(x.agentAccountId), size: 28),
+                title: Text(app.displayNameOf(x.agentAccountId)),
+                subtitle: Text(
+                  [
+                    channelName(x.channelId),
+                    if (x.startedAt != null) runningLabel(now.difference(x.startedAt!), t),
+                    if (x.owned) t.agentsMine,
+                  ].where((e) => e.isNotEmpty).join(' · '),
+                  style: TextStyle(color: k.mute),
+                ),
+                onTap: () => open(x.channelId, x.threadRootId),
+              ),
+            if (app.agentWakes.isNotEmpty) head(t.agentsWaiting, 'agents-waiting'),
+            for (final w in app.agentWakes)
+              ListTile(
+                key: Key('agent-wake-${w.agentAccountId}-${w.threadRootId}'),
+                dense: true,
+                leading: HarkroomAvatar(id: w.agentAccountId, name: app.displayNameOf(w.agentAccountId), size: 28),
+                title: Text(app.displayNameOf(w.agentAccountId)),
+                subtitle: Text(
+                  [
+                    if (w.wakeAt != null) inLabel(w.wakeAt!, now, t),
+                    channelName(w.channelId),
+                    if (w.reason != null) w.reason!,
+                  ].where((e) => e.isNotEmpty).join(' · '),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: k.mute),
+                ),
+                onTap: () => open(w.channelId, w.threadRootId),
+              ),
+            head(t.agentsAll, 'agents-all'),
+            for (final a in agents)
+              ListTile(
+                key: Key('agent-${a.id}'),
+                dense: true,
+                leading: HarkroomAvatar(id: a.id, name: a.handle, size: 28),
+                title: Text(a.displayName.isNotEmpty ? a.displayName : a.handle),
+                subtitle: a.displayName.isNotEmpty && a.displayName != a.handle ? Text('@${a.handle}') : null,
+                // 도는 중이면 작은 점 — 위 묶음과 같은 사실을 전체 목록에서도 한눈에.
+                trailing: running.contains(a.id)
+                    ? Icon(Icons.circle, size: 8, color: k.accent, semanticLabel: t.agentsRunning)
+                    : null,
+              ),
+            // 떠 있는 막대에 마지막 줄이 가리지 않도록.
+            const SizedBox(height: 96),
+          ],
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(title: Text(t.tabAgents), actions: const [OpenMeButton(), SizedBox(width: 8)]),
-      body: Center(
-        child: Padding(
-          key: const Key('agents-soon'),
-          padding: const EdgeInsets.all(HarkroomSize.gutter),
-          child: Text(t.agentsSoon, textAlign: TextAlign.center, style: TextStyle(color: context.tokens.mute)),
-        ),
-      ),
+      body: SafeArea(child: Column(children: [const ConnectionBand(), Expanded(child: body)])),
     );
   }
 }

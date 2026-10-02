@@ -55,6 +55,25 @@ MockClient _server() => MockClient((req) async {
           ],
         });
       }
+      // S7: 서버 0.3.154 의 `?scope=visible` 모양(AgentActivityView — sessionId 없음). scope 없이 오면
+      // 소유자 표면을 부른 것이므로 400 으로 시험을 빨갛게 한다.
+      if (path == '/agent-sessions' || path == '/agent-wakes') {
+        if (req.url.queryParameters['scope'] != 'visible') return _json({'error': {'code': 'bad', 'message': 'scope'}}, 400);
+        if (path == '/agent-sessions') {
+          return _json({
+            'sessions': [
+              {'agentAccountId': 'a-designer', 'channelId': 'c1', 'threadRootId': null, 'harness': 'claude-code',
+               'startedAt': DateTime.now().subtract(const Duration(minutes: 4)).toUtc().toIso8601String(), 'owned': false},
+            ],
+          });
+        }
+        return _json({
+          'wakes': [
+            {'id': 'w1', 'agentAccountId': 'a-qa', 'channelId': 'c1', 'threadRootId': 'r1', 'messageId': 'm1',
+             'wakeAt': DateTime.now().add(const Duration(minutes: 10)).toUtc().toIso8601String(), 'reason': 'CI 확인'},
+          ],
+        });
+      }
       if (path == '/accounts') {
         return _json({
           'accounts': [
@@ -125,11 +144,27 @@ void main() {
     expect(find.descendant(of: find.byKey(const Key('channel-d1')), matching: find.text('designer')), findsOneWidget);
   });
 
-  testWidgets('에이전트 탭은 S7 전까지 「곧」 한 줄', (tester) async {
+  testWidgets('S7 에이전트 탭: 도는 턴·예약·전체를 scope=visible 로 읽고, 붙기·멈춤 버튼은 없다', (tester) async {
     await _pump(tester);
     await tester.tap(find.byKey(const Key('tab-agents')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('agents-soon')), findsOneWidget);
+    expect(find.byKey(const Key('agents-running')), findsOneWidget);
+    final run = find.byKey(const Key('agent-run-a-designer-c1-'));
+    expect(run, findsOneWidget);
+    expect(find.descendant(of: run, matching: find.textContaining('#task')), findsOneWidget);
+    expect(find.descendant(of: run, matching: find.textContaining('4')), findsOneWidget, reason: '4분째');
+    expect(find.byKey(const Key('agents-waiting')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const Key('agent-wake-a-qa-r1')), matching: find.textContaining('CI 확인')),
+        findsOneWidget);
+    expect(find.byKey(const Key('agent-a-designer')), findsOneWidget);
+    expect(find.byKey(const Key('agent-a-qa')), findsOneWidget);
+    // 읽기 전용 — 터미널·멈춤 아이콘이 없다.
+    expect(find.byIcon(Icons.terminal), findsNothing);
+    expect(find.byIcon(Icons.stop_circle_outlined), findsNothing);
+    // 도는 줄을 누르면 그 채널(스레드 루트가 없으면 채널)이 열린다.
+    await tester.tap(run);
+    await tester.pumpAndSettle();
+    expect(find.byType(BackButton), findsOneWidget);
   });
 
   testWidgets('머리의 프로필 사진을 누르면 「나」 화면이 선다', (tester) async {
