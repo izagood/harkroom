@@ -193,12 +193,19 @@ MockClient _server() => MockClient((req) async {
         final body = (jsonDecode(req.body) as Map)['body'] as String;
         _sent.add(body);
         _sentModels.add((jsonDecode(req.body) as Map)['agentModels']);
+        // **실서버처럼 멘션을 id 토큰으로 바꿔 돌려준다**(#271·#845) — 화면은 그것을 다시
+        // `@handle` 로 그리고, 멘션 후보의 "자주 부른 순"은 그 토큰을 센다.
+        const ids = {'forge': 'a1', 'scout': 'a2', 'lumen': 'a3'};
+        final stored = body.replaceAllMapped(
+          RegExp(r'@([a-z]+)'),
+          (m) => ids[m.group(1)] == null ? m.group(0)! : '<@${ids[m.group(1)]}>',
+        );
         return _json({
           'id': 'm3',
           'seq': 3,
           'channelId': 'c1',
           'authorId': 'me-1',
-          'body': body,
+          'body': stored,
           'kind': 'user',
         });
       }
@@ -378,6 +385,40 @@ void main() {
     expect(text, '@forge ');
     // 고른 뒤에는 후보가 사라진다 — 이름이 끝났으므로.
     expect(find.byKey(const Key('mention-picker')), findsNothing);
+  });
+
+  testWidgets('@ 후보는 내가 자주 부른 상대가 먼저다(없으면 이름순)', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await _settle(tester);
+
+    List<String> chips() => tester
+        .widgetList<ActionChip>(find.descendant(
+          of: find.byKey(const Key('mention-picker')),
+          matching: find.byType(ActionChip),
+        ))
+        .map((c) => (c.key! as ValueKey<String>).value)
+        .toList();
+
+    await tester.enterText(find.byKey(const Key('composer')), '@');
+    await _settle(tester);
+    expect(chips().take(3), [
+      'mention-candidate-forge',
+      'mention-candidate-lumen',
+      'mention-candidate-me',
+    ]);
+
+    await tester.enterText(find.byKey(const Key('composer')), '@lumen 봐 줘');
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('composer-send')));
+    await _settle(tester);
+
+    await tester.enterText(find.byKey(const Key('composer')), '@');
+    await _settle(tester);
+    expect(chips().first, 'mention-candidate-lumen');
   });
 
   testWidgets('@ 로 에이전트를 고르면 그 자리가 모델 빠른 줄이 되고, 고른 모델이 그 글과 함께 간다', (tester) async {
