@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import sharp from 'sharp';
-import { downscaleImage, DOWNSCALE_MAX_INPUT_PIXELS } from '../src/mcp/imageDownscale.js';
+import { downscaleImage, DOWNSCALE_MAX_INPUT_PIXELS, DOWNSCALE_MAX_PENDING, tryAcquireDownscaleSlot } from '../src/mcp/imageDownscale.js';
 
 /**
  * `attachment.fetch` 의 그림 축소. 입력은 **신뢰하지 않는 바이트**라 실패 모양까지 잰다 —
@@ -56,5 +56,37 @@ describe('downscaleImage', () => {
     expect(r).toMatchObject({ ok: false });
     if (r.ok) return;
     expect(r.reason).toContain('still over');
+  });
+
+  it('refuses formats outside png/jpeg/gif/webp before decoding (SVG uploaded as image/png)', async () => {
+    // sharp 는 contentType 을 보지 않고 바이트로 디코더를 고른다 — PNG 라고 붙여도 SVG 로 풀린다.
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="3000"><rect width="4000" height="3000" fill="red"/></svg>');
+    const r = await downscaleImage(svg, 3 * 1024 * 1024);
+    expect(r).toMatchObject({ ok: false });
+    if (r.ok) return;
+    expect(r.reason).toContain('unsupported image format (svg)');
+  });
+
+  it('refuses TIFF too', async () => {
+    const tiff = await sharp({ create: { width: 50, height: 50, channels: 3, background: '#123456' } }).tiff().toBuffer();
+    const r = await downscaleImage(tiff, 3 * 1024 * 1024);
+    expect(r).toMatchObject({ ok: false });
+    if (r.ok) return;
+    expect(r.reason).toContain('unsupported image format (tiff)');
+  });
+});
+
+describe('tryAcquireDownscaleSlot', () => {
+  it('hands out at most DOWNSCALE_MAX_PENDING slots and frees them on release', () => {
+    const held = Array.from({ length: DOWNSCALE_MAX_PENDING }, () => tryAcquireDownscaleSlot());
+    expect(held.every((r) => r !== null)).toBe(true);
+    expect(tryAcquireDownscaleSlot()).toBeNull();
+    held[0]!();
+    held[0]!(); // 두 번 불러도 한 자리만 돌아온다
+    const again = tryAcquireDownscaleSlot();
+    expect(again).not.toBeNull();
+    expect(tryAcquireDownscaleSlot()).toBeNull();
+    again!();
+    for (const r of held.slice(1)) r!();
   });
 });

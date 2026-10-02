@@ -53,7 +53,7 @@ import { agentModelOptions, announceChange, checkOffered, emitChanged } from '..
 import type { OperatorHub } from '../ws/operatorHub.js';
 import { AttachmentMissingError, type StorageBackend } from '../storage/local.js';
 import { Readable } from 'node:stream';
-import { downscaleImage, DOWNSCALE_READ_MAX_BYTES } from './imageDownscale.js';
+import { downscaleImage, DOWNSCALE_READ_MAX_BYTES, tryAcquireDownscaleSlot } from './imageDownscale.js';
 
 // slug 문법과 거절 문구는 services/memory.ts 에 있다 — 사람용 REST(accountRoutes)도 같은 것을 쓴다.
 import { isValidSlug, MEMORY_SLUG_HINT } from '../services/memory.js';
@@ -1735,9 +1735,22 @@ function buildMcpServer(
      * 텍스트 줄에 적는다 — 에이전트가 "작은 글씨가 안 보인다"를 원본 탓으로 오해하지 않게.
      */
     if (IMAGE_TYPES.includes(contentType) && sizeBytes > IMAGE_MAX_BYTES && sizeBytes <= DOWNSCALE_READ_MAX_BYTES) {
-      const original = await readAttachment(meta, DOWNSCALE_READ_MAX_BYTES, resolved.attachment.storageKey);
-      if ('error' in original) return original.error;
-      const small = await downscaleImage(original.body, IMAGE_MAX_BYTES);
+      const notInlined = (reason: string) => jsonResult({
+        attachment: meta,
+        note: `too large to inline (${sizeBytes}B > ${IMAGE_MAX_BYTES}B) and could not be downscaled: ${reason}`,
+        download: `GET /attachments/${id} (Authorization: Bearer $HARKROOM_PAT) — needs shell/HTTP access; if you have neither, say so and ask the human instead of guessing`,
+      });
+      // 원본을 읽기 **전에** 자리를 잡는다 — 기다리는 호출이 저마다 32MiB 를 쥐고 쌓이지 않게.
+      const release = tryAcquireDownscaleSlot();
+      if (!release) return notInlined('busy (too many downscales in flight); try again shortly');
+      let small: Awaited<ReturnType<typeof downscaleImage>>;
+      try {
+        const original = await readAttachment(meta, DOWNSCALE_READ_MAX_BYTES, resolved.attachment.storageKey);
+        if ('error' in original) return original.error;
+        small = await downscaleImage(original.body, IMAGE_MAX_BYTES);
+      } finally {
+        release();
+      }
       if (small.ok) {
         return {
           content: [
@@ -1760,11 +1773,7 @@ function buildMcpServer(
           ],
         };
       }
-      return jsonResult({
-        attachment: meta,
-        note: `too large to inline (${sizeBytes}B > ${IMAGE_MAX_BYTES}B) and could not be downscaled: ${small.reason}`,
-        download: `GET /attachments/${id} (Authorization: Bearer $HARKROOM_PAT) — needs shell/HTTP access; if you have neither, say so and ask the human instead of guessing`,
-      });
+      return notInlined(small.reason);
     }
 
     if (!IMAGE_TYPES.includes(contentType) || sizeBytes > IMAGE_MAX_BYTES) {

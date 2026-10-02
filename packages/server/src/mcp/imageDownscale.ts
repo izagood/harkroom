@@ -22,6 +22,12 @@ import sharp from 'sharp';
  * - 메타데이터(EXIF·GPS 등)는 출력에 싣지 않는다(sharp 기본값). 방향만 `rotate()` 로
  *   픽셀에 반영한다 — 안 그러면 세로 사진이 눕는다.
  * - 움직이는 GIF·WebP 는 **첫 프레임**만 쓴다(sharp 기본값). 응답에 그 사실을 적는다.
+ * - sharp 는 contentType 이 아니라 **바이트 내용**으로 디코더를 고른다. `image/png` 라고 올린
+ *   SVG·TIFF·HEIF 도 libvips 가 푼다 — 그래서 헤더로 읽은 형식을 `DECODABLE_FORMATS` 로 묶고,
+ *   밖이면 디코딩 전에 거절한다. 잘 안 쓰는 디코더를 공격면으로 내주지 않는다.
+ * - 동시에 기다릴 수 있는 수를 `DOWNSCALE_MAX_PENDING` 으로 묶는다. 호출부는 원본(최대 32MiB)을
+ *   읽기 **전에** 자리를 잡는다(`tryAcquireDownscaleSlot`) — 기다리는 호출마다 원본을 쥐고
+ *   있으니, 자리 없이 줄을 세우면 메모리가 줄 길이만큼 쌓인다.
  */
 
 /** 줄여 볼 원본의 최대 바이트. 이보다 큰 것은 메모리에 올리지 않고 지금처럼 안내만 한다. */
@@ -37,6 +43,32 @@ export const DOWNSCALE_MAX_INPUT_PIXELS = 50_000_000;
  * 시도할 (긴 변, JPEG 품질) 순서. 첫 단계가 거의 늘 한도 안에 든다 — 2000px JPEG 는
  * 보통 0.3~1MB 다. 뒤 단계는 사진처럼 압축이 안 되는 그림을 위한 안전판이다.
  */
+/**
+ * 디코딩을 허락하는 형식(sharp `metadata().format` 값). `attachment.fetch` 가 그림으로 싣는
+ * `IMAGE_TYPES`(png·jpeg·gif·webp)와 같은 집합이다 — 그 밖의 것은 애초에 그림으로 다루지 않는다.
+ */
+const DECODABLE_FORMATS: ReadonlySet<string> = new Set(['png', 'jpeg', 'gif', 'webp']);
+
+/** 동시에 잡을 수 있는 축소 자리(도는 것 하나 + 기다리는 것). 넘치면 `busy` 로 돌려보낸다. */
+export const DOWNSCALE_MAX_PENDING = 4;
+
+let pending = 0;
+
+/**
+ * 축소 자리 하나를 잡는다. 자리가 없으면 `null` — 호출부는 원본을 읽지 말고 이유를 말한다.
+ * 받은 함수를 **꼭 한 번** 불러 자리를 돌려준다(`finally`). 두 번 불러도 한 번만 센다.
+ */
+export function tryAcquireDownscaleSlot(): (() => void) | null {
+  if (pending >= DOWNSCALE_MAX_PENDING) return null;
+  pending++;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    pending--;
+  };
+}
+
 const STEPS: ReadonlyArray<{ maxEdge: number; quality: number }> = [
   { maxEdge: 2000, quality: 82 },
   { maxEdge: 1600, quality: 75 },
@@ -79,6 +111,10 @@ async function downscaleNow(input: Buffer, limitBytes: number): Promise<Downscal
   let pages: number;
   try {
     const meta = await sharp(input, { limitInputPixels: DOWNSCALE_MAX_INPUT_PIXELS }).metadata();
+    // 디코딩 전에 형식부터 — metadata() 는 헤더만 읽는다.
+    if (!meta.format || !DECODABLE_FORMATS.has(meta.format)) {
+      return { ok: false, reason: `unsupported image format (${meta.format ?? 'unknown'}); only png, jpeg, gif and webp are downscaled` };
+    }
     if (!meta.width || !meta.height) return { ok: false, reason: 'could not read image dimensions' };
     // EXIF 방향이 5~8 이면 가로·세로가 바뀐 채 저장돼 있다 — 보고하는 해상도는 보이는 모양으로.
     const swapped = (meta.orientation ?? 1) >= 5;
