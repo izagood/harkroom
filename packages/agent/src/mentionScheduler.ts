@@ -22,6 +22,7 @@ import {
 } from './prompt.js';
 import { exhausted, isHarnessStall, isQuotaExhausted, isSessionIdConflict, isThreadModelRejected, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
 import type { SecretLeases } from './secretLeases.js';
+import type { ThreadClaim, ThreadClaims } from './threadClaims.js';
 import { looksLikeGate, PromptNotDeliveredError } from './pty.js';
 
 /**
@@ -172,6 +173,12 @@ export interface MentionSchedulerDeps {
    * 처리) 놓는다 — 재시도로 미룬 동안은 쥐고 있다(R1: 같은 멘션의 재시도는 받은 임대를 다시 쓴다).
    */
   secretLeases?: SecretLeases;
+  /**
+   * (에이전트, 스레드) 턴 임대(서버 095, `threadClaims.ts`). 아래 스레드 잠금이 **이 프로세스 안**의 진실이라면
+   * 이것은 같은 에이전트의 **러너들 사이**의 진실이다 — 앱 업데이트로 옛 러너와 새 러너가 겹쳐 도는 동안
+   * 같은 스레드에 턴이 둘 뜨지 않게 한다. 못 잡으면 `blocked` 로 세고 다음 폴에서 다시 묻는다.
+   */
+  threadClaims?: ThreadClaims;
   /** 종료 요청이 나를 향한 것인지 가르는 기준(stop.ts). */
   startedAtMs: number;
   /** 테스트가 백오프 경계를 결정론적으로 재현하기 위한 시계 주입. 생략하면 Date.now. */
@@ -679,6 +686,21 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
 
         if (inFlightThreads.has(threadKey) || deps.registry.get(threadKey)) { out.blocked += 1; continue; }
 
+        // 러너들 사이의 잠금 — 다른 러너(이관 중인 옛 세대)가 이 스레드에서 턴을 돌리고 있으면 띄우지 않는다.
+        // 멘션은 미읽음으로 남아 그 턴이 끝나 임대가 풀린 뒤의 폴에서 다시 온다. attempts 를 올리지 않는다.
+        let claim: ThreadClaim | null = null;
+        if (deps.threadClaims) {
+          claim = await deps.threadClaims.hold(mention.channelId, anchor);
+          if (!claim) { out.blocked += 1; continue; }
+          // 기다리는 사이 이 프로세스 안에서 같은 스레드가 시작됐을 수 있다 — 다시 본다. `hold` 는 스레드당
+          // 하나만 주므로 이 임대는 이 자리 것뿐이고, 놓아도 다른 턴의 임대를 지우지 않는다.
+          if (inFlightThreads.has(threadKey) || deps.registry.get(threadKey)) {
+            void claim.release();
+            out.blocked += 1;
+            continue;
+          }
+        }
+
         // 장부 등록은 **동기적으로, 띄우기 전에**. 위 inFlightThreads 주석이 이유다.
         inFlightEntries.add(entry.id);
         inFlightThreads.add(threadKey);
@@ -696,7 +718,8 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
           .catch((err: unknown) => {
             console.error(`  ${entry.messageId} 턴 실패:`, err instanceof Error ? err.message : err);
           })
-          .finally(() => { running.delete(task); });
+          // 임대는 턴이 **완전히 끝난 뒤** 놓는다(재시도로 미룬 멘션도 이 턴은 끝났다 — 다음 시도는 다시 잡는다).
+          .finally(() => { running.delete(task); void claim?.release(); });
         running.add(task);
       }
 
