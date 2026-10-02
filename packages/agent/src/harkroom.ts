@@ -254,6 +254,34 @@ export class HarkroomAgentClient {
     }
   }
 
+  /**
+   * 동시 턴 자리(오퍼레이터 R1, `operator/src/turnSlots.ts`). 오퍼레이터가 서버로 넘기지 않고 직접 답한다.
+   * 200 받음 · 409 꽉 참 · 그 밖(옛 오퍼레이터가 서버로 넘겨 받은 404, 링크 끊김)은 'unsupported' —
+   * 상한은 자원 보호라 확인하지 못하면 띄운다(fail-open). 스레드 임대와 반대인 이유는 `turnSlots.ts`.
+   */
+  async acquireTurnSlot(key: string): Promise<'granted' | 'full' | 'unsupported'> {
+    try {
+      const res = await this.link.request({
+        type: 'http.forward', method: 'POST', path: '/agent/turn-slots',
+        body: JSON.stringify({ key }), contentType: 'application/json',
+      });
+      if (res.status === 200) return 'granted';
+      if (res.status === 409) return 'full';
+      return 'unsupported';
+    } catch {
+      return 'unsupported';
+    }
+  }
+
+  async releaseTurnSlot(key: string): Promise<void> {
+    try {
+      await this.link.request({
+        type: 'http.forward', method: 'POST', path: '/agent/turn-slots/release',
+        body: JSON.stringify({ key }), contentType: 'application/json',
+      });
+    } catch { /* 러너가 죽으면 오퍼레이터가 링크 끊김으로 돌려받는다 */ }
+  }
+
   async reportActivity(): Promise<void> {
     await this.rest<unknown>('POST', '/agent/activity', 'agent/activity');
   }

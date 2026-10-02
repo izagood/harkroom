@@ -492,6 +492,7 @@ const threadClaims = createThreadClaims({ client: harkroom, holder: randomUUID()
 
 const scheduler = createMentionScheduler({
   harkroom, registry, queue: mentionQueue, heldEntryIds, secretLeases, threadClaims,
+  turnSlots: { acquire: (key) => harkroom.acquireTurnSlot(key), release: (key) => harkroom.releaseTurnSlot(key) },
   // **턴마다** 축을 다시 읽는다 — 지운 계정은 빠지고 새 계정은 들어온다(`createLiveAccountLane`).
   accountLane: async () => (await liveLane.current()).lane,
   // 모델은 매 턴 정의에서 읽는다 — 모델별 주간 창(Opus 등)이 있으면 그것까지 본다. 못 읽으면

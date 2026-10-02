@@ -261,6 +261,7 @@ The operator normally gets its paths from the desktop app. Run headless, it read
 |----------|-------------|---------|----------|
 | `HARKROOM_DATA_DIR` | Data directory shared with the desktop app (socket, `operator/operator.json`, tokens, per-agent MCP config) | `~/Library/Application Support/app.harkroom.desktop` (macOS), `$XDG_DATA_HOME/app.harkroom.desktop` (Linux), `%APPDATA%\app.harkroom.desktop` (Windows) | No |
 | `HARKROOM_OPERATOR_VERSION` | Version stamped into the pid record and passed to runners as `AGENT_VERSION` when started headless | - | No |
+| `HARKROOM_MAX_TURNS` | Maximum number of turns running at once across **all** runners of this operator. When full, new mentions stay unread in the inbox and start once a turn finishes. `0` or unset means no limit. Read by the operator at startup | - (no limit) | No |
 | `XDG_DATA_HOME` / `APPDATA` | Read only to compute the default data directory | platform default | No |
 | `CLAUDE_CONFIG_DIR` | Where the operator looks for `.claude.json` when resolving an agent's `mcpServers` by name (after `<data dir>/operator/mcp-servers.json`) | `~` | No |
 
