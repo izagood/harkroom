@@ -333,6 +333,43 @@ class ComposerScope extends StatelessWidget {
   Widget build(BuildContext context) => child;
 }
 
+/// 대화 목록(채널·스레드)의 빈 곳을 **한 번 탭하면 키보드를 내린다**(모바일 관례).
+///
+/// **손가락으로 목록을 끌기 시작해도** 내린다 — "지금은 읽는다"는 뜻이다.
+///
+/// 내리는 것은 **포커스뿐**이다 — 쓰던 글·첨부·멘션 핀은 작성칸 쪽 상태라 그대로 남는다.
+///
+/// 끌기는 `keyboardDismissBehavior: onDrag` 를 쓰지 않고 스크롤 **시작**(`dragDetails` 가 있는
+/// [ScrollStartNotification])으로 잡는다. onDrag 는 목록이 실제로 움직일 때(ScrollUpdate)만
+/// 들어서, 한 화면에 다 드는 짧은 채널·스레드는 Android 에서 끌어도 안 내려갔다. 코드가
+/// 움직이는 스크롤(새 말이 와서 `jumpTo`·`animateTo`)에는 `dragDetails` 가 없어 안 내린다.
+/// 바깥 목록(depth 0)만 본다 — 말풍선 안 표를 옆으로 미는 것까지 세지 않는다.
+///
+/// 말풍선 안의 버튼·링크·답글 문은 제 탭을 먼저 가져가므로(더 깊은 쪽이 이긴다) 그것을
+/// 누를 때는 키보드가 내려가지 않는다. 읽는 중·비어 있음 화면도 감싸서, 말이 없는 채널에서도
+/// 같은 손짓이 듣게 한다.
+class FeedKeyboardDismiss extends StatelessWidget {
+  const FeedKeyboardDismiss({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        key: const Key('feed-dismiss-keyboard'),
+        behavior: HitTestBehavior.opaque,
+        onTap: _dismiss,
+        child: NotificationListener<ScrollStartNotification>(
+          onNotification: (n) {
+            if (n.depth == 0 && n.dragDetails != null) _dismiss();
+            return false;
+          },
+          child: child,
+        ),
+      );
+
+  static void _dismiss() => FocusManager.instance.primaryFocus?.unfocus();
+}
+
 /// 작성칸 한 줄(칸 + 위아래 여백)만큼. 여러 줄로 늘어난 작성칸은 덮을 수 있다 — 토스트는 잠깐이다.
 const composerToastLift = 76.0;
 

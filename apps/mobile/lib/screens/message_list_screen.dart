@@ -140,7 +140,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
           children: [
             const ConnectionBand(),
             Expanded(
-              child: switch (app.channelLoad[widget.channelId]) {
+              child: FeedKeyboardDismiss(child: switch (app.channelLoad[widget.channelId]) {
                 // 아직 판정 전(열자마자)도 읽는 중으로 본다 — 그 한 프레임에 "비어 있다"가
                 // 스쳐 지나가면 사람은 빈 채널로 읽는다.
                 null || LoadState.loading => const LoadingSkeleton(),
@@ -159,6 +159,9 @@ class _MessageListScreenState extends State<MessageListScreen> {
                       key: const Key('channel-feed'),
                       controller: _scroll,
                       reverse: true,
+                      // 짧은 채널도 늘 끌리게 둔다 — 끌기 시작이 키보드를 내린다([FeedKeyboardDismiss]).
+                      // 안 그러면 Android 에서 한 화면에 다 드는 채널은 끌기가 아예 시작되지 않는다.
+                      physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       // 못 보낸 말이 **맨 아래**(reverse 라 앞쪽)에 선다 — 보낸 자리다. 맨 위(끝)에는
                       // 회전자·"다시 시도"·채널 시작 중 하나를 둔다([FeedTop]).
@@ -184,7 +187,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
                         ),
                       ),
                     ),
-              },
+              }),
             ),
             MentionModelBar(
               controller: _composer,

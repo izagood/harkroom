@@ -854,4 +854,105 @@ void main() {
     expect(find.descendant(of: screen, matching: find.byKey(const Key('thread-replies-divider'))), findsOneWidget);
     expect(find.descendant(of: screen, matching: find.byKey(const Key('message-r1'))), findsOneWidget);
   });
+
+  group('키보드 내림 — 목록을 끌거나 빈 곳을 탭하면 포커스만 푼다', () {
+    bool focused(WidgetTester tester, String key) =>
+        tester.widget<TextField>(find.byKey(Key(key))).focusNode!.hasFocus;
+    String text(WidgetTester tester, String key) =>
+        tester.widget<TextField>(find.byKey(Key(key))).controller!.text;
+
+    testWidgets('채널: 목록을 끌면 키보드가 내려가고, 쓰던 글·멘션 핀은 남는다', (tester) async {
+      final state = _state();
+      await tester.pumpWidget(HarkroomApp(state: state));
+      await tester.pumpAndSettle();
+      addTearDown(state.dispose);
+      await tester.tap(find.byKey(const Key('channel-c1')));
+      await _settle(tester);
+      // 핀을 하나 세운다 — 내림이 작성칸 상태까지 비우면 여기서 드러난다.
+      await tester.enterText(find.byKey(const Key('composer')), '@forge 시작');
+      await tester.tap(find.byKey(const Key('composer-send')));
+      await _settle(tester);
+      expect(find.byKey(const Key('sticky-mention-forge')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('composer')));
+      await tester.enterText(find.byKey(const Key('composer')), '쓰던 글');
+      await tester.pump();
+      expect(focused(tester, 'composer'), isTrue);
+
+      // 위로 끌어올린다(reverse 목록이라 지난 말 쪽).
+      await tester.drag(find.byKey(const Key('channel-feed')), const Offset(0, 300));
+      await _settle(tester);
+      expect(focused(tester, 'composer'), isFalse);
+      expect(text(tester, 'composer'), '쓰던 글');
+      expect(find.byKey(const Key('sticky-mention-forge')), findsOneWidget);
+    });
+
+    testWidgets('채널: 새 말이 와서 목록이 움직이는 것처럼 코드가 스크롤하면 내리지 않는다', (tester) async {
+      final state = _state();
+      await tester.pumpWidget(HarkroomApp(state: state));
+      await tester.pumpAndSettle();
+      addTearDown(state.dispose);
+      await tester.tap(find.byKey(const Key('channel-c1')));
+      await _settle(tester);
+      await tester.tap(find.byKey(const Key('composer')));
+      await tester.pump();
+      expect(focused(tester, 'composer'), isTrue);
+
+      final scroll = tester.widget<ListView>(find.byKey(const Key('channel-feed'))).controller!;
+      scroll.jumpTo(40);
+      await tester.pump();
+      unawaited(scroll.animateTo(0, duration: const Duration(milliseconds: 100), curve: Curves.linear));
+      await _settle(tester);
+      expect(focused(tester, 'composer'), isTrue);
+    });
+
+    testWidgets('채널: 목록 빈 곳을 한 번 탭하면 내려간다', (tester) async {
+      final state = _state();
+      await tester.pumpWidget(HarkroomApp(state: state));
+      await tester.pumpAndSettle();
+      addTearDown(state.dispose);
+      await tester.tap(find.byKey(const Key('channel-c1')));
+      await _settle(tester);
+      await tester.tap(find.byKey(const Key('composer')));
+      await tester.enterText(find.byKey(const Key('composer')), '쓰던 글');
+      await tester.pump();
+      expect(focused(tester, 'composer'), isTrue);
+
+      // 목록은 아래부터 쌓이므로 맨 위 띠는 빈 곳이다.
+      await tester.tapAt(tester.getTopLeft(find.byKey(const Key('channel-feed'))) + const Offset(100, 4));
+      await _settle(tester);
+      expect(focused(tester, 'composer'), isFalse);
+      expect(text(tester, 'composer'), '쓰던 글');
+    });
+
+    testWidgets('스레드: 한 화면에 다 드는 짧은 스레드도 끌면 내려가고, 빈 곳 탭도 듣는다', (tester) async {
+      final state = _state();
+      await tester.pumpWidget(HarkroomApp(state: state));
+      await tester.pumpAndSettle();
+      addTearDown(state.dispose);
+      await tester.tap(find.byKey(const Key('channel-c1')));
+      await _settle(tester);
+      await tester.tap(find.byKey(const Key('thread-open-m1')));
+      await _settle(tester);
+
+      await tester.tap(find.byKey(const Key('thread-composer')));
+      await tester.enterText(find.byKey(const Key('thread-composer')), '답글 쓰는 중');
+      await tester.pump();
+      expect(focused(tester, 'thread-composer'), isTrue);
+      // 이 스레드는 스크롤할 거리가 0 이다 — 목록이 안 움직여도 끌기는 듣는다.
+      expect(tester.widget<ListView>(find.byKey(const Key('thread-feed'))).controller!.position.maxScrollExtent, 0);
+      await tester.drag(find.byKey(const Key('thread-feed')), const Offset(0, 300));
+      await _settle(tester);
+      expect(focused(tester, 'thread-composer'), isFalse);
+      expect(text(tester, 'thread-composer'), '답글 쓰는 중');
+
+      await tester.tap(find.byKey(const Key('thread-composer')));
+      await tester.pump();
+      expect(focused(tester, 'thread-composer'), isTrue);
+      await tester.tapAt(tester.getTopLeft(find.byKey(const Key('thread-feed'))) + const Offset(100, 4));
+      await _settle(tester);
+      expect(focused(tester, 'thread-composer'), isFalse);
+      expect(text(tester, 'thread-composer'), '답글 쓰는 중');
+    });
+  });
 }

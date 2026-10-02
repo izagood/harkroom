@@ -229,12 +229,16 @@ class _ThreadScreenState extends State<ThreadScreen> {
             // `onOpenThread` 를 주지 않는다 — **이미 스레드 안이라 들어갈 곳이 없다.**
             const ConnectionBand(),
             Expanded(
-              child: ListView(
-                key: const Key('thread-feed'),
-                controller: _scroll,
-                reverse: true,
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                children: rows.reversed.toList(growable: false),
+              child: FeedKeyboardDismiss(
+                child: ListView(
+                  key: const Key('thread-feed'),
+                  controller: _scroll,
+                  reverse: true,
+                  // 채널 화면과 같다 — 짧아도 끌려야 키보드를 내린다([FeedKeyboardDismiss]).
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  children: rows.reversed.toList(growable: false),
+                ),
               ),
             ),
             // **스레드의 작성칸은 자기 키를 쓴다** — 채널에서 고른 사진이 답글에
