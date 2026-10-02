@@ -101,6 +101,11 @@ export interface AppState {
    * 부름은 쌓여 줄지 않았다. 컨트롤러가 `GET /inbox?threads=1` 로 채운다(`refreshInboxMine`).
    */
   inboxMine: number;
+  /**
+   * 컨트롤러가 보드 재료를 새로 받은 횟수(`controller.loadInboxBoard`). 열려 있는 보드는 이 수가
+   * 바뀌면 `inboxBoardSnapshot()` 을 다시 그린다 — 따로 조회하지 않는다(배지와 조회 하나를 나눈다).
+   */
+  inboxBoardRevision: number;
   /** 채널별 읽음 상태(서버 진실). 사이드바 배지가 여기서 나온다. */
   reads: Record<string, { lastReadSeq: number; unread: number }>;
   /**
@@ -427,7 +432,7 @@ export const NO_TEAMS: AgentTeamRow[] = [];
 
 const initial = {
   me: null, accounts: {}, groups: [], teams: null, channels: [], dms: [], activeChannelId: null, threadRootId: null,
-  messages: {}, typing: {}, hasMore: {}, unread: [], inboxRevision: 0, inboxMine: 0, reads: {}, dividerSeq: {},
+  messages: {}, typing: {}, hasMore: {}, unread: [], inboxRevision: 0, inboxMine: 0, inboxBoardRevision: 0, reads: {}, dividerSeq: {},
   online: [], terminalTarget: null, channelSheetId: null, channelSheetTab: null, leases: [], connected: false, serverVersion: null, workspaceIconUrl: null,
   projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, drafts: {}, stickyMentions: {}, uploads: {},

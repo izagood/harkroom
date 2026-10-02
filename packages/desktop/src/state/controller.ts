@@ -2,6 +2,9 @@ import type { AccountStatus, AddTeamToChannelResult, AgentModelOptions, AgentPic
 import type { MemoryEdit, MemoryEntry, MemoryRevision } from '../lib/memoryList';
 import { countsAsReply, notifyLevelOf, readFailureMeta, type InboxThreadState } from '@harkroom/shared';
 import { buildBoard, mineCount } from '../lib/inboxBoard';
+
+/** 보드 한 판의 재료 — `GET /inbox?threads=1` 의 응답(`ApiClient.inboxBoard`). */
+export interface InboxBoardData { entries: InboxEntry[]; threads: MessageRow[] | null; threadStates: InboxThreadState[] }
 import { ApiClient, ApiError } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
@@ -75,11 +78,11 @@ export class Controller {
   }
   private ws: WsHandle | null = null;
   private unreadFetchSeq = 0;
-  /** 내 차례 수 조회가 도는 중인가 · 도는 동안 또 바뀌었나(`refreshInboxMine`). */
-  private mineInFlight = false;
-  private mineDirty = false;
+  /** 도는 중인 보드 조회 · 도는 동안 또 바뀌었나(`loadInboxBoard`). */
+  private boardInFlight: Promise<InboxBoardData> | null = null;
+  private boardDirty = false;
   /** 마지막 보드 재료 — 시간만 흘러도(나중에의 시각이 지나도) 수를 다시 세려고 들고 있다. */
-  private mineInput: { entries: InboxEntry[]; threads: MessageRow[] | null; threadStates: InboxThreadState[] } | null = null;
+  private mineInput: InboxBoardData | null = null;
   private mineTick: ReturnType<typeof setInterval> | null = null;
   /** 히스토리를 이미 통째로 받은 채널. 이 집합에 없으면 openChannel이 증분이 아니라 전체를 받는다. */
   private loadedChannels = new Set<string>();
@@ -908,16 +911,44 @@ export class Controller {
    * 나를 기다리는 일이 없다고 거짓말한다.
    */
   private async refreshInboxMine(): Promise<void> {
-    if (this.mineInFlight) { this.mineDirty = true; return; }
-    this.mineInFlight = true;
-    try {
-      do {
-        this.mineDirty = false;
-        this.mineInput = await this.api.inboxBoard();
-        if (this.stopped) return;
-        this.recountInboxMine();
-      } while (this.mineDirty && !this.stopped);
-    } finally { this.mineInFlight = false; }
+    await this.loadInboxBoard();
+  }
+
+  /**
+   * 보드 재료(`GET /inbox?threads=1`)를 **한 곳에서** 받는다 — 배지(`inboxMine`)와 열려 있는 보드가
+   * 같은 조회 하나를 나눠 쓴다(#1076 security a: 신호 하나에 조회 둘이 나가던 것을 하나로).
+   *
+   * - 도는 중에 또 부르면 **같은 약속**을 돌려주고, 끝난 뒤 한 번 더 받아 그 결과로 풀린다 — 도는
+   *   동안 바뀐 것(방금 누른 나중에 등)을 놓치지 않으면서 동시에 도는 조회는 늘 하나다.
+   * - 받을 때마다 배지를 다시 세고 `inboxBoardRevision` 을 올린다 — 열려 있는 보드는 그 수를 보고
+   *   `inboxBoardSnapshot()` 을 그린다(따로 조회하지 않는다). 보드가 연 순간 부르면 배지도 그 순간
+   *   보드와 맞춰진다(#1076 designer 메모).
+   * - 실패는 부른 쪽에 그대로 던진다 — 보드는 오류 상자를 세우고, 배지는 앞선 값을 지킨다.
+   */
+  loadInboxBoard(): Promise<InboxBoardData> {
+    if (this.boardInFlight) { this.boardDirty = true; return this.boardInFlight; }
+    const run = async (): Promise<InboxBoardData> => {
+      try {
+        let data: InboxBoardData;
+        do {
+          this.boardDirty = false;
+          data = await this.api.inboxBoard();
+          if (this.stopped) return data;
+          this.mineInput = data;
+          this.recountInboxMine();
+          const store = this.store.getState();
+          store.set({ inboxBoardRevision: store.inboxBoardRevision + 1 });
+        } while (this.boardDirty && !this.stopped);
+        return data;
+      } finally { this.boardInFlight = null; }
+    };
+    this.boardInFlight = run();
+    return this.boardInFlight;
+  }
+
+  /** 마지막으로 받은 보드 재료. 아직 없으면 null. 열려 있는 보드가 `inboxBoardRevision` 에 맞춰 읽는다. */
+  inboxBoardSnapshot(): InboxBoardData | null {
+    return this.mineInput;
   }
 
   /**

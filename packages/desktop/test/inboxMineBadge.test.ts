@@ -36,7 +36,7 @@ async function boot(board: () => Board) {
   const changed = async (): Promise<void> => {
     callbacks.current!.onEvent({ type: 'inbox.updated', accountId: ME });
   };
-  return { c, api, changed };
+  return { c, api, changed, callbacks };
 }
 
 describe('배지 = 보드의 내 차례 수', () => {
@@ -98,5 +98,51 @@ describe('배지 = 보드의 내 차례 수', () => {
     await changed();
     await new Promise((r) => setTimeout(r, 20));
     expect(useAppStore.getState().inboxMine).toBe(1);
+  });
+});
+
+describe('보드와 배지가 조회 하나를 나눈다 (#1076 후속)', () => {
+  it('신호 하나에 조회 하나 — 보드는 그 재료를 받아 그린다(inboxBoardRevision)', async () => {
+    const t0 = new Date(Date.now() - HOUR).toISOString();
+    const data: Board = { entries: [entry(1, 'r1', t0)], threads: [head('r1')], threadStates: [] };
+    const { c, api, changed } = await boot(() => data);
+    await vi.waitFor(() => expect(useAppStore.getState().inboxBoardRevision).toBe(1));
+    const before = (api.inboxBoard as ReturnType<typeof vi.fn>).mock.calls.length;
+    await changed();
+    await vi.waitFor(() => expect(useAppStore.getState().inboxBoardRevision).toBe(2));
+    expect((api.inboxBoard as ReturnType<typeof vi.fn>).mock.calls.length).toBe(before + 1);
+    expect(c.inboxBoardSnapshot()).toEqual(data);
+  });
+
+  it('도는 중에 또 부르면 같은 약속을 받고, 끝난 뒤 한 번 더 받아 새 재료로 풀린다', async () => {
+    const t0 = new Date(Date.now() - HOUR).toISOString();
+    let n = 0;
+    let release: (() => void) | null = null;
+    const { c, api } = await boot(() => ({ entries: [entry(++n, 'r1', t0)], threads: [head('r1')], threadStates: [] }));
+    await vi.waitFor(() => expect(useAppStore.getState().inboxBoardRevision).toBe(1));
+    const fn = api.inboxBoard as ReturnType<typeof vi.fn>;
+    const calls = fn.mock.calls.length;
+    const original = fn.getMockImplementation()!;
+    fn.mockImplementationOnce(async () => { await new Promise<void>((r) => { release = r; }); return original(); });
+    const first = c.loadInboxBoard();
+    const second = c.loadInboxBoard();
+    expect(second).toBe(first);
+    release!();
+    const got = await second;
+    // 처음 것 + 도는 동안 부른 것의 뒤따름 하나 = 둘. 셋째는 없다.
+    expect(fn.mock.calls.length).toBe(calls + 2);
+    expect(got.entries[0]!.id).toBe(n);
+  });
+
+  it('보드가 열면서 부르면 배지도 그 순간 보드와 맞춰진다', async () => {
+    const t0 = new Date(Date.now() - HOUR).toISOString();
+    let data: Board = { entries: [entry(1, 'r1', t0)], threads: [head('r1')], threadStates: [] };
+    const { c } = await boot(() => data);
+    await vi.waitFor(() => expect(useAppStore.getState().inboxMine).toBe(1));
+    // 신호 없이 상태가 바뀌었다(예: 남이 내게 온 물음을 닫음) — 배지는 아직 1.
+    data = { ...data, threads: [{ ...head('r1'), openAskAccountIds: [] }] };
+    expect(useAppStore.getState().inboxMine).toBe(1);
+    await c.loadInboxBoard();
+    expect(useAppStore.getState().inboxMine).toBe(0);
   });
 });
