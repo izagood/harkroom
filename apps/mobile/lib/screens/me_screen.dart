@@ -172,6 +172,14 @@ class _PushSection extends StatelessWidget {
             onChanged: (v) => push.setCommunityEnabled(c.key, v),
           ));
         }
+        children.add(SwitchListTile(
+          key: const Key('me-push-preview'),
+          secondary: const SizedBox(width: 36, child: Icon(Icons.short_text)),
+          title: Text(t.pushPreview),
+          subtitle: Text(t.pushPreviewHint),
+          value: push.preview,
+          onChanged: push.setPreview,
+        ));
     }
     return Column(mainAxisSize: MainAxisSize.min, children: children);
   }

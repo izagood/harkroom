@@ -637,6 +637,12 @@ class StringsEn implements Strings {
   String get pushCommunityOff => 'Notifications off';
 
   @override
+  String get pushPreview => 'Show previews';
+
+  @override
+  String get pushPreviewHint => 'Shows the first line of the message. When on, that text passes through Apple\'s notification servers.';
+
+  @override
   String get searchButton => 'Search';
 
   @override

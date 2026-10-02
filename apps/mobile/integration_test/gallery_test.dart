@@ -775,6 +775,10 @@ class _GalleryPush implements PushPlatform {
   @override
   Future<void> setMutedCommunities(Set<String> keys) async {}
   @override
+  Future<bool> showPreview() async => false;
+  @override
+  Future<void> setShowPreview(bool on) async {}
+  @override
   Future<PushPermission> status() async => perm;
   @override
   Future<bool> request() async => false;

@@ -636,6 +636,12 @@ class StringsKo implements Strings {
   String get pushCommunityOff => '알림 끔';
 
   @override
+  String get pushPreview => '내용 미리보기';
+
+  @override
+  String get pushPreviewHint => '알림에 글 첫 줄을 보여 줘요. 켜면 그 내용이 Apple 의 알림 서버를 거쳐요.';
+
+  @override
   String get searchButton => '찾기';
 
   @override

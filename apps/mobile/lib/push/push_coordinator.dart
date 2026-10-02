@@ -43,6 +43,9 @@ class PushCoordinator extends ChangeNotifier {
   /// 푸시를 끈 커뮤니티의 열쇠(M4). 이 커뮤니티 서버에는 등록하지 않는다.
   Set<String> muted = {};
 
+  /// 알림에 글 내용을 실을지(나 › 알림 「내용 미리보기」, 기본 꺼짐). 커뮤니티마다 등록에 같이 싣는다.
+  bool preview = false;
+
   final Set<String> _registered = {};
   int? _badge;
   bool _started = false;
@@ -55,6 +58,11 @@ class PushCoordinator extends ChangeNotifier {
       muted = await platform.mutedCommunities();
     } on Object {
       // 채널 없음 — 끈 커뮤니티 없음으로 둔다.
+    }
+    try {
+      preview = await platform.showPreview();
+    } on Object {
+      // 채널 없음 — 꺼짐(기본)으로 둔다.
     }
     await refreshPermission();
     try {
@@ -101,6 +109,18 @@ class PushCoordinator extends ChangeNotifier {
 
   /// 이 커뮤니티의 알림을 켜고 끈다(M4). 끄면 그 서버에 등록을 풀고(`DELETE /push/devices/current`) 다시
   /// 등록하지 않는다. 남은 커뮤니티 수가 바뀌면 배지 설정도 달라지므로 다시 맞춘다.
+  /// 「내용 미리보기」 스위치. 기기에 적고 모든 커뮤니티에 다시 등록한다(등록이 prefs 를 바꾼다).
+  Future<void> setPreview(bool on) async {
+    preview = on;
+    notifyListeners();
+    try {
+      await platform.setShowPreview(on);
+    } on Object {
+      // 기기에 못 적으면 이번 실행 동안만 유지된다.
+    }
+    await sync();
+  }
+
   Future<void> setCommunityEnabled(String key, bool enabled) async {
     final next = {...muted};
     enabled ? next.remove(key) : next.add(key);
@@ -158,10 +178,11 @@ class PushCoordinator extends ChangeNotifier {
       // 배지를 합계보다 줄인다(designer #1087). 그때는 앱이 앞에 올 때 합계로 적는다.
       final serverBadge = receiving.length < 2;
       for (final c in receiving) {
-        final mark = '${c.key}|${c.token}|${device.token}|$serverBadge';
+        final mark = '${c.key}|${c.token}|${device.token}|$serverBadge|$preview';
         if (_registered.contains(mark)) continue;
         try {
-          await app.apiFor(c).registerPushDevice(token: device.token, env: device.env, badge: serverBadge);
+          await app.apiFor(c).registerPushDevice(
+              token: device.token, env: device.env, badge: serverBadge, preview: preview);
           _registered.removeWhere((m) => m.startsWith('${c.key}|'));
           _registered.add(mark);
         } on Object {

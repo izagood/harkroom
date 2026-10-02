@@ -112,14 +112,17 @@ class ApiClient {
   ///
   /// [badge] 가 있으면 `prefs.badge` 로 싣는다(서버 #1088~). 그 키를 모르는 옛 서버는 prefs 가 strict 라 400 을
   /// 준다 — 그때는 prefs 없이 한 번 더 등록한다. 등록이 배지 설정 하나 때문에 깨지지 않게.
-  Future<void> registerPushDevice({required String token, required String env, bool? badge}) async {
+  ///
+  /// [preview] 가 있으면 `prefs.preview` 로 싣는다(서버는 처음부터 받는다 — 켜면 알림에 글 첫 줄이 실린다).
+  Future<void> registerPushDevice({required String token, required String env, bool? badge, bool? preview}) async {
     final body = {'token': token, 'platform': 'ios', 'env': env};
-    if (badge == null) {
+    final prefs = {'badge': ?badge, 'preview': ?preview};
+    if (prefs.isEmpty) {
       await _send('PUT', '/push/devices', body: body);
       return;
     }
     try {
-      await _send('PUT', '/push/devices', body: {...body, 'prefs': {'badge': badge}});
+      await _send('PUT', '/push/devices', body: {...body, 'prefs': prefs});
     } on ApiError catch (e) {
       if (e.status != 400) rethrow;
       await _send('PUT', '/push/devices', body: body);
