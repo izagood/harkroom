@@ -52,6 +52,8 @@ function harness(opts: {
   lane?: Parameters<typeof createMentionScheduler>[0]['accountLane'];
   /** buildTurnDeps 가 받은 계정 — 턴이 어느 계정으로 떴는지 본다. */
   seenAccounts?: (string | null)[];
+  /** 참을 돌려주는 동안 `markRead` 가 서버 링크 실패처럼 던진다(2026-10-02 회귀선). */
+  markReadFails?: () => boolean;
 }) {
   const markedRead: number[] = [];
   const posted: { channelId: string; body: string; anchor: string | null }[] = [];
@@ -59,7 +61,10 @@ function harness(opts: {
   const registry = new TurnRegistry();
   const scheduler = createMentionScheduler({
     harkroom: {
-      markRead: async (ids) => { markedRead.push(...ids); return ids.length; },
+      markRead: async (ids) => {
+        if (opts.markReadFails?.()) throw new Error('MCP error -32001: Request timed out');
+        markedRead.push(...ids); return ids.length;
+      },
       post: async (channelId, body, anchor) => { posted.push({ channelId, body, anchor }); return 1; },
       // 실패 발화도 `posted` 에 담는다 — 회귀선이 보는 것은 "그 스레드에 무슨 말이
       // 나갔나" 이고, 실패도 그 스레드에 나간 말이다. 종류는 `failed` 가 따로 담는다.
@@ -880,5 +885,74 @@ describe('계정 관문으로 접은 멘션', () => {
     expect(out.skipped).toBe(1);
     expect(h.markedRead).toEqual([1]);
     expect(h.calls()).toBe(1);
+  });
+});
+
+/**
+ * 끝난 턴의 읽음 처리 실패는 턴의 실패가 아니다(2026-10-02). task_manager 실측: 턴은 답했는데
+ * 그 뒤 `inbox.read` 가 `MCP error -32001` 로 던져 재시도 경로로 떨어졌고, 30초 뒤 같은 프롬프트가
+ * 한 번 더 돌았다(깨움 754건 중 62건이 그렇게 두 번 왔다). 끝난 entry 는 id 로 멱등해야 한다.
+ *
+ * 되돌려 RED: `finish` 를 지우고 `markRead` 를 다시 `try` 안에서 직접 부르면 첫 시험에서 재시도
+ * 통지(`failed`)가 서고 두 번째 폴에 턴이 다시 돈다(`runs` 가 2).
+ */
+describe('끝난 턴의 읽음 처리 실패 — 다시 띄우지 않는다 (2026-10-02)', () => {
+  it('markRead 가 던져도 재시도 통지 없이 끝나고, 같은 entry 가 다시 와도 읽음 처리만 다시 한다', async () => {
+    let runs = 0;
+    let linkDown = true;
+    const h = harness({ runTurn: async () => { runs += 1; return { ok: true } as never; }, markReadFails: () => linkDown });
+
+    expect(await h.scheduler.admit(batchOf([{ entryId: 7, messageId: 'm-7' }]), ctx)).toMatchObject({ started: 1 });
+    await h.scheduler.drain();
+    expect(runs).toBe(1);
+    expect(h.failed).toEqual([]);          // "답하지 못하고 끝나 다시 시도합니다" 가 서지 않는다
+    expect(h.markedRead).toEqual([]);      // 읽음 처리는 아직 못 했다
+    expect(h.scheduler.holdingEntries()).toEqual([7]); // 교체 러너도 이 entry 를 집지 않게 넘긴다
+
+    // inbox 는 at-least-once 라 같은 entry 를 다시 준다 — 턴은 다시 돌지 않는다.
+    expect(await h.scheduler.admit(batchOf([{ entryId: 7, messageId: 'm-7' }]), ctx)).toMatchObject({ started: 0, skipped: 1 });
+    await h.scheduler.drain();
+    expect(runs).toBe(1);
+
+    // 링크가 돌아오면 그 폴에서 읽음 처리가 끝나고 표에서 빠진다.
+    linkDown = false;
+    expect(await h.scheduler.admit(batchOf([{ entryId: 7, messageId: 'm-7' }]), ctx)).toMatchObject({ started: 0, skipped: 1 });
+    expect(h.markedRead).toEqual([7]);
+    expect(h.scheduler.holdingEntries()).toEqual([]);
+    expect(runs).toBe(1);
+  });
+
+  it('물러나는 drain 이 읽음 처리를 한 번 더 시도한다', async () => {
+    let linkDown = true;
+    const h = harness({ runTurn: async () => ({ ok: true }) as never, markReadFails: () => linkDown });
+    await h.scheduler.admit(batchOf([{ entryId: 8, messageId: 'm-8' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.markedRead).toEqual([]);
+    linkDown = false;
+    await h.scheduler.drain();
+    expect(h.markedRead).toEqual([8]);
+  });
+
+  it('재시도 없는 실패(MAX_ATTEMPTS 소진)의 읽음 처리가 던져도 턴 실패로 번지지 않는다', async () => {
+    let linkDown = true;
+    let runs = 0;
+    let clock = 1_000_000;
+    const h = harness({
+      runTurn: async () => { runs += 1; throw new Error('harness 종료 1: boom'); },
+      markReadFails: () => linkDown,
+      now: () => clock,
+    });
+    for (let i = 0; i < 3; i += 1) {
+      clock += 10 * 60_000; // 백오프를 건너뛴다
+      await h.scheduler.admit(batchOf([{ entryId: 9, messageId: 'm-9' }]), ctx);
+      await h.scheduler.drain();
+    }
+    expect(runs).toBe(3);
+    // 소진 뒤에도 같은 entry 가 오면 띄우지 않는다 — 읽음 처리만 다시 한다.
+    expect(await h.scheduler.admit(batchOf([{ entryId: 9, messageId: 'm-9' }]), ctx)).toMatchObject({ started: 0, skipped: 1 });
+    expect(runs).toBe(3);
+    linkDown = false;
+    await h.scheduler.admit(batchOf([{ entryId: 9, messageId: 'm-9' }]), ctx);
+    expect(h.markedRead).toEqual([9]);
   });
 });
