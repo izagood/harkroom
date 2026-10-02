@@ -15,7 +15,15 @@
 import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-export interface McpStdioServer { type?: 'stdio'; command: string; args?: string[]; env?: Record<string, string> }
+export interface McpStdioServer {
+  type?: 'stdio'; command: string; args?: string[]; env?: Record<string, string>;
+  /**
+   * claude 전용(2.1.x): 참이면 이 서버의 도구를 **지연 로딩(tool search) 뒤로 미루지 않는다.**
+   * 다른 하네스는 이 키를 읽지 않는다 — codex 는 harkroom 항목을 `-c` 로 따로 굽고(`turn.ts`), opencode·pi 는
+   * 아는 필드만 골라 번역한다(`opencodeHome.ts::toOpencodeMcp`).
+   */
+  alwaysLoad?: boolean;
+}
 export interface McpRemoteServer { type: 'http' | 'sse'; url: string; headers?: Record<string, string>; oauth?: { clientId?: string; callbackPort?: number } }
 export type McpServerDefinition = McpStdioServer | McpRemoteServer;
 
@@ -37,7 +45,13 @@ export function buildMcpConfig(input: {
 }): { mcpServers: Record<string, McpServerDefinition>; missing: string[]; needsAuth: string[] } {
   const mcpServers: Record<string, McpServerDefinition> = {
     // stdio 브릿지(스펙 §5). 인증 재료는 하네스 env 에서 브릿지가 읽는다 — 이 항목엔 명령만 있다.
-    harkroom: { type: 'stdio', command: input.operatorBin, args: [...MCP_BRIDGE_ARGS] },
+    //
+    // `alwaysLoad`(2026-10-02): claude 는 MCP 도구 설명이 컨텍스트의 일정 비율을 넘으면 도구를 **지연 로딩**해
+    // 모델이 먼저 `ToolSearch` 를 불러야 쓸 수 있게 한다. 에이전트 하나에 harkroom 35 + avcs 40 + jira·slack
+    // 54 개가 붙어 그 문턱을 넘었고, task_manager 실측에서 거의 **매 턴 ToolSearch 왕복 1회(~5초)** 가
+    // 발화 앞에 끼었다 — 말하려면 `message.post` 부터 찾아야 하니까. harkroom 도구는 모든 턴이 쓰는
+    // 유일한 표면이라 항상 실어 둔다. 나머지(avcs·원격)는 지금처럼 지연 로딩이다.
+    harkroom: { type: 'stdio', command: input.operatorBin, args: [...MCP_BRIDGE_ARGS], alwaysLoad: true },
     avcs: { type: 'stdio', command: 'avcs', args: ['mcp'] },
   };
   const missing: string[] = [];
