@@ -5,7 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/api/api_client.dart';
 import 'package:harkroom/api/ws.dart';
+import 'package:harkroom/i18n/i18n.dart';
 import 'package:harkroom/main.dart';
+import 'package:harkroom/screens/me_screen.dart';
+import 'package:harkroom/state/app_scope.dart';
+import 'package:harkroom/theme.dart';
 import 'package:harkroom/push/push_coordinator.dart';
 import 'package:harkroom/push/push_platform.dart';
 import 'package:harkroom/push/push_target.dart';
@@ -33,10 +37,19 @@ class _Server {
   final String meId;
   final pushCalls = <String>[];
 
+  /// `/inbox` 를 망 오류로 끊는다.
+  bool failInbox = false;
+
+  /// 옛 서버 흉내 — prefs 를 실으면 400(strict).
+  bool strictPrefs = false;
+
   MockClient client(String? token) => MockClient((req) async {
         final path = req.url.path;
         if (path == '/push/devices' || path == '/push/devices/current') {
           pushCalls.add('${req.method} $path ${req.method == 'PUT' ? req.body : ''}'.trim());
+          if (strictPrefs && req.method == 'PUT' && req.body.contains('"prefs"')) {
+            return _json({'error': {'code': 'validation', 'message': 'unrecognized key'}}, 400);
+          }
           return req.method == 'PUT' ? _json({'id': 'd'}) : http.Response('', 204);
         }
         if (path == '/auth/logout') return http.Response('', 204);
@@ -47,6 +60,7 @@ class _Server {
           '/accounts' => _json({'accounts': <Object?>[]}),
           '/reads' => _json({'reads': <Object?>[]}),
           '/ws-ticket' => _json({'ticket': 'tk'}),
+          _ when path.startsWith('/inbox') && failInbox => throw http.ClientException('망 없음'),
           _ when path.startsWith('/inbox') => _json({'entries': <Object?>[]}),
           _ when path.endsWith('/messages') => _json({'messages': <Object?>[], 'hasMore': false}),
           _ when path.endsWith('/auto-mentions') => _json({'autoMentions': <Object?>[]}),
@@ -68,6 +82,11 @@ class _Idle implements WsConnection {
 }
 
 class _FakePush implements PushPlatform {
+  Set<String> mutedStore = {};
+  @override
+  Future<Set<String>> mutedCommunities() async => {...mutedStore};
+  @override
+  Future<void> setMutedCommunities(Set<String> keys) async => mutedStore = {...keys};
   PushPermission perm = PushPermission.notDetermined;
   bool grant = true;
   bool prompted = false;
@@ -99,8 +118,9 @@ class _FakePush implements PushPlatform {
   Future<bool> wasPrompted() async => prompted;
   @override
   Future<void> markPrompted() async => prompted = true;
+  int settingsOpened = 0;
   @override
-  Future<void> openSettings() async {}
+  Future<void> openSettings() async => settingsOpened++;
   @override
   void listen({required void Function(Map<String, Object?>) onOpen, required bool Function(Map<String, Object?>) shouldPresent}) {}
 }
@@ -170,8 +190,42 @@ void main() {
       final c = PushCoordinator(app, push);
       await c.sync();
       await c.sync();
-      expect(acme.pushCalls, ['PUT /push/devices {"token":"ab","platform":"ios","env":"sandbox"}']);
+      // 커뮤니티가 둘이라 서버 배지는 끈다(M4 배지 a).
+      expect(acme.pushCalls, ['PUT /push/devices {"token":"ab","platform":"ios","env":"sandbox","prefs":{"badge":false}}']);
       expect(beta.pushCalls, hasLength(1));
+    });
+
+    test('커뮤니티 알림을 끄면 그 서버의 등록을 풀고, 남은 하나는 서버 배지를 켠 채로 다시 등록한다', () async {
+      await boot();
+      push.perm = PushPermission.authorized;
+      final c = PushCoordinator(app, push);
+      await c.sync();
+      await c.setCommunityEnabled('$_betaUrl#$_b', false);
+      expect(beta.pushCalls.last, 'DELETE /push/devices/current');
+      expect(acme.pushCalls.last, endsWith('"prefs":{"badge":true}}'));
+      expect(push.mutedStore, {'$_betaUrl#$_b'});
+      final betaCount = beta.pushCalls.length;
+      await c.sync();
+      expect(beta.pushCalls.length, betaCount);
+      await c.setCommunityEnabled('$_betaUrl#$_b', true);
+      expect(beta.pushCalls.last, startsWith('PUT'));
+      expect(acme.pushCalls.last, endsWith('"prefs":{"badge":false}}'));
+    });
+
+    test('옛 서버가 prefs 를 400 으로 거절하면 prefs 없이 다시 등록한다', () async {
+      await boot();
+      acme.strictPrefs = true;
+      push.perm = PushPermission.authorized;
+      await PushCoordinator(app, push).sync();
+      expect(acme.pushCalls, hasLength(2));
+      expect(acme.pushCalls.last, 'PUT /push/devices {"token":"ab","platform":"ios","env":"sandbox"}');
+    });
+
+    test('다시 앞에 올 때 다시 읽기가 실패해도 던지지 않는다', () async {
+      await boot();
+      final c = PushCoordinator(app, push);
+      acme.failInbox = true;
+      await c.resumed();
     });
 
     test('권한이 없으면 등록하지 않는다', () async {
@@ -298,6 +352,58 @@ void main() {
       await push.resumed();
       expect(fake.badges.length, before + 1);
       expect(fake.badges.last, 0);
+    });
+  });
+
+  group('나 화면 「알림」 (M4)', () {
+    Future<_FakePush> pumpMe(WidgetTester tester, PushPermission perm) async {
+      final acme = _Server(_a);
+      final app = AppState(
+        sessions: MemorySessionStore(seed: jsonEncode({
+          'active': _a,
+          'communities': [{'accountId': _a, 'baseUrl': _acmeUrl, 'token': 'tok', 'handle': 'me'}],
+        })),
+        apiFactory: (base, token) => ApiClient(baseUrl: base, token: token, httpClient: acme.client(token)),
+        connector: (_) async => _Idle(),
+      );
+      final fake = _FakePush()
+        ..perm = perm
+        ..prompted = true;
+      final push = PushCoordinator(app, fake);
+      await app.boot();
+      await push.start();
+      await tester.pumpWidget(MaterialApp(
+        theme: harkroomTheme(Brightness.light),
+        builder: (context, child) => I18n(
+          strings: stringsFor('ko'),
+          child: AppScope(state: app, child: PushScope(push: push, child: child!)),
+        ),
+        home: const MeScreen(),
+      ));
+      await tester.pump();
+      return fake;
+    }
+
+    testWidgets('아직 묻지 않았으면 [켜기] 가 OS 권한 창을 띄운다', (tester) async {
+      final fake = await pumpMe(tester, PushPermission.notDetermined);
+      await tester.tap(find.byKey(const Key('me-push-turn-on')));
+      await tester.pump();
+      expect(fake.requests, 1);
+      expect(find.byKey(Key('me-push-community-$_acmeUrl#$_a')), findsOneWidget);
+    });
+
+    testWidgets('거부됐으면 [iOS 설정 열기] 를 보인다', (tester) async {
+      final fake = await pumpMe(tester, PushPermission.denied);
+      await tester.tap(find.byKey(const Key('me-push-open-settings')));
+      expect(fake.settingsOpened, 1);
+    });
+
+    testWidgets('켜져 있으면 커뮤니티 스위치로 끈다', (tester) async {
+      final fake = await pumpMe(tester, PushPermission.authorized);
+      await tester.tap(find.byKey(Key('me-push-community-$_acmeUrl#$_a')));
+      await tester.pump();
+      expect(fake.mutedStore, {'$_acmeUrl#$_a'});
+      expect(find.text('알림 끔'), findsOneWidget);
     });
   });
 

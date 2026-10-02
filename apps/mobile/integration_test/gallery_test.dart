@@ -716,6 +716,10 @@ class _LongThreadServer {
 /// 갤러리용 푸시 표면 — 아직 묻지 않은 기기. OS 창은 띄우지 않는다.
 class _GalleryPush implements PushPlatform {
   @override
+  Future<Set<String>> mutedCommunities() async => {};
+  @override
+  Future<void> setMutedCommunities(Set<String> keys) async {}
+  @override
   Future<PushPermission> status() async => PushPermission.notDetermined;
   @override
   Future<bool> request() async => false;

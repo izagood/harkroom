@@ -6,6 +6,8 @@ import '../state/app_scope.dart';
 import '../ui/parts.dart';
 import '../ui/tokens.dart';
 import 'community_screens.dart';
+import '../push/push_coordinator.dart';
+import '../push/push_platform.dart';
 
 /// 나 · 이 기기의 커뮤니티(designer ⑧).
 ///
@@ -106,6 +108,7 @@ class MeScreen extends StatelessWidget {
               title: Text(t.communityAdd),
               onTap: () => openAddCommunity(context),
             ),
+            const _PushSection(),
             const Divider(),
             ListTile(
               key: const Key('me-sign-out-all'),
@@ -117,5 +120,59 @@ class MeScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// 「알림」 절(푸시 M4, designer f1). 안내 시트에서 [나중에]를 골랐거나 iOS 설정에서 껐어도 여기서 다시 켤 수
+/// 있다. 권한이 있으면 커뮤니티마다 스위치를 둔다 — 끄면 그 서버에 등록을 푼다.
+class _PushSection extends StatelessWidget {
+  const _PushSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final push = PushScope.of(context);
+    if (push == null) return const SizedBox.shrink();
+    final t = context.t;
+    final app = context.app;
+    final children = <Widget>[SectionHeader(label: t.pushSection)];
+    switch (push.permission) {
+      case null:
+        return const SizedBox.shrink();
+      case PushPermission.notDetermined:
+        children.add(ListTile(
+          key: const Key('me-push-not-asked'),
+          leading: const SizedBox(width: 36, child: Icon(Icons.notifications_none)),
+          title: Text(t.pushNotAsked),
+          trailing: FilledButton(
+            key: const Key('me-push-turn-on'),
+            onPressed: push.enable,
+            child: Text(t.pushTurnOn),
+          ),
+        ));
+      case PushPermission.denied:
+        children.add(ListTile(
+          key: const Key('me-push-denied'),
+          leading: const SizedBox(width: 36, child: Icon(Icons.notifications_off_outlined)),
+          title: Text(t.pushDenied),
+          trailing: OutlinedButton(
+            key: const Key('me-push-open-settings'),
+            onPressed: push.platform.openSettings,
+            child: Text(t.pushOpenSettings),
+          ),
+        ));
+      case PushPermission.authorized:
+        for (final c in app.communities.where((c) => !c.isExpired)) {
+          final on = !push.muted.contains(c.key);
+          children.add(SwitchListTile(
+            key: Key('me-push-community-${c.key}'),
+            secondary: CommunityTile(community: c),
+            title: Text(c.displayLabel, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text(on ? t.pushCommunityOn : t.pushCommunityOff),
+            value: on,
+            onChanged: (v) => push.setCommunityEnabled(c.key, v),
+          ));
+        }
+    }
+    return Column(mainAxisSize: MainAxisSize.min, children: children);
   }
 }

@@ -140,6 +140,11 @@ import UserNotifications
     case "markPrompted":
       UserDefaults.standard.set(true, forKey: "harkroom.push.prompted")
       result(nil)
+    case "mutedCommunities":
+      result(UserDefaults.standard.stringArray(forKey: "harkroom.push.muted") ?? [])
+    case "setMutedCommunities":
+      UserDefaults.standard.set((call.arguments as? [String]) ?? [], forKey: "harkroom.push.muted")
+      result(nil)
     case "openSettings":
       if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
       result(nil)
