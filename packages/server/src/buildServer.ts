@@ -42,6 +42,7 @@ import { startThreadStatusWatcher } from './services/threadStatus.js';
 import { Lifecycle } from './lifecycle.js';
 import { loggerConfig } from './logging.js';
 import { createRateLimiter, type RateLimitRule } from './rateLimit.js';
+import type { TrustProxy } from './config.js';
 import { createMetrics } from './metrics.js';
 import { createScheduledMessageSweeper } from './services/scheduledMessages.js';
 import { createAutomationSweeper } from './services/automations.js';
@@ -64,8 +65,12 @@ import { createDelegationDeadlineSweeper } from './services/delegations.js';
  * 초대 토큰이 있어도 시도 자체를 좁힌다. `/ws-ticket` 은 넉넉하다 — 재연결 폭풍은 정상 동작이고,
  * 여기서 막으면 네트워크가 불안한 클라이언트가 영구히 못 붙는다.
  */
-const DEFAULT_RATE_LIMITS: Record<'login' | 'signup' | 'ticket' | 'upload', RateLimitRule> = {
+const DEFAULT_RATE_LIMITS: Record<RateLimitName, RateLimitRule> = {
   login: { windowMs: 5 * 60_000, max: 20 },
+  // **계정 단위** 로그인 실패 상한. 주소 단위 리밋(`login`)은 `req.ip` 판정이 틀어지면(프록시 신뢰
+  // 설정 실수·XFF 위조) 같이 무너진다 — 이 리밋은 주소와 무관하게 한 login_id 에 대한 대입을 막는다.
+  // 성공 없이 이어진 시도를 센다(성공하면 지운다). 실제 적용은 `/auth/login` 핸들러(`authRoutes.ts`) 안이다.
+  loginAccount: { windowMs: 15 * 60_000, max: 10 },
   signup: { windowMs: 15 * 60_000, max: 10 },
   ticket: { windowMs: 60_000, max: 120 },
   // 첨부는 크기 제한(25MB)만으로 부족하다 — 그건 **한 번의** 업로드만 막고, 반복하면 디스크가
@@ -73,8 +78,10 @@ const DEFAULT_RATE_LIMITS: Record<'login' | 'signup' | 'ticket' | 'upload', Rate
   upload: { windowMs: 60_000, max: 20 },
 };
 
+type RateLimitName = 'login' | 'loginAccount' | 'signup' | 'ticket' | 'upload';
+
 /** 어떤 경로에 어떤 리밋을 적용하는가. 인증 표면만 좁힌다 — 발화·조회는 건드리지 않는다. */
-const LIMITED_ROUTES: { method: string; url: string; rule: keyof typeof DEFAULT_RATE_LIMITS }[] = [
+const LIMITED_ROUTES: { method: string; url: string; rule: Exclude<RateLimitName, 'loginAccount'> }[] = [
   { method: 'POST', url: '/auth/login', rule: 'login' },
   { method: 'POST', url: '/auth/register', rule: 'signup' },
   { method: 'POST', url: '/bootstrap', rule: 'signup' },
@@ -159,11 +166,12 @@ export interface ServerDeps {
   /** 로그 싱크 교체(테스트 전용 seam). 프로덕션은 stdout 이다. */
   logStream?: import('node:stream').Writable;
   /** 인증 표면 리밋 재정의. 미지정이면 DEFAULT_RATE_LIMITS. */
-  rateLimits?: Partial<Record<'login' | 'signup' | 'ticket' | 'upload', RateLimitRule>>;
+  rateLimits?: Partial<Record<RateLimitName, RateLimitRule>>;
   /** 리밋 판정용 시계(테스트 전용 seam). */
   now?: () => number;
   /**
    * 앞단 리버스 프록시를 신뢰할지. **켜면 `X-Forwarded-For` 를 클라이언트 주소로 받아들인다.**
+   * `true` 는 전부 믿기(비권장), 숫자는 믿을 hop 수, 목록은 믿을 프록시 IP/CIDR(`config.ts`).
    *
    * 켜야 하는 이유: 프록시 뒤에서는 소켓 주소가 프록시 하나뿐이라 **모든 클라이언트가 레이트
    * 리밋 버킷 하나를 공유하고**(서로를 밀어낸다) 감사 로그의 ip 가 전부 같은 값이 된다.
@@ -172,7 +180,7 @@ export interface ServerDeps {
    * 켜면 안 되는 이유: 프록시가 **없는데** 켜면 누구나 헤더를 위조해 리밋을 무한히 우회한다.
    * 그래서 기본값은 끔이고, 실제로 앞단을 둔 배포에서만 켠다.
    */
-  trustProxy?: boolean;
+  trustProxy?: TrustProxy;
   /**
    * 첨부 스토리지. 미지정이면 ATTACHMENT_ROOT·ATTACHMENT_MAX_BYTES(기본 25MB)를 쓴다.
    * S3 호환으로 바꿀 때는 storage/local.ts 만 갈아 끼우면 된다.
@@ -223,10 +231,23 @@ function defaultAttachmentRoot(app: FastifyInstance): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), '..', '.attachments');
 }
 
+/**
+ * `TrustProxy` 를 Fastify 가 받는 꼴로 바꾼다.
+ *
+ * **hop 수는 함수로 넘긴다.** Fastify 5.12 는 숫자 `trustProxy` 를 "직접 붙은 상대를 검증할 수
+ * 없다"며 **아무것도 믿지 않는 것**으로 처리한다(`lib/request.js` getTrustProxyFn) — 숫자를 그대로
+ * 넘기면 조용히 꺼져 모든 사용자가 프록시 주소 하나로 묶인다. 그래서 "소켓에서부터 n 개"를 직접
+ * 쓴다. 이 서버는 프록시(ingress) 뒤에서만 닿는 배포를 전제로 hop 수를 쓴다 — 오리진에 직접 닿는
+ * 길이 있으면 CIDR 목록을 써라.
+ */
+function fastifyTrustProxy(t: TrustProxy): boolean | string[] | ((addr: string, hop: number) => boolean) {
+  return typeof t === 'number' ? (_addr, hop) => hop < t : t;
+}
+
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({
     // 기본값 false 를 유지한다 — 프록시가 없는데 신뢰하면 헤더 위조로 리밋이 무의미해진다.
-    trustProxy: deps.trustProxy ?? false,
+    trustProxy: fastifyTrustProxy(deps.trustProxy ?? false),
     /**
      * JSON 본문의 상한을 **명시한다**. fastify 기본값(1MB)에 기대면 그 수가 어디에도 적혀
      * 있지 않아, 메시지 상한(`MAX_MESSAGE_BODY_CHARS`)과의 관계를 읽을 수 없다. 여기를
@@ -435,6 +456,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // 막히고, 응답이 계정 존재 여부를 드러내지 않는다.
   const limiter = createRateLimiter(deps.now);
   const rules = { ...DEFAULT_RATE_LIMITS, ...deps.rateLimits };
+  if (deps.trustProxy === true) {
+    app.log.warn('TRUST_PROXY=1 trusts every proxy hop: the leftmost X-Forwarded-For becomes the client '
+      + 'address and can be spoofed to dodge rate limits. Set a hop count (e.g. TRUST_PROXY=2) or proxy CIDRs.');
+  }
   app.addHook('onRequest', async (req, reply) => {
     const route = LIMITED_ROUTES.find(
       (r) => r.method === req.method && req.url.split('?')[0] === r.url,
@@ -528,7 +553,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     typingTtlMs: deps.typingTtlMs,
     agentPresence,
   });
-  await registerAuthRoutes(app, deps.pool);
+  await registerAuthRoutes(app, deps.pool, { limiter, loginAccountRule: rules.loginAccount });
   // 오퍼레이터 허브(스펙 2026-09-20 §4)를 여기서 만든다 — 계정 라우트가 배정 거절 사유를 여기서
   // 읽는다. 라우트 등록은 아래(릴레이 뒤)다: 허브는 소켓이 붙기 전엔 빈 표일 뿐이라 순서가 무관하다.
   const operatorHub = createOperatorHub();

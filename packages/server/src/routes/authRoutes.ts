@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { newToken, hashToken } from '../auth/tokens.js';
 import { effectiveCapabilities } from '../auth/permissions.js';
 import { recordAudit } from '../audit.js';
+import type { RateLimiter, RateLimitRule } from '../rateLimit.js';
 import { createChannel } from '../services/channels.js';
 import { getHandleGroupByHandle } from '../services/handleGroups.js';
 
@@ -24,7 +25,23 @@ const credentials = z.object({
   password: z.string().min(8).max(128),
 });
 
-export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
+export interface AuthRouteOpts {
+  /** 계정 단위 로그인 실패 상한(`DEFAULT_RATE_LIMITS.loginAccount`). 주소 단위 리밋과 같은 저장소를 쓴다. */
+  limiter: RateLimiter;
+  loginAccountRule: RateLimitRule;
+}
+
+/**
+ * 계정 단위 키. **계정이 있든 없든 같은 키를 쓴다** — 없는 login_id 만 막히지 않거나(또는 반대로)
+ * 하면 429 여부로 계정 존재가 드러난다. 길이를 자르는 것은 아무 문자열이나 키로 받아 메모리를
+ * 늘리지 못하게 하려는 것이다(진짜 login_id 는 이보다 짧다).
+ */
+function loginAccountKey(loginId: string): string {
+  return `loginAccount:${loginId.toLowerCase().slice(0, 128)}`;
+}
+
+export async function registerAuthRoutes(app: FastifyInstance, pool: Pool, opts: AuthRouteOpts): Promise<void> {
+  const { limiter, loginAccountRule } = opts;
   app.post('/bootstrap', async (req, reply) => {
     const existing = await pool.query(`select 1 from account where kind = 'human' limit 1`);
     if (existing.rowCount) {
@@ -182,6 +199,22 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
 
   app.post('/auth/login', async (req, reply) => {
     const body = z.object({ loginId: z.string(), password: z.string() }).parse(req.body);
+    // 계정 단위 상한은 **Argon2 검증 앞**에서 센다 — 막힌 계정에 대해서는 비싼 검증도 안 한다.
+    // 검증 뒤에 실패만 세면 동시에 보낸 요청이 모두 검사를 통과해 상한을 넘는다. 그래서 시도를
+    // 먼저 세고, 성공하면 지운다 — 결과적으로 "성공 없이 이어진 시도"를 세는 것과 같다.
+    // 막혀 있는 동안은 맞는 비밀번호도 거절한다. 그러지 않으면 대입이 계속 맞혀 볼 수 있다.
+    // 응답은 주소 단위 리밋과 **같은 모양**이다 — 어느 리밋에 걸렸는지, 계정이 있는지를 말하지 않는다.
+    const accountKey = loginAccountKey(body.loginId);
+    const locked = limiter.hit(accountKey, loginAccountRule);
+    if (!locked.allowed) {
+      await recordAudit(pool, {
+        action: 'login.failed', actorId: null, actorHandle: body.loginId, detail: { reason: 'account_rate_limited' },
+      }, req);
+      return reply
+        .code(429)
+        .header('retry-after', String(Math.ceil(locked.retryAfterMs / 1000)))
+        .send({ error: { code: 'rate_limited', message: 'too many attempts, try again later' } });
+    }
     const res = await pool.query(
       `select id, password_hash, handle from account where lower(login_id) = lower($1) and kind = 'human'`, [body.loginId]);
     const row = res.rows[0];
@@ -193,6 +226,7 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool): Prom
       }, req);
       return reply.code(401).send({ error: { code: 'invalid_credentials', message: 'wrong login ID or password' } });
     }
+    limiter.reset(accountKey);
     const { token, hash } = newToken('hrks');
     await pool.query(
       `insert into session (token_hash, account_id, expires_at)

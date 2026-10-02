@@ -20,6 +20,8 @@ export interface RateLimitVerdict {
 
 export interface RateLimiter {
   hit(key: string, rule: RateLimitRule): RateLimitVerdict;
+  /** 키를 지운다(성공한 로그인이 그 계정의 실패 수를 비운다). */
+  reset(key: string): void;
   size(): number;
 }
 
@@ -43,6 +45,10 @@ export function createRateLimiter(now: () => number = () => Date.now()): RateLim
         return { allowed: true, retryAfterMs: 0 };
       }
       return { allowed: false, retryAfterMs: Math.max(1, current.resetAt - t) };
+    },
+
+    reset(key) {
+      windows.delete(key);
     },
 
     size() {
