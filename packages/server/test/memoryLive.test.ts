@@ -572,7 +572,8 @@ describe('memory MCP tools', () => {
 
       for (let i = 0; i < needToAdd; i++) {
         const result = await callTool(client, 'memory.set', { slug: `mem/testitem${i}`, value: 'x' });
-        expect(result).toEqual({ ok: true });
+        // 180개부터는 items_near_limit 경고가 붙는다(C1) — ok 는 그대로다.
+        expect(result).toMatchObject({ ok: true });
       }
 
       const add201 = await callTool(client, 'memory.set', { slug: 'mem/testitem200', value: 'x' });
@@ -582,9 +583,223 @@ describe('memory MCP tools', () => {
       expect(removeOne).toEqual({ ok: true });
 
       const addAfterDelete = await callTool(client, 'memory.set', { slug: 'mem/testitem200', value: 'x' });
-      expect(addAfterDelete).toEqual({ ok: true });
+      expect(addAfterDelete).toMatchObject({ ok: true });
+      expect(addAfterDelete.warnings).toEqual([{ code: 'items_near_limit', active: 200, limit: 200 }]);
     } finally {
       await client.close();
     }
+  });
+
+  // ── C1 정리 도구: 보관·합치기·되돌리기·임대·경고 ─────────────────────────────────────
+  describe('curate (C1)', () => {
+    it('archive hides from list/recall/search and count, get still reads it, unarchive brings it back', async () => {
+      const { pat } = await createAgent(app, adminToken, 'archive-agent');
+      const client = await mcpClient(pat);
+      try {
+        await callTool(client, 'memory.set', { slug: 'mem/deploy-steps', value: '배포 절차', description: '배포 절차 요약' });
+        const before = (await callTool(client, 'memory.list', {})).rev;
+        expect(await callTool(client, 'memory.archive', { slug: 'mem/deploy-steps' })).toEqual({ ok: true });
+        const list = await callTool(client, 'memory.list', {});
+        expect(list.slugs).not.toContain('mem/deploy-steps');
+        expect(list.rev).not.toBe(before);
+        expect((await callTool(client, 'memory.search', { query: '배포 절차', recall: true })).hits).toEqual([]);
+        expect((await callTool(client, 'memory.search', { query: '배포 절차' })).hits).toEqual([]);
+        expect((await callTool(client, 'memory.search', { query: '배포 절차', includeArchived: true })).hits.map((h: { slug: string }) => h.slug)).toEqual(['mem/deploy-steps']);
+        const got = await callTool(client, 'memory.get', { slug: 'mem/deploy-steps' });
+        expect(got).toMatchObject({ value: '배포 절차', archived: true, archivedAt: expect.any(String) });
+        const audit = await callTool(client, 'memory.audit', {});
+        expect(audit.items).toEqual({ active: 0, limit: 200, archived: 1 });
+        // 멱등: 다시 보관해도 ok. 되살리면 목록에 돌아온다.
+        expect(await callTool(client, 'memory.archive', { slug: 'mem/deploy-steps' })).toEqual({ ok: true });
+        expect(await callTool(client, 'memory.unarchive', { slug: 'mem/deploy-steps' })).toEqual({ ok: true });
+        expect((await callTool(client, 'memory.list', {})).slugs).toContain('mem/deploy-steps');
+        expect((await callTool(client, 'memory.get', { slug: 'mem/deploy-steps' })).archived).toBeUndefined();
+        // core 는 보관 불가, 없는 것은 not_found, 기대 판이 다르면 conflict.
+        expect((await callTool(client, 'memory.archive', { slug: 'core' })).error.code).toBe('core_not_archivable');
+        expect((await callTool(client, 'memory.archive', { slug: 'mem/nope' })).error.code).toBe('not_found');
+        const stale = await callTool(client, 'memory.archive', { slug: 'mem/deploy-steps', ifUpdatedAt: '2020-01-01T00:00:00.000Z' });
+        expect(stale.error.code).toBe('conflict');
+        expect((await callTool(client, 'memory.get', { slug: 'mem/deploy-steps' })).archived).toBeUndefined();
+      } finally {
+        await client.close();
+      }
+    });
+
+    it('writing to an archived slug revives it and counts it against the limit', async () => {
+      const { accountId, pat } = await createAgent(app, adminToken, 'archive-write-agent');
+      const client = await mcpClient(pat);
+      try {
+        await callTool(client, 'memory.set', { slug: 'mem/a', value: 'a' });
+        await callTool(client, 'memory.archive', { slug: 'mem/a' });
+        expect(await callTool(client, 'memory.set', { slug: 'mem/a', value: 'a2' })).toEqual({ ok: true });
+        const row = (await pool.query(`select archived_at from agent_memory where account_id = $1 and slug = 'mem/a'`, [accountId])).rows[0];
+        expect(row.archived_at).toBeNull();
+        expect((await callTool(client, 'memory.list', {})).slugs).toContain('mem/a');
+      } finally {
+        await client.close();
+      }
+    });
+
+    it('unarchive refuses when active items are at the limit', async () => {
+      const { pat } = await createAgent(app, adminToken, 'archive-full-agent');
+      const client = await mcpClient(pat);
+      try {
+        await callTool(client, 'memory.set', { slug: 'mem/parked', value: 'p' });
+        await callTool(client, 'memory.archive', { slug: 'mem/parked' });
+        for (let i = 0; i < 200; i++) await callTool(client, 'memory.set', { slug: `mem/f${i}`, value: 'x' });
+        expect((await callTool(client, 'memory.unarchive', { slug: 'mem/parked' })).error.code).toBe('too_many');
+        await callTool(client, 'memory.archive', { slug: 'mem/f0' });
+        expect(await callTool(client, 'memory.unarchive', { slug: 'mem/parked' })).toEqual({ ok: true });
+      } finally {
+        await client.close();
+      }
+    });
+
+    it('merge writes into, archives from, keeps a merge revision with detail.from, honours per-slug ifUpdatedAt', async () => {
+      const { pat } = await createAgent(app, adminToken, 'merge-agent');
+      const client = await mcpClient(pat);
+      try {
+        await callTool(client, 'memory.set', { slug: 'mem/cache-a', value: '캐시 사실 A' });
+        await callTool(client, 'memory.set', { slug: 'mem/cache-b', value: '캐시 사실 B' });
+        await callTool(client, 'memory.set', { slug: 'mem/cache-c', value: '캐시 사실 C' });
+        const a = await callTool(client, 'memory.get', { slug: 'mem/cache-a' });
+        const b = await callTool(client, 'memory.get', { slug: 'mem/cache-b' });
+
+        // 기대 판이 어긋나면 아무것도 바뀌지 않는다.
+        const bad = await callTool(client, 'memory.merge', {
+          into: 'mem/cache-a', from: ['mem/cache-b'], value: 'x', ifUpdatedAt: { 'mem/cache-b': '2020-01-01T00:00:00.000Z' },
+        });
+        expect(bad.error).toMatchObject({ code: 'conflict', slug: 'mem/cache-b' });
+        expect((await callTool(client, 'memory.get', { slug: 'mem/cache-a' })).value).toBe('캐시 사실 A');
+        expect((await callTool(client, 'memory.get', { slug: 'mem/cache-b' })).archived).toBeUndefined();
+        // from 에 없는 것이 있어도 마찬가지.
+        const miss = await callTool(client, 'memory.merge', { into: 'mem/cache-a', from: ['mem/cache-b', 'mem/none'], value: 'x' });
+        expect(miss.error).toMatchObject({ code: 'not_found', slugs: ['mem/none'] });
+
+        const ok = await callTool(client, 'memory.merge', {
+          into: 'mem/cache-a', from: ['mem/cache-b', 'mem/cache-c', 'mem/cache-a'], value: '캐시 사실 A+B+C', description: '캐시 사실 모음',
+          ifUpdatedAt: { 'mem/cache-a': a.updatedAt, 'mem/cache-b': b.updatedAt },
+        });
+        expect(ok).toMatchObject({ ok: true, archived: ['mem/cache-b', 'mem/cache-c'] });
+        expect(await callTool(client, 'memory.get', { slug: 'mem/cache-a' })).toMatchObject({ value: '캐시 사실 A+B+C', description: '캐시 사실 모음' });
+        expect((await callTool(client, 'memory.get', { slug: 'mem/cache-b' })).archived).toBe(true);
+        expect((await callTool(client, 'memory.list', {})).slugs).toEqual(['mem/cache-a']);
+        const revs = (await callTool(client, 'memory.revisions', { slug: 'mem/cache-a' })).revisions;
+        expect(revs[0]).toMatchObject({ id: expect.any(Number), reason: 'merge', detail: { from: ['mem/cache-b', 'mem/cache-c'], created: false }, chars: 6 });
+
+        // 새 이름으로도 합친다 — 그때도 merge 판이 남아 무엇이 합쳐졌는지 적힌다.
+        expect(await callTool(client, 'memory.merge', { into: 'mem/cache-all', from: ['mem/cache-a'], value: '전부' })).toMatchObject({ ok: true });
+        expect((await callTool(client, 'memory.revisions', { slug: 'mem/cache-all' })).revisions[0]).toMatchObject({ reason: 'merge', detail: { from: ['mem/cache-a'], created: true } });
+        expect((await callTool(client, 'memory.merge', { into: 'core', from: ['mem/cache-a'], value: 'x' })).error.code).toBe('core_not_mergeable');
+      } finally {
+        await client.close();
+      }
+    });
+
+    it('restore brings back a revision (latest or by id), leaves a restore revision, revives deleted slugs', async () => {
+      const { pat } = await createAgent(app, adminToken, 'restore-agent');
+      const client = await mcpClient(pat);
+      try {
+        await callTool(client, 'memory.set', { slug: 'mem/r', value: 'v0', description: 'd0' });
+        await callTool(client, 'memory.set', { slug: 'mem/r', value: 'v1' });
+        await callTool(client, 'memory.set', { slug: 'mem/r', value: 'v2' });
+        expect(await callTool(client, 'memory.restore', { slug: 'mem/r' })).toEqual({ ok: true });
+        expect((await callTool(client, 'memory.get', { slug: 'mem/r' })).value).toBe('v1');
+        const revs = (await callTool(client, 'memory.revisions', { slug: 'mem/r' })).revisions;
+        expect(revs[0]).toMatchObject({ reason: 'restore', chars: 2, detail: { revisionId: expect.any(Number) } });
+        const v0 = revs.find((r: { chars: number; reason?: string; description?: string }) => r.chars === 2 && !r.reason && r.description === 'd0');
+        expect(v0).toBeTruthy();
+        expect(await callTool(client, 'memory.restore', { slug: 'mem/r', revisionId: v0.id })).toEqual({ ok: true });
+        expect(await callTool(client, 'memory.get', { slug: 'mem/r' })).toMatchObject({ value: 'v0', description: 'd0' });
+        // 지운 것도 되살아난다. 없는 판은 not_found.
+        await callTool(client, 'memory.set', { slug: 'mem/r', value: null });
+        expect(await callTool(client, 'memory.restore', { slug: 'mem/r' })).toEqual({ ok: true });
+        expect((await callTool(client, 'memory.get', { slug: 'mem/r' })).value).toBe('v0');
+        expect((await callTool(client, 'memory.restore', { slug: 'mem/r', revisionId: 999999 })).error.code).toBe('not_found');
+      } finally {
+        await client.close();
+      }
+    });
+
+    it('curated revisions (merge/restore) do not crowd out the 5 ordinary revisions', async () => {
+      const { accountId, pat } = await createAgent(app, adminToken, 'rev-cap-agent');
+      const client = await mcpClient(pat);
+      try {
+        await callTool(client, 'memory.set', { slug: 'mem/src', value: 's' });
+        await callTool(client, 'memory.set', { slug: 'mem/t', value: 'v0' });
+        for (let i = 1; i <= 6; i++) await callTool(client, 'memory.set', { slug: 'mem/t', value: `v${i}` });
+        for (let i = 0; i < 8; i++) await callTool(client, 'memory.restore', { slug: 'mem/t' });
+        const rows = (await pool.query(
+          `select reason from agent_memory_revision where account_id = $1 and slug = 'mem/t'`, [accountId],
+        )).rows as { reason: string | null }[];
+        expect(rows.filter((r) => r.reason === null)).toHaveLength(5);
+        expect(rows.filter((r) => r.reason === 'restore')).toHaveLength(8);
+      } finally {
+        await client.close();
+      }
+    });
+
+    it('lease: one holder per account, renew with the same token, others are told to back off, release', async () => {
+      const { pat } = await createAgent(app, adminToken, 'lease-agent');
+      const client = await mcpClient(pat);
+      try {
+        expect(await callTool(client, 'memory.lease', { action: 'status' })).toEqual({ lease: null });
+        const first = await callTool(client, 'memory.lease', { action: 'acquire', minutes: 30 });
+        expect(first).toMatchObject({ acquired: true, token: expect.any(String), lease: { expiresAt: expect.any(String) } });
+        const other = await callTool(client, 'memory.lease', { action: 'acquire' });
+        expect(other).toMatchObject({ acquired: false, heldBy: { expiresAt: first.lease.expiresAt } });
+        expect(other.token).toBeUndefined();
+        const renewed = await callTool(client, 'memory.lease', { action: 'acquire', token: first.token, minutes: 60 });
+        expect(renewed.acquired).toBe(true);
+        expect(new Date(renewed.lease.expiresAt).getTime()).toBeGreaterThan(new Date(first.lease.expiresAt).getTime());
+        expect(await callTool(client, 'memory.lease', { action: 'release', token: 'not-the-token' })).toEqual({ ok: true, released: false });
+        expect(await callTool(client, 'memory.lease', { action: 'release', token: first.token })).toEqual({ ok: true, released: true });
+        expect((await callTool(client, 'memory.lease', { action: 'acquire' })).acquired).toBe(true);
+      } finally {
+        await client.close();
+      }
+    });
+
+    it('set warns near the core limit and when journals are about to be pruned; core_too_long lists sections', async () => {
+      const { pat } = await createAgent(app, adminToken, 'warn-agent');
+      const client = await mcpClient(pat);
+      try {
+        expect(await callTool(client, 'memory.set', { slug: 'core', value: 'x'.repeat(2599) })).toEqual({ ok: true });
+        const near = await callTool(client, 'memory.set', { slug: 'core', value: 'x'.repeat(2600) });
+        expect(near).toEqual({ ok: true, warnings: [{ code: 'core_near_limit', length: 2600, limit: 3000 }] });
+        const over = await callTool(client, 'memory.set', { slug: 'core', value: `# 머리\n${'a'.repeat(100)}\n## 긴 절\n${'b'.repeat(2900)}\n## 짧은 절\nc` });
+        expect(over.error.code).toBe('core_too_long');
+        expect(over.error.sections[0]).toEqual({ heading: '긴 절', chars: 2908 });
+        await callTool(client, 'memory.set', { slug: 'core', value: 'small' });
+        for (let i = 0; i < 55; i++) await callTool(client, 'memory.set', { slug: `mem/j${String(i).padStart(2, '0')}`, value: 'j', kind: 'journal' });
+        const r = await callTool(client, 'memory.set', { slug: 'mem/j55', value: 'j', kind: 'journal' });
+        expect(r.warnings).toEqual([{ code: 'journal_expiring', count: 56, limit: 60, expiring: ['mem/j00'] }]);
+        expect((await callTool(client, 'memory.audit', {})).expiringJournal).toEqual(['mem/j00']);
+      } finally {
+        await client.close();
+      }
+    });
+
+    it('audit adds similarBody, sharedRefs, old and largest', async () => {
+      const { accountId, pat } = await createAgent(app, adminToken, 'audit-c1-agent');
+      const client = await mcpClient(pat);
+      try {
+        const body = '러너는 stateDir 을 기동 때 캐시한다 앱 종료 뒤 옮겨라 PR #802 #804 참고';
+        await callTool(client, 'memory.set', { slug: 'mem/paths-one', value: body, description: 'a' });
+        await callTool(client, 'memory.set', { slug: 'mem/moving-state', value: body + ' 그리고 ENOENT', description: 'b' });
+        await callTool(client, 'memory.set', { slug: 'mem/other', value: '전혀 다른 내용 #802 하나만 공유', description: 'c' });
+        await callTool(client, 'memory.set', { slug: 'mem/big', value: 'z'.repeat(5000), description: 'd' });
+        await pool.query(`update agent_memory set updated_at = now() - interval '100 days' where account_id = $1 and slug = 'mem/other'`, [accountId]);
+        const a = await callTool(client, 'memory.audit', {});
+        expect(a.similarBody).toEqual([{ pair: ['mem/moving-state', 'mem/paths-one'], similarity: expect.any(Number) }]);
+        expect(a.similarBody[0].similarity).toBeGreaterThanOrEqual(0.5);
+        expect(a.sharedRefs).toEqual([{ ref: '#802', slugs: ['mem/moving-state', 'mem/other', 'mem/paths-one'] }]);
+        expect(a.old).toEqual([{ slug: 'mem/other', updatedAt: expect.any(String) }]);
+        expect(a.largest[0]).toEqual({ slug: 'mem/big', chars: 5000 });
+        expect(a.items).toEqual({ active: 4, limit: 200, archived: 0 });
+      } finally {
+        await client.close();
+      }
+    });
   });
 });

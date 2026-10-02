@@ -14,6 +14,8 @@ export {
 
 /** slug 마다 남기는 이전 판 수(069). 되돌릴 길이면 되고, 역사서가 아니다. */
 export const MAX_MEMORY_REVISIONS_PER_SLUG = 5;
+/** 이유(merge·restore)가 붙은 판은 따로 이만큼(097) — 정리 한 바퀴가 되돌릴 판을 밀어내지 않게. */
+export const MAX_CURATED_REVISIONS_PER_SLUG = 20;
 
 export interface MemoryEntry {
   slug: string;
@@ -27,11 +29,13 @@ export interface MemoryEntry {
   /** 쓰기 검사(080)에 걸린 판이면 그 시각과 이유. 사람이 확인할 때까지 프롬프트에 싣지 않는다. */
   flaggedAt: Date | null;
   flagReason: string | null;
+  /** 보관된 기억(097)이면 그 시각. 목록·recall·검색·상한에서 빠지고 `memory.get`·사람 화면에서만 보인다. */
+  archivedAt: Date | null;
 }
 
 const ENTRY_COLUMNS = `slug, value, updated_at as "updatedAt", description, created_at as "createdAt",
   read_count as "readCount", last_read_at as "lastReadAt", kind,
-  flagged_at as "flaggedAt", flag_reason as "flagReason"`;
+  flagged_at as "flaggedAt", flag_reason as "flagReason", archived_at as "archivedAt"`;
 
 /** 목록 한 줄 — 러너가 턴 프롬프트의 `<memory-index>` 에 싣는다(본문은 없다). */
 export interface MemoryIndexEntry {
@@ -44,7 +48,7 @@ export async function listMemoryIndex(pool: Pool, accountId: string): Promise<Me
   const res = await pool.query(
     // 걸린 판(080)의 요약은 싣지 않는다 — 요약도 에이전트가 쓴 글이라 검사 대상이다.
     `select slug, case when flagged_at is null then description end as description, kind
-     from agent_memory where account_id = $1 order by slug`,
+     from agent_memory where account_id = $1 and archived_at is null order by slug`,
     [accountId],
   );
   return res.rows as MemoryIndexEntry[];
@@ -59,7 +63,7 @@ export type MemoryResult = 'ok' | 'too_many';
 
 export async function listMemory(pool: Pool, accountId: string): Promise<string[]> {
   const res = await pool.query(
-    `select slug from agent_memory where account_id = $1 order by slug`,
+    `select slug from agent_memory where account_id = $1 and archived_at is null order by slug`,
     [accountId],
   );
   return res.rows.map((r) => r.slug as string);
@@ -73,6 +77,7 @@ export async function listMemory(pool: Pool, accountId: string): Promise<string[
  * 판본을 올리는 것을 잊을 자리가 아예 없다. 재료는 `(slug, updated_at)` 이다:
  * - 추가·수정은 `updated_at = now()` 로 그 행의 값을 바꾼다.
  * - 삭제는 그 행이 목록에서 빠진다.
+ * - 보관·복구(097)는 `updated_at = now()` 로 바꾼다 — 보관은 목록에서 빠지는 일이라 판이 바뀌어야 한다.
  * 그래서 어느 쪽이든 해시가 바뀐다. 본문을 해시하지 않는 이유: 200행×8,000자를 폴마다
  * 읽을 까닭이 없다 — 본문이 바뀌면 `updated_at` 도 반드시 바뀐다.
  *
@@ -152,13 +157,21 @@ async function deleteWithRevision(pool: Pool, accountId: string, slug: string): 
   await pruneRevisions(pool, accountId, slug);
 }
 
-async function pruneRevisions(pool: Pool, accountId: string, slug: string): Promise<void> {
+/**
+ * 보통 판(수정·삭제로 밀려난 것)은 최근 5개, **이유가 붙은 판**(merge·restore, 097)은 따로 최근
+ * `MAX_CURATED_REVISIONS_PER_SLUG` 개를 둔다. 정리 한 바퀴(합치기 → 다듬기 몇 번)가 되돌릴 판을
+ * 밀어내면 되돌리기가 없는 것과 같다 — 압축으로 생긴 판은 보통 판과 자리를 다투지 않는다.
+ */
+export async function pruneRevisions(pool: Pool, accountId: string, slug: string): Promise<void> {
   await pool.query(
     `delete from agent_memory_revision
      where account_id = $1 and slug = $2 and id not in (
-       select id from agent_memory_revision where account_id = $1 and slug = $2
-       order by replaced_at desc, id desc limit $3)`,
-    [accountId, slug, MAX_MEMORY_REVISIONS_PER_SLUG],
+       (select id from agent_memory_revision where account_id = $1 and slug = $2 and reason is null
+        order by replaced_at desc, id desc limit $3)
+       union
+       (select id from agent_memory_revision where account_id = $1 and slug = $2 and reason is not null
+        order by replaced_at desc, id desc limit $4))`,
+    [accountId, slug, MAX_MEMORY_REVISIONS_PER_SLUG, MAX_CURATED_REVISIONS_PER_SLUG],
   );
 }
 
@@ -186,7 +199,7 @@ export interface MemoryConflict {
 /** DB 는 µs 까지 갖고 JSON 은 ms 까지 준다 — 비교는 ms 로 자른 값끼리 한다. */
 const MS_EQ = `date_trunc('milliseconds', updated_at) = date_trunc('milliseconds', $EXPECT::timestamptz)`;
 
-async function currentUpdatedAt(pool: Pool, accountId: string, slug: string): Promise<Date | null> {
+export async function currentUpdatedAt(pool: Pool, accountId: string, slug: string): Promise<Date | null> {
   const r = await pool.query(
     `select updated_at from agent_memory where account_id = $1 and slug = $2`, [accountId, slug],
   );
@@ -240,12 +253,13 @@ export async function setMemory(
   // 본문을 "이전 판"으로 적는다. `prev` 는 문장 시작 시점의 스냅숏이라 덮어쓰기 전 값이다.
   const res = await pool.query(
     `with prev as (
-       select slug, value, description, updated_at, flagged_at from agent_memory where account_id = $1 and slug = $2),
+       select slug, value, description, updated_at, flagged_at, archived_at from agent_memory where account_id = $1 and slug = $2),
      ins as (
        insert into agent_memory (account_id, slug, value, description, kind, flagged_at, flag_reason)
        select $1, $2, $3, nullif($5, ''), coalesce($7, 'topic'), case when $10::text is null then null else now() end, $10::text
-       where ((select count(*) from agent_memory where account_id = $1) < $4
-          or exists (select 1 from prev))
+       -- 상한은 **살아 있는** 행만 센다(097). 보관된 slug 를 다시 쓰는 것은 되살리는 일이라 새 항목으로 센다.
+       where ((select count(*) from agent_memory where account_id = $1 and archived_at is null) < $4
+          or exists (select 1 from prev where archived_at is null))
          -- 기대가 있으면: 새로 만들기는 "기대가 null" 일 때만.
          and ($8 = 'none' or ($8 = 'absent' and not exists (select 1 from prev)) or ($8 = 'at' and exists (select 1 from prev)))
        on conflict (account_id, slug) do update set
@@ -254,6 +268,7 @@ export async function setMemory(
          kind = coalesce($7, agent_memory.kind),
          flagged_at = excluded.flagged_at,
          flag_reason = excluded.flag_reason,
+         archived_at = null,
          updated_at = now()
        -- **판 비교는 여기서 한다.** DO UPDATE 의 WHERE 는 잠근 뒤의 최신 행으로 다시 평가되므로,
        -- 두 턴이 같은 판을 들고 동시에 와도 한쪽만 통과한다(prev 스냅숏으로 비교하면 둘 다 통과).
@@ -295,8 +310,8 @@ export async function setMemory(
 async function pruneJournal(pool: Pool, accountId: string): Promise<void> {
   await pool.query(
     `with d as (
-       delete from agent_memory where account_id = $1 and kind = 'journal' and slug in (
-         select slug from agent_memory where account_id = $1 and kind = 'journal'
+       delete from agent_memory where account_id = $1 and kind = 'journal' and archived_at is null and slug in (
+         select slug from agent_memory where account_id = $1 and kind = 'journal' and archived_at is null
          order by updated_at desc, slug offset $2)
        returning slug, value, description, updated_at, flagged_at)
      insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged)
@@ -490,7 +505,7 @@ export function rankRecall(terms: string[], rows: RecallCandidate[], limit: numb
  */
 export async function searchMemory(
   pool: Pool, accountId: string, query: string,
-  opts: { limit: number; includeValue: boolean; recall?: boolean; exclude?: string[]; recordTop?: number },
+  opts: { limit: number; includeValue: boolean; recall?: boolean; exclude?: string[]; recordTop?: number; includeArchived?: boolean },
 ): Promise<{ hits: MemorySearchHit[]; terms: string[] }> {
   if (opts.recall) {
     const terms = searchTerms(query, { exclude: await recallExcludedNames(pool) });
@@ -499,7 +514,7 @@ export async function searchMemory(
     // 이름·요약에 걸린 행만 가져온다 — 본문은 그 몇 행만 JS 로 센다.
     const res = await pool.query(
       `select slug, description, kind, value, updated_at as "updatedAt" from agent_memory m
-       where account_id = $1 and slug <> 'core' and kind <> 'journal' and flagged_at is null
+       where account_id = $1 and slug <> 'core' and kind <> 'journal' and flagged_at is null and archived_at is null
          and exists (select 1 from unnest($2::text[]) as p
                      where lower(m.slug) like p or lower(coalesce(m.description, '')) like p)`,
       [accountId, patterns],
@@ -521,10 +536,10 @@ export async function searchMemory(
           + case when lower(m.value) like p then 1 else 0 end), 0)
         from unnest($2::text[]) as p)::int as score
      from agent_memory m
-     where account_id = $1 and slug <> 'core' and flagged_at is null
+     where account_id = $1 and slug <> 'core' and flagged_at is null and ($4 or archived_at is null)
      order by score desc, updated_at desc
      limit $3`,
-    [accountId, patterns, opts.limit],
+    [accountId, patterns, opts.limit, opts.includeArchived ?? false],
   );
   return { hits: (res.rows as MemorySearchHit[]).filter((r) => r.score > 0), terms };
 }
@@ -551,20 +566,29 @@ async function recordRecall(pool: Pool, accountId: string, slugs: string[]): Pro
 }
 
 export interface MemoryRevision {
+  /** `memory.restore` 가 가리키는 값(097). */
+  id: number;
   value: string;
   description: string | null;
   updatedAt: Date;
   replacedAt: Date;
   /** 이 판이 쓰기 검사(080)에 걸린 판이었나. */
   flagged: boolean;
+  /** 어떤 일로 밀려난 판인가(097). null 은 보통 수정·삭제. */
+  reason: MemoryRevisionReason | null;
+  /** merge 면 `{ from: string[] }` — 어떤 기억이 이 판에 합쳐졌나(측정의 gold 재매핑 근거). */
+  detail: Record<string, unknown> | null;
 }
+
+export const MEMORY_REVISION_REASONS = ['merge', 'restore'] as const;
+export type MemoryRevisionReason = typeof MEMORY_REVISION_REASONS[number];
 
 /** slug 의 이전 판, 최근 것부터. 사람이 보는 화면과 정리 턴이 되돌릴 때 쓴다. */
 export async function listMemoryRevisions(
   pool: Pool, accountId: string, slug: string,
 ): Promise<MemoryRevision[]> {
   const res = await pool.query(
-    `select value, description, updated_at as "updatedAt", replaced_at as "replacedAt", flagged
+    `select id::int as id, value, description, updated_at as "updatedAt", replaced_at as "replacedAt", flagged, reason, detail
      from agent_memory_revision where account_id = $1 and slug = $2
      order by replaced_at desc, id desc`,
     [accountId, slug],
@@ -631,6 +655,13 @@ export function isValidSlug(slug: string): boolean {
 export const AUDIT_STALE_DAYS = 30;
 export const AUDIT_NEVER_READ_GRACE_DAYS = 7;
 const AUDIT_LIST_CAP = 30;
+/** 이만큼 안 고친 기억은 낡았을 수 있다(C1). 읽힘과 무관한 축 — recall 이 안 세던 때의 read_count 왜곡을 피한다. */
+export const AUDIT_OLD_DAYS = 90;
+/** 본문 낱말 자카드가 이 이상이면 같은 주제를 두 번 적었을 가능성 — 합칠 후보(C1). */
+export const AUDIT_BODY_SIMILARITY = 0.5;
+/** journal 이 상한에서 이만큼 안쪽이면 "곧 밀려날 것"으로 알린다(C1). 증류할 교훈이 있으면 topic 으로 올린다. */
+export const JOURNAL_EXPIRING_WINDOW = 5;
+const AUDIT_LARGEST_CAP = 10;
 
 export interface MemoryAudit {
   total: number;
@@ -660,6 +691,53 @@ export interface MemoryAudit {
    * true 면 고친 뒤 다시 audit 한다.
    */
   truncated: boolean;
+  /** 살아 있는 항목 수와 상한(C1). `<memory-index>` 머리의 "N/200" 과 같은 값이다. */
+  items: { active: number; limit: number; archived: number };
+  /** journal 상한(60)에서 5개 안쪽에 든 오래된 journal — 다음 쓰기들에 밀려난다. 교훈을 topic 으로 증류할 마지막 기회다. */
+  expiringJournal: string[];
+  /** 본문 낱말이 절반 넘게 겹치는 짝 — 같은 주제를 두 번 적었을 후보(이름은 다를 수 있다). */
+  similarBody: { pair: [string, string]; similarity: number }[];
+  /** 같은 PR 번호(`#123`)를 셋 이상 공유하는 기억 묶음 — 한 작업의 경위가 여러 topic 으로 흩어진 흔적. */
+  sharedRefs: { ref: string; slugs: string[] }[];
+  /** 90일 넘게 안 고친 것(journal 제외). 낡은 사실일 수 있다 — 읽어 보고 고치거나 보관한다. */
+  old: { slug: string; updatedAt: string }[];
+  /** 본문이 긴 것 상위 10개 — 포인터로 쪼갤 후보. */
+  largest: { slug: string; chars: number }[];
+}
+
+/** 본문을 낱말로 편다(소문자, 두 글자 이상). 자카드용이라 순서·빈도는 버린다. */
+export function bodyTokens(value: string): Set<string> {
+  return new Set(value.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((t) => t.length > 1));
+}
+
+/** `#1234` 꼴의 PR·이슈 번호. 세 자리 미만은 목록 번호와 섞여 뺀다. */
+export function refTokens(value: string): Set<string> {
+  return new Set([...value.matchAll(/(?<![\w#])#(\d{3,6})\b/g)].map((m) => `#${m[1]}`));
+}
+
+/**
+ * core 가 넘쳤을 때 "무엇을 내릴까"의 후보 — `## 제목` 절 단위의 길이(C1). 거절에 동봉한다:
+ * 거절만 받은 에이전트는 포기하고 엉뚱한 곳에 적는다(invalid_slug 때와 같은 교훈).
+ */
+export function coreSections(value: string, limit = 5): { heading: string; chars: number }[] {
+  const out: { heading: string; chars: number }[] = [];
+  const lines = value.split('\n');
+  let heading = '(머리)'; let chars = 0;
+  const flush = () => { if (chars) out.push({ heading, chars }); };
+  for (const line of lines) {
+    const m = /^#{1,6}\s+(.+?)\s*$/.exec(line);
+    if (m) { flush(); heading = m[1]!.slice(0, 60); chars = line.length + 1; } else chars += line.length + 1;
+  }
+  flush();
+  return out.sort((a, b) => b.chars - a.chars).slice(0, limit);
+}
+
+/** 상한 60 안쪽 5개에 든 journal, 먼저 밀려날(가장 오래된) 것부터. journal 이 55개 이하면 비어 있다. */
+export function pickExpiringJournals(journals: { slug: string; updatedAt: Date }[]): string[] {
+  const keep = MAX_JOURNAL_MEMORIES_PER_ACCOUNT - JOURNAL_EXPIRING_WINDOW;
+  if (journals.length <= keep) return [];
+  return [...journals].sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime() || a.slug.localeCompare(b.slug))
+    .slice(keep).map((j) => j.slug).reverse();
 }
 
 /** 이름을 낱말로 편다 — `mem/pr-896-memory-runner-cache` → {pr, memory, runner, cache}(숫자는 버린다). */
@@ -684,14 +762,17 @@ export async function auditMemory(
 ): Promise<MemoryAudit> {
   const res = await pool.query(
     `select slug, value, description, kind, read_count, last_read_at, recall_count, last_recalled_at,
-       created_at, flagged_at, flag_reason
-     from agent_memory where account_id = $1 order by slug`,
+       created_at, updated_at, flagged_at, flag_reason
+     from agent_memory where account_id = $1 and archived_at is null order by slug`,
     [accountId],
   );
+  const archivedCount = (await pool.query(
+    `select count(*)::int as n from agent_memory where account_id = $1 and archived_at is not null`, [accountId],
+  )).rows[0].n as number;
   const rows = res.rows as {
     slug: string; value: string; description: string | null; kind: MemoryKind;
     read_count: number; last_read_at: Date | null; recall_count: number; last_recalled_at: Date | null;
-    created_at: Date; flagged_at: Date | null; flag_reason: string | null;
+    created_at: Date; updated_at: Date; flagged_at: Date | null; flag_reason: string | null;
   }[];
   const now = Date.now();
   const day = 86_400_000;
@@ -702,6 +783,9 @@ export async function auditMemory(
     core: coreRow ? { length: coreRow.value.length, limit: MAX_CORE_MEMORY_LENGTH } : null,
     neverRead: [], stale: [], brokenLinks: [], similar: [], outdated: [], undescribed: [], flagged: [],
     truncated: false,
+    items: { active: rows.length, limit: MAX_MEMORY_ITEMS_PER_ACCOUNT, archived: archivedCount },
+    expiringJournal: pickExpiringJournals(rows.filter((r) => r.kind === 'journal').map((r) => ({ slug: r.slug, updatedAt: r.updated_at }))),
+    similarBody: [], sharedRefs: [], old: [], largest: [],
   };
   const lowered = patterns.map((p) => p.trim()).filter((p) => p.length >= 3).map((p) => [p, p.toLowerCase()] as const);
   for (const r of rows) {
@@ -717,6 +801,9 @@ export async function auditMemory(
     if (judged && lastUsed && now - lastUsed.getTime() > AUDIT_STALE_DAYS * day) {
       audit.stale.push({ slug: r.slug, lastReadAt: lastUsed.toISOString() });
     }
+    if (judged && now - r.updated_at.getTime() > AUDIT_OLD_DAYS * day) {
+      audit.old.push({ slug: r.slug, updatedAt: r.updated_at.toISOString() });
+    }
     for (const m of r.value.matchAll(/\[\[([^\]\s]{1,255})\]\]/g)) {
       const target = m[1]!;
       const exists = slugs.has(target) || slugs.has(`mem/${target}`);
@@ -727,14 +814,30 @@ export async function auditMemory(
     const body = r.value.toLowerCase();
     for (const [raw, low] of lowered) if (body.includes(low)) audit.outdated.push({ slug: r.slug, pattern: raw });
   }
-  const named = rows.filter((r) => r.slug !== 'core' && r.kind !== 'journal').map((r) => [r.slug, nameTokens(r.slug)] as const);
+  const judgedRows = rows.filter((r) => r.slug !== 'core' && r.kind !== 'journal');
+  const named = judgedRows.map((r) => [r.slug, nameTokens(r.slug)] as const);
+  const bodies = judgedRows.map((r) => [r.slug, bodyTokens(r.value)] as const);
   for (let i = 0; i < named.length; i++) {
     for (let j = i + 1; j < named.length; j++) {
       if (jaccard(named[i]![1], named[j]![1]) >= 0.6) audit.similar.push([named[i]![0], named[j]![0]]);
+      const sim = jaccard(bodies[i]![1], bodies[j]![1]);
+      if (sim >= AUDIT_BODY_SIMILARITY) {
+        audit.similarBody.push({ pair: [bodies[i]![0], bodies[j]![0]], similarity: Math.round(sim * 100) / 100 });
+      }
     }
   }
+  audit.similarBody.sort((a, b) => b.similarity - a.similarity);
+  const byRef = new Map<string, string[]>();
+  for (const r of judgedRows) for (const ref of refTokens(r.value)) byRef.set(ref, [...(byRef.get(ref) ?? []), r.slug]);
+  audit.sharedRefs = [...byRef.entries()].filter(([, s]) => s.length >= 3)
+    .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])).map(([ref, s]) => ({ ref, slugs: s }));
+  audit.largest = judgedRows.map((r) => ({ slug: r.slug, chars: r.value.length }))
+    .sort((a, b) => b.chars - a.chars).slice(0, AUDIT_LARGEST_CAP);
   audit.truncated = [audit.neverRead, audit.stale, audit.brokenLinks, audit.similar, audit.outdated,
-    audit.undescribed, audit.flagged].some((l) => l.length > AUDIT_LIST_CAP);
+    audit.undescribed, audit.flagged, audit.similarBody, audit.sharedRefs, audit.old].some((l) => l.length > AUDIT_LIST_CAP);
+  audit.similarBody = audit.similarBody.slice(0, AUDIT_LIST_CAP);
+  audit.sharedRefs = audit.sharedRefs.slice(0, AUDIT_LIST_CAP);
+  audit.old = audit.old.slice(0, AUDIT_LIST_CAP);
   audit.neverRead = audit.neverRead.slice(0, AUDIT_LIST_CAP);
   audit.stale = audit.stale.slice(0, AUDIT_LIST_CAP);
   audit.brokenLinks = audit.brokenLinks.slice(0, AUDIT_LIST_CAP);
