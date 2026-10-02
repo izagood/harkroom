@@ -332,7 +332,7 @@ void main() {
       final rich = tester.widget<RichText>(find.byType(RichText).first);
       final chips = <String>[];
       rich.text.visitChildren((span) {
-        if (span is TextSpan && span.style?.backgroundColor == HarkroomTokens.light.mentionSoft) {
+        if (span is TextSpan && span.style?.backgroundColor == HarkroomTokens.light.accentSurface) {
           chips.add(span.text!);
         }
         return true;

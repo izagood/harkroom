@@ -113,7 +113,7 @@ TextSpan _withBoldHost(String template, String host) {
   if (at < 0) return TextSpan(text: template);
   return TextSpan(children: [
     TextSpan(text: template.substring(0, at)),
-    TextSpan(text: host, style: const TextStyle(fontWeight: FontWeight.w700)),
+    TextSpan(text: host, style: const TextStyle(fontWeight: FontWeight.w600)),
     TextSpan(text: template.substring(at + '{host}'.length)),
   ]);
 }

@@ -26,7 +26,7 @@ class LoadingSkeleton extends StatelessWidget {
           alignment: Alignment.centerLeft,
           child: Container(
             height: 10,
-            decoration: BoxDecoration(color: k.soft, borderRadius: BorderRadius.circular(5)),
+            decoration: BoxDecoration(color: k.surfaceHover, borderRadius: BorderRadius.circular(5)),
           ),
         );
     const widths = [(0.35, 0.9), (0.28, 0.7), (0.4, 0.82), (0.3, 0.6)];
@@ -48,7 +48,7 @@ class LoadingSkeleton extends StatelessWidget {
                   width: HarkroomSize.avatar,
                   height: HarkroomSize.avatar,
                   decoration: BoxDecoration(
-                    color: k.soft,
+                    color: k.surfaceHover,
                     borderRadius: BorderRadius.circular(HarkroomSize.avatarRadius),
                   ),
                 ),
@@ -92,7 +92,7 @@ class EmptyState extends StatelessWidget {
               const SizedBox(height: 6),
               Text(hint!,
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: HarkroomType.meta, color: k.mute)),
+                  style: TextStyle(fontSize: HarkroomType.meta, color: k.fgMuted)),
             ],
           ],
         ),
@@ -140,7 +140,7 @@ class FailedState extends StatelessWidget {
               Text(detail!,
                   key: const Key('state-failed-detail'),
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: HarkroomType.meta, color: k.mute)),
+                  style: TextStyle(fontSize: HarkroomType.meta, color: k.fgMuted)),
             ],
             const SizedBox(height: 6),
             Text(
@@ -150,7 +150,7 @@ class FailedState extends StatelessWidget {
                   LoadFailure.forbidden => t.loadFailedForbidden,
                 },
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: HarkroomType.meta, color: k.mute)),
+                style: TextStyle(fontSize: HarkroomType.meta, color: k.fgMuted)),
             const SizedBox(height: 14),
             OutlinedButton(
               key: const Key('state-retry'),
@@ -214,7 +214,7 @@ class FailedSendRow extends StatelessWidget {
       key: Key('failed-${item.localId}'),
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       padding: const EdgeInsets.fromLTRB(8, 8, 4, 4),
-      decoration: BoxDecoration(color: k.errSoft, borderRadius: BorderRadius.circular(8)),
+      decoration: BoxDecoration(color: k.dangerSurface, borderRadius: BorderRadius.circular(8)),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -226,7 +226,7 @@ class FailedSendRow extends StatelessWidget {
               children: [
                 Text(t.sendFailed,
                     style: TextStyle(
-                        fontSize: HarkroomType.meta, fontWeight: FontWeight.w600, color: k.err)),
+                        fontSize: HarkroomType.meta, fontWeight: FontWeight.w600, color: k.danger)),
                 const SizedBox(height: 2),
                 Text(item.body,
                     style: TextStyle(
@@ -236,13 +236,13 @@ class FailedSendRow extends StatelessWidget {
                     TextButton(
                       key: Key('resend-${item.localId}'),
                       onPressed: item.retrying ? null : () => app.resend(item),
-                      style: TextButton.styleFrom(foregroundColor: k.err),
+                      style: TextButton.styleFrom(foregroundColor: k.danger),
                       child: Text(item.retrying ? t.sending : t.resend),
                     ),
                     TextButton(
                       key: Key('discard-${item.localId}'),
                       onPressed: item.retrying ? null : () => app.discardFailed(item),
-                      style: TextButton.styleFrom(foregroundColor: k.mute),
+                      style: TextButton.styleFrom(foregroundColor: k.fgMuted),
                       child: Text(t.discard),
                     ),
                   ],

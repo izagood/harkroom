@@ -11,7 +11,7 @@ final _mention = RegExp(r'(^|[^A-Za-z0-9_@-])@[A-Za-z0-9_-]{2,32}');
 
 /// 본문을 마크다운으로 그린다. 메시지 줄이 쓴다.
 ///
-/// 글자 크기·색은 토큰에서 온다(본문 15/1.4). 코드는 고정폭 + `soft` 바탕, 인용은 왼쪽 선.
+/// 글자 크기·색은 토큰에서 온다(본문 15/1.5). 코드는 고정폭 + `surfaceSunken` 바탕, 인용은 왼쪽 선.
 class MarkdownBody extends StatefulWidget {
   const MarkdownBody(this.source, {super.key, this.openLink, this.openMessage});
 
@@ -90,15 +90,15 @@ class _MarkdownBodyState extends State<MarkdownBody> {
   Widget _block(BuildContext context, MdBlock b, TextStyle base, HarkroomTokens k) => switch (b) {
         MdParagraph(:final text) => _rich(text, base, k),
         MdHeading(:final level, :final text) =>
-          _rich(text, base.copyWith(fontWeight: FontWeight.w700, fontSize: level <= 2 ? 16 : 15), k),
+          _rich(text, base.copyWith(fontWeight: FontWeight.w600, fontSize: level <= 2 ? 16 : 15), k),
         MdCode(:final text) => Container(
             key: _key('md-code'),
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
-              color: k.soft,
+              color: k.surfaceSunken,
               borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: k.line),
+              border: Border.all(color: k.border),
             ),
             // 긴 줄은 **접지 않고 옆으로 민다** — 코드를 접으면 들여쓰기의 뜻이 사라진다.
             child: SingleChildScrollView(
@@ -114,15 +114,15 @@ class _MarkdownBodyState extends State<MarkdownBody> {
         MdQuote(:final text) => Container(
             key: _key('md-quote'),
             padding: const EdgeInsets.only(left: 10),
-            decoration: BoxDecoration(border: Border(left: BorderSide(color: k.line, width: 3))),
-            child: _rich(text, base.copyWith(color: k.mute), k),
+            decoration: BoxDecoration(border: Border(left: BorderSide(color: k.border, width: 3))),
+            child: _rich(text, base.copyWith(color: k.fgMuted), k),
           ),
         MdList() => _list(b, base, k, 0),
         MdRule() => Container(
             key: _key('md-rule'),
             height: 1,
             margin: const EdgeInsets.symmetric(vertical: 4),
-            color: k.line,
+            color: k.border,
           ),
         MdTable() => _table(b, base, k),
       };
@@ -142,7 +142,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
                   SizedBox(
                     width: list.ordered ? 22 : 14,
                     child: Text(list.ordered ? '${list.start + i}.' : _bullets[depth % _bullets.length],
-                        style: base.copyWith(color: k.mute)),
+                        style: base.copyWith(color: k.fgMuted)),
                   ),
                   Expanded(
                     child: list.items[i].children.isEmpty
@@ -176,7 +176,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
           constraints: const BoxConstraints(maxWidth: 240),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: _rich(text, head ? cellStyle.copyWith(fontWeight: FontWeight.w700) : cellStyle, k,
+            child: _rich(text, head ? cellStyle.copyWith(fontWeight: FontWeight.w600) : cellStyle, k,
                 align: alignOf(c)),
           ),
         );
@@ -186,10 +186,10 @@ class _MarkdownBodyState extends State<MarkdownBody> {
       child: Table(
         defaultColumnWidth: const IntrinsicColumnWidth(),
         defaultVerticalAlignment: TableCellVerticalAlignment.top,
-        border: TableBorder.all(color: k.line),
+        border: TableBorder.all(color: k.border),
         children: [
           TableRow(
-            decoration: BoxDecoration(color: k.soft),
+            decoration: BoxDecoration(color: k.surfaceSunken),
             children: [for (var c = 0; c < t.head.length; c++) cell(t.head[c], c, head: true)],
           ),
           for (final row in t.rows)
@@ -207,7 +207,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
           child: Text(
             context.t.markdownTableMoreRows.replaceAll('{n}', '${t.omittedRows}'),
             key: _key('md-table-more'),
-            style: TextStyle(fontSize: HarkroomType.meta, color: k.mute),
+            style: TextStyle(fontSize: HarkroomType.meta, color: k.fgMuted),
           ),
         ),
       ],
@@ -220,7 +220,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
       switch (piece) {
         case MdText(:final text, :final bold, :final italic, :final strike):
           final style = TextStyle(
-            fontWeight: bold ? FontWeight.w700 : null,
+            fontWeight: bold ? FontWeight.w600 : null,
             fontStyle: italic ? FontStyle.italic : null,
             decoration: strike ? TextDecoration.lineThrough : null,
           );
@@ -234,7 +234,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
               text: text.substring(at, m.end),
               style: style.copyWith(
                 color: k.link,
-                backgroundColor: k.mentionSoft,
+                backgroundColor: k.accentSurface,
                 fontWeight: FontWeight.w600,
               ),
             ));
@@ -249,7 +249,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
               fontFamilyFallback: const ['Courier'],
               fontSize: 13,
               color: k.accent,
-              backgroundColor: k.soft,
+              backgroundColor: k.surfaceRaised,
             ),
           ));
         case MdLink(:final text, :final uri, :final messageId):
@@ -292,13 +292,13 @@ Future<bool?> showLinkConfirm(BuildContext context, Uri uri) {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(t.linkConfirmTitle, style: TextStyle(fontSize: HarkroomType.meta, color: k.mute)),
+            Text(t.linkConfirmTitle, style: TextStyle(fontSize: HarkroomType.meta, color: k.fgMuted)),
             const SizedBox(height: 4),
             Text(uri.host,
                 key: const Key('link-confirm-host'),
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: k.fg)),
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: k.fg)),
             const SizedBox(height: 4),
-            SelectableText(uri.toString(), style: TextStyle(fontSize: HarkroomType.meta, color: k.mute)),
+            SelectableText(uri.toString(), style: TextStyle(fontSize: HarkroomType.meta, color: k.fgMuted)),
             // 경고는 **해당하는 것마다 한 줄씩** — 둘 다 해당하는데 하나만 보이면 나머지 위험을 모른다.
             for (final (key, text) in [
               if (uri.userInfo.isNotEmpty) ('link-warn-userinfo', t.linkUserInfoWarning),
@@ -309,8 +309,8 @@ Future<bool?> showLinkConfirm(BuildContext context, Uri uri) {
                 key: Key(key),
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                decoration: BoxDecoration(color: k.warnSoft, borderRadius: BorderRadius.circular(6)),
-                child: Text(text, style: TextStyle(fontSize: HarkroomType.meta, color: k.warn)),
+                decoration: BoxDecoration(color: k.warningSurface, borderRadius: BorderRadius.circular(6)),
+                child: Text(text, style: TextStyle(fontSize: HarkroomType.meta, color: k.warning)),
               ),
             ],
             const SizedBox(height: 12),

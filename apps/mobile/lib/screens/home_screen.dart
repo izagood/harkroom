@@ -123,10 +123,10 @@ class FloatingTabBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final k = context.tokens;
     return Material(
-      color: k.bg,
+      color: k.surface,
       elevation: 3,
       shadowColor: Colors.black26,
-      shape: StadiumBorder(side: BorderSide(color: k.line)),
+      shape: StadiumBorder(side: BorderSide(color: k.border)),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
         child: Row(
@@ -143,7 +143,7 @@ class FloatingTabBar extends StatelessWidget {
                     child: Container(
                       height: 48,
                       decoration: ShapeDecoration(
-                        color: i == selected ? k.soft : Colors.transparent,
+                        color: i == selected ? k.surfaceHover : Colors.transparent,
                         shape: const StadiumBorder(),
                       ),
                       child: Column(
@@ -153,15 +153,15 @@ class FloatingTabBar extends StatelessWidget {
                             count: items[i].badge,
                             isLabelVisible: items[i].badge > 0,
                             child: Icon(i == selected ? items[i].selectedIcon : items[i].icon,
-                                size: 22, color: i == selected ? k.fg : k.mute),
+                                size: 22, color: i == selected ? k.fg : k.fgMuted),
                           ),
                           const SizedBox(height: 2),
                           Text(
                             items[i].label,
                             style: TextStyle(
                               fontSize: 11,
-                              fontWeight: i == selected ? FontWeight.w700 : FontWeight.w400,
-                              color: i == selected ? k.fg : k.mute,
+                              fontWeight: i == selected ? FontWeight.w600 : FontWeight.w400,
+                              color: i == selected ? k.fg : k.fgMuted,
                             ),
                           ),
                         ],
@@ -190,10 +190,10 @@ class FloatingSearchButton extends StatelessWidget {
       label: context.t.searchButton,
       excludeSemantics: true,
       child: Material(
-        color: k.bg,
+        color: k.surface,
         elevation: 3,
         shadowColor: Colors.black26,
-        shape: CircleBorder(side: BorderSide(color: k.line)),
+        shape: CircleBorder(side: BorderSide(color: k.border)),
         child: InkWell(
           key: const Key('tab-search'),
           customBorder: const CircleBorder(),
@@ -226,7 +226,7 @@ class AgentsScreen extends StatelessWidget {
     Widget head(String text, String key) => Padding(
           key: Key(key),
           padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 14, HarkroomSize.gutter, 4),
-          child: Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.mute)),
+          child: Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.fgMuted)),
         );
     String channelName(String id) {
       for (final c in app.channels) {
@@ -265,7 +265,7 @@ class AgentsScreen extends StatelessWidget {
             if (app.agentActivity.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter, vertical: 6),
-                child: Text(t.agentsNoneRunning, style: TextStyle(color: k.mute)),
+                child: Text(t.agentsNoneRunning, style: TextStyle(color: k.fgMuted)),
               ),
             for (final x in app.agentActivity)
               ListTile(
@@ -279,7 +279,7 @@ class AgentsScreen extends StatelessWidget {
                     if (x.startedAt != null) runningLabel(now.difference(x.startedAt!), t),
                     if (x.owned) t.agentsMine,
                   ].where((e) => e.isNotEmpty).join(' · '),
-                  style: TextStyle(color: k.mute),
+                  style: TextStyle(color: k.fgMuted),
                 ),
                 onTap: () => open(x.channelId, x.threadRootId),
               ),
@@ -298,7 +298,7 @@ class AgentsScreen extends StatelessWidget {
                   ].where((e) => e.isNotEmpty).join(' · '),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: k.mute),
+                  style: TextStyle(color: k.fgMuted),
                 ),
                 onTap: () => open(w.channelId, w.threadRootId),
               ),

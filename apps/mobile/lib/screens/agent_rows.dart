@@ -27,7 +27,7 @@ class ProgressRow extends StatelessWidget {
     final elapsed = DateTime.now().toUtc().difference(run.first.createdAt);
 
     final k = context.tokens;
-    final muted = TextStyle(fontSize: 12, color: k.mute, height: 1.35);
+    final muted = TextStyle(fontSize: 12, color: k.fgMuted, height: 1.35);
     // 개정판 3.3: 본문 열(아바타 뒤)에 맞춘 회색 한 줄 「◌ designer 작업 중 · 2분째 — 문구」.
     // 가장 최근 줄이면 목록이 아래부터 쌓이므로 작성칸 바로 위에 선다(따로 고정하지 않는다 —
     // 뒤에 말이 오면 그 말 위, 일이 일어난 순서 자리에 남는다).

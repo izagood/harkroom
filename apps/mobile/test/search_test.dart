@@ -370,8 +370,8 @@ void main() {
       final k = tester.element(find.byType(SearchScreen)).tokens;
       expect(chip('search-scope-channel').selected, isTrue);
       expect(chip('search-scope-channel').selectedColor, k.fg);
-      expect(chip('search-scope-channel').labelStyle?.color, k.bg);
-      expect(chip('search-scope-all').labelStyle?.color, k.mute);
+      expect(chip('search-scope-channel').labelStyle?.color, k.surface);
+      expect(chip('search-scope-all').labelStyle?.color, k.fgMuted);
     });
 
     testWidgets('최근 찾은 말: 결과를 열면 남고, 누르면 그 말로 찾고, 지울 수 있다', (tester) async {

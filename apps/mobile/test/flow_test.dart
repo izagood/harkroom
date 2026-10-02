@@ -838,7 +838,7 @@ void main() {
     addTearDown(state.dispose);
     await tester.tap(find.byKey(const Key('channel-c1')));
     await _settle(tester);
-    final soft = tester.element(find.byKey(const Key('composer'))).tokens.soft;
+    final soft = tester.element(find.byKey(const Key('composer'))).tokens.surfaceRaised;
     Color? bg() => tester
         .widget<IconButton>(
             find.descendant(of: find.byKey(const Key('composer-send')), matching: find.byType(IconButton)))

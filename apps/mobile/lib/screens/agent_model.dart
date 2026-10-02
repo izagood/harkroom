@@ -63,10 +63,10 @@ Map<String, ModelPick> picksForBody(
   };
 }
 
-/// 경고 색 — 무효 지정은 실패가 아니다(designer 검토 3). 앱 토큰의 `warn` 을 쓴다(모바일 S1 이
+/// 경고 색 — 무효 지정은 실패가 아니다(designer 검토 3). 앱 토큰의 `warning` 을 쓴다(모바일 S1 이
 /// 들인 [HarkroomTokens]). 토큰이 없는 테마(시험의 맨 MaterialApp)에서는 amber 로 물러난다.
 Color warningColor(BuildContext context) =>
-    Theme.of(context).extension<HarkroomTokens>()?.warn ??
+    Theme.of(context).extension<HarkroomTokens>()?.warning ??
     (Theme.of(context).brightness == Brightness.dark
         ? Colors.amber.shade300
         : Colors.amber.shade900);

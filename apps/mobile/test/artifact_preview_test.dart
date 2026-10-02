@@ -162,7 +162,7 @@ void main() {
       expect(body.textSpan!.toPlainText(), '이 페이지가 evil.example.net 로 이동하려 한다.');
       // 호스트만 굵게(designer c).
       final bold = (body.textSpan! as TextSpan).children!.whereType<TextSpan>()
-          .where((t) => t.style?.fontWeight == FontWeight.w700).map((t) => t.text).toList();
+          .where((t) => t.style?.fontWeight == FontWeight.w600).map((t) => t.text).toList();
       expect(bold, ['evil.example.net']);
       await tester.tap(find.byKey(const Key('artifact-leave-cancel')));
       await tester.pumpAndSettle();

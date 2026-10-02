@@ -35,14 +35,14 @@ class MeScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(t.communitySignOutAll,
-                  style: const TextStyle(fontSize: HarkroomType.screenTitle, fontWeight: FontWeight.w700)),
+                  style: const TextStyle(fontSize: HarkroomType.name, fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
               Text(t.communitySignOutAllConfirm.replaceAll('{count}', '${app.communities.length}'),
-                  style: TextStyle(color: k.mute)),
+                  style: TextStyle(color: k.fgMuted)),
               const SizedBox(height: 16),
               FilledButton(
                 key: const Key('me-sign-out-all-confirm'),
-                style: FilledButton.styleFrom(backgroundColor: k.err, foregroundColor: Colors.white),
+                style: FilledButton.styleFrom(backgroundColor: k.danger, foregroundColor: Colors.white),
                 onPressed: () => Navigator.of(ctx).pop(true),
                 child: Text(t.communitySignOutAll),
               ),
@@ -112,8 +112,8 @@ class MeScreen extends StatelessWidget {
             const Divider(),
             ListTile(
               key: const Key('me-sign-out-all'),
-              leading: Icon(Icons.logout, color: k.err),
-              title: Text(t.communitySignOutAll, style: TextStyle(color: k.err)),
+              leading: Icon(Icons.logout, color: k.danger),
+              title: Text(t.communitySignOutAll, style: TextStyle(color: k.danger)),
               onTap: () => _confirmSignOutAll(context),
             ),
           ],
