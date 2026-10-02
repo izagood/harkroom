@@ -724,45 +724,47 @@ class AppState extends ChangeNotifier {
     final api = _api;
     if (api == null) return;
     final gen = _generation;
-    for (final entry in messages.entries.toList()) {
-      final list = entry.value;
-      if (list.isEmpty) continue;
-      try {
-        final page = await api.messages(entry.key, since: list.last.seq, limit: 200);
+    // **한꺼번에 묻는다.** 예전에는 채널 N개·스레드 M개·reads·인박스를 for 문으로 하나씩 기다려
+    // N+M+2 왕복이 직렬로 쌓였다 — 왕복 하나가 130~300ms(Cloudflare 해외 PoP 경로)라 열어 둔 것이
+    // 열 개면 다시 붙은 뒤 화면이 맞기까지 1.5~3초였다. 각 조회는 서로 다른 자리(채널·스레드·
+    // reads)에 쓰므로 어느 것이 먼저 끝나도 결과가 같다. 동시 요청 수는 [catchUpConcurrency] 로 묶는다.
+    final jobs = <Future<void> Function()>[
+      for (final entry in messages.entries.toList())
+        if (entry.value.isNotEmpty)
+          () async {
+            final page = await api.messages(entry.key, since: entry.value.last.seq, limit: 200);
+            if (gen != _generation) return;
+            for (final m in page.messages) {
+              _upsertMessage(m);
+            }
+          },
+      for (final rootId in threads.keys.toList())
+        if (_channelOfThread(rootId) case final channelId?)
+          () async {
+            final page = await api.messages(channelId, thread: rootId, limit: 100);
+            if (gen != _generation) return;
+            // 최신 페이지로 **통째로 간다**. 밀어 올려 받아 둔 옛 답글은 버리고 `hasMore` 를 다시 세워
+            // 다시 밀면 받게 한다 — 남겨 두면 끊긴 사이 지워진 옛 답글이 화면에 남는다(security #1051).
+            _storeThreadPage(rootId, page.messages);
+            threadHasMore[rootId] = page.hasMore;
+          },
+      () async {
+        final fresh = await api.reads();
         if (gen != _generation) return;
-        for (final m in page.messages) {
-          _upsertMessage(m);
-        }
-      } on Object {
-        // 다음에 다시 붙을 때 또 읽는다.
-      }
-    }
-    for (final entry in threads.entries.toList()) {
-      final channelId = _channelOfThread(entry.key);
-      if (channelId == null) continue;
-      try {
-        final page = await api.messages(channelId, thread: entry.key, limit: 100);
-        if (gen != _generation) return;
-        // 최신 페이지로 **통째로 간다**. 밀어 올려 받아 둔 옛 답글은 버리고 `hasMore` 를 다시 세워
-        // 다시 밀면 받게 한다 — 남겨 두면 끊긴 사이 지워진 옛 답글이 화면에 남는다(security #1051).
-        _storeThreadPage(entry.key, page.messages);
-        threadHasMore[entry.key] = page.hasMore;
-      } on Object {
-        /* 위와 같다 */
-      }
-    }
-    try {
-      final fresh = await api.reads();
-      if (gen != _generation) return;
-      reads
-        ..clear()
-        ..addEntries(fresh.map((r) => MapEntry(r.channelId, r)));
-    } on Object {
-      /* 위와 같다 */
-    }
+        reads
+          ..clear()
+          ..addEntries(fresh.map((r) => MapEntry(r.channelId, r)));
+      },
+      loadInbox,
+    ];
+    await runLimited(jobs, catchUpConcurrency);
+    if (gen != _generation) return;
     notifyListeners();
-    await loadInbox();
   }
+
+  /// 다시 붙은 뒤 따라잡기에서 동시에 내보내는 요청 수 상한. 브라우저의 호스트당 연결 수(6~8)와
+  /// 비슷하게 둔다 — 열어 둔 스레드가 수십 개여도 서버에 한꺼번에 몰리지 않게 한다.
+  static const catchUpConcurrency = 8;
 
   String? _channelOfThread(String rootId) {
     for (final entry in messages.entries) {
@@ -1747,4 +1749,23 @@ bool isPreviewableName(String filename) {
   if (dot < 0) return false;
   const exts = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif', 'bmp'};
   return exts.contains(filename.substring(dot + 1).toLowerCase());
+}
+
+/// [jobs] 를 많아야 [limit] 개씩 동시에 돌린다. **하나가 실패해도 나머지는 끝까지 돈다** — 한 채널
+/// 때문에 인박스가 낡은 채로 남으면 안 된다. 실패는 삼킨다(다음에 다시 붙을 때 또 읽는다).
+@visibleForTesting
+Future<void> runLimited(List<Future<void> Function()> jobs, int limit) async {
+  var next = 0;
+  Future<void> worker() async {
+    while (next < jobs.length) {
+      final job = jobs[next++];
+      try {
+        await job();
+      } on Object {
+        // 위와 같다.
+      }
+    }
+  }
+
+  await Future.wait([for (var i = 0; i < limit && i < jobs.length; i++) worker()]);
 }
