@@ -243,8 +243,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     },
     // 러너의 MCP·REST 요청 — 그 에이전트를 아는 커뮤니티의 서버로 나른다(스펙 §5). 인증은
     // 그 커뮤니티의 오퍼레이터 토큰 + 에이전트 id 로 바뀐다.
-    onRequest: async (runnerId, agentId, req) => {
-      const slot = turnSlots.maybeHandle(runnerId, req);
+    onRequest: async (runnerId, agentId, req, kind) => {
+      const slot = turnSlots.maybeHandle(runnerId, req, kind);
       if (slot) return slot;
       const mounted = await turnSecrets.maybeHandle(runnerId, agentId, req);
       if (mounted) return mounted;
@@ -265,6 +265,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     // `registry` 는 아래에서 만들어지지만 이 콜백은 그 뒤에만 불린다(러너가 붙어야 온다).
     // relay 링크가 끊겼다 = 러너가 죽었거나 오퍼레이터를 놓았다 — 그 러너가 쥔 턴 자리를 돌려받는다.
     onClose: (runnerId) => { turnSlots.releaseRunner(runnerId); },
+    // relay 가 다시 붙었다 — 끊긴 사이 잃은 놓기 요청이 자리를 묶어 두지 않게 그 러너의 자리를 털어 낸다(L1).
+    onRelayAttach: (runnerId) => { turnSlots.releaseRunner(runnerId); },
     onNotice: (runnerId, agentId, notice) => {
       // 턴 임대를 맡긴다·놓는다(비밀 보관소). relay 소켓에서만 온다 — 브릿지의 통지는 링크가 버린다.
       if (notice.type === 'secret.lease') { turnSecrets.noteLease(runnerId, agentId, notice); return; }

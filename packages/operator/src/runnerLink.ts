@@ -41,14 +41,20 @@ export interface RunnerLinkDeps {
   /**
    * 요청 프레임(`mcp.request`·`http.forward`, 스펙 §5 MCP 행). 답은 **온 소켓으로** 돌아간다 —
    * relay 소켓이든 브릿지 소켓이든. 없으면 요청은 status 0 으로 거절된다(삼키지 않는다).
+   * `kind` 는 요청이 온 소켓이다 — 러너 자신(relay)만 쓸 수 있는 경로를 가르는 데 쓴다(턴 자리, security #1127 L2).
    */
-  onRequest?(runnerId: string, agentId: string, req: RunnerLinkRequest): Promise<RunnerLinkResponse>;
+  onRequest?(runnerId: string, agentId: string, req: RunnerLinkRequest, kind: 'relay' | 'bridge'): Promise<RunnerLinkResponse>;
   /**
    * 단방향 통지(`runner.pollStopped`·`mcp.authRejected`). **서버로 안 나간다** — 오퍼레이터 안에서 끝나는 말이다
    * (`shared/runnerLink.ts` 의 `RunnerLinkNotice`). 없으면 그냥 버린다.
    */
   onNotice?(runnerId: string, agentId: string, notice: RunnerLinkNotice): void;
   onClose?(runnerId: string): void;
+  /**
+   * 러너의 relay 소켓이 (다시) 붙었다. 재접속은 앞 소켓을 `linked` 에서 먼저 빼므로 `onClose` 가 불리지
+   * 않을 수 있다 — 끊긴 사이 잃은 요청(턴 자리 놓기 등)이 남긴 상태를 여기서 털어 낸다(security #1127 L1).
+   */
+  onRelayAttach?(runnerId: string): void;
   log(line: string): void;
   /** 한 줄 상한. 기본은 `RUNNER_LINK_MAX_LINE_BYTES` 이고, 주입은 회귀선의 몫이다. */
   maxLineBytes?: number;
@@ -126,7 +132,7 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
   const handleLine = (runnerId: string, agentId: string, socket: LinkSocket, kind: 'relay' | 'bridge', value: unknown): void => {
     if (isRunnerLinkRequest(value)) {
       const answer = deps.onRequest
-        ? deps.onRequest(runnerId, agentId, value).catch((err: unknown) => refuse(value, err instanceof Error ? err.message : String(err)))
+        ? deps.onRequest(runnerId, agentId, value, kind).catch((err: unknown) => refuse(value, err instanceof Error ? err.message : String(err)))
         : Promise.resolve(refuse(value, '이 오퍼레이터에는 전달이 배선되지 않았다'));
       void answer.then((res) => { writeAnswer(socket, value, res); });
       return;
@@ -163,6 +169,7 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
         const previous = linked.get(runnerId);
         if (previous && previous !== socket) { linked.delete(runnerId); previous.destroy(); }
         linked.set(runnerId, socket);
+        deps.onRelayAttach?.(runnerId);
       }
 
       const decoder = new NdjsonDecoder(maxLineBytes);

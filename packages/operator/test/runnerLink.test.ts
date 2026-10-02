@@ -6,6 +6,7 @@ import { EventEmitter } from 'node:events';
 import { encodeLine, NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
 import { createRunnerLinkServer, type LinkSocket } from '../src/runnerLink.js';
+import { createTurnSlots, TURN_SLOTS_PATH } from '../src/turnSlots.js';
 
 /** 러너 쪽 끝. `write` 는 오퍼레이터가 러너에게 보낸 줄, `feed` 는 러너가 보낸 줄. */
 function fakeSocket() {
@@ -123,6 +124,70 @@ describe('runnerLink 서버', () => {
     // 브릿지 소켓에서 온 릴레이 프레임은 버린다 — 브릿지는 PTY 를 모른다.
     bridge.feed({ type: 'session.ended', sessionId: 's1' });
     expect(frames).toEqual([]);
+  });
+
+  it('onRequest 는 요청이 온 소켓의 kind 를 받는다 — relay 전용 경로를 가르는 근거다(#1127 L2)', async () => {
+    const kinds: string[] = [];
+    const link = createRunnerLinkServer({
+      onFrame: () => {},
+      onRequest: async (_r, _a, req, kind) => { kinds.push(kind); return { type: 'http.response', id: req.id, status: 200, body: '' }; },
+      log: () => {},
+    });
+    link.expect('r-1', 'agent-a', 'sec');
+    const relay = fakeSocket();
+    link.accept(relay.socket, hello('r-1', 'sec'), []);
+    const bridge = fakeSocket();
+    link.accept(bridge.socket, { ...hello('r-1', 'sec'), kind: 'bridge' }, []);
+    relay.feed({ type: 'http.forward', id: 'a', method: 'GET', path: '/x' });
+    bridge.feed({ type: 'http.forward', id: 'b', method: 'GET', path: '/x' });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(kinds).toEqual(['relay', 'bridge']);
+  });
+
+  it('relay 가 붙을 때마다 onRelayAttach 가 온다 — 앞 소켓이 닫히기 전에 다시 붙어 onClose 가 없을 때도(#1127 L1)', () => {
+    const attached: string[] = [];
+    const closed: string[] = [];
+    const link = createRunnerLinkServer({
+      onFrame: () => {}, onClose: (r) => closed.push(r), onRelayAttach: (r) => attached.push(r), log: () => {},
+    });
+    link.expect('r-1', 'agent-a', 'sec');
+    link.accept(fakeSocket().socket, hello('r-1', 'sec'), []);
+    link.accept(fakeSocket().socket, { ...hello('r-1', 'sec'), kind: 'bridge' }, []);
+    link.accept(fakeSocket().socket, hello('r-1', 'sec'), []);
+    expect(attached).toEqual(['r-1', 'r-1']);
+    expect(closed).toEqual([]);
+  });
+
+  /**
+   * security #1127 L1 의 장면: 러너가 자리를 쥐었는데 놓기 요청이 끊긴 소켓과 함께 사라지고, 러너는 새 relay 로
+   * 다시 붙는다(앞 소켓의 close 보다 먼저). 되돌려 RED: run.ts 처럼 onRelayAttach 에 releaseRunner 를 잇지
+   * 않으면 자리가 러너가 죽을 때까지 남아 r-2 가 409 를 받는다.
+   */
+  it('놓기 요청을 잃고 relay 가 다시 붙으면 그 러너의 자리가 돌아온다', async () => {
+    const slots = createTurnSlots({ max: 1 });
+    const link = createRunnerLinkServer({
+      onFrame: () => {},
+      onRequest: async (runnerId, _a, req, kind) => slots.maybeHandle(runnerId, req, kind)
+        ?? { type: 'http.response', id: req.id, status: 404, body: '' },
+      onClose: (r) => slots.releaseRunner(r),
+      onRelayAttach: (r) => slots.releaseRunner(r),
+      log: () => {},
+    });
+    link.expect('r-1', 'agent-a', 'sec');
+    link.expect('r-2', 'agent-b', 'sec2');
+    const first = fakeSocket();
+    link.accept(first.socket, hello('r-1', 'sec'), []);
+    first.feed({ type: 'http.forward', id: 'g', method: 'POST', path: TURN_SLOTS_PATH, body: JSON.stringify({ key: 'ch/T' }) });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(slots.inUse()).toBe(1);
+    // 놓기 요청은 끝내 오지 않는다. 러너가 새 relay 로 다시 붙는다 — 앞 소켓은 아직 안 닫혔다.
+    link.accept(fakeSocket().socket, hello('r-1', 'sec'), []);
+    expect(slots.inUse()).toBe(0);
+    const other = fakeSocket();
+    link.accept(other.socket, hello('r-2', 'sec2'), []);
+    other.feed({ type: 'http.forward', id: 'h', method: 'POST', path: TURN_SLOTS_PATH, body: JSON.stringify({ key: 'ch/U' }) });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(other.lines()).toMatchObject([{ type: 'http.response', id: 'h', status: 200 }]);
   });
 
   it('onRequest 가 없으면 요청에 mcp.error/http.response 로 거절한다 — 조용히 삼키지 않는다', async () => {
