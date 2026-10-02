@@ -30,6 +30,16 @@ describe('repo.merge grant', () => {
     await pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [forAgent, id]);
     return id;
   };
+  /** 이 에이전트(또는 다른 에이전트)가 세운 선택 카드에 누군가 답한 상태 — `ask_answered` 로 깨어난 턴의 cause. */
+  const askCard = async (answeredBy: string | null, cardAuthor = agentId, forAgent = agentId): Promise<string> => {
+    const ask = { prompt: 'merge?', options: [{ id: 'yes', label: 'yes' }], ...(answeredBy ? { answeredWith: 'yes', answeredBy, answeredAt: new Date().toISOString() } : {}) };
+    const m = await pool.query(
+      `insert into message (channel_id, author_id, body, kind, meta) values ($1, $2, 'merge?', 'user', $3) returning id`,
+      [ch, cardAuthor, JSON.stringify({ kind: 'ask', ask })]);
+    const id = m.rows[0].id as string;
+    await pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'ask_answered')`, [forAgent, id]);
+    return id;
+  };
   const lease = async (causeMessageId: string) =>
     (await app.inject({ method: 'POST', url: '/agent/turn-leases', headers: asAgent(), payload: { causeMessageId } })).json().lease as { id: string; token: string };
   const check = (l: { id: string; token: string }, repo = 'izagood/harkroom', extra: Record<string, unknown> = {}) =>
@@ -127,6 +137,23 @@ describe('repo.merge grant', () => {
       const l2 = await lease(await mention(otherAgentId));
       expect((await check(l2)).json()).toMatchObject({ allowed: true, causeByHuman: false });
       expect((await grant(alice.token, { scope: 'repo:izagood/harkroom', allowAgentCause: false })).statusCode).toBe(200);
+    });
+    it('③ 사람(소유자)이 이 에이전트의 선택 카드에 답해서 뜬 턴은 사람이 띄운 것으로 본다', async () => {
+      const l = await lease(await askCard(alice.accountId));
+      const res = await check(l);
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ allowed: true, causeByHuman: true });
+      expect((await pool.query(`select 1 from audit_log where action = 'repo.merge.checked' and (detail->>'viaAskAnswer')::boolean`)).rowCount).toBe(1);
+    });
+    it('③ 카드에 답한 사람이 소유자가 아니거나, 아직 답이 없거나, 남의 카드면 cause_not_human', async () => {
+      // 채널의 다른 사람(bob)이 눌렀다 — 소유자가 아니다.
+      expect((await check(await lease(await askCard(bob.accountId)))).json().error.code).toBe('cause_not_human');
+      // 답이 없는 카드(닫힘 등으로 깨어난 턴).
+      expect((await check(await lease(await askCard(null)))).json().error.code).toBe('cause_not_human');
+      // 다른 에이전트가 세운 카드에 소유자가 답했지만 이 에이전트의 카드가 아니다.
+      expect((await check(await lease(await askCard(alice.accountId, otherAgentId)))).json().error.code).toBe('cause_not_human');
+      // 답한 사람이 사람이 아니면(에이전트 id 를 적어 넣어도) 아니다.
+      expect((await check(await lease(await askCard(otherAgentId)))).json().error.code).toBe('cause_not_human');
     });
     it('임대가 틀리거나 끝났으면 lease_invalid, 저장소 모양이 틀리면 400, 권한 없는 저장소는 not_granted', async () => {
       const l = await lease(await mention(alice.accountId));
