@@ -189,6 +189,52 @@ export async function readTranscriptTurnState(
   return null;
 }
 
+/**
+ * **턴을 끝낸 하네스에 아직 도는 자식 작업이 있는가**(2026-10-02). claude 는 `end_turn` 직후
+ * `system/turn_duration` 레코드를 적고, 백그라운드 서브에이전트·워크플로가 남아 있으면 거기에
+ * `pendingBackgroundAgentCount`·`pendingWorkflowCount` 를 싣는다(없으면 필드 자체가 없다 — 0 이다).
+ *
+ * 왜 필요한가: 끝난 턴을 유예 없이 바로 회수하려면(러너 응답 속도) "끝났다"만으로는 모자란다 —
+ * 10-01 사고에서 서브에이전트를 띄우고 `end_turn` 한 턴이 60초 뒤 SIGTERM 으로 함께 죽었다
+ * (`mem/silent-turn-false-stall` ②). 자식이 남은 턴은 지금처럼 유예하고, 없는 턴만 바로 거둔다.
+ *
+ * 돌려주는 값: 남은 자식 수(0 이면 없다) · `null` 은 **모른다**(기록을 못 읽는 하네스·이 턴의
+ * `turn_duration` 이 아직 안 적힘·`sinceMs` 이전 것뿐) — 모를 때 호출자는 유예 쪽을 고른다.
+ * 꼬리에서 거꾸로 훑다가 이 턴의 대화 레코드(user/assistant)를 먼저 만나면 `turn_duration` 이
+ * 아직 없는 것이다. 던지지 않는다.
+ */
+export async function readTranscriptPendingBackground(
+  harness: AgentHarness,
+  sessionId: string | null,
+  opts: { projectsDir?: string; configDir?: string | null; sinceMs?: number } = {},
+): Promise<number | null> {
+  if (!readsSessionTranscript(harness)) return null;
+  if (!sessionId) return null;
+  const text = await readTranscriptTail(sessionId, opts);
+  if (text === null) return null;
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (!line) continue;
+    let record: {
+      type?: unknown; subtype?: unknown; isSidechain?: unknown; timestamp?: unknown;
+      pendingBackgroundAgentCount?: unknown; pendingWorkflowCount?: unknown;
+    };
+    try { record = JSON.parse(line); } catch { continue; }
+    if (record.isSidechain === true) continue;
+    const at = typeof record.timestamp === 'string' ? Date.parse(record.timestamp) : NaN;
+    if (record.type === 'user' || record.type === 'assistant') {
+      // 이 턴의 대화가 turn_duration 보다 뒤에 있다 — 아직 안 적혔거나 턴이 이어지고 있다.
+      return null;
+    }
+    if (record.type !== 'system' || record.subtype !== 'turn_duration') continue;
+    if (opts.sinceMs !== undefined && (!Number.isFinite(at) || at < opts.sinceMs)) return null;
+    const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+    return n(record.pendingBackgroundAgentCount) + n(record.pendingWorkflowCount);
+  }
+  return null;
+}
+
 const TAIL_BYTES = 256 * 1024;
 
 /** 기록 파일의 꼬리 `TAIL_BYTES` 를 읽는다. 잘린 첫 줄(반쪽 JSON)은 버린다. **던지지 않는다.** */

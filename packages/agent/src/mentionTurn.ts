@@ -25,7 +25,7 @@ import { readLastApiError } from './harnessErrors.js';
 import type { AttentionLedger } from './attentionLedger.js';
 import { readSkillUses } from './skillUsage.js';
 import type { ReviewFork } from './reviewFork.js';
-import { readLastAssistantText, readMcpAuthRejections, readPermissionDenials, readTranscriptTurnState, sessionTranscriptGrewSince, sessionTranscriptMtimeMs, type PermissionDenial } from './harnessErrors.js';
+import { readLastAssistantText, readMcpAuthRejections, readPermissionDenials, readTranscriptPendingBackground, readTranscriptTurnState, sessionTranscriptGrewSince, sessionTranscriptMtimeMs, type PermissionDenial } from './harnessErrors.js';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
 import { opencodeDirs } from './opencodeHome.js';
@@ -292,6 +292,15 @@ export interface MentionTurnDeps {
   readTranscriptMtime?: typeof sessionTranscriptMtimeMs;
   /** 하네스가 이 턴의 차례를 끝냈는가(기본 `readTranscriptTurnState`). 주입 이유는 위와 같다. */
   readTurnState?: typeof readTranscriptTurnState;
+  /** 끝낸 턴에 남은 자식 작업 수(기본 `readTranscriptPendingBackground`). 주입 이유는 위와 같다. */
+  readPendingBackground?: typeof readTranscriptPendingBackground;
+  /**
+   * **끝났고 자식 작업도 없는** 턴을 거두기까지의 유예(기본 0 — 바로 거둔다, 2026-10-02).
+   * `orphanMs` 는 그 밖의 끝(자식이 남았거나 모름·꼬리를 못 읽어 발화로만 판정)에 남는다.
+   * 왜 가르나: 60초 유예는 같은 스레드의 다음 멘션을 그만큼 기다리게 했다(스레드당 턴 하나) —
+   * 사람이 본 "느린 반응"의 가장 큰 고정 비용이었다(task_manager 실측 64s).
+   */
+  finishedReclaimMs?: number;
   /**
    * 발화를 확인하는 주기(기본 3초, 2026-09-08). TUI 는 답하고도 안 죽으므로 러너가
    * "답했는가"를 직접 봐야 하고, 그 사실은 스레드에만 있다 — 에이전트는 자기 PAT 로
@@ -1095,6 +1104,13 @@ export async function runMentionTurn(
      * 깨움만 걸고 말없이 끝나는 턴(c0853e6f), 답을 올린 뒤 CI·콜백을 기다리는 턴(ebb97c7b).
      */
     finished: boolean;
+    /**
+     * 끝낸 턴에 남은 자식 작업 수(서브에이전트·워크플로, `readTranscriptPendingBackground`). `null` 은 모른다.
+     * 0 일 때만 유예 없이 거둔다 — 10-01 사고(서브에이전트를 띄운 턴을 60초 뒤 죽임)의 재발 방지가 이 값이다.
+     */
+    pending: number | null;
+    /** 지금 선 회수 시계의 유예(ms). 더 짧은 유예가 가능해지면 시계를 다시 세운다. */
+    reclaimGraceMs: number;
     /** 마지막으로 읽은 기록 꼬리. `null` 은 판정할 수 없다는 뜻이다(읽지 못하는 하네스·파일 없음). */
     tail: 'ended' | 'working' | null;
     /**
@@ -1122,7 +1138,7 @@ export async function runMentionTurn(
   } = {
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
     apiError: null, canceledBy: null, stalled: false, awaitingHuman: false, gateNoticed: false,
-    lastLifeMs: 0, lastDataAtMs: 0, stalledIdleMs: 0, finished: false, tail: null,
+    lastLifeMs: 0, lastDataAtMs: 0, stalledIdleMs: 0, finished: false, pending: null, reclaimGraceMs: 0, tail: null,
     threadUnreadable: false, silenceDeferred: false, deniedSeen: new Set(), denialNotices: 0, mcpRejectedSeen: new Set(),
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
     gateHeld: null, gateRequeue: null, cancelGateWatch: null,
@@ -1158,8 +1174,20 @@ export async function runMentionTurn(
       end.cancelReclaim = null;
       return;
     }
-    if (end.cancelReclaim) return; // 이미 유예 중 — 다시 세우면 유예가 늘어난다.
-    end.cancelReclaim = schedule(() => { end.cancelReclaim = null; reclaim(); }, deps.orphanMs ?? 60_000);
+    // **끝났고 자식 작업이 없으면 유예 없이 거둔다**(2026-10-02). 유예(`orphanMs`)의 값어치는 둘이었다 —
+    // 사람이 attach 할 틈, 그리고 `end_turn` 뒤에도 돌 수 있는 자식(서브에이전트·백그라운드 작업)의
+    // 보호. 앞은 `viewers > 0` 이 따로 지키고, 뒤는 기록의 `pending` 이 말해 준다. 그래서 자식이
+    // 0 으로 **확인된** 턴만 바로 거두고, 남았거나 모르면(`null`) 지금처럼 유예한다.
+    const grace = end.finished && end.pending === 0 ? (deps.finishedReclaimMs ?? 0) : (deps.orphanMs ?? 60_000);
+    if (end.cancelReclaim) {
+      // 이미 유예 중 — 다시 세우면 유예가 늘어난다. 더 **짧은** 유예가 가능해졌을 때만 바꿔 세운다.
+      if (grace >= end.reclaimGraceMs) return;
+      end.cancelReclaim();
+      end.cancelReclaim = null;
+    }
+    end.reclaimGraceMs = grace;
+    if (grace <= 0) { reclaim(); return; }
+    end.cancelReclaim = schedule(() => { end.cancelReclaim = null; reclaim(); }, grace);
   };
 
   const onViewerCount = (count: number): void => {
@@ -1319,6 +1347,12 @@ export async function runMentionTurn(
     if (end.exited) return;
     end.tail = tail;
     end.finished = tail === 'ended';
+    // 자식 작업 수는 끝난 턴에서만 뜻이 있다 — 일하는 중의 값은 다음 레코드가 바로 뒤집는다.
+    end.pending = end.finished
+      ? await (deps.readPendingBackground ?? readTranscriptPendingBackground)(def.harness, sessionIdForProbe, {
+        configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
+      }).catch(() => null)
+      : null;
     if (!end.finished && end.spoke && tail === 'working') {
       const limit = deps.harnessStallMs ?? 10 * 60_000;
       const mtime = await (deps.readTranscriptMtime ?? sessionTranscriptMtimeMs)(def.harness, sessionIdForProbe, {

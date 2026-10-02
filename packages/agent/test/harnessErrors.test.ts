@@ -8,7 +8,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { readLastApiError, readLastAssistantText, readMcpAuthRejections, readPermissionDenials, readTranscriptTurnState, sessionTranscriptGrewSince } from '../src/harnessErrors.js';
+import { readLastApiError, readLastAssistantText, readMcpAuthRejections, readPermissionDenials, readTranscriptPendingBackground, readTranscriptTurnState, sessionTranscriptGrewSince } from '../src/harnessErrors.js';
 
 /** `isApiErrorMessage` 레코드 한 줄. 실물 세션 파일의 모양을 그대로 쓴다. */
 const rec = (timestamp: string, text: string): string => JSON.stringify({
@@ -240,6 +240,47 @@ describe('readTranscriptTurnState', () => {
     expect(await readTranscriptTurnState('claude-code', 'ffffffff-0000-0000-0000-000000000000', { projectsDir })).toBeNull();
     expect(await readTranscriptTurnState('codex', SID, { projectsDir })).toBeNull();
     expect(await readTranscriptTurnState('claude-code', null, { projectsDir })).toBeNull();
+  });
+});
+
+/**
+ * 끝낸 턴의 자식 작업 수(2026-10-02). 실물 형식: claude 2.1.287 은 `end_turn` 뒤 `turn_duration` 에
+ * `pendingBackgroundAgentCount`·`pendingWorkflowCount` 를 **남아 있을 때만** 싣는다(없으면 필드 없음).
+ * 되돌려 RED: 함수가 필드 없음을 null 로 돌리면 첫 시험이, 앞 턴 것을 세면 셋째 시험이 깨진다.
+ */
+describe('readTranscriptPendingBackground', () => {
+  const T0 = Date.parse('2026-10-02T12:00:00.000Z');
+  const at = (s: number) => new Date(T0 + s * 1000).toISOString();
+  const assistant = (s: number, stop: string) => ({
+    type: 'assistant', timestamp: at(s), message: { role: 'assistant', stop_reason: stop, content: [{ type: 'text', text: 'x' }] },
+  });
+  const duration = (s: number, extra: object = {}) => ({ type: 'system', subtype: 'turn_duration', durationMs: 1, messageCount: 3, timestamp: at(s), ...extra });
+
+  it('turn_duration 에 자식 필드가 없으면 0 — 바로 거둘 수 있다', async () => {
+    const projectsDir = await seed([assistant(2, 'end_turn'), duration(3), { type: 'cost-state' }, { type: 'last-prompt' }]);
+    expect(await readTranscriptPendingBackground('claude-code', SID, { projectsDir, sinceMs: T0 })).toBe(0);
+  });
+
+  it('서브에이전트·워크플로가 남아 있으면 그 수 — 유예한다(10-01 사고)', async () => {
+    const projectsDir = await seed([assistant(2, 'end_turn'), duration(3, { pendingBackgroundAgentCount: 2, pendingWorkflowCount: 1 })]);
+    expect(await readTranscriptPendingBackground('claude-code', SID, { projectsDir, sinceMs: T0 })).toBe(3);
+  });
+
+  it('앞 턴의 turn_duration 은 세지 않는다 · 이 턴의 것이 아직 없으면 null', async () => {
+    expect(await readTranscriptPendingBackground('claude-code', SID, {
+      projectsDir: await seed([assistant(-60, 'end_turn'), duration(-59)]), sinceMs: T0,
+    })).toBeNull();
+    // end_turn 은 적혔는데 turn_duration 이 아직 뒤따르지 않았다 — 모른다.
+    expect(await readTranscriptPendingBackground('claude-code', SID, {
+      projectsDir: await seed([duration(-59), assistant(2, 'end_turn')]), sinceMs: T0,
+    })).toBeNull();
+  });
+
+  it('사이드체인 줄은 건너뛴다 · 못 읽는 하네스·세션 미상은 null', async () => {
+    const projectsDir = await seed([assistant(2, 'end_turn'), duration(3), { type: 'assistant', isSidechain: true, timestamp: at(4), message: {} }]);
+    expect(await readTranscriptPendingBackground('claude-code', SID, { projectsDir, sinceMs: T0 })).toBe(0);
+    expect(await readTranscriptPendingBackground('codex', SID, { projectsDir })).toBeNull();
+    expect(await readTranscriptPendingBackground('claude-code', null, { projectsDir })).toBeNull();
   });
 });
 
