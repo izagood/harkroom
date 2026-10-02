@@ -7,7 +7,7 @@
 "PUSH_REASON_FAIL" = "작업을 끝내지 못했어요";
 "PUSH_REASON_GATE" = "로그인이 필요해요";
 "PUSH_REASON_DONE" = "작업을 마쳤어요";
-"PUSH_REASON_REPLIES" = "답 %@개가 와 있어요";
+"PUSH_REASON_REPLIES" = "새 답을 확인해 보세요";
 
 /* 푸시 알림 부제 `[종류] @보낸 이` — subtitle-loc-key. 이름 뒤에 조사를 붙이지 않는다. */
 "PUSH_SUB_MENTION" = "@%@ 부름";

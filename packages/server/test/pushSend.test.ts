@@ -309,6 +309,36 @@ describe('종류별 규칙 (P1 — harkroom://message/5afd59e0-9e38-4273-8e9a-2a
     expect(sent[0]!.collapseId).toBe(`fail:${id}`);
   });
 
+  it('결정·실패가 1분 안에 또 오면 알림은 따로 남되 소리·time-sensitive 는 첫 것만 (L1)', async () => {
+    const root = await myThread();
+    const a = await reply(root, '@admin 실패 1', { kind: 'failure', failure: { retryable: true } });
+    await due(); await sweeper().sweep();
+    const b = await reply(root, '@admin 실패 2', { kind: 'failure', failure: { retryable: true } });
+    await due(); await sweeper().sweep();
+    expect(aps(0)).toMatchObject({ sound: 'default', 'interruption-level': 'time-sensitive' });
+    expect(aps(1)).not.toHaveProperty('sound');
+    expect(aps(1)['interruption-level']).toBe('active');
+    expect(sent.map((x) => x.collapseId)).toEqual([`fail:${a}`, `fail:${b}`]);
+    // 보통 답의 10분 간격과는 따로 센다 — 같은 스레드의 답은 여전히 첫 것이 운다.
+    await reply(root, '@admin 보통 답');
+    await due(); await sweeper().sweep();
+    expect(aps(2)).toMatchObject({ sound: 'default', 'interruption-level': 'active' });
+    // 1분이 지나면 다시 뚫는다.
+    await pool.query(`update push_thread_sound set sounded_at = now() - interval '2 minutes' where thread_key like 'urgent:%'`);
+    await reply(root, '@admin 실패 3', { kind: 'failure', failure: { retryable: true } });
+    await due(); await sweeper().sweep();
+    expect(aps(3)).toMatchObject({ sound: 'default', 'interruption-level': 'time-sensitive' });
+  });
+
+  it('하루 넘게 안 울린 소리 기록은 sweep 이 지운다 (L2)', async () => {
+    await pool.query(
+      `insert into push_thread_sound (account_id, thread_key, sounded_at) values
+         ($1, 'old', now() - interval '2 days'), ($1, 'fresh', now() - interval '1 hour')`, [adminId]);
+    await sweeper().sweep();
+    const r = await pool.query(`select thread_key from push_thread_sound order by thread_key`);
+    expect(r.rows.map((x) => x.thread_key)).toEqual(['fresh']);
+  });
+
   it('로그인 관문 실패는 "로그인 필요"', async () => {
     const root = await myThread();
     await reply(root, '@admin 로그인', { kind: 'failure', failure: { retryable: true, code: 'account_gate' } });

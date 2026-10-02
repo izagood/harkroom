@@ -28,6 +28,13 @@ export const PUSH_PREVIEW_MAX = 120;
 /** 같은 스레드의 에이전트 보통 답은 이 간격 안에 한 번만 울린다(jaebin D1). */
 export const PUSH_REPLY_SOUND_WINDOW_MS = 10 * 60_000;
 
+/**
+ * 결정·실패·관문이 집중 모드를 뚫는 것은 스레드마다 이 간격에 한 번이다(security L1). 되풀이해 실패하는
+ * 에이전트가 time-sensitive 를 연달아 울리면 사람은 그 설정을 아예 끈다. 나머지도 알림은 남는다 —
+ * 하나하나가 손댈 일이라 갈아쓰지 않고, 소리와 time-sensitive 만 뺀다.
+ */
+export const PUSH_URGENT_WINDOW_MS = 60_000;
+
 export interface PushClassifyInput {
   reason: PushReason;
   authorKind: 'human' | 'agent';
@@ -96,7 +103,10 @@ export interface PushPayloadInput {
   replyCount: number;
   /** `ask` 의 선택지 수(0 이면 문구에서 뺀다). */
   optionCount: number;
-  /** 이번에 소리를 낼까. 급한 종류는 늘 true 로 넘어온다. false 면 passive(조용히 쌓임). */
+  /**
+   * 이번에 울려도 되나(worker 가 스레드별 간격으로 정한다). 보통 답은 false 면 passive(조용히 쌓임),
+   * 결정·실패·관문은 false 면 time-sensitive 없이 소리 없는 active 로 남는다.
+   */
   sound: boolean;
 }
 
@@ -153,12 +163,12 @@ export function buildPushPayload(input: PushPayloadInput): Record<string, unknow
   const preview = input.previewBody !== null ? previewText(input.previewBody, input.idToHandle) : '';
   const alert = { title, ...subtitle(input), ...(preview ? { body: preview } : fallbackBody(input)) };
   const urgent = isUrgentPush(input.kind);
-  const level = urgent ? 'time-sensitive' : input.sound ? 'active' : 'passive';
+  const level = urgent ? (input.sound ? 'time-sensitive' : 'active') : input.sound ? 'active' : 'passive';
   return {
     aps: {
       alert,
       ...(input.badge !== null ? { badge: input.badge } : {}),
-      ...(urgent || input.sound ? { sound: 'default' } : {}),
+      ...(input.sound ? { sound: 'default' } : {}),
       'interruption-level': level,
       'thread-id': pushThreadKey(input),
     },

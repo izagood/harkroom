@@ -43,11 +43,15 @@ class _Server {
   /// 옛 서버 흉내 — prefs 를 실으면 400(strict).
   bool strictPrefs = false;
 
+  /// #1088 이전 서버 흉내 — prefs 는 받지만 badge 키를 모른다.
+  bool noBadgePrefs = false;
+
   MockClient client(String? token) => MockClient((req) async {
         final path = req.url.path;
         if (path == '/push/devices' || path == '/push/devices/current') {
           pushCalls.add('${req.method} $path ${req.method == 'PUT' ? req.body : ''}'.trim());
-          if (strictPrefs && req.method == 'PUT' && req.body.contains('"prefs"')) {
+          if (req.method == 'PUT' &&
+              ((strictPrefs && req.body.contains('"prefs"')) || (noBadgePrefs && req.body.contains('"badge"')))) {
             return _json({'error': {'code': 'validation', 'message': 'unrecognized key'}}, 400);
           }
           return req.method == 'PUT' ? _json({'id': 'd'}) : http.Response('', 204);
@@ -237,8 +241,19 @@ void main() {
       acme.strictPrefs = true;
       push.perm = PushPermission.authorized;
       await PushCoordinator(app, push).sync();
-      expect(acme.pushCalls, hasLength(2));
+      expect(acme.pushCalls, hasLength(3));
       expect(acme.pushCalls.last, 'PUT /push/devices {"token":"ab","platform":"ios","env":"sandbox"}');
+    });
+
+    test('badge 를 모르는 서버(400)에도 미리보기 끄기는 닿는다 — preview 만 실어 다시 보낸다 (F1)', () async {
+      await boot();
+      acme.noBadgePrefs = true;
+      push.perm = PushPermission.authorized;
+      final c = PushCoordinator(app, push);
+      await c.setPreview(true);
+      await c.setPreview(false);
+      expect(acme.pushCalls.last, 'PUT /push/devices {"token":"ab","platform":"ios","env":"sandbox","prefs":{"preview":false}}');
+      expect(acme.pushCalls.where((x) => !x.contains('"prefs"')), isEmpty);
     });
 
     test('다시 앞에 올 때 다시 읽기가 실패해도 던지지 않는다', () async {
@@ -442,6 +457,7 @@ void main() {
       final fake = await pumpMe(tester, PushPermission.authorized);
       final tile = find.byKey(const Key('me-push-preview'));
       expect(tester.widget<SwitchListTile>(tile).value, isFalse);
+      expect(find.byKey(const Key('me-push-preview-divider')), findsOneWidget);
       await tester.tap(tile);
       await tester.pump();
       expect(fake.previewStore, isTrue);

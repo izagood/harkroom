@@ -172,6 +172,8 @@ class _PushSection extends StatelessWidget {
             onChanged: (v) => push.setCommunityEnabled(c.key, v),
           ));
         }
+        // 위는 커뮤니티마다, 아래는 모든 커뮤니티에 걸리는 설정이다 — 선으로 가른다(designer n3).
+        children.add(const Divider(key: Key('me-push-preview-divider'), height: 17, indent: 16, endIndent: 16));
         children.add(SwitchListTile(
           key: const Key('me-push-preview'),
           secondary: const SizedBox(width: 36, child: Icon(Icons.short_text)),

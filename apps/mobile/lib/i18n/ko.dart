@@ -644,7 +644,7 @@ class StringsKo implements Strings {
   String get pushPreview => '내용 미리보기';
 
   @override
-  String get pushPreviewHint => '알림에 글 첫 줄을 보여 줘요. 켜면 그 내용이 Apple 의 알림 서버를 거쳐요.';
+  String get pushPreviewHint => '알림에 글 앞부분을 보여 줘요. 켜면 그 내용이 Apple 알림 서버를 거치고 잠금 화면에도 보일 수 있어요.';
 
   @override
   String get searchButton => '찾기';

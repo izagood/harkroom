@@ -645,7 +645,7 @@ class StringsEn implements Strings {
   String get pushPreview => 'Show previews';
 
   @override
-  String get pushPreviewHint => 'Shows the first line of the message. When on, that text passes through Apple\'s notification servers.';
+  String get pushPreviewHint => "Shows the start of the message in notifications. When on, that text passes through Apple's notification servers and may appear on your lock screen.";
 
   @override
   String get searchButton => 'Search';
