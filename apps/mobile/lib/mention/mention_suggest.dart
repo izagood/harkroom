@@ -12,6 +12,7 @@
 library;
 
 import 'mention.dart';
+import 'usage.dart';
 
 /// 지금 자동완성이 붙는 자리.
 class MentionQuery {
@@ -118,12 +119,17 @@ bool _survivesScan(String text, int at) {
 /// 후보를 고른다. **접두 일치**이고, 이미 다 친 이름도 남긴다(고치는 중일 수 있다).
 ///
 /// 정렬은 (1) handle 이 접두로 시작하는 것 먼저 (2) 그 다음 표시 이름 일치 —
-/// 사람이 친 것은 handle 이므로 그쪽을 앞에 둔다.
+/// 사람이 친 것은 handle 이므로 그쪽을 앞에 둔다. 각 무리 **안에서는** [usageOf] 가
+/// 주는 기록으로 자주 부른 상대가 먼저다(횟수 → 최근 → 이름순). 기록이 없으면 이름순이다.
+///
+/// 무리를 넘어 섞지 않는 이유: `@fo` 를 친 사람에게 이름에 fo 가 없는 단골이 앞에 서면
+/// 친 글자와 화면이 어긋난다. 순서는 친 글자가 먼저 가르고, 쓰임은 그 안에서만 가른다.
 List<T> rankMentionCandidates<T>(
   Iterable<T> all,
   String prefix, {
   required String Function(T) handleOf,
   required String Function(T) displayNameOf,
+  MentionUse? Function(T)? usageOf,
   int limit = 8,
 }) {
   final needle = prefix.toLowerCase();
@@ -137,7 +143,19 @@ List<T> rankMentionCandidates<T>(
       byName.add(item);
     }
   }
-  byHandle.sort((a, b) => handleOf(a).compareTo(handleOf(b)));
-  byName.sort((a, b) => handleOf(a).compareTo(handleOf(b)));
+  int compare(T a, T b) {
+    final ua = usageOf?.call(a);
+    final ub = usageOf?.call(b);
+    final byCount = (ub?.count ?? 0).compareTo(ua?.count ?? 0);
+    if (byCount != 0) return byCount;
+    if (ua != null && ub != null) {
+      final byLast = ub.last.compareTo(ua.last);
+      if (byLast != 0) return byLast;
+    }
+    return handleOf(a).compareTo(handleOf(b));
+  }
+
+  byHandle.sort(compare);
+  byName.sort(compare);
   return [...byHandle, ...byName].take(limit).toList(growable: false);
 }

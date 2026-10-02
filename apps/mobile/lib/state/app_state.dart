@@ -21,6 +21,7 @@ import '../api/models.dart';
 import '../api/ws.dart';
 import '../api/ws_socket.dart';
 import '../mention/sticky.dart';
+import '../mention/usage.dart';
 import '../session/session_store.dart';
 
 /// 앱이 지금 어느 단계에 있나. 화면 하나가 이것만 보고 무엇을 그릴지 정한다.
@@ -1223,6 +1224,39 @@ class AppState extends ChangeNotifier {
   /// 버리지 않고 여기 두는 이유: 받은 것 탭에서 들어오면 루트가 채널의 최근 페이지보다
   /// 오래돼 [messages] 에 없을 수 있다. 그때 화면 머리는 이 값으로 선다.
   final Map<String, MessageRow> threadRoots = {};
+
+  // ── 멘션 쓰임 ─────────────────────────────────────────────────────────
+
+  /// 계정 id → 내가 그 상대를 부른 기록. 멘션 후보 칩이 자주 부른 순으로 선다
+  /// (`lib/mention/usage.dart` 가 무엇을 세는지 적는다).
+  ///
+  /// 칩 줄은 **글자를 칠 때마다** 다시 그려지므로 매번 세지 않고 담아 둔다. 메시지가
+  /// 바뀌는 자리는 모두 [notifyListeners] 를 부르므로 거기서 버린다 — 바뀌는 자리마다
+  /// 따로 지우게 하면 하나를 빠뜨리는 순간 순서가 낡는다.
+  Map<String, MentionUse> get mentionUse {
+    final cached = _mentionUse;
+    if (cached != null) return cached;
+    final myId = me?.id;
+    final counted = myId == null
+        ? const <String, MentionUse>{}
+        : countMentionUse(
+            [
+              for (final list in messages.values) ...list,
+              for (final list in threads.values) ...list,
+              ...threadRoots.values,
+            ],
+            myId,
+          );
+    return _mentionUse = counted;
+  }
+
+  Map<String, MentionUse>? _mentionUse;
+
+  @override
+  void notifyListeners() {
+    _mentionUse = null;
+    super.notifyListeners();
+  }
 
   /// 스레드 응답 한 페이지를 루트([threadRoots])와 답글([threads])로 나눠 담는다.
   void _storeThreadPage(String rootId, List<MessageRow> page) {

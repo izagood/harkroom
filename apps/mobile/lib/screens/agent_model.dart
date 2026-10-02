@@ -332,6 +332,7 @@ class _MentionModelBarState extends State<MentionModelBar> {
           query.prefix,
           handleOf: (a) => a.handle,
           displayNameOf: (a) => a.displayName,
+          usageOf: (a) => app.mentionUse[a.id],
         );
         if (candidates.isNotEmpty) {
           rows.add(
