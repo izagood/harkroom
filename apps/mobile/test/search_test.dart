@@ -64,6 +64,9 @@ class _Server {
   /// 받은 `POST /dms` 의 accountIds 들.
   final dmPosts = <List>[];
 
+  /// 값이 있으면 `POST /dms` 답을 그때까지 붙잡는다 — 거듭 누르기·전환 경쟁을 재현한다.
+  Completer<void>? dmGate;
+
   /// 「배포」 를 찾으면 답글 하나가 온다. 그 밖은 0건.
   Map<String, Object?> Function(Map<String, String> q) answer = (q) => {
         'messages': switch (q['q']) {
@@ -98,6 +101,8 @@ class _Server {
         // 실서버 모양: DM 은 `/dms`(명단만), 만들기는 `POST /dms {accountIds}` → 201 ChannelRow.
         if (path == '/dms' && req.method == 'POST') {
           dmPosts.add((jsonDecode(req.body) as Map)['accountIds'] as List);
+          final g = dmGate;
+          if (g != null) await g.future;
           return _json({'id': 'd9', 'kind': 'dm', 'name': ''}, 201);
         }
         if (path == '/dms') return _json({'dms': <Object?>[]});
@@ -440,6 +445,45 @@ void main() {
         ['a2'],
       ]);
       expect(tester.widget<MessageListScreen>(find.byType(MessageListScreen)).channelId, 'd9');
+    });
+
+    testWidgets('바로 가기 사람을 거듭 눌러도 POST /dms 는 한 번이다(designer ③ · security L2)', (tester) async {
+      final server = _Server()..dmGate = Completer<void>();
+      await _boot(tester, server);
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      await _type(tester, '@qa');
+      await tester.tap(find.byKey(const Key('search-shortcut-person-a2')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('search-shortcut-person-a2')));
+      await tester.pump();
+      server.dmGate!.complete();
+      await _settle(tester);
+      expect(server.dmPosts.length, 1);
+      expect(find.byType(MessageListScreen), findsOneWidget);
+    });
+
+    test('DM 을 여는 사이 커뮤니티를 떠나면 그 DM 을 붙이지 않는다(security L1)', () async {
+      final server = _Server()..dmGate = Completer<void>();
+      final app = AppState(
+        sessions: SessionStore.inMemory(
+          seed: jsonEncode({
+            'active': 'me-1',
+            'communities': [
+              {'accountId': 'me-1', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'me'},
+            ],
+          }),
+        ),
+        apiFactory: (b, t) => ApiClient(baseUrl: b, token: t, httpClient: server.client),
+        connector: (_) async => _Idle(),
+      );
+      addTearDown(app.dispose);
+      await app.boot();
+      final pending = app.openDmWith('a2');
+      await app.signOutCommunity(app.activeKey!);
+      server.dmGate!.complete();
+      expect(await pending, isNull);
+      expect(app.channels.any((c) => c.id == 'd9'), isFalse);
     });
 
     test('로그아웃과 겹친 최근 찾은 말 쓰기는 버린다 — 지운 말이 되살아나지 않는다(security 찾기 F2 r1)', () async {

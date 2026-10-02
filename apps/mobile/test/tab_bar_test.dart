@@ -161,6 +161,12 @@ void main() {
     // 읽기 전용 — 터미널·멈춤 아이콘이 없다.
     expect(find.byIcon(Icons.terminal), findsNothing);
     expect(find.byIcon(Icons.stop_circle_outlined), findsNothing);
+    // 「에이전트 전체」 줄을 누르면 그 에이전트와의 DM 이 열린다(designer ①).
+    await tester.tap(find.byKey(const Key('agent-a-qa')));
+    await tester.pumpAndSettle();
+    expect(find.byType(BackButton), findsOneWidget);
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
     // 도는 줄을 누르면 그 채널(스레드 루트가 없으면 채널)이 열린다.
     await tester.tap(run);
     await tester.pumpAndSettle();
