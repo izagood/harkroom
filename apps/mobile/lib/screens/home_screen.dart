@@ -143,7 +143,7 @@ class FloatingTabBar extends StatelessWidget {
                     child: Container(
                       height: 48,
                       decoration: ShapeDecoration(
-                        color: i == selected ? k.surfaceRaised : Colors.transparent,
+                        color: i == selected ? k.surfaceHover : Colors.transparent,
                         shape: const StadiumBorder(),
                       ),
                       child: Column(

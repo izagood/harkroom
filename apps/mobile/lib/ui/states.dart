@@ -26,7 +26,7 @@ class LoadingSkeleton extends StatelessWidget {
           alignment: Alignment.centerLeft,
           child: Container(
             height: 10,
-            decoration: BoxDecoration(color: k.surfaceRaised, borderRadius: BorderRadius.circular(5)),
+            decoration: BoxDecoration(color: k.surfaceHover, borderRadius: BorderRadius.circular(5)),
           ),
         );
     const widths = [(0.35, 0.9), (0.28, 0.7), (0.4, 0.82), (0.3, 0.6)];
@@ -48,7 +48,7 @@ class LoadingSkeleton extends StatelessWidget {
                   width: HarkroomSize.avatar,
                   height: HarkroomSize.avatar,
                   decoration: BoxDecoration(
-                    color: k.surfaceRaised,
+                    color: k.surfaceHover,
                     borderRadius: BorderRadius.circular(HarkroomSize.avatarRadius),
                   ),
                 ),

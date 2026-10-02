@@ -345,7 +345,7 @@ class _ShortcutCard extends StatelessWidget {
       button: true,
       selected: selected,
       child: Material(
-        color: selected ? k.surfaceRaised : k.surface,
+        color: selected ? k.surfaceHover : k.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: k.border)),
         child: InkWell(
           customBorder: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),

@@ -175,7 +175,7 @@ class StatusBand extends StatelessWidget {
     final (Color fg, Color bg) = switch (tone) {
       BandTone.warn => (k.warning, k.warningSurface),
       BandTone.error => (k.danger, k.dangerSurface),
-      BandTone.info => (k.fg, k.surfaceRaised),
+      BandTone.info => (k.fg, k.surfaceSunken),
     };
     return Semantics(
       liveRegion: true,

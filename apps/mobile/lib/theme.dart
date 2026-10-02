@@ -95,7 +95,7 @@ ThemeData harkroomTheme(Brightness brightness) {
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: k.surface,
       surfaceTintColor: Colors.transparent,
-      indicatorColor: k.surfaceRaised,
+      indicatorColor: k.surfaceHover,
       height: 60,
       labelTextStyle: WidgetStateProperty.resolveWith((s) => TextStyle(
             fontSize: 11,
