@@ -57,6 +57,11 @@ export interface TurnSecrets {
   leaseEnded(runnerId: string, cause: string): Promise<void>;
   /** `secret.mount` 호출이면 답하고, 아니면 null(그대로 서버로 넘긴다). */
   maybeHandle(runnerId: string, agentId: string, req: RunnerLinkRequest): Promise<RunnerLinkResponse | null>;
+  /**
+   * 살아 있는 임대를 돌려준다(`turnMerge` 가 머지 판정에 같은 임대를 쓴다). 토큰이 그대로 나가지만 받는
+   * 쪽도 이 프로세스 안이다 — 하네스로는 여전히 안 나간다.
+   */
+  lookup(runnerId: string, cause: string): { leaseId: string; token: string; agentId: string } | null;
   /** 만료된 임대의 디렉터리를 지운다. 주기적으로 부른다. */
   sweepExpired(): Promise<number>;
   /** 기동 때 한 번 — 앞 오퍼레이터가 남긴 디렉터리를 전부 지운다(그 임대는 이 프로세스가 모른다). */
@@ -152,6 +157,12 @@ export function createTurnSecrets(deps: TurnSecretsDeps): TurnSecrets {
       leases.set(keyOf(runnerId, notice.cause), {
         runnerId, agentId, cause: notice.cause, leaseId: notice.leaseId, token: notice.token, expiresAtMs,
       });
+    },
+
+    lookup(runnerId, cause) {
+      const lease = leases.get(keyOf(runnerId, cause));
+      if (!lease || lease.expiresAtMs <= now()) return null;
+      return { leaseId: lease.leaseId, token: lease.token, agentId: lease.agentId };
     },
 
     async leaseEnded(runnerId, cause) {

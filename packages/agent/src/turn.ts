@@ -80,6 +80,8 @@ export interface BuildTurnCommandOptions {
    * 않는다: 호출자가 안 채우면 타입 에러로, 넘겼는데 비어 있으면 즉시 예외로 죽는다.
    */
   operatorBin: string;
+  /** 서버가 이 에이전트에 머지를 허락한 저장소(`GET /agent/merge-grants`). 비면 allow 규칙을 안 준다. */
+  mergeRepos?: readonly string[];
   /** 개인 config.toml/MCP 를 상속하지 않는 Harkroom 전용 Codex 상태 루트. */
   codexHome: string;
   /**
@@ -160,6 +162,13 @@ interface HarnessPreset {
    * CODEX_PRESET.permission 주석 참고). mode 없이 항상 붙이면 그 사고를 반복한다.
    */
   alwaysArgs(mode: TurnMode): string[];
+  /**
+   * 권한 규칙 주입(에이전트 머지 권한, 스레드 3deac356). 멘션 `auto` 턴에만 — readonly(plan)·인터랙티브는
+   * argv 를 그대로 둔다. 파일(계정 config·워크스페이스 settings)에는 아무것도 쓰지 않는다: 파일에 쓰면
+   * 같은 계정 풀을 쓰는 **모든** 에이전트에 퍼진다(09-30 결정). argv 는 이 턴, 이 에이전트뿐이다.
+   * deny/allow 문법이 없는 하네스는 생략한다 — 그쪽은 프롬프트의 "머지는 래퍼로만" 한 줄뿐이다(한계, docs/agent-merge.md).
+   */
+  permissionRules?(args: { mode: TurnMode; mentionPermission: MentionPermission; operatorBin: string; mergeRepos: readonly string[] }): string[];
 }
 
 const CLAUDE_PRESET: HarnessPreset = {
@@ -234,6 +243,23 @@ const CLAUDE_PRESET: HarnessPreset = {
   },
   // claude 는 멘션·인터랙티브 모두 같은 `claude` 커맨드라 모드별 차이가 없고, 붙일 것도 없다.
   alwaysArgs: () => [],
+  /**
+   * 실측 2026-10-02(claude 2.1.287, 스레드 3deac356 T1~T4): allow 규칙에 걸린 명령은 auto 분류기를 **거치지
+   * 않고** 실행되고, deny 규칙은 분류기보다 먼저·allow 보다 우선해 결정적으로 막는다. `:*` 는 단어 경계를 본다
+   * (`…/harkroom-operator merge:*` 는 `mergeall` 에 안 걸린다).
+   *
+   * - deny 는 **모든** auto 멘션 턴에: 권한 있는 에이전트도 `gh pr merge` 를 직접 못 부르고 래퍼로만 간다(D4).
+   *   `gh api` 는 PUT 접두만 막는다 — `.mergeable` 같은 읽기 조회는 그대로 된다(T3). 가운데 와일드카드는 안 맞는다(P2).
+   * - allow 는 서버가 이 에이전트에 `repo.merge` grant 를 준 저장소가 하나라도 있을 때만, 래퍼의 **절대 경로 +
+   *   서브커맨드** 접두로(T1c). 저장소 범위는 규칙이 아니라 서버·래퍼가 가른다.
+   */
+  permissionRules: ({ mode, mentionPermission, operatorBin, mergeRepos }) => {
+    if (mode !== 'mention' || mentionPermission !== 'auto') return [];
+    return [
+      '--disallowedTools', ...MERGE_DENY_RULES,
+      ...(mergeRepos.length ? ['--allowedTools', `Bash(${operatorBin} merge:*)`] : []),
+    ];
+  },
 };
 
 const CODEX_PRESET: HarnessPreset = {
@@ -537,6 +563,28 @@ export function assertHarnessContract(runnableHarnesses?: readonly AgentHarness[
   }
 }
 
+/**
+ * 에이전트가 직접 main 을 바꾸는 길(실수 방지). 우회가 쉬운 가드레일이다 — 경계는 아니다.
+ *
+ * **규칙 문법은 접두(`:*` = 접두 + 단어 경계) 아니면 정확 일치뿐이다**(실측 2026-10-02 P2, claude 2.1.287):
+ * `Bash(git push:* main)`·`Bash(gh api:*pulls/…/merge*)` 같은 **가운데 와일드카드는 아무것도 맞추지 않는다** —
+ * 그 명령은 규칙이 아니라 분류기가 막았고(`git push origin main` 은 아예 실행됐다), 정확 일치 `Bash(git push origin
+ * main)` 은 "has been denied" 로 결정적으로 막았다. 그래서 여기엔 실제로 맞는 모양만 둔다:
+ * - `gh pr merge:*` 접두(T2) · `gh api -X PUT:*`/`--method PUT:*` 접두(머지 엔드포인트는 PUT 이다 — 읽기 `gh api` 는
+ *   그대로 된다, T3) · main 으로의 흔한 push 정확 일치 넷.
+ * - `gh api graphql …mergePullRequest` 와 그 밖의 push 모양(`--force-with-lease`, `-u`, 다른 리모트 이름)은 규칙으로
+ *   표현할 수 없어 **분류기에 남는다**. 넓은 `git push:*` 로 막으면 PR 올리기가 죽는다.
+ */
+export const MERGE_DENY_RULES: readonly string[] = [
+  'Bash(gh pr merge:*)',
+  'Bash(gh api -X PUT:*)',
+  'Bash(gh api --method PUT:*)',
+  'Bash(git push origin main)',
+  'Bash(git push origin HEAD:main)',
+  'Bash(git push -u origin main)',
+  'Bash(git push --force origin main)',
+];
+
 export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
   const preset = PRESETS[opts.harness];
   if (preset === 'unsupported') {
@@ -573,6 +621,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     ...preset.session(opts.sessionId, opts.isFirstTurn, opts.mode),
     ...preset.alwaysArgs(opts.mode),
     ...(opts.mode === 'mention' ? preset.permission[opts.mentionPermission] : []),
+    ...(preset.permissionRules?.({ mode: opts.mode, mentionPermission: opts.mentionPermission, operatorBin: opts.operatorBin, mergeRepos: opts.mergeRepos ?? [] }) ?? []),
     ...(readonlyByList ? ['--tools', opts.readonlyToolList as string] : []),
     // pi 의 세션 자리는 **저장소가 정할 수 있다**(`.pi/settings.json` 의 `sessionDir`, 신뢰 판정 전) —
     // CLI 인자로 러너 루트에 못박는다(`piHome.ts::piSessionsDir`, security U1).

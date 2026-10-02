@@ -23,6 +23,8 @@ import { RUNNER_LINK_ENV, RUNNER_LINK_ENV_KEYS, RUNNER_TURN_CAUSE_ENV } from '@h
 import { parseDaemonArgs, describeArgs, type DaemonArgs } from './args.js';
 import { parseCliArgs, register, registerViaRunningOperator, resolveDataDir, runArgs } from './cli.js';
 import { runMcpBridge } from './mcpBridge.js';
+import { MERGE_TOOL, parseMergeArgs } from './turnMerge.js';
+import { PassThrough } from 'node:stream';
 import { EXIT_INCONCLUSIVE, EXIT_OCCUPIED, startDaemon } from './run.js';
 
 /**
@@ -44,6 +46,53 @@ async function mcpBridgeMain(): Promise<void> {
 }
 
 /**
+ * `harkroom-operator merge <owner/name> <n> --head <sha>` — 에이전트 머지 래퍼의 **클라이언트 쪽**(스레드 3deac356).
+ * 하네스의 셸에서 돈다. 인자를 재고(`parseMergeArgs`), 브릿지와 같은 소켓·같은 자격으로 `tools/call repo.merge`
+ * 한 줄을 보낸 뒤 답 한 줄을 받아 JSON 으로 찍는다. 판정·gh 실행은 전부 오퍼레이터 쪽(`turnMerge.ts`)이다 —
+ * 이 프로세스는 토큰도 임대도 모른다. 러너가 그 에이전트의 턴에만 이 명령의 allow 규칙을 준다.
+ */
+async function mergeMain(argv: string[]): Promise<void> {
+  const parsed = parseMergeArgs(argv);
+  if ('error' in parsed) { console.error(`merge: ${parsed.error}`); process.exit(2); }
+  const socketPath = process.env[RUNNER_LINK_ENV.socketPath];
+  const runnerId = process.env[RUNNER_LINK_ENV.runnerId];
+  const secret = process.env[RUNNER_LINK_ENV.secret];
+  const cause = process.env[RUNNER_TURN_CAUSE_ENV] || null;
+  if (!socketPath || !runnerId || !secret || !cause) {
+    console.error(`merge: ${RUNNER_LINK_ENV_KEYS.join('·')}·${RUNNER_TURN_CAUSE_ENV} 이 필요하다 — 러너가 띄운 멘션 턴 안에서만 돈다`);
+    process.exit(2);
+  }
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const done = new Promise<{ ok: boolean; text: string }>((resolve) => {
+    let buf = '';
+    stdout.on('data', (chunk: Buffer) => {
+      buf += chunk.toString('utf8');
+      const nl = buf.indexOf('\n');
+      if (nl < 0) return;
+      const line = buf.slice(0, nl);
+      try {
+        const msg = JSON.parse(line) as { result?: { content?: { text?: string }[]; isError?: boolean }; error?: { message?: string } };
+        if (msg.error) resolve({ ok: false, text: JSON.stringify({ error: { code: 'link_error', message: msg.error.message ?? 'link error' } }) });
+        else resolve({ ok: msg.result?.isError !== true, text: msg.result?.content?.[0]?.text ?? '{}' });
+      } catch {
+        resolve({ ok: false, text: JSON.stringify({ error: { code: 'bad_reply', message: 'unparseable reply from operator' } }) });
+      }
+      stdin.end();
+    });
+  });
+  const bridge = runMcpBridge({ socketPath, runnerId, secret, cause, cwd: process.cwd() }, { stdin, stdout, stderr: process.stderr });
+  stdin.write(`${JSON.stringify({
+    jsonrpc: '2.0', id: 1, method: 'tools/call',
+    params: { name: MERGE_TOOL, arguments: { repo: parsed.repo, number: parsed.number, headSha: parsed.headSha } },
+  })}\n`);
+  const r = await done;
+  await bridge;
+  console.log(r.text);
+  process.exit(r.ok ? 0 : 1);
+}
+
+/**
  * 서브커맨드 분기(`cli.ts`). 앱이 띄우면 `--socket …` 인자가 그대로 오고(`daemon`), 사람이나
  * launchd/systemd 가 띄우면 `run` 이다 — 둘 다 같은 `daemonMain` 으로 들어간다. 차이는 인자를
  * 누가 조립했는가뿐이다.
@@ -53,6 +102,9 @@ async function main(): Promise<void> {
   switch (cmd.command) {
     case 'mcp-bridge':
       await mcpBridgeMain();
+      return;
+    case 'merge':
+      await mergeMain(cmd.argv);
       return;
     case 'register': {
       const dataDir = resolveDataDir(process.env.HARKROOM_DATA_DIR);

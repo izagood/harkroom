@@ -688,8 +688,13 @@ export function buildSystemPrompt(opts: {
    * 문장을 아예 빼고, 대신 "말을 멈추면 죽는다"는 사실만 말한다.
    */
   turnBudgetMs?: number;
+  /**
+   * 머지 권한(스레드 3deac356). `repos` 가 비면 "머지 권한이 없다"를 말한다 — 말하지 않으면 에이전트가 옛 습관대로
+   * `gh pr merge` 를 치고 deny 규칙에 걸려 분류기 운에 기댄다. 없으면(옛 호출부) 이 절을 아예 뺀다.
+   */
+  merge?: { operatorBin: string; repos: readonly string[] };
 }): string {
-  const { handle, channelName, instructions, guide, memory, turnBudgetMs } = opts;
+  const { handle, channelName, instructions, guide, memory, turnBudgetMs, merge } = opts;
   const budgetMinutes = turnBudgetMs === undefined ? null : Math.floor(turnBudgetMs / 60_000);
   return [
     `너는 harkroom 워크스페이스의 에이전트 @${handle} 이고, 지금 #${channelName} 에서 말한다.`,
@@ -732,6 +737,7 @@ export function buildSystemPrompt(opts: {
     // 문장에 하네스 이름을 쓰지 않는 것도 같은 결정이다: 하네스는 harkroom 가 에이전트 설정에
     // 이미 갖고 있고, PR 을 나중에 읽는 사람에게 중요한 것은 **어느 에이전트가 열었는가**다.
     // 하네스를 굳이 남기려면 문장 가운데가 아니라 뒤에 따로 붙여야 갈아끼울 수 있다.
+    ...(merge ? mergeSection(merge) : []),
     '저장소에 PR 을 열면 본문 **맨 끝**에 이 줄을 넣는다:',
     '',
     `🤖 Opened by \`@${handle}\`, an agent in [Harkroom](${HARKROOM_REPO_URL}) — a chat workspace where people and AI agents share channels.`,
@@ -904,6 +910,32 @@ export function buildSystemPrompt(opts: {
  * `buildSystemPrompt` 의 그 문단이 같은 공백을 메운다). 그래서 넘긴 턴은 **넘겼다는 것을
  * 사람에게 말하고 끝내는 것**이 지금의 올바른 종료다.
  */
+/**
+ * 머지 절(스레드 3deac356). 새 어휘(래퍼)를 만들면 **같은 PR 에서 프롬프트에 쓰라고 적고 옛 지시를 지운다**
+ * (mem/new-vocabulary-needs-a-prompt — `message.delegate` 가 한 번도 안 쓰인 사례). 그래서 여기서 `gh pr merge`
+ * 를 이름 대어 금지한다. 저장소 이름은 서버에서 온 값이라 그대로 적는다.
+ */
+function mergeSection(merge: { operatorBin: string; repos: readonly string[] }): string[] {
+  if (!merge.repos.length) {
+    return [
+      '**PR 머지는 하지 마라.** 이 에이전트에게 머지가 허락된 저장소가 없다. `gh pr merge`·`gh api …/merge`·',
+      '`git push … main` 은 막혀 있고, 사람이 "머지해"라고 해도 네가 누르지 않는다 — 소유자가 설정 › 에이전트에서',
+      '이 저장소의 머지 권한을 준 뒤에만 된다. 머지가 필요하면 PR 번호·head sha 를 적어 사람에게 넘겨라.',
+      '',
+    ];
+  }
+  return [
+    `**PR 머지는 이 명령으로만 한다**(허락된 저장소: ${merge.repos.join(', ')}):`,
+    '',
+    `    ${merge.operatorBin} merge <owner/name> <PR 번호> --head <40자 head sha>`,
+    '',
+    '`gh pr merge`·`gh api …/merge`·`git push … main` 은 쓰지 않는다(막혀 있다). squash 로만 머지되고 head 가',
+    '바뀌었으면 거절된다. 결과는 서버가 이 스레드에 시스템 줄로 남긴다. 허락되지 않은 저장소는 래퍼가 거절한다 —',
+    '그때는 사람에게 넘겨라. 머지 전에 CI 가 초록이고 검토가 끝났는지 네가 먼저 확인한다.',
+    '',
+  ];
+}
+
 function teamSection(team: InboxTeamCall, meId: string, handles: Record<string, string>): string[] {
   const myHandle = handles[meId];
   const roster = team.members.map((m) => {

@@ -215,6 +215,19 @@ export class HarkroomAgentClient {
     }
   }
 
+  /**
+   * 이 에이전트가 머지해도 되는 저장소(스레드 3deac356). 옛 서버(404)·오류는 빈 목록이다 — allow 규칙이 안
+   * 붙을 뿐이고 deny 는 그대로 붙는다(fail-closed 쪽).
+   */
+  async mergeGrants(): Promise<string[]> {
+    try {
+      const r = await this.rest<{ repos?: unknown }>('GET', '/agent/merge-grants', 'merge-grants');
+      return Array.isArray(r?.repos) ? r.repos.filter((x): x is string => typeof x === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
   async reportActivity(): Promise<void> {
     await this.rest<unknown>('POST', '/agent/activity', 'agent/activity');
   }
