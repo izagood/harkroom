@@ -12,6 +12,7 @@ import { buildServer } from '../src/buildServer.js';
 import { hashToken } from '../src/auth/tokens.js';
 import { bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
 import { PUSH_DEVICES_PER_ACCOUNT } from '../src/routes/pushRoutes.js';
+import { mintPat } from '../src/services/pats.js';
 
 let app: FastifyInstance; let pool: Pool; let stop: () => Promise<void>;
 let adminToken: string;
@@ -82,12 +83,11 @@ describe('PUT /push/devices', () => {
 
   it('사람 계정의 PAT 도 403 이다 — 계정 종류가 아니라 자격증명 경로(authVia)로 가른다', async () => {
     const { accountId } = await createMember(app, adminToken, 'p-human-pat');
-    const made = await app.inject({
-      method: 'POST', url: `/accounts/${accountId}/pats`, headers: auth(adminToken), payload: { label: 'cli' },
-    });
-    // 사람도 PAT 를 가질 수 있다(CLI 등). 그래서 계정 종류만 보면 이 길이 열린다.
-    expect(made.statusCode).toBeLessThan(300);
-    const res = await put(made.json().token as string, { token: tok(8), platform: 'ios', env: 'production' });
+    // REST 는 이제 사람 PAT 를 발급하지 않는다(대상은 에이전트뿐). 그래도 옛 사람 PAT 가 남아 있을 수 있고
+    // PAT 인증은 계정 종류를 보지 않으니, 계정 종류만 보면 이 길이 열린다 — 서비스로 직접 만든다.
+    const made = await mintPat(pool, accountId, 'cli', { actorId: null, actorHandle: null });
+    if (!made.ok) throw new Error('mint failed');
+    const res = await put(made.token, { token: tok(8), platform: 'ios', env: 'production' });
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe('push_session_only');
     expect(await rows(accountId)).toHaveLength(0);

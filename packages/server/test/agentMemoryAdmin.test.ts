@@ -153,4 +153,16 @@ describe('에이전트 기억 편집 REST (M5)', () => {
     expect(put.statusCode).toBe(403);
     expect(revs.statusCode).toBe(403);
   });
+
+  it('사람 계정 id 나 없는 id 로는 기억 행을 만들지 않는다 — admin 이어도 404', async () => {
+    // requireOwnerOrAdmin 은 이 둘에도 admin 을 통과시킨다. 라우트가 대상을 안 보면 사람 id 로 행이 생겼다.
+    const me = (await app.inject({ method: 'GET', url: '/accounts/me', headers: admin() })).json().id as string;
+    for (const id of [me, '00000000-0000-4000-8000-000000000000']) {
+      const put = await app.inject({
+        method: 'PUT', url: `/accounts/agents/${id}/memory/${encodeURIComponent('mem/stray')}`, headers: admin(), payload: { value: 'x' },
+      });
+      expect(put.statusCode).toBe(404);
+      expect(await listMemory(pool, id)).toHaveLength(0);
+    }
+  });
 });
