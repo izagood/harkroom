@@ -388,6 +388,11 @@ class StringsKo implements Strings {
   String get attachmentUploadFailed => '파일을 올리지 못했다.';
 
   @override
+  String get attachmentRemove => '첨부에서 빼기';
+  @override
+  String attachmentRemoveNamed(String name) => '첨부에서 빼기: $name';
+
+  @override
   String get attachLibrary => '사진 보관함';
 
   @override
