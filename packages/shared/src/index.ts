@@ -2820,6 +2820,25 @@ export interface AgentWakeView {
   reason: string | null;
 }
 
+/**
+ * 에이전트가 **지금 무엇을 하는가** — `GET /agent-sessions?scope=visible` 의 한 줄(모바일 에이전트 탭, S7).
+ *
+ * 공개 범위는 **그 채널을 볼 수 있는가** 하나다(jaebin 결정 A, 2026-10-02): 메시지가 보이는 사람에게
+ * 그 메시지를 쓰고 있는 턴을 감출 이유가 없고, 판정을 메시지와 같은 술어로 두면 "말은 보이는데
+ * 턴은 안 보인다"는 어긋남이 없다. **`sessionId` 는 싣지 않는다** — 이 표면은 읽기 전용이고,
+ * attach·그만두기는 지금처럼 소유자 문(`AgentSessionView`)으로만 간다.
+ */
+export interface AgentActivityView {
+  agentAccountId: string;
+  channelId: string;
+  threadRootId: string | null;
+  harness: AgentHarness;
+  startedAt: string;
+  mode?: 'mention' | 'interactive';
+  /** 내가 소유한(또는 admin 인) 에이전트인가 — 화면이 "내 에이전트" 를 가를 때 쓴다. */
+  owned: boolean;
+}
+
 /** 뷰어(데스크탑)가 보는 세션 상태. `runner-offline` 은 '끝났다'와 다르다. */
 export type AgentSessionState = 'running' | 'ended' | 'runner-offline';
 
