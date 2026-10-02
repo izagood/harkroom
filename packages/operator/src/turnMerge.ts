@@ -138,6 +138,12 @@ function checkGreen(c: NonNullable<PrView['statusCheckRollup']>[number]): boolea
   return c.conclusion === 'SUCCESS' || c.conclusion === 'SKIPPED' || c.conclusion === 'NEUTRAL';
 }
 
+/** 실패로 끝난 실행 — 같은 이름에 하나라도 있으면 그 이름은 빨강이다(C1). 취소(CANCELLED)·진행 중은 여기 안 든다. */
+function checkRed(c: NonNullable<PrView['statusCheckRollup']>[number]): boolean {
+  if (c.state) return c.state === 'FAILURE' || c.state === 'ERROR';
+  return c.conclusion === 'FAILURE' || c.conclusion === 'TIMED_OUT' || c.conclusion === 'ACTION_REQUIRED';
+}
+
 export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
   const exec = deps.exec ?? defaultExec;
 
@@ -206,12 +212,17 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     if (pr.isDraft) return refuse('draft', 'PR is a draft');
     if (pr.headRefOid !== headSha) return refuse('head_moved', `PR head is ${pr.headRefOid ?? '?'}, not ${headSha}`);
     if (pr.mergeStateStatus !== 'CLEAN') return refuse('not_mergeable', `mergeStateStatus is ${pr.mergeStateStatus ?? 'unknown'} (need CLEAN)`);
-    // 체크는 **이름별**로 본다 — 같은 이름의 취소된 중복 실행(CANCELLED, #1078·#1083 에서 실제로 남았다)이 있어도
-    // 그 이름에 초록 실행이 하나 있으면 초록이다. 이름이 없는 항목은 그 항목 하나로 판정한다.
+    // 체크는 **이름별**로 본다(security C1). 같은 이름의 취소된 중복 실행(CANCELLED, #1078·#1083 에서 실제로 남았다)만
+    // 무시한다 — 그 이름에 **빨강(FAILURE·TIMED_OUT·ACTION_REQUIRED)이 하나라도 있으면 빨강**이고, 초록이 하나는 있어야
+    // 한다. "초록 하나면 초록"으로 두면 재실행이 빨간데 옛 실행이 초록인 경우가 통과한다. 이름이 없는 항목은 그 항목 하나.
     const checks = pr.statusCheckRollup ?? [];
-    const byName = new Map<string, boolean>();
-    checks.forEach((c, i) => { const k = c.name ?? c.context ?? `#${i}`; byName.set(k, (byName.get(k) ?? false) || checkGreen(c)); });
-    const red = [...byName.entries()].filter(([, green]) => !green).map(([k]) => k);
+    const byName = new Map<string, { green: boolean; red: boolean }>();
+    checks.forEach((c, i) => {
+      const k = c.name ?? c.context ?? `#${i}`;
+      const cur = byName.get(k) ?? { green: false, red: false };
+      byName.set(k, { green: cur.green || checkGreen(c), red: cur.red || checkRed(c) });
+    });
+    const red = [...byName.entries()].filter(([, v]) => v.red || !v.green).map(([k]) => k);
     if (!byName.size || red.length) return refuse('ci_not_green', byName.size ? `not green: ${red.join(', ').slice(0, 200)}` : 'no checks reported');
 
     // ⑤ squash 로만, head 를 못박고. `--admin` 은 문법에 없다.

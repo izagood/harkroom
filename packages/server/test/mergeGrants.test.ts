@@ -147,6 +147,13 @@ describe('repo.merge grant', () => {
   });
 
   describe('보고·목록', () => {
+    it('소유자는 자기 에이전트의 grant 목록을 본다 — 다른 member 는 403 (PR 3)', async () => {
+      const mine = await app.inject({ method: 'GET', url: `/accounts/${agentId}/grants`, headers: auth(alice.token) });
+      expect(mine.statusCode).toBe(200);
+      expect(mine.json().grants).toEqual([expect.objectContaining({ capability: 'repo.merge', scope: 'repo:izagood/harkroom' })]);
+      expect((await app.inject({ method: 'GET', url: `/accounts/${agentId}/grants`, headers: auth(bob.token) })).statusCode).toBe(403);
+      expect((await app.inject({ method: 'GET', url: `/accounts/${otherAgentId}/grants`, headers: auth(alice.token) })).statusCode).toBe(403);
+    });
     it('merge-grants 는 자기 저장소 목록만 준다', async () => {
       const res = await app.inject({ method: 'GET', url: '/agent/merge-grants', headers: asAgent() });
       expect(res.json()).toEqual({ repos: ['izagood/harkroom'] });

@@ -29,6 +29,8 @@ const fakeController = (agents: AgentView[], pats: PatView[] = []) => {
   const c = {
     listAgents: vi.fn(async (): Promise<AgentView[]> => agents),
     listPats: vi.fn(async (): Promise<PatView[]> => pats),
+    // 「할 수 있는 일」 절(스레드 3deac356)이 상세를 열며 부른다 — 빈 목록이면 절은 '없음'만 그린다.
+    listGrants: vi.fn(async () => []),
     revokePat: vi.fn(async (): Promise<{ revoked: number }> => ({ revoked: 1 })),
     mintPat: vi.fn(async (): Promise<string> => 'murp_new'),
     agentDefaults: vi.fn(async (): Promise<AgentDefaults> => (
@@ -204,6 +206,8 @@ describe('#251 끈 결과가 스토어를 거쳐 다른 화면에 닿는다', ()
       accounts: vi.fn(async () => [admin, rusalka]),
       listAgents: vi.fn(async () => [rusalka]),
       listPats: vi.fn(async () => []),
+      // 「할 수 있는 일」 절(스레드 3deac356)이 상세를 열며 부른다 — 빈 목록이면 절은 '없음'만 그린다.
+      listGrants: vi.fn(async () => []),
       setAgentDisabled,
     } as unknown as Partial<ApiClient>));
     setController(real);

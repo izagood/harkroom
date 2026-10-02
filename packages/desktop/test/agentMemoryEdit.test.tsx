@@ -31,6 +31,8 @@ const fakeController = (memories: MemoryEntry[], revisions: MemoryRevision[] = [
   const c = {
     listAgents: vi.fn(async (): Promise<AgentView[]> => [agent('rusalka')]),
     listPats: vi.fn(async (): Promise<PatView[]> => []),
+    // 「할 수 있는 일」 절(스레드 3deac356)이 상세를 열며 부른다 — 빈 목록이면 절은 '없음'만 그린다.
+    listGrants: vi.fn(async () => []),
     agentDefaults: vi.fn(async (): Promise<AgentDefaults> => ({ harness: 'claude-code', model: null, effort: null })),
     agentMemory: vi.fn(async () => memories),
     deleteAgentMemory: vi.fn(async (): Promise<void> => undefined),
