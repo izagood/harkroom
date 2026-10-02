@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createBadger, type Badge, type Badger } from './badge';
 import { useCommunityRegistry, type CommunityEntry } from '../state/communities';
-import { blockingUnreadCount, hasUnreadMessages } from '../state/unread';
+import { hasUnreadMessages } from '../state/unread';
 
 /**
  * 독(Dock) 아이콘에 안 읽은 것을 표시한다 — Slack 이 하는 그 표시다.
@@ -14,7 +14,7 @@ import { blockingUnreadCount, hasUnreadMessages } from '../state/unread';
  *
  * ## 무엇을 세는가 — 화면과 **같은 것**
  *
- * 규칙은 `state/unread.ts` 하나에 있고 레일·사이드바가 같은 함수를 쓴다. 독이 자기 식으로
+ * 숫자는 보드의 "내 차례" 수(`inboxMine`, 배지 A)이고 레일·사이드바가 같은 값을 쓴다. 독이 자기 식으로
  * 세면 "독에는 3, 화면에는 2" 가 되고 그때 사람이 믿는 숫자는 없다.
  *
  * ## 커뮤니티 전부를 **합친다**
@@ -62,7 +62,7 @@ export function badgeOf(entries: CommunityEntry[]): Badge {
   let dot = false;
   for (const e of entries) {
     const s = e.store.getState();
-    count += blockingUnreadCount(s.unread);
+    count += s.inboxMine;
     dot = dot || hasUnreadMessages(s.reads);
   }
   return { count, dot: count === 0 && dot };
