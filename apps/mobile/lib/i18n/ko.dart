@@ -576,4 +576,16 @@ class StringsKo implements Strings {
 
   @override
   String get communityOthersWaiting => ', 다른 커뮤니티에 나를 기다리는 것이 있다';
+
+  @override
+  String get pushPromptTitle => '부르면 알려 드릴게요';
+
+  @override
+  String get pushPromptBody => '에이전트가 나를 부르거나, 내 스레드에 답하거나, 내 선택을 기다리면 앱이 꺼져 있어도 알림을 보내요.';
+
+  @override
+  String get pushPromptEnable => '알림 켜기';
+
+  @override
+  String get pushPromptLater => '나중에';
 }

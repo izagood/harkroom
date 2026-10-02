@@ -505,6 +505,10 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 그 커뮤니티의 토큰으로 서버에 묻는 클라이언트. 지금 커뮤니티가 아니어도 된다 — 푸시 등록은
+  /// 로그인해 둔 커뮤니티마다 따로 한다(`lib/push/push_coordinator.dart`).
+  ApiClient apiFor(StoredCommunity community) => _apiFactory(community.baseUrl, community.token);
+
   /// 그 커뮤니티 서버의 릴리스 번호(`/healthz`). 모르면 `null`.
   Future<String?> serverVersionOf(StoredCommunity community) async {
     try {
@@ -1453,6 +1457,13 @@ class AppState extends ChangeNotifier {
   Future<void> _revoke(StoredCommunity? c) async {
     if (c == null || c.isExpired) return;
     final api = _apiFactory(c.baseUrl, c.token);
+    try {
+      // 푸시 등록을 먼저 푼다(`DELETE /push/devices/current`). 로그아웃이 서버 세션을 지우면 함께
+      // 풀리지만, 그 둘 중 하나라도 닿으면 이 기기에 더는 알림이 가지 않는다. 옛 서버(404)도 넘어간다.
+      await api.unregisterPushDevice().timeout(const Duration(seconds: 2));
+    } on Object {
+      // 아래 로그아웃이 세션과 함께 지운다.
+    }
     try {
       await api.logout().timeout(const Duration(seconds: 2));
     } on Object {

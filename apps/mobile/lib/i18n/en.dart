@@ -577,4 +577,16 @@ class StringsEn implements Strings {
 
   @override
   String get communityOthersWaiting => ', another community has something waiting for you';
+
+  @override
+  String get pushPromptTitle => "Get notified when you're called";
+
+  @override
+  String get pushPromptBody => "When an agent mentions you, replies in your thread, or waits for your choice, you'll get a notification — even when the app is closed.";
+
+  @override
+  String get pushPromptEnable => 'Turn on notifications';
+
+  @override
+  String get pushPromptLater => 'Not now';
 }

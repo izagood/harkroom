@@ -1,0 +1,5 @@
+/* 푸시 알림 본문(서버가 미리보기 없이 보낼 때 loc-key 로 고른다 — services/push/payload.ts). */
+"PUSH_REASON_MENTION" = "Mentioned you";
+"PUSH_REASON_THREAD_REPLY" = "Replied in a thread";
+"PUSH_REASON_DM" = "Sent you a message";
+"PUSH_REASON_ASK" = "Is waiting for your choice";
