@@ -303,6 +303,24 @@ void main() {
     await shot(tester, '17-push-prompt');
   });
 
+  for (final (name, perm) in [
+    ('18a-me-push-not-asked', PushPermission.notDetermined),
+    ('18b-me-push-denied', PushPermission.denied),
+    ('18c-me-push-on', PushPermission.authorized),
+  ]) {
+    testWidgets('나 화면 알림 $name', (tester) async {
+      final app = _galleryApp(_server());
+      addTearDown(app.dispose);
+      await tester.pumpWidget(HarkroomApp(
+        state: app, push: PushCoordinator(app, _GalleryPush(perm: perm, prompted: true))));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+      await tester.tap(find.byKey(const Key('open-me')).first);
+      await shot(tester, name);
+    });
+  }
+
   testWidgets('부팅 실패', (tester) async {
     final app = _galleryApp(MockClient((_) async => throw http.ClientException('네트워크 없음')));
     addTearDown(app.dispose);
@@ -715,12 +733,15 @@ class _LongThreadServer {
 
 /// 갤러리용 푸시 표면 — 아직 묻지 않은 기기. OS 창은 띄우지 않는다.
 class _GalleryPush implements PushPlatform {
+  _GalleryPush({this.perm = PushPermission.notDetermined, this.prompted = false});
+  final PushPermission perm;
+  final bool prompted;
   @override
   Future<Set<String>> mutedCommunities() async => {};
   @override
   Future<void> setMutedCommunities(Set<String> keys) async {}
   @override
-  Future<PushPermission> status() async => PushPermission.notDetermined;
+  Future<PushPermission> status() async => perm;
   @override
   Future<bool> request() async => false;
   @override
@@ -730,7 +751,7 @@ class _GalleryPush implements PushPlatform {
   @override
   Future<void> setBadge(int count) async {}
   @override
-  Future<bool> wasPrompted() async => false;
+  Future<bool> wasPrompted() async => prompted;
   @override
   Future<void> markPrompted() async {}
   @override
