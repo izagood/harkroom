@@ -18,7 +18,7 @@ const secret = (name: string, over: Partial<SecretView> = {}): SecretView => ({
   expiresAt: null, createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-01T00:00:00Z', version: 1, sizeBytes: 10, grantCount: 0, ...over,
 });
 
-function setup(over: Partial<Record<string, unknown>> = {}, initial: SecretView[] = [secret('forge-token', { description: 'API token', grantCount: 1 })], enabled = true) {
+function setup(over: Partial<Record<string, unknown>> = {}, initial: SecretView[] = [secret('api-token', { description: 'API token', grantCount: 1 })], enabled = true) {
   let rows = initial;
   const c = {
     listSecrets: vi.fn(async () => ({ enabled, secrets: rows })),
@@ -41,7 +41,7 @@ beforeEach(() => {
   useActiveStore.getState().reset();
   useActiveStore.getState().set({
     me: acc(ME, 'owner'),
-    accounts: { [ME]: acc(ME, 'owner'), 'agent-1': acc('agent-1', 'alpha', 'agent'), 'agent-2': acc('agent-2', 'beta', 'agent') },
+    accounts: { [ME]: acc(ME, 'owner'), 'agent-1': acc('agent-1', 'alpha', 'agent', false, { ownerAccountId: ME }), 'agent-2': acc('agent-2', 'beta', 'agent', false, { ownerAccountId: 'other-1' }), 'other-1': acc('other-1', 'carol') },
   });
 });
 afterEach(() => { usePrefsStore.getState().setLocale('system'); cleanup(); });
@@ -50,8 +50,8 @@ describe('SecretsSettings', () => {
   it('목록: 이름·쓰는 곳·만료를 앉히고 값은 어디에도 없다', async () => {
     setup();
     render(<SecretsSettings />);
-    const row = await screen.findByTestId('secret-forge-token');
-    expect(row.textContent).toContain('forge-token');
+    const row = await screen.findByTestId('secret-api-token');
+    expect(row.textContent).toContain('api-token');
     expect(row.textContent).toContain('쓰는 곳: 에이전트 1');
     expect(row.textContent).toContain('만료 없음');
   });
@@ -71,13 +71,13 @@ describe('SecretsSettings', () => {
     render(<SecretsSettings />);
     fireEvent.click(await screen.findByRole('button', { name: '+ 비밀 넣기' }));
     const form = screen.getByTestId('secret-create');
-    fireEvent.change(within(form).getAllByRole('textbox')[0], { target: { value: 'forge-token' } });
+    fireEvent.change(within(form).getAllByRole('textbox')[0]!, { target: { value: 'api-token' } });
     const value = within(form).getByLabelText('값') as HTMLInputElement;
     expect(value.type).toBe('password');
     fireEvent.change(value, { target: { value: 's3cr3t-value' } });
     fireEvent.click(within(form).getByRole('radio', { name: '없음' }));
     fireEvent.click(within(form).getByRole('button', { name: '넣기' }));
-    await waitFor(() => expect(c.createSecret).toHaveBeenCalledWith({ name: 'forge-token', kind: 'text', description: '', expiresAt: null, value: 's3cr3t-value' }));
+    await waitFor(() => expect(c.createSecret).toHaveBeenCalledWith({ name: 'api-token', kind: 'text', description: '', expiresAt: null, value: 's3cr3t-value' }));
     await waitFor(() => expect(screen.queryByTestId('secret-create')).toBeNull());
     expect(document.body.textContent).not.toContain('s3cr3t-value');
   });
@@ -87,7 +87,7 @@ describe('SecretsSettings', () => {
     render(<SecretsSettings />);
     fireEvent.click(await screen.findByRole('button', { name: '+ 비밀 넣기' }));
     const form = screen.getByTestId('secret-create');
-    fireEvent.change(within(form).getAllByRole('textbox')[0], { target: { value: 'Bad.Name' } });
+    fireEvent.change(within(form).getAllByRole('textbox')[0]!, { target: { value: 'Bad.Name' } });
     fireEvent.change(within(form).getByLabelText('값'), { target: { value: 'v' } });
     expect((within(form).getByRole('button', { name: '넣기' }) as HTMLButtonElement).disabled).toBe(true);
   });
@@ -97,7 +97,7 @@ describe('SecretsSettings', () => {
     render(<SecretsSettings />);
     fireEvent.click(await screen.findByRole('button', { name: '+ 비밀 넣기' }));
     const form = screen.getByTestId('secret-create');
-    fireEvent.change(within(form).getAllByRole('textbox')[0], { target: { value: 'k' } });
+    fireEvent.change(within(form).getAllByRole('textbox')[0]!, { target: { value: 'k' } });
     fireEvent.change(within(form).getByLabelText('값'), { target: { value: 'v' } });
     fireEvent.click(within(form).getByRole('button', { name: '넣기' }));
     expect((await screen.findByTestId('secrets-error')).textContent).toContain('설명은 에이전트에게 보이니');
@@ -106,12 +106,12 @@ describe('SecretsSettings', () => {
   it('지우기는 확인창을 거치고, 쓰는 곳이 있으면 멈춘다고 말한다', async () => {
     const c = setup();
     render(<SecretsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: '비밀 forge-token 지우기' }));
+    fireEvent.click(await screen.findByRole('button', { name: '비밀 api-token 지우기' }));
     const dlg = screen.getByRole('dialog');
     expect(dlg.textContent).toContain('다음 턴부터 멈춘다');
     expect(c.deleteSecret).not.toHaveBeenCalled();
     fireEvent.click(within(dlg).getByRole('button', { name: '지우기' }));
-    await waitFor(() => expect(c.deleteSecret).toHaveBeenCalledWith('id-forge-token'));
+    await waitFor(() => expect(c.deleteSecret).toHaveBeenCalledWith('id-api-token'));
   });
 
   it('받을 에이전트: 소유자는 주고, 거두기는 확인창을 거친다', async () => {
@@ -121,10 +121,34 @@ describe('SecretsSettings', () => {
     await screen.findByTestId('secret-grant-alpha');
     fireEvent.change(screen.getByLabelText('에이전트'), { target: { value: 'agent-2' } });
     fireEvent.click(screen.getByRole('button', { name: '주기' }));
-    await waitFor(() => expect(c.putSecretGrant).toHaveBeenCalledWith('id-forge-token', { agentId: 'agent-2', channelId: null, operator: 'current' }));
+    await waitFor(() => expect(c.putSecretGrant).toHaveBeenCalledWith('id-api-token', { agentId: 'agent-2', channelId: null, operator: 'current' }));
     fireEvent.click(screen.getByRole('button', { name: '@alpha 에게서 거두기' }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '거두기' }));
-    await waitFor(() => expect(c.deleteSecretGrant).toHaveBeenCalledWith('id-forge-token', 'g1'));
+    await waitFor(() => expect(c.deleteSecretGrant).toHaveBeenCalledWith('id-api-token', 'g1'));
+  });
+
+  it('부여 패널: 모든 채널 경고, 남의 에이전트·어느 오퍼레이터든 경고', async () => {
+    setup();
+    render(<SecretsSettings />);
+    fireEvent.click(await screen.findByRole('button', { name: '받을 에이전트' }));
+    await screen.findByTestId('secret-grant-alpha');
+    expect(screen.getByTestId('secret-grants-all-channels').textContent).toContain('모든 스레드에서');
+    const sel = screen.getByLabelText('에이전트');
+    expect(within(sel).getByRole('group', { name: '내 에이전트' }).textContent).toContain('@alpha');
+    expect(within(sel).getByRole('group', { name: '다른 사람의 에이전트' }).textContent).toContain('@beta (소유자 @carol)');
+    expect(screen.queryByTestId('secret-grant-other-warn')).toBeNull();
+    fireEvent.change(sel, { target: { value: 'agent-2' } });
+    expect(screen.getByTestId('secret-grant-other-warn').textContent).toContain('@carol');
+    expect(screen.queryByTestId('secret-grant-any-warn')).toBeNull();
+    fireEvent.change(screen.getByLabelText('오퍼레이터'), { target: { value: 'any' } });
+    expect(screen.getByTestId('secret-grant-any-warn').textContent).toContain('앞으로 배정되는 머신');
+  });
+
+  it('가린 입력은 new-password 로 자동 채우기를 막는다', async () => {
+    setup({}, []);
+    render(<SecretsSettings />);
+    fireEvent.click(await screen.findByRole('button', { name: '+ 비밀 넣기' }));
+    expect(screen.getByLabelText('값').getAttribute('autocomplete')).toBe('new-password');
   });
 
   it('남의 비밀(admin 이 보는 것)에는 값 바꾸기·주기가 없다', async () => {
