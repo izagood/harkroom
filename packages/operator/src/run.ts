@@ -45,6 +45,7 @@ import type { CommunityInstance } from './community.js';
 import { createTurnSecrets } from './turnSecrets.js';
 import { readConfig } from './config.js';
 import { createTurnMerge, GH_PATH } from './turnMerge.js';
+import { createTurnSlots, MAX_TURNS_ENV, parseMaxTurns } from './turnSlots.js';
 import { createTurnUploads } from './turnUploads.js';
 
 /**
@@ -206,6 +207,9 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   });
   // 에이전트 머지 래퍼(스레드 3deac356). 브릿지 소켓으로 온 `repo.merge` 를 여기서 받아 서버 판정 → gh 머지 →
   // 결과 보고를 한다. 임대는 `turnSecrets` 의 것을 그대로 쓴다(`lookup`).
+  // 동시 턴 상한(R1) — 이 오퍼레이터가 띄운 러너 전부를 합쳐 센다(`turnSlots.ts`).
+  const turnSlots = createTurnSlots({ max: parseMaxTurns(process.env[MAX_TURNS_ENV], log), log });
+  if (turnSlots.max !== null) log(`동시 턴 상한: ${turnSlots.max}`);
   const turnMerge = createTurnMerge({
     forward: async (agentId, req) => {
       const c = communities.find((x) => x.knowsAgent(agentId));
@@ -240,6 +244,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     // 러너의 MCP·REST 요청 — 그 에이전트를 아는 커뮤니티의 서버로 나른다(스펙 §5). 인증은
     // 그 커뮤니티의 오퍼레이터 토큰 + 에이전트 id 로 바뀐다.
     onRequest: async (runnerId, agentId, req) => {
+      const slot = turnSlots.maybeHandle(runnerId, req);
+      if (slot) return slot;
       const mounted = await turnSecrets.maybeHandle(runnerId, agentId, req);
       if (mounted) return mounted;
       const merged = await turnMerge.maybeHandle(runnerId, agentId, req);
@@ -257,6 +263,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     // 회수한 러너가 **인박스를 놓았다**고 알린다(2026-09-28). 그 순간부터 교체 러너를 띄워도
     // 같은 멘션을 둘이 집지 않는다 — 프로세스가 죽기를 기다리던 공백이 여기서 사라진다.
     // `registry` 는 아래에서 만들어지지만 이 콜백은 그 뒤에만 불린다(러너가 붙어야 온다).
+    // relay 링크가 끊겼다 = 러너가 죽었거나 오퍼레이터를 놓았다 — 그 러너가 쥔 턴 자리를 돌려받는다.
+    onClose: (runnerId) => { turnSlots.releaseRunner(runnerId); },
     onNotice: (runnerId, agentId, notice) => {
       // 턴 임대를 맡긴다·놓는다(비밀 보관소). relay 소켓에서만 온다 — 브릿지의 통지는 링크가 버린다.
       if (notice.type === 'secret.lease') { turnSecrets.noteLease(runnerId, agentId, notice); return; }

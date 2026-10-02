@@ -179,6 +179,15 @@ export interface MentionSchedulerDeps {
    * 같은 스레드에 턴이 둘 뜨지 않게 한다. 못 잡으면 `blocked` 로 세고 다음 폴에서 다시 묻는다.
    */
   threadClaims?: ThreadClaims;
+  /**
+   * 동시 턴 자리(오퍼레이터 전체 상한 `HARKROOM_MAX_TURNS`, `operator/src/turnSlots.ts`). 스레드 임대 다음에 묻는다.
+   * 'full' 이면 `blocked` — 읽음 처리하지 않고 attempts 도 올리지 않아, 자리가 난 뒤의 폴에서 다시 온다.
+   * 'unsupported'(옛 오퍼레이터·링크 오류)는 상한이 없는 것으로 보고 띄운다.
+   */
+  turnSlots?: {
+    acquire(key: string): Promise<'granted' | 'full' | 'unsupported'>;
+    release(key: string): Promise<void>;
+  };
   /** 종료 요청이 나를 향한 것인지 가르는 기준(stop.ts). */
   startedAtMs: number;
   /** 테스트가 백오프 경계를 결정론적으로 재현하기 위한 시계 주입. 생략하면 Date.now. */
@@ -701,6 +710,25 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
           }
         }
 
+        // 머신 전체의 동시 턴 상한 — 자리가 없으면 잡은 스레드 임대를 놓고 다음 폴로 미룬다.
+        let slotHeld = false;
+        if (deps.turnSlots) {
+          const slot = await deps.turnSlots.acquire(threadKey);
+          if (slot === 'full') {
+            void claim?.release();
+            out.blocked += 1;
+            continue;
+          }
+          slotHeld = slot === 'granted';
+          // 기다리는 사이 이 프로세스 안에서 같은 스레드가 시작됐을 수 있다 — 위와 같은 재확인.
+          if (inFlightThreads.has(threadKey) || deps.registry.get(threadKey)) {
+            if (slotHeld) void deps.turnSlots.release(threadKey);
+            void claim?.release();
+            out.blocked += 1;
+            continue;
+          }
+        }
+
         // 장부 등록은 **동기적으로, 띄우기 전에**. 위 inFlightThreads 주석이 이유다.
         inFlightEntries.add(entry.id);
         inFlightThreads.add(threadKey);
@@ -719,7 +747,11 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
             console.error(`  ${entry.messageId} 턴 실패:`, err instanceof Error ? err.message : err);
           })
           // 임대는 턴이 **완전히 끝난 뒤** 놓는다(재시도로 미룬 멘션도 이 턴은 끝났다 — 다음 시도는 다시 잡는다).
-          .finally(() => { running.delete(task); void claim?.release(); });
+          .finally(() => {
+            running.delete(task);
+            void claim?.release();
+            if (slotHeld) void deps.turnSlots?.release(threadKey);
+          });
         running.add(task);
       }
 
