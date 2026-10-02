@@ -17,6 +17,10 @@ abstract class RecentSearchStore {
   Future<List<String>> load(String communityKey);
 
   Future<void> save(String communityKey, List<String> queries);
+
+  /// 그 커뮤니티의 것을 지운다 — 로그아웃할 때. iOS 키체인은 앱을 지워도 남으므로 안 지우면 무엇을
+  /// 찾았는지가 기기에 계속 남는다(security #1094 F1).
+  Future<void> delete(String communityKey);
 }
 
 class KeychainRecentSearchStore extends RecentSearchStore {
@@ -47,6 +51,15 @@ class KeychainRecentSearchStore extends RecentSearchStore {
       /* 위와 같다 */
     }
   }
+
+  @override
+  Future<void> delete(String communityKey) async {
+    try {
+      await _storage.delete(key: _key(communityKey), iOptions: _options);
+    } on Object {
+      /* 위와 같다 */
+    }
+  }
 }
 
 class MemoryRecentSearchStore extends RecentSearchStore {
@@ -59,4 +72,7 @@ class MemoryRecentSearchStore extends RecentSearchStore {
 
   @override
   Future<void> save(String communityKey, List<String> queries) async => values[communityKey] = queries;
+
+  @override
+  Future<void> delete(String communityKey) async => values.remove(communityKey);
 }

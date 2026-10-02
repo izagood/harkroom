@@ -1099,7 +1099,8 @@ class AppState extends ChangeNotifier {
   Future<void> forgetSearch(String? query) async {
     final key = activeKey;
     if (key == null) return;
-    await _setRecent(key, query == null ? const [] : recentSearches.where((s) => s != query).toList(growable: false));
+    final base = _recentFor == key ? recentSearches : await _recentStore.load(key);
+    await _setRecent(key, query == null ? const [] : base.where((s) => s != query).toList(growable: false));
   }
 
   Future<void> _setRecent(String key, List<String> next) async {
@@ -1512,12 +1513,14 @@ class AppState extends ChangeNotifier {
       notifyListeners();
       await _revoke(gone);
       await _sessions.remove(key);
+      await _recentStore.delete(key);
       return;
     }
     _generation++;
     _dropSocket();
     await _revoke(gone);
     await _sessions.remove(key);
+    await _recentStore.delete(key);
     // 위 두 await 사이에 화면이 부른 요청은 첫 줄에서 올린 세대를 쥐고 옛 토큰으로 간다.
     // 비우기 직전에 한 번 더 올려 그 답도 버린다.
     _generation++;
@@ -1557,6 +1560,7 @@ class AppState extends ChangeNotifier {
     homeTab = 0;
     await Future.wait([for (final c in communities) _revoke(c)]);
     await _sessions.clear();
+    await Future.wait([for (final c in communities) _recentStore.delete(c.key)]);
     _generation++;
     _resetSession();
     communities = const [];
@@ -1623,6 +1627,10 @@ class AppState extends ChangeNotifier {
     pending.clear();
     // 누구와 이야기하던 자리인가도 그 계정의 것이다 — 다른 계정이 이어받으면 엉뚱한 상대를 부른다.
     stickyMentions.clear();
+    // 최근 찾은 말도 그 커뮤니티의 것이다 — 새 커뮤니티 것을 읽기 전까지 앞 목록이 보이거나, 그 목록이
+    // 새 커뮤니티 키에 저장되면 안 된다(security #1094 F2). 잠깐 비었다가 차는 것이 낫다.
+    recentSearches = const [];
+    _recentFor = null;
     channelAutoMentions.clear();
     autoSkipped.clear();
     openChannelId = null;

@@ -46,21 +46,37 @@ export function highlightParts(text: string, query: string): HighlightPart[] {
   return parts.length ? parts : [{ text, hit: false }];
 }
 
+/** 팔레트 결과 한 줄에 대략 들어가는 글자 수. 일치가 이 안에 끝나면 자르지 않는다(모바일은 두 줄 40). */
+export const SEARCH_EXCERPT_VISIBLE = 60;
+
 /**
- * 한 줄로 잘리는 자리에서 찾은 낱말이 잘린 뒤쪽에 있으면 강조가 안 보인다 — 첫 일치 앞 [lead] 글자쯤에서
- * `…` 로 시작하는 발췌로 바꾼다(모바일 `searchExcerpt` 와 같다). 낱말 가운데를 자르지 않게 그 앞 공백까지 물린다.
+ * 한 줄로 잘리는 자리에서 찾은 낱말이 잘린 뒤쪽에 있으면 강조가 안 보인다 — 발췌로 바꾼다
+ * (모바일 `searchExcerpt` 와 같은 규칙).
+ *
+ * - 첫 일치가 보이는 칸(`visible`) 안에서 끝나면 자르지 않는다(#1094 D1 — `@에이전트 …` 꼴 글이 잘리던 것).
+ * - 자르면 일치 앞 `lead` 글자쯤에서 `…` 로 시작한다. 그 자리가 낱말 가운데면 일치 앞의 첫 공백 뒤로,
+ *   없으면 앞쪽 가까운 공백으로 물리고, 그것도 없으면 자르지 않는다.
  */
-export function searchExcerpt(text: string, query: string, lead = 20): string {
+export function searchExcerpt(text: string, query: string, visible = SEARCH_EXCERPT_VISIBLE, lead = 20): string {
   const lower = text.toLowerCase();
   if (lower.length !== text.length) return text;
   let first = -1;
+  let end = -1;
   for (const w of queryWords(query)) {
     const at = lower.indexOf(w);
-    if (at >= 0 && (first < 0 || at < first)) first = at;
+    if (at >= 0 && (first < 0 || at < first)) {
+      first = at;
+      end = at + w.length;
+    }
   }
-  if (first <= lead) return text;
+  if (first < 0 || end <= visible || first <= lead) return text;
   let start = first - lead;
-  const space = text.lastIndexOf(' ', start);
-  if (space >= 0 && first - space <= lead + 10) start = space + 1;
+  if (text[start - 1] !== ' ') {
+    const ahead = text.indexOf(' ', start);
+    const behind = text.lastIndexOf(' ', start - 1);
+    if (ahead >= 0 && ahead < first) start = ahead + 1;
+    else if (behind >= 0 && first - behind <= lead + 10) start = behind + 1;
+    else return text;
+  }
   return `…${text.slice(start)}`;
 }

@@ -21,6 +21,11 @@ describe('highlightParts — ⌘K 결과 강조', () => {
 describe('searchExcerpt — 한 줄 밖의 낱말', () => {
   it('첫 일치가 앞 스무 글자 밖이면 그 앞에서 … 로 시작한다', () => {
     expect(searchExcerpt('짧은 배포 글', '배포')).toBe('짧은 배포 글');
+    // 한 줄에 들어가는 글은 일치가 스무 글자 뒤여도 자르지 않는다(#1094 D1).
+    expect(searchExcerpt('@task_manager 서버 최신버전 배포해', '배포')).toBe('@task_manager 서버 최신버전 배포해');
+    // 자를 자리 앞뒤로 공백이 없으면 자르지 않는다.
+    const noSpace = `${'가'.repeat(80)}배포`;
+    expect(searchExcerpt(noSpace, '배포')).toBe(noSpace);
     const long = `${'가나다라 '.repeat(20)}여기서 배포했다`;
     const ex = searchExcerpt(long, '배포');
     expect(ex.startsWith('…')).toBe(true);

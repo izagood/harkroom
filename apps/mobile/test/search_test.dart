@@ -411,8 +411,46 @@ void main() {
       expect(tester.widget<MessageListScreen>(find.byType(MessageListScreen)).channelId, 'd1');
     });
 
+    for (final all in [false, true]) {
+      test('로그아웃(${all ? '모두' : '이 커뮤니티'})하면 최근 찾은 말을 기기에서 지운다(security #1094 F1·F2)', () async {
+        final store = MemoryRecentSearchStore();
+        final server = _Server();
+        final app = AppState(
+          sessions: SessionStore.inMemory(
+            seed: jsonEncode({
+              'active': 'me-1',
+              'communities': [
+                {'accountId': 'me-1', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'me'},
+              ],
+            }),
+          ),
+          apiFactory: (b, t) => ApiClient(baseUrl: b, token: t, httpClient: server.client),
+          connector: (_) async => _Idle(),
+          recentSearchStore: store,
+        );
+        addTearDown(app.dispose);
+        await app.boot();
+        final key = app.activeKey!;
+        await app.rememberSearch('배포');
+        expect(store.values[key], ['배포']);
+        if (all) {
+          await app.signOutAll();
+        } else {
+          await app.signOutCommunity(key);
+        }
+        expect(store.values.containsKey(key), isFalse);
+        // 화면 상태도 비었다 — 다음 커뮤니티에 앞 목록이 비치지 않는다.
+        expect(app.recentSearches, isEmpty);
+      });
+    }
+
     test('발췌: 첫 일치가 두 줄 밖이면 그 앞에서 「…」 로 시작한다', () {
       expect(searchExcerpt('짧은 배포 글', '배포'), '짧은 배포 글');
+      // 두 줄에 들어가는 글은 일치가 스무 글자 뒤여도 자르지 않는다(#1094 D1).
+      expect(searchExcerpt('@task_manager 서버 최신버전 배포해', '배포'), '@task_manager 서버 최신버전 배포해');
+      // 자를 자리 앞뒤로 공백이 없으면 자르지 않는다 — 낱말 가운데에서 「…ask」 가 되지 않는다.
+      final noSpace = '${'가' * 60}배포';
+      expect(searchExcerpt(noSpace, '배포'), noSpace);
       final long = '${'가나다라 ' * 20}여기서 배포했다';
       final ex = searchExcerpt(long, '배포');
       expect(ex, startsWith('…'));

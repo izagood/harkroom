@@ -581,21 +581,41 @@ class SearchResultTile extends StatelessWidget {
   }
 }
 
-/// 찾은 낱말이 앞쪽에 오도록 자른 발췌. 첫 일치가 [lead] 글자보다 뒤에 있으면 그 앞 [lead] 글자쯤에서
-/// 「…」 로 시작한다(designer #1092 f1, Slack 과 같다). 낱말 가운데를 자르지 않게 그 앞 공백까지 물린다.
-String searchExcerpt(String text, String query, {int lead = 20}) {
+/// 결과 줄 본문 두 칸에 대략 들어가는 글자 수(한글 기준). 일치가 이 안에 끝나면 자르지 않는다.
+const int searchExcerptVisible = 40;
+
+/// 찾은 낱말이 보이게 자른 발췌(designer #1092 f1, Slack 과 같다).
+///
+/// - 첫 일치가 **보이는 칸([visible]) 안에서 끝나면 자르지 않는다** — 두 줄에 들어가는 글을 자르면
+///   잃기만 한다. 이 앱의 글은 거의 `@에이전트 …` 로 시작해 가장 흔한 줄이 그 꼴이다(#1094 D1).
+/// - 자르면 일치 앞 [lead] 글자쯤에서 「…」 로 시작한다. 그 자리가 낱말 가운데면 일치 앞의 첫 공백
+///   뒤로 물리고, 그런 공백이 없으면 앞쪽 가까운 공백으로, 그것도 없으면 **자르지 않는다**.
+String searchExcerpt(String text, String query, {int visible = searchExcerptVisible, int lead = 20}) {
   final words = _queryWords(query);
   final lower = text.toLowerCase();
   if (lower.length != text.length) return text;
   var first = -1;
+  var end = -1;
   for (final w in words) {
     final at = lower.indexOf(w);
-    if (at >= 0 && (first < 0 || at < first)) first = at;
+    if (at >= 0 && (first < 0 || at < first)) {
+      first = at;
+      end = at + w.length;
+    }
   }
-  if (first <= lead) return text;
+  if (first < 0 || end <= visible || first <= lead) return text;
   var start = first - lead;
-  final space = text.lastIndexOf(' ', start);
-  if (space >= 0 && first - space <= lead + 10) start = space + 1;
+  if (text[start - 1] != ' ') {
+    final ahead = text.indexOf(' ', start);
+    final behind = text.lastIndexOf(' ', start - 1);
+    if (ahead >= 0 && ahead < first) {
+      start = ahead + 1;
+    } else if (behind >= 0 && first - behind <= lead + 10) {
+      start = behind + 1;
+    } else {
+      return text;
+    }
+  }
   return '…${text.substring(start)}';
 }
 
