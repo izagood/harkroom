@@ -176,7 +176,7 @@ class _AddCommunityScreenState extends State<AddCommunityScreen> {
                 hintText: t.connectServerUrlHint,
                 errorText: problem == null ? null : _urlMessage(t, problem),
                 filled: _fixedUrl,
-                fillColor: _fixedUrl ? context.tokens.soft : null,
+                fillColor: _fixedUrl ? context.tokens.surfaceRaised : null,
                 border: _fixedUrl ? InputBorder.none : null,
                 enabledBorder: _fixedUrl
                     ? OutlineInputBorder(
@@ -194,7 +194,7 @@ class _AddCommunityScreenState extends State<AddCommunityScreen> {
                     ? Icon(Icons.lock_outline,
                         key: const Key('community-add-url-locked'),
                         size: 18,
-                        color: context.tokens.mute)
+                        color: context.tokens.fgMuted)
                     : null,
               ),
             ),
@@ -369,7 +369,7 @@ class _CommunityDetailScreenState extends State<CommunityDetailScreen> {
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
               child: TextButton(
                 key: const Key('community-sign-out'),
-                style: TextButton.styleFrom(foregroundColor: k.err),
+                style: TextButton.styleFrom(foregroundColor: k.danger),
                 onPressed: () => _signOut(c),
                 child: Text(t.communitySignOutOne.replaceAll('{name}', c.displayLabel)),
               ),
@@ -428,7 +428,7 @@ class CommunityHeader extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: k.accent,
                         shape: BoxShape.circle,
-                        border: Border.all(color: k.bg, width: 2),
+                        border: Border.all(color: k.surface, width: 2),
                       ),
                     ),
                   ),
@@ -441,10 +441,10 @@ class CommunityHeader extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                    fontSize: HarkroomType.screenTitle, fontWeight: FontWeight.w700, color: k.fg),
+                    fontSize: HarkroomType.name, fontWeight: FontWeight.w600, color: k.fg),
               ),
             ),
-            Icon(Icons.expand_more, size: 20, color: k.mute),
+            Icon(Icons.expand_more, size: 20, color: k.fgMuted),
           ],
         ),
       ),
@@ -549,9 +549,9 @@ class ExpiredChip extends StatelessWidget {
     final k = context.tokens;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(color: k.warnSoft, borderRadius: BorderRadius.circular(999)),
+      decoration: BoxDecoration(color: k.warningSurface, borderRadius: BorderRadius.circular(999)),
       child: Text(label,
-          style: TextStyle(color: k.warn, fontSize: 12, fontWeight: FontWeight.w600)),
+          style: TextStyle(color: k.warning, fontSize: 12, fontWeight: FontWeight.w600)),
     );
   }
 }

@@ -20,7 +20,7 @@ void main() {
 
     test('남보라 씨앗색을 쓰지 않는다 — 주 색은 먹색, 강조는 주황 하나', () {
       final t = harkroomTheme(Brightness.light);
-      expect(t.colorScheme.primary, HarkroomTokens.light.ink);
+      expect(t.colorScheme.primary, HarkroomTokens.light.surfaceInverse);
       expect(t.colorScheme.secondary, HarkroomTokens.light.accent);
       expect(t.badgeTheme.backgroundColor, HarkroomTokens.light.accent);
     });
@@ -31,7 +31,7 @@ void main() {
 
     test('"내 차례" 면이 비어 있지 않다 — 비우면 Material 이 먹색을 지어낸다', () {
       final s = harkroomTheme(Brightness.light).colorScheme;
-      expect(s.primaryContainer, HarkroomTokens.light.accentSoft);
+      expect(s.primaryContainer, HarkroomTokens.light.accentSurface);
       expect(s.onPrimaryContainer, HarkroomTokens.light.fg);
     });
   });
@@ -87,11 +87,11 @@ void main() {
       expect((acted, closed), (1, 1));
     });
 
-    testWidgets('면을 칠하지 않는다 — 옅은 바탕(warnSoft)', (tester) async {
+    testWidgets('면을 칠하지 않는다 — 옅은 바탕(warningSurface)', (tester) async {
       await tester.pumpWidget(_host(const StatusBand(text: '연결 끊김')));
       final m = tester.widget<Material>(
           find.descendant(of: find.byType(StatusBand), matching: find.byType(Material)).first);
-      expect(m.color, HarkroomTokens.light.warnSoft);
+      expect(m.color, HarkroomTokens.light.warningSurface);
     });
   });
 

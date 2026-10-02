@@ -355,9 +355,9 @@ class ThreadRepliesDivider extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 8, HarkroomSize.gutter, 4),
       child: Row(
         children: [
-          Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.mute)),
+          Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.fgMuted)),
           const SizedBox(width: 8),
-          Expanded(child: Divider(height: 1, color: k.line)),
+          Expanded(child: Divider(height: 1, color: k.border)),
         ],
       ),
     );
@@ -379,7 +379,7 @@ class ThreadRootMissing extends StatelessWidget {
     return Padding(
       key: const Key('thread-root-missing'),
       padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 12, HarkroomSize.gutter, 4),
-      child: Text(text, style: TextStyle(fontSize: 12, color: context.tokens.mute)),
+      child: Text(text, style: TextStyle(fontSize: 12, color: context.tokens.fgMuted)),
     );
   }
 }
@@ -430,7 +430,7 @@ class HitFlashState extends State<HitFlash> {
     return AnimatedContainer(
       duration: const Duration(milliseconds: 400),
       decoration: BoxDecoration(
-        color: on ? k.accentSoft : Colors.transparent,
+        color: on ? k.accentSurface : Colors.transparent,
         border: Border(left: BorderSide(color: on ? k.accent : Colors.transparent, width: 3)),
       ),
       child: widget.child,

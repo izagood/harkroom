@@ -333,7 +333,7 @@ class FeedTopRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final k = context.tokens;
     final t = context.t;
-    final muted = TextStyle(fontSize: 12, color: k.mute);
+    final muted = TextStyle(fontSize: 12, color: k.fgMuted);
     // **세 상태가 같은 높이 상자에 선다**(designer #1026 후속). 높이가 다르면 받는 중 → 못 받음 →
     // 처음 으로 바뀔 때 목록이 그만큼 움직였다(다시 시도 +14pt, 시작 줄 −4pt).
     final Widget child = switch (top) {

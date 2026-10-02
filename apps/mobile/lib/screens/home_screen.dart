@@ -123,10 +123,10 @@ class FloatingTabBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final k = context.tokens;
     return Material(
-      color: k.bg,
+      color: k.surface,
       elevation: 3,
       shadowColor: Colors.black26,
-      shape: StadiumBorder(side: BorderSide(color: k.line)),
+      shape: StadiumBorder(side: BorderSide(color: k.border)),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
         child: Row(
@@ -143,7 +143,7 @@ class FloatingTabBar extends StatelessWidget {
                     child: Container(
                       height: 48,
                       decoration: ShapeDecoration(
-                        color: i == selected ? k.soft : Colors.transparent,
+                        color: i == selected ? k.surfaceRaised : Colors.transparent,
                         shape: const StadiumBorder(),
                       ),
                       child: Column(
@@ -153,15 +153,15 @@ class FloatingTabBar extends StatelessWidget {
                             count: items[i].badge,
                             isLabelVisible: items[i].badge > 0,
                             child: Icon(i == selected ? items[i].selectedIcon : items[i].icon,
-                                size: 22, color: i == selected ? k.fg : k.mute),
+                                size: 22, color: i == selected ? k.fg : k.fgMuted),
                           ),
                           const SizedBox(height: 2),
                           Text(
                             items[i].label,
                             style: TextStyle(
                               fontSize: 11,
-                              fontWeight: i == selected ? FontWeight.w700 : FontWeight.w400,
-                              color: i == selected ? k.fg : k.mute,
+                              fontWeight: i == selected ? FontWeight.w600 : FontWeight.w400,
+                              color: i == selected ? k.fg : k.fgMuted,
                             ),
                           ),
                         ],
@@ -190,10 +190,10 @@ class FloatingSearchButton extends StatelessWidget {
       label: context.t.searchButton,
       excludeSemantics: true,
       child: Material(
-        color: k.bg,
+        color: k.surface,
         elevation: 3,
         shadowColor: Colors.black26,
-        shape: CircleBorder(side: BorderSide(color: k.line)),
+        shape: CircleBorder(side: BorderSide(color: k.border)),
         child: InkWell(
           key: const Key('tab-search'),
           customBorder: const CircleBorder(),

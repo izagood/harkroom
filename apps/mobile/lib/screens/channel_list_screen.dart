@@ -148,8 +148,8 @@ class _ChannelName extends StatelessWidget {
     return Text(
       name,
       style: TextStyle(
-        fontWeight: unread ? FontWeight.w700 : FontWeight.w400,
-        color: unread ? k.fg : k.mute,
+        fontWeight: unread ? FontWeight.w600 : FontWeight.w400,
+        color: unread ? k.fg : k.fgMuted,
       ),
     );
   }
@@ -258,10 +258,10 @@ class _SectionHeader extends StatelessWidget {
         child: Container(
           height: 36,
           padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter),
-          decoration: BoxDecoration(border: Border(top: BorderSide(color: k.line))),
+          decoration: BoxDecoration(border: Border(top: BorderSide(color: k.border))),
           child: Row(
             children: [
-              Icon(icon, size: 15, color: k.mute),
+              Icon(icon, size: 15, color: k.fgMuted),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(title,
@@ -269,7 +269,7 @@ class _SectionHeader extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.fg)),
               ),
-              Icon(collapsed ? Icons.expand_more : Icons.expand_less, size: 18, color: k.mute),
+              Icon(collapsed ? Icons.expand_more : Icons.expand_less, size: 18, color: k.fgMuted),
             ],
           ),
         ),
@@ -345,8 +345,8 @@ class _ShortcutCard extends StatelessWidget {
       button: true,
       selected: selected,
       child: Material(
-        color: selected ? k.soft : k.bg,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: k.line)),
+        color: selected ? k.surfaceRaised : k.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: k.border)),
         child: InkWell(
           customBorder: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           onTap: onTap,
@@ -354,7 +354,7 @@ class _ShortcutCard extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: Row(
               children: [
-                Icon(icon, size: 18, color: k.mute),
+                Icon(icon, size: 18, color: k.fgMuted),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(label,
@@ -366,8 +366,8 @@ class _ShortcutCard extends StatelessWidget {
                 Text('$count',
                     style: TextStyle(
                         fontSize: 15,
-                        fontWeight: count > 0 ? FontWeight.w700 : FontWeight.w400,
-                        color: count > 0 ? k.fg : k.mute)),
+                        fontWeight: count > 0 ? FontWeight.w600 : FontWeight.w400,
+                        color: count > 0 ? k.fg : k.fgMuted)),
               ],
             ),
           ),
@@ -447,7 +447,7 @@ class _NewMessageSheetState extends State<NewMessageSheet> {
       ..sort((a, b) => a.handle.toLowerCase().compareTo(b.handle.toLowerCase()));
     Widget head(String text) => Padding(
           padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 12, HarkroomSize.gutter, 4),
-          child: Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.mute)),
+          child: Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.fgMuted)),
         );
     return SafeArea(
       child: SizedBox(

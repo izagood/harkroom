@@ -263,7 +263,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 : null,
             isDense: true,
             filled: true,
-            fillColor: k.soft,
+            fillColor: k.surfaceRaised,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
           ),
         ),
@@ -344,7 +344,7 @@ class _SearchScreenState extends State<SearchScreen> {
               ListTile(
                 key: Key('search-recent-$q'),
                 dense: true,
-                leading: Icon(Icons.history, size: 20, color: context.tokens.mute),
+                leading: Icon(Icons.history, size: 20, color: context.tokens.fgMuted),
                 title: Text(q),
                 trailing: IconButton(
                   tooltip: t.searchRecentRemove,
@@ -382,7 +382,7 @@ class _SearchScreenState extends State<SearchScreen> {
             if (_shown.length == searchMinChars) ...[
               const SizedBox(height: 6),
               Text(t.searchTwoLetterHint,
-                  textAlign: TextAlign.center, style: TextStyle(fontSize: 13, color: context.tokens.mute)),
+                  textAlign: TextAlign.center, style: TextStyle(fontSize: 13, color: context.tokens.fgMuted)),
             ],
             if (_scope != SearchScope.all) ...[
               const SizedBox(height: 12),
@@ -405,7 +405,7 @@ class _SearchScreenState extends State<SearchScreen> {
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.only(bottom: 24),
       itemCount: _results.length + (_loadingMore ? 1 : 0) + (shortcuts.isEmpty ? 0 : 1),
-      separatorBuilder: (_, _) => Divider(height: 1, color: context.tokens.line),
+      separatorBuilder: (_, _) => Divider(height: 1, color: context.tokens.border),
       itemBuilder: (context, i) {
         // 이름이 맞는 대화가 있으면 결과 위에 한 묶음으로.
         if (shortcuts.isNotEmpty) {
@@ -538,7 +538,7 @@ class _SectionHeader extends StatelessWidget {
         child: Row(children: [
           Expanded(
             child: Text(label,
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: context.tokens.mute)),
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: context.tokens.fgMuted)),
           ),
           ?trailing,
         ]),
@@ -556,15 +556,15 @@ class _ScopeChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final k = context.tokens;
     // 고른 칩은 먹색 바탕 + 흰 글자 — 지금 어디서 찾는지가 이 화면의 첫 정보다(designer #1092 f2).
-    // 「흰」 은 다크에서도 바탕(`fg` = 밝은 글자색)과 맞서는 색이어야 하므로 `bg` 를 쓴다.
+    // 「흰」 은 다크에서도 바탕(`fg` = 밝은 글자색)과 맞서는 색이어야 하므로 `surface` 를 쓴다.
     return ChoiceChip(
       label: Text(label),
       selected: selected,
       showCheckmark: false,
       selectedColor: k.fg,
-      backgroundColor: k.bg,
-      side: BorderSide(color: selected ? k.fg : k.line),
-      labelStyle: TextStyle(color: selected ? k.bg : k.mute, fontWeight: selected ? FontWeight.w600 : FontWeight.w400),
+      backgroundColor: k.surface,
+      side: BorderSide(color: selected ? k.fg : k.border),
+      labelStyle: TextStyle(color: selected ? k.surface : k.fgMuted, fontWeight: selected ? FontWeight.w600 : FontWeight.w400),
       onSelected: (_) => onTap(),
     );
   }
@@ -626,11 +626,11 @@ class SearchResultTile extends StatelessWidget {
                 ]),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12, color: k.mute),
+                style: TextStyle(fontSize: 12, color: k.fgMuted),
               ),
               const SizedBox(height: 2),
               Text.rich(
-                TextSpan(children: highlightSpans(body, query, TextStyle(backgroundColor: k.warnSoft, color: k.fg, fontWeight: FontWeight.w600))),
+                TextSpan(children: highlightSpans(body, query, TextStyle(backgroundColor: k.warningSurface, color: k.fg, fontWeight: FontWeight.w600))),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(fontSize: 14, color: k.fg),

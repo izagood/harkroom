@@ -417,7 +417,7 @@ Future<_AttachChoice?> _showAttachSheet(BuildContext context, {required bool has
       minTileHeight: 52,
       leading: Icon(icon),
       title: Text(label),
-      subtitle: note == null ? null : Text(note, style: TextStyle(fontSize: HarkroomType.meta, color: k.mute)),
+      subtitle: note == null ? null : Text(note, style: TextStyle(fontSize: HarkroomType.meta, color: k.fgMuted)),
       // 비활성이면 누르면 아무 일도 없다.
       onTap: enabled ? () => Navigator.of(context).pop(c) : null,
     );
@@ -459,9 +459,9 @@ Future<void> _showCameraDenied(BuildContext context, Future<void> Function() ope
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(t.cameraDeniedTitle,
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: k.fg)),
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: k.fg)),
             const SizedBox(height: 4),
-            Text(t.cameraDeniedBody, style: TextStyle(fontSize: HarkroomType.meta, color: k.mute)),
+            Text(t.cameraDeniedBody, style: TextStyle(fontSize: HarkroomType.meta, color: k.fgMuted)),
             const SizedBox(height: 12),
             Row(
               children: [

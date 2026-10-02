@@ -106,7 +106,7 @@ class MessageTile extends StatelessWidget {
                           if (message.lastReplyAt != null && (message.replyCount ?? 0) > 0)
                             Text(
                               ' · ${agoLabel(message.lastReplyAt!, DateTime.now().toUtc(), t)}',
-                              style: TextStyle(color: k.mute, fontSize: 12),
+                              style: TextStyle(color: k.fgMuted, fontSize: 12),
                             ),
                         ],
                       ),
@@ -251,7 +251,7 @@ class _Header extends StatelessWidget {
             child: Text(
               app.displayNameOf(message.authorId),
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: k.fg),
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: k.fg),
             ),
           ),
           // 사람과 에이전트를 **갈라 보여 준다** — 누구를 부르는지, 누가 답했는지가 이 앱의
@@ -273,7 +273,7 @@ class _Header extends StatelessWidget {
           Text(
             agoLabel(message.createdAt, DateTime.now().toUtc(), t),
             key: Key('time-${message.id}'),
-            style: TextStyle(fontSize: HarkroomType.meta, color: k.mute),
+            style: TextStyle(fontSize: HarkroomType.meta, color: k.fgMuted),
           ),
         ],
       ),
@@ -297,15 +297,15 @@ class _MentionDenied extends StatelessWidget {
       key: const Key('mention-denied'),
       margin: const EdgeInsets.only(top: 4),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(color: k.warnSoft, borderRadius: BorderRadius.circular(6)),
+      decoration: BoxDecoration(color: k.warningSurface, borderRadius: BorderRadius.circular(6)),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.warning_amber_rounded, size: 14, color: k.warn),
+          Icon(Icons.warning_amber_rounded, size: 14, color: k.warning),
           const SizedBox(width: 5),
           Expanded(
             child: Text(t.mentionDeniedLine.replaceFirst('{handles}', names),
-                style: TextStyle(fontSize: HarkroomType.meta, height: 1.35, color: k.warn)),
+                style: TextStyle(fontSize: HarkroomType.meta, height: 1.35, color: k.warning)),
           ),
         ],
       ),
@@ -345,7 +345,7 @@ class DayDivider extends StatelessWidget {
   Widget build(BuildContext context) {
     final k = context.tokens;
     final label = dayLabel(context.t, at);
-    Widget line() => Expanded(child: Container(height: 1, color: k.line));
+    Widget line() => Expanded(child: Container(height: 1, color: k.border));
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter, vertical: 8),
       child: Row(
@@ -354,7 +354,7 @@ class DayDivider extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Text(label,
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: k.mute)),
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: k.fgMuted)),
           ),
           line(),
         ],
