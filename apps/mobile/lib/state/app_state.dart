@@ -1041,6 +1041,33 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 링크가 가리키는 메시지가 **어디에 있는가**(채널·스레드). 이미 읽어 둔 것이면 왕복하지 않는다.
+  ///
+  /// 실패는 **던진다** — 404(없다)·403(못 보는 대화)·연결 실패마다 사람에게 할 말이 다르고, 그것은
+  /// 화면이 정한다(데스크톱 `openMessage` 와 같은 세 갈래). 그 사이 커뮤니티·계정이 바뀌었으면
+  /// `null` — 옛 서버의 답으로 새 커뮤니티 안을 돌아다니면 안 된다.
+  ///
+  /// 찾은 것이 스레드 루트(최상위 글)면 [threadRoots] 에 넣어 둔다 — 링크를 따라 연 스레드 화면이
+  /// 채널에 아직 안 실린 옛 글이라도 루트를 바로 그린다.
+  Future<MessageRow?> locateMessage(String messageId) async {
+    final cached = _findCachedMessage(messageId);
+    if (cached != null) return cached;
+    final gen = _generation;
+    final found = await _api!.message(messageId);
+    if (gen != _generation) return null;
+    if (found.threadRootId == null) threadRoots.putIfAbsent(found.id, () => found);
+    return found;
+  }
+
+  MessageRow? _findCachedMessage(String messageId) {
+    for (final list in [...messages.values, ...threads.values]) {
+      for (final m in list) {
+        if (m.id == messageId) return m;
+      }
+    }
+    return threadRoots[messageId];
+  }
+
   MessageRow? _findMessage(String channelId, String messageId) {
     for (final list in [messages[channelId], ...threads.values]) {
       if (list == null) continue;

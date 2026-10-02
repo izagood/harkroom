@@ -10,6 +10,7 @@ import '../ui/states.dart';
 import '../mention/render.dart';
 import '../markdown/markdown_view.dart';
 import 'attachments.dart';
+import 'message_link.dart';
 
 /// 말풍선 한 줄. **채널 화면과 스레드 화면이 같은 것을 쓴다.**
 ///
@@ -66,7 +67,8 @@ class MessageTile extends StatelessWidget {
               children: [
                 if (!continued) _Header(message: message, isAgent: author?.isAgent == true),
                 // 작은 마크다운(코드·목록·인용·굵게·링크). 모르는 것은 글자 그대로 둔다.
-                if (body.isNotEmpty) MarkdownBody(body),
+                if (body.isNotEmpty)
+                  MarkdownBody(body, openMessage: (id) => openMessageLink(context, id)),
                 if (denied.isNotEmpty) _MentionDenied(handles: denied),
                 if (card != null) Padding(padding: const EdgeInsets.only(top: 6), child: card),
                 AttachmentStrip(attachments: message.attachments),

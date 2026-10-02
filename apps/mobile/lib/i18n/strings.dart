@@ -94,6 +94,15 @@ abstract class Strings {
   /// 링크 확인 시트의 머리.
   String get linkConfirmTitle;
 
+  /// `harkroom://message/<id>` 를 눌렀는데 그 메시지가 없다(404 — 지워졌거나 다른 커뮤니티의 링크).
+  String get messageLinkGone;
+
+  /// 그 메시지가 내가 못 보는 대화에 있다(403).
+  String get messageLinkForbidden;
+
+  /// 그 밖의 실패(연결 등).
+  String get messageLinkFailed;
+
   /// 링크 확인: 열기.
   String get linkConfirmOpen;
 
@@ -643,6 +652,9 @@ Map<String, String> stringsToMap(Strings s) => {
       'cameraDeniedOpenSettings': s.cameraDeniedOpenSettings,
       'cameraOpenFailed': s.cameraOpenFailed,
       'linkConfirmTitle': s.linkConfirmTitle,
+      'messageLinkGone': s.messageLinkGone,
+      'messageLinkForbidden': s.messageLinkForbidden,
+      'messageLinkFailed': s.messageLinkFailed,
       'linkConfirmOpen': s.linkConfirmOpen,
       'linkConfirmCancel': s.linkConfirmCancel,
       'markdownTableMoreRows': s.markdownTableMoreRows,

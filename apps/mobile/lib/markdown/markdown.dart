@@ -379,11 +379,17 @@ class MdInlineCode extends MdInline {
   final String text;
 }
 
-/// 링크. [uri] 가 `null` 이면 **열 수 없는 링크**다(http(s) 가 아니다) — 글자만 보이고 누를 수 없다.
+/// 링크. 가는 곳은 둘 중 하나다 — 앱 밖 브라우저([uri], http(s) 만) 또는 앱 안의 메시지
+/// ([messageId], `harkroom://message/<uuid>`). 둘 다 `null` 이면 **열 수 없는 링크**다 — 글자만
+/// 보이고 누를 수 없다.
 class MdLink extends MdInline {
-  const MdLink(this.text, this.uri, {this.labelled = false});
+  const MdLink(this.text, this.uri, {this.labelled = false, this.messageId});
   final String text;
   final Uri? uri;
+
+  /// 앱 안에서 열 메시지의 id. 이것이 있으면 [uri] 는 늘 `null` 이다 — `harkroom://` 는 OS 로
+  /// 보내지 않는다(OS 는 이 스킴을 모르고, 등록된 앱이 있다면 그것이 남의 앱이다).
+  final String? messageId;
 
   /// `[글](주소)` 처럼 **보이는 글자와 주소가 따로**인 링크. 맨 주소는 `false` 다.
   final bool labelled;
@@ -409,6 +415,22 @@ bool hostLooksSpoofable(Uri uri) =>
     uri.host.runes.any((r) => r > 0x7f) ||
     uri.host.split('.').any((p) => p.startsWith('xn--'));
 
+/// 메시지 링크의 접두사. 데스크톱 `MESSAGE_PERMALINK_PREFIX`(`packages/shared/src/index.ts`)와 같다 —
+/// 만드는 쪽과 읽는 쪽이 갈라지면 자기가 만든 링크를 자기가 못 연다.
+const messagePermalinkPrefix = 'harkroom://message/';
+
+final _uuid = RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
+
+/// `harkroom://message/<uuid>` 에서 id 를, 아니면 `null`. 데스크톱 `parseMessagePermalink` 와 같은
+/// 판정이다: **전체 일치만**, 나머지가 uuid 꼴이 아니면 링크가 아니다 — 아무 글자나 서버 질의
+/// 경로(`GET /messages/<id>`)로 흘리지 않는다. 접두사는 데스크톱처럼 소문자 그대로만 본다.
+String? parseMessagePermalink(String raw) {
+  final s = raw.trim();
+  if (!s.startsWith(messagePermalinkPrefix)) return null;
+  final id = s.substring(messagePermalinkPrefix.length);
+  return _uuid.hasMatch(id) ? id.toLowerCase() : null;
+}
+
 /// 열어도 되는 주소인가. **http·https 만** 연다 — `javascript:`·`file:`·`tel:`·앱 스킴은
 /// 남이 쓴 글이 폰에서 무엇을 실행하게 하는 길이다. 호스트가 없는 것도 막는다.
 Uri? safeLinkUri(String raw) {
@@ -429,7 +451,9 @@ final _inline = RegExp(
   r'|(?<![\w*])\*([^*\n]+)\*(?![\w*])'
   r'|(https?://[^\s<>()\[\]]+[^\s<>()\[\].,;:!?"\x27])'
   // 취소선. 여는 `~~` 뒤·닫는 `~~` 앞이 공백이면 짝이 아니다(데스크톱과 같다).
-  r'|~~([^~\s](?:[^~\n]*[^~\s])?)~~',
+  r'|~~([^~\s](?:[^~\n]*[^~\s])?)~~'
+  // 맨 메시지 링크. 뒤에 id 글자가 더 붙으면 링크가 아니다(36자에서 잘라 붙이지 않는다).
+  r'|(harkroom://message/[0-9a-fA-F-]{36})(?![0-9A-Za-z-])',
 );
 
 /// 한 단락을 인라인 조각으로 나눈다.
@@ -441,7 +465,10 @@ List<MdInline> parseInline(String text) {
     if (m.group(1) != null) {
       out.add(MdInlineCode(m.group(1)!));
     } else if (m.group(2) != null) {
-      out.add(MdLink(m.group(2)!, safeLinkUri(m.group(3)!), labelled: true));
+      final id = parseMessagePermalink(m.group(3)!);
+      out.add(id != null
+          ? MdLink(m.group(2)!, null, labelled: true, messageId: id)
+          : MdLink(m.group(2)!, safeLinkUri(m.group(3)!), labelled: true));
     } else if (m.group(4) != null || m.group(5) != null) {
       out.add(MdText(m.group(4) ?? m.group(5)!, bold: true));
     } else if (m.group(6) != null) {
@@ -450,6 +477,9 @@ List<MdInline> parseInline(String text) {
       out.add(MdLink(m.group(7)!, safeLinkUri(m.group(7)!)));
     } else if (m.group(8) != null) {
       out.add(MdText(m.group(8)!, strike: true));
+    } else if (m.group(9) != null) {
+      final id = parseMessagePermalink(m.group(9)!);
+      out.add(id != null ? MdLink(m.group(9)!, null, messageId: id) : MdText(m.group(9)!));
     }
     last = m.end;
   }

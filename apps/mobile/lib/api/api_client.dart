@@ -156,6 +156,11 @@ class ApiClient {
     return MessagePage.fromJson(_obj(await _send('GET', '/channels/$channelId/messages$qs')));
   }
 
+  /// 링크(`harkroom://message/<id>`)가 가리키는 메시지 하나(#178 의 `GET /messages/:id`). 링크를 받은
+  /// 사람은 채널을 모른다 — 그것을 알려 주는 것이 이 라우트다. 없으면 404, 못 보는 대화면 403.
+  Future<MessageRow> message(String messageId) async =>
+      MessageRow.fromJson(_obj(await _send('GET', '/messages/${Uri.encodeComponent(messageId)}')));
+
   /// 말한다. 멘션이 들어 있으면 **이것이 에이전트를 부르는 방법**이다 — 별도
   /// 엔드포인트가 없고, 서버가 본문을 훑어 턴을 띄운다.
   ///

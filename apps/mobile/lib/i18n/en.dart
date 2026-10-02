@@ -492,6 +492,15 @@ class StringsEn implements Strings {
   String get linkConfirmTitle => 'Where this link goes';
 
   @override
+  String get messageLinkGone => 'That message is gone — it was deleted, or the link points at nothing.';
+
+  @override
+  String get messageLinkForbidden => "You can't open that message — it's in a conversation you're not part of.";
+
+  @override
+  String get messageLinkFailed => 'Could not open that message. Check your connection and try again.';
+
+  @override
   String get linkConfirmOpen => 'Open';
 
   @override

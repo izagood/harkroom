@@ -13,13 +13,17 @@ final _mention = RegExp(r'(^|[^A-Za-z0-9_@-])@[A-Za-z0-9_-]{2,32}');
 ///
 /// 글자 크기·색은 토큰에서 온다(본문 15/1.4). 코드는 고정폭 + `soft` 바탕, 인용은 왼쪽 선.
 class MarkdownBody extends StatefulWidget {
-  const MarkdownBody(this.source, {super.key, this.openLink});
+  const MarkdownBody(this.source, {super.key, this.openLink, this.openMessage});
 
   final String source;
 
   /// 링크를 여는 길. 시험이 바꿔 끼운다. 기본은 **앱 밖 브라우저**다 — 앱 안 웹뷰로 열면 남이
   /// 건 페이지가 앱의 모양을 빌린다.
   final Future<void> Function(Uri uri)? openLink;
+
+  /// `harkroom://message/<id>` 를 여는 길(앱 안 이동). **없으면 그 링크는 글자로만 남는다** — 눌러도
+  /// 아무 일 없는 링크를 그리면 사람은 앱이 멈춘 줄 안다(데스크톱 `MessageBody` 의 같은 규율).
+  final Future<void> Function(String messageId)? openMessage;
 
   @override
   State<MarkdownBody> createState() => _MarkdownBodyState();
@@ -44,6 +48,13 @@ class _MarkdownBodyState extends State<MarkdownBody> {
   }
 
   Future<void> _open(MdLink link) async {
+    // 앱 안 링크는 OS 를 거치지 않는다. 확인 시트도 없다 — 가는 곳이 이 앱의, 내가 볼 수 있는
+    // 메시지뿐이고(서버가 403 으로 거른다) 밖으로 나가는 것이 없다.
+    final messageId = link.messageId;
+    if (messageId != null) {
+      await widget.openMessage?.call(messageId);
+      return;
+    }
     // 열기 직전에 **한 번 더** 거른다 — 파서가 걸렀어도, 이 함수가 받는 것은 늘 http(s) 여야 한다.
     final safe = link.uri == null ? null : safeLinkUri(link.uri.toString());
     if (safe == null) return;
@@ -241,8 +252,9 @@ class _MarkdownBodyState extends State<MarkdownBody> {
               backgroundColor: k.soft,
             ),
           ));
-        case MdLink(:final text, :final uri):
-          if (uri == null) {
+        case MdLink(:final text, :final uri, :final messageId):
+          final openable = uri != null || (messageId != null && widget.openMessage != null);
+          if (!openable) {
             // 열 수 없는 스킴: **글자만** 남긴다. 누를 수 있게 그리면 사람은 열린다고 믿는다.
             spans.add(TextSpan(text: text));
           } else {
