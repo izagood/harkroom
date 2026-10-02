@@ -43,6 +43,8 @@ import { fileSecrets } from './secrets.js';
 import { createRunnerLinkServer } from './runnerLink.js';
 import type { CommunityInstance } from './community.js';
 import { createTurnSecrets } from './turnSecrets.js';
+import { readConfig } from './config.js';
+import { createTurnMerge, GH_PATH } from './turnMerge.js';
 import { createTurnUploads } from './turnUploads.js';
 
 /**
@@ -202,6 +204,19 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     },
     log,
   });
+  // 에이전트 머지 래퍼(스레드 3deac356). 브릿지 소켓으로 온 `repo.merge` 를 여기서 받아 서버 판정 → gh 머지 →
+  // 결과 보고를 한다. 임대는 `turnSecrets` 의 것을 그대로 쓴다(`lookup`).
+  const turnMerge = createTurnMerge({
+    forward: async (agentId, req) => {
+      const c = communities.find((x) => x.knowsAgent(agentId));
+      return c ? c.forward(agentId, req) : { type: 'http.response', id: req.id, status: 0, body: '이 에이전트를 아는 커뮤니티가 없다' };
+    },
+    lookupLease: (runnerId, cause) => turnSecrets.lookup(runnerId, cause),
+    log,
+    ghPath: GH_PATH,
+    home: homedir(),
+    ghUser: async () => (await readConfig(join(appDataDir, 'operator', 'operator.json'))).merge?.ghUser,
+  });
   // 턴 파일 올리기(미리보기 PR ③). 브릿지의 `attachment.upload{path}` 를 여기서 받아 워크스페이스 안의 파일을
   // 서버 `/uploads` 로 올린다 — 모델이 바이너리를 base64 로 쓰지 않게(`turnUploads.ts`).
   const turnUploads = createTurnUploads({
@@ -227,6 +242,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     onRequest: async (runnerId, agentId, req) => {
       const mounted = await turnSecrets.maybeHandle(runnerId, agentId, req);
       if (mounted) return mounted;
+      const merged = await turnMerge.maybeHandle(runnerId, agentId, req);
+      if (merged) return merged;
       const uploaded = await turnUploads.maybeHandle(agentId, req);
       if (uploaded) return uploaded;
       const c = communities.find((x) => x.knowsAgent(agentId));

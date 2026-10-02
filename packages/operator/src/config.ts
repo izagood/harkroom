@@ -34,6 +34,11 @@ export interface CommunityConfig {
 export interface OperatorConfig {
   /** 키는 서버 baseUrl(끝 슬래시 없음). */
   communities: Record<string, CommunityConfig>;
+  /**
+   * 에이전트 머지 래퍼(`turnMerge.ts`)가 쓰는 gh 계정. `ghUser` 가 있으면 `gh auth token -u <ghUser>` 의
+   * 토큰으로 머지한다 — 없으면 gh 의 활성 계정이다. 사람이 손으로 적는 칸이다(앱에 UI 없음).
+   */
+  merge?: { ghUser?: string };
 }
 
 const EMPTY: OperatorConfig = { communities: {} };

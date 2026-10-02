@@ -6,6 +6,7 @@
  * | `harkroom-operator register <baseUrl> <code> [--name n]` | 등록 코드(설정 › Operators 가 발급, 5분·1회)를 `POST /operators/claim` 으로 토큰과 바꿔 이 머신의 secrets 에 두고, `operator.json` 에 그 커뮤니티의 자리를 만든다 |
  * | `harkroom-operator run [--data-dir d]` | 앱이 넘기던 daemon 인자를 데이터 디렉터리에서 **같은 규칙**(`daemonEndpointPaths`)으로 조립해 상주한다 — 앱이 나중에 같은 머신에 떠도 같은 소켓을 보고 "이미 서비스 중"으로 물러난다 |
  * | `harkroom-operator mcp-bridge` | 하네스가 띄우는 stdio MCP 브릿지(`mcpBridge.ts`) |
+ * | `harkroom-operator merge <owner/name> <n> --head <sha>` | 에이전트 머지 래퍼 — 브릿지와 같은 소켓으로 오퍼레이터에 묻는다(`turnMerge.ts`) |
  * | 그 밖 | 앱이 넘기는 `--socket …` 인자 그대로(`args.ts`) |
  *
  * 등록이 CLI 인 이유: 코드는 화면에서 사람이 읽어 그 머신의 터미널에 붙여 넣는다 — 서버가
@@ -27,6 +28,8 @@ export type CliCommand =
   | { command: 'register'; baseUrl: string; code: string; name?: string }
   | { command: 'run'; dataDir: string | undefined }
   | { command: 'mcp-bridge' }
+  /** `merge <owner/name> <n> --head <sha> [--approval <uuid>]` — 인자 검증은 `turnMerge.parseMergeArgs`. */
+  | { command: 'merge'; argv: string[] }
   | { command: 'daemon'; argv: string[] };
 
 function flagValue(argv: readonly string[], flag: string): string | undefined {
@@ -51,6 +54,8 @@ export function parseCliArgs(argv: readonly string[]): CliCommand {
       return { command: 'run', dataDir: flagValue(argv.slice(1), '--data-dir') };
     case 'mcp-bridge':
       return { command: 'mcp-bridge' };
+    case 'merge':
+      return { command: 'merge', argv: argv.slice(1) };
     default:
       return { command: 'daemon', argv: [...argv] };
   }

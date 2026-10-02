@@ -41,6 +41,8 @@ import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './h
  * 그대로 넘겨도 되고, 테스트는 인메모리 fake 를 넘긴다(프로세스 경계·네트워크 없이 검증). */
 export interface MentionTurnHarkroom {
   definition(): Promise<AgentView>;
+  /** 머지를 허락한 저장소(스레드 3deac356). 옵셔널 — 없는 표면(시험 더블)은 빈 목록과 같다. */
+  mergeGrants?(): Promise<string[]>;
   /** 스레드 × 에이전트 모델 지정의 실효값(서버 079). 옛 서버를 흉내 내는 테스트 더블은 없어도 된다. */
   threadModel?(messageId: string): Promise<TurnModel>;
   /**
@@ -889,8 +891,11 @@ export async function runMentionTurn(
     ? `${headLines.join('\n').replace(/^\n+/, '')}\n\n${prompt}`
     : prompt;
 
+  // 머지 권한(스레드 3deac356): 서버가 허락한 저장소만 프롬프트에 적고 allow 규칙을 준다. 표면이 없는(옛) 클라이언트는 빈 목록.
+  const mergeRepos = (await deps.harkroom.mergeGrants?.().catch(() => [] as string[])) ?? [];
   const systemPrompt = buildSystemPrompt({
     handle: deps.me.handle,
+    merge: { operatorBin: deps.operatorBin, repos: mergeRepos },
     channelName: deps.channelName,
     instructions: def.instructions,
     guide: deps.guide,
@@ -985,6 +990,7 @@ export async function runMentionTurn(
     mcpConfigPath: deps.mcpConfigPath,
     extraMcpServers,
     operatorBin: deps.operatorBin,
+    mergeRepos,
     codexHome: deps.codexHome,
     opencodeHome: deps.opencodeHome,
     piHome: deps.piHome,
