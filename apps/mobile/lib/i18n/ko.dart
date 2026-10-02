@@ -228,6 +228,10 @@ class StringsKo implements Strings {
   String get agentsSoon => '에이전트가 지금 무엇을 하는지 여기서 본다. 곧 들어온다.';
   @override
   String get dmsEmpty => '아직 DM 이 없다.';
+  @override
+  String get sectionStarred => '즐겨찾기';
+  @override
+  String get sectionChannels => '채널';
 
   @override
   String get inboxEmpty => '인박스가 비어 있다.';

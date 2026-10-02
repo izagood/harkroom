@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
 import '../ui/states.dart';
@@ -20,7 +21,20 @@ class ChannelListScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.t;
     final app = context.app;
-    final rows = app.channels.where((c) => c.isDm == dms).toList(growable: false);
+    // 치운 채널(hiddenAt)은 세우지 않는다 — 데스크탑 사이드바와 같은 규칙.
+    final rows = app.channels
+        .where((c) => c.isDm == dms && app.channelPrefs[c.id]?.hidden != true)
+        .toList(growable: false);
+    // 홈은 묶음으로(S5b): 즐겨찾기 → 사용자 섹션(이름순) → 채널. DM 탭은 한 묶음 그대로.
+    final items = <Object>[];
+    if (dms) {
+      items.addAll(rows);
+    } else {
+      for (final sec in homeSections(rows, app.channelPrefs)) {
+        items.add(sec);
+        if (!app.collapsedSections.contains(sec.key)) items.addAll(sec.channels);
+      }
+    }
 
     return Scaffold(
       // 머리 왼쪽이 커뮤니티 자리다(설계 ①) — 데스크탑 레일 맨 위 타일과 같은 규칙.
@@ -47,9 +61,17 @@ class ChannelListScreen extends StatelessWidget {
                   : ListView.builder(
                       // 커뮤니티를 옮기면 맨 위부터 — 앞 커뮤니티의 스크롤 자리를 이어받지 않는다(설계 ④).
                       key: PageStorageKey('${dms ? 'dms' : 'channels'}-${app.activeKey}'),
-                      itemCount: rows.length,
+                      itemCount: items.length,
                       itemBuilder: (context, i) {
-                        final channel = rows[i];
+                        final item = items[i];
+                        if (item is HomeSection) {
+                          return _SectionHeader(
+                            section: item,
+                            collapsed: app.collapsedSections.contains(item.key),
+                            onTap: () => app.toggleSection(item.key),
+                          );
+                        }
+                        final channel = item as ChannelRow;
                         final unread = app.reads[channel.id]?.unread ?? 0;
                         return ListTile(
                           // 글자로 줄을 집지 않는다 — 이름은 번역되고 바뀐다.
@@ -143,6 +165,110 @@ class OpenMeButton extends StatelessWidget {
       icon: me == null
           ? const Icon(Icons.account_circle_outlined)
           : HarkroomAvatar(id: me.id, name: me.handle, size: 28),
+    );
+  }
+}
+
+/// 홈의 한 묶음.
+class HomeSection {
+  const HomeSection({required this.key, required this.kind, required this.name, required this.channels});
+
+  /// 접기 상태의 열쇠: `starred` · `section:<이름>` · `channels`.
+  final String key;
+  final HomeSectionKind kind;
+
+  /// 사용자 섹션 이름(kind 가 custom 일 때만).
+  final String? name;
+  final List<ChannelRow> channels;
+}
+
+enum HomeSectionKind { starred, custom, channels }
+
+/// 홈 묶음(데스크탑 사이드바와 같은 규칙):
+/// - **즐겨찾기**가 맨 위. 별표 채널은 **여기에만** 선다(두 묶음에 같은 채널이 두 줄이면 어느 배지가
+///   최신인지 답하지 못한다).
+/// - 그다음 사용자 섹션을 이름순으로, 섹션 없는 채널은 맨 아래 「채널」.
+/// - 묶음 안은 수동 순서(`sortOrder`, 없으면 뒤) → 이름.
+/// - 빈 묶음은 세우지 않는다 — 단 「채널」 은 다른 묶음이 하나도 없을 때도 선다(목록 머리).
+List<HomeSection> homeSections(List<ChannelRow> channels, Map<String, ChannelPref> prefs) {
+  int byOrder(ChannelRow a, ChannelRow b) {
+    final oa = prefs[a.id]?.sortOrder;
+    final ob = prefs[b.id]?.sortOrder;
+    if (oa != null && ob != null && oa != ob) return oa.compareTo(ob);
+    if (oa != null && ob == null) return -1;
+    if (oa == null && ob != null) return 1;
+    return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+  }
+
+  final starred = <ChannelRow>[];
+  final bySection = <String, List<ChannelRow>>{};
+  final plain = <ChannelRow>[];
+  for (final c in channels) {
+    final p = prefs[c.id];
+    if (p?.starred == true) {
+      starred.add(c);
+    } else if (p?.section != null) {
+      bySection.putIfAbsent(p!.section!, () => []).add(c);
+    } else {
+      plain.add(c);
+    }
+  }
+  final out = <HomeSection>[];
+  if (starred.isNotEmpty) {
+    out.add(HomeSection(key: 'starred', kind: HomeSectionKind.starred, name: null, channels: starred..sort(byOrder)));
+  }
+  final names = bySection.keys.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+  for (final n in names) {
+    out.add(HomeSection(key: 'section:$n', kind: HomeSectionKind.custom, name: n, channels: bySection[n]!..sort(byOrder)));
+  }
+  if (plain.isNotEmpty || out.isEmpty) {
+    out.add(HomeSection(key: 'channels', kind: HomeSectionKind.channels, name: null, channels: plain..sort(byOrder)));
+  }
+  return out;
+}
+
+/// 묶음 머리 한 줄(개정판 3.2 「☆ 즐겨찾기 ⌃」). 누르면 접고 편다.
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.section, required this.collapsed, required this.onTap});
+
+  final HomeSection section;
+  final bool collapsed;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final k = context.tokens;
+    final (icon, title) = switch (section.kind) {
+      HomeSectionKind.starred => (Icons.star_outline, t.sectionStarred),
+      HomeSectionKind.custom => (Icons.folder_outlined, section.name!),
+      HomeSectionKind.channels => (Icons.tag, t.sectionChannels),
+    };
+    return Semantics(
+      button: true,
+      expanded: !collapsed,
+      child: InkWell(
+        key: Key('section-${section.key}'),
+        onTap: onTap,
+        child: Container(
+          height: 36,
+          padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter),
+          decoration: BoxDecoration(border: Border(top: BorderSide(color: k.line))),
+          child: Row(
+            children: [
+              Icon(icon, size: 15, color: k.mute),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.fg)),
+              ),
+              Icon(collapsed ? Icons.expand_more : Icons.expand_less, size: 18, color: k.mute),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

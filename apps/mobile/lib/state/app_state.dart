@@ -191,6 +191,18 @@ class AppState extends ChangeNotifier {
   /// 채널에서 틀린다.
   final Map<String, ReadState> reads = {};
 
+  /// 채널 id → 내 선호(즐겨찾기·섹션·치움). 홈 목록이 이것으로 묶인다(S5b). 옛 서버·실패면 비어
+  /// 있고, 그때 홈은 지금처럼 이름순 한 묶음이다.
+  final Map<String, ChannelPref> channelPrefs = {};
+
+  /// 홈에서 접어 둔 묶음(섹션 키). 이 기기·이 세션만 기억한다.
+  final Set<String> collapsedSections = {};
+
+  void toggleSection(String key) {
+    if (!collapsedSections.remove(key)) collapsedSections.add(key);
+    notifyListeners();
+  }
+
   /// 채널 id → 그 채널에서 읽어 둔 메시지(오름차순, `seq` 로 유일).
   final Map<String, List<MessageRow>> messages = {};
 
@@ -525,9 +537,18 @@ class AppState extends ChangeNotifier {
     final api = _api!;
     try {
       final who = me ?? await api.me();
-      final results = await Future.wait([api.channels(), api.accounts(), api.reads()]);
+      final results = await Future.wait([
+        api.channels(),
+        api.accounts(),
+        api.reads(),
+        // 선호는 **못 받아도 들어간다** — 홈이 묶이지 않을 뿐 채널은 다 보인다(옛 서버·일시 실패).
+        api.channelPrefs().catchError((Object _) => const <ChannelPref>[]),
+      ]);
       // 기다리는 사이 로그아웃했거나 다른 계정으로 들어왔다 — 옛 답을 새 세션에 붓지 않는다.
       if (gen != _generation) return;
+      channelPrefs
+        ..clear()
+        ..addEntries((results[3] as List<ChannelPref>).map((p) => MapEntry(p.channelId, p)));
       me = who;
       channels
         ..clear()
@@ -1555,6 +1576,8 @@ class AppState extends ChangeNotifier {
     me = null;
     inbox.clear();
     reads.clear();
+    channelPrefs.clear();
+    collapsedSections.clear();
     threads.clear();
     threadRoots.clear();
     threadHasMore.clear();

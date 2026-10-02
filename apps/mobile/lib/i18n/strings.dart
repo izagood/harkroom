@@ -276,6 +276,10 @@ abstract class Strings {
   /// DM 탭이 빌 때.
   String get dmsEmpty;
 
+  /// 홈 묶음 머리(S5b): 즐겨찾기 · (사용자 섹션은 이름 그대로) · 채널.
+  String get sectionStarred;
+  String get sectionChannels;
+
   /// 부른 사람이 없다.
   String get inboxEmpty;
 
@@ -785,6 +789,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'tabAgents': s.tabAgents,
       'agentsSoon': s.agentsSoon,
       'dmsEmpty': s.dmsEmpty,
+      'sectionStarred': s.sectionStarred,
+      'sectionChannels': s.sectionChannels,
       'inboxEmpty': s.inboxEmpty,
       'inboxMarkAllRead': s.inboxMarkAllRead,
       'inboxReasonMention': s.inboxReasonMention,

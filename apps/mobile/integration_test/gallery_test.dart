@@ -61,6 +61,9 @@ void main() {
     addTearDown(app.dispose);
     await tester.pumpWidget(HarkroomApp(state: app));
     await shot(tester, '01-channels');
+    await tester.tap(find.byKey(const Key('section-starred')));
+    await shot(tester, '01b-home-starred-folded');
+    await tester.tap(find.byKey(const Key('section-starred')));
 
     await tester.tap(find.byKey(const Key('channel-c1')));
     await shot(tester, '02-channel');
@@ -409,6 +412,15 @@ MockClient _server({bool states = false}) => MockClient((req) async {
             {'id': 'c2', 'name': 'harkroom', 'kind': 'standard', 'visibility': 'public'},
             {'id': 'c3', 'name': 'testbed', 'kind': 'standard', 'visibility': 'private'},
             {'id': 'c4', 'name': 'homelab', 'kind': 'standard', 'visibility': 'public'},
+          ],
+        });
+      }
+      // S5b 홈 묶음: 즐겨찾기 하나 · 사용자 섹션 하나 · 나머지는 「채널」.
+      if (path == '/channels/prefs') {
+        return _json({
+          'prefs': [
+            {'channelId': 'c2', 'starredAt': '2026-10-01T00:00:00Z'},
+            {'channelId': 'c4', 'section': 'infra'},
           ],
         });
       }
