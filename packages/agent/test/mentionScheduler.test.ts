@@ -7,7 +7,7 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createMentionScheduler, GATE_REQUEUE_MAX, GATE_WAIT_MAX_MS, type BatchContext } from '../src/mentionScheduler.js';
+import { createMentionScheduler, DONE_UNREAD_MAX_MS, GATE_REQUEUE_MAX, GATE_WAIT_MAX_MS, type BatchContext } from '../src/mentionScheduler.js';
 import { AccountGateRequeueError } from '../src/mentionTurn.js';
 import { TurnRegistry } from '../src/turnRegistry.js';
 import { MentionQueue } from '../src/mentionQueue.js';
@@ -54,14 +54,19 @@ function harness(opts: {
   seenAccounts?: (string | null)[];
   /** 참을 돌려주는 동안 `markRead` 가 서버 링크 실패처럼 던진다(2026-10-02 회귀선). */
   markReadFails?: () => boolean;
+  /** 앞 세대가 끝냈는데 읽음 처리만 못 한 entry(`HARKROOM_HANDOVER_DONE`, L2). */
+  handoverDone?: Set<number>;
 }) {
   const markedRead: number[] = [];
+  /** `markRead` 가 불린 **호출** 단위 — 묶음 호출(L1) 회귀선이 본다. */
+  const markReadCalls: number[][] = [];
   const posted: { channelId: string; body: string; anchor: string | null }[] = [];
   const failed: { body: string; retryable: boolean }[] = [];
   const registry = new TurnRegistry();
   const scheduler = createMentionScheduler({
     harkroom: {
       markRead: async (ids) => {
+        markReadCalls.push([...ids]);
         if (opts.markReadFails?.()) throw new Error('MCP error -32001: Request timed out');
         markedRead.push(...ids); return ids.length;
       },
@@ -86,9 +91,10 @@ function harness(opts: {
     },
     startedAtMs: 0,
     ...(opts.held ? { heldEntryIds: () => opts.held! } : {}),
+    ...(opts.handoverDone ? { handoverDone: opts.handoverDone } : {}),
     ...(opts.now ? { now: opts.now } : {}),
   });
-  return { scheduler, registry, markedRead, posted, failed };
+  return { scheduler, registry, markedRead, markReadCalls, posted, failed };
 }
 
 describe('mentionScheduler 승인 관문', () => {
@@ -907,7 +913,8 @@ describe('끝난 턴의 읽음 처리 실패 — 다시 띄우지 않는다 (202
     expect(runs).toBe(1);
     expect(h.failed).toEqual([]);          // "답하지 못하고 끝나 다시 시도합니다" 가 서지 않는다
     expect(h.markedRead).toEqual([]);      // 읽음 처리는 아직 못 했다
-    expect(h.scheduler.holdingEntries()).toEqual([7]); // 교체 러너도 이 entry 를 집지 않게 넘긴다
+    expect(h.scheduler.holdingEntries()).toEqual([]); // 도는 턴은 없다
+    expect(h.scheduler.doneEntries()).toEqual([7]);   // 끝났는데 읽음 처리만 남은 것은 따로 넘긴다(L2)
 
     // inbox 는 at-least-once 라 같은 entry 를 다시 준다 — 턴은 다시 돌지 않는다.
     expect(await h.scheduler.admit(batchOf([{ entryId: 7, messageId: 'm-7' }]), ctx)).toMatchObject({ started: 0, skipped: 1 });
@@ -918,8 +925,58 @@ describe('끝난 턴의 읽음 처리 실패 — 다시 띄우지 않는다 (202
     linkDown = false;
     expect(await h.scheduler.admit(batchOf([{ entryId: 7, messageId: 'm-7' }]), ctx)).toMatchObject({ started: 0, skipped: 1 });
     expect(h.markedRead).toEqual([7]);
-    expect(h.scheduler.holdingEntries()).toEqual([]);
+    expect(h.scheduler.doneEntries()).toEqual([]);
     expect(runs).toBe(1);
+  });
+
+  /**
+   * L1(2026-10-03). 되돌려 RED: `pruneDoneUnread` 를 지우면 첫 시험에서 7 이 표에 남고, 묶음 호출을
+   * 다시 id 마다 부르면 둘째 시험의 호출 수가 2 가 된다.
+   */
+  it('다시 오지 않는 entry 도 24h 가 지나면 표에서 지운다 — 폴마다 나이로 정리한다', async () => {
+    let linkDown = true;
+    let clock = 1_000_000;
+    const h = harness({ runTurn: async () => ({ ok: true }) as never, markReadFails: () => linkDown, now: () => clock });
+    await h.scheduler.admit(batchOf([{ entryId: 7, messageId: 'm-7' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.scheduler.doneEntries()).toEqual([7]);
+
+    // 서버는 사실 읽음 처리를 했고 응답만 늦었다 — 7 은 다시 오지 않는다. 다른 멘션의 폴이 표를 정리한다.
+    clock += DONE_UNREAD_MAX_MS + 1;
+    linkDown = false;
+    await h.scheduler.admit(batchOf([{ entryId: 8, messageId: 'm-8' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.scheduler.doneEntries()).toEqual([]);
+  });
+
+  it('한 배치에 끝난 entry 가 여럿 다시 오면 markRead 를 한 번만 부른다', async () => {
+    let linkDown = true;
+    const h = harness({ runTurn: async () => ({ ok: true }) as never, markReadFails: () => linkDown });
+    await h.scheduler.admit(batchOf([{ entryId: 7, messageId: 'm-7', threadRootId: 't-1' }, { entryId: 8, messageId: 'm-8', threadRootId: 't-2' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.scheduler.doneEntries().sort()).toEqual([7, 8]);
+
+    linkDown = false;
+    const before = h.markReadCalls.length;
+    expect(await h.scheduler.admit(batchOf([{ entryId: 7, messageId: 'm-7', threadRootId: 't-1' }, { entryId: 8, messageId: 'm-8', threadRootId: 't-2' }]), ctx)).toMatchObject({ started: 0, skipped: 2 });
+    expect(h.markReadCalls.slice(before)).toEqual([[7, 8]]);
+    expect(h.scheduler.doneEntries()).toEqual([]);
+  });
+
+  /**
+   * L2(2026-10-03). 앞 러너가 끝냈는데 읽음 처리만 못 한 entry 를 넘겨받은 교체 러너는 **턴 없이** 읽음
+   * 처리만 한다 — 보류(`heldEntryIds`)와 달리 시한이 지나도 띄우지 않는다.
+   * 되돌려 RED: `handoverDone` 을 `doneUnread` 에 심지 않으면 턴이 돌아 `runs` 가 1 이 된다.
+   */
+  it('앞 세대가 끝낸 entry(handoverDone)는 턴 없이 읽음 처리만 한다', async () => {
+    let runs = 0;
+    const h = harness({ runTurn: async () => { runs += 1; return { ok: true } as never; }, handoverDone: new Set([5]) });
+    expect(h.scheduler.doneEntries()).toEqual([5]);
+    expect(await h.scheduler.admit(batchOf([{ entryId: 5, messageId: 'm-5' }]), ctx)).toMatchObject({ started: 0, skipped: 1 });
+    await h.scheduler.drain();
+    expect(runs).toBe(0);
+    expect(h.markedRead).toEqual([5]);
+    expect(h.scheduler.doneEntries()).toEqual([]);
   });
 
   it('물러나는 drain 이 읽음 처리를 한 번 더 시도한다', async () => {

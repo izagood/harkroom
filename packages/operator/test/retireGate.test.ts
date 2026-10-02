@@ -85,6 +85,37 @@ describe('회수 게이트 — 프로세스 생사가 아니라 인박스 소유
     expect(host.spawned[0]?.env.HARKROOM_HANDOVER_HOLD).toBe('41,42');
   });
 
+  /**
+   * L2(2026-10-03, #1119 후속). 끝났는데 읽음 처리만 못 한 entry 는 `holding` 과 **다른 env** 로 간다 —
+   * 섞으면 교체 러너가 보류 시한 동안만 건너뛰고 그 뒤 끝난 일에 두 번째 턴을 띄운다.
+   * 되돌려 RED: `done` 을 `holding` 에 합치거나 버리면 아래 두 단언 중 하나가 깨진다.
+   */
+  it('앞 러너가 끝냈지만 읽음 처리 못 한 entry 는 HARKROOM_HANDOVER_DONE 으로 따로 전달된다', async () => {
+    const host = fakeHost();
+    const registry = new RunnerRegistry(LAUNCH, host);
+    host.alive.add(62702);
+    registry.retire('murmur', 62702, inc('old'));
+    registry.notePollStopped('murmur', inc('old'), [41], [7, 8]);
+
+    await registry.spawnRunner('murmur', { PATH: '/usr/bin' });
+
+    expect(host.spawned[0]?.env.HARKROOM_HANDOVER_HOLD).toBe('41');
+    expect(host.spawned[0]?.env.HARKROOM_HANDOVER_DONE).toBe('7,8');
+  });
+
+  it('done 만 있고 holding 이 없으면 HOLD 는 심지 않고 DONE 만 심는다', async () => {
+    const host = fakeHost();
+    const registry = new RunnerRegistry(LAUNCH, host);
+    host.alive.add(62702);
+    registry.retire('murmur', 62702, inc('old'));
+    registry.notePollStopped('murmur', inc('old'), [], [9]);
+
+    await registry.spawnRunner('murmur', {});
+
+    expect(host.spawned[0]?.env.HARKROOM_HANDOVER_HOLD).toBeUndefined();
+    expect(host.spawned[0]?.env.HARKROOM_HANDOVER_DONE).toBe('9');
+  });
+
   it('들고 있는 것이 없으면 env 를 심지 않는다 — 없는 값을 빈 문자열로 넘기지 않는다', async () => {
     const host = fakeHost();
     const registry = new RunnerRegistry(LAUNCH, host);

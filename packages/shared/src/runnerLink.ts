@@ -134,9 +134,14 @@ export type RunnerLinkResponse =
  * `holding` — 아직 도는 턴의 inbox entry id 들. `markRead` 는 턴 **완료 후**라 이것들은
  * 여전히 미읽음이고, 그대로 두면 **교체 러너가 같은 멘션을 다시 집어 두 번 답한다.**
  * 오퍼레이터가 이 목록을 교체 러너에게 넘겨 그동안만 건너뛰게 한다.
+ *
+ * `done` — **턴은 끝났는데 읽음 처리만 못 한** entry id 들(2026-10-03, #1119 후속 L2). 서버 링크가
+ * 끊긴 채 물러나는 러너가 남기는 것이다. `holding` 과 다르다: 이것들은 기다릴 턴이 없으므로 교체
+ * 러너는 보류 시한과 무관하게 **읽음 처리만** 한다 — 턴을 띄우면 끝난 일에 두 번째 턴이 선다.
+ * 생략은 "없다"다(이 필드를 모르는 옛 러너).
  */
 export type RunnerLinkNotice =
-  | { type: 'runner.pollStopped'; holding: number[] }
+  | { type: 'runner.pollStopped'; holding: number[]; done?: number[] }
   | McpAuthRejectedNotice
   | SecretLeaseNotice
   | SecretLeaseEndedNotice;
@@ -200,7 +205,8 @@ export function isRunnerLinkNotice(value: unknown): value is RunnerLinkNotice {
   if (m.type === 'secret.lease') return str(m.cause) && str(m.leaseId) && str(m.token) && str(m.expiresAt);
   if (m.type === 'secret.leaseEnded') return str(m.cause);
   if (m.type !== 'runner.pollStopped') return false;
-  return Array.isArray(m.holding) && m.holding.every((v) => typeof v === 'number' && Number.isInteger(v));
+  const ids = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === 'number' && Number.isInteger(x));
+  return ids(m.holding) && (m.done === undefined || ids(m.done));
 }
 
 const REQUEST_TYPES = new Set(['mcp.request', 'http.forward']);

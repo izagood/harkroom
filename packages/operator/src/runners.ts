@@ -58,7 +58,7 @@ import { psIdentityProbe } from './adopt.js';
 interface RetiringEntry {
   pid: number;
   incarnationId: IncarnationId | null;
-  pollStopped?: { holding: number[] };
+  pollStopped?: { holding: number[]; done: number[] };
 }
 
 export interface RunnerRecord {
@@ -359,11 +359,11 @@ export class RunnerRegistry {
    * 알리지 않는 세대(이 프레임을 모르는 옛 러너)에서는 영영 `undefined` 로 남고, 그러면
    * 게이트는 **예전 그대로** 프로세스가 죽을 때까지 기다린다. 즉 이 기능은 순수한 덧셈이다.
    */
-  notePollStopped(agentId: string, incarnationId: IncarnationId, holding: readonly number[]): void {
+  notePollStopped(agentId: string, incarnationId: IncarnationId, holding: readonly number[], done: readonly number[] = []): void {
     const entry = this.retiring.get(agentId);
     // id 를 대조한다 — 그 사이 또 다른 세대가 회수 자리에 들어왔을 수 있다.
     if (entry === undefined || entry.incarnationId !== incarnationId) return;
-    entry.pollStopped = { holding: [...holding] };
+    entry.pollStopped = { holding: [...holding], done: [...done] };
   }
 
   /**
@@ -518,8 +518,16 @@ export class RunnerRegistry {
     // 앞 러너가 놓은 인박스에는 **그가 아직 돌리고 있는 턴의 entry 가 미읽음으로 남아 있다**
     // (`markRead` 는 턴 완료 후다). 그대로 두면 이 새 러너가 같은 멘션을 집어 두 번 답한다.
     // 그 목록만 건네 잠시 건너뛰게 한다 — 받는 쪽 유예는 `agent/src/main.ts` 가 갖는다.
-    const 보류 = this.retiring.get(agentId)?.pollStopped?.holding ?? [];
-    const env2 = 보류.length ? { ...env, HARKROOM_HANDOVER_HOLD: 보류.join(',') } : env;
+    // 앞 러너가 **끝냈는데 읽음 처리만 못 한** entry(L2)는 따로 심는다 — 받는 쪽은 이것을 기다리지 않고
+    // 읽음 처리만 한다. `holding` 에 섞으면 보류 시한 뒤 끝난 일에 두 번째 턴이 선다.
+    const 앞 = this.retiring.get(agentId)?.pollStopped;
+    const 보류 = 앞?.holding ?? [];
+    const 끝남 = 앞?.done ?? [];
+    const env2 = {
+      ...env,
+      ...(보류.length ? { HARKROOM_HANDOVER_HOLD: 보류.join(',') } : {}),
+      ...(끝남.length ? { HARKROOM_HANDOVER_DONE: 끝남.join(',') } : {}),
+    };
 
     const logHandle = this.logs?.open(agentId) ?? null;
 

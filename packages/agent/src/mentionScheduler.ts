@@ -169,6 +169,11 @@ export interface MentionSchedulerDeps {
    */
   heldEntryIds?: () => ReadonlySet<number>;
   /**
+   * 앞 세대가 **끝냈는데 읽음 처리만 못 한** entry(`HARKROOM_HANDOVER_DONE`, L2). 기동 때 `doneUnread` 에
+   * 심어 턴 없이 읽음 처리만 한다. `heldEntryIds` 와 달리 풀 일이 없다 — 기다릴 턴이 없다.
+   */
+  handoverDone?: ReadonlySet<number>;
+  /**
    * 턴 임대(비밀 보관소 PR 3, `secretLeases.ts`). 멘션의 첫 시도 전에 받고, 그 멘션이 **끝날 때**(읽음
    * 처리) 놓는다 — 재시도로 미룬 동안은 쥐고 있다(R1: 같은 멘션의 재시도는 받은 임대를 다시 쓴다).
    */
@@ -204,6 +209,8 @@ export interface MentionScheduler {
    * (`main.ts` 의 종료 경로 → `relay.notifyPollStopped`).
    */
   holdingEntries(): number[];
+  /** 턴은 끝났는데 읽음 처리만 못 한 entry id(`doneUnread`). 교체 러너에게 따로 넘긴다 — 읽음 처리만 하라고. */
+  doneEntries(): number[];
   drain(): Promise<void>;
 }
 
@@ -291,19 +298,37 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
    * (표가 영원히 자라지 않게 하는 안전판이고, 그만큼 오래 서버에 못 닿았으면 러너가 이미 교체됐다).
    */
   const doneUnread = new Map<number, number>();
+  // 앞 세대가 끝냈는데 읽음 처리만 못 한 entry(L2) — 처음부터 "끝났다" 로 둔다. 시각은 지금: 앞 러너가
+  // 언제 끝냈는지 모르고, 24h 상한은 이 러너 기준으로 다시 세는 것이 안전하다(짧게 세면 다시 띄운다).
+  for (const id of deps.handoverDone ?? []) doneUnread.set(id, now());
   /**
-   * 끝난 entry 를 읽음 처리한다 — **던지지 않는다.** 실패하면 `doneUnread` 에 적고 다음 폴이 다시
-   * 시도한다. 호출자는 이 뒤에 회계 정리(attempts·gateRequeues·임대 반납)를 그대로 이어 간다:
-   * 턴의 결말은 이미 났고, 읽음 처리는 그 결말을 서버에 알리는 일일 뿐이다.
+   * 끝난 entry 들을 **한 번의 호출로** 읽음 처리한다 — **던지지 않는다.** 실패하면 전부 `doneUnread` 에
+   * 적고(이미 있던 것은 처음 적힌 시각을 지킨다) 다음 폴이 다시 시도한다. 호출자는 이 뒤에 회계
+   * 정리(attempts·gateRequeues·임대 반납)를 그대로 이어 간다: 턴의 결말은 이미 났고, 읽음 처리는
+   * 그 결말을 서버에 알리는 일일 뿐이다.
+   *
+   * 묶는 이유(L1): 링크가 느릴 때 id 마다 따로 부르면 폴 루프가 id 수 × 요청 시한만큼 선다.
    */
-  const finish = async (entryId: number): Promise<void> => {
+  const finishMany = async (ids: readonly number[]): Promise<void> => {
+    if (ids.length === 0) return;
     try {
-      await deps.harkroom.markRead([entryId]);
-      doneUnread.delete(entryId);
+      await deps.harkroom.markRead([...ids]);
+      for (const id of ids) doneUnread.delete(id);
     } catch (err) {
-      if (!doneUnread.has(entryId)) doneUnread.set(entryId, now());
-      console.error(`  entry ${entryId} 읽음 처리 실패(턴은 끝났다 — 다시 띄우지 않고 다음 폴에 읽음 처리만 다시 한다): ${err instanceof Error ? err.message : String(err)}`);
+      const at = now();
+      for (const id of ids) if (!doneUnread.has(id)) doneUnread.set(id, at);
+      console.error(`  entry ${ids.join(',')} 읽음 처리 실패(턴은 끝났다 — 다시 띄우지 않고 다음 폴에 읽음 처리만 다시 한다): ${err instanceof Error ? err.message : String(err)}`);
     }
+  };
+  const finish = (entryId: number): Promise<void> => finishMany([entryId]);
+  /**
+   * 상한을 넘긴 항목을 표에서 지운다(L1). 전에는 같은 entry 가 **다시 올 때만** 지웠다 — 서버가 읽음
+   * 처리는 했는데 응답만 늦어 시한에 걸린 경우(`-32001`)가 그 모양이라, 다시 오지 않는 id 가 러너가
+   * 사는 동안 표에 남아 이관 목록과 drain 재시도에 계속 실렸다. 폴마다 한 번 훑는다.
+   */
+  const pruneDoneUnread = (): void => {
+    const at = now();
+    for (const [id, since] of doneUnread) if (at - since > DONE_UNREAD_MAX_MS) doneUnread.delete(id);
   };
   /** 완료를 기다릴 수 있게 잡아 두는 프로미스. `drain` 이 이것을 본다. */
   const running = new Set<Promise<void>>();
@@ -638,6 +663,9 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
     async admit(batch, ctx) {
       const out: AdmitOutcome = { started: 0, deferred: 0, blocked: 0, skipped: 0 };
       const orphans: number[] = [];
+      /** 이 배치에서 다시 온, 끝났는데 읽음 처리만 남은 entry — 루프 뒤 **한 번에** 읽음 처리한다(L1). */
+      const doneAgain: number[] = [];
+      pruneDoneUnread();
 
       for (const entry of batch.entries) {
         const mention = batch.messages.find((m) => m.id === entry.messageId);
@@ -664,11 +692,8 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         }
 
         // 끝났는데 읽음 처리만 남은 entry(2026-10-02) — 턴을 띄우지 않고 읽음 처리만 다시 한다.
-        const doneAt = doneUnread.get(entry.id);
-        if (doneAt !== undefined) {
-          if (now() - doneAt > DONE_UNREAD_MAX_MS) { doneUnread.delete(entry.id); }
-          else { out.skipped += 1; await finish(entry.id); continue; }
-        }
+        // 상한 넘긴 것은 위 `pruneDoneUnread` 가 이미 지웠다.
+        if (doneUnread.has(entry.id)) { out.skipped += 1; doneAgain.push(entry.id); continue; }
 
         if (inFlightEntries.has(entry.id)) { out.blocked += 1; continue; }
         // 앞 세대가 들고 있는 것은 **내 것이 아니다**(이관 중). 유예가 끝나면 이 집합이
@@ -795,18 +820,21 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       }
 
       if (orphans.length) await deps.harkroom.markRead(orphans);
+      await finishMany(doneAgain);
       return out;
     },
 
     inFlight: () => running.size,
-    // 읽음 처리가 남은 끝난 entry 도 함께 넘긴다 — 교체 러너가 그것을 집으면 끝난 일에 두 번째 턴이 선다.
-    holdingEntries: () => [...inFlightEntries, ...doneUnread.keys()],
+    holdingEntries: () => [...inFlightEntries],
+    // 읽음 처리가 남은 끝난 entry 는 **따로** 넘긴다(L2) — `holding` 에 섞으면 교체 러너는 보류 시한 동안만
+    // 건너뛰고, 시한 뒤 inbox 가 다시 주면 끝난 일에 두 번째 턴을 띄운다. 따로 받으면 읽음 처리만 한다.
+    doneEntries: () => [...doneUnread.keys()],
 
     async drain() {
       // 스냅샷을 떠서 도는 이유: 완료 콜백이 이 집합을 수정하므로 순회 중에 직접 읽지 않는다.
       while (running.size) await Promise.all([...running]);
-      // 물러나기 전에 한 번 더 — 링크가 돌아왔으면 여기서 끝난다.
-      for (const id of [...doneUnread.keys()]) await finish(id);
+      // 물러나기 전에 한 번 더, 한 호출로 — 링크가 돌아왔으면 여기서 끝난다.
+      await finishMany([...doneUnread.keys()]);
     },
   };
 }
