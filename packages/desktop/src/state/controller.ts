@@ -2422,6 +2422,17 @@ export class Controller {
     return this.api.unassignAgent(agentId);
   }
 
+  // 비밀 보관소(085) — 설정 › 나 › 비밀과 API. 판정은 서버.
+  listSecrets() { return this.api.listSecrets(); }
+  createSecret(body: Parameters<ApiClient['createSecret']>[0]) { return this.api.createSecret(body); }
+  patchSecret(id: string, body: Parameters<ApiClient['patchSecret']>[1]) { return this.api.patchSecret(id, body); }
+  replaceSecretValue(id: string, body: Parameters<ApiClient['replaceSecretValue']>[1]) { return this.api.replaceSecretValue(id, body); }
+  deleteSecret(id: string) { return this.api.deleteSecret(id); }
+  listSecretGrants(id: string) { return this.api.listSecretGrants(id); }
+  putSecretGrant(id: string, body: Parameters<ApiClient['putSecretGrant']>[1]) { return this.api.putSecretGrant(id, body); }
+  deleteSecretGrant(id: string, grantId: string) { return this.api.deleteSecretGrant(id, grantId); }
+  listSecretAccess(id: string) { return this.api.listSecretAccess(id); }
+
   // capability grant(055) — 에이전트 머지 권한 절(스레드 3deac356). 판정은 서버.
   listGrants(accountId: string): Promise<import('@harkroom/shared').GrantRow[]> {
     return this.api.listGrants(accountId);

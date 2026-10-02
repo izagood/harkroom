@@ -29,7 +29,7 @@ import { hasCapability } from '../../lib/capabilities';
  * 그 한 줄이 **두 화면에 각각** 있다: `TeamDetail` 의 `team-mention-note`(팀 → 집합)와
  * `HandleGroupsSettings` 의 목록 머리(집합 → 팀).
  */
-export type SectionId = 'workspace' | 'profile' | 'notifications' | 'messages' | 'appearance' | 'communities' | 'agents' | 'agent-defaults' | 'operators' | 'integrations' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'automations' | 'gallery' | 'this-operator';
+export type SectionId = 'workspace' | 'profile' | 'notifications' | 'messages' | 'appearance' | 'communities' | 'agents' | 'agent-defaults' | 'operators' | 'integrations' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'automations' | 'gallery' | 'this-operator' | 'secrets';
 
 /**
  * 목차 한 줄의 **이름은 사전 키 하나다**(UX ④ H5). 전에는 목차가 영어 문자열(`Appearance`)을,
@@ -61,6 +61,8 @@ export const SETTINGS_GROUPS: { id: 'me' | 'device' | 'workspace' | 'agents'; ti
       { id: 'notifications' },
       { id: 'messages' },
       { id: 'appearance' },
+      // 비밀과 API(외부 API 권한 C안 P1, designer v3 ①): 비밀은 서버에서 개인 소유라 「나」 묶음이다(D1).
+      { id: 'secrets' },
     ],
   },
   {
