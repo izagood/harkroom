@@ -7,6 +7,8 @@ import 'package:harkroom/api/api_client.dart';
 import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/main.dart';
 import 'package:harkroom/markdown/markdown_view.dart';
+import 'package:harkroom/push/push_coordinator.dart';
+import 'package:harkroom/push/push_platform.dart';
 import 'package:harkroom/screens/thread_screen.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_state.dart';
@@ -292,6 +294,13 @@ void main() {
       MaterialPageRoute<void>(builder: (_) => const ThreadScreen(channelId: 'c1', rootId: 'gone-root')),
     );
     await shot(tester, '33-thread-root-missing');
+  });
+
+  testWidgets('푸시 안내 시트', (tester) async {
+    final app = _galleryApp(_server());
+    addTearDown(app.dispose);
+    await tester.pumpWidget(HarkroomApp(state: app, push: PushCoordinator(app, _GalleryPush())));
+    await shot(tester, '17-push-prompt');
   });
 
   testWidgets('부팅 실패', (tester) async {
@@ -702,4 +711,26 @@ class _LongThreadServer {
         if (path == '/ws-ticket') return _json({'ticket': 'tk'});
         return _json({'error': {'code': 'not_found', 'message': path}}, 404);
       });
+}
+
+/// 갤러리용 푸시 표면 — 아직 묻지 않은 기기. OS 창은 띄우지 않는다.
+class _GalleryPush implements PushPlatform {
+  @override
+  Future<PushPermission> status() async => PushPermission.notDetermined;
+  @override
+  Future<bool> request() async => false;
+  @override
+  Future<PushDeviceToken?> token() async => null;
+  @override
+  Future<Map<String, Object?>?> takeInitialOpen() async => null;
+  @override
+  Future<void> setBadge(int count) async {}
+  @override
+  Future<bool> wasPrompted() async => false;
+  @override
+  Future<void> markPrompted() async {}
+  @override
+  Future<void> openSettings() async {}
+  @override
+  void listen({required void Function(Map<String, Object?>) onOpen, required bool Function(Map<String, Object?>) shouldPresent}) {}
 }
