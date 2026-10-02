@@ -1369,10 +1369,15 @@ function buildMcpServer(
       // 러너 자동 주입용(recall P1) — 이름·상투어를 거르고 이름·요약 일치만, journal 빼고.
       // 옛 서버는 모르는 키를 버리므로(zod strip) 러너는 응답의 nameHits 로 새 서버를 알아본다.
       recall: z.boolean().optional(),
+      // recall 모드만(S2 F1·F6): 이 세션에 이미 실은 판(`slug@updatedAt`, 옛 러너는 맨 slug)을 빼고,
+      // 러너가 실을 앞 recordTop 개를 recall_count 로 센다. 옛 서버는 둘 다 버린다 — 러너는 제 쪽에서도 거른다.
+      exclude: z.array(z.string().max(300)).max(200).optional(),
+      recordTop: z.number().int().min(0).max(5).optional(),
     },
-  }, async ({ query, limit, includeValue, recall }) => {
+  }, async ({ query, limit, includeValue, recall, exclude, recordTop }) => {
     const res = await searchMemory(pool, account.id, query, {
       limit: limit ?? 5, includeValue: includeValue ?? false, recall: recall ?? false,
+      ...(recall ? { exclude: exclude ?? [], recordTop: recordTop ?? 0 } : {}),
     });
     return jsonResult(recall ? res : { hits: res.hits });
   });

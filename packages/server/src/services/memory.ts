@@ -313,6 +313,8 @@ export interface MemorySearchHit {
   value?: string;
   /** recall 모드만: 이름·요약에 걸린 낱말 수. 러너가 이 값이 있으면 새 서버로 알아본다. */
   nameHits?: number;
+  /** recall 모드만: 그 판의 시각. 러너가 `slug@updatedAt` 으로 "이 판을 이미 실었나"를 가른다(F6). */
+  updatedAt?: string;
 }
 
 /** 한국어 조사가 붙은 낱말도 걸리게 끝의 흔한 조사를 떼어 본다(형태소 분석기 없이 싼 근사). */
@@ -473,6 +475,7 @@ export function rankRecall(terms: string[], rows: RecallCandidate[], limit: numb
     || (a.r.slug < b.r.slug ? -1 : a.r.slug > b.r.slug ? 1 : 0));
   return scored.slice(0, limit).map(({ r, nameHits, score }) => ({
     slug: r.slug, description: r.description, kind: r.kind, score, nameHits, value: r.value,
+    updatedAt: r.updatedAt.toISOString(),
   }));
 }
 
@@ -486,7 +489,8 @@ export function rankRecall(terms: string[], rows: RecallCandidate[], limit: numb
  * 러너가 로그 한 줄로 남긴다.
  */
 export async function searchMemory(
-  pool: Pool, accountId: string, query: string, opts: { limit: number; includeValue: boolean; recall?: boolean },
+  pool: Pool, accountId: string, query: string,
+  opts: { limit: number; includeValue: boolean; recall?: boolean; exclude?: string[]; recordTop?: number },
 ): Promise<{ hits: MemorySearchHit[]; terms: string[] }> {
   if (opts.recall) {
     const terms = searchTerms(query, { exclude: await recallExcludedNames(pool) });
@@ -500,8 +504,11 @@ export async function searchMemory(
                      where lower(m.slug) like p or lower(coalesce(m.description, '')) like p)`,
       [accountId, patterns],
     );
-    const hits = rankRecall(terms, res.rows as RecallCandidate[], opts.limit)
+    const skip = new Set(opts.exclude ?? []);
+    const rows = (res.rows as RecallCandidate[]).filter((r) => !isExcluded(skip, r.slug, r.updatedAt));
+    const hits = rankRecall(terms, rows, opts.limit)
       .map((h) => (opts.includeValue ? h : { ...h, value: undefined }));
+    if (opts.recordTop) await recordRecall(pool, accountId, hits.slice(0, opts.recordTop).map((h) => h.slug));
     return { hits, terms };
   }
   const terms = searchTerms(query);
@@ -520,6 +527,27 @@ export async function searchMemory(
     [accountId, patterns, opts.limit],
   );
   return { hits: (res.rows as MemorySearchHit[]).filter((r) => r.score > 0), terms };
+}
+
+/**
+ * 이 세션에 이미 실은 판인가(F6). 키는 `slug@updatedAt`(ISO) — 세션 도중 **고쳐진** 기억은 다시 싣는다.
+ * 맨 slug 키는 옛 러너의 고정 파일에서 온 것이라 판과 무관하게 뺀다(그 세션이 끝나면 사라진다).
+ */
+function isExcluded(skip: Set<string>, slug: string, updatedAt: Date): boolean {
+  return skip.has(slug) || skip.has(`${slug}@${updatedAt.toISOString()}`);
+}
+
+/**
+ * 러너가 턴 프롬프트에 실은 기억을 센다(F1, 096). recall 은 러너가 고르므로 서버는 러너가
+ * `recordTop` 으로 "앞 몇 개를 싣는다"고 말한 것만 센다 — 돌려준 후보 전부를 세면 안 실린 것까지 쓰인 것이 된다.
+ */
+async function recordRecall(pool: Pool, accountId: string, slugs: string[]): Promise<void> {
+  if (!slugs.length) return;
+  await pool.query(
+    `update agent_memory set recall_count = recall_count + 1, last_recalled_at = now()
+     where account_id = $1 and slug = any($2::text[])`,
+    [accountId, slugs],
+  );
 }
 
 export interface MemoryRevision {
@@ -607,9 +635,12 @@ const AUDIT_LIST_CAP = 30;
 export interface MemoryAudit {
   total: number;
   core: { length: number; limit: number } | null;
-  /** 만든 지 7일이 지났는데 한 번도 안 읽힌 것(journal 제외 — 경위는 원래 잘 안 읽힌다). */
+  /**
+   * 만든 지 7일이 지났는데 한 번도 안 쓰인 것(journal 제외 — 경위는 원래 잘 안 읽힌다).
+   * "쓰임" = `memory.get` 으로 읽힘 **또는** 러너 recall 로 실림(096).
+   */
   neverRead: string[];
-  /** 마지막으로 읽은 지 30일이 지난 것(journal 제외). */
+  /** 마지막으로 쓰인 지(읽힘·recall 중 늦은 쪽) 30일이 지난 것(journal 제외). `lastReadAt` 은 그 늦은 쪽 시각이다. */
   stale: { slug: string; lastReadAt: string }[];
   /** 본문의 `[[이름]]` 이 가리키는 기억이 없다. */
   brokenLinks: { slug: string; target: string }[];
@@ -624,6 +655,11 @@ export interface MemoryAudit {
   undescribed: string[];
   /** 쓰기 검사(080)에 걸려 사람 확인을 기다리는 것. 에이전트는 고쳐 쓰거나 사람에게 알린다. */
   flagged: { slug: string; reason: string | null }[];
+  /**
+   * 어느 목록이든 30개에서 잘렸으면 true(F9). 정리 턴이 한 바퀴 돌고 "끝났다"고 믿지 않게 —
+   * true 면 고친 뒤 다시 audit 한다.
+   */
+  truncated: boolean;
 }
 
 /** 이름을 낱말로 편다 — `mem/pr-896-memory-runner-cache` → {pr, memory, runner, cache}(숫자는 버린다). */
@@ -647,14 +683,15 @@ export async function auditMemory(
   pool: Pool, accountId: string, patterns: string[] = [],
 ): Promise<MemoryAudit> {
   const res = await pool.query(
-    `select slug, value, description, kind, read_count, last_read_at, created_at, flagged_at, flag_reason
+    `select slug, value, description, kind, read_count, last_read_at, recall_count, last_recalled_at,
+       created_at, flagged_at, flag_reason
      from agent_memory where account_id = $1 order by slug`,
     [accountId],
   );
   const rows = res.rows as {
     slug: string; value: string; description: string | null; kind: MemoryKind;
-    read_count: number; last_read_at: Date | null; created_at: Date;
-    flagged_at: Date | null; flag_reason: string | null;
+    read_count: number; last_read_at: Date | null; recall_count: number; last_recalled_at: Date | null;
+    created_at: Date; flagged_at: Date | null; flag_reason: string | null;
   }[];
   const now = Date.now();
   const day = 86_400_000;
@@ -664,17 +701,21 @@ export async function auditMemory(
     total: rows.length,
     core: coreRow ? { length: coreRow.value.length, limit: MAX_CORE_MEMORY_LENGTH } : null,
     neverRead: [], stale: [], brokenLinks: [], similar: [], outdated: [], undescribed: [], flagged: [],
+    truncated: false,
   };
   const lowered = patterns.map((p) => p.trim()).filter((p) => p.length >= 3).map((p) => [p, p.toLowerCase()] as const);
   for (const r of rows) {
     const judged = r.slug !== 'core' && r.kind !== 'journal';
     if (r.flagged_at) audit.flagged.push({ slug: r.slug, reason: r.flag_reason });
-    if (judged && r.read_count === 0 && now - r.created_at.getTime() > AUDIT_NEVER_READ_GRACE_DAYS * day) {
+    const used = r.read_count + r.recall_count;
+    if (judged && used === 0 && now - r.created_at.getTime() > AUDIT_NEVER_READ_GRACE_DAYS * day) {
       audit.neverRead.push(r.slug);
     }
     if (judged && !r.description?.trim()) audit.undescribed.push(r.slug);
-    if (judged && r.last_read_at && now - r.last_read_at.getTime() > AUDIT_STALE_DAYS * day) {
-      audit.stale.push({ slug: r.slug, lastReadAt: r.last_read_at.toISOString() });
+    const lastUsed = [r.last_read_at, r.last_recalled_at]
+      .filter((d): d is Date => d !== null).reduce<Date | null>((a, d) => (!a || d > a ? d : a), null);
+    if (judged && lastUsed && now - lastUsed.getTime() > AUDIT_STALE_DAYS * day) {
+      audit.stale.push({ slug: r.slug, lastReadAt: lastUsed.toISOString() });
     }
     for (const m of r.value.matchAll(/\[\[([^\]\s]{1,255})\]\]/g)) {
       const target = m[1]!;
@@ -692,6 +733,8 @@ export async function auditMemory(
       if (jaccard(named[i]![1], named[j]![1]) >= 0.6) audit.similar.push([named[i]![0], named[j]![0]]);
     }
   }
+  audit.truncated = [audit.neverRead, audit.stale, audit.brokenLinks, audit.similar, audit.outdated,
+    audit.undescribed, audit.flagged].some((l) => l.length > AUDIT_LIST_CAP);
   audit.neverRead = audit.neverRead.slice(0, AUDIT_LIST_CAP);
   audit.stale = audit.stale.slice(0, AUDIT_LIST_CAP);
   audit.brokenLinks = audit.brokenLinks.slice(0, AUDIT_LIST_CAP);

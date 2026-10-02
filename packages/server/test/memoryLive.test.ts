@@ -318,6 +318,66 @@ describe('memory MCP tools', () => {
     }
   });
 
+  // S2 F1·F6: 러너가 실은 기억은 recall_count 로 센다 — audit 이 "안 쓰임"으로 올리지 않게.
+  it('memory.search recall counts recordTop hits, honours slug@updatedAt exclude, and audit treats recall as use', async () => {
+    const { accountId, pat } = await createAgent(app, adminToken, 'recall-count-agent');
+    const client = await mcpClient(pat);
+    try {
+      await callTool(client, 'memory.set', { slug: 'mem/cache-a', value: '캐시 캐시 캐시', description: '캐시 설계' });
+      await callTool(client, 'memory.set', { slug: 'mem/cache-b', value: '캐시', description: '캐시 함정' });
+      await callTool(client, 'memory.set', { slug: 'mem/cache-c', value: '없음', description: '캐시 측정' });
+      const query = '캐시 봐 달라';
+
+      // recordTop 없이(옛 러너)는 세지 않는다.
+      await callTool(client, 'memory.search', { query, recall: true, includeValue: true });
+      const counts = async () => Object.fromEntries((await pool.query(
+        `select slug, recall_count from agent_memory where account_id = $1 order by slug`, [accountId],
+      )).rows.map((r: { slug: string; recall_count: number }) => [r.slug, r.recall_count]));
+      expect(await counts()).toEqual({ 'mem/cache-a': 0, 'mem/cache-b': 0, 'mem/cache-c': 0 });
+
+      // 앞 2개만 센다 — 돌려준 3개 전부가 아니다.
+      const first = await callTool(client, 'memory.search', { query, recall: true, includeValue: true, recordTop: 2 });
+      const order = (first.hits as { slug: string }[]).map((h) => h.slug);
+      expect(order).toEqual(['mem/cache-a', 'mem/cache-b', 'mem/cache-c']);
+      expect(await counts()).toEqual({ 'mem/cache-a': 1, 'mem/cache-b': 1, 'mem/cache-c': 0 });
+
+      // 이미 실은 판은 뺀다. 맨 slug(옛 고정 파일)도 뺀다.
+      const keyA = `mem/cache-a@${first.hits[0].updatedAt}`;
+      const second = await callTool(client, 'memory.search', { query, recall: true, includeValue: true, exclude: [keyA, 'mem/cache-b'], recordTop: 2 });
+      expect((second.hits as { slug: string }[]).map((h) => h.slug)).toEqual(['mem/cache-c']);
+      expect(await counts()).toEqual({ 'mem/cache-a': 1, 'mem/cache-b': 1, 'mem/cache-c': 1 });
+
+      // 세션 도중 고쳐진 판은 다시 나온다(F6).
+      await callTool(client, 'memory.set', { slug: 'mem/cache-a', value: '캐시 캐시 캐시 고침', description: '캐시 설계' });
+      const third = await callTool(client, 'memory.search', { query, recall: true, includeValue: true, exclude: [keyA] });
+      expect((third.hits as { slug: string }[]).map((h) => h.slug)).toContain('mem/cache-a');
+
+      // recall 로만 쓰인 기억은 neverRead·stale 이 아니다.
+      await pool.query(`update agent_memory set created_at = now() - interval '40 days' where account_id = $1`, [accountId]);
+      await pool.query(`update agent_memory set read_count = 1, last_read_at = now() - interval '45 days' where account_id = $1 and slug = 'mem/cache-b'`, [accountId]);
+      const a = await callTool(client, 'memory.audit', {});
+      expect(a.neverRead).toEqual([]);
+      expect(a.stale).toEqual([]);
+      expect(a.truncated).toBe(false);
+    } finally {
+      await client.close();
+    }
+  });
+
+  // F9: 목록이 30개에서 잘리면 truncated 로 알린다.
+  it('memory.audit says truncated when a list is cut at 30', async () => {
+    const { pat } = await createAgent(app, adminToken, 'audit-trunc-agent');
+    const client = await mcpClient(pat);
+    try {
+      for (let i = 0; i < 31; i++) await callTool(client, 'memory.set', { slug: `mem/n${i}`, value: 'x' });
+      const a = await callTool(client, 'memory.audit', {});
+      expect(a.undescribed).toHaveLength(30);
+      expect(a.truncated).toBe(true);
+    } finally {
+      await client.close();
+    }
+  });
+
   // M3: 병렬 턴 둘이 같은 판을 읽고 각자 고치면 나중 쓰기가 앞 것을 조용히 지웠다.
   describe('ifUpdatedAt (낙관적 동시성)', () => {
     it('맞는 판이면 쓰고, 어긋난 판이면 conflict 와 지금 판을 준다', async () => {
