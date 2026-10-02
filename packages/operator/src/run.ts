@@ -426,6 +426,14 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   // 로그인이 끝나면 그 계정의 사용량을 다시 잰다 — 폴러는 아래에서 만든다(호출은 그 뒤다).
   const claudeAccounts = createClaudeAccountsPort({ onSignedIn: (dir) => { void usagePoller?.forget(dir); } });
   const codexAccounts = createCodexAccountsPort();
+  // `pools.json` 의 순서를 디스크와 맞춘다(2026-10-02) — 순서를 안 쓰던 계정 추가 경로가 남긴 어긋남을
+  // 고친다. 이름만 적는다. 실패해도 기동을 막지 않는다(순서는 동점일 때만 쓰인다). 서버에 안 붙는
+  // 기동(테스트)에서는 돌리지 않는다 — 그 머신의 실제 계정 뿌리를 건드리면 안 된다(아래 폴러와 같다).
+  if (options.communities !== false) void claudeAccounts.reconcileOrder().then(({ added, removed }) => {
+    if (added.length || removed.length) {
+      log(`claude 계정 순서 맞춤: 더함 ${added.join(', ') || '없음'} · 뺌 ${removed.join(', ') || '없음'}`);
+    }
+  }, () => undefined);
 
   // 계정별 사용률을 뒤에서 재서 `usage.json` 에 쓴다(C ①) — 러너가 새 스레드의 계정을 고를 때 읽는다.
   // 서버에 안 붙는 기동(테스트)에서는 돌리지 않는다: 러너가 뜰 일이 없고, 그 머신의 실제 계정으로

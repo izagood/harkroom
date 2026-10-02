@@ -168,6 +168,12 @@ export interface ClaudeAccountsPort {
    * 누르지 않는다. 그 세션이 끝나면 스크립트가 관문 표식을 지워 다시 배정 후보가 된다.
    */
   openTerminal(pool: string, account: string): Promise<void>;
+  /**
+   * `pools.json` 의 `order` 를 디스크와 맞춘다(2026-10-02). 데몬이 뜰 때 한 번 부른다 — 디스크에 있는데
+   * `order` 에 없는 계정은 끝에 붙이고, `order` 에 있는데 디스크에 없는 이름은 뺀다. 평평한 구조·깨진
+   * 파일은 건드리지 않는다. 고쳤으면 무엇을 고쳤는지 돌려준다(로그용, 이름만).
+   */
+  reconcileOrder(): Promise<{ added: string[]; removed: string[] }>;
   /** 진행 중인 로그인을 전부 회수한다. 데몬 종료 경로가 부른다. */
   shutdownLogins(): Promise<void>;
   onLoginEvent(cb: (e: ClaudeLoginEvent) => void): void;
@@ -433,6 +439,41 @@ async function writePoolsConfig(root: string, cfg: ClaudePoolsConfig): Promise<v
   await rename(tmpPath, poolsConfigPath(root));
 }
 
+/**
+ * `pools.json` 의 `order` 를 고친다(2026-10-02). **파일이 없거나(평평한 구조) 깨졌으면 쓰지 않는다** —
+ * 깨진 파일을 우리 해석으로 덮으면 사람이 손댄 다른 값(기본 풀·배정)이 사라진다(`readPoolsConfig` 는
+ * 깨진 파일을 빈 설정으로 읽으므로 여기서는 원문으로 따로 잰다). 바뀐 것이 없으면 쓰지 않는다.
+ */
+async function updatePoolOrder(
+  root: string,
+  edit: (order: Record<string, string[]>) => Record<string, string[]>,
+): Promise<boolean> {
+  let text: string;
+  try {
+    text = await readFile(poolsConfigPath(root), 'utf8');
+  } catch {
+    return false; // 평평한 구조 — order 가 없다
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return false; // 깨졌다 — 덮지 않는다
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  const cfg = parseClaudePoolsConfig(raw);
+  const next = edit(cfg.order);
+  if (JSON.stringify(next) === JSON.stringify(cfg.order)) return false;
+  await writePoolsConfig(root, { ...cfg, order: next });
+  return true;
+}
+
+/** 이름을 그 풀의 `order` **끝에** 붙인다. 이미 있으면 그대로다. */
+function appendTo(order: Record<string, string[]>, pool: string, account: string): Record<string, string[]> {
+  const list = order[pool] ?? [];
+  return list.includes(account) ? order : { ...order, [pool]: [...list, account] };
+}
+
 /** 뿌리 아래 계정 하나가 실제로 어디 있는가. */
 export interface ClaudeAccountDir {
   name: string;
@@ -685,6 +726,35 @@ export function createClaudeAccountsPort(opts: {
       await (opts.openInTerminal ?? nodeOpenInTerminal)(script);
     },
 
+    async reconcileOrder(): Promise<{ added: string[]; removed: string[] }> {
+      const layout = await readClaudeAccountsLayout(root);
+      const added: string[] = [];
+      const removed: string[] = [];
+      if (layout.mode !== 'pools') return { added, removed };
+      const onDisk = new Map(layout.pools.map((p) => [p.name, p.accounts.map((a) => a.name)]));
+      await updatePoolOrder(root, (order) => {
+        const next: Record<string, string[]> = {};
+        // 디스크에 없는 풀의 순서는 손대지 않는다 — 풀은 화면이 지우고, 여기서 지우면 잠깐 안 보이는
+        // 디렉터리(외장 볼륨 등)의 순서를 잃는다. 있는 풀만 맞춘다.
+        for (const [pool, list] of Object.entries(order)) {
+          const found = onDisk.get(pool);
+          if (!found) { next[pool] = list; continue; }
+          const kept = list.filter((n) => found.includes(n));
+          for (const n of list) if (!kept.includes(n)) removed.push(`${pool}/${n}`);
+          next[pool] = kept;
+        }
+        for (const [pool, found] of onDisk) {
+          // 순서 칸이 아예 없는 풀은 만들지 않는다 — 그 풀은 이름순(`orderAccounts`)으로 이미 같다.
+          if (!(pool in next)) continue;
+          for (const n of found) {
+            if (!next[pool]!.includes(n)) { next[pool] = [...next[pool]!, n]; added.push(`${pool}/${n}`); }
+          }
+        }
+        return next;
+      });
+      return { added, removed };
+    },
+
     async removeAccount(pool: string, account: string): Promise<void> {
       const dir = under(root, pool, account);
       // **없는 것을 지우려 하면 거절한다.** 조용히 성공하면 UI 가 "지웠다"를 그리는데
@@ -731,6 +801,12 @@ export function createClaudeAccountsPort(opts: {
         throw new Error(`대상에 같은 이름이 이미 있다: ${toPool}/${account}`);
       }
       await rename(from, to);
+      // 옮긴 풀의 순서 끝에 붙인다(2026-10-02). 옮겨 오는 쪽은 뿌리의 잔여 계정이라 어느 풀의
+      // `order` 에도 없다 — 그래도 같은 이름이 다른 풀의 순서에 남아 있으면 거기서 뺀다.
+      await updatePoolOrder(root, (order) => appendTo(
+        Object.fromEntries(Object.entries(order).map(([p, l]) => [p, p === toPool ? l : l.filter((n) => n !== account)])),
+        toPool, account,
+      )).catch(() => undefined);
       // **옮긴 뒤 다시 잰다.** 실측으로는 자격증명 파일이 함께 움직여 로그인이 유지되지만,
       // 갓 로그인한 계정이 파일을 남기는지 Keychain 에만 남기는지는 로그인을 완주해야 알 수
       // 있고 그것은 사람만 할 수 있다 — 그래서 "성공했다"고 말하지 않고 사실을 돌려준다.
@@ -780,6 +856,14 @@ export function createClaudeAccountsPort(opts: {
           const status = readStatus(await runStatus(configDir));
           if (!status.loggedIn && state.created) {
             await rm(configDir, { recursive: true, force: true }).catch(() => undefined);
+          }
+          if (status.loggedIn && state.created) {
+            // **새로 만든 계정**이 로그인에 성공했다 — 그 풀의 순서 끝에 붙인다(2026-10-02). 붙이지 않으면
+            // 화면이 다른 설정을 저장할 때까지 `order` 밖에 남는다(동점·사용량 모름일 때 맨 뒤로 간다).
+            // 다시 로그인(`created` 거짓)은 자리를 그대로 둔다. 실패해도 로그인은 성공이다.
+            await updatePoolOrder(root, (order) => appendTo(order, pool, account)).catch((err: unknown) => {
+              console.warn(`[claudeAccounts] 순서 기록 실패(로그인은 성공): ${err instanceof Error ? err.message : String(err)}`);
+            });
           }
           if (status.loggedIn) {
             // 다시 로그인했다 = 관문 표식은 옛 로그인의 사정이다. 아직 막혀 있으면 러너가 다시 세운다.
