@@ -161,6 +161,46 @@ describe('the preview panel', () => {
     expect(screen.getByText('에이전트가 만든 페이지')).toBeTruthy();
   });
 
+  // A′: Tauri 안에서는 src 를 넣기 전에 그 URL 을 내비게이션 훅에 한 번 허용해 둔다. 실패하면 src 를 넣지 않는다.
+  it('allows the signed URL in the navigation hook before framing it, every time', async () => {
+    const calls: string[] = [];
+    const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => { calls.push(`${cmd}:${String(args?.url)}`); });
+    (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke };
+    try {
+      fakeController({
+        issuePreview: vi.fn()
+          .mockResolvedValueOnce(ticket())
+          .mockResolvedValueOnce(ticket({ url: 'https://server.example.com/preview/tok2' })),
+      });
+      render(<ArtifactPanel />);
+      open();
+      const frame = await screen.findByTestId('artifact-frame');
+      expect(calls).toEqual(['allow_preview_once:https://server.example.com/preview/tok']);
+      expect(frame.getAttribute('src')).toBe('https://server.example.com/preview/tok');
+      fireEvent.click(screen.getAllByTestId('artifact-panel-reload')[0]!);
+      await waitFor(() => expect(screen.getByTestId('artifact-frame').getAttribute('src')).toBe('https://server.example.com/preview/tok2'));
+      expect(calls).toEqual([
+        'allow_preview_once:https://server.example.com/preview/tok',
+        'allow_preview_once:https://server.example.com/preview/tok2',
+      ]);
+    } finally {
+      delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
+  });
+
+  it('does not frame the URL when the hook refuses to hold it', async () => {
+    (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke: vi.fn(async () => { throw new Error('only /preview/ paths'); }) };
+    try {
+      fakeController();
+      render(<ArtifactPanel />);
+      open();
+      await waitFor(() => expect(screen.getByTestId('artifact-panel-state').getAttribute('data-state')).toBe('failed'));
+      expect(screen.queryByTestId('artifact-frame')).toBeNull();
+    } finally {
+      delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
+  });
+
   it('asks for a fresh signed path every time it reloads (an expired path is not an error)', async () => {
     const c = fakeController({
       issuePreview: vi.fn()

@@ -627,6 +627,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       // 경로·프로그램을 뜻하는 이름을 금지한다. 두 스위트가 함께여야 이 성질이 선다.
       expect(commands.filter((c) => c.webviewParams.length > 0).map((c) => c.fn).sort())
         .toEqual([
+          'allow_preview_once',
           'claude_account_login_cancel', 'claude_account_login_start',
           'claude_account_login_submit', 'claude_account_move', 'claude_account_open_terminal',
           'claude_account_remove', 'claude_accounts_configure', 'claude_pool_remove',
@@ -636,6 +637,10 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
           'operator_agent_remove', 'operator_agent_set', 'operator_mcp_auth', 'operator_mcp_remove', 'operator_mcp_set', 'operator_register',
           'secret_delete', 'secret_get', 'secret_set',
         ]);
+      // 미리보기 허용(#1069 A′): URL **문자열** 하나와, Tauri 가 채우는 웹뷰(라벨이 main 인지 본다)뿐이다.
+      // 판정(http(s)·/preview/·90초·한 번)은 Rust `PreviewAllowance` 가 하고 그 단위 시험이 고정한다.
+      const preview = commands.find((c) => c.fn === 'allow_preview_once')!;
+      expect(preview.webviewParams.sort()).toEqual(['url: String', 'webview: tauri::Webview']);
       // 등록: 서버 URL·코드·이름 문자열뿐 — claim 은 데몬이 한다.
       const reg = commands.find((c) => c.fn === 'operator_register')!;
       expect(reg.webviewParams.sort()).toEqual(['base_url: String', 'code: String', 'name: Option<String>']);

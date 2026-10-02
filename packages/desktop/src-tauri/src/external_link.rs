@@ -59,18 +59,89 @@ pub fn judge(url: &Url) -> Verdict {
     }
 }
 
+/// 미리보기(아티팩트) 서명 URL 의 **한 번짜리 허용**(#1069 A′, jaebin 결정 1c3401f3).
+///
+/// 왜 필요한가: wry 는 하위 프레임(iframe)의 이동까지 이 훅으로 보내고, URL 말고는 아무것도 주지 않는다
+/// (wry 0.55 `navigation_policy` — `isMainFrame` 을 보지 않는다). 그래서 미리보기 패널의 iframe 첫 로드
+/// (`https://<서버>/preview/<토큰>`)가 `judge` 에서 `OpenExternally` 가 되어 **토큰 URL 이 시스템 브라우저로
+/// 나가고 패널은 빈다.**
+///
+/// 왜 `judge` 에 경로 규칙을 더하지 않는가: 그 규칙은 main 웹뷰에도 열린다. 에이전트가 글에 `/preview/…`
+/// 링크를 걸고 사람이 오른쪽 클릭 → Open Link 를 누르면, 60초 안에서는 앱 화면 전체가 에이전트 페이지로 덮인다
+/// (security). 그래서 **앱이 방금 받은 그 서명 URL 하나만, 한 번, 90초 안에서만** 통과시킨다. 앱 화면은 그 URL 로
+/// 이동할 일이 없고, 그 URL 은 iframe 이 곧바로 써 버린다. 그 밖의 판정은 `judge` 그대로다.
+pub struct PreviewAllowance {
+    slot: std::sync::Mutex<Option<(Url, std::time::Instant)>>,
+}
+
+/// 허용의 수명. 서명 URL 자체가 60초라 그보다 조금 길게 둔다 — 이 칸이 먼저 닫혀 첫 로드를 막는 일이 없게.
+pub const PREVIEW_ALLOW_TTL: std::time::Duration = std::time::Duration::from_secs(90);
+
+impl Default for PreviewAllowance {
+    fn default() -> Self {
+        Self { slot: std::sync::Mutex::new(None) }
+    }
+}
+
+impl PreviewAllowance {
+    /// 다음 이동 하나를 허용해 둔다. http(s) 이고 경로가 `/preview/` 로 시작하는 것만 받는다 — 이 칸이 다른
+    /// 주소를 여는 문이 되면 안 된다. 새로 쥐면 앞의 것은 버린다(칸은 하나다).
+    pub fn allow(&self, raw: &str, now: std::time::Instant) -> Result<(), &'static str> {
+        let url = Url::parse(raw).map_err(|_| "not a url")?;
+        if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+            return Err("only http(s) preview urls");
+        }
+        if !url.path().starts_with("/preview/") || url.fragment().is_some() {
+            return Err("only /preview/ paths");
+        }
+        *self.slot.lock().unwrap_or_else(|e| e.into_inner()) = Some((url, now + PREVIEW_ALLOW_TTL));
+        Ok(())
+    }
+
+    /// 이 이동이 쥔 그 URL 이고 만료 전이면 true 를 주고 **칸을 비운다**(한 번만). 만료됐으면 비우고 false.
+    /// 다른 URL 이면 칸을 그대로 둔다 — 프레임이 첫 로드 전에 `about:blank` 를 거치는 일이 있다.
+    pub fn take(&self, url: &Url, now: std::time::Instant) -> bool {
+        let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        match slot.as_ref() {
+            Some((_, expires)) if now >= *expires => {
+                *slot = None;
+                false
+            }
+            Some((held, _)) if held == url => {
+                *slot = None;
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
 /// 이동 훅을 다는 플러그인. 창이 `tauri.conf.json` 에 선언되어 있어 창 빌더에 훅을 걸 수
 /// 없으므로(빌더는 `setup` 시점에 이미 지나갔다), 런타임이 **모든 웹뷰**에 대해 부르는
 /// 플러그인 훅을 쓴다.
 pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     tauri::plugin::Builder::new("external-link")
-        .on_navigation(|webview, url| match judge(url) {
+        .setup(|app, _api| {
+            use tauri::Manager as _;
+            app.manage(PreviewAllowance::default());
+            Ok(())
+        })
+        .on_navigation(|webview, url| {
+            use tauri::Manager as _;
+            // 앱이 방금 쥔 미리보기 서명 URL 이면 한 번만 통과시킨다(위 `PreviewAllowance`). 그 밖은 `judge`.
+            if let Some(allowance) = webview.try_state::<PreviewAllowance>() {
+                if allowance.take(url, std::time::Instant::now()) {
+                    return true;
+                }
+            }
+            match judge(url) {
             Verdict::Allow => true,
             Verdict::OpenExternally => {
                 open_in_browser(webview, url.as_str());
                 false
             }
             Verdict::Block => false,
+            }
         })
         .build()
 }
@@ -92,8 +163,68 @@ fn open_in_browser<R: tauri::Runtime>(webview: &tauri::Webview<R>, url: &str) {
 mod tests {
     //! 회귀선은 한 문장이다: **앱 출처가 아닌 http(s) 이동은 절대 허용되지 않는다.**
     //! `Verdict::Allow` 가 거기서 나오는 순간 화면이 덮이는 그 버그가 돌아온다.
-    use super::{judge, Verdict};
+    use super::{judge, PreviewAllowance, Verdict, PREVIEW_ALLOW_TTL};
+    use std::time::{Duration, Instant};
     use tauri::Url;
+
+    const TOK: &str = "https://server.example.com/preview/AbC123";
+
+    fn u(raw: &str) -> Url {
+        Url::parse(raw).expect("test url")
+    }
+
+    #[test]
+    fn preview_allowance_lets_the_held_url_through_once() {
+        let a = PreviewAllowance::default();
+        let t0 = Instant::now();
+        a.allow(TOK, t0).unwrap();
+        assert!(a.take(&u(TOK), t0 + Duration::from_secs(1)));
+        // 두 번째는 원래 규칙으로 돌아간다(이 칸은 비었다).
+        assert!(!a.take(&u(TOK), t0 + Duration::from_secs(2)));
+        assert_eq!(judge(&u(TOK)), Verdict::OpenExternally);
+    }
+
+    #[test]
+    fn preview_allowance_expires() {
+        let a = PreviewAllowance::default();
+        let t0 = Instant::now();
+        a.allow(TOK, t0).unwrap();
+        assert!(!a.take(&u(TOK), t0 + PREVIEW_ALLOW_TTL));
+        // 만료로 비운 뒤에는 다시 와도 통과하지 않는다.
+        assert!(!a.take(&u(TOK), t0));
+    }
+
+    #[test]
+    fn preview_allowance_does_not_open_other_preview_urls() {
+        let a = PreviewAllowance::default();
+        let t0 = Instant::now();
+        a.allow(TOK, t0).unwrap();
+        assert!(!a.take(&u("https://server.example.com/preview/OTHER"), t0));
+        assert!(!a.take(&u("https://evil.example.com/preview/AbC123"), t0));
+        assert!(!a.take(&u("http://server.example.com/preview/AbC123"), t0));
+        // 다른 URL 은 칸을 비우지 않는다 — 쥔 그것은 여전히 한 번 통과한다.
+        assert!(a.take(&u(TOK), t0));
+    }
+
+    #[test]
+    fn preview_allowance_only_holds_preview_paths() {
+        let a = PreviewAllowance::default();
+        let t0 = Instant::now();
+        assert!(a.allow("https://server.example.com/channels", t0).is_err());
+        assert!(a.allow("https://server.example.com/preview/x#frag", t0).is_err());
+        assert!(a.allow("javascript:alert(1)", t0).is_err());
+        assert!(a.allow("file:///preview/x", t0).is_err());
+        assert!(a.allow("not a url", t0).is_err());
+    }
+
+    #[test]
+    fn holding_a_preview_url_does_not_change_other_verdicts() {
+        let a = PreviewAllowance::default();
+        a.allow(TOK, Instant::now()).unwrap();
+        assert_eq!(judge(&u("tauri://localhost/index.html")), Verdict::Allow);
+        assert_eq!(judge(&u("https://github.com/")), Verdict::OpenExternally);
+        assert_eq!(judge(&u("javascript:alert(1)")), Verdict::Block);
+    }
 
     fn v(raw: &str) -> Verdict {
         judge(&Url::parse(raw).expect("test url"))

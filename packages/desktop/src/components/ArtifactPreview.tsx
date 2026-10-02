@@ -6,6 +6,7 @@ import { ApiError } from '../lib/api';
 import { useT } from '../i18n/useT';
 import { formatSize } from './Attachments';
 import { isMacOS, MAC_TRAFFIC_LIGHT_PL } from '../lib/platform';
+import { allowPreviewOnce } from '../lib/previewAllowance';
 
 /**
  * 미리보기(아티팩트) 화면 ④ — 에이전트가 `artifact.publish` 로 올린 HTML 을 앱 안에서 본다.
@@ -65,7 +66,11 @@ export function ArtifactPanel({ fill = false }: {
     const mine = ++attempt.current;
     loads.current = 0;
     setPhase({ kind: 'loading' });
-    getController().issuePreview(target.id).then((ticket) => {
+    getController().issuePreview(target.id).then(async (ticket) => {
+      if (attempt.current !== mine) return;
+      // src 를 넣기 **전에** 그 URL 하나를 내비게이션 훅에 한 번 허용해 둔다(A′). 실패하면 src 를 넣지 않는다 —
+      // 넣으면 훅이 그 토큰 URL 을 시스템 브라우저로 넘긴다(`lib/previewAllowance.ts`).
+      await allowPreviewOnce(ticket.url);
       if (attempt.current !== mine) return;
       setPhase({ kind: 'ready', url: ticket.url, title: ticket.title });
     }).catch((err: unknown) => {
