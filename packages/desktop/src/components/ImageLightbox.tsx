@@ -279,7 +279,7 @@ export function ImageLightbox({ attachment, url, failed = false, onRetry, onClos
           <span className="min-w-0 truncate">{nav.sender}</span>
           <span aria-hidden>·</span>
           <span className="shrink-0">{nav.at}</span>
-          <button type="button" className="shrink-0 rounded px-1 text-fg-muted underline-offset-2 hover:underline"
+          <button type="button" className="shrink-0 rounded-sm px-1 text-fg-muted underline-offset-2 hover:underline"
             onClick={nav.onGoTo} data-testid="gallery-goto">{t('message.attachment.goToMessage')}</button>
         </div>
       )}
@@ -310,7 +310,7 @@ export function ImageLightbox({ attachment, url, failed = false, onRetry, onClos
                 <>
                   <span className="text-danger">{t('message.attachment.loadFailedLong')}</span>
                   {onRetry && (
-                    <button type="button" className="rounded border border-border px-2 py-0.5 hover:bg-surface-sunken"
+                    <button type="button" className="rounded-row border border-border px-2 py-0.5 hover:bg-surface-sunken"
                       onClick={onRetry} data-testid="gallery-retry">{t('message.attachment.retry')}</button>
                   )}
                 </>
