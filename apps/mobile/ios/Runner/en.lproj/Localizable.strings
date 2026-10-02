@@ -2,4 +2,4 @@
 "PUSH_REASON_MENTION" = "Mentioned you";
 "PUSH_REASON_THREAD_REPLY" = "Replied in a thread";
 "PUSH_REASON_DM" = "Sent you a message";
-"PUSH_REASON_ASK" = "Is waiting for your choice";
+"PUSH_REASON_ASK" = "Waiting for your choice";

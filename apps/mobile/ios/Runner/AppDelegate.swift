@@ -39,13 +39,32 @@ import UserNotifications
     for w in waiters { w(nil) }
   }
 
-  /// 개발 빌드(Xcode)는 sandbox APNs, TestFlight·App Store 는 production 이다. 서버가 그 둘을 가른다.
-  private static var apnsEnv: String {
+  /// 이 토큰이 속한 APNs 환경. 서버가 sandbox·production 주소를 이것으로 고른다.
+  ///
+  /// **서명 프로파일의 `aps-environment` 를 먼저 본다**(security #1085). 빌드 구성(`#if DEBUG`)으로만 가르면
+  /// Profile 구성처럼 development 프로파일로 서명된 비-Debug 빌드가 "production" 을 신고하고, sandbox 토큰이
+  /// production 으로 등록돼 APNs 가 BadDeviceToken 을 준다. App Store·TestFlight 빌드에는
+  /// `embedded.mobileprovision` 이 없으므로 그때만 빌드 구성으로 떨어진다(그 빌드는 언제나 production 이다).
+  private static let apnsEnv: String = {
+    if let env = profileApsEnvironment() { return env == "development" ? "sandbox" : "production" }
     #if DEBUG
     return "sandbox"
     #else
     return "production"
     #endif
+  }()
+
+  /// `embedded.mobileprovision`(CMS 로 감싼 plist)의 `Entitlements.aps-environment`. 없거나 못 읽으면 nil.
+  private static func profileApsEnvironment() -> String? {
+    guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+          let data = try? Data(contentsOf: url),
+          let start = data.range(of: Data("<?xml".utf8)),
+          let end = data.range(of: Data("</plist>".utf8), in: start.lowerBound..<data.endIndex),
+          let plist = try? PropertyListSerialization.propertyList(
+            from: data.subdata(in: start.lowerBound..<end.upperBound), format: nil) as? [String: Any],
+          let ent = plist["Entitlements"] as? [String: Any]
+    else { return nil }
+    return ent["aps-environment"] as? String
   }
 
   // MARK: 알림 표시·누름

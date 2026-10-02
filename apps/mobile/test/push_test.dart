@@ -9,6 +9,8 @@ import 'package:harkroom/main.dart';
 import 'package:harkroom/push/push_coordinator.dart';
 import 'package:harkroom/push/push_platform.dart';
 import 'package:harkroom/push/push_target.dart';
+import 'package:harkroom/screens/message_list_screen.dart';
+import 'package:harkroom/screens/thread_screen.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_state.dart';
 import 'package:http/http.dart' as http;
@@ -213,6 +215,89 @@ void main() {
       expect(c.shouldPresent(_hk(_a)), isFalse);
       expect(c.shouldPresent(_hk(_a, root: _root)), isTrue);
       expect(c.shouldPresent(_hk(_b)), isTrue);
+    });
+  });
+
+  group('누름 → 화면 (④)', () {
+    Future<(AppState, PushCoordinator)> pumpTwo(WidgetTester tester) async {
+      final acme = _Server(_a);
+      final beta = _Server(_b);
+      final app = AppState(
+        sessions: MemorySessionStore(seed: jsonEncode({
+          'active': _a,
+          'communities': [
+            {'accountId': _a, 'baseUrl': _acmeUrl, 'token': 'tok', 'handle': 'me'},
+            {'accountId': _b, 'baseUrl': _betaUrl, 'token': 'tok', 'handle': 'me'},
+          ],
+        })),
+        apiFactory: (base, token) =>
+            ApiClient(baseUrl: base, token: token, httpClient: (base == _acmeUrl ? acme : beta).client(token)),
+        connector: (_) async => _Idle(),
+      );
+      // 시트가 화면을 덮지 않게 이미 물은 기기로 둔다.
+      final push = PushCoordinator(app, _FakePush()..prompted = true);
+      await tester.pumpWidget(HarkroomApp(state: app, push: push));
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      return (app, push);
+    }
+
+    Future<void> settle(WidgetTester tester) async {
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+    }
+
+    testWidgets('다른 커뮤니티 스레드의 알림을 누르면 그 커뮤니티로 옮겨 그 스레드를 연다', (tester) async {
+      final (app, push) = await pumpTwo(tester);
+      expect(app.activeKey, '$_acmeUrl#$_a');
+      unawaited(push.open(_hk(_b, root: _root)));
+      await settle(tester);
+      expect(app.activeKey, '$_betaUrl#$_b');
+      final screen = tester.widget<ThreadScreen>(find.byType(ThreadScreen));
+      expect((screen.channelId, screen.rootId), (_ch, _root));
+      expect(push.pending, isNull);
+    });
+
+    testWidgets('지금 커뮤니티의 채널 알림은 옮기지 않고 그 채널을 연다', (tester) async {
+      final (app, push) = await pumpTwo(tester);
+      unawaited(push.open(_hk(_a)));
+      await settle(tester);
+      expect(app.activeKey, '$_acmeUrl#$_a');
+      expect(tester.widget<MessageListScreen>(find.byType(MessageListScreen)).channelId, _ch);
+    });
+
+    testWidgets('겹치는 계정 id 의 알림은 아무 화면도 열지 않는다', (tester) async {
+      final (app, push) = await pumpTwo(tester);
+      app.communities = [_c(_acmeUrl, _a), _c(_betaUrl, _a)];
+      unawaited(push.open(_hk(_a)));
+      await settle(tester);
+      expect(find.byType(MessageListScreen), findsNothing);
+      expect(find.byType(ThreadScreen), findsNothing);
+    });
+  });
+
+  group('배지 (④)', () {
+    test('다시 앞에 오면 같은 값이라도 OS 배지를 다시 적는다 — 배경의 푸시가 서버별 수로 덮었으므로', () async {
+      final acme = _Server(_a);
+      final app = AppState(
+        sessions: MemorySessionStore(seed: jsonEncode({
+          'active': _a,
+          'communities': [{'accountId': _a, 'baseUrl': _acmeUrl, 'token': 'tok', 'handle': 'me'}],
+        })),
+        apiFactory: (base, token) => ApiClient(baseUrl: base, token: token, httpClient: acme.client(token)),
+        connector: (_) async => _Idle(),
+      );
+      final fake = _FakePush();
+      final push = PushCoordinator(app, fake);
+      await app.boot();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final before = fake.badges.length;
+      expect(fake.badges, isNotEmpty);
+      await push.resumed();
+      expect(fake.badges.length, before + 1);
+      expect(fake.badges.last, 0);
     });
   });
 
