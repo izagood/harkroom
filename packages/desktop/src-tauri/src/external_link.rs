@@ -72,6 +72,10 @@ pub fn judge(url: &Url) -> Verdict {
 /// 이동할 일이 없고, 그 URL 은 iframe 이 곧바로 써 버린다. 그 밖의 판정은 `judge` 그대로다.
 pub struct PreviewAllowance {
     slot: std::sync::Mutex<Option<(Url, std::time::Instant)>>,
+    /// 마지막으로 쥐었던 미리보기 서버 호스트. `take` 가 실패해도 그 호스트의 `/preview/…` 는 **브라우저로 넘기지
+    /// 않고 막는다**(security, #1069 실측을 릴리스 뒤로 미루며 더한 안전망) — 웹뷰가 넘긴 URL 과 쥔 URL 이 어긋나도
+    /// 결과는 "패널이 빈다"로 끝나고, 토큰 URL 이 시스템 브라우저 기록에 남지 않는다.
+    last_host: std::sync::Mutex<Option<String>>,
 }
 
 /// 허용의 수명. 서명 URL 자체가 60초라 그보다 조금 길게 둔다 — 이 칸이 먼저 닫혀 첫 로드를 막는 일이 없게.
@@ -79,7 +83,7 @@ pub const PREVIEW_ALLOW_TTL: std::time::Duration = std::time::Duration::from_sec
 
 impl Default for PreviewAllowance {
     fn default() -> Self {
-        Self { slot: std::sync::Mutex::new(None) }
+        Self { slot: std::sync::Mutex::new(None), last_host: std::sync::Mutex::new(None) }
     }
 }
 
@@ -94,8 +98,19 @@ impl PreviewAllowance {
         if !url.path().starts_with("/preview/") || url.fragment().is_some() {
             return Err("only /preview/ paths");
         }
+        *self.last_host.lock().unwrap_or_else(|e| e.into_inner()) = url.host_str().map(str::to_owned);
         *self.slot.lock().unwrap_or_else(|e| e.into_inner()) = Some((url, now + PREVIEW_ALLOW_TTL));
         Ok(())
+    }
+
+    /// `take` 가 실패한 이동이 **마지막으로 쥐었던 호스트의 `/preview/…`** 인가 — 그렇다면 훅은 막기만 한다(false).
+    /// 다른 호스트·다른 경로는 이 판정과 무관하게 `judge` 로 간다.
+    pub fn is_stale_preview(&self, url: &Url) -> bool {
+        let last = self.last_host.lock().unwrap_or_else(|e| e.into_inner());
+        match (last.as_deref(), url.host_str()) {
+            (Some(held), Some(host)) => held == host && url.path().starts_with("/preview/"),
+            _ => false,
+        }
     }
 
     /// 이 이동이 쥔 그 URL 이고 만료 전이면 true 를 주고 **칸을 비운다**(한 번만). 만료됐으면 비우고 false.
@@ -132,6 +147,10 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
             if let Some(allowance) = webview.try_state::<PreviewAllowance>() {
                 if allowance.take(url, std::time::Instant::now()) {
                     return true;
+                }
+                // 쥔 것과 어긋난 같은 서버의 미리보기 URL — 브라우저로 넘기지 않고 막는다(위 `last_host`).
+                if allowance.is_stale_preview(url) {
+                    return false;
                 }
             }
             match judge(url) {
@@ -215,6 +234,31 @@ mod tests {
         assert!(a.allow("javascript:alert(1)", t0).is_err());
         assert!(a.allow("file:///preview/x", t0).is_err());
         assert!(a.allow("not a url", t0).is_err());
+    }
+
+    // security(#1069 릴리스 뒤 실측의 안전망): 쥔 것과 토큰만 다른 같은 호스트의 /preview/ 는 take 가 false 이고
+    // 막는 쪽으로 판정된다 — 시스템 브라우저로 넘기지 않는다.
+    #[test]
+    fn a_mismatched_preview_url_on_the_held_host_is_blocked_not_opened() {
+        let a = PreviewAllowance::default();
+        let t0 = Instant::now();
+        a.allow(TOK, t0).unwrap();
+        let other = u("https://server.example.com/preview/OTHER");
+        assert!(!a.take(&other, t0));
+        assert!(a.is_stale_preview(&other));
+        // 한 번 쓴 뒤 같은 URL 이 다시 와도 막힌다.
+        assert!(a.take(&u(TOK), t0));
+        assert!(a.is_stale_preview(&u(TOK)));
+        // 다른 호스트·같은 호스트의 다른 경로는 이 판정 밖이다(judge 그대로).
+        assert!(!a.is_stale_preview(&u("https://evil.example.com/preview/AbC123")));
+        assert!(!a.is_stale_preview(&u("https://server.example.com/channels")));
+        assert_eq!(judge(&u("https://server.example.com/channels")), Verdict::OpenExternally);
+    }
+
+    #[test]
+    fn nothing_is_stale_before_anything_was_held() {
+        let a = PreviewAllowance::default();
+        assert!(!a.is_stale_preview(&u(TOK)));
     }
 
     #[test]
