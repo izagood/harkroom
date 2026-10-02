@@ -32,9 +32,13 @@ export function loggerConfig(opts: LoggerOptions): Record<string, unknown> {
     // 직렬화기가 헤더를 안 실어도 남겨 둔다 — 나중에 헤더를 로깅하는 코드가 들어올 때의 안전망.
     redact: { paths: ['req.headers.authorization', 'req.headers.cookie'], remove: true },
     serializers: {
-      req: (req: { id?: string; method: string; url: string }) => ({
+      // `ip` 는 Fastify 가 `TRUST_PROXY` 로 고른 클라이언트 주소다(레이트 리밋 키와 같은 값). 앞단
+      // 접근 로그에는 XFF 전체가 이미 남으므로 새로 드러나는 것은 거의 없고, 대신 "서버가 실제로
+      // 누구로 봤는가"를 배포 뒤에 확인할 수 있다 — 프록시 신뢰 설정이 틀렸는지 볼 유일한 자리다.
+      req: (req: { id?: string; method: string; url: string; ip?: string }) => ({
         method: req.method,
         url: redactUrl(req.url),
+        ...(req.ip ? { ip: req.ip } : {}),
       }),
     },
   };

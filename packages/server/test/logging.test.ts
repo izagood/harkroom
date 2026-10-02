@@ -35,6 +35,22 @@ beforeAll(async () => {
 afterAll(async () => stop());
 
 describe('요청 로깅', () => {
+  // 서버가 클라이언트를 **누구로 봤는지**(레이트 리밋 키와 같은 `req.ip`)를 남긴다 — 프록시 신뢰
+  // 설정(`TRUST_PROXY`)이 맞는지 배포 뒤에 확인할 수 있는 유일한 자리다.
+  it('logs the client address the server resolved through the trusted proxies', async () => {
+    const log = capture();
+    const app: FastifyInstance = await buildServer({ pool, logStream: log.stream, logLevel: 'info', trustProxy: 2 });
+    await app.inject({
+      method: 'GET', url: '/healthz', remoteAddress: '10.244.1.5',
+      headers: { 'x-forwarded-for': '203.0.113.77,198.51.100.20,10.244.4.233' },
+    });
+    await app.close();
+
+    const incoming = log.lines.find((l) => typeof l.req === 'object' && l.req !== null);
+    expect((incoming!.req as { ip?: string }).ip).toBe('198.51.100.20');
+    expect(log.text()).not.toContain('203.0.113.77');
+  });
+
   it('logs one completed request with method, path, status and a request id', async () => {
     const log = capture();
     const app: FastifyInstance = await buildServer({ pool, logStream: log.stream, logLevel: 'info' });

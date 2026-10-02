@@ -235,7 +235,7 @@ The server reads these environment variables:
 | `AVCS_BASE_URL` | AVCS server URL for event projection | - | No |
 | `CORS_ORIGINS` | Allowed CORS origins (comma-separated) | All origins | No |
 | `LOG_LEVEL` | Server log level (`debug`, `info`, `warn`, `error`) | `info` | No |
-| `TRUST_PROXY` | Trust `X-Forwarded-For` header (`1` or `true`) | `false` | No |
+| `TRUST_PROXY` | Which reverse proxies to trust for `X-Forwarded-For`: a hop count of 2 or more, or comma-separated proxy IPs/CIDRs (use this for a single proxy). `1`/`true` trusts every hop and lets clients spoof their address — not recommended | `false` | No |
 | `HARKROOM_SECRET_KEY` | Key used to encrypt automation webhook secrets at rest (AES-256-GCM). Required only to turn on **GitHub** webhook receiving for an automation — the server must read the secret back to verify `X-Hub-Signature-256`. Any string; keep it stable, since changing it makes existing GitHub keys unverifiable (reissue them) | - | No |
 | `HARKROOM_SECRET_KEYS_DIR` | Directory holding the keys for the **secret store** (secrets that people hand to agents). One file per key, file name = key id, content = exactly 32 random bytes as base64 (44 chars) or hex (64 chars) — e.g. `openssl rand -base64 32`. Mount it from a Kubernetes Secret as a volume rather than passing keys as env. Unset = the secret store is off. If set but a key is malformed, the server refuses to start | - | No |
 | `HARKROOM_SECRET_KEY_ID` | Which key in `HARKROOM_SECRET_KEYS_DIR` seals new secret values. Optional when the directory holds a single key; required when it holds more than one (key rotation) | - | No |

@@ -4,6 +4,7 @@ import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin } from './helpers/fixtures.js';
+import { parseTrustProxy, type TrustProxy } from '../src/config.js';
 
 let pool: Pool;
 let stop: () => Promise<void>;
@@ -21,7 +22,7 @@ beforeAll(async () => {
 });
 afterAll(async () => stop());
 
-const build = (trustProxy?: boolean): Promise<FastifyInstance> => buildServer({
+const build = (trustProxy?: TrustProxy): Promise<FastifyInstance> => buildServer({
   pool, trustProxy, rateLimits: { login: { windowMs: 60_000, max: MAX } },
 });
 
@@ -76,5 +77,92 @@ describe('프록시 신뢰 — 켬', () => {
     );
     expect(row.rows[0]?.ip).toBe('198.51.100.42');
     await app.close();
+  });
+});
+
+/**
+ * hop 수로 믿기. 터널 배포의 실제 모양을 그대로 옮긴다 — envoy(소켓)가 받는 XFF 는
+ * `<클라이언트가 보낸 값>,<Cloudflare 가 덧붙인 진짜 주소>,<cloudflared 파드>` 이다.
+ * `true`(전부 믿기)면 맨 왼쪽(위조 칸)이 `req.ip` 가 되고, `2` 면 오른쪽에서 두 번째(진짜 주소)가 된다.
+ */
+describe('프록시 신뢰 — hop 수', () => {
+  const tunnelXff = (spoofed: string) => `${spoofed},198.51.100.20,10.244.4.233`;
+
+  it('ignores a spoofed leftmost X-Forwarded-For when trusting 2 hops', async () => {
+    const app = await build(2);
+
+    const codes: number[] = [];
+    for (let i = 0; i < MAX + 2; i += 1) {
+      // 위조 칸을 매번 바꾼다 — 그 칸이 키에 쓰이면 전부 통과할 것이다.
+      codes.push((await login(app, '10.244.1.5', tunnelXff(`203.0.113.${i}`))).statusCode);
+    }
+
+    expect(codes).toContain(429);
+    await app.close();
+  });
+
+  it('records the address the edge appended, not the spoofed one', async () => {
+    const app = await build(2);
+
+    await login(app, '10.244.1.5', tunnelXff('203.0.113.77'));
+
+    const row = await pool.query(
+      `select ip from audit_log where action = 'login.failed' order by id desc limit 1`,
+    );
+    expect(row.rows[0]?.ip).toBe('198.51.100.20');
+    await app.close();
+  });
+
+  // 대조군: 같은 요청을 옛 설정(`true`)으로 받으면 위조 칸이 그대로 쓰인다 — 이 PR 이 고치는 구멍.
+  it('documents that trusting every hop takes the spoofed value', async () => {
+    const app = await build(true);
+
+    await login(app, '10.244.1.5', tunnelXff('203.0.113.78'));
+
+    const row = await pool.query(
+      `select ip from audit_log where action = 'login.failed' order by id desc limit 1`,
+    );
+    expect(row.rows[0]?.ip).toBe('203.0.113.78');
+    await app.close();
+  });
+
+  it('trusts only the listed proxy CIDRs', async () => {
+    const app = await build(['10.244.0.0/16']);
+
+    // 소켓(10.244.1.5)과 cloudflared(10.244.4.233)는 목록 안이라 건너뛰고, 그 다음이 클라이언트다.
+    await login(app, '10.244.1.5', tunnelXff('203.0.113.79'));
+
+    const row = await pool.query(
+      `select ip from audit_log where action = 'login.failed' order by id desc limit 1`,
+    );
+    expect(row.rows[0]?.ip).toBe('198.51.100.20');
+    await app.close();
+  });
+});
+
+describe('TRUST_PROXY 읽기', () => {
+  it('keeps the old values working', () => {
+    expect(parseTrustProxy(undefined)).toBe(false);
+    expect(parseTrustProxy('')).toBe(false);
+    expect(parseTrustProxy('0')).toBe(false);
+    expect(parseTrustProxy('false')).toBe(false);
+    // `1` 은 hop 1 이 아니다 — 처음부터 "전부 믿기"였고 배포가 그 값으로 켜져 있다.
+    expect(parseTrustProxy('1')).toBe(true);
+    expect(parseTrustProxy('true')).toBe(true);
+  });
+
+  it('reads hop counts and proxy lists', () => {
+    expect(parseTrustProxy('2')).toBe(2);
+    expect(parseTrustProxy(' 3 ')).toBe(3);
+    expect(parseTrustProxy('10.244.0.0/16, 192.168.1.211')).toEqual(['10.244.0.0/16', '192.168.1.211']);
+    expect(parseTrustProxy('fd00::/8')).toEqual(['fd00::/8']);
+  });
+
+  // 알 수 없는 값을 조용히 끄거나 켜면 둘 다 경고 없이 리밋이 틀어진다 — 기동을 멈춘다.
+  it('refuses values it does not understand', () => {
+    // hop 1 은 숫자로 못 쓴다(`1` 은 이미 전부 믿기다) — 프록시 하나 뒤면 CIDR 로 준다.
+    for (const bad of ['yes', 'hops:1', 'hops:2', '17', '10.0.0.0/33', '10.0.0.300', 'loopback']) {
+      expect(() => parseTrustProxy(bad), bad).toThrow(/TRUST_PROXY/);
+    }
   });
 });
