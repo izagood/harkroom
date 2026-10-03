@@ -53,6 +53,8 @@ export interface GrantRow {
   /** 연결이 바뀌어 멈춘 grant(098). */
   suspendedAt?: string | null;
   suspendReason?: string | null;
+  /** `api.call` 전용(100): 쓰기 메서드는 사람 글로 띄운 턴에서만. */
+  writeNeedsHumanCause?: boolean;
 }
 
 export const API_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
