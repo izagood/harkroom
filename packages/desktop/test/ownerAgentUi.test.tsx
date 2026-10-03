@@ -134,8 +134,9 @@ describe('소유자의 에이전트 설정 화면 (#299)', () => {
     const options = vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null, pickable: [{ model: 'opus', efforts: [] }] }));
     await openAsOwner({ agentModelOptions: options });
     expect(await screen.findByTestId('pickable-row-opus')).toBeTruthy();
-    // 상세의 [저장]과 이름이 겹치지 않는다 — 겹치면 어느 저장인지 모른다.
-    expect(screen.getAllByRole('button', { name: '저장' })).toHaveLength(1);
+    // 목록의 저장은 상세의 저장 바로 모였다(A3) — 제 [목록 저장]이 없고, 고치기 전에는 바도 없다.
+    expect(screen.queryByTestId('pickable-save')).toBeNull();
+    expect(screen.queryByTestId('agent-save-bar')).toBeNull();
     cleanup();
 
     useAppStore.getState().set({
@@ -150,6 +151,20 @@ describe('소유자의 에이전트 설정 화면 (#299)', () => {
     expect(screen.queryByTestId('agent-pickable')).toBeNull();
   });
 
+  it('모델 목록도 저장 바로 모인다(A3) — effort 를 켜면 바가 서고 [저장]이 목록을 보낸다', async () => {
+    const options = vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null, pickable: [{ model: 'opus', efforts: [] }] }));
+    const setPickable = vi.fn(async (_id: string, models: unknown) => ({ models, outside: 0 }));
+    await openAsOwner({ agentModelOptions: options, setAgentPickableModels: setPickable });
+    await screen.findByTestId('pickable-row-opus');
+    expect(screen.queryByTestId('agent-save-bar')).toBeNull();
+
+    fireEvent.click(screen.getByLabelText('opus 에 effort high 허용'));
+    expect(screen.getByTestId('agent-save-count').textContent).toBe('1개 바뀜');
+    fireEvent.click(screen.getByRole('button', { name: '저장' }));
+    await waitFor(() => expect(setPickable).toHaveBeenCalledWith('id-mybot', [{ model: 'opus', efforts: ['high'] }], false));
+    await waitFor(() => expect(screen.queryByTestId('agent-save-bar')).toBeNull());
+  });
+
   it('admin 의 저장 본문에는 admin 전용 키가 그대로 실린다', async () => {
     useAppStore.getState().set({
       me: acc('u1', 'admin', 'human', true),
@@ -161,6 +176,8 @@ describe('소유자의 에이전트 설정 화면 (#299)', () => {
     fireEvent.click(screen.getByTestId('agent-card-mybot'));
     await screen.findByLabelText('Mention permission');
 
+    // 저장 바는 바뀐 것이 있을 때만 선다(A3) — 무엇이든 하나 고친다.
+    fireEvent.change(screen.getByLabelText('Working directory'), { target: { value: '/tmp/y' } });
     fireEvent.click(screen.getByRole('button', { name: '저장' }));
     await waitFor(() => expect(c.updateAgent).toHaveBeenCalled());
     const patch = (c.updateAgent as ReturnType<typeof vi.fn>).mock.calls[0]![1] as Record<string, unknown>;

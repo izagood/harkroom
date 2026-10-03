@@ -55,7 +55,7 @@ import { copyText } from '../../lib/clipboard';
 import { navKey } from './sections';
 import { AGENT_DETAIL_TABS, parseAgentTarget, type AgentDetailTab } from './agentDetailTabs';
 import { ConfirmDialog } from '../ConfirmDialog';
-import { ImmediateBadge, PendingEditsContext, type PendingHandlers, type RegisterPending } from './pendingEdits';
+import { ImmediateBadge, PendingEditsContext, setLeaveGuard, type PendingHandlers, type RegisterPending } from './pendingEdits';
 
 /** #177: 클립보드가 없거나 거부되면 **조용히 실패하지 않는다** — 화면에 있는 그 명령
  *  텍스트를 선택 상태로 만들어 사람이 ⌘C 할 수 있게 하고, 오류를 눈에 보이게 남긴다.
@@ -798,8 +798,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     else pendingHandlers.current.delete(key);
     setPendingCounts((prev) => ((prev[key] ?? 0) === count ? prev : { ...prev, [key]: count }));
   }, []);
+  // [하네스 기본값 쓰기]는 초안 칸이 아니라 `customized` 를 내린다 — 그것도 저장할 변경 하나다.
   const draftChanges = selected !== null && draft !== null
     ? (Object.keys(draft) as (keyof Draft)[]).filter((k) => draft[k] !== draftOf(selected)[k]).length
+      + (customized !== (selected.model !== null || selected.effort !== null) ? 1 : 0)
     : 0;
   const pendingTotal = draftChanges + Object.values(pendingCounts).reduce((a, b) => a + b, 0);
   /** 저장 안 한 것이 있는데 상세를 떠나려 할 때 — 떠날 길을 들고 묻는다. */
@@ -808,6 +810,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     if (selected !== null && pendingTotal > 0) setLeaving({ go });
     else go();
   };
+  // 설정 목차·← 뒤로로 화면째 떠날 때도 같은 것을 묻는다 — 저장 안 한 것이 있는 동안만 건다.
+  const hasPending = selected !== null && pendingTotal > 0;
+  useEffect(() => (hasPending ? setLeaveGuard((go) => setLeaving({ go })) : undefined), [hasPending]);
 
   /**
    * 사진을 걸거나(파일) 지운다(null). 단계·확인·진행률은 `useAvatarEdit` 이 센다 —

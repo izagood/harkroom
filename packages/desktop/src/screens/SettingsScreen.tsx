@@ -21,6 +21,7 @@ import { ThisOperatorSettings } from '../components/settings/ThisOperatorSetting
 import { DEFAULT_SECTION, SETTINGS_GROUPS, isSectionId, navKey, workspaceEditable, type SectionId } from '../components/settings/sections';
 import { useActiveStore, useCommunityRegistry } from '../state/communities';
 import { WindowDragStrip } from '../components/WindowDragStrip';
+import { guardedLeave } from '../components/settings/pendingEdits';
 import { useT } from '../i18n/useT';
 
 export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onBack, onSignOut, onCommunitiesEmpty }: {
@@ -66,7 +67,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
         <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-surface">
           <button
             className="flex items-center gap-2 px-4 py-4 text-left font-medium text-fg-muted hover:text-fg"
-            onClick={onBack}
+            onClick={() => guardedLeave(onBack)}
           >
             <span aria-hidden>←</span> {t('settings.back')}
           </button>
@@ -94,7 +95,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
                     className={`flex w-full items-center rounded-card px-2 py-1.5 text-left
                       ${section === item.id ? 'bg-surface-hover font-medium text-fg' : 'text-fg-muted hover:bg-surface-sunken'}`}
                     aria-current={section === item.id ? 'page' : undefined}
-                    onClick={() => setSection(item.id)}
+                    onClick={() => guardedLeave(() => setSection(item.id))}
                   >
                     {t(navKey(item.id))}
                   </button>

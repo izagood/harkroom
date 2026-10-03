@@ -53,3 +53,20 @@ export function ImmediateBadge({ label }: { label: string }) {
     </span>
   );
 }
+
+/**
+ * 설정 화면을 떠나는 길(목차·← 뒤로)이 묻는 자리. 상세에 저장 안 한 변경이 있는 동안만 걸린다.
+ * 설정 화면(`SettingsScreen`)과 에이전트 상세는 부모·자식이 아니라 컨텍스트로 잇지 않고 이 한 칸으로
+ * 잇는다 — 걸린 것이 없으면 떠나는 길은 그대로 바로 간다.
+ */
+let leaveGuard: ((go: () => void) => void) | null = null;
+
+export function setLeaveGuard(guard: (go: () => void) => void): () => void {
+  leaveGuard = guard;
+  return () => { if (leaveGuard === guard) leaveGuard = null; };
+}
+
+export function guardedLeave(go: () => void): void {
+  if (leaveGuard) leaveGuard(go);
+  else go();
+}
