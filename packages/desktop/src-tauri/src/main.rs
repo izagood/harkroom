@@ -673,6 +673,30 @@ async fn operator_mcp_remove(
     .await
 }
 
+#[tauri::command]
+async fn operator_merge_get(
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.operator_merge_get()
+    })
+    .await
+}
+
+/// 머지 래퍼의 gh 계정을 고른다 — `gh_user` 가 None 이면 지운다. 검사는 오퍼레이터가 한다(security C7).
+#[tauri::command]
+async fn operator_merge_set(
+    app: tauri::AppHandle,
+    gh_user: Option<String>,
+) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.operator_merge_set(gh_user.as_deref())
+    })
+    .await
+}
+
 /// 원격 MCP 의 OAuth — `action` 은 start·status·forget. 웹뷰가 넘기는 것은 이름 하나다.
 #[tauri::command]
 async fn operator_mcp_auth(
@@ -880,6 +904,8 @@ fn main() {
             operator_mcp_list,
             operator_mcp_set,
             operator_mcp_remove,
+            operator_merge_get,
+            operator_merge_set,
             operator_mcp_auth,
             operator_agent_remove,
         ])

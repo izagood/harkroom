@@ -2287,6 +2287,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 canGrant={selected.ownerAccountId === myId}
                 canRevoke={isAdmin || isOwner}
                 disabled={busy}
+                localOperatorId={typeof localOperator === 'object' && localOperator !== null ? localOperator.operatorId : null}
               />
             )}
 
