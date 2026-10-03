@@ -3,7 +3,7 @@ import type {
   McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, MentionPolicy,
   AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, ThreadAgentModelView,
   AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InboxThreadState, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
-import { MENTION_EDIT_SKIPPED_HEADER, type GrantRow, type Capability } from '@harkroom/shared';
+import { MENTION_EDIT_SKIPPED_HEADER, type GrantRow, type Capability, type ApiConnectorView, type ApiGrantLimits, type ApiMethod } from '@harkroom/shared';
 import type { MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
@@ -739,11 +739,25 @@ export class ApiClient {
   listGrants(accountId: string): Promise<GrantRow[]> {
     return this.req<{ grants: GrantRow[] }>('GET', `/accounts/${accountId}/grants`).then((r) => r.grants);
   }
-  putGrant(accountId: string, body: { capability: Capability; scope: string; expiresAt?: string | null; allowAgentCause?: boolean }): Promise<GrantRow[]> {
+  putGrant(accountId: string, body: { capability: Capability; scope: string; expiresAt?: string | null; allowAgentCause?: boolean; limits?: ApiGrantLimits; writeNeedsHumanCause?: boolean; delegateDepth?: number }): Promise<GrantRow[]> {
     return this.req<{ grants: GrantRow[] }>('PUT', `/accounts/${accountId}/grants`, body).then((r) => r.grants);
   }
   deleteGrant(accountId: string, capability: Capability, scope: string): Promise<void> {
     return this.req('DELETE', `/accounts/${accountId}/grants/${encodeURIComponent(capability)}?scope=${encodeURIComponent(scope)}`);
+  }
+
+  /** API 연결(098, 외부 API 권한 C안). 사람만 쓴다 — 판정은 서버 `connectorRoutes.ts`. 키 값은 오가지 않는다(비밀 id 만). */
+  listConnectors(): Promise<ApiConnectorView[]> {
+    return this.req<{ connectors: ApiConnectorView[] }>('GET', '/connectors').then((r) => r.connectors);
+  }
+  createConnector(body: { name: string; baseUrl: string; authKind: 'bearer' | 'header' | 'none'; authHeader?: string | null; secretId?: string | null; methods: ApiMethod[] }): Promise<ApiConnectorView> {
+    return this.req<{ connector: ApiConnectorView }>('POST', '/connectors', body).then((r) => r.connector);
+  }
+  patchConnector(id: string, body: { baseUrl?: string; authKind?: 'bearer' | 'header' | 'none'; authHeader?: string | null; secretId?: string | null; methods?: ApiMethod[] }): Promise<{ connector: ApiConnectorView; suspendedGrants: number }> {
+    return this.req('PATCH', `/connectors/${id}`, body);
+  }
+  deleteConnector(id: string): Promise<void> {
+    return this.req('DELETE', `/connectors/${id}`);
   }
 
   /**

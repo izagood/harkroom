@@ -2422,6 +2422,12 @@ export class Controller {
     return this.api.unassignAgent(agentId);
   }
 
+  // API 연결(098) — 설정 › 나 › 비밀과 API. 판정은 서버.
+  listConnectors() { return this.api.listConnectors(); }
+  createConnector(body: Parameters<ApiClient['createConnector']>[0]) { return this.api.createConnector(body); }
+  patchConnector(id: string, body: Parameters<ApiClient['patchConnector']>[1]) { return this.api.patchConnector(id, body); }
+  deleteConnector(id: string) { return this.api.deleteConnector(id); }
+
   // 비밀 보관소(085) — 설정 › 나 › 비밀과 API. 판정은 서버.
   listSecrets() { return this.api.listSecrets(); }
   createSecret(body: Parameters<ApiClient['createSecret']>[0]) { return this.api.createSecret(body); }
@@ -2437,7 +2443,7 @@ export class Controller {
   listGrants(accountId: string): Promise<import('@harkroom/shared').GrantRow[]> {
     return this.api.listGrants(accountId);
   }
-  putGrant(accountId: string, body: { capability: import('@harkroom/shared').Capability; scope: string; expiresAt?: string | null; allowAgentCause?: boolean }): Promise<import('@harkroom/shared').GrantRow[]> {
+  putGrant(accountId: string, body: Parameters<ApiClient['putGrant']>[1]): Promise<import('@harkroom/shared').GrantRow[]> {
     return this.api.putGrant(accountId, body);
   }
   deleteGrant(accountId: string, capability: import('@harkroom/shared').Capability, scope: string): Promise<void> {

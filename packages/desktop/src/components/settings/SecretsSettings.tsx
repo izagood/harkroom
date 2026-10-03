@@ -5,6 +5,7 @@ import { ApiError, type SecretAccessView, type SecretGrantView, type SecretView 
 import { useLocale, useT } from '../../i18n/useT';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { Button, Field, Segmented, SettingsPage, TextInput } from './primitives';
+import { ConnectorsSection } from './ConnectorsSection';
 
 /**
  * 설정 › 나 › **비밀과 API** — 비밀 절(외부 API 권한 C안 P1, 스레드 07519d86 · designer v3 ①).
@@ -126,7 +127,7 @@ export function SecretsSettings() {
                     <ReplaceForm secret={s} busy={busy} onCancel={() => setPanel(null)}
                       onSubmit={async (body) => { if (await run(async () => { await getController().replaceSecretValue(s.id, body); })) setPanel(null); }} />
                   )}
-                  {open === 'grants' && <GrantsPanel secret={s} canGrant={mine && !expired} onChanged={load} />}
+                  {open === 'grants' && <GrantsPanel secret={s} canGrant={mine && !expired} expiredMine={mine && expired} onChanged={load} />}
                   {open === 'access' && <AccessPanel secret={s} />}
                 </li>
               );
@@ -135,6 +136,9 @@ export function SecretsSettings() {
           {error && <p role="alert" className="mt-2 text-meta text-danger" data-testid="secrets-error">{error}</p>}
         </section>
       )}
+
+      {/* API 연결(P4b, designer v3 ②) — 비밀을 가리키므로 같은 페이지, 비밀 절 아래(D1). */}
+      {typeof state === 'object' && <ConnectorsSection secrets={secrets} enabled={state.enabled} onChanged={load} />}
 
       {deleting && (
         <ConfirmDialog
@@ -318,7 +322,7 @@ function ReplaceForm({ secret, busy, onSubmit, onCancel }: {
 }
 
 /** 파일로 받을 에이전트(`secret.mount`). 부여는 소유자만 — 서버 owner_only 와 같다. */
-function GrantsPanel({ secret, canGrant, onChanged }: { secret: SecretView; canGrant: boolean; onChanged(): Promise<void> }) {
+function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: SecretView; canGrant: boolean; expiredMine: boolean; onChanged(): Promise<void> }) {
   const t = useT();
   const locale = useLocale();
   const accounts = useActiveStore((s) => s.accounts);
@@ -353,7 +357,6 @@ function GrantsPanel({ secret, canGrant, onChanged }: { secret: SecretView; canG
   return (
     <div className="mt-2 rounded border border-border bg-surface-sunken p-2" data-testid="secret-grants">
       <p className="text-meta text-fg-subtle">{t('secrets.grantsNote')}</p>
-      <p className="mt-1 text-meta text-warning" data-testid="secret-grants-all-channels">{t('secrets.allChannelsWarn')}</p>
       {rows === 'loading' && <p className="mt-1 text-meta text-fg-muted">{t('secrets.loading')}</p>}
       {rows === 'error' && <p role="alert" className="mt-1 text-meta text-danger">{t('secrets.listFailed')}</p>}
       {Array.isArray(rows) && rows.length === 0 && <p className="mt-1 text-meta text-fg-subtle">{t('secrets.grantsNone')}</p>}
@@ -374,7 +377,10 @@ function GrantsPanel({ secret, canGrant, onChanged }: { secret: SecretView; canG
         </ul>
       )}
       {canGrant ? (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
+        <>
+        {/* 경고는 읽는 순서대로 주기 폼 바로 위(designer n4). */}
+        <p className="mt-2 text-meta text-warning" data-testid="secret-grants-all-channels">{t('secrets.allChannelsWarn')}</p>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
           <select aria-label={t('secrets.grantAgent')} className="rounded border border-border bg-field px-2 py-1 text-meta text-fg" value={agentId} disabled={busy} onChange={(e) => setAgentId(e.target.value)}>
             <option value="">{t('secrets.grantAgentPick')}</option>
             {mineAgents.length > 0 && (
@@ -407,8 +413,10 @@ function GrantsPanel({ secret, canGrant, onChanged }: { secret: SecretView; canG
           )}
           {operator === 'any' && <p className="w-full text-meta text-warning" data-testid="secret-grant-any-warn">{t('secrets.anyOperatorWarn')}</p>}
         </div>
+        </>
       ) : (
-        <p className="mt-2 text-meta text-fg-subtle">{t('secrets.grantOwnerOnly')}</p>
+        // 내 비밀이 만료돼서 못 주는 것과 남의 비밀이라 못 주는 것은 고칠 길이 다르다(designer n3).
+        <p className="mt-2 text-meta text-fg-subtle">{expiredMine ? t('secrets.grantExpiredMine') : t('secrets.grantOwnerOnly')}</p>
       )}
       {error && <p role="alert" className="mt-1 text-meta text-danger" data-testid="secret-grants-error">{error}</p>}
       {revoking && (
@@ -426,6 +434,23 @@ function GrantsPanel({ secret, canGrant, onChanged }: { secret: SecretView; canG
       )}
     </div>
   );
+}
+
+/**
+ * 접근 기록의 「결과」를 사람 말로(designer n2). 서버 코드를 그대로 두지 않는다 — `api:<연결> <METHOD> <경로>` 는 API 호출로
+ * 키를 건넨 줄(P3)이고, 나머지 거절 이유는 아는 것만 옮기고 모르는 것은 코드 그대로 둔다.
+ */
+function accessText(t: ReturnType<typeof useT>, r: SecretAccessView): string {
+  if (r.result === 'granted') {
+    if (r.reason?.startsWith('api:')) return t('secrets.accessApi', { what: r.reason.slice(4) });
+    return t('secrets.accessMounted');
+  }
+  const known: Record<string, string> = {
+    not_granted: t('secrets.why.notGranted'), wrong_channel: t('secrets.why.wrongChannel'), wrong_operator: t('secrets.why.wrongOperator'),
+    grant_suspended: t('secrets.why.suspended'), secret_expired: t('secrets.why.expired'), rate_limited: t('secrets.why.rateLimited'),
+    lease_invalid: t('secrets.why.lease'), owner_inactive: t('secrets.why.ownerInactive'),
+  };
+  return t('secrets.accessDenied', { why: (r.reason && known[r.reason]) ?? r.reason ?? '?' });
 }
 
 function AccessPanel({ secret }: { secret: SecretView }) {
@@ -455,7 +480,7 @@ function AccessPanel({ secret }: { secret: SecretView }) {
                 <td className="pr-3">{new Date(r.at).toLocaleString(locale)}</td>
                 <td className="pr-3">{r.agentId ? `@${accounts[r.agentId]?.handle ?? r.agentId.slice(0, 8)}` : '—'}</td>
                 <td className="pr-3">{r.channelId ? `#${channels.find((c) => c.id === r.channelId)?.name ?? r.channelId.slice(0, 8)}` : '—'}</td>
-                <td>{r.result}{r.reason ? ` · ${r.reason}` : ''}{r.version !== null ? ` · v${r.version}` : ''}</td>
+                <td>{accessText(t, r)}{r.version !== null ? ` · v${r.version}` : ''}</td>
               </tr>
             ))}
           </tbody>
