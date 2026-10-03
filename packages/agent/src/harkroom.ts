@@ -221,11 +221,17 @@ export class HarkroomAgentClient {
    */
   /** 이 에이전트가 쓸 수 있는 API 연결 이름(C안 P3, `GET /agent/api-grants`). 옛 서버·실패는 빈 목록 — allow 규칙을 안 준다(fail-closed). */
   async apiGrants(): Promise<string[]> {
+    return (await this.apiGrantInfo()).connectors;
+  }
+
+  /** 쓸 수 있는 연결과 그중 다시 줄 수 있는 연결(P5, `delegatable` — 옛 서버는 없다 → 빈 목록). */
+  async apiGrantInfo(): Promise<{ connectors: string[]; delegatable: string[] }> {
+    const names = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(x)) : []);
     try {
-      const r = await this.rest<{ connectors?: unknown }>('GET', '/agent/api-grants', 'api-grants');
-      return Array.isArray(r?.connectors) ? r.connectors.filter((x): x is string => typeof x === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(x)) : [];
+      const r = await this.rest<{ connectors?: unknown; delegatable?: unknown }>('GET', '/agent/api-grants', 'api-grants');
+      return { connectors: names(r?.connectors), delegatable: names(r?.delegatable) };
     } catch {
-      return [];
+      return { connectors: [], delegatable: [] };
     }
   }
 
