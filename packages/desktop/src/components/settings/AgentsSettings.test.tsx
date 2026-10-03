@@ -325,6 +325,8 @@ describe('AgentsSettings — 에이전트별 계정 풀', () => {
   async function openDetail(): Promise<void> {
     render(<AgentsSettings />);
     (await screen.findByRole('button', { name: /alpha/ })).click();
+    // 계정 풀은 실행 탭에 있다(A2).
+    (await screen.findByTestId('agent-tab-run')).click();
   }
 
   /**

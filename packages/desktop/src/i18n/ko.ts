@@ -536,6 +536,13 @@ export const ko = {
   'agents.detail.saveFailed': '저장하지 못했다',
   'agents.detail.submitNew': '에이전트 만들기',
   'agents.detail.titleEdit': '{handle} 편집',
+  'agents.detail.tablist': '에이전트 상세 묶음',
+  'agents.detail.tab.overview': '개요',
+  'agents.detail.tab.profile': '프로필',
+  'agents.detail.tab.run': '실행',
+  'agents.detail.tab.permissions': '권한',
+  'agents.detail.tab.memory': '기억',
+  'agents.detail.runsOn': '{name} 에서 실행',
   'agents.detail.titleNew': '새 에이전트',
 
   'agents.disable.cancel': '취소',

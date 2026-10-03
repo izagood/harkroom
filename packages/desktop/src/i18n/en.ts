@@ -990,6 +990,13 @@ export const en = {
   'agents.detail.saveFailed': 'The changes were not saved',
   'agents.detail.submitNew': 'Create agent',
   'agents.detail.titleEdit': 'Edit {handle}',
+  'agents.detail.tablist': 'Agent detail sections',
+  'agents.detail.tab.overview': 'Overview',
+  'agents.detail.tab.profile': 'Profile',
+  'agents.detail.tab.run': 'Run',
+  'agents.detail.tab.permissions': 'Permissions',
+  'agents.detail.tab.memory': 'Memory',
+  'agents.detail.runsOn': 'Runs on {name}',
   'agents.detail.titleNew': 'Add agent',
 
   'agents.disable.cancel': 'Cancel',

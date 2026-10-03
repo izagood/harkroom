@@ -728,7 +728,8 @@ describe('에이전트 설정 — 기본은 영어다', () => {
     seedAgents([agentView()]);
     render(<AgentsSettings />);
     await openDetail();
-    for (const title of ['Profile', 'Run', 'Permissions']) {
+    for (const [tab, title] of [['profile', 'Profile'], ['run', 'Run'], ['permissions', 'Permissions']] as const) {
+      fireEvent.click(screen.getByTestId(`agent-tab-${tab}`));
       expect(screen.getByRole('heading', { name: title }), title).toBeTruthy();
     }
   });
@@ -816,7 +817,8 @@ describe('에이전트 설정 — 언어를 한국어로 바꾸면 한국어로 
     seedAgents([agentView()]);
     render(<AgentsSettings />);
     await openDetail();
-    for (const title of ['프로필', '실행', '권한']) {
+    for (const [tab, title] of [['profile', '프로필'], ['run', '실행'], ['permissions', '권한']] as const) {
+      fireEvent.click(screen.getByTestId(`agent-tab-${tab}`));
       expect(screen.getByRole('heading', { name: title }), title).toBeTruthy();
     }
   });

@@ -71,6 +71,7 @@ describe('에이전트 배정', () => {
     const c = setup(a, [op('op-1', 'jaebin-mbp'), op('op-2', 'gpu-box')]);
     render(<AgentsSettings />);
     (await screen.findByRole('button', { name: /alpha/ })).click();
+    fireEvent.click(await screen.findByTestId('agent-tab-run'));
     await waitFor(() => expect(screen.getByTestId('agent-assignment-current').textContent).toContain('gpu-box'));
     fireEvent.click(screen.getByRole('button', { name: '배정 해제' }));
     await waitFor(() => expect(c.unassignAgent).toHaveBeenCalledWith(AGENT_ID));

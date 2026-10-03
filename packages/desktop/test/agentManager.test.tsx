@@ -174,6 +174,7 @@ describe('AgentsSettings', () => {
     const c = fakeController([agent('rusalka', { model: 'claude-opus-5', effort: 'high' })]);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-run'));
 
     fireEvent.click(screen.getByRole('button', { name: 'Use harness defaults' }));
     fireEvent.click(screen.getByRole('button', { name: '저장' }));
@@ -277,6 +278,7 @@ describe('AgentsSettings', () => {
       (c.mintPat as ReturnType<typeof vi.fn>).mockResolvedValue('murp_new_token');
       render(<AgentsSettings />);
       fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+      fireEvent.click(await screen.findByTestId('agent-tab-permissions'));
 
       const newPatBtn = await screen.findByRole('button', { name: '+ New PAT' });
       fireEvent.click(newPatBtn);
@@ -422,6 +424,7 @@ describe('에이전트 기억 (#139 3단계)', () => {
     c.agentMemory.mockRejectedValue(new Error('boom'));
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-memory'));
 
     expect(await screen.findByRole('alert')).toBeTruthy();
     expect(screen.queryByText('기억이 없다')).toBeNull();
@@ -433,6 +436,7 @@ describe('에이전트 기억 (#139 3단계)', () => {
     c.agentMemory.mockResolvedValue([mem('mem/deploy', '배포는 redeploy.sh')]);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-memory'));
 
     fireEvent.click(await screen.findByRole('button', { name: 'mem/deploy 기억 지우기' }));
     expect(c.deleteAgentMemory).not.toHaveBeenCalled();
@@ -449,6 +453,7 @@ describe('에이전트 기억 (#139 3단계)', () => {
     c.agentMemory.mockResolvedValue([mem('core', '값')]);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-memory'));
     await screen.findByText('core');
 
     expect(screen.queryByLabelText(/기억.*편집|edit.*memory/i)).toBeNull();
@@ -646,9 +651,62 @@ describe('상세는 세 묶음, 저장은 한 쌍 (Task 15-3)', () => {
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
-    for (const title of ['프로필', '실행', '권한']) {
+    // 세 묶음은 이제 각자의 탭이다(A2) — 탭을 눌러야 그 묶음 제목이 보인다.
+    for (const [tab, title] of [['profile', '프로필'], ['run', '실행'], ['permissions', '권한']] as const) {
+      fireEvent.click(screen.getByTestId(`agent-tab-${tab}`));
       expect(await screen.findByRole('heading', { name: title })).toBeTruthy();
     }
+  });
+
+  it('상세는 개요 탭으로 열리고, 위험 구역(사용 중지·삭제)은 개요 맨 끝이다 (A2)', async () => {
+    fakeController([agent('rusalka')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+
+    expect(screen.getByTestId('agent-tab-overview').getAttribute('aria-selected')).toBe('true');
+    const overview = screen.getByTestId('agent-tabpanel-overview');
+    expect(overview.hidden).toBe(false);
+    for (const id of ['profile', 'run', 'permissions', 'memory']) {
+      expect(screen.getByTestId(`agent-tabpanel-${id}`).hidden, id).toBe(true);
+    }
+    const restart = screen.getByTestId('agent-restart');
+    const del = screen.getByTestId('agent-delete');
+    expect(overview.contains(restart) && overview.contains(del)).toBe(true);
+    // 위아래가 곧 세기 — 되돌릴 수 있는 조작이 위, 지우기가 맨 아래.
+    expect(restart.compareDocumentPosition(del) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('targetId 의 #탭 으로 그 탭을 바로 연다 (A2)', async () => {
+    fakeController([agent('rusalka')]);
+    render(<AgentsSettings targetId="id-rusalka#memory" />);
+    await waitFor(() => expect(screen.getByTestId('agent-tab-memory').getAttribute('aria-selected')).toBe('true'));
+    expect(screen.getByTestId('agent-tabpanel-memory').hidden).toBe(false);
+  });
+
+  it('모르는 탭 이름은 버리고 개요로 연다 (A2)', async () => {
+    fakeController([agent('rusalka')]);
+    render(<AgentsSettings targetId="id-rusalka#nope" />);
+    await waitFor(() => expect(screen.getByTestId('agent-tab-overview').getAttribute('aria-selected')).toBe('true'));
+  });
+
+  it('탭을 옮겨도 고치던 초안이 남는다 — 칸이 언마운트되지 않는다 (A2)', async () => {
+    fakeController([agent('rusalka', { workingDir: '/repo' })]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(screen.getByTestId('agent-tab-run'));
+    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+
+    fireEvent.click(screen.getByTestId('agent-tab-memory'));
+    fireEvent.click(screen.getByTestId('agent-tab-run'));
+    expect((screen.getByLabelText('Working directory') as HTMLInputElement).value).toBe('/other');
+  });
+
+  it('새 에이전트 만들기에는 탭이 없다 (A2)', async () => {
+    fakeController([]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-create'));
+    await screen.findByRole('button', { name: '에이전트 만들기' });
+    expect(screen.queryByRole('tablist', { name: '에이전트 상세 묶음' })).toBeNull();
   });
 
   it('고치기 전에는 되돌리기가 없다 — 누를 것이 없는 버튼을 그리지 않는다', async () => {
@@ -733,6 +791,7 @@ describe('에이전트 사진 (Task 15-4)', () => {
       vi.fn(async () => undefined);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-profile'));
 
     fireEvent.click(await screen.findByRole('button', { name: '지우기' }));
     // 첫 클릭은 묻기만 한다 — 되돌릴 수 없는 조작이 스친 클릭 하나로 일어나지 않는다.
@@ -755,6 +814,7 @@ describe('에이전트 사진 (Task 15-4)', () => {
       vi.fn(async () => undefined);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-profile'));
 
     fireEvent.click(await screen.findByRole('button', { name: '지우기' }));
     fireEvent.click(await screen.findByRole('button', { name: '취소' }));
@@ -771,6 +831,7 @@ describe('에이전트 사진 (Task 15-4)', () => {
       vi.fn(async () => { throw new ApiError(400, 'not_an_image', 'nope'); });
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-profile'));
 
     const file = new File([new Uint8Array([1])], 'evil.png', { type: 'image/png' });
     fireEvent.change(await screen.findByTestId('agent-avatar-file'), { target: { files: [file] } });
