@@ -316,9 +316,10 @@ toolchain for the desktop app.
 ```
 packages/    server, desktop, agent, operator, shared — the pnpm/TypeScript workspace
 apps/        mobile — the Flutter client (pub/Dart), outside the pnpm workspace
+             site — the static landing page (apps/site/README.md)
 ```
 
-`apps/` holds one thing today, and that is on purpose rather than by accident. The split is by
+`apps/` holds the mobile client and the landing page, and that is on purpose rather than by accident. The split is by
 role — `apps/` is what a person or a machine runs, `packages/` is what those things import — and
 the rest of the move is deferred until the open pull requests land. The mobile client went
 straight to its final home because it is new: there was no history to move, and placing it
@@ -327,7 +328,8 @@ correctly now is cheaper than moving it twice.
 Two consequences worth knowing:
 
 - **pnpm does not see `apps/`.** `pnpm -r test` and `pnpm -r typecheck` skip it, which is
-  intended — that directory belongs to pub. Run its checks from `apps/mobile` with `flutter`.
+  intended — `apps/mobile` belongs to pub and `apps/site` has no dependencies. Run mobile checks
+  from `apps/mobile` with `flutter`.
 - Because of that, a repo-wide check must name both roots. `packages/server/test/repoHygiene.test.ts`
   keeps that list in one place (`CODE_ROOTS`).
 
