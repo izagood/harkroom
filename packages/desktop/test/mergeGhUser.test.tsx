@@ -118,8 +118,18 @@ describe('머지 gh 계정 줄', () => {
     expect(screen.getByRole('alert').textContent!.length).toBeLessThan(260);
   });
 
-  it('권한이 하나도 없으면 비어 있어도 경고 상자 대신 조용한 한 줄이다(#1140 n2) — [정하기]는 그대로', async () => {
+  it('권한이 하나도 없으면 절이 접히고 gh 계정 줄은 그리지 않는다(#1146 designer c) — 오퍼레이터도 묻지 않는다', async () => {
     grants([]);
+    const invoke = tauri({ ghUser: null, accounts: ACCOUNTS, host: 'mac-1' });
+    render(<AgentGrantsSection agent={agent(HERE)} canGrant canRevoke localOperatorId={HERE} />);
+    await screen.findByTestId('agent-grants-none');
+    expect(screen.queryByTestId('merge-gh-user')).toBeNull();
+    expect(screen.queryByTestId('merge-gh-user-unset')).toBeNull();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('만료된 권한만 있으면 경고 상자 대신 조용한 한 줄이다(#1140 n2) — [정하기]는 그대로', async () => {
+    grants([{ ...GRANT, expiresAt: '2026-01-01T00:00:00Z' }]);
     const invoke = tauri({ ghUser: null, accounts: ACCOUNTS, host: 'mac-1' });
     render(<AgentGrantsSection agent={agent(HERE)} canGrant canRevoke localOperatorId={HERE} />);
     expect((await screen.findByTestId('merge-gh-user-unset-quiet')).textContent).toContain('머지에 쓸 GitHub 계정: 없음');
@@ -130,11 +140,12 @@ describe('머지 gh 계정 줄', () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_merge_set', { ghUser: 'izagood' }));
   });
 
-  it('만료된 권한만 있으면 권한 없음과 같다 — 조용한 한 줄', async () => {
-    grants([{ ...GRANT, expiresAt: '2026-01-01T00:00:00Z' }]);
-    tauri({ ghUser: null, accounts: ACCOUNTS, host: 'mac-1' });
+  it('gh 실행 파일이 아닌 다른 파일의 ENOENT 는 "gh 없음"으로 바꾸지 않는다(#1146 security n1)', async () => {
+    tauri({ ghUser: null, accounts: null, accountsError: 'gh auth status failed: open /home/me/.config/gh/hosts.yml: ENOENT', host: 'mac-1' });
     render(<AgentGrantsSection agent={agent(HERE)} canGrant canRevoke localOperatorId={HERE} />);
-    expect(await screen.findByTestId('merge-gh-user-unset-quiet')).toBeTruthy();
+    fireEvent.click(await screen.findByText('정하기'));
+    expect(screen.getByRole('alert').textContent).toContain('hosts.yml');
+    expect(screen.queryByText(/GitHub CLI 를 설치하고/)).toBeNull();
   });
 
   it('gh 활성 계정을 고르면 회사 계정일 수 있다고 한 번 더 알린다(security n2). 이 값이 기기 전체에 걸린다는 안내가 있다', async () => {
@@ -166,7 +177,8 @@ describe('머지 gh 계정 줄', () => {
     expect((await screen.findByTestId('merge-gh-user-other')).textContent).toContain('다른 기기(studio-mini)');
     unmount();
     const r1 = render(<AgentGrantsSection agent={agent('op-elsewhere')} canGrant canRevoke localOperatorId={HERE} />);
-    expect((await screen.findByTestId('merge-gh-user-other')).textContent).toContain('알 수 없는 기기');
+    // 이름을 모르면 괄호 없는 문장(#1146 designer a)
+    expect((await screen.findByTestId('merge-gh-user-other')).textContent).toBe('이 에이전트는 다른 기기에서 돈다. 머지에 쓸 GitHub 계정은 그 기기에서 정한다.');
     r1.unmount();
     const r2 = render(<AgentGrantsSection agent={agent(HERE)} canGrant={false} canRevoke localOperatorId={HERE} />);
     r2.unmount();

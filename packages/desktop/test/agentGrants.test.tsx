@@ -183,6 +183,28 @@ describe('AgentGrantsSection', () => {
     expect(screen.queryByText('다시 7일')).toBeNull();
   });
 
+  it('P1: 제목은 이웃 FieldGroup 과 같은 h3 이고 테두리 상자가 없다(#1146 designer 수정 1). 읽는 동안도 접힌 모양이다', async () => {
+    let resolve!: (v: GrantRow[]) => void;
+    setup({ listGrants: vi.fn(() => new Promise<GrantRow[]>((r) => { resolve = r; })) });
+    render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
+    expect(screen.getByRole('heading', { level: 3, name: 'PR 머지' })).toBeTruthy();
+    expect(screen.getByTestId('agent-grants-loading')).toBeTruthy();
+    expect(screen.getByTestId('agent-grants').className).not.toContain('border');
+    expect(screen.getByTestId('agent-grants').textContent).not.toContain('부여가 곧 승인');
+    resolve([grant('repo:izagood/harkroom')]);
+    await screen.findByTestId('agent-grant-izagood/harkroom');
+    expect(screen.getByRole('heading', { level: 3, name: 'PR 머지' })).toBeTruthy();
+    expect(screen.getByTestId('agent-grants').className).not.toContain('border');
+  });
+
+  it('P1: 소유자가 아니면(admin) 수를 알리지 않는다 — 남의 에이전트 배지가 목록에 끼지 않게(#1146 security n2)', async () => {
+    const onCount = vi.fn();
+    setup();
+    render(<AgentGrantsSection agent={agent()} canGrant={false} canRevoke onCountChange={onCount} />);
+    await screen.findByTestId('agent-grant-izagood/harkroom');
+    expect(onCount).not.toHaveBeenCalled();
+  });
+
   it('P1: 읽을 때마다 살아 있는 권한 수를 알린다(목록 카드 「머지 N」)', async () => {
     const onCount = vi.fn();
     setup({ listGrants: vi.fn(async () => [grant('repo:a/b'), grant('repo:a/c', { expiresAt: '2026-01-01T00:00:00Z' }), { ...grant(''), capability: 'channel.create' }]) });

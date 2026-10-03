@@ -4414,7 +4414,7 @@ export const en = {
   'agents.grants.ghUser.activeWarn': '{login} is the active gh account. If it is a work account, work repositories can be merged with it too — make sure this is the account you mean.',
   'agents.grants.ghUser.errNotLoggedIn': 'That account is not logged in to gh on this device any more. Reload the list and pick again.',
   'agents.grants.ghUser.errNoGh': 'gh was not found on this device. Install the GitHub CLI and run gh auth login.',
-  'agents.grants.ghUser.otherDeviceUnknown': 'another device',
+  'agents.grants.ghUser.otherDeviceNoName': 'This agent runs on another device. The GitHub account for merges is chosen on that device.',
   'mcpServers.description': 'Names an agent may attach. Only the name and credential kind live here — the definition and any token stay on each operator machine. For remote servers, sign in once on this machine with the row\'s Sign in button and every agent on this machine uses it.',
   'mcpServers.loading': 'Loading…',
   'mcpServers.listFailed': 'The registry could not be read',

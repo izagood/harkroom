@@ -22,7 +22,8 @@ const rawReason = (err: unknown): string => (err instanceof Error ? err.message 
 type T = ReturnType<typeof useT>;
 export function mergeReasonText(t: T, raw: string): string {
   if (/is not logged in to gh on this machine/.test(raw)) return t('agents.grants.ghUser.errNotLoggedIn');
-  if (/ENOENT|no such file/i.test(raw)) return t('agents.grants.ghUser.errNoGh');
+  // gh 실행 파일 자체를 못 찾은 경우만(`spawn <path> ENOENT`) — gh 가 다른 파일을 못 찾은 것까지 "gh 없음"으로 바꾸지 않는다(#1146 security n1).
+  if (/spawn \S+ ENOENT/.test(raw)) return t('agents.grants.ghUser.errNoGh');
   return raw.slice(0, 200);
 }
 

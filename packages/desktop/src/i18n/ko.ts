@@ -2277,7 +2277,7 @@ export const ko = {
   'agents.grants.ghUser.activeWarn': '{login} 계정은 gh 활성 계정이다. 회사 계정이라면 회사 저장소도 이 계정으로 머지된다 — 의도한 계정인지 확인한다.',
   'agents.grants.ghUser.errNotLoggedIn': '그 계정은 이제 이 기기의 gh 에 로그인돼 있지 않다. 목록을 다시 열어 고른다.',
   'agents.grants.ghUser.errNoGh': '이 기기에서 gh 를 찾지 못했다. GitHub CLI 를 설치하고 gh auth login 을 한다.',
-  'agents.grants.ghUser.otherDeviceUnknown': '알 수 없는 기기',
+  'agents.grants.ghUser.otherDeviceNoName': '이 에이전트는 다른 기기에서 돈다. 머지에 쓸 GitHub 계정은 그 기기에서 정한다.',
   'mcpServers.description': '에이전트가 붙일 수 있는 이름. 여기에는 이름과 자격증명 종류만 있다 — 정의와 토큰은 각 오퍼레이터 머신에 남는다. 원격 서버의 OAuth 는 줄의 [인증] 으로 이 머신에서 한 번 하면, 이 머신의 모든 에이전트가 쓴다.',
   'mcpServers.loading': '읽는 중…',
   'mcpServers.listFailed': '레지스트리를 읽지 못했다',
