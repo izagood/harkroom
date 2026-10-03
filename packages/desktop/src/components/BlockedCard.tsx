@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ApiConnectorView, MessageRow } from '@harkroom/shared';
+import type { ApiConnectorView, GrantRow, MessageRow } from '@harkroom/shared';
 import { getController } from '../state/controller';
 import { useActiveStore } from '../state/communities';
 import { useLocale, useT } from '../i18n/useT';
@@ -33,14 +33,14 @@ export function readBlocked(meta: Record<string, unknown>): BlockedMeta | null {
   };
 }
 
-/** 막힌 경로의 첫 마디까지(`/api/x/1` → `/api/`). 더 넓히지 않는다. */
+/** 막힌 경로의 첫 마디까지(`/api/x/1` → `/api/`). 더 넓히지 않는다. 경로를 모르면 빈 글자 — 사람이 적는다(security L1). */
 export function firstSegment(path: string | null): string {
-  if (!path) return '/';
+  if (!path) return '';
   const m = /^\/[^/]+\//.exec(path);
   return m ? m[0] : path;
 }
 
-const GRANT_CODES = new Set(['not_granted', 'expired', 'suspended', 'method_not_allowed', 'path_not_allowed', 'cause_not_human']);
+const GRANT_CODES = new Set(['not_granted', 'expired', 'suspended', 'method_not_allowed', 'path_not_allowed']);
 
 export function BlockedCard({ message, onOpenSettings }: { message: MessageRow; onOpenSettings?: (section?: SectionId, targetId?: string) => void }) {
   const t = useT();
@@ -50,19 +50,29 @@ export function BlockedCard({ message, onOpenSettings }: { message: MessageRow; 
   const accounts = useActiveStore((s) => s.accounts);
   const [open, setOpen] = useState(false);
   const [connectors, setConnectors] = useState<ApiConnectorView[] | null>(null);
+  // 지금 그 연결에 있는 grant — 있으면 폼이 「지금 → 바꿀 값」을 보이고 [바꾸기]가 된다(security L2).
+  const [existing, setExisting] = useState<GrantRow | null | undefined>(undefined);
   const [done, setDone] = useState(false);
+  const agentIdForLoad = b?.agentId;
+  const connectorIdForLoad = b?.connectorId;
   useEffect(() => {
-    if (!open || connectors) return;
+    if (!open || connectors || !agentIdForLoad) return;
     getController().listConnectors().then(setConnectors, () => setConnectors([]));
-  }, [open, connectors]);
+    getController().listGrants(agentIdForLoad).then(
+      (rows) => setExisting(rows.find((g) => g.capability === 'api.call' && g.scope === `connector:${connectorIdForLoad ?? ''}`) ?? null),
+      () => setExisting(null));
+  }, [open, connectors, agentIdForLoad, connectorIdForLoad]);
   if (!b) return null;
 
   const handle = accounts[b.agentId]?.handle ?? b.agentId.slice(0, 8);
   const owner = b.ownerAccountId ? accounts[b.ownerAccountId]?.handle ?? '?' : '?';
   const isOwner = !!me && b.ownerAccountId === me.id && me.kind === 'human';
   const code = b.lastCode ?? b.code;
-  const request = b.lastRequest ?? `${b.method} ${b.path ?? '(경로 생략)'}`;
-  const initial: ApiGrantInitial | undefined = b.connectorId
+  // 서버는 위험한 경로를 「(경로 생략)」으로 싣는다(P4a L1) — 화면 말로 바꾼다(designer D3).
+  const shownRequest = (b.lastRequest ?? `${b.method} ${b.path ?? '(경로 생략)'}`).replace('(경로 생략)', t('blocked.pathOmitted'));
+  // [설정 바꾸기…](cause_not_human, designer D2)는 지금 grant 그대로 연다 — initial 없이 existing 으로.
+  const humanOnlyEdit = code === 'cause_not_human';
+  const initial: ApiGrantInitial | undefined = b.connectorId && !humanOnlyEdit
     ? { connectorId: b.connectorId, scope: b.method === 'GET' ? 'read' : 'write', pathPrefix: firstSegment(b.path) }
     : undefined;
   const mine = (connectors ?? []).filter((c) => c.ownerAccountId === me?.id && c.id === b.connectorId);
@@ -72,7 +82,7 @@ export function BlockedCard({ message, onOpenSettings }: { message: MessageRow; 
       <div className="font-medium text-fg">🔒 {t('blocked.title', { handle })}</div>
       <dl className="mt-1 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 text-fg">
         <dt className="text-fg-subtle">{t('blocked.request')}</dt>
-        <dd className="min-w-0 break-all font-mono">{b.connectorName ?? '—'} {request}</dd>
+        <dd className="min-w-0 break-all font-mono">{b.connectorName ?? '—'} {shownRequest}</dd>
         <dt className="text-fg-subtle">{t('blocked.reason')}</dt>
         <dd>{t(`blocked.why.${code}` as MessageKey)}</dd>
         <dt className="text-fg-subtle">{t('blocked.today')}</dt>
@@ -83,6 +93,9 @@ export function BlockedCard({ message, onOpenSettings }: { message: MessageRow; 
         <div className="mt-2 flex flex-wrap gap-2">
           {GRANT_CODES.has(code) && initial && (
             <button type="button" className="rounded bg-accent px-2 py-1 font-medium text-fg-on-strong" onClick={() => setOpen(true)}>{t('blocked.give')}</button>
+          )}
+          {humanOnlyEdit && b.connectorId && (
+            <button type="button" className="rounded bg-accent px-2 py-1 font-medium text-fg-on-strong" onClick={() => setOpen(true)}>{t('blocked.changeSetting')}</button>
           )}
           {(code === 'no_secret' || code === 'secret_expired') && onOpenSettings && (
             <button type="button" className="rounded bg-accent px-2 py-1 font-medium text-fg-on-strong" onClick={() => onOpenSettings('secrets')}>{t('blocked.newValue')}</button>
@@ -101,9 +114,9 @@ export function BlockedCard({ message, onOpenSettings }: { message: MessageRow; 
           <div className="p-4">
             <div className="text-body font-medium text-fg">{t('blocked.dialogTitle', { handle })}</div>
             <p className="mt-1 text-meta text-fg-subtle">{t('blocked.dialogNote')}</p>
-            {connectors === null
+            {connectors === null || existing === undefined
               ? <p className="mt-2 text-meta text-fg-muted">{t('secrets.loading')}</p>
-              : <ApiGrantForm agentId={b.agentId} connectors={mine} initial={initial} onCancel={() => setOpen(false)} onDone={() => { setOpen(false); setDone(true); }} />}
+              : <ApiGrantForm agentId={b.agentId} connectors={mine} initial={initial} existing={existing} onCancel={() => setOpen(false)} onDone={() => { setOpen(false); setDone(true); }} />}
           </div>
         </Overlay>
       )}

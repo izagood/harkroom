@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { connectorScope, type ApiConnectorView, type ApiMethod } from '@harkroom/shared';
+import { connectorScope, type ApiConnectorView, type ApiMethod, type GrantRow } from '@harkroom/shared';
+import { useLocale } from '../../i18n/useT';
 import { getController } from '../../state/controller';
 import { ApiError } from '../../lib/api';
 import { useT } from '../../i18n/useT';
@@ -20,10 +21,17 @@ export interface ApiGrantInitial {
   pathPrefix: string;
 }
 
-type Expiry = '7d' | '30d' | 'none';
+type Expiry = '7d' | '30d' | 'none' | 'keep';
 
-export function ApiGrantForm({ agentId, connectors, initial, onDone, onCancel }: {
+/**
+ * - `existing`: 이 에이전트가 그 연결에 이미 가진 grant(security L2·designer D1). grant 는 (에이전트, 연결)마다 한 줄이고 PUT 은
+ *   upsert 라 **주면 지금 권한을 대신한다** — 그래서 「지금 → 바꿀 값」을 위에 보이고 버튼 이름을 [바꾸기]로 한다. 넓히기·합치기는 없다.
+ * - `initial` 이 없고 `existing` 이 있으면 지금 값으로 연다(카드의 [설정 바꾸기…], designer D2). 만료는 「지금 만료 유지」가 기본.
+ * - `initial.pathPrefix` 가 빈 글자면 막힌 경로를 모르는 것이다(security L1) — 칸을 비워 두고 사람이 적기 전엔 [주기]가 꺼진다.
+ */
+export function ApiGrantForm({ agentId, connectors, initial, existing = null, onDone, onCancel }: {
   agentId: string;
+  existing?: GrantRow | null;
   /** 고를 수 있는 연결 — 내 것만(서버 규칙과 같다). */
   connectors: ApiConnectorView[];
   initial?: ApiGrantInitial;
@@ -31,11 +39,14 @@ export function ApiGrantForm({ agentId, connectors, initial, onDone, onCancel }:
   onCancel(): void;
 }) {
   const t = useT();
-  const [connectorId, setConnectorId] = useState(initial?.connectorId ?? connectors[0]?.id ?? '');
-  const [scope, setScope] = useState<'read' | 'write'>(initial?.scope ?? 'read');
-  const [pathPrefix, setPathPrefix] = useState(initial?.pathPrefix ?? '/');
-  const [expiry, setExpiry] = useState<Expiry>('7d');
-  const [humanOnly, setHumanOnly] = useState<'yes' | 'no' | null>(null);
+  const locale = useLocale();
+  const exWrite = (existing?.limits?.methods ?? []).some((m) => m !== 'GET');
+  const fromExisting = !initial && !!existing;
+  const [connectorId, setConnectorId] = useState(initial?.connectorId ?? existing?.scope.replace(/^connector:/, '') ?? connectors[0]?.id ?? '');
+  const [scope, setScope] = useState<'read' | 'write'>(initial?.scope ?? (fromExisting && exWrite ? 'write' : 'read'));
+  const [pathPrefix, setPathPrefix] = useState(initial?.pathPrefix ?? existing?.limits?.pathPrefix ?? '/');
+  const [expiry, setExpiry] = useState<Expiry>(fromExisting ? 'keep' : '7d');
+  const [humanOnly, setHumanOnly] = useState<'yes' | 'no' | null>(fromExisting && exWrite ? (existing?.writeNeedsHumanCause ? 'yes' : 'no') : null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,7 +54,9 @@ export function ApiGrantForm({ agentId, connectors, initial, onDone, onCancel }:
   const writeMethods = (c?.methods ?? []).filter((m) => m !== 'GET');
   const canWrite = writeMethods.length > 0;
   const methods: ApiMethod[] = scope === 'read' ? ['GET'] : [...(c?.methods ?? [])];
-  const effectiveExpiry: Expiry = scope === 'write' && expiry === 'none' ? '7d' : expiry;
+  // 「지금 만료 유지」는 지금 grant 가 있고, 쓰기라면 그 만료가 있을 때만(무기한 쓰기는 서버가 거절한다).
+  const keepOk = !!existing && (scope === 'read' || existing.expiresAt !== null) && (existing.expiresAt === null || Date.parse(existing.expiresAt) > Date.now());
+  const effectiveExpiry: Expiry = (expiry === 'keep' && !keepOk) || (scope === 'write' && expiry === 'none') ? '7d' : expiry;
   const pathOk = /^\/[^\s#\\]*$/.test(pathPrefix) && !pathPrefix.includes('..') && !pathPrefix.includes('?');
   const readOk = !c || c.methods.includes('GET') || scope === 'write';
   const ready = !!c && pathOk && readOk && methods.length > 0 && (scope === 'read' || humanOnly !== null);
@@ -56,7 +69,7 @@ export function ApiGrantForm({ agentId, connectors, initial, onDone, onCancel }:
       await getController().putGrant(agentId, {
         capability: 'api.call', scope: connectorScope(c.id),
         limits: { methods, pathPrefix },
-        expiresAt: days === null ? null : new Date(Date.now() + days * 86_400_000).toISOString(),
+        expiresAt: effectiveExpiry === 'keep' ? existing?.expiresAt ?? null : days === null ? null : new Date(Date.now() + days * 86_400_000).toISOString(),
         ...(scope === 'write' ? { writeNeedsHumanCause: humanOnly === 'yes' } : {}),
       });
       await onDone();
@@ -74,8 +87,17 @@ export function ApiGrantForm({ agentId, connectors, initial, onDone, onCancel }:
   if (!connectors.length) return <p className="mt-2 text-meta text-fg-subtle" data-testid="api-grant-no-connector">{t('apiGrant.noConnector')}</p>;
 
   const seg = (on: boolean) => `rounded px-2 py-1 text-meta ${on ? 'bg-accent text-fg-on-strong' : 'border border-border text-fg hover:bg-surface-hover'}`;
+  const describe = (methods: readonly string[], prefix: string, until: string | null) =>
+    `${methods.some((m) => m !== 'GET') ? t('apiGrant.rowWrite') : t('apiGrant.rowRead')} ${prefix || '—'}${until ? ` · ${t('agents.grants.expiresOn', { when: new Date(until).toLocaleDateString(locale) })}` : ''}`;
   return (
     <div className="mt-2 space-y-2 rounded border border-border bg-surface-sunken p-2 text-meta text-fg" data-testid="api-grant-form">
+      {existing && (
+        <div className="rounded border border-warning-border bg-warning-surface px-2 py-1 text-warning" data-testid="api-grant-replace">
+          <div>{t('apiGrant.now', { what: describe(existing.limits?.methods ?? [], existing.limits?.pathPrefix ?? '', existing.expiresAt) })}</div>
+          <div>{t('apiGrant.next', { what: describe(methods, pathPrefix, null) })}</div>
+          <div>{t('apiGrant.replaceNote')}</div>
+        </div>
+      )}
       <label className="flex flex-col gap-1">
         {t('apiGrant.connector')}
         <select aria-label={t('apiGrant.connector')} className="rounded border border-border bg-surface px-2 py-1" value={connectorId} disabled={busy || !!initial}
@@ -96,13 +118,14 @@ export function ApiGrantForm({ agentId, connectors, initial, onDone, onCancel }:
       <label className="flex flex-col gap-1">
         {t('apiGrant.path')}
         <input aria-label={t('apiGrant.path')} className="rounded border border-border bg-surface px-2 py-1 font-mono" value={pathPrefix} disabled={busy} onChange={(e) => setPathPrefix(e.target.value)} />
-        {!pathOk && <span className="text-warning">{t('apiGrant.pathBad')}</span>}
+        {pathPrefix === '' ? <span className="text-warning" data-testid="api-grant-path-unknown">{t('apiGrant.pathUnknown')}</span>
+          : !pathOk && <span className="text-warning">{t('apiGrant.pathBad')}</span>}
       </label>
       <div role="radiogroup" aria-label={t('apiGrant.expiry')} className="flex flex-wrap items-center gap-2">
         <span>{t('apiGrant.expiry')}</span>
-        {(['7d', '30d', ...(scope === 'read' ? ['none'] as const : [])] as Expiry[]).map((x) => (
+        {([...(keepOk ? ['keep'] as const : []), '7d', '30d', ...(scope === 'read' ? ['none'] as const : [])] as Expiry[]).map((x) => (
           <button key={x} type="button" role="radio" aria-checked={effectiveExpiry === x} className={seg(effectiveExpiry === x)} disabled={busy} onClick={() => setExpiry(x)}>
-            {t(x === '7d' ? 'apiGrant.expiry7d' : x === '30d' ? 'apiGrant.expiry30d' : 'apiGrant.expiryNone')}
+            {x === 'keep' ? t('apiGrant.expiryKeep') : t(x === '7d' ? 'apiGrant.expiry7d' : x === '30d' ? 'apiGrant.expiry30d' : 'apiGrant.expiryNone')}
           </button>
         ))}
         {scope === 'write' && <span className="text-fg-subtle">{t('apiGrant.writeExpiryHint')}</span>}
@@ -117,7 +140,7 @@ export function ApiGrantForm({ agentId, connectors, initial, onDone, onCancel }:
       )}
       <p className="text-fg-subtle">{t('apiGrant.keyNote')}</p>
       <div className="flex gap-2">
-        <button type="button" className="rounded border border-border bg-accent px-2 py-1 font-medium text-accent-fg disabled:opacity-50" disabled={busy || !ready} onClick={() => void submit()}>{t('apiGrant.give')}</button>
+        <button type="button" className="rounded bg-accent px-2 py-1 font-medium text-fg-on-strong disabled:opacity-50" disabled={busy || !ready} onClick={() => void submit()}>{existing ? t('apiGrant.replace') : t('apiGrant.give')}</button>
         <button type="button" className="rounded border border-border px-2 py-1 hover:bg-surface disabled:opacity-50" disabled={busy} onClick={onCancel}>{t('secrets.cancel')}</button>
       </div>
       {error && <p role="alert" className="text-danger" data-testid="api-grant-error">{error}</p>}

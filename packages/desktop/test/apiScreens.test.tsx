@@ -32,6 +32,7 @@ function setup(over: Record<string, unknown> = {}, rows: ApiConnectorView[] = [c
     patchConnector: vi.fn(async () => ({ connector: conn(), suspendedGrants: 1 })),
     deleteConnector: vi.fn(async () => undefined),
     putGrant: vi.fn(async () => []),
+    listGrants: vi.fn(async () => []),
     ...over,
   };
   setController(c as unknown as Controller);
@@ -113,9 +114,9 @@ describe('ApiGrantForm', () => {
     render(<ApiGrantForm agentId="agent-1" connectors={[conn()]} onDone={() => {}} onCancel={() => {}} />);
     fireEvent.click(screen.getByRole('radio', { name: '읽기+쓰기 (GET·POST)' }));
     expect(screen.queryByRole('radio', { name: '없음' })).toBeNull();
-    const yes = screen.getByRole('radio', { name: '예' });
+    const yes = screen.getByRole('radio', { name: '사람이 시킨 턴에서만' });
     expect(yes.getAttribute('aria-checked')).toBe('false');
-    expect(screen.getByRole('radio', { name: '아니오 — 에이전트 글 턴도' }).getAttribute('aria-checked')).toBe('false');
+    expect(screen.getByRole('radio', { name: '에이전트가 시킨 턴에서도' }).getAttribute('aria-checked')).toBe('false');
     expect((screen.getByRole('button', { name: '주기' }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(yes);
     fireEvent.click(screen.getByRole('button', { name: '주기' }));
@@ -136,7 +137,7 @@ describe('BlockedCard', () => {
   it('첫 마디까지만 자른다', () => {
     expect(firstSegment('/api/capacity/x')).toBe('/api/');
     expect(firstSegment('/x')).toBe('/x');
-    expect(firstSegment(null)).toBe('/');
+    expect(firstSegment(null)).toBe('');
   });
 
   it('소유자 사람에게만 [권한 주기…] — 대화상자는 막힌 GET 을 읽기만·첫 마디로 채운다', async () => {
@@ -147,6 +148,50 @@ describe('BlockedCard', () => {
     const form = await screen.findByTestId('api-grant-form');
     expect(within(form).getByRole('radio', { name: '읽기만 (GET)' }).getAttribute('aria-checked')).toBe('true');
     expect((within(form).getByLabelText('경로 (이것으로 시작하는 경로만)') as HTMLInputElement).value).toBe('/api/');
+  });
+
+  it('경로를 모르면(L1) 경로 칸을 비우고 적기 전엔 [주기]가 꺼진다', async () => {
+    setup();
+    render(<BlockedCard message={msg({ path: null, lastRequest: 'GET (경로 생략)', code: 'path_not_allowed' })} onOpenSettings={() => {}} />);
+    expect(screen.getByTestId('blocked-card').textContent).toContain('GET (경로 생략)');
+    fireEvent.click(screen.getByRole('button', { name: '권한 주기…' }));
+    const form = await screen.findByTestId('api-grant-form');
+    expect((within(form).getByLabelText('경로 (이것으로 시작하는 경로만)') as HTMLInputElement).value).toBe('');
+    expect(within(form).getByTestId('api-grant-path-unknown')).toBeTruthy();
+    expect((within(form).getByRole('button', { name: '주기' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('이미 권한이 있으면(L2·D1) 「지금 → 바꿀 값」과 [바꾸기]를 보인다', async () => {
+    const until = new Date(Date.now() + 5 * 86_400_000).toISOString();
+    setup({ listGrants: vi.fn(async () => [{ accountId: 'agent-1', capability: 'api.call', scope: `connector:${conn().id}`, grantedBy: ME, grantedAt: '', expiresAt: until,
+      limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, writeNeedsHumanCause: false }]) });
+    render(<BlockedCard message={msg({ path: '/admin/x', method: 'GET', code: 'path_not_allowed' })} onOpenSettings={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: '권한 주기…' }));
+    const box = await screen.findByTestId('api-grant-replace');
+    expect(box.textContent).toContain('지금: 읽기+쓰기 /api/');
+    expect(box.textContent).toContain('바꿀 값: 읽기만 /admin/');
+    expect(box.textContent).toContain('주면 지금 권한을 대신한다');
+    expect(screen.getByRole('button', { name: '바꾸기' })).toBeTruthy();
+  });
+
+  it('cause_not_human(D2)은 [설정 바꾸기…] — 지금 grant 그대로 열고 만료는 유지가 기본', async () => {
+    const until = new Date(Date.now() + 5 * 86_400_000).toISOString();
+    const c = setup({ listGrants: vi.fn(async () => [{ accountId: 'agent-1', capability: 'api.call', scope: `connector:${conn().id}`, grantedBy: ME, grantedAt: '', expiresAt: until,
+      limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, writeNeedsHumanCause: true }]) });
+    render(<BlockedCard message={msg({ code: 'cause_not_human', method: 'POST', path: '/api/x' })} onOpenSettings={() => {}} />);
+    expect(screen.getByTestId('blocked-card').textContent).toContain('이 권한은 사람이 시킨 턴에서만 쓸 수 있다');
+    expect(screen.queryByRole('button', { name: '권한 주기…' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '설정 바꾸기…' }));
+    const form = await screen.findByTestId('api-grant-form');
+    expect((within(form).getByLabelText('경로 (이것으로 시작하는 경로만)') as HTMLInputElement).value).toBe('/api/');
+    expect(within(form).getByRole('radio', { name: '사람이 시킨 턴에서만' }).getAttribute('aria-checked')).toBe('true');
+    expect(within(form).getByRole('radio', { name: '지금 만료 유지' }).getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(within(form).getByRole('radio', { name: '에이전트가 시킨 턴에서도' }));
+    fireEvent.click(within(form).getByRole('button', { name: '바꾸기' }));
+    await waitFor(() => expect(c.putGrant).toHaveBeenCalled());
+    expect((c.putGrant.mock.calls[0] as unknown as [string, Record<string, unknown>])[1]).toMatchObject({
+      limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: until, writeNeedsHumanCause: false,
+    });
   });
 
   it('소유자가 아니면 버튼 없이 「소유자만」', () => {

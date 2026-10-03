@@ -201,7 +201,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
         </div>
       )}
       {canGrant && adding && addKind === 'api' && (
-        <ApiGrantForm agentId={agent.id} connectors={connectors.filter((c) => c.ownerAccountId === myId)}
+        <ApiGrantForm agentId={agent.id} connectors={connectors.filter((c) => c.ownerAccountId === myId && !apiGrants.some((g) => g.scope === `connector:${c.id}`))}
           onCancel={() => setAdding(false)} onDone={async () => { setAdding(false); await load(); }} />
       )}
       {canGrant && adding && addKind === 'merge' && (
