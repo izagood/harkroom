@@ -98,29 +98,46 @@ describe('api-checks · api-results', () => {
     expect((await report(l)).json().error.code).toBe('not_checked');
   });
 
-  it('막힘 카드: 거절하면 그 스레드에 카드가 서고, 같은 날 다시 막히면 숫자만 오른다 · 질의는 감사·카드에 없다', async () => {
-    // 앞 시험들의 거절(not_granted·method·path)이 이미 이 연결의 오늘 카드 하나에 모여 있다.
-    const card = async () => (await pool.query(
-      `select body, kind, meta from message where meta->'blocked'->>'agentId' = $1 and meta->'blocked'->>'connectorId' = $2`, [agentId, connectorId])).rows;
-    const before = await card();
-    expect(before).toHaveLength(1);
-    expect(before[0].meta.blocked).toMatchObject({ code: 'not_granted', connectorName: 'lab', ownerAccountId: alice.accountId });
-    const l = await lease();
-    expect((await check(l, 'GET', '/admin?api_key=zzz')).json().error.code).toBe('path_not_allowed');
-    expect((await check(l, 'GET', '/admin/2?api_key=zzz')).json().error.code).toBe('path_not_allowed');
-    const cards = await card();
-    expect(cards).toHaveLength(1);
-    expect(cards[0].kind).toBe('system');
-    expect(cards[0].meta.blocked).toMatchObject({ lastCode: 'path_not_allowed', count: before[0].meta.blocked.count + 2 });
-    // 이름만 있는 연결(없는 연결)은 따로 한 장이다.
-    expect((await pool.query(`select 1 from message where meta->'blocked'->>'connectorName' = 'nope'`)).rowCount).toBe(1);
-    expect(JSON.stringify(cards[0])).not.toContain('zzz');
-    expect(cards[0].body).not.toContain('@');
+  it('막힘 카드: 스레드 안에서 하루 한 장·숫자만 오른다 · 다른 스레드는 따로 · 질의·위험한 경로는 싣지 않는다', async () => {
+    const cardsIn = async (threadRootId: string) => (await pool.query(
+      `select body, kind, meta from message where meta->'blocked'->>'agentId' = $1 and thread_root_id = $2 order by created_at`, [agentId, threadRootId])).rows;
+    const rootOf = async (leaseId: string) => (await pool.query(`select thread_root_id from secret_turn_lease where id = $1`, [leaseId])).rows[0].thread_root_id as string;
+
+    const l1 = await lease();
+    const t1 = await rootOf(l1.id);
+    expect((await check(l1, 'GET', '/admin?api_key=zzz')).json().error.code).toBe('path_not_allowed');
+    expect((await check(l1, 'GET', '/admin/2?api_key=zzz')).json().error.code).toBe('path_not_allowed');
+    const c1 = await cardsIn(t1);
+    expect(c1).toHaveLength(1);
+    expect(c1[0].kind).toBe('system');
+    expect(c1[0].meta.blocked).toMatchObject({ kind: 'api', code: 'path_not_allowed', count: 2, connectorId, connectorName: 'lab', ownerAccountId: alice.accountId, path: '/admin', lastRequest: 'GET /admin/2' });
+    expect(JSON.stringify(c1)).not.toContain('zzz');
+    expect(c1[0].body).not.toContain('@');
+
+    // 다른 스레드(F2): 새 카드가 서고, 첫 스레드 카드의 meta 는 그대로다.
+    const l2 = await lease();
+    const t2 = await rootOf(l2.id);
+    expect((await check(l2, 'GET', '/secret-path')).json().error.code).toBe('path_not_allowed');
+    expect(await cardsIn(t2)).toHaveLength(1);
+    const again = await cardsIn(t1);
+    expect(again[0].meta.blocked).toMatchObject({ count: 2, lastRequest: 'GET /admin/2' });
+    expect(JSON.stringify(again)).not.toContain('secret-path');
+
+    // 없는 연결(L2): 이름이 달라도 스레드·하루에 한 장. 위험한 경로(L1)는 본문·meta 에 싣지 않는다.
+    expect((await check(l2, 'GET', '/x', 'nope-a')).statusCode).toBe(404);
+    expect((await check(l2, 'GET', '/api/..;/admin', 'nope-b')).statusCode).toBe(404);
+    const missing = (await cardsIn(t2)).filter((c) => c.meta.blocked.connectorId === null);
+    expect(missing).toHaveLength(1);
+    expect(missing[0].meta.blocked.count).toBe(2);
+    expect(missing[0].meta.blocked.lastRequest).toBe('GET (경로 생략)');
+    expect(JSON.stringify(missing)).not.toContain('..;');
+
+    // 거절 감사에도 질의가 없다(#1139 L1).
     const audits = (await pool.query(`select detail from audit_log where action = 'api.call.denied' and target = $1`, [`connector:${connectorId}`])).rows;
     expect(JSON.stringify(audits)).not.toContain('zzz');
     // 임대가 틀린 거절은 카드를 세우지 않는다.
-    await check({ id: l.id, token: 'wrong' });
-    expect((await card())[0].meta.blocked.count).toBe(before[0].meta.blocked.count + 2);
+    await check({ id: l1.id, token: 'wrong' });
+    expect((await cardsIn(t1))[0].meta.blocked.count).toBe(2);
   });
 
   it('「쓰기는 사람 글 턴만」: 켜면 에이전트 글 턴의 쓰기는 cause_not_human, 읽기는 그대로', async () => {
@@ -140,7 +157,11 @@ describe('api-checks · api-results', () => {
       [createHash('sha256').update(token, 'utf8').digest('hex'), agentId, op.operatorId, m.rows[0].id, ch])).rows[0];
     const l = { id: leaseRow.id as string, token };
     expect((await check(l, 'POST', '/api/x')).json().error.code).toBe('cause_not_human');
+    // 키를 건네기 전에 막았다 — 이 임대로 granted 접근 기록이 하나도 없다(F3).
+    const grantedFor = async () => (await pool.query(`select 1 from secret_access_log where turn_id = $1 and result = 'granted'`, [l.id])).rowCount;
+    expect(await grantedFor()).toBe(0);
     expect((await check(l, 'GET', '/api/x')).statusCode).toBe(200);
+    expect(await grantedFor()).toBe(1);
     // 칸을 끄면 같은 임대의 쓰기가 통과한다 — 막은 것이 이 칸이었음을 확인한다.
     await pool.query(`update account_grant set write_needs_human_cause = false where account_id = $1 and capability = 'api.call'`, [agentId]);
     expect((await check(l, 'POST', '/api/y')).statusCode).toBe(200);

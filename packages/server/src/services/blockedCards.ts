@@ -2,19 +2,26 @@ import type { Pool } from 'pg';
 import { audienceFor } from './channels.js';
 import { emitEvent } from '../events.js';
 import { postMessage, getMessageById } from './messages.js';
+import { safePath } from '../auth/apiGrants.js';
 
 /**
- * 막힘 카드(외부 API 권한 C안 P4, 설계 스레드 07519d86 · designer v3 ④).
+ * API 막힘 카드(외부 API 권한 C안 P4, 설계 스레드 07519d86 · designer v3 ④).
  *
- * 래퍼(`api`·`merge`)가 **서버 판정에서** 거절되면 서버가 그 턴의 스레드에 카드를 세운다. 에이전트의 ask 가 아니다 —
- * 10-03 사고에서 에이전트가 세운 「허용 규칙 넣음」 같은 선택지는 눌러도 아무 데도 쓰이지 않았다. 이 카드는 서버가 아는
- * 사실(누가·무엇을·왜 막혔나)만 싣고, 버튼(desktop)은 소유자 사람 세션의 REST 로만 처리된다.
+ * `api` 래퍼가 **서버 판정에서** 거절되면 서버가 그 턴의 스레드에 카드를 세운다. 에이전트의 ask 가 아니다 — 10-03 사고에서
+ * 에이전트가 세운 「허용 규칙 넣음」 같은 선택지는 눌러도 아무 데도 쓰이지 않았다. 이 카드는 서버가 아는 사실(누가·무엇을·
+ * 왜 막혔나)만 싣고, 버튼(desktop P4b)은 소유자 사람 세션의 REST 로만 처리된다.
  *
- * **하루 한 장**: (에이전트, 대상, UTC 날짜) 마다 카드 하나. 다시 막히면 새 카드를 세우지 않고 `count`·`lastAt`·`lastCode` 만
- * 올린다 — 같은 거절이 되풀이되어 스레드를 덮지 않게.
+ * **머지 카드는 여기서 만들지 않는다**(#1142 security F1) — 머지 권한 UX 스레드(febe9ff8)의 `mergeDenialId` 카드가 맡는다.
  *
- * 본문은 고정 문구와 서버 값뿐이다. 핸들 앞에 `@` 를 붙이지 않는다 — 본문의 멘션은 실제 부름이 된다(머지 N2).
- * 경로는 질의를 뗀다(질의에 토큰을 붙이는 API 가 있다, #1139 security L1).
+ * **스레드 안에서 하루 한 장**: (에이전트, 대상, 스레드, UTC 날짜)마다 카드 하나(F2 — 키에 스레드가 없으면 다른 스레드·채널의
+ * 경로가 처음 카드의 meta 로 흘렀다). 다시 막히면 `count`·`lastAt`·`lastCode`·`lastRequest` 만 올린다. 없는 연결 이름은
+ * 이름이 달라도 스레드·하루에 한 장이다(L2 — 이름을 바꿔 가며 부르면 스레드가 카드로 덮인다).
+ *
+ * 본문은 고정 문구와 서버 값뿐이다. 경로는 `safePath` 를 지난 것만 질의를 떼고 코드 칸에 싣고, 아니면 「(경로 생략)」이다
+ * (L1 — `no_connector` 는 경로 검사 전에 판정되므로 에이전트가 정한 글자가 시스템 줄로 렌더될 수 있었다). `@` 는 무력화한다.
+ *
+ * P5 조건(security L3, 메모): `write_needs_human_cause` 는 지금 잎 줄만 본다. 위임이 생기면 사슬 판정에 `parent.w ⇒ child.w` 를
+ * 넣거나 `grant.delegate` 가 부모 값을 물려받게 해야 한다.
  */
 
 /** 카드를 세우는 거절. 그 밖(임대·경로 모양·사슬 깨짐)은 사람이 버튼 하나로 고칠 것이 아니라 카드를 세우지 않는다. */
@@ -22,46 +29,47 @@ export const API_CARD_CODES = new Set([
   'not_granted', 'no_connector', 'no_secret', 'secret_expired', 'expired', 'suspended',
   'method_not_allowed', 'path_not_allowed', 'cause_not_human',
 ]);
-export const MERGE_CARD_CODES = new Set(['not_granted', 'cause_not_human']);
-/**
- * `human_merges`: 판정은 통과했지만 오퍼레이터의 gh 계정이 그 저장소에 닿지 못했다(회사 저장소 등). 권한을 더 줘도 풀리지 않으므로
- * 화면은 [권한 주기]를 감추고 「이 저장소는 사람이 머지」만 보인다. 이 코드는 머지 보고(`reportMerge`)에서만 온다.
- */
-export const HUMAN_MERGES = 'human_merges';
 
 export interface BlockedInput {
-  kind: 'api' | 'merge';
   agentId: string; channelId: string; threadRootId: string;
   code: string;
-  /** api: 연결 id(있으면)·이름, merge: 저장소. */
-  connectorId?: string | null; connectorName?: string; repo?: string;
-  method?: string; path?: string; number?: number;
+  connectorId: string | null; connectorName: string;
+  method: string; path: string;
   now?: Date;
 }
 
 export interface BlockedMeta {
-  key: string; kind: 'api' | 'merge'; agentId: string; ownerAccountId: string | null;
+  key: string; kind: 'api'; agentId: string; ownerAccountId: string | null;
   code: string; lastCode: string; count: number; firstAt: string; lastAt: string;
-  connectorId: string | null; connectorName: string | null; repo: string | null;
-  method: string | null; path: string | null; number: number | null;
+  /** 없는 연결이면 null — 이름은 그때 사람이 만들 연결 이름으로만 쓴다. */
+  connectorId: string | null; connectorName: string | null;
+  method: string; path: string | null;
 }
 
 const reasonText: Record<string, string> = {
   not_granted: '권한 없음', no_connector: '연결 없음', no_secret: '키 없음', secret_expired: '키 만료',
   expired: '권한 만료', suspended: '권한 멈춤', method_not_allowed: '메서드 밖', path_not_allowed: '경로 밖',
-  cause_not_human: '사람 글 턴 아님', human_merges: '이 저장소는 사람이 머지',
+  cause_not_human: '사람 글 턴 아님',
 };
+
+/** 카드에 실을 경로 — 안전한 모양이면 질의를 뗀 경로, 아니면 null. */
+export function cardPath(path: string): string | null {
+  if (!safePath(path)) return null;
+  return (path.split('?')[0] ?? '').slice(0, 200);
+}
 
 export async function recordBlocked(pool: Pool, b: BlockedInput): Promise<string | null> {
   const now = b.now ?? new Date();
   const day = now.toISOString().slice(0, 10);
-  const target = b.kind === 'merge' ? `repo:${b.repo ?? ''}` : b.connectorId ? `connector:${b.connectorId}` : `connector-name:${b.connectorName ?? ''}`;
-  // 「사람이 머지」는 [권한 주기] 카드와 따로 선다 — 같은 카드에 섞이면 화면이 어느 버튼을 낼지 헷갈린다.
-  const key = `${b.kind}:${b.agentId}:${target}${b.code === 'human_merges' ? ':human' : ''}:${day}`;
-  const path = b.path ? (b.path.split('?')[0] ?? '').slice(0, 300) : null;
+  const target = b.connectorId ? `connector:${b.connectorId}` : 'connector-name:*';
+  const key = `api:${b.agentId}:${target}:${b.threadRootId}:${day}`;
+  const path = cardPath(b.path);
+  const request = `${b.method} ${path ?? '(경로 생략)'}`;
 
   const existing = (await pool.query<{ id: string }>(
-    `select id from message where meta->'blocked'->>'key' = $1 and deleted_at is null order by created_at limit 1`, [key])).rows[0];
+    `select id from message
+      where meta->'blocked'->>'key' = $1 and channel_id = $2 and coalesce(thread_root_id, id) = $3 and deleted_at is null
+      order by created_at limit 1`, [key, b.channelId, b.threadRootId])).rows[0];
   if (existing) {
     const r = await pool.query(
       `update message set meta = jsonb_set(jsonb_set(jsonb_set(jsonb_set(meta,
@@ -70,7 +78,7 @@ export async function recordBlocked(pool: Pool, b: BlockedInput): Promise<string
            '{blocked,lastCode}', to_jsonb($3::text)),
            '{blocked,lastRequest}', to_jsonb($4::text))
         where id = $1 returning id`,
-      [existing.id, now.toISOString(), b.code, b.kind === 'merge' ? `#${b.number ?? ''}` : `${b.method ?? ''} ${path ?? ''}`]);
+      [existing.id, now.toISOString(), b.code, request]);
     if (r.rowCount) {
       const row = await getMessageById(pool, existing.id);
       if (row) emitEvent({ type: 'message.updated', message: row, audience: await audienceFor(pool, row.channelId) });
@@ -83,15 +91,13 @@ export async function recordBlocked(pool: Pool, b: BlockedInput): Promise<string
     [b.agentId])).rows[0];
   const handle = agent?.handle ?? 'agent';
   const meta: BlockedMeta = {
-    key, kind: b.kind, agentId: b.agentId, ownerAccountId: agent?.ownerAccountId ?? null,
+    key, kind: 'api', agentId: b.agentId, ownerAccountId: agent?.ownerAccountId ?? null,
     code: b.code, lastCode: b.code, count: 1, firstAt: now.toISOString(), lastAt: now.toISOString(),
-    connectorId: b.connectorId ?? null, connectorName: b.connectorName ?? null, repo: b.repo ?? null,
-    method: b.method ?? null, path, number: b.number ?? null,
+    connectorId: b.connectorId, connectorName: b.connectorId ? b.connectorName : (/^[a-z0-9][a-z0-9_-]{0,63}$/.test(b.connectorName) ? b.connectorName : null),
+    method: b.method, path,
   };
-  const what = b.kind === 'merge'
-    ? `${b.repo ?? '?'}#${b.number ?? '?'} 머지`
-    : `${b.connectorName ?? '?'} ${b.method ?? ''} ${path ?? ''}`.trim();
-  const body = `🔒 ${handle} 의 ${what} 가 막혔다 · ${reasonText[b.code] ?? b.code}`.replace(/@/g, '＠');
+  const name = meta.connectorName ?? '(연결 없음)';
+  const body = `🔒 ${handle} 의 API 호출이 막혔다 · ${name} \`${request}\` · ${reasonText[b.code] ?? b.code}`.replace(/@/g, '＠');
   const posted = await postMessage(pool, {
     channelId: b.channelId, threadRootId: b.threadRootId, authorId: b.agentId, body, kind: 'system',
     meta: { blocked: meta },

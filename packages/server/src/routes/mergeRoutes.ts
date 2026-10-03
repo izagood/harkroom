@@ -52,8 +52,6 @@ export async function registerMergeRoutes(app: FastifyInstance, pool: Pool): Pro
       result: z.enum(['merged', 'failed']),
       mergeSha: SHA.nullable().optional(),
       error: z.string().max(1000).nullable().optional(),
-      /** P4 의견 ①: 오퍼레이터의 gh 계정이 이 저장소에 닿지 못한다 — 카드가 「사람이 머지」가 된다. */
-      errorCode: z.enum(['no_repo_access']).optional(),
     }).safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'leaseId, token, repo, number, headSha and result are required' } });
     const r = await reportMerge(pool, { ...who, ...parsed.data });

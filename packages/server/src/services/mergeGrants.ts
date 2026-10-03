@@ -4,7 +4,6 @@ import { repoScope } from '@harkroom/shared';
 import { mergeGrantFor } from '../auth/permissions.js';
 import { recordAudit } from '../audit.js';
 import { postMessage } from './messages.js';
-import { MERGE_CARD_CODES, recordBlocked } from './blockedCards.js';
 
 /**
  * 에이전트 머지 권한 — 서버 쪽 판정과 기록. 설계 스레드 3deac356(채널 a42006a1), security F1~F4.
@@ -94,13 +93,6 @@ export async function checkMerge(
       action: 'repo.merge.denied', actorId: args.agentId, target: scope ?? args.repo,
       detail: { code, number: args.number, headSha: args.headSha, operatorId: args.operatorId, leaseId: leaseOk ? lease!.id : null },
     });
-    // 막힘 카드(P4). 1판에서 빠졌던 머지 카드다 — 사람이 버튼 하나로 권한을 줄 수 있는 거절만.
-    if (leaseOk && scope && MERGE_CARD_CODES.has(code)) {
-      await recordBlocked(pool, {
-        kind: 'merge', agentId: args.agentId, channelId: lease!.channelId, threadRootId: lease!.threadRootId, code,
-        repo: scope.slice('repo:'.length), number: args.number, now,
-      }).catch(() => null);
-    }
     return { ok: false, code };
   };
 
@@ -124,7 +116,7 @@ export async function checkMerge(
 export type MergeReport = {
   agentId: string; operatorId: string; leaseId: string; token: string;
   repo: string; number: number; headSha: string;
-  result: 'merged' | 'failed'; mergeSha?: string | null; error?: string | null; errorCode?: 'no_repo_access'; now?: Date;
+  result: 'merged' | 'failed'; mergeSha?: string | null; error?: string | null; now?: Date;
 };
 
 /**
@@ -164,13 +156,6 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
   });
   if (posted.failure) return { ok: false, code: 'post_failed' };
   const msg = posted.message;
-  // P4 의견 ①: 권한을 줘도 이 오퍼레이터로는 머지할 수 없는 저장소다 — 「사람이 머지」 카드. 원문·계정 이름은 싣지 않는다.
-  if (r.result === 'failed' && r.errorCode === 'no_repo_access') {
-    await recordBlocked(pool, {
-      kind: 'merge', agentId: r.agentId, channelId: lease.channelId, threadRootId: lease.threadRootId,
-      code: 'human_merges', repo, number: r.number, now,
-    }).catch(() => null);
-  }
   await recordAudit(pool, {
     action: r.result === 'merged' ? 'repo.merge.merged' : 'repo.merge.failed', actorId: r.agentId, target: scope,
     detail: { number: r.number, headSha: r.headSha, mergeSha: r.mergeSha ?? null, operatorId: r.operatorId, leaseId: lease.id, messageId: msg.id },

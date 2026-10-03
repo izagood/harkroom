@@ -63,14 +63,6 @@ export function parseMergeArgs(argv: readonly string[]): MergeArgs | { error: st
   return { repo: repo.toLowerCase(), number: Number(num), headSha };
 }
 
-/**
- * gh 의 실패가 "이 gh 계정으로는 이 저장소를 볼 수 없다/쓸 수 없다" 인가(P4 의견 ①). `merge.ghUser` 가 개인 계정이면 회사 저장소는
- * 늘 여기 걸린다 — 그때 서버는 카드에 「사람이 머지」를 띄우고 [권한 주기]를 감춘다. 원문은 보고 코드로만 바꾸고 싣지 않는다.
- */
-export function isRepoAccessError(stderr: string): boolean {
-  return /Could not resolve to a Repository|Resource not accessible|must have (?:push|write|admin) access|does not have the correct permissions|HTTP 40[34]|not have permission/i.test(stderr);
-}
-
 export type ExecResult = { code: number; stdout: string; stderr: string };
 export type Exec = (file: string, args: string[], env: Record<string, string>) => Promise<ExecResult>;
 
@@ -199,10 +191,10 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     let granted: { grantedBy?: string; causeByHuman?: boolean } = {};
     try { granted = JSON.parse(check.body) as typeof granted; } catch { /* 선택 정보 */ }
 
-    const report = async (result: 'merged' | 'failed', mergeSha: string | null, error: string | null, errorCode: 'no_repo_access' | null = null): Promise<void> => {
+    const report = async (result: 'merged' | 'failed', mergeSha: string | null, error: string | null): Promise<void> => {
       const res = await deps.forward(agentId, {
         type: 'http.forward', id: randomUUID(), method: 'POST', path: '/agent/merge-results',
-        body: JSON.stringify({ leaseId: lease.leaseId, token: lease.token, repo, number, headSha, result, mergeSha, error, ...(errorCode ? { errorCode } : {}) }), contentType: 'application/json',
+        body: JSON.stringify({ leaseId: lease.leaseId, token: lease.token, repo, number, headSha, result, mergeSha, error }), contentType: 'application/json',
       }).catch(() => null);
       if (!res || res.type !== 'http.response' || res.status !== 201) deps.log(`merge: ${repo}#${number} ${result} 보고가 서버에 닿지 않았다(${res && res.type === 'http.response' ? res.status : 'no response'})`);
     };
@@ -212,11 +204,7 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     if (!tok.ok) { await report('failed', null, `${tok.code}: ${tok.message}`); return fail(tok.code, tok.message); }
     const env = ghEnv(deps.home, tok.token);
     const view = await gh(['pr', 'view', String(number), '-R', repo, '--json', 'state,isDraft,headRefOid,baseRefName,mergeStateStatus,statusCheckRollup'], env);
-    if (view.code !== 0) {
-      const access = isRepoAccessError(view.stderr);
-      await report('failed', null, `gh pr view: ${view.stderr.trim().slice(0, 300)}`, access ? 'no_repo_access' : null);
-      return fail(access ? 'no_repo_access' : 'pr_not_found', access ? 'this operator\'s gh account cannot access the repository — a person merges it' : `gh pr view failed: ${view.stderr.trim().slice(0, 300)}`);
-    }
+    if (view.code !== 0) { await report('failed', null, `gh pr view: ${view.stderr.trim().slice(0, 300)}`); return fail('pr_not_found', `gh pr view failed: ${view.stderr.trim().slice(0, 300)}`); }
     let pr: PrView = {};
     try { pr = JSON.parse(view.stdout) as PrView; } catch { await report('failed', null, 'gh pr view: unparseable'); return fail('pr_not_found', 'gh pr view returned no JSON'); }
     const refuse = async (code: string, message: string) => { await report('failed', null, `${code}: ${message}`); return fail(code, message, { pr: { state: pr.state, headRefOid: pr.headRefOid, mergeStateStatus: pr.mergeStateStatus } }); };
@@ -241,9 +229,8 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     const merge = await gh(['pr', 'merge', String(number), '-R', repo, '--squash', '--match-head-commit', headSha], env);
     if (merge.code !== 0) {
       const err = merge.stderr.trim().slice(0, 300);
-      const access = isRepoAccessError(merge.stderr);
-      await report('failed', null, err, access ? 'no_repo_access' : null);
-      return fail(access ? 'no_repo_access' : 'merge_failed', access ? 'this operator\'s gh account cannot merge this repository — a person merges it' : `gh pr merge failed: ${err}`);
+      await report('failed', null, err);
+      return fail('merge_failed', `gh pr merge failed: ${err}`);
     }
     let mergeSha: string | null = null;
     const after = await gh(['pr', 'view', String(number), '-R', repo, '--json', 'mergeCommit'], env);

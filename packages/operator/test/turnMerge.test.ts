@@ -51,13 +51,12 @@ describe('turnMerge', () => {
   let checkStatus: number | null;
   let pr: Record<string, unknown>;
   let mergeCode: number;
-  let mergeStderr = 'GraphQL: Base branch was modified';
   let ghUser: string | undefined;
   let lease: { leaseId: string; token: string; agentId: string } | null;
   let tm: TurnMerge;
 
   beforeEach(() => {
-    forwards = []; execs = []; checkStatus = 200; mergeCode = 0; mergeStderr = 'GraphQL: Base branch was modified'; ghUser = 'izagood';
+    forwards = []; execs = []; checkStatus = 200; mergeCode = 0; ghUser = 'izagood';
     lease = { leaseId: 'lease-1', token: 'tok-1', agentId: 'a1' };
     pr = { state: 'OPEN', isDraft: false, headRefOid: SHA, baseRefName: 'main', mergeStateStatus: 'CLEAN', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }, { state: 'SUCCESS' }] };
     tm = createTurnMerge({
@@ -80,7 +79,7 @@ describe('turnMerge', () => {
         if (args[0] === 'auth') return ghUser === 'broken' ? { code: 1, stdout: '', stderr: 'no oauth token' } : { code: 0, stdout: 'tok-from-gh\n', stderr: '' };
         if (args[0] === 'pr' && args[1] === 'view' && args.includes('mergeCommit')) return { code: 0, stdout: JSON.stringify({ mergeCommit: { oid: MERGE_SHA } }), stderr: '' };
         if (args[0] === 'pr' && args[1] === 'view') return { code: 0, stdout: JSON.stringify(pr), stderr: '' };
-        if (args[0] === 'pr' && args[1] === 'merge') return { code: mergeCode, stdout: '', stderr: mergeCode ? mergeStderr : '' };
+        if (args[0] === 'pr' && args[1] === 'merge') return { code: mergeCode, stdout: '', stderr: mergeCode ? 'GraphQL: Base branch was modified' : '' };
         return { code: 1, stdout: '', stderr: 'unexpected' };
       },
     });
@@ -211,13 +210,6 @@ describe('turnMerge', () => {
     expect(auth.args).toEqual(['auth', 'token', '-u', 'izagood']);
     expect(auth.env.GH_TOKEN).toBeUndefined();
     for (const e of execs.filter((e) => e.args[0] === 'pr')) expect(e.env.GH_TOKEN).toBe('tok-from-gh');
-  });
-
-  it('gh 계정이 저장소에 닿지 못하면 no_repo_access 로 보고한다 — 서버가 「사람이 머지」 카드를 세운다(P4 ①)', async () => {
-    mergeCode = 1; mergeStderr = 'GraphQL: Resource not accessible by integration (mergePullRequest)';
-    const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
-    expect(r.body.error.code).toBe('no_repo_access');
-    expect(results()).toEqual([expect.objectContaining({ result: 'failed', errorCode: 'no_repo_access' })]);
   });
 
   it('gh pr merge 가 실패하면 merge_failed 이고 실패를 보고한다 — stderr 는 잘라서', async () => {

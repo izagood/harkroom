@@ -52,7 +52,7 @@ export async function checkApiCall(
     // 사람이 버튼 하나로 고칠 수 있는 거절이면 그 턴의 스레드에 막힘 카드를 세운다(P4). 실패해도 판정은 그대로다.
     if (leaseOk && API_CARD_CODES.has(code)) {
       await recordBlocked(pool, {
-        kind: 'api', agentId: args.agentId, channelId: lease!.channelId, threadRootId: lease!.threadRootId, code,
+        agentId: args.agentId, channelId: lease!.channelId, threadRootId: lease!.threadRootId, code,
         connectorId, connectorName: args.connector, method: args.method, path: args.path, now,
       }).catch(() => null);
     }
