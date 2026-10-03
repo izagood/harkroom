@@ -14,7 +14,7 @@ import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js
 import { emitEvent, emitPosted, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '../services/channels.js';
-import { BAD_THREAD_MESSAGE, checkAskMirror, gateAwaitingAccount, listInbox, listMessages, markInboxRead, notifyGateAwaiting, postMessage, searchInput, searchMessages, syncAskMirrors, type AskMirrorRefusal } from '../services/messages.js';
+import { BAD_THREAD_MESSAGE, checkAskMirror, getMessageById, gateAwaitingAccount, listInbox, listMessages, markInboxRead, notifyGateAwaiting, postMessage, searchInput, searchMessages, syncAskMirrors, type AskMirrorRefusal } from '../services/messages.js';
 
 /** `message.ask` 의 `mirrorOf` 거절 사유 — 에이전트가 읽고 고칠 수 있게 무엇을 바꾸면 되는지 적는다. */
 const MIRROR_REFUSAL_MESSAGE: Record<AskMirrorRefusal, string> = {
@@ -66,6 +66,7 @@ import { listGrantedSecrets } from '../services/secretAccess.js';
 import { collectStrings, SECRET_IN_BODY, type SecretLeakGuard } from '../services/secretLeakGuard.js';
 import type { AgentPresence } from './presence.js';
 import { enqueueAskPush } from '../services/push/pushJobs.js';
+import { bumpDenialCard, DENIAL_CARD_REFUSAL_MESSAGE, linkDenialCard, prepareDenialCard, type MergeDenialMeta } from '../services/mergeDenials.js';
 
 /**
  * 발화 도구가 공통으로 받는 `model` — 에이전트가 신고하는 **자기 모델 ID**(#600).
@@ -760,9 +761,15 @@ function buildMcpServer(
        * 정해지면 이 카드가 그 결과로 닫힌다. 답은 끝까지 사람이 누른다 — 대리 답이 아니다.
        */
       mirrorOf: z.string().uuid().optional(),
+      /**
+       * 머지 래퍼가 `not_granted` 와 함께 돌려준 `denialId`(스레드 febe9ff8 P3). 실으면 서버가 그 거절 기록으로 카드의 권한
+       * 칸(저장소·PR·에이전트)을 채우고, 소유자에게 [7일 주기] 버튼이 뜬다. 선택지에는 「다시 머지」 같은 다음 걸음을 둔다 —
+       * 권한 주기는 선택지가 아니다. 같은 날 같은 저장소면 새 카드 대신 있던 카드의 횟수가 오른다.
+       */
+      mergeDenialId: z.string().uuid().optional(),
       model: MODEL_ARG,
     },
-  }, async ({ channelId, body, threadRootId, options, to, prompt, mirrorOf, model }) => {
+  }, async ({ channelId, body, threadRootId, options, to, prompt, mirrorOf, mergeDenialId, model }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
@@ -792,8 +799,24 @@ function buildMcpServer(
         return jsonResult({ error: { code: refusal, message: MIRROR_REFUSAL_MESSAGE[refusal] } });
       }
     }
-    const meta: AskMeta & Partial<ModelMeta> = {
+    // 머지 거절 카드(P3, security C1·C3). 권한 칸은 거절 기록에서만 채운다 — 에이전트가 쓴 본문·선택지와 섞지 않는다.
+    let mergeDenial: MergeDenialMeta | null = null;
+    if (mergeDenialId) {
+      if (audience.kind !== 'human' || mirrorOf) {
+        return jsonResult({ error: { code: 'merge_denial_audience', message: 'a merge-denial card is addressed to humans; omit `to` and `mirrorOf`' } });
+      }
+      const prepared = await prepareDenialCard(pool, { agentId: account.id, denialId: mergeDenialId, channelId, threadRootId: threadRootId ?? null });
+      if (!prepared.ok) return jsonResult({ error: { code: prepared.code, message: DENIAL_CARD_REFUSAL_MESSAGE[prepared.code] } });
+      if (prepared.existingCardId) {
+        await bumpDenialCard(pool, prepared.existingCardId, prepared.meta);
+        const existing = await getMessageById(pool, prepared.existingCardId);
+        if (existing) return jsonResult({ message: existing, notified: [], merged: 'same repository was already refused today — counted on the existing card' });
+      }
+      mergeDenial = prepared.meta;
+    }
+    const meta: AskMeta & Partial<ModelMeta> & { mergeDenial?: MergeDenialMeta } = {
       kind: 'ask', ask: { options, to: audience, ...(prompt ? { prompt } : {}), ...(mirrorOf ? { mirrorOf } : {}) },
+      ...(mergeDenial ? { mergeDenial } : {}),
       ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
     };
     const posted = await postMessage(pool, {
@@ -803,6 +826,7 @@ function buildMcpServer(
     });
     if (posted.failure) return postFailureResult(posted.failure);
     const { message, notified, replayed } = posted;
+    if (mergeDenial && !replayed) await linkDenialCard(pool, mergeDenial.denialId, message.id);
     if (!replayed) {
       const channelAudience = await audienceFor(pool, channelId);
       emitPosted(posted, channelAudience);

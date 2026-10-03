@@ -39,7 +39,8 @@ export async function registerMergeRoutes(app: FastifyInstance, pool: Pool): Pro
     const r = await checkMerge(pool, { ...who, ...parsed.data });
     void reply.header('cache-control', 'no-store');
     if (!r.ok) {
-      return reply.code(r.code === 'bad_repo' ? 400 : 403).send({ error: { code: r.code, message: `merge not allowed: ${r.code}` } });
+      // `denialId`(P3): 에이전트가 이것을 `message.ask` 의 `mergeDenialId` 로 실어 소유자에게 [7일 주기] 카드를 세운다.
+      return reply.code(r.code === 'bad_repo' ? 400 : 403).send({ error: { code: r.code, message: `merge not allowed: ${r.code}`, ...(r.denialId ? { denialId: r.denialId } : {}) } });
     }
     return { allowed: true, repo: r.scope.slice('repo:'.length), grantedBy: r.grantedBy, grantedAt: r.grantedAt, causeByHuman: r.causeByHuman, channelId: r.channelId, threadRootId: r.threadRootId };
   });
