@@ -396,6 +396,23 @@ function normalizeTerm(raw: string): string | null {
   return t;
 }
 
+/**
+ * 후속 턴의 새 말(focus)에서만 거르는 말(G 후속, qa 실측 10-03). "다시 봐 줘"·"그대로 진행해"·"계속" 같은
+ * 되받는 말은 주제가 아니다 — 그런데 focus 낱말이면 후속 턴 게이트를 열어 준다. qa 흉내 측정에서 G 뒤에
+ * 남은 잡음 32개가 전부 '다시' 하나가 요약에 '다시'가 든 기억 둘에 걸린 것이었다. 첫 턴 질의·루트 머리에는
+ * 걸지 않는다(그쪽에서는 순위만 돕고, "다시 제안 금지" 같은 기억을 주제로 찾는 요청도 있다).
+ * 값은 `searchTerms` 가 정규화한 꼴이다 — `그대로` 는 조사 `로` 가 떨어져 `그대`, `그걸로` 는 `그걸`.
+ */
+export const FOCUS_STOPWORDS: ReadonlySet<string> = new Set([
+  '다시', '한번', '계속', '마저', '이어서', '이대', '그대', '그걸', '그거', '그것', '그렇게', '똑같이', '아까', '방금',
+  '좋아', '좋다', '괜찮', '고마워', '감사', '알겠', '그래', '해줘', '봐줘', 'ok', 'okay', 'go', 'again', 'continue',
+]);
+
+/** 후속 턴 새 말의 낱말(G). 이름 제외·recall 상투어에 더해 `FOCUS_STOPWORDS` 를 거른다. */
+export function focusTermsOf(focus: string, excluded: ReadonlySet<string>): string[] {
+  return searchTerms(focus, { exclude: new Set([...excluded, ...FOCUS_STOPWORDS]) });
+}
+
 /** focus 가 있을 때 낱말 상한 — 새 말 12개 + 루트 머리 몫(G). */
 export const RECALL_FOCUS_TERM_CAP = 16;
 
@@ -526,7 +543,7 @@ export async function searchMemory(
     const excluded = await recallExcludedNames(pool);
     // focus(G): 러너가 후속 턴에 "이번에 새로 온 말"을 따로 준다. 그 낱말을 먼저 세운다 — 질의 앞머리의
     // 루트 머리가 12개 상한을 채워 정작 새 말의 낱말이 빠지는 일을 막는다. 루트 낱말은 순위만 돕는다.
-    const focusTerms = opts.focus !== undefined ? searchTerms(opts.focus, { exclude: excluded }) : undefined;
+    const focusTerms = opts.focus !== undefined ? focusTermsOf(opts.focus, excluded) : undefined;
     const terms = focusTerms
       ? [...new Set([...focusTerms, ...searchTerms(query, { exclude: excluded })])].slice(0, RECALL_FOCUS_TERM_CAP)
       : searchTerms(query, { exclude: excluded });
