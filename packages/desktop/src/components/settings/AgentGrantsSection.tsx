@@ -1,5 +1,6 @@
 /**
- * 에이전트 상세의 **「할 수 있는 일」** 절 — 에이전트 머지 권한(스레드 3deac356, designer 안 L2).
+ * 에이전트 상세의 **「머지·API 권한」** 절(옛 이름 「할 수 있는 일」 — 이름만 봐서는 무엇을 주는지 몰랐다, 스레드 febe9ff8 P1.
+ * #1144 가 API 호출 권한을 같은 절에 소제목으로 더해 「PR 머지」 하나로는 이름이 좁아졌다) — 에이전트 머지 권한(스레드 3deac356, designer 안 L2).
  *
  * 비밀 보관소 부여와 같은 문법이다: 에이전트 × 저장소, 준 사람·날짜, 만료, [거두기]. 판정은 전부 서버가 한다
  * (`grantRoutes.ts` — F1 scope 는 `repo:<owner>/<name>` 만, F2 주는 사람은 그 에이전트의 소유자인 사람, 거두기는
@@ -29,8 +30,17 @@ type Expiry = 'none' | '7d' | '30d';
 /** `repo:<owner>/<name>` → `owner/name`. 서버가 소문자로 정규화해 돌려준다. */
 const repoOf = (scope: string): string => scope.replace(/^repo:/, '');
 
-export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, localOperatorId }: {
+/** 살아 있는 `repo.merge` grant 수 — 목록 카드의 「머지 N」(P1)과 이 절이 같은 셈을 쓴다. */
+export function liveMergeGrantCount(rows: readonly GrantRow[], now = Date.now()): number {
+  return rows.filter((g) => g.capability === CAP && (g.expiresAt === null || Date.parse(g.expiresAt) > now)).length;
+}
+
+export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, localOperatorId, assignedOperatorName, onCountChange }: {
   agent: AgentView;
+  /** 배정된 오퍼레이터(기기)의 이름 — 「다른 기기에서 돈다」 안내에 넣는다(#1140 designer n4). 모르면 null. */
+  assignedOperatorName?: string | null;
+  /** 목록을 다시 읽을 때마다 살아 있는 grant 수를 알린다 — 목록 카드 「머지 N」 이 따라오게. */
+  onCountChange?: (count: number) => void;
   /**
    * 이 기기 오퍼레이터의 id(`operator.json` 이 적어 둔 값). 에이전트가 **이 기기에 배정돼 있을 때만** 머지 gh 계정 줄을
    * 그린다 — 머지는 그 에이전트를 돌리는 오퍼레이터의 gh 로 되므로 남의 기기 값을 여기서 고칠 수는 없다.
@@ -61,11 +71,16 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   const load = useCallback(async () => {
     try {
       const all = await getController().listGrants(agent.id);
-      setGrants(all.filter((g) => g.capability === CAP));
+      const rows = all.filter((g) => g.capability === CAP);
+      setGrants(rows);
       setApiGrants(all.filter((g) => g.capability === 'api.call'));
+      // 소유자가 볼 때만 알린다(#1146 security n2) — admin 이 남의 에이전트를 열어도 목록 카드에 그 숫자가 끼지 않게.
+      if (canGrant) onCountChange?.(liveMergeGrantCount(rows));
     } catch { setGrants('error'); }
     try { setConnectors(await getController().listConnectors()); } catch { setConnectors([]); }
-  }, [agent.id]);
+    // `onCountChange` 는 부모가 매 렌더 새로 만든다 — 의존에 넣으면 렌더마다 다시 읽는다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent.id, canGrant]);
   useEffect(() => { setGrants('loading'); void load(); }, [load]);
 
   const explain = (err: unknown): string => {
@@ -95,13 +110,63 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
     setReposText(''); setExpiry('none'); setAdding(false);
   });
 
+  /** 만료된 줄을 그 저장소 그대로 7일 다시 준다(P1). 서버 판정은 [권한 주기] 와 같다(F1·F2) — 같은 PUT 이다. */
+  const renew = (g: GrantRow) => run(async () => {
+    await getController().putGrant(agent.id, {
+      capability: CAP, scope: g.scope, expiresAt: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+      ...(g.allowAgentCause ? { allowAgentCause: true } : {}),
+    });
+  });
+
   const off = busy || disabled;
   const rows = Array.isArray(grants) ? grants : [];
+  // 비어 있으면 한 줄로 접는다(P1) — 설명 문단·빈 문장 없이 「PR 머지 · 머지 권한 없음 · [+ 권한 주기]」. 읽는 동안도
+  // 같은 모양으로 그린다(#1146 designer b) — 권한 없는 에이전트를 열 때마다 절이 펼쳤다 줄어드는 흔들림을 없앤다.
+  // API 호출 권한(#1144)이 하나라도 있으면 접지 않는다 — 그 줄들이 이 절에 산다.
+  const compact = (grants === 'loading' || (Array.isArray(grants) && rows.length === 0 && apiGrants.length === 0)) && !adding;
+  const otherDevice = assignedOperatorName
+    ? t('agents.grants.ghUser.otherDevice', { host: assignedOperatorName })
+    : t('agents.grants.ghUser.otherDeviceNoName');
+  const ghRow = canGrant && hasOperatorLocalSurface() && agent.assignment?.operatorId ? (
+    localOperatorId && agent.assignment.operatorId === localOperatorId
+      ? <MergeGhUserRow disabled={disabled} hasGrants={liveMergeGrantCount(rows) > 0} />
+      : <p className="mt-2 text-meta text-fg-subtle" data-testid="merge-gh-user-other">{otherDevice}</p>
+  ) : null;
+
+  // 제목은 이웃 FieldGroup(「실행」·「권한」)과 같은 단이다 — 테두리 상자 없이 h3(#1146 designer 수정 1). 작은 회색
+  // 제목이면 이름을 고치고 자리를 올려도 다시 놓친다(f1).
+  const heading = <h3 className="text-body font-semibold text-fg">{t('agents.grants.heading')}<ImmediateBadge label={t('agents.detail.immediate')} /></h3>;
+
+  if (compact) {
+    // 접힌 동안은 gh 계정 줄을 그리지 않는다(#1146 designer c) — [정하기]와 [+ 권한 주기]가 오른쪽 끝에 겹쳐 서지
+    // 않게. 첫 권한을 주면 펼쳐지며 그 줄이 처음 보인다. 막는 힘은 래퍼(`no_gh_user`)에 있다.
+    return (
+      <section data-testid="agent-grants">
+        <div className="flex flex-wrap items-baseline gap-2">
+          {heading}
+          {grants === 'loading'
+            ? <span className="text-meta text-fg-subtle" data-testid="agent-grants-loading">{t('agents.grants.loading')}</span>
+            : <span className="text-meta text-fg-subtle" data-testid="agent-grants-none">{t('agents.grants.noneShort')}</span>}
+          {canGrant && (
+            <button
+              className="ml-auto rounded-row border border-border px-2 py-0.5 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
+              disabled={off || grants === 'loading'}
+              onClick={() => setAdding(true)}
+            >
+              {t('agents.grants.add')}
+            </button>
+          )}
+        </div>
+        {!canGrant && canRevoke && <p className="mt-1 text-meta text-fg-subtle">{t('agents.grants.ownerOnly')}</p>}
+        {error && <p role="alert" className="mt-2 text-meta text-danger" data-testid="agent-grants-error">{error}</p>}
+      </section>
+    );
+  }
 
   return (
-    <div className="rounded-row border border-border p-3" data-testid="agent-grants">
-      <div className="text-meta font-medium text-fg-muted">{t('agents.grants.heading')}<ImmediateBadge label={t('agents.detail.immediate')} /></div>
-      <p className="mt-1 text-meta text-fg-subtle">{t('agents.grants.note')}</p>
+    <section data-testid="agent-grants">
+      {heading}
+      <p className="text-meta text-fg-subtle">{t('agents.grants.note')}</p>
 
       {apiGrants.length > 0 && (
         <>
@@ -141,11 +206,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
         </>
       )}
       {/* 머지 gh 계정(P2) — 소유자인 사람에게만, 이 기기에서 도는 에이전트에만. */}
-      {canGrant && hasOperatorLocalSurface() && agent.assignment?.operatorId && (
-        localOperatorId && agent.assignment.operatorId === localOperatorId
-          ? <MergeGhUserRow disabled={disabled} />
-          : <p className="mt-2 text-meta text-fg-subtle" data-testid="merge-gh-user-other">{t('agents.grants.ghUser.otherDevice')}</p>
-      )}
+      {ghRow}
 
       {grants === 'loading' && <p className="mt-2 text-meta text-fg-muted">{t('agents.grants.loading')}</p>}
       {grants === 'error' && <p role="alert" className="mt-2 text-meta text-danger">{t('agents.grants.listFailed')}</p>}
@@ -157,7 +218,9 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
             const repo = repoOf(g.scope);
             const expired = g.expiresAt !== null && Date.parse(g.expiresAt) <= Date.now();
             return (
-              <li key={g.scope} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-row border border-border px-2 py-1 text-meta text-fg" data-testid={`agent-grant-${repo}`}>
+              // 만료된 줄은 통째로 한 단 낮춘다(지난 nit n4) — 살아 있는 줄과 같은 무게로 보이지 않게. [거두기]는 정리용으로 둔다.
+              <li key={g.scope} className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-row border border-border px-2 py-1 text-meta ${expired ? 'text-fg-subtle' : 'text-fg'}`} data-testid={`agent-grant-${repo}`} data-expired={expired || undefined}>
+                {/* 부여 종류 이름은 두되 한 단 낮춘다(지난 nit n3) — 지금 주인공은 저장소다. */}
                 <span className="text-fg-muted">{t('agents.grants.merge')}</span>
                 <span className="font-mono">{repo}</span>
                 <span className="text-fg-subtle">
@@ -168,9 +231,19 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                     : expired ? t('agents.grants.expired') : t('agents.grants.expiresOn', { when: new Date(g.expiresAt).toLocaleDateString(locale) })}
                   {g.allowAgentCause ? ` · ${t('agents.grants.agentCause')}` : ''}
                 </span>
+                {expired && canGrant && (
+                  <button
+                    className="ml-auto rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-sunken disabled:opacity-50"
+                    disabled={off}
+                    aria-label={t('agents.grants.renewAria', { repo })}
+                    onClick={() => void renew(g)}
+                  >
+                    {t('agents.grants.renew7d')}
+                  </button>
+                )}
                 {canRevoke && (
                   <button
-                    className="ml-auto rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:text-danger disabled:opacity-50"
+                    className={`${expired && canGrant ? '' : 'ml-auto '}rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:text-danger disabled:opacity-50`}
                     disabled={off}
                     aria-label={t('agents.grants.revokeAria', { repo })}
                     onClick={() => setRevoking(g)}
@@ -280,6 +353,6 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
           }}
         />
       )}
-    </div>
+    </section>
   );
 }

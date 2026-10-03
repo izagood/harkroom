@@ -724,7 +724,7 @@ function VersionChip({ handle, runnerVersion, assignment, operators, restarting 
  */
 export function AgentGrid<T extends AgentCardSubject>({
   agents, selectedId, runnerStates, online, connected, onPick, onCreate, canCreate,
-  onStop, operatorVersions = null, place = 'settings',
+  onStop, operatorVersions = null, place = 'settings', mergeCounts,
 }: {
   agents: T[];
   selectedId: string | null;
@@ -755,6 +755,13 @@ export function AgentGrid<T extends AgentCardSubject>({
   operatorVersions?: OperatorVersions | null;
   /** 이 격자가 선 자리. 기본값 `settings` 가 설정 화면의 오늘 모양이다(`AgentGridPlace` 주석). */
   place?: AgentGridPlace;
+  /**
+   * 에이전트 id → 살아 있는 머지 권한(`repo.merge`) 수 — 「머지 N」 줄(스레드 febe9ff8 P1). 설정 화면이 **소유한
+   * 에이전트에만** 채운다. 없거나 0 이면 줄을 안 그린다: 권한 없는 에이전트가 대부분이라 「머지 0」 은 소음이다.
+   * 카드 타입(`AgentCardSubject`)에 얹지 않은 이유: 이 값은 서버 목록이 아니라 따로 읽은 것이고, 타입에 얹으면
+   * `AgentView` 가 그 타입의 하위 타입이 아니게 되어 호출부 추론이 흔들린다.
+   */
+  mergeCounts?: Record<string, number>;
 }) {
   const [query, setQuery] = useState('');
   // 이 격자의 말은 전부 `grid.*` 를 지난다. 활동 경과만 `lib/time.ts` 가 낸다 —
@@ -1149,6 +1156,11 @@ export function AgentGrid<T extends AgentCardSubject>({
                            밀어 넣는 순간 칩이 따라 바뀐다(`VersionChip.restarting` 주석). */
                         restarting={runnerStates[a.id]?.status === 'restarting'}
                       />
+                    </InfoRow>
+                  )}
+                  {(mergeCounts?.[a.id] ?? 0) > 0 && (
+                    <InfoRow label={t('grid.card.merge')}>
+                      <span className="block truncate" data-testid={`agent-merge-count-${a.handle}`}>{t('grid.card.mergeRepos', { count: mergeCounts![a.id]! })}</span>
                     </InfoRow>
                   )}
                   {a.lastTurnAt !== undefined && (

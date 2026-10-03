@@ -1,5 +1,5 @@
 /**
- * 「할 수 있는 일」 절(에이전트 머지 권한, 스레드 3deac356). 판정은 전부 서버가 한다 — 여기서 재는 것은 목록이
+ * 「PR 머지」 절(옛 「할 수 있는 일」, 에이전트 머지 권한, 스레드 3deac356 · febe9ff8 P1). 판정은 전부 서버가 한다 — 여기서 재는 것은 목록이
  * 응답을 그대로 앉히는가, 주기/거두기가 컨트롤러 표면(`putGrant`·`deleteGrant`)에 **정확한 scope** 로 닿는가,
  * 소유자가 아니면 [권한 주기] 가 없는가, 거두기는 확인창을 거치는가, 서버 거절이 사람 말로 보이는가다.
  */
@@ -120,6 +120,8 @@ describe('AgentGrantsSection', () => {
     await screen.findByTestId('agent-grant-izagood/harkroom');
     fireEvent.click(screen.getByLabelText('izagood/harkroom 머지 권한 거두기'));
     expect(screen.getByText('izagood/harkroom 머지 권한을 거둘까?')).toBeTruthy();
+    // 지난 nit n1 — 변수 뒤에 받침 따라 바뀌는 조사를 붙이지 않는다
+    expect(screen.getByText('다음 턴부터 @alpha 의 izagood/harkroom 머지가 막힌다.')).toBeTruthy();
     fireEvent.click(screen.getByText('취소'));
     expect(c.deleteGrant).not.toHaveBeenCalled();
     fireEvent.click(screen.getByLabelText('izagood/harkroom 머지 권한 거두기'));
@@ -137,6 +139,55 @@ describe('AgentGrantsSection', () => {
     fireEvent.change(screen.getByLabelText('저장소 (정확한 이름, 한 줄에 하나)'), { target: { value: 'izagood/x' } });
     fireEvent.click(screen.getByText('주기'));
     await waitFor(() => expect(screen.getByTestId('agent-grants-error').textContent).toContain('소유자(사람)만'));
+  });
+
+  it('P1: 절 이름은 「PR 머지」, 비어 있으면 설명 없이 한 줄로 접히고 [+ 권한 주기]로 펼친다', async () => {
+    setup({ listGrants: vi.fn(async () => []) });
+    render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
+    const none = await screen.findByTestId('agent-grants-none');
+    expect(none.textContent).toContain('머지 권한 없음');
+    const box = screen.getByTestId('agent-grants');
+    expect(box.textContent).toContain('PR 머지');
+    expect(box.textContent).not.toContain('부여가 곧 승인');  // 설명 문단은 접힌다
+    fireEvent.click(screen.getByText('+ 권한 주기'));
+    expect(screen.getByTestId('agent-grants-add')).toBeTruthy();
+    expect(screen.getByTestId('agent-grants').textContent).toContain('부여가 곧 승인');
+  });
+
+  it('P1: 만료된 줄은 한 단 낮추고 [다시 7일]로 같은 scope 를 7일 다시 준다 — 소유자에게만', async () => {
+    const before = Date.now();
+    const c = setup({ listGrants: vi.fn(async () => [grant('repo:izagood/harkroom-gate', { expiresAt: '2026-01-01T00:00:00Z', allowAgentCause: true }), grant('repo:izagood/harkroom')]) });
+    render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
+    const row = await screen.findByTestId('agent-grant-izagood/harkroom-gate');
+    expect(row.getAttribute('data-expired')).toBe('true');
+    expect(row.className).toContain('text-fg-subtle');
+    expect(screen.getByTestId('agent-grant-izagood/harkroom').getAttribute('data-expired')).toBeNull();
+    // 살아 있는 줄에는 [다시 7일]이 없다
+    expect(screen.queryByLabelText('izagood/harkroom 머지 권한을 7일 다시 주기')).toBeNull();
+    fireEvent.click(screen.getByLabelText('izagood/harkroom-gate 머지 권한을 7일 다시 주기'));
+    await waitFor(() => expect(c.putGrant).toHaveBeenCalledTimes(1));
+    const [id, body] = c.putGrant.mock.calls[0]! as unknown as [string, { capability: string; scope: string; expiresAt: string; allowAgentCause?: boolean }];
+    expect(id).toBe('agent-1');
+    expect(body.capability).toBe('repo.merge');
+    expect(body.scope).toBe('repo:izagood/harkroom-gate');
+    expect(body.allowAgentCause).toBe(true);  // 있던 플래그를 떨어뜨리지 않는다
+    const days = (Date.parse(body.expiresAt) - before) / 86_400_000;
+    expect(days).toBeGreaterThan(6.99);
+    expect(days).toBeLessThan(7.01);
+  });
+
+  it('P1: 소유자가 아니면(admin) 만료된 줄에도 [다시 7일]이 없다', async () => {
+    setup({ listGrants: vi.fn(async () => [grant('repo:izagood/harkroom-gate', { expiresAt: '2026-01-01T00:00:00Z' })]) });
+    render(<AgentGrantsSection agent={agent()} canGrant={false} canRevoke />);
+    await screen.findByTestId('agent-grant-izagood/harkroom-gate');
+    expect(screen.queryByText('다시 7일')).toBeNull();
+  });
+
+  it('P1: 읽을 때마다 살아 있는 권한 수를 알린다(목록 카드 「머지 N」)', async () => {
+    const onCount = vi.fn();
+    setup({ listGrants: vi.fn(async () => [grant('repo:a/b'), grant('repo:a/c', { expiresAt: '2026-01-01T00:00:00Z' }), { ...grant(''), capability: 'channel.create' }]) });
+    render(<AgentGrantsSection agent={agent()} canGrant canRevoke onCountChange={onCount} />);
+    await waitFor(() => expect(onCount).toHaveBeenCalledWith(1));
   });
 
   it('목록을 못 읽으면 "없음"이 아니라 실패를 말한다', async () => {

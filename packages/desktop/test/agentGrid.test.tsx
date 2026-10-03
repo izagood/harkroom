@@ -39,6 +39,7 @@ const grid = (props: Partial<Parameters<typeof AgentGrid>[0]> = {}) => render(
     onStop={props.onStop}
     operatorVersions={props.operatorVersions}
     place={props.place}
+    mergeCounts={props.mergeCounts}
   />,
 );
 
@@ -1104,4 +1105,18 @@ describe('물러나는 중 — 다섯 번째 얼굴 (2026-09-08 실측)', () => 
     expect(screen.getByTestId('agent-retiring-alpha').textContent).toContain('턴');
   });
 
+});
+
+describe('AgentGrid — 「머지 N」(스레드 febe9ff8 P1)', () => {
+  it('살아 있는 머지 권한이 있는 카드에만 줄을 올린다 — 0·모름은 안 올린다', () => {
+    grid({ agents: [agent('alpha'), agent('beta'), agent('gamma')], mergeCounts: { 'id-alpha': 2, 'id-beta': 0 } });
+    expect(screen.getByTestId('agent-merge-count-alpha').textContent).toBe('저장소 2개');
+    expect(screen.queryByTestId('agent-merge-count-beta')).toBeNull();
+    expect(screen.queryByTestId('agent-merge-count-gamma')).toBeNull();
+  });
+
+  it('사이드바 자리에는 정보 줄이 없으니 숫자도 없다', () => {
+    grid({ agents: [agent('alpha')], mergeCounts: { 'id-alpha': 2 }, place: 'sidebar' });
+    expect(screen.queryByTestId('agent-merge-count-alpha')).toBeNull();
+  });
 });
