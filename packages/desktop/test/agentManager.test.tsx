@@ -978,6 +978,71 @@ describe('저장 바 (A3)', () => {
     expect(go2).toHaveBeenCalledTimes(1);
   });
 
+  it('저장 실패가 안 보이는 탭의 칸이면 바가 그 탭을 가리킨다 (designer 수정 b)', async () => {
+    const c = fakeController([agent('rusalka', { workingDir: '/repo' })]);
+    c.updateAgent.mockImplementation(async () => { throw new Error('끊겼다'); });
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(screen.getByTestId('agent-tab-permissions'));
+    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+
+    fireEvent.click(screen.getByTestId('agent-tab-profile'));
+    fireEvent.click(screen.getByRole('button', { name: '저장' }));
+    const failed = await screen.findByTestId('agent-save-failed');
+    expect(failed.textContent).toContain('1개 저장 못 함');
+    fireEvent.click(screen.getByRole('button', { name: '권한 탭에서 보기' }));
+    expect(screen.getByTestId('agent-tab-permissions').getAttribute('aria-selected')).toBe('true');
+    // 그 탭에 와 있으면 가리킬 필요가 없다 — 문구만 남는다.
+    expect(screen.queryByTestId('agent-save-failed-goto')).toBeNull();
+    // 되돌리면 실패 표시도 걷힌다.
+    fireEvent.click(screen.getByRole('button', { name: '되돌리기' }));
+    expect(screen.queryByTestId('agent-save-failed')).toBeNull();
+  });
+
+  it('바뀐 것이 있는 탭 이름 옆에만 점이 선다 (designer n1)', async () => {
+    fakeController([agent('rusalka')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    expect(screen.queryByTestId('agent-tab-dot-profile')).toBeNull();
+
+    fireEvent.change(await screen.findByLabelText('Agent instructions'), { target: { value: '고친 지시문' } });
+    expect(screen.getByTestId('agent-tab-dot-profile')).toBeTruthy();
+    for (const id of ['overview', 'run', 'permissions', 'memory']) {
+      expect(screen.queryByTestId(`agent-tab-dot-${id}`), id).toBeNull();
+    }
+  });
+
+  it('[저장하고 나가기]는 저장한 뒤 떠나고, 저장이 실패하면 떠나지 않는다 (designer n2)', async () => {
+    const c = fakeController([agent('rusalka', { workingDir: '/repo' })]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+
+    c.updateAgent.mockImplementationOnce(async () => { throw new Error('끊겼다'); });
+    fireEvent.click(screen.getByTestId('agent-back'));
+    fireEvent.click(await screen.findByRole('button', { name: '저장하고 나가기' }));
+    expect(await screen.findByTestId('agent-save-failed')).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByTestId('agent-tab-overview')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('agent-back'));
+    fireEvent.click(await screen.findByRole('button', { name: '저장하고 나가기' }));
+    expect(await screen.findByTestId('agent-card-rusalka')).toBeTruthy();
+    expect(c.updateAgent).toHaveBeenCalledTimes(2);
+    expect(c.updateAgent.mock.calls[1]![1]).toMatchObject({ workingDir: '/other' });
+  });
+
+  it('다른 화면이 targetId 로 다른 에이전트를 열어도 저장 안 한 초안을 묻는다 (security n2)', async () => {
+    fakeController([agent('rusalka', { workingDir: '/repo' }), agent('fizz')]);
+    const { rerender } = render(<AgentsSettings targetId="id-rusalka" />);
+    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+
+    rerender(<AgentsSettings targetId="id-fizz" />);
+    fireEvent.click(await screen.findByRole('button', { name: '계속 고치기' }));
+    expect(screen.getByRole('heading', { name: 'rusalka 편집' })).toBeTruthy();
+    expect((screen.getByLabelText('Working directory') as HTMLInputElement).value).toBe('/other');
+  });
+
   it('바로 걸리는 칸에는 「바로 적용」 표지가 선다', async () => {
     fakeController([agent('rusalka')]);
     render(<AgentsSettings />);

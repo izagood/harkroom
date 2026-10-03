@@ -226,6 +226,24 @@ const DETAIL_TAB_LABEL = {
   memory: 'agents.detail.tab.memory',
 } as const satisfies Record<AgentDetailTab, string>;
 
+/**
+ * 저장 바에 걸린 것이 **어느 탭의 칸인가**(A3 수정, designer). 저장이 실패하면 오류 줄은 그 칸 자리에
+ * 서는데, 그 탭이 안 보이면 사람에게는 바만 남는다 — 바가 이 표로 그 탭을 가리킨다. 탭 이름 옆의
+ * 점(바뀐 것이 있는 탭)도 이 표를 읽는다.
+ */
+const DRAFT_FIELD_TAB = {
+  handle: 'profile', instructions: 'profile',
+  harness: 'run', model: 'run', effort: 'run',
+  workingDir: 'permissions', mentionPermission: 'permissions', ownerAccountId: 'permissions',
+} as const satisfies Record<keyof Draft, AgentDetailTab>;
+/** `usePendingEdit` 로 등록하는 칸의 탭. */
+const PENDING_KEY_TAB: Record<string, AgentDetailTab> = { 'local-folder': 'run', pickable: 'permissions' };
+/** 여러 탭이면 탭 순서로 앞의 것. */
+const firstTab = (tabs: Iterable<AgentDetailTab>): AgentDetailTab | null => {
+  const set = new Set(tabs);
+  return AGENT_DETAIL_TABS.find((x) => set.has(x)) ?? null;
+};
+
 export function AgentsSettings({ targetId }: { targetId?: string }) {
   // 시간 표기는 언어를 따른다(`lib/time.ts`). 접두는 사전을 지난다.
   const t = useT();
@@ -617,7 +635,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     const agent = agents.find((a) => a.id === target.agentId);
     if (!agent) return;
     pickedFor.current = targetId;
-    pick(agent, target.tab ?? 'overview');
+    // 다른 화면에서 다른 에이전트를 열 때도 저장 안 한 초안을 묻지 않고 버리지 않는다(security n2).
+    guardLeave(() => pick(agent, target.tab ?? 'overview'));
   }, [targetId, agents]);
 
   // 기본값은 admin 전용 라우트다(`GET /settings/agent-defaults`). admin 이 아닌 사람에게
@@ -799,11 +818,23 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     setPendingCounts((prev) => ((prev[key] ?? 0) === count ? prev : { ...prev, [key]: count }));
   }, []);
   // [하네스 기본값 쓰기]는 초안 칸이 아니라 `customized` 를 내린다 — 그것도 저장할 변경 하나다.
-  const draftChanges = selected !== null && draft !== null
-    ? (Object.keys(draft) as (keyof Draft)[]).filter((k) => draft[k] !== draftOf(selected)[k]).length
-      + (customized !== (selected.model !== null || selected.effort !== null) ? 1 : 0)
-    : 0;
+  const draftTabs: AgentDetailTab[] = selected !== null && draft !== null
+    ? [
+      ...(Object.keys(draft) as (keyof Draft)[])
+        .filter((k) => draft[k] !== draftOf(selected)[k])
+        .map((k) => DRAFT_FIELD_TAB[k]),
+      ...(customized !== (selected.model !== null || selected.effort !== null) ? ['run' as const] : []),
+    ]
+    : [];
+  const draftChanges = draftTabs.length;
   const pendingTotal = draftChanges + Object.values(pendingCounts).reduce((a, b) => a + b, 0);
+  /** 바뀐 것이 있는 탭 — 탭 이름 옆에 점을 찍는다(designer n1). */
+  const pendingTabs = new Set<AgentDetailTab>([
+    ...draftTabs,
+    ...Object.entries(pendingCounts).filter(([, n]) => n > 0).map(([k]) => PENDING_KEY_TAB[k] ?? 'overview'),
+  ]);
+  /** 마지막 [저장]에서 저장하지 못한 것의 수와 그 칸이 있는 탭. 다시 저장하거나 되돌리면 지운다. */
+  const [saveFailed, setSaveFailed] = useState<{ n: number; tab: AgentDetailTab } | null>(null);
   /** 저장 안 한 것이 있는데 상세를 떠나려 할 때 — 떠날 길을 들고 묻는다. */
   const [leaving, setLeaving] = useState<{ go: () => void } | null>(null);
   const guardLeave = (go: () => void) => {
@@ -969,12 +1000,21 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   };
 
   /** 저장 바의 [저장] — 바뀐 칸을 차례로 저장한다. 실패한 칸은 제 자리에 이유를 그리고 바는 남는다. */
-  const saveAll = async () => {
-    if (draftChanges > 0) await saveSelected();
-    for (const h of [...pendingHandlers.current.values()]) await h.save();
+  const saveAll = async (): Promise<boolean> => {
+    setSaveFailed(null);
+    let failed = 0;
+    const failedTabs: AgentDetailTab[] = [];
+    if (draftChanges > 0 && !(await saveSelected())) { failed += draftChanges; failedTabs.push(...draftTabs); }
+    for (const [key, h] of [...pendingHandlers.current.entries()]) {
+      if (!(await h.save())) { failed += pendingCounts[key] ?? 1; failedTabs.push(PENDING_KEY_TAB[key] ?? 'overview'); }
+    }
+    const tab = firstTab(failedTabs);
+    if (failed > 0 && tab) setSaveFailed({ n: failed, tab });
+    return failed === 0;
   };
   /** 저장 바의 [되돌리기] — 서버 값으로. 고른 에이전트를 다시 고르면 초안이 다시 채워진다(`pick`). */
   const revertAll = () => {
+    setSaveFailed(null);
     if (selected) pick(selected, detailTab);
     for (const h of [...pendingHandlers.current.values()]) h.revert();
   };
@@ -1496,6 +1536,15 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   onClick={() => setDetailTab(id)}
                 >
                   {t(DETAIL_TAB_LABEL[id])}
+                  {/* 바뀐 것이 있는 탭(designer n1). 저장 바는 모든 탭에 걸치므로 어디서 고쳤는지 기억할 필요가 없게. */}
+                  {pendingTabs.has(id) && (
+                    <span
+                      data-testid={`agent-tab-dot-${id}`}
+                      role="img"
+                      aria-label={t('agents.detail.tabChanged')}
+                      className="ml-1 inline-block size-1.5 rounded-full bg-fg-muted align-middle"
+                    />
+                  )}
                 </button>
               ))}
             </div>
@@ -2659,6 +2708,22 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   {t('agents.detail.pendingCount', { n: String(pendingTotal) })}
                 </span>
               )}
+              {/* 저장하지 못한 것(designer A3 수정 b). 오류 줄은 칸 자리에 그대로 두고, 바는 **어느 탭인지만**
+                  가리킨다 — 그 칸이 안 보이는 탭에 있으면 사람에게는 바만 남기 때문이다. */}
+              {selected && saveFailed && (
+                <span role="alert" data-testid="agent-save-failed" className="flex items-center gap-1 text-meta text-danger">
+                  {t('agents.detail.saveFailedCount', { n: String(saveFailed.n) })}
+                  {saveFailed.tab !== detailTab && (
+                    <button
+                      data-testid="agent-save-failed-goto"
+                      className="rounded-row px-1 underline hover:bg-surface-hover"
+                      onClick={() => setDetailTab(saveFailed.tab)}
+                    >
+                      {t('agents.detail.saveFailedGoto', { tab: t(DETAIL_TAB_LABEL[saveFailed.tab]) })}
+                    </button>
+                  )}
+                </span>
+              )}
               {selected && (
                 <Button variant="secondary" disabled={busy} onClick={revertAll}>
                   {t('agents.detail.revert')}
@@ -2700,6 +2765,14 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           confirmLabel={t('agents.detail.leaveDiscard')}
           cancelLabel={t('agents.detail.leaveStay')}
           danger
+          busy={busy}
+          extraLabel={t('agents.detail.leaveSave')}
+          // 저장하고 나간다(designer n2). 하나라도 못 저장하면 떠나지 않는다 — 실패를 말할 자리(바)가
+          // 이 화면에 있다.
+          onExtra={() => {
+            const go = leaving.go;
+            void saveAll().then((ok) => { setLeaving(null); if (ok) go(); });
+          }}
           onConfirm={() => { const go = leaving.go; setLeaving(null); go(); }}
           onCancel={() => setLeaving(null)}
         />
