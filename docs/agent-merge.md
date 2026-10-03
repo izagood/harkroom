@@ -45,6 +45,18 @@
 { "communities": { "…": { "agents": {} } }, "merge": { "ghUser": "the-merging-account" } }
 ```
 
+## 거절 카드 [7일 주기]
+
+판정이 `not_granted` 이고 **나머지 판정은 통과**(임대·저장소 이름·그 턴을 띄운 것이 사람)하면 서버가 거절 기록(`merge_denial`)을
+남기고 `merge-checks` 의 403 본문에 `denialId` 를 싣는다. 에이전트가 `message.ask` 에 `mergeDenialId` 로 그것을 실으면 서버가
+기록에서 저장소·PR·에이전트 칸을 채운 카드를 세운다(에이전트 본문과 따로). 같은 날 같은 저장소·스레드면 새 카드 대신 횟수가 오른다.
+
+- 버튼은 ask 선택지가 아니다. `POST /agents/:id/merge-denials/:denialId/grant` — 사람 **세션**만(PAT·에이전트 토큰 403), 그
+  에이전트의 소유자만, `:id` 가 기록의 에이전트와 같아야 하고, 기록은 한 번만 쓴다. scope·기한은 본문에서 받지 않는다(기록과 7일).
+- 배포 저장소(`HARKROOM_MERGE_DEPLOY_REPOS`)는 카드에서 주지 않는다 — 설정 화면에서 정확한 이름으로 준다.
+- 주고 나서 소유자가 같은 카드에서 「다시 머지」를 고르면 F4(소유자가 에이전트 자신의 카드에 답함)로 새 턴이 뜬다.
+- 범위 밖: 같은 uid 로 도는 에이전트가 사람의 세션 토큰을 읽어 이 REST 를 부르는 경우(G2 위협 모델과 같다).
+
 ## 한계
 
 - **codex·opencode·kilo·pi 에는 deny/allow 문법이 없다.** 그 하네스에서는 프롬프트의 "머지는 래퍼로만" 지시가

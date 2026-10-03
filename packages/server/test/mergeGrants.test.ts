@@ -5,6 +5,8 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
 import { can, mergeGrantFor } from '../src/auth/permissions.js';
+import { mintPat } from '../src/services/pats.js';
+import { bumpDenialCard, linkDenialCard, prepareDenialCard } from '../src/services/mergeDenials.js';
 
 // 에이전트 머지 권한(090) — 설계 스레드 3deac356, security F1·F2·F4 의 회귀선.
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
@@ -267,6 +269,134 @@ describe('repo.merge grant', () => {
       expect(msg.meta.merge.error).toBe('@channel @bob boom\n@alice');
       // 그 줄로 생긴 멘션 받은편지는 없다(스레드 답 알림은 별개) — bob 은 불리지 않았다.
       expect((await pool.query(`select count(*)::int as n from inbox where message_id = $1 and (reason = 'mention' or account_id = $2)`, [res.json().messageId, bob.accountId])).rows[0].n).toBe(0);
+    });
+  });
+
+  describe('P3 — 거절 카드 [7일 주기] (스레드 febe9ff8, security C1~C6)', () => {
+    const grantFrom = (token: string, denialId: string, target = agentId, payload: Record<string, unknown> = {}) =>
+      app.inject({ method: 'POST', url: `/agents/${target}/merge-denials/${denialId}/grant`, headers: auth(token), payload });
+    const threadOf = async (cause: string) => (await pool.query(`select coalesce(thread_root_id, id) as t from message where id = $1`, [cause])).rows[0].t as string;
+    const refused = async (repo: string, causeAuthor = alice.accountId) => {
+      const cause = await mention(causeAuthor);
+      const l = await lease(cause);
+      const res = await check(l, repo, { number: 42 });
+      return { cause, res, body: res.json() as { error: { code: string; denialId?: string } } };
+    };
+
+    it('C2: not_granted 이고 사람이 띄운 턴이면 denialId 를 준다 — 에이전트가 띄운 턴의 not_granted 에는 없다', async () => {
+      const { body } = await refused('izagood/p3-a');
+      expect(body.error.code).toBe('not_granted');
+      expect(body.error.denialId).toMatch(/^[0-9a-f-]{36}$/);
+      const row = (await pool.query(`select agent_id, scope, pr_number from merge_denial where id = $1`, [body.error.denialId])).rows[0];
+      expect(row).toEqual({ agent_id: agentId, scope: 'repo:izagood/p3-a', pr_number: 42 });
+      // 에이전트(다른 에이전트)의 글로 뜬 턴
+      const byAgent = await refused('izagood/p3-a', otherAgentId);
+      expect(byAgent.body.error.code).toBe('not_granted');
+      expect(byAgent.body.error.denialId).toBeUndefined();
+    });
+
+    it('C1: 카드는 그 거절의 에이전트·스레드·안 씀·안 만료일 때만 — 권한 칸은 기록에서 채운다', async () => {
+      const { cause, body } = await refused('izagood/p3-b');
+      const id = body.error.denialId!;
+      const thread = await threadOf(cause);
+      expect(await prepareDenialCard(pool, { agentId: otherAgentId, denialId: id, channelId: ch, threadRootId: thread })).toEqual({ ok: false, code: 'denial_other_agent' });
+      expect(await prepareDenialCard(pool, { agentId, denialId: id, channelId: ch, threadRootId: await mention(alice.accountId) })).toEqual({ ok: false, code: 'denial_other_thread' });
+      expect(await prepareDenialCard(pool, { agentId, denialId: '00000000-0000-4000-8000-000000000000', channelId: ch, threadRootId: thread })).toEqual({ ok: false, code: 'denial_not_found' });
+      const later = new Date(Date.now() + 25 * 3_600_000);
+      expect(await prepareDenialCard(pool, { agentId, denialId: id, channelId: ch, threadRootId: thread, now: later })).toEqual({ ok: false, code: 'denial_expired' });
+      const ok = await prepareDenialCard(pool, { agentId, denialId: id, channelId: ch, threadRootId: thread });
+      expect(ok).toMatchObject({ ok: true, existingCardId: null, meta: { denialId: id, agentId, ownerAccountId: alice.accountId, repo: 'izagood/p3-b', number: 42, deployRepo: false, count: 1 } });
+    });
+
+    it('C3: 같은 날 같은 저장소·스레드는 카드 한 장 — 다시 막히면 횟수와 버튼의 거절 기록만 바뀐다', async () => {
+      const first = await refused('izagood/p3-c');
+      const thread = await threadOf(first.cause);
+      const p1 = await prepareDenialCard(pool, { agentId, denialId: first.body.error.denialId!, channelId: ch, threadRootId: thread });
+      if (!p1.ok) throw new Error('prepare failed');
+      const card = (await pool.query(
+        `insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, 'card', 'user', $4) returning id`,
+        [ch, thread, agentId, JSON.stringify({ kind: 'ask', ask: { options: [{ id: 'retry', label: 'retry' }, { id: 'later', label: 'later' }] }, mergeDenial: p1.meta })])).rows[0].id as string;
+      await linkDenialCard(pool, p1.meta.denialId, card);
+      // 같은 스레드에서 다시 막힘
+      const l = await lease(first.cause);
+      const again = (await check(l, 'izagood/p3-c', { number: 43 })).json().error.denialId as string;
+      const p2 = await prepareDenialCard(pool, { agentId, denialId: again, channelId: ch, threadRootId: thread });
+      expect(p2).toMatchObject({ ok: true, existingCardId: card });
+      if (!p2.ok) throw new Error('prepare failed');
+      await bumpDenialCard(pool, card, p2.meta);
+      const meta = (await pool.query(`select meta from message where id = $1`, [card])).rows[0].meta.mergeDenial;
+      expect(meta).toMatchObject({ count: 2, denialId: again, number: 43, repo: 'izagood/p3-c' });
+    });
+
+    it('C4·C5: 소유자 사람 세션만, :id 가 기록의 에이전트와 같을 때, 한 번만 — scope·기한은 본문에서 받지 않는다', async () => {
+      const { body } = await refused('izagood/p3-d');
+      const id = body.error.denialId!;
+      // 에이전트 토큰·사람 PAT·소유자 아닌 사람·admin 은 403
+      expect((await app.inject({ method: 'POST', url: `/agents/${agentId}/merge-denials/${id}/grant`, headers: asAgent() })).statusCode).toBe(403);
+      const pat = await mintPat(pool, alice.accountId, 'p3-pat', { actorId: null, actorHandle: null });
+      if (!pat.ok) throw new Error('mint failed');
+      expect((await grantFrom(pat.token, id)).statusCode).toBe(403);
+      expect((await grantFrom(bob.token, id)).statusCode).toBe(403);
+      expect((await grantFrom(admin.token, id)).statusCode).toBe(403);
+      // 남의 에이전트 경로에 이 거절 id — alice 가 other 의 소유자여도 404
+      await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [otherAgentId, alice.accountId]);
+      expect((await grantFrom(alice.token, id, otherAgentId)).statusCode).toBe(404);
+      await pool.query(`update agent_config set owner_account_id = null where account_id = $1`, [otherAgentId]);
+      expect(await mergeGrantFor(pool, agentId, 'izagood/p3-d')).toBeNull();
+      // 소유자 세션 — 본문에 다른 scope·기한을 실어도 무시된다
+      const before = Date.now();
+      const ok = await grantFrom(alice.token, id, agentId, { scope: 'repo:izagood/other', expiresAt: null });
+      expect(ok.statusCode).toBe(200);
+      expect(ok.json().repo).toBe('izagood/p3-d');
+      const g = await mergeGrantFor(pool, agentId, 'izagood/p3-d');
+      expect(g).not.toBeNull();
+      expect(await mergeGrantFor(pool, agentId, 'izagood/other')).toBeNull();
+      const row = (await pool.query(`select expires_at, allow_agent_cause, granted_by from account_grant where account_id = $1 and scope = 'repo:izagood/p3-d'`, [agentId])).rows[0];
+      const days = (new Date(row.expires_at).getTime() - before) / 86_400_000;
+      expect(days).toBeGreaterThan(6.99); expect(days).toBeLessThan(7.01);
+      expect(row.allow_agent_cause).toBe(false);
+      expect(row.granted_by).toBe(alice.accountId);
+      // 한 번만
+      expect((await grantFrom(alice.token, id)).json().error.code).toBe('denial_used');
+      // 감사
+      const audit = (await pool.query(`select detail from audit_log where action = 'grant.given' and detail->>'denialId' = $1`, [id])).rows;
+      expect(audit).toHaveLength(1);
+      expect(audit[0].detail).toMatchObject({ via: 'merge_denial', scope: 'repo:izagood/p3-d' });
+      await revoke(alice.token, 'repo:izagood/p3-d');
+    });
+
+    it('C6: 배포 저장소는 카드에 deployRepo 로 표시되고, REST 는 거절하며 기록을 쓰지 않는다', async () => {
+      const prev = process.env.HARKROOM_MERGE_DEPLOY_REPOS;
+      process.env.HARKROOM_MERGE_DEPLOY_REPOS = 'Izagood/Homelab, bad name';
+      try {
+        const { cause, body } = await refused('izagood/homelab');
+        const id = body.error.denialId!;
+        const p = await prepareDenialCard(pool, { agentId, denialId: id, channelId: ch, threadRootId: await threadOf(cause) });
+        expect(p).toMatchObject({ ok: true, meta: { deployRepo: true } });
+        const res = await grantFrom(alice.token, id);
+        expect(res.statusCode).toBe(403);
+        expect(res.json().error.code).toBe('deploy_repo');
+        expect((await pool.query(`select used_at from merge_denial where id = $1`, [id])).rows[0].used_at).toBeNull();
+        expect(await mergeGrantFor(pool, agentId, 'izagood/homelab')).toBeNull();
+      } finally {
+        if (prev === undefined) delete process.env.HARKROOM_MERGE_DEPLOY_REPOS; else process.env.HARKROOM_MERGE_DEPLOY_REPOS = prev;
+      }
+    });
+
+    it('준 뒤 카드 meta 에 준 사람·기한이 적힌다', async () => {
+      const { cause, body } = await refused('izagood/p3-e');
+      const id = body.error.denialId!;
+      const thread = await threadOf(cause);
+      const p = await prepareDenialCard(pool, { agentId, denialId: id, channelId: ch, threadRootId: thread });
+      if (!p.ok) throw new Error('prepare failed');
+      const card = (await pool.query(
+        `insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, 'card', 'user', $4) returning id`,
+        [ch, thread, agentId, JSON.stringify({ kind: 'ask', ask: { options: [{ id: 'retry', label: 'retry' }, { id: 'later', label: 'later' }] }, mergeDenial: p.meta })])).rows[0].id as string;
+      await linkDenialCard(pool, id, card);
+      expect((await grantFrom(alice.token, id)).json().cardMessageId).toBe(card);
+      const meta = (await pool.query(`select meta from message where id = $1`, [card])).rows[0].meta.mergeDenial;
+      expect(meta.granted).toMatchObject({ by: alice.accountId });
+      await revoke(alice.token, 'repo:izagood/p3-e');
     });
   });
 });
