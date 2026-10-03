@@ -177,7 +177,7 @@ describe('BlockedCard', () => {
   it('cause_not_human(D2)은 [설정 바꾸기…] — 지금 grant 그대로 열고 만료는 유지가 기본', async () => {
     const until = new Date(Date.now() + 5 * 86_400_000).toISOString();
     const c = setup({ listGrants: vi.fn(async () => [{ accountId: 'agent-1', capability: 'api.call', scope: `connector:${conn().id}`, grantedBy: ME, grantedAt: '', expiresAt: until,
-      limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, writeNeedsHumanCause: true }]) });
+      limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, writeNeedsHumanCause: true, delegateDepth: 2 }]) });
     render(<BlockedCard message={msg({ code: 'cause_not_human', method: 'POST', path: '/api/x' })} onOpenSettings={() => {}} />);
     expect(screen.getByTestId('blocked-card').textContent).toContain('이 권한은 사람이 시킨 턴에서만 쓸 수 있다');
     expect(screen.queryByRole('button', { name: '권한 주기…' })).toBeNull();
@@ -190,8 +190,19 @@ describe('BlockedCard', () => {
     fireEvent.click(within(form).getByRole('button', { name: '바꾸기' }));
     await waitFor(() => expect(c.putGrant).toHaveBeenCalled());
     expect((c.putGrant.mock.calls[0] as unknown as [string, Record<string, unknown>])[1]).toMatchObject({
-      limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: until, writeNeedsHumanCause: false,
+      limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: until, writeNeedsHumanCause: false, delegateDepth: 2,
     });
+  });
+
+  it('대화상자를 닫았다 다시 열면 grant 를 새로 읽는다(security D1 메모)', async () => {
+    const c = setup();
+    render(<BlockedCard message={msg({})} onOpenSettings={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: '권한 주기…' }));
+    await screen.findByTestId('api-grant-form');
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
+    fireEvent.click(screen.getByRole('button', { name: '권한 주기…' }));
+    await screen.findByTestId('api-grant-form');
+    expect(c.listGrants).toHaveBeenCalledTimes(2);
   });
 
   it('소유자가 아니면 버튼 없이 「소유자만」', () => {

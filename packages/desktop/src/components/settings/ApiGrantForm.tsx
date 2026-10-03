@@ -71,6 +71,8 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, on
         limits: { methods, pathPrefix },
         expiresAt: effectiveExpiry === 'keep' ? existing?.expiresAt ?? null : days === null ? null : new Date(Date.now() + days * 86_400_000).toISOString(),
         ...(scope === 'write' ? { writeNeedsHumanCause: humanOnly === 'yes' } : {}),
+        // PUT 은 upsert 라 안 보낸 칸은 기본값으로 돌아간다 — 다시 줄 수 있는 단계를 조용히 0 으로 만들지 않는다(security D2 메모).
+        ...(existing ? { delegateDepth: existing.delegateDepth ?? 0 } : {}),
       });
       await onDone();
     } catch (e) {
@@ -96,6 +98,7 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, on
           <div>{t('apiGrant.now', { what: describe(existing.limits?.methods ?? [], existing.limits?.pathPrefix ?? '', existing.expiresAt) })}</div>
           <div>{t('apiGrant.next', { what: describe(methods, pathPrefix, null) })}</div>
           <div>{t('apiGrant.replaceNote')}</div>
+          {existing.expiresAt !== null && Date.parse(existing.expiresAt) <= Date.now() && <div data-testid="api-grant-expired">{t('apiGrant.expiredRenew')}</div>}
         </div>
       )}
       <label className="flex flex-col gap-1">

@@ -62,6 +62,8 @@ export function BlockedCard({ message, onOpenSettings }: { message: MessageRow; 
       (rows) => setExisting(rows.find((g) => g.capability === 'api.call' && g.scope === `connector:${connectorIdForLoad ?? ''}`) ?? null),
       () => setExisting(null));
   }, [open, connectors, agentIdForLoad, connectorIdForLoad]);
+  // 닫으면 읽어 둔 것을 버린다 — 다시 열 때 그 순간의 grant 로 「지금」을 그린다(security D1 메모).
+  const close = () => { setOpen(false); setConnectors(null); setExisting(undefined); };
   if (!b) return null;
 
   const handle = accounts[b.agentId]?.handle ?? b.agentId.slice(0, 8);
@@ -110,13 +112,13 @@ export function BlockedCard({ message, onOpenSettings }: { message: MessageRow; 
       )}
       {!isOwner && <p className="mt-1 text-fg-subtle" data-testid="blocked-owner-only">{t('blocked.ownerOnly', { owner })}</p>}
       {open && (
-        <Overlay label={t('blocked.dialogTitle', { handle })} onClose={() => setOpen(false)} className="w-[32rem]" align="center">
+        <Overlay label={t('blocked.dialogTitle', { handle })} onClose={close} className="w-[32rem]" align="center">
           <div className="p-4">
             <div className="text-body font-medium text-fg">{t('blocked.dialogTitle', { handle })}</div>
             <p className="mt-1 text-meta text-fg-subtle">{t('blocked.dialogNote')}</p>
             {connectors === null || existing === undefined
               ? <p className="mt-2 text-meta text-fg-muted">{t('secrets.loading')}</p>
-              : <ApiGrantForm agentId={b.agentId} connectors={mine} initial={initial} existing={existing} onCancel={() => setOpen(false)} onDone={() => { setOpen(false); setDone(true); }} />}
+              : <ApiGrantForm agentId={b.agentId} connectors={mine} initial={initial} existing={existing} onCancel={close} onDone={() => { close(); setDone(true); }} />}
           </div>
         </Overlay>
       )}

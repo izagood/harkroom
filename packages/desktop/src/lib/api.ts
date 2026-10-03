@@ -739,7 +739,7 @@ export class ApiClient {
   listGrants(accountId: string): Promise<GrantRow[]> {
     return this.req<{ grants: GrantRow[] }>('GET', `/accounts/${accountId}/grants`).then((r) => r.grants);
   }
-  putGrant(accountId: string, body: { capability: Capability; scope: string; expiresAt?: string | null; allowAgentCause?: boolean; limits?: ApiGrantLimits; writeNeedsHumanCause?: boolean }): Promise<GrantRow[]> {
+  putGrant(accountId: string, body: { capability: Capability; scope: string; expiresAt?: string | null; allowAgentCause?: boolean; limits?: ApiGrantLimits; writeNeedsHumanCause?: boolean; delegateDepth?: number }): Promise<GrantRow[]> {
     return this.req<{ grants: GrantRow[] }>('PUT', `/accounts/${accountId}/grants`, body).then((r) => r.grants);
   }
   deleteGrant(accountId: string, capability: Capability, scope: string): Promise<void> {

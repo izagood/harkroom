@@ -4331,6 +4331,7 @@ export const en = {
   'apiGrant.pathUnknown': 'The blocked path is unknown — type the path to give.',
   'blocked.pathOmitted': '(path omitted)',
   'blocked.changeSetting': 'Change setting…',
+  'apiGrant.expiredRenew': 'Expired — this gives it anew.',
   'secrets.errNameTaken': 'A secret with that name already exists.',
   'secrets.errInDescription': 'The description looks like it contains a key. Descriptions are visible to agents — take the value out.',
   'secrets.errBadValue': 'The value was refused (empty or over 64 KB).',
