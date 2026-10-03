@@ -54,6 +54,8 @@ import { useAgentPool } from './useAgentPool';
 import { copyText } from '../../lib/clipboard';
 import { navKey } from './sections';
 import { AGENT_DETAIL_TABS, parseAgentTarget, type AgentDetailTab } from './agentDetailTabs';
+import { ConfirmDialog } from '../ConfirmDialog';
+import { ImmediateBadge, PendingEditsContext, setLeaveGuard, type PendingHandlers, type RegisterPending } from './pendingEdits';
 
 /** #177: 클립보드가 없거나 거부되면 **조용히 실패하지 않는다** — 화면에 있는 그 명령
  *  텍스트를 선택 상태로 만들어 사람이 ⌘C 할 수 있게 하고, 오류를 눈에 보이게 남긴다.
@@ -223,6 +225,24 @@ const DETAIL_TAB_LABEL = {
   permissions: 'agents.detail.tab.permissions',
   memory: 'agents.detail.tab.memory',
 } as const satisfies Record<AgentDetailTab, string>;
+
+/**
+ * 저장 바에 걸린 것이 **어느 탭의 칸인가**(A3 수정, designer). 저장이 실패하면 오류 줄은 그 칸 자리에
+ * 서는데, 그 탭이 안 보이면 사람에게는 바만 남는다 — 바가 이 표로 그 탭을 가리킨다. 탭 이름 옆의
+ * 점(바뀐 것이 있는 탭)도 이 표를 읽는다.
+ */
+const DRAFT_FIELD_TAB = {
+  handle: 'profile', instructions: 'profile',
+  harness: 'run', model: 'run', effort: 'run',
+  workingDir: 'permissions', mentionPermission: 'permissions', ownerAccountId: 'permissions',
+} as const satisfies Record<keyof Draft, AgentDetailTab>;
+/** `usePendingEdit` 로 등록하는 칸의 탭. */
+const PENDING_KEY_TAB: Record<string, AgentDetailTab> = { 'local-folder': 'run', pickable: 'permissions' };
+/** 여러 탭이면 탭 순서로 앞의 것. */
+const firstTab = (tabs: Iterable<AgentDetailTab>): AgentDetailTab | null => {
+  const set = new Set(tabs);
+  return AGENT_DETAIL_TABS.find((x) => set.has(x)) ?? null;
+};
 
 export function AgentsSettings({ targetId }: { targetId?: string }) {
   // 시간 표기는 언어를 따른다(`lib/time.ts`). 접두는 사전을 지난다.
@@ -615,7 +635,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     const agent = agents.find((a) => a.id === target.agentId);
     if (!agent) return;
     pickedFor.current = targetId;
-    pick(agent, target.tab ?? 'overview');
+    // 다른 화면에서 다른 에이전트를 열 때도 저장 안 한 초안을 묻지 않고 버리지 않는다(security n2).
+    guardLeave(() => pick(agent, target.tab ?? 'overview'));
   }, [targetId, agents]);
 
   // 기본값은 admin 전용 라우트다(`GET /settings/agent-defaults`). admin 이 아닌 사람에게
@@ -786,6 +807,45 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     && JSON.stringify(draft) !== JSON.stringify(draftOf(selected));
 
   /**
+   * 저장 바(A3, `pendingEdits.tsx`). 이 화면 자신의 초안(이름·지시문·실행 설정)은 바뀐 칸 수로
+   * 세고, 따로 저장하는 칸(폴더·모델 목록)은 등록한 수를 더한다. 합이 0 이면 바는 안 선다.
+   */
+  const pendingHandlers = useRef(new Map<string, PendingHandlers>());
+  const [pendingCounts, setPendingCounts] = useState<Record<string, number>>({});
+  const registerPending = useCallback<RegisterPending>((key, count, handlers) => {
+    if (handlers) pendingHandlers.current.set(key, handlers);
+    else pendingHandlers.current.delete(key);
+    setPendingCounts((prev) => ((prev[key] ?? 0) === count ? prev : { ...prev, [key]: count }));
+  }, []);
+  // [하네스 기본값 쓰기]는 초안 칸이 아니라 `customized` 를 내린다 — 그것도 저장할 변경 하나다.
+  const draftTabs: AgentDetailTab[] = selected !== null && draft !== null
+    ? [
+      ...(Object.keys(draft) as (keyof Draft)[])
+        .filter((k) => draft[k] !== draftOf(selected)[k])
+        .map((k) => DRAFT_FIELD_TAB[k]),
+      ...(customized !== (selected.model !== null || selected.effort !== null) ? ['run' as const] : []),
+    ]
+    : [];
+  const draftChanges = draftTabs.length;
+  const pendingTotal = draftChanges + Object.values(pendingCounts).reduce((a, b) => a + b, 0);
+  /** 바뀐 것이 있는 탭 — 탭 이름 옆에 점을 찍는다(designer n1). */
+  const pendingTabs = new Set<AgentDetailTab>([
+    ...draftTabs,
+    ...Object.entries(pendingCounts).filter(([, n]) => n > 0).map(([k]) => PENDING_KEY_TAB[k] ?? 'overview'),
+  ]);
+  /** 마지막 [저장]에서 저장하지 못한 것의 수와 그 칸이 있는 탭. 다시 저장하거나 되돌리면 지운다. */
+  const [saveFailed, setSaveFailed] = useState<{ n: number; tab: AgentDetailTab } | null>(null);
+  /** 저장 안 한 것이 있는데 상세를 떠나려 할 때 — 떠날 길을 들고 묻는다. */
+  const [leaving, setLeaving] = useState<{ go: () => void } | null>(null);
+  const guardLeave = (go: () => void) => {
+    if (selected !== null && pendingTotal > 0) setLeaving({ go });
+    else go();
+  };
+  // 설정 목차·← 뒤로로 화면째 떠날 때도 같은 것을 묻는다 — 저장 안 한 것이 있는 동안만 건다.
+  const hasPending = selected !== null && pendingTotal > 0;
+  useEffect(() => (hasPending ? setLeaveGuard((go) => setLeaving({ go })) : undefined), [hasPending]);
+
+  /**
    * 사진을 걸거나(파일) 지운다(null). 단계·확인·진행률은 `useAvatarEdit` 이 센다 —
    * `ProfileSettings` 와 같은 것을 두 벌 세면 한쪽만 고치는 날이 온다.
    *
@@ -869,31 +929,40 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   /** 만들 때와 바꿀 때가 같은 규칙이다 — 서버의 `^[a-z0-9_-]{2,32}$` 와 같은 문법. */
   const validHandle = (h: string) => /^[a-z0-9_-]{2,32}$/.test(h);
 
+  /** 고른 에이전트의 초안을 저장한다. 실패는 화면 위쪽 오류 줄이 말하고 `false` 를 돌려준다(저장 바가 센다). */
+  const saveSelected = async (): Promise<boolean> => {
+    setError(null);
+    if (!draft || !selected) return false;
+    if (!validHandle(draft.handle)) {
+      setError(t('agents.create.invalidName'));
+      return false;
+    }
+    setBusy(true);
+    try {
+      const updated = await getController().updateAgent(selected.id, {
+        // 바뀐 때만 싣는다. 늘 실으면 이름 말고 다른 것을 고치러 온 저장이 전부
+        // 이름 변경 감사·WS 이벤트를 끌고 다닌다.
+        ...(draft.handle !== selected.handle ? { handle: draft.handle } : {}),
+        ...configPatch(draft),
+      });
+      setSelected(updated);
+      reload();
+      return true;
+    } catch (e) {
+      // 이름 충돌은 **고칠 수 있는 실패**다. "저장하지 못했다"로 뭉뚱그리면 사람은
+      // 무엇을 고쳐야 할지 모른 채 같은 이름으로 다시 누른다.
+      setError(e instanceof ApiError && e.code === 'handle_taken'
+        ? t('agents.detail.handleTaken')
+        : t('agents.detail.saveFailed'));
+      return false;
+    } finally { setBusy(false); }
+  };
+
   const submit = async () => {
     setError(null);
     if (!draft) return;
     if (selected) {
-      if (!validHandle(draft.handle)) {
-        setError(t('agents.create.invalidName'));
-        return;
-      }
-      setBusy(true);
-      try {
-        const updated = await getController().updateAgent(selected.id, {
-          // 바뀐 때만 싣는다. 늘 실으면 이름 말고 다른 것을 고치러 온 저장이 전부
-          // 이름 변경 감사·WS 이벤트를 끌고 다닌다.
-          ...(draft.handle !== selected.handle ? { handle: draft.handle } : {}),
-          ...configPatch(draft),
-        });
-        setSelected(updated);
-        reload();
-      } catch (e) {
-        // 이름 충돌은 **고칠 수 있는 실패**다. "저장하지 못했다"로 뭉뚱그리면 사람은
-        // 무엇을 고쳐야 할지 모른 채 같은 이름으로 다시 누른다.
-        setError(e instanceof ApiError && e.code === 'handle_taken'
-          ? t('agents.detail.handleTaken')
-          : t('agents.detail.saveFailed'));
-      } finally { setBusy(false); }
+      await saveSelected();
       return;
     }
     if (!validHandle(draft.handle)) {
@@ -928,6 +997,26 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     } catch {
       setError(t('agents.create.failed'));
     } finally { setBusy(false); }
+  };
+
+  /** 저장 바의 [저장] — 바뀐 칸을 차례로 저장한다. 실패한 칸은 제 자리에 이유를 그리고 바는 남는다. */
+  const saveAll = async (): Promise<boolean> => {
+    setSaveFailed(null);
+    let failed = 0;
+    const failedTabs: AgentDetailTab[] = [];
+    if (draftChanges > 0 && !(await saveSelected())) { failed += draftChanges; failedTabs.push(...draftTabs); }
+    for (const [key, h] of [...pendingHandlers.current.entries()]) {
+      if (!(await h.save())) { failed += pendingCounts[key] ?? 1; failedTabs.push(PENDING_KEY_TAB[key] ?? 'overview'); }
+    }
+    const tab = firstTab(failedTabs);
+    if (failed > 0 && tab) setSaveFailed({ n: failed, tab });
+    return failed === 0;
+  };
+  /** 저장 바의 [되돌리기] — 서버 값으로. 고른 에이전트를 다시 고르면 초안이 다시 채워진다(`pick`). */
+  const revertAll = () => {
+    setSaveFailed(null);
+    if (selected) pick(selected, detailTab);
+    for (const h of [...pendingHandlers.current.values()]) h.revert();
   };
 
   /**
@@ -1346,6 +1435,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     : { className: 'space-y-4' });
 
   return (
+    <PendingEditsContext.Provider value={registerPending}>
     <div className="relative flex h-full min-h-0 bg-surface-raised">
 
 
@@ -1358,7 +1448,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             <button
               data-testid="agent-back"
               className="rounded-row px-1.5 py-0.5 text-body text-fg-muted hover:bg-surface-hover"
-              onClick={() => { setView('grid'); setSelected(null); setError(null); }}
+              onClick={() => guardLeave(() => { setView('grid'); setSelected(null); setError(null); })}
             >
               {t('agents.detail.back')}
             </button>
@@ -1446,6 +1536,15 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   onClick={() => setDetailTab(id)}
                 >
                   {t(DETAIL_TAB_LABEL[id])}
+                  {/* 바뀐 것이 있는 탭(designer n1). 저장 바는 모든 탭에 걸치므로 어디서 고쳤는지 기억할 필요가 없게. */}
+                  {pendingTabs.has(id) && (
+                    <span
+                      data-testid={`agent-tab-dot-${id}`}
+                      role="img"
+                      aria-label={t('agents.detail.tabChanged')}
+                      className="ml-1 inline-block size-1.5 rounded-full bg-fg-muted align-middle"
+                    />
+                  )}
                 </button>
               ))}
             </div>
@@ -1634,6 +1733,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 <div className={`rounded-row border p-3 ${selected.disabled ? 'border-border bg-surface' : 'border-danger-border bg-danger-surface'}`}>
                   <div className="text-meta font-medium text-fg-muted">
                     {selected.disabled ? t('agents.disable.headingDisabled') : t('agents.disable.headingEnabled')}
+                    <ImmediateBadge label={t('agents.detail.immediate')} />
                   </div>
                   {selected.disabled ? (
                     <div className="mt-2">
@@ -2300,7 +2400,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
               {selected && (isAdmin || isOwner) && (
                 <div className="rounded-row border border-border p-3">
-                  <div className="text-meta font-medium text-fg-muted">PAT (Personal Access Token)</div>
+                  <div className="text-meta font-medium text-fg-muted">PAT (Personal Access Token)<ImmediateBadge label={t('agents.detail.immediate')} /></div>
                   <div className="mt-2 space-y-2">
                     {pats === null ? (
                       <div className="text-meta text-fg-muted">{t('agents.pat.loading')}</div>
@@ -2593,31 +2693,51 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           </div>
 
           {/*
-            **저장은 한 쌍이다**(문서 원칙 05). 전에는 저장 버튼이 카드 안 회색 하나와 화면
-            아래 파란 하나로 갈려 있었다 — 어느 것이 무엇을 저장하는지 알 수 없었다.
-            회색 쪽(워크스페이스 기본값)은 Task 16 이 다른 화면으로 뺐고, 여기 남은 하나에
-            **되돌리기**를 짝지어 하단에만 둔다.
+            **저장 바**(designer A3). 고른 에이전트에서는 **바뀐 것이 있을 때만** 서고 그 수를 말한다 —
+            전에는 고친 것이 없어도 [Save changes] 가 같은 모양으로 떠 있어 무엇이 저장 대기인지
+            알 수 없었다. 칸마다 있던 [Save]·[Save list] 는 여기로 모였다(`pendingEdits.tsx`).
+            새 에이전트 만들기는 만들 단추가 하나뿐이라 그대로 늘 선다.
           */}
-          <footer className="flex w-full max-w-2xl gap-2 border-t border-border px-5 py-3">
-            <Button
-              variant="primary"
-              disabled={busy || draft === null}
-              onClick={() => void submit()}
+          {(!selected || pendingTotal > 0) && (
+            <footer
+              data-testid={selected ? 'agent-save-bar' : undefined}
+              className="flex w-full max-w-2xl items-center gap-2 border-t border-border px-5 py-3"
             >
-              {selected ? t('agents.detail.save') : t('agents.detail.submitNew')}
-            </Button>
-            {/* 되돌리기는 **고친 것이 있을 때만** 선다 — 누를 것이 없는 버튼을 그리지 않는다.
-                고른 에이전트를 다시 고르면 서버 값으로 초안이 다시 채워진다(`pick`). */}
-            {selected && dirty && (
+              {selected && (
+                <span data-testid="agent-save-count" className="text-meta text-fg-muted">
+                  {t('agents.detail.pendingCount', { n: String(pendingTotal) })}
+                </span>
+              )}
+              {/* 저장하지 못한 것(designer A3 수정 b). 오류 줄은 칸 자리에 그대로 두고, 바는 **어느 탭인지만**
+                  가리킨다 — 그 칸이 안 보이는 탭에 있으면 사람에게는 바만 남기 때문이다. */}
+              {selected && saveFailed && (
+                <span role="alert" data-testid="agent-save-failed" className="flex items-center gap-1 text-meta text-danger">
+                  {t('agents.detail.saveFailedCount', { n: String(saveFailed.n) })}
+                  {saveFailed.tab !== detailTab && (
+                    <button
+                      data-testid="agent-save-failed-goto"
+                      className="rounded-row px-1 underline hover:bg-surface-hover"
+                      onClick={() => setDetailTab(saveFailed.tab)}
+                    >
+                      {t('agents.detail.saveFailedGoto', { tab: t(DETAIL_TAB_LABEL[saveFailed.tab]) })}
+                    </button>
+                  )}
+                </span>
+              )}
+              {selected && (
+                <Button variant="secondary" disabled={busy} onClick={revertAll}>
+                  {t('agents.detail.revert')}
+                </Button>
+              )}
               <Button
-                variant="secondary"
-                disabled={busy}
-                onClick={() => pick(selected, detailTab)}
+                variant="primary"
+                disabled={busy || draft === null}
+                onClick={() => void (selected ? saveAll() : submit())}
               >
-                {t('agents.detail.revert')}
+                {selected ? t('agents.detail.save') : t('agents.detail.submitNew')}
               </Button>
-            )}
-          </footer>
+            </footer>
+          )}
         </div>
       {createdToast && (
         <div
@@ -2637,7 +2757,28 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           </button>
         </div>
       )}
+      {leaving && (
+        <ConfirmDialog
+          title={t('agents.detail.leaveTitle', { n: String(pendingTotal) })}
+          detail={t('agents.detail.leaveNote')}
+          detailKind="note"
+          confirmLabel={t('agents.detail.leaveDiscard')}
+          cancelLabel={t('agents.detail.leaveStay')}
+          danger
+          busy={busy}
+          extraLabel={t('agents.detail.leaveSave')}
+          // 저장하고 나간다(designer n2). 하나라도 못 저장하면 떠나지 않는다 — 실패를 말할 자리(바)가
+          // 이 화면에 있다.
+          onExtra={() => {
+            const go = leaving.go;
+            void saveAll().then((ok) => { setLeaving(null); if (ok) go(); });
+          }}
+          onConfirm={() => { const go = leaving.go; setLeaving(null); go(); }}
+          onCancel={() => setLeaving(null)}
+        />
+      )}
     </div>
+    </PendingEditsContext.Provider>
   );
 }
 

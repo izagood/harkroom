@@ -19,6 +19,7 @@ import { useT } from '../../i18n/useT';
 import { useLocale } from '../../i18n/useT';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { hasOperatorLocalSurface } from '../../lib/operatorLocal';
+import { ImmediateBadge } from './pendingEdits';
 import { MergeGhUserRow } from './MergeGhUserRow';
 
 const CAP = 'repo.merge' as const;
@@ -89,7 +90,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
 
   return (
     <div className="rounded-row border border-border p-3" data-testid="agent-grants">
-      <div className="text-meta font-medium text-fg-muted">{t('agents.grants.heading')}</div>
+      <div className="text-meta font-medium text-fg-muted">{t('agents.grants.heading')}<ImmediateBadge label={t('agents.detail.immediate')} /></div>
       <p className="mt-1 text-meta text-fg-subtle">{t('agents.grants.note')}</p>
 
       {/* 머지 gh 계정(P2) — 소유자인 사람에게만, 이 기기에서 도는 에이전트에만. */}

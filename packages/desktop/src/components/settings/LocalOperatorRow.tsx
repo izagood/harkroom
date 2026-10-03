@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { getController } from '../../state/controller';
 import { hasOperatorLocalSurface, listLocalAgents, removeLocalAgent, setLocalAgent } from '../../lib/operatorLocal';
 import { useT } from '../../i18n/useT';
+import { usePendingEdit } from './pendingEdits';
 
 interface LocalState { registered: boolean; present: boolean; workingDir: string }
 
@@ -32,14 +33,23 @@ export function LocalOperatorRow({ agentId, disabled }: { agentId: string; disab
   }, [available, baseUrl, agentId]);
   useEffect(() => { load(); }, [load]);
 
-  if (!available || !baseUrl) return null;
-
-  const run = async (fn: () => Promise<void>, done: string) => {
+  const run = async (fn: () => Promise<void>, done: string): Promise<boolean> => {
     setBusy(true); setNotice(null);
-    try { await fn(); setNotice(done); load(); }
-    catch (e) { setNotice(t('agents.local.failed', { reason: e instanceof Error ? e.message : String(e) })); }
+    try { await fn(); setNotice(done); load(); return true; }
+    catch (e) { setNotice(t('agents.local.failed', { reason: e instanceof Error ? e.message : String(e) })); return false; }
     finally { setBusy(false); }
   };
+
+  // 폴더는 글자를 치는 칸이라 상세의 저장 바로 모은다(A3). 넣기·빼기 체크는 바로 적용이다.
+  const folderDirty = state !== null && state !== 'error' && state.present && draft !== state.workingDir;
+  const inBar = usePendingEdit(
+    'local-folder',
+    folderDirty ? 1 : 0,
+    () => (baseUrl ? run(() => setLocalAgent(baseUrl, agentId, { workingDir: draft }), t('agents.local.saved')) : Promise.resolve(false)),
+    () => { if (state !== null && state !== 'error') setDraft(state.workingDir); },
+  );
+
+  if (!available || !baseUrl) return null;
 
   return (
     <div className="mt-3 border-t border-border pt-3" data-testid="agent-local-operator">
@@ -77,13 +87,13 @@ export function LocalOperatorRow({ agentId, disabled }: { agentId: string; disab
                 disabled={busy || disabled}
                 onChange={(e) => setDraft(e.target.value)}
               />
-              <button
+              {!inBar && <button
                 className="rounded-row border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
                 disabled={busy || disabled || draft === state.workingDir}
                 onClick={() => void run(() => setLocalAgent(baseUrl, agentId, { workingDir: draft }), t('agents.local.saved'))}
               >
                 {t('agents.local.save')}
-              </button>
+              </button>}
             </div>
           )}
           {notice && <p className="mt-1 text-meta text-fg-subtle" data-testid="agent-local-notice">{notice}</p>}
