@@ -1380,13 +1380,18 @@ function buildMcpServer(
       // 러너가 실을 앞 recordTop 개를 recall_count 로 센다. 옛 서버는 둘 다 버린다 — 러너는 제 쪽에서도 거른다.
       exclude: z.array(z.string().max(300)).max(200).optional(),
       recordTop: z.number().int().min(0).max(5).optional(),
+      // recall 모드만(G): 이번에 새로 온 말. 주면 그 낱말이 이름·요약에 하나 이상 걸린 것만 돌려주고(후속 턴 게이트)
+      // 응답에 focusTerms 를 싣는다. 옛 서버는 버린다 — 러너는 focusTerms 가 없으면 루트 머리 없이 다시 묻는다.
+      focus: z.string().max(2000).optional(),
       // 보관된 것(097)도 찾는다 — 에이전트가 직접 찾을 때만. recall 은 보관을 보지 않는다.
       includeArchived: z.boolean().optional(),
     },
-  }, async ({ query, limit, includeValue, recall, exclude, recordTop, includeArchived }) => {
+  }, async ({ query, limit, includeValue, recall, exclude, recordTop, focus, includeArchived }) => {
     const res = await searchMemory(pool, account.id, query, {
       limit: limit ?? 5, includeValue: includeValue ?? false, recall: recall ?? false,
-      ...(recall ? { exclude: exclude ?? [], recordTop: recordTop ?? 0 } : { includeArchived: includeArchived ?? false }),
+      ...(recall
+        ? { exclude: exclude ?? [], recordTop: recordTop ?? 0, ...(focus !== undefined ? { focus } : {}) }
+        : { includeArchived: includeArchived ?? false }),
     });
     return jsonResult(recall ? res : { hits: res.hits });
   });

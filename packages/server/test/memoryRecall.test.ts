@@ -45,6 +45,26 @@ const row = (slug: string, description: string | null, value: string, kind: Reca
   ({ slug, description, value, kind, updatedAt: new Date(0) });
 
 describe('rankRecall', () => {
+  // G: 후속 턴 게이트 — 새 말(focus) 낱말이 이름·요약에 하나도 안 걸린 것은 루트 낱말만으로는 싣지 않는다.
+  it('focus 를 주면 focus 낱말이 이름·요약에 걸린 것만 남고, termHits 로 무엇에 걸렸는지 말한다', () => {
+    const rows = [
+      row('mem/deploy-recipe', '배포 절차', ''),   // 루트 낱말(배포)만
+      row('mem/deploy-rollback', '배포 되돌림', ''), // 루트 + 새 말(되돌림)
+      row('mem/rollback-db', '되돌림 DB', ''),       // 새 말만
+    ];
+    const terms = ['되돌림', '배포'];
+    const all = rankRecall(terms, rows, 5);
+    expect(all.map((h) => h.slug)).toEqual(['mem/deploy-rollback', 'mem/deploy-recipe', 'mem/rollback-db']);
+    expect(all[0]!.termHits).toEqual(['되돌림', '배포']);
+    const gated = rankRecall(terms, rows, 5, { focus: new Set(['되돌림']) });
+    // 루트 낱말은 순위만 돕는다 — 둘 다 걸린 것이 위.
+    expect(gated.map((h) => h.slug)).toEqual(['mem/deploy-rollback', 'mem/rollback-db']);
+  });
+
+  it('focus 가 비어 있으면(새 말에 낱말이 없다) 아무것도 싣지 않는다', () => {
+    expect(rankRecall(['배포'], [row('mem/deploy-recipe', '배포 절차', '')], 5, { focus: new Set() })).toEqual([]);
+  });
+
   it('이름·요약 일치가 없으면 본문이 아무리 걸려도 싣지 않는다', () => {
     const hits = rankRecall(['캐시', '러너'], [row('mem/x', null, '캐시 러너 캐시')], 5);
     expect(hits).toEqual([]);

@@ -330,6 +330,8 @@ export interface MemorySearchHit {
   nameHits?: number;
   /** recall 모드만: 그 판의 시각. 러너가 `slug@updatedAt` 으로 "이 판을 이미 실었나"를 가른다(F6). */
   updatedAt?: string;
+  /** recall 모드만: 이름·요약에 걸린 낱말(G). 러너 로그와 후속 턴 게이트가 "무엇으로 걸렸나"를 본다. */
+  termHits?: string[];
 }
 
 /** 한국어 조사가 붙은 낱말도 걸리게 끝의 흔한 조사를 떼어 본다(형태소 분석기 없이 싼 근사). */
@@ -393,6 +395,9 @@ function normalizeTerm(raw: string): string | null {
   }
   return t;
 }
+
+/** focus 가 있을 때 낱말 상한 — 새 말 12개 + 루트 머리 몫(G). */
+export const RECALL_FOCUS_TERM_CAP = 16;
 
 export function searchTerms(query: string, opts: { exclude?: ReadonlySet<string> } = {}): string[] {
   const out = new Set<string>();
@@ -469,27 +474,34 @@ function countOccurrences(hay: string, needle: string): number {
  * - 점수 = 이름·요약 3 + 본문 1(낱말당, 전과 같다). 동점은 이름 일치 수 → 본문 출현 수 → slug.
  *   전에는 동점을 최근 수정 순으로 갈라, 같은 짝이 세션마다 실렸다(감사 ⑤).
  */
-export function rankRecall(terms: string[], rows: RecallCandidate[], limit: number): (MemorySearchHit & { nameHits: number })[] {
+export function rankRecall(
+  terms: string[], rows: RecallCandidate[], limit: number, opts: { focus?: ReadonlySet<string> } = {},
+): (MemorySearchHit & { nameHits: number; termHits: string[] })[] {
   const scored = [];
   for (const r of rows) {
     // 이름이 journal 인데 kind 가 topic 으로 남은 행(`mem/journal/e2cc9c57`)도 journal 로 본다.
     if (r.slug === 'core' || r.kind === 'journal' || r.slug.startsWith('mem/journal/')) continue;
     const name = `${r.slug.toLowerCase()}\n${(r.description ?? '').toLowerCase()}`;
     const body = r.value.toLowerCase();
-    let nameHits = 0; let bodyHits = 0; let occurrences = 0;
+    let bodyHits = 0; let occurrences = 0;
+    const termHits: string[] = [];
     for (const t of terms) {
       const count = termMatcher(t);
-      if (count(name)) nameHits++;
+      if (count(name)) termHits.push(t);
       const c = count(body);
       if (c) { bodyHits++; occurrences += c; }
     }
+    const nameHits = termHits.length;
     if (!nameHits) continue;
-    scored.push({ r, nameHits, score: nameHits * 3 + bodyHits, occurrences });
+    // 후속 턴 게이트(G): 새 말의 낱말이 이름·요약에 하나도 안 걸린 것은 싣지 않는다 — 루트 머리만으로 걸린
+    // 것은 첫 턴에 이미 실렸고, 그것이 빠진 자리에 3·4순위가 올라와 잡음이 됐다(qa M4: 후속 턴 정답 6/92).
+    if (opts.focus && !termHits.some((t) => opts.focus!.has(t))) continue;
+    scored.push({ r, nameHits, termHits, score: nameHits * 3 + bodyHits, occurrences });
   }
   scored.sort((a, b) => b.score - a.score || b.nameHits - a.nameHits || b.occurrences - a.occurrences
     || (a.r.slug < b.r.slug ? -1 : a.r.slug > b.r.slug ? 1 : 0));
-  return scored.slice(0, limit).map(({ r, nameHits, score }) => ({
-    slug: r.slug, description: r.description, kind: r.kind, score, nameHits, value: r.value,
+  return scored.slice(0, limit).map(({ r, nameHits, termHits, score }) => ({
+    slug: r.slug, description: r.description, kind: r.kind, score, nameHits, termHits, value: r.value,
     updatedAt: r.updatedAt.toISOString(),
   }));
 }
@@ -505,11 +517,21 @@ export function rankRecall(terms: string[], rows: RecallCandidate[], limit: numb
  */
 export async function searchMemory(
   pool: Pool, accountId: string, query: string,
-  opts: { limit: number; includeValue: boolean; recall?: boolean; exclude?: string[]; recordTop?: number; includeArchived?: boolean },
-): Promise<{ hits: MemorySearchHit[]; terms: string[] }> {
+  opts: {
+    limit: number; includeValue: boolean; recall?: boolean; exclude?: string[]; recordTop?: number; includeArchived?: boolean;
+    focus?: string;
+  },
+): Promise<{ hits: MemorySearchHit[]; terms: string[]; focusTerms?: string[] }> {
   if (opts.recall) {
-    const terms = searchTerms(query, { exclude: await recallExcludedNames(pool) });
-    if (!terms.length) return { hits: [], terms };
+    const excluded = await recallExcludedNames(pool);
+    // focus(G): 러너가 후속 턴에 "이번에 새로 온 말"을 따로 준다. 그 낱말을 먼저 세운다 — 질의 앞머리의
+    // 루트 머리가 12개 상한을 채워 정작 새 말의 낱말이 빠지는 일을 막는다. 루트 낱말은 순위만 돕는다.
+    const focusTerms = opts.focus !== undefined ? searchTerms(opts.focus, { exclude: excluded }) : undefined;
+    const terms = focusTerms
+      ? [...new Set([...focusTerms, ...searchTerms(query, { exclude: excluded })])].slice(0, RECALL_FOCUS_TERM_CAP)
+      : searchTerms(query, { exclude: excluded });
+    const withFocus = focusTerms ? { focusTerms } : {};
+    if (!terms.length || (focusTerms && !focusTerms.length)) return { hits: [], terms, ...withFocus };
     const patterns = terms.map((t) => `%${t.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
     // 이름·요약에 걸린 행만 가져온다 — 본문은 그 몇 행만 JS 로 센다.
     const res = await pool.query(
@@ -521,10 +543,11 @@ export async function searchMemory(
     );
     const skip = new Set(opts.exclude ?? []);
     const rows = (res.rows as RecallCandidate[]).filter((r) => !isExcluded(skip, r.slug, r.updatedAt));
-    const hits = rankRecall(terms, rows, opts.limit)
+    // 게이트는 서버에서 건다 — 러너가 거르면 recordTop 이 안 실린 것까지 센다(F1).
+    const hits = rankRecall(terms, rows, opts.limit, focusTerms ? { focus: new Set(focusTerms) } : {})
       .map((h) => (opts.includeValue ? h : { ...h, value: undefined }));
     if (opts.recordTop) await recordRecall(pool, accountId, hits.slice(0, opts.recordTop).map((h) => h.slug));
-    return { hits, terms };
+    return { hits, terms, ...withFocus };
   }
   const terms = searchTerms(query);
   if (!terms.length) return { hits: [], terms };
