@@ -773,15 +773,19 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
    * 질의는 `services/memory.ts` 를 그대로 부른다 — 여기서 다시 쓰면 계정 스코프가 두
    * 곳에 생기고 한쪽만 고치는 사고가 난다.
    */
-  app.get('/accounts/agents/:id/memory', { preHandler: app.requireOwnerOrAdmin('id') }, async (req) => ({
-    memories: await listMemoryEntries(pool, z.object({ id: z.string().uuid() }).parse(req.params).id),
-  }));
+  app.get('/accounts/agents/:id/memory', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    // 대상은 에이전트뿐이다(아래 isAgentTarget 주석) — admin 이 사람 id 를 넣어도 404.
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
+    return { memories: await listMemoryEntries(pool, id) };
+  });
 
   app.delete('/accounts/agents/:id/memory/:slug', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
     const { id, slug } = z.object({
       id: z.string().uuid(),
       slug: z.string().min(1).max(255),
     }).parse(req.params);
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
     await deleteMemory(pool, id, slug);
     await recordAudit(pool, {
       // 본문은 남기지 않는다 — docs/design.md 가 "감사에 본문을 복사하면 삭제가 삭제가
@@ -843,6 +847,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
       return reply.code(403).send({ error: { code: 'forbidden', message: 'only a human can confirm a flagged memory' } });
     }
     const { id, slug } = z.object({ id: z.string().uuid(), slug: z.string().min(1).max(255) }).parse(req.params);
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
     if (!(await clearMemoryFlag(pool, id, slug))) {
       return reply.code(404).send({ error: { code: 'not_flagged', message: 'memory is not flagged' } });
     }
@@ -854,8 +859,9 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
   });
 
   /** 이전 판(069), 최근 것부터. 화면이 "이 판으로 되돌리기"를 그린다 — 되돌리기는 위 PUT 이다. */
-  app.get('/accounts/agents/:id/memory/:slug/revisions', { preHandler: app.requireOwnerOrAdmin('id') }, async (req) => {
+  app.get('/accounts/agents/:id/memory/:slug/revisions', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
     const { id, slug } = z.object({ id: z.string().uuid(), slug: z.string().min(1).max(255) }).parse(req.params);
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
     return { revisions: await listMemoryRevisions(pool, id, slug) };
   });
 
@@ -864,7 +870,10 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
    * admin 을 통과시키고(대상의 존재 판정은 라우트 몫이라고 적어 두었다), 이 라우트들은 그 판정을
    * 하지 않았다 — 그래서 admin 이 사람 계정(다른 admin 포함)의 PAT 를 발급해 그 사람으로 글을
    * 쓰고 권한을 줄 수 있었다(2026-10-02 security 검토, #1062). 앱이 PAT 를 다루는 자리는 에이전트
-   * 설정뿐이고 사람 PAT 를 쓰는 기능은 없다. 이미 발급된 사람 PAT 는 이 검사로 폐기되지 않는다.
+   * 설정뿐이고 사람 PAT 를 쓰는 기능은 없다. 이미 발급된 사람 PAT 는 폐기되지 않지만 인증이
+   * 에이전트 PAT 만 받으므로(auth/plugin.ts viaPat) 쓸 수 없다.
+   *
+   * 기억은 읽기·지우기·이전 판·확인도 지운 에이전트를 대상으로 둔다 — 고치기(PUT)만 살아 있는 것.
    *
    * PAT 은 지운 에이전트도 대상으로 둔다 — 남은 토큰을 보고 폐기할 길은 열려 있어야 한다.
    */
