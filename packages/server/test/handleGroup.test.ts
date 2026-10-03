@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import { addChannelMember, removeChannelMember } from '../src/services/channels.js';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
@@ -27,6 +28,7 @@ let adminId: string;
 let memberPat: string;
 let memberId: string;
 let outsiderPat: string;
+let outsiderId: string;
 let humanMemberToken: string;
 let humanMemberId: string;
 /** 두 번째 사람 구성원. "구성원 **전원**" 이 뜻을 갖게 하려면 하나로는 안 된다. */
@@ -110,7 +112,7 @@ beforeAll(async () => {
   app = await buildServer({ pool: db.pool });
   ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
   ({ pat: memberPat, accountId: memberId } = await createAgent(app, adminToken, 'member'));
-  ({ pat: outsiderPat } = await createAgent(app, adminToken, 'outsider'));
+  ({ pat: outsiderPat, accountId: outsiderId } = await createAgent(app, adminToken, 'outsider'));
 
   ({ id: humanMemberId, token: humanMemberToken } = await registerHuman('humanmember'));
   ({ id: secondMemberId, token: secondMemberToken } = await registerHuman('secondmember'));
@@ -389,6 +391,9 @@ describe('계정과 집합이 같은 이름이면 계정이 이긴다', () => {
       [shadowId, humanMemberId],
     );
 
+    // 계정 `outsider` 가 그 채널을 **볼 수 있어야** 받는다 — 인박스는 지금 볼 수 있는 채널의 것만
+    // 낸다(2026-10-02). 이 시험이 재는 것은 가시성이 아니라 이름 충돌이므로 멤버로 넣고 잰다.
+    await addChannelMember(pool, privateId, outsiderId);
     const id = await post(adminToken, privateId, '@outsider 누구를 부르나');
 
     // 계정이 이긴다 — 계정 `outsider` 가 받고, 집합의 구성원은 그것 때문에 받지 않는다.
@@ -396,6 +401,7 @@ describe('계정과 집합이 같은 이름이면 계정이 이긴다', () => {
     expect(await inboxFor(humanMemberToken, id)).toEqual([]);
 
     await pool.query(`delete from handle_group where id = $1`, [shadowId]);
+    await removeChannelMember(pool, privateId, outsiderId);
   });
 });
 

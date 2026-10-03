@@ -263,3 +263,28 @@ describe('백로그 게이지는 답할 의무가 있는 에이전트만 센다'
     expect(seriesFor(await scrape(), 'murmur')).toBe(false);
   });
 });
+
+// 인박스는 **지금 볼 수 있는 채널의 것만** 나간다(#1079). 나간 채널의 부름은 폴에 안 나가 읽음이 될
+// 길이 없으므로, 게이지가 그것을 세면 살아 있는 러너도 끝없이 커진다 — 위 "거짓 경보"와 같은 종류다.
+describe('백로그 게이지는 지금 볼 수 있는 채널의 부름만 센다', () => {
+  it('비공개 채널에서 내보낸 에이전트의 안 읽은 부름은 게이지에 없다', async () => {
+    const { accountId } = await createAgent(app, adminToken, 'leftbot');
+    const ch = await app.inject({
+      method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'left-private', visibility: 'private' },
+    });
+    const channelId = ch.json().id as string;
+    await app.inject({
+      method: 'POST', url: `/channels/${channelId}/members`, headers: auth(adminToken), payload: { accountId },
+    });
+    await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`, headers: auth(adminToken), payload: { body: '@leftbot 부른다' },
+    });
+    expect(await scrape()).toContain('harkroom_agent_oldest_unread_seconds{handle="leftbot"}');
+
+    await app.inject({ method: 'DELETE', url: `/channels/${channelId}/members/${accountId}`, headers: auth(adminToken) });
+    // 행은 남는다(다시 들어오면 다시 보인다) — 세지 않을 뿐이다.
+    const row = await pool.query('select count(*)::int as n from inbox where account_id = $1 and read_at is null', [accountId]);
+    expect(row.rows[0].n).toBe(1);
+    expect(await scrape()).not.toContain('harkroom_agent_oldest_unread_seconds{handle="leftbot"}');
+  });
+});
