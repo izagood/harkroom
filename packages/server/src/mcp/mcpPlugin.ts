@@ -32,8 +32,13 @@ import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '.
 import {
   listMemoryIndex, MAX_CORE_MEMORY_LENGTH, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MAX_MEMORY_DESCRIPTION_LENGTH,
   MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, memoryRev, readMemoryCounted, searchMemory, auditMemory,
-  setMemory, lastCleanRevision,
+  setMemory, lastCleanRevision, coreSections, listMemoryRevisions,
 } from '../services/memory.js';
+import {
+  acquireMemoryLease, archiveMemory, memoryLeaseStatus, memoryWarnings, mergeMemory, releaseMemoryLease, restoreMemory,
+  unarchiveMemory, MEMORY_LEASE_DEFAULT_MINUTES, MEMORY_LEASE_MAX_MINUTES, MAX_ARCHIVED_MEMORIES_PER_ACCOUNT,
+} from '../services/memoryCurate.js';
+import { randomUUID as newLeaseToken } from 'node:crypto';
 import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
 import { scanWrite } from '../services/contentScan.js';
 import { listAutomationsForAgent, proposeAutomation, runAutomationForAgent, triggerSchema } from '../services/automations.js';
@@ -1355,6 +1360,8 @@ function buildMcpServer(
     return jsonResult({
       slug: memory.slug, value: memory.value, updatedAt: memory.updatedAt.toISOString(),
       ...(memory.description ? { description: memory.description } : {}),
+      // 보관된 기억(097)도 읽힌다 — 목록·recall 에서만 빠진다. 다시 쓰려면 memory.unarchive.
+      ...(memory.archivedAt ? { archived: true, archivedAt: memory.archivedAt.toISOString() } : {}),
     });
   });
 
@@ -1369,19 +1376,28 @@ function buildMcpServer(
       // 러너 자동 주입용(recall P1) — 이름·상투어를 거르고 이름·요약 일치만, journal 빼고.
       // 옛 서버는 모르는 키를 버리므로(zod strip) 러너는 응답의 nameHits 로 새 서버를 알아본다.
       recall: z.boolean().optional(),
+      // recall 모드만(S2 F1·F6): 이 세션에 이미 실은 판(`slug@updatedAt`, 옛 러너는 맨 slug)을 빼고,
+      // 러너가 실을 앞 recordTop 개를 recall_count 로 센다. 옛 서버는 둘 다 버린다 — 러너는 제 쪽에서도 거른다.
+      exclude: z.array(z.string().max(300)).max(200).optional(),
+      recordTop: z.number().int().min(0).max(5).optional(),
+      // 보관된 것(097)도 찾는다 — 에이전트가 직접 찾을 때만. recall 은 보관을 보지 않는다.
+      includeArchived: z.boolean().optional(),
     },
-  }, async ({ query, limit, includeValue, recall }) => {
+  }, async ({ query, limit, includeValue, recall, exclude, recordTop, includeArchived }) => {
     const res = await searchMemory(pool, account.id, query, {
       limit: limit ?? 5, includeValue: includeValue ?? false, recall: recall ?? false,
+      ...(recall ? { exclude: exclude ?? [], recordTop: recordTop ?? 0 } : { includeArchived: includeArchived ?? false }),
     });
     return jsonResult(recall ? res : { hits: res.hits });
   });
 
   // memory.audit — 정리 턴(M4)이 볼 후보. 판단은 에이전트가 한다; 서버는 사실만 모은다.
   server.registerTool('memory.audit', {
-    description: '내 기억의 정리 후보: 한 번도/30일 넘게 안 읽힘·깨진 [[링크]]·이름이 거의 같은 짝·낡은 낱말(patterns)·요약 없음(undescribed)·core 길이. '
-      + '정리 절차: 후보마다 memory.get 으로 읽고 판단한다 — 합치거나(한쪽에 모으고 다른 쪽 삭제), 되풀이할 교훈만 남기고 줄이거나, '
-      + '낡은 이름을 고치거나, 필요 없으면 지운다. 요약이 없는 것은 읽고 "언제 열어 볼지" 한 줄을 description 으로 채운다(목록·자동 recall 이 요약으로 찾는다). 고칠 땐 ifUpdatedAt 을 준다(이전 판이 남아 되돌릴 수 있다). 끝나면 무엇을 바꿨는지 스레드에 보고한다',
+    description: '내 기억의 정리 후보: 한 번도/30일 넘게 안 읽힘·깨진 [[링크]]·이름이 거의 같은 짝(similar)·본문이 절반 넘게 겹치는 짝(similarBody)·'
+      + '같은 PR 번호를 공유하는 묶음(sharedRefs)·90일 넘게 안 고침(old)·긴 것(largest)·곧 밀려날 journal(expiringJournal)·낡은 낱말(patterns)·요약 없음(undescribed)·core 길이·항목 수(items). '
+      + '정리 절차: 먼저 memory.lease 로 임대를 잡는다(다른 턴이 정리 중이면 물러난다). 후보마다 memory.get 으로 읽고 판단한다 — '
+      + '합칠 것은 memory.merge(한 호출로 into 를 쓰고 from 을 보관), 안 쓰는 것은 지우지 말고 memory.archive(보관 — 목록·recall 에서 빠지고 unarchive 로 돌아온다), '
+      + '되풀이할 교훈만 남기고 줄이거나, 낡은 이름을 고친다. 틀렸으면 memory.restore. truncated 면 고친 뒤 다시 부른다. 요약이 없는 것은 읽고 "언제 열어 볼지" 한 줄을 description 으로 채운다(목록·자동 recall 이 요약으로 찾는다). 고칠 땐 ifUpdatedAt 을 준다(이전 판이 남아 되돌릴 수 있다). 끝나면 무엇을 바꿨는지 스레드에 보고한다',
     inputSchema: { patterns: z.array(z.string().min(3).max(100)).max(20).optional() },
   }, async ({ patterns }) => jsonResult(await auditMemory(pool, account.id, patterns ?? [])));
 
@@ -1413,7 +1429,8 @@ function buildMcpServer(
         error: {
           code: 'core_too_long',
           message: `core 는 ${MAX_CORE_MEMORY_LENGTH}자까지다(지금 ${value.length}자). core 는 매 턴 통째로 실린다 — `
-            + '한 가지 주제로 묶이는 것은 `mem/<이름>` 으로 옮기고 core 에는 포인터 한 줄만 남겨라.',
+            + '한 가지 주제로 묶이는 것은 `mem/<이름>` 으로 옮기고 core 에는 포인터 한 줄만 남겨라. sections 는 절(## 제목) 단위 길이, 긴 것부터 — 내릴 후보다.',
+          sections: coreSections(value),
         },
       });
     }
@@ -1442,16 +1459,139 @@ function buildMcpServer(
         error: { code: 'too_many', message: `at most ${MAX_MEMORY_ITEMS_PER_ACCOUNT} memories per account` },
       });
     }
+    // 쓴 자리에서 알린다(C1): core 가 곧 넘침·항목이 곧 상한·journal 이 곧 밀려남. 비어 있으면 싣지 않는다.
+    const warnings = await memoryWarnings(pool, account.id);
+    const warn = warnings.length ? { warnings } : {};
     if (flag) {
       return jsonResult({
         ok: true,
+        ...warn,
         flagged: { reason: flag.reason, rules: flag.rules },
         notice: `저장했지만 쓰기 검사에 걸렸다(${flag.reason}). 사람이 확인할 때까지 이 판은 목록 요약·recall·memory.get `
           + '어디에도 실리지 않는다. 남의 글을 옮겨 적었거나 비밀 값을 넣었다면 빼고 다시 써라. 그대로 둬야 하면 '
           + '사람에게 확인을 부탁해라(설정 › 에이전트 › 기억).',
       });
     }
+    return jsonResult({ ok: true, ...warn });
+  });
+
+  // ── 정리 도구(C1, services/memoryCurate.ts). 지우기 대신 보관, 합치기는 한 호출, 되돌리기는 도구로. ──
+  const slugArg = z.string().min(1);
+  const ifUpdatedAtArg = z.string().datetime({ offset: true }).nullable().optional();
+  const toDate = (v: string | null | undefined): Date | null | undefined => (v === undefined ? undefined : v === null ? null : new Date(v));
+  const conflictError = (slug: string, now: Date | null) => jsonResult({
+    error: {
+      code: 'conflict', slug, updatedAt: now ? now.toISOString() : null,
+      message: now
+        ? `그 사이 다른 턴이 ${slug} 를 고쳤다(지금 판 ${now.toISOString()}). memory.get 으로 다시 읽고 그 updatedAt 으로 다시 해라.`
+        : `${slug} 가 그 사이 지워졌거나 아직 없다.`,
+    },
+  });
+
+  server.registerTool('memory.archive', {
+    description: '기억을 보관한다(삭제 대신). 목록(<memory-index>)·recall·검색·200 상한에서 빠지지만 memory.get 으로 읽히고 memory.unarchive 로 돌아온다. '
+      + `보관은 ${MAX_ARCHIVED_MEMORIES_PER_ACCOUNT}개까지 — 넘치면 가장 오래 보관된 것부터 이전 판으로 밀려난다. `
+      + '안 쓰는 것 같은데 지우기 아까우면 이것이다. core 는 보관할 수 없다. ifUpdatedAt 은 memory.get 의 updatedAt',
+    inputSchema: { slug: slugArg, ifUpdatedAt: ifUpdatedAtArg },
+  }, async ({ slug, ifUpdatedAt }) => {
+    if (!isValidSlug(slug)) return jsonResult({ error: { code: 'invalid_slug', message: MEMORY_SLUG_HINT } });
+    if (slug === 'core') return jsonResult({ error: { code: 'core_not_archivable', message: 'core 는 매 턴 실리는 자리라 보관할 수 없다 — 줄여 써라' } });
+    const r = await archiveMemory(pool, account.id, slug, toDate(ifUpdatedAt));
+    if (r === 'not_found') return jsonResult({ error: { code: 'not_found', message: 'memory not found' } });
+    if (typeof r === 'object') return conflictError(slug, r.conflict.updatedAt);
     return jsonResult({ ok: true });
+  });
+
+  server.registerTool('memory.unarchive', {
+    description: '보관한 기억을 되살린다. 살아 있는 항목이 상한(200)이면 too_many — 먼저 자리를 비운다',
+    inputSchema: { slug: slugArg },
+  }, async ({ slug }) => {
+    if (!isValidSlug(slug)) return jsonResult({ error: { code: 'invalid_slug', message: MEMORY_SLUG_HINT } });
+    const r = await unarchiveMemory(pool, account.id, slug);
+    if (r === 'not_found') return jsonResult({ error: { code: 'not_found', message: 'memory not found' } });
+    if (r === 'too_many') return jsonResult({ error: { code: 'too_many', message: `at most ${MAX_MEMORY_ITEMS_PER_ACCOUNT} active memories per account` } });
+    return jsonResult({ ok: true });
+  });
+
+  server.registerTool('memory.merge', {
+    description: '기억 여럿을 하나로 합친다 — 한 호출로 into 를 value 로 쓰고 from 을 전부 보관한다(두 호출로 나누면 그 사이 다른 턴이 from 을 고친다). '
+      + 'into 는 있는 것이든 새 이름이든 된다. ifUpdatedAt 은 {slug: updatedAt} 꼴로, 적은 slug 만 대 본다(into 가 없어야 하면 null). '
+      + '이전 판이 reason=merge 로 남아 memory.restore 로 되돌린다. 합친 본문에는 from 의 되풀이할 사실만 남기고 경위는 버려라',
+    inputSchema: {
+      into: slugArg,
+      from: z.array(slugArg).min(1).max(10),
+      value: z.string().min(1).max(MAX_MEMORY_VALUE_LENGTH),
+      description: z.string().max(MAX_MEMORY_DESCRIPTION_LENGTH).optional(),
+      kind: z.enum(MEMORY_KINDS).optional(),
+      ifUpdatedAt: z.record(z.string(), z.string().datetime({ offset: true }).nullable()).optional(),
+    },
+  }, async ({ into, from, value, description, kind, ifUpdatedAt }) => {
+    for (const s of [into, ...from]) if (!isValidSlug(s)) return jsonResult({ error: { code: 'invalid_slug', slug: s, message: MEMORY_SLUG_HINT } });
+    if (into === 'core' || from.includes('core')) return jsonResult({ error: { code: 'core_not_mergeable', message: 'core 는 합치기의 대상이 아니다 — memory.set 으로 써라' } });
+    const flag = scanWrite(value, description);
+    const expect = ifUpdatedAt
+      ? Object.fromEntries(Object.entries(ifUpdatedAt).map(([k, v]) => [k, v === null ? null : new Date(v)]))
+      : undefined;
+    const r = await mergeMemory(pool, account.id, { into, from, value, description, kind, expect, flagReason: flag?.reason ?? null });
+    if (r === 'too_many') return jsonResult({ error: { code: 'too_many', message: `at most ${MAX_MEMORY_ITEMS_PER_ACCOUNT} active memories per account` } });
+    if (typeof r === 'object' && 'notFound' in r) return jsonResult({ error: { code: 'not_found', slugs: r.notFound, message: 'from 중 없는 기억이 있다 — 아무것도 바꾸지 않았다' } });
+    if (typeof r === 'object') return conflictError(r.conflict.slug, r.conflict.updatedAt);
+    const warnings = await memoryWarnings(pool, account.id);
+    return jsonResult({
+      ok: true, archived: from.filter((s) => s !== into),
+      ...(warnings.length ? { warnings } : {}),
+      ...(flag ? { flagged: { reason: flag.reason, rules: flag.rules }, notice: '합친 본문이 쓰기 검사에 걸렸다 — 사람이 확인할 때까지 프롬프트에 안 실린다. 지시문·비밀 값 없이 다시 써라.' } : {}),
+    });
+  });
+
+  server.registerTool('memory.revisions', {
+    description: '한 기억의 이전 판(최근 것부터, 최대 5 + 정리로 생긴 판 20). reason=merge 의 detail.from 은 거기 합쳐진 기억들. memory.restore 에 id 를 준다',
+    inputSchema: { slug: slugArg },
+  }, async ({ slug }) => {
+    if (!isValidSlug(slug)) return jsonResult({ error: { code: 'invalid_slug', message: MEMORY_SLUG_HINT } });
+    const revisions = await listMemoryRevisions(pool, account.id, slug);
+    return jsonResult({
+      revisions: revisions.map((r) => ({
+        id: r.id, updatedAt: r.updatedAt.toISOString(), replacedAt: r.replacedAt.toISOString(), chars: r.value.length, ...(r.kind ? { kind: r.kind } : {}),
+        ...(r.description ? { description: r.description } : {}), ...(r.reason ? { reason: r.reason } : {}),
+        ...(r.detail ? { detail: r.detail } : {}), ...(r.flagged ? { flagged: true } : {}),
+      })),
+    });
+  });
+
+  server.registerTool('memory.restore', {
+    description: '이전 판으로 되돌린다(revisionId 생략=가장 최근 판). 지금 판은 reason=restore 로 남아 되돌리기도 되돌릴 수 있다. 지워졌거나 보관된 기억도 이것으로 살아난다(종류는 판에 적힌 대로). 되살리는 본문은 쓰기 검사를 다시 거친다',
+    inputSchema: { slug: slugArg, revisionId: z.number().int().positive().optional() },
+  }, async ({ slug, revisionId }) => {
+    if (!isValidSlug(slug)) return jsonResult({ error: { code: 'invalid_slug', message: MEMORY_SLUG_HINT } });
+    // 되살리는 본문도 지금 규칙으로 검사한다(080, security L1) — 걸리면 걸린 채로 산다.
+    const r = await restoreMemory(pool, account.id, slug, revisionId, (v, d) => scanWrite(v, d)?.reason ?? null);
+    if (r === 'not_found') return jsonResult({ error: { code: 'not_found', message: '그 판이 없다 — memory.revisions 로 확인해라' } });
+    if (r === 'too_many') return jsonResult({ error: { code: 'too_many', message: `at most ${MAX_MEMORY_ITEMS_PER_ACCOUNT} active memories per account` } });
+    return jsonResult({ ok: true });
+  });
+
+  server.registerTool('memory.lease', {
+    description: '정리 임대(계정당 하나). acquire 로 잡고(token 을 돌려준다, 같은 token 으로 다시 부르면 연장) 끝나면 release. '
+      + '다른 턴이 들고 있으면 acquired:false 와 만료 시각 — 그때는 정리하지 말고 물러나라(둘이 같이 고치면 ifUpdatedAt 충돌만 난다). status 는 조회',
+    inputSchema: {
+      action: z.enum(['acquire', 'release', 'status']),
+      token: z.string().min(8).max(80).optional(),
+      minutes: z.number().int().min(1).max(MEMORY_LEASE_MAX_MINUTES).optional(),
+    },
+  }, async ({ action, token, minutes }) => {
+    const view = (l: { holder: string; acquiredAt: Date; expiresAt: Date } | null) => (l
+      ? { acquiredAt: l.acquiredAt.toISOString(), expiresAt: l.expiresAt.toISOString() } : null);
+    if (action === 'status') return jsonResult({ lease: view(await memoryLeaseStatus(pool, account.id)) });
+    if (action === 'release') {
+      if (!token) return jsonResult({ error: { code: 'token_required', message: 'release 에는 acquire 가 준 token 이 필요하다' } });
+      return jsonResult({ ok: true, released: await releaseMemoryLease(pool, account.id, token) });
+    }
+    const t = token ?? newLeaseToken();
+    const r = await acquireMemoryLease(pool, account.id, t, minutes ?? MEMORY_LEASE_DEFAULT_MINUTES);
+    // token 은 잡은 쪽에만 준다 — 남의 token 을 알면 남의 임대를 놓을 수 있다.
+    if (r.acquired) return jsonResult({ acquired: true, token: t, lease: view(r.lease) });
+    return jsonResult({ acquired: false, heldBy: view(r.heldBy), notice: '다른 턴이 이 계정의 기억을 정리하고 있다 — 만료 뒤에 다시 하거나 물러나라.' });
   });
 
   // skill.propose — 에이전트가 스킬을 제안한다. 미승인 상태로 들어가고 채널에 알림이 간다.

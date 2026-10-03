@@ -141,7 +141,7 @@ describe('mcp surface', () => {
     const names = tools.tools.map((t) => t.name).sort();
     expect(names).toEqual([
       'account.list', 'account.me', 'agent.modelOptions', 'artifact.publish', 'attachment.fetch', 'attachment.upload', 'automation.list', 'automation.propose', 'automation.run', 'channel.doc', 'channel.list', 'inbox.poll', 'inbox.read',
-      'memory.audit', 'memory.get', 'memory.list', 'memory.search', 'memory.set',
+      'memory.archive', 'memory.audit', 'memory.get', 'memory.lease', 'memory.list', 'memory.merge', 'memory.restore', 'memory.revisions', 'memory.search', 'memory.set', 'memory.unarchive',
       'message.ask', 'message.delegate', 'message.fail', 'message.post', 'message.progress', 'message.react', 'message.read', 'message.report', 'message.search', 'message.unreact',
       'secret.list', 'secret.mount', 'skill.propose', 'turn.wake', 'workspace.guide',
     ]);
