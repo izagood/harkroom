@@ -4,7 +4,7 @@
  * `claudeAccounts.ts` 와 같은 경계다: 웹뷰가 넘기는 것은 URL·id·문자열뿐이고 Rust 커맨드가
  * 데몬에 전달한다.
  */
-import type { OperatorAgentsListResult, OperatorLocalAgent, OperatorMcpAuthStartResult, OperatorMcpAuthState, OperatorMcpListResult, OperatorMcpRemoteDefinition, OperatorRegisterResult } from '@harkroom/shared/daemonProtocol';
+import type { OperatorAgentsListResult, OperatorLocalAgent, OperatorMcpAuthStartResult, OperatorMcpAuthState, OperatorMcpListResult, OperatorMcpRemoteDefinition, OperatorMergeState, OperatorRegisterResult } from '@harkroom/shared/daemonProtocol';
 
 interface TauriInternals { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> }
 
@@ -73,4 +73,17 @@ export function localMcpAuthStatus(name: string): Promise<OperatorMcpAuthState> 
 
 export async function forgetLocalMcpAuth(name: string): Promise<void> {
   await call('operator_mcp_auth', { action: 'forget', name });
+}
+
+/**
+ * 머지 래퍼의 gh 계정(`operator.json` 의 `merge.ghUser`). 목록은 이 머신 gh 의 로그인 이름뿐이고 토큰은 오지 않는다.
+ * 고를 수 있는 것은 그 순간 gh 에 로그인된 이름만이다 — 오퍼레이터가 다시 잰다(security C7).
+ */
+export function getLocalMerge(): Promise<OperatorMergeState> {
+  return call('operator_merge_get') as Promise<OperatorMergeState>;
+}
+
+/** `null` 은 비우기다 — 그 뒤로 래퍼는 머지하지 않는다(`no_gh_user`). */
+export function setLocalMergeGhUser(ghUser: string | null): Promise<OperatorMergeState> {
+  return call('operator_merge_set', { ghUser }) as Promise<OperatorMergeState>;
 }

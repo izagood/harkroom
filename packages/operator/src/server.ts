@@ -36,6 +36,7 @@ import {
   readOperatorAgentSetPayload,
   readOperatorRegisterPayload,
   readOperatorMcpRemovePayload,
+  readOperatorMergeSetPayload,
   readOperatorMcpAuthPayload,
   readOperatorMcpSetPayload,
   type AdoptRunnerResult,
@@ -56,6 +57,7 @@ import type { ClaudeAccountsPort } from './claudeAccounts.js';
 import type { CodexAccountsPort } from './codexAccounts.js';
 import type { LocalAgentsPort } from './localAgents.js';
 import type { LocalMcpPort } from './localMcp.js';
+import type { LocalMergePort } from './localMerge.js';
 import type { ClaudePoolsConfig } from '@harkroom/shared/claudePools';
 
 export interface DaemonServerDeps {
@@ -93,6 +95,8 @@ export interface DaemonServerDeps {
   localAgents?: LocalAgentsPort;
   /** 이 머신의 MCP 정의(`mcp-servers.json`). 없으면 그 요청은 거절한다. */
   localMcp?: LocalMcpPort;
+  /** 머지 래퍼의 gh 계정(`operator.json` 의 `merge.ghUser`). 없으면 그 요청은 거절한다. */
+  localMerge?: LocalMergePort;
   /** 로그 한 줄. 기본은 stdout — 앱이 사이드카 파이프로 그대로 본다. */
   log?: (line: string) => void;
   /**
@@ -451,6 +455,28 @@ export class DaemonServer {
           return {};
         } catch (err) {
           return daemonError('internal', err instanceof Error ? err.message : String(err));
+        }
+      }
+      case 'operatorMergeGet': {
+        const port = this.deps.localMerge;
+        if (!port) return daemonError('no-such-runner', '이 daemon 에는 머지 설정이 배선되지 않았다');
+        try { return await port.get(); } catch (err) {
+          return daemonError('internal', err instanceof Error ? err.message : String(err));
+        }
+      }
+      case 'operatorMergeSet': {
+        const port = this.deps.localMerge;
+        if (!port) return daemonError('no-such-runner', '이 daemon 에는 머지 설정이 배선되지 않았다');
+        const p = readOperatorMergeSetPayload(req.payload);
+        if (isDaemonError(p)) return p;
+        try {
+          const { state, previous } = await port.set(p.ghUser);
+          // 바꾼 사실을 남긴다(security C8) — 이름뿐이다, 토큰은 이 경로에 없다.
+          if (previous !== p.ghUser) this.log(`머지 gh 계정: ${previous ?? '(없음)'} → ${p.ghUser ?? '(없음)'} @ ${state.host}`);
+          return state;
+        } catch (err) {
+          // 목록에 없는 이름·gh 실패는 사람이 고칠 사유다 — 원문 그대로 올린다.
+          return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
         }
       }
       // ── claude 계정 풀 ────────────────────────────────────────────────────────

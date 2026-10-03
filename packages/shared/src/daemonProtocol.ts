@@ -126,6 +126,10 @@ export const REQUEST_TYPES = [
   'operatorMcpAuthStart',
   'operatorMcpAuthStatus',
   'operatorMcpAuthForget',
+  // 에이전트 머지 래퍼가 쓸 gh 계정(`operator.json` 의 `merge.ghUser`, 스레드 febe9ff8 P2). 목록은 `gh auth status`
+  // 의 로그인 이름뿐이고 **토큰은 오가지 않는다**. set 은 그 순간 목록에 있는 이름만 받는다(security C7).
+  'operatorMergeGet',
+  'operatorMergeSet',
 ] as const;
 export type DaemonRequestType = (typeof REQUEST_TYPES)[number];
 
@@ -750,6 +754,34 @@ export function readOperatorMcpRemovePayload(payload: unknown): { name: string }
   const p = payload as { name?: unknown } | null;
   const name = readMcpName(p?.name, 'operatorMcpRemove');
   return typeof name === 'string' ? { name } : name;
+}
+
+/** gh 에 로그인된 계정 하나 — `gh auth status --json hosts` 의 github.com 항목에서 이름과 활성 여부만 옮긴다. */
+export interface OperatorGhAccount { login: string; active: boolean }
+
+/**
+ * 머지 래퍼의 gh 계정 상태(`operatorMergeGet`·`operatorMergeSet` 의 답).
+ * - `ghUser`: `operator.json` 의 `merge.ghUser`. 없으면 null — 그때 래퍼는 머지하지 않는다(`no_gh_user`).
+ * - `accounts`: 이 머신의 gh 로그인 목록. gh 가 없거나 답이 깨졌으면 null 이고 `accountsError` 에 까닭.
+ * - `host`: 이 값이 어느 기기의 것인지(security C8) — 화면이 함께 보인다.
+ */
+export interface OperatorMergeState {
+  ghUser: string | null;
+  accounts: OperatorGhAccount[] | null;
+  accountsError?: string;
+  host: string;
+}
+
+/** GitHub 로그인 이름 모양 — `turnMerge.ts` 의 `tokenFor` 가 받는 것과 같다. */
+export const GH_LOGIN_RE = /^[A-Za-z0-9-]{1,39}$/;
+
+/** `ghUser: null` 은 지우기다. 목록에 있는지는 오퍼레이터가 그 순간의 gh 로 다시 잰다. */
+export function readOperatorMergeSetPayload(payload: unknown): { ghUser: string | null } | DaemonError {
+  const p = payload as { ghUser?: unknown } | null;
+  if (!p || typeof p !== 'object' || !('ghUser' in p)) return daemonError('bad-payload', 'operatorMergeSet 에는 ghUser 가 필요하다(지우려면 null)');
+  if (p.ghUser === null) return { ghUser: null };
+  if (typeof p.ghUser !== 'string' || !GH_LOGIN_RE.test(p.ghUser)) return daemonError('bad-payload', 'ghUser 는 GitHub 로그인 이름이어야 한다');
+  return { ghUser: p.ghUser };
 }
 
 export interface OperatorRegisterResult {

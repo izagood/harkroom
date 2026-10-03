@@ -18,6 +18,8 @@ import { ApiError } from '../../lib/api';
 import { useT } from '../../i18n/useT';
 import { useLocale } from '../../i18n/useT';
 import { ConfirmDialog } from '../ConfirmDialog';
+import { hasOperatorLocalSurface } from '../../lib/operatorLocal';
+import { MergeGhUserRow } from './MergeGhUserRow';
 
 const CAP = 'repo.merge' as const;
 type Expiry = 'none' | '7d' | '30d';
@@ -25,8 +27,13 @@ type Expiry = 'none' | '7d' | '30d';
 /** `repo:<owner>/<name>` → `owner/name`. 서버가 소문자로 정규화해 돌려준다. */
 const repoOf = (scope: string): string => scope.replace(/^repo:/, '');
 
-export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled }: {
+export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, localOperatorId }: {
   agent: AgentView;
+  /**
+   * 이 기기 오퍼레이터의 id(`operator.json` 이 적어 둔 값). 에이전트가 **이 기기에 배정돼 있을 때만** 머지 gh 계정 줄을
+   * 그린다 — 머지는 그 에이전트를 돌리는 오퍼레이터의 gh 로 되므로 남의 기기 값을 여기서 고칠 수는 없다.
+   */
+  localOperatorId?: string | null;
   /** 그 에이전트의 소유자인 사람만 — 서버 F2 와 같다. */
   canGrant: boolean;
   /** 소유자 또는 admin. */
@@ -84,6 +91,13 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled }: {
     <div className="rounded-row border border-border p-3" data-testid="agent-grants">
       <div className="text-meta font-medium text-fg-muted">{t('agents.grants.heading')}</div>
       <p className="mt-1 text-meta text-fg-subtle">{t('agents.grants.note')}</p>
+
+      {/* 머지 gh 계정(P2) — 소유자인 사람에게만, 이 기기에서 도는 에이전트에만. */}
+      {canGrant && hasOperatorLocalSurface() && agent.assignment?.operatorId && (
+        localOperatorId && agent.assignment.operatorId === localOperatorId
+          ? <MergeGhUserRow disabled={disabled} />
+          : <p className="mt-2 text-meta text-fg-subtle" data-testid="merge-gh-user-other">{t('agents.grants.ghUser.otherDevice')}</p>
+      )}
 
       {grants === 'loading' && <p className="mt-2 text-meta text-fg-muted">{t('agents.grants.loading')}</p>}
       {grants === 'error' && <p role="alert" className="mt-2 text-meta text-danger">{t('agents.grants.listFailed')}</p>}

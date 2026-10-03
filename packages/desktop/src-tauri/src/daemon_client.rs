@@ -2115,6 +2115,16 @@ impl DaemonConnection {
         self.request("operatorMcpRemove", json!({ "name": name }))
     }
 
+    // 머지 래퍼의 gh 계정(`operator.json` 의 `merge.ghUser`, P2). 오가는 것은 로그인 이름뿐이다 — 목록에 있는
+    // 이름인지는 오퍼레이터가 그 순간의 `gh auth status` 로 다시 잰다(security C7). `None` 은 지우기다.
+    pub fn operator_merge_get(&self) -> Result<Value, String> {
+        self.request("operatorMergeGet", json!({}))
+    }
+
+    pub fn operator_merge_set(&self, gh_user: Option<&str>) -> Result<Value, String> {
+        self.request("operatorMergeSet", json!({ "ghUser": gh_user }))
+    }
+
     // 원격 MCP 의 OAuth(2026-09-30). 토큰은 오퍼레이터가 든다 — 소켓으로는 인가 url 과 상태만 온다.
     pub fn operator_mcp_auth(&self, method: &str, name: &str) -> Result<Value, String> {
         self.request(method, json!({ "name": name }))

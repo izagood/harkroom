@@ -36,6 +36,7 @@ import { createCodexAccountsPort } from './codexAccounts.js';
 import { startCommunities } from './communities.js';
 import { createLocalAgentsPort } from './localAgents.js';
 import { createLocalMcpPort } from './localMcp.js';
+import { createLocalMergePort } from './localMerge.js';
 import { createMcpOAuth } from './mcpOAuth.js';
 import { rewriteMcpConfigTokens } from './mcpConfig.js';
 import { claudeConfigPath } from './mcpConfig.js';
@@ -505,6 +506,12 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     oauth: mcpOAuth,
   });
 
+  const localMerge = createLocalMergePort({
+    configPath: join(appDataDir, 'operator', 'operator.json'),
+    ghPath: GH_PATH,
+    home: homedir(),
+  });
+
   const server = new DaemonServer({
     token: '', // claim 이 만든 값으로 아래에서 바꾼다 — 그 전에는 아무도 못 붙는다.
     identity,
@@ -514,6 +521,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     codexAccounts,
     localAgents,
     localMcp,
+    localMerge,
     log,
     runnerLink,
   });
