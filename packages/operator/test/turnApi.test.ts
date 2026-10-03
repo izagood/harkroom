@@ -42,6 +42,9 @@ describe('scrubValue', () => {
     const b64 = Buffer.from(KEY).toString('base64').replace(/=+$/, '');
     expect(scrubValue(`x ${b64} y`, KEY)).toBe('x [REDACTED] y');
     expect(scrubValue('abc', 'abc')).toBe('abc');
+    // URL 인코딩 꼴(#1139 n1) — 인코딩이 원문과 다를 때만.
+    const odd = 'k+y/val=ue&0123';
+    expect(scrubValue(`?t=${encodeURIComponent(odd)}`, odd)).toBe('?t=[REDACTED]');
   });
 });
 

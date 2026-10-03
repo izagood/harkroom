@@ -79,6 +79,9 @@ export function scrubValue(text: string, value: string): string {
   let out = text.split(value).join('[REDACTED]');
   const b64 = Buffer.from(value, 'utf8').toString('base64').replace(/=+$/, '');
   if (b64.length >= 8) out = out.split(b64).join('[REDACTED]');
+  // URL 인코딩 꼴로 되비치는 응답도 있다(질의·리다이렉트 location, #1139 security n1).
+  const enc = encodeURIComponent(value);
+  if (enc !== value) out = out.split(enc).join('[REDACTED]');
   return out;
 }
 

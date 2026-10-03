@@ -73,6 +73,11 @@ describe('repo.merge grant', () => {
       expect(await mergeGrantFor(pool, agentId, 'izagood/harkroom')).toBeNull();
       const l = await lease(await mention(alice.accountId));
       expect((await check(l)).json().error.code).toBe('not_granted');
+      // 막힘 카드(P4): 사람 글 턴의 not_granted 는 그 스레드에 머지 카드를 세운다. 본문에 @ 가 없다.
+      const card = (await pool.query(`select body, meta from message where meta->'blocked'->>'kind' = 'merge' and meta->'blocked'->>'agentId' = $1`, [agentId])).rows;
+      expect(card).toHaveLength(1);
+      expect(card[0].meta.blocked).toMatchObject({ repo: 'izagood/harkroom', number: 7, code: 'not_granted', ownerAccountId: alice.accountId });
+      expect(card[0].body).not.toContain('@');
       await pool.query(`delete from account_grant where account_id = $1 and scope = ''`, [agentId]);
     });
     it('admin 역할·can() 은 repo.merge 를 열지 않는다', async () => {

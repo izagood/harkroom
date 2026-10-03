@@ -4,6 +4,7 @@ import { repoScope } from '@harkroom/shared';
 import { mergeGrantFor } from '../auth/permissions.js';
 import { recordAudit } from '../audit.js';
 import { postMessage } from './messages.js';
+import { MERGE_CARD_CODES, recordBlocked } from './blockedCards.js';
 
 /**
  * 에이전트 머지 권한 — 서버 쪽 판정과 기록. 설계 스레드 3deac356(채널 a42006a1), security F1~F4.
@@ -93,6 +94,13 @@ export async function checkMerge(
       action: 'repo.merge.denied', actorId: args.agentId, target: scope ?? args.repo,
       detail: { code, number: args.number, headSha: args.headSha, operatorId: args.operatorId, leaseId: leaseOk ? lease!.id : null },
     });
+    // 막힘 카드(P4). 1판에서 빠졌던 머지 카드다 — 사람이 버튼 하나로 권한을 줄 수 있는 거절만.
+    if (leaseOk && scope && MERGE_CARD_CODES.has(code)) {
+      await recordBlocked(pool, {
+        kind: 'merge', agentId: args.agentId, channelId: lease!.channelId, threadRootId: lease!.threadRootId, code,
+        repo: scope.slice('repo:'.length), number: args.number, now,
+      }).catch(() => null);
+    }
     return { ok: false, code };
   };
 

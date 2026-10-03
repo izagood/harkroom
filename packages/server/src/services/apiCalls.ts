@@ -5,6 +5,7 @@ import { recordAudit } from '../audit.js';
 import type { SecretKeyring } from './secretKeyring.js';
 import { causeByHuman, readLease } from './mergeGrants.js';
 import { postMessage } from './messages.js';
+import { API_CARD_CODES, recordBlocked } from './blockedCards.js';
 
 /**
  * 외부 API 호출 — 서버 쪽 판정·키 건네기·기록(C안 P3, 설계 스레드 07519d86). 흐름은 머지 래퍼와 같다:
@@ -17,7 +18,7 @@ import { postMessage } from './messages.js';
  * (`secret_access_log`)을 남긴다 — 사람이 「접근 기록」에서 본다.
  */
 
-export type ApiCheckDenial = ApiDenial | 'lease_invalid' | 'secret_expired' | 'owner_inactive' | 'no_value' | 'unreadable';
+export type ApiCheckDenial = ApiDenial | 'lease_invalid' | 'secret_expired' | 'owner_inactive' | 'no_value' | 'unreadable' | 'cause_not_human';
 
 export type ApiCheck =
   | {
@@ -45,8 +46,16 @@ export async function checkApiCall(
   const deny = async (code: ApiCheckDenial): Promise<ApiCheck> => {
     await recordAudit(pool, {
       action: 'api.call.denied', actorId: args.agentId, target,
-      detail: { code, method: args.method, path: args.path.slice(0, 300), operatorId: args.operatorId, leaseId: leaseOk ? lease!.id : null },
+      // 질의는 뗀다 — `?api_key=…` 처럼 질의에 토큰을 붙이는 API 가 있다(#1139 security L1).
+      detail: { code, method: args.method, path: (args.path.split('?')[0] ?? '').slice(0, 300), operatorId: args.operatorId, leaseId: leaseOk ? lease!.id : null },
     });
+    // 사람이 버튼 하나로 고칠 수 있는 거절이면 그 턴의 스레드에 막힘 카드를 세운다(P4). 실패해도 판정은 그대로다.
+    if (leaseOk && API_CARD_CODES.has(code)) {
+      await recordBlocked(pool, {
+        kind: 'api', agentId: args.agentId, channelId: lease!.channelId, threadRootId: lease!.threadRootId, code,
+        connectorId, connectorName: args.connector, method: args.method, path: args.path, now,
+      }).catch(() => null);
+    }
     return { ok: false, code };
   };
 
@@ -55,6 +64,12 @@ export async function checkApiCall(
   const g = await apiGrantFor(pool, { agentId: args.agentId, connectorId, method: args.method, path: args.path });
   if (!g.ok) return deny(g.code);
   const hit = g.hit;
+  const byHuman = causeByHuman(lease!);
+  // 「쓰기는 사람 글 턴만」(P4, grant 마다 사람이 고른 칸). 키를 건네기 전에 본다.
+  if (!['GET'].includes(args.method)) {
+    const w = (await pool.query<{ w: boolean }>(`select write_needs_human_cause as w from account_grant where id = $1`, [hit.grantId])).rows[0];
+    if (w?.w && !byHuman) return deny('cause_not_human');
+  }
 
   let value: Buffer | null = null;
   if (hit.authKind !== 'none') {
@@ -81,7 +96,6 @@ export async function checkApiCall(
     await log('granted', `api:${hit.connectorName} ${args.method} ${(args.path.split('?')[0] ?? '').slice(0, 200)}`, v.version);
   }
 
-  const byHuman = causeByHuman(lease!);
   await recordAudit(pool, {
     action: 'api.call.checked', actorId: args.agentId, target: connectorScope(hit.connectorId),
     detail: { method: args.method, path: (args.path.split('?')[0] ?? '').slice(0, 300), operatorId: args.operatorId, leaseId: lease!.id, grantId: hit.grantId, rootGrantedBy: hit.rootGrantedBy, causeByHuman: byHuman },

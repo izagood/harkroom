@@ -27,6 +27,8 @@ const grantBody = z.object({
   limits: z.unknown().optional(),
   /** `api.call` 전용(098): 받은 쪽이 다시 줄 수 있는 단계. 위임 도구는 P5 다 — 지금은 사람이 정해 두기만 한다. */
   delegateDepth: z.number().int().min(0).max(2).optional(),
+  /** `api.call` 전용(100, P4): 쓰기 메서드는 그 턴을 띄운 글이 사람 글일 때만. 기본값은 화면이 고르게 한다(서버 기본 false). */
+  writeNeedsHumanCause: z.boolean().optional(),
 });
 
 /**
@@ -97,7 +99,8 @@ async function listGrants(pool: Pool, accountId: string): Promise<GrantRow[]> {
     `select account_id as "accountId", capability, scope, granted_by as "grantedBy",
             granted_at as "grantedAt", expires_at as "expiresAt", allow_agent_cause as "allowAgentCause",
             id, parent_grant_id as "parentGrantId", delegate_depth as "delegateDepth", limits,
-            suspended_at as "suspendedAt", suspend_reason as "suspendReason"
+            suspended_at as "suspendedAt", suspend_reason as "suspendReason",
+            write_needs_human_cause as "writeNeedsHumanCause"
        from account_grant where account_id = $1 order by capability, scope`, [accountId]);
   return res.rows;
 }
@@ -124,8 +127,8 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
     let { scope } = parsed.data;
     let limits: ApiGrantLimits | null = null;
     const delegateDepth = capability === 'api.call' ? parsed.data.delegateDepth ?? 0 : 0;
-    if (capability !== 'api.call' && (parsed.data.limits !== undefined || parsed.data.delegateDepth !== undefined)) {
-      return reply.code(400).send({ error: { code: 'bad_request', message: 'limits·delegateDepth 는 api.call 전용이다' } });
+    if (capability !== 'api.call' && (parsed.data.limits !== undefined || parsed.data.delegateDepth !== undefined || parsed.data.writeNeedsHumanCause !== undefined)) {
+      return reply.code(400).send({ error: { code: 'bad_request', message: 'limits·delegateDepth·writeNeedsHumanCause 는 api.call 전용이다' } });
     }
     if (capability === 'api.call') {
       const check = await checkApiGrant(pool, req, id, scope, parsed.data);
@@ -146,20 +149,22 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
     // 같은 (계정, capability, scope) 에 다시 주면 갱신이다 — 준 사람과 만료가 새 값으로 바뀐다. 사람이 다시 주면
     // 그 줄은 루트가 되고(parent 비움) 정지도 풀린다 — 사람이 바뀐 연결을 보고 다시 믿기로 한 것이다.
     await pool.query(
-      `insert into account_grant (account_id, capability, scope, granted_by, expires_at, allow_agent_cause, limits, delegate_depth)
-       values ($1, $2, $3, $4, $5, $6, $7, $8)
+      `insert into account_grant (account_id, capability, scope, granted_by, expires_at, allow_agent_cause, limits, delegate_depth, write_needs_human_cause)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        on conflict (account_id, capability, scope) do update
          set granted_by = excluded.granted_by, granted_at = now(), expires_at = excluded.expires_at,
              allow_agent_cause = excluded.allow_agent_cause, limits = excluded.limits,
              delegate_depth = excluded.delegate_depth, parent_grant_id = null,
+             write_needs_human_cause = excluded.write_needs_human_cause,
              suspended_at = null, suspend_reason = null`,
-      [id, capability, scope, req.account!.id, expiresAt ?? null, allowAgentCause ?? false, limits ? JSON.stringify(limits) : null, delegateDepth]);
+      [id, capability, scope, req.account!.id, expiresAt ?? null, allowAgentCause ?? false, limits ? JSON.stringify(limits) : null, delegateDepth,
+        capability === 'api.call' ? parsed.data.writeNeedsHumanCause ?? false : false]);
     await recordAudit(pool, {
       action: 'grant.given', ...actorOf(req), target: id,
       detail: {
         capability, scope, expiresAt: expiresAt ?? null,
         ...(capability === 'repo.merge' ? { allowAgentCause: allowAgentCause ?? false } : {}),
-        ...(capability === 'api.call' ? { limits, delegateDepth } : {}),
+        ...(capability === 'api.call' ? { limits, delegateDepth, writeNeedsHumanCause: parsed.data.writeNeedsHumanCause ?? false } : {}),
       },
     }, req);
     emitEvent({ type: 'grant.changed', accountId: id, audience: 'all' });

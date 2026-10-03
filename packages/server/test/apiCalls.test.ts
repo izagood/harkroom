@@ -98,6 +98,52 @@ describe('api-checks · api-results', () => {
     expect((await report(l)).json().error.code).toBe('not_checked');
   });
 
+  it('막힘 카드: 거절하면 그 스레드에 카드가 서고, 같은 날 다시 막히면 숫자만 오른다 · 질의는 감사·카드에 없다', async () => {
+    // 앞 시험들의 거절(not_granted·method·path)이 이미 이 연결의 오늘 카드 하나에 모여 있다.
+    const card = async () => (await pool.query(
+      `select body, kind, meta from message where meta->'blocked'->>'agentId' = $1 and meta->'blocked'->>'connectorId' = $2`, [agentId, connectorId])).rows;
+    const before = await card();
+    expect(before).toHaveLength(1);
+    expect(before[0].meta.blocked).toMatchObject({ code: 'not_granted', connectorName: 'lab', ownerAccountId: alice.accountId });
+    const l = await lease();
+    expect((await check(l, 'GET', '/admin?api_key=zzz')).json().error.code).toBe('path_not_allowed');
+    expect((await check(l, 'GET', '/admin/2?api_key=zzz')).json().error.code).toBe('path_not_allowed');
+    const cards = await card();
+    expect(cards).toHaveLength(1);
+    expect(cards[0].kind).toBe('system');
+    expect(cards[0].meta.blocked).toMatchObject({ lastCode: 'path_not_allowed', count: before[0].meta.blocked.count + 2 });
+    // 이름만 있는 연결(없는 연결)은 따로 한 장이다.
+    expect((await pool.query(`select 1 from message where meta->'blocked'->>'connectorName' = 'nope'`)).rowCount).toBe(1);
+    expect(JSON.stringify(cards[0])).not.toContain('zzz');
+    expect(cards[0].body).not.toContain('@');
+    const audits = (await pool.query(`select detail from audit_log where action = 'api.call.denied' and target = $1`, [`connector:${connectorId}`])).rows;
+    expect(JSON.stringify(audits)).not.toContain('zzz');
+    // 임대가 틀린 거절은 카드를 세우지 않는다.
+    await check({ id: l.id, token: 'wrong' });
+    expect((await card())[0].meta.blocked.count).toBe(before[0].meta.blocked.count + 2);
+  });
+
+  it('「쓰기는 사람 글 턴만」: 켜면 에이전트 글 턴의 쓰기는 cause_not_human, 읽기는 그대로', async () => {
+    const g = await app.inject({ method: 'PUT', url: `/accounts/${agentId}/grants`, headers: auth(alice.token), payload: {
+      capability: 'api.call', scope: `connector:${connectorId}`, limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' },
+      expiresAt: new Date(Date.now() + 7 * 86_400_000).toISOString(), writeNeedsHumanCause: true,
+    } });
+    expect(g.json().grants).toContainEqual(expect.objectContaining({ capability: 'api.call', writeNeedsHumanCause: true }));
+    // 에이전트 글로 띄운 턴.
+    const m = await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'post it', 'user') returning id`, [ch, agentId]);
+    await pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [agentId, m.rows[0].id]);
+    const l = (await app.inject({ method: 'POST', url: '/agent/turn-leases', headers: asAgent(), payload: { causeMessageId: m.rows[0].id } })).json().lease;
+    if (l) {
+      expect((await check(l, 'POST', '/api/x')).json().error.code).toBe('cause_not_human');
+      expect((await check(l, 'GET', '/api/x')).statusCode).toBe(200);
+    }
+    // 사람 글 턴의 쓰기는 통과.
+    expect((await check(await lease(), 'POST', '/api/x')).statusCode).toBe(200);
+    // 다른 capability 에는 이 칸을 못 준다.
+    const bad = await app.inject({ method: 'PUT', url: `/accounts/${agentId}/grants`, headers: auth(alice.token), payload: { capability: 'repo.merge', scope: 'repo:a/b', writeNeedsHumanCause: true } });
+    expect(bad.statusCode).toBe(400);
+  });
+
   it('만료된 비밀이면 secret_expired 로 거절하고 기록한다', async () => {
     await pool.query(`update secret set expires_at = now() - interval '1 minute' where name = 'lab-token'`);
     const l = await lease();
