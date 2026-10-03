@@ -28,6 +28,7 @@ function setup(over: Partial<Record<string, unknown>> = {}) {
   let rows: GrantRow[] = [grant('repo:izagood/harkroom'), { ...grant(''), capability: 'channel.create' }];
   const c = {
     listGrants: vi.fn(async () => rows),
+    listConnectors: vi.fn(async () => []),
     putGrant: vi.fn(async (_id: string, body: { scope: string }) => { rows = [...rows, grant(body.scope)]; return rows; }),
     deleteGrant: vi.fn(async (_id: string, _cap: string, scope: string) => { rows = rows.filter((g) => g.scope !== scope); }),
     ...over,
@@ -64,6 +65,7 @@ describe('AgentGrantsSection', () => {
     render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
     await screen.findByTestId('agent-grant-izagood/harkroom');
     fireEvent.click(screen.getByText('+ 권한 주기'));
+    fireEvent.click(screen.getByRole('radio', { name: 'PR 머지' }));
     fireEvent.change(screen.getByLabelText('저장소 (정확한 이름, 한 줄에 하나)'), { target: { value: 'Izagood/Harkroom-Gate\nizagood/homelab, izagood/homelab' } });
     fireEvent.change(screen.getByLabelText('만료'), { target: { value: '7d' } });
     fireEvent.click(screen.getByText('주기'));
@@ -83,6 +85,7 @@ describe('AgentGrantsSection', () => {
     render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
     await screen.findByTestId('agent-grant-izagood/harkroom');
     fireEvent.click(screen.getByText('+ 권한 주기'));
+    fireEvent.click(screen.getByRole('radio', { name: 'PR 머지' }));
     fireEvent.change(screen.getByLabelText('저장소 (정확한 이름, 한 줄에 하나)'), { target: { value: 'izagood/*' } });
     expect((screen.getByText('주기') as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/와일드카드/).textContent).toContain('izagood/*');
@@ -117,6 +120,7 @@ describe('AgentGrantsSection', () => {
     render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
     await screen.findByTestId('agent-grant-izagood/harkroom');
     fireEvent.click(screen.getByText('+ 권한 주기'));
+    fireEvent.click(screen.getByRole('radio', { name: 'PR 머지' }));
     fireEvent.change(screen.getByLabelText('저장소 (정확한 이름, 한 줄에 하나)'), { target: { value: 'izagood/x' } });
     fireEvent.click(screen.getByText('주기'));
     await waitFor(() => expect(screen.getByTestId('agent-grants-error').textContent).toContain('소유자(사람)만'));

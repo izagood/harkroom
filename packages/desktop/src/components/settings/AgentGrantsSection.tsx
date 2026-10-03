@@ -10,7 +10,8 @@
  * 남긴다. 거절 카드의 [권한 주기] 버튼(designer 안)은 1판에서 뺐다 — 서버의 거절 기록·별도 REST 가 먼저다.
  */
 import { useCallback, useEffect, useState } from 'react';
-import type { AgentView, GrantRow } from '@harkroom/shared';
+import type { AgentView, ApiConnectorView, GrantRow } from '@harkroom/shared';
+import { ApiGrantForm } from './ApiGrantForm';
 import { repoScope } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
@@ -43,6 +44,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   const t = useT();
   const locale = useLocale();
   const accounts = useActiveStore((s) => s.accounts);
+  const myId = useActiveStore((s) => s.me?.id);
   const [grants, setGrants] = useState<GrantRow[] | 'loading' | 'error'>('loading');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,10 +52,18 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   const [reposText, setReposText] = useState('');
   const [expiry, setExpiry] = useState<Expiry>('none');
   const [revoking, setRevoking] = useState<GrantRow | null>(null);
+  // API 호출(P4b): 같은 절에 소제목으로 나눈다(designer v3 ③). 연결 이름은 내 연결 목록에서 찾는다 — 없으면 id 앞부분.
+  const [apiGrants, setApiGrants] = useState<GrantRow[]>([]);
+  const [connectors, setConnectors] = useState<ApiConnectorView[]>([]);
+  const [addKind, setAddKind] = useState<'merge' | 'api'>('api');
 
   const load = useCallback(async () => {
-    try { setGrants((await getController().listGrants(agent.id)).filter((g) => g.capability === CAP)); }
-    catch { setGrants('error'); }
+    try {
+      const all = await getController().listGrants(agent.id);
+      setGrants(all.filter((g) => g.capability === CAP));
+      setApiGrants(all.filter((g) => g.capability === 'api.call'));
+    } catch { setGrants('error'); }
+    try { setConnectors(await getController().listConnectors()); } catch { setConnectors([]); }
   }, [agent.id]);
   useEffect(() => { setGrants('loading'); void load(); }, [load]);
 
@@ -92,6 +102,43 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
       <div className="text-meta font-medium text-fg-muted">{t('agents.grants.heading')}</div>
       <p className="mt-1 text-meta text-fg-subtle">{t('agents.grants.note')}</p>
 
+      {apiGrants.length > 0 && (
+        <>
+          <div className="mt-2 text-meta font-medium text-fg-muted">{t('apiGrant.heading')}</div>
+          <ul className="mt-1 space-y-1" data-testid="agent-api-grants">
+            {apiGrants.map((g) => {
+              const id = g.scope.replace(/^connector:/, '');
+              const c = connectors.find((x) => x.id === id);
+              const expired = g.expiresAt !== null && Date.parse(g.expiresAt) <= Date.now();
+              const noKey = !!c && c.authKind !== 'none' && !c.secretId;
+              const dim = expired || !!g.suspendedAt || noKey;
+              const write = (g.limits?.methods ?? []).some((m) => m !== 'GET');
+              return (
+                <li key={g.scope} className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-border px-2 py-1 text-meta ${dim ? 'text-fg-subtle' : 'text-fg'}`} data-testid={`agent-api-grant-${c?.name ?? id.slice(0, 8)}`}>
+                  <span className="rounded bg-accent-surface px-1 text-accent-text">API</span>
+                  <span className="font-mono font-medium">{c?.name ?? id.slice(0, 8)}</span>
+                  <span>{write ? t('apiGrant.rowWrite') : t('apiGrant.rowRead')}</span>
+                  {g.limits?.pathPrefix && <span className="font-mono text-fg-subtle">{g.limits.pathPrefix}</span>}
+                  {write && g.writeNeedsHumanCause && <span className="text-fg-subtle">{t('apiGrant.rowHumanOnly')}</span>}
+                  <span className="text-fg-subtle">
+                    {t('agents.grants.by', { handle: accounts[g.grantedBy]?.handle ?? g.grantedBy, when: new Date(g.grantedAt).toLocaleDateString(locale) })}
+                    {' · '}
+                    {g.expiresAt === null ? t('agents.grants.noExpiry') : expired ? t('agents.grants.expired') : t('agents.grants.expiresOn', { when: new Date(g.expiresAt).toLocaleDateString(locale) })}
+                  </span>
+                  {g.suspendedAt && <span className="rounded bg-warning-surface px-1 text-warning">{t('apiGrant.rowSuspended')}</span>}
+                  {noKey && <span className="rounded bg-danger-surface px-1 text-danger">{t('apiGrant.rowNoKey')}</span>}
+                  {canRevoke && (
+                    <button className="ml-auto rounded border border-border px-2 py-0.5 text-meta text-fg hover:text-danger disabled:opacity-50" disabled={off}
+                      aria-label={t('apiGrant.revokeAria', { name: c?.name ?? id.slice(0, 8) })}
+                      onClick={() => setRevoking(g)}>{t('agents.grants.revoke')}</button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          <div className="mt-2 text-meta font-medium text-fg-muted">{t('apiGrant.mergeHeading')}</div>
+        </>
+      )}
       {/* 머지 gh 계정(P2) — 소유자인 사람에게만, 이 기기에서 도는 에이전트에만. */}
       {canGrant && hasOperatorLocalSurface() && agent.assignment?.operatorId && (
         localOperatorId && agent.assignment.operatorId === localOperatorId
@@ -110,7 +157,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
             const expired = g.expiresAt !== null && Date.parse(g.expiresAt) <= Date.now();
             return (
               <li key={g.scope} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-row border border-border px-2 py-1 text-meta text-fg" data-testid={`agent-grant-${repo}`}>
-                <span className="font-medium">{t('agents.grants.merge')}</span>
+                <span className="text-fg-muted">{t('agents.grants.merge')}</span>
                 <span className="font-mono">{repo}</span>
                 <span className="text-fg-subtle">
                   {t('agents.grants.by', { handle: accounts[g.grantedBy]?.handle ?? g.grantedBy, when: new Date(g.grantedAt).toLocaleDateString(locale) })}
@@ -148,6 +195,16 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
       {!canGrant && canRevoke && <p className="mt-2 text-meta text-fg-subtle">{t('agents.grants.ownerOnly')}</p>}
 
       {canGrant && adding && (
+        <div role="radiogroup" aria-label={t('apiGrant.kind')} className="mt-2 flex gap-2 text-meta">
+          <button type="button" role="radio" aria-checked={addKind === 'api'} className={`rounded px-2 py-1 ${addKind === 'api' ? 'bg-accent text-fg-on-strong' : 'border border-border text-fg'}`} onClick={() => setAddKind('api')}>{t('apiGrant.kindApi')}</button>
+          <button type="button" role="radio" aria-checked={addKind === 'merge'} className={`rounded px-2 py-1 ${addKind === 'merge' ? 'bg-accent text-fg-on-strong' : 'border border-border text-fg'}`} onClick={() => setAddKind('merge')}>{t('apiGrant.kindMerge')}</button>
+        </div>
+      )}
+      {canGrant && adding && addKind === 'api' && (
+        <ApiGrantForm agentId={agent.id} connectors={connectors.filter((c) => c.ownerAccountId === myId)}
+          onCancel={() => setAdding(false)} onDone={async () => { setAdding(false); await load(); }} />
+      )}
+      {canGrant && adding && addKind === 'merge' && (
         <div className="mt-2 rounded-row border border-border bg-surface-sunken p-2" data-testid="agent-grants-add">
           <label className="flex flex-col gap-1 text-meta text-fg">
             {t('agents.grants.repos')}
@@ -198,8 +255,12 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
 
       {revoking && (
         <ConfirmDialog
-          title={t('agents.grants.revokeTitle', { repo: repoOf(revoking.scope) })}
-          detail={t('agents.grants.revokeDetail', { handle: agent.handle, repo: repoOf(revoking.scope) })}
+          title={revoking.capability === 'api.call'
+            ? t('apiGrant.revokeTitle', { name: connectors.find((c) => `connector:${c.id}` === revoking.scope)?.name ?? '' })
+            : t('agents.grants.revokeTitle', { repo: repoOf(revoking.scope) })}
+          detail={revoking.capability === 'api.call'
+            ? t('apiGrant.revokeDetail', { handle: agent.handle })
+            : t('agents.grants.revokeDetail', { handle: agent.handle, repo: repoOf(revoking.scope) })}
           confirmLabel={t('agents.grants.revoke')}
           cancelLabel={t('agents.grants.cancel')}
           danger
@@ -208,7 +269,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
           onConfirm={() => {
             const g = revoking;
             setRevoking(null);
-            void run(() => getController().deleteGrant(agent.id, CAP, g.scope));
+            void run(() => getController().deleteGrant(agent.id, g.capability, g.scope));
           }}
         />
       )}
