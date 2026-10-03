@@ -20,10 +20,14 @@ describe('위임', () => {
   let alice: { token: string; accountId: string };
   let bob: { token: string; accountId: string };
   let a: string; let b: string; let c: string; let bobs: string;
-  let connectorId: string; let ch: string;
+  let connectorId: string; let ch: string; let other: string;
 
-  const msgBy = async (authorId: string) =>
-    (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'go', 'user') returning id`, [ch, authorId])).rows[0].id as string;
+  /** 원인 메시지 — 기본은 위임하는 에이전트(a)를 깨운 글(inbox 있음). `woke: false` 면 깨우지 않은 글. */
+  const msgBy = async (authorId: string, o: { woke?: boolean; forAgent?: string; channel?: string } = {}) => {
+    const id = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'go', 'user') returning id`, [o.channel ?? ch, authorId])).rows[0].id as string;
+    if (o.woke !== false) await pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [o.forAgent ?? a, id]);
+    return id;
+  };
   const give = (agent: string, body: Record<string, unknown>) => app.inject({
     method: 'PUT', url: `/accounts/${agent}/grants`, headers: auth(alice.token),
     payload: { capability: 'api.call', scope: `connector:${connectorId}`, ...body },
@@ -51,6 +55,7 @@ describe('위임', () => {
     connectorId = (await app.inject({ method: 'POST', url: '/connectors', headers: auth(alice.token),
       payload: { name: 'lab-api', baseUrl: 'https://api.example.internal', authKind: 'bearer', secretId, methods: ['GET', 'POST', 'PUT'] } })).json().connector.id;
     ch = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'deleg' } })).json().id as string;
+    other = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'elsewhere' } })).json().id as string;
     // 사람이 a 에게: GET·POST /api/ · 7일 · 한 단계 더 · 쓰기는 사람 글 턴만.
     expect((await give(a, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: days(7), delegateDepth: 1, writeNeedsHumanCause: true })).statusCode).toBe(200);
   });
@@ -112,6 +117,31 @@ describe('위임', () => {
     if (!r2.ok) throw new Error('expected ok');
     expect((await app.inject({ method: 'POST', url: `/grants/${r2.grantId}/decline`, headers: auth(alice.token) })).statusCode).toBe(204);
     expect(await grantOf(c)).toBeUndefined();
+  });
+
+  it('F1: 이 에이전트를 깨우지 않은 사람 글을 원인으로 대면 대기이고, 그 채널에는 글이 생기지 않는다', async () => {
+    const notMine = await msgBy(alice.accountId, { woke: false, channel: other });
+    const r = await delegateApiGrant(pool, base({ to: c, causeMessageId: notMine }));
+    expect(r).toMatchObject({ ok: true, pending: true });
+    expect((await pool.query(`select 1 from message where channel_id = $1 and meta ? 'delegation'`, [other])).rowCount).toBe(0);
+    if (r.ok) await revokeDelegation(pool, { agentId: a, grantId: r.grantId });
+  });
+
+  it('F2: 루트 사람이 아닌 사람(다른 멤버)의 글로 띄운 턴이면 대기', async () => {
+    const r = await delegateApiGrant(pool, base({ to: c, causeMessageId: await msgBy(bob.accountId) }));
+    expect(r).toMatchObject({ ok: true, pending: true });
+    if (r.ok) await revokeDelegation(pool, { agentId: a, grantId: r.grantId });
+  });
+
+  it('L1: 같은 위임이 다시 오면 아무것도 하지 않는다 — 줄·알림이 새로 생기지 않는다', async () => {
+    const first = await delegateApiGrant(pool, base({ to: c, causeMessageId: await msgBy(alice.accountId) }));
+    if (!first.ok) throw new Error('expected ok');
+    const lines = async () => (await pool.query(`select 1 from message where meta->'delegation'->>'toAgentId' = $1`, [c])).rowCount;
+    const before = await lines();
+    const again = await delegateApiGrant(pool, base({ to: c, causeMessageId: await msgBy(alice.accountId) }));
+    expect(again).toMatchObject({ ok: true, grantId: first.grantId, pending: false });
+    expect(await lines()).toBe(before);
+    await revokeDelegation(pool, { agentId: a, grantId: first.grantId });
   });
 
   it('덮지 않는다: 사람이 직접 준 줄이 있으면 already_granted', async () => {

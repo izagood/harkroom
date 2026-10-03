@@ -27,9 +27,13 @@ import { getMessageById, postMessage } from './messages.js';
 
 export type DelegateDenial =
   | 'not_agent' | 'no_connector' | 'not_granted' | 'parent_invalid' | 'no_delegate_depth' | 'depth_too_deep'
-  | 'bad_limits' | 'wider_than_parent' | 'bad_expiry' | 'no_target' | 'not_root_owner_agent' | 'self' | 'already_granted';
+  | 'bad_limits' | 'wider_than_parent' | 'bad_expiry' | 'no_target' | 'not_root_owner_agent' | 'self' | 'already_granted' | 'rate_limited';
 
 const MAX_DAYS_MS = 30 * 86_400_000 + 60_000;
+/** 원인 메시지가 이 에이전트를 깨운 지 이만큼 안이어야 원인으로 친다(automation 의 cause_stale 과 같은 결). */
+const CAUSE_FRESH_MS = 60 * 60_000;
+/** (위임한 에이전트, 받는 쪽)마다 하루에 새로 남기는 위임 수 상한 — 루트 사람 알림이 쌓이지 않게(security L1). */
+const DAILY_PER_PAIR = 5;
 export const PENDING_APPROVAL = 'pending_approval';
 
 interface ParentRow {
@@ -79,17 +83,39 @@ export async function delegateApiGrant(pool: Pool, a: {
   if (target.id === a.fromAgentId) return deny('self');
   if (target.ownerAccountId !== root) return deny('not_root_owner_agent');
 
-  const existing = (await pool.query<{ parentGrantId: string | null }>(
-    `select parent_grant_id as "parentGrantId" from account_grant where account_id = $1 and capability = 'api.call' and scope = $2`,
+  const existing = (await pool.query<{ id: string; parentGrantId: string | null; limits: ApiGrantLimits | null; expiresAt: string | null; delegateDepth: number; w: boolean; suspendReason: string | null }>(
+    `select id, parent_grant_id as "parentGrantId", limits, expires_at as "expiresAt", delegate_depth as "delegateDepth",
+            write_needs_human_cause as w, suspend_reason as "suspendReason"
+       from account_grant where account_id = $1 and capability = 'api.call' and scope = $2`,
     [target.id, scope])).rows[0];
   if (existing && existing.parentGrantId !== parent.id) return deny('already_granted');
+  const wanted = parent.writeNeedsHumanCause || a.writeNeedsHumanCause === true;
+  // 같은 위임이 다시 오면(범위·단계·칸이 같고 만료가 하루 안쪽으로 같다) 아무것도 하지 않는다 — 줄도 알림도 새로 만들지 않는다(L1).
+  if (existing && existing.limits && existing.expiresAt
+    && JSON.stringify([...existing.limits.methods].sort()) === JSON.stringify([...limits.methods].sort())
+    && existing.limits.pathPrefix === limits.pathPrefix && existing.delegateDepth === a.delegateDepth && existing.w === wanted
+    && Math.abs(Date.parse(existing.expiresAt) - exp) < 86_400_000) {
+    return { ok: true, grantId: existing.id, pending: existing.suspendReason === PENDING_APPROVAL };
+  }
+  const recent = (await pool.query<{ n: number }>(
+    `select count(*)::int as n from audit_log where action in ('grant.delegated', 'grant.delegate.pending')
+      and actor_id = $1 and target = $2 and at > $3`, [a.fromAgentId, target.id, new Date(now.getTime() - 86_400_000)])).rows[0]!.n;
+  if (recent >= DAILY_PER_PAIR) return deny('rate_limited');
 
-  // E2: 그 턴을 띄운 글이 사람 글이 아니면 대기. 원인을 모르면(옛 러너) 사람 글이 아닌 것으로 본다.
-  const cause = a.causeMessageId ? (await pool.query<{ kind: string; channelId: string; threadRootId: string }>(
-    `select ac.kind, m.channel_id as "channelId", coalesce(m.thread_root_id, m.id) as "threadRootId"
-       from message m join account ac on ac.id = m.author_id where m.id = $1`, [a.causeMessageId])).rows[0] : undefined;
-  const pending = cause?.kind !== 'human';
-  const w = parent.writeNeedsHumanCause || a.writeNeedsHumanCause === true;
+  // 원인 메시지는 믿기 전에 확인한다(security F1): 그 글이 **이 에이전트를 실제로 깨웠어야**(inbox, 1시간 안) 원인으로 친다.
+  // 확인되지 않으면 대기이고, 시스템 줄도 쓰지 않는다 — 에이전트가 속하지 않은 채널에 글이 생기지 않게.
+  const cause = a.causeMessageId ? (await pool.query<{ authorId: string; answeredBy: string | null; channelId: string; threadRootId: string }>(
+    `select m.author_id as "authorId", m.meta->'ask'->>'answeredBy' as "answeredBy",
+            m.channel_id as "channelId", coalesce(m.thread_root_id, m.id) as "threadRootId"
+       from message m
+      where m.id = $1 and m.deleted_at is null
+        and exists (select 1 from inbox i where i.account_id = $2 and i.message_id = m.id and i.created_at > $3)`,
+    [a.causeMessageId, a.fromAgentId, new Date(now.getTime() - CAUSE_FRESH_MS)])).rows[0] : undefined;
+  // E2(좁힘, security F2): 즉시 유효는 그 턴을 **루트 사람이** 띄웠을 때만 — 글을 쓴 것이 루트 사람이거나, 루트 사람이 답한 선택 카드.
+  // 다른 멤버·guest·에이전트 글이면 대기로 들어가 루트 사람이 허락해야 쓰인다.
+  const byRoot = !!cause && (cause.authorId === root || cause.answeredBy === root);
+  const pending = !byRoot;
+  const w = wanted;
 
   const grantId = ((await pool.query<{ id: string }>(
     `insert into account_grant (account_id, capability, scope, granted_by, expires_at, limits, delegate_depth, write_needs_human_cause,
