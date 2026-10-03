@@ -101,8 +101,13 @@ export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<vo
       // 삭제된 계정은 어떤 자격증명으로도 서지 못한다(061). 삭제가 PAT 를 전부 폐기하므로
       // 이 조건은 보통 걸리지 않지만, 삭제 뒤에 발급된 PAT(소유자 라우트는 계정을 목록으로
       // 찾지 않는다) 하나가 지워진 에이전트를 되살리는 길이 되면 안 된다.
+      //
+      // PAT 는 **에이전트의** 자격증명이다(kind='agent'). 발급 라우트는 #1114 부터 에이전트만 받지만
+      // 그 전에 발급된 사람 PAT 가 남아 있을 수 있다 — 그 토큰은 세션 만료·로그아웃 없이 그 사람으로
+      // 서는 길이라, 발급만 막고 인증을 열어 두면 남은 토큰이 영영 산다. 앱·모바일·오퍼레이터 어느 것도
+      // 사람 PAT 로 서버에 말하지 않는다(사람은 세션, 러너는 에이전트 PAT·오퍼레이터 토큰).
       `select ${ACCOUNT_COLS} from pat p join account a on a.id = p.account_id
-       where p.token_hash = $1 and p.revoked_at is null and a.deleted_at is null`, [hash]);
+       where p.token_hash = $1 and p.revoked_at is null and a.deleted_at is null and a.kind = 'agent'`, [hash]);
     if (viaPat.rowCount) { req.account = viaPat.rows[0]; req.credentialHash = hash; req.authVia = 'pat'; }
   });
 

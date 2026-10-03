@@ -81,15 +81,14 @@ describe('PUT /push/devices', () => {
     expect(await rows(accountId)).toHaveLength(0);
   });
 
-  it('사람 계정의 PAT 도 403 이다 — 계정 종류가 아니라 자격증명 경로(authVia)로 가른다', async () => {
+  it('사람 계정의 PAT 는 인증되지 않는다 — 401 이고 등록되지 않는다', async () => {
     const { accountId } = await createMember(app, adminToken, 'p-human-pat');
-    // REST 는 이제 사람 PAT 를 발급하지 않는다(대상은 에이전트뿐). 그래도 옛 사람 PAT 가 남아 있을 수 있고
-    // PAT 인증은 계정 종류를 보지 않으니, 계정 종류만 보면 이 길이 열린다 — 서비스로 직접 만든다.
+    // REST 는 사람 PAT 를 발급하지 않는다(대상은 에이전트뿐, #1114). 그 전에 발급된 사람 PAT 가 남아 있을 수
+    // 있어 서비스로 직접 만든다 — PAT 인증이 에이전트만 받으므로 이 토큰은 어느 라우트에도 서지 못한다.
     const made = await mintPat(pool, accountId, 'cli', { actorId: null, actorHandle: null });
     if (!made.ok) throw new Error('mint failed');
     const res = await put(made.token, { token: tok(8), platform: 'ios', env: 'production' });
-    expect(res.statusCode).toBe(403);
-    expect(res.json().error.code).toBe('push_session_only');
+    expect(res.statusCode).toBe(401);
     expect(await rows(accountId)).toHaveLength(0);
   });
 

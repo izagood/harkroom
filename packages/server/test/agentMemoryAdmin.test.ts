@@ -165,4 +165,21 @@ describe('에이전트 기억 편집 REST (M5)', () => {
       expect(await listMemory(pool, id)).toHaveLength(0);
     }
   });
+
+  it('사람 계정 id 면 읽기·지우기·이전 판·확인도 admin 이어도 404 다', async () => {
+    // 옛 판본이 남긴 사람 id 의 기억 행이 있다고 치고(서비스로 직접 만든다) REST 로는 보이지도 지워지지도 않아야 한다.
+    await setMemory(pool, adminId, 'mem/stray-old', 'x', undefined, undefined, undefined, 'test');
+    const slug = encodeURIComponent('mem/stray-old');
+    const res = await Promise.all([
+      app.inject({ method: 'GET', url: `/accounts/agents/${adminId}/memory`, headers: admin() }),
+      app.inject({ method: 'GET', url: `/accounts/agents/${adminId}/memory/${slug}/revisions`, headers: admin() }),
+      app.inject({ method: 'POST', url: `/accounts/agents/${adminId}/memory/${slug}/confirm`, headers: admin() }),
+      app.inject({ method: 'DELETE', url: `/accounts/agents/${adminId}/memory/${slug}`, headers: admin() }),
+    ]);
+    for (const r of res) {
+      expect(r.statusCode).toBe(404);
+      expect(r.json().error.code).toBe('not_found');
+    }
+    expect(await listMemory(pool, adminId)).toHaveLength(1);
+  });
 });
