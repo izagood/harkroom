@@ -30,6 +30,8 @@ export type CliCommand =
   | { command: 'mcp-bridge' }
   /** `merge <owner/name> <n> --head <sha>` — 인자 검증은 `turnMerge.parseMergeArgs`. */
   | { command: 'merge'; argv: string[] }
+  /** `api <연결> <METHOD> <경로> [--data …]` — 인자 검증은 `turnApi.parseApiArgs`. */
+  | { command: 'api'; argv: string[] }
   | { command: 'daemon'; argv: string[] };
 
 function flagValue(argv: readonly string[], flag: string): string | undefined {
@@ -56,6 +58,8 @@ export function parseCliArgs(argv: readonly string[]): CliCommand {
       return { command: 'mcp-bridge' };
     case 'merge':
       return { command: 'merge', argv: argv.slice(1) };
+    case 'api':
+      return { command: 'api', argv: argv.slice(1) };
     default:
       return { command: 'daemon', argv: [...argv] };
   }

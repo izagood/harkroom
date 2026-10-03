@@ -24,6 +24,8 @@ import { parseDaemonArgs, describeArgs, type DaemonArgs } from './args.js';
 import { parseCliArgs, register, registerViaRunningOperator, resolveDataDir, runArgs } from './cli.js';
 import { runMcpBridge } from './mcpBridge.js';
 import { MERGE_TOOL, parseMergeArgs } from './turnMerge.js';
+import { API_TOOL, parseApiArgs } from './turnApi.js';
+import { readFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
 import { EXIT_INCONCLUSIVE, EXIT_OCCUPIED, startDaemon } from './run.js';
 
@@ -101,6 +103,65 @@ async function mergeMain(argv: string[]): Promise<void> {
 }
 
 /**
+ * 브릿지와 같은 소켓·같은 자격으로 `tools/call` 한 줄을 보내고 답 한 줄을 받는다(머지·api 래퍼 공용 꼴).
+ */
+async function callOperatorTool(name: string, args: Record<string, unknown>): Promise<{ ok: boolean; text: string } | { ok: false; notInTurn: true }> {
+  const socketPath = process.env[RUNNER_LINK_ENV.socketPath];
+  const runnerId = process.env[RUNNER_LINK_ENV.runnerId];
+  const secret = process.env[RUNNER_LINK_ENV.secret];
+  const cause = process.env[RUNNER_TURN_CAUSE_ENV] || null;
+  if (!socketPath || !runnerId || !secret || !cause) return { ok: false, notInTurn: true };
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const done = new Promise<{ ok: boolean; text: string }>((resolve) => {
+    let buf = '';
+    stdout.on('data', (chunk: Buffer) => {
+      buf += chunk.toString('utf8');
+      const nl = buf.indexOf('\n');
+      if (nl < 0) return;
+      const line = buf.slice(0, nl);
+      try {
+        const msg = JSON.parse(line) as { result?: { content?: { text?: string }[]; isError?: boolean }; error?: { message?: string } };
+        if (msg.error) resolve({ ok: false, text: JSON.stringify({ error: { code: 'link_error', message: msg.error.message ?? 'link error' } }) });
+        else resolve({ ok: msg.result?.isError !== true, text: msg.result?.content?.[0]?.text ?? '{}' });
+      } catch {
+        resolve({ ok: false, text: JSON.stringify({ error: { code: 'bad_reply', message: 'unparseable reply from operator' } }) });
+      }
+      stdin.end();
+    });
+  });
+  const bridge = runMcpBridge({ socketPath, runnerId, secret, cause, cwd: process.cwd() }, { stdin, stdout, stderr: process.stderr });
+  stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } })}\n`);
+  const r = await done;
+  await bridge;
+  return r;
+}
+
+/**
+ * `harkroom-operator api <연결> <METHOD> <경로> [--data @파일|<글자>] [--content-type <형식>]` — 외부 API 래퍼의 **클라이언트 쪽**
+ * (C안 P3, 스레드 07519d86). 하네스의 셸에서 돈다. 인자를 재고 본문 파일을 읽어 오퍼레이터에 넘긴다 — 판정·키·호출은 전부
+ * 오퍼레이터 쪽(`turnApi.ts`)이다. 이 프로세스는 키도 임대도 모른다. 결과 JSON 에 `exit` 를 싣는다(꼬리 `; echo $?` 를 붙이면
+ * allow 규칙이 깨진다 — 머지 래퍼 qa ②).
+ */
+async function apiMain(argv: string[]): Promise<void> {
+  const parsed = parseApiArgs(argv, (p) => readFileSync(resolve(process.cwd(), p)));
+  if ('error' in parsed) {
+    console.log(JSON.stringify({ error: { code: 'bad_request', message: parsed.error }, exit: 2 }));
+    process.exit(2);
+  }
+  const r = await callOperatorTool(API_TOOL, { connector: parsed.connector, method: parsed.method, path: parsed.path, body: parsed.body, contentType: parsed.contentType });
+  if ('notInTurn' in r) {
+    console.log(JSON.stringify({ error: { code: 'not_in_turn', message: `${RUNNER_LINK_ENV_KEYS.join('·')}·${RUNNER_TURN_CAUSE_ENV} are required — the wrapper only runs inside a runner-launched mention turn` }, exit: 2 }));
+    process.exit(2);
+  }
+  let out: Record<string, unknown> = {};
+  try { const v: unknown = JSON.parse(r.text); if (v && typeof v === 'object') out = v as Record<string, unknown>; } catch { out = { raw: r.text }; }
+  const exit = r.ok ? 0 : 1;
+  console.log(JSON.stringify({ ...out, exit }));
+  process.exit(exit);
+}
+
+/**
  * 서브커맨드 분기(`cli.ts`). 앱이 띄우면 `--socket …` 인자가 그대로 오고(`daemon`), 사람이나
  * launchd/systemd 가 띄우면 `run` 이다 — 둘 다 같은 `daemonMain` 으로 들어간다. 차이는 인자를
  * 누가 조립했는가뿐이다.
@@ -113,6 +174,9 @@ async function main(): Promise<void> {
       return;
     case 'merge':
       await mergeMain(cmd.argv);
+      return;
+    case 'api':
+      await apiMain(cmd.argv);
       return;
     case 'register': {
       const dataDir = resolveDataDir(process.env.HARKROOM_DATA_DIR);
