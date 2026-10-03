@@ -260,19 +260,59 @@ describe('memoryPin — 시스템 프롬프트를 세션 동안 고정한다', (
       expect(queries).toEqual(['배포 절차를 고쳐 달라', '배포 절차를 고쳐 달라\n그대로 해']);
     });
 
-    it('F3: 목록에 N/200 을 싣고, 상한 가까이면 지우라고 경고한다', async () => {
+    it('F3: 목록 끝에 N/200 을 늘 싣는다', async () => {
       const few = await turn({ core: 'C', slugs: ['mem/a'] }, true);
       expect(few.turn).toContain('(기억 2/200개');
-      expect(few.turn).not.toContain('상한에 가깝다');
-      const many = Array.from({ length: 179 }, (_, i) => `mem/m${i}`);
-      const near = await turn({ core: 'C', slugs: many }, true);
-      expect(near.turn).toContain('(기억 180/200개');
-      expect(near.turn).toContain('상한에 가깝다');
-      // 세션 도중 상한 가까이 불어나면 변경 알림에도 싣는다.
+      expect(few.turn).not.toContain('정리 신호');
+    });
+  });
+
+  // C2: 정리 신호를 목록 머리에 — 서버 C1 경고와 같은 문턱(shared)·같은 셋.
+  describe('C2 정리 신호', () => {
+    const many = (n: number) => Array.from({ length: n }, (_, i) => `mem/m${i}`);
+
+    it('항목 180 부터: 머리에 merge·archive·lease 를 말한다(문턱 아래는 조용하다)', async () => {
+      const below = await turn({ core: 'C', slugs: many(178) }, true);
+      expect(below.turn).not.toContain('정리 신호');
+      const near = await turn({ core: 'C', slugs: many(179) }, true);
+      const text = near.turn;
+      expect(text).toContain('- 기억 180/200개');
+      expect(text).toContain('memory.merge');
+      expect(text).toContain('memory.archive');
+      expect(text).toContain('memory.lease');
+      // 머리에 — 목록 첫 줄보다 앞이다.
+      expect(text.indexOf('정리 신호')).toBeLessThan(text.indexOf('- mem/m0'));
+    });
+
+    it('core 2,600자부터, journal 56개부터', async () => {
+      const core = await turn({ core: 'x'.repeat(2600), slugs: ['mem/a'] }, true);
+      expect(core.turn).toContain('- core 2,600/3,000자');
+      expect(core.turn).not.toContain('- journal');
+      const j = many(56);
+      const kinds = Object.fromEntries(j.map((s) => [s, 'journal']));
+      const journals = await turn({ core: 'C', slugs: ['mem/a', ...j], kinds }, true);
+      expect(journals.turn).toContain('- journal 56/60개');
+      expect(journals.turn).toContain('expiringJournal');
+      const fewer = await turn({ core: 'C', slugs: ['mem/a', ...j.slice(1)], kinds }, true);
+      expect(fewer.turn).not.toContain('- journal');
+    });
+
+    it('세션 도중: 새로 켜진 신호만 한 번 알리고, 꺼졌다 다시 켜지면 다시 알린다', async () => {
       await turn({ core: 'C', slugs: ['mem/a'] }, true);
-      const grew = await turn({ core: 'C', slugs: ['mem/a', ...many] }, false);
+      // 다른 스레드의 쓰기로 상한 가까이 불어났다 — 목록이 바뀌지 않았어도(여기선 바뀌었지만) 신호는 알린다.
+      const grew = await turn({ core: 'C', slugs: ['mem/a', ...many(179)] }, false);
       expect(grew.turn).toContain('<memory-update>');
-      expect(grew.turn).toContain('상한에 가깝다');
+      expect(grew.turn).toContain('- 기억 181/200개');
+      // 같은 신호는 다시 안 싣는다.
+      const same = await turn({ core: 'C', slugs: ['mem/a', ...many(179)] }, false);
+      expect(same.turn).toBe('');
+      // core 신호만 새로 켜지면 그것을 알린다(core 전문과 함께).
+      const core = await turn({ core: 'y'.repeat(2700), slugs: ['mem/a', ...many(179)] }, false);
+      expect(core.turn).toContain('- core 2,700/3,000자');
+      // 정리해서 꺼졌다가 다시 켜지면 다시 알린다.
+      await turn({ core: 'y'.repeat(2700), slugs: ['mem/a'] }, false);
+      const again = await turn({ core: 'y'.repeat(2700), slugs: ['mem/a', ...many(179)] }, false);
+      expect(again.turn).toContain('- 기억 181/200개');
     });
   });
 

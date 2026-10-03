@@ -3,6 +3,7 @@ import {
   MAX_CORE_MEMORY_LENGTH, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MAX_MEMORY_ITEMS_PER_ACCOUNT, JOURNAL_EXPIRING_WINDOW,
   pickExpiringJournals, pruneRevisions, type MemoryKind,
 } from './memory.js';
+import { MEMORY_CORE_WARN_CHARS, MEMORY_ITEMS_WARN_COUNT } from '@harkroom/shared';
 
 /**
  * 기억 정리의 **쓰기 쪽**(메모리 자동 요약·압축 C1, 2026-10-02, 설계
@@ -20,10 +21,8 @@ import {
  * 기억은 그대로 다음 턴의 지시가 되는 자리라(080), 기계가 쓴 요약이 검토 없이 들어가면 안 된다.
  */
 
-/** 이 길이부터 core 가 "곧 넘친다"고 알린다(상한 3,000). 추정값 — 실측 뒤 조정한다. */
-export const MEMORY_CORE_WARN_CHARS = 2600;
-/** 이 개수부터 항목이 "곧 상한"이라고 알린다(상한 200). 추정값. */
-export const MEMORY_ITEMS_WARN_COUNT = 180;
+// 경고 문턱은 러너(`memoryPin.ts`)와 같이 쓰므로 shared 에 둔다(C2).
+export { MEMORY_CORE_WARN_CHARS, MEMORY_ITEMS_WARN_COUNT };
 /** 정리 임대의 기본 길이. 정리 턴 하나가 30분 예산이라 넉넉히 한 시간. */
 export const MEMORY_LEASE_DEFAULT_MINUTES = 60;
 export const MEMORY_LEASE_MAX_MINUTES = 180;
