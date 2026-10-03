@@ -15,6 +15,7 @@ import { MessageSettings } from '../components/settings/MessageSettings';
 import { ProfileSettings } from '../components/settings/ProfileSettings';
 import { SkillsSettings } from '../components/settings/SkillsSettings';
 import { AutomationsSettings } from '../components/settings/AutomationsSettings';
+import { SecretsSettings } from '../components/settings/SecretsSettings';
 import { UpdatesSettings } from '../components/settings/UpdatesSettings';
 import { ThisOperatorSettings } from '../components/settings/ThisOperatorSettings';
 import { DEFAULT_SECTION, SETTINGS_GROUPS, isSectionId, navKey, workspaceEditable, type SectionId } from '../components/settings/sections';
@@ -126,6 +127,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
           {section === 'this-operator' && <ThisOperatorSettings onOpenSection={setSection} />}
           {section === 'skills' && <SkillsSettings targetId={targetId} />}
           {section === 'automations' && <AutomationsSettings />}
+          {section === 'secrets' && <SecretsSettings />}
           {section === 'gallery' && <GallerySettings />}
         </main>
       </div>

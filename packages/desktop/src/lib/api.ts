@@ -18,6 +18,23 @@ export interface PreviewTicket {
   latestTitle?: string;
 }
 
+/** 비밀 한 줄(`GET /secrets`). 값은 없다 — 판 번호와 크기뿐이다. */
+export interface SecretView {
+  id: string; name: string; kind: 'text' | 'file'; filename: string | null; description: string;
+  ownerAccountId: string; expiresAt: string | null; createdAt: string; updatedAt: string;
+  version: number | null; sizeBytes: number | null; grantCount: number;
+}
+/** 비밀을 파일로 받을 수 있는 에이전트(`secret.mount`). channelId null = 모든 채널, operatorId null = 아무 오퍼레이터. */
+export interface SecretGrantView {
+  id: string; agentId: string; channelId: string | null; operatorId: string | null;
+  grantedBy: string; grantedAt: string; suspendedAt: string | null; suspendReason: string | null;
+}
+/** 접근 기록 한 줄. 값·해시는 없다. */
+export interface SecretAccessView {
+  id: string; version: number | null; agentId: string | null; operatorId: string | null; turnId: string | null;
+  channelId: string | null; threadRootId: string | null; result: string; reason: string | null; at: string;
+}
+
 export class ApiError extends Error {
   /**
    * 서버가 오류와 **함께 보낸 것**. 응답 본문을 그대로 들고 온다.
@@ -727,6 +744,38 @@ export class ApiClient {
   }
   deleteGrant(accountId: string, capability: Capability, scope: string): Promise<void> {
     return this.req('DELETE', `/accounts/${accountId}/grants/${encodeURIComponent(capability)}?scope=${encodeURIComponent(scope)}`);
+  }
+
+  /**
+   * 비밀 보관소(085, 사람용 REST). 값은 **보내기만** 한다 — 서버는 값이나 그 해시를 어떤 응답에도 싣지 않는다.
+   * 남의 비밀은 있어도 404 다(이름은 권한의 지도). 판정은 전부 서버 — `secretRoutes.ts`.
+   */
+  listSecrets(): Promise<{ enabled: boolean; secrets: SecretView[] }> {
+    return this.req('GET', '/secrets');
+  }
+  createSecret(body: { name: string; kind: 'text' | 'file'; filename?: string | null; description: string; expiresAt: string | null; value?: string; valueBase64?: string }): Promise<SecretView> {
+    return this.req<{ secret: SecretView }>('POST', '/secrets', body).then((r) => r.secret);
+  }
+  patchSecret(id: string, body: { description?: string; expiresAt?: string | null }): Promise<SecretView> {
+    return this.req<{ secret: SecretView }>('PATCH', `/secrets/${id}`, body).then((r) => r.secret);
+  }
+  replaceSecretValue(id: string, body: { value?: string; valueBase64?: string }): Promise<SecretView> {
+    return this.req<{ secret: SecretView }>('PUT', `/secrets/${id}/value`, body).then((r) => r.secret);
+  }
+  deleteSecret(id: string): Promise<void> {
+    return this.req('DELETE', `/secrets/${id}`);
+  }
+  listSecretGrants(id: string): Promise<SecretGrantView[]> {
+    return this.req<{ grants: SecretGrantView[] }>('GET', `/secrets/${id}/grants`).then((r) => r.grants);
+  }
+  putSecretGrant(id: string, body: { agentId: string; channelId: string | null; operator: 'current' | 'any' }): Promise<void> {
+    return this.req<unknown>('PUT', `/secrets/${id}/grants`, body).then(() => undefined);
+  }
+  deleteSecretGrant(id: string, grantId: string): Promise<void> {
+    return this.req('DELETE', `/secrets/${id}/grants/${grantId}`);
+  }
+  listSecretAccess(id: string): Promise<SecretAccessView[]> {
+    return this.req<{ access: SecretAccessView[] }>('GET', `/secrets/${id}/access?limit=100`).then((r) => r.access);
   }
 
   /** `invokeScope: 'list'` 의 명단에 사람을 넣는다. 멱등. 답은 갱신된 AgentView. */
