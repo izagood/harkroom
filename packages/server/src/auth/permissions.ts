@@ -81,6 +81,8 @@ export async function can(
 ): Promise<boolean> {
   // `repo.merge` 는 여기서 언제나 거짓이다 — 정확 일치 grant 만 보는 `mergeGrantFor` 가 판정한다(F1).
   if (cap === 'repo.merge') return false;
+  // `api.call` 도 같다 — 사슬과 limits 를 보는 `apiGrants.ts::apiGrantFor` 가 판정한다.
+  if (cap === 'api.call') return false;
   if (target && await isOwnerOf(pool, actor.id, target)) return true;
   // guest 는 기본 capability 가 없다 — 외부인을 채널 하나에만 들이는 자리다(스펙 §6, v2).
   if (actor.role !== 'guest' && MEMBER_DEFAULT_CAPABILITIES.includes(cap)) return true;
@@ -96,8 +98,8 @@ export async function can(
  * 화면이 없는 권한을 그린다. 그쪽은 대상이 있을 때 `can()` 으로 묻는다.
  */
 export async function effectiveCapabilities(pool: Pool, actor: AccountView): Promise<Capability[]> {
-  // `repo.merge` 는 전역이 될 수 없다 — admin 이라도 화면에 그 권한을 그리지 않는다(F1).
-  if (actor.role === 'owner' || actor.role === 'admin') return CAPABILITIES.filter((c) => c !== 'repo.merge');
+  // `repo.merge`·`api.call` 은 전역이 될 수 없다 — admin 이라도 화면에 그 권한을 그리지 않는다(F1, #1136 L1).
+  if (actor.role === 'owner' || actor.role === 'admin') return CAPABILITIES.filter((c) => c !== 'repo.merge' && c !== 'api.call');
   const res = await pool.query<{ capability: Capability }>(
     `select distinct capability from account_grant
       where account_id = $1 and scope = '' and (expires_at is null or expires_at > now())`, [actor.id]);
