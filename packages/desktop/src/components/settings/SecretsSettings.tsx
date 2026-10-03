@@ -175,6 +175,7 @@ function useExplain() {
         case 'bad_value': return t('secrets.errBadValue');
         case 'secret_store_disabled': return t('secrets.disabled');
         case 'owner_only': return t('secrets.errOwnerOnly');
+        case 'not_own_agent': return t('secrets.errNotOwnAgent');
         case 'secret_expired': return t('secrets.errExpired');
         case 'not_assigned': return t('secrets.errNotAssigned');
         default: break;
@@ -346,13 +347,9 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
   };
   const handle = (id: string) => accounts[id]?.handle ?? id.slice(0, 8);
   const me = useActiveStore((s) => s.me);
-  // 남의 에이전트에게 주면 값이 **그 사람 머신의 오퍼레이터**에 파일로 떨어진다(security M1) — 목록을 나누고 경고한다.
-  // 서버는 아직 kind 만 본다. 막을지는 P2 에서 정한다.
+  // 비밀은 **내 에이전트**에게만 준다 — 서버도 남의 에이전트는 not_own_agent 로 거절한다(#1135 security M1).
   const agents = Object.values(accounts).filter((a) => a.kind === 'agent').sort((a, b) => a.handle.localeCompare(b.handle));
   const mineAgents = agents.filter((a) => a.ownerAccountId === me?.id);
-  const otherAgents = agents.filter((a) => a.ownerAccountId !== me?.id);
-  const picked = agentId ? accounts[agentId] : undefined;
-  const pickedOther = picked !== undefined && picked.ownerAccountId !== me?.id;
 
   return (
     <div className="mt-2 rounded border border-border bg-surface-sunken p-2" data-testid="secret-grants">
@@ -388,15 +385,6 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
                 {mineAgents.map((a) => <option key={a.id} value={a.id}>@{a.handle}</option>)}
               </optgroup>
             )}
-            {otherAgents.length > 0 && (
-              <optgroup label={t('secrets.agentsOthers')}>
-                {otherAgents.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {t('secrets.agentOther', { handle: a.handle, owner: a.ownerAccountId ? handle(a.ownerAccountId) : '?' })}
-                  </option>
-                ))}
-              </optgroup>
-            )}
           </select>
           <select aria-label={t('secrets.grantOperator')} className="rounded border border-border bg-field px-2 py-1 text-meta text-fg" value={operator} disabled={busy} onChange={(e) => setOperator(e.target.value as 'current' | 'any')}>
             <option value="current">{t('secrets.operatorCurrent')}</option>
@@ -406,11 +394,6 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
             await getController().putSecretGrant(secret.id, { agentId, channelId: null, operator });
             setAgentId('');
           })}>{t('secrets.grant')}</SmallButton>
-          {pickedOther && (
-            <p className="w-full text-meta text-warning" data-testid="secret-grant-other-warn">
-              {t('secrets.otherAgentWarn', { handle: picked.handle, owner: picked.ownerAccountId ? handle(picked.ownerAccountId) : '?' })}
-            </p>
-          )}
           {operator === 'any' && <p className="w-full text-meta text-warning" data-testid="secret-grant-any-warn">{t('secrets.anyOperatorWarn')}</p>}
         </div>
         </>
@@ -448,7 +431,7 @@ function accessText(t: ReturnType<typeof useT>, r: SecretAccessView): string {
   const known: Record<string, string> = {
     not_granted: t('secrets.why.notGranted'), wrong_channel: t('secrets.why.wrongChannel'), wrong_operator: t('secrets.why.wrongOperator'),
     grant_suspended: t('secrets.why.suspended'), secret_expired: t('secrets.why.expired'), rate_limited: t('secrets.why.rateLimited'),
-    lease_invalid: t('secrets.why.lease'), owner_inactive: t('secrets.why.ownerInactive'),
+    lease_invalid: t('secrets.why.lease'), not_own_agent: t('secrets.why.notOwnAgent'), owner_inactive: t('secrets.why.ownerInactive'),
   };
   return t('secrets.accessDenied', { why: (r.reason && known[r.reason]) ?? r.reason ?? '?' });
 }

@@ -86,6 +86,8 @@ describe('비밀 보관소 REST (085)', () => {
     alice = await createMember(app, admin.token, 'alice');
     bob = await createMember(app, admin.token, 'bob');
     agentId = (await createAgent(app, admin.token, 'worker')).accountId;
+    // 비밀은 소유자 자신의 에이전트에게만 준다(not_own_agent) — 시험의 에이전트를 alice 의 것으로.
+    await pool.query(`update agent_config set owner_account_id = $1 where account_id = $2`, [alice.accountId, agentId]);
     const op = await registerOperator(app, admin.token, 'mac');
     opToken = op.token;
     operatorId = op.operatorId;
@@ -184,8 +186,18 @@ describe('비밀 보관소 REST (085)', () => {
     expect(revoke.statusCode).toBe(204);
   });
 
+  it('남의 에이전트에게는 못 준다(not_own_agent) — 이미 준 옛 줄도 reveal 이 막는다', async () => {
+    const theirs = (await createAgent(app, admin.token, 'theirs')).accountId; // 소유자 admin
+    const id = (await pool.query(`select id from secret where name = 'gh-token'`)).rows[0].id as string;
+    const res = await app.inject({ method: 'PUT', url: `/secrets/${id}/grants`, headers: auth(alice.token), payload: { agentId: theirs, operator: 'any' } });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('not_own_agent');
+    expect((await pool.query(`select 1 from secret_grant where agent_id = $1`, [theirs])).rowCount).toBe(0);
+  });
+
   it('배정 없는 에이전트에 current 로 주면 409', async () => {
     const lone = (await createAgent(app, admin.token, 'lonely')).accountId;
+    await pool.query(`update agent_config set owner_account_id = $1 where account_id = $2`, [alice.accountId, lone]);
     const id = (await pool.query(`select id from secret where name = 'gh-token'`)).rows[0].id as string;
     const res = await app.inject({ method: 'PUT', url: `/secrets/${id}/grants`, headers: auth(alice.token), payload: { agentId: lone } });
     expect(res.statusCode).toBe(409);
