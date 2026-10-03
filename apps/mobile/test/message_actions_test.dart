@@ -84,6 +84,8 @@ class _Server {
         }
         if (path == '/channels/c1/messages/r3/also-in-channel') return _json({...rows[2], 'alsoInChannel': true});
         if (path == '/channels/c1/messages/r4/also-in-channel') return _json({...rows[3], 'alsoInChannel': false});
+        // 답글이 남은 머리를 지우면 서버는 본문을 뗀 자리표시자를 200 으로 돌려준다.
+        if (req.method == 'DELETE' && path == '/channels/c1/messages/m1') return _json({...rows[0], 'body': ''});
         if (req.method == 'DELETE' || path.endsWith('/unread') || path.endsWith('/read')) {
           return http.Response('', 204);
         }
@@ -165,6 +167,17 @@ void main() {
       expect(server.calls.last, 'DELETE /channels/c1/messages/r4');
       expect(app.messages['c1']!.any((m) => m.id == 'r4'), isFalse);
       expect(app.threads['m1']!.any((m) => m.id == 'r4'), isFalse);
+    });
+
+    test('답글이 남은 머리를 지우면 자리표시자로 덮는다 — 소켓이 먼저 와도 빼지 않는다(security F1)', () async {
+      final server = _Server();
+      final app = await _open(server);
+      addTearDown(app.dispose);
+      // 서버는 응답보다 먼저 message.updated 를 낸다.
+      app.applyEvent({'type': 'message.updated', 'message': {...server.rows[0], 'body': ''}});
+      await app.deleteMessage('c1', 'm1');
+      expect(server.calls.last, 'DELETE /channels/c1/messages/m1');
+      expect(app.messages['c1']!.where((m) => m.id == 'm1').single.body, '');
     });
 
     test('채널에도 올리기 PUT · 거두기 DELETE', () async {
@@ -271,6 +284,20 @@ void main() {
       expect(tester.widget<TextButton>(find.byKey(const Key('message-edit-save'))).onPressed, isNull);
       await tester.tap(find.byKey(const Key('message-edit-cancel')));
       await tester.pumpAndSettle();
+    });
+
+    testWidgets('채널에도 올리기는 짧게 알린다(designer D1)', (tester) async {
+      final (server, _) = await pump(tester, 'r3');
+      await tester.longPress(find.byKey(const Key('message-press-r3')));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const Key('message-action-postToChannel')));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(server.calls, contains('PUT /channels/c1/messages/r3/also-in-channel'));
+      expect(find.text('채널에도 올렸다'), findsOneWidget);
     });
 
     testWidgets('시스템 글은 탭해도 스레드가 열리지 않는다(n2)', (tester) async {

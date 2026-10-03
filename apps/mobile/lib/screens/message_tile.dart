@@ -428,8 +428,11 @@ Future<void> runMessageAction(BuildContext context, MessageRow message, MessageA
       done = t.messageMarkedUnread;
     case MessageAction.postToChannel:
       go = () => app.setAlsoInChannel(message.channelId, message.id, true);
+      // 모바일 줄에는 「채널에도 올림」 표시가 없다 — 알리지 않으면 스레드 화면에서는 아무것도 안 바뀐다.
+      done = t.messagePostedToChannel;
     case MessageAction.recall:
       go = () => app.setAlsoInChannel(message.channelId, message.id, false);
+      done = t.messageRecalledFromChannel;
     case MessageAction.edit:
       final body = await _askEdit(context, bodyAsHandles(message.body, app.accounts));
       if (body == null || body == bodyAsHandles(message.body, app.accounts)) return;

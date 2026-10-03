@@ -1203,11 +1203,17 @@ class AppState extends ChangeNotifier {
     _upsertMessage(updated);
   }
 
-  /// 지운다. 성공하면 화면에서 먼저 뺀다 — 소켓을 기다리면 끊긴 동안 지운 글이 남아 보인다.
-  /// 답글이 남은 스레드 머리는 서버가 자리표시자로 남기고 `message.updated` 로 다시 보낸다.
+  /// 지운다. 소켓을 기다리지 않고 응답으로 바로 고친다 — 끊긴 동안 지운 글이 남아 보이면 안 된다.
+  ///
+  /// 답글이 남은 스레드 머리는 서버가 자리표시자 행을 돌려준다 — 그때는 **빼지 않고 덮는다.**
+  /// 빼면 소켓의 `message.updated` 가 응답보다 먼저 온 경우 살아 있는 답글로 들어갈 머리가 사라진다.
   Future<void> deleteMessage(String channelId, String messageId) async {
-    await _api!.deleteMessage(channelId, messageId);
-    _removeMessage(channelId, messageId);
+    final tombstone = await _api!.deleteMessage(channelId, messageId);
+    if (tombstone != null) {
+      _upsertMessage(tombstone);
+    } else {
+      _removeMessage(channelId, messageId);
+    }
   }
 
   /// 스레드 답글을 채널에도 올리거나(`true`) 채널에서 거둔다(`false`).

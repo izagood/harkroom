@@ -428,9 +428,13 @@ class StringsEn implements Strings {
   @override
   String get messageMarkedUnread => 'Marked unread';
   @override
-  String get messagePostToChannel => 'Also send to channel';
+  String get messagePostToChannel => 'Post to channel';
   @override
   String get messageRecallFromChannel => 'Remove from channel';
+  @override
+  String get messagePostedToChannel => 'Sent to channel';
+  @override
+  String get messageRecalledFromChannel => 'Removed from channel';
   @override
   String get messageEdit => 'Edit message';
   @override
@@ -446,7 +450,7 @@ class StringsEn implements Strings {
   @override
   String get messageDeleteConfirm => 'Delete';
   @override
-  String get messageActionFailed => 'Could not do that. Try again';
+  String get messageActionFailed => "Couldn't do that";
   @override
   String get mentionAdd => 'Mention a person or agent';
 

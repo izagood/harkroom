@@ -91,6 +91,12 @@ abstract class Strings {
   /// 시트(내 스레드 답글): 채널에도 올린다.
   String get messagePostToChannel;
 
+  /// 채널에도 올렸다는 짧은 확인.
+  String get messagePostedToChannel;
+
+  /// 채널에서 거뒀다는 짧은 확인.
+  String get messageRecalledFromChannel;
+
   /// 시트(채널에도 올린 답글): 채널에서만 거둔다. 글은 스레드에 남는다.
   String get messageRecallFromChannel;
 
@@ -853,6 +859,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'messageMarkedUnread': s.messageMarkedUnread,
       'messagePostToChannel': s.messagePostToChannel,
       'messageRecallFromChannel': s.messageRecallFromChannel,
+      'messagePostedToChannel': s.messagePostedToChannel,
+      'messageRecalledFromChannel': s.messageRecalledFromChannel,
       'messageEdit': s.messageEdit,
       'messageEditSave': s.messageEditSave,
       'messageEditCancel': s.messageEditCancel,

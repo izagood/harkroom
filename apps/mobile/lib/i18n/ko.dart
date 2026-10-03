@@ -431,6 +431,10 @@ class StringsKo implements Strings {
   @override
   String get messageRecallFromChannel => '채널에서 거두기';
   @override
+  String get messagePostedToChannel => '채널에도 올렸다';
+  @override
+  String get messageRecalledFromChannel => '채널에서 거뒀다';
+  @override
   String get messageEdit => '수정';
   @override
   String get messageEditSave => '저장';
@@ -445,7 +449,7 @@ class StringsKo implements Strings {
   @override
   String get messageDeleteConfirm => '삭제';
   @override
-  String get messageActionFailed => '하지 못했다. 다시 해 보라';
+  String get messageActionFailed => '하지 못했다';
   @override
   String get mentionAdd => '사람·에이전트 부르기';
 
