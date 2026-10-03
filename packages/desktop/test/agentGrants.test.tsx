@@ -1,5 +1,5 @@
 /**
- * 「PR 머지」 절(옛 「할 수 있는 일」, 에이전트 머지 권한, 스레드 3deac356 · febe9ff8 P1). 판정은 전부 서버가 한다 — 여기서 재는 것은 목록이
+ * 「머지·API 권한」 절(옛 「할 수 있는 일」, 에이전트 머지 권한, 스레드 3deac356 · febe9ff8 P1). 판정은 전부 서버가 한다 — 여기서 재는 것은 목록이
  * 응답을 그대로 앉히는가, 주기/거두기가 컨트롤러 표면(`putGrant`·`deleteGrant`)에 **정확한 scope** 로 닿는가,
  * 소유자가 아니면 [권한 주기] 가 없는가, 거두기는 확인창을 거치는가, 서버 거절이 사람 말로 보이는가다.
  */
@@ -141,15 +141,17 @@ describe('AgentGrantsSection', () => {
     await waitFor(() => expect(screen.getByTestId('agent-grants-error').textContent).toContain('소유자(사람)만'));
   });
 
-  it('P1: 절 이름은 「PR 머지」, 비어 있으면 설명 없이 한 줄로 접히고 [+ 권한 주기]로 펼친다', async () => {
+  it('P1: 절 이름은 「머지·API 권한」, 비어 있으면 설명 없이 한 줄로 접히고 [+ 권한 주기]로 펼친다', async () => {
     setup({ listGrants: vi.fn(async () => []) });
     render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
     const none = await screen.findByTestId('agent-grants-none');
-    expect(none.textContent).toContain('머지 권한 없음');
+    expect(none.textContent).toContain('준 권한 없음');
     const box = screen.getByTestId('agent-grants');
-    expect(box.textContent).toContain('PR 머지');
+    expect(box.textContent).toContain('머지·API 권한');
     expect(box.textContent).not.toContain('부여가 곧 승인');  // 설명 문단은 접힌다
     fireEvent.click(screen.getByText('+ 권한 주기'));
+    // 펼치면 종류 고르기(#1144: API 가 기본)가 서고, PR 머지를 고르면 저장소 칸이 열린다
+    fireEvent.click(screen.getByRole('radio', { name: 'PR 머지' }));
     expect(screen.getByTestId('agent-grants-add')).toBeTruthy();
     expect(screen.getByTestId('agent-grants').textContent).toContain('부여가 곧 승인');
   });
@@ -187,14 +189,22 @@ describe('AgentGrantsSection', () => {
     let resolve!: (v: GrantRow[]) => void;
     setup({ listGrants: vi.fn(() => new Promise<GrantRow[]>((r) => { resolve = r; })) });
     render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
-    expect(screen.getByRole('heading', { level: 3, name: 'PR 머지' })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 3, name: /^머지·API 권한/ })).toBeTruthy();
     expect(screen.getByTestId('agent-grants-loading')).toBeTruthy();
     expect(screen.getByTestId('agent-grants').className).not.toContain('border');
     expect(screen.getByTestId('agent-grants').textContent).not.toContain('부여가 곧 승인');
     resolve([grant('repo:izagood/harkroom')]);
     await screen.findByTestId('agent-grant-izagood/harkroom');
-    expect(screen.getByRole('heading', { level: 3, name: 'PR 머지' })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 3, name: /^머지·API 권한/ })).toBeTruthy();
     expect(screen.getByTestId('agent-grants').className).not.toContain('border');
+  });
+
+  it('P1: API 호출 권한만 있어도 접지 않는다 — 그 줄들이 이 절에 산다(#1144)', async () => {
+    const cid = '11111111-1111-4111-8111-111111111111';
+    setup({ listGrants: vi.fn(async () => [{ ...grant(`connector:${cid}`), capability: 'api.call', limits: { methods: ['GET'], pathPrefix: '/' } }]) });
+    render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
+    expect(await screen.findByTestId('agent-api-grants')).toBeTruthy();
+    expect(screen.getByTestId('agent-grants').textContent).toContain('부여가 곧 승인');
   });
 
   it('P1: 소유자가 아니면(admin) 수를 알리지 않는다 — 남의 에이전트 배지가 목록에 끼지 않게(#1146 security n2)', async () => {
