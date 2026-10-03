@@ -317,8 +317,12 @@ describe('repo.merge grant', () => {
         `insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, 'card', 'user', $4) returning id`,
         [ch, thread, agentId, JSON.stringify({ kind: 'ask', ask: { options: [{ id: 'retry', label: 'retry' }, { id: 'later', label: 'later' }] }, mergeDenial: p1.meta })])).rows[0].id as string;
       await linkDenialCard(pool, p1.meta.denialId, card);
-      // 같은 스레드에서 다시 막힘
-      const l = await lease(first.cause);
+      // 같은 스레드에서 다시 막힘 — 그 스레드의 새 사람 글로 뜬 턴(임대는 cause 마다 하나다)
+      const reply = (await pool.query(
+        `insert into message (channel_id, thread_root_id, author_id, body, kind) values ($1, $2, $3, 'again', 'user') returning id`,
+        [ch, thread, alice.accountId])).rows[0].id as string;
+      await pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [agentId, reply]);
+      const l = await lease(reply);
       const again = (await check(l, 'izagood/p3-c', { number: 43 })).json().error.denialId as string;
       const p2 = await prepareDenialCard(pool, { agentId, denialId: again, channelId: ch, threadRootId: thread });
       expect(p2).toMatchObject({ ok: true, existingCardId: card });
@@ -335,7 +339,8 @@ describe('repo.merge grant', () => {
       expect((await app.inject({ method: 'POST', url: `/agents/${agentId}/merge-denials/${id}/grant`, headers: asAgent() })).statusCode).toBe(403);
       const pat = await mintPat(pool, alice.accountId, 'p3-pat', { actorId: null, actorHandle: null });
       if (!pat.ok) throw new Error('mint failed');
-      expect((await grantFrom(pat.token, id)).statusCode).toBe(403);
+      // 사람 PAT: 지금은 인증 단계에서 401(사람 PAT 경로가 없다). 그 경로가 생겨도 이 라우트는 세션만 받는다(403).
+      expect([401, 403]).toContain((await grantFrom(pat.token, id)).statusCode);
       expect((await grantFrom(bob.token, id)).statusCode).toBe(403);
       expect((await grantFrom(admin.token, id)).statusCode).toBe(403);
       // 남의 에이전트 경로에 이 거절 id — alice 가 other 의 소유자여도 404
