@@ -216,7 +216,7 @@ void main() {
           s,
           ArtifactScreen(
             attachment: _page(),
-            frameBuilder: frame ?? (context, url, _) => Text('frame:$url', key: const Key('fake-frame')),
+            frameBuilder: frame ?? (context, url, _, _) => Text('frame:$url', key: const Key('fake-frame')),
           ),
         );
 
@@ -246,6 +246,37 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.byKey(Key('artifact-state-$state')), findsOneWidget);
         expect(find.byKey(const Key('fake-frame')), findsNothing);
+        // 일반 실패는 상태를 곁들여 원인을 가를 단서를 남긴다.
+        if (state == 'failed') expect(find.text('HTTP 500'), findsOneWidget);
+      });
+    }
+
+    // 폰에서 카드를 눌러도 흰 화면만 보이던 신고(스레드 0e543396) — 문서를 못 받으면 사유와 [다시 불러오기]를 보인다.
+    for (final (failure, reason) in [
+      (const PreviewLoadFailure(status: 404), 'HTTP 404'),
+      (const PreviewLoadFailure(description: 'The Internet connection appears to be offline.'),
+          'The Internet connection appears to be offline.'),
+    ]) {
+      testWidgets('WebView 가 문서를 못 받으면 흰 화면 대신 사유를 보인다 ($reason)', (tester) async {
+        final calls = <String>[];
+        void Function(PreviewLoadFailure)? fail;
+        await tester.pumpWidget(screen(_state(_server(calls: calls)), frame: (context, url, _, onLoadFailed) {
+          fail = onLoadFailed;
+          return Text('frame:$url', key: const Key('fake-frame'));
+        }));
+        await tester.pumpAndSettle();
+        fail!(failure);
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('fake-frame')), findsNothing);
+        expect(find.byKey(const Key('artifact-state-failed')), findsOneWidget);
+        expect(find.text(reason), findsOneWidget);
+
+        // [다시 불러오기]는 새 서명 경로로 다시 연다.
+        await tester.tap(find.widgetWithText(OutlinedButton, '다시 불러오기'));
+        await tester.pumpAndSettle();
+        expect(calls.length, 2);
+        expect(find.text('frame:$_base/preview/tok2'), findsOneWidget);
+        expect(find.byKey(const Key('artifact-state-detail')), findsNothing);
       });
     }
   });
