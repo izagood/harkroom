@@ -104,7 +104,7 @@ export function ProgressRow({ messages, endedAt = null }: {
         {messages.length > 1 && (
           <button
             data-testid="progress-expand"
-            className="rounded px-1 text-fg-subtle hover:bg-surface-hover"
+            className="rounded-sm px-1 text-fg-subtle hover:bg-surface-hover"
             aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
           >
@@ -127,7 +127,7 @@ export function ProgressRow({ messages, endedAt = null }: {
               key={m.id}
               ref={m.id === highlightedId ? highlightRef : undefined}
               data-highlighted={m.id === highlightedId ? 'true' : undefined}
-              className={`text-meta text-fg-subtle${m.id === highlightedId ? ' rounded bg-warning-surface-strong ring-1 ring-warning-border' : ''}`}
+              className={`text-meta text-fg-subtle${m.id === highlightedId ? ' rounded-row bg-warning-surface-strong ring-1 ring-warning-border' : ''}`}
             >
               {displayBody(m, accounts, groups, teams)}
             </li>

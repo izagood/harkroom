@@ -197,7 +197,7 @@ export function MentionSuggestList({ id, label, options, active, onActive, onCho
          넘치는 것은 여기서 스크롤된다. `vh` 를 함께 두는 이유: 고정 높이만 두면
          창이 낮을 때 목록이 화면 위로 잘려 나가고, 잘린 쪽은 스크롤로도 닿지 않는다.
          `overscroll-contain` 은 목록의 끝에서 굴린 것이 뒤의 대화를 밀지 않게 한다. */
-      className={`absolute ${placement === 'above' ? 'bottom-full mb-1' : 'top-full mt-1'} left-0 z-10 max-h-[min(22rem,60vh)] w-72 overflow-y-auto overscroll-contain rounded border border-border bg-surface-raised py-1 shadow-lg`}
+      className={`absolute ${placement === 'above' ? 'bottom-full mb-1' : 'top-full mt-1'} left-0 z-10 max-h-[min(22rem,60vh)] w-72 overflow-y-auto overscroll-contain rounded-card bg-surface-raised py-1 shadow-float`}
     >
       {options.map((item, i) => (
         <li key={item.id}>

@@ -129,14 +129,14 @@ export function ArtifactPanel({ fill = false }: {
         <span className="ml-auto" />
         <button
           type="button"
-          className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded text-body text-fg-muted hover:bg-surface-sunken"
+          className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-row text-body text-fg-muted hover:bg-surface-sunken"
           onClick={() => setExpanded((v) => !v)}
           aria-label={expanded ? t('artifact.panel.collapse') : t('artifact.panel.expand')}
           data-testid="artifact-panel-expand"
         >{expanded ? '⤡' : '⤢'}</button>
         <button
           type="button"
-          className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded text-name leading-none text-fg-muted hover:bg-surface-sunken"
+          className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-row text-name leading-none text-fg-muted hover:bg-surface-sunken"
           onClick={() => getController().closeArtifactPreview()}
           aria-label={t('artifact.panel.close')}
           data-testid="artifact-panel-close"
@@ -172,7 +172,7 @@ export function ArtifactPanel({ fill = false }: {
               // 한도 초과에서 할 수 있는 일은 이것 하나다 — 아래 줄 구석에만 두지 않는다(designer f).
               <button
                 type="button"
-                className="rounded border border-border px-2 py-0.5 text-meta hover:bg-surface"
+                className="rounded-row border border-border px-2 py-0.5 text-meta hover:bg-surface"
                 onClick={() => void getController().saveAttachment(attachment)}
                 data-testid="artifact-panel-download-body"
               >{t('artifact.panel.download')}</button>
@@ -180,7 +180,7 @@ export function ArtifactPanel({ fill = false }: {
             {(phase.kind === 'navigated' || (phase.kind === 'error' && phase.reason === 'failed')) && (
               <button
                 type="button"
-                className="rounded border border-border px-2 py-0.5 text-meta hover:bg-surface"
+                className="rounded-row border border-border px-2 py-0.5 text-meta hover:bg-surface"
                 onClick={() => load(attachment)}
                 data-testid="artifact-panel-reload"
               >{t('artifact.panel.reload')}</button>
@@ -194,14 +194,14 @@ export function ArtifactPanel({ fill = false }: {
         {phase.kind === 'ready' && (
           <button
             type="button"
-            className="ml-auto rounded px-1 hover:bg-surface-sunken"
+            className="ml-auto rounded-sm px-1 hover:bg-surface-sunken"
             onClick={() => load(attachment)}
             data-testid="artifact-panel-reload"
           >{t('artifact.panel.reload')}</button>
         )}
         <button
           type="button"
-          className={`${phase.kind === 'ready' ? '' : 'ml-auto '}rounded px-1 hover:bg-surface-sunken`}
+          className={`${phase.kind === 'ready' ? '' : 'ml-auto '}rounded-sm px-1 hover:bg-surface-sunken`}
           onClick={() => void getController().saveAttachment(attachment)}
           data-testid="artifact-panel-download"
         >{t('artifact.panel.download')}</button>

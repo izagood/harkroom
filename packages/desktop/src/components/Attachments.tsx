@@ -112,7 +112,7 @@ export function PendingAttachmentTile({ upload, onRemove, onRetry }: {
       <button
         type="button"
         aria-label={`Retry ${name}`}
-        className="rounded px-1 font-medium text-accent hover:bg-surface-hover"
+        className="rounded-sm px-1 font-medium text-accent hover:bg-surface-hover"
         // 커서를 지킨다 — 다시 누른 뒤에도 초안을 이어서 쓴다.
         onMouseDown={(e) => e.preventDefault()}
         onClick={onRetry}
@@ -140,7 +140,7 @@ export function PendingAttachmentTile({ upload, onRemove, onRetry }: {
         data-testid="pending-attachment"
         data-status={status}
         title={`${name} · ${size}`}
-        className={`relative flex h-20 w-52 shrink-0 items-center gap-2 rounded-md border bg-surface px-2.5 text-meta text-fg ${border}`}
+        className={`relative flex h-20 w-52 shrink-0 items-center gap-2 rounded-card border bg-surface px-2.5 text-meta text-fg ${border}`}
       >
         <span aria-hidden className="text-title">📎</span>
         <span className="flex min-w-0 flex-col gap-0.5">
@@ -158,13 +158,13 @@ export function PendingAttachmentTile({ upload, onRemove, onRetry }: {
       data-testid="pending-attachment"
       data-status={status}
       title={`${name} · ${size}`}
-      className={`group relative h-20 w-20 shrink-0 rounded-md border bg-surface-sunken text-meta ${border}`}
+      className={`group relative h-20 w-20 shrink-0 rounded-card border bg-surface-sunken text-meta ${border}`}
     >
       {url ? (
         <button
           type="button"
           aria-label={t('message.attachment.zoom', { filename: name })}
-          className="block h-full w-full cursor-zoom-in overflow-hidden rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          className="block h-full w-full cursor-zoom-in overflow-hidden rounded-card focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           onClick={() => setZoomed(true)}
         >
           {/* 이름은 띠가 글자로 말한다 — alt 까지 이름이면 스크린리더가 같은 파일을 두 번 읽는다. */}
@@ -250,7 +250,7 @@ function Attachment({ attachment, message }: { attachment: AttachmentRow; messag
           type="button"
           onClick={openZoom}
           aria-label={t('message.attachment.zoom', { filename: attachment.filename })}
-          className="block cursor-zoom-in rounded border border-border"
+          className="block cursor-zoom-in rounded-row border border-border"
         >
           {/*
             **세로만이 아니라 가로도 묶는다.** 높이만 묶어 두면(`max-h-64` + `max-w-full`)
@@ -266,7 +266,7 @@ function Attachment({ attachment, message }: { attachment: AttachmentRow; messag
             src={url}
             alt={attachment.filename}
             data-testid="attachment-preview"
-            className="max-h-56 max-w-[min(28rem,100%)] rounded"
+            className="max-h-56 max-w-[min(28rem,100%)] rounded-row"
           />
         </button>
         {zoomed && <ImageLightbox attachment={attachment} url={url} onClose={() => setZoomed(false)} />}
@@ -278,7 +278,7 @@ function Attachment({ attachment, message }: { attachment: AttachmentRow; messag
   }
   return (
     <button
-      className="inline-flex items-center gap-2 rounded border border-border bg-surface px-2 py-1 text-body text-fg hover:bg-surface-sunken"
+      className="inline-flex items-center gap-2 rounded-row border border-border bg-surface px-2 py-1 text-body text-fg hover:bg-surface-sunken"
       onClick={() => void getController().saveAttachment(attachment)}
     >
       <span aria-hidden>📎</span>
@@ -318,7 +318,7 @@ function ArtifactCard({ attachment, cover, from }: {
       aria-pressed={selected}
       data-testid="artifact-card"
       data-selected={selected ? 'true' : 'false'}
-      className={`block w-[min(28rem,100%)] overflow-hidden rounded border bg-surface text-left hover:bg-surface-sunken ${selected ? 'border-accent ring-1 ring-accent' : 'border-border'}`}
+      className={`block w-[min(28rem,100%)] overflow-hidden rounded-card border bg-surface text-left hover:bg-surface-sunken ${selected ? 'border-accent ring-1 ring-accent' : 'border-border'}`}
     >
       {coverUrl && (
         <img src={coverUrl} alt="" data-testid="artifact-card-cover" className="aspect-video w-full border-b border-border object-cover" />

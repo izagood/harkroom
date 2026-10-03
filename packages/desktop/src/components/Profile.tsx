@@ -223,7 +223,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
           {canSeeConfig && onOpenSettings && (
             <button
               data-testid="profile-settings"
-              className="rounded border border-border px-3 py-1.5 text-body font-medium
+              className="rounded-row border border-border px-3 py-1.5 text-body font-medium
                          text-fg hover:bg-surface-hover"
               onClick={() => { onClose(); onOpenSettings('agents', account.id); }}
             >
@@ -233,7 +233,7 @@ export function Profile({ accountId, onClose, onOpenSettings }: {
           {account.id !== me?.id && (
             <button
               data-testid="profile-dm"
-              className="rounded border border-border px-3 py-1.5 text-body font-medium
+              className="rounded-row border border-border px-3 py-1.5 text-body font-medium
                          text-fg hover:bg-surface-hover"
               onClick={() => { onClose(); void getController().startDm(account.id); }}
             >

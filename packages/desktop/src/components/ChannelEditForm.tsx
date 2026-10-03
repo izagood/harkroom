@@ -70,7 +70,7 @@ export function ChannelEditForm({ channel, onDone }: { channel: ChannelRow; onDo
   };
 
   return (
-        <div data-testid="channel-edit-form" className="rounded border border-border bg-surface-raised p-1">
+        <div data-testid="channel-edit-form" className="rounded-row border border-border bg-surface-raised p-1">
           {/*
             **사이드바의 단은 아랫단 11px 이다** — 이 파일이 이미 그렇게 서 있었다: 오류·
             안내·멤버 이름·구획 라벨·미읽음 개수가 전부 11px 이고, 그것은 10px 27곳을
@@ -92,7 +92,7 @@ export function ChannelEditForm({ channel, onDone }: { channel: ChannelRow; onDo
             type="text"
             aria-label="Channel name"
             data-testid="channel-edit-name"
-            className="mb-1 w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
+            className="mb-1 w-full rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
             placeholder={t('sidebar.edit.namePlaceholder')}
             value={editName}
             onChange={(e) => { setEditName(e.target.value); setEditError(null); }}
@@ -100,7 +100,7 @@ export function ChannelEditForm({ channel, onDone }: { channel: ChannelRow; onDo
           <input
             type="text"
             aria-label="Topic"
-            className="mb-1 w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
+            className="mb-1 w-full rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
             placeholder={t('sidebar.edit.topicPlaceholder')}
             value={editTopic}
             onChange={(e) => { setEditTopic(e.target.value); setEditError(null); }}
@@ -109,7 +109,7 @@ export function ChannelEditForm({ channel, onDone }: { channel: ChannelRow; onDo
             <input
               type="text"
               aria-label="Repository"
-              className="flex-1 rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
+              className="flex-1 rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
               placeholder={t('sidebar.edit.repoPlaceholder')}
               value={editRepo}
               onChange={(e) => { setEditRepo(e.target.value); setEditError(null); }}
@@ -127,13 +127,13 @@ export function ChannelEditForm({ channel, onDone }: { channel: ChannelRow; onDo
           )}
           <div className="flex gap-1">
             <button
-              className="rounded bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
+              className="rounded-row bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
               onClick={() => void submitEdit()}
             >
               {t('sidebar.edit.save')}
             </button>
             <button
-              className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
+              className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
               onClick={onDone}
             >
               {t('sidebar.edit.cancel')}

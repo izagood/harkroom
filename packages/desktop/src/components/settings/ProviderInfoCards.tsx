@@ -22,11 +22,11 @@ function DisplayOnlyBody({ system, note, testId }: { system: string; note: strin
   const t = useT();
   return (
     <div className="flex flex-col gap-2" data-testid={testId}>
-      <div className="rounded-lg border border-border px-4 py-3">
+      <div className="rounded-card border border-border px-4 py-3">
         <div className="font-medium text-fg">{t('providerAccounts.systemDefault')}</div>
         <div className="text-fg-subtle">{system}</div>
       </div>
-      <div className="rounded-lg border border-dashed border-border px-4 py-3 text-fg-subtle">{note}</div>
+      <div className="rounded-card border border-dashed border-border px-4 py-3 text-fg-subtle">{note}</div>
     </div>
   );
 }

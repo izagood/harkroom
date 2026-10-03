@@ -104,7 +104,7 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
   if (notifyLevel === 'none' || !count) return null;
   return (
     <span data-testid={`unread-${channelId}`}
-      className="shrink-0 rounded-full bg-danger px-1.5 text-meta font-bold text-fg-on-strong">
+      className="shrink-0 rounded-full bg-danger px-1.5 text-meta font-semibold text-fg-on-strong">
       {count}
     </span>
   );
@@ -152,7 +152,7 @@ function InboxRowBadge() {
       <span
         data-testid="inbox-blocking-badge"
         aria-label={t('sidebar.inbox.blocking', { count: blocking })}
-        className="ml-auto shrink-0 rounded-full bg-danger px-1.5 text-meta font-bold text-fg-on-strong"
+        className="ml-auto shrink-0 rounded-full bg-danger px-1.5 text-meta font-semibold text-fg-on-strong"
       >
         {blocking}
       </span>
@@ -492,7 +492,7 @@ export function Sidebar({
   const [sectionRenameDraft, setSectionRenameDraft] = useState('');
 
   const row = (active: boolean) =>
-    `flex w-full items-center gap-1.5 rounded px-2 py-1 text-left hover:bg-surface-raised ${active ? 'bg-surface-raised' : ''}`;
+    `flex w-full items-center gap-1.5 rounded-row px-2 py-1 text-left hover:bg-surface-raised ${active ? 'bg-surface-raised' : ''}`;
 
   /**
    * 목록에 하나 더하는 `+`(#488 A2). **네 자리가 같은 모양·같은 자리를 쓴다** — 여기 둘
@@ -779,7 +779,7 @@ export function Sidebar({
     const isStarred = !!pref?.starredAt;
     if (deletingChannelId === ch.id) {
       return (
-        <div key={ch.id} data-testid={`delete-${ch.id}`} className="mt-1 rounded border border-danger bg-surface-raised p-1">
+        <div key={ch.id} data-testid={`delete-${ch.id}`} className="mt-1 rounded-row border border-danger bg-surface-raised p-1">
           <div className="mb-1 text-meta text-fg-muted">
             {t('sidebar.delete.title', { name: `${ch.visibility === 'private' ? '🔒' : '#'}${ch.name}` })}
           </div>
@@ -797,14 +797,14 @@ export function Sidebar({
                 조작을 승인하게 하지 않는다. */}
             {typeof deleteCount === 'number' && (
               <button
-                className="rounded bg-danger px-2 py-0.5 text-meta text-fg-on-strong hover:bg-danger-hover"
+                className="rounded-row bg-danger px-2 py-0.5 text-meta text-fg-on-strong hover:bg-danger-hover"
                 onClick={() => void confirmDelete(ch.id)}
               >
                 {t('sidebar.delete.confirm')}
               </button>
             )}
             <button
-              className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
+              className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
               onClick={closeDelete}
             >
               {t('sidebar.delete.cancel')}
@@ -822,7 +822,7 @@ export function Sidebar({
           ? <span className="text-fg-subtle" aria-label={t('sidebar.channel.private')} title={t('sidebar.channel.private')}>🔒</span>
           : <span className="text-fg-subtle">#</span>}
         {ch.name}
-        {ch.repo && <span className="rounded bg-surface-raised px-1 text-meta text-fg-muted">{ch.repo}</span>}
+        {ch.repo && <span className="rounded-sm bg-surface-raised px-1 text-meta text-fg-muted">{ch.repo}</span>}
         {/* 오른쪽 상태 묶음. `ml-auto` 는 **여기 한 번만** 있다 — 안의 둘이 각자 갖고
             있으면 남은 여백이 둘로 갈려 점이 줄 한가운데에 선다(`ChannelUnreadDot` 주석). */}
         <span className="ml-auto flex shrink-0 items-center gap-1">
@@ -968,13 +968,13 @@ export function Sidebar({
     return (
       <div key={ch.id} className="relative w-full">
       {sectionEditFor === ch.id && (
-        <div className="mb-1 rounded border border-border bg-surface-raised p-1">
+        <div className="mb-1 rounded-row border border-border bg-surface-raised p-1">
           <input
             type="text"
             autoFocus
             aria-label={t('sidebar.section.name')}
             maxLength={40}
-            className="w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
+            className="w-full rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
             placeholder={t('sidebar.section.movePlaceholder')}
             value={sectionDraft}
             onChange={(e) => setSectionDraft(e.target.value)}
@@ -986,13 +986,13 @@ export function Sidebar({
           />
           <div className="mt-1 flex gap-1">
             <button
-              className="rounded bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
+              className="rounded-row bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
               onClick={submitSection}
             >
               {t('sidebar.section.moveSubmit')}
             </button>
             <button
-              className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
+              className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
               onClick={() => { setSectionEditFor(null); setSectionDraft(''); }}
             >
               {t('sidebar.section.cancel')}
@@ -1145,7 +1145,7 @@ export function Sidebar({
             title={connected ? t('sidebar.brand.connected') : t('sidebar.brand.disconnected')} />
           <button
             onClick={onToggleCollapse}
-            className="ml-auto rounded p-1 hover:bg-surface-raised"
+            className="ml-auto rounded-row p-1 hover:bg-surface-raised"
             aria-label={t('sidebar.brand.collapse')}
             title={t('sidebar.brand.collapse')}
           >
@@ -1250,11 +1250,11 @@ export function Sidebar({
           */}
           {me?.isAdmin && (
             createChannelOpen ? (
-              <div className="mb-1 rounded border border-border bg-surface-raised p-1">
+              <div className="mb-1 rounded-row border border-border bg-surface-raised p-1">
                 <input
                   type="text"
                   aria-label="New channel name"
-                  className="mb-1 w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
+                  className="mb-1 w-full rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
                   placeholder="channel-name"
                   value={newChannelName}
                   onChange={(e) => { setNewChannelName(e.target.value); setCreateError(null); }}
@@ -1278,13 +1278,13 @@ export function Sidebar({
                 {createError && <p role="alert" className="mb-1 text-meta text-danger">{createError}</p>}
                 <div className="flex gap-1">
                   <button
-className="rounded bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
+className="rounded-row bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
                     onClick={() => void submitNewChannel()}
                   >
                     {t('sidebar.channel.createSubmit')}
                   </button>
                   <button
-className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
+className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
                     onClick={closeCreate}
                   >
                     {t('sidebar.channel.cancel')}
@@ -1298,13 +1298,13 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
             const sectionName = group.section;
             const isRenaming = sectionRenameFor === sectionName;
             const sectionHeader = isRenaming ? (
-              <div className="mb-1 rounded border border-border bg-surface-raised p-1 ml-2 mr-2">
+              <div className="mb-1 rounded-row border border-border bg-surface-raised p-1 ml-2 mr-2">
                 <input
                   type="text"
                   autoFocus
                   aria-label={t('sidebar.section.renameName')}
                   maxLength={40}
-                  className="w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
+                  className="w-full rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
                   placeholder={t('sidebar.section.renamePlaceholder')}
                   value={sectionRenameDraft}
                   onChange={(e) => setSectionRenameDraft(e.target.value)}
@@ -1322,7 +1322,7 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
                 />
                 <div className="mt-1 flex gap-1">
                   <button
-                    className="rounded bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
+                    className="rounded-row bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
                     onClick={() => {
                       const newName = sectionRenameDraft.trim();
                       setSectionRenameFor(null);
@@ -1335,7 +1335,7 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
                     {t('sidebar.section.renameSubmit')}
                   </button>
                   <button
-                    className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
+                    className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
                     onClick={() => { setSectionRenameFor(null); setSectionRenameDraft(''); }}
                   >
                     {t('sidebar.section.cancel')}
@@ -1422,7 +1422,7 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
           */}
           {addRow(t('sidebar.dm.new'), () => setPickerOpen((v) => !v), 'add-dm')}
           {pickerOpen ? (
-            <div className="mb-1 rounded border border-border bg-surface-raised p-1">
+            <div className="mb-1 rounded-row border border-border bg-surface-raised p-1">
               {others.map((a) => (
                 <button key={a.id} className={row(false)}
                   onClick={() => { setPickerOpen(false); void getController().startDm(a.id); }}>

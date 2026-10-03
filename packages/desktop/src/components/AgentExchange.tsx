@@ -67,7 +67,7 @@ export function AgentExchange({ messages, onOpenDirectory, onOpenSettings, inThr
         <button
           data-testid="agent-exchange-toggle"
           aria-expanded
-          className="mx-4 my-0.5 rounded px-1 text-meta text-fg-agent hover:bg-surface-hover"
+          className="mx-4 my-0.5 rounded-sm px-1 text-meta text-fg-agent hover:bg-surface-hover"
           onClick={() => setOpen(false)}
         >
           {names.join(' ↔ ')} · {t('speech.exchange.collapse')}
@@ -105,7 +105,7 @@ export function AgentExchange({ messages, onOpenDirectory, onOpenSettings, inThr
       <button
         data-testid="agent-exchange-toggle"
         aria-expanded={false}
-        className="flex w-full min-w-0 items-center gap-1.5 rounded px-1 text-left text-meta
+        className="flex w-full min-w-0 items-center gap-1.5 rounded-sm px-1 text-left text-meta
                    text-fg-agent hover:bg-surface-hover"
         onClick={() => setOpen(true)}
       >

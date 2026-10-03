@@ -59,7 +59,7 @@ export function Collab({ snapshot, filter, onFilterChange, handleOf, onOpenChann
       */}
       {snapshot.kind === 'unknown' && (
         <div
-          className="mx-1 rounded border border-dashed border-border px-2 py-2"
+          className="mx-1 rounded-row border border-dashed border-border px-2 py-2"
           data-testid="collab-unknown"
         >
           <div className="text-meta text-fg">{t('collab.unknown')}</div>
@@ -75,7 +75,7 @@ export function Collab({ snapshot, filter, onFilterChange, handleOf, onOpenChann
             // 안내문이 **없는 메뉴**("설정 › 투영")를 가리키던 자리다(UX ② H3). 이제 말로
             // 길을 설명하지 않고 그 칸으로 가는 버튼을 준다 — 메뉴 이름이 바뀌어도(⑥) 길은 산다.
             <div
-              className="mx-1 flex flex-col gap-1.5 rounded border border-border bg-surface-raised px-3 py-2.5"
+              className="mx-1 flex flex-col gap-1.5 rounded-row border border-border bg-surface-raised px-3 py-2.5"
               data-testid="collab-no-server"
             >
               <div className="text-body font-semibold text-fg">{t('collab.noServer.title')}</div>
@@ -83,7 +83,7 @@ export function Collab({ snapshot, filter, onFilterChange, handleOf, onOpenChann
               {onOpenProjectionSettings && (
                 <button
                   data-testid="collab-open-projection"
-                  className="mt-0.5 self-start rounded bg-accent px-2.5 py-1 text-meta font-medium text-fg-on-strong hover:bg-accent-hover"
+                  className="mt-0.5 self-start rounded-row bg-accent px-2.5 py-1 text-meta font-medium text-fg-on-strong hover:bg-accent-hover"
                   onClick={onOpenProjectionSettings}
                 >
                   {t('collab.noServer.open')}
@@ -128,7 +128,7 @@ function Loaded({ repos, actors, filter, onFilterChange, handleOf, onOpenChannel
             data-testid={`collab-filter-${f}`}
             aria-pressed={filter === f}
             onClick={() => onFilterChange(f)}
-            className={`rounded px-1.5 py-0.5 text-meta ${
+            className={`rounded-row px-1.5 py-0.5 text-meta ${
               filter === f ? 'bg-surface-sunken text-fg' : 'text-fg-subtle hover:text-fg'
             }`}
           >
@@ -215,7 +215,7 @@ function Row({ proposal, actorLabel }: {
 
   return (
     <div
-      className="rounded bg-surface-sunken"
+      className="rounded-row bg-surface-sunken"
       data-testid={`collab-row-${proposal.intentOid}`}
       /* 상태를 속성으로도 남긴다 — 시험이 상태를 **글자로** 집으면 로케일 기본값이 바뀌는
          날 이유 없이 빨개진다(`agentTurns.test` 가 적어 둔 규칙). */

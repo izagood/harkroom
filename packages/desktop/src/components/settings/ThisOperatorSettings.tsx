@@ -103,7 +103,7 @@ export function ThisOperatorSettings({ onOpenSection }: {
             <>
               <p className="text-meta text-fg-muted" data-testid="this-operator-unavailable">{t('thisOperator.unavailable')}</p>
               {onOpenSection && (
-                <button className="mt-2 rounded px-2 py-1 text-meta text-accent hover:bg-surface-sunken" onClick={() => onOpenSection('operators')}>
+                <button className="mt-2 rounded-row px-2 py-1 text-meta text-accent hover:bg-surface-sunken" onClick={() => onOpenSection('operators')}>
                   {t('thisOperator.openList')}
                 </button>
               )}
@@ -144,8 +144,8 @@ export function ThisOperatorSettings({ onOpenSection }: {
                 <button
                   data-testid="this-operator-register"
                   className={isRegistered || checking
-                    ? 'rounded border border-border px-4 py-2 font-medium text-fg hover:bg-surface-sunken disabled:opacity-50'
-                    : 'rounded bg-accent px-4 py-2 font-medium text-fg-on-strong disabled:opacity-50'}
+                    ? 'rounded-row border border-border px-4 py-2 font-medium text-fg hover:bg-surface-sunken disabled:opacity-50'
+                    : 'rounded-row bg-accent px-4 py-2 font-medium text-fg-on-strong disabled:opacity-50'}
                   disabled={busy || checking}
                   onClick={() => void registerHere()}
                 >
@@ -155,7 +155,7 @@ export function ThisOperatorSettings({ onOpenSection }: {
                 {onOpenSection && (
                   <button
                     data-testid="this-operator-open-list"
-                    className="rounded px-2 py-2 text-meta text-accent hover:bg-surface-sunken"
+                    className="rounded-row px-2 py-2 text-meta text-accent hover:bg-surface-sunken"
                     onClick={() => onOpenSection('operators')}
                   >
                     {t('thisOperator.openList')}

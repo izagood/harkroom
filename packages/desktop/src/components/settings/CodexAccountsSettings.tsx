@@ -41,7 +41,7 @@ interface LoginState {
 function Badge({ children, tone = 'muted' }: { children: string; tone?: 'muted' | 'strong' }) {
   return (
     <span
-      className={`rounded-md border px-1.5 py-px text-caption ${
+      className={`rounded-row border px-1.5 py-px text-caption ${
         tone === 'strong' ? 'border-border-strong text-fg' : 'border-border text-fg-muted'
       }`}
     >
@@ -150,10 +150,10 @@ export function CodexAccountsSettings() {
             </Button>
           </div>
 
-          {error && <div className="mb-3 rounded-lg border border-danger-border px-4 py-2 text-danger">{error}</div>}
+          {error && <div className="mb-3 rounded-card border border-danger-border px-4 py-2 text-danger">{error}</div>}
 
           {adding && (
-            <div className="mb-3 flex items-center gap-2 rounded-lg border border-border px-4 py-3" data-testid="codex-add-form">
+            <div className="mb-3 flex items-center gap-2 rounded-card border border-border px-4 py-3" data-testid="codex-add-form">
               <div className="min-w-0 flex-1">
                 <TextInput
                   value={name}
@@ -170,7 +170,7 @@ export function CodexAccountsSettings() {
           )}
 
           {login && (
-            <div className="mb-3 flex items-center gap-3 rounded-lg border border-border px-4 py-3" data-testid="codex-login">
+            <div className="mb-3 flex items-center gap-3 rounded-card border border-border px-4 py-3" data-testid="codex-login">
               <div className="min-w-0 flex-1">
                 <div className="font-medium text-fg">{login.account}</div>
                 <div className="text-fg-subtle">{t('providerAccounts.codex.loginWaiting')}</div>
@@ -189,7 +189,7 @@ export function CodexAccountsSettings() {
           <div className="space-y-2">
             {/* 시스템 기본값 — 언제나 맨 위. 활성 계정이 없으면 이것이 활성이다. */}
             <div
-              className={`flex items-center gap-4 rounded-lg border px-4 py-3 ${
+              className={`flex items-center gap-4 rounded-card border px-4 py-3 ${
                 snap?.active === null ? 'border-border-strong bg-surface-hover' : 'border-border'
               }`}
               data-testid="codex-account-system"
@@ -202,7 +202,7 @@ export function CodexAccountsSettings() {
                 <div className="truncate text-fg-subtle">
                   {/* 첫 목록 전에는 "로그아웃됨"이라고 단언하지 않는다 — 아직 모른다. */}
                   {!snap
-                    ? (error ? null : <span className="inline-block h-3.5 w-40 animate-pulse rounded bg-border align-middle" data-testid="codex-system-skeleton" aria-hidden="true" />)
+                    ? (error ? null : <span className="inline-block h-3.5 w-40 animate-pulse rounded-row bg-border align-middle" data-testid="codex-system-skeleton" aria-hidden="true" />)
                     : snap.system.loggedIn
                       ? (snap.system.email ?? detail(snap.system))
                       : t('providerAccounts.codex.systemSignedOut')}
@@ -215,13 +215,13 @@ export function CodexAccountsSettings() {
             </div>
 
             {!snap && !error && (
-              <div className="rounded-lg border border-border">
+              <div className="rounded-card border border-border">
                 <AccountRowsSkeleton rows={1} />
               </div>
             )}
 
             {snap && snap.accounts.length === 0 && (
-              <div className="rounded-lg border border-dashed border-border px-4 py-3 text-fg-subtle" data-testid="codex-accounts-empty">
+              <div className="rounded-card border border-dashed border-border px-4 py-3 text-fg-subtle" data-testid="codex-accounts-empty">
                 {t('providerAccounts.codex.empty')}
               </div>
             )}
@@ -231,7 +231,7 @@ export function CodexAccountsSettings() {
               return (
                 <div
                   key={a.name}
-                  className={`flex items-center gap-4 rounded-lg border px-4 py-3 ${
+                  className={`flex items-center gap-4 rounded-card border px-4 py-3 ${
                     active ? 'border-border-strong bg-surface-hover' : 'border-border'
                   }`}
                   data-testid={`codex-account-${a.name}`}

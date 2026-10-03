@@ -27,7 +27,7 @@ export function AppearanceSettings() {
   const zoom = usePrefsStore((s) => s.zoom);
   const setZoom = usePrefsStore((s) => s.setZoom);
 
-  const pill = (on: boolean) => `flex-1 rounded-lg py-2 font-medium transition ${
+  const pill = (on: boolean) => `flex-1 rounded-card py-2 font-medium transition ${
     on ? 'bg-accent text-fg-on-strong' : 'bg-surface-raised text-fg hover:bg-surface'
   }`;
 

@@ -76,7 +76,7 @@ export function StatusPicker({ onDone }: {
   return (
     <div
       data-testid="status-picker"
-      className="mt-1 rounded border border-border bg-surface-raised p-1"
+      className="mt-1 rounded-row border border-border bg-surface-raised p-1"
       onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onDone(); } }}
     >
       {ACCOUNT_STATUSES.map((s) => (
@@ -86,7 +86,7 @@ export function StatusPicker({ onDone }: {
           // 고르는 항목과 입력칸은 **본문단 13px**(앱 기본값이라 안 적는다) — 아래 오류·
           // 버튼은 아랫단 11px 이다. 고르려면 읽어야 하고, 다 고른 뒤 누르는 것과 그 결과는
           // 눈이 이미 가 있는 자리다.
-          className={`block w-full rounded px-2 py-1 text-left hover:bg-surface-hover ${me.status === s ? 'text-fg' : 'text-fg-muted'}`}
+          className={`block w-full rounded-row px-2 py-1 text-left hover:bg-surface-hover ${me.status === s ? 'text-fg' : 'text-fg-muted'}`}
           // 문구는 넘기지 않는다 — 키 부재가 '손대지 않음'이다. 상태만 바꾸려던
           // 조작이 문구를 함께 지우면 사용자는 왜 사라졌는지 알 수 없다.
           onClick={() => void apply(s)}
@@ -99,21 +99,21 @@ export function StatusPicker({ onDone }: {
         maxLength={80}
         value={text}
         placeholder={t('status.picker.notePlaceholder')}
-        className="mt-1 w-full rounded border border-border bg-field px-2 py-1 text-fg outline-none"
+        className="mt-1 w-full rounded-row border border-border bg-field px-2 py-1 text-fg outline-none"
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') void apply(me.status, text.trim() || null); }}
       />
       {error && <p role="alert" className="mt-1 text-meta text-danger">{error}</p>}
       <div className="mt-1 flex gap-1">
         <button
-          className="rounded bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
+          className="rounded-row bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
           onClick={() => void apply(me.status, text.trim() || null)}
         >
           {t('status.picker.save')}
         </button>
         {statusText && (
           <button
-            className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
+            className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
             // 지우기는 **명시적 null** 이다. 빈 문자열로 지우면 "문구가 없다"와
             // "빈 문구가 있다"가 섞인다.
             onClick={() => void apply(me.status, null)}
@@ -127,7 +127,7 @@ export function StatusPicker({ onDone }: {
           사라진다. `Escape` 도 같은 곳으로 간다: 패널 안에서 취소를 기대하는 키다.
         */}
         <button
-          className="ml-auto rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
+          className="ml-auto rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
           onClick={onDone}
         >
           {t('status.picker.close')}

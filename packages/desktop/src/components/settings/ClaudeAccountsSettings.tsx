@@ -406,7 +406,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
               <span className="font-medium text-fg">{pool.name || 'Ungrouped'}</span>
               {snap.defaultPool === pool.name && (
-                <span className="rounded border border-border px-1.5 text-meta uppercase tracking-wide text-fg-muted">
+                <span className="rounded-row border border-border px-1.5 text-meta uppercase tracking-wide text-fg-muted">
                   Default pool
                 </span>
               )}
@@ -457,7 +457,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                         {...triggerProps}
                         type="button"
                         aria-label={`Actions for pool ${pool.name}`}
-                        className="rounded px-2 py-1 text-fg-subtle hover:bg-surface-hover hover:text-fg"
+                        className="rounded-row px-2 py-1 text-fg-subtle hover:bg-surface-hover hover:text-fg"
                       >
                         ⋯
                       </button>
@@ -557,7 +557,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                         {...triggerProps}
                         type="button"
                         aria-label={`Actions for account ${a.name}`}
-                        className="rounded px-1.5 py-1 text-fg-subtle hover:bg-surface-hover hover:text-fg"
+                        className="rounded-row px-1.5 py-1 text-fg-subtle hover:bg-surface-hover hover:text-fg"
                       >
                         ⋯
                       </button>

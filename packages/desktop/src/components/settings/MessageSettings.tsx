@@ -43,7 +43,7 @@ export function MessageSettings() {
                 key={ms}
                 type="button"
                 aria-pressed={windowMs === ms}
-                className={`rounded-lg border px-3 py-1 ${
+                className={`rounded-card border px-3 py-1 ${
                   windowMs === ms
                     ? 'border-accent bg-accent-surface font-medium text-accent'
                     : 'border-border text-fg hover:bg-surface'

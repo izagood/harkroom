@@ -63,7 +63,7 @@ export function FailureCard({ message, inThread = false }: {
       data-testid="failure-card"
       data-retryable={failure.retryable}
       data-gate={gate || undefined}
-      className={`mt-1.5 rounded-lg border ${gate ? 'border-state-turn bg-accent-surface' : 'border-state-stuck bg-danger-surface'}`}
+      className={`mt-1.5 rounded-card border ${gate ? 'border-state-turn bg-accent-surface' : 'border-state-stuck bg-danger-surface'}`}
     >
       <div className="flex items-baseline gap-2 px-3 pt-2">
         <span className={`text-meta font-semibold ${gate ? 'text-state-turn' : 'text-state-stuck'}`}>
@@ -97,7 +97,7 @@ export function FailureCard({ message, inThread = false }: {
         {failure.retryable && author && !modelRejected && (
           <button
             data-testid="failure-retry"
-            className="rounded border border-border bg-surface-raised px-2 py-0.5 text-meta
+            className="rounded-row border border-border bg-surface-raised px-2 py-0.5 text-meta
                        font-medium text-fg hover:bg-surface-hover"
             onClick={() => setDraft(
               // 작성창의 scope 는 채널이면 채널 id, 스레드면 `thread:<rootId>` 다
@@ -120,7 +120,7 @@ export function FailureCard({ message, inThread = false }: {
         {modelRejected && author && (
           <button
             data-testid="failure-reset-model"
-            className="rounded bg-accent px-2 py-0.5 text-meta font-medium text-fg-on-strong hover:bg-accent-hover"
+            className="rounded-row bg-accent px-2 py-0.5 text-meta font-medium text-fg-on-strong hover:bg-accent-hover"
             onClick={() => {
               void getController().setThreadAgentModel(message.channelId, rootId, message.authorId, null, null)
                 .then(() => setDraft(scope, t('speech.failure.retryDraft', { handle: author.handle })))

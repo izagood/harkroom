@@ -40,7 +40,7 @@ export function ThreadModelCollapsed({ rootId, expanded, onToggle }: {
       data-testid="thread-models-collapsed"
       aria-expanded={expanded}
       onClick={onToggle}
-      className="rounded border border-dashed border-border px-1.5 py-0.5 text-meta text-fg-subtle hover:bg-surface-sunken"
+      className="rounded-row border border-dashed border-border px-1.5 py-0.5 text-meta text-fg-subtle hover:bg-surface-sunken"
     >
       {t('threadModel.allDefault')}
     </button>
@@ -88,7 +88,7 @@ export function ThreadModelRow({ channelId, rootId, thread, expanded }: {
           목록을 보이므로 거기서 고르면 행이 새 하네스로 다시 적힌다. */}
       {rows.filter((r) => r.stale).map((r) => (
         <p key={r.agentId} role="note" data-testid="thread-models-stale"
-          className="mt-1 flex flex-wrap items-center gap-2 rounded border border-warning-border bg-warning-surface px-2 py-1 text-meta text-warning">
+          className="mt-1 flex flex-wrap items-center gap-2 rounded-row border border-warning-border bg-warning-surface px-2 py-1 text-meta text-warning">
           <span>@{accounts[r.agentId]?.handle ?? ''} — {t('threadModel.staleDetail', { harness: r.currentHarness })}</span>
           <AgentModelChip
             agentId={r.agentId}

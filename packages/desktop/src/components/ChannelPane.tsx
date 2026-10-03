@@ -693,21 +693,21 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
             data-testid="channel-title"
             onClick={() => useActiveStore.getState().set({ channelSheetId: channel.id })}
             aria-label={t('channelSheet.open', { name: channel.name ?? '' })}
-            className="shrink-0 whitespace-nowrap rounded px-1 text-name font-bold hover:bg-surface-sunken"
+            className="shrink-0 whitespace-nowrap rounded-sm px-1 text-name font-semibold hover:bg-surface-sunken"
           >
             {title} <span aria-hidden="true" className="text-meta text-fg-subtle">⌄</span>
           </button>
         ) : (
-          <span className="shrink-0 whitespace-nowrap text-name font-bold">{title}</span>
+          <span className="shrink-0 whitespace-nowrap text-name font-semibold">{title}</span>
         )}
         {channel?.topic && <span className="truncate text-meta text-fg-subtle">{channel.topic}</span>}
-        {channel?.repo && <span className="rounded bg-surface-sunken px-1.5 text-meta text-fg-muted">{channel.repo}</span>}
-        {isArchived && <span className="rounded bg-surface-hover px-1.5 text-meta text-fg-muted">{t('channel.header.archived')}</span>}
+        {channel?.repo && <span className="rounded-row bg-surface-sunken px-1.5 text-meta text-fg-muted">{channel.repo}</span>}
+        {isArchived && <span className="rounded-row bg-surface-hover px-1.5 text-meta text-fg-muted">{t('channel.header.archived')}</span>}
         {/* 검색은 ⌘K 로도 열리지만 단축키만으로는 보이지 않는다(#258). 헤더 버튼은
             **지금 보는 대화로 좁힌 채** 열고, ⌘K 는 전역으로 남는다 — 두 진입점이 서로
             다른 뜻을 가지므로 title 에 그 차이를 적는다. DM 에도 같은 버튼이 나온다. */}
         <button
-          className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
+          className="ml-auto shrink-0 rounded-row border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
           onClick={() => onOpenSearch?.(true)}
           aria-label={t('channel.header.searchLabel')}
           title={t('channel.header.searchTitle')}
@@ -805,7 +805,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
           // 서버 히스토리 창(최신 N개) 밖으로 밀려난 대화로 돌아가는 유일한 경로다.
           <div className="px-4 py-2 text-center">
             <button
-              className="rounded border border-border px-2 py-1 text-meta text-fg-muted"
+              className="rounded-row border border-border px-2 py-1 text-meta text-fg-muted"
               onClick={() => void getController().loadOlder()}
             >
               Load older messages
@@ -846,7 +846,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       {jumpVisible && (
         <button
           data-testid="channel-jump-to-bottom"
-          className="absolute bottom-3 right-4 rounded-full border border-border bg-surface-raised px-3 py-1 text-meta font-medium text-fg shadow-lg hover:bg-surface-sunken"
+          className="absolute bottom-3 right-4 rounded-full bg-surface-raised px-3 py-1 text-meta font-medium text-fg shadow-float hover:bg-surface-sunken"
           onClick={scrollToBottom}
         >
           {t('channel.pane.jumpToBottom')}
@@ -889,7 +889,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       })()}
       <div className="border-t border-border p-3">
         {isArchived ? (
-          <div className="rounded bg-surface-sunken p-2 text-center text-fg-subtle">
+          <div className="rounded-row bg-surface-sunken p-2 text-center text-fg-subtle">
             {t('channel.pane.archived')}
           </div>
         ) : (

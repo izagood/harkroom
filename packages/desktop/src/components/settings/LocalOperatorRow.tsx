@@ -71,14 +71,14 @@ export function LocalOperatorRow({ agentId, disabled }: { agentId: string; disab
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <input
                 aria-label={t('agents.local.workingDir')}
-                className="min-w-[16rem] flex-1 rounded border border-border bg-surface px-2 py-1 font-mono text-meta text-fg"
+                className="min-w-[16rem] flex-1 rounded-row border border-border bg-surface px-2 py-1 font-mono text-meta text-fg"
                 placeholder={t('agents.local.workingDirPlaceholder')}
                 value={draft}
                 disabled={busy || disabled}
                 onChange={(e) => setDraft(e.target.value)}
               />
               <button
-                className="rounded border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
+                className="rounded-row border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
                 disabled={busy || disabled || draft === state.workingDir}
                 onClick={() => void run(() => setLocalAgent(baseUrl, agentId, { workingDir: draft }), t('agents.local.saved'))}
               >

@@ -66,7 +66,7 @@ export function AskCard({ message }: { message: MessageRow }) {
       data-for-me={forMe}
       data-answered={answered}
       data-closed={closed}
-      className={`mt-1.5 rounded-lg border ${
+      className={`mt-1.5 rounded-card border ${
         // 강조는 **답을 기다리는 내 차례**에만 간다. 답이 끝난 카드는 기록이므로 강조를
         // 거둔다 — 안 그러면 끝난 스레드가 계속 나를 부른다.
         canChoose ? 'border-state-turn bg-accent-surface' : 'border-border-agent bg-surface-agent'
@@ -103,7 +103,7 @@ export function AskCard({ message }: { message: MessageRow }) {
               disabled={!canChoose}
               data-testid={`ask-option-${o.id}`}
               // 옵션은 **본문 크기**로 그린다 — 읽고 골라야 하는 글이지 라벨이 아니다.
-              className={`rounded border px-2.5 py-1.5 text-left text-body ${
+              className={`rounded-row border px-2.5 py-1.5 text-left text-body ${
                 canChoose
                   ? 'border-border bg-surface-raised hover:border-state-turn hover:bg-surface-hover'
                   : 'border-border-agent bg-transparent'
@@ -129,7 +129,7 @@ export function AskCard({ message }: { message: MessageRow }) {
           <button
             type="button"
             data-testid="ask-decline"
-            className="rounded px-1 py-0.5 text-meta text-fg-subtle underline decoration-dotted
+            className="rounded-sm px-1 py-0.5 text-meta text-fg-subtle underline decoration-dotted
                        underline-offset-2 hover:bg-surface-hover hover:text-fg-muted"
             onClick={() => { void getController().closeAsk(message.id, message.channelId); }}
           >

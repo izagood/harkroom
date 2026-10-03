@@ -132,7 +132,7 @@ export function MessageEditBox({ value, onChange, onSave, onCancel, channelId }:
       >
         <textarea
           ref={ref}
-          className="w-full resize-none rounded border border-border bg-field px-2 py-1"
+          className="w-full resize-none rounded-row border border-border bg-field px-2 py-1"
           rows={2}
           value={value}
           aria-expanded={open}
@@ -161,8 +161,8 @@ export function MessageEditBox({ value, onChange, onSave, onCancel, channelId }:
         )}
       </div>
       <div className="flex gap-1">
-        <button className="rounded border border-border px-1.5 text-meta text-fg-muted" onClick={onSave}>Save</button>
-        <button className="rounded border border-border px-1.5 text-meta text-fg-muted" onClick={onCancel}>Cancel</button>
+        <button className="rounded-row border border-border px-1.5 text-meta text-fg-muted" onClick={onSave}>Save</button>
+        <button className="rounded-row border border-border px-1.5 text-meta text-fg-muted" onClick={onCancel}>Cancel</button>
       </div>
     </div>
   );

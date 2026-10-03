@@ -134,8 +134,8 @@ export function ChannelSettingsSheet() {
     <Overlay label={t('channelSheet.label', { name: channel.name ?? '' })} onClose={close} className="w-[32rem]">
       <div data-testid="channel-sheet" className="flex flex-col">
         <div className="flex items-center gap-2 border-b border-border px-4 pt-3">
-          <span className="text-name font-bold">#{channel.name}</span>
-          <button onClick={close} aria-label={t('channelSheet.close')} className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover">✕</button>
+          <span className="text-name font-semibold">#{channel.name}</span>
+          <button onClick={close} aria-label={t('channelSheet.close')} className="ml-auto rounded-row px-2 py-1 text-fg-muted hover:bg-surface-hover">✕</button>
         </div>
         <div role="tablist" className="flex border-b border-border px-2">
           {tabButton('info', t('channelSheet.tab.info'))}
@@ -146,7 +146,7 @@ export function ChannelSettingsSheet() {
         </div>
 
         <div className="p-4">
-          {error && <p role="alert" className="mb-3 rounded border border-danger-border bg-danger-surface p-2 text-danger">{error}</p>}
+          {error && <p role="alert" className="mb-3 rounded-row border border-danger-border bg-danger-surface p-2 text-danger">{error}</p>}
 
           {tab === 'info' && editing && (
             <div role="tabpanel" id={panelId('info')} aria-labelledby={tabId('info')}>
@@ -166,28 +166,28 @@ export function ChannelSettingsSheet() {
                 {isArchived && <><dt className="text-fg-subtle">{t('channelSheet.info.state')}</dt><dd className="text-fg">{t('channel.header.archived')}</dd></>}
               </dl>
               {canManage && (
-                <button data-testid="channel-sheet-edit" onClick={() => setEditing(true)} className="mt-3 rounded border border-border px-3 py-1 text-fg-muted hover:bg-surface-hover">
+                <button data-testid="channel-sheet-edit" onClick={() => setEditing(true)} className="mt-3 rounded-row border border-border px-3 py-1 text-fg-muted hover:bg-surface-hover">
                   {t('channelSheet.edit')}
                 </button>
               )}
               {leaveConfirm ? (
-                <div className="mt-6 rounded border border-warning-border bg-warning-surface p-3">
+                <div className="mt-6 rounded-row border border-warning-border bg-warning-surface p-3">
                   <p className="text-warning">{t('channelSheet.leaveLast')}</p>
                   <div className="mt-2 flex gap-2">
-                    <button disabled={busy} onClick={() => void leave(true)} className="rounded bg-danger px-3 py-1 text-fg-on-strong hover:bg-danger-hover">{t('channelSheet.leaveAnyway')}</button>
-                    <button autoFocus onClick={() => setLeaveConfirm(false)} className="rounded border border-border px-3 py-1 text-fg-muted hover:bg-surface-hover">{t('channelSheet.cancel')}</button>
+                    <button disabled={busy} onClick={() => void leave(true)} className="rounded-row bg-danger px-3 py-1 text-fg-on-strong hover:bg-danger-hover">{t('channelSheet.leaveAnyway')}</button>
+                    <button autoFocus onClick={() => setLeaveConfirm(false)} className="rounded-row border border-border px-3 py-1 text-fg-muted hover:bg-surface-hover">{t('channelSheet.cancel')}</button>
                   </div>
                 </div>
               ) : (
                 <div className="mt-6 flex gap-2 border-t border-border pt-4">
                   {canManage && (
-                    <button data-testid="channel-sheet-archive" disabled={busy} onClick={() => void archive()} className="rounded border border-border px-3 py-1 text-fg-muted hover:bg-surface-hover disabled:opacity-50">
+                    <button data-testid="channel-sheet-archive" disabled={busy} onClick={() => void archive()} className="rounded-row border border-border px-3 py-1 text-fg-muted hover:bg-surface-hover disabled:opacity-50">
                       {isArchived ? t('sidebar.menu.unarchive') : t('sidebar.menu.archive')}
                     </button>
                   )}
                   {/* 되돌리기 어려운 쪽이라 빨강이다(designer ⑦: [채널 나가기(빨강)]). */}
                   {knownMember && (
-                    <button data-testid="channel-sheet-leave" disabled={busy} onClick={() => void leave(false)} className="rounded border border-danger-border px-3 py-1 text-danger hover:bg-danger-surface disabled:opacity-50">
+                    <button data-testid="channel-sheet-leave" disabled={busy} onClick={() => void leave(false)} className="rounded-row border border-danger-border px-3 py-1 text-danger hover:bg-danger-surface disabled:opacity-50">
                       {t('channelSheet.leave')}
                     </button>
                   )}

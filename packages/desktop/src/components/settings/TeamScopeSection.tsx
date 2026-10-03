@@ -55,7 +55,7 @@ export function TeamScopeSection({ teamId, scope, ownerAccountId, invokers, edit
   const handleOf = (id: string) => accounts[id]?.handle ?? id;
 
   return (
-    <div className="rounded border border-border p-3" data-testid="team-scope">
+    <div className="rounded-row border border-border p-3" data-testid="team-scope">
       <div className="text-meta font-medium text-fg-muted">{t('agents.teams.scope.heading')}</div>
       <p className="mt-1 text-meta text-fg-subtle">{t('agents.teams.scope.note')}</p>
       <label className="mt-2 flex flex-col gap-1 text-meta text-fg">
@@ -63,7 +63,7 @@ export function TeamScopeSection({ teamId, scope, ownerAccountId, invokers, edit
         <select
           aria-label={t('agents.scope.invoke')}
           data-testid="team-scope-select"
-          className="w-fit rounded border border-border bg-surface px-2 py-1 text-meta text-fg"
+          className="w-fit rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
           disabled={off}
           value={scope}
           onChange={(e) => setScope(e.target.value as InvokeScope)}
@@ -84,7 +84,7 @@ export function TeamScopeSection({ teamId, scope, ownerAccountId, invokers, edit
           {invokers.length === 0 && <p className="mt-1 text-meta text-fg-subtle">{t('agents.scope.invokersNone')}</p>}
           <ul className="mt-1 flex flex-wrap gap-2">
             {invokers.map((id) => (
-              <li key={id} className="flex items-center gap-1 rounded border border-border px-2 py-0.5 text-meta text-fg">
+              <li key={id} className="flex items-center gap-1 rounded-row border border-border px-2 py-0.5 text-meta text-fg">
                 @{handleOf(id)}
                 {editable && (
                   <button
@@ -101,7 +101,7 @@ export function TeamScopeSection({ teamId, scope, ownerAccountId, invokers, edit
             <div className="mt-2 flex items-center gap-2">
               <select
                 aria-label={t('agents.scope.addInvoker')}
-                className="rounded border border-border bg-surface px-2 py-1 text-meta text-fg"
+                className="rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
                 disabled={off}
                 value={pick}
                 onChange={(e) => setPick(e.target.value)}
@@ -110,7 +110,7 @@ export function TeamScopeSection({ teamId, scope, ownerAccountId, invokers, edit
                 {humans.map((a) => <option key={a.id} value={a.id}>@{a.handle}</option>)}
               </select>
               <button
-                className="rounded border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
+                className="rounded-row border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
                 disabled={off || !pick}
                 onClick={() => { const id = pick; setPick(''); setInvoker(id, true); }}
               >{t('agents.scope.addInvoker')}</button>

@@ -34,7 +34,7 @@ export function GateTerminalButton({ label, agentId }: { label: string; agentId:
         data-testid="gate-terminal-open"
         disabled
         title={t(target.kind === 'missing' ? 'gate.terminal.missing' : 'gate.terminal.ambiguous')}
-        className="rounded border border-border bg-surface-raised px-2 py-0.5 text-meta font-medium text-fg-muted opacity-60"
+        className="rounded-row border border-border bg-surface-raised px-2 py-0.5 text-meta font-medium text-fg-muted opacity-60"
       >
         {t('gate.terminal.open')}
       </button>
@@ -46,7 +46,7 @@ export function GateTerminalButton({ label, agentId }: { label: string; agentId:
         type="button"
         data-testid="gate-terminal-open"
         disabled={state === 'opening'}
-        className="rounded bg-accent px-2 py-0.5 text-meta font-medium text-fg-on-strong hover:bg-accent-hover"
+        className="rounded-row bg-accent px-2 py-0.5 text-meta font-medium text-fg-on-strong hover:bg-accent-hover"
         onClick={() => {
           setState('opening');
           openClaudeAccountTerminal(target.pool, target.account)

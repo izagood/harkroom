@@ -221,18 +221,18 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
             격자에서 열리므로 돌아가는 길이 다르게 생기면 사람이 그것을 배워야 한다. */}
         <button
           data-testid="team-back"
-          className="rounded px-1.5 py-0.5 text-body text-fg-muted hover:bg-surface-hover"
+          className="rounded-row px-1.5 py-0.5 text-body text-fg-muted hover:bg-surface-hover"
           onClick={onBack}
         >
           {t('agents.teams.back')}
         </button>
-        <h2 className="text-name font-bold">@{team.name}</h2>
+        <h2 className="text-name font-semibold">@{team.name}</h2>
       </header>
 
       <div className="w-full max-w-2xl flex-1 space-y-4 overflow-y-auto p-5">
         {error && <p role="alert" className="text-meta text-danger">{error}</p>}
 
-        <div className="rounded border border-border p-3">
+        <div className="rounded-row border border-border p-3">
           <div className="text-meta font-medium text-fg-muted">{t('agents.teams.nameHeading')}</div>
           {/*
             ## **이름의 뜻을 말한다** (문서 4단계)
@@ -265,7 +265,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
           <div className="mt-2 flex gap-2">
             <input
               aria-label={t('agents.teams.nameEdit')}
-              className="flex-1 rounded border border-border bg-field px-3 py-2"
+              className="flex-1 rounded-row border border-border bg-field px-3 py-2"
               value={editName}
               onChange={(e) => { setEditName(e.target.value); setError(null); }}
               disabled={!isAdmin}
@@ -298,7 +298,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
           />
         )}
 
-        <div className="rounded border border-border p-3">
+        <div className="rounded-row border border-border p-3">
           <div className="text-meta font-medium text-fg-muted">{t('agents.teams.membersHeading')}</div>
           {/*
             **팀장의 뜻을 여기서 한 번 말한다.** 배지만 두면 그것이 무엇을 바꾸는지 아무도
@@ -342,7 +342,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
               <div
                 key={m.accountId}
                 data-testid={`team-member-${m.handle}`}
-                className="flex items-center gap-2 rounded bg-surface px-2 py-1.5"
+                className="flex items-center gap-2 rounded-row bg-surface px-2 py-1.5"
               >
                 <Identity account={accounts[m.accountId]} className="h-8 w-8 text-sm" variant="avatar" />
                 {/* 팀원 이름도 상자 안의 단(11px)이다 — 옆의 `(비활성)`·`빼기` 가 이미 그
@@ -365,7 +365,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
                 {lead === m.accountId && (
                   <span
                     data-testid={`team-lead-badge-${m.handle}`}
-                    className="shrink-0 rounded bg-accent-surface px-1.5 py-0.5 text-meta font-medium text-accent"
+                    className="shrink-0 rounded-row bg-accent-surface px-1.5 py-0.5 text-meta font-medium text-accent"
                   >
                     {t('agents.teams.lead')}
                   </span>
@@ -432,7 +432,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
         </div>
 
         {isAdmin && (
-          <div className="rounded border border-danger-border p-3">
+          <div className="rounded-row border border-danger-border p-3">
             <div className="text-meta font-medium text-danger">{t('agents.teams.deleteHeading')}</div>
             <p className="mt-1 text-meta text-fg-subtle">{t('agents.teams.deleteNote')}</p>
             {/* 인라인 확인은 그대로 두고 **버튼 모양만 프리미티브를 통과한다**(문서). */}

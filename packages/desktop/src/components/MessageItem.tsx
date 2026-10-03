@@ -668,7 +668,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
         {isSaved && (
           <div
             data-testid="saved-mark"
-            className="mb-0.5 flex w-fit items-center gap-1 rounded border border-border
+            className="mb-0.5 flex w-fit items-center gap-1 rounded-row border border-border
                        bg-surface-raised px-1.5 py-0.5 text-meta font-medium text-fg"
           >
             <span className="[&_path]:fill-current">
@@ -727,7 +727,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
           {automation && (
             <span
               data-testid="automation-chip"
-              className="rounded border border-border px-1 text-meta text-fg-subtle"
+              className="rounded-sm border border-border px-1 text-meta text-fg-subtle"
               title={automation.initiatedBy
                 // 에이전트가 돌린 회차(082) — 글은 소유자 이름이지만 누가 눌렀는지는 여기서 말한다.
                 ? t('message.automation.tooltipByAgent', {
@@ -769,7 +769,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
               #↵ {t('message.channelEcho')}
             </span>
           )}
-          {avcsType && <span className="rounded bg-warning-surface-strong px-1 text-meta text-warning">{avcsType}</span>}
+          {avcsType && <span className="rounded-sm bg-warning-surface-strong px-1 text-meta text-warning">{avcsType}</span>}
           <span className="text-meta text-fg-muted">{time}</span>
           {message.editedAt && <span className="text-meta text-fg-muted">(edited)</span>}
         </div>
@@ -786,7 +786,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                 data-testid="thread-origin-link"
                 // 아래 "최근 댓글 보기"와 **같은 처리**를 받는다(#488 B2): 스레드로 가는
                 // 링크이지 나를 막는 말이 아니므로 색이 아니라 점선 밑줄이 링크임을 말한다.
-                className="mb-0.5 -mx-1 flex max-w-full items-baseline gap-1 rounded px-1 py-0.5
+                className="mb-0.5 -mx-1 flex max-w-full items-baseline gap-1 rounded-sm px-1 py-0.5
                            text-meta text-fg-muted hover:bg-surface-hover"
                 onClick={() => void getController().openThread(message.threadRootId!)}
                 // 미리보기는 화면에서 접히므로(`truncate`) 귀로 듣는 쪽에는 온전히 실어 준다.
@@ -827,7 +827,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
             )}
             {skillSlug && onOpenSettings && (
               <button
-                className="mt-1 rounded-lg border border-border px-2 py-1 text-meta font-medium
+                className="mt-1 rounded-card border border-border px-2 py-1 text-meta font-medium
                            text-fg hover:bg-surface-hover"
                 onClick={() => onOpenSettings('skills', skillSlug)}
               >
@@ -880,7 +880,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                 // #424: 상자(테두리+옅은 면)를 벗긴다 — 채널을 스크롤하면 답글이 달린 메시지마다
                 // 파란 상자가 줄줄이 서서 본문보다 먼저 눈에 띄었다. Slack 처럼 참여자 얼굴 +
                 // 강조색 텍스트 링크로만 두고, 면은 hover 에서만 옅게 깔아 클릭 대상임을 알린다.
-                className="mt-0.5 self-start -mx-1 flex items-center gap-1.5 rounded px-1 py-0.5
+                className="mt-0.5 self-start -mx-1 flex items-center gap-1.5 rounded-sm px-1 py-0.5
                            text-meta hover:bg-surface-hover"
                 onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
                 /*
@@ -999,7 +999,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                 // 한쪽만 상자면 두 진입점이 다른 종류처럼 보인다.
                 // #488 B2: 답글 요약과 **같은 처리**를 받는다 — 스레드로 가는 링크이지
                 // 나를 막는 말이 아니다. 색 대신 점선 밑줄이 링크임을 말한다.
-                className="mt-0.5 self-start -mx-1 rounded px-1 py-0.5 text-meta font-medium
+                className="mt-0.5 self-start -mx-1 rounded-sm px-1 py-0.5 text-meta font-medium
                            text-fg-muted underline decoration-dotted underline-offset-2
                            hover:bg-surface-hover"
                 onClick={() => void getController().openThread(message.threadRootId!, { focusMessageId: message.id })}
@@ -1084,7 +1084,7 @@ function DeletedMessageRow({ message, inThread }: { message: MessageRow; inThrea
         {!inThread && replyCount > 0 && (
           <button
             data-testid="deleted-message-replies"
-            className="mt-0.5 -mx-1 rounded px-1 py-0.5 text-meta font-medium text-fg-muted
+            className="mt-0.5 -mx-1 rounded-sm px-1 py-0.5 text-meta font-medium text-fg-muted
                        underline decoration-dotted underline-offset-2 hover:bg-surface-hover"
             onClick={() => void getController().openThread(message.id)}
           >
@@ -1123,7 +1123,7 @@ function AudienceBadge({ message }: { message: MessageRow }) {
     <span
       data-testid="audience-badge"
       data-for-me={forMe}
-      className={`rounded px-1 text-meta font-medium ${
+      className={`rounded-sm px-1 text-meta font-medium ${
         forMe ? 'bg-accent-surface text-state-turn' : 'text-fg-agent'
       }`}
     >

@@ -81,7 +81,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled }: {
   const rows = Array.isArray(grants) ? grants : [];
 
   return (
-    <div className="rounded border border-border p-3" data-testid="agent-grants">
+    <div className="rounded-row border border-border p-3" data-testid="agent-grants">
       <div className="text-meta font-medium text-fg-muted">{t('agents.grants.heading')}</div>
       <p className="mt-1 text-meta text-fg-subtle">{t('agents.grants.note')}</p>
 
@@ -95,7 +95,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled }: {
             const repo = repoOf(g.scope);
             const expired = g.expiresAt !== null && Date.parse(g.expiresAt) <= Date.now();
             return (
-              <li key={g.scope} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-border px-2 py-1 text-meta text-fg" data-testid={`agent-grant-${repo}`}>
+              <li key={g.scope} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-row border border-border px-2 py-1 text-meta text-fg" data-testid={`agent-grant-${repo}`}>
                 <span className="font-medium">{t('agents.grants.merge')}</span>
                 <span className="font-mono">{repo}</span>
                 <span className="text-fg-subtle">
@@ -108,7 +108,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled }: {
                 </span>
                 {canRevoke && (
                   <button
-                    className="ml-auto rounded border border-border px-2 py-0.5 text-meta text-fg hover:text-danger disabled:opacity-50"
+                    className="ml-auto rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:text-danger disabled:opacity-50"
                     disabled={off}
                     aria-label={t('agents.grants.revokeAria', { repo })}
                     onClick={() => setRevoking(g)}
@@ -124,7 +124,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled }: {
 
       {canGrant && !adding && (
         <button
-          className="mt-2 rounded border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
+          className="mt-2 rounded-row border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
           disabled={off || grants === 'loading'}
           onClick={() => setAdding(true)}
         >
@@ -134,12 +134,12 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled }: {
       {!canGrant && canRevoke && <p className="mt-2 text-meta text-fg-subtle">{t('agents.grants.ownerOnly')}</p>}
 
       {canGrant && adding && (
-        <div className="mt-2 rounded border border-border bg-surface-sunken p-2" data-testid="agent-grants-add">
+        <div className="mt-2 rounded-row border border-border bg-surface-sunken p-2" data-testid="agent-grants-add">
           <label className="flex flex-col gap-1 text-meta text-fg">
             {t('agents.grants.repos')}
             <textarea
               aria-label={t('agents.grants.repos')}
-              className="min-h-[3rem] rounded border border-border bg-surface px-2 py-1 font-mono text-meta text-fg"
+              className="min-h-[3rem] rounded-row border border-border bg-surface px-2 py-1 font-mono text-meta text-fg"
               placeholder={t('agents.grants.reposPlaceholder')}
               disabled={off}
               value={reposText}
@@ -151,7 +151,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled }: {
             {t('agents.grants.expiry')}
             <select
               aria-label={t('agents.grants.expiry')}
-              className="rounded border border-border bg-surface px-2 py-1 text-meta text-fg"
+              className="rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
               disabled={off}
               value={expiry}
               onChange={(e) => setExpiry(e.target.value as Expiry)}
@@ -163,14 +163,14 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled }: {
           </label>
           <div className="mt-2 flex gap-2">
             <button
-              className="rounded border border-border bg-accent px-2 py-1 text-meta font-medium text-accent-fg disabled:opacity-50"
+              className="rounded-row border border-border bg-accent px-2 py-1 text-meta font-medium text-accent-fg disabled:opacity-50"
               disabled={off || repos.length === 0 || badRepos.length > 0}
               onClick={() => void submit()}
             >
               {t('agents.grants.confirmAdd')}
             </button>
             <button
-              className="rounded border border-border px-2 py-1 text-meta text-fg hover:bg-surface disabled:opacity-50"
+              className="rounded-row border border-border px-2 py-1 text-meta text-fg hover:bg-surface disabled:opacity-50"
               disabled={off}
               onClick={() => { setAdding(false); setReposText(''); }}
             >

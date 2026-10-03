@@ -313,13 +313,13 @@ export function Inbox({ open, onClose }: Props) {
     const days = daysWaiting(card.sinceAt, Date.now());
     const more = card.entries.length - 1;
     return (
-      <li key={card.rootId} className="rounded border border-border bg-surface-raised">
+      <li key={card.rootId} className="rounded-row border border-border bg-surface-raised">
         <button
           data-testid={`inbox-card-${card.rootId}`}
           data-column={card.column}
           data-unread={card.unread ? 'true' : 'false'}
           onClick={() => openCard(card)}
-          className={`flex w-full flex-col gap-1 rounded border-l-2 px-2 py-1.5 text-left hover:bg-surface-hover ${
+          className={`flex w-full flex-col gap-1 rounded-row border-l-2 px-2 py-1.5 text-left hover:bg-surface-hover ${
             card.unread ? 'border-accent' : 'border-transparent'}`}
         >
           {/* **해야 할 일 한 문장.** 잘라 낸 본문 두 줄이 아니라 고른 한 문장이다(`oneSentence`). */}
@@ -361,7 +361,7 @@ export function Inbox({ open, onClose }: Props) {
               data-testid={`inbox-card-answer-${card.rootId}-${o.id}`}
               disabled={busy === card.rootId}
               onClick={() => void answer(card, o.id)}
-              className="rounded border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-hover disabled:opacity-50"
+              className="rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-hover disabled:opacity-50"
             >
               {o.label}
             </button>
@@ -377,7 +377,7 @@ export function Inbox({ open, onClose }: Props) {
                 data-testid={`inbox-card-undo-${card.rootId}`}
                 disabled={busy === card.rootId}
                 onClick={() => void setState(card, { state: null })}
-                className="ml-auto rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
+                className="ml-auto rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
               >
                 {t('inbox.board.undo')}
               </button>
@@ -388,7 +388,7 @@ export function Inbox({ open, onClose }: Props) {
                   data-testid={`inbox-card-later-${card.rootId}`}
                   disabled={busy === card.rootId}
                   onClick={() => void setState(card, { state: 'later', until: tomorrowMorning(Date.now()) })}
-                  className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
+                  className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
                 >
                   {t('inbox.board.later')}
                 </button>
@@ -397,7 +397,7 @@ export function Inbox({ open, onClose }: Props) {
                     data-testid={`inbox-card-done-${card.rootId}`}
                     disabled={busy === card.rootId}
                     onClick={() => void setState(card, { state: 'done' })}
-                    className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
+                    className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
                   >
                     {t('inbox.board.done')}
                   </button>
@@ -426,7 +426,7 @@ export function Inbox({ open, onClose }: Props) {
                  focus-visible:outline-accent focus-visible:-outline-offset-2"
     >
       <div className="flex items-center gap-2 border-b border-border bg-surface-raised p-3">
-        <span className="font-bold">{t('inbox.pane.title')}</span>
+        <span className="font-semibold">{t('inbox.pane.title')}</span>
         {/* **숫자는 내 차례 하나뿐이다** — 0 이 될 수 있는 수만 뜻이 있다. */}
         {load.kind === 'ready' && (
           <span data-testid="inbox-mine-count" className={`text-meta ${mine > 0 ? 'font-medium text-state-turn' : 'text-fg-subtle'}`}>
@@ -435,7 +435,7 @@ export function Inbox({ open, onClose }: Props) {
         )}
         <button
           onClick={onClose}
-          className="ml-auto rounded px-2 py-1 text-fg-muted hover:bg-surface-hover
+          className="ml-auto rounded-row px-2 py-1 text-fg-muted hover:bg-surface-hover
                      focus-visible:outline-solid focus-visible:outline-2
                      focus-visible:outline-accent"
           aria-label={t('inbox.pane.close')}
@@ -445,11 +445,11 @@ export function Inbox({ open, onClose }: Props) {
       </div>
       {/* 실패는 보드 위에 남긴다 — 조회 실패를 빈 보드로 삼키지 않는다. */}
       {load.kind === 'error' && (
-        <div role="alert" className="m-3 rounded border border-danger-border bg-danger-surface p-2 text-danger">
+        <div role="alert" className="m-3 rounded-row border border-danger-border bg-danger-surface p-2 text-danger">
           {t('inbox.pane.loadFailed', { reason: load.message })}
           <button
             onClick={() => { reload(); }}
-            className="ml-2 rounded bg-danger px-2 py-0.5 text-fg-on-strong hover:bg-danger-hover"
+            className="ml-2 rounded-row bg-danger px-2 py-0.5 text-fg-on-strong hover:bg-danger-hover"
           >
             {t('inbox.pane.retry')}
           </button>

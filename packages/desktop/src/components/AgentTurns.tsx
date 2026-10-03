@@ -139,7 +139,7 @@ export function AgentTurns({
     // 사람은 빈 목록과 같은 뜻으로 읽는다.
     return frame(
       <div data-testid="agent-turns-unknown"
-        className="mx-1 rounded border border-dashed border-border px-2 py-2">
+        className="mx-1 rounded-row border border-dashed border-border px-2 py-2">
         <p className="text-meta text-fg">{t('agentTurns.unknown')}</p>
         <p className="mt-0.5 text-meta text-fg-subtle">{t('agentTurns.unknownHint')}</p>
         <p className="mt-1 text-meta text-fg-subtle break-words">{snapshot.reason}</p>
@@ -203,7 +203,7 @@ export function AgentTurns({
              버튼이 되고, 같은 일을 하는 길이 둘이면 사람은 매번 어느 쪽인지 고른다. */
           <button type="button" data-testid="agent-turns-cancel-all"
             onClick={() => setConfirmAll(stoppable(snapshot.turns))}
-            className="ml-auto shrink-0 rounded px-1.5 py-0.5 text-meta text-danger hover:bg-danger-surface">
+            className="ml-auto shrink-0 rounded-row px-1.5 py-0.5 text-meta text-danger hover:bg-danger-surface">
             {t('agentTurns.cancelAll')}
           </button>
         )}
@@ -247,7 +247,7 @@ export function AgentTurns({
           return (
             <li key={`${group.channelId}/${root ?? '_root'}`}
               data-testid={`agent-turns-group-${group.channelId}-${root ?? 'root'}`}
-              className="rounded bg-surface-sunken">
+              className="rounded-row bg-surface-sunken">
               {/*
                 러너가 스레드를 말하지 않은 묶음은 **버튼이 아니다** — 눌러도 갈 곳이 없는
                 버튼을 그리지 않는다(design.md §4). 그 사실을 `title` 이 말한다.
@@ -300,7 +300,7 @@ export function AgentTurns({
                       */}
                       {turn.mode === 'interactive' && (
                         <span data-testid={`agent-turn-human-${turn.sessionId}`}
-                          className="shrink-0 rounded bg-accent-surface px-1 text-accent">
+                          className="shrink-0 rounded-sm bg-accent-surface px-1 text-accent">
                           {t('agentTurns.human')}
                         </span>
                       )}
@@ -326,7 +326,7 @@ export function AgentTurns({
                           title={turn.claudePool
                             ? t('agentTurns.accountTitle', { pool: turn.claudePool })
                             : t('agentTurns.accountTitleRoot')}
-                          className="min-w-0 shrink truncate rounded bg-surface-raised px-1 text-fg-muted">
+                          className="min-w-0 shrink truncate rounded-sm bg-surface-raised px-1 text-fg-muted">
                           {turn.claudeAccount ?? t('agentTurns.accountDefault')}
                         </span>
                       )}
@@ -353,7 +353,7 @@ export function AgentTurns({
                         <button type="button" data-testid={`agent-turn-terminal-${turn.sessionId}`}
                           onClick={() => onOpenTerminal(turn)}
                           title={t('agentTurns.terminalTitle')}
-                          className="shrink-0 rounded px-1 text-fg-muted hover:bg-surface-hover">
+                          className="shrink-0 rounded-sm px-1 text-fg-muted hover:bg-surface-hover">
                           {t('agentTurns.terminal')}
                         </button>
                       )}
@@ -372,7 +372,7 @@ export function AgentTurns({
                       {onCancelTurns && (turn.mode === 'interactive' ? (
                         <button type="button" data-testid={`agent-turn-end-control-${turn.sessionId}`}
                           onClick={() => setConfirmControl(turn)}
-                          className="shrink-0 rounded px-1 text-danger hover:bg-danger-surface">
+                          className="shrink-0 rounded-sm px-1 text-danger hover:bg-danger-surface">
                           {t('agentTurns.endControl')}
                         </button>
                       ) : (
@@ -390,7 +390,7 @@ export function AgentTurns({
                             ]}
                             renderTrigger={(props) => (
                               <button type="button" {...props} data-testid={`agent-turn-cancel-${turn.sessionId}`}
-                                className="shrink-0 rounded px-1 text-danger hover:bg-danger-surface">
+                                className="shrink-0 rounded-sm px-1 text-danger hover:bg-danger-surface">
                                 {t('agentTurns.cancel')} <span aria-hidden="true">▾</span>
                               </button>
                             )}
@@ -400,7 +400,7 @@ export function AgentTurns({
                              (designer #1054). ▾ 없는 버튼이 바로 멈춘다(옛 동작). */
                           <button type="button" data-testid={`agent-turn-cancel-${turn.sessionId}`}
                             onClick={() => onCancelTurns([turn])}
-                            className="shrink-0 rounded px-1 text-danger hover:bg-danger-surface">
+                            className="shrink-0 rounded-sm px-1 text-danger hover:bg-danger-surface">
                             {t('agentTurns.cancel')}
                           </button>
                         )

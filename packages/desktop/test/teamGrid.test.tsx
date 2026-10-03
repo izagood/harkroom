@@ -410,7 +410,7 @@ describe('팀 카드 — 틀이 에이전트 카드와 같다', () => {
       를 여기서 박는다. 나머지(면·모서리·여백)는 같아야 한다.
     */
     const teamBox = pick('box', teamSrc);
-    for (const part of ['rounded-lg', 'bg-surface-raised', 'p-3']) {
+    for (const part of ['rounded-card', 'bg-surface-raised', 'p-3']) {
       expect(pick('box', settings)).toContain(part);
       expect(teamBox).toContain(part);
     }

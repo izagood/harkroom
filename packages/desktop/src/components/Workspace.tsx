@@ -311,7 +311,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
           {sidebarCollapsed && (
             <button
               onClick={handleToggleSidebar}
-              className="rounded px-2 py-1 hover:bg-surface-hover"
+              className="rounded-row px-2 py-1 hover:bg-surface-hover"
               aria-label={t('workspace.showSidebar')}
               title={t('workspace.showSidebar')}
             >
@@ -321,7 +321,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
           <button
             onClick={handleGoBack}
             disabled={!canGoBack}
-            className={`rounded px-2 py-1 ${canGoBack ? 'hover:bg-surface-hover' : 'text-fg-muted cursor-not-allowed'}`}
+            className={`rounded-row px-2 py-1 ${canGoBack ? 'hover:bg-surface-hover' : 'text-fg-muted cursor-not-allowed'}`}
             aria-label={t('workspace.back')}
             title={t('workspace.backTitle')}
           >
@@ -330,7 +330,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
           <button
             onClick={handleGoForward}
             disabled={!canGoForward}
-            className={`rounded px-2 py-1 ${canGoForward ? 'hover:bg-surface-hover' : 'text-fg-muted cursor-not-allowed'}`}
+            className={`rounded-row px-2 py-1 ${canGoForward ? 'hover:bg-surface-hover' : 'text-fg-muted cursor-not-allowed'}`}
             aria-label={t('workspace.forward')}
             title={t('workspace.forwardTitle')}
           >

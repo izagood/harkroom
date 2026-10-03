@@ -82,11 +82,11 @@ export function MemoryDetail({ agentId, entry, onChanged }: {
   return (
     <div className="mb-1 space-y-1 px-2" data-testid={`memory-detail-${entry.slug}`}>
       {entry.flaggedAt && (
-        <div data-testid="memory-flagged" role="note" className="rounded border border-warning-border bg-warning-surface p-2 text-meta">
+        <div data-testid="memory-flagged" role="note" className="rounded-row border border-warning-border bg-warning-surface p-2 text-meta">
           <p className="text-warning">{t('agents.memory.flaggedNote', { reason: entry.flagReason ?? '' })}</p>
           <button
             data-testid="memory-flag-confirm"
-            className="mt-1 rounded border border-border bg-surface px-2 text-meta text-fg disabled:opacity-50"
+            className="mt-1 rounded-row border border-border bg-surface px-2 text-meta text-fg disabled:opacity-50"
             disabled={busy}
             onClick={confirmFlag}
           >
@@ -115,7 +115,7 @@ export function MemoryDetail({ agentId, entry, onChanged }: {
           <textarea
             data-testid="memory-edit-value"
             aria-label={t('agents.memory.editValue')}
-            className="h-40 w-full rounded border border-border bg-surface p-1 font-mono text-meta"
+            className="h-40 w-full rounded-row border border-border bg-surface p-1 font-mono text-meta"
             value={value}
             maxLength={limit}
             onChange={(e) => setValue(e.target.value)}
@@ -127,7 +127,7 @@ export function MemoryDetail({ agentId, entry, onChanged }: {
             data-testid="memory-edit-description"
             aria-label={t('agents.memory.editDescription')}
             placeholder={t('agents.memory.editDescription')}
-            className="w-full rounded border border-border bg-surface px-1 text-meta"
+            className="w-full rounded-sm border border-border bg-surface px-1 text-meta"
             value={description}
             maxLength={MAX_MEMORY_DESCRIPTION_LENGTH}
             onChange={(e) => setDescription(e.target.value)}
@@ -136,7 +136,7 @@ export function MemoryDetail({ agentId, entry, onChanged }: {
             <select
               data-testid="memory-edit-kind"
               aria-label={t('agents.memory.editKind')}
-              className="rounded border border-border bg-surface px-1 text-meta"
+              className="rounded-sm border border-border bg-surface px-1 text-meta"
               value={kind}
               onChange={(e) => setKind(e.target.value as Kind)}
             >
@@ -146,14 +146,14 @@ export function MemoryDetail({ agentId, entry, onChanged }: {
           <div className="flex gap-1">
             <button
               data-testid="memory-edit-save"
-              className="rounded bg-accent px-2 text-meta text-fg-on-strong disabled:opacity-50"
+              className="rounded-row bg-accent px-2 text-meta text-fg-on-strong disabled:opacity-50"
               disabled={busy || value.trim() === ''}
               onClick={() => save({ value, description, ...(isCore ? {} : { kind }) })}
             >
               {t('agents.memory.save')}
             </button>
             <button
-              className="rounded border border-border px-2 text-meta text-fg-muted"
+              className="rounded-row border border-border px-2 text-meta text-fg-muted"
               onClick={() => { setEditing(false); setValue(entry.value); setDescription(entry.description ?? ''); setProblem(null); }}
             >
               {t('agents.memory.cancelEdit')}
@@ -171,14 +171,14 @@ export function MemoryDetail({ agentId, entry, onChanged }: {
         <div className="flex gap-1">
           <button
             data-testid="memory-edit-start"
-            className="rounded border border-border px-1.5 text-meta text-fg-muted"
+            className="rounded-row border border-border px-1.5 text-meta text-fg-muted"
             onClick={() => setEditing(true)}
           >
             {t('agents.memory.edit')}
           </button>
           <button
             data-testid="memory-revisions-toggle"
-            className="rounded border border-border px-1.5 text-meta text-fg-muted"
+            className="rounded-row border border-border px-1.5 text-meta text-fg-muted"
             aria-expanded={revisions !== 'closed'}
             onClick={openRevisions}
           >
@@ -193,7 +193,7 @@ export function MemoryDetail({ agentId, entry, onChanged }: {
         <div className="text-meta text-fg-muted">{t('agents.memory.noRevisions')}</div>
       )}
       {Array.isArray(revisions) && revisions.map((r, i) => (
-        <div key={`${r.replacedAt}-${i}`} data-testid="memory-revision" className="rounded border border-border p-1">
+        <div key={`${r.replacedAt}-${i}`} data-testid="memory-revision" className="rounded-row border border-border p-1">
           <div className="flex items-baseline gap-2 text-meta text-fg-subtle">
             <span className="flex-1" title={new Date(r.updatedAt).toLocaleString(locale)}>
               {t('agents.memory.revisionAt', { ago: agoLabel(new Date(r.updatedAt).getTime(), Date.now(), locale, t) })}
@@ -201,7 +201,7 @@ export function MemoryDetail({ agentId, entry, onChanged }: {
             </span>
             <button
               data-testid="memory-revision-restore"
-              className="rounded border border-border px-1.5 text-meta text-fg-muted disabled:opacity-50"
+              className="rounded-row border border-border px-1.5 text-meta text-fg-muted disabled:opacity-50"
               disabled={busy || (isCore && r.value.length > MAX_CORE_MEMORY_LENGTH)}
               onClick={() => save({ value: r.value, description: r.description ?? '' })}
             >

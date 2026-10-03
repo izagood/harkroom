@@ -47,7 +47,7 @@ export function WaitChainLine({ chain }: { chain: Chain }) {
         data-testid="wait-chain"
         data-end="deadlock"
         data-reason={chain.deadlockReason}
-        className="mx-4 my-1 rounded border border-state-stuck bg-danger-surface px-2 py-1
+        className="mx-4 my-1 rounded-row border border-state-stuck bg-danger-surface px-2 py-1
                    text-meta text-state-stuck"
       >
         <span className="font-semibold">{t('waitChain.deadlock')}</span>

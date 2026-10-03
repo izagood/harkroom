@@ -105,14 +105,14 @@ export function ReactionPickerPanel({ message, onClose }: { message: MessageRow;
       data-placement={below ? 'bottom' : 'top'}
       /* 오른쪽 끝을 툴바에 맞춘다(`right-0`) — 툴바가 행의 오른쪽에 붙어 있으므로 왼쪽에
          맞추면 창이 화면 밖으로 나간다. `bottom-full` 은 "내 아래끝 = 부모의 위끝"이다. */
-      className={`absolute right-0 z-10 w-58 rounded-[10px] border border-border bg-surface-raised
-                  p-2.5 shadow-lg ${below ? 'top-full mt-1.5' : 'bottom-full mb-1.5'}`}
+      className={`absolute right-0 z-10 w-58 rounded-card bg-surface-raised
+                  p-2.5 shadow-float ${below ? 'top-full mt-1.5' : 'bottom-full mb-1.5'}`}
     >
       <div className="mb-2 flex items-center justify-between px-0.5 text-meta text-fg-subtle">
         <span>{t('reactions.pickTitle')}</span>
         <button
           aria-label="Close reaction picker"
-          className="rounded px-1 hover:bg-surface-hover hover:text-fg"
+          className="rounded-sm px-1 hover:bg-surface-hover hover:text-fg"
           onClick={onClose}
         >
           Esc
@@ -129,7 +129,7 @@ export function ReactionPickerPanel({ message, onClose }: { message: MessageRow;
                  테스트가 어느 것인지 가리지 못한다). */
               aria-label={e}
               aria-pressed={mine}
-              className={`flex h-8 w-8 items-center justify-center rounded-lg text-title
+              className={`flex h-8 w-8 items-center justify-center rounded-card text-title
                 ${mine ? 'bg-surface-sunken ring-1 ring-border' : 'hover:bg-surface-hover'}`}
               onClick={() => toggle(e, !mine)}
             >
@@ -510,7 +510,7 @@ function ReactionTooltip({ emoji, who, text, anchor }: {
       data-testid="reaction-tooltip"
       data-placement={below ? 'bottom' : 'top'}
       style={style}
-      className="pointer-events-none z-50 flex flex-col items-center gap-1 rounded-lg bg-fg px-3 py-2 text-surface shadow-lg"
+      className="pointer-events-none z-50 flex flex-col items-center gap-1 rounded-card bg-fg px-3 py-2 text-surface shadow-float"
     >
       {/* 칩의 이모지를 크게 다시 그린다 — 칩 여럿이 붙어 있으면 이 풍선이 **어느** 칩 것인지를 이것이 답한다. */}
       <span className="flex h-14 w-14 items-center justify-center text-[48px] leading-none" data-testid="reaction-tooltip-emoji">{emoji}</span>
