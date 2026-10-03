@@ -34,7 +34,7 @@ import { findOpencodeSessionId } from './opencodeSessions.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
 import type { MemoryCache } from './memoryCache.js';
-import { planMemory, RECALL_MAX_ITEMS, type RecallResult } from './memoryPin.js';
+import { planMemory, RECALL_MAX_ITEMS, RECALL_ROOT_HEAD_CHARS, type RecallResult } from './memoryPin.js';
 import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './harnessMemory.js';
 
 /** runMentionTurn 이 요구하는 harkroom 표면. HarkroomAgentClient 의 부분집합이라 실제 클래스를
@@ -67,7 +67,7 @@ export interface MentionTurnHarkroom {
   /** #139: core 본문과 mem/* slug 목록. 실패는 **던진다** — 호출자가 구분해야 한다. */
   readMemory(): Promise<{ core: string | null; slugs: string[] }>;
   /** 관련 기억 찾기(`memory.search`, 본문 포함). 없으면(테스트·옛 조립) 찾지 않는다. */
-  searchMemory?(query: string, limit: number): Promise<RecallResult>;
+  searchMemory?(query: string, limit: number, opts?: { exclude?: string[]; recordTop?: number }): Promise<RecallResult>;
   /**
    * #140: 승인된 스킬 목록. **실패는 던진다** — 러너가 stderr 에 한 줄 남길 수 있어야 한다.
    * 여기서 빈 배열로 삼키면 "스킬이 없다"와 "서버를 못 읽었다"가 같은 값이 되고, 그러면
@@ -877,14 +877,27 @@ export async function runMentionTurn(
   // **예약으로 깨어난 턴(`turn.wake`)은 찾지 않는다**(recall P1). 새로 온 남의 말이 없거나, 있어도
   // 앞 턴이 이미 본 요청의 되풀이라 같은 것을 다시 고르거나 엉뚱한 것을 끌어온다 — 이어지는
   // 세션은 필요한 기억을 이미 들고 있다.
+  //
+  //
+  // **스레드 루트 글의 머리(~300자)를 질의 앞에 붙인다**(S2 F2). 후속 턴의 새 말은 "그대로 해"·"다시 봐"처럼
+  // 짧아 주제어가 없었다 — 긴 스레드일수록 recall 이 비었다. 후속 턴은 `lastFedSeq` 이후만 읽어 루트가
+  // `thread` 에 없으므로, 루트를 본 턴(대개 첫 턴)에 memoryPin 이 고정 파일에 머리를 적어 두고 다음 턴들이 쓴다.
+  // 새 말이 없으면(wake·내 말뿐) 찾지 않는 규칙은 그대로다.
   const fedFrom = rec.lastFedSeq;
   const recallQuery = target.wake ? '' : thread
     .filter((m) => m.seq > fedFrom && m.authorId !== deps.me.id && m.kind !== 'progress')
     .slice(-3).map((m) => m.body).join('\n').slice(0, 1000);
+  const root = anchor ? thread.find((m) => m.id === anchor) : undefined;
   const search = deps.harkroom.searchMemory?.bind(deps.harkroom);
   const memoryPlan = await planMemory({
     stateDir: deps.stateDir, key, sessionId: rec.sessionId, isFirstTurn, memory,
-    ...(search && recallQuery ? { recall: { query: recallQuery, search: (q: string) => search(q, RECALL_MAX_ITEMS + 3) } } : {}),
+    ...(search && recallQuery ? {
+      recall: {
+        query: recallQuery,
+        ...(root ? { rootHead: root.body.slice(0, RECALL_ROOT_HEAD_CHARS) } : {}),
+        search: (q: string, o: { exclude: string[]; recordTop: number }) => search(q, RECALL_MAX_ITEMS + 3, o),
+      },
+    } : {}),
   });
   // 하네스 파일 메모리 수확 알림(U5, `harnessMemory.ts`). 어댑터가 그 자리를 아는 하네스만
   // (지금은 claude). 읽기 실패는 빈 목록이라 턴을 막지 않는다.
