@@ -1,6 +1,6 @@
 /**
  * 설정 › 에이전트의 「PR 머지」 배선(스레드 febe9ff8 P1) — 목록 카드 「머지 N」 은 **내가 소유한 에이전트만** 세고,
- * 상세에서는 그 절이 「실행」(하네스·모델) 바로 아래, 「권한」 위에 선다.
+ * 상세에서는 그 절이 「권한」 탭 맨 위, 「권한」 묶음 제목 앞에 선다(#1151 탭 뒤).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor, fireEvent } from '@testing-library/react';
@@ -32,7 +32,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); setController(null); usePrefsStore.getState().setLocale('system'); });
 
 describe('설정 › 에이전트 — PR 머지 배선', () => {
-  it('내 에이전트만 grant 를 읽어 「머지 N」 을 단다(만료된 것은 안 센다). 상세에서는 「실행」 아래·「권한」 위에 선다', async () => {
+  it('내 에이전트만 grant 를 읽어 「머지 N」 을 단다(만료된 것은 안 센다). 상세에서는 「권한」 탭 맨 위에 선다', async () => {
     const listGrants = vi.fn(async (id: string) => (id === 'a-mine'
       ? [grant('repo:izagood/harkroom'), grant('repo:izagood/harkroom-gate'), grant('repo:izagood/old', '2026-01-01T00:00:00Z')]
       : []));
@@ -51,10 +51,13 @@ describe('설정 › 에이전트 — PR 머지 배선', () => {
     expect(listGrants.mock.calls.map((c) => c[0])).toEqual(['a-mine']);
 
     fireEvent.click(screen.getByTestId('agent-card-mine'));
+    fireEvent.click(await screen.findByRole('tab', { name: '권한' }));
     const section = await screen.findByTestId('agent-grants');
-    const run = screen.getByRole('heading', { name: '실행' });
+    const panel = screen.getByRole('tabpanel');
+    expect(panel.contains(section)).toBe(true);
     const perms = screen.getByRole('heading', { name: '권한' });
-    expect(run.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // 탭 안의 첫 덩어리이고, 「권한」 묶음 제목보다 앞이다
+    expect(panel.firstElementChild).toBe(section);
     expect(section.compareDocumentPosition(perms) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
