@@ -249,9 +249,27 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 지금 DM 을 여는 중인 상대들.
+  final Set<String> _openingDm = {};
+
   /// 그 사람과의 DM 을 열거나 만들고 id 를 준다. 목록에 없던 DM 이면 더한다(이름은 상대로).
-  Future<String> openDmWith(String accountId) async {
-    final id = await _api!.openDm([accountId]);
+  ///
+  /// `null` 이면 **아무것도 하지 마라**는 뜻이다. 둘 중 하나다.
+  /// - 같은 사람에게 여는 중이다 — 거듭 누르기(designer ③). 서버는 찾기와 만들기가 한 트랜잭션이
+  ///   아니라 동시에 두 번 오면 같은 짝 DM 이 둘 생길 수 있다(security L2).
+  /// - 기다리는 사이 커뮤니티가 바뀌었다(security L1) — 옛 커뮤니티의 DM 을 새 커뮤니티 목록에
+  ///   붙이고 그리로 밀어 넣으면 안 된다.
+  Future<String?> openDmWith(String accountId) async {
+    if (!_openingDm.add(accountId)) return null;
+    final gen = _generation;
+    final key = activeKey;
+    final String id;
+    try {
+      id = await _api!.openDm([accountId]);
+    } finally {
+      _openingDm.remove(accountId);
+    }
+    if (gen != _generation || key != activeKey) return null;
     if (!channels.any((c) => c.id == id)) {
       final myId = me?.id ?? '';
       final row = ChannelRow(id: id, name: '', isPrivate: true, isDm: true, topic: null, memberIds: [myId, accountId]);

@@ -166,8 +166,9 @@ class OpenMeButton extends StatelessWidget {
     final me = app.me;
     return IconButton(
       key: const Key('open-me'),
-      tooltip: context.t.tabMe,
-      onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const MeScreen())),
+      // 사진만 보이므로 스크린리더에는 이 이름이 들린다 — 무엇이 열리는지 말한다(designer S5a 후속).
+      tooltip: context.t.meSettings,
+      onPressed: () => openMeSheet(context),
       icon: me == null
           ? const Icon(Icons.account_circle_outlined)
           : HarkroomAvatar(id: me.id, name: me.handle, size: 28),
@@ -425,7 +426,8 @@ class _NewMessageSheetState extends State<NewMessageSheet> {
       final id = await app.openDmWith(accountId);
       if (!mounted) return;
       nav.pop();
-      _push(nav, id);
+      // null: 커뮤니티가 바뀌었다 — 시트만 닫고 아무 데로도 가지 않는다.
+      if (id != null) _push(nav, id);
     } catch (_) {
       if (!mounted) return;
       setState(() => _busy = false);
@@ -486,5 +488,23 @@ class _NewMessageSheetState extends State<NewMessageSheet> {
         ),
       ),
     );
+  }
+}
+
+/// 그 사람과의 DM 을 열고(없으면 만들고) 그 화면으로 간다. 찾기 바로 가기·에이전트 탭이 쓴다.
+///
+/// 거듭 누르기와 커뮤니티 전환은 [AppState.openDmWith] 가 막는다(그때는 `null` → 아무것도 안 한다).
+Future<void> openDmScreen(BuildContext context, String accountId) async {
+  final app = context.app;
+  final nav = Navigator.of(context);
+  final messenger = ScaffoldMessenger.of(context);
+  final failed = context.t.newMessageDmFailed;
+  try {
+    final id = await app.openDmWith(accountId);
+    if (id == null) return;
+    await app.openChannel(id);
+    await nav.push(MaterialPageRoute<void>(builder: (_) => MessageListScreen(channelId: id)));
+  } catch (_) {
+    messenger.showSnackBar(SnackBar(content: Text(failed), behavior: SnackBarBehavior.floating));
   }
 }

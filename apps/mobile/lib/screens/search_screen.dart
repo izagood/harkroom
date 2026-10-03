@@ -10,6 +10,7 @@ import '../state/app_state.dart';
 import '../ui/parts.dart';
 import '../ui/states.dart';
 import '../ui/tokens.dart';
+import 'channel_list_screen.dart';
 import 'message_link.dart';
 import 'message_list_screen.dart';
 import 'message_tile.dart';
@@ -427,6 +428,14 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
+  /// 1:1 DM 의 상대 id. 채널이거나 여럿인 DM 이면 null.
+  String? _dmPeer(BuildContext context, ChannelRow c) {
+    if (!c.isDm || c.memberIds.length != 2) return null;
+    final me = context.app.me?.id;
+    final others = c.memberIds.where((id) => id != me).toList(growable: false);
+    return others.length == 1 ? others.single : null;
+  }
+
   List<Widget> _shortcutRows(BuildContext context, List<SearchShortcut> shortcuts) {
     if (shortcuts.isEmpty) return const [];
     return [
@@ -436,7 +445,10 @@ class _SearchScreenState extends State<SearchScreen> {
           ListTile(
             key: Key('search-shortcut-${c.id}'),
             dense: true,
-            leading: Icon(c.isDm ? Icons.person_outline : Icons.tag, size: 20, color: context.tokens.fgMuted),
+            // 1:1 DM 은 상대 아바타로 — DM 없는 사람 줄과 같은 「사람」 모양이다(designer ②).
+            leading: _dmPeer(context, c) != null
+                ? HarkroomAvatar(id: _dmPeer(context, c)!, name: context.app.displayNameOf(_dmPeer(context, c)!), size: 20)
+                : Icon(c.isDm ? Icons.person_outline : Icons.tag, size: 20, color: context.tokens.fgMuted),
             title: Text(c.name),
             subtitle: c.isDm ? Text(context.t.tabDms) : null,
             onTap: () {
@@ -451,25 +463,12 @@ class _SearchScreenState extends State<SearchScreen> {
             leading: HarkroomAvatar(id: x.person!.id, name: x.person!.handle, size: 20),
             title: Text(x.person!.displayName.isNotEmpty ? x.person!.displayName : x.person!.handle),
             subtitle: Text('@${x.person!.handle}'),
-            onTap: () => _openPerson(context, x.person!.id),
+            onTap: () => openDmScreen(context, x.person!.id),
           ),
     ];
   }
 
-  /// DM 이 없는 사람을 누르면 DM 을 연다(새 메시지 시트와 같은 `POST /dms` 길).
-  Future<void> _openPerson(BuildContext context, String accountId) async {
-    final app = context.app;
-    final nav = Navigator.of(context);
-    final messenger = ScaffoldMessenger.of(context);
-    final failed = context.t.newMessageDmFailed;
-    try {
-      final id = await app.openDmWith(accountId);
-      await app.openChannel(id);
-      await nav.push(MaterialPageRoute<void>(builder: (_) => MessageListScreen(channelId: id)));
-    } catch (_) {
-      messenger.showSnackBar(SnackBar(content: Text(failed), behavior: SnackBarBehavior.floating));
-    }
-  }
+
 }
 
 /// 바로 가기 한 줄: 대화(채널·DM) 또는 **아직 DM 이 없는 사람·에이전트**(누르면 DM 을 연다, designer 찾기 F2 n2).

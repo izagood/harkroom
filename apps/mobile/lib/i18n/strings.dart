@@ -289,6 +289,9 @@ abstract class Strings {
   /// 탭 이름 — 나와 연결.
   String get tabMe;
 
+  /// 머리 프로필 사진 버튼의 이름(tooltip·스크린리더) — 나 시트를 연다.
+  String get meSettings;
+
   /// 탭바(개정판 3.1): 홈 · DM · 인박스 · 에이전트. 「나」 는 탭이 아니라 머리의 프로필 사진이다.
   String get tabHome;
   String get tabDms;
@@ -881,6 +884,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'tabChannels': s.tabChannels,
       'tabInbox': s.tabInbox,
       'tabMe': s.tabMe,
+      'meSettings': s.meSettings,
       'tabHome': s.tabHome,
       'tabDms': s.tabDms,
       'tabAgents': s.tabAgents,

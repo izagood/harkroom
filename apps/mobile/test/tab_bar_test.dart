@@ -161,18 +161,67 @@ void main() {
     // 읽기 전용 — 터미널·멈춤 아이콘이 없다.
     expect(find.byIcon(Icons.terminal), findsNothing);
     expect(find.byIcon(Icons.stop_circle_outlined), findsNothing);
+    // 「에이전트 전체」 줄을 누르면 그 에이전트와의 DM 이 열린다(designer ①).
+    await tester.tap(find.byKey(const Key('agent-a-qa')));
+    await tester.pumpAndSettle();
+    expect(find.byType(BackButton), findsOneWidget);
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
     // 도는 줄을 누르면 그 채널(스레드 루트가 없으면 채널)이 열린다.
     await tester.tap(run);
     await tester.pumpAndSettle();
     expect(find.byType(BackButton), findsOneWidget);
   });
 
-  testWidgets('머리의 프로필 사진을 누르면 「나」 화면이 선다', (tester) async {
+  testWidgets('S6 나 시트: 프로필 사진(「나 · 설정」)을 누르면 바닥 시트가 0.6 높이로 서고, 머리에 나', (tester) async {
+    await _pump(tester);
+    final button = tester.widget<IconButton>(find.byKey(const Key('open-me')));
+    expect(button.tooltip, anyOf('나 · 설정', 'Me · Settings'));
+    await tester.tap(find.byKey(const Key('open-me')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('me-sheet')), findsOneWidget);
+    expect(find.byType(BackButton), findsNothing, reason: '밀어 넣는 화면이 아니라 시트다');
+    final sheet = tester.widget<DraggableScrollableSheet>(find.byType(DraggableScrollableSheet));
+    expect(sheet.initialChildSize, 0.6);
+    expect(sheet.maxChildSize, 0.92);
+    expect(find.descendant(of: find.byKey(const Key('me-header')), matching: find.textContaining('@me')), findsOneWidget);
+    // 보던 탭이 뒤에 그대로 있다.
+    expect(find.byKey(const Key('tab-home')), findsOneWidget);
+  });
+
+  testWidgets('S6 나 시트: 끌어 내리면 닫히고, 뒤로 가기로도 닫힌다', (tester) async {
     await _pump(tester);
     await tester.tap(find.byKey(const Key('open-me')));
     await tester.pumpAndSettle();
-    expect(find.byType(BackButton), findsOneWidget);
-    expect(find.text('나').evaluate().isNotEmpty || find.text('You').evaluate().isNotEmpty, isTrue);
+    await tester.fling(find.byKey(const Key('me-sheet')), const Offset(0, 800), 2000);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('me-sheet')), findsNothing);
+    await tester.tap(find.byKey(const Key('open-me')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('me-sheet')), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('me-sheet')), findsNothing);
+  });
+
+  testWidgets('S6 나 시트: [모두 로그아웃] 은 시트를 먼저 닫고 확인을 연다 — [취소] 는 아무것도 바꾸지 않는다', (tester) async {
+    final app = await _pump(tester);
+    await tester.tap(find.byKey(const Key('open-me')));
+    await tester.pumpAndSettle();
+    await tester.drag(find.byKey(const Key('me-sheet')), const Offset(0, -500));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.byKey(const Key('me-sign-out-all')), 200,
+        scrollable: find.descendant(of: find.byKey(const Key('me-sheet')), matching: find.byType(Scrollable)).first);
+    await tester.tap(find.byKey(const Key('me-sign-out-all')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('me-sheet')), findsNothing, reason: '시트 둘이 겹치지 않는다');
+    expect(find.byKey(const Key('me-sign-out-all-sheet')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('me-sign-out-all-cancel')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('me-sign-out-all-sheet')), findsNothing);
+    expect(find.byKey(const Key('me-sheet')), findsNothing, reason: '나 시트를 다시 열지 않는다');
+    expect(app.communities, isNotEmpty);
+    expect(app.phase, AppPhase.ready);
   });
 
   testWidgets('프로필 사진은 탭 넷 모두의 머리에 있다 — 인박스도', (tester) async {
@@ -184,7 +233,7 @@ void main() {
     }
     await tester.tap(find.byKey(const Key('open-me')));
     await tester.pumpAndSettle();
-    expect(find.byType(BackButton), findsOneWidget);
+    expect(find.byKey(const Key('me-sheet')), findsOneWidget);
   });
 
   testWidgets('S5b 홈: 즐겨찾기 묶음이 위에, 치운 채널은 없고, 묶음 머리를 누르면 접힌다', (tester) async {

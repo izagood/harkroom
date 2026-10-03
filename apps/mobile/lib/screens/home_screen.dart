@@ -324,6 +324,8 @@ class AgentsScreen extends StatelessWidget {
                 trailing: running.contains(a.id)
                     ? Icon(Icons.circle, size: 8, color: k.accent, semanticLabel: t.agentsRunning)
                     : null,
+                // 누르면 그 에이전트와의 DM — 탭에서 바로 일을 시킨다(designer ①).
+                onTap: () => openDmScreen(context, a.id),
               ),
             // 떠 있는 막대에 마지막 줄이 가리지 않도록.
             const SizedBox(height: 96),
