@@ -1485,7 +1485,7 @@ dependencies = [
 
 [[package]]
 name = "harkroom-desktop"
-version = "0.3.174"
+version = "0.3.175"
 dependencies = [
  "keyring",
  "libc",
