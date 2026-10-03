@@ -55,6 +55,7 @@ afterEach(() => { cleanup(); usePrefsStore.getState().setLocale('system'); });
 const openRow = async (slug: string) => {
   render(<AgentsSettings />);
   fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+  fireEvent.click(await screen.findByTestId('agent-tab-memory'));
   fireEvent.click(await screen.findByRole('button', { name: `${slug} 펼치기` }));
 };
 
@@ -66,6 +67,7 @@ describe('기억 고치기 (M5)', () => {
     }]);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-memory'));
     const row = await screen.findByTestId('memory-row-mem/deploy');
     expect(row.textContent).toContain('배포 절차');
     expect(row.textContent).toContain('절차');

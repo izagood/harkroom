@@ -169,6 +169,7 @@ describe('#251 다시 켠 직후 PAT 가 0개임이 드러난다', () => {
     c.listPats.mockImplementation(async () => { throw new Error('끊겼다'); });
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-permissions'));
 
     expect((await screen.findByRole('alert')).textContent).toContain('PAT 목록을 읽지 못했다');
     expect(screen.queryByText(/새로 발급해야 한다/)).toBeNull();

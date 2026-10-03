@@ -59,6 +59,7 @@ afterEach(() => { cleanup(); usePrefsStore.getState().setLocale('system'); });
 const open = async () => {
   render(<AgentsSettings />);
   fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+  fireEvent.click(await screen.findByTestId('agent-tab-memory'));
 };
 
 describe('접힌 줄이 기본이다', () => {
