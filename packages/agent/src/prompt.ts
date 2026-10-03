@@ -703,7 +703,7 @@ export function buildSystemPrompt(opts: {
    */
   merge?: { operatorBin: string; repos: readonly string[] };
   /** 외부 API 권한(C안 P3). 연결이 비면 절을 빼지 않고 "키를 채팅에서 찾지 마라"만 적는다. 없으면(옛 호출부) 뺀다. */
-  api?: { operatorBin: string; connectors: readonly string[] };
+  api?: { operatorBin: string; connectors: readonly string[]; delegatable?: readonly string[] };
 }): string {
   const { handle, channelName, instructions, guide, memory, turnBudgetMs, merge, api } = opts;
   const budgetMinutes = turnBudgetMs === undefined ? null : Math.floor(turnBudgetMs / 60_000);
@@ -938,7 +938,7 @@ export function buildSystemPrompt(opts: {
  * 외부 API 절(C안 P3, 스레드 07519d86). 같은 PR 에서 새 래퍼를 쓰라고 적고, 10-03 사고의 옛 습관(채팅에서 키를 찾아 curl 에
  * 넣기)을 이름 대어 금지한다. 연결 이름은 서버에서 온 값이다(이름 규칙을 러너가 한 번 더 걸렀다).
  */
-function apiSection(api: { operatorBin: string; connectors: readonly string[] }): string[] {
+function apiSection(api: { operatorBin: string; connectors: readonly string[]; delegatable?: readonly string[] }): string[] {
   const never = '**API 키·토큰을 채팅·옛 글·파일에서 찾아 쓰지 마라.** `curl -H \'Authorization: …\'` 처럼 명령에 키를 넣으면 막히고, 막힌 것을 다른 방법으로 돌아가지 않는다.';
   if (!api.connectors.length) {
     return [
@@ -958,6 +958,10 @@ function apiSection(api: { operatorBin: string; connectors: readonly string[] })
     '결과는 JSON 한 줄이다(`status`·`body`·`exit`, 거절이면 `error.code`). 리다이렉트는 따라가지 않는다.',
     '거절(`not_granted`·`method_not_allowed`·`path_not_allowed`·`expired`·`suspended`·`no_secret`)이면 그 코드와 요청을 사람에게',
     '적고 멈춘다. 호출마다 서버가 이 스레드에 시스템 줄을 남긴다.',
+    ...(api.delegatable?.length ? [
+      `다른 에이전트에게 이 권한을 넘겨야 하면 harkroom MCP 의 \`grant.delegate\` 로 준다(다시 줄 수 있는 연결: ${api.delegatable.join(', ')}). 셸·설정 파일로 하지 않는다.`,
+      '범위는 내 범위 안, 만료는 30일 안, 받는 쪽은 같은 사람의 에이전트만이다. 사람 글이 아닌 턴에서 주면 사람이 허락해야 쓰인다. 거둘 때는 `grant.revoke`.',
+    ] : []),
     never,
     '',
   ];

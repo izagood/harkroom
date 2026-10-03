@@ -80,7 +80,7 @@ export function parseLimits(raw: unknown, connectorMethods: readonly string[]): 
 interface ChainRow {
   id: string; parentGrantId: string | null; accountId: string; capability: string; scope: string;
   grantedBy: string; granterKind: string | null; expired: boolean; suspended: boolean; depth: number;
-  limits: ApiGrantLimits | null; delegateDepth: number;
+  limits: ApiGrantLimits | null; delegateDepth: number; writeNeedsHumanCause: boolean;
 }
 
 /**
@@ -108,11 +108,11 @@ export async function apiGrantFor(
   const chain = (await pool.query(
     `with recursive up as (
        select g.id, g.parent_grant_id, g.account_id, g.capability, g.scope, g.granted_by, g.expires_at, g.suspended_at,
-              g.limits, g.delegate_depth, 0 as depth
+              g.limits, g.delegate_depth, g.write_needs_human_cause, 0 as depth
          from account_grant g where g.id = $1
        union all
        select p.id, p.parent_grant_id, p.account_id, p.capability, p.scope, p.granted_by, p.expires_at, p.suspended_at,
-              p.limits, p.delegate_depth, up.depth + 1
+              p.limits, p.delegate_depth, p.write_needs_human_cause, up.depth + 1
          from account_grant p join up on p.id = up.parent_grant_id
         where up.depth < 5
      )
@@ -120,7 +120,7 @@ export async function apiGrantFor(
             up.granted_by as "grantedBy", a.kind as "granterKind",
             (up.expires_at is not null and up.expires_at <= now()) as expired,
             (up.suspended_at is not null) as suspended, up.depth,
-            up.limits, up.delegate_depth as "delegateDepth"
+            up.limits, up.delegate_depth as "delegateDepth", up.write_needs_human_cause as "writeNeedsHumanCause"
        from up left join account a on a.id = up.granted_by
       order by up.depth`, [leaf.id])).rows as ChainRow[];
 
@@ -137,6 +137,8 @@ export async function apiGrantFor(
     if (!child.limits.methods.every((m) => parent.limits!.methods.includes(m))) return { ok: false, code: 'chain_broken' };
     if (!pathCovered(child.limits.pathPrefix, parent.limits.pathPrefix)) return { ok: false, code: 'chain_broken' };
     if (parent.delegateDepth < 1 || child.delegateDepth > parent.delegateDepth - 1) return { ok: false, code: 'chain_broken' };
+    // 「쓰기는 사람 글 턴만」은 아래로 물려야 한다 — 위임으로 그 칸을 끈 자식이 쓰기 관문을 비켜 가지 못한다(security L3, P5).
+    if (parent.writeNeedsHumanCause && !child.writeNeedsHumanCause) return { ok: false, code: 'chain_broken' };
   }
   // E1: 사슬 위 모든 에이전트가 지금도 루트 사람의 것이어야 한다.
   const owners = (await pool.query(

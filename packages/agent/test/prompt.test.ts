@@ -529,6 +529,10 @@ describe('buildSystemPrompt', () => {
     expect(none).toContain('허락된 외부 API 연결이 없다');
     expect(none).not.toContain('harkroom-operator api');
     expect(buildSystemPrompt(common)).not.toContain('외부 API');
+    // P5: 다시 줄 수 있는 연결이 있을 때만 grant.delegate 를 적는다.
+    const deleg = buildSystemPrompt({ ...common, api: { operatorBin: '/opt/harkroom/harkroom-operator', connectors: ['lab-api'], delegatable: ['lab-api'] } });
+    expect(deleg).toContain('`grant.delegate`');
+    expect(granted).not.toContain('grant.delegate');
   });
 
   it('message.post 로 스스로 발화하라고 지시한다', () => {

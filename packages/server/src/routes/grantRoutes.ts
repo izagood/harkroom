@@ -14,6 +14,7 @@ import { CAPABILITIES, ROLES, repoScope, type ApiGrantLimits, type GrantRow } fr
 import { hasWriteMethod, isConnectorScope, parseLimits } from '../auth/apiGrants.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
+import { decideDelegation } from '../services/apiDelegation.js';
 
 const grantBody = z.object({
   capability: z.enum(CAPABILITIES),
@@ -194,6 +195,19 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
       emitEvent({ type: 'grant.changed', accountId: id, audience: 'all' });
       return reply.code(204).send();
     });
+
+  /**
+   * 위임 대기 줄(E2) 허락·거절 — **루트 사람만**(사슬을 시작한 사람). 에이전트·다른 사람은 403. 거절은 줄을 지운다.
+   */
+  for (const [verb, approve] of [['approve', true], ['decline', false]] as const) {
+    app.post<{ Params: { id: string } }>(`/grants/:id/${verb}`, { preHandler: app.requireAccount }, async (req, reply) => {
+      const { id } = idParam.parse(req.params);
+      if (req.account!.kind !== 'human') return reply.code(403).send({ error: { code: 'forbidden', message: 'only a person decides' } });
+      const r = await decideDelegation(pool, { grantId: id, humanId: req.account!.id, approve });
+      if (!r.ok) return reply.code(r.status).send({ error: { code: r.code, message: r.code } });
+      return reply.code(204).send();
+    });
+  }
 
   /**
    * 역할 변경. owner 는 하나뿐이고 이 라우트로 정하지 않는다(bootstrap·claim 이 정한다).

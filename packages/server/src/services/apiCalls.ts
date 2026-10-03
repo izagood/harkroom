@@ -158,6 +158,15 @@ export async function reportApiCall(pool: Pool, r: ApiReport): Promise<{ ok: tru
   return { ok: true, messageId: posted.message.id };
 }
 
+/** 다시 줄 수 있는(delegate_depth ≥ 1) 연결 이름 — 러너가 프롬프트에 `grant.delegate` 를 적을지 고른다(P5). */
+export async function delegatableConnectors(pool: Pool, agentId: string): Promise<string[]> {
+  const r = await pool.query<{ name: string }>(
+    `select distinct c.name from account_grant g join api_connector c on g.scope = 'connector:' || c.id::text
+      where g.account_id = $1 and g.capability = 'api.call' and g.suspended_at is null and g.delegate_depth >= 1
+        and (g.expires_at is null or g.expires_at > now()) order by c.name`, [agentId]);
+  return r.rows.map((x) => x.name);
+}
+
 /** 이 에이전트가 쓸 수 있는 연결 이름 — 러너가 allow 규칙과 프롬프트 한 절을 고르는 근거. 판정은 쓰는 순간 다시 한다. */
 export async function callableConnectors(pool: Pool, agentId: string): Promise<string[]> {
   const r = await pool.query<{ name: string }>(

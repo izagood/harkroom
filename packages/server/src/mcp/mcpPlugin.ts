@@ -1,3 +1,4 @@
+import { delegateApiGrant, listDelegations, revokeDelegation } from '../services/apiDelegation.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { FastifyInstance } from 'fastify';
@@ -1828,6 +1829,39 @@ function buildMcpServer(
    * 이 호출을 오퍼레이터가 가로채 턴 임대로 값을 받고 파일에 쓴 뒤 경로만 돌려준다(`operator/turnSecrets.ts`).
    * 서버까지 왔다는 것은 오퍼레이터를 거치지 않았거나(PAT 러너) 옛 오퍼레이터라는 뜻이다 — 값은 주지 않는다.
    */
+  /**
+   * 위임(외부 API 권한 C안 P5). 판정은 전부 서버(`services/apiDelegation.ts`)다 — 받는 범위 ⊆ 준 범위·단계·30일·E1(루트 사람의
+   * 에이전트만)·E2(사람 글이 아닌 턴이면 루트 사람 허락 대기). 머지 권한은 위임하지 않는다(v1).
+   */
+  server.registerTool('grant.delegate', {
+    description: '내가 받은 API 권한을 다른 에이전트에게 다시 준다(사람이 「다시 줄 수 있음」을 켠 권한만). 범위는 내 범위 안, 만료 30일 안. 사람 글이 아닌 턴이면 사람이 허락해야 쓰인다',
+    inputSchema: {
+      to: z.string().min(1).max(64), connector: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/),
+      methods: z.array(z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])).min(1).max(5),
+      pathPrefix: z.string().min(1).max(300), days: z.number().int().min(1).max(30),
+      delegateDepth: z.number().int().min(0).max(1).default(0), writeNeedsHumanCause: z.boolean().optional(),
+    },
+  }, async ({ to, connector, methods, pathPrefix, days, delegateDepth, writeNeedsHumanCause }) => {
+    if (account.kind !== 'agent') return jsonResult({ error: { code: 'not_agent', message: 'only agents delegate' } });
+    const r = await delegateApiGrant(pool, {
+      fromAgentId: account.id, to, connector, methods, pathPrefix, delegateDepth, writeNeedsHumanCause,
+      expiresAt: new Date(Date.now() + days * 86_400_000).toISOString(), causeMessageId: cause,
+    });
+    return jsonResult(r.ok ? { grantId: r.grantId, pending: r.pending, note: r.pending ? 'waiting for the root person to approve' : 'given — from the next turn' } : { error: { code: r.code, message: r.message ?? r.code } });
+  });
+  server.registerTool('grant.revoke', {
+    description: '내가 다른 에이전트에게 다시 준 API 권한을 거둔다(그 아래로 준 것도 함께 끝난다)',
+    inputSchema: { grantId: z.string().uuid() },
+  }, async ({ grantId }) => {
+    if (account.kind !== 'agent') return jsonResult({ error: { code: 'not_agent', message: 'only agents use this' } });
+    const r = await revokeDelegation(pool, { agentId: account.id, grantId });
+    return jsonResult(r.ok ? { revoked: true } : { error: { code: r.code ?? 'not_found', message: 'no such grant given by you' } });
+  });
+  server.registerTool('grant.list', {
+    description: '내 API 권한(다시 줄 수 있는 단계 포함)과 내가 다시 준 권한 목록',
+    inputSchema: {},
+  }, async () => jsonResult(await listDelegations(pool, account.id)));
+
   server.registerTool('secret.mount', {
     description: '비밀 하나를 이 턴 전용 파일로 받는다 — 값이 아니라 파일 경로를 준다. 이름은 secret.list 에 있다. 파일 내용을 출력·복사하지 마라',
     inputSchema: { name: z.string().min(1).max(64) },
