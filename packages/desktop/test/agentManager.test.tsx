@@ -670,11 +670,25 @@ describe('상세는 세 묶음, 저장은 한 쌍 (Task 15-3)', () => {
     for (const id of ['profile', 'run', 'permissions', 'memory']) {
       expect(screen.getByTestId(`agent-tabpanel-${id}`).hidden, id).toBe(true);
     }
-    const restart = screen.getByTestId('agent-restart');
     const del = screen.getByTestId('agent-delete');
-    expect(overview.contains(restart) && overview.contains(del)).toBe(true);
-    // 위아래가 곧 세기 — 되돌릴 수 있는 조작이 위, 지우기가 맨 아래.
-    expect(restart.compareDocumentPosition(del) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(overview.contains(del)).toBe(true);
+    // 위아래가 곧 세기 — 러너 절(되돌릴 수 있는 것)이 위, 지우기가 맨 아래.
+    expect(overview.firstElementChild!.compareDocumentPosition(del) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('[멈춤]·[다시 시작]은 상세 머리에 있고, 어느 탭에서든 보인다 (jaebin "멈춤은 머리")', async () => {
+    const c = fakeController([agent('rusalka')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+
+    const actions = screen.getByTestId('agent-header-actions');
+    expect(actions.closest('header')).toBeTruthy();
+    expect(actions.contains(screen.getByTestId('agent-restart'))).toBe(true);
+    // 탭 칸 밖이라 다른 탭으로 옮겨도 숨지 않는다.
+    expect(screen.getByTestId('agent-tabpanel-overview').contains(actions)).toBe(false);
+    fireEvent.click(screen.getByTestId('agent-tab-memory'));
+    fireEvent.click(screen.getByRole('button', { name: '러너 중지' }));
+    await waitFor(() => expect(c.requestAgentStop).toHaveBeenCalledWith('id-rusalka'));
   });
 
   it('targetId 의 #탭 으로 그 탭을 바로 연다 (A2)', async () => {
