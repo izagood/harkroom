@@ -4027,3 +4027,62 @@ describe('계정 관문 대기 — 계정당 하나, 표식이 지워지면 다�
     expect(gateFail?.code).toBeUndefined();
   });
 });
+
+/**
+ * 스레드 임대 펜싱(security L1). 스케줄러가 넘긴 `target.fence` 가 울리면 턴은 사람의 [중단] 과 같은 길로
+ * 접힌다 — 스폰 뒤면 SIGTERM, 스폰 전이면 아예 안 띄운다. 실패에는 `fencedOut` 표시를 달아 스케줄러가
+ * 재시도·실패 카드 대신 표지만 남기게 한다.
+ */
+describe('펜싱 — 스레드 임대를 잃으면 턴을 접는다', () => {
+  it('도는 중에 울리면 그 PTY 에 SIGTERM 을 보내고, 실패에 fencedOut 을 단다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, runTurn } = await makeDeps(fake);
+    const fence = new AbortController();
+    let killed: string | null = null;
+    runTurn.script = async (_plan: TurnPlan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+    }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      fence.abort();
+      return { exitCode: 143, timedOut: false, tail: '' };
+    };
+    const err = await runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION, fence: fence.signal,
+    }).catch((e: unknown) => e as Error & { fencedOut?: boolean });
+    expect(killed).toBe('SIGTERM');
+    expect((err as Error).message).toMatch(/넘겨받아 이 턴을 접었다/);
+    expect((err as { fencedOut?: boolean }).fencedOut).toBe(true);
+  });
+
+  it('스폰 전에 이미 울렸으면 하네스를 띄우지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, runTurn } = await makeDeps(fake);
+    const fence = new AbortController();
+    fence.abort();
+    let spawned = false;
+    runTurn.script = async () => { spawned = true; return { exitCode: 0, timedOut: false, tail: '' }; };
+    await expect(runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION, fence: fence.signal,
+    })).rejects.toThrow(/넘겨받아/);
+    expect(spawned).toBe(false);
+  });
+
+  it('울리지 않은 신호는 아무것도 바꾸지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, runTurn } = await makeDeps(fake);
+    let killed: string | null = null;
+    runTurn.script = async (_plan: TurnPlan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+    }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      return { exitCode: 7, timedOut: false, tail: 'boom' };
+    };
+    await expect(runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION, fence: new AbortController().signal,
+    })).rejects.toThrow(/harness 종료 7/);
+    expect(killed).toBeNull();
+  });
+});

@@ -12,6 +12,10 @@
  *   넘겨받는다. 넘겨받힌 뒤 늦게 온 박동은 서버가 409 로 거절한다 — 되찾지 않는다.
  * - **한 프로세스 안에서도 스레드당 하나다.** 놓기가 끝나기 전에 같은 스레드를 다시 잡으면, 앞 턴의 놓기가
  *   뒤 턴의 임대를 지운다(같은 holder 라 서버는 둘을 못 가른다). 그래서 놓기가 끝날 때까지 null 이다.
+ * - **잃으면 접는다**(펜싱, security L1). 박동이 409(남이 넘겨받음)를 받으면 `lost` 가 울린다 — 스케줄러가 그
+ *   신호를 턴에 넘기고, 턴은 SIGTERM 으로 접힌다. 링크가 90초 넘게 끊겼다 돌아온 러너의 턴이 넘겨받은 쪽과
+ *   겹쳐 도는 것을 끝낸다. **일시 오류(5xx·링크 끊김)로는 울리지 않는다** — 잃었는지 모르는 것이지 잃은
+ *   것이 아니고, 만료 전에 박동 두 번이 더 있다.
  * - **확인하지 못하면 띄우지 않는다**(fail-closed). 링크·서버 오류는 다음 폴에서 다시 묻는다 — 멘션은
  *   인박스에 미읽음으로 남는다. 단 **옛 서버(404)는 임대가 없는 것**이라 지금까지처럼 띄운다.
  */
@@ -26,6 +30,8 @@ export interface ThreadClaimClient {
 }
 
 export interface ThreadClaim {
+  /** 임대를 잃었다(다른 러너가 넘겨받았다). 한 번 울리면 다시 쥐지 않는다 — 박동도 멈춘다. */
+  readonly lost: AbortSignal;
   /** 박동을 멈추고 서버에서 놓는다. 던지지 않는다 — 놓기가 실패해도 만료가 대신 놓는다. */
   release(): Promise<void>;
 }
@@ -47,7 +53,8 @@ export const THREAD_CLAIM_TTL_SEC = 90;
 /** 만료의 1/3 — 박동 하나가 늦거나 빠져도 임대가 살아 있다. */
 export const THREAD_CLAIM_HEARTBEAT_MS = 30_000;
 
-const NOOP: ThreadClaim = { release: async () => {} };
+/** 옛 서버(임대 없음) — 잃을 임대가 없으므로 울리지 않는 신호다. */
+const NOOP: ThreadClaim = { lost: new AbortController().signal, release: async () => {} };
 
 export function createThreadClaims(opts: {
   client: ThreadClaimClient;
@@ -101,14 +108,18 @@ export function createThreadClaims(opts: {
       }
 
       let released = false;
+      const lost = new AbortController();
       /** 날아가는 중인 박동. 놓기는 이것을 기다린다 — 놓은 뒤에 도착한 박동이 임대를 되살리지 않게. */
       let beat: Promise<void> | null = null;
       const handle = timers.setInterval(() => {
         if (released || beat) return;
         beat = opts.client.claimThread(channelId, threadRootId, opts.holder, ttlSec)
           .then((o) => {
-            if (o === 'taken' && !released) {
-              log(`[threadClaims] ${key}: 임대를 잃었다 — 박동이 끊긴 사이 다른 러너가 넘겨받았다`);
+            if (o === 'taken' && !released && !lost.signal.aborted) {
+              log(`[threadClaims] ${key}: 임대를 잃었다 — 박동이 끊긴 사이 다른 러너가 넘겨받았다. 이 턴을 접는다`);
+              // 되찾으려 하지 않는다 — 넘겨받은 쪽이 살아 있는 동안 서버는 어차피 409 다.
+              timers.clearInterval(handle);
+              lost.abort();
             }
           })
           .catch(() => { /* 다음 박동이 다시 민다. 만료 전에 두 번 더 기회가 있다 */ })
@@ -116,6 +127,7 @@ export function createThreadClaims(opts: {
       }, heartbeatMs);
 
       return {
+        lost: lost.signal,
         release() {
           if (released) return Promise.resolve();
           released = true;

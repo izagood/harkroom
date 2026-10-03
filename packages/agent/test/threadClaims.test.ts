@@ -6,7 +6,7 @@
 // 그대로 재현하고, 임대가 그것을 막는지 잰다. 가짜 서버의 판정은 서버 `services/threadClaims.ts` 의 SQL 과
 // 같은 규칙이다(같은 holder 면 민다 · 만료됐으면 넘겨받는다 · 놓기는 자기 것만).
 import { describe, expect, it } from 'vitest';
-import { createMentionScheduler, type BatchContext } from '../src/mentionScheduler.js';
+import { createMentionScheduler, fencedNotice, type BatchContext } from '../src/mentionScheduler.js';
 import { TurnRegistry } from '../src/turnRegistry.js';
 import { MentionQueue } from '../src/mentionQueue.js';
 import type { InboxBatch } from '../src/harkroom.js';
@@ -86,21 +86,29 @@ function runner(server: ReturnType<typeof fakeServer>, holder: string, timers = 
   const started: string[] = [];
   const pending: { resolve: (v: MentionTurnResult) => void }[] = [];
   const markedRead: number[] = [];
+  const posted: string[] = [];
+  /** 턴이 받은 펜싱 신호 — 진짜 턴처럼 울리면 접힌다(143 으로 실패). */
+  const fences: (AbortSignal | undefined)[] = [];
   const claims = createThreadClaims({ client: server.client, holder, timers, log: () => {} });
   const scheduler = createMentionScheduler({
     harkroom: {
       markRead: async (ids) => { markedRead.push(...ids); return ids.length; },
-      post: async () => 1,
-      fail: async () => 1,
+      post: async (_c, body) => { posted.push(body); return 1; },
+      fail: async (_c, body) => { posted.push(body); return 1; },
     },
     registry: new TurnRegistry(),
     queue: new MentionQueue(),
     accountLane: [null],
     runMentionTurn: (_deps, target) => {
       started.push(target.threadRootId ?? '(top)');
+      fences.push(target.fence);
       const d = deferred<MentionTurnResult>();
       pending.push(d);
-      return d.promise;
+      // 진짜 턴은 신호가 울리면 SIGTERM 으로 접혀 실패로 돌아온다(mentionTurn 의 onFenceLost).
+      return new Promise<MentionTurnResult>((res, rej) => {
+        d.promise.then(res);
+        target.fence?.addEventListener('abort', () => rej(new Error('fenced')), { once: true });
+      });
     },
     buildTurnDeps: () => ({} as never),
     hooks: { stopRequested: () => {}, exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {} },
@@ -109,7 +117,7 @@ function runner(server: ReturnType<typeof fakeServer>, holder: string, timers = 
   });
   /** 가장 먼저 뜬 턴을 끝낸다. */
   const finishFirst = async () => { pending.shift()!.resolve({ ok: true } as never); await scheduler.drain(); await flush(); };
-  return { scheduler, started, markedRead, claims, finishFirst };
+  return { scheduler, started, markedRead, posted, fences, claims, finishFirst };
 }
 
 describe('스레드 임대 — 이관 중 같은 스레드에 턴이 둘 뜨지 않는다', () => {
@@ -287,5 +295,92 @@ describe('createThreadClaims', () => {
     await claims.hold(CH, 'T');
     await claims.hold(CH, 'U');
     expect(lines).toHaveLength(1);
+  });
+});
+
+describe('스레드 임대 펜싱 — 잃으면 턴을 접는다 (security L1)', () => {
+  /**
+   * 링크가 90초 넘게 끊긴 러너: 그 사이 임대가 만료돼 다른 러너가 넘겨받았는데, 옛 러너의 턴은 아직 산다.
+   * 링크가 돌아와 첫 박동이 409 를 받는 순간 그 턴을 접어야 겹침이 끝난다.
+   *
+   * 되돌려 RED: `threadClaims.ts` 의 `lost.abort()` 를 지우면 옛 턴이 계속 돌아(pending) 표지가 없다.
+   */
+  it('박동이 409 를 받으면 옛 턴이 접히고, 표지를 남기고, 읽음 처리하지 않는다', async () => {
+    const server = fakeServer();
+    const beat = manualTimers();
+    const old = runner(server, 'runner-old', beat.timers);
+    const neo = runner(server, 'runner-new');
+    await old.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1', threadRootId: 'T' }]), ctx);
+    await flush();
+
+    // 옛 러너가 끊긴 사이 만료 → 새 러너가 넘겨받아 같은 멘션을 띄운다.
+    server.advance(91_000);
+    expect((await neo.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1', threadRootId: 'T' }]), ctx)).started).toBe(1);
+
+    // 링크가 돌아온 옛 러너의 첫 박동.
+    beat.tick();
+    await old.scheduler.drain();
+    await flush();
+
+    expect(old.fences[0]?.aborted).toBe(true);
+    expect(old.posted).toEqual([fencedNotice()]);
+    // 그 멘션은 이제 넘겨받은 쪽 것이다 — 옛 러너가 읽음 처리하면 새 러너가 끝낸 뒤의 판단을 빼앗는다.
+    expect(old.markedRead).toEqual([]);
+    // 넘겨받은 쪽의 임대는 그대로다(옛 러너의 놓기는 남의 것을 안 지운다).
+    expect(server.rows.get(`${CH}/T`)?.holder).toBe('runner-new');
+    // 박동도 멈췄다 — 되찾으려 두드리지 않는다.
+    expect(beat.live.size).toBe(0);
+  });
+
+  it('일시적인 5xx·링크 끊김으로는 접히지 않는다 — 잃었는지 모르는 것이지 잃은 것이 아니다', async () => {
+    const server = fakeServer();
+    const beat = manualTimers();
+    const old = runner(server, 'runner-old', beat.timers);
+    await old.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1', threadRootId: 'T' }]), ctx);
+    await flush();
+
+    server.setMode('down');
+    for (let i = 0; i < 2; i++) { server.advance(30_000); beat.tick(); await flush(); }
+    expect(old.fences[0]?.aborted).toBe(false);
+    expect(old.posted).toEqual([]);
+
+    // 돌아온 박동이 다시 민다 — 아무도 넘겨받지 않았으므로 여전히 내 것이다.
+    server.setMode('normal');
+    server.advance(20_000);
+    beat.tick();
+    await flush();
+    expect(old.fences[0]?.aborted).toBe(false);
+    expect(server.rows.get(`${CH}/T`)?.holder).toBe('runner-old');
+
+    await old.finishFirst();
+    expect(old.markedRead).toEqual([1]);
+  });
+
+  it('createThreadClaims: 409 면 lost 가 울리고 박동이 멈춘다. 오류(던짐)로는 울리지 않는다', async () => {
+    const server = fakeServer();
+    const beat = manualTimers();
+    const claims = createThreadClaims({ client: server.client, holder: 'old', timers: beat.timers, log: () => {} });
+    const c = await claims.hold(CH, 'T');
+
+    server.setMode('down');
+    beat.tick();
+    await flush();
+    expect(c!.lost.aborted).toBe(false);
+    expect(beat.live.size).toBe(1);
+
+    server.setMode('normal');
+    server.advance(91_000);
+    await server.client.claimThread(CH, 'T', 'new', 90);
+    beat.tick();
+    await flush();
+    expect(c!.lost.aborted).toBe(true);
+    expect(beat.live.size).toBe(0);
+  });
+
+  it('옛 서버(404)의 손잡이는 울리지 않는다', async () => {
+    const server = fakeServer();
+    server.setMode('old-server');
+    const claims = createThreadClaims({ client: server.client, holder: 'h', timers: manualTimers().timers, log: () => {} });
+    expect((await claims.hold(CH, 'T'))!.lost.aborted).toBe(false);
   });
 });

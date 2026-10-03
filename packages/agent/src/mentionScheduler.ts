@@ -223,6 +223,12 @@ export interface MentionScheduler {
  * 때문이다: 고른 길로 가는 것이 아니라 **접는 것**이다. 고른 것이 없으므로 옵션을 풀어
  * 싣지 않는다 — 대신 사람이 무엇을 물음에 답하지 않았는지가 본문에 있다.
  */
+/** 스레드 임대를 잃어 접힌 턴의 표지. 누가 이어 가는지는 같은 에이전트의 다른 러너다(이관·재접속). */
+export function fencedNotice(): string {
+  return '(다른 러너가 이 스레드를 넘겨받아 이 턴을 접었다 — 이 러너가 서버와 끊긴 사이 스레드 임대가 만료됐다.'
+    + ' 남은 일은 넘겨받은 쪽이 잇는다)';
+}
+
 function askClosedNote(): string {
   return '내가 낸 선택지에 사람이 답하지 않기로 했다 — 그 선택을 기다리지 말고,'
     + ' 지금 아는 것으로 접거나 다른 길을 골라라(같은 물음을 다시 내지 마라)';
@@ -344,9 +350,21 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
     delegatedBy?: InboxBatch['entries'][number]['delegatedBy'],
     /** 수정으로 생긴 부름(076). */
     viaEdit?: boolean,
+    /** 이 턴이 쥔 스레드 임대를 잃었다는 신호(`threadClaims.ts` 펜싱). */
+    fence?: AbortSignal,
   ): Promise<void> {
+    /**
+     * 임대를 잃어 접힌 턴의 표지(security L1). 사람이 스레드에서 "왜 말하다 멈췄나"를 알 수 있게 한 줄 남긴다.
+     * 실패 카드가 아니다 — 고장이 아니라 다른 러너가 이어 가는 것이고, 사람이 할 일이 없다.
+     */
+    const noticeFenced = async (): Promise<void> => {
+      await deps.harkroom.post(mention.channelId, fencedNotice(), anchor).catch((e: unknown) => {
+        console.error(`  ${mention.id} 임대 잃음 표지 발화 실패:`, e instanceof Error ? e.message : e);
+      });
+    };
     const target: MentionTarget = {
       channelId: mention.channelId, threadRootId: anchor, mentionId: mention.id,
+      ...(fence ? { fence } : {}),
       // 깨움(마이그레이션 040): 자기가 걸어 둔 예약이 시각이 되어 자기를 부른 것이다. 사유는
       // 그 대기 줄의 본문이다 — 서버가 거기 넣었고(agentWakes.ts::scheduleWake), 여기서 다시
       // 지어내면 사람이 스레드에서 읽는 사유와 프롬프트의 사유가 갈라진다.
@@ -450,8 +468,21 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       attempts.delete(entryId);
       gateRequeues.delete(entryId);
       void deps.secretLeases?.release(mention.id);
+      // 답을 낸 뒤 잃었으면 답은 이미 나갔다 — 읽음은 그대로 두고 접혔다는 사실만 남긴다.
+      if (fence?.aborted) await noticeFenced();
       if (turn.stopRequestedAt) deps.hooks.stopRequested(turn.stopRequestedAt);
     } catch (err) {
+      // **임대를 잃어 접혔다**(security L1) — 실패가 아니다. 이 스레드는 이제 넘겨받은 러너의 것이다:
+      // 읽음 처리하지 않고(그쪽이 같은 inbox 를 본다), 재시도 회계도 통지도 하지 않는다. 오류 종류가 아니라
+      // 신호로 가른다 — 접히는 길(SIGTERM·스폰 전 가드)이 여럿이라 어느 오류로 끝날지 정해져 있지 않다.
+      if (fence?.aborted) {
+        const prior = attempts.get(entryId);
+        attempts.set(entryId, { tried: Math.max(0, tried - 1), notBefore: 0, noticed: prior?.noticed });
+        void deps.secretLeases?.release(mention.id);
+        console.error(`  ${mention.id} 스레드 임대를 잃어 턴을 접었다 — 넘겨받은 러너가 잇는다`);
+        await noticeFenced();
+        return;
+      }
       // 계정 관문 때문에 접었다(2026-10-02) — **실패가 아니다.** 재시도 회계·실패 통지·읽음 처리를 하지
       // 않고 같은 멘션을 다시 띄운다: `passed` 는 다음 폴에 바로, `queued` 는 그 계정의 표식이 지워진 뒤.
       if (err instanceof AccountGateRequeueError) {
@@ -806,7 +837,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         // entry 당 1회라는 약속이 깨진다.
         attempts.set(entry.id, { tried, notBefore: 0, noticed: prior?.noticed });
 
-        const task: Promise<void> = runOne(entry.id, mention, anchor, threadKey, ctx, tried, entry.reason, entry.team, entry.delegation, entry.delegatedBy, entry.viaEdit === true)
+        const task: Promise<void> = runOne(entry.id, mention, anchor, threadKey, ctx, tried, entry.reason, entry.team, entry.delegation, entry.delegatedBy, entry.viaEdit === true, claim?.lost)
           .catch((err: unknown) => {
             console.error(`  ${entry.messageId} 턴 실패:`, err instanceof Error ? err.message : err);
           })
