@@ -286,10 +286,16 @@ export async function registerSecretRoutes(
     const expired = await pool.query(`select 1 from secret where id = $1 and expires_at <= now()`, [s.id]);
     if (expired.rowCount) return reply.code(409).send({ error: { code: 'secret_expired', message: 'the secret has expired; replace its value or extend expiresAt first' } });
     const agent = await pool.query(
-      `select a.id, asg.operator_id as "operatorId" from account a
+      `select a.id, asg.operator_id as "operatorId", c.owner_account_id as "ownerAccountId" from account a
          left join agent_assignment asg on asg.agent_id = a.id
+         left join agent_config c on c.account_id = a.id
         where a.id = $1 and a.kind = 'agent' and a.deleted_at is null`, [g.agentId]);
     if (!agent.rowCount) return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+    // 비밀은 **소유자 자신의 에이전트**에게만 준다(#1135 security M1, jaebin「추천대로」 — 위임 E1 과 같은 기준). 남의 에이전트에게 주면
+    // 값이 그 사람이 고른 오퍼레이터 머신에 파일로 내려간다. 이미 준 줄은 reveal 이 같은 기준으로 막는다(`secretAccess.ts`).
+    if ((agent.rows[0] as { ownerAccountId: string | null }).ownerAccountId !== req.account!.id) {
+      return reply.code(403).send({ error: { code: 'not_own_agent', message: 'secrets can only be given to your own agents' } });
+    }
     if (g.channelId) {
       const ch = await pool.query(`select 1 from channel where id = $1`, [g.channelId]);
       if (!ch.rowCount) return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });

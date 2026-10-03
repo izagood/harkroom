@@ -80,7 +80,7 @@ export async function endTurnLease(pool: Pool, args: { leaseId: string; token: s
 export type RevealDenial =
   | 'lease_invalid' | 'not_found' | 'secret_expired' | 'owner_inactive'
   | 'not_granted' | 'grant_suspended' | 'wrong_channel' | 'wrong_operator'
-  | 'no_value' | 'unreadable' | 'rate_limited';
+  | 'no_value' | 'unreadable' | 'rate_limited' | 'not_own_agent';
 
 export type RevealResult =
   | { ok: true; secretId: string; name: string; kind: 'text' | 'file'; filename: string | null; version: number; value: Buffer }
@@ -111,10 +111,11 @@ export async function revealSecret(
 
   const secret = (await pool.query(
     `select s.id, s.name, s.kind, s.filename, s.expires_at <= $2 as expired,
-            (o.deleted_at is not null or o.disabled_at is not null) as "ownerInactive"
+            (o.deleted_at is not null or o.disabled_at is not null) as "ownerInactive",
+            (select c.owner_account_id = s.owner_account_id from agent_config c where c.account_id = $3) as "ownAgent"
        from secret s join account o on o.id = s.owner_account_id where s.name = $1`,
-    [args.name, now])).rows[0] as
-    | { id: string; name: string; kind: 'text' | 'file'; filename: string | null; expired: boolean | null; ownerInactive: boolean }
+    [args.name, now, args.agentId])).rows[0] as
+    | { id: string; name: string; kind: 'text' | 'file'; filename: string | null; expired: boolean | null; ownerInactive: boolean; ownAgent: boolean | null }
     | undefined;
 
   const log = async (result: 'granted' | 'denied', reason: RevealDenial | null, version: number | null) => {
@@ -141,6 +142,8 @@ export async function revealSecret(
   const onOperator = inChannel.filter((g) => g.operatorId === null || g.operatorId === args.operatorId);
   const live = onOperator.filter((g) => !g.suspended);
   if (!grants.length) return deny('not_granted');
+  // 남의 에이전트에게 준 옛 줄(부여 차단 전에 생긴 것)도 막는다 — 소유가 바뀐 에이전트도 같다.
+  if (secret.ownAgent !== true) return deny('not_own_agent');
   if (!inChannel.length) return deny('wrong_channel');
   if (!onOperator.length) return deny('wrong_operator');
   if (!live.length) return deny('grant_suspended');
@@ -167,6 +170,7 @@ export async function listGrantedSecrets(pool: Pool, agentId: string): Promise<{
   const r = await pool.query(
     `select s.name, s.kind, s.filename, s.description, array_agg(distinct g.channel_id) as "channelIds"
        from secret_grant g join secret s on s.id = g.secret_id join account o on o.id = s.owner_account_id
+       join agent_config ac on ac.account_id = g.agent_id and ac.owner_account_id = s.owner_account_id
       where g.agent_id = $1 and g.suspended_at is null
         and (s.expires_at is null or s.expires_at > now())
         and o.deleted_at is null and o.disabled_at is null
