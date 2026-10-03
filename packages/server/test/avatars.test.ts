@@ -370,6 +370,21 @@ describe('에이전트 아바타 (Task 15-4)', () => {
     expect(res.statusCode).toBe(404);
   });
 
+  it('지운 에이전트에는 걸지 않는다', async () => {
+    const made = await app.inject({
+      method: 'POST', url: '/accounts/agents', headers: auth(adminToken),
+      payload: { handle: 'gonebot', displayName: 'gonebot' },
+    });
+    const goneId = made.json().id as string;
+    expect((await app.inject({ method: 'DELETE', url: `/accounts/agents/${goneId}`, headers: auth(adminToken) })).statusCode).toBe(204);
+    const id = await upload(adminToken, 'gone.png', PNG, 'image/png');
+    const res = await app.inject({
+      method: 'PUT', url: `/accounts/agents/${goneId}/avatar`,
+      headers: auth(adminToken), payload: { attachmentId: id },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
   it('명시적 null 로 지운다 — 키가 없으면 400 이다', async () => {
     const cleared = await app.inject({
       method: 'PUT', url: `/accounts/agents/${agentId}/avatar`,

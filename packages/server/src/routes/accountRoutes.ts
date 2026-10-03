@@ -806,6 +806,8 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
       kind: z.enum(MEMORY_KINDS).optional(),
       ifUpdatedAt: z.string().datetime({ offset: true }).nullable().optional(),
     }).parse(req.body);
+    // 사람 id 로 기억 행을 만들지 않는다 — 아래 isAgentTarget 주석.
+    if (!(await isAgentTarget(id, { live: true }))) return reply.code(404).send(noSuchAgent);
     if (!isValidSlug(slug)) return reply.code(422).send({ error: { code: 'invalid_slug', message: MEMORY_SLUG_HINT } });
     if (slug === 'core' && body.value.length > MAX_CORE_MEMORY_LENGTH) {
       return reply.code(422).send({ error: { code: 'core_too_long', message: `core 는 ${MAX_CORE_MEMORY_LENGTH}자까지다` } });
@@ -857,8 +859,27 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     return { revisions: await listMemoryRevisions(pool, id, slug) };
   });
 
-  app.get('/accounts/:id/pats', { preHandler: app.requireOwnerOrAdmin('id') }, async (req) => {
+  /**
+   * PAT·기억 라우트의 대상은 **에이전트**뿐이다. `requireOwnerOrAdmin` 은 없는 id 와 사람 id 에도
+   * admin 을 통과시키고(대상의 존재 판정은 라우트 몫이라고 적어 두었다), 이 라우트들은 그 판정을
+   * 하지 않았다 — 그래서 admin 이 사람 계정(다른 admin 포함)의 PAT 를 발급해 그 사람으로 글을
+   * 쓰고 권한을 줄 수 있었다(2026-10-02 security 검토, #1062). 앱이 PAT 를 다루는 자리는 에이전트
+   * 설정뿐이고 사람 PAT 를 쓰는 기능은 없다. 이미 발급된 사람 PAT 는 이 검사로 폐기되지 않는다.
+   *
+   * PAT 은 지운 에이전트도 대상으로 둔다 — 남은 토큰을 보고 폐기할 길은 열려 있어야 한다.
+   */
+  const noSuchAgent = { error: { code: 'not_found', message: 'no such agent' } } as const;
+  async function isAgentTarget(id: string, opts: { live?: boolean } = {}): Promise<boolean> {
+    const res = await pool.query(
+      `select 1 from account where id = $1 and kind = 'agent'${opts.live ? ' and deleted_at is null' : ''}`,
+      [id],
+    );
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  app.get('/accounts/:id/pats', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
     const res = await pool.query(
       `select label, created_at, revoked_at from pat where account_id = $1 order by created_at desc`,
       [id],
@@ -874,6 +895,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
 
   app.post('/accounts/:id/pats', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
     const body = z.object({ label: z.string().min(1).max(64) }).parse(req.body);
     // 발급 규칙은 services/pats.ts 한 곳이다 — 오퍼레이터 경로와 같은 규칙을 쓴다.
     const minted = await mintPat(pool, id, body.label, { actorId: req.account!.id, actorHandle: req.account!.handle }, req);
@@ -887,8 +909,9 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
 
   // 라벨 단위 폐기다. pat.label 에 유일성이 없어 같은 라벨의 토큰이 여러 개면 전부 폐기된다 —
   // 폐기에서는 하나 남기는 것보다 하나 더 끊는 쪽이 안전하다.
-  app.delete('/accounts/:id/pats/:label', { preHandler: app.requireOwnerOrAdmin('id') }, async (req) => {
+  app.delete('/accounts/:id/pats/:label', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
     const { id, label } = z.object({ id: z.string().uuid(), label: z.string().min(1).max(64) }).parse(req.params);
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
     const res = await pool.query(
       `update pat set revoked_at = now() where account_id = $1 and label = $2 and revoked_at is null`,
       [id, label],

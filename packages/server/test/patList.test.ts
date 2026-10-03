@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
-import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -157,3 +157,34 @@ describe('PAT management', () => {
     expect(runners.filter((p: { revokedAt: string | null }) => p.revokedAt === null)).toHaveLength(1);
   });
 });
+
+describe('PAT 라우트의 대상은 에이전트뿐이다 (2026-10-02 security)', () => {
+  // requireOwnerOrAdmin 은 사람 id·없는 id 에도 admin 을 통과시킨다. 이 라우트들이 대상을 안 보면
+  // admin 이 다른 사람(다른 admin 포함)의 PAT 를 발급해 그 사람으로 행동할 수 있었다.
+  const missing = '00000000-0000-4000-8000-000000000000';
+
+  it('사람 계정이면 admin 이어도 발급·목록·폐기가 404 이고 토큰이 생기지 않는다', async () => {
+    const { accountId: human } = await createMember(app, adminToken, 'pat-human');
+    for (const id of [human, adminId]) {
+      const post = await app.inject({ method: 'POST', url: `/accounts/${id}/pats`, headers: admin(), payload: { label: 'cli' } });
+      expect(post.statusCode).toBe(404);
+      expect(post.json().token).toBeUndefined();
+      expect((await app.inject({ method: 'GET', url: `/accounts/${id}/pats`, headers: admin() })).statusCode).toBe(404);
+      expect((await app.inject({ method: 'DELETE', url: `/accounts/${id}/pats/cli`, headers: admin() })).statusCode).toBe(404);
+      expect((await pool.query(`select 1 from pat where account_id = $1`, [id])).rowCount).toBe(0);
+    }
+  });
+
+  it('없는 id 면 admin 이어도 404 다 — 201 로 고아 토큰을 만들지 않는다', async () => {
+    const post = await app.inject({ method: 'POST', url: `/accounts/${missing}/pats`, headers: admin(), payload: { label: 'x' } });
+    expect(post.statusCode).toBe(404);
+    expect((await app.inject({ method: 'GET', url: `/accounts/${missing}/pats`, headers: admin() })).statusCode).toBe(404);
+  });
+
+  it('에이전트는 그대로 된다', async () => {
+    const id = await createAgentOnly('pat-still-ok');
+    const post = await app.inject({ method: 'POST', url: `/accounts/${id}/pats`, headers: admin(), payload: { label: 'runner' } });
+    expect(post.statusCode).toBe(201);
+  });
+});
+
