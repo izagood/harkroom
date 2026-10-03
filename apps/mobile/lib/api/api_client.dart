@@ -271,6 +271,22 @@ class ApiClient {
   }
 
   /// 스레드 × 에이전트 모델 지정(서버 079).
+  /// 내 글을 고친다(`PATCH`). 서버가 작성자만 받는다 — 화면도 내 글에만 줄을 세운다.
+  Future<MessageRow> editMessage(String channelId, String messageId, String body) async => MessageRow.fromJson(
+      _obj(await _send('PATCH', '/channels/$channelId/messages/$messageId', body: {'body': body})));
+
+  /// 지운다. 작성자 또는 admin 만 — 서버가 다시 본다.
+  Future<void> deleteMessage(String channelId, String messageId) =>
+      _send('DELETE', '/channels/$channelId/messages/$messageId');
+
+  /// 스레드 답글을 채널에도 올린다(`PUT …/also-in-channel`). 멱등이다.
+  Future<MessageRow> postToChannel(String channelId, String messageId) async => MessageRow.fromJson(
+      _obj(await _send('PUT', '/channels/$channelId/messages/$messageId/also-in-channel')));
+
+  /// 채널에 함께 올린 답글을 채널에서만 거둔다. 글은 스레드에 남는다.
+  Future<MessageRow> recallFromChannel(String channelId, String messageId) async => MessageRow.fromJson(
+      _obj(await _send('DELETE', '/channels/$channelId/messages/$messageId/also-in-channel')));
+
   Future<List<ThreadAgentModel>> threadAgentModels(String channelId, String rootId) async {
     final res = _obj(await _send('GET', '/channels/$channelId/threads/$rootId/agent-models'));
     final list = res['agentModels'];
@@ -441,6 +457,11 @@ class ApiClient {
   ///
   /// **`seq` 를 보낸다** — 시각이 아니다. 시각으로 하면 기기 시계가 틀린 만큼 읽음이
   /// 앞뒤로 흔들리고, 그 오차는 사람에게 "안 읽은 것이 사라졌다"로 보인다.
+  /// 여기부터 안 읽음. 읽음(`/read`)과 **다른 라우트**다 — 서버가 자동 전진과 사람의 표시를 가른다.
+  /// 보내는 것은 그 메시지의 seq 다(그 메시지부터 안 읽은 것이 된다).
+  Future<void> markUnread(String channelId, int seq) =>
+      _send('PUT', '/channels/$channelId/unread', body: {'seq': seq});
+
   Future<void> markRead(String channelId, int seq) =>
       _send('PUT', '/channels/$channelId/read', body: {'seq': seq});
 

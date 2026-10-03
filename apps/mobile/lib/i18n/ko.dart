@@ -423,6 +423,30 @@ class StringsKo implements Strings {
   @override
   String get messageCopyFailed => '복사하지 못했다';
   @override
+  String get messageMarkUnread => '여기부터 안 읽음';
+  @override
+  String get messageMarkedUnread => '안 읽음으로 표시했다';
+  @override
+  String get messagePostToChannel => '채널에도 올리기';
+  @override
+  String get messageRecallFromChannel => '채널에서 거두기';
+  @override
+  String get messageEdit => '수정';
+  @override
+  String get messageEditSave => '저장';
+  @override
+  String get messageEditCancel => '취소';
+  @override
+  String get messageDelete => '삭제';
+  @override
+  String get messageDeleteConfirmTitle => '이 메시지를 지울까?';
+  @override
+  String get messageDeleteConfirmBody => '지운 메시지는 되돌릴 수 없다.';
+  @override
+  String get messageDeleteConfirm => '삭제';
+  @override
+  String get messageActionFailed => '하지 못했다. 다시 해 보라';
+  @override
   String get mentionAdd => '사람·에이전트 부르기';
 
   @override

@@ -848,8 +848,7 @@ class AppState extends ChangeNotifier {
         final channelId = event['channelId'];
         final messageId = event['messageId'];
         if (channelId is! String || messageId is! String) return;
-        messages[channelId]?.removeWhere((m) => m.id == messageId);
-        notifyListeners();
+        _removeMessage(channelId, messageId);
       case 'inbox.updated':
         // 서버는 "바뀌었다"만 알린다 — 무엇이 바뀌었는지는 싣지 않는다. 한 건을
         // 끼워 넣으면 그 사이 다른 기기에서 읽은 것이 화면에서 되살아나므로,
@@ -1196,6 +1195,52 @@ class AppState extends ChangeNotifier {
     } else {
       await _api!.addReaction(channelId, messageId, emoji);
     }
+  }
+
+  /// 내 글을 고친다. 응답(고쳐진 행)으로 바로 덮는다 — 소켓이 같은 행을 또 주면 같은 자리에 선다.
+  Future<void> editMessage(String channelId, String messageId, String body) async {
+    final updated = await _api!.editMessage(channelId, messageId, body);
+    _upsertMessage(updated);
+  }
+
+  /// 지운다. 성공하면 화면에서 먼저 뺀다 — 소켓을 기다리면 끊긴 동안 지운 글이 남아 보인다.
+  /// 답글이 남은 스레드 머리는 서버가 자리표시자로 남기고 `message.updated` 로 다시 보낸다.
+  Future<void> deleteMessage(String channelId, String messageId) async {
+    await _api!.deleteMessage(channelId, messageId);
+    _removeMessage(channelId, messageId);
+  }
+
+  /// 스레드 답글을 채널에도 올리거나(`true`) 채널에서 거둔다(`false`).
+  Future<void> setAlsoInChannel(String channelId, String messageId, bool on) async {
+    final updated = on
+        ? await _api!.postToChannel(channelId, messageId)
+        : await _api!.recallFromChannel(channelId, messageId);
+    _upsertMessage(updated);
+  }
+
+  /// 여기부터 안 읽음. 경계는 이 메시지 **앞**이다 — 데스크톱 `markChannelUnread` 와 같은 셈.
+  /// 내 글은 안 읽은 수에 들지 않는다(서버도 빼고 센다).
+  Future<void> markUnreadFrom(MessageRow message) async {
+    final channelId = message.channelId;
+    await _api!.markUnread(channelId, message.seq);
+    final current = reads[channelId];
+    final last = current?.lastReadSeq ?? message.seq - 1;
+    final boundary = last < message.seq - 1 ? last : message.seq - 1;
+    final mine = me?.id;
+    final unread = (messages[channelId] ?? const <MessageRow>[])
+        .where((m) => m.seq > boundary && m.authorId != mine)
+        .length;
+    reads[channelId] = ReadState(channelId: channelId, lastReadSeq: boundary, unread: unread);
+    notifyListeners();
+  }
+
+  /// 채널 목록·열린 스레드·받아 둔 루트에서 한 메시지를 뺀다. 소켓 `message.deleted` 와 내 삭제가 같이 쓴다.
+  void _removeMessage(String channelId, String messageId) {
+    messages[channelId]?.removeWhere((m) => m.id == messageId);
+    for (final list in threads.values) {
+      list.removeWhere((m) => m.id == messageId && m.channelId == channelId);
+    }
+    notifyListeners();
   }
 
   /// 링크가 가리키는 메시지가 **어디에 있는가**(채널·스레드). 이미 읽어 둔 것이면 왕복하지 않는다.

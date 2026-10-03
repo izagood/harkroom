@@ -82,6 +82,42 @@ abstract class Strings {
   /// 클립보드에 못 담았다. 조용히 지나가면 사람은 붙여넣고서야 안다.
   String get messageCopyFailed;
 
+  /// 시트(남의 글): 이 메시지부터 안 읽은 것으로 되돌린다.
+  String get messageMarkUnread;
+
+  /// 안 읽음으로 표시했다는 짧은 확인.
+  String get messageMarkedUnread;
+
+  /// 시트(내 스레드 답글): 채널에도 올린다.
+  String get messagePostToChannel;
+
+  /// 시트(채널에도 올린 답글): 채널에서만 거둔다. 글은 스레드에 남는다.
+  String get messageRecallFromChannel;
+
+  /// 시트(내 글): 본문 수정.
+  String get messageEdit;
+
+  /// 수정창의 저장 단추.
+  String get messageEditSave;
+
+  /// 수정창·삭제 확인창의 취소 단추.
+  String get messageEditCancel;
+
+  /// 시트(내 글·admin): 삭제. 빨강, 구분선 아래.
+  String get messageDelete;
+
+  /// 삭제 확인창 제목.
+  String get messageDeleteConfirmTitle;
+
+  /// 삭제 확인창 본문. 되돌릴 수 없다는 것을 말한다.
+  String get messageDeleteConfirmBody;
+
+  /// 삭제 확인창의 지우기 단추.
+  String get messageDeleteConfirm;
+
+  /// 수정·삭제·올리기·거두기·안 읽음 실패. 조용히 지나가지 않는다.
+  String get messageActionFailed;
+
   /// 작성칸 왼쪽 @ 버튼(개정판 3.4)의 접근성 이름. 누르면 칸에 `@` 를 넣어 후보 줄을 연다.
   String get mentionAdd;
 
@@ -813,6 +849,18 @@ Map<String, String> stringsToMap(Strings s) => {
       'messageLinkCopied': s.messageLinkCopied,
       'messageBodyCopied': s.messageBodyCopied,
       'messageCopyFailed': s.messageCopyFailed,
+      'messageMarkUnread': s.messageMarkUnread,
+      'messageMarkedUnread': s.messageMarkedUnread,
+      'messagePostToChannel': s.messagePostToChannel,
+      'messageRecallFromChannel': s.messageRecallFromChannel,
+      'messageEdit': s.messageEdit,
+      'messageEditSave': s.messageEditSave,
+      'messageEditCancel': s.messageEditCancel,
+      'messageDelete': s.messageDelete,
+      'messageDeleteConfirmTitle': s.messageDeleteConfirmTitle,
+      'messageDeleteConfirmBody': s.messageDeleteConfirmBody,
+      'messageDeleteConfirm': s.messageDeleteConfirm,
+      'messageActionFailed': s.messageActionFailed,
       'mentionAdd': s.mentionAdd,
       'attachmentUploadFailed': s.attachmentUploadFailed,
       'attachmentRemove': s.attachmentRemove,

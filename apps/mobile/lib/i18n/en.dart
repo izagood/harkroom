@@ -424,6 +424,30 @@ class StringsEn implements Strings {
   @override
   String get messageCopyFailed => 'Could not copy';
   @override
+  String get messageMarkUnread => 'Mark unread from here';
+  @override
+  String get messageMarkedUnread => 'Marked unread';
+  @override
+  String get messagePostToChannel => 'Also send to channel';
+  @override
+  String get messageRecallFromChannel => 'Remove from channel';
+  @override
+  String get messageEdit => 'Edit message';
+  @override
+  String get messageEditSave => 'Save';
+  @override
+  String get messageEditCancel => 'Cancel';
+  @override
+  String get messageDelete => 'Delete message';
+  @override
+  String get messageDeleteConfirmTitle => 'Delete this message?';
+  @override
+  String get messageDeleteConfirmBody => 'This cannot be undone.';
+  @override
+  String get messageDeleteConfirm => 'Delete';
+  @override
+  String get messageActionFailed => 'Could not do that. Try again';
+  @override
   String get mentionAdd => 'Mention a person or agent';
 
   @override
