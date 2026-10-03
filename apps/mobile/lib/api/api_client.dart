@@ -270,6 +270,27 @@ class ApiClient {
     return MessageRow.fromJson(_obj(res));
   }
 
+  /// 내 글을 고친다(`PATCH`). 서버가 작성자만 받는다 — 화면도 내 글에만 줄을 세운다.
+  Future<MessageRow> editMessage(String channelId, String messageId, String body) async => MessageRow.fromJson(
+      _obj(await _send('PATCH', '/channels/$channelId/messages/$messageId', body: {'body': body})));
+
+  /// 지운다. 작성자 또는 admin 만 — 서버가 다시 본다.
+  ///
+  /// 답글이 남은 스레드 머리는 서버가 본문을 뗀 자리표시자로 남기고 **그 행을 200 으로** 돌려준다.
+  /// 정말 사라졌으면 204 라 `null` 이다.
+  Future<MessageRow?> deleteMessage(String channelId, String messageId) async {
+    final res = await _send('DELETE', '/channels/$channelId/messages/$messageId');
+    return res == null ? null : MessageRow.fromJson(_obj(res));
+  }
+
+  /// 스레드 답글을 채널에도 올린다(`PUT …/also-in-channel`). 멱등이다.
+  Future<MessageRow> postToChannel(String channelId, String messageId) async => MessageRow.fromJson(
+      _obj(await _send('PUT', '/channels/$channelId/messages/$messageId/also-in-channel')));
+
+  /// 채널에 함께 올린 답글을 채널에서만 거둔다. 글은 스레드에 남는다.
+  Future<MessageRow> recallFromChannel(String channelId, String messageId) async => MessageRow.fromJson(
+      _obj(await _send('DELETE', '/channels/$channelId/messages/$messageId/also-in-channel')));
+
   /// 스레드 × 에이전트 모델 지정(서버 079).
   Future<List<ThreadAgentModel>> threadAgentModels(String channelId, String rootId) async {
     final res = _obj(await _send('GET', '/channels/$channelId/threads/$rootId/agent-models'));
@@ -436,6 +457,11 @@ class ApiClient {
     final body = _obj(await _send('GET', '/reads'));
     return _list(body['reads']).map(ReadState.fromJson).toList(growable: false);
   }
+
+  /// 여기부터 안 읽음. 읽음(`/read`)과 **다른 라우트**다 — 서버가 자동 전진과 사람의 표시를 가른다.
+  /// 보내는 것은 그 메시지의 seq 다(그 메시지부터 안 읽은 것이 된다).
+  Future<void> markUnread(String channelId, int seq) =>
+      _send('PUT', '/channels/$channelId/unread', body: {'seq': seq});
 
   /// 여기까지 읽었다고 알린다.
   ///

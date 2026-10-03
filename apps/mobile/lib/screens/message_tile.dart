@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
+import '../state/app_state.dart';
 import '../time.dart';
 import '../ui/parts.dart';
 import '../ui/tokens.dart';
@@ -51,7 +52,8 @@ class MessageTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) => _Pressable(
         message: message,
-        onTap: onOpenThread,
+        // 시스템 글은 사람의 말이 아니라 스레드를 열 까닭이 없다 — 탭도 시트처럼 끈다(designer n2).
+        onTap: message.kind == MessageKind.system ? null : onOpenThread,
         onReplyInThread: onReplyInThread,
         child: _row(context),
       );
@@ -246,11 +248,18 @@ class _PressableState extends State<_Pressable> {
     final m = widget.message;
     final reply = widget.onReplyInThread;
     final hasBody = m.body.trim().isNotEmpty;
+    final can = MessageActionsFor.of(context.app, m);
+    void act(MessageAction a) => runMessageAction(context, m, a).ignore();
     return Semantics(
       customSemanticsActions: {
         CustomSemanticsAction(label: t.messageReplyInThread): ?reply,
         CustomSemanticsAction(label: t.messageCopyLink): () => copyMessage(context, m, MessageCopy.link),
         if (hasBody) CustomSemanticsAction(label: t.messageCopyBody): () => copyMessage(context, m, MessageCopy.body),
+        if (can.markUnread) CustomSemanticsAction(label: t.messageMarkUnread): () => act(MessageAction.markUnread),
+        if (can.edit) CustomSemanticsAction(label: t.messageEdit): () => act(MessageAction.edit),
+        if (can.postToChannel) CustomSemanticsAction(label: t.messagePostToChannel): () => act(MessageAction.postToChannel),
+        if (can.recall) CustomSemanticsAction(label: t.messageRecallFromChannel): () => act(MessageAction.recall),
+        if (can.delete) CustomSemanticsAction(label: t.messageDelete): () => act(MessageAction.delete),
       },
       child: Material(
         color: _open ? context.tokens.surfaceHover : Colors.transparent,
@@ -265,7 +274,8 @@ class _PressableState extends State<_Pressable> {
   }
 }
 
-/// 메시지 길게 누르기 시트: 리액션 줄 · 스레드에서 답글 · 링크 복사 · 본문 복사.
+/// 메시지 길게 누르기 시트: 리액션 줄 · 스레드에서 답글 · 링크 복사 · 본문 복사 · 여기부터 안 읽음 ·
+/// 수정 · 채널에도 올리기/거두기 · (구분선) 삭제. 누구 글에 무엇이 서는지는 [MessageActionsFor].
 ///
 /// 본문 복사는 **마크다운 원문**이다 — 그려진 글자가 아니라 다시 붙여넣을 수 있는 글이다.
 /// 멘션만 `@handle` 로 되돌린다([bodyAsHandles]). 첨부·리액션은 본문이 아니라 싣지 않는다.
@@ -278,8 +288,19 @@ Future<void> showMessageActions(BuildContext context, MessageRow message, {VoidC
   HapticFeedback.selectionClick().ignore();
   final hasBody = message.body.trim().isNotEmpty;
   final reply = message.kind == MessageKind.system ? null : onReplyInThread;
+  final can = MessageActionsFor.of(app, message);
+  final k = context.tokens;
+  ListTile item(BuildContext sheet, MessageAction a, IconData icon, String label, {String? key, Color? color}) => ListTile(
+        key: Key(key ?? 'message-action-${a.name}'),
+        leading: Icon(icon, color: color),
+        title: Text(label, style: color == null ? null : TextStyle(color: color)),
+        onTap: () => Navigator.of(sheet).pop(_SheetPick.act(a)),
+      );
   final choice = await showModalBottomSheet<_SheetPick>(
     context: context,
+    // 다른 시트(첨부·모델·푸시·링크)와 같이 손잡이를 단다(designer n1).
+    showDragHandle: true,
+    isScrollControlled: true,
     builder: (sheet) => SafeArea(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -322,6 +343,15 @@ Future<void> showMessageActions(BuildContext context, MessageRow message, {VoidC
               title: Text(t.messageCopyBody),
               onTap: () => Navigator.of(sheet).pop(const _SheetPick.copy(MessageCopy.body)),
             ),
+          if (can.markUnread) item(sheet, MessageAction.markUnread, Icons.mark_chat_unread_outlined, t.messageMarkUnread),
+          if (can.edit) item(sheet, MessageAction.edit, Icons.edit_outlined, t.messageEdit),
+          if (can.postToChannel) item(sheet, MessageAction.postToChannel, Icons.forum_outlined, t.messagePostToChannel),
+          if (can.recall) item(sheet, MessageAction.recall, Icons.undo, t.messageRecallFromChannel),
+          // 되돌릴 수 없는 것은 구분선 아래, 빨강으로 맨 끝에 둔다 — 엄지가 지나가다 닿지 않게.
+          if (can.delete) ...[
+            const Divider(height: 1),
+            item(sheet, MessageAction.delete, Icons.delete_outline, t.messageDelete, color: k.danger),
+          ],
         ],
       ),
     ),
@@ -337,21 +367,203 @@ Future<void> showMessageActions(BuildContext context, MessageRow message, {VoidC
       }
     case _SheetPick(:final copy?):
       await copyMessage(context, message, copy);
+    case _SheetPick(:final act?):
+      await runMessageAction(context, message, act);
     default:
       reply?.call();
   }
 }
 
-/// 시트에서 고른 것. 셋 중 하나만 찬다(셋 다 비면 「스레드에서 답글」).
+/// 시트 아래쪽 동작들. 리액션·복사·스레드에서 답글은 따로 간다.
+enum MessageAction { markUnread, edit, postToChannel, recall, delete }
+
+/// 이 글에 어떤 동작이 서는가. 데스크톱 `MessageItem` 의 조건과 같다 — 화면이 서버보다 너그러우면
+/// 눌러도 403 이고, 더 엄하면 서버가 열어 둔 길(admin 삭제·거두기)이 닿지 않는다.
+class MessageActionsFor {
+  const MessageActionsFor._({
+    required this.markUnread,
+    required this.edit,
+    required this.delete,
+    required this.postToChannel,
+    required this.recall,
+  });
+
+  factory MessageActionsFor.of(AppState app, MessageRow m) {
+    final me = app.me;
+    final mine = me != null && me.id == m.authorId;
+    final admin = me?.isAdmin == true;
+    final system = m.kind == MessageKind.system;
+    final reply = m.threadRootId != null;
+    final delete = (mine || admin) && !system;
+    return MessageActionsFor._(
+      // 내 글은 안 읽은 수에 들지 않는다 — 눌러도 숫자가 그대로인 항목은 거짓 신호다.
+      markUnread: me != null && !mine && !system,
+      // 수정은 admin 에게도 열지 않는다: 남의 발언을 고칠 수 있으면 기록이 증거가 못 된다.
+      edit: mine && !system,
+      delete: delete,
+      // 둘은 alsoInChannel 로 배타적이다 — 지금 상태가 어느 쪽인지 항목 하나가 말한다.
+      postToChannel: mine && !system && reply && !m.alsoInChannel,
+      recall: delete && reply && m.alsoInChannel,
+    );
+  }
+
+  final bool markUnread;
+  final bool edit;
+  final bool delete;
+  final bool postToChannel;
+  final bool recall;
+}
+
+/// 시트와 VoiceOver 동작이 같은 길로 들어온다. 실패는 토스트로 말한다.
+Future<void> runMessageAction(BuildContext context, MessageRow message, MessageAction act) async {
+  final t = context.t;
+  final app = AppScope.read(context);
+  final messenger = ScaffoldMessenger.of(context);
+  final margin = toastMargin(context);
+  Future<void> Function()? go;
+  String? done;
+  switch (act) {
+    case MessageAction.markUnread:
+      go = () => app.markUnreadFrom(message);
+      done = t.messageMarkedUnread;
+    case MessageAction.postToChannel:
+      go = () => app.setAlsoInChannel(message.channelId, message.id, true);
+      // 모바일 줄에는 「채널에도 올림」 표시가 없다 — 알리지 않으면 스레드 화면에서는 아무것도 안 바뀐다.
+      done = t.messagePostedToChannel;
+    case MessageAction.recall:
+      go = () => app.setAlsoInChannel(message.channelId, message.id, false);
+      done = t.messageRecalledFromChannel;
+    case MessageAction.edit:
+      final body = await _askEdit(context, bodyAsHandles(message.body, app.accounts));
+      if (body == null || body == bodyAsHandles(message.body, app.accounts)) return;
+      go = () => app.editMessage(message.channelId, message.id, body);
+    case MessageAction.delete:
+      if (!await _confirmDelete(context)) return;
+      go = () => app.deleteMessage(message.channelId, message.id);
+  }
+  final run = go;
+  try {
+    await run();
+  } on Object {
+    if (context.mounted) showFailureToast(context, t.messageActionFailed, retry: () => run().ignore());
+    return;
+  }
+  if (done == null) return;
+  messenger
+    ..removeCurrentSnackBar()
+    ..showSnackBar(SnackBar(
+      key: const Key('message-action-done'),
+      content: Text(done),
+      behavior: SnackBarBehavior.floating,
+      margin: margin,
+      duration: const Duration(seconds: 2),
+    ));
+}
+
+/// 수정창. 저장된 정본은 `<@id>` 라 사람이 고칠 수 있게 `@handle` 로 채운다 — 서버가 다시 정규화한다.
+/// 비운 채로는 저장할 수 없다(서버도 빈 본문을 받지 않는다 — 지우려면 삭제다).
+Future<String?> _askEdit(BuildContext context, String initial) =>
+    showDialog<String>(context: context, builder: (_) => _EditDialog(initial: initial, t: context.t));
+
+/// 수정창 몸통. 입력칸 컨트롤러는 **창이 쥔다** — 부른 쪽이 `whenComplete` 로 버리면 닫히는
+/// 애니메이션 동안 입력칸이 버린 컨트롤러를 다시 읽는다.
+class _EditDialog extends StatefulWidget {
+  const _EditDialog({required this.initial, required this.t});
+
+  final String initial;
+
+  /// 부른 쪽의 문구. 대화창은 다른 경로(route)라 앱이 I18n 을 어디에 두었는지에 기대지 않는다(시트와 같다).
+  final Strings t;
+
+  @override
+  State<_EditDialog> createState() => _EditDialogState();
+}
+
+class _EditDialogState extends State<_EditDialog> {
+  late final _controller = TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.t;
+    return AlertDialog(
+      key: const Key('message-edit-dialog'),
+      title: Text(t.messageEdit),
+      content: TextField(
+        key: const Key('message-edit-field'),
+        controller: _controller,
+        autofocus: true,
+        minLines: 1,
+        maxLines: 8,
+        onChanged: (_) => setState(() {}),
+      ),
+      actions: [
+        TextButton(
+          key: const Key('message-edit-cancel'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(t.messageEditCancel),
+        ),
+        TextButton(
+          key: const Key('message-edit-save'),
+          onPressed: _controller.text.trim().isEmpty ? null : () => Navigator.of(context).pop(_controller.text),
+          child: Text(t.messageEditSave),
+        ),
+      ],
+    );
+  }
+}
+
+/// 삭제 확인창. 되돌릴 수 없는 일이라 한 번 더 묻는다.
+Future<bool> _confirmDelete(BuildContext context) async {
+  final t = context.t;
+  final k = context.tokens;
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (dialog) => AlertDialog(
+      key: const Key('message-delete-dialog'),
+      title: Text(t.messageDeleteConfirmTitle),
+      content: Text(t.messageDeleteConfirmBody),
+      actions: [
+        TextButton(
+          key: const Key('message-delete-cancel'),
+          onPressed: () => Navigator.of(dialog).pop(false),
+          child: Text(t.messageEditCancel),
+        ),
+        TextButton(
+          key: const Key('message-delete-confirm'),
+          onPressed: () => Navigator.of(dialog).pop(true),
+          child: Text(t.messageDeleteConfirm, style: TextStyle(color: k.danger)),
+        ),
+      ],
+    ),
+  );
+  return ok == true;
+}
+
+/// 시트에서 고른 것. 하나만 찬다(다 비면 「스레드에서 답글」).
 class _SheetPick {
-  const _SheetPick.react(String this.emoji) : copy = null;
-  const _SheetPick.copy(MessageCopy this.copy) : emoji = null;
-  const _SheetPick.reply()
+  const _SheetPick.react(String this.emoji)
+      : copy = null,
+        act = null;
+  const _SheetPick.copy(MessageCopy this.copy)
+      : emoji = null,
+        act = null;
+  const _SheetPick.act(MessageAction this.act)
       : emoji = null,
         copy = null;
+  const _SheetPick.reply()
+      : emoji = null,
+        copy = null,
+        act = null;
 
   final String? emoji;
   final MessageCopy? copy;
+  final MessageAction? act;
 }
 
 /// 시트 맨 위 리액션 칸 하나. 엄지가 닿게 44pt 를 넘긴다.
