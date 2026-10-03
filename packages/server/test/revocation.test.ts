@@ -5,8 +5,9 @@ import type { Pool } from 'pg';
 import WebSocket from 'ws';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
-import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 import { findInvalidCredentials } from '../src/ws/credentials.js';
+import { mintPat } from '../src/services/pats.js';
 
 let app: FastifyInstance;
 let pool: Pool;
@@ -136,6 +137,28 @@ describe('findInvalidCredentials', () => {
     expect(invalid.has(hashOf(sweep.pat))).toBe(true);
     expect(invalid.has(hashOf('never-issued'))).toBe(true);
     expect(invalid.has(hashOf(live))).toBe(false);
+  });
+
+  // 인증 훅(auth/plugin.ts)과 같은 조건이어야 한다 — 훅이 거절하는 토큰의 소켓은 sweep 이 끊는다.
+  it('사람 PAT·지운 에이전트의 PAT·지운 계정의 세션은 무효로 본다 (인증 훅과 같은 조건, #1138)', async () => {
+    const human = await createMember(app, adminToken, 'sweep-human');
+    // REST 는 사람 PAT 를 발급하지 않는다 — #1114 이전에 남은 토큰을 흉내 내 서비스로 만든다.
+    const humanPat = await mintPat(pool, human.accountId, 'cli', { actorId: null, actorHandle: null });
+    if (!humanPat.ok) throw new Error('mint failed');
+    const gone = await agentWithPat('sweep-gone');
+    const goneHuman = await createMember(app, adminToken, 'sweep-gone-human');
+    await pool.query(`update account set deleted_at = now() where id = any($1)`, [[gone.id, goneHuman.accountId]]);
+    const alive = await agentWithPat('sweep-alive');
+
+    const invalid = await findInvalidCredentials(pool, [
+      hashOf(humanPat.token), hashOf(gone.pat), hashOf(goneHuman.token), hashOf(alive.pat), hashOf(human.token),
+    ]);
+
+    expect(invalid.has(hashOf(humanPat.token))).toBe(true);
+    expect(invalid.has(hashOf(gone.pat))).toBe(true);
+    expect(invalid.has(hashOf(goneHuman.token))).toBe(true);
+    expect(invalid.has(hashOf(alive.pat))).toBe(false);
+    expect(invalid.has(hashOf(human.token))).toBe(false);
   });
 
   // DB 왕복 실패로 전원을 끊으면 일시적 장애가 강제 로그아웃 사고가 된다. 그리고 sweep 루프
