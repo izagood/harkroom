@@ -264,7 +264,7 @@ class _SearchScreenState extends State<SearchScreen> {
             isDense: true,
             filled: true,
             fillColor: k.surfaceRaised,
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(HarkroomRadius.compose), borderSide: BorderSide.none),
           ),
         ),
         actions: [

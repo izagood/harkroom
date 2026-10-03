@@ -90,7 +90,7 @@ class _PendingTile extends StatelessWidget {
           key: Key('pending-open-${item.filename}'),
           onTap: onOpen,
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(HarkroomRadius.card),
             child: Stack(
               fit: StackFit.expand,
               children: [
@@ -121,7 +121,7 @@ class _PendingTile extends StatelessWidget {
         decoration: BoxDecoration(
           color: k.surfaceRaised,
           border: Border.all(color: k.border),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(HarkroomRadius.card),
         ),
         child: Row(
           children: [

@@ -63,7 +63,7 @@ class HarkroomAvatar extends StatelessWidget {
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: colorFor(id),
-          borderRadius: BorderRadius.circular(HarkroomSize.avatarRadius * size / HarkroomSize.avatar),
+          borderRadius: BorderRadius.circular(HarkroomRadius.avatar * size / HarkroomSize.avatar),
         ),
         child: Text(
           initialOf(name),
@@ -94,7 +94,7 @@ class UnreadBadge extends StatelessWidget {
       key: Key('unread-$count'),
       constraints: const BoxConstraints(minWidth: 20),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-      decoration: BoxDecoration(color: k.accent, borderRadius: BorderRadius.circular(10)),
+      decoration: BoxDecoration(color: k.accent, borderRadius: BorderRadius.circular(HarkroomRadius.full)),
       child: Text(
         // 세 자리가 넘으면 줄인다 — 정확한 수보다 "많다"가 더 읽힌다.
         count > 99 ? '99+' : '$count',
@@ -241,15 +241,15 @@ class SectionHeader extends StatelessWidget {
 InputDecoration composerDecoration(BuildContext context, String hint) {
   final k = context.tokens;
   OutlineInputBorder edge(Color c) => OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(HarkroomRadius.compose),
         borderSide: BorderSide(color: c, width: 1),
       );
   return InputDecoration(
     hintText: hint,
     isDense: true,
     contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-    border: edge(k.border),
-    enabledBorder: edge(k.border),
+    border: edge(HarkroomShadow.composeBorder(Theme.of(context).brightness).color),
+    enabledBorder: edge(HarkroomShadow.composeBorder(Theme.of(context).brightness).color),
     focusedBorder: edge(k.fgMuted),
   );
 }

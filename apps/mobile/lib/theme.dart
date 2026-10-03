@@ -31,7 +31,7 @@ ThemeData harkroomTheme(Brightness brightness) {
     brightness: brightness,
     // 다크에서 먹색 버튼은 바탕에 묻힌다 — 그때는 글자색을 주 색으로 쓴다.
     primary: dark ? k.fg : k.surfaceInverse,
-    onPrimary: dark ? k.surfaceInverse : Colors.white,
+    onPrimary: k.fgOnStrong,
     secondary: k.accent,
     onSecondary: k.fgOnStrong,
     // 손으로 채우는 이상 **컨테이너 색도 빠짐없이** 채운다 — 비워 두면 Material 이 먹색
@@ -42,11 +42,11 @@ ThemeData harkroomTheme(Brightness brightness) {
     secondaryContainer: k.surfaceRaised,
     onSecondaryContainer: k.fg,
     tertiary: k.warning,
-    onTertiary: Colors.white,
+    onTertiary: k.fgOnStrong,
     tertiaryContainer: k.warningSurface,
     onTertiaryContainer: k.warning,
     error: k.danger,
-    onError: Colors.white,
+    onError: k.fgOnStrong,
     errorContainer: k.dangerSurface,
     onErrorContainer: k.danger,
     surface: k.surface,
@@ -126,14 +126,14 @@ ThemeData harkroomTheme(Brightness brightness) {
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(HarkroomRadius.card),
         side: BorderSide(color: k.border),
       ),
     ),
     snackBarTheme: SnackBarThemeData(
       backgroundColor: k.surfaceInverse,
-      contentTextStyle: const TextStyle(color: Colors.white),
-      actionTextColor: const Color(0xFFFFB59C),
+      contentTextStyle: TextStyle(color: k.fgOnInverse),
+      actionTextColor: k.accentOnInverse,
       behavior: SnackBarBehavior.floating,
     ),
     // 탭의 숫자 배지도 **주황**이다. 기본은 오류 빨강이라 "인박스에 3개"가 "오류 3개"로 읽혔다.

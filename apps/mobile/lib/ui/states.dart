@@ -26,7 +26,7 @@ class LoadingSkeleton extends StatelessWidget {
           alignment: Alignment.centerLeft,
           child: Container(
             height: 10,
-            decoration: BoxDecoration(color: k.surfaceHover, borderRadius: BorderRadius.circular(5)),
+            decoration: BoxDecoration(color: k.surfaceHover, borderRadius: BorderRadius.circular(HarkroomRadius.row)),
           ),
         );
     const widths = [(0.35, 0.9), (0.28, 0.7), (0.4, 0.82), (0.3, 0.6)];
@@ -49,7 +49,7 @@ class LoadingSkeleton extends StatelessWidget {
                   height: HarkroomSize.avatar,
                   decoration: BoxDecoration(
                     color: k.surfaceHover,
-                    borderRadius: BorderRadius.circular(HarkroomSize.avatarRadius),
+                    borderRadius: BorderRadius.circular(HarkroomRadius.avatar),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -214,7 +214,7 @@ class FailedSendRow extends StatelessWidget {
       key: Key('failed-${item.localId}'),
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       padding: const EdgeInsets.fromLTRB(8, 8, 4, 4),
-      decoration: BoxDecoration(color: k.dangerSurface, borderRadius: BorderRadius.circular(8)),
+      decoration: BoxDecoration(color: k.dangerSurface, borderRadius: BorderRadius.circular(HarkroomRadius.card)),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

@@ -82,7 +82,7 @@ class MessageTile extends StatelessWidget {
                   InkWell(
                     key: Key('thread-open-${message.id}'),
                     onTap: onOpenThread,
-                    borderRadius: BorderRadius.circular(6),
+                    borderRadius: BorderRadius.circular(HarkroomRadius.row),
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(minHeight: 32),
                       child: Row(
@@ -205,7 +205,7 @@ Future<void> pickReaction(BuildContext context, MessageRow message) async {
             for (final e in quickReactions)
               InkWell(
                 key: Key('reaction-pick-$e'),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(HarkroomRadius.card),
                 onTap: () => Navigator.of(sheet).pop(e),
                 child: SizedBox(
                   width: 48,
@@ -262,7 +262,7 @@ class _Header extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
               decoration: BoxDecoration(
                 border: Border.all(color: k.accent.withValues(alpha: 0.45)),
-                borderRadius: BorderRadius.circular(3),
+                borderRadius: BorderRadius.circular(HarkroomRadius.sm),
               ),
               child: Text(t.agentBadge,
                   style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: k.accent)),
@@ -297,7 +297,7 @@ class _MentionDenied extends StatelessWidget {
       key: const Key('mention-denied'),
       margin: const EdgeInsets.only(top: 4),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(color: k.warningSurface, borderRadius: BorderRadius.circular(6)),
+      decoration: BoxDecoration(color: k.warningSurface, borderRadius: BorderRadius.circular(HarkroomRadius.card)),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
