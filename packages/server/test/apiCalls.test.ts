@@ -9,9 +9,18 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
 import { createSecretKeyring } from '../src/services/secretKeyring.js';
+import { cardPath } from '../src/services/blockedCards.js';
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 const KEY = `key_${'a'.repeat(24)}`;
+
+describe('cardPath', () => {
+  it('안전한 경로만 질의를 떼고 싣는다 — 백틱·..; 는 null(카드 본문의 코드 칸을 깨지 않게)', () => {
+    expect(cardPath('/api/x?k=1')).toBe('/api/x');
+    expect(cardPath('/api/`x`[a](harkroom://y)')).toBeNull();
+    expect(cardPath('/api/..;/admin')).toBeNull();
+  });
+});
 
 describe('api-checks · api-results', () => {
   let db: Awaited<ReturnType<typeof startTestDb>>;
