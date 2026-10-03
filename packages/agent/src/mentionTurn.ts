@@ -68,7 +68,7 @@ export interface MentionTurnHarkroom {
   /** #139: core 본문과 mem/* slug 목록. 실패는 **던진다** — 호출자가 구분해야 한다. */
   readMemory(): Promise<{ core: string | null; slugs: string[] }>;
   /** 관련 기억 찾기(`memory.search`, 본문 포함). 없으면(테스트·옛 조립) 찾지 않는다. */
-  searchMemory?(query: string, limit: number, opts?: { exclude?: string[]; recordTop?: number }): Promise<RecallResult>;
+  searchMemory?(query: string, limit: number, opts?: { exclude?: string[]; recordTop?: number; focus?: string }): Promise<RecallResult>;
   /**
    * #140: 승인된 스킬 목록. **실패는 던진다** — 러너가 stderr 에 한 줄 남길 수 있어야 한다.
    * 여기서 빈 배열로 삼키면 "스킬이 없다"와 "서버를 못 읽었다"가 같은 값이 되고, 그러면
@@ -901,7 +901,7 @@ export async function runMentionTurn(
       recall: {
         query: recallQuery,
         ...(root ? { rootHead: root.body.slice(0, RECALL_ROOT_HEAD_CHARS) } : {}),
-        search: (q: string, o: { exclude: string[]; recordTop: number }) => search(q, RECALL_MAX_ITEMS + 3, o),
+        search: (q: string, o: { exclude: string[]; recordTop: number; focus?: string }) => search(q, RECALL_MAX_ITEMS + 3, o),
       },
     } : {}),
   });

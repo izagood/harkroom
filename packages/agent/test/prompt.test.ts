@@ -727,6 +727,9 @@ describe('메모리 주입 (#139)', () => {
       expect(s).toContain(tool);
     }
     expect(s).not.toContain('남길 값이 없어진 것은 `memory.set` 에 `value: null` 을 줘서 지운다');
+    // security 후속(10-03): 지워도 이전 판에 남는다 — 비밀은 사람에게 알려 판까지 지우게 한다.
+    expect(s).toContain('지워도 이전 판에 남는다');
+    expect(s).not.toContain('비밀이 섞인 것 등)에만 쓴다');
     expect(s.indexOf('</memory>')).toBeLessThan(s.indexOf('memory.archive'));
   });
 
