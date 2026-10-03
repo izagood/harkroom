@@ -23,6 +23,11 @@ export const API_CARD_CODES = new Set([
   'method_not_allowed', 'path_not_allowed', 'cause_not_human',
 ]);
 export const MERGE_CARD_CODES = new Set(['not_granted', 'cause_not_human']);
+/**
+ * `human_merges`: 판정은 통과했지만 오퍼레이터의 gh 계정이 그 저장소에 닿지 못했다(회사 저장소 등). 권한을 더 줘도 풀리지 않으므로
+ * 화면은 [권한 주기]를 감추고 「이 저장소는 사람이 머지」만 보인다. 이 코드는 머지 보고(`reportMerge`)에서만 온다.
+ */
+export const HUMAN_MERGES = 'human_merges';
 
 export interface BlockedInput {
   kind: 'api' | 'merge';
@@ -44,14 +49,15 @@ export interface BlockedMeta {
 const reasonText: Record<string, string> = {
   not_granted: '권한 없음', no_connector: '연결 없음', no_secret: '키 없음', secret_expired: '키 만료',
   expired: '권한 만료', suspended: '권한 멈춤', method_not_allowed: '메서드 밖', path_not_allowed: '경로 밖',
-  cause_not_human: '사람 글 턴 아님',
+  cause_not_human: '사람 글 턴 아님', human_merges: '이 저장소는 사람이 머지',
 };
 
 export async function recordBlocked(pool: Pool, b: BlockedInput): Promise<string | null> {
   const now = b.now ?? new Date();
   const day = now.toISOString().slice(0, 10);
   const target = b.kind === 'merge' ? `repo:${b.repo ?? ''}` : b.connectorId ? `connector:${b.connectorId}` : `connector-name:${b.connectorName ?? ''}`;
-  const key = `${b.kind}:${b.agentId}:${target}:${day}`;
+  // 「사람이 머지」는 [권한 주기] 카드와 따로 선다 — 같은 카드에 섞이면 화면이 어느 버튼을 낼지 헷갈린다.
+  const key = `${b.kind}:${b.agentId}:${target}${b.code === 'human_merges' ? ':human' : ''}:${day}`;
   const path = b.path ? (b.path.split('?')[0] ?? '').slice(0, 300) : null;
 
   const existing = (await pool.query<{ id: string }>(

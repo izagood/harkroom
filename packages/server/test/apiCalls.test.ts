@@ -2,7 +2,7 @@
 // 지키는 것: 오퍼레이터를 거친 에이전트만 · 판정은 사슬(apiGrantFor) · 키는 통과한 판정에만 실리고 접근 기록이 남는다 ·
 // 판정 없는 보고는 받지 않는다 · 시스템 줄 본문에 키가 없다.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
@@ -132,11 +132,19 @@ describe('api-checks · api-results', () => {
     // 에이전트 글로 띄운 턴.
     const m = await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'post it', 'user') returning id`, [ch, agentId]);
     await pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [agentId, m.rows[0].id]);
-    const l = (await app.inject({ method: 'POST', url: '/agent/turn-leases', headers: asAgent(), payload: { causeMessageId: m.rows[0].id } })).json().lease;
-    if (l) {
-      expect((await check(l, 'POST', '/api/x')).json().error.code).toBe('cause_not_human');
-      expect((await check(l, 'GET', '/api/x')).statusCode).toBe(200);
-    }
+    // 임대는 직접 넣는다 — 발급 경로의 사정(누가 불렀나)과 상관없이 이 판정 자체를 반드시 잰다(task_manager: D 의 본체).
+    const token = 'agent-cause-token';
+    const leaseRow = (await pool.query(
+      `insert into secret_turn_lease (token_hash, agent_id, operator_id, cause_message_id, channel_id, thread_root_id, expires_at)
+       values ($1, $2, $3, $4, $5, $4, now() + interval '30 minutes') returning id`,
+      [createHash('sha256').update(token, 'utf8').digest('hex'), agentId, op.operatorId, m.rows[0].id, ch])).rows[0];
+    const l = { id: leaseRow.id as string, token };
+    expect((await check(l, 'POST', '/api/x')).json().error.code).toBe('cause_not_human');
+    expect((await check(l, 'GET', '/api/x')).statusCode).toBe(200);
+    // 칸을 끄면 같은 임대의 쓰기가 통과한다 — 막은 것이 이 칸이었음을 확인한다.
+    await pool.query(`update account_grant set write_needs_human_cause = false where account_id = $1 and capability = 'api.call'`, [agentId]);
+    expect((await check(l, 'POST', '/api/y')).statusCode).toBe(200);
+    await pool.query(`update account_grant set write_needs_human_cause = true where account_id = $1 and capability = 'api.call'`, [agentId]);
     // 사람 글 턴의 쓰기는 통과.
     expect((await check(await lease(), 'POST', '/api/x')).statusCode).toBe(200);
     // 다른 capability 에는 이 칸을 못 준다.

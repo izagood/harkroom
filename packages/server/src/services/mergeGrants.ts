@@ -124,7 +124,7 @@ export async function checkMerge(
 export type MergeReport = {
   agentId: string; operatorId: string; leaseId: string; token: string;
   repo: string; number: number; headSha: string;
-  result: 'merged' | 'failed'; mergeSha?: string | null; error?: string | null; now?: Date;
+  result: 'merged' | 'failed'; mergeSha?: string | null; error?: string | null; errorCode?: 'no_repo_access'; now?: Date;
 };
 
 /**
@@ -164,6 +164,13 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
   });
   if (posted.failure) return { ok: false, code: 'post_failed' };
   const msg = posted.message;
+  // P4 의견 ①: 권한을 줘도 이 오퍼레이터로는 머지할 수 없는 저장소다 — 「사람이 머지」 카드. 원문·계정 이름은 싣지 않는다.
+  if (r.result === 'failed' && r.errorCode === 'no_repo_access') {
+    await recordBlocked(pool, {
+      kind: 'merge', agentId: r.agentId, channelId: lease.channelId, threadRootId: lease.threadRootId,
+      code: 'human_merges', repo, number: r.number, now,
+    }).catch(() => null);
+  }
   await recordAudit(pool, {
     action: r.result === 'merged' ? 'repo.merge.merged' : 'repo.merge.failed', actorId: r.agentId, target: scope,
     detail: { number: r.number, headSha: r.headSha, mergeSha: r.mergeSha ?? null, operatorId: r.operatorId, leaseId: lease.id, messageId: msg.id },

@@ -199,6 +199,27 @@ describe('repo.merge grant', () => {
       const res = await app.inject({ method: 'GET', url: '/agent/merge-grants', headers: asAgent() });
       expect(res.json()).toEqual({ repos: ['izagood/harkroom'] });
     });
+    it('no_repo_access 보고는 「사람이 머지」 카드를 따로 세운다 — 오류 원문·계정은 싣지 않는다(P4 ①)', async () => {
+      expect((await grant(alice.token, { scope: 'repo:example/service' })).statusCode).toBe(200);
+      const l = await lease(await mention(alice.accountId));
+      expect((await check(l, 'example/service')).statusCode).toBe(200);
+      const res = await app.inject({
+        method: 'POST', url: '/agent/merge-results', headers: asAgent(),
+        payload: { leaseId: l.id, token: l.token, repo: 'example/service', number: 7, headSha: SHA, result: 'failed', error: 'GraphQL: Resource not accessible by integration (secret-account)', errorCode: 'no_repo_access' },
+      });
+      expect(res.statusCode).toBe(201);
+      const card = (await pool.query(`select body, meta from message where meta->'blocked'->>'code' = 'human_merges' and meta->'blocked'->>'repo' = 'example/service'`)).rows;
+      expect(card).toHaveLength(1);
+      expect(card[0].body).toContain('사람이 머지');
+      expect(JSON.stringify(card[0])).not.toContain('secret-account');
+      expect(JSON.stringify(card[0])).not.toContain('Resource not accessible');
+      const badCode = await app.inject({
+        method: 'POST', url: '/agent/merge-results', headers: asAgent(),
+        payload: { leaseId: l.id, token: l.token, repo: 'example/service', number: 7, headSha: SHA, result: 'failed', errorCode: 'whatever' },
+      });
+      expect(badCode.statusCode).toBe(400);
+    });
+
     it('merge-results 는 그 턴의 스레드에 시스템 줄을 쓰고(래퍼 보고라고 밝힘) 감사에 남긴다', async () => {
       const cause = await mention(alice.accountId);
       const l = await lease(cause);
