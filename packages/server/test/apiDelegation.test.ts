@@ -19,7 +19,7 @@ describe('위임', () => {
   let app: FastifyInstance;
   let alice: { token: string; accountId: string };
   let bob: { token: string; accountId: string };
-  let a: string; let b: string; let c: string; let bobs: string;
+  let a: string; let b: string; let c: string; let d: string; let e: string; let bobs: string;
   let connectorId: string; let ch: string; let other: string;
 
   /** 원인 메시지 — 기본은 위임하는 에이전트(a)를 깨운 글(inbox 있음). `woke: false` 면 깨우지 않은 글. */
@@ -49,7 +49,10 @@ describe('위임', () => {
     b = (await createAgent(app, admin.token, 'worker')).accountId;
     c = (await createAgent(app, admin.token, 'helper')).accountId;
     bobs = (await createAgent(app, admin.token, 'bobs')).accountId;
-    for (const x of [a, b, c]) await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [x, alice.accountId]);
+    // 하루 상한(L1)은 (위임한 에이전트, 받는 쪽) 쌍마다 센다 — 감사 기록은 지울 수 없으니 시험마다 받는 쪽을 따로 둔다.
+    d = (await createAgent(app, admin.token, 'helper2')).accountId;
+    e = (await createAgent(app, admin.token, 'helper3')).accountId;
+    for (const x of [a, b, c, d, e]) await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [x, alice.accountId]);
     await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [bobs, bob.accountId]);
     const secretId = (await pool.query(`insert into secret (name, kind, owner_account_id) values ('lab-token', 'text', $1) returning id`, [alice.accountId])).rows[0].id;
     connectorId = (await app.inject({ method: 'POST', url: '/connectors', headers: auth(alice.token),
@@ -134,8 +137,6 @@ describe('위임', () => {
   });
 
   it('F3: 선택 카드 — 이 에이전트가 세우고 루트 사람이 답한 원본 카드면 즉시, 거울 카드·남의 카드면 대기', async () => {
-    // 하루 상한(L1)은 (a, c) 쌍을 센다 — 앞 시험들의 위임 기록을 비워 이 시험만 잰다.
-    await pool.query(`delete from audit_log where actor_id = $1 and target = $2 and action in ('grant.delegated', 'grant.delegate.pending')`, [a, c]);
     const card = async (author: string, ask: Record<string, unknown>) => {
       const id = (await pool.query(`insert into message (channel_id, author_id, body, kind, meta) values ($1, $2, 'ok?', 'user', $3) returning id`,
         [ch, author, JSON.stringify({ kind: 'ask', ask: { prompt: 'ok?', options: [{ id: 'y', label: 'y' }], answeredWith: 'y', answeredBy: alice.accountId, ...ask } })])).rows[0].id as string;
@@ -144,27 +145,25 @@ describe('위임', () => {
     };
     // 거울 카드(원본의 답이 복사된 것)로 깨어난 턴 → 대기.
     const original = await card(b, {});
-    const mirror = await delegateApiGrant(pool, base({ to: c, causeMessageId: await card(a, { mirrorOf: original }) }));
+    const mirror = await delegateApiGrant(pool, base({ to: d, causeMessageId: await card(a, { mirrorOf: original }) }));
     expect(mirror).toMatchObject({ ok: true, pending: true });
     if (mirror.ok) await revokeDelegation(pool, { agentId: a, grantId: mirror.grantId });
     // 다른 에이전트가 세운 카드 → 대기.
-    const others = await delegateApiGrant(pool, base({ to: c, causeMessageId: await card(b, {}) }));
+    const others = await delegateApiGrant(pool, base({ to: d, causeMessageId: await card(b, {}) }));
     expect(others).toMatchObject({ ok: true, pending: true });
     if (others.ok) await revokeDelegation(pool, { agentId: a, grantId: others.grantId });
     // 이 에이전트가 세운 원본 카드에 루트 사람이 답함 → 즉시.
-    const own = await delegateApiGrant(pool, base({ to: c, causeMessageId: await card(a, {}) }));
+    const own = await delegateApiGrant(pool, base({ to: d, causeMessageId: await card(a, {}) }));
     expect(own).toMatchObject({ ok: true, pending: false });
     if (own.ok) await revokeDelegation(pool, { agentId: a, grantId: own.grantId });
   });
 
   it('L1: 같은 위임이 다시 오면 아무것도 하지 않는다 — 줄·알림이 새로 생기지 않는다', async () => {
-    // 하루 상한(L1)은 (a, c) 쌍을 센다 — 앞 시험들의 위임 기록을 비워 이 시험만 잰다.
-    await pool.query(`delete from audit_log where actor_id = $1 and target = $2 and action in ('grant.delegated', 'grant.delegate.pending')`, [a, c]);
-    const first = await delegateApiGrant(pool, base({ to: c, causeMessageId: await msgBy(alice.accountId) }));
+    const first = await delegateApiGrant(pool, base({ to: e, causeMessageId: await msgBy(alice.accountId) }));
     if (!first.ok) throw new Error('expected ok');
-    const lines = async () => (await pool.query(`select 1 from message where meta->'delegation'->>'toAgentId' = $1`, [c])).rowCount;
+    const lines = async () => (await pool.query(`select 1 from message where meta->'delegation'->>'toAgentId' = $1`, [e])).rowCount;
     const before = await lines();
-    const again = await delegateApiGrant(pool, base({ to: c, causeMessageId: await msgBy(alice.accountId) }));
+    const again = await delegateApiGrant(pool, base({ to: e, causeMessageId: await msgBy(alice.accountId) }));
     expect(again).toMatchObject({ ok: true, grantId: first.grantId, pending: false });
     expect(await lines()).toBe(before);
     await revokeDelegation(pool, { agentId: a, grantId: first.grantId });
