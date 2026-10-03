@@ -17,6 +17,7 @@ import { useActiveStore } from '../../state/communities';
 import { ApiError } from '../../lib/api';
 import { useT } from '../../i18n/useT';
 import { AgentMcpSection } from './AgentMcpSection';
+import { ImmediateBadge } from './pendingEdits';
 import { Toggle } from './primitives';
 
 export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
@@ -76,7 +77,7 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
       */}
       <details data-testid="agent-scope-details" className="group">
       <summary className="cursor-pointer list-none">
-        <div className="text-meta font-medium text-fg-muted">{t('agents.scope.heading')} <span aria-hidden="true" className="inline-block transition-transform group-open:rotate-180">▾</span></div>
+        <div className="text-meta font-medium text-fg-muted">{t('agents.scope.heading')}<ImmediateBadge label={t('agents.detail.immediate')} /> <span aria-hidden="true" className="inline-block transition-transform group-open:rotate-180">▾</span></div>
         <p data-testid="agent-scope-summary" className="mt-1 text-meta text-fg">
           {[
             t(`agents.scope.invoke.${agent.invokeScope}`),

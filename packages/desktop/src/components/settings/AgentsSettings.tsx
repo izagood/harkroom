@@ -54,6 +54,8 @@ import { useAgentPool } from './useAgentPool';
 import { copyText } from '../../lib/clipboard';
 import { navKey } from './sections';
 import { AGENT_DETAIL_TABS, parseAgentTarget, type AgentDetailTab } from './agentDetailTabs';
+import { ConfirmDialog } from '../ConfirmDialog';
+import { ImmediateBadge, PendingEditsContext, type PendingHandlers, type RegisterPending } from './pendingEdits';
 
 /** #177: 클립보드가 없거나 거부되면 **조용히 실패하지 않는다** — 화면에 있는 그 명령
  *  텍스트를 선택 상태로 만들어 사람이 ⌘C 할 수 있게 하고, 오류를 눈에 보이게 남긴다.
@@ -786,6 +788,28 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     && JSON.stringify(draft) !== JSON.stringify(draftOf(selected));
 
   /**
+   * 저장 바(A3, `pendingEdits.tsx`). 이 화면 자신의 초안(이름·지시문·실행 설정)은 바뀐 칸 수로
+   * 세고, 따로 저장하는 칸(폴더·모델 목록)은 등록한 수를 더한다. 합이 0 이면 바는 안 선다.
+   */
+  const pendingHandlers = useRef(new Map<string, PendingHandlers>());
+  const [pendingCounts, setPendingCounts] = useState<Record<string, number>>({});
+  const registerPending = useCallback<RegisterPending>((key, count, handlers) => {
+    if (handlers) pendingHandlers.current.set(key, handlers);
+    else pendingHandlers.current.delete(key);
+    setPendingCounts((prev) => ((prev[key] ?? 0) === count ? prev : { ...prev, [key]: count }));
+  }, []);
+  const draftChanges = selected !== null && draft !== null
+    ? (Object.keys(draft) as (keyof Draft)[]).filter((k) => draft[k] !== draftOf(selected)[k]).length
+    : 0;
+  const pendingTotal = draftChanges + Object.values(pendingCounts).reduce((a, b) => a + b, 0);
+  /** 저장 안 한 것이 있는데 상세를 떠나려 할 때 — 떠날 길을 들고 묻는다. */
+  const [leaving, setLeaving] = useState<{ go: () => void } | null>(null);
+  const guardLeave = (go: () => void) => {
+    if (selected !== null && pendingTotal > 0) setLeaving({ go });
+    else go();
+  };
+
+  /**
    * 사진을 걸거나(파일) 지운다(null). 단계·확인·진행률은 `useAvatarEdit` 이 센다 —
    * `ProfileSettings` 와 같은 것을 두 벌 세면 한쪽만 고치는 날이 온다.
    *
@@ -869,31 +893,40 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   /** 만들 때와 바꿀 때가 같은 규칙이다 — 서버의 `^[a-z0-9_-]{2,32}$` 와 같은 문법. */
   const validHandle = (h: string) => /^[a-z0-9_-]{2,32}$/.test(h);
 
+  /** 고른 에이전트의 초안을 저장한다. 실패는 화면 위쪽 오류 줄이 말하고 `false` 를 돌려준다(저장 바가 센다). */
+  const saveSelected = async (): Promise<boolean> => {
+    setError(null);
+    if (!draft || !selected) return false;
+    if (!validHandle(draft.handle)) {
+      setError(t('agents.create.invalidName'));
+      return false;
+    }
+    setBusy(true);
+    try {
+      const updated = await getController().updateAgent(selected.id, {
+        // 바뀐 때만 싣는다. 늘 실으면 이름 말고 다른 것을 고치러 온 저장이 전부
+        // 이름 변경 감사·WS 이벤트를 끌고 다닌다.
+        ...(draft.handle !== selected.handle ? { handle: draft.handle } : {}),
+        ...configPatch(draft),
+      });
+      setSelected(updated);
+      reload();
+      return true;
+    } catch (e) {
+      // 이름 충돌은 **고칠 수 있는 실패**다. "저장하지 못했다"로 뭉뚱그리면 사람은
+      // 무엇을 고쳐야 할지 모른 채 같은 이름으로 다시 누른다.
+      setError(e instanceof ApiError && e.code === 'handle_taken'
+        ? t('agents.detail.handleTaken')
+        : t('agents.detail.saveFailed'));
+      return false;
+    } finally { setBusy(false); }
+  };
+
   const submit = async () => {
     setError(null);
     if (!draft) return;
     if (selected) {
-      if (!validHandle(draft.handle)) {
-        setError(t('agents.create.invalidName'));
-        return;
-      }
-      setBusy(true);
-      try {
-        const updated = await getController().updateAgent(selected.id, {
-          // 바뀐 때만 싣는다. 늘 실으면 이름 말고 다른 것을 고치러 온 저장이 전부
-          // 이름 변경 감사·WS 이벤트를 끌고 다닌다.
-          ...(draft.handle !== selected.handle ? { handle: draft.handle } : {}),
-          ...configPatch(draft),
-        });
-        setSelected(updated);
-        reload();
-      } catch (e) {
-        // 이름 충돌은 **고칠 수 있는 실패**다. "저장하지 못했다"로 뭉뚱그리면 사람은
-        // 무엇을 고쳐야 할지 모른 채 같은 이름으로 다시 누른다.
-        setError(e instanceof ApiError && e.code === 'handle_taken'
-          ? t('agents.detail.handleTaken')
-          : t('agents.detail.saveFailed'));
-      } finally { setBusy(false); }
+      await saveSelected();
       return;
     }
     if (!validHandle(draft.handle)) {
@@ -928,6 +961,17 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     } catch {
       setError(t('agents.create.failed'));
     } finally { setBusy(false); }
+  };
+
+  /** 저장 바의 [저장] — 바뀐 칸을 차례로 저장한다. 실패한 칸은 제 자리에 이유를 그리고 바는 남는다. */
+  const saveAll = async () => {
+    if (draftChanges > 0) await saveSelected();
+    for (const h of [...pendingHandlers.current.values()]) await h.save();
+  };
+  /** 저장 바의 [되돌리기] — 서버 값으로. 고른 에이전트를 다시 고르면 초안이 다시 채워진다(`pick`). */
+  const revertAll = () => {
+    if (selected) pick(selected, detailTab);
+    for (const h of [...pendingHandlers.current.values()]) h.revert();
   };
 
   /**
@@ -1346,6 +1390,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     : { className: 'space-y-4' });
 
   return (
+    <PendingEditsContext.Provider value={registerPending}>
     <div className="relative flex h-full min-h-0 bg-surface-raised">
 
 
@@ -1358,7 +1403,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             <button
               data-testid="agent-back"
               className="rounded-row px-1.5 py-0.5 text-body text-fg-muted hover:bg-surface-hover"
-              onClick={() => { setView('grid'); setSelected(null); setError(null); }}
+              onClick={() => guardLeave(() => { setView('grid'); setSelected(null); setError(null); })}
             >
               {t('agents.detail.back')}
             </button>
@@ -1634,6 +1679,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 <div className={`rounded-row border p-3 ${selected.disabled ? 'border-border bg-surface' : 'border-danger-border bg-danger-surface'}`}>
                   <div className="text-meta font-medium text-fg-muted">
                     {selected.disabled ? t('agents.disable.headingDisabled') : t('agents.disable.headingEnabled')}
+                    <ImmediateBadge label={t('agents.detail.immediate')} />
                   </div>
                   {selected.disabled ? (
                     <div className="mt-2">
@@ -2300,7 +2346,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
               {selected && (isAdmin || isOwner) && (
                 <div className="rounded-row border border-border p-3">
-                  <div className="text-meta font-medium text-fg-muted">PAT (Personal Access Token)</div>
+                  <div className="text-meta font-medium text-fg-muted">PAT (Personal Access Token)<ImmediateBadge label={t('agents.detail.immediate')} /></div>
                   <div className="mt-2 space-y-2">
                     {pats === null ? (
                       <div className="text-meta text-fg-muted">{t('agents.pat.loading')}</div>
@@ -2593,31 +2639,35 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           </div>
 
           {/*
-            **저장은 한 쌍이다**(문서 원칙 05). 전에는 저장 버튼이 카드 안 회색 하나와 화면
-            아래 파란 하나로 갈려 있었다 — 어느 것이 무엇을 저장하는지 알 수 없었다.
-            회색 쪽(워크스페이스 기본값)은 Task 16 이 다른 화면으로 뺐고, 여기 남은 하나에
-            **되돌리기**를 짝지어 하단에만 둔다.
+            **저장 바**(designer A3). 고른 에이전트에서는 **바뀐 것이 있을 때만** 서고 그 수를 말한다 —
+            전에는 고친 것이 없어도 [Save changes] 가 같은 모양으로 떠 있어 무엇이 저장 대기인지
+            알 수 없었다. 칸마다 있던 [Save]·[Save list] 는 여기로 모였다(`pendingEdits.tsx`).
+            새 에이전트 만들기는 만들 단추가 하나뿐이라 그대로 늘 선다.
           */}
-          <footer className="flex w-full max-w-2xl gap-2 border-t border-border px-5 py-3">
-            <Button
-              variant="primary"
-              disabled={busy || draft === null}
-              onClick={() => void submit()}
+          {(!selected || pendingTotal > 0) && (
+            <footer
+              data-testid={selected ? 'agent-save-bar' : undefined}
+              className="flex w-full max-w-2xl items-center gap-2 border-t border-border px-5 py-3"
             >
-              {selected ? t('agents.detail.save') : t('agents.detail.submitNew')}
-            </Button>
-            {/* 되돌리기는 **고친 것이 있을 때만** 선다 — 누를 것이 없는 버튼을 그리지 않는다.
-                고른 에이전트를 다시 고르면 서버 값으로 초안이 다시 채워진다(`pick`). */}
-            {selected && dirty && (
+              {selected && (
+                <span data-testid="agent-save-count" className="text-meta text-fg-muted">
+                  {t('agents.detail.pendingCount', { n: String(pendingTotal) })}
+                </span>
+              )}
+              {selected && (
+                <Button variant="secondary" disabled={busy} onClick={revertAll}>
+                  {t('agents.detail.revert')}
+                </Button>
+              )}
               <Button
-                variant="secondary"
-                disabled={busy}
-                onClick={() => pick(selected, detailTab)}
+                variant="primary"
+                disabled={busy || draft === null}
+                onClick={() => void (selected ? saveAll() : submit())}
               >
-                {t('agents.detail.revert')}
+                {selected ? t('agents.detail.save') : t('agents.detail.submitNew')}
               </Button>
-            )}
-          </footer>
+            </footer>
+          )}
         </div>
       {createdToast && (
         <div
@@ -2637,7 +2687,20 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           </button>
         </div>
       )}
+      {leaving && (
+        <ConfirmDialog
+          title={t('agents.detail.leaveTitle', { n: String(pendingTotal) })}
+          detail={t('agents.detail.leaveNote')}
+          detailKind="note"
+          confirmLabel={t('agents.detail.leaveDiscard')}
+          cancelLabel={t('agents.detail.leaveStay')}
+          danger
+          onConfirm={() => { const go = leaving.go; setLeaving(null); go(); }}
+          onCancel={() => setLeaving(null)}
+        />
+      )}
     </div>
+    </PendingEditsContext.Provider>
   );
 }
 

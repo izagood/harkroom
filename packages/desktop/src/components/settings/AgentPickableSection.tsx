@@ -18,6 +18,7 @@ import type { AgentModelOptions, AgentPickableModel, AgentView } from '@harkroom
 import { getController } from '../../state/controller';
 import { useT } from '../../i18n/useT';
 import { ModelPicker } from './ModelPicker';
+import { usePendingEdit } from './pendingEdits';
 
 /** 하네스가 effort 목록을 안 밝혔을 때 고를 값 — 상세의 Effort 칸과 같은 목록이다. */
 const FALLBACK_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
@@ -53,6 +54,27 @@ export function AgentPickableSection({ agent, disabled }: { agent: AgentView; di
     return () => { alive = false; };
   }, [agent.id]);
 
+  const save = async (clearOutside: boolean): Promise<boolean> => {
+    setBusy(true); setError(null);
+    try {
+      const res = await getController().setAgentPickableModels(agent.id, draft, clearOutside);
+      setSaved(res.models);
+      setDraft(res.models);
+      setOutside(res.outside ?? 0);
+      setCleared(clearOutside ? (res.cleared ?? 0) : null);
+      return true;
+    } catch (err) {
+      setError(t('agents.pickable.saveFailed', { reason: err instanceof Error ? err.message : String(err) }));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 모델 목록은 상세의 저장 바로 모은다(A3) — 못 읽었으면 걸지 않는다(빈 목록을 저장하면 목록이 지워진다).
+  const loaded = options !== null && options !== 'error';
+  const inBar = usePendingEdit('pickable', loaded && !same(draft, saved) ? 1 : 0, () => save(false), () => setDraft(saved));
+
   if (options === null) {
     return (
       <Frame t={t}><p className="mt-2 text-meta text-fg-muted">{t('agents.pickable.loading')}</p></Frame>
@@ -81,21 +103,6 @@ export function AgentPickableSection({ agent, disabled }: { agent: AgentView; di
         // 하네스가 밝힌 순서(낮은 것부터)를 지킨다 — 누른 순서로 쌓이면 같은 목록이 다르게 저장된다.
         : effortsOf(model).filter((x) => x === effort || e.efforts.includes(x)),
     })));
-
-  const save = async (clearOutside: boolean) => {
-    setBusy(true); setError(null);
-    try {
-      const res = await getController().setAgentPickableModels(agent.id, draft, clearOutside);
-      setSaved(res.models);
-      setDraft(res.models);
-      setOutside(res.outside ?? 0);
-      setCleared(clearOutside ? (res.cleared ?? 0) : null);
-    } catch (err) {
-      setError(t('agents.pickable.saveFailed', { reason: err instanceof Error ? err.message : String(err) }));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <Frame t={t}>
@@ -153,7 +160,7 @@ export function AgentPickableSection({ agent, disabled }: { agent: AgentView; di
         >
           {t('agents.pickable.add')}
         </button>
-        <button
+        {!inBar && <button
           type="button"
           data-testid="pickable-save"
           className="ml-auto rounded-row bg-accent px-2 py-1 text-meta font-medium text-fg-on-strong hover:bg-accent-hover disabled:opacity-50"
@@ -161,7 +168,7 @@ export function AgentPickableSection({ agent, disabled }: { agent: AgentView; di
           onClick={() => void save(false)}
         >
           {t('agents.pickable.save')}
-        </button>
+        </button>}
       </div>
 
       {outside > 0 && (
