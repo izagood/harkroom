@@ -54,7 +54,8 @@ const reasonText: Record<string, string> = {
 
 /** 카드에 실을 경로 — 안전한 모양이면 질의를 뗀 경로, 아니면 null. */
 export function cardPath(path: string): string | null {
-  if (!safePath(path)) return null;
+  // 백틱은 카드 본문의 코드 칸을 닫는다 — 그 뒤 글자(에이전트가 정한 것)가 마크다운·링크로 렌더된다(#1142 security nit).
+  if (!safePath(path) || path.includes('`')) return null;
   return (path.split('?')[0] ?? '').slice(0, 200);
 }
 
