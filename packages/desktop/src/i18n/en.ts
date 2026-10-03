@@ -4332,6 +4332,7 @@ export const en = {
   'blocked.pathOmitted': '(path omitted)',
   'blocked.changeSetting': 'Change setting…',
   'apiGrant.expiredRenew': 'Expired — this gives it anew.',
+  'apiGrant.allGranted': 'All your connections already have a permission here. To change one, revoke it above and give it again.',
   'secrets.errNameTaken': 'A secret with that name already exists.',
   'secrets.errInDescription': 'The description looks like it contains a key. Descriptions are visible to agents — take the value out.',
   'secrets.errBadValue': 'The value was refused (empty or over 64 KB).',

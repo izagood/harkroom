@@ -2195,6 +2195,7 @@ export const ko = {
   'blocked.pathOmitted': '(경로 생략)',
   'blocked.changeSetting': '설정 바꾸기…',
   'apiGrant.expiredRenew': '만료됐다 — 새로 준다.',
+  'apiGrant.allGranted': '내 연결 모두에 이미 권한이 있다. 바꾸려면 위 줄을 거두고 다시 준다.',
   'secrets.errNameTaken': '같은 이름의 비밀이 이미 있다.',
   'secrets.errInDescription': '설명에 키처럼 보이는 글자가 있다. 설명은 에이전트에게 보이니 값을 빼 달라.',
   'secrets.errBadValue': '값을 받지 않았다(비었거나 64KB 초과).',

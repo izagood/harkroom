@@ -201,8 +201,14 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
         </div>
       )}
       {canGrant && adding && addKind === 'api' && (
-        <ApiGrantForm agentId={agent.id} connectors={connectors.filter((c) => c.ownerAccountId === myId && !apiGrants.some((g) => g.scope === `connector:${c.id}`))}
-          onCancel={() => setAdding(false)} onDone={async () => { setAdding(false); await load(); }} />
+        (() => {
+          const mine = connectors.filter((c) => c.ownerAccountId === myId);
+          const free = mine.filter((c) => !apiGrants.some((g) => g.scope === `connector:${c.id}`));
+          // 내 연결이 모두 이미 권한을 가졌으면 「연결이 없다」가 아니라 그 사실을 말한다(designer a).
+          return mine.length > 0 && free.length === 0
+            ? <p className="mt-2 text-meta text-fg-subtle" data-testid="api-grant-all-granted">{t('apiGrant.allGranted')}</p>
+            : <ApiGrantForm agentId={agent.id} connectors={free} onCancel={() => setAdding(false)} onDone={async () => { setAdding(false); await load(); }} />;
+        })()
       )}
       {canGrant && adding && addKind === 'merge' && (
         <div className="mt-2 rounded-row border border-border bg-surface-sunken p-2" data-testid="agent-grants-add">

@@ -53,7 +53,11 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, on
   const c = connectors.find((x) => x.id === connectorId);
   const writeMethods = (c?.methods ?? []).filter((m) => m !== 'GET');
   const canWrite = writeMethods.length > 0;
-  const methods: ApiMethod[] = scope === 'read' ? ['GET'] : [...(c?.methods ?? [])];
+  // [설정 바꾸기…](fromExisting)는 기존 메서드를 **그대로** 보낸다 — 연결이 더 넓게 허용해도 넓히지 않는다(security F1).
+  // 범위·경로 칸도 잠근다: 이 모드에서 바꾸는 것은 「쓰기는 사람 글 턴만」과 만료뿐이다(designer D2).
+  const methods: ApiMethod[] = fromExisting
+    ? [...((existing?.limits?.methods ?? []) as ApiMethod[])]
+    : scope === 'read' ? ['GET'] : [...(c?.methods ?? [])];
   // 「지금 만료 유지」는 지금 grant 가 있고, 쓰기라면 그 만료가 있을 때만(무기한 쓰기는 서버가 거절한다).
   const keepOk = !!existing && (scope === 'read' || existing.expiresAt !== null) && (existing.expiresAt === null || Date.parse(existing.expiresAt) > Date.now());
   const effectiveExpiry: Expiry = (expiry === 'keep' && !keepOk) || (scope === 'write' && expiry === 'none') ? '7d' : expiry;
@@ -89,38 +93,43 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, on
   if (!connectors.length) return <p className="mt-2 text-meta text-fg-subtle" data-testid="api-grant-no-connector">{t('apiGrant.noConnector')}</p>;
 
   const seg = (on: boolean) => `rounded px-2 py-1 text-meta ${on ? 'bg-accent text-fg-on-strong' : 'border border-border text-fg hover:bg-surface-hover'}`;
-  const describe = (methods: readonly string[], prefix: string, until: string | null) =>
-    `${methods.some((m) => m !== 'GET') ? t('apiGrant.rowWrite') : t('apiGrant.rowRead')} ${prefix || '—'}${until ? ` · ${t('agents.grants.expiresOn', { when: new Date(until).toLocaleDateString(locale) })}` : ''}`;
+  // 메서드를 글자로 적는다 — 「읽기+쓰기」만으로는 메서드가 넓어진 것이 안 보인다(security F1).
+  const describe = (methods: readonly string[], prefix: string, until: string) =>
+    `${methods.some((m) => m !== 'GET') ? t('apiGrant.rowWrite') : t('apiGrant.rowRead')} (${methods.join('·')}) ${prefix || '—'} · ${until}`;
+  const untilText = (iso: string | null) => (iso === null ? t('agents.grants.noExpiry') : t('agents.grants.expiresOn', { when: new Date(iso).toLocaleDateString(locale) }));
+  // 「바꿀 값」의 만료(designer n5): 유지면 지금 날짜, 아니면 고른 칸.
+  const nextUntil = effectiveExpiry === 'keep' ? untilText(existing?.expiresAt ?? null)
+    : effectiveExpiry === 'none' ? t('agents.grants.noExpiry') : t(effectiveExpiry === '7d' ? 'apiGrant.expiry7d' : 'apiGrant.expiry30d');
   return (
     <div className="mt-2 space-y-2 rounded border border-border bg-surface-sunken p-2 text-meta text-fg" data-testid="api-grant-form">
       {existing && (
         <div className="rounded border border-warning-border bg-warning-surface px-2 py-1 text-warning" data-testid="api-grant-replace">
-          <div>{t('apiGrant.now', { what: describe(existing.limits?.methods ?? [], existing.limits?.pathPrefix ?? '', existing.expiresAt) })}</div>
-          <div>{t('apiGrant.next', { what: describe(methods, pathPrefix, null) })}</div>
+          <div>{t('apiGrant.now', { what: describe(existing.limits?.methods ?? [], existing.limits?.pathPrefix ?? '', untilText(existing.expiresAt)) })}</div>
+          <div>{t('apiGrant.next', { what: describe(methods, pathPrefix, nextUntil) })}</div>
           <div>{t('apiGrant.replaceNote')}</div>
           {existing.expiresAt !== null && Date.parse(existing.expiresAt) <= Date.now() && <div data-testid="api-grant-expired">{t('apiGrant.expiredRenew')}</div>}
         </div>
       )}
       <label className="flex flex-col gap-1">
         {t('apiGrant.connector')}
-        <select aria-label={t('apiGrant.connector')} className="rounded border border-border bg-surface px-2 py-1" value={connectorId} disabled={busy || !!initial}
+        <select aria-label={t('apiGrant.connector')} className="rounded border border-border bg-surface px-2 py-1" value={connectorId} disabled={busy || !!initial || fromExisting}
           onChange={(e) => { setConnectorId(e.target.value); setScope('read'); setHumanOnly(null); }}>
           {connectors.map((x) => <option key={x.id} value={x.id}>{x.name} — {x.baseUrl}</option>)}
         </select>
       </label>
       <div role="radiogroup" aria-label={t('apiGrant.scope')} className="flex flex-wrap items-center gap-2">
         <span>{t('apiGrant.scope')}</span>
-        <button type="button" role="radio" aria-checked={scope === 'read'} className={seg(scope === 'read')} disabled={busy} onClick={() => setScope('read')}>{t('apiGrant.read')}</button>
+        <button type="button" role="radio" aria-checked={scope === 'read'} className={seg(scope === 'read')} disabled={busy || fromExisting} onClick={() => setScope('read')}>{t('apiGrant.read')}</button>
         {canWrite && (
-          <button type="button" role="radio" aria-checked={scope === 'write'} className={seg(scope === 'write')} disabled={busy}
+          <button type="button" role="radio" aria-checked={scope === 'write'} className={seg(scope === 'write')} disabled={busy || fromExisting}
             onClick={() => { setScope('write'); if (expiry === 'none') setExpiry('7d'); }}>
-            {t('apiGrant.write', { methods: (c?.methods ?? []).join('·') })}
+            {t('apiGrant.write', { methods: (fromExisting && scope === 'write' ? methods : c?.methods ?? []).join('·') })}
           </button>
         )}
       </div>
       <label className="flex flex-col gap-1">
         {t('apiGrant.path')}
-        <input aria-label={t('apiGrant.path')} className="rounded border border-border bg-surface px-2 py-1 font-mono" value={pathPrefix} disabled={busy} onChange={(e) => setPathPrefix(e.target.value)} />
+        <input aria-label={t('apiGrant.path')} className="rounded border border-border bg-surface px-2 py-1 font-mono" value={pathPrefix} disabled={busy || fromExisting} onChange={(e) => setPathPrefix(e.target.value)} />
         {pathPrefix === '' ? <span className="text-warning" data-testid="api-grant-path-unknown">{t('apiGrant.pathUnknown')}</span>
           : !pathOk && <span className="text-warning">{t('apiGrant.pathBad')}</span>}
       </label>

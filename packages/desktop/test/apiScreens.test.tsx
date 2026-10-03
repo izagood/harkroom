@@ -168,8 +168,8 @@ describe('BlockedCard', () => {
     render(<BlockedCard message={msg({ path: '/admin/x', method: 'GET', code: 'path_not_allowed' })} onOpenSettings={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: '권한 주기…' }));
     const box = await screen.findByTestId('api-grant-replace');
-    expect(box.textContent).toContain('지금: 읽기+쓰기 /api/');
-    expect(box.textContent).toContain('바꿀 값: 읽기만 /admin/');
+    expect(box.textContent).toContain('지금: 읽기+쓰기 (GET·POST) /api/');
+    expect(box.textContent).toContain('바꿀 값: 읽기만 (GET) /admin/');
     expect(box.textContent).toContain('주면 지금 권한을 대신한다');
     expect(screen.getByRole('button', { name: '바꾸기' })).toBeTruthy();
   });
@@ -192,6 +192,38 @@ describe('BlockedCard', () => {
     expect((c.putGrant.mock.calls[0] as unknown as [string, Record<string, unknown>])[1]).toMatchObject({
       limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: until, writeNeedsHumanCause: false, delegateDepth: 2,
     });
+  });
+
+  it('F1: [설정 바꾸기…]는 연결이 더 넓어도 기존 메서드를 그대로 보내고, 범위·경로는 잠근다', async () => {
+    const until = new Date(Date.now() + 5 * 86_400_000).toISOString();
+    const wide = conn({ methods: ['GET', 'POST', 'PUT', 'DELETE'] });
+    const c = setup({ listConnectors: vi.fn(async () => [wide]), listGrants: vi.fn(async () => [{ accountId: 'agent-1', capability: 'api.call', scope: `connector:${wide.id}`, grantedBy: ME, grantedAt: '', expiresAt: until,
+      limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, writeNeedsHumanCause: true, delegateDepth: 0 }]) });
+    render(<BlockedCard message={msg({ code: 'cause_not_human', method: 'POST', path: '/api/x' })} onOpenSettings={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: '설정 바꾸기…' }));
+    const form = await screen.findByTestId('api-grant-form');
+    expect((within(form).getByLabelText('경로 (이것으로 시작하는 경로만)') as HTMLInputElement).disabled).toBe(true);
+    expect((within(form).getByRole('radio', { name: '읽기만 (GET)' }) as HTMLButtonElement).disabled).toBe(true);
+    const box = within(form).getByTestId('api-grant-replace').textContent ?? '';
+    expect(box).toContain('바꿀 값: 읽기+쓰기 (GET·POST) /api/');
+    expect(box).not.toContain('PUT');
+    fireEvent.click(within(form).getByRole('radio', { name: '에이전트가 시킨 턴에서도' }));
+    fireEvent.click(within(form).getByRole('button', { name: '바꾸기' }));
+    await waitFor(() => expect(c.putGrant).toHaveBeenCalled());
+    expect((c.putGrant.mock.calls[0] as unknown as [string, { limits: { methods: string[] } }])[1].limits.methods).toEqual(['GET', 'POST']);
+  });
+
+  it('n5·[바꾸기]: 「바꿀 값」에 메서드와 고른 만료를 적는다', async () => {
+    const until = new Date(Date.now() + 5 * 86_400_000).toISOString();
+    setup({ listGrants: vi.fn(async () => [{ accountId: 'agent-1', capability: 'api.call', scope: `connector:${conn().id}`, grantedBy: ME, grantedAt: '', expiresAt: until,
+      limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, writeNeedsHumanCause: false }]) });
+    render(<BlockedCard message={msg({ path: '/admin/x', method: 'GET', code: 'path_not_allowed' })} onOpenSettings={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: '권한 주기…' }));
+    const box = await screen.findByTestId('api-grant-replace');
+    expect(box.textContent).toContain('지금: 읽기+쓰기 (GET·POST) /api/');
+    expect(box.textContent).toContain('바꿀 값: 읽기만 (GET) /admin/ · 7일');
+    fireEvent.click(screen.getByRole('radio', { name: '30일' }));
+    expect(screen.getByTestId('api-grant-replace').textContent).toContain('/admin/ · 30일');
   });
 
   it('대화상자를 닫았다 다시 열면 grant 를 새로 읽는다(security D1 메모)', async () => {
