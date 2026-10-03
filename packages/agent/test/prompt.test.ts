@@ -720,6 +720,16 @@ describe('메모리 주입 (#139)', () => {
     expect(s).toContain('invalid_slug');
   });
 
+  // C2: 정리 도구(C1)를 프롬프트가 말해야 쓰인다(message.delegate 가 안 쓰인 교훈). 지우기 대신 보관이 기본이다.
+  it('정리 절차를 적는다 — 임대·audit·merge·archive·restore, 삭제는 예외로만', () => {
+    const s = build({ core: '본문', slugs: [] });
+    for (const tool of ['memory.lease', 'memory.audit', 'memory.merge', 'memory.archive', 'memory.unarchive', 'memory.restore']) {
+      expect(s).toContain(tool);
+    }
+    expect(s).not.toContain('남길 값이 없어진 것은 `memory.set` 에 `value: null` 을 줘서 지운다');
+    expect(s.indexOf('</memory>')).toBeLessThan(s.indexOf('memory.archive'));
+  });
+
   // 사용법은 `</memory>` **바깥**에 선다 — 안은 데이터, 밖은 지시다.
   it('사용법은 memory 블록 바깥에 있다', () => {
     const s = build({ core: '본문', slugs: [] });

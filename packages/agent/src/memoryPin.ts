@@ -23,7 +23,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { MAX_MEMORY_ITEMS_PER_ACCOUNT } from '@harkroom/shared';
+import {
+  JOURNAL_EXPIRING_WINDOW, MAX_CORE_MEMORY_LENGTH, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MAX_MEMORY_ITEMS_PER_ACCOUNT,
+  MEMORY_CORE_WARN_CHARS, MEMORY_ITEMS_WARN_COUNT,
+} from '@harkroom/shared';
 import { escapeForPrompt, staleMemoryLines, type MemoryContext } from './prompt.js';
 
 export const MEMORY_PIN_DIR = 'memory-pins';
@@ -45,6 +48,8 @@ interface PinState {
   recalled?: string[];
   /** 스레드 루트 글의 머리(S2 F2). 루트를 본 턴에 적어 두고, 루트가 안 읽히는 후속 턴의 recall 질의에 붙인다. */
   rootHead?: string;
+  /** 이 세션에 이미 알린 정리 신호(C2, `MemorySignal`). 새로 생긴 신호만 다음 턴에 알린다. */
+  announcedSignals?: string[];
 }
 
 /** 러너가 요청 본문으로 찾은 기억(서버 `memory.search`, includeValue). */
@@ -79,10 +84,38 @@ export function recallKey(h: { slug: string; updatedAt?: string }): string {
 const isRecalled = (skip: Set<string>, h: RecallHit): boolean => skip.has(recallKey(h)) || skip.has(h.slug);
 
 /**
- * 기억 개수가 상한(200)의 이만큼에 닿으면 목록에 경고를 싣는다(S2 F3). 상한에 닿으면 `memory.set` 이
- * `too_many` 로 거절할 뿐이고 topic 은 아무도 안 지운다 — 막히기 전에 에이전트가 정리하게 한다.
+ * 정리 신호(메모리 C2). 서버 `memory.set` 응답의 `warnings`(C1)와 같은 셋을 같은 문턱(`@harkroom/shared`)으로
+ * 러너가 다시 센다 — 쓰기 응답은 그 쓰기를 한 턴만 보고, 상한은 다른 스레드의 쓰기로도 차기 때문이다.
+ * 상한에 닿으면 서버는 거절할 뿐이고 아무도 대신 줄이지 않는다 — 막히기 전에 에이전트가 정리하게 한다.
  */
-export const MEMORY_COUNT_WARN_RATIO = 0.9;
+export type MemorySignal = 'core_near_limit' | 'items_near_limit' | 'journal_expiring';
+
+const num = (n: number) => n.toLocaleString('en-US');
+
+/** 지금 기억에서 켜진 정리 신호와 그 줄. 보관(C1)한 것은 서버 목록에서 이미 빠져 있다. */
+export function memorySignals(core: string | null, total: number, journalCount: number): { codes: MemorySignal[]; lines: string[] } {
+  const codes: MemorySignal[] = [];
+  const lines: string[] = [];
+  if (core !== null && core.length >= MEMORY_CORE_WARN_CHARS) {
+    codes.push('core_near_limit');
+    lines.push(`- core ${num(core.length)}/${num(MAX_CORE_MEMORY_LENGTH)}자 — 넘기면 \`core_too_long\` 으로 거절된다.`
+      + ' 한 주제인 절(## 제목)은 `mem/*` 로 내리고 core 에는 포인터 한 줄만 남겨라.');
+  }
+  if (total >= MEMORY_ITEMS_WARN_COUNT) {
+    codes.push('items_near_limit');
+    lines.push(`- 기억 ${total}/${MAX_MEMORY_ITEMS_PER_ACCOUNT}개 — 닿으면 새 기억은 \`too_many\` 로 거절된다.`
+      + ' `memory.audit` 으로 후보를 받아 같은 주제는 `memory.merge` 로 합치고, 안 쓰는 것은 지우지 말고 `memory.archive` 로 보관하라.');
+  }
+  if (journalCount > MAX_JOURNAL_MEMORIES_PER_ACCOUNT - JOURNAL_EXPIRING_WINDOW) {
+    codes.push('journal_expiring');
+    lines.push(`- journal ${journalCount}/${MAX_JOURNAL_MEMORIES_PER_ACCOUNT}개 — 넘치면 오래된 것부터 밀려난다.`
+      + ' 되풀이할 교훈이 남은 것은 topic 으로 증류하라(`memory.audit` 의 `expiringJournal`).');
+  }
+  if (lines.length) {
+    lines.unshift('정리 신호(이 턴의 일을 마친 뒤 정리하라 — 다른 턴과 겹치지 않게 `memory.lease` 를 먼저 잡는다):');
+  }
+  return { codes, lines };
+}
 
 /**
  * 자동 주입 기준. 새 서버는 이름·요약 일치(`nameHits ≥ 1`)를 이미 걸러 주고, 옛 서버에는 점수로만
@@ -122,6 +155,8 @@ async function loadPin(file: string): Promise<PinState | null> {
       announcedSlugs: p.announcedSlugs.filter((s): s is string => typeof s === 'string'),
       recalled: Array.isArray(p.recalled) ? p.recalled.filter((s): s is string => typeof s === 'string') : [],
       ...(typeof p.rootHead === 'string' ? { rootHead: p.rootHead } : {}),
+      ...(Array.isArray(p.announcedSignals)
+        ? { announcedSignals: p.announcedSignals.filter((s): s is string => typeof s === 'string') } : {}),
     };
   } catch {
     return null;
@@ -135,25 +170,20 @@ function entryLine(slug: string, descriptions: Record<string, string> | undefine
 }
 
 /**
- * 개수 줄(F3). 서버 상한은 core·journal 까지 센 행 수다. 상한에 가까우면 무엇을 지울지까지 말한다.
+ * 목록(F3·C2). 정리 신호는 **머리**에 — 목록이 길면 끝 줄은 묻힌다. 개수 줄은 늘 끝에 둔다: 서버 상한은
+ * 보관하지 않은 core·journal 까지 센 행 수다.
  */
-function countLines(total: number): string[] {
-  const line = `(기억 ${total}/${MAX_MEMORY_ITEMS_PER_ACCOUNT}개 — core·journal 포함)`;
-  if (total < Math.floor(MAX_MEMORY_ITEMS_PER_ACCOUNT * MEMORY_COUNT_WARN_RATIO)) return [line];
-  return [
-    `${line} **상한에 가깝다** — 닿으면 새 기억은 \`too_many\` 로 거절된다. 새로 만들기 전에 끝난 journal·낡은 topic 을`
-      + ' `memory.set` 의 `value: null` 로 지우거나 비슷한 것을 합쳐라(`memory.audit` 이 후보를 준다).',
-  ];
-}
-
-function indexLines(slugs: string[], descriptions: Record<string, string> | undefined, journalCount = 0, total = 0): string[] {
+function indexLines(
+  slugs: string[], descriptions: Record<string, string> | undefined, journalCount: number, total: number, signals: string[],
+): string[] {
   if (!slugs.length && !journalCount) return [];
   return [
     '<memory-index>',
+    ...signals, ...(signals.length ? [''] : []),
     '저장된 기억(본문은 필요할 때 `memory.get` 으로 가져온다 — 이름만으로 짐작되지 않으면 열어 본다):',
     ...slugs.map((s) => entryLine(s, descriptions)),
     ...(journalCount ? [`(작업 경위 기록 journal ${journalCount}개는 목록에 싣지 않는다 — \`memory.search\` 로 찾는다.)`] : []),
-    ...countLines(total),
+    `(기억 ${total}/${MAX_MEMORY_ITEMS_PER_ACCOUNT}개 — core·journal 포함, 보관한 것은 빼고)`,
     '</memory-index>',
   ];
 }
@@ -184,6 +214,7 @@ export async function planMemory(opts: {
   const visible = memory.slugs.filter((s) => !isJournal(s));
   const journalCount = memory.slugs.length - visible.length;
   const total = memory.slugs.length + (memory.core !== null ? 1 : 0);
+  const signals = memorySignals(memory.core, total, journalCount);
 
   const pin = opts.isFirstTurn ? null : await loadPin(file);
   const pinUsable = pin !== null
@@ -212,13 +243,14 @@ export async function planMemory(opts: {
 
   if (!pinUsable) {
     // 새 세션(또는 고정을 잃었다): 지금 값으로 고정하고 목록 전체를 싣는다.
-    const lines = [...indexLines(visible, memory.descriptions, journalCount, total), ...recall.lines, ...stale];
+    const lines = [...indexLines(visible, memory.descriptions, journalCount, total, signals.lines), ...recall.lines, ...stale];
     return {
       system: { core: memory.core, slugs: memory.slugs },
       turnLines: trimLeading(lines),
       commit: save({
         sessionId: opts.sessionId, systemCore: memory.core,
         announcedCoreSha: sha(memory.core), announcedSlugs: visible, recalled, ...keep,
+        announcedSignals: signals.codes,
       }),
     };
   }
@@ -230,15 +262,17 @@ export async function planMemory(opts: {
   const now = new Set(visible);
   const added = visible.filter((s) => !seen.has(s));
   const removed = pin.announcedSlugs.filter((s) => !now.has(s));
-  if (coreChanged || added.length || removed.length) {
+  // 세션 도중 새로 켜진 정리 신호만 알린다 — 첫 턴 목록에서 이미 본 것을 턴마다 되풀이하면 대화 기록에 쌓인다.
+  // 꺼졌다 다시 켜진 것은 다시 알린다(announcedSignals 를 지금 값으로 덮으므로).
+  const announcedSignals = new Set(pin.announcedSignals ?? []);
+  const newSignal = signals.codes.some((c) => !announcedSignals.has(c));
+  if (coreChanged || added.length || removed.length || newSignal) {
     lines.push('<memory-update>', '이 세션이 시작된 뒤 기억이 바뀌었다 — 시스템 프롬프트의 `<memory>` 보다 이것이 지금 값이다.');
     if (coreChanged && memory.core !== null) {
       lines.push('', '지금 core 전문:', escapeForPrompt(memory.core));
     }
     if (added.length) lines.push('', '새로 생긴 기억:', ...added.map((s) => entryLine(s, memory.descriptions)));
-    // 세션 도중 상한 가까이 불어났으면 여기서도 알린다(첫 턴 목록은 이미 지나갔다).
-    const counted = countLines(total);
-    if (added.length && counted.length && counted[0]!.includes('상한에 가깝다')) lines.push('', ...counted);
+    if (newSignal) lines.push('', ...signals.lines);
     if (removed.length) lines.push('', '지워진 기억:', ...removed.map((s) => `- ${escapeForPrompt(s)}`));
     lines.push('</memory-update>');
   }
@@ -247,7 +281,7 @@ export async function planMemory(opts: {
     // slugs 는 "비었는가" 판정에만 쓰인다 — 목록 자체는 시스템 프롬프트에 안 실린다.
     system: { core: pin.systemCore, slugs: memory.slugs },
     turnLines: trimLeading(lines),
-    commit: save({ ...pin, announcedCoreSha: coreSha, announcedSlugs: visible, recalled, ...keep }),
+    commit: save({ ...pin, announcedCoreSha: coreSha, announcedSlugs: visible, recalled, ...keep, announcedSignals: signals.codes }),
   };
 }
 

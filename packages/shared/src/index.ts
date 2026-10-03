@@ -3591,6 +3591,14 @@ export const MEMORY_KINDS = ['topic', 'procedure', 'journal'] as const;
 export type MemoryKind = typeof MEMORY_KINDS[number];
 /** 에이전트마다 두는 journal 수. 넘치면 오래된 것부터 이전 판으로 옮기며 지운다. */
 export const MAX_JOURNAL_MEMORIES_PER_ACCOUNT = 60;
+/**
+ * "곧 넘친다" 경고 문턱(메모리 C1·C2). 서버는 `memory.set` 응답의 `warnings` 로, 러너는 다음 턴
+ * `<memory-index>` 머리 줄로 같은 문턱을 쓴다 — 두 자리가 다른 숫자를 말하지 않게 여기 둔다. 추정값, 실측 뒤 조정.
+ */
+export const MEMORY_CORE_WARN_CHARS = 2600;
+export const MEMORY_ITEMS_WARN_COUNT = 180;
+/** journal 이 상한에서 이만큼 안쪽이면 "곧 밀려날 것"으로 알린다. 증류할 교훈이 있으면 topic 으로 올린다. */
+export const JOURNAL_EXPIRING_WINDOW = 5;
 
 export * from './permissions.js';
 export * from './threadStatus.js';

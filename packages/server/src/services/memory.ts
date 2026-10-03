@@ -4,12 +4,12 @@ import type { Pool } from 'pg';
 // 데스크탑은 이 패키지를 import 할 수 없다. 여기서는 다시 내보내기만 한다.
 import {
   MAX_CORE_MEMORY_LENGTH, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MAX_MEMORY_DESCRIPTION_LENGTH, MAX_MEMORY_ITEMS_PER_ACCOUNT,
-  MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, type MemoryKind,
+  MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, JOURNAL_EXPIRING_WINDOW, type MemoryKind,
 } from '@harkroom/shared';
 
 export {
   MAX_CORE_MEMORY_LENGTH, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MAX_MEMORY_DESCRIPTION_LENGTH, MAX_MEMORY_ITEMS_PER_ACCOUNT,
-  MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, type MemoryKind,
+  MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, JOURNAL_EXPIRING_WINDOW, type MemoryKind,
 };
 
 /** slug 마다 남기는 이전 판 수(069). 되돌릴 길이면 되고, 역사서가 아니다. */
@@ -661,8 +661,6 @@ const AUDIT_LIST_CAP = 30;
 export const AUDIT_OLD_DAYS = 90;
 /** 본문 낱말 자카드가 이 이상이면 같은 주제를 두 번 적었을 가능성 — 합칠 후보(C1). */
 export const AUDIT_BODY_SIMILARITY = 0.5;
-/** journal 이 상한에서 이만큼 안쪽이면 "곧 밀려날 것"으로 알린다(C1). 증류할 교훈이 있으면 topic 으로 올린다. */
-export const JOURNAL_EXPIRING_WINDOW = 5;
 const AUDIT_LARGEST_CAP = 10;
 
 export interface MemoryAudit {
