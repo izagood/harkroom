@@ -366,6 +366,36 @@ describe('memory MCP tools', () => {
     }
   });
 
+  // G: focus(새 말)를 주면 서버가 후속 턴 게이트를 걸고, recordTop 은 게이트를 지난 것만 센다.
+  it('memory.search recall focus gates on fresh-message terms, returns focusTerms/termHits, counts only gated hits', async () => {
+    const { accountId, pat } = await createAgent(app, adminToken, 'recall-focus-agent');
+    const client = await mcpClient(pat);
+    try {
+      await callTool(client, 'memory.set', { slug: 'mem/deploy-recipe', value: '절차', description: '배포 절차' });
+      await callTool(client, 'memory.set', { slug: 'mem/deploy-rollback', value: '되돌림', description: '배포 되돌림' });
+      const query = '배포 절차를 고쳐 달라\n되돌림도 봐';
+      const plain = await callTool(client, 'memory.search', { query, recall: true, includeValue: true });
+      expect(plain.focusTerms).toBeUndefined();
+      expect((plain.hits as { slug: string }[]).map((h) => h.slug)).toContain('mem/deploy-recipe');
+
+      const gated = await callTool(client, 'memory.search', { query, focus: '되돌림도 봐', recall: true, includeValue: true, recordTop: 2 });
+      expect(gated.focusTerms).toEqual(['되돌림']);
+      expect((gated.hits as { slug: string; termHits: string[] }[]).map((h) => [h.slug, h.termHits]))
+        .toEqual([['mem/deploy-rollback', expect.arrayContaining(['되돌림', '배포'])]]);
+      const counts = (await pool.query(
+        `select slug, recall_count from agent_memory where account_id = $1 order by slug`, [accountId],
+      )).rows.map((r: { slug: string; recall_count: number }) => [r.slug, r.recall_count]);
+      expect(counts).toEqual([['mem/deploy-recipe', 0], ['mem/deploy-rollback', 1]]);
+
+      // 새 말에 낱말이 없으면(기호뿐) 루트 낱말만으로는 아무것도 안 준다.
+      const empty = await callTool(client, 'memory.search', { query, focus: '!!! ---', recall: true, includeValue: true });
+      expect(empty.focusTerms).toEqual([]);
+      expect(empty.hits).toEqual([]);
+    } finally {
+      await client.close();
+    }
+  });
+
   // F9: 목록이 30개에서 잘리면 truncated 로 알린다.
   it('memory.audit says truncated when a list is cut at 30', async () => {
     const { pat } = await createAgent(app, adminToken, 'audit-trunc-agent');
