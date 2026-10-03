@@ -96,6 +96,15 @@ const releaseHandoverHold = (): void => {
   console.log('[main] 오퍼레이터가 이관 보류를 풀었다 — 앞 러너가 물러났다');
   handoverHeld.clear();
 };
+/**
+ * 앞 러너가 **끝냈는데 읽음 처리만 못 한** entry(`HARKROOM_HANDOVER_DONE`, 2026-10-03 L2). 보류와 달리
+ * 풀 것이 없다 — 기다릴 턴이 없으므로 스케줄러가 이것들은 턴 없이 읽음 처리만 한다(`doneUnread` 에 심는다).
+ */
+const handoverDone = new Set<number>(
+  (process.env.HARKROOM_HANDOVER_DONE ?? '')
+    .split(',').map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0),
+);
+if (handoverDone.size) console.log(`[main] 이관: 앞 러너가 끝냈지만 읽음 처리 못 한 entry ${[...handoverDone].join(',')} — 턴 없이 읽음 처리만 한다`);
 
 const relay = createRelayClient({
   link: config.operatorLink,
@@ -491,7 +500,7 @@ const secretLeases = createSecretLeases({
 const threadClaims = createThreadClaims({ client: harkroom, holder: randomUUID() });
 
 const scheduler = createMentionScheduler({
-  harkroom, registry, queue: mentionQueue, heldEntryIds, secretLeases, threadClaims,
+  harkroom, registry, queue: mentionQueue, heldEntryIds, handoverDone, secretLeases, threadClaims,
   turnSlots: { acquire: (key) => harkroom.acquireTurnSlot(key), release: (key) => harkroom.releaseTurnSlot(key) },
   // **턴마다** 축을 다시 읽는다 — 지운 계정은 빠지고 새 계정은 들어온다(`createLiveAccountLane`).
   accountLane: async () => (await liveLane.current()).lane,
@@ -658,8 +667,9 @@ while (running) {
 // **여기가 "인박스를 놓았다"의 정확한 순간이다.** 시그널 핸들러에서 알리면 거짓말이 된다 —
 // 그때는 배치 하나가 아직 돌고 있어서 새 항목을 더 집을 수 있다. 이 줄에 와서야 admit 이
 // 끝났고, 그래서 오퍼레이터가 **프로세스가 죽기를 기다리지 않고** 교체 러너를 띄워도 된다.
-// 아직 도는 턴의 entry 는 함께 넘겨 교체 러너가 그것만 건너뛰게 한다.
-relay.notifyPollStopped(scheduler.holdingEntries());
+// 아직 도는 턴의 entry 는 함께 넘겨 교체 러너가 그것만 건너뛰게 한다. 끝났는데 읽음 처리만 못 한
+// entry 는 따로 넘긴다 — 교체 러너는 그것을 기다리지 않고 읽음 처리만 한다(L2).
+relay.notifyPollStopped(scheduler.holdingEntries(), scheduler.doneEntries());
 await scheduler.drain();
 // 멘션을 놓는 길에 기록 가리기(D7)가 돌고 있을 수 있다 — 끝 통지도 그 뒤에 나간다. relay 를 끊기 전에
 // 짧게 기다린다. 넘으면 그냥 물러난다: 임대는 만료되고 오퍼레이터가 파일을 지운다(기록은 가려지지 않은 채 남는다).

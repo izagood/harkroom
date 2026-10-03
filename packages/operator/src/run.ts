@@ -278,7 +278,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
         void handleMcpAuthRejected(agentId, runnerId, notice.servers.slice(0, MAX_REJECTED_PER_NOTICE), notice.turnStartedAtMs);
         return;
       }
-      registry.notePollStopped(agentId, runnerId, notice.holding);
+      registry.notePollStopped(agentId, runnerId, notice.holding, notice.done ?? []);
       log(`러너가 인박스를 놓았다: agent=${agentId} runnerId=${runnerId} 진행 중인 턴 ${notice.holding.length}개 — 교체를 띄운다`);
       // 배정이 5초 주기로 다시 시도하므로 여기서 직접 spawn 하지 않는다. 그 주기가 곧
       // 공백의 상한이다(예전에는 "남은 턴이 끝날 때까지" 였다).
