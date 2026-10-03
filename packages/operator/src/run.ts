@@ -45,6 +45,7 @@ import type { CommunityInstance } from './community.js';
 import { createTurnSecrets } from './turnSecrets.js';
 import { readConfig } from './config.js';
 import { createTurnMerge, GH_PATH } from './turnMerge.js';
+import { createTurnApi } from './turnApi.js';
 import { createTurnSlots, MAX_TURNS_ENV, parseMaxTurns } from './turnSlots.js';
 import { createTurnUploads } from './turnUploads.js';
 
@@ -221,6 +222,16 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     home: homedir(),
     ghUser: async () => (await readConfig(join(appDataDir, 'operator', 'operator.json'))).merge?.ghUser,
   });
+  // 외부 API 래퍼(C안 P3, 스레드 07519d86). 브릿지 소켓으로 온 `api.call` 을 여기서 받아 서버 판정 → 키를 붙여 호출 → 결과
+  // 보고를 한다. 키는 이 프로세스 밖으로 나가지 않는다. 임대는 머지와 같이 `turnSecrets` 의 것을 쓴다.
+  const turnApi = createTurnApi({
+    forward: async (agentId, req) => {
+      const c = communities.find((x) => x.knowsAgent(agentId));
+      return c ? c.forward(agentId, req) : { type: 'http.response', id: req.id, status: 0, body: '이 에이전트를 아는 커뮤니티가 없다' };
+    },
+    lookupLease: (runnerId, cause) => turnSecrets.lookup(runnerId, cause),
+    log,
+  });
   // 턴 파일 올리기(미리보기 PR ③). 브릿지의 `attachment.upload{path}` 를 여기서 받아 워크스페이스 안의 파일을
   // 서버 `/uploads` 로 올린다 — 모델이 바이너리를 base64 로 쓰지 않게(`turnUploads.ts`).
   const turnUploads = createTurnUploads({
@@ -250,6 +261,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       if (mounted) return mounted;
       const merged = await turnMerge.maybeHandle(runnerId, agentId, req);
       if (merged) return merged;
+      const called = await turnApi.maybeHandle(runnerId, agentId, req);
+      if (called) return called;
       const uploaded = await turnUploads.maybeHandle(agentId, req);
       if (uploaded) return uploaded;
       const c = communities.find((x) => x.knowsAgent(agentId));

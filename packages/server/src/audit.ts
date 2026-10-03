@@ -53,6 +53,7 @@ export type AuditAction =
   | 'secret.lease.conflict'
   // 에이전트 머지 권한(090, 스레드 3deac356): 래퍼의 판정 요청·거절·보고. detail 에 저장소·PR·sha·임대만, 본문 없음.
   | 'repo.merge.checked' | 'repo.merge.denied' | 'repo.merge.merged' | 'repo.merge.failed'
+  | 'api.call.checked' | 'api.call.denied' | 'api.call.done'
   // 본문 거절(D5) — 에이전트의 글에 grant 받은 비밀 값이 있어서 막았다. detail 은 표면·비밀 이름·id 만.
   | 'secret.leak.blocked'
   // 오퍼레이터·배정(스펙 2026-09-20 §3).

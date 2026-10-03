@@ -933,6 +933,16 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
     expect(args.join(' ')).not.toContain('izagood');
   });
 
+  it('api.call 연결이 있을 때만 api 래퍼 allow 가 붙는다(C안 P3) — 머지 allow 와 함께, 연결 이름은 싣지 않는다', () => {
+    const only = buildTurnCommand({ ...common, mode: 'mention', apiConnectors: ['forge'] }).args;
+    expect(after(only, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator api:*)']);
+    expect(only.join(' ')).not.toContain('forge');
+    const both = buildTurnCommand({ ...common, mode: 'mention', mergeRepos: ['izagood/harkroom'], apiConnectors: ['forge'] }).args;
+    expect(after(both, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator merge:*)', 'Bash(/opt/harkroom/harkroom-operator api:*)']);
+    const ro = buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly', apiConnectors: ['forge'] }).args;
+    expect(ro).not.toContain('--allowedTools');
+  });
+
   it('readonly(plan) 턴과 인터랙티브 턴은 argv 를 그대로 둔다 — --permission-mode 도 바뀌지 않는다', () => {
     const ro = buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly', mergeRepos: ['izagood/harkroom'] }).args;
     expect(ro).not.toContain('--disallowedTools');

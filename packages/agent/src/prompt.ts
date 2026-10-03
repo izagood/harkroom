@@ -693,8 +693,10 @@ export function buildSystemPrompt(opts: {
    * `gh pr merge` 를 치고 deny 규칙에 걸려 분류기 운에 기댄다. 없으면(옛 호출부) 이 절을 아예 뺀다.
    */
   merge?: { operatorBin: string; repos: readonly string[] };
+  /** 외부 API 권한(C안 P3). 연결이 비면 절을 빼지 않고 "키를 채팅에서 찾지 마라"만 적는다. 없으면(옛 호출부) 뺀다. */
+  api?: { operatorBin: string; connectors: readonly string[] };
 }): string {
-  const { handle, channelName, instructions, guide, memory, turnBudgetMs, merge } = opts;
+  const { handle, channelName, instructions, guide, memory, turnBudgetMs, merge, api } = opts;
   const budgetMinutes = turnBudgetMs === undefined ? null : Math.floor(turnBudgetMs / 60_000);
   return [
     `너는 harkroom 워크스페이스의 에이전트 @${handle} 이고, 지금 #${channelName} 에서 말한다.`,
@@ -738,6 +740,7 @@ export function buildSystemPrompt(opts: {
     // 이미 갖고 있고, PR 을 나중에 읽는 사람에게 중요한 것은 **어느 에이전트가 열었는가**다.
     // 하네스를 굳이 남기려면 문장 가운데가 아니라 뒤에 따로 붙여야 갈아끼울 수 있다.
     ...(merge ? mergeSection(merge) : []),
+    ...(api ? apiSection(api) : []),
     '저장소에 PR 을 열면 본문 **맨 끝**에 이 줄을 넣는다:',
     '',
     `🤖 Opened by \`@${handle}\`, an agent in [Harkroom](${HARKROOM_REPO_URL}) — a chat workspace where people and AI agents share channels.`,
@@ -922,6 +925,35 @@ export function buildSystemPrompt(opts: {
  * (mem/new-vocabulary-needs-a-prompt — `message.delegate` 가 한 번도 안 쓰인 사례). 그래서 여기서 `gh pr merge`
  * 를 이름 대어 금지한다. 저장소 이름은 서버에서 온 값이라 그대로 적는다.
  */
+/**
+ * 외부 API 절(C안 P3, 스레드 07519d86). 같은 PR 에서 새 래퍼를 쓰라고 적고, 10-03 사고의 옛 습관(채팅에서 키를 찾아 curl 에
+ * 넣기)을 이름 대어 금지한다. 연결 이름은 서버에서 온 값이다(이름 규칙을 러너가 한 번 더 걸렀다).
+ */
+function apiSection(api: { operatorBin: string; connectors: readonly string[] }): string[] {
+  const never = '**API 키·토큰을 채팅·옛 글·파일에서 찾아 쓰지 마라.** `curl -H \'Authorization: …\'` 처럼 명령에 키를 넣으면 막히고, 막힌 것을 다른 방법으로 돌아가지 않는다.';
+  if (!api.connectors.length) {
+    return [
+      never,
+      '이 에이전트에게 허락된 외부 API 연결이 없다. 외부 API 가 필요하면 사람에게 "설정 › 비밀과 API 에서 연결을 만들고',
+      '이 에이전트의 「할 수 있는 일」에서 권한을 달라"고 말하고 멈춘다.',
+      '',
+    ];
+  }
+  return [
+    `**외부 API 는 이 명령으로만 부른다**(허락된 연결: ${api.connectors.join(', ')}):`,
+    '',
+    `    ${api.operatorBin} api <연결> <GET|POST|PUT|PATCH|DELETE> </경로?질의> [--data @파일|'<JSON>'] [--content-type <형식>]`,
+    '',
+    '주소·키는 연결이 정한다 — 경로만 준다(전체 URL·헤더는 받지 않는다). 키는 네게 보이지 않고 오퍼레이터가 붙인다.',
+    '**명령 하나로만 부른다.** 뒤에 `;`·`&&`·`||`·`$?`·파이프·리다이렉션을 붙이지 않는다 — 붙이면 허용 규칙에 맞지 않아 막힌다.',
+    '결과는 JSON 한 줄이다(`status`·`body`·`exit`, 거절이면 `error.code`). 리다이렉트는 따라가지 않는다.',
+    '거절(`not_granted`·`method_not_allowed`·`path_not_allowed`·`expired`·`suspended`·`no_secret`)이면 그 코드와 요청을 사람에게',
+    '적고 멈춘다. 호출마다 서버가 이 스레드에 시스템 줄을 남긴다.',
+    never,
+    '',
+  ];
+}
+
 function mergeSection(merge: { operatorBin: string; repos: readonly string[] }): string[] {
   if (!merge.repos.length) {
     return [

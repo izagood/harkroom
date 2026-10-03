@@ -82,6 +82,8 @@ export interface BuildTurnCommandOptions {
   operatorBin: string;
   /** 서버가 이 에이전트에 머지를 허락한 저장소(`GET /agent/merge-grants`). 비면 allow 규칙을 안 준다. */
   mergeRepos?: readonly string[];
+  /** 서버가 이 에이전트에 api.call 을 허락한 연결(`GET /agent/api-grants`). 비면 allow 규칙을 안 준다. */
+  apiConnectors?: readonly string[];
   /** 개인 config.toml/MCP 를 상속하지 않는 Harkroom 전용 Codex 상태 루트. */
   codexHome: string;
   /**
@@ -168,7 +170,7 @@ interface HarnessPreset {
    * 같은 계정 풀을 쓰는 **모든** 에이전트에 퍼진다(09-30 결정). argv 는 이 턴, 이 에이전트뿐이다.
    * deny/allow 문법이 없는 하네스는 생략한다 — 그쪽은 프롬프트의 "머지는 래퍼로만" 한 줄뿐이다(한계, docs/agent-merge.md).
    */
-  permissionRules?(args: { mode: TurnMode; mentionPermission: MentionPermission; operatorBin: string; mergeRepos: readonly string[] }): string[];
+  permissionRules?(args: { mode: TurnMode; mentionPermission: MentionPermission; operatorBin: string; mergeRepos: readonly string[]; apiConnectors?: readonly string[] }): string[];
 }
 
 const CLAUDE_PRESET: HarnessPreset = {
@@ -253,11 +255,17 @@ const CLAUDE_PRESET: HarnessPreset = {
    * - allow 는 서버가 이 에이전트에 `repo.merge` grant 를 준 저장소가 하나라도 있을 때만, 래퍼의 **절대 경로 +
    *   서브커맨드** 접두로(T1c). 저장소 범위는 규칙이 아니라 서버·래퍼가 가른다.
    */
-  permissionRules: ({ mode, mentionPermission, operatorBin, mergeRepos }) => {
+  permissionRules: ({ mode, mentionPermission, operatorBin, mergeRepos, apiConnectors = [] }) => {
     if (mode !== 'mention' || mentionPermission !== 'auto') return [];
+    // api 래퍼(C안 P3)도 머지와 같은 모양이다: 절대 경로 + 서브커맨드 접두. 연결·메서드·경로 범위는 규칙이 아니라 서버가 가른다.
+    // `;`·`&&` 로 묶은 명령은 claude 가 조각마다 따로 판정하므로 이 규칙 하나로는 통과하지 않는다(프롬프트가 금지한다).
+    const allow = [
+      ...(mergeRepos.length ? [`Bash(${operatorBin} merge:*)`] : []),
+      ...(apiConnectors.length ? [`Bash(${operatorBin} api:*)`] : []),
+    ];
     return [
       '--disallowedTools', ...MERGE_DENY_RULES,
-      ...(mergeRepos.length ? ['--allowedTools', `Bash(${operatorBin} merge:*)`] : []),
+      ...(allow.length ? ['--allowedTools', ...allow] : []),
     ];
   },
 };
@@ -621,7 +629,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     ...preset.session(opts.sessionId, opts.isFirstTurn, opts.mode),
     ...preset.alwaysArgs(opts.mode),
     ...(opts.mode === 'mention' ? preset.permission[opts.mentionPermission] : []),
-    ...(preset.permissionRules?.({ mode: opts.mode, mentionPermission: opts.mentionPermission, operatorBin: opts.operatorBin, mergeRepos: opts.mergeRepos ?? [] }) ?? []),
+    ...(preset.permissionRules?.({ mode: opts.mode, mentionPermission: opts.mentionPermission, operatorBin: opts.operatorBin, mergeRepos: opts.mergeRepos ?? [], apiConnectors: opts.apiConnectors ?? [] }) ?? []),
     ...(readonlyByList ? ['--tools', opts.readonlyToolList as string] : []),
     // pi 의 세션 자리는 **저장소가 정할 수 있다**(`.pi/settings.json` 의 `sessionDir`, 신뢰 판정 전) —
     // CLI 인자로 러너 루트에 못박는다(`piHome.ts::piSessionsDir`, security U1).

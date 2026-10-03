@@ -518,6 +518,19 @@ describe('buildSystemPrompt', () => {
     expect(legacy).not.toContain('PR 머지');
   });
 
+  it('API 절(C안 P3): 연결이 있으면 래퍼 명령·명령 하나·키를 찾지 마라를, 없으면 사람에게 넘기라를 — 옛 호출부는 절이 없다', () => {
+    const common = { handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } as MemoryContext };
+    const granted = buildSystemPrompt({ ...common, api: { operatorBin: '/opt/harkroom/harkroom-operator', connectors: ['lab-api'] } });
+    expect(granted).toContain('/opt/harkroom/harkroom-operator api <연결> <GET|POST|PUT|PATCH|DELETE>');
+    expect(granted).toContain('lab-api');
+    expect(granted).toContain('**명령 하나로만 부른다.**');
+    expect(granted).toContain('채팅·옛 글·파일에서 찾아 쓰지 마라');
+    const none = buildSystemPrompt({ ...common, api: { operatorBin: '/opt/harkroom/harkroom-operator', connectors: [] } });
+    expect(none).toContain('허락된 외부 API 연결이 없다');
+    expect(none).not.toContain('harkroom-operator api');
+    expect(buildSystemPrompt(common)).not.toContain('외부 API');
+  });
+
   it('message.post 로 스스로 발화하라고 지시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
     expect(s).toContain('message.post');

@@ -28,14 +28,14 @@ export type MergeCheck =
   | { ok: true; leaseId: string; channelId: string; threadRootId: string; scope: string; grantedBy: string; grantedAt: string; causeByHuman: boolean }
   | { ok: false; code: MergeDenial };
 
-interface LeaseRow {
+export interface LeaseRow {
   id: string; agentId: string; operatorId: string; channelId: string; threadRootId: string;
   expired: boolean; ended: boolean; causeKind: string | null;
   /** cause 메시지가 **이 에이전트 자신의 선택 카드**(ask)이고 사람이 답한 경우 — 답한 사람의 id·kind. 아니면 null. */
   causeAskAuthorId: string | null; askAnsweredBy: string | null; askAnswererKind: string | null; askAnswererOwnsAgent: boolean;
 }
 
-async function readLease(pool: Pool, args: { leaseId: string; token: string; now: Date }): Promise<LeaseRow | undefined> {
+export async function readLease(pool: Pool, args: { leaseId: string; token: string; now: Date }): Promise<LeaseRow | undefined> {
   return (await pool.query(
     `select l.id, l.agent_id as "agentId", l.operator_id as "operatorId", l.channel_id as "channelId",
             l.thread_root_id as "threadRootId", l.expires_at <= $3 as expired, l.ended_at is not null as ended,

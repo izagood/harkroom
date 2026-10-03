@@ -219,6 +219,16 @@ export class HarkroomAgentClient {
    * 이 에이전트가 머지해도 되는 저장소(스레드 3deac356). 옛 서버(404)·오류는 빈 목록이다 — allow 규칙이 안
    * 붙을 뿐이고 deny 는 그대로 붙는다(fail-closed 쪽).
    */
+  /** 이 에이전트가 쓸 수 있는 API 연결 이름(C안 P3, `GET /agent/api-grants`). 옛 서버·실패는 빈 목록 — allow 규칙을 안 준다(fail-closed). */
+  async apiGrants(): Promise<string[]> {
+    try {
+      const r = await this.rest<{ connectors?: unknown }>('GET', '/agent/api-grants', 'api-grants');
+      return Array.isArray(r?.connectors) ? r.connectors.filter((x): x is string => typeof x === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(x)) : [];
+    } catch {
+      return [];
+    }
+  }
+
   async mergeGrants(): Promise<string[]> {
     try {
       const r = await this.rest<{ repos?: unknown }>('GET', '/agent/merge-grants', 'merge-grants');
