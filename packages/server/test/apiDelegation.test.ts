@@ -81,7 +81,8 @@ describe('위임', () => {
     expect(await delegateApiGrant(pool, base({ fromAgentId: b, to: c, causeMessageId: human }))).toMatchObject({ ok: false, code: 'no_delegate_depth' });
     // 루트 사람을 부르는 시스템 줄.
     const sys = (await pool.query(`select body, meta from message where meta->'delegation'->>'grantId' = $1`, [r.ok ? r.grantId : ''])).rows[0];
-    expect(sys.body).toContain('@alice');
+    // 본문 멘션은 저장 때 id 토큰이 된다 — 루트 사람을 부른 것이다(알림).
+    expect(sys.body).toContain(`<@${alice.accountId}>`);
     expect(sys.meta.delegation).toMatchObject({ pending: false, rootAccountId: alice.accountId, toAgentId: b });
     expect((await listDelegations(pool, a)).given).toEqual([expect.objectContaining({ to: 'worker', connector: 'lab-api' })]);
   });
