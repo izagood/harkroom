@@ -104,8 +104,8 @@ export async function delegateApiGrant(pool: Pool, a: {
 
   // 원인 메시지는 믿기 전에 확인한다(security F1): 그 글이 **이 에이전트를 실제로 깨웠어야**(inbox, 1시간 안) 원인으로 친다.
   // 확인되지 않으면 대기이고, 시스템 줄도 쓰지 않는다 — 에이전트가 속하지 않은 채널에 글이 생기지 않게.
-  const cause = a.causeMessageId ? (await pool.query<{ authorId: string; answeredBy: string | null; channelId: string; threadRootId: string }>(
-    `select m.author_id as "authorId", m.meta->'ask'->>'answeredBy' as "answeredBy",
+  const cause = a.causeMessageId ? (await pool.query<{ authorId: string; answeredBy: string | null; mirrorOf: string | null; channelId: string; threadRootId: string }>(
+    `select m.author_id as "authorId", m.meta->'ask'->>'answeredBy' as "answeredBy", m.meta->'ask'->>'mirrorOf' as "mirrorOf",
             m.channel_id as "channelId", coalesce(m.thread_root_id, m.id) as "threadRootId"
        from message m
       where m.id = $1 and m.deleted_at is null
@@ -113,7 +113,10 @@ export async function delegateApiGrant(pool: Pool, a: {
     [a.causeMessageId, a.fromAgentId, new Date(now.getTime() - CAUSE_FRESH_MS)])).rows[0] : undefined;
   // E2(좁힘, security F2): 즉시 유효는 그 턴을 **루트 사람이** 띄웠을 때만 — 글을 쓴 것이 루트 사람이거나, 루트 사람이 답한 선택 카드.
   // 다른 멤버·guest·에이전트 글이면 대기로 들어가 루트 사람이 허락해야 쓰인다.
-  const byRoot = !!cause && (cause.authorId === root || cause.answeredBy === root);
+  // 선택 카드 경로는 좁힌다(security F3 — 거울 카드는 원본의 answeredBy 를 그대로 복사하므로 위조된다): 거울이 아닌 카드이고,
+  // 그 카드를 **이 에이전트가** 세웠고, 루트 사람이 답했을 때만.
+  const byRootAnswer = !!cause && cause.mirrorOf === null && cause.authorId === a.fromAgentId && cause.answeredBy === root;
+  const byRoot = !!cause && (cause.authorId === root || byRootAnswer);
   const pending = !byRoot;
   const w = wanted;
 
