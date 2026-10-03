@@ -250,7 +250,7 @@ describe('memoryPin — 시스템 프롬프트를 세션 동안 고정한다', (
 
     it('F2: 루트 머리를 질의 앞에 붙이고, 루트가 안 보이는 후속 턴에도 고정 파일의 것을 쓴다', async () => {
       const queries: string[] = [];
-      const search = async (q: string) => { queries.push(q); return { hits: [] }; };
+      const search = async (q: string) => { queries.push(q); return { hits: [], focusTerms: [] }; };
       const p1 = await planMemory({
         stateDir, key: KEY, sessionId: SID, isFirstTurn: true, memory: MEM,
         recall: { query: '배포 절차를 고쳐 달라', rootHead: '배포 절차를 고쳐 달라', search },
@@ -258,6 +258,58 @@ describe('memoryPin — 시스템 프롬프트를 세션 동안 고정한다', (
       await p1.commit(SID);
       await planMemory({ stateDir, key: KEY, sessionId: SID, isFirstTurn: false, memory: MEM, recall: { query: '그대로 해', search } });
       expect(queries).toEqual(['배포 절차를 고쳐 달라', '배포 절차를 고쳐 달라\n그대로 해']);
+    });
+  });
+
+  // G: 후속 턴 게이트 — 루트 머리를 붙인 턴은 새 말을 focus 로 넘기고, 옛 서버면 루트 머리 없이 다시 묻는다.
+  describe('G 후속 턴 게이트', () => {
+    const MEM = { core: 'C', slugs: ['mem/deploy-recipe', 'mem/deploy-rollback'] };
+    const ROOT = '배포 절차를 고쳐 달라';
+    type Call = { q: string; focus?: string };
+    const firstTurn = async (search: (q: string, o: { exclude: string[]; recordTop: number; focus?: string }) => Promise<RecallResult>) => {
+      const p = await planMemory({ stateDir, key: KEY, sessionId: SID, isFirstTurn: true, memory: MEM, recall: { query: ROOT, rootHead: ROOT, search } });
+      await p.commit(SID);
+    };
+    const followUp = (search: (q: string, o: { exclude: string[]; recordTop: number; focus?: string }) => Promise<RecallResult>, query = '되돌림도 봐') =>
+      planMemory({ stateDir, key: KEY, sessionId: SID, isFirstTurn: false, memory: MEM, recall: { query, search } });
+    const hit = (slug: string, termHits?: string[]) => ({ slug, description: null, score: 6, nameHits: 2, value: `${slug} 본문`, updatedAt: 'T1', ...(termHits ? { termHits } : {}) });
+
+    it('첫 턴은 focus 없이, 후속 턴은 새 말을 focus 로 넘긴다(새 서버면 한 번만 묻는다)', async () => {
+      const calls: Call[] = [];
+      const search = async (q: string, o: { focus?: string }) => {
+        calls.push({ q, ...(o.focus !== undefined ? { focus: o.focus } : {}) });
+        return o.focus !== undefined ? { hits: [hit('mem/deploy-rollback', ['되돌림', '배포'])], focusTerms: ['되돌림'] } : { hits: [] };
+      };
+      await firstTurn(search);
+      const p = await followUp(search);
+      expect(calls).toEqual([{ q: ROOT }, { q: `${ROOT}\n되돌림도 봐`, focus: '되돌림도 봐' }]);
+      expect(p.turnLines.join('\n')).toContain('## mem/deploy-rollback');
+    });
+
+    it('옛 서버(focusTerms 없음): 루트 낱말로 고른 결과는 버리고 루트 머리 없이 새 말로만 다시 묻는다', async () => {
+      const calls: Call[] = [];
+      const search = async (q: string, o: { focus?: string }) => {
+        calls.push({ q, ...(o.focus !== undefined ? { focus: o.focus } : {}) });
+        // 옛 서버는 focus 를 모른다 — 루트 낱말로 걸린 것을 준다.
+        return q.includes(ROOT) ? { hits: [hit('mem/deploy-recipe')] } : { hits: [] };
+      };
+      await firstTurn(async () => ({ hits: [] }));
+      const p = await followUp(search);
+      expect(calls).toEqual([{ q: `${ROOT}\n되돌림도 봐`, focus: '되돌림도 봐' }, { q: '되돌림도 봐' }]);
+      expect(p.turnLines.join('\n')).not.toContain('<memory-recall>');
+    });
+
+    it('러너도 한 번 더 본다: termHits 에 focus 낱말이 없는 hit 는 싣지 않는다', async () => {
+      const search = async () => ({ hits: [hit('mem/deploy-recipe', ['배포']), hit('mem/deploy-rollback', ['되돌림'])], focusTerms: ['되돌림'] });
+      await firstTurn(async () => ({ hits: [] }));
+      const text = (await followUp(search)).turnLines.join('\n');
+      expect(text).toContain('## mem/deploy-rollback');
+      expect(text).not.toContain('## mem/deploy-recipe');
+    });
+
+    it('로그에 focus 낱말을 남긴다', () => {
+      expect(recallLogLine('k', { hits: [], terms: ['되돌림', '배포'], focusTerms: ['되돌림'] }, [], new Set()))
+        .toBe('[memoryPin] recall k: terms=되돌림,배포 focus=되돌림 picked=-');
     });
 
     it('F3: 목록 끝에 N/200 을 늘 싣는다', async () => {

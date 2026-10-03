@@ -62,19 +62,23 @@ export interface RecallHit {
   nameHits?: number;
   /** 그 판의 시각(ISO) — #1126 이후 서버만 준다. 이미 실은 판인지 가르는 키가 된다. */
   updatedAt?: string;
+  /** 이름·요약에 걸린 낱말 — #1145 이후 서버만 준다(G). */
+  termHits?: string[];
 }
 
 /** `memory.search` recall 모드의 응답. `terms` 는 서버가 실제로 쓴 낱말이다(옛 서버는 없다). */
 export interface RecallResult {
   hits: RecallHit[];
   terms?: string[];
+  /** `focus` 를 알아들은 서버(#1145)만 준다 — 없으면 옛 서버라 후속 턴 게이트가 안 걸렸다(G). */
+  focusTerms?: string[];
 }
 
 /**
  * `exclude` 는 이 세션에 이미 실은 판의 키, `recordTop` 은 실을 개수다 — 서버가 이미 실은 판을 빼고
  * 앞 `recordTop` 개를 recall_count 로 센다(S2 F1). 옛 서버는 둘 다 버리므로 러너도 제 쪽에서 거른다.
  */
-type RecallSearch = (query: string, opts: { exclude: string[]; recordTop: number }) => Promise<RecallResult>;
+type RecallSearch = (query: string, opts: { exclude: string[]; recordTop: number; focus?: string }) => Promise<RecallResult>;
 
 /** 이미 실은 판인가를 가르는 키(F6). */
 export function recallKey(h: { slug: string; updatedAt?: string }): string {
@@ -285,29 +289,55 @@ export async function planMemory(opts: {
   };
 }
 
-/** 루트 머리를 질의 앞에 붙인다 — 이번 새 말에 루트가 이미 들어 있으면(첫 턴) 겹쳐 싣지 않는다. */
-function withRootHead<T extends { query: string }>(recall: T, rootHead: string | undefined): T {
+/**
+ * 루트 머리를 질의 앞에 붙인다 — 이번 새 말에 루트가 이미 들어 있으면(첫 턴) 겹쳐 싣지 않는다.
+ * 붙였으면 새 말을 `focus` 로 따로 넘긴다(G): 서버가 새 말 낱말이 이름·요약에 걸린 것만 돌려준다.
+ */
+function withRootHead<T extends { query: string }>(recall: T, rootHead: string | undefined): T & { focus?: string } {
   const head = rootHead?.trim();
   if (!head || recall.query.includes(head)) return recall;
-  return { ...recall, query: `${head}\n${recall.query}` };
+  return { ...recall, query: `${head}\n${recall.query}`, focus: recall.query };
+}
+
+/**
+ * 후속 턴 게이트(G). 루트 머리를 붙인 턴(`focus` 가 있다)에서는 **새 말 낱말이 이름·요약에 하나 이상 걸린
+ * 것만** 싣는다 — 루트 낱말로만 걸린 것은 첫 턴에 이미 실렸고, 그것이 빠진 자리에 올라온 3·4순위가
+ * 잡음이었다(qa M4: 후속 턴 정답 6/92). 게이트는 서버가 건다(그래야 recall_count 가 실린 것만 센다).
+ * 서버가 `focusTerms` 를 안 주면 옛 서버다 — 게이트 없이 루트 낱말로 고른 결과라 버리고, **루트 머리 없이**
+ * 새 말로만 다시 묻는다(F2 전 동작).
+ */
+async function searchGated(
+  recall: { query: string; search: RecallSearch; focus?: string }, skip: Set<string>,
+): Promise<RecallResult> {
+  const base = { exclude: [...skip], recordTop: RECALL_MAX_ITEMS };
+  if (recall.focus === undefined) return recall.search(recall.query, base);
+  const found = await recall.search(recall.query, { ...base, focus: recall.focus });
+  if (found.focusTerms) return found;
+  return recall.search(recall.focus, base);
+}
+
+/** 서버가 게이트를 걸었어도 러너가 한 번 더 본다 — termHits 를 주는 서버에서만(옛 응답은 그대로 둔다). */
+function passesFocus(h: RecallHit, focusTerms: string[] | undefined): boolean {
+  if (!focusTerms || !h.termHits) return true;
+  return h.termHits.some((t) => focusTerms.includes(t));
 }
 
 async function recallLines(
-  recall: { query: string; search: RecallSearch } | undefined,
+  recall: { query: string; search: RecallSearch; focus?: string } | undefined,
   skip: Set<string>,
   key: string,
 ): Promise<{ lines: string[]; slugs: string[] }> {
   if (!recall || !recall.query.trim()) return { lines: [], slugs: [] };
   let found: RecallResult;
   try {
-    found = await recall.search(recall.query, { exclude: [...skip], recordTop: RECALL_MAX_ITEMS });
+    found = await searchGated(recall, skip);
   } catch (err: unknown) {
     console.error(`[memoryPin] 관련 기억 찾기 실패 — 이번 턴은 싣지 않는다: ${err instanceof Error ? err.message : String(err)}`);
     return { lines: [], slugs: [] };
   }
   const picked = found.hits
     .filter((h) => (h.nameHits === undefined ? h.score >= RECALL_MIN_SCORE : h.nameHits >= 1)
-      && typeof h.value === 'string' && !isRecalled(skip, h) && h.slug !== 'core')
+      && typeof h.value === 'string' && !isRecalled(skip, h) && h.slug !== 'core' && passesFocus(h, found.focusTerms))
     .slice(0, RECALL_MAX_ITEMS);
   console.log(recallLogLine(key, found, picked, skip));
   if (!picked.length) return { lines: [], slugs: [] };
@@ -337,6 +367,7 @@ export function recallLogLine(key: string, found: RecallResult, picked: RecallHi
   // 낱말은 요청문에서 왔다 — 서버가 비밀값 같은 조각을 거르지만, 옛 서버·빠진 틈에 대비해 로그에서도 가린다.
   const term = (t: string) => (/^[\w-]{20,}$/u.test(t) ? `${t.slice(0, 4)}…` : t);
   return `[memoryPin] recall ${key}: terms=${found.terms ? found.terms.map(term).join(',') || '-' : '?'}`
+    + `${found.focusTerms ? ` focus=${found.focusTerms.map(term).join(',') || '-'}` : ''}`
     + ` picked=${picked.map(hit).join(' ') || '-'}${dropped.length ? ` dropped=${dropped.join(' ')}` : ''}`;
 }
 
