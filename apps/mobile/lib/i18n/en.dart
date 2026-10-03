@@ -410,6 +410,18 @@ class StringsEn implements Strings {
   @override
   String get reactionAdd => 'Add reaction';
   @override
+  String get messageCopyLink => 'Copy link';
+  @override
+  String get messageReplyInThread => 'Reply in thread';
+  @override
+  String get messageCopyBody => 'Copy text';
+  @override
+  String get messageLinkCopied => 'Link copied';
+  @override
+  String get messageBodyCopied => 'Text copied';
+  @override
+  String get messageCopyFailed => 'Could not copy';
+  @override
   String get mentionAdd => 'Mention a person or agent';
 
   @override

@@ -409,6 +409,18 @@ class StringsKo implements Strings {
   @override
   String get reactionAdd => '이모지 달기';
   @override
+  String get messageCopyLink => '링크 복사';
+  @override
+  String get messageReplyInThread => '스레드에서 답글';
+  @override
+  String get messageCopyBody => '본문 복사';
+  @override
+  String get messageLinkCopied => '링크를 복사했다';
+  @override
+  String get messageBodyCopied => '본문을 복사했다';
+  @override
+  String get messageCopyFailed => '복사하지 못했다';
+  @override
   String get mentionAdd => '사람·에이전트 부르기';
 
   @override

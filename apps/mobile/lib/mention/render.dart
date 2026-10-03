@@ -22,6 +22,19 @@ String renderMentions(
   return handle == null ? unknown : '@$handle';
 });
 
+/// **복사·붙여넣기용** 본문 — 아는 계정 토큰만 `@handle` 로 되돌린다(데스크톱 `bodyAsHandles`).
+///
+/// [renderMentions] 와 다른 점: **모르는 토큰은 그대로 둔다.** 화면은 `<@uuid>` 보다 [unknown]
+/// 이 낫지만, 복사한 글은 다시 붙여넣을 글이다 — 토큰은 붙여넣으면 서버가 다시 그 대상을
+/// 찾아 주고, [unknown] 은 대상을 영영 잃는다. 집합·팀은 모바일이 이름표를 안 받아 오므로
+/// 토큰으로 남는다.
+String bodyAsHandles(String body, Map<String, AccountView> accounts) =>
+    body.replaceAllMapped(_token, (m) {
+      if (m.group(1) != null) return m.group(0)!;
+      final handle = accounts[m.group(2)]?.handle;
+      return handle == null ? m.group(0)! : '@$handle';
+    });
+
 /// 접두가 붙은 쪽을 **먼저** 적는다 — 원본 `ANY_MENTION_TOKEN_PATTERN` 과 같은 순서다.
 final RegExp _token = RegExp(
   r'<@((?:group|team):[0-9a-f-]{36})>|<@([0-9a-f-]{36})>',

@@ -27,13 +27,22 @@ import 'attachments.dart';
 /// 지워지고(긴 작업 하나가 채널을 덮는다), 목록 응답도 스레드 수만큼 부푼다.
 /// 그래서 여기서 `?thread=` 로 따로 읽는다.
 class ThreadScreen extends StatefulWidget {
-  const ThreadScreen({super.key, required this.channelId, required this.rootId, this.highlightId});
+  const ThreadScreen({
+    super.key,
+    required this.channelId,
+    required this.rootId,
+    this.highlightId,
+    this.focusComposer = false,
+  });
 
   final String channelId;
   final String rootId;
 
   /// 열자마자 그 줄로 굴려 2초 강조할 메시지(찾기 결과). 루트여도 되고 답글이어도 된다.
   final String? highlightId;
+
+  /// 열자마자 작성칸에 포커스(키보드)를 준다 — 메시지 시트의 「스레드에서 답글」.
+  final bool focusComposer;
 
   @override
   State<ThreadScreen> createState() => _ThreadScreenState();
@@ -68,6 +77,12 @@ class _ThreadScreenState extends State<ThreadScreen> {
     _community = app.activeKey;
     _composer.text = app.draftFor(widget.rootId);
     _composer.addListener(_keepDraft);
+    if (widget.focusComposer) {
+      // 첫 프레임 뒤에 준다 — 작성칸이 아직 나무에 없으면 포커스가 갈 곳이 없다.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _composerFocus.requestFocus();
+      });
+    }
   }
 
   String? _community;
