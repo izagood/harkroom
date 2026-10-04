@@ -8,7 +8,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { API_METHODS } from '@harkroom/shared';
 import type { SecretKeyring } from '../services/secretKeyring.js';
-import { callableConnectors, checkApiCall, reportApiCall } from '../services/apiCalls.js';
+import { callableConnectors, checkApiCall, delegatableConnectors, reportApiCall } from '../services/apiCalls.js';
 
 const base = {
   leaseId: z.string().uuid(), token: z.string().min(1).max(200),
@@ -31,7 +31,7 @@ export async function registerApiCallRoutes(app: FastifyInstance, pool: Pool, op
     const who = viaOperator(req, reply);
     if (!who) return reply;
     void reply.header('cache-control', 'no-store');
-    return { connectors: await callableConnectors(pool, who.agentId) };
+    return { connectors: await callableConnectors(pool, who.agentId), delegatable: await delegatableConnectors(pool, who.agentId) };
   });
 
   app.post('/agent/api-checks', { preHandler: app.requireAccount }, async (req, reply) => {
