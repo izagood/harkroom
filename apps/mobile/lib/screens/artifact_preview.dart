@@ -154,8 +154,20 @@ Future<void> openArtifactPreview(BuildContext context, AttachmentRow attachment)
 }
 
 /// 프레임 자리. 시험은 WebView(플랫폼 뷰) 대신 이것을 바꿔 끼운다.
-typedef PreviewFrameBuilder = Widget Function(
-    BuildContext context, String url, void Function(Uri outside) onOpenedOutside);
+///
+/// [onLoadFailed] 는 첫 문서를 못 받았을 때 부른다 — 흰 화면으로 두지 않고 사유를 보이게 한다.
+typedef PreviewFrameBuilder = Widget Function(BuildContext context, String url,
+    void Function(Uri outside) onOpenedOutside, void Function(PreviewLoadFailure failure) onLoadFailed);
+
+/// WebView 가 첫 문서를 못 받은 사유. [status] 는 HTTP 상태(받았으면), [description] 은 네트워크 오류 글.
+class PreviewLoadFailure {
+  const PreviewLoadFailure({this.status, this.description});
+  final int? status;
+  final String? description;
+
+  /// 사람에게 보일 짧은 사유 — 원인을 가르는 단서다(앱이 흰 화면만 보이면 신고로는 원인을 못 정한다).
+  String get reason => status != null ? 'HTTP $status' : (description == null || description!.isEmpty ? '?' : description!);
+}
 
 enum _Phase { loading, ready, tooLarge, forbidden, gone, failed }
 
@@ -175,6 +187,9 @@ class _ArtifactScreenState extends State<ArtifactScreen> {
   String? _title;
   int _attempt = 0;
 
+  /// 실패 사유 한 줄(HTTP 상태·네트워크 오류). 문구 아래에 작게 보인다.
+  String? _detail;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -184,7 +199,10 @@ class _ArtifactScreenState extends State<ArtifactScreen> {
   /// 열 때·다시 불러올 때마다 **새 서명 경로**를 받는다 — 60초짜리라 만료는 오류가 아니라 재발급 사유다.
   Future<void> _load() async {
     final mine = ++_attempt;
-    setState(() => _phase = _Phase.loading);
+    setState(() {
+      _phase = _Phase.loading;
+      _detail = null;
+    });
     final api = context.app.api;
     if (api == null) {
       setState(() => _phase = _Phase.failed);
@@ -200,16 +218,33 @@ class _ArtifactScreenState extends State<ArtifactScreen> {
       });
     } on ApiError catch (e) {
       if (!mounted || mine != _attempt) return;
-      setState(() => _phase = switch (e.status) {
-            413 => _Phase.tooLarge,
-            403 => _Phase.forbidden,
-            404 => _Phase.gone,
-            _ => _Phase.failed,
-          });
-    } on Object {
+      setState(() {
+        _phase = switch (e.status) {
+          413 => _Phase.tooLarge,
+          403 => _Phase.forbidden,
+          404 => _Phase.gone,
+          _ => _Phase.failed,
+        };
+        _detail = _phase == _Phase.failed ? 'HTTP ${e.status}' : null;
+      });
+    } on Object catch (e) {
       if (!mounted || mine != _attempt) return;
-      setState(() => _phase = _Phase.failed);
+      setState(() {
+        _phase = _Phase.failed;
+        _detail = e.runtimeType.toString();
+      });
     }
+  }
+
+  /// 서명 경로는 받았는데 WebView 가 문서를 못 받았다. `GET /preview/:token` 은 만료·권한·삭제를 전부 같은 404 로
+  /// 답하므로(서버가 일부러 가르지 않는다) 여기서는 사유를 "열지 못했다"로 묶고 상태만 곁들인다. [다시 불러오기]는
+  /// 새 서명 경로를 받으므로 만료라면 그것으로 풀린다.
+  void _loadFailed(PreviewLoadFailure failure) {
+    if (!mounted || _phase != _Phase.ready) return;
+    setState(() {
+      _phase = _Phase.failed;
+      _detail = failure.reason;
+    });
   }
 
   void _openedOutside(Uri uri) {
@@ -250,21 +285,23 @@ class _ArtifactScreenState extends State<ArtifactScreen> {
         ],
       ),
       body: switch (_phase) {
-        _Phase.ready => (widget.frameBuilder ?? _defaultFrame)(context, _url!, _openedOutside),
-        _ => _StateView(phase: _phase, attachment: widget.attachment, onReload: _load),
+        _Phase.ready => (widget.frameBuilder ?? _defaultFrame)(context, _url!, _openedOutside, _loadFailed),
+        _ => _StateView(phase: _phase, attachment: widget.attachment, detail: _detail, onReload: _load),
       },
     );
   }
 
-  Widget _defaultFrame(BuildContext context, String url, void Function(Uri) onOpenedOutside) =>
-      _PreviewWebView(key: ValueKey(url), url: url, onOpenedOutside: onOpenedOutside);
+  Widget _defaultFrame(BuildContext context, String url, void Function(Uri) onOpenedOutside,
+          void Function(PreviewLoadFailure) onLoadFailed) =>
+      _PreviewWebView(key: ValueKey(url), url: url, onOpenedOutside: onOpenedOutside, onLoadFailed: onLoadFailed);
 }
 
 class _StateView extends StatelessWidget {
-  const _StateView({required this.phase, required this.attachment, required this.onReload});
+  const _StateView({required this.phase, required this.attachment, required this.onReload, this.detail});
 
   final _Phase phase;
   final AttachmentRow attachment;
+  final String? detail;
   final VoidCallback onReload;
 
   @override
@@ -284,6 +321,13 @@ class _StateView extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(text, key: Key('artifact-state-${phase.name}'), textAlign: TextAlign.center),
+            if (detail != null) ...[
+              const SizedBox(height: 4),
+              Text(detail!,
+                  key: const Key('artifact-state-detail'),
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall),
+            ],
             if (phase == _Phase.failed) ...[
               const SizedBox(height: 12),
               OutlinedButton(onPressed: onReload, child: Text(t.artifactReload)),
@@ -297,10 +341,12 @@ class _StateView extends StatelessWidget {
 
 /// 실제 WebView. JS 는 켠다(시안은 대개 스크립트로 움직인다). **JS 채널은 붙이지 않는다.**
 class _PreviewWebView extends StatefulWidget {
-  const _PreviewWebView({super.key, required this.url, required this.onOpenedOutside});
+  const _PreviewWebView(
+      {super.key, required this.url, required this.onOpenedOutside, required this.onLoadFailed});
 
   final String url;
   final void Function(Uri outside) onOpenedOutside;
+  final void Function(PreviewLoadFailure failure) onLoadFailed;
 
   @override
   State<_PreviewWebView> createState() => _PreviewWebViewState();
@@ -341,6 +387,26 @@ class _PreviewWebViewState extends State<_PreviewWebView> {
             case PreviewNavigation.block:
               return NavigationDecision.prevent;
           }
+        },
+        // 첫 문서를 못 받으면 흰 화면에 막대만 남는다 — 사유를 화면으로 올린다. 하위 리소스(글꼴·그림)의 실패는
+        // 페이지가 그려지는 데 지장이 없으니 무시하고, 첫 로드가 끝난 뒤의 실패도 무시한다(페이지는 이미 보인다).
+        onWebResourceError: (error) {
+          if (_initialLoaded || error.isForMainFrame == false) return;
+          // 우리가 막은 이동(prevent)도 iOS 에서는 "취소됨" 오류로 온다 — 그건 실패가 아니다.
+          if (error.errorCode == -999 /* NSURLErrorCancelled */) return;
+          widget.onLoadFailed(PreviewLoadFailure(description: error.description));
+        },
+        onHttpError: (error) {
+          if (_initialLoaded) return;
+          final status = error.response?.statusCode;
+          if (status == null || status < 400) return;
+          final failedUrl = error.request?.uri.toString();
+          if (failedUrl != null && failedUrl != widget.url &&
+              decidePreviewNavigation(requested: failedUrl, initial: widget.url, isMainFrame: true, initialLoaded: false) !=
+                  PreviewNavigation.allow) {
+            return;
+          }
+          widget.onLoadFailed(PreviewLoadFailure(status: status));
         },
         onPageFinished: (_) {
           _initialLoaded = true;
