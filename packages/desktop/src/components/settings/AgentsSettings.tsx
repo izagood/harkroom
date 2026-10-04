@@ -1534,6 +1534,53 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 )}
               </span>
             )}
+            {selected && isAdmin && (<>
+              {/* 머리로 올린 자리(jaebin "멈춤은 머리"). admin 만 — 전과 같은 조건이다.
+
+                  #493: 켜는 길과 끄는 길을 **한 자리**에 겹쳐 둔다. `#427` 이 "되돌리는 길을
+                  요청과 같은 자리에 둔다"고 한 것을 한 걸음 더 민 것이다 — 다른 자리로 보내면
+                  "설정에서 껐으니 설정에서 켜겠지"로 읽는 사람이 그것을 못 찾고, 못 찾으면
+                  DB 를 고치러 간다(#427 이 실제로 밟힌 경로다).
+
+                  한 자리이므로 "누를 것이 없는 버튼"이 애초에 생기지 않는다 — 이 자리에는
+                  항상 지금 할 수 있는 조작 하나만 서 있다.
+
+                  서버 API 는 그대로다 — 실행은 `undoAgentStopRequest`, 중지는 `requestAgentStop`.
+                  화면 어휘만 사람의 어휘로 바꿨고 장부·라우트는 건드리지 않았다. */}
+              <div data-testid="agent-header-actions" className="ml-auto flex shrink-0 gap-2">
+                {selected.stopRequestedAt ? (
+                  <button
+                    className="rounded-row border border-border px-2 py-1 text-meta font-medium text-fg-default hover:bg-surface-sunken disabled:opacity-50"
+                    aria-label={t('agents.stop.startAction')}
+                    disabled={busy}
+                    onClick={() => void undoStopRequest()}
+                  >
+                    {t('agents.stop.start')}
+                  </button>
+                ) : (
+                  <button
+                    className="rounded-row border border-warning-border bg-warning-surface px-2 py-1 text-meta font-medium text-warning hover:bg-warning-surface-strong disabled:opacity-50"
+                    aria-label={t('agents.stop.stopAction')}
+                    disabled={busy}
+                    onClick={() => void requestStop()}
+                  >
+                    {t('agents.stop.stop')}
+                  </button>
+                )}
+                {!selected.stopRequestedAt && (
+                  <button
+                    className="rounded-row border border-border px-2 py-1 text-meta font-medium text-fg-default hover:bg-surface-sunken disabled:opacity-50"
+                    aria-label={t('agents.restart.action')}
+                    data-testid="agent-restart"
+                    disabled={busy}
+                    onClick={() => void restartRunner()}
+                  >
+                    {t('agents.restart.label')}
+                  </button>
+                )}
+                {restartSent && <span className="self-center text-meta text-fg-muted" role="status">{t('agents.restart.sent')}</span>}
+              </div>
+            </>)}
           </header>
 
           {/* 상세의 탭(designer A2). 머리 바로 아래 고정이다 — 스크롤 안에 두면 긴 기억 목록을
@@ -1702,49 +1749,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       </span>
                     )}
                   </div>
-                  {/* #493: 켜는 길과 끄는 길을 **한 자리**에 겹쳐 둔다. `#427` 이 "되돌리는 길을
-                      요청과 같은 자리에 둔다"고 한 것을 한 걸음 더 민 것이다 — 다른 자리로 보내면
-                      "설정에서 껐으니 설정에서 켜겠지"로 읽는 사람이 그것을 못 찾고, 못 찾으면
-                      DB 를 고치러 간다(#427 이 실제로 밟힌 경로다).
-
-                      한 자리이므로 "누를 것이 없는 버튼"이 애초에 생기지 않는다 — 이 자리에는
-                      항상 지금 할 수 있는 조작 하나만 서 있다.
-
-                      서버 API 는 그대로다 — 실행은 `undoAgentStopRequest`, 중지는 `requestAgentStop`.
-                      화면 어휘만 사람의 어휘로 바꿨고 장부·라우트는 건드리지 않았다. */}
-                  <div className="mt-2 flex gap-2">
-                    {selected.stopRequestedAt ? (
-                      <button
-                        className="rounded-row border border-border px-2 py-1 text-meta font-medium text-fg-default hover:bg-surface-sunken disabled:opacity-50"
-                        aria-label={t('agents.stop.startAction')}
-                        disabled={busy}
-                        onClick={() => void undoStopRequest()}
-                      >
-                        {t('agents.stop.start')}
-                      </button>
-                    ) : (
-                      <button
-                        className="rounded-row border border-warning-border bg-warning-surface px-2 py-1 text-meta font-medium text-warning hover:bg-warning-surface-strong disabled:opacity-50"
-                        aria-label={t('agents.stop.stopAction')}
-                        disabled={busy}
-                        onClick={() => void requestStop()}
-                      >
-                        {t('agents.stop.stop')}
-                      </button>
-                    )}
-                    {!selected.stopRequestedAt && (
-                      <button
-                        className="rounded-row border border-border px-2 py-1 text-meta font-medium text-fg-default hover:bg-surface-sunken disabled:opacity-50"
-                        aria-label={t('agents.restart.action')}
-                        data-testid="agent-restart"
-                        disabled={busy}
-                        onClick={() => void restartRunner()}
-                      >
-                        {t('agents.restart.label')}
-                      </button>
-                    )}
-                    {restartSent && <span className="self-center text-meta text-fg-muted" role="status">{t('agents.restart.sent')}</span>}
-                  </div>
+                  {/* [멈춤]/[실행]·[다시 시작] 버튼은 **상세 머리**로 올라갔다(jaebin "멈춤은 머리", designer 시안 c1ae17e6).
+                      어느 탭에서든 누를 수 있어야 한다. 이 절에는 그 버튼이 무엇을 하는지(위 문단)와 지금 상태(삼분)만 남는다. */}
                 </div>
               )}
 
