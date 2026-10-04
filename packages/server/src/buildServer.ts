@@ -52,6 +52,7 @@ import { createSecretBox } from './services/secretBox.js';
 import { loadSecretKeyring, type SecretKeyring } from './services/secretKeyring.js';
 import { registerSecretRoutes } from './routes/secretRoutes.js';
 import { registerMergeRoutes } from './routes/mergeRoutes.js';
+import { registerMergeDenialRoutes } from './routes/mergeDenialRoutes.js';
 import { registerApiCallRoutes } from './routes/apiCallRoutes.js';
 import { registerThreadClaimRoutes } from './routes/threadClaimRoutes.js';
 import { createSecretLeakGuard, leakGuardHook } from './services/secretLeakGuard.js';
@@ -617,6 +618,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     limiter: deps.secretRevealLimiter,
   });
   await registerMergeRoutes(app, deps.pool);
+  await registerMergeDenialRoutes(app, deps.pool);
   await registerApiCallRoutes(app, deps.pool, { keyring: secretKeyring });
   await registerThreadClaimRoutes(app, deps.pool);
 

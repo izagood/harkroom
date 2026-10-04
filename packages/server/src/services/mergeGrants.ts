@@ -26,7 +26,11 @@ export type MergeDenial =
 
 export type MergeCheck =
   | { ok: true; leaseId: string; channelId: string; threadRootId: string; scope: string; grantedBy: string; grantedAt: string; causeByHuman: boolean }
-  | { ok: false; code: MergeDenial };
+  /** `denialId` 는 거절 카드를 세울 수 있는 거절에만 있다(`not_granted` 이고 나머지 판정은 통과 — C2). */
+  | { ok: false; code: MergeDenial; denialId?: string };
+
+/** 거절 기록(`merge_denial`)을 쓸 수 있는 시한 — 카드가 하루 한 장이라 하루. grant 의 기한(7일)과 다르다. */
+export const MERGE_DENIAL_TTL_MS = 24 * 3_600_000;
 
 export interface LeaseRow {
   id: string; agentId: string; operatorId: string; channelId: string; threadRootId: string;
@@ -99,8 +103,19 @@ export async function checkMerge(
   if (!leaseOk) return deny('lease_invalid');
   if (!scope) return deny('bad_repo');
   const grant = await mergeGrantFor(pool, args.agentId, args.repo);
-  if (!grant) return deny('not_granted');
   const byHuman = causeByHuman(lease!);
+  if (!grant) {
+    const denied = await deny('not_granted');
+    // C2: 카드는 **나머지 판정을 다 통과한** 거절에만 — 사람이 띄우지 않은 턴(에이전트 위임)이 권한 카드를 만들지 못하게.
+    // 임대·저장소 모양은 위에서 이미 걸렀다. `allow_agent_cause` 는 grant 의 칸이라 grant 가 없으면 사람 턴만 남는다.
+    if (!byHuman) return denied;
+    const row = (await pool.query<{ id: string }>(
+      `insert into merge_denial (agent_id, scope, pr_number, head_sha, channel_id, thread_root_id, lease_id, expires_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
+      [args.agentId, scope, args.number, args.headSha, lease!.channelId, lease!.threadRootId, lease!.id,
+        new Date(now.getTime() + MERGE_DENIAL_TTL_MS)])).rows[0]!;
+    return { ok: false, code: 'not_granted', denialId: row.id };
+  }
   if (!byHuman && !grant.allowAgentCause) return deny('cause_not_human');
 
   await recordAudit(pool, {
