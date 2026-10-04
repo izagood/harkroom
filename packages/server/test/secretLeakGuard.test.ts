@@ -67,6 +67,8 @@ describe('본문 거절 (D5)', () => {
     alice = await createMember(app, admin.token, 'alice');
     agent = await createAgent(app, admin.token, 'worker');
     bystander = await createAgent(app, admin.token, 'bystander');
+    // 비밀은 소유자 자신의 에이전트에게만 준다(not_own_agent).
+    await pool.query(`update agent_config set owner_account_id = $1 where account_id = $2`, [alice.accountId, agent.accountId]);
     channelId = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'leak-test' } })).json().id as string;
     for (const id of [agent.accountId, bystander.accountId]) {
       await app.inject({ method: 'POST', url: `/channels/${channelId}/members`, headers: auth(admin.token), payload: { accountId: id } });

@@ -57,6 +57,8 @@ describe('턴 임대·reveal (086)', () => {
     alice = await createMember(app, admin.token, 'alice');
     agentId = (await createAgent(app, admin.token, 'worker')).accountId;
     otherAgentId = (await createAgent(app, admin.token, 'other')).accountId;
+    // 비밀은 소유자 자신의 에이전트에게만 준다(not_own_agent) — 시험의 에이전트를 alice 의 것으로.
+    await pool.query(`update agent_config set owner_account_id = $1 where account_id = any($2::uuid[])`, [alice.accountId, [agentId, otherAgentId]]);
     op = await registerOperator(app, admin.token, 'mac');
     op2 = await registerOperator(app, admin.token, 'mac2');
     for (const [a, o] of [[agentId, op.operatorId], [otherAgentId, op2.operatorId]] as const) {
@@ -121,6 +123,20 @@ describe('턴 임대·reveal (086)', () => {
     const row = await pool.query(`select * from secret_access_log order by id desc limit 1`);
     expect(row.rows[0]).toMatchObject({ result: 'granted', version: 1, channel_id: privCh, turn_id: l.id });
     expect(JSON.stringify(row.rows[0])).not.toContain('ghp_');
+  });
+
+  it('남의 에이전트가 된 줄(옛 부여·소유 변경)은 reveal 이 not_own_agent 로 막는다', async () => {
+    await pool.query(`update agent_config set owner_account_id = $1 where account_id = $2`, [admin.accountId, agentId]);
+    try {
+      const l = (await lease(await mention(privCh))).json().lease;
+      const res = await reveal(l);
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('not_own_agent');
+      expect(await lastReason()).toMatchObject({ result: 'denied', reason: 'not_own_agent' });
+      expect(res.body).not.toContain('ghp_');
+    } finally {
+      await pool.query(`update agent_config set owner_account_id = $1 where account_id = $2`, [alice.accountId, agentId]);
+    }
   });
 
   it('H1: 공개 채널 턴은 channelId 를 무엇으로 주장해도 못 받는다', async () => {

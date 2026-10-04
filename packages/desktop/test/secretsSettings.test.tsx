@@ -41,7 +41,7 @@ beforeEach(() => {
   useActiveStore.getState().reset();
   useActiveStore.getState().set({
     me: acc(ME, 'owner'),
-    accounts: { [ME]: acc(ME, 'owner'), 'agent-1': acc('agent-1', 'alpha', 'agent', false, { ownerAccountId: ME }), 'agent-2': acc('agent-2', 'beta', 'agent', false, { ownerAccountId: 'other-1' }), 'other-1': acc('other-1', 'carol') },
+    accounts: { [ME]: acc(ME, 'owner'), 'agent-1': acc('agent-1', 'alpha', 'agent', false, { ownerAccountId: ME }), 'agent-2': acc('agent-2', 'beta', 'agent', false, { ownerAccountId: 'other-1' }), 'other-1': acc('other-1', 'carol'), 'agent-3': acc('agent-3', 'gamma', 'agent', false, { ownerAccountId: ME }) },
   });
 });
 afterEach(() => { usePrefsStore.getState().setLocale('system'); cleanup(); });
@@ -119,15 +119,15 @@ describe('SecretsSettings', () => {
     render(<SecretsSettings />);
     fireEvent.click(await screen.findByRole('button', { name: '받을 에이전트' }));
     await screen.findByTestId('secret-grant-alpha');
-    fireEvent.change(screen.getByLabelText('에이전트'), { target: { value: 'agent-2' } });
+    fireEvent.change(screen.getByLabelText('에이전트'), { target: { value: 'agent-3' } });
     fireEvent.click(screen.getByRole('button', { name: '주기' }));
-    await waitFor(() => expect(c.putSecretGrant).toHaveBeenCalledWith('id-api-token', { agentId: 'agent-2', channelId: null, operator: 'current' }));
+    await waitFor(() => expect(c.putSecretGrant).toHaveBeenCalledWith('id-api-token', { agentId: 'agent-3', channelId: null, operator: 'current' }));
     fireEvent.click(screen.getByRole('button', { name: '@alpha 에게서 거두기' }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '거두기' }));
     await waitFor(() => expect(c.deleteSecretGrant).toHaveBeenCalledWith('id-api-token', 'g1'));
   });
 
-  it('부여 패널: 모든 채널 경고, 남의 에이전트·어느 오퍼레이터든 경고', async () => {
+  it('부여 패널: 모든 채널 경고, 내 에이전트만 고를 수 있고, 어느 오퍼레이터든 경고', async () => {
     setup();
     render(<SecretsSettings />);
     fireEvent.click(await screen.findByRole('button', { name: '받을 에이전트' }));
@@ -135,10 +135,8 @@ describe('SecretsSettings', () => {
     expect(screen.getByTestId('secret-grants-all-channels').textContent).toContain('모든 스레드에서');
     const sel = screen.getByLabelText('에이전트');
     expect(within(sel).getByRole('group', { name: '내 에이전트' }).textContent).toContain('@alpha');
-    expect(within(sel).getByRole('group', { name: '다른 사람의 에이전트' }).textContent).toContain('@beta (소유자 @carol)');
-    expect(screen.queryByTestId('secret-grant-other-warn')).toBeNull();
-    fireEvent.change(sel, { target: { value: 'agent-2' } });
-    expect(screen.getByTestId('secret-grant-other-warn').textContent).toContain('@carol');
+    // 남의 에이전트(@beta, 소유자 carol)는 목록에 없다 — 서버도 not_own_agent 로 거절한다.
+    expect(sel.textContent).not.toContain('@beta');
     expect(screen.queryByTestId('secret-grant-any-warn')).toBeNull();
     fireEvent.change(screen.getByLabelText('오퍼레이터'), { target: { value: 'any' } });
     expect(screen.getByTestId('secret-grant-any-warn').textContent).toContain('앞으로 배정되는 머신');
