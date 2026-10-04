@@ -35,7 +35,7 @@ import { LocalOperatorRow } from './LocalOperatorRow';
 import { ModelPicker } from './ModelPicker';
 import { hasOperatorLocalSurface, listLocalAgents } from '../../lib/operatorLocal';
 import { AgentScopeSection } from './AgentScopeSection';
-import { AgentGrantsSection } from './AgentGrantsSection';
+import { AgentGrantsSection, liveMergeGrantCount } from './AgentGrantsSection';
 import { AgentPickableSection } from './AgentPickableSection';
 import { kindLabel, MemoryDetail } from './MemoryDetail';
 import { canSeeAgentConfig } from '../../lib/agentConfigGate';
@@ -444,6 +444,25 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     void getController().listAgents().then(setAgents).catch(() => setError(t('agents.grid.listFailed')));
   };
   useEffect(reload, []);
+
+  /**
+   * 목록 카드의 「머지 N」(스레드 febe9ff8 P1). **내가 소유한 에이전트만** 센다 — 머지 권한을 주는 사람이 소유자뿐이라
+   * (서버 F2) 이 숫자가 쓸모 있는 사람도 소유자다. 에이전트마다 `GET /accounts/:id/grants` 한 번, 격자 폴링(5초)과
+   * 엮지 않으려고 **소유한 에이전트 id 의 집합이 바뀔 때만** 다시 읽는다. 상세에서 주고 거두면 그 절이
+   * `onCountChange` 로 바로 고친다. 못 읽은 에이전트는 숫자를 그리지 않는다(없는 것을 0 이라고 하지 않는다).
+   */
+  const [mergeCounts, setMergeCounts] = useState<Record<string, number>>({});
+  const ownedKey = myId === undefined ? '' : agents.filter((a) => a.ownerAccountId === myId).map((a) => a.id).sort().join(',');
+  useEffect(() => {
+    if (!ownedKey) return;
+    let live = true;
+    for (const id of ownedKey.split(',')) {
+      void Promise.resolve().then(() => getController().listGrants(id))
+        .then((rows) => { if (live) setMergeCounts((prev) => ({ ...prev, [id]: liveMergeGrantCount(rows) })); })
+        .catch(() => { /* 숫자를 안 그린다 */ });
+    }
+    return () => { live = false; };
+  }, [ownedKey]);
 
   const modelOperatorId = selected?.assignment?.operatorId
     ?? (typeof localOperator === 'object' && localOperator !== null ? localOperator.operatorId : null);
@@ -1377,6 +1396,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
         />
         <AgentGrid
           agents={agents}
+          mergeCounts={mergeCounts}
           selectedId={null}
           runnerStates={runnerStates}
           online={online}
@@ -2295,6 +2315,20 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             </div>
 
             <div {...detailPanel('permissions')}>
+              {/* 에이전트 머지 권한(스레드 3deac356) — 「권한」 탭 맨 위(스레드 febe9ff8 P1, designer f1·f2: 「호출 범위·
+                  자격증명」 아래에서는 찾지 못했다). 주는 것은 소유자인 사람만(서버 F2), 거두기는 소유자·admin. */}
+              {selected && (isAdmin || isOwner) && myId !== undefined && (
+                <AgentGrantsSection
+                  agent={selected}
+                  canGrant={selected.ownerAccountId === myId}
+                  canRevoke={isAdmin || isOwner}
+                  disabled={busy}
+                  localOperatorId={typeof localOperator === 'object' && localOperator !== null ? localOperator.operatorId : null}
+                  assignedOperatorName={Array.isArray(operators) ? operators.find((o) => o.id === selected.assignment?.operatorId)?.name ?? null : null}
+                  onCountChange={(n) => setMergeCounts((prev) => (prev[selected.id] === n ? prev : { ...prev, [selected.id]: n }))}
+                />
+              )}
+
               {draft !== null && (
                 <FieldGroup title={t('agents.permissions.title')} note={t('agents.permissions.note')}>
                 {/* #253 의 표에서 `mentionPermission` 은 **admin 전용**이다. 소유자에게는 비활성
@@ -2377,18 +2411,6 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     setSelected(updated);
                     setAgents((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
                   }}
-                />
-              )}
-
-              {/* 에이전트 머지 권한(스레드 3deac356) — 「호출 범위·자격증명」 바로 아래(designer 안). 주는 것은 소유자인
-                  사람만(서버 F2), 거두기는 소유자·admin. */}
-              {selected && (isAdmin || isOwner) && myId !== undefined && (
-                <AgentGrantsSection
-                  agent={selected}
-                  canGrant={selected.ownerAccountId === myId}
-                  canRevoke={isAdmin || isOwner}
-                  disabled={busy}
-                  localOperatorId={typeof localOperator === 'object' && localOperator !== null ? localOperator.operatorId : null}
                 />
               )}
 
