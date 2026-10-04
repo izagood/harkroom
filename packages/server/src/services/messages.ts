@@ -2404,7 +2404,15 @@ export async function listMessages(
  * 걸러진 머리의 카드는 보드에 서지 않는다(화면의 "머리가 안 오면 세우지 않는다").
  */
 export async function listInboxThreads(pool: Pool, accountId: string, entries: InboxEntry[]): Promise<MessageRow[]> {
-  const rootIds = [...new Set(entries.map((e) => e.threadRootId ?? e.messageId))];
+  return listThreadHeads(pool, accountId, entries.map((e) => e.threadRootId ?? e.messageId));
+}
+
+/**
+ * 스레드 머리 행들 — `listInboxThreads` 와 「내 작업」 보드(`/inbox/board`)가 같이 쓴다. 가시성·지운
+ * 머리 규칙이 한 자리에 있어야 두 조회가 같은 머리를 낸다.
+ */
+async function listThreadHeads(pool: Pool, accountId: string, ids: string[]): Promise<MessageRow[]> {
+  const rootIds = [...new Set(ids)];
   if (rootIds.length === 0) return [];
   const res = await pool.query(
     `select ${LIST_COLS} from message m ${THREAD_STATS}
@@ -2414,6 +2422,59 @@ export async function listInboxThreads(pool: Pool, accountId: string, entries: I
     [rootIds, accountId],
   );
   return res.rows;
+}
+
+/** 「내 작업」 보드가 inbox 밖에서 더 모으는 기간과 상한. */
+export const BOARD_WINDOW_DAYS = 30;
+export const BOARD_EXTRA_LIMIT = 300;
+
+/**
+ * 「내 작업」 보드(2026-10-03 jaebin 승인, 스레드 edd07149)가 **inbox 밖에서** 더 모으는 스레드 머리.
+ *
+ * 왜 inbox 만으로 모자란가: inbox 항목은 남이 나를 부르거나 내 스레드에 답할 때만 생긴다. 그래서
+ * ① 내가 시켰는데 **아직 아무도 답하지 않은** 스레드와 ② 남이 연 스레드에 **내가 말만 얹은** 스레드는
+ * 보드 어디에도 없었다 — "시켜 놓고 잊는" 일이 바로 ①이다.
+ *
+ * 범위 = (내가 연 머리 ∪ 내가 답한 스레드) 중 **최근 `days` 일 안에 내가 말한 것** ∩ **에이전트가 낀 것**.
+ * "에이전트가 낀 것"은 `thread_status` 행이 있다는 뜻이다 — 서버 판정(`decideThreadStatus`)이
+ * `agentInvolved` 가 아니면 행을 지운다. 사람끼리 나눈 말까지 일로 세우면 보드가 다시 넘친다(jaebin 결정).
+ *
+ * 가시성은 여기서 거르지 않는다 — 머리를 싣는 `listThreadHeads` 가 지금 기준으로 다시 잰다(한 자리).
+ * 최근에 상태가 바뀐 것부터 `limit` 개. 넘쳤는지는 `truncated` 로 알린다.
+ */
+export async function listBoardRootIds(
+  pool: Pool, accountId: string, opts: { days: number; limit: number },
+): Promise<{ rootIds: string[]; truncated: boolean }> {
+  const res = await pool.query(
+    `with mine as (
+       select coalesce(m.thread_root_id, m.id) as root_id
+         from message m
+        where m.author_id = $1 and m.deleted_at is null
+          and m.created_at > now() - make_interval(days => $2::int)
+     )
+     select ts.root_id as id
+       from (select distinct root_id from mine) r
+       join thread_status ts on ts.root_id = r.root_id
+      order by ts.updated_at desc, ts.root_id
+      limit $3::int + 1`,
+    [accountId, opts.days, opts.limit],
+  );
+  const ids = res.rows.map((r: { id: string }) => r.id);
+  return { rootIds: ids.slice(0, opts.limit), truncated: ids.length > opts.limit };
+}
+
+/**
+ * 「내 작업」 보드의 머리 = inbox 항목의 머리 ∪ `listBoardRootIds`. 응답 모양은 `?threads=1` 과 같다 —
+ * 앱의 `buildBoard` 가 그대로 받는다. inbox 항목이 없는 머리는 `entries` 에 줄이 없이 `threads` 에만 선다.
+ */
+export async function listBoardThreads(
+  pool: Pool, accountId: string, entries: InboxEntry[],
+): Promise<{ threads: MessageRow[]; truncated: boolean }> {
+  const extra = await listBoardRootIds(pool, accountId, { days: BOARD_WINDOW_DAYS, limit: BOARD_EXTRA_LIMIT });
+  const threads = await listThreadHeads(pool, accountId, [
+    ...entries.map((e) => e.threadRootId ?? e.messageId), ...extra.rootIds,
+  ]);
+  return { threads, truncated: extra.truncated };
 }
 
 export async function listInbox(

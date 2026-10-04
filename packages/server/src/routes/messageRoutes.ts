@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { EFFORT_MAX, MAX_MESSAGE_BODY_CHARS, MENTION_EDIT_SKIPPED_HEADER, MODEL_ID_MAX, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@harkroom/shared';
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
-import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE } from '../services/messages.js';
+import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listBoardThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -477,6 +477,18 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
     // 내 완료·나중에(089). 머리가 실린 스레드의 것만 — 걸러진 머리의 상태가 따로 새지 않게.
     const threadStates = await listInboxThreadStates(pool, req.account!.id, threads.map((m) => m.id));
     return { entries, threads, threadStates };
+  });
+
+  /**
+   * 「내 작업」 보드(2026-10-03, S1). `?threads=1` 과 같은 모양에 **inbox 밖의 머리**를 더한다 — 내가 연·
+   * 답한 스레드 30일 ∩ 에이전트가 낀 것(`listBoardRootIds`). 옛 `?threads=1` 은 그대로 둔다(옛 앱).
+   * `truncated` 는 inbox 밖 머리가 상한에서 잘렸다는 뜻이다.
+   */
+  app.get('/inbox/board', { preHandler: app.requireAccount }, async (req) => {
+    const entries = await listInbox(pool, req.account!.id, { unreadOnly: false });
+    const { threads, truncated } = await listBoardThreads(pool, req.account!.id, entries);
+    const threadStates = await listInboxThreadStates(pool, req.account!.id, threads.map((m) => m.id));
+    return { entries, threads, threadStates, truncated };
   });
 
   /**
