@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { excludedNamesFrom, rankRecall, searchTerms, type RecallCandidate } from '../src/services/memory.js';
+import { excludedNamesFrom, focusTermsOf, rankRecall, searchTerms, type RecallCandidate } from '../src/services/memory.js';
 
 // recall P1 의 순수 부분 — pg 없이 돈다. 정답 세트(fixture) 회귀도 이 자리에 붙인다.
 describe('searchTerms', () => {
@@ -26,6 +26,31 @@ describe('searchTerms', () => {
 
   it('exclude 가 없으면(에이전트가 직접 찾을 때) 이름도 찾는다', () => {
     expect(searchTerms('jaebin 결정')).toEqual(['jaebin', '결정']);
+  });
+});
+
+// G 후속(qa 10-03): 후속 턴 되받는 말은 focus 낱말이 못 된다 — 게이트를 여는 열쇠가 '다시' 였다.
+describe('focusTermsOf', () => {
+  it('되받는 말(다시·계속·그대로·그걸로·좋아 그렇게…)은 focus 에서 빠진다', () => {
+    for (const q of ['다시 봐 줘', '그대로 진행해', '응 그걸로 해 줘', '계속 해', '다시 한번 확인해 줘', '좋아 그렇게 해', '이어서 해 줘', '마저 해', 'ok 해줘']) {
+      expect([q, focusTermsOf(q, new Set())]).toEqual([q, []]);
+    }
+  });
+
+  it('주제어는 남는다 — 되받는 말과 섞여도', () => {
+    expect(focusTermsOf('다시 배포 되돌림 봐 줘', new Set())).toEqual(['배포', '되돌림']);
+    expect(focusTermsOf('jaebin 캐시 계속 봐 줘', new Set(['jaebin']))).toEqual(['캐시']);
+  });
+
+  it('첫 턴 질의(searchTerms)에는 걸지 않는다 — "다시 제안 금지" 를 주제로 찾을 수 있다', () => {
+    expect(searchTerms('다시 제안 금지', { exclude: new Set() })).toContain('다시');
+  });
+
+  it('qa 재현: 요약에 "다시" 가 든 기억은 "다시 봐 줘" 후속 턴에 게이트를 못 지난다', () => {
+    const rows = [row('mem/team-phase3-done', '거부된 설계 — 다시 제안 금지', ''), row('mem/deploy', '배포 절차', '')];
+    const terms = ['다시', '배포'];
+    expect(rankRecall(terms, rows, 5, { focus: new Set(focusTermsOf('다시 봐 줘', new Set())) })).toEqual([]);
+    expect(rankRecall(terms, rows, 5, { focus: new Set(['다시']) }).map((h) => h.slug)).toEqual(['mem/team-phase3-done']);
   });
 });
 
