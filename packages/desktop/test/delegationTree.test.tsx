@@ -66,7 +66,7 @@ function setup() {
   const c = {
     listGrants: vi.fn(async (id: string) => all.filter((r) => r.accountId === id)),
     listConnectors: vi.fn(async () => [{ id: CONN, name: 'lab-api', ownerAccountId: ME, baseUrl: 'https://api.example.internal', authKind: 'bearer', authHeader: null, secretId: 's1', methods: ['GET'], createdAt: '', updatedAt: '', grantCount: 1 }]),
-    deleteGrant: vi.fn(async (id: string) => { all = all.filter((r) => r.accountId !== id); }),
+    deleteGrant: vi.fn(async (id: string, _cap: string, _scope: string) => { all = all.filter((r) => r.accountId !== id); }),
     approveDelegation: vi.fn(async () => undefined),
     declineDelegation: vi.fn(async () => undefined),
   };
