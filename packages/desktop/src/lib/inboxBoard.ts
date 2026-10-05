@@ -107,11 +107,24 @@ function askForMe(meta: Record<string, unknown>, me: BoardInput['me'], scope: Sc
 }
 
 /**
- * 머리의 상태로 열을 정한다. 순서가 규칙이다: **내 차례가 치움을 이긴다** — ✅ 를 단 뒤에
+ * 머리의 상태로 열을 정한다 — 보는 사람 층 → 서버 상태 → (상태가 없으면) 옛 규칙. 순서가 규칙이다: **내 차례가 치움을 이긴다** — ✅ 를 단 뒤에
  * 다시 나에게 물음이 왔으면 그 일은 다시 내 것이다.
  */
 function columnFromHead(head: MessageRow, input: BoardInput, scope: Scope): BoardColumn {
-  const { me, isAgent } = input;
+  const viewer = viewerColumn(head, input, scope);
+  if (viewer) return viewer;
+  const status = head.statusReaction?.status;
+  if (status) return columnFromStatus(status, scope);
+  return legacyColumn(head, input, scope);
+}
+
+/**
+ * **보는 사람 층** — 나를 기다리는 것만 여기서 가른다. 서버 상태(`statusReaction`)는 스레드 기준이라
+ * "누구 차례인가"를 모른다(🙋 는 누가 보든 🙋 다). 그래서 내 차례만은 머리의 열린 물음·관문·대기 마디로
+ * 직접 잰다. 나머지 열은 서버 상태가 정한다(`columnFromStatus`).
+ */
+function viewerColumn(head: MessageRow, input: BoardInput, scope: Scope): BoardColumn | null {
+  const { me } = input;
   const myId = me?.id ?? null;
   const human = me?.kind === 'human';
   const mine = scope.opened || scope.calledMe;
@@ -121,11 +134,43 @@ function columnFromHead(head: MessageRow, input: BoardInput, scope: Scope): Boar
   const gateIds = head.openGateAccountIds ?? [];
   const humanAsks = head.openAskHumanCount ?? 0;
   const failures = head.unresolvedFailureCount ?? 0;
-  // 내 차례: 나를 지목한 열린 물음·위임은 어디서든, 수신자 없는 물음·실패는 내 스레드에서만.
+  // 나를 지목한 열린 물음·위임은 어디서든, 수신자 없는 물음·실패는 내 스레드에서만.
   // 실패는 언제나 사람에게 온다(`FailureMeta` 에 `to` 가 없다).
   if ((myId != null && (accountIds.includes(myId) || gateIds.includes(myId)))
     || (myId != null && links.some((l) => l.blockedBy === myId))
     || (human && mine && (humanAsks > 0 || failures > 0))) return 'mine';
+  return null;
+}
+
+/**
+ * 서버 상태 → 열(「내 작업」 S2, 2026-10-05 jaebin 승인: **판정 원본은 서버 ✅**). 채널 머리에 붙은
+ * 상태 리액션과 보드의 열이 같은 말을 하게 한다 — 보드가 따로 "끝"을 판정하면 둘이 갈린다.
+ *
+ * - 💬 도는 중 · 👀 받음 → 진행
+ * - ⏳ 에이전트·깨움을 기다림 · 🙋 (내가 아닌) 사람을 기다림 → 기다림
+ * - 🚨 막힘 → **내 스레드면 내 차례**(사람 손이 있어야 풀린다: 막힌 부름·죽은 러너), 아니면 기다림
+ * - ✅ → 끝
+ */
+function columnFromStatus(status: NonNullable<MessageRow['statusReaction']>['status'], scope: Scope): BoardColumn {
+  switch (status) {
+    case 'running':
+    case 'received': return 'active';
+    case 'waiting':
+    case 'my-turn': return 'blocked';
+    case 'stuck': return scope.opened || scope.calledMe ? 'mine' : 'blocked';
+    case 'done': return 'done';
+  }
+}
+
+/** 서버 상태가 없는 머리(에이전트가 낀 적 없는 스레드) — 옛 규칙 그대로. */
+function legacyColumn(head: MessageRow, input: BoardInput, scope: Scope): BoardColumn {
+  const { me, isAgent } = input;
+  const myId = me?.id ?? null;
+  const links = head.openAskLinks ?? [];
+  const accountIds = head.openAskAccountIds ?? [];
+  const humanAsks = head.openAskHumanCount ?? 0;
+  const failures = head.unresolvedFailureCount ?? 0;
+  // 내 차례는 이미 `viewerColumn` 이 갈랐다.
   // 막힘: **내가 열었거나 내가 위임한** 스레드가 남을 기다린다. 남의 스레드의 기다림은 빼낸다.
   const iWait = myId != null && links.some((l) => l.waiter === myId);
   const open = links.length > 0 || accountIds.length > 0 || humanAsks > 0 || failures > 0;
@@ -209,11 +254,15 @@ export function buildBoard(input: BoardInput): BoardCard[] {
     const list = groups.get(key);
     if (list) list.push(e); else groups.set(key, [e]);
   }
+  // inbox 밖의 머리(「내 작업」 S1 — 내가 연·말한 스레드)는 **항목 없는 카드**가 된다. 시켜 놓고 아직
+  // 아무도 답하지 않은 일이 여기 든다.
+  for (const head of threads ?? []) if (!groups.has(head.id)) groups.set(head.id, []);
   const myId = me?.id ?? null;
   const cards: BoardCard[] = [];
   for (const [rootId, list] of groups) {
     list.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
     const head = heads.get(rootId) ?? null;
+    const latest = list[0] ?? null;
     // 머리를 물었는데 안 왔다 = 지워졌다(LIST_VISIBLE). 지운 일은 보드에 세우지 않는다.
     if (threads != null && !head) continue;
     const scope: Scope = {
@@ -221,12 +270,14 @@ export function buildBoard(input: BoardInput): BoardCard[] {
       calledMe: list.some((e) => CALLED_ME.has(e.reason)),
     };
     let column = head ? columnFromHead(head, input, scope) : columnFromEntries(list, input, scope);
-    const lastActivityAt = [head?.lastReplyAt, head?.createdAt, list[0]!.createdAt]
+    // 항목 없는 카드는 머리가 반드시 있다(위에서 머리로만 만들었다).
+    const lastActivityAt = [head?.lastReplyAt, head?.createdAt, latest?.createdAt]
       .filter((v): v is string => typeof v === 'string')
       .reduce((a, b) => (Date.parse(a) >= Date.parse(b) ? a : b));
     const stale = nowMs - Date.parse(lastActivityAt) > RECENT_MS;
     const running = head?.lastKind === 'progress';
-    const state = effectiveState(states.get(rootId), list[0]!.createdAt, nowMs);
+    // 나에게 온 항목이 없으면 내 상태를 풀 새 부름도 없다 — 견줄 시각이 없으니 상태가 그대로 산다.
+    const state = effectiveState(states.get(rootId), latest?.createdAt ?? new Date(0).toISOString(), nowMs);
     let fold: BoardFold | null = null;
     // 나중에는 어느 열이든 그 열 맨 아래로 접는다 — 내 차례도 미룰 수 있어야 수가 0 이 된다.
     // 치운 것은 끝남 맨 아래로 간다 — 내 차례만은 치움을 이긴다(물음이 열려 있으면 치울 수 없다).
@@ -243,17 +294,18 @@ export function buildBoard(input: BoardInput): BoardCard[] {
     const failureMeta = failure ? readFailureMeta(failure.meta) : null;
     const summary = (ask?.prompt && oneSentence(ask.prompt))
       || (failureMeta?.what && oneSentence(failureMeta.what))
-      || oneSentence(lead?.body ?? head?.body ?? list[0]!.body)
-      || oneSentence(list[0]!.body);
+      || oneSentence(lead?.body ?? head?.body ?? latest?.body ?? '')
+      || oneSentence(latest?.body ?? '');
     cards.push({
       rootId,
-      channelId: head?.channelId ?? list[0]!.channelId,
+      channelId: head?.channelId ?? latest!.channelId,
       column,
       fold,
       entries: list,
       summary,
-      whoId: lead?.authorId ?? head?.authorId ?? list[0]!.authorId,
-      sinceAt: (lead ?? list[0]!).createdAt,
+      whoId: lead?.authorId ?? head?.authorId ?? latest?.authorId ?? null,
+      // 항목이 없으면 머리가 마지막으로 움직인 때부터 센다.
+      sinceAt: (lead ?? latest)?.createdAt ?? lastActivityAt,
       lastActivityAt,
       unread: list.some((e) => e.readAt === null),
       ask: openAsk && ask ? { messageId: openAsk.messageId, options: ask.options } : null,

@@ -282,3 +282,84 @@ describe('계정 관문 — Inbox 내 차례(서버 #1039 openGateAccountIds)', 
     expect(cards[0]!.column).toBe('mine');
   });
 });
+
+/** 서버 상태 리액션(088) 하나. */
+const sr = (status: NonNullable<MessageRow['statusReaction']>['status']): MessageRow['statusReaction'] =>
+  ({ status, emoji: '·', accountId: BOT, reason: null, updatedAt: ago(0) });
+
+describe('「내 작업」 S2 — 열은 서버 상태가 원본이다', () => {
+  it('서버 상태가 열을 정한다: 💬👀 진행 · ⏳ 기다림 · ✅ 끝', () => {
+    const rows = ['run', 'recv', 'wait', 'done'].map((r, i) => entry(i + 1, { threadRootId: r, reason: 'thread_reply' }));
+    const cards = board(rows, [
+      head('run', { authorId: ME, statusReaction: sr('running') }),
+      head('recv', { authorId: ME, statusReaction: sr('received') }),
+      head('wait', { authorId: ME, statusReaction: sr('waiting') }),
+      // 마지막 말이 사람이어도 서버가 ✅ 면 끝이다 — 옛 규칙("마지막이 에이전트")과 갈리던 자리.
+      head('done', { authorId: ME, lastAuthorId: ME, statusReaction: sr('done') }),
+    ]);
+    const col = Object.fromEntries(cards.map((c) => [c.rootId, c.column]));
+    expect(col).toEqual({ run: 'active', recv: 'active', wait: 'blocked', done: 'done' });
+  });
+
+  it('서버가 ⏳ 면 마지막 말이 에이전트여도 끝이 아니다', () => {
+    const cards = board([entry(1, { threadRootId: 'r1', reason: 'thread_reply' })],
+      [head('r1', { authorId: ME, lastAuthorId: BOT, statusReaction: sr('waiting') })]);
+    expect(cards[0]!.column).toBe('blocked');
+  });
+
+  it('나를 지목한 물음은 서버 상태보다 먼저다 — 🙋 이 나에게 온 것이면 내 차례', () => {
+    const cards = board([entry(1, { threadRootId: 'r1', reason: 'thread_reply' })],
+      [head('r1', { openAskAccountIds: [ME], statusReaction: sr('my-turn') })]);
+    expect(cards[0]!.column).toBe('mine');
+  });
+
+  it('🙋 이 남에게 간 것이면 기다림이다', () => {
+    const cards = board([entry(1, { threadRootId: 'r1', reason: 'thread_reply' })],
+      [head('r1', { openAskHumanCount: 1, statusReaction: sr('my-turn') })]);
+    expect(cards[0]!.column).toBe('blocked');
+  });
+
+  it('🚨 은 내 스레드면 내 차례, 남의 스레드면 기다림이다', () => {
+    const cards = board(
+      [entry(1, { threadRootId: 'mine', reason: 'thread_reply' }), entry(2, { threadRootId: 'theirs', reason: 'thread_reply' })],
+      [head('mine', { authorId: ME, statusReaction: sr('stuck') }), head('theirs', { statusReaction: sr('stuck') })],
+    );
+    const col = Object.fromEntries(cards.map((c) => [c.rootId, c.column]));
+    expect(col).toEqual({ mine: 'mine', theirs: 'blocked' });
+  });
+
+  it('서버 상태가 없는 머리(에이전트가 낀 적 없음)는 옛 규칙 그대로다', () => {
+    const cards = board([entry(1, { threadRootId: 'r1', reason: 'thread_reply' })],
+      [head('r1', { authorId: ME, lastAuthorId: BOT, statusReaction: null })]);
+    expect(cards[0]!.column).toBe('done');
+  });
+});
+
+describe('「내 작업」 S2 — inbox 밖의 머리는 항목 없는 카드다', () => {
+  it('시켜 놓고 아직 답이 없는 스레드가 카드로 선다', () => {
+    const cards = board([], [head('asked', { authorId: ME, body: '<@bot> 이거 해 줘', statusReaction: sr('received'), createdAt: ago(DAY / 4) })]);
+    expect(cards).toHaveLength(1);
+    const c = cards[0]!;
+    expect(c).toMatchObject({ rootId: 'asked', column: 'active', entries: [], unread: false, whoId: ME, ask: null });
+    expect(c.summary).toBe('이거 해 줘');
+    expect(c.sinceAt).toBe(ago(DAY / 4));
+  });
+
+  it('항목과 겹치는 머리는 카드 하나다', () => {
+    const cards = board([entry(1, { threadRootId: 'r1', reason: 'thread_reply' })],
+      [head('r1', { authorId: ME, statusReaction: sr('running') })]);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.entries).toHaveLength(1);
+  });
+
+  it('항목 없는 카드의 내 상태(완료)는 풀리지 않는다 — 풀 새 부름이 없다', () => {
+    const cards = board([], [head('r1', { authorId: ME, statusReaction: sr('running') })],
+      { threadStates: [st('r1', 'done', ago(DAY))] });
+    expect(cards[0]).toMatchObject({ column: 'done', fold: 'cleared' });
+  });
+
+  it('남이 연 스레드에서 내가 말만 얹었어도 🚨 은 기다림이다 — 나를 부르지 않았다', () => {
+    const cards = board([], [head('r1', { statusReaction: sr('stuck') })]);
+    expect(cards[0]!.column).toBe('blocked');
+  });
+});

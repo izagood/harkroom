@@ -281,7 +281,8 @@ export function Inbox({ open, onClose }: Props) {
       || (threads?.find((m) => m.id === card.rootId)?.replyCount ?? 0) > 0;
     const go = isThread
       ? getController().openThread(card.rootId, { channelId: card.channelId })
-      : (onClose(), getController().openMessage(card.entries[0]!.messageId));
+      // 항목 없는 카드(inbox 밖 머리)는 머리 자체를 연다.
+      : (onClose(), getController().openMessage(card.entries[0]?.messageId ?? card.rootId));
     void Promise.resolve(go).then(() => reload({ quiet: true }));
   };
 

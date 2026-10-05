@@ -60,6 +60,7 @@
   "GET /handle-groups/:p": "0.1.167",
   "GET /healthz": "0.1.167",
   "GET /inbox": "0.1.167",
+  "GET /inbox/board": "0.3.182",
   "GET /leases": "0.1.167",
   "GET /link-previews": "0.1.167",
   "GET /mcp-servers": "0.2.9",

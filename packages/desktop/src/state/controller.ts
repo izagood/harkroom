@@ -3,8 +3,8 @@ import type { MemoryEdit, MemoryEntry, MemoryRevision, MemoryAudit, MemoryBatchR
 import { countsAsReply, notifyLevelOf, readFailureMeta, type InboxThreadState } from '@harkroom/shared';
 import { buildBoard, mineCount } from '../lib/inboxBoard';
 
-/** 보드 한 판의 재료 — `GET /inbox?threads=1` 의 응답(`ApiClient.inboxBoard`). */
-export interface InboxBoardData { entries: InboxEntry[]; threads: MessageRow[] | null; threadStates: InboxThreadState[] }
+/** 보드 한 판의 재료 — `GET /inbox/board` 의 응답(`ApiClient.inboxBoard`). `truncated` 는 옛 시험 목이 안 줄 수 있다. */
+export interface InboxBoardData { entries: InboxEntry[]; threads: MessageRow[] | null; threadStates: InboxThreadState[]; truncated?: boolean }
 import { ApiClient, ApiError, type PreviewTicket } from '../lib/api';
 import { addRange, coversSeq, type SeqRange } from '../lib/seqCoverage';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
@@ -955,7 +955,7 @@ export class Controller {
    * 아무것도 달라지지 않은 채로 조회를 한 번 더 낸다.
    */
   /**
-   * **내 차례 수**를 다시 센다(배지 A). 보드와 같은 재료(`GET /inbox?threads=1`)·같은 판정
+   * **내 차례 수**를 다시 센다(배지 A). 보드와 같은 재료(`GET /inbox/board`)·같은 판정
    * (`buildBoard` → `mineCount`)이라 배지와 보드 머리글이 갈리지 않는다.
    *
    * 그 조회는 인박스 전체라 무겁다 — 이벤트가 몰리면 **하나만 돌리고** 도는 동안 온 것은 끝난 뒤
@@ -967,7 +967,7 @@ export class Controller {
   }
 
   /**
-   * 보드 재료(`GET /inbox?threads=1`)를 **한 곳에서** 받는다 — 배지(`inboxMine`)와 열려 있는 보드가
+   * 보드 재료(`GET /inbox/board`)를 **한 곳에서** 받는다 — 배지(`inboxMine`)와 열려 있는 보드가
    * 같은 조회 하나를 나눠 쓴다(#1076 security a: 신호 하나에 조회 둘이 나가던 것을 하나로).
    *
    * - 도는 중에 또 부르면 **같은 약속**을 돌려주고, 끝난 뒤 한 번 더 받아 그 결과로 풀린다 — 도는

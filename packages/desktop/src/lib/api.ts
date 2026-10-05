@@ -348,13 +348,15 @@ export class ApiClient {
     return (await this.req<{ entries: InboxEntry[] }>('GET', '/inbox')).entries;
   }
   /**
-   * 상태 보드(2026-10-01)의 재료 — 전체 항목 + 그 항목들이 속한 **스레드 머리**(지금 상태).
-   * 열은 머리가 정한다(`lib/inboxBoard`). 옛 서버는 `threads` 를 모르고 `entries` 만 준다 —
-   * 그때 `null` 로 내려 보드가 항목 `meta` 로 판정하게 한다(그래서 하한 판을 올리지 않는다).
+   * 「내 작업」 보드의 재료 — 전체 항목 + 그 항목들이 속한 **스레드 머리**(지금 상태) + inbox 밖의
+   * 머리(내가 연·말한 스레드 30일 ∩ 에이전트가 낀 것, 서버 #1137). 열은 머리가 정한다(`lib/inboxBoard`).
+   * inbox 항목이 없는 머리도 카드가 된다 — 시켜 놓고 아직 답이 없는 일이 그것이다.
+   *
+   * `truncated` 는 inbox 밖 머리가 서버 상한(300)에서 잘렸다는 뜻이다.
    */
-  async inboxBoard(): Promise<{ entries: InboxEntry[]; threads: MessageRow[] | null; threadStates: InboxThreadState[] }> {
-    const res = await this.req<{ entries: InboxEntry[]; threads?: MessageRow[]; threadStates?: InboxThreadState[] }>('GET', '/inbox?threads=1');
-    return { entries: res.entries, threads: res.threads ?? null, threadStates: res.threadStates ?? [] };
+  async inboxBoard(): Promise<{ entries: InboxEntry[]; threads: MessageRow[] | null; threadStates: InboxThreadState[]; truncated?: boolean }> {
+    const res = await this.req<{ entries: InboxEntry[]; threads?: MessageRow[]; threadStates?: InboxThreadState[]; truncated?: boolean }>('GET', '/inbox/board');
+    return { entries: res.entries, threads: res.threads ?? null, threadStates: res.threadStates ?? [], truncated: res.truncated ?? false };
   }
   /** 스레드 하나의 **내** 완료·나중에(2/2, 089). `state: null` 이면 되돌린다. */
   setInboxThreadState(
