@@ -458,6 +458,11 @@ body {
   outline-offset: 2px;
 }
 
+/* 구분선을 끄는 동안 iframe 이 마우스를 삼키지 않게 한다(`PaneResizer`). */
+body[data-pane-dragging] iframe {
+  pointer-events: none;
+}
+
 /*
   # 눌리는 것에는 손가락 커서 (2026-09-09)
 

@@ -314,8 +314,11 @@ describe('preview panel width and leaving the card', () => {
     const handle = screen.getByRole('separator', { name: '미리보기 너비 조절' });
     // jsdom 은 폭을 재지 못한다 — 원점은 하한(360)이다.
     fireEvent.mouseDown(handle, { clientX: 500 });
+    // 끄는 동안 iframe 이 마우스를 삼키지 않도록 body 에 표지가 선다(index.css).
+    expect(document.body.dataset.paneDragging).toBe('true');
     fireEvent.mouseMove(document, { clientX: 200 });
     fireEvent.mouseUp(document);
+    expect(document.body.dataset.paneDragging).toBeUndefined();
     expect(panel.style.width).toBe('660px');
     expect(localStorage.getItem('harkroom.previewWidth')).toBe('660');
     cleanup();

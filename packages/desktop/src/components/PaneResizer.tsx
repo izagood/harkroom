@@ -80,6 +80,7 @@ export function PaneResizer({ label, width, min, max, minRoomLeft, onWidth, onRe
       origin.current = null;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      delete document.body.dataset.paneDragging;
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -99,6 +100,9 @@ export function PaneResizer({ label, width, min, max, minRoomLeft, onWidth, onRe
     origin.current = { x: e.clientX, width, max: roomBound() };
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
+    // 끄는 동안 커서가 iframe(미리보기) 위를 지나면 mousemove 가 그 문서로 가서 끌기가 끊긴다 — index.css 가
+    // 이 표지를 보고 iframe 의 포인터를 끈다(security n2, 2026-10-05).
+    document.body.dataset.paneDragging = 'true';
   };
 
   /** 화살표는 **구분선을 그 방향으로** 움직인다 — 왼쪽 화살표면 패널이 넓어진다. */
