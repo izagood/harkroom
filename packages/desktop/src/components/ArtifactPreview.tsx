@@ -9,7 +9,7 @@ import { isMacOS, macTopBarMinHeight, macTrafficLightInset } from '../lib/platfo
 import { allowPreviewOnce } from '../lib/previewAllowance';
 import { PaneResizer } from './PaneResizer';
 import {
-  paneStorage, paneMaxWidth, MIN_PREVIEW_WIDTH, MAX_PREVIEW_WIDTH, MIN_CHANNEL_WIDTH, MIN_THREAD_WIDTH,
+  paneStorage, paneMaxWidth, MIN_PREVIEW_WIDTH, MAX_PREVIEW_WIDTH, MIN_CHANNEL_WIDTH, MIN_THREAD_WIDTH, PREVIEW_DEFAULT_CSS,
 } from '../lib/prefs';
 
 /**
@@ -34,6 +34,16 @@ import {
  * 서명 경로는 60초짜리다. 패널을 연 채 오래 두다가 다시 불러오면 **새로 받는다** — 만료를 오류로 보이지
  * 않는다(designer 기준). 그래서 경로를 상태에 오래 쥐지 않고 [다시 불러오기]가 언제나 `issuePreview` 를 부른다.
  */
+
+/**
+ * 패널을 연 카드와 연 방식. 닫을 때 포커스를 어디에 둘지가 이것으로 갈린다(designer 2026-10-05):
+ * 마우스로 열었으면 놓는다 — 카드에 남은 포커스가 Esc 뒤 `:focus-visible` 링으로 그려져 선택 표시처럼 남았다.
+ * 키보드로 열었으면 카드로 돌려준다 — 놓으면 키보드 사용자가 자리를 잃는다.
+ */
+let opener: { el: HTMLElement; byKeyboard: boolean } | null = null;
+export function noteArtifactOpener(el: HTMLElement, byKeyboard: boolean): void {
+  opener = { el, byKeyboard };
+}
 
 type Phase =
   | { kind: 'loading' }
@@ -66,7 +76,7 @@ export function ArtifactPanel({ fill = false }: {
   const loads = useRef(0);
   const attempt = useRef(0);
   const [width, setStoredWidth] = useState(() => paneStorage.loadPreviewWidth());
-  const setWidth = useCallback((next: number) => {
+  const setWidth = useCallback((next: number | null) => {
     setStoredWidth(next);
     paneStorage.savePreviewWidth(next);
   }, []);
@@ -97,20 +107,24 @@ export function ArtifactPanel({ fill = false }: {
   /*
     선택 표시가 닫은 뒤에도 남던 것(jaebin 신고 2026-10-05). 가게의 `artifactPreview` 는 닫으면 비지만, 누른
     카드에 포커스가 남아 있으면 Esc(키 입력) 뒤로 WebKit 이 그것을 `:focus-visible` 로 보고 전역 외곽선(2px
-    주황)을 그린다 — 선택 테두리와 똑같아 보인다. 패널이 닫히는 순간 포커스가 카드에 있으면 놓는다.
+    주황)을 그린다 — 선택 테두리와 똑같아 보인다. 닫히는 순간 연 방식대로 포커스를 정리한다(`opener`).
   */
   const wasOpen = useRef(false);
   useEffect(() => {
     if (attachment) { wasOpen.current = true; return; }
     if (!wasOpen.current) return;
     wasOpen.current = false;
+    const o = opener;
+    opener = null;
+    if (o?.byKeyboard && o.el.isConnected) { o.el.focus(); return; }
     const active = document.activeElement;
     if (active instanceof HTMLElement && active.closest('[data-testid="artifact-card"]')) active.blur();
   }, [attachment]);
 
   /*
-    다른 곳을 고르면 닫는다 — 채널이나 스레드를 옮긴 뒤에도 패널이 남으면 무엇의 시안인지 끊기고, 채널에서 연
-    미리보기는 스레드 자리를 접어 두므로(`previewLayout`) 새로 연 스레드가 보이지도 않는다.
+    카드가 있던 칸이 바뀌거나 사라지면 닫는다(designer 2026-10-05) — 채널을 옮기거나, 스레드를 열거나 바꾸거나
+    닫으면. 채널에서 연 미리보기는 스레드 자리를 접어 두므로(`previewLayout`) 그대로 두면 새로 연 스레드가 보이지도
+    않는다. 다른 카드를 누르는 것은 칸이 그대로이므로 닫지 않고 바꾼다.
   */
   const place = useActiveStore((s) => `${s.activeChannelId ?? ''}/${s.threadRootId ?? ''}`);
   const openedAt = useRef<string | null>(null);
@@ -120,16 +134,18 @@ export function ArtifactPanel({ fill = false }: {
     if (openedAt.current !== place) getController().closeArtifactPreview();
   }, [attachment, place]);
 
-  // fill 이면 실제 폭이 저장된 폭보다 넓을 수 있다 — 끌기의 원점은 보이는 폭이어야 손잡이가 바로 따라온다.
+  // 보이는 폭은 저장된 숫자와 다를 수 있다(끈 적 없으면 CSS 기본 폭, fill 이면 남는 폭) — 끌기의 원점은 보이는
+  // 폭이어야 손잡이가 바로 따라온다.
   const sectionRef = useRef<HTMLElement | null>(null);
   const [measured, setMeasured] = useState(0);
   useEffect(() => {
     const el = sectionRef.current;
-    if (!el || !fill || typeof ResizeObserver === 'undefined') return;
+    if (!el || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(() => setMeasured(Math.round(el.getBoundingClientRect().width)));
     ro.observe(el);
     return () => ro.disconnect();
-  }, [fill, attachment]);
+  }, [fill, attachment, expanded]);
+  const dragWidth = Math.max(MIN_PREVIEW_WIDTH, fill ? Math.max(width ?? 0, measured) : (width ?? measured));
 
   useEffect(() => {
     if (!attachment) return;
@@ -167,17 +183,22 @@ export function ArtifactPanel({ fill = false }: {
         않는다(`minWidth`) — 그래야 끌어 넓힌 만큼 스레드가 줄어든다. 창이 좁아지면 `paneMaxWidth` 가 이긴다.
       */
       style={expanded ? undefined : fill
-        ? { minWidth: `min(${width}px, ${paneMaxWidth(MIN_PREVIEW_WIDTH, MIN_THREAD_WIDTH)})` }
-        : { width, minWidth: MIN_PREVIEW_WIDTH, maxWidth: paneMaxWidth(MIN_PREVIEW_WIDTH, MIN_CHANNEL_WIDTH) }}
+        ? { minWidth: `min(${width ?? MIN_PREVIEW_WIDTH}px, ${paneMaxWidth(MIN_PREVIEW_WIDTH, MIN_THREAD_WIDTH)})` }
+        : {
+          width: width ?? PREVIEW_DEFAULT_CSS,
+          minWidth: MIN_PREVIEW_WIDTH,
+          maxWidth: paneMaxWidth(MIN_PREVIEW_WIDTH, MIN_CHANNEL_WIDTH),
+        }}
     >
       {!expanded && (
         <PaneResizer
           label={t('artifact.panel.resize')}
-          width={fill ? Math.max(width, measured) : width}
+          width={dragWidth}
           min={MIN_PREVIEW_WIDTH}
           max={MAX_PREVIEW_WIDTH}
           minRoomLeft={fill ? MIN_THREAD_WIDTH : MIN_CHANNEL_WIDTH}
           onWidth={setWidth}
+          onReset={() => setWidth(null)}
         />
       )}
       {/*

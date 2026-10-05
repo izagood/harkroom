@@ -1483,6 +1483,8 @@ export const ko = {
   'artifact.card.latest': '최신 v{version} 있음',
   'artifact.card.latestTitle': '최신 v{version} · 「{title}」',
   'artifact.card.html': 'HTML',
+  'artifact.card.openLabel': '미리보기 열기 ›',
+  'artifact.card.previewing': '미리보기 중',
   'artifact.panel.label': '미리보기',
   'artifact.panel.expand': '창 전체로 키우기',
   'artifact.panel.collapse': '옆 패널로 되돌리기',

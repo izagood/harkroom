@@ -20,7 +20,7 @@ const STEP = 10;
  * `absolute left-0` 으로 선다. 폭 계산도 `parentElement` 를 부모 패널로 읽으므로,
  * 이 컴포넌트는 반드시 폭을 지는 그 요소의 **직계 자식**이어야 한다.
  */
-export function PaneResizer({ label, width, min, max, minRoomLeft, onWidth }: {
+export function PaneResizer({ label, width, min, max, minRoomLeft, onWidth, onReset }: {
   /** 접근성 이름. "무엇의" 너비인지 사람이 읽을 수 있어야 한다. */
   label: string;
   width: number;
@@ -34,6 +34,8 @@ export function PaneResizer({ label, width, min, max, minRoomLeft, onWidth }: {
    */
   minRoomLeft: number;
   onWidth: (next: number) => void;
+  /** 있으면 더블클릭이 기본 폭으로 되돌린다(미리보기 패널, designer 2026-10-05). */
+  onReset?: () => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   /** 드래그 원점. `null` 이면 끌고 있지 않다. */
@@ -122,6 +124,7 @@ export function PaneResizer({ label, width, min, max, minRoomLeft, onWidth }: {
       className="absolute -left-0.5 top-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-accent focus:bg-accent"
       onMouseDown={onMouseDown}
       onKeyDown={onKeyDown}
+      onDoubleClick={onReset}
     />
   );
 }

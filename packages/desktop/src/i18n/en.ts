@@ -3121,6 +3121,8 @@ export const en = {
   'artifact.card.latest': 'Latest v{version}',
   'artifact.card.latestTitle': 'Latest v{version} · “{title}”',
   'artifact.card.html': 'HTML',
+  'artifact.card.openLabel': 'Open preview ›',
+  'artifact.card.previewing': 'Previewing',
   'artifact.panel.label': 'Preview',
   'artifact.panel.expand': 'Expand to window',
   'artifact.panel.collapse': 'Back to side panel',

@@ -88,12 +88,13 @@ export const DEFAULT_TERMINAL_WIDTH = 676;
 export const MIN_TERMINAL_WIDTH = 400;
 export const MAX_TERMINAL_WIDTH = 1000;
 /**
- * 미리보기(아티팩트) 패널. 기본값은 끌기 전 화면 그대로(`w-[min(40rem,45vw)]` 의 40rem)이고,
- * 하한은 그때의 `min-w-[22rem]` 이다. 시안은 넓게 볼수록 좋으므로 상한은 스레드처럼 난간으로만 둔다 —
- * 실질 상한은 왼쪽에 남길 폭이다(jaebin 신고 2026-10-05: 좁고 넓힐 수 없다).
+ * 미리보기(아티팩트) 패널. 끌기 전에는 숫자가 아니라 CSS 기본 폭(`PREVIEW_DEFAULT_CSS`)으로 선다 — 시안은 대개
+ * 데스크톱 폭으로 그려져 640px 이면 첫 화면부터 잘렸다(jaebin 신고 2026-10-05, designer 답). 손잡이를 끌면
+ * 그 숫자를 기억하고, 더블클릭하면 기억을 지워 기본 폭으로 돌아간다. 상한은 스레드처럼 난간으로만 둔다 —
+ * 실질 상한은 왼쪽에 남길 폭이다.
  */
-export const DEFAULT_PREVIEW_WIDTH = 640;
-export const MIN_PREVIEW_WIDTH = 352;
+export const PREVIEW_DEFAULT_CSS = 'min(48rem, 50vw)';
+export const MIN_PREVIEW_WIDTH = 360;
 export const MAX_PREVIEW_WIDTH = 2000;
 
 /**
@@ -291,11 +292,14 @@ export const paneStorage = {
   saveTerminalWidth(width: number): void {
     saveWidth(TERMINAL_WIDTH_KEY, width, MIN_TERMINAL_WIDTH, MAX_TERMINAL_WIDTH);
   },
-  loadPreviewWidth(): number {
-    return loadWidth(PREVIEW_WIDTH_KEY, DEFAULT_PREVIEW_WIDTH, MIN_PREVIEW_WIDTH, MAX_PREVIEW_WIDTH);
+  /** `null` 은 "끈 적 없음" — 기본 폭(`PREVIEW_DEFAULT_CSS`)으로 선다. */
+  loadPreviewWidth(): number | null {
+    const w = loadWidth(PREVIEW_WIDTH_KEY, -1, -1, MAX_PREVIEW_WIDTH);
+    return w < 0 ? null : Math.max(MIN_PREVIEW_WIDTH, w);
   },
-  savePreviewWidth(width: number): void {
-    saveWidth(PREVIEW_WIDTH_KEY, width, MIN_PREVIEW_WIDTH, MAX_PREVIEW_WIDTH);
+  savePreviewWidth(width: number | null): void {
+    if (width !== null) { saveWidth(PREVIEW_WIDTH_KEY, width, MIN_PREVIEW_WIDTH, MAX_PREVIEW_WIDTH); return; }
+    try { localStorage.removeItem(PREVIEW_WIDTH_KEY); } catch { /* 저장 불가 환경 허용 */ }
   },
 };
 
