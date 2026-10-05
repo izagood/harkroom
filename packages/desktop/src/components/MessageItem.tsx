@@ -1,5 +1,6 @@
 import { BlockedCard } from './BlockedCard';
 import { SecretNoticeAction } from './SecretNoticeAction';
+import { MergeDenialPanel } from './MergeDenialPanel';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { messagePermalink, readAskMeta, readModelMeta, type MessageRow } from '@harkroom/shared';
 import { readAutomationMeta } from '../lib/automation';
@@ -814,6 +815,8 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
             {shownBody.trim() && <MessageBody body={shownBody} messageId={message.id} refIds={mentionRefs} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
             {/* 선택지는 본문 **바로 아래**에 붙는다 — 답할 자리가 말 옆에 있어야 한다(규칙 05).
                 형식을 못 알아보면 `AskCard` 가 스스로 아무것도 그리지 않는다. */}
+            {/* 머지 거절 카드(P5) — 권한 칸은 서버 기록(meta.mergeDenial), 선택지는 그 아래 AskCard. */}
+            {message.meta.mergeDenial !== undefined && <MergeDenialPanel message={message} onOpenSettings={onOpenSettings} />}
             <AskCard message={message} />
             {/* 실패도 본문 바로 아래다 — 고치는 경로가 말 옆에 있어야 한다(규칙 05). */}
             <FailureCard message={message} inThread={inThread} />

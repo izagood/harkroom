@@ -2609,6 +2609,9 @@ export class Controller {
   putGrant(accountId: string, body: Parameters<ApiClient['putGrant']>[1]): Promise<import('@harkroom/shared').GrantRow[]> {
     return this.api.putGrant(accountId, body);
   }
+  grantFromMergeDenial(agentId: string, denialId: string) {
+    return this.api.grantFromMergeDenial(agentId, denialId);
+  }
   deleteGrant(accountId: string, capability: import('@harkroom/shared').Capability, scope: string): Promise<void> {
     return this.api.deleteGrant(accountId, capability, scope);
   }
