@@ -23,6 +23,8 @@ import { ConfirmDialog } from '../ConfirmDialog';
 import { hasOperatorLocalSurface } from '../../lib/operatorLocal';
 import { ImmediateBadge } from './pendingEdits';
 import { MergeGhUserRow } from './MergeGhUserRow';
+import { buildForest, decidableBy, descendantCount, pendingForRoot, type ForestNode } from '../../lib/delegationForest';
+import { DelegationChildren, PendingDelegations, type DelegationActions } from './DelegationTree';
 
 const CAP = 'repo.merge' as const;
 type Expiry = 'none' | '7d' | '30d';
@@ -67,6 +69,9 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   const [apiGrants, setApiGrants] = useState<GrantRow[]>([]);
   const [connectors, setConnectors] = useState<ApiConnectorView[]>([]);
   const [addKind, setAddKind] = useState<'merge' | 'api'>('api');
+  // 위임 나무(P5 desktop): 나무는 에이전트를 건너가므로 **내 에이전트 전부**의 api.call 줄을 모아 엮는다(서버는 parentGrantId 만 준다).
+  const [forest, setForest] = useState<Map<string, ForestNode>>(new Map());
+  const [revokingNode, setRevokingNode] = useState<{ node: ForestNode; below: boolean } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -74,6 +79,17 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
       const rows = all.filter((g) => g.capability === CAP);
       setGrants(rows);
       setApiGrants(all.filter((g) => g.capability === 'api.call'));
+      // 소유자가 볼 때만 나무를 엮는다 — 남의 에이전트 grant 목록은 서버가 admin·소유자에게만 준다.
+      if (canGrant) {
+        const st = useActiveStore.getState();
+        const mine = Object.values(st.accounts)
+          .filter((a) => a.kind === 'agent' && a.id !== agent.id && a.ownerAccountId != null && a.ownerAccountId === st.me?.id)
+          .map((a) => a.id);
+        const others = await Promise.all(mine.map((id) => getController().listGrants(id).catch(() => [] as GrantRow[])));
+        setForest(buildForest([...all, ...others.flat()]));
+      } else {
+        setForest(buildForest(all));
+      }
       // 소유자가 볼 때만 알린다(#1146 security n2) — admin 이 남의 에이전트를 열어도 목록 카드에 그 숫자가 끼지 않게.
       if (canGrant) onCountChange?.(liveMergeGrantCount(rows));
     } catch { setGrants('error'); }
@@ -119,6 +135,14 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   });
 
   const off = busy || disabled;
+  const delegation: DelegationActions = {
+    off: !!off,
+    canRevoke,
+    canDecide: (n) => !!myId && decidableBy(n, myId),
+    revoke: (node) => setRevokingNode({ node, below: false }),
+    decide: (node, approve) => void run(() => approve ? getController().approveDelegation(node.grant.id) : getController().declineDelegation(node.grant.id)),
+  };
+  const pending = canGrant && myId ? pendingForRoot(forest, myId) : [];
   const rows = Array.isArray(grants) ? grants : [];
   // 비어 있으면 한 줄로 접는다(P1) — 설명 문단·빈 문장 없이 「PR 머지 · 머지 권한 없음 · [+ 권한 주기]」. 읽는 동안도
   // 같은 모양으로 그린다(#1146 designer b) — 권한 없는 에이전트를 열 때마다 절이 펼쳤다 줄어드는 흔들림을 없앤다.
@@ -167,6 +191,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
     <section data-testid="agent-grants">
       {heading}
       <p className="text-meta text-fg-subtle">{t('agents.grants.note')}</p>
+      <PendingDelegations pending={pending} accounts={accounts} connectors={connectors} a={delegation} />
 
       {apiGrants.length > 0 && (
         <>
@@ -179,8 +204,11 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
               const noKey = !!c && c.authKind !== 'none' && !c.secretId;
               const dim = expired || !!g.suspendedAt || noKey;
               const write = (g.limits?.methods ?? []).some((m) => m !== 'GET');
+              const node = g.id ? forest.get(g.id) : undefined;
+              const below = node ? descendantCount(node) : 0;
               return (
-                <li key={g.scope} className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-border px-2 py-1 text-meta ${dim ? 'text-fg-subtle' : 'text-fg'}`} data-testid={`agent-api-grant-${c?.name ?? id.slice(0, 8)}`}>
+                <li key={g.scope} className="space-y-0">
+                <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-border px-2 py-1 text-meta ${dim ? 'text-fg-subtle' : 'text-fg'}`} data-testid={`agent-api-grant-${c?.name ?? id.slice(0, 8)}`}>
                   <span className="rounded bg-accent-surface px-1 text-accent-text">API</span>
                   <span className="font-mono font-medium">{c?.name ?? id.slice(0, 8)}</span>
                   <span>{write ? t('apiGrant.rowWrite') : t('apiGrant.rowRead')}</span>
@@ -198,6 +226,15 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                       aria-label={t('apiGrant.revokeAria', { name: c?.name ?? id.slice(0, 8) })}
                       onClick={() => setRevoking(g)}>{t('agents.grants.revoke')}</button>
                   )}
+                  {node?.parent && <span className="basis-full text-fg-subtle" data-testid={`delegation-from-${g.id}`}>{t('apiGrant.from', { handle: accounts[node.parent.agentId]?.handle ?? node.parent.agentId.slice(0, 8) })}</span>}
+                  {(g.delegateDepth ?? 0) > 0 && <span className="text-fg-subtle">{t('apiGrant.depthLeft', { n: String(g.delegateDepth) })}</span>}
+                  {canRevoke && node && below > 0 && (
+                    <button className="rounded border border-border px-2 py-0.5 text-meta text-fg hover:text-danger disabled:opacity-50" disabled={off}
+                      data-testid={`delegation-revoke-below-${g.id}`}
+                      onClick={() => setRevokingNode({ node, below: true })}>{t('apiGrant.revokeBelow')}</button>
+                  )}
+                </div>
+                {node && <DelegationChildren node={node} accounts={accounts} a={delegation} />}
                 </li>
               );
             })}
@@ -333,6 +370,28 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
 
       {error && <p role="alert" className="mt-2 text-meta text-danger" data-testid="agent-grants-error">{error}</p>}
 
+      {revokingNode && (() => {
+        const { node, below } = revokingNode;
+        const n = descendantCount(node);
+        const handle = accounts[node.agentId]?.handle ?? node.agentId.slice(0, 8);
+        return (
+          <ConfirmDialog
+            title={below ? t('apiGrant.revokeBelowTitle', { n: String(n) }) : t('apiGrant.revokeChildTitle', { handle })}
+            detail={below ? t('apiGrant.revokeBelowDetail', { handle }) : t('apiGrant.revokeChildDetail', { handle, n: String(n) })}
+            confirmLabel={t('agents.grants.revoke')}
+            cancelLabel={t('agents.grants.cancel')}
+            danger
+            busy={busy}
+            onCancel={() => setRevokingNode(null)}
+            onConfirm={() => {
+              setRevokingNode(null);
+              // 아래 줄은 FK cascade 로 함께 지워진다 — [이 아래 전부]는 바로 아래 줄들만 지우면 된다. 이 줄 자신은 남긴다.
+              const targets = below ? node.children : [node];
+              void run(async () => { for (const c of targets) await getController().deleteGrant(c.agentId, 'api.call', c.grant.scope); });
+            }}
+          />
+        );
+      })()}
       {revoking && (
         <ConfirmDialog
           title={revoking.capability === 'api.call'
