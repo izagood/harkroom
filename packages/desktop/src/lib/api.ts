@@ -746,15 +746,15 @@ export class ApiClient {
   putGrant(accountId: string, body: { capability: Capability; scope: string; expiresAt?: string | null; allowAgentCause?: boolean; limits?: ApiGrantLimits; writeNeedsHumanCause?: boolean; delegateDepth?: number }): Promise<GrantRow[]> {
     return this.req<{ grants: GrantRow[] }>('PUT', `/accounts/${accountId}/grants`, body).then((r) => r.grants);
   }
+  deleteGrant(accountId: string, capability: Capability, scope: string): Promise<void> {
+    return this.req('DELETE', `/accounts/${accountId}/grants/${encodeURIComponent(capability)}?scope=${encodeURIComponent(scope)}`);
+  }
   /** 위임 대기 줄(E2) 허락·거절 — 루트 사람만(외부 API P5, #1157). 거절은 줄을 지운다(아래도 함께). */
   approveDelegation(grantId: string): Promise<void> {
     return this.req('POST', `/grants/${grantId}/approve`);
   }
   declineDelegation(grantId: string): Promise<void> {
     return this.req('POST', `/grants/${grantId}/decline`);
-  }
-  deleteGrant(accountId: string, capability: Capability, scope: string): Promise<void> {
-    return this.req('DELETE', `/accounts/${accountId}/grants/${encodeURIComponent(capability)}?scope=${encodeURIComponent(scope)}`);
   }
 
   /** API 연결(098, 외부 API 권한 C안). 사람만 쓴다 — 판정은 서버 `connectorRoutes.ts`. 키 값은 오가지 않는다(비밀 id 만). */
