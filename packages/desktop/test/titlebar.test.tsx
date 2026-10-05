@@ -489,7 +489,7 @@ describe('배율과 신호등', () => {
     expect(brandStyle()).toContain(`${MAC_TRAFFIC_LIGHT_CLEAR_PT}px / var(${WEBVIEW_ZOOM_VAR}, 1) - ${RAIL_W_PX}px`);
     // 100% 이상에서 지금 화면이 그대로인 이유 — 원래 여백(pl-3)이 max 의 한쪽이다.
     expect(brandStyle()).toContain('max(calc(var(--spacing) * 3)');
-    expect(brandStyle()).toContain(`min-height: calc(40px / var(${WEBVIEW_ZOOM_VAR}, 1))`);
+    expect(brandStyle()).toContain(`min-height: max(calc(var(--spacing) * 9), calc(40px / var(${WEBVIEW_ZOOM_VAR}, 1)))`);
     // 펴져 있으면 헤더는 사이드바 오른쪽이라 여백을 늘리지 않는다. 높이는 한 줄이라 같이 맞춘다.
     expect(headerStyle()).not.toContain('padding-left');
     expect(headerStyle()).toContain('min-height');

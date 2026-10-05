@@ -68,7 +68,9 @@ export function macTrafficLightInset(offsetPx: number, minPadding: string): { pa
  */
 export function macTopBarMinHeight(): { minHeight: string } | undefined {
   if (!isMacOS()) return undefined;
-  return { minHeight: `calc(40px / ${zoomVar})` };
+  // `TOP_BAR_H`(h-9) 도 하한에 넣는다 — 이 값이 `min-height` 를 맡으면서 flex 안에서 바가 h-9 아래로
+  // 눌릴 수 있게 되면(세로로 넘치는 사이드바) 배율 100% 이상에서 오히려 낮아진다.
+  return { minHeight: `max(calc(var(--spacing) * 9), calc(40px / ${zoomVar}))` };
 }
 
 /**
