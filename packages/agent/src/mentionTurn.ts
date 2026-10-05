@@ -1027,6 +1027,7 @@ export async function runMentionTurn(
     operatorBin: deps.operatorBin,
     mergeRepos,
     apiConnectors,
+    apiDelegatable: apiInfo.delegatable,
     codexHome: deps.codexHome,
     opencodeHome: deps.opencodeHome,
     piHome: deps.piHome,
