@@ -125,6 +125,8 @@
   "POST /claim": "0.1.223",
   "POST /connectors": "0.3.171",
   "POST /dms": "0.1.167",
+  "POST /grants/:p/approve": "0.3.182",
+  "POST /grants/:p/decline": "0.3.182",
   "POST /handle-groups": "0.1.167",
   "POST /handle-groups/:p/members": "0.1.167",
   "POST /inbox/read": "0.1.167",

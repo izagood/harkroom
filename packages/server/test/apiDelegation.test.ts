@@ -19,7 +19,7 @@ describe('위임', () => {
   let app: FastifyInstance;
   let alice: { token: string; accountId: string };
   let bob: { token: string; accountId: string };
-  let a: string; let b: string; let c: string; let d: string; let e: string; let bobs: string;
+  let a: string; let b: string; let c: string; let d: string; let e: string; let f: string; let bobs: string;
   let connectorId: string; let ch: string; let other: string;
 
   /** 원인 메시지 — 기본은 위임하는 에이전트(a)를 깨운 글(inbox 있음). `woke: false` 면 깨우지 않은 글. */
@@ -52,7 +52,8 @@ describe('위임', () => {
     // 하루 상한(L1)은 (위임한 에이전트, 받는 쪽) 쌍마다 센다 — 감사 기록은 지울 수 없으니 시험마다 받는 쪽을 따로 둔다.
     d = (await createAgent(app, admin.token, 'helper2')).accountId;
     e = (await createAgent(app, admin.token, 'helper3')).accountId;
-    for (const x of [a, b, c, d, e]) await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [x, alice.accountId]);
+    f = (await createAgent(app, admin.token, 'helper4')).accountId;
+    for (const x of [a, b, c, d, e, f]) await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [x, alice.accountId]);
     await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [bobs, bob.accountId]);
     const secretId = (await pool.query(`insert into secret (name, kind, owner_account_id) values ('lab-token', 'text', $1) returning id`, [alice.accountId])).rows[0].id;
     connectorId = (await app.inject({ method: 'POST', url: '/connectors', headers: auth(alice.token),
@@ -167,6 +168,17 @@ describe('위임', () => {
     expect(again).toMatchObject({ ok: true, grantId: first.grantId, pending: false });
     expect(await lines()).toBe(before);
     await revokeDelegation(pool, { agentId: a, grantId: first.grantId });
+  });
+
+  it('L1 상한(security #1157 메모): 범위만 바꿔 같은 받는 쪽에 6번 위임하면 6번째가 rate_limited 이고 시스템 줄은 5개다', async () => {
+    const lines = async () => (await pool.query(`select 1 from message where meta->'delegation'->>'toAgentId' = $1`, [f])).rowCount;
+    const results = [];
+    for (let i = 1; i <= 6; i++) {
+      results.push(await delegateApiGrant(pool, base({ to: f, pathPrefix: `/api/clusters/${i}`, causeMessageId: await msgBy(alice.accountId) })));
+    }
+    expect(results.slice(0, 5).every((r) => r.ok)).toBe(true);
+    expect(results[5]).toMatchObject({ ok: false, code: 'rate_limited' });
+    expect(await lines()).toBe(5);
   });
 
   it('덮지 않는다: 사람이 직접 준 줄이 있으면 already_granted', async () => {
