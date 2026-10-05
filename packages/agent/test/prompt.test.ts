@@ -511,6 +511,11 @@ describe('buildSystemPrompt', () => {
     expect(granted).toContain('/opt/harkroom/harkroom-operator merge <owner/name> <PR 번호> --head <40자 head sha>');
     expect(granted).toContain('izagood/harkroom');
     expect(granted).toContain('`gh pr merge`');
+    // P4(스레드 febe9ff8): 거절 코드별 길 — denialId 는 message.ask 의 mergeDenialId 로, no_repo_access 는 「사람이 머지」
+    expect(granted).toContain('`mergeDenialId: <그 값>`');
+    expect(granted).toContain('`to`·`mirrorOf` 는 싣지 않는다');
+    expect(granted).toContain('`no_repo_access`');
+    expect(granted).toContain('사람이 머지');
     const none = buildSystemPrompt({ ...common, merge: { operatorBin: '/opt/harkroom/harkroom-operator', repos: [] } });
     expect(none).toContain('**PR 머지는 하지 마라.**');
     expect(none).not.toContain('harkroom-operator merge');

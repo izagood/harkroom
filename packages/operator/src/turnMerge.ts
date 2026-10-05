@@ -34,12 +34,15 @@ import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/run
 
 export const MERGE_TOOL = 'repo.merge';
 
+const NO_REPO_ACCESS = "this operator's gh account cannot access or merge this repository — granting more permission will not help; a person merges it";
+
 /** `gh` 의 절대 경로 — 셸 PATH 를 믿지 않는다(F3). 기동 때 한 번 고른다. 없으면 머지는 `pr_not_found` 로 실패한다. */
 export const GH_PATH = ['/opt/homebrew/bin/gh', '/usr/local/bin/gh', '/usr/bin/gh'].find((p) => existsSync(p)) ?? '/usr/local/bin/gh';
 
 /** 래퍼가 받는 인자 모양(F3). 셸에서 온 문자열이라 여기서 전부 다시 잰다. */
 export const REPO_RE = /^[a-z0-9][a-z0-9._-]{0,99}\/[a-z0-9._-]{1,100}$/i;
 export const SHA_RE = /^[0-9a-f]{40}$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface MergeArgs { repo: string; number: number; headSha: string }
 
@@ -61,6 +64,15 @@ export function parseMergeArgs(argv: readonly string[]): MergeArgs | { error: st
   }
   if (!headSha || !SHA_RE.test(headSha)) return { error: '--head <40자 hex sha> 가 필요하다' };
   return { repo: repo.toLowerCase(), number: Number(num), headSha };
+}
+
+/**
+ * gh 의 실패가 "이 gh 계정으로는 이 저장소를 볼 수 없다/쓸 수 없다" 인가. `merge.ghUser` 가 개인 계정이면 회사 저장소는 늘 여기
+ * 걸린다 — 권한(grant)을 더 줘도 풀리지 않으므로 에이전트는 `no_repo_access` 를 받고 사람에게 머지를 넘긴다(「사람이 머지」).
+ * 오류 원문은 서버 보고의 `error`(meta 전용)에만 남고 에이전트 답에는 싣지 않는다.
+ */
+export function isRepoAccessError(stderr: string): boolean {
+  return /Could not resolve to a Repository|Resource not accessible|must have (?:push|write|admin) access|does not have the correct permissions|HTTP 40[34]|not have permission/i.test(stderr);
 }
 
 export type ExecResult = { code: number; stdout: string; stderr: string };
@@ -185,7 +197,17 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     if (!check || check.type !== 'http.response' || check.status === 0) return fail('unavailable', 'the server could not be reached — merge refused (fail-closed)');
     if (check.status !== 200) {
       let code = `http_${check.status}`;
-      try { code = (JSON.parse(check.body) as { error?: { code?: string } }).error?.code ?? code; } catch { /* 그대로 */ }
+      let denialId: string | undefined;
+      try {
+        const e = (JSON.parse(check.body) as { error?: { code?: string; denialId?: unknown } }).error;
+        code = e?.code ?? code;
+        if (typeof e?.denialId === 'string' && UUID_RE.test(e.denialId)) denialId = e.denialId;
+      } catch { /* 그대로 */ }
+      // P4(스레드 febe9ff8): 서버가 카드를 세울 수 있는 거절에만 `denialId` 를 준다(C2). 에이전트는 그것을 `message.ask` 의
+      // `mergeDenialId` 로 실어 소유자에게 [7일 주기] 카드를 세운다 — 카드의 저장소·PR 칸은 서버가 기록에서 채운다.
+      if (denialId) {
+        return { ok: false, value: { error: { code, message: `merge not allowed: ${code} — ask the owner with message.ask and mergeDenialId`, denialId } } };
+      }
       return fail(code, `merge not allowed: ${code}`);
     }
     let granted: { grantedBy?: string; causeByHuman?: boolean } = {};
@@ -204,7 +226,11 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     if (!tok.ok) { await report('failed', null, `${tok.code}: ${tok.message}`); return fail(tok.code, tok.message); }
     const env = ghEnv(deps.home, tok.token);
     const view = await gh(['pr', 'view', String(number), '-R', repo, '--json', 'state,isDraft,headRefOid,baseRefName,mergeStateStatus,statusCheckRollup'], env);
-    if (view.code !== 0) { await report('failed', null, `gh pr view: ${view.stderr.trim().slice(0, 300)}`); return fail('pr_not_found', `gh pr view failed: ${view.stderr.trim().slice(0, 300)}`); }
+    if (view.code !== 0) {
+      await report('failed', null, `gh pr view: ${view.stderr.trim().slice(0, 300)}`);
+      if (isRepoAccessError(view.stderr)) return fail('no_repo_access', NO_REPO_ACCESS);
+      return fail('pr_not_found', `gh pr view failed: ${view.stderr.trim().slice(0, 300)}`);
+    }
     let pr: PrView = {};
     try { pr = JSON.parse(view.stdout) as PrView; } catch { await report('failed', null, 'gh pr view: unparseable'); return fail('pr_not_found', 'gh pr view returned no JSON'); }
     const refuse = async (code: string, message: string) => { await report('failed', null, `${code}: ${message}`); return fail(code, message, { pr: { state: pr.state, headRefOid: pr.headRefOid, mergeStateStatus: pr.mergeStateStatus } }); };
@@ -230,6 +256,7 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     if (merge.code !== 0) {
       const err = merge.stderr.trim().slice(0, 300);
       await report('failed', null, err);
+      if (isRepoAccessError(merge.stderr)) return fail('no_repo_access', NO_REPO_ACCESS);
       return fail('merge_failed', `gh pr merge failed: ${err}`);
     }
     let mergeSha: string | null = null;

@@ -7,6 +7,9 @@ import { bootstrapAdmin, createAgent, createMember, registerOperator } from './h
 import { can, mergeGrantFor } from '../src/auth/permissions.js';
 import { mintPat } from '../src/services/pats.js';
 import { bumpDenialCard, linkDenialCard, prepareDenialCard } from '../src/services/mergeDenials.js';
+import { MERGE_DENIAL_DAILY_CAP } from '../src/services/mergeGrants.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 // 에이전트 머지 권한(090) — 설계 스레드 3deac356, security F1·F2·F4 의 회귀선.
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
@@ -402,6 +405,99 @@ describe('repo.merge grant', () => {
       const meta = (await pool.query(`select meta from message where id = $1`, [card])).rows[0].meta.mergeDenial;
       expect(meta.granted).toMatchObject({ by: alice.accountId });
       await revoke(alice.token, 'repo:izagood/p3-e');
+    });
+
+    it('L2: 같은 (에이전트, 저장소, 스레드)의 안 쓴 기록은 다시 쓴다 — PR 번호만 지금 것으로', async () => {
+      const { cause, body } = await refused('izagood/p4-reuse');
+      const thread = await threadOf(cause);
+      const reply = (await pool.query(
+        `insert into message (channel_id, thread_root_id, author_id, body, kind) values ($1, $2, $3, 'again', 'user') returning id`,
+        [ch, thread, alice.accountId])).rows[0].id as string;
+      await pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [agentId, reply]);
+      const again = (await check(await lease(reply), 'izagood/p4-reuse', { number: 99 })).json().error;
+      expect(again).toMatchObject({ code: 'not_granted', denialId: body.error.denialId });
+      const rows = (await pool.query(`select pr_number from merge_denial where agent_id = $1 and scope = 'repo:izagood/p4-reuse'`, [agentId])).rows;
+      expect(rows).toEqual([{ pr_number: 99 }]);
+    });
+
+    it('L2: 에이전트마다 24시간 새 기록 상한 — 넘으면 not_granted 는 그대로, denialId 는 없다', async () => {
+      const capAgent = (await createAgent(app, admin.token, 'capbot')).accountId;
+      const have = (await pool.query(`select count(*)::int as n from merge_denial where agent_id = $1`, [capAgent])).rows[0].n as number;
+      expect(have).toBe(0);
+      // 상한까지는 손으로 채운다(임대·스레드는 아무 기록의 것을 빌린다 — 상한은 에이전트 단위다)
+      const src = (await pool.query(`select channel_id, thread_root_id, lease_id from merge_denial limit 1`)).rows[0];
+      for (let i = 0; i < MERGE_DENIAL_DAILY_CAP; i++) {
+        await pool.query(
+          `insert into merge_denial (agent_id, scope, pr_number, head_sha, channel_id, thread_root_id, lease_id, expires_at)
+           values ($1, $2, 1, $3, $4, $5, $6, now() + interval '1 day')`,
+          [capAgent, `repo:izagood/cap-${i}`, SHA, src.channel_id, src.thread_root_id, src.lease_id]);
+      }
+      await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [capAgent, alice.accountId]);
+      await pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)`, [capAgent, op.operatorId, admin.accountId]);
+      const cause = await mention(alice.accountId, capAgent);
+      const l = (await app.inject({ method: 'POST', url: '/agent/turn-leases', headers: asAgent(op, capAgent), payload: { causeMessageId: cause } })).json().lease as { id: string; token: string };
+      const res = await app.inject({ method: 'POST', url: '/agent/merge-checks', headers: asAgent(op, capAgent), payload: { leaseId: l.id, token: l.token, repo: 'izagood/cap-over', number: 1, headSha: SHA } });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('not_granted');
+      expect(res.json().error.denialId).toBeUndefined();
+      expect((await pool.query(`select count(*)::int as n from merge_denial where agent_id = $1`, [capAgent])).rows[0].n).toBe(MERGE_DENIAL_DAILY_CAP);
+    });
+
+    it('n1: 있던 카드는 그 에이전트가 쓴 글에서만 찾는다 — 같은 key 의 남의 글은 무시', async () => {
+      const { cause, body } = await refused('izagood/p4-n1');
+      const thread = await threadOf(cause);
+      const p = await prepareDenialCard(pool, { agentId, denialId: body.error.denialId!, channelId: ch, threadRootId: thread });
+      if (!p.ok) throw new Error('prepare failed');
+      await pool.query(
+        `insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, 'fake', 'user', $4)`,
+        [ch, thread, otherAgentId, JSON.stringify({ mergeDenial: p.meta })]);
+      const again = await prepareDenialCard(pool, { agentId, denialId: body.error.denialId!, channelId: ch, threadRootId: thread });
+      expect(again).toMatchObject({ ok: true, existingCardId: null });
+    });
+
+    describe('n2: MCP 경로 message.ask + mergeDenialId', () => {
+      let client: Client;
+      const text = (r: Awaited<ReturnType<Client['callTool']>>): any =>
+        JSON.parse((r.content as { type: string; text: string }[])[0]!.text);
+      beforeAll(async () => {
+        await app.listen({ port: 0, host: '127.0.0.1' });
+        const addr = app.server.address();
+        const url = typeof addr === 'object' && addr ? `http://127.0.0.1:${addr.port}/mcp` : '';
+        client = new Client({ name: 'test', version: '0.0.0' });
+        await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${agentPat}` } } }));
+      });
+      afterAll(async () => { await client.close(); });
+      const ask = (args: Record<string, unknown>) => client.callTool({ name: 'message.ask', arguments: {
+        channelId: ch, body: 'merge refused', options: [{ id: 'retry', label: '다시 머지' }, { id: 'later', label: '나중에' }], ...args,
+      } }).then(text);
+
+      it('to·mirrorOf 를 실으면 merge_denial_audience 로 거절되고 카드가 서지 않는다', async () => {
+        const { cause, body } = await refused('izagood/p4-mcp-a');
+        const thread = await threadOf(cause);
+        const denialId = body.error.denialId!;
+        expect((await ask({ threadRootId: thread, mergeDenialId: denialId, to: 'alice' })).error.code).toBe('merge_denial_audience');
+        expect((await ask({ threadRootId: thread, mergeDenialId: denialId, mirrorOf: cause })).error.code).toBe('merge_denial_audience');
+        expect((await pool.query(`select count(*)::int as n from message where meta ? 'mergeDenial' and coalesce(thread_root_id, id) = $1`, [thread])).rows[0].n).toBe(0);
+      });
+
+      it('카드는 서버 기록으로 칸을 채우고, 같은 날 두 번째 ask 는 merged 로 있던 카드의 횟수만 올린다', async () => {
+        const { cause, body } = await refused('izagood/p4-mcp-b');
+        const thread = await threadOf(cause);
+        const first = await ask({ threadRootId: thread, mergeDenialId: body.error.denialId! });
+        expect(first.error).toBeUndefined();
+        expect(first.message.meta.mergeDenial).toMatchObject({ repo: 'izagood/p4-mcp-b', number: 42, agentId, ownerAccountId: alice.accountId, count: 1 });
+        const second = await ask({ threadRootId: thread, mergeDenialId: body.error.denialId!, body: 'again' });
+        expect(second.merged).toEqual(expect.any(String));
+        expect(second.message.id).toBe(first.message.id);
+        const meta = (await pool.query(`select meta from message where id = $1`, [first.message.id])).rows[0].meta.mergeDenial;
+        expect(meta.count).toBe(2);
+      });
+
+      it('다른 스레드에서 세우면 denial_other_thread', async () => {
+        const { body } = await refused('izagood/p4-mcp-c');
+        const elsewhere = await mention(alice.accountId);
+        expect((await ask({ threadRootId: elsewhere, mergeDenialId: body.error.denialId! })).error.code).toBe('denial_other_thread');
+      });
     });
   });
 });

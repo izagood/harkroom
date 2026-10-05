@@ -32,6 +32,9 @@ export type MergeCheck =
 /** 거절 기록(`merge_denial`)을 쓸 수 있는 시한 — 카드가 하루 한 장이라 하루. grant 의 기한(7일)과 다르다. */
 export const MERGE_DENIAL_TTL_MS = 24 * 3_600_000;
 
+/** 에이전트 하나가 24시간에 새로 만들 수 있는 거절 기록 수(security L2) — 넘으면 거절은 하되 카드용 `denialId` 를 주지 않는다. */
+export const MERGE_DENIAL_DAILY_CAP = 20;
+
 export interface LeaseRow {
   id: string; agentId: string; operatorId: string; channelId: string; threadRootId: string;
   expired: boolean; ended: boolean; causeKind: string | null;
@@ -109,6 +112,22 @@ export async function checkMerge(
     // C2: 카드는 **나머지 판정을 다 통과한** 거절에만 — 사람이 띄우지 않은 턴(에이전트 위임)이 권한 카드를 만들지 못하게.
     // 임대·저장소 모양은 위에서 이미 걸렀다. `allow_agent_cause` 는 grant 의 칸이라 grant 가 없으면 사람 턴만 남는다.
     if (!byHuman) return denied;
+    // L2(security, #1158): 거절 기록은 무한히 늘지 않는다. ① (에이전트, 저장소, 채널, 스레드)에 안 쓰고 안 만료된 기록이 있으면
+    // 그것을 다시 쓴다 — PR·head·임대만 지금 것으로 바꾼다(카드는 어차피 그 묶음에 한 장이다). ② 새로 만드는 것은 에이전트마다
+    // 24시간에 `MERGE_DENIAL_DAILY_CAP` 개까지 — 넘으면 거절은 그대로 하되 카드용 id 는 주지 않는다(저장소 이름을 바꿔 가며 부르는 경우).
+    const reused = (await pool.query<{ id: string }>(
+      `update merge_denial set pr_number = $5, head_sha = $6, lease_id = $7
+        where id = (select id from merge_denial
+                     where agent_id = $1 and scope = $2 and channel_id = $3 and thread_root_id = $4
+                       and used_at is null and expires_at > $8
+                     order by created_at desc limit 1)
+        returning id`,
+      [args.agentId, scope, lease!.channelId, lease!.threadRootId, args.number, args.headSha, lease!.id, now])).rows[0];
+    if (reused) return { ok: false, code: 'not_granted', denialId: reused.id };
+    const recent = (await pool.query<{ n: number }>(
+      `select count(*)::int as n from merge_denial where agent_id = $1 and created_at > $2`,
+      [args.agentId, new Date(now.getTime() - 24 * 3_600_000)])).rows[0]!.n;
+    if (recent >= MERGE_DENIAL_DAILY_CAP) return denied;
     const row = (await pool.query<{ id: string }>(
       `insert into merge_denial (agent_id, scope, pr_number, head_sha, channel_id, thread_root_id, lease_id, expires_at)
        values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
