@@ -5,7 +5,7 @@ import { useActiveStore } from '../state/communities';
 import { ApiError } from '../lib/api';
 import { useT } from '../i18n/useT';
 import { formatSize } from './Attachments';
-import { isMacOS, MAC_TRAFFIC_LIGHT_PL } from '../lib/platform';
+import { isMacOS, macTopBarMinHeight, macTrafficLightInset } from '../lib/platform';
 import { allowPreviewOnce } from '../lib/previewAllowance';
 
 /**
@@ -120,7 +120,9 @@ export function ArtifactPanel({ fill = false }: {
         그 폭을 비우고, 창을 끌 자리가 되도록 drag region 을 단다(designer 수정 2). 버튼은 drag 를 받지 않는다.
       */}
       <header
-        className={`flex shrink-0 items-center gap-2 border-b border-border py-2 pr-2 ${expanded && isMacOS() ? `${MAC_TRAFFIC_LIGHT_PL} min-h-[40px]` : 'pl-3'}`}
+        className={`flex shrink-0 items-center gap-2 border-b border-border py-2 pr-2 ${expanded && isMacOS() ? 'min-h-[40px]' : 'pl-3'}`}
+        // 펼치면 창 왼쪽 끝이 곧 이 머리줄이다 — 신호등 폭(78pt)을 배율로 나눠 비운다(`macTrafficLightInset`).
+        style={expanded ? { ...macTrafficLightInset(0, '0px'), ...macTopBarMinHeight() } : undefined}
         {...(expanded ? { 'data-tauri-drag-region': true } : {})}
         data-testid="artifact-panel-header"
       >

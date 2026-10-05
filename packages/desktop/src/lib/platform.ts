@@ -34,6 +34,46 @@ export function isMacOS(): boolean {
 export const MAC_TRAFFIC_LIGHT_PL = 'pl-[78px]';
 
 /**
+ * 신호등을 비우는 폭(pt) — 창 왼쪽 끝에서 앱 내용이 시작해도 되는 가장 가까운 자리.
+ * 신호등 오른쪽 끝(72.5pt, `MAC_TRAFFIC_LIGHT_POSITION`)에서 5.5pt 를 더 둔다. `MAC_TRAFFIC_LIGHT_PL`
+ * 과 같은 숫자다 — 그 여백이 배율 100% 에서 비우던 폭을 배율과 무관하게 지키는 것이 아래 둘의 일이다.
+ */
+export const MAC_TRAFFIC_LIGHT_CLEAR_PT = 78;
+
+/**
+ * 웹뷰 배율을 CSS 가 읽는 변수(`lib/zoom.ts` 가 배율을 걸 때 같이 적는다, 기본 1).
+ *
+ * **왜 필요한가(2026-10-05 신고 — 배율을 낮추면 로고가 신호등 위로 넘어갔다).** 신호등은 네이티브라
+ * 창 좌표(pt)에 고정인데, 그 옆 레일(70px)·여백은 CSS px 라 배율만큼 줄어든다. 배율 80% 에서
+ * 브랜드 로고가 86pt → 69pt 로 와서 신호등 끝(72.5pt)을 덮었다. 그래서 신호등을 비우는 폭은
+ * CSS px 로 적지 않고 `pt ÷ 배율` 로 적는다 — 배율이 어떻든 창 위에서는 같은 pt 가 된다.
+ */
+export const WEBVIEW_ZOOM_VAR = '--webview-zoom';
+const zoomVar = `var(${WEBVIEW_ZOOM_VAR}, 1)`;
+
+/**
+ * 창 왼쪽 끝에서 `offsetPx`(CSS px) 떨어진 곳에서 시작하는 바가 신호등을 비우려면 둘 왼쪽 여백.
+ * `minPadding` 은 신호등과 무관하게 원래 두던 여백이다 — `max()` 라서 배율 100% 이상에서는 그
+ * 값이 이기고 화면이 지금과 같다. macOS 가 아니면 아무것도 주지 않는다(OS 장식이 그대로 있다).
+ */
+export function macTrafficLightInset(offsetPx: number, minPadding: string): { paddingLeft: string } | undefined {
+  if (!isMacOS()) return undefined;
+  return { paddingLeft: `max(${minPadding}, calc(${MAC_TRAFFIC_LIGHT_CLEAR_PT}px / ${zoomVar} - ${offsetPx}px))` };
+}
+
+/**
+ * 최상단 바가 배율을 낮춰도 **창 위에서 40pt 아래로 줄지 않게** 하는 최소 높이(macOS 만).
+ * 신호등 중심은 19.75pt 에 고정이다 — 바가 배율 70% 에서 28pt 로 줄면 신호등이 바 아래 선에 걸치고
+ * 로고와 세로 가운데가 어긋난다. 배율 100% 이상은 `TOP_BAR_H` 가 이미 40pt 이상이라 그대로다.
+ */
+export function macTopBarMinHeight(): { minHeight: string } | undefined {
+  if (!isMacOS()) return undefined;
+  // `TOP_BAR_H`(h-9) 도 하한에 넣는다 — 이 값이 `min-height` 를 맡으면서 flex 안에서 바가 h-9 아래로
+  // 눌릴 수 있게 되면(세로로 넘치는 사이드바) 배율 100% 이상에서 오히려 낮아진다.
+  return { minHeight: `max(calc(var(--spacing) * 9), calc(40px / ${zoomVar}))` };
+}
+
+/**
  * macOS 신호등 자리 — `src-tauri/tauri.macos.conf.json` 의 `trafficLightPosition` 과 **같은 값**이다
  * (JSON 에는 주석을 달 수 없어서 이유를 여기 적고, `test/titlebar.test.tsx` 가 두 곳이 같은지 본다).
  * 단위는 pt(창 좌표)이고 CSS px 가 아니다.

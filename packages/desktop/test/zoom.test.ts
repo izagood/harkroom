@@ -10,6 +10,7 @@ import {
   stepZoom,
   zoomFactor,
 } from '../src/lib/zoom';
+import { WEBVIEW_ZOOM_VAR } from '../src/lib/platform';
 
 describe('배율 눈금', () => {
   it('눈금 100% 는 웹뷰 배율 **정확히 1.0** 이다', () => {
@@ -102,6 +103,22 @@ describe('웹뷰에 거는 쪽', () => {
     await zoomer.apply(125);
     await zoomer.apply(125);
     expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
+  /** 신호등(네이티브 pt)을 비우는 여백이 이 변수로 나눈다 — `lib/platform.ts` 의 `macTrafficLightInset`. */
+  it('웹뷰가 받아들인 배율을 CSS 변수로 적는다', async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke };
+    await createZoomer().apply(80);
+    expect(document.documentElement.style.getPropertyValue(WEBVIEW_ZOOM_VAR)).toBe(String(zoomFactor(80)));
+    document.documentElement.style.removeProperty(WEBVIEW_ZOOM_VAR);
+  });
+
+  it('거절되면 변수를 적지 않는다 — 배율이 안 걸렸는데 여백만 늘면 안 된다', async () => {
+    const invoke = vi.fn().mockRejectedValue(new Error('unsupported'));
+    (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke };
+    await createZoomer().apply(80);
+    expect(document.documentElement.style.getPropertyValue(WEBVIEW_ZOOM_VAR)).toBe('');
   });
 });
 

@@ -5,7 +5,7 @@ import { Identity, StatusMark } from './Identity';
 import { Menu } from './Menu';
 import { StatusPicker } from './StatusPicker';
 import { CommunitySwitcher } from './CommunitySwitcher';
-import { TOP_BAR_BG, TOP_BAR_H } from '../lib/platform';
+import { TOP_BAR_BG, TOP_BAR_H, macTopBarMinHeight } from '../lib/platform';
 import { AgentsIcon, CollabIcon, DmIcon, HomeIcon, SavedIcon } from './RailIcons';
 import type { SectionId } from './settings/sections';
 import { useT } from '../i18n/useT';
@@ -39,6 +39,8 @@ export type RailPanel = 'home' | 'dm' | 'agents' | 'collab';
  * 변경의 범위가 아니라 남긴다.
  */
 const RAIL_W = 'w-[70px]';
+/** `RAIL_W` 의 숫자. 레일 오른쪽에서 시작하는 바가 신호등 여백을 셀 때 쓴다(`macTrafficLightInset`). */
+export const RAIL_W_PX = 70;
 
 /**
  * 칸 하나의 정의. 배열 하나로 두는 이유는 **숫자 단축키가 레일 순서를 그대로 따라야**
@@ -254,6 +256,8 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onMana
         data-tauri-drag-region
         aria-hidden="true"
         className={`shrink-0 ${TOP_BAR_H} border-b border-border ${TOP_BAR_BG}`}
+        // 브랜드 바·헤더와 한 줄이라 높이도 같이 지킨다(`macTopBarMinHeight`).
+        style={macTopBarMinHeight()}
       />
       {/*
         몸통. 오른쪽 테두리가 **여기**에 붙는다(위 띠 주석). `min-h-0` 은 아래 네 칸의
