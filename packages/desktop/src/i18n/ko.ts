@@ -2240,7 +2240,7 @@ export const ko = {
   'apiGrant.pendingLine': '@{from} → @{to}',
   'apiGrant.revokeBelow': '이 아래 전부 거두기',
   'apiGrant.revokeBelowTitle': '이 아래 {n}줄을 거둘까?',
-  'apiGrant.revokeBelowDetail': '@{handle} 이 다시 준 권한과 그 아래가 모두 지워진다. @{handle} 의 권한은 그대로다.',
+  'apiGrant.revokeBelowDetail': '@{handle}에게서 아래로 다시 준 권한이 모두 지워진다. @{handle} 의 권한은 그대로다.',
   'apiGrant.revokeChildTitle': '@{handle} 의 이 권한을 거둘까?',
   'apiGrant.revokeChildDetail': '@{handle} 의 이 권한과 그 아래 {n}줄이 지워진다.',
   'apiGrant.revokeChildAria': '@{handle} 에게 다시 준 권한 거두기',
