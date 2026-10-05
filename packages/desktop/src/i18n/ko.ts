@@ -1487,6 +1487,7 @@ export const ko = {
   'artifact.panel.expand': '창 전체로 키우기',
   'artifact.panel.collapse': '옆 패널로 되돌리기',
   'artifact.panel.close': '미리보기 닫기',
+  'artifact.panel.resize': '미리보기 너비 조절',
   'artifact.panel.reload': '다시 불러오기',
   'artifact.panel.download': '파일로 받기',
   'artifact.panel.madeBy': '에이전트가 만든 페이지',

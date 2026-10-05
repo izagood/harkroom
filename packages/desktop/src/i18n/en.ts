@@ -3125,6 +3125,7 @@ export const en = {
   'artifact.panel.expand': 'Expand to window',
   'artifact.panel.collapse': 'Back to side panel',
   'artifact.panel.close': 'Close preview',
+  'artifact.panel.resize': 'Resize preview',
   'artifact.panel.reload': 'Reload',
   'artifact.panel.download': 'Download file',
   'artifact.panel.madeBy': 'A page made by an agent',

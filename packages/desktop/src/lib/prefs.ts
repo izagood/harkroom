@@ -55,6 +55,7 @@ const SIDEBAR_COLLAPSED_KEY = 'harkroom.sidebarCollapsed';
 const UNDO_SEND_KEY = 'harkroom.undoSendMs';
 const THREAD_WIDTH_KEY = 'harkroom.threadWidth';
 const TERMINAL_WIDTH_KEY = 'harkroom.terminalWidth';
+const PREVIEW_WIDTH_KEY = 'harkroom.previewWidth';
 const LAST_WORKSPACE_URL_KEY = 'harkroom.lastWorkspaceUrl';
 
 export const MIN_SIDEBAR_WIDTH = 200;
@@ -86,6 +87,14 @@ export const MAX_THREAD_WIDTH = 2000;
 export const DEFAULT_TERMINAL_WIDTH = 676;
 export const MIN_TERMINAL_WIDTH = 400;
 export const MAX_TERMINAL_WIDTH = 1000;
+/**
+ * 미리보기(아티팩트) 패널. 기본값은 끌기 전 화면 그대로(`w-[min(40rem,45vw)]` 의 40rem)이고,
+ * 하한은 그때의 `min-w-[22rem]` 이다. 시안은 넓게 볼수록 좋으므로 상한은 스레드처럼 난간으로만 둔다 —
+ * 실질 상한은 왼쪽에 남길 폭이다(jaebin 신고 2026-10-05: 좁고 넓힐 수 없다).
+ */
+export const DEFAULT_PREVIEW_WIDTH = 640;
+export const MIN_PREVIEW_WIDTH = 352;
+export const MAX_PREVIEW_WIDTH = 2000;
 
 /**
  * 대화에 반드시 남겨 두는 폭. 상한이 상수뿐이면 스레드·터미널이 대화를 폭 0 으로 밀어낼
@@ -281,6 +290,12 @@ export const paneStorage = {
   },
   saveTerminalWidth(width: number): void {
     saveWidth(TERMINAL_WIDTH_KEY, width, MIN_TERMINAL_WIDTH, MAX_TERMINAL_WIDTH);
+  },
+  loadPreviewWidth(): number {
+    return loadWidth(PREVIEW_WIDTH_KEY, DEFAULT_PREVIEW_WIDTH, MIN_PREVIEW_WIDTH, MAX_PREVIEW_WIDTH);
+  },
+  savePreviewWidth(width: number): void {
+    saveWidth(PREVIEW_WIDTH_KEY, width, MIN_PREVIEW_WIDTH, MAX_PREVIEW_WIDTH);
   },
 };
 

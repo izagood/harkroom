@@ -7,6 +7,10 @@ import { useT } from '../i18n/useT';
 import { formatSize } from './Attachments';
 import { isMacOS, macTopBarMinHeight, macTrafficLightInset } from '../lib/platform';
 import { allowPreviewOnce } from '../lib/previewAllowance';
+import { PaneResizer } from './PaneResizer';
+import {
+  paneStorage, paneMaxWidth, MIN_PREVIEW_WIDTH, MAX_PREVIEW_WIDTH, MIN_CHANNEL_WIDTH, MIN_THREAD_WIDTH,
+} from '../lib/prefs';
 
 /**
  * 미리보기(아티팩트) 화면 ④ — 에이전트가 `artifact.publish` 로 올린 HTML 을 앱 안에서 본다.
@@ -61,6 +65,11 @@ export function ArtifactPanel({ fill = false }: {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
   const loads = useRef(0);
   const attempt = useRef(0);
+  const [width, setStoredWidth] = useState(() => paneStorage.loadPreviewWidth());
+  const setWidth = useCallback((next: number) => {
+    setStoredWidth(next);
+    paneStorage.savePreviewWidth(next);
+  }, []);
 
   const load = useCallback((target: AttachmentRow) => {
     const mine = ++attempt.current;
@@ -85,6 +94,43 @@ export function ArtifactPanel({ fill = false }: {
     load(attachment);
   }, [attachment, load]);
 
+  /*
+    선택 표시가 닫은 뒤에도 남던 것(jaebin 신고 2026-10-05). 가게의 `artifactPreview` 는 닫으면 비지만, 누른
+    카드에 포커스가 남아 있으면 Esc(키 입력) 뒤로 WebKit 이 그것을 `:focus-visible` 로 보고 전역 외곽선(2px
+    주황)을 그린다 — 선택 테두리와 똑같아 보인다. 패널이 닫히는 순간 포커스가 카드에 있으면 놓는다.
+  */
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (attachment) { wasOpen.current = true; return; }
+    if (!wasOpen.current) return;
+    wasOpen.current = false;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active.closest('[data-testid="artifact-card"]')) active.blur();
+  }, [attachment]);
+
+  /*
+    다른 곳을 고르면 닫는다 — 채널이나 스레드를 옮긴 뒤에도 패널이 남으면 무엇의 시안인지 끊기고, 채널에서 연
+    미리보기는 스레드 자리를 접어 두므로(`previewLayout`) 새로 연 스레드가 보이지도 않는다.
+  */
+  const place = useActiveStore((s) => `${s.activeChannelId ?? ''}/${s.threadRootId ?? ''}`);
+  const openedAt = useRef<string | null>(null);
+  useEffect(() => {
+    if (!attachment) { openedAt.current = null; return; }
+    if (openedAt.current === null) { openedAt.current = place; return; }
+    if (openedAt.current !== place) getController().closeArtifactPreview();
+  }, [attachment, place]);
+
+  // fill 이면 실제 폭이 저장된 폭보다 넓을 수 있다 — 끌기의 원점은 보이는 폭이어야 손잡이가 바로 따라온다.
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const [measured, setMeasured] = useState(0);
+  useEffect(() => {
+    const el = sectionRef.current;
+    if (!el || !fill || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setMeasured(Math.round(el.getBoundingClientRect().width)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [fill, attachment]);
+
   useEffect(() => {
     if (!attachment) return;
     // 페이지 안을 한 번 누르면 키 입력은 교차 origin iframe 으로 가고 Esc 는 앱에 오지 않는다 — 막을 길이 없다.
@@ -106,15 +152,34 @@ export function ArtifactPanel({ fill = false }: {
 
   return (
     <section
+      ref={sectionRef}
       aria-label={t('artifact.panel.label')}
       data-testid="artifact-panel"
       data-expanded={expanded ? 'true' : 'false'}
       className={expanded
         ? 'fixed inset-0 z-40 flex flex-col bg-surface'
         : fill
-          ? 'flex min-w-[22rem] flex-1 flex-col border-l border-border bg-surface'
-          : 'flex w-[min(40rem,45vw)] min-w-[22rem] shrink-0 flex-col border-l border-border bg-surface'}
+          ? 'relative flex flex-1 flex-col border-l border-border bg-surface'
+          : 'relative flex flex-col border-l border-border bg-surface'}
+      /*
+        폭은 사람이 끄는 값이다(스레드·터미널과 같은 손잡이). 왼쪽에 남길 자리는 곁의 칸이 무엇이냐로 갈린다 —
+        채널이면 대화의 하한, 스레드(fill)면 스레드의 하한. fill 일 때는 남는 폭을 채우되 끈 폭보다 좁아지지
+        않는다(`minWidth`) — 그래야 끌어 넓힌 만큼 스레드가 줄어든다. 창이 좁아지면 `paneMaxWidth` 가 이긴다.
+      */
+      style={expanded ? undefined : fill
+        ? { minWidth: `min(${width}px, ${paneMaxWidth(MIN_PREVIEW_WIDTH, MIN_THREAD_WIDTH)})` }
+        : { width, minWidth: MIN_PREVIEW_WIDTH, maxWidth: paneMaxWidth(MIN_PREVIEW_WIDTH, MIN_CHANNEL_WIDTH) }}
     >
+      {!expanded && (
+        <PaneResizer
+          label={t('artifact.panel.resize')}
+          width={fill ? Math.max(width, measured) : width}
+          min={MIN_PREVIEW_WIDTH}
+          max={MAX_PREVIEW_WIDTH}
+          minRoomLeft={fill ? MIN_THREAD_WIDTH : MIN_CHANNEL_WIDTH}
+          onWidth={setWidth}
+        />
+      )}
       {/*
         창 전체로 펼치면 이 머리줄이 창의 좌상단이다 — macOS 는 신호등이 콘텐츠 위에 뜨므로(titleBarStyle Overlay)
         그 폭을 비우고, 창을 끌 자리가 되도록 drag region 을 단다(designer 수정 2). 버튼은 drag 를 받지 않는다.

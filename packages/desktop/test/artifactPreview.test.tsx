@@ -298,3 +298,56 @@ describe('which panes stay beside the preview', () => {
     expect(previewLayout('thread', false).hideMain).toBe(false);
   });
 });
+
+// jaebin 신고(2026-10-05): 패널이 좁고 넓힐 수 없다 · 닫아도 카드의 주황 테두리가 남는다.
+describe('preview panel width and leaving the card', () => {
+  beforeEach(() => { localStorage.removeItem('harkroom.previewWidth'); });
+
+  it('has a resize handle and remembers the dragged width', async () => {
+    fakeController();
+    useAppStore.getState().set({ artifactPreview: page() });
+    render(<ArtifactPanel />);
+    const panel = screen.getByTestId('artifact-panel');
+    expect(panel.style.width).toBe('640px');
+    const handle = screen.getByRole('separator', { name: '미리보기 너비 조절' });
+    fireEvent.mouseDown(handle, { clientX: 500 });
+    fireEvent.mouseMove(document, { clientX: 200 });
+    fireEvent.mouseUp(document);
+    expect(panel.style.width).toBe('940px');
+    expect(localStorage.getItem('harkroom.previewWidth')).toBe('940');
+    cleanup();
+    useAppStore.getState().set({ artifactPreview: page() });
+    render(<ArtifactPanel />);
+    expect(screen.getByTestId('artifact-panel').style.width).toBe('940px');
+  });
+
+  it('has no handle while expanded to the whole window', () => {
+    fakeController();
+    useAppStore.getState().set({ artifactPreview: page() });
+    render(<ArtifactPanel />);
+    fireEvent.click(screen.getByTestId('artifact-panel-expand'));
+    expect(screen.queryByRole('separator')).toBeNull();
+  });
+
+  it('lets go of the card focus when the panel closes, so no ring stays behind', () => {
+    fakeController();
+    render(<><Attachments attachments={[page()]} /><ArtifactPanel /></>);
+    const card = screen.getByTestId('artifact-card');
+    card.focus();
+    fireEvent.click(card);
+    expect(card.getAttribute('data-selected')).toBe('true');
+    act(() => { fireEvent.keyDown(document, { key: 'Escape' }); });
+    expect(useAppStore.getState().artifactPreview).toBeNull();
+    expect(card.getAttribute('data-selected')).toBe('false');
+    expect(document.activeElement).not.toBe(card);
+  });
+
+  it('closes when another channel or thread is chosen', () => {
+    const c = fakeController();
+    useAppStore.getState().set({ artifactPreview: page() });
+    render(<ArtifactPanel />);
+    act(() => { useAppStore.getState().set({ threadRootId: 'm9' }); });
+    expect(c.closeArtifactPreview).toHaveBeenCalled();
+    expect(screen.queryByTestId('artifact-panel')).toBeNull();
+  });
+});
