@@ -1,3 +1,5 @@
+import { WEBVIEW_ZOOM_VAR } from './platform';
+
 /**
  * 화면 배율 — **글자만이 아니라 화면 전체를 키운다.**
  *
@@ -135,6 +137,9 @@ export function createZoomer(): { apply(step: number): Promise<void> } {
       applied = normalized;
       try {
         await invoke(ZOOM_COMMAND, { label: windowLabel(), value: zoomFactor(normalized) });
+        // 신호등(네이티브 pt)을 비우는 여백이 이 값으로 나눈다(`lib/platform.ts` 의 `WEBVIEW_ZOOM_VAR`).
+        // 웹뷰가 배율을 받아들인 **뒤에만** 적는다 — 거절됐는데 적으면 여백이 없는 배율을 되돌린다.
+        document.documentElement.style.setProperty(WEBVIEW_ZOOM_VAR, String(zoomFactor(normalized)));
       } catch {
         // 다음 변화에서 다시 시도할 수 있게 기억을 지운다.
         applied = null;

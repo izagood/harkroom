@@ -4,14 +4,14 @@ import { getController } from '../state/controller';
 import { sidebarStorage, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from '../lib/prefs';
 import { ApiError } from '../lib/api';
 // `isMacOS`·`MAC_TRAFFIC_LIGHT_PL` 이 여기 있었다 — 신호등 여백은 이제 레일이 진다(아래 주석).
-import { TOP_BAR_BG, TOP_BAR_H } from '../lib/platform';
+import { TOP_BAR_BG, TOP_BAR_H, macTopBarMinHeight, macTrafficLightInset } from '../lib/platform';
 import { LeasePanel } from './LeasePanel';
 import { Menu, type MenuItem } from './Menu';
 // `StatusPicker` 가 여기 있었다 — 계정 행과 함께 `Rail.tsx` 로 갔다.
 // `Identity` 가 **돌아왔다**: 합쳐진 DM 목록의 상태를 아바타가 말한다(`dmRow` 주석).
 // `StatusMark` 도 남는다 — presence 와 다른 사실이라 아바타가 대신할 수 없다.
 import { Identity, StatusMark } from './Identity';
-import type { RailPanel } from './Rail';
+import { RAIL_W_PX, type RailPanel } from './Rail';
 // 찾기가 맨 위로 갔다(#488 A · 찾기가 맨 위로). 별도 파일인 이유: 이 줄은 **칸과 무관**한
 // 공용 껍데기에 사는 유일한 목록이라, 칸별 묶음을 그리는 이 파일의 본문과 섞을 것이 없다.
 import { SidebarFind } from './SidebarFind';
@@ -1103,6 +1103,12 @@ export function Sidebar({
           */
           className={`flex ${TOP_BAR_H} select-none items-center gap-2 border-b border-border
                       ${TOP_BAR_BG} pl-3 pr-3 font-bold`}
+          /*
+            **배율을 낮춰도 로고가 신호등을 덮지 않게**(2026-10-05). 이 바는 레일 오른쪽에서 시작하고,
+            레일·`pl-3` 은 배율을 따라 줄지만 신호등은 안 준다 — `macTrafficLightInset` 이 모자란
+            만큼만 여백을 늘린다. 100% 이상에서는 `pl-3` 그대로다.
+          */
+          style={{ ...macTrafficLightInset(RAIL_W_PX, 'calc(var(--spacing) * 3)'), ...macTopBarMinHeight() }}
         >
           {/*
             **글자를 되돌렸다**(실측 2026-09-08, 사용자가 화면에서 지적 — "harkroom 텍스트가

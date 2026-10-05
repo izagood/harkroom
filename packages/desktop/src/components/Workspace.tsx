@@ -5,8 +5,8 @@ import { sidebarStorage, MIN_CHANNEL_WIDTH, MIN_INBOX_WIDTH } from '../lib/prefs
 import { usePrefsStore } from '../state/prefsStore';
 import { DEFAULT_ZOOM, stepZoom } from '../lib/zoom';
 // `isMacOS`·`MAC_TRAFFIC_LIGHT_PL` 이 여기 있었다 — 좌상단은 이제 늘 레일이다(아래 주석).
-import { TOP_BAR_BG, TOP_BAR_H } from '../lib/platform';
-import { Rail, type RailPanel } from './Rail';
+import { TOP_BAR_BG, TOP_BAR_H, macTopBarMinHeight, macTrafficLightInset } from '../lib/platform';
+import { Rail, RAIL_W_PX, type RailPanel } from './Rail';
 import { Sidebar } from './Sidebar';
 import { SidebarToggleIcon } from './SidebarToggleIcon';
 import { ChannelPane } from './ChannelPane';
@@ -307,6 +307,12 @@ export function Workspace({ onLogout, onOpenSettings }: {
             방금 사용자가 지적한 것이다.
           */
           className={`flex ${TOP_BAR_H} items-center gap-2 border-b border-border ${TOP_BAR_BG} pl-2 pr-2`}
+          /*
+            사이드바가 접히면 이 헤더가 레일 바로 오른쪽이다 — 펼치기 버튼이 신호등 쪽 첫 내용이
+            되므로 브랜드 바와 같은 이유로 배율에 맞춰 여백을 지킨다. 펴져 있으면 사이드바가 그
+            사이에 있어 여백을 늘리지 않는다(높이는 세 조각이 한 줄이라 늘 같이 맞춘다).
+          */
+          style={{ ...(sidebarCollapsed ? macTrafficLightInset(RAIL_W_PX, 'calc(var(--spacing) * 2)') : undefined), ...macTopBarMinHeight() }}
         >
           {sidebarCollapsed && (
             <button

@@ -4,7 +4,9 @@ import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Workspace } from '../src/components/Workspace';
 import App from '../src/App';
-import { MAC_TRAFFIC_LIGHT_PL, MAC_TRAFFIC_LIGHT_POSITION, MAC_TITLEBAR_H, TOP_BAR_H } from '../src/lib/platform';
+import { MAC_TRAFFIC_LIGHT_CLEAR_PT, MAC_TRAFFIC_LIGHT_PL, MAC_TRAFFIC_LIGHT_POSITION, MAC_TITLEBAR_H, TOP_BAR_H, WEBVIEW_ZOOM_VAR } from '../src/lib/platform';
+import { RAIL_W_PX } from '../src/components/Rail';
+import { ZOOM_STEPS, zoomFactor } from '../src/lib/zoom';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { acc, chan, scheduledApiStub } from './helpers/fakeApi';
 // 설정 파일은 **이 파일 기준**으로 끌어온다(`?raw`, Vite 가 변환 시점에 해석한다). `process.cwd()`
@@ -467,5 +469,66 @@ describe('브랜드 줄은 로고와 글자를 함께 둔다', () => {
   it('연결 점은 그대로 있다', () => {
     renderWorkspace({ sidebarCollapsed: false });
     expect(screen.getByTestId('connection-dot')).toBeTruthy();
+  });
+});
+
+/**
+ * **배율을 낮춰도 로고가 신호등을 덮지 않는다**(2026-10-05 신고, 첨부 그림은 배율 80%).
+ *
+ * 신호등은 네이티브라 창 좌표(pt)에 고정이고, 레일(70px)·여백은 CSS px 라 웹뷰 배율만큼 준다.
+ * 그래서 신호등 쪽 첫 내용의 여백은 `78pt ÷ 배율 − 레일` 이상이어야 한다. jsdom 은 `calc()` 를
+ * 계산하지 않으므로 ① 식이 바에 실렸는지와 ② 그 식을 배율 눈금마다 직접 풀어 본다.
+ */
+describe('배율과 신호등', () => {
+  const brandStyle = () => screen.getByTestId('sidebar-brand').getAttribute('style') ?? '';
+  const headerStyle = () => screen.getByTestId('app-header').getAttribute('style') ?? '';
+
+  it('macOS·펼침 — 브랜드 바가 배율로 나눈 신호등 폭을 여백 하한으로 진다', () => {
+    pretendMac();
+    renderWorkspace({ sidebarCollapsed: false });
+    expect(brandStyle()).toContain(`${MAC_TRAFFIC_LIGHT_CLEAR_PT}px / var(${WEBVIEW_ZOOM_VAR}, 1) - ${RAIL_W_PX}px`);
+    // 100% 이상에서 지금 화면이 그대로인 이유 — 원래 여백(pl-3)이 max 의 한쪽이다.
+    expect(brandStyle()).toContain('max(calc(var(--spacing) * 3)');
+    expect(brandStyle()).toContain(`min-height: calc(40px / var(${WEBVIEW_ZOOM_VAR}, 1))`);
+    // 펴져 있으면 헤더는 사이드바 오른쪽이라 여백을 늘리지 않는다. 높이는 한 줄이라 같이 맞춘다.
+    expect(headerStyle()).not.toContain('padding-left');
+    expect(headerStyle()).toContain('min-height');
+    expect(screen.getByTestId('rail-titlebar').getAttribute('style') ?? '').toContain('min-height');
+  });
+
+  it('macOS·접힘 — 펼치기 버튼이 첫 내용이라 헤더가 여백 하한을 진다', () => {
+    pretendMac();
+    renderWorkspace({ sidebarCollapsed: true });
+    expect(headerStyle()).toContain(`${MAC_TRAFFIC_LIGHT_CLEAR_PT}px / var(${WEBVIEW_ZOOM_VAR}, 1) - ${RAIL_W_PX}px`);
+  });
+
+  it('macOS 가 아니면 아무것도 바꾸지 않는다 — OS 장식이 그대로 있다', () => {
+    pretendWindows();
+    renderWorkspace({ sidebarCollapsed: true });
+    expect(headerStyle()).toBe('');
+    expect(screen.getByTestId('rail-titlebar').getAttribute('style') ?? '').toBe('');
+    cleanup();
+    pretendWindows();
+    renderWorkspace({ sidebarCollapsed: false });
+    expect(brandStyle()).toBe('');
+  });
+
+  it('RAIL_W_PX 는 레일 폭 클래스와 같은 숫자다', () => {
+    pretendMac();
+    renderWorkspace({ sidebarCollapsed: false });
+    expect(screen.getByTestId('rail').className).toContain(`w-[${RAIL_W_PX}px]`);
+  });
+
+  /** 식을 배율 눈금마다 풀어 본다 — 브랜드 로고가 창 위에서 서는 자리(pt)가 신호등 끝보다 오른쪽이다. */
+  it('모든 배율 눈금에서 브랜드 내용은 신호등 끝(72.5pt)보다 오른쪽이다', () => {
+    const spacingPx = 0.278 * 16; // index.css 의 --spacing
+    const trafficLightRightPt = 72.5;
+    for (const step of ZOOM_STEPS) {
+      const z = zoomFactor(step);
+      const padPx = Math.max(spacingPx * 3, MAC_TRAFFIC_LIGHT_CLEAR_PT / z - RAIL_W_PX);
+      const contentPt = (RAIL_W_PX + padPx) * z;
+      expect(contentPt, `${step}%`).toBeGreaterThanOrEqual(MAC_TRAFFIC_LIGHT_CLEAR_PT - 1e-9);
+      expect(contentPt, `${step}%`).toBeGreaterThan(trafficLightRightPt);
+    }
   });
 });
