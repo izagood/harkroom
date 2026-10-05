@@ -1,6 +1,7 @@
 // 호환 하한(`MIN_SERVER_VERSION`)과 릴리스 번호를 견주는 자. **한 벌만 둔다** — 그 파일
 // 상단에 왜 이 값이 자동으로 오르지 않는지가 근거와 함께 적혀 있다.
 export * from './compat.js';
+export * from './memoryCleanup.js';
 
 /**
  * 사람이 **직접 고르는** 상태(#186). 소켓 연결에서 파생되는 presence 와 나란히 산다 —
