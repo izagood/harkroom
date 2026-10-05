@@ -133,4 +133,28 @@ describe('GET /inbox/board', () => {
     expect(cut).toEqual({ rootIds: [b], truncated: true });
     expect((await board()).truncated).toBe(false);
   });
+
+  /**
+   * #1137 security 후속: 상한은 **볼 수 있는 머리**로 센다. 내보내진 비공개 채널의 머리가 몫을 먹으면
+   * 보이는 카드가 상한보다 적은데도 `truncated` 가 참이었다.
+   */
+  it('볼 수 없게 된 머리는 상한 몫을 먹지 않는다', async () => {
+    const ch = await app.inject({
+      method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'cap-private', visibility: 'private' },
+    });
+    const privateId = ch.json().id as string;
+    await app.inject({
+      method: 'POST', url: `/channels/${privateId}/members`, headers: auth(adminToken), payload: { accountId: botId },
+    });
+    const hidden = await post(adminId, '@workbot 곧 못 볼 일', null, privateId);
+    await settle(hidden);
+    const seen = await post(adminId, '@workbot 계속 볼 일');
+    await settle(seen);
+    // 숨을 머리를 가장 최근으로 — 거르기 전에 자르면 이것이 몫 하나를 차지한다.
+    await pool.query(`update thread_status set updated_at = now() + interval '1 hour' where root_id = $1`, [hidden]);
+    await pool.query(`update thread_status set updated_at = now() + interval '30 minutes' where root_id = $1`, [seen]);
+    await removeChannelMember(pool, privateId, adminId);
+    const cut = await listBoardRootIds(pool, adminId, { days: 30, limit: 1 });
+    expect(cut.rootIds).toEqual([seen]);
+  });
 });

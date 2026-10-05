@@ -2439,7 +2439,11 @@ export const BOARD_EXTRA_LIMIT = 300;
  * "에이전트가 낀 것"은 `thread_status` 행이 있다는 뜻이다 — 서버 판정(`decideThreadStatus`)이
  * `agentInvolved` 가 아니면 행을 지운다. 사람끼리 나눈 말까지 일로 세우면 보드가 다시 넘친다(jaebin 결정).
  *
- * 가시성은 여기서 거르지 않는다 — 머리를 싣는 `listThreadHeads` 가 지금 기준으로 다시 잰다(한 자리).
+ * **가시성·지운 머리를 상한보다 먼저 거른다**(#1137 security 후속, 2026-10-05). 처음에는 자른 뒤에
+ * `listThreadHeads` 만 걸렀다 — 내보내진 비공개 채널의 내 말이 많으면 그 머리들이 300 몫을 먹어,
+ * 보이는 카드가 300 보다 적은데도 `truncated` 가 참이었다. 그래서 여기서도 `listThreadHeads` 와 같은
+ * 두 조건(`LIST_VISIBLE`·`channelVisibleSql`)을 건다. 머리를 실을 때 다시 재는 것은 그대로 둔다 —
+ * 그쪽이 응답에 실리는 행의 경계이고, 이것은 세는 몫의 경계다.
  * 최근에 상태가 바뀐 것부터 `limit` 개. 넘쳤는지는 `truncated` 로 알린다.
  */
 export async function listBoardRootIds(
@@ -2447,14 +2451,18 @@ export async function listBoardRootIds(
 ): Promise<{ rootIds: string[]; truncated: boolean }> {
   const res = await pool.query(
     `with mine as (
-       select coalesce(m.thread_root_id, m.id) as root_id
-         from message m
-        where m.author_id = $1 and m.deleted_at is null
-          and m.created_at > now() - make_interval(days => $2::int)
+       select distinct coalesce(said.thread_root_id, said.id) as root_id
+         from message said
+        where said.author_id = $1 and said.deleted_at is null
+          and said.created_at > now() - make_interval(days => $2::int)
      )
      select ts.root_id as id
-       from (select distinct root_id from mine) r
-       join thread_status ts on ts.root_id = r.root_id
+       from mine
+       join thread_status ts on ts.root_id = mine.root_id
+       join message m on m.id = ts.root_id
+       join channel c on c.id = m.channel_id
+      where m.thread_root_id is null and ${LIST_VISIBLE}
+        and ${channelVisibleSql('c', '$1')}
       order by ts.updated_at desc, ts.root_id
       limit $3::int + 1`,
     [accountId, opts.days, opts.limit],
