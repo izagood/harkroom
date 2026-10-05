@@ -79,6 +79,16 @@ export function BlockedCard({ message, onOpenSettings }: { message: MessageRow; 
     : undefined;
   const mine = (connectors ?? []).filter((c) => c.ownerAccountId === me?.id && c.id === b.connectorId);
 
+  // 준 뒤에는 카드를 ✓ 한 줄로 접는다(#1144 designer n4) — 할 일이 끝난 카드가 스레드에서 자리를 차지하지 않게.
+  if (done) {
+    return (
+      <div className="mt-1 text-meta text-fg-muted" data-testid="blocked-card">
+        <span className="text-success" aria-hidden>✓ </span>
+        <span data-testid="blocked-done">{t('blocked.doneLine', { handle, name: b.connectorName ?? '—' })}</span>
+      </div>
+    );
+  }
+
   return (
     <div className="mt-1 rounded border border-border border-l-4 border-warning-border bg-surface-raised p-2 text-meta" data-testid="blocked-card">
       <div className="font-medium text-fg">🔒 {t('blocked.title', { handle })}</div>

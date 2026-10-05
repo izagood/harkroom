@@ -114,6 +114,18 @@ describe('AgentGrantsSection — 위임 나무', () => {
     expect(c.deleteGrant.mock.calls.every((x) => x[1] === 'api.call' && x[2] === `connector:${CONN}`)).toBe(true);
   });
 
+  it('API 행 [바꾸기]: 같은 폼을 지금 grant 로 연다 — 거두지 않고 PUT 한 번', async () => {
+    const c = setup();
+    (c as unknown as { putGrant: unknown }).putGrant = vi.fn(async () => []);
+    render(<AgentGrantsSection agent={agent('agent-a')} canGrant canRevoke />);
+    fireEvent.click(await screen.findByTestId('api-grant-change-lab-api'));
+    const form = await screen.findByTestId('api-grant-form');
+    expect(form.textContent).toContain('지금:');
+    fireEvent.click(within(form).getByRole('button', { name: '바꾸기' }));
+    await waitFor(() => expect((c as unknown as { putGrant: ReturnType<typeof vi.fn> }).putGrant).toHaveBeenCalledTimes(1));
+    expect(c.deleteGrant).not.toHaveBeenCalled();
+  });
+
   it('받은 줄에는 「받은 곳」을 적는다', async () => {
     setup();
     render(<AgentGrantsSection agent={agent('agent-b')} canGrant canRevoke />);

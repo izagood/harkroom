@@ -23,6 +23,7 @@ import { ConfirmDialog } from '../ConfirmDialog';
 import { hasOperatorLocalSurface } from '../../lib/operatorLocal';
 import { ImmediateBadge } from './pendingEdits';
 import { MergeGhUserRow } from './MergeGhUserRow';
+import { Segmented } from '../Segmented';
 import { buildForest, decidableBy, descendantCount, pendingForRoot, type ForestNode } from '../../lib/delegationForest';
 import { DelegationChildren, PendingDelegations, type DelegationActions } from './DelegationTree';
 
@@ -74,6 +75,8 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   const [secretGrant, setSecretGrant] = useState<GrantRow | null>(null);
   // 위임 나무(P5 desktop): 나무는 에이전트를 건너가므로 **내 에이전트 전부**의 api.call 줄을 모아 엮는다(서버는 parentGrantId 만 준다).
   const [forest, setForest] = useState<Map<string, ForestNode>>(new Map());
+  // API 행 [바꾸기](#1144 designer b): 같은 폼을 지금 grant 로 연다 — 거두고 다시 주지 않아도 된다.
+  const [changing, setChanging] = useState<string | null>(null);
   const [revokingNode, setRevokingNode] = useState<{ node: ForestNode; below: boolean } | null>(null);
 
   const load = useCallback(async () => {
@@ -225,8 +228,13 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                   </span>
                   {g.suspendedAt && <span className="rounded bg-warning-surface px-1 text-warning">{t('apiGrant.rowSuspended')}</span>}
                   {noKey && <span className="rounded bg-danger-surface px-1 text-danger">{t('apiGrant.rowNoKey')}</span>}
+                  {canGrant && c && c.ownerAccountId === myId && (
+                    <button className="ml-auto rounded border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-sunken disabled:opacity-50" disabled={off}
+                      data-testid={`api-grant-change-${c.name}`} aria-expanded={changing === g.scope}
+                      onClick={() => setChanging(changing === g.scope ? null : g.scope)}>{t('apiGrant.replace')}</button>
+                  )}
                   {canRevoke && (
-                    <button className="ml-auto rounded border border-border px-2 py-0.5 text-meta text-fg hover:text-danger disabled:opacity-50" disabled={off}
+                    <button className={`${canGrant && c && c.ownerAccountId === myId ? '' : 'ml-auto '}rounded border border-border px-2 py-0.5 text-meta text-fg hover:text-danger disabled:opacity-50`} disabled={off}
                       aria-label={t('apiGrant.revokeAria', { name: c?.name ?? id.slice(0, 8) })}
                       onClick={() => setRevoking(g)}>{t('agents.grants.revoke')}</button>
                   )}
@@ -238,6 +246,9 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                       onClick={() => setRevokingNode({ node, below: true })}>{t('apiGrant.revokeBelow')}</button>
                   )}
                 </div>
+                {changing === g.scope && c && (
+                  <ApiGrantForm agentId={agent.id} connectors={[c]} existing={g} onCancel={() => setChanging(null)} onDone={async () => { setChanging(null); await load(); }} />
+                )}
                 {node && <DelegationChildren node={node} accounts={accounts} a={delegation} />}
                 </li>
               );
@@ -331,13 +342,13 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
       {!canGrant && canRevoke && <p className="mt-2 text-meta text-fg-subtle">{t('agents.grants.ownerOnly')}</p>}
 
       {canGrant && adding && (
-        <div role="radiogroup" aria-label={t('apiGrant.kind')} className="mt-2 flex gap-2 text-meta">
-          <button type="button" role="radio" aria-checked={addKind === 'api'} className={`rounded px-2 py-1 ${addKind === 'api' ? 'bg-accent text-fg-on-strong' : 'border border-border text-fg'}`} onClick={() => setAddKind('api')}>{t('apiGrant.kindApi')}</button>
-          <button type="button" role="radio" aria-checked={addKind === 'merge'} className={`rounded px-2 py-1 ${addKind === 'merge' ? 'bg-accent text-fg-on-strong' : 'border border-border text-fg'}`} onClick={() => setAddKind('merge')}>{t('apiGrant.kindMerge')}</button>
-          {!secretGrant && (
-            <button type="button" role="radio" aria-checked={addKind === 'secret'} className={`rounded px-2 py-1 ${addKind === 'secret' ? 'bg-accent text-fg-on-strong' : 'border border-border text-fg'}`} onClick={() => setAddKind('secret')}>{t('apiGrant.kindSecret')}</button>
-          )}
-        </div>
+        <Segmented label={t('apiGrant.kind')} showLabel={false} className="mt-2" value={addKind} onChange={setAddKind}
+          options={[
+            { value: 'api' as const, label: t('apiGrant.kindApi') },
+            { value: 'merge' as const, label: t('apiGrant.kindMerge') },
+            // 비밀 만들기는 이미 주었으면 고를 칸에서 뺀다(한 줄뿐이다).
+            ...(secretGrant ? [] : [{ value: 'secret' as const, label: t('apiGrant.kindSecret') }]),
+          ]} />
       )}
       {canGrant && adding && addKind === 'api' && (
         (() => {

@@ -127,6 +127,18 @@ describe('SecretsSettings', () => {
     await waitFor(() => expect(c.deleteSecretGrant).toHaveBeenCalledWith('id-api-token', 'g1'));
   });
 
+  it('#1156 앞의 옛 줄: 받는 에이전트의 소유자가 비밀 주인과 다르면 「소유자가 달라 막힘」 배지', async () => {
+    setup({ listSecretGrants: vi.fn(async () => [
+      { id: 'g1', agentId: 'agent-1', channelId: null, operatorId: null, grantedBy: ME, grantedAt: '2026-10-02T00:00:00Z', suspendedAt: null, suspendReason: null },
+      { id: 'g2', agentId: 'agent-2', channelId: null, operatorId: null, grantedBy: ME, grantedAt: '2026-10-02T00:00:00Z', suspendedAt: null, suspendReason: null },
+    ]) });
+    render(<SecretsSettings />);
+    fireEvent.click(await screen.findByRole('button', { name: '받을 에이전트' }));
+    await screen.findByTestId('secret-grant-beta');
+    expect(screen.getByTestId('secret-grant-not-own-beta').textContent).toContain('소유자가 달라 막힘');
+    expect(screen.queryByTestId('secret-grant-not-own-alpha')).toBeNull();
+  });
+
   it('부여 패널: 모든 채널 경고, 내 에이전트만 고를 수 있고, 어느 오퍼레이터든 경고', async () => {
     setup();
     render(<SecretsSettings />);
