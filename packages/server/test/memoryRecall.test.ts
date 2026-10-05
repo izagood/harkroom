@@ -37,6 +37,14 @@ describe('focusTermsOf', () => {
     }
   });
 
+  it('인사 꼴 감사(감사해·감사합니다…)만 빠지고 audit 뜻의 감사는 남는다 — go 는 Go 언어 주제라 남는다(qa 10-04)', () => {
+    for (const q of ['감사해', '감사합니다!', '고마워 감사해요', '다시 봐 줘 감사합니다.']) expect([q, focusTermsOf(q, new Set())]).toEqual([q, []]);
+    expect(focusTermsOf('감사 결과는?', new Set())).toEqual(['감사', '결과']);
+    expect(focusTermsOf('감사는 어디 남나', new Set())).toContain('감사');
+    expect(focusTermsOf('감사합니다 감사 로그 봐 줘', new Set())).toEqual(['감사', '로그']);
+    expect(focusTermsOf('go 모듈 캐시', new Set())).toEqual(['go', '모듈', '캐시']);
+  });
+
   it('주제어는 남는다 — 되받는 말과 섞여도', () => {
     expect(focusTermsOf('다시 배포 되돌림 봐 줘', new Set())).toEqual(['배포', '되돌림']);
     expect(focusTermsOf('jaebin 캐시 계속 봐 줘', new Set(['jaebin']))).toEqual(['캐시']);
