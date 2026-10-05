@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { MessageRow } from '@harkroom/shared';
 import { getController } from '../state/controller';
+import { ApiError } from '../lib/api';
 import { useActiveStore } from '../state/communities';
 import { useLocale, useT } from '../i18n/useT';
 import type { SectionId } from './settings/sections';
@@ -50,7 +51,8 @@ export function MergeDenialPanel({ message, onOpenSettings }: { message: Message
   const me = useActiveStore((s) => s.me);
   const accounts = useActiveStore((s) => s.accounts);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // 서버 거절은 code 로 갈라 사람에게 하는 말로 보인다(designer #1163 수정 1). 원문은 title 로만 남긴다 — 서버 문구는 에이전트에게 하는 말이다.
+  const [error, setError] = useState<{ code: string; raw: string } | null>(null);
   const [givenUntil, setGivenUntil] = useState<string | null>(null);
   if (!d) return null;
 
@@ -67,7 +69,7 @@ export function MergeDenialPanel({ message, onOpenSettings }: { message: Message
       const r = await getController().grantFromMergeDenial(d.agentId, d.denialId);
       setGivenUntil(r.expiresAt);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError({ code: e instanceof ApiError ? e.code : 'failed', raw: e instanceof Error ? e.message : String(e) });
     } finally {
       setBusy(false);
     }
@@ -88,7 +90,7 @@ export function MergeDenialPanel({ message, onOpenSettings }: { message: Message
         <dd>{t('blocked.count', { n: String(d.count), when: d.lastAt ? new Date(d.lastAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : '' })}</dd>
       </dl>
       {until && <p className="mt-1 text-fg" data-testid="merge-denial-granted">{t('mergeDenial.granted', { date: fmt(until) })}</p>}
-      {!until && isOwner && !d.deployRepo && (
+      {!until && isOwner && !d.deployRepo && error?.code !== 'denial_expired' && error?.code !== 'denial_used' && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <button type="button" disabled={busy} data-testid="merge-denial-give"
             className="rounded bg-accent px-2 py-1 font-medium text-fg-on-strong disabled:opacity-60" onClick={() => void give()}>
@@ -108,7 +110,26 @@ export function MergeDenialPanel({ message, onOpenSettings }: { message: Message
         </div>
       )}
       {!until && !isOwner && <p className="mt-1 text-fg-subtle" data-testid="merge-denial-owner-only">{t('blocked.ownerOnly', { owner })}</p>}
-      {error && <p className="mt-1 text-danger" role="alert" data-testid="merge-denial-error">{t('mergeDenial.failed', { reason: error })}</p>}
+      {error && !until && (
+        <div className="mt-1" role="alert" data-testid="merge-denial-error" data-code={error.code} title={error.raw}>
+          {error.code === 'denial_expired' ? (
+            <>
+              <p className="text-fg">{t('mergeDenial.errExpired')}</p>
+              {onOpenSettings && (
+                <button type="button" className="mt-1 rounded border border-border px-2 py-1 text-fg-muted" onClick={() => onOpenSettings('agents', d.agentId)}>
+                  {t('blocked.openSettings')}
+                </button>
+              )}
+            </>
+          ) : (
+            <p className={error.code === 'denial_used' ? 'text-fg' : 'text-danger'}>
+              {error.code === 'denial_used' ? t('mergeDenial.errUsed')
+                : error.code === 'forbidden' ? t('mergeDenial.errForbidden')
+                : t('mergeDenial.errFailed')}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

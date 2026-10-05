@@ -11,6 +11,7 @@ import { setController, type Controller } from '../src/state/controller';
 import { resetCommunityRegistry, useActiveStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { acc } from './helpers/fakeApi';
+import { ApiError } from '../src/lib/api';
 
 const ME = 'owner-1';
 const DENIAL = '0f0e0d0c-0b0a-4908-8706-050403020100';
@@ -90,11 +91,37 @@ describe('MergeDenialPanel', () => {
     expect(screen.queryByTestId('merge-denial-give')).toBeNull();
   });
 
-  it('서버가 거절하면 이유를 보이고 버튼은 다시 누를 수 있다', async () => {
-    setup({ grantFromMergeDenial: vi.fn(async () => { throw new Error('denial_used'); }) });
+  it('만료된 거절(denial_expired)은 사람에게 하는 말과 설정 길 — 서버 원문(에이전트에게 하는 말)은 title 로만', async () => {
+    setup({ grantFromMergeDenial: vi.fn(async () => { throw new ApiError(409, 'denial_expired', 'that merge denial expired; ask the wrapper again'); }) });
+    const open = vi.fn();
+    render(<MergeDenialPanel message={card()} onOpenSettings={open} />);
+    fireEvent.click(screen.getByTestId('merge-denial-give'));
+    const err = await screen.findByTestId('merge-denial-error');
+    expect(err.textContent).toContain('24시간이 지나 만료됐다');
+    expect(err.textContent).not.toContain('wrapper');
+    expect(err.getAttribute('title')).toContain('wrapper');
+    expect(screen.queryByTestId('merge-denial-give')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '설정에서 보기' }));
+    expect(open).toHaveBeenCalledWith('agents', 'agent-1');
+  });
+
+  it('그 밖의 거절은 「주지 못했다」이고 버튼은 다시 누를 수 있다 · 소유자 아님은 그 말로', async () => {
+    setup({ grantFromMergeDenial: vi.fn(async () => { throw new ApiError(500, 'internal', 'boom'); }) });
     render(<MergeDenialPanel message={card()} />);
     fireEvent.click(screen.getByTestId('merge-denial-give'));
-    await waitFor(() => expect(screen.getByTestId('merge-denial-error').textContent).toContain('denial_used'));
+    await waitFor(() => expect(screen.getByTestId('merge-denial-error').textContent).toContain('주지 못했다'));
+    expect(screen.getByTestId('merge-denial-error').textContent).not.toContain('boom');
     expect((screen.getByTestId('merge-denial-give') as HTMLButtonElement).disabled).toBe(false);
+    cleanup();
+    setup({ grantFromMergeDenial: vi.fn(async () => { throw new ApiError(403, 'forbidden', 'only the owner'); }) });
+    render(<MergeDenialPanel message={card()} />);
+    fireEvent.click(screen.getByTestId('merge-denial-give'));
+    await waitFor(() => expect(screen.getByTestId('merge-denial-error').textContent).toContain('소유자만'));
+  });
+
+  it('버튼 이름은 「7일 동안 주기」(designer n1 — 「7일 주기」는 주기(週期)로도 읽힌다)', () => {
+    setup();
+    render(<MergeDenialPanel message={card()} />);
+    expect(screen.getByTestId('merge-denial-give').textContent).toBe('7일 동안 주기');
   });
 });
