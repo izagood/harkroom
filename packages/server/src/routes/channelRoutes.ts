@@ -26,7 +26,7 @@ import {
 import { recordAudit } from '../audit.js';
 import { emitEvent, emitPosted } from '../events.js';
 import { BAD_THREAD_MESSAGE, isThreadRootOf, postMessage } from '../services/messages.js';
-import { invokeFactsFor, mayInvokeInDm } from '../services/invokeGate.js';
+import { invokeFactsFor, mayInvoke } from '../services/invokeGate.js';
 
 /**
  * 섹션 이름의 길이 규칙(#157) — 만드는 경로(`PATCH /channels/:id/pref`)와 이름을 바꾸는
@@ -440,8 +440,10 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
       try {
         const facts = await invokeFactsFor(client, body.accountIds.filter((id) => id !== req.account!.id));
         for (const fact of facts.values()) {
-          if (!(await mayInvokeInDm(client, fact, { callerId: req.account!.id, channelId: '' }))) {
-            return reply.code(403).send({ error: 'agent_not_invokable' });
+          if (!(await mayInvoke(client, fact, { callerId: req.account!.id, channelId: '', via: 'mention' }))) {
+            return reply.code(403).send({
+              error: { code: 'agent_not_invokable', message: 'this agent cannot be invoked by you' },
+            });
           }
         }
       } finally {

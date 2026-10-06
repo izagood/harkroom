@@ -7,7 +7,7 @@
  * | invoke_scope | 통과 조건 |
  * |---|---|
  * | community | 누구나 |
- * | channel | 호출자가 그 채널의 멤버(`channel_member`) |
+ * | channel | 호출자가 그 채널의 멤버(`channel_member`) — DM 은 아니다(아래) |
  * | list | `agent_invoker` 에 호출자가 있다 |
  * | owner | 호출자 = `owner_account_id`, 또는 같은 소유자의 owner 에이전트 — 대상이 형제를 믿으면(`trust_siblings`, 083 기본) 명단 없이, 아니면 `agent_owner_delegate`(073) 명단에 있을 때 |
  *
@@ -16,6 +16,10 @@
  * 좁은 쪽이 하므로 "아무나 → 공개 에이전트 → owner 에이전트" 우회는 여전히 막힌다
  * (`services/replyGrants.ts`). 결과 발화만 쓸 수 있고(진행 줄은 못 쓴다), 스레드 머리는
  * `postMessage` 가 같은 채널의 최상위 글로 검사하므로 다른 채널에서 같은 T 를 달아 쓸 수 없다.
+ *
+ * **DM 은 `channel` 범위를 주지 않는다.** DM 의 멤버는 대화 상대뿐이라 "그 채널의 사람"이라는
+ * 뜻이 서지 않는다 — 누구든 DM 을 열면 멤버가 된다. DM 갈래·DM 안의 `@멘션`·새 DM 열기가 모두
+ * `mayInvoke` 하나를 지나므로 이 판정도 `passesScope` 한 곳에 둔다. DM 에서는 회신권(084)으로만 지나간다.
  *
  * **집합·auto-mention·@channel 을 거쳐 온 부름은 `community` 만 통과한다.** 그것들은 전부
  * "소유자가 아닌 무언가가 부르는 것"이다(auto-mention 은 넣는 시점에 400 으로도 막힌다).
@@ -77,22 +81,6 @@ export async function mayInvoke(
   if (facts.invokeScope === 'owner' && await isEligibleDelegate(client, facts, ctx.callerId, { listed: true })) return true;
   // 회신권(084) — 대상이 이 스레드에서 호출자를 불렀다. 팀 부름에는 쓰지 않는다(팀은 회신이 아니다).
   return ctx.via === 'mention' && ctx.replyGrantThreadId != null
-    && hasReplyGrant(client, { granteeId: ctx.callerId, granterId: facts.agentId, threadRootId: ctx.replyGrantThreadId });
-}
-
-/**
- * DM 의 부름. 판정은 직접 멘션과 같다(호출자 = 작성자) — DM 도 부름이므로 fan-out 밖에서
- * 같은 게이트를 지난다. 하나 다른 것은 `channel` 범위다: DM 의 멤버는 대화 상대뿐이라 "그 채널의
- * 사람"이라는 범위의 뜻이 서지 않는다. 그래서 DM 에서는 회신권(084)으로만 지나간다.
- */
-export async function mayInvokeInDm(
-  client: PoolClient,
-  facts: AgentInvokeFacts,
-  ctx: { callerId: string; channelId: string; replyGrantThreadId?: string | null },
-): Promise<boolean> {
-  if (facts.invokeScope !== 'channel') return mayInvoke(client, facts, { ...ctx, via: 'mention' });
-  if (facts.off) return false;
-  return ctx.replyGrantThreadId != null
     && hasReplyGrant(client, { granteeId: ctx.callerId, granterId: facts.agentId, threadRootId: ctx.replyGrantThreadId });
 }
 
@@ -160,8 +148,11 @@ async function passesScope(
       return Boolean(res.rowCount);
     }
     case 'channel': {
+      // 채널이 없으면(새 DM 을 열기 전) 지날 채널도 없다.
+      if (!ctx.channelId) return false;
       const res = await client.query(
-        `select 1 from channel_member where channel_id = $1 and account_id = $2`, [ctx.channelId, ctx.callerId]);
+        `select 1 from channel_member m join channel ch on ch.id = m.channel_id
+          where m.channel_id = $1 and m.account_id = $2 and ch.kind <> 'dm'`, [ctx.channelId, ctx.callerId]);
       return Boolean(res.rowCount);
     }
   }
