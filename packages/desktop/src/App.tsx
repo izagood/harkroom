@@ -17,6 +17,7 @@ import { ConnectScreen } from './screens/ConnectScreen';
 import { Workspace } from './components/Workspace';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { WindowDragStrip } from './components/WindowDragStrip';
+import { markBoot } from './lib/bootTimings';
 import { BootNotice, type BootWait } from './components/BootNotice';
 import type { SectionId } from './components/settings/sections';
 
@@ -141,10 +142,12 @@ export default function App() {
       // 키체인 접근은 IPC 뒤라 비동기다(lib/session.ts). 부팅 화면이 그 사이를 덮는데,
       // **그 화면이 무엇을 덮고 있는지 말하지 않는 것**이 `#460` 이다(실측 36분).
       // 콜백은 `secret_get` 을 부르기 직전에 온다 — 폴백(`localStorage`) 경로에서는 안 온다.
+      markBoot('keychain:start');
       const stored = await sessionStore.load(() => {
         if (cancelled) return;
         setBootWait('keychain');
       });
+      markBoot('keychain:done');
       // **대기가 끝났으면 되돌린다.** 아래 `cancelled` 문지기보다 앞이다: 여기를 지나면
       // 키체인은 이미 답했고, 그 뒤에도 문구가 서 있으면 사람은 없는 대화상자를 찾는다.
       setBootWait('unknown');
@@ -171,6 +174,7 @@ export default function App() {
           startedController.stop();
           return;
         }
+        markBoot('ready');
         setPhase('ready');
         restores.current.push(...restoreOthers(stored, active.accountId, handleSessionLost));
       } catch (err) {

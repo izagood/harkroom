@@ -1793,6 +1793,7 @@ export const ko = {
   'channel.doc.theirs': '서버의 현재 내용',
 
   'channel.empty.noMessages': '아직 메시지가 없다',
+  'channel.loadingMessages': '메시지를 불러오는 중…',
   'channel.empty.noMessagesIn': '#{name} 에 아직 메시지가 없다',
   'channel.empty.tipMention': '@{handle} 처럼 에이전트를 멘션하면 그 에이전트의 inbox 로 들어간다.',
   'channel.empty.tipTopic':

@@ -78,6 +78,11 @@ export interface AppState {
   typing: Record<string, string[]>;
   /** 채널별 '더 오래된 것이 남았는가'. */
   hasMore: Record<string, boolean>;
+  /**
+   * 채널별 '첫 페이지(since=0)를 기다리는 중'. 이 동안은 빈 상태(「아직 메시지가 없다」)를
+   * 그리지 않는다 — 받지 못한 것을 없는 것으로 말하게 된다(#1223 n1, 재시작 뒤 복원 채널).
+   */
+  firstPageLoading: Record<string, boolean>;
   unread: InboxEntry[];
   /**
    * 인박스가 서버에서 바뀐 것을 **확인한 횟수**(2026-09-10). `refreshUnread` 가 새 목록을
@@ -449,7 +454,7 @@ export const NO_TEAMS: AgentTeamRow[] = [];
 
 const initial = {
   me: null, accounts: {}, groups: [], teams: null, channels: [], dms: [], activeChannelId: null, threadRootId: null,
-  messages: {}, typing: {}, hasMore: {}, unread: [], inboxRevision: 0, inboxMine: 0, inboxBoardRevision: 0, reads: {}, dividerSeq: {},
+  messages: {}, typing: {}, hasMore: {}, firstPageLoading: {}, unread: [], inboxRevision: 0, inboxMine: 0, inboxBoardRevision: 0, reads: {}, dividerSeq: {},
   online: [], terminalTarget: null, channelSheetId: null, artifactPreview: null, artifactPreviewFrom: null, channelSheetTab: null, leases: [], connected: false, serverVersion: null, workspaceIconUrl: null,
   projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, drafts: {}, stickyMentions: {}, uploads: {},

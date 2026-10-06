@@ -57,6 +57,7 @@ const THREAD_WIDTH_KEY = 'harkroom.threadWidth';
 const TERMINAL_WIDTH_KEY = 'harkroom.terminalWidth';
 const PREVIEW_WIDTH_KEY = 'harkroom.previewWidth';
 const LAST_WORKSPACE_URL_KEY = 'harkroom.lastWorkspaceUrl';
+const LAST_CHANNEL_KEY = 'harkroom.lastChannel';
 
 export const MIN_SIDEBAR_WIDTH = 200;
 export const MAX_SIDEBAR_WIDTH = 480;
@@ -372,6 +373,59 @@ export const draftsStorage = {
     try { localStorage.removeItem(DRAFTS_KEY); } catch { /* noop */ }
   },
 };
+
+/**
+ * 커뮤니티·계정마다 **마지막으로 연 채널**을 기억한다(콜드 스타트 A안, 2026-10-06).
+ *
+ * 재시작 뒤 그 채널을 다시 열고, 첫 페이지를 기동 묶음과 **병렬로** 미리 받는다
+ * (`Controller.start`). 담는 것은 채널 id 하나뿐이다 — 이름·본문은 싣지 않는다.
+ *
+ * 열쇠는 `scope`(서버 주소 + 계정 id)다. 같은 기기에서 두 커뮤니티·두 계정을 쓰면 각자의
+ * 마지막 채널이 따로 남아야 하고, 한 계정의 채널 id 를 다른 서버에 물으면 404 만 난다.
+ * 로그아웃하면 그 scope 의 값을 지운다(`Controller.clearLocal`) — 초안과 같은 수명이다.
+ */
+export const lastChannelStorage = {
+  load(scope: string): string | null {
+    try {
+      const raw = localStorage.getItem(LAST_CHANNEL_KEY);
+      if (!raw) return null;
+      const map = JSON.parse(raw) as Record<string, unknown>;
+      const id = map[scope];
+      return typeof id === 'string' && id ? id : null;
+    } catch {
+      return null;
+    }
+  },
+  save(scope: string, channelId: string): void {
+    try {
+      const raw = localStorage.getItem(LAST_CHANNEL_KEY);
+      const map = (raw ? JSON.parse(raw) : {}) as Record<string, string>;
+      if (map[scope] === channelId) return;
+      map[scope] = channelId;
+      localStorage.setItem(LAST_CHANNEL_KEY, JSON.stringify(map));
+    } catch { /* 저장 불가 환경 허용 */ }
+  },
+  /** 모든 scope 를 지운다 — 전체 로그아웃(`sessionStore.clear()`)과 같은 수명. */
+  clear(): void {
+    try { localStorage.removeItem(LAST_CHANNEL_KEY); } catch { /* noop */ }
+  },
+  remove(scope: string): void {
+    try {
+      const raw = localStorage.getItem(LAST_CHANNEL_KEY);
+      if (!raw) return;
+      const map = JSON.parse(raw) as Record<string, string>;
+      if (!(scope in map)) return;
+      delete map[scope];
+      if (Object.keys(map).length === 0) localStorage.removeItem(LAST_CHANNEL_KEY);
+      else localStorage.setItem(LAST_CHANNEL_KEY, JSON.stringify(map));
+    } catch { /* noop */ }
+  },
+};
+
+/** `lastChannelStorage` 의 열쇠. 계정 id 가 비면(옛 단일 세션 이관분) 기억하지 않는다. */
+export function lastChannelScope(baseUrl: string, accountId: string): string | null {
+  return accountId ? `${baseUrl}|${accountId}` : null;
+}
 
 /**
  * 스코프별 **멘션 고정**을 기기 로컬에 보관한다(#706).
