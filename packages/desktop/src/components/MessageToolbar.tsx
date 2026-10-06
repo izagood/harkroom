@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
+import { useWindowView } from '../state/windowView';
 import { useT } from '../i18n/useT';
 import { Menu, type MenuItem } from './Menu';
 import { InlineReactionButtons, ReactionPickerPanel } from './Reactions';
@@ -48,6 +49,8 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
   /** 링크 만들기·복사 알림은 `MessageItem` 에 있다 — 이 버튼은 그것을 부르기만 한다. */
   onCopyLink: () => void;
 }) {
+  // 「스레드 열기」는 **이 창의** 자리로 간다(채널 창이면 자기 패널, W4 — `state/windowView`).
+  const windowView = useWindowView();
   const t = useT();
   const [picking, setPicking] = useState(false);
   // #219 와 같은 판단: 담김은 **id 집합**으로 본다(한 탭의 행들로 판단하면 '완료' 탭을 열어
@@ -182,7 +185,7 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
           className={slot}
           title={t('message.replyInThread')}
           aria-label={t('message.replyInThread')}
-          onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
+          onClick={() => windowView.openThread(message.threadRootId ?? message.id)}
         >
           <ThreadIcon />
         </button>

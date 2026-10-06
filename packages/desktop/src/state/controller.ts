@@ -1317,8 +1317,10 @@ export class Controller {
   }
 
   /** 상단에 도달했을 때 한 페이지 더 과거로. 남은 게 없으면 요청하지 않는다. */
-  async loadOlder(): Promise<void> {
-    const { activeChannelId, messages, hasMore } = this.store.getState();
+  /** `channelId` 는 새 창이 자기 채널을 줄 때다(`state/windowView`). 안 주면 메인 창의 활성 채널. */
+  async loadOlder(channelId?: string): Promise<void> {
+    const { messages, hasMore } = this.store.getState();
+    const activeChannelId = channelId ?? this.store.getState().activeChannelId;
     if (!activeChannelId || !hasMore[activeChannelId]) return;
     const rows = messages[activeChannelId] ?? [];
     if (!rows.length) return;
@@ -1329,6 +1331,66 @@ export class Controller {
     this.store.getState().set({
       hasMore: { ...this.store.getState().hasMore, [activeChannelId]: page.hasMore },
     });
+  }
+
+  /**
+   * **새 창이 자기 채널을 불러온다**(채널·스레드 새 창). `openChannel` 과 같은 조회를 하되 메인 창의
+   * 자리(`activeChannelId`·`threadRootId`·이력·본문 자리 요구)는 건드리지 않는다 — 새 창을 띄웠다고
+   * 메인 화면이 그 채널로 옮겨 가면 「창마다 따로」(완료 조건 ②)가 깨진다.
+   *
+   * 읽음은 여기서 올리지 않는다. 그 창이 **포커스이고 보일 때** 화면이 `markWindowRead` 를 부른다(C5).
+   */
+  async loadChannelForWindow(channelId: string): Promise<void> {
+    const store = this.store.getState();
+    const since = this.loadedChannels.has(channelId)
+      ? Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq))
+      : 0;
+    this.swallow(this.loadPins(channelId));
+    this.swallow(this.loadChannelAutoMentions(channelId));
+    const page = await this.api.messages(channelId, { since, limit: since === 0 ? INITIAL_HISTORY_LIMIT : undefined });
+    this.loadedChannels.add(channelId);
+    this.store.getState().upsertMessages(channelId, page.messages);
+    // 증분 응답은 `hasMore` 를 말할 자격이 없다 — 근거는 `openChannel` 의 같은 자리.
+    if (since === 0) {
+      this.store.getState().set({ hasMore: { ...this.store.getState().hasMore, [channelId]: page.hasMore } });
+    }
+  }
+
+  /**
+   * **새 창이 자기 스레드를 불러온다.** `openThread` 의 조회 부분만이다 — 메인 창의 스레드 패널은
+   * 그대로 둔다. 한 줄도 없으면 `false`(그 스레드는 없다 — 창이 빈 상태로 알린다, 판 3 3b).
+   */
+  async loadThreadForWindow(channelId: string, rootId: string): Promise<boolean> {
+    const page = await this.api.messages(channelId, { thread: rootId });
+    this.store.getState().upsertMessages(channelId, page.messages);
+    this.swallow(this.loadThreadAgentModels(channelId, rootId));
+    return page.messages.length > 0;
+  }
+
+  /**
+   * 새 창이 포커스이고 보일 때 그 채널의 읽음 위치를 올린다(C5). 「새 메시지」 구분선은 창을 연
+   * 시점에 얼린 값을 창이 따로 쥐므로(`useWindowDivider`) 여기서 스토어의 구분선을 다시 얼리지
+   * 않는다 — 메인이 같은 채널을 보고 있지 않은 한 그 값을 쓰는 곳은 없지만, 메인의 선을 창이
+   * 움직이면 안 된다.
+   */
+  markWindowRead(channelId: string): void {
+    const store = this.store.getState();
+    const frozen = store.reads[channelId]?.lastReadSeq ?? 0;
+    const newest = Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq));
+    const ids = store.unread
+      .filter((e) => e.channelId === channelId && !e.readAt)
+      .map((e) => e.id);
+    if (!ids.length && newest <= frozen) return;
+    this.swallow((async () => {
+      if (ids.length) {
+        await this.api.markRead(ids);
+        await this.refreshUnread();
+      }
+      if (newest <= frozen) return;
+      await this.api.markChannelRead(channelId, newest);
+      const after = this.store.getState();
+      after.set({ reads: { ...after.reads, [channelId]: { lastReadSeq: newest, unread: 0 } } });
+    })());
   }
 
   closeThread(): void {

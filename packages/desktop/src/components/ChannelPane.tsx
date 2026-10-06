@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { GalleryScopeContext } from './Attachments';
 import type { GalleryScope } from '../lib/imageGallery';
 import { getCommunityController, useActiveStore, useCommunityRegistry } from '../state/communities';
+import { useWindowView } from '../state/windowView';
 import { getController } from '../state/controller';
 import { MessageRows } from './MessageRows';
 import { groupProgress } from '../lib/progressGroup';
@@ -74,15 +75,17 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   // `useActiveStore()` 로 스토어 전체를 구독해서, 입력 중 표시·접속 상태·**다른 채널**에 온
   // 메시지까지 모든 변경이 이 목록을 통째로 다시 그렸다. 메시지·핀·`hasMore`·구분선은
   // **활성 채널의 것만** 읽는다 — 다른 채널의 배열이 바뀌어도 이 값들은 같은 참조다.
-  const activeChannelId = useActiveStore((s) => s.activeChannelId);
+  // 보는 채널은 **이 창의 것**이다(새 창 — `state/windowView`). 메인이면 스토어의 활성 채널 그대로다.
+  const windowView = useWindowView();
+  const activeChannelId = windowView.channelId;
   const channels = useActiveStore((s) => s.channels);
   const dms = useActiveStore((s) => s.dms);
   const accounts = useActiveStore((s) => s.accounts);
   const me = useActiveStore((s) => s.me);
-  const channelMessages = useActiveStore((s) => (s.activeChannelId ? s.messages[s.activeChannelId] : undefined));
-  const channelHasMore = useActiveStore((s) => (s.activeChannelId ? s.hasMore[s.activeChannelId] : undefined));
-  const channelDividerSeq = useActiveStore((s) => (s.activeChannelId ? s.dividerSeq[s.activeChannelId] : undefined));
-  const channelPinsRaw = useActiveStore((s) => (s.activeChannelId ? s.pins[s.activeChannelId] : undefined));
+  const channelMessages = useActiveStore((s) => (activeChannelId ? s.messages[activeChannelId] : undefined));
+  const channelHasMore = useActiveStore((s) => (activeChannelId ? s.hasMore[activeChannelId] : undefined));
+  const channelDividerSeq = useActiveStore((s) => (windowView.kind !== 'main' ? windowView.dividerSeq : activeChannelId ? s.dividerSeq[activeChannelId] : undefined));
+  const channelPinsRaw = useActiveStore((s) => (activeChannelId ? s.pins[activeChannelId] : undefined));
   const runnerStates = useActiveStore((s) => s.runnerStates);
   const groups = useActiveStore((s) => s.groups);
   const teams = useActiveStore((s) => s.teams) ?? CHANNEL_NO_TEAMS;
@@ -536,7 +539,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     if (!isNearTop(el)) return;
     loadingOlderRef.current = true;
     olderAnchorRef.current = { height: el.scrollHeight, top: el.scrollTop };
-    void getController().loadOlder().finally(() => { loadingOlderRef.current = false; });
+    void getController().loadOlder(activeChannelId ?? undefined).finally(() => { loadingOlderRef.current = false; });
   };
 
   /** 목록의 첫 줄. 위쪽에 뭔가 끼어들었는지를 이 id 하나로 안다. */
@@ -806,7 +809,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
           <div className="px-4 py-2 text-center">
             <button
               className="rounded-row border border-border px-2 py-1 text-meta text-fg-muted"
-              onClick={() => void getController().loadOlder()}
+              onClick={() => void getController().loadOlder(activeChannelId ?? undefined)}
             >
               Load older messages
             </button>

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { GalleryScopeContext } from './Attachments';
 import type { GalleryScope } from '../lib/imageGallery';
 import { getCommunityController, useActiveStore, useCommunityRegistry } from '../state/communities';
-import { getController } from '../state/controller';
+import { useWindowView } from '../state/windowView';
 import { MessageItem } from './MessageItem';
 import { ProgressRow } from './ProgressRow';
 import { groupProgress } from '../lib/progressGroup';
@@ -34,7 +34,10 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
   reserveLeft?: number;
 } = {}) {
   const t = useT();
-  const { activeChannelId, threadRootId, messages, accounts, me, online, connected } = useActiveStore();
+  const { messages, accounts, me, online, connected } = useActiveStore();
+  // 보는 자리는 **이 창의 것**이다(새 창 — `state/windowView`). 메인이면 스토어 그대로다.
+  const view = useWindowView();
+  const { channelId: activeChannelId, threadRootId } = view;
   // 답글을 보낼 커뮤니티 — 보낸 순간의 것을 붙잡는다(PR #997, ChannelPane 과 같은 이유).
   const communityId = useCommunityRegistry((s) => s.activeId);
   /** 채널과 같은 판정을 쓴다 — 모르는 계정은 에이전트로 치지 않는다(`lib/agentExchange`). */
@@ -301,7 +304,7 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
           <ThreadParticipants messages={thread} live={live} />
         </div>
         <button className="ml-2 rounded-row px-2 text-fg-subtle hover:bg-surface-sunken"
-          onClick={() => getController().closeThread()}>
+          onClick={() => view.closeThread()}>
           ×
         </button>
       </header>
