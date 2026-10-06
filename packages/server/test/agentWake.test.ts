@@ -544,8 +544,10 @@ describe('GET /threads/:rootId/report-wakes — 이 스레드를 보고처로 �
     };
     const a1 = await newThread();
     const w1 = await schedule(a1);
-    expect(await refreshThreadStatus(pool, report, new Set([botAccountId])))
-      .toMatchObject({ status: 'waiting', accountId: botAccountId, reason: w1.wakeAt });
+    const waiting = await refreshThreadStatus(pool, report, new Set([botAccountId]));
+    expect(waiting).toMatchObject({ status: 'waiting', accountId: botAccountId });
+    // 시각은 json_build_object 의 timestamptz 모양(+00:00)으로 온다 — 열린 깨움(open_wake)과 같다. 같은 순간인지만 본다.
+    expect(new Date((waiting as { reason: string }).reason).toISOString()).toBe(w1.wakeAt);
 
     const seen: WorkspaceEvent[] = [];
     const off = onEvent((e) => { if (e.type === 'thread.reportWakes.changed') seen.push(e); });
