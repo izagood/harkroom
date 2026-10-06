@@ -6,7 +6,7 @@
 // 세션이 이미 아는 것까지 다시 넘길 필요가 없다 — 그 경계가 `lastFedSeq` 다. 그리고 예전엔
 // 러너가 모델 응답을 파싱해 대신 올렸지만, 이제 에이전트가 harkroom MCP `message.post` 로
 // 스스로 올린다 — 그래서 시스템 프롬프트가 "어디에 쓸지"까지 알려줘야 한다.
-import { messagePermalink, type MessageRow, type InboxTeamCall, type InboxDelegationOutcome, type InboxDelegatedBy } from '@harkroom/shared';
+import { messagePermalink, type MessageRow, type InboxTeamCall, type InboxDelegationOutcome, type InboxDelegatedBy, type InboxCanceledWake, type WakeReportTo } from '@harkroom/shared';
 
 import type { AccountFailure } from './claudeAccounts.js';
 
@@ -1268,7 +1268,13 @@ export function buildTurnPrompt(opts: {
    * 아래 자기-발화 필터에 전부 걸린다. 그대로 두면 `mentionTurn` 이 하네스를 돌리지
    * 않고 끝내, 걸어 둔 기다림이 조용히 사라진다.
    */
-  wake?: { reason: string };
+  wake?: { reason: string; reportTo?: WakeReportTo };
+  /**
+   * 이 부름이 **접은 내 예약**(서버 107, 2026-10-06). 사람이 이 스레드에서 부르면 걸어 둔 깨움이 전부 접히는데,
+   * 전에는 이 턴이 그것을 몰라 "11:22 에 본다" 는 약속이 조용히 사라졌다. 델타를 대신하지 않는다 — 사람의
+   * 새 발화 위에 덧붙는 맥락이다(`team` 과 같은 성격).
+   */
+  canceledWakes?: InboxCanceledWake[];
   /**
    * 이 턴이 **팀장으로서 불린 턴**이면 그 팀과 명단(마이그레이션 047).
    *
@@ -1301,7 +1307,7 @@ export function buildTurnPrompt(opts: {
 }): { prompt: string; fedSeq: number } {
   const {
     messages, lastFedSeq, meId, handles, channelId, threadRootId, wake, team, delegation,
-    delegatedBy, editedMention,
+    delegatedBy, editedMention, canceledWakes,
   } = opts;
   const isFirstTurn = lastFedSeq === 0;
 
@@ -1329,7 +1335,12 @@ export function buildTurnPrompt(opts: {
   // 깨움 줄을 **사람의 발화처럼 렌더하지 않는다**(`renderLine` 을 쓰지 않는 이유다).
   // "forge: CI 결과 확인" 으로 보이면 에이전트가 자기 옛 말을 새 요청으로 읽는다.
   // 아래 델타에 사람의 새 발화가 함께 있을 수 있으므로 이 줄은 그것을 대체하지 않고 앞에 선다.
-  const wakeLines = wake === undefined ? [] : [`(예약된 후속 턴 — 사유: ${wake.reason})`, ''];
+  const wakeLines = wake === undefined ? [] : [
+    `(예약된 후속 턴 — 사유: ${wake.reason})`,
+    ...(wake.reportTo ? reportToLines(wake.reportTo) : []),
+    '',
+  ];
+  const canceledLines = canceledWakes?.length ? canceledWakeLines(canceledWakes) : [];
   const teamLines = team === undefined ? [] : teamSection(team, meId, handles);
   const delegationLines = delegation === undefined ? [] : delegationSection(delegation);
   const handedLines = delegatedBy === undefined ? [] : handedSection(delegatedBy);
@@ -1346,7 +1357,7 @@ export function buildTurnPrompt(opts: {
   // 팀 블록은 **델타 앞**이다 — 사람의 말을 읽기 전에 "너는 이 팀의 창구다"를 알아야
   // 그 말을 팀의 일로 읽는다. `wakeLines` 뒤에 두는 이유: 그 줄은 이 턴이 왜 떴는지이고,
   // 팀 블록은 이 턴이 무엇인지다(둘이 함께 오는 경우는 예약이 걸린 팀 턴이다).
-  const prompt = [head, '', ...wakeLines, ...teamLines, ...delegationLines, ...handedLines, ...editLines, ...lines, ...howTo].join('\n');
+  const prompt = [head, '', ...wakeLines, ...canceledLines, ...teamLines, ...delegationLines, ...handedLines, ...editLines, ...lines, ...howTo].join('\n');
 
   return { prompt, fedSeq };
 }
@@ -1439,6 +1450,53 @@ export function offAnchorNotice(posts: MessageRow[]): string | null {
  * 저자를 보는 이유: 한 스레드에 여러 에이전트가 있을 수 있고, 동료의 대기 줄로 내 침묵을
  * 정당화하면 내 턴은 아무 말 없이 사라진다.
  */
+/**
+ * 깨움 메시지 meta 에서 보고처를 꺼낸다(`meta.wake.reportTo`, 2026-10-06). 모양이 틀리면 없는 것으로 본다 —
+ * 옛 서버의 깨움에는 이 키가 없고, 그때는 지금처럼 앵커에만 답한다.
+ */
+export function wakeReportTo(meta: unknown): WakeReportTo | undefined {
+  const wake = (meta as { wake?: { reportTo?: unknown } } | null | undefined)?.wake;
+  const r = wake?.reportTo as Record<string, unknown> | undefined;
+  if (!r || typeof r.channelId !== 'string' || typeof r.threadRootId !== 'string') return undefined;
+  return { channelId: r.channelId, threadRootId: r.threadRootId };
+}
+
+/**
+ * 깨어난 턴에게 **다른 스레드에 한 약속**을 적는다(2026-10-06). 스레드마다 세션이 따로라 깨어난 턴은 자기
+ * 앵커만 안다 — 사유 한 줄에 약속이 없으면 결과는 앵커에만 남고 약속한 쪽(#task 등)에서는 "안 봤다" 로 보였다.
+ */
+export function reportToLines(r: WakeReportTo): string[] {
+  return [
+    `(이 예약은 결과를 **다른 스레드에 보고하기로 약속했다** — channelId: ${r.channelId} · threadRootId: ${r.threadRootId}`,
+    ` (harkroom://message/${r.threadRootId}). 이 스레드 답과 별도로 그 스레드에도 message.post 로 결과를 남겨라.`,
+    ' 거기에 아무 말 없이 끝나면 러너가 그 스레드에 "보고 없이 끝났다" 를 남긴다.)',
+  ];
+}
+
+/**
+ * 이 부름으로 **접힌 내 예약들**(서버 107). 사람의 말이 예약을 무효로 만든 것이니 대부분은 다시 걸 일이
+ * 없다 — 하지만 예약이 사람의 말과 무관한 기다림(CI 등)이었으면 다시 걸어야 하고, 그 판단은 턴의 몫이다.
+ */
+export function canceledWakeLines(list: readonly InboxCanceledWake[]): string[] {
+  return [
+    `(이 부름으로 이 스레드에 걸어 둔 너의 예약 ${list.length}개가 접혔다 — 그 시각에 다시 깨어나지 않는다. 아직 필요하면 turn.wake 로 다시 걸어라:`,
+    ...list.map((w) => `- ${w.reason} (원래 ${w.wakeAt}${w.reportTo ? ` · 보고처 harkroom://message/${w.reportTo.threadRootId}` : ''})`),
+    ')',
+    '',
+  ];
+}
+
+/**
+ * 약속한 보고처에 아무 말 없이 끝난 깨움 턴의 경고(2026-10-06). 보고처 스레드에 남긴다 — 거기서 기다리는
+ * 사람이 "안 봤다" 가 아니라 "봤는데 여기 안 적었다, 결과는 저기 있다" 를 알게.
+ */
+export function reportMissedNotice(reason: string, anchor: string): string {
+  return [
+    `이 스레드에 보고하기로 한 예약이 깨어났지만 여기에 아무 말 없이 끝났다 — 사유: ${reason}`,
+    `그 턴은 harkroom://message/${anchor} 스레드에서 돌았다. 결과는 그쪽을 본다.`,
+  ].join('\n');
+}
+
 export function hasOwnWakeSince(messages: MessageRow[], meId: string, sinceSeq: number): boolean {
   return messages.some(
     (m) => m.authorId === meId && m.seq > sinceSeq && m.kind === MESSAGE_KIND_WAKE,

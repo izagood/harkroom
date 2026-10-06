@@ -524,6 +524,72 @@ describe('runMentionTurn', () => {
     expect(prompt).toContain('CI 결과 확인');
   });
 
+  /**
+   * 보고처(`turn.wake` reportTo, 2026-10-06). 스레드마다 세션이 따로라 깨어난 턴은 자기 앵커만 안다 — 다른
+   * 스레드(#task)에서 한 "13:21 에 확인한다" 약속이 사유에 없으면 결과는 앵커에만 남았다(task_manager 실측).
+   *
+   * 되돌려 RED: `reportPromiseCheck` 호출을 지우면 첫 시험의 경고가 없고, 기준선을 앵커 seq 로 바꾸면 약속 글
+   * (깨움보다 뒤에 쓴 내 글)을 보고로 세어 경고가 사라진다.
+   */
+  describe('깨움 보고처(reportTo)', () => {
+    const REPORT = { channelId: CHANNEL, threadRootId: 'report-root' };
+
+    async function wakeTurn(script: (fake: FakeHarkroom, meId: string) => void) {
+      const fake = new FakeHarkroom(defOf());
+      fake.seedFrom('human-1', '@forge #1174 확인해');
+      // 약속 글 — 깨움을 건 뒤 다른 스레드에서 쓴 내 글이다. 이 턴의 보고로 세면 안 된다.
+      const { deps, runTurn, plans, turnOpts } = await makeDeps(fake);
+      fake.seedFrom(deps.me.id, '다음 확인은 13:21 KST', 'report-root');
+      runTurn.script = async () => { script(fake, deps.me.id); return { exitCode: 0, timedOut: false, tail: '' }; };
+      await runMentionTurn(deps, {
+        channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+        wake: { reason: '#1174 CI 확인', reportTo: REPORT },
+      });
+      return { fake, prompt: (await getPlanContent(plans, turnOpts)).at(-1)! };
+    }
+
+    it('앵커에만 답하고 끝나면 보고처에 경고를 남긴다 — 프롬프트에는 약속이 실려 있다', async () => {
+      const { fake, prompt } = await wakeTurn((f, me) => { f.seedFrom(me, 'CI 초록이다', null); });
+      expect(prompt).toContain('다른 스레드에 보고하기로 약속했다');
+      expect(prompt).toContain('threadRootId: report-root');
+      const warn = fake.fails.filter((x) => x.threadRootId === 'report-root');
+      expect(warn).toHaveLength(1);
+      expect(warn[0]).toMatchObject({ retryable: false });
+      expect(warn[0]!.body).toContain('#1174 CI 확인');
+    });
+
+    it('보고처에 말했으면(진행 설명이라도) 경고하지 않는다', async () => {
+      const { fake } = await wakeTurn((f, me) => {
+        f.seedFrom(me, 'CI 초록이다', null);
+        const m = f.seedFrom(me, '#1174 확인했다 — 초록', 'report-root');
+        m.kind = 'progress';
+      });
+      expect(fake.fails.filter((x) => x.threadRootId === 'report-root')).toEqual([]);
+    });
+
+    it('다시 기다리기로 했으면(새 깨움) 경고하지 않는다 — 아직 보고할 때가 아니다', async () => {
+      const { fake } = await wakeTurn((f, me) => {
+        const m = f.seedFrom(me, '#1174 CI 다시 확인', null);
+        m.kind = 'wake';
+      });
+      expect(fake.fails.filter((x) => x.threadRootId === 'report-root')).toEqual([]);
+    });
+  });
+
+  it('사람 글로 접힌 예약은 그 부름의 프롬프트에 실린다(서버 107)', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 그거 말고 이거 먼저 해');
+    const { deps, plans, turnOpts } = await makeDeps(fake);
+    await runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+      canceledWakes: [{ reason: 'designer 안 회수', wakeAt: '2026-10-06T02:00:00.000Z' }],
+    });
+    const prompt = (await getPlanContent(plans, turnOpts)).at(-1)!;
+    expect(prompt).toContain('예약 1개가 접혔다');
+    expect(prompt).toContain('designer 안 회수');
+    expect(prompt).toContain('그거 말고 이거 먼저 해');
+  });
+
   // recall P1: 예약으로 깨어난 턴은 관련 기억을 찾지 않는다 — 앞 턴 요청의 되풀이라 같은 것·엉뚱한 것을 고른다.
   it('깨어난 턴은 memory.search(recall)를 부르지 않는다 — 평범한 멘션 턴은 부른다', async () => {
     const fake = new FakeHarkroom(defOf());

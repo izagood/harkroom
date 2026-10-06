@@ -10,6 +10,7 @@
 // markRead 만 await 한다. 이 계약이 깨지면 폴 루프가 다시 턴에 묶여, 이 모듈이 존재하는
 // 이유 자체가 사라진다.
 import type { FailOpts, InboxBatch } from './harkroom.js';
+import type { WakeReportTo } from '@harkroom/shared';
 import { AccountGateRequeueError, mentionAnchor, type MentionTarget, type MentionTurnDeps, type MentionTurnResult } from './mentionTurn.js';
 import { SessionStore } from './sessions.js';
 import type { TurnRegistry } from './turnRegistry.js';
@@ -18,7 +19,7 @@ import { accountFailureOf, accountTrailOf, withAccountFailover, type ClaudeAccou
 import {
   accountTrailReason, controlHeldNotice, controlledNotice, FAILURE_NOTICE, quotaNotice, retryNotice, retryReason,
   withAccountTrail,
-  sessionConflictNotice, stallNotice, threadModelRejectedNotice,
+  sessionConflictNotice, stallNotice, threadModelRejectedNotice, wakeReportTo,
 } from './prompt.js';
 import { exhausted, isHarnessStall, isQuotaExhausted, isSessionIdConflict, isThreadModelRejected, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
 import type { SecretLeases } from './secretLeases.js';
@@ -244,6 +245,12 @@ function askAnsweredNote(mention: { body: string; meta?: unknown }): string {
   return `내가 낸 선택지에 답이 왔다 — 고른 것: ${label ?? picked}`;
 }
 
+/** 깨움 턴의 대상: 사유는 깨움 메시지 본문, 보고처는 그 meta(`meta.wake.reportTo`). */
+function wakeTarget(mention: InboxBatch['messages'][number]): { reason: string; reportTo?: WakeReportTo } {
+  const reportTo = wakeReportTo(mention.meta);
+  return { reason: mention.body, ...(reportTo ? { reportTo } : {}) };
+}
+
 /** 끝났는데 읽음 처리가 안 된 entry 를 "다시 띄우지 않는다" 로 기억하는 상한(2026-10-02). */
 export const DONE_UNREAD_MAX_MS = 24 * 60 * 60 * 1000;
 /** 관문 때문에 접어 둔 멘션을 기다리는 상한. 그 뒤에는 읽음 처리한다(관문 통지는 이미 남았다). */
@@ -352,6 +359,8 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
     viaEdit?: boolean,
     /** 이 턴이 쥔 스레드 임대를 잃었다는 신호(`threadClaims.ts` 펜싱). */
     fence?: AbortSignal,
+    /** 이 부름이 접은 내 예약(서버 107). */
+    canceledWakes?: InboxBatch['entries'][number]['canceledWakes'],
   ): Promise<void> {
     /**
      * 임대를 잃어 접힌 턴의 표지(security L1). 사람이 스레드에서 "왜 말하다 멈췄나"를 알 수 있게 한 줄 남긴다.
@@ -372,7 +381,10 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       // 평범한 멘션으로 처리하면 안 되는 이유: 깨움에는 부른 사람의 새 발화가 없다. 델타는
       // 자기가 쓴 대기 줄뿐이고 자기 발화는 걸러지므로 프롬프트가 비어, 러너가 하네스를
       // 돌리지 않고 커서만 전진시킨다 — 기다림이 흔적 없이 사라진다.
-      ...(reason === 'wake' ? { wake: { reason: mention.body } } : {}),
+      //
+      // 보고처(2026-10-06)도 그 메시지의 meta 에서 꺼낸다 — 서버가 사유와 함께 거기 실었다.
+      ...(reason === 'wake' ? { wake: wakeTarget(mention) } : {}),
+      ...(canceledWakes?.length ? { canceledWakes } : {}),
       /**
        * **선택에 답이 왔다**(2026-09-09). 깨움과 같은 자리를 쓰는 이유는 같은 문제이기
        * 때문이다: 사람은 카드의 버튼만 눌렀지 새 메시지를 쓰지 않았으므로 델타가 비고,
@@ -837,7 +849,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         // entry 당 1회라는 약속이 깨진다.
         attempts.set(entry.id, { tried, notBefore: 0, noticed: prior?.noticed });
 
-        const task: Promise<void> = runOne(entry.id, mention, anchor, threadKey, ctx, tried, entry.reason, entry.team, entry.delegation, entry.delegatedBy, entry.viaEdit === true, claim?.lost)
+        const task: Promise<void> = runOne(entry.id, mention, anchor, threadKey, ctx, tried, entry.reason, entry.team, entry.delegation, entry.delegatedBy, entry.viaEdit === true, claim?.lost, entry.canceledWakes)
           .catch((err: unknown) => {
             console.error(`  ${entry.messageId} 턴 실패:`, err instanceof Error ? err.message : err);
           })

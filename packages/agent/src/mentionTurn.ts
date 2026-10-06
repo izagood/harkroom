@@ -10,9 +10,9 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { AgentHarness, AgentView, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow } from '@harkroom/shared';
+import type { AgentHarness, AgentView, InboxCanceledWake, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow, WakeReportTo } from '@harkroom/shared';
 import type { FailOpts, Me } from './harkroom.js';
-import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice } from './prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, reportMissedNotice, MESSAGE_KIND_WAKE } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, harnessPath, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
@@ -58,7 +58,7 @@ export interface MentionTurnHarkroom {
     threadRootId: string | null,
     opts: FailOpts,
   ): Promise<number>;
-  readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]>;
+  readThread(channelId: string, threadRootId: string | null, since?: number, limit?: number): Promise<MessageRow[]>;
   /**
    * 채널 **전체**(스레드 답 포함)에서 seq 커서 이후를 읽는다 — `offAnchorEvidence` 가 쓴다.
    *
@@ -493,7 +493,9 @@ export interface MentionTarget {
    * 옵셔널인 이유: 평범한 멘션 턴에는 깨움이 없다. 그리고 값이 있으면 프롬프트 조립이
    * 달라진다 — 깨움에는 부른 사람이 없어서 델타가 비고, 비면 하네스가 돌지 않는다.
    */
-  wake?: { reason: string };
+  wake?: { reason: string; reportTo?: WakeReportTo };
+  /** 이 부름이 접은 내 예약(서버 107). 서버가 inbox 항목에 실어 준다(`InboxEntry.canceledWakes`). */
+  canceledWakes?: InboxCanceledWake[];
   /**
    * 이 스레드의 임대를 **잃었다**는 신호(서버 095, `threadClaims.ts` 펜싱). 울리면 이 턴을 접는다 — 다른
    * 러너가 이미 이 스레드를 넘겨받았으므로 계속 돌면 같은 스레드에 턴이 둘이다. 없으면(옛 서버·시험) 안 울린다.
@@ -551,6 +553,27 @@ export interface MentionTarget {
  *
  * **던지지 않는다.** 이것은 통지를 더 좋게 만드는 정황이지 통지의 조건이 아니다.
  */
+/**
+ * 깨움 턴이 **약속한 보고처에 아무 말도 안 했으면** 그 스레드에 경고를 남긴다(2026-10-06, `turn.wake` reportTo).
+ *
+ * 진행 설명(progress)도 보고로 센다 — 거기서 기다리는 사람에게는 "봤다" 는 신호이기 때문이다. 깨움 줄만은
+ * 세지 않는다(그것은 보고가 아니라 또 기다리겠다는 말이다). 실패 카드로 남기는 이유: 사람이 할 일이 있다 —
+ * 결과를 앵커 스레드에서 찾아야 하고, 그 사실이 스레드 머리에 서야 "안 봤다" 와 갈린다. 다시 부를 일은
+ * 아니라서 `retryable: false` 다. 읽기·발화 실패는 삼킨다(관측이다 — 호출자의 try 가 로그를 남긴다).
+ */
+async function reportPromiseCheck(
+  deps: MentionTurnDeps, reportTo: WakeReportTo, baseSeq: number, reason: string, anchor: string,
+): Promise<void> {
+  const there = await deps.harkroom.readThread(reportTo.channelId, reportTo.threadRootId, baseSeq);
+  const said = there.some((m) => m.authorId === deps.me.id && m.seq > baseSeq && m.kind !== MESSAGE_KIND_WAKE);
+  if (said) return;
+  console.log(`[mentionTurn] 깨움 턴이 보고처 ${reportTo.threadRootId} 에 말하지 않고 끝났다 — 거기에 경고를 남긴다`);
+  await deps.harkroom.fail(reportTo.channelId, reportMissedNotice(reason, anchor), reportTo.threadRootId, {
+    retryable: false,
+    what: '약속한 스레드에 보고하지 않고 깨움 턴이 끝났다',
+  });
+}
+
 async function offAnchorEvidence(
   deps: MentionTurnDeps, key: string, channelId: string, anchor: string | null, turnStartSeq: number,
 ): Promise<string | null> {
@@ -840,6 +863,7 @@ export async function runMentionTurn(
     channelId,
     threadRootId: anchor,
     ...(target.wake ? { wake: target.wake } : {}),
+    ...(target.canceledWakes?.length ? { canceledWakes: target.canceledWakes } : {}),
     ...(target.team ? { team: target.team } : {}),
     ...(target.delegation ? { delegation: target.delegation } : {}),
     ...(target.delegatedBy ? { delegatedBy: target.delegatedBy } : {}),
@@ -858,6 +882,15 @@ export async function runMentionTurn(
   // 발화 판정(countOwnPostsSince)의 기준선이다 — 턴 시작 전에 이미 있던 자기 발화까지 세면,
   // 아무것도 안 하고 끝낸 턴도 "발화했다"로 잘못 판정된다.
   const turnStartSeq = thread.reduce((max, m) => Math.max(max, m.seq), 0);
+  // 보고처의 기준선(2026-10-06). 앵커의 seq 로는 못 잰다: 약속 글은 대개 **다른 스레드에서 깨움보다 뒤에**
+  // 쓰여 앵커의 마지막 seq 보다 크다 — 그것을 이 턴의 보고로 잘못 센다. 보고처의 지금 마지막 글을 잰다.
+  // 못 읽으면 판정을 접는다(null) — 근거 없이 경고하지 않는다.
+  const reportTo = target.wake?.reportTo;
+  const reportBaseSeq = reportTo
+    ? await deps.harkroom.readThread(reportTo.channelId, reportTo.threadRootId, undefined, 1)
+      .then((ms) => ms.reduce((max, m) => Math.max(max, m.seq), 0))
+      .catch(() => null)
+    : null;
 
   // #139 는 "매 턴 다시 읽는다, 캐시 없음"이었다. 이제 러너 사본(`memoryCache.ts`)을 거친다
   // (2026-09-28) — 판본이 같으면 왕복하지 않고, 서버를 못 읽으면 사본으로 돈다. 수정이 다음
@@ -2139,6 +2172,11 @@ export async function runMentionTurn(
         configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
       }).catch(() => null);
       await deps.harkroom.progress(channelId, silentWakeNotice(lastSaid, deps.runnerSecret, await tailSecrets()), anchor);
+    }
+    // **약속한 보고처에 말했나**(2026-10-06). 앵커 쪽 판정(위)과 따로 본다 — 앵커에 답하고도 보고처를 잊는 것이
+    // 실측된 모양이다(task_manager 10-06). 다시 기다리기로 했으면(새 깨움) 아직 보고할 때가 아니니 경고하지 않는다.
+    if (reportTo && reportBaseSeq !== null && !hasOwnWakeSince(after, deps.me.id, turnStartSeq)) {
+      await reportPromiseCheck(deps, reportTo, reportBaseSeq, target.wake?.reason ?? '', anchor ?? mentionId);
     }
   } catch (err) {
     console.error(

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, type MemoryContext } from '../src/prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -201,6 +201,32 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
     });
     expect(r.prompt).toContain('예약');
     expect(r.prompt).not.toContain('jaebin:');
+  });
+
+  it('보고처가 있는 깨움은 그 스레드 id 를 싣는다 — 깨어난 턴은 다른 스레드의 약속을 모른다(2026-10-06)', () => {
+    const r = buildTurnPrompt({
+      messages: [], lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
+      wake: { reason: 'CI 결과 확인', reportTo: { channelId: 'c9', threadRootId: 'r9' } },
+    });
+    expect(r.prompt).toContain('channelId: c9 · threadRootId: r9');
+    expect(r.prompt).toContain('harkroom://message/r9');
+  });
+
+  it('접힌 예약은 사람의 발화 위에 덧붙는다 — 델타를 대신하지 않는다', () => {
+    const base = { lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't' };
+    const cw = [{ reason: '회수', wakeAt: '2026-10-06T02:00:00.000Z', reportTo: { channelId: 'c9', threadRootId: 'r9' } }];
+    expect(buildTurnPrompt({ ...base, messages: [], canceledWakes: cw }).prompt).toBe('');
+    const r = buildTurnPrompt({ ...base, messages: [msg(10, 'u1', '이거 먼저')], canceledWakes: cw });
+    expect(r.prompt).toContain('예약 1개가 접혔다');
+    expect(r.prompt).toContain('- 회수 (원래 2026-10-06T02:00:00.000Z · 보고처 harkroom://message/r9)');
+    expect(r.prompt).toContain('jaebin: 이거 먼저');
+  });
+
+  it('wakeReportTo 는 모양이 틀린 meta 를 없는 것으로 본다', () => {
+    expect(wakeReportTo({ wake: { reportTo: { channelId: 'c', threadRootId: 'r' } } })).toEqual({ channelId: 'c', threadRootId: 'r' });
+    expect(wakeReportTo({ wake: { reportTo: { channelId: 1 } } })).toBeUndefined();
+    expect(wakeReportTo(null)).toBeUndefined();
+    expect(wakeReportTo({ kind: 'wake', wake: { reason: 'x' } })).toBeUndefined();
   });
 
   // 깨움과 함께 사람의 새 발화가 같이 와 있을 수 있다(기다리는 동안 사람이 말했다).

@@ -286,6 +286,82 @@ describe('turn.wake — 에이전트가 자기를 나중에 깨운다', () => {
     });
   });
 
+  /**
+   * 사람 부름이 접은 깨움을 **그 부름의 턴에게 알린다**(107, 2026-10-06). 전에는 접혔다는 사실이 아무 데도
+   * 안 실려, 부름으로 뜬 턴은 "11:22 에 본다" 고 믿은 채 끝났다.
+   */
+  it('부름이 접은 내 깨움은 그 부름의 inbox 항목에 canceledWakes 로 실린다', async () => {
+    const threadRootId = await newThread();
+    const client = await mcpClient(botPat);
+    const w = text(await client.callTool({
+      name: 'turn.wake', arguments: { channelId, threadRootId, notBeforeSec: 3600, reason: 'designer 안 회수' },
+    }));
+    const call = (await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { body: '@wakebot 그거 말고 이거 먼저', threadRootId },
+    })).json().id as string;
+
+    const row = await pool.query(`select canceled_by_message_id from agent_wake where message_id = $1`, [w.wake.messageId]);
+    expect(row.rows[0].canceled_by_message_id).toBe(call);
+    const polled = text(await client.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 0 } }));
+    await client.close();
+    const entry = (polled.entries as { messageId: string; canceledWakes?: unknown }[]).find((e) => e.messageId === call);
+    expect(entry?.canceledWakes).toEqual([{ reason: 'designer 안 회수', wakeAt: w.wake.wakeAt }]);
+    // 다른 부름 항목에는 키째 없다 — 항목 모양을 넓히지 않는다.
+    const others = (polled.entries as { messageId: string; canceledWakes?: unknown }[]).filter((e) => e.messageId !== call);
+    expect(others.every((e) => !('canceledWakes' in e))).toBe(true);
+  });
+
+  describe('보고처(reportTo, 2026-10-06)', () => {
+    it('보고처를 주면 깨움 메시지 meta 에 싣는다', async () => {
+      const threadRootId = await newThread();
+      const reportRoot = await newThread();
+      const client = await mcpClient(botPat);
+      const res = text(await client.callTool({
+        name: 'turn.wake',
+        arguments: { channelId, threadRootId, notBeforeSec: 300, reason: '#1174 확인', reportTo: { channelId, threadRootId: reportRoot } },
+      }));
+      await client.close();
+      expect(res.error).toBeUndefined();
+      const msg = await pool.query(`select meta from message where id = $1`, [res.wake.messageId]);
+      expect(msg.rows[0].meta.wake.reportTo).toEqual({ channelId, threadRootId: reportRoot });
+    });
+
+    it('앵커와 같은 스레드면 싣지 않는다 — 뜻이 없다', async () => {
+      const threadRootId = await newThread();
+      const client = await mcpClient(botPat);
+      const res = text(await client.callTool({
+        name: 'turn.wake',
+        arguments: { channelId, threadRootId, notBeforeSec: 300, reason: '같은 곳', reportTo: { channelId, threadRootId } },
+      }));
+      await client.close();
+      const msg = await pool.query(`select meta from message where id = $1`, [res.wake.messageId]);
+      expect(msg.rows[0].meta.wake.reportTo).toBeUndefined();
+    });
+
+    it('스레드 머리가 아닌 글·없는 글을 보고처로 주면 bad_report_to 로 거절하고 예약하지 않는다', async () => {
+      const threadRootId = await newThread();
+      const reply = (await app.inject({
+        method: 'POST', url: `/channels/${channelId}/messages`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { body: '답글', threadRootId },
+      })).json().id as string;
+      const client = await mcpClient(botPat);
+      const before = await pool.query(`select count(*)::int as n from agent_wake where account_id = $1`, [botAccountId]);
+      for (const bad of [reply, '00000000-0000-4000-8000-000000000000']) {
+        const res = text(await client.callTool({
+          name: 'turn.wake',
+          arguments: { channelId, threadRootId, notBeforeSec: 300, reason: 'x', reportTo: { channelId, threadRootId: bad } },
+        }));
+        expect(res.error).toMatchObject({ code: 'bad_report_to' });
+      }
+      await client.close();
+      const after = await pool.query(`select count(*)::int as n from agent_wake where account_id = $1`, [botAccountId]);
+      expect(after.rows[0].n).toBe(before.rows[0].n);
+    });
+  });
+
   // 게시가 스레드 머리를 거절하면(bad_thread) 그 사유를 그대로 돌려준다 — 상한(wake_limit)으로
   // 바꿔 말하면 에이전트가 "너무 많이 기다렸다"로 읽고 사람에게 넘긴다.
   it('다른 채널의 글을 스레드 머리로 주면 bad_thread 로 거절한다 — wake_limit 이 아니다', async () => {
