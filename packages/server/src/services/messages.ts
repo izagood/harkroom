@@ -9,7 +9,7 @@ import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels
 import { emitEvent } from '../events.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
 import { getTeam, getTeamByName, listTeamMembers } from './teams.js';
-import { invokeFactsFor, mayInvoke, mayInvokeInDm, mayInvokeTeam, type InvokeVia } from './invokeGate.js';
+import { invokeFactsFor, mayInvoke, mayInvokeTeam, type InvokeVia } from './invokeGate.js';
 import { closeReplyGrants, openReplyGrants } from './replyGrants.js';
 import { enqueueInboxPush } from './push/pushJobs.js';
 import { displayBodySql } from './systemBody.js';
@@ -1475,8 +1475,8 @@ export async function postMessage(
       for (const row of members.rows) {
         if (notified.has(row.account_id)) continue;
         const fact = dmFacts.get(row.account_id);
-        if (fact && !(await mayInvokeInDm(client, fact, {
-          callerId: input.authorId, channelId: input.channelId, replyGrantThreadId: input.threadRootId ?? null,
+        if (fact && !(await mayInvoke(client, fact, {
+          callerId: input.authorId, channelId: input.channelId, via: 'mention', replyGrantThreadId: input.threadRootId ?? null,
         }))) continue;
         await insertInbox(client, row.account_id, message.id, 'dm', notified);
       }

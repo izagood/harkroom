@@ -90,9 +90,37 @@ describe('DM 호출 게이트', () => {
     expect(await inboxRows(a.accountId, id)).toBe(1);
   });
 
-  it('channel 에이전트: DM 멤버십은 범위를 주지 않는다 — 새 DM 403', async () => {
+  it('channel 에이전트: DM 멤버십은 범위를 주지 않는다 — 새 DM 403, 이유는 error.code 로', async () => {
     const a = await agentWith('dmchan', 'channel');
-    expect((await openDm(stranger.token, a.accountId)).statusCode).toBe(403);
+    const res = await openDm(stranger.token, a.accountId);
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('agent_not_invokable');
+  });
+
+  it('channel 에이전트: 이미 있는 DM 에서 @ 로 불러도 inbox 에 안 들어가고 mentionDenied 에 남는다', async () => {
+    const a = await agentWith('dmchan2', 'community');
+    const dm = (await openDm(stranger.token, a.accountId)).json().id as string;
+    const narrowed = await app.inject({
+      method: 'PATCH', url: `/accounts/agents/${a.accountId}`, headers: auth(adminToken), payload: { invokeScope: 'channel' },
+    });
+    expect(narrowed.statusCode).toBe(200);
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${dm}/messages`, headers: auth(stranger.token), payload: { body: '@dmchan2 해 줘' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().meta.mentionDenied).toEqual(['dmchan2']);
+    expect(await inboxRows(a.accountId, res.json().id)).toBe(0);
+  });
+
+  it('channel 에이전트: 사람끼리의 DM 에서 @ 로 불러도 지나가지 않는다', async () => {
+    const a = await agentWith('dmchan3', 'channel');
+    const dm = (await openDm(stranger.token, owner.accountId)).json().id as string;
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${dm}/messages`, headers: auth(stranger.token), payload: { body: '@dmchan3 해 줘' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().meta.mentionDenied).toEqual(['dmchan3']);
+    expect(await inboxRows(a.accountId, res.json().id)).toBe(0);
   });
 
   it('사람끼리의 DM 은 그대로다', async () => {
