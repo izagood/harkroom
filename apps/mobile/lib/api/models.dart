@@ -131,6 +131,36 @@ class ReactionRow {
       );
 }
 
+/// 스레드 상태(서버 `statusReaction`, 루트에만). 서버는 이 상태를 루트의 **진짜 리액션**으로도 단다 —
+/// 주인 에이전트 이름으로, 끝남(done)은 없이(server 108, 2026-10-06). 화면은 이것으로 그 리액션 칸이
+/// 상태 칸인지 알아볼 뿐이다 — 따로 그리지 않는다.
+class ThreadStatusMark {
+  const ThreadStatusMark({required this.status, required this.emoji, required this.accountId, required this.reason});
+
+  /// `received`·`running`·`waiting`·`my-turn`·`stuck`·`done`.
+  final String status;
+  final String emoji;
+  final String? accountId;
+  final String? reason;
+
+  /// 이 리액션 칸이 서버가 단 상태 칸인가 — 상태 이모지이고 주인 에이전트가 들어 있다. 끝남은 달지 않는다.
+  bool marks(ReactionRow r) =>
+      status != 'done' && accountId != null && r.emoji == emoji && r.accountIds.contains(accountId);
+
+  static ThreadStatusMark? fromJson(Object? j) {
+    if (j is! Map) return null;
+    final status = j['status'];
+    final emoji = j['emoji'];
+    if (status is! String || emoji is! String) return null;
+    return ThreadStatusMark(
+      status: status,
+      emoji: emoji,
+      accountId: j['accountId'] as String?,
+      reason: j['reason'] as String?,
+    );
+  }
+}
+
 /// 첨부 하나.
 class AttachmentRow {
   const AttachmentRow({
@@ -246,6 +276,7 @@ class MessageRow {
     this.alsoInChannel = false,
     this.participantIds = const [],
     this.lastReplyAt,
+    this.status,
   });
 
   final String id;
@@ -280,6 +311,9 @@ class MessageRow {
   /// **스레드 루트에만**: 마지막 답글 시각. 요약 줄 「· 2분 전」 이 쓴다.
   final DateTime? lastReplyAt;
 
+  /// **스레드 루트에만**: 스레드 상태(`ThreadStatusMark`). 옛 서버·답글·에이전트가 안 낀 스레드는 `null`.
+  final ThreadStatusMark? status;
+
   /// 스레드 답글인데 **채널에도 보이라고** 올린 것(#231). 채널 화면은 루트와 이것만 그린다.
   final bool alsoInChannel;
 
@@ -306,6 +340,28 @@ class MessageRow {
         alsoInChannel: alsoInChannel,
         participantIds: participantIds,
         lastReplyAt: lastReplyAt,
+        status: status,
+      );
+
+  /// 스레드 상태를 바꾼 사본(`thread.status` 이벤트).
+  MessageRow withStatus(ThreadStatusMark? next) => MessageRow(
+        id: id,
+        seq: seq,
+        channelId: channelId,
+        threadRootId: threadRootId,
+        authorId: authorId,
+        body: body,
+        kind: kind,
+        meta: meta,
+        createdAt: createdAt,
+        editedAt: editedAt,
+        reactions: reactions,
+        attachments: attachments,
+        replyCount: replyCount,
+        alsoInChannel: alsoInChannel,
+        participantIds: participantIds,
+        lastReplyAt: lastReplyAt,
+        status: next,
       );
 
   bool get isThreadRoot => threadRootId == null;
@@ -353,6 +409,7 @@ class MessageRow {
       alsoInChannel: alsoInChannel,
       participantIds: participantIds,
       lastReplyAt: lastReplyAt,
+      status: status,
     );
   }
 
@@ -388,6 +445,7 @@ class MessageRow {
             ? (j['participantIds']! as List).whereType<String>().toList(growable: false)
             : const [],
         lastReplyAt: DateTime.tryParse(_str(j['lastReplyAt']))?.toUtc(),
+        status: ThreadStatusMark.fromJson(j['statusReaction']),
       );
 }
 

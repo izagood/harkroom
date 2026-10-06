@@ -884,6 +884,12 @@ class AppState extends ChangeNotifier {
       case 'reaction.added':
       case 'reaction.removed':
         _applyReactionDelta(event);
+      case 'thread.status':
+        // 스레드 상태가 바뀌었다 — 리액션 칸은 리액션 이벤트로 따로 오고, 이것은 그 칸이 상태 칸인지만 알린다.
+        final channelId = event['channelId'];
+        final rootId = event['rootId'];
+        if (channelId is! String || rootId is! String) return;
+        _applyThreadStatus(channelId, rootId, ThreadStatusMark.fromJson(event['statusReaction']));
       case 'account.handle_changed':
         final id = event['accountId'];
         final handle = event['newHandle'];
@@ -912,6 +918,22 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       default:
       // 모르는 이벤트. 무시한다.
+    }
+  }
+
+  /// 루트의 스레드 상태를 갈아 끼운다. 모르는 루트는 버린다(다음에 읽을 때 서버가 함께 준다).
+  void _applyThreadStatus(String channelId, String rootId, ThreadStatusMark? status) {
+    for (final list in [messages[channelId], ...threads.values]) {
+      if (list == null) continue;
+      final idx = list.indexWhere((m) => m.id == rootId);
+      if (idx < 0) continue;
+      list[idx] = list[idx].withStatus(status);
+      notifyListeners();
+    }
+    final root = threadRoots[rootId];
+    if (root != null && root.channelId == channelId) {
+      threadRoots[rootId] = root.withStatus(status);
+      notifyListeners();
     }
   }
 

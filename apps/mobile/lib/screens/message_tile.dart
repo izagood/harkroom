@@ -203,7 +203,13 @@ class _Reactions extends StatelessWidget {
             backgroundColor:
                 mine != null && r.accountIds.contains(mine) ? theme.colorScheme.primaryContainer : null,
             label: Text('${r.emoji} ${r.accountIds.length}'),
+            // 서버가 단 스레드 상태 칸(👀💬⏳🙋🚨)이면 길게 눌러 이유를 본다.
+            tooltip: message.status?.marks(r) == true ? message.status!.reason : null,
             onPressed: () async {
+              // 상태 칸은 내가 같이 단 것만 뗀다 — 남의(상태 주인의) 칸을 눌러 같은 이모지를 달면
+              // 상태와 사람 리액션이 한 칸에 섞인다(데스크톱과 같은 규칙).
+              final isMine = mine != null && r.accountIds.contains(mine);
+              if (message.status?.marks(r) == true && !isMine) return;
               Future<void> go() => app.toggleReaction(message.channelId, message.id, r.emoji);
               try {
                 await go();
