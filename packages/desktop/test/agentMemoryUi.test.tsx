@@ -17,9 +17,9 @@ import { MAX_MEMORY_ITEMS_PER_ACCOUNT } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
-import { AgentsSettings } from '../src/components/settings/AgentsSettings';
+import { AgentsSettings, MEMORY_TWO_PANE_MIN_PX } from '../src/components/settings/AgentsSettings';
 import { acc } from './helpers/fakeApi';
-import type { MemoryAudit } from '../src/lib/memoryList';
+import type { MemoryAudit, MemoryEntry } from '../src/lib/memoryList';
 
 const agent = (handle: string): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member', assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [], delegates: [], mcpServers: [],
@@ -48,7 +48,7 @@ let audit: MemoryAudit | null = null;
 /** 되살리기에서 자리가 있는 수 — 그 뒤의 것은 `too_many`. */
 let unarchiveRoom = Infinity;
 
-const fakeController = (memories: (ReturnType<typeof mem> & { archivedAt?: string })[]) => {
+const fakeController = (memories: MemoryEntry[]) => {
   const c = {
     listAgents: vi.fn(async (): Promise<AgentView[]> => [agent('rusalka')]),
     listPats: vi.fn(async (): Promise<PatView[]> => []),
@@ -101,17 +101,20 @@ describe('접힌 줄이 기본이다', () => {
   });
 
   /**
-   * 하나만 열리는 방식이면 다음을 열 때마다 앞의 것이 닫혀 **견주기가 끊긴다.** 이 화면의
-   * 일이 바로 견주며 지울 것을 고르는 것이라, 여럿이 함께 열려야 한다.
+   * 상세는 한 칸이다(PR 4 두 칸). 견주기는 줄의 **두 줄 요약**이 맡는다 — 상세를 여럿 펼치면 본문·이전 판이
+   * 겹겹이 쌓여 목록이 다시 무너진다.
    */
-  it('여럿을 함께 펼칠 수 있다', async () => {
+  it('상세는 하나만 열리고, 견주기는 줄의 두 줄 요약이 맡는다', async () => {
     fakeController([mem('mem/a-one', '# 첫째\n알파'), mem('mem/b-two', '# 둘째\n베타')]);
     await open();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'mem/a-one 펼치기' }));
+    expect(within(await screen.findByTestId('memory-row-mem/a-one')).getByTestId('memory-summary').textContent).toBe('첫째');
+    fireEvent.click(screen.getByRole('button', { name: 'mem/a-one 펼치기' }));
+    expect(within(screen.getByTestId('memory-detail-pane')).getByText(/알파/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'mem/b-two 펼치기' }));
-    expect(screen.getByText(/알파/)).toBeTruthy();
-    expect(screen.getByText(/베타/)).toBeTruthy();
+    expect(screen.getAllByTestId('memory-detail-pane')).toHaveLength(1);
+    expect(within(screen.getByTestId('memory-detail-pane')).getByText(/베타/)).toBeTruthy();
+    expect(within(screen.getByTestId('memory-detail-pane')).queryByText(/알파/)).toBeNull();
   });
 
   /**
@@ -495,3 +498,171 @@ describe('정리할 것 (#1186 audit)', () => {
   });
 });
 
+const kinded = (slug: string, value: string, kind: 'topic' | 'procedure' | 'journal', extra: Record<string, unknown> = {}) => ({
+  ...mem(slug, value), kind, ...extra,
+});
+
+describe('종류별 묶음·목록/상세 두 칸 (PR 4)', () => {
+  it('규칙·사실 / 절차 / 경위 기록 칸으로 나뉘고, 빈 칸은 없다', async () => {
+    fakeController([kinded('mem/a-one', '# 1', 'topic'), kinded('mem/b-two', '# 2', 'journal'), mem('mem/c-old', '# 3')]);
+    await open();
+
+    const topic = await screen.findByTestId('memory-section-topic');
+    expect(within(topic).getByTestId('memory-row-mem/a-one')).toBeTruthy();
+    // 종류가 없는 옛 항목은 규칙·사실이다.
+    expect(within(topic).getByTestId('memory-row-mem/c-old')).toBeTruthy();
+    expect(within(screen.getByTestId('memory-section-journal')).getByTestId('memory-row-mem/b-two')).toBeTruthy();
+    expect(screen.queryByTestId('memory-section-procedure')).toBeNull();
+  });
+
+  it('본문의 [[링크]] 는 그 기억을 상세에 열고, 없는 것은 깨짐·보관된 것은 보관함을 연다', async () => {
+    fakeController([
+      mem('mem/a-one', '# 하나\n[[mem/b-two]] 와 [[old-one]] 와 [[nowhere]]'),
+      mem('mem/b-two', '# 둘\n베타 본문'),
+      archived('mem/old-one', '# 옛것'),
+    ]);
+    await open();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'mem/a-one 펼치기' }));
+    const pane = screen.getByTestId('memory-detail-pane');
+    expect(within(pane).getByTestId('memory-link-nowhere').getAttribute('data-state')).toBe('missing');
+    expect(within(pane).getByTestId('memory-link-old-one').getAttribute('data-state')).toBe('archived');
+
+    fireEvent.click(within(pane).getByTestId('memory-link-mem/b-two'));
+    expect(within(screen.getByTestId('memory-detail-pane')).getByText(/베타 본문/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'mem/a-one 펼치기' }));
+    fireEvent.click(within(screen.getByTestId('memory-detail-pane')).getByTestId('memory-link-old-one'));
+    // 보관된 것은 보관함이 열려 그 줄이 보이고, 상세에 연다.
+    expect(within(screen.getByTestId('memory-archived')).getByTestId('memory-row-mem/old-one')).toBeTruthy();
+    expect(within(screen.getByTestId('memory-detail-pane')).getByText(/옛것/)).toBeTruthy();
+  });
+
+  it('본문의 마크다운은 HTML 로 들어가지 않는다', async () => {
+    fakeController([mem('mem/a-one', '# 제목\n<img src=x onerror=alert(1)> **굵게**')]);
+    await open();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'mem/a-one 펼치기' }));
+    const body = screen.getByTestId('memory-body');
+    expect(body.querySelector('img')).toBeNull();
+    expect(body.textContent).toContain('<img src=x onerror=alert(1)>');
+    expect(within(body).getByRole('heading').textContent).toBe('제목');
+  });
+
+  it('상세에 「왜 후보인가」를 근거와 함께 말하고, 짝 상대를 누르면 그것을 연다', async () => {
+    audit = {
+      ...emptyAudit(),
+      similar: [['mem/a-one', 'mem/a-two']],
+      undescribed: ['mem/a-one'],
+      flagged: [{ slug: 'mem/a-one', reason: '비밀처럼 보임' }],
+    };
+    fakeController([mem('mem/a-one', '# 1'), mem('mem/a-two', '# 짝 본문')]);
+    await open();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'mem/a-one 펼치기' }));
+    const why = await screen.findByTestId('memory-why');
+    expect(within(why).getByTestId('memory-why-flagged').textContent).toContain('비밀처럼 보임');
+    expect(within(why).getByTestId('memory-why-undescribed')).toBeTruthy();
+    fireEvent.click(within(why).getByRole('button', { name: 'mem/a-two' }));
+    expect(within(screen.getByTestId('memory-detail-pane')).getByText(/짝 본문/)).toBeTruthy();
+  });
+
+  it('줄 꼬리표는 둘까지, 나머지는 +n (n3) · 쓰임 0 은 그리지 않는다 (n5)', async () => {
+    audit = {
+      ...emptyAudit(),
+      flagged: [{ slug: 'mem/a-one', reason: null }], neverRead: ['mem/a-one'], undescribed: ['mem/a-one'],
+    };
+    fakeController([
+      { ...mem('mem/a-one', '# 1'), readCount: 0, recallCount: 0 },
+      { ...mem('mem/b-two', '# 2'), readCount: 2, recallCount: 1 },
+    ]);
+    await open();
+
+    const row = await screen.findByTestId('memory-row-mem/a-one');
+    await within(row).findByTestId('memory-reason-flagged');
+    expect(within(row).getByTestId('memory-reason-neverRead')).toBeTruthy();
+    expect(within(row).queryByTestId('memory-reason-undescribed')).toBeNull();
+    expect(within(row).getByTestId('memory-reason-more').textContent).toBe('+1');
+    // 0 은 그리지 않는다(#1209 nit 3).
+    expect(within(row).queryByTestId('memory-usage')).toBeNull();
+    expect(within(screen.getByTestId('memory-row-mem/b-two')).getByTestId('memory-usage').textContent).toBe('쓰임 3');
+  });
+
+  it('보관하면 상세 칸이 닫히지 않고 보관된 것으로 남는다 · 지우면 닫힌다', async () => {
+    const c = fakeController([mem('mem/a-one', '# 하나')]);
+    await open();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'mem/a-one 펼치기' }));
+    c.agentMemory.mockResolvedValueOnce([]);
+    fireEvent.click(within(screen.getByTestId('memory-detail-pane')).getByRole('button', { name: 'mem/a-one 기억 지우기' }));
+    fireEvent.click(screen.getByText('정말 지운다'));
+    await vi.waitFor(() => expect(screen.queryByTestId('memory-detail-pane')).toBeNull());
+  });
+
+  it('다른 에이전트로 바꾸면 상세·고르기가 넘어가지 않는다 — 같은 이름의 기억이 있어도(security)', async () => {
+    const c = fakeController([]);
+    c.listAgents.mockResolvedValue([agent('rusalka'), agent('vodnik')]);
+    c.agentMemory.mockImplementation(async (id: string) => (
+      id === 'id-rusalka' ? [mem('mem/same', '# 루살카 것')] : [mem('mem/same', '# 보드닉 것')]) as never);
+    let releaseRevisions!: () => void;
+    c.agentMemoryRevisions.mockImplementationOnce(() => new Promise((r) => {
+      releaseRevisions = () => r([{ value: '# 루살카 옛 판', description: null, updatedAt: '2026-09-01T00:00:00.000Z', replacedAt: '2026-09-02T00:00:00.000Z' }]);
+    }) as never);
+    await open();
+
+    fireEvent.click(await screen.findByLabelText('mem/same 고르기'));
+    fireEvent.click(screen.getByRole('button', { name: 'mem/same 펼치기' }));
+    fireEvent.click(within(screen.getByTestId('memory-detail-pane')).getByTestId('memory-revisions-toggle'));
+
+    fireEvent.click(screen.getByTestId('agent-back'));
+    fireEvent.click(await screen.findByTestId('agent-card-vodnik'));
+    fireEvent.click(await screen.findByTestId('agent-tab-memory'));
+    await screen.findByTestId('memory-row-mem/same');
+    releaseRevisions();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(screen.queryByTestId('memory-detail-pane')).toBeNull();
+    expect(screen.queryByText(/루살카 옛 판/)).toBeNull();
+    expect(screen.queryByTestId('memory-picked-bar')).toBeNull();
+    expect((screen.getByLabelText('mem/same 고르기') as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('좁으면 상세는 고른 줄 바로 아래 열린다 — 목록에서 자리를 잃지 않게(B2)', async () => {
+    fakeController([mem('mem/a-one', '# 1\n알파'), mem('mem/b-two', '# 2\n베타')]);
+    await open();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'mem/b-two 펼치기' }));
+    const row = screen.getByTestId('memory-row-mem/b-two');
+    expect(within(row).getByTestId('memory-detail-pane')).toBeTruthy();
+    expect(within(row).getByRole('button', { name: 'mem/b-two 접기' }).getAttribute('aria-current')).toBe('true');
+  });
+
+  it('넓으면(48rem 이상) 목록 옆 한 칸에 열린다(B1)', async () => {
+    const realRO = globalThis.ResizeObserver;
+    const realRect = Element.prototype.getBoundingClientRect;
+    globalThis.ResizeObserver = class {
+      constructor(private cb: () => void) {}
+      observe() { this.cb(); }
+      disconnect() {}
+      unobserve() {}
+    } as unknown as typeof ResizeObserver;
+    Element.prototype.getBoundingClientRect = function () { return { width: MEMORY_TWO_PANE_MIN_PX } as DOMRect; };
+    try {
+      audit = { ...emptyAudit(), flagged: [{ slug: 'mem/a-one', reason: null }], neverRead: ['mem/a-one'] };
+      fakeController([mem('mem/a-one', '# 1\n알파')]);
+      await open();
+      // 두 칸이면 꼬리표는 하나 + 「+n」(왼쪽 칸이 좁다, #1209 designer).
+      const row = screen.getByTestId('memory-row-mem/a-one');
+      await within(row).findByTestId('memory-reason-flagged');
+      expect(within(row).queryByTestId('memory-reason-neverRead')).toBeNull();
+      expect(within(row).getByTestId('memory-reason-more').textContent).toBe('+1');
+      fireEvent.click(await screen.findByRole('button', { name: 'mem/a-one 펼치기' }));
+      const pane = screen.getByTestId('memory-detail-pane');
+      expect(screen.getByTestId('memory-row-mem/a-one').contains(pane)).toBe(false);
+      expect(within(pane).getByText(/알파/)).toBeTruthy();
+    } finally {
+      globalThis.ResizeObserver = realRO;
+      Element.prototype.getBoundingClientRect = realRect;
+    }
+  });
+});

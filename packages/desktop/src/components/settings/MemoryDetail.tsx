@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { MAX_CORE_MEMORY_LENGTH, MAX_MEMORY_DESCRIPTION_LENGTH, MAX_MEMORY_VALUE_LENGTH } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { ApiError } from '../../lib/api';
@@ -29,11 +29,13 @@ export function kindLabel(t: Translate, k: Kind): string {
  * `core` 와 목록 줄이 **같은 컴포넌트**를 쓴다 — 두 벌이면 한쪽만 낡는다. core 에는 종류가 없다
  * (매 턴 실리는 자리라 종류로 가르지 않는다).
  */
-export function MemoryDetail({ agentId, entry, onChanged }: {
+export function MemoryDetail({ agentId, entry, onChanged, body }: {
   agentId: string;
   entry: MemoryEntry;
   /** 저장·되돌리기 뒤 목록을 다시 읽게 한다. */
   onChanged: () => void;
+  /** 본문을 그리는 모양. 없으면 원문 그대로(`core` 카드). */
+  body?: ReactNode;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -171,8 +173,8 @@ export function MemoryDetail({ agentId, entry, onChanged }: {
           </div>
         </div>
       ) : (
-        /* 값은 최대 8,000자다 — 펼쳐도 이 상자 안에서만 자란다. */
-        <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-meta text-fg-muted">{entry.value}</pre>
+        /* 값은 최대 8,000자다 — 펼쳐도 이 상자 안에서만 자란다. 목록 상세는 읽는 모양(`MemoryBody`)을 넘긴다. */
+        body ?? <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-meta text-fg-muted">{entry.value}</pre>
       )}
 
       {problem && <div role="alert" className="text-meta text-danger">{problem}</div>}

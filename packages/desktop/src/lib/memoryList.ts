@@ -283,7 +283,7 @@ export function cleanupChips(audit: MemoryAudit, archivedSlugs: ReadonlySet<stri
     stale: new Set(audit.stale.map((s) => s.slug)),
     neverRead: new Set(audit.neverRead),
     pairs: pairSlugs,
-    brokenLinks: new Set(audit.brokenLinks.filter((l) => !archivedSlugs.has(l.target)).map((l) => l.slug)),
+    brokenLinks: new Set(audit.brokenLinks.filter((l) => !isArchivedTarget(l.target, archivedSlugs)).map((l) => l.slug)),
     expiringJournal: new Set(audit.expiringJournal),
     undescribed: new Set(audit.undescribed),
   };
@@ -309,9 +309,10 @@ export function chipsFor(slug: string, chips: CleanupChipView[]): CleanupChip[] 
 export function archivedLinks(audit: MemoryAudit, archivedSlugs: ReadonlySet<string>): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const l of audit.brokenLinks) {
-    if (!archivedSlugs.has(l.target)) continue;
+    if (!isArchivedTarget(l.target, archivedSlugs)) continue;
+    const target = archivedSlugs.has(l.target) ? l.target : `mem/${l.target}`;
     const list = out.get(l.slug);
-    if (list) { if (!list.includes(l.target)) list.push(l.target); } else out.set(l.slug, [l.target]);
+    if (list) { if (!list.includes(target)) list.push(target); } else out.set(l.slug, [target]);
   }
   return out;
 }
@@ -334,4 +335,92 @@ export function usedWithin(entries: MemoryEntry[], days: number, now: number): n
 /** 쓰임 = 읽힘 + recall. 옛 서버면 없는 쪽은 0 으로 센다. */
 export function usageOf(e: MemoryEntry): number {
   return (e.readCount ?? 0) + (e.recallCount ?? 0);
+}
+
+/**
+ * 종류별 칸(Memory 탭 결정 1). 순서가 곧 화면 순서다 — 규칙·사실이 가장 많이 열리고, 경위는
+ * 원래 잘 안 읽힌다. 종류가 없는 옛 서버 항목은 규칙·사실로 센다(서버 기본값과 같다).
+ */
+export const MEMORY_KINDS = ['topic', 'procedure', 'journal'] as const;
+export type MemoryKind = typeof MEMORY_KINDS[number];
+
+export interface MemoryKindSection {
+  kind: MemoryKind;
+  /** 이 칸에 든 기억 수(검색·칩으로 거른 뒤). */
+  count: number;
+  rows: MemoryRow[];
+}
+
+/**
+ * 종류별로 나눈 뒤 칸마다 `memoryRows` 로 접두어를 묶는다. 빈 칸은 돌려주지 않는다.
+ * 접두어 묶음이 종류를 넘나들지 않게 칸 안에서 묶는다 — `mem/pr-` 의 경위와 규칙이 한 묶음에
+ * 섞이면 종류로 나눈 보람이 없다.
+ */
+export function memorySections(
+  entries: MemoryEntry[],
+  opts: { query?: string; sort?: MemorySort } = {},
+): MemoryKindSection[] {
+  const out: MemoryKindSection[] = [];
+  for (const kind of MEMORY_KINDS) {
+    const rows = memoryRows(entries.filter((e) => (e.kind ?? 'topic') === kind), opts);
+    const count = rows.reduce((n, r) => n + (r.kind === 'item' ? 1 : r.group.items.length), 0);
+    if (count > 0) out.push({ kind, count, rows });
+  }
+  return out;
+}
+
+/** 본문의 `[[이름]]` 조각. 서버 audit 과 같은 문법이다(공백 없음, 255자까지). */
+export const WIKI_LINK = /\[\[([^\]\s]{1,255})\]\]/g;
+
+/** `[[x]]` 가 가리키는 slug. 서버처럼 `x` 그대로와 `mem/x` 둘 다 본다. */
+export function resolveWikiLink(
+  target: string, active: ReadonlySet<string>, archived: ReadonlySet<string>,
+): { slug: string; state: 'active' | 'archived' } | { slug: null; state: 'missing' } {
+  for (const slug of [target, `mem/${target}`]) {
+    if (active.has(slug)) return { slug, state: 'active' };
+    if (archived.has(slug)) return { slug, state: 'archived' };
+  }
+  return { slug: null, state: 'missing' };
+}
+
+/**
+ * 「왜 후보인가」 — 한 기억이 audit 의 어느 목록에 왜 들었나. 칩은 이름만 말하고, 상세는
+ * 근거(마지막 쓰임·짝 상대·가리킨 이름·걸린 이유)를 함께 말한다. 칩 순서대로.
+ */
+export type CandidateReason =
+  | { key: 'flagged'; reason: string | null }
+  | { key: 'stale'; lastUsedAt: string }
+  | { key: 'neverRead' }
+  | { key: 'pairs'; with: string[] }
+  | { key: 'brokenLinks'; targets: string[] }
+  | { key: 'expiringJournal' }
+  | { key: 'undescribed' };
+
+export function candidateReasons(
+  slug: string, audit: MemoryAudit, archivedSlugs: ReadonlySet<string>,
+): CandidateReason[] {
+  if (slug === CORE_SLUG) return [];
+  const out: CandidateReason[] = [];
+  const flag = audit.flagged.find((f) => f.slug === slug);
+  if (flag) out.push({ key: 'flagged', reason: flag.reason });
+  const stale = audit.stale.find((s) => s.slug === slug);
+  if (stale) out.push({ key: 'stale', lastUsedAt: stale.lastReadAt });
+  if (audit.neverRead.includes(slug)) out.push({ key: 'neverRead' });
+  const partners = new Set<string>();
+  for (const [a, b] of audit.similar) { if (a === slug) partners.add(b); if (b === slug) partners.add(a); }
+  for (const { pair: [a, b] } of audit.similarBody) { if (a === slug) partners.add(b); if (b === slug) partners.add(a); }
+  if (partners.size) out.push({ key: 'pairs', with: [...partners] });
+  const targets = audit.brokenLinks.filter((l) => l.slug === slug && !isArchivedTarget(l.target, archivedSlugs)).map((l) => l.target);
+  if (targets.length) out.push({ key: 'brokenLinks', targets });
+  if (audit.expiringJournal.includes(slug)) out.push({ key: 'expiringJournal' });
+  if (audit.undescribed.includes(slug)) out.push({ key: 'undescribed' });
+  return out;
+}
+
+/** 줄 꼬리표는 이만큼만 보이고 나머지는 「+n」(좁은 창에서 요약 칸이 0 으로 밀리지 않게, #1196 designer n3). */
+export const MAX_ROW_REASONS = 2;
+
+/** `[[x]]` 의 x 가 보관된 기억을 가리키나(`x` 그대로 또는 `mem/x`, 서버 audit 과 같은 규칙). */
+function isArchivedTarget(target: string, archived: ReadonlySet<string>): boolean {
+  return archived.has(target) || archived.has(`mem/${target}`);
 }
