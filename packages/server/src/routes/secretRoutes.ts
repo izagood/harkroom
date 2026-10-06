@@ -16,7 +16,7 @@ import { scanWrite } from '../services/contentScan.js';
 import type { SecretKeyring } from '../services/secretKeyring.js';
 import { needlesFor } from '../services/secretLeakGuard.js';
 import { endTurnLease, issueTurnLease, revealSecret, RevealLimiter } from '../services/secretAccess.js';
-import { createAgentSecret, createLimiter, GENERATE_TYPES, rotateAgentSecret, type CreateDenial, type CreateSource } from '../services/secretCreate.js';
+import { createAgentSecret, createLimiter, GENERATE_TYPES, hasCreateGrant, rotateAgentSecret, type CreateDenial, type CreateSource } from '../services/secretCreate.js';
 
 /** 계획 D6. 파일·텍스트 공통 상한(바이트). */
 export const SECRET_MAX_BYTES = 64 * 1024;
@@ -464,6 +464,14 @@ export async function registerSecretRoutes(
       default: return 409; // too_many · name_taken · value_is_mounted · adopted_by_owner · secret_expired
     }
   };
+
+  // 러너가 프롬프트에 만들기 절을 쓸지 고른다(`/agent/merge-grants` 와 같은 틀). 판정이 아니다 — 판정은 위 gate() 가 매 호출 한다.
+  app.get('/agent/secret-create', { preHandler: app.requireAccount }, async (req, reply) => {
+    const who = viaOperator(req, reply);
+    if (!who) return reply;
+    void reply.header('cache-control', 'no-store');
+    return { granted: !!keyring && (await hasCreateGrant(pool, who.agentId)) };
+  });
 
   app.post('/agent/secrets', { preHandler: app.requireAccount }, async (req, reply) => {
     const who = viaOperator(req, reply);

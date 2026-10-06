@@ -235,6 +235,16 @@ export class HarkroomAgentClient {
     }
   }
 
+  /** 이 에이전트가 비밀을 만들 수 있는가(capability `secret.create`). 옛 서버·실패는 false — 절을 쓰지 않는다. */
+  async secretCreateGranted(): Promise<boolean> {
+    try {
+      const r = await this.rest<{ granted?: unknown }>('GET', '/agent/secret-create', 'secret-create');
+      return r?.granted === true;
+    } catch {
+      return false;
+    }
+  }
+
   async mergeGrants(): Promise<string[]> {
     try {
       const r = await this.rest<{ repos?: unknown }>('GET', '/agent/merge-grants', 'merge-grants');

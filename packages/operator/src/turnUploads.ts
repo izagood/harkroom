@@ -136,6 +136,37 @@ export async function resolveInsideWorkspace(cwd: string, path: string, agentId:
   return { ok: true, path: target };
 }
 
+export type WorkspaceRead = { ok: true; path: string; bytes: Buffer } | { ok: false; code: string; message: string };
+
+/**
+ * 턴 워크스페이스 안의 일반 파일 하나를 읽는다 — `attachment.upload` 와 `secret.import`(security L1)가 같이 쓴다.
+ * 경로는 `resolveInsideWorkspace` 로 판정하고, 판정한 경로를 **심링크를 따라가지 않고** 연다(O_NOFOLLOW) — realpath 와
+ * 열기 사이에 그 자리가 밖을 가리키는 심링크로 바뀌면 열기가 실패한다. 크기·종류도 연 핸들에서 본다(경로를 다시 보지 않는다).
+ * 남는 틈: 중간 디렉터리를 바꿔치기하는 것은 막지 못한다 — 같은 uid 경계(H2) 안의 일이다.
+ */
+export async function readWorkspaceFile(cwd: string, path: string, agentId: string, maxBytes: number): Promise<WorkspaceRead> {
+  const resolved = await resolveInsideWorkspace(cwd, path, agentId);
+  if (!resolved.ok) return resolved;
+  const limit = maxBytes >= 1024 * 1024 ? `${Math.floor(maxBytes / 1024 / 1024)}MB` : `${Math.floor(maxBytes / 1024)}KB`;
+  let handle: FileHandle;
+  try { handle = await open(resolved.path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW); } catch {
+    return { ok: false, code: 'read_failed', message: `could not open ${path}` };
+  }
+  try {
+    const info = await handle.stat();
+    if (!info.isFile()) return { ok: false, code: 'not_a_file', message: `not a regular file: ${path}` };
+    if (info.size > maxBytes) return { ok: false, code: 'too_large', message: `the file exceeds ${limit}` };
+    const bytes = await handle.readFile();
+    // 열고 나서 자란 파일 — 한도를 다시 본다.
+    if (bytes.length > maxBytes) return { ok: false, code: 'too_large', message: `the file exceeds ${limit}` };
+    return { ok: true, path: resolved.path, bytes };
+  } catch {
+    return { ok: false, code: 'read_failed', message: `could not read ${path}` };
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
 export function createTurnUploads(deps: TurnUploadsDeps): TurnUploads {
   const maxBytes = deps.maxBytes ?? UPLOAD_MAX_BYTES;
   return {
@@ -154,30 +185,11 @@ export function createTurnUploads(deps: TurnUploadsDeps): TurnUploads {
       // 기준이 없으면 올리지 않는다 — 옛 브릿지는 cwd 를 싣지 않는다.
       if (!req.cwd) return fail('no_workspace', 'this bridge does not report its workspace; update the harkroom app');
 
-      const resolved = await resolveInsideWorkspace(req.cwd, args.path, agentId);
-      if (!resolved.ok) return fail(resolved.code, resolved.message);
-      // 판정한 경로를 **심링크를 따라가지 않고** 연다(O_NOFOLLOW) — realpath 와 열기 사이에 그 자리가 밖을
-      // 가리키는 심링크로 바뀌면 열기가 실패한다. 크기·종류도 연 핸들에서 본다(경로를 다시 보지 않는다).
-      // 남는 틈: 중간 디렉터리를 바꿔치기하는 것은 막지 못한다 — 같은 uid 경계(H2) 안의 일이다.
-      let handle: FileHandle;
-      try { handle = await open(resolved.path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW); } catch {
-        return fail('read_failed', `could not open ${args.path}`);
-      }
-      let bytes: Buffer;
-      try {
-        const info = await handle.stat();
-        if (!info.isFile()) return fail('not_a_file', `not a regular file: ${args.path}`);
-        if (info.size > maxBytes) return fail('too_large', `the file exceeds ${Math.floor(maxBytes / 1024 / 1024)}MB`);
-        bytes = await handle.readFile();
-        // 열고 나서 자란 파일 — 한도를 다시 본다.
-        if (bytes.length > maxBytes) return fail('too_large', `the file exceeds ${Math.floor(maxBytes / 1024 / 1024)}MB`);
-      } catch {
-        return fail('read_failed', `could not read ${args.path}`);
-      } finally {
-        await handle.close().catch(() => {});
-      }
+      const read = await readWorkspaceFile(req.cwd, args.path, agentId, maxBytes);
+      if (!read.ok) return fail(read.code, read.message);
+      const bytes = read.bytes;
 
-      const filename = safeFilename(typeof args.filename === 'string' ? args.filename : resolved.path);
+      const filename = safeFilename(typeof args.filename === 'string' ? args.filename : read.path);
       const contentType = contentTypeFor(filename);
       const form = multipart(filename, contentType, bytes);
       const res = await deps.forward(agentId, {

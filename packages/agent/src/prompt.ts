@@ -704,8 +704,10 @@ export function buildSystemPrompt(opts: {
   merge?: { operatorBin: string; repos: readonly string[] };
   /** 외부 API 권한(C안 P3). 연결이 비면 절을 빼지 않고 "키를 채팅에서 찾지 마라"만 적는다. 없으면(옛 호출부) 뺀다. */
   api?: { operatorBin: string; connectors: readonly string[]; delegatable?: readonly string[] };
+  /** 비밀 만들기 권한(capability `secret.create`). 참일 때만 절을 쓴다 — 없는 에이전트에게 도구를 권하지 않는다. */
+  secretCreate?: boolean;
 }): string {
-  const { handle, channelName, instructions, guide, memory, turnBudgetMs, merge, api } = opts;
+  const { handle, channelName, instructions, guide, memory, turnBudgetMs, merge, api, secretCreate } = opts;
   const budgetMinutes = turnBudgetMs === undefined ? null : Math.floor(turnBudgetMs / 60_000);
   return [
     `너는 harkroom 워크스페이스의 에이전트 @${handle} 이고, 지금 #${channelName} 에서 말한다.`,
@@ -750,6 +752,7 @@ export function buildSystemPrompt(opts: {
     // 하네스를 굳이 남기려면 문장 가운데가 아니라 뒤에 따로 붙여야 갈아끼울 수 있다.
     ...(merge ? mergeSection(merge) : []),
     ...(api ? apiSection(api) : []),
+    ...(secretCreate ? secretCreateSection() : []),
     '저장소에 PR 을 열면 본문 **맨 끝**에 이 줄을 넣는다:',
     '',
     `🤖 Opened by \`@${handle}\`, an agent in [Harkroom](${HARKROOM_REPO_URL}) — a chat workspace where people and AI agents share channels.`,
@@ -963,6 +966,27 @@ function apiSection(api: { operatorBin: string; connectors: readonly string[]; d
       '범위는 내 범위 안, 만료는 30일 안, 받는 쪽은 같은 사람의 에이전트만이다. 사람 글이 아닌 턴에서 주면 사람이 허락해야 쓰인다. 거둘 때는 `grant.revoke`.',
     ] : []),
     never,
+    '',
+  ];
+}
+
+/**
+ * 비밀 만들기 절(스레드 1a08d0cf, security n1). 새 도구 셋(`secret.generate`·`import`·`rotate`)을 쓰라고 같은 PR 에서 적는다
+ * (mem/new-vocabulary-needs-a-prompt). **"소유자가 요청할 때만"** 은 서버가 못 보는 것이다 — 서버는 턴을 띄운 글이 소유자
+ * 글인지만 본다(F2). 그래서 여기서 말로 묶는다.
+ */
+export function secretCreateSection(): string[] {
+  return [
+    '**비밀을 만들 수 있다 — 소유자가 그 비밀을 만들어 달라고 요청할 때만 만든다.** 필요해 보인다고 스스로 만들지 않는다.',
+    '만든 비밀의 주인은 소유자이고, 부여는 나에게 이 채널로만 걸린다. 만들면 서버가 이 스레드에 알림 줄을 남기고 소유자를 부른다.',
+    '- 새 값: harkroom MCP 의 `secret.generate`(type: password·token_hex·token_base64url·ssh_ed25519). 값은 나에게 오지 않는다.',
+    '  ssh 는 공개키만 돌려준다. 바로 써야 하면 `mount:true` 로 파일 경로를 받는다.',
+    '- 받은 값 등록: 값을 화면에 찍지 말고 `cmd > file` 로 턴 워크스페이스에 받은 뒤 `secret.import { name, path }`. 원본은 지워진다.',
+    '  **이미 화면·문맥에 보인 값은 유출된 것이다** — 등록하지 말고 사람에게 회전을 부탁한다. `already_granted` 는 이미 가진 비밀이다 —',
+    '  그 이름으로 `secret.mount` 해서 쓴다.',
+    '- 값 바꾸기: 내가 만든 비밀만 `secret.rotate { name, generate | path }`. `adopted_by_owner` 면 소유자가 맡은 비밀이니 사람에게 넘긴다.',
+    '- 값을 MCP 인자·메시지·기억·파일·커밋에 쓰지 않는다. 거절 코드(`not_granted`·`cause_not_owner`·`value_is_mounted`·`too_many` 등)는',
+    '  그대로 사람에게 적고 멈춘다.',
     '',
   ];
 }

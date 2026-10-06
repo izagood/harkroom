@@ -118,6 +118,28 @@ describe('에이전트가 비밀을 만든다 (102)', () => {
     expect((await reveal(await lease(ch2), 'db-pass')).json().error.code).toBe('wrong_channel');
   });
 
+  it('n4: 만들면 소유자에게 알린다 — 그 턴의 스레드에 서버 줄 + 소유자 인박스(설명·값은 싣지 않는다)', async () => {
+    const l = await lease();
+    const res = await create(l, 'notice-me', { generate: { type: 'token_hex' } }, { description: 'not in the notice' });
+    expect(res.statusCode).toBe(201);
+    const s = await secretRow('notice-me');
+    const m = (await pool.query(
+      `select id, body, kind, author_id, channel_id, meta from message where meta->'secretNotice'->>'secretId' = $1`, [s.id])).rows;
+    expect(m).toHaveLength(1);
+    expect(m[0]).toMatchObject({ kind: 'system', author_id: agentId, channel_id: ch });
+    expect(m[0].meta.secretNotice).toMatchObject({ action: 'created', name: 'notice-me', via: 'generate', ownerAccountId: alice.accountId });
+    expect(m[0].body).toContain('`notice-me`');
+    expect(m[0].body).not.toContain('not in the notice');
+    const inbox = (await pool.query(`select reason from inbox where account_id = $1 and message_id = $2`, [alice.accountId, m[0].id])).rows;
+    expect(inbox.length).toBeGreaterThan(0);
+    // 회전도 알린다.
+    const r = await rotate(await lease(), 'notice-me', { generate: { type: 'token_hex' } });
+    expect(r.statusCode).toBe(200);
+    const after = (await pool.query(
+      `select meta from message where meta->'secretNotice'->>'secretId' = $1 order by created_at`, [s.id])).rows;
+    expect(after.map((x) => x.meta.secretNotice.action)).toEqual(['created', 'rotated']);
+  });
+
   it('ssh_ed25519: 공개키만 돌려준다', async () => {
     const res = await create(await lease(), 'deploy-key', { generate: { type: 'ssh_ed25519' } });
     expect(res.statusCode).toBe(201);
@@ -208,6 +230,24 @@ describe('에이전트가 비밀을 만든다 (102)', () => {
     const res = await create(await lease(), 'one-more', { generate: { type: 'password' } });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe('too_many');
+  });
+
+  it('n2: 상한은 동시 호출에도 지킨다 — 한 자리 남았을 때 셋이 함께 와도 하나만 만든다', async () => {
+    await pool.query(`delete from secret where created_by_agent_id = $1 and name like 'fill-%'`, [agentId]);
+    const have = (await pool.query(`select count(*)::int as n from secret where created_by_agent_id = $1`, [agentId])).rows[0].n as number;
+    for (let i = have; i < AGENT_SECRET_MAX - 1; i++) {
+      await pool.query(`insert into secret (name, kind, owner_account_id, created_by_agent_id) values ($1, 'text', $2, $3)`, [`fill-${i}`, alice.accountId, agentId]);
+    }
+    const leases = [await lease(), await lease(), await lease()];
+    const res = await Promise.all(leases.map((l, i) => create(l, `race-${i}`, { generate: { type: 'password' } })));
+    expect(res.map((r) => r.statusCode).sort()).toEqual([201, 409, 409]);
+    expect((await pool.query(`select count(*)::int as n from secret where created_by_agent_id = $1`, [agentId])).rows[0].n).toBe(AGENT_SECRET_MAX);
+  });
+
+  it('GET /agent/secret-create — 러너가 프롬프트 절을 고르는 값(capability 있음/없음)', async () => {
+    const get = (id: string) => app.inject({ method: 'GET', url: '/agent/secret-create', headers: asAgent(id) });
+    expect((await get(agentId)).json()).toEqual({ granted: true });
+    expect((await get(sibling)).json()).toEqual({ granted: false });
   });
 
   it('사람·PAT 은 이 길을 못 쓴다', async () => {
