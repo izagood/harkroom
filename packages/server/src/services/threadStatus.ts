@@ -1,6 +1,6 @@
 import type { Pool } from 'pg';
 import {
-  decideThreadStatus, statusReactionEmoji, THREAD_STATUS_EMOJI,
+  decideThreadStatus, THREAD_STATUS_EMOJI,
   type ThreadStatusDecision, type ThreadStatusFacts, type ThreadStatusReaction,
 } from '@harkroom/shared';
 
@@ -120,8 +120,8 @@ export async function readThreadStatusFacts(
 async function syncStatusReaction(
   pool: Pool, channelId: string, rootId: string, decision: ThreadStatusDecision | null,
 ): Promise<void> {
-  const emoji = decision ? statusReactionEmoji(decision.status) : null;
-  const accountId = emoji ? decision!.accountId : null;
+  const emoji = decision ? THREAD_STATUS_EMOJI[decision.status] : null;
+  const accountId = decision?.accountId ?? null;
   const res = await pool.query(
     `with want as (select $2::uuid as account_id, $3::text as emoji where $2::uuid is not null and $3::text is not null),
      del as (

@@ -16,10 +16,10 @@ alter table message_reaction
 -- 상태가 바뀔 때 루트의 상태 행만 찾는다.
 create index message_reaction_status on message_reaction (message_id) where source = 'status';
 
--- 이미 판정된 스레드를 채운다. ✅(done)는 달지 않는다 — 끝나면 상태 리액션을 뗀다(jaebin B2):
--- ✅ 는 사람이 "치움"으로 누르는 이모지라 상태 ✅ 와 한 칩으로 섞인다. 주인 모름(null)도 달지 않는다.
+-- 이미 판정된 스레드를 채운다. 끝남 ✅ 도 단다(jaebin B1) — 에이전트가 완료 표시를 남겨야 끝난 것을
+-- 알고, 누가 남겼는지 리액션에 보인다. 주인 모름(null)은 달지 않는다.
 insert into message_reaction (message_id, account_id, emoji, source)
 select ts.root_id, ts.account_id, ts.emoji, 'status'
 from thread_status ts join message m on m.id = ts.root_id
-where ts.status <> 'done' and ts.account_id is not null and m.deleted_at is null
+where ts.account_id is not null and m.deleted_at is null
 on conflict do nothing;

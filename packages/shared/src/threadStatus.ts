@@ -8,9 +8,9 @@
  * 어떻게 보이는가(2026-10-06, jaebin): 판정 결과는 `thread_status` 에 저장되고(행에 `statusReaction`),
  * 서버가 그것을 루트의 **진짜 리액션**으로도 단다 — 상태 주인 에이전트 이름으로, `message_reaction.source
  * = 'status'`(마이그 108). 그래서 데스크톱·모바일·웹이 이미 그리는 리액션 그대로 같게 보인다. 상태가
- * 바뀌면 서버가 이전 상태 리액션을 떼고 새로 단다. 끝남(✅)은 달지 않는다(`statusReactionEmoji`) —
- * ✅ 는 사람이 "치움"으로 누르는 이모지라 섞이면 숫자만 오른다. 사람 리액션은 `source = 'user'` 라
- * 서버가 건드리지 않는다.
+ * 바뀌면 서버가 이전 상태 리액션을 떼고 새로 단다. 끝남(✅)도 주인 이름으로 단다(jaebin B1) — 에이전트가
+ * 완료 표시를 남겨야 끝난 것을 알고, 누가 남겼는지 리액션에 보인다. 사람 ✅ 와 한 칩에 모여 숫자가
+ * 오르는 것은 받아들인다. 사람 리액션은 `source = 'user'` 라 서버가 건드리지 않는다.
  *
  * 화면의 `threadState()`(desktop `lib/threadState.ts`)와의 관계: 그쪽은 **보는 사람 기준**
  * (내 차례 / 남을 기다림)이고, 이것은 **스레드 기준**이다 — 사람에게 간 미답 물음이면 누가
@@ -26,14 +26,6 @@ export const THREAD_STATUS_EMOJI: Record<ThreadStatus, string> = {
   stuck: '🚨',
   done: '✅',
 };
-
-/**
- * 루트에 **진짜 리액션으로** 다는 이모지. 끝남(`done`)은 `null` — 열린 일(👀💬⏳🙋🚨)만 단다(jaebin B2, 10-06).
- * 서버(`services/threadStatus.ts`)가 달고, 화면은 이것으로 "이 칩이 상태 리액션인가"를 가른다.
- */
-export function statusReactionEmoji(status: ThreadStatus): string | null {
-  return status === 'done' ? null : THREAD_STATUS_EMOJI[status];
-}
 
 /** 행에 실리는 상태 리액션. 없으면(에이전트가 한 번도 끼지 않은 스레드) `null`. */
 export interface ThreadStatusReaction {
