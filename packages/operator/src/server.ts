@@ -37,6 +37,8 @@ import {
   readOperatorRegisterPayload,
   readOperatorMcpRemovePayload,
   readOperatorMergeSetPayload,
+  readWorkspaceCleanupActPayload,
+  readWorkspaceCleanupSettingsPayload,
   readOperatorMcpAuthPayload,
   readOperatorMcpSetPayload,
   type AdoptRunnerResult,
@@ -58,6 +60,7 @@ import type { CodexAccountsPort } from './codexAccounts.js';
 import type { LocalAgentsPort } from './localAgents.js';
 import type { LocalMcpPort } from './localMcp.js';
 import type { LocalMergePort } from './localMerge.js';
+import type { WorkspaceCleanup } from './workspaceCleanupService.js';
 import type { ClaudePoolsConfig } from '@harkroom/shared/claudePools';
 
 export interface DaemonServerDeps {
@@ -97,6 +100,8 @@ export interface DaemonServerDeps {
   localMcp?: LocalMcpPort;
   /** 머지 래퍼의 gh 계정(`operator.json` 의 `merge.ghUser`). 없으면 그 요청은 거절한다. */
   localMerge?: LocalMergePort;
+  /** 작업 폴더 청소기(스레드 9e909150). 없으면 그 메서드들은 배선 안 됨으로 답한다. */
+  workspaceCleanup?: WorkspaceCleanup;
   /** 로그 한 줄. 기본은 stdout — 앱이 사이드카 파이프로 그대로 본다. */
   log?: (line: string) => void;
   /**
@@ -476,6 +481,31 @@ export class DaemonServer {
           return state;
         } catch (err) {
           // 목록에 없는 이름·gh 실패는 사람이 고칠 사유다 — 원문 그대로 올린다.
+          return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
+        }
+      }
+      case 'workspaceCleanupGet':
+      case 'workspaceCleanupSettingsSet':
+      case 'workspaceCleanupAct':
+      case 'workspaceCleanupSweep': {
+        const port = this.deps.workspaceCleanup;
+        if (!port) return daemonError('no-such-runner', '이 daemon 에는 작업 폴더 정리가 배선되지 않았다');
+        try {
+          if (req.type === 'workspaceCleanupGet') return await port.get();
+          if (req.type === 'workspaceCleanupSweep') { await port.sweep(); return await port.get(); }
+          if (req.type === 'workspaceCleanupSettingsSet') {
+            const p = readWorkspaceCleanupSettingsPayload(req.payload);
+            if (isDaemonError(p)) return p;
+            const v = await port.setSettings(p);
+            this.log(`작업 폴더 정리 설정: ${v.settings.enabled ? '켬' : '끔'} · ${v.settings.graceDays}일`);
+            return v;
+          }
+          const p = readWorkspaceCleanupActPayload(req.payload);
+          if (isDaemonError(p)) return p;
+          const v = await port.act(p.path, p.action, p.by);
+          this.log(`작업 폴더 정리: ${p.action} ${p.path}`);
+          return v;
+        } catch (err) {
           return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
         }
       }
