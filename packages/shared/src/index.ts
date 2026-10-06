@@ -2695,7 +2695,13 @@ export type WsServerEvent =
   | { type: 'thread.status'; channelId: string; rootId: string;
       statusReaction: import('./threadStatus.js').ThreadStatusReaction | null; audience: 'all' | string[] }
   | { type: 'thread.agent_model.changed'; channelId: string; threadRootId: string; agentId: string;
-      row: ThreadAgentModelView | null; audience: 'all' | string[] };
+      row: ThreadAgentModelView | null; audience: 'all' | string[] }
+  /**
+   * 이 스레드를 보고처로 둔 깨움이 걸렸다·떴다·접혔다(2026-10-06). **신호뿐이다** — 사유·앵커·누가 건 것인지는
+   * 싣지 않는다(채널 청중 전원에게 가므로). 화면은 `GET /threads/:rootId/report-wakes` 를 다시 불러 자기 권한으로
+   * 거른 값을 받는다.
+   */
+  | { type: 'thread.reportWakes.changed'; channelId: string; rootId: string; audience: 'all' | string[] };
 
 /**
  * 워크스페이스 스킬 하나의 뷰(#140·#311).
@@ -2834,6 +2840,24 @@ export interface AgentSessionView {
  * 앵커(`threadRootId`)와 사유(`reason`)를 **wake 메시지에서 되찾는다** — 040 의 주석이
  * 정한 규칙이다: 시계 테이블에 앵커를 또 저장하면 두 번째 진실 원천이 된다.
  */
+/**
+ * 이 스레드를 **보고처로 둔** 아직 안 뜬 깨움 한 줄(`GET /threads/:rootId/report-wakes`, 2026-10-06).
+ *
+ * 깨움은 앵커 스레드에 서 있어 보고처(#task 등)에서 기다리는 사람은 그것을 못 봤다. `reason`·`anchor` 는
+ * **보는 사람이 앵커 채널을 볼 수 있을 때만** 싣는다(#1208 security n1) — 앵커가 비공개면 null 이다.
+ */
+export interface ReportWakeView {
+  /** `agent_wake.id`. */
+  id: string;
+  /** 깨움을 건 에이전트. */
+  agentAccountId: string;
+  wakeAt: string;
+  /** 사유(깨움 메시지 본문). 앵커를 못 보거나 그 메시지가 지워졌으면 null. */
+  reason: string | null;
+  /** 깨움이 돌아갈 앵커 스레드. 앵커 채널을 못 보면 null. */
+  anchor: { channelId: string; threadRootId: string } | null;
+}
+
 export interface AgentWakeView {
   /** `agent_wake.id`. 나중에 취소 문이 생기면 이 값이 대상이 된다. */
   id: string;

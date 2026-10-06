@@ -5,7 +5,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
-import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
+import { onEvent, type WorkspaceEvent } from '../src/events.js';
+import { refreshThreadStatus } from '../src/services/threadStatus.js';
 import { createAgentWakeSweeper } from '../src/services/agentWakes.js';
 
 /**
@@ -459,6 +461,116 @@ describe('turn.wake — 에이전트가 자기를 나중에 깨운다', () => {
  * 아무 일도 없는 것과 **기다리는 중인 것**. 예약은 스레드마다 흩어진 wake 메시지로만
  * 보였으므로 스레드를 다 열어 보지 않으면 알 수 없었다.
  */
+/**
+ * 보고처 대기(2026-10-06). 보고처(#task 등)를 보는 사람은 앵커 스레드에 선 깨움을 못 봤다 — 그 스레드의 머리는
+ * 다른 곳에서 기다리는 중인데 ✅ 였다. 판정 순서와 거르기가 계약이다: 보고처를 못 보면 403, 앵커를 못 보면
+ * 사유·앵커가 null, 이벤트는 신호뿐(#1208 security n1).
+ */
+describe('GET /threads/:rootId/report-wakes — 이 스레드를 보고처로 둔 깨움', () => {
+  const auth = (t: string) => ({ authorization: `Bearer ${t}` });
+  async function privateChannel(name: string, members: string[]): Promise<string> {
+    const id = (await app.inject({
+      method: 'POST', url: '/channels', headers: auth(adminToken),
+      payload: { name: `${name}-${Date.now()}`, visibility: 'private' },
+    })).json().id as string;
+    for (const accountId of members) {
+      await app.inject({ method: 'POST', url: `/channels/${id}/members`, headers: auth(adminToken), payload: { accountId } });
+    }
+    return id;
+  }
+  async function rootIn(ch: string, body: string): Promise<string> {
+    return (await app.inject({
+      method: 'POST', url: `/channels/${ch}/messages`, headers: auth(adminToken), payload: { body },
+    })).json().id as string;
+  }
+
+  it('앵커를 볼 수 있으면 사유·앵커를, 못 보면 null 을 싣는다 — 줄 자체는 둘 다 본다', async () => {
+    const hidden = await privateChannel('rw-anchor', [botAccountId]);
+    const anchor = await rootIn(hidden, '@wakebot 비공개 작업');
+    const report = await newThread();
+    const { token: memberToken } = await createMember(app, adminToken, `rwm${Date.now()}`);
+
+    const seen: WorkspaceEvent[] = [];
+    const off = onEvent((e) => { if (e.type === 'thread.reportWakes.changed') seen.push(e); });
+    const client = await mcpClient(botPat);
+    const w = text(await client.callTool({
+      name: 'turn.wake',
+      arguments: { channelId: hidden, threadRootId: anchor, notBeforeSec: 3600, reason: '비공개 사유', reportTo: { channelId, threadRootId: report } },
+    }));
+    await client.close();
+    off();
+    expect(w.error).toBeUndefined();
+    // 신호뿐이다 — 사유·앵커·누가 건 것인지 싣지 않는다.
+    expect(seen).toHaveLength(1);
+    expect(Object.keys(seen[0]!).sort()).toEqual(['audience', 'channelId', 'rootId', 'type']);
+    expect(seen[0]).toMatchObject({ channelId, rootId: report });
+
+    const asAdmin = await app.inject({ method: 'GET', url: `/threads/${report}/report-wakes`, headers: auth(adminToken) });
+    expect(asAdmin.statusCode).toBe(200);
+    expect(asAdmin.json().wakes).toEqual([{
+      id: w.wake.id, agentAccountId: botAccountId, wakeAt: w.wake.wakeAt,
+      reason: '비공개 사유', anchor: { channelId: hidden, threadRootId: anchor },
+    }]);
+    const asMember = await app.inject({ method: 'GET', url: `/threads/${report}/report-wakes`, headers: auth(memberToken) });
+    expect(asMember.statusCode).toBe(200);
+    expect(asMember.json().wakes).toEqual([{ id: w.wake.id, agentAccountId: botAccountId, wakeAt: w.wake.wakeAt, reason: null, anchor: null }]);
+    expect(JSON.stringify(asMember.json())).not.toContain('비공개 사유');
+  });
+
+  it('보고처 채널을 못 보면 403, 스레드 머리가 아니면 404 다', async () => {
+    const hiddenReportCh = await privateChannel('rw-report', []);
+    const hiddenReport = await rootIn(hiddenReportCh, '비공개 보고처');
+    const { token: memberToken } = await createMember(app, adminToken, `rwx${Date.now()}`);
+    expect((await app.inject({ method: 'GET', url: `/threads/${hiddenReport}/report-wakes`, headers: auth(memberToken) })).statusCode).toBe(403);
+
+    const root = await newThread();
+    const reply = (await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`, headers: auth(adminToken), payload: { body: '답', threadRootId: root },
+    })).json().id as string;
+    expect((await app.inject({ method: 'GET', url: `/threads/${reply}/report-wakes`, headers: auth(adminToken) })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'GET', url: `/threads/not-a-uuid/report-wakes`, headers: auth(adminToken) })).statusCode).toBe(404);
+  });
+
+  it('보고처 머리는 ⏳ 가 되고, 깨움이 뜨거나 접히면 줄이 사라지며 신호가 다시 간다', async () => {
+    const report = await newThread();
+    const schedule = async (anchor: string) => {
+      const client = await mcpClient(botPat);
+      const r = text(await client.callTool({
+        name: 'turn.wake',
+        arguments: { channelId, threadRootId: anchor, notBeforeSec: 3600, reason: 'CI 확인', reportTo: { channelId, threadRootId: report } },
+      }));
+      await client.close();
+      return r.wake as { id: string; wakeAt: string; messageId: string };
+    };
+    const a1 = await newThread();
+    const w1 = await schedule(a1);
+    expect(await refreshThreadStatus(pool, report, new Set([botAccountId])))
+      .toMatchObject({ status: 'waiting', accountId: botAccountId, reason: w1.wakeAt });
+
+    const seen: WorkspaceEvent[] = [];
+    const off = onEvent((e) => { if (e.type === 'thread.reportWakes.changed') seen.push(e); });
+    // ① 시각이 되어 뜬다(sweep)
+    await pullWakeIntoPast(w1.messageId);
+    await createAgentWakeSweeper(pool).sweep();
+    expect(seen.map((e) => (e as { rootId: string }).rootId)).toContain(report);
+    // ② 다른 깨움은 사람의 부름으로 접힌다(preempt)
+    const a2 = await newThread();
+    await schedule(a2);
+    seen.length = 0;
+    await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`, headers: auth(adminToken),
+      payload: { body: '@wakebot 이거 먼저', threadRootId: a2 },
+    });
+    off();
+    expect(seen.map((e) => (e as { rootId: string }).rootId)).toEqual([report]);
+
+    const list = await app.inject({ method: 'GET', url: `/threads/${report}/report-wakes`, headers: auth(adminToken) });
+    expect(list.json().wakes).toEqual([]);
+    const after = await refreshThreadStatus(pool, report, new Set([botAccountId]));
+    expect(after && typeof after === 'object' ? after.status : after).not.toBe('waiting');
+  });
+});
+
 describe('GET /agent-wakes — 아직 오지 않은 깨움', () => {
   const auth = (token: string) => ({ authorization: `Bearer ${token}` });
 

@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
-import type { MessageRow } from '@harkroom/shared';
+import type { MessageRow, ReportWakeView, WakeReportTo } from '@harkroom/shared';
 import { BAD_THREAD_MESSAGE, postMessage } from './messages.js';
+import { audienceFor, channelVisibleSql } from './channels.js';
 import { emitEvent } from '../events.js';
 
 /**
@@ -180,6 +181,11 @@ export async function preemptWakesForThread(
     threadRootId: string; authorId: string; notified: Set<string>;
     /** 이 발화 자신. 부름으로 접은 깨움에 남긴다(107) — 그 부름의 턴이 무엇이 접혔는지 안다. */
     messageId: string;
+    /**
+     * 깨우거나 접은 깨움의 **보고처**를 여기 모은다(2026-10-06). 신호(`thread.reportWakes.changed`)는 커밋 뒤에
+     * 쳐야 하므로 호출자가 `announceReportWakes` 로 낸다 — `inbox.updated` 를 호출자가 내는 것과 같은 이유다.
+     */
+    reportTouched?: WakeReportTo[];
   },
 ): Promise<string[]> {
   // 판정은 계정 종류 하나다. 라우트가 아니라 여기서 보는 이유: 이 파일이 깨움 정책의
@@ -192,8 +198,8 @@ export async function preemptWakesForThread(
   // 앵커는 시계 테이블에 없다 — 040 의 규칙(앵커를 두 번 저장하지 않는다) 그대로
   // 깨움 메시지에서 되찾는다. `for update` 는 sweep 과의 경합용이다: 그쪽이 먼저
   // 잡았으면 잠금을 기다린 뒤 술어가 다시 평가돼 이 행은 빠진다(이미 fired 다).
-  const due = await client.query<{ id: string; account_id: string }>(
-    `select w.id, w.account_id from agent_wake w
+  const due = await client.query<{ id: string; account_id: string; report_to: unknown }>(
+    `select w.id, w.account_id, m.meta->'wake'->'reportTo' as report_to from agent_wake w
        join message m on m.id = w.message_id
       where coalesce(m.thread_root_id, m.id) = $1
         and w.account_id <> $2
@@ -206,6 +212,8 @@ export async function preemptWakesForThread(
 
   const woke: string[] = [];
   for (const row of due.rows) {
+    const report = asReportTo(row.report_to);
+    if (report) args.reportTouched?.push(report);
     if (args.notified.has(row.account_id)) {
       await client.query(
         `update agent_wake set canceled_at = now(), canceled_by_message_id = $2 where id = $1`,
@@ -224,6 +232,86 @@ export async function preemptWakesForThread(
     woke.push(row.account_id);
   }
   return woke;
+}
+
+function asReportTo(v: unknown): WakeReportTo | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  return typeof o.channelId === 'string' && typeof o.threadRootId === 'string'
+    ? { channelId: o.channelId, threadRootId: o.threadRootId } : null;
+}
+
+/**
+ * 보고처 스레드들에 "대기가 바뀌었다" 신호를 보낸다(2026-10-06). **값을 싣지 않는다** — 이벤트는 그 채널 청중
+ * 전원에게 가는데, 사유·앵커는 앵커 채널을 볼 수 있는 사람에게만 보여야 한다(#1208 security n1). 화면은 이것을
+ * 받고 `listReportWakes` 를 다시 불러 자기 권한으로 거른 값을 받는다. 같은 스레드는 한 번만 보낸다.
+ *
+ * 스레드 상태 감시(`startThreadStatusWatcher`)도 이 신호로 보고처의 머리 ⏳ 를 다시 판정한다.
+ */
+export async function announceReportWakes(pool: Pool, targets: readonly WakeReportTo[]): Promise<void> {
+  const seen = new Set<string>();
+  for (const t of targets) {
+    const key = `${t.channelId}:${t.threadRootId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    emitEvent({
+      type: 'thread.reportWakes.changed', channelId: t.channelId, rootId: t.threadRootId,
+      audience: await audienceFor(pool, t.channelId),
+    });
+  }
+}
+
+export type ReportWakesResult =
+  | { wakes: ReportWakeView[]; refusal?: undefined }
+  | { refusal: 'not_found' | 'forbidden'; wakes?: undefined };
+
+/**
+ * 이 스레드를 **보고처로 둔** 아직 안 뜬 깨움(2026-10-06, `GET /threads/:rootId/report-wakes`).
+ *
+ * 판정 순서가 계약이다(task_manager 10-06): ① 보고처 스레드가 있고 스레드 머리인가(아니면 not_found)
+ * ② 보는 사람이 **보고처 채널**을 볼 수 있는가(아니면 forbidden — 줄 수 자체가 그 스레드의 사실이다)
+ * ③ 줄마다 **앵커 채널**을 볼 수 있을 때만 사유·앵커를 싣는다(#1208 security n1·n2).
+ *
+ * `agent_wake` 의 열린 행에서 출발한다(`agent_wake_due` 부분 인덱스) — 열린 깨움은 언제나 적어서, message 의
+ * meta 에 식 인덱스를 따로 두지 않는다. 보고처 채널까지 맞아야 한다: meta 는 서버만 쓰지만 판정을 두 값으로 묶는다.
+ */
+export async function listReportWakes(pool: Pool, rootId: string, viewerId: string): Promise<ReportWakesResult> {
+  const head = await pool.query<{ channel_id: string; visible: boolean }>(
+    `select m.channel_id, ${channelVisibleSql('c', '$2')} as visible
+       from message m join channel c on c.id = m.channel_id
+      where m.id = $1 and m.thread_root_id is null and m.deleted_at is null`,
+    [rootId, viewerId],
+  );
+  const h = head.rows[0];
+  if (!h) return { refusal: 'not_found' };
+  if (!h.visible) return { refusal: 'forbidden' };
+
+  const res = await pool.query<{
+    id: string; account_id: string; wake_at: Date; body: string | null; deleted: boolean;
+    anchor_channel: string; anchor_root: string; anchor_visible: boolean;
+  }>(
+    `select w.id, w.account_id, w.wake_at, wm.body, wm.deleted_at is not null as deleted,
+            wm.channel_id as anchor_channel, coalesce(wm.thread_root_id, wm.id) as anchor_root,
+            ${channelVisibleSql('ac', '$3')} as anchor_visible
+       from agent_wake w
+       join message wm on wm.id = w.message_id
+       join channel ac on ac.id = wm.channel_id
+      where w.fired_at is null and w.canceled_at is null
+        and wm.meta->'wake'->'reportTo'->>'threadRootId' = $1::text
+        and wm.meta->'wake'->'reportTo'->>'channelId' = $2::text
+      order by w.wake_at
+      limit 50`,
+    [rootId, h.channel_id, viewerId],
+  );
+  return {
+    wakes: res.rows.map((r) => ({
+      id: r.id,
+      agentAccountId: r.account_id,
+      wakeAt: new Date(r.wake_at).toISOString(),
+      reason: r.anchor_visible && !r.deleted ? r.body : null,
+      anchor: r.anchor_visible ? { channelId: r.anchor_channel, threadRootId: r.anchor_root } : null,
+    })),
+  };
 }
 
 export interface SweepHost {
@@ -286,6 +374,13 @@ export function createAgentWakeSweeper(pool: Pool): {
       );
       await client.query(`update agent_wake set fired_at = now() where id = $1`, [row.id]);
       await client.query('commit');
+
+      // 보고처가 있었으면 그 스레드의 대기 줄·머리 ⏳ 가 풀린다 — 신호만 보낸다(커밋 뒤).
+      const meta = await pool.query<{ report_to: unknown }>(
+        `select meta->'wake'->'reportTo' as report_to from message where id = $1`, [row.message_id],
+      ).catch(() => null);
+      const report = asReportTo(meta?.rows[0]?.report_to);
+      if (report) await announceReportWakes(pool, [report]).catch(() => undefined);
 
       // 러너의 `inbox.poll` 은 이 이벤트로 깨어난다. 없어도 다음 폴(최대 25초)에 잡히지만,
       // 그만큼 기다림이 늦어질 이유가 없다.

@@ -29,6 +29,7 @@ function visibleTo(e: WorkspaceEvent, accountId: string): boolean {
     case 'agent_assignment.changed':
     case 'thread.agent_model.changed':
     case 'thread.status':
+    case 'thread.reportWakes.changed':
       return e.audience === 'all' || e.audience.includes(accountId);
     case 'inbox.updated':
     case 'saved.changed':

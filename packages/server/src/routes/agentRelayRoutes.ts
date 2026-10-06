@@ -31,7 +31,8 @@
 // 쓰면 행 타임스탬프가 곧 키 입력의 리듬이라 그 자체가 부채널이다.
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
-import type { AgentActivityView, AgentSessionView, AgentWakeView } from '@harkroom/shared';
+import type { AgentActivityView, AgentSessionView, AgentWakeView, ReportWakeView } from '@harkroom/shared';
+import { listReportWakes } from '../services/agentWakes.js';
 import { unwrapOperatorFrame, wrapServerFrame } from '@harkroom/shared/runnerLink';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { channelVisibleSql } from '../services/channels.js';
@@ -364,6 +365,21 @@ export async function registerAgentRelayRoutes(
         reason: row.reason,
       })) satisfies AgentWakeView[],
     };
+  });
+
+  /**
+   * 이 스레드를 **보고처로 둔** 아직 안 뜬 깨움(2026-10-06). 보고처(#task 등)를 보는 사람이 "다른 스레드에서
+   * 확인하고 여기 보고한다" 를 보게 한다. 판정·거르기는 `listReportWakes` 가 갖는다 — 보고처 채널을 못 보면 403,
+   * 앵커 채널을 못 보면 그 줄의 사유·앵커가 null 이다(#1208 security n1). admin 예외는 없다(내용 읽기 권한이다).
+   */
+  app.get<{ Params: { rootId: string } }>('/threads/:rootId/report-wakes', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { rootId } = req.params;
+    if (!UUID_RE.test(rootId)) return reply.code(404).send({ error: 'not_found' });
+    const result = await listReportWakes(pool, rootId, req.account!.id);
+    if (result.refusal === 'not_found') return reply.code(404).send({ error: 'not_found' });
+    if (result.refusal === 'forbidden') return reply.code(403).send({ error: 'forbidden' });
+    const wakes: ReportWakeView[] = result.wakes ?? [];
+    return { wakes };
   });
 
   /**

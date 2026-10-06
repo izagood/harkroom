@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow, type WakeReportTo } from '@harkroom/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { getMentionPolicy } from './mentionPolicy.js';
-import { preemptWakesForThread } from './agentWakes.js';
+import { announceReportWakes, preemptWakesForThread } from './agentWakes.js';
 import { closeDelegationsForReply, outcomesFor } from './delegations.js';
 import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels.js';
 import { emitEvent } from '../events.js';
@@ -1489,9 +1489,11 @@ export async function postMessage(
      *
      * 앵커 없는 채널 최상위 발화에는 하지 않는다: 깨움은 반드시 스레드에 걸린다(040).
      */
+    const reportTouched: WakeReportTo[] = [];
     const wokeByPost = input.threadRootId
       ? await preemptWakesForThread(client, {
         threadRootId: input.threadRootId, authorId: input.authorId, notified, messageId: message.id,
+        reportTouched,
       })
       : [];
 
@@ -1545,6 +1547,8 @@ export async function postMessage(
     // 이벤트는 **커밋 뒤**다 — 러너는 이것을 보고 즉시 폴하므로, 앞에서 치면 아직 안 보이는
     // inbox 를 읽고 빈손으로 돌아간다(sweep 이 같은 순서를 지키는 이유와 같다).
     for (const accountId of wokeByPost) emitEvent({ type: 'inbox.updated', accountId });
+    // 깨우거나 접은 깨움에 보고처가 있었으면 그 스레드의 대기 줄·머리 ⏳ 를 다시 그리게 한다(신호만).
+    if (reportTouched.length) await announceReportWakes(pool, reportTouched).catch(() => undefined);
     // 결말이 난 팀장도 같은 자리에서 깨운다(위 주석의 이유가 그대로 적용된다).
     for (const accountId of wokeByDelegation) emitEvent({ type: 'inbox.updated', accountId });
 

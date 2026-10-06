@@ -47,6 +47,18 @@ describe('decideThreadStatus — 위에서부터 이긴다', () => {
     }), live);
     expect(d).toEqual({ status: 'waiting', accountId: 'lead', reason: 'bot' });
   });
+  // 보고처 깨움(2026-10-06): 다른 스레드에서 확인하고 여기 보고할 것이 있으면 ⏳. 사유는 시각뿐(security n1).
+  it('이 스레드를 보고처로 둔 열린 깨움은 ⏳ — 열린 깨움·에이전트 대기 뒤, 진행 중보다 앞이다', () => {
+    const rw = { accountId: 'tm', wakeAt: '2026-10-06T04:21:57.000Z' };
+    expect(decideThreadStatus(f({ openReportWake: rw }), live)).toEqual({ status: 'waiting', accountId: 'tm', reason: rw.wakeAt });
+    expect(decideThreadStatus(f({ openReportWake: rw, openWake: { accountId: 'bot', wakeAt: 'w' } }), live))
+      .toEqual({ status: 'waiting', accountId: 'bot', reason: 'w' });
+    expect(decideThreadStatus(f({ openReportWake: rw, last: { kind: 'progress', authorId: 'bot', authorIsAgent: true } }), live)?.status)
+      .toBe('waiting');
+    expect(decideThreadStatus(f({ openReportWake: rw, humanAsk: { askerId: 'bot', prompt: 'p' } }), live)?.status).toBe('my-turn');
+    // 옛 서버(키 없음)는 지금처럼 끝남이다.
+    expect(decideThreadStatus(f({}), live)?.status).toBe('done');
+  });
   it('배달됐지만 말이 없으면 받음, 아무것도 안 열려 있으면 끝남', () => {
     expect(decideThreadStatus(f({
       pendingMention: { agentId: 'bot' }, last: { kind: 'user', authorId: 'h', authorIsAgent: false },

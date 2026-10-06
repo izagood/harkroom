@@ -44,7 +44,7 @@ import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
 import { scanWrite } from '../services/contentScan.js';
 import { listAutomationsForAgent, proposeAutomation, runAutomationForAgent, triggerSchema } from '../services/automations.js';
 import { channelPostGate } from '../services/channels.js';
-import { scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC } from '../services/agentWakes.js';
+import { announceReportWakes, scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC } from '../services/agentWakes.js';
 import { guideFor } from './guide.js';
 import { listTeams } from '../services/teams.js';
 import { listHandleGroups } from '../services/handleGroups.js';
@@ -1799,6 +1799,8 @@ function buildMcpServer(
     // 그래서 일반 발화와 같은 이벤트를 태운다. inbox 는 만들지 않는다(자기 자신이다).
     const audience = await audienceFor(pool, channelId);
     emitEvent({ type: 'message.created', message: result.message, audience });
+    // 보고처에도 "기다리는 것이 생겼다" 신호를 보낸다(신호만 — 값은 그쪽 화면이 자기 권한으로 GET).
+    if (report) await announceReportWakes(pool, [report]).catch(() => undefined);
     return jsonResult({ wake: result.wake, message: result.message });
   });
 
