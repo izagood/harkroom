@@ -83,6 +83,12 @@ export interface AppState {
    * 그리지 않는다 — 받지 못한 것을 없는 것으로 말하게 된다(#1223 n1, 재시작 뒤 복원 채널).
    */
   firstPageLoading: Record<string, boolean>;
+  /**
+   * 채널별 '첫 창의 뒤채움(`startBackfill`)이 도는 중'. 첫 페이지의 최상위 줄이 화면을 못 채우면
+   * 이 동안 줄을 그리지 않고 첫 페이지 대기처럼 다룬다 — 몇 줄이 창 위쪽에 섰다가 뒤채움이 오면
+   * 바닥으로 미끄러진다(#1226 designer n1). 이 동안 「Load older」도 숨긴다(n2).
+   */
+  backfilling: Record<string, boolean>;
   unread: InboxEntry[];
   /**
    * 인박스가 서버에서 바뀐 것을 **확인한 횟수**(2026-09-10). `refreshUnread` 가 새 목록을
@@ -454,7 +460,7 @@ export const NO_TEAMS: AgentTeamRow[] = [];
 
 const initial = {
   me: null, accounts: {}, groups: [], teams: null, channels: [], dms: [], activeChannelId: null, threadRootId: null,
-  messages: {}, typing: {}, hasMore: {}, firstPageLoading: {}, unread: [], inboxRevision: 0, inboxMine: 0, inboxBoardRevision: 0, reads: {}, dividerSeq: {},
+  messages: {}, typing: {}, hasMore: {}, firstPageLoading: {}, backfilling: {}, unread: [], inboxRevision: 0, inboxMine: 0, inboxBoardRevision: 0, reads: {}, dividerSeq: {},
   online: [], terminalTarget: null, channelSheetId: null, artifactPreview: null, artifactPreviewFrom: null, channelSheetTab: null, leases: [], connected: false, serverVersion: null, workspaceIconUrl: null,
   projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, drafts: {}, stickyMentions: {}, uploads: {},

@@ -261,21 +261,25 @@ describe('Controller', () => {
   it('loads an older page from the oldest message it holds', async () => {
     const api = fakeApi({
       messages: vi.fn(async (_c: string, opts?: { before?: number }) =>
-        (opts?.before
+        (opts?.before === 5
           ? { messages: [msg('m1', 'c1', 1, '더 오래된 것')], hasMore: false }
-          : { messages: [msg('m9', 'c1', 9, '최신')], hasMore: true }) as never),
+          // 첫 창의 뒤채움(before 9) — 그 아래도 남았다.
+          : opts?.before === 9
+            ? { messages: [msg('m5', 'c1', 5, '뒤채움')], hasMore: true }
+            : { messages: [msg('m9', 'c1', 9, '최신')], hasMore: true }) as never),
     });
     const { makeWs } = fakeWsFactory();
     const c = new Controller(api, makeWs);
     await c.start();
     await c.openChannel('c1');
+    await vi.waitFor(() => expect(useAppStore.getState().messages.c1!.map((m) => m.id)).toEqual(['m5', 'm9']));
     expect(useAppStore.getState().hasMore.c1).toBe(true);
 
     await c.loadOlder();
 
     const call = (api.messages as ReturnType<typeof vi.fn>).mock.calls.at(-1)!;
-    expect(call[1]).toMatchObject({ before: 9 });
-    expect(useAppStore.getState().messages.c1!.map((m) => m.id)).toEqual(['m1', 'm9']);
+    expect(call[1]).toMatchObject({ before: 5 });
+    expect(useAppStore.getState().messages.c1!.map((m) => m.id)).toEqual(['m1', 'm5', 'm9']);
     expect(useAppStore.getState().hasMore.c1).toBe(false);
   });
 

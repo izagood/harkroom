@@ -11,7 +11,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useActiveStore as useAppStore } from '../src/state/communities';
-import { Controller, INITIAL_HISTORY_LIMIT, removeCommunity } from '../src/state/controller';
+import { Controller, FIRST_PAGE_LIMIT, removeCommunity } from '../src/state/controller';
 import { useCommunityRegistry } from '../src/state/communities';
 import { lastChannelScope, lastChannelStorage } from '../src/lib/prefs';
 import { chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
@@ -52,7 +52,7 @@ describe('콜드 스타트: 마지막 채널 복원', () => {
     const started = c.start();
     // 기동 묶음(channels)이 아직 답하지 않았는데 메시지 요청은 이미 나갔다 — 병렬이다.
     expect(messages).toHaveBeenCalledTimes(1);
-    expect(messages).toHaveBeenCalledWith('c1', { since: 0, limit: INITIAL_HISTORY_LIMIT });
+    expect(messages).toHaveBeenCalledWith('c1', { since: 0, limit: FIRST_PAGE_LIMIT });
 
     channelsGate.resolve([chan('c1', 'general')]);
     await started;
