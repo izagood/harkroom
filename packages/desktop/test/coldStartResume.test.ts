@@ -119,10 +119,15 @@ describe('콜드 스타트: 마지막 채널 복원', () => {
     expect(lastChannelStorage.load(SCOPE)).toBeNull();
   });
 
-  it('S2: 미리 받기 응답보다 소켓이 먼저 열려도 메시지 요청은 하나다', async () => {
+  it('S2·F1: 응답보다 소켓이 먼저 열려도 since=0 요청은 하나고, 그 사이 글은 증분 한 번으로 메운다', async () => {
     lastChannelStorage.save(SCOPE, 'c1');
     const page = deferred<{ messages: ReturnType<typeof msg>[]; hasMore: boolean }>();
-    const messages = vi.fn(() => page.promise);
+    const messages = vi.fn((_c: string, opts?: { since?: number }) => (
+      (opts?.since ?? 0) === 0
+        ? page.promise
+        // 스냅숏(T1)과 소켓 열림(T2) 사이에 올라온 글 — 첫 페이지에도 소켓에도 없다.
+        : Promise.resolve({ messages: [msg('m2', 'c1', 2, '틈의 글', 'u2')], hasMore: false })
+    ));
     const { makeWs, callbacks } = fakeWsFactory();
     const c = new Controller(fakeApi({ messages: messages as never }), makeWs);
     c.lastChannelScope = SCOPE;
@@ -131,12 +136,28 @@ describe('콜드 스타트: 마지막 채널 복원', () => {
     callbacks.current!.onOpen?.();
     await new Promise((r) => setTimeout(r, 0));
     page.resolve({ messages: [msg('m1', 'c1', 1, '안녕', 'u2')], hasMore: false });
-    await vi.waitFor(() => expect(useAppStore.getState().messages.c1?.length).toBe(1));
-    expect(messages).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(useAppStore.getState().messages.c1?.map((m) => m.id)).toEqual(['m1', 'm2']));
+    const calls = messages.mock.calls as unknown as Array<[string, { since?: number; limit?: number }]>;
+    expect(calls.filter(([, o]) => (o.since ?? 0) === 0)).toHaveLength(1);
+    expect(messages).toHaveBeenCalledWith('c1', { since: 1, limit: 200 });
 
-    // 첫 페이지가 들어온 뒤의 재접속은 예전처럼 증분을 받는다.
-    callbacks.current!.onOpen?.();
-    await vi.waitFor(() => expect(messages).toHaveBeenCalledWith('c1', { since: 1, limit: 200 }));
+    // 한 번 메웠으면 표시는 지워진다 — 다시 열 때는 평소 증분만.
+    messages.mockClear();
+    await c.openChannel('c1');
+    expect(messages).toHaveBeenCalledTimes(1);
+    expect(messages).toHaveBeenCalledWith('c1', { since: 2, limit: 200 });
+  });
+
+  it('F1: 소켓이 열리지 않았으면 첫 페이지 뒤에 증분을 더 받지 않는다', async () => {
+    lastChannelStorage.save(SCOPE, 'c1');
+    const messages = vi.fn(async () => ({ messages: [msg('m1', 'c1', 1, '안녕', 'u2')], hasMore: false }));
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(fakeApi({ messages }), makeWs);
+    c.lastChannelScope = SCOPE;
+    await c.start();
+    await vi.waitFor(() => expect(useAppStore.getState().messages.c1?.length).toBe(1));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(messages).toHaveBeenCalledTimes(1);
   });
 
   it('S1: 전체 로그아웃은 모든 scope 를 지운다', async () => {

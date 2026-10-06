@@ -102,6 +102,8 @@ export class Controller {
    * 여는 `openChannel` 이 새로 묻지 않고 이것에 합류한다 — 응답 전에 눌러도 요청은 하나다.
    * 실패는 `null` 로 접어 두고, 그때는 평소대로 다시 묻는다.
    */
+  /** 소켓이 열릴 때(`reconcile`) 첫 페이지를 기다리던 채널. 첫 페이지를 넣은 뒤 증분을 한 번 받는다. */
+  private reconcileAfterFirstPage = new Set<string>();
   private prefetchedPages = new Map<string, Promise<{ messages: MessageRow[]; hasMore: boolean } | null>>();
   /**
    * 채널마다 **받아 온 seq 구간**(`lib/seqCoverage`). `loadedChannels` 가 "한 번이라도 열었는가"라면
@@ -414,6 +416,17 @@ export class Controller {
     const page = await this.api.messages(channelId, { since: 0, limit: INITIAL_HISTORY_LIMIT });
     markBoot('messages:response');
     return page;
+  }
+
+  /**
+   * 첫 페이지를 기다리는 동안 소켓이 열렸으면(`reconcileAfterFirstPage`) 그 뒤의 글을 증분으로 받는다.
+   * 읽음 처리(`settleReadPosition`)보다 **먼저**여야 한다 — 틈의 글을 받기 전에 더 큰 seq 까지 읽음으로
+   * 적으면 그 글은 끝내 안 보인다.
+   */
+  private async catchUpAfterFirstPage(channelId: string): Promise<void> {
+    if (!this.reconcileAfterFirstPage.delete(channelId)) return;
+    const maxSeq = Math.max(0, ...(this.store.getState().messages[channelId] ?? []).map((m) => m.seq));
+    await this.pullSince(channelId, maxSeq);
   }
 
   /** 마지막으로 연 채널을 기억한다(커뮤니티·계정별). */
@@ -772,6 +785,11 @@ export class Controller {
     // 첫 페이지가 아직 오지 않은 채널은 건너뛴다 — 그 응답이 최신 창을 덮는다. 여기서 since=0 으로
     // 따로 받으면 기동 직후(복원 채널의 미리 받기보다 소켓이 먼저 열릴 때) 같은 채널에 200행 요청이
     // 하나 더 나가 느린 경로에서 대역을 나눠 쓴다(#1223 S2).
+    // 건너뛴 채널은 **표시해 둔다**(#1223 F1). 첫 페이지 스냅숏과 소켓 구독 사이에 올라온 글은 그
+    // 응답에도 소켓에도 없다 — 첫 페이지를 넣은 뒤 증분을 한 번 받아 그 틈을 메운다(보통 빈 응답).
+    for (const id of Object.keys(this.store.getState().firstPageLoading)) this.reconcileAfterFirstPage.add(id);
+    for (const id of this.prefetchedPages.keys()) this.reconcileAfterFirstPage.add(id);
+    if (activeChannelId && !this.loadedChannels.has(activeChannelId)) this.reconcileAfterFirstPage.add(activeChannelId);
     if (activeChannelId && this.loadedChannels.has(activeChannelId) && !this.prefetchedPages.has(activeChannelId)) {
       const maxSeq = Math.max(0, ...(messages[activeChannelId] ?? []).map((m) => m.seq));
       // 끊긴 사이의 글을 **끝까지** 받는다 — 한 페이지로 자르면 받은 구간이 틈을 품는다(`pullSince`).
@@ -1174,6 +1192,7 @@ export class Controller {
       });
     }
     markBoot('messages:applied');
+    await this.catchUpAfterFirstPage(channelId);
     // 응답을 기다리는 사이 사람이 다른 채널로 갔으면 읽음 처리하지 않는다 — 한 줄도 못 본 채널을
     // 읽었다고 적게 된다. 기동 때 복원한 채널이 늦게 도착하는 경우가 가장 흔하다. 돌아오면
     // 증분 갈래(`since > 0`)가 그때 읽음 처리한다.
@@ -2649,6 +2668,7 @@ export class Controller {
         hasMore: { ...store.hasMore, [channelId]: page.hasMore },
       });
     }
+    await this.catchUpAfterFirstPage(channelId);
     this.settleReadPosition(channelId);
   }
 
