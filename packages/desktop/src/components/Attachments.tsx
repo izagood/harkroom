@@ -8,7 +8,7 @@ import { collectGallery, type GalleryItem, type GalleryScope } from '../lib/imag
 import { stampLabel } from '../lib/day';
 import { ImageLightbox } from './ImageLightbox';
 import { useT, useLocale } from '../i18n/useT';
-import { useLatestKnownVersion } from './ArtifactPreview';
+import { useLatestKnownVersion, noteArtifactOpener } from './ArtifactPreview';
 
 /**
  * 그림을 연 **칸**의 넘겨 보기 범위 — 채널 본문(`ChannelPane`)과 스레드 패널(`ThreadPanel`)이 준다.
@@ -313,19 +313,29 @@ function ArtifactCard({ attachment, cover, from }: {
   return (
     <button
       type="button"
-      onClick={() => getController().openArtifactPreview(attachment, from)}
+      onClick={(e) => {
+        // detail 0 = Enter·Space(키보드). 닫을 때 포커스를 돌려줄지가 이것으로 갈린다(`ArtifactPreview.tsx`).
+        noteArtifactOpener(e.currentTarget, e.detail === 0);
+        getController().openArtifactPreview(attachment, from);
+      }}
       aria-label={t('artifact.card.open', { title: ref.title })}
       aria-pressed={selected}
       data-testid="artifact-card"
       data-selected={selected ? 'true' : 'false'}
-      className={`block w-[min(28rem,100%)] overflow-hidden rounded-card border bg-surface text-left hover:bg-surface-sunken ${selected ? 'border-accent ring-1 ring-accent' : 'border-border'}`}
+      // `artifact-card` 는 포커스 링을 카드 바깥에 띄운다(index.css) — 선택 표시(카드 테두리)와 모양이 갈린다.
+      className={`artifact-card group block w-[min(28rem,100%)] overflow-hidden rounded-card border bg-surface text-left hover:bg-surface-sunken ${selected ? 'border-accent ring-1 ring-accent' : 'border-border'}`}
     >
       {coverUrl && (
         <img src={coverUrl} alt="" data-testid="artifact-card-cover" className="aspect-video w-full border-b border-border object-cover" />
       )}
       <span className="flex flex-col gap-0.5 px-3 py-2">
         <span className="flex items-center gap-2">
-          <span className="truncate font-medium">{ref.title}</span>
+          {/* 눌러서 보는 시안이라는 표지(designer A안) — 표지 그림이 있어도 같은 모양이다. */}
+          <svg aria-hidden="true" data-testid="artifact-card-icon" viewBox="0 0 16 16" width="16" height="16" className="shrink-0 text-fg-muted" fill="none" stroke="currentColor" strokeWidth="1.3">
+            <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+            <path d="M1.5 5.5h13M6 5.5v8" />
+          </svg>
+          <span className="min-w-0 truncate font-medium">{ref.title}</span>
           <span className="shrink-0 text-meta text-fg-subtle">{ref.version > 1
             // 고쳐 올린 안인지 첫 판인지 카드에서 보이게(designer a).
             ? t('artifact.card.versionWithPrev', { version: ref.version, prev: ref.version - 1 })
@@ -341,7 +351,12 @@ function ArtifactCard({ attachment, cover, from }: {
           )}
         </span>
         {ref.summary && <span className="truncate text-meta text-fg-muted">{ref.summary}</span>}
-        <span className="text-meta text-fg-subtle">{t('artifact.card.html')} · {formatSize(attachment.sizeBytes)}</span>
+        <span className="flex items-center gap-2 text-meta">
+          <span className={selected ? 'text-fg' : 'text-fg-muted group-hover:text-fg'} data-testid="artifact-card-action">
+            {selected ? t('artifact.card.previewing') : t('artifact.card.openLabel')}
+          </span>
+          <span className="ml-auto shrink-0 text-fg-subtle">{t('artifact.card.html')} · {formatSize(attachment.sizeBytes)}</span>
+        </span>
       </span>
     </button>
   );

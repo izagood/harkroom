@@ -298,3 +298,96 @@ describe('which panes stay beside the preview', () => {
     expect(previewLayout('thread', false).hideMain).toBe(false);
   });
 });
+
+// jaebin 신고(2026-10-05): 패널이 좁고 넓힐 수 없다 · 시안 카드인지 안 보인다 · 닫아도 주황 테두리가 남는다.
+// 사양은 designer 답(같은 날, 스레드 39b9c322).
+describe('preview panel width and leaving the card', () => {
+  beforeEach(() => { localStorage.removeItem('harkroom.previewWidth'); });
+
+  it('stands at the default css width, remembers the dragged width, and double-click forgets it', () => {
+    fakeController();
+    useAppStore.getState().set({ artifactPreview: page() });
+    render(<ArtifactPanel />);
+    const panel = screen.getByTestId('artifact-panel');
+    expect(panel.style.width).toBe('min(48rem, 50vw)');
+    expect(panel.style.minWidth).toBe('360px');
+    const handle = screen.getByRole('separator', { name: '미리보기 너비 조절' });
+    // jsdom 은 폭을 재지 못한다 — 원점은 하한(360)이다.
+    fireEvent.mouseDown(handle, { clientX: 500 });
+    // 끄는 동안 iframe 이 마우스를 삼키지 않도록 body 에 표지가 선다(index.css).
+    expect(document.body.dataset.paneDragging).toBe('true');
+    fireEvent.mouseMove(document, { clientX: 200 });
+    fireEvent.mouseUp(document);
+    expect(document.body.dataset.paneDragging).toBeUndefined();
+    expect(panel.style.width).toBe('660px');
+    expect(localStorage.getItem('harkroom.previewWidth')).toBe('660');
+    cleanup();
+    useAppStore.getState().set({ artifactPreview: page() });
+    render(<ArtifactPanel />);
+    expect(screen.getByTestId('artifact-panel').style.width).toBe('660px');
+    fireEvent.doubleClick(screen.getByRole('separator', { name: '미리보기 너비 조절' }));
+    expect(screen.getByTestId('artifact-panel').style.width).toBe('min(48rem, 50vw)');
+    expect(localStorage.getItem('harkroom.previewWidth')).toBeNull();
+  });
+
+  it('has no handle while expanded to the whole window', () => {
+    fakeController();
+    useAppStore.getState().set({ artifactPreview: page() });
+    render(<ArtifactPanel />);
+    fireEvent.click(screen.getByTestId('artifact-panel-expand'));
+    expect(screen.queryByRole('separator')).toBeNull();
+  });
+
+  it('marks the card as a preview and says which one is open', () => {
+    fakeController();
+    render(<><Attachments attachments={[page()]} /><ArtifactPanel /></>);
+    expect(screen.getByTestId('artifact-card-icon')).toBeTruthy();
+    expect(screen.getByTestId('artifact-card-action').textContent).toBe('미리보기 열기 ›');
+    fireEvent.click(screen.getByTestId('artifact-card'), { detail: 1 });
+    expect(screen.getByTestId('artifact-card-action').textContent).toBe('미리보기 중');
+  });
+
+  it('opened with the mouse: lets go of the card focus on close, so no ring stays behind', () => {
+    fakeController();
+    render(<><Attachments attachments={[page()]} /><ArtifactPanel /></>);
+    const card = screen.getByTestId('artifact-card');
+    card.focus();
+    fireEvent.click(card, { detail: 1 });
+    expect(card.getAttribute('data-selected')).toBe('true');
+    act(() => { fireEvent.keyDown(document, { key: 'Escape' }); });
+    expect(useAppStore.getState().artifactPreview).toBeNull();
+    expect(card.getAttribute('data-selected')).toBe('false');
+    expect(document.activeElement).not.toBe(card);
+  });
+
+  it('opened with the keyboard: gives focus back to the card on close', () => {
+    fakeController();
+    render(<><Attachments attachments={[page()]} /><ArtifactPanel /></>);
+    const card = screen.getByTestId('artifact-card');
+    fireEvent.click(card, { detail: 0 });
+    (document.body as HTMLElement).focus();
+    act(() => { fireEvent.click(screen.getByTestId('artifact-panel-close')); });
+    expect(card.getAttribute('data-selected')).toBe('false');
+    expect(document.activeElement).toBe(card);
+  });
+
+  it('closes when another channel or thread is chosen', () => {
+    const c = fakeController();
+    useAppStore.getState().set({ artifactPreview: page() });
+    render(<ArtifactPanel />);
+    act(() => { useAppStore.getState().set({ threadRootId: 'm9' }); });
+    expect(c.closeArtifactPreview).toHaveBeenCalled();
+    expect(screen.queryByTestId('artifact-panel')).toBeNull();
+  });
+
+  it('switches to another card without closing', () => {
+    const c = fakeController();
+    render(<><Attachments attachments={[page(), page({ id: 'p2' }, { version: 2 })]} /><ArtifactPanel /></>);
+    const [a, b] = screen.getAllByTestId('artifact-card') as [HTMLElement, HTMLElement];
+    fireEvent.click(a, { detail: 1 });
+    fireEvent.click(b, { detail: 1 });
+    expect(c.closeArtifactPreview).not.toHaveBeenCalled();
+    expect(b.getAttribute('data-selected')).toBe('true');
+    expect(a.getAttribute('data-selected')).toBe('false');
+  });
+});

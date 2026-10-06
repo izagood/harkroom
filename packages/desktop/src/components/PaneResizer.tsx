@@ -20,7 +20,7 @@ const STEP = 10;
  * `absolute left-0` 으로 선다. 폭 계산도 `parentElement` 를 부모 패널로 읽으므로,
  * 이 컴포넌트는 반드시 폭을 지는 그 요소의 **직계 자식**이어야 한다.
  */
-export function PaneResizer({ label, width, min, max, minRoomLeft, onWidth }: {
+export function PaneResizer({ label, width, min, max, minRoomLeft, onWidth, onReset }: {
   /** 접근성 이름. "무엇의" 너비인지 사람이 읽을 수 있어야 한다. */
   label: string;
   width: number;
@@ -34,6 +34,8 @@ export function PaneResizer({ label, width, min, max, minRoomLeft, onWidth }: {
    */
   minRoomLeft: number;
   onWidth: (next: number) => void;
+  /** 있으면 더블클릭이 기본 폭으로 되돌린다(미리보기 패널, designer 2026-10-05). */
+  onReset?: () => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   /** 드래그 원점. `null` 이면 끌고 있지 않다. */
@@ -78,6 +80,7 @@ export function PaneResizer({ label, width, min, max, minRoomLeft, onWidth }: {
       origin.current = null;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      delete document.body.dataset.paneDragging;
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -97,6 +100,9 @@ export function PaneResizer({ label, width, min, max, minRoomLeft, onWidth }: {
     origin.current = { x: e.clientX, width, max: roomBound() };
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
+    // 끄는 동안 커서가 iframe(미리보기) 위를 지나면 mousemove 가 그 문서로 가서 끌기가 끊긴다 — index.css 가
+    // 이 표지를 보고 iframe 의 포인터를 끈다(security n2, 2026-10-05).
+    document.body.dataset.paneDragging = 'true';
   };
 
   /** 화살표는 **구분선을 그 방향으로** 움직인다 — 왼쪽 화살표면 패널이 넓어진다. */
@@ -122,6 +128,7 @@ export function PaneResizer({ label, width, min, max, minRoomLeft, onWidth }: {
       className="absolute -left-0.5 top-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-accent focus:bg-accent"
       onMouseDown={onMouseDown}
       onKeyDown={onKeyDown}
+      onDoubleClick={onReset}
     />
   );
 }
