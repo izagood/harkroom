@@ -3,8 +3,8 @@
 // `kind='progress'` 는 이미 서버에 있고 러너가 `message.progress` 로 보내는데, 데스크탑이
 // 특별히 그리지 않아 **일반 발화로 흘렀다** — 규칙 02("로그가 아니라 사람의 말")가 새고 있던
 // 자리다. 이 파일은 그 구멍이 다시 열리지 않게 잠근다.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
 import type { MessageRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { ProgressRow } from '../src/components/ProgressRow';
@@ -325,5 +325,32 @@ describe('endedAt 배선', () => {
     ]);
     expect(channel).toMatch(/<ProgressRow[^>]*endedAt=\{slot\.endedAt\}/s);
     expect(thread).toMatch(/<ProgressRow[^>]*endedAt=\{slot\.endedAt\}/s);
+  });
+});
+
+describe('ProgressRow — 도는 경과는 1분마다 다시 그린다(#1188 후속 n1)', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('도는 줄 여럿이 타이머 하나를 나눠 쓰고, 끝난 줄은 구독하지 않는다', () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    vi.setSystemTime(new Date('2026-10-06T05:00:00.000Z'));
+    const started = '2026-10-06T04:57:00.000Z';
+    const { unmount } = render(
+      <>
+        <ProgressRow messages={[prog('p1', 'a', FORGE, started)]} />
+        <ProgressRow messages={[prog('p2', 'b', CODEX, started)]} />
+        <ProgressRow messages={[prog('p3', 'c', FORGE, started)]} endedAt="2026-10-06T04:58:00.000Z" />
+      </>,
+    );
+    expect(vi.getTimerCount()).toBe(1);
+    const rows = () => screen.getAllByTestId('progress-row').map((r) => r.textContent ?? '');
+    expect(rows()[0]).toContain('3분째');
+    act(() => { vi.advanceTimersByTime(60_000); });
+    expect(rows()[0]).toContain('4분째');
+    expect(rows()[1]).toContain('4분째');
+    // 끝난 줄은 끝난 시각까지만 잰다 — 틱이 와도 그대로다.
+    expect(rows()[2]).not.toContain('4분');
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

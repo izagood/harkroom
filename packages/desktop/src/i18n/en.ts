@@ -3399,7 +3399,7 @@ export const en = {
   /** 접힌 구간 안에서 아직 도는 진행(2026-10-06). `ProgressRow` 의 `Working` 과 같은 낱말이다. */
   'speech.exchange.running': '{handle} working',
   'speech.exchange.runningFor': '{handle} working {duration}',
-  'speech.exchange.runningMany': { one: '{count} working', other: '{count} working' },
+  'speech.exchange.runningMany': { one: '{count} agent working', other: '{count} agents working' },
   /** 결론도 본문도 없는 마지막 말 — 첨부만 있다. */
   'speech.exchange.attachments': {
     one: '{count} attachment',

@@ -5,6 +5,7 @@ import { selectAccountNames } from '../lib/accountNames';
 import { displayBody } from '../lib/mention';
 import { elapsedMs } from '../lib/progressGroup';
 import { runningLabel, tookLabel } from '../lib/time';
+import { useMinuteTick } from '../lib/useMinuteTick';
 import { useT, useLocale } from '../i18n/useT';
 import { TerminalChip } from './TerminalChip';
 
@@ -75,6 +76,8 @@ export function ProgressRow({ messages, endedAt = null }: {
   // (2026-09-07 실측: 사용자가 그 화면을 보고 "죽었나 도나?" 를 물었다).
   const ended = endedAt === null ? null : new Date(endedAt).getTime();
   const 끝났다 = ended !== null && !Number.isNaN(ended);
+  // 도는 동안만 1분마다 다시 그린다 — 안 하면 「N분」이 그릴 때 값으로 멈춘다(`useMinuteTick`).
+  useMinuteTick(!끝났다);
   const ms = elapsedMs(first.createdAt, 끝났다 ? ended! : Date.now());
   // **두 상태를 사전 항목 둘로 가른다**(`lib/time.ts::runningLabel` 주석). 여기 있던
   // `elapsed.replace(/째$/, '')` 는 한국어 어미를 정규식으로 자르던 것이라 다른 언어에서

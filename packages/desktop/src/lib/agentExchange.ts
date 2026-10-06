@@ -413,14 +413,31 @@ export function firstLine(body: string): string {
     if (/^\s*>/.test(raw)) continue;
     // 가로줄(`---`·`***`)은 글이 아니다.
     if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(raw)) continue;
+    // 표의 구분 행(`|---|:--:|`)도 글이 아니다. 정규식 대신 글자 집합으로 본다 — 칸마다
+    // 반복을 겹쳐 쓰면 #1188 의 머리 멘션 식과 같은 꼴이 된다.
+    if (isTableRule(raw)) continue;
     // 머리 멘션은 **본문 맨 앞**에서만 뺀다 — 문장 가운데의 `@handle` 은 말의 일부다.
     const rest = head ? raw.replace(HEAD_MENTIONS, '') : raw;
-    const line = stripMarkdown(rest).replace(/\s+/g, ' ').trim();
+    const line = stripMarkdown(tableCells(rest)).replace(/\s+/g, ' ').trim();
     if (line) return line;
     // 멘션만 있던 줄(빼고 나니 비었다)이면 다음 줄도 아직 머리다.
     if (rest.trim() !== '') head = false;
   }
   return '';
+}
+
+/** 표의 구분 행인가 — `|`·`-`·`:`·공백만 있고 `|` 와 `-` 가 다 있다. */
+function isTableRule(line: string): boolean {
+  return line.includes('|') && line.includes('-') && line.replace(/[\s|:-]/g, '') === '';
+}
+
+/**
+ * 표의 행(`| a | b |`)이면 칸을 ` · ` 로 잇는다(#1188 후속 n2). 앞 `|` 만 떼면 가운데 `|` 가
+ * 줄에 그대로 섰다 — 접힌 줄에서는 칸 경계가 글로 읽혀야 한다. 빈 칸은 버린다.
+ */
+function tableCells(line: string): string {
+  if (!line.trimStart().startsWith('|')) return line;
+  return line.split('|').map((c) => c.trim()).filter(Boolean).join(' · ');
 }
 
 /** `firstLine` 이 한 줄에서 보는 앞부분의 길이. */
