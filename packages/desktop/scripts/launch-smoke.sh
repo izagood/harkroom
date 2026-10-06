@@ -71,6 +71,9 @@ token="$(openssl rand -hex 16)"
 echo "--- 앱 출력 ---"
 echo "::stop-commands::$token"
 cat "$log"
+# 마지막 줄에 줄바꿈이 없으면 끝 표지가 그 줄 끝에 붙어 명령이 다시 켜지지 않는다 — 그러면 아래
+# `::error::` 주석이 보이지 않는다(판정은 그대로다). 빈 출력이나 이미 줄바꿈으로 끝나면 넣지 않는다.
+if [ -s "$log" ] && [ -n "$(tail -c 1 "$log")" ]; then printf '\n'; fi
 echo "::$token::"
 echo "--- 끝 ---"
 
