@@ -370,13 +370,16 @@ describe('리액션 말풍선 (2026-09-29, Slack 본)', () => {
     expect(screen.queryByTestId('reaction-tooltip')).toBeNull();
   });
 
-  it('내가 누른 칩이면 제거 안내가 앞에 붙는다', async () => {
+  it('내가 누른 칩이면 제거 안내가 문장 **뒤**에 괄호 없이 붙는다', async () => {
     fakeController();
     render(<MessageItem message={withReactions([{ emoji: '🎉', accountIds: ['u1'] }])} />);
 
     fireEvent.mouseEnter(screen.getByTestId('reaction-🎉'));
     const tip = await screen.findByTestId('reaction-tooltip');
-    expect(within(tip).getByTestId('reaction-tooltip-hint').textContent).toContain('(click to remove)');
-    expect(tip.textContent).toContain('You reacted with 🎉');
+    const hint = within(tip).getByTestId('reaction-tooltip-hint');
+    expect(hint.textContent).toBe('Click to remove');
+    // 읽는 순서: 누가 달았는지가 먼저, 안내가 뒤(designer — 괄호가 맨 앞에 오던 것).
+    expect(tip.textContent!.indexOf('You reacted with 🎉')).toBeLessThan(tip.textContent!.indexOf('Click to remove'));
+    expect(tip.textContent).not.toContain('(');
   });
 });

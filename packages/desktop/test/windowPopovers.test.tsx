@@ -162,4 +162,48 @@ describe('새 창 안의 떠 있는 것', () => {
     expect(menu.className).toMatch(/\babsolute\b/);
     expect(menu.className).toMatch(/top-full/);
   });
+
+  /** #1224 후속 1(designer f1·security nit): 띄운 메뉴는 굴리면 ⋯ 와 떨어져 옆 글의 메뉴처럼 읽힌다. */
+  it('띄운 ⋯ 메뉴는 그 창의 목록을 굴리면 닫힌다', () => {
+    const menu = openMenuIn({ top: 40, bottom: 270 }, { top: 240, bottom: 264 }, 218);
+    expect(menu.style.position).toBe('fixed');
+    const doc = menu.ownerDocument;
+    // 메뉴 자신이 굴러도 닫지 않는다.
+    fireEvent.scroll(menu);
+    expect(doc.querySelector('[role="menu"]')).not.toBeNull();
+    fireEvent.scroll(doc.querySelector('[data-probe="list"]')!);
+    expect(doc.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it('목록 안의 평소(absolute) 메뉴는 굴려도 닫지 않는다(메인 창 동작 그대로)', () => {
+    const menu = openMenuIn({ top: 0, bottom: 400 }, { top: 40, bottom: 64 }, 218);
+    expect(menu.style.position).toBe('');
+    fireEvent.scroll(menu.ownerDocument.querySelector('[data-probe="list"]')!);
+    expect(menu.ownerDocument.querySelector('[role="menu"]')).not.toBeNull();
+  });
+
+  /** #1224 후속 2(security nit): 위/아래 판정이 `[anchor]` 에만 묶여 창 크기가 바뀌어도 그대로였다. */
+  it('반응 말풍선이 떠 있는 동안 그 창 높이가 바뀌면 위/아래를 다시 잰다', async () => {
+    setController({ toggleReaction: vi.fn(async () => undefined) } as unknown as Controller);
+    const doc = popupDoc();
+    renderInPopup(doc, { ...msg('m1', 'c1', 1, '본문', 'u2'), reactions: [{ emoji: '👀', accountIds: ['u2'] }] });
+    const chip = doc.querySelector<HTMLElement>('[data-testid="reaction-👀"]')!;
+    // 창 맨 위의 칩 — 위로는 자리가 없어 아래로 연다(창이 충분히 높을 때).
+    placeAt(chip, { left: 100, top: 5, width: 20, height: 20 });
+    vi.useFakeTimers();
+    fireEvent.mouseEnter(chip);
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    vi.useRealTimers();
+    const tip = () => doc.querySelector<HTMLElement>('[data-testid="reaction-tooltip"]')!;
+    expect(tip().dataset.placement).toBe('bottom');
+
+    const tall = WIN.height;
+    try {
+      WIN.height = 30; // 창을 줄여 아래에도 자리가 없게 한다
+      await act(async () => { window.dispatchEvent(new Event('resize')); });
+      expect(tip().dataset.placement).toBe('top');
+    } finally {
+      WIN.height = tall;
+    }
+  });
 });

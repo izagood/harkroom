@@ -92,8 +92,8 @@ describe('말풍선 문장', () => {
   // 누르면 **취소**된다는 것만 칩 모양으로 안 보인다 — 내가 누른 칩에만 안내가 붙는다.
   it('내가 누른 칩에만 떼기 안내가 붙고, 문장 첫 글자는 대문자다', () => {
     expect(reactionSentence('✅', ['u1'], nameOf, 'u1', en))
-      .toEqual({ hint: '(click to remove)', sentence: 'You reacted with ✅' });
-    expect(reactionSentence('✅', ['u1'], nameOf, 'u1', ko).hint).toBe('(제거하려면 클릭)');
+      .toEqual({ hint: 'Click to remove', sentence: 'You reacted with ✅' });
+    expect(reactionSentence('✅', ['u1'], nameOf, 'u1', ko).hint).toBe('누르면 반응을 뗀다');
     expect(reactionSentence('✅', ['u2'], nameOf, 'u1', en).hint).toBeNull();
   });
 

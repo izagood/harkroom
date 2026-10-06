@@ -471,14 +471,22 @@ function ReactionTooltip({ emoji, who, text, also, anchor }: {
   // 새 창에서 올린 칩의 말풍선이 메인 창에 뜬다(2026-10-06 F1).
   const hostDoc = useHostDocument();
   const view = viewOf(hostDoc);
+  // 떠 있는 동안 **그 창** 크기가 바뀌면 위/아래를 다시 잰다(security nit, #1224 후속). 아래 위치 계산은
+  // 렌더마다 돌지만 위/아래 판정은 layout 효과라 크기를 딸림값으로 줘야 다시 돈다.
+  const [viewHeight, setViewHeight] = useState(view.innerHeight);
+  useEffect(() => {
+    const onResize = () => setViewHeight(view.innerHeight);
+    view.addEventListener('resize', onResize);
+    return () => view.removeEventListener('resize', onResize);
+  }, [view]);
   const { hint, sentence } = who
     ? reactionSentence(emoji, who.accountIds, who.nameOf, who.myId, t)
     : { hint: null, sentence: text ?? '' };
 
   useLayoutEffect(() => {
     const height = ref.current?.getBoundingClientRect().height ?? 0;
-    setBelow(anchor.top - TOOLTIP_GAP - height < EDGE_GAP && anchor.bottom + TOOLTIP_GAP + height <= view.innerHeight - EDGE_GAP);
-  }, [anchor]);
+    setBelow(anchor.top - TOOLTIP_GAP - height < EDGE_GAP && anchor.bottom + TOOLTIP_GAP + height <= viewHeight - EDGE_GAP);
+  }, [anchor, viewHeight]);
 
   const center = anchor.left + anchor.width / 2;
   const left = Math.max(EDGE_GAP, Math.min(center - TOOLTIP_WIDTH / 2, view.innerWidth - TOOLTIP_WIDTH - EDGE_GAP));
@@ -502,15 +510,15 @@ function ReactionTooltip({ emoji, who, text, also, anchor }: {
       {/* **글자는 본문과 같다** — 단(`text-body`)도 굵기도. 첫 판의 `font-semibold` 는 같은 14px 이어도
           본문보다 커 보였고 폭을 더 먹어 "반응 / 했다" 처럼 낱말 가운데서 꺾였다. `break-keep` 은
           한글 낱말을 가운데서 자르지 않게 한다(줄은 띄어쓰기에서만 바뀐다). */}
-      <p className="text-center text-body break-keep break-words">
-        {hint && <span data-testid="reaction-tooltip-hint">{hint} </span>}
-        {sentence}
-      </p>
+      <p className="text-center text-body break-keep break-words">{sentence}</p>
+      {/* 안내는 문장 **뒤** 한 줄이다(designer, #1224 후속) — 앞에 괄호로 붙이면 「(제거하려면 클릭) 나, bot이(가)…」
+          처럼 읽는 순서가 뒤집힌다. 누가 달았는지가 먼저고, 누르면 무엇이 되는지는 덧붙임이다. */}
+      {hint && <p data-testid="reaction-tooltip-hint" className="text-center text-meta opacity-70 break-keep">{hint}</p>}
       {also && (
-        <p className="text-center text-body break-keep break-words" data-testid="reaction-tooltip-also">
-          {also.hint && <span data-testid="reaction-tooltip-hint">{also.hint} </span>}
-          {also.sentence}
-        </p>
+        <>
+          <p className="text-center text-body break-keep break-words" data-testid="reaction-tooltip-also">{also.sentence}</p>
+          {also.hint && <p data-testid="reaction-tooltip-hint" className="text-center text-meta opacity-70 break-keep">{also.hint}</p>}
+        </>
       )}
       <span
         aria-hidden="true"
