@@ -330,7 +330,7 @@ describe('ConnectScreen — 복구 키는 만든 직후 한 번만 (R1)', () => 
     fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
     await screen.findByTestId('recovery-key-value');
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
-    expect(await screen.findByText(/Clear your clipboard once you have saved it/)).toBeTruthy();
+    expect(await screen.findByText(/Clear your clipboard after you've put it in your password manager/)).toBeTruthy();
     expect(writeText).toHaveBeenCalledWith(KEY);
     expect(document.body.textContent).not.toMatch(/cleared in 60 seconds/);
   });

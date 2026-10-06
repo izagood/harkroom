@@ -38,7 +38,7 @@ export function RecoveryKeyStep({ recoveryKey, communityName, onDone }: {
     }
     const outcome = await copyText(recoveryKey, keyRef.current);
     if (outcome === 'copied') {
-      setNote('Copied. Clear your clipboard once you have saved it.');
+      setNote('Copied. Clear your clipboard after you\'ve put it in your password manager.');
     } else if (outcome === 'selected') {
       setNote('Selected — press ⌘C to copy.');
     } else {
