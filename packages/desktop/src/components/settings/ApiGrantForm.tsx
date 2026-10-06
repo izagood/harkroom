@@ -1,3 +1,4 @@
+import { Segmented } from '../Segmented';
 import { useState } from 'react';
 import { connectorScope, type ApiConnectorView, type ApiMethod, type GrantRow } from '@harkroom/shared';
 import { useLocale } from '../../i18n/useT';
@@ -92,7 +93,6 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, on
 
   if (!connectors.length) return <p className="mt-2 text-meta text-fg-subtle" data-testid="api-grant-no-connector">{t('apiGrant.noConnector')}</p>;
 
-  const seg = (on: boolean) => `rounded px-2 py-1 text-meta ${on ? 'bg-accent text-fg-on-strong' : 'border border-border text-fg hover:bg-surface-hover'}`;
   // 메서드를 글자로 적는다 — 「읽기+쓰기」만으로는 메서드가 넓어진 것이 안 보인다(security F1).
   const describe = (methods: readonly string[], prefix: string, until: string) =>
     `${methods.some((m) => m !== 'GET') ? t('apiGrant.rowWrite') : t('apiGrant.rowRead')} (${methods.join('·')}) ${prefix || '—'} · ${until}`;
@@ -117,38 +117,29 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, on
           {connectors.map((x) => <option key={x.id} value={x.id}>{x.name} — {x.baseUrl}</option>)}
         </select>
       </label>
-      <div role="radiogroup" aria-label={t('apiGrant.scope')} className="flex flex-wrap items-center gap-2">
-        <span>{t('apiGrant.scope')}</span>
-        <button type="button" role="radio" aria-checked={scope === 'read'} className={seg(scope === 'read')} disabled={busy || fromExisting} onClick={() => setScope('read')}>{t('apiGrant.read')}</button>
-        {canWrite && (
-          <button type="button" role="radio" aria-checked={scope === 'write'} className={seg(scope === 'write')} disabled={busy || fromExisting}
-            onClick={() => { setScope('write'); if (expiry === 'none') setExpiry('7d'); }}>
-            {t('apiGrant.write', { methods: (fromExisting && scope === 'write' ? methods : c?.methods ?? []).join('·') })}
-          </button>
-        )}
-      </div>
+      <Segmented label={t('apiGrant.scope')} value={scope} disabled={busy || fromExisting}
+        onChange={(v) => { setScope(v); if (v === 'write' && expiry === 'none') setExpiry('7d'); }}
+        options={[
+          { value: 'read' as const, label: t('apiGrant.read') },
+          ...(canWrite ? [{ value: 'write' as const, label: t('apiGrant.write', { methods: (fromExisting && scope === 'write' ? methods : c?.methods ?? []).join('·') }) }] : []),
+        ]} />
       <label className="flex flex-col gap-1">
         {t('apiGrant.path')}
         <input aria-label={t('apiGrant.path')} className="rounded border border-border bg-surface px-2 py-1 font-mono" value={pathPrefix} disabled={busy || fromExisting} onChange={(e) => setPathPrefix(e.target.value)} />
         {pathPrefix === '' ? <span className="text-warning" data-testid="api-grant-path-unknown">{t('apiGrant.pathUnknown')}</span>
           : !pathOk && <span className="text-warning">{t('apiGrant.pathBad')}</span>}
       </label>
-      <div role="radiogroup" aria-label={t('apiGrant.expiry')} className="flex flex-wrap items-center gap-2">
-        <span>{t('apiGrant.expiry')}</span>
-        {([...(keepOk ? ['keep'] as const : []), '7d', '30d', ...(scope === 'read' ? ['none'] as const : [])] as Expiry[]).map((x) => (
-          <button key={x} type="button" role="radio" aria-checked={effectiveExpiry === x} className={seg(effectiveExpiry === x)} disabled={busy} onClick={() => setExpiry(x)}>
-            {x === 'keep' ? t('apiGrant.expiryKeep') : t(x === '7d' ? 'apiGrant.expiry7d' : x === '30d' ? 'apiGrant.expiry30d' : 'apiGrant.expiryNone')}
-          </button>
-        ))}
+      <Segmented label={t('apiGrant.expiry')} value={effectiveExpiry} disabled={busy} onChange={setExpiry}
+        options={([...(keepOk ? ['keep'] as const : []), '7d', '30d', ...(scope === 'read' ? ['none'] as const : [])] as Expiry[]).map((x) => ({
+          value: x, label: x === 'keep' ? t('apiGrant.expiryKeep') : t(x === '7d' ? 'apiGrant.expiry7d' : x === '30d' ? 'apiGrant.expiry30d' : 'apiGrant.expiryNone'),
+        }))}>
         {scope === 'write' && <span className="text-fg-subtle">{t('apiGrant.writeExpiryHint')}</span>}
-      </div>
+      </Segmented>
       {scope === 'write' && (
-        <div role="radiogroup" aria-label={t('apiGrant.humanOnly')} className="flex flex-wrap items-center gap-2" data-testid="api-grant-human-only">
-          <span>{t('apiGrant.humanOnly')}</span>
-          <button type="button" role="radio" aria-checked={humanOnly === 'yes'} className={seg(humanOnly === 'yes')} disabled={busy} onClick={() => setHumanOnly('yes')}>{t('apiGrant.humanOnlyYes')}</button>
-          <button type="button" role="radio" aria-checked={humanOnly === 'no'} className={seg(humanOnly === 'no')} disabled={busy} onClick={() => setHumanOnly('no')}>{t('apiGrant.humanOnlyNo')}</button>
+        <Segmented label={t('apiGrant.humanOnly')} value={humanOnly} disabled={busy} onChange={setHumanOnly} testId="api-grant-human-only"
+          options={[{ value: 'yes' as const, label: t('apiGrant.humanOnlyYes') }, { value: 'no' as const, label: t('apiGrant.humanOnlyNo') }]}>
           <span className="w-full text-fg-subtle">{humanOnly === null ? t('apiGrant.humanOnlyPick') : t('apiGrant.humanOnlyHint')}</span>
-        </div>
+        </Segmented>
       )}
       <p className="text-fg-subtle">{t('apiGrant.keyNote')}</p>
       <div className="flex gap-2">

@@ -237,6 +237,17 @@ describe('BlockedCard', () => {
     expect(c.listGrants).toHaveBeenCalledTimes(2);
   });
 
+  it('n4: 주고 나면 카드가 ✓ 한 줄로 접힌다', async () => {
+    setup();
+    render(<BlockedCard message={msg({})} onOpenSettings={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: '권한 주기…' }));
+    const form = await screen.findByTestId('api-grant-form');
+    fireEvent.click(within(form).getByRole('button', { name: '주기' }));
+    await waitFor(() => expect(screen.getByTestId('blocked-done').textContent).toContain('권한을 줬다'));
+    expect(screen.queryByRole('button', { name: '권한 주기…' })).toBeNull();
+    expect(screen.getByTestId('blocked-card').textContent).not.toContain('3번');
+  });
+
   it('소유자가 아니면 버튼 없이 「소유자만」', () => {
     setup();
     useActiveStore.getState().set({ me: acc('other', 'carol') });

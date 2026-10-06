@@ -414,6 +414,10 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
                 {' · '}{t('secrets.grantedOn', { when: new Date(g.grantedAt).toLocaleDateString(locale) })}
               </span>
               {g.suspendedAt && <span className="rounded bg-warning-surface px-1 text-warning">{t('secrets.suspended', { reason: g.suspendReason ?? '' })}</span>}
+              {/* #1156 앞에 생긴 옛 줄: 받는 에이전트의 소유자가 비밀 주인과 다르면 서버가 reveal 을 not_own_agent 로 막는다. */}
+              {accounts[g.agentId] && accounts[g.agentId]!.ownerAccountId !== secret.ownerAccountId && (
+                <span className="rounded bg-danger-surface px-1 text-danger" data-testid={`secret-grant-not-own-${handle(g.agentId)}`}>{t('secrets.notOwnBlocked')}</span>
+              )}
               <span className="ml-auto"><SmallButton onClick={() => setRevoking(g)} disabled={busy} danger ariaLabel={t('secrets.revokeAria', { handle: handle(g.agentId) })}>{t('secrets.revoke')}</SmallButton></span>
             </li>
           ))}

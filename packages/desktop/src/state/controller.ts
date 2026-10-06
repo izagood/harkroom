@@ -2615,6 +2615,8 @@ export class Controller {
   deleteGrant(accountId: string, capability: import('@harkroom/shared').Capability, scope: string): Promise<void> {
     return this.api.deleteGrant(accountId, capability, scope);
   }
+  approveDelegation(grantId: string): Promise<void> { return this.api.approveDelegation(grantId); }
+  declineDelegation(grantId: string): Promise<void> { return this.api.declineDelegation(grantId); }
 
   // 호출 범위(스펙 2026-09-20 §6) — 전부 서버가 판정한다. 화면은 응답을 그대로 앉힌다.
   addInvoker(agentId: string, accountId: string): Promise<import('@harkroom/shared').AgentView> {
