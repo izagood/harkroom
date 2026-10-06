@@ -746,6 +746,13 @@ export class ApiClient {
   putGrant(accountId: string, body: { capability: Capability; scope: string; expiresAt?: string | null; allowAgentCause?: boolean; limits?: ApiGrantLimits; writeNeedsHumanCause?: boolean; delegateDepth?: number }): Promise<GrantRow[]> {
     return this.req<{ grants: GrantRow[] }>('PUT', `/accounts/${accountId}/grants`, body).then((r) => r.grants);
   }
+  /**
+   * 머지 거절 카드의 [7일 주기](스레드 febe9ff8 P3·P5). 소유자 사람 세션만 — scope·기한은 서버가 거절 기록과 상수로 정한다.
+   * 본문은 보내지 않는다(서버도 읽지 않는다).
+   */
+  grantFromMergeDenial(agentId: string, denialId: string): Promise<{ repo: string; expiresAt: string; cardMessageId: string | null }> {
+    return this.req('POST', `/agents/${agentId}/merge-denials/${denialId}/grant`);
+  }
   deleteGrant(accountId: string, capability: Capability, scope: string): Promise<void> {
     return this.req('DELETE', `/accounts/${accountId}/grants/${encodeURIComponent(capability)}?scope=${encodeURIComponent(scope)}`);
   }
