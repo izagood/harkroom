@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { emptyLedger } from '@harkroom/shared/workspaceCleanup';
-import { applyHumanAction, planSweep, removeRebuildable, runSweep, type ObservedWorktree, type SweepFacts } from '../src/workspaceCleanup.js';
+import { applyHumanAction, planSweep, removeRebuildable, runSweep, writeLedger, type ObservedWorktree, type SweepFacts } from '../src/workspaceCleanup.js';
 
 const T = { channelId: 'c1', threadRootId: 'r1' };
 const NOW = new Date('2026-10-06T00:00:00Z');
@@ -393,6 +393,14 @@ describe('F1 — 끄면 지우지 않는다(이미 나간 요청까지)', () => 
     o.requestDelete({ channelId: C, threadRootId: R });
     // 원장이 비어 있으니 화면 live 에는 아무 스레드도 없다(owners.json 전부를 내지 않는다).
     expect((await svc.get()).live.threads).toEqual({});
+    // 원장에 스레드 폴더가 하나 오르면 live 에는 그 키만 실린다(worktree 항목·원장 밖 스레드는 빠진다).
+    const base = { state: 'listed', repo: null, branch: null, headSha: null, pr: null, lastModifiedAt: null, listedAt: null,
+      deleteAfter: null, blockReason: null, actedBy: null, actedAt: null, sizeBefore: null, sizeNow: null };
+    await writeLedger(ledgerPath, { ...emptyLedger(), items: [
+      { ...base, path: '/state/workspaces/w', kind: 'threadDir', thread: { channelId: C, threadRootId: R } },
+      { ...base, path: '/wt/x', kind: 'worktree', thread: { channelId: C, threadRootId: other.threadRootId } },
+    ] } as never);
+    expect(Object.keys((await svc.get()).live.threads)).toEqual([K]);
     await svc.setSettings({ enabled: false });
     expect((await o.live()).threads[K]!.deleteRequestedAt).toBeNull();
     expect(reply(await o.maybeHandle('run1', 'agentA', req({ threads: [] }), 'relay')).deleteThreads).toEqual([]);
