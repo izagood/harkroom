@@ -363,20 +363,19 @@ export class ApiClient {
     return this.req('PUT', `/inbox/threads/${rootId}`, body);
   }
   /**
-   * 메시지를 고친다. `postMessage` 처럼 **부름의 결과를 함께** 낸다 — 수정으로 넣은 멘션도
-   * 부르기 때문이다(076). 결과가 헤더로 오는 이유는 게시와 같다(`NOTIFIED_HEADER` 주석).
+   * 메시지를 고친다. 수정으로 넣은 멘션도 서버가 부르지만(076) 몇 명을 불렀는지는 화면에
+   * 쓰지 않으므로 읽지 않는다.
    *
    * `mentionSkipped` 는 새 멘션을 넣었는데 서버가 **부르지 않은** 이유다(작성 뒤 24시간이
    * 지났거나 에이전트의 글). 없으면 null — 옛 서버도 null 이다.
    */
   async editMessage(
     channelId: string, messageId: string, body: string,
-  ): Promise<{ message: MessageRow; notified: NotifiedResult; mentionSkipped: MentionEditSkipReason | null }> {
+  ): Promise<{ message: MessageRow; mentionSkipped: MentionEditSkipReason | null }> {
     const res = await this.reqWithHeaders<MessageRow>('PATCH', `/channels/${channelId}/messages/${messageId}`, { body });
     const skipped = res.headers.get(MENTION_EDIT_SKIPPED_HEADER);
     return {
       message: res.body,
-      notified: readNotifiedHeaders(res.headers),
       mentionSkipped: skipped === 'too_old' || skipped === 'agent_author' ? skipped : null,
     };
   }
