@@ -17,7 +17,7 @@ const DIGEST = 'a'.repeat(64);
 
 beforeAll(async () => {
   const db = await startTestDb(); stop = db.stop; pool = db.pool as Pool;
-  app = await buildServer({ pool });
+  app = await buildServer({ pool, operatorStatusMinIntervalMs: 0 });
   ({ token: adminToken } = await bootstrapAdmin(app));
   ({ token: aliceToken, accountId: aliceId } = await createMember(app, adminToken, 'alice'));
   ({ token: bobToken } = await createMember(app, adminToken, 'bob'));
@@ -123,5 +123,42 @@ describe('등록 코드 codeId(H2)', () => {
       expect(res.statusCode).toBe(200);
       expect(got).toEqual([expect.objectContaining({ operatorId: res.json().operator.id, codeId: issued.codeId, audience: [aliceId] })]);
     } finally { off(); }
+  });
+});
+
+describe('security #1200 n1·n2', () => {
+  it('비밀 키가 있으면 machineId 가 HMAC 이라 키 없는 sha256(owner:digest) 와 다르다', async () => {
+    const { machineIdKey } = await import('../src/routes/operatorRoutes.js');
+    const { createHash, createHmac } = await import('node:crypto');
+    const key = machineIdKey('test-secret')!;
+    expect(key).toHaveLength(32);
+    expect(machineIdKey('')).toBeNull();
+    const plain = createHash('sha256').update(`owner:${DIGEST}`).digest('hex');
+    expect(createHmac('sha256', key).update(`owner:${DIGEST}`).digest('hex')).not.toBe(plain);
+  });
+
+  it('최소 간격 안의 박동은 DB·이벤트를 건너뛴다(허브 값은 갱신된다)', async () => {
+    const slow = await buildServer({ pool, operatorStatusMinIntervalMs: 60_000 });
+    await slow.listen({ port: 0, host: '127.0.0.1' });
+    try {
+      const addr = slow.server.address();
+      const url = typeof addr === 'object' && addr ? `127.0.0.1:${addr.port}` : '';
+      const op = await registerOperator(slow, aliceToken, 'throttled');
+      const got: WorkspaceEvent[] = [];
+      const off = onEvent((e) => { if (e.type === 'operator.changed' && e.operatorId === op.operatorId && Array.isArray(e.audience)) got.push(e); });
+      try {
+        const ws = new WebSocket(`ws://${url}/operator`, { headers: auth(op.token) });
+        await new Promise<void>((resolve, reject) => { ws.on('open', () => resolve()); ws.on('error', reject); });
+        ws.send(JSON.stringify({ type: 'hello', protocol: 1, capabilities: { agentIds: [], harnesses: {} }, runners: [], sessions: [] }));
+        beat(ws, { turns: { running: 1, max: 4 } });
+        await waitFor(async () => got.length >= 1);
+        beat(ws, { turns: { running: 2, max: 4 } });
+        await new Promise((r) => setTimeout(r, 150));
+        expect(got).toHaveLength(1);
+        const list = (await slow.inject({ method: 'GET', url: '/operators', headers: auth(aliceToken) })).json().operators as OperatorView[];
+        expect(list.find((o) => o.id === op.operatorId)?.status?.turns.running).toBe(2);
+        ws.close();
+      } finally { off(); }
+    } finally { await slow.close(); }
   });
 });

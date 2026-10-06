@@ -9,7 +9,7 @@
 // 통과시킨다. 라우트가 두 판정을 따로 쓰면 그것이 곧 판정 복제다(#253).
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
-import { randomBytes } from 'node:crypto';
+import { createHash, createHmac, hkdfSync, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import type { OperatorStatus, OperatorUpgradeEvent, OperatorView } from '@harkroom/shared';
 import { isMachineDigest, parseUpgradeProgress } from '@harkroom/shared/operatorProtocol';
@@ -92,7 +92,27 @@ export interface OperatorRoutesDeps {
   hub: OperatorHub;
   /** 소켓 ping 주기(ms). `/ws`·릴레이와 **같은 값**을 받는다(`wsHeartbeatMs`) — 갈라지면 수명이 갈린다. */
   heartbeatMs?: number;
+  /**
+   * 머신 묶음표를 섞는 서버 비밀(security #1200 n1). `machineIdKey(HARKROOM_SECRET_KEY)` 로 만든다. 있으면
+   * HMAC-SHA256(key, owner:digest) — DB 를 읽는 사람이 이미 아는 machine-id 후보로 "이 소유자의 operator 가 저
+   * 머신에 있나"를 맞춰 볼 수 없다. 없으면 sha256(owner:digest)(P2a 와 같은 값, 비밀이 없는 개발 서버).
+   */
+  machineIdKey?: Buffer | null;
+  /** 박동 처리 최소 간격. 기본 `STATUS_MIN_INTERVAL_MS`. */
+  statusMinIntervalMs?: number;
 }
+
+/** `HARKROOM_SECRET_KEY` 에서 머신 묶음표 전용 키를 뽑는다(HKDF) — 봉투 키와 같은 바이트를 두 용도로 쓰지 않는다. */
+export function machineIdKey(rawSecret: string | null | undefined): Buffer | null {
+  const trimmed = rawSecret?.trim();
+  if (!trimmed) return null;
+  return Buffer.from(hkdfSync('sha256', Buffer.from(trimmed, 'utf8'), Buffer.alloc(0), 'harkroom operator machine id v1', 32));
+}
+
+/** 박동을 DB·이벤트로 처리하는 최소 간격(security n2). 정상 오퍼레이터는 30초에 한 번이다. 허브의 값은 매번 갱신된다. */
+export const STATUS_MIN_INTERVAL_MS = 10_000;
+/** 오퍼레이터마다 처리를 기다리는 업그레이드 단계의 상한(security n5). 넘치면 버리고 남긴다. */
+export const UPGRADE_QUEUE_MAX = 20;
 
 export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, deps: OperatorRoutesDeps): Promise<void> {
   const codes = createRegisterCodes(REGISTER_CODE_TTL_MS);
@@ -136,34 +156,45 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
    *    전원(`'all'`)이 아니다 — 남의 턴 수가 오갈 때마다 모든 창이 목록을 다시 읽을 까닭이 없다.
    */
   const lastSignature = new Map<string, string>();
+  const lastProcessedAt = new Map<string, number>();
+  const lastMachine = new Map<string, string>();
+  const mixMachine = (owner: string, digest: string): string => (deps.machineIdKey
+    ? createHmac('sha256', deps.machineIdKey).update(`${owner}:${digest}`).digest('hex')
+    : createHash('sha256').update(`${owner}:${digest}`).digest('hex'));
   const offStatus = deps.hub.onFrame((operatorId, frame) => {
     if (frame.type !== 'status') return;
+    // 촘촘한 박동은 DB·이벤트를 건너뛴다(n2) — 붙은 뒤 첫 박동은 언제나 처리한다(끊길 때 시각을 잊는다).
+    const now = Date.now();
+    const last = lastProcessedAt.get(operatorId);
+    if (last !== undefined && now - last < (deps.statusMinIntervalMs ?? STATUS_MIN_INTERVAL_MS)) return;
+    lastProcessedAt.set(operatorId, now);
     const status = deps.hub.status(operatorId);
     const signature = status ? statusSignature(status) : null;
     const signatureChanged = signature !== null && lastSignature.get(operatorId) !== signature;
     if (signature !== null) lastSignature.set(operatorId, signature);
-    const machine = isMachineDigest(frame.machine) ? frame.machine : null;
+    // 같은 머신 값이면 질의하지 않는다 — 머신은 바뀌지 않는 값이다.
+    const machine = isMachineDigest(frame.machine) && lastMachine.get(operatorId) !== frame.machine ? frame.machine : null;
+    if (!machine && !signatureChanged) return;
     void (async () => {
+      const owner = (await pool.query<{ owner: string }>(
+        `select owner_account_id as owner from operator where id = $1 and revoked_at is null`, [operatorId])).rows[0]?.owner;
+      if (!owner) return;
       let machineChanged = false;
       if (machine) {
+        const mixed = mixMachine(owner, machine);
         const res = await pool.query(
-          `update operator set machine_id = encode(sha256(convert_to(owner_account_id::text || ':' || $2, 'UTF8')), 'hex')
-            where id = $1 and machine_id is distinct from encode(sha256(convert_to(owner_account_id::text || ':' || $2, 'UTF8')), 'hex')
-            returning id`,
-          [operatorId, machine]);
+          `update operator set machine_id = $2 where id = $1 and machine_id is distinct from $2 returning id`, [operatorId, mixed]);
         machineChanged = (res.rowCount ?? 0) > 0;
+        lastMachine.set(operatorId, machine);
       }
-      if (machineChanged) {
-        emitEvent({ type: 'operator.changed', operatorId, audience: 'all' });
-      } else if (signatureChanged) {
-        const owner = await pool.query<{ owner: string }>(
-          `select owner_account_id as owner from operator where id = $1 and revoked_at is null`, [operatorId]);
-        if (owner.rows[0]) emitEvent({ type: 'operator.changed', operatorId, audience: [owner.rows[0].owner] });
-      }
+      if (machineChanged) emitEvent({ type: 'operator.changed', operatorId, audience: 'all' });
+      else if (signatureChanged) emitEvent({ type: 'operator.changed', operatorId, audience: [owner] });
     })().catch((err: unknown) => app.log.warn({ err, operatorId }, 'operator 박동 처리 실패'));
   });
-  // 끊기면 서명을 잊는다 — 다시 붙은 뒤 첫 박동은 언제나 알린다(끊긴 사이 화면은 status: null 을 봤다).
-  const offStatusClose = deps.hub.onClose((operatorId) => { lastSignature.delete(operatorId); });
+  // 끊기면 서명·시각·머신 값을 잊는다 — 다시 붙은 뒤 첫 박동은 언제나 처리하고 알린다(끊긴 사이 화면은 status: null 을 봤다).
+  const offStatusClose = deps.hub.onClose((operatorId) => {
+    lastSignature.delete(operatorId); lastProcessedAt.delete(operatorId); lastMachine.delete(operatorId);
+  });
   app.addHook('onClose', async () => { offStatus(); offStatusClose(); });
 
   /**
@@ -174,10 +205,18 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
   // 오퍼레이터마다 한 줄로 세운다 — 프레임마다 질의를 따로 띄우면 insert 가 도착 순서와 다르게 끝나
   // 이력의 순서(id)가 뒤섞이고, 20줄 자르기가 갓 들어온 줄을 지운다(CI 에서 25줄을 연달아 보내 재현).
   const upgradeQueue = new Map<string, Promise<void>>();
+  const upgradePending = new Map<string, number>();
   const offUpgrade = deps.hub.onFrame((operatorId, frame) => {
     if (frame.type !== 'upgrade.progress') return;
     const ev = parseUpgradeProgress(frame);
     if (!ev) return;
+    // 대기 줄 상한(n5) — 토큰을 쥔 쪽이 몰아 보내도 메모리·DB 질의가 끝없이 쌓이지 않는다.
+    const pending = upgradePending.get(operatorId) ?? 0;
+    if (pending >= UPGRADE_QUEUE_MAX) {
+      app.log.warn({ operatorId }, 'operator 업그레이드 단계가 너무 몰린다 — 버린다');
+      return;
+    }
+    upgradePending.set(operatorId, pending + 1);
     const prev = upgradeQueue.get(operatorId) ?? Promise.resolve();
     const next = prev.then(async () => {
       const res = await pool.query<{ owner: string }>(
@@ -195,7 +234,11 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
       emitEvent({ type: 'operator.changed', operatorId, audience: [owner] });
     }).catch((err: unknown) => app.log.warn({ err, operatorId }, 'operator 업그레이드 단계 기록 실패'));
     upgradeQueue.set(operatorId, next);
-    void next.then(() => { if (upgradeQueue.get(operatorId) === next) upgradeQueue.delete(operatorId); });
+    void next.then(() => {
+      const left = (upgradePending.get(operatorId) ?? 1) - 1;
+      if (left > 0) upgradePending.set(operatorId, left); else upgradePending.delete(operatorId);
+      if (upgradeQueue.get(operatorId) === next) upgradeQueue.delete(operatorId);
+    });
   });
   app.addHook('onClose', async () => { offUpgrade(); });
 

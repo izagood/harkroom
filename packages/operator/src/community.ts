@@ -11,7 +11,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
-import type { OperatorCapabilities } from '@harkroom/shared';
+import type { OperatorCapabilities, OperatorStatus } from '@harkroom/shared';
 import type { AgentDefinition, ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 import type { Forwarder } from './forward.js';
@@ -19,6 +19,7 @@ import type { AssignmentReconciler } from './assignments.js';
 import type { LocalAgentConfig } from './config.js';
 import { createRelayMux } from './relayMux.js';
 import { createServerLink, type LinkDialer, type ServerLink } from './serverLink.js';
+import { HEARTBEAT_INTERVAL_MS } from './heartbeat.js';
 
 export interface CommunityDeps {
   baseUrl: string;
@@ -49,6 +50,12 @@ export interface CommunityDeps {
   onSelf?: (operatorId: string) => void;
   /** 이 오퍼레이터의 빌드 버전(`version.ts`). hello 에 싣는다 — `null`·빈 값이면 싣지 않는다(서버는 "모른다"). */
   version?: string | null;
+  /**
+   * 박동(P3a). 붙을 때 한 번, 그 뒤 `heartbeatMs` 마다 `status` 프레임을 낸다. 없으면 박동이 없다(옛 동작).
+   * 끊겨 있는 동안은 보내지 않는다 — 다음 붙음이 곧바로 하나를 낸다.
+   */
+  heartbeat?: { status: () => Promise<OperatorStatus>; machine: () => Promise<string | null> };
+  heartbeatMs?: number;
   log: (line: string) => void;
 }
 
@@ -127,6 +134,8 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
       selfOwner = readSelf();
       // 서버는 소켓이 끊기면 러너의 세션을 버린다 — hello 의 목록 뒤에 러너별 announce 로 능력까지 다시 낸다.
       mux.resync();
+      // hello 다음에 박동 하나 — 서버는 끊길 때 박동을 버리므로 붙자마자 채워 둔다.
+      beat();
     },
     onClose: (reason) => deps.log(`서버와 끊겼다: ${deps.baseUrl}${reason ? ` — ${reason}` : ''}`),
     onFrame: (frame) => {
@@ -166,12 +175,30 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
   });
   linkRef.current = link;
 
+  let beatTimer: ReturnType<typeof setInterval> | null = null;
+  const beat = (): void => {
+    const hb = deps.heartbeat;
+    if (!hb) return;
+    void Promise.all([hb.status(), hb.machine()])
+      .then(([status, machine]) => { link.send({ type: 'status', status, ...(machine ? { machine } : {}) }); })
+      .catch((err: unknown) => deps.log(`박동을 만들지 못했다: ${err instanceof Error ? err.message : String(err)}`));
+  };
+
   return {
     baseUrl: deps.baseUrl,
     link,
     assignments,
-    start: () => link.start(),
-    stop: () => link.stop(),
+    start: () => {
+      link.start();
+      if (deps.heartbeat && !beatTimer) {
+        beatTimer = setInterval(beat, deps.heartbeatMs ?? HEARTBEAT_INTERVAL_MS);
+        beatTimer.unref?.();
+      }
+    },
+    stop: () => {
+      if (beatTimer) { clearInterval(beatTimer); beatTimer = null; }
+      link.stop();
+    },
     onRunnerExit: (agentId, code) => {
       // 이 커뮤니티의 배정이 아니면 남의 exit 이다 — 조정기가 assigned 로 다시 거르지만
       // 여기서 먼저 거르면 로그가 커뮤니티마다 한 줄씩 찍히지 않는다.
