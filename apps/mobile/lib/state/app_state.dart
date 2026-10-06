@@ -327,6 +327,11 @@ class AppState extends ChangeNotifier {
   /// 바뀐다. 다시 눌러 성공하거나 최신 페이지가 어떤 길로든 들어오면 지운다.
   final Set<String> latestJumpFailed = {};
 
+  /// 스레드 루트 id → 띠가 선 동안([threadTailMissing]) **소켓으로 온 새 답글 수**. 옛 창 끝에 이어 붙이면 그
+  /// 사이 답글이 빠진 채 새 답글이 서므로 붙이지 않고 여기에 센다 — 띠가 「최신 답글로 ↓ · 새 답글 n개」로
+  /// 알린다. 최신 페이지를 받으면([_storeThreadPage]) 그 안에 들어 있으므로 지운다.
+  final Map<String, int> threadTailNew = {};
+
   /// 스레드 루트 id → 옛 답글을 못 받았다. 채널의 [olderFailed] 와 같이 스크롤로는 다시 부르지
   /// 않고 "다시 시도" 를 누를 때만 간다.
   final Set<String> olderThreadFailed = {};
@@ -952,6 +957,12 @@ class AppState extends ChangeNotifier {
         final at = replies.indexWhere((m) => m.seq == message.seq);
         if (at >= 0) {
           replies[at] = message;
+        } else if (threadTailMissing.contains(rootId)) {
+          // 옛 답글 창을 보는 중이다 — 끝에 이어 붙이면 그 사이 답글이 빠진 채 새 답글이 선다. 붙이지 않고
+          // 세기만 한다. 띠가 알리고, 최신 페이지로 가면 거기 들어 있다. `progress`·`wake` 는 답글로 안 센다.
+          if (message.kind != MessageKind.progress && message.kind != MessageKind.wake) {
+            threadTailNew[rootId] = (threadTailNew[rootId] ?? 0) + 1;
+          }
         } else {
           replies.add(message);
           replies.sort((a, b) => a.seq.compareTo(b.seq));
@@ -1604,6 +1615,7 @@ class AppState extends ChangeNotifier {
     // 최신 페이지를 통째로 받았다 — 꼬리가 비어 있던 사실은 여기서 끝난다.
     threadTailMissing.remove(rootId);
     latestJumpFailed.remove(rootId);
+    threadTailNew.remove(rootId);
     final replies = <MessageRow>[];
     for (final m in page) {
       if (m.id == rootId) {
@@ -1972,6 +1984,7 @@ class AppState extends ChangeNotifier {
     threadTailMissing.clear();
     jumpingToLatest.clear();
     latestJumpFailed.clear();
+    threadTailNew.clear();
     channels.clear();
     accounts.clear();
     messages.clear();

@@ -262,4 +262,23 @@ void main() {
     expect(server.posted, isEmpty);
     expect(app.failedSends, isEmpty);
   });
+
+  testWidgets('띠가 선 동안 소켓 새 답글이 오면 띠에 「· 새 답글 n개」가 붙고, 옛 창에는 붙지 않는다', (tester) async {
+    final server = _Server(replies: 250);
+    final app = (await tester.runAsync(() => _boot(server)))!;
+    addTearDown(app.dispose);
+    await enterOld(tester, app);
+    app.applyEvent({
+      'type': 'message.created',
+      'message': {'id': 'r252', 'seq': 252, 'channelId': 'c1', 'threadRootId': 'root', 'authorId': 'a2', 'body': '새', 'kind': 'user'},
+    });
+    await tester.pump();
+    expect(find.byKey(const Key('message-r252')), findsNothing);
+    final expected = '${stringsFor('ko').threadLatestReplies} · ${stringsFor('ko').threadLatestNewReplies.replaceFirst('{n}', '1')}';
+    expect(find.text(expected), findsOneWidget);
+    await tester.tap(find.byKey(const Key('thread-latest-go')));
+    await _settle(tester);
+    expect(app.threadTailNew, isEmpty);
+    expect(find.byKey(const Key('thread-latest-band')), findsNothing);
+  });
 }

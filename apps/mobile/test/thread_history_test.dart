@@ -20,7 +20,7 @@ class _Server {
   _Server({required this.replies, this.oldServer = false});
 
   /// 답글 수. 루트는 seq 1, 답글은 seq 2.. 이다.
-  final int replies;
+  int replies;
 
   /// 참이면 #1048 전의 서버처럼 굴어 스레드 `hasMore` 를 늘 `false` 로 주고 `before` 를 무시한다.
   final bool oldServer;
@@ -307,5 +307,63 @@ void main() {
     await app2.openThread('c1', 'root', aroundSeq: 240);
     expect(app2.threads['root']!.map((m) => m.seq), contains(251));
     expect(app2.threadTailMissing, isEmpty);
+  });
+
+  test('띠가 선 스레드에 소켓으로 새 답글이 오면 옛 창에 붙이지 않고 세며, 최신으로 가면 그 안에 들어 있고 수는 지워진다', () async {
+    final server = _Server(replies: 250);
+    final app = await _open(server);
+    addTearDown(app.dispose);
+    await app.openThread('c1', 'root', aroundSeq: 40);
+    // 띠가 선 상태: 손에는 최신 페이지(152..251)와 창(1..90)이 있고 사이가 비어 있다.
+    expect(app.threadTailMissing, contains('root'));
+    final before = app.threads['root']!.length;
+
+    Map<String, Object?> reply(int seq, {String kind = 'user'}) => {
+          'type': 'message.created',
+          'message': {
+            'id': 'r$seq',
+            'seq': seq,
+            'channelId': 'c1',
+            'threadRootId': 'root',
+            'authorId': 'a2',
+            'body': '새 답글 $seq',
+            'kind': kind,
+          },
+        };
+    app.applyEvent(reply(252));
+    app.applyEvent(reply(253));
+    app.applyEvent(reply(254, kind: 'progress'));
+    // 창·최신 묶음 어디에도 안 붙고, 진행 줄은 안 센다.
+    expect(app.threads['root']!.length, before);
+    expect(app.threads['root']!.map((m) => m.seq), isNot(contains(252)));
+    expect(app.threadTailNew['root'], 2);
+
+    // 이미 손에 든 답글의 수정(같은 seq)은 그대로 반영된다.
+    app.applyEvent({
+      'type': 'message.updated',
+      'message': {'id': 'r40', 'seq': 40, 'channelId': 'c1', 'threadRootId': 'root', 'authorId': 'a1', 'body': '고침', 'kind': 'user'},
+    });
+    expect(app.threads['root']!.firstWhere((m) => m.seq == 40).body, '고침');
+    expect(app.threadTailNew['root'], 2);
+
+    // 최신으로 가면 수가 지워진다(서버 최신 페이지에 그 답글이 들어 있다).
+    server.replies = 253;
+    expect(await app.jumpToLatestReplies('c1', 'root'), isTrue);
+    expect(app.threadTailMissing, isEmpty);
+    expect(app.threadTailNew, isEmpty);
+    expect(app.threads['root']!.last.seq, 254);
+  });
+
+  test('띠가 없는 스레드에서는 소켓 답글이 전처럼 바로 붙는다(회귀)', () async {
+    final server = _Server(replies: 50);
+    final app = await _open(server);
+    addTearDown(app.dispose);
+    expect(app.threadTailMissing, isEmpty);
+    app.applyEvent({
+      'type': 'message.created',
+      'message': {'id': 'r99', 'seq': 99, 'channelId': 'c1', 'threadRootId': 'root', 'authorId': 'a2', 'body': '새', 'kind': 'user'},
+    });
+    expect(app.threads['root']!.last.seq, 99);
+    expect(app.threadTailNew, isEmpty);
   });
 }
