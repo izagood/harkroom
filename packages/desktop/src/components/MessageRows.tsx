@@ -8,6 +8,7 @@ import { dayLabel, localDayKey } from '../lib/day';
 import { exchangeRows, type ExchangeSlot } from '../lib/agentExchange';
 import type { SectionId } from './settings/sections';
 import type { Locale } from '../i18n';
+import { markFirstMessagePaint } from '../lib/bootTimings';
 
 /**
  * 채널 대화 줄들 — **화면에 보이는 줄과 그 앞뒤 버퍼만 마운트한다**(대화 불러오기 성능,
@@ -79,6 +80,9 @@ interface RowsProps {
 }
 
 export function MessageRows(props: RowsProps) {
+  // 콜드 스타트 계측: 첫 메시지 줄이 그려진 때(프로세스에서 한 번, `bootTimings`).
+  const hasRows = props.slots.length > 0;
+  useEffect(() => { if (hasRows) markFirstMessagePaint(); }, [hasRows]);
   // 환경은 실행 중에 바뀌지 않는다 — 훅 순서가 흔들릴 일이 없다.
   return canVirtualize() ? <VirtualRows {...props} /> : <AllRows {...props} />;
 }

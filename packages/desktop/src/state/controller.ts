@@ -9,6 +9,8 @@ import { ApiClient, ApiError, type PreviewTicket } from '../lib/api';
 import { addRange, coversSeq, type SeqRange } from '../lib/seqCoverage';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
+import { markBoot } from '../lib/bootTimings';
+import { lastChannelScope, lastChannelStorage } from '../lib/prefs';
 import { silentNotifier, type NotificationTarget, type Notifier } from '../lib/notify';
 import { anyAppWindowFocused } from '../lib/appWindows';
 import { bodyRecipients, displayBody } from '../lib/mention';
@@ -89,6 +91,18 @@ export class Controller {
   private mineTick: ReturnType<typeof setInterval> | null = null;
   /** 히스토리를 이미 통째로 받은 채널. 이 집합에 없으면 openChannel이 증분이 아니라 전체를 받는다. */
   private loadedChannels = new Set<string>();
+  /**
+   * 마지막 채널을 기억하는 열쇠(`lastChannelScope` — 서버 주소 + 계정 id). 세우는 쪽은
+   * 커뮤니티 기동(`startCommunitySession`·`restoreCommunitySession`)이고, `null` 이면
+   * 기억도 복원도 하지 않는다(시험·옛 단일 세션).
+   */
+  lastChannelScope: string | null = null;
+  /**
+   * `start()` 가 기동 묶음과 **병렬로** 미리 받은 첫 페이지(콜드 스타트 A안). 그 채널을 처음
+   * 여는 `openChannel` 이 새로 묻지 않고 이것에 합류한다 — 응답 전에 눌러도 요청은 하나다.
+   * 실패는 `null` 로 접어 두고, 그때는 평소대로 다시 묻는다.
+   */
+  private prefetchedPages = new Map<string, Promise<{ messages: MessageRow[]; hasMore: boolean } | null>>();
   /**
    * 채널마다 **받아 온 seq 구간**(`lib/seqCoverage`). `loadedChannels` 가 "한 번이라도 열었는가"라면
    * 이것은 "어느 자리의 이웃이 실려 있는가"다 — 점프가 창을 받을지는 이것으로 정한다(`openMessage`).
@@ -256,6 +270,13 @@ export class Controller {
     // 실패하고 소켓의 재시도가 새 티켓으로 붙는다(지금 재접속과 같은 길).
     let earlyTicket: Promise<string> | null = this.api.wsTicket();
     earlyTicket.catch(() => undefined);
+    // 마지막으로 보던 채널의 첫 페이지를 **기동 묶음과 같이** 띄운다(콜드 스타트 A안). 예전에는
+    // 묶음이 끝나고 사람이 채널을 누른 **뒤에야** 이 요청이 나가서, 왕복(실측 300ms 바닥) 하나와
+    // 500행 전송이 그 뒤에 직렬로 붙었다. 한 채널만 받는 이유는 PR 본문에 있다 — 재시작 뒤 가장
+    // 먼저 보는 것은 거의 언제나 마지막 채널이고, 더 받으면 느린 경로에서 기동 묶음과 대역을 다툰다.
+    const resumeChannelId = this.lastChannelScope ? lastChannelStorage.load(this.lastChannelScope) : null;
+    if (resumeChannelId) this.prefetchPage(resumeChannelId);
+    markBoot('start:request');
     const [me, { accounts, groups, teams }, channels, dms, leases, unread, reads] = await Promise.all([
       this.api.me(), this.api.accounts(), this.api.channels(),
       this.api.dms(), this.api.leases(), this.api.inboxUnread(), this.api.reads(),
@@ -263,6 +284,7 @@ export class Controller {
     // React StrictMode 정리나 재로그인이 위 요청 도중 stop() 할 수 있다. 그 뒤 계속하면
     // 폐기된 컨트롤러가 WS와 러너를 다시 만들며 세션 하나가 둘로 갈라진다.
     if (this.stopped) return;
+    markBoot('start:done');
     store.set({
       me, channels, dms, leases, unread,
       accounts: Object.fromEntries(accounts.map((a) => [a.id, a])),
@@ -305,6 +327,7 @@ export class Controller {
     }, {
       onEvent: (e) => this.handleEvent(e),
       onOpen: () => {
+        markBoot('ws:open');
         this.store.getState().set({ connected: true });
         this.swallow(this.reconcile());
         // 서버 버전은 **소켓이 열릴 때마다** 다시 묻는다(#693). 주기 갱신이 아닌 이유:
@@ -333,6 +356,52 @@ export class Controller {
     // 하고(채팅은 daemon 없이도 된다), 그 실패는 러너를 띄우려 할 때 러너 상태에 사유로
     // 오른다(`RunnerLauncher.startAll`). 여기서 await 하면 소켓 왕복이 창 표시를 늦춘다.
     this.swallow(this.runnerLauncher.ensureOperator());
+
+    // 마지막 채널을 연다 — 기다리지 않는다. 첫 화면은 그 채널의 머리로 바로 서고, 메시지는
+    // 위에서 미리 띄운 응답이 오는 대로 찬다. 그 사이 사람이 다른 채널을 눌렀으면 열지 않는다.
+    // 목록에 없는 채널(나갔거나 지워졌다)이면 기억을 지우고 받아 둔 것도 버린다.
+    if (resumeChannelId) {
+      const known = channels.some((c) => c.id === resumeChannelId) || dms.some((d) => d.id === resumeChannelId);
+      if (known && !this.store.getState().activeChannelId) {
+        this.swallow(this.openChannel(resumeChannelId));
+      } else {
+        this.prefetchedPages.delete(resumeChannelId);
+        if (!known && this.lastChannelScope) lastChannelStorage.remove(this.lastChannelScope);
+      }
+    }
+  }
+
+  /** 첫 페이지를 미리 띄워 `prefetchedPages` 에 둔다. 실패는 `null` 로 접는다. */
+  private prefetchPage(channelId: string): void {
+    markBoot('messages:request');
+    const page = this.api.messages(channelId, { since: 0, limit: INITIAL_HISTORY_LIMIT })
+      .then((p) => { markBoot('messages:response'); return p; })
+      .catch(() => null);
+    this.prefetchedPages.set(channelId, page);
+  }
+
+  /**
+   * 채널의 **첫** 페이지(since=0)를 받는다. 미리 받은 것이 있으면 그것에 합류하고(응답이 오면
+   * 버린다), 없거나 실패했으면 새로 묻는다.
+   */
+  private async firstPage(channelId: string): Promise<{ messages: MessageRow[]; hasMore: boolean }> {
+    const prefetched = this.prefetchedPages.get(channelId);
+    if (prefetched) {
+      // 응답이 올 때까지 **지우지 않는다** — 기동의 복원과 사람의 클릭이 같은 응답에 합류해야
+      // 요청이 하나다. 둘 다 같은 페이지를 넣으므로(upsert) 두 번 넣어도 무해하다.
+      const page = await prefetched;
+      if (this.prefetchedPages.get(channelId) === prefetched) this.prefetchedPages.delete(channelId);
+      if (page) return page;
+    }
+    markBoot('messages:request');
+    const page = await this.api.messages(channelId, { since: 0, limit: INITIAL_HISTORY_LIMIT });
+    markBoot('messages:response');
+    return page;
+  }
+
+  /** 마지막으로 연 채널을 기억한다(커뮤니티·계정별). */
+  private rememberChannel(channelId: string): void {
+    if (this.lastChannelScope) lastChannelStorage.save(this.lastChannelScope, channelId);
   }
 
   stop(): void {
@@ -444,6 +513,8 @@ export class Controller {
     // 고정은 문장이 아니지만 *누구와 이야기하던 자리인가*는 남는다. 초안과 같은 매체에
     // 같은 수명으로 두기로 했으므로 지우는 자리도 여기다(#706).
     this.store.getState().clearStickyMentions();
+    // 마지막 채널도 같은 수명이다 — 계정이 떠난 뒤 *어디를 보고 있었나*만 남을 이유가 없다.
+    if (this.lastChannelScope) lastChannelStorage.remove(this.lastChannelScope);
     this.store.getState().reset();
   }
 
@@ -1048,6 +1119,7 @@ export class Controller {
       activeChannelId: channelId, threadRootId: null, highlightedMessageId: null,
       ...(opts.reveal === false ? {} : { channelRevealSeq: store.channelRevealSeq + 1 }),
     });
+    this.rememberChannel(channelId);
     // 투영된 system 메시지는 사용자가 그 채널을 보고 있지 않아도 WS로 들어와 maxSeq를 올린다.
     // 그 상태에서 증분 조회를 하면 backlog 전체가 건너뛰어져 채널이 거의 비어 보인다 —
     // 그래서 처음 여는 채널은 히스토리를 통째로 받는다(since=0 → 서버가 최신 N개를 준다).
@@ -1062,7 +1134,7 @@ export class Controller {
     this.swallow(this.loadChannelAutoMentions(channelId));
     // 이미 연 채널이면 증분을 **끝까지** 받는다(`pullSince`) — 한 페이지로 자르면 틈이 남는다.
     if (since > 0) { await this.pullSince(channelId, since); this.settleReadPosition(channelId); return; }
-    const page = await this.api.messages(channelId, { since, limit: INITIAL_HISTORY_LIMIT });
+    const page = await this.firstPage(channelId);
     this.loadedChannels.add(channelId);
     // 첫 페이지는 "가장 오래된 줄부터 최신까지"를 말한다 — 그 뒤 소켓으로 오는 새 글도 이 안이다.
     // 빈 페이지는 아무것도 말하지 않는다.
@@ -1079,6 +1151,11 @@ export class Controller {
         hasMore: { ...this.store.getState().hasMore, [channelId]: page.hasMore },
       });
     }
+    markBoot('messages:applied');
+    // 응답을 기다리는 사이 사람이 다른 채널로 갔으면 읽음 처리하지 않는다 — 한 줄도 못 본 채널을
+    // 읽었다고 적게 된다. 기동 때 복원한 채널이 늦게 도착하는 경우가 가장 흔하다. 돌아오면
+    // 증분 갈래(`since > 0`)가 그때 읽음 처리한다.
+    if (this.store.getState().activeChannelId !== channelId) return;
     this.settleReadPosition(channelId);
   }
 
@@ -2529,6 +2606,7 @@ export class Controller {
     // 뒤로·앞으로 이동도 채널을 새로 여는 것이다 — 접힘 기본값이 여기서 갈리면
     // 같은 채널이 어떻게 도착했는지에 따라 다르게 보인다(#217).
     store.set({ activeChannelId: channelId, threadRootId: null, highlightedMessageId: null });
+    this.rememberChannel(channelId);
     const since = this.loadedChannels.has(channelId)
       ? Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq))
       : 0;
@@ -2539,7 +2617,7 @@ export class Controller {
     // 읽음 처리(`settleReadPosition`)는 **두 갈래 모두** 거친다 — 증분 갈래에서 빠뜨리면 뒤로·앞으로
     // 간 채널의 배지가 남는다(security F1, 2026-10-06).
     if (since > 0) { await this.pullSince(channelId, since); this.settleReadPosition(channelId); return; }
-    const page = await this.api.messages(channelId, { since, limit: INITIAL_HISTORY_LIMIT });
+    const page = await this.firstPage(channelId);
     this.loadedChannels.add(channelId);
     if (page.messages.length) this.addCoverage(channelId, Math.min(...page.messages.map((m) => m.seq)), Infinity);
     store.upsertMessages(channelId, page.messages);
@@ -2821,6 +2899,7 @@ export async function startCommunitySession(opts: {
     opts.onSessionLost ?? (() => {}),
     entry.store,
   );
+  controller.lastChannelScope = lastChannelScope(opts.baseUrl, opts.accountId);
   useCommunityRegistry.getState().attachController(entry.id, controller);
   try {
     await controller.start();
@@ -2923,6 +3002,7 @@ export function restoreCommunitySession(opts: {
       opts.onSessionLost ?? (() => {}),
       entry.store,
     );
+    controller.lastChannelScope = lastChannelScope(opts.baseUrl, opts.accountId);
     current = controller;
     useCommunityRegistry.getState().attachController(entry.id, controller);
     try {
