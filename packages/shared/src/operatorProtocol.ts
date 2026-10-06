@@ -154,6 +154,7 @@ export function isMachineDigest(value: unknown): value is string {
 
 const CREDENTIAL_KINDS = new Set(['claude', 'codex', 'mcp', 'gh']);
 const OPERATOR_PLATFORMS = new Set<string>(['darwin', 'linux', 'win32']);
+const CREDENTIAL_NAME = /^[a-z0-9][a-z0-9._-]{0,47}$/;
 const CREDENTIAL_STATES = new Set<OperatorCredentialState>(['present', 'expired', 'missing']);
 const MAX_CREDENTIALS = 64;
 const MAX_STATUS_AGENTS = 256;
@@ -210,7 +211,8 @@ export function parseOperatorStatus(value: unknown): OperatorStatus | null {
       const r = c as Record<string, unknown>;
       const kind = typeof r.kind === 'string' && CREDENTIAL_KINDS.has(r.kind) ? r.kind as 'claude' | 'codex' | 'mcp' | 'gh' : null;
       const state = typeof r.state === 'string' && CREDENTIAL_STATES.has(r.state as OperatorCredentialState) ? r.state as OperatorCredentialState : null;
-      const name = shortText(r.name);
+      // 이름은 서버 이름·계정 핸들 꼴만 받는다(security #1200 n3) — 토큰 조각(대문자·긴 난수 등)이 화면에 실리지 않게.
+      const name = typeof r.name === 'string' && CREDENTIAL_NAME.test(r.name) ? r.name : null;
       if (!kind || !state || !name) continue;
       const agentIds = Array.isArray(r.agentIds)
         ? r.agentIds.map((a) => shortText(a)).filter((a): a is string => a !== null).slice(0, MAX_STATUS_AGENTS)

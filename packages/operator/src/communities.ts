@@ -7,7 +7,7 @@
  * 레지스트리는 배정을 모른다 — 둘을 잇는 어댑터가 여기 하나다.
  */
 import { createAssignmentReconciler, type AssignmentDeps } from './assignments.js';
-import { createCommunity, type CommunityInstance } from './community.js';
+import { createCommunity, type CommunityDeps, type CommunityInstance } from './community.js';
 import { operatorVersion } from './version.js';
 import { communityKey, readConfig, rememberOperatorId } from './config.js';
 import { createForwarder } from './forward.js';
@@ -42,6 +42,8 @@ export interface StartCommunitiesDeps {
   operatorBin: string;
   /** 원격 MCP 의 OAuth 토큰(`mcpOAuth.ts`). 없으면 토큰을 굽지 않는다 — 하네스가 제 손으로 인증한다(옛 동작). */
   mcpOAuth?: McpOAuth;
+  /** 박동 재료(P3a, `heartbeat.ts`). 없으면 박동을 내지 않는다. */
+  heartbeat?: CommunityDeps['heartbeat'];
 }
 
 export interface CommunityRuntime {
@@ -169,6 +171,7 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
     const community = createCommunity({
       baseUrl, token, agents, reconciler, log: deps.log,
       version: operatorVersion(deps.appVersion),
+      heartbeat: deps.heartbeat,
       runnerLink: deps.runnerLink, forwarder, fetchImpl: deps.fetchImpl,
       harnesses: () => { refreshHarnesses(); return withModels(); },
       // 실패는 삼킨다 — 못 적어도 이 오퍼레이터는 그대로 돈다. 앱의 '이 기기' 기본값만 늦어진다.

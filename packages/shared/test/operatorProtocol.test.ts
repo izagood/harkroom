@@ -102,3 +102,14 @@ describe('업그레이드 단계 — P2b', () => {
     expect(parseOperatorStatus({ turns: { running: 0 }, platform: 'plan9' })?.platform).toBeUndefined();
   });
 });
+
+describe('자격 증명 이름 — security #1200 n3', () => {
+  it('서버 이름·계정 핸들 꼴만 받는다 — 대문자·긴 난수 같은 토큰 조각은 그 항목을 버린다', () => {
+    const out = parseOperatorStatus({ turns: { running: 0 }, credentials: [
+      { kind: 'mcp', name: 'slack', state: 'present' },
+      { kind: 'claude', name: 'sk-ant-oat01-AbCdEf', state: 'present' },
+      { kind: 'gh', name: 'x'.repeat(49), state: 'present' },
+    ] });
+    expect(out?.credentials?.map((c) => c.name)).toEqual(['slack']);
+  });
+});

@@ -55,6 +55,8 @@ export interface TurnSlots {
   releaseRunner(runnerId: string): void;
   /** 지금 쥔 자리 수(상태 표시·시험용). */
   inUse(): number;
+  /** runnerId → 그 러너가 쥔 자리 수(박동의 에이전트별 턴 수). */
+  byRunner(): Map<string, number>;
   readonly max: number | null;
 }
 
@@ -80,6 +82,7 @@ export function createTurnSlots(opts: { max: number | null; log?: (line: string)
   return {
     max: opts.max,
     inUse: () => count,
+    byRunner: () => new Map([...held].map(([runnerId, keys]) => [runnerId, keys.size])),
 
     maybeHandle(runnerId, req, from) {
       if (req.type !== 'http.forward' || req.method !== 'POST') return null;

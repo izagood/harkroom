@@ -48,6 +48,8 @@ import { readConfig } from './config.js';
 import { createTurnMerge, defaultExec, ghEnv, GH_PATH } from './turnMerge.js';
 import { createTurnApi } from './turnApi.js';
 import { createTurnSlots, MAX_TURNS_ENV, parseMaxTurns } from './turnSlots.js';
+import { collectStatus, readMachineDigest } from './heartbeat.js';
+import { announceOf } from './communities.js';
 import { createTurnUploads } from './turnUploads.js';
 import { cleanupLedgerPath } from './workspaceCleanup.js';
 import { cleanupOwnersPath, createCleanupOwners } from './workspaceCleanupOwners.js';
@@ -214,6 +216,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   // 결과 보고를 한다. 임대는 `turnSecrets` 의 것을 그대로 쓴다(`lookup`).
   // 동시 턴 상한(R1) — 이 오퍼레이터가 띄운 러너 전부를 합쳐 센다(`turnSlots.ts`).
   const turnSlots = createTurnSlots({ max: parseMaxTurns(process.env[MAX_TURNS_ENV], log), log });
+  const daemonStartedAt = new Date();
+  let machineDigest: Promise<string | null> | null = null;
   if (turnSlots.max !== null) log(`동시 턴 상한: ${turnSlots.max}`);
   const turnMerge = createTurnMerge({
     forward: async (agentId, req) => {
@@ -653,6 +657,17 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
         appVersion: args.appVersion ?? null, log,
         runnerLink, socketPath: outcome.paths.socketPath, operatorBin: entryPath, mcpOAuth,
         turnSecretsDir: join(appDataDir, 'turn-secrets'),
+        // 박동(P3a) — 서버가 「호스트」 화면에 보일 이 머신의 지금 상태. 머신 값은 한 번 읽어 둔다.
+        heartbeat: {
+          status: () => collectStatus({
+            startedAt: daemonStartedAt,
+            turns: () => ({ running: turnSlots.inUse(), max: turnSlots.max }),
+            turnsByRunner: () => turnSlots.byRunner(),
+            runners: () => announceOf(registry).map((r) => ({ runnerId: r.runnerId, agentId: r.agentId })),
+            dataDir: appDataDir,
+          }),
+          machine: () => (machineDigest ??= readMachineDigest()),
+        },
       });
       communities = runtime.communities;
       startCommunity = runtime.startOne;

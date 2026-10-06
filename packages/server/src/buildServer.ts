@@ -12,7 +12,7 @@ import { registerAuthRoutes } from './routes/authRoutes.js';
 import { registerAccountRoutes } from './routes/accountRoutes.js';
 import { registerGrantRoutes } from './routes/grantRoutes.js';
 import { registerConnectorRoutes } from './routes/connectorRoutes.js';
-import { registerOperatorRoutes } from './routes/operatorRoutes.js';
+import { machineIdKey, registerOperatorRoutes } from './routes/operatorRoutes.js';
 import { createOperatorHub } from './ws/operatorHub.js';
 import { registerAssignmentRoutes } from './routes/assignmentRoutes.js';
 import { registerThreadAgentModelRoutes } from './routes/threadAgentModelRoutes.js';
@@ -162,6 +162,8 @@ export interface ServerDeps {
   /** 소켓 뒤 자격증명 재검증 주기. 기본 60초. */
   wsRevalidateMs?: number;
   /** WS ping/pong 주기(ms). 기본 30초. 테스트에서 짧게 준다. */
+  /** 오퍼레이터 박동을 DB·이벤트로 처리하는 최소 간격(ms). 시험이 줄인다. 기본 `STATUS_MIN_INTERVAL_MS`. */
+  operatorStatusMinIntervalMs?: number;
   wsHeartbeatMs?: number;
   /** '입력 중' 상태의 수명(ms). 기본 6초. */
   typingTtlMs?: number;
@@ -646,6 +648,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     hub: operatorHub,
     // 소켓 수명 규칙은 `/ws`·릴레이와 **같은 값**이다 — 갈라지면 더 민감한 쪽이 더 느슨해진다.
     heartbeatMs: deps.wsHeartbeatMs,
+    // 머신 묶음표 섞기(security #1200 n1) — 자동화 봉투와 같은 env 에서 용도를 갈라 뽑는다.
+    statusMinIntervalMs: deps.operatorStatusMinIntervalMs,
+    machineIdKey: machineIdKey(deps.secretKey !== undefined ? deps.secretKey : process.env.HARKROOM_SECRET_KEY),
   });
   // 배정(§3). 허브 뒤 — hello 에 배정을 다시 미는 구독이 허브에 걸린다.
   await registerAssignmentRoutes(app, deps.pool, operatorHub);

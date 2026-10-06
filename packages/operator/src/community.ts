@@ -9,9 +9,9 @@
  * 이 객체가 해석하는 프레임은 `assign`·`unassign` 둘뿐이다. 나머지(러너 프레임)는 단계 3 이
  * `onFrame` 으로 릴레이 다중화기에 넘긴다 — 여기서 해석하면 스펙 §8 근거 ②(어휘)가 깨진다.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
-import type { OperatorCapabilities } from '@harkroom/shared';
+import type { OperatorCapabilities, OperatorStatus } from '@harkroom/shared';
 import type { AgentDefinition, ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 import type { Forwarder } from './forward.js';
@@ -19,6 +19,7 @@ import type { AssignmentReconciler } from './assignments.js';
 import type { LocalAgentConfig } from './config.js';
 import { createRelayMux } from './relayMux.js';
 import { createServerLink, type LinkDialer, type ServerLink } from './serverLink.js';
+import { HEARTBEAT_INTERVAL_MS } from './heartbeat.js';
 
 export interface CommunityDeps {
   baseUrl: string;
@@ -49,6 +50,12 @@ export interface CommunityDeps {
   onSelf?: (operatorId: string) => void;
   /** 이 오퍼레이터의 빌드 버전(`version.ts`). hello 에 싣는다 — `null`·빈 값이면 싣지 않는다(서버는 "모른다"). */
   version?: string | null;
+  /**
+   * 박동(P3a). 붙을 때 한 번, 그 뒤 `heartbeatMs` 마다 `status` 프레임을 낸다. 없으면 박동이 없다(옛 동작).
+   * 끊겨 있는 동안은 보내지 않는다 — 다음 붙음이 곧바로 하나를 낸다.
+   */
+  heartbeat?: { status: () => Promise<OperatorStatus>; machine: () => Promise<string | null> };
+  heartbeatMs?: number;
   log: (line: string) => void;
 }
 
@@ -127,6 +134,8 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
       selfOwner = readSelf();
       // 서버는 소켓이 끊기면 러너의 세션을 버린다 — hello 의 목록 뒤에 러너별 announce 로 능력까지 다시 낸다.
       mux.resync();
+      // hello 다음에 박동 하나 — 서버는 끊길 때 박동을 버리므로 붙자마자 채워 둔다.
+      beat();
     },
     onClose: (reason) => deps.log(`서버와 끊겼다: ${deps.baseUrl}${reason ? ` — ${reason}` : ''}`),
     onFrame: (frame) => {
@@ -166,12 +175,41 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
   });
   linkRef.current = link;
 
+  let beatTimer: ReturnType<typeof setInterval> | null = null;
+  const beat = (): void => {
+    const hb = deps.heartbeat;
+    if (!hb) return;
+    void Promise.all([hb.status(), hb.machine()])
+      .then(([status, machine]) => {
+        // 이 커뮤니티의 에이전트만 싣는다(security #1203 F1) — hello 가 `reconciler.announce()` 로 거르는 것과 같은
+        // 경계다. 재료는 오퍼레이터 전역이라 거르지 않으면 회사 서버에 개인 에이전트의 id·턴 수가 간다.
+        // 턴 합계·메모리·디스크는 머신의 값이라 그대로 둔다(상한은 커뮤니티 사이에 공유된다).
+        const own: OperatorStatus = status.runners
+          ? { ...status, runners: status.runners.filter((r) => r.agentId in agents) }
+          : status;
+        // 머신 값에 이 서버 주소를 섞는다(security #1203 n7) — 서버마다 값이 달라 두 서버의 관리자가 서로
+        // 대조해 같은 머신인지 알 수 없다. 한 서버 안(같은 소유자)의 묶음에는 지장이 없다.
+        const scoped = machine ? createHash('sha256').update(`${machine}\n${deps.baseUrl}`).digest('hex') : null;
+        link.send({ type: 'status', status: own, ...(scoped ? { machine: scoped } : {}) });
+      })
+      .catch((err: unknown) => deps.log(`박동을 만들지 못했다: ${err instanceof Error ? err.message : String(err)}`));
+  };
+
   return {
     baseUrl: deps.baseUrl,
     link,
     assignments,
-    start: () => link.start(),
-    stop: () => link.stop(),
+    start: () => {
+      link.start();
+      if (deps.heartbeat && !beatTimer) {
+        beatTimer = setInterval(beat, deps.heartbeatMs ?? HEARTBEAT_INTERVAL_MS);
+        beatTimer.unref?.();
+      }
+    },
+    stop: () => {
+      if (beatTimer) { clearInterval(beatTimer); beatTimer = null; }
+      link.stop();
+    },
     onRunnerExit: (agentId, code) => {
       // 이 커뮤니티의 배정이 아니면 남의 exit 이다 — 조정기가 assigned 로 다시 거르지만
       // 여기서 먼저 거르면 로그가 커뮤니티마다 한 줄씩 찍히지 않는다.
