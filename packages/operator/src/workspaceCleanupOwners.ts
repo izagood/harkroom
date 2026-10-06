@@ -38,6 +38,10 @@ export interface CleanupOwners {
   threads(): Promise<OwnerRecord[]>;
   /** 이 스레드의 작업 폴더를 지워 달라고 그 러너의 다음 보고 답에 싣는다. */
   requestDelete(ref: CleanupThreadRef): void;
+  /** 지우기 요청을 거둔다(「보존」, 원장에서 빠짐). */
+  cancelDelete(ref: CleanupThreadRef): void;
+  /** 원장에서 아직 지울 차례인 스레드 키만 남기고 나머지 요청은 거둔다(회차마다). */
+  retainDeletes(keys: ReadonlySet<string>): void;
   /** 러너가 지웠다고 알린 스레드들(작업 폴더 경로와 함께) — 한 번 읽으면 비운다. */
   drainDeleted(): { thread: CleanupThreadRef; path: string }[];
 }
@@ -48,10 +52,12 @@ export function cleanupOwnersPath(appDataDir: string): string {
 
 const key = (t: CleanupThreadRef) => `${t.channelId}/${t.threadRootId}`;
 
-export function createCleanupOwners(opts: { path: string; log?: (line: string) => void }): CleanupOwners {
+export function createCleanupOwners(opts: { path: string; log?: (line: string) => void; now?: () => Date }): CleanupOwners {
   const runningBy = new Map<string, Set<string>>();
   /** threadKey → 지워 달라고 한 스레드. 메모리에만 — 오퍼레이터가 다시 뜨면 다음 회차가 다시 고른다. */
-  const pendingDelete = new Map<string, CleanupThreadRef>();
+  const pendingDelete = new Map<string, CleanupThreadRef & { requestedAt: string }>();
+  /** 지금 시각 — 시험이 갈아 끼운다. */
+  const nowIso = () => (opts.now ?? (() => new Date()))().toISOString();
   let deletedConfirmed: { thread: CleanupThreadRef; path: string }[] = [];
   let cache: Record<string, OwnerRecord> | null = null;
   let chain: Promise<unknown> = Promise.resolve();
@@ -84,6 +90,12 @@ export function createCleanupOwners(opts: { path: string; log?: (line: string) =
       const run = new Set<string>();
       for (const t of report.threads) if (t.running) run.add(key(t));
       runningBy.set(runnerId, run);
+      // 되살리기(규칙 4): 요청한 뒤 그 스레드에 턴이 돌거나 새 턴이 왔으면 요청을 거둔다. 기다리던 답이 나중에 나가
+      // 방금 쓴 폴더를 지우면 안 된다(security F1).
+      for (const t of report.threads) {
+        const p = pendingDelete.get(key(t));
+        if (p && (t.running || (t.lastTurnAt !== null && t.lastTurnAt > p.requestedAt))) pendingDelete.delete(key(t));
+      }
       const write = chain.then(async () => {
         const all = { ...(await load()) };
         for (const t of report.threads) {
@@ -112,14 +124,22 @@ export function createCleanupOwners(opts: { path: string; log?: (line: string) =
       chain = write.catch((err) => opts.log?.(`cleanup 주인 장부 쓰기 실패: ${err instanceof Error ? err.message : String(err)}`));
       await chain;
       const all = await load();
+      // 답을 짓는 **그 순간에** 다시 본다: 그 에이전트 것이고, 어느 러너에서도 돌지 않고, 요청한 뒤 턴이 없었을 때만.
+      const busy = new Set<string>();
+      for (const r of runningBy.values()) for (const k of r) busy.add(k);
       const deleteThreads = [...pendingDelete.entries()]
-        .filter(([k]) => all[k]?.agentId === agentId && !run.has(k))
-        .map(([, ref]) => ref);
+        .filter(([k, p]) => all[k]?.agentId === agentId && !busy.has(k) && (all[k]?.lastTurnAt ?? '') <= p.requestedAt)
+        .map(([, p]) => ({ channelId: p.channelId, threadRootId: p.threadRootId }));
       return answer(req, 200, { deleteThreads });
     },
     releaseRunner(runnerId) { runningBy.delete(runnerId); },
     async threads() { return Object.values(await load()); },
-    requestDelete(ref) { pendingDelete.set(key(ref), { channelId: ref.channelId, threadRootId: ref.threadRootId }); },
+    requestDelete(ref) {
+      const k = key(ref);
+      if (!pendingDelete.has(k)) pendingDelete.set(k, { channelId: ref.channelId, threadRootId: ref.threadRootId, requestedAt: nowIso() });
+    },
+    cancelDelete(ref) { pendingDelete.delete(key(ref)); },
+    retainDeletes(keys) { for (const k of [...pendingDelete.keys()]) if (!keys.has(k)) pendingDelete.delete(k); },
     drainDeleted() { const out = deletedConfirmed; deletedConfirmed = []; return out; },
     async ownerOf() {
       const out = new Map<string, OwnerRecord>();

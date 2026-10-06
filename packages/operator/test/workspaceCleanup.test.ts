@@ -279,3 +279,44 @@ describe('스레드 폴더 지우기는 러너에게 맡긴다(규칙 6)', () =>
     expect((await o.threads())[0]!.workspaceDir).toBeNull();
   });
 });
+
+describe('F1 — 지우기 요청은 되살리기·보존으로 거둔다', () => {
+  const C = '11111111-1111-1111-1111-111111111111';
+  const R = '44444444-4444-4444-4444-444444444444';
+  const req = (body: unknown) => ({ type: 'http.forward' as const, id: 'q', method: 'POST', path: CLEANUP_REPORT_PATH, body: JSON.stringify(body) });
+  const reply = (r: unknown) => JSON.parse((r as { body: string }).body) as { deleteThreads: unknown[] };
+  const T0 = { channelId: C, threadRootId: R, worktrees: [], lastTurnAt: '2026-09-01T00:00:00Z', running: false, workspaceDir: '/state/workspaces/y' };
+  const fresh = async () => {
+    const d = await mkdtemp(join(tmpdir(), 'owners-'));
+    let now = new Date('2026-10-06T00:00:00Z');
+    const o = createCleanupOwners({ path: join(d, 'owners.json'), now: () => now });
+    await o.maybeHandle('run1', 'agentA', req({ threads: [T0] }), 'relay');
+    o.requestDelete({ channelId: C, threadRootId: R });
+    return { o, tick: (iso: string) => { now = new Date(iso); } };
+  };
+  it('요청 → 새 턴(도는 중) → 턴 끝 보고 — 지우기가 나가지 않는다', async () => {
+    const { o } = await fresh();
+    const during = await o.maybeHandle('run1', 'agentA', req({ threads: [{ ...T0, lastTurnAt: '2026-10-06T00:05:00Z', running: true }] }), 'relay');
+    expect(reply(during).deleteThreads).toEqual([]);
+    const after = await o.maybeHandle('run1', 'agentA', req({ threads: [{ ...T0, lastTurnAt: '2026-10-06T00:10:00Z', running: false }] }), 'relay');
+    expect(reply(after).deleteThreads).toEqual([]);
+    const later = await o.maybeHandle('run1', 'agentA', req({ threads: [] }), 'relay');
+    expect(reply(later).deleteThreads).toEqual([]);
+  });
+  it('다른 러너가 그 스레드를 돌리는 중이면 답에 싣지 않는다', async () => {
+    const { o } = await fresh();
+    await o.maybeHandle('run2', 'agentA', req({ threads: [{ ...T0, lastTurnAt: null, running: true }] }), 'relay');
+    expect(reply(await o.maybeHandle('run1', 'agentA', req({ threads: [] }), 'relay')).deleteThreads).toEqual([]);
+  });
+  it('보존(cancelDelete)·원장에서 빠짐(retainDeletes)이면 거둔다, 아니면 나간다', async () => {
+    const a = await fresh();
+    a.o.cancelDelete({ channelId: C, threadRootId: R });
+    expect(reply(await a.o.maybeHandle('run1', 'agentA', req({ threads: [] }), 'relay')).deleteThreads).toEqual([]);
+    const b = await fresh();
+    b.o.retainDeletes(new Set());
+    expect(reply(await b.o.maybeHandle('run1', 'agentA', req({ threads: [] }), 'relay')).deleteThreads).toEqual([]);
+    const c = await fresh();
+    c.o.retainDeletes(new Set([`${C}/${R}`]));
+    expect(reply(await c.o.maybeHandle('run1', 'agentA', req({ threads: [] }), 'relay')).deleteThreads).toEqual([{ channelId: C, threadRootId: R }]);
+  });
+});

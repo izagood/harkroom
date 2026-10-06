@@ -37,6 +37,37 @@ export const gitWorktreePaths: ListWorktrees = (repo) => new Promise((resolve) =
   });
 });
 
+/**
+ * 하네스 기록(jsonl)에서 **실행한 명령**만 뽑는다 — claude 의 `tool_use.input.command`, codex 의 `function_call.arguments`
+ * 안 `command`. 모델이 읽은 파일·출력에 적힌 `worktree add` 는 그 스레드가 만든 것이 아니다(security n6).
+ */
+export function commandTexts(jsonl: string): string {
+  const out: string[] = [];
+  const visit = (v: unknown, depth: number): void => {
+    if (depth > 8 || !v || typeof v !== 'object') return;
+    if (Array.isArray(v)) { for (const x of v) visit(x, depth + 1); return; }
+    const o = v as Record<string, unknown>;
+    if (o.type === 'tool_use' && o.input && typeof (o.input as { command?: unknown }).command === 'string') {
+      out.push((o.input as { command: string }).command);
+      return;
+    }
+    if (o.type === 'function_call' && typeof o.arguments === 'string') {
+      try {
+        const cmd = (JSON.parse(o.arguments) as { command?: unknown }).command;
+        if (typeof cmd === 'string') out.push(cmd);
+        else if (Array.isArray(cmd)) out.push(cmd.filter((x) => typeof x === 'string').join(' '));
+      } catch { /* 모양이 다르면 건너뛴다 */ }
+      return;
+    }
+    for (const x of Object.values(o)) visit(x, depth + 1);
+  };
+  for (const line of jsonl.split('\n')) {
+    if (!line.includes('worktree add')) continue;
+    try { visit(JSON.parse(line), 0); } catch { /* 깨진 줄 */ }
+  }
+  return out.join('\n');
+}
+
 /** 기록에 `worktree add` 가 있지만 절대 경로가 안 드러났는가(`"$W"` 같은 변수). */
 export function hasOpaqueWorktreeAdd(text: string, home: string): boolean {
   const all = text.match(/worktree add\b/g)?.length ?? 0;
@@ -69,11 +100,14 @@ export interface ThreadDeleteDeps {
  * 한 스레드를 지운다: 작업 폴더 + 그 작업 폴더의 Claude 세션 기록(`projects/<인코딩>/` 안의 `memory/` 밖 전부) + 세션 레코드.
  * 작업 폴더가 상태 트리 밖이면(또는 심링크면) 아무것도 지우지 않고 false.
  */
-export async function deleteThread(deps: ThreadDeleteDeps, ref: CleanupThreadRef): Promise<boolean> {
+export type DeleteOutcome = 'deleted' | 'absent' | 'refused';
+
+export async function deleteThread(deps: ThreadDeleteDeps, ref: CleanupThreadRef): Promise<DeleteOutcome> {
   const key = `${ref.channelId}/${ref.threadRootId}`;
   const rec = deps.sessionOf(key);
-  if (!rec) return true; // 이미 없다
-  if (!(await isInsideRoot(deps.workspaceBaseDir, rec.workspaceDir))) return false;
+  // 레코드가 없다 — 이 러너(인스턴스)의 스레드가 아니다. "지웠다"로 알리지 않는다(security n8).
+  if (!rec) return 'absent';
+  if (!(await isInsideRoot(deps.workspaceBaseDir, rec.workspaceDir))) return 'refused';
   // 레코드를 먼저 뺀다 — 지우다 죽어도 다음 턴이 지운 세션을 이어받으려 하지 않는다.
   await deps.forget(key);
   await rm(rec.workspaceDir, { recursive: true, force: true });
@@ -86,7 +120,7 @@ export async function deleteThread(deps: ThreadDeleteDeps, ref: CleanupThreadRef
       await rm(join(dir, entry), { recursive: true, force: true });
     }
   }
-  return true;
+  return 'deleted';
 }
 
 export interface CleanupReporterDeps {
@@ -95,16 +129,22 @@ export interface CleanupReporterDeps {
   home: string;
   now?: () => Date;
   /** 답의 `deleteThreads` 를 지운다. 없으면 지우지 않는다. */
-  deleteThread?: (ref: CleanupThreadRef) => Promise<boolean>;
+  deleteThread?: (ref: CleanupThreadRef) => Promise<DeleteOutcome>;
   log?: (line: string) => void;
 }
 
-interface Open { repo: string | null; before: Promise<Set<string>>; workspaceDir: string | null; overlapped: boolean }
+export interface TurnInfo { repo: string | null; workspaceDir: string | null }
+
+interface Open { info: Promise<TurnInfo>; before: Promise<Set<string>>; overlapped: boolean }
 
 export interface CleanupReporter {
-  turnStarted(key: string, info: { repo: string | null; workspaceDir: string | null }): Promise<void>;
+  /**
+   * 턴이 시작했다. **장부에는 동기로 먼저 올린다** — `info` 를 기다리는 사이 온 지우기 요청이 시작 중인 턴의 폴더를 지우면
+   * 안 된다(security F2). 그래서 `info` 는 약속으로 받는다.
+   */
+  turnStarted(key: string, info: TurnInfo | Promise<TurnInfo>): Promise<void>;
   /** `transcripts` 는 이 턴의 하네스 기록 파일들(없으면 빈 배열). */
-  turnEnded(key: string, transcripts: string[]): Promise<void>;
+  turnEnded(key: string, transcripts: string[], workspaceDir?: string | null): Promise<void>;
   /** 기동 때 한 번 — 이미 쌓인 것의 주인을 알린다. */
   backfill(threads: CleanupThreadReport[]): Promise<void>;
   /** 턴이 없어도 주기적으로 — 오퍼레이터의 지우기 요청은 보고의 답으로만 오므로, 한가한 러너도 물어야 받는다. */
@@ -125,10 +165,10 @@ export function createCleanupReporter(deps: CleanupReporterDeps): CleanupReporte
   const send = async (threads: CleanupThreadReport[]) => {
     const keys = new Set(threads.map((t) => `${t.channelId}/${t.threadRootId}`));
     const all = [...threads];
-    for (const [k, o] of open) {
+    for (const k of open.keys()) {
       if (keys.has(k)) continue;
       const ref = refOf(k);
-      if (ref) all.push({ ...ref, worktrees: [], lastTurnAt: null, running: true, workspaceDir: o.workspaceDir });
+      if (ref) all.push({ ...ref, worktrees: [], lastTurnAt: null, running: true, workspaceDir: null });
     }
     const deleted = pendingDeleted;
     pendingDeleted = [];
@@ -138,8 +178,9 @@ export function createCleanupReporter(deps: CleanupReporterDeps): CleanupReporte
     for (const ref of reply.deleteThreads ?? []) {
       if (open.has(`${ref.channelId}/${ref.threadRootId}`)) continue; // 도는 턴은 건드리지 않는다
       try {
-        if (await deps.deleteThread(ref)) pendingDeleted.push(ref);
-        else deps.log?.(`cleanup: ${ref.threadRootId} 작업 폴더가 상태 트리 밖이라 지우지 않았다`);
+        const r = await deps.deleteThread(ref);
+        if (r === 'deleted') pendingDeleted.push(ref);
+        else if (r === 'refused') deps.log?.(`cleanup: ${ref.threadRootId} 작업 폴더가 상태 트리 밖이라 지우지 않았다`);
       } catch (err) { deps.log?.(`cleanup: ${ref.threadRootId} 지우기 실패: ${err instanceof Error ? err.message : String(err)}`); }
     }
   };
@@ -147,25 +188,28 @@ export function createCleanupReporter(deps: CleanupReporterDeps): CleanupReporte
   return {
     async turnStarted(key, info) {
       for (const o of open.values()) o.overlapped = true;
-      // 장부에는 **기다리기 전에** 올린다 — 아주 짧은 턴이 끝나는 통지가 먼저 와도 짝을 찾는다.
-      const before = (info.repo ? deps.listWorktrees(info.repo) : Promise.resolve([] as string[])).then((l) => new Set(l), () => new Set<string>());
-      open.set(key, { repo: info.repo, before, workspaceDir: info.workspaceDir, overlapped: open.size > 0 });
+      const infoP = Promise.resolve(info).catch(() => ({ repo: null, workspaceDir: null }) as TurnInfo);
+      const before = infoP.then((i) => (i.repo ? deps.listWorktrees(i.repo) : [])).then((l) => new Set(l), () => new Set<string>());
+      // 여기까지 await 없이 — 이 줄이 실행된 뒤에는 지우기가 이 스레드를 건너뛴다.
+      open.set(key, { info: infoP, before, overlapped: open.size > 0 });
+      const i = await infoP;
       const ref = refOf(key);
-      if (ref) await send([{ ...ref, worktrees: [], lastTurnAt: now().toISOString(), running: true, workspaceDir: info.workspaceDir }]);
+      if (ref) await send([{ ...ref, worktrees: [], lastTurnAt: now().toISOString(), running: true, workspaceDir: i.workspaceDir }]);
     },
-    async turnEnded(key, transcripts) {
+    async turnEnded(key, transcripts, workspaceDirAtEnd) {
       const o = open.get(key);
       open.delete(key);
       const ref = refOf(key);
       if (!ref) return;
       const worktrees = new Set<string>();
-      if (o?.repo) {
-        const after = await deps.listWorktrees(o.repo);
+      const info = o ? await o.info : null;
+      if (o && info?.repo) {
+        const after = await deps.listWorktrees(info.repo);
         const current = new Set(after);
         let opaque = false;
         for (const t of transcripts) {
           let text = '';
-          try { text = await readFile(t, 'utf8'); } catch { continue; }
+          try { text = commandTexts(await readFile(t, 'utf8')); } catch { continue; }
           for (const p of worktreeAddPaths(text, deps.home)) if (current.has(p)) worktrees.add(p);
           if (hasOpaqueWorktreeAdd(text, deps.home)) opaque = true;
         }
@@ -173,7 +217,7 @@ export function createCleanupReporter(deps: CleanupReporterDeps): CleanupReporte
         const fresh = after.filter((p) => !before.has(p));
         if (opaque && !o.overlapped && fresh.length === 1) worktrees.add(fresh[0]!);
       }
-      await send([{ ...ref, worktrees: [...worktrees], lastTurnAt: now().toISOString(), running: false, workspaceDir: o?.workspaceDir ?? null }]);
+      await send([{ ...ref, worktrees: [...worktrees], lastTurnAt: now().toISOString(), running: false, workspaceDir: workspaceDirAtEnd ?? info?.workspaceDir ?? null }]);
     },
     async backfill(threads) {
       if (threads.length) await send(threads);
@@ -206,7 +250,7 @@ export async function collectBackfill(deps: {
           const p = join(dir, f);
           const st = await lstat(p);
           last = Math.max(last, st.mtimeMs);
-          for (const w of worktreeAddPaths(await readFile(p, 'utf8'), deps.home)) worktrees.add(w);
+          for (const w of worktreeAddPaths(commandTexts(await readFile(p, 'utf8')), deps.home)) worktrees.add(w);
         } catch { /* 하나 못 읽어도 나머지 */ }
       }
     }

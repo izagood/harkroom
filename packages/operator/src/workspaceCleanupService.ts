@@ -213,6 +213,10 @@ export function createWorkspaceCleanup(deps: WorkspaceCleanupDeps, base: Cleanup
         }))].slice(-200),
       };
       await writeLedger(deps.ledgerPath, next);
+      // 원장에서 빠졌거나(되살아남) 보존된 스레드 폴더의 지우기 요청은 거둔다.
+      deps.owners.retainDeletes(new Set(next.items
+        .filter((i) => i.kind !== 'worktree' && i.thread && (i.state === 'listed' || i.state === 'blocked'))
+        .map((i) => threadKey(i.thread!))));
       const n = (s: string) => next.items.filter((i) => i.state === s).length;
       deps.log(`cleanup: 삭제 예정 ${n('listed')} · ⚠ ${n('blocked')} · 보존 ${n('kept')} · 주인 모름 ${n('unowned')}`);
     } finally { running = false; }
@@ -242,6 +246,9 @@ export function createWorkspaceCleanup(deps: WorkspaceCleanupDeps, base: Cleanup
     act: (path, action, by) => serial(async () => {
       const settings = await readCleanupSettings(deps.configPath);
       const r = applyHumanAction(await readLedger(deps.ledgerPath), path, action, by, settings, now());
+      // 「보존」은 이미 러너에게 나간 요청도 거둔다(security F1).
+      const target = r.ledger.items.find((i) => i.path === path);
+      if (action === 'keep' && target?.thread && target.kind !== 'worktree') deps.owners.cancelDelete(target.thread);
       const next = await runSweep({ ledger: r.ledger, actions: r.actions }, ports, deps.owners.running(), now());
       await writeLedger(deps.ledgerPath, next);
       return view();

@@ -532,14 +532,16 @@ const scheduler = createMentionScheduler({
   harkroom, registry, queue: mentionQueue, heldEntryIds, handoverDone, secretLeases, threadClaims,
   turnSlots: { acquire: (key) => harkroom.acquireTurnSlot(key), release: (key) => harkroom.releaseTurnSlot(key) },
   turnWatch: {
-    started: async (key) => {
-      const def = await harkroom.definition().catch(() => null);
-      await cleanupReporter.turnStarted(key, { repo: def?.workingDir ?? null, workspaceDir: store.get(key)?.workspaceDir ?? null });
-    },
+    // 정의를 기다리기 **전에** 부른다 — 리포터가 이 스레드를 "도는 중"으로 먼저 올린다(security F2).
+    started: (key) => cleanupReporter.turnStarted(key, harkroom.definition().then(
+      (def) => ({ repo: def.workingDir ?? null, workspaceDir: store.get(key)?.workspaceDir ?? null }),
+      () => ({ repo: null, workspaceDir: store.get(key)?.workspaceDir ?? null }),
+    )),
     ended: async (key, mentionId) => {
       const transcripts = turnTranscripts.get(mentionId) ?? [];
       turnTranscripts.delete(mentionId);
-      await cleanupReporter.turnEnded(key, transcripts.filter((p) => p.endsWith('.jsonl')));
+      // 첫 턴이면 작업 폴더는 턴 안에서 생겼다 — 끝날 때 다시 읽는다.
+      await cleanupReporter.turnEnded(key, transcripts.filter((p) => p.endsWith('.jsonl')), store.get(key)?.workspaceDir ?? null);
     },
   },
   // **턴마다** 축을 다시 읽는다 — 지운 계정은 빠지고 새 계정은 들어온다(`createLiveAccountLane`).
