@@ -1,5 +1,5 @@
 import { Fragment, useState, useRef, useEffect, useCallback, useLayoutEffect, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import { useHostDocument } from '../lib/hostDocument';
+import { useHostDocument, viewOf } from '../lib/hostDocument';
 
 export interface MenuItem {
   label: string;
@@ -106,12 +106,16 @@ export const PLACEMENT_GAP = 4;
  *
  * 조상 하나에서 멈추지 않고 끝까지 올라가며 교집합을 좁힌다. 스크롤 상자 안에 스크롤
  * 상자가 있는 배치(스레드 패널 안의 목록)에서 바깥 상자가 더 좁을 수 있다.
+ *
+ * 뷰포트는 **그 요소가 그려지는 창**의 것이다(`viewOf`) — 새 창 안의 메뉴를 메인 창 높이로 자르면
+ * 작은 창에서 아래로 나간다.
  */
 export function clipBounds(el: HTMLElement): { top: number; bottom: number } {
+  const view = viewOf(el.ownerDocument);
   let top = 0;
-  let bottom = window.innerHeight;
+  let bottom = view.innerHeight;
   for (let p = el.parentElement; p; p = p.parentElement) {
-    const overflowY = getComputedStyle(p).overflowY;
+    const overflowY = view.getComputedStyle(p).overflowY;
     if (overflowY === 'visible' || overflowY === '') continue;
     const r = p.getBoundingClientRect();
     top = Math.max(top, r.top);
@@ -290,8 +294,10 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
         // 머리가 있으면 그만큼 더 높다(약 44px). 좌표로 여는 소비자(#111)는 아직 머리를
         // 쓰지 않지만, 어림값을 항목 수에만 매어 두면 다음 소비자가 조용히 화면 밖으로 나간다.
         const height = items.length * 28 + items.filter((it, i) => i > 0 && it.separatorBefore).length * 9 + (header ? 44 : 0) + 8;
-        const x = Math.max(EDGE_GAP, Math.min(openAt.x, window.innerWidth - MENU_WIDTH - EDGE_GAP));
-        const y = Math.max(EDGE_GAP, Math.min(openAt.y, window.innerHeight - height - EDGE_GAP));
+        // 자르는 기준은 메뉴가 그려지는 창이다(`viewOf`) — 새 창이면 그 창의 크기.
+        const view = viewOf(hostDoc);
+        const x = Math.max(EDGE_GAP, Math.min(openAt.x, view.innerWidth - MENU_WIDTH - EDGE_GAP));
+        const y = Math.max(EDGE_GAP, Math.min(openAt.y, view.innerHeight - height - EDGE_GAP));
         return { position: 'fixed' as const, left: x, top: y };
       })()
     : undefined;
