@@ -158,6 +158,53 @@ describe('pickAccount', () => {
   });
 });
 
+describe('pickAccount — 상위 둘은 점수에 비례해 뽑는다 (2026-10-06)', () => {
+  // a: 90% 남음 · 50h → 1.80/h, b: 34% 남음 · 100h → 0.34/h. 반반이던 때는 b 가 a 만큼 받았다.
+  const es = [entry('a', { weekly: 10, weeklyResetH: 50 }), entry('b', { weekly: 66, weeklyResetH: 100 })];
+  const pB = 0.34 / (1.8 + 0.34);
+
+  it('둘째를 뽑을 확률은 s2 / (s1 + s2) 다', () => {
+    const N = 10_000;
+    let b = 0;
+    for (let i = 0; i < N; i += 1) {
+      if (pickAccount(input(es, { accounts: ['a', 'b'], random: () => (i + 0.5) / N })).order[0] === 'b') b += 1;
+    }
+    expect(b / N).toBeCloseTo(pB, 3);
+  });
+
+  it('난수가 1 − p 아래면 1등, 그 위면 2등이다 — 로그에 뽑힌 쪽의 확률을 단다', () => {
+    const lo = pickAccount(input(es, { accounts: ['a', 'b'], random: () => 1 - pB - 1e-6 }));
+    const hi = pickAccount(input(es, { accounts: ['a', 'b'], random: () => 1 - pB + 1e-6 }));
+    expect(lo.order).toEqual(['a', 'b']);
+    expect(lo.detail).toContain(`p=${(1 - pB).toFixed(2)}`);
+    expect(hi.order).toEqual(['b', 'a']);
+    expect(hi.detail).toContain(`p=${pB.toFixed(2)}`);
+  });
+
+  it('둘 다 0점이면 언제나 1등이다', () => {
+    // 배정 50건 × 2%p 감점으로 둘 다 여유 0 — 그래도 새 배정 기준(85/97) 아래라 자격은 있다.
+    const zero = [entry('a', { weekly: 10 }), entry('b', { weekly: 10 })];
+    const r = pickAccount(input(zero, {
+      accounts: ['a', 'b'], recentAssignments: new Map([['a', 50], ['b', 50]]), random: () => 0.999,
+    }));
+    expect(r.order[0]).toBe('a');
+    expect(r.detail).not.toContain('p=');
+  });
+
+  it('2등만 0점이면 2등은 뽑히지 않는다', () => {
+    const r = pickAccount(input([entry('a', { weekly: 10 }), entry('b', { weekly: 10 })], {
+      accounts: ['a', 'b'], recentAssignments: new Map([['b', 50]]), random: () => 0.999,
+    }));
+    expect(r.order[0]).toBe('a');
+  });
+
+  it('계정이 하나뿐이면 난수와 상관없이 그 계정이다', () => {
+    const r = pickAccount(input([entry('a', { weekly: 10 })], { accounts: ['a'], random: () => 0.999 }));
+    expect(r).toMatchObject({ order: ['a'], reason: 'new' });
+    expect(r.detail).not.toContain('p=');
+  });
+});
+
 describe('pickAccount — 같은 로그인은 후보 한 자리 (09-30 qa 실측)', () => {
   // lychee·lime 은 같은 로그인, plum 은 다른 로그인. 묶지 않으면 상위 둘이 lychee·lime 이라
   // 무작위를 어떻게 굴려도 plum 이 첫째가 되지 않았다.
