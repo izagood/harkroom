@@ -3,6 +3,7 @@ import { ApiClient, ApiError } from '../lib/api';
 import { GateClient, gateErrorText, gateProgressText, looksLikeWorkspaceAddress, pendingWorkspace,
   type PendingWorkspace } from '../lib/gate';
 import { Logo } from '../components/Logo';
+import { RecoveryKeyStep } from '../components/RecoveryKeyStep';
 import { ConnectUpdateBanner } from '../components/ConnectUpdateBanner';
 import { lastWorkspaceUrlStorage } from '../lib/prefs';
 
@@ -62,6 +63,11 @@ export function ConnectScreen(props: ConnectScreenProps) {
   /** 클레임할 수 있게 됐는가. 폴링이 `ready` 를 본 뒤에만 참이다. */
   const [claimable, setClaimable] = useState(false);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * 생성 응답에 실려 온 복구 키. **이 상태에만** 있다 — 보관본(`pendingWorkspace`)에 넣지 않으므로 앱을
+   * 닫으면 사라진다(그것이 "한 번만"이다). 사람이 저장했다고 확인하면 비운다.
+   */
+  const [recoveryKey, setRecoveryKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialError) setError(initialError);
@@ -131,6 +137,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
       // **응답을 화면에 그리기 전에 적는다.** 클레임 토큰은 이 응답에만 있고, 여기서
       // 앱이 죽으면 그 워크스페이스는 영영 가져갈 수 없다.
       pendingWorkspace.write(p);
+      if (res.recoveryKey) setRecoveryKey(res.recoveryKey);
       setPending(p);
       setProgress('Submitted — waiting for approval…');
     } catch (err) {
@@ -170,7 +177,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
   const discardPending = () => {
     if (pollTimer.current) clearTimeout(pollTimer.current);
     pendingWorkspace.clear();
-    setPending(null); setClaimable(false); setProgress(null); setError(null);
+    setPending(null); setClaimable(false); setProgress(null); setError(null); setRecoveryKey(null);
   };
 
   const submit = async () => {
@@ -218,7 +225,12 @@ export function ConnectScreen(props: ConnectScreenProps) {
         onSubmit={(e) => {
           e.preventDefault();
           // `create` 는 두 단계다 — 만들기, 그리고 준비되면 클레임.
-          if (authMode === 'create') { void (pending ? claimWorkspace() : createWorkspace()); return; }
+          if (authMode === 'create') {
+            // 복구 키 단계에서는 Enter 로 아무것도 하지 않는다 — 저장했다는 확인은 그 단계의 버튼만 받는다.
+            if (recoveryKey) return;
+            void (pending ? claimWorkspace() : createWorkspace());
+            return;
+          }
           void submit();
         }}
       >
@@ -247,7 +259,10 @@ export function ConnectScreen(props: ConnectScreenProps) {
         {/* `create` 는 **서버 주소를 묻지 않는다** — 그 주소는 아직 존재하지 않고, gate 가
             만들어 준 뒤에야 정해진다. 대신 만들어 달라고 할 곳(gate)을 묻는다. */}
         {authMode === 'create' ? (
-          pending ? (
+          pending && recoveryKey ? (
+            /* 진행·클레임으로 넘어가기 **전에** 복구 키를 받게 한다. 폴링은 뒤에서 계속 돈다. */
+            <RecoveryKeyStep recoveryKey={recoveryKey} communityName={pending.name} onDone={() => setRecoveryKey(null)} />
+          ) : pending ? (
             <>
               {/* 만들어지는 중이거나, 준비돼 클레임을 기다리는 자리. */}
               <div className="rounded-row border border-border bg-field px-3 py-2">
@@ -372,6 +387,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
         )}
         {/* 오류는 본문단이다 — 로그인이 막힌 사람에게 이 한 줄이 유일한 단서다. */}
         {error && <p className="text-danger">{error}</p>}
+        {!recoveryKey && (
         <button
           type="submit"
           disabled={
@@ -390,6 +406,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
             ? (pending ? (claimable ? 'Create admin account' : 'Waiting…') : 'Create community')
             : authMode === 'signin' ? 'Sign in' : authMode === 'bootstrap' ? 'Create account' : 'Join with invite'}
         </button>
+        )}
         {authMode === 'signin' ? (
           <div className="space-y-1">
             <button
@@ -425,6 +442,9 @@ export function ConnectScreen(props: ConnectScreenProps) {
             )}
           </div>
         ) : authMode === 'create' ? (
+          // 복구 키 단계에서는 빠져나가는 길이 Continue 하나다 — 여기서 버리면 다시 볼 수 없는 키가
+          // 클레임 보관본과 함께 사라진다(designer F1). 겹창의 Cancel 도 같은 이유로 숨긴다(아래).
+          recoveryKey ? null : (
           <button
             type="button"
             className="w-full text-meta text-fg-subtle underline"
@@ -437,6 +457,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
           >
             {pending ? 'Discard and go back to sign in' : 'Back to sign in'}
           </button>
+          )
         ) : (
           <button
             type="button"
@@ -446,7 +467,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
             Back to sign in
           </button>
         )}
-        {props.mode === 'add' && (
+        {props.mode === 'add' && !recoveryKey && (
           <button
             type="button"
             className="w-full rounded-row border border-border py-1.5 text-meta font-medium hover:bg-surface"
