@@ -686,6 +686,78 @@ async fn operator_merge_get(
     .await
 }
 
+#[tauri::command]
+async fn workspace_cleanup_get(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.workspace_cleanup_get()
+    })
+    .await
+}
+
+#[tauri::command]
+async fn workspace_cleanup_settings_set(
+    app: tauri::AppHandle,
+    enabled: Option<bool>,
+    grace_days: Option<u32>,
+) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.workspace_cleanup_settings_set(enabled, grace_days)
+    })
+    .await
+}
+
+/// 보존·되돌리기·삭제 예정에 넣기. 경로가 원장에 있는지·동작 이름은 오퍼레이터가 검사한다.
+#[tauri::command]
+async fn workspace_cleanup_act(
+    app: tauri::AppHandle,
+    path: String,
+    action: String,
+    by: String,
+) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.workspace_cleanup_act(&path, &action, &by)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn workspace_cleanup_sweep(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.workspace_cleanup_sweep()
+    })
+    .await
+}
+
+/// 「폴더 열기」 — **원장에 있는 경로만** Finder 로 연다. 웹뷰가 아무 경로나 열게 하는 자리가 되지 않게, 그 순간의 원장을
+/// 다시 읽어 그 경로가 항목인지 본다. 경로는 인자로만 넘긴다(셸을 거치지 않는다).
+#[tauri::command]
+async fn workspace_cleanup_reveal(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let view = conn.workspace_cleanup_get()?;
+        let known = view
+            .get("ledger")
+            .and_then(|l| l.get("items"))
+            .and_then(|i| i.as_array())
+            .map(|items| items.iter().any(|it| it.get("path").and_then(|p| p.as_str()) == Some(path.as_str())))
+            .unwrap_or(false);
+        if !known {
+            return Err("이 경로는 정리 목록에 없다".into());
+        }
+        // 원장 경로는 언제나 절대 경로라(`/` 로 시작) open 의 플래그로 읽힐 일이 없다.
+        std::process::Command::new("/usr/bin/open")
+            .arg(&path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
 /// 머지 래퍼의 gh 계정을 고른다 — `gh_user` 가 None 이면 지운다. 검사는 오퍼레이터가 한다(security C7).
 #[tauri::command]
 async fn operator_merge_set(
@@ -916,6 +988,11 @@ fn main() {
             operator_mcp_remove,
             operator_merge_get,
             operator_merge_set,
+            workspace_cleanup_get,
+            workspace_cleanup_settings_set,
+            workspace_cleanup_act,
+            workspace_cleanup_sweep,
+            workspace_cleanup_reveal,
             operator_mcp_auth,
             operator_agent_remove,
         ])

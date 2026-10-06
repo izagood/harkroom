@@ -2125,6 +2125,26 @@ impl DaemonConnection {
         self.request("operatorMergeSet", json!({ "ghUser": gh_user }))
     }
 
+    // 작업 폴더 정리(스레드 9e909150). 원장은 오퍼레이터의 것이고 앱은 읽기·설정·보존/넣기만 한다 — 바로 지우는 메서드는 없다.
+    pub fn workspace_cleanup_get(&self) -> Result<Value, String> {
+        self.request("workspaceCleanupGet", json!({}))
+    }
+
+    pub fn workspace_cleanup_settings_set(&self, enabled: Option<bool>, grace_days: Option<u32>) -> Result<Value, String> {
+        let mut payload = serde_json::Map::new();
+        if let Some(v) = enabled { payload.insert("enabled".into(), json!(v)); }
+        if let Some(v) = grace_days { payload.insert("graceDays".into(), json!(v)); }
+        self.request("workspaceCleanupSettingsSet", Value::Object(payload))
+    }
+
+    pub fn workspace_cleanup_act(&self, path: &str, action: &str, by: &str) -> Result<Value, String> {
+        self.request("workspaceCleanupAct", json!({ "path": path, "action": action, "by": by }))
+    }
+
+    pub fn workspace_cleanup_sweep(&self) -> Result<Value, String> {
+        self.request("workspaceCleanupSweep", json!({}))
+    }
+
     // 원격 MCP 의 OAuth(2026-09-30). 토큰은 오퍼레이터가 든다 — 소켓으로는 인가 url 과 상태만 온다.
     pub fn operator_mcp_auth(&self, method: &str, name: &str) -> Result<Value, String> {
         self.request(method, json!({ "name": name }))
