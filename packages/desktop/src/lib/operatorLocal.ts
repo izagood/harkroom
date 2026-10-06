@@ -91,7 +91,7 @@ export function setLocalMergeGhUser(ghUser: string | null): Promise<OperatorMerg
 
 // ── 작업 폴더 정리(스레드 9e909150) ──────────────────────────────────────────────
 // 원장은 오퍼레이터의 것이다(`operator/src/workspaceCleanup.ts`). 앱은 읽고, 설정을 바꾸고, 보존·되돌리기·삭제 예정에 넣기만
-// 한다 — **바로 지우는 길은 없다**(D3·D5). 「폴더 열기」는 Rust 가 원장에 있는 경로인지 다시 본 뒤 연다.
+// 한다 — **바로 지우는 길은 없다**(D3·D5).
 
 export interface WorkspaceCleanupView {
   settings: CleanupSettings;
@@ -114,8 +114,4 @@ export function actWorkspaceCleanup(path: string, action: 'keep' | 'unkeep' | 'l
 
 export function sweepWorkspaceCleanup(): Promise<WorkspaceCleanupView> {
   return call('workspace_cleanup_sweep') as Promise<WorkspaceCleanupView>;
-}
-
-export function revealWorkspaceCleanupPath(path: string): Promise<void> {
-  return call('workspace_cleanup_reveal', { path }) as Promise<void>;
 }

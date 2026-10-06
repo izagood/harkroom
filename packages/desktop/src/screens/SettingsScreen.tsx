@@ -18,6 +18,8 @@ import { AutomationsSettings } from '../components/settings/AutomationsSettings'
 import { SecretsSettings } from '../components/settings/SecretsSettings';
 import { UpdatesSettings } from '../components/settings/UpdatesSettings';
 import { ThisOperatorSettings } from '../components/settings/ThisOperatorSettings';
+import { WorkspaceCleanupSettings, useCleanupWarnCount } from '../components/settings/WorkspaceCleanupSettings';
+import { getController } from '../state/controller';
 import { DEFAULT_SECTION, SETTINGS_GROUPS, isSectionId, navKey, workspaceEditable, type SectionId } from '../components/settings/sections';
 import { useActiveStore, useCommunityRegistry } from '../state/communities';
 import { WindowDragStrip } from '../components/WindowDragStrip';
@@ -37,6 +39,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
   onCommunitiesEmpty(): void;
 }) {
   const t = useT();
+  const cleanupWarn = useCleanupWarnCount();
   /**
    * **빈 화면은 답이 아니다.** 목차에 없는 값이 들어오면 아래 분기가 전부 거짓이 되어
    * 본문이 통째로 빈다 — 사용자는 "설정이 안 열린다" 로 겪는다(실측 2026-09-07: 투영
@@ -98,6 +101,10 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
                     onClick={() => guardedLeave(() => setSection(item.id))}
                   >
                     {t(navKey(item.id))}
+                    {/* ⚠ 가 있을 때만 붙인다 — 늘 숫자를 달면 소음이 된다(시안 v3). */}
+                    {item.id === 'workspace-cleanup' && cleanupWarn > 0 && (
+                      <span className="ml-auto text-meta text-warning" data-testid="settings-nav-cleanup-warn">⚠ {cleanupWarn}</span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -126,6 +133,9 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
           {section === 'invite' && <InviteSettings />}
           {section === 'updates' && <UpdatesSettings />}
           {section === 'this-operator' && <ThisOperatorSettings onOpenSection={setSection} />}
+          {section === 'workspace-cleanup' && (
+            <WorkspaceCleanupSettings onGoToThread={(channelId, rootId) => { onBack(); void getController().openThread(rootId, { channelId }); }} />
+          )}
           {section === 'skills' && <SkillsSettings targetId={targetId} />}
           {section === 'automations' && <AutomationsSettings />}
           {section === 'secrets' && <SecretsSettings targetId={targetId} />}

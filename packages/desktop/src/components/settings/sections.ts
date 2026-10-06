@@ -29,7 +29,7 @@ import { hasCapability } from '../../lib/capabilities';
  * 그 한 줄이 **두 화면에 각각** 있다: `TeamDetail` 의 `team-mention-note`(팀 → 집합)와
  * `HandleGroupsSettings` 의 목록 머리(집합 → 팀).
  */
-export type SectionId = 'workspace' | 'profile' | 'notifications' | 'messages' | 'appearance' | 'communities' | 'agents' | 'agent-defaults' | 'operators' | 'integrations' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'automations' | 'gallery' | 'this-operator' | 'secrets';
+export type SectionId = 'workspace' | 'profile' | 'notifications' | 'messages' | 'appearance' | 'communities' | 'agents' | 'agent-defaults' | 'operators' | 'integrations' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'automations' | 'gallery' | 'this-operator' | 'secrets' | 'workspace-cleanup';
 
 /**
  * 목차 한 줄의 **이름은 사전 키 하나다**(UX ④ H5). 전에는 목차가 영어 문자열(`Appearance`)을,
@@ -76,6 +76,8 @@ export const SETTINGS_GROUPS: { id: 'me' | 'device' | 'workspace' | 'agents'; ti
       // 이 머신을 오퍼레이터로 등록하는 자리(UX ⑥b-2). 오퍼레이터 **목록**은 워크스페이스 전체의 것이라
       // 에이전트 묶음에 남고, "이 머신" 은 이 기기에만 걸리므로 여기다(designer 사양 ⑥).
       { id: 'this-operator' },
+      // 작업 폴더 정리(스레드 9e909150). 폴더와 디스크는 이 기기의 것이라 이 묶음이다(designer D1).
+      { id: 'workspace-cleanup' },
     ],
   },
   {
