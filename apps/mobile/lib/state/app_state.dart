@@ -327,10 +327,12 @@ class AppState extends ChangeNotifier {
   /// 바뀐다. 다시 눌러 성공하거나 최신 페이지가 어떤 길로든 들어오면 지운다.
   final Set<String> latestJumpFailed = {};
 
-  /// 스레드 루트 id → 띠가 선 동안([threadTailMissing]) **소켓으로 온 새 답글 수**. 옛 창 끝에 이어 붙이면 그
-  /// 사이 답글이 빠진 채 새 답글이 서므로 붙이지 않고 여기에 센다 — 띠가 「최신 답글로 ↓ · 새 답글 n개」로
-  /// 알린다. 최신 페이지를 받으면([_storeThreadPage]) 그 안에 들어 있으므로 지운다.
-  final Map<String, int> threadTailNew = {};
+  /// 스레드 루트 id → 띠가 선 동안([threadTailMissing]) **소켓으로 온 새 답글의 id**. 옛 창 끝에 이어 붙이면 그
+  /// 사이 답글이 빠진 채 새 답글이 서므로 붙이지 않고 여기에 적는다 — 띠가 「최신 답글로 ↓ · 새 답글 n개」로
+  /// 알린다. **수가 아니라 id 집합**인 이유: 같은 글이 두 번 오는 것이 정상 경로다(내 답글은 POST 응답과
+  /// 소켓으로, 재연결 직후는 겹쳐서, 수정은 같은 길로) — 수만 올리면 두 번 센다. 최신 페이지를 받으면
+  /// ([_storeThreadPage]) 그 안에 들어 있으므로 지운다.
+  final Map<String, Set<String>> threadTailNew = {};
 
   /// 스레드 루트 id → 옛 답글을 못 받았다. 채널의 [olderFailed] 와 같이 스크롤로는 다시 부르지
   /// 않고 "다시 시도" 를 누를 때만 간다.
@@ -961,7 +963,7 @@ class AppState extends ChangeNotifier {
           // 옛 답글 창을 보는 중이다 — 끝에 이어 붙이면 그 사이 답글이 빠진 채 새 답글이 선다. 붙이지 않고
           // 세기만 한다. 띠가 알리고, 최신 페이지로 가면 거기 들어 있다. `progress`·`wake` 는 답글로 안 센다.
           if (message.kind != MessageKind.progress && message.kind != MessageKind.wake) {
-            threadTailNew[rootId] = (threadTailNew[rootId] ?? 0) + 1;
+            threadTailNew.putIfAbsent(rootId, () => {}).add(message.id);
           }
         } else {
           replies.add(message);
@@ -1444,9 +1446,8 @@ class AppState extends ChangeNotifier {
     // 붙고 그 아래에 「최신 답글로 ↓」가 남아, 방금 쓴 글이 마지막이 아닌 것처럼 보인다. 옮기기에 실패해도
     // 글은 보낸다(글을 잃지 않는 쪽이 먼저다 — 띠는 「다시 시도」로 남는다).
     //
-    // **기다리는 사이 세션이 바뀌면 보내지 않는다**(security F1). `_post` 는 그 시점의 `_api` 를 읽으므로,
-    // 기다리는 동안 커뮤니티를 바꾸면 A 의 본문·첨부가 B 서버로 간다. 세대가 다르면 `false` 로 돌려 작성칸이
-    // 글을 비우지 않게 한다 — 첨부도 그래서 기다린 뒤에 뗀다.
+    // **기다리는 사이 세션이 바뀌면 보내지 않는다**(보내기 전 세션 확인). 세대가 다르면 `false` 로 돌려
+    // 작성칸이 글을 비우지 않게 한다 — 첨부도 그래서 기다린 뒤에 뗀다.
     if (threadRootId != null && threadTailMissing.contains(threadRootId)) {
       final gen = _generation;
       await jumpToLatestReplies(channelId, threadRootId);

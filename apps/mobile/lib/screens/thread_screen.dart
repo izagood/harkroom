@@ -308,7 +308,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                   ? ThreadLatestBandState.failed
                   : ThreadLatestBandState.idle,
           // 띠가 선 동안 소켓으로 온 새 답글이 있으면 수를 덧붙인다 — 옛 창에 붙이지 않았으니 여기서 알려야 한다.
-          label: switch (app.threadTailNew[widget.rootId] ?? 0) {
+          label: switch (app.threadTailNew[widget.rootId]?.length ?? 0) {
             0 => t.threadLatestReplies,
             final n => '${t.threadLatestReplies} · ${t.threadLatestNewReplies.replaceFirst('{n}', '$n')}',
           },

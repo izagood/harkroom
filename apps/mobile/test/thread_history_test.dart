@@ -333,10 +333,13 @@ void main() {
     app.applyEvent(reply(252));
     app.applyEvent(reply(253));
     app.applyEvent(reply(254, kind: 'progress'));
+    // 같은 글이 두 번 와도(내 답글은 POST 응답+소켓, 재연결 직후 겹침) 한 번만 센다 — id 집합.
+    app.applyEvent(reply(253));
     // 창·최신 묶음 어디에도 안 붙고, 진행 줄은 안 센다.
     expect(app.threads['root']!.length, before);
     expect(app.threads['root']!.map((m) => m.seq), isNot(contains(252)));
-    expect(app.threadTailNew['root'], 2);
+    expect(app.threadTailNew['root'], hasLength(2));
+    expect(app.threadTailNew['root'], containsAll(['r252', 'r253']));
 
     // 이미 손에 든 답글의 수정(같은 seq)은 그대로 반영된다.
     app.applyEvent({
@@ -344,7 +347,7 @@ void main() {
       'message': {'id': 'r40', 'seq': 40, 'channelId': 'c1', 'threadRootId': 'root', 'authorId': 'a1', 'body': '고침', 'kind': 'user'},
     });
     expect(app.threads['root']!.firstWhere((m) => m.seq == 40).body, '고침');
-    expect(app.threadTailNew['root'], 2);
+    expect(app.threadTailNew['root'], hasLength(2));
 
     // 최신으로 가면 수가 지워진다(서버 최신 페이지에 그 답글이 들어 있다).
     server.replies = 253;
