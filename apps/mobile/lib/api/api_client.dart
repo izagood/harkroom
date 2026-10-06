@@ -506,6 +506,24 @@ class ApiClient {
     return MessageRow.fromJson(_obj(res));
   }
 
+  // ── 나중에 볼 메시지(#219) ─────────────────────────────────────────────
+
+  /// 담아 둔 메시지(새로 담은 것 먼저). 경로에 남의 계정이 없다 — 서버가 토큰의 주인 것만 준다.
+  Future<List<SavedEntry>> savedMessages(SavedState state) async {
+    final body = _obj(await _send('GET', '/saved?state=${state.name}'));
+    return _list(body['entries']).map(SavedEntry.fromJson).toList(growable: false);
+  }
+
+  Future<SavedSummary> savedSummary() async => SavedSummary.fromJson(_obj(await _send('GET', '/saved/summary')));
+
+  /// 담는다. 이미 담겨 있으면 서버가 할 것으로 되돌린다(행은 하나). 지운 글은 404, 볼 수 없는 글은 403.
+  Future<void> saveMessage(String messageId) => _send('PUT', '/saved/$messageId');
+
+  Future<void> setSavedState(String messageId, SavedState state) =>
+      _send('PATCH', '/saved/$messageId', body: {'state': state.name});
+
+  Future<void> unsaveMessage(String messageId) => _send('DELETE', '/saved/$messageId');
+
   // ── 소켓 ──────────────────────────────────────────────────────────────
 
   /// 연결 **시도마다** 새로 받는다. 재사용하면 서버가 거절한다.

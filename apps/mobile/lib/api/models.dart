@@ -688,3 +688,65 @@ class AgentWake {
         reason: j['reason'] is String ? j['reason'] as String : null,
       );
 }
+
+/// 담아 둔 메시지의 상태(#219). `open` 은 할 것, `done` 은 완료다. 이름이 곧 서버 값이다.
+enum SavedState {
+  open,
+  done;
+
+  static SavedState parse(Object? v) => v == 'done' ? SavedState.done : SavedState.open;
+}
+
+/// 나중에 볼 메시지 한 줄. `GET /saved?state=`.
+///
+/// [message] 가 `null` 인 것은 **정상 경로**다 — 지운 글이거나 지금 볼 수 없는 채널의 글이면 서버가
+/// 본문을 떼고 행만 준다. 그래도 줄은 남긴다: 목록에서 빼면 사람이 그 항목을 지울 길이 없어진다.
+class SavedEntry {
+  const SavedEntry({
+    required this.messageId,
+    required this.channelId,
+    required this.state,
+    required this.createdAt,
+    required this.deleted,
+    required this.message,
+  });
+
+  final String messageId;
+  final String channelId;
+  final SavedState state;
+  final DateTime createdAt;
+
+  /// 지운 글이다. `message == null` 이면서 이것이 거짓이면 **볼 수 없는 채널**의 글이다.
+  final bool deleted;
+  final MessageRow? message;
+
+  SavedEntry withState(SavedState next) => SavedEntry(
+        messageId: messageId,
+        channelId: channelId,
+        state: next,
+        createdAt: createdAt,
+        deleted: deleted,
+        message: message,
+      );
+
+  static SavedEntry fromJson(Map<String, Object?> j) => SavedEntry(
+        messageId: _str(j['messageId']),
+        channelId: _str(j['channelId']),
+        state: SavedState.parse(j['state']),
+        createdAt: DateTime.tryParse(_str(j['createdAt']))?.toUtc() ??
+            DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+        deleted: _bool(j['deleted']),
+        message: j['message'] is Map ? MessageRow.fromJson(Map<String, Object?>.from(j['message']! as Map)) : null,
+      );
+}
+
+/// `GET /saved/summary` — 할 것 개수(홈 카드)와 담긴 메시지 id(시트 문구·표식). id 는 할 것·완료 **둘 다**다.
+class SavedSummary {
+  const SavedSummary({required this.openCount, required this.messageIds});
+
+  final int openCount;
+  final Set<String> messageIds;
+
+  static SavedSummary fromJson(Map<String, Object?> j) =>
+      SavedSummary(openCount: _int(j['openCount']), messageIds: _strList(j['messageIds']).toSet());
+}

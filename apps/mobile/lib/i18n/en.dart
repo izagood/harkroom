@@ -253,6 +253,52 @@ class StringsEn implements Strings {
   @override
   String get cardNew => 'New';
   @override
+  String get cardSaved => 'Saved';
+  @override
+  String get messageSave => 'Save for later';
+  @override
+  String get messageUnsave => 'Unsave';
+  @override
+  String get messageSavedMark => 'Saved for later';
+  @override
+  String get savedAdded => 'Saved';
+  @override
+  String get savedOpenList => 'View list';
+  @override
+  String get savedRemoved => 'Removed';
+  @override
+  String get savedUndo => 'Undo';
+  @override
+  String get savedSaveFailed => 'Couldn’t save this message';
+  @override
+  String get savedActionFailed => 'Couldn’t update the saved list';
+  @override
+  String get savedTitle => 'Saved messages';
+  @override
+  String get savedTabOpen => 'To do';
+  @override
+  String get savedTabDone => 'Done';
+  @override
+  String get savedEmptyOpen => 'Nothing saved yet';
+  @override
+  String get savedEmptyOpenHint => 'Long-press a message and choose “Save for later” to collect it here.';
+  @override
+  String get savedEmptyDone => 'Nothing done yet';
+  @override
+  String get savedLoadFailed => 'Saved messages didn’t load';
+  @override
+  String get savedMarkDone => 'Mark as done';
+  @override
+  String get savedMarkOpen => 'Put back on the list';
+  @override
+  String get savedMovedDone => 'Moved to done';
+  @override
+  String get savedMovedOpen => 'Back on the list';
+  @override
+  String get savedDeleted => 'Deleted message';
+  @override
+  String get savedUnavailable => 'You no longer have access to this channel';
+  @override
   String get newMessage => 'New message';
   @override
   String get newMessagePeople => 'People';

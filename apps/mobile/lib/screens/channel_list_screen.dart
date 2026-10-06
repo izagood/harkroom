@@ -7,6 +7,7 @@ import '../ui/states.dart';
 import '../ui/parts.dart';
 import '../ui/tokens.dart';
 import 'community_screens.dart';
+import 'saved_screen.dart';
 import 'me_screen.dart';
 import 'message_list_screen.dart';
 
@@ -280,7 +281,8 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-/// 홈 맨 위 바로가기 카드 둘(개정판 3.2, S5c): 「내 차례」 → 인박스 탭, 「새로 온 것」 → 안 읽은 채널만.
+/// 홈 맨 위 바로가기 카드 셋(개정판 3.2, S5c): 「내 차례」 → 인박스 탭, 「새로 온 것」 → 안 읽은 채널만,
+/// 「저장」 → 저장된 메시지 화면(#219).
 /// 「초안」 은 초안 저장이 생길 때(S8), 「도는 에이전트」 는 S7 에서 더한다.
 class ShortcutCards extends StatelessWidget {
   const ShortcutCards({super.key, required this.newCount});
@@ -318,6 +320,18 @@ class ShortcutCards extends StatelessWidget {
               onTap: app.toggleHomeUnreadOnly,
             ),
           ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _ShortcutCard(
+              key: const Key('card-saved'),
+              icon: Icons.bookmark_border,
+              label: t.cardSaved,
+              // 할 것 개수. 0 이어도 카드는 남는다 — 사라지면 어디서 여는지 잊는다(designer 시안 ②).
+              count: app.savedOpenCount,
+              selected: false,
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SavedScreen())),
+            ),
+          ),
         ],
       ),
     );
@@ -353,23 +367,29 @@ class _ShortcutCard extends StatelessWidget {
           customBorder: RoundedRectangleBorder(borderRadius: BorderRadius.circular(HarkroomRadius.card)),
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            child: Row(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+            // 카드가 셋이면 375pt 폭에서 칸이 ≈110pt 다 — 아이콘·이름·숫자를 한 줄에 두면 이름이 잘린다.
+            // 아이콘과 숫자를 윗줄, 이름을 아랫줄에 둔다(designer 시안 ②).
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(icon, size: 18, color: k.fgMuted),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: k.fg)),
+                Row(
+                  children: [
+                    Icon(icon, size: 18, color: k.fgMuted),
+                    const Spacer(),
+                    // 0 은 회색 숫자로 둔다 — 카드 자리가 늘 같아야 엄지가 외운다. 배지(빨강)는 쓰지 않는다.
+                    Text('$count',
+                        style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: count > 0 ? FontWeight.w600 : FontWeight.w400,
+                            color: count > 0 ? k.fg : k.fgMuted)),
+                  ],
                 ),
-                // 0 은 회색 숫자로 둔다 — 카드 자리가 늘 같아야 엄지가 외운다. 배지(빨강)는 쓰지 않는다.
-                Text('$count',
-                    style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: count > 0 ? FontWeight.w600 : FontWeight.w400,
-                        color: count > 0 ? k.fg : k.fgMuted)),
+                const SizedBox(height: 2),
+                Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: k.fg)),
               ],
             ),
           ),
