@@ -5,7 +5,7 @@ import { z } from 'zod';
 import {
   addChannelMember, assertChannelVisible, audienceFor, channelListAudience, channelListLostAudience,
   channelMembershipGate, channelPostGate, createChannel, deleteChannel,
-  getChannelDoc, getChannelRow, getOrCreateDm, listChannelMembers, listChannels, removeChannelMember,
+  findDm, getChannelDoc, getChannelRow, getOrCreateDm, listChannelMembers, listChannels, removeChannelMember,
   updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs, renameSection,
 } from '../services/channels.js';
 import { listPins, pinMessage, unpinMessage } from '../services/pins.js';
@@ -26,6 +26,7 @@ import {
 import { recordAudit } from '../audit.js';
 import { emitEvent, emitPosted } from '../events.js';
 import { BAD_THREAD_MESSAGE, isThreadRootOf, postMessage } from '../services/messages.js';
+import { invokeFactsFor, mayInvokeInDm } from '../services/invokeGate.js';
 
 /**
  * 섹션 이름의 길이 규칙(#157) — 만드는 경로(`PATCH /channels/:id/pref`)와 이름을 바꾸는
@@ -431,7 +432,23 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
 
   app.post('/dms', { preHandler: app.requireAccount }, async (req, reply) => {
     const body = z.object({ accountIds: z.array(z.string().uuid()).min(1).max(16) }).parse(req.body);
-    const channel = await getOrCreateDm(pool, [...body.accountIds, req.account!.id]);
+    const members = [...body.accountIds, req.account!.id];
+    // 새 DM 은 부를 수 있는 에이전트와만 연다 — 메시지마다 게이트가 걸러도(messages.ts DM 갈래)
+    // 열어 두면 "보냈는데 답이 없는" 방이 된다. 이미 있는 DM 은 그대로 돌려준다(지난 대화를 잃지 않게).
+    if (!(await findDm(pool, members))) {
+      const client = await pool.connect();
+      try {
+        const facts = await invokeFactsFor(client, body.accountIds.filter((id) => id !== req.account!.id));
+        for (const fact of facts.values()) {
+          if (!(await mayInvokeInDm(client, fact, { callerId: req.account!.id, channelId: '' }))) {
+            return reply.code(403).send({ error: 'agent_not_invokable' });
+          }
+        }
+      } finally {
+        client.release();
+      }
+    }
+    const channel = await getOrCreateDm(pool, members);
     return reply.code(201).send(channel);
   });
 

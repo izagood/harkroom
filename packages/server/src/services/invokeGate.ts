@@ -37,17 +37,22 @@ export interface AgentInvokeFacts {
   agentId: string;
   invokeScope: InvokeScope;
   ownerAccountId: string | null;
+  /** 비활성(`disabled_at`)이거나 지운 에이전트다. 어떤 길로도 부를 수 없다. */
+  off?: boolean;
 }
 
 /** 여러 에이전트의 스코프를 한 번에 읽는다 — fan-out 은 후보가 여럿이다. 사람·모르는 id 는 빠진다. */
 export async function invokeFactsFor(client: PoolClient, agentIds: readonly string[]): Promise<Map<string, AgentInvokeFacts>> {
   if (!agentIds.length) return new Map();
-  const res = await client.query<{ id: string; invoke_scope: InvokeScope; owner_account_id: string | null }>(
-    `select a.id, coalesce(c.invoke_scope, 'community') as invoke_scope, c.owner_account_id
+  const res = await client.query<{ id: string; invoke_scope: InvokeScope; owner_account_id: string | null; off: boolean }>(
+    `select a.id, coalesce(c.invoke_scope, 'community') as invoke_scope, c.owner_account_id,
+            (a.disabled_at is not null or a.deleted_at is not null) as off
        from account a left join agent_config c on c.account_id = a.id
       where a.kind = 'agent' and a.id = any($1::uuid[])`,
     [agentIds]);
-  return new Map(res.rows.map((r) => [r.id, { agentId: r.id, invokeScope: r.invoke_scope, ownerAccountId: r.owner_account_id }]));
+  return new Map(res.rows.map((r) => [r.id, {
+    agentId: r.id, invokeScope: r.invoke_scope, ownerAccountId: r.owner_account_id, off: r.off,
+  }]));
 }
 
 export async function mayInvoke(
@@ -60,6 +65,9 @@ export async function mayInvoke(
    */
   ctx: { callerId: string; channelId: string; via: InvokeVia; replyGrantThreadId?: string | null },
 ): Promise<boolean> {
+  // 꺼 둔 에이전트는 PAT 가 폐기돼 받을 러너가 없다 — 부름을 쌓으면 아무도 안 읽는 inbox 와
+  // "집을 러너가 없다" 통지만 남는다.
+  if (facts.off) return false;
   if (facts.invokeScope === 'community') return true;
   // 팀도 호출자가 작성자 그대로다 — 직접 멘션과 같은 판정을 탄다(위 머리 주석 ②).
   if (ctx.via !== 'mention' && ctx.via !== 'team') return false;
@@ -69,6 +77,22 @@ export async function mayInvoke(
   if (facts.invokeScope === 'owner' && await isEligibleDelegate(client, facts, ctx.callerId, { listed: true })) return true;
   // 회신권(084) — 대상이 이 스레드에서 호출자를 불렀다. 팀 부름에는 쓰지 않는다(팀은 회신이 아니다).
   return ctx.via === 'mention' && ctx.replyGrantThreadId != null
+    && hasReplyGrant(client, { granteeId: ctx.callerId, granterId: facts.agentId, threadRootId: ctx.replyGrantThreadId });
+}
+
+/**
+ * DM 의 부름. 판정은 직접 멘션과 같다(호출자 = 작성자) — DM 도 부름이므로 fan-out 밖에서
+ * 같은 게이트를 지난다. 하나 다른 것은 `channel` 범위다: DM 의 멤버는 대화 상대뿐이라 "그 채널의
+ * 사람"이라는 범위의 뜻이 서지 않는다. 그래서 DM 에서는 회신권(084)으로만 지나간다.
+ */
+export async function mayInvokeInDm(
+  client: PoolClient,
+  facts: AgentInvokeFacts,
+  ctx: { callerId: string; channelId: string; replyGrantThreadId?: string | null },
+): Promise<boolean> {
+  if (facts.invokeScope !== 'channel') return mayInvoke(client, facts, { ...ctx, via: 'mention' });
+  if (facts.off) return false;
+  return ctx.replyGrantThreadId != null
     && hasReplyGrant(client, { granteeId: ctx.callerId, granterId: facts.agentId, threadRootId: ctx.replyGrantThreadId });
 }
 
