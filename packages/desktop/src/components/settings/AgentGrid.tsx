@@ -247,7 +247,7 @@ const PLACE: Record<AgentGridPlace, {
     **상자 여백 26px 을 뺀 값**으로 바뀌었을 뿐이다. 그 시험이 26 을 어디서 얻는지 함께
     적어 뒀으니 상자 여백을 고치는 사람이 트랙도 같이 고치게 된다.
 
-    ## 상자 — `bg-surface-raised` · `border` · `rounded-lg` · `p-3`
+    ## 상자 — `bg-surface-raised` · `border` · `rounded-card` · `p-3`
 
     `p-3`(12px)을 고른 근거는 **선택 링과의 거리**이고, 그것이 실측으로 확인된 값이다
     (2026-09-08, 720px 패널 8장). 선택 링은 `ring-2` + `ring-offset-2` 로 얼굴 바깥
@@ -260,7 +260,7 @@ const PLACE: Record<AgentGridPlace, {
     26px 이 34px 이 되어 트랙을 172px 로 밀어야 137 하한을 지킨다. 즉 이 값은 혼자
     고를 수 없다. 회귀선이 26 을 명시적으로 계산하는 이유가 그것이다.
 
-    `rounded-lg`(8px)는 이 저장소가 이미 쓰는 카드 모서리다(검색 입력이 같은 값) — 새
+    `rounded-card`(8px)는 이 저장소가 이미 쓰는 카드 모서리다(검색 입력이 같은 값) — 새
     반지름을 하나 더 만들지 않는다.
 
     ## `faceText`·`glyph` 가 타이포 4단이 아닌 이유
@@ -282,12 +282,12 @@ const PLACE: Record<AgentGridPlace, {
     ringOffset: 'ring-offset-surface-raised',
     /* **선 색은 여기 없다** — 실패한 카드가 그 칸만 갈아 끼우므로 호출부가 붙인다
        (감싸개 `div` 의 주석). 색을 여기 박으면 실패 분기가 문자열 치환이 된다. */
-    box: 'rounded-lg border bg-surface-raised p-3',
+    box: 'rounded-card border bg-surface-raised p-3',
     /* 카드가 흰 면이므로 바닥이 한 단 내려가야 카드가 뜬다 — 설정 패널 자체가
        `surface-raised` 다(`AgentsSettings.tsx`). `p-3` 은 가라앉은 면이 카드에 딱
        붙지 않게 하는 여백이고, `-mx-1` 없이 패널의 `p-5` 안에서 자연히 선다. */
-    gridBg: 'rounded-lg bg-surface-sunken p-3',
-    createBox: 'rounded-lg border border-dashed border-border p-3',
+    gridBg: 'rounded-card bg-surface-sunken p-3',
+    createBox: 'rounded-card border border-dashed border-border p-3',
   },
   sidebar: {
     grid: 'grid-cols-[repeat(auto-fill,64px)] gap-x-3 gap-y-4',
@@ -568,7 +568,7 @@ function VersionChip({ handle, runnerVersion, assignment, operators, restarting 
         data-testid={`agent-version-${handle}`}
         data-version="restarting"
         aria-live="polite"
-        className="inline-block whitespace-nowrap rounded border border-warning-border
+        className="inline-block whitespace-nowrap rounded-row border border-warning-border
                    bg-warning-surface px-1.5 py-px text-meta text-warning"
       >
         {t('grid.version.restarting')}
@@ -593,7 +593,7 @@ function VersionChip({ handle, runnerVersion, assignment, operators, restarting 
       <span
         data-testid={`agent-version-${handle}`}
         data-version="unknown"
-        className="inline-block rounded border border-dashed border-border px-1.5 py-px text-meta text-fg-subtle"
+        className="inline-block rounded-row border border-dashed border-border px-1.5 py-px text-meta text-fg-subtle"
       >
         {t('grid.version.unknown')}
       </span>
@@ -620,7 +620,7 @@ function VersionChip({ handle, runnerVersion, assignment, operators, restarting 
         data-testid={`agent-version-${handle}`}
         data-version="current"
         title={title}
-        className="inline-block rounded bg-surface-sunken px-1.5 py-px text-meta text-fg-muted"
+        className="inline-block rounded-row bg-surface-sunken px-1.5 py-px text-meta text-fg-muted"
       >
         {t('grid.version.current', { version })}
       </span>
@@ -642,7 +642,7 @@ function VersionChip({ handle, runnerVersion, assignment, operators, restarting 
     `clientWidth` 를 넘지 않는다. 그래서 값 자체가 **한 줄임을 선언한다.** 이 칩은
     쪼개지면 뜻이 흐려지는 원자값이다(버전 · 구분점 · 판정 · 손잡이가 한 덩어리다).
   */
-  const shape = 'inline-block whitespace-nowrap rounded border border-warning-border'
+  const shape = 'inline-block whitespace-nowrap rounded-row border border-warning-border'
     + ' bg-warning-surface px-1.5 py-px text-meta text-warning';
   // 뒤처진 칩은 **눌리지 않는다**(스펙 2026-09-20 §2) — 새 번들로 가는 길은 그 러너를
   // 돌리는 오퍼레이터를 갱신하는 것이고, 앱에서 누를 일이 아니다. 칩은 사실만 말한다.
@@ -724,7 +724,7 @@ function VersionChip({ handle, runnerVersion, assignment, operators, restarting 
  */
 export function AgentGrid<T extends AgentCardSubject>({
   agents, selectedId, runnerStates, online, connected, onPick, onCreate, canCreate,
-  onStop, operatorVersions = null, place = 'settings',
+  onStop, operatorVersions = null, place = 'settings', mergeCounts,
 }: {
   agents: T[];
   selectedId: string | null;
@@ -755,6 +755,13 @@ export function AgentGrid<T extends AgentCardSubject>({
   operatorVersions?: OperatorVersions | null;
   /** 이 격자가 선 자리. 기본값 `settings` 가 설정 화면의 오늘 모양이다(`AgentGridPlace` 주석). */
   place?: AgentGridPlace;
+  /**
+   * 에이전트 id → 살아 있는 머지 권한(`repo.merge`) 수 — 「머지 N」 줄(스레드 febe9ff8 P1). 설정 화면이 **소유한
+   * 에이전트에만** 채운다. 없거나 0 이면 줄을 안 그린다: 권한 없는 에이전트가 대부분이라 「머지 0」 은 소음이다.
+   * 카드 타입(`AgentCardSubject`)에 얹지 않은 이유: 이 값은 서버 목록이 아니라 따로 읽은 것이고, 타입에 얹으면
+   * `AgentView` 가 그 타입의 하위 타입이 아니게 되어 호출부 추론이 흔들린다.
+   */
+  mergeCounts?: Record<string, number>;
 }) {
   const [query, setQuery] = useState('');
   // 이 격자의 말은 전부 `grid.*` 를 지난다. 활동 경과만 `lib/time.ts` 가 낸다 —
@@ -787,7 +794,7 @@ export function AgentGrid<T extends AgentCardSubject>({
           <input
             data-testid="agent-search"
             aria-label={t('grid.search.label')}
-            className="w-full rounded-lg border border-border bg-field py-2 pl-8 pr-14
+            className="w-full rounded-card border border-border bg-field py-2 pl-8 pr-14
                        text-fg placeholder-fg-subtle"
             placeholder={t('grid.search.placeholder')}
             value={query}
@@ -1149,6 +1156,11 @@ export function AgentGrid<T extends AgentCardSubject>({
                            밀어 넣는 순간 칩이 따라 바뀐다(`VersionChip.restarting` 주석). */
                         restarting={runnerStates[a.id]?.status === 'restarting'}
                       />
+                    </InfoRow>
+                  )}
+                  {(mergeCounts?.[a.id] ?? 0) > 0 && (
+                    <InfoRow label={t('grid.card.merge')}>
+                      <span className="block truncate" data-testid={`agent-merge-count-${a.handle}`}>{t('grid.card.mergeRepos', { count: mergeCounts![a.id]! })}</span>
                     </InfoRow>
                   )}
                   {a.lastTurnAt !== undefined && (

@@ -77,7 +77,7 @@ export function ProviderUsageSkeleton() {
     <div className="flex items-start gap-6" data-testid="provider-usage-skeleton" role="status" aria-label={t('providerUsage.loading')}>
       {[0, 1].map((i) => (
         <div key={i} className="min-w-0 flex-1" aria-hidden="true">
-          <div className="h-3 w-16 animate-pulse rounded bg-border" />
+          <div className="h-3 w-16 animate-pulse rounded-row bg-border" />
           <div className="mt-1.5 h-1.5 animate-pulse rounded-full bg-border" />
         </div>
       ))}
@@ -92,8 +92,8 @@ export function AccountRowsSkeleton({ rows = 2 }: { rows?: number }) {
     <div className="space-y-3 px-4 py-3" data-testid="provider-accounts-skeleton" role="status" aria-label={t('providerAccounts.loading')}>
       {Array.from({ length: rows }, (_, i) => (
         <div key={i} className="flex items-center gap-4" aria-hidden="true">
-          <div className="h-3.5 w-24 animate-pulse rounded bg-border" />
-          <div className="h-3.5 flex-1 animate-pulse rounded bg-border" />
+          <div className="h-3.5 w-24 animate-pulse rounded-row bg-border" />
+          <div className="h-3.5 flex-1 animate-pulse rounded-row bg-border" />
         </div>
       ))}
     </div>

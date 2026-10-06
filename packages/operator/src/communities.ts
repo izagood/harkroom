@@ -7,7 +7,7 @@
  * 레지스트리는 배정을 모른다 — 둘을 잇는 어댑터가 여기 하나다.
  */
 import { createAssignmentReconciler, type AssignmentDeps } from './assignments.js';
-import { createCommunity, type CommunityInstance } from './community.js';
+import { createCommunity, type CommunityDeps, type CommunityInstance } from './community.js';
 import { operatorVersion } from './version.js';
 import { communityKey, readConfig, rememberOperatorId } from './config.js';
 import { createForwarder } from './forward.js';
@@ -42,6 +42,8 @@ export interface StartCommunitiesDeps {
   operatorBin: string;
   /** 원격 MCP 의 OAuth 토큰(`mcpOAuth.ts`). 없으면 토큰을 굽지 않는다 — 하네스가 제 손으로 인증한다(옛 동작). */
   mcpOAuth?: McpOAuth;
+  /** 박동 재료(P3a, `heartbeat.ts`). 없으면 박동을 내지 않는다. */
+  heartbeat?: CommunityDeps['heartbeat'];
 }
 
 export interface CommunityRuntime {
@@ -50,6 +52,9 @@ export interface CommunityRuntime {
   /**
    * 설정·토큰을 다시 읽어 그 커뮤니티를 띄운다(앱의 `operatorRegister` 뒤). 이미 떠 있으면 그것,
    * 토큰이 없으면 null. 오퍼레이터를 다시 띄우지 않고 등록을 반영하는 유일한 길이다.
+   * **토큰이 바뀌었으면(다시 등록) 떠 있던 것을 내리고 새 토큰으로 다시 붙는다** — 서버는 옛 등록을
+   * 폐기하고 소켓을 끊으므로, 옛 토큰을 쥔 채 남으면 재접속마다 401 이다. 러너는 레지스트리가
+   * 들고 있어 그대로 살고, 새 연결의 assign 이 멱등 spawn 으로 그것을 다시 잡는다.
    */
   startOne(baseUrl: string): Promise<CommunityInstance | null>;
 }
@@ -145,18 +150,28 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
   });
 
   const started: CommunityInstance[] = [];
+  /** 인스턴스가 붙을 때 쓴 토큰 — 다시 등록을 알아보는 기준이다. */
+  const tokens = new WeakMap<CommunityInstance, string>();
   const startOne = async (rawUrl: string, section?: { agents: Record<string, import('./config.js').LocalAgentConfig> }): Promise<CommunityInstance | null> => {
     const baseUrl = communityKey(rawUrl);
-    const existing = started.find((c) => c.baseUrl === baseUrl);
-    if (existing) return existing;
-    const agents = section?.agents ?? (await readConfig(configPath)).communities[baseUrl]?.agents ?? {};
     const token = await secrets.getToken(baseUrl);
+    const existingAt = started.findIndex((c) => c.baseUrl === baseUrl);
+    if (existingAt >= 0) {
+      const existing = started[existingAt]!;
+      if (!token || tokens.get(existing) === token) return existing;
+      deps.log(`다시 등록 — 새 토큰으로 다시 붙는다: ${baseUrl}`);
+      existing.stop();
+      // 같은 배열에서 뺀다 — run.ts 가 이 참조로 러너 프레임·exit 를 커뮤니티에 나눈다.
+      started.splice(existingAt, 1);
+    }
+    const agents = section?.agents ?? (await readConfig(configPath)).communities[baseUrl]?.agents ?? {};
     if (!token) { deps.log(`커뮤니티 건너뜀(토큰 없음 — 등록이 필요하다): ${baseUrl}`); return null; }
     const ref: { current: CommunityInstance | null } = { current: null };
     const reconciler = createAssignmentReconciler(runnerDeps(ref));
     const community = createCommunity({
       baseUrl, token, agents, reconciler, log: deps.log,
       version: operatorVersion(deps.appVersion),
+      heartbeat: deps.heartbeat,
       runnerLink: deps.runnerLink, forwarder, fetchImpl: deps.fetchImpl,
       harnesses: () => { refreshHarnesses(); return withModels(); },
       // 실패는 삼킨다 — 못 적어도 이 오퍼레이터는 그대로 돈다. 앱의 '이 기기' 기본값만 늦어진다.
@@ -166,6 +181,7 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
       },
     });
     ref.current = community;
+    tokens.set(community, token);
     community.start();
     started.push(community);
     return community;

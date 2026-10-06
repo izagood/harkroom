@@ -121,14 +121,17 @@ void main() {
       expect(app.accounts['a1']!.isAgent, isTrue);
     });
 
-    test('토큰이 죽었으면 보관본을 지우고 로그인으로 돌린다', () async {
-      // 안 지우면 다음 기동에 같은 실패를 반복한다.
+    test('토큰이 죽었으면 그 토큰만 비우고 로그인으로 돌린다 — 행은 남는다', () async {
+      // 토큰을 안 비우면 다음 기동에 같은 실패를 반복한다. 행을 지우면 「다시 로그인」 자리가 없다.
       final store = SessionStore.inMemory(seed: _seed(token: '폐기된토큰'));
       final app = _app(store: store, client: _server(meStatus: 401));
       await app.boot();
 
       expect(app.phase, AppPhase.needsLogin);
-      expect(await store.load(), isNull);
+      final kept = (await store.load())!.communities.single;
+      expect(kept.accountId, 'me-1');
+      expect(kept.isExpired, isTrue);
+      expect(app.communities.single.isExpired, isTrue);
     });
   });
 
@@ -447,6 +450,58 @@ void main() {
       await app.attach('c1', item, Uint8List(10));
       app.detach('c1', item);
       expect(app.pending['c1'], isNull);
+    });
+  });
+
+  group('스레드 응답의 루트', () {
+    // 실서버의 `?thread=` 는 **루트를 맨 앞에** 함께 준다(server `listMessages`).
+    // 채널 목록은 비워 둔다 — 받은 것 탭에서 오래된 스레드로 들어온 경우다.
+    MockClient threadServer() {
+      final base = _server(channels: [
+        {'id': 'c1', 'name': 'general', 'kind': 'standard'},
+      ]);
+      return MockClient((req) async {
+        if (req.url.path.endsWith('/messages') &&
+            req.method == 'GET' &&
+            req.url.queryParameters['thread'] == 'm1') {
+          return _json({
+            'messages': [
+              {'id': 'r1', 'seq': 5, 'channelId': 'c1', 'threadRootId': 'm1', 'authorId': 'a1', 'body': '답', 'kind': 'user'},
+              {'id': 'm1', 'seq': 1, 'channelId': 'c1', 'authorId': 'a1', 'body': '루트', 'kind': 'user', 'replyCount': 1},
+            ],
+            'hasMore': false,
+          }, 200);
+        }
+        return base.send(req).then(http.Response.fromStream);
+      });
+    }
+
+    late AppState app;
+    setUp(() async {
+      app = _app(store: SessionStore.inMemory(seed: _seed()), client: threadServer());
+      await app.boot();
+      await app.openChannel('c1');
+      await app.openThread('c1', 'm1');
+    });
+
+    test('답글 목록에는 루트가 없다 — 있으면 화면이 루트를 두 번 그린다', () {
+      expect(app.threads['m1']!.map((m) => m.id), ['r1']);
+      expect(app.threadRoots['m1']!.body, '루트');
+    });
+
+    test('따로 둔 루트도 리액션·수정을 받는다', () {
+      app.applyEvent({'type': 'reaction.added', 'channelId': 'c1', 'messageId': 'm1', 'emoji': '👀', 'accountId': 'a1'});
+      expect(app.threadRoots['m1']!.reactions.single.emoji, '👀');
+      app.applyEvent({
+        'type': 'message.updated',
+        'message': {'id': 'm1', 'seq': 1, 'channelId': 'c1', 'authorId': 'a1', 'body': '고친 루트', 'kind': 'user'},
+      });
+      expect(app.threadRoots['m1']!.body, '고친 루트');
+    });
+
+    test('다시 붙어 따라잡아도 루트가 답글로 섞이지 않는다', () async {
+      await app.catchUp();
+      expect(app.threads['m1']!.map((m) => m.id), ['r1']);
     });
   });
 

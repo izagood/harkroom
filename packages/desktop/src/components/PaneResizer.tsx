@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { useHostDocument } from '../lib/hostDocument';
 
 /** 화살표 한 번에 구분선이 움직이는 거리. 사이드바 손잡이와 같은 보폭이다. */
 const STEP = 10;
@@ -20,7 +21,7 @@ const STEP = 10;
  * `absolute left-0` 으로 선다. 폭 계산도 `parentElement` 를 부모 패널로 읽으므로,
  * 이 컴포넌트는 반드시 폭을 지는 그 요소의 **직계 자식**이어야 한다.
  */
-export function PaneResizer({ label, width, min, max, minRoomLeft, onWidth }: {
+export function PaneResizer({ label, width, min, max, minRoomLeft, onWidth, onReset }: {
   /** 접근성 이름. "무엇의" 너비인지 사람이 읽을 수 있어야 한다. */
   label: string;
   width: number;
@@ -34,7 +35,11 @@ export function PaneResizer({ label, width, min, max, minRoomLeft, onWidth }: {
    */
   minRoomLeft: number;
   onWidth: (next: number) => void;
+  /** 있으면 더블클릭이 기본 폭으로 되돌린다(미리보기 패널, designer 2026-10-05). */
+  onReset?: () => void;
 }) {
+  // 새 창 안이면 그 창의 문서를 듣는다(`lib/hostDocument`).
+  const hostDoc = useHostDocument();
   const ref = useRef<HTMLDivElement | null>(null);
   /** 드래그 원점. `null` 이면 끌고 있지 않다. */
   const origin = useRef<{ x: number; width: number; max: number } | null>(null);
@@ -76,14 +81,15 @@ export function PaneResizer({ label, width, min, max, minRoomLeft, onWidth }: {
     };
     const onUp = (): void => {
       origin.current = null;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
+      hostDoc.body.style.cursor = '';
+      hostDoc.body.style.userSelect = '';
+      delete hostDoc.body.dataset.paneDragging;
     };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
+    hostDoc.addEventListener('mousemove', onMove);
+    hostDoc.addEventListener('mouseup', onUp);
     return () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
+      hostDoc.removeEventListener('mousemove', onMove);
+      hostDoc.removeEventListener('mouseup', onUp);
       // 드래그 도중 언마운트되면 `mouseup` 을 받을 리스너가 사라져 body 의 cursor·
       // userSelect 가 영구히 남는다(#372 에서 사이드바가 같은 값을 치렀다).
       if (origin.current) onUp();
@@ -95,8 +101,11 @@ export function PaneResizer({ label, width, min, max, minRoomLeft, onWidth }: {
     // 기본 동작인 "선택 시작"을, 후자는 드래그 중 다른 경로로 새 선택이 생기는 것을 막는다.
     e.preventDefault();
     origin.current = { x: e.clientX, width, max: roomBound() };
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
+    hostDoc.body.style.cursor = 'col-resize';
+    hostDoc.body.style.userSelect = 'none';
+    // 끄는 동안 커서가 iframe(미리보기) 위를 지나면 mousemove 가 그 문서로 가서 끌기가 끊긴다 — index.css 가
+    // 이 표지를 보고 iframe 의 포인터를 끈다(security n2, 2026-10-05).
+    hostDoc.body.dataset.paneDragging = 'true';
   };
 
   /** 화살표는 **구분선을 그 방향으로** 움직인다 — 왼쪽 화살표면 패널이 넓어진다. */
@@ -122,6 +131,7 @@ export function PaneResizer({ label, width, min, max, minRoomLeft, onWidth }: {
       className="absolute -left-0.5 top-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-accent focus:bg-accent"
       onMouseDown={onMouseDown}
       onKeyDown={onKeyDown}
+      onDoubleClick={onReset}
     />
   );
 }

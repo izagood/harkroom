@@ -33,15 +33,24 @@ function checkedLabel(at: number): string {
 
 export function UpdatesSettings() {
   const t = useT();
-  const { status, checkedAt, checking, check, install } = useUpdateCheck();
+  const { status, checkedAt, checking, recheckFailure, check, install } = useUpdateCheck();
   const busy = checking || status.kind === 'installing';
 
   let newVersion: string;
-  if (status.kind === 'available') newVersion = `${status.version} · checked ${checkedLabel(checkedAt ?? Date.now())}`;
+  /**
+   * 실패 원문은 **아랫줄**에 둔다(designer, #1173). 한 줄에 이어 붙이면 말줄임으로 잘려 원문을
+   * 보여 주려던 목적이 사라진다. 길면 3줄에서 자르고 전문은 `title` 에 남긴다.
+   */
+  let failureLine: string | null = null;
+  if (status.kind === 'available') {
+    newVersion = `${status.version} · checked ${checkedLabel(checkedAt ?? Date.now())}`;
+    // 새 버전을 안 뒤의 확인이 실패했으면 그것도 적는다 — "checked" 시각이 왜 멈췄는지 사람이 안다.
+    if (recheckFailure) failureLine = `Re-check failed ${checkedLabel(recheckFailure.at)}: ${recheckFailure.message}`;
+  }
   else if (status.kind === 'installing') newVersion = `${status.version} · downloading and installing…`;
   else if (status.kind === 'uptodate') newVersion = `None — up to date · checked ${checkedLabel(checkedAt ?? Date.now())}`;
   // 실패는 실패라고 적는다. 원문을 붙여 사람이 원인을 직접 볼 수 있게 한다.
-  else if (status.kind === 'failed') newVersion = `Could not complete: ${status.message}`;
+  else if (status.kind === 'failed') { newVersion = 'Could not complete'; failureLine = status.message; }
   else newVersion = checking ? 'Checking…' : 'Not checked yet';
 
   return (
@@ -50,15 +59,33 @@ export function UpdatesSettings() {
         {/* 순서가 사양이다(UX ③): 지금 버전 → 새 버전(확인 시각) → 설치. 사이드바 칸의
             "0.3.59 → 0.3.63" 을 세로로 편 모양이다. */}
         <ReadonlyRow label="Current version" value={__APP_VERSION__} />
-        <ReadonlyRow label="New version" value={<span role="status" data-testid="updates-new-version">{newVersion}</span>} />
+        <ReadonlyRow
+          label="New version"
+          value={
+            <span role="status" data-testid="updates-new-version" className="block text-right">
+              <span className="block truncate">{newVersion}</span>
+              {failureLine && (
+                <span
+                  data-testid="updates-failure"
+                  title={failureLine}
+                  className="mt-0.5 line-clamp-3 whitespace-normal break-words text-meta text-warning"
+                >
+                  {failureLine}
+                </span>
+              )}
+            </span>
+          }
+        />
         <div className="flex items-center justify-end gap-2 px-4 py-3">
-          {status.kind === 'available' || status.kind === 'installing' ? (
+          {/* [Check now] 는 새 버전을 안 뒤에도 남긴다 — 0.3.184 를 받아 둔 사이 0.3.185 가 나왔을 수
+              있다. 다시 물어 더 새 판이 있으면 표시와 [Restart to install] 이 그 판을 가리킨다
+              (`appUpdater` 가 설치할 핸들을 마지막 확인의 것으로 바꾼다). */}
+          <Button disabled={busy} onClick={() => void check()}>
+            {checking ? 'Checking…' : 'Check now'}
+          </Button>
+          {(status.kind === 'available' || status.kind === 'installing') && (
             <Button variant="primary" disabled={busy} onClick={() => void install(status.version)}>
               {status.kind === 'installing' ? 'Installing…' : 'Restart to install'}
-            </Button>
-          ) : (
-            <Button disabled={busy} onClick={() => void check()}>
-              {checking ? 'Checking…' : 'Check now'}
             </Button>
           )}
         </div>

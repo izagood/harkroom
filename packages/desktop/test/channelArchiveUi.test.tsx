@@ -3,6 +3,10 @@ import { render, screen, fireEvent, cleanup, within } from '@testing-library/rea
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
+
+/** 멤버·편집·나가기는 채널 설정 시트가 연다(UX ⑦b-2) — 시트는 Workspace 에 서므로 여기서 함께 그린다. */
+const SidebarWithSheet = (p: Parameters<typeof Sidebar>[0]) => (<><Sidebar {...p} /><ChannelSettingsSheet /></>);
+import { ChannelSettingsSheet } from '../src/components/ChannelSettingsSheet';
 import { ChannelPane } from '../src/components/ChannelPane';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { acc, chan } from './helpers/fakeApi';
@@ -23,7 +27,7 @@ const archived = (id: string, name: string) => ({ ...chan(id, name), archivedAt:
 const seed = (isAdmin: boolean) => {
   useAppStore.getState().reset();
   useAppStore.getState().set({
-    me: { ...acc('u1', 'me'), isAdmin },
+    me: acc('u1', 'me', 'human', isAdmin),
     accounts: { u1: acc('u1', 'me') },
     channels: [chan('c1', 'general'), archived('c2', 'old-project')],
     dms: [], connected: true,
@@ -31,7 +35,7 @@ const seed = (isAdmin: boolean) => {
 };
 
 const sidebar = () => render(
-  <Sidebar panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
+  <SidebarWithSheet panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 
 // **언어를 한국어로 고정한다.** 이 파일의 축들은 사이드바의 한국어 문구로 쓰여 있고,
@@ -85,8 +89,10 @@ describe('채널 보관 UI (#153)', () => {
     const c = fakeController();
     sidebar();
 
+    // 보관은 채널 설정 시트로 옮겼다(UX ⑦b-1) — 메뉴의 "채널 설정…" 이 그 시트를 연다.
     fireEvent.contextMenu(screen.getAllByRole('button', { name: /^# / })[0]!);
-    fireEvent.click(screen.getByText('보관'));
+    fireEvent.click(screen.getByRole('menuitem', { name: '채널 설정…' }));
+    fireEvent.click(screen.getByTestId('channel-sheet-archive'));
 
     expect(c.archiveChannel).toHaveBeenCalledWith('c1', true);
   });

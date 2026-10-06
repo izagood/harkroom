@@ -1,9 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { previewUrlFor } from '../lib/attachmentUploads';
-import type { AttachmentRow } from '@harkroom/shared';
+import type { AttachmentRow, MessageRow } from '@harkroom/shared';
+import type { PendingUpload } from '../state/appStore';
 import { getController } from '../state/controller';
-import { Overlay } from './Overlay';
-import { useT } from '../i18n/useT';
+import { useActiveStore } from '../state/communities';
+import { collectGallery, type GalleryItem, type GalleryScope } from '../lib/imageGallery';
+import { stampLabel } from '../lib/day';
+import { ImageLightbox } from './ImageLightbox';
+import { useT, useLocale } from '../i18n/useT';
+import { useLatestKnownVersion, noteArtifactOpener } from './ArtifactPreview';
+
+/**
+ * 그림을 연 **칸**의 넘겨 보기 범위 — 채널 본문(`ChannelPane`)과 스레드 패널(`ThreadPanel`)이 준다.
+ * 없으면(그 밖의 자리) 지금처럼 그 그림 한 장만 본다.
+ */
+export const GalleryScopeContext = createContext<GalleryScope | null>(null);
 
 /**
  * 미리보기를 허용하는 타입. **화이트리스트다** — `image/*` 로 열면 `image/svg+xml` 이 들어오고,
@@ -59,145 +70,170 @@ function useAttachmentUrl(id: string, enabled: boolean): { url: string | null; f
 }
 
 /**
- * 칩 안에 들어가는 작은 미리보기. **이름 옆에 놓이는 그림이므로 alt 는 비운다** — 이름을
- * 두 번 읽히면 스크린리더에서 칩 하나가 파일 두 개처럼 들린다.
+ * 작성창에 붙인 첨부 하나 — **그림은 80×80 타일, 그림이 아닌 것은 같은 높이의 파일 카드**다
+ * (designer 시안 24878e97, jaebin D1~D4 전부 추천). 24px 썸네일 옆에 이름을 늘어놓던 칩은
+ * 미리보기 효과가 거의 없었다 — 스크린샷끼리는 24px 에서 서로 구별되지 않는다.
  *
- * 그릴 수 없으면 📎 로 남되 **"원래 미리보기가 없는 것"과 "받지 못한 것"을 가른다** — 둘을
- * 같은 📎 로 덮으면, 네트워크가 끊겨 그림이 빠진 자리를 사람이 "이 파일은 원래 이렇다"로
- * 읽고 그대로 보낸다. 본문 미리보기가 `(불러오기 실패)` 로 가르는 것과 같은 규칙이다.
+ * - 이름·크기는 **호버·포커스 때만** 그림 아래 띠로 겹친다(`title` 도 단다). 그림을 가리지 않는다.
+ * - × 는 오른쪽 위 모서리에 반쯤 걸친 원이고 **늘 보인다** — 빼기는 자주 하는 일이라 숨기면 못 찾는다.
+ *   그림의 누르는 자리(확대)와 겹치지 않게 타일 밖으로 반 걸친다.
+ * - 올리는 중·실패는 **늘 보인다.** 상태를 호버 뒤로 숨기면 실패한 채로 보낸다.
+ *
+ * 그림은 다 올라간 뒤 **서버의 바이트**로 그린다: 고른 파일이 아니라 실제로 붙은 것을 보여야 한다.
+ * 그 바이트가 올 때까지는 고른 파일로 그린다(올리는 중에는 흐리게) — 안 그러면
+ * `흐린 그림 → 📎 → 그림` 으로 한 번 꺼졌다 켜진다(designer 검토 A).
  */
-export function AttachmentThumb({ attachment, placeholderFile }: {
-  attachment: AttachmentRow;
-  /**
-   * 방금 올린 그 파일. 서버 바이트가 올 때까지 이것으로 그린다 — 작성창 칩이 업로드를 끝낸
-   * 순간 📎 로 꺼졌다 켜지지 않게 한다. 받아 오기가 실패하면 지금처럼 실패를 말한다.
-   */
-  placeholderFile?: File;
+export function PendingAttachmentTile({ upload, onRemove, onRetry }: {
+  upload: PendingUpload;
+  onRemove: () => void;
+  onRetry: () => void;
 }) {
   const t = useT();
-  const previewable = canPreview(attachment);
-  const { url, failed } = useAttachmentUrl(attachment.id, previewable);
-  if (!url && placeholderFile && previewable && !failed) return <LocalFileThumb file={placeholderFile} />;
-  if (!url) {
-    return (
-      // 그림이 올 자리는 미리 그림 높이(h-6)로 잡는다 — 바이트가 도착하는 순간 11px 이모지가
-      // 24px 그림으로 바뀌면서 칩 줄 전체가 밀려 내려간다. 처음부터 그릴 수 없는 첨부는
-      // 자리를 잡지 않는다: 올 것이 없는데 비워 둔 여백이다.
-      <span className={previewable ? 'inline-flex h-6 items-center gap-1' : 'inline-flex items-center gap-1'}>
-        <span aria-hidden>📎</span>
-        {failed && <span className="text-danger">{t('message.attachment.previewFailed')}</span>}
-      </span>
-    );
-  }
-  return (
-    <img
-      src={url}
-      alt=""
-      data-testid="attachment-thumb"
-      className="h-6 w-6 shrink-0 rounded-sm border border-border object-cover"
-    />
-  );
-}
-
-/**
- * 올리는 중인 첨부의 미리보기 — **고른 파일**로 곧장 그린다. 서버 바이트는 아직 없고,
- * 다 올라가면 칩이 `AttachmentThumb`(실제로 붙은 것)으로 바뀐다. 그릴 수 있는 종류는
- * `canPreview` 와 같은 목록이다: 여기서만 더 그리면 올라간 뒤에 그림이 사라진다.
- */
-export function LocalFileThumb({ file, dim = false }: { file: File; dim?: boolean }) {
-  const previewable = canPreview({ contentType: file.type } as AttachmentRow);
+  const { file, row, status } = upload;
+  const name = row?.filename ?? file.name;
+  const size = formatSize(row?.sizeBytes ?? file.size);
+  const pct = upload.fraction === null ? null : Math.round(upload.fraction * 100);
+  const previewable = canPreview(row ?? ({ contentType: file.type } as AttachmentRow));
+  const server = useAttachmentUrl(row?.id ?? '', previewable && !!row);
   // 파일마다 하나인 URL 을 **렌더 중에** 받는다 — effect 로 미루면 첫 그림 전에 📎 가 한 번 낀다.
   // 해제는 첨부가 작성창에서 사라질 때 `attachmentUploads` 가 한다.
-  const url = previewable ? previewUrlFor(file) : null;
-  if (!url) {
+  const local = previewable && !server.url && !server.failed ? previewUrlFor(file) : null;
+  const url = server.url ?? local;
+  const [zoomed, setZoomed] = useState(false);
+
+  const progress = status === 'uploading' && (
+    <span className="text-fg-subtle tabular-nums" role="status">
+      {pct === null || pct >= 100 ? t('composer.attach.uploading') : t('composer.attach.uploadingPct', { pct })}
+    </span>
+  );
+  const failed = status === 'failed' && (
+    <span className="inline-flex items-center gap-1">
+      <span className="text-danger">{t('composer.attach.failedShort')}</span>
+      <button
+        type="button"
+        aria-label={`Retry ${name}`}
+        className="rounded-sm px-1 font-medium text-accent hover:bg-surface-hover"
+        // 커서를 지킨다 — 다시 누른 뒤에도 초안을 이어서 쓴다.
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onRetry}
+      >
+        {t('composer.attach.retry')}
+      </button>
+    </span>
+  );
+  const remove = (
+    <button
+      type="button"
+      aria-label={`Remove ${name}`}
+      className="absolute -right-2 -top-2 z-10 flex h-5 w-5 items-center justify-center rounded-full border border-border bg-surface text-meta leading-none text-fg-muted shadow-sm hover:bg-surface-hover hover:text-fg"
+      onClick={onRemove}
+    >
+      ×
+    </button>
+  );
+  const border = status === 'failed' ? 'border-danger' : 'border-border';
+
+  if (!previewable) {
+    // 그림이 아닌 첨부 — 보여 줄 그림이 없으니 이름·크기가 곧 미리보기다. 늘 보인다.
     return (
-      <span className={previewable ? 'inline-flex h-6 items-center' : 'inline-flex items-center'}>
-        <span aria-hidden>📎</span>
-      </span>
+      <div
+        data-testid="pending-attachment"
+        data-status={status}
+        title={`${name} · ${size}`}
+        className={`relative flex h-20 w-52 shrink-0 items-center gap-2 rounded-card border bg-surface px-2.5 text-meta text-fg ${border}`}
+      >
+        <span aria-hidden className="text-title">📎</span>
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="line-clamp-2 break-all font-medium">{name}</span>
+          <span className="text-fg-subtle">{status === 'done' ? size : (progress || failed)}</span>
+        </span>
+        {remove}
+      </div>
     );
   }
+
   return (
-    <img
-      src={url}
-      alt=""
-      data-testid="attachment-local-thumb"
-      // 흐리게는 **올리는 중일 때만**이다. 다 올라간 뒤 자리 지킴으로 쓸 때는 진하게.
-      className={`h-6 w-6 shrink-0 rounded-sm border border-border object-cover${dim ? ' opacity-60' : ''}`}
-    />
+    <>
+    <div
+      data-testid="pending-attachment"
+      data-status={status}
+      title={`${name} · ${size}`}
+      className={`group relative h-20 w-20 shrink-0 rounded-card border bg-surface-sunken text-meta ${border}`}
+    >
+      {url ? (
+        <button
+          type="button"
+          aria-label={t('message.attachment.zoom', { filename: name })}
+          className="block h-full w-full cursor-zoom-in overflow-hidden rounded-card focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          onClick={() => setZoomed(true)}
+        >
+          {/* 이름은 띠가 글자로 말한다 — alt 까지 이름이면 스크린리더가 같은 파일을 두 번 읽는다. */}
+          <img
+            src={url}
+            alt=""
+            data-testid={server.url ? 'attachment-thumb' : 'attachment-local-thumb'}
+            className={`h-full w-full object-cover${status === 'uploading' ? ' opacity-60' : ''}`}
+          />
+        </button>
+      ) : (
+        // 받지 못한 그림은 "원래 미리보기가 없는 것"과 갈라 말한다 — 같은 📎 로 덮으면 끊긴
+        // 자리를 사람이 "이 파일은 원래 이렇다"로 읽고 그대로 보낸다.
+        <span className="flex h-full w-full flex-col items-center justify-center gap-0.5 px-1 text-center">
+          <span aria-hidden>📎</span>
+          {server.failed && <span className="text-danger">{t('message.attachment.previewFailed')}</span>}
+        </span>
+      )}
+      {/* 이름·크기 띠 — 호버·포커스 때만. 누르는 자리를 막지 않게 포인터는 통과시킨다. */}
+      {status === 'done' && (
+        <span className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col rounded-b-md bg-black/65 px-1.5 py-1 leading-tight text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          <span className="truncate">{name}</span>
+          <span className="text-white/75">{size}</span>
+        </span>
+      )}
+      {/* 올리는 중·실패는 늘 보인다. */}
+      {status !== 'done' && (
+        <span className="absolute inset-x-0 bottom-0 flex justify-center rounded-b-md bg-surface/90 px-1 py-0.5">
+          {progress || failed}
+        </span>
+      )}
+      {status === 'uploading' && pct !== null && pct < 100 && (
+        <span aria-hidden className="pointer-events-none absolute inset-x-1 top-1 h-1 overflow-hidden rounded-full bg-black/20">
+          <span className="block h-full bg-accent" style={{ width: `${pct}%` }} />
+        </span>
+      )}
+      {remove}
+    </div>
+      {/* 겹창은 타일 **밖에** 둔다 — 안에 두면 타일의 `title` 툴팁이 확대 보기 위에 뜬다. */}
+      {zoomed && url && (
+        <ImageLightbox
+          attachment={row ?? ({ id: upload.localId, filename: name, sizeBytes: file.size, contentType: file.type } as AttachmentRow)}
+          url={url}
+          // 아직 서버에 없는 파일은 저장할 것이 없다 — 고른 그 파일이 사람 디스크에 있다.
+          saveable={!!row}
+          onClose={() => setZoomed(false)}
+        />
+      )}
+    </>
   );
 }
 
-/**
- * 확대 보기(#첨부 확대). 본문의 그림은 `max-h-56` · `max-w-[28rem]` 로 줄여 그리므로 스크린샷 속 글자는
- * 대개 읽히지 않는다 — 크게 볼 자리가 없으면 사람은 그림을 디스크에 저장해 시스템 뷰어로
- * 열고, 그때 채팅을 떠난다.
- *
- * 스크림 · Esc · 바깥 클릭은 **`Overlay` 가 정한다.** 여기서 다시 정하면 "겹쳐 열려도
- * 맨 위 하나만 닫힌다"는 규칙이 이 자리에서만 갈린다.
- *
- * **바이트를 다시 받지 않는다.** 확대할 그림은 이미 본문에 그려진 그것이므로 같은
- * objectURL 을 그대로 넘겨 쓴다. 다시 받으면 클릭마다 왕복이 붙고, URL 의 수명(revoke)을
- * 두 곳이 나눠 갖게 된다 — 그러면 닫는 쪽이 revoke 한 URL 을 본문이 계속 가리킨다.
- */
-function Lightbox({ attachment, url, onClose }: {
-  attachment: AttachmentRow;
-  url: string;
-  onClose: () => void;
-}) {
-  const t = useT();
-  /**
-   * **포커스를 겹창 안으로 옮긴다.** 안 옮기면 포커스는 스크림 뒤의 그림 버튼에 남는다 —
-   * 화살표·PageDown 으로 스크롤하면 보이지 않는 뒤쪽 목록이 움직이고, Tab 은 겹창이 아니라
-   * 뒤 화면의 다음 버튼으로 간다. 키보드로 열었을 때 닫는 길(`Esc` 는 document 에서 받지만
-   * `×` 는 아니다)이 손에 닿지 않는 것도 같은 이유다.
-   *
-   * 닫기 버튼을 고른다 — 겹창에서 사람이 가장 자주 하는 다음 동작이고, 저장을 먼저 잡으면
-   * Enter 한 번에 파일 저장이 시작된다.
-   */
-  const closeRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => { closeRef.current?.focus(); }, []);
-  return (
-    // 폭을 고정하지 않는다(기본값 `w-[42rem]` 를 물려받으면 작은 그림 옆에 빈 판이 남는다) —
-    // 화면보다 큰 그림만 뷰포트에서 잘라 낸다.
-    <Overlay label={attachment.filename} onClose={onClose} align="center" className="max-w-[92vw]">
-      <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
-        <span className="truncate font-medium">{attachment.filename}</span>
-        <span className="shrink-0 text-fg-subtle">{formatSize(attachment.sizeBytes)}</span>
-        {/*
-          이미지는 칩이 아니라 그림으로 그려지므로 **여기 말고는 저장할 자리가 없다.**
-          저장이 칩 분기에만 붙어 있으면, 미리보기가 되는 첨부일수록 내려받을 길이 없다.
-          실패 문구는 컨트롤러가 Notice 로 세운다(#257) — 여기서 다시 삼키지 않는다.
-        */}
-        <button
-          className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
-          onClick={() => void getController().saveAttachment(attachment)}
-        >{t('message.attachment.save')}</button>
-        <button
-          ref={closeRef}
-          className="shrink-0 rounded px-2 text-fg-subtle hover:bg-surface-sunken"
-          onClick={onClose}
-          aria-label={t('message.attachment.closeZoom')}
-        >×</button>
-      </header>
-      {/*
-        `max-h-[80vh]` 로 세로를 제한한다 — 높이를 열어 두면 세로로 긴 스크린샷에서 그림이
-        패널을 밀어내고 머리줄(이름 · 저장 · 닫기)이 화면 밖으로 나간다.
-      */}
-      <img
-        src={url}
-        alt={attachment.filename}
-        data-testid="attachment-full"
-        className="max-h-[80vh] max-w-full object-contain"
-      />
-    </Overlay>
-  );
-}
-
-function Attachment({ attachment }: { attachment: AttachmentRow }) {
+/** 확대 보기는 `ImageLightbox.tsx` 에 있다(배율·끌기·단축키, designer 3192efed). */
+function Attachment({ attachment, message }: { attachment: AttachmentRow; message?: MessageRow }) {
   const t = useT();
   const previewable = canPreview(attachment);
   const { url, failed } = useAttachmentUrl(attachment.id, previewable);
   const [zoomed, setZoomed] = useState(false);
+  const scope = useContext(GalleryScopeContext);
+  /** 연 순간의 목록(사양 1: 열 때 한 번 찍는다). 칸 밖이거나 글을 모르면 null — 한 장 보기. */
+  const [gallery, setGallery] = useState<{ items: GalleryItem[]; start: number } | null>(null);
+  const openZoom = () => {
+    if (scope && message) {
+      const items = collectGallery(useActiveStore.getState().messages[message.channelId] ?? [], scope, canPreview);
+      const start = items.findIndex((it) => it.attachment.id === attachment.id);
+      if (start >= 0 && items.length > 1) { setGallery({ items, start }); return; }
+    }
+    setZoomed(true);
+  };
 
   if (previewable && url) {
     return (
@@ -212,9 +248,9 @@ function Attachment({ attachment }: { attachment: AttachmentRow }) {
         */}
         <button
           type="button"
-          onClick={() => setZoomed(true)}
+          onClick={openZoom}
           aria-label={t('message.attachment.zoom', { filename: attachment.filename })}
-          className="block cursor-zoom-in rounded border border-border"
+          className="block cursor-zoom-in rounded-row border border-border"
         >
           {/*
             **세로만이 아니라 가로도 묶는다.** 높이만 묶어 두면(`max-h-64` + `max-w-full`)
@@ -230,16 +266,19 @@ function Attachment({ attachment }: { attachment: AttachmentRow }) {
             src={url}
             alt={attachment.filename}
             data-testid="attachment-preview"
-            className="max-h-56 max-w-[min(28rem,100%)] rounded"
+            className="max-h-56 max-w-[min(28rem,100%)] rounded-row"
           />
         </button>
-        {zoomed && <Lightbox attachment={attachment} url={url} onClose={() => setZoomed(false)} />}
+        {zoomed && <ImageLightbox attachment={attachment} url={url} onClose={() => setZoomed(false)} />}
+        {gallery && (
+          <ImageGallery items={gallery.items} start={gallery.start} startUrl={url} onClose={() => setGallery(null)} />
+        )}
       </>
     );
   }
   return (
     <button
-      className="inline-flex items-center gap-2 rounded border border-border bg-surface px-2 py-1 text-body text-fg hover:bg-surface-sunken"
+      className="inline-flex items-center gap-2 rounded-row border border-border bg-surface px-2 py-1 text-body text-fg hover:bg-surface-sunken"
       onClick={() => void getController().saveAttachment(attachment)}
     >
       <span aria-hidden>📎</span>
@@ -250,11 +289,167 @@ function Attachment({ attachment }: { attachment: AttachmentRow }) {
   );
 }
 
-export function Attachments({ attachments }: { attachments: AttachmentRow[] }) {
+/**
+ * 미리보기(아티팩트) 카드(④, designer d8ca47be). 본문 아래 첨부 자리에 붙고 폭은 그림과 같은 28rem 이다.
+ * **목록 안에서 페이지를 띄우지 않는다** — 축소 iframe 을 깔면 스크롤할 때마다 스크립트가 돌고, 격리면도
+ * 열었을 때 하나만 있는 편이 낫다. 카드 전체가 누르는 자리다.
+ *
+ * 표지는 같은 글에 붙은 그림 첨부다(`coverAttachmentId`). 없으면 그림 칸을 비워 두지 않고 글 카드로만 그린다.
+ * 표지는 `canPreview` 화이트리스트(svg 없음)를 지난 것만 `<img>`(blob)로 그린다(security ④ 조건).
+ */
+function ArtifactCard({ attachment, cover, from }: {
+  attachment: AttachmentRow; cover: AttachmentRow | null; from: 'channel' | 'thread';
+}) {
+  const t = useT();
+  const ref = attachment.artifact!;
+  const latest = useLatestKnownVersion(ref.artifactId, ref.latestVersion);
+  const coverOk = cover !== null && canPreview(cover);
+  const { url: coverUrl } = useAttachmentUrl(cover?.id ?? '', coverOk);
+  const newer = latest > ref.version;
+  // 지금 패널에 떠 있는 카드 — 같은 안의 v1·v2 가 나란히 있을 때 무엇을 보고 있는지 보인다(designer c).
+  const selected = useActiveStore((st) => st.artifactPreview?.id === attachment.id);
+  // 최신 제목은 #1065(091) 서버부터 싣는다. 없으면 툴팁을 생략한다.
+  const latestTitle = ref.latestTitle;
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        // detail 0 = Enter·Space(키보드). 닫을 때 포커스를 돌려줄지가 이것으로 갈린다(`ArtifactPreview.tsx`).
+        noteArtifactOpener(e.currentTarget, e.detail === 0);
+        getController().openArtifactPreview(attachment, from);
+      }}
+      aria-label={t('artifact.card.open', { title: ref.title })}
+      aria-pressed={selected}
+      data-testid="artifact-card"
+      data-selected={selected ? 'true' : 'false'}
+      // `artifact-card` 는 포커스 링을 카드 바깥에 띄운다(index.css) — 선택 표시(카드 테두리)와 모양이 갈린다.
+      className={`artifact-card group block w-[min(28rem,100%)] overflow-hidden rounded-card border bg-surface text-left hover:bg-surface-sunken ${selected ? 'border-accent ring-1 ring-accent' : 'border-border'}`}
+    >
+      {coverUrl && (
+        <img src={coverUrl} alt="" data-testid="artifact-card-cover" className="aspect-video w-full border-b border-border object-cover" />
+      )}
+      <span className="flex flex-col gap-0.5 px-3 py-2">
+        <span className="flex items-center gap-2">
+          {/* 눌러서 보는 시안이라는 표지(designer A안) — 표지 그림이 있어도 같은 모양이다. */}
+          <svg aria-hidden="true" data-testid="artifact-card-icon" viewBox="0 0 16 16" width="16" height="16" className="shrink-0 text-fg-muted" fill="none" stroke="currentColor" strokeWidth="1.3">
+            <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+            <path d="M1.5 5.5h13M6 5.5v8" />
+          </svg>
+          <span className="min-w-0 truncate font-medium">{ref.title}</span>
+          <span className="shrink-0 text-meta text-fg-subtle">{ref.version > 1
+            // 고쳐 올린 안인지 첫 판인지 카드에서 보이게(designer a).
+            ? t('artifact.card.versionWithPrev', { version: ref.version, prev: ref.version - 1 })
+            : t('artifact.card.version', { version: ref.version })}</span>
+          {newer && (
+            <span
+              className="ml-auto shrink-0 rounded-full border border-border px-1.5 text-meta text-fg-muted"
+              data-testid="artifact-card-latest"
+              title={latestTitle && latest === ref.latestVersion
+                ? t('artifact.card.latestTitle', { version: latest, title: latestTitle })
+                : undefined}
+            >{t('artifact.card.latest', { version: latest })}</span>
+          )}
+        </span>
+        {ref.summary && <span className="truncate text-meta text-fg-muted">{ref.summary}</span>}
+        <span className="flex items-center gap-2 text-meta">
+          <span className={selected ? 'text-fg' : 'text-fg-muted group-hover:text-fg'} data-testid="artifact-card-action">
+            {selected ? t('artifact.card.previewing') : t('artifact.card.openLabel')}
+          </span>
+          <span className="ml-auto shrink-0 text-fg-subtle">{t('artifact.card.html')} · {formatSize(attachment.sizeBytes)}</span>
+        </span>
+      </span>
+    </button>
+  );
+}
+
+/**
+ * 넘겨 보기(designer 사양, 2026-10-02). 장(`index`)과 장마다의 바이트를 쥔다 — 라이트박스는 한 장을 그릴 뿐이다.
+ * 바이트: 연 그림은 본문이 받은 objectURL 을 그대로 쓰고(다시 받지 않는다), 나머지는 볼 때 받는다. 이웃(±1)은
+ * 미리 받아 넘기는 순간 바로 보이게 한다. 여기서 만든 objectURL 은 닫을 때 revoke 한다 — 본문 것은 본문이 한다.
+ */
+export function ImageGallery({ items, start, startUrl, onClose }: {
+  items: GalleryItem[];
+  start: number;
+  startUrl: string;
+  onClose: () => void;
+}) {
+  const locale = useLocale();
+  const [index, setIndex] = useState(start);
+  const startId = items[start]?.attachment.id;
+  const [urls, setUrls] = useState<Record<string, string>>(() => (startId ? { [startId]: startUrl } : {}));
+  const [failed, setFailed] = useState<Record<string, boolean>>({});
+  const asked = useRef(new Set<string>(startId ? [startId] : []));
+  const owned = useRef<string[]>([]);
+  const alive = useRef(true);
+  useEffect(() => () => {
+    alive.current = false;
+    for (const u of owned.current) URL.revokeObjectURL(u);
+  }, []);
+
+  const load = useCallback((id: string) => {
+    if (asked.current.has(id)) return;
+    asked.current.add(id);
+    setFailed((f) => ({ ...f, [id]: false }));
+    void getController().fetchAttachment(id).then((blob) => {
+      const u = URL.createObjectURL(blob);
+      if (!alive.current) { URL.revokeObjectURL(u); return; }
+      owned.current.push(u);
+      setUrls((m) => ({ ...m, [id]: u }));
+    }).catch(() => {
+      asked.current.delete(id);
+      if (alive.current) setFailed((f) => ({ ...f, [id]: true }));
+    });
+  }, []);
+
+  useEffect(() => {
+    for (const i of [index, index - 1, index + 1]) {
+      const it = items[i];
+      if (it) load(it.attachment.id);
+    }
+  }, [index, items, load]);
+
+  const item = items[index]!;
+  const id = item.attachment.id;
+  const author = useActiveStore((s) => s.accounts[item.message.authorId]);
+  return (
+    <ImageLightbox
+      attachment={item.attachment}
+      url={urls[id] ?? null}
+      failed={!!failed[id]}
+      onRetry={() => load(id)}
+      onClose={onClose}
+      nav={{
+        index,
+        total: items.length,
+        onPrev: index > 0 ? () => setIndex(index - 1) : undefined,
+        onNext: index < items.length - 1 ? () => setIndex(index + 1) : undefined,
+        sender: author?.handle ?? '…',
+        at: stampLabel(item.message.createdAt, locale),
+        onGoTo: () => { onClose(); void getController().openMessage(item.message.id, item.message); },
+      }}
+    />
+  );
+}
+
+export function Attachments({ attachments, from = 'channel', message }: {
+  attachments: AttachmentRow[];
+  /** 이 목록이 놓인 칸 — 미리보기가 열린 동안 남길 칸을 정한다(`Workspace.tsx`). */
+  from?: 'channel' | 'thread';
+  /** 이 첨부가 달린 글 — 있으면 확대 보기에서 같은 칸의 그림을 넘겨 본다. */
+  message?: MessageRow;
+}) {
   if (!attachments.length) return null;
+  // 미리보기의 표지는 카드 안에 그린다 — 따로 그림으로 한 번 더 보이면 같은 것이 두 번이다.
+  const covers = new Set(attachments.map((a) => a.artifact?.coverAttachmentId).filter((v): v is string => !!v));
   return (
     <div className="mt-1 space-y-1">
-      {attachments.map((a) => <div key={a.id}><Attachment attachment={a} /></div>)}
+      {attachments.filter((a) => !covers.has(a.id)).map((a) => (
+        <div key={a.id}>
+          {a.artifact
+            ? <ArtifactCard attachment={a} from={from} cover={attachments.find((c) => c.id === a.artifact!.coverAttachmentId) ?? null} />
+            : <Attachment attachment={a} message={message} />}
+        </div>
+      ))}
     </div>
   );
 }

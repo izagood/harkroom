@@ -3,25 +3,41 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'connect/connect_screen.dart';
 import 'i18n/i18n.dart';
+import 'push/push_coordinator.dart';
+import 'push/push_gate.dart';
+import 'push/push_platform.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
+import 'session/recent_search_store.dart';
 import 'session/session_store.dart';
 import 'state/app_scope.dart';
 import 'state/app_state.dart';
 import 'theme.dart';
 import 'ui/states.dart';
 
-void main() => runApp(HarkroomApp(state: AppState(sessions: SessionStore.keychain())));
+void main() => runApp(bootApp());
+
+/// 앱을 짓는다. **바인딩부터 세운다** — [PushCoordinator] 가 `runApp` 전에 네이티브 채널 처리기를
+/// 단다(`harkroom/push`). 바인딩 없이 그러면 `main` 이 예외로 끝나 `runApp` 이 불리지 않고, 릴리스
+/// 빌드는 아무 오류도 없이 흰 화면에 멈춘다(TestFlight 281). 시험은 [sessions] 를 바꿔 끼운다.
+HarkroomApp bootApp({SessionStore? sessions}) {
+  WidgetsFlutterBinding.ensureInitialized();
+  final state = AppState(sessions: sessions ?? SessionStore.keychain(), recentSearchStore: RecentSearchStore.keychain());
+  return HarkroomApp(state: state, push: PushCoordinator(state, MethodChannelPush()));
+}
 
 /// 앱 루트.
 ///
 /// **오퍼레이터가 아니라 대화 클라이언트다**(계획서 §1) — 이 앱은 에이전트를 돌리지
 /// 않고 부른다. 터미널·러너 제어·Claude 계정은 여기 들어오지 않는다.
 class HarkroomApp extends StatefulWidget {
-  const HarkroomApp({super.key, required this.state});
+  const HarkroomApp({super.key, required this.state, this.push});
 
   /// 시험이 바꿔 끼운다(메모리 보관소 + 가짜 소켓).
   final AppState state;
+
+  /// 푸시(`lib/push/`). 없으면(시험) 푸시 없이 돈다.
+  final PushCoordinator? push;
 
   @override
   State<HarkroomApp> createState() => _HarkroomAppState();
@@ -31,6 +47,10 @@ class _HarkroomAppState extends State<HarkroomApp> {
   /// 사람이 앱 안에서 고른 언어. `null` 이면 **기기 언어를 따른다**(§7-2 — 폰 언어를
   /// 바꾸는 것이 유일한 수단이면 그것은 설정이 아니다. 고르는 화면은 P1 이후).
   final Locale? _override = null;
+
+  /// 토스트를 화면 옮길 때 내리려고 쥔다([ToastDismisser]).
+  final _messenger = GlobalKey<ScaffoldMessengerState>();
+  late final _toastDismisser = ToastDismisser(_messenger);
 
   @override
   void initState() {
@@ -43,6 +63,8 @@ class _HarkroomAppState extends State<HarkroomApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      scaffoldMessengerKey: _messenger,
+      navigatorObservers: [_toastDismisser],
       // **`context.t` 를 쓰지 않는다.** 이 콜백은 아래 `builder` 보다 **위**에서 불리므로
       // 거기서 세우는 `I18n` 이 아직 없다 — `context.t` 를 쓰면 앱이 첫 프레임에 죽는다
       // (시험이 잡았다). `Localizations` 는 MaterialApp 이 이 위에 둔다.
@@ -78,9 +100,12 @@ class _HarkroomAppState extends State<HarkroomApp> {
       darkTheme: harkroomTheme(Brightness.dark),
       builder: (context, child) => I18n(
         strings: stringsFor(Localizations.localeOf(context).languageCode),
-        child: AppScope(state: widget.state, child: child ?? const SizedBox.shrink()),
+        child: AppScope(
+          state: widget.state,
+          child: PushScope(push: widget.push, child: child ?? const SizedBox.shrink()),
+        ),
       ),
-      home: const _Root(),
+      home: _Root(push: widget.push),
     );
   }
 }
@@ -90,14 +115,16 @@ class _HarkroomAppState extends State<HarkroomApp> {
 /// 각 화면이 스스로 다음 화면으로 `Navigator.push` 하게 두면, 부팅으로 들어온 경로와
 /// 로그인으로 들어온 경로가 갈라지고 둘 중 하나에만 있는 버그가 생긴다.
 class _Root extends StatelessWidget {
-  const _Root();
+  const _Root({this.push});
+
+  final PushCoordinator? push;
 
   @override
   Widget build(BuildContext context) => switch (context.app.phase) {
         AppPhase.booting => const _Booting(),
         AppPhase.needsServer => const ConnectScreen(),
         AppPhase.needsLogin => const LoginScreen(),
-        AppPhase.ready => const HomeScreen(),
+        AppPhase.ready => PushGate(push: push, child: const HomeScreen()),
         AppPhase.unreachable => const _Unreachable(),
       };
 }

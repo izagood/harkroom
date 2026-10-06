@@ -4,9 +4,9 @@ import { useActiveStore } from '../../state/communities';
 import { useT } from '../../i18n/useT';
 import { hasCapability } from '../../lib/capabilities';
 import { hasOperatorLocalSurface, listLocalAgents, registerLocalOperator } from '../../lib/operatorLocal';
-import { ConfirmDialog } from '../ConfirmDialog';
 import type { SectionId } from './sections';
 import { SettingsGroup, SettingsPage } from './primitives';
+import { operatorNameOf } from '../../lib/operatorName';
 
 /**
  * 설정 › 이 기기 › **이 머신의 오퍼레이터**(UX ⑥b-2).
@@ -47,7 +47,12 @@ export function ThisOperatorSettings({ onOpenSection }: {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<LocalStatus>({ kind: 'checking' });
-  const [askAgain, setAskAgain] = useState(false);
+  /**
+   * 다시 등록의 결과. `replaced` 면 서버가 옛 등록을 폐기하고 배정을 옮겼다. `kept` 면 폐기하지
+   * 않았다 — `replaces` 를 모르는 옛 서버다(남의 id 였을 때도 서버는 같은 답을 준다). 그때는
+   * 옛 등록이 토큰째 살아 있으므로 직접 지우라고 말한다.
+   */
+  const [again, setAgain] = useState<{ kind: 'replaced'; moved: number } | { kind: 'kept' } | null>(null);
 
   const loadStatus = useCallback(async (): Promise<void> => {
     const baseUrl = getController().api?.baseUrl ?? null;
@@ -60,7 +65,7 @@ export function ThisOperatorSettings({ onOpenSection }: {
       if (!mine.operatorId) { setStatus({ kind: 'registered', name: null, online: null }); return; }
       const list = await getController().operators().catch(() => null);
       const op = list?.find((o) => o.id === mine.operatorId) ?? null;
-      setStatus({ kind: 'registered', name: op?.name ?? null, online: op ? op.online : null });
+      setStatus({ kind: 'registered', name: operatorNameOf(op) ?? null, online: op ? op.online : null });
     } catch {
       setStatus({ kind: 'unknown' });
     }
@@ -71,7 +76,8 @@ export function ThisOperatorSettings({ onOpenSection }: {
   const checking = status.kind === 'checking';
 
   const registerHere = async () => {
-    setError(null); setRegistered(null);
+    const wasRegistered = isRegistered;
+    setError(null); setRegistered(null); setAgain(null);
     setBusy(true);
     try {
       const minted = await getController().operatorRegisterCode();
@@ -79,6 +85,8 @@ export function ThisOperatorSettings({ onOpenSection }: {
       if (!baseUrl) throw new Error(t('thisOperator.noServer'));
       const out = await registerLocalOperator(baseUrl, minted.code);
       setRegistered(out.name);
+      if (out.replaced) setAgain({ kind: 'replaced', moved: out.replaced.movedAssignments });
+      else if (wasRegistered) setAgain({ kind: 'kept' });
       void loadStatus();
     } catch (e) {
       setError(t('operators.registerHereFailed', { reason: e instanceof Error ? e.message : String(e) }));
@@ -96,7 +104,7 @@ export function ThisOperatorSettings({ onOpenSection }: {
             <>
               <p className="text-meta text-fg-muted" data-testid="this-operator-unavailable">{t('thisOperator.unavailable')}</p>
               {onOpenSection && (
-                <button className="mt-2 rounded px-2 py-1 text-meta text-accent hover:bg-surface-sunken" onClick={() => onOpenSection('operators')}>
+                <button className="mt-2 rounded-row px-2 py-1 text-meta text-accent hover:bg-surface-sunken" onClick={() => onOpenSection('operators')}>
                   {t('thisOperator.openList')}
                 </button>
               )}
@@ -121,20 +129,36 @@ export function ThisOperatorSettings({ onOpenSection }: {
                     status.online === null ? null : status.online ? t('operators.online') : t('operators.offline'),
                   ].filter(Boolean).join(' · ')}
                 </span>
+                {/* 이름은 Operators 에서만 바꾼다(designer) — 같은 조작을 두 자리에 두지 않고 그리로 보낸다. */}
+                {status.kind === 'registered' && status.name && onOpenSection && (
+                  <button
+                    data-testid="this-operator-rename"
+                    className="rounded-row px-1 text-meta font-normal text-accent hover:bg-surface-sunken"
+                    onClick={() => onOpenSection('operators')}
+                  >
+                    {t('thisOperator.renameInList')}
+                  </button>
+                )}
               </p>
               <p className="mb-3 text-meta text-fg-muted">{t('operators.registerHereNote')}</p>
               {registered && (
                 <p className="mb-3 text-meta text-success" data-testid="operator-registered-here">{t('operators.registerHereDone', { name: registered })}</p>
+              )}
+              {again?.kind === 'replaced' && (
+                <p className="mb-3 text-meta text-fg-muted" data-testid="this-operator-replaced">{t('thisOperator.replacedDone', { n: again.moved })}</p>
+              )}
+              {again?.kind === 'kept' && (
+                <p role="alert" className="mb-3 text-meta text-danger" data-testid="this-operator-kept">{t('thisOperator.replacedKept')}</p>
               )}
               <div className="flex flex-wrap items-center gap-2">
                 {/* 이미 등록돼 있으면 **다시 등록** 으로 낮춘다(회색 테두리) — 같은 머신을 두 번 등록하지 않게. */}
                 <button
                   data-testid="this-operator-register"
                   className={isRegistered || checking
-                    ? 'rounded border border-border px-4 py-2 font-medium text-fg hover:bg-surface-sunken disabled:opacity-50'
-                    : 'rounded bg-accent px-4 py-2 font-medium text-fg-on-strong disabled:opacity-50'}
+                    ? 'rounded-row border border-border px-4 py-2 font-medium text-fg hover:bg-surface-sunken disabled:opacity-50'
+                    : 'rounded-row bg-accent px-4 py-2 font-medium text-fg-on-strong disabled:opacity-50'}
                   disabled={busy || checking}
-                  onClick={() => (isRegistered ? setAskAgain(true) : void registerHere())}
+                  onClick={() => void registerHere()}
                 >
                   {busy ? t('operators.registerBusy') : isRegistered ? t('thisOperator.registerAgain') : t('operators.registerHere')}
                 </button>
@@ -142,7 +166,7 @@ export function ThisOperatorSettings({ onOpenSection }: {
                 {onOpenSection && (
                   <button
                     data-testid="this-operator-open-list"
-                    className="rounded px-2 py-2 text-meta text-accent hover:bg-surface-sunken"
+                    className="rounded-row px-2 py-2 text-meta text-accent hover:bg-surface-sunken"
                     onClick={() => onOpenSection('operators')}
                   >
                     {t('thisOperator.openList')}
@@ -157,22 +181,6 @@ export function ThisOperatorSettings({ onOpenSection }: {
           {error && <p role="alert" className="mt-3 text-meta text-danger">{error}</p>}
         </div>
       </SettingsGroup>
-      {/*
-        다시 등록은 **옛 등록을 폐기하지 않는다**(security #1021): `POST /operators/claim` 은 claim 마다
-        새 행을 넣고, 오퍼레이터는 이 머신의 토큰·operatorId 를 새것으로 덮을 뿐이다. 옛 행은
-        `revoked_at` 이 빈 채 목록에 "끊김" 으로 남고 그 토큰도 서버에선 유효하다 — 그래서 묻는다.
-      */}
-      {askAgain && (
-        <ConfirmDialog
-          title={t('thisOperator.registerAgainTitle')}
-          detail={t('thisOperator.registerAgainDetail')}
-          detailKind="note"
-          confirmLabel={t('thisOperator.registerAgain')}
-          cancelLabel={t('thisOperator.registerAgainCancel')}
-          onConfirm={() => { setAskAgain(false); void registerHere(); }}
-          onCancel={() => setAskAgain(false)}
-        />
-      )}
     </SettingsPage>
   );
 }

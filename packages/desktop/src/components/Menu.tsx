@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useCallback, useLayoutEffect, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { Fragment, useState, useRef, useEffect, useCallback, useLayoutEffect, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useHostDocument } from '../lib/hostDocument';
 
 export interface MenuItem {
   label: string;
@@ -16,6 +17,20 @@ export interface MenuItem {
    * `Settings ⌘,` 가 아니고, 스크린리더는 글리프를 "커맨드 콤마"로 읽지 못한다.
    */
   shortcut?: string;
+  /**
+   * 이 항목 **앞에** 구분선을 긋는다(UX ⑦, designer 사양: 채널 우클릭 메뉴를 묶음으로 나눈다).
+   * 묶음을 배열의 배열로 받지 않고 항목의 표시로 둔 이유: 조건부로 빠지는 항목이 많아(권한·상태)
+   * 묶음 첫 항목이 그때그때 다르다 — 그래서 소비자가 **실제로 남은** 항목 중 첫 것에 단다.
+   * 맨 앞 항목에 달려 있으면 긋지 않는다(빈 위쪽에 선만 서는 것을 막는다).
+   */
+  separatorBefore?: boolean;
+  /** 되돌리기 어려운 동작(삭제)을 빨간 글씨로(UX ⑦b, designer). 기본은 보통 항목이다. */
+  tone?: 'danger';
+  /**
+   * 고를 수 있는 줄 중 **지금 고르지 않은** 줄 — 라벨 앞에 `✓ ` 폭의 보이지 않는 칸을 둔다. 고른 줄은 라벨이
+   * 이미 `✓ ` 로 시작하므로 세 줄의 글자 시작이 맞는다. 칸은 CSS 의사 요소라 접근성 이름·textContent 에 안 섞인다.
+   */
+  checkable?: boolean;
 }
 
 /**
@@ -131,6 +146,8 @@ export function clipBounds(el: HTMLElement): { top: number; bottom: number } {
 const MENU_ITEM_FOCUS = 'outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1';
 
 export function Menu({ renderTrigger, items, placement = 'top', openOnContextMenu = false, header, className = '' }: MenuProps) {
+  // 새 창 안이면 그 창의 문서를 듣는다(`lib/hostDocument`).
+  const hostDoc = useHostDocument();
   const [open, setOpen] = useState(false);
   const [openAt, setOpenAt] = useState<MenuPosition | null>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
@@ -220,8 +237,8 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
       if (triggerRef.current?.contains(target)) return;
       close();
     };
-    document.addEventListener('mousedown', onMouseDown);
-    return () => document.removeEventListener('mousedown', onMouseDown);
+    hostDoc.addEventListener('mousedown', onMouseDown);
+    return () => hostDoc.removeEventListener('mousedown', onMouseDown);
   }, [open, close]);
 
   /** 메뉴 안에서의 키보드 이동. 항목 버튼에 직접 걸어 리스너 재부착을 피한다. */
@@ -272,7 +289,7 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
     ? (() => {
         // 머리가 있으면 그만큼 더 높다(약 44px). 좌표로 여는 소비자(#111)는 아직 머리를
         // 쓰지 않지만, 어림값을 항목 수에만 매어 두면 다음 소비자가 조용히 화면 밖으로 나간다.
-        const height = items.length * 28 + (header ? 44 : 0) + 8;
+        const height = items.length * 28 + items.filter((it, i) => i > 0 && it.separatorBefore).length * 9 + (header ? 44 : 0) + 8;
         const x = Math.max(EDGE_GAP, Math.min(openAt.x, window.innerWidth - MENU_WIDTH - EDGE_GAP));
         const y = Math.max(EDGE_GAP, Math.min(openAt.y, window.innerHeight - height - EDGE_GAP));
         return { position: 'fixed' as const, left: x, top: y };
@@ -287,7 +304,7 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
           ref={menuRef}
           role="menu"
           onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } }}
-          className={`${openAt ? '' : `absolute ${resolvedPlacement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}`} z-10 min-w-32 rounded border border-border bg-surface-raised py-1 shadow-lg ${className}`}
+          className={`${openAt ? '' : `absolute ${resolvedPlacement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}`} z-10 min-w-32 rounded-card bg-surface-raised py-1 shadow-float ${className}`}
           style={menuStyle}
         >
           {/*
@@ -302,8 +319,11 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
             <div className="border-b border-border px-3 pb-2 pt-1">{header}</div>
           )}
           {items.map((item, index) => (
+            <Fragment key={item.label}>
+            {index > 0 && item.separatorBefore && (
+              <div role="separator" className="my-1 border-t border-border" />
+            )}
             <button
-              key={item.label}
               ref={(el) => { itemRefs.current[index] = el; }}
               role="menuitem"
               disabled={item.disabled}
@@ -312,14 +332,17 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
               // 항목은 본문단(앱 기본값 13px), 단축키는 이미 아랫단 11px 이다 — 고르려면
               // 항목을 읽어야 하고 단축키는 한 번 배우면 안 읽는다.
               className={`flex w-full items-center gap-4 px-3 py-2 text-left ${MENU_ITEM_FOCUS} ${
-                item.disabled ? 'cursor-not-allowed text-fg-subtle' : 'text-fg-muted hover:bg-surface-hover hover:text-fg'
+                item.disabled ? 'cursor-not-allowed text-fg-subtle'
+                  : item.tone === 'danger' ? 'text-danger hover:bg-danger-surface'
+                  : 'text-fg-muted hover:bg-surface-hover hover:text-fg'
               }`}
             >
-              <span>{item.label}</span>
+              <span className={item.checkable ? "before:invisible before:content-['✓_']" : undefined}>{item.label}</span>
               {item.shortcut && (
                 <span aria-hidden="true" className="ml-auto text-meta text-fg-subtle">{item.shortcut}</span>
               )}
             </button>
+            </Fragment>
           ))}
         </div>
       )}

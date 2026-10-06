@@ -17,6 +17,7 @@ import { useActiveStore } from '../../state/communities';
 import { ApiError } from '../../lib/api';
 import { useT } from '../../i18n/useT';
 import { AgentMcpSection } from './AgentMcpSection';
+import { ImmediateBadge } from './pendingEdits';
 import { Toggle } from './primitives';
 
 export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
@@ -68,8 +69,26 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
   const showDelegates = agent.trustSiblings !== true;
 
   return (
-    <div className="rounded border border-border p-3" data-testid="agent-scope">
-      <div className="text-meta font-medium text-fg-muted">{t('agents.scope.heading')}</div>
+    <div className="rounded-row border border-border p-3" data-testid="agent-scope">
+      {/*
+        **한 줄 요약 + 펼치기**(UX ⑨b, designer 사양 ⑨: "부를 수 있는 곳은 한 줄로 요약"). 상세 화면에서 이 절은
+        고르는 칸이 넷(부르는 사람·자격증명·명단·대리 호출자)에 MCP 까지 서서 가장 길었다 — 대부분은 읽기만
+        한다. 지금 값은 접혀 있어도 요약 줄이 말하고, 고칠 때만 편다. 오류는 접힘 밖에 둔다(아래).
+      */}
+      <details data-testid="agent-scope-details" className="group">
+      <summary className="cursor-pointer list-none">
+        <div className="text-meta font-medium text-fg-muted">{t('agents.scope.heading')}<ImmediateBadge label={t('agents.detail.immediate')} /> <span aria-hidden="true" className="inline-block transition-transform group-open:rotate-180">▾</span></div>
+        <p data-testid="agent-scope-summary" className="mt-1 text-meta text-fg">
+          {[
+            t(`agents.scope.invoke.${agent.invokeScope}`),
+            t(`agents.scope.credential.${agent.credentialScope}`),
+            ...(agent.invokeScope === 'list' ? [t('agents.scope.summaryInvokers', { count: String(invokers.length) })] : []),
+            ...(delegates.length ? [t('agents.scope.summaryDelegates', { count: String(delegates.length) })] : []),
+            // MCP 절도 이 접힘 안이다 — 접힌 채로 몇 개 붙었는지 말한다(designer #1059).
+            ...((agent.mcpServers ?? []).length ? [t('agents.scope.summaryMcp', { count: String((agent.mcpServers ?? []).length) })] : []),
+          ].join(' · ')}
+        </p>
+      </summary>
       <p className="mt-1 text-meta text-fg-subtle">{t('agents.scope.note')}</p>
 
       <div className="mt-2 flex flex-wrap gap-4">
@@ -77,7 +96,7 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
           {t('agents.scope.invoke')}
           <select
             aria-label={t('agents.scope.invoke')}
-            className="rounded border border-border bg-surface px-2 py-1 text-meta text-fg"
+            className="rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
             disabled={off}
             value={agent.invokeScope}
             onChange={(e) => {
@@ -92,7 +111,7 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
           {t('agents.scope.credential')}
           <select
             aria-label={t('agents.scope.credential')}
-            className="rounded border border-border bg-surface px-2 py-1 text-meta text-fg"
+            className="rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
             disabled={off}
             value={agent.credentialScope}
             onChange={(e) => {
@@ -111,7 +130,7 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
           {invokers.length === 0 && <p className="mt-1 text-meta text-fg-subtle">{t('agents.scope.invokersNone')}</p>}
           <ul className="mt-1 flex flex-wrap gap-2">
             {invokers.map((id) => (
-              <li key={id} className="flex items-center gap-1 rounded border border-border px-2 py-0.5 text-meta text-fg">
+              <li key={id} className="flex items-center gap-1 rounded-row border border-border px-2 py-0.5 text-meta text-fg">
                 @{accounts[id]?.handle ?? id}
                 <button
                   className="text-fg-subtle hover:text-danger"
@@ -125,7 +144,7 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
           <div className="mt-2 flex items-center gap-2">
             <select
               aria-label={t('agents.scope.addInvoker')}
-              className="rounded border border-border bg-surface px-2 py-1 text-meta text-fg"
+              className="rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
               disabled={off}
               value={pick}
               onChange={(e) => setPick(e.target.value)}
@@ -134,7 +153,7 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
               {humans.map((a) => <option key={a.id} value={a.id}>@{a.handle}</option>)}
             </select>
             <button
-              className="rounded border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
+              className="rounded-row border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
               disabled={off || !pick}
               onClick={() => { const id = pick; setPick(''); void run(() => getController().addInvoker(agent.id, id)); }}
             >
@@ -163,7 +182,7 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
           {delegates.length === 0 && <p className="mt-1 text-meta text-fg-subtle">{t('agents.scope.delegatesNone')}</p>}
           <ul className="mt-1 flex flex-wrap gap-2">
             {delegates.map((id) => (
-              <li key={id} className="flex items-center gap-1 rounded border border-border px-2 py-0.5 text-meta text-fg">
+              <li key={id} className="flex items-center gap-1 rounded-row border border-border px-2 py-0.5 text-meta text-fg">
                 @{accounts[id]?.handle ?? id}
                 <button
                   className="text-fg-subtle hover:text-danger"
@@ -177,7 +196,7 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
           <div className="mt-2 flex items-center gap-2">
             <select
               aria-label={t('agents.scope.addDelegate')}
-              className="rounded border border-border bg-surface px-2 py-1 text-meta text-fg"
+              className="rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
               disabled={off || delegateCandidates.length === 0}
               value={pickDelegate}
               onChange={(e) => setPickDelegate(e.target.value)}
@@ -186,7 +205,7 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
               {delegateCandidates.map((a) => <option key={a.id} value={a.id}>@{a.handle}</option>)}
             </select>
             <button
-              className="rounded border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
+              className="rounded-row border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
               disabled={off || !pickDelegate}
               onClick={() => { const id = pickDelegate; setPickDelegate(''); void run(() => getController().addDelegate(agent.id, id)); }}
             >
@@ -198,6 +217,7 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
 
       {/* MCP 는 한 절에서 끝낸다(레지스트리·이 머신 정의·scope) — `AgentMcpSection` 머리 주석. */}
       <AgentMcpSection agent={agent} disabled={disabled} onUpdated={onUpdated} />
+      </details>
 
       {error && <p role="alert" className="mt-2 text-meta text-danger" data-testid="agent-scope-error">{error}</p>}
     </div>

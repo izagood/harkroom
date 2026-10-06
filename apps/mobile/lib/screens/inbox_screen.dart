@@ -5,8 +5,12 @@ import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
 import '../ui/states.dart';
 import '../state/app_state.dart';
+import '../ui/parts.dart';
 import '../ui/tokens.dart';
 import '../mention/render.dart';
+import 'channel_list_screen.dart';
+
+import 'community_screens.dart';
 import 'message_list_screen.dart';
 import 'thread_screen.dart';
 
@@ -24,7 +28,13 @@ class InboxScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(t.tabInbox),
+        // 인박스는 지금 커뮤니티 것만 보이므로 머리에 그 커뮤니티를 단다(designer #1066) — 토스트는
+        // 2초면 사라진다. 커뮤니티가 하나뿐이면 가를 것이 없으니 뺀다.
+        title: ScreenTitle(
+          key: const Key('inbox-title'),
+          title: t.tabInbox,
+          subtitle: app.communities.length > 1 ? app.activeCommunity?.displayLabel : null,
+        ),
         actions: [
           if (app.inboxUnread > 0)
             TextButton(
@@ -34,12 +44,22 @@ class InboxScreen extends StatelessWidget {
               ),
               child: Text(t.inboxMarkAllRead),
             ),
+          // 「나」 로 가는 길은 머리 오른쪽 사진 하나다 — 탭 넷 모두 같은 자리에 둔다.
+          // [모두 읽음] 이 보였다 사라져도 사진은 움직이지 않게 맨 끝에 선다.
+          const OpenMeButton(),
+          const SizedBox(width: 8),
         ],
       ),
       body: SafeArea(
         child: Column(
           children: [
             const ConnectionBand(),
+            // 다른 커뮤니티에 나를 기다리는 것(설계 ⑤ · D2). 인박스는 지금 커뮤니티 것만 보이고, 다른
+            // 커뮤니티는 **커뮤니티마다 한 줄**로 알린다 — 하나로 합치면 「보기」가 어디로 가는지 모른다.
+            // 0 인 커뮤니티는 줄이 없다.
+            for (final c in app.communities)
+              if (c.key != app.activeKey && !c.isExpired && (app.otherWaiting[c.key] ?? 0) > 0)
+                OtherCommunityInboxRow(community: c, count: app.otherWaiting[c.key]!),
             Expanded(
               // 이미 읽은 목록이 있으면 상태와 관계없이 그것을 보인다 — 다시 읽다 실패했다고
               // 있던 줄을 지우지 않는다(`loadInbox` 의 같은 판단).

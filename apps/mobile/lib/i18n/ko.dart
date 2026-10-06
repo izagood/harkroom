@@ -13,7 +13,7 @@ class StringsKo implements Strings {
   String get appName => 'Harkroom';
 
   @override
-  String get connectTitle => '워크스페이스에 연결';
+  String get connectTitle => '커뮤니티에 연결';
 
   @override
   String get connectServerUrlLabel => '서버 주소';
@@ -73,10 +73,22 @@ class StringsKo implements Strings {
   String get messagesEmpty => '아직 메시지가 없다.';
 
   @override
-  String get composerHint => '메시지 — @ 로 에이전트를 부른다';
+  String get composerHint => '{name} 에 메시지';
 
   @override
   String get composerSend => '보내기';
+
+  @override
+  String get stickyMentionsLabel => '계속 부르는 상대';
+
+  @override
+  String get stickyMentionRemove => '{handle} 그만 부르기';
+
+  @override
+  String get autoMentionSkip => '이번만 {handle} 빼기';
+
+  @override
+  String get channelAgentTitle => '누르면 계속 부른다';
 
   @override
   String get modelDefault => '기본';
@@ -199,6 +211,9 @@ class StringsKo implements Strings {
   String get mentionUnknown => '@알 수 없음';
 
   @override
+  String get systemAccountUnknown => '알 수 없음';
+
+  @override
   String get tabChannels => '채널';
 
   @override
@@ -206,6 +221,44 @@ class StringsKo implements Strings {
 
   @override
   String get tabMe => '나';
+  @override
+  String get meSettings => '나 · 설정';
+  @override
+  String get tabHome => '홈';
+  @override
+  String get tabDms => 'DM';
+  @override
+  String get tabAgents => '에이전트';
+  @override
+  String get agentsRunning => '지금 도는 것';
+  @override
+  String get agentsWaiting => '예약';
+  @override
+  String get agentsAll => '에이전트 전체';
+  @override
+  String get agentsNoneRunning => '지금 도는 에이전트가 없다.';
+  @override
+  String get agentsLoadFailed => '에이전트 상태를 읽지 못했다.';
+  @override
+  String get agentsMine => '내 것';
+  @override
+  String get dmsEmpty => '아직 DM 이 없다.';
+  @override
+  String get sectionStarred => '즐겨찾기';
+  @override
+  String get sectionChannels => '채널';
+  @override
+  String get cardMyTurn => '내 차례';
+  @override
+  String get cardNew => '새로 온 것';
+  @override
+  String get newMessage => '새 메시지';
+  @override
+  String get newMessagePeople => '사람';
+  @override
+  String get newMessageDmFailed => 'DM 을 열지 못했다.';
+  @override
+  String get unreadOnlyEmpty => '새로 온 것이 없다.';
 
   @override
   String get inboxEmpty => '인박스가 비어 있다.';
@@ -239,6 +292,59 @@ class StringsKo implements Strings {
 
   @override
   String get attachmentFailed => '이 파일을 불러오지 못했다.';
+  @override
+  String get attachmentGoToMessage => '글로 가기';
+
+  @override
+  String get artifactVersion => 'v{v}';
+
+  @override
+  String get artifactVersionWithPrev => 'v{v} · 이전 {prev}개';
+
+  @override
+  String get artifactLatest => '최신 v{v} 있음';
+
+  @override
+  String get artifactOpen => '미리보기 열기';
+
+  @override
+  String get artifactMadeBy => '에이전트가 만든 페이지';
+
+  @override
+  String get artifactReload => '다시 불러오기';
+
+  @override
+  String get artifactClose => '미리보기 닫기';
+
+  @override
+  String get artifactLoading => '불러오는 중…';
+
+  @override
+  String get artifactTooLarge => '미리보기 한도를 넘는다({size}). 데스크톱 앱에서 파일로 받아 볼 수 있다.';
+
+  @override
+  String get artifactForbidden => '이 미리보기를 볼 수 없다(채널 멤버가 아니다).';
+
+  @override
+  String get artifactGone => '지워진 미리보기다.';
+
+  @override
+  String get artifactFailed => '미리보기를 열지 못했다.';
+
+  @override
+  String get artifactOpenedOutside => '브라우저로 열었다.';
+
+  @override
+  String get artifactLeaveTitle => '미리보기 밖으로 이동';
+
+  @override
+  String get artifactLeaveBody => '이 페이지가 {host} 로 이동하려 한다.';
+
+  @override
+  String get artifactLeaveOpen => '브라우저로 열기';
+
+  @override
+  String get artifactLeaveCancel => '취소';
 
   @override
   String get timeUnderMinute => '1분 미만';
@@ -301,10 +407,86 @@ class StringsKo implements Strings {
   String get failureNeedsHand => '손이 필요하다';
 
   @override
-  String get attachmentAdd => '파일 첨부';
+  String get attachmentAdd => '첨부 추가';
+  @override
+  String get reactionAdd => '이모지 달기';
+  @override
+  String get messageCopyLink => '링크 복사';
+  @override
+  String get messageReplyInThread => '스레드에서 답글';
+  @override
+  String get messageCopyBody => '본문 복사';
+  @override
+  String get messageLinkCopied => '링크를 복사했다';
+  @override
+  String get messageBodyCopied => '본문을 복사했다';
+  @override
+  String get messageCopyFailed => '복사하지 못했다';
+  @override
+  String get messageMarkUnread => '여기부터 안 읽음';
+  @override
+  String get messageMarkedUnread => '안 읽음으로 표시했다';
+  @override
+  String get messagePostToChannel => '채널에도 올리기';
+  @override
+  String get messageRecallFromChannel => '채널에서 거두기';
+  @override
+  String get messagePostedToChannel => '채널에도 올렸다';
+  @override
+  String get messageRecalledFromChannel => '채널에서 거뒀다';
+  @override
+  String get messageEdit => '수정';
+  @override
+  String get messageEditSave => '저장';
+  @override
+  String get messageEditCancel => '취소';
+  @override
+  String get messageDelete => '삭제';
+  @override
+  String get messageDeleteConfirmTitle => '이 메시지를 지울까?';
+  @override
+  String get messageDeleteConfirmBody => '지운 메시지는 되돌릴 수 없다.';
+  @override
+  String get messageDeleteConfirm => '삭제';
+  @override
+  String get messageActionFailed => '하지 못했다';
+  @override
+  String get mentionAdd => '사람·에이전트 부르기';
 
   @override
   String get attachmentUploadFailed => '파일을 올리지 못했다.';
+
+  @override
+  String get attachmentRemove => '첨부에서 빼기';
+  @override
+  String attachmentRemoveNamed(String name) => '첨부에서 빼기: $name';
+
+  @override
+  String get attachLibrary => '사진 보관함';
+
+  @override
+  String get attachCamera => '사진 찍기';
+
+  @override
+  String get attachFile => '파일 선택';
+
+  @override
+  String get attachCameraUnavailable => '이 기기에는 카메라가 없다';
+
+  @override
+  String get cameraDeniedTitle => '카메라를 쓸 수 없다';
+
+  @override
+  String get cameraDeniedBody => '설정 › Harkroom 에서 카메라를 켜면 사진을 찍어 붙일 수 있다.';
+
+  @override
+  String get cameraDeniedClose => '닫기';
+
+  @override
+  String get cameraDeniedOpenSettings => '설정 열기';
+
+  @override
+  String get cameraOpenFailed => '카메라를 열지 못했다.';
 
   @override
   String get loadFailedHint => '네트워크를 확인한 뒤 다시 시도해 달라.';
@@ -314,12 +496,26 @@ class StringsKo implements Strings {
 
   @override
   String get threadLoadFailed => '답글을 불러오지 못했다';
+  @override
+  String get threadRootMissing => '원글을 불러오지 못했다';
+  @override
+  String get threadLatestReplies => '최신 답글로 ↓';
+  @override
+  String get threadLatestLoadFailed => '최신 답글을 불러오지 못했다';
+  @override
+  String get threadLatestNewReplies => '새 답글 {n}개 · 최신으로 ↓';
 
   @override
   String get inboxLoadFailed => '인박스를 불러오지 못했다';
 
   @override
   String get messagesEmptyHint => '첫 말을 남기거나 @ 로 에이전트를 불러 본다.';
+
+  @override
+  String get channelStartLine => '여기가 #{name} 의 처음이다';
+
+  @override
+  String get olderLoadFailed => '이전 메시지를 불러오지 못했다';
 
   @override
   String get inboxEmptyHint => '누가 부르거나 답을 기다리면 여기 선다.';
@@ -376,13 +572,24 @@ class StringsKo implements Strings {
   String get mentionDeniedLine => '{handles} 를 부르지 않았다 — 부를 수 있는 범위 밖이다. 그 에이전트의 소유자에게 물어라.';
 
   @override
-  String get linkConfirmTitle => '이 주소를 연다';
+  String get linkConfirmTitle => '이 링크가 여는 곳';
+
+  @override
+  String get messageLinkGone => '그 메시지가 없다 — 지워졌거나, 링크가 아무것도 가리키지 않는다.';
+
+  @override
+  String get messageLinkForbidden => '그 메시지를 열 수 없다 — 내가 참여하지 않은 대화에 있다.';
+
+  @override
+  String get messageLinkFailed => '메시지를 열지 못했다. 연결을 확인하고 다시 시도해라.';
 
   @override
   String get linkConfirmOpen => '열기';
 
   @override
   String get linkConfirmCancel => '취소';
+  @override
+  String get markdownTableMoreRows => '…{n}행 더';
 
   @override
   String get linkUserInfoWarning => '주소 앞에 다른 이름이 붙어 있다. 실제로 열리는 곳은 위의 굵은 주소다.';
@@ -390,4 +597,190 @@ class StringsKo implements Strings {
   @override
   String get linkNonAsciiWarning => '주소에 영문이 아닌 글자가 있다. 닮은 글자로 꾸민 주소일 수 있다.';
 
+
+  @override
+  String get meCommunitiesSection => '이 기기의 커뮤니티';
+
+  @override
+  String get communityAdd => '커뮤니티 추가';
+
+  @override
+  String get communityCurrent => '지금 커뮤니티';
+
+  @override
+  String get communityExpired => '다시 로그인';
+
+  @override
+  String get communitySignOutAll => '모든 커뮤니티에서 로그아웃';
+
+  @override
+  String get communitySignOutAllConfirm => '이 기기의 커뮤니티 {count}개에서 모두 로그아웃한다. 다시 쓰려면 하나씩 다시 로그인해야 한다.';
+
+  @override
+  String get communityCancel => '취소';
+
+  @override
+  String get communitySignOutOne => '{name} 에서 로그아웃';
+
+  @override
+  String get communitySwitchTo => '이 커뮤니티로 옮기기';
+
+  @override
+  String get communitySwitched => '지금 커뮤니티: {name} · @{handle}';
+
+  @override
+  String get communityLabel => '표시 이름';
+
+  @override
+  String get communityLabelHint => '이 기기에서만 쓴다. 비우면 호스트명을 쓴다.';
+
+  @override
+  String get communityAccount => '계정';
+
+  @override
+  String get communityServer => '서버';
+
+  @override
+  String get communityVersion => '버전';
+
+  @override
+  String get communityVersionUnknown => '알 수 없음';
+
+  @override
+  String get communityAddSubmit => '로그인하고 옮기기';
+
+  @override
+  String get communityAddClose => '닫기';
+
+  @override
+  String get communitySave => '저장';
+
+  @override
+  String get loginOtherCommunity => '다른 커뮤니티로';
+
+  @override
+  String get communityExpiredSubtitle => '로그인이 만료됐다';
+
+  @override
+  String get communityManage => '커뮤니티 관리';
+
+  @override
+  String get communitySwitcherLabel => '커뮤니티 전환, {name}';
+
+  @override
+  String get communityOthersWaiting => ', 다른 커뮤니티에 나를 기다리는 것이 있다';
+
+  @override
+  String get pushPromptTitle => '부르면 알려 드릴게요';
+
+  @override
+  String get pushPromptBody => '에이전트가 나를 부르거나, 내 스레드에 답하거나, 내 선택을 기다리면 앱이 꺼져 있어도 알림을 보내요.';
+
+  @override
+  String get pushPromptEnable => '알림 켜기';
+
+  @override
+  String get pushPromptLater => '나중에';
+
+  @override
+  String get pushSection => '알림';
+
+  @override
+  String get pushNotAsked => '아직 켜지 않았어요';
+
+  @override
+  String get pushTurnOn => '켜기';
+
+  @override
+  String get pushDenied => 'iOS 설정에서 꺼져 있어요';
+
+  @override
+  String get pushOpenSettings => 'iOS 설정 열기';
+
+  @override
+  String get pushCommunityOn => '알림 받음';
+
+  @override
+  String get pushCommunityOff => '알림 끔';
+
+  @override
+  String get pushPreview => '내용 미리보기';
+
+  @override
+  String get pushPreviewHint => '알림에 글 앞부분을 보여 줘요. 켜면 그 내용이 Apple 알림 서버를 거치고 잠금 화면에도 보일 수 있어요.';
+
+  @override
+  String get searchButton => '찾기';
+
+  @override
+  String get searchHint => '메시지 찾기';
+
+  @override
+  String get searchCancel => '취소';
+
+  @override
+  String get searchScopeAll => '전체';
+
+  @override
+  String get searchScopeThread => '이 스레드';
+
+  @override
+  String get searchStart => '두 글자부터 찾는다.';
+
+  @override
+  String get searchNoResults => '‘{q}’에 맞는 메시지가 없다.';
+
+  @override
+  String get searchTwoLetterHint => '두 글자는 낱말 앞부분만 찾는다 — 한 글자 더 쳐 보라.';
+
+  @override
+  String get searchEverywhere => '전체에서 찾기';
+
+  @override
+  String get searchFailed => '찾지 못했다.';
+
+  @override
+  String get searchMoreFailed => '결과를 더 불러오지 못했다.';
+
+  @override
+  String get searchInThread => '스레드';
+
+  @override
+  String get searchRecent => '최근 찾은 말';
+
+  @override
+  String get searchRecentClear => '모두 지우기';
+
+  @override
+  String get searchRecentRemove => '지우기';
+
+  @override
+  String get searchShortcuts => '바로 가기';
+
+  @override
+  String get searchCount => '메시지 {n}개';
+
+  @override
+  String get searchCountMore => '메시지 {n}개 이상';
+
+  @override
+  String get searchSort => '정렬';
+
+  @override
+  String get searchSortRelevance => '관련도순';
+
+  @override
+  String get searchSortRelevanceHint => '맞는 글 먼저';
+
+  @override
+  String get searchSortRecent => '최신순';
+
+  @override
+  String get searchSortRecentHint => '새 글 먼저';
+
+  @override
+  String get inboxOtherCommunity => '{name} 에 나를 기다리는 것 {count}';
+
+  @override
+  String get inboxOtherView => '보기';
 }

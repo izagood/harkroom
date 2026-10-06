@@ -8,15 +8,33 @@ StoredCommunity _c(String id, {String url = 'https://a.example.com', String? lab
 
 void main() {
   group('키는 계정 id 다', () {
-    test('같은 서버에 다른 주소로 들어가도 목록에 두 번 서지 않는다', () async {
-      // 실제로 겪는 상황: 사내망 이름으로 한 번, 공개 도메인으로 한 번 로그인한다.
-      // URL 로 키를 두면 같은 커뮤니티가 둘이 된다.
+    test('계정 id 가 같아도 서버(origin)가 다르면 다른 행이다 — 기존 행을 덮지 않는다', () async {
+      // 계정 id 는 서버가 대는 값이다. id 만 열쇠면 낯선 서버가 남의 id 를 대서 그 행의
+      // 토큰·이름을 차지한다(security #1046 F1).
       final store = SessionStore.inMemory();
-      await store.upsert(_c('acct-1', url: 'https://lan.example.com'));
+      await store.upsert(_c('acct-1', url: 'https://lan.example.com', label: '회사'));
       final after = await store.upsert(_c('acct-1', url: 'https://public.example.com'));
 
+      expect(after.communities.length, 2);
+      expect(after.communities.first.baseUrl, 'https://lan.example.com');
+      expect(after.communities.first.label, '회사');
+      expect(after.communities.last.label, isNull);
+    });
+
+    test('같은 origin 이면 경로·끝 슬래시가 달라도 같은 행이다', () async {
+      final store = SessionStore.inMemory();
+      await store.upsert(_c('acct-1', url: 'https://a.example.com'));
+      final after = await store.upsert(_c('acct-1', url: 'https://a.example.com/'));
       expect(after.communities.length, 1);
-      expect(after.communities.single.baseUrl, 'https://public.example.com');
+    });
+
+    test('옛 저장본의 active(계정 id 만)도 알아본다', () async {
+      final raw = jsonEncode({
+        'active': 'b',
+        'communities': [_c('a').toJson(), _c('b').toJson()],
+      });
+      final loaded = await SessionStore.inMemory(seed: raw).load();
+      expect(loaded!.current!.accountId, 'b');
     });
 
     test('다른 계정은 따로 쌓인다', () async {
@@ -24,7 +42,7 @@ void main() {
       await store.upsert(_c('a'));
       final after = await store.upsert(_c('b'));
       expect(after.communities.map((c) => c.accountId), ['a', 'b']);
-      expect(after.active, 'b');
+      expect(after.active, _c('b').key);
     });
 
     test('다시 로그인해도 목록 순서가 바뀌지 않는다', () async {
@@ -42,7 +60,7 @@ void main() {
       final store = SessionStore.inMemory();
       await store.upsert(_c('a'));
       await store.upsert(_c('b'));
-      await store.remove('b');
+      await store.remove(_c('b').key);
 
       final after = await store.load();
       expect(after!.communities.map((c) => c.accountId), ['a']);
@@ -54,7 +72,7 @@ void main() {
     test('마지막 하나를 빼면 전부 지운다', () async {
       final store = SessionStore.inMemory();
       await store.upsert(_c('a'));
-      await store.remove('a');
+      await store.remove(_c('a').key);
       expect(await store.load(), isNull);
     });
   });
@@ -98,6 +116,39 @@ void main() {
       });
       final loaded = await SessionStore.inMemory(seed: raw).load();
       expect(loaded!.current!.accountId, 'a');
+    });
+  });
+
+  group('여러 커뮤니티', () {
+    test('update 는 active 를 건드리지 않는다', () async {
+      final store = SessionStore.inMemory();
+      await store.upsert(_c('a'));
+      await store.upsert(_c('b'));
+      final after = await store.update(_c('a').key, (c) => c.copyWith(token: ''));
+      expect(after!.active, _c('b').key);
+      expect(after.communities.first.isExpired, isTrue);
+      expect(after.communities.last.isExpired, isFalse);
+    });
+
+    test('setActive 는 없는 id 를 무시한다', () async {
+      final store = SessionStore.inMemory();
+      await store.upsert(_c('a'));
+      await store.upsert(_c('b'));
+      expect((await store.setActive(_c('a').key))!.active, _c('a').key);
+      expect((await store.setActive('없음'))!.active, _c('a').key);
+    });
+
+    test('다시 로그인해도 이 기기에서 붙인 이름은 남는다', () async {
+      final store = SessionStore.inMemory();
+      await store.upsert(_c('a', label: '회사'));
+      final after = await store.upsert(_c('a'));
+      expect(after.communities.single.label, '회사');
+    });
+
+    test('이름이 없으면 호스트명을 보인다', () {
+      expect(_c('a', url: 'https://acme.example.com').displayLabel, 'acme.example.com');
+      expect(_c('a', label: '  ').displayLabel, 'a.example.com');
+      expect(_c('a', label: '회사').displayLabel, '회사');
     });
   });
 }

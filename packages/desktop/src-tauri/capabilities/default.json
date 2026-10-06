@@ -9,6 +9,7 @@
     "core:window:allow-start-dragging",
     "core:window:allow-set-badge-count",
     "core:window:allow-set-badge-label",
+    "core:window:allow-set-always-on-top",
     "core:webview:allow-set-webview-zoom",
     "notification:default",
     "shell:allow-open",

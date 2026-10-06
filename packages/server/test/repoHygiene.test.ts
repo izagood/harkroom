@@ -102,6 +102,7 @@ describe('repo hygiene', () => {
       /^example\.(?:com|net|org)$/i,
       /\.example\.(?:com|net|org)$/i,
       /\.example$/i, // RFC 2606 예약
+      /^api(?:\.sandbox)?\.push\.apple\.com$/i, // APNs 운영 주소(services/push/apns.ts). Apple 이 공개한 고정 호스트다
       /\.invalid$/i,
       /\.internal$/i, // ICANN 이 사설용으로 예약한 TLD
       /\.[a-z0-9-]*test$/i, // `.test` 와 `avcs.status-test` 처럼 회귀선이 만든 도메인
@@ -127,6 +128,9 @@ describe('repo hygiene', () => {
       // Apple 1st-party: App Store Connect API(빌드 번호 조회)·WWDR 중간 인증서·개발자 문서
       // (2026-10-01, `apps/mobile/tool/` 와 TestFlight 안내).
       /^(?:(?:api\.)?appstoreconnect|developer|www)\.apple\.com$/i,
+      // 미리보기(아티팩트) CSP 의 외부 리소스 허용목록(2026-10-02, `server/src/services/artifactPreview.ts`).
+      // 공개 CDN·폰트 호스트다 — 이 목록을 넓히는 것은 격리면을 넓히는 것이라 리뷰에 드러나야 한다.
+      /^(?:cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net|fonts\.googleapis\.com|fonts\.gstatic\.com)$/i,
     ];
 
     /** 도메인이 아닌 것들. IP 리터럴은 SSRF 회귀선이 10진·16진 표기까지 쓴다. */

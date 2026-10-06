@@ -12,9 +12,9 @@ describe('설정 목차 네 묶음 (UX ⑥a)', () => {
     const { SETTINGS_GROUPS } = await import('../src/components/settings/sections');
     const byGroup = Object.fromEntries(SETTINGS_GROUPS.map((g) => [g.id, g.items.map((i) => i.id)]));
     expect(SETTINGS_GROUPS.map((g) => g.id)).toEqual(['me', 'device', 'workspace', 'agents']);
-    expect(byGroup.me).toEqual(['profile', 'notifications', 'messages', 'appearance']);
-    expect(byGroup.device).toEqual(['communities', 'connection', 'updates', 'this-operator']);
-    expect(byGroup.workspace).toEqual(['workspace', 'invite', 'handle-groups', 'mcp-servers']);
+    expect(byGroup.me).toEqual(['profile', 'notifications', 'messages', 'appearance', 'secrets']);
+    expect(byGroup.device).toEqual(['communities', 'updates', 'this-operator']);
+    expect(byGroup.workspace).toEqual(['workspace', 'invite', 'handle-groups', 'integrations']);
     expect(byGroup.agents!.filter((id) => id !== 'gallery'))
       .toEqual(['agents', 'agent-defaults', 'claude-accounts', 'operators', 'skills', 'automations']);
   });

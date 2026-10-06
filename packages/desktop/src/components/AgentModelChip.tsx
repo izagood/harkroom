@@ -11,13 +11,14 @@
  * `ModelPicker` 가 직접 입력으로 물러선다 — "고를 것이 없다" 고 그리지 않는다.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useHostDocument } from '../lib/hostDocument';
 import type { AgentModelOptions } from '@harkroom/shared';
 import { getController } from '../state/controller';
 import { ModelPicker } from './settings/ModelPicker';
 import { formatModelValue, type ModelValue } from '../lib/threadModels';
 import { useT } from '../i18n/useT';
 
-const FIELD = 'w-full rounded border border-border bg-surface px-2 py-1 text-meta';
+const FIELD = 'w-full rounded-row border border-border bg-surface px-2 py-1 text-meta';
 
 export function AgentModelChip({
   agentId, handle, value, stale = false, inherited = false, setByAgent = null, highlight = false, mode, placement = 'below',
@@ -83,7 +84,7 @@ export function AgentModelChip({
         // 단축키는 칩에 적는다 — 줄 끝의 힌트는 부른 직후에만 선다(designer 검토 4).
         title={mode === 'composer' ? t('threadModel.chipHint') : undefined}
         onClick={() => setOpen(!open)}
-        className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-meta ${style} ${
+        className={`inline-flex items-center gap-1 rounded-row px-1.5 py-0.5 text-meta ${style} ${
           highlight ? 'ring-2 ring-accent' : ''
         } hover:bg-surface-sunken`}
       >
@@ -126,6 +127,8 @@ function AgentModelPicker({ agentId, handle, value, mode, placement, clearsThrea
   onApply: (next: ModelValue) => void | Promise<unknown>;
   onReset: () => void | Promise<unknown>;
 }) {
+  // 새 창 안이면 그 창의 문서를 듣는다(`lib/hostDocument`).
+  const hostDoc = useHostDocument();
   const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   const [options, setOptions] = useState<PickerOptions | null>(null);
@@ -135,7 +138,7 @@ function AgentModelPicker({ agentId, handle, value, mode, placement, clearsThrea
     const el = ref.current;
     const parent = el?.parentElement;
     if (!el || !parent) return;
-    const pane = el.closest('section') ?? document.body;
+    const pane = el.closest('section') ?? hostDoc.body;
     const room = pane.getBoundingClientRect().right - parent.getBoundingClientRect().left;
     setAlignRight(room < el.offsetWidth);
   }, []);
@@ -156,8 +159,8 @@ function AgentModelPicker({ agentId, handle, value, mode, placement, clearsThrea
   // 바깥을 누르면 닫는다. 고르개 안의 select 가 띄운 목록은 이 상자 안의 클릭으로 온다.
   useEffect(() => {
     const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
+    hostDoc.addEventListener('mousedown', onDown);
+    return () => hostDoc.removeEventListener('mousedown', onDown);
   }, [onClose]);
 
   const models = options === null ? null : options.models;
@@ -192,7 +195,7 @@ function AgentModelPicker({ agentId, handle, value, mode, placement, clearsThrea
         // select 안의 Enter 는 목록을 닫는 데 쓰인다 — 버튼·입력에서만 적용한다.
         if (e.key === 'Enter' && (e.target as HTMLElement).tagName !== 'SELECT' && !busy) { e.preventDefault(); void apply(); }
       }}
-      className={`absolute ${alignRight ? 'right-0' : 'left-0'} z-30 w-80 rounded-md border border-border bg-surface-raised p-3 shadow-lg ${
+      className={`absolute ${alignRight ? 'right-0' : 'left-0'} z-30 w-80 rounded-card bg-surface-raised p-3 shadow-float ${
         placement === 'above' ? 'bottom-full mb-1' : 'top-full mt-1'
       }`}
       style={{ maxHeight: 'min(26rem, 60vh)', overflowY: 'auto' }}
@@ -232,12 +235,12 @@ function AgentModelPicker({ agentId, handle, value, mode, placement, clearsThrea
       {error && <p role="alert" className="mb-2 text-meta text-danger">{error}</p>}
       <div className="flex items-center justify-end gap-2">
         <button type="button" data-testid="model-reset" disabled={busy}
-          className="rounded px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
+          className="rounded-row px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
           onClick={() => void run(onReset)}>
           {t(clearsThread ? 'threadModel.picker.clearThread' : 'threadModel.picker.reset')}
         </button>
         <button type="button" data-testid="model-apply" disabled={busy}
-          className="rounded bg-accent px-2 py-1 text-meta font-medium text-fg-on-strong hover:bg-accent-hover"
+          className="rounded-row bg-accent px-2 py-1 text-meta font-medium text-fg-on-strong hover:bg-accent-hover"
           onClick={() => void apply()}>
           {t('threadModel.picker.apply')}
         </button>

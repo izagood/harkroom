@@ -41,7 +41,6 @@ import { interpolate } from '../src/i18n/format';
 import { useActiveStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, Controller } from '../src/state/controller';
-import { WaitChainSection } from '../src/components/WaitChainSection';
 import { WaitChainLine } from '../src/components/WaitChain';
 import { Sidebar } from '../src/components/Sidebar';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
@@ -238,17 +237,6 @@ const CODEX = 'a-codex';
 const link = (waiter: string, blockedBy: string | null): OpenAskLink =>
   ({ waiter, blockedBy, askedAt: new Date(Date.now() - 3 * 60_000).toISOString() });
 
-function seed(links: OpenAskLink[] | null) {
-  useActiveStore.getState().set({
-    me: acc(ME, 'me'),
-    accounts: { [ME]: acc(ME, 'me'), [FORGE]: acc(FORGE, 'forge'), [CODEX]: acc(CODEX, 'codex') },
-    channels: [chan('c1', 'general')],
-    messages: { c1: [msg('root-1', 'c1', 1, '루트', FORGE, { openAskLinks: links })] },
-    online: [FORGE, CODEX],
-    connected: true,
-  });
-}
-
 /** 언어를 정한다. `'system'` 을 안 쓰는 이유: 시험이 브라우저 설정에 매달리면 안 된다. */
 const speak = (locale: Locale) => usePrefsStore.getState().setLocale(locale);
 
@@ -260,87 +248,6 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   usePrefsStore.getState().setLocale('system');
-});
-
-describe('화면 — 기본은 영어다', () => {
-  it('빈 구획이 영어로 뜬다', () => {
-    useActiveStore.getState().set({
-      me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') },
-      channels: [chan('c1', 'general')], messages: { c1: [] }, online: [], connected: true,
-    });
-    render(<WaitChainSection />);
-    expect(screen.getByText('Nothing is waiting')).toBeTruthy();
-    expect(screen.getByTestId('wait-chain-section').querySelector('h3')?.textContent)
-      .toBe('Waiting on (0)');
-  });
-
-  /**
-   * **경과 표기도 이제 영어다**(`#619` 후속). 그 PR 이 남긴 주의점이 여기 있었다 —
-   * *"경과 표기(`3분째`)는 아직 한국어라 이 축은 사슬 줄만 재고 행 전체를 재지 않는다."*
-   *
-   * 시간 표기가 `lib/time.ts` 한 벌로 합쳐지면서 그 예외가 없어졌으므로 **행 전체**를
-   * 잰다. 예외를 남겨 두면 다음 사람이 그 자리에 한국어를 다시 넣어도 초록이다.
-   */
-  it('사슬 줄이 영어 어순으로 뜬다 — 조사가 안 붙고, 경과도 영어다', () => {
-    seed([link(FORGE, ME)]);
-    render(<WaitChainSection />);
-    const row = screen.getByTestId('wait-chain-root-1');
-    expect(row.textContent).toContain('#general');
-    expect(row.textContent).toContain('forge');
-    // **행 전체**에 한국어가 없다 — 빼 두는 자리가 하나도 없다.
-    expect(row.textContent).not.toMatch(/[가-힣]/);
-  });
-
-  it('몇 개가 풀리는지 영어로 말한다', () => {
-    seed([link(CODEX, FORGE), link(FORGE, ME)]);
-    render(<WaitChainSection />);
-    expect(screen.getByTestId('wait-chain-root-1').textContent)
-      .toContain('answering unblocks 2 threads');
-  });
-});
-
-describe('화면 — 언어를 한국어로 바꾸면 한국어로 뜬다', () => {
-  it('빈 구획이 한국어로 바뀐다', () => {
-    useActiveStore.getState().set({
-      me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') },
-      channels: [chan('c1', 'general')], messages: { c1: [] }, online: [], connected: true,
-    });
-    speak('ko');
-    render(<WaitChainSection />);
-    expect(screen.getByText('기다리는 것이 없다')).toBeTruthy();
-    expect(screen.getByTestId('wait-chain-section').querySelector('h3')?.textContent)
-      .toBe('기다리는 것 (0)');
-  });
-
-  it('몇 개가 풀리는지 한국어로 말한다', () => {
-    seed([link(CODEX, FORGE), link(FORGE, ME)]);
-    speak('ko');
-    render(<WaitChainSection />);
-    expect(screen.getByTestId('wait-chain-root-1').textContent).toContain('답하면 2개가 풀린다');
-  });
-
-  /**
-   * **"없다"와 "아직 안 봤다"는 다른 사실이다**(design.md §4). 그 구별이 언어를
-   * 바꿔도 남는지 — 뼈대가 뜻을 옮겼지 낱말만 옮긴 것이 아님을 재는 축이다.
-   */
-  it('"아직 다 보지 못했다"가 두 언어에 다 있다', () => {
-    const twoChannels = {
-      me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') },
-      channels: [chan('c1', 'general'), chan('c2', 'design')],
-      messages: { c1: [] }, online: [], connected: true,
-    };
-    useActiveStore.getState().set(twoChannels);
-    render(<WaitChainSection />);
-    expect(screen.getByText('Not everything has been checked yet')).toBeTruthy();
-    // 모를 때는 제목이 수를 말하지 않는다 — 그 규율도 언어를 건너 살아남는다.
-    expect(screen.getByTestId('wait-chain-section').querySelector('h3')?.textContent)
-      .not.toContain('0');
-
-    cleanup();
-    speak('ko');
-    render(<WaitChainSection />);
-    expect(screen.getByText('아직 다 보지 못했다')).toBeTruthy();
-  });
 });
 
 /**
@@ -463,7 +370,7 @@ describe('사이드바 — 기본은 영어다', () => {
     render(<Sidebar panel="home" {...sidebarProps} />);
     const items = [...openChannelMenu().querySelectorAll('[role="menuitem"]')]
       .map((el) => el.textContent);
-    expect(items).toContain('Edit channel');
+    expect(items).toContain('Channel settings…');
     expect(items).toContain('View members');
     expect(items).toContain('Copy channel name');
     // 사이드바 메뉴에는 한국어가 한 글자도 없다 — 섹션 이름 같은 사람이 지은 값은 없는 상태다.
@@ -512,7 +419,7 @@ describe('사이드바 — 언어를 한국어로 바꾸면 한국어로 뜬다'
     render(<Sidebar panel="home" {...sidebarProps} />);
     const items = [...openChannelMenu().querySelectorAll('[role="menuitem"]')]
       .map((el) => el.textContent);
-    expect(items).toContain('채널 편집');
+    expect(items).toContain('채널 설정…');
     expect(items).toContain('멤버 보기');
     expect(items).toContain('채널명 복사');
   });
@@ -821,7 +728,8 @@ describe('에이전트 설정 — 기본은 영어다', () => {
     seedAgents([agentView()]);
     render(<AgentsSettings />);
     await openDetail();
-    for (const title of ['Profile', 'Run', 'Permissions']) {
+    for (const [tab, title] of [['profile', 'Profile'], ['run', 'Run'], ['permissions', 'Permissions']] as const) {
+      fireEvent.click(screen.getByTestId(`agent-tab-${tab}`));
       expect(screen.getByRole('heading', { name: title }), title).toBeTruthy();
     }
   });
@@ -909,7 +817,8 @@ describe('에이전트 설정 — 언어를 한국어로 바꾸면 한국어로 
     seedAgents([agentView()]);
     render(<AgentsSettings />);
     await openDetail();
-    for (const title of ['프로필', '실행', '권한']) {
+    for (const [tab, title] of [['profile', '프로필'], ['run', '실행'], ['permissions', '권한']] as const) {
+      fireEvent.click(screen.getByTestId(`agent-tab-${tab}`));
       expect(screen.getByRole('heading', { name: title }), title).toBeTruthy();
     }
   });
@@ -1026,33 +935,29 @@ describe('에이전트 설정 — 옮기면서 사실을 잃지 않는다', () =
     expect(ko['agents.detail.disconnected']).toContain('알 수 없다');
   });
 
-  it('PAT 0개 안내가 두 언어 모두 「왜 없어졌나」까지 말한다', () => {
-    // 켜진 에이전트의 0개는 러너가 못 뜬다는 뜻이고, 그 사유(비활성화가 전부 폐기했다)를
-    // 함께 말해야 사람이 "고장 났나"로 읽지 않는다.
-    expect(en['agents.pat.noneNeedsMint']).toContain('mint one');
-    expect(en['agents.pat.noneNeedsMint']).toContain('disabling revokes them all');
-    expect(ko['agents.pat.noneNeedsMint']).toContain('새로 발급');
-    expect(ko['agents.pat.noneNeedsMint']).toContain('전부 폐기');
-    // 꺼진 에이전트에서 0개는 **정상이다** — 그래서 재발급을 권하지 않는다.
-    expect(en['agents.pat.none']).not.toContain('mint');
-    expect(ko['agents.pat.none']).not.toContain('발급');
-  });
-
-  it('클립보드 실패가 두 언어 모두 「다음에 무엇을 하나」를 말한다', () => {
-    // 오류만 적고 끝내면 사람은 막힌다(`#177`).
-    expect(en['agents.runner.copyFailedSelected']).toContain('⌘C');
-    expect(ko['agents.runner.copyFailedSelected']).toContain('⌘C');
-    expect(en['agents.runner.copyFailedManual']).toContain('by hand');
-    expect(ko['agents.runner.copyFailedManual']).toContain('손으로');
+  it('옛 PAT 안내가 두 언어 모두 「안 쓰이지만 아직 유효하다」를 말한다', () => {
+    // 「안 쓰인다」만 말하면 남겨 둬도 되는 것으로 읽는다 — 만료가 없다는 것이 지우는 이유다.
+    expect(en['agents.pat.legacyNote']).toContain('never expire');
+    expect(ko['agents.pat.legacyNote']).toContain('만료도 없다');
   });
 
   /**
-   * **끄기 안내는 비대칭을 말한다** — 끄는 것은 되돌릴 수 있지만 PAT 는 안 돌아온다.
-   * 뒤엣것을 자르면 사람은 이것을 되돌릴 수 있는 조작으로만 읽는다.
+   * **끄기 안내는 「다시 켤 때 PAT 는 필요 없다」를 말한다**(결정 harkroom 스레드 c4f4dab4).
+   * 옛 문구는 「새로 발급해야 한다」고 시켰는데, 발급은 닫혔고(410) 러너는 오퍼레이터로 접속한다.
    */
-  it('비활성화 안내가 두 언어 모두 「PAT 는 안 돌아온다」를 말한다', () => {
-    expect(en['agents.disable.noteEnabled']).toContain('does not bring them back');
-    expect(ko['agents.disable.noteEnabled']).toContain('복구되지 않아');
+  it('비활성화 안내가 두 언어 모두 재발급을 시키지 않는다', () => {
+    for (const key of ['agents.disable.noteEnabled', 'agents.disable.warning'] as const) {
+      expect(en[key], key).toContain('does not need a PAT');
+      expect(en[key], key).not.toMatch(/mint/);
+      expect(ko[key], key).toContain('PAT 는 필요 없다');
+      expect(ko[key], key).not.toContain('발급');
+    }
+  });
+
+  it('옛 토큰 확인창 제목이 영어 단수를 맞게 쓴다', () => {
+    const tEn = translator('en');
+    expect(tEn('agents.pat.revokeAllTitle', { count: 1 })).toBe('Revoke the old token?');
+    expect(tEn('agents.pat.revokeAllTitle', { count: 3 })).toBe('Revoke 3 old tokens?');
   });
 
   /**
@@ -1063,7 +968,7 @@ describe('에이전트 설정 — 옮기면서 사실을 잃지 않는다', () =
   it('제품 고유어는 두 언어에서 같은 글자다', () => {
     const pairs: [keyof typeof en, string][] = [
       ['agents.run.defaultsNotAdmin', 'admin'],
-      ['agents.pat.none', 'PAT'],
+      ['agents.pat.heading', 'PAT'],
       ['agents.run.harnessDefault', 'harness'],
       ['agents.runner.daemonScope', 'daemon'],
       ['agents.permissions.ownerNone', 'attach'],
@@ -1363,8 +1268,9 @@ describe('여덟 가지 말 — 카드가 두 언어로 말한다', () => {
     });
     render(<AgentExchange messages={exchange} />);
     let line = screen.getByTestId('agent-exchange').textContent ?? '';
-    // **`yet` 이 진다** — 빼면 "아무것도 안 정해진다"는 판정이 된다.
-    expect(line).toContain('Nothing decided yet');
+    // 결론이 없으면 마지막 말의 첫 줄(2026-10-06) — 옛 `Nothing decided yet` 은 없다.
+    expect(line).not.toContain('Nothing decided yet');
+    expect(line).toContain('forge:');
     expect(line).toContain('3 exchanges');
     expect(line).toMatch(/last /);
     expect(line).not.toMatch(/[가-힣]/);
@@ -1377,7 +1283,7 @@ describe('여덟 가지 말 — 카드가 두 언어로 말한다', () => {
     });
     render(<AgentExchange messages={exchange} />);
     line = screen.getByTestId('agent-exchange').textContent ?? '';
-    expect(line).toContain('아직 정해진 것 없음');
+    expect(line).not.toContain('아직 정해진 것 없음');
     expect(line).toContain('3번 주고받음');
     expect(line).toContain('마지막');
   });
@@ -1778,10 +1684,15 @@ describe('daemon 사실 — 판정이 두 언어로 말한다', () => {
 const AGENT = 'a-mine';
 
 /** 이 넷은 컨트롤러를 만진다 — 문자열만 재므로 부르는 것만 있으면 된다. */
+/** 인박스 보드가 받을 재료 — 기본은 비었다. 열 이름을 재는 시험만 카드 하나를 넣는다. */
+let inboxBoardRows: { entries: InboxEntry[]; threads: null; threadStates: [] } = { entries: [], threads: null, threadStates: [] };
+
 function stubController() {
   setController({
     // `Composer` 는 채널이 있으면 예약 목록을 곧바로 조회한다 — 없으면 그 화면이 뜨다 만다.
-    api: { inbox: async () => [], scheduledMessages: async () => [] },
+    api: { inbox: async () => [], inboxBoard: async () => inboxBoardRows, scheduledMessages: async () => [] },
+    loadInboxBoard: async () => inboxBoardRows,
+    inboxBoardSnapshot: () => null,
     listAgents: async () => [],
     openMessage: async () => undefined,
     openChannel: async () => undefined,
@@ -1968,6 +1879,7 @@ describe('작성창 — 두 언어로 뜬다', () => {
 
 describe('인박스 — 두 언어로 뜬다', () => {
   beforeEach(() => {
+    inboxBoardRows = { entries: [], threads: null, threadStates: [] };
     stubController();
     useActiveStore.getState().set({
       me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') },
@@ -1975,49 +1887,43 @@ describe('인박스 — 두 언어로 뜬다', () => {
     });
   });
 
-  it('필터 칩과 구획이 영어로 뜬다', async () => {
+  it('빈 보드가 두 언어로 뜬다', async () => {
     render(<Inbox open onClose={() => {}} />);
-    expect(screen.getByTestId('inbox-filter-blocking').textContent).toContain('Blocking you');
-    expect(screen.getByTestId('inbox-filter-all').textContent).toContain('Everything');
-    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent)
-      .toBe('Nothing has called you'));
+    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent).toBe('Nothing has called you'));
     // 자리의 이름이자 머리글이다 — 랜드마크로 찾을 수 있어야 한다.
     expect(screen.getByRole('complementary', { name: 'Inbox' })).toBeTruthy();
-  });
-
-  it('필터 칩과 구획이 한국어로 바뀐다', async () => {
+    cleanup();
     speak('ko');
     render(<Inbox open onClose={() => {}} />);
-    expect(screen.getByTestId('inbox-filter-blocking').textContent).toContain('나를 막는 것');
-    expect(screen.getByTestId('inbox-filter-all').textContent).toContain('전부');
-    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent)
-      .toBe('나를 부른 것이 없다'));
+    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent).toBe('나를 부른 것이 없다'));
     expect(screen.getByRole('complementary', { name: '인박스' })).toBeTruthy();
   });
 
   /**
-   * **사슬 구획의 이름은 `waitChain.*` 것이다** — 인박스가 그 이름을 제 손으로 다시
-   * 적으면 스레드 패널과 갈린다(그 영역이 화면 이름이 아니라 판정 이름인 이유).
-   * 두 언어 모두 그 사전의 말이 나오는지 잰다.
+   * **열 이름은 구획 이름(랜드마크)이다** — 개수가 섞이지 않는다. 수는 머리글의 "내 차례"
+   * 하나뿐이다(그 수만 0 이 될 수 있다).
    */
-  it('사슬 구획 이름이 사슬 사전에서 온다 — 인박스가 다시 적지 않는다', () => {
+  it('열 넷과 내 차례 수가 두 언어로 뜬다', async () => {
+    inboxBoardRows = {
+      entries: [{
+        id: 1, messageId: 'm1', reason: 'mention', readAt: null, channelId: 'c1', authorId: ME,
+        body: '봐 줘', meta: {}, createdAt: new Date().toISOString(), threadRootId: null,
+      }],
+      threads: null,
+      threadStates: [],
+    };
     render(<Inbox open onClose={() => {}} />);
-    expect(screen.getByRole('region', { name: en['waitChain.sectionTitle'] as string })).toBeTruthy();
+    for (const name of ['Your turn', 'Waiting', 'In progress', 'Done']) {
+      expect(await screen.findByRole('region', { name })).toBeTruthy();
+    }
+    expect(screen.getByTestId('inbox-mine-count').textContent).toBe('0 waiting on you');
     cleanup();
     speak('ko');
     render(<Inbox open onClose={() => {}} />);
-    expect(screen.getByRole('region', { name: ko['waitChain.sectionTitle'] as string })).toBeTruthy();
-  });
-
-  /**
-   * **랜드마크 이름에 개수가 없다.** 구획 이름은 자리의 이름이고, 개수가 섞이면 목록이
-   * 바뀔 때마다 이름이 달라져 자리를 이름으로 찾는 사람에게 매번 다른 구획이 된다.
-   * 보이는 머리글은 개수를 단다 — 그 둘이 갈려 있는 것이 이 축이 지키는 것이다.
-   */
-  it('구획 이름에는 개수가 없고 머리글에는 있다', async () => {
-    render(<Inbox open onClose={() => {}} />);
-    const region = await screen.findByRole('region', { name: 'Called you' });
-    expect(region.querySelector('h3')?.textContent).toContain('(0)');
+    for (const name of ['내 차례', '기다리는 중', '진행', '끝남']) {
+      expect(await screen.findByRole('region', { name })).toBeTruthy();
+    }
+    expect(screen.getByTestId('inbox-mine-count').textContent).toBe('나를 기다리는 일 0');
   });
 });
 
@@ -2821,7 +2727,8 @@ describe('팀 상세 — 이름의 뜻을 두 언어가 다 말한다', () => {
    * `admin` 으로 되돌린 것도 같은 규율이고, 그 자리를 함께 잰다.
    */
   it('admin 이 두 언어에서 같은 글자다', () => {
-    for (const key of ['agents.teams.memberReadOnly', 'invite.notAdmin'] as (keyof typeof en)[]) {
+    // `invite.notAdmin` 이 빠졌다(UX ⑦b-2) — 판정이 admin 이 아니라 `member.invite` 능력이 되어 문구에 admin 이 없다.
+    for (const key of ['agents.teams.memberReadOnly'] as (keyof typeof en)[]) {
       expect(en[key], `en.${key}`).toContain('admin');
       expect(ko[key], `ko.${key}`).toContain('admin');
       expect(ko[key], `ko.${key}`).not.toContain('관리자');
@@ -2936,6 +2843,7 @@ describe('레일 — 두 언어로 뜨고 칸 이름은 안 옮긴다', () => {
         me: acc(ME, 'me'),
         accounts: { [ME]: acc(ME, 'me') },
         unread: [inboxEntry(1, 'm1', 'mention'), inboxEntry(2, 'm2', 'dm')],
+        inboxMine: 2,
       });
     };
 

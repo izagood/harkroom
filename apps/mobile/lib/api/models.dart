@@ -81,11 +81,15 @@ class ChannelRow {
     required this.isPrivate,
     required this.isDm,
     required this.topic,
+    this.memberIds = const [],
   });
 
   final String id;
   final String name;
   final bool isPrivate;
+
+  /// DM 의 참여자(나 포함). 채널이면 비어 있다 — `GET /channels` 는 명단을 주지 않는다.
+  final List<String> memberIds;
 
   /// DM 은 이름이 아니라 **상대**로 그려야 한다 — 화면이 갈라져야 하므로 값으로 둔다.
   final bool isDm;
@@ -98,6 +102,20 @@ class ChannelRow {
         isDm: _str(j['kind']) == 'dm',
         topic: j['topic'] as String?,
       );
+
+  /// `GET /dms` 의 한 줄(`id`·`memberIds`). **`GET /channels` 는 DM 을 주지 않는다**(kind standard 만) —
+  /// DM 은 이 길로만 온다. 이름은 서버가 주지 않으므로 [name] 은 비워 두고 화면 쪽이 상대 이름으로 채운다.
+  static ChannelRow fromDmJson(Map<String, Object?> j) => ChannelRow(
+        id: _str(j['id']),
+        name: '',
+        isPrivate: true,
+        isDm: true,
+        topic: null,
+        memberIds: _strList(j['memberIds']),
+      );
+
+  ChannelRow withName(String n) =>
+      ChannelRow(id: id, name: n, isPrivate: isPrivate, isDm: isDm, topic: topic, memberIds: memberIds);
 }
 
 /// 리액션 한 칸. 누가 눌렀는지까지 온다 — 내가 눌렀는지를 화면이 알아야 한다.
@@ -120,12 +138,16 @@ class AttachmentRow {
     required this.filename,
     required this.contentType,
     required this.byteSize,
+    this.artifact,
   });
 
   final String id;
   final String filename;
   final String contentType;
   final int byteSize;
+
+  /// 미리보기(아티팩트) 버전이면 있다(서버 0.3.133~, `artifact.publish`). 보통 첨부에는 없다.
+  final ArtifactRef? artifact;
 
   bool get isImage => contentType.startsWith('image/');
 
@@ -134,6 +156,54 @@ class AttachmentRow {
         filename: _str(j['filename']),
         contentType: _str(j['contentType'], 'application/octet-stream'),
         byteSize: _int(j['sizeBytes']),
+        artifact: j['artifact'] is Map ? ArtifactRef.fromJson((j['artifact']! as Map).cast<String, Object?>()) : null,
+      );
+}
+
+/// 첨부가 가리키는 미리보기 버전. `title`·`summary` 는 **그 글의 버전** 것이다(#1065) — 옛 카드는 그때 이름을
+/// 보인다. `latestVersion` 은 목록을 읽은 순간 값이라, 화면은 더 높은 버전 글이 들어오면 스스로 알약을 갱신한다.
+class ArtifactRef {
+  const ArtifactRef({
+    required this.artifactId,
+    required this.version,
+    required this.latestVersion,
+    required this.title,
+    this.latestTitle,
+    this.summary,
+    this.coverAttachmentId,
+  });
+
+  final String artifactId;
+  final int version;
+  final int latestVersion;
+  final String title;
+  final String? latestTitle;
+  final String? summary;
+  final String? coverAttachmentId;
+
+  static ArtifactRef fromJson(Map<String, Object?> j) => ArtifactRef(
+        artifactId: _str(j['artifactId']),
+        version: _int(j['version'], 1),
+        latestVersion: _int(j['latestVersion'], _int(j['version'], 1)),
+        title: _str(j['title']),
+        latestTitle: j['latestTitle'] is String ? j['latestTitle']! as String : null,
+        summary: j['summary'] is String ? j['summary']! as String : null,
+        coverAttachmentId: j['coverAttachmentId'] is String ? j['coverAttachmentId']! as String : null,
+      );
+}
+
+/// `POST /attachments/:id/preview` 의 답 — 60초짜리 서명 경로. 열 때마다 새로 받는다.
+class PreviewTicket {
+  const PreviewTicket({required this.path, required this.title, required this.version});
+
+  final String path;
+  final String title;
+  final int version;
+
+  static PreviewTicket fromJson(Map<String, Object?> j) => PreviewTicket(
+        path: _str(j['path']),
+        title: _str(j['title']),
+        version: _int(j['version'], 1),
       );
 }
 
@@ -174,6 +244,8 @@ class MessageRow {
     required this.attachments,
     required this.replyCount,
     this.alsoInChannel = false,
+    this.participantIds = const [],
+    this.lastReplyAt,
   });
 
   final String id;
@@ -201,6 +273,13 @@ class MessageRow {
   /// 아니다"다. 둘을 0 으로 뭉치면 모든 답글이 스레드 진입점을 갖게 된다.
   final int? replyCount;
 
+  /// **스레드 루트에만**: 답글을 단 사람들의 id(서버가 센다, 최근 순). 요약 줄의 아바타가 쓴다.
+  /// 옛 서버나 답글이면 비어 있다.
+  final List<String> participantIds;
+
+  /// **스레드 루트에만**: 마지막 답글 시각. 요약 줄 「· 2분 전」 이 쓴다.
+  final DateTime? lastReplyAt;
+
   /// 스레드 답글인데 **채널에도 보이라고** 올린 것(#231). 채널 화면은 루트와 이것만 그린다.
   final bool alsoInChannel;
 
@@ -225,6 +304,8 @@ class MessageRow {
         attachments: attachments,
         replyCount: n < 0 ? 0 : n,
         alsoInChannel: alsoInChannel,
+        participantIds: participantIds,
+        lastReplyAt: lastReplyAt,
       );
 
   bool get isThreadRoot => threadRootId == null;
@@ -270,6 +351,8 @@ class MessageRow {
       attachments: attachments,
       replyCount: replyCount,
       alsoInChannel: alsoInChannel,
+      participantIds: participantIds,
+      lastReplyAt: lastReplyAt,
     );
   }
 
@@ -301,6 +384,10 @@ class MessageRow {
             : const [],
         replyCount: j['replyCount'] is num ? (j['replyCount']! as num).toInt() : null,
         alsoInChannel: j['alsoInChannel'] == true,
+        participantIds: j['participantIds'] is List
+            ? (j['participantIds']! as List).whereType<String>().toList(growable: false)
+            : const [],
+        lastReplyAt: DateTime.tryParse(_str(j['lastReplyAt']))?.toUtc(),
       );
 }
 
@@ -342,6 +429,39 @@ class ReadState {
       );
 }
 
+/// 채널 하나에 대한 **내** 선호. `GET /channels/prefs`(데스크탑 사이드바와 같은 값).
+/// 모바일은 S5b 에서 읽기만 한다 — 별표·섹션 편집은 S9 채널 시트.
+class ChannelPref {
+  const ChannelPref({
+    required this.channelId,
+    required this.starred,
+    required this.section,
+    required this.sortOrder,
+    required this.hidden,
+  });
+
+  final String channelId;
+
+  /// 즐겨찾기(`starredAt` 이 있다).
+  final bool starred;
+
+  /// 사용자 섹션 이름. null 이면 섹션 없음(맨 아래 「채널」).
+  final String? section;
+
+  /// 섹션 안 수동 순서. null 이면 이름순 뒤.
+  final int? sortOrder;
+
+  /// 사이드바에서 치웠다(`hiddenAt` 이 있다) — 목록에 세우지 않는다.
+  final bool hidden;
+
+  static ChannelPref fromJson(Map<String, Object?> j) => ChannelPref(
+        channelId: _str(j['channelId']),
+        starred: j['starredAt'] is String,
+        section: j['section'] is String && (j['section']! as String).trim().isNotEmpty ? j['section']! as String : null,
+        sortOrder: j['sortOrder'] is num ? (j['sortOrder']! as num).toInt() : null,
+        hidden: j['hiddenAt'] is String,
+      );
+}
 
 /// 내가 **불린 이유**. 러너가 프롬프트를 다르게 조립하려고 서버가 갈라 둔 값이고,
 /// 화면도 같은 이유로 갈라 그린다 — "멘션"과 "내가 낸 물음에 답이 왔다"는 다른 일이다.
@@ -417,6 +537,28 @@ class InboxEntry {
       );
 }
 
+/// 채널 자동 멘션 한 줄(`GET /channels/:id/auto-mentions`, #173 · 모드는 마이그레이션 048).
+///
+/// - `always`: 이 채널의 작성칸이 **매 글 앞에** `@handle` 을 붙인다.
+/// - `available`: 붙이지는 않고 "이 채널이 데리고 있는 에이전트"로 후보에 띄운다 — 누르면 고정된다.
+///
+/// 모드를 모르는 옛 서버(048 이전)는 `mode` 를 싣지 않는다. 그때의 자동 멘션은 전부 `always` 였다.
+class ChannelAutoMention {
+  const ChannelAutoMention({required this.agentAccountId, required this.handle, required this.mode});
+
+  final String agentAccountId;
+  final String handle;
+  final String mode;
+
+  bool get isAlways => mode != 'available';
+
+  factory ChannelAutoMention.fromJson(Map<String, Object?> j) => ChannelAutoMention(
+        agentAccountId: _str(j['agentAccountId']),
+        handle: _str(j['handle']),
+        mode: _str(j['mode'], 'always'),
+      );
+}
+
 /// 스레드 × 에이전트 모델 지정 한 줄(서버 079). 값이 null 인 축은 에이전트 설정을 따른다.
 /// [stale] 은 지정 뒤 에이전트의 하네스가 바뀌어 쓰지 않는 값이다 — 칩이 취소선으로 그린다.
 class ThreadAgentModel {
@@ -487,4 +629,62 @@ class AgentModelOptions {
           : null,
     );
   }
+}
+
+/// 에이전트가 지금 도는 턴 하나(`GET /agent-sessions?scope=visible`, S7). 읽기 전용이라 세션 id 를 받지 않는다.
+///
+/// **옛 서버**(scope 를 모르는 0.3.153 이하)는 소유자·admin 목록을 옛 모양으로 준다 — `owned` 가 없으면
+/// 그 목록은 원래 내 것만이므로 참으로 읽는다.
+class AgentActivity {
+  const AgentActivity({
+    required this.agentAccountId,
+    required this.channelId,
+    required this.threadRootId,
+    required this.harness,
+    required this.startedAt,
+    required this.owned,
+  });
+
+  final String agentAccountId;
+  final String channelId;
+  final String? threadRootId;
+  final String harness;
+  final DateTime? startedAt;
+  final bool owned;
+
+  static AgentActivity fromJson(Map<String, Object?> j) => AgentActivity(
+        agentAccountId: _str(j['agentAccountId']),
+        channelId: _str(j['channelId']),
+        threadRootId: j['threadRootId'] is String ? j['threadRootId'] as String : null,
+        harness: _str(j['harness']),
+        startedAt: j['startedAt'] is String ? DateTime.tryParse(j['startedAt'] as String) : null,
+        owned: j['owned'] is bool ? j['owned'] as bool : true,
+      );
+}
+
+/// 에이전트가 스스로 걸어 둔 다음 깨움(`GET /agent-wakes?scope=visible`).
+class AgentWake {
+  const AgentWake({
+    required this.agentAccountId,
+    required this.channelId,
+    required this.threadRootId,
+    required this.wakeAt,
+    required this.reason,
+  });
+
+  final String agentAccountId;
+  final String channelId;
+  final String threadRootId;
+  final DateTime? wakeAt;
+
+  /// wake 메시지 본문. 지워졌으면 null.
+  final String? reason;
+
+  static AgentWake fromJson(Map<String, Object?> j) => AgentWake(
+        agentAccountId: _str(j['agentAccountId']),
+        channelId: _str(j['channelId']),
+        threadRootId: _str(j['threadRootId']),
+        wakeAt: j['wakeAt'] is String ? DateTime.tryParse(j['wakeAt'] as String) : null,
+        reason: j['reason'] is String ? j['reason'] as String : null,
+      );
 }

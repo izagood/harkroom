@@ -14,6 +14,7 @@ type SavedMessageWithMetaRow = MessageRow & {
   smCreatedAt: string;
   smDoneAt: string | null;
   smDeleted: boolean;
+  smVisible: boolean;
 };
 
 function toSavedMessageRow({
@@ -21,6 +22,7 @@ function toSavedMessageRow({
   smCreatedAt,
   smDoneAt,
   smDeleted,
+  smVisible,
   ...message
 }: SavedMessageWithMetaRow): SavedMessageRow {
   return {
@@ -34,7 +36,12 @@ function toSavedMessageRow({
     // 내주지 않는다** — 그것이 새면 삭제가 삭제가 아니다(핀의 같은 판단, #218).
     // 그래서 옵셔널이 아니라 명시적 null 이다: 키가 사라지면 클라이언트가 '아직 안 받았다'
     // 와 '삭제됐다'를 구분할 수 없다.
-    message: smDeleted ? null : message,
+    //
+    // **지금 볼 수 없는 채널의 메시지도 본문을 내주지 않는다**(#1030 security F1·N2). 가시성은
+    // 담을 때만 검사했고 채널에서 빠져도 담긴 행은 남는다 — 그대로 실으면 나간 뒤에 바뀐
+    // 본문과 상태 리액션 이유(ask 물음·fail 사유)가 계속 샌다. 행은 남긴다(목록에서 빼면
+    // 사람이 그 항목을 지울 길이 없어진다) — 지운 글과 같은 처리다.
+    message: smDeleted || !smVisible ? null : message,
   };
 }
 
@@ -47,7 +54,8 @@ async function selectSavedMessages(
   const res = await pool.query(
     // `deleted_at is null` 을 **걸지 않는다** — 삭제된 메시지도 자리가 남아야 한다(결정 3).
     // 대신 삭제 여부를 함께 실어 위 mapper 가 본문을 떼어 낸다.
-    `select m.*, sm.state as "smState", sm.created_at as "smCreatedAt", sm.done_at as "smDoneAt"
+    `select m.*, sm.state as "smState", sm.created_at as "smCreatedAt", sm.done_at as "smDoneAt",
+       exists (select 1 from channel c where c.id = m."channelId" and ${channelVisibleSql('c', '$1')}) as "smVisible"
      from saved_message sm
      join lateral (
        select ${MESSAGE_COLS}, (deleted_at is not null) as "smDeleted"

@@ -63,7 +63,7 @@ class HarkroomAvatar extends StatelessWidget {
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: colorFor(id),
-          borderRadius: BorderRadius.circular(HarkroomSize.avatarRadius * size / HarkroomSize.avatar),
+          borderRadius: BorderRadius.circular(HarkroomRadius.avatar * size / HarkroomSize.avatar),
         ),
         child: Text(
           initialOf(name),
@@ -94,13 +94,13 @@ class UnreadBadge extends StatelessWidget {
       key: Key('unread-$count'),
       constraints: const BoxConstraints(minWidth: 20),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-      decoration: BoxDecoration(color: k.accent, borderRadius: BorderRadius.circular(10)),
+      decoration: BoxDecoration(color: k.accent, borderRadius: BorderRadius.circular(HarkroomRadius.full)),
       child: Text(
         // 세 자리가 넘으면 줄인다 — 정확한 수보다 "많다"가 더 읽힌다.
         count > 99 ? '99+' : '$count',
         textAlign: TextAlign.center,
         style: TextStyle(
-            color: k.onAccent, fontSize: 11, fontWeight: FontWeight.w700, height: 1.1),
+            color: k.fgOnStrong, fontSize: 11, fontWeight: FontWeight.w600, height: 1.1),
       ),
     );
   }
@@ -123,7 +123,7 @@ class ScreenTitle extends StatelessWidget {
       title,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: TextStyle(fontSize: HarkroomType.screenTitle, fontWeight: FontWeight.w700, color: k.fg),
+      style: TextStyle(fontSize: HarkroomType.name, fontWeight: FontWeight.w600, color: k.fg),
     );
     final sub = subtitle;
     if (sub == null || sub.isEmpty) return head;
@@ -136,7 +136,7 @@ class ScreenTitle extends StatelessWidget {
           sub,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: TextStyle(fontSize: HarkroomType.screenSubtitle, color: k.mute),
+          style: TextStyle(fontSize: HarkroomType.meta, color: k.fgMuted),
         ),
       ],
     );
@@ -173,9 +173,9 @@ class StatusBand extends StatelessWidget {
   Widget build(BuildContext context) {
     final k = context.tokens;
     final (Color fg, Color bg) = switch (tone) {
-      BandTone.warn => (k.warn, k.warnSoft),
-      BandTone.error => (k.err, k.errSoft),
-      BandTone.info => (k.fg, k.soft),
+      BandTone.warn => (k.warning, k.warningSurface),
+      BandTone.error => (k.danger, k.dangerSurface),
+      BandTone.info => (k.fg, k.surfaceSunken),
     };
     return Semantics(
       liveRegion: true,
@@ -228,21 +228,40 @@ class SectionHeader extends StatelessWidget {
       alignment: Alignment.centerLeft,
       child: Text(
         label,
-        style: TextStyle(fontSize: HarkroomType.section, fontWeight: FontWeight.w700, color: k.fg),
+        style: TextStyle(fontSize: HarkroomType.meta, fontWeight: FontWeight.w600, color: k.fg),
       ),
     );
   }
 }
 
-/// 보내기 버튼의 모양. **주황 원 + [HarkroomTokens.onAccent] 화살표**다(재설계 §3.4) — 보내기는
+/// 보내기 버튼의 모양. **주황 원 + [HarkroomTokens.fgOnStrong] 화살표**다(재설계 §3.4) — 보내기는
 /// 강조색을 쓰는 몇 안 되는 자리다. 채널·스레드 두 작성칸이 같은 것을 쓴다.
-ButtonStyle sendButtonStyle(BuildContext context) {
+/// 작성칸 테두리. 둥근 칸, 쉴 때 1px 선 · 포커스일 때 1px 회색(개정판 3.4 — 주황 2px 테두리는
+/// 보내기 버튼과 강조가 겹쳤다).
+InputDecoration composerDecoration(BuildContext context, String hint) {
+  final k = context.tokens;
+  OutlineInputBorder edge(Color c) => OutlineInputBorder(
+        borderRadius: BorderRadius.circular(HarkroomRadius.compose),
+        borderSide: BorderSide(color: c, width: 1),
+      );
+  return InputDecoration(
+    hintText: hint,
+    isDense: true,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+    border: edge(HarkroomShadow.composeBorder(Theme.of(context).brightness).color),
+    enabledBorder: edge(HarkroomShadow.composeBorder(Theme.of(context).brightness).color),
+    focusedBorder: edge(k.fgMuted),
+  );
+}
+
+/// [soft] 는 보낼 글이 없을 때의 흐린 모양(잠긴 모양과 같은 색).
+ButtonStyle sendButtonStyle(BuildContext context, {bool soft = false}) {
   final k = context.tokens;
   return IconButton.styleFrom(
-    backgroundColor: k.accent,
-    foregroundColor: k.onAccent,
-    disabledBackgroundColor: k.soft,
-    disabledForegroundColor: k.mute,
+    backgroundColor: soft ? k.surfaceRaised : k.accent,
+    foregroundColor: soft ? k.fgMuted : k.fgOnStrong,
+    disabledBackgroundColor: k.surfaceRaised,
+    disabledForegroundColor: k.fgMuted,
     minimumSize: const Size(40, 40),
   );
 }

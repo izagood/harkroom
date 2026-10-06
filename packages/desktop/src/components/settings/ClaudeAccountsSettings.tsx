@@ -46,6 +46,7 @@ import {
   listenClaudeLogin,
   moveClaudeAccount,
   newClaudeAccountId,
+  openClaudeAccountTerminal,
   removeClaudeAccount,
   removeClaudePool,
   sameSignInAs,
@@ -64,6 +65,7 @@ import { ProviderSection } from './ProviderSection';
 import { AccountRowsSkeleton, ProviderUsageBars, ProviderUsageSkeleton } from './ProviderUsageBars';
 import { ClaudeAssignThresholdsRow } from './ClaudeAssignThresholds';
 import { usageFor, useProviderUsage } from '../../lib/providerUsage';
+import { useT } from '../../i18n/useT';
 
 /** 제공업체 계정 화면 안의 Claude 칸. `SettingsPage` 와 같은 인자를 받아 `Shell` 로 갈아 끼운다. */
 function ClaudeSection({ description, children }: {
@@ -146,6 +148,7 @@ function StandalonePage({ description, width, children }: {
  * 껍데기(`SettingsPage`) 대신 하네스 칸(`ProviderSection`)을 쓴다 — 껍데기가 둘이면 제목이 둘이다.
  */
 export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolean } = {}) {
+  const t = useT();
   const Shell = embedded ? ClaudeSection : StandalonePage;
   // 한도 사용률: CLI(`/usage`) 먼저, 실패하면 같은 API(`usageChain.ts`). 사용량은 이것 하나다.
   const available = hasClaudeAccountsSurface();
@@ -160,6 +163,14 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
   const [reauthAsk, setReauthAsk] = useState<ReauthAsk | null>(null);
   const [newPool, setNewPool] = useState<string | null>(null);
   const [moveNote, setMoveNote] = useState<string | null>(null);
+  /**
+   * 사람이 [터미널 열기]로 연 계정(`pool/account`, 2026-10-01). 그 창에서 고르고 돌아오면 데몬이
+   * 표식을 지웠을 것이라, **이 화면으로 포커스가 돌아올 때만** 목록을 다시 읽는다 — 목록 조회는
+   * 계정마다 `claude auth status` 를 띄우므로 평소에 포커스마다 돌리지 않는다.
+   */
+  const [terminalOpened, setTerminalOpened] = useState<string | null>(null);
+  /** 터미널에서 돌아와 표식이 사라진 계정(`pool/account`). 한 번 알리고 다음 조회 때 내린다. */
+  const [terminalBack, setTerminalBack] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!available) return;
@@ -174,6 +185,36 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
   }, [available]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  // 다시 읽은 목록에서 그 계정의 표식이 사라졌으면 끝이다 — 안내를 "돌아왔다"로 바꾸고 포커스마다
+  // 다시 읽기도 멈춘다(designer D3). 아직 남아 있으면(사람이 고르지 않고 나왔다) 그대로 둔다.
+  useEffect(() => {
+    if (!terminalOpened || !snap) return;
+    const [poolName, accountName] = terminalOpened.split('/');
+    const acct = snap.pools.find((p) => p.name === poolName)?.accounts.find((a) => a.name === accountName);
+    if (acct && !acct.attention) {
+      setTerminalOpened(null);
+      setTerminalBack(terminalOpened);
+    }
+  }, [snap, terminalOpened]);
+
+  useEffect(() => {
+    if (!terminalOpened) return;
+    const onFocus = (): void => { void refresh(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [terminalOpened, refresh]);
+
+  const openTerminal = useCallback(async (pool: string, account: string) => {
+    try {
+      await openClaudeAccountTerminal(pool, account);
+      setTerminalOpened(`${pool}/${account}`);
+      setTerminalBack(null);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
 
   // 로그인 진행을 듣는다. 화면이 살아 있는 동안만 — 떠날 때 떼지 않으면 다음 마운트가
   // 두 번 듣는다.
@@ -365,7 +406,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
               <span className="font-medium text-fg">{pool.name || 'Ungrouped'}</span>
               {snap.defaultPool === pool.name && (
-                <span className="rounded border border-border px-1.5 text-meta uppercase tracking-wide text-fg-muted">
+                <span className="rounded-row border border-border px-1.5 text-meta uppercase tracking-wide text-fg-muted">
                   Default pool
                 </span>
               )}
@@ -379,7 +420,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                   화면 순서를 그대로 쓴다). 그래서 이 표는 여전히 점수로 정렬하지 않는다 —
                   점수는 몇 분마다 바뀌고, 사람이 정한 순서가 화면에서 사라지면 안 된다.
                 */}
-                {pool.accounts.length > 1 && ' · new threads go to the account with the most weekly room per hour left; order breaks ties'}
+                {pool.accounts.length > 1 && ' · new threads go to one of the two accounts with the most weekly room per hour left, picked in proportion to that room; order breaks ties'}
               </span>
             </div>
             <div className="flex items-center gap-3">
@@ -416,7 +457,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                         {...triggerProps}
                         type="button"
                         aria-label={`Actions for pool ${pool.name}`}
-                        className="rounded px-2 py-1 text-fg-subtle hover:bg-surface-hover hover:text-fg"
+                        className="rounded-row px-2 py-1 text-fg-subtle hover:bg-surface-hover hover:text-fg"
                       >
                         ⋯
                       </button>
@@ -503,6 +544,9 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                       label: `Sign in again to ${a.name}`,
                       onSelect: () => setReauthAsk({ pool: pool.name, account: a.name, label: accountLabel(a) }),
                     }, {
+                      label: `Open a terminal for ${a.name}`,
+                      onSelect: () => { void openTerminal(pool.name, a.name); },
+                    }, {
                       label: `Remove account ${a.name}`,
                       onSelect: () => askPending({
                         kind: 'account', pool: pool.name, account: a.name, label: accountLabel(a),
@@ -513,7 +557,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                         {...triggerProps}
                         type="button"
                         aria-label={`Actions for account ${a.name}`}
-                        className="rounded px-1.5 py-1 text-fg-subtle hover:bg-surface-hover hover:text-fg"
+                        className="rounded-row px-1.5 py-1 text-fg-subtle hover:bg-surface-hover hover:text-fg"
                       >
                         ⋯
                       </button>
@@ -521,6 +565,32 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                   />
                 </span>
               </div>
+              {/*
+                러너가 이 계정을 **사람의 선택을 기다리는 화면** 때문에 건너뛰었다(조직 관리 설정 승인·첫 실행
+                등 — 판정은 문구가 아니라 상태다, `agent/src/pty.ts::waitingQuietMs`). 러너는 그 화면을 대신
+                누르지 않는다 — 여기서 그 계정의 터미널을 열어 사람이 고른다. 이유를 툴팁이 아니라 줄로
+                보인다(designer D1): 무슨 일이 생기는지가 늘 보여야 하고, 메일 칸을 밀어내지 않는다.
+              */}
+              {a.attention && (
+                <div
+                  className="flex flex-wrap items-baseline gap-x-2 px-4 pb-2.5 text-meta"
+                  data-testid="claude-account-attention"
+                >
+                  <span className="text-warning">
+                    {/* 안 2(2026-10-02): 막힌 계정은 빼지 않고 **맨 뒤로** 간다 — #1007 의 "건너뛴다"가 아니다. */}
+                    ⚠ {t('claudeAccounts.attention.notice')}
+                  </span>
+                  <button
+                    type="button"
+                    className="shrink-0 text-accent underline hover:text-fg"
+                    aria-label={t('claudeAccounts.attention.openAria', { account: a.name })}
+                    data-testid="claude-account-attention-open"
+                    onClick={() => { void openTerminal(pool.name, a.name); }}
+                  >
+                    {t('gate.terminal.open')}
+                  </button>
+                </div>
+              )}
               {pu ? (
                 <div className="px-4 pb-2.5" data-testid={`claude-provider-usage-${pool.name}-${a.name}`}>
                   <ProviderUsageBars usage={pu} nowMs={providerSnap!.measuredAtMs} />
@@ -539,6 +609,16 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
               </div>
             );
           })}
+          {terminalOpened && pool.accounts.some((a) => `${pool.name}/${a.name}` === terminalOpened) && (
+            <div className="px-4 py-3 text-meta text-fg" data-testid="claude-account-terminal-note">
+              Opened Terminal for {terminalOpened}. Make your choice there, then type /exit — new threads use this account again after that.
+            </div>
+          )}
+          {terminalBack && pool.accounts.some((a) => `${pool.name}/${a.name}` === terminalBack) && (
+            <div className="px-4 py-3 text-meta text-fg" data-testid="claude-account-terminal-back">
+              {terminalBack} is back — new threads can use it again.
+            </div>
+          )}
         </SettingsGroup>
         );
       })}

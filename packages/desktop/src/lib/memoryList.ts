@@ -25,6 +25,19 @@ export interface MemoryEntry {
   /** 서버 080: 쓰기 검사에 걸린 판이면 시각과 이유. 사람이 확인할 때까지 에이전트 프롬프트에 안 실린다. */
   flaggedAt?: string | null;
   flagReason?: string | null;
+  /**
+   * 서버 097: 보관된 기억이면 그 시각. 사람 목록 API 는 보관된 것도 **함께** 준다 — 그것을
+   * 살아 있는 것과 한 목록·한 숫자로 세면 상한(보관 제외)과 어긋난 `213 / 200` 이 뜬다.
+   */
+  archivedAt?: string | null;
+  /** 서버 096: 러너 recall 로 프롬프트에 실린 횟수·마지막 시각(#1186 부터 사람 목록에도 온다). */
+  recallCount?: number;
+  lastRecalledAt?: string | null;
+  /**
+   * 만든 시각. 보관·되살리기도 `updatedAt` 을 바꾸므로(서버 `archiveMemory`) 상세의 "고침" 만으로는
+   * 되살린 기억이 방금 쓴 것처럼 보인다 — 만든 때를 따로 보여 준다.
+   */
+  createdAt?: string;
 }
 
 /** 이전 판(서버 069). 최근 것부터 온다. */
@@ -139,6 +152,27 @@ export function splitCore(entries: MemoryEntry[]): { core: MemoryEntry | null; r
   return { core, rest: entries.filter((e) => e.slug !== CORE_SLUG) };
 }
 
+/**
+ * 보관된 것을 뗀다(서버 097).
+ *
+ * **상한 200 은 보관을 빼고 센다**(`services/memory.ts` 의 `too_many` 판정) — 화면의 숫자도
+ * `active` 로 세야 서버가 거절하는 시점과 맞는다. 보관된 것은 에이전트 목록·recall 에
+ * 실리지 않으므로 살아 있는 것과 한 목록에 섞지 않는다. 최근 보관한 것부터 준다.
+ */
+export function splitArchived(entries: MemoryEntry[]): { active: MemoryEntry[]; archived: MemoryEntry[] } {
+  const active: MemoryEntry[] = [];
+  const archived: MemoryEntry[] = [];
+  for (const e of entries) (e.archivedAt ? archived : active).push(e);
+  archived.sort((a, b) => b.archivedAt!.localeCompare(a.archivedAt!) || a.slug.localeCompare(b.slug));
+  return { active, archived };
+}
+
+/** 검색어로만 거른다(순서는 그대로). 보관 칸처럼 묶지 않는 목록이 쓴다. */
+export function filterMemories(entries: MemoryEntry[], query: string): MemoryEntry[] {
+  const q = query.trim().toLowerCase();
+  return q ? entries.filter((e) => matches(e, q)) : entries;
+}
+
 /** 검색은 slug 와 **본문 둘 다** 본다 — 값이 이미 손에 있으므로 서버 왕복이 없다. */
 function matches(e: MemoryEntry, q: string): boolean {
   return e.slug.toLowerCase().includes(q) || e.value.toLowerCase().includes(q);
@@ -196,4 +230,249 @@ export function memoryRows(
     rows.push({ kind: 'group', group: { key, items: byKey.get(key)! } });
   }
   return rows;
+}
+
+/**
+ * 정리 후보(서버 `GET …/memory/audit`, #1186). 에이전트의 `memory.audit` 과 같은 분류이고, 사람
+ * 화면은 목록 상한이 200 이라 낱개 목록은 사실상 전부 온다. 화면이 쓰는 필드만 적는다.
+ */
+export interface MemoryAudit {
+  core: { length: number; limit: number } | null;
+  neverRead: string[];
+  stale: { slug: string; lastReadAt: string }[];
+  brokenLinks: { slug: string; target: string }[];
+  similar: [string, string][];
+  similarBody: { pair: [string, string]; similarity: number }[];
+  undescribed: string[];
+  flagged: { slug: string; reason: string | null }[];
+  expiringJournal: string[];
+  /** 어느 목록이든 상한에서 잘렸으면 true. 사람 상한(200)에서 잘리는 것은 n² 인 짝 목록뿐이다. */
+  truncated: boolean;
+  items: { active: number; limit: number; archived: number };
+}
+
+/** 보관·되살리기의 slug 하나 결과(#1186). 한 slug 의 실패가 나머지를 막지 않는다. */
+export type MemoryBatchResult = 'ok' | 'not_found' | 'invalid_slug' | 'core_not_archivable' | 'too_many';
+
+/** 「정리할 것」 칩. 순서가 곧 화면 순서다 — 사람 손이 가장 급한 것부터. */
+export const CLEANUP_CHIPS = ['flagged', 'stale', 'neverRead', 'pairs', 'brokenLinks', 'expiringJournal', 'undescribed'] as const;
+export type CleanupChip = typeof CLEANUP_CHIPS[number];
+
+export interface CleanupChipView {
+  key: CleanupChip;
+  /** 칩을 누르면 목록이 이 기억들만 보인다. 숫자는 이 집합의 크기다. */
+  slugs: Set<string>;
+  /** 짝 목록이 상한에서 잘렸으면 숫자를 "200+" 처럼 쓴다. */
+  truncated: boolean;
+}
+
+/**
+ * audit 를 칩으로 편다. **숫자는 기억 수**다 — 짝 칩은 `similar`·`similarBody` 가 같은 짝을 각각
+ * 담을 수 있고 한 기억이 여러 짝에 들어가므로, 짝 수로 세면 칩을 눌러 보이는 줄 수와 어긋난다.
+ *
+ * 깨진 링크는 **정말 없는 기억을 가리키는 것만** 센다. audit 은 살아 있는 slug 만 보므로 보관된
+ * 기억을 가리키는 `[[링크]]` 도 깨짐으로 오는데, 그것은 고칠 일이 아니라 되살릴지 정할 일이다
+ * (`archivedLinks`). 0 인 칩은 돌려주지 않는다 — 할 일이 없는 칩은 소음이다.
+ */
+export function cleanupChips(audit: MemoryAudit, archivedSlugs: ReadonlySet<string>): CleanupChipView[] {
+  const pairSlugs = new Set<string>();
+  for (const [a, b] of audit.similar) { pairSlugs.add(a); pairSlugs.add(b); }
+  for (const { pair: [a, b] } of audit.similarBody) { pairSlugs.add(a); pairSlugs.add(b); }
+  const sets: Record<CleanupChip, Set<string>> = {
+    flagged: new Set(audit.flagged.map((f) => f.slug)),
+    stale: new Set(audit.stale.map((s) => s.slug)),
+    neverRead: new Set(audit.neverRead),
+    pairs: pairSlugs,
+    brokenLinks: new Set(audit.brokenLinks.filter((l) => !isArchivedTarget(l.target, archivedSlugs)).map((l) => l.slug)),
+    expiringJournal: new Set(audit.expiringJournal),
+    undescribed: new Set(audit.undescribed),
+  };
+  // core 는 목록 줄이 아니라 위 카드에 선다 — 칩 숫자에 넣으면 눌렀을 때 보이는 줄 수와 하나 어긋난다.
+  // audit 은 `flagged`·`brokenLinks` 에 core 를 넣는다(서버 `auditMemory` 의 judged 밖).
+  for (const set of Object.values(sets)) set.delete(CORE_SLUG);
+  return CLEANUP_CHIPS
+    .map((key) => ({ key, slugs: sets[key], truncated: key === 'pairs' && audit.truncated }))
+    .filter((c) => c.slugs.size > 0);
+}
+
+/** 칩 숫자. 잘린 짝 칩은 아는 만큼 + "+" 다(정확하지 않은 숫자를 정확한 듯 쓰지 않는다). */
+export function chipCount(chip: CleanupChipView): string {
+  return chip.truncated ? `${chip.slugs.size}+` : String(chip.slugs.size);
+}
+
+/** 한 기억이 어느 칩에 걸렸나 — 줄 꼬리표. 칩 순서대로. */
+export function chipsFor(slug: string, chips: CleanupChipView[]): CleanupChip[] {
+  return chips.filter((c) => c.slugs.has(slug)).map((c) => c.key);
+}
+
+/** 보관된 기억을 가리키는 `[[링크]]` — slug → 가리킨 보관 기억들. 줄에 [되살리기]를 단다. */
+export function archivedLinks(audit: MemoryAudit, archivedSlugs: ReadonlySet<string>): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const l of audit.brokenLinks) {
+    if (!isArchivedTarget(l.target, archivedSlugs)) continue;
+    const target = archivedSlugs.has(l.target) ? l.target : `mem/${l.target}`;
+    const list = out.get(l.slug);
+    if (list) { if (!list.includes(target)) list.push(target); } else out.set(l.slug, [target]);
+  }
+  return out;
+}
+
+/** 보관은 300 개까지 — 넘치면 서버가 가장 오래 보관한 것부터 **조용히** 이전 판으로 밀어낸다. */
+export const MAX_ARCHIVED_MEMORIES = 300;
+
+/** 이만큼 더 보관하면 밀려나는 수. 0 이면 경고하지 않는다(security n2: 미리 알린다). */
+export function archiveOverflow(archivedNow: number, adding: number): number {
+  return Math.max(0, archivedNow + adding - MAX_ARCHIVED_MEMORIES);
+}
+
+/** 지난 `days` 일 안에 쓰인(읽힘 또는 recall) 기억 수 — 건강 띠. */
+export function usedWithin(entries: MemoryEntry[], days: number, now: number): number {
+  const since = now - days * 86_400_000;
+  return entries.filter((e) => [e.lastReadAt, e.lastRecalledAt]
+    .some((t) => t != null && new Date(t).getTime() >= since)).length;
+}
+
+/** 쓰임 = 읽힘 + recall. 옛 서버면 없는 쪽은 0 으로 센다. */
+export function usageOf(e: MemoryEntry): number {
+  return (e.readCount ?? 0) + (e.recallCount ?? 0);
+}
+
+/**
+ * 종류별 칸(Memory 탭 결정 1). 순서가 곧 화면 순서다 — 규칙·사실이 가장 많이 열리고, 경위는
+ * 원래 잘 안 읽힌다. 종류가 없는 옛 서버 항목은 규칙·사실로 센다(서버 기본값과 같다).
+ */
+export const MEMORY_KINDS = ['topic', 'procedure', 'journal'] as const;
+export type MemoryKind = typeof MEMORY_KINDS[number];
+
+export interface MemoryKindSection {
+  kind: MemoryKind;
+  /** 이 칸에 든 기억 수(검색·칩으로 거른 뒤). */
+  count: number;
+  rows: MemoryRow[];
+}
+
+/**
+ * 종류별로 나눈 뒤 칸마다 `memoryRows` 로 접두어를 묶는다. 빈 칸은 돌려주지 않는다.
+ * 접두어 묶음이 종류를 넘나들지 않게 칸 안에서 묶는다 — `mem/pr-` 의 경위와 규칙이 한 묶음에
+ * 섞이면 종류로 나눈 보람이 없다.
+ */
+export function memorySections(
+  entries: MemoryEntry[],
+  opts: { query?: string; sort?: MemorySort } = {},
+): MemoryKindSection[] {
+  const out: MemoryKindSection[] = [];
+  for (const kind of MEMORY_KINDS) {
+    const rows = memoryRows(entries.filter((e) => (e.kind ?? 'topic') === kind), opts);
+    const count = rows.reduce((n, r) => n + (r.kind === 'item' ? 1 : r.group.items.length), 0);
+    if (count > 0) out.push({ kind, count, rows });
+  }
+  return out;
+}
+
+/** 본문의 `[[이름]]` 조각. 서버 audit 과 같은 문법이다(공백 없음, 255자까지). */
+export const WIKI_LINK = /\[\[([^\]\s]{1,255})\]\]/g;
+
+/** `[[x]]` 가 가리키는 slug. 서버처럼 `x` 그대로와 `mem/x` 둘 다 본다. */
+export function resolveWikiLink(
+  target: string, active: ReadonlySet<string>, archived: ReadonlySet<string>,
+): { slug: string; state: 'active' | 'archived' } | { slug: null; state: 'missing' } {
+  for (const slug of [target, `mem/${target}`]) {
+    if (active.has(slug)) return { slug, state: 'active' };
+    if (archived.has(slug)) return { slug, state: 'archived' };
+  }
+  return { slug: null, state: 'missing' };
+}
+
+/**
+ * 「왜 후보인가」 — 한 기억이 audit 의 어느 목록에 왜 들었나. 칩은 이름만 말하고, 상세는
+ * 근거(마지막 쓰임·짝 상대·가리킨 이름·걸린 이유)를 함께 말한다. 칩 순서대로.
+ */
+export type CandidateReason =
+  | { key: 'flagged'; reason: string | null }
+  | { key: 'stale'; lastUsedAt: string }
+  | { key: 'neverRead' }
+  | { key: 'pairs'; with: string[] }
+  | { key: 'brokenLinks'; targets: string[] }
+  | { key: 'expiringJournal' }
+  | { key: 'undescribed' };
+
+export function candidateReasons(
+  slug: string, audit: MemoryAudit, archivedSlugs: ReadonlySet<string>,
+): CandidateReason[] {
+  if (slug === CORE_SLUG) return [];
+  const out: CandidateReason[] = [];
+  const flag = audit.flagged.find((f) => f.slug === slug);
+  if (flag) out.push({ key: 'flagged', reason: flag.reason });
+  const stale = audit.stale.find((s) => s.slug === slug);
+  if (stale) out.push({ key: 'stale', lastUsedAt: stale.lastReadAt });
+  if (audit.neverRead.includes(slug)) out.push({ key: 'neverRead' });
+  const partners = new Set<string>();
+  for (const [a, b] of audit.similar) { if (a === slug) partners.add(b); if (b === slug) partners.add(a); }
+  for (const { pair: [a, b] } of audit.similarBody) { if (a === slug) partners.add(b); if (b === slug) partners.add(a); }
+  if (partners.size) out.push({ key: 'pairs', with: [...partners] });
+  const targets = audit.brokenLinks.filter((l) => l.slug === slug && !isArchivedTarget(l.target, archivedSlugs)).map((l) => l.target);
+  if (targets.length) out.push({ key: 'brokenLinks', targets });
+  if (audit.expiringJournal.includes(slug)) out.push({ key: 'expiringJournal' });
+  if (audit.undescribed.includes(slug)) out.push({ key: 'undescribed' });
+  return out;
+}
+
+/** 줄 꼬리표는 이만큼만 보이고 나머지는 「+n」(좁은 창에서 요약 칸이 0 으로 밀리지 않게, #1196 designer n3). */
+export const MAX_ROW_REASONS = 2;
+
+/** `[[x]]` 의 x 가 보관된 기억을 가리키나(`x` 그대로 또는 `mem/x`, 서버 audit 과 같은 규칙). */
+function isArchivedTarget(target: string, archived: ReadonlySet<string>): boolean {
+  return archived.has(target) || archived.has(`mem/${target}`);
+}
+
+/**
+ * 「정리 맡기기」의 범위(Memory 탭 PR 5, 결정 3: 그 에이전트와의 DM). 합치기·증류처럼 **판단이
+ * 필요한 일**은 사람 화면에 버튼으로 두지 않고 그 기억을 쓴 에이전트에게 맡긴다 — 그 에이전트는
+ * `memory.merge`·`memory.archive` 와 정리 임대를 이미 갖고 있다.
+ */
+export const CLEANUP_SCOPES = ['merge', 'distill', 'describe', 'links', 'archiveUnused', 'picked'] as const;
+export type CleanupScope = typeof CLEANUP_SCOPES[number];
+
+/** 범위마다 걸린 기억(지금 화면이 아는 audit·고른 것에서). 0 인 범위는 고를 수 없다. */
+export function cleanupScopeSlugs(
+  chips: CleanupChipView[], picked: string[],
+): Record<CleanupScope, string[]> {
+  const of = (k: CleanupChip) => [...(chips.find((c) => c.key === k)?.slugs ?? [])].sort();
+  return {
+    merge: of('pairs'),
+    distill: of('expiringJournal'),
+    describe: of('undescribed'),
+    links: of('brokenLinks'),
+    archiveUnused: [...new Set([...of('stale'), ...of('neverRead')])].sort(),
+    picked: [...picked].sort(),
+  };
+}
+
+/** 범위 하나에 싣는 이름 수의 상한 — 나머지는 수로만 말한다(에이전트가 audit 으로 다시 찾는다). */
+export const CLEANUP_SLUGS_PER_SCOPE = 30;
+
+/** slug 문법(서버 `isValidSlug` 와 같은 글자). 이 밖의 글자가 든 이름은 DM 에 싣지 않는다. */
+const SAFE_SLUG = /^(core|mem\/[a-z0-9_\-/]{1,250})$/;
+
+/**
+ * DM 초안. **기억의 본문·요약은 싣지 않는다** — 이름(slug)과 범위만. 두 가지 이유다:
+ * ① 본문은 에이전트가 쓴 글이라 DM 에 그대로 옮기면 사람이 보낸 지시처럼 읽힐 수 있다(지시문 섞임).
+ * ② 에이전트는 본문을 `memory.get` 으로 직접 읽는다 — 싣는 것은 노출만 늘린다.
+ * slug 는 문법이 좁은 글자만 받고(`SAFE_SLUG`) 백틱 안에 둔다 — 멘션·채널 토큰으로 읽히지 않게.
+ * 범위 이름과 절차 문구는 화면 사전에서 온다(`t`).
+ */
+export function cleanupRequestBody(
+  scopes: { scope: CleanupScope; label: string; slugs: string[] }[],
+  text: { intro: string; more: (n: number) => string; outro: string },
+): string {
+  const lines = [text.intro, ''];
+  for (const { label, slugs } of scopes) {
+    const safe = slugs.filter((s) => SAFE_SLUG.test(s));
+    const shown = safe.slice(0, CLEANUP_SLUGS_PER_SCOPE);
+    lines.push(`- ${label} (${safe.length})`);
+    if (shown.length) lines.push(`  ${shown.map((s) => `\`${s}\``).join(' ')}`);
+    if (safe.length > shown.length) lines.push(`  ${text.more(safe.length - shown.length)}`);
+  }
+  lines.push('', text.outro);
+  return lines.join('\n');
 }

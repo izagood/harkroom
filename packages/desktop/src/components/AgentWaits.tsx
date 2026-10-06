@@ -100,7 +100,7 @@ export function AgentWaits({ snapshot, handleOf, channelLabel, onOpenThread, var
                 onClick={() => onOpenThread(wake.threadRootId)}
                 className={`flex w-full min-w-0 items-baseline text-left text-meta hover:bg-surface-hover ${tower
                   ? 'gap-3 border-t border-border px-3 py-1.5'
-                  : 'gap-1.5 rounded px-2 py-0.5'}`}>
+                  : 'gap-1.5 rounded-row px-2 py-0.5'}`}>
                 <span className="shrink-0 font-medium text-fg-agent">@{handleOf(wake.agentAccountId)}</span>
                 {/*
                   사유가 없는 줄은 **지워진 깨움**이다. 시계는 살아 있어 깨움은 그대로

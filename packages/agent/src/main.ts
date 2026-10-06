@@ -19,7 +19,8 @@
 import { resolveTurnModel } from './threadModel.js';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { access, readdir } from 'node:fs/promises';
+import { access, readdir, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { loadConfig, runnerLabel } from './config.js';
 import { applySelfRename, HarkroomAgentClient } from './harkroom.js';
@@ -38,18 +39,22 @@ import { runnerExitPlan } from './exit.js';
 import { stopRequestedForRunner } from './stop.js';
 import { harnessLoginNotice } from './prompt.js';
 import { createRelayClient } from './relay.js';
+import { claudeProjectRootsUnder, collectBackfill, createCleanupReporter, deleteThread, gitWorktreePaths } from './cleanupReport.js';
 import { createInteractiveManager, type InteractiveManager } from './interactiveTurn.js';
 import { createAttentionLedger } from './attentionLedger.js';
 import { TurnRegistry } from './turnRegistry.js';
 import { MentionQueue } from './mentionQueue.js';
 import { claudeAccountsRoot, createLiveAccountLane, loadClaudeAccountLane, presentAccounts } from './claudeAccounts.js';
 import { createAccountAssigner } from './accountAssign.js';
+import { clearAccountAttention, isAttentionActive, markAccountNeedsAttention, readAccountAttention } from '@harkroom/shared/claudeGates';
 import { syncCodexAuth } from './codexHome.js';
 import { allXdgApps, usesPiHome, usesXdgHome, xdgAppFor } from './adapters/index.js';
 import { ensurePiHome } from './piHome.js';
 import { ensureOpencodeHome } from './opencodeHome.js';
 import { createMentionScheduler, type BatchContext } from './mentionScheduler.js';
 import { createSecretLeases } from './secretLeases.js';
+import { randomUUID } from 'node:crypto';
+import { createThreadClaims } from './threadClaims.js';
 
 const config = loadConfig();
 // 릴레이(오퍼레이터 링크)가 곧 서버로 가는 유일한 길이다(스펙 2026-09-20 §5) — MCP 도 REST 도 이
@@ -93,6 +98,15 @@ const releaseHandoverHold = (): void => {
   console.log('[main] 오퍼레이터가 이관 보류를 풀었다 — 앞 러너가 물러났다');
   handoverHeld.clear();
 };
+/**
+ * 앞 러너가 **끝냈는데 읽음 처리만 못 한** entry(`HARKROOM_HANDOVER_DONE`, 2026-10-03 L2). 보류와 달리
+ * 풀 것이 없다 — 기다릴 턴이 없으므로 스케줄러가 이것들은 턴 없이 읽음 처리만 한다(`doneUnread` 에 심는다).
+ */
+const handoverDone = new Set<number>(
+  (process.env.HARKROOM_HANDOVER_DONE ?? '')
+    .split(',').map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0),
+);
+if (handoverDone.size) console.log(`[main] 이관: 앞 러너가 끝냈지만 읽음 처리 못 한 entry ${[...handoverDone].join(',')} — 턴 없이 읽음 처리만 한다`);
 
 const relay = createRelayClient({
   link: config.operatorLink,
@@ -266,7 +280,7 @@ const [me, guide] = await (async () => {
 // 뿌리가 아직 없는 첫 기동이면 읽을 것이 없다 — 그때는 빈 목록이고 새 이름으로 만든다.
 const stateDirNames = await readdir(config.stateDir).catch(() => [] as string[]);
 const {
-  agentStateDir, legacyPath, sessionsPath, workspaceBaseDir, codexHomeDir, opencodeHomeDir, piHomeDir,
+  agentStateDir, legacyPath, sessionsPath, workspaceBaseDir, codexHomeDir, opencodeHomeDir, piHomeDir, cleanupBackfillPath,
 } = resolveAgentStateDir(config.stateDir, me.handle, me.id, config.agentInstance, stateDirNames);
 
 // 뿌리 이름이 id 하나라(#850) 사람이 눈으로 찾을 길을 따로 낸다: `by-name/<handle> -> ../<뿌리>`.
@@ -483,8 +497,53 @@ const secretLeases = createSecretLeases({
   turnSecretsDir: process.env.HARKROOM_TURN_SECRETS_DIR ?? null,
 });
 
+// 스레드 임대(서버 095). holder 는 **이 프로세스**다 — 앱 업데이트로 같은 에이전트의 옛 러너와 겹쳐 도는 동안
+// 둘을 가르는 값이라 기동마다 새로 짓는다(같은 에이전트 자격이라 계정 id 로는 못 가른다).
+const threadClaims = createThreadClaims({ client: harkroom, holder: randomUUID() });
+
+// 작업 폴더 정리(스레드 9e909150). 오퍼레이터는 이 상태 트리를 못 읽으므로 러너가 알리고, 이 트리 안의 지우기도 러너가 한다.
+// 턴의 기록 파일은 멘션 id 로 모은다 — 턴이 끝날 때 그 기록에서 `worktree add` 경로를 읽는다.
+const turnTranscripts = new Map<string, string[]>();
+const cleanupReporter = createCleanupReporter({
+  send: (report) => harkroom.reportCleanup(report),
+  listWorktrees: gitWorktreePaths,
+  home: homedir(),
+  deleteThread: (ref) => deleteThread({
+    workspaceBaseDir,
+    claudeProjectRoots: () => claudeProjectRootsUnder(claudeAccountsRoot()),
+    sessionOf: (key) => store.get(key),
+    forget: (key) => store.delete(key),
+  }, ref),
+  log: (line) => console.log(`[cleanup] ${line}`),
+});
+// 기동 보고는 한 번만 — 세션 기록 전체를 읽으므로 무겁다. 끝나면 표지를 남긴다. 늦게 돌려도 된다(턴을 막지 않는다).
+void access(cleanupBackfillPath).then(() => undefined, async () => {
+  const threads = await collectBackfill({
+    sessions: store.entries(), claudeProjectRoots: await claudeProjectRootsUnder(claudeAccountsRoot()), home: homedir(),
+  });
+  await cleanupReporter.backfill(threads);
+  await writeFile(cleanupBackfillPath, JSON.stringify({ at: new Date().toISOString(), threads: threads.length }), { mode: 0o600 });
+}).catch((err) => console.warn('[cleanup] 기동 보고 실패:', err instanceof Error ? err.message : err));
+// 한가한 러너도 지우기 요청을 받게 — 오퍼레이터 청소기 주기(1시간)의 절반.
+const cleanupTick = setInterval(() => { void cleanupReporter.tick().catch(() => {}); }, 30 * 60_000);
+cleanupTick.unref?.();
+
 const scheduler = createMentionScheduler({
-  harkroom, registry, queue: mentionQueue, heldEntryIds, secretLeases,
+  harkroom, registry, queue: mentionQueue, heldEntryIds, handoverDone, secretLeases, threadClaims,
+  turnSlots: { acquire: (key) => harkroom.acquireTurnSlot(key), release: (key) => harkroom.releaseTurnSlot(key) },
+  turnWatch: {
+    // 정의를 기다리기 **전에** 부른다 — 리포터가 이 스레드를 "도는 중"으로 먼저 올린다(security F2).
+    started: (key) => cleanupReporter.turnStarted(key, harkroom.definition().then(
+      (def) => ({ repo: def.workingDir ?? null, workspaceDir: store.get(key)?.workspaceDir ?? null }),
+      () => ({ repo: null, workspaceDir: store.get(key)?.workspaceDir ?? null }),
+    )),
+    ended: async (key, mentionId) => {
+      const transcripts = turnTranscripts.get(mentionId) ?? [];
+      turnTranscripts.delete(mentionId);
+      // 첫 턴이면 작업 폴더는 턴 안에서 생겼다 — 끝날 때 다시 읽는다.
+      await cleanupReporter.turnEnded(key, transcripts.filter((p) => p.endsWith('.jsonl')), store.get(key)?.workspaceDir ?? null);
+    },
+  },
   // **턴마다** 축을 다시 읽는다 — 지운 계정은 빠지고 새 계정은 들어온다(`createLiveAccountLane`).
   accountLane: async () => (await liveLane.current()).lane,
   // 모델은 매 턴 정의에서 읽는다 — 모델별 주간 창(Opus 등)이 있으면 그것까지 본다. 못 읽으면
@@ -496,12 +555,24 @@ const scheduler = createMentionScheduler({
       .then((d) => resolveTurnModel(harkroom, d, anchor ?? null))
       .then((m) => m.model, () => null),
   )),
+  // 사람이 지나야 하는 관문에 막힌 계정을 표시한다(설정 › Claude 계정의 [터미널 열기], 2026-10-01).
+  accountAttention: {
+    mark: (a) => markAccountNeedsAttention(a.configDir, Date.now()),
+    clear: async (a) => { await clearAccountAttention(a.configDir); },
+    active: async (dir) => isAttentionActive(await readAccountAttention(dir), Date.now()),
+  },
   runMentionTurn,
   // 계정별로 갈리는 두 필드(`claudeAccount`·`claudeConfigDir`)만 계정 축이 채운다 —
   // 나머지는 계정과 무관하므로 매번 같은 값이다.
-  buildTurnDeps: ({ ctx, mention, account, isLastAccount }) => ({
+  buildTurnDeps: ({ ctx, mention, account, isLastAccount, onPromptDelivered }) => ({
+    ...(onPromptDelivered ? { onPromptDelivered } : {}),
     // 비밀 보관소 D7 — 이 턴의 기록 파일을 멘션 장부에 적는다(멘션이 끝날 때 가린다).
-    noteTranscript: (cause: string, path: string) => secretLeases.noteTranscript(cause, path),
+    noteTranscript: (cause: string, path: string) => {
+      secretLeases.noteTranscript(cause, path);
+      const list = turnTranscripts.get(cause) ?? [];
+      if (!list.includes(path)) list.push(path);
+      turnTranscripts.set(cause, list);
+    },
     secretNeedles: (cause: string) => secretLeases.needles(cause),
     harkroom, memory: memoryCache, store, exec, runTurn: runPtyTurn, me, guide,
     channelName: ctx.channelName(mention.channelId),
@@ -527,6 +598,10 @@ const scheduler = createMentionScheduler({
     // 살아남아 전환 자체가 일어나지 않는다 — 부르는 경로는 던지지 않기 때문이다.
     attentionLedger: isLastAccount ? attentionLedger : undefined,
     callsForHuman: isLastAccount,
+    ...(account ? {
+      markAccountGate: () => { void markAccountNeedsAttention(account.configDir, Date.now()).catch(() => undefined); },
+      accountGateCleared: async () => !isAttentionActive(await readAccountAttention(account.configDir), Date.now()),
+    } : {}),
     operatorBin: config.operatorBin, runnerSecret: config.operatorLink.secret,
     turnTimeoutMs: config.turnTimeoutMs,
     harnessStallMs: config.harnessStallMs,
@@ -639,11 +714,14 @@ while (running) {
 // **여기가 "인박스를 놓았다"의 정확한 순간이다.** 시그널 핸들러에서 알리면 거짓말이 된다 —
 // 그때는 배치 하나가 아직 돌고 있어서 새 항목을 더 집을 수 있다. 이 줄에 와서야 admit 이
 // 끝났고, 그래서 오퍼레이터가 **프로세스가 죽기를 기다리지 않고** 교체 러너를 띄워도 된다.
-// 아직 도는 턴의 entry 는 함께 넘겨 교체 러너가 그것만 건너뛰게 한다.
-relay.notifyPollStopped(scheduler.holdingEntries());
+// 아직 도는 턴의 entry 는 함께 넘겨 교체 러너가 그것만 건너뛰게 한다. 끝났는데 읽음 처리만 못 한
+// entry 는 따로 넘긴다 — 교체 러너는 그것을 기다리지 않고 읽음 처리만 한다(L2).
+relay.notifyPollStopped(scheduler.holdingEntries(), scheduler.doneEntries());
 await scheduler.drain();
 // 멘션을 놓는 길에 기록 가리기(D7)가 돌고 있을 수 있다 — 끝 통지도 그 뒤에 나간다. relay 를 끊기 전에
 // 짧게 기다린다. 넘으면 그냥 물러난다: 임대는 만료되고 오퍼레이터가 파일을 지운다(기록은 가려지지 않은 채 남는다).
 await secretLeases.drain(5_000);
+// 스레드 임대 놓기도 relay 위로 간다 — 끊기 전에 짧게 기다린다. 못 놓은 것은 만료(90초)가 놓는다.
+await threadClaims.drain(3_000);
 relay.stop();
 console.log('종료');

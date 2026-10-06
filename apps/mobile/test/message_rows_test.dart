@@ -156,5 +156,70 @@ void main() {
       await pump(tester, _m('1', 1));
       expect(find.byKey(const Key('mention-denied')), findsNothing);
     });
+
+    testWidgets('스레드 요약 줄: 참여자 아바타(최대 3) · 답글 n개 · 마지막 답글 시각 (S4e)', (tester) async {
+      final root = MessageRow.fromJson({
+        'id': 'r', 'seq': 1, 'channelId': 'c1', 'authorId': 'a1', 'body': '원글', 'kind': 'user',
+        'createdAt': _t0.toIso8601String(), 'replyCount': 14,
+        'participantIds': ['a1', 'a2', 'a3', 'a4'],
+        'lastReplyAt': DateTime.now().toUtc().subtract(const Duration(minutes: 2)).toIso8601String(),
+      });
+      var opened = 0;
+      await tester.pumpWidget(MaterialApp(
+        theme: harkroomTheme(Brightness.light),
+        home: I18n(
+          strings: stringsFor('ko'),
+          child: AppScope(
+            state: app,
+            child: Scaffold(
+              body: Builder(builder: (c) => buildFeedItem(c, FeedMessage(root), onOpenThread: (_) => opened++)),
+            ),
+          ),
+        ),
+      ));
+      for (final id in ['a1', 'a2', 'a3']) {
+        expect(find.byKey(Key('thread-participant-r-$id')), findsOneWidget);
+      }
+      expect(find.byKey(const Key('thread-participant-r-a4')), findsNothing);
+      expect(find.textContaining('답글 14개'), findsOneWidget);
+      expect(find.textContaining('2분 전'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('thread-open-r')));
+      expect(opened, 1);
+    });
+
+    testWidgets('옛 서버(participantIds 없음)는 아바타 없이 「답글 n개」만', (tester) async {
+      final root = MessageRow.fromJson({
+        'id': 'r', 'seq': 1, 'channelId': 'c1', 'authorId': 'a1', 'body': '원글', 'kind': 'user',
+        'createdAt': _t0.toIso8601String(), 'replyCount': 2,
+      });
+      await tester.pumpWidget(MaterialApp(
+        theme: harkroomTheme(Brightness.light),
+        home: I18n(
+          strings: stringsFor('ko'),
+          child: AppScope(
+            state: app,
+            child: Scaffold(body: Builder(builder: (c) => buildFeedItem(c, FeedMessage(root), onOpenThread: (_) {}))),
+          ),
+        ),
+      ));
+      expect(find.byWidgetPredicate((w) => w.key is ValueKey && '${(w.key! as ValueKey).value}'.startsWith('thread-participant-')), findsNothing);
+      expect(find.text('답글 2개'), findsOneWidget);
+    });
+
+    testWidgets('리액션 줄 끝의 「이모지 달기」가 고르는 시트를 연다 (S4e)', (tester) async {
+      final m = MessageRow.fromJson({
+        'id': 'x', 'seq': 1, 'channelId': 'c1', 'authorId': 'a1', 'body': '말', 'kind': 'user',
+        'createdAt': _t0.toIso8601String(),
+        'reactions': [
+          {'emoji': '👀', 'accountIds': ['a1']},
+        ],
+      });
+      await pump(tester, m);
+      expect(find.byKey(const Key('reaction-add-x')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('reaction-add-x')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('reaction-pick-👍')), findsOneWidget);
+      expect(find.byKey(const Key('reaction-pick-✅')), findsOneWidget);
+    });
   });
 }

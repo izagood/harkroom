@@ -5,7 +5,9 @@
 // 잰다. 화면이 이 결과를 그리는지는 `agentMemoryUi.test.tsx` 가 따로 본다.
 import { describe, it, expect } from 'vitest';
 import {
-  memorySummary, memoryGroupKey, memoryRows, splitCore, MIN_GROUP_SIZE,
+  archiveOverflow, archivedLinks, candidateReasons, chipCount, cleanupChips, memorySections, resolveWikiLink, usedWithin,
+  cleanupRequestBody, type MemoryAudit,
+  filterMemories, memorySummary, memoryGroupKey, memoryRows, splitArchived, splitCore, MIN_GROUP_SIZE,
   type MemoryEntry,
 } from '../src/lib/memoryList';
 
@@ -159,3 +161,128 @@ describe('memoryRows — 묶고, 고르고, 줄로 편다', () => {
     expect(entries.map((e) => e.slug)).toEqual(['mem/b-1', 'mem/a-1']);
   });
 });
+
+describe('splitArchived — 보관된 것을 뗀다(서버 097)', () => {
+  it('archivedAt 이 있는 것만 보관 쪽으로, 최근 보관한 것부터', () => {
+    const live = mem('mem/live');
+    const a1 = { ...mem('mem/a1'), archivedAt: at(2) };
+    const a2 = { ...mem('mem/a2'), archivedAt: at(5) };
+    const nul = { ...mem('mem/nul'), archivedAt: null };
+    const { active, archived } = splitArchived([a1, live, a2, nul]);
+    expect(active.map((e) => e.slug)).toEqual(['mem/live', 'mem/nul']);
+    expect(archived.map((e) => e.slug)).toEqual(['mem/a2', 'mem/a1']);
+  });
+
+  it('옛 서버(필드 없음)면 전부 살아 있는 것이다', () => {
+    const { active, archived } = splitArchived([mem('core'), mem('mem/x')]);
+    expect(active).toHaveLength(2);
+    expect(archived).toEqual([]);
+  });
+});
+
+describe('filterMemories — 검색어로만 거른다', () => {
+  it('slug·본문 둘 다 보고, 빈 검색어면 그대로', () => {
+    const list = [mem('mem/alpha', '# 하나'), mem('mem/beta', '# 알파 이야기')];
+    expect(filterMemories(list, '  ')).toBe(list);
+    expect(filterMemories(list, 'ALPHA').map((e) => e.slug)).toEqual(['mem/alpha']);
+    expect(filterMemories(list, '알파').map((e) => e.slug)).toEqual(['mem/beta']);
+  });
+});
+
+describe('정리 칩 (#1186)', () => {
+  const base = (): MemoryAudit => ({
+    core: null, neverRead: [], stale: [], brokenLinks: [], similar: [], similarBody: [], undescribed: [],
+    flagged: [], expiringJournal: [], truncated: false, items: { active: 0, limit: 200, archived: 0 },
+  });
+
+  it('짝 칩은 similar·similarBody 를 합쳐 기억 수로 센다', () => {
+    const chips = cleanupChips({
+      ...base(),
+      similar: [['a', 'b'], ['a', 'c']],
+      similarBody: [{ pair: ['b', 'a'], similarity: 0.7 }],
+    }, new Set());
+    expect(chips.map((c) => [c.key, c.slugs.size])).toEqual([['pairs', 3]]);
+  });
+
+  it('잘렸으면 짝 칩에만 + 가 붙는다', () => {
+    const chips = cleanupChips({ ...base(), similar: [['a', 'b']], neverRead: ['x'], truncated: true }, new Set());
+    expect(chips.map(chipCount)).toEqual(['1', '2+']);
+  });
+
+  it('보관된 것을 가리키는 링크는 깨짐에서 빼고 따로 준다', () => {
+    const audit = { ...base(), brokenLinks: [{ slug: 'a', target: 'old' }, { slug: 'b', target: 'gone' }] };
+    const archived = new Set(['old']);
+    expect(cleanupChips(audit, archived).find((c) => c.key === 'brokenLinks')!.slugs).toEqual(new Set(['b']));
+    expect(archivedLinks(audit, archived)).toEqual(new Map([['a', ['old']]]));
+  });
+
+  it('보관 300 을 넘는 만큼만 경고한다', () => {
+    expect(archiveOverflow(298, 2)).toBe(0);
+    expect(archiveOverflow(298, 5)).toBe(3);
+  });
+
+  it('최근 쓰임은 읽힘·recall 중 하나라도 기간 안이면 센다', () => {
+    const now = Date.UTC(2026, 9, 6);
+    const day = 86_400_000;
+    const e = (slug: string, r: number | null, c: number | null) => ({
+      slug, value: '', updatedAt: '',
+      lastReadAt: r === null ? null : new Date(now - r * day).toISOString(),
+      lastRecalledAt: c === null ? null : new Date(now - c * day).toISOString(),
+    });
+    expect(usedWithin([e('a', 1, null), e('b', 30, 2), e('c', 30, null), e('d', null, null)], 7, now)).toBe(2);
+  });
+
+  it('core 는 칩에서 뺀다 — 카드에 서므로 눌렀을 때 줄 수와 어긋난다(n6)', () => {
+    const chips = cleanupChips({
+      ...base(), flagged: [{ slug: 'core', reason: 'x' }, { slug: 'a', reason: null }],
+      brokenLinks: [{ slug: 'core', target: 'gone' }],
+    }, new Set());
+    expect(chips.map((c) => [c.key, [...c.slugs]])).toEqual([['flagged', ['a']]]);
+  });
+});
+
+
+describe('종류별 칸·왜 후보인가 (PR 4)', () => {
+  const e = (slug: string, kind?: 'topic' | 'procedure' | 'journal') => ({ slug, value: '', updatedAt: '2026-10-01T00:00:00.000Z', kind });
+  it('종류별로 나누고, 접두어 묶음은 칸을 넘지 않는다', () => {
+    const secs = memorySections([e('mem/pr-1', 'journal'), e('mem/pr-2', 'journal'), e('mem/pr-3', 'topic'), e('mem/pr-4', 'journal'), e('mem/x')]);
+    expect(secs.map((s) => [s.kind, s.count])).toEqual([['topic', 2], ['journal', 3]]);
+    expect(secs[1]!.rows).toHaveLength(1);
+    expect(secs[1]!.rows[0]!.kind).toBe('group');
+  });
+  it('[[x]] 는 x 와 mem/x 를 본다', () => {
+    expect(resolveWikiLink('a', new Set(['mem/a']), new Set())).toEqual({ slug: 'mem/a', state: 'active' });
+    expect(resolveWikiLink('mem/b', new Set(), new Set(['mem/b']))).toEqual({ slug: 'mem/b', state: 'archived' });
+    expect(resolveWikiLink('c', new Set(), new Set()).state).toBe('missing');
+  });
+  it('왜 후보인가는 짝 상대·깨진 대상을 모으고, 보관 대상과 core 는 뺀다', () => {
+    const audit = {
+      core: null, neverRead: [], stale: [], undescribed: ['core'], flagged: [], expiringJournal: [], truncated: false,
+      items: { active: 0, limit: 200, archived: 0 },
+      similar: [['a', 'b']] as [string, string][], similarBody: [{ pair: ['c', 'a'] as [string, string], similarity: 0.6 }],
+      brokenLinks: [{ slug: 'a', target: 'gone' }, { slug: 'a', target: 'old' }],
+    };
+    expect(candidateReasons('a', audit, new Set(['mem/old']))).toEqual([
+      { key: 'pairs', with: ['b', 'c'] }, { key: 'brokenLinks', targets: ['gone'] },
+    ]);
+    expect(candidateReasons('core', audit, new Set())).toEqual([]);
+  });
+});
+
+describe('정리 맡기기 초안 (PR 5)', () => {
+  const text = { intro: 'I', more: (n: number) => `+${n}`, outro: 'O' };
+  it('slug 문법 밖의 이름은 싣지 않고, 상한을 넘으면 수로만 말한다', () => {
+    const many = Array.from({ length: 33 }, (_, i) => `mem/x${i}`);
+    const body = cleanupRequestBody([
+      { scope: 'merge', label: 'M', slugs: ['mem/ok', 'mem/<@everyone>', 'mem/a b'] },
+      { scope: 'picked', label: 'P', slugs: many },
+    ], text);
+    expect(body).toContain('- M (1)\n  `mem/ok`');
+    expect(body).not.toContain('everyone');
+    expect(body).toContain('- P (33)');
+    expect(body).toContain('+3');
+    expect(body.startsWith('I\n')).toBe(true);
+    expect(body.endsWith('\nO')).toBe(true);
+  });
+});
+

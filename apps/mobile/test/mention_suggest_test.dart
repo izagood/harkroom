@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/mention/mention.dart';
+import 'package:harkroom/api/models.dart';
 import 'package:harkroom/mention/mention_suggest.dart';
+import 'package:harkroom/mention/usage.dart';
 
 /// 커서 표식 `|` 를 쓴 짧은 표기. 시험이 읽히게.
 (String, int) _at(String marked) {
@@ -148,6 +150,82 @@ void main() {
 
     test('대소문자를 가리지 않는다', () {
       expect(rank('FO'), ['forge', 'formula', 'murmur']);
+    });
+
+    // 자주 부른 상대가 같은 무리 안에서 앞에 선다(횟수 → 최근 → 이름순).
+    final t0 = DateTime.utc(2026, 10, 1);
+    final usage = {
+      'formula': MentionUse(count: 3, last: t0),
+      'murmur': MentionUse(count: 5, last: t0),
+      'codex': MentionUse(count: 1, last: t0.add(const Duration(hours: 1))),
+      'forge': MentionUse(count: 1, last: t0),
+    };
+    List<String> rankUsed(String prefix) => rankMentionCandidates(
+          all,
+          prefix,
+          handleOf: (a) => a.handle,
+          displayNameOf: (a) => a.name,
+          usageOf: (a) => usage[a.handle],
+        ).map((a) => a.handle).toList();
+
+    test('자주 부른 순 — 같으면 최근에 부른 쪽, 그다음 이름순', () {
+      expect(rankUsed(''), ['murmur', 'formula', 'codex', 'forge']);
+    });
+
+    test('쓰임은 무리 안에서만 가른다 — 접두 일치가 표시 이름 일치보다 늘 앞', () {
+      // murmur 는 가장 자주 불렀지만 fo 를 이름(표시 이름)으로만 맞춘다.
+      expect(rankUsed('fo'), ['formula', 'forge', 'murmur']);
+    });
+
+    test('자주 부른 상대가 limit 에 잘리지 않는다', () {
+      final out = rankMentionCandidates(
+        all,
+        '',
+        handleOf: (a) => a.handle,
+        displayNameOf: (a) => a.name,
+        usageOf: (a) => usage[a.handle],
+        limit: 1,
+      ).map((a) => a.handle);
+      expect(out, ['murmur']);
+    });
+  });
+
+  group('부른 기록 세기', () {
+    const me = '00000000-0000-0000-0000-00000000000a';
+    const forge = '00000000-0000-0000-0000-0000000000f0';
+    const codex = '00000000-0000-0000-0000-0000000000c0';
+    const team = '00000000-0000-0000-0000-0000000000e0';
+    var seq = 0;
+    MessageRow msg(String author, String body, {String? id, int day = 1}) => MessageRow(
+          id: id ?? 'm${seq++}',
+          seq: seq,
+          channelId: 'c',
+          threadRootId: null,
+          authorId: author,
+          body: body,
+          kind: MessageKind.user,
+          meta: const {},
+          createdAt: DateTime.utc(2026, 10, day),
+          editedAt: null,
+          reactions: const [],
+          attachments: const [],
+          replyCount: null,
+        );
+
+    test('내 글만, 한 글에 한 번, id 로 센다', () {
+      final dup = msg(me, '<@$forge> 다시', id: 'dup', day: 3);
+      final out = countMentionUse([
+        msg(me, '<@$forge> 와 <@$forge> 둘 다', day: 1),
+        msg(me, '<@$codex> 봐 줘', day: 2),
+        dup,
+        dup, // 채널 목록과 스레드 목록에 같은 답글이 함께 있다
+        msg(codex, '<@$forge> 남이 부른 것', day: 5),
+        msg(me, '<@team:$team> 팀은 안 센다 <@$me> 나도 안 센다'),
+      ], me);
+      expect(out.keys.toSet(), {forge, codex});
+      expect(out[forge]!.count, 2);
+      expect(out[forge]!.last, DateTime.utc(2026, 10, 3));
+      expect(out[codex]!.count, 1);
     });
   });
 }

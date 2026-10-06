@@ -3,7 +3,7 @@ import {
   AGENT_HARNESSES, HANDLE_PATTERN, RUNNABLE_HARNESSES,
   type AgentConfig, type AgentDefaults, type AgentTeamMemberRow, type AgentTeamRow,
   type AgentView, type MentionPermission, type OperatorView, type OperatorCapabilities, type PatView, harnessHasAccountPool,
-  MAX_CORE_MEMORY_LENGTH, MAX_MEMORY_ITEMS_PER_ACCOUNT } from '@harkroom/shared';
+  MAX_CORE_MEMORY_LENGTH, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MAX_MEMORY_ITEMS_PER_ACCOUNT } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { ApiError } from '../../lib/api';
 import { useActiveStore } from '../../state/communities';
@@ -20,7 +20,9 @@ import { agoLabel } from '../../lib/time';
 // 기억 목록의 판정(접기·검색·묶기)은 `lib/` 한 벌이다 — 그 파일 머리말에 화면에서 떼어
 // 낸 이유가 있다. 회귀선은 `test/memoryList.test.ts`.
 import {
-  memoryRows, memorySummary, splitCore, type MemoryEntry, type MemorySort,
+  CLEANUP_SCOPES, MAX_ARCHIVED_MEMORIES, MAX_ROW_REASONS, cleanupRequestBody, cleanupScopeSlugs, memoryGroupKey, archivedLinks, candidateReasons, memorySections, resolveWikiLink, archiveOverflow, chipCount, chipsFor, cleanupChips, filterMemories, memoryRows, memorySummary,
+  splitArchived, splitCore, usageOf, usedWithin,
+  type CleanupChip, type CleanupScope, type MemoryAudit, type MemoryBatchResult, type MemoryEntry, type MemorySort,
 } from '../../lib/memoryList';
 // 화면은 `useT`, 화면 밖에서 쓰이는 순수 함수(`lastTurnLabel`)는 `Translate` 를 인자로
 // 받는다 — 그 갈림의 근거는 `i18n/index.ts::Translate` 머리말에 있다.
@@ -35,8 +37,11 @@ import { LocalOperatorRow } from './LocalOperatorRow';
 import { ModelPicker } from './ModelPicker';
 import { hasOperatorLocalSurface, listLocalAgents } from '../../lib/operatorLocal';
 import { AgentScopeSection } from './AgentScopeSection';
+import { AgentGrantsSection, liveMergeGrantCount } from './AgentGrantsSection';
 import { AgentPickableSection } from './AgentPickableSection';
 import { kindLabel, MemoryDetail } from './MemoryDetail';
+import { MemoryBody } from './MemoryBody';
+import { openWindow } from '../../lib/windowActions';
 import { canSeeAgentConfig } from '../../lib/agentConfigGate';
 // 팀 묶음(`docs/desktop-agent-cards.html` 4단계). 카드가 `AgentGrid` 를 재사용하지 않은
 // 근거는 `TeamGrid` 머리 주석에 있다 — 요지는 `AgentGridPlace` 가 못 박은 것이다:
@@ -50,33 +55,11 @@ import { Identity } from '../Identity';
 import { Button } from './primitives';
 import { AvatarStatus, useAvatarEdit } from './avatarEdit';
 import { useAgentPool } from './useAgentPool';
-import { copyText } from '../../lib/clipboard';
 import { navKey } from './sections';
-
-/** #177: 클립보드가 없거나 거부되면 **조용히 실패하지 않는다** — 화면에 있는 그 명령
- *  텍스트를 선택 상태로 만들어 사람이 ⌘C 할 수 있게 하고, 오류를 눈에 보이게 남긴다.
- *  그 처리는 `lib/clipboard` 의 `copyText` 가 하고(코드 블록의 복사 버튼도 같은 것을
- *  쓴다), 여기서는 **결과를 이 화면의 문구로 바꾸는 일만** 한다 — 문구가 부르는 쪽에
- *  있는 이유는 `lib/clipboard` 머리말에 적어 두었다.
- *  `target` 은 복사 대상 명령이 그려진 노드다(선택해 줄 대상). */
-const copyToClipboard = async (
-  text: string,
-  target: HTMLElement | null,
-  onError: (msg: string) => void,
-  // **번역기를 인자로 받는다**(`chainSentences`·`memberErrorText` 와 같은 (b) 주입,
-  // 근거는 `i18n/index.ts::Translate` 머리말). 이 함수는 컴포넌트 밖이라 훅을 부를 수
-  // 없고, 모듈 전역 번역기를 부르면 언어가 전역 상태에 묶여 시험이 서로의 언어를 밟는다.
-  t: Translate,
-): Promise<boolean> => {
-  const outcome = await copyText(text, target);
-  if (outcome === 'copied') return true;
-  onError(
-    outcome === 'selected'
-      ? t('agents.runner.copyFailedSelected')
-      : t('agents.runner.copyFailedManual'),
-  );
-  return false;
-};
+import { AGENT_DETAIL_TABS, parseAgentTarget, type AgentDetailTab } from './agentDetailTabs';
+import { ConfirmDialog } from '../ConfirmDialog';
+import { operatorNameOf, operatorPickerLabels } from '../../lib/operatorName';
+import { ImmediateBadge, PendingEditsContext, setLeaveGuard, type PendingHandlers, type RegisterPending } from './pendingEdits';
 
 /** AGENT_HARNESSES 에조차 없는 harness. 없는 것은 사용자의 CLI 가 아니라 harkroom 의 구현이므로
  *  '설치 안 됨'이 아니라 '지원 예정'이다. AGENT_HARNESSES 에는 있지만 아직 못 돌리는 것(RUNNABLE_HARNESSES
@@ -213,6 +196,38 @@ const draftOf = (a: AgentView): Draft => ({
 /** 만들었다는 팝업이 머무는 시간. 읽고 닫을 새도 없이 사라지지 않을 만큼만. */
 export const CREATED_TOAST_MS = 5000;
 
+/** 탭 이름의 사전 키. 템플릿 문자열로 키를 짓지 않는다 — 사전 검사가 못 잡는다. */
+const DETAIL_TAB_LABEL = {
+  overview: 'agents.detail.tab.overview',
+  profile: 'agents.detail.tab.profile',
+  run: 'agents.detail.tab.run',
+  permissions: 'agents.detail.tab.permissions',
+  memory: 'agents.detail.tab.memory',
+} as const satisfies Record<AgentDetailTab, string>;
+
+/**
+ * 저장 바에 걸린 것이 **어느 탭의 칸인가**(A3 수정, designer). 저장이 실패하면 오류 줄은 그 칸 자리에
+ * 서는데, 그 탭이 안 보이면 사람에게는 바만 남는다 — 바가 이 표로 그 탭을 가리킨다. 탭 이름 옆의
+ * 점(바뀐 것이 있는 탭)도 이 표를 읽는다.
+ */
+const DRAFT_FIELD_TAB = {
+  handle: 'profile', instructions: 'profile',
+  harness: 'run', model: 'run', effort: 'run',
+  workingDir: 'permissions', mentionPermission: 'permissions', ownerAccountId: 'permissions',
+} as const satisfies Record<keyof Draft, AgentDetailTab>;
+/** `usePendingEdit` 로 등록하는 칸의 탭. */
+const PENDING_KEY_TAB: Record<string, AgentDetailTab> = { 'local-folder': 'run', pickable: 'permissions' };
+/** 여러 탭이면 탭 순서로 앞의 것. */
+const firstTab = (tabs: Iterable<AgentDetailTab>): AgentDetailTab | null => {
+  const set = new Set(tabs);
+  return AGENT_DETAIL_TABS.find((x) => set.has(x)) ?? null;
+};
+
+/** 보관 칸의 열림 상태 열쇠. 접두어 묶음 열쇠(`mem/pr-`)와 겹치지 않는다. */
+const ARCHIVED_GROUP = 'archived';
+/** 목록/상세를 나란히 두는 최소 폭(48rem). 한 칸 24rem 이 줄 하나(체크·slug·꼬리표 둘·버튼)를 담는 폭이다. */
+export const MEMORY_TWO_PANE_MIN_PX = 768;
+
 export function AgentsSettings({ targetId }: { targetId?: string }) {
   // 시간 표기는 언어를 따른다(`lib/time.ts`). 접두는 사전을 지난다.
   const t = useT();
@@ -230,6 +245,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 상세의 폭이 좁아져 문서가 세운 세 묶음이 다시 한 줄로 흐른다.
    */
   const [view, setView] = useState<'grid' | 'detail'>('grid');
+  /** 상세의 탭(`agentDetailTabs.ts`). 새 에이전트 만들기에는 탭이 없다 — 칸이 셋뿐이다. */
+  const [detailTab, setDetailTab] = useState<AgentDetailTab>('overview');
   /**
    * **묶음 둘 — 에이전트 / 팀** (`docs/desktop-agent-cards.html` 4단계).
    *
@@ -312,16 +329,17 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const [defaults, setDefaults] = useState<AgentDefaults | 'error' | null>(null);
   // null 이면 'harness 기본값 사용'. 되돌릴 때 model·effort 를 명시적 null 로 비워야 한다.
   const [customized, setCustomized] = useState(false);
-  const [pat, setPat] = useState<string | null>(null);
   /**
    * #251: PAT 목록도 **세 상태**다 — null(아직 안 읽음) / 'error'(못 읽음) / 목록.
-   * 위 `defaults` 주석이 "PAT 로더가 실패를 `setPats([])` 로 삼켜 '없음'과 같은 화면을
-   * 만든다"고 적어 둔 그 결함을 여기서 없앤다. #251 이 "0개면 재발급이 필요하다"를
-   * 그 자리에서 말하기로 결정했으므로, '못 읽었다'가 0개로 보이면 화면이 있는 PAT 를
-   * 없다고 하고 운영자에게 필요 없는 재발급을 권한다.
+   * 러너는 v0.2.9 부터 PAT 를 쓰지 않고 발급도 닫혔다(서버 410) — 이 칸은 **살아 있는 옛 토큰을
+   * 지우는 자리**로만 남는다. '못 읽었다'를 0개로 그리면 지워야 할 토큰이 있는데 칸이 사라진다.
    */
   const [pats, setPats] = useState<PatView[] | 'error' | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
+  /** [모두 폐기] 확인창(security 조건 a). 토큰마다 DELETE 를 불러 감사 `pat.revoked` 가 하나씩 남는다. */
+  const [confirmingRevokeAll, setConfirmingRevokeAll] = useState(false);
+  /** 폐기되지 않은 토큰만. 이 칸은 이것이 하나라도 있을 때만 선다. */
+  const livePats = Array.isArray(pats) ? pats.filter((p) => !p.revokedAt) : [];
   // #139: 메모리는 **세 상태**다 — null(아직 안 읽음) / 'error'(못 읽음) / 목록.
   // 실패를 빈 배열로 삼키면 "기억이 없다" 와 "못 읽었다" 가 구분되지 않는다
   // (docs/design.md 4절). 러너 쪽 MemoryContext 가 같은 이유로 세 상태다.
@@ -362,28 +380,56 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 것이고, 하나만 열리는 방식이면 다음을 열 때마다 앞의 것이 닫혀 비교가 끊긴다.
    */
   const [openSlugs, setOpenSlugs] = useState<string[]>([]);
+  /**
+   * 상세 칸에 연 기억 하나(Memory 탭 PR 4 — 목록/상세 두 칸). 여럿을 펼치던 앞판과 달리 하나다:
+   * 상세는 본문·이전 판·고치기를 담아 길어서, 둘을 나란히 펼치면 목록이 다시 무너진다.
+   * 에이전트를 바꾸면 비운다 — 같은 이름의 기억이 다른 에이전트에도 있을 수 있다.
+   */
+  const [memSelected, setMemSelected] = useState<string | null>(null);
+  /** 「정리 맡기기」 시트(PR 5). 고른 범위만 DM 초안에 싣는다. */
+  const [memCleanup, setMemCleanup] = useState<CleanupScope[] | null>(null);
+  const [memCleanupBusy, setMemCleanupBusy] = useState(false);
+  const [memCleanupError, setMemCleanupError] = useState<string | null>(null);
+  /** 방금 보낸 것 — 같은 요청을 곧바로 또 보내지 않게 버튼 옆에 말한다(#1211 designer nit 4). */
+  const [memCleanupSent, setMemCleanupSent] = useState<{ agentId: string; at: number; dmId: string } | null>(null);
+  /**
+   * 목록/상세를 나란히 둘 만큼 넓은가(#1209 designer B1·B2). 컨테이너 쿼리 대신 잰다 — 좁을 때는 상세를
+   * **고른 줄 바로 아래** 펼쳐야 하는데(목록에서 자리를 잃지 않게), 그 자리는 CSS 만으로 옮길 수 없다.
+   * ResizeObserver 가 없으면(jsdom) 좁은 쪽이다.
+   */
+  const [memWide, setMemWide] = useState(false);
+  const memLayoutObserver = useRef<ResizeObserver | null>(null);
+  const memLayoutRef = useCallback((el: HTMLDivElement | null) => {
+    memLayoutObserver.current?.disconnect();
+    memLayoutObserver.current = null;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setMemWide(el.getBoundingClientRect().width >= MEMORY_TWO_PANE_MIN_PX));
+    ro.observe(el);
+    memLayoutObserver.current = ro;
+  }, []);
+  /** 상세가 새로 열릴 때 한 번 그쪽으로 옮긴다 — `[[링크]]`·짝 이름으로 넘어갈 때 화면 밖에 열리지 않게. */
+  const memPaneScrolled = useRef<string | null>(null);
   const [openGroups, setOpenGroups] = useState<string[]>([]);
   const [memQuery, setMemQuery] = useState('');
   const [memSort, setMemSort] = useState<MemorySort>('recent');
+  /**
+   * 정리 후보(#1186 audit). **못 받아도 목록은 그대로 뜬다** — 옛 서버(404)나 일시 실패에
+   * 칩이 없을 뿐이다. 칩 하나를 누르면 그 후보만 보인다(`memChip`).
+   */
+  const [memAudit, setMemAudit] = useState<MemoryAudit | null>(null);
+  const [memChip, setMemChip] = useState<CleanupChip | null>(null);
+  /** 여러 개 고르기 — 보관·되살리기를 한 번에(결정 2). */
+  const [memPicked, setMemPicked] = useState<string[]>([]);
+  const [memNotice, setMemNotice] = useState<{ tone: 'ok' | 'warn'; text: string; dmId?: string } | null>(null);
+  const [memBusy, setMemBusy] = useState(false);
   // #251: 비활성화는 되돌릴 수 없는 작업이므로 확인 단계를 거친다.
   const [confirmingDisable, setConfirmingDisable] = useState(false);
   // #836: 삭제도 두 걸음이다. 비활성화와 달리 **handle 을 그대로 쳐야** 확인 버튼이 선다 —
   // 두 위험이 나란히 있는 화면에서 확인 모양까지 같으면, 끄려던 손이 지우는 쪽을 누른다.
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
-  // 라벨을 하드코딩하면 재발급이 막힌다 — 라벨은 살아 있는 토큰 안에서 유일하고
-  // (마이그레이션 010) 서버가 중복을 409 로 거절한다. 토큰을 잃어 폐기한 뒤 같은 이름으로
-  // 다시 발급하는 것이 주 사용 흐름이라, 사용자가 이름을 정할 수 있어야 한다.
-  const [newPatLabel, setNewPatLabel] = useState('runner');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // 복사 성공 시 버튼 문구를 잠깐 "복사됨"으로 바꾼다(2초).
-  const [copySuccess, setCopySuccess] = useState<string | null>(null);
-  // 클립보드를 못 쓸 때 선택해 줄 명령 노드들. 화면 밖 복제가 아니라 사람이 보고 있는 그 텍스트다.
-  /** 토큰 원문이 그려진 노드. 클립보드가 막혔을 때 **이것을** 선택해 준다(아래 복사 버튼). */
-  const patRef = useRef<HTMLElement | null>(null);
-  // #177: "잃었으면 새로 발급한다" 를 글로만 두면 발급 자리를 찾아야 한다 — 진입점으로 보낸다.
-  const newPatLabelRef = useRef<HTMLInputElement | null>(null);
   const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
   const myId = useActiveStore((s) => s.me?.id);
   // #250: 이 앱이 띄운 러너의 상태. 실행기가 스토어에 밀어 넣고 화면은 읽기만 한다.
@@ -411,6 +457,25 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     void getController().listAgents().then(setAgents).catch(() => setError(t('agents.grid.listFailed')));
   };
   useEffect(reload, []);
+
+  /**
+   * 목록 카드의 「머지 N」(스레드 febe9ff8 P1). **내가 소유한 에이전트만** 센다 — 머지 권한을 주는 사람이 소유자뿐이라
+   * (서버 F2) 이 숫자가 쓸모 있는 사람도 소유자다. 에이전트마다 `GET /accounts/:id/grants` 한 번, 격자 폴링(5초)과
+   * 엮지 않으려고 **소유한 에이전트 id 의 집합이 바뀔 때만** 다시 읽는다. 상세에서 주고 거두면 그 절이
+   * `onCountChange` 로 바로 고친다. 못 읽은 에이전트는 숫자를 그리지 않는다(없는 것을 0 이라고 하지 않는다).
+   */
+  const [mergeCounts, setMergeCounts] = useState<Record<string, number>>({});
+  const ownedKey = myId === undefined ? '' : agents.filter((a) => a.ownerAccountId === myId).map((a) => a.id).sort().join(',');
+  useEffect(() => {
+    if (!ownedKey) return;
+    let live = true;
+    for (const id of ownedKey.split(',')) {
+      void Promise.resolve().then(() => getController().listGrants(id))
+        .then((rows) => { if (live) setMergeCounts((prev) => ({ ...prev, [id]: liveMergeGrantCount(rows) })); })
+        .catch(() => { /* 숫자를 안 그린다 */ });
+    }
+    return () => { live = false; };
+  }, [ownedKey]);
 
   const modelOperatorId = selected?.assignment?.operatorId
     ?? (typeof localOperator === 'object' && localOperator !== null ? localOperator.operatorId : null);
@@ -598,10 +663,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const pickedFor = useRef<string | null>(null);
   useEffect(() => {
     if (!targetId || pickedFor.current === targetId) return;
-    const agent = agents.find((a) => a.id === targetId);
+    const target = parseAgentTarget(targetId);
+    const agent = agents.find((a) => a.id === target.agentId);
     if (!agent) return;
     pickedFor.current = targetId;
-    pick(agent);
+    // 다른 화면에서 다른 에이전트를 열 때도 저장 안 한 초안을 묻지 않고 버리지 않는다(security n2).
+    guardLeave(() => pick(agent, target.tab ?? 'overview'));
   }, [targetId, agents]);
 
   // 기본값은 admin 전용 라우트다(`GET /settings/agent-defaults`). admin 이 아닌 사람에게
@@ -641,12 +708,30 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     void getController().listPats(a.id).then(setPats).catch(() => setPats('error'));
   };
 
-  const loadMemories = (a: AgentView) => {
+  /** 지금 화면이 보는 에이전트 — 늦게 온 응답이 다른 에이전트의 목록을 덮지 않게. */
+  const memAgentRef = useRef<string | null>(null);
+  /**
+   * `refresh` 는 같은 에이전트를 다시 읽을 때다(보관·지우기·고치기 뒤). 그때는 **이전 목록과 칩을
+   * 둔 채로** 새 값이 오면 바꾼다 — 비우고 읽으면 누를 때마다 목록·칩이 깜빡이고, 눌러 둔 칩
+   * 필터가 전체로 튀었다가 돌아온다(#1196 designer n1). 비우는 것은 에이전트를 바꿀 때뿐이다.
+   */
+  const loadMemories = (a: AgentView, refresh = false) => {
     if (!canReadSecrets(a)) return;
-    setMemories(null);
+    // 다시 읽기는 **지금 보는 에이전트일 때만**이다. 옛 렌더의 `selected`(A)를 쥔 콜백이 B 로
+    // 바꾼 뒤에 불러도 화면을 A 로 되돌리지 못하게(#1196 security n1) — 되돌리면 A 의 줄이 B 칸에
+    // 그려지고, 그 줄의 보관·지우기가 B 의 같은 이름 slug 로 간다.
+    if (refresh && memAgentRef.current !== a.id) return;
+    memAgentRef.current = a.id;
+    const current = () => memAgentRef.current === a.id;
+    if (!refresh) { setMemories(null); setMemAudit(null); }
     void getController().agentMemory(a.id)
-      .then(setMemories)
-      .catch(() => setMemories('error'));
+      .then((list) => { if (current()) setMemories(list); })
+      .catch(() => { if (current()) setMemories('error'); });
+    // 표면이 없거나 던지는 것도 "후보 없음"으로 접힌다 — 칩은 덤이고 목록을 막지 않는다.
+    void Promise.resolve()
+      .then(() => getController().agentMemoryAudit(a.id))
+      .then((audit) => { if (current()) setMemAudit(audit); })
+      .catch(() => { if (current() && !refresh) setMemAudit(null); });
   };
 
   /**
@@ -655,22 +740,135 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 생긴다(그 파일 머리말).
    */
   const memoryAll = Array.isArray(memories) ? memories : null;
-  const memorySplit = memoryAll ? splitCore(memoryAll) : null;
-  const memoryVisible = memorySplit
-    ? memoryRows(memorySplit.rest, { query: memQuery, sort: memSort })
+  /**
+   * 사람 목록 API 는 보관된 것도 함께 준다. **숫자와 목록은 살아 있는 것만** — 서버 상한이
+   * 보관을 빼고 세므로, 섞어 세면 `213 / 200` 처럼 있을 수 없는 숫자가 뜬다.
+   */
+  const memoryParts = memoryAll ? splitArchived(memoryAll) : null;
+  const memorySplit = memoryParts ? splitCore(memoryParts.active) : null;
+  const memoryArchived = memoryParts ? filterMemories(memoryParts.archived, memQuery) : [];
+  const memoryArchivedSet = new Set(memoryParts?.archived.map((m) => m.slug) ?? []);
+  const memoryChips = memAudit ? cleanupChips(memAudit, memoryArchivedSet) : [];
+  const memoryArchivedLinks = memAudit ? archivedLinks(memAudit, memoryArchivedSet) : new Map<string, string[]>();
+  /** 칩이 눌려 있으면 그 후보만. 칩이 사라졌으면(정리돼 0) 거르지 않는다. */
+  const memoryChipSet = memoryChips.find((c) => c.key === memChip)?.slugs ?? null;
+  /** 종류별 칸(결정 1). 칸 안에서 접두어로 묶는다(lib `memorySections`). */
+  const memoryKindSections = memorySplit
+    ? memorySections(
+      memoryChipSet ? memorySplit.rest.filter((m) => memoryChipSet.has(m.slug)) : memorySplit.rest,
+      { query: memQuery, sort: memSort },
+    )
     : [];
+  const memoryVisible = memoryKindSections.flatMap((sec) => sec.rows);
+  const memoryActiveSet = new Set(memoryParts?.active.map((m) => m.slug) ?? []);
+  /** 상세 칸의 기억. 보관·지우기로 사라졌으면 칸이 닫힌다(없는 것을 그리지 않는다). */
+  const memorySelectedEntry = memSelected && memoryAll
+    ? memoryAll.find((m) => m.slug === memSelected && m.slug !== 'core') ?? null
+    : null;
+  const memoryPickedActive = memoryParts
+    ? memoryParts.active.filter((m) => memPicked.includes(m.slug)).map((m) => m.slug) : [];
+  const memoryPickedArchived = memoryParts
+    ? memoryParts.archived.filter((m) => memPicked.includes(m.slug)).map((m) => m.slug) : [];
+  /**
+   * 고른 것 중 지금 검색·칩에 안 걸려 **안 보이는** 수(#1196 designer n4). 필터가 바뀔 때 고르기를
+   * 풀지 않는 이유: 칩을 옮겨 가며 후보를 모으는 것이 주 흐름이다 — 풀면 모은 것이 사라진다.
+   * 대신 막대에 그 수를 말해 보이지 않는 것이 함께 보관되는 것을 모르고 누르지 않게 한다.
+   */
+  const memoryShown = new Set<string>([
+    ...memoryVisible.flatMap((r) => (r.kind === 'item' ? [r.item.slug] : r.group.items.map((m) => m.slug))),
+    ...memoryArchived.map((m) => m.slug),
+  ]);
+  const memoryPickedHidden = memPicked.filter((s) => !memoryShown.has(s)).length;
+  /** 이만큼 보관하면 300 상한에서 조용히 밀려나는 수(security n2) — 누르기 전에 말한다. */
+  const memoryOverflow = memoryParts ? archiveOverflow(memoryParts.archived.length, memoryPickedActive.length) : 0;
+  /** 「정리 맡기기」 범위별 기억(PR 5). 지금 화면이 아는 audit·고른 것에서 센다. */
+  const memoryCleanupSlugs = cleanupScopeSlugs(memoryChips, memoryPickedActive);
+  const memoryCleanupBody = memCleanup && selected
+    ? cleanupRequestBody(
+      memCleanup.filter((sc) => memoryCleanupSlugs[sc].length > 0).map((sc) => ({
+        scope: sc, label: t(`agents.memory.cleanupScope.${sc}`), slugs: memoryCleanupSlugs[sc],
+      })),
+      {
+        intro: t('agents.memory.cleanupIntro'),
+        more: (n) => t('agents.memory.cleanupMore', { n }),
+        outro: t('agents.memory.cleanupOutro'),
+      },
+    )
+    : '';
   /**
    * 한도가 차면 **새 기억이 조용히 거절된다**(`services/memory.ts` 의 `too_many`). 그때
    * 사람이 할 수 있는 일은 지우는 것뿐인데 앞판 화면에는 몇 개인지조차 없었다. 9할에서
    * 색을 바꾼다 — 차고 나서 알면 늦다.
    */
-  const memoryNearLimit = memoryAll !== null
-    && memoryAll.length >= Math.floor(MAX_MEMORY_ITEMS_PER_ACCOUNT * 0.9);
+  const memoryNearLimit = memoryParts !== null
+    && memoryParts.active.length >= Math.floor(MAX_MEMORY_ITEMS_PER_ACCOUNT * 0.9);
   /** 검색 중에는 묶음을 연 채로 둔다 — 걸린 것을 접어 두면 찾은 보람이 없다. */
   const memorySearching = memQuery.trim() !== '';
 
   const toggleIn = (list: string[], key: string): string[] =>
     (list.includes(key) ? list.filter((k) => k !== key) : [...list, key]);
+
+  /**
+   * 「정리 맡기기」 보내기(PR 5, 결정 3). 보내는 대상은 **누른 순간의 에이전트**다 — 그 뒤 다른 에이전트로
+   * 바꿔도 글은 원래 대상에게 가고, 결과 문구만 지금 칸이 그 에이전트일 때 적는다(security: 늦은 응답).
+   */
+  /**
+   * 이 에이전트가 지금 DM 으로 턴을 띄울 수 있나(#1211 designer nit 5). 서버는 사람이 DM 에 쓴 글마다
+   * 상대에게 'dm' inbox 를 **호출 게이트 없이** 만들고(`services/messages.ts` DM 절), 러너는 inbox 이유를
+   * 가리지 않고 턴을 띄운다 — 호출 범위 설정과 무관하다. 턴이 안 뜨는 것은 꺼졌거나·지워졌거나·
+   * 오퍼레이터에 배정되지 않은 에이전트뿐이다. 그때는 보내도 답이 없으니 막고 이유를 말한다.
+   */
+  const memoryCleanupBlocked = !!selected && (selected.disabled || selected.deleted || !selected.assignment);
+  const memoryCleanupSend = () => {
+    if (!selected || !memCleanup || !memoryCleanupBody || memoryCleanupBlocked) return;
+    const agent = selected;
+    const body = memoryCleanupBody;
+    setMemCleanupBusy(true);
+    setMemCleanupError(null);
+    void getController().sendDm(agent.id, body)
+      .then((dmId) => {
+        if (memAgentRef.current !== agent.id) return;
+        setMemCleanup(null);
+        setMemCleanupSent({ agentId: agent.id, at: Date.now(), dmId });
+        setMemNotice({ tone: 'ok', text: t('agents.memory.cleanupSent', { handle: agent.handle }), dmId });
+      })
+      // 실패는 시트 안 [보내기] 옆에 — 화면 위쪽 오류 줄은 시트에서 멀다(nit 3).
+      .catch(() => { if (memAgentRef.current === agent.id) setMemCleanupError(t('agents.memory.cleanupFailed')); })
+      .finally(() => setMemCleanupBusy(false));
+  };
+
+  /**
+   * 보관·되살리기(#1186). 결과는 slug 마다 온다 — **안 된 것은 고른 채로 둔다**(되살리기가 200 에
+   * 막힌 것을 사람이 자리를 비운 뒤 다시 누를 수 있게). 된 것만 고르기에서 뺀다.
+   */
+  const memoryBatch = (op: 'archive' | 'unarchive', slugs: string[]) => {
+    if (!selected || slugs.length === 0) return;
+    const agent = selected;
+    setMemBusy(true);
+    setMemNotice(null);
+    const call = op === 'archive'
+      ? getController().archiveAgentMemories(agent.id, slugs)
+      : getController().unarchiveAgentMemories(agent.id, slugs);
+    void call
+      .then((results: { slug: string; result: MemoryBatchResult }[]) => {
+        // 그 사이 다른 에이전트로 바꿨으면 결과를 지금 칸에 적지 않는다(security n1).
+        if (memAgentRef.current !== agent.id) return;
+        const done = results.filter((r) => r.result === 'ok').map((r) => r.slug);
+        const tooMany = results.filter((r) => r.result === 'too_many').length;
+        const skipped = results.length - done.length - tooMany;
+        setMemPicked((prev) => prev.filter((s) => !done.includes(s)));
+        const parts: string[] = [];
+        if (done.length) {
+          parts.push(t(op === 'archive' ? 'agents.memory.archivedDone' : 'agents.memory.unarchivedDone', { n: done.length }));
+        }
+        if (tooMany) parts.push(t('agents.memory.unarchiveTooMany', { n: tooMany, max: MAX_MEMORY_ITEMS_PER_ACCOUNT }));
+        if (skipped) parts.push(t('agents.memory.batchSkipped', { n: skipped }));
+        setMemNotice({ tone: tooMany || skipped ? 'warn' : 'ok', text: parts.join(' · ') });
+        loadMemories(agent, true);
+      })
+      .catch(() => { if (memAgentRef.current === agent.id) setError(t('agents.memory.batchFailed')); })
+      .finally(() => setMemBusy(false));
+  };
 
   /**
    * 지우기의 확인 한 쌍. **`core` 카드와 목록 줄이 같은 것을 쓴다** — 두 벌로 두면
@@ -680,18 +878,18 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     confirmingSlug === slug ? (
       <span className="flex flex-none gap-1">
         <button
-          className="rounded border border-danger-border bg-danger-surface px-1.5 text-meta text-danger"
+          className="rounded-row border border-danger-border bg-danger-surface px-1.5 text-meta text-danger"
           onClick={() => {
             setConfirmingSlug(null);
             void getController().deleteAgentMemory(agentId, slug)
-              .then(() => { if (selected) loadMemories(selected); })
+              .then(() => { if (selected) loadMemories(selected, true); })
               .catch(() => setError(t('agents.memory.deleteFailed')));
           }}
         >
           {t('agents.memory.deleteConfirm')}
         </button>
         <button
-          className="rounded border border-border px-1.5 text-meta text-fg-muted"
+          className="rounded-row border border-border px-1.5 text-meta text-fg-muted"
           onClick={() => setConfirmingSlug(null)}
         >
           {t('agents.memory.keep')}
@@ -699,7 +897,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       </span>
     ) : (
       <button
-        className="flex-none rounded border border-border px-1.5 text-meta text-fg-muted"
+        className="flex-none rounded-row border border-border px-1.5 text-meta text-fg-muted"
         aria-label={t('agents.memory.deleteAction', { slug })}
         onClick={() => setConfirmingSlug(slug)}
       >
@@ -715,51 +913,256 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 지우기를 펼친 뒤에만 보이게 두지 않은 이유: 한도에 닿았을 때 사람이 하는 일이 바로
    * 훑으며 지우는 것이고, 그때마다 펼치게 만들면 접은 값이 도로 사라진다.
    */
-  const memoryRow = (m: MemoryEntry, agentId: string, inGroup: boolean) => {
-    const open = openSlugs.includes(m.slug);
+  const memoryRow = (m: MemoryEntry, inGroup: boolean, inArchive = false) => {
+    const open = memSelected === m.slug;
+    const reasons = chipsFor(m.slug, memoryChips);
+    // 두 칸이면 왼쪽 칸이 ~30rem 이라 꼬리표는 하나만 — 반쯤 잘린 표는 없는 것보다 나쁘다. 나머지는 옆 상세의
+    // 「왜 후보인가」에 문장으로 다 나온다(#1209 designer).
+    const maxReasons = memWide ? 1 : MAX_ROW_REASONS;
+    const pointsToArchived = memoryArchivedLinks.get(m.slug) ?? [];
+    const usage = usageOf(m);
+    const archiveKey = `archive:${m.slug}`;
     return (
       <div
         key={m.slug}
         data-testid={`memory-row-${m.slug}`}
         className="border-t border-border first:border-t-0"
       >
-        <div className={`flex items-baseline gap-2 px-2 py-1 ${inGroup ? 'pl-6' : ''}`}>
+        {/* 고른 줄은 배경으로 말한다 — 표시 글자를 넣으면 slug 가 밀린다(#1209 designer nit 1). */}
+        <div className={`flex items-baseline gap-2 px-2 py-1 ${inGroup ? 'pl-6' : ''} ${open ? 'bg-surface-hover' : ''}`}>
+          <input
+            type="checkbox"
+            className="flex-none self-center"
+            checked={memPicked.includes(m.slug)}
+            aria-label={t('agents.memory.pick', { slug: m.slug })}
+            onChange={() => setMemPicked((prev) => toggleIn(prev, m.slug))}
+          />
           <button
             className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
             aria-expanded={open}
+            aria-current={open ? 'true' : undefined}
             aria-label={t(open ? 'agents.memory.collapse' : 'agents.memory.expand', { slug: m.slug })}
-            onClick={() => setOpenSlugs((prev) => toggleIn(prev, m.slug))}
+            onClick={() => setMemSelected((prev) => (prev === m.slug ? null : m.slug))}
           >
-            <span aria-hidden="true" className="flex-none text-meta text-fg-subtle">{open ? '▾' : '▸'}</span>
-            <span className="flex-none text-meta font-medium">{m.slug}</span>
+            <span className="flex min-w-0 flex-1 flex-col">
+            {/* 꼬리표가 많아 넘치면 이 줄 안에서 잘린다 — 옆 버튼 위로 겹쳐 그리지 않게. */}
+            <span className="flex min-w-0 items-baseline gap-2 overflow-hidden">
+            {/* 두 칸일 때 왼쪽 칸이 좁아도 이름이 0 으로 접히지 않게 최소 폭을 둔다(꼬리표가 먼저 줄어든다). */}
+            <span className="min-w-[8rem] shrink truncate text-meta font-medium">{m.slug}</span>
             {/* 종류(M5): 주제가 아닌 것만 표를 단다 — 대부분인 주제에까지 달면 표가 소음이 된다. */}
             {m.kind && m.kind !== 'topic' && (
-              <span data-testid="memory-kind" className="flex-none rounded bg-surface-hover px-1 text-meta text-fg-subtle">
+              <span data-testid="memory-kind" className="flex-none rounded-sm bg-surface-hover px-1 text-meta text-fg-subtle">
                 {kindLabel(t, m.kind)}
+              </span>
+            )}
+            {/* 보관함 안에서는 칸 이름이 이미 말한다 — 같은 말을 줄마다 되풀이하지 않는다. */}
+            {m.archivedAt && !inArchive && (
+              <span data-testid="memory-archived-badge" className="flex-none rounded-sm bg-surface-hover px-1 text-meta text-fg-subtle">
+                {t('agents.memory.archivedTag')}
               </span>
             )}
             {/* 쓰기 검사(서버 080)에 걸린 판 — 사람이 확인할 때까지 에이전트 프롬프트에 안 실린다. */}
             {m.flaggedAt && (
-              <span data-testid="memory-flag-badge" className="flex-none rounded bg-warning-surface px-1 text-meta text-warning">
+              <span data-testid="memory-flag-badge" className="flex-none rounded-sm bg-warning-surface px-1 text-meta text-warning">
                 {t('agents.memory.flaggedTag')}
               </span>
             )}
             {/* 요약(에이전트가 쓴 한 줄)이 있으면 그것을, 없으면 첫 줄을 제목처럼 쓴다. 넘치면 잘린다. */}
-            <span className="min-w-0 flex-1 truncate text-meta text-fg-subtle">{m.description || memorySummary(m.value)}</span>
+            {/* 왜 정리 후보인가 — 칩과 같은 말. 칩을 누르지 않아도 줄에서 보인다. */}
+            {/* 좁은 창에서 요약을 밀어내지 않게 둘까지만, 나머지는 「+n」(#1196 designer n3). */}
+            {reasons.slice(0, maxReasons).map((r) => (
+              <span key={r} data-testid={`memory-reason-${r}`} className="flex-none rounded-sm bg-warning-surface px-1 text-meta text-warning">
+                {t(`agents.memory.chip.${r}`)}
+              </span>
+            ))}
+            {reasons.length > maxReasons && (
+              <span
+                data-testid="memory-reason-more"
+                title={reasons.slice(maxReasons).map((r) => t(`agents.memory.chip.${r}`)).join(', ')}
+                className="flex-none rounded-sm bg-warning-surface px-1 text-meta text-warning"
+              >
+                {`+${reasons.length - maxReasons}`}
+              </span>
+            )}
+            </span>
+            {/* 두 줄 요약 — 한 줄에서 잘리면 무슨 기억인지 펼쳐야만 알았다. */}
+            <span data-testid="memory-summary" className="line-clamp-2 min-w-0 pl-4 text-meta text-fg-subtle">{m.description || memorySummary(m.value)}</span>
+            </span>
           </button>
+          {/* 보관된 기억을 가리키는 [[링크]] 는 깨짐(빨강)이 아니다 — 되살릴지 정할 일이다. */}
+          {pointsToArchived.length > 0 && (
+            <button
+              data-testid="memory-points-archived"
+              className="flex-none rounded-row border border-border px-1.5 text-meta text-fg-muted"
+              title={`${t('agents.memory.pointsToArchived', { n: pointsToArchived.length })}: ${pointsToArchived.join(', ')}`}
+              aria-label={t('agents.memory.pointsToArchived', { n: pointsToArchived.length })}
+              disabled={memBusy}
+              onClick={() => memoryBatch('unarchive', pointsToArchived)}
+            >
+              {/* 줄에는 짧게 — 긴 문구가 이름 자리를 먹는다. 전체 문구는 툴팁·aria 에. */}
+              {t('agents.memory.pointsToArchivedShort', { n: pointsToArchived.length })}
+            </button>
+          )}
+          {/* 0 은 그리지 않는다 — 모든 줄에 「쓰임 0」이 서면 쓰인 줄이 묻힌다(#1196 n5 → #1209 nit 3). */}
+          {usage > 0 && (
+            <span data-testid="memory-usage" className="flex-none text-meta text-fg-subtle">
+              {t('agents.memory.usage', { n: usage })}
+            </span>
+          )}
           <span
             className="flex-none text-meta text-fg-subtle"
             title={new Date(m.updatedAt).toLocaleString(locale)}
           >
             {agoLabel(new Date(m.updatedAt).getTime(), Date.now(), locale, t)}
           </span>
+          {/*
+            줄의 기본 버튼은 **보관**이다(결정 2) — 되살릴 수 있다. 완전히 지우기는 펼친 안쪽에만.
+            보관함이 300 을 넘기게 되면 한 번 더 묻는다(security n2: 넘치면 오래된 것이 조용히 밀린다).
+          */}
+          {inArchive ? (
+            <button
+              className="flex-none rounded-row border border-border bg-surface px-1.5 text-meta text-fg-muted"
+              aria-label={t('agents.memory.unarchiveSlug', { slug: m.slug })}
+              disabled={memBusy}
+              onClick={() => memoryBatch('unarchive', [m.slug])}
+            >
+              {t('agents.memory.unarchiveAction')}
+            </button>
+          ) : confirmingSlug === archiveKey ? (
+            <span className="flex flex-none gap-1">
+              <button
+                className="rounded-row border border-warning-border bg-warning-surface px-1.5 text-meta text-warning"
+                onClick={() => { setConfirmingSlug(null); memoryBatch('archive', [m.slug]); }}
+              >
+                {t('agents.memory.archiveOverflowConfirm')}
+              </button>
+              <button className="rounded-row border border-border px-1.5 text-meta text-fg-muted" onClick={() => setConfirmingSlug(null)}>
+                {t('agents.memory.keep')}
+              </button>
+              {/* 왜 한 번 더 묻는지를 툴팁에만 두지 않는다(#1196 designer n2). */}
+              <span data-testid="memory-row-overflow" className="text-meta text-warning">
+                {t('agents.memory.archiveOverflowShort', { n: 1 })}
+              </span>
+            </span>
+          ) : (
+            <button
+              className="flex-none rounded-row border border-border bg-surface px-1.5 text-meta text-fg-muted"
+              aria-label={t('agents.memory.archiveSlug', { slug: m.slug })}
+              disabled={memBusy}
+              onClick={() => (memoryParts && archiveOverflow(memoryParts.archived.length, 1) > 0
+                ? setConfirmingSlug(archiveKey)
+                : memoryBatch('archive', [m.slug]))}
+            >
+              {t('agents.memory.archiveAction')}
+            </button>
+          )}
+        </div>
+        {/* 좁으면 상세는 고른 줄 바로 아래(#1209 designer B2) — 목록 위에 열리면 화면 밖이라 안 보인다. */}
+        {open && !memWide && memorySelectedEntry && (
+          <div className="px-2 pb-2">{memoryDetailPane(memorySelectedEntry, selected!.id)}</div>
+        )}
+      </div>
+    );
+  };
+
+  /**
+   * 상세 칸(PR 4). 본문은 읽는 모양으로(`MemoryBody`), `[[링크]]` 는 그 기억을 이 칸에 연다.
+   * 「왜 후보인가」는 칩이 이름만 말하던 것의 근거다. 완전히 지우기는 여기에만 있다(결정 2).
+   * `key` 에 에이전트를 넣는다 — 같은 이름의 기억이 다른 에이전트에도 있을 때 앞 칸의 편집·판
+   * 상태가 넘어오지 않게(security: 두 칸 사이 상태 누수).
+   */
+  const memoryDetailPane = (m: MemoryEntry, agentId: string) => {
+    const why = memAudit ? candidateReasons(m.slug, memAudit, memoryArchivedSet) : [];
+    const openLink = (target: string) => {
+      const r = resolveWikiLink(target, memoryActiveSet, memoryArchivedSet);
+      if (!r.slug) return;
+      // 좁은 창에서 상세는 그 줄 안에 그려진다 — 줄이 접힌 칸(보관함·접두어 묶음) 안이면 칸부터 연다(#1209 security 메모).
+      const entry = memoryAll?.find((e) => e.slug === r.slug);
+      const prefix = memoryGroupKey(r.slug);
+      const keys = [
+        ...(r.state === 'archived' ? [ARCHIVED_GROUP] : []),
+        ...(r.state === 'active' && prefix ? [`${entry?.kind ?? 'topic'}:${prefix}`] : []),
+      ];
+      setOpenGroups((prev) => [...prev, ...keys.filter((k) => !prev.includes(k))]);
+      setMemSelected(r.slug);
+    };
+    const ago = (iso: string) => agoLabel(new Date(iso).getTime(), Date.now(), locale, t);
+    return (
+      <div
+        key={`${agentId}:${m.slug}`}
+        data-testid="memory-detail-pane"
+        className="space-y-2 rounded-row border border-border bg-surface p-2"
+        ref={(el) => {
+          const k = `${agentId}:${m.slug}`;
+          if (!el || memPaneScrolled.current === k) return;
+          memPaneScrolled.current = k;
+          el.scrollIntoView?.({ block: 'nearest' });
+        }}
+      >
+        <div className="flex items-baseline gap-2">
+          <span className="min-w-0 flex-1 break-all text-meta font-medium">{m.slug}</span>
+          <span className="flex-none rounded-sm bg-surface-hover px-1 text-meta text-fg-subtle">{kindLabel(t, m.kind ?? 'topic')}</span>
+          {m.archivedAt && (
+            <span className="flex-none rounded-sm bg-surface-hover px-1 text-meta text-fg-subtle">{t('agents.memory.archivedTag')}</span>
+          )}
+          <button
+            className="flex-none text-meta text-fg-muted"
+            aria-label={t('agents.memory.closeDetail')}
+            onClick={() => setMemSelected(null)}
+          >
+            ✕
+          </button>
+        </div>
+        {why.length > 0 && (
+          <ul data-testid="memory-why" className="space-y-0.5 rounded-row bg-warning-surface p-1.5 text-meta text-warning">
+            {why.map((w) => (
+              <li key={w.key} data-testid={`memory-why-${w.key}`}>
+                {w.key === 'flagged' ? t('agents.memory.why.flagged', { reason: w.reason ?? '' })
+                  : w.key === 'stale' ? t('agents.memory.why.stale', { ago: ago(w.lastUsedAt) })
+                    : w.key === 'pairs' ? (
+                      <>
+                        {t('agents.memory.why.pairs')}{' '}
+                        {w.with.map((p, i) => (
+                          <Fragment key={p}>
+                            {i > 0 && ', '}
+                            {/* 목록 줄이 없는 상대(core·이미 사라진 것)는 눌러도 열 곳이 없다 — 글자로 둔다(nit 4). */}
+                            {p !== 'core' && memoryAll?.some((e) => e.slug === p)
+                              ? <button className="underline decoration-dotted" onClick={() => setMemSelected(p)}>{p}</button>
+                              : <span>{p}</span>}
+                          </Fragment>
+                        ))}
+                      </>
+                    )
+                      : w.key === 'brokenLinks' ? t('agents.memory.why.brokenLinks', { targets: w.targets.join(', ') })
+                        : t(`agents.memory.why.${w.key}`)}
+              </li>
+            ))}
+          </ul>
+        )}
+        <MemoryDetail
+          agentId={agentId}
+          entry={m}
+          onChanged={() => { if (selected) loadMemories(selected, true); }}
+          body={(
+            <MemoryBody
+              value={m.value}
+              linkState={(target) => resolveWikiLink(target, memoryActiveSet, memoryArchivedSet).state}
+              onOpenLink={openLink}
+            />
+          )}
+        />
+        <div className="flex justify-end gap-1 px-2">
+          {m.archivedAt && (
+            <button
+              className="rounded-row border border-border px-1.5 text-meta text-fg-muted"
+              disabled={memBusy}
+              onClick={() => memoryBatch('unarchive', [m.slug])}
+            >
+              {t('agents.memory.unarchiveAction')}
+            </button>
+          )}
           {memoryDelete(m.slug, agentId)}
         </div>
-        {open && (
-          <div className={inGroup ? 'pl-4' : ''}>
-            <MemoryDetail agentId={agentId} entry={m} onChanged={() => { if (selected) loadMemories(selected); }} />
-          </div>
-        )}
       </div>
     );
   };
@@ -770,6 +1173,45 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    */
   const dirty = selected !== null && draft !== null
     && JSON.stringify(draft) !== JSON.stringify(draftOf(selected));
+
+  /**
+   * 저장 바(A3, `pendingEdits.tsx`). 이 화면 자신의 초안(이름·지시문·실행 설정)은 바뀐 칸 수로
+   * 세고, 따로 저장하는 칸(폴더·모델 목록)은 등록한 수를 더한다. 합이 0 이면 바는 안 선다.
+   */
+  const pendingHandlers = useRef(new Map<string, PendingHandlers>());
+  const [pendingCounts, setPendingCounts] = useState<Record<string, number>>({});
+  const registerPending = useCallback<RegisterPending>((key, count, handlers) => {
+    if (handlers) pendingHandlers.current.set(key, handlers);
+    else pendingHandlers.current.delete(key);
+    setPendingCounts((prev) => ((prev[key] ?? 0) === count ? prev : { ...prev, [key]: count }));
+  }, []);
+  // [하네스 기본값 쓰기]는 초안 칸이 아니라 `customized` 를 내린다 — 그것도 저장할 변경 하나다.
+  const draftTabs: AgentDetailTab[] = selected !== null && draft !== null
+    ? [
+      ...(Object.keys(draft) as (keyof Draft)[])
+        .filter((k) => draft[k] !== draftOf(selected)[k])
+        .map((k) => DRAFT_FIELD_TAB[k]),
+      ...(customized !== (selected.model !== null || selected.effort !== null) ? ['run' as const] : []),
+    ]
+    : [];
+  const draftChanges = draftTabs.length;
+  const pendingTotal = draftChanges + Object.values(pendingCounts).reduce((a, b) => a + b, 0);
+  /** 바뀐 것이 있는 탭 — 탭 이름 옆에 점을 찍는다(designer n1). */
+  const pendingTabs = new Set<AgentDetailTab>([
+    ...draftTabs,
+    ...Object.entries(pendingCounts).filter(([, n]) => n > 0).map(([k]) => PENDING_KEY_TAB[k] ?? 'overview'),
+  ]);
+  /** 마지막 [저장]에서 저장하지 못한 것의 수와 그 칸이 있는 탭. 다시 저장하거나 되돌리면 지운다. */
+  const [saveFailed, setSaveFailed] = useState<{ n: number; tab: AgentDetailTab } | null>(null);
+  /** 저장 안 한 것이 있는데 상세를 떠나려 할 때 — 떠날 길을 들고 묻는다. */
+  const [leaving, setLeaving] = useState<{ go: () => void } | null>(null);
+  const guardLeave = (go: () => void) => {
+    if (selected !== null && pendingTotal > 0) setLeaving({ go });
+    else go();
+  };
+  // 설정 목차·← 뒤로로 화면째 떠날 때도 같은 것을 묻는다 — 저장 안 한 것이 있는 동안만 건다.
+  const hasPending = selected !== null && pendingTotal > 0;
+  useEffect(() => (hasPending ? setLeaveGuard((go) => setLeaving({ go })) : undefined), [hasPending]);
 
   /**
    * 사진을 걸거나(파일) 지운다(null). 단계·확인·진행률은 `useAvatarEdit` 이 센다 —
@@ -788,23 +1230,30 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   );
   const avatarEdit = useAvatarEdit(applyAvatar);
 
-  const pick = (a: AgentView) => {
+  const pick = (a: AgentView, tab: AgentDetailTab = 'overview') => {
     setSelected(a);
+    setDetailTab(tab);
     setCreatedAgentId(null);
     setView('detail');
     setDraft(draftOf(a));
     setCustomized(a.model !== null || a.effort !== null);
-    setPat(null);
     setPats(null);
     setRevoking(null);
+    setConfirmingRevokeAll(false);
     setError(null);
     setConfirmingSlug(null);
     setConfirmingDisable(false);
     // 앞 에이전트에서 펼쳐 둔 줄·검색어가 남으면 다음 에이전트의 목록이 남의 상태로 열린다.
     setOpenSlugs([]);
+    setMemSelected(null);
+    setMemCleanup(null);
+    setMemCleanupError(null);
     setOpenGroups([]);
     setMemQuery('');
     setMemSort('recent');
+    setMemChip(null);
+    setMemPicked([]);
+    setMemNotice(null);
     loadPats(a);
     loadMemories(a);
     setOperators(null);
@@ -825,9 +1274,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     const known = defaults !== null && defaults !== 'error' ? defaults : null;
     setDraft(known ? emptyDraft(known) : null);
     setCustomized(known !== null && (known.model !== null || known.effort !== null));
-    setPat(null);
     setPats(null);
     setRevoking(null);
+    setConfirmingRevokeAll(false);
     setError(null);
     setConfirmingDisable(false);
   };
@@ -854,31 +1303,40 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   /** 만들 때와 바꿀 때가 같은 규칙이다 — 서버의 `^[a-z0-9_-]{2,32}$` 와 같은 문법. */
   const validHandle = (h: string) => /^[a-z0-9_-]{2,32}$/.test(h);
 
+  /** 고른 에이전트의 초안을 저장한다. 실패는 화면 위쪽 오류 줄이 말하고 `false` 를 돌려준다(저장 바가 센다). */
+  const saveSelected = async (): Promise<boolean> => {
+    setError(null);
+    if (!draft || !selected) return false;
+    if (!validHandle(draft.handle)) {
+      setError(t('agents.create.invalidName'));
+      return false;
+    }
+    setBusy(true);
+    try {
+      const updated = await getController().updateAgent(selected.id, {
+        // 바뀐 때만 싣는다. 늘 실으면 이름 말고 다른 것을 고치러 온 저장이 전부
+        // 이름 변경 감사·WS 이벤트를 끌고 다닌다.
+        ...(draft.handle !== selected.handle ? { handle: draft.handle } : {}),
+        ...configPatch(draft),
+      });
+      setSelected(updated);
+      reload();
+      return true;
+    } catch (e) {
+      // 이름 충돌은 **고칠 수 있는 실패**다. "저장하지 못했다"로 뭉뚱그리면 사람은
+      // 무엇을 고쳐야 할지 모른 채 같은 이름으로 다시 누른다.
+      setError(e instanceof ApiError && e.code === 'handle_taken'
+        ? t('agents.detail.handleTaken')
+        : t('agents.detail.saveFailed'));
+      return false;
+    } finally { setBusy(false); }
+  };
+
   const submit = async () => {
     setError(null);
     if (!draft) return;
     if (selected) {
-      if (!validHandle(draft.handle)) {
-        setError(t('agents.create.invalidName'));
-        return;
-      }
-      setBusy(true);
-      try {
-        const updated = await getController().updateAgent(selected.id, {
-          // 바뀐 때만 싣는다. 늘 실으면 이름 말고 다른 것을 고치러 온 저장이 전부
-          // 이름 변경 감사·WS 이벤트를 끌고 다닌다.
-          ...(draft.handle !== selected.handle ? { handle: draft.handle } : {}),
-          ...configPatch(draft),
-        });
-        setSelected(updated);
-        reload();
-      } catch (e) {
-        // 이름 충돌은 **고칠 수 있는 실패**다. "저장하지 못했다"로 뭉뚱그리면 사람은
-        // 무엇을 고쳐야 할지 모른 채 같은 이름으로 다시 누른다.
-        setError(e instanceof ApiError && e.code === 'handle_taken'
-          ? t('agents.detail.handleTaken')
-          : t('agents.detail.saveFailed'));
-      } finally { setBusy(false); }
+      await saveSelected();
       return;
     }
     if (!validHandle(draft.handle)) {
@@ -913,6 +1371,26 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     } catch {
       setError(t('agents.create.failed'));
     } finally { setBusy(false); }
+  };
+
+  /** 저장 바의 [저장] — 바뀐 칸을 차례로 저장한다. 실패한 칸은 제 자리에 이유를 그리고 바는 남는다. */
+  const saveAll = async (): Promise<boolean> => {
+    setSaveFailed(null);
+    let failed = 0;
+    const failedTabs: AgentDetailTab[] = [];
+    if (draftChanges > 0 && !(await saveSelected())) { failed += draftChanges; failedTabs.push(...draftTabs); }
+    for (const [key, h] of [...pendingHandlers.current.entries()]) {
+      if (!(await h.save())) { failed += pendingCounts[key] ?? 1; failedTabs.push(PENDING_KEY_TAB[key] ?? 'overview'); }
+    }
+    const tab = firstTab(failedTabs);
+    if (failed > 0 && tab) setSaveFailed({ n: failed, tab });
+    return failed === 0;
+  };
+  /** 저장 바의 [되돌리기] — 서버 값으로. 고른 에이전트를 다시 고르면 초안이 다시 채워진다(`pick`). */
+  const revertAll = () => {
+    setSaveFailed(null);
+    if (selected) pick(selected, detailTab);
+    for (const h of [...pendingHandlers.current.values()]) h.revert();
   };
 
   /**
@@ -1042,19 +1520,25 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     setRevoking(null);
   };
 
-  const mintNewPat = async () => {
-    if (!selected) return;
-    setBusy(true);
+  /**
+   * 살아 있는 옛 토큰을 **라벨마다** 폐기한다. 일괄 라우트를 새로 두지 않는 이유: 라벨 DELETE 가
+   * 감사 `pat.revoked` 를 토큰마다 남기고(security 조건 a), 서버를 바꾸지 않으면 이 화면은 옛 서버에서도 된다.
+   * 하나라도 실패하면 거기서 멈추고 목록을 다시 읽는다 — 무엇이 남았는지는 다시 읽은 목록이 말한다.
+   */
+  const revokeAllPats = async () => {
+    if (!selected || !Array.isArray(pats)) return;
+    const labels = [...new Set(pats.filter((p) => !p.revokedAt).map((p) => p.label))];
     setError(null);
+    setBusy(true);
     try {
-      const token = await getController().mintPat(selected.id, newPatLabel.trim());
-      setPat(token);
+      for (const label of labels) await getController().revokePat(selected.id, label);
+    } catch {
+      setError(t('agents.pat.revokeFailed'));
+    } finally {
+      setBusy(false);
+      setConfirmingRevokeAll(false);
       loadPats(selected);
-    } catch (e) {
-      // 서버가 왜 거절했는지 그대로 보여야 한다 — 특히 '이 라벨은 이미 쓰인다'(409)는
-      // 사용자가 라벨만 바꾸면 해결되는 것이라, 뭉개면 막힌 것처럼 보인다.
-      setError(e instanceof Error ? e.message : t('agents.pat.mintFailed'));
-    } finally { setBusy(false); }
+    }
   };
 
   /*
@@ -1068,7 +1552,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 입력칸만 예외로 본문단 13px 이다(`field` 에 크기가 없어 앱 기본값을 물려받는다) —
    * 방금 친 글자를 다시 읽는 자리다. `settings/primitives.tsx` 가 같은 짝을 쓴다.
    */
-  const field = 'w-full rounded border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
+  const field = 'w-full rounded-row border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
   const label = 'block text-meta font-medium text-fg-muted';
 
   /**
@@ -1184,7 +1668,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       <div className="flex h-full min-h-0 flex-col bg-surface-raised p-5">
         {groupTabs}
         <div className="mb-4">
-          <h2 className="text-name font-bold">{t('agents.teams.heading')}</h2>
+          <h2 className="text-name font-semibold">{t('agents.teams.heading')}</h2>
           {/*
             **이름의 뜻을 말하는 자리 ①**(문서 4단계). 격자 머리에서 한 번, 이름을 정하는
             칸 아래에서 한 번 말한다(`TeamDetail` 의 `team-mention-note`) — 두 자리인 것이
@@ -1203,11 +1687,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           지금은 만들면 곧바로 상세가 열린다(`submitCreateTeam`).
         */}
         {creatingTeam && (
-          <div className="mb-4 flex items-center gap-2 rounded-lg border border-border p-3">
+          <div className="mb-4 flex items-center gap-2 rounded-card border border-border p-3">
             <input
               data-testid="team-name-input"
               aria-label={t('agents.teams.nameLabel')}
-              className="flex-1 rounded border border-border bg-field px-3 py-2"
+              className="flex-1 rounded-row border border-border bg-field px-3 py-2"
               placeholder="team-name"
               value={newTeamName}
               onChange={(e) => { setNewTeamName(e.target.value); setError(null); }}
@@ -1258,7 +1742,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               `primitives.tsx` 의 `SettingsPage` 제목(17px)과 갈라 둔 근거를 그 파일에
               적어 뒀다. 16px(`text-base`)이었고 4단 밖이었다. */}
           {/* 칸 제목은 목차 줄과 같은 키다(UX ④a 규칙, ⑥b 에서 줄 이름이 "목록" 이 됐다). */}
-          <h2 className="text-name font-bold">{t(navKey('agents'))}</h2>
+          <h2 className="text-name font-semibold">{t(navKey('agents'))}</h2>
           <p className="text-meta text-fg-subtle">{t('agents.grid.note')}</p>
         </div>
         {error && <p role="alert" className="mb-2 text-meta text-danger">{error}</p>}
@@ -1273,11 +1757,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
         />
         <AgentGrid
           agents={agents}
+          mergeCounts={mergeCounts}
           selectedId={null}
           runnerStates={runnerStates}
           online={online}
           connected={connected}
-          onPick={pick}
+          onPick={(a) => pick(a)}
           onCreate={startNew}
           canCreate={isAdmin}
           /*
@@ -1314,7 +1799,24 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     );
   }
 
+  /**
+   * 탭 칸의 속성. **안 보이는 탭도 그린다**(`hidden`) — 탭을 옮겨도 칸이 언마운트되지 않으므로
+   * 고치던 초안·펼친 줄·조회 결과가 그대로 남고, 칸의 동작이 탭 전과 같다(A2 는 옮기기만 한다).
+   * 새 에이전트 만들기에는 탭이 없으니 전부 보인다.
+   */
+  const detailPanel = (id: AgentDetailTab) => (selected
+    ? {
+      id: `agent-tabpanel-${id}`,
+      role: 'tabpanel' as const,
+      'aria-labelledby': `agent-tab-${id}`,
+      'data-testid': `agent-tabpanel-${id}`,
+      hidden: detailTab !== id,
+      className: 'space-y-4',
+    }
+    : { className: 'space-y-4' });
+
   return (
+    <PendingEditsContext.Provider value={registerPending}>
     <div className="relative flex h-full min-h-0 bg-surface-raised">
 
 
@@ -1326,12 +1828,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             */}
             <button
               data-testid="agent-back"
-              className="rounded px-1.5 py-0.5 text-body text-fg-muted hover:bg-surface-hover"
-              onClick={() => { setView('grid'); setSelected(null); setError(null); }}
+              className="rounded-row px-1.5 py-0.5 text-body text-fg-muted hover:bg-surface-hover"
+              onClick={() => guardLeave(() => { setView('grid'); setSelected(null); setError(null); })}
             >
               {t('agents.detail.back')}
             </button>
-            <h2 className="text-name font-bold">
+            <h2 className="text-name font-semibold">
               {selected ? t('agents.detail.titleEdit', { handle: selected.handle }) : t('agents.detail.titleNew')}
             </h2>
             {/*
@@ -1368,6 +1870,17 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 >
                   {lastTurnLabel(selected.lastTurnAt, Date.now(), locale, t)}
                 </span>
+                {/* 실행 위치(designer A2: 머리에 상태·소유자·실행 위치). 고르는 자리는 실행 탭에 있고
+                    여기는 읽기만 한다 — 배정이 없으면 안 그린다(「배정 없음」은 실행 탭이 말한다). */}
+                {selected.assignment && (
+                  <span data-testid="agent-header-location" className="text-fg-subtle">
+                    {t('agents.detail.runsOn', {
+                      name: (Array.isArray(operators)
+                        ? operatorNameOf(operators.find((o) => o.id === selected.assignment!.operatorId))
+                        : undefined) ?? t('agents.assignment.unknownOperator'),
+                    })}
+                  </span>
+                )}
                 {runnerStates[selected.id]?.status === 'failed' && (
                   <span
                     data-testid={`agent-runner-failed-${selected.id}`}
@@ -1382,14 +1895,99 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 )}
               </span>
             )}
+            {selected && isAdmin && (<>
+              {/* 머리로 올린 자리(jaebin "멈춤은 머리"). admin 만 — 전과 같은 조건이다.
+
+                  #493: 켜는 길과 끄는 길을 **한 자리**에 겹쳐 둔다. `#427` 이 "되돌리는 길을
+                  요청과 같은 자리에 둔다"고 한 것을 한 걸음 더 민 것이다 — 다른 자리로 보내면
+                  "설정에서 껐으니 설정에서 켜겠지"로 읽는 사람이 그것을 못 찾고, 못 찾으면
+                  DB 를 고치러 간다(#427 이 실제로 밟힌 경로다).
+
+                  한 자리이므로 "누를 것이 없는 버튼"이 애초에 생기지 않는다 — 이 자리에는
+                  항상 지금 할 수 있는 조작 하나만 서 있다.
+
+                  서버 API 는 그대로다 — 실행은 `undoAgentStopRequest`, 중지는 `requestAgentStop`.
+                  화면 어휘만 사람의 어휘로 바꿨고 장부·라우트는 건드리지 않았다. */}
+              <div data-testid="agent-header-actions" className="ml-auto flex shrink-0 gap-2">
+                {selected.stopRequestedAt ? (
+                  <button
+                    className="rounded-row border border-border px-2 py-1 text-meta font-medium text-fg-default hover:bg-surface-sunken disabled:opacity-50"
+                    aria-label={t('agents.stop.startAction')}
+                    disabled={busy}
+                    onClick={() => void undoStopRequest()}
+                  >
+                    {t('agents.stop.start')}
+                  </button>
+                ) : (
+                  <button
+                    className="rounded-row border border-warning-border bg-warning-surface px-2 py-1 text-meta font-medium text-warning hover:bg-warning-surface-strong disabled:opacity-50"
+                    aria-label={t('agents.stop.stopAction')}
+                    disabled={busy}
+                    onClick={() => void requestStop()}
+                  >
+                    {t('agents.stop.stop')}
+                  </button>
+                )}
+                {!selected.stopRequestedAt && (
+                  <button
+                    className="rounded-row border border-border px-2 py-1 text-meta font-medium text-fg-default hover:bg-surface-sunken disabled:opacity-50"
+                    aria-label={t('agents.restart.action')}
+                    data-testid="agent-restart"
+                    disabled={busy}
+                    onClick={() => void restartRunner()}
+                  >
+                    {t('agents.restart.label')}
+                  </button>
+                )}
+                {restartSent && <span className="self-center text-meta text-fg-muted" role="status">{t('agents.restart.sent')}</span>}
+              </div>
+            </>)}
           </header>
 
-          <div className="w-full max-w-2xl flex-1 space-y-4 overflow-y-auto p-5">
+          {/* 상세의 탭(designer A2). 머리 바로 아래 고정이다 — 스크롤 안에 두면 긴 기억 목록을
+              내려간 사람이 다른 탭으로 가는 길을 잃는다. 밑줄 탭은 격자의 에이전트·팀 탭과 같은 어휘다. */}
+          {selected && (
+            <div role="tablist" aria-label={t('agents.detail.tablist')} className="flex border-b border-border px-5">
+              {AGENT_DETAIL_TABS.map((id) => (
+                <button
+                  key={id}
+                  id={`agent-tab-${id}`}
+                  data-testid={`agent-tab-${id}`}
+                  role="tab"
+                  aria-selected={detailTab === id}
+                  aria-controls={`agent-tabpanel-${id}`}
+                  className={`-mb-px border-b-2 px-3 py-2 text-body ${
+                    detailTab === id
+                      ? 'border-fg font-semibold text-fg'
+                      : 'border-transparent text-fg-muted hover:text-fg'
+                  }`}
+                  onClick={() => setDetailTab(id)}
+                >
+                  {t(DETAIL_TAB_LABEL[id])}
+                  {/* 바뀐 것이 있는 탭(designer n1). 저장 바는 모든 탭에 걸치므로 어디서 고쳤는지 기억할 필요가 없게. */}
+                  {pendingTabs.has(id) && (
+                    <span
+                      data-testid={`agent-tab-dot-${id}`}
+                      role="img"
+                      aria-label={t('agents.detail.tabChanged')}
+                      className="ml-1 inline-block size-1.5 rounded-full bg-fg-muted align-middle"
+                    />
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/*
+            Memory 탭만 넓힌다(#1209 designer B1). max-w-2xl(42rem) − p-5 면 안쪽이 ~39.5rem 이라 두 칸(48rem =
+            MEMORY_TWO_PANE_MIN_PX)에 영영 닿지 않았다. max-w-5xl(64rem) − 2.5rem = 61.5rem 이면 닿는다.
+          */}
+          <div className={`w-full flex-1 space-y-4 overflow-y-auto p-5 ${detailTab === 'memory' ? 'max-w-5xl' : 'max-w-2xl'}`}>
             {/* #171 의 '새 에이전트 기본값' 편집 절은 **설정 › Agent defaults 로 옮겼다**
                 (identity 문서 원칙 04). 개별 에이전트를 고치는 이 화면에 워크스페이스 전체에
                 걸리는 값이 앉아 있으면 지금 무엇을 고치고 있는지가 사라진다.
                 읽기는 여기 남는다 — 새 에이전트 초안(`emptyDraft`)을 채우는 서식이기 때문이다. */}
-            {draft === null ? (
+            {draft === null && (
               // 기본값을 못 읽은 것은 **오류**다 — `role="alert"` 로 알린다. 불러오는 중이거나
               // 권한이 없는 것은 오류가 아니므로 같은 역할을 주지 않는다(붉은 글이 뜬다).
               <div
@@ -1403,963 +2001,1260 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 // 크기를 안 적어 본문단 13px 을 물려받는다 — 이 상자가 뜨는 동안 오른쪽
                 // 칸의 **내용 전부**다(초안을 못 만들었으니 폼이 없다). 아래 묶음 상자들의
                 // 단(11px)을 여기 주면 화면 하나가 통째로 가장 작은 글자가 된다.
-                className={`rounded border border-border p-3 ${defaults === 'error' ? 'text-danger' : 'text-fg-subtle'}`}
+                className={`rounded-row border border-border p-3 ${defaults === 'error' ? 'text-danger' : 'text-fg-subtle'}`}
               >
                 {defaults === 'error'
                   ? t('agents.run.defaultsFailed')
                   : (isAdmin ? t('agents.run.defaultsLoading') : t('agents.run.defaultsNotAdmin'))}
               </div>
-            ) : (
-            <>
-            {/*
-              **상세는 세 묶음이다**(identity 문서 Task 15-3): 프로필 · 실행 · 권한.
-              전에는 아홉 필드가 한 줄로 흘러 무엇이 무엇과 묶이는지 알 수 없었다.
-            */}
-            <FieldGroup title={t('agents.profile.title')} note={t('agents.profile.note')}>
-            {/*
-              사진(identity 문서 Task 15-4). **에이전트는 자기 사진을 올릴 손이 없다** —
-              소유자가 대신 올려 주지 않으면 영원히 색 하나로 남는다. 문서가 이 화면의 성패를
-              여기에 걸었다: "결국 이 화면의 성패는 사람이 사진을 올리게 만드는 것에 달린다."
-              (`handleColor()` 의 12색은 26개 밀도에서 이미 시끄럽고, 색은 **사진이 없을 때의
-              임시값**이라는 뜻이다.)
-
-              새 에이전트에는 그리지 않는다 — 아직 계정이 없어 걸 대상이 없다.
-            */}
-            {selected && (
-              <div>
-                <div className="flex items-center gap-3">
-                  <Identity account={selected} className="h-12 w-12 text-base" variant="avatar" />
-                  <input
-                    ref={avatarEdit.pickRef}
-                    type="file"
-                    data-testid="agent-avatar-file"
-                    accept={AVATAR_ACCEPT}
-                    className="hidden"
-                    onChange={avatarEdit.onPicked}
-                  />
-                  <Button disabled={avatarEdit.busy} onClick={avatarEdit.openPicker}>
-                    {t('agents.profile.avatarUpload')}
-                  </Button>
-                  {/*
-                    지우기는 **두 걸음**이다(같은 화면의 `confirmingDisable` 과 같은 모양).
-                    한 걸음이던 동안은 스친 클릭 하나로 사진이 사라졌고, 사라진 뒤에도
-                    아무 말이 없어 눌린 것인지조차 알 수 없었다.
-                  */}
-                  {selected.avatarAttachmentId && (avatarEdit.confirmingRemove ? (
-                    <>
-                      <Button variant="danger" disabled={avatarEdit.busy} onClick={avatarEdit.confirmRemove}>
-                        {t('agents.profile.avatarRemoveConfirm')}
-                      </Button>
-                      <Button onClick={avatarEdit.cancelRemove}>{t('agents.profile.avatarRemoveCancel')}</Button>
-                    </>
-                  ) : (
-                    <Button variant="danger" disabled={avatarEdit.busy} onClick={avatarEdit.askRemove}>
-                      {t('agents.profile.avatarRemove')}
-                    </Button>
-                  ))}
-                  {/* `AVATAR_FORMATS` 는 형식 목록(`PNG · JPEG · …`)이라 번역하지 않는다 —
-                      파일 형식의 이름이고, 사람이 파일 고르개에서 보는 그 말이다. */}
-                  <span className="text-meta text-fg-subtle">
-                    {t('agents.profile.avatarFormats', { formats: AVATAR_FORMATS })}
-                  </span>
-                </div>
-                <AvatarStatus phase={avatarEdit.phase} />
-              </div>
-            )}
-            {/*
-              #843: **만든 뒤에도 이름을 바꾼다.** 오래 `disabled` 였고, 그 자리에 붙은 안내가
-              "나중에 바꿀 수 없다"였다 — 이름을 잘못 지은 사람에게 남은 길은 에이전트를 지우고
-              다시 만드는 것뿐이었고, 그러면 계정 id 가 바뀌어 러너 상태가 통째로 날아갔다.
-              막았던 근거(러너 상태 디렉터리가 이름으로 스코프된다)는 `agent/stateDir.ts` 에서
-              없앴다. 그래서 여기서도 잠그지 않는다.
-
-              안내 문구가 만들 때와 고칠 때 갈리는 이유: 처음에는 "이게 부르는 이름이다"를
-              알려야 하고, 바꿀 때는 **무엇이 따라오는지**를 알려야 한다. 이름을 바꾸는 사람이
-              가장 먼저 걱정하는 것이 "지난 대화가 깨지나"인데, 답은 아니다 — 본문의 멘션은
-              `<@id>` 가 정본이라(#271, `shared` 의 `MENTION_TOKEN_PATTERN`) 과거 메시지도
-              새 이름으로 그려지고, 세션·워크스페이스는 `stateDir` 이 id 로 찾아 이어진다.
-              둘을 한 문장으로 합치면 둘 다 안 읽힌다.
-            */}
-            <label className={label}>
-              Agent name
-              <input
-                className={field}
-                aria-label="Agent name"
-                placeholder="fizz"
-                value={draft.handle}
-                onChange={(e) => setDraft({ ...draft, handle: e.target.value })}
-              />
-              <span className="text-meta text-fg-subtle">
-                {selected ? t('agents.profile.renameNote') : t('agents.profile.handleNote')}
-              </span>
-            </label>
-
-            <label className={label}>
-              Agent instructions
-              <textarea
-                className={`${field} resize-y`}
-                aria-label="Agent instructions"
-                rows={6}
-                placeholder={t('agents.profile.instructionsPlaceholder')}
-                value={draft.instructions}
-                onChange={(e) => setDraft({ ...draft, instructions: e.target.value })}
-              />
-            </label>
-
-            </FieldGroup>
-
-            <FieldGroup title={t('agents.run.title')} note={t('agents.run.note')}>
-            <div>
-              <div className={label}>AI configuration</div>
-              <div className="mt-1 flex gap-1">
-                <button
-                  className={`flex-1 rounded px-3 py-2 ${customized ? 'bg-surface-sunken text-fg-muted' : 'bg-surface-raised shadow ring-1 ring-border'}`}
-                  onClick={() => setCustomized(false)}
-                >
-                  Use harness defaults
-                </button>
-                <button
-                  className={`flex-1 rounded px-3 py-2 ${customized ? 'bg-surface-raised shadow ring-1 ring-border' : 'bg-surface-sunken text-fg-muted'}`}
-                  onClick={() => setCustomized(true)}
-                >
-                  Customize for this agent
-                </button>
-              </div>
-            </div>
-
-            <label className={label}>
-              Agent harness
-              <select
-                className={field}
-                aria-label="Agent harness"
-                value={draft.harness}
-                onChange={(e) => setDraft({ ...draft, harness: e.target.value as AgentConfig['harness'] })}
-              >
-                {AGENT_HARNESSES.map((h) =>
-                  (RUNNABLE_HARNESSES as readonly string[]).includes(h)
-                    ? <option key={h} value={h}>{h} (default)</option>
-                    : <option key={h} value={h} disabled>{t('agents.run.harnessPlanned', { harness: h })}</option>,
-                )}
-                {PLANNED.map((h) => (
-                  <option key={h} value={h} disabled>{t('agents.run.harnessPlanned', { harness: h })}</option>
-                ))}
-              </select>
-            </label>
-
-            {/* 계정 풀 — **이 기기에만 저장된다.** 위 필드들과 저장 경로가 다르므로
-                (서버 PATCH 가 아니라 로컬 데몬) 고르는 즉시 쓰고, 그 사실을 적는다.
-                표면이 없으면 아예 그리지 않는다 — 그려 두면 고를 수 있는데 아무 일도 안 난다.
-
-                **읽는 중·읽기 실패는 "없음"이 아니다.** 그때도 칸은 그리고 잠그기만 한다 —
-                감추면 아래 `agentPool.error` 를 그릴 자리도 같이 사라져, 데몬이 대답을 못 한
-                것뿐인데 사람은 "이 앱에 그런 기능이 없다"고 읽는다. */}
-            {/* **하네스를 함께 본다(2026-09-11).** 앞 판본은 `agentPool.available` 만 보고
-                그렸다 — 그래서 codex 에이전트 만들기 화면에도 claude 풀 선택이 떴고, 사람이
-                고른 값을 러너는 그대로 버렸다(`mentionTurn` 이 claude 턴에만 싣는다).
-                사람은 배정했고 화면은 배정됐다고 말하는데 아무 일도 안 일어나는 자리였다.
-
-                **감추지 않고 이유를 적는다.** 빈 자리는 사람이 원인을 지어내게 만든다 —
-                `useAgentPool` 이 조회 실패를 감추지 않는 것과 같은 규율이다. 그래서 풀이
-                없는 하네스에는 선택 대신 한 줄을 그린다. */}
-            {agentPool.available && !harnessHasAccountPool(draft.harness) && (
-              <span className="block text-meta text-fg-subtle">
-                {t('agents.run.poolNotForHarness', { harness: draft.harness })}
-              </span>
-            )}
-            {agentPool.available && harnessHasAccountPool(draft.harness) && (
-              <label className={label}>
-                Account pool
-                <select
-                  className={field}
-                  aria-label="Account pool"
-                  disabled={!agentPool.ready}
-                  value={agentPool.assigned}
-                  onChange={(e) => void agentPool.assign(e.target.value)}
-                >
-                  <option value="">
-                    {agentPool.defaultPool
-                      ? `Use the default pool (${agentPool.defaultPool})`
-                      : 'Use the default pool'}
-                  </option>
-                  {agentPool.pools.map((p) => <option key={p} value={p}>{p}</option>)}
-                </select>
-                {/* 만들기와 상세에서 **적용 시점이 다르다.** 상세는 고르는 즉시 데몬에
-                    쓰이고 러너 재시작이 필요하지만, 만들기에는 쓸 대상이 아직 없어
-                    생성 시점에 쓰인다(그래서 첫 러너가 이미 그 풀로 뜬다 — 재시작이
-                    필요 없다). 한 문구로 뭉개면 한쪽은 반드시 틀린 말이 된다. */}
-                <span className="mt-1 block text-meta text-fg-subtle">
-                  This machine only — pools are local directories, so this is not shared
-                  with other devices.{' '}
-                  {selected || createdAgentId
-                    ? 'Restart the runner for a change to take effect.'
-                    : 'Applied when the agent is created, before its runner starts.'}
-                </span>
-                {agentPool.error && (
-                  <span className="mt-1 block text-meta text-danger">{agentPool.error}</span>
-                )}
-              </label>
             )}
 
-            {/* **어디서 돌리나 — 만들기의 기본값**(#856).
+            <div {...detailPanel('overview')}>
+              {/* 개요 — 지금 돌고 있나, 그리고 맨 끝에 되돌릴 수 없는 조작(designer A2). 사용 중지·삭제는
+                  전에 기억 바로 아래, 화면 한가운데 있었다 — 위아래가 곧 세기라 끝으로 보낸다. */}
+              {selected && isAdmin && (
+                <div className="rounded-row border border-border p-3">
+                  {/* #129 → #427 → #493: "재시작"을 금지한 원칙은 그대로 살아 있고, **사실관계만
+                      바뀌었다.** 지우지 말고 이 이력을 읽어라 — 그러지 않으면 다음 사람이 이
+                      자리를 또 뒤집는다.
 
-                상세 화면은 이 질문에 두 곳으로 답한다(위의 `LocalOperatorRow` 와 배정 고르개).
-                만들기에는 그 둘이 없어서, 만든 에이전트가 계정만 있고 아무도 안 띄우는 상태로
-                섰다 — 화면 어디에도 "왜 멈춰 있나"가 적혀 있지 않았다. 여기서 켜면 만든 직후
-                로컬 설정에 넣고 배정까지 쓴다(`controller.attachToLocalOperator`).
+                      `#129`(2026-08) 이 못박은 것: *"재시작"이라고 쓰지 않는다. harkroom 는 러너를
+                      띄우지 않으므로 재시작은 harkroom 가 할 수 있는 일이 아니고, **할 수 없는 일을
+                      버튼 이름으로 약속하면 그것이 곧 거짓 신호다**(docs/design.md 4절).*
+                      그때는 참이었다 — harkroom 는 "외부 접속형"이었고 러너를 띄우는 것은 사람과
+                      그 머신의 launchd/systemd 감독의 몫이었다.
 
-                **끄는 자리를 남긴다.** 다른 기기에서 돌릴 에이전트가 있고, 그때 이 기기에
-                먼저 배정해 두면 러너가 떴다가 다시 옮겨지는 왕복이 생긴다. */}
-            {!selected && localOperator !== 'none' && (
-              <label className="flex items-start gap-2 text-meta text-fg">
-                <input
-                  type="checkbox"
-                  aria-label={t('agents.create.runHere')}
-                  checked={runHere && localOperator !== 'error'}
-                  disabled={localOperator === 'error' || localOperator === null}
-                  onChange={(e) => setRunHere(e.target.checked)}
-                />
-                <span>
-                  {t('agents.create.runHere')}
-                  <span className="mt-1 block text-meta text-fg-subtle">
-                    {localOperator === 'error'
-                      ? t('agents.local.listFailed')
-                      : t('agents.create.runHereNote')}
-                  </span>
-                </span>
-              </label>
-            )}
+                      **무엇이 바뀌었나**: `#431` 2단계에서 **daemon 이 러너의 오퍼레이터가 됐고,
+                      이 앱이 그 daemon 을 통해 실제로 러너를 띄운다**(`#482`).
+                      `controller.startRunners` → `runnerLauncher.startAll` → `daemon_spawn_runner`
+                      → daemon 의 `spawn(detached)` 까지 실제 경로가 있다. 그래서 "실행"은 이제
+                      이 앱이 못 하는 일을 약속하는 말이 아니다. `#129` 의 원칙(할 수 없는 일을
+                      이름으로 약속하지 마라)은 그대로 지켜지고, 그 원칙이 걸러 내던 대상이
+                      사라졌을 뿐이다.
 
-            </FieldGroup>
+                      **다만 이 버튼이 프로세스를 지금 띄우지는 않는다.** `startAll` 은 앱 기동 뒤
+                      첫 `presence.snapshot` 에서 한 번만 돈다(`controller.ts` 의
+                      `runnerAutoStartDone` 플래그) — 주기 타이머가 아니다. 이 버튼이 하는 일은
+                      "자동 기동 대상에 다시 넣는다"까지고, 실제 spawn 은 **다음 기동**이다.
+                      그래서 아래 문구도 "다음 기동에서 뜬다"라고 쓴다 — "지금 뜬다"라고 쓰면
+                      `#129` 가 금지한 그 거짓 신호를 이름만 바꿔 되살리는 셈이 된다.
 
-            <FieldGroup title={t('agents.permissions.title')} note={t('agents.permissions.note')}>
-            {/* #253 의 표에서 `mentionPermission` 은 **admin 전용**이다. 소유자에게는 비활성
-                입력이 아니라 **아예 그리지 않는다** — 눌러도 안 되는 것을 보여 주면 사람은
-                자기가 뭘 잘못했다고 생각한다(#299). 값 자체는 아래 읽기 전용 칸에 적는다. */}
-            {isAdmin && (
-              <label className={label}>
-                Mention permission
-                <select
-                  className={field}
-                  aria-label="Mention permission"
-                  value={draft.mentionPermission}
-                  onChange={(e) => setDraft({ ...draft, mentionPermission: e.target.value as MentionPermission })}
-                >
-                  {/* 값(`auto`·`readonly`)은 저장·전송용이라 번역하지 않는다 — 라벨이
-                      그 값을 앞에 세우는 것은 같은 말이 API·설정 파일에도 나오기 때문이다. */}
-                  <option value="auto">{t('agents.permissions.mentionAuto')}</option>
-                  <option value="readonly">{t('agents.permissions.mentionReadonly')}</option>
-                </select>
-                <span className="text-meta text-fg-subtle">{t('agents.permissions.mentionNote')}</span>
-              </label>
-            )}
+                      **`#141` 재기동이 그 위에 하나를 더 얹었다.** 그리드의 [뒤처진 러너 전체
+                      재기동]과 프로필의 [새 버전으로 재기동]은 **실제로 죽이고 다시 띄운다**
+                      (`RunnerLauncher.restart` → daemon 의 `killRunner` → 종료 확인 → spawn).
+                      이 절의 [실행]과 갈라 두는 이유: 그것은 "자동 기동 대상에 넣는다"이고
+                      저것은 "지금 도는 러너를 갈아 준다"다 — 하나로 뭉치면 어느 쪽도 정확히
+                      말하지 못한다. 그리고 **"새 버전으로"는 뒤처졌다고 확인된 때만** 쓴다:
+                      버전을 모르는 러너에는 그냥 [러너 재기동]이다(`runnerVersions.ts`).
 
-            {customized && (
-              <div className="grid grid-cols-2 gap-3">
-                <label className={label}>
-                  Model
-                  <ModelPicker
-                    className={field}
-                    value={draft.model}
-                    models={modelCaps === null ? null : modelCaps === 'unknown' ? undefined : modelCaps[draft.harness]?.models}
-                    onChange={(model) => setDraft({ ...draft, model })}
-                  />
-                </label>
-                <label className={label}>
-                  Effort
-                  <select
-                    className={field}
-                    aria-label="Effort"
-                    value={draft.effort}
-                    onChange={(e) => setDraft({ ...draft, effort: e.target.value })}
-                  >
-                    <option value="">{t('agents.run.harnessDefault')}</option>
-                    {EFFORTS.map((e) => <option key={e} value={e}>{e}</option>)}
-                  </select>
-                </label>
-              </div>
-            )}
+                      **그래도 여전히 금지인 것**: "멈췄다"·"종료됨" 류의 **생사 단정**. 러너가
+                      종료하면 다음 GET /agent/config 자체가 오지 않아 서버는 프로세스가 실제로
+                      죽었는지 영원히 모른다(019_agent_stop_request.sql). daemon 이 생사를 아는
+                      문제는 `#443` 의 자리이고, 이 절이 답하는 질문이 아니다 — 이 절은
+                      "이 에이전트가 자동 기동 대상에 들어와 있는가"에만 답한다. */}
+                  <div className="text-meta font-medium text-fg-muted">{t('agents.stop.heading')}</div>
+                  {/* #493: 버튼이 "종료 요청"/"요청 되돌리기" 둘에서 **한 자리 토글**로 접혔다.
+                      "요청"·"되돌리기"는 서버 API 의 대칭(`stop` ↔ `stop/undo`)에서 온 **내부
+                      어휘**였다. 사람은 "내가 보낸 요청을 취소한다"고 생각하지 않는다 —
+                      "이 에이전트를 다시 켠다"고 생각한다.
 
-            <label className={label}>
-              Working directory
-              <input
-                className={field}
-                aria-label="Working directory"
-                placeholder={t('agents.permissions.workingDirPlaceholder')}
-                value={draft.workingDir}
-                onChange={(e) => setDraft({ ...draft, workingDir: e.target.value })}
-              />
-            </label>
+                      버튼 이름이 짧아진 만큼 **잃으면 안 되는 뉘앙스가 이 문단으로 왔다**:
+                      중지는 즉시 죽이는 것이 아니라 **진행 중인 턴을 마친 뒤 스스로 물러나는**
+                      것이고, 턴 중간에 끊기지 않는다. 버튼만 보면 "중지 = 지금 끊긴다"로 읽히므로
+                      이 사실은 반드시 글로 남아 있어야 한다.
 
-            {selected && isAdmin && (
-              <label className={label}>
-                {t('agents.permissions.ownerLabel')}
-                <select
-                  className={field}
-                  aria-label="Owner"
-                  value={draft.ownerAccountId ?? ''}
-                  onChange={(e) => setDraft({ ...draft, ownerAccountId: e.target.value || null })}
-                >
-                  <option value="">{t('agents.permissions.ownerNone')}</option>
-                  {humanAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>{a.handle}</option>
-                  ))}
-                </select>
-                <span className="text-meta text-fg-subtle">{t('agents.permissions.ownerNote')}</span>
-              </label>
-            )}
+                      **여기서 daemon 의 생사를 말하지는 않는다** — `#443` 의 자리다. */}
+                  <p className="mt-1 text-meta text-fg-subtle">
+                    {emphasize(t('agents.stop.note'), {
+                      strongStop: t('agents.stop.noteStop'),
+                      strongFinish: t('agents.stop.noteFinish'),
+                      strongSkipped: t('agents.stop.noteSkipped'),
+                      strongStart: t('agents.stop.noteStart'),
+                      strongNextStart: t('agents.stop.noteNextStart'),
+                    })}
+                  </p>
+                  {/* #493: **세 상태를 버튼이 아니라 이 상태 표시로 옮겼다.**
 
-            {!isAdmin && selected && (
-              <div className="rounded border border-border bg-surface p-3">
-                <div className="text-meta text-fg-subtle">
-                  {draft.ownerAccountId
-                    ? t('agents.permissions.ownerReadOnly', { handle: accounts[draft.ownerAccountId]?.handle ?? '?' })
-                    : t('agents.permissions.ownerReadOnlyNone')}
-                </div>
-                {/* admin 전용 필드의 **값**은 숨길 것이 아니다 — 숨기면 소유자는 자기 에이전트가
-                    읽기 전용인지도 모른 채 부른다. 바꿀 수 없다는 것만 분명히 한다. */}
-                <div className="mt-1 text-meta text-fg-subtle">
-                  {t('agents.permissions.mentionReadOnlyValue', { value: draft.mentionPermission })}
-                </div>
-              </div>
-            )}
+                      버튼 자리는 하나여야 한다 — 사람이 답해야 하는 질문은 "지금 켤까 끌까" 하나뿐이고,
+                      그 질문에 버튼 둘을 내밀면 어느 쪽이 지금 상태인지를 사람이 역산해야 한다.
+                      그러나 **세 상태는 접으면 안 된다.** 특히 `stopAckedAt` 이 없는 동안은
+                      "중지를 걸었는데 그 요청이 아직 러너에게 닿지 않았다"는 뜻이고, 이것은 사람이
+                      알아야 할 사실이다 — 러너가 붙어 있지 않으면 읽어 갈 쪽이 없어 요청은 계속
+                      미수령으로 남는다. 접어 버리면 사람은 "눌렀는데 왜 안 멈추지"를 알 길이 없다.
 
-            </FieldGroup>
-            </>
-            )}
+                      그래서 **버튼은 이분(실행/중지), 상태 표시는 삼분**으로 나눈다. 둘은 같은 값을
+                      다른 해상도로 읽는다: 버튼은 `stopRequestedAt` 의 유무만, 상태 표시는 거기에
+                      `stopAckedAt` 을 더해 셋을 가른다.
 
-            {selected && (isAdmin || isOwner) && (
-              <div className="rounded border border-border p-3">
-                <div className="flex items-baseline justify-between gap-2">
-                  <div className="text-meta font-medium text-fg-muted">{t('agents.memory.heading')}</div>
-                  {memoryAll !== null && memoryAll.length > 0 && (
-                    <div
-                      data-testid="memory-count"
-                      title={memoryNearLimit ? t('agents.memory.limitNote') : undefined}
-                      className={`text-meta ${memoryNearLimit ? 'text-warning' : 'text-fg-subtle'}`}
-                    >
-                      {t('agents.memory.count', {
-                        n: memoryAll.length, max: MAX_MEMORY_ITEMS_PER_ACCOUNT,
-                      })}
-                    </div>
-                  )}
-                </div>
-                {/* 읽기·삭제만이다. 편집을 넣지 않는 이유(#139): 사람이 고쳐도 에이전트가
-                    다음 턴에 덮어쓰면 **사람은 자기 수정이 왜 사라졌는지 알 수 없다.** */}
-                <div className="mt-2 space-y-2">
-                  {memories === null && <div className="text-meta text-fg-muted">{t('agents.memory.loading')}</div>}
-                  {memories === 'error' && (
-                    <div role="alert" className="text-meta text-danger">{t('agents.memory.failed')}</div>
-                  )}
-                  {memoryAll !== null && memoryAll.length === 0 && (
-                    <div className="text-meta text-fg-muted">{t('agents.memory.empty')}</div>
-                  )}
-
-                  {/*
-                    `core` 는 목록에 서지 않는다. **매 턴 통째로 프롬프트에 실리는 것은
-                    이것뿐**이고 나머지는 필요할 때만 열리므로, 같은 줄에 두면 화면이 그
-                    차이를 말하지 않게 된다. 강조색을 쓰지 않는 이유(#488 B2): 이 카드는
-                    나를 막지 않는다 — 에이전트의 것을 가리키는 축(`surface-agent`)이 제자리다.
-                  */}
-                  {memorySplit?.core && (
-                    <div
-                      data-testid="memory-core"
-                      className="rounded border border-border-agent bg-surface-agent px-2 py-1.5"
-                    >
-                      <div className="flex items-baseline gap-2">
-                        <button
-                          className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
-                          aria-expanded={openSlugs.includes(memorySplit.core.slug)}
-                          aria-label={t(
-                            openSlugs.includes(memorySplit.core.slug)
-                              ? 'agents.memory.collapse' : 'agents.memory.expand',
-                            { slug: memorySplit.core.slug },
-                          )}
-                          onClick={() => setOpenSlugs((prev) => toggleIn(prev, 'core'))}
-                        >
-                          <span aria-hidden="true" className="flex-none text-meta text-fg-agent">
-                            {openSlugs.includes(memorySplit.core.slug) ? '▾' : '▸'}
-                          </span>
-                          <span className="flex-none text-meta font-medium">{memorySplit.core.slug}</span>
-                          <span className="flex-none rounded-full border border-border-agent px-1.5 text-meta text-fg-agent">
-                            {t('agents.memory.coreTag')}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate text-meta text-fg-subtle">
-                            {memorySummary(memorySplit.core.value)}
-                          </span>
-                        </button>
-                        {memoryDelete(memorySplit.core.slug, selected.id)}
-                      </div>
-                      {/* 길이가 곧 매 턴의 비용이다 — 게이지가 그것을 수가 아니라 자리로 말한다. */}
-                      <div className="mt-1.5 flex items-center gap-2">
-                        <div className="h-1 flex-1 overflow-hidden rounded-full bg-border">
-                          <div
-                            className={`h-full rounded-full ${
-                              memorySplit.core.value.length >= MAX_CORE_MEMORY_LENGTH * 0.9
-                                ? 'bg-warning' : 'bg-fg-agent'
-                            }`}
-                            style={{
-                              width: `${Math.min(100, Math.round(
-                                (memorySplit.core.value.length / MAX_CORE_MEMORY_LENGTH) * 100,
-                              ))}%`,
-                            }}
-                          />
-                        </div>
-                        <span className="flex-none text-meta text-fg-subtle">
-                          {t('agents.memory.charsOfMax', {
-                            n: memorySplit.core.value.length.toLocaleString(locale),
-                            max: MAX_CORE_MEMORY_LENGTH.toLocaleString(locale),
-                          })}
-                        </span>
-                      </div>
-                      <div className="mt-1 text-meta text-fg-subtle">{t('agents.memory.coreNote')}</div>
-                      {openSlugs.includes(memorySplit.core.slug) && (
-                        <div className="mt-1">
-                          <MemoryDetail agentId={selected.id} entry={memorySplit.core} onChanged={() => loadMemories(selected)} />
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {memorySplit && memorySplit.rest.length > 0 && (
-                    <>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <input
-                          className="min-w-0 flex-1 rounded border border-border bg-field px-2 py-1 text-meta"
-                          value={memQuery}
-                          placeholder={t('agents.memory.search')}
-                          aria-label={t('agents.memory.search')}
-                          onChange={(e) => setMemQuery(e.target.value)}
-                        />
-                        {/* 두 축뿐이라 고르는 자리를 접지 않는다 — 셀렉트로 두면 지금 무엇으로
-                            정렬돼 있는지를 누르기 전에는 알 수 없다. */}
-                        <div className="flex flex-none overflow-hidden rounded border border-border" role="group" aria-label={t('agents.memory.sortLabel')}>
-                          {(['recent', 'name'] as const).map((k) => (
-                            <button
-                              key={k}
-                              aria-pressed={memSort === k}
-                              className={`px-2 py-1 text-meta ${
-                                memSort === k ? 'bg-surface-sunken font-medium' : 'text-fg-muted'
-                              }`}
-                              onClick={() => setMemSort(k)}
-                            >
-                              {t(k === 'recent' ? 'agents.memory.sortRecent' : 'agents.memory.sortName')}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="overflow-hidden rounded border border-border">
-                        {/* **"없다" 와 다르다** — 이 검색어에 걸리는 것이 없을 뿐이다. */}
-                        {memoryVisible.length === 0 && (
-                          <div className="px-2 py-1 text-meta text-fg-muted">{t('agents.memory.noMatch')}</div>
-                        )}
-                        {memoryVisible.map((row) => {
-                          if (row.kind === 'item') return memoryRow(row.item, selected.id, false);
-                          const openGroup = memorySearching || openGroups.includes(row.group.key);
-                          return (
-                            <div key={row.group.key} className="border-t border-border first:border-t-0">
-                              <button
-                                data-testid={`memory-group-${row.group.key}`}
-                                className="flex w-full items-baseline gap-2 bg-surface-agent px-2 py-1 text-left text-fg-agent"
-                                aria-expanded={openGroup}
-                                aria-label={t(
-                                  openGroup ? 'agents.memory.groupCollapse' : 'agents.memory.groupExpand',
-                                  { key: row.group.key },
-                                )}
-                                onClick={() => setOpenGroups((prev) => toggleIn(prev, row.group.key))}
-                              >
-                                <span aria-hidden="true" className="flex-none text-meta">{openGroup ? '▾' : '▸'}</span>
-                                <span className="text-meta font-medium">{`${row.group.key}…`}</span>
-                                <span className="ml-auto flex-none text-meta">
-                                  {t('agents.memory.groupCount', { n: row.group.items.length })}
-                                </span>
-                              </button>
-                              {openGroup && row.group.items.map((m) => memoryRow(m, selected.id, true))}
-                            </div>
-                          );
+                      **'멈췄다'고 쓰지 않는다** — 위 주석과 019 마이그레이션이 그 이유를 적었다. */}
+                  <div className="mt-2 text-meta" role="status">
+                    {!selected.stopRequestedAt && (
+                      <span className="text-fg-muted">{t('agents.stop.notRequested')}</span>
+                    )}
+                    {selected.stopRequestedAt && !selected.stopAckedAt && (
+                      <span className="text-warning">
+                        {/* 시각은 `toLocaleString()` 이 낸다 — **사전에 넣지 않는다**(`Intl` 이
+                            이미 로케일을 따른다). 문장은 그 값을 자리표시자로 받는다. */}
+                        {t('agents.stop.requested', {
+                          requestedAt: new Date(selected.stopRequestedAt).toLocaleString(),
                         })}
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* #251: 에이전트 비활성화/활성화. 관리 행위이므로 admin 만 보인다. */}
-            {selected && isAdmin && (
-              <div className={`rounded border p-3 ${selected.disabled ? 'border-border bg-surface' : 'border-danger-border bg-danger-surface'}`}>
-                <div className="text-meta font-medium text-fg-muted">
-                  {selected.disabled ? t('agents.disable.headingDisabled') : t('agents.disable.headingEnabled')}
-                </div>
-                {selected.disabled ? (
-                  <div className="mt-2">
-                    <p className="text-meta text-fg-subtle mb-2">{t('agents.disable.noteDisabled')}</p>
-                    <button
-                      className="rounded border border-accent bg-accent-surface px-2 py-1 text-meta font-medium text-accent hover:bg-surface-hover disabled:opacity-50"
-                      aria-label={t('agents.disable.enableAction')}
-                      disabled={busy}
-                      onClick={() => void toggleDisabled()}
-                    >
-                      {t('agents.disable.enable')}
-                    </button>
+                      </span>
+                    )}
+                    {selected.stopRequestedAt && selected.stopAckedAt && (
+                      <span className="text-fg-muted">
+                        {t('agents.stop.acked', {
+                          requestedAt: new Date(selected.stopRequestedAt).toLocaleString(),
+                          ackedAt: new Date(selected.stopAckedAt).toLocaleString(),
+                        })}
+                        {/* #427 → #493: 러너가 이미 읽어 간 뒤가 오히려 다시 켤 필요가 생기는
+                            자리다 — 그 뒤로는 자동 기동이 이 에이전트를 영영 건너뛴다. 실행을
+                            누른다고 이미 물러난 러너가 그 자리에서 되살아나지는 않으므로
+                            '다음 기동부터'라고 쓴다. */}
+                        {t('agents.stop.ackedResume')}
+                      </span>
+                    )}
                   </div>
-                ) : confirmingDisable ? (
-                  <div className="mt-2">
-                    <p className="text-meta text-danger mb-2">
-                      {emphasize(t('agents.disable.warning'), {
-                        strongRevoked: t('agents.disable.warningRevoked'),
-                        strongMint: t('agents.disable.warningMint'),
-                      })}
-                    </p>
-                    <div className="flex gap-1">
+                  {/* [멈춤]/[실행]·[다시 시작] 버튼은 **상세 머리**로 올라갔다(jaebin "멈춤은 머리", designer 시안 c1ae17e6).
+                      어느 탭에서든 누를 수 있어야 한다. 이 절에는 그 버튼이 무엇을 하는지(위 문단)와 지금 상태(삼분)만 남는다. */}
+                </div>
+              )}
+
+              {/* #251: 에이전트 비활성화/활성화. 관리 행위이므로 admin 만 보인다. */}
+              {selected && isAdmin && (
+                <div className={`rounded-row border p-3 ${selected.disabled ? 'border-border bg-surface' : 'border-danger-border bg-danger-surface'}`}>
+                  <div className="text-meta font-medium text-fg-muted">
+                    {selected.disabled ? t('agents.disable.headingDisabled') : t('agents.disable.headingEnabled')}
+                    <ImmediateBadge label={t('agents.detail.immediate')} />
+                  </div>
+                  {selected.disabled ? (
+                    <div className="mt-2">
+                      <p className="text-meta text-fg-subtle mb-2">{t('agents.disable.noteDisabled')}</p>
                       <button
-                        className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
-                        aria-label={t('agents.disable.confirm')}
+                        className="rounded-row border border-accent bg-accent-surface px-2 py-1 text-meta font-medium text-accent hover:bg-surface-hover disabled:opacity-50"
+                        aria-label={t('agents.disable.enableAction')}
                         disabled={busy}
                         onClick={() => void toggleDisabled()}
                       >
-                        {t('agents.disable.confirm')}
-                      </button>
-                      <button
-                        className="rounded border border-border px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
-                        onClick={() => setConfirmingDisable(false)}
-                      >
-                        {t('agents.disable.cancel')}
+                        {t('agents.disable.enable')}
                       </button>
                     </div>
-                  </div>
-                ) : (
-                  <div className="mt-2">
-                    <p className="text-meta text-fg-subtle mb-2">
-                      {emphasize(t('agents.disable.noteEnabled'), {
-                        strongRevoked: t('agents.disable.noteEnabledRevoked'),
-                        strongMint: t('agents.disable.noteEnabledMint'),
-                      })}
-                    </p>
-                    <button
-                      className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
-                      aria-label={t('agents.disable.disableAction')}
-                      disabled={busy}
-                      onClick={() => void toggleDisabled()}
-                    >
-                      {t('agents.disable.disable')}
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* #836: 에이전트 삭제. 비활성화 **아래**에 둔다 — 위아래가 곧 세기라, 되돌릴 수
-                있는 것을 먼저 보여 주고 되돌릴 수 없는 것을 그 다음에 둔다. 관리 행위이므로
-                admin 만 보인다(비활성화와 같은 문). */}
-            {selected && isAdmin && (
-              <div className="rounded border border-danger-border bg-danger-surface p-3">
-                <div className="text-meta font-medium text-fg-muted">{t('agents.delete.heading')}</div>
-                {confirmingDelete ? (
-                  <div className="mt-2">
-                    <p className="text-meta text-danger mb-2">
-                      {emphasize(t('agents.delete.warning'), {
-                        strongIrreversible: t('agents.delete.warningIrreversible'),
-                        strongHistory: t('agents.delete.warningHistory'),
-                      })}
-                    </p>
-                    {/* 이름을 그대로 치게 한다. 버튼 하나 더 누르는 확인은 "예"를 두 번
-                        누르는 것과 같아서, 지우려던 것이 이 에이전트가 맞는지는 묻지 않는다. */}
-                    <label className="block text-meta text-fg-subtle mb-1" htmlFor="agent-delete-confirm">
-                      {t('agents.delete.confirmPrompt', { handle: selected.handle })}
-                    </label>
-                    <input
-                      id="agent-delete-confirm"
-                      data-testid="agent-delete-confirm-input"
-                      className="mb-2 w-full rounded border border-border bg-surface px-2 py-1 text-meta text-fg"
-                      value={deleteConfirmText}
-                      autoComplete="off"
-                      onChange={(e) => setDeleteConfirmText(e.target.value)}
-                    />
-                    <div className="flex gap-1">
-                      <button
-                        className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
-                        data-testid="agent-delete-confirm"
-                        aria-label={t('agents.delete.confirm')}
-                        disabled={busy || deleteConfirmText !== selected.handle}
-                        onClick={() => void removeAgent()}
-                      >
-                        {t('agents.delete.confirm')}
-                      </button>
-                      <button
-                        className="rounded border border-border px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
-                        onClick={() => { setConfirmingDelete(false); setDeleteConfirmText(''); }}
-                      >
-                        {t('agents.delete.cancel')}
-                      </button>
+                  ) : confirmingDisable ? (
+                    <div className="mt-2">
+                      <p className="text-meta text-danger mb-2">
+                        {emphasize(t('agents.disable.warning'), {
+                          strongRevoked: t('agents.disable.warningRevoked'),
+                        })}
+                      </p>
+                      <div className="flex gap-1">
+                        <button
+                          className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                          aria-label={t('agents.disable.confirm')}
+                          disabled={busy}
+                          onClick={() => void toggleDisabled()}
+                        >
+                          {t('agents.disable.confirm')}
+                        </button>
+                        <button
+                          className="rounded-row border border-border px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
+                          onClick={() => setConfirmingDisable(false)}
+                        >
+                          {t('agents.disable.cancel')}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <div className="mt-2">
-                    <p className="text-meta text-fg-subtle mb-2">
-                      {emphasize(t('agents.delete.note'), {
-                        strongIrreversible: t('agents.delete.noteIrreversible'),
-                        strongHistory: t('agents.delete.noteHistory'),
-                      })}
-                    </p>
-                    <button
-                      className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
-                      data-testid="agent-delete"
-                      aria-label={t('agents.delete.action')}
-                      disabled={busy}
-                      onClick={() => { setConfirmingDelete(true); setDeleteConfirmText(''); }}
-                    >
-                      {t('agents.delete.delete')}
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {selected && isAdmin && (
-              <div className="rounded border border-border p-3">
-                {/* #129 → #427 → #493: "재시작"을 금지한 원칙은 그대로 살아 있고, **사실관계만
-                    바뀌었다.** 지우지 말고 이 이력을 읽어라 — 그러지 않으면 다음 사람이 이
-                    자리를 또 뒤집는다.
-
-                    `#129`(2026-08) 이 못박은 것: *"재시작"이라고 쓰지 않는다. harkroom 는 러너를
-                    띄우지 않으므로 재시작은 harkroom 가 할 수 있는 일이 아니고, **할 수 없는 일을
-                    버튼 이름으로 약속하면 그것이 곧 거짓 신호다**(docs/design.md 4절).*
-                    그때는 참이었다 — harkroom 는 "외부 접속형"이었고 러너를 띄우는 것은 사람과
-                    그 머신의 launchd/systemd 감독의 몫이었다.
-
-                    **무엇이 바뀌었나**: `#431` 2단계에서 **daemon 이 러너의 오퍼레이터가 됐고,
-                    이 앱이 그 daemon 을 통해 실제로 러너를 띄운다**(`#482`).
-                    `controller.startRunners` → `runnerLauncher.startAll` → `daemon_spawn_runner`
-                    → daemon 의 `spawn(detached)` 까지 실제 경로가 있다. 그래서 "실행"은 이제
-                    이 앱이 못 하는 일을 약속하는 말이 아니다. `#129` 의 원칙(할 수 없는 일을
-                    이름으로 약속하지 마라)은 그대로 지켜지고, 그 원칙이 걸러 내던 대상이
-                    사라졌을 뿐이다.
-
-                    **다만 이 버튼이 프로세스를 지금 띄우지는 않는다.** `startAll` 은 앱 기동 뒤
-                    첫 `presence.snapshot` 에서 한 번만 돈다(`controller.ts` 의
-                    `runnerAutoStartDone` 플래그) — 주기 타이머가 아니다. 이 버튼이 하는 일은
-                    "자동 기동 대상에 다시 넣는다"까지고, 실제 spawn 은 **다음 기동**이다.
-                    그래서 아래 문구도 "다음 기동에서 뜬다"라고 쓴다 — "지금 뜬다"라고 쓰면
-                    `#129` 가 금지한 그 거짓 신호를 이름만 바꿔 되살리는 셈이 된다.
-
-                    **`#141` 재기동이 그 위에 하나를 더 얹었다.** 그리드의 [뒤처진 러너 전체
-                    재기동]과 프로필의 [새 버전으로 재기동]은 **실제로 죽이고 다시 띄운다**
-                    (`RunnerLauncher.restart` → daemon 의 `killRunner` → 종료 확인 → spawn).
-                    이 절의 [실행]과 갈라 두는 이유: 그것은 "자동 기동 대상에 넣는다"이고
-                    저것은 "지금 도는 러너를 갈아 준다"다 — 하나로 뭉치면 어느 쪽도 정확히
-                    말하지 못한다. 그리고 **"새 버전으로"는 뒤처졌다고 확인된 때만** 쓴다:
-                    버전을 모르는 러너에는 그냥 [러너 재기동]이다(`runnerVersions.ts`).
-
-                    **그래도 여전히 금지인 것**: "멈췄다"·"종료됨" 류의 **생사 단정**. 러너가
-                    종료하면 다음 GET /agent/config 자체가 오지 않아 서버는 프로세스가 실제로
-                    죽었는지 영원히 모른다(019_agent_stop_request.sql). daemon 이 생사를 아는
-                    문제는 `#443` 의 자리이고, 이 절이 답하는 질문이 아니다 — 이 절은
-                    "이 에이전트가 자동 기동 대상에 들어와 있는가"에만 답한다. */}
-                <div className="text-meta font-medium text-fg-muted">{t('agents.stop.heading')}</div>
-                {/* #493: 버튼이 "종료 요청"/"요청 되돌리기" 둘에서 **한 자리 토글**로 접혔다.
-                    "요청"·"되돌리기"는 서버 API 의 대칭(`stop` ↔ `stop/undo`)에서 온 **내부
-                    어휘**였다. 사람은 "내가 보낸 요청을 취소한다"고 생각하지 않는다 —
-                    "이 에이전트를 다시 켠다"고 생각한다.
-
-                    버튼 이름이 짧아진 만큼 **잃으면 안 되는 뉘앙스가 이 문단으로 왔다**:
-                    중지는 즉시 죽이는 것이 아니라 **진행 중인 턴을 마친 뒤 스스로 물러나는**
-                    것이고, 턴 중간에 끊기지 않는다. 버튼만 보면 "중지 = 지금 끊긴다"로 읽히므로
-                    이 사실은 반드시 글로 남아 있어야 한다.
-
-                    **여기서 daemon 의 생사를 말하지는 않는다** — `#443` 의 자리다. */}
-                <p className="mt-1 text-meta text-fg-subtle">
-                  {emphasize(t('agents.stop.note'), {
-                    strongStop: t('agents.stop.noteStop'),
-                    strongFinish: t('agents.stop.noteFinish'),
-                    strongSkipped: t('agents.stop.noteSkipped'),
-                    strongStart: t('agents.stop.noteStart'),
-                    strongNextStart: t('agents.stop.noteNextStart'),
-                  })}
-                </p>
-                {/* #493: **세 상태를 버튼이 아니라 이 상태 표시로 옮겼다.**
-
-                    버튼 자리는 하나여야 한다 — 사람이 답해야 하는 질문은 "지금 켤까 끌까" 하나뿐이고,
-                    그 질문에 버튼 둘을 내밀면 어느 쪽이 지금 상태인지를 사람이 역산해야 한다.
-                    그러나 **세 상태는 접으면 안 된다.** 특히 `stopAckedAt` 이 없는 동안은
-                    "중지를 걸었는데 그 요청이 아직 러너에게 닿지 않았다"는 뜻이고, 이것은 사람이
-                    알아야 할 사실이다 — 러너가 붙어 있지 않으면 읽어 갈 쪽이 없어 요청은 계속
-                    미수령으로 남는다. 접어 버리면 사람은 "눌렀는데 왜 안 멈추지"를 알 길이 없다.
-
-                    그래서 **버튼은 이분(실행/중지), 상태 표시는 삼분**으로 나눈다. 둘은 같은 값을
-                    다른 해상도로 읽는다: 버튼은 `stopRequestedAt` 의 유무만, 상태 표시는 거기에
-                    `stopAckedAt` 을 더해 셋을 가른다.
-
-                    **'멈췄다'고 쓰지 않는다** — 위 주석과 019 마이그레이션이 그 이유를 적었다. */}
-                <div className="mt-2 text-meta" role="status">
-                  {!selected.stopRequestedAt && (
-                    <span className="text-fg-muted">{t('agents.stop.notRequested')}</span>
-                  )}
-                  {selected.stopRequestedAt && !selected.stopAckedAt && (
-                    <span className="text-warning">
-                      {/* 시각은 `toLocaleString()` 이 낸다 — **사전에 넣지 않는다**(`Intl` 이
-                          이미 로케일을 따른다). 문장은 그 값을 자리표시자로 받는다. */}
-                      {t('agents.stop.requested', {
-                        requestedAt: new Date(selected.stopRequestedAt).toLocaleString(),
-                      })}
-                    </span>
-                  )}
-                  {selected.stopRequestedAt && selected.stopAckedAt && (
-                    <span className="text-fg-muted">
-                      {t('agents.stop.acked', {
-                        requestedAt: new Date(selected.stopRequestedAt).toLocaleString(),
-                        ackedAt: new Date(selected.stopAckedAt).toLocaleString(),
-                      })}
-                      {/* #427 → #493: 러너가 이미 읽어 간 뒤가 오히려 다시 켤 필요가 생기는
-                          자리다 — 그 뒤로는 자동 기동이 이 에이전트를 영영 건너뛴다. 실행을
-                          누른다고 이미 물러난 러너가 그 자리에서 되살아나지는 않으므로
-                          '다음 기동부터'라고 쓴다. */}
-                      {t('agents.stop.ackedResume')}
-                    </span>
-                  )}
-                </div>
-                {/* #493: 켜는 길과 끄는 길을 **한 자리**에 겹쳐 둔다. `#427` 이 "되돌리는 길을
-                    요청과 같은 자리에 둔다"고 한 것을 한 걸음 더 민 것이다 — 다른 자리로 보내면
-                    "설정에서 껐으니 설정에서 켜겠지"로 읽는 사람이 그것을 못 찾고, 못 찾으면
-                    DB 를 고치러 간다(#427 이 실제로 밟힌 경로다).
-
-                    한 자리이므로 "누를 것이 없는 버튼"이 애초에 생기지 않는다 — 이 자리에는
-                    항상 지금 할 수 있는 조작 하나만 서 있다.
-
-                    서버 API 는 그대로다 — 실행은 `undoAgentStopRequest`, 중지는 `requestAgentStop`.
-                    화면 어휘만 사람의 어휘로 바꿨고 장부·라우트는 건드리지 않았다. */}
-                <div className="mt-2 flex gap-2">
-                  {selected.stopRequestedAt ? (
-                    <button
-                      className="rounded border border-border px-2 py-1 text-meta font-medium text-fg-default hover:bg-surface-sunken disabled:opacity-50"
-                      aria-label={t('agents.stop.startAction')}
-                      disabled={busy}
-                      onClick={() => void undoStopRequest()}
-                    >
-                      {t('agents.stop.start')}
-                    </button>
                   ) : (
-                    <button
-                      className="rounded border border-warning-border bg-warning-surface px-2 py-1 text-meta font-medium text-warning hover:bg-warning-surface-strong disabled:opacity-50"
-                      aria-label={t('agents.stop.stopAction')}
-                      disabled={busy}
-                      onClick={() => void requestStop()}
-                    >
-                      {t('agents.stop.stop')}
-                    </button>
-                  )}
-                  {!selected.stopRequestedAt && (
-                    <button
-                      className="rounded border border-border px-2 py-1 text-meta font-medium text-fg-default hover:bg-surface-sunken disabled:opacity-50"
-                      aria-label={t('agents.restart.action')}
-                      data-testid="agent-restart"
-                      disabled={busy}
-                      onClick={() => void restartRunner()}
-                    >
-                      {t('agents.restart.label')}
-                    </button>
-                  )}
-                  {restartSent && <span className="self-center text-meta text-fg-muted" role="status">{t('agents.restart.sent')}</span>}
-                </div>
-              </div>
-            )}
-
-            {/* 스펙 2026-09-20 §3: **어디서 돌리나.** 앱은 러너를 띄우지 않는다 — 이 고르개가
-                서버에 배정을 쓰면 그 오퍼레이터가 러너를 띄운다. 러너 실행·중지 절 바로 뒤에
-                두는 이유: 그 절의 '실행'이 실제로 무엇을 켜는지가 이 배정으로 정해진다. */}
-            {selected && (isAdmin || isOwner) && (
-              <div className="rounded border border-border p-3">
-                <div className="text-meta font-medium text-fg-muted">{t('agents.assignment.heading')}</div>
-                <p className="mt-1 text-meta text-fg-subtle" data-testid="agent-assignment-current">
-                  {(() => {
-                    const asg = selected.assignment;
-                    if (!asg) return t('agents.assignment.none');
-                    const op = Array.isArray(operators) ? operators.find((o) => o.id === asg.operatorId) : undefined;
-                    const name = op?.name ?? t('agents.assignment.unknownOperator');
-                    return op && !op.online
-                      ? t('agents.assignment.currentOffline', { name })
-                      : t('agents.assignment.current', { name });
-                  })()}
-                </p>
-                {/* 오퍼레이터가 배정을 거절한 사유(스펙 §7·§6). 서버 메모리의 사실이라 러너가 뜨면 사라진다 —
-                    이것이 없으면 사람은 "배정했는데 왜 안 뜨나"를 오퍼레이터 로그에서 찾아야 한다. */}
-                {selected.runnerRefusal && (
-                  <p className="mt-1 text-meta text-warning" data-testid="agent-assignment-refused">
-                    {refusalText(selected.runnerRefusal.reason, t)}
-                  </p>
-                )}
-                {/* `role="alert"` 를 안 단다 — 이것은 사람이 방금 한 조작의 결과가 아니라 목록
-                    조회의 실패이고, 화면의 alert 는 조작 결과(위 `error`) 하나여야 한다. */}
-                {operators === 'error' && (
-                  <p className="mt-2 text-meta text-danger">{t('operators.listFailed')}</p>
-                )}
-                {Array.isArray(operators) && operators.length === 0 && (
-                  <p className="mt-2 text-meta text-fg-subtle">{t('agents.assignment.noOperators')}</p>
-                )}
-                {Array.isArray(operators) && operators.length > 0 && (
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <select
-                      aria-label={t('agents.assignment.label')}
-                      className="rounded border border-border bg-surface px-2 py-1 text-meta text-fg"
-                      disabled={assigning || busy}
-                      value={selected.assignment?.operatorId ?? ''}
-                      onChange={(e) => {
-                        const operatorId = e.target.value;
-                        if (!operatorId || operatorId === selected.assignment?.operatorId) return;
-                        setError(null);
-                        setAssigning(true);
-                        void getController().assignAgent(selected.id, operatorId)
-                          .then((assignment) => {
-                            // 응답의 배정을 **그대로** 앉힌다 — 목록을 다시 읽지 않아도 방금 고른
-                            // 것이 화면에 선다(`requestStop` 과 같은 규율).
-                            const updated = { ...selected, assignment };
-                            setSelected(updated);
-                            setAgents((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
-                          })
-                          .catch((err: unknown) => setError(
-                            err instanceof ApiError && err.code === 'not_capable'
-                              ? t('agents.assignment.notCapable')
-                              : t('agents.assignment.failed', { reason: err instanceof Error ? err.message : String(err) }),
-                          ))
-                          .finally(() => setAssigning(false));
-                      }}
-                    >
-                      <option value="">{t('agents.assignment.pick')}</option>
-                      {operators.map((o) => (
-                        <option key={o.id} value={o.id}>
-                          {o.name}{o.online ? '' : ` (${t('operators.offline')})`}
-                        </option>
-                      ))}
-                    </select>
-                    {selected.assignment && (
+                    <div className="mt-2">
+                      <p className="text-meta text-fg-subtle mb-2">
+                        {emphasize(t('agents.disable.noteEnabled'), {
+                          strongRevoked: t('agents.disable.noteEnabledRevoked'),
+                        })}
+                      </p>
                       <button
-                        className="rounded border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
+                        className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                        aria-label={t('agents.disable.disableAction')}
+                        disabled={busy}
+                        onClick={() => void toggleDisabled()}
+                      >
+                        {t('agents.disable.disable')}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* #836: 에이전트 삭제. 비활성화 **아래**에 둔다 — 위아래가 곧 세기라, 되돌릴 수
+                  있는 것을 먼저 보여 주고 되돌릴 수 없는 것을 그 다음에 둔다. 관리 행위이므로
+                  admin 만 보인다(비활성화와 같은 문). */}
+              {selected && isAdmin && (
+                <div className="rounded-row border border-danger-border bg-danger-surface p-3">
+                  <div className="text-meta font-medium text-fg-muted">{t('agents.delete.heading')}</div>
+                  {confirmingDelete ? (
+                    <div className="mt-2">
+                      <p className="text-meta text-danger mb-2">
+                        {emphasize(t('agents.delete.warning'), {
+                          strongIrreversible: t('agents.delete.warningIrreversible'),
+                          strongHistory: t('agents.delete.warningHistory'),
+                        })}
+                      </p>
+                      {/* 이름을 그대로 치게 한다. 버튼 하나 더 누르는 확인은 "예"를 두 번
+                          누르는 것과 같아서, 지우려던 것이 이 에이전트가 맞는지는 묻지 않는다. */}
+                      <label className="block text-meta text-fg-subtle mb-1" htmlFor="agent-delete-confirm">
+                        {t('agents.delete.confirmPrompt', { handle: selected.handle })}
+                      </label>
+                      <input
+                        id="agent-delete-confirm"
+                        data-testid="agent-delete-confirm-input"
+                        className="mb-2 w-full rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
+                        value={deleteConfirmText}
+                        autoComplete="off"
+                        onChange={(e) => setDeleteConfirmText(e.target.value)}
+                      />
+                      <div className="flex gap-1">
+                        <button
+                          className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                          data-testid="agent-delete-confirm"
+                          aria-label={t('agents.delete.confirm')}
+                          disabled={busy || deleteConfirmText !== selected.handle}
+                          onClick={() => void removeAgent()}
+                        >
+                          {t('agents.delete.confirm')}
+                        </button>
+                        <button
+                          className="rounded-row border border-border px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
+                          onClick={() => { setConfirmingDelete(false); setDeleteConfirmText(''); }}
+                        >
+                          {t('agents.delete.cancel')}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-2">
+                      <p className="text-meta text-fg-subtle mb-2">
+                        {emphasize(t('agents.delete.note'), {
+                          strongIrreversible: t('agents.delete.noteIrreversible'),
+                          strongHistory: t('agents.delete.noteHistory'),
+                        })}
+                      </p>
+                      <button
+                        className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                        data-testid="agent-delete"
+                        aria-label={t('agents.delete.action')}
+                        disabled={busy}
+                        onClick={() => { setConfirmingDelete(true); setDeleteConfirmText(''); }}
+                      >
+                        {t('agents.delete.delete')}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div {...detailPanel('profile')}>
+              {/*
+                **상세는 묶음으로 나뉜다**(identity 문서 Task 15-3 → designer A2): 세 묶음(프로필 · 실행 · 권한)이
+                이제 각자의 탭이다. 전에는 아홉 필드가 한 줄로 흘러 무엇이 무엇과 묶이는지 알 수 없었다.
+              */}
+              {draft !== null && (
+                <FieldGroup title={t('agents.profile.title')} note={t('agents.profile.note')}>
+                {/*
+                  사진(identity 문서 Task 15-4). **에이전트는 자기 사진을 올릴 손이 없다** —
+                  소유자가 대신 올려 주지 않으면 영원히 색 하나로 남는다. 문서가 이 화면의 성패를
+                  여기에 걸었다: "결국 이 화면의 성패는 사람이 사진을 올리게 만드는 것에 달린다."
+                  (`handleColor()` 의 12색은 26개 밀도에서 이미 시끄럽고, 색은 **사진이 없을 때의
+                  임시값**이라는 뜻이다.)
+
+                  새 에이전트에는 그리지 않는다 — 아직 계정이 없어 걸 대상이 없다.
+                */}
+                {selected && (
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <Identity account={selected} className="h-12 w-12 text-base" variant="avatar" />
+                      <input
+                        ref={avatarEdit.pickRef}
+                        type="file"
+                        data-testid="agent-avatar-file"
+                        accept={AVATAR_ACCEPT}
+                        className="hidden"
+                        onChange={avatarEdit.onPicked}
+                      />
+                      <Button disabled={avatarEdit.busy} onClick={avatarEdit.openPicker}>
+                        {t('agents.profile.avatarUpload')}
+                      </Button>
+                      {/*
+                        지우기는 **두 걸음**이다(같은 화면의 `confirmingDisable` 과 같은 모양).
+                        한 걸음이던 동안은 스친 클릭 하나로 사진이 사라졌고, 사라진 뒤에도
+                        아무 말이 없어 눌린 것인지조차 알 수 없었다.
+                      */}
+                      {selected.avatarAttachmentId && (avatarEdit.confirmingRemove ? (
+                        <>
+                          <Button variant="danger" disabled={avatarEdit.busy} onClick={avatarEdit.confirmRemove}>
+                            {t('agents.profile.avatarRemoveConfirm')}
+                          </Button>
+                          <Button onClick={avatarEdit.cancelRemove}>{t('agents.profile.avatarRemoveCancel')}</Button>
+                        </>
+                      ) : (
+                        <Button variant="danger" disabled={avatarEdit.busy} onClick={avatarEdit.askRemove}>
+                          {t('agents.profile.avatarRemove')}
+                        </Button>
+                      ))}
+                      {/* `AVATAR_FORMATS` 는 형식 목록(`PNG · JPEG · …`)이라 번역하지 않는다 —
+                          파일 형식의 이름이고, 사람이 파일 고르개에서 보는 그 말이다. */}
+                      <span className="text-meta text-fg-subtle">
+                        {t('agents.profile.avatarFormats', { formats: AVATAR_FORMATS })}
+                      </span>
+                    </div>
+                    <AvatarStatus phase={avatarEdit.phase} />
+                  </div>
+                )}
+                {/*
+                  #843: **만든 뒤에도 이름을 바꾼다.** 오래 `disabled` 였고, 그 자리에 붙은 안내가
+                  "나중에 바꿀 수 없다"였다 — 이름을 잘못 지은 사람에게 남은 길은 에이전트를 지우고
+                  다시 만드는 것뿐이었고, 그러면 계정 id 가 바뀌어 러너 상태가 통째로 날아갔다.
+                  막았던 근거(러너 상태 디렉터리가 이름으로 스코프된다)는 `agent/stateDir.ts` 에서
+                  없앴다. 그래서 여기서도 잠그지 않는다.
+
+                  안내 문구가 만들 때와 고칠 때 갈리는 이유: 처음에는 "이게 부르는 이름이다"를
+                  알려야 하고, 바꿀 때는 **무엇이 따라오는지**를 알려야 한다. 이름을 바꾸는 사람이
+                  가장 먼저 걱정하는 것이 "지난 대화가 깨지나"인데, 답은 아니다 — 본문의 멘션은
+                  `<@id>` 가 정본이라(#271, `shared` 의 `MENTION_TOKEN_PATTERN`) 과거 메시지도
+                  새 이름으로 그려지고, 세션·워크스페이스는 `stateDir` 이 id 로 찾아 이어진다.
+                  둘을 한 문장으로 합치면 둘 다 안 읽힌다.
+                */}
+                <label className={label}>
+                  Agent name
+                  <input
+                    className={field}
+                    aria-label="Agent name"
+                    placeholder="fizz"
+                    value={draft.handle}
+                    onChange={(e) => setDraft({ ...draft, handle: e.target.value })}
+                  />
+                  <span className="text-meta text-fg-subtle">
+                    {selected ? t('agents.profile.renameNote') : t('agents.profile.handleNote')}
+                  </span>
+                </label>
+
+                <label className={label}>
+                  Agent instructions
+                  <textarea
+                    className={`${field} resize-y`}
+                    aria-label="Agent instructions"
+                    rows={6}
+                    placeholder={t('agents.profile.instructionsPlaceholder')}
+                    value={draft.instructions}
+                    onChange={(e) => setDraft({ ...draft, instructions: e.target.value })}
+                  />
+                </label>
+
+                </FieldGroup>
+              )}
+            </div>
+
+            <div {...detailPanel('run')}>
+              {draft !== null && (
+                <FieldGroup title={t('agents.run.title')} note={t('agents.run.note')}>
+                <div>
+                  <div className={label}>AI configuration</div>
+                  <div className="mt-1 flex gap-1">
+                    <button
+                      className={`flex-1 rounded-row px-3 py-2 ${customized ? 'bg-surface-sunken text-fg-muted' : 'bg-surface-raised ring-1 ring-border'}`}
+                      onClick={() => setCustomized(false)}
+                    >
+                      Use harness defaults
+                    </button>
+                    <button
+                      className={`flex-1 rounded-row px-3 py-2 ${customized ? 'bg-surface-raised ring-1 ring-border' : 'bg-surface-sunken text-fg-muted'}`}
+                      onClick={() => setCustomized(true)}
+                    >
+                      Customize for this agent
+                    </button>
+                  </div>
+                </div>
+
+                {/* 모델·Effort 는 **무엇으로 도는가**의 답이라 이 묶음이다(UX ⑨b, designer 사양 ⑨). 전에는 "권한" 묶음에
+                    서 있었다 — 바로 위의 [하네스 기본값 / 이 에이전트만] 고르기와 그것이 여는 칸이 두 묶음으로 갈렸다. */}
+                {customized && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className={label}>
+                      {t('agents.run.model')}
+                      <ModelPicker
+                        className={field}
+                        value={draft.model}
+                        models={modelCaps === null ? null : modelCaps === 'unknown' ? undefined : modelCaps[draft.harness]?.models}
+                        onChange={(model) => setDraft({ ...draft, model })}
+                      />
+                    </label>
+                    <label className={label}>
+                      {t('agents.run.effort')}
+                      <select
+                        className={field}
+                        aria-label="Effort"
+                        value={draft.effort}
+                        onChange={(e) => setDraft({ ...draft, effort: e.target.value })}
+                      >
+                        <option value="">{t('agents.run.harnessDefault')}</option>
+                        {EFFORTS.map((e) => <option key={e} value={e}>{e}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                )}
+
+                <label className={label}>
+                  Agent harness
+                  <select
+                    className={field}
+                    aria-label="Agent harness"
+                    value={draft.harness}
+                    onChange={(e) => setDraft({ ...draft, harness: e.target.value as AgentConfig['harness'] })}
+                  >
+                    {AGENT_HARNESSES.map((h) =>
+                      (RUNNABLE_HARNESSES as readonly string[]).includes(h)
+                        ? <option key={h} value={h}>{h} (default)</option>
+                        : <option key={h} value={h} disabled>{t('agents.run.harnessPlanned', { harness: h })}</option>,
+                    )}
+                    {PLANNED.map((h) => (
+                      <option key={h} value={h} disabled>{t('agents.run.harnessPlanned', { harness: h })}</option>
+                    ))}
+                  </select>
+                </label>
+
+                {/* 계정 풀 — **이 기기에만 저장된다.** 위 필드들과 저장 경로가 다르므로
+                    (서버 PATCH 가 아니라 로컬 데몬) 고르는 즉시 쓰고, 그 사실을 적는다.
+                    표면이 없으면 아예 그리지 않는다 — 그려 두면 고를 수 있는데 아무 일도 안 난다.
+
+                    **읽는 중·읽기 실패는 "없음"이 아니다.** 그때도 칸은 그리고 잠그기만 한다 —
+                    감추면 아래 `agentPool.error` 를 그릴 자리도 같이 사라져, 데몬이 대답을 못 한
+                    것뿐인데 사람은 "이 앱에 그런 기능이 없다"고 읽는다. */}
+                {/* **하네스를 함께 본다(2026-09-11).** 앞 판본은 `agentPool.available` 만 보고
+                    그렸다 — 그래서 codex 에이전트 만들기 화면에도 claude 풀 선택이 떴고, 사람이
+                    고른 값을 러너는 그대로 버렸다(`mentionTurn` 이 claude 턴에만 싣는다).
+                    사람은 배정했고 화면은 배정됐다고 말하는데 아무 일도 안 일어나는 자리였다.
+
+                    **감추지 않고 이유를 적는다.** 빈 자리는 사람이 원인을 지어내게 만든다 —
+                    `useAgentPool` 이 조회 실패를 감추지 않는 것과 같은 규율이다. 그래서 풀이
+                    없는 하네스에는 선택 대신 한 줄을 그린다. */}
+                {agentPool.available && !harnessHasAccountPool(draft.harness) && (
+                  <span className="block text-meta text-fg-subtle">
+                    {t('agents.run.poolNotForHarness', { harness: draft.harness })}
+                  </span>
+                )}
+                {agentPool.available && harnessHasAccountPool(draft.harness) && (
+                  <label className={label}>
+                    Account pool
+                    <select
+                      className={field}
+                      aria-label="Account pool"
+                      disabled={!agentPool.ready}
+                      value={agentPool.assigned}
+                      onChange={(e) => void agentPool.assign(e.target.value)}
+                    >
+                      <option value="">
+                        {agentPool.defaultPool
+                          ? `Use the default pool (${agentPool.defaultPool})`
+                          : 'Use the default pool'}
+                      </option>
+                      {agentPool.pools.map((p) => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                    {/* 만들기와 상세에서 **적용 시점이 다르다.** 상세는 고르는 즉시 데몬에
+                        쓰이고 러너 재시작이 필요하지만, 만들기에는 쓸 대상이 아직 없어
+                        생성 시점에 쓰인다(그래서 첫 러너가 이미 그 풀로 뜬다 — 재시작이
+                        필요 없다). 한 문구로 뭉개면 한쪽은 반드시 틀린 말이 된다. */}
+                    <span className="mt-1 block text-meta text-fg-subtle">
+                      This machine only — pools are local directories, so this is not shared
+                      with other devices.{' '}
+                      {selected || createdAgentId
+                        ? 'Restart the runner for a change to take effect.'
+                        : 'Applied when the agent is created, before its runner starts.'}
+                    </span>
+                    {agentPool.error && (
+                      <span className="mt-1 block text-meta text-danger">{agentPool.error}</span>
+                    )}
+                  </label>
+                )}
+
+                {/* **어디서 돌리나 — 만들기의 기본값**(#856).
+
+                    상세 화면은 이 질문에 두 곳으로 답한다(위의 `LocalOperatorRow` 와 배정 고르개).
+                    만들기에는 그 둘이 없어서, 만든 에이전트가 계정만 있고 아무도 안 띄우는 상태로
+                    섰다 — 화면 어디에도 "왜 멈춰 있나"가 적혀 있지 않았다. 여기서 켜면 만든 직후
+                    로컬 설정에 넣고 배정까지 쓴다(`controller.attachToLocalOperator`).
+
+                    **끄는 자리를 남긴다.** 다른 기기에서 돌릴 에이전트가 있고, 그때 이 기기에
+                    먼저 배정해 두면 러너가 떴다가 다시 옮겨지는 왕복이 생긴다. */}
+                {!selected && localOperator !== 'none' && (
+                  <label className="flex items-start gap-2 text-meta text-fg">
+                    <input
+                      type="checkbox"
+                      aria-label={t('agents.create.runHere')}
+                      checked={runHere && localOperator !== 'error'}
+                      disabled={localOperator === 'error' || localOperator === null}
+                      onChange={(e) => setRunHere(e.target.checked)}
+                    />
+                    <span>
+                      {t('agents.create.runHere')}
+                      <span className="mt-1 block text-meta text-fg-subtle">
+                        {localOperator === 'error'
+                          ? t('agents.local.listFailed')
+                          : t('agents.create.runHereNote')}
+                      </span>
+                    </span>
+                  </label>
+                )}
+
+                </FieldGroup>
+              )}
+
+              {/* 스펙 2026-09-20 §3: **어디서 돌리나.** 앱은 러너를 띄우지 않는다 — 이 고르개가
+                  서버에 배정을 쓰면 그 오퍼레이터가 러너를 띄운다. 러너 실행·중지 절 바로 뒤에
+                  두는 이유: 그 절의 '실행'이 실제로 무엇을 켜는지가 이 배정으로 정해진다. */}
+              {selected && (isAdmin || isOwner) && (
+                <div className="rounded-row border border-border p-3">
+                  <div className="text-meta font-medium text-fg-muted">{t('agents.assignment.heading')}</div>
+                  <p className="mt-1 text-meta text-fg-subtle" data-testid="agent-assignment-current">
+                    {(() => {
+                      const asg = selected.assignment;
+                      if (!asg) return t('agents.assignment.none');
+                      const op = Array.isArray(operators) ? operators.find((o) => o.id === asg.operatorId) : undefined;
+                      const name = operatorNameOf(op) ?? t('agents.assignment.unknownOperator');
+                      return op && !op.online
+                        ? t('agents.assignment.currentOffline', { name })
+                        : t('agents.assignment.current', { name });
+                    })()}
+                  </p>
+                  {/* 오퍼레이터가 배정을 거절한 사유(스펙 §7·§6). 서버 메모리의 사실이라 러너가 뜨면 사라진다 —
+                      이것이 없으면 사람은 "배정했는데 왜 안 뜨나"를 오퍼레이터 로그에서 찾아야 한다. */}
+                  {selected.runnerRefusal && (
+                    <p className="mt-1 text-meta text-warning" data-testid="agent-assignment-refused">
+                      {refusalText(selected.runnerRefusal.reason, t)}
+                    </p>
+                  )}
+                  {/* `role="alert"` 를 안 단다 — 이것은 사람이 방금 한 조작의 결과가 아니라 목록
+                      조회의 실패이고, 화면의 alert 는 조작 결과(위 `error`) 하나여야 한다. */}
+                  {operators === 'error' && (
+                    <p className="mt-2 text-meta text-danger">{t('operators.listFailed')}</p>
+                  )}
+                  {Array.isArray(operators) && operators.length === 0 && (
+                    <p className="mt-2 text-meta text-fg-subtle">{t('agents.assignment.noOperators')}</p>
+                  )}
+                  {Array.isArray(operators) && operators.length > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <select
+                        aria-label={t('agents.assignment.label')}
+                        className="rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
                         disabled={assigning || busy}
-                        onClick={() => {
+                        value={selected.assignment?.operatorId ?? ''}
+                        onChange={(e) => {
+                          const operatorId = e.target.value;
+                          if (!operatorId || operatorId === selected.assignment?.operatorId) return;
                           setError(null);
                           setAssigning(true);
-                          void getController().unassignAgent(selected.id)
-                            .then(() => {
-                              const updated = { ...selected, assignment: null };
+                          void getController().assignAgent(selected.id, operatorId)
+                            .then((assignment) => {
+                              // 응답의 배정을 **그대로** 앉힌다 — 목록을 다시 읽지 않아도 방금 고른
+                              // 것이 화면에 선다(`requestStop` 과 같은 규율).
+                              const updated = { ...selected, assignment };
                               setSelected(updated);
                               setAgents((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
                             })
                             .catch((err: unknown) => setError(
-                              t('agents.assignment.failed', { reason: err instanceof Error ? err.message : String(err) }),
+                              err instanceof ApiError && err.code === 'not_capable'
+                                ? t('agents.assignment.notCapable')
+                                : t('agents.assignment.failed', { reason: err instanceof Error ? err.message : String(err) }),
                             ))
                             .finally(() => setAssigning(false));
                         }}
                       >
-                        {t('agents.assignment.unassign')}
-                      </button>
+                        <option value="">{t('agents.assignment.pick')}</option>
+                        {/* 보이는 이름이 겹칠 때만 「— 호스트명」(designer) — 같은 VM 의 work·personal 을 가른다. */}
+                        {operators.map((o) => (
+                          <option key={o.id} value={o.id}>
+                            {operatorPickerLabels(operators).get(o.id)}{o.online ? '' : ` (${t('operators.offline')})`}
+                          </option>
+                        ))}
+                      </select>
+                      {selected.assignment && (
+                        <button
+                          className="rounded-row border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
+                          disabled={assigning || busy}
+                          onClick={() => {
+                            setError(null);
+                            setAssigning(true);
+                            void getController().unassignAgent(selected.id)
+                              .then(() => {
+                                const updated = { ...selected, assignment: null };
+                                setSelected(updated);
+                                setAgents((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+                              })
+                              .catch((err: unknown) => setError(
+                                t('agents.assignment.failed', { reason: err instanceof Error ? err.message : String(err) }),
+                              ))
+                              .finally(() => setAssigning(false));
+                          }}
+                        >
+                          {t('agents.assignment.unassign')}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  <p className="mt-2 text-meta text-fg-subtle">{t('agents.assignment.note')}</p>
+                  {/* 양쪽 동의의 둘째 절반 — 이 머신의 오퍼레이터 로컬 설정(스펙 §3 능력). */}
+                  <LocalOperatorRow agentId={selected.id} disabled={busy} />
+                </div>
+              )}
+
+              {/* #250: 이 앱이 띄운 러너의 상태와 회전 버튼. **소유자에게도 보인다** —
+                  실행기의 대상 판정이 `ownerAccountId === 내 id` 이므로, admin 에게만 보이면
+                  자기 러너를 띄운 소유자가 그 상태를 볼 수도 재발급할 수도 없다.
+
+                  이 절은 위 "러너 실행" 명령 틀(#177)과 **둘 다** 남는다: 앱이 띄우는 것은
+                  내가 소유한 에이전트뿐이고, 남의 머신에서 손으로 띄우는 길은 그대로 있다.
+
+                  **앞 판본은 여기에 "그렇게 뜬 러너는 '외부에서 실행 중'으로 보인다"고
+                  적어 뒀었다. 두 군데가 틀렸다**(`#482`, `#430`):
+
+                  1. `external` 이라는 상태가 없어졌다 — 지금 값은 `adopted` 이고 화면 문구는
+                     `RunnerStatus.tsx::runnerStatusLabel` 이 정한다.
+                  2. 더 중요하게, **손으로 띄운 러너는 그렇게 보이지 않는다.** `adopted` 는
+                     *"이 daemon 의 장부에 있고 `kill(pid, 0)` 으로 살아 있음을 확인했다"* 이고,
+                     장부에는 **이 daemon 이 spawn 한 것만** 들어간다. 남이 띄운 러너는 장부에
+                     없으므로 daemon 은 그 존재를 모른다 — 서버 presence 에 보이면 그 어긋남을
+                     사유 한 줄로 말할 뿐 상태로 삼지 않는다(`runnerLauncher.ts::STRANGER_ATTACHED`).
+                     판정을 presence 추측에서 daemon 관측으로 옮긴 것이 `#430` 의 핵심이었다. */}
+              {selected && (isAdmin || (myId !== undefined && selected.ownerAccountId === myId)) && (
+                <div className="rounded-row border border-border p-3">
+                  <div className="text-meta font-medium text-fg-muted">{t('agents.runner.heading')}</div>
+                  {/* 상태 문구를 여기 하드코딩하지 않는다 — `runnerStatusLabel` 에서 받아 온다.
+                      이 설명이 낡았던 이유가 정확히 그 하드코딩이었다: `#482` 가 `external` 을
+                      `adopted` 로 바꾸며 `RunnerStatus.tsx` 의 문구를 고쳤는데, 같은 말을 제 손으로
+                      적어 둔 이 문장은 따라오지 않아 화면 두 자리가 서로 다른 말을 했다.
+                      같은 출처에서 내면 다음 개명도 저절로 따라온다. */}
+                  <p className="mt-1 text-meta text-fg-subtle">
+                    {/* `{label}` 은 `runnerStatusLabel` 이 낸다 — 상태 이름을 이 문장이 제 손으로
+                        적으면 `RunnerStatus.tsx` 가 바뀔 때 여기만 낡는다(위 import 주석). */}
+                    {emphasize(
+                      t('agents.runner.ownedNote', {
+                        label: runnerStatusLabel({ agentId: '', status: 'adopted', exitCode: null, message: null }, t),
+                      }),
+                      {
+                        strongOwn: t('agents.runner.ownedNoteOwn'),
+                        strongDaemon: t('agents.runner.ownedNoteDaemon'),
+                      },
                     )}
+                  </p>
+                  {/* 남이 띄운 러너를 이 화면이 못 본다는 것은 **한계 고백**이라 따로 적는다.
+                      앞 문장에 "누가 띄웠든"으로 뭉쳐 두면 사람은 손으로 띄운 러너도 여기
+                      나타날 것으로 읽고, 안 나타나면 앱이 고장 났다고 판단한다. */}
+                  <p className="mt-1 text-meta text-fg-subtle">
+                    {emphasize(t('agents.runner.daemonScope'), {
+                      strongOnlyOwn: t('agents.runner.daemonScopeOnlyOwn'),
+                    })}
+                  </p>
+                  <div className="mt-2">
+                    <RunnerStatusLine state={runnerStates[selected.id]} />
+                  </div>
+                  {/* #443: **daemon 이 직접 확인한 사실**을 바로 위 판정 옆에 얹는다
+                      (정본 문서 `docs/desktop-agent-cards.html` 3단계).
+
+                      ## 새 구획을 만들지 않았다
+
+                      이 절('러너 (이 앱)')이 이미 러너를 말하는 자리이고, 위
+                      `RunnerStatusLine` 이 **이 앱의 판정**을 내놓는다. daemon 의 사실을 다른
+                      구획으로 보내면 사람은 같은 러너에 대한 두 이야기를 화면 두 곳에서
+                      찾아 맞춰 봐야 한다 — 그리고 이 정보가 필요해지는 순간(*"눌렀는데 왜 안
+                      죽지"*)에는 그 둘을 **나란히** 봐야 답이 나온다.
+
+                      ## 카드에는 안 올린다
+
+                      문서가 명시했다: *"카드에 올릴 것은 아니지만 상세에는 있어야 한다."*
+                      `AgentGrid` 의 `place` 축과 사이드바 격리 회귀선은 손대지 않았다.
+
+                      ## 강조색을 쓰지 않는다 (규칙 04)
+
+                      이 정보는 **나를 막지 않는다** — 사실 조회이고, 사람이 지금 무언가를
+                      해야 한다는 신호가 아니다. 그래서 회색 단으로만 적는다. 이 절에서
+                      강조·경고색을 갖는 것은 실패 사유(`RunnerStatusLine` 의 `danger`)와
+                      옛 PAT 폐기 버튼뿐이고, 그 톤을 침범하지 않는다. */}
+                  <DaemonFacts
+                    runner={daemonRunners[selected.id]}
+                    stopRequestedAt={selected.stopRequestedAt}
+                    stopAckedAt={selected.stopAckedAt}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div {...detailPanel('permissions')}>
+              {/* 에이전트 머지 권한(스레드 3deac356) — 「권한」 탭 맨 위(스레드 febe9ff8 P1, designer f1·f2: 「호출 범위·
+                  자격증명」 아래에서는 찾지 못했다). 주는 것은 소유자인 사람만(서버 F2), 거두기는 소유자·admin. */}
+              {selected && (isAdmin || isOwner) && myId !== undefined && (
+                <AgentGrantsSection
+                  agent={selected}
+                  canGrant={selected.ownerAccountId === myId}
+                  canRevoke={isAdmin || isOwner}
+                  disabled={busy}
+                  localOperatorId={typeof localOperator === 'object' && localOperator !== null ? localOperator.operatorId : null}
+                  assignedOperatorName={Array.isArray(operators) ? operatorNameOf(operators.find((o) => o.id === selected.assignment?.operatorId)) ?? null : null}
+                  onCountChange={(n) => setMergeCounts((prev) => (prev[selected.id] === n ? prev : { ...prev, [selected.id]: n }))}
+                />
+              )}
+
+              {draft !== null && (
+                <FieldGroup title={t('agents.permissions.title')} note={t('agents.permissions.note')}>
+                {/* #253 의 표에서 `mentionPermission` 은 **admin 전용**이다. 소유자에게는 비활성
+                    입력이 아니라 **아예 그리지 않는다** — 눌러도 안 되는 것을 보여 주면 사람은
+                    자기가 뭘 잘못했다고 생각한다(#299). 값 자체는 아래 읽기 전용 칸에 적는다. */}
+                {isAdmin && (
+                  <label className={label}>
+                    Mention permission
+                    <select
+                      className={field}
+                      aria-label="Mention permission"
+                      value={draft.mentionPermission}
+                      onChange={(e) => setDraft({ ...draft, mentionPermission: e.target.value as MentionPermission })}
+                    >
+                      {/* 값(`auto`·`readonly`)은 저장·전송용이라 번역하지 않는다 — 라벨이
+                          그 값을 앞에 세우는 것은 같은 말이 API·설정 파일에도 나오기 때문이다. */}
+                      <option value="auto">{t('agents.permissions.mentionAuto')}</option>
+                      <option value="readonly">{t('agents.permissions.mentionReadonly')}</option>
+                    </select>
+                    <span className="text-meta text-fg-subtle">{t('agents.permissions.mentionNote')}</span>
+                  </label>
+                )}
+
+
+                <label className={label}>
+                  Working directory
+                  <input
+                    className={field}
+                    aria-label="Working directory"
+                    placeholder={t('agents.permissions.workingDirPlaceholder')}
+                    value={draft.workingDir}
+                    onChange={(e) => setDraft({ ...draft, workingDir: e.target.value })}
+                  />
+                </label>
+
+                {selected && isAdmin && (
+                  <label className={label}>
+                    {t('agents.permissions.ownerLabel')}
+                    <select
+                      className={field}
+                      aria-label="Owner"
+                      value={draft.ownerAccountId ?? ''}
+                      onChange={(e) => setDraft({ ...draft, ownerAccountId: e.target.value || null })}
+                    >
+                      <option value="">{t('agents.permissions.ownerNone')}</option>
+                      {humanAccounts.map((a) => (
+                        <option key={a.id} value={a.id}>{a.handle}</option>
+                      ))}
+                    </select>
+                    <span className="text-meta text-fg-subtle">{t('agents.permissions.ownerNote')}</span>
+                  </label>
+                )}
+
+                {!isAdmin && selected && (
+                  <div className="rounded-row border border-border bg-surface p-3">
+                    <div className="text-meta text-fg-subtle">
+                      {draft.ownerAccountId
+                        ? t('agents.permissions.ownerReadOnly', { handle: accounts[draft.ownerAccountId]?.handle ?? '?' })
+                        : t('agents.permissions.ownerReadOnlyNone')}
+                    </div>
+                    {/* admin 전용 필드의 **값**은 숨길 것이 아니다 — 숨기면 소유자는 자기 에이전트가
+                        읽기 전용인지도 모른 채 부른다. 바꿀 수 없다는 것만 분명히 한다. */}
+                    <div className="mt-1 text-meta text-fg-subtle">
+                      {t('agents.permissions.mentionReadOnlyValue', { value: draft.mentionPermission })}
+                    </div>
                   </div>
                 )}
-                <p className="mt-2 text-meta text-fg-subtle">{t('agents.assignment.note')}</p>
-                {/* 양쪽 동의의 둘째 절반 — 이 머신의 오퍼레이터 로컬 설정(스펙 §3 능력). */}
-                <LocalOperatorRow agentId={selected.id} disabled={busy} />
-              </div>
-            )}
 
-            {/* 스펙 2026-09-20 §6: 누가 깨울 수 있고 무슨 자격증명을 쥐나. 배정 뒤에 두는 이유는
-                personal 자격증명이 배정을 제한하기 때문이다(소유자 자신의 오퍼레이터에만). */}
-            {selected && (isAdmin || isOwner) && (
-              <AgentScopeSection
-                agent={selected}
-                agents={agents}
-                disabled={busy}
-                onUpdated={(updated) => {
-                  setSelected(updated);
-                  setAgents((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
-                }}
-              />
-            )}
+                </FieldGroup>
+              )}
 
-            {/* 087: 다른 에이전트가 부르며 고를 수 있는 (모델·effort). 서버 문이 사람·**소유자**라서
-                admin 이어도 소유자가 아니면 그리지 않는다(저장이 403 owner_only). */}
-            {selected && myId !== undefined && selected.ownerAccountId === myId && (
-              <AgentPickableSection agent={selected} disabled={busy} />
-            )}
+              {/* 스펙 2026-09-20 §6: 누가 깨울 수 있고 무슨 자격증명을 쥐나. 배정 뒤에 두는 이유는
+                  personal 자격증명이 배정을 제한하기 때문이다(소유자 자신의 오퍼레이터에만). */}
+              {selected && (isAdmin || isOwner) && (
+                <AgentScopeSection
+                  agent={selected}
+                  agents={agents}
+                  disabled={busy}
+                  onUpdated={(updated) => {
+                    setSelected(updated);
+                    setAgents((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+                  }}
+                />
+              )}
 
-            {selected && (isAdmin || isOwner) && (
-              <div className="rounded border border-border p-3">
-                <div className="text-meta font-medium text-fg-muted">PAT (Personal Access Token)</div>
-                <div className="mt-2 space-y-2">
-                  {pats === null ? (
-                    <div className="text-meta text-fg-muted">{t('agents.pat.loading')}</div>
-                  ) : pats === 'error' ? (
-                    // 실패를 '없음'으로 그리면 살아 있는 PAT 를 없다고 하고, 그 위에서
-                    // "새로 발급해야 한다"까지 말하게 된다(docs/design.md 4절).
-                    <div className="text-meta text-danger" role="alert">{t('agents.pat.listFailed')}</div>
-                  ) : pats.length === 0 ? (
-                    /* #251: 켜진 에이전트에 PAT 가 0개면 러너가 뜰 수 없다 — 비활성화가
-                       PAT 를 전부 폐기하고 다시 켜도 되살리지 않으므로(서버가 해시만
-                       보관한다), 재발급이 필요하다는 것을 이 자리에서 말한다. 꺼진
-                       에이전트에서는 0개가 정상 상태라 권하지 않는다. */
-                    <div className={`text-meta ${selected.disabled ? 'text-fg-muted' : 'text-warning'}`}>
-                      {selected.disabled ? t('agents.pat.none') : t('agents.pat.noneNeedsMint')}
-                    </div>
+              {/* 087: 다른 에이전트가 부르며 고를 수 있는 (모델·effort). 서버 문이 사람·**소유자**라서
+                  admin 이어도 소유자가 아니면 그리지 않는다(저장이 403 owner_only). */}
+              {selected && myId !== undefined && selected.ownerAccountId === myId && (
+                <AgentPickableSection agent={selected} disabled={busy} />
+              )}
+
+              {/* 옛 러너 토큰(결정 harkroom 스레드 c4f4dab4). 러너는 오퍼레이터 토큰으로 서고 발급은 닫혔다 —
+                  **살아 있는 것이 있을 때만** 그것을 지우는 자리로 선다. 0개면 칸 자체가 없다. 폐기된 줄은
+                  보이지 않는다(할 일이 없는 줄이다). 못 읽었으면 그 사실을 말한다 — 숨기면 지울 토큰이 있는데
+                  칸이 사라진다. 「없다 — 새로 발급하라」 안내는 지웠다(security 조건 b): 다 폐기한 사람에게
+                  쓸모없는 토큰을 다시 찍으라고 시켰다. */}
+              {selected && (isAdmin || isOwner) && (pats === 'error' || livePats.length > 0) && (
+                <div className="rounded-row border border-border p-3" data-testid="legacy-pats">
+                  <div className="text-meta font-medium text-fg-muted">{t('agents.pat.heading')}<ImmediateBadge label={t('agents.detail.immediate')} /></div>
+                  {pats === 'error' ? (
+                    <div className="mt-2 text-meta text-danger" role="alert">{t('agents.pat.listFailed')}</div>
                   ) : (
-                    pats.map((p) => (
-                      <div key={`${p.label}:${p.createdAt}`} className="flex items-center justify-between rounded bg-surface px-2 py-1.5">
-                        <div className="text-meta">
-                          <span className="font-medium">{p.label}</span>
-                          {p.revokedAt && (
-                            <span className="ml-2 text-danger">{t('agents.pat.revoked')}</span>
-                          )}
-                          <span className="ml-2 text-fg-muted">
-                            {new Date(p.createdAt).toLocaleDateString()}
-                          </span>
-                        </div>
-                        {!p.revokedAt && (
-                          revoking === p.label ? (
-                            <div className="flex items-center gap-1">
-                              <button
-                                className="rounded border border-danger-border bg-danger-surface px-1.5 py-0.5 text-meta text-danger"
-                                onClick={() => void revokePat(p.label)}
-                              >
-                               {t('agents.pat.revokeConfirm')}
-                              </button>
-                              <button
-                                className="px-1.5 py-0.5 text-meta text-fg-subtle"
-                                onClick={() => setRevoking(null)}
-                              >
-                               {t('agents.pat.revokeCancel')}
-                              </button>
+                    <>
+                      <p className="mt-1 text-meta text-fg-muted">{t('agents.pat.legacyNote')}</p>
+                      <div className="mt-2 space-y-2">
+                        {livePats.map((p) => (
+                          <div key={`${p.label}:${p.createdAt}`} className="flex items-center justify-between rounded-row bg-surface px-2 py-1.5">
+                            <div className="text-meta">
+                              <span className="font-medium">{p.label}</span>
+                              <span className="ml-2 text-fg-muted">
+                                {new Date(p.createdAt).toLocaleDateString()}
+                              </span>
                             </div>
-                          ) : (
-                            <button
-                              className="text-meta text-danger hover:underline"
-                              onClick={() => setRevoking(p.label)}
-                            >
-                              {t('agents.pat.revoke')}
-                            </button>
-                          )
-                        )}
+                            {revoking === p.label ? (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  className="rounded-row border border-danger-border bg-danger-surface px-1.5 py-0.5 text-meta text-danger"
+                                  onClick={() => void revokePat(p.label)}
+                                >
+                                 {t('agents.pat.revokeConfirm')}
+                                </button>
+                                <button
+                                  className="px-1.5 py-0.5 text-meta text-fg-subtle"
+                                  onClick={() => setRevoking(null)}
+                                >
+                                 {t('agents.pat.revokeCancel')}
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                className="text-meta text-danger hover:underline"
+                                onClick={() => setRevoking(p.label)}
+                              >
+                                {t('agents.pat.revoke')}
+                              </button>
+                            )}
+                          </div>
+                        ))}
                       </div>
-                    ))
+                      <div className="mt-2">
+                        <button
+                          data-testid="pat-revoke-all"
+                          className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger disabled:opacity-50"
+                          disabled={busy}
+                          onClick={() => setConfirmingRevokeAll(true)}
+                        >
+                          {t('agents.pat.revokeAll', { n: String(livePats.length) })}
+                        </button>
+                      </div>
+                    </>
                   )}
                 </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <input
-                    ref={newPatLabelRef}
-                    className="w-40 rounded border border-border bg-field px-2 py-1"
-                    aria-label={t('agents.pat.label')}
-                    placeholder="runner"
-                    value={newPatLabel}
-                    onChange={(e) => setNewPatLabel(e.target.value)}
-                  />
-                  <button
-                    className="rounded bg-surface-sunken px-2 py-1 text-meta font-medium text-fg hover:bg-surface-hover disabled:opacity-50"
-                    disabled={busy || newPatLabel.trim() === ''}
-                    onClick={() => void mintNewPat()}
-                  >
-                    {t('agents.pat.mint')}
-                  </button>
+              )}
+            </div>
+
+            <div {...detailPanel('memory')}>
+              {selected && (isAdmin || isOwner) && (
+                <div className="rounded-row border border-border p-3">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <div className="text-meta font-medium text-fg-muted">{t('agents.memory.heading')}</div>
+                    {memoryAll !== null && memoryAll.length > 0 && (
+                      <div
+                        data-testid="memory-count"
+                        title={memoryNearLimit ? t('agents.memory.limitNote') : undefined}
+                        className={`text-meta ${memoryNearLimit ? 'text-warning' : 'text-fg-subtle'}`}
+                      >
+                        {t('agents.memory.count', {
+                          n: memoryParts!.active.length, max: MAX_MEMORY_ITEMS_PER_ACCOUNT,
+                        })}
+                        {memoryParts!.archived.length > 0 && (
+                          <span data-testid="memory-archived-count">
+                            {` · ${t('agents.memory.archivedCount', { n: memoryParts!.archived.length })}`}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {/* 읽기·삭제만이다. 편집을 넣지 않는 이유(#139): 사람이 고쳐도 에이전트가
+                      다음 턴에 덮어쓰면 **사람은 자기 수정이 왜 사라졌는지 알 수 없다.** */}
+                  <div className="mt-2 space-y-2">
+                    {memories === null && <div className="text-meta text-fg-muted">{t('agents.memory.loading')}</div>}
+                    {memories === 'error' && (
+                      <div role="alert" className="text-meta text-danger">{t('agents.memory.failed')}</div>
+                    )}
+                    {memoryAll !== null && memoryAll.length === 0 && (
+                      <div className="text-meta text-fg-muted">{t('agents.memory.empty')}</div>
+                    )}
+
+                    {/*
+                      건강 띠와 「정리할 것」 칩(#1186 audit). 숫자는 위 머리의 N/200 과 같은 셈이고,
+                      칩 숫자는 **기억 수**다(lib `cleanupChips`). 0 인 칩은 그리지 않는다.
+                    */}
+                    {memoryParts && memoryParts.active.length > 0 && (
+                      <div data-testid="memory-health" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-fg-subtle">
+                        <span>
+                          {t('agents.memory.journalCount', {
+                            n: memoryParts.active.filter((m) => m.kind === 'journal').length,
+                            max: MAX_JOURNAL_MEMORIES_PER_ACCOUNT,
+                          })}
+                        </span>
+                        <span>{t('agents.memory.usedRecently', { n: usedWithin(memoryParts.active, 7, Date.now()) })}</span>
+                      </div>
+                    )}
+                    {memoryChips.length > 0 && (
+                      <div data-testid="memory-chips" className="flex flex-wrap items-center gap-1" role="group" aria-label={t('agents.memory.cleanupHeading')}>
+                        <span className="mr-1 text-meta font-medium text-fg-muted">{t('agents.memory.cleanupHeading')}</span>
+                        {memoryChips.map((c) => (
+                          <button
+                            key={c.key}
+                            data-testid={`memory-chip-${c.key}`}
+                            aria-pressed={memChip === c.key}
+                            className={`rounded-row border px-1.5 text-meta ${
+                              memChip === c.key ? 'border-warning-border bg-warning-surface text-warning' : 'border-border text-fg-muted'
+                            }`}
+                            onClick={() => setMemChip((prev) => (prev === c.key ? null : c.key))}
+                          >
+                            {`${t(`agents.memory.chip.${c.key}`)} ${chipCount(c)}`}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {/*
+                      「정리 맡기기」(PR 5). 합치기·증류처럼 판단이 필요한 일은 그 에이전트에게 DM 으로 맡긴다.
+                      초안에는 **이름과 범위만** 싣고 본문은 싣지 않는다(lib `cleanupRequestBody`). 보낸 뒤에도
+                      이 탭에 머문다 — 사람은 하던 정리를 이어 가고, 답은 DM 에 온다.
+                    */}
+                    {memoryParts && memoryParts.active.length > 0 && memCleanup === null && (
+                      <button
+                        data-testid="memory-cleanup-open"
+                        className="rounded-row border border-border bg-surface px-1.5 text-meta text-fg-muted"
+                        onClick={() => setMemCleanup(CLEANUP_SCOPES.filter((sc) => (
+                          sc === 'picked' ? memoryPickedActive.length > 0 : memoryCleanupSlugs[sc].length > 0)))}
+                      >
+                        {t('agents.memory.cleanupOpen', { handle: selected.handle })}
+                      </button>
+                    )}
+                    {memCleanup === null && memCleanupSent?.agentId === selected.id && (
+                      <span data-testid="memory-cleanup-sent" className="ml-2 text-meta text-fg-subtle">
+                        {t('agents.memory.cleanupSentAgo', { ago: agoLabel(memCleanupSent.at, Date.now(), locale, t) })}
+                      </span>
+                    )}
+                    {memCleanup !== null && (
+                      <div data-testid="memory-cleanup-sheet" className="space-y-2 rounded-row border border-border bg-surface p-2">
+                        <div className="text-meta font-semibold">{t('agents.memory.cleanupTitle', { handle: selected.handle })}</div>
+                        <div className="text-meta text-fg-subtle">{t('agents.memory.cleanupNote')}</div>
+                        {memoryCleanupBlocked && (
+                          <div data-testid="memory-cleanup-blocked" role="note" className="text-meta text-warning">
+                            {t('agents.memory.cleanupBlocked', { handle: selected.handle })}
+                          </div>
+                        )}
+                        <div className="flex flex-col gap-0.5">
+                          {CLEANUP_SCOPES.map((sc) => {
+                            const n = memoryCleanupSlugs[sc].length;
+                            return (
+                              <label key={sc} className={`flex items-baseline gap-2 text-meta ${n === 0 ? 'text-fg-subtle' : ''}`}>
+                                <input
+                                  type="checkbox"
+                                  data-testid={`memory-cleanup-scope-${sc}`}
+                                  disabled={n === 0}
+                                  checked={n > 0 && memCleanup.includes(sc)}
+                                  onChange={() => setMemCleanup((prev) => (prev ? toggleIn(prev, sc) as CleanupScope[] : prev))}
+                                />
+                                <span>{t(`agents.memory.cleanupScope.${sc}`)}</span>
+                                <span className="text-fg-subtle">{n}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        {memoryCleanupBody && (
+                          // 본문 글꼴로, 끝까지 — 맨 끝 절차 문구가 사람이 무엇을 시키는지 확인할 문장이다(nit 1).
+                          <div data-testid="memory-cleanup-preview" className="rounded-sm bg-surface-sunken p-1.5 font-sans text-meta whitespace-pre-wrap break-words text-fg-muted">
+                            {memoryCleanupBody}
+                          </div>
+                        )}
+                        <div className="flex gap-1">
+                          <button
+                            data-testid="memory-cleanup-send"
+                            className="rounded-row border border-border bg-surface-agent px-2 text-meta text-fg-agent disabled:opacity-50"
+                            disabled={memCleanupBusy || memoryCleanupBlocked || !memCleanup.some((sc) => memoryCleanupSlugs[sc].length > 0)}
+                            onClick={memoryCleanupSend}
+                          >
+                            {t('agents.memory.cleanupSend', { handle: selected.handle })}
+                          </button>
+                          <button className="rounded-row border border-border px-2 text-meta text-fg-muted" onClick={() => { setMemCleanup(null); setMemCleanupError(null); }}>
+                            {t('agents.memory.cancelEdit')}
+                          </button>
+                          {memCleanupError && (
+                            <span data-testid="memory-cleanup-error" role="alert" className="self-center text-meta text-danger">{memCleanupError}</span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    {memNotice && (
+                      <div
+                        data-testid="memory-notice"
+                        role="status"
+                        className={`text-meta ${memNotice.tone === 'warn' ? 'text-warning' : 'text-fg-muted'}`}
+                      >
+                        {memNotice.text}
+                        {/* 답이 오는 DM 으로 가는 길 — 이 탭은 그대로 두고 새 창으로 연다(nit 2). */}
+                        {memNotice.dmId && (
+                          <button
+                            data-testid="memory-notice-open-dm"
+                            className="ml-2 underline decoration-dotted"
+                            onClick={() => openWindow({ kind: 'channel', channelId: memNotice.dmId! })}
+                          >
+                            {t('agents.memory.cleanupOpenDm')}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {memPicked.length > 0 && (
+                      <div data-testid="memory-picked-bar" className="flex flex-wrap items-center gap-2 rounded-row border border-border bg-surface-sunken px-2 py-1">
+                        <span className="text-meta font-medium">{t('agents.memory.picked', { n: memPicked.length })}</span>
+                        {memoryPickedHidden > 0 && (
+                          <span data-testid="memory-picked-hidden" className="text-meta text-warning">
+                            {t('agents.memory.pickedHidden', { n: memoryPickedHidden })}
+                          </span>
+                        )}
+                        {memoryPickedActive.length > 0 && (
+                          <button
+                            data-testid="memory-archive-picked"
+                            className={`rounded-row border px-1.5 text-meta ${
+                              memoryOverflow > 0 ? 'border-warning-border bg-warning-surface text-warning' : 'border-border text-fg-muted'
+                            }`}
+                            disabled={memBusy}
+                            onClick={() => memoryBatch('archive', memoryPickedActive)}
+                          >
+                            {t(memoryOverflow > 0 ? 'agents.memory.archivePickedAnyway' : 'agents.memory.archivePicked', { n: memoryPickedActive.length })}
+                          </button>
+                        )}
+                        {memoryPickedArchived.length > 0 && (
+                          <button
+                            data-testid="memory-unarchive-picked"
+                            className="rounded-row border border-border px-1.5 text-meta text-fg-muted"
+                            disabled={memBusy}
+                            onClick={() => memoryBatch('unarchive', memoryPickedArchived)}
+                          >
+                            {t('agents.memory.unarchivePicked', { n: memoryPickedArchived.length })}
+                          </button>
+                        )}
+                        <button className="ml-auto text-meta text-fg-muted" onClick={() => setMemPicked([])}>
+                          {t('agents.memory.clearPicks')}
+                        </button>
+                        {memoryOverflow > 0 && (
+                          <div data-testid="memory-archive-overflow" className="w-full text-meta text-warning">
+                            {t('agents.memory.archiveOverflow', { n: memoryOverflow, max: MAX_ARCHIVED_MEMORIES })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/*
+                      `core` 는 목록에 서지 않는다. **매 턴 통째로 프롬프트에 실리는 것은
+                      이것뿐**이고 나머지는 필요할 때만 열리므로, 같은 줄에 두면 화면이 그
+                      차이를 말하지 않게 된다. 강조색을 쓰지 않는 이유(#488 B2): 이 카드는
+                      나를 막지 않는다 — 에이전트의 것을 가리키는 축(`surface-agent`)이 제자리다.
+                    */}
+                    {memorySplit?.core && (
+                      <div
+                        data-testid="memory-core"
+                        className="rounded-row border border-border-agent bg-surface-agent px-2 py-1.5"
+                      >
+                        <div className="flex items-baseline gap-2">
+                          <button
+                            className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
+                            aria-expanded={openSlugs.includes(memorySplit.core.slug)}
+                            aria-label={t(
+                              openSlugs.includes(memorySplit.core.slug)
+                                ? 'agents.memory.collapse' : 'agents.memory.expand',
+                              { slug: memorySplit.core.slug },
+                            )}
+                            onClick={() => setOpenSlugs((prev) => toggleIn(prev, 'core'))}
+                          >
+                            <span aria-hidden="true" className="flex-none text-meta text-fg-agent">
+                              {openSlugs.includes(memorySplit.core.slug) ? '▾' : '▸'}
+                            </span>
+                            <span className="flex-none text-meta font-medium">{memorySplit.core.slug}</span>
+                            <span className="flex-none rounded-full border border-border-agent px-1.5 text-meta text-fg-agent">
+                              {t('agents.memory.coreTag')}
+                            </span>
+                            {/* core 는 칩에서 빠지므로(lib `cleanupChips`) 걸린 판이면 카드가 직접 말한다. */}
+                            {memorySplit.core.flaggedAt && (
+                              <span data-testid="memory-flag-badge" className="flex-none rounded-sm bg-warning-surface px-1 text-meta text-warning">
+                                {t('agents.memory.flaggedTag')}
+                              </span>
+                            )}
+                            <span className="min-w-0 flex-1 truncate text-meta text-fg-subtle">
+                              {memorySummary(memorySplit.core.value)}
+                            </span>
+                          </button>
+                          {memoryDelete(memorySplit.core.slug, selected.id)}
+                        </div>
+                        {/* 길이가 곧 매 턴의 비용이다 — 게이지가 그것을 수가 아니라 자리로 말한다. */}
+                        <div className="mt-1.5 flex items-center gap-2">
+                          <div className="h-1 flex-1 overflow-hidden rounded-full bg-border">
+                            <div
+                              className={`h-full rounded-full ${
+                                memorySplit.core.value.length >= MAX_CORE_MEMORY_LENGTH * 0.9
+                                  ? 'bg-warning' : 'bg-fg-agent'
+                              }`}
+                              style={{
+                                width: `${Math.min(100, Math.round(
+                                  (memorySplit.core.value.length / MAX_CORE_MEMORY_LENGTH) * 100,
+                                ))}%`,
+                              }}
+                            />
+                          </div>
+                          <span className="flex-none text-meta text-fg-subtle">
+                            {t('agents.memory.charsOfMax', {
+                              n: memorySplit.core.value.length.toLocaleString(locale),
+                              max: MAX_CORE_MEMORY_LENGTH.toLocaleString(locale),
+                            })}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-meta text-fg-subtle">{t('agents.memory.coreNote')}</div>
+                        {openSlugs.includes(memorySplit.core.slug) && (
+                          <div className="mt-1">
+                            <MemoryDetail agentId={selected.id} entry={memorySplit.core} onChanged={() => loadMemories(selected, true)} />
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/*
+                      목록/상세 두 칸(PR 4). 갈림은 창이 아니라 이 칸의 실제 폭(`memWide`)으로 한다. 좁으면 상세는
+                      고른 줄 아래에 펼친다.
+                    */}
+                    <div ref={memLayoutRef}>
+                    <div className={memWide ? 'grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-2' : ''}>
+                    <div className="min-w-0 space-y-2">
+                    {/* 남은 것이 모두 보관됐어도 보관함을 찾을 수 있게 검색창은 둘 중 하나만 있어도 선다. */}
+                    {memorySplit && (memorySplit.rest.length > 0 || memoryParts!.archived.length > 0) && (
+                      <>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            className="min-w-0 flex-1 rounded-row border border-border bg-field px-2 py-1 text-meta"
+                            value={memQuery}
+                            placeholder={t('agents.memory.search')}
+                            aria-label={t('agents.memory.search')}
+                            onChange={(e) => setMemQuery(e.target.value)}
+                          />
+                          {/* 두 축뿐이라 고르는 자리를 접지 않는다 — 셀렉트로 두면 지금 무엇으로
+                              정렬돼 있는지를 누르기 전에는 알 수 없다. */}
+                          <div className="flex flex-none overflow-hidden rounded-row border border-border" role="group" aria-label={t('agents.memory.sortLabel')}>
+                            {(['recent', 'name'] as const).map((k) => (
+                              <button
+                                key={k}
+                                aria-pressed={memSort === k}
+                                className={`px-2 py-1 text-meta ${
+                                  memSort === k ? 'bg-surface-sunken font-medium' : 'text-fg-muted'
+                                }`}
+                                onClick={() => setMemSort(k)}
+                              >
+                                {t(k === 'recent' ? 'agents.memory.sortRecent' : 'agents.memory.sortName')}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {memorySplit.rest.length > 0 && (
+                        <div className="overflow-hidden rounded-row border border-border">
+                          {/*
+                            **"없다" 와 다르다** — 이 검색어에 걸리는 것이 없을 뿐이다. 보관함에만 걸렸으면
+                            그렇게 말한다 — "결과 없음" 바로 아래에 결과가 보이면 화면이 스스로 어긋난다.
+                          */}
+                          {memoryVisible.length === 0 && (
+                            <div data-testid="memory-no-match" className="px-2 py-1 text-meta text-fg-muted">
+                              {memoryArchived.length > 0 && memorySearching
+                                ? t('agents.memory.noMatchActive', { n: memoryArchived.length })
+                                : t('agents.memory.noMatch')}
+                            </div>
+                          )}
+                          {memoryKindSections.map((sec) => (
+                            <div key={sec.kind} data-testid={`memory-section-${sec.kind}`} className="border-t border-border first:border-t-0">
+                              {/* 칸 머리가 그 안의 접두어 묶음 머리보다 약하면 위계가 뒤집힌다(nit 2). */}
+                              <div className="flex items-baseline gap-2 bg-surface-sunken px-2 py-0.5 text-meta font-semibold text-fg">
+                                <span>{t(`agents.memory.section.${sec.kind}`)}</span>
+                                <span className="ml-auto font-normal">{t('agents.memory.groupCount', { n: sec.count })}</span>
+                              </div>
+                          {sec.rows.map((row) => {
+                            if (row.kind === 'item') return memoryRow(row.item, false);
+                            const groupKey = `${sec.kind}:${row.group.key}`;
+                            const openGroup = memorySearching || openGroups.includes(groupKey);
+                            return (
+                              <div key={groupKey} className="border-t border-border">
+                                <button
+                                  data-testid={`memory-group-${row.group.key}`}
+                                  className="flex w-full items-baseline gap-2 bg-surface-agent px-2 py-1 text-left text-fg-agent"
+                                  aria-expanded={openGroup}
+                                  aria-label={t(
+                                    openGroup ? 'agents.memory.groupCollapse' : 'agents.memory.groupExpand',
+                                    { key: row.group.key },
+                                  )}
+                                  onClick={() => setOpenGroups((prev) => toggleIn(prev, groupKey))}
+                                >
+                                  <span aria-hidden="true" className="flex-none text-meta">{openGroup ? '▾' : '▸'}</span>
+                                  <span className="text-meta font-medium">{`${row.group.key}…`}</span>
+                                  <span className="ml-auto flex-none text-meta">
+                                    {t('agents.memory.groupCount', { n: row.group.items.length })}
+                                  </span>
+                                </button>
+                                {openGroup && row.group.items.map((m) => memoryRow(m, true))}
+                              </div>
+                            );
+                          })}
+                            </div>
+                          ))}
+                        </div>
+                        )}
+                      </>
+                    )}
+
+                    {/*
+                      보관된 것(서버 097)은 에이전트 목록·recall·상한에서 빠진다 — 그래서 위 목록과
+                      숫자에 섞지 않고 맨 아래 접힌 칸에 둔다. 검색 중에는 걸린 것만 연 채로 보인다.
+                    */}
+                    {memoryArchived.length > 0 && (
+                      <div data-testid="memory-archived" className="overflow-hidden rounded-row border border-border">
+                        <button
+                          className="flex w-full items-baseline gap-2 px-2 py-1 text-left text-fg-muted"
+                          aria-expanded={memorySearching || openGroups.includes(ARCHIVED_GROUP)}
+                          aria-label={t(
+                            memorySearching || openGroups.includes(ARCHIVED_GROUP)
+                              ? 'agents.memory.archivedCollapse' : 'agents.memory.archivedExpand',
+                          )}
+                          onClick={() => setOpenGroups((prev) => toggleIn(prev, ARCHIVED_GROUP))}
+                        >
+                          <span aria-hidden="true" className="flex-none text-meta">
+                            {memorySearching || openGroups.includes(ARCHIVED_GROUP) ? '▾' : '▸'}
+                          </span>
+                          <span className="text-meta font-medium">{t('agents.memory.archivedHeading')}</span>
+                          <span className="ml-auto flex-none text-meta">
+                            {t('agents.memory.groupCount', { n: memoryArchived.length })}
+                          </span>
+                        </button>
+                        {(memorySearching || openGroups.includes(ARCHIVED_GROUP)) && (
+                          <>
+                            <div className="border-t border-border px-2 py-1 text-meta text-fg-subtle">
+                              {t('agents.memory.archivedNote')}
+                            </div>
+                            {memoryArchived.map((m) => memoryRow(m, true, true))}
+                          </>
+                        )}
+                      </div>
+                    )}
+                    </div>
+                    {memWide && memorySelectedEntry && (
+                      <div className="sticky top-0 min-w-0">{memoryDetailPane(memorySelectedEntry, selected.id)}</div>
+                    )}
+                    </div>
+                    </div>
+                  </div>
                 </div>
-                <p className="mt-1 text-meta text-fg-muted">{t('agents.pat.labelNote')}</p>
-              </div>
-            )}
+              )}
+            </div>
 
             {/* #176: 목록 조회가 실패하면 마지막 활동도 presence 도 알 수 없다 — 그때 빈 화면을
                 그리면 '에이전트가 없다'와 '못 읽었다'가 같아진다. 위 PAT 로더가 실패를
@@ -2367,166 +3262,62 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 는 스크린리더에 아무 말도 하지 않는다. */}
             {error && <p role="alert" className="text-meta text-danger">{error}</p>}
 
-            {pat && (
-              // 서버가 해시만 보관하므로 지금 놓치면 다시 볼 수 없다.
-              <div className="rounded border border-warning-border bg-warning-surface p-3">
-                <div className="text-meta font-semibold text-warning">{t('agents.pat.shownOnce')}</div>
-                {/* 토큰 **자체**를 복사하는 버튼. 아래 명령 복사와 둘 다 남는 이유:
-                    이 토큰이 가는 곳이 러너 명령만이 아니다 — 다른 기기의 `.env`,
-                    비밀 저장소, CI 변수처럼 명령 껍데기가 방해가 되는 자리가 있고,
-                    그때 사람은 명령을 복사해 앞뒤를 손으로 잘라내야 했다. 잘라내다
-                    한 글자를 흘리면 인증만 조용히 실패한다(#125 가 잘린 토큰에 대해
-                    지적한 것과 같은 결말).
-
-                    문구는 아래 명령 복사와 **같은 키를 쓴다**(`agents.runner.copy`) —
-                    글자가 `Copy`/`Copied` 하나뿐인데 사전에 두 벌을 두면 한쪽만
-                    번역되는 날이 온다. 무엇을 복사하는지는 `aria-label` 이 가른다. */}
-                <div className="mt-1 flex items-start gap-2">
-                  <code
-                    ref={patRef}
-                    className="min-w-0 flex-1 break-all rounded bg-surface-raised p-2 text-meta"
-                  >
-                    {pat}
-                  </code>
-                  <button
-                    className="shrink-0 rounded border border-warning-border bg-warning-surface-strong px-1.5 py-0.5 text-meta text-warning hover:bg-warning-border"
-                    aria-label={t('agents.pat.copyToken')}
-                    onClick={async () => {
-                      setError(null);
-                      // 자르지 않는다 — 화면에 있는 그 문자열 전체가 클립보드로 간다.
-                      const ok = await copyToClipboard(pat, patRef.current, setError, t);
-                      if (ok) {
-                        setCopySuccess('pat');
-                        setTimeout(() => setCopySuccess((c) => c === 'pat' ? null : c), 2000);
-                      }
-                    }}
-                  >
-                    {copySuccess === 'pat' ? t('agents.runner.copied') : t('agents.runner.copy')}
-                  </button>
-                </div>
-                {/* 스펙 2026-09-20 §2: 이 토큰을 러너 명령에 심어 복사시키던 자리였다. 이제
-                    배정된 오퍼레이터가 이 토큰을 서버에서 직접 받아 가므로(단계 2 한정;
-                    단계 4 가 PAT 자체를 없앤다) 사람이 옮겨 적을 일이 없다. 손으로 띄우는
-                    길만 이 토큰이 필요하고, 그 안내가 아래 한 줄이다. */}
-                <p className="mt-2 text-meta text-warning">{t('agents.runner.operatorTakesPat')}</p>
-              </div>
-            )}
-
-            {/* #250: 이 앱이 띄운 러너의 상태와 회전 버튼. **소유자에게도 보인다** —
-                실행기의 대상 판정이 `ownerAccountId === 내 id` 이므로, admin 에게만 보이면
-                자기 러너를 띄운 소유자가 그 상태를 볼 수도 재발급할 수도 없다.
-
-                이 절은 위 "러너 실행" 명령 틀(#177)과 **둘 다** 남는다: 앱이 띄우는 것은
-                내가 소유한 에이전트뿐이고, 남의 머신에서 손으로 띄우는 길은 그대로 있다.
-
-                **앞 판본은 여기에 "그렇게 뜬 러너는 '외부에서 실행 중'으로 보인다"고
-                적어 뒀었다. 두 군데가 틀렸다**(`#482`, `#430`):
-
-                1. `external` 이라는 상태가 없어졌다 — 지금 값은 `adopted` 이고 화면 문구는
-                   `RunnerStatus.tsx::runnerStatusLabel` 이 정한다.
-                2. 더 중요하게, **손으로 띄운 러너는 그렇게 보이지 않는다.** `adopted` 는
-                   *"이 daemon 의 장부에 있고 `kill(pid, 0)` 으로 살아 있음을 확인했다"* 이고,
-                   장부에는 **이 daemon 이 spawn 한 것만** 들어간다. 남이 띄운 러너는 장부에
-                   없으므로 daemon 은 그 존재를 모른다 — 서버 presence 에 보이면 그 어긋남을
-                   사유 한 줄로 말할 뿐 상태로 삼지 않는다(`runnerLauncher.ts::STRANGER_ATTACHED`).
-                   판정을 presence 추측에서 daemon 관측으로 옮긴 것이 `#430` 의 핵심이었다. */}
-            {selected && (isAdmin || (myId !== undefined && selected.ownerAccountId === myId)) && (
-              <div className="rounded border border-border p-3">
-                <div className="text-meta font-medium text-fg-muted">{t('agents.runner.heading')}</div>
-                {/* 상태 문구를 여기 하드코딩하지 않는다 — `runnerStatusLabel` 에서 받아 온다.
-                    이 설명이 낡았던 이유가 정확히 그 하드코딩이었다: `#482` 가 `external` 을
-                    `adopted` 로 바꾸며 `RunnerStatus.tsx` 의 문구를 고쳤는데, 같은 말을 제 손으로
-                    적어 둔 이 문장은 따라오지 않아 화면 두 자리가 서로 다른 말을 했다.
-                    같은 출처에서 내면 다음 개명도 저절로 따라온다. */}
-                <p className="mt-1 text-meta text-fg-subtle">
-                  {/* `{label}` 은 `runnerStatusLabel` 이 낸다 — 상태 이름을 이 문장이 제 손으로
-                      적으면 `RunnerStatus.tsx` 가 바뀔 때 여기만 낡는다(위 import 주석). */}
-                  {emphasize(
-                    t('agents.runner.ownedNote', {
-                      label: runnerStatusLabel({ agentId: '', status: 'adopted', exitCode: null, message: null }, t),
-                    }),
-                    {
-                      strongOwn: t('agents.runner.ownedNoteOwn'),
-                      strongDaemon: t('agents.runner.ownedNoteDaemon'),
-                    },
-                  )}
-                </p>
-                {/* 남이 띄운 러너를 이 화면이 못 본다는 것은 **한계 고백**이라 따로 적는다.
-                    앞 문장에 "누가 띄웠든"으로 뭉쳐 두면 사람은 손으로 띄운 러너도 여기
-                    나타날 것으로 읽고, 안 나타나면 앱이 고장 났다고 판단한다. */}
-                <p className="mt-1 text-meta text-fg-subtle">
-                  {emphasize(t('agents.runner.daemonScope'), {
-                    strongOnlyOwn: t('agents.runner.daemonScopeOnlyOwn'),
-                  })}
-                </p>
-                <div className="mt-2">
-                  <RunnerStatusLine state={runnerStates[selected.id]} />
-                </div>
-                {/* #443: **daemon 이 직접 확인한 사실**을 바로 위 판정 옆에 얹는다
-                    (정본 문서 `docs/desktop-agent-cards.html` 3단계).
-
-                    ## 새 구획을 만들지 않았다
-
-                    이 절('러너 (이 앱)')이 이미 러너를 말하는 자리이고, 위
-                    `RunnerStatusLine` 이 **이 앱의 판정**을 내놓는다. daemon 의 사실을 다른
-                    구획으로 보내면 사람은 같은 러너에 대한 두 이야기를 화면 두 곳에서
-                    찾아 맞춰 봐야 한다 — 그리고 이 정보가 필요해지는 순간(*"눌렀는데 왜 안
-                    죽지"*)에는 그 둘을 **나란히** 봐야 답이 나온다.
-
-                    ## 카드에는 안 올린다
-
-                    문서가 명시했다: *"카드에 올릴 것은 아니지만 상세에는 있어야 한다."*
-                    `AgentGrid` 의 `place` 축과 사이드바 격리 회귀선은 손대지 않았다.
-
-                    ## 강조색을 쓰지 않는다 (규칙 04)
-
-                    이 정보는 **나를 막지 않는다** — 사실 조회이고, 사람이 지금 무언가를
-                    해야 한다는 신호가 아니다. 그래서 회색 단으로만 적는다. 이 절에서
-                    강조·경고색을 갖는 것은 실패 사유(`RunnerStatusLine` 의 `danger`)와
-                    PAT 재발급 버튼뿐이고, 그 톤을 침범하지 않는다. */}
-                <DaemonFacts
-                  runner={daemonRunners[selected.id]}
-                  stopRequestedAt={selected.stopRequestedAt}
-                  stopAckedAt={selected.stopAckedAt}
-                />
-              </div>
-            )}
 
           </div>
 
           {/*
-            **저장은 한 쌍이다**(문서 원칙 05). 전에는 저장 버튼이 카드 안 회색 하나와 화면
-            아래 파란 하나로 갈려 있었다 — 어느 것이 무엇을 저장하는지 알 수 없었다.
-            회색 쪽(워크스페이스 기본값)은 Task 16 이 다른 화면으로 뺐고, 여기 남은 하나에
-            **되돌리기**를 짝지어 하단에만 둔다.
+            **저장 바**(designer A3). 고른 에이전트에서는 **바뀐 것이 있을 때만** 서고 그 수를 말한다 —
+            전에는 고친 것이 없어도 [Save changes] 가 같은 모양으로 떠 있어 무엇이 저장 대기인지
+            알 수 없었다. 칸마다 있던 [Save]·[Save list] 는 여기로 모였다(`pendingEdits.tsx`).
+            새 에이전트 만들기는 만들 단추가 하나뿐이라 그대로 늘 선다.
           */}
-          <footer className="flex w-full max-w-2xl gap-2 border-t border-border px-5 py-3">
-            <Button
-              variant="primary"
-              disabled={busy || draft === null}
-              onClick={() => void submit()}
+          {(!selected || pendingTotal > 0) && (
+            <footer
+              data-testid={selected ? 'agent-save-bar' : undefined}
+              className="flex w-full max-w-2xl items-center gap-2 border-t border-border px-5 py-3"
             >
-              {selected ? t('agents.detail.save') : t('agents.detail.submitNew')}
-            </Button>
-            {/* 되돌리기는 **고친 것이 있을 때만** 선다 — 누를 것이 없는 버튼을 그리지 않는다.
-                고른 에이전트를 다시 고르면 서버 값으로 초안이 다시 채워진다(`pick`). */}
-            {selected && dirty && (
+              {selected && (
+                <span data-testid="agent-save-count" className="text-meta text-fg-muted">
+                  {t('agents.detail.pendingCount', { n: String(pendingTotal) })}
+                </span>
+              )}
+              {/* 저장하지 못한 것(designer A3 수정 b). 오류 줄은 칸 자리에 그대로 두고, 바는 **어느 탭인지만**
+                  가리킨다 — 그 칸이 안 보이는 탭에 있으면 사람에게는 바만 남기 때문이다. */}
+              {selected && saveFailed && (
+                <span role="alert" data-testid="agent-save-failed" className="flex items-center gap-1 text-meta text-danger">
+                  {t('agents.detail.saveFailedCount', { n: String(saveFailed.n) })}
+                  {saveFailed.tab !== detailTab && (
+                    <button
+                      data-testid="agent-save-failed-goto"
+                      className="rounded-row px-1 underline hover:bg-surface-hover"
+                      onClick={() => setDetailTab(saveFailed.tab)}
+                    >
+                      {t('agents.detail.saveFailedGoto', { tab: t(DETAIL_TAB_LABEL[saveFailed.tab]) })}
+                    </button>
+                  )}
+                </span>
+              )}
+              {selected && (
+                <Button variant="secondary" disabled={busy} onClick={revertAll}>
+                  {t('agents.detail.revert')}
+                </Button>
+              )}
               <Button
-                variant="secondary"
-                disabled={busy}
-                onClick={() => pick(selected)}
+                variant="primary"
+                disabled={busy || draft === null}
+                onClick={() => void (selected ? saveAll() : submit())}
               >
-                {t('agents.detail.revert')}
+                {selected ? t('agents.detail.save') : t('agents.detail.submitNew')}
               </Button>
-            )}
-          </footer>
+            </footer>
+          )}
         </div>
       {createdToast && (
         <div
           data-testid="agent-created-toast"
           // 확인이지 경보가 아니다 — `Notice` 의 `alert` 보다 약하게 둔다(`UpdateToast` 와 같은 판단).
           role="status"
-          className="absolute bottom-4 left-1/2 z-50 flex max-w-[90%] -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-surface-raised py-1.5 pl-3 pr-1.5 text-body shadow-md"
+          className="absolute bottom-4 left-1/2 z-50 flex max-w-[90%] -translate-x-1/2 items-center gap-2 rounded-full bg-surface-raised py-1.5 pl-3 pr-1.5 text-body shadow-float"
         >
           <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-accent-brand" />
           <span className="truncate">{t('agents.create.created', { handle: createdToast })}</span>
@@ -2539,7 +3330,41 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           </button>
         </div>
       )}
+      {confirmingRevokeAll && selected && (
+        <ConfirmDialog
+          title={t('agents.pat.revokeAllTitle', { count: livePats.length })}
+          detail={t('agents.pat.revokeAllDetail')}
+          detailKind="note"
+          confirmLabel={t('agents.pat.revokeAllConfirm')}
+          cancelLabel={t('agents.pat.revokeCancel')}
+          danger
+          busy={busy}
+          onConfirm={() => void revokeAllPats()}
+          onCancel={() => setConfirmingRevokeAll(false)}
+        />
+      )}
+      {leaving && (
+        <ConfirmDialog
+          title={t('agents.detail.leaveTitle', { n: String(pendingTotal) })}
+          detail={t('agents.detail.leaveNote')}
+          detailKind="note"
+          confirmLabel={t('agents.detail.leaveDiscard')}
+          cancelLabel={t('agents.detail.leaveStay')}
+          danger
+          busy={busy}
+          extraLabel={t('agents.detail.leaveSave')}
+          // 저장하고 나간다(designer n2). 하나라도 못 저장하면 떠나지 않는다 — 실패를 말할 자리(바)가
+          // 이 화면에 있다.
+          onExtra={() => {
+            const go = leaving.go;
+            void saveAll().then((ok) => { setLeaving(null); if (ok) go(); });
+          }}
+          onConfirm={() => { const go = leaving.go; setLeaving(null); go(); }}
+          onCancel={() => setLeaving(null)}
+        />
+      )}
     </div>
+    </PendingEditsContext.Provider>
   );
 }
 
@@ -2691,7 +3516,7 @@ function StaleRunnerBar({ agents, runnerStates, operators, t }: {
   }).stale.length - stale.length;
 
   return (
-    <div className="mb-3 rounded border border-border p-3">
+    <div className="mb-3 rounded-row border border-border p-3">
       <p className="text-meta text-fg-subtle" data-testid="stale-runners-summary">
         {operators === null
           // 오퍼레이터 목록을 못 얻었으면 비교 기준이 없다. "전부 최신이다"로 적으면 확인하지

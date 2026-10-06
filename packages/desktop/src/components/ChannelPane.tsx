@@ -1,5 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { GalleryScopeContext } from './Attachments';
+import type { GalleryScope } from '../lib/imageGallery';
 import { getCommunityController, useActiveStore, useCommunityRegistry } from '../state/communities';
+import { useWindowView } from '../state/windowView';
+import { popOutChannel } from '../lib/windowActions';
 import { getController } from '../state/controller';
 import { MessageRows } from './MessageRows';
 import { groupProgress } from '../lib/progressGroup';
@@ -11,6 +15,7 @@ import { ChannelDocPanel } from './ChannelDocPanel';
 import { ChannelEmptyState } from './ChannelEmptyState';
 import { RunnerStatusLine } from './RunnerStatus';
 import { distanceFromBottom, isNearBottom, isNearTop } from '../lib/stickyBottom';
+import { appendedFromHere } from '../lib/ownSends';
 import { anchoredScrollTop, needsAnchorFix, pickAnchor, type ScrollAnchor } from '../lib/scrollAnchor';
 import { useLocale, useT } from '../i18n/useT';
 import { displayBody } from '../lib/mention';
@@ -57,6 +62,9 @@ interface ChannelPaneProps {
 /** 빈 배열 리터럴을 매 렌더 새로 만들지 않는다. */
 const CHANNEL_NO_TEAMS: never[] = [];
 
+/** 채널 본문에서 연 그림은 채널 최상위 글의 그림을 넘긴다(그림 넘겨 보기 사양 1). */
+const CHANNEL_GALLERY: GalleryScope = { kind: 'channel' };
+
 export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: ChannelPaneProps) {
   // 날짜 구분선은 **앱 언어**를 따른다(`lib/day.ts` 의 근거).
   const locale = useLocale();
@@ -69,15 +77,17 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   // `useActiveStore()` 로 스토어 전체를 구독해서, 입력 중 표시·접속 상태·**다른 채널**에 온
   // 메시지까지 모든 변경이 이 목록을 통째로 다시 그렸다. 메시지·핀·`hasMore`·구분선은
   // **활성 채널의 것만** 읽는다 — 다른 채널의 배열이 바뀌어도 이 값들은 같은 참조다.
-  const activeChannelId = useActiveStore((s) => s.activeChannelId);
+  // 보는 채널은 **이 창의 것**이다(새 창 — `state/windowView`). 메인이면 스토어의 활성 채널 그대로다.
+  const windowView = useWindowView();
+  const activeChannelId = windowView.channelId;
   const channels = useActiveStore((s) => s.channels);
   const dms = useActiveStore((s) => s.dms);
   const accounts = useActiveStore((s) => s.accounts);
   const me = useActiveStore((s) => s.me);
-  const channelMessages = useActiveStore((s) => (s.activeChannelId ? s.messages[s.activeChannelId] : undefined));
-  const channelHasMore = useActiveStore((s) => (s.activeChannelId ? s.hasMore[s.activeChannelId] : undefined));
-  const channelDividerSeq = useActiveStore((s) => (s.activeChannelId ? s.dividerSeq[s.activeChannelId] : undefined));
-  const channelPinsRaw = useActiveStore((s) => (s.activeChannelId ? s.pins[s.activeChannelId] : undefined));
+  const channelMessages = useActiveStore((s) => (activeChannelId ? s.messages[activeChannelId] : undefined));
+  const channelHasMore = useActiveStore((s) => (activeChannelId ? s.hasMore[activeChannelId] : undefined));
+  const channelDividerSeq = useActiveStore((s) => (windowView.kind !== 'main' ? windowView.dividerSeq : activeChannelId ? s.dividerSeq[activeChannelId] : undefined));
+  const channelPinsRaw = useActiveStore((s) => (activeChannelId ? s.pins[activeChannelId] : undefined));
   const runnerStates = useActiveStore((s) => s.runnerStates);
   const groups = useActiveStore((s) => s.groups);
   const teams = useActiveStore((s) => s.teams) ?? CHANNEL_NO_TEAMS;
@@ -432,9 +442,21 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * 딸림값이 `roots.length` 뿐인 것은 예전과 같다(내용이 바뀌어도 스크롤을 건드릴 일은
    * 없다). 바닥 여부와 마지막 작성자는 이 렌더의 값을 클로저로 읽으므로 딸림값이 아니다.
    */
+  /**
+   * **직전 커밋의 마지막 뿌리.** "내가 쓴 것은 따라간다"는 **끝에 새로 붙은** 내 글에만 든다 — 줄 수는
+   * 과거 페이지(`loadOlder`)·점프 창·스레드 뿌리처럼 **위에** 붙어도 늘고, 그때 마지막 뿌리는 그대로
+   * 내 것이다. 그것까지 따라가면 위를 읽던 자리와 방금 점프한 자리가 바닥으로 끌려간다(2026-10-06,
+   * 링크 이동이 되끌림 — #task 처럼 마지막 최상위 글이 내 것인 채널에서 매번). 아래 효과보다 뒤에
+   * 적어야(같은 커밋에서 아래가 먼저 읽는다) 비교 대상이 직전 커밋의 값이다.
+   */
+  const lastRootIdRef = useRef<string | null>(null);
   useEffect(() => {
+    const last = roots[roots.length - 1];
+    // 「내 글」= **이 기기의 작성칸에서 보낸** 글(`lib/ownSends.ts`). 자동화·다른 기기가 내 이름으로 끝에 붙인
+    // 글은 남의 글과 같이 — 위를 읽던 사람을 끌어내리지 않는다(2026-10-06, #1191 후속).
+    const appendedMine = appendedFromHere(last, lastRootIdRef.current, me?.id, activeChannelId ?? '', useActiveStore.getState());
     if (jumpedThisCommitRef.current) setJumpVisible(true);
-    else if (atBottomRef.current || roots[roots.length - 1]?.authorId === me?.id) {
+    else if (atBottomRef.current || appendedMine) {
       scrollToBottom();
       // 첫 페이지가 정착 창보다 늦게 올 수 있다(느린 서버·찬 채널). 도착한 줄과 **함께**
       // 자라는 그림·링크 카드가 같은 보정을 필요로 하므로 창을 다시 연다.
@@ -444,6 +466,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     else setJumpVisible(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roots.length]);
+  useEffect(() => { lastRootIdRef.current = roots[roots.length - 1]?.id ?? null; });
   // 점프 표식은 **그 커밋 한 번**만 산다 — 위 효과보다 뒤에 선언해야 같은 커밋에서 위가 먼저 읽는다.
   useEffect(() => { jumpedThisCommitRef.current = false; });
 
@@ -531,7 +554,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     if (!isNearTop(el)) return;
     loadingOlderRef.current = true;
     olderAnchorRef.current = { height: el.scrollHeight, top: el.scrollTop };
-    void getController().loadOlder().finally(() => { loadingOlderRef.current = false; });
+    void getController().loadOlder(activeChannelId ?? undefined).finally(() => { loadingOlderRef.current = false; });
   };
 
   /** 목록의 첫 줄. 위쪽에 뭔가 끼어들었는지를 이 id 하나로 안다. */
@@ -670,10 +693,11 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   const channelPins = channelPinsRaw ?? [];
 
   return (
-    /* `data-testid` 는 **자리를 재는 회귀선**의 손잡이다(`inboxPane.test.tsx`). 인박스가
+    <GalleryScopeContext.Provider value={CHANNEL_GALLERY}>
+    {/* `data-testid` 는 **자리를 재는 회귀선**의 손잡이다(`inboxPane.test.tsx`). 인박스가
        자리가 되면서 한 가로줄에 서는 형제가 셋(인박스·채널·스레드)이 되었고, "누가 누구의
        왼쪽인가"를 잴 방법이 필요해졌다 — 글자(`#general` 같은 제목)로 잡으면 채널 이름이
-       바뀔 때마다 그 회귀선이 함께 흔들린다. */
+       바뀔 때마다 그 회귀선이 함께 흔들린다. */}
     <div data-testid="channel-pane" className="flex min-w-0 flex-1">
     <main className="flex min-w-0 flex-1 flex-col bg-surface-raised">
       <header className="flex items-center gap-2 border-b border-border px-4 py-2">
@@ -681,21 +705,45 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
             `MessageItem` 의 작성자 이름과 같은 단이다. 화면 제목단(17px)은 설정·로그인처럼
             화면 하나를 여는 자리에만 준다. 옆의 주제·꼬리표는 아랫단 11px 이다. */}
         {/* `shrink-0 whitespace-nowrap`: 좁은 열에서 "# task" 가 두 줄로 꺾이지 않는다 — 줄어야 하는 것은 옆의 주제다. */}
-        <span className="shrink-0 whitespace-nowrap text-name font-bold">{title}</span>
+        {/* 채널이면 제목이 **채널 설정 시트를 여는 버튼**이다(UX ⑦b, designer: "# task ⌄"). DM 에는 시트가 없다. */}
+        {channel ? (
+          <button
+            data-testid="channel-title"
+            onClick={() => useActiveStore.getState().set({ channelSheetId: channel.id })}
+            aria-label={t('channelSheet.open', { name: channel.name ?? '' })}
+            className="shrink-0 whitespace-nowrap rounded-sm px-1 text-name font-semibold hover:bg-surface-sunken"
+          >
+            {title} <span aria-hidden="true" className="text-meta text-fg-subtle">⌄</span>
+          </button>
+        ) : (
+          <span className="shrink-0 whitespace-nowrap text-name font-semibold">{title}</span>
+        )}
         {channel?.topic && <span className="truncate text-meta text-fg-subtle">{channel.topic}</span>}
-        {channel?.repo && <span className="rounded bg-surface-sunken px-1.5 text-meta text-fg-muted">{channel.repo}</span>}
-        {isArchived && <span className="rounded bg-surface-hover px-1.5 text-meta text-fg-muted">{t('channel.header.archived')}</span>}
+        {channel?.repo && <span className="rounded-row bg-surface-sunken px-1.5 text-meta text-fg-muted">{channel.repo}</span>}
+        {isArchived && <span className="rounded-row bg-surface-hover px-1.5 text-meta text-fg-muted">{t('channel.header.archived')}</span>}
         {/* 검색은 ⌘K 로도 열리지만 단축키만으로는 보이지 않는다(#258). 헤더 버튼은
             **지금 보는 대화로 좁힌 채** 열고, ⌘K 는 전역으로 남는다 — 두 진입점이 서로
             다른 뜻을 가지므로 title 에 그 차이를 적는다. DM 에도 같은 버튼이 나온다. */}
         <button
-          className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
+          className="ml-auto shrink-0 rounded-row border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
           onClick={() => onOpenSearch?.(true)}
           aria-label={t('channel.header.searchLabel')}
           title={t('channel.header.searchTitle')}
         >
           {t('channel.header.search')}
         </button>
+        {/* ⧉ 채널을 새 창으로(판 3 C1, 채널 머리). 메인에만 있다 — 채널 창은 이미 창이다. 옮긴다(W1). */}
+        {windowView.kind === 'main' && (
+          <button
+            data-testid="channel-pop-out"
+            className="shrink-0 rounded-row px-2 text-fg-subtle hover:bg-surface-sunken"
+            title={t('window.popOut')}
+            aria-label={t('window.popOut')}
+            onClick={() => { void popOutChannel(activeChannelId); }}
+          >
+            ⧉
+          </button>
+        )}
       </header>
       {/* 메시지·문서·파일 탭(UX ①) — **머리 아래 한 줄**이다(designer 사양). 머리 안에 두면
           주제·저장소 꼬리표와 한 줄을 다툰다. 문서는 채널에 붙는다(#188) — DM 에는 없다.
@@ -787,8 +835,8 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
           // 서버 히스토리 창(최신 N개) 밖으로 밀려난 대화로 돌아가는 유일한 경로다.
           <div className="px-4 py-2 text-center">
             <button
-              className="rounded border border-border px-2 py-1 text-meta text-fg-muted"
-              onClick={() => void getController().loadOlder()}
+              className="rounded-row border border-border px-2 py-1 text-meta text-fg-muted"
+              onClick={() => void getController().loadOlder(activeChannelId ?? undefined)}
             >
               Load older messages
             </button>
@@ -828,7 +876,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       {jumpVisible && (
         <button
           data-testid="channel-jump-to-bottom"
-          className="absolute bottom-3 right-4 rounded-full border border-border bg-surface-raised px-3 py-1 text-meta font-medium text-fg shadow-lg hover:bg-surface-sunken"
+          className="absolute bottom-3 right-4 rounded-full bg-surface-raised px-3 py-1 text-meta font-medium text-fg shadow-float hover:bg-surface-sunken"
           onClick={scrollToBottom}
         >
           {t('channel.pane.jumpToBottom')}
@@ -871,7 +919,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       })()}
       <div className="border-t border-border p-3">
         {isArchived ? (
-          <div className="rounded bg-surface-sunken p-2 text-center text-fg-subtle">
+          <div className="rounded-row bg-surface-sunken p-2 text-center text-fg-subtle">
             {t('channel.pane.archived')}
           </div>
         ) : (
@@ -917,5 +965,6 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       </div>
     </main>
     </div>
+    </GalleryScopeContext.Provider>
   );
 }

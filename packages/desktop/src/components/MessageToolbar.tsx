@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
+import { useHostDocument } from '../lib/hostDocument';
 import type { MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
+import { useWindowView } from '../state/windowView';
+import { openThreadFrom } from '../lib/windowActions';
 import { useT } from '../i18n/useT';
 import { Menu, type MenuItem } from './Menu';
 import { InlineReactionButtons, ReactionPickerPanel } from './Reactions';
@@ -48,6 +51,10 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
   /** 링크 만들기·복사 알림은 `MessageItem` 에 있다 — 이 버튼은 그것을 부르기만 한다. */
   onCopyLink: () => void;
 }) {
+  // 새 창 안이면 그 창의 문서를 듣는다(`lib/hostDocument`).
+  const hostDoc = useHostDocument();
+  // 「스레드 열기」는 **이 창의** 자리로 간다(채널 창이면 자기 패널, W4 — `state/windowView`).
+  const windowView = useWindowView();
   const t = useT();
   const [picking, setPicking] = useState(false);
   // #219 와 같은 판단: 담김은 **id 집합**으로 본다(한 탭의 행들로 판단하면 '완료' 탭을 열어
@@ -74,11 +81,11 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
       if (rootRef.current?.contains(e.target as Node)) return;
       setPicking(false);
     };
-    document.addEventListener('keydown', onKey, true);
-    document.addEventListener('mousedown', onDown);
+    hostDoc.addEventListener('keydown', onKey, true);
+    hostDoc.addEventListener('mousedown', onDown);
     return () => {
-      document.removeEventListener('keydown', onKey, true);
-      document.removeEventListener('mousedown', onDown);
+      hostDoc.removeEventListener('keydown', onKey, true);
+      hostDoc.removeEventListener('mousedown', onDown);
     };
   }, [picking]);
 
@@ -92,7 +99,7 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
   const onArrow = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
     const slots = Array.from(rootRef.current?.querySelectorAll<HTMLElement>('[data-slot]') ?? []);
-    const at = slots.indexOf(document.activeElement as HTMLElement);
+    const at = slots.indexOf(hostDoc.activeElement as HTMLElement);
     if (at < 0 || slots.length === 0) return;
     e.preventDefault();
     const next = e.key === 'ArrowRight' ? (at + 1) % slots.length : (at - 1 + slots.length) % slots.length;
@@ -129,10 +136,10 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
    * 이유: 사이만 벌리면 툴바만 길어지고 과녁은 그대로라 겨누기가 쉬워지지 않는다.
    * 창(`ReactionPickerPanel`)이 이미 32px 칸에 4px 사이를 쓰므로, 사이 값은 그쪽과 같다.
    */
-  const slot = 'flex h-7 w-7 items-center justify-center rounded-md text-fg-muted'
+  const slot = 'flex h-7 w-7 items-center justify-center rounded-row text-fg-muted'
     + ' hover:bg-surface-hover hover:text-fg';
   /** 눌린 칸(담김·리액션)은 **가라앉은 면**으로 말한다. 강조색은 '내 차례'가 쓴다(규칙 04). */
-  const slotOn = 'flex h-7 w-7 items-center justify-center rounded-md bg-surface-sunken text-fg';
+  const slotOn = 'flex h-7 w-7 items-center justify-center rounded-row bg-surface-sunken text-fg';
 
   return (
     <div
@@ -144,8 +151,8 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
       onKeyDown={onArrow}
       /* 행의 **위쪽 경계에 걸친다**(`-top-3`). 앞 판은 `top-1` 이라 한 줄 긴 말의 오른쪽
          끝을 덮었다 — 여덟 칸이면 폭이 200px 을 넘으므로 그만큼 더 덮는다. */
-      className={`absolute -top-3 right-2 flex items-center gap-1 rounded-lg border border-border
-                  bg-surface-raised p-1 shadow-sm ${reveal}`}
+      className={`absolute -top-3 right-2 flex items-center gap-1 rounded-card
+                  bg-surface-raised p-1 shadow-float ${reveal}`}
     >
       {/* 창은 툴바의 **자식**이다 — 툴바가 사라지면 창도 사라져야 하고(고아 팝오버를 만들지
           않는다), 바깥 클릭 판정도 `rootRef` 하나로 끝난다. */}
@@ -182,7 +189,7 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
           className={slot}
           title={t('message.replyInThread')}
           aria-label={t('message.replyInThread')}
-          onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
+          onClick={(e) => openThreadFrom(e, windowView, message.channelId, message.threadRootId ?? message.id)}
         >
           <ThreadIcon />
         </button>

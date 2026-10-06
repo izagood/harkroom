@@ -1,0 +1,95 @@
+import { mkdtemp, readFile, writeFile, mkdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { readOperatorMergeSetPayload } from '@harkroom/shared/daemonProtocol';
+import { createLocalMergePort, parseGhAccounts } from '../src/localMerge.js';
+import type { Exec } from '../src/turnMerge.js';
+
+const STATUS = JSON.stringify({ hosts: {
+  'github.com': [
+    { state: 'success', active: true, host: 'github.com', login: 'work-account', tokenSource: 'keyring' },
+    { state: 'success', active: false, host: 'github.com', login: 'izagood', tokenSource: 'keyring' },
+  ],
+  'ghe.example.com': [{ state: 'success', active: true, host: 'ghe.example.com', login: 'other' }],
+} });
+
+async function fresh(initial?: unknown) {
+  const dir = await mkdtemp(join(tmpdir(), 'local-merge-'));
+  const configPath = join(dir, 'operator', 'operator.json');
+  if (initial !== undefined) { await mkdir(join(dir, 'operator'), { recursive: true }); await writeFile(configPath, JSON.stringify(initial)); }
+  const calls: { file: string; args: string[]; env: Record<string, string> }[] = [];
+  let reply = { code: 0, stdout: STATUS, stderr: '' };
+  const exec: Exec = async (file, args, env) => { calls.push({ file, args, env }); return reply; };
+  const port = createLocalMergePort({ configPath, ghPath: '/opt/gh', home: '/home/me', exec, host: 'mac-1' });
+  return { configPath, calls, port, setReply: (r: typeof reply) => { reply = r; } };
+}
+
+describe('localMerge 포트 (P2 · security C7·C8)', () => {
+  it('처음에는 비어 있다 — 활성 계정을 고르지 않는다. 목록은 github.com 의 이름·활성 여부뿐이고 기기 이름을 함께 준다', async () => {
+    const { port, calls } = await fresh();
+    expect(await port.get()).toEqual({
+      ghUser: null, host: 'mac-1',
+      accounts: [{ login: 'work-account', active: true }, { login: 'izagood', active: false }],
+    });
+    // C7: 인자 배열로, 토큰을 보이는 플래그 없이, 상속 env(GH_TOKEN) 없이
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.file).toBe('/opt/gh');
+    expect(calls[0]!.args).toEqual(['auth', 'status', '--json', 'hosts']);
+    expect(calls[0]!.args).not.toContain('--show-token');
+    expect(calls[0]!.env.GH_TOKEN).toBeUndefined();
+  });
+
+  it('목록에 있는 이름을 고르면 operator.json merge.ghUser 에 쓰고 다른 칸은 그대로 둔다', async () => {
+    const { port, configPath } = await fresh({ communities: { 'https://a.example.com': { agents: { x: {} } } } });
+    const out = await port.set('izagood');
+    expect(out.previous).toBeNull();
+    expect(out.state.ghUser).toBe('izagood');
+    const disk = JSON.parse(await readFile(configPath, 'utf8'));
+    expect(disk.merge).toEqual({ ghUser: 'izagood' });
+    expect(disk.communities['https://a.example.com'].agents).toEqual({ x: {} });
+    expect((await port.get()).ghUser).toBe('izagood');
+  });
+
+  it('C7: 그 순간 gh 에 로그인되지 않은 이름은 받지 않는다 — 파일도 그대로다', async () => {
+    const { port, configPath } = await fresh({ communities: {}, merge: { ghUser: 'izagood' } });
+    await expect(port.set('someone-else')).rejects.toThrow(/not logged in/);
+    // 다른 호스트의 계정도 못 고른다 — 래퍼의 `gh auth token -u` 는 github.com 을 본다
+    await expect(port.set('other')).rejects.toThrow(/not logged in/);
+    expect(JSON.parse(await readFile(configPath, 'utf8')).merge).toEqual({ ghUser: 'izagood' });
+  });
+
+  it('gh 가 답하지 못하면 목록은 null + 까닭이고, 고르기는 거절한다. 지우기(null)는 gh 없이도 된다', async () => {
+    const { port, setReply, configPath } = await fresh({ communities: {}, merge: { ghUser: 'izagood' } });
+    setReply({ code: 127, stdout: '', stderr: 'no such file' });
+    const s = await port.get();
+    expect(s.accounts).toBeNull();
+    expect(s.accountsError).toContain('no such file');
+    await expect(port.set('izagood')).rejects.toThrow(/gh auth status failed/);
+    const out = await port.set(null);
+    expect(out.previous).toBe('izagood');
+    expect(out.state.ghUser).toBeNull();
+    expect(JSON.parse(await readFile(configPath, 'utf8')).merge).toBeUndefined();
+  });
+
+  it('로그인 하나가 만료돼 gh 가 0 이 아닌 코드로 끝나도 JSON 이 있으면 목록을 쓴다', async () => {
+    const { port, setReply } = await fresh();
+    setReply({ code: 1, stdout: STATUS, stderr: 'token invalid for x' });
+    expect((await port.get()).accounts?.map((a) => a.login)).toEqual(['work-account', 'izagood']);
+  });
+
+  it('parseGhAccounts: 모양이 아닌 이름·중복은 버리고, github.com 이 없으면 빈 목록', () => {
+    expect(parseGhAccounts('nope')).toBeNull();
+    expect(parseGhAccounts(JSON.stringify({ hosts: {} }))).toEqual([]);
+    expect(parseGhAccounts(JSON.stringify({ hosts: { 'github.com': [{ login: 'a b' }, { login: 'ok', active: true }, { login: 'ok' }] } })))
+      .toEqual([{ login: 'ok', active: true }]);
+  });
+
+  it('readOperatorMergeSetPayload: 로그인 모양이거나 null 만', () => {
+    expect(readOperatorMergeSetPayload({ ghUser: 'izagood' })).toEqual({ ghUser: 'izagood' });
+    expect(readOperatorMergeSetPayload({ ghUser: null })).toEqual({ ghUser: null });
+    expect(readOperatorMergeSetPayload({})).toMatchObject({ code: 'bad-payload' });
+    expect(readOperatorMergeSetPayload({ ghUser: 'a; rm -rf /' })).toMatchObject({ code: 'bad-payload' });
+    expect(readOperatorMergeSetPayload({ ghUser: '' })).toMatchObject({ code: 'bad-payload' });
+  });
+});

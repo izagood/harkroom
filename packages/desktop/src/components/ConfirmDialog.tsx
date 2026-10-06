@@ -29,6 +29,7 @@ import { Overlay } from './Overlay';
  */
 export function ConfirmDialog({
   title, detail, detailKind = 'preview', confirmLabel, cancelLabel = 'Cancel', danger = false, busy = false, error = null, onConfirm, onCancel,
+  extraLabel, onExtra,
 }: {
   /** 무엇을 묻는지. `role="dialog"` 의 접근성 이름으로도 쓰인다. */
   title: string;
@@ -57,6 +58,12 @@ export function ConfirmDialog({
   error?: string | null;
   onConfirm: () => void;
   onCancel: () => void;
+  /**
+   * 셋째 길(있을 때만). 확인 버튼 **왼쪽**의 주 동작 버튼으로 선다 — 예: 저장 안 한 변경이 있을 때
+   * [버리고 나가기] 옆의 [저장하고 나가기]. 확인이 위험 조작(`danger`)일 때 쓴다.
+   */
+  extraLabel?: string;
+  onExtra?: () => void;
 }) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { cancelRef.current?.focus(); }, []);
@@ -70,7 +77,7 @@ export function ConfirmDialog({
         {/* 대상 미리보기. 넘치면 잘린다 — 확인창은 메시지를 읽는 자리가 아니라
             "이것 맞나"를 알아보는 자리다. */}
         {detail !== undefined && detailKind === 'preview' && (
-          <div className="max-h-24 overflow-hidden rounded border border-border bg-surface-sunken px-2 py-1.5 text-fg-muted">
+          <div className="max-h-24 overflow-hidden rounded-row border border-border bg-surface-sunken px-2 py-1.5 text-fg-muted">
             {detail}
           </div>
         )}
@@ -83,18 +90,28 @@ export function ConfirmDialog({
             /* 시험이 버튼을 **글자로 집지 않게** 이름을 준다 — 로케일 기본값이 바뀌면
                글자로 집은 줄이 이유 없이 빨개진다(사전 이관이 세운 규율). */
             data-testid="confirm-cancel"
-            className="rounded px-3 py-1 text-fg-muted hover:bg-surface-sunken disabled:opacity-50"
+            className="rounded-row px-3 py-1 text-fg-muted hover:bg-surface-sunken disabled:opacity-50"
             onClick={onCancel}
           >
             {cancelLabel}
           </button>
+          {extraLabel && onExtra && (
+            <button
+              data-testid="confirm-extra"
+              disabled={busy}
+              className="rounded-row bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover disabled:opacity-50"
+              onClick={onExtra}
+            >
+              {extraLabel}
+            </button>
+          )}
           <button
             data-testid="confirm-ok"
             disabled={busy}
             aria-busy={busy || undefined}
             className={`${danger
-              ? 'rounded border border-danger-border bg-danger-surface px-3 py-1 font-medium text-danger hover:bg-danger-surface-strong'
-              : 'rounded bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover'} disabled:opacity-50`}
+              ? 'rounded-row border border-danger-border bg-danger-surface px-3 py-1 font-medium text-danger hover:bg-danger-surface-strong'
+              : 'rounded-row bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover'} disabled:opacity-50`}
             onClick={onConfirm}
           >
             {confirmLabel}

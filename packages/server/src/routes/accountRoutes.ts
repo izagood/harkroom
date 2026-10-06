@@ -7,17 +7,18 @@ import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { ACCOUNT_STATUSES, CREDENTIAL_SCOPES, INVOKE_SCOPES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@harkroom/shared';
 import {
   ackAgentStop, assignmentOf, createAgentAccount, definitionFor, deleteAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
-  revokeAllPats, setAgentMcpServers, setDelegate, setInvoker, setTrustSiblings, undoAgentStopRequest, updateAgent, validateMcpServers, validateScopeChange,
+  revokeAllPats, setAgentMcpServers, setDelegate, setInvoker, setRequiresMacos, setTrustSiblings, undoAgentStopRequest, updateAgent, validateMcpServers, validateScopeChange,
 } from '../services/agents.js';
 import { isEligibleDelegate } from '../services/invokeGate.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { suspendSecretGrants } from '../services/secretAccess.js';
-import { mintPat } from '../services/pats.js';
 import { emitEvent } from '../events.js';
 import {
   deleteMemory, listMemoryEntries, listMemoryRevisions, MAX_CORE_MEMORY_LENGTH, MAX_MEMORY_DESCRIPTION_LENGTH,
   isValidSlug, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, MEMORY_SLUG_HINT, setMemory, clearMemoryFlag,
+  auditMemory, AUDIT_HUMAN_LIST_CAP,
 } from '../services/memory.js';
+import { archiveMemory, unarchiveMemory } from '../services/memoryCurate.js';
 import { getHandleGroupByHandle } from '../services/handleGroups.js';
 
 export interface AccountRouteDeps {
@@ -386,6 +387,8 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
       // 가진 사람이 정한다(명단 PUT 과 같은 규칙). owner 범위가 아니어도 받는다: 값은 남고
       // 판정에만 안 쓰인다(invokers 명단과 같다).
       trustSiblings: z.boolean().optional(),
+      // 맥 전용 표시(106). 소유자·admin 이 정한다. 배정을 막지 않는다 — 화면이 경고만 한다(v3).
+      requiresMacos: z.boolean().optional(),
     }).parse(req.body);
 
     const account = req.account!;
@@ -460,6 +463,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     }
     if (patch.mcpServers !== undefined) await setAgentMcpServers(pool, id, patch.mcpServers);
     if (patch.trustSiblings !== undefined) await setTrustSiblings(pool, id, patch.trustSiblings);
+    if (patch.requiresMacos !== undefined) await setRequiresMacos(pool, id, patch.requiresMacos);
 
     let revokedLabels: string[] = [];
     if (patch.disabled !== undefined && patch.disabled !== before.disabled) {
@@ -773,15 +777,19 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
    * 질의는 `services/memory.ts` 를 그대로 부른다 — 여기서 다시 쓰면 계정 스코프가 두
    * 곳에 생기고 한쪽만 고치는 사고가 난다.
    */
-  app.get('/accounts/agents/:id/memory', { preHandler: app.requireOwnerOrAdmin('id') }, async (req) => ({
-    memories: await listMemoryEntries(pool, z.object({ id: z.string().uuid() }).parse(req.params).id),
-  }));
+  app.get('/accounts/agents/:id/memory', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    // 대상은 에이전트뿐이다(아래 isAgentTarget 주석) — admin 이 사람 id 를 넣어도 404.
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
+    return { memories: await listMemoryEntries(pool, id) };
+  });
 
   app.delete('/accounts/agents/:id/memory/:slug', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
     const { id, slug } = z.object({
       id: z.string().uuid(),
       slug: z.string().min(1).max(255),
     }).parse(req.params);
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
     await deleteMemory(pool, id, slug);
     await recordAudit(pool, {
       // 본문은 남기지 않는다 — docs/design.md 가 "감사에 본문을 복사하면 삭제가 삭제가
@@ -806,6 +814,8 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
       kind: z.enum(MEMORY_KINDS).optional(),
       ifUpdatedAt: z.string().datetime({ offset: true }).nullable().optional(),
     }).parse(req.body);
+    // 사람 id 로 기억 행을 만들지 않는다 — 아래 isAgentTarget 주석.
+    if (!(await isAgentTarget(id, { live: true }))) return reply.code(404).send(noSuchAgent);
     if (!isValidSlug(slug)) return reply.code(422).send({ error: { code: 'invalid_slug', message: MEMORY_SLUG_HINT } });
     if (slug === 'core' && body.value.length > MAX_CORE_MEMORY_LENGTH) {
       return reply.code(422).send({ error: { code: 'core_too_long', message: `core 는 ${MAX_CORE_MEMORY_LENGTH}자까지다` } });
@@ -841,6 +851,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
       return reply.code(403).send({ error: { code: 'forbidden', message: 'only a human can confirm a flagged memory' } });
     }
     const { id, slug } = z.object({ id: z.string().uuid(), slug: z.string().min(1).max(255) }).parse(req.params);
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
     if (!(await clearMemoryFlag(pool, id, slug))) {
       return reply.code(404).send({ error: { code: 'not_flagged', message: 'memory is not flagged' } });
     }
@@ -852,15 +863,105 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
   });
 
   /** 이전 판(069), 최근 것부터. 화면이 "이 판으로 되돌리기"를 그린다 — 되돌리기는 위 PUT 이다. */
-  app.get('/accounts/agents/:id/memory/:slug/revisions', { preHandler: app.requireOwnerOrAdmin('id') }, async (req) => {
+  app.get('/accounts/agents/:id/memory/:slug/revisions', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
     const { id, slug } = z.object({ id: z.string().uuid(), slug: z.string().min(1).max(255) }).parse(req.params);
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
     return { revisions: await listMemoryRevisions(pool, id, slug) };
   });
 
-  app.get('/accounts/:id/pats', { preHandler: app.requireOwnerOrAdmin('id') }, async (req) => {
+  /**
+   * 정리 후보(Memory 탭 재설계 PR 2). 에이전트의 `memory.audit` 과 **같은 서비스**를 탄다 — 분류가
+   * 두 벌이면 사람 화면과 에이전트가 다른 것을 후보라 부른다. 다른 것은 목록 상한뿐이다: 에이전트는
+   * 30, 사람은 `AUDIT_HUMAN_LIST_CAP`(칩 숫자가 정확해야 한다 — 결정 4). 낡은 낱말(patterns)은 받지
+   * 않는다 — 그것은 정리 턴이 제 맥락으로 넣는 것이다.
+   */
+  app.get('/accounts/agents/:id/memory/audit', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
+    return { audit: await auditMemory(pool, id, [], { cap: AUDIT_HUMAN_LIST_CAP }) };
+  });
+
+  /**
+   * 보관·되살리기를 **여러 개 한 번에**(결정 2: 줄 기본 버튼이 Forget 에서 보관으로). 에이전트의
+   * `memory.archive`·`memory.unarchive` 와 같은 서비스다 — 보관 300 상한 밀어내기·되살릴 때 200 상한
+   * (`too_many`)이 한 벌이다.
+   *
+   * 한 slug 의 실패가 나머지를 막지 않는다 — 결과를 slug 마다 돌려준다. 되살리기는 앞에서부터
+   * 자리가 차면 뒤의 것이 `too_many` 가 된다. 감사에는 성공한 slug 만 남긴다(본문 없음 — 지우기와 같은 규칙).
+   */
+  const memorySlugsBody = z.object({
+    slugs: z.array(z.string().min(1).max(255)).min(1).max(MAX_MEMORY_ITEMS_PER_ACCOUNT),
+  });
+  type MemoryBatchResult = 'ok' | 'not_found' | 'invalid_slug' | 'core_not_archivable' | 'too_many';
+
+  app.post('/accounts/agents/:id/memory/archive', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const slugs = [...new Set(memorySlugsBody.parse(req.body).slugs)];
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
+    const results: { slug: string; result: MemoryBatchResult }[] = [];
+    for (const slug of slugs) {
+      if (!isValidSlug(slug)) { results.push({ slug, result: 'invalid_slug' }); continue; }
+      // core 는 매 턴 실리는 자리라 보관하지 않는다 — memory.archive 와 같은 규칙.
+      if (slug === 'core') { results.push({ slug, result: 'core_not_archivable' }); continue; }
+      const r = await archiveMemory(pool, id, slug);
+      // expect 를 주지 않으므로 conflict 는 오지 않는다.
+      results.push({ slug, result: r === 'not_found' ? 'not_found' : 'ok' });
+    }
+    const done = results.filter((r) => r.result === 'ok').map((r) => r.slug);
+    if (done.length) {
+      await recordAudit(pool, {
+        action: 'agent.memory.archived', actorId: req.account!.id, actorHandle: req.account!.handle,
+        target: id, detail: { slugs: done },
+      }, req);
+    }
+    return { results };
+  });
+
+  app.post('/accounts/agents/:id/memory/unarchive', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const slugs = [...new Set(memorySlugsBody.parse(req.body).slugs)];
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
+    const results: { slug: string; result: MemoryBatchResult }[] = [];
+    for (const slug of slugs) {
+      if (!isValidSlug(slug)) { results.push({ slug, result: 'invalid_slug' }); continue; }
+      results.push({ slug, result: await unarchiveMemory(pool, id, slug) });
+    }
+    const done = results.filter((r) => r.result === 'ok').map((r) => r.slug);
+    if (done.length) {
+      await recordAudit(pool, {
+        action: 'agent.memory.unarchived', actorId: req.account!.id, actorHandle: req.account!.handle,
+        target: id, detail: { slugs: done },
+      }, req);
+    }
+    return { results };
+  });
+
+  /**
+   * PAT·기억 라우트의 대상은 **에이전트**뿐이다. `requireOwnerOrAdmin` 은 없는 id 와 사람 id 에도
+   * admin 을 통과시키고(대상의 존재 판정은 라우트 몫이라고 적어 두었다), 이 라우트들은 그 판정을
+   * 하지 않았다 — 그래서 admin 이 사람 계정(다른 admin 포함)의 PAT 를 발급해 그 사람으로 글을
+   * 쓰고 권한을 줄 수 있었다(2026-10-02 security 검토, #1062). 앱이 PAT 를 다루는 자리는 에이전트
+   * 설정뿐이고 사람 PAT 를 쓰는 기능은 없다. 이미 발급된 사람 PAT 는 폐기되지 않지만 인증이
+   * 에이전트 PAT 만 받으므로(auth/plugin.ts viaPat) 쓸 수 없다.
+   *
+   * 기억은 읽기·지우기·이전 판·확인도 지운 에이전트를 대상으로 둔다 — 고치기(PUT)만 살아 있는 것.
+   *
+   * PAT 은 지운 에이전트도 대상으로 둔다 — 남은 토큰을 보고 폐기할 길은 열려 있어야 한다.
+   */
+  const noSuchAgent = { error: { code: 'not_found', message: 'no such agent' } } as const;
+  async function isAgentTarget(id: string, opts: { live?: boolean } = {}): Promise<boolean> {
     const res = await pool.query(
-      `select label, created_at, revoked_at from pat where account_id = $1 order by created_at desc`,
+      `select 1 from account where id = $1 and kind = 'agent'${opts.live ? ' and deleted_at is null' : ''}`,
+      [id],
+    );
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  app.get('/accounts/:id/pats', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
+    const res = await pool.query(
+      `select label, created_at, revoked_at, last_used_at from pat where account_id = $1 order by created_at desc`,
       [id],
     );
     return {
@@ -868,27 +969,30 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
         label: r.label,
         createdAt: r.created_at,
         revokedAt: r.revoked_at,
+        lastUsedAt: r.last_used_at,
       })),
     };
   });
 
+  /**
+   * 발급은 닫혔다(410). 러너는 v0.2.9 부터 오퍼레이터 토큰으로 서고, PAT 를 쓰는 경로가 저장소 안에
+   * 없다 — 새로 찍은 토큰은 만료 없는 에이전트 자격증명 한 벌이 늘 뿐이다(결정 스레드 c4f4dab4, security
+   * 789b2375). 화면 버튼만 빼면 API 로는 여전히 찍히므로 라우트에서 닫는다. 목록·폐기는 남는다 — 살아
+   * 있는 옛 토큰을 지울 길이 있어야 한다.
+   */
   app.post('/accounts/:id/pats', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
-    const body = z.object({ label: z.string().min(1).max(64) }).parse(req.body);
-    // 발급 규칙은 services/pats.ts 한 곳이다 — 오퍼레이터 경로와 같은 규칙을 쓴다.
-    const minted = await mintPat(pool, id, body.label, { actorId: req.account!.id, actorHandle: req.account!.handle }, req);
-    if (!minted.ok) {
-      return reply.code(409).send({
-        error: { code: 'label_in_use', message: 'a live token already uses this label — revoke it first or pick another' },
-      });
-    }
-    return reply.code(201).send({ token: minted.token });
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
+    return reply.code(410).send({
+      error: { code: 'pat_issuance_closed', message: 'agents authenticate through their operator; PATs are no longer issued' },
+    });
   });
 
   // 라벨 단위 폐기다. pat.label 에 유일성이 없어 같은 라벨의 토큰이 여러 개면 전부 폐기된다 —
   // 폐기에서는 하나 남기는 것보다 하나 더 끊는 쪽이 안전하다.
-  app.delete('/accounts/:id/pats/:label', { preHandler: app.requireOwnerOrAdmin('id') }, async (req) => {
+  app.delete('/accounts/:id/pats/:label', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
     const { id, label } = z.object({ id: z.string().uuid(), label: z.string().min(1).max(64) }).parse(req.params);
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
     const res = await pool.query(
       `update pat set revoked_at = now() where account_id = $1 and label = $2 and revoked_at is null`,
       [id, label],

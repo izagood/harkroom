@@ -95,9 +95,9 @@ const FRAME = {
   grid: 'grid-cols-[repeat(auto-fill,164px)] gap-x-4 gap-y-4',
   card: 'w-[164px]',
   /** 같은 표의 `box`. 선 색은 호출부가 붙이지 않는다 — 팀 카드에는 실패 분기가 없다. */
-  box: 'rounded-lg border border-border bg-surface-raised p-3',
-  gridBg: 'rounded-lg bg-surface-sunken p-3',
-  createBox: 'rounded-lg border border-dashed border-border p-3',
+  box: 'rounded-card border border-border bg-surface-raised p-3',
+  gridBg: 'rounded-card bg-surface-sunken p-3',
+  createBox: 'rounded-card border border-dashed border-border p-3',
   bg: 'bg-surface-raised',
 } as const;
 
@@ -320,7 +320,7 @@ export function TeamGrid({
           <input
             data-testid="team-search"
             aria-label={trans('agents.teams.gridSearch')}
-            className="w-full rounded-lg border border-border bg-field py-2 pl-8 pr-14
+            className="w-full rounded-card border border-border bg-field py-2 pl-8 pr-14
                        text-fg placeholder-fg-subtle"
             placeholder={trans('agents.teams.gridSearchPlaceholder')}
             value={query}

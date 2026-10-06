@@ -8,10 +8,12 @@
 //! 물러난다(`lib/session.ts`). 그래서 여기서는 실패를 숨기지 않고 문자열로 돌려준다 —
 //! 조용히 성공한 척하면 프런트가 평문 경로로 내려갈 기회를 잃는다.
 
+mod app_windows;
 mod daemon_client;
 mod external_link;
 mod login_path;
 mod notification;
+mod concealed_clipboard;
 
 use std::collections::HashMap;
 
@@ -472,6 +474,19 @@ async fn claude_account_remove(
 }
 
 #[tauri::command]
+async fn claude_account_open_terminal(
+    app: tauri::AppHandle,
+    pool: String,
+    account: String,
+) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.claude_account_open_terminal(&pool, &account)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn claude_pool_remove(
     app: tauri::AppHandle,
     pool: String,
@@ -660,6 +675,30 @@ async fn operator_mcp_remove(
     .await
 }
 
+#[tauri::command]
+async fn operator_merge_get(
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.operator_merge_get()
+    })
+    .await
+}
+
+/// 머지 래퍼의 gh 계정을 고른다 — `gh_user` 가 None 이면 지운다. 검사는 오퍼레이터가 한다(security C7).
+#[tauri::command]
+async fn operator_merge_set(
+    app: tauri::AppHandle,
+    gh_user: Option<String>,
+) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.operator_merge_set(gh_user.as_deref())
+    })
+    .await
+}
+
 /// 원격 MCP 의 OAuth — `action` 은 start·status·forget. 웹뷰가 넘기는 것은 이름 하나다.
 #[tauri::command]
 async fn operator_mcp_auth(
@@ -790,6 +829,23 @@ async fn daemon_list_runners(
     .await
 }
 
+/// 미리보기 패널(#1069)이 iframe 에 넣으려는 **서명 URL 하나**를 내비게이션 훅에 한 번 허용해 둔다(A′).
+/// 판정·수명·한 번은 `external_link::PreviewAllowance` 가 지킨다. **main 웹뷰에서만** 받는다 — 다른 웹뷰가 생겨도
+/// 그쪽이 앱 화면에 이동 허용을 꽂을 수 없게(capabilities 도 main 뿐이다).
+#[tauri::command]
+fn allow_preview_once(
+    webview: tauri::Webview,
+    state: tauri::State<'_, external_link::PreviewAllowance>,
+    url: String,
+) -> Result<(), String> {
+    if webview.label() != "main" {
+        return Err("allow_preview_once is only for the main webview".into());
+    }
+    state
+        .allow(&url, std::time::Instant::now())
+        .map_err(|e| e.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         // 알림 표면. **발신은 `notification::notification_send` 가 한다** — 이 플러그인의
@@ -814,10 +870,18 @@ fn main() {
         // 알림 클릭을 받는 델리게이트를 세운다(`notification::install`). **기동 때 한 번**
         // 이어야 한다 — 첫 알림을 보낼 때 세우면 그 알림의 클릭을 놓칠 수 있다.
         .setup(|app| {
+            // 메인 창은 설정이 아니라 여기서 세운다 — 채널·스레드 새 창 문(`app_windows`)을
+            // 빌더에 걸어야 해서다.
+            app_windows::build_main(app)?;
             notification::install(app.handle());
+            // 기동 확인(`scripts/launch-smoke.sh`)이 "setup 을 지났다"를 읽는 표지. 켜지 않으면 아무것도 안 한다.
+            if std::env::var_os("HARKROOM_LAUNCH_SMOKE").is_some() {
+                eprintln!("harkroom-launch-smoke: setup done");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            allow_preview_once,
             secret_get,
             secret_set,
             secret_delete,
@@ -827,12 +891,14 @@ fn main() {
             login_path,
             notification::notification_send,
             app_version,
+            concealed_clipboard::clipboard_write_concealed,
             claude_accounts_list,
             claude_accounts_configure,
             claude_account_login_start,
             claude_account_login_submit,
             claude_account_login_cancel,
             claude_account_remove,
+            claude_account_open_terminal,
             claude_pool_remove,
             claude_account_move,
             claude_accounts_provider_usage,
@@ -848,11 +914,19 @@ fn main() {
             operator_mcp_list,
             operator_mcp_set,
             operator_mcp_remove,
+            operator_merge_get,
+            operator_merge_set,
             operator_mcp_auth,
             operator_agent_remove,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Harkroom");
+        .build(tauri::generate_context!())
+        .expect("error while building Harkroom")
+        .run(|_app, event| {
+            // 복구 키를 복사하고 60초가 지나기 전에 앱을 끄면 비우기 스레드가 함께 죽는다 — 끝나기 전에 한 번 비운다.
+            if let tauri::RunEvent::Exit = event {
+                concealed_clipboard::clear_on_exit();
+            }
+        });
 }
 
 #[cfg(all(test, unix))]

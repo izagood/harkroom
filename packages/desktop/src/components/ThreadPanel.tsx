@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { GalleryScopeContext } from './Attachments';
+import type { GalleryScope } from '../lib/imageGallery';
 import { getCommunityController, useActiveStore, useCommunityRegistry } from '../state/communities';
-import { getController } from '../state/controller';
+import { useWindowView } from '../state/windowView';
+import { openWindow } from '../lib/windowActions';
 import { MessageItem } from './MessageItem';
 import { ProgressRow } from './ProgressRow';
 import { groupProgress } from '../lib/progressGroup';
 import { AgentExchange } from './AgentExchange';
-import { groupAgentExchanges } from '../lib/agentExchange';
+import { groupAgentExchanges, exchangeRows } from '../lib/agentExchange';
 import { ThreadStateBadge } from './ThreadStateBadge';
 import { threadState } from '../lib/threadState';
 import { WaitChainLine } from './WaitChain';
@@ -17,6 +20,7 @@ import { PaneResizer } from './PaneResizer';
 import { paneStorage, paneMaxWidth, MIN_THREAD_WIDTH, MAX_THREAD_WIDTH, MIN_CHANNEL_WIDTH } from '../lib/prefs';
 import { TypingLine } from './TypingLine';
 import { isNearBottom } from '../lib/stickyBottom';
+import { appendedFromHere } from '../lib/ownSends';
 import type { SectionId } from './settings/sections';
 import { useT } from '../i18n/useT';
 
@@ -32,7 +36,12 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
   reserveLeft?: number;
 } = {}) {
   const t = useT();
-  const { activeChannelId, threadRootId, messages, accounts, me, online, connected } = useActiveStore();
+  const { messages, accounts, me, online, connected } = useActiveStore();
+  // 보는 자리는 **이 창의 것**이다(새 창 — `state/windowView`). 메인이면 스토어 그대로다.
+  const view = useWindowView();
+  const { channelId: activeChannelId, threadRootId } = view;
+  // 스레드 창 안이면 패널이 창을 채운다 — 손잡이·왼쪽 선이 없고 ⧉ 도 없다(이미 창이다).
+  const fill = view.kind === 'thread';
   // 답글을 보낼 커뮤니티 — 보낸 순간의 것을 붙잡는다(PR #997, ChannelPane 과 같은 이유).
   const communityId = useCommunityRegistry((s) => s.activeId);
   /** 채널과 같은 판정을 쓴다 — 모르는 계정은 에이전트로 치지 않는다(`lib/agentExchange`). */
@@ -51,6 +60,11 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
     setWidth(next);
     paneStorage.saveThreadWidth(next);
   }, []);
+  // 채널 창이면 폭은 **그 창의 것**이다(designer #1174) — 메인의 저장 폭을 읽지도 쓰지도 않는다.
+  const paneWidth = view.pane?.width ?? threadWidth;
+  const paneMin = view.pane?.min ?? MIN_THREAD_WIDTH;
+  const paneReserve = view.pane?.reserveLeft ?? reserveLeft;
+  const onPaneWidth = view.pane?.onWidth ?? setThreadWidth;
 
   const thread = useMemo(() => {
     if (!activeChannelId || !threadRootId) return [];
@@ -181,13 +195,19 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
     stickyRef.current = false;
   }, [highlightedId, highlightInThread]);
 
+  /** 직전 커밋의 마지막 답글 — 채널의 `lastRootIdRef` 와 같은 이유다(앞에 붙은 옛 답글은 "내 새 답글"이 아니다). */
+  const lastReplyIdRef = useRef<string | null>(null);
   useEffect(() => {
     // 줄 수가 는 까닭이 점프가 불러온 답글 페이지면 따라가지 않는다 — "내가 쓴 답글은 따라
     // 간다" 예외도 여기서는 뜻이 없다(마지막 답글이 내 것인 스레드에서 점프가 되끌려 갔다).
     if (jumpedThisCommitRef.current) return;
-    if (atBottomRef.current || thread[thread.length - 1]?.authorId === me?.id) scrollToBottom();
+    const last = thread[thread.length - 1];
+    // 「내 답글」= 이 기기의 작성칸에서 보낸 것만(`lib/ownSends.ts`, 자리 열쇠는 스레드 뿌리).
+    const appendedMine = appendedFromHere(last, lastReplyIdRef.current, me?.id, threadRootId ?? '', useActiveStore.getState());
+    if (atBottomRef.current || appendedMine) scrollToBottom();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thread.length]);
+  useEffect(() => { lastReplyIdRef.current = thread[thread.length - 1]?.id ?? null; });
   // 점프 표식은 **그 커밋 한 번**만 산다 — 남겨 두면 다음에 내가 보낸 답글까지 안 따라간다.
   useEffect(() => { jumpedThisCommitRef.current = false; });
 
@@ -253,6 +273,9 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
     if (el.scrollTop < prevTop) stickyRef.current = false;
   };
 
+  // 스레드 패널에서 연 그림은 이 스레드(루트+답글)의 그림을 넘긴다(그림 넘겨 보기 사양 1).
+  const gallery = useMemo<GalleryScope | null>(() => (threadRootId ? { kind: 'thread', rootId: threadRootId } : null), [threadRootId]);
+
   if (!threadRootId) return null;
 
   return (
@@ -266,26 +289,27 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
      * `flex-shrink` 기본값(1)을 그대로 둬서, 창이 좁아지면 고른 폭보다 줄어들되
      * `minWidth` 아래로는 안 간다 — 전에 `min-w-[480px] flex-1` 이 하던 일과 같다.
      */
+    <GalleryScopeContext.Provider value={gallery}>
     <section
       /* `ChannelPane` 과 같은 이유로 붙은 손잡이다(그 파일의 주석) — 인박스가 자리가 되면서
          한 줄의 형제가 셋이 되었고, 그 순서를 재는 회귀선이 생겼다. */
       data-testid="thread-pane"
-      className="relative flex flex-col border-l border-border bg-surface-raised"
+      className={`relative flex flex-col bg-surface-raised ${fill ? 'min-w-0 flex-1' : 'border-l border-border'}`}
       /* 상한은 `paneMaxWidth` 가 적는다(그 함수의 주석) — 터미널과 **같은 결함**을 여기서도
          막는다: 넓은 창에서 고른 폭이 좁은 창에서 그대로 서면 대화가 폭 0 으로 밀린다. */
-      style={{ width: threadWidth, minWidth: MIN_THREAD_WIDTH, maxWidth: paneMaxWidth(MIN_THREAD_WIDTH, reserveLeft) }}
+      style={fill ? undefined : { width: paneWidth, minWidth: paneMin, maxWidth: paneMaxWidth(paneMin, paneReserve) }}
     >
-      <PaneResizer
+      {!fill && <PaneResizer
         label={t('thread.resizeHandle')}
-        width={threadWidth}
-        min={MIN_THREAD_WIDTH}
+        width={paneWidth}
+        min={paneMin}
         max={MAX_THREAD_WIDTH}
         /* 이 구분선 왼쪽에는 대화(또는 인박스) 하나만 있다. */
-        minRoomLeft={reserveLeft}
-        onWidth={setThreadWidth}
-      />
+        minRoomLeft={paneReserve}
+        onWidth={onPaneWidth}
+      />}
       <header className="flex items-center border-b border-border px-4 py-2">
-        <span className="font-bold">{t('thread.title')}</span>
+        <span className="font-semibold">{t('thread.title')}</span>
         {/* `null` 은 '아직 아무 말도 못 봤다' — 그때는 배지를 그리지 않는다(`threadState`). */}
         {state && <ThreadStateBadge state={state} className="ml-2" />}
         {/* 참여자 줄과 터미널 선택자는 **헤더**다 — 세션이 (에이전트, 스레드)당 하나이므로
@@ -294,8 +318,24 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
           <ThreadModelCollapsed rootId={threadRootId} expanded={modelsOpen} onToggle={() => setModelsOpen((v) => !v)} />
           <ThreadParticipants messages={thread} live={live} />
         </div>
-        <button className="ml-2 rounded px-2 text-fg-subtle hover:bg-surface-sunken"
-          onClick={() => getController().closeThread()}>
+        {/* ⧉ 새 창으로 떼어 낸다(판 3 주 진입점, × 왼쪽). **옮긴다**(W1): 창이 열리면 이 패널은 닫는다 —
+            그래야 패널에서 바로 다른 스레드를 연다. 초안은 키가 `thread:<뿌리>` 라 창으로 따라간다(③). */}
+        {!fill && activeChannelId && (
+          <button
+            data-testid="thread-pop-out"
+            className="ml-2 rounded-row px-2 text-fg-subtle hover:bg-surface-sunken"
+            title={t('window.openThread')}
+            aria-label={t('window.openThread')}
+            onClick={() => {
+              const r = openWindow({ kind: 'thread', channelId: activeChannelId, rootId: threadRootId });
+              if (r.kind === 'opened' || r.kind === 'focused') view.closeThread();
+            }}
+          >
+            ⧉
+          </button>
+        )}
+        <button className="ml-2 rounded-row px-2 text-fg-subtle hover:bg-surface-sunken"
+          onClick={() => view.closeThread()}>
           ×
         </button>
       </header>
@@ -317,14 +357,15 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
         {/* 채널과 **같은 함수**로 접는다 — 두 곳이 다른 판정을 쓰면 같은 대화가 자리마다
             다르게 보인다(`lib/progressGroup`·`lib/agentExchange`). 순서도 채널과 같아야 한다:
             진행을 먼저 접고 그 위에 주고받기를 접는다. */}
-        {groupAgentExchanges(groupProgress(thread), isAgent).map((slot) => (
+        {groupAgentExchanges(groupProgress(thread), isAgent, threadRootId ?? undefined).map((slot) => (
           slot.kind === 'progress'
             ? <ProgressRow key={slot.messages[0]!.id} messages={slot.messages} endedAt={slot.endedAt} />
             : slot.kind === 'exchange'
               ? (
                 <AgentExchange
-                  key={slot.messages[0]!.id}
+                  key={exchangeRows(slot)[0]!.id}
                   messages={slot.messages}
+                  items={slot.items}
                   inThread
                   onOpenDirectory={onOpenDirectory}
                   onOpenSettings={onOpenSettings}
@@ -358,7 +399,7 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
             type="checkbox"
             checked={alsoInChannel}
             onChange={(e) => setAlsoInChannel(e.target.checked)}
-            className="rounded border-border"
+            className="rounded-row border-border"
           />
           {t('thread.alsoPostToChannel')}
         </label>
@@ -378,5 +419,6 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
         />
       </div>
     </section>
+    </GalleryScopeContext.Provider>
   );
 }

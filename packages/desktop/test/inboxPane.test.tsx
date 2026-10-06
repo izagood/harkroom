@@ -47,7 +47,9 @@ const entry = (
 const mount = (rows: InboxEntry[], extra: Record<string, unknown> = {}) => {
   const api = fakeApi();
   const c = {
-    api: { ...api, inbox: vi.fn(async () => rows) },
+    api: { ...api, inbox: vi.fn(async () => rows), inboxBoard: vi.fn(async () => ({ entries: rows, threads: null, threadStates: [] })) },
+    loadInboxBoard: vi.fn(async () => ({ entries: rows, threads: null, threadStates: [] })),
+    inboxBoardSnapshot: vi.fn(() => null),
     openMessage: vi.fn(async () => undefined),
     openChannel: vi.fn().mockResolvedValue(undefined),
     openThread: vi.fn(),
@@ -103,7 +105,7 @@ describe('인박스는 자리다 — 모달이 아니다 (#488 C2)', () => {
     expect(screen.getByTestId('thread-pane')).toBeTruthy();
 
     openInbox();
-    await waitFor(() => expect(screen.getByTestId('inbox-entry-1')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('inbox-card-m1')).toBeTruthy());
 
     // **둘 다** 있다. 하나가 다른 하나를 밀어내지 않는다.
     expect(screen.getByTestId('thread-pane')).toBeTruthy();
@@ -138,11 +140,12 @@ describe('인박스는 자리다 — 모달이 아니다 (#488 C2)', () => {
     const c = mount([entry(7, 'thread_reply', 'c1', 'm1')]);
 
     openInbox();
-    await waitFor(() => expect(screen.getByTestId('inbox-entry-7')).toBeTruthy());
-    fireEvent.click(screen.getByTestId('inbox-entry-7'));
+    // 카드는 **스레드 하나**다 — 열쇠가 답글이 아니라 그 머리(m1)다.
+    await waitFor(() => expect(screen.getByTestId('inbox-card-m1')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('inbox-card-m1'));
 
-    // 이동 경로는 그대로다(#178·#228).
-    expect(c.openMessage).toHaveBeenCalledWith('m7');
+    // 스레드 카드는 그 스레드를 오른쪽 패널로 연다.
+    expect(c.openThread).toHaveBeenCalledWith('m1', { channelId: 'c1' });
     // 그리고 인박스는 **남는다.** 모달 시절에는 이 자리에서 `onClose` 가 불렸다.
     expect(screen.getByTestId('inbox-pane')).toBeTruthy();
 
@@ -163,8 +166,8 @@ describe('인박스는 자리다 — 모달이 아니다 (#488 C2)', () => {
     const c = mount([entry(9, 'mention', 'c1')]);
 
     openInbox();
-    await waitFor(() => expect(screen.getByTestId('inbox-entry-9')).toBeTruthy());
-    fireEvent.click(screen.getByTestId('inbox-entry-9'));
+    await waitFor(() => expect(screen.getByTestId('inbox-card-m9')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('inbox-card-m9'));
 
     expect(c.openMessage).toHaveBeenCalledWith('m9');
     // 인박스가 접히고 채널이 그 자리에 선다 — 누른 것이 보인다.

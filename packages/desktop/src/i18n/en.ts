@@ -160,7 +160,7 @@ import type { Message } from './types';
  * **다음 PR 이 다시 잴 자리**를 적어 둔다: `Loading…` 이 지금 둘이고
  * (`sidebar.members.loading`·`agents.memory.loading`) 뜻도 하나다 — *"아직 못 읽었다"*.
  * 세 번째가 오면 그것이 `common` 의 첫 손님이다. 다만 `agents.run.defaultsLoading`
- * (`Loading the defaults…`)·`agents.pat.loading`(`Reading PATs…`)은 **그 후보가 아니다**:
+ * (`Loading the defaults…`)은 **그 후보가 아니다**:
  * 같은 화면에 여럿이 함께 뜰 수 있어 무엇을 읽는 중인지가 문구에 있어야 한다.
  *
  * 그리고 **설정 화면에 언어 고르는 자리가 아직 없다.** 값과 배선은 다 있다
@@ -201,15 +201,11 @@ export const en = {
   'profile.roleAdmin': 'Administrator',
   'profile.readonlyNote': 'You can change your profile photo and your handle here. Your display name and login ID are set when the account is created and cannot be changed from the app yet.',
   'profile.signOut': 'Sign out',
-  'profile.signOutNote': 'Ends this session on this device only. Your other devices stay signed in.',
+  'profile.signOutNote': 'Signs out on this device. Every community added on this device is removed; your other devices stay signed in.',
   'connection.projectionRunning': '{repo} · projection is running',
-  'connection.projection': 'Projection',
-  'connection.server': 'Server',
-  'connection.realtime': 'Realtime connection',
+  'connection.projection': 'Status',
   'connection.connected': 'Connected',
   'connection.disconnected': 'Disconnected',
-  'connection.signOutTitle': 'Sign out of this community',
-  'connection.signOutNote': 'To use another server, add it in Settings › Communities — the switcher appears at the left of the sidebar once you are in more than one.',
   'appearance.modeSystem': 'System',
   'appearance.modeLight': 'Light',
   'appearance.modeDark': 'Dark',
@@ -222,6 +218,7 @@ export const en = {
   'settings.saved': '✓ Saved',
   'settings.saving': 'Saving…',
   'settings.nav.this-operator': "This machine's operator",
+  'settings.nav.secrets': 'Secrets & APIs',
   'settings.desc.this-operator': "Register this machine as an operator so agents can run here. The list of registered machines is under Agents › Operators.",
   'thisOperator.unavailable': "Registering this machine only works in the desktop app. Register other machines from Agents › Operators with a code.",
   'thisOperator.noCap': "Registering this machine needs the operator registration permission. Ask an admin.",
@@ -231,38 +228,39 @@ export const en = {
   'thisOperator.statusNone': 'Not registered yet',
   'thisOperator.statusRegistered': 'Registered',
   'thisOperator.registerAgain': 'Register again',
-  'thisOperator.registerAgainNote': 'Registering again adds this machine to the operator list a second time. Delete the old registration from the operator list yourself.',
-  'thisOperator.registerAgainTitle': 'Register this machine again?',
-  'thisOperator.registerAgainDetail': 'A new operator is created and this machine connects as it. The old registration is not deleted: it stays as offline and its token is still valid on the server. Delete the old registration from the operator list yourself. Agents assigned to the old registration do not move over.',
-  'thisOperator.registerAgainCancel': 'Cancel',
+  'thisOperator.registerAgainNote': 'Registering again revokes the old registration automatically and moves its assignments to the new one.',
+  'thisOperator.replacedDone': 'Revoked the old registration. Moved {n} assignment(s) to the new one.',
+  'thisOperator.replacedKept': 'The server did not revoke the old registration (older server). It stays as offline and its token is still valid — delete it from the operator list yourself. Assignments were not moved.',
   'thisOperator.openList': 'Open the operator list',
+  'thisOperator.renameInList': 'Rename it in Operators',
   'operators.openThisOperator': "Open this machine's operator",
   'settings.back': 'Back to app',
   'settings.group.me': 'You',
   'settings.group.device': 'This device',
-  'settings.group.workspace': 'Workspace',
+  'settings.group.workspace': 'Community',
   'settings.group.readOnly': 'read-only',
   'settings.group.agents': 'Agents',
   'settings.nav.profile': 'Profile',
   'settings.nav.notifications': 'Notifications',
   'settings.nav.messages': 'Messages',
   'settings.nav.appearance': 'Appearance & language',
-  'settings.nav.connection': 'Connection',
   'settings.nav.communities': 'Communities',
   'settings.nav.workspace': 'General',
   'settings.nav.agents': 'List',
   'settings.nav.agent-defaults': 'New agent defaults',
   'settings.nav.operators': 'Operators',
-  'settings.nav.mcp-servers': 'MCP servers',
+  'settings.nav.integrations': 'Integrations',
   'settings.nav.claude-accounts': 'Provider accounts',
   'settings.nav.handle-groups': 'Handle groups',
-  'settings.nav.invite': 'Invite',
+  'settings.nav.invite': 'Members & invites',
   'settings.nav.updates': 'Updates',
   'settings.nav.skills': 'Skills',
   'settings.nav.automations': 'Automations',
   'settings.nav.gallery': 'Component gallery',
   'settings.desc.communities': 'The harkroom servers this device knows. Each one keeps its own channels, messages and connection.',
-  'settings.desc.connection': 'The harkroom server this app talks to.',
+  'settings.desc.integrations': 'Where the community connects to outside tools — the avcs projection, and the MCP servers agents may attach.',
+  'integrations.projection': 'avcs projection',
+  'integrations.mcp': 'MCP servers',
   'settings.desc.messages': 'These choices live on this device only.',
   'settings.desc.notifications': 'harkroom only notifies you while its window is in the background.',
   'settings.desc.profile': 'Who you are signed in as on this server.',
@@ -460,6 +458,18 @@ export const en = {
   // **눌린 것이 맞는지** 화면이 말하지 않는다(툴바의 스레드 칸이 상시 노출이 된 뒤로
   // 이 상태가 흔해졌다 — 전에는 답글이 있는 스레드만 열 수 있었다).
   'thread.empty': 'No replies yet. Start the thread with the first reply.',
+  // 채널·스레드 새 창(designer 판 3). `window.limit` 의 {count} 는 `MAX_APP_WINDOWS`.
+  'window.openThread': 'Open thread in new window',
+  'window.popOut': 'Open in new window',
+  'window.limit': '{count} windows are already open. Close one, then try again.',
+  'window.blocked': 'Could not open a new window.',
+  'window.threadGone': 'This thread is gone — it was deleted, or you can no longer see it.',
+  'window.loading': 'Loading…',
+  'window.openChannel': 'Open channel in new window',
+  'window.inWindow': 'Open in a separate window',
+  'window.pin': 'Keep on top',
+  'window.unpin': 'Stop keeping on top',
+  'window.backToMain': 'Move back to main window',
   'reactions.pickTitle': 'Pick a reaction',
 
   // ---------------------------------------------------------------------------
@@ -666,8 +676,8 @@ export const en = {
   'profileAvatar.removeConfirm': 'Delete for good',
 
   // 워크스페이스 아이콘 — 커뮤니티 레일의 사진(설정 › Workspace).
-  'workspaceIcon.description': 'Settings for this workspace, shared by every member.',
-  'workspaceIcon.label': 'Workspace icon',
+  'workspaceIcon.description': 'Settings for this community, shared by every member.',
+  'workspaceIcon.label': 'Community icon',
   'workspaceIcon.adminOnly': 'Only owners and admins can change the icon. Without one, the community rail shows the first letter of the name.',
 
   'profileName.apply': 'Apply',
@@ -719,7 +729,7 @@ export const en = {
   'skills.group.pending': 'Pending',
   'skills.group.pendingEmpty': 'No skills waiting for approval',
   'skills.group.subtitle':
-    'Workspace skills proposed by agents. Approving installs the body as a skill file for every agent, which the harness reads when it needs it.',
+    'Community skills proposed by agents. Approving installs the body as a skill file for every agent, which the harness reads when it needs it.',
   'skills.list.loadFailed': 'The skill list did not arrive',
   'skills.list.loading': 'Loading…',
   'skills.list.refresh': 'Refresh',
@@ -760,6 +770,8 @@ export const en = {
   'automations.row.unknownTarget': '(a channel you cannot see)',
   'automations.row.runNow': 'Run once now',
   'automations.row.runFailed': 'The run was not queued',
+  'automations.row.expand': 'Expand',
+  'automations.row.collapse': 'Collapse',
   'automations.row.edit': 'Edit',
   'automations.row.history': 'History',
   'automations.row.delete': 'Delete',
@@ -898,7 +910,8 @@ export const en = {
   'agentTurns.accountTitle': 'Running on this claude account (pool: {pool})',
   'agentTurns.accountTitleRoot': 'Running on this claude account (root pool)',
   'agentTurns.cancel': 'Stop',
-  'agentTurns.cancelAll': 'Stop all',
+  'agentTurns.cancelOne': 'This turn only',
+  'agentTurns.cancelAll': 'Stop all…',
   'agentTurns.cancelAllTitle': 'Stop {n} running turns?',
   'agentTurns.cancelConfirm': 'Stop them',
   'agentTurns.cancelDetail': 'Only the turns stop — the runners stay up and take the next mention. Each stopped turn leaves a failure note in its thread. Turns someone is driving by hand are left alone.',
@@ -909,8 +922,8 @@ export const en = {
   'agentTurns.endControlTitle': "End the hands-on session on @{handle}?",
   'agentTurns.endControlDetail': 'The terminal closes and the harness is stopped. Anything typed there is already saved in the session, so reopening the terminal resumes it. The runner stays up, and the mentions this thread has been holding are answered next.',
   'agentTurns.endControlConfirm': 'End control',
-  'agentTurns.cancelThread': 'Stop thread',
-  'agentTurns.cancelThreadTitle': 'Stop every turn running in this thread',
+  /** 줄의 [멈추기 ▾] 안 항목(UX ⑨a) — 숫자가 **무엇을 함께 멈추는지** 말한다. */
+  'agentTurns.cancelThread': 'Everything in this thread ({n})',
   'agentTurns.checking': 'Checking\u2026',
   'agentTurns.count': '{n} running',
   'agentTurns.human': 'human at the wheel',
@@ -990,6 +1003,23 @@ export const en = {
   'agents.detail.saveFailed': 'The changes were not saved',
   'agents.detail.submitNew': 'Create agent',
   'agents.detail.titleEdit': 'Edit {handle}',
+  'agents.detail.immediate': "Applies now",
+  'agents.detail.pendingCount': "{n} unsaved",
+  'agents.detail.leaveTitle': "Leave with {n} unsaved changes?",
+  'agents.detail.leaveNote': "Changes you haven't saved will be lost.",
+  'agents.detail.leaveDiscard': "Discard and leave",
+  'agents.detail.leaveStay': "Keep editing",
+  'agents.detail.saveFailedCount': "{n} couldn't be saved",
+  'agents.detail.saveFailedGoto': "Show in {tab}",
+  'agents.detail.tabChanged': "Has unsaved changes",
+  'agents.detail.leaveSave': "Save and leave",
+  'agents.detail.tablist': 'Agent detail sections',
+  'agents.detail.tab.overview': 'Overview',
+  'agents.detail.tab.profile': 'Profile',
+  'agents.detail.tab.run': 'Run',
+  'agents.detail.tab.permissions': 'Permissions',
+  'agents.detail.tab.memory': 'Memory',
+  'agents.detail.runsOn': 'Runs on {name}',
   'agents.detail.titleNew': 'Add agent',
 
   'agents.disable.cancel': 'Cancel',
@@ -1023,8 +1053,8 @@ export const en = {
    * 사람이 "고장 났나"라고 읽지 않게, 그것이 비활성화의 결과였음을 여기서 잇는다.
    */
   'agents.disable.noteDisabled':
-    'This agent is disabled. Enabling it again will report that it has no PAT and needs a '
-    + 'new one — disabling revoked every PAT it had.',
+    'This agent is disabled. Disabling revoked every PAT it had — enabling it again does not need one, '
+    + 'since agents connect through their operator.',
   /**
    * 끄기 전 안내. **되돌릴 수 없는 것이 무엇인지**를 말한다 — 끄는 것 자체는 되돌릴 수
    * 있지만 PAT 는 돌아오지 않는다(서버가 해시만 보관한다). 그 비대칭이 이 문장의 전부다.
@@ -1033,15 +1063,13 @@ export const en = {
    * 꾸밈이 아니라 문단에서 건져야 할 사실을 가리킨다(`AgentsSettings.emphasize` 머리말).
    */
   'agents.disable.noteEnabled':
-    'Disabling an agent {strongRevoked}, and enabling it again does not bring them back — '
-    + 'you have to {strongMint}.',
-  'agents.disable.noteEnabledMint': 'mint new ones',
+    'Disabling an agent {strongRevoked}. It does not need a PAT when you enable it again — '
+    + 'it connects through its operator.',
   'agents.disable.noteEnabledRevoked': 'revokes every PAT it has',
   /** 확인 단계. 위 안내와 달리 **지금 벌어질 일**을 현재형으로 말한다. */
   'agents.disable.warning':
-    '{strongRevoked} and its runner stops. Enabling it again does not bring the PATs back — '
-    + 'you have to {strongMint}.',
-  'agents.disable.warningMint': 'mint new ones',
+    '{strongRevoked} and its runner stops. It does not need a PAT when you enable it again — '
+    + 'it connects through its operator.',
   'agents.disable.warningRevoked': 'Every PAT of this agent is revoked',
 
   /**
@@ -1108,6 +1136,78 @@ export const en = {
    */
   'agents.memory.coreNote': 'These characters ride in the prompt every turn. The rest open only when the agent needs them.',
   'agents.memory.coreTag': 'Every turn',
+  'agents.memory.archivedCollapse': 'Collapse archived memories',
+  'agents.memory.archivedCount': '{n} archived',
+  'agents.memory.archivedExpand': 'Expand archived memories',
+  'agents.memory.archivedHeading': 'Archived',
+  'agents.memory.archivedNote': "Archived memories are left out of the agent's index and recall, and don't count toward the limit.",
+  'agents.memory.archivedTag': 'Archived',
+  'agents.memory.cleanupBlocked': '@{handle} — off or not assigned to an operator, so a DM would not start a turn. Turn it on or assign an operator in the Run tab',
+  'agents.memory.cleanupOpenDm': 'Open DM',
+  'agents.memory.cleanupSentAgo': 'Sent {ago}',
+  'agents.memory.cleanupOpen': 'Ask @{handle} to tidy up',
+  'agents.memory.cleanupTitle': 'Send a tidy-up request to @{handle} by DM',
+  'agents.memory.cleanupNote': 'Only memory names and scopes are sent, not their bodies — the agent reads them itself. The reply arrives in the DM.',
+  'agents.memory.cleanupSend': 'Send to @{handle}',
+  'agents.memory.cleanupSent': 'Sent to @{handle} by DM. The reply will arrive there',
+  'agents.memory.cleanupFailed': 'Could not send the tidy-up request',
+  'agents.memory.cleanupIntro': 'Please tidy up your memory. Only the scopes below (picked in Settings › Agents › Memory).',
+  'agents.memory.cleanupMore': '…and {n} more — find them with memory.audit',
+  'agents.memory.cleanupOutro': 'Take the cleanup lease with memory.lease, read each with memory.get and decide. Merge with memory.merge; archive unused ones with memory.archive instead of deleting. When done, tell me in this DM what you changed.',
+  'agents.memory.cleanupScope.merge': 'Merge look-alikes',
+  'agents.memory.cleanupScope.distill': 'Distill lessons from expiring logs',
+  'agents.memory.cleanupScope.describe': 'Fill in summaries',
+  'agents.memory.cleanupScope.links': 'Fix broken links',
+  'agents.memory.cleanupScope.archiveUnused': 'Review unused ones for archiving',
+  'agents.memory.cleanupScope.picked': 'Review the selected memories',
+  'agents.memory.closeDetail': 'Close details',
+  'agents.memory.linkArchived': 'Archived memory — open it to unarchive',
+  'agents.memory.linkMissing': 'No memory by that name',
+  'agents.memory.section.journal': 'Logs',
+  'agents.memory.section.procedure': 'Procedures',
+  'agents.memory.section.topic': 'Rules & facts',
+  'agents.memory.why.brokenLinks': 'Points to missing memories: {targets}',
+  'agents.memory.why.expiringJournal': 'Near the 60-log limit and about to be pushed out — move lessons worth keeping into a rule or fact',
+  'agents.memory.why.flagged': 'Held by the write check, waiting for review: {reason}',
+  'agents.memory.why.neverRead': 'More than 7 days old and never used',
+  'agents.memory.why.pairs': 'Similar memories (merge candidates):',
+  'agents.memory.why.stale': 'Last used {ago} (over 30 days)',
+  'agents.memory.why.undescribed': 'No summary, so the index and recall only find it by name',
+  'agents.memory.archiveAction': 'Archive',
+  'agents.memory.archiveSlug': 'Archive {slug}',
+  'agents.memory.archiveOverflow': 'The archive holds {max}; the {n} oldest archived will be pushed out to past versions',
+  'agents.memory.archiveOverflowConfirm': 'Archive anyway',
+  'agents.memory.archiveOverflowShort': 'The {n} oldest archived will be pushed out',
+  'agents.memory.archivePicked': 'Archive {n}',
+  'agents.memory.archivePickedAnyway': 'Archive {n} anyway',
+  'agents.memory.archivedDone': 'Archived {n}',
+  'agents.memory.archivedEditNote': 'Saving brings this memory out of the archive and back into use',
+  'agents.memory.batchFailed': 'Could not archive or unarchive',
+  'agents.memory.batchSkipped': '{n} could not be handled (gone or invalid name)',
+  'agents.memory.chip.brokenLinks': 'Broken links',
+  'agents.memory.chip.expiringJournal': 'Logs about to expire',
+  'agents.memory.chip.flagged': 'Needs review',
+  'agents.memory.chip.neverRead': 'Never used',
+  'agents.memory.chip.pairs': 'Look-alikes',
+  'agents.memory.chip.stale': 'Unused 30 days',
+  'agents.memory.chip.undescribed': 'No summary',
+  'agents.memory.cleanupHeading': 'To tidy',
+  'agents.memory.clearPicks': 'Clear selection',
+  'agents.memory.created': 'Created {ago}',
+  'agents.memory.journalCount': 'Logs {n}/{max}',
+  'agents.memory.noMatchActive': 'None in use · {n} in the archive',
+  'agents.memory.pick': 'Select {slug}',
+  'agents.memory.picked': '{n} selected',
+  'agents.memory.pickedHidden': 'Includes {n} not shown by the filter',
+  'agents.memory.pointsToArchived': 'Points to {n} archived · Unarchive',
+  'agents.memory.pointsToArchivedShort': '↺ {n} archived',
+  'agents.memory.unarchiveAction': 'Unarchive',
+  'agents.memory.unarchivePicked': 'Unarchive {n}',
+  'agents.memory.unarchiveSlug': 'Unarchive {slug}',
+  'agents.memory.unarchiveTooMany': '{n} could not be unarchived — no room ({max}/{max} in use)',
+  'agents.memory.unarchivedDone': 'Unarchived {n}',
+  'agents.memory.usage': 'Used {n}×',
+  'agents.memory.usedRecently': 'Used in 7 days: {n}',
   /** 남은 자리. 차면 새 기억이 조용히 거절되므로 늘 띄워 둔다. */
   'agents.memory.count': '{n} / {max}',
   'agents.memory.deleteAction': 'Forget {slug}',
@@ -1135,29 +1235,26 @@ export const en = {
   /** 기본. 이 화면을 여는 대부분의 이유가 *"방금 무엇을 기억했나"* 다. */
   'agents.memory.sortRecent': 'Recent',
 
-  /** 토큰 **자체**를 복사하는 버튼. 버튼 글자는 `agents.runner.copy` 를 쓰고
-   *  (`Copy` 하나를 두 벌로 두지 않는다) 무엇을 복사하는지는 이 이름이 가른다. */
-  'agents.pat.copyToken': 'Copy the token',
-  'agents.pat.label': 'New PAT label',
-  /** 라벨 규칙. 서버가 409 로 거절하는 그 규칙이고, **되쓸 수 있다**까지 말해야 막히지 않는다. */
-  'agents.pat.labelNote':
-    'A label is unique among the live tokens. Revoking one frees its label to be used again.',
+  /** 옛 러너 토큰 칸의 제목. `PAT` 는 고유어라 번역하지 않는다(i18n 시험이 지킨다). */
+  'agents.pat.heading': 'Old runner tokens (PAT)',
+  /**
+   * 왜 지우라는지. 러너는 오퍼레이터로 서므로 **쓰는 곳이 없다**와 **그래도 유효하고 만료가 없다**를
+   * 함께 말한다 — 앞엣것만 말하면 남겨 둬도 되는 것으로 읽는다.
+   */
+  'agents.pat.legacyNote':
+    'Agents now connect through their operator, so nothing uses these tokens — but they stay valid and never expire. '
+    + 'It is safer to revoke them.',
   'agents.pat.listFailed': 'The PAT list could not be read',
-  'agents.pat.loading': 'Reading PATs…',
-  'agents.pat.mint': '+ New PAT',
-  'agents.pat.mintFailed': 'The PAT was not minted',
-  /** 꺼진 에이전트에 PAT 0개는 **정상이다** — 그래서 재발급을 권하지 않는다. */
-  'agents.pat.none': 'No PAT',
-  /** 켜진 에이전트에 PAT 0개면 러너가 못 뜬다 — 그 사실과 사유를 함께 말한다. */
-  'agents.pat.noneNeedsMint': 'No PAT — mint one (disabling revokes them all)',
   'agents.pat.revoke': 'Revoke',
+  'agents.pat.revokeAll': 'Revoke all ({n})',
+  'agents.pat.revokeAllConfirm': 'Revoke all',
+  /** 확인창 본문. 되돌릴 수 없다는 것과 감사에 하나씩 남는다는 것(security 조건 a)을 말한다. */
+  'agents.pat.revokeAllDetail':
+    'Each token is revoked by its label and recorded in the audit log. Anything still holding one of them stops working. This cannot be undone.',
+  'agents.pat.revokeAllTitle': { one: 'Revoke the old token?', other: 'Revoke {count} old tokens?' },
   'agents.pat.revokeCancel': 'Cancel',
   'agents.pat.revokeConfirm': 'Really revoke',
-  'agents.pat.revoked': '(revoked)',
   'agents.pat.revokeFailed': 'The PAT was not revoked',
-  /** 발급 직후. **왜 다시 못 보는지**를 함께 적는다 — 그것이 지금 복사해야 하는 이유다. */
-  'agents.pat.shownOnce':
-    'This token is visible only now — the server keeps only a hash, so it cannot be shown again',
 
   'agents.permissions.mentionAuto': 'auto — allow every tool on a mention turn',
   /** 이 설정이 **안 걸리는 자리**를 말한다 — 없으면 사람은 터미널에서도 막힐 것으로 읽는다. */
@@ -1202,18 +1299,10 @@ export const en = {
   'agents.model.listUnknown': 'Could not get this harness\'s model list from the operator running it — type the exact model name.',
   'agents.run.note': 'What it runs on.',
   'agents.run.title': 'Run',
+  /** 영어 값 그대로 — 사전으로 옮긴 것은 한국어 화면에서 "모델" 로 읽히게 하려는 것이다(designer #1059). */
+  'agents.run.model': 'Model',
+  'agents.run.effort': 'Effort',
 
-  'agents.runner.copied': 'Copied',
-  'agents.runner.copy': 'Copy',
-  /** 선택조차 못 했을 때. 남은 길이 손으로 옮겨 적는 것뿐이라 그것을 말한다. */
-  'agents.runner.copyFailedManual':
-    'The clipboard is not available and the command could not be selected — copy it by hand',
-  /**
-   * 클립보드가 없거나 거부됐을 때. **조용히 실패하지 않는다**(`#177`) — 화면의 그 명령을
-   * 선택해 두었으므로 **다음에 할 일**을 말한다. 오류만 적고 끝내면 사람은 막힌다.
-   */
-  'agents.runner.copyFailedSelected':
-    'The clipboard is not available — the command is selected, so press ⌘C to copy it',
   /**
    * daemon 이 자기가 띄운 러너만 아는 것은 **한계 고백**이다. 앞 문장에 뭉치면 사람은
    * 손으로 띄운 러너도 여기 나타날 것으로 읽고, 안 나타나면 앱이 고장 났다고 판단한다.
@@ -1232,13 +1321,6 @@ export const en = {
     + 'its mentions between them.',
   'agents.runner.ownedNoteDaemon': 'daemon already holds',
   'agents.runner.ownedNoteOwn': 'I own',
-  /**
-   * 발급 직후 상자의 안내. 앞 판본은 여기서 러너 명령을 통째로 복사시켰다 — 이제 배정된
-   * 오퍼레이터가 토큰을 서버에서 직접 받아 가므로 사람이 옮겨 적을 일이 없다(단계 2 한정).
-   */
-  'agents.runner.operatorTakesPat':
-    'You do not need to copy this anywhere for an assigned operator — it fetches the token from the server itself. '
-    + 'Keep it only if you start a runner by hand.',
 
   'agents.stale.allCurrent': 'Every running runner matches the version of its operator.',
   /**
@@ -1785,9 +1867,9 @@ export const en = {
    */
   'sidebar.find.placeholder': 'Channels · people · agents',
 
-  'sidebar.members.adminBadge': 'Workspace admin',
+  'sidebar.members.adminBadge': 'Community admin',
   /** 채널 역할이 아니라 계정 속성이다 — 원래 `title` 이 그것을 말하고 있었다. */
-  'sidebar.members.adminBadgeTitle': 'Workspace admin — not a channel role',
+  'sidebar.members.adminBadgeTitle': 'Community admin — not a channel role',
   /**
    * 꺼진 에이전트 배지. **`Off` 가 아니다** — 이것은 자동 멘션 체크박스의 켬/끔이
    * 아니라 **계정 자체가 꺼진 것**이고, 두 상태가 같은 줄에 나란히 선다. 같은 낱말을
@@ -1870,6 +1952,7 @@ export const en = {
   'sidebar.menu.copyName': 'Copy channel name',
   'sidebar.menu.delete': 'Delete',
   'sidebar.menu.edit': 'Edit channel',
+  'sidebar.menu.settings': 'Channel settings…',
   'sidebar.menu.hide': 'Hide',
   'sidebar.menu.invite': 'Invite',
   'sidebar.menu.leave': 'Leave',
@@ -2003,14 +2086,6 @@ export const en = {
     other: 'answering unblocks {count} threads',
   },
 
-  'waitChain.sectionTitle': 'Waiting on',
-  'waitChain.sectionTitleCount': 'Waiting on ({count})',
-  'waitChain.empty': 'Nothing is waiting',
-  /** **"없다"가 아니라 "모른다"** 다(design.md §4). */
-  'waitChain.unseen': 'Not everything has been checked yet',
-  'waitChain.dm': 'DM',
-  'waitChain.reasonCycle': 'waiting on each other',
-  'waitChain.reasonDeadRunner': 'the answering side has stopped',
 
   // ---------------------------------------------------------------------------
   // message — **메시지 행 하나에 매달린 말**(`components/MessageItem.tsx` 와 그 행이
@@ -2321,6 +2396,8 @@ export const en = {
   /** 모델이 `null` 일 때. **'모른다'가 아니라 '하네스가 고른다'다**(`AgentConfig.model`). */
   'grid.card.harnessDefault': 'harness default',
   'grid.card.lastTurn': 'Activity',
+  'grid.card.merge': 'Merge',
+  'grid.card.mergeRepos': { one: '{count} repo', other: '{count} repos' },
   /** 카드 왼쪽 라벨. 값은 `VersionChip` 이 낸다. */
   'grid.card.runner': 'Runner',
   /**
@@ -2462,7 +2539,7 @@ export const en = {
   // 화면 이름이 아니다.
   //
   // 그 판정을 그리는 화면이 **셋이다**: 화면 위쪽 띠(`ProjectionBanner`) · 리스 목록
-  // (`LeasePanel`) · 연결 설정(`ConnectionSettings`). 그 파일 머리말이 *"두 자리가 각자
+  // (`LeasePanel`) · 연동 설정(`IntegrationsSettings`). 그 파일 머리말이 *"두 자리가 각자
   // 판정하면 반드시 갈라진다"* 며 함수를 하나로 뽑은 그 이유가 키에도 그대로 걸린다.
   //
   // `url` 덩어리만 화면 하나(`settings/ProjectionUrl.tsx`)의 것이다. **그래도 여기 둔다** —
@@ -2867,37 +2944,43 @@ export const en = {
   //   자기 말로 적을 수 있어야 하고, 지금 영어인 것은 우연이지 계약이 아니다
   // ---------------------------------------------------------------------------
 
-  'inbox.drafts.badge': 'Draft',
-  'inbox.drafts.empty': 'No unfinished drafts',
-  /**
-   * 구획 이름(랜드마크)과 눈에 보이는 머리글을 **가른다** — `waitChain.sectionTitle` /
-   * `sectionTitleCount` 가 이미 그 모양이다. 랜드마크는 **자리의 이름**이라 그 안의
-   * 개수가 섞이면 목록이 바뀔 때마다 이름이 달라지고, 스크린리더로 자리를 오가는
-   * 사람에게는 매번 다른 구획처럼 들린다.
-   */
-  'inbox.drafts.heading': 'Unfinished drafts',
-  'inbox.drafts.headingCount': 'Unfinished drafts ({count})',
-  /** 채널을 못 알아낸 스레드 초안. **`scopeKey` 를 그대로 내는 자리의 앞말이다.** */
-  'inbox.drafts.thread': 'thread',
+  // 상태 보드(C안, 2026-10-01). 열 이름은 designer 사양 그대로다.
+  'inbox.board.col.mine': 'Your turn',
+  /** 남을 기다리는 열. "막힘" 이 아니다 — 스레드 상태 리액션(088)에서 막힘은 실패를 뜻한다(designer). */
+  'inbox.board.col.blocked': 'Waiting',
+  'inbox.board.col.active': 'In progress',
+  'inbox.board.col.done': 'Done',
+  /** 열 머리의 수. **내 차례만 센다** — 다른 열은 줄지 않는 숫자라 아무 말도 하지 않는다. */
+  'inbox.board.mineCount': '{count} waiting on you',
+  /** 열이 비었을 때. 내 차례가 0 이 되는 것이 이 화면의 목적이다. */
+  'inbox.board.empty.mine': 'Nothing is waiting on you',
+  'inbox.board.empty.other': 'Nothing here',
+  /** 처음부터 아무것도 없을 때(걸러 낸 것과 다르다). */
+  'inbox.board.empty.all': 'Nothing has called you',
+  /** "N일째" — 이 열에 들어오게 한 말부터 센다. */
+  'inbox.board.days': '{count}d waiting',
+  /** 카드에 쌓인 말의 수 — 같은 일에서 온 것이 여럿이면 한 장에 모인다는 표시. */
+  'inbox.board.more': '+{count} more',
+  'inbox.board.unread': 'New',
+  /** 치움 — 머리에 ✅ 를 달아 보드에서 내린다(끝남 맨 아래 접힘). 2/2 의 서버 완료가 대신한다. */
+  /** 완료 — 서버의 내 상태(2/2). 보드에서 내려 끝남 맨 아래 "치운 것" 으로 접는다. */
+  'inbox.board.done': 'Done',
+  /** 나중에 — 내일 아침까지 그 열 맨 아래로 접고, 내 차례 수에서 뺀다. */
+  'inbox.board.later': 'Later',
+  /** 치운 것·미룬 것을 되돌린다. */
+  'inbox.board.undo': 'Put back',
+  /** 미룬 카드가 다시 서는 시각. `{when}` 은 `오늘 시각 · tomorrowAt · 날짜 시각` 중 하나다. */
+  'inbox.board.laterUntil': 'back {when}',
+  'inbox.board.tomorrowAt': 'tomorrow {time}',
+  /** 열 맨 아래 접힘 줄. 접힌 카드도 수로 남는다. */
+  'inbox.board.fold.quiet': 'Quiet for a week ({count})',
+  'inbox.board.fold.old': 'Older ({count})',
+  'inbox.board.fold.cleared': 'Cleared ({count})',
+  'inbox.board.fold.later': 'Later ({count})',
+  /** 쓰다 만 초안 — 보드 밖 한 줄. */
+  'inbox.board.drafts': 'Unfinished drafts ({count})',
 
-  /** 목록이 비었다 — **걸러 낸 것과 다른 사실이다**(아래 `noMatch`). */
-  'inbox.entries.empty': 'Nothing has called you',
-  /** 위 `drafts.heading` 과 같은 이유로 갈라 둔다 — 랜드마크 이름에 수를 안 섞는다. */
-  'inbox.entries.heading': 'Called you',
-  'inbox.entries.headingCount': 'Called you ({count})',
-  /** 걸러 냈을 때. 칩을 되돌리면 다시 나온다는 것이 이 문장과 빈 목록의 차이다. */
-  'inbox.entries.noMatch': 'Nothing matches the filter',
-  /** 줄이 스레드에서 왔다. 앞의 `·` 는 화면이 붙인다. */
-  'inbox.entries.thread': 'thread',
-  /** 줄 끝의 안 읽음 표시. **칩(`filter.unread`)과 같은 말이다** — 한 키로 둔다. */
-  'inbox.entries.unread': 'Unread',
 
-  'inbox.filter.all': 'Everything',
-  'inbox.filter.blocking': 'Blocking you',
-  /** **rank 축이 아니라 읽음 축이다**(원래 주석이 그 어긋남을 알면서 뒀다). */
-  'inbox.filter.unread': 'Unread',
-  /** rank 축. **위 `unread` 와 이름이 겹치면 안 된다**(위 표). */
-  'inbox.filter.reading': 'To read',
 
   'inbox.pane.close': 'Close the inbox',
   /**
@@ -3087,7 +3170,42 @@ export const en = {
   'message.attachment.loadFailed': '(could not load)',
   'message.attachment.zoom': 'View larger: {filename}',
   'message.attachment.closeZoom': 'Close the enlarged view',
+  'message.attachment.zoomIn': 'Zoom in',
+  'message.attachment.zoomOut': 'Zoom out',
+  'message.attachment.zoomFit': 'Fit to width',
+  'message.attachment.zoomFitShort': 'Fit',
+  'message.attachment.zoomActual': 'Actual size',
+  'message.attachment.zoomFitLevel': 'Fit {percent}',
   'message.attachment.save': 'Save',
+  'artifact.card.open': 'Open preview {title}',
+  'artifact.card.version': 'v{version}',
+  'artifact.card.versionWithPrev': 'v{version} · {prev} earlier',
+  'artifact.card.latest': 'Latest v{version}',
+  'artifact.card.latestTitle': 'Latest v{version} · “{title}”',
+  'artifact.card.html': 'HTML',
+  'artifact.card.openLabel': 'Open preview ›',
+  'artifact.card.previewing': 'Previewing',
+  'artifact.panel.label': 'Preview',
+  'artifact.panel.expand': 'Expand to window',
+  'artifact.panel.collapse': 'Back to side panel',
+  'artifact.panel.close': 'Close preview',
+  'artifact.panel.resize': 'Resize preview',
+  'artifact.panel.reload': 'Reload',
+  'artifact.panel.download': 'Download file',
+  'artifact.panel.madeBy': 'A page made by an agent',
+  'artifact.panel.loading': 'Loading…',
+  'artifact.panel.tooLarge': 'Too large to preview ({size}). You can download the file to view it',
+  'artifact.panel.forbidden': 'You cannot see this preview',
+  'artifact.panel.gone': 'This preview was deleted',
+  'artifact.panel.failed': 'The preview could not be opened',
+  'artifact.panel.navigated': 'The page tried to go somewhere else, so it was stopped.',
+  'message.attachment.goToMessage': 'Go to message',
+  'message.attachment.galleryAnnounce': 'Image {index} of {total}, sent by {sender}',
+  'message.attachment.loadFailedLong': 'Could not load this image',
+  'message.attachment.retry': 'Retry',
+  'message.attachment.loading': 'Loading image',
+  'message.attachment.prev': 'Previous image',
+  'message.attachment.next': 'Next image',
 
   /** 줄 머리 — 무엇을 불렀나. 셋 다 **부름의 대상**이지 사람 수가 아니다. */
   'message.notified.group': 'Handle group',
@@ -3239,7 +3357,7 @@ export const en = {
   // | {n}줄 펼치기 · 접기 | `Show {count} lines` · `Collapse` | 펼침은 **몇 줄인지**를 말해야 열 이유가 되고(규칙 06 의 결), 접기는 수를 말할 이유가 없다 — 이미 보고 있다 |
   // | 확인한 것 · 바뀐 파일 · 남은 것 | `Checked` · `Files changed` · `Left to do` | **셋이 한 축에 선다** — 무엇을 했나 · 무엇이 바뀌었나 · 무엇이 남았나. `Remaining` 은 명사라 "남은 것이 있다"만 말하고 **누가 할 일인지**가 빠진다 |
   // | 정했다 · 끝냈다 | `Decided` · `Finished` | 접은 줄의 결론 머리. **위 `ask.decided` 와 같은 낱말이다** — 같은 사실을 두 자리가 다르게 부르면 어휘가 늘어난다(그 파일 주석이 한국어로 이미 그렇게 정했다) |
-  // | 아직 정해진 것 없음 | `Nothing decided yet` | **`yet` 이 진다** — 빼면 "아무것도 안 정해진다"는 판정이 되는데, 이 구간은 아직 도는 중일 수 있다 |
+  // | {handle} 작업 중 {duration} | `{handle} working {duration}` | 접힌 주고받기 안에서 아직 도는 진행의 칩(2026-10-06). `Working` 과 같은 낱말 — 옛 `Nothing decided yet` 자리는 마지막 말 첫 줄이 받았다 |
   // | {n}번 주고받음 | `{count} exchanges` | 복수형이 갈린다. 접힌 줄에서 **결론 뒤에 오는 부수적인 숫자**라 문장이 아니라 명사구다 |
   // | 마지막 {시각} | `last {time}` | 시각은 `toLocaleTimeString` 이 그 언어로 낸다 — 사전은 앞의 낱말만 진다(`lib/time.ts` 의 경계와 같은 규율) |
   //
@@ -3281,6 +3399,20 @@ export const en = {
 
   'speech.failure.title': 'Could not finish it',
   'speech.failure.callAgain': 'Call again',
+  'claudeAccounts.attention.notice': 'Claude Code is waiting for your choice on a setup screen. New threads try this account last until you answer it.',
+  'claudeAccounts.attention.openAria': 'Open a terminal for {account}',
+  'gate.card.title': 'Needs your choice',
+  'gate.card.line': '{account} stopped at a Claude Code setup screen. Answer it in the terminal and this turn starts again.',
+  'gate.notify.title': '{account} is waiting for your choice',
+  'gate.notify.body': '@{agent} stopped at a setup screen — open it to answer',
+  'gate.notify.bodyNoAgent': 'An agent stopped at a setup screen — open it to answer',
+  'gate.terminal.open': 'Open terminal',
+  'gate.terminal.opened': 'Opened in Terminal — answer the question there, the turn will start again',
+  'gate.terminal.failed': 'Could not open the terminal',
+  'gate.terminal.missing': 'This account is not on this Mac',
+  'gate.terminal.ambiguous': 'More than one pool has an account with this name — open it from Settings › Claude accounts',
+  'gate.terminal.elsewhere': 'Open the terminal on {operator}',
+  'gate.terminal.elsewhereUnknown': 'Open the terminal on the Mac that runs this agent',
   /**
    * **화면 문구가 아니라 초안이다** — 눌러도 안 보내고 작성창을 채운다(그 자리 주석).
    * 그래서 사람이 보내기 전에 읽고 고칠 글이고, 말투가 부탁이다.
@@ -3308,8 +3440,15 @@ export const en = {
    */
   'speech.exchange.decided': 'Decided',
   'speech.exchange.finished': 'Finished',
-  /** **`yet` 이 진다** — 빼면 판정이 되는데, 이 구간은 아직 도는 중일 수 있다. */
-  'speech.exchange.undecided': 'Nothing decided yet',
+  /** 접힌 구간 안에서 아직 도는 진행(2026-10-06). `ProgressRow` 의 `Working` 과 같은 낱말이다. */
+  'speech.exchange.running': '{handle} working',
+  'speech.exchange.runningFor': '{handle} working {duration}',
+  'speech.exchange.runningMany': { one: '{count} agent working', other: '{count} agents working' },
+  /** 결론도 본문도 없는 마지막 말 — 첨부만 있다. */
+  'speech.exchange.attachments': {
+    one: '{count} attachment',
+    other: '{count} attachments',
+  },
   'speech.exchange.count': {
     one: '{count} exchange',
     other: '{count} exchanges',
@@ -3348,6 +3487,26 @@ export const en = {
   'thread.state.waiting': 'Waiting on others',
   'thread.state.running': 'Running',
   'thread.state.done': 'Done',
+
+  // ---------------------------------------------------------------------------
+  // 스레드 상태 리액션(D안) — 루트에 하나, 서버가 단다(`shared/threadStatus.ts`).
+  // 칩의 글자는 🙋·🚨 둘만 받는다(강조 예산: 사람을 부르는 두 상태). 나머지는 이모지만이고
+  // 마우스를 올리면 아래 문장이 뜬다. `{who}` 는 그 상태의 주인 에이전트, `{reason}` 은
+  // ask 물음·fail 사유·기다리는 상대·깨움 시각이다.
+  // ---------------------------------------------------------------------------
+  'threadStatus.label.received': 'Received',
+  'threadStatus.label.running': 'Working',
+  'threadStatus.label.waiting': 'Waiting',
+  'threadStatus.label.myTurn': 'Your turn',
+  'threadStatus.label.stuck': 'Stuck',
+  'threadStatus.label.done': 'Done',
+  'threadStatus.tip.myTurn': '{who} asks',
+  'threadStatus.tip.stuck': '{who} failed',
+  'threadStatus.tip.waitingOn': 'waiting for {other}',
+  'threadStatus.tip.waitingWake': 'checks back at {time}',
+  'threadStatus.someone': 'An agent',
+  'threadStatus.aria': 'Thread status: {sentence}',
+  'saved.unavailable': 'You no longer have access to this channel',
 
   /**
    * 채널 요약의 말 슬롯 — **"누가 누구를 기다린다"**. `waitChain.link` 와 **같은 문장**을
@@ -3475,6 +3634,33 @@ export const en = {
   'channel.files.unknownError': 'unknown error',
 
   'channel.header.archived': 'Archived',
+  // channelSheet — 채널 설정 시트(UX ⑦b, `components/ChannelSettingsSheet.tsx`). 나가기·편집 규칙은 사이드바와 같다.
+  'channelSheet.archiveFailed': 'The archive state did not change',
+  'channelSheet.cancel': 'Cancel',
+  'channelSheet.close': 'Close channel settings',
+  'channelSheet.edit': 'Edit',
+  'channelSheet.info.name': 'Name',
+  'channelSheet.info.none': 'None',
+  'channelSheet.info.private': 'Private',
+  'channelSheet.info.public': 'Public',
+  'channelSheet.info.repo': 'Repository',
+  'channelSheet.info.state': 'State',
+  'channelSheet.info.topic': 'Topic',
+  'channelSheet.info.visibility': 'Visibility',
+  'channelSheet.label': '#{name} channel settings',
+  'channelSheet.leave': 'Leave channel',
+  'channelSheet.leaveAnyway': 'Leave anyway',
+  /** **나간 뒤 무엇이 남는가**까지 말한다 — 마지막 멤버가 나가는 것은 되돌리기 어렵다. */
+  'channelSheet.leaveLast': 'You are the last member. Once you leave, only an admin can see this channel in the list. The channel itself stays.',
+  'channelSheet.notify.failed': 'The notification level did not change',
+  'channelSheet.notify.legend': 'What should this channel notify you about',
+  'channelSheet.open': 'Open #{name} channel settings',
+  'channelSheet.save': 'Save',
+  'channelSheet.tab.info': 'Info',
+  'channelSheet.tab.notify': 'Notifications',
+  'channelSheet.tab.members': 'Members',
+  'channelSheet.tab.membersCount': 'Members {count}',
+  'channelSheet.tab.agents': 'Agents',
   'channel.header.doc': 'Document',
   'channel.header.files': 'Files',
   'channel.header.messages': 'Messages',
@@ -3603,7 +3789,7 @@ export const en = {
 
   'directory.close': 'Close the directory',
   'directory.disabled': 'Disabled',
-  'directory.empty': 'No accounts in this workspace yet',
+  'directory.empty': 'No accounts in this community yet',
   'directory.label': 'Directory',
   'directory.listFailed': 'The account list did not arrive — {reason}',
   'directory.loading': 'Loading…',
@@ -3812,6 +3998,8 @@ export const en = {
   'rail.me.menuFor': '{handle} — your account menu',
   'rail.me.profile': 'Your profile',
   'rail.me.status': 'Change your status',
+  'rail.me.settings': 'Settings',
+  'rail.me.signOut': 'Sign out',
   'rail.nav.label': 'Main navigation',
   /** 이름 뒤에 붙는 조각 — `{name}` 은 칸 이름(`Home`·`Saved`)이다. */
   'rail.cell.withCount': '{name} — {count}',
@@ -3898,7 +4086,7 @@ export const en = {
   // | 한국어 | 영어 | 왜 |
   // |---|---|---|
   // | 이 화면은 관리자만 볼 수 있습니다 | `Only an admin can see this screen` | `admin` 은 안 옮긴다. 원래 한국어의 `관리자` 가 그 값을 가리키는 말이었고, 이 저장소는 그 자리에 `admin` 을 쓴다(`agents` 머리말) |
-  // | 초대 토큰을 만들어 … 한 번 쓰면 소진됩니다 | `Create an invite token to bring someone into this workspace. The token is shown once, right after it is minted, and never again. It is used up the first time someone signs up with it.` | **세 사실을 다 진다**: 무엇을 하나 · 한 번만 보인다 · 한 번 쓰면 끝이다. 셋 다 되돌릴 수 없는 것에 관한 말이라 하나도 못 뺀다 |
+  // | 초대 토큰을 만들어 … 한 번 쓰면 소진됩니다 | `Create an invite token to bring someone into this community. The token is shown once, right after it is minted, and never again. It is used up the first time someone signs up with it.` | **세 사실을 다 진다**: 무엇을 하나 · 한 번만 보인다 · 한 번 쓰면 끝이다. 셋 다 되돌릴 수 없는 것에 관한 말이라 하나도 못 뺀다 |
   // | 이 토큰은 지금만 보입니다 — 창을 벗어나면 다시 볼 수 없습니다 | `This token is on screen only now — leave this view and it is gone` | **놓치면 되돌릴 수 없다**는 것이 이 줄의 전부다(그 자리 주석이 크기를 안 내린 이유로 적었다) |
   // | 받는 사람이 가입할 때 이 토큰이 필요합니다. 지금 복사해 두세요. | `Whoever you invite needs this token to sign up. Copy it now.` | 뒤 문장이 **지금 할 일**이다 |
   // | 새 토큰 발급 (앞 토큰은 화면에서 사라집니다) | `Mint a new token (the one above disappears)` | 괄호가 **버튼을 누르면 무엇을 잃는지** 말한다(그 자리 주석: 그래서 버튼을 잠그지 않는다) |
@@ -3929,6 +4117,13 @@ export const en = {
   'operators.revoke': 'Delete',
   'operators.revokeAction': 'Delete {name}',
   'operators.revokeFailed': 'The operator was not deleted',
+  'operators.renameAction': 'Rename {name}',
+  'operators.nameLabel': 'Operator name',
+  'operators.save': 'Save',
+  'operators.useHostname': 'Use hostname ({name})',
+  'operators.hostname': 'Hostname this operator registered with',
+  'operators.duplicateName': 'Another operator already has this name — it still saves.',
+  'operators.renameFailed': 'The name was not saved: {reason}',
   'operators.registerNote':
     'A registration code is valid for five minutes and works once. Run the command it prints on the machine, '
     + 'and that machine shows up here as an operator.',
@@ -3963,6 +4158,9 @@ export const en = {
   'agents.pickable.clear': "Clear",
   'agents.pickable.cleared': "Cleared the agent pick in {n} threads. They use the default from the next turn.",
   'agents.scope.heading': 'Who can call it, what it holds',
+  'agents.scope.summaryInvokers': '{count} on the list',
+  'agents.scope.summaryDelegates': '{count} delegate callers',
+  'agents.scope.summaryMcp': '{count} MCP',
   'agents.scope.note': 'Saved on change. Personal credentials require owner-only calls, and a scope can only narrow.',
   'agents.scope.invoke': 'Who can call this agent',
   'agents.scope.invoke.community': 'Anyone in the community',
@@ -3998,6 +4196,9 @@ export const en = {
   'agents.mcp.auth.ok': 'signed in',
   'agents.mcp.auth.needed': 'sign-in needed — agent turns cannot use this MCP until you sign in',
   'agents.mcp.auth.expired': 'sign-in expired — sign in again',
+  'agents.mcp.auth.rejected': 'rejected · {time} · {agent} — the MCP server refused the token; sign in again',
+  'agents.mcp.auth.rejectedNoAgent': 'rejected · {time} — the MCP server refused the token; sign in again',
+  'agents.mcp.auth.rejectedNote': 'An agent turn was refused by this MCP server (HTTP 401), and a freshly refreshed token was refused too. Agent turns cannot use this MCP until you sign in again.',
   'agents.mcp.auth.pending': 'waiting for sign-in in the browser',
   'agents.mcp.auth.error': 'sign-in failed: {reason}',
   'agents.mcp.auth.start': 'Sign in',
@@ -4027,11 +4228,311 @@ export const en = {
   'agents.scope.mcp': 'MCP servers',
   'agents.scope.mcpLoading': 'Reading the registry…',
   'agents.scope.mcpListFailed': 'The MCP registry could not be read',
-  'agents.scope.mcpNone': 'The registry is empty — an admin adds names under Settings › MCP servers.',
+  'agents.scope.mcpNone': 'The registry is empty — an admin adds names under Settings › Integrations › MCP servers.',
   'agents.scope.errInvariant': 'Personal credentials go together with owner-only calls: set both, and a personal MCP server needs personal credentials.',
   'agents.scope.errWidening': 'A scope cannot be widened once narrowed — this agent may already hold personal data.',
   'agents.scope.errUnknownMcp': 'That MCP server is not in the registry.',
   'agents.scope.errFailed': 'Not saved: {reason}',
+  'secrets.description': 'Keys you own. A value is never shown again after you save it. Agents never receive the value through chat — they use it by name.',
+  'secrets.loading': 'Loading…',
+  'secrets.listFailed': 'Could not read the secrets',
+  'secrets.disabled': 'The secret store is off on this server (HARKROOM_SECRET_KEYS_DIR is not set). Ask the server admin to turn it on.',
+  'secrets.heading': 'Secrets',
+  'secrets.count': '{n}',
+  'secrets.add': '+ Add secret',
+  'secrets.none': 'No secrets yet. Put keys here instead of pasting them in chat.',
+  'secrets.kindText': 'Text',
+  'secrets.kindFile': 'File',
+  'secrets.usedBy': 'Used by: {n} agent grant(s)',
+  'secrets.unused': 'Not used yet',
+  'secrets.expired': 'Expired {when}',
+  'secrets.until': 'Until {when}',
+  'secrets.noExpiry': 'No expiry',
+  'secrets.replace': 'Replace value',
+  'secrets.grants': 'Agents',
+  'secrets.access': 'Access log',
+  'secrets.delete': 'Delete',
+  'secrets.deleteAria': 'Delete secret {name}',
+  'secrets.deleteTitle': 'Delete secret {name}?',
+  'secrets.deleteDetail': 'The value and its versions are erased here; the access log stays. This does not revoke the key where it was issued — revoke it there too.',
+  'secrets.deleteDetailUsed': '{n} agent grant(s) stop working from the next turn. The access log stays. This does not revoke the key where it was issued.',
+  'secrets.cancel': 'Cancel',
+  'secrets.name': 'Name',
+  'secrets.nameHint': 'Lowercase letters, digits, - and _. Agents refer to the secret by this name.',
+  'secrets.nameBad': 'Use lowercase letters, digits, - and _ (start with a letter or digit, up to 64).',
+  'secrets.kind': 'Kind',
+  'secrets.value': 'Value',
+  'secrets.file': 'File',
+  'secrets.valueHint': 'Not shown again after saving. To change it, put in a new value.',
+  'secrets.tooBig': 'Larger than 64 KB — the server will refuse it.',
+  'secrets.descriptionLabel': 'Description (agents can see it)',
+  'secrets.descriptionHint': 'Say what the key is for. Never put the value here.',
+  'secrets.expiry': 'Expiry',
+  'secrets.expiryNone': 'None',
+  'secrets.expiry30d': '30 days',
+  'secrets.expiry90d': '90 days',
+  'secrets.expiryDate': 'Pick a date',
+  'secrets.confirmAdd': 'Add',
+  'secrets.newValue': 'New value',
+  'secrets.replaceHint': 'The old value is erased. Agents get the new one from their next mount.',
+  'secrets.confirmReplace': 'Replace',
+  'secrets.grantsNote': 'Agents that may receive this secret as a turn-only file (secret.mount). The value never goes into the model context.',
+  'secrets.grantsNone': 'No agent can receive it.',
+  'secrets.allChannels': 'All channels',
+  'secrets.boundOperator': 'Bound to its current operator',
+  'secrets.anyOperator': 'Any operator',
+  'secrets.grantedOn': 'Given {when}',
+  'secrets.suspended': 'Suspended: {reason}',
+  'secrets.revoke': 'Revoke',
+  'secrets.revokeAria': 'Revoke from {handle}',
+  'secrets.revokeTitle': 'Stop giving {name} to @{handle}?',
+  'secrets.revokeDetail': 'From the next mount the agent cannot receive it. Files already mounted in a running turn are removed when that turn ends.',
+  'secrets.grantAgent': 'Agent',
+  'secrets.grantAgentPick': 'Choose an agent…',
+  'secrets.grantOperator': 'Operator',
+  'secrets.operatorCurrent': 'Only its current operator',
+  'secrets.operatorAny': 'Any operator',
+  'secrets.grant': 'Give',
+  'secrets.grantOwnerOnly': 'Only the owner of a secret that has not expired can give it.',
+  'secrets.accessNone': 'No access yet.',
+  'secrets.accessAt': 'When',
+  'secrets.accessWho': 'Who',
+  'secrets.accessWhere': 'Where',
+  'secrets.accessResult': 'Result',
+  'secrets.accessNote': 'The value and its hash are never recorded.',
+  'secrets.multilineHint': 'Multi-line keys (PEM etc.) lose their line breaks here — put them in as a file.',
+  'secrets.allChannelsWarn': 'The agent can receive it in every thread it is called in. Other people’s or agents’ messages in that thread can also make the agent use this key.',
+  'secrets.byAgent': 'Created by @{handle}',
+  'secrets.valueByAgent': 'Value set by @{handle}',
+  'secrets.valueByAgentTitle': '@{handle} knows this value (it imported or mounted it). Replace the value before widening access to other agents.',
+  'secrets.widenWarn': '@{handle} set this value, so @{handle} knows it. Consider [Replace value] before giving it to another agent.',
+  'secrets.adoptNote': 'Once you grant or widen it yourself, @{handle} can no longer rotate this secret (it becomes owner-managed).',
+  'secrets.notice.open': 'Open secrets',
+  'agents.grants.secretCreate': 'Create secrets',
+  'agents.grants.secretCreateOn': 'Allowed',
+  'agents.grants.secretCreateHeading': 'Create secrets',
+  'agents.grants.secretCreateNote': 'In turns you start, this agent may create secrets (the server generates the value) or register a value it received. You own them, and each is granted only to this agent in that channel. Each creation leaves a notice line in that thread, and the secret is badged in Settings › Secrets & APIs.',
+  'agents.grants.secretCreateConfirm': 'Allow',
+  'agents.grants.secretCreateRevokeTitle': 'Stop @{handle} from creating secrets?',
+  'agents.grants.secretCreateRevokeDetail': 'Secrets it already created stay (remove or revoke them in Settings › Secrets & APIs).',
+  'apiGrant.kindSecret': 'Create secrets',
+  'secrets.agentsMine': 'My agents',
+  'secrets.anyOperatorWarn': 'It will also go to any machine the agent is assigned to later.',
+  'secrets.grantExpiredMine': 'Expired. Replace the value and you can give it again.',
+  'secrets.accessApi': 'API call · {what}',
+  'secrets.accessMounted': 'Received as a file',
+  'secrets.accessDenied': 'Blocked ({why})',
+  'secrets.why.notGranted': 'not given',
+  'secrets.why.wrongChannel': 'other channel',
+  'secrets.why.wrongOperator': 'other operator',
+  'secrets.why.suspended': 'grant stopped',
+  'secrets.why.expired': 'expired',
+  'secrets.why.rateLimited': 'too many',
+  'secrets.why.lease': 'not in a turn',
+  'secrets.why.ownerInactive': 'owner inactive',
+  'connectors.heading': 'API connections',
+  'connectors.note': 'Agents use only the connection name and a path. The address and key are attached as set here; agents never see the key.',
+  'connectors.add': '+ New API connection',
+  'connectors.none': 'No API connections yet.',
+  'connectors.listFailed': 'Could not read the API connections',
+  'connectors.keyBearer': '· key {name} (Bearer)',
+  'connectors.keyHeader': '· key {name} ({header})',
+  'connectors.noKey': 'No key — calls are blocked',
+  'connectors.grantCount': '· agents with permission: {n}',
+  'connectors.edit': 'Edit',
+  'connectors.delete': 'Delete',
+  'connectors.deleteAria': 'Delete API connection {name}',
+  'connectors.deleteTitle': 'Delete API connection {name}?',
+  'connectors.deleteDetail': 'The connection is removed. The key stays in Secrets.',
+  'connectors.deleteDetailUsed': '{n} agent permission(s) on this connection are removed too, from the next turn.',
+  'connectors.changeTitle': 'Change where the key goes?',
+  'connectors.changeDetail': 'Changing the address, auth or key stops the permission of {n} agent(s) on this connection. Give it again from the agent screen to resume.',
+  'connectors.changeConfirm': 'Change and stop',
+  'connectors.suspendedNotice': '{n} permission(s) were stopped. Give them again from the agent screen.',
+  'connectors.name': 'Name',
+  'connectors.nameHint': 'Lowercase letters, digits, - and _. Agents call it by this name.',
+  'connectors.baseUrl': 'Base address',
+  'connectors.baseUrlHint': 'https only, without a path. Calls never leave this host and redirects are not followed.',
+  'connectors.auth': 'Auth',
+  'connectors.authBearer': 'Bearer header',
+  'connectors.authHeader': 'Custom header',
+  'connectors.authNone': 'None',
+  'connectors.headerName': 'Header name',
+  'connectors.headerHint': 'Letters, digits and - only.',
+  'connectors.key': 'Key',
+  'connectors.keyPick': 'Choose one of my secrets…',
+  'connectors.keyHint': 'Only your own text secrets. Add one in Secrets above.',
+  'connectors.methods': 'Allowed methods',
+  'connectors.methodsHint': 'The most an agent can be given. What each agent may use is set per agent.',
+  'connectors.create': 'Create',
+  'connectors.save': 'Save',
+  'connectors.errNameTaken': 'A connection with that name already exists.',
+  'connectors.errBaseUrl': 'Use an https address without a path or query.',
+  'connectors.errHeader': 'That header name cannot carry the key.',
+  'connectors.errSecret': 'That secret is not one of yours.',
+  'connectors.errSecretKind': 'The key must be a text secret.',
+  'connectors.errForbidden': 'You cannot change this connection.',
+  'connectors.errFailed': 'Failed: {reason}',
+  'apiGrant.heading': 'API calls',
+  'apiGrant.mergeHeading': 'PR merge',
+  'apiGrant.rowRead': 'read only',
+  'apiGrant.rowWrite': 'read + write',
+  'apiGrant.rowHumanOnly': '· writes: person turns only',
+  'apiGrant.rowSuspended': 'Stopped — the connection changed',
+  'apiGrant.from': 'Received from @{handle}',
+  'apiGrant.depthLeft': 'Can re-grant {n} more',
+  'apiGrant.pendingBadge': 'Waiting for approval',
+  'apiGrant.blockedChain': 'Chain blocked — a level above cannot be used',
+  'apiGrant.approve': 'Approve',
+  'apiGrant.decline': 'Decline',
+  'apiGrant.pendingHeading': 'Waiting for approval {n}',
+  'apiGrant.pendingLine': '@{from} → @{to}',
+  'apiGrant.revokeBelow': 'Revoke everything below',
+  'apiGrant.revokeBelowTitle': 'Revoke {n} rows below?',
+  'apiGrant.revokeBelowDetail': 'What @{handle} re-granted, and everything under it, is removed. @{handle} keeps its own permission.',
+  'apiGrant.revokeChildTitle': 'Revoke this permission from @{handle}?',
+  'apiGrant.revokeChildDetail': 'This permission of @{handle} and the {n} rows under it are removed.',
+  'apiGrant.revokeChildAria': 'Revoke the permission re-granted to @{handle}',
+  'apiGrant.rowNoKey': 'Connection has no key — calls blocked',
+  'apiGrant.revokeAria': 'Revoke API permission for {name}',
+  'apiGrant.revokeTitle': 'Revoke API permission for {name}?',
+  'apiGrant.revokeDetail': 'From the next turn @{handle} cannot call it.',
+  'apiGrant.kind': 'What',
+  'apiGrant.kindApi': 'API call',
+  'apiGrant.kindMerge': 'PR merge',
+  'apiGrant.noConnector': 'You have no API connection. Create one in Settings › Me › Secrets & APIs.',
+  'apiGrant.connector': 'API connection',
+  'apiGrant.scope': 'Scope',
+  'apiGrant.read': 'Read only (GET)',
+  'apiGrant.write': 'Read + write ({methods})',
+  'apiGrant.path': 'Path (only paths starting with this)',
+  'apiGrant.pathBad': 'Start with / and leave out .., ? and spaces.',
+  'apiGrant.expiry': 'Expiry',
+  'apiGrant.expiry7d': '7 days',
+  'apiGrant.expiry30d': '30 days',
+  'apiGrant.expiryNone': 'None',
+  'apiGrant.writeExpiryHint': 'Read + write cannot go without expiry.',
+  'apiGrant.humanOnly': 'Writes only in turns a person started',
+  'apiGrant.humanOnlyYes': 'Only in turns a person started',
+  'apiGrant.humanOnlyNo': 'Also in turns an agent started',
+  'apiGrant.humanOnlyPick': 'Choose one — there is no default.',
+  'apiGrant.humanOnlyHint': 'Reads are not affected.',
+  'apiGrant.keyNote': 'The agent never receives the key value; the operator attaches it when calling.',
+  'apiGrant.give': 'Give',
+  'apiGrant.errExpiry': 'Read + write needs an expiry within 30 days.',
+  'apiGrant.errLimits': 'The scope is wider than the connection allows.',
+  'apiGrant.errConnector': 'That connection no longer exists.',
+  'apiGrant.errForbidden': 'Only the owner of both the agent and the connection can give this.',
+  'apiGrant.errFailed': 'Failed: {reason}',
+  'blocked.title': 'API call by @{handle} was blocked',
+  'blocked.request': 'Request',
+  'blocked.reason': 'Reason',
+  'blocked.today': 'Today',
+  'blocked.count': '{n} time(s) · last {when}',
+  'blocked.give': 'Give permission…',
+  'blocked.newValue': 'Put in a new value…',
+  'blocked.makeConnection': 'Create API connection…',
+  'blocked.openSettings': 'Open settings',
+  'blocked.ownerOnly': 'Only the agent’s owner @{owner} can give this.',
+  'blocked.dialogTitle': 'Give @{handle} API permission',
+  'blocked.dialogNote': 'Filled from the blocked request. It is never wider than that request.',
+  'blocked.done': 'Given — from the next turn.',
+  'blocked.doneLine': 'Gave @{handle} permission for {name} — from the next turn.',
+  'blocked.why.not_granted': 'no permission',
+  'blocked.why.no_connector': 'no such connection',
+  'blocked.why.no_secret': 'no key',
+  'blocked.why.secret_expired': 'key expired',
+  'blocked.why.expired': 'permission expired',
+  'blocked.why.suspended': 'permission stopped',
+  'blocked.why.method_not_allowed': 'method outside the permission',
+  'blocked.why.path_not_allowed': 'path outside the permission',
+  'blocked.why.cause_not_human': 'This permission can only be used in turns a person started',
+  'mergeDenial.title': 'Merge by @{handle} was blocked — no permission for this repository',
+  'mergeDenial.pr': 'PR',
+  'mergeDenial.give': 'Allow for 7 days',
+  'mergeDenial.giveNote': 'Only this repository. Then pick “merge again” below.',
+  'mergeDenial.granted': 'Allowed until {date} — pick “merge again” below to retry.',
+  'mergeDenial.deployRepo': 'This is a deploy repository — it is not granted from a card. Give it in settings with the exact name.',
+  'mergeDenial.errExpired': 'This block expired after 24 hours. Ask the agent to merge again and a new card appears — or give it in settings.',
+  'mergeDenial.errUsed': 'Already given from this record.',
+  'mergeDenial.errForbidden': 'Only this agent’s owner can give this.',
+  'mergeDenial.errFailed': 'Could not allow. Try again.',
+  'apiGrant.now': 'Now: {what}',
+  'apiGrant.next': 'New: {what}',
+  'apiGrant.replaceNote': 'Giving this replaces the current permission.',
+  'apiGrant.replace': 'Replace',
+  'apiGrant.expiryKeep': 'Keep current expiry',
+  'apiGrant.pathUnknown': 'The blocked path is unknown — type the path to give.',
+  'blocked.pathOmitted': '(path omitted)',
+  'blocked.changeSetting': 'Change setting…',
+  'apiGrant.expiredRenew': 'Expired — this gives it anew.',
+  'apiGrant.allGranted': 'All your connections already have a permission here. To change one, use [Replace] on its row above.',
+  'secrets.errNotOwnAgent': 'Secrets can only be given to your own agents.',
+  'secrets.why.notOwnAgent': 'not your agent',
+  'secrets.notOwnBlocked': 'Blocked — owned by someone else; revoke it',
+  'secrets.errNameTaken': 'A secret with that name already exists.',
+  'secrets.errInDescription': 'The description looks like it contains a key. Descriptions are visible to agents — take the value out.',
+  'secrets.errBadValue': 'The value was refused (empty or over 64 KB).',
+  'secrets.errOwnerOnly': 'Only the secret owner can give it.',
+  'secrets.errExpired': 'The secret has expired. Replace its value first.',
+  'secrets.errNotAssigned': 'That agent is not assigned to an operator. Assign it first, or choose "Any operator".',
+  'secrets.errForbidden': 'You cannot do that for this secret.',
+  'secrets.errFailed': 'Failed: {reason}',
+  'agents.grants.heading': 'Merge & API access',
+  'agents.grants.note': 'Repositories where this agent may merge pull requests, and APIs it may call. A grant is the approval — it is not asked again at use time; a merge result is posted as one line in that thread. Only the owner grants; admins can revoke.',
+  'agents.grants.loading': 'Loading…',
+  'agents.grants.listFailed': 'The grants could not be read',
+  'agents.grants.none': 'No merge permission. The agent will not merge even when asked.',
+  'agents.grants.merge': 'Merge PRs',
+  'agents.grants.by': 'by {handle} · {when}',
+  'agents.grants.noExpiry': 'no expiry',
+  'agents.grants.expired': 'expired',
+  'agents.grants.expiresOn': 'until {when}',
+  'agents.grants.agentCause': 'also when invoked by an agent',
+  'agents.grants.revoke': 'Revoke',
+  'agents.grants.revokeAria': 'Revoke merge permission for {repo}',
+  'agents.grants.revokeTitle': 'Revoke merge permission for {repo}?',
+  'agents.grants.revokeDetail': 'From its next turn, @{handle} will not be able to merge {repo}.',
+  'agents.grants.add': '+ Grant permission',
+  'agents.grants.ownerOnly': 'Only the owner of this agent can grant. You can revoke.',
+  'agents.grants.repos': 'Repositories (exact names, one per line)',
+  'agents.grants.reposPlaceholder': 'owner/repo',
+  'agents.grants.expiry': 'Expires',
+  'agents.grants.expiryNone': 'never',
+  'agents.grants.expiry7d': 'in 7 days',
+  'agents.grants.expiry30d': 'in 30 days',
+  'agents.grants.confirmAdd': 'Grant',
+  'agents.grants.cancel': 'Cancel',
+  'agents.grants.errScope': 'Repository names must be exact owner/name — no wildcards, no blanks',
+  'agents.grants.errForbidden': 'Only the owner (a person) of this agent can grant merge permission',
+  'agents.grants.errFailed': 'Not saved: {reason}',
+  'agents.grants.ghUser.label': 'GitHub account used for merges',
+  'agents.grants.ghUser.device': 'this device ({host})',
+  'agents.grants.ghUser.unset': 'No GitHub account is set for merges on this device ({host}). Merges are refused until you choose one, even with a grant.',
+  'agents.grants.ghUser.choose': 'Choose',
+  'agents.grants.ghUser.change': 'Change',
+  'agents.grants.ghUser.select': 'GitHub account',
+  'agents.grants.ghUser.placeholder': 'Pick an account…',
+  'agents.grants.ghUser.activeTag': '{login} (active in gh)',
+  'agents.grants.ghUser.save': 'Save',
+  'agents.grants.ghUser.clear': 'Clear',
+  'agents.grants.ghUser.hint': 'Only accounts logged in to gh on this device are listed. Pick the account that may merge these repositories — not chosen automatically.',
+  'agents.grants.ghUser.notLoggedIn': 'The account {login} is no longer logged in to gh on this device — merges will fail.',
+  'agents.grants.ghUser.noAccounts': 'No GitHub account is logged in to gh on this device. Run gh auth login in a terminal first.',
+  'agents.grants.ghUser.ghFailed': 'Could not read the gh accounts: {reason}',
+  'agents.grants.ghUser.loadFailed': 'Could not read the merge account from this device\'s operator',
+  'agents.grants.ghUser.saveFailed': 'Not saved: {reason}',
+  'agents.grants.ghUser.otherDevice': 'This agent runs on another device ({host}). The GitHub account for merges is chosen on that device.',
+  'agents.grants.noneShort': 'Nothing granted',
+  'agents.grants.renew7d': 'Renew 7 days',
+  'agents.grants.renewAria': 'Renew merge permission for {repo} for 7 days',
+  'agents.grants.ghUser.loading': 'Reading the merge account…',
+  'agents.grants.ghUser.unsetQuiet': 'GitHub account for merges: none',
+  'agents.grants.ghUser.deviceWide': 'This setting belongs to the device: every agent running here merges with this account.',
+  'agents.grants.ghUser.activeWarn': '{login} is the active gh account. If it is a work account, work repositories can be merged with it too — make sure this is the account you mean.',
+  'agents.grants.ghUser.errNotLoggedIn': 'That account is not logged in to gh on this device any more. Reload the list and pick again.',
+  'agents.grants.ghUser.errNoGh': 'gh was not found on this device. Install the GitHub CLI and run gh auth login.',
+  'agents.grants.ghUser.otherDeviceNoName': 'This agent runs on another device. The GitHub account for merges is chosen on that device.',
   'mcpServers.description': 'Names an agent may attach. Only the name and credential kind live here — the definition and any token stay on each operator machine. For remote servers, sign in once on this machine with the row\'s Sign in button and every agent on this machine uses it.',
   'mcpServers.loading': 'Loading…',
   'mcpServers.listFailed': 'The registry could not be read',
@@ -4083,10 +4584,18 @@ export const en = {
   'invite.create': 'Mint an invite token',
   'invite.createAgain': 'Mint a new token (the one above disappears)',
   'invite.failed': 'The token was not minted',
-  'invite.notAdmin': 'Only an admin can see this screen',
+  /** 화면 전체가 아니라 **초대 묶음**만 닫힌다(UX ⑥b-5) — 멤버 목록은 모두에게 보인다. */
+  'invite.notAdmin': 'Only people with the invite permission can mint invite tokens',
+  'members.invite.title': 'Invite',
+  'members.list.empty': 'No people in this community yet',
+  /** 숫자를 모를 때(불러오는 중·실패) — 0 은 "아무도 없다" 로 읽힌다. */
+  'members.list.heading': 'Members',
+  'members.list.title': 'Members ({count})',
+  /** 에이전트가 왜 없는지까지 말한다 — 안 말하면 "목록이 덜 왔다" 로 읽힌다. */
+  'members.note': 'The people in this community, and invite tokens to bring in someone new. Agents are under Agents › List.',
   /** **세 사실을 다 진다** — 무엇을 하나 · 한 번만 보인다 · 한 번 쓰면 끝이다. */
   'invite.note':
-    'Create an invite token to bring someone into this workspace. The token is shown once, right '
+    'Create an invite token to bring someone into this community. The token is shown once, right '
     + 'after it is minted, and never again. It is used up the first time someone signs up with it.',
   'invite.tokenNextStep': 'Whoever you invite needs this token to sign up. Copy it now.',
   /** **놓치면 되돌릴 수 없다**는 것이 이 줄의 전부다. */

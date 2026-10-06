@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
-import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type MessageRow } from '@harkroom/shared';
+import { z } from 'zod';
+import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow, type WakeReportTo } from '@harkroom/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { getMentionPolicy } from './mentionPolicy.js';
 import { preemptWakesForThread } from './agentWakes.js';
@@ -8,8 +9,10 @@ import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels
 import { emitEvent } from '../events.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
 import { getTeam, getTeamByName, listTeamMembers } from './teams.js';
-import { invokeFactsFor, mayInvoke, mayInvokeTeam, type InvokeVia } from './invokeGate.js';
+import { invokeFactsFor, mayInvoke, mayInvokeInDm, mayInvokeTeam, type InvokeVia } from './invokeGate.js';
 import { closeReplyGrants, openReplyGrants } from './replyGrants.js';
+import { enqueueInboxPush } from './push/pushJobs.js';
+import { displayBodySql } from './systemBody.js';
 
 /**
  * 채널 안에서 `seq` 발급을 직렬화하는 advisory lock 의 classid(#523).
@@ -115,6 +118,12 @@ export interface PostMessageInput {
    * 이 값이 있으면 사람 글이어도 이 깊이로 저장하고 상한을 판정한다. 없으면(사람·시계·외부 이벤트) 옛 셈이다.
    */
   chainDepth?: number | null;
+  /**
+   * 서버가 에이전트 이름으로 세운 **알림 줄**(API 막힘 카드·비밀 만들기 알림). 화면에는 답글처럼 보이지만 에이전트의
+   * 결과가 아니다 — 회신권(084)을 닫거나 쓰지 않고, 위임 의무(050)도 닫지 않는다(#1177 security L1': 위임받은 스레드에서
+   * 비밀을 만들면 결과 전에 팀장이 "답 왔음"으로 깼다). 머리 주인 `thread_reply`·DM 알림은 그대로다 — 사람이 볼 줄이다.
+   */
+  serverNotice?: boolean;
 }
 
 // 리액션을 COLS 에 넣는 이유: 메시지를 내주는 경로가 네 갈래(목록·POST·PATCH·idempotency
@@ -131,13 +140,34 @@ const REACTIONS = `coalesce((
 
 // 첨부도 리액션과 같은 이유로 COLS 에 있다 — 조회 뒤에 붙이면 네 갈래 중 하나를 빼먹는다.
 // storage_key 는 **의도적으로 빼 두었다**: 스토리지 키가 응답에 새면 그 자체가 접근 경로다.
+//
+// 미리보기(090)의 버전이면 `artifact` 를 더한다 — 카드가 제목·버전·"최신 vN 있음"을 그린다. 보통
+// 첨부에는 키 자체가 없다(null 을 싣지 않는다): 첨부 모양을 정확히 비교하는 화면·시험이 많다.
+// `latestVersion` 은 읽는 순간의 값이다 — 새 버전이 올라와도 옛 글에 이벤트를 다시 치지 않는다.
+// `title`·`summary` 는 **그 글의 버전** 것이다(091) — 옛 카드는 그때 이름을 보인다. 최신 이름은 `latestTitle`.
 const ATTACHMENTS = `coalesce((
-  select json_agg(json_build_object(
+  select json_agg((jsonb_build_object(
     'id', a.id, 'filename', a.filename,
     'contentType', a.content_type, 'sizeBytes', a.size_bytes::int
-  ) order by a.attached_at, a.created_at)
+  ) || coalesce((
+    select jsonb_build_object('artifact', jsonb_build_object(
+      'artifactId', av.artifact_id, 'version', av.version, 'title', coalesce(av.title, ar.title), 'latestTitle', ar.title, 'summary', av.summary,
+      'coverAttachmentId', av.cover_attachment_id,
+      'latestVersion', (select max(av2.version) from artifact_version av2 where av2.artifact_id = av.artifact_id)))
+    from artifact_version av join artifact ar on ar.id = av.artifact_id where av.attachment_id = a.id
+  ), '{}'::jsonb)) order by a.attached_at, a.created_at)
   from attachment a where a.message_id = message.id
 ), '[]'::json) as attachments`;
+
+/**
+ * 스레드 상태 리액션(D안, `services/threadStatus.ts`). 루트 하나에 한 행이라 PK 조회 하나다.
+ * `COLS` 에도 싣는 이유: 실시간 `message.updated` 가 이 값을 null 로 덮으면 화면의 상태가
+ * 깜빡인다(판정 재료가 그렇게 사라져 채널 줄 배지가 안 그려졌다 — 0.3.107).
+ */
+function statusReactionOf(alias: string): string {
+  return `(select json_build_object('status', ts.status, 'emoji', ts.emoji, 'accountId', ts.account_id,
+    'reason', ts.reason, 'updatedAt', ts.updated_at) from thread_status ts where ts.root_id = ${alias}.id)`;
+}
 
 // #218: 핀 목록도 이 컬럼 집합으로 메시지를 내주기 때문에 export 다. 핀 전용으로 컬럼을
 // 다시 적으면 위에 적은 "네 갈래" 가 다섯이 되고, 리액션·첨부가 그 응답에서만 빠진다.
@@ -154,8 +184,10 @@ export const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root
   null::int as "replyCount", null::int as "activityCount",
   null::text as "lastReplyAt", null::text[] as "participantIds",
   null::int as "openAskHumanCount", null::text[] as "openAskAccountIds", null::jsonb as "openAskLinks",
+  null::text[] as "openGateAccountIds",
   null::int as "failureCount", null::int as "unresolvedFailureCount",
   null::text as "lastKind", null::text as "lastAuthorId",
+  ${statusReactionOf('message')} as "statusReaction",
   also_in_channel as "alsoInChannel", deleted_at as "deletedAt"`;
 
 /**
@@ -238,6 +270,23 @@ const THREAD_STATE_FACTS = `LEFT JOIN LATERAL (
               OR r.author_id = t.author_id)
         )
     )::int as unresolved_failure_count,
+    -- 안 풀린 account_gate 실패의 차례 주인들(2026-10-02). 해소 규칙은 바로 위와 **같다** —
+    -- 갈라지면 🙋 가 풀린 뒤에도 Inbox 의 내 차례에 남는다. 차례 주인을 못 정한 실패
+    -- (awaitingAccountId 없음)는 넣지 않는다: 아무 계정 id 로 채우면 그 사람만 강조를 받는다.
+    COALESCE(ARRAY_AGG(DISTINCT t.meta->'failure'->>'awaitingAccountId') FILTER (
+      WHERE t.meta->>'kind' = 'failure'
+        AND t.meta->'failure'->>'code' = 'account_gate'
+        AND t.meta->'failure'->>'awaitingAccountId' IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM message r
+          WHERE (r.id = m.id OR r.thread_root_id = m.id)
+            AND r.deleted_at IS NULL
+            AND r.seq > t.seq
+            AND (r.kind IN ('progress', 'wake')
+              OR r.meta->>'kind' = 'report'
+              OR r.author_id = t.author_id)
+        )
+    ), '{}'::text[]) as open_gate_account_ids,
     -- 마디들: 누가 → 누구를 기다리는가(#488 A3-b). 위의 두 집계로는 부족하다 —
     -- open_ask_account_ids 는 '답해야 하는 쪽'만 모은 집합이라 누가 물었는지가
     -- 지워지고, 사슬을 이으려면 짝이 필요하다.
@@ -389,11 +438,13 @@ const LIST_COLS = `m.id, m.seq::int as seq, m.channel_id as "channelId", m.threa
   case when m.thread_root_id is null then thread_stats.participant_ids end as "participantIds",
   case when m.thread_root_id is null then thread_state.open_ask_human_count end as "openAskHumanCount",
   case when m.thread_root_id is null then thread_state.open_ask_account_ids end as "openAskAccountIds",
+  case when m.thread_root_id is null then thread_state.open_gate_account_ids end as "openGateAccountIds",
   case when m.thread_root_id is null then thread_state.failure_count end as "failureCount",
   case when m.thread_root_id is null then thread_state.unresolved_failure_count end as "unresolvedFailureCount",
   case when m.thread_root_id is null then thread_state.open_ask_links end as "openAskLinks",
   case when m.thread_root_id is null then thread_last.last_kind end as "lastKind",
   case when m.thread_root_id is null then thread_last.last_author_id end as "lastAuthorId",
+  case when m.deleted_at is null then ${statusReactionOf('m')} end as "statusReaction",
   m.also_in_channel as "alsoInChannel", m.deleted_at as "deletedAt"`;
 
 /**
@@ -442,6 +493,46 @@ const LIST_VISIBLE = `(m.deleted_at is null or (m.thread_root_id is null and exi
  */
 const REVEAL_REASONS: ReadonlySet<InboxEntry['reason']> = new Set(['mention', 'thread_reply']);
 
+/**
+ * `account_gate` 실패의 **차례 주인**(2026-10-02, 관문 대응 안 2) — 그 턴을 띄운 멘션을 쓴 사람.
+ *
+ * **믿기 전에 확인한다**(원인 헤더와 같은 규율): 그 메시지가 이 에이전트를 **실제로 깨웠고**
+ * (inbox), 같은 채널이며, 작성자가 **사람**이고 **지금도 그 채널을 볼 수 있을** 때만 그 사람이다
+ * (security F1 — 턴이 도는 사이 채널에서 빠진 사람의 Inbox 에 그 채널 글 본문이 실리지 않게). 아니면 `null` — 에이전트가
+ * 아무 메시지 id 나 대서 남의 Inbox 에 "내 차례"를 꽂지 못하게 한다.
+ */
+export async function gateAwaitingAccount(
+  pool: Pool, agentId: string, channelId: string, mentionId: string,
+): Promise<string | null> {
+  const res = await pool.query(
+    `select m.author_id
+       from inbox i
+       join message m on m.id = i.message_id
+       join account a on a.id = m.author_id
+       join channel c on c.id = m.channel_id
+      where i.account_id = $1 and i.message_id = $2 and m.channel_id = $3
+        and a.kind = 'human' and m.deleted_at is null
+        and ${channelVisibleSql('c', 'm.author_id')}
+      limit 1`,
+    [agentId, mentionId, channelId],
+  );
+  return (res.rows[0]?.author_id as string | undefined) ?? null;
+}
+
+/**
+ * 차례 주인에게 이 실패를 Inbox 로 알린다 — `postMessage` 의 `beforeCommit` 안에서 부른다
+ * (같은 트랜잭션, 팬아웃이 끝난 뒤). 이미 이 글로 알림을 받았으면(스레드 주인 등) 두 번 넣지 않는다.
+ *
+ * 사유가 `thread_reply` 인 이유: 사람이 받는 것은 "나를 지목했다"가 아니라 "내가 부른 스레드에
+ * 답(실패)이 왔다"이고, 그 사유는 숨긴 채널도 다시 보이게 한다(`REVEAL_REASONS`).
+ */
+export async function notifyGateAwaiting(
+  client: PoolClient, accountId: string, messageId: string, notified: ReadonlySet<string>,
+): Promise<void> {
+  if (notified.has(accountId)) return;
+  await insertInbox(client, accountId, messageId, 'thread_reply', notified as Set<string>);
+}
+
 async function insertInbox(
   client: PoolClient, accountId: string, messageId: string, reason: InboxEntry['reason'], notified: Set<string>,
   /**
@@ -452,10 +543,13 @@ async function insertInbox(
    */
   teamId?: string,
 ): Promise<void> {
-  await client.query(
-    `insert into inbox (account_id, message_id, reason, team_id) values ($1, $2, $3, $4)`,
+  const inserted = await client.query<{ id: string }>(
+    `insert into inbox (account_id, message_id, reason, team_id) values ($1, $2, $3, $4) returning id`,
     [accountId, messageId, reason, teamId ?? null],
   );
+  // 푸시(093): 같은 트랜잭션에 job 을 넣는다. 사람이고 기기가 있을 때만 행이 생긴다.
+  // 이 관문이 부름을 만드는 유일한 자리라 "알림을 받은 사람"과 "폰이 울리는 사람"이 갈리지 않는다.
+  await enqueueInboxPush(client, inserted.rows[0]!.id, accountId, messageId, reason);
   /**
    * 숨김 되돌리기(#376 결정 B) — **부름은 숨김을 뚫는다.** 이 자리인 이유: inbox 항목을
    * 만드는 관문이 이 함수 하나이므로, "알림을 받은 사람"과 "사이드바에 다시 나타나는 사람"이
@@ -1171,7 +1265,9 @@ export async function postMessage(
       줄을 세운다 — 채널 전체가 서던 줄(풀 포화)은 되살리지 않는다.
       락 순서는 언제나 이것 → 채널 락이라 서로를 기다리며 막히지 않는다.
     */
-    if (authorIsAgent && input.threadRootId && countsAsReply(input.kind ?? 'user')) {
+    /** 에이전트의 결과로 세는가 — 회신권·위임 의무가 본다. 서버 알림 줄은 아니다(`serverNotice`). */
+    const isResult = countsAsReply(input.kind ?? 'user') && !input.serverNotice;
+    if (authorIsAgent && input.threadRootId && isResult) {
       await lockReplyGrantsFor(client, input.authorId, input.threadRootId);
     }
     const scannedDepth = await mentionDepthFor(client, {
@@ -1186,7 +1282,7 @@ export async function postMessage(
     const mentionDepth = chainBound ? Math.max(scannedDepth, input.chainDepth!) : scannedDepth;
     const calls = await resolveMentionCalls(client, {
       body: input.body, channelId: input.channelId, authorId: input.authorId, authorIsAgent, mentionDepth, chainBound,
-      replyGrantThreadId: countsAsReply(input.kind ?? 'user') ? input.threadRootId ?? null : null,
+      replyGrantThreadId: isResult ? input.threadRootId ?? null : null,
     });
 
     /**
@@ -1278,7 +1374,7 @@ export async function postMessage(
 
     // 연결 뒤에 읽는다 — COLS 가 첨부를 함께 가져오므로 순서가 뒤바뀌면 빈 배열이 나간다.
     const read = await client.query(`select ${COLS} from message where id = $1`, [messageId]);
-    const message: MessageRow = read.rows[0];
+    let message: MessageRow = read.rows[0];
 
     if (input.idempotencyKey) {
       await client.query(
@@ -1374,8 +1470,15 @@ export async function postMessage(
         `select account_id from channel_member where channel_id = $1 and account_id <> $2`,
         [input.channelId, input.authorId],
       );
+      // 상대가 에이전트면 호출 게이트를 지난다(바로 위 스레드 답글과 같은 이유). 사람은 facts 에 없어 그대로 받는다.
+      const dmFacts = await invokeFactsFor(client, members.rows.map((r) => r.account_id));
       for (const row of members.rows) {
-        if (!notified.has(row.account_id)) await insertInbox(client, row.account_id, message.id, 'dm', notified);
+        if (notified.has(row.account_id)) continue;
+        const fact = dmFacts.get(row.account_id);
+        if (fact && !(await mayInvokeInDm(client, fact, {
+          callerId: input.authorId, channelId: input.channelId, replyGrantThreadId: input.threadRootId ?? null,
+        }))) continue;
+        await insertInbox(client, row.account_id, message.id, 'dm', notified);
       }
     }
 
@@ -1388,7 +1491,7 @@ export async function postMessage(
      */
     const wokeByPost = input.threadRootId
       ? await preemptWakesForThread(client, {
-        threadRootId: input.threadRootId, authorId: input.authorId, notified,
+        threadRootId: input.threadRootId, authorId: input.authorId, notified, messageId: message.id,
       })
       : [];
 
@@ -1405,11 +1508,11 @@ export async function postMessage(
      * 두 곳에 살게 된다.
      */
     // 결과를 냈으면 이 스레드에서 받은 회신권을 닫는다(084) — 이 발화는 위에서 이미 게이트를 지났다.
-    if (input.threadRootId && isReply && authorIsAgent) {
+    if (input.threadRootId && isResult && authorIsAgent) {
       await closeReplyGrants(client, { granteeId: input.authorId, threadRootId: input.threadRootId });
     }
 
-    const wokeByDelegation = input.threadRootId
+    const wokeByDelegation = input.threadRootId && !input.serverNotice
       ? await closeDelegationsForReply(client, {
         threadRootId: input.threadRootId,
         authorId: input.authorId,
@@ -1425,6 +1528,14 @@ export async function postMessage(
         await client.query('rollback');
         return { failure: 'rejected', rejection };
       }
+      /*
+        `beforeCommit` 은 이 글에 딸린 행을 더 쓸 수 있다 — `artifact.publish` 가 첨부를 미리보기 버전으로
+        건다(090). 위에서 읽은 행은 그 전 것이라, 그대로 내보내면 실시간 `message.created` 와 도구 결과의
+        첨부에 `artifact{}` 가 빠지고 앱은 새로 읽기 전까지 카드 대신 html 칩을 그린다(2026-10-02 실측:
+        발행 응답의 첨부에 artifact 가 없었다). 같은 트랜잭션에서 다시 읽는다.
+      */
+      const reread = await client.query(`select ${COLS} from message where id = $1`, [message.id]);
+      if (reread.rowCount) message = reread.rows[0];
     }
 
     await client.query('commit');
@@ -1464,6 +1575,21 @@ export async function hasOlderMessages(pool: Pool, channelId: string, oldestSeq:
   const res = await pool.query(
     `select 1 from message where channel_id = $1 and seq < $2 and deleted_at is null limit 1`,
     [channelId, oldestSeq],
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
+/**
+ * 이 스레드에 `oldestSeq` 보다 오래된 답글이 남았나. 스레드 조회의 `hasMore` 다 — 채널의
+ * [hasOlderMessages] 를 쓰면 **다른 스레드·채널 글**까지 세어 늘 참이 된다.
+ */
+export async function hasOlderThreadReplies(
+  pool: Pool, channelId: string, threadRootId: string, oldestSeq: number,
+): Promise<boolean> {
+  const res = await pool.query(
+    `select 1 from message
+     where channel_id = $1 and thread_root_id = $2 and seq < $3 and deleted_at is null limit 1`,
+    [channelId, threadRootId, oldestSeq],
   );
   return (res.rowCount ?? 0) > 0;
 }
@@ -2168,6 +2294,24 @@ export async function listMessages(
       );
       return res.rows;
     }
+    /**
+     * 스레드의 **옛 답글 페이지**(위로 밀어 더 읽기). `before` 보다 오래된 답글 중 최신 limit 개.
+     * **이 스레드의 답글만** 본다(`thread_root_id = $2`) — 전에는 이 갈래가 없어 `before` 가
+     * 무시되고 최신 페이지가 다시 왔다. 루트는 첫 페이지(아래 기본 갈래)가 이미 싣고, 루트의
+     * seq 는 모든 답글보다 작으므로 옛 페이지에는 싣지 않는다.
+     */
+    if (opts.before !== undefined) {
+      const res = await pool.query(
+        `select * from (
+           select ${LIST_COLS} from message m ${THREAD_STATS}
+           where m.channel_id = $1 and m.thread_root_id = $2 and m.seq < $3 and ${LIST_VISIBLE}
+           order by m.seq desc limit $4
+         ) older
+         order by seq`,
+        [channelId, opts.threadRootId, opts.before, limit],
+      );
+      return res.rows;
+    }
     // 스레드 조회에서는 루트를 항상 포함한다 — limit 와 관계없이.
     if (opts.since !== undefined && opts.since > 0) {
       const res = await pool.query(
@@ -2178,14 +2322,16 @@ export async function listMessages(
       );
       return res.rows;
     }
+    // `limit` 은 **답글에만** 건다. 전에는 `order by … limit` 이 union 전체에 걸려 답글이 limit
+    // 을 넘는 스레드에서 루트가 잘려 나갔다(위 주석의 "항상 포함" 과 달리).
     const res = await pool.query(
       `select * from (
-        select ${LIST_COLS} from message m ${THREAD_STATS}
-        where m.channel_id = $1 and m.id = $2 and ${LIST_VISIBLE}
+        (select ${LIST_COLS} from message m ${THREAD_STATS}
+         where m.channel_id = $1 and m.id = $2 and ${LIST_VISIBLE})
         union all
-        select ${LIST_COLS} from message m ${THREAD_STATS}
-        where m.channel_id = $1 and m.thread_root_id = $2 and ${LIST_VISIBLE}
-        order by seq desc limit $3
+        (select ${LIST_COLS} from message m ${THREAD_STATS}
+         where m.channel_id = $1 and m.thread_root_id = $2 and ${LIST_VISIBLE}
+         order by m.seq desc limit $3)
       ) latest
       order by seq`,
       [channelId, opts.threadRootId, limit],
@@ -2254,6 +2400,112 @@ export async function listMessages(
   return res.rows;
 }
 
+/**
+ * 인박스 항목들이 속한 **스레드의 머리**(Inbox 상태 보드, 2026-10-01).
+ *
+ * 보드는 메시지가 아니라 **일(스레드)** 단위로 선다 — 같은 일에서 온 다섯 줄이 카드 하나가
+ * 된다. 카드를 어느 열(내 차례·막힘·진행·끝남)에 둘지는 줄의 `meta` 가 아니라 **스레드의
+ * 지금 상태**가 정한다: 답한 물음, 풀린 실패는 옛 줄의 `meta` 로는 알 수 없다. 그 상태는
+ * 채널 목록이 이미 머리에 싣는 `THREAD_STATS` 그대로라, 같은 열(`LIST_COLS`)을 머리에서만 읽는다
+ * — 판정을 새로 적으면 채널의 배지와 보드의 열이 갈린다.
+ *
+ * 머리 수만큼만 돈다(항목 수가 아니라). 머리마다의 LATERAL 은 062 의
+ * `(thread_root_id, seq)` 색인을 탄다.
+ *
+ * **볼 수 있는가는 지금 다시 잰다**(`channelVisibleSql`, security F1). 인박스 항목은 부를 때의
+ * 가시성으로 만들어지고 그 뒤로 남는다 — 비공개 채널에서 내보내지거나(`removeChannelMember` 는
+ * inbox 행을 안 지운다) 채널이 비공개로 바뀌어도 항목은 그대로다. 머리는 **계속 갱신되는**
+ * 스레드 상태(본문·리액션·참여자·열린 물음)라, 거르지 않으면 나간 사람이 그 스레드를 계속 지켜본다.
+ * 걸러진 머리의 카드는 보드에 서지 않는다(화면의 "머리가 안 오면 세우지 않는다").
+ */
+export async function listInboxThreads(pool: Pool, accountId: string, entries: InboxEntry[]): Promise<MessageRow[]> {
+  return listThreadHeads(pool, accountId, entries.map((e) => e.threadRootId ?? e.messageId));
+}
+
+/**
+ * 스레드 머리 행들 — `listInboxThreads` 와 「내 작업」 보드(`/inbox/board`)가 같이 쓴다. 가시성·지운
+ * 머리 규칙이 한 자리에 있어야 두 조회가 같은 머리를 낸다.
+ */
+async function listThreadHeads(pool: Pool, accountId: string, ids: string[]): Promise<MessageRow[]> {
+  const rootIds = [...new Set(ids)];
+  if (rootIds.length === 0) return [];
+  const res = await pool.query(
+    `select ${LIST_COLS} from message m ${THREAD_STATS}
+       join channel c on c.id = m.channel_id
+      where m.id = any($1::uuid[]) and m.thread_root_id is null and ${LIST_VISIBLE}
+        and ${channelVisibleSql('c', '$2')}`,
+    [rootIds, accountId],
+  );
+  return res.rows;
+}
+
+/** 「내 작업」 보드가 inbox 밖에서 더 모으는 기간과 상한. */
+export const BOARD_WINDOW_DAYS = 30;
+export const BOARD_EXTRA_LIMIT = 300;
+
+/**
+ * 「내 작업」 보드(2026-10-03 jaebin 승인, 스레드 edd07149)가 **inbox 밖에서** 더 모으는 스레드 머리.
+ *
+ * 왜 inbox 만으로 모자란가: inbox 항목은 남이 나를 부르거나 내 스레드에 답할 때만 생긴다. 그래서
+ * ① 내가 시켰는데 **아직 아무도 답하지 않은** 스레드와 ② 남이 연 스레드에 **내가 말만 얹은** 스레드는
+ * 보드 어디에도 없었다 — "시켜 놓고 잊는" 일이 바로 ①이다.
+ *
+ * 범위 = (내가 연 머리 ∪ 내가 답한 스레드) 중 **최근 `days` 일 안에 내가 말한 것** ∩ **에이전트가 낀 것**.
+ * "에이전트가 낀 것"은 `thread_status` 행이 있다는 뜻이다 — 서버 판정(`decideThreadStatus`)이
+ * `agentInvolved` 가 아니면 행을 지운다. 사람끼리 나눈 말까지 일로 세우면 보드가 다시 넘친다(jaebin 결정).
+ *
+ * **가시성·지운 머리를 상한보다 먼저 거른다**(#1137 security 후속, 2026-10-05). 처음에는 자른 뒤에
+ * `listThreadHeads` 만 걸렀다 — 내보내진 비공개 채널의 내 말이 많으면 그 머리들이 300 몫을 먹어,
+ * 보이는 카드가 300 보다 적은데도 `truncated` 가 참이었다. 그래서 여기서도 `listThreadHeads` 와 같은
+ * 두 조건(`LIST_VISIBLE`·`channelVisibleSql`)을 건다. 머리를 실을 때 다시 재는 것은 그대로 둔다 —
+ * 그쪽이 응답에 실리는 행의 경계이고, 이것은 세는 몫의 경계다.
+ * 최근에 상태가 바뀐 것부터 `limit` 개. 넘쳤는지는 `truncated` 로 알린다.
+ */
+export async function listBoardRootIds(
+  pool: Pool, accountId: string, opts: { days: number; limit: number },
+): Promise<{ rootIds: string[]; truncated: boolean }> {
+  const res = await pool.query(
+    `with mine as (
+       select distinct coalesce(said.thread_root_id, said.id) as root_id
+         from message said
+        where said.author_id = $1 and said.deleted_at is null
+          and said.created_at > now() - make_interval(days => $2::int)
+     )
+     select ts.root_id as id
+       from mine
+       join thread_status ts on ts.root_id = mine.root_id
+       join message m on m.id = ts.root_id
+       join channel c on c.id = m.channel_id
+      where m.thread_root_id is null and ${LIST_VISIBLE}
+        and ${channelVisibleSql('c', '$1')}
+      order by ts.updated_at desc, ts.root_id
+      limit $3::int + 1`,
+    [accountId, opts.days, opts.limit],
+  );
+  const ids = res.rows.map((r: { id: string }) => r.id);
+  return { rootIds: ids.slice(0, opts.limit), truncated: ids.length > opts.limit };
+}
+
+/**
+ * 「내 작업」 보드의 머리 = inbox 항목의 머리 ∪ `listBoardRootIds`. 응답 모양은 `?threads=1` 과 같다 —
+ * 앱의 `buildBoard` 가 그대로 받는다. inbox 항목이 없는 머리는 `entries` 에 줄이 없이 `threads` 에만 선다.
+ */
+export async function listBoardThreads(
+  pool: Pool, accountId: string, entries: InboxEntry[],
+): Promise<{ threads: MessageRow[]; truncated: boolean }> {
+  const extra = await listBoardRootIds(pool, accountId, { days: BOARD_WINDOW_DAYS, limit: BOARD_EXTRA_LIMIT });
+  const threads = await listThreadHeads(pool, accountId, [
+    ...entries.map((e) => e.threadRootId ?? e.messageId), ...extra.rootIds,
+  ]);
+  return { threads, truncated: extra.truncated };
+}
+
+function isReportTo(v: unknown): v is WakeReportTo {
+  if (!v || typeof v !== 'object') return false;
+  const o = v as Record<string, unknown>;
+  return typeof o.channelId === 'string' && typeof o.threadRootId === 'string';
+}
+
 export async function listInbox(
   pool: Pool, accountId: string, opts: { unreadOnly?: boolean },
 ): Promise<InboxEntry[]> {
@@ -2262,7 +2514,8 @@ export async function listInbox(
             m.channel_id as "channelId",
             -- 줄이 네 가지를 말할 재료(#488 C2): 누가 · 무슨 말 · 무엇을 · 언제·어디.
             -- 이미 message 를 join 하고 있었으므로 컬럼만 더한다 — 새 왕복이 없다.
-            m.author_id as "authorId", m.body, m.meta,
+            -- 시스템 메시지의 자리표시자는 여기서 채운다 — 인박스 항목에는 kind 가 없어 화면이 못 채운다.
+            m.author_id as "authorId", ${displayBodySql('m')} as body, m.meta,
             m.created_at as "createdAt", m.thread_root_id as "threadRootId",
             -- 팀 부름의 팀(047). 명단은 아래에서 한 번에 채운다 — 여기서 join 하면
             -- 팀원 수만큼 행이 불어나 항목이 여러 번 나온다.
@@ -2270,9 +2523,19 @@ export async function listInbox(
             -- 수정으로 생긴 부름(076). 참일 때만 싣는다 — 아래에서 거짓은 키째 지운다.
             i.via_edit as "viaEdit"
      from inbox i join message m on m.id = i.message_id
+     join channel c on c.id = m.channel_id
      -- 지워진 말은 인박스에도 남지 않는다. 본문을 싣기 시작했으므로 이 조건이 없으면
      -- 지운 글이 인박스 줄에 그대로 보인다(전에는 id 만 실어 보이지 않았다).
+     --
+     -- **지금 볼 수 있는 채널의 것만**(2026-10-02, #1018 security F1 후속). 항목은 부를 때의
+     -- 가시성으로 만들어지고 그 뒤로 남는다 — 비공개 채널에서 내보내지거나(removeChannelMember
+     -- 는 inbox 행을 안 지운다) 채널이 비공개로 바뀌어도 그대로다. 거르지 않으면 나간 사람이
+     -- 그 채널의 본문을 인박스로 계속 받는다. 행은 지우지 않는다: 다시 들어오면 다시 보인다.
+     --
+     -- 러너의 inbox.poll 도 이 함수를 쓴다 → 나간 채널의 부름으로는 **턴이 뜨지 않는다**.
+     -- 의도다: 그 턴은 그 채널을 읽지도 거기에 쓰지도 못한다.
      where i.account_id = $1 and m.deleted_at is null
+       and ${channelVisibleSql('c', '$1')}
        ${opts.unreadOnly ? 'and i.read_at is null' : ''}
      order by i.id`,
     [accountId],
@@ -2372,12 +2635,113 @@ export async function listInbox(
     }
   }
 
+  /**
+   * **이 부름이 접은 내 깨움**을 붙인다(107, 2026-10-06). 사람이 부르면 그 스레드의 대기 깨움이 접히는데
+   * (`preemptWakesForThread`), 부름으로 뜬 턴은 그것을 몰라 약속한 확인이 조용히 사라졌다. 러너가 이
+   * 목록으로 "접혔다 — 필요하면 다시 걸어라" 를 프롬프트에 싣는다.
+   *
+   * 사유는 깨움 메시지의 본문이다(`scheduleWake` 가 본문=사유로 게시한다). 내 깨움만 — 남의 것은
+   * 내 할 일이 아니다.
+   */
+  const callIds = [...new Set(rows.filter((r) => r.reason !== 'wake').map((r) => r.messageId))];
+  if (callIds.length) {
+    const folded = await pool.query<{ by: string; reason: string; wakeAt: string; reportTo: unknown }>(
+      `select w.canceled_by_message_id as by, wm.body as reason, w.wake_at as "wakeAt",
+              wm.meta->'wake'->'reportTo' as "reportTo"
+         from agent_wake w join message wm on wm.id = w.message_id
+        where w.account_id = $1 and w.canceled_by_message_id = any($2)
+        order by w.wake_at`,
+      [accountId, callIds],
+    );
+    const byCall = new Map<string, NonNullable<InboxEntry['canceledWakes']>>();
+    for (const r of folded.rows) {
+      const list = byCall.get(r.by) ?? [];
+      list.push({
+        reason: r.reason, wakeAt: new Date(r.wakeAt).toISOString(),
+        ...(isReportTo(r.reportTo) ? { reportTo: r.reportTo } : {}),
+      });
+      byCall.set(r.by, list);
+    }
+    for (const row of rows) {
+      const found = row.reason !== 'wake' ? byCall.get(row.messageId) : undefined;
+      if (found) row.canceledWakes = found;
+    }
+  }
+
   // `teamId` 는 계약이 아니다(`InboxEntry` 에 없다) — 명단으로 옮긴 뒤 지운다. 남겨 두면
   // 화면·러너가 그 값을 읽기 시작하고, 그러면 명단과 id 라는 두 출처가 생긴다.
   for (const row of rows) delete row.teamId;
   // `viaEdit` 는 참일 때만 나간다(`InboxEntry.viaEdit`) — 게시로 생긴 항목의 모양을 넓히지 않는다.
   for (const row of rows as { viaEdit?: boolean }[]) if (!row.viaEdit) delete row.viaEdit;
   return rows;
+}
+
+/**
+ * 내 스레드 처리 상태들(089) — `GET /inbox?threads=1` 이 머리와 함께 싣는다. **지금 볼 수 있는
+ * 채널의 것만** 낸다(`listInboxThreads` 와 같은 이유, security F1): 나간 채널의 상태 행이 남아
+ * 있어도 그 존재가 응답에 새지 않게 한다.
+ */
+export async function listInboxThreadStates(pool: Pool, accountId: string, rootIds: string[]): Promise<InboxThreadState[]> {
+  if (rootIds.length === 0) return [];
+  const res = await pool.query(
+    `select s.root_id as "rootId", s.state, s.until, s.updated_at as "updatedAt"
+       from inbox_thread_state s
+       join message m on m.id = s.root_id
+       join channel c on c.id = m.channel_id
+      where s.account_id = $1 and s.root_id = any($2::uuid[]) and ${channelVisibleSql('c', '$1')}`,
+    [accountId, rootIds],
+  );
+  return res.rows.map((r) => ({
+    rootId: r.rootId, state: r.state,
+    until: r.until ? new Date(r.until).toISOString() : null,
+    updatedAt: new Date(r.updatedAt).toISOString(),
+  }));
+}
+
+/** `setInboxThreadState` 가 거절한 이유. 라우트가 404·403 으로 옮긴다. */
+export type InboxThreadStateRefusal = 'not_found' | 'not_root' | 'forbidden';
+
+/**
+ * 내 스레드 처리 상태를 정한다(`null` 이면 지운다). **바꾸는 것은 언제나 부른 계정 자신의 행**이다 —
+ * 계정을 인자로 받지 않고 라우트가 `req.account` 를 넘기므로 남의 보드를 바꿀 길이 없다.
+ *
+ * 볼 수 없는 채널의 루트는 거절한다(`channelVisibleSql`). 안 그러면 루트 id 만 알면 그 채널에
+ * 무엇이 있는지(있다는 사실)를 응답 코드로 떠볼 수 있다 — 그래서 없는 것과 볼 수 없는 것을
+ * 가르지만, 볼 수 없는 채널의 루트인지는 루트가 있을 때만 말한다(메시지 링크 라우트와 같다).
+ */
+export async function setInboxThreadState(
+  pool: Pool, accountId: string, rootId: string,
+  next: { state: 'done' } | { state: 'later'; until: string } | null,
+): Promise<InboxThreadState | null | InboxThreadStateRefusal> {
+  const root = await pool.query<{ thread_root_id: string | null; visible: boolean }>(
+    `select m.thread_root_id, ${channelVisibleSql('c', '$2')} as visible
+       from message m join channel c on c.id = m.channel_id
+      where m.id = $1 and m.deleted_at is null`,
+    [rootId, accountId],
+  );
+  const row = root.rows[0];
+  if (!row) return 'not_found';
+  if (!row.visible) return 'forbidden';
+  if (row.thread_root_id !== null) return 'not_root';
+  if (next === null) {
+    await pool.query(`delete from inbox_thread_state where account_id = $1 and root_id = $2`, [accountId, rootId]);
+    return null;
+  }
+  const until = next.state === 'later' ? next.until : null;
+  const res = await pool.query(
+    `insert into inbox_thread_state (account_id, root_id, state, until)
+     values ($1, $2, $3, $4)
+     on conflict (account_id, root_id)
+       do update set state = excluded.state, until = excluded.until, updated_at = now()
+     returning root_id as "rootId", state, until, updated_at as "updatedAt"`,
+    [accountId, rootId, next.state, until],
+  );
+  const r = res.rows[0];
+  return {
+    rootId: r.rootId, state: r.state,
+    until: r.until ? new Date(r.until).toISOString() : null,
+    updatedAt: new Date(r.updatedAt).toISOString(),
+  };
 }
 
 /** 읽음 처리된 항목 수를 돌려준다. account_id 스코프이므로 남의 entry id 는 아무 것도 지우지 않는다. */
@@ -2401,7 +2765,30 @@ export interface SearchScope {
   threadRootId?: string | null;
   limit?: number;
   offset?: number;
+  /**
+   * 거르기(S1). 전부 **가시성·스코프 술어 위에 얹는 `and` 조건**이다 — 결과를 좁히기만 하고 넓히는
+   * 갈래가 없다. 빈 배열·null 은 "거르지 않음"이다.
+   *
+   * - `authorIds`: 이 사람들이 쓴 것만. 개수는 [SEARCH_MAX_AUTHORS] 까지(라우트가 막고 여기서도 자른다).
+   * - `after`·`before`: `created_at` 의 [after, before) 반열린 구간(ISO 시각). 「오늘」·「7일」 칩이 그대로 쓴다.
+   * - `hasAttachment`: 첨부가 하나라도 붙은 것만.
+   */
+  authorIds?: readonly string[] | null;
+  after?: string | null;
+  before?: string | null;
+  hasAttachment?: boolean | null;
+  /** `relevance`(기본, 접두 일치 > ts_rank > 최신) · `recent`(최신순만). */
+  sort?: SearchSort | null;
 }
+
+export type SearchSort = 'relevance' | 'recent';
+
+/**
+ * `authorIds` 의 천장. 칩으로 고르는 사람 수라 이 정도면 넉넉하고, 상한이 없으면 질의 하나에
+ * uuid 수천 개를 실어 `= any($7)` 을 부풀릴 수 있다(security #1094 S1 ②).
+ */
+export const SEARCH_MAX_AUTHORS = 10;
+
 
 export interface SearchPage {
   messages: MessageRow[];
@@ -2418,6 +2805,20 @@ export interface SearchPage {
  * 뜬다. 버튼이 아예 서지 않는 것이 맞다.
  */
 export const SEARCH_MAX_OFFSET = 1000;
+
+/**
+ * 검색 입력의 **형식과 상한 한 벌**(S2). REST `/search` 와 MCP `message.search` 가 같은 조각을 쓴다 —
+ * 서비스의 `slice` 는 두 번째 그물일 뿐이고, 형식 검증이 한쪽 표면에만 있으면 다른 표면이 그 구멍이 된다
+ * (security #1097). 쿼리 문자열과 JSON 인자는 모양이 달라(되풀이 키·`'true'` 대 배열·boolean) 감싸는
+ * 자리만 각자 둔다.
+ */
+export const searchInput = {
+  query: z.string().min(1).max(256),
+  authorIds: z.array(z.string().uuid()).max(SEARCH_MAX_AUTHORS),
+  time: z.string().datetime({ offset: true }),
+  sort: z.enum(['relevance', 'recent']),
+  offset: z.number().int().min(0).max(SEARCH_MAX_OFFSET),
+} as const;
 
 /**
  * `limit + 1` 을 떠 왔으므로 한 줄이 더 있으면 다음 페이지가 있다 — **천장 안쪽일 때만**.
@@ -2489,10 +2890,21 @@ export async function searchMessages(
 ): Promise<SearchPage> {
   const limit = Math.min(scope.limit ?? 50, 100);
   const offset = Math.max(scope.offset ?? 0, 0);
+  const authorIds = scope.authorIds?.length ? scope.authorIds.slice(0, SEARCH_MAX_AUTHORS) : null;
+  // 정렬은 닫힌 두 값 중 하나다 — 문자열을 SQL 에 그대로 잇지 않고 여기서 고른다.
+  const order = scope.sort === 'recent'
+    ? `m.created_at desc, m.seq desc`
+    : `(m.search @@ ${PREFIX_TSQUERY}) desc,
+              ts_rank(m.search, ${PREFIX_TSQUERY}) desc,
+              m.seq desc`;
   const res = await pool.query(
     `select m.id, m.seq::int as seq, m.channel_id as "channelId", m.thread_root_id as "threadRootId",
        m.author_id as "authorId", m.body, m.kind, m.meta, m.created_at as "createdAt",
-       m.edited_at as "editedAt", '[]'::json as reactions, '[]'::json as attachments,
+       m.edited_at as "editedAt", '[]'::json as reactions,
+       -- 결과 카드가 사진·파일을 그릴 수 있게 첨부 요약을 싣는다(S1). 이 하위 질의는 **아래 where 를
+       -- 통과한 행**(볼 수 있고 지워지지 않은 메시지)에만 붙으므로 못 보는 메시지의 첨부를 끌어오지
+       -- 않는다(security S1 ③). 모양은 목록 응답과 같은 ATTACHMENTS 한 곳에서 온다.
+       ${ATTACHMENTS.replace(/message\./g, 'm.')},
        null::int as "replyCount", null::int as "activityCount",
   null::text as "lastReplyAt", null::text[] as "participantIds",
        m.also_in_channel as "alsoInChannel"
@@ -2514,17 +2926,24 @@ export async function searchMessages(
        -- 스레드 스코프는 루트 자신을 포함한다 — 루트에 있는 말을 못 찾으면 "이 스레드에서
        -- 찾기"가 아니다(listMessages 의 스레드 분기와 같은 문장).
        and ($5::uuid is null or m.id = $5 or m.thread_root_id = $5)
+       -- 거르기(S1)도 같은 자리다: 가시성·스코프 **위에** 얹는 and 뿐이라 결과를 좁히기만 한다
+       -- (security S1 ①). null 이면 상수로 접혀 계획이 그대로 남는다.
+       and ($7::uuid[] is null or m.author_id = any($7::uuid[]))
+       and ($8::timestamptz is null or m.created_at >= $8::timestamptz)
+       and ($9::timestamptz is null or m.created_at < $9::timestamptz)
+       and ($10::boolean is not true or exists (select 1 from attachment a where a.message_id = m.id))
      -- 정확 일치(1번)를 부분문자열-only 히트 앞에 세우고, 그 안에서 ts_rank, 그다음 최신순.
      -- seq desc 만 있던 때는 흔한 낱말이면 상위 50 이 전부 최근 것으로 차서 정작 찾던
      -- 옛 메시지가 응답에 들어오지도 않았다.
      --
      -- 페이지는 offset 이다(seq 커서가 아니다): 순서가 seq 가 아니라 rank 이므로 seq 커서는
      -- 이 정렬에서 뜻이 없다.
-     order by (m.search @@ ${PREFIX_TSQUERY}) desc,
-              ts_rank(m.search, ${PREFIX_TSQUERY}) desc,
-              m.seq desc
+     order by ${order}
      limit $2 offset $6`,
-    [query, limit + 1, requesterId, scope.channelId ?? null, scope.threadRootId ?? null, offset],
+    [
+      query, limit + 1, requesterId, scope.channelId ?? null, scope.threadRootId ?? null, offset,
+      authorIds, scope.after ?? null, scope.before ?? null, scope.hasAttachment ?? null,
+    ],
   );
   const rows = res.rows as MessageRow[];
   return { messages: rows.slice(0, limit), hasMore: searchHasMore(rows.length, limit, offset) };

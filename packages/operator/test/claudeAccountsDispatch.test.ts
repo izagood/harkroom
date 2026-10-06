@@ -28,6 +28,8 @@ function fakePort(over: Partial<ClaudeAccountsPort> = {}): ClaudeAccountsPort {
     measureUsage: vi.fn(async () => ({ fetchedAtMs: 0, session: null, weekly: null })),
     configure: vi.fn(async () => undefined),
     removeAccount: vi.fn(async () => undefined),
+    reconcileOrder: vi.fn(async () => ({ added: [], removed: [] })),
+    openTerminal: vi.fn(async () => undefined),
     removePool: vi.fn(async () => undefined),
     move: vi.fn(async () => ({ loggedIn: true })),
     loginStart: vi.fn(async () => ({ loginId: 'lid' })),
@@ -66,7 +68,7 @@ describe('프로토콜 등록', () => {
     for (const t of [
       'claudeAccountsList', 'claudeAccountsConfigure', 'claudeAccountLoginStart',
       'claudeAccountLoginSubmit', 'claudeAccountLoginCancel', 'claudeAccountRemove',
-      'claudePoolRemove', 'claudeAccountMove',
+      'claudePoolRemove', 'claudeAccountMove', 'claudeAccountOpenTerminal',
     ]) {
       expect(REQUEST_TYPES as readonly string[]).toContain(t);
     }

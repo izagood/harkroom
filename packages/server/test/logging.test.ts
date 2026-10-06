@@ -35,6 +35,22 @@ beforeAll(async () => {
 afterAll(async () => stop());
 
 describe('요청 로깅', () => {
+  // 서버가 클라이언트를 **누구로 봤는지**(레이트 리밋 키와 같은 `req.ip`)를 남긴다 — 프록시 신뢰
+  // 설정(`TRUST_PROXY`)이 맞는지 배포 뒤에 확인할 수 있는 유일한 자리다.
+  it('logs the client address the server resolved through the trusted proxies', async () => {
+    const log = capture();
+    const app: FastifyInstance = await buildServer({ pool, logStream: log.stream, logLevel: 'info', trustProxy: 2 });
+    await app.inject({
+      method: 'GET', url: '/healthz', remoteAddress: '10.244.1.5',
+      headers: { 'x-forwarded-for': '203.0.113.77,198.51.100.20,10.244.4.233' },
+    });
+    await app.close();
+
+    const incoming = log.lines.find((l) => typeof l.req === 'object' && l.req !== null);
+    expect((incoming!.req as { ip?: string }).ip).toBe('198.51.100.20');
+    expect(log.text()).not.toContain('203.0.113.77');
+  });
+
   it('logs one completed request with method, path, status and a request id', async () => {
     const log = capture();
     const app: FastifyInstance = await buildServer({ pool, logStream: log.stream, logLevel: 'info' });
@@ -46,6 +62,19 @@ describe('요청 로깅', () => {
     expect(log.text()).toContain('/healthz');
     expect(done!.reqId).toBeTruthy();
     expect((done!.res as { statusCode: number }).statusCode).toBe(200);
+  });
+
+  // 미리보기 토큰은 경로에 있고 60초 동안 다시 쓸 수 있다 — 로그에 남으면 로그 열람자가 그 문서를 연다.
+  it('never writes a preview token from the path into the log', async () => {
+    const log = capture();
+    const app = await buildServer({ pool, logStream: log.stream, logLevel: 'info' });
+    const token = 'C29wwxyzPreviewTokenShapedValue_-0123456789abcdefABCDEF';
+    await app.inject({ method: 'GET', url: `/preview/${token}` });
+    await app.inject({ method: 'GET', url: `/preview/${token}?x=1` });
+    await app.close();
+
+    expect(log.text()).toContain('/preview/REDACTED');
+    expect(log.text()).not.toContain(token);
   });
 
   // 로그는 오래 남고 널리 읽힌다. Bearer 토큰이 거기 적히면 로그 열람 권한이 곧 계정 권한이 된다.

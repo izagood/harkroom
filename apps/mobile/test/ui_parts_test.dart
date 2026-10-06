@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/theme.dart';
 import 'package:harkroom/ui/parts.dart';
+import 'package:harkroom/ui/states.dart';
 import 'package:harkroom/ui/tokens.dart';
 
 Widget _host(Widget child, {Brightness brightness = Brightness.light}) => MaterialApp(
@@ -19,7 +20,7 @@ void main() {
 
     test('남보라 씨앗색을 쓰지 않는다 — 주 색은 먹색, 강조는 주황 하나', () {
       final t = harkroomTheme(Brightness.light);
-      expect(t.colorScheme.primary, HarkroomTokens.light.ink);
+      expect(t.colorScheme.primary, HarkroomTokens.light.surfaceInverse);
       expect(t.colorScheme.secondary, HarkroomTokens.light.accent);
       expect(t.badgeTheme.backgroundColor, HarkroomTokens.light.accent);
     });
@@ -30,7 +31,7 @@ void main() {
 
     test('"내 차례" 면이 비어 있지 않다 — 비우면 Material 이 먹색을 지어낸다', () {
       final s = harkroomTheme(Brightness.light).colorScheme;
-      expect(s.primaryContainer, HarkroomTokens.light.accentSoft);
+      expect(s.primaryContainer, HarkroomTokens.light.accentSurface);
       expect(s.onPrimaryContainer, HarkroomTokens.light.fg);
     });
   });
@@ -86,11 +87,11 @@ void main() {
       expect((acted, closed), (1, 1));
     });
 
-    testWidgets('면을 칠하지 않는다 — 옅은 바탕(warnSoft)', (tester) async {
+    testWidgets('면을 칠하지 않는다 — 옅은 바탕(warningSurface)', (tester) async {
       await tester.pumpWidget(_host(const StatusBand(text: '연결 끊김')));
       final m = tester.widget<Material>(
           find.descendant(of: find.byType(StatusBand), matching: find.byType(Material)).first);
-      expect(m.color, HarkroomTokens.light.warnSoft);
+      expect(m.color, HarkroomTokens.light.warningSurface);
     });
   });
 
@@ -100,5 +101,27 @@ void main() {
     expect(find.text('멤버 12'), findsOneWidget);
     await tester.pumpWidget(_host(const ScreenTitle(title: '# task')));
     expect(find.byType(Column), findsNothing);
+  });
+
+  testWidgets('목록 자리 탭 — 스크롤이 없는 자리(비어 있음·못 읽음)에서도 키보드만 내리고 글은 둔다', (tester) async {
+    final field = TextEditingController(text: '쓰던 글');
+    final focus = FocusNode();
+    addTearDown(field.dispose);
+    addTearDown(focus.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Column(children: [
+          const Expanded(child: FeedKeyboardDismiss(child: Center(child: Text('비어 있다')))),
+          TextField(controller: field, focusNode: focus),
+        ]),
+      ),
+    ));
+    focus.requestFocus();
+    await tester.pump();
+    expect(focus.hasFocus, isTrue);
+    await tester.tapAt(tester.getTopLeft(find.byType(FeedKeyboardDismiss)) + const Offset(20, 20));
+    await tester.pump();
+    expect(focus.hasFocus, isFalse);
+    expect(field.text, '쓰던 글');
   });
 }

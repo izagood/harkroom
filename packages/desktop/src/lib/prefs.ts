@@ -8,7 +8,6 @@
 // 스스로 알고 `pnpm` 을 거치지 않는다. 에이전트가 **일할 저장소**는 이 값들과 다른
 // 것이었고(`workingDir`, DB, 에이전트별) 그대로 남는다.
 
-import { isInboxFilter, type InboxFilter } from './inboxRow';
 
 import { DEFAULT_ZOOM, normalizeZoom } from './zoom';
 
@@ -56,7 +55,7 @@ const SIDEBAR_COLLAPSED_KEY = 'harkroom.sidebarCollapsed';
 const UNDO_SEND_KEY = 'harkroom.undoSendMs';
 const THREAD_WIDTH_KEY = 'harkroom.threadWidth';
 const TERMINAL_WIDTH_KEY = 'harkroom.terminalWidth';
-const INBOX_FILTER_KEY = 'harkroom.inboxFilter';
+const PREVIEW_WIDTH_KEY = 'harkroom.previewWidth';
 const LAST_WORKSPACE_URL_KEY = 'harkroom.lastWorkspaceUrl';
 
 export const MIN_SIDEBAR_WIDTH = 200;
@@ -88,6 +87,15 @@ export const MAX_THREAD_WIDTH = 2000;
 export const DEFAULT_TERMINAL_WIDTH = 676;
 export const MIN_TERMINAL_WIDTH = 400;
 export const MAX_TERMINAL_WIDTH = 1000;
+/**
+ * 미리보기(아티팩트) 패널. 끌기 전에는 숫자가 아니라 CSS 기본 폭(`PREVIEW_DEFAULT_CSS`)으로 선다 — 시안은 대개
+ * 데스크톱 폭으로 그려져 640px 이면 첫 화면부터 잘렸다(jaebin 신고 2026-10-05, designer 답). 손잡이를 끌면
+ * 그 숫자를 기억하고, 더블클릭하면 기억을 지워 기본 폭으로 돌아간다. 상한은 스레드처럼 난간으로만 둔다 —
+ * 실질 상한은 왼쪽에 남길 폭이다.
+ */
+export const PREVIEW_DEFAULT_CSS = 'min(48rem, 50vw)';
+export const MIN_PREVIEW_WIDTH = 360;
+export const MAX_PREVIEW_WIDTH = 2000;
 
 /**
  * 대화에 반드시 남겨 두는 폭. 상한이 상수뿐이면 스레드·터미널이 대화를 폭 0 으로 밀어낼
@@ -218,36 +226,6 @@ export const sidebarStorage = {
 };
 
 /**
- * 인박스에서 **고른 칩**(`Inbox.tsx`). 폭·접힘과 같은 기기 로컬 값이다 — 계정을 따라
- * 다니게 하면 다른 기기에서 남이 좁혀 둔 목록을 물려받는다(`design.md`: 값은 전부 기기
- * 로컬이다).
- *
- * 오래 저장하지 않던 값이다. 닫았다 열면 `'all'` 로 돌아갔고, 그것이 사람에게는 **고른
- * 것을 앱이 매번 되돌리는 동작**이었다 — '안 읽은 것'으로 좁혀 훑던 중에 인박스를 접었다
- * 펴면 수백 줄이 다시 쏟아진다(2026-09-09 보고). 원래의 걱정("좁혀 두면 걸러진 항목이
- * 없는 항목으로 보인다")은 칩마다 개수가 붙은 뒤로 근거를 잃었다: 좁혀진 화면에서도 다른
- * 칩의 수가 보이므로 안 보이는 것이 없는 것이 아니라는 사실이 화면에 남아 있다.
- *
- * 읽을 때 값을 검사한다(`isInboxFilter`) — 칩을 빼거나 이름을 바꾸는 날, 저장본에 남은
- * 옛 값이 그대로 상태가 되면 아무 칩도 선택돼 보이지 않는 화면이 된다.
- */
-export const DEFAULT_INBOX_FILTER: InboxFilter = 'all';
-
-export const inboxStorage = {
-  loadFilter(): InboxFilter {
-    try {
-      const raw = localStorage.getItem(INBOX_FILTER_KEY);
-      return isInboxFilter(raw) ? raw : DEFAULT_INBOX_FILTER;
-    } catch {
-      return DEFAULT_INBOX_FILTER;
-    }
-  },
-  saveFilter(filter: InboxFilter): void {
-    try { localStorage.setItem(INBOX_FILTER_KEY, filter); } catch { /* 저장 불가 환경 허용 */ }
-  },
-};
-
-/**
  * 로그인 화면의 "Workspace URL" 칸이 처음에 보여 줄 값.
  *
  * 로그인에 **성공한** 주소만 적는다 — 틀린 주소로 실패한 시도까지 적으면 다음 기동에 그
@@ -313,6 +291,15 @@ export const paneStorage = {
   },
   saveTerminalWidth(width: number): void {
     saveWidth(TERMINAL_WIDTH_KEY, width, MIN_TERMINAL_WIDTH, MAX_TERMINAL_WIDTH);
+  },
+  /** `null` 은 "끈 적 없음" — 기본 폭(`PREVIEW_DEFAULT_CSS`)으로 선다. */
+  loadPreviewWidth(): number | null {
+    const w = loadWidth(PREVIEW_WIDTH_KEY, -1, -1, MAX_PREVIEW_WIDTH);
+    return w < 0 ? null : Math.max(MIN_PREVIEW_WIDTH, w);
+  },
+  savePreviewWidth(width: number | null): void {
+    if (width !== null) { saveWidth(PREVIEW_WIDTH_KEY, width, MIN_PREVIEW_WIDTH, MAX_PREVIEW_WIDTH); return; }
+    try { localStorage.removeItem(PREVIEW_WIDTH_KEY); } catch { /* 저장 불가 환경 허용 */ }
   },
 };
 

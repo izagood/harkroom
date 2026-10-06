@@ -5,6 +5,7 @@ import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
 import '../time.dart';
+import '../ui/tokens.dart';
 import '../mention/render.dart';
 
 /// 진행 줄 — **말풍선이 아니라 상태 한 줄**이다.
@@ -22,35 +23,40 @@ class ProgressRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.t;
     final app = context.app;
-    final theme = Theme.of(context);
     final last = run.last;
     final elapsed = DateTime.now().toUtc().difference(run.first.createdAt);
 
+    final k = context.tokens;
+    final muted = TextStyle(fontSize: 12, color: k.fgMuted, height: 1.35);
+    // 개정판 3.3: 본문 열(아바타 뒤)에 맞춘 회색 한 줄 「◌ designer 작업 중 · 2분째 — 문구」.
+    // 가장 최근 줄이면 목록이 아래부터 쌓이므로 작성칸 바로 위에 선다(따로 고정하지 않는다 —
+    // 뒤에 말이 오면 그 말 위, 일이 일어난 순서 자리에 남는다).
     return Padding(
       key: Key('progress-${last.id}'),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      padding: const EdgeInsets.fromLTRB(
+          HarkroomSize.gutter + HarkroomSize.avatar + 10, 4, HarkroomSize.gutter, 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox(
-            width: 12,
-            height: 12,
-            child: CircularProgressIndicator(strokeWidth: 2),
+          const Padding(
+            padding: EdgeInsets.only(top: 2),
+            child: SizedBox(width: 11, height: 11, child: CircularProgressIndicator(strokeWidth: 1.6)),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           Expanded(
             child: Text(
-              // `작업 중 · 4분째 — 마지막 진행 문구`
-              '${t.agentWorking} · ${runningLabel(elapsed, t)} — ${renderMentions(last.body, context.app.accounts, context.t.mentionUnknown)}',
-              style: theme.textTheme.bodySmall,
+              '${app.displayNameOf(last.authorId)} ${t.agentWorking} · ${runningLabel(elapsed, t)} — '
+              '${renderMentions(last.body, context.app.accounts, context.t.mentionUnknown)}',
+              style: muted,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          if (run.length > 1)
-            Text('${run.length}', style: theme.textTheme.labelSmall),
-          const SizedBox(width: 4),
-          Text(app.displayNameOf(last.authorId), style: theme.textTheme.labelSmall),
+          // 접힌 진행이 여럿이면 몇 개인지(누르면 펼치는 것은 이 줄의 일이 아니다).
+          if (run.length > 1) ...[
+            const SizedBox(width: 6),
+            Text('${run.length}', key: Key('progress-count-${last.id}'), style: muted),
+          ],
         ],
       ),
     );

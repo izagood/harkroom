@@ -509,6 +509,19 @@ jobs:
           HARKROOM_APP_PATH: ${{ github.workspace }}/packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app
         run: pnpm --filter @harkroom/desktop sign
 
+      # ## 기동 확인 — 서명한 앱을 띄워 본다 (공증·업로드 전)
+      #
+      # 0.3.191~0.3.203 이 켜자마자 죽는 채로 latest 까지 갔다(#1213). 여기서 실패하면 이 잡이
+      # 빨개지고 `finalize` 가 돌지 않아 **공개·latest 로 안 올라가며**, `cleanup` 이 draft 와 태그를
+      # 치운다. 자리를 서명 **뒤**로 둔 것은 사람이 받는 것과 같은 바이너리(hardened runtime 포함)를
+      # 띄우기 위해서이고, 공증 **앞**으로 둔 것은 죽는 판을 몇 분짜리 공증 왕복에 보내지 않기
+      # 위해서다(공증·staple 은 실행 파일을 바꾸지 않는다). 기준은 `ci.yml` 과 같은 스크립트다.
+      - name: 서명한 앱을 띄워 기동을 확인한다
+        run: >
+          packages/desktop/scripts/launch-smoke.sh
+          packages/desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop
+          10
+
       # ## 공증 — `.p8` 을 **파일로** 푼다
       #
       # `notarize-app.mjs` 는 키 **경로**를 받지 내용을 받지 않는다(그 파일 주석: 값을 프로세스

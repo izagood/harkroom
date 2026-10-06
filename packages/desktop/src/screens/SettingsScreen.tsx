@@ -6,21 +6,22 @@ import { WorkspaceSettings } from '../components/settings/WorkspaceSettings';
 import { GallerySettings } from '../components/settings/GallerySettings';
 import { AppearanceSettings } from '../components/settings/AppearanceSettings';
 import { CommunitySettings } from '../components/settings/CommunitySettings';
-import { ConnectionSettings } from '../components/settings/ConnectionSettings';
 import { HandleGroupsSettings } from '../components/settings/HandleGroupsSettings';
 import { InviteSettings } from '../components/settings/InviteSettings';
 import { OperatorsSettings } from '../components/settings/OperatorsSettings';
-import { McpServersSettings } from '../components/settings/McpServersSettings';
+import { IntegrationsSettings } from '../components/settings/IntegrationsSettings';
 import { NotificationSettings } from '../components/settings/NotificationSettings';
 import { MessageSettings } from '../components/settings/MessageSettings';
 import { ProfileSettings } from '../components/settings/ProfileSettings';
 import { SkillsSettings } from '../components/settings/SkillsSettings';
 import { AutomationsSettings } from '../components/settings/AutomationsSettings';
+import { SecretsSettings } from '../components/settings/SecretsSettings';
 import { UpdatesSettings } from '../components/settings/UpdatesSettings';
 import { ThisOperatorSettings } from '../components/settings/ThisOperatorSettings';
 import { DEFAULT_SECTION, SETTINGS_GROUPS, isSectionId, navKey, workspaceEditable, type SectionId } from '../components/settings/sections';
-import { useActiveStore } from '../state/communities';
+import { useActiveStore, useCommunityRegistry } from '../state/communities';
 import { WindowDragStrip } from '../components/WindowDragStrip';
+import { guardedLeave } from '../components/settings/pendingEdits';
 import { useT } from '../i18n/useT';
 
 export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onBack, onSignOut, onCommunitiesEmpty }: {
@@ -46,6 +47,13 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
     isSectionId(initialSection) ? initialSection : DEFAULT_SECTION,
   );
   const me = useActiveStore((s) => s.me);
+  /**
+   * 설정이 열린 채 커뮤니티가 바뀌면(알림 클릭은 설정을 닫지 않고 전환한다) 본문을 **새로 띄운다.**
+   * 섹션들은 목록을 마운트 때 한 번 읽고 쓰기는 `getController()`(= 그 순간의 활성 커뮤니티)로
+   * 한다 — 다시 띄우지 않으면 화면은 옛 커뮤니티의 에이전트를 보이면서 저장은 새 커뮤니티 서버로
+   * 보낸다. 에이전트 사진이 그렇게 남의 서버로 가서 "사진을 바꿨습니다"만 남았다(2026-10-02).
+   */
+  const communityId = useCommunityRegistry((r) => r.activeId);
 
   return (
     /* #342: 설정도 `Workspace` 를 **대체해서** 그려진다(겹창이 아니다) — 그래서 여기 있는
@@ -59,7 +67,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
         <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-surface">
           <button
             className="flex items-center gap-2 px-4 py-4 text-left font-medium text-fg-muted hover:text-fg"
-            onClick={onBack}
+            onClick={() => guardedLeave(onBack)}
           >
             <span aria-hidden>←</span> {t('settings.back')}
           </button>
@@ -84,10 +92,10 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
                 {g.items.map((item) => (
                   <button
                     key={item.id}
-                    className={`flex w-full items-center rounded-lg px-2 py-1.5 text-left
+                    className={`flex w-full items-center rounded-card px-2 py-1.5 text-left
                       ${section === item.id ? 'bg-surface-hover font-medium text-fg' : 'text-fg-muted hover:bg-surface-sunken'}`}
                     aria-current={section === item.id ? 'page' : undefined}
-                    onClick={() => setSection(item.id)}
+                    onClick={() => guardedLeave(() => setSection(item.id))}
                   >
                     {t(navKey(item.id))}
                   </button>
@@ -101,12 +109,11 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1 overflow-y-auto">
+        <main key={communityId} className="min-w-0 flex-1 overflow-y-auto">
           {section === 'profile' && <ProfileSettings onSignOut={onSignOut} />}
           {section === 'notifications' && <NotificationSettings />}
           {section === 'messages' && <MessageSettings />}
           {section === 'appearance' && <AppearanceSettings />}
-          {section === 'connection' && <ConnectionSettings onSignOut={onSignOut} />}
           {section === 'communities' && <CommunitySettings onCommunitiesEmpty={onCommunitiesEmpty} />}
           {/* AgentsSettings 는 자체 2단 레이아웃이라 SettingsPage 여백을 쓰지 않는다. */}
           {section === 'agents' && <AgentsSettings targetId={targetId} />}
@@ -114,13 +121,14 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
           {section === 'agent-defaults' && <AgentDefaultsSettings />}
           {section === 'workspace' && <WorkspaceSettings />}
           {section === 'operators' && <OperatorsSettings onOpenSection={setSection} />}
-          {section === 'mcp-servers' && <McpServersSettings />}
+          {section === 'integrations' && <IntegrationsSettings />}
           {section === 'handle-groups' && <HandleGroupsSettings />}
           {section === 'invite' && <InviteSettings />}
           {section === 'updates' && <UpdatesSettings />}
           {section === 'this-operator' && <ThisOperatorSettings onOpenSection={setSection} />}
           {section === 'skills' && <SkillsSettings targetId={targetId} />}
           {section === 'automations' && <AutomationsSettings />}
+          {section === 'secrets' && <SecretsSettings targetId={targetId} />}
           {section === 'gallery' && <GallerySettings />}
         </main>
       </div>

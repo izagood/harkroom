@@ -118,6 +118,28 @@ describe('QA 재현: Saved → 스레드 답글 점프(원인 1)', () => {
     expect({ visible: targetVisible(), scrollTop: box().scrollTop }).toMatchObject({ visible: true });
   });
 
+  /**
+   * 앞에 붙는 옛 답글은 「내 답글 따라가기」가 아니다(2026-10-06, 채널의 `prependKeepsPlace.test.tsx` 와
+   * 같은 결함): 위를 읽는 중에 점프 창이 **앞에** 붙으면 마지막 답글은 그대로 내 것이라 바닥으로 끌려갔다.
+   */
+  it('위를 읽는 중에 옛 답글이 앞에 붙어도(마지막 답글이 내 것) 읽던 자리를 지킨다', async () => {
+    const rs = replies();
+    rs[N - 1] = { ...rs[N - 1]!, authorId: 'u1' };
+    useAppStore.getState().set({ threadRootId: 'm1', messages: { c1: [root(), ...rs] } });
+    render(<ThreadPanel />);
+    await settle();
+    const b = box();
+    expect(b.scrollTop).toBe(maxTop(b));
+    // 사람이 위로 올렸다.
+    act(() => { b.scrollTop = b.scrollTop - 600; b.dispatchEvent(new Event('scroll')); });
+    const before = b.scrollTop;
+    // 옛 답글 한 페이지가 앞에 붙는다(`openThread(aroundSeq)`·위로 더 읽기).
+    act(() => { useAppStore.getState().upsertMessages('c1', Array.from({ length: 10 }, (_, i) => msg(`o${i}`, 'c1', 2 + i, `옛 답글 o${i}`, 'u3', { threadRootId: 'm1' }))); });
+    await settle();
+    expect(b.scrollTop).not.toBe(maxTop(b));
+    expect(b.scrollTop).toBe(before);
+  });
+
   it('점프 뒤에 내가 보낸 답글은 여전히 따라 내려간다', async () => {
     useAppStore.getState().set({ threadRootId: 'm1', messages: { c1: [root()] } });
     render(<ThreadPanel />);
@@ -128,7 +150,8 @@ describe('QA 재현: Saved → 스레드 답글 점프(원인 1)', () => {
       s.set({ highlightedMessageId: TARGET });
     });
     await settle();
-    act(() => { useAppStore.getState().upsertMessages('c1', [msg('mine', 'c1', 999, '내 답글', 'u1', { threadRootId: 'm1' })]); });
+    // 작성칸에서 보낸 답글은 컨트롤러가 응답 id 를 적어 둔다(`lib/ownSends.ts`) — 그 표식이 있어야 따라간다.
+    act(() => { const s = useAppStore.getState(); s.set({ ownSendIds: { mine: true } }); s.upsertMessages('c1', [msg('mine', 'c1', 999, '내 답글', 'u1', { threadRootId: 'm1' })]); });
     await settle();
     expect(box().scrollTop).toBe(maxTop(box()));
   });

@@ -23,6 +23,16 @@ import type { OperatorToServerFrame, ServerToOperatorFrame } from './operatorPro
 export const RUNNER_LINK_PROTOCOL_VERSION = 1;
 
 /**
+ * 러너 링크(relay·bridge) 한 줄의 바이트 상한 — 데몬 제어 채널의 `MAX_LINE_BYTES`(1MiB)와 **따로** 둔다.
+ *
+ * 이 링크는 MCP 결과와 REST 본문을 그대로 나른다. 서버 `attachment.fetch` 는 3MiB 까지의 그림을
+ * base64(4/3배)로 한 줄에 싣고, 텍스트는 4MiB 까지 싣는다. 1MiB 를 같이 쓰던 동안 원본 약 786KB
+ * 를 넘는 그림의 답이 오퍼레이터에서 조용히 버려져 브릿지가 90초 뒤 시간 초과를 냈다(2026-10-02).
+ * 16MiB 는 그 최대치의 네 배이고, 폭주하는 상대를 막는 상한이라는 원래 뜻은 그대로 남는다.
+ */
+export const RUNNER_LINK_MAX_LINE_BYTES = 16 * 1024 * 1024;
+
+/**
  * 오퍼레이터가 러너를 spawn 할 때 심는 링크 env 셋의 **이름**(`assignments.ts`). 러너 코어
  * (`agent/src/config.ts`)와 하네스가 띄우는 `mcp-bridge`(`operator/src/main.ts`)가 같은 셋을 읽는다.
  *
@@ -98,8 +108,13 @@ export function checkRunnerHello(value: unknown): { runnerId: string; secret: st
 
 export type RunnerLinkRequest =
   /** `cause` — 이 요청을 낸 턴을 띄운 메시지 id(`RUNNER_TURN_CAUSE_ENV`). 옛 브릿지는 싣지 않는다. */
-  | { type: 'mcp.request'; id: string; payload: unknown; cause?: string }
-  | { type: 'http.forward'; id: string; method: string; path: string; body?: string; contentType?: string };
+  /**
+   * `cwd` — 브릿지 프로세스의 작업 디렉터리(= 하네스가 띄운 턴 워크스페이스, claude 실측 2026-10-02).
+   * 오퍼레이터의 `attachment.upload` 가 경로를 이 아래로만 받는 데 쓴다. 옛 브릿지·러너 코어는 싣지 않는다.
+   */
+  | { type: 'mcp.request'; id: string; payload: unknown; cause?: string; cwd?: string }
+  /** `bodyBase64` — 이진 본문(multipart 업로드). 있으면 `body` 대신 이것을 바이트로 풀어 보낸다. */
+  | { type: 'http.forward'; id: string; method: string; path: string; body?: string; bodyBase64?: string; contentType?: string };
 
 export type RunnerLinkResponse =
   /** 서버가 돌려준 JSON-RPC 메시지들. 알림(202)이면 빈 배열. */
@@ -119,9 +134,14 @@ export type RunnerLinkResponse =
  * `holding` — 아직 도는 턴의 inbox entry id 들. `markRead` 는 턴 **완료 후**라 이것들은
  * 여전히 미읽음이고, 그대로 두면 **교체 러너가 같은 멘션을 다시 집어 두 번 답한다.**
  * 오퍼레이터가 이 목록을 교체 러너에게 넘겨 그동안만 건너뛰게 한다.
+ *
+ * `done` — **턴은 끝났는데 읽음 처리만 못 한** entry id 들(2026-10-03, #1119 후속 L2). 서버 링크가
+ * 끊긴 채 물러나는 러너가 남기는 것이다. `holding` 과 다르다: 이것들은 기다릴 턴이 없으므로 교체
+ * 러너는 보류 시한과 무관하게 **읽음 처리만** 한다 — 턴을 띄우면 끝난 일에 두 번째 턴이 선다.
+ * 생략은 "없다"다(이 필드를 모르는 옛 러너).
  */
 export type RunnerLinkNotice =
-  | { type: 'runner.pollStopped'; holding: number[] }
+  | { type: 'runner.pollStopped'; holding: number[]; done?: number[] }
   | McpAuthRejectedNotice
   | SecretLeaseNotice
   | SecretLeaseEndedNotice;
@@ -185,7 +205,8 @@ export function isRunnerLinkNotice(value: unknown): value is RunnerLinkNotice {
   if (m.type === 'secret.lease') return str(m.cause) && str(m.leaseId) && str(m.token) && str(m.expiresAt);
   if (m.type === 'secret.leaseEnded') return str(m.cause);
   if (m.type !== 'runner.pollStopped') return false;
-  return Array.isArray(m.holding) && m.holding.every((v) => typeof v === 'number' && Number.isInteger(v));
+  const ids = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === 'number' && Number.isInteger(x));
+  return ids(m.holding) && (m.done === undefined || ids(m.done));
 }
 
 const REQUEST_TYPES = new Set(['mcp.request', 'http.forward']);

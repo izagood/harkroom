@@ -143,7 +143,7 @@ function CardBody({
       style={style}
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
-      className="z-50 overflow-y-auto rounded border border-border bg-surface-raised p-3 text-body shadow-lg"
+      className="z-50 overflow-y-auto rounded-card bg-surface-raised p-3 text-body shadow-float"
     >
       <div className="font-semibold text-fg">@{name}</div>
       <div className="mt-0.5 text-meta text-fg-muted">
@@ -173,7 +173,7 @@ function CardBody({
                   {account && <Identity account={account} variant="avatar" />}
                   <span className={m.disabled ? 'text-fg-subtle line-through' : 'text-fg'}>@{m.handle}</span>
                   {isLead && (
-                    <span className="rounded bg-surface-sunken px-1 text-meta font-medium text-fg">
+                    <span className="rounded-sm bg-surface-sunken px-1 text-meta font-medium text-fg">
                       {t('mention.card.lead')}
                     </span>
                   )}

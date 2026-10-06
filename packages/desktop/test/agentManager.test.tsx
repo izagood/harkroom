@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import type { AgentConfig, AgentDefaults, AgentView, PatView } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { translator } from '../src/i18n';
@@ -8,6 +8,7 @@ import { setController, type Controller } from '../src/state/controller';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
 import { acc } from './helpers/fakeApi';
 import { ApiError } from '../src/lib/api';
+import { guardedLeave } from '../src/components/settings/pendingEdits';
 
 /** 문구가 아니라 **사실**을 잰다 — 어투가 바뀌어도(`~습니다` → `~다`) 이 축은 산다. */
 const ko = translator('ko');
@@ -34,8 +35,9 @@ const fakeController = (agents: AgentView[] = []) => {
     createAgent: vi.fn(async (_input: CreateInput) => ({ agent: agent('fizz'), pat: 'murp_secret' })),
     updateAgent: vi.fn(async (_id: string, _patch: PatchInput) => agent('fizz')),
     listPats: vi.fn(async (): Promise<PatView[]> => []),
+    // 「할 수 있는 일」 절(스레드 3deac356)이 상세를 열며 부른다 — 빈 목록이면 절은 '없음'만 그린다.
+    listGrants: vi.fn(async () => []),
     revokePat: vi.fn(async (): Promise<{ revoked: number }> => ({ revoked: 1 })),
-    mintPat: vi.fn(async (): Promise<string> => 'murp_new'),
     // #171: 기본은 "읽었다". 실패가 필요한 테스트가 갈아끼운다.
     agentDefaults: vi.fn(async (): Promise<AgentDefaults> => (
       { harness: 'claude-code', model: null, effort: null }
@@ -172,6 +174,7 @@ describe('AgentsSettings', () => {
     const c = fakeController([agent('rusalka', { model: 'claude-opus-5', effort: 'high' })]);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-run'));
 
     fireEvent.click(screen.getByRole('button', { name: 'Use harness defaults' }));
     fireEvent.click(screen.getByRole('button', { name: '저장' }));
@@ -206,50 +209,77 @@ describe('AgentsSettings', () => {
     expect((screen.getByLabelText('Mention permission') as HTMLSelectElement).value).toBe('readonly');
   });
 
-  describe('PAT management', () => {
+  describe('PAT management — 옛 러너 토큰 정리 자리(발급은 닫혔다)', () => {
     const pats: PatView[] = [
       { label: 'runner', createdAt: '2024-01-01T00:00:00Z', revokedAt: null },
+      { label: 'desktop:d43faaed', createdAt: '2024-01-04T00:00:00Z', revokedAt: null },
       { label: 'backup', createdAt: '2024-01-02T00:00:00Z', revokedAt: '2024-01-03T00:00:00Z' },
     ];
 
-    it('shows PAT section when editing an agent and user is admin', async () => {
+    const openPermissions = async () => {
+      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+      fireEvent.click(await screen.findByTestId('agent-tab-permissions'));
+    };
+
+    it('살아 있는 토큰이 있으면 칸이 서고, 살아 있는 것만 보인다', async () => {
       useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
       const c = fakeController([agent('rusalka')]);
       (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
       render(<AgentsSettings />);
-      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+      await openPermissions();
 
-      expect(await screen.findByText('PAT (Personal Access Token)')).toBeTruthy();
+      expect(await screen.findByTestId('legacy-pats')).toBeTruthy();
+      expect(await screen.findByText('runner')).toBeTruthy();
+      expect(await screen.findByText('desktop:d43faaed')).toBeTruthy();
+      // 폐기된 줄은 할 일이 없는 줄이다 — 그리지 않는다.
+      expect(screen.queryByText('backup')).toBeNull();
+    });
+
+    it('발급 손잡이가 없다(입력·[+ New PAT])', async () => {
+      useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+      const c = fakeController([agent('rusalka')]);
+      (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
+      render(<AgentsSettings />);
+      await openPermissions();
+      await screen.findByTestId('legacy-pats');
+
+      expect(screen.queryByRole('button', { name: '+ New PAT' })).toBeNull();
+      expect(screen.queryByLabelText('New PAT label')).toBeNull();
+    });
+
+    it('살아 있는 토큰이 0개면 칸 자체가 없고 「발급하라」 안내도 없다', async () => {
+      useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+      const c = fakeController([agent('rusalka')]);
+      (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue([pats[2]]);
+      render(<AgentsSettings />);
+      await openPermissions();
+      await waitFor(() => expect(c.listPats).toHaveBeenCalled());
+      await act(async () => {});
+
+      expect(screen.queryByTestId('legacy-pats')).toBeNull();
+      expect(screen.queryByText(/PAT 가 없다|No PAT/)).toBeNull();
+      expect(screen.queryByText(/새로 발급해야 한다|mint one/)).toBeNull();
+    });
+
+    it('목록을 못 읽으면 숨기지 않고 그 사실을 말한다', async () => {
+      useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+      const c = fakeController([agent('rusalka')]);
+      (c.listPats as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('boom'));
+      render(<AgentsSettings />);
+      await openPermissions();
+
+      const box = await screen.findByTestId('legacy-pats');
+      expect(box.querySelector('[role="alert"]')).toBeTruthy();
     });
 
     it('does not show PAT section when user is not admin', async () => {
       useAppStore.getState().set({ me: acc('u1', 'user', 'human', false) });
-      fakeController([agent('rusalka')]);
-      render(<AgentsSettings />);
-      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
-
-      expect(screen.queryByText('PAT (Personal Access Token)')).toBeNull();
-    });
-
-    it('lists PATs when editing an agent', async () => {
-      useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
       const c = fakeController([agent('rusalka')]);
       (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
       render(<AgentsSettings />);
       fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
-      expect(await screen.findByText('runner')).toBeTruthy();
-      expect(await screen.findByText('backup')).toBeTruthy();
-    });
-
-    it('shows revoked PATs with indicator', async () => {
-      useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
-      const c = fakeController([agent('rusalka')]);
-      (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
-      render(<AgentsSettings />);
-      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
-
-      expect(await screen.findByText('(폐기됨)')).toBeTruthy();
+      expect(screen.queryByTestId('legacy-pats')).toBeNull();
     });
 
     it('calls revokePat when confirming revoke', async () => {
@@ -258,29 +288,52 @@ describe('AgentsSettings', () => {
       (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
       (c.revokePat as ReturnType<typeof vi.fn>).mockResolvedValue({ revoked: 1 });
       render(<AgentsSettings />);
-      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+      await openPermissions();
 
-      const revokeBtn = await screen.findByText('Revoke');
-      fireEvent.click(revokeBtn);
-      const confirmBtn = await screen.findByText('Really revoke');
-      fireEvent.click(confirmBtn);
+      fireEvent.click((await screen.findAllByText('폐기'))[0]!);
+      fireEvent.click(await screen.findByText('정말 폐기'));
 
       await waitFor(() => expect(c.revokePat).toHaveBeenCalledWith('id-rusalka', 'runner'));
+      expect(c.revokePat).toHaveBeenCalledTimes(1);
     });
 
-    it('shows newly minted PAT once', async () => {
+    it('[모두 폐기]는 확인창을 거치고, 살아 있는 라벨마다 한 번씩 DELETE 한다', async () => {
       useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
       const c = fakeController([agent('rusalka')]);
-      (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (c.mintPat as ReturnType<typeof vi.fn>).mockResolvedValue('murp_new_token');
+      (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
+      (c.revokePat as ReturnType<typeof vi.fn>).mockResolvedValue({ revoked: 1 });
       render(<AgentsSettings />);
-      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+      await openPermissions();
 
-      const newPatBtn = await screen.findByRole('button', { name: '+ New PAT' });
-      fireEvent.click(newPatBtn);
+      fireEvent.click(await screen.findByTestId('pat-revoke-all'));
+      // 확인창 전에는 아무것도 지우지 않는다(security 조건 a).
+      expect(c.revokePat).not.toHaveBeenCalled();
+      const dialog = await screen.findByRole('dialog');
+      const confirm = Array.from(dialog.querySelectorAll('button')).find((b) => /모두 폐기|Revoke all/.test(b.textContent ?? ''));
+      fireEvent.click(confirm!);
 
-      expect((await screen.findAllByText(/murp_new_token/)).length).toBeGreaterThan(0);
-      expect(await screen.findByText(/이 토큰은 지금만 보인다/)).toBeTruthy();
+      await waitFor(() => expect(c.revokePat).toHaveBeenCalledTimes(2));
+      expect(c.revokePat).toHaveBeenCalledWith('id-rusalka', 'runner');
+      expect(c.revokePat).toHaveBeenCalledWith('id-rusalka', 'desktop:d43faaed');
+      expect(c.revokePat).not.toHaveBeenCalledWith('id-rusalka', 'backup');
+      // 다 지운 뒤 목록을 다시 읽는다 — 남은 것이 무엇인지는 서버가 말한다.
+      await waitFor(() => expect((c.listPats as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(1));
+    });
+
+    it('[모두 폐기] 확인창에서 취소하면 아무것도 지우지 않는다', async () => {
+      useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+      const c = fakeController([agent('rusalka')]);
+      (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
+      render(<AgentsSettings />);
+      await openPermissions();
+
+      fireEvent.click(await screen.findByTestId('pat-revoke-all'));
+      const dialog = await screen.findByRole('dialog');
+      const cancel = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === '취소');
+      fireEvent.click(cancel!);
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      expect(c.revokePat).not.toHaveBeenCalled();
     });
   });
 
@@ -420,6 +473,7 @@ describe('에이전트 기억 (#139 3단계)', () => {
     c.agentMemory.mockRejectedValue(new Error('boom'));
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-memory'));
 
     expect(await screen.findByRole('alert')).toBeTruthy();
     expect(screen.queryByText('기억이 없다')).toBeNull();
@@ -431,7 +485,10 @@ describe('에이전트 기억 (#139 3단계)', () => {
     c.agentMemory.mockResolvedValue([mem('mem/deploy', '배포는 redeploy.sh')]);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-memory'));
 
+    // 지우기는 펼친 안쪽에 있다(Memory 탭 결정 2 — 줄의 기본 버튼은 보관).
+    fireEvent.click(await screen.findByRole('button', { name: 'mem/deploy 펼치기' }));
     fireEvent.click(await screen.findByRole('button', { name: 'mem/deploy 기억 지우기' }));
     expect(c.deleteAgentMemory).not.toHaveBeenCalled();
 
@@ -447,6 +504,7 @@ describe('에이전트 기억 (#139 3단계)', () => {
     c.agentMemory.mockResolvedValue([mem('core', '값')]);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-memory'));
     await screen.findByText('core');
 
     expect(screen.queryByLabelText(/기억.*편집|edit.*memory/i)).toBeNull();
@@ -644,9 +702,76 @@ describe('상세는 세 묶음, 저장은 한 쌍 (Task 15-3)', () => {
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
-    for (const title of ['프로필', '실행', '권한']) {
+    // 세 묶음은 이제 각자의 탭이다(A2) — 탭을 눌러야 그 묶음 제목이 보인다.
+    for (const [tab, title] of [['profile', '프로필'], ['run', '실행'], ['permissions', '권한']] as const) {
+      fireEvent.click(screen.getByTestId(`agent-tab-${tab}`));
       expect(await screen.findByRole('heading', { name: title })).toBeTruthy();
     }
+  });
+
+  it('상세는 개요 탭으로 열리고, 위험 구역(사용 중지·삭제)은 개요 맨 끝이다 (A2)', async () => {
+    fakeController([agent('rusalka')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+
+    expect(screen.getByTestId('agent-tab-overview').getAttribute('aria-selected')).toBe('true');
+    const overview = screen.getByTestId('agent-tabpanel-overview');
+    expect(overview.hidden).toBe(false);
+    for (const id of ['profile', 'run', 'permissions', 'memory']) {
+      expect(screen.getByTestId(`agent-tabpanel-${id}`).hidden, id).toBe(true);
+    }
+    const del = screen.getByTestId('agent-delete');
+    expect(overview.contains(del)).toBe(true);
+    // 위아래가 곧 세기 — 러너 절(되돌릴 수 있는 것)이 위, 지우기가 맨 아래.
+    expect(overview.firstElementChild!.compareDocumentPosition(del) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('[멈춤]·[다시 시작]은 상세 머리에 있고, 어느 탭에서든 보인다 (jaebin "멈춤은 머리")', async () => {
+    const c = fakeController([agent('rusalka')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+
+    const actions = screen.getByTestId('agent-header-actions');
+    expect(actions.closest('header')).toBeTruthy();
+    expect(actions.contains(screen.getByTestId('agent-restart'))).toBe(true);
+    // 탭 칸 밖이라 다른 탭으로 옮겨도 숨지 않는다.
+    expect(screen.getByTestId('agent-tabpanel-overview').contains(actions)).toBe(false);
+    fireEvent.click(screen.getByTestId('agent-tab-memory'));
+    fireEvent.click(screen.getByRole('button', { name: '러너 중지' }));
+    await waitFor(() => expect(c.requestAgentStop).toHaveBeenCalledWith('id-rusalka'));
+  });
+
+  it('targetId 의 #탭 으로 그 탭을 바로 연다 (A2)', async () => {
+    fakeController([agent('rusalka')]);
+    render(<AgentsSettings targetId="id-rusalka#memory" />);
+    await waitFor(() => expect(screen.getByTestId('agent-tab-memory').getAttribute('aria-selected')).toBe('true'));
+    expect(screen.getByTestId('agent-tabpanel-memory').hidden).toBe(false);
+  });
+
+  it('모르는 탭 이름은 버리고 개요로 연다 (A2)', async () => {
+    fakeController([agent('rusalka')]);
+    render(<AgentsSettings targetId="id-rusalka#nope" />);
+    await waitFor(() => expect(screen.getByTestId('agent-tab-overview').getAttribute('aria-selected')).toBe('true'));
+  });
+
+  it('탭을 옮겨도 고치던 초안이 남는다 — 칸이 언마운트되지 않는다 (A2)', async () => {
+    fakeController([agent('rusalka', { workingDir: '/repo' })]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(screen.getByTestId('agent-tab-run'));
+    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+
+    fireEvent.click(screen.getByTestId('agent-tab-memory'));
+    fireEvent.click(screen.getByTestId('agent-tab-run'));
+    expect((screen.getByLabelText('Working directory') as HTMLInputElement).value).toBe('/other');
+  });
+
+  it('새 에이전트 만들기에는 탭이 없다 (A2)', async () => {
+    fakeController([]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-create'));
+    await screen.findByRole('button', { name: '에이전트 만들기' });
+    expect(screen.queryByRole('tablist', { name: '에이전트 상세 묶음' })).toBeNull();
   });
 
   it('고치기 전에는 되돌리기가 없다 — 누를 것이 없는 버튼을 그리지 않는다', async () => {
@@ -654,7 +779,10 @@ describe('상세는 세 묶음, 저장은 한 쌍 (Task 15-3)', () => {
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
-    await screen.findByRole('button', { name: '저장' });
+    await screen.findByTestId('agent-tab-overview');
+    // 저장 바도 없다(A3) — 바뀐 것이 없으면 저장할 것도 없다.
+    expect(screen.queryByTestId('agent-save-bar')).toBeNull();
+    expect(screen.queryByRole('button', { name: '저장' })).toBeNull();
     expect(screen.queryByRole('button', { name: '되돌리기' })).toBeNull();
   });
 
@@ -731,6 +859,7 @@ describe('에이전트 사진 (Task 15-4)', () => {
       vi.fn(async () => undefined);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-profile'));
 
     fireEvent.click(await screen.findByRole('button', { name: '지우기' }));
     // 첫 클릭은 묻기만 한다 — 되돌릴 수 없는 조작이 스친 클릭 하나로 일어나지 않는다.
@@ -753,6 +882,7 @@ describe('에이전트 사진 (Task 15-4)', () => {
       vi.fn(async () => undefined);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-profile'));
 
     fireEvent.click(await screen.findByRole('button', { name: '지우기' }));
     fireEvent.click(await screen.findByRole('button', { name: '취소' }));
@@ -769,6 +899,7 @@ describe('에이전트 사진 (Task 15-4)', () => {
       vi.fn(async () => { throw new ApiError(400, 'not_an_image', 'nope'); });
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-profile'));
 
     const file = new File([new Uint8Array([1])], 'evil.png', { type: 'image/png' });
     fireEvent.change(await screen.findByTestId('agent-avatar-file'), { target: { files: [file] } });
@@ -839,5 +970,153 @@ describe('그리드와 상세는 한 번에 하나만 (Task 15)', () => {
 
     expect(await screen.findByRole('button', { name: '에이전트 만들기' })).toBeTruthy();
     expect(screen.queryByTestId('agent-grid')).toBeNull();
+  });
+});
+
+describe('저장 바 (A3)', () => {
+  it('바뀐 것이 있을 때만 서고 그 수를 말한다 — [저장]은 바뀐 것을 한 번에 보낸다', async () => {
+    const c = fakeController([agent('rusalka', { workingDir: '/repo' })]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    expect(screen.queryByTestId('agent-save-bar')).toBeNull();
+
+    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+    expect(screen.getByTestId('agent-save-count').textContent).toBe('1개 바뀜');
+    fireEvent.change(screen.getByLabelText('Agent instructions'), { target: { value: '고친 지시문' } });
+    expect(screen.getByTestId('agent-save-count').textContent).toBe('2개 바뀜');
+
+    fireEvent.click(screen.getByRole('button', { name: '저장' }));
+    await waitFor(() => expect(c.updateAgent).toHaveBeenCalledTimes(1));
+    expect(c.updateAgent.mock.calls[0]![1]).toMatchObject({ workingDir: '/other', instructions: '고친 지시문' });
+  });
+
+  it('[되돌리기]는 서버 값으로 돌리고 바를 거둔다', async () => {
+    fakeController([agent('rusalka', { workingDir: '/repo' })]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+
+    fireEvent.click(screen.getByRole('button', { name: '되돌리기' }));
+    expect((screen.getByLabelText('Working directory') as HTMLInputElement).value).toBe('/repo');
+    expect(screen.queryByTestId('agent-save-bar')).toBeNull();
+  });
+
+  it('저장 안 한 채 ← 에이전트로 떠나면 묻는다 — [계속 고치기]는 남고 [버리고 나가기]는 떠난다', async () => {
+    fakeController([agent('rusalka', { workingDir: '/repo' })]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+
+    fireEvent.click(screen.getByTestId('agent-back'));
+    fireEvent.click(await screen.findByRole('button', { name: '계속 고치기' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect((screen.getByLabelText('Working directory') as HTMLInputElement).value).toBe('/other');
+
+    fireEvent.click(screen.getByTestId('agent-back'));
+    fireEvent.click(await screen.findByRole('button', { name: '버리고 나가기' }));
+    expect(await screen.findByTestId('agent-card-rusalka')).toBeTruthy();
+  });
+
+  it('고친 것이 없으면 묻지 않고 바로 떠난다', async () => {
+    fakeController([agent('rusalka')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-back'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(await screen.findByTestId('agent-card-rusalka')).toBeTruthy();
+  });
+
+  it('설정 목차로 떠나는 길(guardedLeave)도 저장 안 한 것이 있는 동안만 묻는다', async () => {
+    fakeController([agent('rusalka', { workingDir: '/repo' })]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    const go = vi.fn();
+    guardedLeave(go);
+    expect(go).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+    const go2 = vi.fn();
+    act(() => guardedLeave(go2));
+    expect(go2).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole('button', { name: '버리고 나가기' }));
+    expect(go2).toHaveBeenCalledTimes(1);
+  });
+
+  it('저장 실패가 안 보이는 탭의 칸이면 바가 그 탭을 가리킨다 (designer 수정 b)', async () => {
+    const c = fakeController([agent('rusalka', { workingDir: '/repo' })]);
+    c.updateAgent.mockImplementation(async () => { throw new Error('끊겼다'); });
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(screen.getByTestId('agent-tab-permissions'));
+    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+
+    fireEvent.click(screen.getByTestId('agent-tab-profile'));
+    fireEvent.click(screen.getByRole('button', { name: '저장' }));
+    const failed = await screen.findByTestId('agent-save-failed');
+    expect(failed.textContent).toContain('1개 저장 못 함');
+    fireEvent.click(screen.getByRole('button', { name: '권한 탭에서 보기' }));
+    expect(screen.getByTestId('agent-tab-permissions').getAttribute('aria-selected')).toBe('true');
+    // 그 탭에 와 있으면 가리킬 필요가 없다 — 문구만 남는다.
+    expect(screen.queryByTestId('agent-save-failed-goto')).toBeNull();
+    // 되돌리면 실패 표시도 걷힌다.
+    fireEvent.click(screen.getByRole('button', { name: '되돌리기' }));
+    expect(screen.queryByTestId('agent-save-failed')).toBeNull();
+  });
+
+  it('바뀐 것이 있는 탭 이름 옆에만 점이 선다 (designer n1)', async () => {
+    fakeController([agent('rusalka')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    expect(screen.queryByTestId('agent-tab-dot-profile')).toBeNull();
+
+    fireEvent.change(await screen.findByLabelText('Agent instructions'), { target: { value: '고친 지시문' } });
+    expect(screen.getByTestId('agent-tab-dot-profile')).toBeTruthy();
+    for (const id of ['overview', 'run', 'permissions', 'memory']) {
+      expect(screen.queryByTestId(`agent-tab-dot-${id}`), id).toBeNull();
+    }
+  });
+
+  it('[저장하고 나가기]는 저장한 뒤 떠나고, 저장이 실패하면 떠나지 않는다 (designer n2)', async () => {
+    const c = fakeController([agent('rusalka', { workingDir: '/repo' })]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+
+    c.updateAgent.mockImplementationOnce(async () => { throw new Error('끊겼다'); });
+    fireEvent.click(screen.getByTestId('agent-back'));
+    fireEvent.click(await screen.findByRole('button', { name: '저장하고 나가기' }));
+    expect(await screen.findByTestId('agent-save-failed')).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByTestId('agent-tab-overview')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('agent-back'));
+    fireEvent.click(await screen.findByRole('button', { name: '저장하고 나가기' }));
+    expect(await screen.findByTestId('agent-card-rusalka')).toBeTruthy();
+    expect(c.updateAgent).toHaveBeenCalledTimes(2);
+    expect(c.updateAgent.mock.calls[1]![1]).toMatchObject({ workingDir: '/other' });
+  });
+
+  it('다른 화면이 targetId 로 다른 에이전트를 열어도 저장 안 한 초안을 묻는다 (security n2)', async () => {
+    fakeController([agent('rusalka', { workingDir: '/repo' }), agent('fizz')]);
+    const { rerender } = render(<AgentsSettings targetId="id-rusalka" />);
+    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+
+    rerender(<AgentsSettings targetId="id-fizz" />);
+    fireEvent.click(await screen.findByRole('button', { name: '계속 고치기' }));
+    expect(screen.getByRole('heading', { name: 'rusalka 편집' })).toBeTruthy();
+    expect((screen.getByLabelText('Working directory') as HTMLInputElement).value).toBe('/other');
+  });
+
+  it('바로 걸리는 칸에는 「바로 적용」 표지가 선다', async () => {
+    fakeController([agent('rusalka')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    const overview = screen.getByTestId('agent-tabpanel-overview');
+    // 사용 중지(admin).
+    expect(overview.querySelector('[data-testid="immediate-badge"]')?.textContent).toBe('바로 적용');
+    // PAT 는 권한 탭.
+    await waitFor(() => expect(
+      screen.getByTestId('agent-tabpanel-permissions').querySelectorAll('[data-testid="immediate-badge"]').length,
+    ).toBeGreaterThan(0));
   });
 });

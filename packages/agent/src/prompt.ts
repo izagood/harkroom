@@ -6,7 +6,9 @@
 // 세션이 이미 아는 것까지 다시 넘길 필요가 없다 — 그 경계가 `lastFedSeq` 다. 그리고 예전엔
 // 러너가 모델 응답을 파싱해 대신 올렸지만, 이제 에이전트가 harkroom MCP `message.post` 로
 // 스스로 올린다 — 그래서 시스템 프롬프트가 "어디에 쓸지"까지 알려줘야 한다.
-import { messagePermalink, type MessageRow, type InboxTeamCall, type InboxDelegationOutcome, type InboxDelegatedBy } from '@harkroom/shared';
+import { messagePermalink, type MessageRow, type InboxTeamCall, type InboxDelegationOutcome, type InboxDelegatedBy, type InboxCanceledWake, type WakeReportTo } from '@harkroom/shared';
+
+import type { AccountFailure } from './claudeAccounts.js';
 
 /** 서버의 메시지 본문 상한(`POST /channels/:id/messages` 의 zod `max(8000)`). 넘기면 발화가 실패한다. */
 export const BODY_LIMIT = 8000;
@@ -287,6 +289,38 @@ export function threadModelRejectedNotice(model: string | null, effort: string |
     + `스레드 머리의 모델 칩에서 기본으로 되돌리거나 다른 모델을 골라 다시 불러 주세요. 하네스: ${why})`;
 }
 
+/** 계정 이유 한 칸의 말(종류만 — 화면 원문은 싣지 않는다, `claudeAccounts.ts::AccountFailureKind`). */
+function accountFailureText(f: AccountFailure): string {
+  const who = f.account ?? '(기본 계정)';
+  switch (f.kind) {
+    case 'gate': return `${who}: 설정 확인 화면에서 사람의 선택을 기다림`;
+    case 'quota': return f.resetsAt === null ? `${who}: 사용량 한도` : `${who}: 사용량 한도(${f.resetsAt} 에 풀림)`;
+    case 'credential': return `${who}: 로그인이 풀림`;
+    case 'timeout': return `${who}: 입력창이 뜨지 않음(시간 초과)`;
+  }
+}
+
+/**
+ * 계정 축이 다 돈 뒤 **계정마다 왜 못 했나**를 덧붙인다(2026-10-02). 축을 안 넘겼으면 원문 그대로다.
+ *
+ * 2026-10-01 에 스레드에는 마지막 계정의 "11pm 에 풀립니다"만 남았고, 사람 손으로 바로 풀리는
+ * 계정(첫 실행 승인 화면)이 있다는 사실은 러너 로그에도 없었다. 관문이 하나라도 있으면 할 일을
+ * 함께 적는다 — 기다리는 것보다 그쪽이 빠르다.
+ */
+export function withAccountTrail(notice: string, trail: readonly AccountFailure[]): string {
+  if (!trail.length) return notice;
+  const lines = trail.map((f) => `- ${accountFailureText(f)}`);
+  const gate = trail.some((f) => f.kind === 'gate')
+    ? ['설정 확인 화면에 선 계정은 그 계정으로 claude 를 터미널에서 한 번 실행해 화면의 물음에 답하면 풀립니다. 그 뒤 다시 불러 주세요.']
+    : [];
+  return [notice, '계정별 이유:', ...lines, ...gate].join('\n');
+}
+
+/** 실패 카드의 `reason` 한 줄 — 같은 사실을 짧게(종류만). */
+export function accountTrailReason(trail: readonly AccountFailure[]): string | null {
+  return trail.length ? trail.map(accountFailureText).join(' · ') : null;
+}
+
 /** 재시도 통지에 싣는 사유의 최대 길이. 한 줄로 읽히는 만큼만 남긴다. */
 const RETRY_REASON_MAX_CHARS = 160;
 
@@ -507,13 +541,22 @@ const MEMORY_USAGE_LINES = [
   '이름 옆에 실리고, 요약이 없으면 이름만 보고 열지 말지 정해야 한다(생략하면 있던 요약이 유지된다).',
   '한 작업의 경위(PR 하나의 진행 기록 같은 것)는 `kind: "journal"` 로 쓴다 — 목록에 안 실리고 최근 60개만',
   '남는다. 되풀이할 교훈은 journal 이 아니라 주제 기억(`topic`)·절차(`procedure`)로 따로 증류한다.',
-  '목록에 없는 것은 `memory.search` 로 찾는다. 기억을 정리하라는 요청(주간 정리 자동화 등)을 받으면',
-  '`memory.audit` 으로 후보(안 읽힘·깨진 링크·비슷한 이름·낡은 낱말)를 받아 하나씩 읽고 판단한다.',
+  '목록에 없는 것은 `memory.search` 로 찾는다.',
+  '',
+  '**정리하는 법** — 정리하라는 요청(주간 정리 자동화 등)을 받았거나 `<memory-index>` 머리에 정리 신호가 보이면:',
+  '① `memory.lease`(acquire)로 정리 임대를 잡는다 — 다른 턴이 들고 있으면 물러난다. ② `memory.audit` 으로',
+  '후보(안 쓰임·비슷한 이름·비슷한 본문·곧 밀려날 journal·오래 안 고친 것·큰 것)를 받아 **하나씩 읽고** 판단한다',
+  '(`truncated` 면 고친 뒤 다시 audit). ③ 같은 주제 여럿은 `memory.merge`(into·from·value) **한 번**으로 합친다 —',
+  'set 과 지우기를 따로 하면 그 사이 다른 턴이 고친다. ④ 안 쓰는 것 같으면 **지우지 말고 `memory.archive`** 로',
+  '보관한다 — 목록·recall·200 상한에서 빠지고 `memory.unarchive` 로 돌아온다. ⑤ 잘못 고쳤으면 `memory.revisions` →',
+  '`memory.restore`. ⑥ 끝나면 임대를 놓고(release) 무엇을 바꿨는지 보고한다.',
   '',
   '**자주 읽고 자주 고쳐라 — 그래야 정정이 남는다.** 기억은 확정된 답이 아니라 과거의 스냅숏이니',
   '현재 원본(파일·저장소·화면)과 대조한 뒤 쓴다. 적어 둔 경로·함수·플래그가 아직 있는지 본다.',
   '**중복해서 쓰지 마라** — 새 slug 를 만들기 전에 고칠 기존 항목이 있는지 먼저 본다. 틀린 것은',
-  '고쳐 쓰고, 남길 값이 없어진 것은 `memory.set` 에 `value: null` 을 줘서 지운다.',
+  '고쳐 쓰고, 쓸모를 잃은 것은 `memory.archive` 로 보관한다. `memory.set` 의 `value: null` 삭제는 틀린 것에만 쓴다 —',
+  '**지워도 이전 판에 남는다**(`memory.revisions` 로 되살아난다). 비밀이 섞였으면 지우는 것으로 끝내지 말고 사람에게',
+  '알려 판까지 지우게 하라.',
   '**있던 기억을 고칠 때는 먼저 `memory.get` 으로 읽고 그 `updatedAt` 을 `ifUpdatedAt` 으로 준다**(core 도 —',
   '프롬프트에 실린 core 는 세션 첫 턴 것일 수 있다). 같은 에이전트의 다른 턴이 병렬로 돈다. `conflict` 가',
   '오면 다시 읽어 네 변경을 합쳐 쓰고, 그냥 덮어쓰지 마라.',
@@ -654,8 +697,17 @@ export function buildSystemPrompt(opts: {
    * 문장을 아예 빼고, 대신 "말을 멈추면 죽는다"는 사실만 말한다.
    */
   turnBudgetMs?: number;
+  /**
+   * 머지 권한(스레드 3deac356). `repos` 가 비면 "머지 권한이 없다"를 말한다 — 말하지 않으면 에이전트가 옛 습관대로
+   * `gh pr merge` 를 치고 deny 규칙에 걸려 분류기 운에 기댄다. 없으면(옛 호출부) 이 절을 아예 뺀다.
+   */
+  merge?: { operatorBin: string; repos: readonly string[] };
+  /** 외부 API 권한(C안 P3). 연결이 비면 절을 빼지 않고 "키를 채팅에서 찾지 마라"만 적는다. 없으면(옛 호출부) 뺀다. */
+  api?: { operatorBin: string; connectors: readonly string[]; delegatable?: readonly string[] };
+  /** 비밀 만들기 권한(capability `secret.create`). 참일 때만 절을 쓴다 — 없는 에이전트에게 도구를 권하지 않는다. */
+  secretCreate?: boolean;
 }): string {
-  const { handle, channelName, instructions, guide, memory, turnBudgetMs } = opts;
+  const { handle, channelName, instructions, guide, memory, turnBudgetMs, merge, api, secretCreate } = opts;
   const budgetMinutes = turnBudgetMs === undefined ? null : Math.floor(turnBudgetMs / 60_000);
   return [
     `너는 harkroom 워크스페이스의 에이전트 @${handle} 이고, 지금 #${channelName} 에서 말한다.`,
@@ -698,6 +750,9 @@ export function buildSystemPrompt(opts: {
     // 문장에 하네스 이름을 쓰지 않는 것도 같은 결정이다: 하네스는 harkroom 가 에이전트 설정에
     // 이미 갖고 있고, PR 을 나중에 읽는 사람에게 중요한 것은 **어느 에이전트가 열었는가**다.
     // 하네스를 굳이 남기려면 문장 가운데가 아니라 뒤에 따로 붙여야 갈아끼울 수 있다.
+    ...(merge ? mergeSection(merge) : []),
+    ...(api ? apiSection(api) : []),
+    ...(secretCreate ? secretCreateSection() : []),
     '저장소에 PR 을 열면 본문 **맨 끝**에 이 줄을 넣는다:',
     '',
     `🤖 Opened by \`@${handle}\`, an agent in [Harkroom](${HARKROOM_REPO_URL}) — a chat workspace where people and AI agents share channels.`,
@@ -782,6 +837,15 @@ export function buildSystemPrompt(opts: {
     // 그래서 이 문장이 유일한 예방이고, 위반은 턴 후 개수를 세어 러너 로그에 남긴다.
     '한 턴에 한 번만 발화한다 — 답이 길어도 나눠 올리지 않고 한 번에 정리해서 올린다.',
     '',
+    // 2026-10-02(미리보기 PR ②, 스레드 31121b84): 디자인 안을 claude.ai 아티팩트 링크로 주면 그 브라우저에
+    // 회사 계정으로 로그인한 사람만 연다 — jaebin 이 폰 스레드에서 링크를 눌렀다가 막혔다. 새 도구를 만들고
+    // 프롬프트에 안 적으면 아무도 안 쓴다(message.delegate #762 → #809 의 교훈). 그래서 같은 PR 에서 적는다.
+    '사람이 **눈으로 볼 HTML**(디자인 안·시안·보고서 페이지)은 claude.ai 아티팩트 링크로 주지 말고',
+    'harkroom MCP 의 `artifact.publish`(channelId·threadRootId·title·body·html)로 올린다 — 그 글이 이',
+    '턴의 발화다. 사람은 앱 안 카드를 눌러 바로 본다(폰 포함). 한 파일에 다 담아라: 페이지는 외부로',
+    'fetch 할 수 없고, 스크립트·스타일·폰트는 cdnjs·jsdelivr·Google Fonts 에서만 불러온다. 같은 안을',
+    '고칠 때는 앞서 받은 `artifactId` 를 함께 줘서 다음 버전으로 올린다. 그 도구가 없으면 지금처럼 글로 쓴다.',
+    '',
     // #144: 긴 작업 시작 시 진행 설명 — message.progress MCP 도구로 올린다.
     // 이것은 결과 발화로 세지 않으며, 사용자가 읽을 수 있어야 뜻이 있다.
     // 진행 설명 예시: "avcs intent 를 만들고 merge3 결함 재현 테스트부터 붙인다 — 서너 턴 걸린다"
@@ -793,6 +857,19 @@ export function buildSystemPrompt(opts: {
     // 루프도 함께 죽었으며, 4분 뒤 초록이 된 CI 를 아무도 보지 않았다. 위의 지시는 "어디에
     // 쓸지"만 말하고 **언제까지 살아있는지**를 말하지 않았고, 그 공백이 실행 불가능한
     // 계획을 낳았다. 이 세 문장이 그 공백을 메운다.
+    // 2026-10-02(미리보기 PR ③): 에이전트는 글에 파일을 붙일 길이 없었다(message.post 에 첨부 인자가 없었다).
+    // 바이너리를 base64 로 쓰게 하지 않고 경로로 올린다 — 오퍼레이터가 읽는다. 새 도구는 적어야 쓰인다(#762→#809).
+    // 2026-10-02(찾기 S2, 스레드 20323649): `message.search` 가 REST 와 같은 범위·거르기를 받게 됐다. 전에는
+    // 검색어 하나만 받아서, 에이전트는 "지난번에 그 말이 어디 있었나"를 채널을 통째로 `message.read` 로
+    // 넘겨 읽어 찾았다. 새 인자는 적어야 쓰인다(#762→#809).
+    '지난 대화에서 **무엇이 어디 있었는지 찾을 때**는 채널을 통째로 `message.read` 로 넘겨 읽지 말고',
+    '`message.search` 를 쓴다 — `channelId`·`threadRootId` 로 범위를, `authorIds`(계정 id, `account.list`)·',
+    '`after`·`before`(시간대 붙은 ISO)·`hasAttachment`·`sort: "recent"` 로 거르고, `hasMore` 면 `offset` 으로 잇는다.',
+    '',
+    '그림·PDF·HTML 같은 **파일을 글에 붙이려면** 파일을 턴 워크스페이스(지금 작업 디렉터리) 안에 두고',
+    'harkroom MCP 의 `attachment.upload`(path)로 올려 첨부 id 를 받은 뒤, `message.post` 의 `attachmentIds` 로',
+    '붙인다. 워크스페이스 밖 파일은 거절되니 먼저 복사한다. 로컬 경로만 적어 두면 사람은 그 파일을 못 본다.',
+    '',
     '네가 말을 멈추면 이 프로세스는 그 자리에서 죽는다. "나중에", "결과가 나오면"은 실행되지',
     '않는다 — 백그라운드로 띄운 명령도 프로세스와 함께 죽는다.',
     '',
@@ -804,6 +881,10 @@ export function buildSystemPrompt(opts: {
     '다시 볼 시각을 예약하고 끝낸다(예: CI 결과 확인 — 5분 뒤). 예약은 스레드에 대기 줄로',
     '보이고, 시각이 되면 **이 세션이 그대로 이어져** 다시 시작한다 — 조사한 것을 다시 조사할',
     '필요가 없다. 예약을 건 턴은 결과 발화 없이 끝내도 된다.',
+    // 2026-10-06: 깨어난 턴은 자기 앵커 스레드만 안다. 다른 스레드에서 한 "몇 시에 확인한다" 약속은
+    // 사유 한 줄에 없으면 사라졌다(task_manager 실측) — 약속한 곳을 기계가 읽는 인자로 받는다.
+    '결과를 **다른 스레드에** 보고하기로 약속했으면 `turn.wake` 의 `reportTo`(그 채널·스레드 id)를 준다 —',
+    '깨어난 턴은 자기 스레드만 알아서, 주지 않으면 그 약속을 모른다.',
     '',
     // 2026-09-30(ebb97c7b): slack MCP 가 인증을 요구하자 턴이 `authenticate` 로 OAuth 를 열고
     // 콜백을 포그라운드로 기다렸다. 흐름은 그 프로세스 안에만 살아 턴과 함께 사라졌고, 다음 턴에
@@ -855,6 +936,100 @@ export function buildSystemPrompt(opts: {
  * `buildSystemPrompt` 의 그 문단이 같은 공백을 메운다). 그래서 넘긴 턴은 **넘겼다는 것을
  * 사람에게 말하고 끝내는 것**이 지금의 올바른 종료다.
  */
+/**
+ * 머지 절(스레드 3deac356). 새 어휘(래퍼)를 만들면 **같은 PR 에서 프롬프트에 쓰라고 적고 옛 지시를 지운다**
+ * (mem/new-vocabulary-needs-a-prompt — `message.delegate` 가 한 번도 안 쓰인 사례). 그래서 여기서 `gh pr merge`
+ * 를 이름 대어 금지한다. 저장소 이름은 서버에서 온 값이라 그대로 적는다.
+ */
+/**
+ * 외부 API 절(C안 P3, 스레드 07519d86). 같은 PR 에서 새 래퍼를 쓰라고 적고, 10-03 사고의 옛 습관(채팅에서 키를 찾아 curl 에
+ * 넣기)을 이름 대어 금지한다. 연결 이름은 서버에서 온 값이다(이름 규칙을 러너가 한 번 더 걸렀다).
+ */
+function apiSection(api: { operatorBin: string; connectors: readonly string[]; delegatable?: readonly string[] }): string[] {
+  const never = '**API 키·토큰을 채팅·옛 글·파일에서 찾아 쓰지 마라.** `curl -H \'Authorization: …\'` 처럼 명령에 키를 넣으면 막히고, 막힌 것을 다른 방법으로 돌아가지 않는다.';
+  if (!api.connectors.length) {
+    return [
+      never,
+      '이 에이전트에게 허락된 외부 API 연결이 없다. 외부 API 가 필요하면 사람에게 "설정 › 비밀과 API 에서 연결을 만들고',
+      '이 에이전트의 「할 수 있는 일」에서 권한을 달라"고 말하고 멈춘다.',
+      '',
+    ];
+  }
+  return [
+    `**외부 API 는 이 명령으로만 부른다**(허락된 연결: ${api.connectors.join(', ')}):`,
+    '',
+    `    ${api.operatorBin} api <연결> <GET|POST|PUT|PATCH|DELETE> </경로?질의> [--data @파일|'<JSON>'] [--content-type <형식>]`,
+    '',
+    '주소·키는 연결이 정한다 — 경로만 준다(전체 URL·헤더는 받지 않는다). 키는 네게 보이지 않고 오퍼레이터가 붙인다.',
+    '**명령 하나로만 부른다.** 뒤에 `;`·`&&`·`||`·`$?`·파이프·리다이렉션을 붙이지 않는다 — 붙이면 허용 규칙에 맞지 않아 막힌다.',
+    '결과는 JSON 한 줄이다(`status`·`body`·`exit`, 거절이면 `error.code`). 리다이렉트는 따라가지 않는다.',
+    '거절(`not_granted`·`method_not_allowed`·`path_not_allowed`·`expired`·`suspended`·`no_secret`)이면 그 코드와 요청을 사람에게',
+    '적고 멈춘다. 호출마다 서버가 이 스레드에 시스템 줄을 남긴다.',
+    ...(api.delegatable?.length ? [
+      `다른 에이전트에게 이 권한을 넘겨야 하면 harkroom MCP 의 \`grant.delegate\` 로 준다(다시 줄 수 있는 연결: ${api.delegatable.join(', ')}). 셸·설정 파일로 하지 않는다.`,
+      '범위는 내 범위 안, 만료는 30일 안, 받는 쪽은 같은 사람의 에이전트만이다. 사람 글이 아닌 턴에서 주면 사람이 허락해야 쓰인다. 거둘 때는 `grant.revoke`.',
+    ] : []),
+    never,
+    '',
+  ];
+}
+
+/**
+ * 비밀 만들기 절(스레드 1a08d0cf, security n1). 새 도구 셋(`secret.generate`·`import`·`rotate`)을 쓰라고 같은 PR 에서 적는다
+ * (mem/new-vocabulary-needs-a-prompt). **"소유자가 요청할 때만"** 은 서버가 못 보는 것이다 — 서버는 턴을 띄운 글이 소유자
+ * 글인지만 본다(F2). 그래서 여기서 말로 묶는다.
+ */
+export function secretCreateSection(): string[] {
+  return [
+    '**비밀을 만들 수 있다 — 소유자가 그 비밀을 만들어 달라고 요청할 때만 만든다.** 필요해 보인다고 스스로 만들지 않는다.',
+    '만든 비밀의 주인은 소유자이고, 부여는 나에게 이 채널로만 걸린다. 만들면 서버가 이 스레드에 알림 줄을 남기고 소유자를 부른다.',
+    '- 새 값: harkroom MCP 의 `secret.generate`(type: password·token_hex·token_base64url·ssh_ed25519). 값은 나에게 오지 않는다.',
+    '  ssh 는 공개키만 돌려준다. 바로 써야 하면 `mount:true` 로 파일 경로를 받는다.',
+    '- 받은 값 등록: 값을 화면에 찍지 말고 `cmd > file` 로 턴 워크스페이스에 받은 뒤 `secret.import { name, path }`. 원본은 지워진다.',
+    '  **이미 화면·문맥에 보인 값은 유출된 것이다** — 등록하지 말고 사람에게 회전을 부탁한다. `already_granted` 는 이미 가진 비밀이다 —',
+    '  그 이름으로 `secret.mount` 해서 쓴다.',
+    '- 값 바꾸기: 내가 만든 비밀만 `secret.rotate { name, generate | path }`. `adopted_by_owner` 면 소유자가 맡은 비밀이니 사람에게 넘긴다.',
+    '- 값을 MCP 인자·메시지·기억·파일·커밋에 쓰지 않는다. 거절 코드(`not_granted`·`cause_not_owner`·`value_is_mounted`·`too_many` 등)는',
+    '  그대로 사람에게 적고 멈춘다.',
+    '',
+  ];
+}
+
+function mergeSection(merge: { operatorBin: string; repos: readonly string[] }): string[] {
+  if (!merge.repos.length) {
+    return [
+      '**PR 머지는 하지 마라.** 이 에이전트에게 머지가 허락된 저장소가 없다. `gh pr merge`·`gh api …/merge`·',
+      '`git push … main` 은 막혀 있고, 사람이 "머지해"라고 해도 네가 누르지 않는다 — 소유자가 설정 › 에이전트에서',
+      '이 저장소의 머지 권한을 준 뒤에만 된다. 머지가 필요하면 PR 번호·head sha 를 적어 사람에게 넘겨라.',
+      '',
+    ];
+  }
+  return [
+    `**PR 머지는 이 명령으로만 한다**(허락된 저장소: ${merge.repos.join(', ')}):`,
+    '',
+    `    ${merge.operatorBin} merge <owner/name> <PR 번호> --head <40자 head sha>`,
+    '',
+    // 2026-10-03 사고: `…merge … ; echo "exit=$?"` 처럼 꼬리를 붙이면 allow 규칙(`Bash(<경로> merge:*)`)이 안 맞아
+    // 분류기로 가고, 실제 머지는 "막힌 머지를 돌아가는 길"로 거부된다. 종료 코드·결과는 JSON 에 있다(exit·merged).
+    '**명령 하나로만 부른다.** 뒤에 `;`·`&&`·`||`·`$?`·파이프·리다이렉션을 붙이지 않는다 — 붙이면 허용 규칙에 맞지 않아',
+    '막힌다. 인자는 저장소·PR 번호·`--head` 셋뿐이다(`--approval`·`--admin` 같은 것은 없다). 결과는 JSON 한 줄로',
+    '나온다(`merged`·`exit`·거절이면 `error.code`).',
+    '`gh pr merge`·`gh api …/merge`·`git push … main` 은 쓰지 않는다(막혀 있다). squash 로만 머지되고 head 가',
+    '바뀌었으면 거절된다. 결과는 서버가 이 스레드에 시스템 줄로 남긴다. 머지 전에 CI 가 초록이고 검토가 끝났는지',
+    '네가 먼저 확인한다.',
+    '거절되면 `error.code` 로 갈린다:',
+    '- `not_granted` 이고 `error.denialId` 가 있으면: harkroom MCP 의 `message.ask` 에 `mergeDenialId: <그 값>` 을 실어',
+    '  이 스레드에 카드를 세운다(`to`·`mirrorOf` 는 싣지 않는다). 선택지는 「다시 머지」와 「나중에」 둘이다. 저장소·PR 칸은',
+    '  서버가 거절 기록에서 채우고, 소유자는 카드의 [7일 주기] 버튼으로 권한을 준 뒤 「다시 머지」를 고른다 — 그때 다시',
+    '  불리면 같은 명령을 한 번 더 부른다. 같은 날 같은 저장소면 서버가 있던 카드의 횟수만 올린다(`merged`).',
+    '- `not_granted` 인데 `denialId` 가 없으면(사람 글이 아닌 턴 등): 카드를 세우지 말고 PR 번호·head sha 를 적어 사람에게 넘긴다.',
+    '- `no_repo_access`: 이 오퍼레이터의 gh 계정은 그 저장소에 닿지 못한다 — 권한을 더 줘도 풀리지 않는다. 「이 저장소는',
+    '  사람이 머지」라고 쓰고 PR 번호·head sha 를 적어 사람에게 넘긴다. 카드는 세우지 않는다.',
+    '- 그 밖의 코드(`head_moved`·`ci_not_green`·`not_mergeable` 등)는 원인을 고치거나 그 코드를 적어 사람에게 넘긴다.',
+    '',
+  ];
+}
+
 function teamSection(team: InboxTeamCall, meId: string, handles: Record<string, string>): string[] {
   const myHandle = handles[meId];
   const roster = team.members.map((m) => {
@@ -1102,7 +1277,13 @@ export function buildTurnPrompt(opts: {
    * 아래 자기-발화 필터에 전부 걸린다. 그대로 두면 `mentionTurn` 이 하네스를 돌리지
    * 않고 끝내, 걸어 둔 기다림이 조용히 사라진다.
    */
-  wake?: { reason: string };
+  wake?: { reason: string; reportTo?: WakeReportTo };
+  /**
+   * 이 부름이 **접은 내 예약**(서버 107, 2026-10-06). 사람이 이 스레드에서 부르면 걸어 둔 깨움이 전부 접히는데,
+   * 전에는 이 턴이 그것을 몰라 "11:22 에 본다" 는 약속이 조용히 사라졌다. 델타를 대신하지 않는다 — 사람의
+   * 새 발화 위에 덧붙는 맥락이다(`team` 과 같은 성격).
+   */
+  canceledWakes?: InboxCanceledWake[];
   /**
    * 이 턴이 **팀장으로서 불린 턴**이면 그 팀과 명단(마이그레이션 047).
    *
@@ -1135,7 +1316,7 @@ export function buildTurnPrompt(opts: {
 }): { prompt: string; fedSeq: number } {
   const {
     messages, lastFedSeq, meId, handles, channelId, threadRootId, wake, team, delegation,
-    delegatedBy, editedMention,
+    delegatedBy, editedMention, canceledWakes,
   } = opts;
   const isFirstTurn = lastFedSeq === 0;
 
@@ -1163,7 +1344,12 @@ export function buildTurnPrompt(opts: {
   // 깨움 줄을 **사람의 발화처럼 렌더하지 않는다**(`renderLine` 을 쓰지 않는 이유다).
   // "forge: CI 결과 확인" 으로 보이면 에이전트가 자기 옛 말을 새 요청으로 읽는다.
   // 아래 델타에 사람의 새 발화가 함께 있을 수 있으므로 이 줄은 그것을 대체하지 않고 앞에 선다.
-  const wakeLines = wake === undefined ? [] : [`(예약된 후속 턴 — 사유: ${wake.reason})`, ''];
+  const wakeLines = wake === undefined ? [] : [
+    `(예약된 후속 턴 — 사유: ${wake.reason})`,
+    ...(wake.reportTo ? reportToLines(wake.reportTo) : []),
+    '',
+  ];
+  const canceledLines = canceledWakes?.length ? canceledWakeLines(canceledWakes) : [];
   const teamLines = team === undefined ? [] : teamSection(team, meId, handles);
   const delegationLines = delegation === undefined ? [] : delegationSection(delegation);
   const handedLines = delegatedBy === undefined ? [] : handedSection(delegatedBy);
@@ -1180,7 +1366,7 @@ export function buildTurnPrompt(opts: {
   // 팀 블록은 **델타 앞**이다 — 사람의 말을 읽기 전에 "너는 이 팀의 창구다"를 알아야
   // 그 말을 팀의 일로 읽는다. `wakeLines` 뒤에 두는 이유: 그 줄은 이 턴이 왜 떴는지이고,
   // 팀 블록은 이 턴이 무엇인지다(둘이 함께 오는 경우는 예약이 걸린 팀 턴이다).
-  const prompt = [head, '', ...wakeLines, ...teamLines, ...delegationLines, ...handedLines, ...editLines, ...lines, ...howTo].join('\n');
+  const prompt = [head, '', ...wakeLines, ...canceledLines, ...teamLines, ...delegationLines, ...handedLines, ...editLines, ...lines, ...howTo].join('\n');
 
   return { prompt, fedSeq };
 }
@@ -1273,6 +1459,57 @@ export function offAnchorNotice(posts: MessageRow[]): string | null {
  * 저자를 보는 이유: 한 스레드에 여러 에이전트가 있을 수 있고, 동료의 대기 줄로 내 침묵을
  * 정당화하면 내 턴은 아무 말 없이 사라진다.
  */
+/**
+ * 깨움 메시지 meta 에서 보고처를 꺼낸다(`meta.wake.reportTo`, 2026-10-06). 모양이 틀리면 없는 것으로 본다 —
+ * 옛 서버의 깨움에는 이 키가 없고, 그때는 지금처럼 앵커에만 답한다.
+ */
+export function wakeReportTo(meta: unknown): WakeReportTo | undefined {
+  const wake = (meta as { wake?: { reportTo?: unknown } } | null | undefined)?.wake;
+  const r = wake?.reportTo as Record<string, unknown> | undefined;
+  if (!r || typeof r.channelId !== 'string' || typeof r.threadRootId !== 'string') return undefined;
+  return { channelId: r.channelId, threadRootId: r.threadRootId };
+}
+
+/**
+ * 깨어난 턴에게 **다른 스레드에 한 약속**을 적는다(2026-10-06). 스레드마다 세션이 따로라 깨어난 턴은 자기
+ * 앵커만 안다 — 사유 한 줄에 약속이 없으면 결과는 앵커에만 남고 약속한 쪽(#task 등)에서는 "안 봤다" 로 보였다.
+ */
+export function reportToLines(r: WakeReportTo): string[] {
+  return [
+    `(이 예약은 결과를 **다른 스레드에 보고하기로 약속했다** — channelId: ${r.channelId} · threadRootId: ${r.threadRootId}`,
+    ` (harkroom://message/${r.threadRootId}). 이 스레드 답과 별도로 그 스레드에도 message.post 로 결과를 남겨라.`,
+    ' 거기에 아무 말 없이 끝나면 러너가 그 스레드에 "보고 없이 끝났다" 를 남긴다.)',
+  ];
+}
+
+/**
+ * 이 부름으로 **접힌 내 예약들**(서버 107). 사람의 말이 예약을 무효로 만든 것이니 대부분은 다시 걸 일이
+ * 없다 — 하지만 예약이 사람의 말과 무관한 기다림(CI 등)이었으면 다시 걸어야 하고, 그 판단은 턴의 몫이다.
+ */
+export function canceledWakeLines(list: readonly InboxCanceledWake[]): string[] {
+  return [
+    `(이 부름으로 이 스레드에 걸어 둔 너의 예약 ${list.length}개가 접혔다 — 그 시각에 다시 깨어나지 않는다. 아직 필요하면 turn.wake 로 다시 걸어라:`,
+    ...list.map((w) => `- ${w.reason} (원래 ${w.wakeAt}${w.reportTo ? ` · 보고처 harkroom://message/${w.reportTo.threadRootId}` : ''})`),
+    ')',
+    '',
+  ];
+}
+
+/**
+ * 약속한 보고처에 아무 말 없이 끝난 깨움 턴의 경고(2026-10-06). 보고처 스레드에 남긴다 — 거기서 기다리는
+ * 사람이 "안 봤다" 가 아니라 "봤는데 여기 안 적었다, 결과는 저기 있다" 를 알게.
+ */
+export function reportMissedNotice(reason: string | null, anchor: string): string {
+  // 사유가 null 이면 싣지 않는다 — 앵커와 보고처의 채널이 다를 때다(#1208 security n2: 비공개 앵커의 사유가
+  // 공개 보고처로 옮겨 적히지 않게). 앵커 id 는 남긴다: 읽기는 서버가 가시성으로 막는다.
+  return [
+    reason === null
+      ? '이 스레드에 보고하기로 한 예약이 깨어났지만 여기에 아무 말 없이 끝났다.'
+      : `이 스레드에 보고하기로 한 예약이 깨어났지만 여기에 아무 말 없이 끝났다 — 사유: ${reason}`,
+    `그 턴은 harkroom://message/${anchor} 스레드에서 돌았다. 결과는 그쪽을 본다.`,
+  ].join('\n');
+}
+
 export function hasOwnWakeSince(messages: MessageRow[], meId: string, sinceSeq: number): boolean {
   return messages.some(
     (m) => m.authorId === meId && m.seq > sinceSeq && m.kind === MESSAGE_KIND_WAKE,

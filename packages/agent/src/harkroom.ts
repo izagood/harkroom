@@ -15,6 +15,7 @@ import type { AccountView, AgentView, InboxEntry, MessageRow } from '@harkroom/s
 import type { RelayClient } from './relay.js';
 import { HARKROOM_ERROR_SOURCE } from './policy.js';
 import { VERSION } from './version.js';
+import { CLEANUP_REPORT_PATH, type CleanupReport, type CleanupReportReply } from '@harkroom/shared/workspaceCleanup';
 
 /** 이 클라이언트가 링크에서 쓰는 표면. `RelayClient` 가 그대로 맞는다 — 테스트는 가짜를 준다. */
 export type RunnerLink = Pick<RelayClient, 'request' | 'mcpTransport'>;
@@ -90,6 +91,22 @@ function tagTransportError(err: unknown): never {
     throw harkroomError(err.message, status);
   }
   throw err;
+}
+
+/**
+ * `message.fail` 의 선택 칸들. `code` 는 서버 `FAILURE_CODES` 의 부분집합이다.
+ * - `account_gate`(2026-10-02, 서버 0.3.x #1039 부터): 턴 **시작** 때 계정 설정 확인 화면이 사람을
+ *   기다린다. `mentionId`(그 턴을 띄운 멘션 — 서버가 차례 주인을 확인한다)·`account`(계정 id 만)와
+ *   짝이다. **옛 서버는 모르는 code 값을 거절한다**(키는 걸러지지만 enum 값은 아니다) — 그래서 이
+ *   값은 그 서버 릴리스 뒤에만 싣는다.
+ */
+export interface FailOpts {
+  retryable: boolean;
+  what?: string;
+  reason?: string;
+  code?: 'thread_model_rejected' | 'account_gate';
+  mentionId?: string;
+  account?: string;
 }
 
 export class HarkroomAgentClient {
@@ -199,6 +216,118 @@ export class HarkroomAgentClient {
     }
   }
 
+  /**
+   * 이 에이전트가 머지해도 되는 저장소(스레드 3deac356). 옛 서버(404)·오류는 빈 목록이다 — allow 규칙이 안
+   * 붙을 뿐이고 deny 는 그대로 붙는다(fail-closed 쪽).
+   */
+  /** 이 에이전트가 쓸 수 있는 API 연결 이름(C안 P3, `GET /agent/api-grants`). 옛 서버·실패는 빈 목록 — allow 규칙을 안 준다(fail-closed). */
+  async apiGrants(): Promise<string[]> {
+    return (await this.apiGrantInfo()).connectors;
+  }
+
+  /** 쓸 수 있는 연결과 그중 다시 줄 수 있는 연결(P5, `delegatable` — 옛 서버는 없다 → 빈 목록). */
+  async apiGrantInfo(): Promise<{ connectors: string[]; delegatable: string[] }> {
+    const names = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(x)) : []);
+    try {
+      const r = await this.rest<{ connectors?: unknown; delegatable?: unknown }>('GET', '/agent/api-grants', 'api-grants');
+      return { connectors: names(r?.connectors), delegatable: names(r?.delegatable) };
+    } catch {
+      return { connectors: [], delegatable: [] };
+    }
+  }
+
+  /** 이 에이전트가 비밀을 만들 수 있는가(capability `secret.create`). 옛 서버·실패는 false — 절을 쓰지 않는다. */
+  async secretCreateGranted(): Promise<boolean> {
+    try {
+      const r = await this.rest<{ granted?: unknown }>('GET', '/agent/secret-create', 'secret-create');
+      return r?.granted === true;
+    } catch {
+      return false;
+    }
+  }
+
+  async mergeGrants(): Promise<string[]> {
+    try {
+      const r = await this.rest<{ repos?: unknown }>('GET', '/agent/merge-grants', 'merge-grants');
+      return Array.isArray(r?.repos) ? r.repos.filter((x): x is string => typeof x === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 스레드 임대(서버 095, `threadClaims.ts`). 200 잡음(또는 밀음) · 409 남이 쥠 · 404 옛 서버(임대 없음).
+   * 그 밖(링크 끊김·5xx)은 던진다 — 확인하지 못한 것이고, 띄울지는 호출자가 정한다(fail-closed).
+   */
+  async claimThread(channelId: string, threadRootId: string, holder: string, ttlSec: number): Promise<'held' | 'taken' | 'unsupported'> {
+    const res = await this.link.request({
+      type: 'http.forward', method: 'POST', path: '/agent/thread-claims',
+      body: JSON.stringify({ channelId, threadRootId, holder, ttlSec }), contentType: 'application/json',
+    });
+    if (res.status === 200) return 'held';
+    if (res.status === 409) return 'taken';
+    if (res.status === 404) return 'unsupported';
+    throw harkroomError(`agent/thread-claims 실패: ${res.status}${res.status === 0 ? ` (${res.body})` : ''}`, res.status || undefined);
+  }
+
+  async releaseThread(channelId: string, threadRootId: string, holder: string): Promise<void> {
+    const res = await this.link.request({
+      type: 'http.forward', method: 'POST', path: '/agent/thread-claims/release',
+      body: JSON.stringify({ channelId, threadRootId, holder }), contentType: 'application/json',
+    });
+    // 404 는 옛 서버 — 놓을 것이 처음부터 없었다.
+    if ((res.status < 200 || res.status >= 300) && res.status !== 404) {
+      throw harkroomError(`agent/thread-claims/release 실패: ${res.status}`, res.status || undefined);
+    }
+  }
+
+  /**
+   * 동시 턴 자리(오퍼레이터 R1, `operator/src/turnSlots.ts`). 오퍼레이터가 서버로 넘기지 않고 직접 답한다.
+   * 200 받음 · 409 꽉 참 · 그 밖(옛 오퍼레이터가 서버로 넘겨 받은 404, 링크 끊김)은 'unsupported' —
+   * 상한은 자원 보호라 확인하지 못하면 띄운다(fail-open). 스레드 임대와 반대인 이유는 `turnSlots.ts`.
+   */
+  async acquireTurnSlot(key: string): Promise<'granted' | 'full' | 'unsupported'> {
+    try {
+      const res = await this.link.request({
+        type: 'http.forward', method: 'POST', path: '/agent/turn-slots',
+        body: JSON.stringify({ key }), contentType: 'application/json',
+      });
+      if (res.status === 200) return 'granted';
+      if (res.status === 409) return 'full';
+      return 'unsupported';
+    } catch {
+      return 'unsupported';
+    }
+  }
+
+  async releaseTurnSlot(key: string): Promise<void> {
+    try {
+      await this.link.request({
+        type: 'http.forward', method: 'POST', path: '/agent/turn-slots/release',
+        body: JSON.stringify({ key }), contentType: 'application/json',
+      });
+    } catch { /* 러너가 죽으면 오퍼레이터가 링크 끊김으로 돌려받는다 */ }
+  }
+
+  /**
+   * 작업 폴더 정리 보고(`operator/src/workspaceCleanupOwners.ts`). 오퍼레이터가 서버로 넘기지 않고 직접 답한다. 답은 이 러너가 지울
+   * 스레드들이다. 옛 오퍼레이터(서버로 넘겨 404)·링크 오류면 null — 정리는 자원 정리라 못 하면 안 할 뿐이다.
+   */
+  async reportCleanup(report: CleanupReport): Promise<CleanupReportReply | null> {
+    try {
+      const res = await this.link.request({
+        type: 'http.forward', method: 'POST', path: CLEANUP_REPORT_PATH,
+        body: JSON.stringify(report), contentType: 'application/json',
+      });
+      if (res.status === 204) return { deleteThreads: [] };
+      if (res.status !== 200) return null;
+      const body = JSON.parse(res.body) as Partial<CleanupReportReply>;
+      return { deleteThreads: Array.isArray(body.deleteThreads) ? body.deleteThreads : [] };
+    } catch {
+      return null;
+    }
+  }
+
   async reportActivity(): Promise<void> {
     await this.rest<unknown>('POST', '/agent/activity', 'agent/activity');
   }
@@ -258,9 +387,22 @@ export class HarkroomAgentClient {
    * `memory.search` recall 모드, 본문 포함 — 러너가 관련 기억을 턴 프롬프트에 붙일 때 쓴다(`memoryPin.ts`).
    * 옛 서버는 `recall` 을 모르는 키로 버리고 옛 응답(terms·nameHits 없음)을 준다 — memoryPin 이 점수로 거른다.
    */
-  async searchMemory(query: string, limit: number): Promise<RecallResult> {
-    const res = await this.call<{ hits?: RecallHit[]; terms?: string[] }>('memory.search', { query, limit, includeValue: true, recall: true });
-    return { hits: res.hits ?? [], ...(Array.isArray(res.terms) ? { terms: res.terms } : {}) };
+  async searchMemory(
+    query: string, limit: number, opts: { exclude?: string[]; recordTop?: number; focus?: string } = {},
+  ): Promise<RecallResult> {
+    const res = await this.call<{ hits?: RecallHit[]; terms?: string[]; focusTerms?: string[] }>('memory.search', {
+      query, limit, includeValue: true, recall: true,
+      // #1126 이후 서버: 이미 실은 판을 빼고 실을 앞 N 개를 센다. 옛 서버는 버린다.
+      ...(opts.exclude?.length ? { exclude: opts.exclude.slice(-200) } : {}),
+      ...(opts.recordTop ? { recordTop: opts.recordTop } : {}),
+      // #1145 이후 서버: 후속 턴 게이트(G). 옛 서버는 버리고 focusTerms 를 안 준다 — memoryPin 이 루트 머리 없이 다시 묻는다.
+      ...(opts.focus !== undefined ? { focus: opts.focus.slice(0, 2000) } : {}),
+    });
+    return {
+      hits: res.hits ?? [],
+      ...(Array.isArray(res.terms) ? { terms: res.terms } : {}),
+      ...(Array.isArray(res.focusTerms) ? { focusTerms: res.focusTerms } : {}),
+    };
   }
 
   /** `memory.get` 의 본문만. 없으면 null. */
@@ -360,7 +502,7 @@ export class HarkroomAgentClient {
      * 옛 서버의 도구 입력 검증은 모르는 키를 걸러 낼 뿐 거절하지 않는다 — 실패 통지는 그대로
      * 나가고 표지만 빠진다(화면이 평문 실패 카드로 그린다). 있을 때만 싣는다.
      */
-    opts: { retryable: boolean; what?: string; reason?: string; code?: 'thread_model_rejected' },
+    opts: FailOpts,
   ): Promise<number> {
     const res = await this.call<{ message: { seq: number } }>('message.fail', {
       channelId,
@@ -370,6 +512,8 @@ export class HarkroomAgentClient {
       ...(opts.what ? { what: opts.what } : {}),
       ...(opts.reason ? { reason: opts.reason } : {}),
       ...(opts.code ? { code: opts.code } : {}),
+      ...(opts.mentionId ? { mentionId: opts.mentionId } : {}),
+      ...(opts.account ? { account: opts.account } : {}),
     });
     return res.message.seq;
   }

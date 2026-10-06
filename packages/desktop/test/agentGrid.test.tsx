@@ -39,6 +39,7 @@ const grid = (props: Partial<Parameters<typeof AgentGrid>[0]> = {}) => render(
     onStop={props.onStop}
     operatorVersions={props.operatorVersions}
     place={props.place}
+    mergeCounts={props.mergeCounts}
   />,
 );
 
@@ -220,7 +221,7 @@ describe('AgentGrid — 목업의 모양', () => {
    * `AgentGrid` 의 그 주석). 상자를 `button` 에 두면 정보 세 줄이 상자 **밖**에 남아
    * 지금과 똑같이 흘러다닌다. 그래서 둘을 함께 감싸는 `div` 가 상자를 받는다.
    *
-   * 되돌려 RED: 감싸개에서 `bg-surface-raised`·`border`·`rounded-lg`·`p-3` 중 하나만
+   * 되돌려 RED: 감싸개에서 `bg-surface-raised`·`border`·`rounded-card`·`p-3` 중 하나만
    * 지워도 이 단언이 빨개진다.
    */
   it('카드가 상자를 받는다 — 정보 세 줄이 어느 얼굴의 것인지 상자가 묶는다', () => {
@@ -230,7 +231,7 @@ describe('AgentGrid — 목업의 모양', () => {
     expect(box.className).toContain('bg-surface-raised');
     expect(box.className).toMatch(/\bborder\b/);
     expect(box.className).toContain('border-border');
-    expect(box.className).toContain('rounded-lg');
+    expect(box.className).toContain('rounded-card');
     expect(box.className).toContain('p-3');
     // 상자가 **둘을 함께** 감싼다 — 얼굴·이름 묶음과 정보 묶음.
     expect(box.querySelector('[data-testid="agent-card-alpha"]')).toBeTruthy();
@@ -270,7 +271,7 @@ describe('AgentGrid — 목업의 모양', () => {
     grid({ agents: [agent('alpha')], online: ['id-alpha'] });
     const create = screen.getByTestId('agent-create');
     expect(create.className).toContain('border-dashed');
-    expect(create.className).toContain('rounded-lg');
+    expect(create.className).toContain('rounded-card');
     // 채워진 카드의 흰 면을 받지 않는다 — 받으면 빈 자리로 안 읽힌다.
     expect(create.className).not.toContain('bg-surface-raised');
   });
@@ -1010,7 +1011,7 @@ describe('AgentGrid — 사이드바는 한 픽셀도 안 바뀐다', () => {
     const box = screen.getByTestId('agent-box-alpha');
     expect(box.className).not.toContain('bg-surface-raised');
     expect(box.className).not.toContain('border-border');
-    expect(box.className).not.toContain('rounded-lg');
+    expect(box.className).not.toContain('rounded-card');
     // 안쪽 여백도 없다 — 64px 트랙에서 좌우 12px 을 먹으면 얼굴이 들어갈 자리가 없다.
     expect(box.className).not.toMatch(/\bp-3\b/);
     cleanup();
@@ -1104,4 +1105,18 @@ describe('물러나는 중 — 다섯 번째 얼굴 (2026-09-08 실측)', () => 
     expect(screen.getByTestId('agent-retiring-alpha').textContent).toContain('턴');
   });
 
+});
+
+describe('AgentGrid — 「머지 N」(스레드 febe9ff8 P1)', () => {
+  it('살아 있는 머지 권한이 있는 카드에만 줄을 올린다 — 0·모름은 안 올린다', () => {
+    grid({ agents: [agent('alpha'), agent('beta'), agent('gamma')], mergeCounts: { 'id-alpha': 2, 'id-beta': 0 } });
+    expect(screen.getByTestId('agent-merge-count-alpha').textContent).toBe('저장소 2개');
+    expect(screen.queryByTestId('agent-merge-count-beta')).toBeNull();
+    expect(screen.queryByTestId('agent-merge-count-gamma')).toBeNull();
+  });
+
+  it('사이드바 자리에는 정보 줄이 없으니 숫자도 없다', () => {
+    grid({ agents: [agent('alpha')], mergeCounts: { 'id-alpha': 2 }, place: 'sidebar' });
+    expect(screen.queryByTestId('agent-merge-count-alpha')).toBeNull();
+  });
 });

@@ -208,7 +208,7 @@ describe('본문이 폭으로 더 내는 것 — 그리고 칸이 내지 않는 
  * `Sidebar` 가 `onCancelTurns` 를 다시 넘기면 이 시험이 빨개진다.
  */
 describe('칸은 요약이다', () => {
-  it('칸의 목록에는 중단 버튼이 없다', async () => {
+  it('칸에는 턴 목록도 중단 버튼도 없다 — 턴은 본문 관제탑 한 곳이다 (UX ⑨a)', async () => {
     const api = fakeApi({
       agentSessions: vi.fn(async () => [turn({ sessionId: 's1' }), turn({ sessionId: 's2', agentAccountId: 'me' })]),
       message: vi.fn(async () => msg('t1', 'c1', 1, '스레드 이름')),
@@ -224,7 +224,10 @@ describe('칸은 요약이다', () => {
         onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
         collapsed={false} onToggleCollapse={vi.fn()} />,
     );
-    await waitFor(() => expect(screen.getByTestId('agent-turns-count')).toBeTruthy());
+    // 턴 요약은 관제탑과 같은 목록이라 뺐다 — 칸은 세션을 묻지도 않는다(폴러는 관제탑 하나).
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.queryByTestId('agent-turns-count')).toBeNull();
+    expect(api.agentSessions).not.toHaveBeenCalled();
     expect(screen.queryByTestId('agent-turns-cancel-all')).toBeNull();
     expect(screen.queryByTestId('agent-turn-cancel-s1')).toBeNull();
     expect(screen.queryByTestId('agent-turns-cancel-group-c1-t1')).toBeNull();

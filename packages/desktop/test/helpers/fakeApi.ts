@@ -153,9 +153,10 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     inboxUnread: vi.fn(async () => []),
     // #185: 읽은 것까지 포함한 inbox 전체. 베이스가 덮어야 목록 화면 테스트가 fake 를 갈아끼울 수 있다.
     inbox: vi.fn(async () => []),
+    inboxBoard: vi.fn(async () => ({ entries: [], threads: null, threadStates: [] })),
     markRead: vi.fn(async () => undefined),
     wsTicket: vi.fn(async () => 'murt_fake'),
-    editMessage: vi.fn(async () => ({ message: msg('m-edit', 'c1', 1, 'edited'), notified: null, mentionSkipped: null })),
+    editMessage: vi.fn(async () => ({ message: msg('m-edit', 'c1', 1, 'edited'), mentionSkipped: null })),
     deleteMessage: vi.fn(async () => undefined),
     // #231 되돌리기: 거두면 **같은 메시지**가 `alsoInChannel: false` 로 돌아온다 —
     // 지우기가 아니라 갱신이라는 사실을 fake 도 그렇게 말해야 한다.
@@ -225,7 +226,6 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
       ({ agentId, operatorId, assignedBy: 'u1', assignedAt: new Date(0).toISOString() })),
     unassignAgent: vi.fn(async () => undefined),
     listPats: vi.fn(async () => []),
-    mintPat: vi.fn(async (_id: string, label: string) => `murp_${label}`),
     revokePat: vi.fn(async () => ({ revoked: 1 })),
     // #141: 터미널 패널이 부르는 표면. 베이스가 덮어야 패널을 띄우는 배선 테스트가
     // "못 물어봤다"(error) 화면 위에서 돌지 않고, "세션을 묻지 않았다" 도 단언할 수 있다.

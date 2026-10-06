@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
-import { useActiveStore as useAppStore } from '../src/state/communities';
+import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
+import { useActiveStore as useAppStore, useCommunityRegistry, resetCommunityRegistry } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { SettingsScreen } from '../src/screens/SettingsScreen';
 import { acc } from './helpers/fakeApi';
@@ -105,5 +105,32 @@ describe('SettingsScreen', () => {
     render(<SettingsScreen onBack={vi.fn()} onSignOut={onSignOut} onCommunitiesEmpty={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
     expect(onSignOut).toHaveBeenCalled();
+  });
+});
+
+/**
+ * **설정이 열린 채 커뮤니티가 바뀌면 본문을 새로 띄운다**(2026-10-02 에이전트 사진 신고).
+ * 알림 클릭은 설정을 닫지 않고 커뮤니티를 바꾼다. 다시 띄우지 않으면 에이전트 목록은 옛
+ * 커뮤니티 것으로 남고, 사진 저장은 `getController()`(새 활성)로 가서 남의 서버에 떨어진다.
+ */
+describe('SettingsScreen — 커뮤니티 전환', () => {
+  afterEach(() => { cleanup(); resetCommunityRegistry(); });
+
+  it('전환하면 섹션이 새 커뮤니티의 컨트롤러로 다시 읽는다', async () => {
+    const listA = vi.fn(async () => []);
+    const listB = vi.fn(async () => []);
+    setController({ listAgents: listA, operators: vi.fn(async () => []) } as unknown as Controller);
+    const b = useCommunityRegistry.getState().register({
+      baseUrl: 'https://b.example.com',
+      controller: { listAgents: listB, operators: vi.fn(async () => []) } as unknown as Controller,
+    });
+    useCommunityRegistry.getState().entries.find((e) => e.id === b.id)!.store.getState().set({ me: acc('u2', 'admin') });
+
+    render(<SettingsScreen initialSection="agents" onBack={vi.fn()} onSignOut={vi.fn()} onCommunitiesEmpty={vi.fn()} />);
+    await waitFor(() => expect(listA).toHaveBeenCalled());
+    expect(listB).not.toHaveBeenCalled();
+
+    act(() => { useCommunityRegistry.getState().setActive(b.id); });
+    await waitFor(() => expect(listB).toHaveBeenCalled());
   });
 });

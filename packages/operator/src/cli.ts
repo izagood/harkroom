@@ -6,6 +6,7 @@
  * | `harkroom-operator register <baseUrl> <code> [--name n]` | 등록 코드(설정 › Operators 가 발급, 5분·1회)를 `POST /operators/claim` 으로 토큰과 바꿔 이 머신의 secrets 에 두고, `operator.json` 에 그 커뮤니티의 자리를 만든다 |
  * | `harkroom-operator run [--data-dir d]` | 앱이 넘기던 daemon 인자를 데이터 디렉터리에서 **같은 규칙**(`daemonEndpointPaths`)으로 조립해 상주한다 — 앱이 나중에 같은 머신에 떠도 같은 소켓을 보고 "이미 서비스 중"으로 물러난다 |
  * | `harkroom-operator mcp-bridge` | 하네스가 띄우는 stdio MCP 브릿지(`mcpBridge.ts`) |
+ * | `harkroom-operator merge <owner/name> <n> --head <sha>` | 에이전트 머지 래퍼 — 브릿지와 같은 소켓으로 오퍼레이터에 묻는다(`turnMerge.ts`) |
  * | 그 밖 | 앱이 넘기는 `--socket …` 인자 그대로(`args.ts`) |
  *
  * 등록이 CLI 인 이유: 코드는 화면에서 사람이 읽어 그 머신의 터미널에 붙여 넣는다 — 서버가
@@ -15,6 +16,7 @@ import { readFile } from 'node:fs/promises';
 import { hostname as osHostname, homedir } from 'node:os';
 import { join } from 'node:path';
 import { daemonEndpointPaths } from '@harkroom/shared/daemonEndpoint';
+import type { OperatorRegisterResult } from '@harkroom/shared/daemonProtocol';
 import type { DaemonArgs } from './args.js';
 import { communityKey, readConfig, writeConfig } from './config.js';
 import { fileSecrets, type OperatorSecrets } from './secrets.js';
@@ -26,6 +28,10 @@ export type CliCommand =
   | { command: 'register'; baseUrl: string; code: string; name?: string }
   | { command: 'run'; dataDir: string | undefined }
   | { command: 'mcp-bridge' }
+  /** `merge <owner/name> <n> --head <sha>` — 인자 검증은 `turnMerge.parseMergeArgs`. */
+  | { command: 'merge'; argv: string[] }
+  /** `api <연결> <METHOD> <경로> [--data …]` — 인자 검증은 `turnApi.parseApiArgs`. */
+  | { command: 'api'; argv: string[] }
   | { command: 'daemon'; argv: string[] };
 
 function flagValue(argv: readonly string[], flag: string): string | undefined {
@@ -50,6 +56,10 @@ export function parseCliArgs(argv: readonly string[]): CliCommand {
       return { command: 'run', dataDir: flagValue(argv.slice(1), '--data-dir') };
     case 'mcp-bridge':
       return { command: 'mcp-bridge' };
+    case 'merge':
+      return { command: 'merge', argv: argv.slice(1) };
+    case 'api':
+      return { command: 'api', argv: argv.slice(1) };
     default:
       return { command: 'daemon', argv: [...argv] };
   }
@@ -102,30 +112,34 @@ export interface RegisterDeps {
 export async function register(
   input: { baseUrl: string; code: string; name?: string },
   deps: RegisterDeps,
-): Promise<{ operatorId: string; name: string; baseUrl: string }> {
+): Promise<OperatorRegisterResult> {
   const baseUrl = communityKey(input.baseUrl);
   const name = input.name ?? (deps.hostname ?? osHostname)();
   const fetchImpl = deps.fetchImpl ?? fetch;
+  const configPath = join(deps.dataDir, 'operator', 'operator.json');
+  // 다시 등록이면 옛 id 를 싣는다 — 서버가 (그 사람의 것일 때만) 옛 행을 폐기하고 배정을 옮긴다.
+  // 옛 서버는 이 키를 모르고 걷어 낸다.
+  const replaces = (await readConfig(configPath)).communities[baseUrl]?.operatorId;
   const res = await fetchImpl(`${baseUrl}/operators/claim`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ code: input.code, name }),
+    body: JSON.stringify({ code: input.code, name, ...(replaces ? { replaces } : {}) }),
   });
   const body = (await res.json().catch(() => null)) as
-    | { operator?: { id: string; name: string }; token?: string; error?: { code: string; message: string } } | null;
+    | { operator?: { id: string; name: string }; token?: string; replaced?: OperatorRegisterResult['replaced'];
+      error?: { code: string; message: string } } | null;
   if (!res.ok || !body?.operator || !body.token) {
     throw new Error(`등록 실패(${res.status}): ${body?.error?.message ?? '서버가 토큰을 주지 않았다'}`);
   }
   // 토큰이 먼저다 — 설정만 있고 토큰이 없는 커뮤니티는 기동 때 "등록이 필요하다"로 건너뛴다(communities.ts).
   const secrets = deps.secrets ?? fileSecrets(join(deps.dataDir, 'operator', 'secrets'));
   await secrets.setToken(baseUrl, body.token);
-  const configPath = join(deps.dataDir, 'operator', 'operator.json');
   const config = await readConfig(configPath);
   // 이미 있는 자리의 로컬 설정(agents)은 그대로 — 재등록은 토큰을 바꾸는 일이지 머신 설정을 지우는 일이 아니다.
   const section = (config.communities[baseUrl] ??= { agents: {} });
   // 재등록이면 오퍼레이터가 새로 생긴다(claim 마다 새 행) — 옛 id 를 남기면 앱이 남의 기기를 고른다.
   section.operatorId = body.operator.id;
   await writeConfig(configPath, config);
-  return { operatorId: body.operator.id, name: body.operator.name, baseUrl };
+  return { operatorId: body.operator.id, name: body.operator.name, baseUrl, replaced: body.replaced ?? null };
 }
 
 /**
@@ -136,7 +150,7 @@ export async function register(
 export async function registerViaRunningOperator(
   dataDir: string,
   input: { baseUrl: string; code: string; name?: string },
-): Promise<{ operatorId: string; name: string; baseUrl: string } | null> {
+): Promise<OperatorRegisterResult | null> {
   const paths = daemonEndpointPaths(dataDir);
   let token: string;
   try { token = (await readFile(paths.tokenPath, 'utf8')).trim(); } catch { return null; }
@@ -159,7 +173,7 @@ export async function registerViaRunningOperator(
           continue;
         }
         socket.destroy();
-        if (msg.ok) resolve(msg.payload as { operatorId: string; name: string; baseUrl: string });
+        if (msg.ok) resolve(msg.payload as OperatorRegisterResult);
         else reject(new Error(msg.error?.message ?? '오퍼레이터가 등록을 거절했다'));
         return;
       }

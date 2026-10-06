@@ -112,7 +112,7 @@ describe('회수한 자리가 되돌아가지 않는다', () => {
   it('멘션 칩은 강조색을 쓰지 않는다 — 링크는 예외다', () => {
     const src = read('components/MessageBody.tsx');
     // 멘션 칩을 만드는 자리(`isGroup` 삼항)에 accent 가 없어야 한다.
-    const chip = src.slice(src.indexOf('const className = `rounded px-0.5'));
+    const chip = src.slice(src.indexOf('const className = `rounded-sm px-0.5'));
     expect(chip.slice(0, 300)).not.toContain('accent');
   });
 

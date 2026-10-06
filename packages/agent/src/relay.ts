@@ -29,7 +29,7 @@ import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import type { AgentHarness, AgentSessionView, RelayRunnerFrame, RelayServerFrame, RunnerCap } from '@harkroom/shared';
 import { NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
 import {
-  RUNNER_LINK_PROTOCOL_VERSION, isOperatorToRunnerNotice, isRunnerLinkResponse,
+  RUNNER_LINK_MAX_LINE_BYTES, RUNNER_LINK_PROTOCOL_VERSION, isOperatorToRunnerNotice, isRunnerLinkResponse,
   type RunnerHello, type RunnerLinkRequest, type RunnerLinkResponse,
 } from '@harkroom/shared/runnerLink';
 import { RingBuffer, type PtyWriter } from './pty.js';
@@ -233,7 +233,11 @@ export interface RelayClient {
    * (오퍼레이터 교체 중이 바로 그 경우다) 붙는 순간 전달된다 — 이 통지가 유실되면
    * 오퍼레이터는 옛 동작으로 돌아가 프로세스가 죽을 때까지 교체를 미룬다.
    */
-  notifyPollStopped(holding: readonly number[]): void;
+  /**
+   * `holding` 은 아직 도는 턴의 entry, `done` 은 **끝났는데 읽음 처리만 못 한** entry(L2) — 교체 러너는
+   * 앞을 보류 시한 동안 건너뛰고, 뒤는 읽음 처리만 한다. 생략은 없다는 뜻이다.
+   */
+  notifyPollStopped(holding: readonly number[], done?: readonly number[]): void;
   /**
    * 하네스가 MCP 서버에 **우리가 구운 Authorization 헤더를 거절당했다**고 오퍼레이터에 알린다
    * (`mcp.authRejected`, 2026-10-01). 토큰은 오퍼레이터가 들고 있으므로 고칠 수 있는 쪽도 거기다.
@@ -305,11 +309,15 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
   };
 
   /** `notifyPollStopped` 가 한 번이라도 불렸으면 여기 남아 재접속마다 다시 나간다. */
-  let pollStopped: readonly number[] | null = null;
+  let pollStopped: { holding: readonly number[]; done: readonly number[] } | null = null;
   const sendPollStopped = (): void => {
     if (pollStopped === null || !transport) return;
-    try { transport.send(JSON.stringify({ type: 'runner.pollStopped', holding: [...pollStopped] })); }
-    catch { /* 재접속이 다시 보낸다 */ }
+    try {
+      transport.send(JSON.stringify({
+        type: 'runner.pollStopped', holding: [...pollStopped.holding],
+        ...(pollStopped.done.length ? { done: [...pollStopped.done] } : {}),
+      }));
+    } catch { /* 재접속이 다시 보낸다 */ }
   };
 
   const send = (frame: RelayRunnerFrame): void => {
@@ -522,8 +530,8 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
   return {
     start: connect,
 
-    notifyPollStopped(holding) {
-      pollStopped = [...holding];
+    notifyPollStopped(holding, done = []) {
+      pollStopped = { holding: [...holding], done: [...done] };
       sendPollStopped();
     },
 
@@ -665,7 +673,8 @@ export const unixDialer: RelayUnixDialer = (link, handlers) => {
   void (async () => {
     const { connect } = await import('node:net');
     const socket = connect(link.socketPath);
-    const decoder = new NdjsonDecoder();
+    // 데몬 제어 채널의 1MiB 가 아니라 링크 상한이다 — REST 본문·MCP 결과가 이 줄로 온다.
+    const decoder = new NdjsonDecoder(RUNNER_LINK_MAX_LINE_BYTES);
     let settled = false;
     const settle = (reason?: string) => {
       if (!settled) { settled = true; handlers.onClose(reason); }

@@ -1,7 +1,8 @@
 /**
- * PAT 발급 — 한 곳. `POST /accounts/:id/pats`(사람이 발급)와 `POST /operator/agents/:id/pat`
- * (오퍼레이터가 배정된 에이전트 것을 받음, 단계 2~3 한정)이 같은 규칙을 쓴다. 발급 규칙이
- * 두 곳에 살면 접두·길이·감사가 갈린다.
+ * PAT 발급 규칙 — 한 곳. 발급 라우트(`POST /accounts/:id/pats`)는 410 으로 닫혔고(103 무렵,
+ * 결정 스레드 c4f4dab4) 오퍼레이터 경로의 발급 라우트는 그 전에 사라졌다. 지금 부르는 쪽은 테스트뿐이다 —
+ * viaPat 인증이 남아 있는 동안 에이전트로 서는 요청을 재려면 토큰이 있어야 한다. 인증을 걷어낼 때
+ * 이 파일도 함께 지운다.
  */
 import type { Pool } from 'pg';
 import type { FastifyRequest } from 'fastify';

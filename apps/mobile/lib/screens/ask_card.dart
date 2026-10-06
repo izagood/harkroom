@@ -90,7 +90,7 @@ class _AskCardState extends State<AskCard> {
                     child: OutlinedButton(
                       key: Key('ask-option-${widget.message.id}-${o.id}'),
                       // 옅은 주황 면 위에서 테두리만 있는 버튼은 묻힌다 — 바탕색으로 채워 띄운다.
-                      style: OutlinedButton.styleFrom(backgroundColor: context.tokens.bg),
+                      style: OutlinedButton.styleFrom(backgroundColor: context.tokens.surface),
                       onPressed: _busy
                           ? null
                           : () => _run(() =>

@@ -5,6 +5,7 @@
 //   받은 에이전트만"이 에이전트 자신의 판단이 된다. 받는 길(reveal)은 다음 PR 에 따로 있다.
 // - **부여는 소유자만**(D4·M2). admin 이 부여할 수 있으면 admin 은 자기가 움직이는 에이전트에게
 //   주고 받아 가서 모든 값을 읽는다. admin 은 회수·삭제만 한다.
+// - 예외 하나: 에이전트가 **자기 소유자의 이름으로** 비밀을 만드는 길(`/agent/secrets`, 102) — 판정은 `secretCreate.ts`.
 // - **값은 한 번 들어오면 다시 나가지 않는다.** 응답·감사·오류 어디에도 값이나 그 해시를 싣지 않는다.
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -15,13 +16,18 @@ import { scanWrite } from '../services/contentScan.js';
 import type { SecretKeyring } from '../services/secretKeyring.js';
 import { needlesFor } from '../services/secretLeakGuard.js';
 import { endTurnLease, issueTurnLease, revealSecret, RevealLimiter } from '../services/secretAccess.js';
+import { createAgentSecret, createLimiter, GENERATE_TYPES, hasCreateGrant, rotateAgentSecret, type CreateDenial, type CreateSource } from '../services/secretCreate.js';
 
 /** 계획 D6. 파일·텍스트 공통 상한(바이트). */
 export const SECRET_MAX_BYTES = 64 * 1024;
 
 const agentRefused = { error: { code: 'forbidden', message: 'agents cannot manage secrets' } };
-const disabled = {
+const storeOff = {
   error: { code: 'secret_store_disabled', message: 'HARKROOM_SECRET_KEYS_DIR is not set on the server; the secret store is off' },
+};
+/** 키는 걸렸는데 DB 의 키 확인값과 맞지 않아 꺼졌다. kid 이름은 싣지 않는다(서버 로그에만). */
+const keyMismatch = {
+  error: { code: 'secret_key_mismatch', message: 'the secret store key on the server does not match the key these secrets were sealed with; the secret store is off' },
 };
 const notFound = { error: { code: 'not_found', message: 'no such secret' } };
 const descriptionLeak = { error: { code: 'secret_in_description', message: 'the description looks like it contains a secret value' } };
@@ -59,14 +65,23 @@ interface SecretRow {
   id: string; name: string; kind: 'text' | 'file'; filename: string | null; description: string;
   ownerAccountId: string; expiresAt: string | null; createdAt: string; updatedAt: string;
   version: number | null; sizeBytes: number | null; grantCount: number;
+  /** 에이전트가 만든 비밀이면 그 에이전트와 원인 글(102). 사람이 만들었으면 null. */
+  createdByAgentId: string | null; createdCauseMessageId: string | null;
+  /**
+   * 지금 값을 정한 것이 에이전트면 그 id(security L2 — 그 에이전트는 값을 안다: import·mount). 사람이 값을 바꾸면 null 이 된다.
+   * 화면은 이것으로 "값을 @x 가 정함" 배지를 달고, 다른 에이전트에게 넓혀 줄 때 경고한다.
+   */
+  valueSetByAgentId: string | null;
 }
 
 const SECRET_COLS = `s.id, s.name, s.kind, s.filename, s.description, s.owner_account_id as "ownerAccountId",
   s.expires_at as "expiresAt", s.created_at as "createdAt", s.updated_at as "updatedAt",
   v.version, v.size_bytes as "sizeBytes",
-  (select count(*)::int from secret_grant g where g.secret_id = s.id) as "grantCount"`;
+  (select count(*)::int from secret_grant g where g.secret_id = s.id) as "grantCount",
+  s.created_by_agent_id as "createdByAgentId", s.created_cause_message_id as "createdCauseMessageId",
+  (select a.id from account a where a.id = v.created_by and a.kind = 'agent') as "valueSetByAgentId"`;
 const SECRET_FROM = `secret s left join lateral (
-    select version, size_bytes from secret_version
+    select version, size_bytes, created_by, split_part(sealed, '.', 2) as sealed_kid from secret_version
      where secret_id = s.id and revoked_at is null order by version desc limit 1) v on true`;
 
 async function getSecret(pool: Pool, id: string): Promise<SecretRow | null> {
@@ -92,10 +107,13 @@ function valueBytes(kind: 'text' | 'file', v: { value?: string; valueBase64?: st
 }
 
 export async function registerSecretRoutes(
-  app: FastifyInstance, pool: Pool, opts: { keyring: SecretKeyring | null; limiter?: RevealLimiter },
+  app: FastifyInstance, pool: Pool,
+  opts: { keyring: SecretKeyring | null; keyMismatch?: boolean; limiter?: RevealLimiter; createLimiter?: RevealLimiter },
 ): Promise<void> {
   const { keyring } = opts;
+  const disabled = opts.keyMismatch ? keyMismatch : storeOff;
   const limiter = opts.limiter ?? new RevealLimiter();
+  const makeLimiter = opts.createLimiter ?? createLimiter();
 
   /** 사람만. 아니면 답을 보내고 false. */
   const human = (req: FastifyRequest, reply: FastifyReply): boolean => {
@@ -123,9 +141,16 @@ export async function registerSecretRoutes(
     if (!human(req, reply)) return reply;
     const me = req.account!;
     const r = await pool.query(
-      `select ${SECRET_COLS} from ${SECRET_FROM}
+      `select ${SECRET_COLS}, v.sealed_kid as "sealedKid" from ${SECRET_FROM}
         where $1::boolean or s.owner_account_id = $2 order by s.name`, [me.isAdmin, me.id]);
-    return { enabled: keyring !== null, secrets: r.rows as SecretRow[] };
+    // keyLost: 지금 값의 키(kid)가 이 서버의 키링에 없다 — 키를 잃었거나 바꿨으니 다시 넣어야 한다.
+    // kid 이름은 내보내지 않는다. 보관소가 꺼져 있으면(키 없음·키 어긋남) 가를 수 없으니 false 다.
+    const kids = new Set(keyring?.kids ?? []);
+    const secrets = (r.rows as (SecretRow & { sealedKid: string | null })[]).map(({ sealedKid, ...row }) => ({
+      ...row,
+      keyLost: keyring !== null && !!sealedKid && !kids.has(sealedKid),
+    }));
+    return { enabled: keyring !== null, keyMismatch: opts.keyMismatch === true, secrets };
   });
 
   app.post('/secrets', { preHandler: app.requireAccount }, async (req, reply) => {
@@ -286,10 +311,16 @@ export async function registerSecretRoutes(
     const expired = await pool.query(`select 1 from secret where id = $1 and expires_at <= now()`, [s.id]);
     if (expired.rowCount) return reply.code(409).send({ error: { code: 'secret_expired', message: 'the secret has expired; replace its value or extend expiresAt first' } });
     const agent = await pool.query(
-      `select a.id, asg.operator_id as "operatorId" from account a
+      `select a.id, asg.operator_id as "operatorId", c.owner_account_id as "ownerAccountId" from account a
          left join agent_assignment asg on asg.agent_id = a.id
+         left join agent_config c on c.account_id = a.id
         where a.id = $1 and a.kind = 'agent' and a.deleted_at is null`, [g.agentId]);
     if (!agent.rowCount) return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+    // 비밀은 **소유자 자신의 에이전트**에게만 준다(#1135 security M1, jaebin「추천대로」 — 위임 E1 과 같은 기준). 남의 에이전트에게 주면
+    // 값이 그 사람이 고른 오퍼레이터 머신에 파일로 내려간다. 이미 준 줄은 reveal 이 같은 기준으로 막는다(`secretAccess.ts`).
+    if ((agent.rows[0] as { ownerAccountId: string | null }).ownerAccountId !== req.account!.id) {
+      return reply.code(403).send({ error: { code: 'not_own_agent', message: 'secrets can only be given to your own agents' } });
+    }
     if (g.channelId) {
       const ch = await pool.query(`select 1 from channel where id = $1`, [g.channelId]);
       if (!ch.rowCount) return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
@@ -417,4 +448,82 @@ export async function registerSecretRoutes(
       valueBase64: r.value.toString('base64'),
     };
   });
+
+  // ─── 에이전트가 만든다(102) ─────────────────────────────────────────────────────────────
+  //
+  // 판정은 전부 `secretCreate.ts`(서버)다 — 오퍼레이터의 경로 검사는 실수 방지일 뿐이다(security F1). 오류 문장은
+  // 고정이고 zod 의 문장을 싣지 않는다 — 값 칸(`valueBase64`)이 오류에 되비치지 않게(L4).
+  const generateSpec = z.object({ type: z.enum(GENERATE_TYPES), length: z.number().int().optional() }).strict();
+  const sourceBody = z.union([
+    z.object({ generate: generateSpec }).strict(),
+    z.object({ import: z.object({
+      kind: z.enum(['text', 'file']), filename: z.string().regex(FILENAME).nullable().optional(),
+      valueBase64: z.string().max(Math.ceil(SECRET_MAX_BYTES / 3) * 4 + 4),
+    }).strict() }).strict(),
+  ]);
+  const leaseFields = { leaseId: z.string().uuid(), token: z.string().min(1).max(200) };
+  const agentCreateBody = z.object({
+    ...leaseFields, name: z.string().regex(NAME), description: z.string().max(500).default(''),
+    expiresInDays: z.number().int().min(1).max(365).optional(), source: sourceBody,
+  }).strict();
+  const agentRotateBody = z.object({ ...leaseFields, name: z.string().regex(NAME), source: sourceBody }).strict();
+  const badCreate = { error: { code: 'bad_request', message: 'leaseId, token, a valid name and one source ({generate:{type,length?}} or {import:{kind,filename?,valueBase64}}) are required' } };
+
+  const toSource = (src: z.infer<typeof sourceBody>): CreateSource | null => {
+    if ('generate' in src) return { generate: src.generate };
+    const b64 = src.import.valueBase64;
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(b64)) return null;
+    if (src.import.kind === 'file' && !src.import.filename) return null;
+    if (src.import.kind === 'text' && src.import.filename) return null;
+    return { import: { kind: src.import.kind, filename: src.import.filename ?? null, value: Buffer.from(b64, 'base64') } };
+  };
+  const createStatus = (code: CreateDenial): number => {
+    switch (code) {
+      case 'lease_invalid': case 'not_granted': case 'cause_not_owner': case 'owner_inactive': case 'grant_suspended': return 403;
+      case 'rate_limited': return 429;
+      case 'not_found': return 404;
+      case 'bad_value': case 'bad_length': case 'secret_in_description': case 'kind_mismatch': return 400;
+      default: return 409; // too_many · name_taken · value_is_mounted · adopted_by_owner · secret_expired
+    }
+  };
+
+  // 러너가 프롬프트에 만들기 절을 쓸지 고른다(`/agent/merge-grants` 와 같은 틀). 판정이 아니다 — 판정은 위 gate() 가 매 호출 한다.
+  app.get('/agent/secret-create', { preHandler: app.requireAccount }, async (req, reply) => {
+    const who = viaOperator(req, reply);
+    if (!who) return reply;
+    void reply.header('cache-control', 'no-store');
+    return { granted: !!keyring && (await hasCreateGrant(pool, who.agentId)) };
+  });
+
+  app.post('/agent/secrets', { preHandler: app.requireAccount }, async (req, reply) => {
+    const who = viaOperator(req, reply);
+    if (!who) return reply;
+    if (!keyring) return reply.code(409).send(disabled);
+    const parsed = agentCreateBody.safeParse(req.body ?? {});
+    const source = parsed.success ? toSource(parsed.data.source) : null;
+    if (!parsed.success || !source) return reply.code(400).send(badCreate);
+    const b = parsed.data;
+    const r = await createAgentSecret(pool, {
+      ...who, leaseId: b.leaseId, token: b.token, keyring, limiter: makeLimiter,
+      name: b.name, description: b.description, expiresInDays: b.expiresInDays, source,
+    });
+    void reply.header('cache-control', 'no-store');
+    if (!r.ok) return reply.code(createStatus(r.code)).send({ error: { code: r.code, message: `secret not created: ${r.code}` } });
+    return reply.code(201).send({ secret: { name: r.name, kind: r.kind, version: r.version, expiresAt: r.expiresAt }, publicKey: r.publicKey });
+  });
+
+  app.post('/agent/secrets/rotate', { preHandler: app.requireAccount }, async (req, reply) => {
+    const who = viaOperator(req, reply);
+    if (!who) return reply;
+    if (!keyring) return reply.code(409).send(disabled);
+    const parsed = agentRotateBody.safeParse(req.body ?? {});
+    const source = parsed.success ? toSource(parsed.data.source) : null;
+    if (!parsed.success || !source) return reply.code(400).send(badCreate);
+    const b = parsed.data;
+    const r = await rotateAgentSecret(pool, { ...who, leaseId: b.leaseId, token: b.token, keyring, limiter: makeLimiter, name: b.name, source });
+    void reply.header('cache-control', 'no-store');
+    if (!r.ok) return reply.code(createStatus(r.code)).send({ error: { code: r.code, message: `secret not rotated: ${r.code}` } });
+    return { secret: { name: r.name, kind: r.kind, version: r.version }, publicKey: r.publicKey };
+  });
+
 }

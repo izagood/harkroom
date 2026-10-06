@@ -186,11 +186,11 @@ describe('Controller', () => {
     expect((api.deleteMessage as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual(['c1', 'm1']);
   });
 
-  // 수정으로 넣은 멘션(076) — 부르지 않았으면 이유를, 불렀으면 몇 명인지를 말한다.
+  // 수정으로 넣은 멘션(076) — 부르지 않았으면 이유를 말한다.
   it('edit tells when an added mention was not called because the message is old', async () => {
     const api = fakeApi({
       editMessage: vi.fn(async () => ({
-        message: msg('m1', 'c1', 1, '@forge 뒤늦게'), notified: { count: 0, ids: [], truncated: false }, mentionSkipped: 'too_old' as const,
+        message: msg('m1', 'c1', 1, '@forge 뒤늦게'), mentionSkipped: 'too_old' as const,
       })),
     });
     const { makeWs } = fakeWsFactory();
@@ -203,11 +203,10 @@ describe('Controller', () => {
     expect(useAppStore.getState().notice).toMatch(/more than 24 hours old/);
   });
 
-  it('edit tells how many people an added mention called', async () => {
+  // 수정으로 멘션을 불렀다는 것은 상단 띠로 알리지 않는다(jaebin, 10-06) — 부르지 못한 때만 말한다.
+  it('edit that called someone shows no notice', async () => {
     const api = fakeApi({
-      editMessage: vi.fn(async () => ({
-        message: msg('m1', 'c1', 1, '@forge 봐 달라'), notified: { count: 1, ids: ['a1'], truncated: false }, mentionSkipped: null,
-      })),
+      editMessage: vi.fn(async () => ({ message: msg('m1', 'c1', 1, '@forge 봐 달라'), mentionSkipped: null })),
     });
     const { makeWs } = fakeWsFactory();
     const c = new Controller(api, makeWs);
@@ -216,7 +215,7 @@ describe('Controller', () => {
 
     await c.editMessage('m1', '@forge 봐 달라');
 
-    expect(useAppStore.getState().notice).toBe('Your edit called 1 person.');
+    expect(useAppStore.getState().notice).toBeNull();
   });
 
   // #231 되돌리기는 **지우기가 아니다**. 스토어에서 빼면 스레드에서도 사라져

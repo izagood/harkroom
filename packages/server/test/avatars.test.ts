@@ -344,6 +344,47 @@ describe('에이전트 아바타 (Task 15-4)', () => {
     expect(res.statusCode).toBe(404);
   });
 
+  it('이 서버에 없는 에이전트 id 면 admin 이어도 404 다 — 0행을 고치고 200 을 내지 않는다', async () => {
+    // 데스크톱이 다른 커뮤니티의 에이전트 id 로 부르는 경우다. 전에는 admin 이 술어를 통과하고
+    // update 가 0행을 고쳐 200 이었다 — 화면은 성공을 말하는데 어디에도 사진이 없었다.
+    const missing = '00000000-0000-4000-8000-000000000000';
+    const id = await upload(adminToken, 'ghost.png', PNG, 'image/png');
+    const set = await app.inject({
+      method: 'PUT', url: `/accounts/agents/${missing}/avatar`,
+      headers: auth(adminToken), payload: { attachmentId: id },
+    });
+    expect(set.statusCode).toBe(404);
+    const cleared = await app.inject({
+      method: 'PUT', url: `/accounts/agents/${missing}/avatar`,
+      headers: auth(adminToken), payload: { attachmentId: null },
+    });
+    expect(cleared.statusCode).toBe(404);
+  });
+
+  it('사람 계정 id 로는 에이전트 라우트가 걸지 않는다', async () => {
+    const id = await upload(adminToken, 'human.png', PNG, 'image/png');
+    const res = await app.inject({
+      method: 'PUT', url: `/accounts/agents/${otherId}/avatar`,
+      headers: auth(adminToken), payload: { attachmentId: id },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('지운 에이전트에는 걸지 않는다', async () => {
+    const made = await app.inject({
+      method: 'POST', url: '/accounts/agents', headers: auth(adminToken),
+      payload: { handle: 'gonebot', displayName: 'gonebot' },
+    });
+    const goneId = made.json().id as string;
+    expect((await app.inject({ method: 'DELETE', url: `/accounts/agents/${goneId}`, headers: auth(adminToken) })).statusCode).toBe(204);
+    const id = await upload(adminToken, 'gone.png', PNG, 'image/png');
+    const res = await app.inject({
+      method: 'PUT', url: `/accounts/agents/${goneId}/avatar`,
+      headers: auth(adminToken), payload: { attachmentId: id },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
   it('명시적 null 로 지운다 — 키가 없으면 400 이다', async () => {
     const cleared = await app.inject({
       method: 'PUT', url: `/accounts/agents/${agentId}/avatar`,

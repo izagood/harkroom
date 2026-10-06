@@ -61,6 +61,12 @@ export interface CreateResult {
   url: string;
   /** **한 번만 나온다.** 위 `create` 주석 참고. */
   claimToken: string;
+  /**
+   * 비밀 보관소 복구 키. **한 번만 나오고, 저장하지 않는다**(`RecoveryKeyStep`). `claimToken` 과 달리
+   * `pendingWorkspace` 에도 넣지 않는다 — 그쪽은 이어받기 위해 남기지만, 이것은 만든 사람이 지금 받아 두는
+   * 것이다. 옛 gate 는 싣지 않는다(그때는 화면을 건너뛴다).
+   */
+  recoveryKey?: string;
 }
 
 export interface JobResult {
@@ -120,7 +126,7 @@ export function gateProgressText(job: JobResult): string {
   switch (job.status) {
     case 'queued': return 'Queued…';
     case 'committed': return 'Submitted — waiting for approval…';
-    case 'waiting_ready': return 'Waiting for the workspace to come up…';
+    case 'waiting_ready': return 'Waiting for the community to come up…';
     case 'ready': return 'Ready.';
     case 'failed': return 'Provisioning failed.';
     default: return `Working… (${job.status})`;
@@ -141,7 +147,7 @@ export function gateErrorText(err: unknown): string {
   // 404 가 오고, `fetch` 가 응답 대신 예외를 던진다. "닿지 않는다"만 말하면 네트워크 탓으로
   // 읽히므로 무엇을 넣는 칸인지를 같이 말한다.
   if (!(err instanceof ApiError)) {
-    return 'Could not reach the provisioning service. Check the service URL — it is the service that creates workspaces, not the new workspace\'s address.';
+    return 'Could not reach the provisioning service. Check the service URL — it is the service that creates communities, not the new community\'s address.';
   }
   switch (err.code) {
     case 'invalid_invite':

@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { HARNESS_ENV_DENYLIST, assertHarnessContract, buildTurnCommand, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
+import { GRANT_DELEGATE_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, assertHarnessContract, buildTurnCommand, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
 
 // harkroomUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
 // 실제로 주는 값(`http://localhost:3400` 류, `/mcp` 없음)과 맞춘다. 예전엔 여기 이미
@@ -903,5 +903,86 @@ describe('pi 의 argv', () => {
     } finally {
       if (before === undefined) delete process.env.PI_CODING_AGENT_SESSION_DIR; else process.env.PI_CODING_AGENT_SESSION_DIR = before;
     }
+  });
+});
+
+// 에이전트 머지 권한(스레드 3deac356, 실측 T1~T4 2026-10-02): 규칙은 **argv 로, 이 턴에만**. 파일에 쓰면
+// 같은 계정 풀의 모든 에이전트에 퍼진다(09-30 결정) — 그래서 buildTurnCommand 의 출력만 잰다.
+describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
+  const SESSION = '88888888-8888-4888-8888-888888888888';
+  const common = { ...base, harness: 'claude-code' as const, sessionId: SESSION, isFirstTurn: false };
+  const after = (args: string[], flag: string) => {
+    const i = args.indexOf(flag);
+    if (i < 0) return [];
+    const out: string[] = [];
+    for (let j = i + 1; j < args.length && !args[j]!.startsWith('--'); j++) out.push(args[j]!);
+    return out;
+  };
+
+  it('auto 멘션 턴에는 deny 4개가 항상 붙는다 — grant 가 없어도', () => {
+    const args = buildTurnCommand({ ...common, mode: 'mention' }).args;
+    expect(after(args, '--disallowedTools')).toEqual([...MERGE_DENY_RULES]);
+    expect(args).not.toContain('--allowedTools');
+  });
+
+  it('grant 가 있을 때만 래퍼 **절대 경로 + 서브커맨드** allow 가 붙는다(T1c 모양) — gh pr merge 는 여전히 deny', () => {
+    const args = buildTurnCommand({ ...common, mode: 'mention', mergeRepos: ['izagood/harkroom'] }).args;
+    expect(after(args, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator merge:*)']);
+    expect(after(args, '--disallowedTools')).toContain('Bash(gh pr merge:*)');
+    // allow 는 저장소 이름을 싣지 않는다 — 범위는 서버·래퍼가 가른다.
+    expect(args.join(' ')).not.toContain('izagood');
+  });
+
+  it('api.call 연결이 있을 때만 api 래퍼 allow 가 붙는다(C안 P3) — 머지 allow 와 함께, 연결 이름은 싣지 않는다', () => {
+    const only = buildTurnCommand({ ...common, mode: 'mention', apiConnectors: ['lab-api'] }).args;
+    expect(after(only, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator api:*)']);
+    expect(only.join(' ')).not.toContain('lab-api');
+    const both = buildTurnCommand({ ...common, mode: 'mention', mergeRepos: ['izagood/harkroom'], apiConnectors: ['lab-api'] }).args;
+    expect(after(both, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator merge:*)', 'Bash(/opt/harkroom/harkroom-operator api:*)']);
+    const ro = buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly', apiConnectors: ['lab-api'] }).args;
+    expect(ro).not.toContain('--allowedTools');
+  });
+
+  it('다시 줄 수 있는 연결이 있을 때만 grant.delegate MCP 도구를 allow 한다(실측: 분류기가 [Permission Grant] 로 막는다)', () => {
+    const none = buildTurnCommand({ ...common, mode: 'mention', apiConnectors: ['lab-api'] }).args;
+    expect(after(none, '--allowedTools')).not.toContain(GRANT_DELEGATE_TOOL);
+    const deleg = buildTurnCommand({ ...common, mode: 'mention', apiConnectors: ['lab-api'], apiDelegatable: ['lab-api'] }).args;
+    expect(after(deleg, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator api:*)', 'mcp__harkroom__grant_delegate']);
+    expect(deleg.join(' ')).not.toContain('lab-api');
+    expect(deleg.join(' ')).not.toContain('grant_revoke');
+    const ro = buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly', apiConnectors: ['lab-api'], apiDelegatable: ['lab-api'] }).args;
+    expect(ro).not.toContain('--allowedTools');
+    const inter = buildTurnCommand({ ...common, mode: 'interactive', apiConnectors: ['lab-api'], apiDelegatable: ['lab-api'] }).args;
+    expect(inter).not.toContain('--allowedTools');
+  });
+
+  it('readonly(plan) 턴과 인터랙티브 턴은 argv 를 그대로 둔다 — --permission-mode 도 바뀌지 않는다', () => {
+    const ro = buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly', mergeRepos: ['izagood/harkroom'] }).args;
+    expect(ro).not.toContain('--disallowedTools');
+    expect(ro).not.toContain('--allowedTools');
+    expect(ro).toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
+    const it_ = buildTurnCommand({ ...common, mode: 'interactive', mergeRepos: ['izagood/harkroom'] }).args;
+    expect(it_).not.toContain('--disallowedTools');
+    expect(it_).not.toContain('--allowedTools');
+  });
+
+  it('deny 는 실제로 맞는 모양만 — 접두(:*) 아니면 정확 일치. 가운데 와일드카드는 아무것도 안 맞춘다(실측 P2)', () => {
+    for (const r of MERGE_DENY_RULES) {
+      const inner = r.slice('Bash('.length, -1);
+      const star = inner.indexOf('*');
+      // 와일드카드는 맨 끝의 `:*` 하나뿐이어야 한다.
+      expect(star === -1 || (star === inner.length - 1 && inner.endsWith(':*')), r).toBe(true);
+    }
+    expect(MERGE_DENY_RULES).toContain('Bash(gh pr merge:*)');
+    expect(MERGE_DENY_RULES).toContain('Bash(git push origin main)');
+    expect(MERGE_DENY_RULES).toContain('Bash(git push origin HEAD:main)');
+    // 읽기용 gh api 와 브랜치 push 를 막는 넓은 패턴은 없다.
+    expect(MERGE_DENY_RULES).not.toContain('Bash(gh api:*)');
+    expect(MERGE_DENY_RULES).not.toContain('Bash(git push:*)');
+  });
+
+  it('codex 에는 규칙을 주지 않는다 — deny/allow 문법이 없다(한계는 docs/agent-merge.md)', () => {
+    const args = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true, mergeRepos: ['izagood/harkroom'] }).args;
+    expect(args.join(' ')).not.toMatch(/allowedTools|disallowedTools/);
   });
 });

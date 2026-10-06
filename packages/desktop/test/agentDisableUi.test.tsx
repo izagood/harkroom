@@ -29,8 +29,9 @@ const fakeController = (agents: AgentView[], pats: PatView[] = []) => {
   const c = {
     listAgents: vi.fn(async (): Promise<AgentView[]> => agents),
     listPats: vi.fn(async (): Promise<PatView[]> => pats),
+    // 「할 수 있는 일」 절(스레드 3deac356)이 상세를 열며 부른다 — 빈 목록이면 절은 '없음'만 그린다.
+    listGrants: vi.fn(async () => []),
     revokePat: vi.fn(async (): Promise<{ revoked: number }> => ({ revoked: 1 })),
-    mintPat: vi.fn(async (): Promise<string> => 'murp_new'),
     agentDefaults: vi.fn(async (): Promise<AgentDefaults> => (
       { harness: 'claude-code', model: null, effort: null }
     )),
@@ -84,9 +85,9 @@ describe('#251 비활성화 컨트롤은 admin 에게만 보인다', () => {
 });
 
 describe('#251 끄기는 확인 단계를 거친다', () => {
-  // 회귀선 4. 확인 문구는 **두 사실**을 다 말해야 한다: PAT 가 전부 폐기된다,
-  // 다시 켜도 돌아오지 않아 새로 발급해야 한다. 하나만 있으면 운영자는 되돌릴 수 있다고
-  // 믿고 끈다. 그리고 확인 **전에는 요청이 나가지 않는다** — 나가면 확인 단계가 장식이다.
+  // 회귀선 4. 확인 문구는 **두 사실**을 다 말해야 한다: PAT 가 전부 폐기된다, 다시 켤 때
+  // PAT 는 필요 없다(옛 문구의 「새로 발급해야 한다」는 발급이 닫혀 틀린 지시다 — c4f4dab4).
+  // 그리고 확인 **전에는 요청이 나가지 않는다** — 나가면 확인 단계가 장식이다.
   it('첫 클릭은 요청을 보내지 않고 확인 문구를 띄운다', async () => {
     const c = fakeController([agent('rusalka')]);
     render(<AgentsSettings />);
@@ -101,7 +102,8 @@ describe('#251 끄기는 확인 단계를 거친다', () => {
     // 두 사실이 확인 단계의 문구 안에 있어야 한다.
     expect(box.textContent).toContain('PAT');
     expect(box.textContent).toContain('폐기');
-    expect(box.textContent).toContain('새로 발급');
+    expect(box.textContent).toContain('PAT 는 필요 없다');
+    expect(box.textContent).not.toContain('발급');
   });
 
   it('확인을 누르면 그때 비활성화 요청이 나간다', async () => {
@@ -141,23 +143,23 @@ describe('#251 끄기는 확인 단계를 거친다', () => {
   });
 });
 
-describe('#251 다시 켠 직후 PAT 가 0개임이 드러난다', () => {
-  // 회귀선 6. 비활성화는 PAT 를 전부 폐기하고 다시 켜도 되살리지 않는다(서버가 해시만
-  // 보관한다). 그래서 켠 직후 화면은 "지금 이 에이전트로는 러너가 뜰 수 없다"를 말해야
-  // 한다 — 안 말하면 운영자는 켰으니 돌아갈 것이라 믿고 기다린다.
-  it('켠 뒤 PAT 목록이 비어 있으면 재발급이 필요하다고 안내한다', async () => {
+describe('#251 다시 켠 직후 PAT 0개는 할 일이 아니다', () => {
+  // 회귀선 6 의 뒤집힘(결정 harkroom 스레드 c4f4dab4). 러너는 오퍼레이터 토큰으로 서므로 켠 직후
+  // PAT 0개는 정상이다. 옛 화면은 여기서 「새로 발급해야 한다」고 시켜 쓸모없는 토큰을 찍게 했다
+  // (security 조건 b) — 그 안내도, 칸 자체도 없어야 한다.
+  it('켠 뒤 PAT 목록이 비어 있어도 재발급을 권하지 않는다', async () => {
     const c = fakeController([agent('rusalka', { disabled: true })], []);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
-
-    // 꺼진 동안에는 0개가 정상이라 권하지 않는다.
-    await waitFor(() => expect(screen.getByText('PAT 가 없다')).toBeTruthy());
+    await waitFor(() => expect(c.listPats).toHaveBeenCalled());
 
     fireEvent.click(screen.getByRole('button', { name: '에이전트 활성화' }));
     await waitFor(() => expect(c.setAgentDisabled).toHaveBeenCalled());
+    await waitFor(() => expect(c.listPats.mock.calls.length).toBeGreaterThan(1));
 
-    const notice = await screen.findByText(/새로 발급해야 한다/);
-    expect(notice.textContent).toContain('PAT 가 없다');
+    expect(screen.queryByText(/새로 발급해야 한다/)).toBeNull();
+    expect(screen.queryByText('PAT 가 없다')).toBeNull();
+    expect(screen.queryByTestId('legacy-pats')).toBeNull();
   });
 
   // 실패를 0개로 그리면 살아 있는 PAT 를 없다고 하고, 그 위에서 필요 없는 재발급까지
@@ -167,6 +169,7 @@ describe('#251 다시 켠 직후 PAT 가 0개임이 드러난다', () => {
     c.listPats.mockImplementation(async () => { throw new Error('끊겼다'); });
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-permissions'));
 
     expect((await screen.findByRole('alert')).textContent).toContain('PAT 목록을 읽지 못했다');
     expect(screen.queryByText(/새로 발급해야 한다/)).toBeNull();
@@ -204,6 +207,8 @@ describe('#251 끈 결과가 스토어를 거쳐 다른 화면에 닿는다', ()
       accounts: vi.fn(async () => [admin, rusalka]),
       listAgents: vi.fn(async () => [rusalka]),
       listPats: vi.fn(async () => []),
+      // 「할 수 있는 일」 절(스레드 3deac356)이 상세를 열며 부른다 — 빈 목록이면 절은 '없음'만 그린다.
+      listGrants: vi.fn(async () => []),
       setAgentDisabled,
     } as unknown as Partial<ApiClient>));
     setController(real);

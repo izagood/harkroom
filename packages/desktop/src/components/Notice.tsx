@@ -25,7 +25,7 @@ export function Notice() {
     >
       <span className="flex-1">{notice}</span>
       <button
-        className="rounded px-1 text-warning hover:bg-warning-surface-strong"
+        className="rounded-sm px-1 text-warning hover:bg-warning-surface-strong"
         aria-label="Dismiss notice"
         onClick={() => useActiveStore.getState().set({ notice: null })}
       >

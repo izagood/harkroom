@@ -102,6 +102,55 @@ class ApiClient {
 
   Future<MeView> me() async => MeView.fromJson(_obj(await _send('GET', '/auth/me')));
 
+  /// 이 토큰의 서버 세션을 끊는다(서버는 이 토큰만 지운다 — 다른 기기는 그대로다).
+  Future<void> logout() async {
+    await _send('POST', '/auth/logout');
+  }
+
+  /// 이 기기의 APNs 토큰을 지금 세션에 묶는다(서버 0.3.144~, `PUT /push/devices`). 다시 불러도 한 행이다.
+  /// 사람 로그인 세션만 받는다 — 서버가 다른 자격증명이면 403 `push_session_only` 를 준다.
+  ///
+  /// [badge] 가 있으면 `prefs.badge` 로 싣는다(서버 #1088~). 그 키를 모르는 옛 서버는 prefs 가 strict 라 400 을
+  /// 준다 — 그때는 prefs 없이 한 번 더 등록한다. 등록이 배지 설정 하나 때문에 깨지지 않게.
+  ///
+  /// [preview] 가 있으면 `prefs.preview` 로 싣는다(서버는 처음부터 받는다 — 켜면 알림에 글 앞부분이 실린다).
+  /// 400 이 와도 prefs 를 통째로 빼지 않고 **preview 만** 실어 한 번 더 보낸다(security F1) — 서버는 보낸 키만
+  /// 바꾸므로, 통째로 빼면 켜 둔 미리보기를 끈 것이 서버에 닿지 않는다. 그래도 400 이면 그때 뺀다.
+  Future<void> registerPushDevice({required String token, required String env, bool? badge, bool? preview}) async {
+    final body = {'token': token, 'platform': 'ios', 'env': env};
+    final prefs = {'badge': ?badge, 'preview': ?preview};
+    if (prefs.isEmpty) {
+      await _send('PUT', '/push/devices', body: body);
+      return;
+    }
+    try {
+      await _send('PUT', '/push/devices', body: {...body, 'prefs': prefs});
+    } on ApiError catch (e) {
+      if (e.status != 400) rethrow;
+      if (preview != null && badge != null) {
+        try {
+          await _send('PUT', '/push/devices', body: {...body, 'prefs': {'preview': preview}});
+          return;
+        } on ApiError catch (e) {
+          if (e.status != 400) rethrow;
+        }
+      }
+      await _send('PUT', '/push/devices', body: body);
+    }
+  }
+
+  /// 지금 세션에 묶인 이 기기의 푸시 등록을 푼다. 로그아웃은 서버 세션이 지워지며 함께 풀리지만,
+  /// 그 요청이 실패해도 이것이 먼저 닿게 따로 부른다.
+  Future<void> unregisterPushDevice() async {
+    await _send('DELETE', '/push/devices/current');
+  }
+
+  /// 서버 릴리스 번호(`/healthz` 의 `version`). 인증 없이 읽힌다. 모르면 `null`.
+  Future<String?> serverVersion() async {
+    final v = _obj(await _send('GET', '/healthz'))['version'];
+    return v is String && v.isNotEmpty ? v : null;
+  }
+
   // ── 디렉터리 · 채널 ───────────────────────────────────────────────────
 
   Future<List<AccountView>> accounts() async =>
@@ -114,6 +163,44 @@ class ApiClient {
           .map(ChannelRow.fromJson)
           .toList(growable: false);
 
+  /// 내 DM 들(최근 말 순). 데스크탑 사이드바의 DM 묶음과 같은 출처다.
+  Future<List<ChannelRow>> dms() async =>
+      _list(_obj(await _send('GET', '/dms'))['dms'])
+          .map(ChannelRow.fromDmJson)
+          .toList(growable: false);
+
+  /// 사람들과의 DM 을 열거나 만든다(`POST /dms` — 이미 있으면 그것을 준다). 나는 서버가 더한다.
+  Future<String> openDm(List<String> accountIds) async {
+    final id = _obj(await _send('POST', '/dms', body: {'accountIds': accountIds}))['id'];
+    if (id is! String || id.isEmpty) throw const FormatException('dm without id');
+    return id;
+  }
+
+  /// 지금 도는 에이전트 턴들 — **그 채널을 볼 수 있는 것만**(`?scope=visible`, 서버 0.3.154~).
+  /// 이 범위만 쓴다: 기본 범위는 attach 용 세션 id 를 싣는 소유자 표면이다.
+  Future<List<AgentActivity>> agentActivity() async =>
+      _list(_obj(await _send('GET', '/agent-sessions?scope=visible'))['sessions'])
+          .map(AgentActivity.fromJson)
+          .toList(growable: false);
+
+  /// 앞으로 올 에이전트 깨움들(같은 범위).
+  Future<List<AgentWake>> agentWakes() async =>
+      _list(_obj(await _send('GET', '/agent-wakes?scope=visible'))['wakes'])
+          .map(AgentWake.fromJson)
+          .toList(growable: false);
+
+  /// 내 채널 선호(즐겨찾기·섹션·순서·치움). 데스크탑 사이드바와 같은 값이다.
+  Future<List<ChannelPref>> channelPrefs() async =>
+      _list(_obj(await _send('GET', '/channels/prefs'))['prefs'])
+          .map(ChannelPref.fromJson)
+          .toList(growable: false);
+
+  /// 채널 자동 멘션(#173). 채널을 볼 수 있는 사람 누구나 읽는다 — 작성칸이 칩을 그려야 한다.
+  Future<List<ChannelAutoMention>> channelAutoMentions(String channelId) async =>
+      _list(_obj(await _send('GET', '/channels/$channelId/auto-mentions'))['autoMentions'])
+          .map(ChannelAutoMention.fromJson)
+          .toList(growable: false);
+
   // ── 메시지 ────────────────────────────────────────────────────────────
 
   /// 한 페이지를 읽는다.
@@ -122,22 +209,50 @@ class ApiClient {
   /// 되돌려 주므로 받은 순서를 그대로 그리면 된다.
   /// [thread] 를 주면 **그 스레드의 답글**만 온다. 채널 목록에는 루트만 실리므로
   /// 답글은 스레드를 열 때 따로 읽는다.
+  /// [around] 는 **점프 창**이다 — 그 `seq` 를 가운데 두고 앞뒤 절반씩 온다(데스크톱의
+  /// 검색·링크 점프와 같은 인자). `before`·`since` 와는 서로 다른 방향이라 함께 주지 않는다.
   Future<MessagePage> messages(
     String channelId, {
     int? before,
     int? since,
+    int? around,
     int? limit,
     String? thread,
   }) async {
     final q = <String, String>{
       if (before != null) 'before': '$before',
       if (since != null) 'since': '$since',
+      if (around != null) 'around': '$around',
       if (limit != null) 'limit': '$limit',
       'thread': ?thread,
     };
     final qs = q.isEmpty ? '' : '?${Uri(queryParameters: q).query}';
     return MessagePage.fromJson(_obj(await _send('GET', '/channels/$channelId/messages$qs')));
   }
+
+  /// 메시지 찾기(`GET /search`). 데스크톱 `SearchPalette` 와 **같은 라우트·같은 인자**다.
+  ///
+  /// 순서는 서버가 정한다(접두 일치 > ts_rank > 최신순) — 받은 순서를 그대로 그린다. 그래서
+  /// 페이지는 seq 커서가 아니라 [offset] 이다(서버 천장 1000, `hasMore` 가 이미 그 천장을 안다).
+  /// [threadRootId] 를 줄 때도 [channelId] 를 같이 준다 — 서버의 403 판정이 채널 단위다.
+  ///
+  /// [sort] 가 없으면 서버 기본(관련도)이다. 최신순이면 서버가 `created_at desc` 로 준다.
+  Future<MessagePage> search(String query,
+      {String? channelId, String? threadRootId, int offset = 0, SearchSort? sort}) async {
+    final q = <String, String>{
+      'q': query,
+      'channelId': ?channelId,
+      'threadRootId': ?threadRootId,
+      if (offset > 0) 'offset': '$offset',
+      if (sort != null) 'sort': sort.name,
+    };
+    return MessagePage.fromJson(_obj(await _send('GET', '/search?${Uri(queryParameters: q).query}')));
+  }
+
+  /// 링크(`harkroom://message/<id>`)가 가리키는 메시지 하나(#178 의 `GET /messages/:id`). 링크를 받은
+  /// 사람은 채널을 모른다 — 그것을 알려 주는 것이 이 라우트다. 없으면 404, 못 보는 대화면 403.
+  Future<MessageRow> message(String messageId) async =>
+      MessageRow.fromJson(_obj(await _send('GET', '/messages/${Uri.encodeComponent(messageId)}')));
 
   /// 말한다. 멘션이 들어 있으면 **이것이 에이전트를 부르는 방법**이다 — 별도
   /// 엔드포인트가 없고, 서버가 본문을 훑어 턴을 띄운다.
@@ -162,6 +277,27 @@ class ApiClient {
     });
     return MessageRow.fromJson(_obj(res));
   }
+
+  /// 내 글을 고친다(`PATCH`). 서버가 작성자만 받는다 — 화면도 내 글에만 줄을 세운다.
+  Future<MessageRow> editMessage(String channelId, String messageId, String body) async => MessageRow.fromJson(
+      _obj(await _send('PATCH', '/channels/$channelId/messages/$messageId', body: {'body': body})));
+
+  /// 지운다. 작성자 또는 admin 만 — 서버가 다시 본다.
+  ///
+  /// 답글이 남은 스레드 머리는 서버가 본문을 뗀 자리표시자로 남기고 **그 행을 200 으로** 돌려준다.
+  /// 정말 사라졌으면 204 라 `null` 이다.
+  Future<MessageRow?> deleteMessage(String channelId, String messageId) async {
+    final res = await _send('DELETE', '/channels/$channelId/messages/$messageId');
+    return res == null ? null : MessageRow.fromJson(_obj(res));
+  }
+
+  /// 스레드 답글을 채널에도 올린다(`PUT …/also-in-channel`). 멱등이다.
+  Future<MessageRow> postToChannel(String channelId, String messageId) async => MessageRow.fromJson(
+      _obj(await _send('PUT', '/channels/$channelId/messages/$messageId/also-in-channel')));
+
+  /// 채널에 함께 올린 답글을 채널에서만 거둔다. 글은 스레드에 남는다.
+  Future<MessageRow> recallFromChannel(String channelId, String messageId) async => MessageRow.fromJson(
+      _obj(await _send('DELETE', '/channels/$channelId/messages/$messageId/also-in-channel')));
 
   /// 스레드 × 에이전트 모델 지정(서버 079).
   Future<List<ThreadAgentModel>> threadAgentModels(String channelId, String rootId) async {
@@ -295,6 +431,14 @@ class ApiClient {
   /// 남는다.
   String attachmentUrl(String attachmentId) => '$baseUrl/attachments/$attachmentId';
 
+  /// 미리보기 서명 경로를 받는다(서버 0.3.131~, #1045). WebView 는 Bearer 헤더를 못 싣기 때문에 60초짜리
+  /// 서명 경로를 받아 연다 — 토큰은 그 URL 에 없다. 열 때·다시 불러올 때마다 새로 받는다(만료는 오류가 아니다).
+  Future<PreviewTicket> issuePreview(String attachmentId) async =>
+      PreviewTicket.fromJson(_obj(await _send('POST', '/attachments/$attachmentId/preview')));
+
+  /// 서명 경로 → WebView 에 넣을 절대 URL. 서버는 프록시 뒤라 자기 공개 주소를 모른다.
+  String previewUrl(String path) => '$baseUrl$path';
+
   /// 이미지 위젯에 넘길 헤더.
   Map<String, String> get authHeaders => _headers();
 
@@ -321,6 +465,11 @@ class ApiClient {
     final body = _obj(await _send('GET', '/reads'));
     return _list(body['reads']).map(ReadState.fromJson).toList(growable: false);
   }
+
+  /// 여기부터 안 읽음. 읽음(`/read`)과 **다른 라우트**다 — 서버가 자동 전진과 사람의 표시를 가른다.
+  /// 보내는 것은 그 메시지의 seq 다(그 메시지부터 안 읽은 것이 된다).
+  Future<void> markUnread(String channelId, int seq) =>
+      _send('PUT', '/channels/$channelId/unread', body: {'seq': seq});
 
   /// 여기까지 읽었다고 알린다.
   ///
@@ -371,3 +520,6 @@ class ApiClient {
 
   void close() => _http.close();
 }
+
+/// 찾기 결과 순서. 이름이 곧 서버 `GET /search?sort=` 의 값이다(`relevance` | `recent`).
+enum SearchSort { relevance, recent }

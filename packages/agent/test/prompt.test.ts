@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, type MemoryContext } from '../src/prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -201,6 +201,32 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
     });
     expect(r.prompt).toContain('예약');
     expect(r.prompt).not.toContain('jaebin:');
+  });
+
+  it('보고처가 있는 깨움은 그 스레드 id 를 싣는다 — 깨어난 턴은 다른 스레드의 약속을 모른다(2026-10-06)', () => {
+    const r = buildTurnPrompt({
+      messages: [], lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
+      wake: { reason: 'CI 결과 확인', reportTo: { channelId: 'c9', threadRootId: 'r9' } },
+    });
+    expect(r.prompt).toContain('channelId: c9 · threadRootId: r9');
+    expect(r.prompt).toContain('harkroom://message/r9');
+  });
+
+  it('접힌 예약은 사람의 발화 위에 덧붙는다 — 델타를 대신하지 않는다', () => {
+    const base = { lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't' };
+    const cw = [{ reason: '회수', wakeAt: '2026-10-06T02:00:00.000Z', reportTo: { channelId: 'c9', threadRootId: 'r9' } }];
+    expect(buildTurnPrompt({ ...base, messages: [], canceledWakes: cw }).prompt).toBe('');
+    const r = buildTurnPrompt({ ...base, messages: [msg(10, 'u1', '이거 먼저')], canceledWakes: cw });
+    expect(r.prompt).toContain('예약 1개가 접혔다');
+    expect(r.prompt).toContain('- 회수 (원래 2026-10-06T02:00:00.000Z · 보고처 harkroom://message/r9)');
+    expect(r.prompt).toContain('jaebin: 이거 먼저');
+  });
+
+  it('wakeReportTo 는 모양이 틀린 meta 를 없는 것으로 본다', () => {
+    expect(wakeReportTo({ wake: { reportTo: { channelId: 'c', threadRootId: 'r' } } })).toEqual({ channelId: 'c', threadRootId: 'r' });
+    expect(wakeReportTo({ wake: { reportTo: { channelId: 1 } } })).toBeUndefined();
+    expect(wakeReportTo(null)).toBeUndefined();
+    expect(wakeReportTo({ kind: 'wake', wake: { reason: 'x' } })).toBeUndefined();
   });
 
   // 깨움과 함께 사람의 새 발화가 같이 와 있을 수 있다(기다리는 동안 사람이 말했다).
@@ -503,6 +529,56 @@ describe('buildSystemPrompt', () => {
 
   // 발화가 자율이 됐으므로, "어디에 쓸지"(harkroom MCP message.post)를 지시문이 명시하지
   // 않으면 턴이 조용히 끝난다 — 회귀를 막는 핵심 문구.
+  // 에이전트 머지 권한(스레드 3deac356): 새 어휘(래퍼)는 같은 PR 에서 프롬프트에 적고 옛 지시(gh pr merge)를
+  // 이름 대어 지운다(mem/new-vocabulary-needs-a-prompt). 허락이 없으면 "머지하지 마라"가 분명해야 한다.
+  it('머지 절: 허락된 저장소가 있으면 래퍼 명령을, 없으면 "머지하지 마라"를 — 옛 호출부(merge 없음)는 절 자체가 없다', () => {
+    const common = { handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } as MemoryContext };
+    const granted = buildSystemPrompt({ ...common, merge: { operatorBin: '/opt/harkroom/harkroom-operator', repos: ['izagood/harkroom'] } });
+    expect(granted).toContain('/opt/harkroom/harkroom-operator merge <owner/name> <PR 번호> --head <40자 head sha>');
+    expect(granted).toContain('izagood/harkroom');
+    expect(granted).toContain('`gh pr merge`');
+    // P4(스레드 febe9ff8): 거절 코드별 길 — denialId 는 message.ask 의 mergeDenialId 로, no_repo_access 는 「사람이 머지」
+    expect(granted).toContain('`mergeDenialId: <그 값>`');
+    expect(granted).toContain('`to`·`mirrorOf` 는 싣지 않는다');
+    expect(granted).toContain('`no_repo_access`');
+    expect(granted).toContain('사람이 머지');
+    const none = buildSystemPrompt({ ...common, merge: { operatorBin: '/opt/harkroom/harkroom-operator', repos: [] } });
+    expect(none).toContain('**PR 머지는 하지 마라.**');
+    expect(none).not.toContain('harkroom-operator merge');
+    const legacy = buildSystemPrompt(common);
+    expect(legacy).not.toContain('PR 머지');
+  });
+
+  // 비밀 만들기(스레드 1a08d0cf, security n1): 서버는 "소유자 글이 띄운 턴"까지만 본다 — "소유자가 요청할 때만"은 프롬프트가 묶는다.
+  it('비밀 만들기 절: capability 가 있을 때만 — 소유자 요청일 때만·값을 찍지 말고 파일로·already_granted 안내', () => {
+    const common = { handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } as MemoryContext };
+    const on = buildSystemPrompt({ ...common, secretCreate: true });
+    expect(on).toContain('소유자가 그 비밀을 만들어 달라고 요청할 때만 만든다');
+    expect(on).toContain('`secret.generate`');
+    expect(on).toContain('`secret.import { name, path }`');
+    expect(on).toContain('`already_granted`');
+    expect(on).toContain('이미 화면·문맥에 보인 값은 유출된 것이다');
+    expect(buildSystemPrompt({ ...common, secretCreate: false })).not.toContain('secret.generate');
+    expect(buildSystemPrompt(common)).not.toContain('secret.generate');
+  });
+
+  it('API 절(C안 P3): 연결이 있으면 래퍼 명령·명령 하나·키를 찾지 마라를, 없으면 사람에게 넘기라를 — 옛 호출부는 절이 없다', () => {
+    const common = { handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } as MemoryContext };
+    const granted = buildSystemPrompt({ ...common, api: { operatorBin: '/opt/harkroom/harkroom-operator', connectors: ['lab-api'] } });
+    expect(granted).toContain('/opt/harkroom/harkroom-operator api <연결> <GET|POST|PUT|PATCH|DELETE>');
+    expect(granted).toContain('lab-api');
+    expect(granted).toContain('**명령 하나로만 부른다.**');
+    expect(granted).toContain('채팅·옛 글·파일에서 찾아 쓰지 마라');
+    const none = buildSystemPrompt({ ...common, api: { operatorBin: '/opt/harkroom/harkroom-operator', connectors: [] } });
+    expect(none).toContain('허락된 외부 API 연결이 없다');
+    expect(none).not.toContain('harkroom-operator api');
+    expect(buildSystemPrompt(common)).not.toContain('외부 API');
+    // P5: 다시 줄 수 있는 연결이 있을 때만 grant.delegate 를 적는다.
+    const deleg = buildSystemPrompt({ ...common, api: { operatorBin: '/opt/harkroom/harkroom-operator', connectors: ['lab-api'], delegatable: ['lab-api'] } });
+    expect(deleg).toContain('`grant.delegate`');
+    expect(granted).not.toContain('grant.delegate');
+  });
+
   it('message.post 로 스스로 발화하라고 지시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
     expect(s).toContain('message.post');
@@ -541,9 +617,34 @@ describe('buildSystemPrompt', () => {
 
   // #90: 한 턴에서 여러 번 message.post 를 부르면 같은 스레드에 답이 여러 개 남는다.
   // "한 번에 정리해서 올려라"는 실행 가능한 지시다.
+  // 미리보기 PR ③: 에이전트가 파일을 글에 붙이는 길. 도구를 만들고 안 적으면 안 쓰인다(#762→#809).
+  it('파일은 워크스페이스에 두고 attachment.upload → message.post attachmentIds 로 붙이라고 지시한다', () => {
+    const s = buildSystemPrompt({ handle: 'designer', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
+    expect(s).toContain('`attachment.upload`');
+    expect(s).toContain('`attachmentIds`');
+    expect(s).toContain('워크스페이스 밖 파일은 거절되니');
+  });
+
+  // 찾기 S2: message.search 가 범위·거르기를 받게 됐다. 도구를 넓히고 안 적으면 안 쓰인다(#762→#809).
+  it('지난 대화를 찾을 때는 message.read 로 넘겨 읽지 말고 message.search 를 범위·거르기와 함께 쓰라고 지시한다', () => {
+    const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
+    expect(s).toContain('`message.search` 를 쓴다');
+    for (const arg of ['`channelId`', '`threadRootId`', '`authorIds`', '`after`', '`before`', '`hasAttachment`', '`offset`']) {
+      expect(s).toContain(arg);
+    }
+  });
+
   it('한 턴에 한 번만 발화하라고 지시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
     expect(s).toContain('한 번에');
+  });
+
+  // 미리보기 PR ②: claude.ai 링크는 폰에서 막힌다. 도구를 만들고 안 적으면 안 쓰인다(#762→#809).
+  it('사람이 볼 HTML 은 claude.ai 링크 대신 artifact.publish 로 올리라고 지시한다', () => {
+    const s = buildSystemPrompt({ handle: 'designer', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
+    expect(s).toContain('`artifact.publish`');
+    expect(s).toContain('claude.ai 아티팩트 링크로 주지 말고');
+    expect(s).toContain('`artifactId`');
   });
 
   /**
@@ -665,6 +766,19 @@ describe('메모리 주입 (#139)', () => {
     const s = build({ core: '무엇이든', slugs: [] });
     expect(s).toContain('mem/');
     expect(s).toContain('invalid_slug');
+  });
+
+  // C2: 정리 도구(C1)를 프롬프트가 말해야 쓰인다(message.delegate 가 안 쓰인 교훈). 지우기 대신 보관이 기본이다.
+  it('정리 절차를 적는다 — 임대·audit·merge·archive·restore, 삭제는 예외로만', () => {
+    const s = build({ core: '본문', slugs: [] });
+    for (const tool of ['memory.lease', 'memory.audit', 'memory.merge', 'memory.archive', 'memory.unarchive', 'memory.restore']) {
+      expect(s).toContain(tool);
+    }
+    expect(s).not.toContain('남길 값이 없어진 것은 `memory.set` 에 `value: null` 을 줘서 지운다');
+    // security 후속(10-03): 지워도 이전 판에 남는다 — 비밀은 사람에게 알려 판까지 지우게 한다.
+    expect(s).toContain('지워도 이전 판에 남는다');
+    expect(s).not.toContain('비밀이 섞인 것 등)에만 쓴다');
+    expect(s.indexOf('</memory>')).toBeLessThan(s.indexOf('memory.archive'));
   });
 
   // 사용법은 `</memory>` **바깥**에 선다 — 안은 데이터, 밖은 지시다.

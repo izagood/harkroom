@@ -29,8 +29,8 @@ export function FilesPanel({ files, loading, error, hasMore, onRetry, onLoadMore
   return (
     <section className="flex h-full w-full min-w-0 flex-col bg-surface-raised" aria-label={t('channel.files.label')}>
       <header className="flex items-center border-b border-border px-4 py-2">
-        <span className="font-bold">{t('channel.files.heading')}</span>
-        <button className="ml-auto rounded px-2 text-fg-subtle hover:bg-surface-sunken"
+        <span className="font-semibold">{t('channel.files.heading')}</span>
+        <button className="ml-auto rounded-row px-2 text-fg-subtle hover:bg-surface-sunken"
           onClick={onClose} aria-label={t('channel.files.close')}>×</button>
       </header>
 
@@ -45,7 +45,7 @@ export function FilesPanel({ files, loading, error, hasMore, onRetry, onLoadMore
         {!loading && error && (
           <div className="p-4">
             <p role="alert" className="text-danger">{t('channel.files.loadFailed', { reason: error })}</p>
-            <button className="mt-2 rounded border border-border px-2 py-1 text-meta text-fg-muted"
+            <button className="mt-2 rounded-row border border-border px-2 py-1 text-meta text-fg-muted"
               onClick={onRetry}>{t('channel.files.retry')}</button>
           </div>
         )}
@@ -79,7 +79,7 @@ export function FilesPanel({ files, loading, error, hasMore, onRetry, onLoadMore
 
         {!loading && !error && hasMore && (
           <div className="px-4 py-2 text-center">
-            <button className="rounded border border-border px-2 py-1 text-meta text-fg-muted"
+            <button className="rounded-row border border-border px-2 py-1 text-meta text-fg-muted"
               onClick={onLoadMore}>{t('channel.files.more')}</button>
           </div>
         )}

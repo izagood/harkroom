@@ -15,6 +15,9 @@ export type AuditAction =
   | 'agent.memory.deleted'
   | 'agent.memory.edited'
   | 'agent.memory.flag_cleared'
+  // Memory 탭 재설계 PR 2: 사람의 보관·되살리기(여러 개). detail 은 {slugs} 뿐 — 본문 없음.
+  | 'agent.memory.archived'
+  | 'agent.memory.unarchived'
   // #171: 새 에이전트의 기본값 변경. 이미 만들어진 에이전트는 바뀌지 않으므로, 이 기록은
   // '앞으로 만들 것의 서식이 언제 누구 손에 바뀌었나' 를 답한다.
   | 'agent.defaults.updated'
@@ -46,14 +49,20 @@ export type AuditAction =
   | 'grant.given' | 'grant.revoked' | 'role.changed'
   // 비밀 보관소(085). detail 에는 이름·판·대상 id 만 — **값도 값의 해시도 넣지 않는다**(짧은 토큰은
   // 해시로 역산된다).
+  | 'connector.created' | 'connector.updated' | 'connector.deleted'
   | 'secret.created' | 'secret.updated' | 'secret.value.replaced' | 'secret.deleted'
+  | 'secret.rotated' | 'secret.create.denied' | 'secret.rotate.denied'
   | 'secret.grant.given' | 'secret.grant.revoked'
   // 턴 임대 충돌(086) — 같은 멘션에 살아 있는 임대가 이미 있다. 러너가 아닌 누군가가 먼저 받아 갔을 수 있다.
   | 'secret.lease.conflict'
+  // 에이전트 머지 권한(090, 스레드 3deac356): 래퍼의 판정 요청·거절·보고. detail 에 저장소·PR·sha·임대만, 본문 없음.
+  | 'repo.merge.checked' | 'repo.merge.denied' | 'repo.merge.merged' | 'repo.merge.failed'
+  | 'api.call.checked' | 'api.call.denied' | 'api.call.done'
+  | 'grant.delegated' | 'grant.delegate.pending' | 'grant.delegate.denied' | 'grant.delegate.approved' | 'grant.delegate.declined' | 'grant.delegate.revoked'
   // 본문 거절(D5) — 에이전트의 글에 grant 받은 비밀 값이 있어서 막았다. detail 은 표면·비밀 이름·id 만.
   | 'secret.leak.blocked'
   // 오퍼레이터·배정(스펙 2026-09-20 §3).
-  | 'operator.registered' | 'operator.revoked' | 'agent.assigned' | 'agent.unassigned'
+  | 'operator.registered' | 'operator.revoked' | 'operator.renamed' | 'agent.assigned' | 'agent.unassigned'
   // 호출 명단(스펙 2026-09-20 §6).
   | 'agent.invoker.added' | 'agent.invoker.removed'
   | 'agent.delegate.added' | 'agent.delegate.removed'

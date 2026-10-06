@@ -60,6 +60,9 @@ jobs:
 
       - run: flutter test
         working-directory: apps/mobile
+      # TestFlight 빌드 번호 고르기(바닥값 포함) — 틀리면 업로드가 거부된다.
+      - run: node --test tool/next-build-number.test.mjs
+        working-directory: apps/mobile
 
   # iOS 빌드는 macOS 러너여야 한다. **과금 배수가 붙으므로** paths 필터가 걸린 이 워크플로
   # 안에만 둔다.

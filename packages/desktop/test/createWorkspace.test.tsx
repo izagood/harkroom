@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { ConnectScreen } from '../src/screens/ConnectScreen';
 import { pendingWorkspace } from '../src/lib/gate';
+import { setConcealedClipboardInvoke } from '../src/lib/concealedClipboard';
 
 const GATE = 'https://gate.example.com';
 const WS = 'https://mine.example.com';
@@ -16,9 +17,9 @@ afterEach(() => {
 
 /** 만들기 폼을 열고 네 칸을 채운다. */
 function fillCreateForm() {
-  fireEvent.click(screen.getByRole('button', { name: /Create a hosted workspace/ }));
+  fireEvent.click(screen.getByRole('button', { name: /Create a hosted community/ }));
   fireEvent.change(screen.getByLabelText('Provisioning service URL'), { target: { value: GATE } });
-  fireEvent.change(screen.getByLabelText('Workspace name'), { target: { value: 'mine' } });
+  fireEvent.change(screen.getByLabelText('Community name'), { target: { value: 'mine' } });
   fireEvent.change(screen.getByLabelText('Invite code'), { target: { value: 'hrg_ok' } });
   fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'me@example.com' } });
 }
@@ -63,7 +64,7 @@ describe('ConnectScreen — 호스팅 워크스페이스 만들기', () => {
     const onConnected = vi.fn();
     render(<ConnectScreen onConnected={onConnected} />);
     fillCreateForm();
-    fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
 
     // 서버가 준 문장을 **그대로** 보여 준다 — 화면이 자기 말로 바꾸면 무엇을 기다리는지
     // 알 수 없다.
@@ -99,7 +100,7 @@ describe('ConnectScreen — 호스팅 워크스페이스 만들기', () => {
     )));
     render(<ConnectScreen onConnected={vi.fn()} />);
     fillCreateForm();
-    fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
 
     const shown = await screen.findByText(/invite code cannot be used/i);
     expect(shown).toBeTruthy();
@@ -114,7 +115,7 @@ describe('ConnectScreen — 호스팅 워크스페이스 만들기', () => {
     )));
     render(<ConnectScreen onConnected={vi.fn()} />);
     fillCreateForm();
-    fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
     expect(await screen.findByText(/already taken/i)).toBeTruthy();
   });
 
@@ -136,7 +137,7 @@ describe('ConnectScreen — 호스팅 워크스페이스 만들기', () => {
     }));
     render(<ConnectScreen onConnected={vi.fn()} />);
     fillCreateForm();
-    fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
     expect(await screen.findByText('push rejected', {}, { timeout: 8000 })).toBeTruthy();
   }, 15000);
 
@@ -182,11 +183,11 @@ describe('ConnectScreen — 호스팅 워크스페이스 만들기', () => {
   /** 네 칸이 다 차기 전에는 보내지 않는다 — gate 가 400 으로 돌려보낼 요청이다. */
   it('빈 칸이 있으면 제출되지 않는다', () => {
     render(<ConnectScreen onConnected={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: /Create a hosted workspace/ }));
-    const submit = screen.getByRole('button', { name: 'Create workspace' }) as HTMLButtonElement;
+    fireEvent.click(screen.getByRole('button', { name: /Create a hosted community/ }));
+    const submit = screen.getByRole('button', { name: 'Create community' }) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText('Provisioning service URL'), { target: { value: GATE } });
-    expect((screen.getByRole('button', { name: 'Create workspace' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Create community' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   /**
@@ -195,12 +196,12 @@ describe('ConnectScreen — 호스팅 워크스페이스 만들기', () => {
    */
   it('서비스 칸에 워크스페이스 주소를 넣으면 칸 밑에서 알려 준다', () => {
     render(<ConnectScreen onConnected={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: /Create a hosted workspace/ }));
-    fireEvent.change(screen.getByLabelText('Workspace name'), { target: { value: 'mine' } });
+    fireEvent.click(screen.getByRole('button', { name: /Create a hosted community/ }));
+    fireEvent.change(screen.getByLabelText('Community name'), { target: { value: 'mine' } });
     fireEvent.change(screen.getByLabelText('Provisioning service URL'), { target: { value: WS } });
-    expect(screen.getByText(/looks like the new workspace's own address/)).toBeTruthy();
+    expect(screen.getByText(/looks like the new community's own address/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Provisioning service URL'), { target: { value: GATE } });
-    expect(screen.queryByText(/looks like the new workspace's own address/)).toBeNull();
+    expect(screen.queryByText(/looks like the new community's own address/)).toBeNull();
   });
 
   /** 응답을 못 받으면(CORS·DNS) 네트워크 탓만 하지 않고 무엇을 넣는 칸인지 말한다. */
@@ -208,14 +209,144 @@ describe('ConnectScreen — 호스팅 워크스페이스 만들기', () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
     render(<ConnectScreen onConnected={vi.fn()} />);
     fillCreateForm();
-    fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
-    expect(await screen.findByText(/not the new workspace's address/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
+    expect(await screen.findByText(/not the new community's address/)).toBeTruthy();
     expect(pendingWorkspace.read()).toBeNull();
   });
 
   /** `add` 겹창에서는 새 워크스페이스를 만들 자리가 아니다(부트스트랩과 같은 근거). */
   it('add 모드에는 만들기 입구가 없다', () => {
     render(<ConnectScreen mode="add" onAdded={vi.fn()} onCancel={vi.fn()} />);
-    expect(screen.queryByRole('button', { name: /Create a hosted workspace/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Create a hosted community/ })).toBeNull();
+  });
+});
+
+describe('ConnectScreen — 복구 키는 만든 직후 한 번만 (R1)', () => {
+  // 모양만 맞춘 가짜 키다. 글자 그대로 적으면 비밀 검사(gitleaks)가 진짜 키로 읽는다.
+  const KEY = ['hrk1', 'mine', 'k1', 'A'.repeat(43), 'abcd'].join('.');
+
+  function stubGate(withKey: boolean) {
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/api/workspaces')) {
+        return new Response(JSON.stringify({
+          jobId: 'job-k', name: 'mine', url: WS, claimToken: 'claim_k', ...(withKey ? { recoveryKey: KEY } : {}),
+        }), { status: 202 });
+      }
+      return new Response(JSON.stringify({ status: 'waiting_ready', done: false }), { status: 200 });
+    }));
+  }
+
+  it('보여 주고, 저장 확인 전에는 넘어가지 않고, 어디에도 남기지 않는다', async () => {
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((m) => vi.spyOn(console, m));
+    stubGate(true);
+    render(<ConnectScreen onConnected={vi.fn()} />);
+    fillCreateForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
+
+    expect((await screen.findByTestId('recovery-key-value')).textContent).toBe(KEY);
+    // 진행 화면·공용 버튼은 아직 없다 — 키를 받기 전에 넘어가지 않는다.
+    expect(screen.queryByRole('button', { name: 'Waiting…' })).toBeNull();
+    const cont = screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement;
+    expect(cont.disabled).toBe(true);
+
+    // 보관본은 클레임 토큰만 든다. 키는 localStorage 어디에도 없다.
+    expect(pendingWorkspace.read()?.claimToken).toBe('claim_k');
+    expect(JSON.stringify({ ...localStorage })).not.toContain('hrk1.');
+
+    fireEvent.click(screen.getByRole('checkbox'));
+    expect(cont.disabled).toBe(false);
+    fireEvent.click(cont);
+
+    expect(screen.queryByTestId('recovery-key-step')).toBeNull();
+    expect(document.body.textContent).not.toContain('hrk1.');
+    expect(await screen.findByRole('button', { name: 'Waiting…' })).toBeTruthy();
+    for (const s of spies) expect(JSON.stringify(s.mock.calls)).not.toContain('hrk1.');
+    for (const s of spies) s.mockRestore();
+  });
+
+  it('앱을 다시 열면 키는 다시 나오지 않는다(이어받기는 클레임 토큰만)', async () => {
+    stubGate(true);
+    render(<ConnectScreen onConnected={vi.fn()} />);
+    fillCreateForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
+    await screen.findByTestId('recovery-key-value');
+    cleanup();
+    render(<ConnectScreen onConnected={vi.fn()} />);
+    expect(await screen.findByText(WS)).toBeTruthy();
+    expect(screen.queryByTestId('recovery-key-step')).toBeNull();
+  });
+
+  it('옛 gate(키 없음)면 이 단계를 건너뛴다', async () => {
+    stubGate(false);
+    render(<ConnectScreen onConnected={vi.fn()} />);
+    fillCreateForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
+    expect(await screen.findByRole('button', { name: 'Waiting…' })).toBeTruthy();
+    expect(screen.queryByTestId('recovery-key-step')).toBeNull();
+  });
+
+  it('키 단계에는 빠져나가는 길이 Continue 하나다 — Discard·Cancel 이 없다', async () => {
+    // `add` 겹창에는 만들기 진입이 없어 키 단계에 닿지 않는다 — Cancel 숨김은 방어로만 두고, 여기서는 Discard 를 본다.
+    stubGate(true);
+    render(<ConnectScreen onConnected={vi.fn()} />);
+    fillCreateForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
+    await screen.findByTestId('recovery-key-value');
+    expect(screen.queryByRole('button', { name: /Discard/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Back to sign in/ })).toBeNull();
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    // 키 단계를 지나면 원래대로 버릴 수 있다.
+    expect(await screen.findByRole('button', { name: /Discard/ })).toBeTruthy();
+  });
+
+  it('복사는 Rust 명령(감춤 표지·60초 비우기)으로 하고, 웹뷰는 키를 들고 기다리지 않는다', async () => {
+    const calls: [string, Record<string, unknown> | undefined][] = [];
+    setConcealedClipboardInvoke(async (cmd, args) => { calls.push([cmd, args]); });
+    const writeText = vi.fn();
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    try {
+      stubGate(true);
+      render(<ConnectScreen onConnected={vi.fn()} />);
+      fillCreateForm();
+      fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
+      await screen.findByTestId('recovery-key-value');
+      fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+      expect(await screen.findByText(/cleared in 60 seconds/)).toBeTruthy();
+      expect(calls).toEqual([['clipboard_write_concealed', { text: KEY }]]);
+      expect(writeText).not.toHaveBeenCalled(); // 웹 클립보드로 따로 쓰지 않는다
+    } finally {
+      setConcealedClipboardInvoke(null);
+    }
+  });
+
+  it('Rust 명령이 없으면 일반 복사로 물러나고 "비운다"고 약속하지 않는다', async () => {
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    stubGate(true);
+    render(<ConnectScreen onConnected={vi.fn()} />);
+    fillCreateForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
+    await screen.findByTestId('recovery-key-value');
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+    expect(await screen.findByText(/Clear your clipboard after you've put it in your password manager/)).toBeTruthy();
+    expect(writeText).toHaveBeenCalledWith(KEY);
+    expect(document.body.textContent).not.toMatch(/cleared in 60 seconds/);
+  });
+
+  it('파일로 저장하면 어디에 평문으로 남았는지 말한다', async () => {
+    const created = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:x');
+    const revoked = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    stubGate(true);
+    render(<ConnectScreen onConnected={vi.fn()} />);
+    fillCreateForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
+    await screen.findByTestId('recovery-key-value');
+    fireEvent.click(screen.getByRole('button', { name: 'Save to file' }));
+    expect(click).toHaveBeenCalled();
+    expect(screen.getByText(/Saved to Downloads as harkroom-recovery-key-mine\.txt/)).toBeTruthy();
+    click.mockRestore(); created.mockRestore(); revoked.mockRestore();
   });
 });

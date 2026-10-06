@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { draftsStorage, stickyMentionsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ThreadAgentModelView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus, ServerVersion } from '@harkroom/shared';
+import type { AccountStatus, AccountView, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ThreadAgentModelView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus, ServerVersion, ThreadStatusReaction } from '@harkroom/shared';
 import type { ObservedRunner, RunnerState } from '../lib/runnerLauncher';
 import type { NotifiedSummary } from '../lib/notified';
 
@@ -94,6 +94,18 @@ export interface AppState {
    * 같은 값이라 화면이 두 번째를 못 본다.
    */
   inboxRevision: number;
+  /**
+   * **내 차례 수**(배지 A, 2026-10-02) — 사이드바 Inbox·레일 홈·커뮤니티 타일·독 배지가 모두 이 값을
+   * 쓴다. 보드의 "나를 기다리는 일 N" 과 **같은 함수**(`lib/inboxBoard::mineCount`)로 센다. 옛 배지는
+   * 안 읽은 멘션·DM 을 세어(`blockingUnreadCount`) 읽어도 열린 물음은 빠지고, 남의 스레드 답글
+   * 부름은 쌓여 줄지 않았다. 컨트롤러가 `GET /inbox?threads=1` 로 채운다(`refreshInboxMine`).
+   */
+  inboxMine: number;
+  /**
+   * 컨트롤러가 보드 재료를 새로 받은 횟수(`controller.loadInboxBoard`). 열려 있는 보드는 이 수가
+   * 바뀌면 `inboxBoardSnapshot()` 을 다시 그린다 — 따로 조회하지 않는다(배지와 조회 하나를 나눈다).
+   */
+  inboxBoardRevision: number;
   /** 채널별 읽음 상태(서버 진실). 사이드바 배지가 여기서 나온다. */
   reads: Record<string, { lastReadSeq: number; unread: number }>;
   /**
@@ -113,6 +125,23 @@ export interface AppState {
    * 채널 최상위 멘션은 그 멘션 메시지 자신이 루트다.
    */
   terminalTarget: { agentAccountId: string; channelId: string; threadRootId: string } | null;
+  /**
+   * 열린 채널 설정 시트의 채널 id(UX ⑦b). 채널 머리의 "# 이름 ⌄" 과 사이드바 메뉴의 "채널 설정…" 두 진입점이
+   * 같은 시트를 열어야 하므로 화면 지역 상태가 아니라 여기 둔다. 커뮤니티 스토어라 커뮤니티를 바꾸면 함께 닫힌다.
+   */
+  channelSheetId: string | null;
+  /**
+   * 열린 미리보기(아티팩트) 패널의 첨부(④). 스레드 패널과 같은 오른쪽 자리에 선다. 커뮤니티 스토어라 커뮤니티를
+   * 바꾸면 함께 닫힌다 — 다른 서버의 토큰으로 이 서버의 문서를 열 일이 없다.
+   */
+  artifactPreview: AttachmentRow | null;
+  /**
+   * 그 카드를 **어느 칸에서** 눌렀나(designer 수정 1). 미리보기가 열린 동안 내용 칸은 둘 — 누른 칸 + 미리보기 —
+   * 이고 나머지(채널·스레드·터미널)는 접었다가 닫으면 그대로 돌아온다(`Workspace.tsx`).
+   */
+  artifactPreviewFrom: 'channel' | 'thread' | null;
+  /** 시트를 어느 탭으로 여는가. `leave` 는 멤버 탭에서 나가기 절차를 바로 시작한다(메뉴의 "나가기"). null = 정보. */
+  channelSheetTab: 'info' | 'members' | 'notify' | 'agents' | 'leave' | null;
   leases: LeaseRow[];
   connected: boolean;
   /**
@@ -247,6 +276,13 @@ export interface AppState {
    */
   notifiedGaps: Record<string, NotifiedSummary>;
   /**
+   * 이 기기의 작성칸에서 보낸 글(`lib/ownSends.ts`). 패널의 「내 글 따라가기」가 **이것만** 따라간다 —
+   * 자동화·다른 기기가 내 이름으로 쓴 글은 아니다. 화면 상태라 영속하지 않는다.
+   */
+  ownSendIds: Record<string, true>;
+  /** 자리(채널 id 또는 스레드 뿌리 id) → 보내는 중인 수. 응답보다 먼저 온 소켓 줄을 내 것으로 보는 근거다. */
+  sendsInFlight: Record<string, number>;
+  /**
    * 투영 고장 띠를 **어느 사정에 대해** 닫았는가(#488 A3-a). 닫지 않았으면 null 이다.
    *
    * 불리언이 아닌 이유: 투영이 꺼진 것을 닫아 뒀는데 그 뒤 투영이 **멈추면** 그것은
@@ -367,6 +403,8 @@ export interface AppState {
    */
   bumpThreadCounts(channelId: string, messageId: string, delta: 1 | -1, countsAsReply: boolean): void;
   applyReaction(channelId: string, messageId: string, emoji: string, accountId: string, on: boolean): void;
+  /** 스레드 상태 리액션(D안, `thread.status` 이벤트)을 루트에 갈아 끼운다. `null` 이면 뗀다. */
+  applyThreadStatus(channelId: string, rootId: string, statusReaction: ThreadStatusReaction | null): void;
   removeMessage(channelId: string, messageId: string): void;
   /**
    * 사람이 고른 상태를 반영한다(#186). `online` 은 **건드리지 않는다** — 연결 여부는
@@ -411,15 +449,45 @@ export const NO_TEAMS: AgentTeamRow[] = [];
 
 const initial = {
   me: null, accounts: {}, groups: [], teams: null, channels: [], dms: [], activeChannelId: null, threadRootId: null,
-  messages: {}, typing: {}, hasMore: {}, unread: [], inboxRevision: 0, reads: {}, dividerSeq: {},
-  online: [], terminalTarget: null, leases: [], connected: false, serverVersion: null, workspaceIconUrl: null,
+  messages: {}, typing: {}, hasMore: {}, unread: [], inboxRevision: 0, inboxMine: 0, inboxBoardRevision: 0, reads: {}, dividerSeq: {},
+  online: [], terminalTarget: null, channelSheetId: null, artifactPreview: null, artifactPreviewFrom: null, channelSheetTab: null, leases: [], connected: false, serverVersion: null, workspaceIconUrl: null,
   projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, drafts: {}, stickyMentions: {}, uploads: {},
   history: [], historyIndex: -1, notice: null, notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,
+  ownSendIds: {}, sendsInFlight: {},
   highlightedMessageId: null, channelRevealSeq: 0,
   runnerStates: {}, daemonRunners: {}, appVersion: null, savedIds: [], savedCount: 0,
   linkPreviewReadyAt: {}, skillsRevision: 0, operatorsRevision: 0,
 };
+
+/**
+ * **실시간 행이 스레드 재료를 null 로 덮지 않게 한다**(0.3.107 채널 줄 배지 누락의 원인).
+ *
+ * 서버는 판정 재료(`openAsk*`·`*failureCount`·`last*`·`replyCount` …)를 목록 응답에만 싣고,
+ * `message.created`·`message.updated` 로 오는 단건 행에서는 전부 `null` 이다(`COLS`). 그 행으로
+ * 기존 행을 통째로 바꾸면, ask 에 답하거나 루트를 고친 순간 `threadStateFromFacts` 가 `null` 을
+ * 받아 배지가 사라졌다. 재료가 비어 온 루트 행은 **알던 재료를 유지**한다 — 모르는 것으로
+ * 아는 것을 지우지 않는다. 상태 리액션(`statusReaction`)은 키가 없을 때(옛 서버)만 유지한다.
+ */
+export function keepThreadFacts(prev: MessageRow | undefined, next: MessageRow): MessageRow {
+  if (!prev || next.threadRootId !== null) return next;
+  let out = next;
+  if (next.openAskHumanCount === null && prev.openAskHumanCount !== null) {
+    out = {
+      ...out,
+      replyCount: prev.replyCount, activityCount: prev.activityCount, lastReplyAt: prev.lastReplyAt,
+      participantIds: prev.participantIds, openAskHumanCount: prev.openAskHumanCount,
+      openAskAccountIds: prev.openAskAccountIds, openAskLinks: prev.openAskLinks,
+      openGateAccountIds: prev.openGateAccountIds,
+      failureCount: prev.failureCount, unresolvedFailureCount: prev.unresolvedFailureCount,
+      lastKind: prev.lastKind, lastAuthorId: prev.lastAuthorId,
+    };
+  }
+  if (next.statusReaction === undefined && prev.statusReaction !== undefined) {
+    out = { ...out, statusReaction: prev.statusReaction };
+  }
+  return out;
+}
 
 /**
  * 커뮤니티 하나의 세계를 담는 스토어를 만든다(#166).
@@ -437,7 +505,7 @@ export function createAppStore() {
     set: (partial) => set(partial),
     upsertMessages: (channelId, rows) => {
       const byId = new Map((get().messages[channelId] ?? []).map((m) => [m.id, m]));
-      for (const r of rows) byId.set(r.id, r);
+      for (const r of rows) byId.set(r.id, keepThreadFacts(byId.get(r.id), r));
       const merged = [...byId.values()].sort((a, b) => a.seq - b.seq);
       set({ messages: { ...get().messages, [channelId]: merged } });
     },
@@ -462,6 +530,12 @@ export function createAppStore() {
      * 리액션 델타를 적용한다. 같은 사람이 두 번 들어오지 않게 하는 것이 핵심이다 — 내가 누른
      * 것은 로컬 갱신과 소켓 이벤트로 두 번 도착하고, 두 번 세면 1 이 2 로 보인다.
      */
+    applyThreadStatus: (channelId, rootId, statusReaction) => {
+      const rows = get().messages[channelId];
+      if (!rows || !rows.some((m) => m.id === rootId)) return;
+      const next = rows.map((m) => (m.id === rootId ? { ...m, statusReaction } : m));
+      set({ messages: { ...get().messages, [channelId]: next } });
+    },
     applyReaction: (channelId, messageId, emoji, accountId, on) => {
       const rows = get().messages[channelId];
       if (!rows) return;

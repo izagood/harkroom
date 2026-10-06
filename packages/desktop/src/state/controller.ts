@@ -1,12 +1,19 @@
 import type { AccountStatus, AddTeamToChannelResult, AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, AgentView, ThreadAgentModelView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
-import type { MemoryEdit, MemoryEntry, MemoryRevision } from '../lib/memoryList';
-import { countsAsReply, notifyLevelOf } from '@harkroom/shared';
-import { ApiClient, ApiError } from '../lib/api';
+import type { MemoryEdit, MemoryEntry, MemoryRevision, MemoryAudit, MemoryBatchResult } from '../lib/memoryList';
+import { countsAsReply, notifyLevelOf, readFailureMeta, type InboxThreadState } from '@harkroom/shared';
+import { buildBoard, mineCount } from '../lib/inboxBoard';
+
+/** 보드 한 판의 재료 — `GET /inbox/board` 의 응답(`ApiClient.inboxBoard`). `truncated` 는 옛 시험 목이 안 줄 수 있다. */
+export interface InboxBoardData { entries: InboxEntry[]; threads: MessageRow[] | null; threadStates: InboxThreadState[]; truncated?: boolean }
+import { ApiClient, ApiError, type PreviewTicket } from '../lib/api';
+import { addRange, coversSeq, type SeqRange } from '../lib/seqCoverage';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type NotificationTarget, type Notifier } from '../lib/notify';
+import { anyAppWindowFocused } from '../lib/appWindows';
 import { bodyRecipients, displayBody } from '../lib/mention';
 import { calledGroups, notifiedSummary, type NotifiedResult } from '../lib/notified';
+import { beginSend, endSend, markOwnSend, type OwnSendMarks } from '../lib/ownSends';
 import { RunnerLauncher, tauriDaemonObserver, tauriAppVersionReader, type AppVersionReader, type DaemonObserver } from '../lib/runnerLauncher';
 // 만들기 흐름이 러너를 띄우기 **전에** 풀 배정을 쓴다 — 근거는 `createAgent` 안에 있다.
 import { assignAgentPool } from '../lib/claudeAccounts';
@@ -51,6 +58,11 @@ export interface OpenThreadOpts {
   prefetched?: Promise<{ messages: MessageRow[]; hasMore: boolean }>;
 }
 
+/** 같은 계정의 관문 알림을 다시 울리기까지의 간격(`announceAccountGate`). */
+export const GATE_NOTIFY_WINDOW_MS = 30 * 60 * 1000;
+/** 한 에이전트가 `GATE_NOTIFY_WINDOW_MS` 안에 울릴 수 있는 관문 알림 수(security #1053 권고). */
+export const GATE_NOTIFY_PER_AGENT = 3;
+
 export class Controller {
 
   /**
@@ -69,8 +81,52 @@ export class Controller {
   }
   private ws: WsHandle | null = null;
   private unreadFetchSeq = 0;
+  /** 도는 중인 보드 조회 · 도는 동안 또 바뀌었나(`loadInboxBoard`). */
+  private boardInFlight: Promise<InboxBoardData> | null = null;
+  private boardDirty = false;
+  /** 마지막 보드 재료 — 시간만 흘러도(나중에의 시각이 지나도) 수를 다시 세려고 들고 있다. */
+  private mineInput: InboxBoardData | null = null;
+  private mineTick: ReturnType<typeof setInterval> | null = null;
   /** 히스토리를 이미 통째로 받은 채널. 이 집합에 없으면 openChannel이 증분이 아니라 전체를 받는다. */
   private loadedChannels = new Set<string>();
+  /**
+   * 채널마다 **받아 온 seq 구간**(`lib/seqCoverage`). `loadedChannels` 가 "한 번이라도 열었는가"라면
+   * 이것은 "어느 자리의 이웃이 실려 있는가"다 — 점프가 창을 받을지는 이것으로 정한다(`openMessage`).
+   */
+  private coverage = new Map<string, SeqRange[]>();
+
+  /** 받아 온 페이지가 말한 구간을 적는다. */
+  private addCoverage(channelId: string, lo: number, hi: number): void {
+    this.coverage.set(channelId, addRange(this.coverage.get(channelId) ?? [], { lo, hi }));
+  }
+
+  /** 그 seq 의 이웃을 받아 온 적이 있는가 — 스토어에 그 줄이 있다는 것과 다르다. */
+  private covers(channelId: string, seq: number): boolean {
+    return coversSeq(this.coverage.get(channelId) ?? [], seq);
+  }
+
+  /** 증분 한 페이지의 상한 — 서버 기본(200)과 같은 값을 **명시해** 보내야 "꽉 찬 페이지"를 셀 수 있다. */
+  private static readonly SINCE_PAGE_LIMIT = 200;
+
+  /**
+   * **`since` 뒤의 새 글을 끝까지 받는다**(2026-10-06, 재연결 틈). 서버의 증분 조회는 `order by seq
+   * limit 200` 이라 끊긴 사이에 그보다 많이 쌓였으면 한 번으로는 뒤가 잘린다 — 그 뒤 소켓으로 오는
+   * 새 글이 그 위에 쌓이면 사이에 **아무도 모르는 틈**이 남고, 열린 구간(`[lo, ∞)`)이 그 틈을 받았다고
+   * 거짓말한다(그 자리로 점프하면 창도 안 받고 세울 줄도 없다). 꽉 찬 페이지가 오면 그 끝에서 다시
+   * 묻는다. 끝없이 돌지 않게 상한을 두고, 거기서도 꽉 찼으면 열린 구간을 **받은 데까지로 닫는다** —
+   * 그 뒤는 모르는 자리라 점프가 창을 받게 된다. 채널 열기(증분)·뒤로 가기·재연결이 **같은 함수**를
+   * 쓴다 — 셋 중 하나만 고치면 다른 길로 같은 틈이 다시 난다.
+   */
+  private async pullSince(channelId: string, since: number): Promise<void> {
+    let cursor = since;
+    for (let pages = 0; pages < 10; pages++) {
+      const page = await this.api.messages(channelId, { since: cursor, limit: Controller.SINCE_PAGE_LIMIT });
+      this.store.getState().upsertMessages(channelId, page.messages);
+      if (page.messages.length < Controller.SINCE_PAGE_LIMIT) return;
+      cursor = Math.max(cursor, ...page.messages.map((m) => m.seq));
+    }
+    this.coverage.set(channelId, (this.coverage.get(channelId) ?? []).map((r) => (r.hi === Infinity ? { lo: r.lo, hi: cursor } : r)));
+  }
   /** 이미 알린 inbox 항목. 같은 항목을 두 번 알리면 알림이 쓸모없어진다. */
   private announced = new Set<number>();
   /**
@@ -79,6 +135,17 @@ export class Controller {
    * 두 경로가 서로의 기록을 보므로 어느 쪽이 먼저 도착해도 한 번만 울린다.
    */
   private notifiedMessages = new Set<string>();
+  /**
+   * 계정 관문 알림을 마지막으로 보낸 시각(계정 이름표 → ms, 2026-10-02 관문 대응 PR-4). **계정당 한 번**이다 —
+   * 그 계정에 막힌 스레드가 여럿이어도(에이전트 여럿·멘션 여럿) 사람이 할 일은 그 계정 하나를 여는 것이다.
+   * `GATE_NOTIFY_WINDOW_MS` 가 지나면 다시 알린다(그때도 막혀 있으면 사람이 놓친 것이다).
+   */
+  private gateNotifiedAt = new Map<string, number>();
+  /**
+   * 에이전트마다 최근 `GATE_NOTIFY_WINDOW_MS` 안에 보낸 관문 알림 시각(security #1053). 이름표(`account`)는 에이전트가
+   * 정하는 값이라, 이름표를 바꿔 가며 실패 글을 올리는 에이전트는 계정 묶음을 피한다 — 그래서 에이전트당 상한을 함께 둔다.
+   */
+  private gateNotifiedByAgent = new Map<string, number[]>();
   private runnerLauncher: RunnerLauncher;
   /** 비동기 부트스트랩 도중 교체·해제된 컨트롤러가 뒤늦게 살아나는 것을 막는다. */
   private stopped = false;
@@ -183,6 +250,12 @@ export class Controller {
 
   async start(): Promise<void> {
     const store = this.store.getState();
+    // WS 티켓을 **첫 묶음과 함께** 받는다. 예전에는 아래 묶음이 끝난 뒤 소켓을 만들 때에야 티켓을
+    // 물어 첫 진입에 왕복이 하나 더 직렬로 붙었다(왕복 하나 130~300ms). 티켓은 30초짜리 1회용이라
+    // 첫 연결에만 쓰고, 다시 붙을 때는 그때 새로 받는다. 묶음이 30초를 넘겨 만료됐으면 첫 연결이
+    // 실패하고 소켓의 재시도가 새 티켓으로 붙는다(지금 재접속과 같은 길).
+    let earlyTicket: Promise<string> | null = this.api.wsTicket();
+    earlyTicket.catch(() => undefined);
     const [me, { accounts, groups, teams }, channels, dms, leases, unread, reads] = await Promise.all([
       this.api.me(), this.api.accounts(), this.api.channels(),
       this.api.dms(), this.api.leases(), this.api.inboxUnread(), this.api.reads(),
@@ -213,6 +286,10 @@ export class Controller {
     this.swallow(this.refreshChannelPrefs());
     // 담아 둔 메시지 요약(#219)도 같은 방식으로 fire-and-forget 으로 받는다.
     this.swallow(this.loadSavedSummary());
+    // 내 차례 수(배지 A)도 크리티컬 패스 밖이다 — 인박스 전체라 무겁고, 없어도 앱은 선다(배지가 0 일 뿐).
+    // 1분마다 다시 센다: 나중에로 미룬 일은 시각이 지나면 서버 신호 없이도 다시 내 차례다.
+    this.swallow(this.refreshInboxMine());
+    if (!this.mineTick) this.mineTick = setInterval(() => this.recountInboxMine(), 60_000);
     // 투영 상태도 60초마다 갱신한다(#267) — 앱 기동 시 한 번과 정기적으로.
     this.swallow(this.refreshProjectionStatus());
     this.projectionRefreshInterval = setInterval(() => {
@@ -221,7 +298,11 @@ export class Controller {
     // 앱을 열자마자 쌓여 있던 미읽음이 한꺼번에 터지면 알림이 소음이 된다.
     for (const e of unread) this.announced.add(e.id);
     // 장기 토큰은 ApiClient 가 헤더로만 쓴다 — WS URL 에는 단기 티켓만 실린다.
-    this.ws = this.makeWs(this.api.baseUrl, () => this.api.wsTicket(), {
+    this.ws = this.makeWs(this.api.baseUrl, () => {
+      const ticket = earlyTicket;
+      earlyTicket = null;
+      return ticket ?? this.api.wsTicket();
+    }, {
       onEvent: (e) => this.handleEvent(e),
       onOpen: () => {
         this.store.getState().set({ connected: true });
@@ -260,6 +341,7 @@ export class Controller {
     this.ws?.close();
     this.ws = null;
     if (this.projectionRefreshInterval) { clearInterval(this.projectionRefreshInterval); this.projectionRefreshInterval = null; }
+    if (this.mineTick) { clearInterval(this.mineTick); this.mineTick = null; }
   }
 
   /**
@@ -405,6 +487,10 @@ export class Controller {
         if (store.threadRootId === e.messageId) store.set({ threadRootId: null });
         break;
       }
+      case 'thread.status':
+        // 상태 리액션(D안) — 서버가 바뀐 순간에만 보낸다. 루트가 아직 없으면(안 받은 채널) 무시한다.
+        store.applyThreadStatus(e.channelId, e.rootId, e.statusReaction);
+        break;
       case 'reaction.added':
       case 'reaction.removed':
         store.applyReaction(e.channelId, e.messageId, e.emoji, e.accountId, e.type === 'reaction.added');
@@ -425,6 +511,7 @@ export class Controller {
       case 'inbox.updated':
         if (e.accountId === store.me?.id) {
           this.swallow(this.refreshUnread().then(() => this.announceNewMentions()));
+          this.swallow(this.refreshInboxMine());
           // 선호도 다시 읽는다(#376). 나를 부르는 것이 오면 **서버가** 그 채널의 숨김을
           // 풀기 때문이다(`services/messages.ts` 의 `insertInbox`). 같은 판정을 여기서 다시
           // 구현하면 두 곳이 갈라져 "서버는 풀었는데 사이드바에는 안 보이는" 채널이 생긴다 —
@@ -594,10 +681,11 @@ export class Controller {
     const { activeChannelId, messages } = this.store.getState();
     if (activeChannelId) {
       const maxSeq = Math.max(0, ...(messages[activeChannelId] ?? []).map((m) => m.seq));
-      const page = await this.api.messages(activeChannelId, { since: maxSeq });
-      this.store.getState().upsertMessages(activeChannelId, page.messages);
+      // 끊긴 사이의 글을 **끝까지** 받는다 — 한 페이지로 자르면 받은 구간이 틈을 품는다(`pullSince`).
+      await this.pullSince(activeChannelId, maxSeq);
     }
     await this.refreshUnread();
+    this.swallow(this.refreshInboxMine());
     this.store.getState().set({ leases: await this.api.leases() });
   }
 
@@ -670,10 +758,46 @@ export class Controller {
    * 한 번 도는 것이라 다시 훑는 일이 없다 — 한꺼번에 터질 목록 자체가 존재하지 않는다.
    * 되훑는 쪽(`announceNewMentions`)에만 그 기록이 있다.
    */
+  /**
+   * 계정 관문 실패면 **계정당 한 번** 알리고 `true`(이 메시지는 다른 알림으로 다시 울리지 않는다).
+   * 관문이 아니면 `false` — 호출자가 평소대로 알린다. 받는 사람은 서버가 정한 차례 주인뿐이다(#1039).
+   */
+  private async announceAccountGate(row: MessageRow): Promise<boolean> {
+    const failure = readFailureMeta(row.meta);
+    if (failure?.code !== 'account_gate') return false;
+    const store = this.store.getState();
+    this.notifiedMessages.add(row.id);
+    // 나에게 온 차례가 아니면 울리지 않는다(채널을 `all` 로 둔 다른 사람에게는 남의 관문이다).
+    if (!store.me || failure.awaitingAccountId !== store.me.id) return true;
+    if (!usePrefsStore.getState().notifications.enabled) return true;
+    const label = failure.account ?? row.authorId;
+    // 열쇠는 (에이전트, 이름표) — 이름표만 쓰면 다른 에이전트의 같은 이름표가 서로를 삼킨다.
+    const key = `${row.authorId}\u0000${label}`;
+    const at = Date.now();
+    const last = this.gateNotifiedAt.get(key);
+    if (last !== undefined && at - last < GATE_NOTIFY_WINDOW_MS) return true;
+    const recent = (this.gateNotifiedByAgent.get(row.authorId) ?? []).filter((t) => at - t < GATE_NOTIFY_WINDOW_MS);
+    if (recent.length >= GATE_NOTIFY_PER_AGENT) return true;
+    this.gateNotifiedAt.set(key, at);
+    this.gateNotifiedByAgent.set(row.authorId, [...recent, at]);
+    const author = store.accounts[row.authorId]?.handle;
+    await this.notifier.notify({
+      // 원문(조직 설정 값)은 싣지 않는다 — 계정 이름표와 에이전트만.
+      // 사람이 읽는 말이라 사전을 지난다(designer #1053 F3) — 한국어 화면에 영어 알림이 뜨지 않게.
+      title: this.t()('gate.notify.title', { account: label }) + this.communitySuffix(),
+      // handle 을 모르면 `@…` 대신 "에이전트가"로 떨어진다(designer #1053 nit).
+      body: author ? this.t()('gate.notify.body', { agent: author }) : this.t()('gate.notify.bodyNoAgent'),
+      target: this.notificationTarget(row.id),
+    });
+    return true;
+  }
+
   private async announceNewMessage(message: MessageRow): Promise<void> {
     const store = this.store.getState();
     // 내가 쓴 것은 알리지 않는다. 보고 있는 창에도 띄우지 않는다 — 배지가 그 일을 한다.
-    if (message.authorId === store.me?.id || document.hasFocus()) return;
+    // 「보고 있다」는 앱 창 중 **하나라도** 포커스일 때다(새 창, `anyAppWindowFocused`).
+    if (message.authorId === store.me?.id || anyAppWindowFocused()) return;
+    if (await this.announceAccountGate(message)) return;
     /**
      * 진행 한 줄·대기 줄은 알리지 않는다(2026-09-09). 채널을 `all` 로 둔 것은 **오가는
      * 말**을 다 받겠다는 뜻이지, 에이전트가 일하는 동안 남기는 상태 표시까지 받겠다는
@@ -716,7 +840,7 @@ export class Controller {
   private async announceNewMentions(): Promise<void> {
     // `groups`·`teams`: 알림 미리보기의 집합·팀 토큰을 이름으로 되돌린다(#845).
     const { unread, me, channels, dms, accounts, messages, channelPrefs, groups, teams } = this.store.getState();
-    if (document.hasFocus()) {
+    if (anyAppWindowFocused()) {
       // 포커스 중에는 알리지 않되, 본 것으로 처리해 나중에 뒤늦게 터지지 않게 한다.
       for (const e of unread) this.announced.add(e.id);
       return;
@@ -781,9 +905,11 @@ export class Controller {
       if (notifyLevelOf(channelPrefs[e.channelId]) === 'none') continue;
       // `all` 채널이면 `announceNewMessage` 가 같은 메시지를 이미 알렸을 수 있다.
       if (this.notifiedMessages.has(e.messageId)) continue;
+      const row = (messages[e.channelId] ?? []).find((m) => m.id === e.messageId);
+      // 계정 관문은 사유(thread_reply) 토글과 무관하게 계정당 한 번이다 — 사람만 풀 수 있다.
+      if (row && await this.announceAccountGate(row)) continue;
       if (!prefs.enabled || !wanted[e.reason]) continue;
 
-      const row = (messages[e.channelId] ?? []).find((m) => m.id === e.messageId);
       const author = row ? accounts[row.authorId]?.handle : null;
       const channel = channels.find((c) => c.id === e.channelId);
       const dm = dms.find((d) => d.id === e.channelId);
@@ -828,6 +954,72 @@ export class Controller {
    * stale 응답에서는 올리지 않는다 — 낡은 목록을 버리면서 "바뀌었다"고 알리면, 받는 쪽은
    * 아무것도 달라지지 않은 채로 조회를 한 번 더 낸다.
    */
+  /**
+   * **내 차례 수**를 다시 센다(배지 A). 보드와 같은 재료(`GET /inbox/board`)·같은 판정
+   * (`buildBoard` → `mineCount`)이라 배지와 보드 머리글이 갈리지 않는다.
+   *
+   * 그 조회는 인박스 전체라 무겁다 — 이벤트가 몰리면 **하나만 돌리고** 도는 동안 온 것은 끝난 뒤
+   * 한 번으로 접는다. 실패는 삼킨다: 배지는 다음 신호에 다시 맞춰지고, 앞선 값을 0 으로 지우면
+   * 나를 기다리는 일이 없다고 거짓말한다.
+   */
+  private async refreshInboxMine(): Promise<void> {
+    await this.loadInboxBoard();
+  }
+
+  /**
+   * 보드 재료(`GET /inbox/board`)를 **한 곳에서** 받는다 — 배지(`inboxMine`)와 열려 있는 보드가
+   * 같은 조회 하나를 나눠 쓴다(#1076 security a: 신호 하나에 조회 둘이 나가던 것을 하나로).
+   *
+   * - 도는 중에 또 부르면 **같은 약속**을 돌려주고, 끝난 뒤 한 번 더 받아 그 결과로 풀린다 — 도는
+   *   동안 바뀐 것(방금 누른 나중에 등)을 놓치지 않으면서 동시에 도는 조회는 늘 하나다.
+   * - 받을 때마다 배지를 다시 세고 `inboxBoardRevision` 을 올린다 — 열려 있는 보드는 그 수를 보고
+   *   `inboxBoardSnapshot()` 을 그린다(따로 조회하지 않는다). 보드가 연 순간 부르면 배지도 그 순간
+   *   보드와 맞춰진다(#1076 designer 메모).
+   * - 실패는 부른 쪽에 그대로 던진다 — 보드는 오류 상자를 세우고, 배지는 앞선 값을 지킨다.
+   */
+  loadInboxBoard(): Promise<InboxBoardData> {
+    if (this.boardInFlight) { this.boardDirty = true; return this.boardInFlight; }
+    const run = async (): Promise<InboxBoardData> => {
+      try {
+        let data: InboxBoardData;
+        do {
+          this.boardDirty = false;
+          data = await this.api.inboxBoard();
+          if (this.stopped) return data;
+          this.mineInput = data;
+          this.recountInboxMine();
+          const store = this.store.getState();
+          store.set({ inboxBoardRevision: store.inboxBoardRevision + 1 });
+        } while (this.boardDirty && !this.stopped);
+        return data;
+      } finally { this.boardInFlight = null; }
+    };
+    this.boardInFlight = run();
+    return this.boardInFlight;
+  }
+
+  /** 마지막으로 받은 보드 재료. 아직 없으면 null. 열려 있는 보드가 `inboxBoardRevision` 에 맞춰 읽는다. */
+  inboxBoardSnapshot(): InboxBoardData | null {
+    return this.mineInput;
+  }
+
+  /**
+   * 들고 있는 재료로 수만 다시 센다. **시간만 흘러도** 수가 바뀐다 — 나중에로 미룬 일은 그 시각이
+   * 지나면 다시 내 차례다. 그래서 1분마다 이것을 돌린다(서버 왕복 없음).
+   */
+  private recountInboxMine(): void {
+    if (!this.mineInput) return;
+    const store = this.store.getState();
+    const me = store.me;
+    const n = mineCount(buildBoard({
+      ...this.mineInput,
+      me: me ? { id: me.id, kind: me.kind } : null,
+      isAgent: (id) => store.accounts[id]?.kind === 'agent',
+      nowMs: Date.now(),
+    }));
+    if (n !== store.inboxMine) store.set({ inboxMine: n });
+  }
+
   private async refreshUnread(): Promise<void> {
     const seq = ++this.unreadFetchSeq;
     const entries = await this.api.inboxUnread();
@@ -868,8 +1060,13 @@ export class Controller {
     // 자동 멘션(#173)도 같은 이유로 크리티컬 패스 밖이다. 못 받으면 칩이 없는 것뿐이고,
     // 그때 글을 보내면 접두가 안 붙는다 — 채널이 안 열리는 것보다 낫다.
     this.swallow(this.loadChannelAutoMentions(channelId));
-    const page = await this.api.messages(channelId, { since, limit: since === 0 ? INITIAL_HISTORY_LIMIT : undefined });
+    // 이미 연 채널이면 증분을 **끝까지** 받는다(`pullSince`) — 한 페이지로 자르면 틈이 남는다.
+    if (since > 0) { await this.pullSince(channelId, since); this.settleReadPosition(channelId); return; }
+    const page = await this.api.messages(channelId, { since, limit: INITIAL_HISTORY_LIMIT });
     this.loadedChannels.add(channelId);
+    // 첫 페이지는 "가장 오래된 줄부터 최신까지"를 말한다 — 그 뒤 소켓으로 오는 새 글도 이 안이다.
+    // 빈 페이지는 아무것도 말하지 않는다.
+    if (page.messages.length) this.addCoverage(channelId, Math.min(...page.messages.map((m) => m.seq)), Infinity);
     this.store.getState().upsertMessages(channelId, page.messages);
     // **증분 응답으로 `hasMore` 를 덮지 않는다.** 서버는 그 값을 `messages.length > 0 &&
     // hasOlderMessages(첫 행)` 로 계산하므로, 새 메시지가 없는 증분 페이지는 0 행이 되어
@@ -978,12 +1175,18 @@ export class Controller {
     // 다른 채널의 스레드면 채널을 먼저 옮긴다 — 스레드 패널은 **활성 채널의** 목록에서
     // 그 뿌리를 찾으므로(`ThreadPanel`), 채널을 두고 뿌리만 세우면 찾을 것이 없다.
     // 목적지는 **오른쪽 스레드 패널**이다 — 본문(인박스·관제탑)을 뺏지 않는다.
+    //
+    // 스레드 조회는 채널 열기를 **기다리지 않고 같이 낸다** — 예전에는 채널 조회가 끝난 뒤에야 물어
+    // 다른 채널의 스레드(인박스에서 답글 열기)가 왕복 둘이었다. 두 응답은 같은 채널 목록에 upsert
+    // 로 합쳐지므로 어느 쪽이 먼저 와도 결과가 같다. 패널은 채널 열기가 끝난 뒤에 세운다(위 이유).
+    const pagePromise = opts.prefetched ?? this.api.messages(channelId, { thread: rootId, around: opts.aroundSeq });
+    pagePromise.catch(() => undefined);
     if (this.store.getState().activeChannelId !== channelId) await this.openChannel(channelId, { reveal: false });
     this.store.getState().pushHistory({ channelId, threadRootId: rootId });
     this.store.getState().set({ threadRootId: rootId });
     let page;
     try {
-      page = await (opts.prefetched ?? this.api.messages(channelId, { thread: rootId, around: opts.aroundSeq }));
+      page = await pagePromise;
     } catch {
       // 열다 만 패널을 남기지 않는다. 남기면 그 자리가 "답이 하나도 없는 끝난 스레드"로
       // 읽힌다 — 연결이 끊긴 것과 정반대의 사실이다.
@@ -1071,9 +1274,11 @@ export class Controller {
    *    처음 여는 채널은 최신 페이지에 대상이 있을 수 있어 지금까지처럼 **본 뒤에** 묻는다 —
    *    쓸데없는 왕복을 만들지 않는다는 규율(`searchJump.test.ts`)을 지킨다.
    */
-  async openMessage(messageId: string): Promise<void> {
+  async openMessage(messageId: string, known?: MessageRow): Promise<void> {
     let target: MessageRow;
-    const cached = this.findCachedMessage(messageId);
+    // 부르는 쪽이 그 행을 이미 들고 있으면(검색 결과) 선조회를 건너뛴다 — 왕복 하나가 준다. 쓰는
+    // 것은 id·채널·seq·스레드 뿌리·alsoInChannel 뿐이고, 모두 메시지가 사는 동안 바뀌지 않는다.
+    const cached = this.findCachedMessage(messageId) ?? (known?.id === messageId ? known : undefined);
     try {
       target = cached ?? await this.api.message(messageId);
     } catch (e) {
@@ -1091,7 +1296,13 @@ export class Controller {
     // 본문은 그대로 둔다 — 인박스를 훑으며 답글을 여는 기본 동작이 그것이다(#783, 그
     // 판정이 `Inbox.openEntry` 와 같은 술어여야 한다는 것도 거기 적혀 있다). 본문의 말이면
     // 목적지가 채널 타임라인이라, 인박스·관제탑이 서 있으면 방금 누른 것이 그 뒤에 숨는다.
-    const inStore = (): boolean => (this.store.getState().messages[target.channelId] ?? []).some((m) => m.id === target.id);
+    /**
+     * **"스토어에 있다"가 아니라 "이웃을 받아 왔다"로 판정한다**(2026-10-06, 링크 이동이 외톨이 줄로 감).
+     * 인박스로 연 스레드의 뿌리는 `openThread` 가 채널 목록에 홀로 넣고, 열어 본 적 없는 채널의 글은
+     * 소켓으로 홀로 쌓인다. 그 줄이 있다고 창을 건너뛰면 앞뒤 없는 자리로 점프해 목록 맨 위에 서고,
+     * 거기서 `loadOlder` 가 바로 돌아 화면이 되끌려 갔다. 판정의 정본은 받아 온 구간(`coverage`)이다.
+     */
+    const covered = (): boolean => this.covers(target.channelId, target.seq);
     /**
      * **채널 쪽 창이 필요한가**(2026-10-01, Saved 점프 C안). 채널에 안 올라온 답글은 채널
      * 목록에 줄이 없다 — 강조가 걸릴 DOM 은 스레드 패널뿐이고, 그 창은 아래 스레드 조회가
@@ -1099,7 +1310,7 @@ export class Controller {
      * `alsoInChannel` 답글은 채널에도 줄이 있으므로 지금처럼 받는다.
      */
     const wantsChannelWindow = !target.threadRootId || target.alsoInChannel;
-    const earlyAround = wantsChannelWindow && !inStore() && this.loadedChannels.has(target.channelId)
+    const earlyAround = wantsChannelWindow && !covered() && this.loadedChannels.has(target.channelId)
       ? this.api.messages(target.channelId, { around: target.seq })
       : null;
     const earlyThread = target.threadRootId
@@ -1121,13 +1332,17 @@ export class Controller {
      * 사이를 메우는 '여기부터 새 메시지' 구분선은 별개 과제다(`loadOlder` 로 위로 올라가면
      * 메워진다).
      */
-    if (wantsChannelWindow && !inStore()) {
+    if (wantsChannelWindow && !covered()) {
       try {
         const page = await (earlyAround ?? this.api.messages(target.channelId, { around: target.seq }));
         this.store.getState().upsertMessages(target.channelId, page.messages);
-        this.store.getState().set({
-          hasMore: { ...this.store.getState().hasMore, [target.channelId]: page.hasMore },
-        });
+        // 창이 말한 구간을 적는다 — 같은 자리로 다시 점프하면 창을 또 받지 않는다. 비어 왔으면
+        // (지워진 자리) 그 seq 하나만 적어 둔다.
+        const seqs = page.messages.map((m) => m.seq);
+        this.addCoverage(target.channelId, Math.min(target.seq, ...seqs), Math.max(target.seq, ...seqs));
+        // **`hasMore` 는 건드리지 않는다.** 서버는 around 창에 늘 `false` 를 준다("과거를 말할 자격이
+        // 없는 조회"). 그것을 쓰면 점프 직후 목록 위의 "이전 글 불러오기"가 사라지고 위로 올려도
+        // 과거가 이어지지 않는다 — `openChannel` 이 증분 응답을 버리는 것과 같은 이유다.
       } catch {
         // 창을 못 받아도 채널은 이미 열렸다. 강조만 안 걸릴 뿐이라 사람을 막지 않는다
         // (구 버전 서버는 `around` 를 모르고 400 을 준다).
@@ -1157,18 +1372,87 @@ export class Controller {
   }
 
   /** 상단에 도달했을 때 한 페이지 더 과거로. 남은 게 없으면 요청하지 않는다. */
-  async loadOlder(): Promise<void> {
-    const { activeChannelId, messages, hasMore } = this.store.getState();
+  /** `channelId` 는 새 창이 자기 채널을 줄 때다(`state/windowView`). 안 주면 메인 창의 활성 채널. */
+  async loadOlder(channelId?: string): Promise<void> {
+    const { messages, hasMore } = this.store.getState();
+    const activeChannelId = channelId ?? this.store.getState().activeChannelId;
     if (!activeChannelId || !hasMore[activeChannelId]) return;
     const rows = messages[activeChannelId] ?? [];
     if (!rows.length) return;
     const oldest = Math.min(...rows.map((m) => m.seq));
 
     const page = await this.api.messages(activeChannelId, { before: oldest });
+    // `before: X` 는 X 아래 전부를 물은 것이다 — 받은 줄의 seq 가 아니라 물은 범위를 적는다.
+    if (page.messages.length) this.addCoverage(activeChannelId, Math.min(...page.messages.map((m) => m.seq)), oldest - 1);
     this.store.getState().upsertMessages(activeChannelId, page.messages);
     this.store.getState().set({
       hasMore: { ...this.store.getState().hasMore, [activeChannelId]: page.hasMore },
     });
+  }
+
+  /**
+   * **새 창이 자기 채널을 불러온다**(채널·스레드 새 창). `openChannel` 과 같은 조회를 하되 메인 창의
+   * 자리(`activeChannelId`·`threadRootId`·이력·본문 자리 요구)는 건드리지 않는다 — 새 창을 띄웠다고
+   * 메인 화면이 그 채널로 옮겨 가면 「창마다 따로」(완료 조건 ②)가 깨진다.
+   *
+   * 읽음은 여기서 올리지 않는다. 그 창이 **포커스이고 보일 때** 화면이 `markWindowRead` 를 부른다(C5).
+   */
+  async loadChannelForWindow(channelId: string): Promise<void> {
+    const store = this.store.getState();
+    const since = this.loadedChannels.has(channelId)
+      ? Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq))
+      : 0;
+    this.swallow(this.loadPins(channelId));
+    this.swallow(this.loadChannelAutoMentions(channelId));
+    const page = await this.api.messages(channelId, { since, limit: since === 0 ? INITIAL_HISTORY_LIMIT : undefined });
+    this.loadedChannels.add(channelId);
+    this.store.getState().upsertMessages(channelId, page.messages);
+    // 증분 응답은 `hasMore` 를 말할 자격이 없다 — 근거는 `openChannel` 의 같은 자리.
+    if (since === 0) {
+      this.store.getState().set({ hasMore: { ...this.store.getState().hasMore, [channelId]: page.hasMore } });
+    }
+  }
+
+  /**
+   * **새 창이 자기 스레드를 불러온다.** `openThread` 의 조회 부분만이다 — 메인 창의 스레드 패널은
+   * 그대로 둔다. 한 줄도 없으면 `false`(그 스레드는 없다 — 창이 빈 상태로 알린다, 판 3 3b).
+   */
+  async loadThreadForWindow(channelId: string, rootId: string): Promise<boolean> {
+    const page = await this.api.messages(channelId, { thread: rootId });
+    this.store.getState().upsertMessages(channelId, page.messages);
+    this.swallow(this.loadThreadAgentModels(channelId, rootId));
+    return page.messages.length > 0;
+  }
+
+  /**
+   * 새 창이 포커스이고 보일 때 그 채널의 읽음 위치를 올린다(C5). 「새 메시지」 구분선은 창을 연
+   * 시점에 얼린 값을 창이 따로 쥐므로(`useWindowDivider`) 여기서 스토어의 구분선을 다시 얼리지
+   * 않는다 — 메인이 같은 채널을 보고 있지 않은 한 그 값을 쓰는 곳은 없지만, 메인의 선을 창이
+   * 움직이면 안 된다.
+   */
+  /**
+   * `rootId` 를 주면 **스레드 창**이다(판 3 4a): 그 스레드의 인박스 항목만 읽음으로 하고 채널 읽음
+   * 위치는 건드리지 않는다 — 채널 위치는 그 채널을 보여 주는 창(메인·채널 창)의 몫이다.
+   */
+  markWindowRead(channelId: string, rootId?: string): void {
+    const store = this.store.getState();
+    const frozen = store.reads[channelId]?.lastReadSeq ?? 0;
+    const newest = rootId ? 0 : Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq));
+    const ids = store.unread
+      .filter((e) => e.channelId === channelId && !e.readAt
+        && (!rootId || e.threadRootId === rootId || e.messageId === rootId))
+      .map((e) => e.id);
+    if (!ids.length && newest <= frozen) return;
+    this.swallow((async () => {
+      if (ids.length) {
+        await this.api.markRead(ids);
+        await this.refreshUnread();
+      }
+      if (newest <= frozen) return;
+      await this.api.markChannelRead(channelId, newest);
+      const after = this.store.getState();
+      after.set({ reads: { ...after.reads, [channelId]: { lastReadSeq: newest, unread: 0 } } });
+    })());
   }
 
   closeThread(): void {
@@ -1187,11 +1471,28 @@ export class Controller {
     const target = channelId ?? this.store.getState().activeChannelId;
     // 파일만 보내는 것은 자연스럽다 — 본문이 비었다고 막으면 첨부를 보낼 길이 없다.
     if (!target || (!body.trim() && !attachmentIds.length)) return;
-    const { message, notified } = await (agentModels.length
-      ? this.api.postMessage(target, body, undefined, crypto.randomUUID(), attachmentIds, undefined, agentModels)
-      : this.api.postMessage(target, body, undefined, crypto.randomUUID(), attachmentIds));
-    this.store.getState().upsertMessages(target, [message]);
-    this.recordNotifiedGap(message.id, body, notified);
+    // 이 기기에서 보내는 글임을 적는다(`lib/ownSends.ts`) — 패널의 「내 글 따라가기」는 이것만 따라간다.
+    this.setOwnSendMarks(beginSend(this.ownSendMarks(), target));
+    try {
+      const { message, notified } = await (agentModels.length
+        ? this.api.postMessage(target, body, undefined, crypto.randomUUID(), attachmentIds, undefined, agentModels)
+        : this.api.postMessage(target, body, undefined, crypto.randomUUID(), attachmentIds));
+      // 스토어에 넣기 **전에** id 를 적어야 같은 커밋에서 패널이 "이 기기 것"으로 읽는다.
+      this.setOwnSendMarks(markOwnSend(this.ownSendMarks(), message.id));
+      this.store.getState().upsertMessages(target, [message]);
+      this.recordNotifiedGap(message.id, body, notified);
+    } finally {
+      this.setOwnSendMarks(endSend(this.ownSendMarks(), target));
+    }
+  }
+
+  private ownSendMarks(): OwnSendMarks {
+    const { ownSendIds, sendsInFlight } = this.store.getState();
+    return { ownSendIds, sendsInFlight };
+  }
+
+  private setOwnSendMarks(marks: OwnSendMarks): void {
+    this.store.getState().set({ ownSendIds: marks.ownSendIds, sendsInFlight: marks.sendsInFlight });
   }
 
   /**
@@ -1247,10 +1548,18 @@ export class Controller {
     const target = channelId ?? state.activeChannelId;
     const root = threadRootId ?? state.threadRootId;
     if (!target || !root || (!body.trim() && !attachmentIds.length)) return;
-    const { message, notified } = await (agentModels.length
-      ? this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds, alsoInChannel, agentModels)
-      : this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds, alsoInChannel));
-    this.store.getState().upsertMessages(target, [message]);
+    // 자리 열쇠는 스레드 뿌리 — 채널 패널이 이 답글을 자기 보냄으로 읽지 않게(`alsoInChannel` 이어도).
+    this.setOwnSendMarks(beginSend(this.ownSendMarks(), root));
+    let message: MessageRow, notified: NotifiedResult;
+    try {
+      ({ message, notified } = await (agentModels.length
+        ? this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds, alsoInChannel, agentModels)
+        : this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds, alsoInChannel)));
+      this.setOwnSendMarks(markOwnSend(this.ownSendMarks(), message.id));
+      this.store.getState().upsertMessages(target, [message]);
+    } finally {
+      this.setOwnSendMarks(endSend(this.ownSendMarks(), root));
+    }
     // 스레드 답글도 집합을 부를 수 있다 — 채널 최상위만 재면 스레드에서 부른 집합의
     // 조용한 실패가 그대로 삼켜진다. 여기서 서버가 `thread_reply` 로 루트 작성자까지
     // 같은 `notified` 에 담는다는 사실이 셈을 **보수적으로** 만든다(`notifiedSummary` 주석).
@@ -1320,6 +1629,24 @@ export class Controller {
 
   fetchAttachment(id: string): Promise<Blob> {
     return this.api.fetchAttachment(id);
+  }
+
+  /**
+   * 미리보기를 연다(④). 오른쪽 패널에 서고, 토큰은 패널이 열 때마다 받는다(`issuePreview`).
+   * 같은 첨부를 다시 누르면 그대로 둔다 — 닫는 것은 패널의 ✕·Esc 다.
+   */
+  openArtifactPreview(attachment: AttachmentRow, from: 'channel' | 'thread' = 'channel'): void {
+    this.store.getState().set({ artifactPreview: attachment, artifactPreviewFrom: from });
+  }
+
+  closeArtifactPreview(): void {
+    this.store.getState().set({ artifactPreview: null, artifactPreviewFrom: null });
+  }
+
+  /** 서명 경로를 받아 프레임에 넣을 절대 URL 과 함께 준다. 실패는 호출부(패널)가 상태로 말한다. */
+  async issuePreview(attachmentId: string): Promise<PreviewTicket & { url: string }> {
+    const ticket = await this.api.issuePreview(attachmentId);
+    return { ...ticket, url: this.api.previewUrl(ticket.path) };
   }
 
   fetchAvatar(accountId: string): Promise<Blob> {
@@ -1401,19 +1728,15 @@ export class Controller {
   async editMessage(messageId: string, body: string): Promise<void> {
     const { activeChannelId } = this.store.getState();
     if (!activeChannelId || !body.trim()) return;
-    const { message: updated, notified, mentionSkipped } = await this.api.editMessage(activeChannelId, messageId, body);
+    const { message: updated, mentionSkipped } = await this.api.editMessage(activeChannelId, messageId, body);
     this.store.getState().upsertMessages(activeChannelId, [updated]);
-    // 수정으로 넣은 멘션의 결과를 말한다(076) — 부르지 않은 것이 조용히 사라지면 사람은 "왜 안
-    // 오나"를 묻고, 그 답이 화면에 없다. 수정으로 새로 부른 사람이 없으면 아무 말도 하지 않는다.
+    // 수정으로 넣은 멘션이 **부르지 않았을 때만** 말한다(076) — 조용히 사라지면 사람은 "왜 안
+    // 오나"를 묻고, 그 답이 화면에 없다. 불렀을 때는 상단 띠로 알리지 않는다(jaebin, 10-06).
     if (mentionSkipped) {
       this.store.getState().set({
         notice: mentionSkipped === 'too_old'
           ? 'Your edit added a mention, but it did not call anyone — the message is more than 24 hours old. Mention them in a new message.'
           : 'Your edit added a mention, but edits to an agent message do not call anyone. Mention them in a new message.',
-      });
-    } else if (notified && notified.count > 0) {
-      this.store.getState().set({
-        notice: `Your edit called ${notified.count} ${notified.count === 1 ? 'person' : 'people'}.`,
       });
     }
   }
@@ -1766,6 +2089,18 @@ export class Controller {
     return this.api.confirmAgentMemory(agentId, slug);
   }
 
+  agentMemoryAudit(agentId: string): Promise<MemoryAudit> {
+    return this.api.agentMemoryAudit(agentId);
+  }
+
+  archiveAgentMemories(agentId: string, slugs: string[]): Promise<{ slug: string; result: MemoryBatchResult }[]> {
+    return this.api.archiveAgentMemories(agentId, slugs);
+  }
+
+  unarchiveAgentMemories(agentId: string, slugs: string[]): Promise<{ slug: string; result: MemoryBatchResult }[]> {
+    return this.api.unarchiveAgentMemories(agentId, slugs);
+  }
+
   agentMemoryRevisions(agentId: string, slug: string): Promise<MemoryRevision[]> {
     return this.api.agentMemoryRevisions(agentId, slug);
   }
@@ -1780,10 +2115,6 @@ export class Controller {
 
   revokePat(accountId: string, label: string): Promise<{ revoked: number }> {
     return this.api.revokePat(accountId, label);
-  }
-
-  mintPat(accountId: string, label: string): Promise<string> {
-    return this.api.mintPat(accountId, label);
   }
 
   /**
@@ -1999,6 +2330,17 @@ export class Controller {
     });
   }
 
+  /**
+   * 그 상대와의 DM 에 글 하나를 보낸다 — **채널을 열지 않는다**(설정 화면에서 보내는 「정리 맡기기」,
+   * Memory 탭 PR 5). 화면을 옮기지 않으므로 사람은 하던 정리를 이어 간다. 보낸 DM 의 id 를 돌려준다.
+   */
+  async sendDm(accountId: string, body: string): Promise<string> {
+    const dm = await this.api.createDm([accountId]);
+    this.store.getState().set({ dms: await this.api.dms() });
+    await this.send(body, [], dm.id);
+    return dm.id;
+  }
+
   async startDm(accountId: string): Promise<void> {
     const dm = await this.api.createDm([accountId]);
     this.store.getState().set({ dms: await this.api.dms() });
@@ -2194,8 +2536,12 @@ export class Controller {
     // 채널이 아예 안 열리면 안 된다 — 채널 선호(`start`)와 같은 이유다.
     this.swallow(this.loadPins(channelId));
     this.swallow(this.loadChannelAutoMentions(channelId));
-    const page = await this.api.messages(channelId, { since, limit: since === 0 ? INITIAL_HISTORY_LIMIT : undefined });
+    // 읽음 처리(`settleReadPosition`)는 **두 갈래 모두** 거친다 — 증분 갈래에서 빠뜨리면 뒤로·앞으로
+    // 간 채널의 배지가 남는다(security F1, 2026-10-06).
+    if (since > 0) { await this.pullSince(channelId, since); this.settleReadPosition(channelId); return; }
+    const page = await this.api.messages(channelId, { since, limit: INITIAL_HISTORY_LIMIT });
     this.loadedChannels.add(channelId);
+    if (page.messages.length) this.addCoverage(channelId, Math.min(...page.messages.map((m) => m.seq)), Infinity);
     store.upsertMessages(channelId, page.messages);
     // 증분 응답은 `hasMore` 를 말할 자격이 없다 — 근거는 `openChannel` 의 같은 자리.
     if (since === 0) {
@@ -2238,6 +2584,10 @@ export class Controller {
     return this.api.revokeOperator(id);
   }
 
+  renameOperator(id: string, label: string | null): Promise<import('@harkroom/shared').OperatorView> {
+    return this.api.renameOperator(id, label);
+  }
+
   assignAgent(agentId: string, operatorId: string): Promise<import('@harkroom/shared').AgentAssignmentView> {
     return this.api.assignAgent(agentId, operatorId);
   }
@@ -2245,6 +2595,39 @@ export class Controller {
   unassignAgent(agentId: string): Promise<void> {
     return this.api.unassignAgent(agentId);
   }
+
+  // API 연결(098) — 설정 › 나 › 비밀과 API. 판정은 서버.
+  listConnectors() { return this.api.listConnectors(); }
+  createConnector(body: Parameters<ApiClient['createConnector']>[0]) { return this.api.createConnector(body); }
+  patchConnector(id: string, body: Parameters<ApiClient['patchConnector']>[1]) { return this.api.patchConnector(id, body); }
+  deleteConnector(id: string) { return this.api.deleteConnector(id); }
+
+  // 비밀 보관소(085) — 설정 › 나 › 비밀과 API. 판정은 서버.
+  listSecrets() { return this.api.listSecrets(); }
+  createSecret(body: Parameters<ApiClient['createSecret']>[0]) { return this.api.createSecret(body); }
+  patchSecret(id: string, body: Parameters<ApiClient['patchSecret']>[1]) { return this.api.patchSecret(id, body); }
+  replaceSecretValue(id: string, body: Parameters<ApiClient['replaceSecretValue']>[1]) { return this.api.replaceSecretValue(id, body); }
+  deleteSecret(id: string) { return this.api.deleteSecret(id); }
+  listSecretGrants(id: string) { return this.api.listSecretGrants(id); }
+  putSecretGrant(id: string, body: Parameters<ApiClient['putSecretGrant']>[1]) { return this.api.putSecretGrant(id, body); }
+  deleteSecretGrant(id: string, grantId: string) { return this.api.deleteSecretGrant(id, grantId); }
+  listSecretAccess(id: string) { return this.api.listSecretAccess(id); }
+
+  // capability grant(055) — 에이전트 머지 권한 절(스레드 3deac356). 판정은 서버.
+  listGrants(accountId: string): Promise<import('@harkroom/shared').GrantRow[]> {
+    return this.api.listGrants(accountId);
+  }
+  putGrant(accountId: string, body: Parameters<ApiClient['putGrant']>[1]): Promise<import('@harkroom/shared').GrantRow[]> {
+    return this.api.putGrant(accountId, body);
+  }
+  grantFromMergeDenial(agentId: string, denialId: string) {
+    return this.api.grantFromMergeDenial(agentId, denialId);
+  }
+  deleteGrant(accountId: string, capability: import('@harkroom/shared').Capability, scope: string): Promise<void> {
+    return this.api.deleteGrant(accountId, capability, scope);
+  }
+  approveDelegation(grantId: string): Promise<void> { return this.api.approveDelegation(grantId); }
+  declineDelegation(grantId: string): Promise<void> { return this.api.declineDelegation(grantId); }
 
   // 호출 범위(스펙 2026-09-20 §6) — 전부 서버가 판정한다. 화면은 응답을 그대로 앉힌다.
   addInvoker(agentId: string, accountId: string): Promise<import('@harkroom/shared').AgentView> {

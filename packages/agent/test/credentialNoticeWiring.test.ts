@@ -41,7 +41,9 @@ describe('자격증명·한도 통지 배선', () => {
     // 한도 통지는 2026-09-09 에 `post` → `fail` 로 바뀌었다(평문은 스레드 머리를 `끝남` 으로
     // 만든다 — `harkroom.ts::fail` 주석). **이 검사가 지키는 것은 그대로다**: 통지가 앵커로
     // 간다는 것. 그래서 뒤에 옵션 객체가 붙는 것만 허용하고 `anchor` 는 계속 요구한다.
-    expect(src).toMatch(/quotaNotice\(quota\.resetsAt\),\s*anchor\s*[,)]/);
+    // 2026-10-02: 계정 축을 넘겼으면 계정마다의 이유를 덧붙인다(`withAccountTrail(…, trail)`).
+    // 감싸도 이 검사의 주장(앵커로 간다)은 그대로다.
+    expect(src).toMatch(/quotaNotice\(quota\.resetsAt\)(?:,\s*trail\))?,\s*anchor\s*[,)]/);
   });
 
   it('사용량 한도는 재시도 회계에 들어가지 않는다', async () => {

@@ -90,7 +90,7 @@ function CodeBlock({ code, lang }: { code: string; lang: string | null }) {
   return (
     // 코드는 접히지 않는다 — 줄바꿈된 명령줄은 그대로 복사해도 실행되지 않는다.
     // 대신 가로로 스크롤한다.
-    <div className="my-2 overflow-hidden rounded border border-border last:mb-0">
+    <div className="my-2 overflow-hidden rounded-row border border-border last:mb-0">
       <div className="flex items-center gap-2 border-b border-border bg-surface-sunken px-2 py-0.5">
         {/* 언어는 **표시만** 한다. 문법 강조기를 들이면 의존성과 공격 표면이 같이 커진다. */}
         {lang && (
@@ -105,7 +105,7 @@ function CodeBlock({ code, lang }: { code: string; lang: string | null }) {
           // `aria-label` 을 따로 두는 이유: 글자는 눌린 뒤 `복사됨` 으로 바뀌는데, 그것만
           // 읽히면 스크린리더 사용자에게는 버튼 이름이 상태에 따라 달라지는 셈이 된다.
           aria-label={t('message.code.copy')}
-          className="ml-auto rounded px-1 py-0.5 text-[0.75em] text-fg-subtle hover:bg-surface-raised hover:text-fg"
+          className="ml-auto rounded-sm px-1 py-0.5 text-[0.75em] text-fg-subtle hover:bg-surface-raised hover:text-fg"
         >
           {copied ? t('message.code.copied') : t('message.code.copy')}
         </button>
@@ -262,7 +262,7 @@ export function MessageBody({
       rel="noreferrer noopener"
       data-testid="body-link"
       data-link-kind={target.kind}
-      className="text-accent underline underline-offset-2 hover:text-accent-hover"
+      className="text-link underline underline-offset-2 hover:decoration-2"
       onClick={(e) => { e.preventDefault(); void followLink(target); }}
     >
       {label}
@@ -305,7 +305,7 @@ export function MessageBody({
      * 나를 부른 것은 그대로 주의색을 받는다 — 그것은 실제로 내 차례를 만든다.
      * 집합은 다른 색(teal)으로 구분한다.
      */
-    const className = `rounded px-0.5 font-medium ${
+    const className = `rounded-sm px-0.5 font-medium ${
       isGroup
         ? 'bg-teal-50 text-teal-700'
         : isRef
@@ -374,7 +374,7 @@ export function MessageBody({
     <code
       key={key}
       data-testid="inline-code"
-      className="rounded bg-surface-sunken px-1 py-0.5 font-mono text-[0.9em] text-fg"
+      className="rounded-sm bg-surface-sunken px-1 py-0.5 font-mono text-[0.9em] text-fg"
     >
       {code}
     </code>

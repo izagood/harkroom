@@ -1,3 +1,4 @@
+import { delegateApiGrant, listDelegations, revokeDelegation } from '../services/apiDelegation.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { FastifyInstance } from 'fastify';
@@ -6,7 +7,7 @@ import { z } from 'zod';
 import {
   ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, MAX_MESSAGE_BODY_CHARS,
   MODEL_ID_MAX, REPORT_MAX_ITEMS, REPORT_MAX_NEXT, TEAM_ROUND_LIMIT,
-  FAILURE_CODES, type AccountView, type AskAudience, type AskMeta, type DelegationMeta, type FailureMeta,
+  ACCOUNT_GATE_LABEL_PATTERN, FAILURE_CODES, type AccountView, type AskAudience, type AskMeta, type DelegationMeta, type FailureMeta,
   type MessageRow, type ModelMeta, type ReportMeta,
 } from '@harkroom/shared';
 import { CAUSE_HEADER } from '@harkroom/shared/runnerLink';
@@ -14,7 +15,7 @@ import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js
 import { emitEvent, emitPosted, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '../services/channels.js';
-import { BAD_THREAD_MESSAGE, checkAskMirror, listInbox, listMessages, markInboxRead, postMessage, searchMessages, syncAskMirrors, type AskMirrorRefusal } from '../services/messages.js';
+import { BAD_THREAD_MESSAGE, checkAskMirror, getMessageById, gateAwaitingAccount, listInbox, listMessages, markInboxRead, notifyGateAwaiting, postMessage, searchInput, searchMessages, syncAskMirrors, type AskMirrorRefusal } from '../services/messages.js';
 
 /** `message.ask` 의 `mirrorOf` 거절 사유 — 에이전트가 읽고 고칠 수 있게 무엇을 바꾸면 되는지 적는다. */
 const MIRROR_REFUSAL_MESSAGE: Record<AskMirrorRefusal, string> = {
@@ -32,8 +33,13 @@ import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '.
 import {
   listMemoryIndex, MAX_CORE_MEMORY_LENGTH, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MAX_MEMORY_DESCRIPTION_LENGTH,
   MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, memoryRev, readMemoryCounted, searchMemory, auditMemory,
-  setMemory, lastCleanRevision,
+  setMemory, lastCleanRevision, coreSections, listMemoryRevisions,
 } from '../services/memory.js';
+import {
+  acquireMemoryLease, archiveMemory, memoryLeaseStatus, memoryWarnings, mergeMemory, releaseMemoryLease, restoreMemory,
+  unarchiveMemory, MEMORY_LEASE_DEFAULT_MINUTES, MEMORY_LEASE_MAX_MINUTES, MAX_ARCHIVED_MEMORIES_PER_ACCOUNT,
+} from '../services/memoryCurate.js';
+import { randomUUID as newLeaseToken } from 'node:crypto';
 import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
 import { scanWrite } from '../services/contentScan.js';
 import { listAutomationsForAgent, proposeAutomation, runAutomationForAgent, triggerSchema } from '../services/automations.js';
@@ -44,20 +50,24 @@ import { listTeams } from '../services/teams.js';
 import { listHandleGroups } from '../services/handleGroups.js';
 import { recordClaudeLane } from '../services/claudeLane.js';
 import { recordRunnerVersion } from '../services/runnerVersion.js';
-import { resolveAttachmentFor } from '../services/attachments.js';
+import { recordUpload, resolveAttachmentFor } from '../services/attachments.js';
+import { ARTIFACT_PUBLISH_ARG_MAX_BYTES, ARTIFACT_REJECTION_MESSAGES, attachArtifactVersion } from '../services/artifacts.js';
 import { reportedModelMeta } from '../services/reportedModel.js';
 import { axisValid, getThreadAgentModel } from '../services/threadAgentModels.js';
 import { applyAgentPicks, cleanPicks, type PickChange } from '../services/agentModelPicks.js';
 import { agentModelOptions, announceChange, checkOffered, emitChanged } from '../routes/threadAgentModelRoutes.js';
 import type { OperatorHub } from '../ws/operatorHub.js';
 import { AttachmentMissingError, type StorageBackend } from '../storage/local.js';
-import type { Readable } from 'node:stream';
+import { Readable } from 'node:stream';
+import { downscaleImage, DOWNSCALE_READ_MAX_BYTES, tryAcquireDownscaleSlot } from './imageDownscale.js';
 
 // slug 문법과 거절 문구는 services/memory.ts 에 있다 — 사람용 REST(accountRoutes)도 같은 것을 쓴다.
 import { isValidSlug, MEMORY_SLUG_HINT } from '../services/memory.js';
 import { listGrantedSecrets } from '../services/secretAccess.js';
 import { collectStrings, SECRET_IN_BODY, type SecretLeakGuard } from '../services/secretLeakGuard.js';
 import type { AgentPresence } from './presence.js';
+import { enqueueAskPush } from '../services/push/pushJobs.js';
+import { bumpDenialCard, DENIAL_CARD_REFUSAL_MESSAGE, linkDenialCard, prepareDenialCard, type MergeDenialMeta } from '../services/mergeDenials.js';
 
 /**
  * 발화 도구가 공통으로 받는 `model` — 에이전트가 신고하는 **자기 모델 ID**(#600).
@@ -71,11 +81,20 @@ const MODEL_ARG = z.string().min(1).max(MODEL_ID_MAX).optional();
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** 미리보기 제목을 파일명으로 — 받은 파일이 무엇인지 보이게. 경로 성분·제어문자는 `displayName` 이 한 번 더 지운다. */
+function slugFilename(title: string): string {
+  const slug = title.replace(/[\\/:*?"<>|\x00-\x1f]+/g, ' ').trim().replace(/\s+/g, '-').slice(0, 80);
+  return slug || 'preview';
+}
+
 function jsonResult(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }] };
 }
 
 /** 게시 거절을 도구 결과로. 첨부 사유 셋은 한 코드로 합친다(라우트와 같은 이유 — 존재 여부를 흘리지 않는다). */
+/** `/mcp` 본문 상한 — `artifact.publish` 의 2MB 인자가 JSON 이스케이프로 부풀어도 들어가게. */
+const MCP_BODY_LIMIT_BYTES = 2 * ARTIFACT_PUBLISH_ARG_MAX_BYTES + 512 * 1024;
+
 function postFailureResult(failure: string) {
   if (failure === 'bad_thread') return jsonResult({ error: { code: 'bad_thread', message: BAD_THREAD_MESSAGE } });
   return jsonResult({ error: { code: 'bad_attachment', message: 'attachments must be your own, unused uploads' } });
@@ -90,7 +109,7 @@ function postFailureResult(failure: string) {
  * 그래서 사유와 다음 할 일을 문장으로 준다. JSON 의 맨 앞 키로 두는 것은 에이전트가 결과를
  * 끝까지 읽지 않아도 보게 하려는 것이다.
  */
-function postedResult(message: MessageRow, notified: string[]) {
+function postedResult(message: MessageRow, notified: string[], extra: Record<string, unknown> = {}) {
   const meta = (message.meta ?? {}) as Record<string, unknown>;
   const capped = Array.isArray(meta.mentionChainCapped) ? meta.mentionChainCapped as string[] : [];
   const denied = Array.isArray(meta.mentionDenied) ? meta.mentionDenied as string[] : [];
@@ -107,7 +126,7 @@ function postedResult(message: MessageRow, notified: string[]) {
       + ' 사람에게 message.ask 로 넘기거나 소유자에게 호출 범위를 물어라.',
     );
   }
-  return jsonResult(warnings.length ? { warnings, message, notified } : { message, notified });
+  return jsonResult(warnings.length ? { warnings, message, notified, ...extra } : { message, notified, ...extra });
 }
 
 /**
@@ -124,7 +143,8 @@ const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
  * 그림으로 실어 줄 최대 원본 크기. base64 는 4/3 로 부풀므로 3MiB → 4MiB 가 되고,
  * 그것이 한 요청에 이미지 하나로 실리는 실질 한계 안이다.
  *
- * 넘는 것을 **거절하지 않는다** — 메타데이터로 떨어뜨린다. 그래야 에이전트가 "무엇이
+ * 넘는 것을 **거절하지 않는다** — 32MiB 까지는 줄인 사본을 싣고(`imageDownscale.ts`),
+ * 그보다 크거나 줄이지 못하면 메타데이터로 떨어뜨린다. 그래야 에이전트가 "무엇이
  * 왔는지"는 알고, 정말 필요하면 REST 로 스트리밍해 받는다. 여기서 200MB 를 통째로
  * base64 로 만들면 서버 메모리와 모델 컨텍스트를 함께 태운다.
  */
@@ -483,13 +503,39 @@ function buildMcpServer(
     return jsonResult({ messages: await denormalizeBodies(pool, messages) });
   });
 
+  // REST `/search` 와 **같은 함수·같은 입력 조각**(`searchInput`)이다(S2). 가시성 판단은 `searchMessages`
+  // 하나에만 있고, 여기는 인자를 옮겨 줄 뿐이다 — 두 벌로 두면 한쪽만 고쳐지는 날이 온다.
   server.registerTool('message.search', {
-    description: '메시지 전문 검색',
-    inputSchema: { query: z.string().min(1).max(256) },
-  }, async ({ query }) => {
-    // 검색어도 본문과 같은 규칙으로 정본에 맞춘다 — REST `/search` 와 **같은 함수**다.
-    const page = await searchMessages(pool, account.id, await normalizeSearchQuery(pool, query));
-    return jsonResult({ messages: await denormalizeBodies(pool, page.messages) });
+    description: '메시지 전문 검색 — 볼 수 있는 대화 전체(channelId·threadRootId 로 좁힘). 보낸 사람(authorIds, 계정 id 최대 10개 — account.list 로 얻는다)·기간(after·before, 시간대 붙은 ISO, [after, before))·첨부 있는 것만(hasAttachment)·정렬(relevance 기본 | recent)으로 거른다. 50개씩, hasMore 면 offset 으로 다음 묶음',
+    inputSchema: {
+      query: searchInput.query,
+      channelId: z.string().uuid().optional(),
+      threadRootId: z.string().uuid().optional(),
+      offset: searchInput.offset.optional(),
+      authorIds: searchInput.authorIds.optional(),
+      after: searchInput.time.optional(),
+      before: searchInput.time.optional(),
+      hasAttachment: z.boolean().optional(),
+      sort: searchInput.sort.optional(),
+    },
+  }, async ({ query, channelId, threadRootId, offset, authorIds, after, before, hasAttachment, sort }) => {
+    // 볼 수 없는 채널을 범위로 주면 REST 의 403 과 같은 거절 — 빈 결과로 답하면 "못 보는 채널"과
+    // "일치가 없는 채널"이 구분되지 않는다(message.read 와 같은 문장).
+    if (channelId && !(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this channel' } });
+    }
+    // 검색어도 본문과 같은 규칙으로 정본에 맞춘다(`@handle` → `<@id>`).
+    const page = await searchMessages(pool, account.id, await normalizeSearchQuery(pool, query), {
+      channelId: channelId ?? null,
+      threadRootId: threadRootId ?? null,
+      offset: offset ?? 0,
+      authorIds: authorIds ?? null,
+      after: after ?? null,
+      before: before ?? null,
+      hasAttachment: hasAttachment ?? null,
+      sort: sort ?? 'relevance',
+    });
+    return jsonResult({ messages: await denormalizeBodies(pool, page.messages), hasMore: page.hasMore });
   });
 
   server.registerTool('message.post', {
@@ -499,10 +545,12 @@ function buildMcpServer(
       body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
       threadRootId: z.string().uuid().optional(),
       alsoInChannel: z.boolean().optional(),
+      // 내가 올린, 아직 아무 글에도 안 붙은 업로드(`attachment.upload` 가 돌려준 id). REST 와 같은 상한이다.
+      attachmentIds: z.array(z.string().uuid()).max(10).optional(),
       model: MODEL_ARG,
       agentModels: AGENT_MODELS_ARG,
     },
-  }, async ({ channelId, body, threadRootId, alsoInChannel, model, agentModels }) => {
+  }, async ({ channelId, body, threadRootId, alsoInChannel, attachmentIds, model, agentModels }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
@@ -512,6 +560,7 @@ function buildMcpServer(
     const posted = await postMessage(pool, {
       causeMessageId: cause,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null, alsoInChannel,
+      attachmentIds: attachmentIds ?? [],
       meta: await reportedModelMeta(pool, account.id, model, threadRootId ?? null),
       ...(picks.list.length ? {
         beforeCommit: async (client, ctx) => {
@@ -526,8 +575,7 @@ function buildMcpServer(
       } : {}),
     });
     if (posted.failure === 'rejected') return jsonResult({ error: { code: posted.rejection.code, message: posted.rejection.message } });
-    // 에이전트는 첨부를 붙이지 않는다(도구에 그 입력이 없다). 그래도 합 타입이므로 확인해야
-    // 하고, 확인 자체가 나중에 도구가 첨부를 받게 될 때의 자리를 남겨 둔다.
+    // 첨부 연결 실패(남의 업로드·이미 붙은 업로드·없는 id)는 REST 와 같은 판정이다(`attachToMessage`).
     if (posted.failure) return postFailureResult(posted.failure);
     const { message, notified, replayed } = posted;
     if (!replayed) {
@@ -585,6 +633,103 @@ function buildMcpServer(
   });
 
   /**
+   * 미리보기(아티팩트) 올리기(2026-10-02). 디자인 안·보고서 같은 HTML 한 장을 **글 하나로** 올린다 —
+   * 사람은 그 글의 카드를 눌러 앱 안에서 바로 본다(`GET /preview/:token`, 격리는 previewRoutes 주석).
+   * claude.ai 아티팩트 링크는 그 브라우저에 로그인한 사람만 열고, 폰에서는 막힌다 — 이 도구가 그 대신이다.
+   *
+   * 페이지는 둘 중 하나로 받는다: `html` 글자(2MB 까지 — 모델이 어차피 글자로 쓴다) 또는 `attachmentId`
+   * (브릿지 `attachment.upload` 로 올린 내 파일, 5MB 까지). 표지 그림은 선택이다.
+   *
+   * 고쳐 올릴 때는 `artifactId` 를 준다 → 같은 안의 v(n+1) 이 **새 글**로 올라간다. 옛 글은 그때
+   * 버전을 그대로 가리킨다. 같은 채널·내가 만든 안에만 얹을 수 있다(`attachArtifactVersion`).
+   *
+   * 메시지·첨부 연결·버전 행은 `postMessage` 의 한 트랜잭션이다. `html` 로 받은 바이트는 그보다 먼저
+   * 디스크·업로드 행으로 쓰고, 게시가 실패하면 지운다(실패해도 붙지 않은 업로드라 GC 대상이기도 하다).
+   */
+  server.registerTool('artifact.publish', {
+    description: 'HTML 미리보기(디자인 안 등)를 글로 올린다 — 사람이 앱 안에서 바로 연다. claude.ai 아티팩트 링크 대신 쓴다. html 글자 또는 attachment.upload 로 올린 파일 id, 고쳐 올릴 땐 artifactId',
+    inputSchema: {
+      channelId: z.string().uuid(),
+      threadRootId: z.string().uuid().optional(),
+      title: z.string().trim().min(1).max(200),
+      body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
+      html: z.string().min(1).optional(),
+      attachmentId: z.string().uuid().optional(),
+      coverAttachmentId: z.string().uuid().optional(),
+      artifactId: z.string().uuid().optional(),
+      summary: z.string().trim().min(1).max(500).optional(),
+      model: MODEL_ARG,
+    },
+  }, async ({ channelId, threadRootId, title, body, html, attachmentId, coverAttachmentId, artifactId, summary, model }) => {
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    if ((html === undefined) === (attachmentId === undefined)) {
+      return jsonResult({ error: { code: 'bad_request', message: 'give exactly one of html or attachmentId' } });
+    }
+
+    // html 글자로 받았으면 먼저 업로드 행으로 만든다 — 그래야 아래가 파일로 받은 경우와 한 길이다.
+    let uploaded: { id: string; storageKey: string } | null = null;
+    if (html !== undefined) {
+      const bytes = Buffer.from(html, 'utf8');
+      if (bytes.length > ARTIFACT_PUBLISH_ARG_MAX_BYTES) {
+        return jsonResult({ error: { code: 'too_large', message: `html exceeds ${ARTIFACT_PUBLISH_ARG_MAX_BYTES / 1024 / 1024}MB — write it to a file and use attachment.upload` } });
+      }
+      const stored = await storage.write(Readable.from([bytes]));
+      try {
+        const row = await recordUpload(pool, {
+          uploaderId: account.id, filename: `${slugFilename(title)}.html`, contentType: 'text/html',
+          sizeBytes: stored.bytes, storageKey: stored.key,
+        });
+        uploaded = { id: row.id, storageKey: stored.key };
+      } catch (err) {
+        await storage.remove(stored.key).catch(() => {});
+        throw err;
+      }
+    }
+    const htmlId = uploaded?.id ?? attachmentId!;
+
+    let published: { artifactId: string; version: number } | null = null;
+    const posted = await postMessage(pool, {
+      causeMessageId: cause,
+      channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
+      attachmentIds: [htmlId, ...(coverAttachmentId ? [coverAttachmentId] : [])],
+      meta: await reportedModelMeta(pool, account.id, model, threadRootId ?? null),
+      beforeCommit: async (client) => {
+        const out = await attachArtifactVersion(client, {
+          channelId, actorId: account.id, title, htmlAttachmentId: htmlId,
+          coverAttachmentId: coverAttachmentId ?? null, summary: summary ?? null, artifactId: artifactId ?? null,
+        });
+        if (!out.ok) return { status: 400, code: out.code, message: ARTIFACT_REJECTION_MESSAGES[out.code] };
+        published = { artifactId: out.artifactId, version: out.version };
+        return null;
+      },
+    });
+    if (posted.failure) {
+      // 글이 안 생겼다 — 이 도구가 만든 업로드는 아무도 가리키지 않는다. 지금 지운다.
+      if (uploaded) {
+        await pool.query(`delete from attachment where id = $1 and message_id is null`, [uploaded.id]).catch(() => {});
+        await storage.remove(uploaded.storageKey).catch(() => {});
+      }
+      if (posted.failure === 'rejected') return jsonResult({ error: { code: posted.rejection.code, message: posted.rejection.message } });
+      return postFailureResult(posted.failure);
+    }
+    const { message, notified, replayed } = posted;
+    if (replayed && uploaded) {
+      // 같은 요청의 재생이다 — 글은 앞서 만든 것이고, 방금 쓴 업로드는 아무 글에도 붙지 않았다. 지금 지운다
+      // (security #1050 b: GC 가 치우긴 하지만 남길 이유가 없다).
+      await pool.query(`delete from attachment where id = $1 and message_id is null`, [uploaded.id]).catch(() => {});
+      await storage.remove(uploaded.storageKey).catch(() => {});
+    }
+    if (!replayed) {
+      const audience = await audienceFor(pool, channelId);
+      emitPosted(posted, audience);
+      for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
+    }
+    return postedResult(message, notified, { artifact: published });
+  });
+
+  /**
    * 선택 요청 — 갈림길에서 선택지를 내놓는다. 고르면 그 즉시 진행되므로 사람이 다시
    * 타이핑하지 않는다(디자인 문서 규칙 05: 답할 자리가 말 옆에 있다).
    *
@@ -617,9 +762,15 @@ function buildMcpServer(
        * 정해지면 이 카드가 그 결과로 닫힌다. 답은 끝까지 사람이 누른다 — 대리 답이 아니다.
        */
       mirrorOf: z.string().uuid().optional(),
+      /**
+       * 머지 래퍼가 `not_granted` 와 함께 돌려준 `denialId`(스레드 febe9ff8 P3). 실으면 서버가 그 거절 기록으로 카드의 권한
+       * 칸(저장소·PR·에이전트)을 채우고, 소유자에게 [7일 주기] 버튼이 뜬다. 선택지에는 「다시 머지」 같은 다음 걸음을 둔다 —
+       * 권한 주기는 선택지가 아니다. 같은 날 같은 저장소면 새 카드 대신 있던 카드의 횟수가 오른다.
+       */
+      mergeDenialId: z.string().uuid().optional(),
       model: MODEL_ARG,
     },
-  }, async ({ channelId, body, threadRootId, options, to, prompt, mirrorOf, model }) => {
+  }, async ({ channelId, body, threadRootId, options, to, prompt, mirrorOf, mergeDenialId, model }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
@@ -627,6 +778,10 @@ function buildMcpServer(
     const ids = new Set(options.map((o) => o.id));
     if (ids.size !== options.length) {
       return jsonResult({ error: { code: 'duplicate_option', message: 'option ids must be unique' } });
+    }
+    // 머지 거절 카드는 사람 앞 원본만이다(C1) — 거울 검사보다 먼저 막아야 어느 쪽을 실어도 같은 코드로 거절된다(security n2).
+    if (mergeDenialId && (to || mirrorOf)) {
+      return jsonResult({ error: { code: 'merge_denial_audience', message: 'a merge-denial card is addressed to humans; omit `to` and `mirrorOf`' } });
     }
     let audience: AskAudience = { kind: 'human' };
     if (to) {
@@ -649,8 +804,24 @@ function buildMcpServer(
         return jsonResult({ error: { code: refusal, message: MIRROR_REFUSAL_MESSAGE[refusal] } });
       }
     }
-    const meta: AskMeta & Partial<ModelMeta> = {
+    // 머지 거절 카드(P3, security C1·C3). 권한 칸은 거절 기록에서만 채운다 — 에이전트가 쓴 본문·선택지와 섞지 않는다.
+    let mergeDenial: MergeDenialMeta | null = null;
+    if (mergeDenialId) {
+      if (audience.kind !== 'human' || mirrorOf) {
+        return jsonResult({ error: { code: 'merge_denial_audience', message: 'a merge-denial card is addressed to humans; omit `to` and `mirrorOf`' } });
+      }
+      const prepared = await prepareDenialCard(pool, { agentId: account.id, denialId: mergeDenialId, channelId, threadRootId: threadRootId ?? null });
+      if (!prepared.ok) return jsonResult({ error: { code: prepared.code, message: DENIAL_CARD_REFUSAL_MESSAGE[prepared.code] } });
+      if (prepared.existingCardId) {
+        await bumpDenialCard(pool, prepared.existingCardId, prepared.meta);
+        const existing = await getMessageById(pool, prepared.existingCardId);
+        if (existing) return jsonResult({ message: existing, notified: [], merged: 'same repository was already refused today — counted on the existing card' });
+      }
+      mergeDenial = prepared.meta;
+    }
+    const meta: AskMeta & Partial<ModelMeta> & { mergeDenial?: MergeDenialMeta } = {
       kind: 'ask', ask: { options, to: audience, ...(prompt ? { prompt } : {}), ...(mirrorOf ? { mirrorOf } : {}) },
+      ...(mergeDenial ? { mergeDenial } : {}),
       ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
     };
     const posted = await postMessage(pool, {
@@ -660,12 +831,26 @@ function buildMcpServer(
     });
     if (posted.failure) return postFailureResult(posted.failure);
     const { message, notified, replayed } = posted;
+    if (mergeDenial && !replayed) await linkDenialCard(pool, mergeDenial.denialId, message.id);
     if (!replayed) {
       const channelAudience = await audienceFor(pool, channelId);
       emitPosted(posted, channelAudience);
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
       // 검사와 발행 사이에 원본이 정해졌으면 방금 세운 거울을 곧바로 그 결과로 닫는다.
       if (mirrorOf) await syncAskMirrors(pool, mirrorOf);
+      /*
+        사람 앞 물음의 푸시(security G4). to:human 은 받는 사람이 정해져 있지 않다 — 그 턴을 띄운 멘션의
+        작성자(차례 주인, `gateAwaitingAccount`)에게만 보낸다. 원인 헤더가 없거나 차례 주인이 사람이
+        아니거나 그 채널이 안 보이면 보내지 않는다. 이 글로 이미 inbox 를 받았으면(멘션) 그 job 이 간다.
+      */
+      if (audience.kind === 'human' && cause) {
+        const awaiting = await gateAwaitingAccount(pool, account.id, channelId, cause);
+        if (awaiting && !notified.includes(awaiting)) await enqueueAskPush(pool, awaiting, message.id);
+      }
+      // 받는 사람을 이름으로 정한 물음이면 그 사람이다. 에이전트면 `enqueueAskPush` 가 아무것도 넣지 않는다.
+      if (audience.kind === 'account' && !notified.includes(audience.accountId)) {
+        await enqueueAskPush(pool, audience.accountId, message.id);
+      }
     }
     return postedResult(message, notified);
   });
@@ -689,11 +874,17 @@ function buildMcpServer(
       what: z.string().min(1).max(500).optional(),
       reason: z.string().min(1).max(1000).optional(),
       retryable: z.boolean(),
-      // 기계가 읽는 실패 갈래(FailureMeta 주석). 러너가 스레드 지정 모델 거절 때 싣는다.
+      // 기계가 읽는 실패 갈래(FailureMeta 주석). 러너가 스레드 지정 모델 거절·계정 관문 때 싣는다.
       code: z.enum(FAILURE_CODES).optional(),
+      /**
+       * `account_gate` 때만: 그 턴을 띄운 멘션(차례 주인을 정할 재료 — 서버가 확인한다)과 관문이 선
+       * 계정의 이름표(`풀/계정`). 러너의 자기 호출에는 원인 헤더가 없어서 멘션을 직접 싣는다.
+       */
+      mentionId: z.string().uuid().optional(),
+      account: z.string().regex(ACCOUNT_GATE_LABEL_PATTERN).optional(),
       model: MODEL_ARG,
     },
-  }, async ({ channelId, body, threadRootId, what, reason, retryable, code, model }) => {
+  }, async ({ channelId, body, threadRootId, what, reason, retryable, code, mentionId, account: gateAccount, model }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
@@ -707,15 +898,35 @@ function buildMcpServer(
     const keepCode = code === 'thread_model_rejected'
       ? !!threadRootId && !!(await getThreadAgentModel(pool, threadRootId, account.id).then((r) => r && !r.stale))
       : !!code;
+    /*
+      **`account_gate` 의 차례 주인은 서버가 정한다**(2026-10-02, 관문 대응 안 2). 그 턴을 띄운 멘션
+      (`mentionId`, 없으면 원인 헤더)이 이 에이전트를 실제로 깨웠고 작성자가 사람이면 그 사람이다
+      (`gateAwaitingAccount`). 못 정해도 표지는 남긴다 — 사람이 풀어야 하는 관문이라는 사실은 같다.
+      이름표·차례 주인은 이 표지에만 붙는다: 다른 실패에 계정 사실이 따라 올라가지 않게.
+    */
+    const gate = code === 'account_gate' && keepCode;
+    const gateSource = mentionId ?? cause;
+    const awaiting = gate && gateSource ? await gateAwaitingAccount(pool, account.id, channelId, gateSource) : null;
     const meta: FailureMeta & Partial<ModelMeta> = {
       kind: 'failure',
-      failure: { retryable, ...(what ? { what } : {}), ...(reason ? { reason } : {}), ...(code && keepCode ? { code } : {}) },
+      failure: {
+        retryable, ...(what ? { what } : {}), ...(reason ? { reason } : {}), ...(code && keepCode ? { code } : {}),
+        ...(awaiting ? { awaitingAccountId: awaiting } : {}),
+        ...(gate && gateAccount ? { account: gateAccount } : {}),
+      },
       ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
     };
     const posted = await postMessage(pool, {
       causeMessageId: cause,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
       meta: meta as unknown as Record<string, unknown>,
+      // 차례 주인이 이 글로 알림을 못 받는 자리(남이 세운 스레드에서 불렀다 등)면 Inbox 에 넣는다.
+      ...(awaiting ? {
+        beforeCommit: async (client, ctx) => {
+          await notifyGateAwaiting(client, awaiting, ctx.message.id, ctx.notified);
+          return null;
+        },
+      } : {}),
     });
     if (posted.failure) return postFailureResult(posted.failure);
     const { message, notified, replayed } = posted;
@@ -1178,6 +1389,8 @@ function buildMcpServer(
     return jsonResult({
       slug: memory.slug, value: memory.value, updatedAt: memory.updatedAt.toISOString(),
       ...(memory.description ? { description: memory.description } : {}),
+      // 보관된 기억(097)도 읽힌다 — 목록·recall 에서만 빠진다. 다시 쓰려면 memory.unarchive.
+      ...(memory.archivedAt ? { archived: true, archivedAt: memory.archivedAt.toISOString() } : {}),
     });
   });
 
@@ -1192,19 +1405,33 @@ function buildMcpServer(
       // 러너 자동 주입용(recall P1) — 이름·상투어를 거르고 이름·요약 일치만, journal 빼고.
       // 옛 서버는 모르는 키를 버리므로(zod strip) 러너는 응답의 nameHits 로 새 서버를 알아본다.
       recall: z.boolean().optional(),
+      // recall 모드만(S2 F1·F6): 이 세션에 이미 실은 판(`slug@updatedAt`, 옛 러너는 맨 slug)을 빼고,
+      // 러너가 실을 앞 recordTop 개를 recall_count 로 센다. 옛 서버는 둘 다 버린다 — 러너는 제 쪽에서도 거른다.
+      exclude: z.array(z.string().max(300)).max(200).optional(),
+      recordTop: z.number().int().min(0).max(5).optional(),
+      // recall 모드만(G): 이번에 새로 온 말. 주면 그 낱말이 이름·요약에 하나 이상 걸린 것만 돌려주고(후속 턴 게이트)
+      // 응답에 focusTerms 를 싣는다. 옛 서버는 버린다 — 러너는 focusTerms 가 없으면 루트 머리 없이 다시 묻는다.
+      focus: z.string().max(2000).optional(),
+      // 보관된 것(097)도 찾는다 — 에이전트가 직접 찾을 때만. recall 은 보관을 보지 않는다.
+      includeArchived: z.boolean().optional(),
     },
-  }, async ({ query, limit, includeValue, recall }) => {
+  }, async ({ query, limit, includeValue, recall, exclude, recordTop, focus, includeArchived }) => {
     const res = await searchMemory(pool, account.id, query, {
       limit: limit ?? 5, includeValue: includeValue ?? false, recall: recall ?? false,
+      ...(recall
+        ? { exclude: exclude ?? [], recordTop: recordTop ?? 0, ...(focus !== undefined ? { focus } : {}) }
+        : { includeArchived: includeArchived ?? false }),
     });
     return jsonResult(recall ? res : { hits: res.hits });
   });
 
   // memory.audit — 정리 턴(M4)이 볼 후보. 판단은 에이전트가 한다; 서버는 사실만 모은다.
   server.registerTool('memory.audit', {
-    description: '내 기억의 정리 후보: 한 번도/30일 넘게 안 읽힘·깨진 [[링크]]·이름이 거의 같은 짝·낡은 낱말(patterns)·요약 없음(undescribed)·core 길이. '
-      + '정리 절차: 후보마다 memory.get 으로 읽고 판단한다 — 합치거나(한쪽에 모으고 다른 쪽 삭제), 되풀이할 교훈만 남기고 줄이거나, '
-      + '낡은 이름을 고치거나, 필요 없으면 지운다. 요약이 없는 것은 읽고 "언제 열어 볼지" 한 줄을 description 으로 채운다(목록·자동 recall 이 요약으로 찾는다). 고칠 땐 ifUpdatedAt 을 준다(이전 판이 남아 되돌릴 수 있다). 끝나면 무엇을 바꿨는지 스레드에 보고한다',
+    description: '내 기억의 정리 후보: 한 번도/30일 넘게 안 읽힘·깨진 [[링크]]·이름이 거의 같은 짝(similar)·본문이 절반 넘게 겹치는 짝(similarBody)·'
+      + '같은 PR 번호를 공유하는 묶음(sharedRefs)·90일 넘게 안 고침(old)·긴 것(largest)·곧 밀려날 journal(expiringJournal)·낡은 낱말(patterns)·요약 없음(undescribed)·core 길이·항목 수(items). '
+      + '정리 절차: 먼저 memory.lease 로 임대를 잡는다(다른 턴이 정리 중이면 물러난다). 후보마다 memory.get 으로 읽고 판단한다 — '
+      + '합칠 것은 memory.merge(한 호출로 into 를 쓰고 from 을 보관), 안 쓰는 것은 지우지 말고 memory.archive(보관 — 목록·recall 에서 빠지고 unarchive 로 돌아온다), '
+      + '되풀이할 교훈만 남기고 줄이거나, 낡은 이름을 고친다. 틀렸으면 memory.restore. truncated 면 고친 뒤 다시 부른다. 요약이 없는 것은 읽고 "언제 열어 볼지" 한 줄을 description 으로 채운다(목록·자동 recall 이 요약으로 찾는다). 고칠 땐 ifUpdatedAt 을 준다(이전 판이 남아 되돌릴 수 있다). 끝나면 무엇을 바꿨는지 스레드에 보고한다',
     inputSchema: { patterns: z.array(z.string().min(3).max(100)).max(20).optional() },
   }, async ({ patterns }) => jsonResult(await auditMemory(pool, account.id, patterns ?? [])));
 
@@ -1236,7 +1463,8 @@ function buildMcpServer(
         error: {
           code: 'core_too_long',
           message: `core 는 ${MAX_CORE_MEMORY_LENGTH}자까지다(지금 ${value.length}자). core 는 매 턴 통째로 실린다 — `
-            + '한 가지 주제로 묶이는 것은 `mem/<이름>` 으로 옮기고 core 에는 포인터 한 줄만 남겨라.',
+            + '한 가지 주제로 묶이는 것은 `mem/<이름>` 으로 옮기고 core 에는 포인터 한 줄만 남겨라. sections 는 절(## 제목) 단위 길이, 긴 것부터 — 내릴 후보다.',
+          sections: coreSections(value),
         },
       });
     }
@@ -1265,16 +1493,139 @@ function buildMcpServer(
         error: { code: 'too_many', message: `at most ${MAX_MEMORY_ITEMS_PER_ACCOUNT} memories per account` },
       });
     }
+    // 쓴 자리에서 알린다(C1): core 가 곧 넘침·항목이 곧 상한·journal 이 곧 밀려남. 비어 있으면 싣지 않는다.
+    const warnings = await memoryWarnings(pool, account.id);
+    const warn = warnings.length ? { warnings } : {};
     if (flag) {
       return jsonResult({
         ok: true,
+        ...warn,
         flagged: { reason: flag.reason, rules: flag.rules },
         notice: `저장했지만 쓰기 검사에 걸렸다(${flag.reason}). 사람이 확인할 때까지 이 판은 목록 요약·recall·memory.get `
           + '어디에도 실리지 않는다. 남의 글을 옮겨 적었거나 비밀 값을 넣었다면 빼고 다시 써라. 그대로 둬야 하면 '
           + '사람에게 확인을 부탁해라(설정 › 에이전트 › 기억).',
       });
     }
+    return jsonResult({ ok: true, ...warn });
+  });
+
+  // ── 정리 도구(C1, services/memoryCurate.ts). 지우기 대신 보관, 합치기는 한 호출, 되돌리기는 도구로. ──
+  const slugArg = z.string().min(1);
+  const ifUpdatedAtArg = z.string().datetime({ offset: true }).nullable().optional();
+  const toDate = (v: string | null | undefined): Date | null | undefined => (v === undefined ? undefined : v === null ? null : new Date(v));
+  const conflictError = (slug: string, now: Date | null) => jsonResult({
+    error: {
+      code: 'conflict', slug, updatedAt: now ? now.toISOString() : null,
+      message: now
+        ? `그 사이 다른 턴이 ${slug} 를 고쳤다(지금 판 ${now.toISOString()}). memory.get 으로 다시 읽고 그 updatedAt 으로 다시 해라.`
+        : `${slug} 가 그 사이 지워졌거나 아직 없다.`,
+    },
+  });
+
+  server.registerTool('memory.archive', {
+    description: '기억을 보관한다(삭제 대신). 목록(<memory-index>)·recall·검색·200 상한에서 빠지지만 memory.get 으로 읽히고 memory.unarchive 로 돌아온다. '
+      + `보관은 ${MAX_ARCHIVED_MEMORIES_PER_ACCOUNT}개까지 — 넘치면 가장 오래 보관된 것부터 이전 판으로 밀려난다. `
+      + '안 쓰는 것 같은데 지우기 아까우면 이것이다. core 는 보관할 수 없다. ifUpdatedAt 은 memory.get 의 updatedAt',
+    inputSchema: { slug: slugArg, ifUpdatedAt: ifUpdatedAtArg },
+  }, async ({ slug, ifUpdatedAt }) => {
+    if (!isValidSlug(slug)) return jsonResult({ error: { code: 'invalid_slug', message: MEMORY_SLUG_HINT } });
+    if (slug === 'core') return jsonResult({ error: { code: 'core_not_archivable', message: 'core 는 매 턴 실리는 자리라 보관할 수 없다 — 줄여 써라' } });
+    const r = await archiveMemory(pool, account.id, slug, toDate(ifUpdatedAt));
+    if (r === 'not_found') return jsonResult({ error: { code: 'not_found', message: 'memory not found' } });
+    if (typeof r === 'object') return conflictError(slug, r.conflict.updatedAt);
     return jsonResult({ ok: true });
+  });
+
+  server.registerTool('memory.unarchive', {
+    description: '보관한 기억을 되살린다. 살아 있는 항목이 상한(200)이면 too_many — 먼저 자리를 비운다',
+    inputSchema: { slug: slugArg },
+  }, async ({ slug }) => {
+    if (!isValidSlug(slug)) return jsonResult({ error: { code: 'invalid_slug', message: MEMORY_SLUG_HINT } });
+    const r = await unarchiveMemory(pool, account.id, slug);
+    if (r === 'not_found') return jsonResult({ error: { code: 'not_found', message: 'memory not found' } });
+    if (r === 'too_many') return jsonResult({ error: { code: 'too_many', message: `at most ${MAX_MEMORY_ITEMS_PER_ACCOUNT} active memories per account` } });
+    return jsonResult({ ok: true });
+  });
+
+  server.registerTool('memory.merge', {
+    description: '기억 여럿을 하나로 합친다 — 한 호출로 into 를 value 로 쓰고 from 을 전부 보관한다(두 호출로 나누면 그 사이 다른 턴이 from 을 고친다). '
+      + 'into 는 있는 것이든 새 이름이든 된다. ifUpdatedAt 은 {slug: updatedAt} 꼴로, 적은 slug 만 대 본다(into 가 없어야 하면 null). '
+      + '이전 판이 reason=merge 로 남아 memory.restore 로 되돌린다. 합친 본문에는 from 의 되풀이할 사실만 남기고 경위는 버려라',
+    inputSchema: {
+      into: slugArg,
+      from: z.array(slugArg).min(1).max(10),
+      value: z.string().min(1).max(MAX_MEMORY_VALUE_LENGTH),
+      description: z.string().max(MAX_MEMORY_DESCRIPTION_LENGTH).optional(),
+      kind: z.enum(MEMORY_KINDS).optional(),
+      ifUpdatedAt: z.record(z.string(), z.string().datetime({ offset: true }).nullable()).optional(),
+    },
+  }, async ({ into, from, value, description, kind, ifUpdatedAt }) => {
+    for (const s of [into, ...from]) if (!isValidSlug(s)) return jsonResult({ error: { code: 'invalid_slug', slug: s, message: MEMORY_SLUG_HINT } });
+    if (into === 'core' || from.includes('core')) return jsonResult({ error: { code: 'core_not_mergeable', message: 'core 는 합치기의 대상이 아니다 — memory.set 으로 써라' } });
+    const flag = scanWrite(value, description);
+    const expect = ifUpdatedAt
+      ? Object.fromEntries(Object.entries(ifUpdatedAt).map(([k, v]) => [k, v === null ? null : new Date(v)]))
+      : undefined;
+    const r = await mergeMemory(pool, account.id, { into, from, value, description, kind, expect, flagReason: flag?.reason ?? null });
+    if (r === 'too_many') return jsonResult({ error: { code: 'too_many', message: `at most ${MAX_MEMORY_ITEMS_PER_ACCOUNT} active memories per account` } });
+    if (typeof r === 'object' && 'notFound' in r) return jsonResult({ error: { code: 'not_found', slugs: r.notFound, message: 'from 중 없는 기억이 있다 — 아무것도 바꾸지 않았다' } });
+    if (typeof r === 'object') return conflictError(r.conflict.slug, r.conflict.updatedAt);
+    const warnings = await memoryWarnings(pool, account.id);
+    return jsonResult({
+      ok: true, archived: from.filter((s) => s !== into),
+      ...(warnings.length ? { warnings } : {}),
+      ...(flag ? { flagged: { reason: flag.reason, rules: flag.rules }, notice: '합친 본문이 쓰기 검사에 걸렸다 — 사람이 확인할 때까지 프롬프트에 안 실린다. 지시문·비밀 값 없이 다시 써라.' } : {}),
+    });
+  });
+
+  server.registerTool('memory.revisions', {
+    description: '한 기억의 이전 판(최근 것부터, 최대 5 + 정리로 생긴 판 20). reason=merge 의 detail.from 은 거기 합쳐진 기억들. memory.restore 에 id 를 준다',
+    inputSchema: { slug: slugArg },
+  }, async ({ slug }) => {
+    if (!isValidSlug(slug)) return jsonResult({ error: { code: 'invalid_slug', message: MEMORY_SLUG_HINT } });
+    const revisions = await listMemoryRevisions(pool, account.id, slug);
+    return jsonResult({
+      revisions: revisions.map((r) => ({
+        id: r.id, updatedAt: r.updatedAt.toISOString(), replacedAt: r.replacedAt.toISOString(), chars: r.value.length, ...(r.kind ? { kind: r.kind } : {}),
+        ...(r.description ? { description: r.description } : {}), ...(r.reason ? { reason: r.reason } : {}),
+        ...(r.detail ? { detail: r.detail } : {}), ...(r.flagged ? { flagged: true } : {}),
+      })),
+    });
+  });
+
+  server.registerTool('memory.restore', {
+    description: '이전 판으로 되돌린다(revisionId 생략=가장 최근 판). 지금 판은 reason=restore 로 남아 되돌리기도 되돌릴 수 있다. 지워졌거나 보관된 기억도 이것으로 살아난다(종류는 판에 적힌 대로). 되살리는 본문은 쓰기 검사를 다시 거친다',
+    inputSchema: { slug: slugArg, revisionId: z.number().int().positive().optional() },
+  }, async ({ slug, revisionId }) => {
+    if (!isValidSlug(slug)) return jsonResult({ error: { code: 'invalid_slug', message: MEMORY_SLUG_HINT } });
+    // 되살리는 본문도 지금 규칙으로 검사한다(080, security L1) — 걸리면 걸린 채로 산다.
+    const r = await restoreMemory(pool, account.id, slug, revisionId, (v, d) => scanWrite(v, d)?.reason ?? null);
+    if (r === 'not_found') return jsonResult({ error: { code: 'not_found', message: '그 판이 없다 — memory.revisions 로 확인해라' } });
+    if (r === 'too_many') return jsonResult({ error: { code: 'too_many', message: `at most ${MAX_MEMORY_ITEMS_PER_ACCOUNT} active memories per account` } });
+    return jsonResult({ ok: true });
+  });
+
+  server.registerTool('memory.lease', {
+    description: '정리 임대(계정당 하나). acquire 로 잡고(token 을 돌려준다, 같은 token 으로 다시 부르면 연장) 끝나면 release. '
+      + '다른 턴이 들고 있으면 acquired:false 와 만료 시각 — 그때는 정리하지 말고 물러나라(둘이 같이 고치면 ifUpdatedAt 충돌만 난다). status 는 조회',
+    inputSchema: {
+      action: z.enum(['acquire', 'release', 'status']),
+      token: z.string().min(8).max(80).optional(),
+      minutes: z.number().int().min(1).max(MEMORY_LEASE_MAX_MINUTES).optional(),
+    },
+  }, async ({ action, token, minutes }) => {
+    const view = (l: { holder: string; acquiredAt: Date; expiresAt: Date } | null) => (l
+      ? { acquiredAt: l.acquiredAt.toISOString(), expiresAt: l.expiresAt.toISOString() } : null);
+    if (action === 'status') return jsonResult({ lease: view(await memoryLeaseStatus(pool, account.id)) });
+    if (action === 'release') {
+      if (!token) return jsonResult({ error: { code: 'token_required', message: 'release 에는 acquire 가 준 token 이 필요하다' } });
+      return jsonResult({ ok: true, released: await releaseMemoryLease(pool, account.id, token) });
+    }
+    const t = token ?? newLeaseToken();
+    const r = await acquireMemoryLease(pool, account.id, t, minutes ?? MEMORY_LEASE_DEFAULT_MINUTES);
+    // token 은 잡은 쪽에만 준다 — 남의 token 을 알면 남의 임대를 놓을 수 있다.
+    if (r.acquired) return jsonResult({ acquired: true, token: t, lease: view(r.lease) });
+    return jsonResult({ acquired: false, heldBy: view(r.heldBy), notice: '다른 턴이 이 계정의 기억을 정리하고 있다 — 만료 뒤에 다시 하거나 물러나라.' });
   });
 
   // skill.propose — 에이전트가 스킬을 제안한다. 미승인 상태로 들어가고 채널에 알림이 간다.
@@ -1405,19 +1756,42 @@ function buildMcpServer(
    * 판정해 `wake_limit` 으로 답한다 — 같은 거절이 아니다.
    */
   server.registerTool('turn.wake', {
-    description: '나를 나중에 다시 부른다(기다릴 것이 있을 때). 예약은 스레드에 대기 줄로 보인다',
+    description: '나를 나중에 다시 부른다(기다릴 것이 있을 때). 예약은 스레드에 대기 줄로 보인다. 결과를 다른 스레드에 보고하기로 했으면 reportTo 에 그 채널·스레드 id',
     inputSchema: {
       channelId: z.string().uuid(),
       threadRootId: z.string().uuid(),
       notBeforeSec: z.number().int().min(WAKE_MIN_SEC).max(WAKE_MAX_SEC),
       reason: z.string().min(1).max(200),
+      /**
+       * 결과를 **다른 스레드에** 보고하기로 약속했으면 그 스레드(2026-10-06, 선택). 깨어난 턴의 프롬프트에
+       * 그 약속이 실리고, 그 턴이 거기에 말하지 않고 끝나면 러너가 그 스레드에 경고를 남긴다. 옛 서버는
+       * 이 키를 모른다 — zod 가 모르는 키를 버리므로 예약은 되고 약속만 빠진다.
+       */
+      reportTo: z.object({ channelId: z.string().uuid(), threadRootId: z.string().uuid() }).optional(),
     },
-  }, async ({ channelId, threadRootId, notBeforeSec, reason }) => {
+  }, async ({ channelId, threadRootId, notBeforeSec, reason, reportTo }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this channel' } });
     }
+    // 보고처는 **내가 쓸 수 있는 스레드 머리**여야 한다 — 못 쓰는 곳을 약속으로 적어 두면 깨어난 턴이
+    // 보고하려다 거절당하고, 러너의 경고도 그 자리에 못 남는다. 앵커와 같으면 뜻이 없어 싣지 않는다.
+    let report: { channelId: string; threadRootId: string } | undefined;
+    if (reportTo && reportTo.threadRootId !== threadRootId) {
+      if (!(await assertChannelVisible(pool, reportTo.channelId, account.id))) {
+        return jsonResult({ error: { code: 'forbidden', message: 'reportTo: not a member of that channel' } });
+      }
+      const head = await pool.query(
+        `select 1 from message where id = $1 and channel_id = $2 and thread_root_id is null and deleted_at is null`,
+        [reportTo.threadRootId, reportTo.channelId],
+      );
+      if (!head.rowCount) {
+        return jsonResult({ error: { code: 'bad_report_to', message: 'reportTo.threadRootId 는 그 채널의 최상위 글(스레드 머리) id 여야 한다' } });
+      }
+      report = reportTo;
+    }
     const result = await scheduleWake(pool, {
       accountId: account.id, channelId, threadRootId, notBeforeSec, reason,
+      ...(report ? { reportTo: report } : {}),
     });
     if (result.refusal) return jsonResult({ error: result.refusal });
 
@@ -1506,6 +1880,39 @@ function buildMcpServer(
    * 이 호출을 오퍼레이터가 가로채 턴 임대로 값을 받고 파일에 쓴 뒤 경로만 돌려준다(`operator/turnSecrets.ts`).
    * 서버까지 왔다는 것은 오퍼레이터를 거치지 않았거나(PAT 러너) 옛 오퍼레이터라는 뜻이다 — 값은 주지 않는다.
    */
+  /**
+   * 위임(외부 API 권한 C안 P5). 판정은 전부 서버(`services/apiDelegation.ts`)다 — 받는 범위 ⊆ 준 범위·단계·30일·E1(루트 사람의
+   * 에이전트만)·E2(사람 글이 아닌 턴이면 루트 사람 허락 대기). 머지 권한은 위임하지 않는다(v1).
+   */
+  server.registerTool('grant.delegate', {
+    description: '내가 받은 API 권한을 다른 에이전트에게 다시 준다(사람이 「다시 줄 수 있음」을 켠 권한만). 범위는 내 범위 안, 만료 30일 안. 사람 글이 아닌 턴이면 사람이 허락해야 쓰인다',
+    inputSchema: {
+      to: z.string().min(1).max(64), connector: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/),
+      methods: z.array(z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])).min(1).max(5),
+      pathPrefix: z.string().min(1).max(300), days: z.number().int().min(1).max(30),
+      delegateDepth: z.number().int().min(0).max(1).default(0), writeNeedsHumanCause: z.boolean().optional(),
+    },
+  }, async ({ to, connector, methods, pathPrefix, days, delegateDepth, writeNeedsHumanCause }) => {
+    if (account.kind !== 'agent') return jsonResult({ error: { code: 'not_agent', message: 'only agents delegate' } });
+    const r = await delegateApiGrant(pool, {
+      fromAgentId: account.id, to, connector, methods, pathPrefix, delegateDepth, writeNeedsHumanCause,
+      expiresAt: new Date(Date.now() + days * 86_400_000).toISOString(), causeMessageId: cause,
+    });
+    return jsonResult(r.ok ? { grantId: r.grantId, pending: r.pending, note: r.pending ? 'waiting for the root person to approve' : 'given — from the next turn' } : { error: { code: r.code, message: r.message ?? r.code } });
+  });
+  server.registerTool('grant.revoke', {
+    description: '내가 다른 에이전트에게 다시 준 API 권한을 거둔다(그 아래로 준 것도 함께 끝난다)',
+    inputSchema: { grantId: z.string().uuid() },
+  }, async ({ grantId }) => {
+    if (account.kind !== 'agent') return jsonResult({ error: { code: 'not_agent', message: 'only agents use this' } });
+    const r = await revokeDelegation(pool, { agentId: account.id, grantId });
+    return jsonResult(r.ok ? { revoked: true } : { error: { code: r.code ?? 'not_found', message: 'no such grant given by you' } });
+  });
+  server.registerTool('grant.list', {
+    description: '내 API 권한(다시 줄 수 있는 단계 포함)과 내가 다시 준 권한 목록',
+    inputSchema: {},
+  }, async () => jsonResult(await listDelegations(pool, account.id)));
+
   server.registerTool('secret.mount', {
     description: '비밀 하나를 이 턴 전용 파일로 받는다 — 값이 아니라 파일 경로를 준다. 이름은 secret.list 에 있다. 파일 내용을 출력·복사하지 마라',
     inputSchema: { name: z.string().min(1).max(64) },
@@ -1513,8 +1920,49 @@ function buildMcpServer(
     error: { code: 'operator_required', message: 'secret.mount is handled by the harkroom operator; this runner is not connected through one that supports it' },
   }));
 
+  /**
+   * 에이전트가 비밀을 만든다(102). `secret.mount` 와 같은 모양 — 오퍼레이터가 가로채 턴 임대를 붙여
+   * `POST /agent/secrets`·`/agent/secrets/rotate` 로 보낸다. **값 칸은 없다** — 값은 서버가 만들거나(generate)
+   * 오퍼레이터가 턴 워크스페이스의 파일에서 읽는다(import). 서버까지 왔다는 것은 오퍼레이터를 거치지 않았다는 뜻이다.
+   */
+  const genSpec = z.object({ type: z.enum(['password', 'token_hex', 'token_base64url', 'ssh_ed25519']), length: z.number().int().optional() });
+  const operatorOnly = (tool: string) => async () => jsonResult({
+    error: { code: 'operator_required', message: `${tool} is handled by the harkroom operator; this runner is not connected through one that supports it` },
+  });
+  server.registerTool('secret.generate', {
+    description: '새 비밀을 서버가 만들어 보관소에 넣는다(값은 나에게 오지 않는다). type: password·token_hex·token_base64url·ssh_ed25519(공개키만 돌려준다). 나에게 이 채널로만 부여된다. 바로 써야 하면 mount:true(파일 경로를 준다). 소유자 글이 띄운 턴에서만, 소유자가 켠 에이전트만',
+    inputSchema: {
+      name: z.string().min(1).max(64), description: z.string().max(500).optional(), type: genSpec.shape.type,
+      length: z.number().int().optional(), expiresInDays: z.number().int().min(1).max(365).optional(), mount: z.boolean().optional(),
+    },
+  }, operatorOnly('secret.generate'));
+  server.registerTool('secret.import', {
+    description: '턴 워크스페이스 안의 파일 내용을 비밀로 등록한다(값을 인자로 주지 마라 — 출력은 `cmd > file` 로 받아 경로를 준다). 성공하면 원본 파일은 지운다(keepSource:true 면 남김). 이미 화면·문맥에 보인 값은 유출된 것이니 등록하지 말고 사람에게 회전을 부탁하라',
+    inputSchema: {
+      name: z.string().min(1).max(64), path: z.string().min(1).max(4096), kind: z.enum(['text', 'file']).optional(),
+      description: z.string().max(500).optional(), expiresInDays: z.number().int().min(1).max(365).optional(), keepSource: z.boolean().optional(),
+    },
+  }, operatorOnly('secret.import'));
+  server.registerTool('secret.rotate', {
+    description: '내가 만든 비밀의 값을 바꾼다(generate 또는 path 중 하나). 소유자가 값을 바꿨거나 다시 부여한 비밀은 못 바꾼다(adopted_by_owner)',
+    inputSchema: { name: z.string().min(1).max(64), generate: genSpec.optional(), path: z.string().min(1).max(4096).optional() },
+  }, operatorOnly('secret.rotate'));
+
+  /**
+   * 파일 올리기(미리보기 PR ③). 실제 일은 오퍼레이터가 한다 — 브릿지가 넘긴 이 호출을 오퍼레이터가 가로채
+   * 턴 워크스페이스 안의 파일을 읽어 `/uploads` 에 올리고 첨부 id 를 돌려준다(`operator/turnUploads.ts`).
+   * 여기 등록하는 이유는 `tools/list` 에 보이게 하려는 것이다(`secret.mount` 와 같은 모양). 서버까지 왔다는
+   * 것은 오퍼레이터를 거치지 않았거나(PAT 러너) 옛 오퍼레이터라는 뜻이다.
+   */
+  server.registerTool('attachment.upload', {
+    description: '턴 워크스페이스 안의 파일(그림·PDF·HTML 등)을 올려 첨부 id 를 받는다 — 아직 글에 붙지 않는다. message.post 의 attachmentIds 나 artifact.publish 의 attachmentId 로 쓴다',
+    inputSchema: { path: z.string().min(1).max(4096), filename: z.string().min(1).max(255).optional() },
+  }, async () => jsonResult({
+    error: { code: 'operator_required', message: 'attachment.upload is handled by the harkroom operator; this runner is not connected through one that supports it' },
+  }));
+
   server.registerTool('attachment.fetch', {
-    description: '첨부 바이트 받기 — 이미지는 그림으로, 텍스트는 글로 실린다. id 는 프롬프트의 [첨부: …] 에 있다',
+    description: '첨부 바이트 받기 — 이미지는 그림으로(3MiB 를 넘으면 줄인 사본), 텍스트는 글로 실린다. id 는 프롬프트의 [첨부: …] 에 있다',
     inputSchema: { attachmentId: z.string().uuid() },
   }, async ({ attachmentId }) => {
     const resolved = await resolveAttachmentFor(pool, attachmentId, account.id);
@@ -1564,6 +2012,54 @@ function buildMcpServer(
       });
     }
 
+    /**
+     * 한도를 넘는 그림은 **줄여서** 싣는다(`imageDownscale.ts`). 폰 스크린샷이 그대로 3MiB 를
+     * 넘어, 줄이지 않으면 에이전트는 셸 다운로드 안내만 받고 — 그 길은 PAT 가 필요해 auto mode
+     * 에서 막힌다. 원본은 그대로 두고 이 응답만 줄인다. 줄였다는 사실과 원본 크기·해상도를
+     * 텍스트 줄에 적는다 — 에이전트가 "작은 글씨가 안 보인다"를 원본 탓으로 오해하지 않게.
+     */
+    if (IMAGE_TYPES.includes(contentType) && sizeBytes > IMAGE_MAX_BYTES && sizeBytes <= DOWNSCALE_READ_MAX_BYTES) {
+      const notInlined = (reason: string) => jsonResult({
+        attachment: meta,
+        note: `too large to inline (${sizeBytes}B > ${IMAGE_MAX_BYTES}B) and could not be downscaled: ${reason}`,
+        download: `GET /attachments/${id} (Authorization: Bearer $HARKROOM_PAT) — needs shell/HTTP access; if you have neither, say so and ask the human instead of guessing`,
+      });
+      // 원본을 읽기 **전에** 자리를 잡는다 — 기다리는 호출이 저마다 32MiB 를 쥐고 쌓이지 않게.
+      const release = tryAcquireDownscaleSlot();
+      if (!release) return notInlined('busy (too many downscales in flight); try again shortly');
+      let small: Awaited<ReturnType<typeof downscaleImage>>;
+      try {
+        const original = await readAttachment(meta, DOWNSCALE_READ_MAX_BYTES, resolved.attachment.storageKey);
+        if ('error' in original) return original.error;
+        small = await downscaleImage(original.body, IMAGE_MAX_BYTES);
+      } finally {
+        release();
+      }
+      if (small.ok) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                attachment: meta,
+                downscaled: {
+                  originalBytes: sizeBytes,
+                  originalResolution: `${small.original.width}x${small.original.height}`,
+                  bytes: small.data.length,
+                  resolution: `${small.resized.width}x${small.resized.height}`,
+                  mimeType: small.mimeType,
+                  ...(small.firstFrameOnly ? { firstFrameOnly: true } : {}),
+                  note: 'resized copy for this response only; the stored original is unchanged',
+                },
+              }),
+            },
+            { type: 'image' as const, data: small.data.toString('base64'), mimeType: small.mimeType },
+          ],
+        };
+      }
+      return notInlined(small.reason);
+    }
+
     if (!IMAGE_TYPES.includes(contentType) || sizeBytes > IMAGE_MAX_BYTES) {
       return jsonResult({
         attachment: meta,
@@ -1610,7 +2106,21 @@ export async function registerMcp(
   leakGuard: SecretLeakGuard | null = null,
   operatorHub?: OperatorHub,
 ): Promise<void> {
-  app.post('/mcp', async (req, reply) => {
+  app.post('/mcp', {
+    /**
+     * 전역 1MB(buildServer)보다 크게 둔다 — `artifact.publish` 의 `html` 인자가 2MB 까지이고, JSON 으로
+     * 실리면 따옴표·줄바꿈이 두 글자가 되어 최악에 두 배가 된다. 이 한도에 먼저 걸리면 에이전트는
+     * "파일로 올려라"라는 도구의 답 대신 fastify 의 413 을 받는다.
+     * 본문을 읽기 **전에** 에이전트가 아닌 요청을 끊는다(아래 onRequest) — 큰 한도를 익명에게 열지 않는다.
+     */
+    bodyLimit: MCP_BODY_LIMIT_BYTES,
+    onRequest: async (req, reply) => {
+      if (!req.account || req.account.kind !== 'agent') {
+        return reply.code(req.account ? 403 : 401)
+          .send({ error: { code: 'agent_only', message: 'MCP surface requires an agent PAT or an operator assignment' } });
+      }
+    },
+  }, async (req, reply) => {
     if (!req.account || req.account.kind !== 'agent') {
       return reply.code(req.account ? 403 : 401)
         .send({ error: { code: 'agent_only', message: 'MCP surface requires an agent PAT or an operator assignment' } });

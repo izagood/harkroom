@@ -31,9 +31,10 @@
 // 쓰면 행 타임스탬프가 곧 키 입력의 리듬이라 그 자체가 부채널이다.
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
-import type { AgentSessionView, AgentWakeView } from '@harkroom/shared';
+import type { AgentActivityView, AgentSessionView, AgentWakeView } from '@harkroom/shared';
 import { unwrapOperatorFrame, wrapServerFrame } from '@harkroom/shared/runnerLink';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
+import { channelVisibleSql } from '../services/channels.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { cancelDelegationsFor } from '../services/delegations.js';
 import { createAttachTicketStore } from '../ws/tickets.js';
@@ -51,6 +52,29 @@ async function ownedAgentIds(pool: Pool, accountId: string): Promise<string[]> {
     [accountId],
   );
   return res.rows.map((r) => r.account_id);
+}
+
+/**
+ * `?scope=visible` 인가(S7, 결정 A). **기본은 옛 범위(소유자·admin)** 다 — 데스크탑 관제 화면은
+ * 이 목록의 줄마다 attach·그만두기 버튼을 그리므로, 기본을 넓히면 남의 세션에 403 이 날 버튼이 선다.
+ */
+function wantsVisibleScope(query: unknown): boolean {
+  return typeof query === 'object' && query !== null && (query as Record<string, unknown>).scope === 'visible';
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** 이 채널들 가운데 이 사람이 볼 수 있는 것. 메시지와 **같은 술어**(`channelVisibleSql`)다. */
+async function visibleChannelIds(pool: Pool, accountId: string, channelIds: string[]): Promise<Set<string>> {
+  // 채널 id 는 **러너가 announce 한 값**이다 — uuid 가 아니면 캐스트가 질의 전체를 500 으로 만든다.
+  // 그런 줄은 어느 채널에도 속하지 않으므로 보이지 않는 것으로 친다.
+  const ids = [...new Set(channelIds)].filter((id) => UUID_RE.test(id));
+  if (!ids.length) return new Set();
+  const res = await pool.query<{ id: string }>(
+    `select c.id from channel c where c.id = any($2::uuid[]) and ${channelVisibleSql('c', '$1')}`,
+    [accountId, ids],
+  );
+  return new Set(res.rows.map((r) => r.id));
 }
 
 export interface AgentRelayDeps {
@@ -254,6 +278,24 @@ export async function registerAgentRelayRoutes(
    */
   app.get('/agent-sessions', { preHandler: app.requireAccount }, async (req) => {
     const account = req.account!;
+    if (wantsVisibleScope(req.query)) {
+      const all = hub.listSessions('all');
+      const owned = account.isAdmin ? null : new Set(await ownedAgentIds(pool, account.id));
+      const visible = account.isAdmin ? null : await visibleChannelIds(pool, account.id, all.map((x) => x.channelId));
+      return {
+        sessions: all
+          .filter((x) => !visible || visible.has(x.channelId))
+          .map((x) => ({
+            agentAccountId: x.agentAccountId,
+            channelId: x.channelId,
+            threadRootId: x.threadRootId,
+            harness: x.harness,
+            startedAt: x.startedAt,
+            ...(x.mode ? { mode: x.mode } : {}),
+            owned: !owned || owned.has(x.agentAccountId),
+          })) satisfies AgentActivityView[],
+      };
+    }
     const scope = account.isAdmin ? 'all' as const : await ownedAgentIds(pool, account.id);
     return { sessions: hub.listSessions(scope) satisfies AgentSessionView[] };
   });
@@ -288,7 +330,10 @@ export async function registerAgentRelayRoutes(
    */
   app.get('/agent-wakes', { preHandler: app.requireAccount }, async (req) => {
     const account = req.account!;
-    const scope = account.isAdmin ? null : await ownedAgentIds(pool, account.id);
+    // `?scope=visible`(S7): 소유 대신 **그 채널을 볼 수 있는가** 로 거른다. wake 메시지도 그 채널에
+    // 서 있어 이미 보이는 사실이다 — 모아 보일 뿐이다.
+    const visibleOnly = wantsVisibleScope(req.query) && !account.isAdmin;
+    const scope = account.isAdmin || visibleOnly ? null : await ownedAgentIds(pool, account.id);
     // 소유한 에이전트가 없으면 질의하지 않는다 — `any('{}')` 는 어차피 0행이다.
     if (scope && !scope.length) return { wakes: [] satisfies AgentWakeView[] };
     const res = await pool.query<{
@@ -300,11 +345,13 @@ export async function registerAgentRelayRoutes(
               case when m.deleted_at is null then m.body else null end as reason
          from agent_wake w
          join message m on m.id = w.message_id
+         join channel c on c.id = w.channel_id
         where w.fired_at is null and w.canceled_at is null
           ${scope ? 'and w.account_id = any($1::uuid[])' : ''}
+          ${visibleOnly ? `and ${channelVisibleSql('c', '$1')}` : ''}
         order by w.wake_at
         limit 200`,
-      scope ? [scope] : [],
+      scope ? [scope] : visibleOnly ? [account.id] : [],
     );
     return {
       wakes: res.rows.map((row) => ({

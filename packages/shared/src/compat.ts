@@ -32,6 +32,13 @@
  *
  * | 값 | 왜 | 무엇이 깨지나 |
  * |---|---|---|
+ * | `0.3.190` | `GET /accounts/agents/:id/memory/audit`·`POST …/memory/archive`·`…/unarchive` 가 그 릴리스에 들어갔고(#1186), 설정 › 에이전트 › 메모리의 정리 칩·보관·되살리기가 그것을 부른다. 목록의 `recallCount`·`createdAt` 도 그때부터 | 정리 칩이 안 뜨고 보관·되살리기가 404 |
+ * | `0.3.190` | 오퍼레이터 이름 바꾸기: `PATCH /operators/:id`(`label`, 104)와 오퍼레이터 목록의 `label` 이 그 릴리스에 들어갔고(#1180, v0.3.190), 설정 › Operators 의 이름 편집(#1183)이 그것을 부른다. 옛 서버는 `label` 을 싣지 않으므로 이름을 그리는 자리가 모두 호스트명(`name`)으로 돌아간다 | 이름 저장이 404, 바꾼 이름이 어디에도 안 보인다 |
+ * | `0.3.182` | `POST /agents/:id/merge-denials/:denialId/grant`(#1158, 101)·`POST /grants/:id/approve`·`/decline`(#1157, 위임 E2)가 그 릴리스에 들어갔다. 머지 거절 카드의 [7일 동안 주기](P5)와 「머지·API 권한」 절의 「허락 기다림 N」·[허락]·[거절]이 그것을 부른다 | [7일 동안 주기]·위임 허락·거절이 404 |
+ * | `0.3.182` | 「내 작업」 보드 S1: `GET /inbox/board`(#1137, 099)가 그 릴리스에 들어갔고, Inbox 보드와 내 차례 배지가 그것을 부른다(옛 `GET /inbox?threads=1` 대신) | 보드가 "불러오지 못했다"로 뜨고 내 차례 배지가 0 에 머문다 |
+ * | `0.3.176` | `PUT /accounts/:id/grants` 가 `api.call` 의 `writeNeedsHumanCause` 를 받는다(#1142, 100). **필드만 더한 변경**이라 serverSurface 회귀선이 못 본다. API 연결 `/connectors`(#1136)는 v0.3.171 이고 「비밀과 API」의 API 연결 절과 「할 수 있는 일」의 API 행이 그것을 부른다 | 「쓰기는 사람 글 턴만」을 켜도 옛 서버는 조용히 버린다. 0.3.171 아래에서는 API 연결이 404 |
+ * | `0.3.133` | 미리보기(아티팩트) ④: `POST /attachments/:id/preview`·`GET /preview/:token`(#1045, v0.3.131)과 메시지 첨부의 `artifact{}`(#1050, v0.3.133)가 그 릴리스에 들어갔고, 첨부 카드와 오른쪽 미리보기 패널이 그것을 부른다. 버전마다 제목(`latestTitle`, #1065)은 그 뒤 릴리스이고, 옛 서버에서는 옛 카드가 최신 제목을 보일 뿐이다 | 카드는 보통 첨부 칩으로 남고(메타 없음), 열기가 404 |
+ * | `0.3.125` | Inbox 보드 2/2: `PUT /inbox/threads/:rootId`(내 완료·나중에, 089)와 `GET /inbox?threads=1` 의 `threadStates` 가 그 릴리스에 들어갔고(#1035, v0.3.125), 보드 카드의 [완료]·[나중에]·[되돌리기](#1037)가 그것을 부른다 | 완료·나중에가 404, 접은 카드가 다시 열면 돌아온다 |
  * | `0.3.113` | 에이전트가 부르며 고르는 모델(087): `PUT /accounts/agents/:id/pickable-models` 와 `GET /agents/:id/model-options` 의 `pickable`·스레드 지정의 `setByKind` 가 그 릴리스에 들어갔고(#1010, v0.3.113), 에이전트 상세의 "다른 에이전트가 고를 수 있는 모델" 절과 칩 꼬리 `@lead 지정`(#③)이 그것을 부른다. 목록을 좁힐 때 정리(`clearOutside`·`outside`)는 그 뒤 릴리스이고, 옛 서버는 그 필드를 버리고 `outside` 를 싣지 않아 물음이 서지 않을 뿐이다 | 허용 목록 저장이 404, 칩 꼬리가 늘 `스레드 지정` |
  * | `0.3.95` | 스레드 × 에이전트 모델 지정(079): `GET/PUT /channels/:id/threads/:rootId/agent-models[/:agentId]`·`GET /agents/:id/model-options` 와 메시지의 `agentModels[]` 가 그 릴리스에 들어갔고(#967, v0.3.95), 앱의 스레드 모델 칩(#969)이 그것을 부른다 | 스레드 모델 칩이 서지 않고, 작성창 칩으로 고른 모델이 옛 서버에서 조용히 버려진다 |
  * | `0.3.57` | `GET /workspace/icon`·`PUT /settings/workspace-icon` 이 그 릴리스에 들어갔고(#929, 077), 커뮤니티 레일 사진과 설정 › Workspace(#931)가 그것을 부른다 | 레일은 이니셜로 남고(404 폴백), 아이콘 올리기가 404 |
@@ -57,7 +64,7 @@
  *
  * 근거 없이 높이지는 않는다 — 멀쩡한 서버가 고장으로 그려지면 그 순간 이 값은 소음이 된다.
  */
-export const MIN_SERVER_VERSION = '0.3.113';
+export const MIN_SERVER_VERSION = '0.3.190';
 
 /** `X.Y.Z` 만 견준다. 그 밖의 모양은 견주지 않는다(아래 `compareRelease` 주석). */
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;

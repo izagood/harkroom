@@ -149,8 +149,8 @@ describe('배선 — 도는 턴이 없어도, 몰라도 대기는 보인다', ()
     expect(await within(tower).findByTestId('agent-wait-w1')).toBeTruthy();
     // 두 사실이 **한 화면에** 함께 선다 — 그 조합이 "죽었나 기다리나"에 답한다.
     expect(within(tower).getByTestId('agent-turns-none')).toBeTruthy();
-    // 칸은 같은 목록을 다시 세우지 않는다 — 수만 낸다(#741 이 중단 버튼에 세운 규칙).
-    expect(screen.getByTestId('agent-waits-count').textContent).toContain('1');
+    // 칸은 대기를 세우지 않는다(UX ⑨a) — 수조차 관제탑과 같은 사실을 두 번 말하는 것이었다.
+    expect(screen.queryByTestId('agent-waits-count')).toBeNull();
   });
 
   it('세션 목록이 실패해도 대기는 그대로 온다 — 테이블에서 오는 사실이다', async () => {

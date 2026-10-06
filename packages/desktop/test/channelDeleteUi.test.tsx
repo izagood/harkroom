@@ -3,6 +3,10 @@ import { render, screen, fireEvent, cleanup, within, waitFor } from '@testing-li
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController, type Controller as ControllerType } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
+import { ChannelSettingsSheet } from '../src/components/ChannelSettingsSheet';
+
+/** 멤버·편집·나가기는 채널 설정 시트가 연다(UX ⑦b-2) — 시트는 Workspace 에 서므로 여기서 함께 그린다. */
+const SidebarWithSheet = (p: Parameters<typeof Sidebar>[0]) => (<><Sidebar {...p} /><ChannelSettingsSheet /></>);
 import type { ApiClient } from '../src/lib/api';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { acc, chan, fakeApi } from './helpers/fakeApi';
@@ -34,7 +38,7 @@ const archived = (id: string, name: string) => ({ ...chan(id, name), archivedAt:
 const seed = (isAdmin: boolean) => {
   useAppStore.getState().reset();
   useAppStore.getState().set({
-    me: { ...acc('u1', 'me'), isAdmin },
+    me: acc('u1', 'me', 'human', isAdmin),
     accounts: { u1: acc('u1', 'me') },
     channels: [chan('c1', 'general'), archived('c2', 'old-project')],
     dms: [], connected: true,
@@ -42,7 +46,7 @@ const seed = (isAdmin: boolean) => {
 };
 
 const sidebar = () => render(
-  <Sidebar panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
+  <SidebarWithSheet panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
     collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 
@@ -73,7 +77,8 @@ describe('채널 삭제 UI (#155)', () => {
 
     fireEvent.contextMenu(screen.getAllByRole('button', { name: /^# / })[0]!);
     const menu = screen.getByRole('menu');
-    expect(within(menu).getByText('보관')).toBeTruthy();
+    // 채널 묶음은 서 있는데(채널 설정…) 삭제만 없다 — 편집·보관은 채널 설정 시트로 옮겼다(UX ⑦b).
+    expect(within(menu).getByText('채널 설정…')).toBeTruthy();
     expect(within(menu).queryByText('삭제')).toBeNull();
   });
 
@@ -168,7 +173,7 @@ describe('채널 삭제 배선 (#155)', () => {
   it('지운 채널이 목록에서 사라지고, 보고 있던 채널이면 선택이 비워진다', async () => {
     useAppStore.getState().reset();
     useAppStore.getState().set({
-      me: { ...acc('u1', 'me'), isAdmin: true },
+      me: acc('u1', 'me', 'human', true),
       accounts: { u1: acc('u1', 'me') },
       channels: [chan('c1', 'general'), archived('c2', 'old-project')],
       activeChannelId: 'c2',
@@ -198,7 +203,7 @@ describe('채널 삭제 배선 (#155)', () => {
   it('보고 있지 않던 채널을 지우면 선택은 그대로다', async () => {
     useAppStore.getState().reset();
     useAppStore.getState().set({
-      me: { ...acc('u1', 'me'), isAdmin: true },
+      me: acc('u1', 'me', 'human', true),
       channels: [chan('c1', 'general'), archived('c2', 'old-project')],
       activeChannelId: 'c1',
       dms: [], connected: true,

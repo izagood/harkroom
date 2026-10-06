@@ -53,6 +53,26 @@ beforeEach(() => {
 afterEach(() => { usePrefsStore.getState().setLocale('system'); cleanup(); });
 
 describe('AgentScopeSection', () => {
+  it('접힌 채로 한 줄 요약이 지금 값을 말한다 — 부르는 사람 · 자격증명 · 명단 수 · 대리 호출자 수 (UX ⑨b)', () => {
+    setup();
+    render(<AgentScopeSection agent={agent({ invokeScope: 'list', credentialScope: 'community', invokers: ['u-2'], delegates: ['a-9'] })} onUpdated={vi.fn()} />);
+    expect(screen.getByTestId('agent-scope-details').hasAttribute('open')).toBe(false);
+    expect(screen.getByTestId('agent-scope-summary').textContent)
+      .toBe('아래 명단의 사람만 · 커뮤니티 공용 자격증명 · 명단 1명 · 대리 호출자 1');
+  });
+
+  it('MCP 가 붙어 있으면 요약에 그 수가 붙는다 — 접힌 채로도 보인다', () => {
+    setup();
+    render(<AgentScopeSection agent={agent({ mcpServers: ['github', 'slack'] })} onUpdated={vi.fn()} />);
+    expect(screen.getByTestId('agent-scope-summary').textContent).toBe('커뮤니티의 누구나 · 자격증명 없음 · MCP 2');
+  });
+
+  it('명단·대리 호출자가 없으면 요약은 두 값만', () => {
+    setup();
+    render(<AgentScopeSection agent={agent()} onUpdated={vi.fn()} />);
+    expect(screen.getByTestId('agent-scope-summary').textContent).toBe('커뮤니티의 누구나 · 자격증명 없음');
+  });
+
   it('호출 범위를 고르면 그 자리에서 updateAgent 에 닿고 응답이 앉는다', async () => {
     const c = setup();
     const onUpdated = vi.fn();
@@ -328,6 +348,42 @@ describe('AgentMcpSection — 원격 MCP 인증', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('MCP 서버가 거절했으면 "거부됨 · 시각 · 에이전트" 를 빨갛게, [다시 인증] 과 함께 보인다', async () => {
+    const at = new Date(2026, 9, 1, 14, 51).getTime();
+    fakeAuth({ state: 'rejected', at, agentId: 'agent-tm' });
+    setup();
+    const prev = useActiveStore.getState().accounts;
+    useActiveStore.getState().set({ accounts: { ...prev, 'agent-tm': { id: 'agent-tm', handle: 'task_manager', displayName: 'task_manager', kind: 'agent', isAdmin: false, avatarUrl: null, createdAt: '2026-09-01T00:00:00.000Z' } } as never });
+    render(<AgentScopeSection agent={agent({ mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+    const badge = await screen.findByTestId('agent-mcp-auth-slack');
+    expect(badge.textContent).toContain('거부됨');
+    expect(badge.textContent).toContain('task_manager');
+    expect(badge.textContent).toMatch(/2:51/);
+    expect(badge.querySelector('.text-danger')).toBeTruthy();
+    expect(screen.getByTestId('agent-mcp-auth-start-slack').textContent).toBe('다시 인증');
+  });
+
+  it('거부를 본 에이전트를 모르면 이름 없이 시각만 보인다', async () => {
+    fakeAuth({ state: 'rejected', at: Date.now(), agentId: 'unknown-agent' });
+    setup();
+    render(<AgentScopeSection agent={agent({ mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+    const badge = await screen.findByTestId('agent-mcp-auth-slack');
+    expect(badge.textContent).toContain('거부됨');
+    expect(badge.textContent).not.toContain('unknown-agent');
+  });
+
+  it('인증됨에도 [다시 인증] 이 있다 — 화면이 맞다고 해도 실제 실패를 본 사람이 곧바로 다시 인증한다', async () => {
+    const opened: string[] = [];
+    setExternalOpener({ open: async (u) => { opened.push(u); } });
+    fakeAuth({ state: 'ok' });
+    setup();
+    render(<AgentScopeSection agent={agent({ mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+    expect((await screen.findByTestId('agent-mcp-auth-slack')).textContent).toContain('인증됨');
+    expect(screen.getByTestId('agent-mcp-auth-forget-slack').textContent).toBe('인증 해제');
+    fireEvent.click(screen.getByTestId('agent-mcp-auth-start-slack'));
+    await waitFor(() => expect(opened).toEqual(['https://auth.example.com/authorize?x=1']));
   });
 
   it('만료면 "다시 인증", 인증됨이면 [인증 해제] 가 forget 에 닿는다', async () => {

@@ -10,9 +10,9 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { AgentHarness, AgentView, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow } from '@harkroom/shared';
-import type { Me } from './harkroom.js';
-import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice } from './prompt.js';
+import type { AgentHarness, AgentView, InboxCanceledWake, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow, WakeReportTo } from '@harkroom/shared';
+import type { FailOpts, Me } from './harkroom.js';
+import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, reportMissedNotice, MESSAGE_KIND_WAKE } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, harnessPath, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
@@ -25,7 +25,7 @@ import { readLastApiError } from './harnessErrors.js';
 import type { AttentionLedger } from './attentionLedger.js';
 import { readSkillUses } from './skillUsage.js';
 import type { ReviewFork } from './reviewFork.js';
-import { readLastAssistantText, readMcpAuthRejections, readPermissionDenials, readTranscriptTurnState, sessionTranscriptGrewSince, sessionTranscriptMtimeMs, type PermissionDenial } from './harnessErrors.js';
+import { readLastAssistantText, readMcpAuthRejections, readPermissionDenials, readTranscriptPendingBackground, readTranscriptTurnState, sessionTranscriptGrewSince, sessionTranscriptMtimeMs, type PermissionDenial } from './harnessErrors.js';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
 import { opencodeDirs } from './opencodeHome.js';
@@ -34,13 +34,18 @@ import { findOpencodeSessionId } from './opencodeSessions.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
 import type { MemoryCache } from './memoryCache.js';
-import { planMemory, RECALL_MAX_ITEMS, type RecallResult } from './memoryPin.js';
+import { planMemory, RECALL_MAX_ITEMS, RECALL_ROOT_HEAD_CHARS, type RecallResult } from './memoryPin.js';
 import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './harnessMemory.js';
 
 /** runMentionTurn 이 요구하는 harkroom 표면. HarkroomAgentClient 의 부분집합이라 실제 클래스를
  * 그대로 넘겨도 되고, 테스트는 인메모리 fake 를 넘긴다(프로세스 경계·네트워크 없이 검증). */
 export interface MentionTurnHarkroom {
   definition(): Promise<AgentView>;
+  /** 머지를 허락한 저장소(스레드 3deac356). 옵셔널 — 없는 표면(시험 더블)은 빈 목록과 같다. */
+  mergeGrants?(): Promise<string[]>;
+  secretCreateGranted?(): Promise<boolean>;
+  apiGrants?(): Promise<string[]>;
+  apiGrantInfo?(): Promise<{ connectors: string[]; delegatable: string[] }>;
   /** 스레드 × 에이전트 모델 지정의 실효값(서버 079). 옛 서버를 흉내 내는 테스트 더블은 없어도 된다. */
   threadModel?(messageId: string): Promise<TurnModel>;
   /**
@@ -51,9 +56,9 @@ export interface MentionTurnHarkroom {
     channelId: string,
     body: string,
     threadRootId: string | null,
-    opts: { retryable: boolean; what?: string; reason?: string },
+    opts: FailOpts,
   ): Promise<number>;
-  readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]>;
+  readThread(channelId: string, threadRootId: string | null, since?: number, limit?: number): Promise<MessageRow[]>;
   /**
    * 채널 **전체**(스레드 답 포함)에서 seq 커서 이후를 읽는다 — `offAnchorEvidence` 가 쓴다.
    *
@@ -65,7 +70,7 @@ export interface MentionTurnHarkroom {
   /** #139: core 본문과 mem/* slug 목록. 실패는 **던진다** — 호출자가 구분해야 한다. */
   readMemory(): Promise<{ core: string | null; slugs: string[] }>;
   /** 관련 기억 찾기(`memory.search`, 본문 포함). 없으면(테스트·옛 조립) 찾지 않는다. */
-  searchMemory?(query: string, limit: number): Promise<RecallResult>;
+  searchMemory?(query: string, limit: number, opts?: { exclude?: string[]; recordTop?: number; focus?: string }): Promise<RecallResult>;
   /**
    * #140: 승인된 스킬 목록. **실패는 던진다** — 러너가 stderr 에 한 줄 남길 수 있어야 한다.
    * 여기서 빈 배열로 삼키면 "스킬이 없다"와 "서버를 못 읽었다"가 같은 값이 되고, 그러면
@@ -290,6 +295,15 @@ export interface MentionTurnDeps {
   readTranscriptMtime?: typeof sessionTranscriptMtimeMs;
   /** 하네스가 이 턴의 차례를 끝냈는가(기본 `readTranscriptTurnState`). 주입 이유는 위와 같다. */
   readTurnState?: typeof readTranscriptTurnState;
+  /** 끝낸 턴에 남은 자식 작업 수(기본 `readTranscriptPendingBackground`). 주입 이유는 위와 같다. */
+  readPendingBackground?: typeof readTranscriptPendingBackground;
+  /**
+   * **끝났고 자식 작업도 없는** 턴을 거두기까지의 유예(기본 0 — 바로 거둔다, 2026-10-02).
+   * `orphanMs` 는 그 밖의 끝(자식이 남았거나 모름·꼬리를 못 읽어 발화로만 판정)에 남는다.
+   * 왜 가르나: 60초 유예는 같은 스레드의 다음 멘션을 그만큼 기다리게 했다(스레드당 턴 하나) —
+   * 사람이 본 "느린 반응"의 가장 큰 고정 비용이었다(task_manager 실측 64s).
+   */
+  finishedReclaimMs?: number;
   /**
    * 발화를 확인하는 주기(기본 3초, 2026-09-08). TUI 는 답하고도 안 죽으므로 러너가
    * "답했는가"를 직접 봐야 하고, 그 사실은 스레드에만 있다 — 에이전트는 자기 PAT 로
@@ -336,6 +350,23 @@ export interface MentionTurnDeps {
    * 두 정책(죽이고 던진다 / 살리고 부른다)을 가르기 때문이다.
    */
   callsForHuman?: boolean;
+  /**
+   * 턴 **시작** 관문으로 사람을 불렀을 때 그 계정에 표식을 세운다(2026-10-02, `claudeGates.ts`).
+   * 앞 계정의 관문은 던져서 스케줄러가 세운다 — 이것은 사람을 부르는(던지지 않는) 마지막 계정용이다.
+   */
+  markAccountGate?: () => void;
+  /**
+   * 그 계정의 관문 표식이 지워졌는가(2026-10-02). 사람을 기다리는 동안 주기적으로 묻고, 참이면 PTY 를
+   * 접고 `AccountGateRequeueError('passed')` 로 다시 띄운다. 없으면 보지 않는다(풀 없는 러너).
+   */
+  accountGateCleared?: () => Promise<boolean>;
+  /**
+   * 프롬프트가 입력창에 들어갔다(2026-10-02, `pty.ts::injectPrompt.onInjected`). 스케줄러가 이것을 본
+   * 시도에서만 그 계정의 관문 표식을 지운다(#1047 security F1).
+   */
+  onPromptDelivered?: () => void;
+  /** `accountGateCleared` 를 묻는 주기(ms, 기본 5초). 시험이 줄인다. */
+  gateWatchMs?: number;
   /**
    * 하네스가 자기 세션 파일에 남긴 API 에러를 읽는다(기본 `readLastApiError`).
    * 주입 가능한 이유는 `sessionMaterialized` 와 같다 — 테스트가 디스크를 세우지 않고
@@ -462,7 +493,14 @@ export interface MentionTarget {
    * 옵셔널인 이유: 평범한 멘션 턴에는 깨움이 없다. 그리고 값이 있으면 프롬프트 조립이
    * 달라진다 — 깨움에는 부른 사람이 없어서 델타가 비고, 비면 하네스가 돌지 않는다.
    */
-  wake?: { reason: string };
+  wake?: { reason: string; reportTo?: WakeReportTo };
+  /** 이 부름이 접은 내 예약(서버 107). 서버가 inbox 항목에 실어 준다(`InboxEntry.canceledWakes`). */
+  canceledWakes?: InboxCanceledWake[];
+  /**
+   * 이 스레드의 임대를 **잃었다**는 신호(서버 095, `threadClaims.ts` 펜싱). 울리면 이 턴을 접는다 — 다른
+   * 러너가 이미 이 스레드를 넘겨받았으므로 계속 돌면 같은 스레드에 턴이 둘이다. 없으면(옛 서버·시험) 안 울린다.
+   */
+  fence?: AbortSignal;
   /**
    * 이 턴이 **팀장으로서 불린 턴**이면 그 팀과 명단(마이그레이션 047). 서버가 inbox 항목에
    * 실어 주고(`InboxEntry.team`) 스케줄러가 그대로 옮긴다 — 러너가 팀을 다시 조회하지
@@ -515,6 +553,45 @@ export interface MentionTarget {
  *
  * **던지지 않는다.** 이것은 통지를 더 좋게 만드는 정황이지 통지의 조건이 아니다.
  */
+/**
+ * 깨움 턴이 **약속한 보고처에 아무 말도 안 했으면** 그 스레드에 경고를 남긴다(2026-10-06, `turn.wake` reportTo).
+ *
+ * 진행 설명(progress)도 보고로 센다 — 거기서 기다리는 사람에게는 "봤다" 는 신호이기 때문이다. 깨움 줄만은
+ * 세지 않는다(그것은 보고가 아니라 또 기다리겠다는 말이다). 실패 카드로 남기는 이유: 사람이 할 일이 있다 —
+ * 결과를 앵커 스레드에서 찾아야 하고, 그 사실이 스레드 머리에 서야 "안 봤다" 와 갈린다. 다시 부를 일은
+ * 아니라서 `retryable: false` 다. 읽기·발화 실패는 삼킨다(관측이다 — 호출자의 try 가 로그를 남긴다).
+ */
+/** 보고처 판정에서 한 번에 읽는 글 수와 쪽 수 상한(#1208 n4). 200 × 10 = 턴 동안 2,000 글까지 본다. */
+const REPORT_CHECK_PAGE = 200;
+const REPORT_CHECK_MAX_PAGES = 10;
+
+async function reportPromiseCheck(
+  deps: MentionTurnDeps, reportTo: WakeReportTo, baseSeq: number, reason: string, anchor: string, anchorChannelId: string,
+): Promise<void> {
+  // **창을 넘겨 끝까지 읽는다**(#1208 security n4). 한 번 읽기는 `seq > baseSeq` 중 가장 오래된 limit 개라, 턴 동안
+  // 보고처가 바빠 글이 limit 을 넘게 쌓이면 내 보고가 창 밖으로 밀려 **보고했는데 경고**가 났다. 찾으면 멈추고,
+  // 쪽 수 상한을 넘기면 판정을 접는다 — 근거 없이 경고하지 않는다(기준선을 못 읽었을 때와 같은 판단).
+  let since = baseSeq;
+  for (let page = 0; ; page += 1) {
+    if (page >= REPORT_CHECK_MAX_PAGES) {
+      console.log(`[mentionTurn] 보고처 ${reportTo.threadRootId} 가 너무 바빠 보고 여부를 다 못 읽었다 — 경고하지 않는다`);
+      return;
+    }
+    const there = await deps.harkroom.readThread(reportTo.channelId, reportTo.threadRootId, since, REPORT_CHECK_PAGE);
+    if (there.some((m) => m.authorId === deps.me.id && m.seq > baseSeq && m.kind !== MESSAGE_KIND_WAKE)) return;
+    const last = there.reduce((max, m) => Math.max(max, m.seq), since);
+    if (there.length === 0 || last <= since) break;
+    since = last;
+  }
+  console.log(`[mentionTurn] 깨움 턴이 보고처 ${reportTo.threadRootId} 에 말하지 않고 끝났다 — 거기에 경고를 남긴다`);
+  // 채널이 다르면 사유를 옮겨 적지 않는다(security n2) — 비공개 앵커의 사유가 공개 보고처에 드러난다.
+  const notice = reportMissedNotice(reportTo.channelId === anchorChannelId ? reason : null, anchor);
+  await deps.harkroom.fail(reportTo.channelId, notice, reportTo.threadRootId, {
+    retryable: false,
+    what: '약속한 스레드에 보고하지 않고 깨움 턴이 끝났다',
+  });
+}
+
 async function offAnchorEvidence(
   deps: MentionTurnDeps, key: string, channelId: string, anchor: string | null, turnStartSeq: number,
 ): Promise<string | null> {
@@ -678,6 +755,43 @@ export interface MentionTurnResult {
   stopRequestedAt: string | null;
 }
 
+/**
+ * 턴 시작 관문 때문에 이 턴을 **접고 같은 멘션을 다시 띄워야 한다**(2026-10-02, 관문 대응 안 2).
+ *
+ * - `queued`: 그 계정의 관문에서 이미 다른 턴이 사람을 기다린다 — **기다리는 PTY 는 계정당 하나**다
+ *   (실측 RSS 180~285MB, 한도가 몰린 밤에 수십 개가 된다). 이 턴은 접고, 표식이 지워지면 다시 띄운다.
+ * - `passed`: 사람을 기다리는 사이 표식이 지워졌다(데몬 터미널에서 지났다 등). **관문에 선 claude 는
+ *   설정을 다시 읽지 않으므로**(2026-10-02 실측: 다른 프로세스가 설정을 고쳐도 10초간 새 바이트 0) 이
+ *   PTY 를 접고 다시 띄워야 새 설정으로 뜬다.
+ *
+ * 실패가 아니다 — 재시도 회계·실패 통지를 타지 않는다(`mentionScheduler.ts`). 관문 통지는 이미 남았다.
+ */
+export class AccountGateRequeueError extends Error {
+  constructor(
+    public readonly why: 'queued' | 'passed',
+    /** 표식을 볼 계정 config 디렉터리. 풀 없는 러너면 `null`. */
+    public readonly configDir: string | null,
+  ) {
+    super(`계정 관문 — 턴을 접고 다시 띄운다(${why})`);
+    this.name = 'AccountGateRequeueError';
+  }
+}
+
+/**
+ * 관문 통지에 붙는 기계용 칸(2026-10-02, 관문 대응 안 2). **턴 시작 관문(`'startup'`)에만** 붙인다 —
+ * 그때만 "그 계정의 설정 확인 화면이 사람을 기다린다"(서버가 🙋·차례 주인으로 읽는다)가 참이다.
+ * 턴 **도중** 권한 확인(`'gate'`)은 명령 하나에 대한 물음이라 계정 관문이 아니다 — 붙이면 명령마다 🙋 가 선다.
+ *
+ * `account` 는 **계정 id 만** 싣는다(풀 이름은 사람 이름일 수 있다 — security, #1039). 화면은 이 id 를
+ * 그 기기의 실제 계정 목록과 대조해 터미널 계정을 고른다(PR-4).
+ */
+export function gateFailExtras(
+  kind: AttentionKind, mentionId: string, account: string | null,
+): Pick<FailOpts, 'code' | 'mentionId' | 'account'> {
+  if (kind !== 'startup') return {};
+  return { code: 'account_gate', mentionId, ...(account ? { account } : {}) };
+}
+
 export async function runMentionTurn(
   deps: MentionTurnDeps, target: MentionTarget,
 ): Promise<MentionTurnResult> {
@@ -767,6 +881,7 @@ export async function runMentionTurn(
     channelId,
     threadRootId: anchor,
     ...(target.wake ? { wake: target.wake } : {}),
+    ...(target.canceledWakes?.length ? { canceledWakes: target.canceledWakes } : {}),
     ...(target.team ? { team: target.team } : {}),
     ...(target.delegation ? { delegation: target.delegation } : {}),
     ...(target.delegatedBy ? { delegatedBy: target.delegatedBy } : {}),
@@ -785,6 +900,15 @@ export async function runMentionTurn(
   // 발화 판정(countOwnPostsSince)의 기준선이다 — 턴 시작 전에 이미 있던 자기 발화까지 세면,
   // 아무것도 안 하고 끝낸 턴도 "발화했다"로 잘못 판정된다.
   const turnStartSeq = thread.reduce((max, m) => Math.max(max, m.seq), 0);
+  // 보고처의 기준선(2026-10-06). 앵커의 seq 로는 못 잰다: 약속 글은 대개 **다른 스레드에서 깨움보다 뒤에**
+  // 쓰여 앵커의 마지막 seq 보다 크다 — 그것을 이 턴의 보고로 잘못 센다. 보고처의 지금 마지막 글을 잰다.
+  // 못 읽으면 판정을 접는다(null) — 근거 없이 경고하지 않는다.
+  const reportTo = target.wake?.reportTo;
+  const reportBaseSeq = reportTo
+    ? await deps.harkroom.readThread(reportTo.channelId, reportTo.threadRootId, undefined, 1)
+      .then((ms) => ms.reduce((max, m) => Math.max(max, m.seq), 0))
+      .catch(() => null)
+    : null;
 
   // #139 는 "매 턴 다시 읽는다, 캐시 없음"이었다. 이제 러너 사본(`memoryCache.ts`)을 거친다
   // (2026-09-28) — 판본이 같으면 왕복하지 않고, 서버를 못 읽으면 사본으로 돈다. 수정이 다음
@@ -812,14 +936,27 @@ export async function runMentionTurn(
   // **예약으로 깨어난 턴(`turn.wake`)은 찾지 않는다**(recall P1). 새로 온 남의 말이 없거나, 있어도
   // 앞 턴이 이미 본 요청의 되풀이라 같은 것을 다시 고르거나 엉뚱한 것을 끌어온다 — 이어지는
   // 세션은 필요한 기억을 이미 들고 있다.
+  //
+  //
+  // **스레드 루트 글의 머리(~300자)를 질의 앞에 붙인다**(S2 F2). 후속 턴의 새 말은 "그대로 해"·"다시 봐"처럼
+  // 짧아 주제어가 없었다 — 긴 스레드일수록 recall 이 비었다. 후속 턴은 `lastFedSeq` 이후만 읽어 루트가
+  // `thread` 에 없으므로, 루트를 본 턴(대개 첫 턴)에 memoryPin 이 고정 파일에 머리를 적어 두고 다음 턴들이 쓴다.
+  // 새 말이 없으면(wake·내 말뿐) 찾지 않는 규칙은 그대로다.
   const fedFrom = rec.lastFedSeq;
   const recallQuery = target.wake ? '' : thread
     .filter((m) => m.seq > fedFrom && m.authorId !== deps.me.id && m.kind !== 'progress')
     .slice(-3).map((m) => m.body).join('\n').slice(0, 1000);
+  const root = anchor ? thread.find((m) => m.id === anchor) : undefined;
   const search = deps.harkroom.searchMemory?.bind(deps.harkroom);
   const memoryPlan = await planMemory({
     stateDir: deps.stateDir, key, sessionId: rec.sessionId, isFirstTurn, memory,
-    ...(search && recallQuery ? { recall: { query: recallQuery, search: (q: string) => search(q, RECALL_MAX_ITEMS + 3) } } : {}),
+    ...(search && recallQuery ? {
+      recall: {
+        query: recallQuery,
+        ...(root ? { rootHead: root.body.slice(0, RECALL_ROOT_HEAD_CHARS) } : {}),
+        search: (q: string, o: { exclude: string[]; recordTop: number; focus?: string }) => search(q, RECALL_MAX_ITEMS + 3, o),
+      },
+    } : {}),
   });
   // 하네스 파일 메모리 수확 알림(U5, `harnessMemory.ts`). 어댑터가 그 자리를 아는 하네스만
   // (지금은 claude). 읽기 실패는 빈 목록이라 턴을 막지 않는다.
@@ -835,8 +972,20 @@ export async function runMentionTurn(
     ? `${headLines.join('\n').replace(/^\n+/, '')}\n\n${prompt}`
     : prompt;
 
+  // 머지 권한(스레드 3deac356): 서버가 허락한 저장소만 프롬프트에 적고 allow 규칙을 준다. 표면이 없는(옛) 클라이언트는 빈 목록.
+  const mergeRepos = (await deps.harkroom.mergeGrants?.().catch(() => [] as string[])) ?? [];
+  // 외부 API 권한(C안 P3, 스레드 07519d86): 같은 틀 — 서버가 허락한 연결이 있을 때만 절을 쓰고 allow 규칙을 준다.
+  const apiInfo = (await (deps.harkroom.apiGrantInfo
+    ? deps.harkroom.apiGrantInfo().catch(() => ({ connectors: [] as string[], delegatable: [] as string[] }))
+    : deps.harkroom.apiGrants?.().then((connectors) => ({ connectors, delegatable: [] as string[] })).catch(() => undefined))) ?? { connectors: [], delegatable: [] };
+  const apiConnectors = apiInfo.connectors;
+  // 비밀 만들기(스레드 1a08d0cf): 소유자가 켠 에이전트에게만 절을 쓴다. 판정은 서버가 매 호출 한다 — 이것은 안내다.
+  const secretCreate = (await deps.harkroom.secretCreateGranted?.().catch(() => false)) ?? false;
   const systemPrompt = buildSystemPrompt({
     handle: deps.me.handle,
+    secretCreate,
+    merge: { operatorBin: deps.operatorBin, repos: mergeRepos },
+    api: { operatorBin: deps.operatorBin, connectors: apiConnectors, delegatable: apiInfo.delegatable },
     channelName: deps.channelName,
     instructions: def.instructions,
     guide: deps.guide,
@@ -931,6 +1080,9 @@ export async function runMentionTurn(
     mcpConfigPath: deps.mcpConfigPath,
     extraMcpServers,
     operatorBin: deps.operatorBin,
+    mergeRepos,
+    apiConnectors,
+    apiDelegatable: apiInfo.delegatable,
     codexHome: deps.codexHome,
     opencodeHome: deps.opencodeHome,
     piHome: deps.piHome,
@@ -993,6 +1145,8 @@ export async function runMentionTurn(
      * 눌러서 끝난 것과 아무도 안 봐서 회수된 것은 스레드에 남길 말이 다르다.
      */
     canceledBy: string | null;
+    /** 스레드 임대를 잃어 접었는가(`target.fence`). 사람의 중단과 문장이 다르다 — 누른 사람이 없다. */
+    fencedOut: boolean;
     /**
      * **하네스가 멈춰서 우리가 접었는가**(2026-09-09). `silenced` 와 갈라야 하는 이유는
      * 사람이 읽을 문장이 다르기 때문이다 — 무발화는 "시간 안에 답을 못 했다"이고 이것은
@@ -1035,6 +1189,13 @@ export async function runMentionTurn(
      * 깨움만 걸고 말없이 끝나는 턴(c0853e6f), 답을 올린 뒤 CI·콜백을 기다리는 턴(ebb97c7b).
      */
     finished: boolean;
+    /**
+     * 끝낸 턴에 남은 자식 작업 수(서브에이전트·워크플로, `readTranscriptPendingBackground`). `null` 은 모른다.
+     * 0 일 때만 유예 없이 거둔다 — 10-01 사고(서브에이전트를 띄운 턴을 60초 뒤 죽임)의 재발 방지가 이 값이다.
+     */
+    pending: number | null;
+    /** 지금 선 회수 시계의 유예(ms). 더 짧은 유예가 가능해지면 시계를 다시 세운다. */
+    reclaimGraceMs: number;
     /** 마지막으로 읽은 기록 꼬리. `null` 은 판정할 수 없다는 뜻이다(읽지 못하는 하네스·파일 없음). */
     tail: 'ended' | 'working' | null;
     /**
@@ -1054,12 +1215,18 @@ export async function runMentionTurn(
     /** 이미 오퍼레이터에 알린, 헤더를 거절당한 MCP 서버 이름. 턴마다 이름당 한 번만 알린다. */
     mcpRejectedSeen: Set<string>;
     cancelReclaim: (() => void) | null; cancelProbe: (() => void) | null; cancelSilence: (() => void) | null;
+    /** 이 턴이 원장에서 잡은 계정 이름표(턴 시작 관문). 끝날 때 놓는다. */
+    gateHeld: string | null;
+    /** 턴 시작 관문 때문에 접었다 — 같은 멘션을 다시 띄운다(`AccountGateRequeueError`). */
+    gateRequeue: 'queued' | 'passed' | null;
+    cancelGateWatch: (() => void) | null;
   } = {
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
-    apiError: null, canceledBy: null, stalled: false, awaitingHuman: false, gateNoticed: false,
-    lastLifeMs: 0, lastDataAtMs: 0, stalledIdleMs: 0, finished: false, tail: null,
+    apiError: null, canceledBy: null, fencedOut: false, stalled: false, awaitingHuman: false, gateNoticed: false,
+    lastLifeMs: 0, lastDataAtMs: 0, stalledIdleMs: 0, finished: false, pending: null, reclaimGraceMs: 0, tail: null,
     threadUnreadable: false, silenceDeferred: false, deniedSeen: new Set(), denialNotices: 0, mcpRejectedSeen: new Set(),
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
+    gateHeld: null, gateRequeue: null, cancelGateWatch: null,
   };
 
   const reclaim = (): void => {
@@ -1092,8 +1259,20 @@ export async function runMentionTurn(
       end.cancelReclaim = null;
       return;
     }
-    if (end.cancelReclaim) return; // 이미 유예 중 — 다시 세우면 유예가 늘어난다.
-    end.cancelReclaim = schedule(() => { end.cancelReclaim = null; reclaim(); }, deps.orphanMs ?? 60_000);
+    // **끝났고 자식 작업이 없으면 유예 없이 거둔다**(2026-10-02). 유예(`orphanMs`)의 값어치는 둘이었다 —
+    // 사람이 attach 할 틈, 그리고 `end_turn` 뒤에도 돌 수 있는 자식(서브에이전트·백그라운드 작업)의
+    // 보호. 앞은 `viewers > 0` 이 따로 지키고, 뒤는 기록의 `pending` 이 말해 준다. 그래서 자식이
+    // 0 으로 **확인된** 턴만 바로 거두고, 남았거나 모르면(`null`) 지금처럼 유예한다.
+    const grace = end.finished && end.pending === 0 ? (deps.finishedReclaimMs ?? 0) : (deps.orphanMs ?? 60_000);
+    if (end.cancelReclaim) {
+      // 이미 유예 중 — 다시 세우면 유예가 늘어난다. 더 **짧은** 유예가 가능해졌을 때만 바꿔 세운다.
+      if (grace >= end.reclaimGraceMs) return;
+      end.cancelReclaim();
+      end.cancelReclaim = null;
+    }
+    end.reclaimGraceMs = grace;
+    if (grace <= 0) { reclaim(); return; }
+    end.cancelReclaim = schedule(() => { end.cancelReclaim = null; reclaim(); }, grace);
   };
 
   const onViewerCount = (count: number): void => {
@@ -1136,6 +1315,12 @@ export async function runMentionTurn(
   // ("멘션 턴 진행 중 → 그 PTY 에 attach")과 main 루프의 유예 판정이 이 등록을 본다.
   // 세션을 연 **뒤**여야 한다: 등록의 sessionId 가 곧 attach 대상이다(릴레이가 없으면 null).
   deps.registry?.register(key, { kind: 'mention', sessionId: session?.sessionId ?? null });
+
+  // 임대를 잃으면 사람의 [중단] 과 같은 길로 접는다 — 스폰 전이면 안 띄우고(`canceledBeforeSpawn`), 스폰
+  // 중이면 손잡이를 잡는 순간(`onSpawn`), 그 뒤면 지금 SIGTERM 이다. 표지는 스케줄러가 남긴다.
+  const onFenceLost = (): void => { end.fencedOut = true; reclaim(); };
+  if (target.fence?.aborted) end.fencedOut = true;
+  else target.fence?.addEventListener('abort', onFenceLost, { once: true });
 
   // 발화 폴링. 서버에만 있는 사실이라 물어보는 수밖에 없다 — 에이전트는 자기 PAT 로
   // 서버에 직접 발화하므로 러너의 PTY 출력에는 그 사실이 안 나타난다.
@@ -1253,6 +1438,12 @@ export async function runMentionTurn(
     if (end.exited) return;
     end.tail = tail;
     end.finished = tail === 'ended';
+    // 자식 작업 수는 끝난 턴에서만 뜻이 있다 — 일하는 중의 값은 다음 레코드가 바로 뒤집는다.
+    end.pending = end.finished
+      ? await (deps.readPendingBackground ?? readTranscriptPendingBackground)(def.harness, sessionIdForProbe, {
+        configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
+      }).catch(() => null)
+      : null;
     if (!end.finished && end.spoke && tail === 'working') {
       const limit = deps.harnessStallMs ?? 10 * 60_000;
       const mtime = await (deps.readTranscriptMtime ?? sessionTranscriptMtimeMs)(def.harness, sessionIdForProbe, {
@@ -1408,7 +1599,7 @@ export async function runMentionTurn(
    * 문장은 `canceledBy` 가 정한다(실패 카드의 첫 분기).
    */
   const canceledBeforeSpawn = (): TurnResult | null =>
-    (end.canceledBy ? { exitCode: 143, timedOut: false, tail: '' } : null);
+    (end.canceledBy || end.fencedOut ? { exitCode: 143, timedOut: false, tail: '' } : null);
 
   let result: TurnResult;
   try {
@@ -1422,6 +1613,7 @@ export async function runMentionTurn(
       // 주입은 `runPtyTurn` 이 준비 신호를 본 뒤에 한다(pty.ts::injectPrompt).
       ...(usesTui ? {
         injectPrompt: {
+          onInjected: () => deps.onPromptDelivered?.(),
           // 지시문이 필요한 하네스에는 여기가 **유일한 길**이다(위 `promptForHarness`).
           text: promptForHarness,
           // 언제 넣을지·갔는지 어떻게 볼지는 **하네스의 성질**이다(어댑터 표).
@@ -1465,6 +1657,8 @@ export async function runMentionTurn(
               // 정지 시계를 계속 재면 사람이 오기 전에 접힌다(위 `awaitingHuman` 주석).
               end.awaitingHuman = true;
               const label = deps.accountLabel ?? '(기본)';
+              // 턴 시작 관문이면 그 계정에 표식을 세운다 — 다음 배정부터 맨 뒤로 간다(`accountAssign.ts`).
+              if (kind === 'startup') deps.markAccountGate?.();
 
               /**
                * **스레드에 남기는 것은 원장보다 앞이다**(2026-09-09).
@@ -1488,6 +1682,7 @@ export async function runMentionTurn(
                   retryable: false,
                   what: '하네스가 사람의 확인을 기다린다',
                   reason: '그 터미널에서 화면의 물음에 답하면 이 턴이 그 자리에서 이어진다',
+                  ...gateFailExtras(kind, mentionId, deps.claudeAccount ?? null),
                 }).catch((e: unknown) => {
                   console.error(`[mentionTurn] ${key}: 관문 통지 발화 실패(턴은 그대로 기다린다):`,
                     e instanceof Error ? e.message : e);
@@ -1506,9 +1701,39 @@ export async function runMentionTurn(
                * 화면도 통지도 없이 서 있다가 정지 시계에 접힌다 — 이 커밋이 고치려는 실패를
                * 원장으로 다시 만드는 셈이다.
                */
-              if (kind === 'startup'
-                && deps.attentionLedger
-                && !deps.attentionLedger.claim(label, sessionIdForProbe ?? key)) return;
+              if (kind === 'startup' && deps.attentionLedger) {
+                if (end.gateHeld === null && !deps.attentionLedger.claim(label, sessionIdForProbe ?? key)) {
+                  /*
+                    **기다리는 PTY 는 계정당 하나다**(2026-10-02, 관문 대응 안 2). 그 계정의 관문에서 이미
+                    다른 턴이 사람을 기다린다 — 이 PTY 는 접고, 표식이 지워지면 같은 멘션을 다시 띄운다.
+                    관문 통지는 위에서 이미 남겼다(스레드마다 남는 것이 맞다 — 그 스레드도 막혔다).
+                  */
+                  end.gateRequeue = 'queued';
+                  reclaim();
+                  return;
+                }
+                end.gateHeld = label;
+                /*
+                  **표식이 지워지면 다시 띄운다.** 관문에 선 claude 는 설정을 다시 읽지 않는다(2026-10-02
+                  실측) — 사람이 데몬 터미널에서 지나도 이 PTY 는 그대로 서 있다. 그래서 접고 다시 띄운다.
+                  사람이 **이 터미널에서** 직접 답하면 주입이 일어나고 턴이 그 자리에서 이어진다(그때는
+                  `injected` 가 참이라 아래 주기는 아무것도 하지 않는다 — 표식은 성공 뒤 스케줄러가 지운다).
+                */
+                const cleared = deps.accountGateCleared;
+                if (cleared && !end.cancelGateWatch) {
+                  const t = setInterval(() => {
+                    if (end.exited || end.spoke || end.gateRequeue) return;
+                    void cleared().then((yes) => {
+                      if (!yes || end.exited || end.spoke || end.gateRequeue) return;
+                      end.gateRequeue = 'passed';
+                      console.error(`[mentionTurn] ${key}: 계정 관문 표식이 지워졌다 — PTY 를 접고 다시 띄운다(계정=${label})`);
+                      reclaim();
+                    }, () => undefined);
+                  }, deps.gateWatchMs ?? 5_000);
+                  t.unref?.();
+                  end.cancelGateWatch = () => clearInterval(t);
+                }
+              }
               session?.needsAttention(screen, label);
               console.error(
                 `[mentionTurn] ${key}: 사람 손이 필요하다(${kind}, 계정=${label}) — 앱이 이 세션의 터미널을 연다`,
@@ -1542,7 +1767,7 @@ export async function runMentionTurn(
         // 위 가드와 이 콜백 사이에도 창이 있다(실행 파일 해석·forkpty). 그 창에 들어온
         // 중단은 손잡이를 잡은 **바로 이 순간** 써야 한다 — 안 쓰면 그 턴은 아무도 다시
         // 죽여 주지 않는다(중단은 한 번 오고, 다시 오지 않는다).
-        if (end.canceledBy) {
+        if (end.canceledBy || end.fencedOut) {
           reclaim();
           return;
         }
@@ -1573,9 +1798,13 @@ export async function runMentionTurn(
   } finally {
     // 끝 상태의 타이머를 먼저 끈다 — 남기면 끝난 턴의 타이머가 다음 턴의 PTY 를 죽인다.
     end.exited = true;
+    target.fence?.removeEventListener('abort', onFenceLost);
     end.cancelProbe?.();
     end.cancelReclaim?.();
     end.cancelSilence?.();
+    end.cancelGateWatch?.();
+    // 원장은 턴과 같은 수명이다 — 놓지 않으면 그 계정의 다음 관문은 영영 사람을 부르지 못한다.
+    if (end.gateHeld !== null) deps.attentionLedger?.release(end.gateHeld);
     // 등록도 세션과 같은 수명이다 — 남겨 두면 끝난 턴이 "진행 중"으로 남아 인터랙티브
     // open 이 죽은 PTY 에 사람을 붙인다.
     deps.registry?.release(key);
@@ -1595,6 +1824,9 @@ export async function runMentionTurn(
 
   // #144: 에이전트가 직접 message.progress 로 진행 설명을 올리므로, 더 이상 ack seq 를 추적할 필요가 없다.
   // progress 메시지는 kind='progress' 로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
+
+  // 턴 시작 관문 때문에 접었다 — 실패가 아니다. 같은 멘션을 다시 띄우게 스케줄러에 넘긴다.
+  if (end.gateRequeue) throw new AccountGateRequeueError(end.gateRequeue, deps.claudeConfigDir ?? null);
 
   // 끝나기 직전의 거부는 주기 사이에 떨어질 수 있다 — 한 번 더 훑는다(TUI 가 아니면 여기가 유일하다).
   await probeDenials();
@@ -1790,6 +2022,8 @@ export async function runMentionTurn(
       // 여럿이 같은 스레드를 보는 자리에서 "누가 멈췄나"는 다음 판단의 재료다.
       end.canceledBy
         ? `@${end.canceledBy} 가 이 턴을 중단했다`
+        : end.fencedOut
+          ? '다른 러너가 이 스레드를 넘겨받아 이 턴을 접었다(스레드 임대를 잃었다)'
         : end.apiError
           // 턴 도중에 관측한 에러가 있으면 그것이 원인이다(2026-09-09). tail 을 담지 않는
           // 이유는 무발화와 같다 — TUI 에서는 주입한 프롬프트가 에코돼 tail 에 섞인다.
@@ -1807,7 +2041,8 @@ export async function runMentionTurn(
               : end.silenced
               ? `harness 무발화 ${deps.turnTimeoutMs}ms — 답 없이 시간 한도를 넘겼다`
               : `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
-    ) as Error & { harnessApiError?: string; harnessStalledMs?: number; threadModel?: TurnModel };
+    ) as Error & { harnessApiError?: string; harnessStalledMs?: number; threadModel?: TurnModel; fencedOut?: boolean };
+    if (end.fencedOut) failure.fencedOut = true;
     /*
       **정지의 마지막 화면은 러너 로그에 남긴다**(2026-09-09).
 
@@ -1956,6 +2191,11 @@ export async function runMentionTurn(
         configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
       }).catch(() => null);
       await deps.harkroom.progress(channelId, silentWakeNotice(lastSaid, deps.runnerSecret, await tailSecrets()), anchor);
+    }
+    // **약속한 보고처에 말했나**(2026-10-06). 앵커 쪽 판정(위)과 따로 본다 — 앵커에 답하고도 보고처를 잊는 것이
+    // 실측된 모양이다(task_manager 10-06). 다시 기다리기로 했으면(새 깨움) 아직 보고할 때가 아니니 경고하지 않는다.
+    if (reportTo && reportBaseSeq !== null && !hasOwnWakeSince(after, deps.me.id, turnStartSeq)) {
+      await reportPromiseCheck(deps, reportTo, reportBaseSeq, target.wake?.reason ?? '', anchor ?? mentionId, channelId);
     }
   } catch (err) {
     console.error(

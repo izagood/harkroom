@@ -123,15 +123,18 @@ describe('관문을 보면 상한을 기다리지 않는다 (부를 사람이 �
     stdinFile: null,
   });
 
-  it('테마 선택 화면이 gateFailMs 동안 이어지면 바로 PromptNotDelivered — 아무것도 안 쓴다', async () => {
+  it('테마 선택 화면이 waitingQuietMs 동안 조용하면 바로 PromptNotDelivered(waiting) — 아무것도 안 쓴다', async () => {
     const chunks: Buffer[] = [];
+    let injectedCalls = 0;
     const startedAt = Date.now();
     await expect(runPtyTurn(themePlan(), {
       cwd: process.cwd(),
       timeoutMs: 20_000,
       onData: (c) => chunks.push(c),
-      injectPrompt: { text: 'NEVER_SEND_THIS', readyTimeoutMs: 15_000, gateFailMs: 300 },
-    })).rejects.toThrow(/준비 신호/);
+      injectPrompt: { text: 'NEVER_SEND_THIS', readyTimeoutMs: 15_000, waitingQuietMs: 300, onInjected: () => { injectedCalls += 1; } },
+    })).rejects.toMatchObject({ name: 'PromptNotDeliveredError', kind: 'waiting' });
+    // 넣지 않았으니 "입력창에 들어갔다"도 없다 — 관문 표식 지우기의 근거가 생기지 않는다(#1047 F1).
+    expect(injectedCalls).toBe(0);
     // 상한(15초)이 아니라 관문 시계로 접혔다.
     expect(Date.now() - startedAt).toBeLessThan(5_000);
     expect(Buffer.concat(chunks).toString('utf8')).not.toContain('NEVER_SEND_THIS');
@@ -143,13 +146,60 @@ describe('관문을 보면 상한을 기다리지 않는다 (부를 사람이 �
       cwd: process.cwd(),
       timeoutMs: 20_000,
       injectPrompt: {
-        text: 'NEVER_SEND_THIS', readyTimeoutMs: 1_500, gateFailMs: 200,
+        text: 'NEVER_SEND_THIS', readyTimeoutMs: 1_500, waitingQuietMs: 200,
         onAttention: (_screen, kind) => called.push(kind),
       },
     });
     expect(called).toContain('startup');
     // 가짜 하네스의 안전망으로 끝났다 = 러너가 죽이지 않았다.
     expect(result.exitCode).toBe(22);
+  }, 20_000);
+});
+
+// ── 문구가 아니라 상태로 판정한다(2026-10-01, jaebin: "내 선택을 기다리는 걸 알 수 없어?").
+//
+// 관문 문구 목록에 **없는** 처음 보는 화면도 잡혀야 한다. 기준은 하나다: 입력창 표시 없이 화면이
+// 조용하다 = 사람의 선택을 기다린다. 반대로 입력창을 그린 뒤 조용한 것은 정상(프롬프트를 넣는다).
+describe('선택 대기를 상태로 판정한다', () => {
+  const plan = (mode: string, extra: Record<string, string> = {}) =>
+    ({ command: process.execPath, args: [fake], env: { FAKE_MODE: mode, ...extra }, stdinFile: null });
+
+  it('처음 보는 화면(관문 문구 없음)도 조용해지면 waiting 으로 접는다', async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const novel = `${mkdtempSync(`${tmpdir()}/novel-`)}/screen.txt`;
+    // 우리 패턴 어디에도 없는 문구다 — 번호·커서·Enter to confirm·✔ 가 없다.
+    writeFileSync(novel, 'A brand new screen from a future version\n  Allow the thing? (y/n)\n');
+    try {
+      const novelText = readFileSync(novel, 'utf8');
+      expect(looksLikeGate(novelText)).toBe(false);
+      expect(looksReadyForPrompt(novelText)).toBe(false);
+      const startedAt = Date.now();
+      await expect(runPtyTurn(plan('gate-only', { FAKE_SCREEN: novel }), {
+        cwd: process.cwd(), timeoutMs: 20_000,
+        injectPrompt: { text: 'NEVER_SEND_THIS', readyTimeoutMs: 15_000, waitingQuietMs: 300 },
+      })).rejects.toMatchObject({ kind: 'waiting' });
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+    } finally {
+      rmSync(novel, { force: true });
+    }
+  }, 20_000);
+
+  it('입력창을 그린 뒤 조용한 것은 선택 대기가 아니다 — 프롬프트를 넣는다', async () => {
+    const chunks: Buffer[] = [];
+    const result = await runPtyTurn(plan('ready-then-echo'), {
+      cwd: process.cwd(), timeoutMs: 20_000, onData: (c) => chunks.push(c),
+      injectPrompt: { text: 'HELLO_PROMPT', readyTimeoutMs: 5_000, waitingQuietMs: 300 },
+    });
+    expect(Buffer.concat(chunks).toString('utf8')).toContain('HELLO_PROMPT');
+    expect(result.exitCode).not.toBeNull();
+  }, 20_000);
+
+  it('아무것도 안 그린 부팅은 waiting 이 아니다 — 상한(timeout)으로 간다', async () => {
+    await expect(runPtyTurn(plan('no-output'), {
+      cwd: process.cwd(), timeoutMs: 20_000,
+      injectPrompt: { text: 'NEVER_SEND_THIS', readyTimeoutMs: 1_200, waitingQuietMs: 200 },
+    })).rejects.toMatchObject({ kind: 'timeout' });
   }, 20_000);
 });
 

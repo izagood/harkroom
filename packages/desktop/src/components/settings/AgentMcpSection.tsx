@@ -1,7 +1,7 @@
 /**
  * 에이전트 상세의 **MCP** 절 — 설정을 한 자리에서 끝낸다(MCP 설정 UI 1차, 2026-09-28).
  *
- * 전에는 세 군데였다: 서버 레지스트리(설정 › MCP servers), 이 머신의 `operator/mcp-servers.json`
+ * 전에는 세 군데였다: 서버 레지스트리(설정 › 연동 › MCP 서버), 이 머신의 `operator/mcp-servers.json`
  * (손으로), 에이전트의 체크. 게다가 personal 서버는 credentialScope 를 **먼저** 바꿔야 했고,
  * 정의 없는 이름을 켜면 오퍼레이터가 그 에이전트를 **띄우지 않았다**(`mcp_server_missing`).
  *
@@ -172,7 +172,7 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
         <div className="text-meta text-fg-muted">{t('agents.scope.mcp')}</div>
         {!adding && (
           <button
-            className="rounded border border-border px-2 py-0.5 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
+            className="rounded-row border border-border px-2 py-0.5 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
             data-testid="agent-mcp-add-open"
             disabled={off}
             onClick={() => { setAdding(true); pickPreset(MCP_PRESETS[0]!.id); }}
@@ -212,12 +212,12 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
       )}
 
       {adding && (
-        <div className="mt-2 flex flex-col gap-2 rounded border border-border p-2" data-testid="agent-mcp-add">
+        <div className="mt-2 flex flex-col gap-2 rounded-row border border-border p-2" data-testid="agent-mcp-add">
           <label className="flex flex-col gap-1 text-meta text-fg">
             {t('agents.mcp.preset')}
             <select
               aria-label={t('agents.mcp.preset')}
-              className="rounded border border-border bg-surface px-2 py-1 text-meta text-fg"
+              className="rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
               value={presetId}
               onChange={(e) => pickPreset(e.target.value)}
             >
@@ -226,11 +226,11 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
             </select>
           </label>
           <div className="flex flex-wrap gap-2">
-            <input aria-label={t('mcpServers.name')} className="w-32 rounded border border-border bg-surface px-2 py-1 text-meta text-fg"
+            <input aria-label={t('mcpServers.name')} className="w-32 rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
               value={name} onChange={(e) => setName(e.target.value)} placeholder="name" />
-            <input aria-label={t('agents.mcp.url')} className="min-w-0 flex-1 rounded border border-border bg-surface px-2 py-1 text-meta text-fg"
+            <input aria-label={t('agents.mcp.url')} className="min-w-0 flex-1 rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
               value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…/mcp" />
-            <select aria-label={t('mcpServers.kindLabel')} className="rounded border border-border bg-surface px-2 py-1 text-meta text-fg"
+            <select aria-label={t('mcpServers.kindLabel')} className="rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
               value={kind} onChange={(e) => setKind(e.target.value as 'community' | 'personal')}>
               <option value="personal">{t('mcpServers.kind.personal')}</option>
               <option value="community">{t('mcpServers.kind.community')}</option>
@@ -238,16 +238,16 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
           </div>
           <p className="text-meta text-fg-subtle">{t('agents.mcp.addNote')}</p>
           <div className="flex gap-2">
-            <button className="rounded border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
+            <button className="rounded-row border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
               data-testid="agent-mcp-add-submit" disabled={off} onClick={add}>{t('agents.mcp.addSubmit')}</button>
-            <button className="rounded px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken" disabled={off}
+            <button className="rounded-row px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken" disabled={off}
               onClick={() => setAdding(false)}>{t('agents.mcp.cancel')}</button>
           </div>
         </div>
       )}
 
       {pending && (
-        <div role="alertdialog" className="mt-2 rounded border border-warning-border bg-warning-surface p-2 text-meta text-warning" data-testid="agent-mcp-confirm-personal">
+        <div role="alertdialog" className="mt-2 rounded-row border border-warning-border bg-warning-surface p-2 text-meta text-warning" data-testid="agent-mcp-confirm-personal">
           <p>{t('agents.mcp.confirmPersonal')}</p>
           {/* 팀 소속을 함께 말한다(068) — owner 로 좁히면 팀 부름에서도 이 팀원 자리는 소유자만
               깨운다. 안 적으면 팀을 부른 남은 "왜 이 에이전트만 안 왔나"를 묻는다(#udc). */}
@@ -257,8 +257,8 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
             </p>
           )}
           <div className="mt-2 flex gap-2">
-            <button className="rounded border border-warning-border px-2 py-1 font-medium" data-testid="agent-mcp-confirm-yes" onClick={confirmPending}>{t('agents.mcp.confirmYes')}</button>
-            <button className="rounded px-2 py-1" onClick={() => setPending(null)}>{t('agents.mcp.cancel')}</button>
+            <button className="rounded-row border border-warning-border px-2 py-1 font-medium" data-testid="agent-mcp-confirm-yes" onClick={confirmPending}>{t('agents.mcp.confirmYes')}</button>
+            <button className="rounded-row px-2 py-1" onClick={() => setPending(null)}>{t('agents.mcp.cancel')}</button>
           </div>
         </div>
       )}
@@ -267,7 +267,7 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
           <span>{notice}</span>
           {/* 러너 config 는 기동 때 만든다 — 지금 쓰려면 갈아 띄운다(#869 `agent.restart`). 멈춰 둔 에이전트는 되살리지 않는다. */}
           {!agent.stopRequestedAt && !restarted && (
-            <button className="rounded border border-border px-2 py-0.5 font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
+            <button className="rounded-row border border-border px-2 py-0.5 font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
               data-testid="agent-mcp-restart" disabled={off} onClick={restartNow}>{t('agents.mcp.restartNow')}</button>
           )}
           {restarted && <span>{t('agents.restart.sent')}</span>}

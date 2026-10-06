@@ -92,6 +92,8 @@ export const REQUEST_TYPES = [
   'claudeAccountRemove',
   'claudePoolRemove',
   'claudeAccountMove',
+  // 사람이 지나야 하는 관문을 그 계정의 터미널에서 고르게 한다(2026-10-01). 이름만 받는다.
+  'claudeAccountOpenTerminal',
   // codex 계정(2026-09-28). claude 와 달리 풀이 없고 `active.json` 이 한 계정을 가리킨다
   // (`codexAccounts.ts` 머리 주석). 로그인은 브라우저가 localhost 로 돌아오므로 코드 제출이 없다.
   'codexAccountsList',
@@ -124,6 +126,16 @@ export const REQUEST_TYPES = [
   'operatorMcpAuthStart',
   'operatorMcpAuthStatus',
   'operatorMcpAuthForget',
+  // 에이전트 머지 래퍼가 쓸 gh 계정(`operator.json` 의 `merge.ghUser`, 스레드 febe9ff8 P2). 목록은 `gh auth status`
+  // 의 로그인 이름뿐이고 **토큰은 오가지 않는다**. set 은 그 순간 목록에 있는 이름만 받는다(security C7).
+  'operatorMergeGet',
+  'operatorMergeSet',
+  // 작업 폴더 정리(스레드 9e909150). 원장은 이 기기의 것이다(`operator/src/workspaceCleanup.ts`). 사람의 손은 보존·되돌리기·
+  // 삭제 예정에 넣기 셋뿐이고, **바로 지우는 메서드는 없다**(D3·D5 결정) — 지우기는 청소기 회차만 한다.
+  'workspaceCleanupGet',
+  'workspaceCleanupSettingsSet',
+  'workspaceCleanupAct',
+  'workspaceCleanupSweep',
 ] as const;
 export type DaemonRequestType = (typeof REQUEST_TYPES)[number];
 
@@ -358,6 +370,17 @@ export class NdjsonDecoder {
   /** 지금 들고 있는 미완성 바이트 수. 회귀선이 "쌓이지 않는다"를 재는 자리다. */
   get pendingBytes(): number {
     return this.buffer.length;
+  }
+
+  /**
+   * 들고 있던 미완성 바이트를 꺼내고 비운다. 연결을 **다른 디코더에 넘길 때** 쓴다 —
+   * 넘기는 쪽이 이것을 버리면 같은 청크에 붙어 온 다음 줄의 머리가 사라지고, 받는 쪽은
+   * 그 꼬리를 깨진 JSON 으로 읽는다(`DaemonServer` → 러너 링크 인계).
+   */
+  takeBuffered(): Buffer {
+    const rest = this.discarding ? Buffer.alloc(0) : this.buffer;
+    this.buffer = Buffer.alloc(0);
+    return rest;
   }
 }
 
@@ -739,7 +762,73 @@ export function readOperatorMcpRemovePayload(payload: unknown): { name: string }
   return typeof name === 'string' ? { name } : name;
 }
 
-export interface OperatorRegisterResult { operatorId: string; name: string; baseUrl: string }
+/** gh 에 로그인된 계정 하나 — `gh auth status --json hosts` 의 github.com 항목에서 이름과 활성 여부만 옮긴다. */
+export interface OperatorGhAccount { login: string; active: boolean }
+
+/**
+ * 머지 래퍼의 gh 계정 상태(`operatorMergeGet`·`operatorMergeSet` 의 답).
+ * - `ghUser`: `operator.json` 의 `merge.ghUser`. 없으면 null — 그때 래퍼는 머지하지 않는다(`no_gh_user`).
+ * - `accounts`: 이 머신의 gh 로그인 목록. gh 가 없거나 답이 깨졌으면 null 이고 `accountsError` 에 까닭.
+ * - `host`: 이 값이 어느 기기의 것인지(security C8) — 화면이 함께 보인다.
+ */
+export interface OperatorMergeState {
+  ghUser: string | null;
+  accounts: OperatorGhAccount[] | null;
+  accountsError?: string;
+  host: string;
+}
+
+/** GitHub 로그인 이름 모양 — `turnMerge.ts` 의 `tokenFor` 가 받는 것과 같다. */
+export const GH_LOGIN_RE = /^[A-Za-z0-9-]{1,39}$/;
+
+/** `ghUser: null` 은 지우기다. 목록에 있는지는 오퍼레이터가 그 순간의 gh 로 다시 잰다. */
+export function readOperatorMergeSetPayload(payload: unknown): { ghUser: string | null } | DaemonError {
+  const p = payload as { ghUser?: unknown } | null;
+  if (!p || typeof p !== 'object' || !('ghUser' in p)) return daemonError('bad-payload', 'operatorMergeSet 에는 ghUser 가 필요하다(지우려면 null)');
+  if (p.ghUser === null) return { ghUser: null };
+  if (typeof p.ghUser !== 'string' || !GH_LOGIN_RE.test(p.ghUser)) return daemonError('bad-payload', 'ghUser 는 GitHub 로그인 이름이어야 한다');
+  return { ghUser: p.ghUser };
+}
+
+/** `workspaceCleanupSettingsSet` — 둘 다 선택이다. graceDays 는 1~30 으로 자른다. */
+export function readWorkspaceCleanupSettingsPayload(payload: unknown): { enabled?: boolean; graceDays?: number } | DaemonError {
+  const p = payload as { enabled?: unknown; graceDays?: unknown } | null;
+  if (!p || typeof p !== 'object') return daemonError('bad-payload', 'workspaceCleanupSettingsSet 에는 enabled 나 graceDays 가 필요하다');
+  const out: { enabled?: boolean; graceDays?: number } = {};
+  if (p.enabled !== undefined) {
+    if (typeof p.enabled !== 'boolean') return daemonError('bad-payload', 'enabled 는 boolean 이어야 한다');
+    out.enabled = p.enabled;
+  }
+  if (p.graceDays !== undefined) {
+    if (typeof p.graceDays !== 'number' || !Number.isInteger(p.graceDays)) return daemonError('bad-payload', 'graceDays 는 정수여야 한다');
+    out.graceDays = p.graceDays;
+  }
+  if (out.enabled === undefined && out.graceDays === undefined) return daemonError('bad-payload', 'enabled 나 graceDays 가 필요하다');
+  return out;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * `workspaceCleanupAct` — 항목은 원장의 경로로 가리키고(원장에 없는 경로는 오퍼레이터가 거절한다), `by` 는 누른 사람의
+ * 계정 id 다(화면의 「누가 보존」). 이름이 아니라 id 다 — 이름은 바뀐다.
+ */
+export function readWorkspaceCleanupActPayload(payload: unknown): { path: string; action: 'keep' | 'unkeep' | 'list'; by: string } | DaemonError {
+  const p = payload as { path?: unknown; action?: unknown; by?: unknown } | null;
+  if (!p || typeof p.path !== 'string' || !p.path.startsWith('/')) return daemonError('bad-payload', 'path 는 원장의 절대 경로여야 한다');
+  if (p.action !== 'keep' && p.action !== 'unkeep' && p.action !== 'list') return daemonError('bad-payload', 'action 은 keep·unkeep·list 중 하나다');
+  if (typeof p.by !== 'string' || !UUID_RE.test(p.by)) return daemonError('bad-payload', 'by 는 계정 id 여야 한다');
+  return { path: p.path, action: p.action, by: p.by };
+}
+
+export interface OperatorRegisterResult {
+  operatorId: string; name: string; baseUrl: string;
+  /**
+   * 다시 등록했을 때 서버가 옛 등록을 폐기했나. `null`·없음 = 폐기하지 않았다 — 옛 등록이 없었거나,
+   * 서버가 `replaces` 를 모르는 옛 서버다. 그때 화면은 "목록에서 직접 지워라"로 물러난다.
+   */
+  replaced?: { operatorId: string; movedAssignments: number } | null;
+}
 
 export function readOperatorRegisterPayload(payload: unknown): { baseUrl: string; code: string; name?: string } | DaemonError {
   const p = payload as { baseUrl?: unknown; code?: unknown; name?: unknown } | null;

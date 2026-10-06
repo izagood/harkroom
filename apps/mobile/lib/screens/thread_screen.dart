@@ -1,14 +1,23 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api/models.dart';
 import '../i18n/i18n.dart';
+import '../mention/sticky.dart';
 import '../state/app_scope.dart';
 import '../state/app_state.dart';
+import '../ui/parts.dart';
 import '../ui/states.dart';
+import '../ui/tokens.dart';
 import 'agent_model.dart';
 import 'composer_attachments.dart';
+import 'mention_button.dart';
 import 'message_feed.dart';
 import 'message_list_screen.dart';
+import 'message_tile.dart';
+import 'search_screen.dart';
+import 'attachments.dart';
 
 /// 스레드 하나. 루트를 맨 위에 두고 그 아래 답글이 붙는다.
 ///
@@ -18,10 +27,27 @@ import 'message_list_screen.dart';
 /// 지워지고(긴 작업 하나가 채널을 덮는다), 목록 응답도 스레드 수만큼 부푼다.
 /// 그래서 여기서 `?thread=` 로 따로 읽는다.
 class ThreadScreen extends StatefulWidget {
-  const ThreadScreen({super.key, required this.channelId, required this.rootId});
+  const ThreadScreen({
+    super.key,
+    required this.channelId,
+    required this.rootId,
+    this.highlightId,
+    this.highlightSeq,
+    this.focusComposer = false,
+  });
 
   final String channelId;
   final String rootId;
+
+  /// 열자마자 그 줄로 굴려 2초 강조할 메시지(찾기 결과·링크). 루트여도 되고 답글이어도 된다.
+  final String? highlightId;
+
+  /// [highlightId] 의 seq. 주면 스레드를 **그 자리를 가운데 둔 창**으로 받는다(`AppState.openThread`) —
+  /// 긴 스레드의 옛 답글은 최신 페이지에 없어 이것 없이는 굴러갈 줄이 없다.
+  final int? highlightSeq;
+
+  /// 열자마자 작성칸에 포커스(키보드)를 준다 — 메시지 시트의 「스레드에서 답글」.
+  final bool focusComposer;
 
   @override
   State<ThreadScreen> createState() => _ThreadScreenState();
@@ -29,11 +55,55 @@ class ThreadScreen extends StatefulWidget {
 
 class _ThreadScreenState extends State<ThreadScreen> {
   final _composer = TextEditingController();
+  /// @ 버튼이 칸에 포커스를 주려고 쥔다.
+  final _composerFocus = FocusNode();
   bool _sending = false;
   /// 작성칸 모델 칩으로 고른 값(서버 079). 서버의 스레드 지정이 되므로 보낸 뒤에도 칩은 그 값을 이어 보인다.
   Map<String, ModelPick> _picks = const {};
 
   bool _loaded = false;
+
+  /// [ThreadScreen.highlightId] 줄을 찾아 굴리는 열쇠. 한 번 굴리면 끝이다 — 사람이 굴린 뒤에 새 답글이
+  /// 와도 다시 끌고 가지 않는다.
+  final _hitKey = GlobalKey();
+  bool _hitDone = false;
+  int _hitTries = 0;
+
+  /// 목록 맨 위(reverse 라 끝)에 닿으면 옛 답글을 받는다 — 채널 화면의 `_maybeLoadOlder` 와 같다.
+  final _scroll = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll.addListener(_maybeLoadOlder);
+    // 쓰던 글(D8)을 되살리고, 칠 때마다 적어 둔다. 커뮤니티 key 는 **지금** 쥔다 — 옮긴 뒤 이 화면이
+    // 닫혀도 글은 이 커뮤니티 자리에 남는다.
+    final app = AppScope.read(context);
+    _community = app.activeKey;
+    _composer.text = app.draftFor(widget.rootId);
+    _composer.addListener(_keepDraft);
+    if (widget.focusComposer) {
+      // 첫 프레임 뒤에 준다 — 작성칸이 아직 나무에 없으면 포커스가 갈 곳이 없다.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _composerFocus.requestFocus();
+      });
+    }
+  }
+
+  String? _community;
+
+  void _keepDraft() {
+    final c = _community;
+    if (c != null) AppScope.read(context).saveDraft(c, widget.rootId, _composer.text);
+  }
+
+  void _maybeLoadOlder() {
+    if (!_scroll.hasClients) return;
+    final pos = _scroll.position;
+    if (pos.pixels < pos.maxScrollExtent - 400) return;
+    // 듣는 자리는 빌드 밖이라 `context.app`(구독)을 부르지 않는다.
+    AppScope.read(context).loadOlderThread(widget.channelId, widget.rootId);
+  }
 
   /// **`initState` 가 아니라 여기서 읽는다.**
   ///
@@ -48,13 +118,17 @@ class _ThreadScreenState extends State<ThreadScreen> {
     super.didChangeDependencies();
     if (_loaded) return;
     _loaded = true;
-    // 루트는 채널에서 이미 왔지만 답글은 여기서 처음 온다.
-    context.app.openThread(widget.channelId, widget.rootId);
+    // 루트는 채널에서 이미 왔지만 답글은 여기서 처음 온다. 갈 줄이 정해져 있으면 그 자리의 창을 받는다.
+    context.app.openThread(widget.channelId, widget.rootId, aroundSeq: widget.highlightSeq);
   }
 
   @override
   void dispose() {
+    _scroll.removeListener(_maybeLoadOlder);
+    _scroll.dispose();
+    _composer.removeListener(_keepDraft);
     _composer.dispose();
+    _composerFocus.dispose();
     super.dispose();
   }
 
@@ -69,16 +143,31 @@ class _ThreadScreenState extends State<ThreadScreen> {
     _composer.clear();
     final picks = _picks;
     setState(() => _picks = const {});
+    // 자동·고정 멘션을 붙인 것이 **서버로 가는 본문**이다(채널 화면과 같다). 모델 지정도 이 본문으로
+    // 센다 — 친 글로 세면 고정으로 부른 에이전트에게 고른 모델이 빠진다.
+    final body = withStickyMentions(text, app.composerPrefix(widget.channelId, widget.rootId));
+    // 옛 답글 창에서 보내면 `send` 가 먼저 최신 묶음으로 옮긴다(m3). 목록이 통째로 바뀌어도 스크롤 위치는
+    // 그대로라 방금 보낸 글이 화면 밖일 수 있다 — 옮겨졌으면 맨 아래로 굴린다(designer nit).
+    final wasTailMissing = app.threadTailMissing.contains(widget.rootId);
     try {
       final went = await app.send(
         widget.channelId,
-        text,
+        body,
         threadRootId: widget.rootId,
         agentModels: picksForBody(
-          picks, text, app.accounts.values,
+          picks, body, app.accounts.values,
           threadRows: app.threadAgentModels[widget.rootId] ?? const [],
         ),
       );
+      // 이번에 부른 상대는 다음 줄부터 고정이다.
+      if (went) {
+        app.keepStickyMentions(widget.rootId, text);
+        // 이번만 뺀 자동 멘션은 이 글로 끝이다 — 다음 글에는 다시 붙는다.
+        app.clearAutoSkips(widget.rootId);
+        if (wasTailMissing && !app.threadTailMissing.contains(widget.rootId) && mounted && _scroll.hasClients) {
+          _scroll.animateTo(0, duration: HarkroomMotion.base, curve: HarkroomMotion.ease);
+        }
+      }
       if (!went && mounted) {
         if (_composer.text.isEmpty) _composer.text = text;
         setState(() => _picks = picks);
@@ -88,12 +177,49 @@ class _ThreadScreenState extends State<ThreadScreen> {
     }
   }
 
+  /// 「최신 답글로 ↓」 — 최신 페이지를 받고 맨 아래(reverse 목록이라 0)로 간다. 받기 전에 굴리면 창 끝에 서고,
+  /// 받은 뒤 목록이 통째로 바뀌므로 그 뒤에 굴린다.
+  Future<void> _jumpToLatest() async {
+    final app = AppScope.read(context);
+    await app.jumpToLatestReplies(widget.channelId, widget.rootId);
+    if (!mounted || !_scroll.hasClients) return;
+    if (app.threadTailMissing.contains(widget.rootId)) return;
+    _scroll.animateTo(0, duration: HarkroomMotion.base, curve: HarkroomMotion.ease);
+  }
+
+  /// 찾은 줄이면 강조로 감싼다.
+  Widget _mark(String? id, Widget child) =>
+      id != null && id == widget.highlightId ? HitFlash(key: _hitKey, child: child) : child;
+
+  /// 찾은 줄로 굴린다. 목록은 화면 밖 줄을 짓지 않으므로(지연 빌드) 아직 없으면 위로(reverse 라 끝 쪽으로)
+  /// 한 화면씩 밀며 찾는다 — 찾거나 끝에 닿으면 멈춘다.
+  void _scrollToHit() {
+    if (_hitDone || widget.highlightId == null || !mounted) return;
+    final ctx = _hitKey.currentContext;
+    if (ctx != null) {
+      _hitDone = true;
+      Scrollable.ensureVisible(ctx, alignment: 0.5, duration: HarkroomMotion.base, curve: HarkroomMotion.ease);
+      return;
+    }
+    if (!_scroll.hasClients || ++_hitTries > 30) return;
+    final pos = _scroll.position;
+    if (pos.pixels >= pos.maxScrollExtent) return;
+    _scroll.jumpTo((pos.pixels + pos.viewportDimension * 0.8).clamp(0, pos.maxScrollExtent));
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToHit());
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.t;
     final app = context.app;
+    if (!_hitDone && widget.highlightId != null && app.threadLoad[widget.rootId] == LoadState.loaded) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToHit());
+    }
 
-    MessageRow? root;
+    // 루트는 채널 목록의 것을 먼저 쓰고(채널 화면과 같은 줄), 없으면 스레드 응답에 함께 온
+    // 것을 쓴다 — 받은 것 탭에서 들어오면 루트가 채널의 최근 페이지 밖일 수 있다.
+    // 답글 목록(`threads`)에는 루트가 없다(`AppState.threadRoots` 주석).
+    MessageRow? root = app.threadRoots[widget.rootId];
     for (final m in app.messages[widget.channelId] ?? const <MessageRow>[]) {
       if (m.id == widget.rootId) {
         root = m;
@@ -102,7 +228,15 @@ class _ThreadScreenState extends State<ThreadScreen> {
     }
     // 채널 화면에서 들어온 답글은 **말풍선이 되는 것만** 그린다(`progress`·`wake` 제외) —
     // 채널에서와 같은 기준이어야 같은 스레드가 두 화면에서 달라 보이지 않는다.
-    final replies = buildFeed(app.threads[widget.rootId] ?? const <MessageRow>[]);
+    // 원글은 상태층이 `threadRoots` 로 갈라 둔다 — `threads` 에는 답글만 있다.
+    final built = buildFeed(app.threads[widget.rootId] ?? const <MessageRow>[]);
+    // **첫 답글 위에는 날짜 줄을 세우지 않는다** — 바로 위 「답글 n개」 줄과 구분선이 둘 연달아 서면
+    // 위계가 흐려진다(designer #1040). 원글과 날짜가 다르면 그 날짜를 구분 줄 글자에 붙인다.
+    final first = built.isEmpty ? null : built.first;
+    final replies = first is FeedMessage && first.dayBreak
+        ? [FeedMessage(first.message, continued: first.continued), ...built.skip(1)]
+        : built;
+    final firstReplyAt = first is FeedMessage ? first.message.createdAt : null;
     final failed = app.failedSends[widget.rootId] ?? const <FailedSend>[];
     final load = app.threadLoad[widget.rootId];
     // 머리 모델 줄에 세울 에이전트: 스레드 글의 작성자 중 에이전트 + 본문이 부른 에이전트.
@@ -116,36 +250,112 @@ class _ThreadScreenState extends State<ThreadScreen> {
       }
     }
 
-    return Scaffold(
-      appBar: AppBar(title: Text(t.threadTitle)),
-      body: SafeArea(
+    ChannelRow? channel;
+    for (final c in app.channels) {
+      if (c.id == widget.channelId) {
+        channel = c;
+        break;
+      }
+    }
+    // 답글 수는 서버가 센 원글의 `replyCount` 를 믿는다. 아직 없으면 받은 말풍선 수(진행 줄 묶음은 빼고).
+    final replyCount = root?.replyCount ?? replies.whereType<FeedMessage>().length;
+    final countLabel = repliesCountLabel(t, replyCount);
+    final dividerLabel = threadDividerLabel(t, replyCount, rootAt: root?.createdAt, firstReplyAt: firstReplyAt);
+    final where = channelLabel(channel);
+
+    // 위에서 아래로 놓을 줄들. 화면에는 **뒤집어서**(아래부터) 쌓는다 — 열면 최신 답글이 작성칸
+    // 바로 위에 오고, 새 답글이 와도 맨 아래에 붙은 채로 따라간다(개정판 3.5). 짧은 스레드는
+    // 아래로 붙는다(사양 목업과 같다).
+    final rows = <Widget>[
+      if (root != null)
+        _mark(root.id, buildFeedItem(context, FeedMessage(root)))
+      // 원글을 끝내 못 찾았다(지워졌거나 둘 다에 없다) — 답글만 덩그러니 남지 않게 그 자리를 말한다.
+      else if (load == LoadState.loaded)
+        ThreadRootMissing(text: t.threadRootMissing),
+      if (root != null || load == LoadState.loaded) ThreadRepliesDivider(label: dividerLabel),
+      // 옛 답글을 받는 중·못 받음 — 채널 맨 위와 같은 44 줄. 「처음」 줄은 세우지 않는다: 바로 위의
+      // 원글이 스레드의 처음이다. 옛 서버(hasMore 를 안 줌)에서는 둘 다 서지 않아 지금과 같다.
+      if (app.loadingOlderThread.contains(widget.rootId))
+        FeedTopRow(top: FeedTop.loading, channelName: '', onRetry: () {})
+      else if (app.olderThreadFailed.contains(widget.rootId))
+        FeedTopRow(
+          top: FeedTop.failed,
+          channelName: '',
+          onRetry: () => app.retryOlderThread(widget.channelId, widget.rootId),
+        ),
+      // 원글은 채널에서 이미 왔으니 늘 보인다. **답글 자리만** 상태 셋으로 나눈다.
+      if (load == null || load == LoadState.loading)
+        const SizedBox(height: 200, child: LoadingSkeleton(rows: 2))
+      else if (load == LoadState.failed)
+        SizedBox(
+          height: 220,
+          child: FailedState(
+            title: t.threadLoadFailed,
+            cause: app.failures[widget.rootId] ?? LoadFailure.network,
+            onRetry: () => app.openThread(widget.channelId, widget.rootId),
+          ),
+        )
+      else
+        ...replies.map((item) => buildFeedItem(context, item,
+            mark: item is FeedMessage ? (row) => _mark(item.message.id, row) : null)),
+      // 링크·찾기로 받은 창 **아래**가 비었다(최신 답글이 안 실렸다) — 스레드가 여기서 끝난 것처럼 보이지 않게
+      // 띠를 세운다. 누르면 최신 페이지로 간다(designer n1, #1191 후속 d1).
+      if (load == LoadState.loaded && app.threadTailMissing.contains(widget.rootId))
+        ThreadLatestBand(
+          state: app.jumpingToLatest.contains(widget.rootId)
+              ? ThreadLatestBandState.loading
+              : app.latestJumpFailed.contains(widget.rootId)
+                  ? ThreadLatestBandState.failed
+                  : ThreadLatestBandState.idle,
+          // 띠가 선 동안 소켓으로 온 새 답글이 있으면 수를 앞세운 문구로 — 옛 창에 붙이지 않았으니 여기서 알려야 한다.
+          label: latestBandLabel(t, app.threadTailNew[widget.rootId]?.length ?? 0),
+          highlight: (app.threadTailNew[widget.rootId]?.length ?? 0) > 0,
+          failedLabel: t.threadLatestLoadFailed,
+          retryLabel: t.commonRetry,
+          onTap: _jumpToLatest,
+        ),
+      ...failed.map((item) => FailedSendRow(item: item)),
+    ];
+
+    return GallerySource(
+      // 크게 보기에서 넘겨 볼 그림의 범위(그림 넘겨 보기 사양 1·5).
+      messages: () => [?root, ...?app.threads[widget.rootId]],
+      child: Scaffold(
+      // 개정판 3.5: 「스레드」 + 부제 「# task · 답글 n개」.
+      appBar: AppBar(
+        title: ScreenTitle(
+          title: t.threadTitle,
+          subtitle: where.isEmpty ? countLabel : '$where · $countLabel',
+        ),
+        // 머리 돋보기 → **이 스레드** 범위로 연다(데스크톱 ⌘F 와 같은 물음).
+        actions: [
+          SearchButton(
+            key: const Key('thread-search'),
+            scope: SearchScope.thread,
+            channelId: widget.channelId,
+            threadRootId: widget.rootId,
+          ),
+          const SizedBox(width: 4),
+        ],
+      ),
+      // 토스트를 작성칸 위로 올린다(states.dart ComposerScope).
+      body: ComposerScope(child: SafeArea(
         child: Column(
           children: [
             ThreadModelBar(channelId: widget.channelId, rootId: widget.rootId, agentIds: threadAgents),
             // `onOpenThread` 를 주지 않는다 — **이미 스레드 안이라 들어갈 곳이 없다.**
             const ConnectionBand(),
             Expanded(
-              child: ListView(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                children: [
-                  if (root != null) buildFeedItem(context, FeedMessage(root)),
-                  if (root != null) const Divider(),
-                  // 원글은 채널에서 이미 왔으니 늘 보인다. **답글 자리만** 상태 셋으로 나눈다.
-                  if (load == null || load == LoadState.loading)
-                    const SizedBox(height: 200, child: LoadingSkeleton(rows: 2))
-                  else if (load == LoadState.failed)
-                    SizedBox(
-                      height: 220,
-                      child: FailedState(
-                        title: t.threadLoadFailed,
-                        cause: app.failures[widget.rootId] ?? LoadFailure.network,
-                        onRetry: () => app.openThread(widget.channelId, widget.rootId),
-                      ),
-                    )
-                  else
-                    ...replies.map((item) => buildFeedItem(context, item)),
-                  ...failed.map((item) => FailedSendRow(item: item)),
-                ],
+              child: FeedKeyboardDismiss(
+                child: ListView(
+                  key: const Key('thread-feed'),
+                  controller: _scroll,
+                  reverse: true,
+                  // 채널 화면과 같다 — 짧아도 끌려야 키보드를 내린다([FeedKeyboardDismiss]).
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  children: rows.reversed.toList(growable: false),
+                ),
               ),
             ),
             // **스레드의 작성칸은 자기 키를 쓴다** — 채널에서 고른 사진이 답글에
@@ -154,6 +364,8 @@ class _ThreadScreenState extends State<ThreadScreen> {
             MentionModelBar(
               controller: _composer,
               picks: _picks,
+              channelId: widget.channelId,
+              composerKey: widget.rootId,
               threadRootId: widget.rootId,
               onPicksChanged: (next) => setState(() => _picks = next),
             ),
@@ -165,24 +377,27 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   AttachButton(composerKey: widget.rootId),
+                  MentionButton(
+                    controller: _composer,
+                    focusNode: _composerFocus,
+                    onInserted: () => setState(() {}),
+                  ),
                   Expanded(
                     child: TextField(
                       key: const Key('thread-composer'),
                       controller: _composer,
+                      focusNode: _composerFocus,
                       onChanged: (_) => setState(() {}),
                       minLines: 1,
                       maxLines: 5,
-                      decoration: InputDecoration(
-                        hintText: t.threadReplyHint,
-                        border: const OutlineInputBorder(),
-                        isDense: true,
-                      ),
+                      decoration: composerDecoration(context, t.threadReplyHint),
                     ),
                   ),
                   SendButton(
                     key: const Key('thread-send'),
                     composerKey: widget.rootId,
                     busy: _sending,
+                    empty: SendButton.nothingToSend(_composer.text),
                     onPressed: _send,
                   ),
                 ],
@@ -190,8 +405,196 @@ class _ThreadScreenState extends State<ThreadScreen> {
             ),
           ],
         ),
+      )),
+    ));
+  }
+
+}
+
+/// 원글과 답글 사이의 구분 줄 「답글 n개」(개정판 3.5).
+class ThreadRepliesDivider extends StatelessWidget {
+  const ThreadRepliesDivider({super.key, required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    return Padding(
+      key: const Key('thread-replies-divider'),
+      padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 8, HarkroomSize.gutter, 4),
+      child: Row(
+        children: [
+          Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.fgMuted)),
+          const SizedBox(width: 8),
+          Expanded(child: Divider(height: 1, color: k.border)),
+        ],
       ),
     );
   }
+}
 
+/// 띠의 대기 문구. 새 답글이 없으면 「최신 답글로 ↓」, 있으면 수를 앞세운 한 문구(「새 답글 n개 · 최신으로 ↓」).
+/// 99 를 넘으면 「99+」 — 수가 커지면 자리를 밀어내고, 그쯤이면 정확한 수는 뜻이 없다.
+String latestBandLabel(Strings t, int newCount) => newCount <= 0
+    ? t.threadLatestReplies
+    : t.threadLatestNewReplies.replaceFirst('{n}', newCount > 99 ? '99+' : '$newCount');
+
+/// 「최신 답글로 ↓」 띠의 세 상태(designer m1·m2). 셋이 **같은 44 상자**에 서서 바뀌어도 목록이 움직이지 않는다
+/// ([FeedTopRow] 와 같은 규율).
+enum ThreadLatestBandState { idle, loading, failed }
+
+/// 창 아래의 「최신 답글로 ↓」 띠(#1191 후속 d1). [FeedTopRow] 와 같은 44 높이의 한 줄로, 눌러서 최신 페이지로 간다.
+/// 가운데 글자 하나만 — 사이에 몇 개가 빠졌는지는 모르므로 수는 말하지 않는다. 받는 동안은 스피너(탭 없음),
+/// 못 받았으면 「못 불러왔다 · 다시 시도」.
+class ThreadLatestBand extends StatelessWidget {
+  const ThreadLatestBand({
+    super.key,
+    required this.label,
+    required this.onTap,
+    this.state = ThreadLatestBandState.idle,
+    this.failedLabel = '',
+    this.retryLabel = '',
+    this.highlight = false,
+  });
+
+  final String label;
+  final String failedLabel;
+  final String retryLabel;
+  final ThreadLatestBandState state;
+  final VoidCallback onTap;
+
+  /// 새 답글이 있어 사건이 된 띠 — 대기 글자를 `accentText` 로. 크기·높이·모양은 그대로다(designer).
+  final bool highlight;
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    final muted = TextStyle(fontSize: 12, color: k.fgMuted);
+    final buttonStyle = TextButton.styleFrom(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      minimumSize: const Size(0, HarkroomSize.row),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      foregroundColor: k.fgMuted,
+    );
+    final Widget child = switch (state) {
+      ThreadLatestBandState.loading => const SizedBox(
+          key: Key('thread-latest-loading'),
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ThreadLatestBandState.failed => Row(
+          key: const Key('thread-latest-failed'),
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Flexible(child: Text(failedLabel, style: muted)),
+            const SizedBox(width: 6),
+            Text('·', style: muted),
+            const SizedBox(width: 6),
+            // 옛 답글 다시 시도 줄(`FeedTopRow.older-retry`)과 같은 모양 — 안쪽 여백 0 이라 가운뎃점 양옆이 같고,
+            // 색을 지정하지 않아 기본 강조색으로 "누를 수 있는 것"으로 읽힌다(designer).
+            TextButton(
+              key: const Key('thread-latest-retry'),
+              onPressed: onTap,
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(0, HarkroomSize.row),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(retryLabel),
+            ),
+          ],
+        ),
+      ThreadLatestBandState.idle => TextButton(
+          key: const Key('thread-latest-go'),
+          onPressed: onTap,
+          style: highlight ? buttonStyle.copyWith(foregroundColor: WidgetStatePropertyAll(k.accentText)) : buttonStyle,
+          child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+        ),
+    };
+    return SizedBox(
+      key: const Key('thread-latest-band'),
+      height: HarkroomSize.row,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter),
+        child: Center(child: child),
+      ),
+    );
+  }
+}
+
+/// 「답글 n개」. 0 도 숫자로 쓴다 — 스레드 안에서 "답글 달기" 는 할 일이 아니라 이미 하는 중이다.
+String repliesCountLabel(Strings t, int count) =>
+    count == 1 ? t.threadRepliesOne : t.threadRepliesMany.replaceFirst('{n}', '$count');
+
+/// 원글을 못 찾았을 때 그 자리의 회색 한 줄(designer #1040).
+class ThreadRootMissing extends StatelessWidget {
+  const ThreadRootMissing({super.key, required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      key: const Key('thread-root-missing'),
+      padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 12, HarkroomSize.gutter, 4),
+      child: Text(text, style: TextStyle(fontSize: 12, color: context.tokens.fgMuted)),
+    );
+  }
+}
+
+/// 「답글 n개」 구분 줄의 글자. 첫 답글이 원글과 다른 날이면(또는 원글을 모르면) 그 날짜를 붙인다 —
+/// 「답글 2개 · 오늘」. 첫 답글 위에는 날짜 줄을 따로 세우지 않으므로 날짜는 여기서만 말한다.
+String threadDividerLabel(Strings t, int count, {DateTime? rootAt, DateTime? firstReplyAt, DateTime? now}) {
+  final label = repliesCountLabel(t, count);
+  if (firstReplyAt == null) return label;
+  if (rootAt != null && sameLocalDay(rootAt, firstReplyAt)) return label;
+  return '$label · ${dayLabel(t, firstReplyAt, now: now)}';
+}
+
+/// 찾은 줄 강조: 옅은 강조 바탕 + 왼쪽 띠로 섰다가 2초 뒤 걷힌다(designer 찾기 안 ⑤).
+class HitFlash extends StatefulWidget {
+  const HitFlash({super.key, required this.child});
+
+  final Widget child;
+
+  /// 강조가 서 있는 시간.
+  static const Duration hold = Duration(seconds: 2);
+
+  @override
+  State<HitFlash> createState() => HitFlashState();
+}
+
+class HitFlashState extends State<HitFlash> {
+  bool on = true;
+  Timer? _off;
+
+  @override
+  void initState() {
+    super.initState();
+    _off = Timer(HitFlash.hold, () {
+      if (mounted) setState(() => on = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _off?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    return AnimatedContainer(
+      duration: HarkroomMotion.base,
+      curve: HarkroomMotion.ease,
+      decoration: BoxDecoration(
+        color: on ? k.accentSurface : Colors.transparent,
+        border: Border(left: BorderSide(color: on ? k.accent : Colors.transparent, width: 3)),
+      ),
+      child: widget.child,
+    );
+  }
 }

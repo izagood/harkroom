@@ -1,8 +1,17 @@
 import { useEffect, useState } from 'react';
 import type { MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
-import { exchangeParticipants, exchangeConclusion } from '../lib/agentExchange';
+import {
+  exchangeParticipants, exchangeConclusion, exchangeLastLine, isSpeech,
+} from '../lib/agentExchange';
+import type { Slot } from '../lib/progressGroup';
+import { elapsedMs } from '../lib/progressGroup';
+import { selectAccountNames } from '../lib/accountNames';
+import { displayBody } from '../lib/mention';
+import { durationLabel } from '../lib/time';
+import { useMinuteTick } from '../lib/useMinuteTick';
 import { MessageItem } from './MessageItem';
+import { ProgressRow } from './ProgressRow';
 import type { SectionId } from './settings/sections';
 import { useT, useLocale } from '../i18n/useT';
 import { stampLabel } from '../lib/day';
@@ -31,8 +40,16 @@ import { stampLabel } from '../lib/day';
  * 색은 강조가 아니라 `fg-agent`·`border-agent` 다. 진행을 막지만 나를 막지는 않으므로
  * 무채색이고, 회색이 아니라 채도 낮춘 청록인 이유는 '비활성'이 아니라 **남의 일**이기 때문이다.
  */
-export function AgentExchange({ messages, onOpenDirectory, onOpenSettings, inThread = false }: {
+const NO_TEAMS_FALLBACK: never[] = [];
+
+export function AgentExchange({ messages, items, onOpenDirectory, onOpenSettings, inThread = false }: {
+  /** 구간의 말(예약 줄 포함). 횟수·참여자·마지막 말은 이 가운데 **말**만 센다(`isSpeech`). */
   messages: MessageRow[];
+  /**
+   * 구간의 자리 전부 — 진행 묶음까지 원래 순서로(`groupAgentExchanges` 가 낸다). 없으면
+   * `messages` 만으로 그린다(견본 화면처럼 진행이 없는 자리).
+   */
+  items?: Slot[];
   onOpenDirectory?: (accountId: string | null) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
   inThread?: boolean;
@@ -50,16 +67,40 @@ export function AgentExchange({ messages, onOpenDirectory, onOpenSettings, inThr
    * 강조가 풀려도 **다시 접지 않는다** — 사람은 아직 그것을 읽는 중이고, 접고 펴는 것은
    * 그 뒤로 사람의 손이다.
    */
+  const slots: Slot[] = items ?? messages.map((m) => ({ kind: 'message' as const, message: m }));
   const holdsHighlight = useActiveStore((s) =>
-    s.highlightedMessageId !== null && messages.some((m) => m.id === s.highlightedMessageId));
+    s.highlightedMessageId !== null && slots.some((it) => (it.kind === 'message'
+      ? it.message.id === s.highlightedMessageId
+      : it.messages.some((m) => m.id === s.highlightedMessageId))));
   const [open, setOpen] = useState(holdsHighlight);
   useEffect(() => { if (holdsHighlight) setOpen(true); }, [holdsHighlight]);
   const accounts = useActiveStore((s) => s.accounts);
+  const names = useActiveStore(selectAccountNames);
+  const groups = useActiveStore((s) => s.groups);
+  const teams = useActiveStore((s) => s.teams) ?? NO_TEAMS_FALLBACK;
 
-  const names = exchangeParticipants(messages).map((id) => accounts[id]?.handle ?? '…');
-  const last = messages[messages.length - 1]!;
+  const speech = messages.filter(isSpeech);
+  const participants = exchangeParticipants(messages).map((id) => accounts[id]?.handle ?? '…');
+  // 시각도 **마지막 말**의 것이다 — 뒤에 붙은 예약 줄이 "마지막"을 끌고 가지 않게.
+  const last = speech[speech.length - 1] ?? messages[messages.length - 1]!;
   const lastTime = stampLabel(last.createdAt, locale);
   const conclusion = exchangeConclusion(messages);
+  const lastLine = conclusion ? null : exchangeLastLine(messages, (m) => displayBody(m, names, groups, teams));
+  /**
+   * 구간 안에서 **아직 도는** 진행(판정 ③). 끝난 진행은 접힌 줄에 흔적을 남기지 않는다 —
+   * 펼치면 원래 자리에 보인다. 도는 것만 말하는 이유: 그것이 "지금 기다리는 중인가"에 대한
+   * 답이고, 끝난 진행 줄 셋은 그 답에 보탤 것이 없다.
+   */
+  const running = slots.flatMap((it) => (it.kind === 'progress' && it.endedAt === null ? [it] : []));
+  // 칩의 「N분」도 `ProgressRow` 와 같은 틱으로 간다. 펼친 뒤에는 진행 줄이 스스로 구독한다.
+  useMinuteTick(!open && running.length > 0);
+
+  function runningChip(first: MessageRow, handle: string): string {
+    const ms = elapsedMs(first.createdAt, Date.now());
+    return ms === null
+      ? t('speech.exchange.running', { handle })
+      : t('speech.exchange.runningFor', { handle, duration: durationLabel(ms, locale, 'coarse') });
+  }
 
   if (open) {
     return (
@@ -67,23 +108,26 @@ export function AgentExchange({ messages, onOpenDirectory, onOpenSettings, inThr
         <button
           data-testid="agent-exchange-toggle"
           aria-expanded
-          className="mx-4 my-0.5 rounded px-1 text-meta text-fg-agent hover:bg-surface-hover"
+          className="mx-4 my-0.5 rounded-sm px-1 text-meta text-fg-agent hover:bg-surface-hover"
           onClick={() => setOpen(false)}
         >
-          {names.join(' ↔ ')} · {t('speech.exchange.collapse')}
+          {participants.join(' ↔ ')} · {t('speech.exchange.collapse')}
         </button>
         {/* 펼치면 **평소의 메시지 그대로** 보인다 — 접힘은 표시 단계의 일이고, 펼친 뒤에는
             다른 말과 같은 대접을 받아야 한다(별도 조판을 두면 어휘가 하나 더 늘어난다). */}
         <div className="border-l-2 border-border-agent">
-          {messages.map((m) => (
-            <MessageItem
-              key={m.id}
-              message={m}
-              inThread={inThread}
-              onOpenDirectory={onOpenDirectory}
-              onOpenSettings={onOpenSettings}
-            />
-          ))}
+          {/* 진행은 원래 자리에 **평소의 진행 줄** 그대로 선다(판정 ③) — 따로 조판하지 않는다. */}
+          {slots.map((it) => (it.kind === 'progress'
+            ? <ProgressRow key={it.messages[0]!.id} messages={it.messages} endedAt={it.endedAt} />
+            : (
+              <MessageItem
+                key={it.message.id}
+                message={it.message}
+                inThread={inThread}
+                onOpenDirectory={onOpenDirectory}
+                onOpenSettings={onOpenSettings}
+              />
+            )))}
         </div>
       </div>
     );
@@ -105,12 +149,12 @@ export function AgentExchange({ messages, onOpenDirectory, onOpenSettings, inThr
       <button
         data-testid="agent-exchange-toggle"
         aria-expanded={false}
-        className="flex w-full min-w-0 items-center gap-1.5 rounded px-1 text-left text-meta
+        className="flex w-full min-w-0 items-center gap-1.5 rounded-sm px-1 text-left text-meta
                    text-fg-agent hover:bg-surface-hover"
         onClick={() => setOpen(true)}
       >
         <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-sm bg-border-agent" />
-        <span className="shrink-0 font-medium">{names.join(' ↔ ')}</span>
+        <span className="shrink-0 font-medium">{participants.join(' ↔ ')}</span>
         {conclusion ? (
           <>
             {/*
@@ -135,20 +179,44 @@ export function AgentExchange({ messages, onOpenDirectory, onOpenSettings, inThr
               {conclusion.text}
             </span>
           </>
-        ) : (
+        ) : lastLine && (
           /*
-            결론이 없는 구간이 실제로 있다 — 서로 자리를 나누기만 하고 아무것도 정하지
-            않은 경우다. 그때 본문 첫 줄을 결론처럼 싣지 않고 **정해진 것이 없다고
-            말한다**: 이것도 "열어야 하나"에 대한 답이고(열 이유가 약하다), 마지막 발언을
-            결론으로 내세우는 것보다 정직하다.
+            결론이 없으면 **마지막 말의 첫 줄**을 `handle: 첫 줄` 로 싣는다(2026-10-06, designer
+            판정 ②). 예전에는 「아직 정해진 것 없음」이었는데, 에이전트가 거의 `message.post`
+            로만 말해서 접힌 줄 거의 전부가 그 문구였다 — "열어야 하나"에 아무것도 답하지
+            못했다. 동사 머리말을 붙이지 않는 것이 결론과의 경계다: 이름과 글만 있으면
+            "정해졌다"로 읽히지 않는다. 색은 결론과 같다(이름은 subtle, 글은 muted).
           */
-          <span className="shrink-0 text-fg-subtle">· {t('speech.exchange.undecided')}</span>
+          <>
+            <span className="shrink-0 text-fg-subtle">
+              · {accounts[lastLine.authorId]?.handle ?? '…'}:
+            </span>
+            <span data-testid="exchange-last-line" className="min-w-0 truncate text-fg-muted">
+              {'text' in lastLine
+                ? lastLine.text
+                : t('speech.exchange.attachments', { count: lastLine.attachments })}
+            </span>
+          </>
         )}
         {/* 횟수와 시각은 **결론 뒤**다. 지우지 않는다 — 문서가 "부수적인 숫자"라고 한 것은
             없애라는 말이 아니라 앞자리를 내주라는 말이다. `ml-auto` 로 줄 끝에 붙여
             결론이 짧을 때도 두 숫자가 같은 자리에서 읽히게 한다. */}
-        <span className="ml-auto shrink-0 text-fg-subtle">
-          · {t('speech.exchange.count', { count: messages.length })}
+        {/*
+          **아직 도는 진행이 있을 때만** 칩 하나(판정 ③). 점은 `ProgressRow` 와 같은
+          `state-running` 이다 — 같은 상태를 두 자리가 같은 색으로 말한다. 여럿이면 이름 대신
+          수로 합친다: 칩이 이름을 줄줄이 늘어놓으면 참여자 줄과 겹쳐 읽힌다.
+        */}
+        {running.length > 0 && (
+          <span data-testid="exchange-running" className="ml-auto flex shrink-0 items-center gap-1 text-fg-muted">
+            <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-state-running" />
+            {running.length === 1
+              ? runningChip(running[0]!.messages[0]!, accounts[running[0]!.messages[0]!.authorId]?.handle ?? '…')
+              : t('speech.exchange.runningMany', { count: running.length })}
+          </span>
+        )}
+        {/* 횟수는 **말만** 센다 — 진행·예약 줄은 주고받은 말이 아니다(판정 ③). */}
+        <span className={`${running.length > 0 ? '' : 'ml-auto '}shrink-0 text-fg-subtle`}>
+          · {t('speech.exchange.count', { count: speech.length })}
         </span>
         {/* 시각은 `stampLabel` 이 그 언어로 낸다 — 사전은 앞의 낱말만 진다. */}
         <span className="shrink-0 text-fg-subtle">· {t('speech.exchange.last', { time: lastTime })}</span>

@@ -536,3 +536,80 @@ describe('중단 — POST /agent-sessions/:id/cancel (3단계)', () => {
     await runner.close();
   });
 });
+
+describe('S7 ?scope=visible — 그 채널을 볼 수 있는 사람이면 본다 (결정 A, 2026-10-02)', () => {
+  const mkChannel = async (name: string, visibility: 'public' | 'private'): Promise<string> => {
+    const res = await app.inject({
+      method: 'POST', url: '/channels', headers: auth(adminToken),
+      payload: { name, repo: `${name}-repo`, visibility },
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json().id as string;
+  };
+
+  it('비소유자는 공개 채널의 세션을 sessionId 없이 보고, 들지 않은 비공개 채널 것은 못 본다', async () => {
+    const pub = await mkChannel('vis-pub', 'public');
+    const priv = await mkChannel('vis-priv', 'private');
+    const runner = await connectRunner(agentId);
+    runner.send({
+      type: 'announce',
+      sessions: [
+        session({ sessionId: 'vis-1', channelId: pub, threadRootId: null }),
+        session({ sessionId: 'vis-2', channelId: priv }),
+        session({ sessionId: 'vis-3', channelId: 'not-a-uuid' }),
+      ],
+    });
+    await waitForSession(ownerToken, 'vis-2');
+
+    const theirs = await app.inject({ method: 'GET', url: '/agent-sessions?scope=visible', headers: auth(strangerToken) });
+    expect(theirs.statusCode).toBe(200);
+    const rows = theirs.json().sessions as Record<string, unknown>[];
+    expect(rows.map((r) => r.channelId)).toEqual([pub]);
+    expect(rows[0]).not.toHaveProperty('sessionId');
+    expect(rows[0]!.owned).toBe(false);
+    expect(rows[0]!.agentAccountId).toBe(agentId);
+
+    // 기본 범위는 그대로다 — 비소유자에게는 빈 목록.
+    const plain = await app.inject({ method: 'GET', url: '/agent-sessions', headers: auth(strangerToken) });
+    expect(plain.json().sessions).toEqual([]);
+
+    // 소유자도 visible 범위로는 들지 않은 비공개 채널 것을 못 본다 — 판정은 채널 하나다. owned 는 참이다.
+    const mine = await app.inject({ method: 'GET', url: '/agent-sessions?scope=visible', headers: auth(ownerToken) });
+    const mineRows = mine.json().sessions as Record<string, unknown>[];
+    expect(mineRows.map((r) => r.channelId)).toEqual([pub]);
+    expect(mineRows[0]!.owned).toBe(true);
+
+    // admin 은 전부(uuid 아닌 줄까지) 본다.
+    const all = await app.inject({ method: 'GET', url: '/agent-sessions?scope=visible', headers: auth(adminToken) });
+    expect((all.json().sessions as Record<string, unknown>[]).map((r) => r.channelId).sort())
+      .toEqual([pub, priv, 'not-a-uuid'].sort());
+
+    await runner.close();
+  });
+
+  it('예약(wake)도 같은 판정이다 — 공개 채널 것은 보이고 비공개 채널 것은 안 보인다', async () => {
+    const pub = await mkChannel('wvis-pub', 'public');
+    const priv = await mkChannel('wvis-priv', 'private');
+    const insertWake = async (channelId: string): Promise<string> => {
+      const m = await pool.query<{ id: string }>(
+        `insert into message (channel_id, author_id, body, kind) values ($1, $2, 'wait for CI', 'wake') returning id`,
+        [channelId, agentId],
+      );
+      await pool.query(
+        `insert into agent_wake (account_id, channel_id, message_id, wake_at) values ($1, $2, $3, now() + interval '1 hour')`,
+        [agentId, channelId, m.rows[0]!.id],
+      );
+      return m.rows[0]!.id;
+    };
+    const pubMsg = await insertWake(pub);
+    await insertWake(priv);
+
+    const theirs = await app.inject({ method: 'GET', url: '/agent-wakes?scope=visible', headers: auth(strangerToken) });
+    expect(theirs.statusCode).toBe(200);
+    const rows = theirs.json().wakes as { channelId: string; messageId: string }[];
+    expect(rows.filter((r) => r.channelId === pub || r.channelId === priv).map((r) => r.messageId)).toEqual([pubMsg]);
+
+    const plain = await app.inject({ method: 'GET', url: '/agent-wakes', headers: auth(strangerToken) });
+    expect(plain.json().wakes).toEqual([]);
+  });
+});

@@ -247,7 +247,7 @@ export function GroupBadge({ group, className = '' }: { group: HandleGroupRow; c
   return (
     <span
       data-testid={`group-badge-${group.handle}`}
-      className={`relative inline-flex items-center gap-1 rounded bg-warning-surface-strong px-1 text-meta text-warning ${className}`}
+      className={`relative inline-flex items-center gap-1 rounded-sm bg-warning-surface-strong px-1 text-meta text-warning ${className}`}
     >
       <span aria-hidden="true">👥</span>
       <span className="sr-only">{t('identity.badge.group')}</span>
@@ -279,7 +279,7 @@ export function TeamBadge({ team, className = '' }: { team: AgentTeamRow; classN
   return (
     <span
       data-testid={`team-badge-${team.name}`}
-      className={`relative inline-flex items-center gap-1 rounded bg-surface-hover px-1 text-meta text-fg-muted ${className}`}
+      className={`relative inline-flex items-center gap-1 rounded-sm bg-surface-hover px-1 text-meta text-fg-muted ${className}`}
     >
       <span aria-hidden="true">🤖</span>
       <span className="sr-only">{t('identity.badge.team')}</span>

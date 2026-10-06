@@ -214,7 +214,7 @@ export function getActiveController(): Controller {
  * 전역 플래그 하나로 합치면 셋 중 하나만 끊긴 상태가 "끊김" 하나로 뭉쳐 거짓말이 된다.
  *
  * **이 값을 화면에 어떻게 보이는지는 이 이슈가 정하지 않는다**(#165 의 몫). 오늘의 두
- * 독자(사이드바 점, `ConnectionSettings`)는 `useActiveStore` 로 활성 커뮤니티의 값만 읽어
+ * 독자(사이드바 점, `CommunitySettings` 의 줄)는 `useActiveStore` 로 활성 커뮤니티의 값만 읽어
  * 오늘과 같은 뜻을 유지한다. 이 함수는 그 위에 목록을 올릴 자리다.
  */
 export function getCommunityConnected(): { id: string; connected: boolean }[] {

@@ -5,7 +5,7 @@ import type { connectWs } from '../src/lib/ws';
 import App from '../src/App';
 import { Workspace } from '../src/components/Workspace';
 import { CommunitySettings } from '../src/components/settings/CommunitySettings';
-import { ConnectionSettings } from '../src/components/settings/ConnectionSettings';
+import { ProfileSettings } from '../src/components/settings/ProfileSettings';
 import { ConnectScreen, type ConnectScreenProps } from '../src/screens/ConnectScreen';
 import {
   resetCommunityRegistry,
@@ -72,8 +72,6 @@ const fakeController = (baseUrl: string) => ({
   openChannel: vi.fn(), startDm: vi.fn(), logout: vi.fn(), stop: vi.fn(),
   createChannel: vi.fn(), updateChannel: vi.fn(), goBack: vi.fn(), goForward: vi.fn(),
   setChannelNotifyLevel: vi.fn(), toggleChannelStar: vi.fn(),
-  // `ConnectionSettings` 가 `ProjectionUrl`(admin 전용)을 함께 그린다 — 이 스위트의
-  // 시드 계정이 admin 이라 조회가 실제로 일어난다.
   projectionConfig: vi.fn(async () => ({ url: null, source: null, appUrl: null, envUrl: null })),
   setProjectionConfig: vi.fn(async () => ({ url: null, source: null, appUrl: null, envUrl: null })),
   refreshProjection: vi.fn(async () => {}),
@@ -151,9 +149,9 @@ async function openCommunitySettingsInApp(handle: string) {
   // 이 테스트가 확인하려는 것은 "설정까지 눌러 간다"이지 그 행의 문구가 아니다.
   expect(screen.getByTestId('me-row').textContent).toContain(handle);
   fireEvent.click(screen.getByTestId('me-row'));
-  fireEvent.click(await screen.findByText('Settings'));
-  fireEvent.click(await screen.findByRole('button', { name: '커뮤니티' }));
-  expect(await screen.findByRole('heading', { name: '커뮤니티' })).toBeTruthy();
+  fireEvent.click(await screen.findByRole('menuitem', { name: '설정' }));
+  fireEvent.click(await screen.findByRole('button', { name: '커뮤니티 목록' }));
+  expect(await screen.findByRole('heading', { name: '커뮤니티 목록' })).toBeTruthy();
 }
 
 beforeEach(() => {
@@ -405,14 +403,14 @@ describe('커뮤니티 전환기 — 레일 하나 + 팝오버 (#165, 2026-09-30
     const { a, b } = await twoCommunities();
     seed(a, 'me-a', true);
     seed(b, 'me-b', true);
-    a.store.getState().set({ unread: [mention(1)] });
+    a.store.getState().set({ unread: [mention(1)], inboxMine: 1 });
     renderWorkspace();
 
     // 지금 커뮤니티의 것은 점이 아니다(Home 배지가 센다).
     expect(screen.queryByTestId('rail-community-dot')).toBeNull();
     expect(screen.getByTestId('rail-home-badge').textContent).toBe('1');
 
-    act(() => { b.store.getState().set({ unread: [mention(2), mention(3), mention(4)] }); });
+    act(() => { b.store.getState().set({ unread: [mention(2), mention(3), mention(4)], inboxMine: 3 }); });
     expect(screen.getByTestId('rail-community-dot')).toBeTruthy();
     expect(screen.getByTestId('rail-community-mark').getAttribute('aria-label'))
       .toBe('a.example — 연결됨, 다른 커뮤니티에 나를 기다리는 것 3개');
@@ -424,7 +422,7 @@ describe('커뮤니티 전환기 — 레일 하나 + 팝오버 (#165, 2026-09-30
     expect(screen.getByTestId(`community-tile-${b.id}`).getAttribute('aria-label')).toContain('나를 기다리는 것 3개');
   });
 
-  it('8. 끊긴 커뮤니티의 행에만 상태 표시가 붙고, Connection 에 옛 문구가 없다', async () => {
+  it('8. 끊긴 커뮤니티의 행에만 상태 표시가 붙고, 로그아웃 안내에 옛 문구가 없다', async () => {
     const { a, b } = await twoCommunities();
     seed(a, 'me-a', true);
     seed(b, 'me-b', false);
@@ -439,13 +437,16 @@ describe('커뮤니티 전환기 — 레일 하나 + 팝오버 (#165, 2026-09-30
     expect(screen.queryByTestId(`community-offline-${a.id}`)).toBeNull();
 
     cleanup();
-    render(<ConnectionSettings onSignOut={() => {}} />);
+    // 로그아웃은 프로필 한 곳이다(UX ⑥b-3, Connection 은 커뮤니티로 흡수됐다).
+    render(<ProfileSettings onSignOut={() => {}} />);
 
     // (A) 아래서 거짓 문장이 된 옛 문구가 화면에 남아 있으면 안 된다.
     expect(screen.queryByText('Use a different server')).toBeNull();
     expect(screen.queryByText('Sign out to enter another server address.')).toBeNull();
-    expect(screen.getByText('이 커뮤니티에서 로그아웃')).toBeTruthy();
-    expect(screen.getByText(/설정 › 커뮤니티/)).toBeTruthy();
+    // "이 커뮤니티에서 로그아웃" 도 거짓이었다 — 명시적 로그아웃은 이 기기의 세션을 **전부** 비운다
+    // (`controller.logout` → `clearLocal()` → `sessionStore.clear()`). 안내가 그 사실을 적는다.
+    expect(screen.queryByText('이 커뮤니티에서 로그아웃')).toBeNull();
+    expect(screen.getByText(/이 기기에 더해 둔 커뮤니티가 모두 빠지고/)).toBeTruthy();
   });
 });
 
@@ -462,7 +463,7 @@ describe('커뮤니티 추가 (#165 결정 3)', () => {
 
     // **설정 화면이 그대로 서 있다.** `phase` 를 `connect` 로 되돌렸다면 이 화면 자체가
     // 사라지고 접속 화면 하나만 남는다 — 그것이 이 이슈가 막는 결함이다.
-    expect(screen.getByRole('heading', { name: '커뮤니티' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '커뮤니티 목록' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByText('Sign in to another community')).toBeNull());
@@ -486,7 +487,7 @@ describe('커뮤니티 추가 (#165 결정 3)', () => {
     // 이미 서버가 있는 사람이 새 서버를 부트스트랩하는 것은 다른 일이다 — 감춘다.
     expect(screen.queryByText('First run? Create the admin account')).toBeNull();
     // 초대 가입은 남는다 — 초대받은 커뮤니티를 하나 더 붙이는 것은 같은 일이다.
-    expect(screen.getByText('Have an invite token? Join this workspace')).toBeTruthy();
+    expect(screen.getByText('Have an invite token? Join this community')).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('Server URL'), { target: { value: 'https://b.example' } });
     fireEvent.change(screen.getByLabelText('Login ID'), { target: { value: 'me-b' } });
@@ -633,7 +634,7 @@ describe('커뮤니티 제거 (#165 결정 4)', () => {
 
     // 그때는 정말 세션이 없다 — 여기서만 `phase` 가 `connect` 로 돌아간다.
     expect(await screen.findByText('Server URL')).toBeTruthy();
-    expect(screen.queryByRole('heading', { name: '커뮤니티' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: '커뮤니티 목록' })).toBeNull();
   });
 });
 

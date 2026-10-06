@@ -27,25 +27,41 @@ const entry = (id: number, channelId = 'c1'): InboxEntry => ({
  * 서버가 들고 있는 목록을 **테스트가 바꿀 수 있게** 잡아 둔다. 조회 하나를 목으로 고정하면
  * "다시 읽었는가"까지는 재도 "다시 읽어서 새 것을 봤는가"는 못 잰다 — 신고의 내용이 후자다.
  */
+type Board = { entries: InboxEntry[]; threads: null; threadStates: [] };
+
+/**
+ * 컨트롤러의 보드 조회(`loadInboxBoard`)를 **그 모양대로** 흉내낸다 — 받으면 재료를 들고
+ * `inboxBoardRevision` 을 올린다. `inbox.updated` 에는 배지 때문에 컨트롤러가 어차피 받는다.
+ * 보드 화면이 낸 조회(`fromPane`)와 컨트롤러가 신호에 낸 조회를 갈라 센다 — 이 파일이 재는 것은
+ * **보드가 따로 조회하지 않는가**다(#1076 security a: 신호 하나에 조회 하나).
+ */
 const mount = (rows: InboxEntry[]) => {
   const server = { rows };
-  const inbox = vi.fn(async () => server.rows);
-  setController({
-    api: { inbox },
+  let snapshot: Board | null = null;
+  const inbox = vi.fn(async (): Promise<Board> => ({ entries: server.rows, threads: null, threadStates: [] }));
+  const fetchAndPublish = async (): Promise<Board> => {
+    const data = await inbox();
+    snapshot = data;
+    act(() => {
+      const s = useAppStore.getState();
+      s.set({ inboxBoardRevision: s.inboxBoardRevision + 1 });
+    });
+    return data;
+  };
+  const fromPane = vi.fn(fetchAndPublish);
+  const controller = {
+    api: { inboxBoard: inbox },
+    loadInboxBoard: fromPane,
+    inboxBoardSnapshot: () => snapshot,
     openMessage: vi.fn(async () => undefined),
     openChannel: vi.fn(async () => undefined),
     answerAsk: vi.fn(async () => undefined),
-  } as unknown as Controller);
+  };
+  setController(controller as unknown as Controller);
   const view = render(<Inbox open onClose={vi.fn()} />);
-  return { server, inbox, view };
-};
-
-/** 서버가 알려 온 것 하나. 컨트롤러가 `inbox.updated` 를 받으면 이 수가 오른다. */
-const serverSaysInboxChanged = (): void => {
-  act(() => {
-    const s = useAppStore.getState();
-    s.set({ inboxRevision: s.inboxRevision + 1 });
-  });
+  /** 서버가 알려 온 것 하나 — 컨트롤러가 `inbox.updated` 를 받아 보드 재료를 다시 받는다. */
+  const serverSaysInboxChanged = async (): Promise<void> => { await fetchAndPublish(); };
+  return { server, inbox, fromPane, view, serverSaysInboxChanged };
 };
 
 beforeEach(() => {
@@ -65,50 +81,54 @@ afterEach(() => {
 describe('인박스는 열어 둔 채로 갱신된다 (2026-09-10)', () => {
   // **이 파일의 심장.** 닫았다 열지 않고 새 줄이 서는가.
   it('열려 있는 동안 서버가 알려 오면 새 줄이 그려진다', async () => {
-    const { server } = mount([entry(1)]);
-    await waitFor(() => expect(screen.getByTestId('inbox-entry-1')).toBeTruthy());
-    expect(screen.queryByTestId('inbox-entry-2')).toBeNull();
+    const { server, fromPane, serverSaysInboxChanged } = mount([entry(1)]);
+    await waitFor(() => expect(screen.getByTestId('inbox-card-m1')).toBeTruthy());
+    expect(screen.queryByTestId('inbox-card-m2')).toBeNull();
+    const opened = fromPane.mock.calls.length;
 
     server.rows = [entry(1), entry(2)];
-    serverSaysInboxChanged();
+    await serverSaysInboxChanged();
 
-    await waitFor(() => expect(screen.getByTestId('inbox-entry-2')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('inbox-card-m2')).toBeTruthy());
+    // 보드는 **따로 조회하지 않았다** — 컨트롤러가 받은 재료를 그렸다.
+    expect(fromPane.mock.calls.length).toBe(opened);
   });
 
   // 사라진 줄도 같은 신호로 사라져야 한다 — 답이 온 물음이 목록에 남아 있으면, 그 목록은
   // 아직 나를 막는 것이 있다고 거짓말한다.
   it('서버에서 빠진 줄은 같은 신호로 사라진다', async () => {
-    const { server } = mount([entry(1), entry(2)]);
-    await waitFor(() => expect(screen.getByTestId('inbox-entry-2')).toBeTruthy());
+    const { server, serverSaysInboxChanged } = mount([entry(1), entry(2)]);
+    await waitFor(() => expect(screen.getByTestId('inbox-card-m2')).toBeTruthy());
 
     server.rows = [entry(1)];
-    serverSaysInboxChanged();
+    await serverSaysInboxChanged();
 
-    await waitFor(() => expect(screen.queryByTestId('inbox-entry-2')).toBeNull());
-    expect(screen.getByTestId('inbox-entry-1')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByTestId('inbox-card-m2')).toBeNull());
+    expect(screen.getByTestId('inbox-card-m1')).toBeTruthy();
   });
 
   // 갱신은 **조용해야** 한다. 목록이 "불러오는 중"으로 되돌아가면 읽던 자리가 사라진다 —
   // 사람은 이 조회를 기다리고 있지 않다.
   it('갱신 중에 목록이 "불러오는 중"으로 되돌아가지 않는다', async () => {
-    const { server } = mount([entry(1)]);
-    await waitFor(() => expect(screen.getByTestId('inbox-entry-1')).toBeTruthy());
+    const { server, serverSaysInboxChanged } = mount([entry(1)]);
+    await waitFor(() => expect(screen.getByTestId('inbox-card-m1')).toBeTruthy());
 
     server.rows = [entry(1), entry(2)];
-    serverSaysInboxChanged();
+    const pending = serverSaysInboxChanged();
     // 조회가 아직 안 돌아온 이 시점에도 줄은 그대로 서 있어야 한다.
-    expect(screen.getByTestId('inbox-entry-1')).toBeTruthy();
-    await waitFor(() => expect(screen.getByTestId('inbox-entry-2')).toBeTruthy());
+    expect(screen.getByTestId('inbox-card-m1')).toBeTruthy();
+    await pending;
+    await waitFor(() => expect(screen.getByTestId('inbox-card-m2')).toBeTruthy());
   });
 
   // 헛조회를 재는 자리. 신호가 같은 값이면 아무 일도 없어야 한다 — 리렌더마다 조회가
   // 나가면 인박스를 열어 두는 것이 서버를 두드리는 일이 된다.
   it('같은 값이 다시 흘러도 조회하지 않는다', async () => {
     const { inbox } = mount([entry(1)]);
-    await waitFor(() => expect(screen.getByTestId('inbox-entry-1')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('inbox-card-m1')).toBeTruthy());
     const before = inbox.mock.calls.length;
 
-    // 인박스와 무관한 스토어 변화 하나. `inboxRevision` 은 그대로다.
+    // 인박스와 무관한 스토어 변화 하나. `inboxBoardRevision` 은 그대로다.
     act(() => { useAppStore.getState().set({ online: ['u2'] }); });
 
     expect(inbox.mock.calls.length).toBe(before);
@@ -116,19 +136,20 @@ describe('인박스는 열어 둔 채로 갱신된다 (2026-09-10)', () => {
 
   // 닫혀 있는 동안 온 것은 **여는 조회 하나로** 온다. 닫힌 화면을 위해 조회를 내면 그것은
   // 아무도 안 보는 목록을 위한 왕복이고, 열 때 같은 조회가 또 나가면 둘이 겹친다.
-  it('닫혀 있는 동안에는 조회하지 않고, 다시 열면 한 번만 조회한다', async () => {
-    const { server, inbox, view } = mount([entry(1)]);
-    await waitFor(() => expect(screen.getByTestId('inbox-entry-1')).toBeTruthy());
+  it('닫혀 있는 동안에는 보드가 조회하지 않고, 다시 열면 한 번만 조회한다', async () => {
+    const { server, fromPane, view, serverSaysInboxChanged } = mount([entry(1)]);
+    await waitFor(() => expect(screen.getByTestId('inbox-card-m1')).toBeTruthy());
 
     view.rerender(<Inbox open={false} onClose={vi.fn()} />);
-    const closed = inbox.mock.calls.length;
+    const closed = fromPane.mock.calls.length;
 
     server.rows = [entry(1), entry(2)];
-    serverSaysInboxChanged();
-    expect(inbox.mock.calls.length).toBe(closed);
+    await serverSaysInboxChanged();
+    expect(fromPane.mock.calls.length).toBe(closed);
 
     view.rerender(<Inbox open onClose={vi.fn()} />);
-    await waitFor(() => expect(screen.getByTestId('inbox-entry-2')).toBeTruthy());
-    expect(inbox.mock.calls.length).toBe(closed + 1);
+    await waitFor(() => expect(screen.getByTestId('inbox-card-m2')).toBeTruthy());
+    // 여는 조회 하나 — 이것이 배지도 이 보드와 맞춘다(`loadInboxBoard`).
+    expect(fromPane.mock.calls.length).toBe(closed + 1);
   });
 });

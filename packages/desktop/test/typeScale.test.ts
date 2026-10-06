@@ -8,12 +8,13 @@ import { join, resolve } from 'node:path';
  *
  * ```
  * text-meta   12px  로우·상태·시간
- * text-body   14px  본문
+ * text-body   15px  본문
  * text-name   17px  이름줄
- * text-title  19px  화면 제목
+ * text-title  20px  화면 제목
  *
  * (2026-09-10 에 `11/13/15/17` 을 1.111 배 해 옮긴 판이다 — 그 배율을 웹뷰가 아니라 앱의
- * 척도가 갖게 한 것이 요점이고, 여백은 `--spacing` 이 같은 비율로 받는다. #751 참고.)
+ * 척도가 갖게 한 것이 요점이고, 여백은 `--spacing` 이 같은 비율로 받는다. #751 참고.
+ * 2026-10-02 A · Paper 에서 본문 14→15·제목 19→20 으로 모바일과 맞췄다.)
  * ```
  *
  * 지키는 것은 보기 좋음이 아니라 **단이 단으로 남는 것**이다. 10px 이 하나 남으면 그 자리는
@@ -75,7 +76,7 @@ const SRC = `${resolve(process.cwd(), 'src')}/`;
  * 4단 — **토큰 이름과 그 값**. 이 표가 `src/index.css` 의 `@theme` 과 일치하는지는 아래
  * 별도 단언이 소스를 읽어 잰다. 여기 적어 두는 것만으로는 두 곳이 갈라질 수 있다.
  */
-const SCALE = { title: 19, name: 17, body: 14, meta: 12 } as const;
+const SCALE = { title: 20, name: 17, body: 15, meta: 12 } as const;
 
 /** 값만 필요한 자리. */
 const SCALE_PX: number[] = Object.values(SCALE);
@@ -160,7 +161,7 @@ const ALLOWED: { file: string; contains: string; why: string }[] = [
   },
   {
     file: 'components/Inbox.tsx',
-    contains: '<Identity account={accounts[e.authorId]} className="mt-0.5 h-5 w-5 text-[10px]"',
+    contains: '<Identity account={who} className="h-5 w-5 shrink-0 text-[10px]"',
     why: '아바타 상자(h-5)와 글리프를 한 쌍으로 넘기는 호출부',
   },
   {
@@ -250,7 +251,7 @@ const ALLOWED: { file: string; contains: string; why: string }[] = [
   //   예외로 등록할 것이 남지 않는다. 예외 목록은 짧을수록 좋고, 사라진 예외는 지운다.
   {
     file: 'components/CommunitySwitcher.tsx',
-    contains: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent text-sm font-bold',
+    contains: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-compose bg-accent text-sm font-semibold',
     why: '레일 맨 위 커뮤니티 타일(h-9) 안 머리글자 — 36px 원에 묶인 글리프다',
   },
   // ↓ **값이 4단과 같은 상자 글리프**(위 넷째 종류). 임의값이 위반이 된 이 판에서 새로
@@ -383,7 +384,7 @@ function themeTypeTokens(): Record<string, string> {
   return found;
 }
 
-describe('타이포 4단 (title 19 / name 17 / body 14 / meta 12)', () => {
+describe('타이포 4단 (title 20 / name 17 / body 15 / meta 12)', () => {
   const files = sourceFiles(SRC);
 
   it('스캔 대상이 실제로 있다 — 목록이 비면 아래 단언이 아무것도 지키지 않는다', () => {
@@ -519,7 +520,7 @@ describe('타이포 4단 (title 19 / name 17 / body 14 / meta 12)', () => {
 
   it('토큰을 소스에서 실제로 읽어 온다', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf-8');
-    expect(css).toContain('--text-body: 14px');
+    expect(css).toContain('--text-body: 15px');
     expect(Object.keys(themeTypeTokens()).length).toBe(4);
   });
 

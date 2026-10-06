@@ -26,6 +26,8 @@ const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admi
   coalesce((select json_agg(d.delegate_id order by d.delegate_id) from agent_owner_delegate d where d.agent_id = a.id), '[]'::json) as delegates,
   -- 083. agent_config 행이 없는 계정은 owner 일 수 없어 판정에 안 쓰인다 — 기본값(true)을 보여 준다.
   coalesce(c.trust_siblings, true) as "trustSiblings",
+  -- 106. 표시용 — 배정을 막지 않는다.
+  coalesce(c.requires_macos, false) as "requiresMacos",
   coalesce((select json_agg(m.name order by m.name) from agent_mcp_server m where m.agent_id = a.id), '[]'::json) as "mcpServers",
   a.disabled_at is not null as disabled,
   -- 이 목록은 삭제된 것을 아예 빼므로 항상 false 다. 그래도 싣는 이유는 AgentView 가
@@ -207,6 +209,14 @@ export async function setTrustSiblings(db: Pool | PoolClient, agentId: string, o
   await db.query(
     `insert into agent_config (account_id, trust_siblings) values ($1, $2)
      on conflict (account_id) do update set trust_siblings = excluded.trust_siblings, updated_at = now()`,
+    [agentId, on]);
+}
+
+/** 맥 전용 표시(106). `setTrustSiblings` 와 같은 upsert 다 — 정의 행이 없는 에이전트에도 남는다. */
+export async function setRequiresMacos(db: Pool | PoolClient, agentId: string, on: boolean): Promise<void> {
+  await db.query(
+    `insert into agent_config (account_id, requires_macos) values ($1, $2)
+     on conflict (account_id) do update set requires_macos = excluded.requires_macos, updated_at = now()`,
     [agentId, on]);
 }
 
@@ -520,6 +530,9 @@ export async function deleteAgentAccount(
       [id],
     );
     await client.query(`delete from agent_memory where account_id = $1`, [id]);
+    // 푸시 기기(092). 에이전트는 등록 라우트가 막지만(사람 세션 전용), 삭제는 soft delete 라 세션
+    // cascade 가 돌지 않는다 — 지운 계정의 기기로 알림이 가는 길을 여기서도 닫는다(security G1).
+    await client.query(`delete from push_device where account_id = $1`, [id]);
     await client.query('commit');
     return { handle: before.handle, revokedPats };
   } catch (err) {

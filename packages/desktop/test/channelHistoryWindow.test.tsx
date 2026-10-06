@@ -48,10 +48,12 @@ describe('채널 히스토리 창', () => {
     expect(INITIAL_HISTORY_LIMIT).toBeGreaterThan(200);
 
     // 두 번째로 열면 증분이다 — 넓은 창은 "처음 열 때 며칠은 보인다"를 위한 것이고,
-    // 새로 생긴 것만 받는 길에 붙이면 매번 500 행을 실어 오는 값만 든다.
+    // 새로 생긴 것만 받는 길에 붙이면 매번 500 행을 실어 오는 값만 든다. 증분은 서버 기본과 같은
+    // 한 페이지(200)를 **명시해** 받는다 — 꽉 찬 페이지를 세어 끝까지 이어 받기 위해서다(`pullSince`).
     messages.mockClear();
     await c.openChannel('c1');
-    expect(messages).toHaveBeenCalledWith('c1', { since: 1, limit: undefined });
+    expect(messages).toHaveBeenCalledWith('c1', { since: 1, limit: 200 });
+    expect((messages.mock.calls as unknown as Array<[string, { limit?: number }]>).every(([, o]) => (o.limit ?? 0) < INITIAL_HISTORY_LIMIT)).toBe(true);
   });
 
   // 이것이 사람이 본 결함이다 — 조용할 때 채널을 한 번 더 누르면 과거로 갈 길이 사라졌다.

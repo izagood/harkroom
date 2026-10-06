@@ -148,7 +148,7 @@ describe('고치는 문과 닫기', () => {
     useActiveStore.getState().set({ projectionStatus: status({ state: 'unconfigured', configured: false }) });
     mount({ onOpenSettings });
     fireEvent.click(screen.getByTestId('projection-open-settings'));
-    expect(onOpenSettings).toHaveBeenCalledWith('connection');
+    expect(onOpenSettings).toHaveBeenCalledWith('integrations');
   });
 
   it('열 수 없는 사람에게는 그 문을 그리지 않는다', () => {

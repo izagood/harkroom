@@ -1,6 +1,9 @@
 // 호환 하한(`MIN_SERVER_VERSION`)과 릴리스 번호를 견주는 자. **한 벌만 둔다** — 그 파일
 // 상단에 왜 이 값이 자동으로 오르지 않는지가 근거와 함께 적혀 있다.
 export * from './compat.js';
+export * from './memoryCleanup.js';
+// 오퍼레이터 이름 정리 — 서버와 앱이 같은 함수를 쓴다.
+export * from './operatorLabel.js';
 
 /**
  * 사람이 **직접 고르는** 상태(#186). 소켓 연결에서 파생되는 presence 와 나란히 산다 —
@@ -247,6 +250,12 @@ export interface AgentView extends AccountView, AgentConfig {
    * 옛 서버(0.3.86 이전)는 이 필드를 주지 않는다 — 화면은 없으면 스위치를 그리지 않는다.
    */
   trustSiblings?: boolean;
+  /**
+   * 맥에서만 제대로 도는 에이전트(시뮬레이터·macOS 빌드·스크린샷, 마이그레이션 106). **표시용**이다 —
+   * 서버는 리눅스 오퍼레이터 배정을 막지 않고, 화면이 오퍼레이터 박동의 `platform` 과 견줘 경고한다.
+   * 옛 서버는 싣지 않는다(없음 = false).
+   */
+  requiresMacos?: boolean;
   /** 이 에이전트에 붙는 MCP 서버 **이름**들 — `mcp_server` 레지스트리의 부분집합(스펙 §6). 정의는 오퍼레이터 머신에 있다. */
   mcpServers: string[];
 }
@@ -286,6 +295,8 @@ export interface PatView {
   label: string;
   createdAt: string;
   revokedAt: string | null;
+  /** 마지막으로 인증에 쓰인 때(서버 103). 그 전 서버는 이 칸을 보내지 않는다. */
+  lastUsedAt?: string | null;
 }
 
 /**
@@ -1006,6 +1017,25 @@ export interface AttachmentRow {
   filename: string;
   contentType: string;
   sizeBytes: number;
+  /**
+   * 미리보기(아티팩트) 버전이면 있다(`artifact.publish` 가 있는 서버부터). 보통 첨부에는 키가 없다.
+   * `latestVersion` 은 목록을 읽은 순간의 값이다 — 새 버전 글이 와도 옛 글은 다시 오지 않는다.
+   */
+  artifact?: AttachmentArtifactRef;
+}
+
+export interface AttachmentArtifactRef {
+  artifactId: string;
+  version: number;
+  latestVersion: number;
+  /** 이 글의 버전 제목 — 옛 카드는 그때 이름을 보인다. */
+  title: string;
+  /** 최신 버전 제목(`artifact.title`). 옛 서버(091 전)는 싣지 않는다. */
+  latestTitle?: string;
+  /** 이 버전에서 무엇을 고쳤나 한 줄. */
+  summary: string | null;
+  /** 같은 글에 함께 붙은 표지 그림 첨부. 없으면 글 카드로만 그린다. */
+  coverAttachmentId: string | null;
 }
 
 /**
@@ -1142,6 +1172,13 @@ export interface MessageRow {
    */
   openAskLinks: OpenAskLink[] | null;
   /**
+   * 안 풀린 `account_gate` 실패(`FailureMeta.failure.code`)의 **차례 주인들**(2026-10-02) —
+   * 하네스가 계정 설정 확인 화면에 서서 그 사람의 선택을 기다린다. 화면은 `openAskAccountIds`
+   * 와 같이 "이것이 내 차례인가"를 여기서 가른다(Inbox 내 차례). 해소 규칙은 `unresolvedFailureCount`
+   * 와 같다. **선택 필드다** — 이 칸을 모르는 옛 서버·픽스처는 없다로 읽는다.
+   */
+  openGateAccountIds?: string[] | null;
+  /**
    * 이 스레드에 실패(`meta.kind === 'failure'`)가 **몇 번 있었는가**. 0 이면 없다.
    *
    * **누적이다 — 상태가 아니다.** 화면이 이것으로 '막힘'을 칠하면 한 번 실패한 스레드는
@@ -1170,6 +1207,12 @@ export interface MessageRow {
   lastKind: 'user' | 'system' | 'progress' | null;
   /** 그 마지막 말의 저자. 생존을 물어볼 대상이다. */
   lastAuthorId: string | null;
+  /**
+   * 스레드 상태 리액션(D안, `threadStatus.ts`). 루트에만, 언제나 하나. 사람 리액션(`reactions`)과
+   * 따로 실린다 — 화면은 맨 앞에 숫자 없이 그리고 누르면 토글되지 않는다. 답글 행·옛 서버는
+   * 키가 없거나 `null` 이다.
+   */
+  statusReaction?: import('./threadStatus.js').ThreadStatusReaction | null;
   /** 스레드 답을 채널에도 함께 올린다(#231). threadRootId 가 없으면 이 값은 항상 false 다. */
   alsoInChannel: boolean;
   /**
@@ -1415,14 +1458,36 @@ export interface FailureMeta {
      *
      * - `thread_model_rejected`: 이 스레드에 지정한 모델·effort 를 하네스가 받지 않았다(079,
      *   결정 6). 화면은 [다시 부르기] 대신 [기본으로 되돌리고 다시 부르기]·[모델 고르기]를 준다.
+     * - `account_gate`: 하네스가 **턴 시작 때** 계정의 설정 확인 화면(첫 실행 승인 등)에 서서
+     *   사람의 선택을 기다린다(2026-10-02, 관문 대응 안 2). 사람이 그 터미널에서 한 번 답하면
+     *   풀린다 — 그래서 상태는 🚨 가 아니라 🙋(`awaitingAccountId` 의 차례)다. 턴 **도중**의
+     *   권한 확인에는 붙지 않는다(러너가 'startup' 일 때만 싣는다).
      */
     code?: FailureCode;
+    /**
+     * `account_gate` 의 **차례 주인** — 그 턴을 띄운 멘션을 쓴 사람(계정 id). 서버가 정한다:
+     * 그 멘션이 이 에이전트를 실제로 깨웠고(inbox) 작성자가 사람일 때만 싣는다. 못 정하면 없다
+     * (그래도 🙋 다 — 누구 차례인지 모를 뿐 사람이 풀어야 하는 것은 같다).
+     */
+    awaitingAccountId?: string;
+    /**
+     * `account_gate` 가 선 계정의 **이름표**(`pool/id` 또는 `id`, `ACCOUNT_GATE_LABEL_PATTERN`).
+     * 화면이 [터미널 열기]로 그 계정을 고를 재료다. 이메일·조직명은 싣지 않는다 — 이 문법이
+     * `@`·`.` 을 받지 않는 것으로 막는다(계정 디렉터리 이름 문법과 같다).
+     */
+    account?: string;
   };
 }
 
 /** `FailureMeta.failure.code` 의 값들. 서버 `message.fail` 입력이 이 목록으로 받는다. */
-export const FAILURE_CODES = ['thread_model_rejected'] as const;
+export const FAILURE_CODES = ['thread_model_rejected', 'account_gate'] as const;
 export type FailureCode = (typeof FAILURE_CODES)[number];
+
+/**
+ * `FailureMeta.failure.account` 의 문법 — 계정 디렉터리 이름(`[a-z0-9-]{1,32}`, 러너
+ * `CLAUDE_ACCOUNT_PATTERN`) 하나 또는 `풀/계정` 둘. **서버로 올라가는 계정 사실은 이것뿐이다.**
+ */
+export const ACCOUNT_GATE_LABEL_PATTERN = /^[a-z0-9-]{1,32}(?:\/[a-z0-9-]{1,32})?$/;
 
 /**
  * `meta` 가 실패인지 판정한다. `readAskMeta` 와 같은 규약이다 — **모르는 `meta` 는 평문으로
@@ -1731,6 +1796,19 @@ export interface ChannelDoc {
   updatedAt: string | null;
 }
 
+/**
+ * 스레드 하나에 대한 **나만의** 처리 상태(Inbox 보드 2/2, 마이그레이션 089). 완료는 보드에서
+ * 내리고(끝남 맨 아래 "치운 것"), 나중에는 `until` 까지 접는다. 그 뒤 새 말이 오면 카드는 다시
+ * 선다 — 그 판정은 화면이 `updatedAt` 과 항목 시각을 견주어 한다.
+ */
+export interface InboxThreadState {
+  rootId: string;
+  state: 'done' | 'later';
+  /** 나중에의 깨어날 시각. 완료면 null. */
+  until: string | null;
+  updatedAt: string;
+}
+
 export interface InboxEntry {
   id: number;
   messageId: string;
@@ -1825,6 +1903,28 @@ export interface InboxEntry {
    * 델타와 무관하게 "수정으로 추가된 멘션"으로 싣는다.
    */
   viaEdit?: true;
+  /**
+   * 이 부름이 **접은 내 깨움**(107, 2026-10-06). 사람이 스레드에서 부르면 그 스레드의 대기 깨움이 접힌다 —
+   * 러너가 이것을 프롬프트에 실어 "그 예약들은 이제 없다, 필요하면 다시 걸어라" 를 알린다. 없으면 키째 없다.
+   * 옛 서버는 싣지 않는다(그러면 지금처럼 모른다 — 더 나빠지지 않는다).
+   */
+  canceledWakes?: InboxCanceledWake[];
+}
+
+/** 깨움 메시지 `meta.wake.reportTo` — 깨어난 턴이 결과를 보고하기로 약속한 스레드(2026-10-06). */
+export interface WakeReportTo {
+  channelId: string;
+  threadRootId: string;
+}
+
+/** `InboxEntry.canceledWakes` 한 줄. */
+export interface InboxCanceledWake {
+  /** 걸 때 적은 사유(깨움 메시지 본문). */
+  reason: string;
+  /** 원래 깨어날 시각(ISO). */
+  wakeAt: string;
+  /** 그 깨움에 보고처가 있었으면 그 스레드 — 접혔으니 그 약속도 다시 챙겨야 한다. */
+  reportTo?: WakeReportTo;
 }
 
 /**
@@ -2164,6 +2264,7 @@ export interface SavedMessageRow {
   deleted: boolean;
   /**
    * `deleted` 가 true 면 **null** 이다 — 지워진 메시지의 본문은 내주지 않는다.
+   * 담은 뒤 그 채널을 볼 수 없게 된 경우(private 채널에서 빠짐)도 null 이다.
    * 옵셔널이 아니라 명시적 null 인 이유: 키가 사라지면 '아직 안 받았다'와 '삭제됐다'가
    * 한 화면이 된다.
    */
@@ -2383,6 +2484,8 @@ export interface ServerVersion {
 export interface ServerHealth extends ServerVersion {
   ok: true;
   avcs: { connected: boolean };
+  /** 모바일 푸시(093). `off` 는 APNS_* 가 없다는 뜻, `degraded` 는 APNs 가 키를 거절했다는 뜻이다. 옛 서버엔 없다. */
+  push?: 'off' | 'ok' | 'degraded';
 }
 
 export interface ScheduledMessageView {
@@ -2588,6 +2691,9 @@ export type WsServerEvent =
    * 스레드 × 에이전트 모델 지정이 바뀌었다(079). `row` 가 null 이면 풀렸다. 채널을 볼 수
    * 있는 사람에게 간다 — 스레드 머리 칩이 다시 그린다.
    */
+  /** 스레드 상태 리액션이 바뀌었다(D안). `null` 이면 뗐다. */
+  | { type: 'thread.status'; channelId: string; rootId: string;
+      statusReaction: import('./threadStatus.js').ThreadStatusReaction | null; audience: 'all' | string[] }
   | { type: 'thread.agent_model.changed'; channelId: string; threadRootId: string; agentId: string;
       row: ThreadAgentModelView | null; audience: 'all' | string[] };
 
@@ -2745,6 +2851,25 @@ export interface AgentWakeView {
    * "기다리는 것이 없다"고 거짓말한다).
    */
   reason: string | null;
+}
+
+/**
+ * 에이전트가 **지금 무엇을 하는가** — `GET /agent-sessions?scope=visible` 의 한 줄(모바일 에이전트 탭, S7).
+ *
+ * 공개 범위는 **그 채널을 볼 수 있는가** 하나다(jaebin 결정 A, 2026-10-02): 메시지가 보이는 사람에게
+ * 그 메시지를 쓰고 있는 턴을 감출 이유가 없고, 판정을 메시지와 같은 술어로 두면 "말은 보이는데
+ * 턴은 안 보인다"는 어긋남이 없다. **`sessionId` 는 싣지 않는다** — 이 표면은 읽기 전용이고,
+ * attach·그만두기는 지금처럼 소유자 문(`AgentSessionView`)으로만 간다.
+ */
+export interface AgentActivityView {
+  agentAccountId: string;
+  channelId: string;
+  threadRootId: string | null;
+  harness: AgentHarness;
+  startedAt: string;
+  mode?: 'mention' | 'interactive';
+  /** 내가 소유한(또는 admin 인) 에이전트인가 — 화면이 "내 에이전트" 를 가를 때 쓴다. */
+  owned: boolean;
 }
 
 /** 뷰어(데스크탑)가 보는 세션 상태. `runner-offline` 은 '끝났다'와 다르다. */
@@ -3499,8 +3624,17 @@ export const MEMORY_KINDS = ['topic', 'procedure', 'journal'] as const;
 export type MemoryKind = typeof MEMORY_KINDS[number];
 /** 에이전트마다 두는 journal 수. 넘치면 오래된 것부터 이전 판으로 옮기며 지운다. */
 export const MAX_JOURNAL_MEMORIES_PER_ACCOUNT = 60;
+/**
+ * "곧 넘친다" 경고 문턱(메모리 C1·C2). 서버는 `memory.set` 응답의 `warnings` 로, 러너는 다음 턴
+ * `<memory-index>` 머리 줄로 같은 문턱을 쓴다 — 두 자리가 다른 숫자를 말하지 않게 여기 둔다. 추정값, 실측 뒤 조정.
+ */
+export const MEMORY_CORE_WARN_CHARS = 2600;
+export const MEMORY_ITEMS_WARN_COUNT = 180;
+/** journal 이 상한에서 이만큼 안쪽이면 "곧 밀려날 것"으로 알린다. 증류할 교훈이 있으면 topic 으로 올린다. */
+export const JOURNAL_EXPIRING_WINDOW = 5;
 
 export * from './permissions.js';
+export * from './threadStatus.js';
 import type { Capability, Role } from './permissions.js';
 
 /**
@@ -3532,6 +3666,56 @@ export interface OperatorView {
    * 화면의 러너 뒤처짐 판정 기준이다(`desktop/src/lib/runnerVersions.ts`).
    */
   version: string | null;
+  /**
+   * 사람이 붙인 이름(`operator.label`, 마이그레이션 104). `null` 은 바꾼 적 없음 — 화면은
+   * `label ?? name` 을 보이고, 바꿨을 때만 `name`(등록 때의 호스트명)을 곁에 둔다.
+   * **선택 필드**다: 이 열을 모르는 옛 서버는 키를 싣지 않는다(없음 = null 과 같다).
+   */
+  label?: string | null;
+  /**
+   * 같은 머신 묶음표(`operator.machine_id`, 마이그레이션 105). 오퍼레이터가 박동에 실은 머신 digest 를
+   * 서버가 **소유자 id 와 섞어** 만든 값이다 — 같은 소유자의 같은 머신이면 같고, 소유자가 다르면 같은
+   * 머신이어도 다르다. 화면이 한 VM 의 operator 들을 한 줄로 묶는 근거다. 저장된 사실이라 오프라인에도
+   * 남는다. **선택 필드**(옛 서버는 싣지 않는다), `null` 은 박동을 보낸 적 없음.
+   */
+  machineId?: string | null;
+  /**
+   * 마지막 박동(`status` 프레임) — **지금의 사실**이다. 연결이 끊기면 `null`. 서버가 받은 시각을
+   * `receivedAt` 에 붙인다. 선택 필드(옛 서버는 싣지 않는다).
+   */
+  status?: (OperatorStatus & { receivedAt: string }) | null;
+}
+
+export type OperatorCredentialState = 'present' | 'expired' | 'missing';
+/** 오퍼레이터가 도는 OS(`process.platform`). 화면이 「macOS 필요」 에이전트를 경고하는 근거다(P2b). */
+export type OperatorPlatform = 'darwin' | 'linux' | 'win32';
+/** 업그레이드 단계(P2b·H3). `failed` 는 받기·검증·풀기 실패, `rolled_back` 은 새 판이 박동을 못 내 되돌림. */
+export type OperatorUpgradeStage = 'download' | 'verify' | 'unpack' | 'restart' | 'healthy' | 'failed' | 'rolled_back';
+
+/** `GET /operators/:id/upgrades` 의 한 줄 — 최근 것부터 20줄. */
+export interface OperatorUpgradeEvent {
+  stage: OperatorUpgradeStage;
+  from: string | null;
+  to: string | null;
+  error: string | null;
+  at: string;
+}
+
+/**
+ * 오퍼레이터 박동의 본문(원격 호스트 관리 P2a·H1·H5). 받는 쪽은 `parseOperatorStatus` 로 허용한 칸만
+ * 남긴다. **자격 증명은 상태만 싣는다** — 값·만료 시각·경로는 칸이 없다.
+ */
+export interface OperatorStatus {
+  startedAt?: string;
+  platform?: OperatorPlatform;
+  /** 지금 도는 턴 수와 동시 턴 상한(`HARKROOM_MAX_TURNS`, null = 상한 없음). */
+  turns: { running: number; max: number | null };
+  memory?: { totalBytes: number; freeBytes: number; turnRssBytes?: number };
+  /** 오퍼레이터 데이터 디렉터리가 놓인 디스크. */
+  disk?: { totalBytes: number; freeBytes: number };
+  /** 에이전트별 러너가 돌리는 턴 수. */
+  runners?: { agentId: string; turns: number }[];
+  credentials?: { kind: 'claude' | 'codex' | 'mcp' | 'gh'; name: string; state: OperatorCredentialState; agentIds: string[] }[];
 }
 
 /** 오퍼레이터가 `hello` 에 싣는 능력 — 연결이 살아 있는 동안만 서버가 든다. */

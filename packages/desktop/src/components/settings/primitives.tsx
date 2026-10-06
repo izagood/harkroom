@@ -37,7 +37,7 @@ export function SettingsPage({ section, description, width = 'default', children
         칸 이름이므로 이름줄단(15px)이다. `ConnectScreen` 의 `h1` 이 전자와 같은 단이다.
 
         24 → 17px 로 내린 것이 눈에 작아 보이지 않는 이유: 본문이 14 → 13px 로 함께
-        내려가 제목과 본문의 비가 1.71 → 1.31 이 아니라, 그 비를 굵기(`font-bold`)와
+        내려가 제목과 본문의 비가 1.71 → 1.31 이 아니라, 그 비를 굵기(`font-semibold`)와
         여백(`mb-8`)이 이미 나눠 지고 있었다.
       */}
       <SettingsHeader section={section} description={description} />
@@ -57,7 +57,7 @@ export function SettingsHeader({ section, description, className = '' }: {
   const t = useT();
   return (
     <div className={className}>
-      <h2 className="text-title font-bold text-fg">{t(navKey(section))}</h2>
+      <h2 className="text-title font-semibold text-fg">{t(navKey(section))}</h2>
       <p className="mt-1 mb-8 text-fg-subtle">{description ?? ''}</p>
     </div>
   );
@@ -68,7 +68,7 @@ export function SettingsGroup({ title, children }: { title?: string; children: R
   return (
     <section className="mb-8">
       {title && <h3 className="mb-2 text-body font-semibold text-fg-subtle">{title}</h3>}
-      <div className="divide-y divide-border rounded-xl border border-border bg-surface-raised">
+      <div className="divide-y divide-border rounded-compose border border-border bg-surface-raised">
         {children}
       </div>
     </section>
@@ -79,7 +79,8 @@ export function SettingsGroup({ title, children }: { title?: string; children: R
 export function ReadonlyRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex items-center gap-4 px-4 py-3">
-      <span className="font-medium text-fg">{label}</span>
+      {/* 라벨은 꺾이지 않는다 — 값이 길면 값 쪽이 줄어든다(#1173 에서 "New version" 이 두 줄로 꺾였다). */}
+      <span className="shrink-0 whitespace-nowrap font-medium text-fg">{label}</span>
       <span className="ml-auto min-w-0 truncate text-fg-muted">{value}</span>
     </div>
   );
@@ -145,7 +146,7 @@ export function Switch({ checked, disabled, onChange, ariaLabel, testId, classNa
  * 않는 것은 앱 기본값이 본문단이기 때문이고(`Workspace.tsx`), 그것이 이 저장소의
  * 입력칸 규칙이다 — 방금 친 글자를 다시 읽는 자리다. 라벨은 12px 이었고 4단 밖이었다.
  */
-const FIELD_BOX = 'w-full rounded border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
+const FIELD_BOX = 'w-full rounded-row border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
 const FIELD_LABEL = 'block text-meta font-medium text-fg-muted';
 
 /**
@@ -228,7 +229,7 @@ export function Segmented({ value, onChange, options, label }: {
   label: string;
 }) {
   return (
-    <div role="radiogroup" aria-label={label} className="flex gap-1 rounded-lg bg-surface-sunken p-1">
+    <div role="radiogroup" aria-label={label} className="flex gap-1 rounded-card bg-surface-sunken p-1">
       {options.map((o) => {
         const on = o.value === value;
         return (
@@ -237,7 +238,7 @@ export function Segmented({ value, onChange, options, label }: {
             type="button"
             role="radio"
             aria-checked={on}
-            className={`flex-1 rounded-md px-3 py-1.5 text-body font-medium ${
+            className={`flex-1 rounded-row px-3 py-1.5 text-body font-medium ${
               on ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:bg-surface-hover'
             }`}
             onClick={() => onChange(o.value)}
@@ -279,7 +280,7 @@ export function Button({ children, onClick, variant = 'secondary', disabled, typ
       disabled={disabled}
       onClick={onClick}
       aria-label={ariaLabel}
-      className={`rounded px-3 py-1.5 text-body font-medium disabled:opacity-50 ${tone}`}
+      className={`rounded-row px-3 py-1.5 text-body font-medium disabled:opacity-50 ${tone}`}
     >
       {children}
     </button>

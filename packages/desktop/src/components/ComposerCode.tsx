@@ -40,7 +40,7 @@ import { codePieces } from '../lib/codeMarks';
  * 한쪽만 고쳐지고, 그 순간 칠이 글자에서 밀린다(그 어긋남은 여백을 고친 사람 눈에는
  * 보이지 않는다: 짧은 한 줄에서는 티가 나지 않고 두 줄째부터 벌어진다).
  */
-export const COMPOSER_BOX = 'rounded border px-3 py-2.5 leading-relaxed';
+export const COMPOSER_BOX = 'rounded-compose border px-3 py-2.5 leading-relaxed';
 
 interface Props {
   /** 지금 초안. 입력칸에 들어 있는 것과 **같은 문자열**이어야 한다. */
@@ -98,7 +98,7 @@ export function ComposerCode({ text, boxRef, layerRef }: Props) {
                 `box-decoration-clone`: 줄을 넘긴 코드의 면이 조각마다 둥근 모서리를 갖게
                 한다. 없으면 넘어간 조각이 각진 채로 잘려 면이 깨져 보인다.
               */
-              className="box-decoration-clone rounded bg-surface-sunken py-0.5"
+              className="box-decoration-clone rounded-row bg-surface-sunken py-0.5"
             >
               {piece.text}
             </span>

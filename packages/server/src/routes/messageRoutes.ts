@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { EFFORT_MAX, MAX_MESSAGE_BODY_CHARS, MENTION_EDIT_SKIPPED_HEADER, MODEL_ID_MAX, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@harkroom/shared';
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
-import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, listInbox, listMessages, markInboxRead, postMessage, searchMessages, SEARCH_MAX_OFFSET, BAD_THREAD_MESSAGE } from '../services/messages.js';
+import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listBoardThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -311,13 +311,19 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
     const messages = await listMessages(pool, id, {
       since: q.since, before: q.before, around: q.around, limit: q.limit, threadRootId: q.thread ?? null,
     });
-    // 스레드 조회는 '더 오래된 것'을 페이지로 돌려주는 경로가 없다 — before 분기가 스레드를
-    // 필터하지 않으므로 이 값을 true 로 올리면 클라이언트가 채널 전체를 거슬러 올라간다.
-    // 그래서 limit 을 넘는 긴 스레드는 최신 limit 개까지만 보인다(그 창이 오래된 쪽이 아니라
-    // 최신 쪽인 것이 이 커밋의 요지다). 스레드 역방향 페이지는 별도 과제다.
-    const hasMore = q.thread
-      ? false
-      : messages.length > 0 && (await hasOlderMessages(pool, id, messages[0]!.seq));
+    // 스레드 조회의 `hasMore` 는 **그 스레드의 답글**로만 센다 — 받은 답글 중 가장 오래된 것보다
+    // 앞선 답글이 남았나. 루트는 세지 않는다(루트는 첫 페이지에 늘 실린다). 다음 페이지는
+    // `?thread=<루트>&before=<그 seq>` 로 받는다(`listMessages` 의 스레드 before 갈래).
+    // 옛 클라이언트는 이 값을 읽지 않으므로(데스크탑·모바일 모두 스레드 응답의 hasMore 를 버린다)
+    // 참이 되어도 동작이 바뀌지 않는다. `since`(증분)·`around`(점프)는 과거를 말할 자격이 없어 false.
+    let hasMore: boolean;
+    if (q.thread) {
+      const oldestReply = messages.find((m) => m.threadRootId === q.thread);
+      hasMore = q.since === undefined && q.around === undefined && oldestReply !== undefined
+        && (await hasOlderThreadReplies(pool, id, q.thread, oldestReply.seq));
+    } else {
+      hasMore = messages.length > 0 && (await hasOlderMessages(pool, id, messages[0]!.seq));
+    }
     return { messages, hasMore };
   });
 
@@ -459,8 +465,59 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
   });
 
   app.get('/inbox', { preHandler: app.requireAccount }, async (req) => {
-    const q = z.object({ unread: z.coerce.boolean().optional() }).parse(req.query);
-    return { entries: await listInbox(pool, req.account!.id, { unreadOnly: q.unread ?? false }) };
+    const q = z.object({
+      unread: z.coerce.boolean().optional(),
+      // 상태 보드(2026-10-01)가 스레드의 지금 상태를 함께 받는다. 묻는 쪽만 값을 치른다 —
+      // 러너의 폴(`unread=1`)은 머리를 쓰지 않는다. 옛 앱은 이 키를 안 보내 응답이 그대로다.
+      threads: z.enum(['1']).optional(),
+    }).parse(req.query);
+    const entries = await listInbox(pool, req.account!.id, { unreadOnly: q.unread ?? false });
+    if (q.threads !== '1') return { entries };
+    const threads = await listInboxThreads(pool, req.account!.id, entries);
+    // 내 완료·나중에(089). 머리가 실린 스레드의 것만 — 걸러진 머리의 상태가 따로 새지 않게.
+    const threadStates = await listInboxThreadStates(pool, req.account!.id, threads.map((m) => m.id));
+    return { entries, threads, threadStates };
+  });
+
+  /**
+   * 「내 작업」 보드(2026-10-03, S1). `?threads=1` 과 같은 모양에 **inbox 밖의 머리**를 더한다 — 내가 연·
+   * 답한 스레드 30일 ∩ 에이전트가 낀 것(`listBoardRootIds`). 옛 `?threads=1` 은 그대로 둔다(옛 앱).
+   * `truncated` 는 inbox 밖 머리가 상한에서 잘렸다는 뜻이다.
+   */
+  app.get('/inbox/board', { preHandler: app.requireAccount }, async (req) => {
+    const entries = await listInbox(pool, req.account!.id, { unreadOnly: false });
+    const { threads, truncated } = await listBoardThreads(pool, req.account!.id, entries);
+    const threadStates = await listInboxThreadStates(pool, req.account!.id, threads.map((m) => m.id));
+    return { entries, threads, threadStates, truncated };
+  });
+
+  /**
+   * 스레드 하나의 **내** 처리 상태(Inbox 보드 2/2, 089). `state: null` 이면 지운다(되돌리기).
+   * 바꾸는 행은 언제나 부른 계정의 것이다 — 계정을 몸통으로 받지 않는다.
+   *
+   * 나중에는 깨어날 시각이 필수이고 **지금보다 뒤, 90일 안**이어야 한다: 지난 시각은 접자마자
+   * 다시 서는 버튼이 되고, 끝없는 미룸은 완료와 구별되지 않는다.
+   */
+  app.put('/inbox/threads/:rootId', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { rootId } = z.object({ rootId: z.string().uuid() }).parse(req.params);
+    const body = z.union([
+      z.object({ state: z.literal('done') }),
+      z.object({ state: z.literal('later'), until: z.string().datetime() }),
+      z.object({ state: z.null() }),
+    ]).parse(req.body);
+    if (body.state === 'later') {
+      const at = Date.parse(body.until);
+      if (!(at > Date.now()) || at > Date.now() + 90 * 86_400_000) {
+        return reply.code(400).send({ error: { code: 'bad_until', message: 'until must be in the future and within 90 days' } });
+      }
+    }
+    const result = await setInboxThreadState(pool, req.account!.id, rootId, body.state === null ? null : body);
+    if (result === 'not_found') return reply.code(404).send({ error: { code: 'not_found', message: 'no such message' } });
+    if (result === 'forbidden') return reply.code(403).send({ error: { code: 'forbidden', message: 'not visible' } });
+    if (result === 'not_root') return reply.code(400).send({ error: { code: 'not_root', message: 'not a thread root' } });
+    // 내 다른 기기의 보드도 따라오게 한다 — 같은 신호가 이미 보드의 조용한 재조회를 부른다.
+    emitEvent({ type: 'inbox.updated', accountId: req.account!.id });
+    return { state: result };
   });
 
   app.post('/inbox/read', { preHandler: app.requireAccount }, async (req, reply) => {
@@ -478,12 +535,20 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
    */
   app.get('/search', { preHandler: app.requireAccount }, async (req, reply) => {
     const q = z.object({
-      q: z.string().min(1).max(256),
+      q: searchInput.query,
       channelId: z.string().uuid().optional(),
       // ⌘F 의 스코프. `channelId` 없이 와도 뜻이 서지만(스레드 id 하나로 채널이 정해진다)
       // 클라이언트는 늘 둘을 함께 보낸다 — 403 판정이 채널 단위이기 때문이다.
       threadRootId: z.string().uuid().optional(),
-      offset: z.coerce.number().int().min(0).max(SEARCH_MAX_OFFSET).optional(),
+      offset: z.coerce.number().pipe(searchInput.offset).optional(),
+      // 거르기(S1). 셋 다 결과를 좁히기만 한다(services/messages.ts SearchScope). 형식·상한은 MCP
+      // `message.search` 와 **같은 조각**(`searchInput`)이다 — 한쪽만 느슨해지지 않게.
+      // `authorId` 는 되풀이해 여럿 보낸다(`?authorId=a&authorId=b`) — 하나면 문자열, 여럿이면 배열로 온다.
+      authorId: z.union([z.string().uuid(), searchInput.authorIds]).optional(),
+      after: searchInput.time.optional(),
+      before: searchInput.time.optional(),
+      hasAttachment: z.enum(['true', 'false']).optional(),
+      sort: searchInput.sort.optional(),
     }).parse(req.query);
     if (q.channelId && !(await assertChannelVisible(pool, q.channelId, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this channel' } });
@@ -494,6 +559,11 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
       channelId: q.channelId ?? null,
       threadRootId: q.threadRootId ?? null,
       offset: q.offset ?? 0,
+      authorIds: q.authorId === undefined ? null : Array.isArray(q.authorId) ? q.authorId : [q.authorId],
+      after: q.after ?? null,
+      before: q.before ?? null,
+      hasAttachment: q.hasAttachment === 'true',
+      sort: q.sort ?? 'relevance',
     });
   });
 

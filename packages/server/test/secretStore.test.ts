@@ -8,7 +8,13 @@ import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
-import { createSecretKeyring, loadSecretKeyring, parseKey } from '../src/services/secretKeyring.js';
+import { createSecretKeyring, keyCheckValue, loadSecretKeys, parseKey } from '../src/services/secretKeyring.js';
+
+/** 시험 전용 — 키 확인값(104) 대조 없이 디렉터리에서 키링을 만든다. 운영 경로는 verifySecretKeys 를 거친다. */
+const loadSecretKeyringForTest = (dir: string | undefined, kid: string | undefined) => {
+  const loaded = loadSecretKeys(dir, kid);
+  return loaded ? createSecretKeyring(loaded.keys, loaded.activeKid) : null;
+};
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 const keyA = randomBytes(32);
@@ -42,6 +48,15 @@ describe('v2 봉투 (085, 보안 검토 M3·M4)', () => {
     expect(rotated.open(sealed.replace('v2.k1.', 'v2.k2.'), aad)).toBeNull();
   });
 
+  /**
+   * 키 확인값(KCV)의 **고정 테스트 벡터.** harkroom-gate(`recoveryKey.ts`)도 같은 값을 시험한다 — 공식이
+   * 갈리면 복구 키로 다시 봉인한 맞는 키를 서버가 기동에서 막는다. 바꾸지 마라.
+   */
+  it('KCV 고정 벡터 — gate 와 같은 공식', () => {
+    const key = Buffer.from(Array.from({ length: 32 }, (_, i) => i));
+    expect(keyCheckValue(key).toString('hex')).toBe('dfbd9a484a80f25600a35a8a2704d755');
+  });
+
   it('키는 정확히 32바이트만 받는다 — 사람이 고른 문자열은 거절', () => {
     expect(parseKey(keyA.toString('base64'))).toEqual(keyA);
     expect(parseKey(`${keyA.toString('hex')}\n`)).toEqual(keyA);
@@ -53,13 +68,13 @@ describe('v2 봉투 (085, 보안 검토 M3·M4)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'hk-keys-'));
     writeFileSync(join(dir, 'k1'), keyA.toString('base64'));
     writeFileSync(join(dir, '..data'), 'not a key');
-    expect(loadSecretKeyring(dir, undefined)?.activeKid).toBe('k1');
+    expect(loadSecretKeyringForTest(dir, undefined)?.activeKid).toBe('k1');
     writeFileSync(join(dir, 'k2'), keyB.toString('hex'));
-    expect(() => loadSecretKeyring(dir, undefined)).toThrow(/HARKROOM_SECRET_KEY_ID/);
-    expect(loadSecretKeyring(dir, 'k2')?.activeKid).toBe('k2');
+    expect(() => loadSecretKeyringForTest(dir, undefined)).toThrow(/HARKROOM_SECRET_KEY_ID/);
+    expect(loadSecretKeyringForTest(dir, 'k2')?.activeKid).toBe('k2');
     writeFileSync(join(dir, 'bad'), 'short');
-    expect(() => loadSecretKeyring(dir, 'k2')).toThrow(/32바이트/);
-    expect(loadSecretKeyring(undefined, undefined)).toBeNull();
+    expect(() => loadSecretKeyringForTest(dir, 'k2')).toThrow(/32바이트/);
+    expect(loadSecretKeyringForTest(undefined, undefined)).toBeNull();
   });
 });
 
@@ -86,6 +101,8 @@ describe('비밀 보관소 REST (085)', () => {
     alice = await createMember(app, admin.token, 'alice');
     bob = await createMember(app, admin.token, 'bob');
     agentId = (await createAgent(app, admin.token, 'worker')).accountId;
+    // 비밀은 소유자 자신의 에이전트에게만 준다(not_own_agent) — 시험의 에이전트를 alice 의 것으로.
+    await pool.query(`update agent_config set owner_account_id = $1 where account_id = $2`, [alice.accountId, agentId]);
     const op = await registerOperator(app, admin.token, 'mac');
     opToken = op.token;
     operatorId = op.operatorId;
@@ -184,8 +201,18 @@ describe('비밀 보관소 REST (085)', () => {
     expect(revoke.statusCode).toBe(204);
   });
 
+  it('남의 에이전트에게는 못 준다(not_own_agent) — 이미 준 옛 줄도 reveal 이 막는다', async () => {
+    const theirs = (await createAgent(app, admin.token, 'theirs')).accountId; // 소유자 admin
+    const id = (await pool.query(`select id from secret where name = 'gh-token'`)).rows[0].id as string;
+    const res = await app.inject({ method: 'PUT', url: `/secrets/${id}/grants`, headers: auth(alice.token), payload: { agentId: theirs, operator: 'any' } });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('not_own_agent');
+    expect((await pool.query(`select 1 from secret_grant where agent_id = $1`, [theirs])).rowCount).toBe(0);
+  });
+
   it('배정 없는 에이전트에 current 로 주면 409', async () => {
     const lone = (await createAgent(app, admin.token, 'lonely')).accountId;
+    await pool.query(`update agent_config set owner_account_id = $1 where account_id = $2`, [alice.accountId, lone]);
     const id = (await pool.query(`select id from secret where name = 'gh-token'`)).rows[0].id as string;
     const res = await app.inject({ method: 'PUT', url: `/secrets/${id}/grants`, headers: auth(alice.token), payload: { agentId: lone } });
     expect(res.statusCode).toBe(409);

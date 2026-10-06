@@ -163,7 +163,7 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
             </span>
           </span>
           <button
-            className="shrink-0 rounded-lg border border-border px-3 py-1.5 font-medium hover:bg-surface"
+            className="shrink-0 rounded-card border border-border px-3 py-1.5 font-medium hover:bg-surface"
             onClick={() => { setAddOpen(true); setAddError(null); }}
           >
             Add community
@@ -199,7 +199,7 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
                 겹창 안에서 말한다. 폼 안의 오류(로그인 실패)는 `ConnectScreen` 이 자기가
                 적는다 — 두 오류의 자리가 다른 것은 원인이 다르기 때문이다. */}
             {addError && (
-              <p role="alert" className="mt-2 rounded bg-surface-raised px-4 py-2 text-danger">{addError}</p>
+              <p role="alert" className="mt-2 rounded-row bg-surface-raised px-4 py-2 text-danger">{addError}</p>
             )}
           </div>
         </div>
@@ -258,14 +258,14 @@ function CommunityRow(props: {
           <span className="flex items-center gap-2 font-medium text-fg">
             {label}
             {active && (
-              <span className="rounded bg-accent-surface px-1 text-meta text-accent">Viewing</span>
+              <span className="rounded-sm bg-accent-surface px-1 text-meta text-accent">Viewing</span>
             )}
           </span>
           <span className="mt-0.5 flex items-center gap-2 text-fg-subtle">
             <span className="min-w-0 truncate font-mono text-meta">{entry.baseUrl || '—'}</span>
             <span className={`h-2 w-2 shrink-0 rounded-full ${connected ? 'bg-success' : 'bg-danger'}`} />
             <span data-testid={`community-state-${entry.id}`}>
-              {connected ? 'Connected' : 'Disconnected'}
+              {connected ? t('connection.connected') : t('connection.disconnected')}
             </span>
           </span>
           {/* 버전은 **연결 상태와 같은 줄에 두지 않는다.** 그 줄은 이미 주소·점·상태로
@@ -305,20 +305,20 @@ function CommunityRow(props: {
         </span>
         {!active && (
           <button
-            className="shrink-0 rounded-lg border border-border px-3 py-1.5 font-medium hover:bg-surface"
+            className="shrink-0 rounded-card border border-border px-3 py-1.5 font-medium hover:bg-surface"
             onClick={props.onSwitch}
           >
             Switch to
           </button>
         )}
         <button
-          className="shrink-0 rounded-lg border border-border px-3 py-1.5 font-medium hover:bg-surface"
+          className="shrink-0 rounded-card border border-border px-3 py-1.5 font-medium hover:bg-surface"
           onClick={props.onStartRename}
         >
           Rename
         </button>
         <button
-          className="shrink-0 rounded-lg border border-border px-3 py-1.5 font-medium text-danger hover:bg-surface"
+          className="shrink-0 rounded-card border border-border px-3 py-1.5 font-medium text-danger hover:bg-surface"
           onClick={props.onStartRemove}
         >
           Remove
@@ -333,20 +333,20 @@ function CommunityRow(props: {
           <div className="mt-1 flex items-center gap-2">
             <input
               id={`community-name-${entry.id}`}
-              className="min-w-0 flex-1 rounded border border-border bg-field px-2 py-1"
+              className="min-w-0 flex-1 rounded-row border border-border bg-field px-2 py-1"
               value={props.labelDraft}
               placeholder={entry.baseUrl || 'community'}
               onChange={(e) => props.onLabelDraft(e.target.value)}
             />
             <button
-              className="shrink-0 rounded-lg border border-border px-3 py-1.5 font-medium hover:bg-surface disabled:opacity-50"
+              className="shrink-0 rounded-card border border-border px-3 py-1.5 font-medium hover:bg-surface disabled:opacity-50"
               disabled={busy}
               onClick={props.onSaveRename}
             >
               {busy ? 'Saving…' : 'Save'}
             </button>
             <button
-              className="shrink-0 rounded-lg px-3 py-1.5 text-fg-muted hover:bg-surface"
+              className="shrink-0 rounded-card px-3 py-1.5 text-fg-muted hover:bg-surface"
               onClick={props.onCancelRename}
             >
               Cancel
@@ -361,7 +361,7 @@ function CommunityRow(props: {
       {/* 확인 단계. **확인 전에는 아무 일도 일어나지 않는다** — 제거는 이 기기의 목록에서만
           빼는 일이지만, 다시 넣으려면 서버 주소와 자격증명이 다시 필요하다. */}
       {props.removing && (
-        <div className="mt-2 rounded-lg border border-border bg-surface p-3">
+        <div className="mt-2 rounded-card border border-border bg-surface p-3">
           <p className="text-fg">
             Remove {label} from this device? It stays on the server — your session there is not
             signed out, and other devices keep working. You will need to sign in again to add it back.
@@ -371,14 +371,14 @@ function CommunityRow(props: {
           )}
           <div className="mt-2 flex items-center gap-2">
             <button
-              className="rounded-lg border border-border px-3 py-1.5 font-medium text-danger hover:bg-surface-hover disabled:opacity-50"
+              className="rounded-card border border-border px-3 py-1.5 font-medium text-danger hover:bg-surface-hover disabled:opacity-50"
               disabled={busy}
               onClick={props.onConfirmRemove}
             >
               {busy ? 'Removing…' : 'Remove from this device'}
             </button>
             <button
-              className="rounded-lg px-3 py-1.5 text-fg-muted hover:bg-surface-hover"
+              className="rounded-card px-3 py-1.5 text-fg-muted hover:bg-surface-hover"
               onClick={props.onCancelRemove}
             >
               Keep it

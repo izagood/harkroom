@@ -1,12 +1,11 @@
 import { useEffect, useState, type ReactElement } from 'react';
 import { communityLabel, useActiveStore, useCommunityRegistry } from '../state/communities';
 import { getController } from '../state/controller';
-import { blockingUnreadCount } from '../state/unread';
 import { Identity, StatusMark } from './Identity';
 import { Menu } from './Menu';
 import { StatusPicker } from './StatusPicker';
 import { CommunitySwitcher } from './CommunitySwitcher';
-import { TOP_BAR_BG, TOP_BAR_H } from '../lib/platform';
+import { TOP_BAR_BG, TOP_BAR_H, macTopBarMinHeight } from '../lib/platform';
 import { AgentsIcon, CollabIcon, DmIcon, HomeIcon, SavedIcon } from './RailIcons';
 import type { SectionId } from './settings/sections';
 import { useT } from '../i18n/useT';
@@ -40,6 +39,8 @@ export type RailPanel = 'home' | 'dm' | 'agents' | 'collab';
  * 변경의 범위가 아니라 남긴다.
  */
 const RAIL_W = 'w-[70px]';
+/** `RAIL_W` 의 숫자. 레일 오른쪽에서 시작하는 바가 신호등 여백을 셀 때 쓴다(`macTrafficLightInset`). */
+export const RAIL_W_PX = 70;
 
 /**
  * 칸 하나의 정의. 배열 하나로 두는 이유는 **숫자 단축키가 레일 순서를 그대로 따라야**
@@ -145,14 +146,15 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onMana
    * "새 대화가 있다"에 가깝다. 사이드바의 채널별 `UnreadBadge` 와 같은 배열을 쓰므로
    * 두 표시가 갈라지지 않는다.
    *
-   * 세는 규칙 자체는 `state/unread.ts` 에 있다 — 독(Dock) 배지가 같은 것을 세야 해서
-   * 꺼냈다(`lib/useDockBadge.ts`). 여기서 다시 적으면 화면의 숫자와 독의 숫자가 갈라진다.
+   * 세는 규칙은 `lib/inboxBoard::mineCount` 하나다(배지 A, 2026-10-02) — 독·사이드바·커뮤니티 타일이
+   * 같은 `inboxMine` 을 읽는다. 여기서 다시 적으면 화면의 숫자와 독의 숫자가 갈라진다.
    *
    * **이 배지가 홈 칸에 있는 것이 문서의 요구다** — Inbox 는 홈 패널 맨 위 한 줄로
    * 내려가고 배지만 레일이 대신 받는다. 그래야 어느 칸에 있든 "나를 기다리는 것 2개"가
    * 계속 보인다.
    */
-  const blockingCount = useActiveStore((s) => blockingUnreadCount(s.unread));
+  // 내 차례 수(배지 A) — 보드 머리글 "나를 기다리는 일 N" 과 같은 값(`appStore.inboxMine`).
+  const blockingCount = useActiveStore((s) => s.inboxMine);
 
   /**
    * 담아 둔 메시지 수(#219). **배지로 그리지 않는다** — 문서: *"배지는 나를 막는 것만
@@ -254,6 +256,8 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onMana
         data-tauri-drag-region
         aria-hidden="true"
         className={`shrink-0 ${TOP_BAR_H} border-b border-border ${TOP_BAR_BG}`}
+        // 브랜드 바·헤더와 한 줄이라 높이도 같이 지킨다(`macTopBarMinHeight`).
+        style={macTopBarMinHeight()}
       />
       {/*
         몸통. 오른쪽 테두리가 **여기**에 붙는다(위 띠 주석). `min-h-0` 은 아래 네 칸의
@@ -308,7 +312,7 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onMana
                 aria-label={me
                   ? t('rail.me.menuFor', { handle: me.handle })
                   : t('rail.me.menu')}
-                className={`flex h-11 w-full items-center justify-center rounded hover:bg-surface-raised ${RAIL_FOCUS}`}
+                className={`flex h-11 w-full items-center justify-center rounded-row hover:bg-surface-raised ${RAIL_FOCUS}`}
               >
                 <span className="relative">
                   <Identity account={me ?? undefined} variant="avatar" className="h-7 w-7 shrink-0" />
@@ -321,14 +325,14 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onMana
             items={[
               { label: t('rail.me.profile'), onSelect: () => onOpenSettings('profile') },
               { label: t('rail.me.status'), onSelect: () => setStatusOpen(true) },
-              { label: 'Settings', shortcut: '⌘,', onSelect: () => onOpenSettings() },
-              { label: 'Sign out', onSelect: () => { getController().logout(); onLogout(); } },
+              { label: t('rail.me.settings'), shortcut: '⌘,', onSelect: () => onOpenSettings() },
+              { label: t('rail.me.signOut'), onSelect: () => { getController().logout(); onLogout(); } },
             ]}
           />
           {/* 상태 고르기는 메뉴 항목이 **여는 것**이다. 레일 안에 두면 62px 에 눌려 입력칸이
               못 서므로 레일 오른쪽으로 띄운다 — 열려 있는 동안에만 그린다. */}
           {statusOpen && (
-            <div className="absolute bottom-full left-full z-20 mb-1 w-64 rounded border border-border bg-surface-raised p-2 shadow-lg">
+            <div className="absolute bottom-full left-full z-20 mb-1 w-64 rounded-card bg-surface-raised p-2 shadow-float">
               <StatusPicker onDone={() => setStatusOpen(false)} />
             </div>
           )}
@@ -409,7 +413,7 @@ function RailButton({ cell, active, badge, countInName, onClick, t }: {
       aria-label={name}
       title={name}
       onClick={onClick}
-      className={`relative flex w-[54px] flex-col items-center gap-0.5 rounded-lg py-1.5 ${RAIL_FOCUS} ${
+      className={`relative flex w-[54px] flex-col items-center gap-0.5 rounded-card py-1.5 ${RAIL_FOCUS} ${
         active ? 'bg-surface-raised text-fg' : 'text-fg-muted hover:bg-surface-hover'
       }`}
     >
@@ -443,7 +447,7 @@ function RailButton({ cell, active, badge, countInName, onClick, t }: {
         <span
           aria-hidden="true"
           data-testid={`${cell.testId}-badge`}
-          className="absolute right-1 top-0.5 rounded-full bg-accent px-1 text-meta font-bold text-fg-on-strong"
+          className="absolute right-1 top-0.5 rounded-full bg-accent px-1 text-meta font-semibold text-fg-on-strong"
         >
           {badge}
         </span>

@@ -13,7 +13,32 @@ import type { Slot } from './progressGroup';
  */
 export type ExchangeSlot =
   | Slot
-  | { kind: 'exchange'; messages: MessageRow[] };
+  | {
+      kind: 'exchange';
+      /**
+       * 구간 안의 **말**(진행이 아닌 발화 — 예약 줄 `wake` 포함), 순서대로. 강조 찾기·키는
+       * `exchangeRows` 로 진행까지 함께 본다.
+       */
+      messages: MessageRow[];
+      /**
+       * 구간을 이루는 자리 전부 — 말과 **진행 묶음**이 원래 순서로(2026-10-06). 진행은 구간을
+       * 끊지 않고 이 안에 든다: 펼치면 원래 자리에 평소의 `ProgressRow` 로 선다.
+       */
+      items: Slot[];
+    };
+
+/** 구간이 담은 행 전부(진행 포함) — 키·날짜·강조 점프가 이것으로 찾는다. */
+export function exchangeRows(slot: Extract<ExchangeSlot, { kind: 'exchange' }>): MessageRow[] {
+  return slot.items.flatMap((it) => (it.kind === 'message' ? [it.message] : it.messages));
+}
+
+/**
+ * 접힌 줄이 **세는 말**인가. 진행(`progress`)과 예약 줄(`wake`)은 일하는 중이라는 상태이지
+ * 누구에게 하는 말이 아니다 — 횟수·참여자·"둘 이상" 문턱·마지막 말에서 뺀다(designer 판정 ③).
+ */
+export function isSpeech(m: MessageRow): boolean {
+  return m.kind !== 'progress' && m.kind !== 'wake';
+}
 
 /** 이 계정이 에이전트인가. 모르는 계정은 에이전트로 치지 않는다 — 접으면 안 되는 것을 접느니 안 접는다. */
 type IsAgent = (accountId: string) => boolean;
@@ -30,6 +55,11 @@ type IsAgent = (accountId: string) => boolean;
  * - 저자가 **전부 에이전트**이고
  * - 서로 **다른 에이전트가 둘 이상** 참여하고(혼잣말은 주고받기가 아니다)
  * - 구간 안에 **사람에게 온 말이 없다**
+ *
+ * 세는 것은 **말**뿐이다(`isSpeech`). 진행 묶음과 예약 줄(`wake`)은 구간을 끊지 않고 그 안에
+ * 들되, 횟수·참여자·"둘 이상" 문턱에는 들지 않는다. 스레드의 **루트는 접지 않는다**(`rootId`).
+ * 둘 다 2026-10-06 최소 수정안이다 — 그전에는 진행 줄마다 구간이 쪼개지고 루트가 첫 접힌
+ * 줄 안으로 사라져, 같은 대화가 어디서 잘리는지가 진행 글의 타이밍에 달려 있었다.
  *
  * ## 접지 않는 예외 ① — 사람에게 온 말
  *
@@ -70,9 +100,19 @@ type IsAgent = (accountId: string) => boolean;
  * 발화들이 펼쳐진다). 이 파일이 이미 택한 방향이 그쪽이다 — *접으면 안 되는 것을 접느니
  * 안 접는다*.
  */
-export function groupAgentExchanges(slots: Slot[], isAgent: IsAgent): ExchangeSlot[] {
+export function groupAgentExchanges(
+  slots: Slot[],
+  isAgent: IsAgent,
+  /**
+   * 스레드 패널의 루트 id. **루트는 접지 않는다**(2026-10-06) — 루트가 무엇에 대한 스레드인지를
+   * 말하는데, 에이전트가 연 스레드에서는 그것이 첫 접힌 줄 안으로 사라졌다. 채널 목록은 모든
+   * 줄이 루트라 이 인자를 주지 않는다.
+   */
+  rootId?: string,
+): ExchangeSlot[] {
   const out: ExchangeSlot[] = [];
-  let run: MessageRow[] = [];
+  /** 모으는 구간 — 말과 진행 묶음이 섞여 원래 순서로 든다. */
+  let run: Slot[] = [];
 
   /**
    * 사람이 이 목록에서 말한 적이 있는가. 예외 ②는 이것이 참일 때만 켜진다 — 기준선이
@@ -82,27 +122,56 @@ export function groupAgentExchanges(slots: Slot[], isAgent: IsAgent): ExchangeSl
   /** 사람이 마지막으로 말한 뒤 이미 답한 에이전트. 첫 답만 예외로 빼기 위한 장부다. */
   const answered = new Set<string>();
 
-  /** 모인 구간을 확정한다. 접을 값이 없으면 원래 자리로 되돌린다. */
-  const flush = (): void => {
+  /**
+   * 모인 구간을 확정한다. 접을 값이 없으면 원래 자리로 되돌린다.
+   *
+   * `atEnd` 는 목록의 맨 끝에서 닫을 때다: 거기서 **아직 도는 진행**은 구간 밖에 둔다 —
+   * 사람이 지금 보고 있는 자리이고, 접힌 줄의 칩 하나보다 평소 진행 줄이 낫다(판정 ③).
+   */
+  const flush = (atEnd = false): void => {
     if (run.length === 0) return;
-    const authors = new Set(run.map((m) => m.authorId));
-    // 혼잣말은 주고받기가 아니다. 한 줄짜리도 접을 것이 없다 —
-    // 접은 줄이 원래 줄보다 길어지면 접는 뜻이 없다.
-    if (authors.size >= 2 && run.length >= 2) {
-      out.push({ kind: 'exchange', messages: run });
-    } else {
-      for (const m of run) out.push({ kind: 'message', message: m });
+    const tail: Slot[] = [];
+    if (atEnd) {
+      while (run.length > 0) {
+        const last = run[run.length - 1]!;
+        if (last.kind !== 'progress' || last.endedAt !== null) break;
+        tail.unshift(run.pop()!);
+      }
     }
+    const messages = run.flatMap((it) => (it.kind === 'message' ? [it.message] : []));
+    // 문턱은 **말만** 센다 — 진행만 남긴 에이전트는 주고받기의 참여자가 아니다(판정 ③).
+    const speech = messages.filter(isSpeech);
+    const authors = new Set(speech.map((m) => m.authorId));
+    // 혼잣말은 주고받기가 아니다. 말 한 줄짜리도 접을 것이 없다 —
+    // 접은 줄이 원래 줄보다 길어지면 접는 뜻이 없다.
+    if (authors.size >= 2 && speech.length >= 2) {
+      out.push({ kind: 'exchange', messages, items: run });
+    } else {
+      out.push(...run);
+    }
+    out.push(...tail);
     run = [];
   };
 
   for (const slot of slots) {
-    // 진행 묶음은 이미 접혀 있다 — 그 접힘을 이 접힘이 삼키면 두 규칙이 한 줄에 뭉친다.
-    //
-    // 진행은 **사람의 차례를 닫지 않는다**: 에이전트가 일하는 중이라는 말이고, 그 뒤에 오는
-    // 결과 발화가 여전히 사람에게 온 첫 답이다. 그래서 `answered` 를 비우지 않는다.
-    if (slot.kind !== 'message') { flush(); out.push(slot); continue; }
+    /**
+     * **진행 묶음은 구간을 끊지 않는다**(2026-10-06). 예전에는 끊었다 — 그래서 한 스레드의
+     * 주고받기가 진행 줄이 끼는 자리마다 쪼개져 「A ↔ B」 줄이 다섯 개, 진행 줄 세 개가
+     * 번갈아 섰고, 쪼개지는 자리가 누가 언제 진행을 남겼는지에 따라 달라져 "규칙이 없다"로
+     * 읽혔다. 이제 구간 안에 들고, 접힌 줄은 도는 것만 칩으로 말한다.
+     *
+     * 진행은 **사람의 차례를 닫지 않는다**: 에이전트가 일하는 중이라는 말이고, 그 뒤에 오는
+     * 결과 발화가 여전히 사람에게 온 첫 답이다. 그래서 `answered` 를 건드리지 않는다.
+     */
+    if (slot.kind !== 'message') { run.push(slot); continue; }
     const m = slot.message;
+
+    // 루트 — 무엇에 대한 스레드인지 말하는 자리다. 저자가 에이전트여도 펼친다.
+    if (m.id === rootId) {
+      flush();
+      out.push(slot);
+      continue;
+    }
 
     // 사람의 발화 — 새 기준선이다. 앞의 구간을 닫고 장부를 비운다.
     if (!isAgent(m.authorId)) {
@@ -112,6 +181,10 @@ export function groupAgentExchanges(slots: Slot[], isAgent: IsAgent): ExchangeSl
       out.push(slot);
       continue;
     }
+
+    // 예약 줄(`wake`)도 진행과 같다 — 기다린다는 상태이지 누구에게 하는 말이 아니다. 첫 답
+    // 장부를 쓰지 않는다(쓰면 그 에이전트의 진짜 답이 "두 번째 발화"로 접힌다).
+    if (m.kind === 'wake') { run.push(slot); continue; }
 
     /**
      * **위임은 사람의 차례를 닫는다**(050 · 3-2).
@@ -148,9 +221,9 @@ export function groupAgentExchanges(slots: Slot[], isAgent: IsAgent): ExchangeSl
       continue;
     }
 
-    run.push(m);
+    run.push(slot);
   }
-  flush();
+  flush(true);
   return out;
 }
 
@@ -184,7 +257,8 @@ function addressesHuman(m: MessageRow, isAgent: IsAgent): boolean {
 /** 접힌 줄이 말할 참여자 — 등장 순서를 지킨다(먼저 말한 쪽이 먼저 읽힌다). */
 export function exchangeParticipants(messages: MessageRow[]): string[] {
   const seen: string[] = [];
-  for (const m of messages) if (!seen.includes(m.authorId)) seen.push(m.authorId);
+  // 말한 쪽만 — 예약 줄만 세운 에이전트는 주고받기의 참여자가 아니다(판정 ③).
+  for (const m of messages) if (isSpeech(m) && !seen.includes(m.authorId)) seen.push(m.authorId);
   return seen;
 }
 
@@ -288,4 +362,101 @@ function clamp(text: string): string {
   return flat.length > EXCHANGE_CONCLUSION_MAX
     ? `${flat.slice(0, EXCHANGE_CONCLUSION_MAX)}…`
     : flat;
+}
+
+/**
+ * 결론이 없는 구간의 **마지막 말 한 줄**(2026-10-06, designer 판정 ②).
+ *
+ * 「아직 정해진 것 없음」을 이것으로 바꿨다. 에이전트는 거의 `message.post` 로만 말하므로
+ * 결론(답한 ask·완료 보고)이 있는 구간이 드물었고, 그래서 접힌 줄 거의 전부가 같은 문구라
+ * "열어야 하나"에 아무것도 답하지 못했다. 동사 머리말(정했다·끝냈다)은 붙이지 않는다 —
+ * 화면이 `handle: 첫 줄` 로만 그려 "정해졌다"로 읽히지 않게 한다.
+ *
+ * 대상은 구간의 **마지막 말**이다(진행·예약 줄은 건너뛴다). 본문은 `display` 가 사람이 읽는
+ * 꼴(`@handle`)로 바꿔 준 것을 받는다 — 토큰(`<@uuid>`)을 그대로 자르면 줄에 uuid 가 선다.
+ * 본문이 비면 첨부 개수를, 그것도 없으면 `null`(칸을 비운다).
+ */
+export type ExchangeLastLine =
+  | { authorId: string; text: string }
+  | { authorId: string; attachments: number }
+  | null;
+
+export function exchangeLastLine(
+  messages: MessageRow[],
+  display: (m: MessageRow) => string,
+): ExchangeLastLine {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i]!;
+    if (!isSpeech(m)) continue;
+    const text = firstLine(display(m));
+    if (text) return { authorId: m.authorId, text: clamp(text) };
+    const n = m.attachments?.length ?? 0;
+    return n > 0 ? { authorId: m.authorId, attachments: n } : null;
+  }
+  return null;
+}
+
+/**
+ * 본문의 **읽을 첫 줄**. 순서는 판정 ② 그대로다:
+ * 맨 앞의 `@멘션` 들을 빼고 → 코드 블록과 인용 줄을 건너뛰고 → 마크다운 기호를 벗기고 →
+ * 비어 있지 않은 첫 줄을 골라 공백을 하나로 접는다.
+ */
+export function firstLine(body: string): string {
+  let inFence = false;
+  let head = true;
+  for (const whole of body.split('\n')) {
+    // 접힌 줄에 실리는 것은 40 자다 — 한 줄을 끝까지 훑을 이유가 없다. 아래 식들이 줄 길이에
+    // 비례해 돌도록 앞부분만 본다.
+    const raw = whole.slice(0, FIRST_LINE_SCAN_MAX);
+    if (/^\s*(```|~~~)/.test(raw)) { inFence = !inFence; continue; }
+    if (inFence) continue;
+    if (/^\s*>/.test(raw)) continue;
+    // 가로줄(`---`·`***`)은 글이 아니다.
+    if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(raw)) continue;
+    // 표의 구분 행(`|---|:--:|`)도 글이 아니다. 정규식 대신 글자 집합으로 본다 — 칸마다
+    // 반복을 겹쳐 쓰면 #1188 의 머리 멘션 식과 같은 꼴이 된다.
+    if (isTableRule(raw)) continue;
+    // 머리 멘션은 **본문 맨 앞**에서만 뺀다 — 문장 가운데의 `@handle` 은 말의 일부다.
+    const rest = head ? raw.replace(HEAD_MENTIONS, '') : raw;
+    const line = stripMarkdown(tableCells(rest)).replace(/\s+/g, ' ').trim();
+    if (line) return line;
+    // 멘션만 있던 줄(빼고 나니 비었다)이면 다음 줄도 아직 머리다.
+    if (rest.trim() !== '') head = false;
+  }
+  return '';
+}
+
+/** 표의 구분 행인가 — `|`·`-`·`:`·공백만 있고 `|` 와 `-` 가 다 있다. */
+function isTableRule(line: string): boolean {
+  return line.includes('|') && line.includes('-') && line.replace(/[\s|:-]/g, '') === '';
+}
+
+/**
+ * 표의 행(`| a | b |`)이면 칸을 ` · ` 로 잇는다(#1188 후속 n2). 앞 `|` 만 떼면 가운데 `|` 가
+ * 줄에 그대로 섰다 — 접힌 줄에서는 칸 경계가 글로 읽혀야 한다. 빈 칸은 버린다.
+ */
+function tableCells(line: string): string {
+  if (!line.trimStart().startsWith('|')) return line;
+  return line.split('|').map((c) => c.trim()).filter(Boolean).join(' · ');
+}
+
+/** `firstLine` 이 한 줄에서 보는 앞부분의 길이. */
+const FIRST_LINE_SCAN_MAX = 500;
+
+/**
+ * 본문 맨 앞의 멘션들. handle 자리(`[^\s@,]`)와 구분 자리(`[\s,]`)가 **글자를 나눠 갖지
+ * 않는다** — 겹치면 한 입력을 나누는 방법이 여럿이 되어 매치가 실패할 때 되짚는 길이 불어난다.
+ */
+const HEAD_MENTIONS = /^\s*(?:@[^\s@,]+[\s,]*)+/;
+
+/** 한 줄의 마크다운 기호를 벗긴다. 링크·그림은 글만 남긴다. */
+function stripMarkdown(line: string): string {
+  return line
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}#{1,6}\s+/, '')
+    .replace(/^\s*(?:[-*+]|\d+[.)])\s+/, '')
+    .replace(/^\s*\|/, '')
+    .replace(/(\*\*|__|~~|`)/g, '')
+    .replace(/(^|\s)[*_](\S)/g, '$1$2')
+    .replace(/(\S)[*_](?=\s|$)/g, '$1');
 }

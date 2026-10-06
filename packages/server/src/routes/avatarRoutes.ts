@@ -90,6 +90,19 @@ export async function registerAvatarRoutes(
     }).parse(req.body);
     const me = req.account!;
 
+    // **대상이 이 서버의 에이전트인지 먼저 본다.** `requireOwnerOrAdmin` 은 없는 id 에도 admin 을
+    // 통과시키고 "존재 여부는 라우트가 404 로 답한다"고 적어 두었는데, 이 라우트는 답하지 않았다 —
+    // 그래서 아래 `update` 가 0행을 고치고도 200 을 냈다. 데스크톱이 다른 커뮤니티의 에이전트 id 로
+    // 이 서버를 부르면(설정 화면이 열린 채 커뮤니티가 바뀐 경우) 화면은 "사진을 바꿨습니다"를
+    // 띄우는데 어느 서버에도 사진이 없다(2026-10-02 task_manager 신고).
+    // 지운 에이전트도 대상이 아니다 — delegates 라우트(accountRoutes.ts)와 같은 조건.
+    const target = await pool.query(
+      `select 1 from account where id = $1 and kind = 'agent' and deleted_at is null`, [id],
+    );
+    if (!target.rowCount) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
+    }
+
     if (body.attachmentId === null) {
       await setAccountAvatar(pool, id, null);
       emitEvent({ type: 'avatar.changed', accountId: id, avatarAttachmentId: null });

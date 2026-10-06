@@ -5,10 +5,10 @@ import { projectionBannerStorage } from '../lib/prefs';
 import { useAgo, useT } from '../i18n/useT';
 
 /**
- * 고치는 문이 **지목하는 자리**. 투영은 "이 앱이 말을 거는 서버" 가 avcs 를 향해 돌리는
- * 것이므로 `Connection` 이 그 방이다(`sections.ts` 의 배치 이유와 같은 결).
+ * 고치는 문이 **지목하는 자리**. 투영은 워크스페이스 전체에 걸리는 바깥 연결이라 설정 ›
+ * 워크스페이스 › **연동** 이 그 방이다(UX ⑥b-4 — 전에는 `Connection`).
  */
-const PROJECTION_SECTION: SectionId = 'connection';
+export const PROJECTION_SECTION: SectionId = 'integrations';
 
 /**
  * 투영이 정상이 아니라는 것을 **화면 위쪽 띠**로 말한다(#488 A3-a).
@@ -85,7 +85,7 @@ export function ProjectionBanner({ onOpenSettings }: {
       {onOpenSettings && (
         <button
           data-testid="projection-open-settings"
-          className="shrink-0 rounded px-2 py-0.5 underline hover:bg-warning-surface-strong"
+          className="shrink-0 rounded-row px-2 py-0.5 underline hover:bg-warning-surface-strong"
           // 함수를 그대로 넘기지 않는다 — React 가 첫 인자로 `MouseEvent` 를 준다.
           onClick={() => onOpenSettings?.(PROJECTION_SECTION)}
         >
@@ -95,7 +95,7 @@ export function ProjectionBanner({ onOpenSettings }: {
       <button
         data-testid="projection-dismiss"
         aria-label={t('projection.banner.dismiss')}
-        className="shrink-0 rounded px-1 hover:bg-warning-surface-strong"
+        className="shrink-0 rounded-sm px-1 hover:bg-warning-surface-strong"
         onClick={() => {
           // 꺼짐만 이 기기에 남긴다(`projectionBannerStorage` 주석). 세션 닫기는 모든 사정에 건다.
           if (banner.testid === 'projection-unconfigured') projectionBannerStorage.snooze(banner.testid);

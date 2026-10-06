@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { AccountStatus, ChannelRow, MessageRow, ThreadAgentModelView } from '@harkroom/shared';
+import type { AccountStatus, ChannelRow, MessageRow, ThreadAgentModelView, ThreadStatusReaction } from '@harkroom/shared';
 import type { WorkspaceSkill } from './services/skills.js';
 
 export type WorkspaceEvent =
@@ -42,7 +42,11 @@ export type WorkspaceEvent =
   // 권한·오퍼레이터(스펙 2026-09-20). 모양은 `@harkroom/shared` 의 WsServerEvent 와 같다 —
   // 화면은 "다시 읽으라"는 신호로만 쓰고 본문을 싣지 않는다(권한 목록은 공격 표면의 지도다).
   | { type: 'grant.changed'; accountId: string; audience: 'all' | string[] }
-  | { type: 'operator.changed'; operatorId: string; audience: 'all' | string[] }
+  /**
+   * `codeId` 는 등록(claim)에서만 실린다 — 「연결 기다리는 중」 창이 **자기가 낸 등록 코드로** 붙은
+   * operator 를 알아보는 표(`POST /operators/register-codes` 의 응답과 같은 값). 소유자에게만 간다.
+   */
+  | { type: 'operator.changed'; operatorId: string; audience: 'all' | string[]; codeId?: string }
   | { type: 'agent_assignment.changed'; agentId: string; audience: 'all' }
   // 담기/해제/상태 변경(#219). 본인의 소켓에만 간다.
   | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string }
@@ -53,6 +57,9 @@ export type WorkspaceEvent =
   // 링크 미리보기 준비 완료(#215). 가져오기는 비동기라, 메시지가 먼저 뜨고 카드가 뒤에 온다.
   | { type: 'link_preview.ready'; url: string; audience: 'all' | string[] }
   // 스레드 × 에이전트 모델 지정(079). 모양은 shared 의 WsServerEvent 와 같다.
+  // 스레드 상태 리액션(D안, services/threadStatus.ts). null 이면 뗐다.
+  | { type: 'thread.status'; channelId: string; rootId: string;
+      statusReaction: ThreadStatusReaction | null; audience: 'all' | string[] }
   | { type: 'thread.agent_model.changed'; channelId: string; threadRootId: string; agentId: string;
       row: ThreadAgentModelView | null; audience: 'all' | string[] };
 

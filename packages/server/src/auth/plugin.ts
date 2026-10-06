@@ -15,6 +15,13 @@ declare module 'fastify' {
     operator: OperatorView | null;
     /** 이 요청을 인증한 자격증명의 해시. WS 티켓이 운반해 소켓 수명을 자격증명에 묶는다. */
     credentialHash: string | null;
+    /**
+     * 어느 자격증명 표로 섰나. `credentialHash` 는 세 경로가 똑같이 채우므로 그것만으로는
+     * "사람이 로그인한 기기에서 왔다"를 가를 수 없다 — 푸시 기기 등록(092)처럼 **세션에만**
+     * 열어야 하는 라우트가 이것을 본다(security G3, 2026-10-02). 오퍼레이터 토큰으로 에이전트가
+     * 선 요청은 `account` 가 있어도 'operator' 다.
+     */
+    authVia: 'session' | 'pat' | 'operator' | null;
   }
   interface FastifyInstance {
     requireAccount: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
@@ -42,6 +49,7 @@ export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<vo
   app.decorateRequest('account', null);
   app.decorateRequest('operator', null);
   app.decorateRequest('credentialHash', null);
+  app.decorateRequest('authVia', null);
 
   app.addHook('onRequest', async (req, reply) => {
     const header = req.headers.authorization;
@@ -53,12 +61,13 @@ export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<vo
     if (raw.startsWith('hkop_')) {
       const op = await pool.query(
         `select id, owner_account_id as "ownerAccountId", name, created_at as "createdAt",
-                last_seen_at as "lastSeenAt", revoked_at as "revokedAt", version
+                last_seen_at as "lastSeenAt", revoked_at as "revokedAt", version, label
            from operator where token_hash = $1 and revoked_at is null`, [hash]);
       if (!op.rowCount) return;
       const operator: OperatorView = { ...op.rows[0], online: false };
       req.operator = operator;
       req.credentialHash = hash;
+      req.authVia = 'operator';
       /**
        * **배정이 곧 인가**(스펙 2026-09-20 §5). 오퍼레이터가 러너 대신 서버에 말할 때 `X-Harkroom-Agent`
        * 로 어느 에이전트인지 밝히고, 그 (오퍼레이터, 에이전트) 쌍이 `agent_assignment` 에 있으면
@@ -87,14 +96,29 @@ export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<vo
     const viaSession = await pool.query(
       `select ${ACCOUNT_COLS} from session s join account a on a.id = s.account_id
        where s.token_hash = $1 and s.expires_at > now() and a.deleted_at is null`, [hash]);
-    if (viaSession.rowCount) { req.account = viaSession.rows[0]; req.credentialHash = hash; return; }
+    if (viaSession.rowCount) { req.account = viaSession.rows[0]; req.credentialHash = hash; req.authVia = 'session'; return; }
     const viaPat = await pool.query(
       // 삭제된 계정은 어떤 자격증명으로도 서지 못한다(061). 삭제가 PAT 를 전부 폐기하므로
       // 이 조건은 보통 걸리지 않지만, 삭제 뒤에 발급된 PAT(소유자 라우트는 계정을 목록으로
       // 찾지 않는다) 하나가 지워진 에이전트를 되살리는 길이 되면 안 된다.
+      //
+      // PAT 는 **에이전트의** 자격증명이다(kind='agent'). 발급 라우트는 #1114 부터 에이전트만 받지만
+      // 그 전에 발급된 사람 PAT 가 남아 있을 수 있다 — 그 토큰은 세션 만료·로그아웃 없이 그 사람으로
+      // 서는 길이라, 발급만 막고 인증을 열어 두면 남은 토큰이 영영 산다. 앱·모바일·오퍼레이터 어느 것도
+      // 사람 PAT 로 서버에 말하지 않는다(사람은 세션, 러너는 에이전트 PAT·오퍼레이터 토큰).
       `select ${ACCOUNT_COLS} from pat p join account a on a.id = p.account_id
-       where p.token_hash = $1 and p.revoked_at is null and a.deleted_at is null`, [hash]);
-    if (viaPat.rowCount) { req.account = viaPat.rows[0]; req.credentialHash = hash; }
+       where p.token_hash = $1 and p.revoked_at is null and a.deleted_at is null and a.kind = 'agent'`, [hash]);
+    if (viaPat.rowCount) {
+      req.account = viaPat.rows[0]; req.credentialHash = hash; req.authVia = 'pat';
+      // 마지막으로 쓴 때(103). PAT 인증을 걷어낼지 이 기록으로 정한다 — 그래서 성공한 인증만 적는다.
+      // 5분 안에 이미 적었으면 행을 건드리지 않는다(요청마다 쓰기가 되지 않게). 기록이 실패해도
+      // 인증은 막지 않는다: 관찰용 칸 하나 때문에 에이전트가 401 을 받으면 안 된다.
+      await pool.query(
+        `update pat set last_used_at = now()
+          where token_hash = $1 and (last_used_at is null or last_used_at < now() - interval '5 minutes')`,
+        [hash],
+      ).catch(() => {});
+    }
   });
 
   app.decorate('requireAccount', async (req: FastifyRequest, reply: FastifyReply) => {

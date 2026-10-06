@@ -36,6 +36,9 @@ import {
   readOperatorAgentSetPayload,
   readOperatorRegisterPayload,
   readOperatorMcpRemovePayload,
+  readOperatorMergeSetPayload,
+  readWorkspaceCleanupActPayload,
+  readWorkspaceCleanupSettingsPayload,
   readOperatorMcpAuthPayload,
   readOperatorMcpSetPayload,
   type AdoptRunnerResult,
@@ -56,6 +59,8 @@ import type { ClaudeAccountsPort } from './claudeAccounts.js';
 import type { CodexAccountsPort } from './codexAccounts.js';
 import type { LocalAgentsPort } from './localAgents.js';
 import type { LocalMcpPort } from './localMcp.js';
+import type { LocalMergePort } from './localMerge.js';
+import type { WorkspaceCleanup } from './workspaceCleanupService.js';
 import type { ClaudePoolsConfig } from '@harkroom/shared/claudePools';
 
 export interface DaemonServerDeps {
@@ -93,6 +98,10 @@ export interface DaemonServerDeps {
   localAgents?: LocalAgentsPort;
   /** 이 머신의 MCP 정의(`mcp-servers.json`). 없으면 그 요청은 거절한다. */
   localMcp?: LocalMcpPort;
+  /** 머지 래퍼의 gh 계정(`operator.json` 의 `merge.ghUser`). 없으면 그 요청은 거절한다. */
+  localMerge?: LocalMergePort;
+  /** 작업 폴더 청소기(스레드 9e909150). 없으면 그 메서드들은 배선 안 됨으로 답한다. */
+  workspaceCleanup?: WorkspaceCleanup;
   /** 로그 한 줄. 기본은 stdout — 앱이 사이드카 파이프로 그대로 본다. */
   log?: (line: string) => void;
   /**
@@ -100,7 +109,7 @@ export interface DaemonServerDeps {
    * 러너의 것이다 — 접속을 통째로 넘기고 이 서버는 더 보지 않는다. 없으면 그런 hello 는
    * 앱 hello 검사(`checkHello`)가 `bad-payload` 로 거절한다.
    */
-  runnerLink?: { accept(socket: Socket, hello: unknown, pending: unknown[]): boolean };
+  runnerLink?: { accept(socket: Socket, hello: unknown, pending: unknown[], buffered?: Buffer): boolean };
 }
 
 /** 접속 하나의 상태. **`hello` 전에는 아무 요청도 받지 않는다.** */
@@ -238,7 +247,8 @@ export class DaemonServer {
           this.connections.delete(conn);
           conn.socket.removeAllListeners('data');
           const rest = lines.slice(i + 1).filter((l) => l.ok).map((l) => (l as { value: unknown }).value);
-          this.deps.runnerLink.accept(conn.socket, line.value, rest);
+          // 덜 끝난 줄의 머리도 넘긴다 — 버리면 hello 와 한 청크로 온 큰 요청이 잘린다.
+          this.deps.runnerLink.accept(conn.socket, line.value, rest, conn.decoder.takeBuffered());
           return;
         }
         this.handleHello(conn, line.value);
@@ -452,6 +462,53 @@ export class DaemonServer {
           return daemonError('internal', err instanceof Error ? err.message : String(err));
         }
       }
+      case 'operatorMergeGet': {
+        const port = this.deps.localMerge;
+        if (!port) return daemonError('no-such-runner', '이 daemon 에는 머지 설정이 배선되지 않았다');
+        try { return await port.get(); } catch (err) {
+          return daemonError('internal', err instanceof Error ? err.message : String(err));
+        }
+      }
+      case 'operatorMergeSet': {
+        const port = this.deps.localMerge;
+        if (!port) return daemonError('no-such-runner', '이 daemon 에는 머지 설정이 배선되지 않았다');
+        const p = readOperatorMergeSetPayload(req.payload);
+        if (isDaemonError(p)) return p;
+        try {
+          const { state, previous } = await port.set(p.ghUser);
+          // 바꾼 사실을 남긴다(security C8) — 이름뿐이다, 토큰은 이 경로에 없다.
+          if (previous !== p.ghUser) this.log(`머지 gh 계정: ${previous ?? '(없음)'} → ${p.ghUser ?? '(없음)'} @ ${state.host}`);
+          return state;
+        } catch (err) {
+          // 목록에 없는 이름·gh 실패는 사람이 고칠 사유다 — 원문 그대로 올린다.
+          return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
+        }
+      }
+      case 'workspaceCleanupGet':
+      case 'workspaceCleanupSettingsSet':
+      case 'workspaceCleanupAct':
+      case 'workspaceCleanupSweep': {
+        const port = this.deps.workspaceCleanup;
+        if (!port) return daemonError('no-such-runner', '이 daemon 에는 작업 폴더 정리가 배선되지 않았다');
+        try {
+          if (req.type === 'workspaceCleanupGet') return await port.get();
+          if (req.type === 'workspaceCleanupSweep') { await port.sweep(); return await port.get(); }
+          if (req.type === 'workspaceCleanupSettingsSet') {
+            const p = readWorkspaceCleanupSettingsPayload(req.payload);
+            if (isDaemonError(p)) return p;
+            const v = await port.setSettings(p);
+            this.log(`작업 폴더 정리 설정: ${v.settings.enabled ? '켬' : '끔'} · ${v.settings.graceDays}일`);
+            return v;
+          }
+          const p = readWorkspaceCleanupActPayload(req.payload);
+          if (isDaemonError(p)) return p;
+          const v = await port.act(p.path, p.action, p.by);
+          this.log(`작업 폴더 정리: ${p.action} ${p.path}`);
+          return v;
+        } catch (err) {
+          return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
+        }
+      }
       // ── claude 계정 풀 ────────────────────────────────────────────────────────
       //
       // **로그에 이메일·코드를 적지 않는다.** 계정 이름만 적는다 — `spawnRunner` 가 env 를
@@ -520,6 +577,19 @@ export class DaemonServer {
         try {
           await port.removeAccount(ref.pool, ref.account);
           this.log(`계정 삭제: ${ref.pool}/${ref.account}`);
+          return {};
+        } catch (err) {
+          return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
+        }
+      }
+      case 'claudeAccountOpenTerminal': {
+        const port = this.requireAccounts();
+        if (isDaemonError(port)) return port;
+        const ref = readAccountRef(req.payload);
+        if (isDaemonError(ref)) return ref;
+        try {
+          await port.openTerminal(ref.pool, ref.account);
+          this.log(`계정 터미널 열기: ${ref.pool}/${ref.account}`);
           return {};
         } catch (err) {
           return daemonError('bad-payload', err instanceof Error ? err.message : String(err));

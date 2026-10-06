@@ -2026,6 +2026,14 @@ impl DaemonConnection {
         )
     }
 
+    /// 그 계정의 터미널을 사람에게 연다(2026-10-01). 이름만 넘긴다 — 경로·명령은 데몬이 조립한다.
+    pub fn claude_account_open_terminal(&self, pool: &str, account: &str) -> Result<Value, String> {
+        self.request(
+            "claudeAccountOpenTerminal",
+            json!({ "pool": pool, "account": account }),
+        )
+    }
+
     pub fn claude_pool_remove(&self, pool: &str) -> Result<Value, String> {
         self.request("claudePoolRemove", json!({ "pool": pool }))
     }
@@ -2105,6 +2113,16 @@ impl DaemonConnection {
 
     pub fn operator_mcp_remove(&self, name: &str) -> Result<Value, String> {
         self.request("operatorMcpRemove", json!({ "name": name }))
+    }
+
+    // 머지 래퍼의 gh 계정(`operator.json` 의 `merge.ghUser`, P2). 오가는 것은 로그인 이름뿐이다 — 목록에 있는
+    // 이름인지는 오퍼레이터가 그 순간의 `gh auth status` 로 다시 잰다(security C7). `None` 은 지우기다.
+    pub fn operator_merge_get(&self) -> Result<Value, String> {
+        self.request("operatorMergeGet", json!({}))
+    }
+
+    pub fn operator_merge_set(&self, gh_user: Option<&str>) -> Result<Value, String> {
+        self.request("operatorMergeSet", json!({ "ghUser": gh_user }))
     }
 
     // 원격 MCP 의 OAuth(2026-09-30). 토큰은 오퍼레이터가 든다 — 소켓으로는 인가 url 과 상태만 온다.

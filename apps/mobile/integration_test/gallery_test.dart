@@ -6,6 +6,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/api/api_client.dart';
 import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/main.dart';
+import 'package:harkroom/markdown/markdown_view.dart';
+import 'package:harkroom/push/push_coordinator.dart';
+import 'package:harkroom/push/push_platform.dart';
+import 'package:harkroom/screens/thread_screen.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_state.dart';
 import 'package:http/http.dart' as http;
@@ -47,7 +51,7 @@ void main() {
         seed: jsonEncode({
           'active': '00000000-0000-4000-8000-000000000001',
           'communities': [
-            {'accountId': '00000000-0000-4000-8000-000000000001', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'jaebin'},
+            {'accountId': '00000000-0000-4000-8000-000000000001', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'me'},
           ],
         }),
       ),
@@ -57,9 +61,28 @@ void main() {
     addTearDown(app.dispose);
     await tester.pumpWidget(HarkroomApp(state: app));
     await shot(tester, '01-channels');
+    await tester.tap(find.byKey(const Key('section-starred')));
+    await shot(tester, '01b-home-starred-folded');
+    await tester.tap(find.byKey(const Key('section-starred')));
+    // S5c: 「새로 온 것」 카드로 좁힌 홈 · 새 메시지 시트.
+    await tester.tap(find.byKey(const Key('card-new')));
+    await shot(tester, '01d-home-new-only');
+    await tester.tap(find.byKey(const Key('card-new')));
+    await tester.tap(find.byKey(const Key('new-message')));
+    await shot(tester, '01e-new-message-sheet');
+    await tester.tapAt(const Offset(20, 80));
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
 
     await tester.tap(find.byKey(const Key('channel-c1')));
     await shot(tester, '02-channel');
+
+    // 첨부 시트. 시뮬레이터라 [사진 찍기] 줄이 비활성으로 선다 — 실기기와 배치가 같다.
+    await tester.tap(find.byKey(const Key('attach')));
+    await shot(tester, '02c-attach-sheet');
+    await tester.tapAt(const Offset(20, 120));
+    await shot(tester, '02d-attach-closed');
 
     final open = find.byKey(const Key('thread-open-m1'));
     await tester.scrollUntilVisible(open, 300,
@@ -67,8 +90,30 @@ void main() {
             .descendant(of: find.byKey(const Key('channel-feed')), matching: find.byType(Scrollable))
             .first);
     await shot(tester, '02a-channel-top');
+    // S4e: 리액션 줄 끝 「이모지 달기」 시트.
+    await tester.tap(find.byKey(const Key('reaction-add-m1')));
+    await shot(tester, '02e-emoji-sheet');
+    await tester.tapAt(const Offset(20, 120));
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    // S4e: 링크 시트 — 사용자 정보와 영문 아닌 글자가 둘 다 있는 주소면 경고가 두 줄.
+    showLinkConfirm(tester.element(find.byKey(const Key('channel-feed'))),
+        Uri.parse('https://user@ex\u0430mple.com/login'));
+    await shot(tester, '02f-link-warnings');
+    await tester.tap(find.byKey(const Key('link-cancel')));
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
     await tester.tap(open);
     await shot(tester, '03-thread');
+    // @ 버튼(S4c): 누르면 칸에 @ 가 들어가 후보 줄이 선다. 키보드는 내려서 찍는다.
+    await tester.tap(find.byKey(const Key('mention-add')).last);
+    await tester.pump(const Duration(milliseconds: 300));
+    FocusManager.instance.primaryFocus?.unfocus();
+    await shot(tester, '03a-thread-mention');
+    await tester.enterText(find.byKey(const Key('thread-composer')), '');
+    await tester.pump();
     await tester.tap(find.byType(BackButton));
     await shot(tester, '02b-channel-back');
     await tester.tap(find.byType(BackButton));
@@ -79,9 +124,33 @@ void main() {
 
     await tester.tap(find.byKey(const Key('tab-inbox')));
     await shot(tester, '04-inbox');
+    // S5a: DM 탭 · 에이전트 탭(S7 전 빈 자리).
+    await tester.tap(find.byKey(const Key('tab-dms')));
+    await shot(tester, '04b-dms');
+    await tester.tap(find.byKey(const Key('tab-agents')));
+    await shot(tester, '04c-agents');
+    // 찾기 n2: 바로 가기에 DM 이 없는 에이전트도 선다(한 글자라 서버에는 묻지 않는다).
+    await tester.tap(find.byKey(const Key('tab-search')));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.enterText(find.byKey(const Key('search-input')), 'h');
+    await shot(tester, '04d-search-shortcuts');
+    await tester.tap(find.byKey(const Key('search-cancel')));
+    await tester.pump(const Duration(milliseconds: 400));
 
-    await tester.tap(find.byKey(const Key('tab-me')));
+    // S5a: 「나」 는 머리의 프로필 사진으로 연다.
+    await tester.tap(find.byKey(const Key('tab-home')));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(find.byKey(const Key('open-me')).first);
+    // S6: 나 시트 — 처음 0.6 · 끝까지 끌어 올린 것 · [모두 로그아웃] 확인.
     await shot(tester, '05-me');
+    await tester.drag(find.byKey(const Key('me-sheet')), const Offset(0, -600));
+    await shot(tester, '05b-me-full');
+    await tester.scrollUntilVisible(find.byKey(const Key('me-sign-out-all')), 200,
+        scrollable: find.descendant(of: find.byKey(const Key('me-sheet')), matching: find.byType(Scrollable)).first);
+    await tester.tap(find.byKey(const Key('me-sign-out-all')));
+    await shot(tester, '05c-me-sign-out-confirm');
+    await tester.tap(find.byKey(const Key('me-sign-out-all-cancel')));
+    await tester.pump(const Duration(milliseconds: 400));
 
     // ── 다크 판. 기기 밝기를 바꾸면 `MaterialApp.darkTheme` 이 선다.
     tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
@@ -90,7 +159,7 @@ void main() {
     for (var i = 0; i < 20; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
-    await tester.tap(find.byKey(const Key('tab-channels')));
+    await tester.tap(find.byKey(const Key('tab-home')));
     await shot(tester, '06-dark-channels');
     await tester.tap(find.byKey(const Key('channel-c1')));
     await shot(tester, '07-dark-channel');
@@ -171,6 +240,114 @@ void main() {
     await shot(tester, '20-busy-channel');
   });
 
+  // ── 채널 맨 위(S4a): 위로 밀어 이전 페이지를 받는 순간 · 못 받았을 때 · 끝까지 받은 뒤.
+  testWidgets('채널 맨 위', (tester) async {
+    final edge = _EdgeServer();
+    final app = _galleryApp(edge.client);
+    addTearDown(app.dispose);
+    await tester.pumpWidget(HarkroomApp(state: app));
+    await shot(tester, '21a-edge-list');
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    for (var i = 0; i < 30; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    ScrollPosition pos() => tester
+        .state<ScrollableState>(find
+            .descendant(of: find.byKey(const Key('channel-feed')), matching: find.byType(Scrollable))
+            .first)
+        .position;
+    Future<void> toTop() async {
+      pos().jumpTo(pos().maxScrollExtent);
+      await tester.pump(const Duration(milliseconds: 60));
+      pos().jumpTo(pos().maxScrollExtent);
+    }
+
+    // 1) 받는 동안: 서버가 답을 미룬다 → 맨 위에 회전자.
+    edge.hold = Completer<void>();
+    await toTop();
+    await shot(tester, '21-older-loading');
+    // 2) 못 받았다: 같은 요청을 500 으로 끝낸다 → "다시 시도" 줄.
+    edge.fail = true;
+    edge.hold!.complete();
+    edge.hold = null;
+    await toTop();
+    await shot(tester, '22-older-failed');
+    // 3) 다시 시도 → 끝까지 받았다 → 시작 줄과 그 아래 첫 날짜 줄.
+    edge.fail = false;
+    await tester.tap(find.byKey(const Key('older-retry')));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    await toTop();
+    await shot(tester, '23-channel-start');
+  });
+
+  // ── 긴 스레드(서버 #1048): 원글이 어제라 구분 줄이 「답글 n개 · 오늘」, 위로 밀면 옛 답글 회전자·실패 줄.
+  testWidgets('긴 스레드', (tester) async {
+    final srv = _LongThreadServer();
+    final app = _galleryApp(srv.client);
+    addTearDown(app.dispose);
+    await tester.pumpWidget(HarkroomApp(state: app));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    Navigator.of(tester.element(find.byKey(const Key('channel-c1')))).push(
+      MaterialPageRoute<void>(builder: (_) => const ThreadScreen(channelId: 'c1', rootId: 'lt-root')),
+    );
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    ScrollPosition pos() =>
+        tester.state<ScrollableState>(find.descendant(of: find.byKey(const Key('thread-feed')), matching: find.byType(Scrollable)).first).position;
+    // 옛 답글을 받는 중(서버가 답을 미룬다) — 「답글 n개」 아래 회전자. 미루기를 먼저 걸고 민다.
+    srv.hold = Completer<void>();
+    pos().jumpTo(pos().maxScrollExtent);
+    await tester.pump(const Duration(milliseconds: 60));
+    pos().jumpTo(pos().maxScrollExtent);
+    await shot(tester, '31-thread-older-loading');
+    // 못 받았다 — 다시 시도 줄.
+    srv.fail = true;
+    srv.hold!.complete();
+    srv.hold = null;
+    await tester.pump(const Duration(milliseconds: 200));
+    pos().jumpTo(pos().maxScrollExtent);
+    await shot(tester, '32-thread-older-failed');
+    await tester.tap(find.byType(BackButton));
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    // 원글을 끝내 못 찾은 스레드 — 「원글을 불러오지 못했다」 + 구분 줄.
+    Navigator.of(tester.element(find.byKey(const Key('channel-c1')))).push(
+      MaterialPageRoute<void>(builder: (_) => const ThreadScreen(channelId: 'c1', rootId: 'gone-root')),
+    );
+    await shot(tester, '33-thread-root-missing');
+  });
+
+  testWidgets('푸시 안내 시트', (tester) async {
+    final app = _galleryApp(_server());
+    addTearDown(app.dispose);
+    await tester.pumpWidget(HarkroomApp(state: app, push: PushCoordinator(app, _GalleryPush())));
+    await shot(tester, '17-push-prompt');
+  });
+
+  for (final (name, perm) in [
+    ('18a-me-push-not-asked', PushPermission.notDetermined),
+    ('18b-me-push-denied', PushPermission.denied),
+    ('18c-me-push-on', PushPermission.authorized),
+  ]) {
+    testWidgets('나 화면 알림 $name', (tester) async {
+      final app = _galleryApp(_server());
+      addTearDown(app.dispose);
+      await tester.pumpWidget(HarkroomApp(
+        state: app, push: PushCoordinator(app, _GalleryPush(perm: perm, prompted: true))));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+      await tester.tap(find.byKey(const Key('open-me')).first);
+      await shot(tester, name);
+    });
+  }
+
   testWidgets('부팅 실패', (tester) async {
     final app = _galleryApp(MockClient((_) async => throw http.ClientException('네트워크 없음')));
     addTearDown(app.dispose);
@@ -188,7 +365,7 @@ AppState _galleryApp(http.Client client) => AppState(
               'accountId': '00000000-0000-4000-8000-000000000001',
               'baseUrl': 'https://h.example.com',
               'token': 'tok',
-              'handle': 'jaebin',
+              'handle': 'me',
             },
           ],
         }),
@@ -205,14 +382,15 @@ http.Response _json(Object body, [int status = 200]) =>
         headers: {'content-type': 'application/json'});
 
 const _accounts = [
-  {'id': '00000000-0000-4000-8000-000000000001', 'handle': 'jaebin', 'displayName': 'jaebin', 'kind': 'human'},
+  {'id': '00000000-0000-4000-8000-000000000001', 'handle': 'me', 'displayName': 'me', 'kind': 'human'},
   {'id': '00000000-0000-4000-8000-000000000002', 'handle': 'task_manager', 'displayName': 'task_manager', 'kind': 'agent'},
   {'id': '00000000-0000-4000-8000-000000000003', 'handle': 'harkroom', 'displayName': 'harkroom', 'kind': 'agent'},
   {'id': '00000000-0000-4000-8000-000000000004', 'handle': 'designer', 'displayName': 'designer', 'kind': 'agent'},
 ];
 
 Map<String, Object?> _m(String id, int seq, String author, String body,
-        {String kind = 'user', Map<String, Object?>? meta, int? replyCount, String? root, int ago = 5}) =>
+        {String kind = 'user', Map<String, Object?>? meta, int? replyCount, String? root, int ago = 5,
+        List<String>? participants, int? lastReplyAgo, List<Map<String, Object?>> reactions = const []}) =>
     {
       'id': id,
       'seq': seq,
@@ -223,8 +401,10 @@ Map<String, Object?> _m(String id, int seq, String author, String body,
       'kind': kind,
       'meta': ?meta,
       'replyCount': ?replyCount,
+      'participantIds': ?participants,
+      'lastReplyAt': lastReplyAgo == null ? null : _ago(lastReplyAgo),
       'createdAt': _ago(ago),
-      'reactions': <Object?>[],
+      'reactions': reactions,
       'attachments': <Object?>[],
     };
 
@@ -247,7 +427,7 @@ MockClient _server({bool states = false}) => MockClient((req) async {
         }
       }
       if (path == '/auth/me') {
-        return _json({'id': '00000000-0000-4000-8000-000000000001', 'handle': 'jaebin', 'displayName': 'jaebin', 'isAdmin': true});
+        return _json({'id': '00000000-0000-4000-8000-000000000001', 'handle': 'me', 'displayName': 'me', 'isAdmin': true});
       }
       if (path == '/channels') {
         return _json({
@@ -256,6 +436,49 @@ MockClient _server({bool states = false}) => MockClient((req) async {
             {'id': 'c2', 'name': 'harkroom', 'kind': 'standard', 'visibility': 'public'},
             {'id': 'c3', 'name': 'testbed', 'kind': 'standard', 'visibility': 'private'},
             {'id': 'c4', 'name': 'homelab', 'kind': 'standard', 'visibility': 'public'},
+          ],
+        });
+      }
+      // S5c: DM 은 /dms 로만 온다(실서버와 같이 이름 없이 명단만).
+      // S7: 에이전트 탭(scope=visible 모양 — 세션 id 없음).
+      if (path == '/agent-sessions') {
+        return _json({
+          'sessions': [
+            {'agentAccountId': '00000000-0000-4000-8000-000000000003', 'channelId': 'c1', 'threadRootId': null,
+             'harness': 'claude-code', 'startedAt': DateTime.now().subtract(const Duration(minutes: 7)).toUtc().toIso8601String(),
+             'owned': true},
+            {'agentAccountId': '00000000-0000-4000-8000-000000000004', 'channelId': 'c2', 'threadRootId': null,
+             'harness': 'claude-code', 'startedAt': DateTime.now().subtract(const Duration(minutes: 2)).toUtc().toIso8601String(),
+             'owned': false},
+          ],
+        });
+      }
+      if (path == '/agent-wakes') {
+        return _json({
+          'wakes': [
+            {'id': 'w1', 'agentAccountId': '00000000-0000-4000-8000-000000000002', 'channelId': 'c1', 'threadRootId': 'm1',
+             'messageId': 'mw', 'wakeAt': DateTime.now().add(const Duration(minutes: 12)).toUtc().toIso8601String(),
+             'reason': 'CI 결과 확인'},
+          ],
+        });
+      }
+      if (path == '/dms' && req.method == 'GET') {
+        return _json({
+          'dms': [
+            {
+              'id': 'd1',
+              'memberIds': ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000004'],
+              'lastMessageAt': '2026-10-01T00:00:00Z',
+            },
+          ],
+        });
+      }
+      // S5b 홈 묶음: 즐겨찾기 하나 · 사용자 섹션 하나 · 나머지는 「채널」.
+      if (path == '/channels/prefs') {
+        return _json({
+          'prefs': [
+            {'channelId': 'c2', 'starredAt': '2026-10-01T00:00:00Z'},
+            {'channelId': 'c4', 'section': 'infra'},
           ],
         });
       }
@@ -299,7 +522,14 @@ MockClient _server({bool states = false}) => MockClient((req) async {
       if (path.endsWith('/messages') && req.url.queryParameters['thread'] != null) {
         return _json({
           'messages': [
-            _m('m1', 1, '00000000-0000-4000-8000-000000000001', '<@00000000-0000-4000-8000-000000000002> 모바일 앱 UI 검토를 designer 에게 맡겨 줘', replyCount: 2, ago: 90),
+            _m('m1', 1, '00000000-0000-4000-8000-000000000001', '<@00000000-0000-4000-8000-000000000002> 모바일 앱 UI 검토를 designer 에게 맡겨 줘', replyCount: 2, ago: 90,
+                // S4e: 요약 줄 아바타·마지막 답글 시각, 리액션(+ 이모지 달기 칩).
+                participants: ['00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000004'],
+                lastReplyAgo: 10,
+                reactions: [
+                  {'emoji': '👀', 'accountIds': ['00000000-0000-4000-8000-000000000002']},
+                  {'emoji': '✅', 'accountIds': ['00000000-0000-4000-8000-000000000001']},
+                ]),
             _m('r1', 7, '00000000-0000-4000-8000-000000000002', '맡겼다. 범위는 apps/mobile 전체다.', root: 'm1', ago: 60),
             _m('r2', 8, '00000000-0000-4000-8000-000000000004', '끝나면 이 스레드에 링크를 남긴다.', root: 'm1', ago: 10),
           ],
@@ -309,7 +539,14 @@ MockClient _server({bool states = false}) => MockClient((req) async {
       if (path.endsWith('/messages') && req.method == 'GET') {
         return _json({
           'messages': [
-            _m('m1', 1, '00000000-0000-4000-8000-000000000001', '<@00000000-0000-4000-8000-000000000002> 모바일 앱 UI 검토를 designer 에게 맡겨 줘', replyCount: 2, ago: 90),
+            _m('m1', 1, '00000000-0000-4000-8000-000000000001', '<@00000000-0000-4000-8000-000000000002> 모바일 앱 UI 검토를 designer 에게 맡겨 줘', replyCount: 2, ago: 90,
+                // S4e: 요약 줄 아바타·마지막 답글 시각, 리액션(+ 이모지 달기 칩).
+                participants: ['00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000004'],
+                lastReplyAgo: 10,
+                reactions: [
+                  {'emoji': '👀', 'accountIds': ['00000000-0000-4000-8000-000000000002']},
+                  {'emoji': '✅', 'accountIds': ['00000000-0000-4000-8000-000000000001']},
+                ]),
             _m('m2', 2, '00000000-0000-4000-8000-000000000002', '<@00000000-0000-4000-8000-000000000003> 에게 넘겼다. 범위는 apps/mobile 전체다.',
                 meta: {
                   'mentionDenied': ['harkroom'],
@@ -345,7 +582,7 @@ MockClient _server({bool states = false}) => MockClient((req) async {
                 },
                 ago: 35),
             _m('m8', 8, '00000000-0000-4000-8000-000000000003',
-                '## 고칠 것\n**둘**이다. @jaebin 확인해 줘:\n1. 다크 `ink` 값을 올린다\n2. 배지 글자는 `onAccent`\n\n```\nflutter test\n```\n> 사양은 재설계 §2 에 있다.\n자세한 건 [PR](https://example.com/pr/1).',
+                '## 고칠 것\n**둘**이다. @me 확인해 줘:\n1. 다크 `ink` 값을 올린다\n2. 배지 글자는 `onAccent`\n\n```\nflutter test\n```\n> 사양은 재설계 §2 에 있다.\n자세한 건 [PR](https://example.com/pr/1).',
                 ago: 3),
             _m('m9', 9, '00000000-0000-4000-8000-000000000004', '화면을 찍는 중이다', kind: 'progress', ago: 2),
           ],
@@ -398,7 +635,7 @@ MockClient _busyServer() {
   }
   return MockClient((req) async {
     final path = req.url.path;
-    if (path == '/auth/me') return _json({'id': me, 'handle': 'jaebin', 'displayName': 'jaebin', 'isAdmin': true});
+    if (path == '/auth/me') return _json({'id': me, 'handle': 'me', 'displayName': 'me', 'isAdmin': true});
     if (path == '/channels') {
       return _json({
         'channels': [
@@ -409,7 +646,7 @@ MockClient _busyServer() {
     if (path == '/accounts') {
       return _json({
         'accounts': [
-          {'id': me, 'handle': 'jaebin', 'displayName': 'jaebin', 'kind': 'human'},
+          {'id': me, 'handle': 'me', 'displayName': 'me', 'kind': 'human'},
           {'id': tm, 'handle': 'task_manager', 'displayName': 'task_manager', 'kind': 'agent'},
         ],
       });
@@ -428,4 +665,171 @@ MockClient _busyServer() {
     if (path == '/ws-ticket') return _json({'ticket': 'tk'});
     return _json({'error': {'code': 'not_found', 'message': path}}, 404);
   });
+}
+
+/// 900 줄 · 5 줄마다 최상위. 첫 페이지(500)로 최상위가 충분해 더 받지 않고, 위로 한 번 밀면
+/// 끝(seq 1)에 닿는다. [hold]·[fail] 로 **이전 페이지 요청만** 미루거나 실패시킨다.
+class _EdgeServer {
+  _EdgeServer() {
+    const me = '00000000-0000-4000-8000-000000000001';
+    const tm = '00000000-0000-4000-8000-000000000002';
+    String? root;
+    for (var seq = 1; seq <= 900; seq++) {
+      final isRoot = seq % 5 == 1;
+      final id = 'e$seq';
+      if (isRoot) root = id;
+      all.add({
+        'id': id,
+        'seq': seq,
+        'channelId': 'c1',
+        'threadRootId': isRoot ? null : root,
+        'authorId': (seq ~/ 5).isEven ? me : tm,
+        'body': isRoot ? '최상위 글 ${seq ~/ 5 + 1}' : '답글 $seq',
+        'kind': 'user',
+        'replyCount': isRoot ? 4 : null,
+        // 앞 절반은 사흘 전 — 끝까지 밀면 첫 날짜 줄이 "오늘" 이 아니다.
+        'createdAt': _ago(seq < 450 ? 3 * 24 * 60 + (900 - seq) : (900 - seq) ~/ 2),
+      });
+    }
+  }
+
+  final all = <Map<String, Object?>>[];
+  Completer<void>? hold;
+  bool fail = false;
+
+  MockClient get client => MockClient((req) async {
+        const me = '00000000-0000-4000-8000-000000000001';
+        final path = req.url.path;
+        if (path == '/auth/me') return _json({'id': me, 'handle': 'me', 'displayName': 'me', 'isAdmin': true});
+        if (path == '/channels') {
+          return _json({
+            'channels': [
+              {'id': 'c1', 'name': 'task', 'kind': 'standard', 'visibility': 'public'},
+            ],
+          });
+        }
+        if (path == '/accounts') return _json({'accounts': _accounts});
+        if (path == '/reads') return _json({'reads': <Object?>[]});
+        if (path.startsWith('/inbox')) return _json({'entries': <Object?>[]});
+        if (path.endsWith('/read')) return _json(<String, Object?>{});
+        if (path == '/channels/c1/messages') {
+          final q = req.url.queryParameters;
+          final limit = int.parse(q['limit'] ?? '200');
+          final before = q['before'] == null ? null : int.parse(q['before']!);
+          if (before != null) {
+            final h = hold;
+            if (h != null) await h.future;
+            if (fail) return _json({'error': {'code': 'unavailable', 'message': 'down'}}, 503);
+          }
+          final pool = all.where((m) => before == null || (m['seq']! as int) < before).toList();
+          final page = pool.length > limit ? pool.sublist(pool.length - limit) : pool;
+          return _json({'messages': page, 'hasMore': page.isNotEmpty && (page.first['seq']! as int) > 1});
+        }
+        if (path == '/ws-ticket') return _json({'ticket': 'tk'});
+        return _json({'error': {'code': 'not_found', 'message': path}}, 404);
+      });
+}
+
+/// 긴 스레드 하나(답글 150, 원글은 어제)와 원글이 사라진 스레드 하나. 서버 #1048 과 같은 뜻으로 준다.
+class _LongThreadServer {
+  Completer<void>? hold;
+  bool fail = false;
+
+  static const me = '00000000-0000-4000-8000-000000000001';
+  static const tm = '00000000-0000-4000-8000-000000000002';
+
+  Map<String, Object?> _reply(int seq, String root, int minutesAgo) => {
+        'id': '$root-r$seq',
+        'seq': seq,
+        'channelId': 'c1',
+        'threadRootId': root,
+        'authorId': seq.isEven ? me : tm,
+        'body': '답글 ${seq - 1}',
+        'kind': 'user',
+        'createdAt': _ago(minutesAgo),
+      };
+
+  MockClient get client => MockClient((req) async {
+        final path = req.url.path;
+        if (path == '/auth/me') return _json({'id': me, 'handle': 'me', 'displayName': 'me', 'isAdmin': true});
+        if (path == '/channels') {
+          return _json({
+            'channels': [
+              {'id': 'c1', 'name': 'task', 'kind': 'standard', 'visibility': 'public'},
+            ],
+          });
+        }
+        if (path == '/accounts') return _json({'accounts': _accounts});
+        if (path == '/reads') return _json({'reads': <Object?>[]});
+        if (path.startsWith('/inbox')) return _json({'entries': <Object?>[]});
+        if (path.endsWith('/read')) return _json(<String, Object?>{});
+        if (path.contains('/agent-models')) return _json({'agentModels': <Object?>[]});
+        if (path == '/channels/c1/messages') {
+          final q = req.url.queryParameters;
+          final thread = q['thread'];
+          if (thread == 'gone-root') {
+            // 원글은 지워져 응답에 없고 채널 목록에도 없다.
+            return _json({'messages': [_reply(900, 'gone-root', 30), _reply(901, 'gone-root', 20)], 'hasMore': false});
+          }
+          if (thread == 'lt-root') {
+            final before = q['before'] == null ? null : int.parse(q['before']!);
+            if (before != null) {
+              final h = hold;
+              if (h != null) await h.future;
+              if (fail) return _json({'error': {'code': 'unavailable', 'message': 'down'}}, 503);
+            }
+            final limit = int.parse(q['limit'] ?? '100');
+            final pool = [for (var s = 2; s <= 151; s++) if (before == null || s < before) s];
+            final page = pool.length > limit ? pool.sublist(pool.length - limit) : pool;
+            return _json({
+              'messages': [
+                if (before == null)
+                  {
+                    'id': 'lt-root', 'seq': 1, 'channelId': 'c1', 'threadRootId': null, 'authorId': me,
+                    'body': '어제 연 긴 스레드', 'kind': 'user', 'replyCount': 150, 'createdAt': _ago(24 * 60),
+                  },
+                // 답글은 모두 오늘(최근 15분 안) — 원글(어제)과 날이 달라 구분 줄이 「답글 150개 · 오늘」.
+                ...page.map((s) => _reply(s, 'lt-root', (151 - s) ~/ 10)),
+              ],
+              'hasMore': page.isNotEmpty && page.first > 2,
+            });
+          }
+          return _json({'messages': <Object?>[], 'hasMore': false});
+        }
+        if (path == '/ws-ticket') return _json({'ticket': 'tk'});
+        return _json({'error': {'code': 'not_found', 'message': path}}, 404);
+      });
+}
+
+/// 갤러리용 푸시 표면 — 아직 묻지 않은 기기. OS 창은 띄우지 않는다.
+class _GalleryPush implements PushPlatform {
+  _GalleryPush({this.perm = PushPermission.notDetermined, this.prompted = false});
+  final PushPermission perm;
+  final bool prompted;
+  @override
+  Future<Set<String>> mutedCommunities() async => {};
+  @override
+  Future<void> setMutedCommunities(Set<String> keys) async {}
+  @override
+  Future<bool> showPreview() async => false;
+  @override
+  Future<void> setShowPreview(bool on) async {}
+  @override
+  Future<PushPermission> status() async => perm;
+  @override
+  Future<bool> request() async => false;
+  @override
+  Future<PushDeviceToken?> token() async => null;
+  @override
+  Future<Map<String, Object?>?> takeInitialOpen() async => null;
+  @override
+  Future<void> setBadge(int count) async {}
+  @override
+  Future<bool> wasPrompted() async => prompted;
+  @override
+  Future<void> markPrompted() async {}
+  @override
+  Future<void> openSettings() async {}
+  @override
+  void listen({required void Function(Map<String, Object?>) onOpen, required bool Function(Map<String, Object?>) shouldPresent}) {}
 }

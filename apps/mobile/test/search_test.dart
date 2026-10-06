@@ -1,0 +1,682 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:harkroom/api/api_client.dart';
+import 'package:harkroom/api/ws.dart';
+import 'package:harkroom/i18n/i18n.dart';
+import 'package:harkroom/main.dart';
+import 'package:harkroom/screens/message_list_screen.dart';
+import 'package:harkroom/screens/message_tile.dart';
+import 'package:harkroom/screens/search_screen.dart';
+import 'package:harkroom/screens/thread_screen.dart';
+import 'package:harkroom/session/recent_search_store.dart';
+import 'package:harkroom/session/session_store.dart';
+import 'package:harkroom/state/app_state.dart';
+import 'package:harkroom/ui/tokens.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+/// 찾기 F1(designer 찾기 안): 진입점 셋이 범위를 미리 고르고, 두 글자부터 디바운스로 보내고,
+/// 결과를 누르면 그 스레드로 가며, 0건·실패가 각각 다른 말을 한다.
+
+// 시험 기기의 언어는 영어다(HarkroomApp 이 기기 언어를 따른다).
+final _t = stringsFor('en');
+
+http.Response _json(Object body, [int status = 200]) =>
+    http.Response.bytes(utf8.encode(jsonEncode(body)), status, headers: {'content-type': 'application/json'});
+
+class _Idle implements WsConnection {
+  final _ctrl = StreamController<String>();
+  @override
+  int? get closeCode => null;
+  @override
+  Stream<String> get messages => _ctrl.stream;
+  @override
+  void send(String payload) {}
+  @override
+  Future<void> close() async {
+    if (!_ctrl.isClosed) await _ctrl.close();
+  }
+}
+
+const _root = '22222222-2222-4222-8222-222222222222';
+const _reply = '11111111-1111-4111-8111-111111111111';
+
+Map<String, Object?> _row(String id, int seq, {String? root, String body = '말', String channelId = 'c1'}) => {
+      'id': id,
+      'seq': seq,
+      'channelId': channelId,
+      'threadRootId': root,
+      'authorId': 'a1',
+      'body': body,
+      'kind': 'user',
+      'createdAt': DateTime.utc(2026, 9, 1).add(Duration(minutes: seq)).toIso8601String(),
+    };
+
+class _Server {
+  /// 받은 `/search` 질의들(쿼리 인자 그대로).
+  final searches = <Map<String, String>>[];
+
+  /// 값이 있으면 그 상태로 실패한다.
+  int? failWith;
+
+  /// 받은 `POST /dms` 의 accountIds 들.
+  final dmPosts = <List>[];
+
+  /// 값이 있으면 `POST /dms` 답을 그때까지 붙잡는다 — 거듭 누르기·전환 경쟁을 재현한다.
+  Completer<void>? dmGate;
+
+  /// 「배포」 를 찾으면 답글 하나가 온다. 그 밖은 0건.
+  Map<String, Object?> Function(Map<String, String> q) answer = (q) => {
+        'messages': switch (q['q']) {
+          '배포' => [_row(_reply, 9, root: _root, body: '0.3.130 배포했다. 서버 헬스 OK')],
+          '시안' => [_row('dddddddd-dddd-4ddd-8ddd-dddddddddddd', 4, body: '시안 올렸다', channelId: 'd1')],
+          _ => <Object?>[],
+        },
+        'hasMore': false,
+      };
+
+  MockClient get client => MockClient((req) async {
+        final path = req.url.path;
+        if (path == '/auth/me') return _json({'id': 'me-1', 'handle': 'me', 'displayName': 'me', 'isAdmin': false});
+        if (path == '/channels') {
+          return _json({
+            'channels': [
+              {'id': 'c1', 'name': 'task', 'kind': 'standard'},
+              {'id': 'd1', 'name': 'designer', 'kind': 'dm'},
+              {'id': 'c2', 'name': 'testbed', 'kind': 'standard'},
+            ],
+          });
+        }
+        if (path == '/accounts') {
+          return _json({
+            'accounts': [
+              {'id': 'a1', 'handle': 'task_manager', 'displayName': 'task_manager', 'kind': 'agent'},
+              {'id': 'a2', 'handle': 'qa_manager', 'displayName': 'qa_manager', 'kind': 'agent'},
+            ],
+          });
+        }
+        if (path == '/reads') return _json({'reads': <Object?>[]});
+        // 실서버 모양: DM 은 `/dms`(명단만), 만들기는 `POST /dms {accountIds}` → 201 ChannelRow.
+        if (path == '/dms' && req.method == 'POST') {
+          dmPosts.add((jsonDecode(req.body) as Map)['accountIds'] as List);
+          final g = dmGate;
+          if (g != null) await g.future;
+          return _json({'id': 'd9', 'kind': 'dm', 'name': ''}, 201);
+        }
+        if (path == '/dms') return _json({'dms': <Object?>[]});
+        if (path == '/channels/d9/messages') return _json({'messages': <Object?>[], 'hasMore': false});
+        if (path.startsWith('/inbox')) return _json({'entries': <Object?>[]});
+        if (path == '/ws-ticket') return _json({'ticket': 'tk'});
+        if (path.contains('/agent-models') || path.contains('/auto-mentions')) {
+          return _json({'agentModels': <Object?>[], 'autoMentions': <Object?>[]});
+        }
+        if (path == '/search') {
+          searches.add(req.url.queryParameters);
+          if (failWith != null) return _json({'error': {'code': 'internal', 'message': 'boom'}}, failWith!);
+          return _json(answer(req.url.queryParameters));
+        }
+        if (path == '/channels/c1/messages') {
+          if (req.url.queryParameters['thread'] == _root) {
+            return _json({
+              'messages': [_row(_root, 3, body: '서버 최신버전 배포해'), _row(_reply, 9, root: _root, body: '0.3.130 배포했다.')],
+              'hasMore': false,
+            });
+          }
+          return _json({'messages': [_row(_root, 3, body: '서버 최신버전 배포해')], 'hasMore': false});
+        }
+        return _json({'error': {'code': 'not_found', 'message': path}}, 404);
+      });
+}
+
+Future<AppState> _boot(WidgetTester tester, _Server server, {RecentSearchStore? recent}) async {
+  final app = AppState(
+    sessions: SessionStore.inMemory(
+      seed: jsonEncode({
+        'active': 'me-1',
+        'communities': [
+          {'accountId': 'me-1', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'me'},
+        ],
+      }),
+    ),
+    apiFactory: (b, t) => ApiClient(baseUrl: b, token: t, httpClient: server.client),
+    connector: (_) async => _Idle(),
+    recentSearchStore: recent,
+  );
+  addTearDown(app.dispose);
+  await tester.runAsync(app.boot);
+  await tester.pumpWidget(HarkroomApp(state: app));
+  await _settle(tester);
+  return app;
+}
+
+/// 가짜 HTTP 는 진짜 비동기다 — runAsync 안에서 답을 받게 한 뒤 그린다. pumpAndSettle 은 쓰지 않는다
+/// (입력칸 커서 깜빡임이 끝나지 않는다).
+Future<void> _settle(WidgetTester tester) async {
+  for (var i = 0; i < 3; i++) {
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 30)));
+    await tester.pump(const Duration(milliseconds: 350));
+  }
+}
+
+Future<void> _type(WidgetTester tester, String text) async {
+  await tester.enterText(find.byKey(const Key('search-input')), text);
+  // 디바운스(300ms)를 넘긴 뒤 답을 받는다.
+  await tester.pump(searchDebounce + const Duration(milliseconds: 10));
+  await _settle(tester);
+}
+
+Future<void> _openChannel(WidgetTester tester, AppState app) async {
+  await tester.tap(find.text('task'));
+  await _settle(tester);
+  expect(find.byType(MessageListScreen), findsOneWidget);
+}
+
+void main() {
+  testWidgets('탭 막대 찾기 버튼 → 전체 범위, 범위 칩 없음, 두 글자부터 보낸다', (tester) async {
+    final server = _Server();
+    await _boot(tester, server);
+    expect(find.byKey(const Key('tab-search')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('tab-search')));
+    await _settle(tester);
+    expect(find.byType(SearchScreen), findsOneWidget);
+    // 맥락 없이 열었으니 고를 범위가 없다.
+    expect(find.byKey(const Key('search-scope-all')), findsNothing);
+    expect(find.text(_t.searchStart), findsOneWidget);
+
+    await _type(tester, '배');
+    expect(server.searches, isEmpty, reason: '한 글자는 보내지 않는다');
+
+    await _type(tester, '배포');
+    expect(server.searches, hasLength(1));
+    expect(server.searches.single, {'q': '배포', 'sort': 'relevance'});
+  });
+
+  testWidgets('디바운스: 연달아 친 것은 마지막 하나만 보낸다', (tester) async {
+    final server = _Server();
+    await _boot(tester, server);
+    await tester.tap(find.byKey(const Key('tab-search')));
+    await _settle(tester);
+    for (final s in ['배포', '배포 순', '배포 순서']) {
+      await tester.enterText(find.byKey(const Key('search-input')), s);
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.pump(searchDebounce);
+    await _settle(tester);
+    expect(server.searches.map((q) => q['q']), ['배포 순서']);
+  });
+
+  testWidgets('채널 머리 돋보기 → 이 채널 범위, 0건이면 [전체에서 찾기] 로 넓힌다', (tester) async {
+    final server = _Server();
+    final app = await _boot(tester, server);
+    await _openChannel(tester, app);
+    await tester.tap(find.byKey(const Key('channel-search')));
+    await _settle(tester);
+    final chip = tester.widget<ChoiceChip>(find.descendant(of: find.byKey(const Key('search-scope-channel')), matching: find.byType(ChoiceChip)));
+    expect(chip.selected, isTrue);
+
+    await _type(tester, '없는말');
+    expect(server.searches.last, {'q': '없는말', 'channelId': 'c1', 'sort': 'relevance'});
+    expect(find.text(_t.searchNoResults.replaceFirst('{q}', '없는말')), findsOneWidget);
+    // 세 글자라 「한 글자 더」 안내는 없다.
+    expect(find.text(_t.searchTwoLetterHint), findsNothing);
+
+    await tester.tap(find.byKey(const Key('search-everywhere')));
+    await _settle(tester);
+    expect(server.searches.last, {'q': '없는말', 'sort': 'relevance'});
+    // 이미 전체라 넓힐 곳이 없다.
+    expect(find.byKey(const Key('search-everywhere')), findsNothing);
+  });
+
+  testWidgets('두 글자 0건엔 「한 글자 더」 를 말한다', (tester) async {
+    await _boot(tester, _Server());
+    await tester.tap(find.byKey(const Key('tab-search')));
+    await _settle(tester);
+    await _type(tester, '재검');
+    expect(find.text(_t.searchTwoLetterHint), findsOneWidget);
+  });
+
+  testWidgets('결과 줄: 어디·누가·언제 + 본문, 누르면 그 스레드 화면, 뒤로 오면 결과가 남는다', (tester) async {
+    final server = _Server();
+    await _boot(tester, server);
+    await tester.tap(find.byKey(const Key('tab-search')));
+    await _settle(tester);
+    await _type(tester, '배포');
+
+    final tile = find.byKey(const Key('search-result-$_reply'));
+    expect(tile, findsOneWidget);
+    expect(
+      tester.getSemantics(find.byType(SearchResultTile)).label,
+      allOf(contains('# task'), contains(_t.searchInThread), contains('task_manager'), contains('배포했다')),
+    );
+
+    await tester.tap(tile);
+    await _settle(tester);
+    final thread = tester.widget<ThreadScreen>(find.byType(ThreadScreen));
+    expect(thread.channelId, 'c1');
+    expect(thread.rootId, _root);
+
+    await tester.pageBack();
+    await _settle(tester);
+    expect(find.byKey(const Key('search-result-$_reply')), findsOneWidget);
+    expect(server.searches, hasLength(1), reason: '돌아와도 다시 찾지 않는다');
+  });
+
+  testWidgets('스레드 머리 돋보기 → 이 스레드 범위(채널 id 를 같이 보낸다)', (tester) async {
+    final server = _Server();
+    final app = await _boot(tester, server);
+    await tester.runAsync(() => app.openChannel('c1'));
+    await tester.pump();
+    final nav = tester.state<NavigatorState>(find.byType(Navigator).first);
+    unawaited(nav.push(MaterialPageRoute<void>(builder: (_) => const ThreadScreen(channelId: 'c1', rootId: _root))));
+    await _settle(tester);
+    await tester.tap(find.byKey(const Key('thread-search')));
+    await _settle(tester);
+    expect(find.byKey(const Key('search-scope-thread')), findsOneWidget);
+    await _type(tester, '배포');
+    expect(server.searches.last, {'q': '배포', 'channelId': 'c1', 'threadRootId': _root, 'sort': 'relevance'});
+  });
+
+  testWidgets('실패는 실패 화면 + [다시 시도], 0건과 다른 말이다', (tester) async {
+    final server = _Server()..failWith = 500;
+    await _boot(tester, server);
+    await tester.tap(find.byKey(const Key('tab-search')));
+    await _settle(tester);
+    await _type(tester, '배포');
+    expect(find.text(_t.searchFailed), findsOneWidget);
+    expect(find.text(_t.searchNoResults.replaceFirst('{q}', '배포')), findsNothing);
+
+    server.failWith = null;
+    await tester.tap(find.text(_t.commonRetry));
+    await _settle(tester);
+    expect(find.byKey(const Key('search-result-$_reply')), findsOneWidget);
+  });
+
+  testWidgets('끝에 닿으면 offset 으로 이어 받고, 겹친 행은 한 번만 그린다', (tester) async {
+    final server = _Server()
+      ..answer = (q) {
+        final offset = int.tryParse(q['offset'] ?? '') ?? 0;
+        // 50개씩. 두 번째 묶음 첫 행은 첫 묶음 끝과 같다(그 사이 새 글로 한 칸 밀린 경우).
+        final start = offset == 0 ? 0 : offset - 1;
+        return {
+          'messages': [
+            for (var i = start; i < offset + 50 && i < 60; i++)
+              _row('00000000-0000-4000-8000-${i.toString().padLeft(12, '0')}', 100 - i, body: '배포 $i'),
+          ],
+          'hasMore': offset == 0,
+        };
+      };
+    await _boot(tester, server);
+    await tester.tap(find.byKey(const Key('tab-search')));
+    await _settle(tester);
+    await _type(tester, '배포');
+    expect(server.searches, hasLength(1));
+    await tester.drag(find.byKey(const Key('search-results')), const Offset(0, -6000));
+    await _settle(tester);
+    expect(server.searches.last['offset'], '50');
+    await tester.drag(find.byKey(const Key('search-results')), const Offset(0, -6000));
+    await _settle(tester);
+    expect(server.searches, hasLength(2), reason: 'hasMore 가 false 면 더 묻지 않는다');
+    expect(find.byKey(const Key('search-result-00000000-0000-4000-8000-000000000059')), findsOneWidget);
+    // 겹친 49 번은 한 줄만 — 목록은 화면 밖을 안 그리므로 그 자리로 조금 되올려 본다.
+    await tester.drag(find.byKey(const Key('search-results')), const Offset(0, 500));
+    await tester.pump();
+    expect(find.byKey(const Key('search-result-00000000-0000-4000-8000-000000000049')), findsOneWidget);
+  });
+
+  group('결과 순서(designer 찾기 정렬 안 A)', () {
+    // 날짜가 섞인 세 줄. 관련도순은 서버가 준 순서 그대로, 최신순은 서버가 날짜 내림차순으로 준다.
+    Map<String, Object?> at(String id, DateTime when) => {..._row(id, 1, body: '배포 $id'), 'createdAt': when.toUtc().toIso8601String()};
+    const a = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const b = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const c = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    final d1 = DateTime(2026, 9, 30, 9, 5);
+    final d2 = DateTime(2026, 10, 1, 14, 30);
+    final d2b = DateTime(2026, 10, 1, 8, 0);
+    _Server sorted() => _Server()
+      ..answer = (q) => {
+            'messages': q['sort'] == 'recent' ? [at(b, d2), at(c, d2b), at(a, d1)] : [at(c, d2b), at(a, d1), at(b, d2)],
+            'hasMore': false,
+          };
+
+    Future<void> pick(WidgetTester tester, SearchSort s) async {
+      await tester.tap(find.byKey(const Key('search-sort')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(Key('search-sort-${s.name}')));
+      await tester.pump(searchDebounce);
+      await _settle(tester);
+    }
+
+    testWidgets('전체 찾기에도 머리 줄에 「메시지 N개」 와 「관련도순」 이 선다, 기본은 관련도순·날짜 머리 없음', (tester) async {
+      final server = sorted();
+      await _boot(tester, server);
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      await _type(tester, '배포');
+      expect(server.searches.single['sort'], 'relevance');
+      expect(find.byKey(const Key('search-result-header')), findsOneWidget);
+      expect(find.text(_t.searchCount.replaceFirst('{n}', '3')), findsOneWidget);
+      expect(find.descendant(of: find.byKey(const Key('search-sort')), matching: find.text(_t.searchSortRelevance)), findsOneWidget);
+      // 단추: 누르는 칸 44 이상, 글자는 먹색(fg)·▾ 만 흐리게(designer #1175 nit ①②).
+      expect(tester.getSize(find.byKey(const Key('search-sort-button'))).height, greaterThanOrEqualTo(44));
+      final k = tester.element(find.byKey(const Key('search-sort-button'))).tokens;
+      final label = tester.widget<Text>(
+          find.descendant(of: find.byKey(const Key('search-sort')), matching: find.text(_t.searchSortRelevance)));
+      expect(label.style?.color, k.fg);
+      expect(tester.widget<Icon>(find.descendant(of: find.byKey(const Key('search-sort')), matching: find.byIcon(Icons.arrow_drop_down))).color, k.fgMuted);
+      expect(find.byType(DayDivider), findsNothing, reason: '관련도순은 날짜가 섞여 묶지 않는다');
+      expect(find.textContaining('14:30'), findsNothing, reason: '줄에는 날짜를 둔다');
+    });
+
+    testWidgets('최신순을 고르면 같은 말로 다시 찾고, 날짜 머리로 묶고 줄엔 시각만, 기기에 기억한다', (tester) async {
+      final server = sorted();
+      final store = MemoryRecentSearchStore();
+      final app = await _boot(tester, server, recent: store);
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      await _type(tester, '배포');
+      await pick(tester, SearchSort.recent);
+      expect(server.searches, hasLength(2));
+      expect(server.searches.last, {'q': '배포', 'sort': 'recent'});
+      expect(app.searchSort, SearchSort.recent);
+      expect(store.sort, 'recent');
+      expect(find.descendant(of: find.byKey(const Key('search-sort')), matching: find.text(_t.searchSortRecent)), findsOneWidget);
+      // b·c 는 같은 날(10/1) — 머리는 b 위에 하나, a(9/30) 위에 하나.
+      expect(find.byKey(const Key('search-day-$b')), findsOneWidget);
+      expect(find.byKey(const Key('search-day-$c')), findsNothing);
+      expect(find.byKey(const Key('search-day-$a')), findsOneWidget);
+      expect(find.textContaining('14:30'), findsOneWidget);
+      expect(find.textContaining('09:05'), findsOneWidget);
+    });
+
+    testWidgets('기억해 둔 최신순으로 연다(범위와 무관)', (tester) async {
+      final server = sorted();
+      final store = MemoryRecentSearchStore()..sort = 'recent';
+      final app = await _boot(tester, server, recent: store);
+      await _openChannel(tester, app);
+      await tester.tap(find.byKey(const Key('channel-search')));
+      await _settle(tester);
+      await _type(tester, '배포');
+      expect(server.searches.last['sort'], 'recent');
+      expect(server.searches.last['channelId'], 'c1');
+    });
+
+    testWidgets('이어 받기는 지금 선 결과의 순서로 묻는다', (tester) async {
+      final server = _Server()
+        ..answer = (q) {
+          final offset = int.tryParse(q['offset'] ?? '') ?? 0;
+          return {
+            'messages': [
+              for (var i = offset; i < offset + 50 && i < 60; i++)
+                _row('00000000-0000-4000-8000-${i.toString().padLeft(12, '0')}', 100 - i, body: '배포 $i'),
+            ],
+            'hasMore': offset == 0,
+          };
+        };
+      await _boot(tester, server, recent: MemoryRecentSearchStore()..sort = 'recent');
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      await _type(tester, '배포');
+      expect(find.text(_t.searchCountMore.replaceFirst('{n}', '50')), findsOneWidget);
+      await tester.drag(find.byKey(const Key('search-results')), const Offset(0, -6000));
+      await _settle(tester);
+      expect(server.searches.last, {'q': '배포', 'offset': '50', 'sort': 'recent'});
+    });
+  });
+
+  group('highlightSpans', () {
+    const mark = TextStyle(fontWeight: FontWeight.w700);
+    String marked(List<InlineSpan> spans) =>
+        spans.map((s) => s is TextSpan && s.style == mark ? '[${s.text}]' : (s as TextSpan).text).join();
+
+    test('낱말마다, 대소문자 없이, 긴 낱말이 이긴다', () {
+      expect(marked(highlightSpans('서버 최신버전 배포해', '배포', mark)), '서버 최신버전 [배포]해');
+      expect(marked(highlightSpans('SearchPalette.tsx 를 고침', 'search tsx', mark)), '[Search]Palette.[tsx] 를 고침');
+      expect(marked(highlightSpans('배포해 배포', '배포 배포해', mark)), '[배포해] [배포]');
+    });
+
+    test('검색 문법 기호는 떼고, 없는 낱말은 안 칠한다', () {
+      expect(marked(highlightSpans('배포 순서 정리', '"배포 순서"', mark)), '[배포] [순서] 정리');
+      expect(marked(highlightSpans('배포', '-배포', mark)), '[배포]');
+      expect(marked(highlightSpans('아무 말', '없음', mark)), '아무 말');
+    });
+  });
+
+  group('F2', () {
+    testWidgets('결과를 누르면 그 스레드에서 찾은 답글을 강조한다', (tester) async {
+      await _boot(tester, _Server());
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      await _type(tester, '배포');
+      await tester.tap(find.byKey(const Key('search-result-$_reply')));
+      await _settle(tester);
+      expect(tester.widget<ThreadScreen>(find.byType(ThreadScreen)).highlightId, _reply);
+      expect(find.byType(HitFlash), findsOneWidget);
+      await tester.pump(HitFlash.hold + const Duration(milliseconds: 10));
+      expect(tester.state<HitFlashState>(find.byType(HitFlash)).on, isFalse, reason: '2초 뒤 걷힌다');
+    });
+
+    testWidgets('DM 결과는 「DM · 이름」 으로 읽힌다', (tester) async {
+      await _boot(tester, _Server());
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      await _type(tester, '시안');
+      expect(tester.getSemantics(find.byType(SearchResultTile)).label, startsWith('${_t.tabDms} · designer, '));
+    });
+
+    testWidgets('고른 범위 칩은 먹색 바탕(fg), 안 고른 칩은 바탕색', (tester) async {
+      final app = await _boot(tester, _Server());
+      await _openChannel(tester, app);
+      await tester.tap(find.byKey(const Key('channel-search')));
+      await _settle(tester);
+      ChoiceChip chip(String k) =>
+          tester.widget<ChoiceChip>(find.descendant(of: find.byKey(Key(k)), matching: find.byType(ChoiceChip)));
+      final k = tester.element(find.byType(SearchScreen)).tokens;
+      expect(chip('search-scope-channel').selected, isTrue);
+      expect(chip('search-scope-channel').selectedColor, k.fg);
+      expect(chip('search-scope-channel').labelStyle?.color, k.surface);
+      expect(chip('search-scope-all').labelStyle?.color, k.fgMuted);
+    });
+
+    testWidgets('최근 찾은 말: 결과를 열면 남고, 누르면 그 말로 찾고, 지울 수 있다', (tester) async {
+      final store = MemoryRecentSearchStore();
+      final server = _Server();
+      await _boot(tester, server, recent: store);
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      await _type(tester, '배포');
+      await tester.tap(find.byKey(const Key('search-result-$_reply')));
+      await _settle(tester);
+      expect(store.values.values.single, ['배포']);
+      await tester.pageBack();
+      await _settle(tester);
+      await tester.tap(find.byKey(const Key('search-cancel')));
+      await _settle(tester);
+
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      expect(find.byKey(const Key('search-recent-배포')), findsOneWidget);
+      final before = server.searches.length;
+      await tester.tap(find.byKey(const Key('search-recent-배포')));
+      await _settle(tester);
+      expect(server.searches.length, before + 1);
+      expect(server.searches.last['q'], '배포');
+
+      // 입력을 비우면 다시 최근 목록 — 모두 지우기.
+      await _type(tester, '');
+      await tester.tap(find.byKey(const Key('search-recent-clear')));
+      await _settle(tester);
+      expect(find.byKey(const Key('search-recent-배포')), findsNothing);
+      expect(store.values.values.single, isEmpty);
+    });
+
+    testWidgets('바로 가기: 이름이 맞는 채널·DM 을 세우고, 누르면 그 대화', (tester) async {
+      await _boot(tester, _Server());
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      await _type(tester, 't');
+      // 앞부분이 맞는 task·testbed. 한 글자라 서버에는 안 보낸다.
+      expect(find.byKey(const Key('search-shortcut-c1')), findsOneWidget);
+      expect(find.byKey(const Key('search-shortcut-c2')), findsOneWidget);
+      expect(find.byKey(const Key('search-shortcut-d1')), findsNothing);
+      await _type(tester, '#des');
+      expect(find.byKey(const Key('search-shortcut-d1')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('search-shortcut-d1')));
+      await _settle(tester);
+      expect(tester.widget<MessageListScreen>(find.byType(MessageListScreen)).channelId, 'd1');
+    });
+
+    testWidgets('바로 가기: DM 이 없는 사람·에이전트도 서고, 누르면 POST /dms 로 그 DM 을 연다(designer 찾기 F2 n2)', (tester) async {
+      final server = _Server();
+      await _boot(tester, server);
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      await _type(tester, '@qa');
+      final row = find.byKey(const Key('search-shortcut-person-a2'));
+      expect(row, findsOneWidget);
+      // 나는 바로 가기에 서지 않는다.
+      await _type(tester, 'me');
+      expect(find.byKey(const Key('search-shortcut-person-me-1')), findsNothing);
+      await _type(tester, '@qa');
+      await tester.tap(find.byKey(const Key('search-shortcut-person-a2')));
+      await _settle(tester);
+      expect(server.dmPosts, [
+        ['a2'],
+      ]);
+      expect(tester.widget<MessageListScreen>(find.byType(MessageListScreen)).channelId, 'd9');
+    });
+
+    testWidgets('바로 가기 사람을 거듭 눌러도 POST /dms 는 한 번이다(designer ③ · security L2)', (tester) async {
+      final server = _Server()..dmGate = Completer<void>();
+      await _boot(tester, server);
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      await _type(tester, '@qa');
+      await tester.tap(find.byKey(const Key('search-shortcut-person-a2')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('search-shortcut-person-a2')));
+      await tester.pump();
+      server.dmGate!.complete();
+      await _settle(tester);
+      expect(server.dmPosts.length, 1);
+      expect(find.byType(MessageListScreen), findsOneWidget);
+    });
+
+    test('DM 을 여는 사이 커뮤니티를 떠나면 그 DM 을 붙이지 않는다(security L1)', () async {
+      final server = _Server()..dmGate = Completer<void>();
+      final app = AppState(
+        sessions: SessionStore.inMemory(
+          seed: jsonEncode({
+            'active': 'me-1',
+            'communities': [
+              {'accountId': 'me-1', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'me'},
+            ],
+          }),
+        ),
+        apiFactory: (b, t) => ApiClient(baseUrl: b, token: t, httpClient: server.client),
+        connector: (_) async => _Idle(),
+      );
+      addTearDown(app.dispose);
+      await app.boot();
+      final pending = app.openDmWith('a2');
+      await app.signOutCommunity(app.activeKey!);
+      server.dmGate!.complete();
+      expect(await pending, isNull);
+      expect(app.channels.any((c) => c.id == 'd9'), isFalse);
+    });
+
+    test('로그아웃과 겹친 최근 찾은 말 쓰기는 버린다 — 지운 말이 되살아나지 않는다(security 찾기 F2 r1)', () async {
+      final store = _GatedRecentStore();
+      final server = _Server();
+      final app = AppState(
+        sessions: SessionStore.inMemory(
+          seed: jsonEncode({
+            'active': 'me-1',
+            'communities': [
+              {'accountId': 'me-1', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'me'},
+            ],
+          }),
+        ),
+        apiFactory: (b, t) => ApiClient(baseUrl: b, token: t, httpClient: server.client),
+        connector: (_) async => _Idle(),
+        recentSearchStore: store,
+      );
+      addTearDown(app.dispose);
+      await app.boot();
+      final key = app.activeKey!;
+      // 찾기 화면을 열기 전이라 rememberSearch 는 보관본을 읽는다 — 그 읽기를 붙잡아 둔다.
+      store.gate = Completer<void>();
+      final pending = app.rememberSearch('배포');
+      await app.signOutCommunity(key);
+      expect(store.values.containsKey(key), isFalse);
+      store.gate!.complete();
+      await pending;
+      expect(store.values.containsKey(key), isFalse, reason: '로그아웃 뒤에 쓰면 지운 말이 되살아난다');
+    });
+
+    for (final all in [false, true]) {
+      test('로그아웃(${all ? '모두' : '이 커뮤니티'})하면 최근 찾은 말을 기기에서 지운다(security #1094 F1·F2)', () async {
+        final store = MemoryRecentSearchStore();
+        final server = _Server();
+        final app = AppState(
+          sessions: SessionStore.inMemory(
+            seed: jsonEncode({
+              'active': 'me-1',
+              'communities': [
+                {'accountId': 'me-1', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'me'},
+              ],
+            }),
+          ),
+          apiFactory: (b, t) => ApiClient(baseUrl: b, token: t, httpClient: server.client),
+          connector: (_) async => _Idle(),
+          recentSearchStore: store,
+        );
+        addTearDown(app.dispose);
+        await app.boot();
+        final key = app.activeKey!;
+        await app.rememberSearch('배포');
+        expect(store.values[key], ['배포']);
+        if (all) {
+          await app.signOutAll();
+        } else {
+          await app.signOutCommunity(key);
+        }
+        expect(store.values.containsKey(key), isFalse);
+        // 화면 상태도 비었다 — 다음 커뮤니티에 앞 목록이 비치지 않는다.
+        expect(app.recentSearches, isEmpty);
+      });
+    }
+
+    test('발췌: 첫 일치가 두 줄 밖이면 그 앞에서 「…」 로 시작한다', () {
+      expect(searchExcerpt('짧은 배포 글', '배포'), '짧은 배포 글');
+      // 두 줄에 들어가는 글은 일치가 스무 글자 뒤여도 자르지 않는다(#1094 D1).
+      expect(searchExcerpt('@task_manager 서버 최신버전 배포해', '배포'), '@task_manager 서버 최신버전 배포해');
+      // 자를 자리 앞뒤로 공백이 없으면 자르지 않는다 — 낱말 가운데에서 「…ask」 가 되지 않는다.
+      final noSpace = '${'가' * 60}배포';
+      expect(searchExcerpt(noSpace, '배포'), noSpace);
+      final long = '${'가나다라 ' * 20}여기서 배포했다';
+      final ex = searchExcerpt(long, '배포');
+      expect(ex, startsWith('…'));
+      expect(ex, endsWith('여기서 배포했다'));
+      expect(ex.indexOf('배포'), lessThanOrEqualTo(31), reason: '찾은 말이 앞 스무 글자쯤 안에 온다');
+      // 낱말 가운데를 자르지 않는다.
+      expect(ex.substring(1, 5), '가나다라');
+      expect(searchExcerpt(long, '없는말'), long);
+    });
+  });
+}
+
+/// 읽기를 붙잡아 둘 수 있는 보관소 — 로그아웃과 쓰기의 경쟁을 재현한다.
+class _GatedRecentStore extends MemoryRecentSearchStore {
+  Completer<void>? gate;
+
+  @override
+  Future<List<String>> load(String communityKey) async {
+    final g = gate;
+    if (g != null) await g.future;
+    return super.load(communityKey);
+  }
+}

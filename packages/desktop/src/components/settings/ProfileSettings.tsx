@@ -40,7 +40,7 @@ function AvatarRow() {
             onChange={edit.onPicked}
           />
           <button
-            className="rounded-lg border border-border px-3 py-1.5 font-medium text-fg hover:bg-surface disabled:opacity-50"
+            className="rounded-card border border-border px-3 py-1.5 font-medium text-fg hover:bg-surface disabled:opacity-50"
             disabled={edit.busy}
             onClick={edit.openPicker}
           >
@@ -54,14 +54,14 @@ function AvatarRow() {
           {me?.avatarAttachmentId && (edit.confirmingRemove ? (
             <>
               <button
-                className="rounded-lg border border-danger-border bg-danger-surface px-3 py-1.5 font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                className="rounded-card border border-danger-border bg-danger-surface px-3 py-1.5 font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
                 disabled={edit.busy}
                 onClick={edit.confirmRemove}
               >
                 {t('profileAvatar.removeConfirm')}
               </button>
               <button
-                className="rounded-lg border border-border px-3 py-1.5 font-medium text-fg-muted hover:bg-surface"
+                className="rounded-card border border-border px-3 py-1.5 font-medium text-fg-muted hover:bg-surface"
                 onClick={edit.cancelRemove}
               >
                 {t('profileAvatar.removeCancel')}
@@ -69,7 +69,7 @@ function AvatarRow() {
             </>
           ) : (
             <button
-              className="rounded-lg border border-border px-3 py-1.5 font-medium text-danger hover:bg-danger-surface disabled:opacity-50"
+              className="rounded-card border border-border px-3 py-1.5 font-medium text-danger hover:bg-danger-surface disabled:opacity-50"
               disabled={edit.busy}
               onClick={edit.askRemove}
             >
@@ -162,7 +162,7 @@ function HandleRow() {
         <span className="font-medium text-fg">{t('profileName.heading')}</span>
         <span className="ml-auto min-w-0 truncate text-fg-muted">@{me?.handle ?? '—'}</span>
         <button
-          className="shrink-0 rounded-lg border border-border px-3 py-1.5 font-medium hover:bg-surface"
+          className="shrink-0 rounded-card border border-border px-3 py-1.5 font-medium hover:bg-surface"
           onClick={startEdit}
         >
           {t('profileName.start')}
@@ -180,19 +180,19 @@ function HandleRow() {
             type="text"
             value={newHandle}
             onChange={(e) => setNewHandle(e.target.value)}
-            className="w-40 rounded-lg border border-border bg-field px-2 py-1 text-fg focus:border-accent focus:outline-none"
+            className="w-40 rounded-card border border-border bg-field px-2 py-1 text-fg focus:border-accent focus:outline-none"
             placeholder={t('profileName.input')}
           />
           {!confirming ? (
             <>
               <button
-                className="rounded-lg border border-border px-3 py-1 font-medium hover:bg-surface"
+                className="rounded-card border border-border px-3 py-1 font-medium hover:bg-surface"
                 onClick={cancelEdit}
               >
                 {t('profileName.cancel')}
               </button>
               <button
-                className="rounded-lg bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover"
+                className="rounded-card bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover"
                 onClick={requestConfirm}
               >
                 {t('profileName.confirm')}
@@ -201,14 +201,14 @@ function HandleRow() {
           ) : (
             <>
               <button
-                className="rounded-lg border border-border px-3 py-1 font-medium hover:bg-surface"
+                className="rounded-card border border-border px-3 py-1 font-medium hover:bg-surface"
                 onClick={() => setConfirming(false)}
                 disabled={busy}
               >
                 {t('profileName.cancel')}
               </button>
               <button
-                className="rounded-lg bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover disabled:opacity-50"
+                className="rounded-card bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover disabled:opacity-50"
                 onClick={apply}
                 disabled={busy}
               >
@@ -221,7 +221,7 @@ function HandleRow() {
       {/* 두 문장이 **한 자리에 함께** 서는 것이 이 확인의 요점이라(범위 + 되돌림 여부)
           회귀선이 둘을 한 덩어리로 읽는다. 낱말이 아니라 그 사실을 잰다. */}
       {confirming && (
-        <div data-testid="handle-change-confirm" className="rounded-lg border border-warning-border bg-warning-surface p-3 text-warning">
+        <div data-testid="handle-change-confirm" className="rounded-card border border-warning-border bg-warning-surface p-3 text-warning">
           <p className="font-medium">{t('profileName.effectPast')}</p>
           <p className="mt-1 text-warning">{t('profileName.effectPermanent')}</p>
         </div>
@@ -261,7 +261,7 @@ export function ProfileSettings({ onSignOut }: { onSignOut(): void }) {
             </span>
           </span>
           <button
-            className="shrink-0 rounded-lg border border-border px-3 py-1.5 font-medium text-danger hover:bg-danger-surface"
+            className="shrink-0 rounded-card border border-border px-3 py-1.5 font-medium text-danger hover:bg-danger-surface"
             onClick={onSignOut}
           >
             {t('profile.signOut')}

@@ -92,7 +92,9 @@ export function createForwarder(deps: { fetchImpl?: typeof fetch } = {}): Forwar
             ...headersFor(target),
             ...(req.contentType ? { 'content-type': req.contentType } : {}),
           },
-          ...(req.body !== undefined ? { body: req.body } : {}),
+          ...(req.bodyBase64 !== undefined
+            ? { body: Buffer.from(req.bodyBase64, 'base64') }
+            : req.body !== undefined ? { body: req.body } : {}),
         });
         return { type: 'http.response', id: req.id, status: res.status, body: await res.text() };
       } catch (err) {

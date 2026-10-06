@@ -3,7 +3,10 @@ import type { MessageRow } from '@harkroom/shared';
 import { displayBody } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
-import { useT } from '../i18n/useT';
+import { openWindow, popOutChannel } from '../lib/windowActions';
+import { useLocale, useT } from '../i18n/useT';
+import { stampLabel } from '../lib/day';
+import { highlightParts, searchExcerpt } from '../lib/highlight';
 
 /**
  * ⌘K 와 ⌘F 는 **다른 물음**이다.
@@ -32,6 +35,7 @@ const NO_TEAMS_FALLBACK: never[] = [];
 
 export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
   const t = useT();
+  const locale = useLocale();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<MessageRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -166,7 +170,7 @@ export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
     // 이동은 `openMessage` 하나에 맡긴다 — 채널 전환·스레드 패널·강조·실패 통지가 전부
     // 그 안에 있다(인박스·저장·첨부가 이미 그 길로 간다). 여기서 openChannel/openThread 를
     // 직접 부르면 강조가 걸리지 않아 "눌렀는데 아무 일도 없다"가 된다.
-    void getController().openMessage(msg.id);
+    void getController().openMessage(msg.id, msg);
     close();
   }, [close]);
 
@@ -191,7 +195,15 @@ export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
       }
       if (e.key === 'Enter' && activeIndex >= 0 && results[activeIndex]) {
         e.preventDefault();
-        openResult(results[activeIndex]);
+        const hit = results[activeIndex];
+        // ⌘⏎ 는 새 창(판 3 C1): 답글이면 그 스레드 창, 채널 글이면 그 채널 창.
+        if (e.metaKey || e.ctrlKey) {
+          if (hit.threadRootId) openWindow({ kind: 'thread', channelId: hit.channelId, rootId: hit.threadRootId });
+          else void popOutChannel(hit.channelId);
+          close();
+          return;
+        }
+        openResult(hit);
         return;
       }
     };
@@ -215,7 +227,7 @@ export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
       }}
     >
       <div
-        className="w-full max-w-xl rounded-lg border border-border bg-surface-raised shadow-xl"
+        className="w-full max-w-xl rounded-card bg-surface-raised shadow-float"
         role="dialog"
         aria-modal="true"
         aria-label={t('search.palette.label')}
@@ -256,7 +268,7 @@ export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
                 data-testid={`search-scope-${s}`}
                 aria-pressed={scope === s}
                 onClick={() => chooseScope(s)}
-                className={`rounded px-2 py-1 text-meta ${
+                className={`rounded-row px-2 py-1 text-meta ${
                   scope === s ? 'bg-surface-hover text-fg' : 'text-fg-muted hover:bg-surface-sunken'
                 }`}
               >
@@ -292,7 +304,7 @@ export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
               aria-selected={index === activeIndex}
               data-testid="search-result"
               onClick={() => openResult(msg)}
-              className={`cursor-pointer rounded px-3 py-2 ${
+              className={`cursor-pointer rounded-row px-3 py-2 ${
                 index === activeIndex ? 'bg-surface-hover' : 'hover:bg-surface-sunken'
               }`}
             >
@@ -309,10 +321,17 @@ export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
                     <span className="text-fg-subtle">{t('search.palette.thread')}</span>
                   </>
                 )}
+                {/* 언제 — 같은 말이 여러 번 걸리면 시각이 고르는 기준이다. 메시지 줄의 도장과 같은 말. */}
+                <span>·</span>
+                <time dateTime={msg.createdAt} className="text-fg-subtle" data-testid="search-result-time">
+                  {stampLabel(msg.createdAt, locale)}
+                </time>
               </div>
               {/* 본문은 `displayBody` 를 지난다 — 이 줄도 `MessageBody` 를 지나지 않아
                   `<@id>`·`{account}` 를 스스로 풀어야 한다(`lib/mention` 주석). */}
-              <div className="mt-1 truncate text-fg">{displayBody(msg, accounts, groups, teams)}</div>
+              <div className="mt-1 truncate text-fg">
+                <Highlighted text={searchExcerpt(displayBody(msg, accounts, groups, teams), query)} query={query} />
+              </div>
             </li>
           ))}
           {/* 잘렸다는 것을 말하지 않으면 사람은 "없다"로 읽는다 — 상위 50 건이 전부 최근
@@ -323,7 +342,7 @@ export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
                 type="button"
                 data-testid="search-more"
                 onClick={() => search(query, scope, enabledResults.length)}
-                className="w-full rounded px-3 py-2 text-meta text-fg-muted hover:bg-surface-sunken"
+                className="w-full rounded-row px-3 py-2 text-meta text-fg-muted hover:bg-surface-sunken"
               >
                 {t('search.palette.more')}
               </button>
@@ -341,5 +360,22 @@ export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
         </div>
       </div>
     </div>
+  );
+}
+
+/** 찾은 낱말을 `<mark>` 로 감싼다. 다크에서도 읽히게 경고 면 색 + 굵게(모바일과 같은 판단). */
+function Highlighted({ text, query }: { text: string; query: string }) {
+  return (
+    <>
+      {highlightParts(text, query).map((p, i) =>
+        p.hit ? (
+          <mark key={i} data-testid="search-hit" className="rounded-sm bg-warning-surface-strong font-semibold text-fg">
+            {p.text}
+          </mark>
+        ) : (
+          <span key={i}>{p.text}</span>
+        ),
+      )}
+    </>
   );
 }

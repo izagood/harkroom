@@ -3,6 +3,7 @@ import { ApiClient, ApiError } from '../lib/api';
 import { GateClient, gateErrorText, gateProgressText, looksLikeWorkspaceAddress, pendingWorkspace,
   type PendingWorkspace } from '../lib/gate';
 import { Logo } from '../components/Logo';
+import { RecoveryKeyStep } from '../components/RecoveryKeyStep';
 import { ConnectUpdateBanner } from '../components/ConnectUpdateBanner';
 import { lastWorkspaceUrlStorage } from '../lib/prefs';
 
@@ -62,6 +63,11 @@ export function ConnectScreen(props: ConnectScreenProps) {
   /** 클레임할 수 있게 됐는가. 폴링이 `ready` 를 본 뒤에만 참이다. */
   const [claimable, setClaimable] = useState(false);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * 생성 응답에 실려 온 복구 키. **이 상태에만** 있다 — 보관본(`pendingWorkspace`)에 넣지 않으므로 앱을
+   * 닫으면 사라진다(그것이 "한 번만"이다). 사람이 저장했다고 확인하면 비운다.
+   */
+  const [recoveryKey, setRecoveryKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialError) setError(initialError);
@@ -131,6 +137,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
       // **응답을 화면에 그리기 전에 적는다.** 클레임 토큰은 이 응답에만 있고, 여기서
       // 앱이 죽으면 그 워크스페이스는 영영 가져갈 수 없다.
       pendingWorkspace.write(p);
+      if (res.recoveryKey) setRecoveryKey(res.recoveryKey);
       setPending(p);
       setProgress('Submitted — waiting for approval…');
     } catch (err) {
@@ -170,7 +177,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
   const discardPending = () => {
     if (pollTimer.current) clearTimeout(pollTimer.current);
     pendingWorkspace.clear();
-    setPending(null); setClaimable(false); setProgress(null); setError(null);
+    setPending(null); setClaimable(false); setProgress(null); setError(null); setRecoveryKey(null);
   };
 
   const submit = async () => {
@@ -201,7 +208,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
     }
   };
 
-  const field = 'w-full rounded border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
+  const field = 'w-full rounded-row border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
   // `add` 는 겹창 안에서 그려진다 — 화면 전체를 차지하는 껍데기는 겹창이 이미 갖고 있고,
   // 여기서 창 높이(`h-full`)를 또 두면 모달 안에 빈 화면 하나가 더 생긴다.
   //
@@ -214,11 +221,16 @@ export function ConnectScreen(props: ConnectScreenProps) {
   return (
     <div className={shell}>
       <form
-        className="w-80 space-y-3 rounded-lg bg-surface-raised p-6 shadow"
+        className="w-80 space-y-3 rounded-card bg-surface-raised p-6 shadow-float"
         onSubmit={(e) => {
           e.preventDefault();
           // `create` 는 두 단계다 — 만들기, 그리고 준비되면 클레임.
-          if (authMode === 'create') { void (pending ? claimWorkspace() : createWorkspace()); return; }
+          if (authMode === 'create') {
+            // 복구 키 단계에서는 Enter 로 아무것도 하지 않는다 — 저장했다는 확인은 그 단계의 버튼만 받는다.
+            if (recoveryKey) return;
+            void (pending ? claimWorkspace() : createWorkspace());
+            return;
+          }
           void submit();
         }}
       >
@@ -229,8 +241,8 @@ export function ConnectScreen(props: ConnectScreenProps) {
           {/* **화면 제목단 17px.** 18px(`text-lg`)이었고 4단 중 아무것도 아니었다. 이 자리는
               화면 하나가 무엇을 하는 중인지 말하는 유일한 줄이라 맨 윗단이 맞다 —
               `SettingsPage` 의 제목과 같은 단이다(그 파일에 근거를 적어 뒀다). */}
-          <h1 className="text-title font-bold">
-            {authMode === 'create' ? 'Create a workspace' : adding ? 'Sign in to another community' : 'Harkroom'}
+          <h1 className="text-title font-semibold">
+            {authMode === 'create' ? 'Create a community' : adding ? 'Sign in to another community' : 'Harkroom'}
           </h1>
         </div>
         {/* 로그인 **전**에도 업데이트할 수 있어야 한다(실측 2026-09-07): 서버에 못 붙는
@@ -247,11 +259,14 @@ export function ConnectScreen(props: ConnectScreenProps) {
         {/* `create` 는 **서버 주소를 묻지 않는다** — 그 주소는 아직 존재하지 않고, gate 가
             만들어 준 뒤에야 정해진다. 대신 만들어 달라고 할 곳(gate)을 묻는다. */}
         {authMode === 'create' ? (
-          pending ? (
+          pending && recoveryKey ? (
+            /* 진행·클레임으로 넘어가기 **전에** 복구 키를 받게 한다. 폴링은 뒤에서 계속 돈다. */
+            <RecoveryKeyStep recoveryKey={recoveryKey} communityName={pending.name} onDone={() => setRecoveryKey(null)} />
+          ) : pending ? (
             <>
               {/* 만들어지는 중이거나, 준비돼 클레임을 기다리는 자리. */}
-              <div className="rounded border border-border bg-field px-3 py-2">
-                <p className="text-meta text-fg-subtle">Workspace</p>
+              <div className="rounded-row border border-border bg-field px-3 py-2">
+                <p className="text-meta text-fg-subtle">Community</p>
                 <p className="text-fg">{pending.url}</p>
               </div>
               {progress && <p className="text-meta text-fg-subtle">{progress}</p>}
@@ -259,7 +274,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
                 <>
                   {/* 준비됐다. 이제 첫 관리자를 만든다 — **토큰은 화면이 들고 있다.** */}
                   <p className="text-meta text-fg-subtle">
-                    Ready. Create the first admin account for this workspace.
+                    Ready. Create the first admin account for this community.
                   </p>
                   <label className="block text-meta font-medium">
                     Login ID
@@ -306,12 +321,12 @@ export function ConnectScreen(props: ConnectScreenProps) {
                 </label>
                 <p id="gate-url-hint" className="mt-1 text-meta text-fg-subtle">
                   {looksLikeWorkspaceAddress(gateUrl, wsName)
-                    ? 'This looks like the new workspace\'s own address — it does not exist yet. Enter the service that creates workspaces.'
-                    : 'The service that creates workspaces — not your new workspace\'s address. It comes with your invite code.'}
+                    ? 'This looks like the new community\'s own address — it does not exist yet. Enter the service that creates communities.'
+                    : 'The service that creates communities — not your new community\'s address. It comes with your invite code.'}
                 </p>
               </div>
               <label className="block text-meta font-medium">
-                Workspace name
+                Community name
                 <input className={field} value={wsName} onChange={(e) => setWsName(e.target.value)} placeholder="my-team" />
               </label>
               <label className="block text-meta font-medium">
@@ -372,6 +387,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
         )}
         {/* 오류는 본문단이다 — 로그인이 막힌 사람에게 이 한 줄이 유일한 단서다. */}
         {error && <p className="text-danger">{error}</p>}
+        {!recoveryKey && (
         <button
           type="submit"
           disabled={
@@ -384,12 +400,13 @@ export function ConnectScreen(props: ConnectScreenProps) {
             // 준비되기 전에는 누를 것이 없다 — 기다리는 중에 버튼만 살아 있으면 눌러 보게 된다.
             || (authMode === 'create' && pending !== null && !claimable)
           }
-          className="w-full rounded bg-accent py-2 font-medium text-fg-on-strong disabled:opacity-50"
+          className="w-full rounded-row bg-accent py-2 font-medium text-fg-on-strong disabled:opacity-50"
         >
           {authMode === 'create'
-            ? (pending ? (claimable ? 'Create admin account' : 'Waiting…') : 'Create workspace')
+            ? (pending ? (claimable ? 'Create admin account' : 'Waiting…') : 'Create community')
             : authMode === 'signin' ? 'Sign in' : authMode === 'bootstrap' ? 'Create account' : 'Join with invite'}
         </button>
+        )}
         {authMode === 'signin' ? (
           <div className="space-y-1">
             <button
@@ -397,7 +414,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
               className="w-full text-meta text-fg-subtle underline"
               onClick={() => setAuthMode('register')}
             >
-              Have an invite token? Join this workspace
+              Have an invite token? Join this community
             </button>
             {/* 부트스트랩은 `add` 에서 **감춘다**(#165 결정 3). 이미 서버가 있는 사람이 새
                 서버의 첫 관리자 계정을 만드는 것은 "커뮤니티를 하나 더 붙인다" 와 다른 일이고,
@@ -420,11 +437,14 @@ export function ConnectScreen(props: ConnectScreenProps) {
                 className="w-full text-meta text-fg-subtle underline"
                 onClick={() => setAuthMode('create')}
               >
-                Have an invite code? Create a hosted workspace
+                Have an invite code? Create a hosted community
               </button>
             )}
           </div>
         ) : authMode === 'create' ? (
+          // 복구 키 단계에서는 빠져나가는 길이 Continue 하나다 — 여기서 버리면 다시 볼 수 없는 키가
+          // 클레임 보관본과 함께 사라진다(designer F1). 겹창의 Cancel 도 같은 이유로 숨긴다(아래).
+          recoveryKey ? null : (
           <button
             type="button"
             className="w-full text-meta text-fg-subtle underline"
@@ -437,6 +457,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
           >
             {pending ? 'Discard and go back to sign in' : 'Back to sign in'}
           </button>
+          )
         ) : (
           <button
             type="button"
@@ -446,10 +467,10 @@ export function ConnectScreen(props: ConnectScreenProps) {
             Back to sign in
           </button>
         )}
-        {props.mode === 'add' && (
+        {props.mode === 'add' && !recoveryKey && (
           <button
             type="button"
-            className="w-full rounded border border-border py-1.5 text-meta font-medium hover:bg-surface"
+            className="w-full rounded-row border border-border py-1.5 text-meta font-medium hover:bg-surface"
             onClick={props.onCancel}
           >
             Cancel

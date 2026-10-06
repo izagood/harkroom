@@ -67,7 +67,7 @@ export function projectionBanner(input: {
    * 이 판정이 내는 말의 번역기. **필수이고 맨 뒤다**(`i18n/index.ts::Translate` 의 (b) 주입).
    *
    * 이 파일은 화면이 아니라 훅을 못 쓴다 — 부르는 자리가 셋이고(`ProjectionBanner` ·
-   * `LeasePanel` · `ConnectionSettings`) 셋 다 컴포넌트라 각자 `useT()` 를 넘긴다.
+   * `LeasePanel` · `IntegrationsSettings`) 셋 다 컴포넌트라 각자 `useT()` 를 넘긴다.
    * **기본값을 두지 않는 이유**: 주면 그 자리를 빠뜨린 화면이 조용히 한 언어로 굳는다.
    *
    * `ago` 와 나란히 서는 것이 맞다 — 둘 다 *"말로 바꾸는 일은 화면의 것"* 이라는 같은

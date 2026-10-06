@@ -3,6 +3,10 @@ import { render, screen, fireEvent, cleanup, within } from '@testing-library/rea
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
+import { ChannelSettingsSheet } from '../src/components/ChannelSettingsSheet';
+
+/** 멤버·편집·나가기는 채널 설정 시트가 연다(UX ⑦b-2) — 시트는 Workspace 에 서므로 여기서 함께 그린다. */
+const SidebarWithSheet = (p: Parameters<typeof Sidebar>[0]) => (<><Sidebar {...p} /><ChannelSettingsSheet /></>);
 import { usePrefsStore } from '../src/state/prefsStore';
 import { acc, chan } from './helpers/fakeApi';
 
@@ -37,7 +41,7 @@ const fakeController = (members: { accountId: string; handle: string }[]) => {
 const seed = () => {
   useAppStore.getState().reset();
   useAppStore.getState().set({
-    me: { ...acc('u1', 'me'), isAdmin: true },
+    me: acc('u1', 'me', 'human', true),
     accounts: { u1: acc('u1', 'me'), u2: acc('u2', 'other') },
     channels: [chan('c1', 'general'), chan('c2', 'secret', null, 'private')],
     dms: [], connected: true,
@@ -45,7 +49,7 @@ const seed = () => {
 };
 
 const sidebar = () => render(
-  <Sidebar panel="home" onOpenDirectory={vi.fn()} onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
+  <SidebarWithSheet panel="home" onOpenDirectory={vi.fn()} onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 
 const openMenuFor = (accessibleName: RegExp): void => {
@@ -85,14 +89,16 @@ describe('private 채널 UI (#182)', () => {
     openMenuFor(/비공개 채널 secret\b/);
     fireEvent.click(screen.getByRole('menuitem', { name: '나가기' }));
 
-    expect(await screen.findByText(/나가면 아무도 이 채널을 볼 수 없다/)).toBeTruthy();
+    // 메뉴 "나가기" 는 시트 **정보 탭**을 열고 그 자리의 절차를 바로 시작한다(designer #1049).
+    expect(await screen.findByText(/마지막 멤버다/)).toBeTruthy();
+    expect(screen.getByTestId('channel-sheet-tab-info').getAttribute('aria-selected')).toBe('true');
     // 경고만 하고 실제로 나가지는 않았다 — 알리는 것과 실행하는 것이 한 번에 일어나면
     // 경고는 사후 통보가 된다.
     expect(c.leaveChannel).not.toHaveBeenCalled();
 
     // 한 번 더 눌러야 실제로 나간다.
-    fireEvent.click(screen.getByRole('button', { name: '정말 나가기' }));
-    expect(c.leaveChannel).toHaveBeenCalledWith('c2', 'u1');
+    fireEvent.click(screen.getByRole('button', { name: '그래도 나가기' }));
+    await vi.waitFor(() => expect(c.leaveChannel).toHaveBeenCalledWith('c2', 'u1'));
   });
 
   it('멤버가 여럿이면 경고 없이 바로 나간다', async () => {
@@ -105,7 +111,7 @@ describe('private 채널 UI (#182)', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: '나가기' }));
 
     await vi.waitFor(() => expect(c.leaveChannel).toHaveBeenCalledWith('c2', 'u1'));
-    expect(screen.queryByText(/나가면 아무도 이 채널을 볼 수 없다/)).toBeNull();
+    expect(screen.queryByText(/마지막 멤버다/)).toBeNull();
   });
 
   it('멤버 조회 실패를 빈 목록으로 삼키지 않는다', async () => {

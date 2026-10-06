@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { excludedNamesFrom, rankRecall, searchTerms, type RecallCandidate } from '../src/services/memory.js';
+import { excludedNamesFrom, focusTermsOf, rankRecall, searchTerms, type RecallCandidate } from '../src/services/memory.js';
 
 // recall P1 의 순수 부분 — pg 없이 돈다. 정답 세트(fixture) 회귀도 이 자리에 붙인다.
 describe('searchTerms', () => {
@@ -30,6 +30,39 @@ describe('searchTerms', () => {
   });
 });
 
+// G 후속(qa 10-03): 후속 턴 되받는 말은 focus 낱말이 못 된다 — 게이트를 여는 열쇠가 '다시' 였다.
+describe('focusTermsOf', () => {
+  it('되받는 말(다시·계속·그대로·그걸로·좋아 그렇게…)은 focus 에서 빠진다', () => {
+    for (const q of ['다시 봐 줘', '그대로 진행해', '응 그걸로 해 줘', '계속 해', '다시 한번 확인해 줘', '좋아 그렇게 해', '이어서 해 줘', '마저 해', 'ok 해줘']) {
+      expect([q, focusTermsOf(q, new Set())]).toEqual([q, []]);
+    }
+  });
+
+  it('인사 꼴 감사(감사해·감사합니다…)만 빠지고 audit 뜻의 감사는 남는다 — go 는 Go 언어 주제라 남는다(qa 10-04)', () => {
+    for (const q of ['감사해', '감사합니다!', '고마워 감사해요', '다시 봐 줘 감사합니다.']) expect([q, focusTermsOf(q, new Set())]).toEqual([q, []]);
+    expect(focusTermsOf('감사 결과는?', new Set())).toEqual(['감사', '결과']);
+    expect(focusTermsOf('감사는 어디 남나', new Set())).toContain('감사');
+    expect(focusTermsOf('감사합니다 감사 로그 봐 줘', new Set())).toEqual(['감사', '로그']);
+    expect(focusTermsOf('go 모듈 캐시', new Set())).toEqual(['go', '모듈', '캐시']);
+  });
+
+  it('주제어는 남는다 — 되받는 말과 섞여도', () => {
+    expect(focusTermsOf('다시 배포 되돌림 봐 줘', new Set())).toEqual(['배포', '되돌림']);
+    expect(focusTermsOf('jaebin 캐시 계속 봐 줘', new Set(['jaebin']))).toEqual(['캐시']);
+  });
+
+  it('첫 턴 질의(searchTerms)에는 걸지 않는다 — "다시 제안 금지" 를 주제로 찾을 수 있다', () => {
+    expect(searchTerms('다시 제안 금지', { exclude: new Set() })).toContain('다시');
+  });
+
+  it('qa 재현: 요약에 "다시" 가 든 기억은 "다시 봐 줘" 후속 턴에 게이트를 못 지난다', () => {
+    const rows = [row('mem/team-phase3-done', '거부된 설계 — 다시 제안 금지', ''), row('mem/deploy', '배포 절차', '')];
+    const terms = ['다시', '배포'];
+    expect(rankRecall(terms, rows, 5, { focus: new Set(focusTermsOf('다시 봐 줘', new Set())) })).toEqual([]);
+    expect(rankRecall(terms, rows, 5, { focus: new Set(['다시']) }).map((h) => h.slug)).toEqual(['mem/team-phase3-done']);
+  });
+});
+
 describe('excludedNamesFrom', () => {
   it('사람만 조각까지 뺀다 — 에이전트·팀 이름(rcms·forge·server)은 주제어라 남긴다', () => {
     const names = excludedNamesFrom([
@@ -46,6 +79,26 @@ const row = (slug: string, description: string | null, value: string, kind: Reca
   ({ slug, description, value, kind, updatedAt: new Date(0) });
 
 describe('rankRecall', () => {
+  // G: 후속 턴 게이트 — 새 말(focus) 낱말이 이름·요약에 하나도 안 걸린 것은 루트 낱말만으로는 싣지 않는다.
+  it('focus 를 주면 focus 낱말이 이름·요약에 걸린 것만 남고, termHits 로 무엇에 걸렸는지 말한다', () => {
+    const rows = [
+      row('mem/deploy-recipe', '배포 절차', ''),   // 루트 낱말(배포)만
+      row('mem/deploy-rollback', '배포 되돌림', ''), // 루트 + 새 말(되돌림)
+      row('mem/rollback-db', '되돌림 DB', ''),       // 새 말만
+    ];
+    const terms = ['되돌림', '배포'];
+    const all = rankRecall(terms, rows, 5);
+    expect(all.map((h) => h.slug)).toEqual(['mem/deploy-rollback', 'mem/deploy-recipe', 'mem/rollback-db']);
+    expect(all[0]!.termHits).toEqual(['되돌림', '배포']);
+    const gated = rankRecall(terms, rows, 5, { focus: new Set(['되돌림']) });
+    // 루트 낱말은 순위만 돕는다 — 둘 다 걸린 것이 위.
+    expect(gated.map((h) => h.slug)).toEqual(['mem/deploy-rollback', 'mem/rollback-db']);
+  });
+
+  it('focus 가 비어 있으면(새 말에 낱말이 없다) 아무것도 싣지 않는다', () => {
+    expect(rankRecall(['배포'], [row('mem/deploy-recipe', '배포 절차', '')], 5, { focus: new Set() })).toEqual([]);
+  });
+
   it('이름·요약 일치가 없으면 본문이 아무리 걸려도 싣지 않는다', () => {
     const hits = rankRecall(['캐시', '러너'], [row('mem/x', null, '캐시 러너 캐시')], 5);
     expect(hits).toEqual([]);

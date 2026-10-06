@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../api/api_error.dart';
 import '../i18n/i18n.dart';
+import '../session/session_store.dart';
 import '../state/app_scope.dart';
+import 'community_screens.dart';
 
 /// 아이디·비밀번호를 받는다. 서버 주소는 이미 정해진 뒤다(`ConnectScreen`).
 class LoginScreen extends StatefulWidget {
@@ -53,6 +55,14 @@ class _LoginScreenState extends State<LoginScreen> {
         'loginErrorRejected' => t.loginErrorRejected,
         _ => t.loginErrorUnreachable,
       };
+
+  StoredCommunity? _otherLive(BuildContext context) {
+    final app = context.app;
+    for (final c in app.communities) {
+      if (!c.isExpired && c.key != app.activeKey) return c;
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -107,6 +117,14 @@ class _LoginScreenState extends State<LoginScreen> {
                 onPressed: _busy ? null : _submit,
                 child: Text(_busy ? t.commonLoading : t.loginSubmit),
               ),
+              // 만료된 커뮤니티에 다시 로그인하는 자리다. 다른 커뮤니티가 살아 있으면 그리로 갈 길을
+              // 둔다 — 이 화면에 갇히면 비밀번호를 모르는 사람은 앱 전체를 못 쓴다.
+              if (_otherLive(context) case final other?)
+                TextButton(
+                  key: const Key('login-other-community'),
+                  onPressed: _busy ? null : () => enterCommunity(context, other.key),
+                  child: Text(t.loginOtherCommunity),
+                ),
             ],
           ),
         ),

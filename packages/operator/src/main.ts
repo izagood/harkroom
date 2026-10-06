@@ -23,6 +23,10 @@ import { RUNNER_LINK_ENV, RUNNER_LINK_ENV_KEYS, RUNNER_TURN_CAUSE_ENV } from '@h
 import { parseDaemonArgs, describeArgs, type DaemonArgs } from './args.js';
 import { parseCliArgs, register, registerViaRunningOperator, resolveDataDir, runArgs } from './cli.js';
 import { runMcpBridge } from './mcpBridge.js';
+import { MERGE_TOOL, parseMergeArgs } from './turnMerge.js';
+import { API_TOOL, parseApiArgs } from './turnApi.js';
+import { readFileSync } from 'node:fs';
+import { PassThrough } from 'node:stream';
 import { EXIT_INCONCLUSIVE, EXIT_OCCUPIED, startDaemon } from './run.js';
 
 /**
@@ -40,7 +44,121 @@ async function mcpBridgeMain(): Promise<void> {
   }
   // 턴의 원인은 없어도 된다 — 옛 러너·대화형 턴은 심지 않는다(서버는 옛 셈으로 간다).
   const cause = process.env[RUNNER_TURN_CAUSE_ENV] || null;
-  await runMcpBridge({ socketPath, runnerId, secret, cause }, { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr });
+  await runMcpBridge({ socketPath, runnerId, secret, cause, cwd: process.cwd() }, { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr });
+}
+
+/**
+ * `harkroom-operator merge <owner/name> <n> --head <sha>` — 에이전트 머지 래퍼의 **클라이언트 쪽**(스레드 3deac356).
+ * 하네스의 셸에서 돈다. 인자를 재고(`parseMergeArgs`), 브릿지와 같은 소켓·같은 자격으로 `tools/call repo.merge`
+ * 한 줄을 보낸 뒤 답 한 줄을 받아 JSON 으로 찍는다. 판정·gh 실행은 전부 오퍼레이터 쪽(`turnMerge.ts`)이다 —
+ * 이 프로세스는 토큰도 임대도 모른다. 러너가 그 에이전트의 턴에만 이 명령의 allow 규칙을 준다.
+ */
+async function mergeMain(argv: string[]): Promise<void> {
+  const parsed = parseMergeArgs(argv);
+  if ('error' in parsed) {
+    console.log(JSON.stringify({ error: { code: 'bad_request', message: parsed.error }, merged: false, exit: 2 }));
+    process.exit(2);
+  }
+  const socketPath = process.env[RUNNER_LINK_ENV.socketPath];
+  const runnerId = process.env[RUNNER_LINK_ENV.runnerId];
+  const secret = process.env[RUNNER_LINK_ENV.secret];
+  const cause = process.env[RUNNER_TURN_CAUSE_ENV] || null;
+  if (!socketPath || !runnerId || !secret || !cause) {
+    console.log(JSON.stringify({ error: { code: 'not_in_turn', message: `${RUNNER_LINK_ENV_KEYS.join('·')}·${RUNNER_TURN_CAUSE_ENV} are required — the wrapper only runs inside a runner-launched mention turn` }, merged: false, exit: 2 }));
+    process.exit(2);
+  }
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const done = new Promise<{ ok: boolean; text: string }>((resolve) => {
+    let buf = '';
+    stdout.on('data', (chunk: Buffer) => {
+      buf += chunk.toString('utf8');
+      const nl = buf.indexOf('\n');
+      if (nl < 0) return;
+      const line = buf.slice(0, nl);
+      try {
+        const msg = JSON.parse(line) as { result?: { content?: { text?: string }[]; isError?: boolean }; error?: { message?: string } };
+        if (msg.error) resolve({ ok: false, text: JSON.stringify({ error: { code: 'link_error', message: msg.error.message ?? 'link error' } }) });
+        else resolve({ ok: msg.result?.isError !== true, text: msg.result?.content?.[0]?.text ?? '{}' });
+      } catch {
+        resolve({ ok: false, text: JSON.stringify({ error: { code: 'bad_reply', message: 'unparseable reply from operator' } }) });
+      }
+      stdin.end();
+    });
+  });
+  const bridge = runMcpBridge({ socketPath, runnerId, secret, cause, cwd: process.cwd() }, { stdin, stdout, stderr: process.stderr });
+  stdin.write(`${JSON.stringify({
+    jsonrpc: '2.0', id: 1, method: 'tools/call',
+    params: { name: MERGE_TOOL, arguments: { repo: parsed.repo, number: parsed.number, headSha: parsed.headSha } },
+  })}\n`);
+  const r = await done;
+  await bridge;
+  // 결과 JSON 에 종료 코드와 머지 여부를 함께 싣는다(qa ②) — 에이전트가 `; echo $?` 를 붙일 이유를 없앤다. 그 꼬리는
+  // allow 규칙을 깨뜨려 분류기로 간다(2026-10-03 #1130 사고).
+  let out: Record<string, unknown> = {};
+  try { const v: unknown = JSON.parse(r.text); if (v && typeof v === 'object') out = v as Record<string, unknown>; } catch { out = { raw: r.text }; }
+  const exit = r.ok ? 0 : 1;
+  console.log(JSON.stringify({ ...out, merged: out.merged === true, exit }));
+  process.exit(exit);
+}
+
+/**
+ * 브릿지와 같은 소켓·같은 자격으로 `tools/call` 한 줄을 보내고 답 한 줄을 받는다(머지·api 래퍼 공용 꼴).
+ */
+async function callOperatorTool(name: string, args: Record<string, unknown>): Promise<{ ok: boolean; text: string } | { ok: false; notInTurn: true }> {
+  const socketPath = process.env[RUNNER_LINK_ENV.socketPath];
+  const runnerId = process.env[RUNNER_LINK_ENV.runnerId];
+  const secret = process.env[RUNNER_LINK_ENV.secret];
+  const cause = process.env[RUNNER_TURN_CAUSE_ENV] || null;
+  if (!socketPath || !runnerId || !secret || !cause) return { ok: false, notInTurn: true };
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const done = new Promise<{ ok: boolean; text: string }>((resolve) => {
+    let buf = '';
+    stdout.on('data', (chunk: Buffer) => {
+      buf += chunk.toString('utf8');
+      const nl = buf.indexOf('\n');
+      if (nl < 0) return;
+      const line = buf.slice(0, nl);
+      try {
+        const msg = JSON.parse(line) as { result?: { content?: { text?: string }[]; isError?: boolean }; error?: { message?: string } };
+        if (msg.error) resolve({ ok: false, text: JSON.stringify({ error: { code: 'link_error', message: msg.error.message ?? 'link error' } }) });
+        else resolve({ ok: msg.result?.isError !== true, text: msg.result?.content?.[0]?.text ?? '{}' });
+      } catch {
+        resolve({ ok: false, text: JSON.stringify({ error: { code: 'bad_reply', message: 'unparseable reply from operator' } }) });
+      }
+      stdin.end();
+    });
+  });
+  const bridge = runMcpBridge({ socketPath, runnerId, secret, cause, cwd: process.cwd() }, { stdin, stdout, stderr: process.stderr });
+  stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } })}\n`);
+  const r = await done;
+  await bridge;
+  return r;
+}
+
+/**
+ * `harkroom-operator api <연결> <METHOD> <경로> [--data @파일|<글자>] [--content-type <형식>]` — 외부 API 래퍼의 **클라이언트 쪽**
+ * (C안 P3, 스레드 07519d86). 하네스의 셸에서 돈다. 인자를 재고 본문 파일을 읽어 오퍼레이터에 넘긴다 — 판정·키·호출은 전부
+ * 오퍼레이터 쪽(`turnApi.ts`)이다. 이 프로세스는 키도 임대도 모른다. 결과 JSON 에 `exit` 를 싣는다(꼬리 `; echo $?` 를 붙이면
+ * allow 규칙이 깨진다 — 머지 래퍼 qa ②).
+ */
+async function apiMain(argv: string[]): Promise<void> {
+  const parsed = parseApiArgs(argv, (p) => readFileSync(resolve(process.cwd(), p)));
+  if ('error' in parsed) {
+    console.log(JSON.stringify({ error: { code: 'bad_request', message: parsed.error }, exit: 2 }));
+    process.exit(2);
+  }
+  const r = await callOperatorTool(API_TOOL, { connector: parsed.connector, method: parsed.method, path: parsed.path, body: parsed.body, contentType: parsed.contentType });
+  if ('notInTurn' in r) {
+    console.log(JSON.stringify({ error: { code: 'not_in_turn', message: `${RUNNER_LINK_ENV_KEYS.join('·')}·${RUNNER_TURN_CAUSE_ENV} are required — the wrapper only runs inside a runner-launched mention turn` }, exit: 2 }));
+    process.exit(2);
+  }
+  let out: Record<string, unknown> = {};
+  try { const v: unknown = JSON.parse(r.text); if (v && typeof v === 'object') out = v as Record<string, unknown>; } catch { out = { raw: r.text }; }
+  const exit = r.ok ? 0 : 1;
+  console.log(JSON.stringify({ ...out, exit }));
+  process.exit(exit);
 }
 
 /**
@@ -53,6 +171,12 @@ async function main(): Promise<void> {
   switch (cmd.command) {
     case 'mcp-bridge':
       await mcpBridgeMain();
+      return;
+    case 'merge':
+      await mergeMain(cmd.argv);
+      return;
+    case 'api':
+      await apiMain(cmd.argv);
       return;
     case 'register': {
       const dataDir = resolveDataDir(process.env.HARKROOM_DATA_DIR);

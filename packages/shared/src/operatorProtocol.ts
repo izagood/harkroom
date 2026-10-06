@@ -13,7 +13,9 @@
  * 버린다: 구·신 세대가 섞여도 한쪽이 죽지 않는다(`daemonProtocol` 의 `unknown-request` 와
  * 같은 판단).
  */
-import type { AgentSessionView, OperatorCapabilities, RunnerCap } from './index.js';
+import type {
+  AgentSessionView, OperatorCapabilities, OperatorCredentialState, OperatorPlatform, OperatorStatus, OperatorUpgradeStage, RunnerCap,
+} from './index.js';
 
 /** 오퍼레이터가 spawn 마다 만드는 러너 식별자. 데몬의 `incarnationId` 와 같은 것이다 — 이름만 통일한다. */
 export interface RunnerAnnounce { agentId: string; runnerId: string; pid: number }
@@ -61,6 +63,20 @@ export type OperatorToServerFrame =
    */
   | { type: 'capabilities'; capabilities: OperatorCapabilities }
   /**
+   * 박동(원격 호스트 관리 P2a, 스레드 3b0f0255) — 오퍼레이터가 30초마다 낸다. 서버는 **마지막 값만**
+   * 연결이 살아 있는 동안 든다(능력과 같은 판단: 꺼진 머신의 메모리·턴 수를 보이면 거짓이다).
+   * `machine` 은 머신 고유값(`/etc/machine-id`·IOPlatformUUID)의 sha256 hex 다 — **원래 값은 보내지
+   * 않는다.** 서버가 이것을 소유자 id 와 다시 섞어 저장하므로(`operator.machine_id`) 소유자가 다르면
+   * 같은 머신이어도 값이 갈린다. 받는 쪽 검증은 `parseOperatorStatus` 하나다.
+   */
+  | { type: 'status'; status: unknown; machine?: unknown }
+  /**
+   * 업그레이드 단계(P2b·H3). 오퍼레이터가 단계를 넘을 때마다 낸다. 되돌림(`rolled_back`)은 boot 단계에서
+   * 일어나 그때 말할 프로세스가 없으므로, 다음에 붙은 오퍼레이터가 첫 박동 즈음 한 번 낸다. 검증은
+   * `parseUpgradeProgress` 하나다.
+   */
+  | { type: 'upgrade.progress'; stage: unknown; from?: unknown; to?: unknown; error?: unknown }
+  /**
    * 러너가 링크에 붙을 때마다(재접속 포함) 자기 세션·능력을 다시 선언한다 — 옛 릴레이의
    * `announce` 그대로다(`runnerLink.ts`). 서버는 이 목록으로 그 러너의 세션을 **교체**한다.
    */
@@ -95,14 +111,14 @@ export type ServerToOperatorFrame =
 
 const OPERATOR_TYPES = new Set<OperatorToServerFrame['type']>([
   'hello', 'capabilities', 'runner.started', 'runner.exited', 'runner.announce', 'session.started', 'session.updated', 'session.ended',
-  'pty.output', 'pty.replay', 'interactive.opened', 'interactive.error', 'attention.required',
+  'pty.output', 'pty.replay', 'interactive.opened', 'interactive.error', 'attention.required', 'status', 'upgrade.progress',
 ]);
 const SERVER_TYPES = new Set<ServerToOperatorFrame['type']>([
   'assign', 'unassign', 'agent.restart', 'runner.kill', 'pty.replay.request', 'pty.input', 'pty.resize', 'viewer.count', 'session.cancel', 'interactive.open',
 ]);
 
 /** `hello` 와 배정 셋(`assign`·`unassign`·`agent.restart`)만 러너 밖의 말이다 — 나머지는 전부 `runnerId` 가 있어야 한다. */
-const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'assign', 'unassign', 'agent.restart']);
+const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'status', 'upgrade.progress', 'assign', 'unassign', 'agent.restart']);
 
 function parse(raw: string, known: Set<string>): Record<string, unknown> | null {
   let value: unknown;
@@ -129,4 +145,102 @@ export function parseOperatorFrame(raw: string): OperatorToServerFrame | null {
 
 export function parseServerFrame(raw: string): ServerToOperatorFrame | null {
   return parse(raw, SERVER_TYPES) as ServerToOperatorFrame | null;
+}
+
+/** 박동의 머신 값 — sha256 hex 64자. 그 밖은 버린다(원래 machine-id 를 그대로 보낸 옛·틀린 구현 포함). */
+export function isMachineDigest(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+}
+
+const CREDENTIAL_KINDS = new Set(['claude', 'codex', 'mcp', 'gh']);
+const OPERATOR_PLATFORMS = new Set<string>(['darwin', 'linux', 'win32']);
+const CREDENTIAL_NAME = /^[a-z0-9][a-z0-9._-]{0,47}$/;
+const CREDENTIAL_STATES = new Set<OperatorCredentialState>(['present', 'expired', 'missing']);
+const MAX_CREDENTIALS = 64;
+const MAX_STATUS_AGENTS = 256;
+
+const count = (v: unknown, max = Number.MAX_SAFE_INTEGER): number | null =>
+  typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= max ? v : null;
+const shortText = (v: unknown, max = 64): string | null =>
+  typeof v === 'string' && v.length > 0 && v.length <= max && !/[\u0000-\u001f]/.test(v) ? v : null;
+
+/**
+ * 박동 본문을 **허용한 칸만** 골라 새 객체로 만든다. 모르는 키는 버린다 — 오퍼레이터가 실수로 토큰·경로
+ * 같은 값을 실어도 서버가 들지 않고 화면에도 가지 않는다(H5: 자격 증명은 **상태만**, 값·만료 시각 없음).
+ * 필수는 `turns.running` 하나다. 나머지 칸은 틀리면 그 칸만 뗀다(박동 하나 때문에 상태 전체를 잃지 않게).
+ */
+export function parseOperatorStatus(value: unknown): OperatorStatus | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const v = value as Record<string, unknown>;
+  const turns = typeof v.turns === 'object' && v.turns !== null ? v.turns as Record<string, unknown> : null;
+  const running = count(turns?.running, 10_000);
+  if (running === null) return null;
+  const out: OperatorStatus = { turns: { running, max: count(turns?.max, 10_000) || null } };
+  if (typeof v.platform === 'string' && OPERATOR_PLATFORMS.has(v.platform)) out.platform = v.platform as OperatorPlatform;
+  const startedAt = shortText(v.startedAt, 40);
+  if (startedAt && !Number.isNaN(Date.parse(startedAt))) out.startedAt = new Date(startedAt).toISOString();
+  const bytes = (o: unknown): { totalBytes: number; freeBytes: number } | undefined => {
+    if (typeof o !== 'object' || o === null) return undefined;
+    const r = o as Record<string, unknown>;
+    const total = count(r.totalBytes);
+    const free = count(r.freeBytes);
+    return total !== null && free !== null && free <= total ? { totalBytes: total, freeBytes: free } : undefined;
+  };
+  const memory = bytes(v.memory);
+  if (memory) {
+    out.memory = memory;
+    const turnRss = count((v.memory as Record<string, unknown>).turnRssBytes);
+    if (turnRss !== null) out.memory.turnRssBytes = turnRss;
+  }
+  const disk = bytes(v.disk);
+  if (disk) out.disk = disk;
+  if (Array.isArray(v.runners)) {
+    const runners: { agentId: string; turns: number }[] = [];
+    for (const r of v.runners.slice(0, MAX_STATUS_AGENTS)) {
+      if (typeof r !== 'object' || r === null) continue;
+      const agentId = shortText((r as Record<string, unknown>).agentId);
+      const n = count((r as Record<string, unknown>).turns, 10_000);
+      if (agentId && n !== null) runners.push({ agentId, turns: n });
+    }
+    out.runners = runners;
+  }
+  if (Array.isArray(v.credentials)) {
+    const creds: NonNullable<OperatorStatus['credentials']> = [];
+    for (const c of v.credentials.slice(0, MAX_CREDENTIALS)) {
+      if (typeof c !== 'object' || c === null) continue;
+      const r = c as Record<string, unknown>;
+      const kind = typeof r.kind === 'string' && CREDENTIAL_KINDS.has(r.kind) ? r.kind as 'claude' | 'codex' | 'mcp' | 'gh' : null;
+      const state = typeof r.state === 'string' && CREDENTIAL_STATES.has(r.state as OperatorCredentialState) ? r.state as OperatorCredentialState : null;
+      // 이름은 서버 이름·계정 핸들 꼴만 받는다(security #1200 n3) — 토큰 조각(대문자·긴 난수 등)이 화면에 실리지 않게.
+      const name = typeof r.name === 'string' && CREDENTIAL_NAME.test(r.name) ? r.name : null;
+      if (!kind || !state || !name) continue;
+      const agentIds = Array.isArray(r.agentIds)
+        ? r.agentIds.map((a) => shortText(a)).filter((a): a is string => a !== null).slice(0, MAX_STATUS_AGENTS)
+        : [];
+      creds.push({ kind, name, state, agentIds });
+    }
+    out.credentials = creds;
+  }
+  return out;
+}
+
+const UPGRADE_STAGES = new Set<OperatorUpgradeStage>(['download', 'verify', 'unpack', 'restart', 'healthy', 'failed', 'rolled_back']);
+const UPGRADE_ERROR_MAX = 300;
+
+/**
+ * 업그레이드 단계 프레임의 본문. 단계는 enum, 판은 `isVersionString`, 사유는 제어 문자를 공백으로 바꿔
+ * 300자에서 자른다(화면 한 줄·감사가 아닌 이력이다). 단계가 틀리면 프레임 전체를 버린다.
+ */
+export function parseUpgradeProgress(frame: { stage?: unknown; from?: unknown; to?: unknown; error?: unknown }):
+  { stage: OperatorUpgradeStage; from: string | null; to: string | null; error: string | null } | null {
+  if (typeof frame.stage !== 'string' || !UPGRADE_STAGES.has(frame.stage as OperatorUpgradeStage)) return null;
+  const error = typeof frame.error === 'string' && frame.error.trim()
+    ? frame.error.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, UPGRADE_ERROR_MAX)
+    : null;
+  return {
+    stage: frame.stage as OperatorUpgradeStage,
+    from: isVersionString(frame.from) ? frame.from : null,
+    to: isVersionString(frame.to) ? frame.to : null,
+    error,
+  };
 }

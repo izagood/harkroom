@@ -61,17 +61,122 @@ abstract class Strings {
   /// 파일 고르기 버튼의 접근성 이름.
   String get attachmentAdd;
 
+  /// 리액션 줄 끝의 「이모지 달기」 칩의 접근성 이름.
+  String get reactionAdd;
+
+  /// 같은 시트: 스레드를 열고 작성칸에 키보드를 올린다(채널의 최상위 글만).
+  String get messageReplyInThread;
+
+  /// 메시지를 길게 눌러 여는 시트: `harkroom://message/<id>` 링크 복사.
+  String get messageCopyLink;
+
+  /// 같은 시트: 본문(마크다운 원문, 첨부·리액션 제외) 복사.
+  String get messageCopyBody;
+
+  /// 링크를 담았다는 짧은 확인.
+  String get messageLinkCopied;
+
+  /// 본문을 담았다는 짧은 확인.
+  String get messageBodyCopied;
+
+  /// 클립보드에 못 담았다. 조용히 지나가면 사람은 붙여넣고서야 안다.
+  String get messageCopyFailed;
+
+  /// 시트(남의 글): 이 메시지부터 안 읽은 것으로 되돌린다.
+  String get messageMarkUnread;
+
+  /// 안 읽음으로 표시했다는 짧은 확인.
+  String get messageMarkedUnread;
+
+  /// 시트(내 스레드 답글): 채널에도 올린다.
+  String get messagePostToChannel;
+
+  /// 채널에도 올렸다는 짧은 확인.
+  String get messagePostedToChannel;
+
+  /// 채널에서 거뒀다는 짧은 확인.
+  String get messageRecalledFromChannel;
+
+  /// 시트(채널에도 올린 답글): 채널에서만 거둔다. 글은 스레드에 남는다.
+  String get messageRecallFromChannel;
+
+  /// 시트(내 글): 본문 수정.
+  String get messageEdit;
+
+  /// 수정창의 저장 단추.
+  String get messageEditSave;
+
+  /// 수정창·삭제 확인창의 취소 단추.
+  String get messageEditCancel;
+
+  /// 시트(내 글·admin): 삭제. 빨강, 구분선 아래.
+  String get messageDelete;
+
+  /// 삭제 확인창 제목.
+  String get messageDeleteConfirmTitle;
+
+  /// 삭제 확인창 본문. 되돌릴 수 없다는 것을 말한다.
+  String get messageDeleteConfirmBody;
+
+  /// 삭제 확인창의 지우기 단추.
+  String get messageDeleteConfirm;
+
+  /// 수정·삭제·올리기·거두기·안 읽음 실패. 조용히 지나가지 않는다.
+  String get messageActionFailed;
+
+  /// 작성칸 왼쪽 @ 버튼(개정판 3.4)의 접근성 이름. 누르면 칸에 `@` 를 넣어 후보 줄을 연다.
+  String get mentionAdd;
+
   /// 올리기 실패. **조용히 지나가지 않는다** — 칩이 사라진 이유를 사람이 알아야 한다.
   String get attachmentUploadFailed;
 
+  /// 작성칸 그림의 전체 화면 보기 아래 버튼 — 붙인 것을 뗀다(보낸 것을 지우는 것이 아니다).
+  String get attachmentRemove;
+
+  /// 작성칸 첨부의 × 의 접근성 이름.
+  String attachmentRemoveNamed(String name);
+
+  /// 첨부 시트: 사진 보관함(PHPicker — 권한을 묻지 않는다).
+  String get attachLibrary;
+
+  /// 첨부 시트: 카메라로 사진 찍기.
+  String get attachCamera;
+
+  /// 첨부 시트: 파일 앱에서 고르기.
+  String get attachFile;
+
+  /// 카메라 줄이 비활성일 때의 보조 문구(시뮬레이터).
+  String get attachCameraUnavailable;
+
+  /// 카메라 권한이 꺼진 상태: 시트 제목·본문·버튼.
+  String get cameraDeniedTitle;
+  String get cameraDeniedBody;
+  String get cameraDeniedClose;
+  String get cameraDeniedOpenSettings;
+
+  /// 권한 말고 다른 이유로 카메라가 안 열렸다.
+  String get cameraOpenFailed;
+
   /// 링크 확인 시트의 머리.
   String get linkConfirmTitle;
+
+  /// `harkroom://message/<id>` 를 눌렀는데 그 메시지가 없다(404 — 지워졌거나 다른 커뮤니티의 링크).
+  String get messageLinkGone;
+
+  /// 그 메시지가 내가 못 보는 대화에 있다(403).
+  String get messageLinkForbidden;
+
+  /// 그 밖의 실패(연결 등).
+  String get messageLinkFailed;
 
   /// 링크 확인: 열기.
   String get linkConfirmOpen;
 
   /// 링크 확인: 취소.
   String get linkConfirmCancel;
+
+  /// 표가 행 상한에서 잘렸을 때 남는 줄. `{n}` 은 숨긴 행 수.
+  String get markdownTableMoreRows;
 
   /// userinfo 가 붙은 주소 경고.
   String get linkUserInfoWarning;
@@ -105,11 +210,30 @@ abstract class Strings {
   /// 스레드 답글을 못 읽음.
   String get threadLoadFailed;
 
+  /// 스레드의 원글을 끝내 못 찾았다(지워졌거나 채널·스레드 응답 둘 다에 없다). 회색 한 줄로 그 자리에 선다.
+  String get threadRootMissing;
+
+  /// 링크·찾기로 옛 답글의 창을 받았는데 최신 답글이 빠져 있다 — 창 아래 띠. 누르면 최신 페이지로 간다.
+  String get threadLatestReplies;
+
+  /// 「최신 답글로 ↓」를 눌렀는데 못 받았다 — 같은 줄에 「다시 시도」와 함께.
+  String get threadLatestLoadFailed;
+
+  /// 띠가 선 동안 소켓으로 온 새 답글이 있을 때의 띠 문구 **전체**(수 앞, 행동·화살표 끝). `{n}` 은 99 넘으면 「99+」.
+  /// 두 문구를 이어 붙이지 않는다 — 언어마다 순서가 다르다.
+  String get threadLatestNewReplies;
+
   /// 인박스를 못 읽음.
   String get inboxLoadFailed;
 
   /// 빈 채널에서 할 일.
   String get messagesEmptyHint;
+
+  /// 채널 맨 위 — 더 오래된 말이 없다. `{name}` 은 채널 이름.
+  String get channelStartLine;
+
+  /// 채널 맨 위 — 이전 페이지를 못 받았다. 옆에 "다시 시도" 가 붙는다.
+  String get olderLoadFailed;
 
   /// 빈 인박스의 뜻.
   String get inboxEmptyHint;
@@ -217,8 +341,66 @@ abstract class Strings {
   /// 탭 이름 — 나와 연결.
   String get tabMe;
 
+  /// 머리 프로필 사진 버튼의 이름(tooltip·스크린리더) — 나 시트를 연다.
+  String get meSettings;
+
+  /// 탭바(개정판 3.1): 홈 · DM · 인박스 · 에이전트. 「나」 는 탭이 아니라 머리의 프로필 사진이다.
+  String get tabHome;
+  String get tabDms;
+  String get tabAgents;
+
+
+  /// 에이전트 탭(S7) 묶음: 지금 도는 턴.
+  String get agentsRunning;
+
+  /// 에이전트 탭 묶음: 스스로 걸어 둔 다음 깨움.
+  String get agentsWaiting;
+
+  /// 에이전트 탭 묶음: 이 커뮤니티의 에이전트 전부.
+  String get agentsAll;
+
+  /// 도는 턴이 없을 때.
+  String get agentsNoneRunning;
+
+  /// 에이전트 상태를 못 읽었을 때.
+  String get agentsLoadFailed;
+
+  /// 내 에이전트 표시(owned).
+  String get agentsMine;
+
+  /// DM 탭이 빌 때.
+  String get dmsEmpty;
+
+  /// 홈 묶음 머리(S5b): 즐겨찾기 · (사용자 섹션은 이름 그대로) · 채널.
+  String get sectionStarred;
+  String get sectionChannels;
+
+  /// 바로가기 카드(S5c): 나를 기다리는 것(인박스 안 본 수).
+  String get cardMyTurn;
+
+  /// 바로가기 카드(S5c): 안 읽은 말이 있는 채널.
+  String get cardNew;
+
+  /// 떠 있는 새 메시지 버튼(S5c).
+  String get newMessage;
+
+  /// 새 메시지 시트의 사람 묶음.
+  String get newMessagePeople;
+
+  /// DM 을 열지 못했을 때.
+  String get newMessageDmFailed;
+
+  /// 「새로 온 것」 만 볼 때 안 읽은 채널이 없다.
+  String get unreadOnlyEmpty;
+
   /// 부른 사람이 없다.
   String get inboxEmpty;
+
+  /// 인박스 맨 위 — 다른 커뮤니티에 안 읽은 부름이 있다. `{name}`·`{count}` 가 바뀐다(조사는 「에」만).
+  String get inboxOtherCommunity;
+
+  /// 인박스 맨 위 줄 — 그 커뮤니티로 옮긴다.
+  String get inboxOtherView;
 
   /// 전부 읽음으로.
   String get inboxMarkAllRead;
@@ -244,11 +426,138 @@ abstract class Strings {
   /// 어느 계정으로 들어와 있나. `{handle}` 이 바뀐다.
   String get meSignedInAs;
 
+  /// 나 탭 — 이 기기에 로그인해 둔 커뮤니티 목록의 머리.
+  String get meCommunitiesSection;
+
+  /// 커뮤니티를 하나 더 로그인한다(데스크탑 레일과 같은 말).
+  String get communityAdd;
+
+  /// 목록에서 지금 쓰는 커뮤니티(✓ 의 읽기 이름).
+  String get communityCurrent;
+
+  /// 토큰이 죽은 커뮤니티. 지우지 않고 이 말로 남긴다.
+  String get communityExpired;
+
+  /// 전환 시트 — 나 탭의 커뮤니티 목록으로 간다.
+  String get communityManage;
+
+  /// 머리 타일의 스크린리더 이름. `{name}` 이 바뀐다.
+  String get communitySwitcherLabel;
+
+  /// 머리 타일에 점이 있을 때 이름 뒤에 붙는다(데스크탑 rail.community.tileOthers 와 같은 뜻).
+  String get communityOthersWaiting;
+
+  /// 만료된 커뮤니티 행의 부제.
+  String get communityExpiredSubtitle;
+
+  /// 이 기기의 커뮤니티 전부에서 로그아웃.
+  String get communitySignOutAll;
+
+  /// 모두 로그아웃 확인. `{count}` 가 바뀐다.
+  String get communitySignOutAllConfirm;
+
+  /// 확인 시트의 취소.
+  String get communityCancel;
+
+  /// 커뮤니티 하나에서만 로그아웃. `{name}` 이 바뀐다.
+  String get communitySignOutOne;
+
+  /// 커뮤니티 화면에서 그리로 옮긴다.
+  String get communitySwitchTo;
+
+  /// 옮긴 직후 토스트. `{name}`·`{handle}` 이 바뀐다. **이름 뒤에 조사를 붙이지 않는다** — 커뮤니티 이름은
+  /// 대개 로마자라 받침을 가릴 수 없다(designer #1056).
+  String get communitySwitched;
+
+  /// 이 기기에서만 쓰는 커뮤니티 이름.
+  String get communityLabel;
+
+  /// 표시 이름 칸 설명.
+  String get communityLabelHint;
+
+  /// 커뮤니티 화면 — 로그인한 계정.
+  String get communityAccount;
+
+  /// 커뮤니티 화면 — 서버 주소.
+  String get communityServer;
+
+  /// 커뮤니티 화면 — 서버 릴리스 번호.
+  String get communityVersion;
+
+  /// 서버 버전을 못 읽었다.
+  String get communityVersionUnknown;
+
+  /// 추가 화면의 제출 버튼.
+  String get communityAddSubmit;
+
+  /// 추가 화면을 닫는다(원래 커뮤니티로 돌아간다).
+  String get communityAddClose;
+
+  /// 표시 이름 저장.
+  String get communitySave;
+
+  /// 만료된 커뮤니티의 로그인 화면에서 다른 커뮤니티로 옮긴다.
+  String get loginOtherCommunity;
+
   /// 첨부를 크게 보기.
   String get attachmentOpen;
 
   /// 첨부를 못 불러왔다. **조용히 빈칸을 두지 않는다.**
   String get attachmentFailed;
+
+  /// 그림 넘겨 보기의 메뉴 — 닫고 그 그림이 달린 글을 연다.
+  String get attachmentGoToMessage;
+
+  /// 미리보기 버전 표기. {v} 를 번호로 바꾼다.
+  String get artifactVersion;
+
+  /// 고쳐 올린 안의 버전 표기.
+  String get artifactVersionWithPrev;
+
+  /// 옛 카드 알약 — 같은 안의 더 높은 버전이 있다.
+  String get artifactLatest;
+
+  /// 카드를 눌러 연다(접근성 이름).
+  String get artifactOpen;
+
+  /// 보는 화면 머리에 출처를 밝힌다.
+  String get artifactMadeBy;
+
+  /// 새 서명 경로를 받아 다시 연다.
+  String get artifactReload;
+
+  /// 닫기 버튼 이름.
+  String get artifactClose;
+
+  /// 여는 중.
+  String get artifactLoading;
+
+  /// 413.
+  String get artifactTooLarge;
+
+  /// 403.
+  String get artifactForbidden;
+
+  /// 404.
+  String get artifactGone;
+
+  /// 그 밖의 실패.
+  String get artifactFailed;
+
+  /// 페이지가 스스로 다른 주소로 가려 했다.
+  String get artifactOpenedOutside;
+
+  /// 미리보기 밖으로 넘기기 전 확인(security F2).
+  String get artifactLeaveTitle;
+
+  /// 미리보기 밖으로 넘기기 전 확인(security F2).
+  String get artifactLeaveBody;
+
+  /// 미리보기 밖으로 넘기기 전 확인(security F2).
+  String get artifactLeaveOpen;
+
+  /// 미리보기 밖으로 넘기기 전 확인(security F2).
+  String get artifactLeaveCancel;
 
   /// 이미 고른 물음. 고른 것이 무엇인지는 옆에 그린다.
   String get askAnswered;
@@ -286,6 +595,10 @@ abstract class Strings {
   /// 본문의 멘션이 가리키는 대상을 모른다(지워졌거나, 모바일이 이름표를 안 받는 팀·집합).
   String get mentionUnknown;
 
+  /// 시스템 메시지(입·퇴장·모델 지정)가 가리키는 계정을 모른다. `@` 를 붙이지 않는다 —
+  /// 시스템 줄은 부르는 말이 아니다(`fillSystemAccount`).
+  String get systemAccountUnknown;
+
   // ── P0 ───────────────────────────────────────────────────────────────
   /// 로그인 화면 제목.
   String get loginTitle;
@@ -317,11 +630,24 @@ abstract class Strings {
   /// 채널에 말이 하나도 없다.
   String get messagesEmpty;
 
-  /// 작성칸의 자리 표시. **에이전트를 부르는 방법이 여기 적혀 있다** — 별도 버튼이 없으므로 화면이 말해 주지 않으면 알 길이 없다.
+  /// 작성칸의 자리 표시. `{name}` 은 "# task" 처럼 채널 표시 이름(DM 은 상대 이름)이다.
+  /// 개정판 3.4: 짧게 어디로 가는지만 말한다 — `@` 는 쳐 보면 후보 줄이 뜬다.
   String get composerHint;
 
   /// 보내기 버튼의 접근성 이름.
   String get composerSend;
+
+  /// 고정 멘션 줄의 접근성 이름 — 이 작성칸이 다음 글에서도 저절로 부르는 상대들.
+  String get stickyMentionsLabel;
+
+  /// 고정 멘션 칩 × 의 설명. {handle} 은 `@forge` 꼴.
+  String get stickyMentionRemove;
+
+  /// 자동 멘션 칩 × 의 설명 — 설정을 지우지 않고 **이번 글에서만** 뺀다. {handle} 은 `@forge` 꼴.
+  String get autoMentionSkip;
+
+  /// "이 채널의 에이전트"(`available`) 칩의 설명 — 누르면 고정되어 다음 글부터 부른다.
+  String get channelAgentTitle;
 
   /// 모델 지정(서버 079): "기본" 칩 — 이 에이전트의 설정 모델로 돈다.
   String get modelDefault;
@@ -406,6 +732,110 @@ abstract class Strings {
 
   /// 에이전트 계정임을 나타내는 짧은 표. 사람과 갈라 보여야 누구를 부르는지 안다.
   String get agentBadge;
+
+  // ── 푸시 알림 ──────────────────────────────────────────────────────────
+  /// 첫 로그인 뒤 한 번 뜨는 안내 시트의 제목. OS 권한 창보다 먼저 이유를 말한다.
+  String get pushPromptTitle;
+
+  /// 안내 시트 본문. 무엇이 울리는지(부를 때·답할 때)만 말한다.
+  String get pushPromptBody;
+
+  /// OS 권한 창을 띄우는 버튼.
+  String get pushPromptEnable;
+
+  /// 지금은 묻지 않는다. 다시 띄우지 않는다.
+  String get pushPromptLater;
+
+  /// 나 화면의 알림 절 머리.
+  String get pushSection;
+
+  /// 권한을 아직 묻지 않았을 때 「알림」 줄의 설명.
+  String get pushNotAsked;
+
+  /// OS 권한 창을 띄우는 버튼.
+  String get pushTurnOn;
+
+  /// 권한이 거부됐을 때 「알림」 줄의 설명.
+  String get pushDenied;
+
+  /// iOS 설정 앱의 이 앱 화면으로 보내는 버튼.
+  String get pushOpenSettings;
+
+  /// 커뮤니티별 알림 스위치가 켜져 있을 때의 설명.
+  String get pushCommunityOn;
+
+  /// 커뮤니티별 알림 스위치가 꺼져 있을 때의 설명.
+  String get pushCommunityOff;
+
+  /// 알림에 글 내용을 싣는 스위치의 이름(나 › 알림).
+  String get pushPreview;
+
+  /// 그 스위치의 설명 — 켜면 내용이 Apple 을 지난다는 것을 말한다.
+  String get pushPreviewHint;
+
+  // ── 찾기 ─────────────────────────────────────────────────────────────
+  /// 메시지 찾기를 여는 버튼(탭 막대 오른쪽·채널/스레드 머리)의 이름.
+  String get searchButton;
+
+  /// 찾기 입력칸이 비었을 때.
+  String get searchHint;
+
+  /// 찾기 화면을 닫는다.
+  String get searchCancel;
+
+  /// 범위 칩: 볼 수 있는 대화 전부.
+  String get searchScopeAll;
+
+  /// 범위 칩: 지금 연 스레드 안.
+  String get searchScopeThread;
+
+  /// 아직 찾을 말을 덜 쳤다(두 글자부터 서버에 보낸다).
+  String get searchStart;
+
+  /// 맞는 것이 없다. {q} 는 찾은 말.
+  String get searchNoResults;
+
+  /// 두 글자로 찾아 0건일 때 — 서버는 두 글자를 낱말 앞부분으로만 맞춘다.
+  String get searchTwoLetterHint;
+
+  /// 범위를 좁혀 0건일 때 전체로 넓히는 버튼.
+  String get searchEverywhere;
+
+  /// 첫 결과를 못 받았다.
+  String get searchFailed;
+
+  /// 다음 결과 묶음을 못 받았다.
+  String get searchMoreFailed;
+
+  /// 결과 줄: 그 말이 스레드 답글이다.
+  String get searchInThread;
+
+  /// 빈 찾기 화면: 최근 찾은 말 묶음의 머리.
+  String get searchRecent;
+
+  /// 최근 찾은 말을 모두 지우는 버튼.
+  String get searchRecentClear;
+
+  /// 최근 찾은 말 하나를 지우는 버튼의 이름.
+  String get searchRecentRemove;
+
+  /// 이름이 맞는 채널·DM 묶음의 머리.
+  String get searchShortcuts;
+
+  /// 결과 머리 줄의 건수. `{n}` 은 받은 수.
+  String get searchCount;
+
+  /// 더 있을 때의 건수(`{n}+`).
+  String get searchCountMore;
+
+  /// 순서 메뉴 단추의 이름(VoiceOver).
+  String get searchSort;
+
+  /// 순서: 관련도순 · 최신순과 그 한 줄 설명.
+  String get searchSortRelevance;
+  String get searchSortRelevanceHint;
+  String get searchSortRecent;
+  String get searchSortRecentHint;
 }
 
 /// **영어와 같아도 되는 키.** 고유명사처럼 번역이 존재하지 않는 것들이다.
@@ -414,6 +844,8 @@ abstract class Strings {
 /// 무조건 빨개지고, 그 시험을 끄면 진짜로 번역이 빠진 키도 함께 통과한다. 예외를
 /// **값으로** 적어 두는 것이 시험을 끄는 것보다 낫다 — 늘어나면 눈에 보인다.
 const Set<String> i18nAllowSameAsEnglish = {
+  // 버전 표기 `v3` — 기호라 두 언어가 같다(데스크톱 `artifact.card.version` 과 같다).
+  'artifactVersion',
   // 고유명사.
   'appName',
   // 주소 예시다. 번역할 말이 없다 — `https://example.com` 은 어느 언어에서도 같다.
@@ -441,10 +873,47 @@ Map<String, String> stringsToMap(Strings s) => {
       'commonBack': s.commonBack,
       'commonRetry': s.commonRetry,
       'attachmentAdd': s.attachmentAdd,
+      'reactionAdd': s.reactionAdd,
+      'messageReplyInThread': s.messageReplyInThread,
+      'messageCopyLink': s.messageCopyLink,
+      'messageCopyBody': s.messageCopyBody,
+      'messageLinkCopied': s.messageLinkCopied,
+      'messageBodyCopied': s.messageBodyCopied,
+      'messageCopyFailed': s.messageCopyFailed,
+      'messageMarkUnread': s.messageMarkUnread,
+      'messageMarkedUnread': s.messageMarkedUnread,
+      'messagePostToChannel': s.messagePostToChannel,
+      'messageRecallFromChannel': s.messageRecallFromChannel,
+      'messagePostedToChannel': s.messagePostedToChannel,
+      'messageRecalledFromChannel': s.messageRecalledFromChannel,
+      'messageEdit': s.messageEdit,
+      'messageEditSave': s.messageEditSave,
+      'messageEditCancel': s.messageEditCancel,
+      'messageDelete': s.messageDelete,
+      'messageDeleteConfirmTitle': s.messageDeleteConfirmTitle,
+      'messageDeleteConfirmBody': s.messageDeleteConfirmBody,
+      'messageDeleteConfirm': s.messageDeleteConfirm,
+      'messageActionFailed': s.messageActionFailed,
+      'mentionAdd': s.mentionAdd,
       'attachmentUploadFailed': s.attachmentUploadFailed,
+      'attachmentRemove': s.attachmentRemove,
+      'attachmentRemoveNamed': s.attachmentRemoveNamed('{name}'),
+      'attachLibrary': s.attachLibrary,
+      'attachCamera': s.attachCamera,
+      'attachFile': s.attachFile,
+      'attachCameraUnavailable': s.attachCameraUnavailable,
+      'cameraDeniedTitle': s.cameraDeniedTitle,
+      'cameraDeniedBody': s.cameraDeniedBody,
+      'cameraDeniedClose': s.cameraDeniedClose,
+      'cameraDeniedOpenSettings': s.cameraDeniedOpenSettings,
+      'cameraOpenFailed': s.cameraOpenFailed,
       'linkConfirmTitle': s.linkConfirmTitle,
+      'messageLinkGone': s.messageLinkGone,
+      'messageLinkForbidden': s.messageLinkForbidden,
+      'messageLinkFailed': s.messageLinkFailed,
       'linkConfirmOpen': s.linkConfirmOpen,
       'linkConfirmCancel': s.linkConfirmCancel,
+      'markdownTableMoreRows': s.markdownTableMoreRows,
       'linkUserInfoWarning': s.linkUserInfoWarning,
       'linkNonAsciiWarning': s.linkNonAsciiWarning,
       'loadFailedServer': s.loadFailedServer,
@@ -456,8 +925,14 @@ Map<String, String> stringsToMap(Strings s) => {
       'loadFailedHint': s.loadFailedHint,
       'messagesLoadFailed': s.messagesLoadFailed,
       'threadLoadFailed': s.threadLoadFailed,
+      'threadRootMissing': s.threadRootMissing,
+      'threadLatestReplies': s.threadLatestReplies,
+      'threadLatestLoadFailed': s.threadLatestLoadFailed,
+      'threadLatestNewReplies': s.threadLatestNewReplies,
       'inboxLoadFailed': s.inboxLoadFailed,
       'messagesEmptyHint': s.messagesEmptyHint,
+      'channelStartLine': s.channelStartLine,
+      'olderLoadFailed': s.olderLoadFailed,
       'inboxEmptyHint': s.inboxEmptyHint,
       'bootUnreachableTitle': s.bootUnreachableTitle,
       'connectionLostBand': s.connectionLostBand,
@@ -493,7 +968,28 @@ Map<String, String> stringsToMap(Strings s) => {
       'tabChannels': s.tabChannels,
       'tabInbox': s.tabInbox,
       'tabMe': s.tabMe,
+      'meSettings': s.meSettings,
+      'tabHome': s.tabHome,
+      'tabDms': s.tabDms,
+      'tabAgents': s.tabAgents,
+      'agentsRunning': s.agentsRunning,
+      'agentsWaiting': s.agentsWaiting,
+      'agentsAll': s.agentsAll,
+      'agentsNoneRunning': s.agentsNoneRunning,
+      'agentsLoadFailed': s.agentsLoadFailed,
+      'agentsMine': s.agentsMine,
+      'dmsEmpty': s.dmsEmpty,
+      'sectionStarred': s.sectionStarred,
+      'sectionChannels': s.sectionChannels,
+      'cardMyTurn': s.cardMyTurn,
+      'cardNew': s.cardNew,
+      'newMessage': s.newMessage,
+      'newMessagePeople': s.newMessagePeople,
+      'newMessageDmFailed': s.newMessageDmFailed,
+      'unreadOnlyEmpty': s.unreadOnlyEmpty,
       'inboxEmpty': s.inboxEmpty,
+      'inboxOtherCommunity': s.inboxOtherCommunity,
+      'inboxOtherView': s.inboxOtherView,
       'inboxMarkAllRead': s.inboxMarkAllRead,
       'inboxReasonMention': s.inboxReasonMention,
       'inboxReasonThreadReply': s.inboxReasonThreadReply,
@@ -502,8 +998,50 @@ Map<String, String> stringsToMap(Strings s) => {
       'inboxReasonAskClosed': s.inboxReasonAskClosed,
       'inboxReasonOther': s.inboxReasonOther,
       'meSignedInAs': s.meSignedInAs,
+      'meCommunitiesSection': s.meCommunitiesSection,
+      'communityAdd': s.communityAdd,
+      'communityCurrent': s.communityCurrent,
+      'communityExpired': s.communityExpired,
+      'communityManage': s.communityManage,
+      'communitySwitcherLabel': s.communitySwitcherLabel,
+      'communityOthersWaiting': s.communityOthersWaiting,
+      'communityExpiredSubtitle': s.communityExpiredSubtitle,
+      'communitySignOutAll': s.communitySignOutAll,
+      'communitySignOutAllConfirm': s.communitySignOutAllConfirm,
+      'communityCancel': s.communityCancel,
+      'communitySignOutOne': s.communitySignOutOne,
+      'communitySwitchTo': s.communitySwitchTo,
+      'communitySwitched': s.communitySwitched,
+      'communityLabel': s.communityLabel,
+      'communityLabelHint': s.communityLabelHint,
+      'communityAccount': s.communityAccount,
+      'communityServer': s.communityServer,
+      'communityVersion': s.communityVersion,
+      'communityVersionUnknown': s.communityVersionUnknown,
+      'communityAddSubmit': s.communityAddSubmit,
+      'communityAddClose': s.communityAddClose,
+      'communitySave': s.communitySave,
+      'loginOtherCommunity': s.loginOtherCommunity,
       'attachmentOpen': s.attachmentOpen,
       'attachmentFailed': s.attachmentFailed,
+      'attachmentGoToMessage': s.attachmentGoToMessage,
+      'artifactVersion': s.artifactVersion,
+      'artifactVersionWithPrev': s.artifactVersionWithPrev,
+      'artifactLatest': s.artifactLatest,
+      'artifactOpen': s.artifactOpen,
+      'artifactMadeBy': s.artifactMadeBy,
+      'artifactReload': s.artifactReload,
+      'artifactClose': s.artifactClose,
+      'artifactLoading': s.artifactLoading,
+      'artifactTooLarge': s.artifactTooLarge,
+      'artifactForbidden': s.artifactForbidden,
+      'artifactGone': s.artifactGone,
+      'artifactFailed': s.artifactFailed,
+      'artifactOpenedOutside': s.artifactOpenedOutside,
+      'artifactLeaveTitle': s.artifactLeaveTitle,
+      'artifactLeaveBody': s.artifactLeaveBody,
+      'artifactLeaveOpen': s.artifactLeaveOpen,
+      'artifactLeaveCancel': s.artifactLeaveCancel,
       'askAnswered': s.askAnswered,
       'askClosed': s.askClosed,
       'askDecline': s.askDecline,
@@ -516,6 +1054,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'threadRepliesMany': s.threadRepliesMany,
       'mentionPickerEmpty': s.mentionPickerEmpty,
       'mentionUnknown': s.mentionUnknown,
+      'systemAccountUnknown': s.systemAccountUnknown,
       'loginTitle': s.loginTitle,
       'loginIdLabel': s.loginIdLabel,
       'loginPasswordLabel': s.loginPasswordLabel,
@@ -528,6 +1067,10 @@ Map<String, String> stringsToMap(Strings s) => {
       'messagesEmpty': s.messagesEmpty,
       'composerHint': s.composerHint,
       'composerSend': s.composerSend,
+      'stickyMentionsLabel': s.stickyMentionsLabel,
+      'stickyMentionRemove': s.stickyMentionRemove,
+      'autoMentionSkip': s.autoMentionSkip,
+      'channelAgentTitle': s.channelAgentTitle,
       'modelDefault': s.modelDefault,
       'modelThreadSet': s.modelThreadSet,
       'modelAgentSet': s.modelAgentSet,
@@ -556,4 +1099,40 @@ Map<String, String> stringsToMap(Strings s) => {
       'connectionDead': s.connectionDead,
       'noticeSessionNotSaved': s.noticeSessionNotSaved,
       'agentBadge': s.agentBadge,
+      'pushPromptTitle': s.pushPromptTitle,
+      'pushPromptBody': s.pushPromptBody,
+      'pushPromptEnable': s.pushPromptEnable,
+      'pushPromptLater': s.pushPromptLater,
+      'pushSection': s.pushSection,
+      'pushNotAsked': s.pushNotAsked,
+      'pushTurnOn': s.pushTurnOn,
+      'pushDenied': s.pushDenied,
+      'pushOpenSettings': s.pushOpenSettings,
+      'pushCommunityOn': s.pushCommunityOn,
+      'pushCommunityOff': s.pushCommunityOff,
+      'pushPreview': s.pushPreview,
+      'pushPreviewHint': s.pushPreviewHint,
+      'searchButton': s.searchButton,
+      'searchHint': s.searchHint,
+      'searchCancel': s.searchCancel,
+      'searchScopeAll': s.searchScopeAll,
+      'searchScopeThread': s.searchScopeThread,
+      'searchStart': s.searchStart,
+      'searchNoResults': s.searchNoResults,
+      'searchTwoLetterHint': s.searchTwoLetterHint,
+      'searchEverywhere': s.searchEverywhere,
+      'searchFailed': s.searchFailed,
+      'searchMoreFailed': s.searchMoreFailed,
+      'searchInThread': s.searchInThread,
+      'searchRecent': s.searchRecent,
+      'searchRecentClear': s.searchRecentClear,
+      'searchRecentRemove': s.searchRecentRemove,
+      'searchShortcuts': s.searchShortcuts,
+      'searchCount': s.searchCount,
+      'searchCountMore': s.searchCountMore,
+      'searchSort': s.searchSort,
+      'searchSortRelevance': s.searchSortRelevance,
+      'searchSortRelevanceHint': s.searchSortRelevanceHint,
+      'searchSortRecent': s.searchSortRecent,
+      'searchSortRecentHint': s.searchSortRecentHint,
     };

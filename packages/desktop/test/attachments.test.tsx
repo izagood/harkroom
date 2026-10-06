@@ -584,7 +584,47 @@ describe('보내기 전 첨부 칩의 미리보기', () => {
 
     const chip = (await screen.findByRole('button', { name: /remove shot\.png/i })).parentElement;
     // 칩의 첫 칸이 그림 자리다 — 바이트가 오기 전에도 그림과 같은 높이를 차지해야 한다.
-    expect(chip?.firstElementChild?.className).toContain('h-6');
+    expect(chip?.className).toContain('h-20');
+  });
+
+  // 24px 칩은 미리보기 효과가 거의 없었다(jaebin) — 그림은 80px 타일이고 이름은 호버 때만 띠로 뜬다.
+  it('그림은 80px 타일이고 이름·크기 띠는 호버·포커스 때만 보인다', async () => {
+    fakeController({ upload: vi.fn(async () => att({ contentType: 'image/png', filename: 'shot.png', sizeBytes: 2048 })) });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('shot.png', 'image/png');
+
+    await screen.findByTestId('attachment-thumb');
+    const tile = screen.getByTestId('pending-attachment');
+    expect(tile.className).toContain('w-20');
+    expect(tile.getAttribute('title')).toBe('shot.png · 2.0 KB');
+    const band = screen.getByText('shot.png').parentElement!;
+    expect(band.className).toContain('opacity-0');
+    expect(band.className).toContain('group-hover:opacity-100');
+    expect(band.className).toContain('group-focus-within:opacity-100');
+  });
+
+  it('타일을 누르면 확대 보기가 열린다', async () => {
+    fakeController({ upload: vi.fn(async () => att({ contentType: 'image/png', filename: 'shot.png' })) });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('shot.png', 'image/png');
+
+    await screen.findByTestId('attachment-thumb');
+    fireEvent.click(screen.getByRole('button', { name: '크게 보기: shot.png' }));
+    expect(await screen.findByTestId('attachment-full')).toBeTruthy();
+  });
+
+  // 그림이 아닌 첨부는 보여 줄 그림이 없다 — 이름·크기가 곧 미리보기라 호버 뒤로 숨기지 않는다.
+  it('그림이 아닌 첨부는 이름이 늘 보이는 같은 높이 카드다', async () => {
+    fakeController({ upload: vi.fn(async () => att({ filename: 'note.txt' })) });
+    render(<Composer onSend={vi.fn()} />);
+
+    pick('note.txt', 'text/plain');
+
+    const name = await screen.findByText('note.txt');
+    expect(name.className).not.toContain('opacity-0');
+    expect(screen.getByTestId('pending-attachment').className).toContain('h-20');
   });
 });
 
@@ -747,11 +787,15 @@ describe('첨부 이미지를 눌러 크게 보기', () => {
    * 뒤의 목록을 움직이고, Tab 은 겹창이 아니라 뒤 화면의 다음 버튼으로 간다 — 키보드로
    * 열었을 때 `×` 가 손에 닿지 않는 것도 같은 이유다.
    */
-  it('열면 포커스가 겹창 안으로 들어온다', async () => {
+  // 포커스는 그림 칸이 받는다(designer 3192efed) — 화살표·Space·Home/End 가 바로 스크롤하고, Enter 로 [저장]이
+  // 눌리는 일이 없다(예전엔 닫기 버튼이 받았다 — 같은 이유로 저장 버튼을 피했다).
+  it('열면 포커스가 겹창 안의 그림 칸으로 들어온다', async () => {
     fakeController();
     fireEvent.click(await renderImage());
 
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: '확대 보기 닫기' }));
+    const dialog = screen.getByRole('dialog', { name: 'shot.png' });
+    expect(document.activeElement).toBe(screen.getByTestId('zoom-body'));
+    expect(dialog.contains(document.activeElement)).toBe(true);
   });
 
   /**

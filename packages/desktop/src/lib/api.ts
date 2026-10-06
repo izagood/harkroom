@@ -2,10 +2,43 @@ import type {
   AutomationIngressIssued, AutomationRunView, AutomationTrigger, AutomationView,
   McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, MentionPolicy,
   AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, ThreadAgentModelView,
-  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
-import { MENTION_EDIT_SKIPPED_HEADER } from '@harkroom/shared';
-import type { MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
+  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InboxThreadState, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
+import { MENTION_EDIT_SKIPPED_HEADER, type GrantRow, type Capability, type ApiConnectorView, type ApiGrantLimits, type ApiMethod } from '@harkroom/shared';
+import type { MemoryAudit, MemoryBatchResult, MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
+
+/** `POST /attachments/:id/preview` 의 답. `latestTitle` 은 091(#1065) 서버부터 싣는다. */
+export interface PreviewTicket {
+  path: string;
+  expiresAt: string;
+  artifactId: string;
+  version: number;
+  latestVersion: number;
+  title: string;
+  latestTitle?: string;
+}
+
+/** 비밀 한 줄(`GET /secrets`). 값은 없다 — 판 번호와 크기뿐이다. */
+export interface SecretView {
+  id: string; name: string; kind: 'text' | 'file'; filename: string | null; description: string;
+  ownerAccountId: string; expiresAt: string | null; createdAt: string; updatedAt: string;
+  version: number | null; sizeBytes: number | null; grantCount: number;
+  /**
+   * 에이전트가 만든 비밀(서버 102)이면 그 에이전트와 원인 글. `valueSetByAgentId` 는 **지금 값**을 정한 에이전트다 —
+   * 그 에이전트는 값을 안다(security L2). 사람이 값을 바꾸면 null. 옛 서버는 칸이 없다(undefined) — 배지를 그리지 않는다.
+   */
+  createdByAgentId?: string | null; createdCauseMessageId?: string | null; valueSetByAgentId?: string | null;
+}
+/** 비밀을 파일로 받을 수 있는 에이전트(`secret.mount`). channelId null = 모든 채널, operatorId null = 아무 오퍼레이터. */
+export interface SecretGrantView {
+  id: string; agentId: string; channelId: string | null; operatorId: string | null;
+  grantedBy: string; grantedAt: string; suspendedAt: string | null; suspendReason: string | null;
+}
+/** 접근 기록 한 줄. 값·해시는 없다. */
+export interface SecretAccessView {
+  id: string; version: number | null; agentId: string | null; operatorId: string | null; turnId: string | null;
+  channelId: string | null; threadRootId: string | null; result: string; reason: string | null; at: string;
+}
 
 export class ApiError extends Error {
   /**
@@ -315,20 +348,36 @@ export class ApiClient {
     return (await this.req<{ entries: InboxEntry[] }>('GET', '/inbox')).entries;
   }
   /**
-   * 메시지를 고친다. `postMessage` 처럼 **부름의 결과를 함께** 낸다 — 수정으로 넣은 멘션도
-   * 부르기 때문이다(076). 결과가 헤더로 오는 이유는 게시와 같다(`NOTIFIED_HEADER` 주석).
+   * 「내 작업」 보드의 재료 — 전체 항목 + 그 항목들이 속한 **스레드 머리**(지금 상태) + inbox 밖의
+   * 머리(내가 연·말한 스레드 30일 ∩ 에이전트가 낀 것, 서버 #1137). 열은 머리가 정한다(`lib/inboxBoard`).
+   * inbox 항목이 없는 머리도 카드가 된다 — 시켜 놓고 아직 답이 없는 일이 그것이다.
+   *
+   * `truncated` 는 inbox 밖 머리가 서버 상한(300)에서 잘렸다는 뜻이다.
+   */
+  async inboxBoard(): Promise<{ entries: InboxEntry[]; threads: MessageRow[] | null; threadStates: InboxThreadState[]; truncated?: boolean }> {
+    const res = await this.req<{ entries: InboxEntry[]; threads?: MessageRow[]; threadStates?: InboxThreadState[]; truncated?: boolean }>('GET', '/inbox/board');
+    return { entries: res.entries, threads: res.threads ?? null, threadStates: res.threadStates ?? [], truncated: res.truncated ?? false };
+  }
+  /** 스레드 하나의 **내** 완료·나중에(2/2, 089). `state: null` 이면 되돌린다. */
+  setInboxThreadState(
+    rootId: string, body: { state: 'done' } | { state: 'later'; until: string } | { state: null },
+  ): Promise<{ state: InboxThreadState | null }> {
+    return this.req('PUT', `/inbox/threads/${rootId}`, body);
+  }
+  /**
+   * 메시지를 고친다. 수정으로 넣은 멘션도 서버가 부르지만(076) 몇 명을 불렀는지는 화면에
+   * 쓰지 않으므로 읽지 않는다.
    *
    * `mentionSkipped` 는 새 멘션을 넣었는데 서버가 **부르지 않은** 이유다(작성 뒤 24시간이
    * 지났거나 에이전트의 글). 없으면 null — 옛 서버도 null 이다.
    */
   async editMessage(
     channelId: string, messageId: string, body: string,
-  ): Promise<{ message: MessageRow; notified: NotifiedResult; mentionSkipped: MentionEditSkipReason | null }> {
+  ): Promise<{ message: MessageRow; mentionSkipped: MentionEditSkipReason | null }> {
     const res = await this.reqWithHeaders<MessageRow>('PATCH', `/channels/${channelId}/messages/${messageId}`, { body });
     const skipped = res.headers.get(MENTION_EDIT_SKIPPED_HEADER);
     return {
       message: res.body,
-      notified: readNotifiedHeaders(res.headers),
       mentionSkipped: skipped === 'too_old' || skipped === 'agent_author' ? skipped : null,
     };
   }
@@ -366,11 +415,6 @@ export class ApiClient {
 
   createAgent(input: { handle: string; displayName: string } & Partial<AgentConfig>): Promise<AgentView> {
     return this.req('POST', '/accounts/agents', input);
-  }
-
-  /** PAT 는 서버가 해시만 보관하므로 생성 직후 한 번만 볼 수 있다. */
-  async mintPat(accountId: string, label: string): Promise<string> {
-    return (await this.req<{ token: string }>('POST', `/accounts/${accountId}/pats`, { label })).token;
   }
 
   async listPats(accountId: string): Promise<PatView[]> {
@@ -575,6 +619,20 @@ export class ApiClient {
   }
 
   /**
+   * 미리보기(아티팩트) 서명 경로를 받는다(서버 0.3.131~, #1045). iframe 은 Bearer 헤더를 못 싣기 때문에
+   * 60초짜리 서명 경로를 받아 프레임에 띄운다 — 토큰은 그 URL 에 없다. 열 때마다 새로 받는다(만료는
+   * 오류가 아니라 재발급 사유다). 절대 URL 은 이 앱이 아는 서버 주소로 짓는다(`previewUrl`).
+   */
+  issuePreview(attachmentId: string): Promise<PreviewTicket> {
+    return this.req('POST', `/attachments/${attachmentId}/preview`);
+  }
+
+  /** 서명 경로 → 프레임에 넣을 절대 URL. 서버는 프록시 뒤라 자기 공개 주소를 모른다. */
+  previewUrl(path: string): string {
+    return `${this.baseUrl}${path}`;
+  }
+
+  /**
    * 첨부 바이트를 받는다. **토큰을 URL 에 넣지 않는다** — 서버 로거가 URL 을 기록하므로
    * 쿼리 파라미터로 넘기면 자격증명이 평문으로 로그에 남는다. `<img src>` 와 `<a href>` 는
    * 헤더를 붙일 수 없으니, 호출부가 이 blob 으로 objectURL 을 만들어 쓴다.
@@ -664,6 +722,11 @@ export class ApiClient {
     return this.req('DELETE', `/operators/${id}`);
   }
 
+  /** 사람이 붙이는 이름. `null`(또는 빈 값)이면 등록 때의 호스트명으로 돌아간다. */
+  renameOperator(id: string, label: string | null): Promise<OperatorView> {
+    return this.req('PATCH', `/operators/${id}`, { label });
+  }
+
   /** 에이전트를 오퍼레이터에 배정한다. 능력에 없으면 409 `not_capable`. */
   assignAgent(agentId: string, operatorId: string): Promise<AgentAssignmentView> {
     return this.req('PUT', `/accounts/agents/${agentId}/assignment`, { operatorId });
@@ -674,6 +737,80 @@ export class ApiClient {
   }
 
   // --- 호출 범위(스펙 2026-09-20 §6) ---------------------------------------------------
+
+  /**
+   * capability grant(055). 에이전트 머지 권한(`repo.merge`, 스레드 3deac356)이 첫 화면 사용자다 — scope 는
+   * `repo:<owner>/<name>`, 주는 사람은 그 에이전트의 소유자(사람), 거두기는 소유자나 admin. 판정은 전부 서버.
+   */
+  listGrants(accountId: string): Promise<GrantRow[]> {
+    return this.req<{ grants: GrantRow[] }>('GET', `/accounts/${accountId}/grants`).then((r) => r.grants);
+  }
+  putGrant(accountId: string, body: { capability: Capability; scope: string; expiresAt?: string | null; allowAgentCause?: boolean; limits?: ApiGrantLimits; writeNeedsHumanCause?: boolean; delegateDepth?: number }): Promise<GrantRow[]> {
+    return this.req<{ grants: GrantRow[] }>('PUT', `/accounts/${accountId}/grants`, body).then((r) => r.grants);
+  }
+  /**
+   * 머지 거절 카드의 [7일 주기](스레드 febe9ff8 P3·P5). 소유자 사람 세션만 — scope·기한은 서버가 거절 기록과 상수로 정한다.
+   * 본문은 보내지 않는다(서버도 읽지 않는다).
+   */
+  grantFromMergeDenial(agentId: string, denialId: string): Promise<{ repo: string; expiresAt: string; cardMessageId: string | null }> {
+    return this.req('POST', `/agents/${agentId}/merge-denials/${denialId}/grant`);
+  }
+  deleteGrant(accountId: string, capability: Capability, scope: string): Promise<void> {
+    return this.req('DELETE', `/accounts/${accountId}/grants/${encodeURIComponent(capability)}?scope=${encodeURIComponent(scope)}`);
+  }
+  /** 위임 대기 줄(E2) 허락·거절 — 루트 사람만(외부 API P5, #1157). 거절은 줄을 지운다(아래도 함께). */
+  approveDelegation(grantId: string): Promise<void> {
+    return this.req('POST', `/grants/${grantId}/approve`);
+  }
+  declineDelegation(grantId: string): Promise<void> {
+    return this.req('POST', `/grants/${grantId}/decline`);
+  }
+
+  /** API 연결(098, 외부 API 권한 C안). 사람만 쓴다 — 판정은 서버 `connectorRoutes.ts`. 키 값은 오가지 않는다(비밀 id 만). */
+  listConnectors(): Promise<ApiConnectorView[]> {
+    return this.req<{ connectors: ApiConnectorView[] }>('GET', '/connectors').then((r) => r.connectors);
+  }
+  createConnector(body: { name: string; baseUrl: string; authKind: 'bearer' | 'header' | 'none'; authHeader?: string | null; secretId?: string | null; methods: ApiMethod[] }): Promise<ApiConnectorView> {
+    return this.req<{ connector: ApiConnectorView }>('POST', '/connectors', body).then((r) => r.connector);
+  }
+  patchConnector(id: string, body: { baseUrl?: string; authKind?: 'bearer' | 'header' | 'none'; authHeader?: string | null; secretId?: string | null; methods?: ApiMethod[] }): Promise<{ connector: ApiConnectorView; suspendedGrants: number }> {
+    return this.req('PATCH', `/connectors/${id}`, body);
+  }
+  deleteConnector(id: string): Promise<void> {
+    return this.req('DELETE', `/connectors/${id}`);
+  }
+
+  /**
+   * 비밀 보관소(085, 사람용 REST). 값은 **보내기만** 한다 — 서버는 값이나 그 해시를 어떤 응답에도 싣지 않는다.
+   * 남의 비밀은 있어도 404 다(이름은 권한의 지도). 판정은 전부 서버 — `secretRoutes.ts`.
+   */
+  listSecrets(): Promise<{ enabled: boolean; secrets: SecretView[] }> {
+    return this.req('GET', '/secrets');
+  }
+  createSecret(body: { name: string; kind: 'text' | 'file'; filename?: string | null; description: string; expiresAt: string | null; value?: string; valueBase64?: string }): Promise<SecretView> {
+    return this.req<{ secret: SecretView }>('POST', '/secrets', body).then((r) => r.secret);
+  }
+  patchSecret(id: string, body: { description?: string; expiresAt?: string | null }): Promise<SecretView> {
+    return this.req<{ secret: SecretView }>('PATCH', `/secrets/${id}`, body).then((r) => r.secret);
+  }
+  replaceSecretValue(id: string, body: { value?: string; valueBase64?: string }): Promise<SecretView> {
+    return this.req<{ secret: SecretView }>('PUT', `/secrets/${id}/value`, body).then((r) => r.secret);
+  }
+  deleteSecret(id: string): Promise<void> {
+    return this.req('DELETE', `/secrets/${id}`);
+  }
+  listSecretGrants(id: string): Promise<SecretGrantView[]> {
+    return this.req<{ grants: SecretGrantView[] }>('GET', `/secrets/${id}/grants`).then((r) => r.grants);
+  }
+  putSecretGrant(id: string, body: { agentId: string; channelId: string | null; operator: 'current' | 'any' }): Promise<void> {
+    return this.req<unknown>('PUT', `/secrets/${id}/grants`, body).then(() => undefined);
+  }
+  deleteSecretGrant(id: string, grantId: string): Promise<void> {
+    return this.req('DELETE', `/secrets/${id}/grants/${grantId}`);
+  }
+  listSecretAccess(id: string): Promise<SecretAccessView[]> {
+    return this.req<{ access: SecretAccessView[] }>('GET', `/secrets/${id}/access?limit=100`).then((r) => r.access);
+  }
 
   /** `invokeScope: 'list'` 의 명단에 사람을 넣는다. 멱등. 답은 갱신된 AgentView. */
   addInvoker(agentId: string, accountId: string): Promise<AgentView> {
@@ -783,6 +920,25 @@ export class ApiClient {
   /** 서버 080: 쓰기 검사에 걸린 기억을 사람이 확인한다 — 표시를 풀어 다시 프롬프트에 싣는다. */
   confirmAgentMemory(agentId: string, slug: string): Promise<{ ok: true }> {
     return this.req('POST', `/accounts/agents/${agentId}/memory/${encodeURIComponent(slug)}/confirm`);
+  }
+
+  /** 정리 후보(#1186). 에이전트 `memory.audit` 과 같은 분류, 사람 화면은 목록 상한 200. */
+  async agentMemoryAudit(agentId: string): Promise<MemoryAudit> {
+    return (await this.req<{ audit: MemoryAudit }>('GET', `/accounts/agents/${agentId}/memory/audit`)).audit;
+  }
+
+  /** 여러 개 보관(#1186). slug 마다 결과가 온다 — 일부 실패가 나머지를 막지 않는다. */
+  async archiveAgentMemories(agentId: string, slugs: string[]): Promise<{ slug: string; result: MemoryBatchResult }[]> {
+    return (await this.req<{ results: { slug: string; result: MemoryBatchResult }[] }>(
+      'POST', `/accounts/agents/${agentId}/memory/archive`, { slugs },
+    )).results;
+  }
+
+  /** 여러 개 되살리기(#1186). 살아 있는 것이 200 이면 뒤의 것이 `too_many`. */
+  async unarchiveAgentMemories(agentId: string, slugs: string[]): Promise<{ slug: string; result: MemoryBatchResult }[]> {
+    return (await this.req<{ results: { slug: string; result: MemoryBatchResult }[] }>(
+      'POST', `/accounts/agents/${agentId}/memory/unarchive`, { slugs },
+    )).results;
   }
 
   async agentMemoryRevisions(agentId: string, slug: string): Promise<MemoryRevision[]> {

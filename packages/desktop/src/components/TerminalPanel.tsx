@@ -321,13 +321,13 @@ export function TerminalPanel() {
           {' · '}
           {threadRoot ? threadExcerpt(threadRoot.body) : t('terminal.header.thread')}
         </span>
-        {state && <span className="shrink-0 rounded bg-surface-raised px-1.5 py-0.5">{t(STATE_LABEL[state])}</span>}
+        {state && <span className="shrink-0 rounded-row bg-surface-raised px-1.5 py-0.5">{t(STATE_LABEL[state])}</span>}
         {/* **닫기는 줄지 않는다**(`shrink-0`). 이 줄에서 마지막까지 남아야 하는 것은 이
             버튼 하나다 — 꼬리표(핸들·스코프)는 줄어들거나 말줄임표가 되면 그만이지만,
             이것이 사라지면 패널을 닫을 길이 없어진다. */}
         <button
           onClick={() => set({ terminalTarget: null })}
-          className="ml-auto shrink-0 rounded px-2 py-0.5 text-fg-muted hover:bg-surface-raised"
+          className="ml-auto shrink-0 rounded-row px-2 py-0.5 text-fg-muted hover:bg-surface-raised"
           aria-label={t('terminal.header.closeAction')}
         >
           {t('terminal.header.close')}
@@ -346,7 +346,7 @@ export function TerminalPanel() {
               패널을 닫고 다시 여는 우회로를 알아내야 한다. */}
           <button
             onClick={() => openRef.current?.()}
-            className="mt-2 rounded bg-surface-raised px-2 py-1 text-fg hover:bg-surface-hover"
+            className="mt-2 rounded-row bg-surface-raised px-2 py-1 text-fg hover:bg-surface-hover"
           >
             {t('terminal.session.open')}
           </button>

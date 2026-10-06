@@ -77,7 +77,7 @@ export function ThreadParticipants({ messages, live }: { messages: MessageRow[];
           <button
             data-testid="terminal-picker"
             aria-expanded={open}
-            className="rounded px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
+            className="rounded-row px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
             onClick={() => setOpen((v) => !v)}
           >
             터미널 ▾
@@ -85,8 +85,8 @@ export function ThreadParticipants({ messages, live }: { messages: MessageRow[];
           {open && (
             <ul
               data-testid="terminal-picker-menu"
-              className="absolute right-0 z-10 mt-1 min-w-32 rounded border border-border
-                         bg-surface-raised py-1 shadow-lg"
+              className="absolute right-0 z-10 mt-1 min-w-32 rounded-card
+                         bg-surface-raised py-1 shadow-float"
             >
               {openable.map((a) => (
                 <li key={a.id}>

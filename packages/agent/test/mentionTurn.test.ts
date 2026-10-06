@@ -12,7 +12,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentHarness, AgentView, MessageRow } from '@harkroom/shared';
-import { mentionAnchor, runMentionTurn, syncSkills, type MentionTurnDeps, type MentionTurnHarkroom, type RunTurn } from '../src/mentionTurn.js';
+import { AccountGateRequeueError, mentionAnchor, runMentionTurn, syncSkills, type MentionTurnDeps, type MentionTurnHarkroom, type RunTurn } from '../src/mentionTurn.js';
+import { createAttentionLedger } from '../src/attentionLedger.js';
 import { BODY_LIMIT } from '../src/prompt.js';
 
 /** 사람이 부른 턴이 마지막 말도 못 읽고 답 없이 끝났을 때의 통지(`silentTurnNotice`). */
@@ -79,7 +80,7 @@ function defOf(overrides: Partial<AgentView> = {}): AgentView {
 class FakeHarkroom implements MentionTurnHarkroom {
   messages: MessageRow[] = [];
   posts: { channelId: string; body: string; threadRootId: string | null }[] = [];
-  fails: { channelId: string; body: string; threadRootId: string | null; retryable: boolean }[] = [];
+  fails: { channelId: string; body: string; threadRootId: string | null; retryable: boolean; code?: string; mentionId?: string; account?: string }[] = [];
   private seq = 0;
   def: AgentView;
   /** #80 테스트를 위해 readThread 호출 기록 */
@@ -141,10 +142,14 @@ class FakeHarkroom implements MentionTurnHarkroom {
     channelId: string,
     body: string,
     threadRootId: string | null,
-    opts: { retryable: boolean; what?: string; reason?: string },
+    opts: { retryable: boolean; what?: string; reason?: string; code?: string; mentionId?: string; account?: string },
   ): Promise<number> {
     this.posts.push({ channelId, body, threadRootId });
-    this.fails.push({ channelId, body, threadRootId, retryable: opts.retryable });
+    this.fails.push({
+      channelId, body, threadRootId, retryable: opts.retryable,
+      ...(opts.code ? { code: opts.code } : {}), ...(opts.mentionId ? { mentionId: opts.mentionId } : {}),
+      ...(opts.account ? { account: opts.account } : {}),
+    });
     const m = this.seedFrom(ME.id, body, threadRootId);
     m.meta = { kind: 'failure', failure: { retryable: opts.retryable } };
     return Promise.resolve(m.seq);
@@ -517,6 +522,108 @@ describe('runMentionTurn', () => {
     const prompt = (await getPlanContent(plans, turnOpts)).at(-1)!;
     expect(prompt).toContain('예약된 후속 턴');
     expect(prompt).toContain('CI 결과 확인');
+  });
+
+  /**
+   * 보고처(`turn.wake` reportTo, 2026-10-06). 스레드마다 세션이 따로라 깨어난 턴은 자기 앵커만 안다 — 다른
+   * 스레드(#task)에서 한 "13:21 에 확인한다" 약속이 사유에 없으면 결과는 앵커에만 남았다(task_manager 실측).
+   *
+   * 되돌려 RED: `reportPromiseCheck` 호출을 지우면 첫 시험의 경고가 없고, 기준선을 앵커 seq 로 바꾸면 약속 글
+   * (깨움보다 뒤에 쓴 내 글)을 보고로 세어 경고가 사라진다.
+   */
+  describe('깨움 보고처(reportTo)', () => {
+    const REPORT = { channelId: CHANNEL, threadRootId: 'report-root' };
+
+    async function wakeTurn(script: (fake: FakeHarkroom, meId: string) => void) {
+      const fake = new FakeHarkroom(defOf());
+      fake.seedFrom('human-1', '@forge #1174 확인해');
+      // 약속 글 — 깨움을 건 뒤 다른 스레드에서 쓴 내 글이다. 이 턴의 보고로 세면 안 된다.
+      const { deps, runTurn, plans, turnOpts } = await makeDeps(fake);
+      fake.seedFrom(deps.me.id, '다음 확인은 13:21 KST', 'report-root');
+      runTurn.script = async () => { script(fake, deps.me.id); return { exitCode: 0, timedOut: false, tail: '' }; };
+      await runMentionTurn(deps, {
+        channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+        wake: { reason: '#1174 CI 확인', reportTo: REPORT },
+      });
+      return { fake, prompt: (await getPlanContent(plans, turnOpts)).at(-1)! };
+    }
+
+    it('앵커에만 답하고 끝나면 보고처에 경고를 남긴다 — 프롬프트에는 약속이 실려 있다', async () => {
+      const { fake, prompt } = await wakeTurn((f, me) => { f.seedFrom(me, 'CI 초록이다', null); });
+      expect(prompt).toContain('다른 스레드에 보고하기로 약속했다');
+      expect(prompt).toContain('threadRootId: report-root');
+      const warn = fake.fails.filter((x) => x.threadRootId === 'report-root');
+      expect(warn).toHaveLength(1);
+      expect(warn[0]).toMatchObject({ retryable: false });
+      expect(warn[0]!.body).toContain('#1174 CI 확인');
+    });
+
+    it('보고처에 말했으면(진행 설명이라도) 경고하지 않는다', async () => {
+      const { fake } = await wakeTurn((f, me) => {
+        f.seedFrom(me, 'CI 초록이다', null);
+        const m = f.seedFrom(me, '#1174 확인했다 — 초록', 'report-root');
+        m.kind = 'progress';
+      });
+      expect(fake.fails.filter((x) => x.threadRootId === 'report-root')).toEqual([]);
+    });
+
+    // #1208 security n4: 한 번 읽기는 `seq > 기준선` 중 가장 오래된 limit 개다 — 보고처가 바빠 글이 그보다 많이
+    // 쌓이면 내 보고가 창 밖으로 밀려 경고가 잘못 났다. 되돌려 RED: 쪽 넘기기를 지우고 한 번만 읽으면 경고가 선다.
+    it('턴 동안 보고처에 글이 창(limit)보다 많이 쌓여도 내 보고를 찾는다 — 잘못 경고하지 않는다', async () => {
+      const { fake } = await wakeTurn((f, me) => {
+        f.limit = 3;
+        for (let i = 0; i < 7; i += 1) f.seedFrom('human-1', `잡담 ${i}`, 'report-root');
+        f.seedFrom(me, '#1174 확인했다 — 초록', 'report-root');
+      });
+      expect(fake.fails.filter((x) => x.threadRootId === 'report-root')).toEqual([]);
+    });
+
+    it('창보다 많이 쌓였는데 끝까지 내 글이 없으면 그때는 경고한다', async () => {
+      const { fake } = await wakeTurn((f) => {
+        f.limit = 3;
+        for (let i = 0; i < 7; i += 1) f.seedFrom('human-1', `잡담 ${i}`, 'report-root');
+      });
+      expect(fake.fails.filter((x) => x.threadRootId === 'report-root')).toHaveLength(1);
+    });
+
+    // #1208 security n2: 비공개 앵커의 사유가 공개 보고처로 옮겨 적히지 않게 — 채널이 다르면 사유를 싣지 않는다.
+    it('보고처가 다른 채널이면 경고에 사유를 싣지 않는다 — 앵커만 가리킨다', async () => {
+      const fake = new FakeHarkroom(defOf());
+      fake.seedFrom('human-1', '@forge #1174 확인해');
+      const { deps, runTurn } = await makeDeps(fake);
+      runTurn.script = async () => { fake.seedFrom(deps.me.id, 'CI 초록이다', null); return { exitCode: 0, timedOut: false, tail: '' }; };
+      await runMentionTurn(deps, {
+        channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+        wake: { reason: '비공개 사유', reportTo: { channelId: 'ch-public', threadRootId: 'report-root' } },
+      });
+      const warn = fake.fails.filter((x) => x.threadRootId === 'report-root');
+      expect(warn).toHaveLength(1);
+      expect(warn[0]!.channelId).toBe('ch-public');
+      expect(warn[0]!.body).not.toContain('비공개 사유');
+      expect(warn[0]!.body).toContain(`harkroom://message/${MENTION}`);
+    });
+
+    it('다시 기다리기로 했으면(새 깨움) 경고하지 않는다 — 아직 보고할 때가 아니다', async () => {
+      const { fake } = await wakeTurn((f, me) => {
+        const m = f.seedFrom(me, '#1174 CI 다시 확인', null);
+        m.kind = 'wake';
+      });
+      expect(fake.fails.filter((x) => x.threadRootId === 'report-root')).toEqual([]);
+    });
+  });
+
+  it('사람 글로 접힌 예약은 그 부름의 프롬프트에 실린다(서버 107)', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 그거 말고 이거 먼저 해');
+    const { deps, plans, turnOpts } = await makeDeps(fake);
+    await runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+      canceledWakes: [{ reason: 'designer 안 회수', wakeAt: '2026-10-06T02:00:00.000Z' }],
+    });
+    const prompt = (await getPlanContent(plans, turnOpts)).at(-1)!;
+    expect(prompt).toContain('예약 1개가 접혔다');
+    expect(prompt).toContain('designer 안 회수');
+    expect(prompt).toContain('그거 말고 이거 먼저 해');
   });
 
   // recall P1: 예약으로 깨어난 턴은 관련 기억을 찾지 않는다 — 앞 턴 요청의 되풀이라 같은 것·엉뚱한 것을 고른다.
@@ -3263,6 +3370,62 @@ describe('턴의 끝 — 발화 + 관찰자 없음 (2026-09-08)', () => {
     expect(fake.posts.map((p) => p.body)).toEqual([NO_REPLY_NOTICE]);
   });
 
+  /**
+   * 끝난 턴의 즉시 회수(2026-10-02). 60초 유예는 같은 스레드의 다음 멘션을 그만큼 기다리게 했다
+   * (스레드당 턴 하나) — 끝났고 자식 작업이 0 으로 확인된 턴만 바로 거둔다.
+   * 되돌려 RED: `reconsiderEnd` 가 `pending` 을 안 보고 늘 `orphanMs` 를 쓰면 첫 시험이 유예(2초)를
+   * 다 기다려 시간 단언이 깨지고, `pending` 을 무시하고 늘 바로 거두면 둘째·셋째 시험이 깨진다.
+   */
+  it('end_turn 뒤 자식 작업이 없으면(pending 0) 유예 없이 바로 거둔다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 확인해 줘');
+    const t = tuiScript(() => {}, 5_000);
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 2_000, readTurnState: async () => 'ended', readPendingBackground: async () => 0,
+      harnessStallMs: 0, readTranscriptMtime: async () => null,
+    });
+    runTurn.script = t.script;
+
+    const started = Date.now();
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(t.killed()).toBe('SIGTERM');
+    expect(Date.now() - started).toBeLessThan(1_000);
+    // 회수로 끝난 정상 턴이다(실패 카드가 아니다).
+    expect(fake.posts.map((p) => p.body)).toEqual([NO_REPLY_NOTICE]);
+  });
+
+  it('end_turn 뒤 서브에이전트가 남아 있으면(pending > 0) 지금처럼 유예한다 — 10-01 사고의 재발 방지', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 확인해 줘');
+    const t = tuiScript(() => {}, 5_000);
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 150, readTurnState: async () => 'ended', readPendingBackground: async () => 2,
+      harnessStallMs: 0, readTranscriptMtime: async () => null,
+    });
+    runTurn.script = t.script;
+
+    const started = Date.now();
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(t.killed()).toBe('SIGTERM');
+    expect(Date.now() - started).toBeGreaterThanOrEqual(150);
+  });
+
+  it('자식 작업 수를 모르면(null) 유예한다 — 모르는 것을 "없다"로 읽지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 확인해 줘');
+    const t = tuiScript(() => {}, 5_000);
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 150, readTurnState: async () => 'ended', readPendingBackground: async () => null,
+      harnessStallMs: 0, readTranscriptMtime: async () => null,
+    });
+    runTurn.script = t.script;
+
+    const started = Date.now();
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(t.killed()).toBe('SIGTERM');
+    expect(Date.now() - started).toBeGreaterThanOrEqual(150);
+  });
+
   it('발화 뒤 꼬리가 working 이어도 기록·화면이 정지 한도만큼 멈추면 끝난 것으로 본다 — 답한 턴이 영원히 살지 않는다', async () => {
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
@@ -3885,5 +4048,143 @@ describe('러너가 턴의 사정을 스레드에 드러낸다 (2026-09-30)', ()
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
     expect(fake.posts.filter((p) => p.body.startsWith('권한 거부'))).toHaveLength(3);
+  });
+});
+
+
+// ── 계정 관문 대기(2026-10-02, 관문 대응 안 2). 마지막 계정에서 턴 시작 관문을 만나면 사람을 부르되,
+// 기다리는 PTY 는 계정당 하나이고, 표식이 지워지면 접고 다시 띄운다(관문에 선 claude 는 설정을 다시
+// 읽지 않는다 — 실측). 통지에는 'startup' 일 때만 account_gate·멘션·계정 id 가 붙는다.
+describe('계정 관문 대기 — 계정당 하나, 표식이 지워지면 다시 띄운다', () => {
+  /** 관문 화면에서 서 있는 하네스: onAttention 을 부르고, kill 될 때까지 끝나지 않는다. */
+  function gatedScript(kind: 'startup' | 'gate' = 'startup') {
+    let killed = 0;
+    const script = async (_plan: TurnPlan, opts: Parameters<RunTurn>[1]): Promise<TurnResult> => {
+      let done!: (r: TurnResult) => void;
+      const exited = new Promise<TurnResult>((r) => { done = r; });
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: () => { killed += 1; done({ exitCode: 143, timedOut: false, tail: '' }); } });
+      (opts as { injectPrompt?: { onAttention?: (s: string, k: 'startup' | 'gate') => void } }).injectPrompt?.onAttention?.('(관문 화면)', kind);
+      return exited;
+    };
+    return { script, killed: () => killed };
+  }
+
+  async function setup(ledger: ReturnType<typeof createAttentionLedger>, extra: Partial<MentionTurnDeps> = {}) {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const made = await makeDeps(fake, {
+      claudeAccount: 'acct-1', claudeConfigDir: '/x/acct-1', accountLabel: 'acct-1',
+      callsForHuman: true, attentionLedger: ledger, gateWatchMs: 20, ...extra,
+    });
+    return { fake, ...made };
+  }
+
+  it("같은 계정에 이미 기다리는 PTY 가 있으면 이 PTY 는 접고 'queued' 로 다시 띄우게 넘긴다", async () => {
+    const ledger = createAttentionLedger();
+    expect(ledger.claim('acct-1', 'other-session')).toBe(true); // 다른 턴이 이미 기다린다
+    const { deps, runTurn, fake } = await setup(ledger);
+    const g = gatedScript();
+    runTurn.script = g.script;
+    const err = await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AccountGateRequeueError);
+    expect((err as AccountGateRequeueError).why).toBe('queued');
+    expect((err as AccountGateRequeueError).configDir).toBe('/x/acct-1');
+    expect(g.killed()).toBe(1);
+    // 그 스레드도 막혔다 — 관문 통지는 남는다. 턴 시작 관문이라 기계용 칸이 붙는다(계정 id 만).
+    expect(fake.fails.at(-1)).toMatchObject({ code: 'account_gate', mentionId: MENTION, account: 'acct-1' });
+  });
+
+  it("기다리는 사이 표식이 지워지면 PTY 를 접고 'passed' 로 다시 띄우게 넘긴다 — 원장은 놓는다", async () => {
+    const ledger = createAttentionLedger();
+    let cleared = false;
+    const { deps, runTurn } = await setup(ledger, { accountGateCleared: async () => cleared });
+    const g = gatedScript();
+    runTurn.script = g.script;
+    const turn = runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }).catch((e: unknown) => e);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(g.killed()).toBe(0); // 아직 표식이 서 있다 — 기다린다
+    cleared = true;
+    const err = await turn;
+    expect(err).toBeInstanceOf(AccountGateRequeueError);
+    expect((err as AccountGateRequeueError).why).toBe('passed');
+    expect(g.killed()).toBe(1);
+    // 원장을 놓았다 — 다음 관문은 다시 사람을 부를 수 있다.
+    expect(ledger.claim('acct-1', 'next')).toBe(true);
+  });
+
+  it("턴 도중 권한 확인('gate')은 계정 관문이 아니다 — 기계용 칸을 붙이지 않고 접지도 않는다", async () => {
+    const ledger = createAttentionLedger();
+    ledger.claim('acct-1', 'other-session');
+    const { deps, runTurn, fake } = await setup(ledger);
+    const g = gatedScript('gate');
+    // 'gate' 는 사람이 답하면 이어진다 — 여기서는 곧바로 끝난 것으로 둔다.
+    runTurn.script = async (plan, opts) => {
+      const p = g.script(plan, opts);
+      return Promise.race([p, new Promise<TurnResult>((r) => setTimeout(() => r({ exitCode: 0, timedOut: false, tail: '' }), 30))]);
+    };
+    const err = await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }).catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(AccountGateRequeueError);
+    expect(g.killed()).toBe(0);
+    const gateFail = fake.fails.find((f) => f.body.length > 0);
+    expect(gateFail?.code).toBeUndefined();
+  });
+});
+
+/**
+ * 스레드 임대 펜싱(security L1). 스케줄러가 넘긴 `target.fence` 가 울리면 턴은 사람의 [중단] 과 같은 길로
+ * 접힌다 — 스폰 뒤면 SIGTERM, 스폰 전이면 아예 안 띄운다. 실패에는 `fencedOut` 표시를 달아 스케줄러가
+ * 재시도·실패 카드 대신 표지만 남기게 한다.
+ */
+describe('펜싱 — 스레드 임대를 잃으면 턴을 접는다', () => {
+  it('도는 중에 울리면 그 PTY 에 SIGTERM 을 보내고, 실패에 fencedOut 을 단다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, runTurn } = await makeDeps(fake);
+    const fence = new AbortController();
+    let killed: string | null = null;
+    runTurn.script = async (_plan: TurnPlan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+    }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      fence.abort();
+      return { exitCode: 143, timedOut: false, tail: '' };
+    };
+    const err = await runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION, fence: fence.signal,
+    }).catch((e: unknown) => e as Error & { fencedOut?: boolean });
+    expect(killed).toBe('SIGTERM');
+    expect((err as Error).message).toMatch(/넘겨받아 이 턴을 접었다/);
+    expect((err as { fencedOut?: boolean }).fencedOut).toBe(true);
+  });
+
+  it('스폰 전에 이미 울렸으면 하네스를 띄우지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, runTurn } = await makeDeps(fake);
+    const fence = new AbortController();
+    fence.abort();
+    let spawned = false;
+    runTurn.script = async () => { spawned = true; return { exitCode: 0, timedOut: false, tail: '' }; };
+    await expect(runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION, fence: fence.signal,
+    })).rejects.toThrow(/넘겨받아/);
+    expect(spawned).toBe(false);
+  });
+
+  it('울리지 않은 신호는 아무것도 바꾸지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, runTurn } = await makeDeps(fake);
+    let killed: string | null = null;
+    runTurn.script = async (_plan: TurnPlan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+    }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      return { exitCode: 7, timedOut: false, tail: 'boom' };
+    };
+    await expect(runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION, fence: new AbortController().signal,
+    })).rejects.toThrow(/harness 종료 7/);
+    expect(killed).toBeNull();
   });
 });

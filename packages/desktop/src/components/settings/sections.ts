@@ -29,7 +29,7 @@ import { hasCapability } from '../../lib/capabilities';
  * 그 한 줄이 **두 화면에 각각** 있다: `TeamDetail` 의 `team-mention-note`(팀 → 집합)와
  * `HandleGroupsSettings` 의 목록 머리(집합 → 팀).
  */
-export type SectionId = 'workspace' | 'profile' | 'notifications' | 'messages' | 'appearance' | 'connection' | 'communities' | 'agents' | 'agent-defaults' | 'operators' | 'mcp-servers' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'automations' | 'gallery' | 'this-operator';
+export type SectionId = 'workspace' | 'profile' | 'notifications' | 'messages' | 'appearance' | 'communities' | 'agents' | 'agent-defaults' | 'operators' | 'integrations' | 'claude-accounts' | 'handle-groups' | 'invite' | 'updates' | 'skills' | 'automations' | 'gallery' | 'this-operator' | 'secrets';
 
 /**
  * 목차 한 줄의 **이름은 사전 키 하나다**(UX ④ H5). 전에는 목차가 영어 문자열(`Appearance`)을,
@@ -61,16 +61,17 @@ export const SETTINGS_GROUPS: { id: 'me' | 'device' | 'workspace' | 'agents'; ti
       { id: 'notifications' },
       { id: 'messages' },
       { id: 'appearance' },
+      // 비밀과 API(외부 API 권한 C안 P1, designer v3 ①): 비밀은 서버에서 개인 소유라 「나」 묶음이다(D1).
+      { id: 'secrets' },
     ],
   },
   {
     id: 'device',
     titleKey: 'settings.group.device',
     items: [
-      // #165: `Connection` 은 "지금 붙은 서버 하나", `Communities` 는 "이 기기가 아는 서버 전부" 다.
-      // ⑥b 에서 커뮤니티로 흡수한다 — 그때까지는 이웃으로 선다.
+      // `Connection`(지금 붙은 서버 하나)은 커뮤니티로 흡수됐다(UX ⑥b-3). 커뮤니티 줄마다 이미
+      // 주소·연결 상태·서버 버전이 있었다 — 같은 사실이 두 페이지에 살았다. 로그아웃은 프로필 한 곳이다.
       { id: 'communities' },
-      { id: 'connection' },
       { id: 'updates' },
       // 이 머신을 오퍼레이터로 등록하는 자리(UX ⑥b-2). 오퍼레이터 **목록**은 워크스페이스 전체의 것이라
       // 에이전트 묶음에 남고, "이 머신" 은 이 기기에만 걸리므로 여기다(designer 사양 ⑥).
@@ -83,13 +84,14 @@ export const SETTINGS_GROUPS: { id: 'me' | 'device' | 'workspace' | 'agents'; ti
     items: [
       // 워크스페이스 자체의 설정 — 지금은 커뮤니티 레일에 걸리는 아이콘 하나다(owner/admin 이 바꾼다).
       { id: 'workspace' },
+      // 멤버와 초대(UX ⑥b-5): 초대 토큰 + Directory 의 사람 목록. id 는 바깥 배선 때문에 `invite` 그대로다.
       { id: 'invite' },
       // `Teams` 가 여기 있었다. 지금은 `Agents` 안의 묶음이다 — 근거는 위 `SectionId` 주석.
       // 사람 묶음(집합)은 워크스페이스 전체에 걸리므로 이 묶음이다(⑩a 에서 팀과 "그룹" 으로 합친다).
       { id: 'handle-groups' },
-      // 스펙 2026-09-20 §6: 에이전트가 붙일 수 있는 MCP 의 **이름** 목록. 워크스페이스 전체에 걸리는
-      // 목록이라 여기다(정의는 오퍼레이터 머신에 있다). ⑥b 에서 "연동" 으로 투영과 합친다.
-      { id: 'mcp-servers' },
+      // 연동(UX ⑥b-4): avcs 투영 + MCP 서버 이름 목록(스펙 2026-09-20 §6). 둘 다 워크스페이스 전체에
+      // 걸리는 바깥 연결이다 — 투영은 서버가 돌리고, MCP 정의는 오퍼레이터 머신에 있다.
+      { id: 'integrations' },
     ],
   },
   {

@@ -6,11 +6,13 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { MENTION_EDIT_SKIPPED_HEADER, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, projectionState, type ProjectionRuntime, type ProjectionStatus, type ServerHealth } from '@harkroom/shared';
 import { serverVersion } from './version.js';
+import { channelVisibleSql } from './services/channels.js';
 import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
 import { registerAccountRoutes } from './routes/accountRoutes.js';
 import { registerGrantRoutes } from './routes/grantRoutes.js';
-import { registerOperatorRoutes } from './routes/operatorRoutes.js';
+import { registerConnectorRoutes } from './routes/connectorRoutes.js';
+import { machineIdKey, registerOperatorRoutes } from './routes/operatorRoutes.js';
 import { createOperatorHub } from './ws/operatorHub.js';
 import { registerAssignmentRoutes } from './routes/assignmentRoutes.js';
 import { registerThreadAgentModelRoutes } from './routes/threadAgentModelRoutes.js';
@@ -19,6 +21,7 @@ import { registerChannelRoutes } from './routes/channelRoutes.js';
 import { registerTeamRoutes } from './routes/teamRoutes.js';
 import { registerMessageRoutes } from './routes/messageRoutes.js';
 import { registerAttachmentRoutes } from './routes/attachmentRoutes.js';
+import { registerPreviewRoutes } from './routes/previewRoutes.js';
 import { registerAvatarRoutes } from './routes/avatarRoutes.js';
 import { registerWorkspaceRoutes } from './routes/workspaceRoutes.js';
 import { createLocalStorage } from './storage/local.js';
@@ -30,19 +33,29 @@ import { registerHandleGroupRoutes } from './routes/handleGroupRoutes.js';
 import { registerLinkPreviewRoutes } from './routes/linkPreviewRoutes.js';
 import { registerAgentRelayRoutes } from './routes/agentRelayRoutes.js';
 import { registerSkillRoutes } from './routes/skillRoutes.js';
+import { registerPushRoutes } from './routes/pushRoutes.js';
+import { createApnsTransport, loadApnsConfig, type PushTransport } from './services/push/apns.js';
+import { createPushSweeper, type PushHealth } from './services/push/pushJobs.js';
 import { registerAutomationRoutes } from './routes/automationRoutes.js';
 import { registerWs } from './ws/wsPlugin.js';
 import { registerMcp } from './mcp/mcpPlugin.js';
 import { createAgentPresence } from './mcp/presence.js';
+import { startThreadStatusWatcher } from './services/threadStatus.js';
 import { Lifecycle } from './lifecycle.js';
 import { loggerConfig } from './logging.js';
 import { createRateLimiter, type RateLimitRule } from './rateLimit.js';
+import type { TrustProxy } from './config.js';
 import { createMetrics } from './metrics.js';
 import { createScheduledMessageSweeper } from './services/scheduledMessages.js';
 import { createAutomationSweeper } from './services/automations.js';
 import { createSecretBox } from './services/secretBox.js';
-import { loadSecretKeyring, type SecretKeyring } from './services/secretKeyring.js';
+import { loadSecretKeys, type SecretKeyring } from './services/secretKeyring.js';
+import { verifySecretKeys } from './services/secretKeyCheck.js';
 import { registerSecretRoutes } from './routes/secretRoutes.js';
+import { registerMergeRoutes } from './routes/mergeRoutes.js';
+import { registerMergeDenialRoutes } from './routes/mergeDenialRoutes.js';
+import { registerApiCallRoutes } from './routes/apiCallRoutes.js';
+import { registerThreadClaimRoutes } from './routes/threadClaimRoutes.js';
 import { createSecretLeakGuard, leakGuardHook } from './services/secretLeakGuard.js';
 import type { RevealLimiter } from './services/secretAccess.js';
 import { createAgentWakeSweeper } from './services/agentWakes.js';
@@ -58,8 +71,17 @@ import { createDelegationDeadlineSweeper } from './services/delegations.js';
  * 초대 토큰이 있어도 시도 자체를 좁힌다. `/ws-ticket` 은 넉넉하다 — 재연결 폭풍은 정상 동작이고,
  * 여기서 막으면 네트워크가 불안한 클라이언트가 영구히 못 붙는다.
  */
-const DEFAULT_RATE_LIMITS: Record<'login' | 'signup' | 'ticket' | 'upload', RateLimitRule> = {
+const DEFAULT_RATE_LIMITS: Record<RateLimitName, RateLimitRule> = {
   login: { windowMs: 5 * 60_000, max: 20 },
+  // **계정 단위** 로그인 상한 둘. 성공 없이 이어진 시도를 센다(성공하면 지운다). 적용은 `/auth/login`
+  // 핸들러(`authRoutes.ts`) 안, Argon2 앞이다.
+  // - `loginAccountIp`: (계정, 주소) — 한 출처가 한 계정을 두드리는 것을 좁힌다. 주소 단위로 나눠
+  //   두는 이유는 **남이 내 계정을 잠그지 못하게** 하려는 것이다(계정 하나로만 세면 아무나 10번
+  //   틀려서 주인을 15분 내쫓는다).
+  // - `loginAccount`: 계정 전체 — 주소를 바꿔 가며(분산·XFF 위조) 한 계정을 노리는 것을 막는다.
+  //   주인이 잠기려면 그 사이 50번이 틀려야 한다.
+  loginAccountIp: { windowMs: 15 * 60_000, max: 10 },
+  loginAccount: { windowMs: 15 * 60_000, max: 50 },
   signup: { windowMs: 15 * 60_000, max: 10 },
   ticket: { windowMs: 60_000, max: 120 },
   // 첨부는 크기 제한(25MB)만으로 부족하다 — 그건 **한 번의** 업로드만 막고, 반복하면 디스크가
@@ -67,8 +89,10 @@ const DEFAULT_RATE_LIMITS: Record<'login' | 'signup' | 'ticket' | 'upload', Rate
   upload: { windowMs: 60_000, max: 20 },
 };
 
+type RateLimitName = 'login' | 'loginAccountIp' | 'loginAccount' | 'signup' | 'ticket' | 'upload';
+
 /** 어떤 경로에 어떤 리밋을 적용하는가. 인증 표면만 좁힌다 — 발화·조회는 건드리지 않는다. */
-const LIMITED_ROUTES: { method: string; url: string; rule: keyof typeof DEFAULT_RATE_LIMITS }[] = [
+const LIMITED_ROUTES: { method: string; url: string; rule: Exclude<RateLimitName, 'loginAccount' | 'loginAccountIp'> }[] = [
   { method: 'POST', url: '/auth/login', rule: 'login' },
   { method: 'POST', url: '/auth/register', rule: 'signup' },
   { method: 'POST', url: '/bootstrap', rule: 'signup' },
@@ -83,6 +107,11 @@ const LIMITED_ROUTES: { method: string; url: string; rule: keyof typeof DEFAULT_
 export interface ServerDeps {
   pool: Pool;
   /**
+   * 모바일 푸시 전송부(093). 생략하면 `APNS_*` env 를 읽고(넷 다 없으면 끈다, 일부만 있으면 기동을
+   * 멈춘다), `null` 이면 끈다(테스트용).
+   */
+  push?: PushTransport | null;
+  /**
    * 자동화 수신(065)의 비밀 봉투 키. 생략하면 `HARKROOM_SECRET_KEY` env 를 읽고, `null` 이면 끈다(테스트용).
    */
   secretKey?: string | null;
@@ -93,6 +122,8 @@ export interface ServerDeps {
   secretKeyring?: SecretKeyring | null;
   /** reveal 속도 제한(테스트가 상한을 바꾼다). 생략하면 에이전트마다 10분에 30회. */
   secretRevealLimiter?: RevealLimiter;
+  /** 에이전트의 비밀 만들기·회전 속도(102). 시험이 넉넉한 것을 넣는다. */
+  secretCreateLimiter?: RevealLimiter;
   /** avcs 연결 상태 — /healthz 에서 쓴다. */
   getAvcsStatus?: () => { connected: boolean };
   /**
@@ -131,6 +162,8 @@ export interface ServerDeps {
   /** 소켓 뒤 자격증명 재검증 주기. 기본 60초. */
   wsRevalidateMs?: number;
   /** WS ping/pong 주기(ms). 기본 30초. 테스트에서 짧게 준다. */
+  /** 오퍼레이터 박동을 DB·이벤트로 처리하는 최소 간격(ms). 시험이 줄인다. 기본 `STATUS_MIN_INTERVAL_MS`. */
+  operatorStatusMinIntervalMs?: number;
   wsHeartbeatMs?: number;
   /** '입력 중' 상태의 수명(ms). 기본 6초. */
   typingTtlMs?: number;
@@ -148,11 +181,12 @@ export interface ServerDeps {
   /** 로그 싱크 교체(테스트 전용 seam). 프로덕션은 stdout 이다. */
   logStream?: import('node:stream').Writable;
   /** 인증 표면 리밋 재정의. 미지정이면 DEFAULT_RATE_LIMITS. */
-  rateLimits?: Partial<Record<'login' | 'signup' | 'ticket' | 'upload', RateLimitRule>>;
+  rateLimits?: Partial<Record<RateLimitName, RateLimitRule>>;
   /** 리밋 판정용 시계(테스트 전용 seam). */
   now?: () => number;
   /**
    * 앞단 리버스 프록시를 신뢰할지. **켜면 `X-Forwarded-For` 를 클라이언트 주소로 받아들인다.**
+   * `true` 는 전부 믿기(비권장), 숫자는 믿을 hop 수, 목록은 믿을 프록시 IP/CIDR(`config.ts`).
    *
    * 켜야 하는 이유: 프록시 뒤에서는 소켓 주소가 프록시 하나뿐이라 **모든 클라이언트가 레이트
    * 리밋 버킷 하나를 공유하고**(서로를 밀어낸다) 감사 로그의 ip 가 전부 같은 값이 된다.
@@ -161,7 +195,7 @@ export interface ServerDeps {
    * 켜면 안 되는 이유: 프록시가 **없는데** 켜면 누구나 헤더를 위조해 리밋을 무한히 우회한다.
    * 그래서 기본값은 끔이고, 실제로 앞단을 둔 배포에서만 켠다.
    */
-  trustProxy?: boolean;
+  trustProxy?: TrustProxy;
   /**
    * 첨부 스토리지. 미지정이면 ATTACHMENT_ROOT·ATTACHMENT_MAX_BYTES(기본 25MB)를 쓴다.
    * S3 호환으로 바꿀 때는 storage/local.ts 만 갈아 끼우면 된다.
@@ -169,6 +203,8 @@ export interface ServerDeps {
   storage?: { root: string; maxBytes: number };
   /** attach 티켓 수명(ms). 기본 30초 — `/ws` 티켓과 같다. 테스트에서 짧게 준다. */
   attachTicketTtlMs?: number;
+  /** 미리보기 서명 URL 의 시계(시험이 만료를 재려고 바꾼다). 미지정이면 Date.now. */
+  previewNow?: () => number;
   /** interactive.open 응답 대기 한도(ms, #337). 기본 10초 — 테스트에서 짧게 준다. */
   interactiveOpenTimeoutMs?: number;
 }
@@ -210,10 +246,23 @@ function defaultAttachmentRoot(app: FastifyInstance): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), '..', '.attachments');
 }
 
+/**
+ * `TrustProxy` 를 Fastify 가 받는 꼴로 바꾼다.
+ *
+ * **hop 수는 함수로 넘긴다.** Fastify 5.12 는 숫자 `trustProxy` 를 "직접 붙은 상대를 검증할 수
+ * 없다"며 **아무것도 믿지 않는 것**으로 처리한다(`lib/request.js` getTrustProxyFn) — 숫자를 그대로
+ * 넘기면 조용히 꺼져 모든 사용자가 프록시 주소 하나로 묶인다. 그래서 "소켓에서부터 n 개"를 직접
+ * 쓴다. 이 서버는 프록시(ingress) 뒤에서만 닿는 배포를 전제로 hop 수를 쓴다 — 오리진에 직접 닿는
+ * 길이 있으면 CIDR 목록을 써라.
+ */
+function fastifyTrustProxy(t: TrustProxy): boolean | string[] | ((addr: string, hop: number) => boolean) {
+  return typeof t === 'number' ? (_addr, hop) => hop < t : t;
+}
+
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({
     // 기본값 false 를 유지한다 — 프록시가 없는데 신뢰하면 헤더 위조로 리밋이 무의미해진다.
-    trustProxy: deps.trustProxy ?? false,
+    trustProxy: fastifyTrustProxy(deps.trustProxy ?? false),
     /**
      * JSON 본문의 상한을 **명시한다**. fastify 기본값(1MB)에 기대면 그 수가 어디에도 적혀
      * 있지 않아, 메시지 상한(`MAX_MESSAGE_BODY_CHARS`)과의 관계를 읽을 수 없다. 여기를
@@ -315,12 +364,17 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     exposedHeaders: [NOTIFIED_HEADER, NOTIFIED_COUNT_HEADER, MENTION_EDIT_SKIPPED_HEADER],
   });
 
+  // 푸시 worker 는 아래(비밀 가림을 만든 뒤)에서 만든다. healthz 는 그보다 먼저 등록되므로 늦게 묶는다.
+  let pushHealth: () => PushHealth = () => 'off';
+
   // 인증 **앞**에 둔다(그리고 그대로 둔다) — 배포가 낡았는지는 로그인 전에도 물을 수
   // 있어야 한다. 여기 실리는 것은 릴리스 번호·커밋·기동 시각뿐이고 셋 다 공개 저장소에
   // 이미 있는 사실이다(#693).
   app.get('/healthz', async (): Promise<ServerHealth> => ({
     ok: true,
     avcs: deps.getAvcsStatus?.() ?? { connected: false },
+    // 푸시는 상태 낱말 하나만 낸다(security) — 키 id·팀·APNs 사유·기기 토큰은 싣지 않는다.
+    push: pushHealth(),
     // 버전을 **별도 엔드포인트로 빼지 않는다.** 운영이 재배포를 확인할 때 이미 치는 것이
     // `/healthz` 이고(docs/operations.md), 표면을 둘로 두면 한쪽만 보고 낡은 판단을 한다.
     ...serverVersion(),
@@ -392,7 +446,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
          join account a on a.id = i.account_id
          -- 정의가 있는 에이전트만. join 이 곧 "harkroom 가 실행할 수 있는 에이전트"의 정의다.
          join agent_config ac on ac.account_id = a.id
+         -- 지금 볼 수 있는 채널의 것만(listInbox 와 같은 경계). 나간 채널의 항목은 폴에 안 나가
+         -- 읽음이 될 길이 없다 — 세면 살아 있는 러너도 이 게이지가 끝없이 커진다(security F1).
+         join message m on m.id = i.message_id
+         join channel ch on ch.id = m.channel_id
          where i.read_at is null and a.kind = 'agent'
+           and ${channelVisibleSql('ch', 'i.account_id')}
          group by a.handle`,
       );
       return Object.fromEntries(
@@ -417,6 +476,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // 막히고, 응답이 계정 존재 여부를 드러내지 않는다.
   const limiter = createRateLimiter(deps.now);
   const rules = { ...DEFAULT_RATE_LIMITS, ...deps.rateLimits };
+  if (deps.trustProxy === true) {
+    app.log.warn('TRUST_PROXY=1 trusts every proxy hop: the leftmost X-Forwarded-For becomes the client '
+      + 'address and can be spoofed to dodge rate limits. Set a hop count (e.g. TRUST_PROXY=2) or proxy CIDRs.');
+  }
   app.addHook('onRequest', async (req, reply) => {
     const route = LIMITED_ROUTES.find(
       (r) => r.method === req.method && req.url.split('?')[0] === r.url,
@@ -435,13 +498,32 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerAuth(app, deps.pool);
 
   // 비밀 보관소(085~). 키 묶음은 여기서 한 번 읽어 라우트·본문 거절(D5)이 같은 것을 쓴다.
-  const secretKeyring = deps.secretKeyring !== undefined
-    ? deps.secretKeyring
-    : loadSecretKeyring(process.env.HARKROOM_SECRET_KEYS_DIR, process.env.HARKROOM_SECRET_KEY_ID);
+  // 디렉터리의 키는 DB 의 키 확인값(104)과 맞춰 본 뒤에만 쓴다 — 같은 kid 에 다른 키가 걸렸으면
+  // 그 kid 로는 봉인도 풀기도 하지 않는다(secretKeyCheck.ts). 활성 kid 가 어긋나면 보관소를 끈다.
+  let secretKeyring: SecretKeyring | null;
+  let secretKeyMismatch = false;
+  if (deps.secretKeyring !== undefined) {
+    secretKeyring = deps.secretKeyring;
+  } else {
+    const loaded = loadSecretKeys(process.env.HARKROOM_SECRET_KEYS_DIR, process.env.HARKROOM_SECRET_KEY_ID);
+    const verified = loaded ? await verifySecretKeys(deps.pool, loaded) : null;
+    secretKeyring = verified?.keyring ?? null;
+    secretKeyMismatch = verified?.mismatch ?? false;
+    if (verified?.rejectedKids.length) {
+      app.log.error({ kids: verified.rejectedKids },
+        'secret store: mounted key does not match the stored key check value; those key ids are disabled');
+    }
+  }
   const leakGuard = createSecretLeakGuard(deps.pool, secretKeyring);
   // 에이전트의 REST 쓰기 본문에 grant 받은 비밀 값이 있으면 거절한다(D5). 루트 훅이라 모든 라우트에
   // 걸리고, 인증(onRequest) 뒤에 돈다. 보관소가 꺼져 있으면(키 없음) 볼 비밀도 없다.
   if (leakGuard) app.addHook('preHandler', leakGuardHook(leakGuard));
+
+  const pushConfig = deps.push === undefined ? loadApnsConfig() : null;
+  const pushTransport = deps.push !== undefined ? deps.push : pushConfig ? createApnsTransport(pushConfig) : null;
+  const pushSweeper = createPushSweeper(deps.pool, { transport: pushTransport, leakGuard });
+  pushSweeper.startSweep(app);
+  pushHealth = pushSweeper.health;
 
   // 에이전트 presence 레지스트리를 한 번 만들고 두 곳에 넘긴다.
   // - registerWs: presence.snapshot 에 에이전트를 합집합으로 얹는다.
@@ -452,6 +534,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     now: deps.now,
   });
   agentPresence.startSweep(app);
+
+  // 스레드 상태 리액션(D안). 메시지·presence 이벤트로 루트를 다시 판정한다.
+  const threadStatusWatcher = startThreadStatusWatcher(deps.pool, agentPresence);
+  app.addHook('onClose', async () => { threadStatusWatcher.stop(); });
 
   const scheduledSweeper = createScheduledMessageSweeper(deps.pool);
   scheduledSweeper.startSweep(app);
@@ -500,13 +586,16 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     typingTtlMs: deps.typingTtlMs,
     agentPresence,
   });
-  await registerAuthRoutes(app, deps.pool);
+  await registerAuthRoutes(app, deps.pool, {
+    limiter, loginAccountRule: rules.loginAccount, loginAccountIpRule: rules.loginAccountIp,
+  });
   // 오퍼레이터 허브(스펙 2026-09-20 §4)를 여기서 만든다 — 계정 라우트가 배정 거절 사유를 여기서
   // 읽는다. 라우트 등록은 아래(릴레이 뒤)다: 허브는 소켓이 붙기 전엔 빈 표일 뿐이라 순서가 무관하다.
   const operatorHub = createOperatorHub();
   await registerAccountRoutes(app, deps.pool, { operatorHub });
   // 권한 부여·회수·역할(스펙 2026-09-20 §6). 계정 라우트 바로 뒤 — 같은 `/accounts/:id/*` 표면이다.
   await registerGrantRoutes(app, deps.pool);
+  await registerConnectorRoutes(app, deps.pool);
   await registerTeamRoutes(app, deps.pool);
   const storageOpts = deps.storage ?? {
     root: defaultAttachmentRoot(app),
@@ -525,6 +614,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerChannelRoutes(app, deps.pool, storage);
   await registerMessageRoutes(app, deps.pool, { operatorHub });
   await registerAttachmentRoutes(app, deps.pool, storage, leakGuard);
+  // 미리보기(아티팩트) — 첨부와 같은 스토리지·같은 가시성 함수를 쓴다(previewRoutes 주석).
+  await registerPreviewRoutes(app, deps.pool, storage, { now: deps.previewNow });
   // 아바타는 같은 스토리지를 쓴다 — 파일 저장소를 하나로 유지하기 위해서다(avatarRoutes 주석).
   await registerAvatarRoutes(app, deps.pool, storage);
   await registerWorkspaceRoutes(app, deps.pool, storage);
@@ -535,14 +626,21 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerHandleGroupRoutes(app, deps.pool);
   await registerLinkPreviewRoutes(app, deps.pool);
   await registerSkillRoutes(app, deps.pool);
+  await registerPushRoutes(app, deps.pool);
   // 외부 수신(065)의 GitHub 서명 검증 키. 없으면 GitHub 수신은 켤 수 없다(범용 hook 은 해시라 된다).
   await registerAutomationRoutes(app, deps.pool, {
     secretBox: createSecretBox(deps.secretKey !== undefined ? deps.secretKey : process.env.HARKROOM_SECRET_KEY),
   });
   await registerSecretRoutes(app, deps.pool, {
     keyring: secretKeyring,
+    keyMismatch: secretKeyMismatch,
     limiter: deps.secretRevealLimiter,
+    createLimiter: deps.secretCreateLimiter,
   });
+  await registerMergeRoutes(app, deps.pool);
+  await registerMergeDenialRoutes(app, deps.pool);
+  await registerApiCallRoutes(app, deps.pool, { keyring: secretKeyring, keyMismatch: secretKeyMismatch });
+  await registerThreadClaimRoutes(app, deps.pool);
 
   // 오퍼레이터 신원과 채널(스펙 2026-09-20 §3·§4). 릴레이와 같은 이유로 registerWs·registerAuth
   // 뒤다. 허브는 연결이 살아 있는 동안의 사실(능력·러너)만 든다 — 저장하지 않는다.
@@ -550,6 +648,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     hub: operatorHub,
     // 소켓 수명 규칙은 `/ws`·릴레이와 **같은 값**이다 — 갈라지면 더 민감한 쪽이 더 느슨해진다.
     heartbeatMs: deps.wsHeartbeatMs,
+    // 머신 묶음표 섞기(security #1200 n1) — 자동화 봉투와 같은 env 에서 용도를 갈라 뽑는다.
+    statusMinIntervalMs: deps.operatorStatusMinIntervalMs,
+    machineIdKey: machineIdKey(deps.secretKey !== undefined ? deps.secretKey : process.env.HARKROOM_SECRET_KEY),
   });
   // 배정(§3). 허브 뒤 — hello 에 배정을 다시 미는 구독이 허브에 걸린다.
   await registerAssignmentRoutes(app, deps.pool, operatorHub);

@@ -1,0 +1,19 @@
+/* 푸시 알림 본문(서버가 미리보기 없이 보낼 때 loc-key 로 고른다 — services/push/payload.ts). */
+"PUSH_REASON_MENTION" = "나를 불렀어요";
+"PUSH_REASON_THREAD_REPLY" = "스레드에 답했어요";
+"PUSH_REASON_DM" = "메시지를 보냈어요";
+"PUSH_REASON_ASK" = "선택을 기다리고 있어요";
+"PUSH_REASON_ASK_OPTIONS" = "결정을 기다려요 · 선택지 %@개";
+"PUSH_REASON_FAIL" = "작업을 끝내지 못했어요";
+"PUSH_REASON_GATE" = "로그인이 필요해요";
+"PUSH_REASON_DONE" = "작업을 마쳤어요";
+"PUSH_REASON_REPLIES" = "새 답을 확인해 보세요";
+
+/* 푸시 알림 부제 `[종류] @보낸 이` — subtitle-loc-key. 이름 뒤에 조사를 붙이지 않는다. */
+"PUSH_SUB_MENTION" = "@%@ 부름";
+"PUSH_SUB_THREAD_REPLY" = "@%@ 답";
+"PUSH_SUB_ASK" = "결정 · @%@";
+"PUSH_SUB_FAIL" = "실패 · @%@";
+"PUSH_SUB_GATE" = "로그인 필요 · @%@";
+"PUSH_SUB_DONE" = "완료 · @%@";
+"PUSH_SUB_REPLIES" = "답 %1$@ · @%2$@";

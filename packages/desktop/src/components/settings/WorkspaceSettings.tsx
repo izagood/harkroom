@@ -35,7 +35,7 @@ export function WorkspaceSettings() {
             <span className="ml-auto flex items-center gap-3">
               <span
                 data-testid="workspace-icon-preview"
-                className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl bg-surface-raised text-meta text-fg-subtle"
+                className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-compose bg-surface-raised text-meta text-fg-subtle"
               >
                 {iconUrl ? <img src={iconUrl} alt="" className="h-full w-full object-cover" /> : '—'}
               </span>
@@ -50,7 +50,7 @@ export function WorkspaceSettings() {
                     onChange={edit.onPicked}
                   />
                   <button
-                    className="rounded-lg border border-border px-3 py-1.5 font-medium text-fg hover:bg-surface disabled:opacity-50"
+                    className="rounded-card border border-border px-3 py-1.5 font-medium text-fg hover:bg-surface disabled:opacity-50"
                     disabled={edit.busy}
                     onClick={edit.openPicker}
                   >
@@ -59,14 +59,14 @@ export function WorkspaceSettings() {
                   {iconUrl && (edit.confirmingRemove ? (
                     <>
                       <button
-                        className="rounded-lg border border-danger-border bg-danger-surface px-3 py-1.5 font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                        className="rounded-card border border-danger-border bg-danger-surface px-3 py-1.5 font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
                         disabled={edit.busy}
                         onClick={edit.confirmRemove}
                       >
                         {t('profileAvatar.removeConfirm')}
                       </button>
                       <button
-                        className="rounded-lg border border-border px-3 py-1.5 font-medium text-fg-muted hover:bg-surface"
+                        className="rounded-card border border-border px-3 py-1.5 font-medium text-fg-muted hover:bg-surface"
                         onClick={edit.cancelRemove}
                       >
                         {t('profileAvatar.removeCancel')}
@@ -74,7 +74,7 @@ export function WorkspaceSettings() {
                     </>
                   ) : (
                     <button
-                      className="rounded-lg border border-border px-3 py-1.5 font-medium text-danger hover:bg-danger-surface disabled:opacity-50"
+                      className="rounded-card border border-border px-3 py-1.5 font-medium text-danger hover:bg-danger-surface disabled:opacity-50"
                       disabled={edit.busy}
                       onClick={edit.askRemove}
                     >

@@ -190,6 +190,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
     claude_account_login_submit: ['code: String', 'login_id: String'],
     claude_account_login_cancel: ['login_id: String'],
     claude_account_remove: ['account: String', 'pool: String'],
+    claude_account_open_terminal: ['account: String', 'pool: String'],
     claude_pool_remove: ['pool: String'],
     claude_account_move: ['account: String', 'to_pool: String'],
     // codex 계정(2026-09-28): 이름·로그인 id 뿐이다.
@@ -602,7 +603,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       expect(callers).toEqual([{ fn: 'daemon_command', file: 'daemon_client.rs' }]);
     });
 
-    it('`#[tauri::command]` 중 웹뷰가 채울 수 있는 파라미터를 받는 것은 시크릿 3종·daemon 2종·로컬 설정 5종뿐이다', () => {
+    it('`#[tauri::command]` 중 웹뷰가 채울 수 있는 파라미터를 받는 것은 시크릿 3종·daemon 2종·로컬 설정 6종뿐이다', () => {
       const commands = [...mainRs.matchAll(
         /#\[tauri::command\]\s*\n\s*(?:async\s+)?fn\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)/g,
       )].map((m) => {
@@ -626,15 +627,20 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       // 경로·프로그램을 뜻하는 이름을 금지한다. 두 스위트가 함께여야 이 성질이 선다.
       expect(commands.filter((c) => c.webviewParams.length > 0).map((c) => c.fn).sort())
         .toEqual([
+          'allow_preview_once',
           'claude_account_login_cancel', 'claude_account_login_start',
-          'claude_account_login_submit', 'claude_account_move',
+          'claude_account_login_submit', 'claude_account_move', 'claude_account_open_terminal',
           'claude_account_remove', 'claude_accounts_configure', 'claude_pool_remove',
           'codex_account_activate', 'codex_account_login_cancel', 'codex_account_login_start',
           'codex_account_remove',
           'daemon_kill_runner', 'daemon_spawn_runner',
-          'operator_agent_remove', 'operator_agent_set', 'operator_mcp_auth', 'operator_mcp_remove', 'operator_mcp_set', 'operator_register',
+          'operator_agent_remove', 'operator_agent_set', 'operator_mcp_auth', 'operator_mcp_remove', 'operator_mcp_set', 'operator_merge_set', 'operator_register',
           'secret_delete', 'secret_get', 'secret_set',
         ]);
+      // 미리보기 허용(#1069 A′): URL **문자열** 하나와, Tauri 가 채우는 웹뷰(라벨이 main 인지 본다)뿐이다.
+      // 판정(http(s)·/preview/·90초·한 번)은 Rust `PreviewAllowance` 가 하고 그 단위 시험이 고정한다.
+      const preview = commands.find((c) => c.fn === 'allow_preview_once')!;
+      expect(preview.webviewParams.sort()).toEqual(['url: String', 'webview: tauri::Webview']);
       // 등록: 서버 URL·코드·이름 문자열뿐 — claim 은 데몬이 한다.
       const reg = commands.find((c) => c.fn === 'operator_register')!;
       expect(reg.webviewParams.sort()).toEqual(['base_url: String', 'code: String', 'name: Option<String>']);
@@ -655,6 +661,11 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       // 서버를 고를 자리가 없다.
       const authMcp = commands.find((c) => c.fn === 'operator_mcp_auth')!;
       expect(authMcp.webviewParams.sort()).toEqual(['action: String', 'name: String']);
+      // 머지 gh 계정(P2): 로그인 이름 **문자열** 하나(None = 비우기). 모양·목록에 있는지는 오퍼레이터가 그 순간의
+      // `gh auth status` 로 다시 잰다(`readOperatorMergeSetPayload`·localMerge.test.ts, security C7) — 웹뷰가 gh 의
+      // 인자·경로를 고를 자리가 없다.
+      const mergeSet = commands.find((c) => c.fn === 'operator_merge_set')!;
+      expect(mergeSet.webviewParams).toEqual(['gh_user: Option<String>']);
       // `daemon_kill_runner` 가 받는 것은 **누구를·어느 세대를** 뿐이다 — 프로그램·인자·경로를
       // 다시 고를 수 있는 자리가 아니다.
       const kill = commands.find((c) => c.fn === 'daemon_kill_runner')!;

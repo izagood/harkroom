@@ -13,15 +13,15 @@ import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, registerOperator } from './helpers/fixtures.js';
 import { onEvent } from '../src/events.js';
 
-let app: FastifyInstance; let stop: () => Promise<void>;
+let app: FastifyInstance; let stop: () => Promise<void>; let pool: Pool;
 let adminToken: string; let opToken: string; let operatorId: string; let baseUrl: string;
 /** `/ws` 와 같은 값이어야 한다(buildServer 의 wsHeartbeatMs) — 갈라 두면 수명이 갈린다. */
 const HEARTBEAT_MS = 120;
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 
 beforeAll(async () => {
-  const db = await startTestDb(); stop = db.stop;
-  app = await buildServer({ pool: db.pool as Pool, wsHeartbeatMs: HEARTBEAT_MS });
+  const db = await startTestDb(); stop = db.stop; pool = db.pool as Pool;
+  app = await buildServer({ pool, wsHeartbeatMs: HEARTBEAT_MS });
   ({ token: adminToken } = await bootstrapAdmin(app));
   ({ token: opToken, operatorId } = await registerOperator(app, adminToken, '테스트기기'));
   await app.listen({ port: 0, host: '127.0.0.1' });
@@ -118,5 +118,66 @@ describe('/operator 채널', () => {
     const { token, operatorId: doomed } = await registerOperator(app, adminToken, '폐기될기기');
     await app.inject({ method: 'DELETE', url: `/operators/${doomed}`, headers: auth(adminToken) });
     await expect(connect(token)).rejects.toThrow('http 401');
+  });
+});
+
+// 폐기는 인증을 다시 보지 않는 붙은 소켓까지 닿아야 한다 — 두면 죽은 토큰으로 계속 산다.
+describe('폐기된 오퍼레이터의 소켓', () => {
+  const closed = (ws: WebSocket) => new Promise<number>((resolve) => ws.once('close', (code) => resolve(code)));
+
+  it('DELETE /operators/:id 는 붙은 소켓을 끊는다', async () => {
+    const op = await registerOperator(app, adminToken, '지울기기');
+    const ws = await connect(op.token);
+    const done = closed(ws);
+    const del = await app.inject({ method: 'DELETE', url: `/operators/${op.operatorId}`, headers: auth(adminToken) });
+    expect(del.statusCode).toBe(204);
+    expect(await done).toBe(4401);
+  });
+
+  it('다시 등록(replaces)은 옛 소켓을 끊는다', async () => {
+    const op = await registerOperator(app, adminToken, '바꿀기기');
+    const ws = await connect(op.token);
+    const done = closed(ws);
+    const code = (await app.inject({ method: 'POST', url: '/operators/register-codes', headers: auth(adminToken) })).json().code as string;
+    const res = await app.inject({ method: 'POST', url: '/operators/claim', payload: { code, name: '바꿀기기', replaces: op.operatorId } });
+    expect(res.json().replaced.operatorId).toBe(op.operatorId);
+    expect(await done).toBe(4401);
+  });
+});
+
+// commit 뒤의 실패(security #1025 권장): 옛 행이 이미 폐기·배정이 옮겨진 뒤라, 응답이 500 이면 새 토큰이
+// 머신에 가지 않고 배정이 아무도 토큰을 모르는 행에 갇힌다. 이벤트 구독자가 던지는 것은 실제로
+// `emitEvent` 를 뚫고 올라온다(EventEmitter 는 구독자 예외를 그대로 던진다).
+describe('다시 등록 — commit 뒤 부수 효과가 던져도', () => {
+  it('200 과 새 토큰을 돌려주고, 옛 소켓은 그래도 끊는다', async () => {
+    const op = await registerOperator(app, adminToken, '던질기기');
+    const ws = await connect(op.token);
+    const done = new Promise<number>((resolve) => ws.once('close', (code) => resolve(code)));
+    // claim 이 내는 첫 이벤트(새 등록, audience = 소유자 목록)에서만 던진다. 소켓 close 핸들러의
+    // `operator.changed`(audience 'all')는 요청 밖에서 돌아 던지면 처리되지 않은 예외가 된다.
+    const off = onEvent((e) => { if (e.type === 'operator.changed' && Array.isArray(e.audience)) throw new Error('구독자 고장'); });
+    try {
+      const code = (await app.inject({ method: 'POST', url: '/operators/register-codes', headers: auth(adminToken) })).json().code as string;
+      const res = await app.inject({ method: 'POST', url: '/operators/claim', payload: { code, name: '던질기기', replaces: op.operatorId } });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().token).toMatch(/^hkop_/);
+      expect(res.json().replaced.operatorId).toBe(op.operatorId);
+    } finally { off(); }
+    expect(await done).toBe(4401);
+  });
+
+  it('구독자가 던져도 옛 토큰 폐기(operator.revoked) 감사 행은 남는다', async () => {
+    const op = await registerOperator(app, adminToken, '감사기기');
+    const off = onEvent((e) => { if (e.type === 'operator.changed' && Array.isArray(e.audience)) throw new Error('구독자 고장'); });
+    try {
+      const code = (await app.inject({ method: 'POST', url: '/operators/register-codes', headers: auth(adminToken) })).json().code as string;
+      const res = await app.inject({ method: 'POST', url: '/operators/claim', payload: { code, name: '감사기기', replaces: op.operatorId } });
+      expect(res.statusCode).toBe(200);
+      const { rows } = await pool.query<{ detail: { replacedBy: string } }>(
+        `select detail from audit_log where action = 'operator.revoked' and target = $1`, [op.operatorId],
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.detail.replacedBy).toBe(res.json().operator.id);
+    } finally { off(); }
   });
 });

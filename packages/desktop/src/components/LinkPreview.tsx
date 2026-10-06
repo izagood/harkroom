@@ -44,7 +44,7 @@ export function LinkPreview({ url }: { url: string }) {
   if (!preview.title && !preview.description && !preview.siteName) return null;
 
   return (
-    <div className="mt-2 rounded border border-border p-3" data-testid="link-preview">
+    <div className="mt-2 rounded-row border border-border p-3" data-testid="link-preview">
       {/* 출처와 주소는 **아랫단 11px** 이다 — 읽는 것은 제목과 설명이고 이 둘은 그 카드가
           어디서 왔는지 알려 주는 꼬리표다. 제목은 크기를 안 적어 본문단 13px 을 물려받고,
           `font-semibold` 로만 도드라진다(같은 단 안에서 굵기로 위계를 낸다). */}

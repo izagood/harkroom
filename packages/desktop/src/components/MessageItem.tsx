@@ -1,8 +1,13 @@
+import { BlockedCard } from './BlockedCard';
+import { SecretNoticeAction } from './SecretNoticeAction';
+import { MergeDenialPanel } from './MergeDenialPanel';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { messagePermalink, readAskMeta, readModelMeta, type MessageRow } from '@harkroom/shared';
 import { readAutomationMeta } from '../lib/automation';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
+import { useWindowView } from '../state/windowView';
+import { openThreadFrom, openWindow } from '../lib/windowActions';
 import { AskCard } from './AskCard';
 import { ThreadStateBadge } from './ThreadStateBadge';
 import { threadStateFromFacts, isBlocking, threadStateLabel } from '../lib/threadState';
@@ -87,6 +92,8 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
   onOpenDirectory?: (accountId: string | null) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }) {
+  // 「스레드 열기」는 **이 창의** 자리로 간다(채널 창이면 자기 패널, W4 — `state/windowView`).
+  const windowView = useWindowView();
   const t = useT();
   const locale = useLocale();
   const isMine = useActiveStore((s) => s.me?.id === message.authorId);
@@ -512,6 +519,11 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
     // 복사는 **권한 게이트가 없다**(#179) — 읽을 수 있으면 이미 본문을 눈으로 옮길 수 있다.
     // Edit·Delete 와 성격이 다르니 그 둘의 조건을 따라가지 않는다.
     { label: 'Copy text', onSelect: () => { void copyBody(); } },
+    // 스레드를 새 창으로(판 3 여는 곳 ②, 우클릭도 같은 메뉴다). 스레드 창 안에서는 뜻이 없어 뺀다.
+    ...(windowView.kind !== 'thread' ? [{
+      label: t('window.openThread'),
+      onSelect: () => { openWindow({ kind: 'thread', channelId: message.channelId, rootId: message.threadRootId ?? message.id }); },
+    }] : []),
     /**
      * 여기부터 안 읽음(#179). #154 의 `PUT /channels/:id/unread` 를 그대로 부른다.
      *
@@ -668,7 +680,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
         {isSaved && (
           <div
             data-testid="saved-mark"
-            className="mb-0.5 flex w-fit items-center gap-1 rounded border border-border
+            className="mb-0.5 flex w-fit items-center gap-1 rounded-row border border-border
                        bg-surface-raised px-1.5 py-0.5 text-meta font-medium text-fg"
           >
             <span className="[&_path]:fill-current">
@@ -727,7 +739,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
           {automation && (
             <span
               data-testid="automation-chip"
-              className="rounded border border-border px-1 text-meta text-fg-subtle"
+              className="rounded-sm border border-border px-1 text-meta text-fg-subtle"
               title={automation.initiatedBy
                 // 에이전트가 돌린 회차(082) — 글은 소유자 이름이지만 누가 눌렀는지는 여기서 말한다.
                 ? t('message.automation.tooltipByAgent', {
@@ -769,7 +781,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
               #↵ {t('message.channelEcho')}
             </span>
           )}
-          {avcsType && <span className="rounded bg-warning-surface-strong px-1 text-meta text-warning">{avcsType}</span>}
+          {avcsType && <span className="rounded-sm bg-warning-surface-strong px-1 text-meta text-warning">{avcsType}</span>}
           <span className="text-meta text-fg-muted">{time}</span>
           {message.editedAt && <span className="text-meta text-fg-muted">(edited)</span>}
         </div>
@@ -786,9 +798,9 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                 data-testid="thread-origin-link"
                 // 아래 "최근 댓글 보기"와 **같은 처리**를 받는다(#488 B2): 스레드로 가는
                 // 링크이지 나를 막는 말이 아니므로 색이 아니라 점선 밑줄이 링크임을 말한다.
-                className="mb-0.5 -mx-1 flex max-w-full items-baseline gap-1 rounded px-1 py-0.5
+                className="mb-0.5 -mx-1 flex max-w-full items-baseline gap-1 rounded-sm px-1 py-0.5
                            text-meta text-fg-muted hover:bg-surface-hover"
-                onClick={() => void getController().openThread(message.threadRootId!)}
+                onClick={(e) => openThreadFrom(e, windowView, message.channelId, message.threadRootId!)}
                 // 미리보기는 화면에서 접히므로(`truncate`) 귀로 듣는 쪽에는 온전히 실어 준다.
                 aria-label={rootPreview ? `${t('message.threadOrigin')}: ${rootPreview}` : t('message.threadOrigin')}
               >
@@ -803,6 +815,8 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
             {shownBody.trim() && <MessageBody body={shownBody} messageId={message.id} refIds={mentionRefs} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
             {/* 선택지는 본문 **바로 아래**에 붙는다 — 답할 자리가 말 옆에 있어야 한다(규칙 05).
                 형식을 못 알아보면 `AskCard` 가 스스로 아무것도 그리지 않는다. */}
+            {/* 머지 거절 카드(P5) — 권한 칸은 서버 기록(meta.mergeDenial), 선택지는 그 아래 AskCard. */}
+            {message.meta.mergeDenial !== undefined && <MergeDenialPanel message={message} onOpenSettings={onOpenSettings} />}
             <AskCard message={message} />
             {/* 실패도 본문 바로 아래다 — 고치는 경로가 말 옆에 있어야 한다(규칙 05). */}
             <FailureCard message={message} inThread={inThread} />
@@ -825,16 +839,20 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                 {t('message.mentionDenied', { handles: mentionDenied.map((h) => `@${h}`).join(' ') })}
               </p>
             )}
+            {/* API 막힘 카드(P4b) — 서버가 세운 시스템 줄의 meta.blocked. */}
+            {isSystem && message.meta.blocked !== undefined && <BlockedCard message={message} onOpenSettings={onOpenSettings} />}
+            {/* 비밀 만들기 알림(서버 102 n4) — 소유자에게만 비밀 화면으로 가는 버튼. 본문은 서버가 쓴 그대로다. */}
+            {isSystem && message.meta.secretNotice !== undefined && <SecretNoticeAction message={message} onOpenSettings={onOpenSettings} />}
             {skillSlug && onOpenSettings && (
               <button
-                className="mt-1 rounded-lg border border-border px-2 py-1 text-meta font-medium
+                className="mt-1 rounded-card border border-border px-2 py-1 text-meta font-medium
                            text-fg hover:bg-surface-hover"
                 onClick={() => onOpenSettings('skills', skillSlug)}
               >
                 {t('message.openSkillApproval')}
               </button>
             )}
-            <Attachments attachments={message.attachments} />
+            <Attachments attachments={message.attachments} from={inThread ? 'thread' : 'channel'} message={message} />
             {/*
               **집합 호출의 결과**(정본 문서). 리액션·답글 요약보다 **앞**에 둔다: 이 줄은
               내가 방금 부른 것의 결과라 본문에 붙어 읽혀야 하고, 아래의 둘은 그 뒤에 남들이
@@ -880,9 +898,9 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                 // #424: 상자(테두리+옅은 면)를 벗긴다 — 채널을 스크롤하면 답글이 달린 메시지마다
                 // 파란 상자가 줄줄이 서서 본문보다 먼저 눈에 띄었다. Slack 처럼 참여자 얼굴 +
                 // 강조색 텍스트 링크로만 두고, 면은 hover 에서만 옅게 깔아 클릭 대상임을 알린다.
-                className="mt-0.5 self-start -mx-1 flex items-center gap-1.5 rounded px-1 py-0.5
+                className="mt-0.5 self-start -mx-1 flex items-center gap-1.5 rounded-sm px-1 py-0.5
                            text-meta hover:bg-surface-hover"
-                onClick={() => void getController().openThread(message.threadRootId ?? message.id)}
+                onClick={(e) => openThreadFrom(e, windowView, message.channelId, message.threadRootId ?? message.id)}
                 /*
                   **상태를 라벨에도 싣는다.** `aria-label` 은 자식 글자를 **덮어쓰므로**,
                   뱃지가 화면에 보여도 이 문자열에 없으면 스크린리더에는 존재하지 않는다 —
@@ -926,7 +944,13 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                   사슬이 있으면 그것이 배지보다 구체적인 말이다: 배지는 "내 차례"까지만
                   말하고, 이 줄은 **누구를 기다리는지**까지 말한다.
                 */}
-                {ends ? (
+                {/*
+                  **상태 리액션이 있으면 이 칸을 그리지 않는다**(D안, designer 결정). 상태는 리액션 줄의
+                  칩 하나가 말한다 — 여기서 또 그리면 한 행에 상태가 두 번이고, 두 판정이 엇갈리면
+                  서로 다른 말을 한다. "누가 누구를 기다리나"는 칩 말풍선에 있다. 상태가 아직 없는
+                  루트(배포 전·판정 전)는 지금 배지가 받친다.
+                */}
+                {message.statusReaction ? null : ends ? (
                   <span
                     data-testid="speech-slot"
                     data-mine={ends.mine}
@@ -993,10 +1017,10 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                 // 한쪽만 상자면 두 진입점이 다른 종류처럼 보인다.
                 // #488 B2: 답글 요약과 **같은 처리**를 받는다 — 스레드로 가는 링크이지
                 // 나를 막는 말이 아니다. 색 대신 점선 밑줄이 링크임을 말한다.
-                className="mt-0.5 self-start -mx-1 rounded px-1 py-0.5 text-meta font-medium
+                className="mt-0.5 self-start -mx-1 rounded-sm px-1 py-0.5 text-meta font-medium
                            text-fg-muted underline decoration-dotted underline-offset-2
                            hover:bg-surface-hover"
-                onClick={() => void getController().openThread(message.threadRootId!, { focusMessageId: message.id })}
+                onClick={(e) => openThreadFrom(e, windowView, message.channelId, message.threadRootId!, { focusMessageId: message.id })}
               >
                 {t('message.recentReplies')}
               </button>
@@ -1064,6 +1088,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
  * **스레드로 들어가는 문** 하나다 — 그것이 이 행이 존재하는 이유다.
  */
 function DeletedMessageRow({ message, inThread }: { message: MessageRow; inThread: boolean }) {
+  const windowView = useWindowView();
   const t = useT();
   const replyCount = message.replyCount ?? 0;
   return (
@@ -1078,9 +1103,9 @@ function DeletedMessageRow({ message, inThread }: { message: MessageRow; inThrea
         {!inThread && replyCount > 0 && (
           <button
             data-testid="deleted-message-replies"
-            className="mt-0.5 -mx-1 rounded px-1 py-0.5 text-meta font-medium text-fg-muted
+            className="mt-0.5 -mx-1 rounded-sm px-1 py-0.5 text-meta font-medium text-fg-muted
                        underline decoration-dotted underline-offset-2 hover:bg-surface-hover"
-            onClick={() => void getController().openThread(message.id)}
+            onClick={(e) => openThreadFrom(e, windowView, message.channelId, message.id)}
           >
             {t('message.summary.replies', { count: replyCount })}
           </button>
@@ -1117,7 +1142,7 @@ function AudienceBadge({ message }: { message: MessageRow }) {
     <span
       data-testid="audience-badge"
       data-for-me={forMe}
-      className={`rounded px-1 text-meta font-medium ${
+      className={`rounded-sm px-1 text-meta font-medium ${
         forMe ? 'bg-accent-surface text-state-turn' : 'text-fg-agent'
       }`}
     >

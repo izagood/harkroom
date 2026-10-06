@@ -158,6 +158,53 @@ describe('pickAccount', () => {
   });
 });
 
+describe('pickAccount — 상위 둘은 점수에 비례해 뽑는다 (2026-10-06)', () => {
+  // a: 90% 남음 · 50h → 1.80/h, b: 34% 남음 · 100h → 0.34/h. 반반이던 때는 b 가 a 만큼 받았다.
+  const es = [entry('a', { weekly: 10, weeklyResetH: 50 }), entry('b', { weekly: 66, weeklyResetH: 100 })];
+  const pB = 0.34 / (1.8 + 0.34);
+
+  it('둘째를 뽑을 확률은 s2 / (s1 + s2) 다', () => {
+    const N = 10_000;
+    let b = 0;
+    for (let i = 0; i < N; i += 1) {
+      if (pickAccount(input(es, { accounts: ['a', 'b'], random: () => (i + 0.5) / N })).order[0] === 'b') b += 1;
+    }
+    expect(b / N).toBeCloseTo(pB, 3);
+  });
+
+  it('난수가 1 − p 아래면 1등, 그 위면 2등이다 — 로그에 뽑힌 쪽의 확률을 단다', () => {
+    const lo = pickAccount(input(es, { accounts: ['a', 'b'], random: () => 1 - pB - 1e-6 }));
+    const hi = pickAccount(input(es, { accounts: ['a', 'b'], random: () => 1 - pB + 1e-6 }));
+    expect(lo.order).toEqual(['a', 'b']);
+    expect(lo.detail).toContain(`p=${(1 - pB).toFixed(2)}`);
+    expect(hi.order).toEqual(['b', 'a']);
+    expect(hi.detail).toContain(`p=${pB.toFixed(2)}`);
+  });
+
+  it('둘 다 0점이면 언제나 1등이다', () => {
+    // 배정 50건 × 2%p 감점으로 둘 다 여유 0 — 그래도 새 배정 기준(85/97) 아래라 자격은 있다.
+    const zero = [entry('a', { weekly: 10 }), entry('b', { weekly: 10 })];
+    const r = pickAccount(input(zero, {
+      accounts: ['a', 'b'], recentAssignments: new Map([['a', 50], ['b', 50]]), random: () => 0.999,
+    }));
+    expect(r.order[0]).toBe('a');
+    expect(r.detail).not.toContain('p=');
+  });
+
+  it('2등만 0점이면 2등은 뽑히지 않는다', () => {
+    const r = pickAccount(input([entry('a', { weekly: 10 }), entry('b', { weekly: 10 })], {
+      accounts: ['a', 'b'], recentAssignments: new Map([['b', 50]]), random: () => 0.999,
+    }));
+    expect(r.order[0]).toBe('a');
+  });
+
+  it('계정이 하나뿐이면 난수와 상관없이 그 계정이다', () => {
+    const r = pickAccount(input([entry('a', { weekly: 10 })], { accounts: ['a'], random: () => 0.999 }));
+    expect(r).toMatchObject({ order: ['a'], reason: 'new' });
+    expect(r.detail).not.toContain('p=');
+  });
+});
+
 describe('pickAccount — 같은 로그인은 후보 한 자리 (09-30 qa 실측)', () => {
   // lychee·lime 은 같은 로그인, plum 은 다른 로그인. 묶지 않으면 상위 둘이 lychee·lime 이라
   // 무작위를 어떻게 굴려도 plum 이 첫째가 되지 않았다.
@@ -179,6 +226,43 @@ describe('pickAccount — 같은 로그인은 후보 한 자리 (09-30 qa 실측
   it('묶음의 나머지는 페일오버 꼬리 맨 뒤다 — 빠지지는 않는다', () => {
     const r = pickAccount(input(usage, { accounts, random: () => 0 }));
     expect(r.order).toEqual(['lime', 'plum', 'acct', 'lychee']);
+  });
+});
+
+describe('pickAccount — 관문에 막힌 계정 (2026-10-01)', () => {
+  it('새 배정에서 빠지고 꼬리 맨 뒤로 간다 — 점수가 1등이어도', () => {
+    const r = pickAccount(input([
+      entry('a', { weekly: 0, weeklyResetH: 10 }),
+      entry('b', { weekly: 50 }),
+      entry('c', { weekly: 60 }),
+    ], { blocked: new Set(['a']) }));
+    expect(r.order[0]).not.toBe('a');
+    expect(r.order.at(-1)).toBe('a');
+  });
+
+  it('고정된 스레드도 옮긴다 — 그 계정으로는 프롬프트조차 못 넣는다', () => {
+    const r = pickAccount(input([entry('a'), entry('b')], { accounts: ['a', 'b'], pinned: 'a', blocked: new Set(['a']) }));
+    expect(r).toMatchObject({ reason: 'moved', order: ['b', 'a'] });
+  });
+
+  it('다른 계정이 다 뜨거워도(한도) 막힌 계정은 여전히 맨 뒤다 — 빼지는 않는다(2026-10-02)', () => {
+    const r = pickAccount(input([
+      entry('a', { weekly: 0, weeklyResetH: 10 }),
+      entry('b', { session: 99, sessionResetH: 1 }),
+      entry('c', { session: 99, sessionResetH: 2 }),
+    ], { blocked: new Set(['a']) }));
+    expect(r.order).toHaveLength(3);
+    expect(r.order.at(-1)).toBe('a');
+  });
+
+  it('모두 막혔으면 순서를 그대로 둔다 — 사람을 부를 계정이 남아야 한다', () => {
+    const r = pickAccount(input([entry('a'), entry('b')], { accounts: ['a', 'b'], blocked: new Set(['a', 'b']) }));
+    expect([...r.order].sort()).toEqual(['a', 'b']);
+  });
+
+  it('사용량을 모를 때도 막힌 계정은 맨 뒤다', () => {
+    const r = pickAccount(input([], { accounts: ['a', 'b'], blocked: new Set(['a']) }));
+    expect(r.order).toEqual(['b', 'a']);
   });
 });
 
@@ -276,5 +360,29 @@ describe('createAccountAssigner', () => {
     expect((await as.laneFor('t1')).map((a) => a?.name)).toEqual(['a', 'b']);
     lane = [acct('b'), acct('c')]; // a 를 지우고 c 를 더했다
     expect((await as.laneFor('t2')).map((a) => a?.name)).toEqual(['c', 'b']);
+  });
+
+  it('관문 표식이 선 계정은 맨 뒤로 — 시한이 없어 하루 지난 표식도 그대로, 표식이 지워지면 돌아온다', async () => {
+    const root = await rootWith([
+      { ...entry('a', { weekly: 0, weeklyResetH: 10 }), pool: 'work' },
+      { ...entry('b', { weekly: 50 }), pool: 'work' },
+    ]);
+    let atMs = NOW - 60_000;
+    const as = createAccountAssigner({
+      lane: [acct('a'), acct('b')], pool: 'work', root,
+      pinnedOf: () => null, now: () => NOW, random: () => 0, log: () => {},
+      readAttention: async (dir) => (dir === '/x/a' ? { kind: 'gate', atMs } : null),
+    });
+    let marked = true;
+    const as2 = createAccountAssigner({
+      lane: [acct('a'), acct('b')], pool: 'work', root,
+      pinnedOf: () => null, now: () => NOW, random: () => 0, log: () => {},
+      readAttention: async (dir) => (dir === '/x/a' && marked ? { kind: 'gate', atMs } : null),
+    });
+    expect((await as.laneFor('t1')).map((x) => x?.name)).toEqual(['b', 'a']);
+    atMs = NOW - 24 * 60 * 60_000;
+    expect((await as2.laneFor('t2')).map((x) => x?.name)).toEqual(['b', 'a']);
+    marked = false;
+    expect((await as2.laneFor('t3'))[0]!.name).toBe('a');
   });
 });

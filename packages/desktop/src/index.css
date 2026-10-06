@@ -32,11 +32,17 @@
     보다 한 단계 가라앉고, 카드·입력창(raised)은 한 단계 떠오른다. 지금의 "라이트인데
     사이드바만 검정"은 다크 모드에서만 재현된다.
   */
-  --app-surface: #fafafa;         /* 화면 바닥 — 본문 영역 */
+  /*
+    A · Paper(2026-10-02, jaebin 선택). 차가운 zinc 를 따뜻한 종이로 바꿨다 — 모바일이 이미
+    이 결이었고, 두 앱이 같은 역할에 같은 값을 갖게 하는 것이 이 판의 목적이다(사양: designer
+    의 `a-paper-tokens.md`, 대비는 라이트 바닥 #FBFAF8·다크 바닥 #1C1B19 기준으로 계산).
+    면 구분은 밝기 한 단계와 1px 선으로만 한다 — 그림자는 떠 있는 것에만(아래 `--shadow-*`).
+  */
+  --app-surface: #fbfaf8;         /* 화면 바닥 — 본문 영역 */
   --app-surface-raised: #ffffff;  /* 카드·입력창·팝오버. 바닥보다 한 단계 떠 있다 */
-  --app-surface-sunken: #f4f4f5;  /* 사이드바·목록 헤더. 바닥보다 한 단계 가라앉는다 */
-  --app-surface-rail: #eeeef0;    /* 맨 왼쪽 레일 — 사이드바보다 한 단계 더 가라앉는다 */
-  --app-surface-hover: #e4e4e7;   /* 눌릴 수 있는 줄에 마우스를 올렸을 때 */
+  --app-surface-sunken: #f3f1ee;  /* 사이드바·목록 헤더. 바닥보다 한 단계 가라앉는다 */
+  --app-surface-rail: #ece9e5;    /* 맨 왼쪽 레일 — 사이드바보다 한 단계 더 가라앉는다 */
+  --app-surface-hover: #e7e2db;   /* 눌릴 수 있는 줄에 마우스를 올렸을 때 */
   /*
     입력 칸의 면. **면 세 단계와 따로 두는 이유**: 입력 칸은 사이드바(sunken) 안에도,
     본문(surface) 위에도, 카드(raised) 안에도 앉는다. 어느 한 단계를 재사용하면 그 단계
@@ -45,42 +51,56 @@
     올려도 보이도록 **항상 `border-border` 와 함께** 쓴다.
   */
   --app-field: #ffffff;
-  --app-border: #e4e4e7;          /* 면과 면을 가르는 선 */
-  --app-fg: #18181b;              /* 본문 글자 */
-  --app-fg-muted: #52525b;        /* 보조 글자 — 시각·타임스탬프·설명 */
-  --app-fg-subtle: #71717a;       /* 더 약한 글자 — 라벨·플레이스홀더 */
+  --app-border: #e6e2dc;          /* 면과 면을 가르는 선 */
+  --app-fg: #1b1a19;              /* 본문 글자 */
+  --app-fg-muted: #6b665f;        /* 보조 글자 — 시각·타임스탬프·설명. 바닥과 5.5:1 */
+  /* 더 약한 글자 — 3.4:1 이라 AA 미달이다. **플레이스홀더·장식 라벨에만** 쓰고, 읽어야
+     하는 글(시각·설명)은 muted 로 간다. */
+  --app-fg-subtle: #8e8880;
+  --app-link: #2563c9;            /* 링크 글자 — 강조(주황)와 따로 둔다. 5.4:1 */
+  /*
+    먹색 면 — 스낵바·떠 있는 버튼·배너처럼 바닥과 반대 밝기로 떠야 하는 것. `-2` 는 그 위에
+    얹는 칩·구분. 다크에서도 바닥보다 밝은 쪽으로 간다(반전이 아니라 "한 단 더 진하게").
+  */
+  --app-surface-inverse: #1b1a19;
+  --app-surface-inverse-2: #2b2927;
   /*
     강조 — 로고의 주황이다(디자인 문서의 `--accent`). 로고에만 있고 화면에는 없던 색을
     화면의 유일한 강조로 올린다. 뜻은 하나로 좁힌다: **`→ 나` 로 온 막는 말**(되물음·선택·실패).
 
-    **면과 글자의 값이 다르다.** 브랜드 주황 `#E8613C` 는 흰 글자와 3.38:1 로 AA(4.5)에
-    못 미친다 — 채운 버튼에 그대로 쓰면 라벨이 읽히지 않는다(옛 인디고는 6.29 였다).
-    그래서 채우는 면은 한 단계 어두운 `#C4491F`(4.86)를 쓰고, 밝은 브랜드 주황은 따로
+    **면과 글자의 값이 다르다.** 브랜드 주황 `#E4572E` 는 흰 글자와 3.7:1 로 AA(4.5)에
+    못 미친다 — 채운 버튼·11~12px 배지 숫자에 그대로 쓰면 읽히지 않는다. 그래서 채우는
+    면은 한 단계 어두운 `#CC4A22`(4.6)를 쓰고, 밝은 브랜드 주황은 따로
     `--app-accent-brand` 에 남긴다. 문서의 `--accent-2` 축이 이 자리다.
   */
-  --app-accent: #c4491f;          /* 강조로 채운 면 — 흰 글자와 4.86:1 */
-  --app-accent-hover: #a83d1a;    /* 그 면의 hover — 한 단계 더 어둡게 */
-  --app-accent-surface: #fdefe9;  /* 강조의 옅은 면 — 선택 배경·안내 상자 */
+  --app-accent: #cc4a22;          /* 강조로 채운 면 — 흰 글자와 4.6:1 */
+  --app-accent-hover: #b6421f;    /* 그 면의 hover — 한 단계 더 어둡게 */
+  /* 강조 **글자** — 멘션 텍스트·"내 차례". 채운 면(accent)과 갈라 둔다: 면은 흰 글자를
+     얹을 만큼 어두워야 하고, 글자는 바닥 위에서 읽혀야 한다(5.3:1). */
+  --app-accent-text: #b6421f;
+  --app-accent-surface: #fdebe4;  /* 강조의 옅은 면 — 선택·멘션 배경·안내 상자 */
   /*
     브랜드 주황 그 자체. 글자를 얹지 않는 자리에만 쓴다 — 선(`border-accent-brand`),
     상태 점, 로고. **글자·채운 버튼에는 쓰지 않는다**(위 대비 이유). 아직 쓰는 자리가
     없고, 이 어휘를 처음 쓰는 것은 상태 점이 될 것이다.
   */
-  --app-accent-brand: #e8613c;
-  --app-danger: #dc2626;          /* 위험 — 삭제 버튼의 면, 오류 글자 */
-  --app-danger-hover: #b91c1c;    /* 위험으로 채운 면의 hover */
-  --app-danger-surface: #fef2f2;  /* 오류 상자의 면 */
-  --app-danger-surface-strong: #fee2e2; /* 그보다 한 단계 짙은 틴트 — 그 상자의 hover */
-  --app-danger-border: #fca5a5;   /* 오류 상자의 선 */
-  --app-warning: #b45309;         /* 경고 — 주의 문구 */
-  --app-warning-surface: #fffbeb; /* 경고 상자의 면 */
-  --app-warning-surface-strong: #fef3c7; /* 한 단계 짙은 틴트 — 강조된 메시지·배지 */
-  --app-warning-border: #fcd34d;  /* 경고 상자의 선 */
-  --app-success: #16a34a;         /* 정상 — 연결됨 표시 */
+  --app-accent-brand: #e4572e;
+  --app-danger: #b42318;          /* 위험 — 삭제 버튼의 면, 오류 글자 */
+  --app-danger-hover: #9a1e14;    /* 위험으로 채운 면의 hover */
+  --app-danger-surface: #fdecea;  /* 오류 상자의 면 */
+  --app-danger-surface-strong: #f9d6d2; /* 그보다 한 단계 짙은 틴트 — 그 상자의 hover */
+  --app-danger-border: #f0a9a2;   /* 오류 상자의 선 */
+  --app-warning: #8a5a00;         /* 경고 — 주의 문구 */
+  --app-warning-surface: #fff1cc; /* 경고 상자의 면 */
+  --app-warning-surface-strong: #fbe3a6; /* 한 단계 짙은 틴트 — 강조된 메시지·배지 */
+  --app-warning-border: #e9c76a;  /* 경고 상자의 선 */
+  --app-success: #1b7d45;         /* 정상 — 연결됨 표시. 바닥과 5.0:1 */
+  --app-success-surface: #e6f6ec; /* 정상 상자의 면 */
   /*
-    강조·위험처럼 **채도 높은 면 위에 얹는 글자**. 두 모드에서 같은 흰색이다 — 그 면 자체가
-    모드와 무관하게 어둡기 때문이고, 여기를 `fg` 로 두면 라이트에서 검은 글자가 남색 버튼
-    위에 얹혀 읽히지 않는다. 이름에 `accent` 를 넣지 않는 이유는 위험 버튼도 쓰기 때문이다.
+    강조·위험처럼 **채도 높은 면 위에 얹는 글자**. 라이트는 흰색, **다크는 어두운 글자**다 —
+    다크의 강조·위험 면은 밝은 쪽(#FF7A4A·#FF8A80)이라 흰 글자를 얹으면 2.6:1 로 읽히지
+    않는다(옛 값이 그랬다). 모바일 다크가 이미 그렇게 했다. 이름에 `accent` 를 넣지 않는
+    이유는 위험 버튼도 쓰기 때문이다.
   */
   --app-fg-on-strong: #ffffff;
 
@@ -91,8 +111,8 @@
     읽히기 때문이다 — 꺼진 것이 아니라 **남의 일**이다.
   */
   --app-fg-agent: #4e5a56;          /* 에이전트끼리의 말의 글자·라벨 */
-  --app-surface-agent: #f2f5f4;     /* 그 말이 앉는 아주 옅은 면 */
-  --app-border-agent: #d3dbd8;      /* 그 말의 선 — 접힌 줄의 테두리 */
+  --app-surface-agent: #f1f4f2;     /* 그 말이 앉는 아주 옅은 면 */
+  --app-border-agent: #cfd8d4;      /* 그 말의 선 — 접힌 줄의 테두리 */
 
   /*
     상태 5단(규칙 03·04). **`turn` 은 강조와 같은 값을 가리키되 이름을 따로 둔다** —
@@ -104,7 +124,7 @@
   */
   --app-state-turn: var(--app-accent);  /* 내 차례 — 화면에서 유일하게 강조받는 상태 */
   --app-state-running: #4e5a56;         /* 도는 중 — 답이 필요 없는 구간 */
-  --app-state-waiting: #93908a;         /* 남을 기다림 — 사슬의 중간 */
+  --app-state-waiting: #a8a39b;         /* 남을 기다림 — 사슬의 중간 */
   --app-state-done: #5e8a6e;            /* 끝남 */
   --app-state-stuck: var(--app-danger); /* 교착·실패 — 사람만이 푼다 */
 }
@@ -115,39 +135,44 @@
   "가라앉은 면"이라는 역할 이름이 거짓이 되고, 두 모드가 서로 다른 규칙을 갖게 된다.)
 */
 :root[data-theme="dark"] {
-  --app-surface: #18181b;
-  --app-surface-raised: #27272a;
-  --app-surface-sunken: #121215;
-  --app-surface-rail: #09090b;
-  --app-surface-hover: #3f3f46;
-  --app-field: #27272a;
-  --app-border: #3f3f46;
-  --app-fg: #f4f4f5;
-  --app-fg-muted: #a1a1aa;
-  --app-fg-subtle: #71717a;
-  /* 다크는 반대다 — 밝은 주황이 어두운 바닥에서 잘 읽힌다(#ff7b54 on #18181b = 6.93). */
-  --app-accent: #ff7b54;
-  --app-accent-hover: #ff9e7f;
-  --app-accent-surface: #3a2119;
-  --app-accent-brand: #ff7b54;
+  --app-surface: #1c1b19;
+  --app-surface-raised: #262422;
+  --app-surface-sunken: #171614;
+  --app-surface-rail: #121110;
+  --app-surface-hover: #2e2b28;
+  --app-field: #262422;
+  --app-border: #34312e;
+  --app-fg: #ebe7e2;
+  --app-fg-muted: #9a938b;
+  --app-fg-subtle: #7a746c;
+  --app-link: #7aa7f0;
+  --app-surface-inverse: #2e2b28;
+  --app-surface-inverse-2: #3d3934;
+  /* 다크는 반대다 — 밝은 주황이 어두운 바닥에서 잘 읽힌다. 그 위 글자는 어둡게(fg-on-strong). */
+  --app-accent: #ff7a4a;
+  --app-accent-hover: #ff9b76;
+  --app-accent-text: #ff9b76;
+  --app-accent-surface: #3a2219;
+  --app-accent-brand: #ff7a4a;
   --app-fg-agent: #8fa39d;
   --app-surface-agent: #1f2422;
   --app-border-agent: #333c39;
-  --app-danger: #dc2626;
-  --app-danger-hover: #b91c1c;
-  --app-danger-surface: #450a0a;
-  --app-danger-surface-strong: #7f1d1d;
-  --app-danger-border: #7f1d1d;
-  --app-warning: #fbbf24;
-  --app-warning-surface: #451a03;
-  --app-warning-surface-strong: #78350f;
-  --app-warning-border: #78350f;
-  --app-success: #4ade80;
-  --app-fg-on-strong: #ffffff;
+  --app-danger: #ff8a80;
+  --app-danger-hover: #ffa59d;
+  --app-danger-surface: #3a1d1b;
+  --app-danger-surface-strong: #4f2825;
+  --app-danger-border: #6b332f;
+  --app-warning: #f0b43c;
+  --app-warning-surface: #33290f;
+  --app-warning-surface-strong: #473816;
+  --app-warning-border: #5e4a1c;
+  --app-success: #5ccf86;
+  --app-success-surface: #16301f;
+  --app-fg-on-strong: #1c1b19;
   /* 상태 5단 — 라이트의 짝. `turn`·`stuck` 은 위 정의를 가리키므로 그 아래 둔다. */
   --app-state-turn: var(--app-accent);
   --app-state-running: #8fa39d;
-  --app-state-waiting: #71717a;
+  --app-state-waiting: #716b64;
   --app-state-done: #6ea882;
   --app-state-stuck: var(--app-danger);
 }
@@ -176,6 +201,11 @@
   --color-warning-surface-strong: var(--app-warning-surface-strong);
   --color-warning-border: var(--app-warning-border);
   --color-success: var(--app-success);
+  --color-success-surface: var(--app-success-surface);
+  --color-link: var(--app-link);
+  --color-accent-text: var(--app-accent-text);
+  --color-surface-inverse: var(--app-surface-inverse);
+  --color-surface-inverse-2: var(--app-surface-inverse-2);
   --color-fg-on-strong: var(--app-fg-on-strong);
   --color-accent-brand: var(--app-accent-brand);
   --color-fg-agent: var(--app-fg-agent);
@@ -238,9 +268,9 @@
     바꾸려던 이 작업이 화면 전체의 줄 간격을 바꾸는 작업이 된다. 단이 줄 간격까지 정해야
     한다면 그것은 자리마다 실측한 뒤의 다음 판이고, 이 판은 **크기만** 옮긴다.
   */
-  --text-title: 19px;  /* 화면 제목 — 설정 화면 제목과 로그인 제목, 둘뿐이다 */
+  --text-title: 20px;  /* 화면 제목 — 설정 화면 제목과 로그인 제목, 둘뿐이다 */
   --text-name: 17px;   /* 이름줄 — 작성자 이름·채널 이름·겹창 제목·설정 칸 제목 */
-  --text-body: 14px;   /* 본문 — 앱의 기본 글자 크기이고 입력칸이 전부 이 단이다 */
+  --text-body: 15px;   /* 본문 — 앱의 기본 글자 크기이고 입력칸이 전부 이 단이다 */
   --text-meta: 12px;   /* 로우·상태·시간 — 사이드바 전체, 시각·꼬리표·구획 라벨 */
 
   /*
@@ -255,6 +285,11 @@
 
     **글자만 키우면 안 된다** — 여백·아이콘이 제자리면 밀도가 무너진다. 그 절반은 바로 아래
     `--spacing` 이 같은 비율로 받는다.
+
+    ## A · Paper 에서 본문·제목을 한 번 더 (2026-10-02)
+
+    본문 14 → 15, 제목 19 → 20. 모바일 본문(15)과 같은 값으로 맞춘 것이다. 한 단 안의
+    변화라 `--spacing` 은 그대로 둔다(사양 §4).
   */
 
   /*
@@ -263,6 +298,55 @@
     비율**(×1.111)로 올렸다 — 그래서 글자가 커진 만큼 그 사이도 벌어진다.
   */
   --spacing: 0.278rem;
+
+  /*
+    모서리 — 역할 넷 + 원형(`rounded-full`) + 아주 작은 것(`rounded-sm`). `--radius-*` 네임
+    스페이스라 `rounded-row`·`rounded-card`·`rounded-compose`·`rounded-avatar` 가 생긴다.
+    **이 판은 선언만 한다** — 화면의 `rounded`·`rounded-lg`(400곳 넘게)를 옮기는 것은 다음
+    판이고, 그 치환 규칙은 사양 §6 에 있다. 값은 모드와 무관해 타이포처럼 리터럴 한 겹이다.
+  */
+  --radius-row: 8px;      /* 줄·버튼·필드·칩 */
+  --radius-card: 12px;    /* 카드·팝오버·메뉴·안내 상자 */
+  --radius-compose: 14px; /* 메시지 입력창·겹창 */
+  --radius-avatar: 10px;  /* 36px 아바타. 20px 아바타는 6px — 그 자리에서 rounded-[…] 대신 다음 판이 정한다 */
+
+  /*
+    그림자 — 둘뿐이다. 메시지는 카드가 아니라서 그림자가 없다. 다크 값이 다르므로 `--app-*`
+    한 겹(아래 `:root` 블록)을 가리킨다 — 색 토큰과 같은 이유(위 주석의 순환 함정).
+  */
+  --shadow-float: var(--app-shadow-float);     /* 팝오버·메뉴·⌘K·겹창 */
+  --shadow-compose: var(--app-shadow-compose); /* 메시지 입력창 */
+
+  /*
+    모션 — 세 길이와 한 곡선. 스프링·바운스는 없다. `prefers-reduced-motion` 이면 아래
+    `:root` 블록에서 길이를 0 으로 내린다. `--ease-*` 네임스페이스라 `ease-paper` 유틸리티가
+    생긴다. 길이는 `duration-[var(--duration)]` 로 부른다(v4 에 길이 테마 네임스페이스가 없다).
+  */
+  --ease-paper: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/*
+  그림자·모션의 모드별 값. 그림자는 `@theme` 이 가리키는 한 겹이고, 길이는 테마 변수가
+  아니라 평범한 변수다.
+*/
+:root {
+  --app-shadow-float: 0 8px 24px rgba(27, 26, 25, 0.08), 0 0 0 1px #e6e2dc;
+  --app-shadow-compose: 0 1px 2px rgba(27, 26, 25, 0.05), 0 0 0 1px #e0dbd4;
+  --duration-fast: 120ms;  /* hover·pressed 배경, 토글 */
+  --duration: 180ms;       /* 패널 전환·팝오버·메시지 도착 */
+  --duration-sheet: 240ms; /* 겹창 올라오기 */
+}
+:root[data-theme="dark"] {
+  --app-shadow-float: 0 8px 24px rgba(0, 0, 0, 0.45), 0 0 0 1px #34312e;
+  /* 다크의 입력창은 그림자 없이 선만 — 어두운 바닥 위 그림자는 보이지 않고 탁해지기만 한다. */
+  --app-shadow-compose: 0 0 0 1px #3d3934;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration: 0ms;
+    --duration-sheet: 0ms;
+  }
 }
 
 /*
@@ -363,6 +447,20 @@ body {
 :focus-visible {
   outline: 2px solid var(--app-accent);
   outline-offset: -2px;
+}
+
+/*
+  미리보기 카드는 열려 있으면 테두리가 주황이다(선택 표시). 링을 안쪽(-2px)에 그리면 그것과 똑같아 보여
+  "닫았는데 선택이 안 풀린다"로 읽혔다(2026-10-05) — 카드만 링을 바깥에 띄운다. 레이어 밖 규칙이라 유틸리티로는
+  못 이긴다(위 주석의 특이성 절) — 같은 층에서 셀렉터를 하나 더 붙인다.
+*/
+.artifact-card:focus-visible {
+  outline-offset: 2px;
+}
+
+/* 구분선을 끄는 동안 iframe 이 마우스를 삼키지 않게 한다(`PaneResizer`). */
+body[data-pane-dragging] iframe {
+  pointer-events: none;
 }
 
 /*

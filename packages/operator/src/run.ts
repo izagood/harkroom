@@ -36,6 +36,7 @@ import { createCodexAccountsPort } from './codexAccounts.js';
 import { startCommunities } from './communities.js';
 import { createLocalAgentsPort } from './localAgents.js';
 import { createLocalMcpPort } from './localMcp.js';
+import { createLocalMergePort } from './localMerge.js';
 import { createMcpOAuth } from './mcpOAuth.js';
 import { rewriteMcpConfigTokens } from './mcpConfig.js';
 import { claudeConfigPath } from './mcpConfig.js';
@@ -43,6 +44,16 @@ import { fileSecrets } from './secrets.js';
 import { createRunnerLinkServer } from './runnerLink.js';
 import type { CommunityInstance } from './community.js';
 import { createTurnSecrets } from './turnSecrets.js';
+import { readConfig } from './config.js';
+import { createTurnMerge, defaultExec, ghEnv, GH_PATH } from './turnMerge.js';
+import { createTurnApi } from './turnApi.js';
+import { createTurnSlots, MAX_TURNS_ENV, parseMaxTurns } from './turnSlots.js';
+import { collectStatus, readMachineDigest } from './heartbeat.js';
+import { announceOf } from './communities.js';
+import { createTurnUploads } from './turnUploads.js';
+import { cleanupLedgerPath } from './workspaceCleanup.js';
+import { cleanupOwnersPath, createCleanupOwners } from './workspaceCleanupOwners.js';
+import { createWorkspaceCleanup, GIT_PATH } from './workspaceCleanupService.js';
 
 /**
  * 채택한 러너의 생사를 확인하는 주기(`#431` 2-c).
@@ -201,6 +212,45 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     },
     log,
   });
+  // 에이전트 머지 래퍼(스레드 3deac356). 브릿지 소켓으로 온 `repo.merge` 를 여기서 받아 서버 판정 → gh 머지 →
+  // 결과 보고를 한다. 임대는 `turnSecrets` 의 것을 그대로 쓴다(`lookup`).
+  // 동시 턴 상한(R1) — 이 오퍼레이터가 띄운 러너 전부를 합쳐 센다(`turnSlots.ts`).
+  const turnSlots = createTurnSlots({ max: parseMaxTurns(process.env[MAX_TURNS_ENV], log), log });
+  const daemonStartedAt = new Date();
+  let machineDigest: Promise<string | null> | null = null;
+  if (turnSlots.max !== null) log(`동시 턴 상한: ${turnSlots.max}`);
+  const turnMerge = createTurnMerge({
+    forward: async (agentId, req) => {
+      const c = communities.find((x) => x.knowsAgent(agentId));
+      return c ? c.forward(agentId, req) : { type: 'http.response', id: req.id, status: 0, body: '이 에이전트를 아는 커뮤니티가 없다' };
+    },
+    lookupLease: (runnerId, cause) => turnSecrets.lookup(runnerId, cause),
+    log,
+    ghPath: GH_PATH,
+    home: homedir(),
+    ghUser: async () => (await readConfig(join(appDataDir, 'operator', 'operator.json'))).merge?.ghUser,
+  });
+  // 외부 API 래퍼(C안 P3, 스레드 07519d86). 브릿지 소켓으로 온 `api.call` 을 여기서 받아 서버 판정 → 키를 붙여 호출 → 결과
+  // 보고를 한다. 키는 이 프로세스 밖으로 나가지 않는다. 임대는 머지와 같이 `turnSecrets` 의 것을 쓴다.
+  const turnApi = createTurnApi({
+    forward: async (agentId, req) => {
+      const c = communities.find((x) => x.knowsAgent(agentId));
+      return c ? c.forward(agentId, req) : { type: 'http.response', id: req.id, status: 0, body: '이 에이전트를 아는 커뮤니티가 없다' };
+    },
+    lookupLease: (runnerId, cause) => turnSecrets.lookup(runnerId, cause),
+    log,
+  });
+  // 턴 파일 올리기(미리보기 PR ③). 브릿지의 `attachment.upload{path}` 를 여기서 받아 워크스페이스 안의 파일을
+  // 서버 `/uploads` 로 올린다 — 모델이 바이너리를 base64 로 쓰지 않게(`turnUploads.ts`).
+  const turnUploads = createTurnUploads({
+    forward: async (agentId, req) => {
+      const c = communities.find((x) => x.knowsAgent(agentId));
+      return c ? c.forward(agentId, req) : { type: 'http.response', id: req.id, status: 0, body: '이 에이전트를 아는 커뮤니티가 없다' };
+    },
+    log,
+  });
+  // 작업 폴더 정리의 주인 장부 — 러너가 relay 로 "이 스레드가 만든 worktree·마지막 턴·도는 턴"을 알린다(스레드 9e909150).
+  const cleanupOwners = createCleanupOwners({ path: cleanupOwnersPath(appDataDir), log });
   // 앞 오퍼레이터가 남긴 턴 디렉터리는 이 프로세스가 모르는 임대의 것이다 — 기동 때 지운다.
   void turnSecrets.sweepAll().then((n) => { if (n) log(`turn-secrets: 앞 오퍼레이터가 남긴 턴 디렉터리 ${n}개를 지웠다`); });
   const turnSecretsTimer = setInterval(() => { void turnSecrets.sweepExpired(); }, 60_000);
@@ -214,9 +264,19 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     },
     // 러너의 MCP·REST 요청 — 그 에이전트를 아는 커뮤니티의 서버로 나른다(스펙 §5). 인증은
     // 그 커뮤니티의 오퍼레이터 토큰 + 에이전트 id 로 바뀐다.
-    onRequest: async (runnerId, agentId, req) => {
+    onRequest: async (runnerId, agentId, req, kind) => {
+      const slot = turnSlots.maybeHandle(runnerId, req, kind);
+      if (slot) return slot;
       const mounted = await turnSecrets.maybeHandle(runnerId, agentId, req);
       if (mounted) return mounted;
+      const merged = await turnMerge.maybeHandle(runnerId, agentId, req);
+      if (merged) return merged;
+      const called = await turnApi.maybeHandle(runnerId, agentId, req);
+      if (called) return called;
+      const reported = await cleanupOwners.maybeHandle(runnerId, agentId, req, kind);
+      if (reported) return reported;
+      const uploaded = await turnUploads.maybeHandle(agentId, req);
+      if (uploaded) return uploaded;
       const c = communities.find((x) => x.knowsAgent(agentId));
       if (!c) {
         return req.type === 'mcp.request'
@@ -228,6 +288,10 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     // 회수한 러너가 **인박스를 놓았다**고 알린다(2026-09-28). 그 순간부터 교체 러너를 띄워도
     // 같은 멘션을 둘이 집지 않는다 — 프로세스가 죽기를 기다리던 공백이 여기서 사라진다.
     // `registry` 는 아래에서 만들어지지만 이 콜백은 그 뒤에만 불린다(러너가 붙어야 온다).
+    // relay 링크가 끊겼다 = 러너가 죽었거나 오퍼레이터를 놓았다 — 그 러너가 쥔 턴 자리를 돌려받는다.
+    onClose: (runnerId) => { turnSlots.releaseRunner(runnerId); cleanupOwners.releaseRunner(runnerId); },
+    // relay 가 다시 붙었다 — 끊긴 사이 잃은 놓기 요청이 자리를 묶어 두지 않게 그 러너의 자리를 털어 낸다(L1).
+    onRelayAttach: (runnerId) => { turnSlots.releaseRunner(runnerId); cleanupOwners.releaseRunner(runnerId); },
     onNotice: (runnerId, agentId, notice) => {
       // 턴 임대를 맡긴다·놓는다(비밀 보관소). relay 소켓에서만 온다 — 브릿지의 통지는 링크가 버린다.
       if (notice.type === 'secret.lease') { turnSecrets.noteLease(runnerId, agentId, notice); return; }
@@ -239,7 +303,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
         void handleMcpAuthRejected(agentId, runnerId, notice.servers.slice(0, MAX_REJECTED_PER_NOTICE), notice.turnStartedAtMs);
         return;
       }
-      registry.notePollStopped(agentId, runnerId, notice.holding);
+      registry.notePollStopped(agentId, runnerId, notice.holding, notice.done ?? []);
       log(`러너가 인박스를 놓았다: agent=${agentId} runnerId=${runnerId} 진행 중인 턴 ${notice.holding.length}개 — 교체를 띄운다`);
       // 배정이 5초 주기로 다시 시도하므로 여기서 직접 spawn 하지 않는다. 그 주기가 곧
       // 공백의 상한이다(예전에는 "남은 턴이 끝날 때까지" 였다).
@@ -397,6 +461,14 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   // 로그인이 끝나면 그 계정의 사용량을 다시 잰다 — 폴러는 아래에서 만든다(호출은 그 뒤다).
   const claudeAccounts = createClaudeAccountsPort({ onSignedIn: (dir) => { void usagePoller?.forget(dir); } });
   const codexAccounts = createCodexAccountsPort();
+  // `pools.json` 의 순서를 디스크와 맞춘다(2026-10-02) — 순서를 안 쓰던 계정 추가 경로가 남긴 어긋남을
+  // 고친다. 이름만 적는다. 실패해도 기동을 막지 않는다(순서는 동점일 때만 쓰인다). 서버에 안 붙는
+  // 기동(테스트)에서는 돌리지 않는다 — 그 머신의 실제 계정 뿌리를 건드리면 안 된다(아래 폴러와 같다).
+  if (options.communities !== false) void claudeAccounts.reconcileOrder().then(({ added, removed }) => {
+    if (added.length || removed.length) {
+      log(`claude 계정 순서 맞춤: 더함 ${added.join(', ') || '없음'} · 뺌 ${removed.join(', ') || '없음'}`);
+    }
+  }, () => undefined);
 
   // 계정별 사용률을 뒤에서 재서 `usage.json` 에 쓴다(C ①) — 러너가 새 스레드의 계정을 고를 때 읽는다.
   // 서버에 안 붙는 기동(테스트)에서는 돌리지 않는다: 러너가 뜰 일이 없고, 그 머신의 실제 계정으로
@@ -458,6 +530,38 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     oauth: mcpOAuth,
   });
 
+  const localMerge = createLocalMergePort({
+    configPath: join(appDataDir, 'operator', 'operator.json'),
+    ghPath: GH_PATH,
+    home: homedir(),
+  });
+
+  // 작업 폴더 청소기(스레드 9e909150). 기동 때 한 번, 그 뒤 1시간마다 돈다. 설정이 꺼져 있으면(기본) 원장에 「주인 모름」만
+  // 보이고 아무것도 넣거나 지우지 않는다.
+  const operatorConfigPath = join(appDataDir, 'operator', 'operator.json');
+  const workspaceCleanup = createWorkspaceCleanup({
+    ledgerPath: cleanupLedgerPath(appDataDir),
+    configPath: operatorConfigPath,
+    owners: cleanupOwners,
+    agents: async () => Object.values((await readConfig(operatorConfigPath)).communities)
+      .flatMap((c) => Object.entries(c.agents).map(([agentId, a]) => ({ agentId, workingDir: a.workingDir ?? null }))),
+    forward: async (agentId, req) => {
+      const c = communities.find((x) => x.knowsAgent(agentId));
+      return c ? c.forward(agentId, req) : { type: 'http.response', id: req.id, status: 0, body: '이 에이전트를 아는 커뮤니티가 없다' };
+    },
+    exec: defaultExec,
+    gitPath: GIT_PATH,
+    ghPath: GH_PATH,
+    ghEnv: ghEnv(homedir(), null),
+    home: homedir(),
+    log,
+  });
+  const runCleanup = () => { void workspaceCleanup.sweep().catch((err) => log(`cleanup 실패: ${err instanceof Error ? err.message : String(err)}`)); };
+  const cleanupBoot = setTimeout(runCleanup, 60_000); // 기동 직후 러너 채택·커뮤니티 연결과 겹치지 않게 1분 뒤
+  cleanupBoot.unref?.();
+  const cleanupTimer = setInterval(runCleanup, 60 * 60_000);
+  cleanupTimer.unref?.();
+
   const server = new DaemonServer({
     token: '', // claim 이 만든 값으로 아래에서 바꾼다 — 그 전에는 아무도 못 붙는다.
     identity,
@@ -467,6 +571,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     codexAccounts,
     localAgents,
     localMcp,
+    localMerge,
+    workspaceCleanup,
     log,
     runnerLink,
   });
@@ -551,6 +657,17 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
         appVersion: args.appVersion ?? null, log,
         runnerLink, socketPath: outcome.paths.socketPath, operatorBin: entryPath, mcpOAuth,
         turnSecretsDir: join(appDataDir, 'turn-secrets'),
+        // 박동(P3a) — 서버가 「호스트」 화면에 보일 이 머신의 지금 상태. 머신 값은 한 번 읽어 둔다.
+        heartbeat: {
+          status: () => collectStatus({
+            startedAt: daemonStartedAt,
+            turns: () => ({ running: turnSlots.inUse(), max: turnSlots.max }),
+            turnsByRunner: () => turnSlots.byRunner(),
+            runners: () => announceOf(registry).map((r) => ({ runnerId: r.runnerId, agentId: r.agentId })),
+            dataDir: appDataDir,
+          }),
+          machine: () => (machineDigest ??= readMachineDigest()),
+        },
       });
       communities = runtime.communities;
       startCommunity = runtime.startOne;
@@ -569,6 +686,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     async shutdown() {
       clearInterval(pollTimer);
       clearInterval(turnSecretsTimer);
+      clearTimeout(cleanupBoot);
+      clearInterval(cleanupTimer);
       usagePoller?.stop();
       // 서버 링크를 먼저 끊는다 — 러너는 데려가지 않는다(이 파일 머리 주석). 링크가 살아
       // 있으면 종료 중에 assign 이 와서 새 러너를 띄울 수 있다.

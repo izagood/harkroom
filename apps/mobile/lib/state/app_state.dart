@@ -13,6 +13,7 @@
 library;
 
 
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import '../api/api_client.dart';
@@ -20,6 +21,9 @@ import '../api/api_error.dart';
 import '../api/models.dart';
 import '../api/ws.dart';
 import '../api/ws_socket.dart';
+import '../mention/sticky.dart';
+import '../mention/usage.dart';
+import '../session/recent_search_store.dart';
 import '../session/session_store.dart';
 
 /// 앱이 지금 어느 단계에 있나. 화면 하나가 이것만 보고 무엇을 그릴지 정한다.
@@ -108,11 +112,28 @@ class AppState extends ChangeNotifier {
     required SessionStore sessions,
     ApiClient Function(String baseUrl, String? token)? apiFactory,
     WsConnector? connector,
+    this.otherPollEvery = const Duration(seconds: 60),
+    this.otherRequestTimeout = const Duration(seconds: 10),
+    RecentSearchStore? recentSearchStore,
   })  : _sessions = sessions,
+        _recentStore = recentSearchStore ?? RecentSearchStore.inMemory(),
         _apiFactory = apiFactory ?? ((b, t) => ApiClient(baseUrl: b, token: t)),
         _connector = connector ?? RealWsConnection.connect;
 
   final SessionStore _sessions;
+  final RecentSearchStore _recentStore;
+
+  /// 지금 커뮤니티의 최근 찾은 말(새것이 앞, [recentSearchMax] 개까지). [loadRecentSearches] 가 채운다.
+  List<String> recentSearches = const [];
+  String? _recentFor;
+
+  /// 최근 찾은 말을 몇 개까지 두나.
+  static const int recentSearchMax = 10;
+
+  /// 커뮤니티마다 최근 찾은 말을 **지운 횟수**. 로그아웃이 올린다 — 그 전에 시작한 쓰기를 버리는 표지다.
+  final Map<String, int> _recentEpoch = {};
+
+  void _bumpRecent(String key) => _recentEpoch[key] = (_recentEpoch[key] ?? 0) + 1;
   final ApiClient Function(String baseUrl, String? token) _apiFactory;
   final WsConnector _connector;
 
@@ -125,6 +146,78 @@ class AppState extends ChangeNotifier {
 
   String? baseUrl;
   MeView? me;
+
+  /// 이 기기에 로그인해 둔 커뮤니티들(보관소와 같은 순서). 토큰이 죽은 것도 남는다
+  /// ([StoredCommunity.isExpired]) — 「다시 로그인」 행으로 선다.
+  List<StoredCommunity> communities = const [];
+
+  /// 지금 쓰는 커뮤니티의 열쇠([StoredCommunity.key] — origin + 계정 id). 연결 화면에서 새 주소를
+  /// 넣은 직후(아직 로그인 전)는 비어 있다.
+  String? activeKey;
+
+  /// 홈의 탭(0 채널 · 1 인박스 · 2 나). **홈 위젯이 아니라 여기 둔다** — 커뮤니티를 옮기는 동안
+  /// 부팅 화면이 서면 홈이 통째로 다시 만들어지고, 위젯 안의 탭은 채널로 튄다. 망이 빠르면 안
+  /// 튀고 느리면 튀면, 같은 동작이 망 속도에 따라 다르게 보인다(designer #1046).
+  int homeTab = 0;
+
+  void selectTab(int tab) {
+    if (homeTab == tab) return;
+    homeTab = tab;
+    notifyListeners();
+    // 에이전트 탭은 열 때마다 새로 읽는다 — 도는 턴은 분 단위로 바뀌고 소켓이 알려 주지 않는다.
+    if (tab == 3) unawaited(loadAgents());
+  }
+
+  /// 쓰던 글(D8): 커뮤니티 열쇠 → 작성칸 키(채널 id · 스레드 루트 id) → 글.
+  ///
+  /// **열쇠는 커뮤니티 key(origin#계정 id)다** — 채널 id 만으로 두면 다른 서버의 같은 id 작성칸에 글이
+  /// 샌다. 커뮤니티를 옮겨도 남고(돌아오면 이어 쓴다), 그 커뮤니티에서 로그아웃하면 지운다(모두
+  /// 로그아웃이면 전부). 메모리에만 둔다 — 앱을 껐다 켜면 비는 것은 전과 같다.
+  final Map<String, Map<String, String>> _drafts = {};
+
+  /// 지금(또는 [community]) 커뮤니티의 그 작성칸에 쓰던 글. 없으면 빈 글.
+  String draftFor(String composerKey, {String? community}) =>
+      _drafts[community ?? activeKey]?[composerKey] ?? '';
+
+  /// 쓰던 글을 적어 둔다. [community] 는 **화면이 열릴 때 쥔** 커뮤니티 key 다 — 옮긴 뒤에 닫히는 화면이
+  /// 지금 커뮤니티 자리에 앞 커뮤니티의 글을 쓰지 않게. 이미 빠진 커뮤니티면 버린다(로그아웃 뒤에 닫히는
+  /// 화면이 지운 글을 되살리지 않게).
+  void saveDraft(String community, String composerKey, String text) {
+    if (!communities.any((c) => c.key == community)) return;
+    if (text.isEmpty) {
+      final m = _drafts[community];
+      m?.remove(composerKey);
+      if (m != null && m.isEmpty) _drafts.remove(community);
+      return;
+    }
+    (_drafts[community] ??= {})[composerKey] = text;
+  }
+
+  /// 다른 커뮤니티의 열쇠 → 나를 기다리는 것(안 읽은 부름) 수. 지금 커뮤니티는 [inboxUnread] 가 센다.
+  ///
+  /// **소켓은 지금 커뮤니티 것만 연다**(D5) — 커뮤니티마다 소켓을 쥐면 배터리가 든다. 나머지는
+  /// 들어올 때와 [otherPollEvery] 마다 수만 받는다. 값이 없으면 아직 모른다(점을 그리지 않는다).
+  final Map<String, int> otherWaiting = {};
+
+  /// 다른 커뮤니티 수를 다시 받는 간격(홈 화면이 이 간격으로 [refreshOtherCounts] 를 부른다).
+  final Duration otherPollEvery;
+
+  /// 다른 커뮤니티 하나에 묻는 시한. 한 서버가 답 없이 매달려도 다음 차례를 막지 않는다(security #1056).
+  final Duration otherRequestTimeout;
+
+  /// 지금 다른 커뮤니티 수를 받는 중인가. 앞 차례가 안 끝났으면 다음 차례는 건너뛴다 — 매달린 서버가
+  /// 있을 때 60초마다 차례가 쌓이지 않게(security #1056).
+  bool _countingOthers = false;
+
+  /// 다른 커뮤니티 중 하나라도 기다리는 것이 있나 — 머리 타일의 점.
+  bool get othersWaiting => otherWaiting.values.any((n) => n > 0);
+
+  StoredCommunity? get activeCommunity {
+    for (final c in communities) {
+      if (c.key == activeKey) return c;
+    }
+    return null;
+  }
 
   ApiClient? _api;
   WsClient? _ws;
@@ -142,6 +235,56 @@ class AppState extends ChangeNotifier {
   /// 채널에서 틀린다.
   final Map<String, ReadState> reads = {};
 
+  /// 채널 id → 내 선호(즐겨찾기·섹션·치움). 홈 목록이 이것으로 묶인다(S5b). 옛 서버·실패면 비어
+  /// 있고, 그때 홈은 지금처럼 이름순 한 묶음이다.
+  final Map<String, ChannelPref> channelPrefs = {};
+
+  /// 홈에서 접어 둔 묶음(섹션 키). 이 기기·이 세션만 기억한다.
+  final Set<String> collapsedSections = {};
+
+  /// 홈을 「새로 온 것」(안 읽은 채널)만으로 좁혔는가 — 바로가기 카드(S5c)가 켜고 끈다. 세션 동안만.
+  bool homeUnreadOnly = false;
+
+  void toggleHomeUnreadOnly() {
+    homeUnreadOnly = !homeUnreadOnly;
+    notifyListeners();
+  }
+
+  /// 지금 DM 을 여는 중인 상대들.
+  final Set<String> _openingDm = {};
+
+  /// 그 사람과의 DM 을 열거나 만들고 id 를 준다. 목록에 없던 DM 이면 더한다(이름은 상대로).
+  ///
+  /// `null` 이면 **아무것도 하지 마라**는 뜻이다. 둘 중 하나다.
+  /// - 같은 사람에게 여는 중이다 — 거듭 누르기(designer ③). 서버는 찾기와 만들기가 한 트랜잭션이
+  ///   아니라 동시에 두 번 오면 같은 짝 DM 이 둘 생길 수 있다(security L2).
+  /// - 기다리는 사이 커뮤니티가 바뀌었다(security L1) — 옛 커뮤니티의 DM 을 새 커뮤니티 목록에
+  ///   붙이고 그리로 밀어 넣으면 안 된다.
+  Future<String?> openDmWith(String accountId) async {
+    if (!_openingDm.add(accountId)) return null;
+    final gen = _generation;
+    final key = activeKey;
+    final String id;
+    try {
+      id = await _api!.openDm([accountId]);
+    } finally {
+      _openingDm.remove(accountId);
+    }
+    if (gen != _generation || key != activeKey) return null;
+    if (!channels.any((c) => c.id == id)) {
+      final myId = me?.id ?? '';
+      final row = ChannelRow(id: id, name: '', isPrivate: true, isDm: true, topic: null, memberIds: [myId, accountId]);
+      channels.add(row.withName(dmTitle(row, myId)));
+      notifyListeners();
+    }
+    return id;
+  }
+
+  void toggleSection(String key) {
+    if (!collapsedSections.remove(key)) collapsedSections.add(key);
+    notifyListeners();
+  }
+
   /// 채널 id → 그 채널에서 읽어 둔 메시지(오름차순, `seq` 로 유일).
   final Map<String, List<MessageRow>> messages = {};
 
@@ -158,6 +301,52 @@ class AppState extends ChangeNotifier {
   /// 채널 id → 이전 페이지를 받는 중인가. 두 번 겹쳐 받지 않는다.
   final Set<String> loadingOlder = {};
 
+  /// 채널 id → 이전 페이지를 못 받았다. 이 채널은 **스크롤로는 다시 부르지 않는다** — 화면이
+  /// "다시 시도" 줄을 세우고, 사람이 누를 때만 [retryOlder] 로 다시 간다. 스크롤마다 다시 부르면
+  /// 서버가 아플 때 요청이 거듭 간다(security #996).
+  final Set<String> olderFailed = {};
+
+  /// 스레드 루트 id → 서버에 더 오래된 답글이 남았는가(스레드 응답의 `hasMore`). 옛 서버는 늘
+  /// `false` 를 주므로 그때는 지금처럼 최신 100 줄만 보인다.
+  final Map<String, bool> threadHasMore = {};
+
+  /// 스레드 루트 id → 옛 답글을 받는 중. 겹쳐 받지 않는다.
+  final Set<String> loadingOlderThread = {};
+
+  /// 스레드 루트 id → **최신 답글이 빠져 있다**(2026-10-06, #1191 후속 d1). 링크·찾기로 옛 답글의 창을
+  /// 받았는데 창이 꽉 차서(limit 만큼) 그 뒤의 답글이 더 있을 수 있고, 손에 든 최신 쪽과도 맞닿지 않은
+  /// 상태다. 화면은 창 아래에 「최신 답글로 ↓」 띠를 세운다 — 없으면 스레드가 거기서 끝난 것처럼 보인다.
+  /// 최신 페이지를 받으면([jumpToLatestReplies]·[catchUp]·창 없는 [openThread]) 지운다.
+  final Set<String> threadTailMissing = {};
+
+  /// 스레드 루트 id → 「최신 답글로 ↓」를 눌러 최신 페이지를 **받는 중**(designer m1). 띠는 스피너로 바뀌고
+  /// 다시 눌리지 않는다. 겹쳐 부르면 한 번만 간다.
+  final Set<String> jumpingToLatest = {};
+
+  /// 스레드 루트 id → 「최신 답글로 ↓」가 **실패했다**(designer m2). 띠가 「못 불러왔다 · 다시 시도」로
+  /// 바뀐다. 다시 눌러 성공하거나 최신 페이지가 어떤 길로든 들어오면 지운다.
+  final Set<String> latestJumpFailed = {};
+
+  /// 스레드 루트 id → 띠가 선 동안([threadTailMissing]) **소켓으로 온 새 답글의 id**. 옛 창 끝에 이어 붙이면 그
+  /// 사이 답글이 빠진 채 새 답글이 서므로 붙이지 않고 여기에 적는다 — 띠가 「최신 답글로 ↓ · 새 답글 n개」로
+  /// 알린다. **수가 아니라 id 집합**인 이유: 같은 글이 두 번 오는 것이 정상 경로다(내 답글은 POST 응답과
+  /// 소켓으로, 재연결 직후는 겹쳐서, 수정은 같은 길로) — 수만 올리면 두 번 센다. 최신 페이지를 받으면
+  /// ([_storeThreadPage]) 그 안에 들어 있으므로 지운다.
+  final Map<String, Set<String>> threadTailNew = {};
+
+  /// 띠가 선 채로 **내가 보낸** 답글의 id(POST 응답에서 적는다). [threadTailNew] 에 세지 않고, 그 뒤 소켓으로
+  /// 다시 와도 세지 않는다 — "새 답글 n개" 는 남이 말한 수다. m3 가 최신으로 옮기기에 실패했을 때만 생기는
+  /// 자리이고, 띠가 「다시 시도」로 남아 있어 거기서 최신으로 가면 내 글이 보인다.
+  final Set<String> _ownTailSent = {};
+
+  /// 스레드 루트 id → 옛 답글을 못 받았다. 채널의 [olderFailed] 와 같이 스크롤로는 다시 부르지
+  /// 않고 "다시 시도" 를 누를 때만 간다.
+  final Set<String> olderThreadFailed = {};
+
+  /// 세션 세대. 로그인·로그아웃·다시 들어오기마다 올린다. 받는 데 걸린 사이에 계정이 바뀌면
+  /// **그 응답을 버린다** — 안 버리면 옛 계정의 말이 새 계정 화면에 섞인다(security #996).
+  int _generation = 0;
+
   /// 스레드 루트 id → 그 스레드를 읽는 상태.
   final Map<String, LoadState> threadLoad = {};
 
@@ -169,6 +358,114 @@ class AppState extends ChangeNotifier {
 
   /// 작성칸 키(채널 id 또는 스레드 루트 id) → 보내지 못한 말들(오래된 것 먼저).
   final Map<String, List<FailedSend>> failedSends = {};
+
+  /// 작성칸 키(채널 id 또는 스레드 루트 id) → 고정 멘션(**계정 id**, 부른 순서).
+  ///
+  /// 한 번 부른 상대는 그 작성칸의 다음 줄부터 저절로 불린다(`lib/mention/sticky.dart`).
+  /// 화면(`State`)이 아니라 여기 두는 이유: 스레드 화면은 나가면 통째로 버려진다 — 거기 두면
+  /// 스레드를 한 번 나갔다 오는 것만으로 칩이 사라지고, 사람은 부르던 줄 알고 보낸 글이
+  /// 아무도 깨우지 않는다(데스크탑 #706 이 겪은 것). 앱을 껐다 켜면 비는 것은 작성칸 글과 같다.
+  final Map<String, List<String>> stickyMentions = {};
+
+  /// 이 작성칸이 지금 부를 고정 상대. 비활성·지워진 계정과 나는 뺀다(저장본은 그대로 둔다).
+  List<AccountView> stickyAccounts(String key) =>
+      liveStickyAccounts(stickyMentions[key] ?? const [], accounts, myId: me?.id);
+
+  /// 방금 보낸 글([typed] — 사람이 친 글)에서 새로 부른 상대를 고정에 더한다.
+  void keepStickyMentions(String key, String typed) {
+    final cur = stickyMentions[key] ?? const <String>[];
+    final next = keepMentioned(cur, typed, accounts.values, myId: me?.id);
+    if (identical(next, cur)) return;
+    stickyMentions[key] = next;
+    notifyListeners();
+  }
+
+  /// "이 채널의 에이전트"(`available`) 칩을 눌렀다 — 그 상대를 고정한다. 그때부터는 사람이
+  /// `@` 로 부른 것과 구분되지 않는다(데스크탑 `callChannelAgent` 와 같다: 부른 것은 사람이다).
+  void pinStickyMention(String key, String accountId) {
+    final cur = stickyMentions[key] ?? const <String>[];
+    if (cur.contains(accountId)) return;
+    stickyMentions[key] = [...cur, accountId];
+    notifyListeners();
+  }
+
+  // ── 채널 자동 멘션(#173) ───────────────────────────────────────────────
+
+  /// 채널 id → 자동 멘션 행. 키가 없으면 아직 못 받았다(그동안은 자동 멘션 없이 보낸다).
+  final Map<String, List<ChannelAutoMention>> channelAutoMentions = {};
+
+  /// 작성칸 키 → **이번 글에서만** 뺀 자동 멘션(계정 id). 보내면 비운다 — 다음 글에는 다시 붙는다.
+  /// 설정을 지우는 것이 아니다: 설정은 admin 의 것이고, 사람에게 필요한 것은 "이 한 줄은 안 부르기"다.
+  final Map<String, Set<String>> autoSkipped = {};
+
+  /// 자동 멘션을 읽는다. 바뀌어도 소켓 이벤트가 없으므로 **채널을 열 때마다** 다시 읽는다(데스크탑도
+  /// 채널을 열 때 읽는다). 실패는 삼킨다 — 칩이 안 설 뿐 작성칸은 돈다.
+  Future<void> loadChannelAutoMentions(String channelId) async {
+    try {
+      channelAutoMentions[channelId] = await _api!.channelAutoMentions(channelId);
+      notifyListeners();
+    } on Object {
+      // 끊김·권한. 앞에 받은 것이 있으면 그대로 둔다.
+    }
+  }
+
+  /// 지금 깨울 수 있는 자동 멘션 상대. 비활성·지워진 계정과 나는 뺀다 — 깨어나지 못하는 상대를 매
+  /// 줄에 붙이면 죽은 handle 만 남는다(데스크탑 `liveAutoRows`).
+  List<AccountView> _liveAuto(String channelId, {required bool always}) => [
+        for (final r in channelAutoMentions[channelId] ?? const <ChannelAutoMention>[])
+          if (r.isAlways == always)
+            if (accounts[r.agentAccountId] case final a? when !a.isDisabled && a.id != me?.id) a,
+      ];
+
+  /// 이 작성칸의 글에 실제로 붙을 자동 멘션(`always` 에서 이번만 뺀 것을 제한 것).
+  List<AccountView> autoAccounts(String channelId, String key) {
+    final skipped = autoSkipped[key] ?? const <String>{};
+    return [for (final a in _liveAuto(channelId, always: true)) if (!skipped.contains(a.id)) a];
+  }
+
+  /// 이 작성칸의 고정 칩. **자동 멘션(`always`) 상대는 뺀다** — 같은 상대에 칩이 둘 서면 × 하나로
+  /// 어느 쪽이 빠지는지 알 수 없다. 자동 칩이 그 자리를 대신한다(데스크탑 `sticky` 와 같다).
+  /// 이번만 뺀 자동 상대도 고정 칩으로 되살아나지 않는다 — 되살아나면 × 가 듣지 않는 것처럼 보인다.
+  List<AccountView> composerSticky(String channelId, String key) {
+    final auto = {for (final a in _liveAuto(channelId, always: true)) a.id};
+    return [for (final a in stickyAccounts(key)) if (!auto.contains(a.id)) a];
+  }
+
+  /// "이 채널의 에이전트"(`available`) 중 아직 부르고 있지 않은 상대 — 누르면 고정된다.
+  List<AccountView> availableAccounts(String channelId, String key) {
+    final stuck = {for (final a in stickyAccounts(key)) a.id};
+    return [for (final a in _liveAuto(channelId, always: false)) if (!stuck.contains(a.id)) a];
+  }
+
+  /// 보낼 때 본문 앞에 붙일 handle — 자동이 먼저, 고정이 뒤(데스크탑 `[...autoActive, ...sticky]`).
+  List<String> composerPrefix(String channelId, String key) => [
+        for (final a in [...autoAccounts(channelId, key), ...composerSticky(channelId, key)])
+          a.handle.toLowerCase(),
+      ];
+
+  /// 자동 칩의 × — 이번 글에서만 뺀다.
+  void skipAutoOnce(String key, String accountId) {
+    (autoSkipped[key] ??= <String>{}).add(accountId);
+    notifyListeners();
+  }
+
+  /// 보냈다 — 이번만 뺀 자동 멘션은 이 글로 끝이다.
+  void clearAutoSkips(String key) {
+    if (autoSkipped.remove(key) != null) notifyListeners();
+  }
+
+  /// 칩의 × — 이 상대를 그만 부른다.
+  void dropStickyMention(String key, String accountId) {
+    final cur = stickyMentions[key];
+    if (cur == null || !cur.contains(accountId)) return;
+    final next = cur.where((id) => id != accountId).toList(growable: false);
+    if (next.isEmpty) {
+      stickyMentions.remove(key);
+    } else {
+      stickyMentions[key] = next;
+    }
+    notifyListeners();
+  }
   int _localSeq = 0;
 
   ApiClient? get api => _api;
@@ -182,10 +479,13 @@ class AppState extends ChangeNotifier {
 
   Future<void> boot() async {
     final stored = await _sessions.load();
+    communities = stored?.communities ?? const [];
     final current = stored?.current;
-    if (current == null || current.token.isEmpty) {
-      phase = stored?.communities.isNotEmpty == true ? AppPhase.needsLogin : AppPhase.needsServer;
+    activeKey = current?.key;
+    if (current == null || current.isExpired) {
+      phase = current != null ? AppPhase.needsLogin : AppPhase.needsServer;
       baseUrl = current?.baseUrl;
+      _api = current == null ? null : _apiFactory(current.baseUrl, null);
       notifyListeners();
       return;
     }
@@ -222,41 +522,168 @@ class AppState extends ChangeNotifier {
     api.token = token;
     final who = await api.me();
 
-    try {
-      await _sessions.upsert(StoredCommunity(
-        accountId: who.id,
-        baseUrl: baseUrl!,
-        token: token,
-        handle: who.handle,
-      ));
-    } on SessionSaveFailure {
-      noticeKey = 'noticeSessionNotSaved';
-    }
+    final c = await _remember(StoredCommunity(
+      accountId: who.id,
+      baseUrl: baseUrl!,
+      token: token,
+      handle: who.handle,
+    ));
+    activeKey = c.key;
     me = who;
     await _enter();
   }
 
+  /// 커뮤니티 하나를 보관소와 [communities] 에 넣는다. 같은 열쇠(origin + 계정 id)면 **제자리에서**
+  /// 갱신한다(designer 판정 4 — 다시 로그인할 때마다 행이 늘면 사람은 어느 것이 산 것인지 모른다).
+  /// origin 이 다르면 계정 id 가 같아도 새 행이다(security F1 — 서버가 대는 id 로 남의 행을 차지하지 못하게).
+  ///
+  /// 보관에 실패해도 이번 실행의 목록에는 넣는다 — 전환이 메모리의 토큰으로 돈다.
+  Future<StoredCommunity> _remember(StoredCommunity community) async {
+    final idx = communities.indexWhere((c) => c.key == community.key);
+    final merged = idx >= 0 && community.label == null
+        ? community.copyWith(label: communities[idx].label)
+        : community;
+    final next = [...communities];
+    if (idx >= 0) {
+      next[idx] = merged;
+    } else {
+      next.add(merged);
+    }
+    communities = next;
+    try {
+      await _sessions.upsert(merged);
+    } on SessionSaveFailure {
+      noticeKey = 'noticeSessionNotSaved';
+    }
+    return merged;
+  }
+
+  // ── 여러 커뮤니티 ──────────────────────────────────────────────────────
+
+  /// 커뮤니티를 하나 더 로그인한다. **지금 커뮤니티는 건드리지 않는다** — 옮기는 것은
+  /// 부르는 쪽이 [switchTo] 로 한다(추가 화면이 닫힌 뒤에). 실패는 그대로 던진다 — 추가
+  /// 화면이 그 자리에서 사유를 보인다.
+  ///
+  /// 같은 계정이면 새 행을 만들지 않고 그 행을 갱신한다(만료된 커뮤니티의 「다시 로그인」도 이 길이다).
+  Future<StoredCommunity> addCommunity(String url, String loginId, String password) async {
+    final api = _apiFactory(url, null);
+    final token = await api.login(loginId, password);
+    api.token = token;
+    final who = await api.me();
+    final c = await _remember(StoredCommunity(
+      accountId: who.id,
+      baseUrl: url,
+      token: token,
+      handle: who.handle,
+    ));
+    notifyListeners();
+    return c;
+  }
+
+  /// 다른 커뮤니티로 옮긴다. API·소켓을 바꾸고 그 커뮤니티의 목록을 새로 읽는다.
+  ///
+  /// 옮기면 지금 커뮤니티의 화면 상태(읽어 둔 메시지·못 보낸 말·고정 멘션)는 **버린다** — 다른
+  /// 계정 이름으로 가면 안 된다는 로그아웃의 판단과 같다. 토큰은 남으므로 돌아오면 다시 읽는다.
+  ///
+  /// 들어가면 `true`. 만료된 커뮤니티면 아무것도 바꾸지 않고 `false` — 부르는 쪽이 다시 로그인을 띄운다.
+  Future<bool> switchTo(String key) async {
+    final target = communities.where((c) => c.key == key).firstOrNull;
+    if (target == null || target.isExpired) return false;
+    if (key == activeKey && phase == AppPhase.ready) return true;
+    _generation++;
+    _dropSocket();
+    _generation++;
+    _resetSession();
+    activeKey = target.key;
+    otherWaiting.remove(target.key);
+    baseUrl = target.baseUrl;
+    _api = _apiFactory(target.baseUrl, target.token);
+    phase = AppPhase.booting;
+    notifyListeners();
+    try {
+      await _sessions.setActive(target.key);
+    } on SessionSaveFailure {
+      // 다음 기동에 앞 커뮤니티가 열릴 뿐이다 — 옮기기는 막지 않는다.
+    }
+    await _enter();
+    return phase == AppPhase.ready && activeKey == target.key;
+  }
+
+  /// 이 기기에서만 쓰는 이름을 붙인다. 빈 글이면 이름을 지운다(호스트명으로 돌아간다).
+  Future<void> renameCommunity(String key, String label) async {
+    final trimmed = label.trim();
+    StoredCommunity change(StoredCommunity c) =>
+        trimmed.isEmpty ? c.copyWith(clearLabel: true) : c.copyWith(label: trimmed);
+    communities = [
+      for (final c in communities) c.key == key ? change(c) : c,
+    ];
+    notifyListeners();
+    try {
+      await _sessions.update(key, change);
+    } on SessionSaveFailure {
+      noticeKey = 'noticeSessionNotSaved';
+      notifyListeners();
+    }
+  }
+
+  /// 그 커뮤니티의 토큰으로 서버에 묻는 클라이언트. 지금 커뮤니티가 아니어도 된다 — 푸시 등록은
+  /// 로그인해 둔 커뮤니티마다 따로 한다(`lib/push/push_coordinator.dart`).
+  ApiClient apiFor(StoredCommunity community) => _apiFactory(community.baseUrl, community.token);
+
+  /// 그 커뮤니티 서버의 릴리스 번호(`/healthz`). 모르면 `null`.
+  Future<String?> serverVersionOf(StoredCommunity community) async {
+    try {
+      return await _apiFactory(community.baseUrl, null).serverVersion();
+    } on Object {
+      return null;
+    }
+  }
+
   /// 목록을 채우고 소켓을 연다.
   Future<void> _enter() async {
+    final gen = ++_generation;
     final api = _api!;
     try {
-      me ??= await api.me();
-      final results = await Future.wait([api.channels(), api.accounts(), api.reads()]);
+      final who = me ?? await api.me();
+      final results = await Future.wait([
+        api.channels(),
+        api.accounts(),
+        api.reads(),
+        // 선호는 **못 받아도 들어간다** — 홈이 묶이지 않을 뿐 채널은 다 보인다(옛 서버·일시 실패).
+        api.channelPrefs().catchError((Object _) => const <ChannelPref>[]),
+        // DM 도 못 받으면 채널만으로 들어간다 — DM 탭이 빌 뿐이다.
+        api.dms().catchError((Object _) => const <ChannelRow>[]),
+      ]);
+      // 기다리는 사이 로그아웃했거나 다른 계정으로 들어왔다 — 옛 답을 새 세션에 붓지 않는다.
+      if (gen != _generation) return;
+      channelPrefs
+        ..clear()
+        ..addEntries((results[3] as List<ChannelPref>).map((p) => MapEntry(p.channelId, p)));
+      me = who;
       channels
         ..clear()
         ..addAll(results[0] as List<ChannelRow>);
       accounts
         ..clear()
         ..addEntries((results[1] as List<AccountView>).map((a) => MapEntry(a.id, a)));
+      // DM 은 따로 온다(`GET /channels` 는 standard 만). 이름은 상대들로 짓는다 — 계정 목록을 받은 뒤라야 한다.
+      channels.addAll((results[4] as List<ChannelRow>).map((d) => d.withName(dmTitle(d, who.id))));
       reads
         ..clear()
         ..addEntries((results[2] as List<ReadState>).map((r) => MapEntry(r.channelId, r)));
     } on ApiError catch (e) {
+      // 옛 세션의 늦은 실패다 — 그 사이 로그아웃하고 다른 계정으로 들어왔으면 **새 계정의 보관본을
+      // 지우거나 화면을 내리면 안 된다**(security #1032 🟡).
+      if (gen != _generation) return;
       // 토큰이 죽었다. **보관본을 지우고** 로그인으로 돌린다 — 안 지우면 다음 기동에
       // 같은 실패를 반복한다.
       if (e.isCredentialFailure) {
-        await _sessions.clear();
+        // **이 커뮤니티만** 만료로 표시한다. 보관본을 통째로 지우면 셋 중 하나가 만료될 때
+        // 나머지 둘의 토큰까지 잃는다(designer 판정 1). 행은 남는다 — 「다시 로그인」.
+        if (gen != _generation) return;
+        await _markExpired(activeKey);
         _api = _apiFactory(baseUrl!, null);
+        me = null;
         phase = AppPhase.needsLogin;
         notifyListeners();
         return;
@@ -266,6 +693,7 @@ class AppState extends ChangeNotifier {
       notifyListeners();
       return;
     } on Object {
+      if (gen != _generation) return;
       // 서버에 닿지 못했다. **던지지 않는다** — 받을 사람이 없어 부팅 화면이 멈춘다.
       phase = AppPhase.unreachable;
       notifyListeners();
@@ -276,6 +704,60 @@ class AppState extends ChangeNotifier {
     _openSocket();
     // 부팅을 막지 않는다 — 채널 목록이 먼저 서고 받은 것은 뒤따라 온다.
     unawaited(loadInbox());
+    _startOtherPolling();
+  }
+
+  // ── 다른 커뮤니티의 수(D5) ──────────────────────────────────────────────
+
+  /// 들어온 직후 한 번 받는다. 그 뒤 60초마다는 **홈 화면이** 부른다([HomeScreen]) — 시계를 화면
+  /// 수명에 묶어야 화면이 없을 때(로그인·부팅 화면) 돌지 않고, 시험에서도 남지 않는다.
+  void _startOtherPolling() {
+    if (!communities.any((c) => c.key != activeKey && !c.isExpired)) return;
+    unawaited(refreshOtherCounts());
+  }
+
+  /// 다른 커뮤니티마다 안 읽은 부름 수만 받는다(`GET /inbox?unread=1`). 그 커뮤니티의 토큰은 그
+  /// 커뮤니티 주소로만 간다. 401 이면 그 커뮤니티를 만료로 표시한다 — 전환 시트가 「다시 로그인」을
+  /// 미리 보인다. 끊김·5xx 는 앞 수를 그대로 둔다(틀린 0 보다 낡은 수가 낫다).
+  Future<void> refreshOtherCounts() async {
+    if (phase != AppPhase.ready || _countingOthers) return;
+    _countingOthers = true;
+    try {
+      await _countOthers();
+    } finally {
+      _countingOthers = false;
+    }
+  }
+
+  Future<void> _countOthers() async {
+    final targets = [
+      for (final c in communities)
+        if (c.key != activeKey && !c.isExpired) c,
+    ];
+    final live = {for (final c in communities) c.key};
+    otherWaiting.removeWhere((k, _) => !live.contains(k) || k == activeKey);
+    for (final c in targets) {
+      final api = _apiFactory(c.baseUrl, c.token);
+      try {
+        final entries = await api.inbox(unreadOnly: true).timeout(otherRequestTimeout);
+        // 기다리는 사이 그 커뮤니티로 옮겼거나 뺐다 — 남의 자리에 수를 쓰지 않는다.
+        if (c.key == activeKey || !communities.any((x) => x.key == c.key)) continue;
+        otherWaiting[c.key] = entries.where((e) => e.isUnread).length;
+      } on ApiError catch (e) {
+        // 물을 때 쓴 토큰이 **지금도 그 행의 토큰일 때만** 만료로 친다. 그 사이 사람이 다시 로그인해
+        // 토큰이 바뀌었으면 늦게 온 401 은 옛 토큰의 것이다 — 새 토큰을 비우면 안 된다(security #1056).
+        final now = communities.where((x) => x.key == c.key).firstOrNull;
+        if (e.isCredentialFailure && c.key != activeKey && now?.token == c.token) {
+          otherWaiting.remove(c.key);
+          await _markExpired(c.key);
+        }
+      } on Object {
+        // 다음 차례에 다시 받는다.
+      } finally {
+        api.close();
+      }
+    }
+    notifyListeners();
   }
 
   void _openSocket() {
@@ -318,39 +800,48 @@ class AppState extends ChangeNotifier {
   Future<void> catchUp() async {
     final api = _api;
     if (api == null) return;
-    for (final entry in messages.entries.toList()) {
-      final list = entry.value;
-      if (list.isEmpty) continue;
-      try {
-        final page = await api.messages(entry.key, since: list.last.seq, limit: 200);
-        for (final m in page.messages) {
-          _upsertMessage(m);
-        }
-      } on Object {
-        // 다음에 다시 붙을 때 또 읽는다.
-      }
-    }
-    for (final entry in threads.entries.toList()) {
-      final channelId = _channelOfThread(entry.key);
-      if (channelId == null) continue;
-      try {
-        final page = await api.messages(channelId, thread: entry.key, limit: 100);
-        threads[entry.key] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
-      } on Object {
-        /* 위와 같다 */
-      }
-    }
-    try {
-      final fresh = await api.reads();
-      reads
-        ..clear()
-        ..addEntries(fresh.map((r) => MapEntry(r.channelId, r)));
-    } on Object {
-      /* 위와 같다 */
-    }
+    final gen = _generation;
+    // **한꺼번에 묻는다.** 예전에는 채널 N개·스레드 M개·reads·인박스를 for 문으로 하나씩 기다려
+    // N+M+2 왕복이 직렬로 쌓였다 — 왕복 하나가 130~300ms(Cloudflare 해외 PoP 경로)라 열어 둔 것이
+    // 열 개면 다시 붙은 뒤 화면이 맞기까지 1.5~3초였다. 각 조회는 서로 다른 자리(채널·스레드·
+    // reads)에 쓰므로 어느 것이 먼저 끝나도 결과가 같다. 동시 요청 수는 [catchUpConcurrency] 로 묶는다.
+    final jobs = <Future<void> Function()>[
+      for (final entry in messages.entries.toList())
+        if (entry.value.isNotEmpty)
+          () async {
+            final page = await api.messages(entry.key, since: entry.value.last.seq, limit: 200);
+            if (gen != _generation) return;
+            for (final m in page.messages) {
+              _upsertMessage(m);
+            }
+          },
+      for (final rootId in threads.keys.toList())
+        if (_channelOfThread(rootId) case final channelId?)
+          () async {
+            final page = await api.messages(channelId, thread: rootId, limit: 100);
+            if (gen != _generation) return;
+            // 최신 페이지로 **통째로 간다**. 밀어 올려 받아 둔 옛 답글은 버리고 `hasMore` 를 다시 세워
+            // 다시 밀면 받게 한다 — 남겨 두면 끊긴 사이 지워진 옛 답글이 화면에 남는다(security #1051).
+            _storeThreadPage(rootId, page.messages);
+            threadHasMore[rootId] = page.hasMore;
+          },
+      () async {
+        final fresh = await api.reads();
+        if (gen != _generation) return;
+        reads
+          ..clear()
+          ..addEntries(fresh.map((r) => MapEntry(r.channelId, r)));
+      },
+      loadInbox,
+    ];
+    await runLimited(jobs, catchUpConcurrency);
+    if (gen != _generation) return;
     notifyListeners();
-    await loadInbox();
   }
+
+  /// 다시 붙은 뒤 따라잡기에서 동시에 내보내는 요청 수 상한. 브라우저의 호스트당 연결 수(6~8)와
+  /// 비슷하게 둔다 — 열어 둔 스레드가 수십 개여도 서버에 한꺼번에 몰리지 않게 한다.
+  static const catchUpConcurrency = 8;
 
   String? _channelOfThread(String rootId) {
     for (final entry in messages.entries) {
@@ -358,9 +849,11 @@ class AppState extends ChangeNotifier {
         if (m.id == rootId) return entry.key;
       }
     }
+    final root = threadRoots[rootId];
+    if (root != null) return root.channelId;
     for (final list in threads.values) {
       for (final m in list) {
-        if (m.id == rootId || m.threadRootId == rootId) return m.channelId;
+        if (m.threadRootId == rootId) return m.channelId;
       }
     }
     return null;
@@ -382,8 +875,7 @@ class AppState extends ChangeNotifier {
         final channelId = event['channelId'];
         final messageId = event['messageId'];
         if (channelId is! String || messageId is! String) return;
-        messages[channelId]?.removeWhere((m) => m.id == messageId);
-        notifyListeners();
+        _removeMessage(channelId, messageId);
       case 'inbox.updated':
         // 서버는 "바뀌었다"만 알린다 — 무엇이 바뀌었는지는 싣지 않는다. 한 건을
         // 끼워 넣으면 그 사이 다른 기기에서 읽은 것이 화면에서 되살아나므로,
@@ -445,6 +937,11 @@ class AppState extends ChangeNotifier {
       list[idx] = list[idx].withReaction(emoji: emoji, accountId: accountId, added: added);
       notifyListeners();
     }
+    final root = threadRoots[messageId];
+    if (root != null && root.channelId == channelId) {
+      threadRoots[messageId] = root.withReaction(emoji: emoji, accountId: accountId, added: added);
+      notifyListeners();
+    }
   }
 
   /// 같은 메시지가 두 번 와도 한 줄로 남는다.
@@ -456,12 +953,25 @@ class AppState extends ChangeNotifier {
     // 스레드 답글이면 그 스레드에도 넣는다. **둘 다 갱신해야 한다** — 채널 화면의
     // 요약(답글 수)과 열려 있는 스레드가 같은 사실을 봐야 하기 때문이다.
     final rootId = message.threadRootId;
+    // 스레드 응답으로 받아 둔 루트도 같은 사실을 본다(수정·리액션이 이 경로로 온다).
+    if (rootId == null && threadRoots.containsKey(message.id)) {
+      threadRoots[message.id] = message;
+      notifyListeners();
+    }
     if (rootId != null) {
       final replies = threads[rootId];
       if (replies != null) {
         final at = replies.indexWhere((m) => m.seq == message.seq);
         if (at >= 0) {
           replies[at] = message;
+        } else if (threadTailMissing.contains(rootId)) {
+          // 옛 답글 창을 보는 중이다 — 끝에 이어 붙이면 그 사이 답글이 빠진 채 새 답글이 선다. 붙이지 않고
+          // 세기만 한다. 띠가 알리고, 최신 페이지로 가면 거기 들어 있다. `progress`·`wake` 는 답글로 안 센다.
+          if (message.kind != MessageKind.progress &&
+              message.kind != MessageKind.wake &&
+              !_ownTailSent.contains(message.id)) {
+            threadTailNew.putIfAbsent(rootId, () => {}).add(message.id);
+          }
         } else {
           replies.add(message);
           replies.sort((a, b) => a.seq.compareTo(b.seq));
@@ -499,6 +1009,39 @@ class AppState extends ChangeNotifier {
 
   // ── 받은 것 ───────────────────────────────────────────────────────────
 
+  // ── 에이전트 탭(S7) ─────────────────────────────────────────────────────
+
+  final List<AgentActivity> agentActivity = [];
+  final List<AgentWake> agentWakes = [];
+  LoadState agentsLoad = LoadState.loading;
+
+  /// 에이전트 탭을 채운다. 소켓이 알려 주지 않으므로 **탭을 열 때와 당겨 새로 고칠 때** 읽는다.
+  Future<void> loadAgents() async {
+    final api = _api;
+    if (api == null) return;
+    if (agentsLoad != LoadState.loaded) {
+      agentsLoad = LoadState.loading;
+      notifyListeners();
+    }
+    final gen = _generation;
+    try {
+      final got = await Future.wait([api.agentActivity(), api.agentWakes()]);
+      if (gen != _generation) return;
+      agentActivity
+        ..clear()
+        ..addAll(got[0] as List<AgentActivity>);
+      agentWakes
+        ..clear()
+        ..addAll(got[1] as List<AgentWake>);
+      agentsLoad = LoadState.loaded;
+    } on Object catch (e) {
+      if (gen != _generation) return;
+      failures['agents'] = LoadFailure.of(e);
+      if (agentsLoad != LoadState.loaded) agentsLoad = LoadState.failed;
+    }
+    notifyListeners();
+  }
+
   Future<void> loadInbox() async {
     final api = _api;
     if (api == null) return;
@@ -508,13 +1051,18 @@ class AppState extends ChangeNotifier {
       inboxLoad = LoadState.loading;
       notifyListeners();
     }
+    final gen = _generation;
     try {
       final entries = await api.inbox();
+      // 로그인 직후 로그아웃하고 다른 계정으로 들어왔을 때, 옛 계정의 인박스가 늦게 와서
+      // 새 화면에 남으면 안 된다.
+      if (gen != _generation) return;
       inbox
         ..clear()
         ..addAll(entries);
       inboxLoad = LoadState.loaded;
     } on Object catch (e) {
+      if (gen != _generation) return;
       // 이미 보이는 목록이 있으면 그대로 둔다 — 다시 못 읽었다고 지우면 있던 것까지 사라진다.
       failures['inbox'] = LoadFailure.of(e);
       if (inboxLoad != LoadState.loaded) inboxLoad = LoadState.failed;
@@ -552,11 +1100,26 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// DM 의 이름: 나를 뺀 상대들의 이름을 쉼표로. 나 혼자인 DM(메모)이면 내 이름.
+  String dmTitle(ChannelRow dm, String myId) {
+    String nameOf(String id) {
+      final a = accounts[id];
+      if (a == null) return id;
+      return a.displayName.isNotEmpty ? a.displayName : a.handle;
+    }
+
+    final others = dm.memberIds.where((id) => id != myId).toList(growable: false);
+    return (others.isEmpty ? [myId] : others).map(nameOf).join(', ');
+  }
+
   // ── 채널 ──────────────────────────────────────────────────────────────
 
   /// 채널을 연다. 이미 읽어 둔 것이 있으면 **다시 읽지 않는다** — 소켓이 그 뒤를 잇는다.
   Future<void> openChannel(String channelId) async {
     openChannelId = channelId;
+    // 자동 멘션은 소켓이 알려 주지 않으므로 열 때마다 새로 읽는다 — 아래의 "이미 읽은 채널" 조기
+    // 반환보다 앞이어야 admin 이 바꾼 설정이 다시 열 때 잡힌다.
+    unawaited(loadChannelAutoMentions(channelId));
     // 이미 읽어 둔 채널은 다시 읽지 않는다 — 소켓이 그 뒤를 잇는다. **못 읽었던 채널은
     // 다시 읽는다**: 전에는 한 번 실패하면 빈 목록이 남아 "메시지가 없다"로 굳었다.
     if (channelLoad[channelId] == LoadState.loaded ||
@@ -565,13 +1128,17 @@ class AppState extends ChangeNotifier {
       return;
     }
     channelLoad[channelId] = LoadState.loading;
+    olderFailed.remove(channelId);
     notifyListeners();
+    final gen = _generation;
     try {
       final page = await _api!.messages(channelId, limit: channelPageSize);
+      if (gen != _generation) return;
       messages[channelId] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
       channelHasMore[channelId] = page.hasMore;
       channelLoad[channelId] = LoadState.loaded;
     } on Object catch (e) {
+      if (gen != _generation) return;
       messages.remove(channelId);
       failures[channelId] = LoadFailure.of(e);
       channelLoad[channelId] = LoadState.failed;
@@ -587,6 +1154,7 @@ class AppState extends ChangeNotifier {
       if (roots >= minVisibleRoots || channelHasMore[channelId] != true) break;
       if (!await loadOlder(channelId)) break;
     }
+    if (gen != _generation) return;
     await markRead(channelId);
   }
 
@@ -604,15 +1172,21 @@ class AppState extends ChangeNotifier {
   /// 이전 페이지(더 오래된 것)를 받는다. 받은 것이 있으면 `true`.
   ///
   /// 채널 화면이 목록 맨 위에 닿으면 부른다. 겹쳐 부르면 한 번만 간다. 실패해도 **던지지 않는다**
-  /// — 이미 보이는 것을 지우지 않고, 다음에 위로 밀 때 다시 해 본다.
+  /// — 이미 보이는 것을 지우지 않고 [olderFailed] 에 적는다. 그 뒤로는 [retryOlder] 만 다시 간다.
   Future<bool> loadOlder(String channelId) async {
     final list = messages[channelId];
     if (list == null || list.isEmpty) return false;
-    if (channelHasMore[channelId] != true || loadingOlder.contains(channelId)) return false;
+    if (channelHasMore[channelId] != true ||
+        loadingOlder.contains(channelId) ||
+        olderFailed.contains(channelId)) {
+      return false;
+    }
     loadingOlder.add(channelId);
     notifyListeners();
+    final gen = _generation;
     try {
       final page = await _api!.messages(channelId, before: list.first.seq, limit: channelPageSize);
+      if (gen != _generation) return false;
       channelHasMore[channelId] = page.hasMore;
       final current = messages[channelId];
       if (current == null) return false;
@@ -622,11 +1196,21 @@ class AppState extends ChangeNotifier {
       messages[channelId] = [...older, ...current]..sort((a, b) => a.seq.compareTo(b.seq));
       return true;
     } on Object {
+      if (gen == _generation) olderFailed.add(channelId);
       return false;
     } finally {
-      loadingOlder.remove(channelId);
-      notifyListeners();
+      // 세대가 바뀌었으면 새 세션의 잠금이다 — 옛 요청이 풀지 않는다.
+      if (gen == _generation) {
+        loadingOlder.remove(channelId);
+        notifyListeners();
+      }
     }
+  }
+
+  /// "이전 메시지를 불러오지 못했다 · 다시 시도" 를 눌렀다. 못 받은 표시를 걷고 한 번 더 간다.
+  Future<bool> retryOlder(String channelId) {
+    olderFailed.remove(channelId);
+    return loadOlder(channelId);
   }
 
   /// 이모지를 누르거나 뗀다.
@@ -648,6 +1232,167 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 내 글을 고친다. 응답(고쳐진 행)으로 바로 덮는다 — 소켓이 같은 행을 또 주면 같은 자리에 선다.
+  Future<void> editMessage(String channelId, String messageId, String body) async {
+    final updated = await _api!.editMessage(channelId, messageId, body);
+    _upsertMessage(updated);
+  }
+
+  /// 지운다. 소켓을 기다리지 않고 응답으로 바로 고친다 — 끊긴 동안 지운 글이 남아 보이면 안 된다.
+  ///
+  /// 답글이 남은 스레드 머리는 서버가 자리표시자 행을 돌려준다 — 그때는 **빼지 않고 덮는다.**
+  /// 빼면 소켓의 `message.updated` 가 응답보다 먼저 온 경우 살아 있는 답글로 들어갈 머리가 사라진다.
+  Future<void> deleteMessage(String channelId, String messageId) async {
+    final tombstone = await _api!.deleteMessage(channelId, messageId);
+    if (tombstone != null) {
+      _upsertMessage(tombstone);
+    } else {
+      _removeMessage(channelId, messageId);
+    }
+  }
+
+  /// 스레드 답글을 채널에도 올리거나(`true`) 채널에서 거둔다(`false`).
+  Future<void> setAlsoInChannel(String channelId, String messageId, bool on) async {
+    final updated = on
+        ? await _api!.postToChannel(channelId, messageId)
+        : await _api!.recallFromChannel(channelId, messageId);
+    _upsertMessage(updated);
+  }
+
+  /// 여기부터 안 읽음. 경계는 이 메시지 **앞**이다 — 데스크톱 `markChannelUnread` 와 같은 셈.
+  /// 내 글은 안 읽은 수에 들지 않는다(서버도 빼고 센다).
+  Future<void> markUnreadFrom(MessageRow message) async {
+    final channelId = message.channelId;
+    await _api!.markUnread(channelId, message.seq);
+    final current = reads[channelId];
+    final last = current?.lastReadSeq ?? message.seq - 1;
+    final boundary = last < message.seq - 1 ? last : message.seq - 1;
+    final mine = me?.id;
+    final unread = (messages[channelId] ?? const <MessageRow>[])
+        .where((m) => m.seq > boundary && m.authorId != mine)
+        .length;
+    reads[channelId] = ReadState(channelId: channelId, lastReadSeq: boundary, unread: unread);
+    notifyListeners();
+  }
+
+  /// 채널 목록·열린 스레드·받아 둔 루트에서 한 메시지를 뺀다. 소켓 `message.deleted` 와 내 삭제가 같이 쓴다.
+  void _removeMessage(String channelId, String messageId) {
+    messages[channelId]?.removeWhere((m) => m.id == messageId);
+    for (final list in threads.values) {
+      list.removeWhere((m) => m.id == messageId && m.channelId == channelId);
+    }
+    // 띠가 세어 둔 새 답글이 지워졌으면 수에서도 뺀다.
+    for (final root in threadTailNew.keys.toList()) {
+      final set = threadTailNew[root]!..remove(messageId);
+      if (set.isEmpty) threadTailNew.remove(root);
+    }
+    notifyListeners();
+  }
+
+  /// 링크가 가리키는 메시지가 **어디에 있는가**(채널·스레드). 이미 읽어 둔 것이면 왕복하지 않는다.
+  ///
+  /// 실패는 **던진다** — 404(없다)·403(못 보는 대화)·연결 실패마다 사람에게 할 말이 다르고, 그것은
+  /// 화면이 정한다(데스크톱 `openMessage` 와 같은 세 갈래). 그 사이 커뮤니티·계정이 바뀌었으면
+  /// `null` — 옛 서버의 답으로 새 커뮤니티 안을 돌아다니면 안 된다.
+  ///
+  /// 찾은 것이 스레드 루트(최상위 글)면 [threadRoots] 에 넣어 둔다 — 링크를 따라 연 스레드 화면이
+  /// 채널에 아직 안 실린 옛 글이라도 루트를 바로 그린다.
+  Future<MessageRow?> locateMessage(String messageId) async {
+    final cached = _findCachedMessage(messageId);
+    if (cached != null) return cached;
+    final gen = _generation;
+    final found = await _api!.message(messageId);
+    if (gen != _generation) return null;
+    if (found.threadRootId == null) threadRoots.putIfAbsent(found.id, () => found);
+    return found;
+  }
+
+  /// 찾기 결과 순서. 기본은 관련도(서버 기본과 같다), 마지막에 고른 것을 기기에 하나 기억한다.
+  SearchSort searchSort = SearchSort.relevance;
+  bool _searchSortLoaded = false;
+
+  /// 기억해 둔 순서를 한 번 읽는다. 그 사이 사람이 이미 골랐으면 읽은 값으로 덮지 않는다.
+  Future<void> loadSearchSort() async {
+    if (_searchSortLoaded) return;
+    _searchSortLoaded = true;
+    final raw = await _recentStore.loadSort();
+    final saved = SearchSort.values.where((s) => s.name == raw).firstOrNull;
+    if (saved == null || saved == searchSort) return;
+    searchSort = saved;
+    notifyListeners();
+  }
+
+  Future<void> setSearchSort(SearchSort sort) async {
+    _searchSortLoaded = true;
+    if (sort == searchSort) return;
+    searchSort = sort;
+    notifyListeners();
+    await _recentStore.saveSort(sort.name);
+  }
+
+  /// 찾기 화면을 열 때 부른다. 커뮤니티가 바뀌었으면 그 커뮤니티 것으로 갈아 낀다.
+  Future<void> loadRecentSearches() async {
+    final key = activeKey;
+    if (key == null) return;
+    final list = await _recentStore.load(key);
+    if (key != activeKey) return;
+    recentSearches = list;
+    _recentFor = key;
+    notifyListeners();
+  }
+
+  /// 찾은 말을 앞에 세운다(같은 말은 한 번만, 대소문자 무시).
+  Future<void> rememberSearch(String query) async {
+    final q = query.trim();
+    final key = activeKey;
+    if (q.isEmpty || key == null) return;
+    final epoch = _recentEpoch[key] ?? 0;
+    final base = _recentFor == key ? recentSearches : await _recentStore.load(key);
+    final next = [q, ...base.where((s) => s.toLowerCase() != q.toLowerCase())].take(recentSearchMax).toList(growable: false);
+    await _setRecent(key, next, epoch);
+  }
+
+  /// 하나 지우기(`query` 가 null 이면 전부).
+  Future<void> forgetSearch(String? query) async {
+    final key = activeKey;
+    if (key == null) return;
+    final epoch = _recentEpoch[key] ?? 0;
+    final base = _recentFor == key ? recentSearches : await _recentStore.load(key);
+    await _setRecent(key, query == null ? const [] : base.where((s) => s != query).toList(growable: false), epoch);
+  }
+
+  Future<void> _setRecent(String key, List<String> next, int epoch) async {
+    // 그 사이 이 커뮤니티에서 로그아웃했으면 쓰지 않는다 — `rememberSearch` 가 보관본을 읽는 await
+    // 사이에 로그아웃이 보관본을 지우면, 여기서 쓰는 순간 지운 최근 찾은 말이 되살아난다(security 찾기 F2 r1).
+    // 로그아웃은 **첫 await 전에** 이 수를 올리므로, 시작할 때 쥔 수와 다르면 버린다.
+    if ((_recentEpoch[key] ?? 0) != epoch) return;
+    if (key == activeKey) {
+      recentSearches = next;
+      _recentFor = key;
+      notifyListeners();
+    }
+    await _recentStore.save(key, next);
+  }
+
+  /// 메시지 찾기. 실패는 **던진다** — 할 말(연결·서버·권한)은 화면이 정한다([LoadFailure.of]).
+  /// 그 사이 커뮤니티·계정이 바뀌었으면 `null` — 옛 서버의 결과를 새 커뮤니티 화면에 그리면 안 된다.
+  Future<MessagePage?> searchMessages(String query,
+      {String? channelId, String? threadRootId, int offset = 0, SearchSort? sort}) async {
+    final gen = _generation;
+    final page = await _api!.search(query, channelId: channelId, threadRootId: threadRootId, offset: offset, sort: sort);
+    if (gen != _generation) return null;
+    return page;
+  }
+
+  MessageRow? _findCachedMessage(String messageId) {
+    for (final list in [...messages.values, ...threads.values]) {
+      for (final m in list) {
+        if (m.id == messageId) return m;
+      }
+    }
+    return threadRoots[messageId];
+  }
+
   MessageRow? _findMessage(String channelId, String messageId) {
     for (final list in [messages[channelId], ...threads.values]) {
       if (list == null) continue;
@@ -655,7 +1400,8 @@ class AppState extends ChangeNotifier {
         if (m.id == messageId) return m;
       }
     }
-    return null;
+    final root = threadRoots[messageId];
+    return root != null && root.channelId == channelId ? root : null;
   }
 
   /// 여기까지 읽었다고 알린다. **화면이 그 채널을 보고 있을 때만** 부른다.
@@ -708,6 +1454,17 @@ class AppState extends ChangeNotifier {
     // 화면이 보내기 버튼을 잠그므로(`isUploading`) 여기 닿는 것은 버그다 — 그래도 글을
     // 잃지 않게 `false` 를 돌려 작성칸이 비우지 않게 한다.
     if (isUploading(key)) return false;
+    // 옛 답글 창에서 답을 보내면 **먼저 최신 묶음으로 옮긴다**(designer m3) — 그냥 보내면 내 글이 옛 창 끝에
+    // 붙고 그 아래에 「최신 답글로 ↓」가 남아, 방금 쓴 글이 마지막이 아닌 것처럼 보인다. 옮기기에 실패해도
+    // 글은 보낸다(글을 잃지 않는 쪽이 먼저다 — 띠는 「다시 시도」로 남는다).
+    //
+    // **기다리는 사이 세션이 바뀌면 보내지 않는다**(보내기 전 세션 확인). 세대가 다르면 `false` 로 돌려
+    // 작성칸이 글을 비우지 않게 한다 — 첨부도 그래서 기다린 뒤에 뗀다.
+    if (threadRootId != null && threadTailMissing.contains(threadRootId)) {
+      final gen = _generation;
+      await jumpToLatestReplies(channelId, threadRootId);
+      if (gen != _generation) return false;
+    }
     pending.remove(key);
     await _post(FailedSend(
       localId: 'local-${_localSeq++}',
@@ -730,6 +1487,7 @@ class AppState extends ChangeNotifier {
   /// 보낸다. 실패하면 **던지지 않고** [failedSends] 에 남긴다 — 던지면 받을 사람이 없어
   /// 글이 조용히 사라졌다(지난 검토의 "조용한 실패").
   Future<void> _post(FailedSend item) async {
+    final gen = _generation;
     try {
       final sent = await _api!.postMessage(
         item.channelId,
@@ -738,9 +1496,19 @@ class AppState extends ChangeNotifier {
         attachmentIds: item.attachmentIds,
         agentModels: item.agentModels,
       );
+      // 보내는 사이 세션이 바뀌었으면 이 답은 지금 화면의 것이 아니다 — 아무 데도 적지 않는다.
+      if (gen != _generation) return;
+      final root = item.threadRootId;
+      if (root != null && threadTailMissing.contains(root)) {
+        // 내 답글은 "새 답글 n개" 에 들지 않는다 — 소켓이 먼저 세어 뒀어도 뺀다.
+        _ownTailSent.add(sent.id);
+        threadTailNew[root]?.remove(sent.id);
+        if (threadTailNew[root]?.isEmpty ?? false) threadTailNew.remove(root);
+      }
       _removeFailed(item);
       _upsertMessage(sent);
     } on Object {
+      if (gen != _generation) return;
       final key = item.threadRootId ?? item.channelId;
       final list = failedSends.putIfAbsent(key, () => []);
       item.retrying = false;
@@ -785,6 +1553,8 @@ class AppState extends ChangeNotifier {
   /// 실패하면 사람은 **친 글까지 잃는다.** 미리 올려 두면 보내기는 id 만 싣는다.
   Future<void> attach(String key, PendingAttachment item, Uint8List bytes) async {
     final list = pending.putIfAbsent(key, () => []);
+    item.byteSize ??= bytes.length;
+    if (item.preview == null && isPreviewableName(item.filename)) item.preview = bytes;
     list.add(item);
     notifyListeners();
     try {
@@ -821,6 +1591,80 @@ class AppState extends ChangeNotifier {
   /// 한 곳에 섞으면 채널 화면이 답글까지 그리게 되고, 그건 스레드를 만든 이유를 지운다.
   final Map<String, List<MessageRow>> threads = {};
 
+  /// 스레드 루트 id → 스레드 응답에 함께 온 그 루트.
+  ///
+  /// **서버의 `?thread=` 응답은 루트를 맨 앞에 싣는다**(server `listMessages` 의 thread 갈래).
+  /// 그것을 [threads] 에 그대로 두면 스레드 화면이 루트를 머리에 한 번, 답글 자리에 또
+  /// 한 번 그린다(2026-10-02 실기기). 그래서 받는 자리에서 갈라 둔다.
+  ///
+  /// 버리지 않고 여기 두는 이유: 받은 것 탭에서 들어오면 루트가 채널의 최근 페이지보다
+  /// 오래돼 [messages] 에 없을 수 있다. 그때 화면 머리는 이 값으로 선다.
+  final Map<String, MessageRow> threadRoots = {};
+
+  // ── 멘션 쓰임 ─────────────────────────────────────────────────────────
+
+  /// 계정 id → 내가 그 상대를 부른 기록. 멘션 후보 칩이 자주 부른 순으로 선다
+  /// (`lib/mention/usage.dart` 가 무엇을 세는지 적는다).
+  ///
+  /// 칩 줄은 **글자를 칠 때마다** 다시 그려지므로 매번 세지 않고 담아 둔다. 메시지가
+  /// 바뀌는 자리는 모두 [notifyListeners] 를 부르므로 거기서 버린다 — 바뀌는 자리마다
+  /// 따로 지우게 하면 하나를 빠뜨리는 순간 순서가 낡는다.
+  Map<String, MentionUse> get mentionUse {
+    final cached = _mentionUse;
+    if (cached != null) return cached;
+    final myId = me?.id;
+    final counted = myId == null
+        ? const <String, MentionUse>{}
+        : countMentionUse(
+            [
+              for (final list in messages.values) ...list,
+              for (final list in threads.values) ...list,
+              ...threadRoots.values,
+            ],
+            myId,
+          );
+    return _mentionUse = counted;
+  }
+
+  Map<String, MentionUse>? _mentionUse;
+
+  @override
+  void notifyListeners() {
+    _mentionUse = null;
+    super.notifyListeners();
+  }
+
+  /// 스레드 응답 한 페이지를 루트([threadRoots])와 답글([threads])로 나눠 담는다.
+  void _storeThreadPage(String rootId, List<MessageRow> page) {
+    // 최신 페이지를 통째로 받았다 — 꼬리가 비어 있던 사실은 여기서 끝난다.
+    threadTailMissing.remove(rootId);
+    latestJumpFailed.remove(rootId);
+    threadTailNew.remove(rootId);
+    _ownTailSent.removeWhere((id) => page.any((m) => m.id == id));
+    final replies = <MessageRow>[];
+    for (final m in page) {
+      if (m.id == rootId) {
+        threadRoots[rootId] = m;
+      } else {
+        replies.add(m);
+      }
+    }
+    threads[rootId] = replies..sort((a, b) => a.seq.compareTo(b.seq));
+  }
+
+  /// 스레드 응답 한 페이지를 이미 있는 답글에 **합친다**(id 로 겹침 제거, seq 순). 점프 창용이다.
+  void _mergeThreadPage(String rootId, List<MessageRow> page) {
+    final byId = <String, MessageRow>{for (final m in threads[rootId] ?? const <MessageRow>[]) m.id: m};
+    for (final m in page) {
+      if (m.id == rootId) {
+        threadRoots[rootId] = m;
+      } else {
+        byId[m.id] = m;
+      }
+    }
+    threads[rootId] = byId.values.toList()..sort((a, b) => a.seq.compareTo(b.seq));
+  }
+
   /// 스레드를 연다.
   ///
   /// **첫 `await` 전에 `notifyListeners()` 를 부르지 않는다.** 이 함수를 부르는 자리는
@@ -830,21 +1674,137 @@ class AppState extends ChangeNotifier {
   ///
   /// 알리지 않아도 손해가 없다: 화면은 `threads[rootId] ?? []` 를 읽으므로 빈 목록이
   /// 그려지고, 답글이 도착하면 아래에서 알린다.
-  Future<void> openThread(String channelId, String rootId) async {
+  ///
+  /// [aroundSeq] 를 주면(링크·찾기 결과로 **그 줄에** 가야 할 때) 최신 페이지 대신 **그 seq 를 가운데
+  /// 둔 창**을 받는다 — 긴 스레드의 옛 답글은 최신 페이지에 없어, 창 없이는 굴러갈 줄이 아예 없다
+  /// (2026-10-06, 링크 이동이 대상으로 안 감). 이미 그 줄이 손에 있으면(또는 스레드를 처음부터 다
+  /// 받았으면) 전처럼 최신 페이지를 받는다. 창은 **합친다**: 이미 받은 답글을 버리면 사람이 읽던 최신
+  /// 쪽이 사라진다.
+  Future<void> openThread(String channelId, String rootId, {int? aroundSeq}) async {
     threads.putIfAbsent(rootId, () => []);
     // 여기서 **알리지 않는다** — 화면이 `didChangeDependencies`(빌드 중)에서 부르므로 알리면
     // "빌드 중 setState" 가 된다. 아직 상태가 없으면 화면은 읽는 중으로 그린다.
     if (threadLoad[rootId] == LoadState.failed) threadLoad[rootId] = LoadState.loading;
+    final gen = _generation;
+    final have = threads[rootId] ?? const <MessageRow>[];
+    final needsWindow = aroundSeq != null &&
+        !have.any((m) => m.seq == aroundSeq) &&
+        // 루트로 가는 길: 스레드를 처음부터 다 받았으면 루트는 이미 맨 위다.
+        !(threadRoots[rootId]?.seq == aroundSeq && threadLoad[rootId] == LoadState.loaded && threadHasMore[rootId] == false);
     try {
-      final page = await _api!.messages(channelId, thread: rootId, limit: 100);
-      threads[rootId] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
+      final page = needsWindow
+          ? await _api!.messages(channelId, thread: rootId, around: aroundSeq, limit: _threadPageLimit)
+          : await _api!.messages(channelId, thread: rootId, limit: _threadPageLimit);
+      if (gen != _generation) return;
+      if (needsWindow) {
+        // 창 **아래**가 비었는가. 서버는 `around` 아래쪽에 `ceil(limit/2)` 줄까지 준다(services/messages.ts) —
+        // 꼭 그만큼 왔으면 그 뒤가 더 있을 수 있고, 모자라면 `around` 뒤를 다 준 것이라 최신까지 들어 있다.
+        // 위쪽이 짧아 창 전체는 모자라도 아래쪽만 보면 된다. 손에 든 최신 쪽(이미 받은 답글 중 가장 오래된
+        // 것)과 맞닿으면 빈 자리가 없다.
+        final windowReplies = page.messages.where((m) => m.id != rootId);
+        final after = windowReplies.where((m) => m.seq > aroundSeq).length;
+        final windowMax = windowReplies.isEmpty ? null : windowReplies.map((m) => m.seq).reduce(max);
+        final heldMin = have.isEmpty ? null : have.map((m) => m.seq).reduce(min);
+        final tailCut = after >= (_threadPageLimit / 2).ceil();
+        if (tailCut && windowMax != null && (heldMin == null || windowMax < heldMin)) {
+          threadTailMissing.add(rootId);
+        } else {
+          threadTailMissing.remove(rootId);
+        }
+        _mergeThreadPage(rootId, page.messages);
+        // 창 응답의 `hasMore` 는 서버가 늘 `false` 로 준다(과거를 말할 자격이 없는 조회). 답글이 하나라도
+        // 왔으면 "더 있을 수 있다"로 두고 위로 밀 때 `before` 로 확인한다 — 끝이면 그 답이 `false` 를 준다.
+        threadHasMore[rootId] = page.messages.any((m) => m.id != rootId);
+      } else {
+        _storeThreadPage(rootId, page.messages);
+        threadHasMore[rootId] = page.hasMore;
+      }
+      olderThreadFailed.remove(rootId);
       threadLoad[rootId] = LoadState.loaded;
     } on Object catch (e) {
+      if (gen != _generation) return;
       failures[rootId] = LoadFailure.of(e);
       if (threadLoad[rootId] != LoadState.loaded) threadLoad[rootId] = LoadState.failed;
     }
     notifyListeners();
     unawaited(loadThreadAgentModels(channelId, rootId));
+  }
+
+  /// 스레드의 옛 답글 한 페이지를 받는다(`?thread=&before=<가장 오래된 답글>`). 받은 것이 있으면 `true`.
+  ///
+  /// 채널의 [loadOlder] 와 같은 규칙이다: 겹쳐 부르면 한 번, 실패하면 [olderThreadFailed] 에 적고
+  /// 던지지 않는다, 세대가 바뀌면 답을 버린다. 서버가 `hasMore` 를 주지 않으면(옛 서버) 아예 가지 않는다.
+  Future<bool> loadOlderThread(String channelId, String rootId) async {
+    final list = threads[rootId];
+    if (list == null || list.isEmpty) return false;
+    if (threadHasMore[rootId] != true ||
+        loadingOlderThread.contains(rootId) ||
+        olderThreadFailed.contains(rootId)) {
+      return false;
+    }
+    loadingOlderThread.add(rootId);
+    notifyListeners();
+    final gen = _generation;
+    try {
+      final page = await _api!.messages(channelId, thread: rootId, before: list.first.seq, limit: 100);
+      if (gen != _generation) return false;
+      threadHasMore[rootId] = page.hasMore;
+      final current = threads[rootId] ?? const <MessageRow>[];
+      final seen = current.map((m) => m.seq).toSet();
+      // 루트는 옛 페이지에 실리지 않지만, 실려도 답글로 넣지 않는다.
+      final older = page.messages.where((m) => m.id != rootId && !seen.contains(m.seq)).toList();
+      if (older.isEmpty) return false;
+      threads[rootId] = [...older, ...current]..sort((a, b) => a.seq.compareTo(b.seq));
+      return true;
+    } on Object {
+      if (gen == _generation) olderThreadFailed.add(rootId);
+      return false;
+    } finally {
+      if (gen == _generation) {
+        loadingOlderThread.remove(rootId);
+        notifyListeners();
+      }
+    }
+  }
+
+  /// 스레드의 "다시 시도". 못 받은 표시를 걷고 한 번 더 간다.
+  Future<bool> retryOlderThread(String channelId, String rootId) {
+    olderThreadFailed.remove(rootId);
+    return loadOlderThread(channelId, rootId);
+  }
+
+  /// 스레드 한 페이지의 줄 수(첫 페이지·옛 페이지·점프 창 모두).
+  static const int _threadPageLimit = 100;
+
+  /// 「최신 답글로 ↓」 띠([threadTailMissing]) — 창을 버리고 **최신 페이지로 간다**(처음 여는 것과 같은 조회).
+  /// 창과 최신 사이를 이어 받지 않는 이유: 사이가 몇 쪽인지 모르고, 사람이 누른 뜻은 "지금 대화로"다.
+  /// 옛 답글은 다시 위로 밀면 `before` 로 받는다. 실패하면 [failures] 에 적고 띠는 남긴다(다시 누를 수 있다).
+  /// 받는 동안은 [jumpingToLatest] 에, 실패하면 [latestJumpFailed] 에 적는다(designer m1·m2). 받았으면 `true`.
+  Future<bool> jumpToLatestReplies(String channelId, String rootId) async {
+    if (jumpingToLatest.contains(rootId)) return false;
+    jumpingToLatest.add(rootId);
+    notifyListeners();
+    final gen = _generation;
+    var ok = false;
+    try {
+      final page = await _api!.messages(channelId, thread: rootId, limit: _threadPageLimit);
+      if (gen != _generation) return false;
+      _storeThreadPage(rootId, page.messages);
+      threadHasMore[rootId] = page.hasMore;
+      olderThreadFailed.remove(rootId);
+      threadLoad[rootId] = LoadState.loaded;
+      ok = true;
+    } on Object catch (e) {
+      if (gen != _generation) return false;
+      failures[rootId] = LoadFailure.of(e);
+      latestJumpFailed.add(rootId);
+    } finally {
+      if (gen == _generation) {
+        jumpingToLatest.remove(rootId);
+        notifyListeners();
+      }
+    }
+    return ok;
   }
 
   /// 스레드 루트 id → 에이전트 모델 지정(서버 079). 키가 없으면 아직 못 받았다.
@@ -894,31 +1854,185 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 로그아웃. 보관본을 지우고 소켓을 닫는다.
+  Future<void> _markExpired(String? key) async {
+    if (key == null) return;
+    communities = [
+      for (final c in communities) c.key == key ? c.copyWith(token: '') : c,
+    ];
+    try {
+      await _sessions.update(key, (c) => c.copyWith(token: ''));
+    } on SessionSaveFailure {
+      // 다음 기동에 같은 401 을 한 번 더 겪고 다시 표시한다.
+    }
+  }
+
+  /// 지금 커뮤니티에서 로그아웃한다(다른 커뮤니티는 그대로). 남은 것이 있으면 그리로 옮긴다.
   Future<void> signOut() async {
-    await _ws?.close();
-    _ws = null;
+    final key = activeKey;
+    if (key == null) return signOutAll();
+    return signOutCommunity(key);
+  }
+
+  /// 커뮤니티 하나에서 로그아웃한다 — 보관소에서 그 행을 뺀다.
+  ///
+  /// 지금 커뮤니티가 아니면 목록에서만 빠진다. 지금 커뮤니티면 다음 커뮤니티로 옮기고(산 것 먼저),
+  /// 마지막 하나였으면 연결 화면으로 간다(designer ⑨).
+  Future<void> signOutCommunity(String key) async {
+    _bumpRecent(key);
+    final gone = communities.where((c) => c.key == key).firstOrNull;
+    final rest = communities.where((c) => c.key != key).toList(growable: false);
+    if (key != activeKey) {
+      communities = rest;
+      _dropDrafts(key);
+      otherWaiting.remove(key);
+      notifyListeners();
+      await _revoke(gone);
+      await _sessions.remove(key);
+      await _recentStore.delete(key);
+      return;
+    }
+    _generation++;
+    _dropSocket();
+    await _revoke(gone);
+    await _sessions.remove(key);
+    await _recentStore.delete(key);
+    // 위 두 await 사이에 화면이 부른 요청은 첫 줄에서 올린 세대를 쥐고 옛 토큰으로 간다.
+    // 비우기 직전에 한 번 더 올려 그 답도 버린다.
+    _generation++;
+    _resetSession();
+    communities = rest;
+    _dropDrafts(key);
+    final next = rest.where((c) => !c.isExpired).firstOrNull ?? rest.firstOrNull;
+    activeKey = next?.key;
+    baseUrl = next?.baseUrl;
+    if (next == null) {
+      _api = null;
+      phase = AppPhase.needsServer;
+      notifyListeners();
+      return;
+    }
+    if (next.isExpired) {
+      _api = _apiFactory(next.baseUrl, null);
+      phase = AppPhase.needsLogin;
+      notifyListeners();
+      return;
+    }
+    _api = _apiFactory(next.baseUrl, next.token);
+    phase = AppPhase.booting;
+    notifyListeners();
+    try {
+      await _sessions.setActive(next.key);
+    } on SessionSaveFailure {
+      /* 다음 기동에 첫 커뮤니티로 떨어질 뿐이다 */
+    }
+    await _enter();
+  }
+
+  /// 그 커뮤니티에서 쓰던 글을 지운다 — 다시 로그인해도 되살아나지 않는다.
+  ///
+  /// **목록에서 그 행을 뺀 뒤에** 부른다(security #1066). 먼저 지우면 `_revoke`(최대 2초)를 기다리는
+  /// 동안 key 가 아직 목록에 있어서, 열린 작성칸의 `saveDraft` 가 지운 자리에 글을 다시 남긴다.
+  void _dropDrafts(String key) => _drafts.remove(key);
+
+  /// 이 기기의 모든 커뮤니티에서 로그아웃한다. 보관본을 지우고 연결 화면으로 간다.
+  Future<void> signOutAll() async {
+    for (final c in communities) {
+      _bumpRecent(c.key);
+    }
+    _generation++;
+    _dropSocket();
+    otherWaiting.clear();
+    _drafts.clear();
+    homeTab = 0;
+    await Future.wait([for (final c in communities) _revoke(c)]);
     await _sessions.clear();
+    await Future.wait([for (final c in communities) _recentStore.delete(c.key)]);
+    _generation++;
+    _resetSession();
+    communities = const [];
+    // 위 await 동안 열린 작성칸이 적은 것도 지운다(목록이 비기 전까지는 `saveDraft` 가 받는다).
+    _drafts.clear();
+    activeKey = null;
+    baseUrl = null;
+    _api = null;
+    phase = AppPhase.needsServer;
+    notifyListeners();
+  }
+
+  /// 서버에 이 토큰의 세션을 끊으라고 한다(`POST /auth/logout`, security F2). 토큰만 지우면 서버 쪽
+  /// 세션은 만료(14일)까지 살고, 지운 뒤에는 거둘 길이 없다.
+  ///
+  /// **짧게만 기다리고, 실패해도 로그아웃을 막지 않는다** — 서버가 죽었거나 망이 없을 때 로그아웃이
+  /// 안 되면 사람은 기기에서 토큰을 지울 방법을 잃는다.
+  Future<void> _revoke(StoredCommunity? c) async {
+    if (c == null || c.isExpired) return;
+    final api = _apiFactory(c.baseUrl, c.token);
+    try {
+      // 푸시 등록을 먼저 푼다(`DELETE /push/devices/current`). 로그아웃이 서버 세션을 지우면 함께
+      // 풀리지만, 그 둘 중 하나라도 닿으면 이 기기에 더는 알림이 가지 않는다. 옛 서버(404)도 넘어간다.
+      await api.unregisterPushDevice().timeout(const Duration(seconds: 2));
+    } on Object {
+      // 아래 로그아웃이 세션과 함께 지운다.
+    }
+    try {
+      await api.logout().timeout(const Duration(seconds: 2));
+    } on Object {
+      // 끊긴 망·5xx·시한 — 서버 세션은 TTL 로 죽는다.
+    }
+  }
+
+  /// 소켓을 닫되 **닫힘 인사를 기다리지 않는다.** `close()` 의 동기 부분이 재연결을 끊고 구독을
+  /// 걷으므로 그 뒤로 이벤트는 안 온다. 기다리면 망이 나쁠 때 서버의 답을 기다리느라 전환·로그아웃이
+  /// 멈춘다(위젯 시험이 잡았다 — 대역 소켓의 닫힘이 끝나지 않자 옮기기가 그대로 섰다).
+  void _dropSocket() {
+    final ws = _ws;
+    _ws = null;
+    if (ws != null) unawaited(ws.close());
+  }
+
+  /// 한 커뮤니티 세션의 화면 상태를 비운다(로그아웃·전환이 함께 쓴다). 단계·주소는 부르는 쪽이 정한다.
+  void _resetSession() {
     me = null;
     inbox.clear();
+    agentActivity.clear();
+    agentWakes.clear();
+    agentsLoad = LoadState.loading;
     reads.clear();
+    channelPrefs.clear();
+    collapsedSections.clear();
+    homeUnreadOnly = false;
     threads.clear();
+    threadRoots.clear();
+    threadHasMore.clear();
+    loadingOlderThread.clear();
+    olderThreadFailed.clear();
+    threadTailMissing.clear();
+    jumpingToLatest.clear();
+    latestJumpFailed.clear();
+    threadTailNew.clear();
+    _ownTailSent.clear();
     channels.clear();
     accounts.clear();
     messages.clear();
     channelLoad.clear();
     channelHasMore.clear();
     loadingOlder.clear();
+    olderFailed.clear();
     threadLoad.clear();
     failures.clear();
     inboxLoad = LoadState.loading;
     // 못 보낸 말도 버린다 — 다른 계정으로 들어온 뒤에 남은 말이 그 계정 이름으로 가면 안 된다.
     failedSends.clear();
     pending.clear();
+    // 누구와 이야기하던 자리인가도 그 계정의 것이다 — 다른 계정이 이어받으면 엉뚱한 상대를 부른다.
+    stickyMentions.clear();
+    // 최근 찾은 말도 그 커뮤니티의 것이다 — 새 커뮤니티 것을 읽기 전까지 앞 목록이 보이거나, 그 목록이
+    // 새 커뮤니티 키에 저장되면 안 된다(security #1094 F2). 잠깐 비었다가 차는 것이 낫다.
+    recentSearches = const [];
+    _recentFor = null;
+    channelAutoMentions.clear();
+    autoSkipped.clear();
     openChannelId = null;
-    _api = baseUrl == null ? null : _apiFactory(baseUrl!, null);
-    phase = baseUrl == null ? AppPhase.needsServer : AppPhase.needsLogin;
-    notifyListeners();
   }
 
   @override
@@ -953,4 +2067,40 @@ class PendingAttachment {
 
   /// 올리기가 끝나면 채워진다.
   AttachmentRow? attachment;
+
+  /// 고른 그림의 바이트 — 작성칸 타일과 전체 화면 보기가 **서버 왕복 없이** 그린다.
+  /// 그릴 수 있는 그림([isPreviewableName])일 때만 채운다. 서버는 바뀌지 않는다.
+  Uint8List? preview;
+
+  /// 고른 파일의 바이트 수. 올리기 전에도 크기를 말할 수 있게.
+  int? byteSize;
+}
+
+/// 작성칸에서 그림으로 그릴 이름인가. 보낸 뒤의 [AttachmentStrip.canPreview] 와 같은 선을
+/// 지킨다 — **SVG 는 그림이 아니다**(스크립트를 품을 수 있다). 올리기 전에는 서버의
+/// `contentType` 이 없으므로 확장자로 가른다. 못 그리면 타일이 파일 카드로 물러난다.
+bool isPreviewableName(String filename) {
+  final dot = filename.lastIndexOf('.');
+  if (dot < 0) return false;
+  const exts = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif', 'bmp'};
+  return exts.contains(filename.substring(dot + 1).toLowerCase());
+}
+
+/// [jobs] 를 많아야 [limit] 개씩 동시에 돌린다. **하나가 실패해도 나머지는 끝까지 돈다** — 한 채널
+/// 때문에 인박스가 낡은 채로 남으면 안 된다. 실패는 삼킨다(다음에 다시 붙을 때 또 읽는다).
+@visibleForTesting
+Future<void> runLimited(List<Future<void> Function()> jobs, int limit) async {
+  var next = 0;
+  Future<void> worker() async {
+    while (next < jobs.length) {
+      final job = jobs[next++];
+      try {
+        await job();
+      } on Object {
+        // 위와 같다.
+      }
+    }
+  }
+
+  await Future.wait([for (var i = 0; i < limit && i < jobs.length; i++) worker()]);
 }

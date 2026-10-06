@@ -46,7 +46,9 @@ const entry = (id: number, channelId: string): InboxEntry => ({
 const mount = (rows: InboxEntry[], extra: Record<string, unknown> = {}) => {
   const api = fakeApi();
   setController({
-    api: { ...api, inbox: vi.fn(async () => rows) },
+    api: { ...api, inbox: vi.fn(async () => rows), inboxBoard: vi.fn(async () => ({ entries: rows, threads: null, threadStates: [] })) },
+    loadInboxBoard: vi.fn(async () => ({ entries: rows, threads: null, threadStates: [] })),
+    inboxBoardSnapshot: vi.fn(() => null),
     openMessage: vi.fn(async () => undefined),
     openChannel: vi.fn().mockResolvedValue(undefined),
     openThread: vi.fn(),
@@ -116,7 +118,7 @@ describe('sr-only 는 자기 상자를 벗어나지 않는다', () => {
     mount([entry(1, 'c1'), entry(2, 'c1')]);
     openInbox();
     const pane = await screen.findByTestId('inbox-pane');
-    await waitFor(() => expect(screen.getByTestId('inbox-entry-1')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('inbox-card-m1')).toBeTruthy());
 
     const srOnly = pane.querySelectorAll('.sr-only');
     expect(srOnly.length).toBeGreaterThan(0);

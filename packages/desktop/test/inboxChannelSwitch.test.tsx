@@ -29,7 +29,7 @@ const entry = (id: number, channelId: string, threadRootId: string | null = null
  * 스토어는 `inboxPane.test.tsx` 와 같은 모양으로 손으로 세운다.
  */
 const mount = (rows: InboxEntry[], apiOverrides: Record<string, unknown> = {}) => {
-  const api = fakeApi({ inbox: vi.fn(async () => rows), ...apiOverrides });
+  const api = fakeApi({ inbox: vi.fn(async () => rows), inboxBoard: vi.fn(async () => ({ entries: rows, threads: null, threadStates: [] })), ...apiOverrides });
   const { makeWs } = fakeWsFactory();
   setController(new Controller(api, makeWs) as unknown as ControllerType);
   useAppStore.getState().set({

@@ -145,7 +145,7 @@ export function HandleGroupsSettings() {
     if (isAdmin) void loadGroupMembers(g.id);
   };
 
-  const field = 'w-full rounded border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
+  const field = 'w-full rounded-row border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
 
   /**
    * 구성원 후보는 **사람 계정뿐**이다 — 에이전트는 집합에 들어가지 않는다(#230 결정 1,
@@ -161,7 +161,7 @@ export function HandleGroupsSettings() {
     <div className="flex min-h-0 flex-1 border-t border-border">
       <aside className="w-56 shrink-0 border-r border-border p-3">
         {isAdmin && (
-          <div className="mb-3 space-y-2 rounded border border-border p-2">
+          <div className="mb-3 space-y-2 rounded-row border border-border p-2">
             <div className="text-meta font-medium text-fg-muted">{t('groups.new.heading')}</div>
             <input
               className={field}
@@ -178,7 +178,7 @@ export function HandleGroupsSettings() {
               onChange={(e) => setNewDisplayName(e.target.value)}
             />
             <button
-              className="w-full rounded bg-accent px-3 py-2 text-left text-fg-on-strong hover:bg-accent-hover disabled:opacity-50"
+              className="w-full rounded-row bg-accent px-3 py-2 text-left text-fg-on-strong hover:bg-accent-hover disabled:opacity-50"
               disabled={saving || !newHandle.trim() || !newDisplayName.trim()}
               onClick={() => void createGroup()}
             >
@@ -215,7 +215,7 @@ export function HandleGroupsSettings() {
           <button
             key={g.id}
             data-testid={`group-row-${g.handle}`}
-            className={`flex w-full items-center gap-1 rounded px-2 py-1.5 text-left ${selected?.group.id === g.id ? 'bg-surface-sunken' : 'hover:bg-surface'}`}
+            className={`flex w-full items-center gap-1 rounded-row px-2 py-1.5 text-left ${selected?.group.id === g.id ? 'bg-surface-sunken' : 'hover:bg-surface'}`}
             onClick={() => pick(g)}
           >
             <span className="font-medium">@{g.handle}</span>
@@ -236,18 +236,18 @@ export function HandleGroupsSettings() {
         ) : (
           <>
             <header className="flex items-center justify-between border-b border-border px-5 py-3">
-              <h2 className="text-name font-bold">@{selected.group.handle}</h2>
+              <h2 className="text-name font-semibold">@{selected.group.handle}</h2>
               {isAdmin && (confirmingDelete ? (
                 <span className="flex items-center gap-2">
                   <button
-                    className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong"
+                    className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong"
                     disabled={saving}
                     onClick={() => void deleteGroup()}
                   >
                     {t('groups.remove.confirm')}
                   </button>
                   <button
-                    className="rounded px-2 py-1 text-meta text-fg-subtle"
+                    className="rounded-row px-2 py-1 text-meta text-fg-subtle"
                     onClick={() => setConfirmingDelete(false)}
                   >
                     {t('groups.remove.cancel')}
@@ -255,7 +255,7 @@ export function HandleGroupsSettings() {
                 </span>
               ) : (
                 <button
-                  className="rounded border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong"
+                  className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong"
                   onClick={() => setConfirmingDelete(true)}
                 >
                   {t('groups.remove.start')}
@@ -264,7 +264,7 @@ export function HandleGroupsSettings() {
             </header>
 
             <div className="w-full max-w-2xl flex-1 space-y-4 overflow-y-auto p-5">
-              <div className="rounded border border-border p-3">
+              <div className="rounded-row border border-border p-3">
                 <div className="text-meta font-medium text-fg-muted">{t('groups.rename.name')}</div>
                 {editingName === selected.group.id ? (
                   <div className="mt-2 flex gap-2">
@@ -275,14 +275,14 @@ export function HandleGroupsSettings() {
                       onChange={(e) => setEditDisplayName(e.target.value)}
                     />
                     <button
-                      className="rounded bg-surface-sunken px-2 py-1 text-meta font-medium text-fg"
+                      className="rounded-row bg-surface-sunken px-2 py-1 text-meta font-medium text-fg"
                       disabled={saving}
                       onClick={() => void updateGroupName()}
                     >
                       {t('groups.rename.save')}
                     </button>
                     <button
-                      className="rounded px-2 py-1 text-meta text-fg-subtle"
+                      className="rounded-row px-2 py-1 text-meta text-fg-subtle"
                       onClick={() => { setEditingName(null); setEditDisplayName(''); }}
                     >
                       {t('groups.remove.cancel')}
@@ -304,7 +304,7 @@ export function HandleGroupsSettings() {
                 )}
               </div>
 
-              <div className="rounded border border-border p-3">
+              <div className="rounded-row border border-border p-3">
                 <div className="text-meta font-medium text-fg-muted">구성원 ({selected.members.length})</div>
                 <div className="mt-2 space-y-1">
                   {selected.members.length === 0 ? (
@@ -313,7 +313,7 @@ export function HandleGroupsSettings() {
                     selected.members.map((id) => {
                       const account = accounts[id];
                       return (
-                        <div key={id} className="flex items-center justify-between rounded bg-surface px-2 py-1.5">
+                        <div key={id} className="flex items-center justify-between rounded-row bg-surface px-2 py-1.5">
                           {/* 계정 디렉터리에 없는 id 는 **"모른다"** 다 — 이름 자리를 비우면
                               "구성원이 아니다"로 읽힌다(design.md 4절). id 를 그대로 보인다. */}
                           <span className="text-meta">

@@ -6,6 +6,7 @@ import { EventEmitter } from 'node:events';
 import { encodeLine, NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
 import { createRunnerLinkServer, type LinkSocket } from '../src/runnerLink.js';
+import { createTurnSlots, TURN_SLOTS_PATH } from '../src/turnSlots.js';
 
 /** 러너 쪽 끝. `write` 는 오퍼레이터가 러너에게 보낸 줄, `feed` 는 러너가 보낸 줄. */
 function fakeSocket() {
@@ -23,7 +24,7 @@ function fakeSocket() {
     const d = new NdjsonDecoder();
     return d.push(written.join('')).filter((l) => l.ok).map((l) => (l as { value: unknown }).value);
   };
-  return { socket, feed, lines, destroyed: () => destroyed, close: () => em.emit('close') };
+  return { socket, feed, raw: (b: Buffer) => em.emit('data', b), lines, destroyed: () => destroyed, close: () => em.emit('close') };
 }
 
 const hello = (runnerId: string, secret: string) => ({ type: 'hello', version: 1, role: 'runner', runnerId, secret });
@@ -125,6 +126,70 @@ describe('runnerLink 서버', () => {
     expect(frames).toEqual([]);
   });
 
+  it('onRequest 는 요청이 온 소켓의 kind 를 받는다 — relay 전용 경로를 가르는 근거다(#1127 L2)', async () => {
+    const kinds: string[] = [];
+    const link = createRunnerLinkServer({
+      onFrame: () => {},
+      onRequest: async (_r, _a, req, kind) => { kinds.push(kind); return { type: 'http.response', id: req.id, status: 200, body: '' }; },
+      log: () => {},
+    });
+    link.expect('r-1', 'agent-a', 'sec');
+    const relay = fakeSocket();
+    link.accept(relay.socket, hello('r-1', 'sec'), []);
+    const bridge = fakeSocket();
+    link.accept(bridge.socket, { ...hello('r-1', 'sec'), kind: 'bridge' }, []);
+    relay.feed({ type: 'http.forward', id: 'a', method: 'GET', path: '/x' });
+    bridge.feed({ type: 'http.forward', id: 'b', method: 'GET', path: '/x' });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(kinds).toEqual(['relay', 'bridge']);
+  });
+
+  it('relay 가 붙을 때마다 onRelayAttach 가 온다 — 앞 소켓이 닫히기 전에 다시 붙어 onClose 가 없을 때도(#1127 L1)', () => {
+    const attached: string[] = [];
+    const closed: string[] = [];
+    const link = createRunnerLinkServer({
+      onFrame: () => {}, onClose: (r) => closed.push(r), onRelayAttach: (r) => attached.push(r), log: () => {},
+    });
+    link.expect('r-1', 'agent-a', 'sec');
+    link.accept(fakeSocket().socket, hello('r-1', 'sec'), []);
+    link.accept(fakeSocket().socket, { ...hello('r-1', 'sec'), kind: 'bridge' }, []);
+    link.accept(fakeSocket().socket, hello('r-1', 'sec'), []);
+    expect(attached).toEqual(['r-1', 'r-1']);
+    expect(closed).toEqual([]);
+  });
+
+  /**
+   * security #1127 L1 의 장면: 러너가 자리를 쥐었는데 놓기 요청이 끊긴 소켓과 함께 사라지고, 러너는 새 relay 로
+   * 다시 붙는다(앞 소켓의 close 보다 먼저). 되돌려 RED: run.ts 처럼 onRelayAttach 에 releaseRunner 를 잇지
+   * 않으면 자리가 러너가 죽을 때까지 남아 r-2 가 409 를 받는다.
+   */
+  it('놓기 요청을 잃고 relay 가 다시 붙으면 그 러너의 자리가 돌아온다', async () => {
+    const slots = createTurnSlots({ max: 1 });
+    const link = createRunnerLinkServer({
+      onFrame: () => {},
+      onRequest: async (runnerId, _a, req, kind) => slots.maybeHandle(runnerId, req, kind)
+        ?? { type: 'http.response', id: req.id, status: 404, body: '' },
+      onClose: (r) => slots.releaseRunner(r),
+      onRelayAttach: (r) => slots.releaseRunner(r),
+      log: () => {},
+    });
+    link.expect('r-1', 'agent-a', 'sec');
+    link.expect('r-2', 'agent-b', 'sec2');
+    const first = fakeSocket();
+    link.accept(first.socket, hello('r-1', 'sec'), []);
+    first.feed({ type: 'http.forward', id: 'g', method: 'POST', path: TURN_SLOTS_PATH, body: JSON.stringify({ key: 'ch/T' }) });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(slots.inUse()).toBe(1);
+    // 놓기 요청은 끝내 오지 않는다. 러너가 새 relay 로 다시 붙는다 — 앞 소켓은 아직 안 닫혔다.
+    link.accept(fakeSocket().socket, hello('r-1', 'sec'), []);
+    expect(slots.inUse()).toBe(0);
+    const other = fakeSocket();
+    link.accept(other.socket, hello('r-2', 'sec2'), []);
+    other.feed({ type: 'http.forward', id: 'h', method: 'POST', path: TURN_SLOTS_PATH, body: JSON.stringify({ key: 'ch/U' }) });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(other.lines()).toMatchObject([{ type: 'http.response', id: 'h', status: 200 }]);
+  });
+
   it('onRequest 가 없으면 요청에 mcp.error/http.response 로 거절한다 — 조용히 삼키지 않는다', async () => {
     const link = createRunnerLinkServer({ onFrame: () => {}, log: () => {} });
     link.expect('r-1', 'agent-a', 'sec');
@@ -171,5 +236,80 @@ describe('runnerLink 서버', () => {
     link.forget('r-1');
     const s = fakeSocket();
     expect(link.accept(s.socket, hello('r-1', 'sec'), [])).toBe(false);
+  });
+});
+
+// 2026-10-02: 원본 ~786KB 를 넘는 그림의 `attachment.fetch` 답(base64 한 줄)이 1MiB 상한에 걸려
+// `encodeLine` 이 던졌고, 그 예외를 `catch {}` 가 삼켜 브릿지가 90초 시한까지 매달렸다.
+describe('runnerLink 줄 상한', () => {
+  const bigImageResponse = (id: string, base64Bytes: number) => ({
+    type: 'mcp.response' as const, id,
+    messages: [{ jsonrpc: '2.0', id: 7, result: { content: [{ type: 'image', data: 'A'.repeat(base64Bytes), mimeType: 'image/png' }] } }],
+  });
+  const parsed = (written: string[]) => written.join('').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+
+  it('1MiB 를 넘는 답(그림 800KB 의 base64)도 기본 상한이면 그대로 돌아간다', async () => {
+    const link = createRunnerLinkServer({
+      onFrame: () => {}, log: () => {},
+      onRequest: async (_r, _a, req) => bigImageResponse(req.id, 1_066_668),
+    });
+    link.expect('r-1', 'agent-a', 'sec');
+    const written: string[] = [];
+    const bridge = fakeSocket();
+    bridge.socket.write = (line) => { written.push(String(line)); return true; };
+    link.accept(bridge.socket, { ...hello('r-1', 'sec'), kind: 'bridge' }, []);
+    bridge.feed({ type: 'mcp.request', id: 'img', payload: { jsonrpc: '2.0', id: 7, method: 'tools/call' } });
+    await new Promise((r) => setTimeout(r, 0));
+    const [res] = parsed(written);
+    expect(res.type).toBe('mcp.response');
+    expect(res.messages[0].result.content[0].data).toHaveLength(1_066_668);
+  });
+
+  it('상한을 넘는 답은 삼키지 않고 같은 id 의 mcp.error 로 즉시 답하고 로그에 남긴다', async () => {
+    const logs: string[] = [];
+    const link = createRunnerLinkServer({
+      onFrame: () => {}, log: (l) => logs.push(l), maxLineBytes: 4096,
+      onRequest: async (_r, _a, req) => bigImageResponse(req.id, 10_000),
+    });
+    link.expect('r-1', 'agent-a', 'sec');
+    const bridge = fakeSocket();
+    link.accept(bridge.socket, { ...hello('r-1', 'sec'), kind: 'bridge' }, []);
+    bridge.feed({ type: 'mcp.request', id: 'img', payload: { jsonrpc: '2.0', id: 7, method: 'tools/call' } });
+    await new Promise((r) => setTimeout(r, 0));
+    const [res] = bridge.lines() as { type: string; id: string; status: number; message: string }[];
+    expect(res).toMatchObject({ type: 'mcp.error', id: 'img', status: 0 });
+    expect(res!.message).toMatch(/상한\(4096 바이트\)/);
+    expect(logs.some((l) => l.includes('id=img') && l.includes('상한(4096 바이트)'))).toBe(true);
+    expect(bridge.destroyed()).toBe(false);
+  });
+
+  it('http.forward 답이 상한을 넘어도 같은 id 의 http.response(status 0)로 답한다', async () => {
+    const link = createRunnerLinkServer({
+      onFrame: () => {}, log: () => {}, maxLineBytes: 4096,
+      onRequest: async (_r, _a, req) => ({ type: 'http.response', id: req.id, status: 200, body: 'x'.repeat(10_000) }),
+    });
+    link.expect('r-1', 'agent-a', 'sec');
+    const relay = fakeSocket();
+    link.accept(relay.socket, hello('r-1', 'sec'), []);
+    relay.feed({ type: 'http.forward', id: 'h1', method: 'GET', path: '/x' });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(relay.lines()).toEqual([expect.objectContaining({ type: 'http.response', id: 'h1', status: 0 })]);
+  });
+
+  it('인계받은 덜 끝난 줄의 머리(buffered)를 이어 붙인다 — hello 와 한 청크로 온 큰 요청이 잘리지 않는다', async () => {
+    const seen: string[] = [];
+    const link = createRunnerLinkServer({
+      onFrame: () => {}, log: () => {},
+      onRequest: async (_r, _a, req) => { seen.push(req.id); return { type: 'mcp.response', id: req.id, messages: [] }; },
+    });
+    link.expect('r-1', 'agent-a', 'sec');
+    const bridge = fakeSocket();
+    const line = encodeLine({ type: 'mcp.request', id: 'split', payload: { jsonrpc: '2.0', id: 1, method: 'x', params: { pad: 'p'.repeat(5000) } } });
+    const head = Buffer.from(line.slice(0, 1000)); const tail = Buffer.from(line.slice(1000));
+    link.accept(bridge.socket, { ...hello('r-1', 'sec'), kind: 'bridge' }, [], head);
+    expect(seen).toEqual([]);
+    bridge.raw(tail); // 꼬리는 그 뒤 data 로 온다.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(seen).toEqual(['split']);
   });
 });

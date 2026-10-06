@@ -1,17 +1,19 @@
 import { useMemo, useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
+import { openChannelFrom, popOutChannel } from '../lib/windowActions';
+import { useAppWindows } from '../lib/appWindows';
 import { sidebarStorage, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from '../lib/prefs';
 import { ApiError } from '../lib/api';
 // `isMacOS`·`MAC_TRAFFIC_LIGHT_PL` 이 여기 있었다 — 신호등 여백은 이제 레일이 진다(아래 주석).
-import { TOP_BAR_BG, TOP_BAR_H } from '../lib/platform';
+import { TOP_BAR_BG, TOP_BAR_H, macTopBarMinHeight, macTrafficLightInset } from '../lib/platform';
 import { LeasePanel } from './LeasePanel';
-import { Menu } from './Menu';
+import { Menu, type MenuItem } from './Menu';
 // `StatusPicker` 가 여기 있었다 — 계정 행과 함께 `Rail.tsx` 로 갔다.
 // `Identity` 가 **돌아왔다**: 합쳐진 DM 목록의 상태를 아바타가 말한다(`dmRow` 주석).
 // `StatusMark` 도 남는다 — presence 와 다른 사실이라 아바타가 대신할 수 없다.
 import { Identity, StatusMark } from './Identity';
-import type { RailPanel } from './Rail';
+import { RAIL_W_PX, type RailPanel } from './Rail';
 // 찾기가 맨 위로 갔다(#488 A · 찾기가 맨 위로). 별도 파일인 이유: 이 줄은 **칸과 무관**한
 // 공용 껍데기에 사는 유일한 목록이라, 칸별 묶음을 그리는 이 파일의 본문과 섞을 것이 없다.
 import { SidebarFind } from './SidebarFind';
@@ -23,10 +25,7 @@ import { SidebarFind } from './SidebarFind';
 // `runnerStatusLabel` 은 DM 줄이 쓴다 — 아바타에 실은 상태를 접근 이름으로도 내야 한다.
 import { runnerReason, runnerStatusLabel } from './RunnerStatus';
 import { AgentGrid } from './settings/AgentGrid';
-import { AgentTurns } from './AgentTurns';
 import { Collab } from './Collab';
-import { AgentWaits } from './AgentWaits';
-import { useAgentTurns, useAgentWakes, useThreadRoots, threadTitle } from '../lib/agentTurns';
 import { useCollabProposals, type CollabFilter } from '../lib/collabProposals';
 // 띄울 권한 판정은 `lib/` 하나가 낸다 — 설정 › 에이전트가 같은 판정을 쓴다.
 // 설정 문의 판정도 한 벌이다(`lib/agentConfigGate.ts`) — 프로필·본문 멘션이 같은 함수를
@@ -35,7 +34,6 @@ import { canSeeAgentConfig } from '../lib/agentConfigGate';
 import { faceState, isFaceGreyed, type FaceState } from '../lib/faceState';
 // 인박스 줄의 배지가 **레일 홈 칸·독과 같은 함수로** 센다(`InboxRowBadge`). 여기서 다시
 // 적으면 같은 사실을 말하는 세 자리가 갈린다 — 그 규칙이 `state/unread.ts` 에 나온 이유다.
-import { blockingUnreadCount } from '../state/unread';
 import { anyPresenceView, PRESENCE_LABEL, type PresenceView } from '../lib/presenceView';
 import type { SectionId } from './settings/sections';
 import type {
@@ -108,7 +106,7 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
   if (notifyLevel === 'none' || !count) return null;
   return (
     <span data-testid={`unread-${channelId}`}
-      className="shrink-0 rounded-full bg-danger px-1.5 text-meta font-bold text-fg-on-strong">
+      className="shrink-0 rounded-full bg-danger px-1.5 text-meta font-semibold text-fg-on-strong">
       {count}
     </span>
   );
@@ -130,7 +128,7 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
  * 화면에서 인박스 줄은 조용했고, 신고자가 본 것이 그것이다(#murmur 1 옆의 무표정한 Inbox).
  *
  * "같은 사실이 두 곳"은 **갈릴 때만** 문제다. 그래서 세는 함수를 새로 적지 않고 레일·독이
- * 쓰는 `blockingUnreadCount` 를 그대로 쓴다 — 셋이 한 함수를 부르면 숫자가 갈릴 자리가 없다.
+ * 읽는 `inboxMine`(보드의 `mineCount`, 배지 A 2026-10-02)을 그대로 쓴다 — 넷이 한 값을 읽으면 숫자가 갈릴 자리가 없다.
  *
  * ## 두 신호를 그대로 물려받는다
  *
@@ -147,7 +145,8 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
  * 그것으로 점을 켜면 인박스를 열었을 때 아무 새 줄도 없는 일이 생긴다.
  */
 function InboxRowBadge() {
-  const blocking = useActiveStore((s) => blockingUnreadCount(s.unread));
+  // 내 차례 수(배지 A) — 보드의 "나를 기다리는 일 N" 과 같은 숫자다.
+  const blocking = useActiveStore((s) => s.inboxMine);
   const unreadCount = useActiveStore((s) => s.unread.filter((e) => !e.readAt).length);
   const t = useT();
   if (blocking > 0) {
@@ -155,7 +154,7 @@ function InboxRowBadge() {
       <span
         data-testid="inbox-blocking-badge"
         aria-label={t('sidebar.inbox.blocking', { count: blocking })}
-        className="ml-auto shrink-0 rounded-full bg-danger px-1.5 text-meta font-bold text-fg-on-strong"
+        className="ml-auto shrink-0 rounded-full bg-danger px-1.5 text-meta font-semibold text-fg-on-strong"
       >
         {blocking}
       </span>
@@ -172,33 +171,6 @@ function InboxRowBadge() {
   }
   return null;
 }
-
-/**
- * 멤버 패널의 실패 문구(#344). 서버의 사유는 영문이고 이 패널은 그것을 그대로 띄우고 있었다 —
- * 화면에 영어 한 줄이 뜨면 사람은 그것을 오류 코드로 읽는다.
- *
- * 바꿔 적는 것은 **보관 사유 하나뿐**이다. 나머지는 서버 문구를 그대로 남긴다: 여기서 목록을
- * 만들어 두면 서버가 새 사유를 늘릴 때마다 화면이 조용히 원문으로 되돌아가는 자리가 생긴다.
- *
- * 이 문구가 실제로 뜨는 자리는 **멤버 추가와 내보내기**다. 나가기 경로는 `isSelf` 예외(#344)
- * 이후 보관 게이트를 통과하므로 이 사유를 받지 못한다 — 그래도 같은 함수를 통과시키는 이유는
- * 세 자리가 같은 `memberError` 한 칸에 쓰기 때문이다. 그래서 문구도 "나갈 수 없다"가 아니라
- * 남는 두 조작에 참인 것으로 적는다.
- *
- * **번역기를 인자로 받는다**(i18n 구조 판단 (b) — `i18n/index.ts::Translate` 머리말).
- * 이것은 판정이다: 서버 사유 하나를 알아보고 나머지는 그대로 흘린다. 그 판정을 화면 안에
- * 두면 세 호출자가 각자 같은 `if` 를 적게 되고, 서버가 문구를 바꾸는 날 한 곳만 고쳐진다.
- *
- * `fallback` 은 **키가 아니라 이미 번역된 문자열**을 받는다. 자리마다 다른 말이고
- * (초대 · 내보내기 · 나가기), 호출부가 `t()` 를 이미 손에 들고 있어 여기서 다시
- * 키를 풀 이유가 없다.
- */
-const memberErrorText = (err: unknown, fallback: string, t: Translate): string => {
-  const msg = err instanceof Error ? err.message : fallback;
-  return msg === 'archived channels are read-only'
-    ? t('sidebar.members.readOnlyArchived')
-    : msg;
-};
 
 export function Sidebar({
   panel, onOpenDirectory, onOpenChannelDirectory, onOpenInbox, onOpenAgentConfig, onOpenProfile,
@@ -271,6 +243,12 @@ export function Sidebar({
 }) {
   const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, channelAutoMentions, messages, runnerStates, projectionStatus } = useActiveStore();
   const t = useT();
+  // 새 창으로 띄운 채널·DM(사이드바 ⧉ 표시). 장부가 바뀔 때만 다시 센다.
+  const appWindowEntries = useAppWindows((st) => st.entries);
+  const poppedChannels = useMemo(
+    () => new Set(appWindowEntries.flatMap((e) => (e.target.kind === 'channel' ? [e.target.channelId] : []))),
+    [appWindowEntries],
+  );
   /*
    * macOS 신호등 여백(#270)이 여기 있었다. **더 이상 이 바가 창의 좌상단이 아니다** —
    * 레일이 항상 왼쪽에 서므로 좌상단은 레일이고, 여백은 레일이 진다(`Rail.tsx` 의
@@ -285,22 +263,6 @@ export function Sidebar({
   const [newChannelPrivate, setNewChannelPrivate] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  // 멤버 패널. 열려 있는 채널 id 하나만 둔다 — 여러 채널의 패널이 동시에 열리면 어느
-  // 목록을 보고 있는지가 화면에서 사라진다(편집 패널과 같은 규칙).
-  const [membersChannelId, setMembersChannelId] = useState<string | null>(null);
-  const [memberError, setMemberError] = useState<string | null>(null);
-  // 자동 멘션 절(#173)의 실패. 멤버 목록 실패와 자리를 나눈다 — 한 문장에 두 사고를 섞으면
-  // 사용자는 어느 쪽을 다시 시도해야 하는지 모른다.
-  const [autoMentionError, setAutoMentionError] = useState<string | null>(null);
-  const [inviteAccountId, setInviteAccountId] = useState('');
-  const [teams, setTeams] = useState<AgentTeamRow[]>([]);
-  const [selectedTeamId, setSelectedTeamId] = useState('');
-  const [teamAddResult, setTeamAddResult] = useState<AddTeamToChannelResult | null>(null);
-  // 팀 쪽 실패는 멤버 목록 실패와 **다른 자리**에 적는다 — 한 칸을 나눠 쓰면 어느 쪽이
-  // 실패했는지가 화면에서 사라진다.
-  const [teamError, setTeamError] = useState<string | null>(null);
-  // '마지막 멤버가 나간다'는 되돌릴 수 없는 조작이라 한 번 더 묻는다.
-  const [leaveConfirmId, setLeaveConfirmId] = useState<string | null>(null);
   /**
    * 채널 삭제 확인(#155). 확인 단계를 **화면 안에** 둔다 — `window.confirm` 은 Tauri
    * 웹뷰에서 막힐 수 있고, 이 저장소의 선례(`MessageItem` 의 '정말 삭제', 바로 위
@@ -317,11 +279,6 @@ export function Sidebar({
   // 숨긴 채널 묶음(#376)도 접혀 있는 채로 시작한다 — 치운 것이 열린 채로 보이면 치운 뜻이 없다.
   const [hiddenOpen, setHiddenOpen] = useState(false);
 
-  const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
-  const [editName, setEditName] = useState('');
-  const [editTopic, setEditTopic] = useState('');
-  const [editRepo, setEditRepo] = useState('');
-  const [editError, setEditError] = useState<string | null>(null);
 
   /*
    * `⌘,` 배선이 여기 있었다(#488 A1). **레일로 갔다** — 그 단축키를 가르치는 메뉴가
@@ -387,122 +344,12 @@ export function Sidebar({
     setCreateError(null);
   };
 
-  const closeMembers = (): void => {
-    setMembersChannelId(null);
-    setMemberError(null);
-    setInviteAccountId('');
-    setLeaveConfirmId(null);
-    setTeams([]);
-    setSelectedTeamId('');
-    setTeamAddResult(null);
-    setTeamError(null);
-  };
-
-  /**
-   * 멤버 패널을 연다. **조회 실패를 빈 목록으로 삼키지 않는다** — private 채널에서
-   * "멤버 없음" 은 "이 채널은 아무도 볼 수 없다"는 뜻이라 거짓 사실이 나가기 경고까지
-   * 지운다. 실패하면 목록을 그리지 않고 오류를 보여 준다.
-   */
-  const openMembers = async (channelId: string): Promise<void> => {
-    setMembersChannelId(channelId);
-    setAutoMentionError(null);
-    // 자동 멘션 목록(#173)은 멤버 목록과 **별개로** 받는다 — 한쪽 실패가 다른 쪽을 가리면 안 된다.
-    void getController().loadChannelAutoMentions(channelId)
-      .catch((err: unknown) => setAutoMentionError(err instanceof Error ? err.message : t('sidebar.members.autoMentionListFailed')));
-    setMemberError(null);
-    setInviteAccountId('');
-    setLeaveConfirmId(null);
-    setTeams([]);
-    setSelectedTeamId('');
-    setTeamAddResult(null);
-    setTeamError(null);
-    try {
-      await getController().loadChannelMembers(channelId);
-    } catch (err) {
-      setMemberError(err instanceof Error ? err.message : t('sidebar.members.listFailed'));
-      return;
-    }
-    /**
-     * 팀 목록(#172)은 **따로** 받는다. 한 try 에 묶으면 팀 조회가 실패했을 때 화면이
-     * "멤버 목록을 받지 못했다"고 말한다 — 멤버 목록은 방금 받았는데 거짓을 말하는 것이다.
-     * 팀 목록이 없으면 "팀으로 추가" 자리만 안 뜨면 되고, 그 사실을 따로 알린다.
-     *
-     * private 채널에서만 부른다: public 채널에는 멤버십이 없어(#156) 서버가 400 으로
-     * 거절한다 — 뜻이 없는 조작의 진입점을 만들지 않는다.
-     */
-    const channel = channels.find((c) => c.id === channelId);
-    if (channel?.visibility === 'private') {
-      try {
-        setTeams(await getController().listTeams());
-      } catch {
-        setTeamError(t('sidebar.members.teamListFailed'));
-      }
-    }
-  };
-
-  const submitTeamAdd = async (channelId: string): Promise<void> => {
-    if (!selectedTeamId) return;
-    setTeamAddResult(null);
-    setTeamError(null);
-    try {
-      const result = await getController().addTeamToChannel(channelId, selectedTeamId);
-      setTeamAddResult(result);
-      setSelectedTeamId('');
-      // 넣은 결과가 멤버 목록에 보여야 한다 — 결과 문구만 갱신하면 바로 아래 목록이
-      // 방금 들어온 에이전트를 빼고 그린다.
-      await getController().loadChannelMembers(channelId);
-    } catch (err) {
-      setTeamError(err instanceof Error ? err.message : t('sidebar.members.teamAddFailed'));
-    }
-  };
-
-  const submitInvite = async (channelId: string): Promise<void> => {
-    if (!inviteAccountId) return;
-    try {
-      await getController().inviteChannelMember(channelId, inviteAccountId);
-      setInviteAccountId('');
-      setMemberError(null);
-    } catch (err) {
-      setMemberError(memberErrorText(err, t('sidebar.members.inviteFailed'), t));
-    }
-  };
-
-  /**
-   * 나가기 요청. 마지막 멤버면 바로 나가지 않고 **그 사실을 알린다** — 나간 뒤에는
-   * admin 만 목록에서 볼 수 있는 채널이 되고, 채널 자체는 남는다(삭제는 #155).
-   */
-  const requestLeave = async (channelId: string): Promise<void> => {
-    if (!me) return;
-    setMembersChannelId(channelId);
-    setMemberError(null);
-    setLeaveConfirmId(null);
-    let members;
-    try {
-      members = await getController().loadChannelMembers(channelId);
-    } catch (err) {
-      setMemberError(err instanceof Error ? err.message : t('sidebar.members.listFailed'));
-      return;
-    }
-    if (!members.some((m) => m.accountId === me.id)) {
-      setMemberError(t('sidebar.members.notAMember'));
-      return;
-    }
-    if (members.length === 1) {
-      setLeaveConfirmId(channelId);
-      return;
-    }
-    await confirmLeave(channelId);
-  };
-
-  const confirmLeave = async (channelId: string): Promise<void> => {
-    if (!me) return;
-    try {
-      await getController().leaveChannel(channelId, me.id);
-      closeMembers();
-    } catch (err) {
-      setMemberError(memberErrorText(err, t('sidebar.members.leaveFailed'), t));
-    }
-  };
+  // 멤버·나가기는 **채널 설정 시트**가 연다(UX ⑦b-2) — 사이드바 안의 인라인 패널은 없앴다. 나가기는 시트의
+  // 멤버 탭에서 절차를 바로 시작한다: 마지막 멤버 확인·오류가 그 패널(`ChannelMembersPanel`)의 자리다.
+  const openSheet = (channelId: string, tab: 'info' | 'members' | 'leave'): void =>
+    useActiveStore.getState().set({ channelSheetId: channelId, channelSheetTab: tab });
+  const openMembers = (channelId: string): void => openSheet(channelId, 'members');
+  const requestLeave = (channelId: string): void => openSheet(channelId, 'leave');
 
   const startDelete = (channelId: string): void => {
     setDeletingChannelId(channelId);
@@ -532,96 +379,7 @@ export function Sidebar({
     }
   };
 
-  /**
-   * 자동 멘션을 켜고 끈다(#173). admin 만 부를 수 있다 — 화면도 admin 에게만 토글을 내준다.
-   * 실패는 그 절 안에 보여 준다: 서버가 400(에이전트 아님·비활성)이나 403 을 줄 수 있고,
-   * 그 사유가 조용히 사라지면 사용자는 체크박스가 고장 났다고 여긴다.
-   */
-  /**
-   * 채널이 이 에이전트를 어떻게 데리고 있나 — 세 값 하나로 정한다(마이그레이션 048).
-   *
-   * `off` 는 행을 지우는 것이고 나머지 둘은 행의 `mode` 다. 체크박스 두 개로 나누지 않은
-   * 이유: 두 상자는 넷을 표현하고(둘 다 켠 상태·둘 다 끈 상태) 그중 둘은 뜻이 없다.
-   * 세 값 중 하나라는 것이 사실이므로 컨트롤도 하나다.
-   */
-  const changeAutoMention = async (
-    channelId: string, agentAccountId: string, value: 'off' | ChannelAutoMentionMode,
-  ): Promise<void> => {
-    setAutoMentionError(null);
-    try {
-      if (value === 'off') await getController().unsetChannelAutoMention(channelId, agentAccountId);
-      else await getController().setChannelAutoMention(channelId, agentAccountId, value);
-    } catch (err) {
-      setAutoMentionError(err instanceof Error ? err.message : t('sidebar.members.autoMentionFailed'));
-    }
-  };
 
-  const closeEdit = (): void => {
-    setEditingChannelId(null);
-    setEditName('');
-    setEditTopic('');
-    setEditRepo('');
-    setEditError(null);
-  };
-
-  const startEdit = (channel: ChannelRow): void => {
-    setEditingChannelId(channel.id);
-    setEditName(channel.name ?? '');
-    setEditTopic(channel.topic);
-    setEditRepo(channel.repo ?? '');
-    setEditError(null);
-  };
-
-  const submitEdit = async (): Promise<void> => {
-    if (!editingChannelId) return;
-    const original = useActiveStore.getState().channels.find((c) => c.id === editingChannelId);
-    const input: { name?: string; topic?: string; repo?: string | null } = {};
-    /**
-     * 이름은 **바뀐 경우에만** 싣는다. 안 바꾸고 저장할 때마다 이름을 같이 보내면 서버가
-     * 그때마다 유니크 검사와 감사 기록의 대상으로 삼고, 무엇보다 이 채널이 자기 이름으로
-     * 유니크 위반을 낼 여지를 만든다.
-     *
-     * 규칙은 만들기와 **같은 상수**로 미리 거른다(`submitNewChannel` 과 같은 이유) — 서버
-     * 왕복 없이 안내하되 최종 판정은 서버다. 빈 이름은 해제 의사가 아니다: 이름 없는 채널은
-     * 없으므로 패턴이 이미 걸러 낸다.
-     */
-    const nextName = editName.trim();
-    if (nextName !== original?.name) {
-      if (!new RegExp(CHANNEL_NAME_PATTERN).test(nextName)) {
-        setEditError(t('sidebar.channel.createInvalidName'));
-        return;
-      }
-      input.name = nextName;
-    }
-    if (editTopic !== original?.topic) {
-      input.topic = editTopic;
-    }
-    // repo 는 **키 부재(변경 없음)와 null(바인딩 해제)를 구분**해야 한다. 그래서 원래
-    // 값과 다를 때만 키를 넣는다 — topic 만 고칠 때 repo 키가 따라가면 바인딩이 조용히
-    // 끊긴다.
-    //
-    // 필드를 비운 것은 **해제 의사**로 읽는다. 필드가 이 채널의 바인딩을 표현하는 유일한
-    // 곳이므로, 바인딩이 남아 있는데 필드가 비어 보이는 상태를 만들면 안 된다. 예전에는
-    // 이 자리에 `editRepo || undefined` 가 있었는데, 그러면 키는 들어가지만 값이
-    // undefined 라 JSON 에서 사라진다 — 사용자가 필드를 비우고 저장했는데 아무 일도
-    // 일어나지 않고 안내도 없었다.
-    if (editRepo !== (original?.repo ?? '')) {
-      input.repo = editRepo === '' ? null : editRepo;
-    }
-    try {
-      await getController().updateChannel(editingChannelId, input);
-      closeEdit();
-    } catch (err) {
-      // 이름 충돌은 **코드로** 가른다(`ProfileSettings` 의 handle 과 같은 판단) — 문구를
-      // 문자열로 뒤지면 서버가 문구를 다듬는 순간 조용히 "편집에 실패했다" 로 뭉개진다.
-      // 이건 사용자가 고칠 수 있는 유일한 실패라 그렇게 말해 줘야 한다.
-      if (err instanceof ApiError && err.code === 'channel_name_taken') {
-        setEditError(t('sidebar.edit.nameTaken'));
-        return;
-      }
-      setEditError(err instanceof Error ? err.message : t('sidebar.edit.failed'));
-    }
-  };
 
   /**
    * Enter 와 [만들기] 가 같은 일을 한다 — 두 핸들러에 같은 절차를 각각 적으면 한쪽만 고치는
@@ -730,22 +488,9 @@ export function Sidebar({
     [accounts],
   );
 
-  /*
-    지금 도는 턴(Agents 관제 1단계). **이 칸을 보고 있을 때만 묻는다** — 사이드바는 항상
-    떠 있고 다른 칸에서 이 요청을 계속 내면 아무도 보지 않는 값을 위해 왕복이 붙는다.
-    훅은 조건부로 부를 수 없으므로(리액트 규칙) 조건은 인자로 넘긴다.
-  */
-  const agentTurns = useAgentTurns(panel === 'agents');
   /* 협업 칸도 같은 규칙이다 — 보고 있을 때만 묻는다(저장소마다 avcs 를 한 번씩 두드린다). */
   const collab = useCollabProposals(panel === 'collab');
   const [collabFilter, setCollabFilter] = useState<CollabFilter>('open');
-  /* 예약은 테이블에서 오므로 릴레이와 무관하게 답이 온다(`AgentWaits` 주석). */
-  const agentWakes = useAgentWakes(panel === 'agents');
-  /* 묶음 머리에 세울 스레드 이름. 모듈 캐시라 관제탑과 **같은 답**을 쓰고, 목록이 5초마다
-     새로 와도 루트를 다시 묻지 않는다(`lib/agentTurns.ts::useThreadRoots`). */
-  const agentTurnRoots = useThreadRoots(
-    agentTurns.kind === 'known' ? agentTurns.turns.map((turn) => turn.threadRootId) : [],
-  );
 
   // "새 섹션…" 을 고른 채널과 입력 중인 이름(#157). `prompt()` 대신 인라인 입력이다.
   const [sectionEditFor, setSectionEditFor] = useState<string | null>(null);
@@ -755,7 +500,7 @@ export function Sidebar({
   const [sectionRenameDraft, setSectionRenameDraft] = useState('');
 
   const row = (active: boolean) =>
-    `flex w-full items-center gap-1.5 rounded px-2 py-1 text-left hover:bg-surface-raised ${active ? 'bg-surface-raised' : ''}`;
+    `flex w-full items-center gap-1.5 rounded-row px-2 py-1 text-left hover:bg-surface-raised ${active ? 'bg-surface-raised' : ''}`;
 
   /**
    * 목록에 하나 더하는 `+`(#488 A2). **네 자리가 같은 모양·같은 자리를 쓴다** — 여기 둘
@@ -967,7 +712,7 @@ export function Sidebar({
       : t(PRESENCE_LABEL[dm.presence]);
     return (
       <button key={dm.id} className={`${row(dm.id === activeChannelId)} ${reason ? 'flex-col items-start' : ''}`}
-        onClick={() => void getController().openChannel(dm.id)}>
+        onClick={(e) => openChannelFrom(e, dm.id, () => void getController().openChannel(dm.id))}>
         <span className="flex min-w-0 items-center gap-1.5">
           {/*
             **상태를 말하는 칸은 이것 하나다.** `data-face` 로 시험이 판정을 읽는다 —
@@ -1018,6 +763,9 @@ export function Sidebar({
           {/* 채널 행과 **같은 묶음**이다(위 주석) — DM 에는 미읽음 점이 없어 안이 하나뿐이지만,
               미는 마진의 자리를 두 곳이 다르게 두면 다음에 무언가를 더할 때 또 갈린다. */}
           <span className="ml-auto flex shrink-0 items-center gap-1">
+            {poppedChannels.has(dm.id) && (
+              <span data-testid={`channel-popped-${dm.id}`} className="text-meta text-fg-subtle" title={t('window.inWindow')} aria-label={t('window.inWindow')}>⧉</span>
+            )}
             <UnreadBadge channelId={dm.id} notifyLevel={dm.notifyLevel} />
           </span>
         </span>
@@ -1040,84 +788,9 @@ export function Sidebar({
     const pref = channelPrefs[ch.id];
     const notifyLevel = notifyLevelOf(pref);
     const isStarred = !!pref?.starredAt;
-    const isEditing = editingChannelId === ch.id;
-    if (isEditing) {
-      return (
-        <div key={ch.id} className="mt-1 rounded border border-border bg-surface-raised p-1">
-          {/*
-            **사이드바의 단은 아랫단 11px 이다** — 이 파일이 이미 그렇게 서 있었다: 오류·
-            안내·멤버 이름·구획 라벨·미읽음 개수가 전부 11px 이고, 그것은 10px 27곳을
-            11px 로 올린 앞 작업이 만든 상태다. 그래서 남아 있던 12px(`text-xs`) 24곳을
-            **색으로 가르지 않고 자리로** 11px 에 붙였다: 이 열은 좁고, 한 열 안에 두 단이
-            서면 눌러야 할 버튼과 읽어야 할 줄이 눈에서 뒤섞인다.
-
-            **입력칸만 예외로 본문단 13px** 이다 — 14px(`text-sm`) 4곳과 12px 1곳으로
-            갈려 있던 것을 하나로 맞췄고, 크기를 안 적어 앱 기본값을 물려받는다. 방금 친
-            글자를 다시 읽는 자리다. `SidebarFind.tsx` 에 그 근거를 적어 뒀다.
-          */}
-          <div className="mb-1 text-meta text-fg-muted">{t('sidebar.edit.title', { name: `#${ch.name}` })}</div>
-          {/*
-            이름이 맨 위다 — 이 폼에서 **바꿨을 때 가장 눈에 띄는 값**이고, 제목 줄이
-            `#옛이름` 으로 무엇을 고치는 중인지 이미 말하고 있다. `#` 는 붙여서 그리지 않는다:
-            저장되는 값에는 `#` 가 없고, 칸 안에 넣어 두면 사람이 그것까지 이름으로 친다.
-          */}
-          <input
-            type="text"
-            aria-label="Channel name"
-            data-testid="channel-edit-name"
-            className="mb-1 w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
-            placeholder={t('sidebar.edit.namePlaceholder')}
-            value={editName}
-            onChange={(e) => { setEditName(e.target.value); setEditError(null); }}
-          />
-          <input
-            type="text"
-            aria-label="Topic"
-            className="mb-1 w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
-            placeholder={t('sidebar.edit.topicPlaceholder')}
-            value={editTopic}
-            onChange={(e) => { setEditTopic(e.target.value); setEditError(null); }}
-          />
-          <div className="mb-1 flex items-center gap-1">
-            <input
-              type="text"
-              aria-label="Repository"
-              className="flex-1 rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
-              placeholder={t('sidebar.edit.repoPlaceholder')}
-              value={editRepo}
-              onChange={(e) => { setEditRepo(e.target.value); setEditError(null); }}
-            />
-          </div>
-          {editError && <p role="alert" className="mb-1 text-meta text-danger">{editError}</p>}
-          {/*
-            repo 를 채워도 아무도 읽지 않는다는 사실을 폼 안에서 말한다(#381). 배지가 뜨는
-            것만으로는 바인딩이 살아 있다고 읽히는데, 투영이 꺼져 있으면 `projection.ts`
-            말고는 이 값을 읽는 곳이 없다. 문구는 `LeasePanel` 배너와 **같은 상수**다 —
-            사본을 만들면 둘이 갈라진다.
-          */}
-          {editRepo && projectionStatus?.state === 'unconfigured' && (
-            <p className="mb-1 text-meta text-warning">{PROJECTION_UNCONFIGURED_NOTICE}</p>
-          )}
-          <div className="flex gap-1">
-            <button
-              className="rounded bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
-              onClick={() => void submitEdit()}
-            >
-              {t('sidebar.edit.save')}
-            </button>
-            <button
-              className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
-              onClick={closeEdit}
-            >
-              {t('sidebar.edit.cancel')}
-            </button>
-          </div>
-        </div>
-      );
-    }
     if (deletingChannelId === ch.id) {
       return (
-        <div key={ch.id} data-testid={`delete-${ch.id}`} className="mt-1 rounded border border-danger bg-surface-raised p-1">
+        <div key={ch.id} data-testid={`delete-${ch.id}`} className="mt-1 rounded-row border border-danger bg-surface-raised p-1">
           <div className="mb-1 text-meta text-fg-muted">
             {t('sidebar.delete.title', { name: `${ch.visibility === 'private' ? '🔒' : '#'}${ch.name}` })}
           </div>
@@ -1135,14 +808,14 @@ export function Sidebar({
                 조작을 승인하게 하지 않는다. */}
             {typeof deleteCount === 'number' && (
               <button
-                className="rounded bg-danger px-2 py-0.5 text-meta text-fg-on-strong hover:bg-danger-hover"
+                className="rounded-row bg-danger px-2 py-0.5 text-meta text-fg-on-strong hover:bg-danger-hover"
                 onClick={() => void confirmDelete(ch.id)}
               >
                 {t('sidebar.delete.confirm')}
               </button>
             )}
             <button
-              className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
+              className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
               onClick={closeDelete}
             >
               {t('sidebar.delete.cancel')}
@@ -1151,259 +824,23 @@ export function Sidebar({
         </div>
       );
     }
-    if (membersChannelId === ch.id) {
-      const members = channelMembers[ch.id];
-      const memberIds = new Set((members ?? []).map((m) => m.accountId));
-      const invitable = Object.values(accounts).filter((a) => !memberIds.has(a.id));
-      const isMember = !!me && memberIds.has(me.id);
-      /**
-       * 초대 가능 여부는 **서버 게이트(`assertChannelVisible`)와 같은 술어**다: public 표준
-       * 채널은 누구나, private 은 그 채널의 멤버만이다. 넓게 잡으면 admin 이 자기가 없는
-       * private 채널에서 초대를 눌러 403 을 받는다 — 눌러서 실패하는 항목은 "할 수 있다"는
-       * 거짓 신호다(docs/design.md §4). 목록을 아직 못 받았으면 판정할 근거가 없으므로
-       * 내주지 않는다.
-       */
-      const canInvite = members !== undefined && (ch.visibility === 'public' || isMember);
-      return (
-        <div key={ch.id} data-testid={`members-${ch.id}`} className="mt-1 rounded border border-border bg-surface-raised p-1">
-          <div className="mb-1 text-meta text-fg-muted">
-            {t('sidebar.members.title', { name: `${ch.visibility === 'private' ? '🔒' : '#'}${ch.name}` })}
-          </div>
-          {/* public 과 private 에서 이 목록의 **뜻이 다르다**. public 채널은 멤버가 아니어도
-              읽고 쓸 수 있으므로 여기 적힌 사람들은 "볼 수 있는 사람"이 아니라 구독자다 —
-              그 말을 하지 않으면 목록에 없는 사람은 못 본다는 뜻으로 읽힌다. private 은
-              반대로 이 목록이 곧 볼 수 있는 사람의 전부다. */}
-          <p className="mb-1 text-meta text-fg-subtle">
-            {ch.visibility === 'private'
-              ? t('sidebar.members.scopePrivate')
-              : t('sidebar.members.scopePublic')}
-          </p>
-          {memberError && <p role="alert" className="mb-1 text-meta text-danger">{memberError}</p>}
-          {/* 키 자체가 없으면 '아직 못 받았다'다 — 빈 목록으로 그리면 거짓 사실이 된다. */}
-          {members === undefined
-            ? !memberError && <p className="mb-1 text-meta text-fg-subtle">{t('sidebar.members.loading')}</p>
-            : (
-              <ul className="mb-1 space-y-0.5">
-                {members.length === 0 && <li className="text-meta text-fg-subtle">{t('sidebar.members.empty')}</li>}
-                {members.map((m) => {
-                  // 디렉터리에 없는 계정은 **아무 종류도 주장하지 않는다** — 모르는 것을
-                  // '사람'으로 그리면 에이전트가 사람으로 보이는 거짓 사실이 된다.
-                  const account = accounts[m.accountId];
-                  return (
-                    <li key={m.accountId} className="flex items-center gap-1 text-meta text-fg-muted">
-                      <span>@{m.handle}</span>
-                      {account && (
-                        <span className="rounded bg-surface-raised px-1 text-meta text-fg">
-                          {account.kind === 'agent' ? t('sidebar.members.kindAgent') : t('sidebar.members.kindHuman')}
-                        </span>
-                      )}
-                      {/* 채널 역할이 아니라 **계정 속성**이다 — 채널별 역할은 아직 없다(#183).
-                          그래서 'admin' 이 아니라 '워크스페이스 admin' 이라고 적는다. */}
-                      {account?.isAdmin && (
-                        <span
-                          className="rounded bg-surface-raised px-1 text-meta text-warning"
-                          title={t('sidebar.members.adminBadgeTitle')}
-                        >
-                          {t('sidebar.members.adminBadge')}
-                        </span>
-                      )}
-                      {me?.isAdmin && m.accountId !== me?.id && (
-                        <button
-                          className="ml-auto rounded px-1 text-meta text-fg-subtle hover:bg-surface-hover hover:text-danger"
-                          aria-label={t('sidebar.members.removeAction', { handle: m.handle })}
-                          onClick={() => void getController().leaveChannel(ch.id, m.accountId)
-                            .catch((err: unknown) => setMemberError(memberErrorText(err, t('sidebar.members.removeFailed'), t)))}
-                        >
-                          {t('sidebar.members.remove')}
-                        </button>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          {/* 자동 멘션(#173). 채널 설정 화면이 따로 없어 채널의 관리 표면인 이 패널에 둔다 —
-              admin 전용 편집 폼에 두면 admin 이 아닌 사람은 "이 채널이 누구를 자동으로 부르나"를
-              어디에서도 볼 수 없다. admin 은 토글, 나머지는 읽기 전용이다: 서버가 403 을 줄
-              조작을 화면이 내주면 "할 수 있다"는 거짓 신호다(docs/design.md §4). */}
-          {(() => {
-            const autoRows = channelAutoMentions[ch.id];
-            const onIds = new Set((autoRows ?? []).map((r) => r.agentAccountId));
-            // 에이전트 id → 지금 걸린 모드. 없는 키가 곧 '없음' 이다.
-            const modeOf = new Map((autoRows ?? []).map((r) => [r.agentAccountId, r.mode] as const));
-            // admin 은 켤 수 있는 에이전트 전부(비활성은 이미 켜져 있을 때만 — 끄는 길은 있어야
-            // 한다)를, 나머지는 켜진 것만 본다. 서버가 비활성 에이전트의 추가를 400 으로
-            // 막으므로, 그 토글을 내주면 눌러서 실패하는 항목이 된다.
-            const agents = Object.values(accounts)
-              .filter((a) => a.kind === 'agent' && (me?.isAdmin ? (!a.disabled || onIds.has(a.id)) : onIds.has(a.id)))
-              .sort((a, b) => a.handle.localeCompare(b.handle));
-            return (
-              <div data-testid={`auto-mentions-${ch.id}`} className="mb-1 border-t border-border pt-1">
-                <div className="mb-0.5 text-meta text-fg-muted">{t('sidebar.members.autoMentionHeading')}</div>
-                <p className="mb-1 text-meta text-fg-subtle">
-                  {/*
-                    **두 문장이 따로 있다.** 뒤엣것은 admin 이 아닌 사람에게만 붙는 조건절이고,
-                    한 키로 합치면 두 경우가 각각 한 문장씩 필요해져 사전 항목이 둘로 늘어난다
-                    (그리고 앞 문장이 두 곳에 복제된다). 이어 붙이는 것은 화면의 일이다 —
-                    `WaitChainSection` 이 `·` 를 화면에 남긴 것과 같은 규칙이다.
-                  */}
-                  {t('sidebar.members.autoMentionNote')}
-                  {!me?.isAdmin && t('sidebar.members.autoMentionNoteReadOnly')}
-                </p>
-                {autoMentionError && <p role="alert" className="mb-1 text-meta text-danger">{autoMentionError}</p>}
-                {/* 키가 없으면 '아직 못 받았다' — 빈 목록으로 그리면 "아무도 안 부른다"는 거짓 사실이 된다. */}
-                {autoRows === undefined
-                  ? !autoMentionError && <p className="mb-1 text-meta text-fg-subtle">{t('sidebar.members.loading')}</p>
-                  : (
-                    <ul className="mb-1 space-y-0.5">
-                      {agents.length === 0 && (
-                        <li className="text-meta text-fg-subtle">
-                          {me?.isAdmin
-                            ? t('sidebar.members.autoMentionEmptyAdmin')
-                            : t('sidebar.members.autoMentionEmptyReader')}
-                        </li>
-                      )}
-                      {agents.map((a) => (
-                        <li key={a.id} className="flex items-center gap-1 text-meta text-fg-muted">
-                          {me?.isAdmin ? (
-                            <>
-                              <span>@{a.handle}</span>
-                              <select
-                                aria-label={t('sidebar.members.autoMentionMode', { handle: a.handle })}
-                                className="rounded border border-border bg-field px-1 py-0.5 text-meta text-fg"
-                                value={modeOf.get(a.id) ?? 'off'}
-                                onChange={(e) => void changeAutoMention(ch.id, a.id, e.target.value as 'off' | ChannelAutoMentionMode)}
-                              >
-                                <option value="off">{t('sidebar.members.autoMentionOff')}</option>
-                                <option value="available">{t('sidebar.members.autoMentionAvailable')}</option>
-                                <option value="always">{t('sidebar.members.autoMentionAlways')}</option>
-                              </select>
-                            </>
-                          ) : (
-                            <span>@{a.handle}</span>
-                          )}
-                          {/* 배지는 **켜진 행에만** 붙는다. admin 목록에는 꺼진 에이전트도 서므로
-                              무조건 붙이면 고른 값이 '없음' 인 줄에 '자동' 이라고 적힌다 — 화면이
-                              선택과 반대되는 말을 한다. 두 값은 서로 다른 말을 해야 한다: 하나는
-                              매 줄에 붙고 하나는 눌러야 부른다. */}
-                          {modeOf.get(a.id) === 'always' && (
-                            <span className="rounded bg-accent-surface px-1 text-meta text-accent">{t('sidebar.members.autoMentionBadge')}</span>
-                          )}
-                          {modeOf.get(a.id) === 'available' && (
-                            <span className="rounded bg-surface-sunken px-1 text-meta text-fg-muted">{t('sidebar.members.autoMentionAvailableBadge')}</span>
-                          )}
-                          {a.disabled && <span className="rounded bg-surface-hover px-1 text-meta text-fg-muted">{t('sidebar.members.agentDisabled')}</span>}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-              </div>
-            );
-          })()}
-          {leaveConfirmId === ch.id && (
-            <p role="alert" className="mb-1 text-meta text-warning">
-              {t('sidebar.members.lastMemberWarning')}
-            </p>
-          )}
-          {canInvite && (
-            <div className="mb-1 flex items-center gap-1">
-              <select
-                aria-label={t('sidebar.members.inviteSelect')}
-                className="flex-1 rounded border border-border bg-field px-1 py-0.5 text-fg"
-                value={inviteAccountId}
-                onChange={(e) => setInviteAccountId(e.target.value)}
-              >
-                <option value="">{t('sidebar.members.invitePick')}</option>
-                {invitable.map((a) => <option key={a.id} value={a.id}>@{a.handle}</option>)}
-              </select>
-              <button
-                className="rounded bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover disabled:opacity-40"
-                disabled={!inviteAccountId}
-                onClick={() => void submitInvite(ch.id)}
-              >
-                {t('sidebar.members.invite')}
-              </button>
-            </div>
-          )}
-          {/*
-            팀 추가(#172): **private 채널에서만.** public 채널에는 멤버십이 없어(#156)
-            서버가 400 으로 거절하므로 뜻이 없는 진입점을 만들지 않는다.
-
-            admin 게이트를 걸지 **않는다**: 서버의 게이트는 `#156` 의 초대와 같은
-            `assertChannelVisible` 이라 그 채널의 멤버면 누구나 넣을 수 있다. 화면만
-            admin 으로 좁히면 할 수 있는 조작이 화면에서 사라진다 — 그것도 화면이
-            서버와 다른 말을 하는 것이다.
-
-            팀이 하나도 없으면 고를 것이 없으니 자리도 없다. 다만 목록을 **못 받은**
-            것은 다른 사실이라 `teamError` 로 따로 말한다.
-          */}
-          {ch.visibility === 'private' && teamError && (
-            <p role="alert" className="mb-1 text-meta text-warning">{teamError}</p>
-          )}
-          {ch.visibility === 'private' && teams.length > 0 && (
-            <div className="mb-1 space-y-1">
-              <div className="text-meta text-fg-subtle">{t('sidebar.members.teamHeading')}</div>
-              <div className="flex items-center gap-1">
-                <select
-                  aria-label={t('sidebar.members.teamSelect')}
-                  className="flex-1 rounded border border-border bg-field px-1 py-0.5 text-fg"
-                  value={selectedTeamId}
-                  onChange={(e) => { setSelectedTeamId(e.target.value); setTeamAddResult(null); }}
-                >
-                  <option value="">{t('sidebar.members.teamPick')}</option>
-                  {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-                <button
-                  className="rounded bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover disabled:opacity-40"
-                  disabled={!selectedTeamId}
-                  onClick={() => void submitTeamAdd(ch.id)}
-                >
-                  {t('sidebar.members.teamAdd')}
-                </button>
-              </div>
-              {teamAddResult && (
-                <div className="text-meta text-fg-muted">
-                  {teamAddResult.added.length > 0 && <span>{t('sidebar.members.teamAdded', { names: teamAddResult.added.join(', ') })}</span>}
-                  {teamAddResult.skipped.length > 0 && <span className="ml-1 text-warning">{t('sidebar.members.teamSkipped', { names: teamAddResult.skipped.join(', ') })}</span>}
-                  {teamAddResult.alreadyMember.length > 0 && <span className="ml-1">{t('sidebar.members.teamAlready', { names: teamAddResult.alreadyMember.join(', ') })}</span>}
-                </div>
-              )}
-            </div>
-          )}
-          <div className="flex gap-1">
-            {/* 멤버가 아니면 나갈 것이 없다. public 채널에서 비멤버의 '나가기'는 서버가
-                200 으로 받아 주지만 아무 일도 일어나지 않는다 — 그런 항목은 만들지 않는다. */}
-            {isMember && (
-              <button
-                className="rounded px-2 py-0.5 text-meta text-danger hover:bg-surface-raised"
-                onClick={() => void (leaveConfirmId === ch.id ? confirmLeave(ch.id) : requestLeave(ch.id))}
-              >
-                {leaveConfirmId === ch.id ? t('sidebar.members.leaveConfirm') : t('sidebar.members.leave')}
-              </button>
-            )}
-            <button
-              className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
-              onClick={closeMembers}
-            >
-              {t('sidebar.members.close')}
-            </button>
-          </div>
-        </div>
-      );
-    }
     const ChannelButton = (
       <button key={ch.id} className={row(ch.id === activeChannelId)}
-        onClick={() => void getController().openChannel(ch.id)}>
+        onClick={(e) => openChannelFrom(e, ch.id, () => void getController().openChannel(ch.id))}>
         {/* private 채널은 '#' 대신 자물쇠다. 여기 이 표시가 없으면 사용자는 자기가 쓰는
             글이 전원에게 가는지 멤버에게만 가는지 화면 어디에서도 알 수 없다. */}
         {ch.visibility === 'private'
           ? <span className="text-fg-subtle" aria-label={t('sidebar.channel.private')} title={t('sidebar.channel.private')}>🔒</span>
           : <span className="text-fg-subtle">#</span>}
         {ch.name}
-        {ch.repo && <span className="rounded bg-surface-raised px-1 text-meta text-fg-muted">{ch.repo}</span>}
+        {ch.repo && <span className="rounded-sm bg-surface-raised px-1 text-meta text-fg-muted">{ch.repo}</span>}
         {/* 오른쪽 상태 묶음. `ml-auto` 는 **여기 한 번만** 있다 — 안의 둘이 각자 갖고
             있으면 남은 여백이 둘로 갈려 점이 줄 한가운데에 선다(`ChannelUnreadDot` 주석). */}
         <span className="ml-auto flex shrink-0 items-center gap-1">
+          {/* 새 창에 띄워 둔 채널(판 3 C4, 완료 조건 ⑤). 누르면 그 창이 앞으로 온다. */}
+          {poppedChannels.has(ch.id) && (
+            <span data-testid={`channel-popped-${ch.id}`} className="text-meta text-fg-subtle" title={t('window.inWindow')} aria-label={t('window.inWindow')}>⧉</span>
+          )}
           <ChannelUnreadDot channelId={ch.id} name={ch.name ?? ''} />
           <UnreadBadge channelId={ch.id} notifyLevel={notifyLevel} />
         </span>
@@ -1432,54 +869,25 @@ export function Sidebar({
     // 목록을 아직 못 받았으면 undefined 다 — 그때는 '모른다'이지 '아니다'가 아니다.
     const knownMembers = channelMembers[ch.id];
     const knownMember = knownMembers === undefined || (!!me && knownMembers.some((m) => m.accountId === me.id));
-    const menuItems = [
+    /*
+     * 메뉴를 **다섯 묶음**으로 나눈다(UX ⑦, designer 사양). 전에는 열여섯 항목이 한 줄로 섰고,
+     * 나가기·삭제 같은 되돌리기 어려운 항목이 복사·알림 사이에 섞여 있었다.
+     *   1 이 채널을 내 목록에서 다루기(미읽음·즐겨찾기·섹션) | 2 알림 | 3 사람·링크(멤버·초대·복사)
+     *   | 4 채널 자체 바꾸기(admin: 고치기·보관·삭제) | 5 치우기(숨기기·나가기, 맨 아래)
+     * 4 는 ⑦b 의 채널 설정 시트가 생기면 "채널 설정…" 한 항목으로 줄어든다.
+     * 조건으로 빠지는 항목이 많으므로 빈 묶음은 버리고, **남은** 묶음의 첫 항목에만 구분선을 단다.
+     */
+    const menuGroups: MenuItem[][] = [
+      [
+      // 맨 위는 「채널을 새 창으로 열기」(판 3 C1). 이미 띄웠으면 그 창을 앞으로 가져온다. 묶음을 새로
+      // 만들지 않고 첫 묶음(이 채널을 내 목록에서 다루기)의 머리에 둔다 — 다섯 묶음 사양(UX ⑦a)을 지킨다.
+      { label: t('window.openChannel'), onSelect: () => { void popOutChannel(ch.id); } },
       ...(lastSeq > 0 ? [{
         // 마지막 메시지부터 미읽음 — 결과는 미읽음 1, 즉 "이 채널 다시 보라"는 표시다.
         // 특정 메시지를 골라 그 지점부터 미읽음으로 만드는 것은 #179 다.
         label: t('sidebar.menu.markUnread'),
         onSelect: () => void getController().markChannelUnread(ch.id, lastSeq),
       }] : []),
-      ...(me?.isAdmin ? [{ label: t('sidebar.menu.edit'), onSelect: () => startEdit(ch) }] : []),
-      ...(me?.isAdmin ? [isArchived
-        ? { label: t('sidebar.menu.unarchive'), onSelect: () => void getController().archiveChannel(ch.id, false) }
-        : { label: t('sidebar.menu.archive'), onSelect: () => void getController().archiveChannel(ch.id, true) }]
-      : []),
-      /**
-       * 삭제(#155). **보관된 채널에만** 만든다 — 서버가 보관되지 않은 채널의 삭제를 409 로
-       * 거절하므로, 눌러도 거절되는 항목을 남겨 두면 "할 수 있다"는 거짓 신호가 된다
-       * (docs/design.md 4절). DM 은 이 목록(`sortedChannels`)에 없어 애초에 닿지 않는다.
-       */
-      ...(me?.isAdmin && isArchived
-        ? [{ label: t('sidebar.menu.delete'), onSelect: () => startDelete(ch.id) }] : []),
-      { label: t('sidebar.menu.members'), onSelect: () => void openMembers(ch.id) },
-      // 초대와 나가기는 **그 채널의 멤버**여야 하는 동작이다(public 채널의 초대는 예외 —
-      // 서버 게이트가 누구나 통과시킨다). 메뉴는 목록을 받기 전에도 그려지므로 아직
-      // 모르는 것을 '아니다'로 단정하지 않는다: 목록을 받아 아닌 것이 확인된 때만 뺀다.
-      ...(ch.visibility === 'public' || knownMember
-        ? [{ label: t('sidebar.menu.invite'), onSelect: () => void openMembers(ch.id) }] : []),
-      ...(knownMember ? [{ label: t('sidebar.menu.leave'), onSelect: () => void requestLeave(ch.id) }] : []),
-      /*
-       * 숨기기(#376). **나가기 바로 옆에 둔다** — 두 항목이 같은 자리에 있어야 "관심 없다"를
-       * 표현하는 길이 나가기 하나뿐이 아니라는 것이 보인다. 멤버십을 보지 않는다: 멤버가
-       * 아닌 public 채널도 사이드바에 있으므로 치울 수 있어야 하고, 숨김은 멤버십을 건드리지
-       * 않으므로 게이트가 필요 없다. 확인 절차도 없다 — 되돌리는 값이 클릭 한 번이다.
-       */
-      isHidden(ch.id)
-        ? { label: t('sidebar.menu.unhide'), onSelect: () => void getController().setChannelHidden(ch.id, false) }
-        : { label: t('sidebar.menu.hide'), onSelect: () => void getController().setChannelHidden(ch.id, true) },
-      { label: t('sidebar.menu.copyName'), onSelect: copyChannelName },
-      { label: t('sidebar.menu.copyId'), onSelect: copyChannelId },
-      // 음소거 토글 하나가 아니라 세 수준을 나란히 둔다(#224). 켬/끔 스위치와 수준을 같이
-      // 두면 "음소거 껐는데 왜 아직 조용하지"가 생긴다 — 여기가 유일한 조작 자리다.
-      ...NOTIFY_LEVELS.map((level) => ({
-        // `✓ ` 는 **화면의 것이다** — 사전에 넣으면 켠 것과 안 켠 것이 각각 사전 항목이
-        // 되어 항목 수가 두 배가 된다(그리고 두 항목이 갈라진다).
-        label: t('sidebar.notify.item', {
-          check: notifyLevel === level ? '✓ ' : '',
-          level: t(NOTIFY_LEVEL_KEY[level]),
-        }),
-        onSelect: () => void getController().setChannelNotifyLevel(ch.id, level),
-      })),
       { label: isStarred ? t('sidebar.menu.unstar') : t('sidebar.menu.star'), onSelect: () => void getController().toggleChannelStar(ch.id) },
       /*
        * 섹션 이동(#157). DM 은 섹션을 가질 수 없다 — kind 로 거르고, 서버도 400 을 준다.
@@ -1514,7 +922,60 @@ export function Sidebar({
        * 또 아무 일도 하지 않는다.
        */
       ...(ch.kind === 'standard' ? sectionMoveItems(ch) : []),
+      ],
+      [
+      // 음소거 토글 하나가 아니라 세 수준을 나란히 둔다(#224). 켬/끔 스위치와 수준을 같이
+      // 두면 "음소거 껐는데 왜 아직 조용하지"가 생긴다 — 여기가 유일한 조작 자리다.
+      ...NOTIFY_LEVELS.map((level) => ({
+        // `✓ ` 는 **화면의 것이다** — 사전에 넣으면 켠 것과 안 켠 것이 각각 사전 항목이
+        // 되어 항목 수가 두 배가 된다(그리고 두 항목이 갈라진다).
+        label: t('sidebar.notify.item', {
+          check: notifyLevel === level ? '✓ ' : '',
+          level: t(NOTIFY_LEVEL_KEY[level]),
+        }),
+        onSelect: () => void getController().setChannelNotifyLevel(ch.id, level),
+        // 고르지 않은 줄에도 ✓ 폭의 빈 칸 — 세 줄의 글자 시작이 가지런하다(designer ⑦a).
+        checkable: notifyLevel !== level,
+      })),
+      ],
+      [
+      { label: t('sidebar.menu.members'), onSelect: () => void openMembers(ch.id) },
+      // 초대와 나가기는 **그 채널의 멤버**여야 하는 동작이다(public 채널의 초대는 예외 —
+      // 서버 게이트가 누구나 통과시킨다). 메뉴는 목록을 받기 전에도 그려지므로 아직
+      // 모르는 것을 '아니다'로 단정하지 않는다: 목록을 받아 아닌 것이 확인된 때만 뺀다.
+      ...(ch.visibility === 'public' || knownMember
+        ? [{ label: t('sidebar.menu.invite'), onSelect: () => void openMembers(ch.id) }] : []),
+      { label: t('sidebar.menu.copyName'), onSelect: copyChannelName },
+      { label: t('sidebar.menu.copyId'), onSelect: copyChannelId },
+      ],
+      [
+      // 채널 설정 시트를 여는 줄 — 누구나 연다. 편집·보관은 시트 정보 탭에서 `channel.manage` 능력이 있을 때만
+      // 선다(UX ⑦b-2). 그래서 이 묶음은 이 한 줄 + 보관된 채널의 삭제다.
+      { label: t('sidebar.menu.settings'), onSelect: () => openSheet(ch.id, 'info') },
+      /**
+       * 삭제(#155). **보관된 채널에만** 만든다 — 서버가 보관되지 않은 채널의 삭제를 409 로
+       * 거절하므로, 눌러도 거절되는 항목을 남겨 두면 "할 수 있다"는 거짓 신호가 된다
+       * (docs/design.md 4절). DM 은 이 목록(`sortedChannels`)에 없어 애초에 닿지 않는다.
+       */
+      ...(me?.isAdmin && isArchived
+        ? [{ label: t('sidebar.menu.delete'), onSelect: () => startDelete(ch.id), tone: 'danger' as const }] : []),
+      ],
+      [
+      /*
+       * 숨기기(#376). **나가기 바로 옆에 둔다**(UX ⑦: 둘 다 맨 아래 묶음) — 두 항목이 같은 자리에 있어야 "관심 없다"를
+       * 표현하는 길이 나가기 하나뿐이 아니라는 것이 보인다. 멤버십을 보지 않는다: 멤버가
+       * 아닌 public 채널도 사이드바에 있으므로 치울 수 있어야 하고, 숨김은 멤버십을 건드리지
+       * 않으므로 게이트가 필요 없다. 확인 절차도 없다 — 되돌리는 값이 클릭 한 번이다.
+       */
+      isHidden(ch.id)
+        ? { label: t('sidebar.menu.unhide'), onSelect: () => void getController().setChannelHidden(ch.id, false) }
+        : { label: t('sidebar.menu.hide'), onSelect: () => void getController().setChannelHidden(ch.id, true) },
+      ...(knownMember ? [{ label: t('sidebar.menu.leave'), onSelect: () => void requestLeave(ch.id) }] : []),
+      ],
     ];
+    const menuItems = menuGroups
+      .filter((g) => g.length > 0)
+      .flatMap((g, gi) => g.map((item, i) => (gi > 0 && i === 0 ? { ...item, separatorBefore: true } : item)));
     const submitSection = () => {
       const name = sectionDraft.trim();
       setSectionEditFor(null);
@@ -1525,13 +986,13 @@ export function Sidebar({
     return (
       <div key={ch.id} className="relative w-full">
       {sectionEditFor === ch.id && (
-        <div className="mb-1 rounded border border-border bg-surface-raised p-1">
+        <div className="mb-1 rounded-row border border-border bg-surface-raised p-1">
           <input
             type="text"
             autoFocus
             aria-label={t('sidebar.section.name')}
             maxLength={40}
-            className="w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
+            className="w-full rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
             placeholder={t('sidebar.section.movePlaceholder')}
             value={sectionDraft}
             onChange={(e) => setSectionDraft(e.target.value)}
@@ -1543,13 +1004,13 @@ export function Sidebar({
           />
           <div className="mt-1 flex gap-1">
             <button
-              className="rounded bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
+              className="rounded-row bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
               onClick={submitSection}
             >
               {t('sidebar.section.moveSubmit')}
             </button>
             <button
-              className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
+              className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
               onClick={() => { setSectionEditFor(null); setSectionDraft(''); }}
             >
               {t('sidebar.section.cancel')}
@@ -1660,6 +1121,12 @@ export function Sidebar({
           */
           className={`flex ${TOP_BAR_H} select-none items-center gap-2 border-b border-border
                       ${TOP_BAR_BG} pl-3 pr-3 font-bold`}
+          /*
+            **배율을 낮춰도 로고가 신호등을 덮지 않게**(2026-10-05). 이 바는 레일 오른쪽에서 시작하고,
+            레일·`pl-3` 은 배율을 따라 줄지만 신호등은 안 준다 — `macTrafficLightInset` 이 모자란
+            만큼만 여백을 늘린다. 100% 이상에서는 `pl-3` 그대로다.
+          */
+          style={{ ...macTrafficLightInset(RAIL_W_PX, 'calc(var(--spacing) * 3)'), ...macTopBarMinHeight() }}
         >
           {/*
             **글자를 되돌렸다**(실측 2026-09-08, 사용자가 화면에서 지적 — "harkroom 텍스트가
@@ -1702,7 +1169,7 @@ export function Sidebar({
             title={connected ? t('sidebar.brand.connected') : t('sidebar.brand.disconnected')} />
           <button
             onClick={onToggleCollapse}
-            className="ml-auto rounded p-1 hover:bg-surface-raised"
+            className="ml-auto rounded-row p-1 hover:bg-surface-raised"
             aria-label={t('sidebar.brand.collapse')}
             title={t('sidebar.brand.collapse')}
           >
@@ -1807,11 +1274,11 @@ export function Sidebar({
           */}
           {me?.isAdmin && (
             createChannelOpen ? (
-              <div className="mb-1 rounded border border-border bg-surface-raised p-1">
+              <div className="mb-1 rounded-row border border-border bg-surface-raised p-1">
                 <input
                   type="text"
                   aria-label="New channel name"
-                  className="mb-1 w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
+                  className="mb-1 w-full rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
                   placeholder="channel-name"
                   value={newChannelName}
                   onChange={(e) => { setNewChannelName(e.target.value); setCreateError(null); }}
@@ -1835,13 +1302,13 @@ export function Sidebar({
                 {createError && <p role="alert" className="mb-1 text-meta text-danger">{createError}</p>}
                 <div className="flex gap-1">
                   <button
-className="rounded bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
+className="rounded-row bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
                     onClick={() => void submitNewChannel()}
                   >
                     {t('sidebar.channel.createSubmit')}
                   </button>
                   <button
-className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
+className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
                     onClick={closeCreate}
                   >
                     {t('sidebar.channel.cancel')}
@@ -1855,13 +1322,13 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
             const sectionName = group.section;
             const isRenaming = sectionRenameFor === sectionName;
             const sectionHeader = isRenaming ? (
-              <div className="mb-1 rounded border border-border bg-surface-raised p-1 ml-2 mr-2">
+              <div className="mb-1 rounded-row border border-border bg-surface-raised p-1 ml-2 mr-2">
                 <input
                   type="text"
                   autoFocus
                   aria-label={t('sidebar.section.renameName')}
                   maxLength={40}
-                  className="w-full rounded border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
+                  className="w-full rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
                   placeholder={t('sidebar.section.renamePlaceholder')}
                   value={sectionRenameDraft}
                   onChange={(e) => setSectionRenameDraft(e.target.value)}
@@ -1879,7 +1346,7 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
                 />
                 <div className="mt-1 flex gap-1">
                   <button
-                    className="rounded bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
+                    className="rounded-row bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
                     onClick={() => {
                       const newName = sectionRenameDraft.trim();
                       setSectionRenameFor(null);
@@ -1892,7 +1359,7 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
                     {t('sidebar.section.renameSubmit')}
                   </button>
                   <button
-                    className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
+                    className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
                     onClick={() => { setSectionRenameFor(null); setSectionRenameDraft(''); }}
                   >
                     {t('sidebar.section.cancel')}
@@ -1979,7 +1446,7 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
           */}
           {addRow(t('sidebar.dm.new'), () => setPickerOpen((v) => !v), 'add-dm')}
           {pickerOpen ? (
-            <div className="mb-1 rounded border border-border bg-surface-raised p-1">
+            <div className="mb-1 rounded-row border border-border bg-surface-raised p-1">
               {others.map((a) => (
                 <button key={a.id} className={row(false)}
                   onClick={() => { setPickerOpen(false); void getController().startDm(a.id); }}>
@@ -2057,49 +1524,11 @@ className="rounded px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
             onOpenProjectionSettings={onOpenProjectionSettings}
           />
         )}
-        {panel === 'agents' && (
-          <AgentTurns
-            snapshot={agentTurns}
-            /*
-              handle 은 스토어의 계정에서 읽는다. 없는 계정(방금 지워졌거나 아직 안 온 것)은
-              **id 를 그대로 보인다** — 빈 자리를 그리면 어느 에이전트인지 잃는다.
-            */
-            handleOf={(id) => accounts[id]?.handle ?? id}
-            channelLabel={(id) => {
-              const ch = channels.find((c) => c.id === id);
-              return ch ? `${ch.visibility === 'private' ? '🔒' : '#'}${ch.name}` : id;
-            }}
-            threadTitleOf={(rootId) => {
-              const row = agentTurnRoots.get(rootId);
-              return row ? threadTitle(row, accounts) : null;
-            }}
-            /*
-              이동은 `openMessage` 에 맡긴다 — 스레드 루트도 메시지이므로 그 경로가
-              채널 전환 · 스레드 패널 · 실패 통지를 이미 다 한다(퍼머링크와 같은 길).
-            */
-            onOpenThread={(rootId) => { void getController().openMessage(rootId); }}
-            /*
-              **중단은 이 칸이 갖지 않는다.** `onCancelTurns` 를 넘기지 않으면 목록은
-              버튼을 그리지 않고(그 컴포넌트의 규약), 그것이 여기서 바라는 것이다:
-              관제탑이 이 칸과 **항상 함께** 보이므로(둘 다 Agents 칸에서 선다) 버튼을
-              양쪽에 두면 같은 일을 하는 길이 한 화면에 두 벌 서고, 사람은 매번 어느 쪽을
-              누를지 고른다. 칸은 요약이고, 멈추는 것은 본문의 일이다.
-            */
-          />
-        )}
-        {panel === 'agents' && (
-          /* 도는 턴 아래에 **기다리는 것**을 세운다 — 이 칸이 답하는 물음이 "지금 무슨
-             일이 벌어지나"인데, 기다림은 그 절반이었는데도 화면에 없었다. */
-          <AgentWaits
-            snapshot={agentWakes}
-            handleOf={(id) => accounts[id]?.handle ?? id}
-            channelLabel={(id) => {
-              const ch = channels.find((c) => c.id === id);
-              return ch ? `${ch.visibility === 'private' ? '🔒' : '#'}${ch.name}` : id;
-            }}
-            onOpenThread={(rootId) => { void getController().openMessage(rootId); }}
-          />
-        )}
+        {/*
+          **Agents 칸은 에이전트 목록만 세운다**(UX ⑨a, designer 사양). 여기 있던 "지금 도는 턴"·"기다리는 것"
+          요약은 본문 관제탑(`AgentTower`)과 같은 목록이었다 — 이 칸이 열리면 관제탑이 늘 함께 보이므로 같은
+          사실이 한 화면에 두 벌 섰다. 턴과 대기는 본문 한 곳에서 보고, 멈춘다.
+        */}
         {panel === 'agents' && (
           <AgentGrid
             /*

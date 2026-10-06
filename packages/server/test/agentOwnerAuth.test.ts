@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
-import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { agentPat, bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 
 let app: FastifyInstance;
 let pool: Pool;
@@ -78,13 +78,15 @@ afterAll(async () => { await app.close(); await stop(); });
 
 describe('#253 소유자 기반 인가', () => {
   describe('PAT 발급·조회·폐기', () => {
-    it('1. 소유자가 자기 에이전트의 PAT 를 발급·조회·폐기할 수 있다', async () => {
+    it('1. 소유자가 자기 에이전트의 PAT 를 조회·폐기할 수 있다(발급은 410)', async () => {
       const issueRes = await app.inject({
         method: 'POST', url: `/accounts/${ownedAgentId}/pats`, headers: auth(ownerToken),
         payload: { label: 'owner-pat' },
       });
-      expect(issueRes.statusCode).toBe(201);
-      const token = issueRes.json().token as string;
+      expect(issueRes.statusCode).toBe(410);
+      expect(issueRes.json().error.code).toBe('pat_issuance_closed');
+      // 발급이 닫히기 전에 찍힌 옛 토큰을 흉내 낸다 — 목록·폐기는 그 토큰을 정리하는 길이다.
+      await agentPat(ownedAgentId, 'owner-pat');
 
       const listRes = await app.inject({
         method: 'GET', url: `/accounts/${ownedAgentId}/pats`, headers: auth(ownerToken),
@@ -114,7 +116,7 @@ describe('#253 소유자 기반 인가', () => {
       expect(checkPat.rowCount).toBe(0);
     });
 
-    it('3. 소유자 없는 에이전트는 admin 만 발급할 수 있다', async () => {
+    it('3. 소유자 없는 에이전트: 남은 403, admin 도 410(발급은 닫혔다)', async () => {
       const byOwner = await app.inject({
         method: 'POST', url: `/accounts/${orphanAgentId}/pats`, headers: auth(ownerToken),
         payload: { label: 'orphan-pat-owner' },
@@ -131,15 +133,18 @@ describe('#253 소유자 기반 인가', () => {
         method: 'POST', url: `/accounts/${orphanAgentId}/pats`, headers: auth(adminToken),
         payload: { label: 'orphan-pat-admin' },
       });
-      expect(byAdmin.statusCode).toBe(201);
+      expect(byAdmin.statusCode).toBe(410);
+      const issued = await pool.query('select 1 from pat where account_id = $1', [orphanAgentId]);
+      // createAgent 가 찍은 'test' 하나뿐이다 — 410 은 아무것도 넣지 않는다.
+      expect(issued.rowCount).toBe(1);
     });
 
-    it('4. admin 은 언제나 된다(소유자가 따로 있어도)', async () => {
+    it('4. admin 은 소유자가 따로 있어도 조회할 수 있다(발급은 admin 도 410)', async () => {
       const res = await app.inject({
         method: 'POST', url: `/accounts/${ownedAgentId}/pats`, headers: auth(adminToken),
         payload: { label: 'admin-pat' },
       });
-      expect(res.statusCode).toBe(201);
+      expect(res.statusCode).toBe(410);
 
       const listRes = await app.inject({
         method: 'GET', url: `/accounts/${ownedAgentId}/pats`, headers: auth(adminToken),
@@ -273,14 +278,14 @@ describe('#253 소유자 기반 인가', () => {
   describe('감사 로그', () => {
     it('9. 소유자의 조작이 감사에 그 소유자의 actorId 로 남는다', async () => {
       await pool.query('delete from pat where account_id = $1 and label = $2', [ownedAgentId, 'audit-test']);
+      await agentPat(ownedAgentId, 'audit-test');
 
       await app.inject({
-        method: 'POST', url: `/accounts/${ownedAgentId}/pats`, headers: auth(ownerToken),
-        payload: { label: 'audit-test' },
+        method: 'DELETE', url: `/accounts/${ownedAgentId}/pats/audit-test`, headers: auth(ownerToken),
       });
 
       const audit = await pool.query(
-        `select actor_id, action from audit_log where target = $1 and action = 'pat.issued' order by id desc limit 1`,
+        `select actor_id, action from audit_log where target = $1 and action = 'pat.revoked' order by id desc limit 1`,
         [ownedAgentId],
       );
       expect(audit.rowCount).toBe(1);

@@ -109,11 +109,60 @@ describe('설정 › Automations 실행 이력의 실행자(082)', () => {
       },
     } as unknown as Controller);
     render(<AutomationsSettings />);
+    fireEvent.click(await screen.findByTestId('automation-toggle-details'));
     fireEvent.click(await screen.findByText(translator('ko')('automations.row.history')));
     await waitFor(() => expect(screen.getByTestId('automation-runs')).toBeTruthy());
     const marks = screen.getAllByTestId('automation-run-initiator');
     expect(marks).toHaveLength(1);
     expect(marks[0]!.textContent).toContain('@task_manager');
     expect(marks[0]!.getAttribute('title')).toContain('harkroom://message/m9');
+  });
+});
+
+describe('설정 › Automations 목록 — 최신이 위, 기본 접힘', () => {
+  const make = (id: string, name: string, createdAt: string, body: string): AutomationView => ({
+    id, ownerId: 'u1', channelId: 'c1', name, body,
+    trigger: { kind: 'schedule', freq: 'daily', time: '09:00', tz: 'Asia/Seoul' },
+    enabled: true, nextAt: null, pausedReason: null, consecutiveFailures: 0, ingressEnabledAt: null,
+    debounceSec: null, proposedBy: null, approvedAt: createdAt, createdAt, updatedAt: createdAt,
+  } as AutomationView);
+
+  it('서버가 오래된 것부터 줘도 만든 시각 내림차순으로 선다', async () => {
+    useAppStore.getState().set({ accounts: { u1: acc('u1', 'jaebin') } });
+    setController({
+      api: {
+        listAutomations: vi.fn(async () => [
+          make('a1', '첫째', '2026-09-01T00:00:00.000Z', 'b1'),
+          make('a3', '셋째', '2026-10-01T00:00:00.000Z', 'b3'),
+          make('a2', '둘째', '2026-09-15T00:00:00.000Z', 'b2'),
+        ]),
+      },
+    } as unknown as Controller);
+    render(<AutomationsSettings />);
+    await waitFor(() => expect(screen.getAllByTestId('automation-row')).toHaveLength(3));
+    expect(screen.getAllByTestId('automation-row').map((r) => r.textContent?.match(/⚡ (첫째|둘째|셋째)/)?.[1]))
+      .toEqual(['셋째', '둘째', '첫째']);
+  });
+
+  it('카드는 접힌 채 이름·토글·일정만 보이고, 누르면 본문과 버튼이 펼쳐진다', async () => {
+    useAppStore.getState().set({ accounts: { u1: acc('u1', 'jaebin') } });
+    setController({
+      api: { listAutomations: vi.fn(async () => [make('a1', '주간 보고', '2026-10-01T00:00:00.000Z', '본문-비밀')]) },
+    } as unknown as Controller);
+    render(<AutomationsSettings />);
+    const toggle = await screen.findByTestId('automation-toggle-details');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByTestId('automation-enabled')).toBeTruthy();
+    expect(screen.getByTestId('automation-summary').textContent).toContain('09:00');
+    expect(screen.queryByText('본문-비밀')).toBeNull();
+    expect(screen.queryByText(translator('ko')('automations.row.runNow'))).toBeNull();
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText('본문-비밀')).toBeTruthy();
+    expect(screen.getByText(translator('ko')('automations.row.runNow'))).toBeTruthy();
+
+    fireEvent.click(toggle);
+    expect(screen.queryByText('본문-비밀')).toBeNull();
   });
 });

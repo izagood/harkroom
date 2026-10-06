@@ -1,0 +1,19 @@
+/* 푸시 알림 본문(서버가 미리보기 없이 보낼 때 loc-key 로 고른다 — services/push/payload.ts). */
+"PUSH_REASON_MENTION" = "Mentioned you";
+"PUSH_REASON_THREAD_REPLY" = "Replied in a thread";
+"PUSH_REASON_DM" = "Sent you a message";
+"PUSH_REASON_ASK" = "Waiting for your choice";
+"PUSH_REASON_ASK_OPTIONS" = "Waiting for your decision · %@ options";
+"PUSH_REASON_FAIL" = "Couldn't finish the task";
+"PUSH_REASON_GATE" = "Sign-in needed";
+"PUSH_REASON_DONE" = "Finished the task";
+"PUSH_REASON_REPLIES" = "New replies to read";
+
+/* Push subtitle `[kind] @sender` — subtitle-loc-key. */
+"PUSH_SUB_MENTION" = "@%@ mentioned you";
+"PUSH_SUB_THREAD_REPLY" = "@%@ replied";
+"PUSH_SUB_ASK" = "Decision · @%@";
+"PUSH_SUB_FAIL" = "Failed · @%@";
+"PUSH_SUB_GATE" = "Sign-in needed · @%@";
+"PUSH_SUB_DONE" = "Done · @%@";
+"PUSH_SUB_REPLIES" = "%1$@ replies · @%2$@";

@@ -178,6 +178,18 @@ jobs:
           packages/desktop/src-tauri/target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop
           26
 
+      # ## 띄워 본다 — 만들어진 것과 켜지는 것은 다른 명제다
+      #
+      # 0.3.191~0.3.203 이 macOS 에서 켜자마자 SIGABRT 로 죽었는데(#1174 의 conf 덮어쓰기로 main 창
+      # 중복 → setup panic, #1213 에서 고침) 이 잡은 초록이었다 — 빌드하고 번들을 열어 보기만 했기
+      # 때문이다. 그래서 `.app` 안의 본체를 직접 띄워 10초를 버티는지, panic 이 없는지, setup 끝
+      # 표지가 찍히는지 본다. 기준과 이유는 스크립트 머리에 있고 `release.yml` 도 같은 것을 부른다.
+      - name: 앱을 띄워 기동을 확인한다
+        run: >
+          packages/desktop/scripts/launch-smoke.sh
+          packages/desktop/src-tauri/target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop
+          10
+
       - name: 번들 산출물을 검증한다
         run: |
           set -euo pipefail

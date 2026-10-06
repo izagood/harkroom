@@ -129,6 +129,17 @@ describe('담아 둔 메시지 — 패널 (#219)', () => {
     expect(screen.getByTestId('saved-toggle-m1')).toBeTruthy();
   });
 
+  it('4b. 볼 수 없게 된 채널의 메시지(deleted=false, message=null)는 "삭제"가 아니라 "볼 수 없음"이다', async () => {
+    fakeController({
+      loadSavedMessages: vi.fn(async () => [entry('m1', 'open', { deleted: false, message: null })]),
+    });
+    render(<SavedMessages open onClose={vi.fn()} />);
+    const row = await screen.findByTestId('saved-entry-m1');
+    expect(row.textContent).toContain('이 채널을 볼 수 없어 내용을 보여 줄 수 없다');
+    expect(row.textContent).not.toContain('삭제된 메시지');
+    expect(screen.getByTestId('saved-toggle-m1')).toBeTruthy();
+  });
+
   it('조회 실패를 "없다" 로 그리지 않는다', async () => {
     fakeController({
       loadSavedMessages: vi.fn(async () => { throw new Error('boom'); }),

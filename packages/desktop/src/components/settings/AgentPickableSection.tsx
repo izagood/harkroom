@@ -18,10 +18,11 @@ import type { AgentModelOptions, AgentPickableModel, AgentView } from '@harkroom
 import { getController } from '../../state/controller';
 import { useT } from '../../i18n/useT';
 import { ModelPicker } from './ModelPicker';
+import { usePendingEdit } from './pendingEdits';
 
 /** 하네스가 effort 목록을 안 밝혔을 때 고를 값 — 상세의 Effort 칸과 같은 목록이다. */
 const FALLBACK_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
-const FIELD = 'rounded border border-border bg-surface px-2 py-1 text-meta text-fg';
+const FIELD = 'rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg';
 
 const same = (a: readonly AgentPickableModel[], b: readonly AgentPickableModel[]) =>
   JSON.stringify(a) === JSON.stringify(b);
@@ -53,6 +54,27 @@ export function AgentPickableSection({ agent, disabled }: { agent: AgentView; di
     return () => { alive = false; };
   }, [agent.id]);
 
+  const save = async (clearOutside: boolean): Promise<boolean> => {
+    setBusy(true); setError(null);
+    try {
+      const res = await getController().setAgentPickableModels(agent.id, draft, clearOutside);
+      setSaved(res.models);
+      setDraft(res.models);
+      setOutside(res.outside ?? 0);
+      setCleared(clearOutside ? (res.cleared ?? 0) : null);
+      return true;
+    } catch (err) {
+      setError(t('agents.pickable.saveFailed', { reason: err instanceof Error ? err.message : String(err) }));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 모델 목록은 상세의 저장 바로 모은다(A3) — 못 읽었으면 걸지 않는다(빈 목록을 저장하면 목록이 지워진다).
+  const loaded = options !== null && options !== 'error';
+  const inBar = usePendingEdit('pickable', loaded && !same(draft, saved) ? 1 : 0, () => save(false), () => setDraft(saved));
+
   if (options === null) {
     return (
       <Frame t={t}><p className="mt-2 text-meta text-fg-muted">{t('agents.pickable.loading')}</p></Frame>
@@ -82,21 +104,6 @@ export function AgentPickableSection({ agent, disabled }: { agent: AgentView; di
         : effortsOf(model).filter((x) => x === effort || e.efforts.includes(x)),
     })));
 
-  const save = async (clearOutside: boolean) => {
-    setBusy(true); setError(null);
-    try {
-      const res = await getController().setAgentPickableModels(agent.id, draft, clearOutside);
-      setSaved(res.models);
-      setDraft(res.models);
-      setOutside(res.outside ?? 0);
-      setCleared(clearOutside ? (res.cleared ?? 0) : null);
-    } catch (err) {
-      setError(t('agents.pickable.saveFailed', { reason: err instanceof Error ? err.message : String(err) }));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <Frame t={t}>
       {draft.length === 0 ? (
@@ -105,7 +112,7 @@ export function AgentPickableSection({ agent, disabled }: { agent: AgentView; di
         <ul className="mt-2 space-y-1.5">
           {draft.map((e) => (
             <li key={e.model} data-testid={`pickable-row-${e.model}`}
-              className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded bg-surface px-2 py-1.5">
+              className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-row bg-surface px-2 py-1.5">
               <span className="font-mono text-meta font-medium text-fg">{e.model}</span>
               <span className="flex flex-wrap items-center gap-2">
                 {effortsOf(e.model).map((x) => (
@@ -126,7 +133,7 @@ export function AgentPickableSection({ agent, disabled }: { agent: AgentView; di
               )}
               <button
                 type="button"
-                className="ml-auto rounded px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
+                className="ml-auto rounded-row px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
                 aria-label={t('agents.pickable.remove', { model: e.model })}
                 disabled={off}
                 onClick={() => setDraft((prev) => prev.filter((p) => p.model !== e.model))}
@@ -143,7 +150,7 @@ export function AgentPickableSection({ agent, disabled }: { agent: AgentView; di
         <button
           type="button"
           data-testid="pickable-add"
-          className="rounded border border-border px-2 py-1 text-meta text-fg hover:bg-surface-hover disabled:opacity-50"
+          className="rounded-row border border-border px-2 py-1 text-meta text-fg hover:bg-surface-hover disabled:opacity-50"
           disabled={off || !canAdd}
           onClick={() => {
             // 새 줄은 effort 없이 시작한다 — 비싼 effort 를 켜는 것은 소유자가 손으로 하는 일이다.
@@ -153,29 +160,29 @@ export function AgentPickableSection({ agent, disabled }: { agent: AgentView; di
         >
           {t('agents.pickable.add')}
         </button>
-        <button
+        {!inBar && <button
           type="button"
           data-testid="pickable-save"
-          className="ml-auto rounded bg-accent px-2 py-1 text-meta font-medium text-fg-on-strong hover:bg-accent-hover disabled:opacity-50"
+          className="ml-auto rounded-row bg-accent px-2 py-1 text-meta font-medium text-fg-on-strong hover:bg-accent-hover disabled:opacity-50"
           disabled={off || !dirty}
           onClick={() => void save(false)}
         >
           {t('agents.pickable.save')}
-        </button>
+        </button>}
       </div>
 
       {outside > 0 && (
         <div role="alertdialog" aria-label={t('agents.pickable.outsideTitle')} data-testid="pickable-outside"
-          className="mt-2 rounded border border-warning-border bg-warning-surface px-2 py-1.5 text-meta text-warning">
+          className="mt-2 rounded-row border border-warning-border bg-warning-surface px-2 py-1.5 text-meta text-warning">
           <p>{t('agents.pickable.outsideAsk', { n: String(outside) })}</p>
           <div className="mt-1.5 flex justify-end gap-2">
             <button type="button" data-testid="pickable-keep" disabled={off}
-              className="rounded px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
+              className="rounded-row px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
               onClick={() => setOutside(0)}>
               {t('agents.pickable.keep')}
             </button>
             <button type="button" data-testid="pickable-clear" disabled={off}
-              className="rounded border border-warning-border bg-surface px-2 py-1 text-meta font-medium text-fg hover:bg-surface-hover"
+              className="rounded-row border border-warning-border bg-surface px-2 py-1 text-meta font-medium text-fg hover:bg-surface-hover"
               onClick={() => void save(true)}>
               {t('agents.pickable.clear')}
             </button>
@@ -192,7 +199,7 @@ export function AgentPickableSection({ agent, disabled }: { agent: AgentView; di
 
 function Frame({ t, children }: { t: ReturnType<typeof useT>; children: React.ReactNode }) {
   return (
-    <div className="rounded border border-border p-3" data-testid="agent-pickable">
+    <div className="rounded-row border border-border p-3" data-testid="agent-pickable">
       <div className="text-meta font-medium text-fg-muted">{t('agents.pickable.heading')}</div>
       <p className="mt-1 text-meta text-fg-subtle">{t('agents.pickable.note')}</p>
       {children}

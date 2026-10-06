@@ -5,20 +5,24 @@ import { sidebarStorage, MIN_CHANNEL_WIDTH, MIN_INBOX_WIDTH } from '../lib/prefs
 import { usePrefsStore } from '../state/prefsStore';
 import { DEFAULT_ZOOM, stepZoom } from '../lib/zoom';
 // `isMacOS`·`MAC_TRAFFIC_LIGHT_PL` 이 여기 있었다 — 좌상단은 이제 늘 레일이다(아래 주석).
-import { TOP_BAR_BG, TOP_BAR_H } from '../lib/platform';
-import { Rail, type RailPanel } from './Rail';
+import { TOP_BAR_BG, TOP_BAR_H, macTopBarMinHeight, macTrafficLightInset } from '../lib/platform';
+import { Rail, RAIL_W_PX, type RailPanel } from './Rail';
 import { Sidebar } from './Sidebar';
 import { SidebarToggleIcon } from './SidebarToggleIcon';
 import { ChannelPane } from './ChannelPane';
 import { AgentTower } from './AgentTower';
 import { Notice } from './Notice';
-import { ProjectionBanner } from './ProjectionBanner';
+import { PROJECTION_SECTION, ProjectionBanner } from './ProjectionBanner';
 import { ServerCompatBanner } from './ServerCompatBanner';
 import { UpdateToast } from './UpdateToast';
 import { ThreadPanel } from './ThreadPanel';
+import { openWindow, popOutChannel } from '../lib/windowActions';
 import { TerminalPanel } from './TerminalPanel';
+import { ArtifactPanel } from './ArtifactPreview';
+import { previewLayout } from '../lib/previewLayout';
 import { SearchPalette, type SearchScope } from './SearchPalette';
 import { Directory } from './Directory';
+import { ChannelSettingsSheet } from './ChannelSettingsSheet';
 import { Profile } from './Profile';
 import { ChannelDirectory } from './ChannelDirectory';
 import { Inbox } from './Inbox';
@@ -36,6 +40,9 @@ export function Workspace({ onLogout, onOpenSettings }: {
   /** 본문을 채널에게 돌려 달라는 요구. 올라갈 때마다 아래 `useEffect` 가 자리를 비운다. */
   const channelRevealSeq = useActiveStore((s) => s.channelRevealSeq);
   const terminalTarget = useActiveStore((s) => s.terminalTarget);
+  // 미리보기가 열린 동안 내용 칸은 둘 — 누른 칸 + 미리보기(`lib/previewLayout.ts`, designer 수정 1).
+  const previewFrom = useActiveStore((s) => (s.artifactPreview ? s.artifactPreviewFrom ?? 'channel' : null));
+  const { hideMain, hideThread, hideTerminal, fillPreview } = previewLayout(previewFrom, !!threadRootId);
   const history = useActiveStore((s) => s.history);
   const historyIndex = useActiveStore((s) => s.historyIndex);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -149,6 +156,8 @@ export function Workspace({ onLogout, onOpenSettings }: {
        * `=`·`+` 를 함께 받는 이유: macOS 에서 ⌘+ 는 Shift 를 함께 눌러야 `+` 가 되고,
        * 그냥 누르면 `=` 가 온다. 사람은 둘 다 "키우기"로 누른다.
        */
+      // 그림 보기처럼 자기 배율을 가진 겹창이 이미 받은 키는 앱 배율로 다시 쓰지 않는다(#1099 designer 수정 1).
+      if ((e.metaKey || e.ctrlKey) && e.defaultPrevented) return;
       if (e.metaKey || e.ctrlKey) {
         const zoomKey = e.key === '=' || e.key === '+' ? 1 : e.key === '-' || e.key === '_' ? -1 : 0;
         if (zoomKey !== 0) {
@@ -170,6 +179,24 @@ export function Workspace({ onLogout, onOpenSettings }: {
         return;
       }
 
+      /**
+       * ⌘⇧O — **포커스가 있는 쪽**을 새 창으로 뗀다(판 3). 스레드 패널 안이면 그 스레드를, 아니면 채널을 옮긴다(W1:
+       * 창이 열리면 메인의 그 자리는 비운다). ⌘K·⌘[·⌘]·⌘\\·⌘⇧M 과 겹치지 않는다.
+       */
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'o') {
+        const s = useActiveStore.getState();
+        if (!s.activeChannelId) return;
+        e.preventDefault();
+        // 포커스가 스레드 패널 안이면 스레드를, 아니면 채널을 뗀다.
+        const inThread = !!(document.activeElement as HTMLElement | null)?.closest?.('[data-testid="thread-pane"]');
+        if (s.threadRootId && inThread) {
+          const r = openWindow({ kind: 'thread', channelId: s.activeChannelId, rootId: s.threadRootId });
+          if (r.kind === 'opened' || r.kind === 'focused') getController().closeThread();
+        } else {
+          void popOutChannel(s.activeChannelId);
+        }
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
         setSearchInitialScope('all');
@@ -274,7 +301,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
            를 **재사용**한다 — 프로필의 `에이전트 설정` 버튼과 본문 멘션이 이미 그것으로 같은
            자리를 열고 있으므로, 새 신호를 만들면 같은 문에 손잡이가 셋이 된다. */
         onOpenAgentConfig={(agentId) => onOpenSettings('agents', agentId)}
-        onOpenProjectionSettings={() => onOpenSettings('connection')}
+        onOpenProjectionSettings={() => onOpenSettings(PROJECTION_SECTION)}
         /* 설정을 볼 수 없는 사람이 카드를 눌렀을 때. 프로필을 여는 함수는 이미 하나다
            (`handleOpenDirectory` — id 를 주면 프로필, 안 주면 디렉터리). */
         onOpenProfile={(accountId) => handleOpenDirectory(accountId)}
@@ -299,11 +326,17 @@ export function Workspace({ onLogout, onOpenSettings }: {
             방금 사용자가 지적한 것이다.
           */
           className={`flex ${TOP_BAR_H} items-center gap-2 border-b border-border ${TOP_BAR_BG} pl-2 pr-2`}
+          /*
+            사이드바가 접히면 이 헤더가 레일 바로 오른쪽이다 — 펼치기 버튼이 신호등 쪽 첫 내용이
+            되므로 브랜드 바와 같은 이유로 배율에 맞춰 여백을 지킨다. 펴져 있으면 사이드바가 그
+            사이에 있어 여백을 늘리지 않는다(높이는 세 조각이 한 줄이라 늘 같이 맞춘다).
+          */
+          style={{ ...(sidebarCollapsed ? macTrafficLightInset(RAIL_W_PX, 'calc(var(--spacing) * 2)') : undefined), ...macTopBarMinHeight() }}
         >
           {sidebarCollapsed && (
             <button
               onClick={handleToggleSidebar}
-              className="rounded px-2 py-1 hover:bg-surface-hover"
+              className="rounded-row px-2 py-1 hover:bg-surface-hover"
               aria-label={t('workspace.showSidebar')}
               title={t('workspace.showSidebar')}
             >
@@ -313,7 +346,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
           <button
             onClick={handleGoBack}
             disabled={!canGoBack}
-            className={`rounded px-2 py-1 ${canGoBack ? 'hover:bg-surface-hover' : 'text-fg-muted cursor-not-allowed'}`}
+            className={`rounded-row px-2 py-1 ${canGoBack ? 'hover:bg-surface-hover' : 'text-fg-muted cursor-not-allowed'}`}
             aria-label={t('workspace.back')}
             title={t('workspace.backTitle')}
           >
@@ -322,7 +355,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
           <button
             onClick={handleGoForward}
             disabled={!canGoForward}
-            className={`rounded px-2 py-1 ${canGoForward ? 'hover:bg-surface-hover' : 'text-fg-muted cursor-not-allowed'}`}
+            className={`rounded-row px-2 py-1 ${canGoForward ? 'hover:bg-surface-hover' : 'text-fg-muted cursor-not-allowed'}`}
             aria-label={t('workspace.forward')}
             title={t('workspace.forwardTitle')}
           >
@@ -387,7 +420,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
             목적지가 본문인 줄을 누르면 인박스가 스스로 접힌다 — 그 판정은 `Inbox.tsx` 의
             `openEntry` 에 있다(누른 것이 반드시 보여야 하기 때문이다).
           */}
-          {railPanel === 'agents' ? (
+          {hideMain ? null : railPanel === 'agents' ? (
             <AgentTower
               onOpenThread={(rootId) => {
                 // 칸을 **되돌린 뒤** 연다. 관제탑이 본문을 쥔 채로 스레드를 열면 스레드
@@ -406,7 +439,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
               onOpenSettings={onOpenSettings}
             />
           )}
-          {threadRootId && (
+          {threadRootId && !hideThread && (
             <ThreadPanel
               onOpenDirectory={handleOpenDirectory}
               onOpenSettings={onOpenSettings}
@@ -417,10 +450,13 @@ export function Workspace({ onLogout, onOpenSettings }: {
           {/* #141: 터미널은 스레드 패널과 **같은 자리**를 쓰고 둘이 나란히 열린다.
               채널 레이아웃 안에 심지 않는다 — `#189`(앱 안 터미널 패널이 어디서 도는가)가
               열려 있어서, 지금 심으면 그 결정이 코드로 먼저 굳는다. */}
-          {terminalTarget && <TerminalPanel />}
+          {terminalTarget && !hideTerminal && <TerminalPanel />}
+          {/* 미리보기(아티팩트) 패널(④) — 오른쪽 줄. 열린 동안 누른 칸 하나만 곁에 남는다(위 hideMain 주석). */}
+          <ArtifactPanel fill={fillPreview} />
         </div>
       </div>
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} initialScope={searchInitialScope} />
+      <ChannelSettingsSheet />
       <Directory open={directoryOpen} onClose={() => { setDirectoryOpen(false); setDirectoryAccountId(null); }} accountId={directoryAccountId} />
       {profileAccountId && (
         <Profile

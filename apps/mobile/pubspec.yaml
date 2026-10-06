@@ -49,6 +49,11 @@ dependencies:
   # 메시지 본문의 링크를 **앱 밖 브라우저로** 연다(마크다운). flutter.dev 의 1st-party 플러그인이다.
   # http(s) 만 넘긴다 — `lib/markdown/markdown.dart` 의 `safeLinkUri`.
   url_launcher: ^6.3.2
+  # 첨부 시트의 [사진 찍기]. flutter.dev 의 1st-party 플러그인이다. file_picker 에는 카메라가 없다.
+  image_picker: ^1.2.3
+  # 미리보기(아티팩트) 전체 화면(⑤). flutter.dev 1st-party 플러그인이다. 사파리로 넘기지 않는 이유: 사파리는
+  # 앱 로그인을 모르고(claude.ai 링크와 같은 벽), 서명 URL 이 브라우저 기록에 남는다(#1069 F1).
+  webview_flutter: ^4.14.1
 
 dev_dependencies:
   flutter_test:

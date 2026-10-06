@@ -3,7 +3,8 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
-import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { agentPat, bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
+import { mintPat } from '../src/services/pats.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -34,12 +35,8 @@ describe('PAT management', () => {
   it('GET /accounts/:id/pats returns labels without tokens', async () => {
     const accountId = await createAgentOnly('listpatbot');
 
-    await app.inject({
-      method: 'POST', url: `/accounts/${accountId}/pats`, headers: admin(), payload: { label: 'runner' },
-    });
-    await app.inject({
-      method: 'POST', url: `/accounts/${accountId}/pats`, headers: admin(), payload: { label: 'backup' },
-    });
+    await agentPat(accountId, 'runner');
+    await agentPat(accountId, 'backup');
 
     const res = await app.inject({
       method: 'GET', url: `/accounts/${accountId}/pats`, headers: admin(),
@@ -63,9 +60,7 @@ describe('PAT management', () => {
   it('GET /accounts/:id/pats includes revoked PATs', async () => {
     const accountId = await createAgentOnly('revokedpatbot');
 
-    await app.inject({
-      method: 'POST', url: `/accounts/${accountId}/pats`, headers: admin(), payload: { label: 'old' },
-    });
+    await agentPat(accountId, 'old');
 
     await app.inject({
       method: 'DELETE', url: `/accounts/${accountId}/pats/old`, headers: admin(),
@@ -121,20 +116,12 @@ describe('PAT management', () => {
   // 라벨은 살아 있는 토큰 안에서 유일하다(마이그레이션 010). 이 제약이 없으면 같은 라벨이
   // 둘 생기고, `DELETE .../pats/:label` 이 라벨로 폐기하므로 "이 하나만" 이 **둘 다** 를
   // 지운다 — UI 가 약속하는 것과 달라진다.
-  it('같은 라벨로 두 번 발급하면 409 로 거절한다', async () => {
+  it('같은 라벨로 두 번 발급하면 label_in_use 로 거절한다', async () => {
     const bot = await createAgent(app, adminToken, 'dupbot');
-    const first = await app.inject({
-      method: 'POST', url: `/accounts/${bot.accountId}/pats`,
-      headers: { authorization: `Bearer ${adminToken}` }, payload: { label: 'runner' },
-    });
-    expect(first.statusCode).toBe(201);
+    await agentPat(bot.accountId, 'runner');
 
-    const second = await app.inject({
-      method: 'POST', url: `/accounts/${bot.accountId}/pats`,
-      headers: { authorization: `Bearer ${adminToken}` }, payload: { label: 'runner' },
-    });
-    expect(second.statusCode).toBe(409);
-    expect(second.json().error.code).toBe('label_in_use');
+    const second = await mintPat(pool, bot.accountId, 'runner', { actorId: null, actorHandle: null });
+    expect(second).toEqual({ ok: false, reason: 'label_in_use' });
   });
 
   // 폐기한 라벨은 다시 쓸 수 있어야 한다 — 토큰을 잃어 폐기하고 같은 이름으로 재발급하는
@@ -142,18 +129,86 @@ describe('PAT management', () => {
   it('폐기한 뒤에는 같은 라벨을 다시 쓸 수 있다', async () => {
     const bot = await createAgent(app, adminToken, 'reusebot');
     const auth = { authorization: `Bearer ${adminToken}` };
-    await app.inject({ method: 'POST', url: `/accounts/${bot.accountId}/pats`, headers: auth, payload: { label: 'runner' } });
+    await agentPat(bot.accountId, 'runner');
     await app.inject({ method: 'DELETE', url: `/accounts/${bot.accountId}/pats/runner`, headers: auth });
 
-    const again = await app.inject({
-      method: 'POST', url: `/accounts/${bot.accountId}/pats`, headers: auth, payload: { label: 'runner' },
-    });
-    expect(again.statusCode).toBe(201);
+    const again = await mintPat(pool, bot.accountId, 'runner', { actorId: null, actorHandle: null });
+    expect(again.ok).toBe(true);
 
     // 목록에는 폐기된 것과 살아 있는 것이 함께 보인다 — 운영자가 재발급을 판단할 근거다.
     const list = await app.inject({ method: 'GET', url: `/accounts/${bot.accountId}/pats`, headers: auth });
     const runners = list.json().pats.filter((p: { label: string }) => p.label === 'runner');
     expect(runners).toHaveLength(2);
     expect(runners.filter((p: { revokedAt: string | null }) => p.revokedAt === null)).toHaveLength(1);
+  });
+});
+
+describe('PAT 라우트의 대상은 에이전트뿐이다 (2026-10-02 security)', () => {
+  // requireOwnerOrAdmin 은 사람 id·없는 id 에도 admin 을 통과시킨다. 이 라우트들이 대상을 안 보면
+  // admin 이 다른 사람(다른 admin 포함)의 PAT 를 발급해 그 사람으로 행동할 수 있었다.
+  const missing = '00000000-0000-4000-8000-000000000000';
+
+  it('사람 계정이면 admin 이어도 발급·목록·폐기가 404 이고 토큰이 생기지 않는다', async () => {
+    const { accountId: human } = await createMember(app, adminToken, 'pat-human');
+    for (const id of [human, adminId]) {
+      const post = await app.inject({ method: 'POST', url: `/accounts/${id}/pats`, headers: admin(), payload: { label: 'cli' } });
+      expect(post.statusCode).toBe(404);
+      expect(post.json().token).toBeUndefined();
+      expect((await app.inject({ method: 'GET', url: `/accounts/${id}/pats`, headers: admin() })).statusCode).toBe(404);
+      expect((await app.inject({ method: 'DELETE', url: `/accounts/${id}/pats/cli`, headers: admin() })).statusCode).toBe(404);
+      expect((await pool.query(`select 1 from pat where account_id = $1`, [id])).rowCount).toBe(0);
+    }
+  });
+
+  it('없는 id 면 admin 이어도 404 다 — 201 로 고아 토큰을 만들지 않는다', async () => {
+    const post = await app.inject({ method: 'POST', url: `/accounts/${missing}/pats`, headers: admin(), payload: { label: 'x' } });
+    expect(post.statusCode).toBe(404);
+    expect((await app.inject({ method: 'GET', url: `/accounts/${missing}/pats`, headers: admin() })).statusCode).toBe(404);
+  });
+
+  it('에이전트여도 발급은 410 이고 토큰이 생기지 않는다', async () => {
+    const id = await createAgentOnly('pat-closed');
+    const post = await app.inject({ method: 'POST', url: `/accounts/${id}/pats`, headers: admin(), payload: { label: 'runner' } });
+    expect(post.statusCode).toBe(410);
+    expect(post.json().error.code).toBe('pat_issuance_closed');
+    expect(post.json().token).toBeUndefined();
+    expect((await pool.query(`select 1 from pat where account_id = $1`, [id])).rowCount).toBe(0);
+  });
+});
+
+describe('last_used_at (103) — PAT 인증을 걷어낼지 정할 관찰 기록', () => {
+  const lastUsed = async (accountId: string, label: string) => {
+    const list = await app.inject({ method: 'GET', url: `/accounts/${accountId}/pats`, headers: admin() });
+    return (list.json().pats as { label: string; lastUsedAt: string | null }[]).find((p) => p.label === label)!.lastUsedAt;
+  };
+
+  it('찍기만 한 토큰은 비어 있고, 인증에 성공하면 적힌다', async () => {
+    const id = await createAgentOnly('pat-lastused');
+    const token = await agentPat(id, 'watch');
+    expect(await lastUsed(id, 'watch')).toBeNull();
+
+    const me = await app.inject({ method: 'GET', url: '/auth/me', headers: { authorization: `Bearer ${token}` } });
+    expect(me.statusCode).toBe(200);
+    expect(await lastUsed(id, 'watch')).not.toBeNull();
+  });
+
+  it('폐기된 토큰은 인증에 실패하고 기록도 바뀌지 않는다', async () => {
+    const id = await createAgentOnly('pat-lastused-dead');
+    const token = await agentPat(id, 'dead');
+    await app.inject({ method: 'DELETE', url: `/accounts/${id}/pats/dead`, headers: admin() });
+
+    const me = await app.inject({ method: 'GET', url: '/auth/me', headers: { authorization: `Bearer ${token}` } });
+    expect(me.statusCode).toBe(401);
+    expect(await lastUsed(id, 'dead')).toBeNull();
+  });
+
+  it('5분 안의 다음 요청은 행을 다시 쓰지 않는다', async () => {
+    const id = await createAgentOnly('pat-lastused-throttle');
+    const token = await agentPat(id, 'busy');
+    const hdr = { authorization: `Bearer ${token}` };
+    await app.inject({ method: 'GET', url: '/auth/me', headers: hdr });
+    const first = await lastUsed(id, 'busy');
+    await app.inject({ method: 'GET', url: '/auth/me', headers: hdr });
+    expect(await lastUsed(id, 'busy')).toBe(first);
   });
 });
