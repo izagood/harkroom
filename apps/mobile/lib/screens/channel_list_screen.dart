@@ -357,9 +357,12 @@ class _ShortcutCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final k = context.tokens;
+    // 아이콘·숫자·이름을 VoiceOver 가 따로 읽지 않게 「저장 3」 한 덩이로 묶는다(designer #1231 n4).
     return Semantics(
       button: true,
       selected: selected,
+      label: '$label $count',
+      excludeSemantics: true,
       child: Material(
         color: selected ? k.surfaceHover : k.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(HarkroomRadius.card), side: BorderSide(color: k.border)),

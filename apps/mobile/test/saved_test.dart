@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -40,6 +41,12 @@ class _Server {
 
   bool failList;
   final bool failSummary;
+
+  /// PATCH 를 실패시킨다(밀기가 실패하면 줄이 제자리로 돌아오는지).
+  bool failPatch = false;
+
+  /// 차 있으면 PUT 이 이것을 기다린다 — 기다리는 사이 계정을 바꾸는 시험.
+  Completer<void>? holdPut;
   final calls = <String>[];
   final bodies = <Object?>[];
 
@@ -111,10 +118,12 @@ class _Server {
           final id = path.substring('/saved/'.length);
           switch (req.method) {
             case 'PUT':
+              if (holdPut != null) await holdPut!.future;
               if (id == 's9') return _json({'error': {'code': 'not_found', 'message': 'x'}}, 404);
               saved[id] = ('open', _clock++);
               return _json(_entry(id));
             case 'PATCH':
+              if (failPatch) return _json({'error': {'code': 'boom', 'message': 'x'}}, 500);
               final state = (jsonDecode(req.body) as Map)['state'] as String;
               saved[id] = (state, saved[id]!.$2);
               return _json(_entry(id));
@@ -129,7 +138,7 @@ class _Server {
 }
 
 /// [second] 면 같은 가짜 서버에 붙는 커뮤니티를 하나 더 둔다 — 옮겨 다닐 곳(세션 세대를 올리는 길).
-Future<AppState> _open(_Server server, {bool second = false}) async {
+Future<AppState> _open(_Server server, {bool second = false, _Server? secondServer}) async {
   final app = AppState(
     sessions: SessionStore.inMemory(
       seed: jsonEncode({
@@ -140,7 +149,8 @@ Future<AppState> _open(_Server server, {bool second = false}) async {
         ],
       }),
     ),
-    apiFactory: (b, t) => ApiClient(baseUrl: b, token: t, httpClient: server.client),
+    apiFactory: (b, t) => ApiClient(
+        baseUrl: b, token: t, httpClient: (b.contains('k.example.com') ? secondServer ?? server : server).client),
     connector: (_) async => throw StateError('소켓 없음'),
   );
   await app.boot();
@@ -241,6 +251,47 @@ void main() {
       expect(app.phase, AppPhase.ready);
       expect(app.savedIds, isEmpty);
       expect(app.savedOpenCount, 0);
+    });
+  });
+
+  group('PR② 상태', () {
+    test('saved.changed: 다른 기기에서 담으면 표식이 서고, 빼면 내리고 열어 둔 칸에서도 뺀다', () async {
+      final server = _Server();
+      final app = await _open(server);
+      addTearDown(app.dispose);
+      await app.loadSaved(SavedState.open);
+      // 데스크톱에서 m2 를 담았다.
+      server.saved['m2'] = ('open', 50);
+      app.applyEvent({'type': 'saved.changed', 'messageId': 'm2', 'state': 'open', 'accountId': 'me-1'});
+      expect(app.isSaved('m2'), isTrue);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(app.savedOpenCount, 3);
+      expect(app.saved[SavedState.open]!.map((e) => e.messageId), contains('m2'));
+      // 데스크톱에서 m1 을 뺐다.
+      server.saved.remove('m1');
+      app.applyEvent({'type': 'saved.changed', 'messageId': 'm1', 'state': null, 'accountId': 'me-1'});
+      expect(app.isSaved('m1'), isFalse);
+      expect(app.saved[SavedState.open]!.any((e) => e.messageId == 'm1'), isFalse);
+    });
+
+    test('saved.changed 가 남의 계정 것이면 건드리지 않는다', () async {
+      final app = await _open(_Server());
+      addTearDown(app.dispose);
+      app.applyEvent({'type': 'saved.changed', 'messageId': 'm1', 'state': null, 'accountId': 'someone'});
+      expect(app.isSaved('m1'), isTrue);
+    });
+
+    test('담는 사이 계정이 바뀌면 새 계정 화면에 표식을 붓지 않는다(security #1231 n1)', () async {
+      final first = _Server()..holdPut = Completer<void>();
+      final other = _Server();
+      final app = await _open(first, second: true, secondServer: other);
+      addTearDown(app.dispose);
+      final saving = app.saveMessage('m2');
+      await app.switchTo(app.communities[1].key);
+      await app.loadSavedSummary();
+      first.holdPut!.complete();
+      await saving;
+      expect(app.isSaved('m2'), isFalse);
     });
   });
 
@@ -356,6 +407,11 @@ void main() {
         final text = tester.renderObject<RenderParagraph>(find.text(label));
         expect(text.didExceedMaxLines, isFalse, reason: '$label 가 잘렸다');
       }
+      // VoiceOver 는 아이콘·숫자·이름을 따로 읽지 않고 「저장 2」 한 번에 읽는다(designer #1231 n4).
+      final semantics = tester.ensureSemantics();
+      expect(tester.getSemantics(card).label, '저장 2');
+      expect(tester.getSemantics(find.byKey(const Key('card-new'))).label, '새로 온 것 5');
+      semantics.dispose();
       await tester.tap(card);
       await tester.pump();
       await _settle(tester);
@@ -445,6 +501,63 @@ void main() {
       await tester.tap(find.byKey(const Key('state-retry')));
       await _settle(tester);
       expect(find.byKey(const Key('saved-row-m1')), findsOneWidget);
+    });
+  
+    testWidgets('왼쪽으로 밀면 완료 — PATCH done, 줄이 빠지고 되돌리기 토스트', (tester) async {
+      final (server, _) = await pump(tester);
+      await tester.drag(find.byKey(const Key('saved-row-m1')), const Offset(-500, 0));
+      await tester.pump();
+      await _settle(tester);
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(server.calls, contains('PATCH /saved/m1'));
+      expect(server.bodies[server.calls.indexOf('PATCH /saved/m1')], {'state': 'done'});
+      expect(find.byKey(const Key('saved-row-m1')), findsNothing);
+      expect(find.byKey(const Key('saved-moved-done')), findsOneWidget);
+    });
+
+    testWidgets('오른쪽으로 밀면 아무 일도 없다 — iOS 뒤로 가기와 겹치지 않게', (tester) async {
+      final (server, _) = await pump(tester);
+      await tester.drag(find.byKey(const Key('saved-row-m1')), const Offset(500, 0));
+      await tester.pump();
+      await _settle(tester);
+      expect(server.calls.where((c) => c.startsWith('PATCH')), isEmpty);
+      expect(find.byKey(const Key('saved-row-m1')), findsOneWidget);
+    });
+
+    testWidgets('밀기가 실패하면 줄이 제자리로 돌아오고 실패 토스트', (tester) async {
+      final (server, _) = await pump(tester);
+      server.failPatch = true;
+      await tester.drag(find.byKey(const Key('saved-row-m1')), const Offset(-500, 0));
+      await tester.pump();
+      await _settle(tester);
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.byKey(const Key('saved-row-m1')), findsOneWidget);
+      expect(find.byKey(const Key('saved-failed')), findsOneWidget);
+    });
+
+    testWidgets('완료 칸에서 뺀 것을 되돌리면 완료 칸으로 돌아간다 — PUT 뒤 PATCH done(designer #1231 n1)', (tester) async {
+      final (server, _) = await pump(tester);
+      await tester.tap(find.byKey(const Key('saved-tab-done')));
+      await tester.pump();
+      await tester.longPress(find.byKey(const Key('saved-row-hidden')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('saved-action-unsave')));
+      await _settle(tester);
+      expect(find.byKey(const Key('saved-row-hidden')), findsNothing);
+      await tester.tap(find.text('되돌리기'));
+      await _settle(tester);
+      await _settle(tester);
+      final put = server.calls.lastIndexOf('PUT /saved/hidden');
+      expect(put, greaterThanOrEqualTo(0));
+      expect(server.calls.sublist(put), contains('PATCH /saved/hidden'));
+      expect(server.saved['hidden']!.$1, 'done');
+      expect(find.byKey(const Key('saved-row-hidden')), findsOneWidget);
+    });
+
+    testWidgets('본문 없는 줄도 아바타 자리에 「–」 원을 둔다(designer #1231 n2)', (tester) async {
+      await pump(tester);
+      expect(find.byKey(const Key('saved-avatar-none-gone')), findsOneWidget);
+      expect(find.descendant(of: find.byKey(const Key('saved-avatar-none-gone')), matching: find.text('–')), findsOneWidget);
     });
   });
 }

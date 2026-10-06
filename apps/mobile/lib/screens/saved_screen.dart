@@ -131,6 +131,41 @@ class SavedRow extends StatelessWidget {
     final when = agoLabel(m?.createdAt ?? entry.createdAt, DateTime.now().toUtc(), t);
     final who = m == null ? null : '@${app.accounts[m.authorId]?.handle ?? app.displayNameOf(m.authorId)}';
 
+    // 왼쪽으로 밀면(오른쪽 → 왼쪽만) ✓·↺ 와 같은 일을 한다. 반대쪽은 iOS 의 가장자리 뒤로 가기와 겹쳐서 쓰지
+    // 않는다(designer 시안 D4). 줄을 놓는 것은 상태가 한다 — 옮기면 목록에서 빠지고, 실패하면 제자리로 돌아온다.
+    return Dismissible(
+      key: ValueKey('saved-swipe-${entry.messageId}-${entry.state.name}'),
+      direction: DismissDirection.endToStart,
+      dismissThresholds: const {DismissDirection.endToStart: 0.35},
+      background: const SizedBox.shrink(),
+      secondaryBackground: Container(
+        color: done ? k.surfaceSunken : k.success,
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(done ? Icons.replay : Icons.check, color: done ? k.fg : k.fgOnStrong, size: 18),
+            const SizedBox(width: 6),
+            Text(done ? t.savedTabOpen : t.savedTabDone,
+                style: TextStyle(color: done ? k.fg : k.fgOnStrong, fontWeight: FontWeight.w700, fontSize: 13)),
+          ],
+        ),
+      ),
+      // 언제나 false — 줄은 상태가 지운다(옮기면 이미 목록에서 빠져 있다). true 로 두면 실패한 줄도 사라진다.
+      confirmDismiss: (_) async {
+        await setSavedStateWithToast(context, entry.messageId, next);
+        return false;
+      },
+      child: _row(context, entry, m, done, next, toggleLabel, preview, who, when),
+    );
+  }
+
+  Widget _row(BuildContext context, SavedEntry entry, MessageRow? m, bool done, SavedState next, String toggleLabel,
+      String preview, String? who, String when) {
+    final t = context.t;
+    final k = context.tokens;
+    final app = context.app;
     return Semantics(
       customSemanticsActions: {
         CustomSemanticsAction(label: toggleLabel): () => setSavedStateWithToast(context, entry.messageId, next),
@@ -146,8 +181,19 @@ class SavedRow extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // 본문이 없는 줄(지운 글·볼 수 없는 채널)도 아바타 자리를 비워 두지 않는다 — 빈칸이면 줄 정렬이
+              // 비어 보인다(designer #1231 n2). 누구의 글인지는 서버도 주지 않으므로 「–」 하나다.
               if (m == null)
-                const SizedBox(width: HarkroomSize.avatar, height: HarkroomSize.avatar)
+                ExcludeSemantics(
+                  child: Container(
+                    key: Key('saved-avatar-none-${entry.messageId}'),
+                    width: HarkroomSize.avatar,
+                    height: HarkroomSize.avatar,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(color: k.surfaceSunken, shape: BoxShape.circle),
+                    child: Text('–', style: TextStyle(color: k.fgSubtle, fontSize: 15)),
+                  ),
+                )
               else
                 HarkroomAvatar(id: m.authorId, name: app.accounts[m.authorId]?.handle ?? app.displayNameOf(m.authorId)),
               const SizedBox(width: 10),
@@ -291,10 +337,12 @@ Future<void> toggleSaved(BuildContext context, String messageId, {required bool 
   final margin = toastMargin(context);
   final navigator = Navigator.of(context);
   final gen = app.sessionGeneration;
+  // 빼기 전에 어느 칸에 있었나 — 되돌리면 그 칸으로 간다(designer #1231 n1).
+  final prior = app.savedStateOf(messageId) ?? SavedState.open;
   Future<void> run(bool on, {bool undo = false}) async {
     if (app.sessionGeneration != gen) return;
     try {
-      await (on ? app.saveMessage(messageId) : app.unsaveMessage(messageId));
+      await (on ? app.saveMessage(messageId, restore: undo ? prior : SavedState.open) : app.unsaveMessage(messageId));
     } on ApiError catch (e) {
       // 담기의 403·404 는 다시 해도 같다(지운 글·볼 수 없는 채널) — 다시 시도를 달지 않는다.
       final permanent = on && (e.status == 403 || e.status == 404);
@@ -328,32 +376,35 @@ Future<void> toggleSaved(BuildContext context, String messageId, {required bool 
 }
 
 /// ✓(완료로) · ↺(할 것으로). 줄이 다른 칸으로 빠지므로 토스트에 되돌리기를 준다.
-Future<void> setSavedStateWithToast(BuildContext context, String messageId, SavedState next) async {
+///
+/// 옮겼으면 `true` — 밀기([SavedRow])가 줄을 놓을지 되돌릴지 이것으로 안다.
+Future<bool> setSavedStateWithToast(BuildContext context, String messageId, SavedState next) async {
   final t = context.t;
   final app = AppScope.read(context);
   final messenger = ScaffoldMessenger.of(context);
   final margin = toastMargin(context);
   final gen = app.sessionGeneration;
-  Future<void> run(SavedState to, {bool undoable = true}) async {
-    if (app.sessionGeneration != gen) return;
+  Future<bool> run(SavedState to, {bool undoable = true}) async {
+    if (app.sessionGeneration != gen) return false;
     try {
       await app.setSavedState(messageId, to);
     } on Object {
       _toast(messenger, margin, t.savedActionFailed,
           key: const Key('saved-failed'), actionLabel: t.commonRetry, onAction: () => run(to, undoable: undoable).ignore());
-      return;
+      return false;
     }
     HapticFeedback.selectionClick().ignore();
     if (!undoable) {
       messenger.removeCurrentSnackBar();
-      return;
+      return true;
     }
     final back = to == SavedState.done ? SavedState.open : SavedState.done;
     _toast(messenger, margin, to == SavedState.done ? t.savedMovedDone : t.savedMovedOpen,
         key: Key('saved-moved-${to.name}'),
         actionLabel: t.savedUndo,
         onAction: () => run(back, undoable: false).ignore());
+    return true;
   }
 
-  await run(next);
+  return run(next);
 }
