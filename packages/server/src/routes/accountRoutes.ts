@@ -7,7 +7,7 @@ import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { ACCOUNT_STATUSES, CREDENTIAL_SCOPES, INVOKE_SCOPES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@harkroom/shared';
 import {
   ackAgentStop, assignmentOf, createAgentAccount, definitionFor, deleteAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
-  revokeAllPats, setAgentMcpServers, setDelegate, setInvoker, setTrustSiblings, undoAgentStopRequest, updateAgent, validateMcpServers, validateScopeChange,
+  revokeAllPats, setAgentMcpServers, setDelegate, setInvoker, setRequiresMacos, setTrustSiblings, undoAgentStopRequest, updateAgent, validateMcpServers, validateScopeChange,
 } from '../services/agents.js';
 import { isEligibleDelegate } from '../services/invokeGate.js';
 import { actorOf, recordAudit } from '../audit.js';
@@ -388,6 +388,8 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
       // 가진 사람이 정한다(명단 PUT 과 같은 규칙). owner 범위가 아니어도 받는다: 값은 남고
       // 판정에만 안 쓰인다(invokers 명단과 같다).
       trustSiblings: z.boolean().optional(),
+      // 맥 전용 표시(106). 소유자·admin 이 정한다. 배정을 막지 않는다 — 화면이 경고만 한다(v3).
+      requiresMacos: z.boolean().optional(),
     }).parse(req.body);
 
     const account = req.account!;
@@ -462,6 +464,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     }
     if (patch.mcpServers !== undefined) await setAgentMcpServers(pool, id, patch.mcpServers);
     if (patch.trustSiblings !== undefined) await setTrustSiblings(pool, id, patch.trustSiblings);
+    if (patch.requiresMacos !== undefined) await setRequiresMacos(pool, id, patch.requiresMacos);
 
     let revokedLabels: string[] = [];
     if (patch.disabled !== undefined && patch.disabled !== before.disabled) {

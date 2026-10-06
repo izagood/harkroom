@@ -11,7 +11,8 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import type { OperatorView } from '@harkroom/shared';
+import type { OperatorStatus, OperatorUpgradeEvent, OperatorView } from '@harkroom/shared';
+import { isMachineDigest, parseUpgradeProgress } from '@harkroom/shared/operatorProtocol';
 import { newToken } from '../auth/tokens.js';
 import { can } from '../auth/permissions.js';
 import { actorOf, recordAudit } from '../audit.js';
@@ -21,6 +22,8 @@ import { createHeartbeat } from '../ws/heartbeat.js';
 import type { OperatorHub } from '../ws/operatorHub.js';
 
 const REGISTER_CODE_TTL_MS = 5 * 60_000;
+/** 오퍼레이터마다 남기는 업그레이드 이력 줄 수(H3). 화면은 최근 몇 번의 시도·되돌림만 보인다. */
+const UPGRADE_HISTORY_MAX = 20;
 /**
  * `replaces` 는 다시 등록하는 머신이 들고 있던 **옛 operatorId** 다(오퍼레이터 `register` 가
  * `operator.json` 에서 읽어 싣는다). 옛 서버는 zod 가 모르는 키를 걷어 내므로 그대로 무시한다.
@@ -42,28 +45,45 @@ const renameBody = z.object({
 });
 
 const OP_COLS = `id, owner_account_id as "ownerAccountId", name, created_at as "createdAt",
-  last_seen_at as "lastSeenAt", revoked_at as "revokedAt", version, label`;
+  last_seen_at as "lastSeenAt", revoked_at as "revokedAt", version, label, machine_id as "machineId"`;
 
 /** 허브가 아는 **지금의 사실** — 연결돼 있는가, 무엇을 돌릴 수 있다고 했는가. */
-export type OperatorPresence = Pick<OperatorHub, 'isOnline' | 'capabilities'>;
+export type OperatorPresence = Pick<OperatorHub, 'isOnline' | 'capabilities' | 'status'>;
+
+/**
+ * 박동 가운데 **화면이 바로 알아야 하는 것**만 뽑은 서명 — 이것이 바뀔 때만 `operator.changed` 를 낸다.
+ * 박동은 30초마다 오므로 매번 내면 모든 창이 목록을 30초마다 다시 읽는다. 메모리·디스크 숫자는 화면이
+ * 열려 있을 때 스스로 다시 읽는다(P7). 턴 수와 자격 증명 상태(「jira 만료 → 멈춤」, H5)는 바로 보여야 한다.
+ */
+export function statusSignature(status: OperatorStatus): string {
+  return JSON.stringify([
+    status.turns.running, status.turns.max,
+    (status.credentials ?? []).map((c) => `${c.kind}:${c.name}:${c.state}`).sort(),
+  ]);
+}
 
 /**
  * 등록 코드 저장소. `ws/tickets.ts` 의 코어는 export 돼 있지 않고 접두를 정할 수 없다 —
  * 열다섯 줄을 여기 두는 편이 그 파일의 경계를 흔드는 것보다 낫다. 1회용·TTL 은 같다.
  */
 function createRegisterCodes(ttlMs: number) {
-  const live = new Map<string, { ownerAccountId: string; expiresAt: number }>();
+  const live = new Map<string, { ownerAccountId: string; codeId: string; expiresAt: number }>();
   return {
-    issue(claim: { ownerAccountId: string }): string {
+    /**
+     * `codeId` 는 코드와 따로 뽑은 표다(코드에서 파생하지 않는다) — 이벤트로 퍼져도 코드를 되짚을 수 없다.
+     * 화면은 이것으로 「내가 낸 코드로 붙은 operator」를 알아본다(H2).
+     */
+    issue(claim: { ownerAccountId: string }): { code: string; codeId: string } {
       const code = `hkreg_${randomBytes(16).toString('base64url')}`;
-      live.set(code, { ...claim, expiresAt: Date.now() + ttlMs });
-      return code;
+      const codeId = randomBytes(9).toString('base64url');
+      live.set(code, { ...claim, codeId, expiresAt: Date.now() + ttlMs });
+      return { code, codeId };
     },
-    consume(code: string): { ownerAccountId: string } | null {
+    consume(code: string): { ownerAccountId: string; codeId: string } | null {
       const entry = live.get(code);
       live.delete(code); // 있든 없든 지운다 — 두 번째 시도는 언제나 실패다
       if (!entry || entry.expiresAt < Date.now()) return null;
-      return { ownerAccountId: entry.ownerAccountId };
+      return { ownerAccountId: entry.ownerAccountId, codeId: entry.codeId };
     },
   };
 }
@@ -77,7 +97,8 @@ export interface OperatorRoutesDeps {
 export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, deps: OperatorRoutesDeps): Promise<void> {
   const codes = createRegisterCodes(REGISTER_CODE_TTL_MS);
   const presence: OperatorPresence = deps.hub;
-  const view = (row: Omit<OperatorView, 'online'>): OperatorView => ({ ...row, online: presence.isOnline(row.id) });
+  const view = (row: Omit<OperatorView, 'online'>): OperatorView =>
+    ({ ...row, online: presence.isOnline(row.id), status: presence.status(row.id) });
 
   /**
    * 하트비트. 옛 `/agent-relay` 에 넣었던 것과 같은 배선(b485b9d8; 그 소켓은 단계 3 에서 이 채널로
@@ -107,6 +128,77 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
   });
   app.addHook('onClose', async () => { offFrame(); });
 
+  /**
+   * 박동(P2a). 숫자는 허브가 든다(`hub.status`) — 여기서는 두 가지만 한다.
+   * 1. 머신 digest 를 소유자 id 와 섞어 `operator.machine_id` 에 적는다(H8). 섞기는 SQL 한 문장 안에서
+   *    소유자 열로 한다 — 오퍼레이터가 소유자를 말하게 두지 않는다. 바뀌었을 때만 쓰고 알린다.
+   * 2. 화면이 바로 알아야 하는 것(`statusSignature`)이 바뀌면 소유자에게 `operator.changed` 를 낸다.
+   *    전원(`'all'`)이 아니다 — 남의 턴 수가 오갈 때마다 모든 창이 목록을 다시 읽을 까닭이 없다.
+   */
+  const lastSignature = new Map<string, string>();
+  const offStatus = deps.hub.onFrame((operatorId, frame) => {
+    if (frame.type !== 'status') return;
+    const status = deps.hub.status(operatorId);
+    const signature = status ? statusSignature(status) : null;
+    const signatureChanged = signature !== null && lastSignature.get(operatorId) !== signature;
+    if (signature !== null) lastSignature.set(operatorId, signature);
+    const machine = isMachineDigest(frame.machine) ? frame.machine : null;
+    void (async () => {
+      let machineChanged = false;
+      if (machine) {
+        const res = await pool.query(
+          `update operator set machine_id = encode(sha256(convert_to(owner_account_id::text || ':' || $2, 'UTF8')), 'hex')
+            where id = $1 and machine_id is distinct from encode(sha256(convert_to(owner_account_id::text || ':' || $2, 'UTF8')), 'hex')
+            returning id`,
+          [operatorId, machine]);
+        machineChanged = (res.rowCount ?? 0) > 0;
+      }
+      if (machineChanged) {
+        emitEvent({ type: 'operator.changed', operatorId, audience: 'all' });
+      } else if (signatureChanged) {
+        const owner = await pool.query<{ owner: string }>(
+          `select owner_account_id as owner from operator where id = $1 and revoked_at is null`, [operatorId]);
+        if (owner.rows[0]) emitEvent({ type: 'operator.changed', operatorId, audience: [owner.rows[0].owner] });
+      }
+    })().catch((err: unknown) => app.log.warn({ err, operatorId }, 'operator 박동 처리 실패'));
+  });
+  // 끊기면 서명을 잊는다 — 다시 붙은 뒤 첫 박동은 언제나 알린다(끊긴 사이 화면은 status: null 을 봤다).
+  const offStatusClose = deps.hub.onClose((operatorId) => { lastSignature.delete(operatorId); });
+  app.addHook('onClose', async () => { offStatus(); offStatusClose(); });
+
+  /**
+   * 업그레이드 단계(P2b·H3). 한 줄씩 적고 오퍼레이터마다 최근 `UPGRADE_HISTORY_MAX` 줄만 남긴다.
+   * 단계마다 소유자에게 `operator.changed` — 화면의 「업그레이드 중」 단계 표시가 따라온다.
+   * 폐기된 오퍼레이터의 프레임은 적지 않는다(토큰 폐기와 소켓 끊김 사이의 틈).
+   */
+  // 오퍼레이터마다 한 줄로 세운다 — 프레임마다 질의를 따로 띄우면 insert 가 도착 순서와 다르게 끝나
+  // 이력의 순서(id)가 뒤섞이고, 20줄 자르기가 갓 들어온 줄을 지운다(CI 에서 25줄을 연달아 보내 재현).
+  const upgradeQueue = new Map<string, Promise<void>>();
+  const offUpgrade = deps.hub.onFrame((operatorId, frame) => {
+    if (frame.type !== 'upgrade.progress') return;
+    const ev = parseUpgradeProgress(frame);
+    if (!ev) return;
+    const prev = upgradeQueue.get(operatorId) ?? Promise.resolve();
+    const next = prev.then(async () => {
+      const res = await pool.query<{ owner: string }>(
+        `with op as (select id, owner_account_id from operator where id = $1 and revoked_at is null),
+              ins as (insert into operator_upgrade (operator_id, stage, from_version, to_version, error)
+                      select id, $2, $3, $4, $5 from op returning operator_id)
+         select owner_account_id as owner from op where exists (select 1 from ins)`,
+        [operatorId, ev.stage, ev.from, ev.to, ev.error]);
+      const owner = res.rows[0]?.owner;
+      if (!owner) return;
+      await pool.query(
+        `delete from operator_upgrade where operator_id = $1
+            and id not in (select id from operator_upgrade where operator_id = $1 order by id desc limit $2)`,
+        [operatorId, UPGRADE_HISTORY_MAX]);
+      emitEvent({ type: 'operator.changed', operatorId, audience: [owner] });
+    }).catch((err: unknown) => app.log.warn({ err, operatorId }, 'operator 업그레이드 단계 기록 실패'));
+    upgradeQueue.set(operatorId, next);
+    void next.then(() => { if (upgradeQueue.get(operatorId) === next) upgradeQueue.delete(operatorId); });
+  });
+  app.addHook('onClose', async () => { offUpgrade(); });
+
   app.get('/operator', { websocket: true, preHandler: app.requireOperator }, (socket, req) => {
     const operatorId = req.operator!.id;
     const detach = deps.hub.addOperator(operatorId, socket);
@@ -125,10 +217,11 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
     emitEvent({ type: 'operator.changed', operatorId, audience: 'all' });
   });
 
-  app.post('/operators/register-codes', { preHandler: app.requireCap('operator.register') }, async (req) => ({
-    code: codes.issue({ ownerAccountId: req.account!.id }),
-    expiresAt: new Date(Date.now() + REGISTER_CODE_TTL_MS).toISOString(),
-  }));
+  app.post('/operators/register-codes', { preHandler: app.requireCap('operator.register') }, async (req) => {
+    const { code, codeId } = codes.issue({ ownerAccountId: req.account!.id });
+    // `codeId` 는 새 키다 — 옛 화면은 모르는 키로 무시한다.
+    return { code, codeId, expiresAt: new Date(Date.now() + REGISTER_CODE_TTL_MS).toISOString() };
+  });
 
   // 인증 없음 — 코드가 인증이다. 1회용·5분이라 URL 노출보다 짧게 산다.
   app.post('/operators/claim', async (req, reply) => {
@@ -204,7 +297,7 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
           detail: { replacedBy: operator.id, movedAssignments: replaced.movedAgentIds.length },
         }, req);
       }
-      emitEvent({ type: 'operator.changed', operatorId: operator.id, audience: [claim.ownerAccountId] });
+      emitEvent({ type: 'operator.changed', operatorId: operator.id, audience: [claim.ownerAccountId], codeId: claim.codeId });
       if (replaced) {
         emitEvent({ type: 'operator.changed', operatorId: replaced.operatorId, audience: 'all' });
         for (const agentId of replaced.movedAgentIds) emitEvent({ type: 'agent_assignment.changed', agentId, audience: 'all' });
@@ -235,6 +328,19 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
       const caps = presence.capabilities(id);
       // 오프라인이면 능력도 없다 — 저장하지 않으므로 "모른다"가 정확한 답이다.
       return caps ?? reply.code(404).send({ error: { code: 'offline', message: '오퍼레이터가 붙어 있지 않다' } });
+    });
+
+  /** 업그레이드 이력(H3) — 최근 것부터. 권한은 능력 조회와 같다(소유자 또는 `operator.manage`). */
+  app.get<{ Params: { id: string } }>(
+    '/operators/:id/upgrades',
+    { preHandler: app.requireCap('operator.manage', { kind: 'operator', param: 'id' }) },
+    async (req) => {
+      const { id } = idParam.parse(req.params);
+      const res = await pool.query<OperatorUpgradeEvent>(
+        `select stage, from_version as "from", to_version as "to", error, at
+           from operator_upgrade where operator_id = $1 order by id desc limit $2`,
+        [id, UPGRADE_HISTORY_MAX]);
+      return { upgrades: res.rows };
     });
 
   /**
