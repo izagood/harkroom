@@ -381,6 +381,75 @@ abstract class Strings {
   /// 바로가기 카드(S5c): 안 읽은 말이 있는 채널.
   String get cardNew;
 
+  /// 바로가기 카드: 담아 둔 것 중 할 것 개수(#219).
+  String get cardSaved;
+
+  /// 메시지 시트: 나중에 볼 목록에 담기(데스크톱 message.save 와 같은 말).
+  String get messageSave;
+
+  /// 메시지 시트: 담은 것을 목록에서 빼기.
+  String get messageUnsave;
+
+  /// 담긴 글의 이름 위 표식(데스크톱 message.savedMark).
+  String get messageSavedMark;
+
+  /// 담은 뒤 토스트.
+  String get savedAdded;
+
+  /// 담은 뒤 토스트의 버튼 — 저장 화면으로 간다.
+  String get savedOpenList;
+
+  /// 뺀 뒤 토스트.
+  String get savedRemoved;
+
+  /// 저장 토스트의 되돌리기 버튼.
+  String get savedUndo;
+
+  /// 담기 실패(403·404 — 다시 해도 같다).
+  String get savedSaveFailed;
+
+  /// 빼기·완료 표시 실패.
+  String get savedActionFailed;
+
+  /// 저장 화면 제목.
+  String get savedTitle;
+
+  /// 저장 화면 칸: 할 것.
+  String get savedTabOpen;
+
+  /// 저장 화면 칸: 완료.
+  String get savedTabDone;
+
+  /// 할 것 칸이 비었다.
+  String get savedEmptyOpen;
+
+  /// 할 것 칸이 비었을 때 담는 법.
+  String get savedEmptyOpenHint;
+
+  /// 완료 칸이 비었다 — 담는 법은 말하지 않는다.
+  String get savedEmptyDone;
+
+  /// 저장 목록을 못 읽었다.
+  String get savedLoadFailed;
+
+  /// 줄의 ✓ 버튼(접근 이름).
+  String get savedMarkDone;
+
+  /// 완료 칸 줄의 ↺ 버튼(접근 이름).
+  String get savedMarkOpen;
+
+  /// 완료로 옮긴 뒤 토스트.
+  String get savedMovedDone;
+
+  /// 할 것으로 되돌린 뒤 토스트.
+  String get savedMovedOpen;
+
+  /// 지운 글의 자리.
+  String get savedDeleted;
+
+  /// 볼 수 없는 채널의 글 자리.
+  String get savedUnavailable;
+
   /// 떠 있는 새 메시지 버튼(S5c).
   String get newMessage;
 
@@ -983,6 +1052,29 @@ Map<String, String> stringsToMap(Strings s) => {
       'sectionChannels': s.sectionChannels,
       'cardMyTurn': s.cardMyTurn,
       'cardNew': s.cardNew,
+      'cardSaved': s.cardSaved,
+      'messageSave': s.messageSave,
+      'messageUnsave': s.messageUnsave,
+      'messageSavedMark': s.messageSavedMark,
+      'savedAdded': s.savedAdded,
+      'savedOpenList': s.savedOpenList,
+      'savedRemoved': s.savedRemoved,
+      'savedUndo': s.savedUndo,
+      'savedSaveFailed': s.savedSaveFailed,
+      'savedActionFailed': s.savedActionFailed,
+      'savedTitle': s.savedTitle,
+      'savedTabOpen': s.savedTabOpen,
+      'savedTabDone': s.savedTabDone,
+      'savedEmptyOpen': s.savedEmptyOpen,
+      'savedEmptyOpenHint': s.savedEmptyOpenHint,
+      'savedEmptyDone': s.savedEmptyDone,
+      'savedLoadFailed': s.savedLoadFailed,
+      'savedMarkDone': s.savedMarkDone,
+      'savedMarkOpen': s.savedMarkOpen,
+      'savedMovedDone': s.savedMovedDone,
+      'savedMovedOpen': s.savedMovedOpen,
+      'savedDeleted': s.savedDeleted,
+      'savedUnavailable': s.savedUnavailable,
       'newMessage': s.newMessage,
       'newMessagePeople': s.newMessagePeople,
       'newMessageDmFailed': s.newMessageDmFailed,

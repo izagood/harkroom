@@ -252,6 +252,52 @@ class StringsKo implements Strings {
   @override
   String get cardNew => '새로 온 것';
   @override
+  String get cardSaved => '저장';
+  @override
+  String get messageSave => '나중에 보기로 담기';
+  @override
+  String get messageUnsave => '담은 것 빼기';
+  @override
+  String get messageSavedMark => '나중을 위해 저장됨';
+  @override
+  String get savedAdded => '담았다';
+  @override
+  String get savedOpenList => '목록 보기';
+  @override
+  String get savedRemoved => '뺐다';
+  @override
+  String get savedUndo => '되돌리기';
+  @override
+  String get savedSaveFailed => '담지 못했다';
+  @override
+  String get savedActionFailed => '바꾸지 못했다';
+  @override
+  String get savedTitle => '저장된 메시지';
+  @override
+  String get savedTabOpen => '할 것';
+  @override
+  String get savedTabDone => '완료';
+  @override
+  String get savedEmptyOpen => '저장된 메시지가 없다';
+  @override
+  String get savedEmptyOpenHint => '메시지를 길게 눌러 「나중에 보기로 담기」를 고르면 여기 모인다.';
+  @override
+  String get savedEmptyDone => '완료된 메시지가 없다';
+  @override
+  String get savedLoadFailed => '저장된 메시지를 불러오지 못했다';
+  @override
+  String get savedMarkDone => '완료로 표시';
+  @override
+  String get savedMarkOpen => '할 것으로 되돌리기';
+  @override
+  String get savedMovedDone => '완료로 옮겼다';
+  @override
+  String get savedMovedOpen => '할 것으로 되돌렸다';
+  @override
+  String get savedDeleted => '삭제된 메시지';
+  @override
+  String get savedUnavailable => '이 채널을 볼 수 없어 내용을 보여 줄 수 없다';
+  @override
   String get newMessage => '새 메시지';
   @override
   String get newMessagePeople => '사람';

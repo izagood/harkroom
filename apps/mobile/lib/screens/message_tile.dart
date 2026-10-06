@@ -14,6 +14,7 @@ import '../mention/render.dart';
 import '../markdown/markdown_view.dart';
 import 'attachments.dart';
 import 'message_link.dart';
+import 'saved_screen.dart';
 
 /// 말풍선 한 줄. **채널 화면과 스레드 화면이 같은 것을 쓴다.**
 ///
@@ -97,6 +98,8 @@ class MessageTile extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // 담아 둔 글은 이름 위에 표식(데스크톱 savedMark 와 같은 말·자리) — 담았는지 보려고 시트를 다시 열지 않게.
+                      if (app.isSaved(message.id)) _SavedMark(key: Key('saved-mark-${message.id}')),
                       if (!continued) _Header(message: message, isAgent: author?.isAgent == true),
                       // 작은 마크다운(코드·목록·인용·굵게·링크). 모르는 것은 글자 그대로 둔다.
                       if (body.isNotEmpty)
@@ -274,6 +277,8 @@ class _PressableState extends State<_Pressable> {
         CustomSemanticsAction(label: t.messageReplyInThread): ?reply,
         CustomSemanticsAction(label: t.messageCopyLink): () => copyMessage(context, m, MessageCopy.link),
         if (hasBody) CustomSemanticsAction(label: t.messageCopyBody): () => copyMessage(context, m, MessageCopy.body),
+        if (can.save) CustomSemanticsAction(label: t.messageSave): () => toggleSaved(context, m.id, save: true).ignore(),
+        if (can.unsave) CustomSemanticsAction(label: t.messageUnsave): () => toggleSaved(context, m.id, save: false).ignore(),
         if (can.markUnread) CustomSemanticsAction(label: t.messageMarkUnread): () => act(MessageAction.markUnread),
         if (can.edit) CustomSemanticsAction(label: t.messageEdit): () => act(MessageAction.edit),
         if (can.postToChannel) CustomSemanticsAction(label: t.messagePostToChannel): () => act(MessageAction.postToChannel),
@@ -410,6 +415,9 @@ Future<void> showMessageActions(BuildContext context, MessageRow message, {VoidC
               title: Text(t.messageCopyBody),
               onTap: () => Navigator.of(sheet).pop(const _SheetPick.copy(MessageCopy.body)),
             ),
+          // 저장은 나만의 일이라 작성자 동작(수정·채널에 올리기)보다 위, 복사 바로 아래다(designer 시안 ①).
+          if (can.save) item(sheet, MessageAction.save, Icons.bookmark_border, t.messageSave),
+          if (can.unsave) item(sheet, MessageAction.unsave, Icons.bookmark, t.messageUnsave),
           if (can.markUnread) item(sheet, MessageAction.markUnread, Icons.mark_chat_unread_outlined, t.messageMarkUnread),
           if (can.edit) item(sheet, MessageAction.edit, Icons.edit_outlined, t.messageEdit),
           if (can.postToChannel) item(sheet, MessageAction.postToChannel, Icons.forum_outlined, t.messagePostToChannel),
@@ -442,12 +450,14 @@ Future<void> showMessageActions(BuildContext context, MessageRow message, {VoidC
 }
 
 /// 시트 아래쪽 동작들. 리액션·복사·스레드에서 답글은 따로 간다.
-enum MessageAction { markUnread, edit, postToChannel, recall, delete }
+enum MessageAction { save, unsave, markUnread, edit, postToChannel, recall, delete }
 
 /// 이 글에 어떤 동작이 서는가. 데스크톱 `MessageItem` 의 조건과 같다 — 화면이 서버보다 너그러우면
 /// 눌러도 403 이고, 더 엄하면 서버가 열어 둔 길(admin 삭제·거두기)이 닿지 않는다.
 class MessageActionsFor {
   const MessageActionsFor._({
+    required this.save,
+    required this.unsave,
     required this.markUnread,
     required this.edit,
     required this.delete,
@@ -462,7 +472,11 @@ class MessageActionsFor {
     final system = m.kind == MessageKind.system;
     final reply = m.threadRootId != null;
     final delete = (mine || admin) && !system;
+    final saved = app.isSaved(m.id);
     return MessageActionsFor._(
+      // 시스템 글은 담지 않는다(답글과 같은 조건). 서버는 막지 않으니 화면에서 막는다.
+      save: me != null && !system && !saved,
+      unsave: me != null && !system && saved,
       // 내 글은 안 읽은 수에 들지 않는다 — 눌러도 숫자가 그대로인 항목은 거짓 신호다.
       markUnread: me != null && !mine && !system,
       // 수정은 admin 에게도 열지 않는다: 남의 발언을 고칠 수 있으면 기록이 증거가 못 된다.
@@ -474,6 +488,8 @@ class MessageActionsFor {
     );
   }
 
+  final bool save;
+  final bool unsave;
   final bool markUnread;
   final bool edit;
   final bool delete;
@@ -490,6 +506,11 @@ Future<void> runMessageAction(BuildContext context, MessageRow message, MessageA
   Future<void> Function()? go;
   String? done;
   switch (act) {
+    // 담기·빼기는 토스트에 버튼(목록 보기·되돌리기)이 붙어 따로 간다.
+    case MessageAction.save:
+    case MessageAction.unsave:
+      await toggleSaved(context, message.id, save: act == MessageAction.save);
+      return;
     case MessageAction.markUnread:
       go = () => app.markUnreadFrom(message);
       done = t.messageMarkedUnread;
@@ -725,6 +746,29 @@ Future<void> pickReaction(BuildContext context, MessageRow message) async {
     if (context.mounted) {
       showFailureToast(context, context.t.reactionFailed, retry: () => go().ignore());
     }
+  }
+}
+
+/// 「나중을 위해 저장됨」 한 줄.
+class _SavedMark extends StatelessWidget {
+  const _SavedMark({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 11pt 라 accent 는 라이트 표면에서 대비가 4.5 에 못 미친다 — 글자용 accentText 를 쓴다(designer #1231).
+          Icon(Icons.bookmark, size: 12, color: k.accentText),
+          const SizedBox(width: 4),
+          Text(context.t.messageSavedMark,
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: k.accentText)),
+        ],
+      ),
+    );
   }
 }
 

@@ -347,6 +347,9 @@ class AppState extends ChangeNotifier {
   /// **그 응답을 버린다** — 안 버리면 옛 계정의 말이 새 계정 화면에 섞인다(security #996).
   int _generation = 0;
 
+  /// 지금 세대. 화면이 쥐고 있다가 늦게 눌린 동작(토스트의 되돌리기)이 다른 계정에 가지 않게 대 본다.
+  int get sessionGeneration => _generation;
+
   /// 스레드 루트 id → 그 스레드를 읽는 상태.
   final Map<String, LoadState> threadLoad = {};
 
@@ -704,6 +707,7 @@ class AppState extends ChangeNotifier {
     _openSocket();
     // 부팅을 막지 않는다 — 채널 목록이 먼저 서고 받은 것은 뒤따라 온다.
     unawaited(loadInbox());
+    unawaited(loadSavedSummary());
     _startOtherPolling();
   }
 
@@ -833,6 +837,7 @@ class AppState extends ChangeNotifier {
           ..addEntries(fresh.map((r) => MapEntry(r.channelId, r)));
       },
       loadInbox,
+      loadSavedSummary,
     ];
     await runLimited(jobs, catchUpConcurrency);
     if (gen != _generation) return;
@@ -1098,6 +1103,107 @@ class AppState extends ChangeNotifier {
     } on Object {
       // 다음 `loadInbox` 가 서버의 사실로 덮는다.
     }
+  }
+
+  // ── 나중에 볼 메시지(#219) ─────────────────────────────────────────────
+
+  /// 담아 둔 메시지 id(할 것·완료 둘 다). 시트의 「담기/빼기」와 줄 위 표식이 이것을 본다.
+  final Set<String> savedIds = {};
+
+  /// 할 것 개수 — 홈 카드 「저장 N」.
+  int savedOpenCount = 0;
+
+  /// 저장 화면의 두 칸. 화면을 열 때 읽는다(소켓 동기화는 다음 단계).
+  final Map<SavedState, List<SavedEntry>> saved = {SavedState.open: [], SavedState.done: []};
+  final Map<SavedState, LoadState> savedLoad = {SavedState.open: LoadState.loading, SavedState.done: LoadState.loading};
+
+  bool isSaved(String messageId) => savedIds.contains(messageId);
+
+  /// 요약을 다시 받는다. **실패는 조용히 넘긴다** — 표식과 숫자가 낡을 뿐 다른 화면은 멀쩡하고, 다음
+  /// 담기·다시 붙기에서 다시 받는다. 들어갈 때 이것 때문에 막히면 안 된다.
+  Future<void> loadSavedSummary() async {
+    final api = _api;
+    if (api == null) return;
+    final gen = _generation;
+    try {
+      final summary = await api.savedSummary();
+      if (gen != _generation) return;
+      savedIds
+        ..clear()
+        ..addAll(summary.messageIds);
+      savedOpenCount = summary.openCount;
+      notifyListeners();
+    } on Object {
+      // 위 주석.
+    }
+  }
+
+  /// 한 칸을 읽는다. 이미 보이는 목록은 다시 읽는 동안 그대로 둔다(인박스와 같은 판단).
+  Future<void> loadSaved(SavedState state) async {
+    final api = _api;
+    if (api == null) return;
+    // **첫 await 전에 알리지 않는다** — 화면이 그리는 중에 부를 수 있다. 처음 상태가 이미 loading 이라
+    // 다시 시도(failed → loading)일 때만 알린다. 그때는 사람이 누른 뒤라 그리는 중이 아니다.
+    if (savedLoad[state] == LoadState.failed) {
+      savedLoad[state] = LoadState.loading;
+      notifyListeners();
+    }
+    final gen = _generation;
+    try {
+      final entries = await api.savedMessages(state);
+      if (gen != _generation) return;
+      saved[state]!
+        ..clear()
+        ..addAll(entries);
+      savedLoad[state] = LoadState.loaded;
+    } on Object catch (e) {
+      if (gen != _generation) return;
+      failures['saved-${state.name}'] = LoadFailure.of(e);
+      if (savedLoad[state] != LoadState.loaded) savedLoad[state] = LoadState.failed;
+    }
+    notifyListeners();
+  }
+
+  /// 담는다. 서버가 받은 **뒤에** 표식을 세운다 — 낙관적으로 세웠다 지우면 표식이 깜빡인다.
+  Future<void> saveMessage(String messageId) async {
+    await _api!.saveMessage(messageId);
+    savedIds.add(messageId);
+    notifyListeners();
+    // 숫자와 열어 둔 목록은 서버의 사실로 맞춘다 — 완료에 있던 것을 다시 담으면 할 것으로 돌아간다.
+    unawaited(loadSavedSummary());
+    for (final state in SavedState.values) {
+      if (savedLoad[state] == LoadState.loaded) unawaited(loadSaved(state));
+    }
+  }
+
+  /// 뺀다. 두 칸 어디에 있든 줄을 지운다.
+  Future<void> unsaveMessage(String messageId) async {
+    await _api!.unsaveMessage(messageId);
+    savedIds.remove(messageId);
+    for (final list in saved.values) {
+      list.removeWhere((e) => e.messageId == messageId);
+    }
+    notifyListeners();
+    unawaited(loadSavedSummary());
+  }
+
+  /// 할 것 ↔ 완료. 줄을 다른 칸으로 옮긴다(그 칸을 읽어 둔 때만 — 안 읽었으면 열 때 서버에서 읽는다).
+  Future<void> setSavedState(String messageId, SavedState next) async {
+    await _api!.setSavedState(messageId, next);
+    final from = saved[next == SavedState.open ? SavedState.done : SavedState.open]!;
+    final at = from.indexWhere((e) => e.messageId == messageId);
+    if (at >= 0) {
+      final moved = from.removeAt(at).withState(next);
+      if (savedLoad[next] == LoadState.loaded) {
+        final to = saved[next]!..removeWhere((e) => e.messageId == messageId);
+        // 서버 순서(담은 때 새것 먼저)대로 끼운다.
+        final pos = to.indexWhere((e) => e.createdAt.isBefore(moved.createdAt));
+        to.insert(pos < 0 ? to.length : pos, moved);
+      }
+    }
+    savedOpenCount = (savedOpenCount + (next == SavedState.open ? 1 : -1)).clamp(0, 1 << 30);
+    notifyListeners();
+    unawaited(loadSavedSummary());
   }
 
   /// DM 의 이름: 나를 뺀 상대들의 이름을 쉼표로. 나 혼자인 DM(메모)이면 내 이름.
@@ -2021,6 +2127,13 @@ class AppState extends ChangeNotifier {
     threadLoad.clear();
     failures.clear();
     inboxLoad = LoadState.loading;
+    // 담아 둔 것도 그 계정의 것이다.
+    savedIds.clear();
+    savedOpenCount = 0;
+    for (final state in SavedState.values) {
+      saved[state]!.clear();
+      savedLoad[state] = LoadState.loading;
+    }
     // 못 보낸 말도 버린다 — 다른 계정으로 들어온 뒤에 남은 말이 그 계정 이름으로 가면 안 된다.
     failedSends.clear();
     pending.clear();
