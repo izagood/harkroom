@@ -306,13 +306,15 @@ describe('Inbox 상태 보드 (C안)', () => {
     expect(screen.getByTestId('inbox-scope-all').getAttribute('aria-pressed')).toBe('true');
 
     fireEvent.click(screen.getByTestId('inbox-scope-opened'));
-    expect(ids()).toEqual(['inbox-card-mine']);
+    // 띠(내 차례)는 거르지 않는다 — 남의 스레드에서 나를 지목한 물음도 남는다(designer #1230).
+    expect(ids()).toEqual(['inbox-card-called', 'inbox-card-mine']);
+    expect(within(screen.getByTestId('inbox-col-mine')).getByTestId('inbox-card-called')).toBeTruthy();
     expect(screen.getByTestId('inbox-scope-opened').getAttribute('aria-pressed')).toBe('true');
-    // 수는 거르기 전 그대로 — 배지와 같은 수.
+    // 수 = 띠 = 배지.
     expect(screen.getByTestId('inbox-mine-count').textContent).toBe('나를 기다리는 일 1');
 
     fireEvent.click(screen.getByTestId('inbox-scope-participated'));
-    expect(ids()).toEqual(['inbox-card-mine', 'inbox-card-said']);
+    expect(ids()).toEqual(['inbox-card-called', 'inbox-card-mine', 'inbox-card-said']);
 
     fireEvent.click(screen.getByTestId('inbox-scope-all'));
     expect(ids()).toHaveLength(3);

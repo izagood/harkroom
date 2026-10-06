@@ -3028,7 +3028,7 @@ export const en = {
   'inbox.board.scope.label': 'Show',
   'inbox.board.scope.all': 'All channels',
   'inbox.board.scope.opened': 'Started by me',
-  'inbox.board.scope.participated': 'I took part',
+  'inbox.board.scope.participated': 'Involved',
   'inbox.board.scope.empty': 'Nothing in this view',
   /** "N일째" — 이 열에 들어오게 한 말부터 센다. */
   'inbox.board.days': '{count}d waiting',
