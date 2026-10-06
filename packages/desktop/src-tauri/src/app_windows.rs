@@ -15,6 +15,10 @@
 //! `target=_blank`, 웹뷰 기본 메뉴의 `Open Link in New Window` …)은 **거절한다** — 그 길은
 //! 지금까지 아무것도 열지 않았고(`on_new_window` 가 없으면 WKWebView 는 nil 을 돌려준다),
 //! 이 파일이 그 문을 넓히지 않는다. 바깥 주소는 `external_link` 가 브라우저로 넘긴다.
+//!
+//! **전제**: `popup_label` 은 어느 프레임이 요청했는지 모른다. 메인 안의 다른 출처 프레임(미리보기 iframe)은
+//! `sandbox` 에 `allow-popups` 가 없어 이 문에 닿지 못한다. 어떤 iframe 이든 `allow-popups` 를 주는 순간 그
+//! 프레임이 `hk-win` 키로 자기 출처의 창을 열 수 있게 된다 — 그때는 이 문에서 요청한 프레임을 가려야 한다.
 
 use tauri::Url;
 

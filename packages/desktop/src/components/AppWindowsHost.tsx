@@ -4,7 +4,7 @@ import { useActiveStore, useCommunityRegistry } from '../state/communities';
 import { getController } from '../state/controller';
 import { WindowViewProvider, type WindowView } from '../state/windowView';
 import {
-  closeAppWindow, markAppWindowGone, persistAppWindows, restoreAppWindows, setAppWindowPinned, setAppWindowScope, setAppWindowPaneWidth,
+  closeAllAppWindows, closeAppWindow, markAppWindowGone, persistAppWindows, restoreAppWindows, setAppWindowPinned, setAppWindowScope, setAppWindowPaneWidth,
   channelWindowPaneClamp, channelWindowPaneDefault, CHANNEL_WINDOW_MIN_CHANNEL, CHANNEL_WINDOW_MIN_THREAD, syncRootAttributes,
   useAppWindows, type AppWindowEntry,
 } from '../lib/appWindows';
@@ -40,6 +40,9 @@ export function AppWindowsHost() {
     }
     restoreAppWindows(communityId);
   }, [communityId]);
+
+  // 화면이 내려가면(로그아웃·세션 만료) 새 창을 모두 닫는다(security L1). 메인 트리가 없으면 창은 그릴 것도 없다.
+  useEffect(() => () => closeAllAppWindows(), []);
 
   // 창을 옮기는 것에는 이벤트가 없다 — 열린 창이 있는 동안 위치를 가끔 적어 둔다(복원 자리).
   const any = entries.length > 0;

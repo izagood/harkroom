@@ -1,13 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, within, act } from '@testing-library/react';
-import { useActiveStore as useAppStore } from '../src/state/communities';
+import { useActiveStore as useAppStore, useCommunityRegistry } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { AppWindowsHost } from '../src/components/AppWindowsHost';
 import { ThreadPanel } from '../src/components/ThreadPanel';
 import { ChannelPane } from '../src/components/ChannelPane';
 import {
-  MAX_APP_WINDOWS, openAppWindow, resetAppWindowsForTest, setWindowOpener, useAppWindows,
+  forgetSavedAppWindows, loadSavedAppWindows, MAX_APP_WINDOWS, openAppWindow, resetAppWindowsForTest, setWindowOpener,
+  useAppWindows,
 } from '../src/lib/appWindows';
 import { acc, msg, scheduledApiStub } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';
@@ -131,5 +132,28 @@ describe('스레드 창', () => {
     expect(wins).toHaveLength(MAX_APP_WINDOWS);
     expect(useAppStore.getState().notice).toContain('8개');
     expect(useAppStore.getState().threadRootId).toBe('m1');
+  });
+});
+
+describe('로그아웃 때 새 창을 닫는다 (security L1)', () => {
+  it('호스트가 내려가면 열린 창을 모두 닫고, 복원 목록은 남긴다', async () => {
+    fakeController();
+    const { unmount } = render(<AppWindowsHost />);
+    act(() => { openAppWindow({ kind: 'thread', channelId: 'c1', rootId: 'm1' }, { communityId: useCommunityRegistry.getState().activeId }); });
+    expect(loadSavedAppWindows()).toHaveLength(1);
+    unmount();
+    expect(wins[0]!.close).toHaveBeenCalled();
+    expect(useAppWindows.getState().entries).toHaveLength(0);
+    await new Promise((r) => setTimeout(r, 600)); // 닫힌 창의 늦은 저장이 목록을 비우지 않는다
+    expect(loadSavedAppWindows()).toHaveLength(1);
+  });
+
+  it('사람이 로그아웃하면 그 커뮤니티의 복원 목록을 지우고 다른 커뮤니티 것은 남긴다', () => {
+    localStorage.setItem('harkroom.appWindows', JSON.stringify([
+      { target: { kind: 'channel', channelId: 'c1' }, communityId: 'k1', pinned: false },
+      { target: { kind: 'channel', channelId: 'c2' }, communityId: 'k2', pinned: false },
+    ]));
+    forgetSavedAppWindows('k1');
+    expect(loadSavedAppWindows().map((w) => w.communityId)).toEqual(['k2']);
   });
 });

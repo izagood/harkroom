@@ -16,7 +16,6 @@ import { PROJECTION_SECTION, ProjectionBanner } from './ProjectionBanner';
 import { ServerCompatBanner } from './ServerCompatBanner';
 import { UpdateToast } from './UpdateToast';
 import { ThreadPanel } from './ThreadPanel';
-import { AppWindowsHost } from './AppWindowsHost';
 import { openWindow, popOutChannel } from '../lib/windowActions';
 import { TerminalPanel } from './TerminalPanel';
 import { ArtifactPanel } from './ArtifactPreview';
@@ -366,8 +365,6 @@ export function Workspace({ onLogout, onOpenSettings }: {
         {/* 알림은 헤더 바로 아래, 대화 위에 둔다 — 채널 안에 그리면 채널을 못 연 실패를
             보여 줄 자리 자체가 없다. */}
         <Notice />
-        {/* 채널·스레드 새 창의 포털(`AppWindowsHost`). 메인 트리 안이라 스토어·연결이 하나다. */}
-        <AppWindowsHost />
         {/*
           투영 고장은 **여기**서 말한다(#488 A3-a). 전에는 사이드바 `ACTIVE WORK` 안에
           있었는데, 그 칸은 "지금 무슨 일이 벌어지는가"를 말하는 자리라 **고장이 일처럼**

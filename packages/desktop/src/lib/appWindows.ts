@@ -180,6 +180,27 @@ export function setAppWindowPaneWidth(key: string, paneWidth: number): void {
   persistAppWindows();
 }
 
+/**
+ * 열린 창을 **모두 닫는다**(security L1 — 로그아웃 때 새 창을 닫는다). 화면(`AppWindowsHost`)이 내려갈 때
+ * 부른다. 복원 목록은 그대로 둔다 — 지우는 것은 사람이 로그아웃했을 때(`forgetSavedAppWindows`)뿐이다.
+ */
+export function closeAllAppWindows(): void {
+  frozen = true;
+  const { entries } = useAppWindows.getState();
+  useAppWindows.setState({ entries: [] });
+  for (const e of entries) { try { e.win.close(); } catch { /* 이미 닫힘 */ } }
+}
+
+/** 사람이 로그아웃했다 — 그 커뮤니티의 복원 목록을 지운다. 다른 커뮤니티의 목록은 남긴다. */
+export function forgetSavedAppWindows(communityId: string | null | undefined): void {
+  const id = communityId ?? null;
+  const rest = loadSavedAppWindows().filter((w) => w.communityId !== id);
+  try {
+    if (rest.length) localStorage.setItem(STORAGE_KEY, JSON.stringify(rest));
+    else localStorage.removeItem(STORAGE_KEY);
+  } catch { /* 저장소 막힘 */ }
+}
+
 /** 열 수 없는 스레드로 판명 — 복원 목록에서 뺀다(창은 빈 상태로 남는다). */
 export function markAppWindowGone(key: string): void {
   const { entries } = useAppWindows.getState();
@@ -240,10 +261,13 @@ function boundsOf(win: Window): WindowBounds | undefined {
  * 커뮤니티를 옮기며 닫은 창들이 목록에서 사라지면 돌아왔을 때 복원할 것이 없다.
  */
 let scope: string | null = null;
-export function setAppWindowScope(communityId: string | null | undefined): void { scope = communityId ?? null; }
+/** 모두 닫는 동안은 적지 않는다 — 닫힌 창들의 늦은 저장이 복원 목록을 비우지 않게(`closeAllAppWindows`). */
+let frozen = false;
+export function setAppWindowScope(communityId: string | null | undefined): void { scope = communityId ?? null; frozen = false; }
 
 /** 지금 열린 창들을 적어 둔다. 실패(저장소 막힘)는 조용히 넘긴다 — 복원은 편의다. */
 export function persistAppWindows(): void {
+  if (frozen) return;
   const others = loadSavedAppWindows().filter((w) => w.communityId !== scope);
   const mine: SavedAppWindow[] = prune()
     .filter((e) => !e.gone && e.communityId === scope)
@@ -336,6 +360,7 @@ export function resetAppWindowsForTest(): void {
   useAppWindows.setState({ entries: [] });
   invokeOverride = null;
   scope = null;
+  frozen = false;
   try { localStorage.removeItem(STORAGE_KEY); } catch { /* */ }
   opener = { open: (url, name, features) => window.open(url, name, features) };
 }
