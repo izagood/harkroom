@@ -63,7 +63,12 @@ describe('업그레이드 이력(H3)', () => {
   it('오퍼레이터마다 최근 20줄만 남긴다', async () => {
     const op = await registerOperator(app, aliceToken, 'vm-many');
     const ws = await connect(op.token);
-    for (let i = 0; i < 25; i++) ws.send(JSON.stringify({ type: 'upgrade.progress', stage: 'download', to: `0.0.${i}` }));
+    // 한 번에 몰아 보내면 대기 줄 상한(UPGRADE_QUEUE_MAX, security n5)에 걸려 버려진다 — 다섯 개씩 보내고 기다린다.
+    for (let b = 0; b < 5; b++) {
+      for (let i = b * 5; i < b * 5 + 5; i++) ws.send(JSON.stringify({ type: 'upgrade.progress', stage: 'download', to: `0.0.${i}` }));
+      const last = `0.0.${b * 5 + 4}`;
+      await waitFor(async () => (await pool.query(`select 1 from operator_upgrade where operator_id = $1 and to_version = $2`, [op.operatorId, last])).rowCount === 1);
+    }
     await waitFor(async () => {
       const { rows } = await pool.query(`select count(*)::int as n, max(to_version) filter (where to_version = '0.0.24') as last from operator_upgrade where operator_id = $1`, [op.operatorId]);
       return rows[0].last === '0.0.24' && rows[0].n <= 20;
@@ -71,6 +76,17 @@ describe('업그레이드 이력(H3)', () => {
     const rows = (await upgrades(aliceToken, op.operatorId)).json().upgrades;
     expect(rows).toHaveLength(20);
     expect(rows[0].to).toBe('0.0.24');
+    ws.close();
+  });
+
+  it('한 번에 몰려 오면 대기 줄 상한(20)을 넘는 것은 버린다 — security n5', async () => {
+    const op = await registerOperator(app, aliceToken, 'vm-burst');
+    const ws = await connect(op.token);
+    for (let i = 0; i < 60; i++) ws.send(JSON.stringify({ type: 'upgrade.progress', stage: 'verify', to: `1.0.${i}` }));
+    await new Promise((r) => setTimeout(r, 1500));
+    const { rows } = await pool.query<{ n: number }>(`select count(*)::int as n from operator_upgrade where operator_id = $1`, [op.operatorId]);
+    expect(rows[0]!.n).toBeLessThanOrEqual(20);
+    expect(rows[0]!.n).toBeGreaterThan(0);
     ws.close();
   });
 
