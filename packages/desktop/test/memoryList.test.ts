@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   archiveOverflow, archivedLinks, candidateReasons, chipCount, cleanupChips, memorySections, resolveWikiLink, usedWithin,
-  type MemoryAudit,
+  cleanupRequestBody, type MemoryAudit,
   filterMemories, memorySummary, memoryGroupKey, memoryRows, splitArchived, splitCore, MIN_GROUP_SIZE,
   type MemoryEntry,
 } from '../src/lib/memoryList';
@@ -268,3 +268,21 @@ describe('종류별 칸·왜 후보인가 (PR 4)', () => {
     expect(candidateReasons('core', audit, new Set())).toEqual([]);
   });
 });
+
+describe('정리 맡기기 초안 (PR 5)', () => {
+  const text = { intro: 'I', more: (n: number) => `+${n}`, outro: 'O' };
+  it('slug 문법 밖의 이름은 싣지 않고, 상한을 넘으면 수로만 말한다', () => {
+    const many = Array.from({ length: 33 }, (_, i) => `mem/x${i}`);
+    const body = cleanupRequestBody([
+      { scope: 'merge', label: 'M', slugs: ['mem/ok', 'mem/<@everyone>', 'mem/a b'] },
+      { scope: 'picked', label: 'P', slugs: many },
+    ], text);
+    expect(body).toContain('- M (1)\n  `mem/ok`');
+    expect(body).not.toContain('everyone');
+    expect(body).toContain('- P (33)');
+    expect(body).toContain('+3');
+    expect(body.startsWith('I\n')).toBe(true);
+    expect(body.endsWith('\nO')).toBe(true);
+  });
+});
+

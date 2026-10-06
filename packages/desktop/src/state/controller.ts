@@ -2330,6 +2330,17 @@ export class Controller {
     });
   }
 
+  /**
+   * 그 상대와의 DM 에 글 하나를 보낸다 — **채널을 열지 않는다**(설정 화면에서 보내는 「정리 맡기기」,
+   * Memory 탭 PR 5). 화면을 옮기지 않으므로 사람은 하던 정리를 이어 간다. 보낸 DM 의 id 를 돌려준다.
+   */
+  async sendDm(accountId: string, body: string): Promise<string> {
+    const dm = await this.api.createDm([accountId]);
+    this.store.getState().set({ dms: await this.api.dms() });
+    await this.send(body, [], dm.id);
+    return dm.id;
+  }
+
   async startDm(accountId: string): Promise<void> {
     const dm = await this.api.createDm([accountId]);
     this.store.getState().set({ dms: await this.api.dms() });

@@ -20,9 +20,9 @@ import { agoLabel } from '../../lib/time';
 // 기억 목록의 판정(접기·검색·묶기)은 `lib/` 한 벌이다 — 그 파일 머리말에 화면에서 떼어
 // 낸 이유가 있다. 회귀선은 `test/memoryList.test.ts`.
 import {
-  MAX_ARCHIVED_MEMORIES, MAX_ROW_REASONS, archivedLinks, candidateReasons, memorySections, resolveWikiLink, archiveOverflow, chipCount, chipsFor, cleanupChips, filterMemories, memoryRows, memorySummary,
+  CLEANUP_SCOPES, MAX_ARCHIVED_MEMORIES, MAX_ROW_REASONS, cleanupRequestBody, cleanupScopeSlugs, memoryGroupKey, archivedLinks, candidateReasons, memorySections, resolveWikiLink, archiveOverflow, chipCount, chipsFor, cleanupChips, filterMemories, memoryRows, memorySummary,
   splitArchived, splitCore, usageOf, usedWithin,
-  type CleanupChip, type MemoryAudit, type MemoryBatchResult, type MemoryEntry, type MemorySort,
+  type CleanupChip, type CleanupScope, type MemoryAudit, type MemoryBatchResult, type MemoryEntry, type MemorySort,
 } from '../../lib/memoryList';
 // 화면은 `useT`, 화면 밖에서 쓰이는 순수 함수(`lastTurnLabel`)는 `Translate` 를 인자로
 // 받는다 — 그 갈림의 근거는 `i18n/index.ts::Translate` 머리말에 있다.
@@ -385,6 +385,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 에이전트를 바꾸면 비운다 — 같은 이름의 기억이 다른 에이전트에도 있을 수 있다.
    */
   const [memSelected, setMemSelected] = useState<string | null>(null);
+  /** 「정리 맡기기」 시트(PR 5). 고른 범위만 DM 초안에 싣는다. */
+  const [memCleanup, setMemCleanup] = useState<CleanupScope[] | null>(null);
+  const [memCleanupBusy, setMemCleanupBusy] = useState(false);
   /**
    * 목록/상세를 나란히 둘 만큼 넓은가(#1209 designer B1·B2). 컨테이너 쿼리 대신 잰다 — 좁을 때는 상세를
    * **고른 줄 바로 아래** 펼쳐야 하는데(목록에서 자리를 잃지 않게), 그 자리는 CSS 만으로 옮길 수 없다.
@@ -774,6 +777,20 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const memoryPickedHidden = memPicked.filter((s) => !memoryShown.has(s)).length;
   /** 이만큼 보관하면 300 상한에서 조용히 밀려나는 수(security n2) — 누르기 전에 말한다. */
   const memoryOverflow = memoryParts ? archiveOverflow(memoryParts.archived.length, memoryPickedActive.length) : 0;
+  /** 「정리 맡기기」 범위별 기억(PR 5). 지금 화면이 아는 audit·고른 것에서 센다. */
+  const memoryCleanupSlugs = cleanupScopeSlugs(memoryChips, memoryPickedActive);
+  const memoryCleanupBody = memCleanup && selected
+    ? cleanupRequestBody(
+      memCleanup.filter((sc) => memoryCleanupSlugs[sc].length > 0).map((sc) => ({
+        scope: sc, label: t(`agents.memory.cleanupScope.${sc}`), slugs: memoryCleanupSlugs[sc],
+      })),
+      {
+        intro: t('agents.memory.cleanupIntro'),
+        more: (n) => t('agents.memory.cleanupMore', { n }),
+        outro: t('agents.memory.cleanupOutro'),
+      },
+    )
+    : '';
   /**
    * 한도가 차면 **새 기억이 조용히 거절된다**(`services/memory.ts` 의 `too_many`). 그때
    * 사람이 할 수 있는 일은 지우는 것뿐인데 앞판 화면에는 몇 개인지조차 없었다. 9할에서
@@ -786,6 +803,25 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
   const toggleIn = (list: string[], key: string): string[] =>
     (list.includes(key) ? list.filter((k) => k !== key) : [...list, key]);
+
+  /**
+   * 「정리 맡기기」 보내기(PR 5, 결정 3). 보내는 대상은 **누른 순간의 에이전트**다 — 그 뒤 다른 에이전트로
+   * 바꿔도 글은 원래 대상에게 가고, 결과 문구만 지금 칸이 그 에이전트일 때 적는다(security: 늦은 응답).
+   */
+  const memoryCleanupSend = () => {
+    if (!selected || !memCleanup || !memoryCleanupBody) return;
+    const agent = selected;
+    const body = memoryCleanupBody;
+    setMemCleanupBusy(true);
+    void getController().sendDm(agent.id, body)
+      .then(() => {
+        if (memAgentRef.current !== agent.id) return;
+        setMemCleanup(null);
+        setMemNotice({ tone: 'ok', text: t('agents.memory.cleanupSent', { handle: agent.handle }) });
+      })
+      .catch(() => { if (memAgentRef.current === agent.id) setError(t('agents.memory.cleanupFailed')); })
+      .finally(() => setMemCleanupBusy(false));
+  };
 
   /**
    * 보관·되살리기(#1186). 결과는 slug 마다 온다 — **안 된 것은 고른 채로 둔다**(되살리기가 200 에
@@ -1026,7 +1062,14 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     const openLink = (target: string) => {
       const r = resolveWikiLink(target, memoryActiveSet, memoryArchivedSet);
       if (!r.slug) return;
-      if (r.state === 'archived') setOpenGroups((prev) => (prev.includes(ARCHIVED_GROUP) ? prev : [...prev, ARCHIVED_GROUP]));
+      // 좁은 창에서 상세는 그 줄 안에 그려진다 — 줄이 접힌 칸(보관함·접두어 묶음) 안이면 칸부터 연다(#1209 security 메모).
+      const entry = memoryAll?.find((e) => e.slug === r.slug);
+      const prefix = memoryGroupKey(r.slug);
+      const keys = [
+        ...(r.state === 'archived' ? [ARCHIVED_GROUP] : []),
+        ...(r.state === 'active' && prefix ? [`${entry?.kind ?? 'topic'}:${prefix}`] : []),
+      ];
+      setOpenGroups((prev) => [...prev, ...keys.filter((k) => !prev.includes(k))]);
       setMemSelected(r.slug);
     };
     const ago = (iso: string) => agoLabel(new Date(iso).getTime(), Date.now(), locale, t);
@@ -1189,6 +1232,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     // 앞 에이전트에서 펼쳐 둔 줄·검색어가 남으면 다음 에이전트의 목록이 남의 상태로 열린다.
     setOpenSlugs([]);
     setMemSelected(null);
+    setMemCleanup(null);
     setOpenGroups([]);
     setMemQuery('');
     setMemSort('recent');
@@ -2859,6 +2903,63 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                             {`${t(`agents.memory.chip.${c.key}`)} ${chipCount(c)}`}
                           </button>
                         ))}
+                      </div>
+                    )}
+                    {/*
+                      「정리 맡기기」(PR 5). 합치기·증류처럼 판단이 필요한 일은 그 에이전트에게 DM 으로 맡긴다.
+                      초안에는 **이름과 범위만** 싣고 본문은 싣지 않는다(lib `cleanupRequestBody`). 보낸 뒤에도
+                      이 탭에 머문다 — 사람은 하던 정리를 이어 가고, 답은 DM 에 온다.
+                    */}
+                    {memoryParts && memoryParts.active.length > 0 && memCleanup === null && (
+                      <button
+                        data-testid="memory-cleanup-open"
+                        className="rounded-row border border-border bg-surface px-1.5 text-meta text-fg-muted"
+                        onClick={() => setMemCleanup(CLEANUP_SCOPES.filter((sc) => (
+                          sc === 'picked' ? memoryPickedActive.length > 0 : memoryCleanupSlugs[sc].length > 0)))}
+                      >
+                        {t('agents.memory.cleanupOpen', { handle: selected.handle })}
+                      </button>
+                    )}
+                    {memCleanup !== null && (
+                      <div data-testid="memory-cleanup-sheet" className="space-y-2 rounded-row border border-border bg-surface p-2">
+                        <div className="text-meta font-semibold">{t('agents.memory.cleanupTitle', { handle: selected.handle })}</div>
+                        <div className="text-meta text-fg-subtle">{t('agents.memory.cleanupNote')}</div>
+                        <div className="flex flex-col gap-0.5">
+                          {CLEANUP_SCOPES.map((sc) => {
+                            const n = memoryCleanupSlugs[sc].length;
+                            return (
+                              <label key={sc} className={`flex items-baseline gap-2 text-meta ${n === 0 ? 'text-fg-subtle' : ''}`}>
+                                <input
+                                  type="checkbox"
+                                  data-testid={`memory-cleanup-scope-${sc}`}
+                                  disabled={n === 0}
+                                  checked={n > 0 && memCleanup.includes(sc)}
+                                  onChange={() => setMemCleanup((prev) => (prev ? toggleIn(prev, sc) as CleanupScope[] : prev))}
+                                />
+                                <span>{t(`agents.memory.cleanupScope.${sc}`)}</span>
+                                <span className="text-fg-subtle">{n}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        {memoryCleanupBody && (
+                          <pre data-testid="memory-cleanup-preview" className="max-h-48 overflow-auto rounded-sm bg-surface-sunken p-1.5 text-meta whitespace-pre-wrap break-words text-fg-muted">
+                            {memoryCleanupBody}
+                          </pre>
+                        )}
+                        <div className="flex gap-1">
+                          <button
+                            data-testid="memory-cleanup-send"
+                            className="rounded-row border border-border bg-surface-agent px-2 text-meta text-fg-agent disabled:opacity-50"
+                            disabled={memCleanupBusy || !memCleanup.some((sc) => memoryCleanupSlugs[sc].length > 0)}
+                            onClick={memoryCleanupSend}
+                          >
+                            {t('agents.memory.cleanupSend', { handle: selected.handle })}
+                          </button>
+                          <button className="rounded-row border border-border px-2 text-meta text-fg-muted" onClick={() => setMemCleanup(null)}>
+                            {t('agents.memory.cancelEdit')}
+                          </button>
+                        </div>
                       </div>
                     )}
                     {memNotice && (
