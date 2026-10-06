@@ -41,6 +41,7 @@ import { AgentGrantsSection, liveMergeGrantCount } from './AgentGrantsSection';
 import { AgentPickableSection } from './AgentPickableSection';
 import { kindLabel, MemoryDetail } from './MemoryDetail';
 import { MemoryBody } from './MemoryBody';
+import { openWindow } from '../../lib/windowActions';
 import { canSeeAgentConfig } from '../../lib/agentConfigGate';
 // 팀 묶음(`docs/desktop-agent-cards.html` 4단계). 카드가 `AgentGrid` 를 재사용하지 않은
 // 근거는 `TeamGrid` 머리 주석에 있다 — 요지는 `AgentGridPlace` 가 못 박은 것이다:
@@ -388,6 +389,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   /** 「정리 맡기기」 시트(PR 5). 고른 범위만 DM 초안에 싣는다. */
   const [memCleanup, setMemCleanup] = useState<CleanupScope[] | null>(null);
   const [memCleanupBusy, setMemCleanupBusy] = useState(false);
+  const [memCleanupError, setMemCleanupError] = useState<string | null>(null);
+  /** 방금 보낸 것 — 같은 요청을 곧바로 또 보내지 않게 버튼 옆에 말한다(#1211 designer nit 4). */
+  const [memCleanupSent, setMemCleanupSent] = useState<{ agentId: string; at: number; dmId: string } | null>(null);
   /**
    * 목록/상세를 나란히 둘 만큼 넓은가(#1209 designer B1·B2). 컨테이너 쿼리 대신 잰다 — 좁을 때는 상세를
    * **고른 줄 바로 아래** 펼쳐야 하는데(목록에서 자리를 잃지 않게), 그 자리는 CSS 만으로 옮길 수 없다.
@@ -416,7 +420,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const [memChip, setMemChip] = useState<CleanupChip | null>(null);
   /** 여러 개 고르기 — 보관·되살리기를 한 번에(결정 2). */
   const [memPicked, setMemPicked] = useState<string[]>([]);
-  const [memNotice, setMemNotice] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null);
+  const [memNotice, setMemNotice] = useState<{ tone: 'ok' | 'warn'; text: string; dmId?: string } | null>(null);
   const [memBusy, setMemBusy] = useState(false);
   // #251: 비활성화는 되돌릴 수 없는 작업이므로 확인 단계를 거친다.
   const [confirmingDisable, setConfirmingDisable] = useState(false);
@@ -808,18 +812,28 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 「정리 맡기기」 보내기(PR 5, 결정 3). 보내는 대상은 **누른 순간의 에이전트**다 — 그 뒤 다른 에이전트로
    * 바꿔도 글은 원래 대상에게 가고, 결과 문구만 지금 칸이 그 에이전트일 때 적는다(security: 늦은 응답).
    */
+  /**
+   * 이 에이전트가 지금 DM 으로 턴을 띄울 수 있나(#1211 designer nit 5). 서버는 사람이 DM 에 쓴 글마다
+   * 상대에게 'dm' inbox 를 **호출 게이트 없이** 만들고(`services/messages.ts` DM 절), 러너는 inbox 이유를
+   * 가리지 않고 턴을 띄운다 — 호출 범위 설정과 무관하다. 턴이 안 뜨는 것은 꺼졌거나·지워졌거나·
+   * 오퍼레이터에 배정되지 않은 에이전트뿐이다. 그때는 보내도 답이 없으니 막고 이유를 말한다.
+   */
+  const memoryCleanupBlocked = !!selected && (selected.disabled || selected.deleted || !selected.assignment);
   const memoryCleanupSend = () => {
-    if (!selected || !memCleanup || !memoryCleanupBody) return;
+    if (!selected || !memCleanup || !memoryCleanupBody || memoryCleanupBlocked) return;
     const agent = selected;
     const body = memoryCleanupBody;
     setMemCleanupBusy(true);
+    setMemCleanupError(null);
     void getController().sendDm(agent.id, body)
-      .then(() => {
+      .then((dmId) => {
         if (memAgentRef.current !== agent.id) return;
         setMemCleanup(null);
-        setMemNotice({ tone: 'ok', text: t('agents.memory.cleanupSent', { handle: agent.handle }) });
+        setMemCleanupSent({ agentId: agent.id, at: Date.now(), dmId });
+        setMemNotice({ tone: 'ok', text: t('agents.memory.cleanupSent', { handle: agent.handle }), dmId });
       })
-      .catch(() => { if (memAgentRef.current === agent.id) setError(t('agents.memory.cleanupFailed')); })
+      // 실패는 시트 안 [보내기] 옆에 — 화면 위쪽 오류 줄은 시트에서 멀다(nit 3).
+      .catch(() => { if (memAgentRef.current === agent.id) setMemCleanupError(t('agents.memory.cleanupFailed')); })
       .finally(() => setMemCleanupBusy(false));
   };
 
@@ -1233,6 +1247,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     setOpenSlugs([]);
     setMemSelected(null);
     setMemCleanup(null);
+    setMemCleanupError(null);
     setOpenGroups([]);
     setMemQuery('');
     setMemSort('recent');
@@ -2920,10 +2935,20 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                         {t('agents.memory.cleanupOpen', { handle: selected.handle })}
                       </button>
                     )}
+                    {memCleanup === null && memCleanupSent?.agentId === selected.id && (
+                      <span data-testid="memory-cleanup-sent" className="ml-2 text-meta text-fg-subtle">
+                        {t('agents.memory.cleanupSentAgo', { ago: agoLabel(memCleanupSent.at, Date.now(), locale, t) })}
+                      </span>
+                    )}
                     {memCleanup !== null && (
                       <div data-testid="memory-cleanup-sheet" className="space-y-2 rounded-row border border-border bg-surface p-2">
                         <div className="text-meta font-semibold">{t('agents.memory.cleanupTitle', { handle: selected.handle })}</div>
                         <div className="text-meta text-fg-subtle">{t('agents.memory.cleanupNote')}</div>
+                        {memoryCleanupBlocked && (
+                          <div data-testid="memory-cleanup-blocked" role="note" className="text-meta text-warning">
+                            {t('agents.memory.cleanupBlocked', { handle: selected.handle })}
+                          </div>
+                        )}
                         <div className="flex flex-col gap-0.5">
                           {CLEANUP_SCOPES.map((sc) => {
                             const n = memoryCleanupSlugs[sc].length;
@@ -2943,22 +2968,26 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                           })}
                         </div>
                         {memoryCleanupBody && (
-                          <pre data-testid="memory-cleanup-preview" className="max-h-48 overflow-auto rounded-sm bg-surface-sunken p-1.5 text-meta whitespace-pre-wrap break-words text-fg-muted">
+                          // 본문 글꼴로, 끝까지 — 맨 끝 절차 문구가 사람이 무엇을 시키는지 확인할 문장이다(nit 1).
+                          <div data-testid="memory-cleanup-preview" className="rounded-sm bg-surface-sunken p-1.5 font-sans text-meta whitespace-pre-wrap break-words text-fg-muted">
                             {memoryCleanupBody}
-                          </pre>
+                          </div>
                         )}
                         <div className="flex gap-1">
                           <button
                             data-testid="memory-cleanup-send"
                             className="rounded-row border border-border bg-surface-agent px-2 text-meta text-fg-agent disabled:opacity-50"
-                            disabled={memCleanupBusy || !memCleanup.some((sc) => memoryCleanupSlugs[sc].length > 0)}
+                            disabled={memCleanupBusy || memoryCleanupBlocked || !memCleanup.some((sc) => memoryCleanupSlugs[sc].length > 0)}
                             onClick={memoryCleanupSend}
                           >
                             {t('agents.memory.cleanupSend', { handle: selected.handle })}
                           </button>
-                          <button className="rounded-row border border-border px-2 text-meta text-fg-muted" onClick={() => setMemCleanup(null)}>
+                          <button className="rounded-row border border-border px-2 text-meta text-fg-muted" onClick={() => { setMemCleanup(null); setMemCleanupError(null); }}>
                             {t('agents.memory.cancelEdit')}
                           </button>
+                          {memCleanupError && (
+                            <span data-testid="memory-cleanup-error" role="alert" className="self-center text-meta text-danger">{memCleanupError}</span>
+                          )}
                         </div>
                       </div>
                     )}
@@ -2969,6 +2998,16 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                         className={`text-meta ${memNotice.tone === 'warn' ? 'text-warning' : 'text-fg-muted'}`}
                       >
                         {memNotice.text}
+                        {/* 답이 오는 DM 으로 가는 길 — 이 탭은 그대로 두고 새 창으로 연다(nit 2). */}
+                        {memNotice.dmId && (
+                          <button
+                            data-testid="memory-notice-open-dm"
+                            className="ml-2 underline decoration-dotted"
+                            onClick={() => openWindow({ kind: 'channel', channelId: memNotice.dmId! })}
+                          >
+                            {t('agents.memory.cleanupOpenDm')}
+                          </button>
+                        )}
                       </div>
                     )}
                     {memPicked.length > 0 && (
