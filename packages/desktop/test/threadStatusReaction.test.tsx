@@ -1,13 +1,14 @@
-// 스레드 상태 리액션(D안) — 화면 쪽. 판정은 서버(shared/threadStatus.ts)가 하고, 여기서는
-// ① 맨 앞에 숫자 없이 ② 누를 수 없게 ③ 🙋·🚨 만 테두리+낱말 ④ hover 이유 ⑤ thread.status 반영
-// ⑥ 실시간 행이 배지 재료를 null 로 덮지 않음(0.3.107 배지 누락) ⑦ 사람 ✅ 와 분리 를 본다.
+// 스레드 상태 리액션 — 화면 쪽. 판정은 서버(shared/threadStatus.ts)가 하고 **진짜 리액션으로 단다**(server 108,
+// 2026-10-06). 여기서는 ① 서버가 단 리액션을 상태 칩으로 알아본다(보통 칩 모양·숫자) ② 남의 상태 칩은 눌러도
+// 안 달린다 ③ 🙋·🚨 만 색 테두리 ④ hover 이유 ⑤ 옛 서버면 상태에서 칩을 붙인다 ⑥ 끝남 ✅ 는 그리지 않는다
+// ⑦ thread.status 반영 ⑧ 실시간 행이 배지 재료를 null 로 덮지 않음(0.3.107 배지 누락) 을 본다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
 import type { MessageRow, ThreadStatusReaction } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
-import { Controller } from '../src/state/controller';
+import { Controller, setController } from '../src/state/controller';
 import { keepThreadFacts } from '../src/state/appStore';
-import { Reactions, statusSentence, withoutAgentStatusEchoes } from '../src/components/Reactions';
+import { Reactions, statusSentence, withStatusReaction } from '../src/components/Reactions';
 import { translator } from '../src/i18n';
 import { acc, fakeApi, msg } from './helpers/fakeApi';
 
@@ -28,63 +29,74 @@ const feed = (c: Controller, e: unknown) =>
   (c as unknown as { handleEvent: (e: unknown) => void }).handleEvent(e);
 
 beforeEach(() => seed());
-afterEach(() => { cleanup(); vi.useRealTimers(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); setController(null); });
 
 describe('상태 리액션 칩', () => {
-  it('맨 앞에, 숫자 없이, 버튼이 아니다 — 사람 칩은 그 뒤에 따로', () => {
-    seed({ statusReaction: st('done', '✅'), reactions: [{ emoji: '✅', accountIds: ['u2'] }, { emoji: '👍', accountIds: ['u1'] }] });
+  it('서버가 단 리액션을 상태 칩으로 그린다 — 보통 칩 모양, 숫자도 있다', () => {
+    seed({ statusReaction: st('running', '💬'), reactions: [{ emoji: '👍', accountIds: ['u1'] }, { emoji: '💬', accountIds: ['bot'] }] });
     render(<Reactions message={root()} />);
-    const row = screen.getByTestId('reactions');
-    const first = row.firstElementChild as HTMLElement;
-    expect(first.dataset.testid).toBe('status-reaction');
-    expect(first.tagName).toBe('SPAN');
-    expect(first.textContent).toBe('✅');
-    // 사람이 단 ✅ 는 숫자와 함께 따로 남는다.
-    expect(screen.getByTestId('reaction-✅').textContent).toBe('✅1');
+    const chip = screen.getByTestId('reaction-💬');
+    expect(chip.tagName).toBe('BUTTON');
+    expect(chip.dataset.status).toBe('running');
+    expect(chip.textContent).toBe('💬1');
+    expect(screen.getByTestId('reaction-👍').dataset.status).toBeUndefined();
+    // 칩은 하나뿐이다 — 따로 그리던 상태 칩은 없다.
+    expect(screen.queryByTestId('status-reaction')).toBeNull();
+    expect(screen.getAllByTestId(/^reaction-💬$/)).toHaveLength(1);
   });
 
-  it('눌러도 토글되지 않는다', () => {
+  it('남의 상태 칩은 눌러도 안 달린다 — 내가 같이 단 것은 뗄 수 있다', () => {
     const toggle = vi.fn(async () => {});
     const c = new Controller(fakeApi());
     (c as unknown as { toggleReaction: typeof toggle }).toggleReaction = toggle;
-    seed({ statusReaction: st('running', '💬') });
-    render(<Reactions message={root()} />);
-    fireEvent.click(screen.getByTestId('status-reaction'));
+    setController(c);
+    seed({ statusReaction: st('received', '👀'), reactions: [{ emoji: '👀', accountIds: ['bot'] }] });
+    const { rerender } = render(<Reactions message={root()} />);
+    fireEvent.click(screen.getByTestId('reaction-👀'));
     expect(toggle).not.toHaveBeenCalled();
-    expect(root().reactions).toEqual([]);
+    rerender(<Reactions message={{ ...root(), reactions: [{ emoji: '👀', accountIds: ['bot', 'u1'] }] }} />);
+    fireEvent.click(screen.getByTestId('reaction-👀'));
+    expect(toggle).toHaveBeenCalledWith('c1', 'r1', '👀', false);
   });
 
-  it('🙋·🚨 만 낱말을 받는다', () => {
-    seed({ statusReaction: st('my-turn', '🙋', '어느 쪽?') });
+  it('🙋·🚨 만 색 테두리를 받는다', () => {
+    seed({ statusReaction: st('my-turn', '🙋', '어느 쪽?'), reactions: [{ emoji: '🙋', accountIds: ['bot'] }] });
     const { rerender } = render(<Reactions message={root()} />);
-    expect(screen.getByTestId('status-reaction-label').textContent).toBe('Your turn');
-    expect(screen.getByTestId('status-reaction').className).toContain('border-state-turn');
-    rerender(<Reactions message={{ ...root(), statusReaction: st('stuck', '🚨', 'MCP auth') }} />);
-    expect(screen.getByTestId('status-reaction-label').textContent).toBe('Stuck');
-    expect(screen.getByTestId('status-reaction').className).toContain('border-state-stuck');
-    rerender(<Reactions message={{ ...root(), statusReaction: st('waiting', '⏳', 'u2') }} />);
-    expect(screen.queryByTestId('status-reaction-label')).toBeNull();
+    expect(screen.getByTestId('reaction-🙋').className).toContain('border-state-turn');
+    rerender(<Reactions message={{ ...root(), statusReaction: st('stuck', '🚨', 'MCP auth'), reactions: [{ emoji: '🚨', accountIds: ['bot'] }] }} />);
+    expect(screen.getByTestId('reaction-🚨').className).toContain('border-state-stuck');
+    rerender(<Reactions message={{ ...root(), statusReaction: st('waiting', '⏳', 'u2'), reactions: [{ emoji: '⏳', accountIds: ['bot'] }] }} />);
+    expect(screen.getByTestId('reaction-⏳').className).toContain('border-border');
   });
 
   it('마우스를 올리면 이유가 뜬다', () => {
     vi.useFakeTimers();
-    seed({ statusReaction: st('my-turn', '🙋', '수정안 둘 중 어느 것?') });
+    seed({ statusReaction: st('my-turn', '🙋', '수정안 둘 중 어느 것?'), reactions: [{ emoji: '🙋', accountIds: ['bot'] }] });
     render(<Reactions message={root()} />);
-    fireEvent.mouseEnter(screen.getByTestId('status-reaction'));
+    fireEvent.mouseEnter(screen.getByTestId('reaction-🙋'));
     act(() => { vi.advanceTimersByTime(200); });
     expect(screen.getByTestId('reaction-tooltip').textContent).toContain('Your turn · harkbot asks · 수정안 둘 중 어느 것?');
   });
 
-  it('상태가 있으면 에이전트만 단 👀·💬 는 숨기고, 사람이 낀 칩은 둔다', () => {
-    const out = withoutAgentStatusEchoes([
-      { emoji: '👀', accountIds: ['bot'] }, { emoji: '✅', accountIds: ['bot', 'u2'] }, { emoji: '🎉', accountIds: ['bot'] },
-    ], useAppStore.getState().accounts as never);
-    expect(out.map((r) => r.emoji)).toEqual(['✅', '🎉']);
+  it('리액션이 아직 없으면(옛 서버·이벤트 찰나) 상태에서 칩을 붙인다, 끝남 ✅ 는 붙이지 않는다', () => {
+    expect(withStatusReaction([], st('running', '💬'))).toEqual([{ emoji: '💬', accountIds: ['bot'] }]);
+    expect(withStatusReaction([{ emoji: '💬', accountIds: ['u2'] }], st('running', '💬')))
+      .toEqual([{ emoji: '💬', accountIds: ['bot', 'u2'] }]);
+    const already = [{ emoji: '💬', accountIds: ['bot'] }];
+    expect(withStatusReaction(already, st('running', '💬'))).toBe(already);
+    expect(withStatusReaction([], st('done', '✅'))).toEqual([]);
   });
 
-  it('답글 행에는 그리지 않는다', () => {
-    render(<Reactions message={{ ...root(), threadRootId: 'x', statusReaction: st('done', '✅') }} />);
-    expect(screen.queryByTestId('status-reaction')).toBeNull();
+  it('끝난 스레드는 사람 ✅ 만 — 상태 칩이 아니다', () => {
+    seed({ statusReaction: st('done', '✅'), reactions: [{ emoji: '✅', accountIds: ['u2'] }] });
+    render(<Reactions message={root()} />);
+    expect(screen.getByTestId('reaction-✅').dataset.status).toBeUndefined();
+    expect(screen.getByTestId('reaction-✅').textContent).toBe('✅1');
+  });
+
+  it('답글 행에는 상태를 붙이지 않는다', () => {
+    render(<Reactions message={{ ...root(), threadRootId: 'x', statusReaction: st('running', '💬') }} />);
+    expect(screen.queryByTestId('reaction-💬')).toBeNull();
   });
 });
 

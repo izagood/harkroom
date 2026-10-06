@@ -1,4 +1,4 @@
-import { THREAD_STATUS_EMOJI, type MessageRow, type ThreadStatusReaction } from '@harkroom/shared';
+import { statusReactionEmoji, type MessageRow, type ThreadStatusReaction } from '@harkroom/shared';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useActiveStore } from '../state/communities';
@@ -219,12 +219,11 @@ export function Reactions({ message }: { message: MessageRow }) {
   };
 
   const status = message.threadRootId === null ? message.statusReaction ?? null : null;
-  const chips = status ? withoutAgentStatusEchoes(message.reactions, accounts) : message.reactions;
-  if (!chips.length && !status) return null;
+  const chips = withStatusReaction(message.reactions, status);
+  if (!chips.length) return null;
 
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1" data-testid="reactions">
-      {status && <StatusReactionChip status={status} accounts={accounts} />}
       {chips.map((r) => (
         <ReactionChip
           key={r.emoji}
@@ -233,32 +232,42 @@ export function Reactions({ message }: { message: MessageRow }) {
           nameOf={nameOf}
           myId={myId}
           onToggle={toggle}
+          status={isStatusChip(r, status) ? status : null}
         />
       ))}
     </div>
   );
 }
 
-/** 상태 리액션이 쓰는 이모지들. 루트에 상태가 있으면 에이전트만 단 같은 이모지 칩은 숨긴다. */
-const STATUS_EMOJI_SET = new Set(Object.values(THREAD_STATUS_EMOJI));
+/**
+ * 이 칩이 **서버가 단 상태 리액션**인가(2026-10-06, jaebin) — 상태 이모지이고 그 주인 에이전트가 들어 있다.
+ * 서버는 상태를 진짜 리액션으로 단다(server 108, `services/threadStatus.ts`) — 주인 에이전트 이름으로,
+ * 끝남 ✅ 는 없이. 그래서 상태는 데스크톱·모바일·웹 모두 같은 리액션으로 보이고, 화면은 그 칩을 알아보기만 한다.
+ */
+export function isStatusChip(r: MessageRow['reactions'][number], status: ThreadStatusReaction | null): boolean {
+  if (!status?.accountId) return false;
+  return r.emoji === statusReactionEmoji(status.status) && r.accountIds.includes(status.accountId);
+}
 
 /**
- * 루트에 상태 리액션이 있으면 **에이전트만 단** 👀·💬·✅ 칩은 그리지 않는다 — 러너가 멘션을
- * 받았다고 단 👀 와 상태 💬 가 나란히 서면 "루트에 언제나 하나"(D안 규칙 1)가 화면에서 깨진다.
- * 사람이 하나라도 단 칩은 그대로 둔다(사람 리액션은 건드리지 않는다). 모르는 계정은 사람으로 친다.
+ * 상태가 있는데 그 리액션이 아직 없으면 붙여서 그린다 — 옛 서버(리액션으로 달지 않는다)와, 실시간
+ * `thread.status` 가 리액션 이벤트보다 먼저 닿은 찰나를 받친다. 서버가 이미 달았으면 그대로다.
  */
-export function withoutAgentStatusEchoes(
-  reactions: MessageRow['reactions'], accounts: AccountNames,
+export function withStatusReaction(
+  reactions: MessageRow['reactions'], status: ThreadStatusReaction | null,
 ): MessageRow['reactions'] {
-  return reactions.filter((r) => !STATUS_EMOJI_SET.has(r.emoji)
-    || r.accountIds.some((id) => accounts[id]?.kind !== 'agent'));
+  const emoji = status ? statusReactionEmoji(status.status) : null;
+  if (!status?.accountId || !emoji || reactions.some((r) => isStatusChip(r, status))) return reactions;
+  const same = reactions.find((r) => r.emoji === emoji);
+  if (same) return reactions.map((r) => (r === same ? { emoji, accountIds: [status.accountId!, ...r.accountIds] } : r));
+  return [{ emoji, accountIds: [status.accountId] }, ...reactions];
 }
 
 /** 이유는 80자에서 자른다 — 긴 물음이 말풍선을 화면만큼 키우지 않게(designer). */
 const REASON_MAX = 80;
 const clip = (x: string) => (x.length > REASON_MAX ? `${x.slice(0, REASON_MAX)}…` : x);
 
-/** 상태 → 낱말 키. 화면의 다섯 배지(`thread.state.*`)와 달리 스레드 기준 여섯 상태다. */
+/** 상태 → 낱말 키. 화면의 다섯 배지(`thread.state.*`)와 달리 스레드 기준 여섯 상태다. 말풍선 문장의 머리다. */
 const STATUS_LABEL = {
   received: 'threadStatus.label.received',
   running: 'threadStatus.label.running',
@@ -308,73 +317,28 @@ export function statusSentence(
   return parts.join(' · ');
 }
 
-/**
- * **상태 리액션 칩**(D안) — 맨 앞에, 숫자 없이, 누를 수 없다.
- *
- * - 버튼이 아니라 `span` 이다: 사람이 눌러 토글하면 서버 판정과 화면이 갈라진다(규칙 4).
- *   포커스는 받는다(`tabIndex=0`) — 키보드로도 이유를 읽을 수 있어야 한다.
- * - 🙋·🚨 만 색 테두리와 낱말을 받는다. 나머지 넷은 사람을 부르지 않으므로 이모지 하나다
- *   (`isBlocking` 과 같은 강조 예산).
- * - 말풍선은 사람 칩과 **같은 틀**(`ReactionTooltip`)을 쓴다 — 두 모양이면 어느 것이 무엇인지 배워야 한다.
- */
-function StatusReactionChip({ status, accounts }: { status: ThreadStatusReaction; accounts: AccountNames }) {
-  const t = useT();
-  const locale = useLocale();
-  const ref = useRef<HTMLSpanElement>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [anchor, setAnchor] = useState<DOMRect | null>(null);
-  const clear = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
-  const openSoon = () => {
-    clear();
-    timer.current = setTimeout(() => {
-      if (ref.current) setAnchor(ref.current.getBoundingClientRect());
-    }, TOOLTIP_OPEN_DELAY_MS);
-  };
-  const close = () => { clear(); setAnchor(null); };
-  useEffect(() => clear, []);
-
-  const sentence = statusSentence(status, accounts, t, locale);
-  const label = status.status === 'my-turn' || status.status === 'stuck' ? t(STATUS_LABEL[status.status]) : null;
-  const tone = status.status === 'my-turn'
-    ? 'border-state-turn text-state-turn font-medium'
-    : status.status === 'stuck'
-      ? 'border-state-stuck text-state-stuck font-medium'
-      : 'border-border text-fg-muted';
-  return (
-    <>
-      <span
-        ref={ref}
-        role="status"
-        tabIndex={0}
-        data-testid="status-reaction"
-        data-status={status.status}
-        aria-label={t('threadStatus.aria', { sentence })}
-        onMouseEnter={openSoon}
-        onMouseLeave={close}
-        onFocus={openSoon}
-        onBlur={close}
-        className={`flex cursor-default select-none items-center gap-1 rounded-full border bg-surface px-1.5 text-meta ${tone}`}
-      >
-        <span>{status.emoji}</span>
-        {label && <span data-testid="status-reaction-label">{label}</span>}
-      </span>
-      {anchor && <ReactionTooltip emoji={status.emoji} text={sentence} anchor={anchor} />}
-    </>
-  );
-}
-
 /** 올린 뒤 이만큼 머물러야 말풍선을 연다 — 칩 줄을 가로지르는 커서마다 깜빡이지 않게. */
 const TOOLTIP_OPEN_DELAY_MS = 150;
 
 /** 칩 하나. 말풍선의 열림 상태가 칩마다 따로라 컴포넌트로 뗐다. */
-function ReactionChip({ emoji, accountIds, nameOf, myId, onToggle }: {
+function ReactionChip({ emoji, accountIds, nameOf, myId, onToggle, status }: {
   emoji: string;
   accountIds: string[];
   nameOf: (id: string) => string | null;
   myId: string | null;
   onToggle: (emoji: string, on: boolean) => void;
+  /**
+   * 서버가 단 **상태 리액션** 칩이면 그 상태(`isStatusChip`). 보통 칩과 같은 모양·숫자로 그린다 — 모바일·웹과
+   * 같게 보이려는 것이 이 모양의 이유다. 다른 셋:
+   * - 내가 단 것이 아니면 **눌러도 아무것도 안 한다** — 눌러서 같은 이모지를 달면 상태와 사람 리액션이 섞인다.
+   * - 말풍선은 누가 달았는지가 아니라 **상태 문장**(`statusSentence`: 상태 · 누구 · 이유)이다.
+   * - 🙋·🚨 만 색 테두리(사람을 부르는 둘 — 앞판의 강조 예산 그대로).
+   */
+  status?: ThreadStatusReaction | null;
 }) {
   const t = useT();
+  const locale = useLocale();
+  const accounts = useActiveStore(selectAccountNames);
   const chipRef = useRef<HTMLButtonElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
@@ -393,12 +357,17 @@ function ReactionChip({ emoji, accountIds, nameOf, myId, onToggle }: {
   // 말풍선(`ReactionTooltip`)과 스크린리더(`aria-label`)가 **같은 목록**을 말한다. 갈라 두면
   // 한쪽만 고쳐지고, 그러면 눈으로 본 것과 읽힌 것이 다르다.
   const who = reactorNames(accountIds, nameOf, myId, t);
+  const sentence = status ? statusSentence(status, accounts, t, locale) : null;
+  const tone = status?.status === 'my-turn'
+    ? 'border-state-turn'
+    : status?.status === 'stuck' ? 'border-state-stuck' : null;
   return (
     <>
       <button
         ref={chipRef}
         data-testid={`reaction-${emoji}`}
         data-mine={mine ? 'true' : 'false'}
+        data-status={status?.status}
         /*
           **호버로 누가 달았는지 보여 준다** — 앞 판(2026-09-09)은 OS `title` 에 이름
           목록만 실었다. OS 툴팁은 작고 늦게 뜨며(약 1초) 우리가 모양을 못 정한다.
@@ -414,7 +383,7 @@ function ReactionChip({ emoji, accountIds, nameOf, myId, onToggle }: {
         onFocus={openSoon}
         onBlur={close}
         // 이모지 문자만으로는 스크린리더가 무엇인지 읽을 수 없다 — 누가 눌렀는지 함께 준다.
-        aria-label={`${emoji} — ${who}`}
+        aria-label={sentence ? `${emoji} — ${t('threadStatus.aria', { sentence })}` : `${emoji} — ${who}`}
         aria-pressed={mine}
         /*
           **내가 단 것은 선으로도 구별한다**(2026-09-09, 요청자 jaebin).
@@ -435,15 +404,18 @@ function ReactionChip({ emoji, accountIds, nameOf, myId, onToggle }: {
         className={`flex items-center gap-1 rounded-full border px-1.5 text-meta ${
           mine
             ? 'border-accent-brand bg-surface-sunken font-medium text-fg'
-            : 'border-border bg-surface text-fg-muted'
-        }`}
-        onClick={() => onToggle(emoji, !mine)}
+            : `${tone ?? 'border-border'} bg-surface text-fg-muted`
+        }${status && !mine ? ' cursor-default' : ''}`}
+        // 상태 칩은 내 것만 뗀다 — 남의(상태 주인의) 칩을 눌러 같은 이모지를 다는 길을 막는다.
+        onClick={() => { if (!status || mine) onToggle(emoji, !mine); }}
       >
         <span>{emoji}</span>
         <span>{accountIds.length}</span>
       </button>
       {anchor && (
-        <ReactionTooltip emoji={emoji} who={{ accountIds, nameOf, myId }} anchor={anchor} />
+        sentence
+          ? <ReactionTooltip emoji={emoji} text={sentence} anchor={anchor} />
+          : <ReactionTooltip emoji={emoji} who={{ accountIds, nameOf, myId }} anchor={anchor} />
       )}
     </>
   );
