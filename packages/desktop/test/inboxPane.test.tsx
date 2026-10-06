@@ -79,7 +79,7 @@ const mount = (rows: InboxEntry[], extra: Record<string, unknown> = {}) => {
 };
 
 /** 여는 입구는 이번 작업에서 바뀌지 않는다 — 사이드바 홈 맨 위 한 줄(`desktop-rail.html`). */
-const openInbox = (): void => { fireEvent.click(screen.getByText('Inbox')); };
+const openInbox = (): void => { fireEvent.click(screen.getByText('내 작업')); };
 
 // **언어를 한국어로 고정한다.** 이 파일의 축들은 이 화면의 한국어 문구로 쓰여 있고,
 // 그 문구가 지키는 것은 언어가 아니라 **그 언어로 표현된 규율**이다(`#619`·사이드바 PR 이
@@ -188,7 +188,7 @@ describe('인박스는 자리다 — 모달이 아니다 (#488 C2)', () => {
 
     // 모달이었다면 `Overlay` 가 `role="dialog"` 를 줬다.
     expect(pane.getAttribute('role')).not.toBe('dialog');
-    expect(screen.queryByRole('dialog', { name: '인박스' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: '내 작업' })).toBeNull();
     // 스크림은 `fixed inset-0` 이었다. 그 값을 가진 조상이 있으면 아직 화면을 덮고 있다.
     expect(pane.closest('.fixed')).toBeNull();
   });
@@ -297,7 +297,7 @@ describe('인박스 자리 — 닫는 길과 키보드 (#488 C2)', () => {
     openInbox();
     await screen.findByTestId('inbox-pane');
 
-    const close = screen.getByRole('button', { name: '인박스 닫기' });
+    const close = screen.getByRole('button', { name: '내 작업 닫기' });
     close.focus();
     expect(document.activeElement).toBe(close);
     fireEvent.click(close);
@@ -314,7 +314,7 @@ describe('인박스 자리 — 닫는 길과 키보드 (#488 C2)', () => {
 
     openInbox();
     await screen.findByTestId('inbox-pane');
-    expect(screen.getByRole('complementary', { name: '인박스' })).toBeTruthy();
+    expect(screen.getByRole('complementary', { name: '내 작업' })).toBeTruthy();
   });
 
   /**

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Identity } from './Identity';
 import type { InboxEntry, InboxThreadState, MessageRow } from '@harkroom/shared';
-import { BOARD_COLUMNS, buildBoard, daysWaiting, laterUntilLabel, mineCount, type BoardCard, type BoardColumn, type BoardFold } from '../lib/inboxBoard';
+import { buildBoard, daysWaiting, laterUntilLabel, mineCount, type BoardCard, type BoardColumn, type BoardFold } from '../lib/inboxBoard';
 import { bodyWithHandles } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
@@ -42,6 +42,19 @@ function tomorrowMorning(nowMs: number): string {
   d.setHours(9, 0, 0, 0);
   return d.toISOString();
 }
+
+/**
+ * 「내 작업」 화면의 자리(designer W2 안 82644a8f). **내 차례는 열이 아니라 맨 위 전폭 띠**이고,
+ * 그 아래 세 열이 진행 → 기다림 → 끝 순서로 선다. 판정은 그대로 `buildBoard` 다 — 바뀐 것은 놓는 자리뿐이다.
+ */
+const LANE_COLUMNS: readonly Exclude<BoardColumn, 'mine'>[] = ['active', 'blocked', 'done'];
+/** 띠에 펼쳐 두는 장수. 넘치면 "+N개 더" 로 접는다 — 띠가 화면을 다 먹으면 세 열이 사라진다. */
+const BAND_LIMIT = 5;
+/**
+ * 열 머리의 상태 이모지 — 채널의 스레드 상태 리액션(088)과 **같은 말**이다. 장식이라 읽지 않는다
+ * (`aria-hidden`); 구획 이름은 글자 키가 진다.
+ */
+const COLUMN_EMOJI = { mine: '🙋', active: '💬', blocked: '⏳', done: '✅' } as const satisfies Record<BoardColumn, string>;
 
 /** 열 이름 키. 화면이 제 손으로 글자를 적지 않는다. */
 const COLUMN_KEY = {
@@ -461,47 +474,90 @@ export function Inbox({ open, onClose }: Props) {
         <p data-testid="inbox-empty" className="p-3 text-fg-subtle">{t('inbox.board.empty.all')}</p>
       )}
       {/*
-        열 넷. **넓은 창에서는 나란히**, 좁은 창에서는 **세로 구획으로 쌓는다**(designer) — 순서가
-        곧 열 순서라 내 차례가 맨 위다. 끌어 옮기기는 없다: 카드는 판정을 따라 저절로 옮긴다.
+        「내 작업」(W2): **내 차례 띠**가 맨 위 전폭으로 서고, 그 아래 세 열(진행 → 기다림 → 끝)이
+        넓은 창에서는 나란히, 좁은 창에서는 세로로 쌓인다. 끌어 옮기기는 없다: 카드는 판정을 따라
+        저절로 옮긴다. 스크롤은 이 자리 하나가 진다 — 띠와 열이 따로 굴러가면 띠가 열을 가린다.
       */}
       {load.kind === 'ready' && cards.length > 0 && (
-        <div
-          data-testid="inbox-board"
-          className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2 lg:flex-row lg:gap-2 lg:overflow-y-hidden lg:overflow-x-auto"
-        >
-          {BOARD_COLUMNS.map((col) => {
-            const shown = byColumn[col].filter((c) => c.fold === null);
+        <div data-testid="inbox-board" className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2">
+          {(() => {
+            // 띠 — 오래 기다린 것부터(`buildBoard` 가 내 차례를 sinceAt 오름차순으로 준다).
+            const shown = byColumn.mine.filter((c) => c.fold === null);
+            const head = shown.slice(0, BAND_LIMIT);
+            const rest = shown.slice(BAND_LIMIT);
+            const later = byColumn.mine.filter((c) => c.fold === 'later');
             return (
               <section
-                key={col}
-                data-testid={`inbox-col-${col}`}
-                aria-label={t(COLUMN_KEY[col])}
-                className="flex shrink-0 flex-col lg:min-h-0 lg:w-64 lg:min-w-56 lg:flex-1 lg:shrink"
+                data-testid="inbox-col-mine"
+                aria-label={t(COLUMN_KEY.mine)}
+                className={`shrink-0 rounded-row border p-2 ${shown.length > 0
+                  ? 'border-state-turn/40 bg-state-turn/10' : 'border-border bg-surface-raised'}`}
               >
-                <h3 className={`px-1 pb-1 text-meta font-medium uppercase tracking-wide ${col === 'mine' ? 'text-state-turn' : 'text-fg-subtle'}`}>
-                  {t(COLUMN_KEY[col])}
+                <h3 className={`flex items-baseline gap-1.5 px-1 pb-1 text-meta font-medium ${shown.length > 0 ? 'text-state-turn' : 'text-fg-subtle'}`}>
+                  <span aria-hidden="true">{COLUMN_EMOJI.mine}</span>
+                  <span>{t(COLUMN_KEY.mine)}</span>
+                  {shown.length > 1 && <span className="font-normal text-fg-subtle">· {t('inbox.board.band.order')}</span>}
                 </h3>
-                <div className="flex flex-col gap-1.5 lg:min-h-0 lg:overflow-y-auto">
-                  {shown.length === 0
-                    ? <p className="px-1 text-meta text-fg-subtle">{t(col === 'mine' ? 'inbox.board.empty.mine' : 'inbox.board.empty.other')}</p>
-                    : <ul className="flex flex-col gap-1.5">{shown.map(cardView)}</ul>}
-                  {/* 접힘 줄 — 열 맨 아래. 펼치면 같은 카드 모양으로 선다. */}
-                  {COLUMN_FOLDS[col].map((fold) => {
-                    const folded = byColumn[col].filter((c) => c.fold === fold);
-                    if (folded.length === 0) return null;
-                    return (
-                      <details key={fold} data-testid={`inbox-fold-${fold}`} className="px-1">
-                        <summary className="cursor-pointer text-meta text-fg-subtle hover:text-fg-muted">
-                          {t(FOLD_KEY[fold], { count: folded.length })}
-                        </summary>
-                        <ul className="mt-1.5 flex flex-col gap-1.5">{folded.map(cardView)}</ul>
-                      </details>
-                    );
-                  })}
-                </div>
+                {/* 0 이면 한 줄로 줄어든다 — 이 띠가 비는 것이 이 화면의 목적이다. */}
+                {shown.length === 0
+                  ? <p data-testid="inbox-band-empty" className="px-1 text-meta text-fg-subtle">{t('inbox.board.empty.mine')}</p>
+                  : <ul className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-1.5">{head.map(cardView)}</ul>}
+                {rest.length > 0 && (
+                  <details data-testid="inbox-band-more" className="mt-1.5 px-1">
+                    <summary className="cursor-pointer text-meta text-fg-subtle hover:text-fg-muted">
+                      {t('inbox.board.more', { count: rest.length })}
+                    </summary>
+                    <ul className="mt-1.5 grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-1.5">{rest.map(cardView)}</ul>
+                  </details>
+                )}
+                {later.length > 0 && (
+                  <details data-testid="inbox-fold-later" className="mt-1.5 px-1">
+                    <summary className="cursor-pointer text-meta text-fg-subtle hover:text-fg-muted">
+                      {t(FOLD_KEY.later, { count: later.length })}
+                    </summary>
+                    <ul className="mt-1.5 grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-1.5">{later.map(cardView)}</ul>
+                  </details>
+                )}
               </section>
             );
-          })}
+          })()}
+          <div className="flex flex-col gap-3 lg:grid lg:grid-cols-3 lg:items-start lg:gap-2">
+            {LANE_COLUMNS.map((col) => {
+              const shown = byColumn[col].filter((c) => c.fold === null);
+              return (
+                <section
+                  key={col}
+                  data-testid={`inbox-col-${col}`}
+                  aria-label={t(COLUMN_KEY[col])}
+                  className="flex min-w-0 flex-col"
+                >
+                  {/* 이모지는 채널의 상태 리액션과 같은 말이다. 수는 띠 하나만 센다 — 다른 열은 줄지 않는 숫자다. */}
+                  <h3 className="flex items-baseline gap-1.5 px-1 pb-1 text-meta font-medium text-fg-subtle">
+                    <span aria-hidden="true">{COLUMN_EMOJI[col]}</span>
+                    <span>{t(COLUMN_KEY[col])}</span>
+                  </h3>
+                  <div className="flex flex-col gap-1.5">
+                    {shown.length === 0
+                      ? <p className="px-1 text-meta text-fg-subtle">{t('inbox.board.empty.other')}</p>
+                      : <ul className="flex flex-col gap-1.5">{shown.map(cardView)}</ul>}
+                    {/* 접힘 줄 — 열 맨 아래. 펼치면 같은 카드 모양으로 선다. */}
+                    {COLUMN_FOLDS[col].map((fold) => {
+                      const folded = byColumn[col].filter((c) => c.fold === fold);
+                      if (folded.length === 0) return null;
+                      return (
+                        <details key={fold} data-testid={`inbox-fold-${fold}`} className="px-1">
+                          <summary className="cursor-pointer text-meta text-fg-subtle hover:text-fg-muted">
+                            {t(FOLD_KEY[fold], { count: folded.length })}
+                          </summary>
+                          <ul className="mt-1.5 flex flex-col gap-1.5">{folded.map(cardView)}</ul>
+                        </details>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
         </div>
       )}
       {/* 쓰다 만 초안 — 보드 밖 한 줄. 누르면 가장 최근 초안 자리로 간다. */}

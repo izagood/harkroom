@@ -324,7 +324,7 @@ describe('A2 · `+` 는 그 목록의 첫 칸에 산다', () => {
     */
     const nav = screen.getByRole('navigation', { name: '주 목록' });
     const sidebarNav = document.querySelector('aside nav')!;
-    expect(within(sidebarNav as HTMLElement).getByText('Inbox')).toBeTruthy();
+    expect(within(sidebarNav as HTMLElement).getByText('내 작업')).toBeTruthy();
     expect(within(sidebarNav as HTMLElement).getByText('Directory')).toBeTruthy();
     expect(within(sidebarNav as HTMLElement).queryByText('Saved')).toBeNull();
     expect(within(nav).getByTestId('rail-saved')).toBeTruthy();

@@ -1794,8 +1794,8 @@ export const en = {
    * 무엇이 다른지 이름만 듣는 사람에게 사라진다: 하나는 내 답을 기다리는 것이고 하나는
    * 새 대화가 있다는 것이다.
    */
-  'sidebar.inbox.blocking': '{count} waiting on you in the inbox',
-  'sidebar.inbox.unread': '{count} unread in the inbox',
+  'sidebar.inbox.blocking': '{count} waiting on you in My work',
+  'sidebar.inbox.unread': '{count} unread in My work',
 
   'sidebar.delete.cancel': 'Cancel',
   'sidebar.delete.confirm': 'Delete for good',
@@ -2950,13 +2950,15 @@ export const en = {
   'inbox.board.col.blocked': 'Waiting',
   'inbox.board.col.active': 'In progress',
   'inbox.board.col.done': 'Done',
+  /** 내 차례 띠의 덧말 — 띠 안의 순서(designer W2). */
+  'inbox.board.band.order': 'oldest first',
   /** 열 머리의 수. **내 차례만 센다** — 다른 열은 줄지 않는 숫자라 아무 말도 하지 않는다. */
   'inbox.board.mineCount': '{count} waiting on you',
   /** 열이 비었을 때. 내 차례가 0 이 되는 것이 이 화면의 목적이다. */
   'inbox.board.empty.mine': 'Nothing is waiting on you',
   'inbox.board.empty.other': 'Nothing here',
   /** 처음부터 아무것도 없을 때(걸러 낸 것과 다르다). */
-  'inbox.board.empty.all': 'Nothing has called you',
+  'inbox.board.empty.all': 'No work here yet',
   /** "N일째" — 이 열에 들어오게 한 말부터 센다. */
   'inbox.board.days': '{count}d waiting',
   /** 카드에 쌓인 말의 수 — 같은 일에서 온 것이 여럿이면 한 장에 모인다는 표시. */
@@ -2982,16 +2984,16 @@ export const en = {
 
 
 
-  'inbox.pane.close': 'Close the inbox',
+  'inbox.pane.close': 'Close My work',
   /**
    * 조회 실패. **빈 목록으로 삼키지 않는다** — 실패했는데 빈 목록만 보이면 사람은
    * "아무도 나를 부르지 않았다"로 읽는다(원래 주석). `{reason}` 은 서버 것이다.
    */
-  'inbox.pane.loadFailed': 'The inbox did not arrive — {reason}',
+  'inbox.pane.loadFailed': 'My work did not arrive — {reason}',
   'inbox.pane.loading': 'Loading…',
   'inbox.pane.retry': 'Try again',
   /** 자리의 이름(`aria-label`)이자 머리글. 스크린리더가 이 구획을 찾는 이름이다. */
-  'inbox.pane.title': 'Inbox',
+  'inbox.pane.title': 'My work',
 
   // ---------------------------------------------------------------------------
   // profile — **화면 이름이다.** `components/Profile.tsx` 가 그리는 겹창이고,

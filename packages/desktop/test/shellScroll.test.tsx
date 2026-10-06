@@ -75,7 +75,7 @@ const mount = (rows: InboxEntry[], extra: Record<string, unknown> = {}) => {
   render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 };
 
-const openInbox = (): void => { fireEvent.click(screen.getByText('Inbox')); };
+const openInbox = (): void => { fireEvent.click(screen.getByText('My work')); };
 
 /**
  * jsdom 에는 `scrollIntoView` 가 없다 — 제품 코드가 `?.()` 로 부르는 이유다(그 옵셔널을

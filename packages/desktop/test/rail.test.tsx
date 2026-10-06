@@ -564,7 +564,7 @@ describe('Inbox 는 홈 맨 위, 북마크는 레일에만', () => {
     useAppStore.getState().set({ channels: [chan('c1', 'general')] });
     mountSidebar('home');
 
-    const inbox = screen.getByText('Inbox');
+    const inbox = screen.getByText('내 작업');
     const channel = screen.getByRole('button', { name: /# general/ });
     expect(inbox.compareDocumentPosition(channel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });

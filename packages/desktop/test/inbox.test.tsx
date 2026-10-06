@@ -81,7 +81,7 @@ describe('Inbox 상태 보드 (C안)', () => {
     expect(within(col('mine')).getByTestId('inbox-card-r1')).toBeTruthy();
   });
 
-  it('열 넷이 내 차례 → 기다리는 중 → 진행 → 끝남 순서로 서고, 수는 내 차례만 센다', async () => {
+  it('내 차례 띠가 맨 위에, 그 아래 세 열이 진행 → 기다림 → 끝 순서로 서고, 수는 내 차례만 센다', async () => {
     fakeController(async () => ({
       entries: ['r1', 'r2', 'r3', 'r4'].map((r, i) => entry(i + 1, { threadRootId: r })),
       threads: [
@@ -94,13 +94,41 @@ describe('Inbox 상태 보드 (C안)', () => {
     open();
     await screen.findByTestId('inbox-card-r1');
     const order = screen.getAllByTestId(/^inbox-col-/).map((el) => el.getAttribute('data-testid'));
-    expect(order).toEqual(['inbox-col-mine', 'inbox-col-blocked', 'inbox-col-active', 'inbox-col-done']);
+    expect(order).toEqual(['inbox-col-mine', 'inbox-col-active', 'inbox-col-blocked', 'inbox-col-done']);
     expect(within(col('blocked')).getByTestId('inbox-card-r2')).toBeTruthy();
     expect(within(col('active')).getByTestId('inbox-card-r3')).toBeTruthy();
     expect(within(col('done')).getByTestId('inbox-card-r4')).toBeTruthy();
     expect(screen.getByTestId('inbox-mine-count').textContent).toBe('나를 기다리는 일 1');
     // 옛 칩은 없다.
     expect(screen.queryByTestId('inbox-filter-blocking')).toBeNull();
+  });
+
+  it('내 차례 띠는 오래 기다린 것부터 다섯 장을 펼치고 나머지는 "+N개 더" 로 접는다', async () => {
+    const roots = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7'];
+    fakeController(async () => ({
+      // 번호가 클수록 오래된 말이다 — 띠는 r7 부터 선다.
+      entries: roots.map((r, i) => entry(i + 1, { threadRootId: r, createdAt: new Date(Date.now() - (i + 1) * 3_600_000).toISOString() })),
+      threads: roots.map((r) => head(r, { openAskAccountIds: [ME] })),
+    }));
+    open();
+    await screen.findByTestId('inbox-card-r7');
+    const band = col('mine');
+    const more = within(band).getByTestId('inbox-band-more');
+    const open5 = within(band).getAllByTestId(/^inbox-card-r\d$/).filter((el) => !more.contains(el)).map((el) => el.getAttribute('data-testid'));
+    expect(open5).toEqual(['inbox-card-r7', 'inbox-card-r6', 'inbox-card-r5', 'inbox-card-r4', 'inbox-card-r3']);
+    expect(more.textContent).toContain('+2개 더');
+    expect(screen.getByTestId('inbox-mine-count').textContent).toBe('나를 기다리는 일 7');
+  });
+
+  it('내 차례가 없으면 띠는 한 줄로 줄어든다', async () => {
+    fakeController(async () => ({
+      entries: [entry(1, { threadRootId: 'r1' })],
+      threads: [head('r1', { lastKind: 'progress', lastAuthorId: BOT })],
+    }));
+    open();
+    await screen.findByTestId('inbox-card-r1');
+    expect(within(col('mine')).getByTestId('inbox-band-empty').textContent).toBe('나를 기다리는 일이 없다');
+    expect(screen.queryByTestId('inbox-band-more')).toBeNull();
   });
 
   it('카드 문장은 본문 앞 두 줄이 아니라 물음 문장이고, <@id> 는 handle 로 보인다', async () => {
@@ -237,7 +265,7 @@ describe('Inbox 상태 보드 (C안)', () => {
   it('부른 것이 없으면 "없다" 를 보여 준다', async () => {
     fakeController(async () => ({ entries: [], threads: [] }));
     open();
-    expect((await screen.findByTestId('inbox-empty')).textContent).toBe('나를 부른 것이 없다');
+    expect((await screen.findByTestId('inbox-empty')).textContent).toBe('아직 올라온 일이 없다');
   });
 
   it('옛 서버(머리 없음)에서도 보드가 선다', async () => {
@@ -274,7 +302,7 @@ describe('Inbox 상태 보드 (C안)', () => {
         onToggleCollapse={vi.fn()}
       />,
     );
-    fireEvent.click(screen.getByText('Inbox'));
+    fireEvent.click(screen.getByText('내 작업'));
     expect(onOpenInbox).toHaveBeenCalled();
   });
 });

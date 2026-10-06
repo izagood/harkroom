@@ -989,8 +989,8 @@ export const ko = {
   'sidebar.channel.privateOption': '비공개 (멤버만 볼 수 있다)',
   'sidebar.channel.unread': '{name} 에 안 읽은 것 {count}개',
 
-  'sidebar.inbox.blocking': '인박스에 내 답을 기다리는 것 {count}개',
-  'sidebar.inbox.unread': '인박스에 안 읽은 것 {count}개',
+  'sidebar.inbox.blocking': '내 작업에 내 답을 기다리는 것 {count}개',
+  'sidebar.inbox.unread': '내 작업에 안 읽은 것 {count}개',
 
   'sidebar.delete.cancel': '취소',
   'sidebar.delete.confirm': '정말 삭제',
@@ -1429,13 +1429,14 @@ export const ko = {
   // ---------------------------------------------------------------------------
 
   'inbox.board.col.mine': '내 차례',
-  'inbox.board.col.blocked': '기다리는 중',
+  'inbox.board.col.blocked': '기다림',
   'inbox.board.col.active': '진행',
-  'inbox.board.col.done': '끝남',
+  'inbox.board.col.done': '끝',
+  'inbox.board.band.order': '오래 기다린 것부터',
   'inbox.board.mineCount': '나를 기다리는 일 {count}',
   'inbox.board.empty.mine': '나를 기다리는 일이 없다',
   'inbox.board.empty.other': '없음',
-  'inbox.board.empty.all': '나를 부른 것이 없다',
+  'inbox.board.empty.all': '아직 올라온 일이 없다',
   'inbox.board.days': '{count}일째',
   'inbox.board.more': '+{count}개 더',
   'inbox.board.unread': '새 말',
@@ -1452,13 +1453,13 @@ export const ko = {
 
 
 
-  'inbox.pane.close': '인박스 닫기',
-  'inbox.pane.loadFailed': '인박스를 불러오지 못했다 — {reason}',
+  'inbox.pane.close': '내 작업 닫기',
+  'inbox.pane.loadFailed': '내 작업을 불러오지 못했다 — {reason}',
   'inbox.pane.loading': '불러오는 중…',
   'inbox.pane.retry': '다시 시도',
   // 머리글이 원래 `Inbox` 였다 — 영어가 원본이므로 그쪽은 그 글자를 지키고, 한국어는
   // 화면의 다른 말들과 같은 언어로 선다(`aria-label` 이 이미 `인박스` 였다).
-  'inbox.pane.title': '인박스',
+  'inbox.pane.title': '내 작업',
 
   // ---------------------------------------------------------------------------
   // profile — 사람과 에이전트가 같은 틀을 쓴다(그 화면 주석: 행 이름만 다르다).
