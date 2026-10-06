@@ -68,15 +68,13 @@ describe('DM 호출 게이트', () => {
   });
 
   it('owner 에이전트: 이미 있는 DM 에 남이 써도 inbox 에 안 들어가고 실패 카드도 없다', async () => {
-    const a = await agentWith('dmprivy3', 'owner');
-    // 범위가 좁혀지기 전에 열린 DM — 열 때는 community 였다.
-    await app.inject({
-      method: 'PATCH', url: `/accounts/agents/${a.accountId}`, headers: auth(adminToken), payload: { invokeScope: 'community' },
-    });
+    // 범위가 좁혀지기 전에 열린 DM — 열 때는 community 였다(owner 를 넓히는 것은 막혀 있으니 좁히는 쪽으로).
+    const a = await agentWith('dmprivy3', 'community');
     const dm = (await openDm(stranger.token, a.accountId)).json().id as string;
-    await app.inject({
+    const narrowed = await app.inject({
       method: 'PATCH', url: `/accounts/agents/${a.accountId}`, headers: auth(adminToken), payload: { invokeScope: 'owner' },
     });
+    expect(narrowed.statusCode).toBe(200);
     // 이미 있는 DM 은 다시 열어도 그대로 돌려준다.
     expect((await openDm(stranger.token, a.accountId)).statusCode).toBe(201);
     const id = await say(stranger.token, dm, '해 줘');
