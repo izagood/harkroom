@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -29,6 +29,8 @@ export interface SecretAad {
 export interface SecretKeyring {
   /** 새로 봉인할 때 쓰는 kid. */
   readonly activeKid: string;
+  /** 이 키링이 풀 수 있는 kid 들. 목록에서 "키가 없어 못 푸는 비밀"(keyLost)을 가르는 데 쓴다. */
+  readonly kids: readonly string[];
   seal(plain: Buffer, aad: SecretAad): string;
   /** 키가 없거나 AAD 가 다르거나 값이 망가졌으면 null — 던지지 않는다. */
   open(sealed: string, aad: SecretAad): Buffer | null;
@@ -66,6 +68,7 @@ export function createSecretKeyring(keys: ReadonlyMap<string, Buffer>, activeKid
 
   return {
     activeKid,
+    kids: [...keys.keys()],
     seal(plain, a) {
       const aad = aadBytes(activeKid, a);
       const salt = randomBytes(16);
@@ -96,6 +99,19 @@ export function createSecretKeyring(keys: ReadonlyMap<string, Buffer>, activeKid
 }
 
 /**
+ * 키 확인값(KCV). 같은 kid 이름 아래 다른 키가 걸렸는지 알아보는 데만 쓴다 — 키를 거꾸로
+ * 알아낼 수 없는 HMAC 출력의 앞 16바이트다. DB(`secret_key_check`)에 kid 별로 남는다.
+ */
+export function keyCheckValue(key: Buffer): Buffer {
+  return createHmac('sha256', key).update('harkroom-kcv-v1').digest().subarray(0, 16);
+}
+
+export interface LoadedSecretKeys {
+  keys: Map<string, Buffer>;
+  activeKid: string;
+}
+
+/**
  * `HARKROOM_SECRET_KEYS_DIR` 에서 키를 읽는다. 디렉터리가 지정되지 않았으면 null(보관소 꺼짐 —
  * 라우트가 409 로 답한다). 지정됐는데 읽을 수 없거나 키가 잘못됐으면 **던진다**: 설정을 했는데
  * 조용히 꺼지면 사람은 왜 안 되는지 모른다.
@@ -104,7 +120,7 @@ export function createSecretKeyring(keys: ReadonlyMap<string, Buffer>, activeKid
  * 고르지 않았으면 어느 것으로 봉인할지 추측하지 않는다.
  * 점으로 시작하는 파일(k8s 볼륨의 `..data` 심링크 등)은 건너뛴다.
  */
-export function loadSecretKeyring(dir: string | undefined, activeKid: string | undefined): SecretKeyring | null {
+export function loadSecretKeys(dir: string | undefined, activeKid: string | undefined): LoadedSecretKeys | null {
   const d = dir?.trim();
   if (!d) return null;
   const keys = new Map<string, Buffer>();
@@ -117,5 +133,12 @@ export function loadSecretKeyring(dir: string | undefined, activeKid: string | u
   if (!keys.size) throw new Error(`HARKROOM_SECRET_KEYS_DIR(${d}) 에 키 파일이 없다`);
   const kid = activeKid?.trim() || (keys.size === 1 ? [...keys.keys()][0]! : '');
   if (!kid) throw new Error('키가 둘 이상이면 HARKROOM_SECRET_KEY_ID 로 활성 kid 를 정해야 한다');
-  return createSecretKeyring(keys, kid);
+  if (!keys.has(kid)) throw new Error(`secret keyring: 활성 kid '${kid}' 의 키가 없다`);
+  return { keys, activeKid: kid };
+}
+
+/** 키 확인 없이 키링을 만든다. 서버 기동은 `verifySecretKeys`(secretKeyCheck.ts)를 거친다. */
+export function loadSecretKeyring(dir: string | undefined, activeKid: string | undefined): SecretKeyring | null {
+  const loaded = loadSecretKeys(dir, activeKid);
+  return loaded ? createSecretKeyring(loaded.keys, loaded.activeKid) : null;
 }

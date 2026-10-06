@@ -49,7 +49,8 @@ import { createMetrics } from './metrics.js';
 import { createScheduledMessageSweeper } from './services/scheduledMessages.js';
 import { createAutomationSweeper } from './services/automations.js';
 import { createSecretBox } from './services/secretBox.js';
-import { loadSecretKeyring, type SecretKeyring } from './services/secretKeyring.js';
+import { loadSecretKeys, type SecretKeyring } from './services/secretKeyring.js';
+import { verifySecretKeys } from './services/secretKeyCheck.js';
 import { registerSecretRoutes } from './routes/secretRoutes.js';
 import { registerMergeRoutes } from './routes/mergeRoutes.js';
 import { registerMergeDenialRoutes } from './routes/mergeDenialRoutes.js';
@@ -495,9 +496,22 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerAuth(app, deps.pool);
 
   // 비밀 보관소(085~). 키 묶음은 여기서 한 번 읽어 라우트·본문 거절(D5)이 같은 것을 쓴다.
-  const secretKeyring = deps.secretKeyring !== undefined
-    ? deps.secretKeyring
-    : loadSecretKeyring(process.env.HARKROOM_SECRET_KEYS_DIR, process.env.HARKROOM_SECRET_KEY_ID);
+  // 디렉터리의 키는 DB 의 키 확인값(104)과 맞춰 본 뒤에만 쓴다 — 같은 kid 에 다른 키가 걸렸으면
+  // 그 kid 로는 봉인도 풀기도 하지 않는다(secretKeyCheck.ts). 활성 kid 가 어긋나면 보관소를 끈다.
+  let secretKeyring: SecretKeyring | null;
+  let secretKeyMismatch = false;
+  if (deps.secretKeyring !== undefined) {
+    secretKeyring = deps.secretKeyring;
+  } else {
+    const loaded = loadSecretKeys(process.env.HARKROOM_SECRET_KEYS_DIR, process.env.HARKROOM_SECRET_KEY_ID);
+    const verified = loaded ? await verifySecretKeys(deps.pool, loaded) : null;
+    secretKeyring = verified?.keyring ?? null;
+    secretKeyMismatch = verified?.mismatch ?? false;
+    if (verified?.rejectedKids.length) {
+      app.log.error({ kids: verified.rejectedKids },
+        'secret store: mounted key does not match the stored key check value; those key ids are disabled');
+    }
+  }
   const leakGuard = createSecretLeakGuard(deps.pool, secretKeyring);
   // 에이전트의 REST 쓰기 본문에 grant 받은 비밀 값이 있으면 거절한다(D5). 루트 훅이라 모든 라우트에
   // 걸리고, 인증(onRequest) 뒤에 돈다. 보관소가 꺼져 있으면(키 없음) 볼 비밀도 없다.
@@ -617,6 +631,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
   await registerSecretRoutes(app, deps.pool, {
     keyring: secretKeyring,
+    keyMismatch: secretKeyMismatch,
     limiter: deps.secretRevealLimiter,
     createLimiter: deps.secretCreateLimiter,
   });
