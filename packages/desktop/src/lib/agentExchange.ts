@@ -404,22 +404,33 @@ export function exchangeLastLine(
 export function firstLine(body: string): string {
   let inFence = false;
   let head = true;
-  for (const raw of body.split('\n')) {
+  for (const whole of body.split('\n')) {
+    // 접힌 줄에 실리는 것은 40 자다 — 한 줄을 끝까지 훑을 이유가 없다. 아래 식들이 줄 길이에
+    // 비례해 돌도록 앞부분만 본다.
+    const raw = whole.slice(0, FIRST_LINE_SCAN_MAX);
     if (/^\s*(```|~~~)/.test(raw)) { inFence = !inFence; continue; }
     if (inFence) continue;
     if (/^\s*>/.test(raw)) continue;
     // 가로줄(`---`·`***`)은 글이 아니다.
     if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(raw)) continue;
-    let line = raw;
     // 머리 멘션은 **본문 맨 앞**에서만 뺀다 — 문장 가운데의 `@handle` 은 말의 일부다.
-    if (head) line = line.replace(/^\s*(?:@[^\s@]+[\s,]*)+/, '');
-    line = stripMarkdown(line).replace(/\s+/g, ' ').trim();
+    const rest = head ? raw.replace(HEAD_MENTIONS, '') : raw;
+    const line = stripMarkdown(rest).replace(/\s+/g, ' ').trim();
     if (line) return line;
-    // 멘션만 있던 줄 — 다음 줄도 아직 머리다.
-    if (raw.trim() !== '' && !/^\s*(?:@[^\s@]+[\s,]*)+$/.test(raw)) head = false;
+    // 멘션만 있던 줄(빼고 나니 비었다)이면 다음 줄도 아직 머리다.
+    if (rest.trim() !== '') head = false;
   }
   return '';
 }
+
+/** `firstLine` 이 한 줄에서 보는 앞부분의 길이. */
+const FIRST_LINE_SCAN_MAX = 500;
+
+/**
+ * 본문 맨 앞의 멘션들. handle 자리(`[^\s@,]`)와 구분 자리(`[\s,]`)가 **글자를 나눠 갖지
+ * 않는다** — 겹치면 한 입력을 나누는 방법이 여럿이 되어 매치가 실패할 때 되짚는 길이 불어난다.
+ */
+const HEAD_MENTIONS = /^\s*(?:@[^\s@,]+[\s,]*)+/;
 
 /** 한 줄의 마크다운 기호를 벗긴다. 링크·그림은 글만 남긴다. */
 function stripMarkdown(line: string): string {

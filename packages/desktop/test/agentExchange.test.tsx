@@ -613,6 +613,22 @@ describe('접힘 최소 수정안 — 재현 스레드 모양', () => {
     expect(exchangeLastLine([say('m1', 1, '   ', HR)], display)).toBeNull();
   });
 
+  it('2-b. 병적인 본문도 첫 줄 뽑기가 금방 끝난다', () => {
+    const bodies = [
+      `${'@a,,,,,,,,'.repeat(12)} [](x)`,
+      `${'@a,'.repeat(4000)}`,
+      `@a ${'[['.repeat(4000)}`,
+      `${'@'.repeat(8000)}\n${'* '.repeat(4000)}`,
+    ];
+    for (const body of bodies) {
+      const started = performance.now();
+      firstLine(body);
+      expect(performance.now() - started).toBeLessThan(200);
+    }
+    // 머리 멘션 사이의 쉼표도 구분자다.
+    expect(firstLine('@a, @b, 결과다')).toBe('결과다');
+  });
+
   it('3. 다른 저자 글이 사이에 끼어도 같은 저자의 다음 말이 진행을 닫는다(거짓 running)', () => {
     const slotsOut = groupProgress([
       say('p1', 0, '검토 시작', SEC, { kind: 'progress' }),
