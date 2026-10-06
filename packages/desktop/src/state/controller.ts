@@ -406,11 +406,15 @@ export class Controller {
   }
 
   private setFirstPageLoading(channelId: string, on: boolean): void {
-    const { firstPageLoading } = this.store.getState();
-    if (!!firstPageLoading[channelId] === on) return;
-    const next = { ...firstPageLoading };
+    this.setChannelFlag('firstPageLoading', channelId, on);
+  }
+
+  private setChannelFlag(key: 'firstPageLoading' | 'backfilling', channelId: string, on: boolean): void {
+    const flags = this.store.getState()[key];
+    if (!!flags[channelId] === on) return;
+    const next = { ...flags };
     if (on) next[channelId] = true; else delete next[channelId];
-    this.store.getState().set({ firstPageLoading: next });
+    this.store.getState().set({ [key]: next });
   }
 
   private async fetchFirstPage(channelId: string): Promise<{ messages: MessageRow[]; hasMore: boolean }> {
@@ -447,8 +451,12 @@ export class Controller {
       const store = this.store.getState();
       store.upsertMessages(channelId, page.messages);
       store.set({ hasMore: { ...this.store.getState().hasMore, [channelId]: page.hasMore } });
-    })().catch(() => {}).finally(() => { this.backfills.delete(channelId); });
+    })().catch(() => {}).finally(() => {
+      this.backfills.delete(channelId);
+      this.setChannelFlag('backfilling', channelId, false);
+    });
     this.backfills.set(channelId, run);
+    this.setChannelFlag('backfilling', channelId, true);
   }
 
   /**

@@ -64,6 +64,13 @@ const CHANNEL_NO_TEAMS: never[] = [];
 
 /** 채널 본문에서 연 그림은 채널 최상위 글의 그림을 넘긴다(그림 넘겨 보기 사양 1). */
 const CHANNEL_GALLERY: GalleryScope = { kind: 'channel' };
+/**
+ * 뒤채움 동안 줄을 그리지 않을 최상위 줄 수의 문턱(#1226 designer n1, `holdForBackfill`). 이보다
+ * 적으면 화면 한 장을 못 채워 창 위쪽에 선다 — 대략 한 화면의 줄 수다.
+ */
+const BACKFILL_HOLD_ROOTS = 20;
+/** 붙잡는 동안 넘기는 빈 자리 — 매 렌더 새 배열이면 목록이 다시 잰다. */
+const NO_SLOTS: ReturnType<typeof groupAgentExchanges> = [];
 
 export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: ChannelPaneProps) {
   // 날짜 구분선은 **앱 언어**를 따른다(`lib/day.ts` 의 근거).
@@ -89,13 +96,9 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   // 첫 페이지를 기다리는 동안은 빈 상태를 그리지 않는다(#1223 n1). 400ms 를 넘기면 한 줄만 말한다 —
   // 대부분 그 전에 끝나므로 스피너·뼈대로 화면을 흔들지 않는다.
   const firstPageLoading = useActiveStore((s) => (activeChannelId ? !!s.firstPageLoading[activeChannelId] : false));
-  const [slowFirstPage, setSlowFirstPage] = useState(false);
-  useEffect(() => {
-    setSlowFirstPage(false);
-    if (!firstPageLoading) return;
-    const id = setTimeout(() => setSlowFirstPage(true), 400);
-    return () => clearTimeout(id);
-  }, [firstPageLoading, activeChannelId]);
+  // 첫 창의 뒤채움(#1226)이 도는 중인가. 최상위 줄이 화면을 못 채우면 아래 `holdForBackfill` 이
+  // 이 동안을 첫 페이지 대기처럼 다룬다.
+  const backfilling = useActiveStore((s) => (activeChannelId ? !!s.backfilling[activeChannelId] : false));
   const channelDividerSeq = useActiveStore((s) => (windowView.kind !== 'main' ? windowView.dividerSeq : activeChannelId ? s.dividerSeq[activeChannelId] : undefined));
   const channelPinsRaw = useActiveStore((s) => (activeChannelId ? s.pins[activeChannelId] : undefined));
   const runnerStates = useActiveStore((s) => s.runnerStates);
@@ -292,6 +295,23 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     const isAgent = (id: string): boolean => accountNames[id]?.kind === 'agent';
     return groupAgentExchanges(groupProgress(roots), isAgent);
   }, [roots, accountNames]);
+
+  /**
+   * 뒤채움이 오기 전 최상위 줄이 화면을 못 채우면 **줄을 그리지 않는다**(#1226 designer n1).
+   * 목록은 바닥 정렬이 아니라서 짧은 내용은 창 위쪽에 선다 — 답글·progress 가 많은 채널은 첫 50행의
+   * 최상위가 몇 줄뿐이라, 그 몇 줄이 위에 섰다가 뒤채움이 오면 바닥으로 미끄러진다. 사람이 읽기
+   * 시작한 줄이 자리를 옮기므로 첫 페이지 대기와 똑같이 비워 두고, 400ms 를 넘기면 한 줄만 말한다.
+   * 최상위가 넉넉한 보통 채널은 50행으로 바로 그린다 — 나눠 받는 이득은 그대로다.
+   */
+  const holdForBackfill = backfilling && roots.length < BACKFILL_HOLD_ROOTS;
+  const waitingFirstWindow = firstPageLoading || holdForBackfill;
+  const [slowFirstPage, setSlowFirstPage] = useState(false);
+  useEffect(() => {
+    setSlowFirstPage(false);
+    if (!waitingFirstWindow) return;
+    const id = setTimeout(() => setSlowFirstPage(true), 400);
+    return () => clearTimeout(id);
+  }, [waitingFirstWindow, activeChannelId]);
 
   /**
    * 구분선을 그릴 메시지. **채널을 열 때 얼려 둔 위치**(`dividerSeq`)를 쓴다 — 라이브 읽음
@@ -841,7 +861,8 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
         data-testid="channel-scroll"
         className="flex-1 overflow-y-auto py-2"
       >
-        {activeChannelId && channelHasMore && (
+        {/* 뒤채움 중에는 숨긴다 — 곧 그 구간이 채워져 사라질 버튼이다(#1226 designer n2). */}
+        {activeChannelId && channelHasMore && !backfilling && (
           // 서버 히스토리 창(최신 N개) 밖으로 밀려난 대화로 돌아가는 유일한 경로다.
           <div className="px-4 py-2 text-center">
             <button
@@ -859,7 +880,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
         {roots.length === 0 && !channelHasMore && !firstPageLoading && (
           <ChannelEmptyState channel={channel} isArchived={isArchived} />
         )}
-        {roots.length === 0 && firstPageLoading && slowFirstPage && (
+        {(roots.length === 0 || holdForBackfill) && waitingFirstWindow && slowFirstPage && (
           <div className="px-4 py-10 text-center text-meta text-fg-subtle" role="status" data-testid="channel-loading">
             {t('channel.loadingMessages')}
           </div>
@@ -871,7 +892,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
             창 위치는 그 채널의 것이다 — 들고 가면 새 채널의 첫 계산이 남의 높이로 시작한다. */}
         <MessageRows
           key={activeChannelId}
-          slots={slots}
+          slots={holdForBackfill ? NO_SLOTS : slots}
           scrollRef={listRef}
           dividerBeforeId={dividerBeforeId}
           locale={locale}
