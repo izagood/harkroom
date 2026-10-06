@@ -142,7 +142,7 @@ describe('주인 장부(러너 보고)', () => {
     const o = createCleanupOwners({ path: join(d, 'owners.json') });
     const body = { threads: [{ channelId: C, threadRootId: R, worktrees: ['/private/tmp/wt-a'], lastTurnAt: '2026-10-06T00:00:00Z', running: true }] };
     expect((await o.maybeHandle('run1', 'agent1', req(body), 'bridge'))!).toMatchObject({ status: 403 });
-    expect((await o.maybeHandle('run1', 'agent1', req(body), 'relay'))!).toMatchObject({ status: 204 });
+    expect((await o.maybeHandle('run1', 'agent1', req(body), 'relay'))!).toMatchObject({ status: 200, body: JSON.stringify({ deleteThreads: [] }) });
     expect((await o.ownerOf()).get('/tmp/wt-a')).toMatchObject({ channelId: C, threadRootId: R, agentId: 'agent1' });
     expect(o.running().has(`${C}/${R}`)).toBe(true);
     o.releaseRunner('run1');
@@ -153,7 +153,7 @@ describe('주인 장부(러너 보고)', () => {
   });
   it('모양이 틀린 줄은 버린다', () => {
     expect(readCleanupReport({ threads: [{ channelId: 'x', threadRootId: R }, { channelId: C, threadRootId: R, worktrees: ['rel/path', '/abs'] }] }))
-      .toEqual({ threads: [{ channelId: C, threadRootId: R, worktrees: ['/abs'], lastTurnAt: null, running: false }] });
+      .toEqual({ threads: [{ channelId: C, threadRootId: R, worktrees: ['/abs'], lastTurnAt: null, running: false, workspaceDir: null }] });
     expect(readCleanupReport(null)).toBeNull();
   });
   it('다른 경로는 건드리지 않는다', async () => {
@@ -221,6 +221,29 @@ describe('의존성 폴더 지우기 — 무시되고 올려 둔 파일이 없�
     expect((await stat(join(d, 'build', 'f'))).isFile()).toBe(true);   // 올려 둔 파일이 있다
     expect((await stat(join(d, 'target', 'f'))).isFile()).toBe(true);  // 무시되지 않는다
   });
+  it('심링크 node_modules 는 올라가 있지 않으면 링크만 지운다(`node_modules/` 규칙이 안 맞아도) — 대상은 남는다', async () => {
+    const d = await mkdtemp(join(tmpdir(), 'cleanup-git-'));
+    const shared = await mkdtemp(join(tmpdir(), 'shared-nm-'));
+    await writeFile(join(shared, 'keep'), 'x');
+    const git = (...a: string[]) => execFileSync('git', ['-C', d, ...a], { env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+    git('init', '-q');
+    await writeFile(join(d, '.gitignore'), 'node_modules/\n');
+    await symlink(shared, join(d, 'node_modules'));
+    const p = createCleanupPorts({ exec: defaultExec, gitPath: 'git', ghPath: '/gh', ghEnv: {}, home: process.env.HOME ?? '/' });
+    await p.removeDeps(d);
+    await expect(lstat(join(d, 'node_modules'))).rejects.toThrow();
+    expect((await stat(join(shared, 'keep'))).isFile()).toBe(true);
+  });
+  it('올려 둔 심링크는 남긴다', async () => {
+    const d = await mkdtemp(join(tmpdir(), 'cleanup-git-'));
+    const git = (...a: string[]) => execFileSync('git', ['-C', d, ...a], { env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+    git('init', '-q');
+    await symlink('/tmp', join(d, 'dist'));
+    git('add', 'dist');
+    const p = createCleanupPorts({ exec: defaultExec, gitPath: 'git', ghPath: '/gh', ghEnv: {}, home: process.env.HOME ?? '/' });
+    await p.removeDeps(d);
+    expect((await lstat(join(d, 'dist'))).isSymbolicLink()).toBe(true);
+  });
 });
 
 describe('보고 — 미래 시각은 지금으로 자른다', () => {
@@ -228,5 +251,72 @@ describe('보고 — 미래 시각은 지금으로 자른다', () => {
     const C = '11111111-1111-1111-1111-111111111111';
     const r = readCleanupReport({ threads: [{ channelId: C, threadRootId: C, lastTurnAt: '2999-01-01T00:00:00Z' }] }, Date.parse('2026-10-06T00:00:00Z'));
     expect(r!.threads[0]!.lastTurnAt).toBe('2026-10-06T00:00:00.000Z');
+  });
+});
+
+describe('스레드 폴더 지우기는 러너에게 맡긴다(규칙 6)', () => {
+  const C = '11111111-1111-1111-1111-111111111111';
+  const R = '33333333-3333-3333-3333-333333333333';
+  const req = (body: unknown) => ({ type: 'http.forward' as const, id: 'q', method: 'POST', path: CLEANUP_REPORT_PATH, body: JSON.stringify(body) });
+  it('요청한 스레드만 그 에이전트의 답에 싣고, 요청한 것만 "지웠다"를 받는다', async () => {
+    const d = await mkdtemp(join(tmpdir(), 'owners-'));
+    const o = createCleanupOwners({ path: join(d, 'owners.json') });
+    const t = { channelId: C, threadRootId: R, worktrees: [], lastTurnAt: '2026-09-01T00:00:00Z', running: false, workspaceDir: '/state/workspaces/x' };
+    await o.maybeHandle('run1', 'agentA', req({ threads: [t] }), 'relay');
+    // 다른 에이전트가 같은 스레드의 작업 폴더를 바꾸려 해도 안 바뀐다
+    await o.maybeHandle('run2', 'agentB', req({ threads: [{ ...t, workspaceDir: '/elsewhere' }] }), 'relay');
+    expect((await o.threads())[0]!.workspaceDir).toBe('/state/workspaces/x');
+    // 요청 전에 "지웠다"고 해도 받지 않는다
+    await o.maybeHandle('run1', 'agentA', req({ threads: [], deleted: [{ channelId: C, threadRootId: R }] }), 'relay');
+    expect(o.drainDeleted()).toEqual([]);
+    o.requestDelete({ channelId: C, threadRootId: R });
+    const other = await o.maybeHandle('run2', 'agentB', req({ threads: [] }), 'relay');
+    expect(JSON.parse((other as { body: string }).body)).toEqual({ deleteThreads: [] });
+    const mine = await o.maybeHandle('run1', 'agentA', req({ threads: [] }), 'relay');
+    expect(JSON.parse((mine as { body: string }).body)).toEqual({ deleteThreads: [{ channelId: C, threadRootId: R }] });
+    await o.maybeHandle('run1', 'agentA', req({ threads: [], deleted: [{ channelId: C, threadRootId: R }] }), 'relay');
+    expect(o.drainDeleted()).toEqual([{ thread: { channelId: C, threadRootId: R }, path: '/state/workspaces/x' }]);
+    expect((await o.threads())[0]!.workspaceDir).toBeNull();
+  });
+});
+
+describe('F1 — 지우기 요청은 되살리기·보존으로 거둔다', () => {
+  const C = '11111111-1111-1111-1111-111111111111';
+  const R = '44444444-4444-4444-4444-444444444444';
+  const req = (body: unknown) => ({ type: 'http.forward' as const, id: 'q', method: 'POST', path: CLEANUP_REPORT_PATH, body: JSON.stringify(body) });
+  const reply = (r: unknown) => JSON.parse((r as { body: string }).body) as { deleteThreads: unknown[] };
+  const T0 = { channelId: C, threadRootId: R, worktrees: [], lastTurnAt: '2026-09-01T00:00:00Z', running: false, workspaceDir: '/state/workspaces/y' };
+  const fresh = async () => {
+    const d = await mkdtemp(join(tmpdir(), 'owners-'));
+    let now = new Date('2026-10-06T00:00:00Z');
+    const o = createCleanupOwners({ path: join(d, 'owners.json'), now: () => now });
+    await o.maybeHandle('run1', 'agentA', req({ threads: [T0] }), 'relay');
+    o.requestDelete({ channelId: C, threadRootId: R });
+    return { o, tick: (iso: string) => { now = new Date(iso); } };
+  };
+  it('요청 → 새 턴(도는 중) → 턴 끝 보고 — 지우기가 나가지 않는다', async () => {
+    const { o } = await fresh();
+    const during = await o.maybeHandle('run1', 'agentA', req({ threads: [{ ...T0, lastTurnAt: '2026-10-06T00:05:00Z', running: true }] }), 'relay');
+    expect(reply(during).deleteThreads).toEqual([]);
+    const after = await o.maybeHandle('run1', 'agentA', req({ threads: [{ ...T0, lastTurnAt: '2026-10-06T00:10:00Z', running: false }] }), 'relay');
+    expect(reply(after).deleteThreads).toEqual([]);
+    const later = await o.maybeHandle('run1', 'agentA', req({ threads: [] }), 'relay');
+    expect(reply(later).deleteThreads).toEqual([]);
+  });
+  it('다른 러너가 그 스레드를 돌리는 중이면 답에 싣지 않는다', async () => {
+    const { o } = await fresh();
+    await o.maybeHandle('run2', 'agentA', req({ threads: [{ ...T0, lastTurnAt: null, running: true }] }), 'relay');
+    expect(reply(await o.maybeHandle('run1', 'agentA', req({ threads: [] }), 'relay')).deleteThreads).toEqual([]);
+  });
+  it('보존(cancelDelete)·원장에서 빠짐(retainDeletes)이면 거둔다, 아니면 나간다', async () => {
+    const a = await fresh();
+    a.o.cancelDelete({ channelId: C, threadRootId: R });
+    expect(reply(await a.o.maybeHandle('run1', 'agentA', req({ threads: [] }), 'relay')).deleteThreads).toEqual([]);
+    const b = await fresh();
+    b.o.retainDeletes(new Set());
+    expect(reply(await b.o.maybeHandle('run1', 'agentA', req({ threads: [] }), 'relay')).deleteThreads).toEqual([]);
+    const c = await fresh();
+    c.o.retainDeletes(new Set([`${C}/${R}`]));
+    expect(reply(await c.o.maybeHandle('run1', 'agentA', req({ threads: [] }), 'relay')).deleteThreads).toEqual([{ channelId: C, threadRootId: R }]);
   });
 });

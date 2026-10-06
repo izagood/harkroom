@@ -167,6 +167,19 @@ export class SessionStore {
     return this.sessions.get(key);
   }
 
+  /** 모든 레코드(작업 폴더 정리의 기동 보고가 읽는다). */
+  entries(): [string, SessionRecord][] {
+    return [...this.sessions.entries()];
+  }
+
+  /** 레코드를 뺀다 — 다음 턴은 새 세션으로 시작한다(작업 폴더 정리가 그 스레드를 지울 때). */
+  async delete(key: string): Promise<void> {
+    if (!this.sessions.delete(key)) return;
+    const next = this.writeQueue.then(() => this.flush());
+    this.writeQueue = next.catch(() => undefined);
+    return next;
+  }
+
   async put(key: string, rec: SessionRecord): Promise<void> {
     this.sessions.set(key, rec);
     const next = this.writeQueue.then(() => this.flush());

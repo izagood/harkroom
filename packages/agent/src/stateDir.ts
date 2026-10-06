@@ -72,6 +72,8 @@ export interface AgentStatePaths {
   opencodeHomeDir: string;
   /** pi 의 러너 전용 `PI_CODING_AGENT_DIR`(`piHome.ts`). */
   piHomeDir: string;
+  /** 작업 폴더 정리의 기동 보고(세션 기록 훑기)를 이미 했다는 표지(`cleanupReport.ts`). */
+  cleanupBackfillPath: string;
   /** 서버별로 갈리기 **전** 경로(handle 만으로 스코프). 존재 확인용이고 자동 이전은 하지 않는다. */
   legacyPath: string;
 }
@@ -99,6 +101,7 @@ export function resolveAgentStateDir(
     codexHomeDir: join(agentStateDir, 'codex-home'),
     opencodeHomeDir: join(agentStateDir, 'opencode-home'),
     piHomeDir: join(agentStateDir, 'pi-home'),
+    cleanupBackfillPath: join(agentStateDir, 'cleanup-backfill.json'),
     legacyPath: join(baseDir, handle),
   };
 }

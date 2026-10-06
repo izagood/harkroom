@@ -9,6 +9,7 @@ import { lstat, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   CLEANUP_GRACE_DEFAULT,
+  CLEANUP_IDLE_DAYS,
   clampGraceDays,
   type CleanupBlockReason,
   type CleanupItem,
@@ -28,6 +29,7 @@ import {
   writeLedger,
   type CleanupPorts,
   type HumanAction,
+  type ObservedIdle,
   type ObservedWorktree,
 } from './workspaceCleanup.js';
 import type { CleanupOwners } from './workspaceCleanupOwners.js';
@@ -109,17 +111,34 @@ export function createCleanupPorts(deps: ScanDeps): CleanupPorts {
       const kb = du.code === 0 ? Number.parseInt(du.stdout.split(/\s/)[0] ?? '', 10) : Number.NaN;
       return Number.isFinite(kb) ? kb * 1024 : null;
     },
-    removeDeps: (root) => removeRebuildable(root, async (name) => {
-      // 그 저장소가 이 폴더를 무시하고(check-ignore), 올려 둔 파일이 하나도 없을 때만.
-      const ignored = await deps.exec(deps.gitPath, ['-C', root, 'check-ignore', '-q', '--', name], env);
-      if (ignored.code !== 0) return false;
+    removeDeps: (root) => removeRebuildable(root, async (name, symlink) => {
+      // 올려 둔 파일이 하나도 없어야 한다(심링크 자체가 올라가 있어도 안 된다).
       const tracked = await deps.exec(deps.gitPath, ['-C', root, 'ls-files', '--', name], env);
-      return tracked.code === 0 && tracked.stdout.trim() === '';
+      if (tracked.code !== 0 || tracked.stdout.trim() !== '') return false;
+      // 심링크는 링크만 지우므로(대상은 따라가지 않는다) 올라가 있지 않으면 된다. `node_modules/` 처럼 끝에 `/` 가 붙은 무시
+      // 규칙은 심링크에 맞지 않아 check-ignore 로는 영영 못 지운다(security 참고, #1210).
+      if (symlink) return true;
+      // 폴더는 그 저장소가 무시하는 것이어야 한다 — 무시 안 된 폴더의 손 파일은 되살릴 수 없다.
+      const ignored = await deps.exec(deps.gitPath, ['-C', root, 'check-ignore', '-q', '--', name], env);
+      return ignored.code === 0;
     }),
   };
 }
 
-export function createWorkspaceCleanup(deps: WorkspaceCleanupDeps, ports: CleanupPorts = createCleanupPorts(deps)): WorkspaceCleanup {
+/** 러너가 지울 차례를 기다린다 — 원장 항목은 그대로 두고(`runSweep` 이 실패로 본다), 러너가 지웠다고 알리면 그때 뺀다. */
+class AwaitingRunner extends Error {}
+
+export function createWorkspaceCleanup(deps: WorkspaceCleanupDeps, base: CleanupPorts = createCleanupPorts(deps)): WorkspaceCleanup {
+  const ports: CleanupPorts = {
+    ...base,
+    async remove(item) {
+      if (item.kind === 'worktree') return base.remove(item);
+      // 스레드 폴더·세션 기록은 러너 상태 트리 안이다(#431 D5) — 오퍼레이터가 rm 하지 않는다.
+      if (!item.thread) throw new AwaitingRunner('no thread');
+      deps.owners.requestDelete(item.thread);
+      throw new AwaitingRunner('awaiting runner');
+    },
+  };
   const now = deps.now ?? (() => new Date());
   let chain: Promise<unknown> = Promise.resolve();
   let running = false;
@@ -162,8 +181,16 @@ export function createWorkspaceCleanup(deps: WorkspaceCleanupDeps, ports: Cleanu
       const agentId = owners.get(normalizeCleanupPath(w.path))?.agentId;
       if (agentId && await isThreadDone(deps.forward, agentId, w.thread.threadRootId)) doneThreads.add(k);
     }
-    // 7일 무턴 스레드 폴더·세션 기록(규칙 6)은 러너 트리라 러너가 지운다(PR ②) — 여기선 worktree 만.
-    return { worktrees, idle: [], doneThreads, lastTurnAt: await deps.owners.lastTurnAt(), runningThreads: deps.owners.running() };
+    // 7일 무턴 스레드(규칙 6): 그 작업 폴더가 항목이 된다. 폴더는 러너 상태 트리 안이라 오퍼레이터는 재지도 지우지도 않는다 —
+    // 기한이 되면 그 러너에게 지워 달라고 한다(`requestDelete` → 다음 보고의 답).
+    const running = deps.owners.running();
+    const idleBefore = now().getTime() - CLEANUP_IDLE_DAYS * 86_400_000;
+    const idle: ObservedIdle[] = [];
+    for (const t of await deps.owners.threads()) {
+      if (!t.workspaceDir || !t.lastTurnAt || Date.parse(t.lastTurnAt) > idleBefore || running.has(threadKey(t))) continue;
+      idle.push({ path: t.workspaceDir, kind: 'threadDir', thread: { channelId: t.channelId, threadRootId: t.threadRootId }, size: null, lastModifiedAt: t.lastTurnAt });
+    }
+    return { worktrees, idle, doneThreads, lastTurnAt: await deps.owners.lastTurnAt(), runningThreads: running };
   };
 
   const sweepOnce = async () => {
@@ -174,8 +201,22 @@ export function createWorkspaceCleanup(deps: WorkspaceCleanupDeps, ports: Cleanu
       const facts = await observe(prev);
       const at = now();
       const plan = planSweep(prev, facts, settings, at);
-      const next = await runSweep(plan, ports, facts.runningThreads, at);
+      const swept = await runSweep(plan, ports, facts.runningThreads, at);
+      // 러너가 지웠다고 알린 스레드 폴더 — 원장에서 빼고 최근 기록에 남긴다.
+      const done = deps.owners.drainDeleted();
+      const gone = new Set(done.map((d) => d.path));
+      const next: CleanupLedger = {
+        ...swept,
+        items: swept.items.filter((i) => !(i.kind !== 'worktree' && gone.has(i.path))),
+        events: [...swept.events, ...done.map((d) => ({
+          at: at.toISOString(), path: d.path, thread: d.thread, action: 'deleted' as const, by: null, bytes: null, reason: null,
+        }))].slice(-200),
+      };
       await writeLedger(deps.ledgerPath, next);
+      // 원장에서 빠졌거나(되살아남) 보존된 스레드 폴더의 지우기 요청은 거둔다.
+      deps.owners.retainDeletes(new Set(next.items
+        .filter((i) => i.kind !== 'worktree' && i.thread && (i.state === 'listed' || i.state === 'blocked'))
+        .map((i) => threadKey(i.thread!))));
       const n = (s: string) => next.items.filter((i) => i.state === s).length;
       deps.log(`cleanup: 삭제 예정 ${n('listed')} · ⚠ ${n('blocked')} · 보존 ${n('kept')} · 주인 모름 ${n('unowned')}`);
     } finally { running = false; }
@@ -205,6 +246,9 @@ export function createWorkspaceCleanup(deps: WorkspaceCleanupDeps, ports: Cleanu
     act: (path, action, by) => serial(async () => {
       const settings = await readCleanupSettings(deps.configPath);
       const r = applyHumanAction(await readLedger(deps.ledgerPath), path, action, by, settings, now());
+      // 「보존」은 이미 러너에게 나간 요청도 거둔다(security F1).
+      const target = r.ledger.items.find((i) => i.path === path);
+      if (action === 'keep' && target?.thread && target.kind !== 'worktree') deps.owners.cancelDelete(target.thread);
       const next = await runSweep({ ledger: r.ledger, actions: r.actions }, ports, deps.owners.running(), now());
       await writeLedger(deps.ledgerPath, next);
       return view();

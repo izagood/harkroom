@@ -120,9 +120,21 @@ export interface CleanupThreadReport extends CleanupThreadRef {
   lastTurnAt: string | null;
   /** 지금 이 스레드의 턴이 도는가. */
   running: boolean;
+  /**
+   * 이 스레드의 작업 폴더(러너 상태 트리 안). 7일 넘게 턴이 없으면 이 경로가 「스레드 폴더」 항목이 된다(규칙 6).
+   * 오퍼레이터는 이 폴더를 **지우지도 재지도 않는다** — 지우기는 답(`deleteThreads`)으로 러너에게 맡긴다.
+   */
+  workspaceDir?: string | null;
 }
 
-export interface CleanupReport { threads: CleanupThreadReport[] }
+export interface CleanupReport {
+  threads: CleanupThreadReport[];
+  /** 앞 답의 `deleteThreads` 를 러너가 지웠다(작업 폴더·세션 기록·세션 레코드). */
+  deleted?: CleanupThreadRef[];
+}
+
+/** 보고의 답 — 기한이 지나 검사를 통과한, 이 러너가 지울 스레드들. */
+export interface CleanupReportReply { deleteThreads: CleanupThreadRef[] }
 
 const UUIDISH = /^[0-9a-f-]{36}$/i;
 const MAX_REPORT_THREADS = 2000;
@@ -143,9 +155,17 @@ export function readCleanupReport(body: unknown, now: number = Date.now()): Clea
       : [];
     const t0 = typeof x.lastTurnAt === 'string' ? Date.parse(x.lastTurnAt) : Number.NaN;
     const lastTurnAt = Number.isNaN(t0) ? null : new Date(Math.min(t0, now)).toISOString();
-    threads.push({ channelId: x.channelId, threadRootId: x.threadRootId, worktrees, lastTurnAt, running: x.running === true });
+    const workspaceDir = typeof x.workspaceDir === 'string' && x.workspaceDir.startsWith('/') && x.workspaceDir.length < 1024 ? x.workspaceDir : null;
+    threads.push({ channelId: x.channelId, threadRootId: x.threadRootId, worktrees, lastTurnAt, running: x.running === true, workspaceDir });
   }
-  return { threads };
+  const deleted = Array.isArray((b as { deleted?: unknown }).deleted)
+    ? ((b as { deleted: unknown[] }).deleted).flatMap((d) => {
+      const x = d as Partial<CleanupThreadRef> | null;
+      return x && typeof x.channelId === 'string' && UUIDISH.test(x.channelId) && typeof x.threadRootId === 'string' && UUIDISH.test(x.threadRootId)
+        ? [{ channelId: x.channelId, threadRootId: x.threadRootId }] : [];
+    }).slice(0, MAX_REPORT_THREADS)
+    : [];
+  return { threads, ...(deleted.length ? { deleted } : {}) };
 }
 
 /** `/tmp/x` 와 `/private/tmp/x` 는 같은 곳이다(macOS). 끝 슬래시도 뗀다. 경로 비교는 이 모양으로. */
@@ -153,6 +173,11 @@ export function normalizeCleanupPath(p: string): string {
   let s = p;
   if (s.startsWith('/private/tmp/')) s = s.slice('/private'.length);
   return s.replace(/\/+$/, '');
+}
+
+/** claude 가 `projects/` 아래 디렉터리 이름을 짓는 법 — 작업 폴더 경로의 영숫자·`-` 밖 글자를 `-` 로. */
+export function claudeProjectDirName(cwd: string): string {
+  return cwd.replace(/[^A-Za-z0-9-]/g, '-');
 }
 
 /**

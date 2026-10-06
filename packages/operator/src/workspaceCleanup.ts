@@ -263,12 +263,12 @@ export interface CleanupPorts {
  * 이름만 보고 지우지 않는다: `safe(name)` 이 참일 때만(그 저장소가 그 폴더를 무시하고, 올려 둔 파일이 없을 때) 지운다.
  * 다른 저장소는 `build/`·`dist/` 를 올려 두거나 손 파일을 둘 수 있다 — 그것은 다시 만들 수 있는 폴더가 아니다.
  */
-export async function removeRebuildable(root: string, safe: (name: string) => Promise<boolean>): Promise<void> {
+export async function removeRebuildable(root: string, safe: (name: string, symlink: boolean) => Promise<boolean>): Promise<void> {
   for (const name of REBUILDABLE_DIRS) {
     const p = join(root, name);
     const st = await lstat(p).catch(() => null);
     if (!st || !(st.isSymbolicLink() || st.isDirectory())) continue;
-    if (!(await safe(name))) continue;
+    if (!(await safe(name, st.isSymbolicLink()))) continue;
     if (st.isSymbolicLink()) await unlink(p);
     else await rm(p, { recursive: true, force: true });
   }

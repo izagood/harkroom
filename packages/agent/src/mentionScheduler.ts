@@ -194,6 +194,13 @@ export interface MentionSchedulerDeps {
     acquire(key: string): Promise<'granted' | 'full' | 'unsupported'>;
     release(key: string): Promise<void>;
   };
+  /**
+   * 턴 앞뒤 통지(작업 폴더 정리, `cleanupReport.ts`). 기다리지 않는다 — 정리 보고가 늦거나 실패해도 턴은 그대로 돈다.
+   */
+  turnWatch?: {
+    started(threadKey: string, mentionId: string): Promise<void>;
+    ended(threadKey: string, mentionId: string): Promise<void>;
+  };
   /** 종료 요청이 나를 향한 것인지 가르는 기준(stop.ts). */
   startedAtMs: number;
   /** 테스트가 백오프 경계를 결정론적으로 재현하기 위한 시계 주입. 생략하면 Date.now. */
@@ -872,6 +879,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         // entry 당 1회라는 약속이 깨진다.
         attempts.set(entry.id, { tried, notBefore: 0, noticed: prior?.noticed });
 
+        void deps.turnWatch?.started(threadKey, mention.id).catch(() => {});
         const task: Promise<void> = runOne(entry.id, mention, anchor, threadKey, ctx, tried, entry.reason, entry.team, entry.delegation, entry.delegatedBy, entry.viaEdit === true, claim?.lost, entry.canceledWakes)
           .catch((err: unknown) => {
             console.error(`  ${entry.messageId} 턴 실패:`, err instanceof Error ? err.message : err);
@@ -881,6 +889,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
             running.delete(task);
             void claim?.release();
             if (slotHeld) void deps.turnSlots?.release(threadKey);
+            void deps.turnWatch?.ended(threadKey, mention.id).catch(() => {});
           });
         running.add(task);
       }
