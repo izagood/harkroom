@@ -1215,9 +1215,11 @@ function buildMcpServer(
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
-    await removeReaction(pool, { messageId, accountId: account.id, emoji });
+    const removed = await removeReaction(pool, { messageId, accountId: account.id, emoji });
     // 제거도 REST 와 같이 이벤트를 낸다 — 없는 것을 떼는 것도 성공이라(REST 주석 참고)
     // 이벤트를 조건부로 내지 않는다. 결과 상태가 같으니 재시도가 안전해야 한다.
+    // 단 서버가 단 상태 리액션이 남았으면 내지 않는다 — 화면이 남은 리액션을 지운다(108).
+    if (removed === 'status_kept') return jsonResult({ ok: true });
     emitEvent({
       type: 'reaction.removed', channelId, messageId, emoji,
       accountId: account.id, audience: await audienceFor(pool, channelId),

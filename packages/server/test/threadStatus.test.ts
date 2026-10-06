@@ -122,7 +122,7 @@ describe('스레드 상태 리액션', () => {
     expect(await refreshThreadStatus(pool, id, live())).toMatchObject({ status: 'received', emoji: '👀', accountId: botId });
   });
 
-  it('사람 리액션과 따로 실린다 — 목록에 statusReaction, reactions 에는 사람 ✅ 만', async () => {
+  it('끝나면 상태 리액션을 뗀다 — 목록에 statusReaction 은 done, reactions 에는 사람 ✅ 만(B2)', async () => {
     const id = await seed(adminId, '부탁');
     await seed(botId, '답', { root: id });
     await refreshThreadStatus(pool, id, live());
@@ -130,6 +130,70 @@ describe('스레드 상태 리액션', () => {
     const row = (await listMessages(pool, channelId, { limit: 200 })).find((m) => m.id === id)!;
     expect(row.statusReaction).toMatchObject({ status: 'done', emoji: '✅', accountId: botId });
     expect(row.reactions).toEqual([{ emoji: '✅', accountIds: [adminId] }]);
+  });
+
+  it('상태를 진짜 리액션으로 단다 — 주인 에이전트 이름, 바뀌면 이전 것을 떼고, 끝나면 없다', async () => {
+    const reactionsOf = async (id: string) => (await listMessages(pool, channelId, { limit: 500 })).find((m) => m.id === id)!.reactions;
+    const events: WorkspaceEvent[] = [];
+    const off = onEvent((e) => { if (e.type === 'reaction.added' || e.type === 'reaction.removed') events.push(e); });
+    try {
+      const id = await seed(adminId, '부탁');
+      await seed(botId, '시작', { root: id, kind: 'progress' });
+      await refreshThreadStatus(pool, id, live());
+      expect(await reactionsOf(id)).toEqual([{ emoji: '💬', accountIds: [botId] }]);
+
+      await seed(botId, '물음', { root: id, meta: ask({ kind: 'human' }) });
+      await refreshThreadStatus(pool, id, live());
+      expect(await reactionsOf(id)).toEqual([{ emoji: '🙋', accountIds: [botId] }]);
+      // 화면이 듣는 이벤트로 나간다 — 떼고 달았다.
+      expect(events.filter((e) => 'messageId' in e && e.messageId === id).map((e) => [e.type, (e as { emoji: string }).emoji]))
+        .toEqual([['reaction.added', '💬'], ['reaction.removed', '💬'], ['reaction.added', '🙋']]);
+
+      // 다시 판정해도 같으면 아무것도 안 바뀐다.
+      events.length = 0;
+      expect(await refreshThreadStatus(pool, id, live())).toBe('unchanged');
+      expect(events).toEqual([]);
+
+      await pool.query(`update message set meta = jsonb_set(meta, '{ask,answeredWith}', '"a"') where thread_root_id = $1 and meta->>'kind' = 'ask'`, [id]);
+      await seed(botId, '끝났다', { root: id });
+      expect(await refreshThreadStatus(pool, id, live())).toMatchObject({ status: 'done' });
+      expect(await reactionsOf(id)).toEqual([]);
+    } finally { off(); }
+  });
+
+  it('사람 리액션은 건드리지 않고, 사람 API 로는 상태 리액션을 못 뗀다', async () => {
+    const auth = { authorization: `Bearer ${adminToken}` };
+    const id = await seed(adminId, '부탁');
+    await pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [botId, id]);
+    await refreshThreadStatus(pool, id, live());
+    // 사람도 👀 를 단다 — 한 칩에 둘이 모인다.
+    const put = await app.inject({ method: 'PUT', url: `/channels/${channelId}/messages/${id}/reactions/${encodeURIComponent('👀')}`, headers: auth });
+    expect(put.statusCode).toBe(200);
+    const reactionsOf = async () => (await listMessages(pool, channelId, { limit: 500 })).find((m) => m.id === id)!.reactions;
+    expect(await reactionsOf()).toEqual([{ emoji: '👀', accountIds: [botId, adminId] }]);
+
+    // 에이전트가 말하기 시작하면 상태 👀 만 떨어지고 사람 👀 는 남는다.
+    await seed(botId, '시작', { root: id, kind: 'progress' });
+    await refreshThreadStatus(pool, id, live());
+    expect(await reactionsOf()).toEqual([{ emoji: '👀', accountIds: [adminId] }, { emoji: '💬', accountIds: [botId] }]);
+
+    // 상태 행은 그 계정의 지우기로도 안 떨어진다(서버가 뗀다) — 이벤트도 안 나간다.
+    const { removeReaction } = await import('../src/services/reactions.js');
+    expect(await removeReaction(pool, { messageId: id, accountId: botId, emoji: '💬' })).toBe('status_kept');
+    expect(await reactionsOf()).toContainEqual({ emoji: '💬', accountIds: [botId] });
+  });
+
+  it('주인 에이전트가 같은 이모지를 손으로 달면 손으로 단 것이 된다 — 상태가 바뀌어도 남는다', async () => {
+    const { addReaction } = await import('../src/services/reactions.js');
+    const id = await seed(adminId, '부탁');
+    await seed(botId, '시작', { root: id, kind: 'progress' });
+    await refreshThreadStatus(pool, id, live());
+    expect(await addReaction(pool, { channelId, messageId: id, accountId: botId, emoji: '💬' })).toBe('added');
+    const src = async () => (await pool.query(`select emoji, source from message_reaction where message_id = $1`, [id])).rows;
+    expect(await src()).toEqual([{ emoji: '💬', source: 'user' }]);
+    await seed(botId, '끝', { root: id });
+    await refreshThreadStatus(pool, id, live());
+    expect(await src()).toEqual([{ emoji: '💬', source: 'user' }]);
   });
 
   it('REST 로 쓴 말이 버스를 지나 다시 판정되고 thread.status 이벤트가 나간다', async () => {

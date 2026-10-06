@@ -436,7 +436,9 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
 
     // 없는 것을 떼는 것도 성공이다 — 결과 상태가 같으니 재시도가 안전하다. 그래서 404 를 보지
     // 않고, 메시지 존재 확인도 하지 않는다(존재를 확인해 주면 없는 메시지 탐색 경로가 된다).
-    await removeReaction(pool, { messageId, accountId: req.account!.id, emoji });
+    const removed = await removeReaction(pool, { messageId, accountId: req.account!.id, emoji });
+    // 서버가 단 상태 리액션(108)이 남았으면 이벤트를 내지 않는다 — 내면 화면이 남은 리액션을 지운다.
+    if (removed === 'status_kept') return reply.code(204).send();
     emitEvent({
       type: 'reaction.removed', channelId: id, messageId, emoji,
       accountId: req.account!.id, audience: await audienceFor(pool, id),

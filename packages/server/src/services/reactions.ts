@@ -35,27 +35,42 @@ export async function addReaction(
 
   // 이미 눌러 둔 것을 다시 누르는 것은 한도에 걸리지 않아야 한다 — 더블클릭이 409 를 받으면
   // 사용자는 자기가 무엇을 잘못했는지 알 수 없다.
+  // 서버가 단 상태 리액션(`source = 'status'`, 108)은 세지 않는다 — 그 계정이 고른 것이 아니다.
   const already = await pool.query(
-    `select emoji from message_reaction where message_id = $1 and account_id = $2`,
+    `select emoji from message_reaction where message_id = $1 and account_id = $2 and source = 'user'`,
     [input.messageId, input.accountId],
   );
   const mine = already.rows.map((r) => r.emoji as string);
   if (!mine.includes(input.emoji) && mine.length >= MAX_REACTIONS_PER_ACTOR) return 'too_many';
 
+  // 같은 행이 상태 리액션이면 손으로 단 것으로 올린다 — 상태가 바뀌어 서버가 상태 행을 떼도
+  // 그 계정이 직접 단 리액션은 남아야 한다.
   await pool.query(
     `insert into message_reaction (message_id, account_id, emoji) values ($1, $2, $3)
-     on conflict do nothing`,
+     on conflict (message_id, account_id, emoji) do update set source = 'user'
+       where message_reaction.source = 'status'`,
     [input.messageId, input.accountId, input.emoji],
   );
   return 'added';
 }
 
-/** 없는 것을 떼는 것도 성공이다 — 결과 상태가 같으므로 클라이언트가 재시도해도 안전하다. */
+/**
+ * 없는 것을 떼는 것도 성공이다 — 결과 상태가 같으므로 클라이언트가 재시도해도 안전하다.
+ *
+ * 서버가 단 상태 리액션(`source = 'status'`)은 떼지 않는다 — 상태가 바뀌면 서버가 뗀다. 그 행이
+ * 남았으면 `'status_kept'` 를 돌려준다: 부른 쪽은 `reaction.removed` 를 내지 않아야 한다(내면 화면이
+ * 서버에 남은 리액션을 지운다).
+ */
 export async function removeReaction(
   pool: Pool, input: { messageId: string; accountId: string; emoji: string },
-): Promise<void> {
-  await pool.query(
-    `delete from message_reaction where message_id = $1 and account_id = $2 and emoji = $3`,
+): Promise<'removed' | 'status_kept'> {
+  const res = await pool.query(
+    `with del as (
+       delete from message_reaction where message_id = $1 and account_id = $2 and emoji = $3 and source = 'user'
+     )
+     select exists (select 1 from message_reaction
+                     where message_id = $1 and account_id = $2 and emoji = $3 and source = 'status') as kept`,
     [input.messageId, input.accountId, input.emoji],
   );
+  return res.rows[0]?.kept === true ? 'status_kept' : 'removed';
 }

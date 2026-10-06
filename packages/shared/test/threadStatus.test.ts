@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { decideThreadStatus, THREAD_STATUS_EMOJI, type ThreadStatusFacts } from '../src/threadStatus.js';
+import { decideThreadStatus, statusReactionEmoji, THREAD_STATUS_EMOJI, type ThreadStatusFacts } from '../src/threadStatus.js';
 
 const base: ThreadStatusFacts = {
   humanAsk: null, failure: null, deniedMention: null, agentWait: null, openWake: null,
@@ -69,5 +69,14 @@ describe('decideThreadStatus — 위에서부터 이긴다', () => {
     const all = Object.values(THREAD_STATUS_EMOJI);
     expect(new Set(all).size).toBe(6);
     expect(THREAD_STATUS_EMOJI).toMatchObject({ received: '👀', running: '💬', waiting: '⏳', 'my-turn': '🙋', stuck: '🚨', done: '✅' });
+  });
+});
+
+describe('statusReactionEmoji — 진짜 리액션으로 다는 것(jaebin B2)', () => {
+  it('열린 일만 달고 끝남 ✅ 는 달지 않는다', () => {
+    expect(statusReactionEmoji('done')).toBeNull();
+    for (const s of ['received', 'running', 'waiting', 'my-turn', 'stuck'] as const) {
+      expect(statusReactionEmoji(s)).toBe(THREAD_STATUS_EMOJI[s]);
+    }
   });
 });
