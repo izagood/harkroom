@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useHostDocument } from '../lib/hostDocument';
 import type { AttachmentRow } from '@harkroom/shared';
 import { getController } from '../state/controller';
 import { Overlay } from './Overlay';
@@ -48,6 +49,8 @@ export function ImageLightbox({ attachment, url, failed = false, onRetry, onClos
   saveable?: boolean;
   nav?: LightboxNav;
 }) {
+  // 새 창 안이면 그 창의 문서를 듣는다(`lib/hostDocument`).
+  const hostDoc = useHostDocument();
   const t = useT();
   const bodyRef = useRef<HTMLDivElement>(null);
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
@@ -154,8 +157,8 @@ export function ImageLightbox({ attachment, url, failed = false, onRetry, onClos
         e.stopPropagation();
       }
     };
-    document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
+    hostDoc.addEventListener('keydown', onKey, true);
+    return () => hostDoc.removeEventListener('keydown', onKey, true);
   }, [isFit, scale, fit, zoomTo, nav, natural]);
 
   // 트랙패드 좌우 스와이프의 누적 — 한 번 넘기면 손을 뗄 때(휠이 잠시 멎을 때)까지 다시 넘기지 않는다.

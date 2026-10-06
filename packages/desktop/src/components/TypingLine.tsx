@@ -1,4 +1,5 @@
 import { useActiveStore } from '../state/communities';
+import { useWindowView } from '../state/windowView';
 import { useT } from '../i18n/useT';
 
 /** 이름을 다 늘어놓으면 줄이 길어지고, 그 줄이 늘어나면 메시지 목록이 밀린다. */
@@ -6,7 +7,7 @@ const MAX_NAMES = 2;
 
 export function TypingLine() {
   const t = useT();
-  const channelId = useActiveStore((s) => s.activeChannelId);
+  const channelId = useWindowView().channelId;
   const typing = useActiveStore((s) => (channelId ? s.typing[channelId] : undefined));
   const accounts = useActiveStore((s) => s.accounts);
 

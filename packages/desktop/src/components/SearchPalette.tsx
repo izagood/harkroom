@@ -3,6 +3,7 @@ import type { MessageRow } from '@harkroom/shared';
 import { displayBody } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
+import { openWindow, popOutChannel } from '../lib/windowActions';
 import { useLocale, useT } from '../i18n/useT';
 import { stampLabel } from '../lib/day';
 import { highlightParts, searchExcerpt } from '../lib/highlight';
@@ -194,7 +195,15 @@ export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
       }
       if (e.key === 'Enter' && activeIndex >= 0 && results[activeIndex]) {
         e.preventDefault();
-        openResult(results[activeIndex]);
+        const hit = results[activeIndex];
+        // ⌘⏎ 는 새 창(판 3 C1): 답글이면 그 스레드 창, 채널 글이면 그 채널 창.
+        if (e.metaKey || e.ctrlKey) {
+          if (hit.threadRootId) openWindow({ kind: 'thread', channelId: hit.channelId, rootId: hit.threadRootId });
+          else void popOutChannel(hit.channelId);
+          close();
+          return;
+        }
+        openResult(hit);
         return;
       }
     };

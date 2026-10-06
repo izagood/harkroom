@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react';
+import { AppWindowsHost } from './components/AppWindowsHost';
+import { forgetSavedAppWindows } from './lib/appWindows';
 import { createNotifier } from './lib/notify';
 import { sessionStore, type StoredCommunity, type StoredSessions } from './lib/session';
 import { useColorMode } from './lib/useColorMode';
@@ -6,7 +8,7 @@ import { useZoom } from './lib/useZoom';
 import { useNotificationOpen } from './lib/useNotificationOpen';
 import { useDockBadge } from './lib/useDockBadge';
 import { useFileDropGuard } from './lib/useFileDropGuard';
-import { getActiveEntry } from './state/communities';
+import { getActiveEntry, useCommunityRegistry } from './state/communities';
 import {
   getController, isCredentialRejection, openNotificationTarget, restoreCommunitySession, startCommunitySession,
   type Controller, type RestoreHandle,
@@ -250,13 +252,20 @@ export default function App() {
     );
   }
   const signOut = () => {
+    forgetSavedAppWindows(useCommunityRegistry.getState().activeId);
     getController().logout();
     setSettings(null);
     setPhase('connect');
   };
 
+  /**
+   * 채널·스레드 새 창의 포털(`AppWindowsHost`)은 **설정 화면과 작업 화면에 걸쳐** 한 자리에 둔다 — 조각의 둘째
+   * 자식이라 둘 사이를 오가도 내려가지 않는다(설정을 연다고 새 창이 닫히면 안 된다). 접속 화면으로 가면 내려가며
+   * 창을 모두 닫는다(security L1).
+   */
   if (settings) {
     return (
+      <>
       <SettingsScreen
         initialSection={settings.section}
         targetId={settings.targetId}
@@ -266,12 +275,17 @@ export default function App() {
         // 커뮤니티 제거가 이 경로 말고는 `phase` 를 건드리지 않는다.
         onCommunitiesEmpty={() => { setSettings(null); setPhase('connect'); }}
       />
+      <AppWindowsHost />
+      </>
     );
   }
   return (
+    <>
     <Workspace
-      onLogout={() => setPhase('connect')}
+      onLogout={() => { forgetSavedAppWindows(useCommunityRegistry.getState().activeId); setPhase('connect'); }}
       onOpenSettings={(section, targetId) => setSettings({ section, targetId })}
     />
+    <AppWindowsHost />
+    </>
   );
 }

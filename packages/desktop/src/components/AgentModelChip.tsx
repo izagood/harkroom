@@ -11,6 +11,7 @@
  * `ModelPicker` 가 직접 입력으로 물러선다 — "고를 것이 없다" 고 그리지 않는다.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useHostDocument } from '../lib/hostDocument';
 import type { AgentModelOptions } from '@harkroom/shared';
 import { getController } from '../state/controller';
 import { ModelPicker } from './settings/ModelPicker';
@@ -126,6 +127,8 @@ function AgentModelPicker({ agentId, handle, value, mode, placement, clearsThrea
   onApply: (next: ModelValue) => void | Promise<unknown>;
   onReset: () => void | Promise<unknown>;
 }) {
+  // 새 창 안이면 그 창의 문서를 듣는다(`lib/hostDocument`).
+  const hostDoc = useHostDocument();
   const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   const [options, setOptions] = useState<PickerOptions | null>(null);
@@ -135,7 +138,7 @@ function AgentModelPicker({ agentId, handle, value, mode, placement, clearsThrea
     const el = ref.current;
     const parent = el?.parentElement;
     if (!el || !parent) return;
-    const pane = el.closest('section') ?? document.body;
+    const pane = el.closest('section') ?? hostDoc.body;
     const room = pane.getBoundingClientRect().right - parent.getBoundingClientRect().left;
     setAlignRight(room < el.offsetWidth);
   }, []);
@@ -156,8 +159,8 @@ function AgentModelPicker({ agentId, handle, value, mode, placement, clearsThrea
   // 바깥을 누르면 닫는다. 고르개 안의 select 가 띄운 목록은 이 상자 안의 클릭으로 온다.
   useEffect(() => {
     const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
+    hostDoc.addEventListener('mousedown', onDown);
+    return () => hostDoc.removeEventListener('mousedown', onDown);
   }, [onClose]);
 
   const models = options === null ? null : options.models;

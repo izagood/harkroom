@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useHostDocument } from '../lib/hostDocument';
 import type { AttachmentRow } from '@harkroom/shared';
 import { getController } from '../state/controller';
 import { useActiveStore } from '../state/communities';
@@ -69,6 +70,8 @@ export function ArtifactPanel({ fill = false }: {
   /** 곁의 내용 칸이 고정 폭(스레드)일 때 남는 폭을 미리보기가 채운다(`Workspace.tsx` 수정 1). */
   fill?: boolean;
 } = {}) {
+  // 새 창 안이면 그 창의 문서를 듣는다(`lib/hostDocument`).
+  const hostDoc = useHostDocument();
   const t = useT();
   const attachment = useActiveStore((s) => s.artifactPreview);
   const [expanded, setExpanded] = useState(false);
@@ -158,8 +161,8 @@ export function ArtifactPanel({ fill = false }: {
       if (expanded) setExpanded(false);
       else getController().closeArtifactPreview();
     };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    hostDoc.addEventListener('keydown', onKey);
+    return () => hostDoc.removeEventListener('keydown', onKey);
   }, [attachment, expanded]);
 
   if (!attachment) return null;

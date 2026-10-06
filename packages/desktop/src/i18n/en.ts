@@ -457,6 +457,18 @@ export const en = {
   // **눌린 것이 맞는지** 화면이 말하지 않는다(툴바의 스레드 칸이 상시 노출이 된 뒤로
   // 이 상태가 흔해졌다 — 전에는 답글이 있는 스레드만 열 수 있었다).
   'thread.empty': 'No replies yet. Start the thread with the first reply.',
+  // 채널·스레드 새 창(designer 판 3). `window.limit` 의 {count} 는 `MAX_APP_WINDOWS`.
+  'window.openThread': 'Open thread in new window',
+  'window.popOut': 'Open in new window',
+  'window.limit': '{count} windows are already open. Close one, then try again.',
+  'window.blocked': 'Could not open a new window.',
+  'window.threadGone': 'This thread is gone — it was deleted, or you can no longer see it.',
+  'window.loading': 'Loading…',
+  'window.openChannel': 'Open channel in new window',
+  'window.inWindow': 'Open in a separate window',
+  'window.pin': 'Keep on top',
+  'window.unpin': 'Stop keeping on top',
+  'window.backToMain': 'Move back to main window',
   'reactions.pickTitle': 'Pick a reaction',
 
   // ---------------------------------------------------------------------------

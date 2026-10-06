@@ -1,4 +1,5 @@
 import { Fragment, useState, useRef, useEffect, useCallback, useLayoutEffect, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useHostDocument } from '../lib/hostDocument';
 
 export interface MenuItem {
   label: string;
@@ -145,6 +146,8 @@ export function clipBounds(el: HTMLElement): { top: number; bottom: number } {
 const MENU_ITEM_FOCUS = 'outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1';
 
 export function Menu({ renderTrigger, items, placement = 'top', openOnContextMenu = false, header, className = '' }: MenuProps) {
+  // 새 창 안이면 그 창의 문서를 듣는다(`lib/hostDocument`).
+  const hostDoc = useHostDocument();
   const [open, setOpen] = useState(false);
   const [openAt, setOpenAt] = useState<MenuPosition | null>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
@@ -234,8 +237,8 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
       if (triggerRef.current?.contains(target)) return;
       close();
     };
-    document.addEventListener('mousedown', onMouseDown);
-    return () => document.removeEventListener('mousedown', onMouseDown);
+    hostDoc.addEventListener('mousedown', onMouseDown);
+    return () => hostDoc.removeEventListener('mousedown', onMouseDown);
   }, [open, close]);
 
   /** 메뉴 안에서의 키보드 이동. 항목 버튼에 직접 걸어 리스너 재부착을 피한다. */
