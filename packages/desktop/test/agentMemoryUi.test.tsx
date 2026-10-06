@@ -17,7 +17,7 @@ import { MAX_MEMORY_ITEMS_PER_ACCOUNT } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
-import { AgentsSettings } from '../src/components/settings/AgentsSettings';
+import { AgentsSettings, MEMORY_TWO_PANE_MIN_PX } from '../src/components/settings/AgentsSettings';
 import { acc } from './helpers/fakeApi';
 import type { MemoryAudit, MemoryEntry } from '../src/lib/memoryList';
 
@@ -567,7 +567,7 @@ describe('종류별 묶음·목록/상세 두 칸 (PR 4)', () => {
     expect(within(screen.getByTestId('memory-detail-pane')).getByText(/짝 본문/)).toBeTruthy();
   });
 
-  it('줄 꼬리표는 둘까지, 나머지는 +n (n3) · 쓰임 0 은 흐리다 (n5)', async () => {
+  it('줄 꼬리표는 둘까지, 나머지는 +n (n3) · 쓰임 0 은 그리지 않는다 (n5)', async () => {
     audit = {
       ...emptyAudit(),
       flagged: [{ slug: 'mem/a-one', reason: null }], neverRead: ['mem/a-one'], undescribed: ['mem/a-one'],
@@ -583,10 +583,9 @@ describe('종류별 묶음·목록/상세 두 칸 (PR 4)', () => {
     expect(within(row).getByTestId('memory-reason-neverRead')).toBeTruthy();
     expect(within(row).queryByTestId('memory-reason-undescribed')).toBeNull();
     expect(within(row).getByTestId('memory-reason-more').textContent).toBe('+1');
-    expect(within(row).getByTestId('memory-usage').getAttribute('data-zero')).toBe('true');
-    const used = within(screen.getByTestId('memory-row-mem/b-two')).getByTestId('memory-usage');
-    expect(used.getAttribute('data-zero')).toBeNull();
-    expect(used.textContent).toBe('쓰임 3');
+    // 0 은 그리지 않는다(#1209 nit 3).
+    expect(within(row).queryByTestId('memory-usage')).toBeNull();
+    expect(within(screen.getByTestId('memory-row-mem/b-two')).getByTestId('memory-usage').textContent).toBe('쓰임 3');
   });
 
   it('보관하면 상세 칸이 닫히지 않고 보관된 것으로 남는다 · 지우면 닫힌다', async () => {
@@ -627,5 +626,37 @@ describe('종류별 묶음·목록/상세 두 칸 (PR 4)', () => {
     expect(screen.queryByTestId('memory-picked-bar')).toBeNull();
     expect((screen.getByLabelText('mem/same 고르기') as HTMLInputElement).checked).toBe(false);
   });
-});
 
+  it('좁으면 상세는 고른 줄 바로 아래 열린다 — 목록에서 자리를 잃지 않게(B2)', async () => {
+    fakeController([mem('mem/a-one', '# 1\n알파'), mem('mem/b-two', '# 2\n베타')]);
+    await open();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'mem/b-two 펼치기' }));
+    const row = screen.getByTestId('memory-row-mem/b-two');
+    expect(within(row).getByTestId('memory-detail-pane')).toBeTruthy();
+    expect(within(row).getByRole('button', { name: 'mem/b-two 접기' }).getAttribute('aria-current')).toBe('true');
+  });
+
+  it('넓으면(48rem 이상) 목록 옆 한 칸에 열린다(B1)', async () => {
+    const realRO = globalThis.ResizeObserver;
+    const realRect = Element.prototype.getBoundingClientRect;
+    globalThis.ResizeObserver = class {
+      constructor(private cb: () => void) {}
+      observe() { this.cb(); }
+      disconnect() {}
+      unobserve() {}
+    } as unknown as typeof ResizeObserver;
+    Element.prototype.getBoundingClientRect = function () { return { width: MEMORY_TWO_PANE_MIN_PX } as DOMRect; };
+    try {
+      fakeController([mem('mem/a-one', '# 1\n알파')]);
+      await open();
+      fireEvent.click(await screen.findByRole('button', { name: 'mem/a-one 펼치기' }));
+      const pane = screen.getByTestId('memory-detail-pane');
+      expect(screen.getByTestId('memory-row-mem/a-one').contains(pane)).toBe(false);
+      expect(within(pane).getByText(/알파/)).toBeTruthy();
+    } finally {
+      globalThis.ResizeObserver = realRO;
+      Element.prototype.getBoundingClientRect = realRect;
+    }
+  });
+});

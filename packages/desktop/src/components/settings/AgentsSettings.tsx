@@ -250,6 +250,8 @@ const firstTab = (tabs: Iterable<AgentDetailTab>): AgentDetailTab | null => {
 
 /** 보관 칸의 열림 상태 열쇠. 접두어 묶음 열쇠(`mem/pr-`)와 겹치지 않는다. */
 const ARCHIVED_GROUP = 'archived';
+/** 목록/상세를 나란히 두는 최소 폭(48rem). 한 칸 24rem 이 줄 하나(체크·slug·꼬리표 둘·버튼)를 담는 폭이다. */
+export const MEMORY_TWO_PANE_MIN_PX = 768;
 
 export function AgentsSettings({ targetId }: { targetId?: string }) {
   // 시간 표기는 언어를 따른다(`lib/time.ts`). 접두는 사전을 지난다.
@@ -408,6 +410,23 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 에이전트를 바꾸면 비운다 — 같은 이름의 기억이 다른 에이전트에도 있을 수 있다.
    */
   const [memSelected, setMemSelected] = useState<string | null>(null);
+  /**
+   * 목록/상세를 나란히 둘 만큼 넓은가(#1209 designer B1·B2). 컨테이너 쿼리 대신 잰다 — 좁을 때는 상세를
+   * **고른 줄 바로 아래** 펼쳐야 하는데(목록에서 자리를 잃지 않게), 그 자리는 CSS 만으로 옮길 수 없다.
+   * ResizeObserver 가 없으면(jsdom) 좁은 쪽이다.
+   */
+  const [memWide, setMemWide] = useState(false);
+  const memLayoutObserver = useRef<ResizeObserver | null>(null);
+  const memLayoutRef = useCallback((el: HTMLDivElement | null) => {
+    memLayoutObserver.current?.disconnect();
+    memLayoutObserver.current = null;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setMemWide(el.getBoundingClientRect().width >= MEMORY_TWO_PANE_MIN_PX));
+    ro.observe(el);
+    memLayoutObserver.current = ro;
+  }, []);
+  /** 상세가 새로 열릴 때 한 번 그쪽으로 옮긴다 — `[[링크]]`·짝 이름으로 넘어갈 때 화면 밖에 열리지 않게. */
+  const memPaneScrolled = useRef<string | null>(null);
   const [openGroups, setOpenGroups] = useState<string[]>([]);
   const [memQuery, setMemQuery] = useState('');
   const [memSort, setMemSort] = useState<MemorySort>('recent');
@@ -892,7 +911,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
         data-testid={`memory-row-${m.slug}`}
         className="border-t border-border first:border-t-0"
       >
-        <div className={`flex items-baseline gap-2 px-2 py-1 ${inGroup ? 'pl-6' : ''}`}>
+        {/* 고른 줄은 배경으로 말한다 — 표시 글자를 넣으면 slug 가 밀린다(#1209 designer nit 1). */}
+        <div className={`flex items-baseline gap-2 px-2 py-1 ${inGroup ? 'pl-6' : ''} ${open ? 'bg-surface-hover' : ''}`}>
           <input
             type="checkbox"
             className="flex-none self-center"
@@ -903,12 +923,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           <button
             className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
             aria-expanded={open}
+            aria-current={open ? 'true' : undefined}
             aria-label={t(open ? 'agents.memory.collapse' : 'agents.memory.expand', { slug: m.slug })}
             onClick={() => setMemSelected((prev) => (prev === m.slug ? null : m.slug))}
           >
             <span className="flex min-w-0 flex-1 flex-col">
             <span className="flex min-w-0 items-baseline gap-2">
-            <span aria-hidden="true" className="flex-none text-meta text-fg-subtle">{open ? '▸' : ''}</span>
             <span className="min-w-0 truncate text-meta font-medium">{m.slug}</span>
             {/* 종류(M5): 주제가 아닌 것만 표를 단다 — 대부분인 주제에까지 달면 표가 소음이 된다. */}
             {m.kind && m.kind !== 'topic' && (
@@ -962,9 +982,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               {t('agents.memory.pointsToArchived', { n: pointsToArchived.length })}
             </button>
           )}
-          {m.readCount !== undefined && (
-            // 0 은 흐리게 — 모든 줄에 「쓰임 0」이 같은 진하기로 서면 쓰인 줄이 묻힌다(#1196 designer n5).
-            <span data-testid="memory-usage" data-zero={usage === 0 || undefined} className={`flex-none text-meta text-fg-subtle ${usage === 0 ? 'opacity-50' : ''}`}>
+          {/* 0 은 그리지 않는다 — 모든 줄에 「쓰임 0」이 서면 쓰인 줄이 묻힌다(#1196 n5 → #1209 nit 3). */}
+          {usage > 0 && (
+            <span data-testid="memory-usage" className="flex-none text-meta text-fg-subtle">
               {t('agents.memory.usage', { n: usage })}
             </span>
           )}
@@ -1016,6 +1036,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             </button>
           )}
         </div>
+        {/* 좁으면 상세는 고른 줄 바로 아래(#1209 designer B2) — 목록 위에 열리면 화면 밖이라 안 보인다. */}
+        {open && !memWide && memorySelectedEntry && (
+          <div className="px-2 pb-2">{memoryDetailPane(memorySelectedEntry, selected!.id)}</div>
+        )}
       </div>
     );
   };
@@ -1036,7 +1060,17 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     };
     const ago = (iso: string) => agoLabel(new Date(iso).getTime(), Date.now(), locale, t);
     return (
-      <div key={`${agentId}:${m.slug}`} data-testid="memory-detail-pane" className="space-y-2 rounded-row border border-border p-2">
+      <div
+        key={`${agentId}:${m.slug}`}
+        data-testid="memory-detail-pane"
+        className="space-y-2 rounded-row border border-border bg-surface p-2"
+        ref={(el) => {
+          const k = `${agentId}:${m.slug}`;
+          if (!el || memPaneScrolled.current === k) return;
+          memPaneScrolled.current = k;
+          el.scrollIntoView?.({ block: 'nearest' });
+        }}
+      >
         <div className="flex items-baseline gap-2">
           <span className="min-w-0 flex-1 break-all text-meta font-medium">{m.slug}</span>
           <span className="flex-none rounded-sm bg-surface-hover px-1 text-meta text-fg-subtle">{kindLabel(t, m.kind ?? 'topic')}</span>
@@ -1063,7 +1097,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                         {w.with.map((p, i) => (
                           <Fragment key={p}>
                             {i > 0 && ', '}
-                            <button className="underline decoration-dotted" onClick={() => setMemSelected(p)}>{p}</button>
+                            {/* 목록 줄이 없는 상대(core·이미 사라진 것)는 눌러도 열 곳이 없다 — 글자로 둔다(nit 4). */}
+                            {p !== 'core' && memoryAll?.some((e) => e.slug === p)
+                              ? <button className="underline decoration-dotted" onClick={() => setMemSelected(p)}>{p}</button>
+                              : <span>{p}</span>}
                           </Fragment>
                         ))}
                       </>
@@ -1905,7 +1942,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             </div>
           )}
 
-          <div className="w-full max-w-2xl flex-1 space-y-4 overflow-y-auto p-5">
+          {/*
+            Memory 탭만 넓힌다(#1209 designer B1). max-w-2xl(42rem) − p-5 면 안쪽이 ~39.5rem 이라 두 칸(48rem =
+            MEMORY_TWO_PANE_MIN_PX)에 영영 닿지 않았다. max-w-5xl(64rem) − 2.5rem = 61.5rem 이면 닿는다.
+          */}
+          <div className={`w-full flex-1 space-y-4 overflow-y-auto p-5 ${detailTab === 'memory' ? 'max-w-5xl' : 'max-w-2xl'}`}>
             {/* #171 의 '새 에이전트 기본값' 편집 절은 **설정 › Agent defaults 로 옮겼다**
                 (identity 문서 원칙 04). 개별 에이전트를 고치는 이 화면에 워크스페이스 전체에
                 걸리는 값이 앉아 있으면 지금 무엇을 고치고 있는지가 사라진다.
@@ -2985,11 +3026,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     )}
 
                     {/*
-                      목록/상세 두 칸(PR 4). 칸 폭은 설정 패널 폭을 따라야 하므로 창 폭이 아니라 컨테이너
-                      폭으로 가른다 — 좁으면 상세가 목록 위로 쌓인다(고른 것을 찾아 내려가지 않게).
+                      목록/상세 두 칸(PR 4). 갈림은 창이 아니라 이 칸의 실제 폭(`memWide`)으로 한다. 좁으면 상세는
+                      고른 줄 아래에 펼친다.
                     */}
-                    <div className="@container">
-                    <div className="flex flex-col-reverse gap-2 @3xl:grid @3xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] @3xl:items-start">
+                    <div ref={memLayoutRef}>
+                    <div className={memWide ? 'grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-2' : ''}>
                     <div className="min-w-0 space-y-2">
                     {/* 남은 것이 모두 보관됐어도 보관함을 찾을 수 있게 검색창은 둘 중 하나만 있어도 선다. */}
                     {memorySplit && (memorySplit.rest.length > 0 || memoryParts!.archived.length > 0) && (
@@ -3035,7 +3076,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                           )}
                           {memoryKindSections.map((sec) => (
                             <div key={sec.kind} data-testid={`memory-section-${sec.kind}`} className="border-t border-border first:border-t-0">
-                              <div className="flex items-baseline gap-2 bg-surface-sunken px-2 py-0.5 text-meta font-medium text-fg-muted">
+                              {/* 칸 머리가 그 안의 접두어 묶음 머리보다 약하면 위계가 뒤집힌다(nit 2). */}
+                              <div className="flex items-baseline gap-2 bg-surface-sunken px-2 py-0.5 text-meta font-semibold text-fg">
                                 <span>{t(`agents.memory.section.${sec.kind}`)}</span>
                                 <span className="ml-auto font-normal">{t('agents.memory.groupCount', { n: sec.count })}</span>
                               </div>
@@ -3106,8 +3148,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       </div>
                     )}
                     </div>
-                    {memorySelectedEntry && (
-                      <div className="min-w-0 @3xl:sticky @3xl:top-0">{memoryDetailPane(memorySelectedEntry, selected.id)}</div>
+                    {memWide && memorySelectedEntry && (
+                      <div className="sticky top-0 min-w-0">{memoryDetailPane(memorySelectedEntry, selected.id)}</div>
                     )}
                     </div>
                     </div>
