@@ -511,7 +511,7 @@ export function Inbox({ open, onClose }: Props) {
                   </details>
                 )}
                 {later.length > 0 && (
-                  <details data-testid="inbox-fold-later" className="mt-1.5 px-1">
+                  <details data-testid="inbox-fold-mine-later" className="mt-1.5 px-1">
                     <summary className="cursor-pointer text-meta text-fg-subtle hover:text-fg-muted">
                       {t(FOLD_KEY.later, { count: later.length })}
                     </summary>
@@ -543,12 +543,13 @@ export function Inbox({ open, onClose }: Props) {
                     {shown.length === 0
                       ? <p className="px-1 text-meta text-fg-subtle">{t('inbox.board.empty.other')}</p>
                       : <ul className="flex flex-col gap-1.5">{shown.map(cardView)}</ul>}
-                    {/* 접힘 줄 — 열 맨 아래. 펼치면 같은 카드 모양으로 선다. */}
+                    {/* 접힘 줄 — 열 맨 아래. 펼치면 같은 카드 모양으로 선다. testid 에 열을 넣는다 — 나중에는
+                        어느 열(과 띠)에서나 접히므로 열 없이 두면 한 화면에 같은 id 가 여럿 선다(security #1219). */}
                     {COLUMN_FOLDS[col].map((fold) => {
                       const folded = byColumn[col].filter((c) => c.fold === fold);
                       if (folded.length === 0) return null;
                       return (
-                        <details key={fold} data-testid={`inbox-fold-${fold}`} className="px-1">
+                        <details key={fold} data-testid={`inbox-fold-${col}-${fold}`} className="px-1">
                           <summary className="cursor-pointer text-meta text-fg-subtle hover:text-fg-muted">
                             {t(FOLD_KEY[fold], { count: folded.length })}
                           </summary>
