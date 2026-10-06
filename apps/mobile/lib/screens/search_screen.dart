@@ -614,12 +614,17 @@ class _SortMenu extends StatelessWidget {
             ]),
           ),
       ],
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Text(label(t, current), style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.fgMuted)),
-          Icon(Icons.arrow_drop_down, size: 18, color: k.fgMuted),
-        ]),
+      // 누르는 칸은 iOS 권장 44 높이(designer #1175 nit ①). 글자는 먹색으로 눌리는 곳임을 보이고 ▾ 만 흐리게(nit ②).
+      child: ConstrainedBox(
+        key: const Key('search-sort-button'),
+        constraints: const BoxConstraints(minHeight: 44),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Text(label(t, current), style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.fg)),
+            Icon(Icons.arrow_drop_down, size: 18, color: k.fgMuted),
+          ]),
+        ),
       ),
     );
   }
