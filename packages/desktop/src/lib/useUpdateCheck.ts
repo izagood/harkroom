@@ -57,6 +57,13 @@ export interface UseUpdateCheck {
   checking: boolean;
   /** 이 세션에서 사람이 "나중에" 를 누른 버전. 더 새 버전이 나오면 다시 말한다. */
   dismissedVersion: string | null;
+  /**
+   * 새 버전을 이미 안 뒤에 **다시 물었다가 실패한** 것. 이때는 `status` 를 `failed` 로 덮지 않는다 —
+   * 덮으면 6시간마다 도는 확인이 한 번 실패하는 것만으로 이미 찾은 새 버전과 설치 버튼이 사라진다.
+   * 앞의 답("0.3.184 가 있다")은 여전히 참이고, 그 뒤의 확인이 실패했다는 것도 참이다 — 둘 다 보여 준다.
+   * 다음 확인이 답을 받으면 지운다.
+   */
+  recheckFailure: { message: string; at: number } | null;
   check(): Promise<void>;
   install(version: string): Promise<void>;
   dismiss(version: string): void;
@@ -79,12 +86,15 @@ interface Snapshot {
   checkedAt: number | null;
   checking: boolean;
   dismissedVersion: string | null;
+  recheckFailure: { message: string; at: number } | null;
 }
-const INITIAL: Snapshot = { status: { kind: 'idle' }, checkedAt: null, checking: false, dismissedVersion: null };
+const INITIAL: Snapshot = { status: { kind: 'idle' }, checkedAt: null, checking: false, dismissedVersion: null, recheckFailure: null };
 let snap: Snapshot = INITIAL;
 let owner: ReturnType<typeof getAppUpdater> | null = null;
 let inflight: Promise<void> | null = null;
 let installing = false;
+/** 마지막으로 **물으러 나간** 시각(성공·실패 무관). 창이 돌아왔을 때 주기가 밀렸는지 판정한다. */
+let lastAttemptAt: number | null = null;
 const listeners = new Set<(s: Snapshot) => void>();
 
 function publish(next: Partial<Snapshot>): void {
@@ -100,6 +110,7 @@ function updater(): ReturnType<typeof getAppUpdater> {
     snap = INITIAL;
     inflight = null;
     installing = false;
+    lastAttemptAt = null;
   }
   return u;
 }
@@ -109,15 +120,23 @@ export function checkForUpdate(): Promise<void> {
   const u = updater();
   if (installing) return Promise.resolve();
   if (inflight) return inflight;
+  lastAttemptAt = Date.now();
   publish({ checking: true });
   const run = (async () => {
     try {
       const found = await u.check();
       if (u !== owner || installing) return;
-      publish({ status: found ? { kind: 'available', version: found.version } : { kind: 'uptodate' }, checkedAt: Date.now() });
+      publish({
+        status: found ? { kind: 'available', version: found.version } : { kind: 'uptodate' },
+        checkedAt: Date.now(),
+        recheckFailure: null,
+      });
     } catch (err) {
       if (u !== owner || installing) return;
-      publish({ status: { kind: 'failed', message: describeError(err) } });
+      const message = describeError(err);
+      // 이미 새 버전을 알고 있으면 그 답을 지키고 실패는 곁에 적는다(`recheckFailure` 의 주석).
+      if (snap.status.kind === 'available') publish({ recheckFailure: { message, at: Date.now() } });
+      else publish({ status: { kind: 'failed', message }, recheckFailure: null });
     } finally {
       if (u === owner) { inflight = null; publish({ checking: false }); }
     }
@@ -129,7 +148,7 @@ export function checkForUpdate(): Promise<void> {
 async function installUpdate(version: string): Promise<void> {
   const u = updater();
   installing = true;
-  publish({ status: { kind: 'installing', version } });
+  publish({ status: { kind: 'installing', version }, recheckFailure: null });
   try {
     await u.downloadAndInstall();
     // 성공하면 앱이 다시 뜨므로 여기로 돌아오지 않는다. 돌아왔다면 재시작이 일어나지
@@ -145,6 +164,13 @@ async function installUpdate(version: string): Promise<void> {
 /**
  * 구독한다. 표면이 있고 **아직 아무도 묻지 않았으면** 한 번 묻는다. `intervalMs` 를 주면
  * 그 주기로 다시 묻는다 — 주기는 앱을 쓰는 동안 늘 서 있는 자리(사이드바 알림) 하나만 준다.
+ *
+ * 주기는 **새 버전을 이미 안 뒤에도 멈추지 않는다** — 0.3.184 를 받아 둔 채 하루를 켜 두면
+ * 그 사이 0.3.185 가 나올 수 있고, 다음 답이 표시를 그 버전으로 바꾼다.
+ *
+ * `setInterval` 만 믿지 않는다: 노트북이 잠들거나 창이 가려지면 WebView 가 타이머를 미루거나
+ * 멈춰서, 아침에 창을 열었을 때 "checked" 가 어젯밤 시각에 머문다. 그래서 창이 다시 보이거나
+ * 포커스를 얻을 때 마지막 물음이 한 주기보다 오래됐으면 그 자리에서 묻는다.
  */
 export function useUpdateCheck({ intervalMs }: { intervalMs?: number } = {}): UseUpdateCheck {
   const [state, setState] = useState<Snapshot>(() => { updater(); return snap; });
@@ -160,7 +186,18 @@ export function useUpdateCheck({ intervalMs }: { intervalMs?: number } = {}): Us
     if (snap.checkedAt === null && !inflight && snap.status.kind === 'idle') void checkForUpdate();
     if (intervalMs === undefined) return;
     const timer = setInterval(() => void checkForUpdate(), intervalMs);
-    return () => clearInterval(timer);
+    const catchUp = () => {
+      if (document.visibilityState === 'hidden') return;
+      if (lastAttemptAt !== null && Date.now() - lastAttemptAt < intervalMs) return;
+      void checkForUpdate();
+    };
+    window.addEventListener('focus', catchUp);
+    document.addEventListener('visibilitychange', catchUp);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', catchUp);
+      document.removeEventListener('visibilitychange', catchUp);
+    };
   }, [intervalMs]);
 
   return {

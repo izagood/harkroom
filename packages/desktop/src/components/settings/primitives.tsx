@@ -79,7 +79,8 @@ export function SettingsGroup({ title, children }: { title?: string; children: R
 export function ReadonlyRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex items-center gap-4 px-4 py-3">
-      <span className="font-medium text-fg">{label}</span>
+      {/* 라벨은 꺾이지 않는다 — 값이 길면 값 쪽이 줄어든다(#1173 에서 "New version" 이 두 줄로 꺾였다). */}
+      <span className="shrink-0 whitespace-nowrap font-medium text-fg">{label}</span>
       <span className="ml-auto min-w-0 truncate text-fg-muted">{value}</span>
     </div>
   );
