@@ -9,6 +9,7 @@ import { ApiClient, ApiError, type PreviewTicket } from '../lib/api';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type NotificationTarget, type Notifier } from '../lib/notify';
+import { anyAppWindowFocused } from '../lib/appWindows';
 import { bodyRecipients, displayBody } from '../lib/mention';
 import { calledGroups, notifiedSummary, type NotifiedResult } from '../lib/notified';
 import { RunnerLauncher, tauriDaemonObserver, tauriAppVersionReader, type AppVersionReader, type DaemonObserver } from '../lib/runnerLauncher';
@@ -754,7 +755,8 @@ export class Controller {
   private async announceNewMessage(message: MessageRow): Promise<void> {
     const store = this.store.getState();
     // 내가 쓴 것은 알리지 않는다. 보고 있는 창에도 띄우지 않는다 — 배지가 그 일을 한다.
-    if (message.authorId === store.me?.id || document.hasFocus()) return;
+    // 「보고 있다」는 앱 창 중 **하나라도** 포커스일 때다(새 창, `anyAppWindowFocused`).
+    if (message.authorId === store.me?.id || anyAppWindowFocused()) return;
     if (await this.announceAccountGate(message)) return;
     /**
      * 진행 한 줄·대기 줄은 알리지 않는다(2026-09-09). 채널을 `all` 로 둔 것은 **오가는
@@ -798,7 +800,7 @@ export class Controller {
   private async announceNewMentions(): Promise<void> {
     // `groups`·`teams`: 알림 미리보기의 집합·팀 토큰을 이름으로 되돌린다(#845).
     const { unread, me, channels, dms, accounts, messages, channelPrefs, groups, teams } = this.store.getState();
-    if (document.hasFocus()) {
+    if (anyAppWindowFocused()) {
       // 포커스 중에는 알리지 않되, 본 것으로 처리해 나중에 뒤늦게 터지지 않게 한다.
       for (const e of unread) this.announced.add(e.id);
       return;

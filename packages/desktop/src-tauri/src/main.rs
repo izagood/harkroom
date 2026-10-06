@@ -8,6 +8,7 @@
 //! 물러난다(`lib/session.ts`). 그래서 여기서는 실패를 숨기지 않고 문자열로 돌려준다 —
 //! 조용히 성공한 척하면 프런트가 평문 경로로 내려갈 기회를 잃는다.
 
+mod app_windows;
 mod daemon_client;
 mod external_link;
 mod login_path;
@@ -868,6 +869,9 @@ fn main() {
         // 알림 클릭을 받는 델리게이트를 세운다(`notification::install`). **기동 때 한 번**
         // 이어야 한다 — 첫 알림을 보낼 때 세우면 그 알림의 클릭을 놓칠 수 있다.
         .setup(|app| {
+            // 메인 창은 설정이 아니라 여기서 세운다 — 채널·스레드 새 창 문(`app_windows`)을
+            // 빌더에 걸어야 해서다.
+            app_windows::build_main(app)?;
             notification::install(app.handle());
             Ok(())
         })
