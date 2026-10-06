@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
-import { setMemory, listMemory } from '../src/services/memory.js';
+import { setMemory, listMemory, AUDIT_HUMAN_LIST_CAP } from '../src/services/memory.js';
 import type { Pool } from 'pg';
 import { MAX_MEMORY_ITEMS_PER_ACCOUNT } from '@harkroom/shared';
 
@@ -204,13 +204,26 @@ describe('사람용 정리 API (Memory 탭 재설계 PR 2)', () => {
   // 결정 4: 칩 숫자가 정확해야 한다 — 에이전트(MCP)의 30 자르기를 사람 화면에 쓰지 않는다.
   it('GET …/memory/audit 는 30개에서 자르지 않는다', async () => {
     const { accountId: id } = await createAgent(app, adminToken, 'auditallbot');
-    for (let i = 0; i < 40; i++) await setMemory(pool, id, `mem/no-desc-${i}`, `본문 ${i}`);
+    // 이름·본문이 서로 닮지 않게(닮으면 similar 짝이 n² 으로 늘어 아래 상한 시험이 된다).
+    for (let i = 0; i < 40; i++) await setMemory(pool, id, `mem/topic${i}x`, `고유본문${i}`);
     const res = await app.inject({ method: 'GET', url: `/accounts/agents/${id}/memory/audit`, headers: owner() });
     expect(res.statusCode).toBe(200);
     const audit = res.json().audit as { undescribed: string[]; truncated: boolean; items: { active: number } };
     expect(audit.undescribed).toHaveLength(40);
     expect(audit.truncated).toBe(false);
     expect(audit.items.active).toBe(40);
+  });
+
+  // 짝 목록은 n² 이라 사람 화면에서도 끊는다 — 응답 크기의 상한(security).
+  it('짝 목록은 상한에서 끊고 truncated 를 세운다', async () => {
+    const { accountId: id } = await createAgent(app, adminToken, 'auditcapbot');
+    // 이름이 같은 낱말뿐인 21개 → similar 짝 210 > 200
+    for (let i = 0; i < 21; i++) await setMemory(pool, id, `mem/same-name-${i}`, `고유본문${i}`);
+    const res = await app.inject({ method: 'GET', url: `/accounts/agents/${id}/memory/audit`, headers: owner() });
+    const audit = res.json().audit as { similar: unknown[]; truncated: boolean; undescribed: string[] };
+    expect(audit.similar).toHaveLength(AUDIT_HUMAN_LIST_CAP);
+    expect(audit.truncated).toBe(true);
+    expect(audit.undescribed).toHaveLength(21);
   });
 
   it('보관은 여러 개를 한 번에, slug 마다 결과를 준다 — core·없는 것·틀린 이름은 막고 나머지는 한다', async () => {
