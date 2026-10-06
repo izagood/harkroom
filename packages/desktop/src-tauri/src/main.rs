@@ -874,6 +874,10 @@ fn main() {
             // 빌더에 걸어야 해서다.
             app_windows::build_main(app)?;
             notification::install(app.handle());
+            // 기동 확인(`scripts/launch-smoke.sh`)이 "setup 을 지났다"를 읽는 표지. 켜지 않으면 아무것도 안 한다.
+            if std::env::var_os("HARKROOM_LAUNCH_SMOKE").is_some() {
+                eprintln!("harkroom-launch-smoke: setup done");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
