@@ -125,6 +125,46 @@ describe('작업 폴더 정리 화면', () => {
     render(<WorkspaceCleanupSettings now={NOW} />);
     expect((await screen.findByTestId('cleanup-kept-by')).textContent).toBe('보존 · mina · 10-04');
   });
+  it('「지우는 중」은 글로 보이고 ⚠ 가 아니며 「보존」은 그대로 눌린다 · 러너 꺼짐은 미룸 · 주인 보고 전 한 줄', async () => {
+    const dirItem = (r: string): CleanupItem => item({ path: `/state/ws/${r}`, kind: 'threadDir', thread: T(r), repo: null, branch: null, headSha: null, pr: null, deleteAfter: '2026-10-06T06:00:00Z' });
+    const ledger: CleanupLedger = { ...LEDGER, items: [dirItem('r-del'), dirItem('r-off'), item({ path: '/tmp/o2', thread: null, state: 'unowned', pr: null, branch: null })] };
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd.startsWith('workspace_cleanup_')) return {
+        settings: { enabled: true, graceDays: 7 }, ledger, running: false,
+        live: { ownersReported: false, threads: {
+          'ch-1/r-del': { deleteRequestedAt: '2026-10-06T06:30:00Z', runnerConnected: true },
+          'ch-1/r-off': { deleteRequestedAt: null, runnerConnected: false },
+        } },
+      };
+      throw new Error(`unexpected ${cmd}`);
+    });
+    (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke };
+    render(<WorkspaceCleanupSettings now={NOW} />);
+    const rows = await screen.findAllByTestId('cleanup-row');
+    expect(rows.map((r) => r.getAttribute('data-tone'))).toEqual(['deferred', 'deleting']);
+    expect(screen.getAllByTestId('cleanup-due')[1]!.textContent).toContain('지우는 중');
+    expect(screen.getByTestId('cleanup-reason').textContent).toContain('러너가 꺼져 있어');
+    expect(screen.getByTestId('cleanup-reason').textContent).not.toContain('⚠');
+    expect(screen.getByTestId('cleanup-owners-pending')).toBeTruthy();
+    fireEvent.click(screen.getAllByTestId('cleanup-keep')[1]!);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('workspace_cleanup_act', { path: '/state/ws/r-del', action: 'keep', by: ME }));
+  });
+  it('꺼져 있으면 「지우는 중」·러너 꺼짐 「미룸」도 「꺼짐 · 지우지 않음」 하나로, 이유 줄 없음', async () => {
+    const dirItem = (r: string): CleanupItem => item({ path: `/state/ws/${r}`, kind: 'threadDir', thread: T(r), repo: null, branch: null, headSha: null, pr: null, deleteAfter: '2026-10-06T06:00:00Z' });
+    const ledger: CleanupLedger = { ...LEDGER, items: [dirItem('r-del'), dirItem('r-off')] };
+    (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke: vi.fn(async () => ({
+      settings: { enabled: false, graceDays: 7 }, ledger, running: false,
+      live: { ownersReported: true, threads: {
+        'ch-1/r-del': { deleteRequestedAt: '2026-10-06T06:30:00Z', runnerConnected: true },
+        'ch-1/r-off': { deleteRequestedAt: null, runnerConnected: false },
+      } },
+    })) };
+    render(<WorkspaceCleanupSettings now={NOW} />);
+    const dues = await screen.findAllByTestId('cleanup-due');
+    expect(dues.map((d) => d.textContent)).toEqual(['꺼짐 · 지우지 않음', '꺼짐 · 지우지 않음']);
+    expect(screen.queryByTestId('cleanup-reason')).toBeNull();
+    expect(document.body.textContent).not.toContain('지우는 중');
+  });
   it('Tauri 표면이 없으면 안내만', () => {
     render(<WorkspaceCleanupSettings now={NOW} />);
     expect(screen.getByTestId('cleanup-unavailable')).toBeTruthy();

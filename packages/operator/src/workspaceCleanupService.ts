@@ -14,6 +14,7 @@ import {
   type CleanupBlockReason,
   type CleanupItem,
   type CleanupLedger,
+  type CleanupLive,
   type CleanupSettings,
   normalizeCleanupPath,
 } from '@harkroom/shared/workspaceCleanup';
@@ -35,7 +36,13 @@ import {
 import type { CleanupOwners } from './workspaceCleanupOwners.js';
 import { isThreadDone, scanRepo, type Forward, type ScanDeps } from './workspaceCleanupScan.js';
 
-export interface WorkspaceCleanupView { settings: CleanupSettings; ledger: CleanupLedger; running: boolean }
+export interface WorkspaceCleanupView {
+  settings: CleanupSettings;
+  ledger: CleanupLedger;
+  running: boolean;
+  /** 원장 밖, 그 순간의 상태(`CleanupLive`). */
+  live: CleanupLive;
+}
 
 export interface WorkspaceCleanup {
   get(): Promise<WorkspaceCleanupView>;
@@ -150,6 +157,7 @@ export function createWorkspaceCleanup(deps: WorkspaceCleanupDeps, base: Cleanup
 
   const view = async (): Promise<WorkspaceCleanupView> => ({
     settings: await readCleanupSettings(deps.configPath), ledger: await readLedger(deps.ledgerPath), running,
+    live: await deps.owners.live(),
   });
 
   const observe = async (prev: CleanupLedger) => {
