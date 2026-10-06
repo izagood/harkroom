@@ -110,6 +110,7 @@ export function SecretsSettings() {
                     <span className="rounded border border-border px-1 text-fg-muted">{s.kind === 'file' ? t('secrets.kindFile') : t('secrets.kindText')}</span>
                     {s.filename && <span className="font-mono">{s.filename}</span>}
                     {s.description && <span className="text-fg-subtle">{s.description}</span>}
+                    <AgentMadeBadge secret={s} />
                     <span className="text-fg-subtle">
                       {s.grantCount > 0 ? t('secrets.usedBy', { n: String(s.grantCount) }) : t('secrets.unused')}
                     </span>
@@ -323,6 +324,28 @@ function ReplaceForm({ secret, busy, onSubmit, onCancel }: {
 }
 
 /** 파일로 받을 에이전트(`secret.mount`). 부여는 소유자만 — 서버 owner_only 와 같다. */
+/**
+ * 에이전트가 만든 비밀의 배지(security L2). 지금 값을 에이전트가 정했으면 「값을 @x 가 정함」(경고 톤 — 그 에이전트는 값을
+ * 안다), 사람이 값을 바꿨으면 「@x 가 만듦」만. 사람이 만든 비밀·옛 서버(칸 없음)는 아무것도 그리지 않는다.
+ */
+export function AgentMadeBadge({ secret }: { secret: Pick<SecretView, 'createdByAgentId' | 'valueSetByAgentId'> }) {
+  const t = useT();
+  const accounts = useActiveStore((s) => s.accounts);
+  const handle = (id: string) => accounts[id]?.handle ?? id.slice(0, 8);
+  if (secret.valueSetByAgentId) {
+    const h = handle(secret.valueSetByAgentId);
+    return (
+      <span className="rounded bg-warning-surface px-1 text-warning" data-testid="secret-value-by-agent" title={t('secrets.valueByAgentTitle', { handle: h })}>
+        {t('secrets.valueByAgent', { handle: h })}
+      </span>
+    );
+  }
+  if (secret.createdByAgentId) {
+    return <span className="rounded border border-border px-1 text-fg-muted" data-testid="secret-by-agent">{t('secrets.byAgent', { handle: handle(secret.createdByAgentId) })}</span>;
+  }
+  return null;
+}
+
 function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: SecretView; canGrant: boolean; expiredMine: boolean; onChanged(): Promise<void> }) {
   const t = useT();
   const locale = useLocale();
@@ -375,6 +398,13 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
       )}
       {canGrant ? (
         <>
+        {/* 에이전트가 값을 정한 비밀(security L2): 그 에이전트는 값을 안다 — 다른 에이전트에게 넓히기 전에 말한다. */}
+        {secret.valueSetByAgentId && (
+          <p className="mt-2 text-meta text-fg-subtle" data-testid="secret-adopt-note">{t('secrets.adoptNote', { handle: handle(secret.valueSetByAgentId) })}</p>
+        )}
+        {secret.valueSetByAgentId && agentId && agentId !== secret.valueSetByAgentId && (
+          <p role="alert" className="mt-1 text-meta text-warning" data-testid="secret-widen-warn">{t('secrets.widenWarn', { handle: handle(secret.valueSetByAgentId) })}</p>
+        )}
         {/* 경고는 읽는 순서대로 주기 폼 바로 위(designer n4). */}
         <p className="mt-2 text-meta text-warning" data-testid="secret-grants-all-channels">{t('secrets.allChannelsWarn')}</p>
         <div className="mt-1 flex flex-wrap items-center gap-2">

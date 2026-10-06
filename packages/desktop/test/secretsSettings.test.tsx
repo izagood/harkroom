@@ -142,6 +142,38 @@ describe('SecretsSettings', () => {
     expect(screen.getByTestId('secret-grant-any-warn').textContent).toContain('앞으로 배정되는 머신');
   });
 
+  // 에이전트가 만든 비밀(서버 102, security L2): 값을 정한 에이전트는 값을 안다 — 배지와, 다른 에이전트에게 넓힐 때 경고.
+  it('L2: 값을 에이전트가 정했으면 「값을 @x 가 정함」, 사람이 바꿨으면 「@x 가 만듦」, 사람 비밀·옛 서버는 배지 없음', async () => {
+    setup({}, [
+      secret('made', { createdByAgentId: 'agent-1', valueSetByAgentId: 'agent-1' }),
+      secret('adopted', { createdByAgentId: 'agent-1', valueSetByAgentId: null }),
+      secret('human', { createdByAgentId: null, valueSetByAgentId: null }),
+      secret('legacy'),
+    ]);
+    render(<SecretsSettings />);
+    const made = await screen.findByTestId('secret-made');
+    expect(within(made).getByTestId('secret-value-by-agent').textContent).toBe('값을 @alpha 가 정함');
+    expect(within(screen.getByTestId('secret-adopted')).getByTestId('secret-by-agent').textContent).toBe('@alpha 가 만듦');
+    expect(within(screen.getByTestId('secret-adopted')).queryByTestId('secret-value-by-agent')).toBeNull();
+    for (const n of ['human', 'legacy']) {
+      expect(within(screen.getByTestId(`secret-${n}`)).queryByTestId('secret-by-agent')).toBeNull();
+      expect(within(screen.getByTestId(`secret-${n}`)).queryByTestId('secret-value-by-agent')).toBeNull();
+    }
+  });
+
+  it('L2: 값을 정한 에이전트가 아닌 에이전트에게 주려 하면 경고한다 — 그 에이전트 자신에게는 경고하지 않는다', async () => {
+    setup({}, [secret('made', { createdByAgentId: 'agent-1', valueSetByAgentId: 'agent-1' })]);
+    render(<SecretsSettings />);
+    fireEvent.click(await screen.findByRole('button', { name: '받을 에이전트' }));
+    await screen.findByTestId('secret-grant-alpha');
+    expect(screen.getByTestId('secret-adopt-note').textContent).toContain('@alpha 는 이 비밀을 더 이상 회전할 수 없다');
+    expect(screen.queryByTestId('secret-widen-warn')).toBeNull();
+    fireEvent.change(screen.getByLabelText('에이전트'), { target: { value: 'agent-1' } });
+    expect(screen.queryByTestId('secret-widen-warn')).toBeNull();
+    fireEvent.change(screen.getByLabelText('에이전트'), { target: { value: 'agent-3' } });
+    expect(screen.getByTestId('secret-widen-warn').textContent).toContain('@alpha 는 값을 알고 있다');
+  });
+
   it('가린 입력은 new-password 로 자동 채우기를 막는다', async () => {
     setup({}, []);
     render(<SecretsSettings />);

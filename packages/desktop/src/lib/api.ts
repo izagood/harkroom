@@ -23,6 +23,11 @@ export interface SecretView {
   id: string; name: string; kind: 'text' | 'file'; filename: string | null; description: string;
   ownerAccountId: string; expiresAt: string | null; createdAt: string; updatedAt: string;
   version: number | null; sizeBytes: number | null; grantCount: number;
+  /**
+   * 에이전트가 만든 비밀(서버 102)이면 그 에이전트와 원인 글. `valueSetByAgentId` 는 **지금 값**을 정한 에이전트다 —
+   * 그 에이전트는 값을 안다(security L2). 사람이 값을 바꾸면 null. 옛 서버는 칸이 없다(undefined) — 배지를 그리지 않는다.
+   */
+  createdByAgentId?: string | null; createdCauseMessageId?: string | null; valueSetByAgentId?: string | null;
 }
 /** 비밀을 파일로 받을 수 있는 에이전트(`secret.mount`). channelId null = 모든 채널, operatorId null = 아무 오퍼레이터. */
 export interface SecretGrantView {

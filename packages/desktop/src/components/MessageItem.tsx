@@ -1,4 +1,5 @@
 import { BlockedCard } from './BlockedCard';
+import { SecretNoticeAction } from './SecretNoticeAction';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { messagePermalink, readAskMeta, readModelMeta, type MessageRow } from '@harkroom/shared';
 import { readAutomationMeta } from '../lib/automation';
@@ -837,6 +838,8 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
             )}
             {/* API 막힘 카드(P4b) — 서버가 세운 시스템 줄의 meta.blocked. */}
             {isSystem && message.meta.blocked !== undefined && <BlockedCard message={message} onOpenSettings={onOpenSettings} />}
+            {/* 비밀 만들기 알림(서버 102 n4) — 소유자에게만 비밀 화면으로 가는 버튼. 본문은 서버가 쓴 그대로다. */}
+            {isSystem && message.meta.secretNotice !== undefined && <SecretNoticeAction message={message} onOpenSettings={onOpenSettings} />}
             {skillSlug && onOpenSettings && (
               <button
                 className="mt-1 rounded-card border border-border px-2 py-1 text-meta font-medium
