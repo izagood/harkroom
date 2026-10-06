@@ -13,7 +13,8 @@
     "./claudePools": "./src/claudePools.ts",
     "./codexAccounts": "./src/codexAccounts.ts",
     "./claudeUsage": "./src/claudeUsage.ts",
-    "./claudeGates": "./src/claudeGates.ts"
+    "./claudeGates": "./src/claudeGates.ts",
+    "./workspaceCleanup": "./src/workspaceCleanup.ts"
   },
   "scripts": { "test": "vitest run", "typecheck": "tsc -p ." },
   "devDependencies": {
