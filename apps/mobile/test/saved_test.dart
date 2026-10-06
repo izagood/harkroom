@@ -14,6 +14,7 @@ import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_scope.dart';
 import 'package:harkroom/state/app_state.dart';
 import 'package:harkroom/theme.dart';
+import 'package:harkroom/ui/tokens.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -127,13 +128,15 @@ class _Server {
       });
 }
 
-Future<AppState> _open(_Server server) async {
+/// [second] 면 같은 가짜 서버에 붙는 커뮤니티를 하나 더 둔다 — 옮겨 다닐 곳(세션 세대를 올리는 길).
+Future<AppState> _open(_Server server, {bool second = false}) async {
   final app = AppState(
     sessions: SessionStore.inMemory(
       seed: jsonEncode({
         'active': 'me-1',
         'communities': [
           {'accountId': 'me-1', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'me'},
+          if (second) {'accountId': 'me-2', 'baseUrl': 'https://k.example.com', 'token': 'tok2', 'handle': 'me2'},
         ],
       }),
     ),
@@ -242,10 +245,10 @@ void main() {
   });
 
   group('메시지 시트', () {
-    Future<(_Server, AppState)> pump(WidgetTester tester, String id) async {
+    Future<(_Server, AppState)> pump(WidgetTester tester, String id, {bool second = false}) async {
       final server = _Server();
       late AppState app;
-      await tester.runAsync(() async => app = await _open(server));
+      await tester.runAsync(() async => app = await _open(server, second: second));
       addTearDown(app.dispose);
       await tester.pumpWidget(_host(
         app,
@@ -295,6 +298,34 @@ void main() {
       await _settle(tester);
       expect(server.calls.last, 'PUT /saved/m1');
       expect(find.byKey(const Key('saved-mark-m1')), findsOneWidget);
+      // 되돌린 사람에게 「목록 보기」를 다시 권하지 않는다 — 저장 화면 안이면 같은 화면이 하나 더 쌓인다(designer #1231).
+      expect(find.byKey(const Key('saved-added')), findsNothing);
+      expect(find.text('목록 보기'), findsNothing);
+    });
+
+    testWidgets('되돌리기 토스트가 떠 있는 사이 계정이 바뀌면 눌러도 PUT 이 나가지 않는다(security #1231 n2)', (tester) async {
+      final (server, app) = await pump(tester, 'm1', second: true);
+      await tester.longPress(find.byKey(const Key('message-press-m1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('message-action-unsave')));
+      await _settle(tester);
+      expect(find.byKey(const Key('saved-removed')), findsOneWidget);
+      // 다른 커뮤니티(계정)로 옮긴다 — API 는 살아 있고 세션 세대만 오른다. 토스트는 아직 떠 있다.
+      await tester.runAsync(() => app.switchTo(app.communities[1].key));
+      await tester.pump();
+      expect(find.text('되돌리기'), findsOneWidget);
+      final before = server.calls.length;
+      await tester.tap(find.text('되돌리기'));
+      await _settle(tester);
+      expect(server.calls.skip(before).where((c) => c.startsWith('PUT /saved')), isEmpty);
+    });
+
+    testWidgets('표식은 글자용 accentText 로 그린다 — 11pt 에서 accent 는 대비가 모자란다(designer #1231)', (tester) async {
+      await pump(tester, 'm1');
+      final mark = tester.widget<Text>(find.text('나중을 위해 저장됨'));
+      expect(mark.style!.color, HarkroomTokens.light.accentText);
+      final icon = tester.widget<Icon>(find.descendant(of: find.byKey(const Key('saved-mark-m1')), matching: find.byType(Icon)));
+      expect(icon.color, HarkroomTokens.light.accentText);
     });
 
     testWidgets('시스템 글에는 담기·빼기 줄이 없다', (tester) async {

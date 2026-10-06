@@ -280,13 +280,19 @@ void _toast(ScaffoldMessengerState messenger, EdgeInsets margin, String text,
 ///
 /// 토스트는 [ScaffoldMessengerState] 를 **미리 쥐고** 띄운다 — 되돌리기를 누를 때는 시트도, 어쩌면 그
 /// 줄도 이미 사라졌다. 담은 뒤에는 「목록 보기」, 뺀 뒤에는 「되돌리기」를 준다(줄·표식이 눈앞에서 사라진다).
+///
+/// 되돌리기로 다시 담은 것에는 「목록 보기」를 다시 권하지 않고 토스트를 내리기만 한다 — 저장 화면 안에서
+/// 누르면 같은 화면이 한 장 더 쌓인다(designer #1231). 토스트가 떠 있는 사이 계정이 바뀌었으면 토스트의
+/// 동작은 아무것도 하지 않는다 — 새 계정으로 PUT 이 나가면 안 된다(security #1231 n2).
 Future<void> toggleSaved(BuildContext context, String messageId, {required bool save}) async {
   final t = context.t;
   final app = AppScope.read(context);
   final messenger = ScaffoldMessenger.of(context);
   final margin = toastMargin(context);
   final navigator = Navigator.of(context);
-  Future<void> run(bool on) async {
+  final gen = app.sessionGeneration;
+  Future<void> run(bool on, {bool undo = false}) async {
+    if (app.sessionGeneration != gen) return;
     try {
       await (on ? app.saveMessage(messageId) : app.unsaveMessage(messageId));
     } on ApiError catch (e) {
@@ -295,22 +301,26 @@ Future<void> toggleSaved(BuildContext context, String messageId, {required bool 
       _toast(messenger, margin, on ? t.savedSaveFailed : t.savedActionFailed,
           key: const Key('saved-failed'),
           actionLabel: permanent ? null : t.commonRetry,
-          onAction: permanent ? null : () => run(on).ignore());
+          onAction: permanent ? null : () => run(on, undo: undo).ignore());
       return;
     } on Object {
       _toast(messenger, margin, on ? t.savedSaveFailed : t.savedActionFailed,
-          key: const Key('saved-failed'), actionLabel: t.commonRetry, onAction: () => run(on).ignore());
+          key: const Key('saved-failed'), actionLabel: t.commonRetry, onAction: () => run(on, undo: undo).ignore());
       return;
     }
     HapticFeedback.selectionClick().ignore();
-    if (on) {
+    if (undo) {
+      messenger.removeCurrentSnackBar();
+    } else if (on) {
       _toast(messenger, margin, t.savedAdded,
           key: const Key('saved-added'),
           actionLabel: t.savedOpenList,
-          onAction: () => navigator.push(MaterialPageRoute<void>(builder: (_) => const SavedScreen())).ignore());
+          onAction: () {
+            if (app.sessionGeneration == gen) navigator.push(MaterialPageRoute<void>(builder: (_) => const SavedScreen())).ignore();
+          });
     } else {
       _toast(messenger, margin, t.savedRemoved,
-          key: const Key('saved-removed'), actionLabel: t.savedUndo, onAction: () => run(true).ignore());
+          key: const Key('saved-removed'), actionLabel: t.savedUndo, onAction: () => run(true, undo: true).ignore());
     }
   }
 
@@ -323,7 +333,9 @@ Future<void> setSavedStateWithToast(BuildContext context, String messageId, Save
   final app = AppScope.read(context);
   final messenger = ScaffoldMessenger.of(context);
   final margin = toastMargin(context);
+  final gen = app.sessionGeneration;
   Future<void> run(SavedState to, {bool undoable = true}) async {
+    if (app.sessionGeneration != gen) return;
     try {
       await app.setSavedState(messageId, to);
     } on Object {

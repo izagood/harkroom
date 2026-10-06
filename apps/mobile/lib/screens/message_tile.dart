@@ -761,10 +761,11 @@ class _SavedMark extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.bookmark, size: 12, color: k.accent),
+          // 11pt 라 accent 는 라이트 표면에서 대비가 4.5 에 못 미친다 — 글자용 accentText 를 쓴다(designer #1231).
+          Icon(Icons.bookmark, size: 12, color: k.accentText),
           const SizedBox(width: 4),
           Text(context.t.messageSavedMark,
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: k.accent)),
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: k.accentText)),
         ],
       ),
     );

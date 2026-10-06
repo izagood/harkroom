@@ -347,6 +347,9 @@ class AppState extends ChangeNotifier {
   /// **그 응답을 버린다** — 안 버리면 옛 계정의 말이 새 계정 화면에 섞인다(security #996).
   int _generation = 0;
 
+  /// 지금 세대. 화면이 쥐고 있다가 늦게 눌린 동작(토스트의 되돌리기)이 다른 계정에 가지 않게 대 본다.
+  int get sessionGeneration => _generation;
+
   /// 스레드 루트 id → 그 스레드를 읽는 상태.
   final Map<String, LoadState> threadLoad = {};
 
