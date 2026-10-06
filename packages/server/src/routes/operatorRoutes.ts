@@ -171,11 +171,15 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
    * 단계마다 소유자에게 `operator.changed` — 화면의 「업그레이드 중」 단계 표시가 따라온다.
    * 폐기된 오퍼레이터의 프레임은 적지 않는다(토큰 폐기와 소켓 끊김 사이의 틈).
    */
+  // 오퍼레이터마다 한 줄로 세운다 — 프레임마다 질의를 따로 띄우면 insert 가 도착 순서와 다르게 끝나
+  // 이력의 순서(id)가 뒤섞이고, 20줄 자르기가 갓 들어온 줄을 지운다(CI 에서 25줄을 연달아 보내 재현).
+  const upgradeQueue = new Map<string, Promise<void>>();
   const offUpgrade = deps.hub.onFrame((operatorId, frame) => {
     if (frame.type !== 'upgrade.progress') return;
     const ev = parseUpgradeProgress(frame);
     if (!ev) return;
-    void (async () => {
+    const prev = upgradeQueue.get(operatorId) ?? Promise.resolve();
+    const next = prev.then(async () => {
       const res = await pool.query<{ owner: string }>(
         `with op as (select id, owner_account_id from operator where id = $1 and revoked_at is null),
               ins as (insert into operator_upgrade (operator_id, stage, from_version, to_version, error)
@@ -189,7 +193,9 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
             and id not in (select id from operator_upgrade where operator_id = $1 order by id desc limit $2)`,
         [operatorId, UPGRADE_HISTORY_MAX]);
       emitEvent({ type: 'operator.changed', operatorId, audience: [owner] });
-    })().catch((err: unknown) => app.log.warn({ err, operatorId }, 'operator 업그레이드 단계 기록 실패'));
+    }).catch((err: unknown) => app.log.warn({ err, operatorId }, 'operator 업그레이드 단계 기록 실패'));
+    upgradeQueue.set(operatorId, next);
+    void next.then(() => { if (upgradeQueue.get(operatorId) === next) upgradeQueue.delete(operatorId); });
   });
   app.addHook('onClose', async () => { offUpgrade(); });
 
