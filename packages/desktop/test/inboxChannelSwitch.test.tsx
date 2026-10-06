@@ -45,7 +45,7 @@ const mount = (rows: InboxEntry[], apiOverrides: Record<string, unknown> = {}) =
 };
 
 const openInbox = async (): Promise<void> => {
-  fireEvent.click(screen.getByText('Inbox'));
+  fireEvent.click(screen.getByText('내 작업'));
   await screen.findByTestId('inbox-pane');
 };
 

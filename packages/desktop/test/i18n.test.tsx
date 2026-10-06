@@ -1889,14 +1889,14 @@ describe('인박스 — 두 언어로 뜬다', () => {
 
   it('빈 보드가 두 언어로 뜬다', async () => {
     render(<Inbox open onClose={() => {}} />);
-    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent).toBe('Nothing has called you'));
+    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent).toBe('No work here yet'));
     // 자리의 이름이자 머리글이다 — 랜드마크로 찾을 수 있어야 한다.
-    expect(screen.getByRole('complementary', { name: 'Inbox' })).toBeTruthy();
+    expect(screen.getByRole('complementary', { name: 'My work' })).toBeTruthy();
     cleanup();
     speak('ko');
     render(<Inbox open onClose={() => {}} />);
-    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent).toBe('나를 부른 것이 없다'));
-    expect(screen.getByRole('complementary', { name: '인박스' })).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent).toBe('아직 올라온 일이 없다'));
+    expect(screen.getByRole('complementary', { name: '내 작업' })).toBeTruthy();
   });
 
   /**
@@ -1920,7 +1920,7 @@ describe('인박스 — 두 언어로 뜬다', () => {
     cleanup();
     speak('ko');
     render(<Inbox open onClose={() => {}} />);
-    for (const name of ['내 차례', '기다리는 중', '진행', '끝남']) {
+    for (const name of ['내 차례', '기다림', '진행', '끝']) {
       expect(await screen.findByRole('region', { name })).toBeTruthy();
     }
     expect(screen.getByTestId('inbox-mine-count').textContent).toBe('나를 기다리는 일 0');

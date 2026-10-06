@@ -1232,7 +1232,7 @@ export function Sidebar({
               인박스도 디렉터리와 **같은 방식으로** 연다(#185) — 사이드바 항목이 뷰를 열고,
               뷰는 닫혀 있으면 아무것도 그리지 않는다. */}
           <button className={`${row(false)} text-fg-muted`} onClick={onOpenInbox}>
-            Inbox
+            {t('inbox.pane.title')}
             <InboxRowBadge />
           </button>
           <button className={`${row(false)} text-fg-muted`} onClick={onOpenDirectory}>

@@ -81,7 +81,7 @@ describe('Inbox 상태 보드 (C안)', () => {
     expect(within(col('mine')).getByTestId('inbox-card-r1')).toBeTruthy();
   });
 
-  it('열 넷이 내 차례 → 기다리는 중 → 진행 → 끝남 순서로 서고, 수는 내 차례만 센다', async () => {
+  it('내 차례 띠가 맨 위에, 그 아래 세 열이 진행 → 기다림 → 끝 순서로 서고, 수는 내 차례만 센다', async () => {
     fakeController(async () => ({
       entries: ['r1', 'r2', 'r3', 'r4'].map((r, i) => entry(i + 1, { threadRootId: r })),
       threads: [
@@ -94,13 +94,41 @@ describe('Inbox 상태 보드 (C안)', () => {
     open();
     await screen.findByTestId('inbox-card-r1');
     const order = screen.getAllByTestId(/^inbox-col-/).map((el) => el.getAttribute('data-testid'));
-    expect(order).toEqual(['inbox-col-mine', 'inbox-col-blocked', 'inbox-col-active', 'inbox-col-done']);
+    expect(order).toEqual(['inbox-col-mine', 'inbox-col-active', 'inbox-col-blocked', 'inbox-col-done']);
     expect(within(col('blocked')).getByTestId('inbox-card-r2')).toBeTruthy();
     expect(within(col('active')).getByTestId('inbox-card-r3')).toBeTruthy();
     expect(within(col('done')).getByTestId('inbox-card-r4')).toBeTruthy();
     expect(screen.getByTestId('inbox-mine-count').textContent).toBe('나를 기다리는 일 1');
     // 옛 칩은 없다.
     expect(screen.queryByTestId('inbox-filter-blocking')).toBeNull();
+  });
+
+  it('내 차례 띠는 오래 기다린 것부터 다섯 장을 펼치고 나머지는 "+N개 더" 로 접는다', async () => {
+    const roots = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7'];
+    fakeController(async () => ({
+      // 번호가 클수록 오래된 말이다 — 띠는 r7 부터 선다.
+      entries: roots.map((r, i) => entry(i + 1, { threadRootId: r, createdAt: new Date(Date.now() - (i + 1) * 3_600_000).toISOString() })),
+      threads: roots.map((r) => head(r, { openAskAccountIds: [ME] })),
+    }));
+    open();
+    await screen.findByTestId('inbox-card-r7');
+    const band = col('mine');
+    const more = within(band).getByTestId('inbox-band-more');
+    const open5 = within(band).getAllByTestId(/^inbox-card-r\d$/).filter((el) => !more.contains(el)).map((el) => el.getAttribute('data-testid'));
+    expect(open5).toEqual(['inbox-card-r7', 'inbox-card-r6', 'inbox-card-r5', 'inbox-card-r4', 'inbox-card-r3']);
+    expect(more.textContent).toContain('+2개 더');
+    expect(screen.getByTestId('inbox-mine-count').textContent).toBe('나를 기다리는 일 7');
+  });
+
+  it('내 차례가 없으면 띠는 한 줄로 줄어든다', async () => {
+    fakeController(async () => ({
+      entries: [entry(1, { threadRootId: 'r1' })],
+      threads: [head('r1', { lastKind: 'progress', lastAuthorId: BOT })],
+    }));
+    open();
+    await screen.findByTestId('inbox-card-r1');
+    expect(within(col('mine')).getByTestId('inbox-band-empty').textContent).toBe('나를 기다리는 일이 없다');
+    expect(screen.queryByTestId('inbox-band-more')).toBeNull();
   });
 
   it('카드 문장은 본문 앞 두 줄이 아니라 물음 문장이고, <@id> 는 handle 로 보인다', async () => {
@@ -156,7 +184,7 @@ describe('Inbox 상태 보드 (C안)', () => {
     states = [{ rootId: 'r1', state: 'done', until: null, updatedAt: new Date().toISOString() }];
     cleanup();
     open();
-    const fold = await screen.findByTestId('inbox-fold-cleared');
+    const fold = await screen.findByTestId('inbox-fold-done-cleared');
     expect(fold.textContent).toContain('치운 것 1');
     fireEvent.click(within(fold).getByTestId('inbox-card-undo-r1'));
     await waitFor(() => expect(c.api.setInboxThreadState).toHaveBeenLastCalledWith('r1', { state: null }));
@@ -181,7 +209,7 @@ describe('Inbox 상태 보드 (C안)', () => {
     states = [{ rootId: 'r1', state: 'later', until: body.until, updatedAt: new Date().toISOString() }];
     cleanup();
     open();
-    const fold = await screen.findByTestId('inbox-fold-later');
+    const fold = await screen.findByTestId('inbox-fold-mine-later');
     expect(within(fold).getByTestId('inbox-card-r1')).toBeTruthy();
     // 언제 다시 서는지 말한다(designer) — 내일 아침 9시.
     expect(within(fold).getByTestId('inbox-card-later-until-r1').textContent).toMatch(/내일 \S+ ?9시에 다시/); // 오전/AM 표기는 ICU 데이터에 따라 갈린다
@@ -237,7 +265,38 @@ describe('Inbox 상태 보드 (C안)', () => {
   it('부른 것이 없으면 "없다" 를 보여 준다', async () => {
     fakeController(async () => ({ entries: [], threads: [] }));
     open();
-    expect((await screen.findByTestId('inbox-empty')).textContent).toBe('나를 부른 것이 없다');
+    expect((await screen.findByTestId('inbox-empty')).textContent).toBe('아직 올라온 일이 없다');
+  });
+
+  /**
+   * 세 열은 **보드 자기 폭**으로 편다(designer #1219). 카드를 열면 옆에 스레드가 서서 보드가 좁아지는데,
+   * 창 폭(`lg:`)으로 펴면 그때도 세 열을 고집해 한 열이 70px 남짓이 된다. jsdom 은 폭을 못 재므로 클래스로 잰다.
+   */
+  it('나중에로 접은 줄은 띠와 열마다 testid 가 갈린다 — 한 화면에 같은 id 가 둘 서지 않는다', async () => {
+    const later = new Date(Date.now() + 86_400_000).toISOString();
+    fakeController(async () => ({
+      entries: [entry(1, { threadRootId: 'r1', reason: 'thread_reply' }), entry(2, { threadRootId: 'r2', reason: 'thread_reply' })],
+      threads: [head('r1', { openAskAccountIds: [ME] }), head('r2', { authorId: ME })],
+      threadStates: ['r1', 'r2'].map((rootId) => ({ rootId, state: 'later' as const, until: later, updatedAt: new Date().toISOString() })),
+    }));
+    open();
+    expect(within(await screen.findByTestId('inbox-fold-mine-later')).getByTestId('inbox-card-r1')).toBeTruthy();
+    expect(within(screen.getByTestId('inbox-fold-active-later')).getByTestId('inbox-card-r2')).toBeTruthy();
+    expect(screen.queryAllByTestId(/^inbox-fold-/).map((e) => e.dataset.testid)).toEqual(
+      [...new Set(screen.queryAllByTestId(/^inbox-fold-/).map((e) => e.dataset.testid))]);
+  });
+
+  it('세 열은 창 폭이 아니라 보드 폭(@container)으로 펼친다', async () => {
+    fakeController(async () => ({
+      entries: [entry(1, { threadRootId: 'r1', reason: 'thread_reply' })],
+      threads: [head('r1', { authorId: ME })],
+    }));
+    open();
+    await screen.findByTestId('inbox-lanes');
+    expect(screen.getByTestId('inbox-board').className.split(/\s+/)).toContain('@container');
+    const lanes = screen.getByTestId('inbox-lanes').className;
+    expect(lanes).toContain('@3xl:grid-cols-3');
+    expect(lanes).not.toMatch(/(^|\s)lg:/);
   });
 
   it('옛 서버(머리 없음)에서도 보드가 선다', async () => {
@@ -274,7 +333,7 @@ describe('Inbox 상태 보드 (C안)', () => {
         onToggleCollapse={vi.fn()}
       />,
     );
-    fireEvent.click(screen.getByText('Inbox'));
+    fireEvent.click(screen.getByText('내 작업'));
     expect(onOpenInbox).toHaveBeenCalled();
   });
 });

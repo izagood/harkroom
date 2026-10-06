@@ -80,10 +80,10 @@ describe('사이드바 Inbox 줄의 표시', () => {
   it('표시에는 글자가 없으므로 접근 이름이 두 신호를 갈라 말한다', () => {
     useAppStore.getState().set({ inboxMine: 1, unread: [entry(1, 'mention', null)] });
     renderSidebar();
-    expect(screen.getByLabelText('인박스에 내 답을 기다리는 것 1개')).toBeTruthy();
+    expect(screen.getByLabelText('내 작업에 내 답을 기다리는 것 1개')).toBeTruthy();
     cleanup();
     useAppStore.getState().set({ inboxMine: 0, unread: [entry(1, 'thread_reply', null)] });
     renderSidebar();
-    expect(screen.getByLabelText('인박스에 안 읽은 것 1개')).toBeTruthy();
+    expect(screen.getByLabelText('내 작업에 안 읽은 것 1개')).toBeTruthy();
   });
 });
