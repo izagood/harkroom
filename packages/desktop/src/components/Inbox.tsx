@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Identity } from './Identity';
 import type { InboxEntry, InboxThreadState, MessageRow } from '@harkroom/shared';
-import { buildBoard, daysWaiting, laterUntilLabel, mineCount, type BoardCard, type BoardColumn, type BoardFold } from '../lib/inboxBoard';
+import { buildBoard, daysWaiting, laterUntilLabel, mineCount, filterBoard, BOARD_SCOPES, type BoardCard, type BoardColumn, type BoardFold, type BoardScope } from '../lib/inboxBoard';
 import { bodyWithHandles } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
@@ -50,6 +50,12 @@ function tomorrowMorning(nowMs: number): string {
 const LANE_COLUMNS: readonly Exclude<BoardColumn, 'mine'>[] = ['active', 'blocked', 'done'];
 /** 띠에 펼쳐 두는 장수. 넘치면 "+N개 더" 로 접는다 — 띠가 화면을 다 먹으면 세 열이 사라진다. */
 const BAND_LIMIT = 5;
+
+const SCOPE_KEY = {
+  all: 'inbox.board.scope.all',
+  opened: 'inbox.board.scope.opened',
+  participated: 'inbox.board.scope.participated',
+} as const satisfies Record<BoardScope, string>;
 /**
  * 열 머리의 상태 이모지 — 채널의 스레드 상태 리액션(088)과 **같은 말**이다. 장식이라 읽지 않는다
  * (`aria-hidden`); 구획 이름은 글자 키가 진다.
@@ -239,11 +245,17 @@ export function Inbox({ open, onClose }: Props) {
     }),
     [entries, threads, threadStates, me, accounts],
   );
+  /**
+   * 필터(W2b). 서버가 준 머리 안에서만 거른다(`filterBoard`). 머리글의 「나를 기다리는 일 N」은
+   * **거르기 전** 수다 — 배지와 같은 수여야 한다(`mineCount` 주석). 필터는 보는 범위만 좁힌다.
+   */
+  const [scope, setScope] = useState<BoardScope>('all');
+  const shownCards = useMemo(() => filterBoard(cards, threads, scope, me?.id ?? null), [cards, threads, scope, me]);
   const byColumn = useMemo(() => {
     const out: Record<BoardColumn, BoardCard[]> = { mine: [], blocked: [], active: [], done: [] };
-    for (const c of cards) out[c.column].push(c);
+    for (const c of shownCards) out[c.column].push(c);
     return out;
-  }, [cards]);
+  }, [shownCards]);
 
   /** 쓰다 만 초안. 보드 밖 한 줄이다 — 남이 나를 부른 것이 아니라 내가 쓰다 만 것이라 열이 없다. */
   const draftKeys = useMemo(
@@ -447,6 +459,24 @@ export function Inbox({ open, onClose }: Props) {
             {t('inbox.board.mineCount', { count: mine })}
           </span>
         )}
+        {/* 필터 — 머리글 안에 둔다. 머리글은 스크롤 밖이라 내려도 늘 보인다(designer n4: sticky). */}
+        {load.kind === 'ready' && cards.length > 0 && (
+          <div role="group" aria-label={t('inbox.board.scope.label')} data-testid="inbox-scope" className="flex flex-wrap items-center gap-1">
+            {BOARD_SCOPES.map((s) => (
+              <button
+                key={s}
+                type="button"
+                data-testid={`inbox-scope-${s}`}
+                aria-pressed={scope === s}
+                onClick={() => setScope(s)}
+                className={`rounded-full border px-2 py-0.5 text-meta focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-accent ${
+                  scope === s ? 'border-transparent bg-accent-surface text-accent' : 'border-border text-fg-muted hover:bg-surface-hover'}`}
+              >
+                {t(SCOPE_KEY[s])}
+              </button>
+            ))}
+          </div>
+        )}
         <button
           onClick={onClose}
           className="ml-auto rounded-row px-2 py-1 text-fg-muted hover:bg-surface-hover
@@ -480,6 +510,11 @@ export function Inbox({ open, onClose }: Props) {
       */}
       {load.kind === 'ready' && cards.length > 0 && (
         <div data-testid="inbox-board" className="@container flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2">
+          {/* 거른 범위가 비었으면 그렇게 말한다 — 「나를 기다리는 일이 없다」만 보이면 다른 범위의 일까지
+              없다고 읽힌다. */}
+          {scope !== 'all' && shownCards.length === 0 && (
+            <p data-testid="inbox-scope-empty" className="px-1 text-meta text-fg-subtle">{t('inbox.board.scope.empty')}</p>
+          )}
           {(() => {
             // 띠 — 오래 기다린 것부터(`buildBoard` 가 내 차례를 sinceAt 오름차순으로 준다).
             const shown = byColumn.mine.filter((c) => c.fold === null);
@@ -522,7 +557,7 @@ export function Inbox({ open, onClose }: Props) {
             );
           })()}
           {/* 세 열은 **보드 자기 폭**으로 편다(`@container` · designer #1219). 창 폭(`lg:`)으로 펴면 카드를
-              눌러 옆에 스레드가 선 — 이 화면의 기본 흐름 — 좁은 보드에서도 세 열을 고집해 한 열이 70px
+              눌러 옆에 스레드가 서면 — 이 화면의 기본 흐름이다 — 좁은 보드에서도 세 열을 고집해 한 열이 70px
               남짓까지 줄었다. `@3xl`(48rem)은 한 열이 15rem 아래로 내려가지 않는 자리다. */}
           <div data-testid="inbox-lanes" className="flex flex-col gap-3 @3xl:grid @3xl:grid-cols-3 @3xl:items-start @3xl:gap-2">
             {LANE_COLUMNS.map((col) => {

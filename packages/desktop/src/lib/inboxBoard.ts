@@ -348,3 +348,31 @@ export function laterUntilLabel(
   if (days === 1) return t('inbox.board.tomorrowAt', { time });
   return `${at.toLocaleDateString(locale, { month: 'short', day: 'numeric' })} ${time}`;
 }
+
+/**
+ * 「내 작업」 필터(W2b, designer 82644a8f): **모든 채널 / 내가 연 것 / 참여한 것**.
+ *
+ * 거르는 재료는 **서버가 준 머리**(`threads`)뿐이다 — 새 조회를 하지 않고, 보드에 이미 선 카드에서
+ * 빼기만 한다(security). 머리가 없는 카드(옛 서버)는 연 사람·참여자를 모르므로 「모든 채널」에서만 보인다.
+ *
+ * - 내가 연 것 = 머리를 내가 썼다.
+ * - 참여한 것 = 내가 연 것 **또는** 내가 답글을 남겼다(`participantIds`). 연 것도 참여다 — 그래서
+ *   「내가 연 것」은 「참여한 것」의 부분집합이고, 필터를 넓혀 가면 카드가 줄지 않는다.
+ */
+export type BoardScope = 'all' | 'opened' | 'participated';
+export const BOARD_SCOPES: readonly BoardScope[] = ['all', 'opened', 'participated'];
+
+export function filterBoard(
+  cards: BoardCard[], threads: MessageRow[] | null, scope: BoardScope, myId: string | null,
+): BoardCard[] {
+  if (scope === 'all') return cards;
+  if (myId == null) return [];
+  const heads = new Map((threads ?? []).map((m) => [m.id, m]));
+  return cards.filter((c) => {
+    const head = heads.get(c.rootId);
+    if (!head) return false;
+    const opened = head.authorId === myId;
+    if (scope === 'opened') return opened;
+    return opened || (head.participantIds ?? []).includes(myId);
+  });
+}

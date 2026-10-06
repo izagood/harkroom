@@ -268,10 +268,6 @@ describe('Inbox 상태 보드 (C안)', () => {
     expect((await screen.findByTestId('inbox-empty')).textContent).toBe('아직 올라온 일이 없다');
   });
 
-  /**
-   * 세 열은 **보드 자기 폭**으로 편다(designer #1219). 카드를 열면 옆에 스레드가 서서 보드가 좁아지는데,
-   * 창 폭(`lg:`)으로 펴면 그때도 세 열을 고집해 한 열이 70px 남짓이 된다. jsdom 은 폭을 못 재므로 클래스로 잰다.
-   */
   it('나중에로 접은 줄은 띠와 열마다 testid 가 갈린다 — 한 화면에 같은 id 가 둘 서지 않는다', async () => {
     const later = new Date(Date.now() + 86_400_000).toISOString();
     fakeController(async () => ({
@@ -286,6 +282,59 @@ describe('Inbox 상태 보드 (C안)', () => {
       [...new Set(screen.queryAllByTestId(/^inbox-fold-/).map((e) => e.dataset.testid))]);
   });
 
+  /**
+   * 필터(W2b) — 서버가 준 머리 안에서만 거른다. 내가 연 것 ⊂ 참여한 것 ⊂ 모든 채널.
+   * 머리글의 「나를 기다리는 일」은 거르기 전 수(배지와 같다).
+   */
+  it('필터: 내가 연 것 · 참여한 것 · 모든 채널', async () => {
+    fakeController(async () => ({
+      entries: [
+        entry(1, { threadRootId: 'mine', reason: 'thread_reply' }),
+        entry(2, { threadRootId: 'said', reason: 'thread_reply' }),
+        entry(3, { threadRootId: 'called', reason: 'mention' }),
+      ],
+      threads: [
+        head('mine', { authorId: ME }),
+        head('said', { authorId: BOT, participantIds: [BOT, ME] }),
+        head('called', { authorId: BOT, participantIds: [BOT], openAskAccountIds: [ME] }),
+      ],
+    }));
+    open();
+    await screen.findByTestId('inbox-card-called');
+    const ids = () => screen.queryAllByTestId(/^inbox-card-(mine|said|called)$/).map((e) => e.dataset.testid).sort();
+    expect(ids()).toEqual(['inbox-card-called', 'inbox-card-mine', 'inbox-card-said']);
+    expect(screen.getByTestId('inbox-scope-all').getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(screen.getByTestId('inbox-scope-opened'));
+    expect(ids()).toEqual(['inbox-card-mine']);
+    expect(screen.getByTestId('inbox-scope-opened').getAttribute('aria-pressed')).toBe('true');
+    // 수는 거르기 전 그대로 — 배지와 같은 수.
+    expect(screen.getByTestId('inbox-mine-count').textContent).toBe('나를 기다리는 일 1');
+
+    fireEvent.click(screen.getByTestId('inbox-scope-participated'));
+    expect(ids()).toEqual(['inbox-card-mine', 'inbox-card-said']);
+
+    fireEvent.click(screen.getByTestId('inbox-scope-all'));
+    expect(ids()).toHaveLength(3);
+  });
+
+  it('거른 범위가 비면 그렇게 말한다', async () => {
+    fakeController(async () => ({
+      entries: [entry(1, { threadRootId: 'r1', reason: 'mention' })],
+      threads: [head('r1', { authorId: BOT, participantIds: [BOT] })],
+    }));
+    open();
+    await screen.findByTestId('inbox-card-r1');
+    expect(screen.queryByTestId('inbox-scope-empty')).toBeNull();
+    fireEvent.click(screen.getByTestId('inbox-scope-opened'));
+    expect(screen.getByTestId('inbox-scope-empty').textContent).toBe('이 범위에는 일이 없다');
+    expect(screen.queryByTestId('inbox-card-r1')).toBeNull();
+  });
+
+  /**
+   * 세 열은 **보드 자기 폭**으로 편다(designer #1219). 카드를 열면 옆에 스레드가 서서 보드가 좁아지는데,
+   * 창 폭(`lg:`)으로 펴면 그때도 세 열을 고집해 한 열이 70px 남짓이 된다. jsdom 은 폭을 못 재므로 클래스로 잰다.
+   */
   it('세 열은 창 폭이 아니라 보드 폭(@container)으로 펼친다', async () => {
     fakeController(async () => ({
       entries: [entry(1, { threadRootId: 'r1', reason: 'thread_reply' })],
