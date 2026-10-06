@@ -49,6 +49,28 @@ describe('normalizeOperatorLabel — 서버와 앱이 같은 정리를 한다', 
     expect(n('\u{1F3F4}\u{E0067}\u{E0062}')).toBe('\u{1F3F4}');
   });
 
+  it('깃발 줄은 소문자·숫자 태그 3~7개만 받는다 — 그 밖의 태그 줄은 지운다', () => {
+    // 대문자·공백 태그
+    expect(n('\u{1F3F4}\u{E0047}\u{E0042}\u{E0020}\u{E007F}')).toBe('\u{1F3F4}');
+    // 소문자 사이에 대문자 하나
+    expect(n('\u{1F3F4}\u{E0067}\u{E0042}\u{E0073}\u{E007F}')).toBe('\u{1F3F4}');
+    // 너무 짧다(2개)·너무 길다(8개)
+    expect(n('\u{1F3F4}\u{E0067}\u{E0062}\u{E007F}')).toBe('\u{1F3F4}');
+    const eight = '\u{E0061}'.repeat(8);
+    expect(n(`\u{1F3F4}${eight}\u{E007F}`)).toBe('\u{1F3F4}');
+    // 숫자 태그는 받는다(3개·7개 경계)
+    const three = '\u{1F3F4}\u{E0075}\u{E0073}\u{E0031}\u{E007F}';
+    expect(n(three)).toBe(three);
+    const seven = `\u{1F3F4}${'\u{E0061}'.repeat(7)}\u{E007F}`;
+    expect(n(seven)).toBe(seven);
+  });
+
+  it('짝 없는 서러게이트는 지운다', () => {
+    expect(n('a\uD800b')).toBe('ab');
+    expect(n('a\uDC00b')).toBe('ab');
+    expect(n('\uD83D')).toBeNull();
+  });
+
   it('결합 문자·한글은 그대로 둔다', () => {
     expect(n('é 회사')).toBe('é 회사');
   });
