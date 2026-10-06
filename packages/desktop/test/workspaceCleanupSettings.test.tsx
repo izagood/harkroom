@@ -93,6 +93,38 @@ describe('작업 폴더 정리 화면', () => {
     fireEvent.click(screen.getByRole('button', { name: '하루 줄이기' }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('workspace_cleanup_settings_set', { enabled: null, graceDays: 6 }));
   });
+  it('자동 정리가 꺼져 있으면 "지운다"고 말하지 않는다 — 기한 대신 꺼짐, 다음 정리 대신 꺼짐 안내, N일 경고 없음', async () => {
+    const invoke = vi.fn(async () => ({ settings: { enabled: false, graceDays: 2 }, ledger: LEDGER, running: false }));
+    (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke };
+    render(<WorkspaceCleanupSettings now={NOW} />);
+    const dues = await screen.findAllByTestId('cleanup-due');
+    // ⚠ 줄은 그대로 ⚠, 나머지는 날짜 없이 「꺼짐 · 지우지 않음」
+    expect(dues[0]!.textContent).toContain('⚠');
+    for (const d of dues.slice(1)) { expect(d.textContent).toBe('꺼짐 · 지우지 않음'); expect(d.textContent).not.toMatch(/\d+-\d+/); }
+    expect(screen.getByTestId('cleanup-next').textContent).toContain('꺼져 있다');
+    expect(screen.getByTestId('cleanup-next').textContent).not.toContain('1시간마다');
+    expect(screen.queryByTestId('cleanup-grace-warn')).toBeNull();
+  });
+  it('보존한 사람은 handle 로(모르면 이름 없이), 최근 기록은 스레드 제목·~ 경로로 — 계정 id·홈 경로를 내지 않는다', async () => {
+    const OTHER = '9b3c1f0e-0000-4000-8000-000000000001';
+    const ledger: CleanupLedger = {
+      ...LEDGER,
+      items: [item({ path: '/Users/someone/wt/k', thread: T('r-k'), state: 'kept', actedBy: OTHER, actedAt: '2026-10-04T00:00:00Z' })],
+      events: [{ at: '2026-10-05T00:00:00Z', path: '/Users/someone/wt/u', thread: null, action: 'kept', by: OTHER, bytes: null, reason: null }],
+    };
+    (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke: vi.fn(async () => ({ settings: { enabled: true, graceDays: 7 }, ledger, running: false })) };
+    render(<WorkspaceCleanupSettings now={NOW} />);
+    const by = await screen.findByTestId('cleanup-kept-by');
+    expect(by.textContent).toBe('보존 · 10-04');
+    expect(document.body.textContent).not.toContain(OTHER);
+    const ev = screen.getByTestId('cleanup-event').textContent!;
+    expect(ev).toContain('보존 · ~/wt/u');
+    expect(document.body.textContent).not.toContain('/Users/someone');
+    cleanup();
+    useActiveStore.getState().set({ accounts: { [ME]: acc(ME, 'owner'), [OTHER]: acc(OTHER, 'mina') } });
+    render(<WorkspaceCleanupSettings now={NOW} />);
+    expect((await screen.findByTestId('cleanup-kept-by')).textContent).toBe('보존 · mina · 10-04');
+  });
   it('Tauri 표면이 없으면 안내만', () => {
     render(<WorkspaceCleanupSettings now={NOW} />);
     expect(screen.getByTestId('cleanup-unavailable')).toBeTruthy();

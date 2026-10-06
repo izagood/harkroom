@@ -28,6 +28,8 @@ const REASON_KEY: Record<CleanupBlockReason, MessageKey> = {
 
 const DAY = 86_400_000;
 const fmtTime = (d: Date) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+/** 화면에 보이는 경로는 홈을 `~` 로 줄인다(복사는 원래 경로). */
+const shortPath = (p: string) => p.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, '~');
 const fmtDay = (iso: string) => { const d = new Date(iso); return `${d.getMonth() + 1}-${String(d.getDate()).padStart(2, '0')}`; };
 
 export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
@@ -39,6 +41,7 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
   const t = useT();
   const me = useActiveStore((s) => s.me);
   const channels = useActiveStore((s) => s.channels);
+  const accounts = useActiveStore((s) => s.accounts);
   const available = hasOperatorLocalSurface();
   const [view, setView] = useState<WorkspaceCleanupView | 'loading' | 'error'>('loading');
   const [busy, setBusy] = useState(false);
@@ -64,8 +67,10 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
 
   // 스레드 첫 줄 — 줄의 제목. 목록에 보이는 스레드만, 한 번씩 읽는다.
   const [titles, setTitles] = useState<Record<string, string>>({});
-  const rootIds = useMemo(() => [...new Set([...(model?.listed ?? []), ...(model?.kept ?? [])]
-    .flatMap((r) => (r.thread ? [r.thread.threadRootId] : [])))], [model]);
+  const rootIds = useMemo(() => [...new Set([
+    ...[...(model?.listed ?? []), ...(model?.kept ?? [])].flatMap((r) => (r.thread ? [r.thread.threadRootId] : [])),
+    ...(model?.events.slice(0, 10) ?? []).flatMap((e) => (e.thread ? [e.thread.threadRootId] : [])),
+  ])], [model]);
   useEffect(() => {
     const api = getController().api;
     if (!api) return;
@@ -95,7 +100,12 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
   }
 
   const { settings, ledger } = view;
+  // 꺼져 있으면 청소기가 아무것도 지우지 않는다 — 기한·다음 정리·N일 경고로 "지운다"고 말하지 않는다(designer 수정 1).
+  const off = !settings.enabled;
   const next = nextSweepAt(ledger);
+  /** 계정 id → 보일 이름. 모르면 null(id 를 화면에 내지 않는다). */
+  const whoOf = (id: string | null) => (id ? (id === me?.id ? me?.handle : accounts[id]?.handle) ?? null : null);
+  const threadTitle = (rootId: string) => titles[rootId] ?? t('cleanup.threadTitle', { id: rootId.slice(0, 8) });
   const channelName = (id: string) => channels.find((c) => c.id === id)?.name ?? null;
   const daysLeft = (iso: string | null): { text: string; today: boolean } => {
     if (!iso) return { text: '', today: false };
@@ -116,22 +126,25 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
     const due = daysLeft(row.deleteAfter);
     const chan = row.thread ? channelName(row.thread.channelId) : null;
     // 제목은 스레드 첫 줄이다 — 사람은 경로로 일을 기억하지 않는다. 못 읽었으면(지워진 글·권한) 짧은 id 로.
-    const title = row.thread ? (titles[row.thread.threadRootId] ?? t('cleanup.threadTitle', { id: row.thread.threadRootId.slice(0, 8) })) : first.path;
+    const title = row.thread ? threadTitle(row.thread.threadRootId) : shortPath(first.path);
     return (
-      <div className={`px-4 py-3 ${row.tone === 'warn' ? 'bg-warning-surface' : ''}`} data-testid="cleanup-row" data-tone={row.tone}>
+      <div className={`px-4 py-3 ${row.tone === 'warn' ? 'bg-warning-surface first:rounded-t-compose last:rounded-b-compose' : ''}`} data-testid="cleanup-row" data-tone={row.tone}>
         <div className="flex items-start gap-3">
           <button className="min-w-0 flex-1 text-left" aria-expanded={isOpen}
             onClick={() => setOpen((s) => { const n = new Set(s); if (n.has(row.key)) n.delete(row.key); else n.add(row.key); return n; })}>
-            <span className="block truncate font-medium text-fg">{title}{chan ? <span className="font-normal text-fg-subtle"> · #{chan}</span> : null}</span>
+            <span className="flex min-w-0 font-medium text-fg">
+              <span className="truncate">{title}</span>
+              {chan ? <span className="shrink-0 whitespace-pre font-normal text-fg-subtle"> · #{chan}</span> : null}
+            </span>
             <span className="mt-0.5 block text-meta text-fg-subtle">
               {row.prNumber !== null ? t(`cleanup.pr.${row.prState ?? 'open'}` as MessageKey, { n: row.prNumber }) : t('cleanup.pr.none')}
               {' · '}{row.parts.map(partLabel).join(' · ')}{' · '}{formatBytes(row.sizeNow)}
-              {kept && row.actedAt ? <> {' · '}<span data-testid="cleanup-kept-by">{t(row.actedBy ? 'cleanup.keptBy' : 'cleanup.keptAuto', { who: row.actedBy === me?.id ? (me?.handle ?? '') : (row.actedBy ?? ''), date: fmtDay(row.actedAt) })}</span></> : null}
+              {kept && row.actedAt ? <> {' · '}<span data-testid="cleanup-kept-by">{whoOf(row.actedBy) ? t('cleanup.keptBy', { who: whoOf(row.actedBy)!, date: fmtDay(row.actedAt) }) : t('cleanup.keptAuto', { date: fmtDay(row.actedAt) })}</span></> : null}
             </span>
           </button>
           {!kept && (
-            <span className={`shrink-0 text-meta ${row.tone === 'warn' ? 'text-warning' : due.today ? 'font-medium text-accent' : 'text-fg-muted'}`} data-testid="cleanup-due">
-              {row.tone === 'warn' ? t('cleanup.stopped') : row.tone === 'deferred' ? t('cleanup.deferred') : due.text}
+            <span className={`shrink-0 text-meta ${row.tone === 'warn' ? 'text-warning' : off ? 'text-fg-subtle' : due.today ? 'font-medium text-accent' : 'text-fg-muted'}`} data-testid="cleanup-due">
+              {row.tone === 'warn' ? t('cleanup.stopped') : off ? t('cleanup.offNoDelete') : row.tone === 'deferred' ? t('cleanup.deferred') : due.text}
             </span>
           )}
           <button className="shrink-0 rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-sunken disabled:opacity-50"
@@ -157,7 +170,7 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
             {row.parts.map((p) => (
               <li key={p.path} className="flex gap-2">
                 <span className="w-24 shrink-0 text-fg-subtle">{partLabel(p)}</span>
-                <span className="min-w-0 flex-1 truncate font-mono">{p.path}</span>
+                <span className="min-w-0 flex-1 truncate font-mono">{shortPath(p.path)}</span>
                 <span>{formatBytes(p.sizeNow)}</span>
               </li>
             ))}
@@ -178,18 +191,24 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
   };
 
   const firstRun = !settings.enabled && ledger.lastSweepAt === null;
+  // 0 인 칸은 소음이라 뺀다(designer n7).
+  const { totals } = model;
+  const summary = [
+    totals.listedCount > 0 ? t('cleanup.summary.listed', { n: totals.listedCount, size: formatBytes(totals.listedBytes) }) : null,
+    totals.keptCount > 0 ? t('cleanup.summary.kept', { n: totals.keptCount }) : null,
+    totals.unownedCount > 0 ? t('cleanup.summary.unowned', { n: totals.unownedCount, size: formatBytes(totals.unownedBytes) }) : null,
+    model.freedLast7Days > 0 ? t('cleanup.summary.freed', { size: formatBytes(model.freedLast7Days) }) : null,
+  ].filter((x): x is string => x !== null);
+  const graceWarnN = off ? 0 : dueIfLower(settings.graceDays - 1);
 
   return (
     <SettingsPage section="workspace-cleanup" description={t('settings.desc.workspace-cleanup')}>
+      {/* 한국어 설명이 낱말 중간에서 끊기지 않게(designer n3). 경로·제목은 truncate 라 영향 없다. */}
+      <div className="break-keep">
       <div className="mb-6 text-meta text-fg-muted" data-testid="cleanup-summary">
-        <p>
-          {t('cleanup.summary.listed', { n: model.totals.listedCount, size: formatBytes(model.totals.listedBytes) })}
-          {' · '}{t('cleanup.summary.kept', { n: model.totals.keptCount })}
-          {' · '}{t('cleanup.summary.unowned', { n: model.totals.unownedCount, size: formatBytes(model.totals.unownedBytes) })}
-          {model.freedLast7Days > 0 && <>{' · '}{t('cleanup.summary.freed', { size: formatBytes(model.freedLast7Days) })}</>}
-        </p>
-        <p className="mt-1 text-fg-subtle" data-testid="cleanup-next">
-          {next ? t('cleanup.next', { time: fmtTime(next) }) : t('cleanup.nextUnknown')}
+        {summary.length > 0 && <p data-testid="cleanup-summary-line">{summary.join(' · ')}</p>}
+        <p className={`${summary.length > 0 ? 'mt-1 ' : ''}text-fg-subtle`} data-testid="cleanup-next">
+          {off ? t('cleanup.nextOff') : next ? t('cleanup.next', { time: fmtTime(next) }) : t('cleanup.nextUnknown')}
         </p>
       </div>
 
@@ -210,8 +229,8 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
                 disabled={busy || settings.graceDays >= 30} onClick={() => setDays(settings.graceDays + 1)}>+</button>
             </div>
           </div>
-          {dueIfLower(settings.graceDays - 1) > 0 && (
-            <p className="mt-2 text-meta text-warning" data-testid="cleanup-grace-warn">{t('cleanup.graceWarn', { n: dueIfLower(settings.graceDays - 1) })}</p>
+          {graceWarnN > 0 && (
+            <p className="mt-2 text-meta text-fg-subtle" data-testid="cleanup-grace-warn">{t('cleanup.graceWarn', { n: graceWarnN })}</p>
           )}
         </div>
       </SettingsGroup>
@@ -238,7 +257,7 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
             <div key={u.path} className="px-4 py-3" data-testid="cleanup-unowned">
               <div className="flex items-start gap-3">
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate font-mono text-fg">{u.path}</span>
+                  <span className="block truncate font-mono text-fg">{shortPath(u.path)}</span>
                   <span className="mt-0.5 block text-meta text-fg-subtle">
                     {u.branch ? t('cleanup.branch', { name: u.branch }) : t('cleanup.detached', { sha: (u.headSha ?? '').slice(0, 7) })}
                     {' · '}{u.pr ? t(`cleanup.pr.${u.pr.state}` as MessageKey, { n: u.pr.number }) : t('cleanup.pr.unknown')}
@@ -264,11 +283,12 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
           {model.events.slice(0, 10).map((e, i) => (
             <p key={`${e.at}-${i}`} className="px-4 py-2 text-meta text-fg-muted" data-testid="cleanup-event">
               <span className="mr-2 text-fg-subtle">{fmtDay(e.at)} {fmtTime(new Date(e.at))}</span>
-              {t(`cleanup.event.${e.action}` as MessageKey, { path: e.path, size: formatBytes(e.bytes), who: e.by === me?.id ? (me?.handle ?? '') : (e.by ?? '') })}
+              {t(`cleanup.event.${e.action}` as MessageKey, { name: e.thread ? threadTitle(e.thread.threadRootId) : shortPath(e.path), size: formatBytes(e.bytes) })}
             </p>
           ))}
         </SettingsGroup>
       )}
+      </div>
     </SettingsPage>
   );
 }
