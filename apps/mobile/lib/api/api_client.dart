@@ -231,12 +231,16 @@ class ApiClient {
   /// 순서는 서버가 정한다(접두 일치 > ts_rank > 최신순) — 받은 순서를 그대로 그린다. 그래서
   /// 페이지는 seq 커서가 아니라 [offset] 이다(서버 천장 1000, `hasMore` 가 이미 그 천장을 안다).
   /// [threadRootId] 를 줄 때도 [channelId] 를 같이 준다 — 서버의 403 판정이 채널 단위다.
-  Future<MessagePage> search(String query, {String? channelId, String? threadRootId, int offset = 0}) async {
+  ///
+  /// [sort] 가 없으면 서버 기본(관련도)이다. 최신순이면 서버가 `created_at desc` 로 준다.
+  Future<MessagePage> search(String query,
+      {String? channelId, String? threadRootId, int offset = 0, SearchSort? sort}) async {
     final q = <String, String>{
       'q': query,
       'channelId': ?channelId,
       'threadRootId': ?threadRootId,
       if (offset > 0) 'offset': '$offset',
+      if (sort != null) 'sort': sort.name,
     };
     return MessagePage.fromJson(_obj(await _send('GET', '/search?${Uri(queryParameters: q).query}')));
   }
@@ -512,3 +516,6 @@ class ApiClient {
 
   void close() => _http.close();
 }
+
+/// 찾기 결과 순서. 이름이 곧 서버 `GET /search?sort=` 의 값이다(`relevance` | `recent`).
+enum SearchSort { relevance, recent }

@@ -811,6 +811,21 @@ abstract class Strings {
 
   /// 이름이 맞는 채널·DM 묶음의 머리.
   String get searchShortcuts;
+
+  /// 결과 머리 줄의 건수. `{n}` 은 받은 수.
+  String get searchCount;
+
+  /// 더 있을 때의 건수(`{n}+`).
+  String get searchCountMore;
+
+  /// 순서 메뉴 단추의 이름(VoiceOver).
+  String get searchSort;
+
+  /// 순서: 관련도순 · 최신순과 그 한 줄 설명.
+  String get searchSortRelevance;
+  String get searchSortRelevanceHint;
+  String get searchSortRecent;
+  String get searchSortRecentHint;
 }
 
 /// **영어와 같아도 되는 키.** 고유명사처럼 번역이 존재하지 않는 것들이다.
@@ -1100,4 +1115,11 @@ Map<String, String> stringsToMap(Strings s) => {
       'searchRecentClear': s.searchRecentClear,
       'searchRecentRemove': s.searchRecentRemove,
       'searchShortcuts': s.searchShortcuts,
+      'searchCount': s.searchCount,
+      'searchCountMore': s.searchCountMore,
+      'searchSort': s.searchSort,
+      'searchSortRelevance': s.searchSortRelevance,
+      'searchSortRelevanceHint': s.searchSortRelevanceHint,
+      'searchSortRecent': s.searchSortRecent,
+      'searchSortRecentHint': s.searchSortRecentHint,
     };

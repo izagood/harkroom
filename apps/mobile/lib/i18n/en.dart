@@ -753,6 +753,27 @@ class StringsEn implements Strings {
   String get searchShortcuts => 'Go to';
 
   @override
+  String get searchCount => '{n} messages';
+
+  @override
+  String get searchCountMore => '{n}+ messages';
+
+  @override
+  String get searchSort => 'Sort';
+
+  @override
+  String get searchSortRelevance => 'Relevance';
+
+  @override
+  String get searchSortRelevanceHint => 'Best matches first';
+
+  @override
+  String get searchSortRecent => 'Newest';
+
+  @override
+  String get searchSortRecentHint => 'Newest first';
+
+  @override
   String get inboxOtherCommunity => '{count} waiting for you in {name}';
 
   @override

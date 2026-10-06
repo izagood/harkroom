@@ -8,6 +8,7 @@ import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/i18n/i18n.dart';
 import 'package:harkroom/main.dart';
 import 'package:harkroom/screens/message_list_screen.dart';
+import 'package:harkroom/screens/message_tile.dart';
 import 'package:harkroom/screens/search_screen.dart';
 import 'package:harkroom/screens/thread_screen.dart';
 import 'package:harkroom/session/recent_search_store.dart';
@@ -190,7 +191,7 @@ void main() {
 
     await _type(tester, '배포');
     expect(server.searches, hasLength(1));
-    expect(server.searches.single, {'q': '배포'});
+    expect(server.searches.single, {'q': '배포', 'sort': 'relevance'});
   });
 
   testWidgets('디바운스: 연달아 친 것은 마지막 하나만 보낸다', (tester) async {
@@ -217,14 +218,14 @@ void main() {
     expect(chip.selected, isTrue);
 
     await _type(tester, '없는말');
-    expect(server.searches.last, {'q': '없는말', 'channelId': 'c1'});
+    expect(server.searches.last, {'q': '없는말', 'channelId': 'c1', 'sort': 'relevance'});
     expect(find.text(_t.searchNoResults.replaceFirst('{q}', '없는말')), findsOneWidget);
     // 세 글자라 「한 글자 더」 안내는 없다.
     expect(find.text(_t.searchTwoLetterHint), findsNothing);
 
     await tester.tap(find.byKey(const Key('search-everywhere')));
     await _settle(tester);
-    expect(server.searches.last, {'q': '없는말'});
+    expect(server.searches.last, {'q': '없는말', 'sort': 'relevance'});
     // 이미 전체라 넓힐 곳이 없다.
     expect(find.byKey(const Key('search-everywhere')), findsNothing);
   });
@@ -275,7 +276,7 @@ void main() {
     await _settle(tester);
     expect(find.byKey(const Key('search-scope-thread')), findsOneWidget);
     await _type(tester, '배포');
-    expect(server.searches.last, {'q': '배포', 'channelId': 'c1', 'threadRootId': _root});
+    expect(server.searches.last, {'q': '배포', 'channelId': 'c1', 'threadRootId': _root, 'sort': 'relevance'});
   });
 
   testWidgets('실패는 실패 화면 + [다시 시도], 0건과 다른 말이다', (tester) async {
@@ -323,6 +324,100 @@ void main() {
     await tester.drag(find.byKey(const Key('search-results')), const Offset(0, 500));
     await tester.pump();
     expect(find.byKey(const Key('search-result-00000000-0000-4000-8000-000000000049')), findsOneWidget);
+  });
+
+  group('결과 순서(designer 찾기 정렬 안 A)', () {
+    // 날짜가 섞인 세 줄. 관련도순은 서버가 준 순서 그대로, 최신순은 서버가 날짜 내림차순으로 준다.
+    Map<String, Object?> at(String id, DateTime when) => {..._row(id, 1, body: '배포 $id'), 'createdAt': when.toUtc().toIso8601String()};
+    const a = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const b = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const c = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    final d1 = DateTime(2026, 9, 30, 9, 5);
+    final d2 = DateTime(2026, 10, 1, 14, 30);
+    final d2b = DateTime(2026, 10, 1, 8, 0);
+    _Server sorted() => _Server()
+      ..answer = (q) => {
+            'messages': q['sort'] == 'recent' ? [at(b, d2), at(c, d2b), at(a, d1)] : [at(c, d2b), at(a, d1), at(b, d2)],
+            'hasMore': false,
+          };
+
+    Future<void> pick(WidgetTester tester, SearchSort s) async {
+      await tester.tap(find.byKey(const Key('search-sort')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(Key('search-sort-${s.name}')));
+      await tester.pump(searchDebounce);
+      await _settle(tester);
+    }
+
+    testWidgets('전체 찾기에도 머리 줄에 「메시지 N개」 와 「관련도순」 이 선다, 기본은 관련도순·날짜 머리 없음', (tester) async {
+      final server = sorted();
+      await _boot(tester, server);
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      await _type(tester, '배포');
+      expect(server.searches.single['sort'], 'relevance');
+      expect(find.byKey(const Key('search-result-header')), findsOneWidget);
+      expect(find.text(_t.searchCount.replaceFirst('{n}', '3')), findsOneWidget);
+      expect(find.descendant(of: find.byKey(const Key('search-sort')), matching: find.text(_t.searchSortRelevance)), findsOneWidget);
+      expect(find.byType(DayDivider), findsNothing, reason: '관련도순은 날짜가 섞여 묶지 않는다');
+      expect(find.textContaining('14:30'), findsNothing, reason: '줄에는 날짜를 둔다');
+    });
+
+    testWidgets('최신순을 고르면 같은 말로 다시 찾고, 날짜 머리로 묶고 줄엔 시각만, 기기에 기억한다', (tester) async {
+      final server = sorted();
+      final store = MemoryRecentSearchStore();
+      final app = await _boot(tester, server, recent: store);
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      await _type(tester, '배포');
+      await pick(tester, SearchSort.recent);
+      expect(server.searches, hasLength(2));
+      expect(server.searches.last, {'q': '배포', 'sort': 'recent'});
+      expect(app.searchSort, SearchSort.recent);
+      expect(store.sort, 'recent');
+      expect(find.descendant(of: find.byKey(const Key('search-sort')), matching: find.text(_t.searchSortRecent)), findsOneWidget);
+      // b·c 는 같은 날(10/1) — 머리는 b 위에 하나, a(9/30) 위에 하나.
+      expect(find.byKey(const Key('search-day-$b')), findsOneWidget);
+      expect(find.byKey(const Key('search-day-$c')), findsNothing);
+      expect(find.byKey(const Key('search-day-$a')), findsOneWidget);
+      expect(find.textContaining('14:30'), findsOneWidget);
+      expect(find.textContaining('09:05'), findsOneWidget);
+    });
+
+    testWidgets('기억해 둔 최신순으로 연다(범위와 무관)', (tester) async {
+      final server = sorted();
+      final store = MemoryRecentSearchStore()..sort = 'recent';
+      final app = await _boot(tester, server, recent: store);
+      await _openChannel(tester, app);
+      await tester.tap(find.byKey(const Key('channel-search')));
+      await _settle(tester);
+      await _type(tester, '배포');
+      expect(server.searches.last['sort'], 'recent');
+      expect(server.searches.last['channelId'], 'c1');
+    });
+
+    testWidgets('이어 받기는 지금 선 결과의 순서로 묻는다', (tester) async {
+      final server = _Server()
+        ..answer = (q) {
+          final offset = int.tryParse(q['offset'] ?? '') ?? 0;
+          return {
+            'messages': [
+              for (var i = offset; i < offset + 50 && i < 60; i++)
+                _row('00000000-0000-4000-8000-${i.toString().padLeft(12, '0')}', 100 - i, body: '배포 $i'),
+            ],
+            'hasMore': offset == 0,
+          };
+        };
+      await _boot(tester, server, recent: MemoryRecentSearchStore()..sort = 'recent');
+      await tester.tap(find.byKey(const Key('tab-search')));
+      await _settle(tester);
+      await _type(tester, '배포');
+      expect(find.text(_t.searchCountMore.replaceFirst('{n}', '50')), findsOneWidget);
+      await tester.drag(find.byKey(const Key('search-results')), const Offset(0, -6000));
+      await _settle(tester);
+      expect(server.searches.last, {'q': '배포', 'offset': '50', 'sort': 'recent'});
+    });
   });
 
   group('highlightSpans', () {
