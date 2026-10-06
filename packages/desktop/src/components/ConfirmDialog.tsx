@@ -70,7 +70,9 @@ export function ConfirmDialog({
 
   return (
     <Overlay label={title} onClose={busy ? noop : onCancel} align="center" className="w-[22rem]">
-      <div className="flex flex-col gap-3 p-4">
+      {/* 한국어는 낱말 단위로만 접는다(`break-keep`) — 「삭 / 제할까?」처럼 낱말 가운데서 끊기지 않게.
+          공백 없는 긴 글(호스트명·경로)은 그래도 상자 안에서 접힌다(`overflow-wrap:anywhere`). */}
+      <div className="flex flex-col gap-3 break-keep p-4 [overflow-wrap:anywhere]">
         {/* 겹창 제목은 이름줄단 15px — 화면 제목단(17px)은 화면 하나를 여는 자리에만 준다
             (`Composer` 의 예약 겹창과 같은 규칙). */}
         <p className="text-name font-medium text-fg">{title}</p>
