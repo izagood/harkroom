@@ -155,10 +155,12 @@ export function createWorkspaceCleanup(deps: WorkspaceCleanupDeps, base: Cleanup
     return next;
   };
 
-  const view = async (): Promise<WorkspaceCleanupView> => ({
-    settings: await readCleanupSettings(deps.configPath), ledger: await readLedger(deps.ledgerPath), running,
-    live: await deps.owners.live(),
-  });
+  const view = async (): Promise<WorkspaceCleanupView> => {
+    const ledger = await readLedger(deps.ledgerPath);
+    // 화면에는 원장에 있는 스레드 폴더의 상태만 낸다(security n1).
+    const keys = new Set(ledger.items.filter((i) => i.kind !== 'worktree' && i.thread).map((i) => threadKey(i.thread!)));
+    return { settings: await readCleanupSettings(deps.configPath), ledger, running, live: await deps.owners.live(keys) };
+  };
 
   const observe = async (prev: CleanupLedger) => {
     const agents = await deps.agents();
@@ -240,6 +242,8 @@ export function createWorkspaceCleanup(deps: WorkspaceCleanupDeps, base: Cleanup
         graceDays: next.graceDays === undefined ? cur.graceDays : clampGraceDays(next.graceDays),
       };
       await writeConfig(deps.configPath, config);
+      // 끄면 이미 러너에게 나간 지우기 요청도 거둔다 — 다음 보고의 답으로 지워지면 「끄면 지우지 않는다」가 깨진다(security F1).
+      if (!config.cleanup.enabled) deps.owners.retainDeletes(new Set());
       // N 을 바꾸면 기한을 다시 계산한다(시안: "3개가 오늘 기한이 됩니다") — listedAt + N일.
       if (next.graceDays !== undefined && next.graceDays !== cur.graceDays) {
         const ledger = await readLedger(deps.ledgerPath);
