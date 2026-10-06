@@ -567,6 +567,42 @@ describe('runMentionTurn', () => {
       expect(fake.fails.filter((x) => x.threadRootId === 'report-root')).toEqual([]);
     });
 
+    // #1208 security n4: 한 번 읽기는 `seq > 기준선` 중 가장 오래된 limit 개다 — 보고처가 바빠 글이 그보다 많이
+    // 쌓이면 내 보고가 창 밖으로 밀려 경고가 잘못 났다. 되돌려 RED: 쪽 넘기기를 지우고 한 번만 읽으면 경고가 선다.
+    it('턴 동안 보고처에 글이 창(limit)보다 많이 쌓여도 내 보고를 찾는다 — 잘못 경고하지 않는다', async () => {
+      const { fake } = await wakeTurn((f, me) => {
+        f.limit = 3;
+        for (let i = 0; i < 7; i += 1) f.seedFrom('human-1', `잡담 ${i}`, 'report-root');
+        f.seedFrom(me, '#1174 확인했다 — 초록', 'report-root');
+      });
+      expect(fake.fails.filter((x) => x.threadRootId === 'report-root')).toEqual([]);
+    });
+
+    it('창보다 많이 쌓였는데 끝까지 내 글이 없으면 그때는 경고한다', async () => {
+      const { fake } = await wakeTurn((f) => {
+        f.limit = 3;
+        for (let i = 0; i < 7; i += 1) f.seedFrom('human-1', `잡담 ${i}`, 'report-root');
+      });
+      expect(fake.fails.filter((x) => x.threadRootId === 'report-root')).toHaveLength(1);
+    });
+
+    // #1208 security n2: 비공개 앵커의 사유가 공개 보고처로 옮겨 적히지 않게 — 채널이 다르면 사유를 싣지 않는다.
+    it('보고처가 다른 채널이면 경고에 사유를 싣지 않는다 — 앵커만 가리킨다', async () => {
+      const fake = new FakeHarkroom(defOf());
+      fake.seedFrom('human-1', '@forge #1174 확인해');
+      const { deps, runTurn } = await makeDeps(fake);
+      runTurn.script = async () => { fake.seedFrom(deps.me.id, 'CI 초록이다', null); return { exitCode: 0, timedOut: false, tail: '' }; };
+      await runMentionTurn(deps, {
+        channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+        wake: { reason: '비공개 사유', reportTo: { channelId: 'ch-public', threadRootId: 'report-root' } },
+      });
+      const warn = fake.fails.filter((x) => x.threadRootId === 'report-root');
+      expect(warn).toHaveLength(1);
+      expect(warn[0]!.channelId).toBe('ch-public');
+      expect(warn[0]!.body).not.toContain('비공개 사유');
+      expect(warn[0]!.body).toContain(`harkroom://message/${MENTION}`);
+    });
+
     it('다시 기다리기로 했으면(새 깨움) 경고하지 않는다 — 아직 보고할 때가 아니다', async () => {
       const { fake } = await wakeTurn((f, me) => {
         const m = f.seedFrom(me, '#1174 CI 다시 확인', null);

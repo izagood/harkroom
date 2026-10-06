@@ -1490,9 +1490,13 @@ export function canceledWakeLines(list: readonly InboxCanceledWake[]): string[] 
  * 약속한 보고처에 아무 말 없이 끝난 깨움 턴의 경고(2026-10-06). 보고처 스레드에 남긴다 — 거기서 기다리는
  * 사람이 "안 봤다" 가 아니라 "봤는데 여기 안 적었다, 결과는 저기 있다" 를 알게.
  */
-export function reportMissedNotice(reason: string, anchor: string): string {
+export function reportMissedNotice(reason: string | null, anchor: string): string {
+  // 사유가 null 이면 싣지 않는다 — 앵커와 보고처의 채널이 다를 때다(#1208 security n2: 비공개 앵커의 사유가
+  // 공개 보고처로 옮겨 적히지 않게). 앵커 id 는 남긴다: 읽기는 서버가 가시성으로 막는다.
   return [
-    `이 스레드에 보고하기로 한 예약이 깨어났지만 여기에 아무 말 없이 끝났다 — 사유: ${reason}`,
+    reason === null
+      ? '이 스레드에 보고하기로 한 예약이 깨어났지만 여기에 아무 말 없이 끝났다.'
+      : `이 스레드에 보고하기로 한 예약이 깨어났지만 여기에 아무 말 없이 끝났다 — 사유: ${reason}`,
     `그 턴은 harkroom://message/${anchor} 스레드에서 돌았다. 결과는 그쪽을 본다.`,
   ].join('\n');
 }

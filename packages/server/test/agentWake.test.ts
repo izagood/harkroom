@@ -314,7 +314,59 @@ describe('turn.wake — 에이전트가 자기를 나중에 깨운다', () => {
     expect(opener && 'canceledWakes' in opener).toBe(false);
   });
 
+  // #1208 security n3 ②: 싣는 것은 **내** 깨움뿐이다 — 같은 글이 남의 깨움을 접어도 내 항목에는 안 실린다.
+  it('다른 계정의 접힌 깨움은 내 canceledWakes 에 실리지 않는다', async () => {
+    const peerHandle = `peerw${Date.now()}`;
+    const { pat: peerPat } = await createAgent(app, adminToken, peerHandle);
+    const threadRootId = await newThread();
+    const peer = await mcpClient(peerPat);
+    const pw = text(await peer.callTool({
+      name: 'turn.wake', arguments: { channelId, threadRootId, notBeforeSec: 3600, reason: '남의 비밀 사유' },
+    }));
+    await peer.close();
+    expect(pw.error).toBeUndefined();
+    // 두 에이전트를 함께 부른다 — 남의 깨움은 접히고, 나는 깨움이 없었다.
+    const call = (await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { body: `@wakebot @${peerHandle} 둘 다 이거 봐`, threadRootId },
+    })).json().id as string;
+    const row = await pool.query(`select canceled_by_message_id from agent_wake where message_id = $1`, [pw.wake.messageId]);
+    expect(row.rows[0].canceled_by_message_id).toBe(call);
+
+    const client = await mcpClient(botPat);
+    const polled = text(await client.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 0 } }));
+    await client.close();
+    const mine = (polled.entries as { messageId: string; canceledWakes?: unknown }[]).find((e) => e.messageId === call);
+    expect(mine).toBeDefined();
+    expect(mine && 'canceledWakes' in mine).toBe(false);
+  });
+
   describe('보고처(reportTo, 2026-10-06)', () => {
+    // #1208 security n3 ①: 볼 수 없는 채널은 보고처가 될 수 없다 — 깨어난 턴이 거기 쓰지도 못한다.
+    it('볼 수 없는 채널을 보고처로 주면 forbidden 으로 거절하고 예약하지 않는다', async () => {
+      const hidden = (await app.inject({
+        method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
+        payload: { name: `wake-hidden-${Date.now()}`, visibility: 'private' },
+      })).json().id as string;
+      const hiddenRoot = (await app.inject({
+        method: 'POST', url: `/channels/${hidden}/messages`, headers: { authorization: `Bearer ${adminToken}` },
+        payload: { body: '비공개 스레드' },
+      })).json().id as string;
+      const threadRootId = await newThread();
+      const client = await mcpClient(botPat);
+      const before = await pool.query(`select count(*)::int as n from agent_wake where account_id = $1`, [botAccountId]);
+      const res = text(await client.callTool({
+        name: 'turn.wake',
+        arguments: { channelId, threadRootId, notBeforeSec: 300, reason: 'x', reportTo: { channelId: hidden, threadRootId: hiddenRoot } },
+      }));
+      await client.close();
+      expect(res.error).toMatchObject({ code: 'forbidden' });
+      const after = await pool.query(`select count(*)::int as n from agent_wake where account_id = $1`, [botAccountId]);
+      expect(after.rows[0].n).toBe(before.rows[0].n);
+    });
+
+
     it('보고처를 주면 깨움 메시지 meta 에 싣는다', async () => {
       const threadRootId = await newThread();
       const reportRoot = await newThread();

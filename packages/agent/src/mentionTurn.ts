@@ -561,14 +561,32 @@ export interface MentionTarget {
  * 결과를 앵커 스레드에서 찾아야 하고, 그 사실이 스레드 머리에 서야 "안 봤다" 와 갈린다. 다시 부를 일은
  * 아니라서 `retryable: false` 다. 읽기·발화 실패는 삼킨다(관측이다 — 호출자의 try 가 로그를 남긴다).
  */
+/** 보고처 판정에서 한 번에 읽는 글 수와 쪽 수 상한(#1208 n4). 200 × 10 = 턴 동안 2,000 글까지 본다. */
+const REPORT_CHECK_PAGE = 200;
+const REPORT_CHECK_MAX_PAGES = 10;
+
 async function reportPromiseCheck(
-  deps: MentionTurnDeps, reportTo: WakeReportTo, baseSeq: number, reason: string, anchor: string,
+  deps: MentionTurnDeps, reportTo: WakeReportTo, baseSeq: number, reason: string, anchor: string, anchorChannelId: string,
 ): Promise<void> {
-  const there = await deps.harkroom.readThread(reportTo.channelId, reportTo.threadRootId, baseSeq);
-  const said = there.some((m) => m.authorId === deps.me.id && m.seq > baseSeq && m.kind !== MESSAGE_KIND_WAKE);
-  if (said) return;
+  // **창을 넘겨 끝까지 읽는다**(#1208 security n4). 한 번 읽기는 `seq > baseSeq` 중 가장 오래된 limit 개라, 턴 동안
+  // 보고처가 바빠 글이 limit 을 넘게 쌓이면 내 보고가 창 밖으로 밀려 **보고했는데 경고**가 났다. 찾으면 멈추고,
+  // 쪽 수 상한을 넘기면 판정을 접는다 — 근거 없이 경고하지 않는다(기준선을 못 읽었을 때와 같은 판단).
+  let since = baseSeq;
+  for (let page = 0; ; page += 1) {
+    if (page >= REPORT_CHECK_MAX_PAGES) {
+      console.log(`[mentionTurn] 보고처 ${reportTo.threadRootId} 가 너무 바빠 보고 여부를 다 못 읽었다 — 경고하지 않는다`);
+      return;
+    }
+    const there = await deps.harkroom.readThread(reportTo.channelId, reportTo.threadRootId, since, REPORT_CHECK_PAGE);
+    if (there.some((m) => m.authorId === deps.me.id && m.seq > baseSeq && m.kind !== MESSAGE_KIND_WAKE)) return;
+    const last = there.reduce((max, m) => Math.max(max, m.seq), since);
+    if (there.length === 0 || last <= since) break;
+    since = last;
+  }
   console.log(`[mentionTurn] 깨움 턴이 보고처 ${reportTo.threadRootId} 에 말하지 않고 끝났다 — 거기에 경고를 남긴다`);
-  await deps.harkroom.fail(reportTo.channelId, reportMissedNotice(reason, anchor), reportTo.threadRootId, {
+  // 채널이 다르면 사유를 옮겨 적지 않는다(security n2) — 비공개 앵커의 사유가 공개 보고처에 드러난다.
+  const notice = reportMissedNotice(reportTo.channelId === anchorChannelId ? reason : null, anchor);
+  await deps.harkroom.fail(reportTo.channelId, notice, reportTo.threadRootId, {
     retryable: false,
     what: '약속한 스레드에 보고하지 않고 깨움 턴이 끝났다',
   });
@@ -2176,7 +2194,7 @@ export async function runMentionTurn(
     // **약속한 보고처에 말했나**(2026-10-06). 앵커 쪽 판정(위)과 따로 본다 — 앵커에 답하고도 보고처를 잊는 것이
     // 실측된 모양이다(task_manager 10-06). 다시 기다리기로 했으면(새 깨움) 아직 보고할 때가 아니니 경고하지 않는다.
     if (reportTo && reportBaseSeq !== null && !hasOwnWakeSince(after, deps.me.id, turnStartSeq)) {
-      await reportPromiseCheck(deps, reportTo, reportBaseSeq, target.wake?.reason ?? '', anchor ?? mentionId);
+      await reportPromiseCheck(deps, reportTo, reportBaseSeq, target.wake?.reason ?? '', anchor ?? mentionId, channelId);
     }
   } catch (err) {
     console.error(
