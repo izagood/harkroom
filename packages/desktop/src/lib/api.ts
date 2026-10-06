@@ -4,7 +4,7 @@ import type {
   AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, ThreadAgentModelView,
   AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InboxThreadState, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
 import { MENTION_EDIT_SKIPPED_HEADER, type GrantRow, type Capability, type ApiConnectorView, type ApiGrantLimits, type ApiMethod } from '@harkroom/shared';
-import type { MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
+import type { MemoryAudit, MemoryBatchResult, MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
 /** `POST /attachments/:id/preview` 의 답. `latestTitle` 은 091(#1065) 서버부터 싣는다. */
@@ -910,6 +910,25 @@ export class ApiClient {
   /** 서버 080: 쓰기 검사에 걸린 기억을 사람이 확인한다 — 표시를 풀어 다시 프롬프트에 싣는다. */
   confirmAgentMemory(agentId: string, slug: string): Promise<{ ok: true }> {
     return this.req('POST', `/accounts/agents/${agentId}/memory/${encodeURIComponent(slug)}/confirm`);
+  }
+
+  /** 정리 후보(#1186). 에이전트 `memory.audit` 과 같은 분류, 사람 화면은 목록 상한 200. */
+  async agentMemoryAudit(agentId: string): Promise<MemoryAudit> {
+    return (await this.req<{ audit: MemoryAudit }>('GET', `/accounts/agents/${agentId}/memory/audit`)).audit;
+  }
+
+  /** 여러 개 보관(#1186). slug 마다 결과가 온다 — 일부 실패가 나머지를 막지 않는다. */
+  async archiveAgentMemories(agentId: string, slugs: string[]): Promise<{ slug: string; result: MemoryBatchResult }[]> {
+    return (await this.req<{ results: { slug: string; result: MemoryBatchResult }[] }>(
+      'POST', `/accounts/agents/${agentId}/memory/archive`, { slugs },
+    )).results;
+  }
+
+  /** 여러 개 되살리기(#1186). 살아 있는 것이 200 이면 뒤의 것이 `too_many`. */
+  async unarchiveAgentMemories(agentId: string, slugs: string[]): Promise<{ slug: string; result: MemoryBatchResult }[]> {
+    return (await this.req<{ results: { slug: string; result: MemoryBatchResult }[] }>(
+      'POST', `/accounts/agents/${agentId}/memory/unarchive`, { slugs },
+    )).results;
   }
 
   async agentMemoryRevisions(agentId: string, slug: string): Promise<MemoryRevision[]> {

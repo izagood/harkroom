@@ -60,6 +60,28 @@ const openRow = async (slug: string) => {
 };
 
 describe('기억 고치기 (M5)', () => {
+  it('보관된 기억을 고치면 되살아난다는 것을 저장 전에 말한다(서버 PUT 이 archived_at 을 비운다)', async () => {
+    fakeController([
+      { slug: 'mem/live', value: 'v', updatedAt: UPDATED },
+      { slug: 'mem/a', value: 'v1', updatedAt: UPDATED, archivedAt: UPDATED },
+    ]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-memory'));
+    fireEvent.click(await screen.findByRole('button', { name: '보관한 기억 펼치기' }));
+    fireEvent.click(screen.getByRole('button', { name: 'mem/a 펼치기' }));
+    fireEvent.click(screen.getByTestId('memory-edit-start'));
+    expect(screen.getByTestId('memory-edit-unarchives').textContent).toContain('보관함에서 나와');
+  });
+
+  it('살아 있는 기억에는 그 말이 없고, 만든 때가 따로 선다', async () => {
+    fakeController([{ slug: 'mem/a', value: 'v1', updatedAt: UPDATED, createdAt: UPDATED }]);
+    await openRow('mem/a');
+    expect(screen.getByTestId('memory-created').textContent).toMatch(/^만듦 /);
+    fireEvent.click(screen.getByTestId('memory-edit-start'));
+    expect(screen.queryByTestId('memory-edit-unarchives')).toBeNull();
+  });
+
   it('줄에 요약과 종류가, 펼치면 읽은 횟수가 선다', async () => {
     fakeController([{
       slug: 'mem/deploy', value: '# 배포\n1. 빌드', updatedAt: UPDATED,

@@ -94,9 +94,15 @@ export function MemoryDetail({ agentId, entry, onChanged }: {
           </button>
         </div>
       )}
-      {(entry.readCount !== undefined || entry.description) && !editing && (
+      {(entry.readCount !== undefined || entry.description || entry.createdAt) && !editing && (
         <div className="flex flex-wrap gap-x-3 text-meta text-fg-subtle">
           {entry.description && <span data-testid="memory-description">{entry.description}</span>}
+          {/* 보관·되살리기도 「고침」 시각을 바꾸므로 만든 때를 따로 보인다(#1186 designer 지침 4). */}
+          {entry.createdAt && (
+            <span data-testid="memory-created" title={new Date(entry.createdAt).toLocaleString(locale)}>
+              {t('agents.memory.created', { ago: agoLabel(new Date(entry.createdAt).getTime(), Date.now(), locale, t) })}
+            </span>
+          )}
           {entry.readCount !== undefined && (
             <span data-testid="memory-reads">
               {entry.lastReadAt
@@ -112,6 +118,10 @@ export function MemoryDetail({ agentId, entry, onChanged }: {
 
       {editing ? (
         <div className="space-y-1">
+          {/* 서버 PUT 은 보관된 기억을 고치면 되살린다(archived_at=null) — 누르기 전에 말한다. */}
+          {entry.archivedAt && (
+            <p data-testid="memory-edit-unarchives" className="text-meta text-warning">{t('agents.memory.archivedEditNote')}</p>
+          )}
           <textarea
             data-testid="memory-edit-value"
             aria-label={t('agents.memory.editValue')}

@@ -30,6 +30,14 @@ export interface MemoryEntry {
    * 살아 있는 것과 한 목록·한 숫자로 세면 상한(보관 제외)과 어긋난 `213 / 200` 이 뜬다.
    */
   archivedAt?: string | null;
+  /** 서버 096: 러너 recall 로 프롬프트에 실린 횟수·마지막 시각(#1186 부터 사람 목록에도 온다). */
+  recallCount?: number;
+  lastRecalledAt?: string | null;
+  /**
+   * 만든 시각. 보관·되살리기도 `updatedAt` 을 바꾸므로(서버 `archiveMemory`) 상세의 "고침" 만으로는
+   * 되살린 기억이 방금 쓴 것처럼 보인다 — 만든 때를 따로 보여 준다.
+   */
+  createdAt?: string;
 }
 
 /** 이전 판(서버 069). 최근 것부터 온다. */
@@ -222,4 +230,105 @@ export function memoryRows(
     rows.push({ kind: 'group', group: { key, items: byKey.get(key)! } });
   }
   return rows;
+}
+
+/**
+ * 정리 후보(서버 `GET …/memory/audit`, #1186). 에이전트의 `memory.audit` 과 같은 분류이고, 사람
+ * 화면은 목록 상한이 200 이라 낱개 목록은 사실상 전부 온다. 화면이 쓰는 필드만 적는다.
+ */
+export interface MemoryAudit {
+  core: { length: number; limit: number } | null;
+  neverRead: string[];
+  stale: { slug: string; lastReadAt: string }[];
+  brokenLinks: { slug: string; target: string }[];
+  similar: [string, string][];
+  similarBody: { pair: [string, string]; similarity: number }[];
+  undescribed: string[];
+  flagged: { slug: string; reason: string | null }[];
+  expiringJournal: string[];
+  /** 어느 목록이든 상한에서 잘렸으면 true. 사람 상한(200)에서 잘리는 것은 n² 인 짝 목록뿐이다. */
+  truncated: boolean;
+  items: { active: number; limit: number; archived: number };
+}
+
+/** 보관·되살리기의 slug 하나 결과(#1186). 한 slug 의 실패가 나머지를 막지 않는다. */
+export type MemoryBatchResult = 'ok' | 'not_found' | 'invalid_slug' | 'core_not_archivable' | 'too_many';
+
+/** 「정리할 것」 칩. 순서가 곧 화면 순서다 — 사람 손이 가장 급한 것부터. */
+export const CLEANUP_CHIPS = ['flagged', 'stale', 'neverRead', 'pairs', 'brokenLinks', 'expiringJournal', 'undescribed'] as const;
+export type CleanupChip = typeof CLEANUP_CHIPS[number];
+
+export interface CleanupChipView {
+  key: CleanupChip;
+  /** 칩을 누르면 목록이 이 기억들만 보인다. 숫자는 이 집합의 크기다. */
+  slugs: Set<string>;
+  /** 짝 목록이 상한에서 잘렸으면 숫자를 "200+" 처럼 쓴다. */
+  truncated: boolean;
+}
+
+/**
+ * audit 를 칩으로 편다. **숫자는 기억 수**다 — 짝 칩은 `similar`·`similarBody` 가 같은 짝을 각각
+ * 담을 수 있고 한 기억이 여러 짝에 들어가므로, 짝 수로 세면 칩을 눌러 보이는 줄 수와 어긋난다.
+ *
+ * 깨진 링크는 **정말 없는 기억을 가리키는 것만** 센다. audit 은 살아 있는 slug 만 보므로 보관된
+ * 기억을 가리키는 `[[링크]]` 도 깨짐으로 오는데, 그것은 고칠 일이 아니라 되살릴지 정할 일이다
+ * (`archivedLinks`). 0 인 칩은 돌려주지 않는다 — 할 일이 없는 칩은 소음이다.
+ */
+export function cleanupChips(audit: MemoryAudit, archivedSlugs: ReadonlySet<string>): CleanupChipView[] {
+  const pairSlugs = new Set<string>();
+  for (const [a, b] of audit.similar) { pairSlugs.add(a); pairSlugs.add(b); }
+  for (const { pair: [a, b] } of audit.similarBody) { pairSlugs.add(a); pairSlugs.add(b); }
+  const sets: Record<CleanupChip, Set<string>> = {
+    flagged: new Set(audit.flagged.map((f) => f.slug)),
+    stale: new Set(audit.stale.map((s) => s.slug)),
+    neverRead: new Set(audit.neverRead),
+    pairs: pairSlugs,
+    brokenLinks: new Set(audit.brokenLinks.filter((l) => !archivedSlugs.has(l.target)).map((l) => l.slug)),
+    expiringJournal: new Set(audit.expiringJournal),
+    undescribed: new Set(audit.undescribed),
+  };
+  return CLEANUP_CHIPS
+    .map((key) => ({ key, slugs: sets[key], truncated: key === 'pairs' && audit.truncated }))
+    .filter((c) => c.slugs.size > 0);
+}
+
+/** 칩 숫자. 잘린 짝 칩은 아는 만큼 + "+" 다(정확하지 않은 숫자를 정확한 듯 쓰지 않는다). */
+export function chipCount(chip: CleanupChipView): string {
+  return chip.truncated ? `${chip.slugs.size}+` : String(chip.slugs.size);
+}
+
+/** 한 기억이 어느 칩에 걸렸나 — 줄 꼬리표. 칩 순서대로. */
+export function chipsFor(slug: string, chips: CleanupChipView[]): CleanupChip[] {
+  return chips.filter((c) => c.slugs.has(slug)).map((c) => c.key);
+}
+
+/** 보관된 기억을 가리키는 `[[링크]]` — slug → 가리킨 보관 기억들. 줄에 [되살리기]를 단다. */
+export function archivedLinks(audit: MemoryAudit, archivedSlugs: ReadonlySet<string>): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const l of audit.brokenLinks) {
+    if (!archivedSlugs.has(l.target)) continue;
+    const list = out.get(l.slug);
+    if (list) { if (!list.includes(l.target)) list.push(l.target); } else out.set(l.slug, [l.target]);
+  }
+  return out;
+}
+
+/** 보관은 300 개까지 — 넘치면 서버가 가장 오래 보관한 것부터 **조용히** 이전 판으로 밀어낸다. */
+export const MAX_ARCHIVED_MEMORIES = 300;
+
+/** 이만큼 더 보관하면 밀려나는 수. 0 이면 경고하지 않는다(security n2: 미리 알린다). */
+export function archiveOverflow(archivedNow: number, adding: number): number {
+  return Math.max(0, archivedNow + adding - MAX_ARCHIVED_MEMORIES);
+}
+
+/** 지난 `days` 일 안에 쓰인(읽힘 또는 recall) 기억 수 — 건강 띠. */
+export function usedWithin(entries: MemoryEntry[], days: number, now: number): number {
+  const since = now - days * 86_400_000;
+  return entries.filter((e) => [e.lastReadAt, e.lastRecalledAt]
+    .some((t) => t != null && new Date(t).getTime() >= since)).length;
+}
+
+/** 쓰임 = 읽힘 + recall. 옛 서버면 없는 쪽은 0 으로 센다. */
+export function usageOf(e: MemoryEntry): number {
+  return (e.readCount ?? 0) + (e.recallCount ?? 0);
 }

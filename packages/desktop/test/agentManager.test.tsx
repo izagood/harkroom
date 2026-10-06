@@ -439,6 +439,8 @@ describe('에이전트 기억 (#139 3단계)', () => {
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
     fireEvent.click(await screen.findByTestId('agent-tab-memory'));
 
+    // 지우기는 펼친 안쪽에 있다(Memory 탭 결정 2 — 줄의 기본 버튼은 보관).
+    fireEvent.click(await screen.findByRole('button', { name: 'mem/deploy 펼치기' }));
     fireEvent.click(await screen.findByRole('button', { name: 'mem/deploy 기억 지우기' }));
     expect(c.deleteAgentMemory).not.toHaveBeenCalled();
 
