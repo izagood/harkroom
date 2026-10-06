@@ -43,6 +43,15 @@ describe('워크스페이스 가이드의 두 판본 (2026-09-08 앵커 이탈 �
     }
   });
 
+  it('두 판본 다 intent 를 열면 workitem.upsert(source avcs)로 스레드에 이으라고 말한다 — 새 도구는 쓰라는 말이 있어야 쓰인다 (협업 ①)', () => {
+    for (const mode of ['resident', 'turn'] as const) {
+      const g = guideFor(mode);
+      expect(g, mode).toMatch(/workitem\.upsert/);
+      expect(g, mode).toMatch(/source: `avcs`/);
+      expect(g, mode).toMatch(/state 는 주지 않는다/);
+    }
+  });
+
   it('두 판본 다 MCP 인증을 턴 안에서 열지 말고 사람에게 넘기라고 말한다 — 흐름이 프로세스와 함께 사라진다 (2026-09-30)', () => {
     for (const mode of ['resident', 'turn'] as const) {
       const g = guideFor(mode);
