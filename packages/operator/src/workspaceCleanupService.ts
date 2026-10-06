@@ -22,6 +22,7 @@ import {
   applyHumanAction,
   planSweep,
   readLedger,
+  removeRebuildable,
   runSweep,
   threadKey,
   writeLedger,
@@ -61,46 +62,60 @@ export async function readCleanupSettings(configPath: string): Promise<CleanupSe
   return { enabled: c.cleanup?.enabled === true, graceDays: clampGraceDays(c.cleanup?.graceDays ?? CLEANUP_GRACE_DEFAULT) };
 }
 
-/** HEAD 가 원격 ref 나 PR head 에 들어 있는가. 원격 브랜치는 squash 머지 뒤 사라지므로 PR head 도 본다. */
-async function isPushed(deps: ScanDeps, item: CleanupItem): Promise<boolean> {
-  if (!item.headSha) return false;
-  const env = { HOME: deps.home, PATH: '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin', GIT_TERMINAL_PROMPT: '0' };
-  if (item.pr?.headSha === item.headSha) return true;
-  const r = await deps.exec(deps.gitPath, ['-C', item.path, 'branch', '-r', '--contains', item.headSha], env);
+const gitEnv = (home: string) => ({ HOME: home, PATH: '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin', GIT_TERMINAL_PROMPT: '0' });
+
+/** `head` 가 원격 ref 나 PR head 에 들어 있는가. 원격 브랜치는 squash 머지 뒤 사라지므로 PR head 도 본다. */
+async function isPushed(deps: ScanDeps, item: CleanupItem, head: string): Promise<boolean> {
+  const env = gitEnv(deps.home);
+  if (item.pr?.headSha === head) return true;
+  const r = await deps.exec(deps.gitPath, ['-C', item.path, 'branch', '-r', '--contains', head], env);
   if (r.code === 0 && r.stdout.trim()) return true;
   if (item.pr?.headSha) {
     // PR head 의 조상이면 올라간 커밋이다(PR head 를 로컬이 모르면 실패 → 안 올라간 것으로 본다).
-    const a = await deps.exec(deps.gitPath, ['-C', item.path, 'merge-base', '--is-ancestor', item.headSha, item.pr.headSha], env);
+    const a = await deps.exec(deps.gitPath, ['-C', item.path, 'merge-base', '--is-ancestor', head, item.pr.headSha], env);
     if (a.code === 0) return true;
   }
   return false;
 }
 
 export function createCleanupPorts(deps: ScanDeps): CleanupPorts {
-  const env = { HOME: deps.home, PATH: '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin', GIT_TERMINAL_PROMPT: '0' };
+  const env = gitEnv(deps.home);
   return {
     async check(item, running): Promise<CleanupBlockReason | null> {
       if (item.thread && running.has(threadKey(item.thread))) return 'turn-running';
       if (item.kind !== 'worktree') return null;
       const st = await deps.exec(deps.gitPath, ['-C', item.path, 'status', '--porcelain'], env);
       if (st.code !== 0 || st.stdout.trim()) return 'uncommitted';
-      if (!(await isPushed(deps, item))) return 'unpushed';
+      // HEAD·브랜치는 **지금** 다시 읽는다. 원장 값은 스캔 때 것이라 그 사이 커밋이 더 생겼을 수 있다 — 낡은 값으로 "올라감"을
+      // 판정하면 새 커밋이 브랜치와 함께 사라진다. 원장과 다르면 다음 회차의 스캔이 새 값을 잴 때까지 막는다.
+      const head = (await deps.exec(deps.gitPath, ['-C', item.path, 'rev-parse', 'HEAD'], env)).stdout.trim();
+      const b = await deps.exec(deps.gitPath, ['-C', item.path, 'symbolic-ref', '-q', '--short', 'HEAD'], env);
+      const branch = b.code === 0 ? b.stdout.trim() || null : null;
+      if (!head || head !== item.headSha || branch !== item.branch) return 'unpushed';
+      if (!(await isPushed(deps, item, head))) return 'unpushed';
       return null;
     },
     async remove(item) {
       if (item.kind !== 'worktree') { await rm(item.path, { recursive: true, force: true }); return; }
-      if (!item.repo) throw new Error('worktree without repo');
-      // --force 없이: git 이 스스로 한 번 더 지켜 준다(변경이 있으면 거절).
+      if (!item.repo || !item.headSha) throw new Error('worktree without repo');
+      // --force 없이: 변경이 있으면 git 이 거절한다.
       const r = await deps.exec(deps.gitPath, ['-C', item.repo, 'worktree', 'remove', item.path], env);
       if (r.code !== 0) throw new Error(r.stderr.trim() || 'git worktree remove failed');
-      // 브랜치는 끝이 올라가 있을 때만 — isPushed 는 check 에서 이미 통과했다.
-      if (item.branch) await deps.exec(deps.gitPath, ['-C', item.repo, 'branch', '-D', item.branch], env);
+      // 브랜치는 끝이 검사한 커밋 그대로일 때만 지운다(`update-ref -d <ref> <old>` 는 값이 다르면 거절한다).
+      if (item.branch) await deps.exec(deps.gitPath, ['-C', item.repo, 'update-ref', '-d', `refs/heads/${item.branch}`, item.headSha], env);
     },
     async size(path) {
       const du = await deps.exec('/usr/bin/du', ['-sk', path], { PATH: '/usr/bin:/bin' });
       const kb = du.code === 0 ? Number.parseInt(du.stdout.split(/\s/)[0] ?? '', 10) : Number.NaN;
       return Number.isFinite(kb) ? kb * 1024 : null;
     },
+    removeDeps: (root) => removeRebuildable(root, async (name) => {
+      // 그 저장소가 이 폴더를 무시하고(check-ignore), 올려 둔 파일이 하나도 없을 때만.
+      const ignored = await deps.exec(deps.gitPath, ['-C', root, 'check-ignore', '-q', '--', name], env);
+      if (ignored.code !== 0) return false;
+      const tracked = await deps.exec(deps.gitPath, ['-C', root, 'ls-files', '--', name], env);
+      return tracked.code === 0 && tracked.stdout.trim() === '';
+    }),
   };
 }
 
@@ -126,9 +141,15 @@ export function createWorkspaceCleanup(deps: WorkspaceCleanupDeps, ports: Cleanu
     for (const i of prev.items) if (i.repo) repos.add(i.repo);
     const worktrees: ObservedWorktree[] = [];
     const seen = new Set<string>();
+    // 에이전트의 workingDir 자체는 후보가 아니다 — 그것이 linked worktree 여도(에이전트가 일하는 자리다).
+    const workingDirs = new Set(agents.flatMap((a) => (a.workingDir ? [normalizeCleanupPath(a.workingDir)] : [])));
     for (const repo of repos) {
       if (!(await lstat(join(repo, '.git')).catch(() => null))) continue;
-      for (const w of await scanRepo(deps, repo, owners)) if (!seen.has(w.path)) { seen.add(w.path); worktrees.push(w); }
+      for (const w of await scanRepo(deps, repo, owners)) {
+        if (seen.has(w.path) || workingDirs.has(normalizeCleanupPath(w.path))) continue;
+        seen.add(w.path);
+        worktrees.push(w);
+      }
     }
     // 스레드 ✅ 는 조건이 될 만한 것(PR 머지·닫힘 + 주인 있음)만 묻는다 — 스레드마다 한 번, 그 스레드를 알린 에이전트로.
     const doneThreads = new Set<string>();

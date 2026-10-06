@@ -253,22 +253,29 @@ export interface CleanupPorts {
   /** worktree 면 `git worktree remove` + (원격·PR head 에 들어 있으면) 브랜치 삭제, 아니면 폴더 삭제. */
   remove(item: CleanupItem): Promise<void>;
   size(path: string): Promise<number | null>;
+  /** 다시 만들 수 있는 폴더만 지운다(`removeRebuildable`). */
+  removeDeps(root: string): Promise<void>;
 }
 
-/** 다시 만들 수 있는 폴더를 지운다. **심링크면 링크만** — 따라가서 공유 트리를 지우면 안 된다. */
-export async function removeRebuildable(root: string): Promise<void> {
+/**
+ * 다시 만들 수 있는 폴더를 지운다. **심링크면 링크만** — 따라가서 공유 트리를 지우면 안 된다.
+ *
+ * 이름만 보고 지우지 않는다: `safe(name)` 이 참일 때만(그 저장소가 그 폴더를 무시하고, 올려 둔 파일이 없을 때) 지운다.
+ * 다른 저장소는 `build/`·`dist/` 를 올려 두거나 손 파일을 둘 수 있다 — 그것은 다시 만들 수 있는 폴더가 아니다.
+ */
+export async function removeRebuildable(root: string, safe: (name: string) => Promise<boolean>): Promise<void> {
   for (const name of REBUILDABLE_DIRS) {
     const p = join(root, name);
     const st = await lstat(p).catch(() => null);
-    if (!st) continue;
+    if (!st || !(st.isSymbolicLink() || st.isDirectory())) continue;
+    if (!(await safe(name))) continue;
     if (st.isSymbolicLink()) await unlink(p);
-    else if (st.isDirectory()) await rm(p, { recursive: true, force: true });
+    else await rm(p, { recursive: true, force: true });
   }
 }
 
 export async function runSweep(
   plan: SweepPlan, ports: CleanupPorts, runningThreads: ReadonlySet<string>, now: Date,
-  removeDeps: (root: string) => Promise<void> = removeRebuildable,
 ): Promise<CleanupLedger> {
   const at = now.toISOString();
   const items = plan.ledger.items.slice();
@@ -281,7 +288,7 @@ export async function runSweep(
       // worktree 만 — 스레드 폴더·세션 기록에는 의존성 폴더가 없고, 있더라도 통째로 지울 것이다.
       if (item.kind !== 'worktree') continue;
       try {
-        await removeDeps(item.path);
+        await ports.removeDeps(item.path);
         const sizeNow = await ports.size(item.path);
         items[idx] = { ...item, sizeNow };
         const freed = item.sizeNow !== null && sizeNow !== null ? Math.max(0, item.sizeNow - sizeNow) : null;

@@ -129,7 +129,8 @@ const MAX_REPORT_THREADS = 2000;
 const MAX_REPORT_WORKTREES = 50;
 
 /** 러너가 보낸 본문을 거른다. 모양이 틀린 줄은 버린다(통째로 거절하지 않는다 — 한 줄 때문에 나머지를 잃지 않게). */
-export function readCleanupReport(body: unknown): CleanupReport | null {
+/** `lastTurnAt` 이 미래면 `now` 로 자른다 — 미래 시각은 주인을 계속 가져가고 항목을 영영 되살린다. */
+export function readCleanupReport(body: unknown, now: number = Date.now()): CleanupReport | null {
   const b = body as { threads?: unknown } | null;
   if (!b || !Array.isArray(b.threads)) return null;
   const threads: CleanupThreadReport[] = [];
@@ -140,7 +141,8 @@ export function readCleanupReport(body: unknown): CleanupReport | null {
     const worktrees = Array.isArray(x.worktrees)
       ? x.worktrees.filter((w): w is string => typeof w === 'string' && w.startsWith('/') && w.length < 1024).slice(0, MAX_REPORT_WORKTREES)
       : [];
-    const lastTurnAt = typeof x.lastTurnAt === 'string' && !Number.isNaN(Date.parse(x.lastTurnAt)) ? x.lastTurnAt : null;
+    const t0 = typeof x.lastTurnAt === 'string' ? Date.parse(x.lastTurnAt) : Number.NaN;
+    const lastTurnAt = Number.isNaN(t0) ? null : new Date(Math.min(t0, now)).toISOString();
     threads.push({ channelId: x.channelId, threadRootId: x.threadRootId, worktrees, lastTurnAt, running: x.running === true });
   }
   return { threads };

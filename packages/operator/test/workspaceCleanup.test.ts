@@ -62,10 +62,10 @@ describe('runSweep', () => {
     const first = planSweep(emptyLedger(), facts(), S, NOW).ledger;
     const plan = planSweep(first, facts(), S, new Date('2026-10-14T00:00:00Z'));
     let removed = 0;
-    const out = await runSweep(plan, { check: async () => 'uncommitted', remove: async () => { removed++; }, size: async () => 1 }, new Set(), NOW);
+    const out = await runSweep(plan, { check: async () => 'uncommitted', remove: async () => { removed++; }, size: async () => 1, removeDeps: async () => {} }, new Set(), NOW);
     expect(removed).toBe(0);
     expect(out.items[0]).toMatchObject({ state: 'blocked', blockReason: 'uncommitted' });
-    const ok = await runSweep(plan, { check: async () => null, remove: async () => { removed++; }, size: async () => 1 }, new Set(), NOW);
+    const ok = await runSweep(plan, { check: async () => null, remove: async () => { removed++; }, size: async () => 1, removeDeps: async () => {} }, new Set(), NOW);
     expect(removed).toBe(1);
     expect(ok.items).toEqual([]);
     expect(ok.events.at(-1)!.action).toBe('deleted');
@@ -79,11 +79,17 @@ describe('removeRebuildable', () => {
     const root = join(d, 'wt'); await mkdir(join(root, 'dist'), { recursive: true });
     await symlink(shared, join(root, 'node_modules'));
     await writeFile(join(root, 'src.ts'), 'x');
-    await removeRebuildable(root);
+    await removeRebuildable(root, async () => true);
     await expect(lstat(join(root, 'node_modules'))).rejects.toThrow();
     await expect(lstat(join(root, 'dist'))).rejects.toThrow();
     expect((await stat(join(shared, 'keep'))).isFile()).toBe(true);
     expect((await stat(join(root, 'src.ts'))).isFile()).toBe(true);
+  });
+  it('safe 가 거짓이면 남긴다', async () => {
+    const d = await mkdtemp(join(tmpdir(), 'cleanup-'));
+    await mkdir(join(d, 'build'));
+    await removeRebuildable(d, async () => false);
+    expect((await stat(join(d, 'build'))).isDirectory()).toBe(true);
   });
 });
 
@@ -143,7 +149,7 @@ describe('주인 장부(러너 보고)', () => {
     expect(o.running().size).toBe(0);
     // 다시 떠도 파일에서 읽는다
     const o2 = createCleanupOwners({ path: join(d, 'owners.json') });
-    expect((await o2.lastTurnAt()).get(`${C}/${R}`)).toBe('2026-10-06T00:00:00Z');
+    expect((await o2.lastTurnAt()).get(`${C}/${R}`)).toBe('2026-10-06T00:00:00.000Z');
   });
   it('모양이 틀린 줄은 버린다', () => {
     expect(readCleanupReport({ threads: [{ channelId: 'x', threadRootId: R }, { channelId: C, threadRootId: R, worktrees: ['rel/path', '/abs'] }] }))
@@ -164,9 +170,11 @@ describe('지우기 직전 검사', () => {
     thread: { channelId: 'c', threadRootId: 'r' }, pr: { number: 1, state: 'merged' as const, headSha: 'h9' },
     lastModifiedAt: null, listedAt: null, deleteAfter: null, blockReason: null, actedBy: null, actedAt: null, sizeBefore: null, sizeNow: null,
   };
+  const FRESH = { 'rev-parse HEAD': { code: 0, stdout: 'h1\n' }, 'symbolic-ref -q': { code: 0, stdout: 'b\n' } };
   const ports = (replies: Record<string, { code: number; stdout: string }>) => {
     const calls: string[][] = [];
-    const exec = async (_f: string, args: string[]) => { calls.push(args); const k = args.slice(2, 4).join(' '); return { stderr: '', ...(replies[k] ?? { code: 1, stdout: '' }) }; };
+    const all: Record<string, { code: number; stdout: string }> = { ...FRESH, ...replies };
+    const exec = async (_f: string, args: string[]) => { calls.push(args); const k = args.slice(2, 4).join(' '); return { stderr: '', ...(all[k] ?? { code: 1, stdout: '' }) }; };
     return { calls, p: createCleanupPorts({ exec, gitPath: '/usr/bin/git', ghPath: '/gh', ghEnv: {}, home: '/h' }) };
   };
   it('도는 턴 → turn-running(git 을 부르지도 않는다)', async () => {
@@ -182,10 +190,43 @@ describe('지우기 직전 검사', () => {
     expect(await ports({ 'status --porcelain': { code: 0, stdout: '' }, 'branch -r': { code: 0, stdout: '' }, 'merge-base --is-ancestor': { code: 0, stdout: '' } }).p.check(base, new Set())).toBeNull();
     expect(await ports({ 'status --porcelain': { code: 0, stdout: '' } }).p.check({ ...base, pr: { ...base.pr, headSha: 'h1' } }, new Set())).toBeNull();
   });
-  it('지우기는 --force 없이 worktree remove', async () => {
+  it('스캔 뒤 커밋이 더 생겼으면(HEAD 가 원장과 다르면) PR head 와 같아 보여도 unpushed', async () => {
+    const pushedLooking = { ...base, pr: { ...base.pr, headSha: 'h1' } };
+    expect(await ports({ 'status --porcelain': { code: 0, stdout: '' }, 'rev-parse HEAD': { code: 0, stdout: 'h2\n' } }).p.check(pushedLooking, new Set())).toBe('unpushed');
+    expect(await ports({ 'status --porcelain': { code: 0, stdout: '' }, 'symbolic-ref -q': { code: 0, stdout: 'other\n' } }).p.check(pushedLooking, new Set())).toBe('unpushed');
+  });
+  it('지우기는 --force 없이 worktree remove, 브랜치는 검사한 커밋 그대로일 때만', async () => {
     const { p, calls } = ports({ 'worktree remove': { code: 0, stdout: '' } });
     await p.remove(base);
     expect(calls[0]).toEqual(['-C', '/repo', 'worktree', 'remove', '/tmp/wt-a']);
-    expect(calls[1]).toEqual(['-C', '/repo', 'branch', '-D', 'b']);
+    expect(calls[1]).toEqual(['-C', '/repo', 'update-ref', '-d', 'refs/heads/b', 'h1']);
+  });
+});
+
+import { execFileSync } from 'node:child_process';
+import { defaultExec } from '../src/turnMerge.js';
+
+describe('의존성 폴더 지우기 — 무시되고 올려 둔 파일이 없는 폴더만 (실제 git)', () => {
+  it('무시되는 dist·node_modules 는 지우고, 올려 둔 build·무시 안 된 target 은 남긴다', async () => {
+    const d = await mkdtemp(join(tmpdir(), 'cleanup-git-'));
+    const git = (...a: string[]) => execFileSync('git', ['-C', d, ...a], { env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+    git('init', '-q');
+    await writeFile(join(d, '.gitignore'), 'dist/\nnode_modules/\nbuild/\n');
+    for (const n of ['dist', 'node_modules', 'build', 'target']) { await mkdir(join(d, n)); await writeFile(join(d, n, 'f'), 'x'); }
+    git('add', '-f', 'build/f', '.gitignore');
+    const p = createCleanupPorts({ exec: defaultExec, gitPath: 'git', ghPath: '/gh', ghEnv: {}, home: process.env.HOME ?? '/' });
+    await p.removeDeps(d);
+    await expect(lstat(join(d, 'dist'))).rejects.toThrow();
+    await expect(lstat(join(d, 'node_modules'))).rejects.toThrow();
+    expect((await stat(join(d, 'build', 'f'))).isFile()).toBe(true);   // 올려 둔 파일이 있다
+    expect((await stat(join(d, 'target', 'f'))).isFile()).toBe(true);  // 무시되지 않는다
+  });
+});
+
+describe('보고 — 미래 시각은 지금으로 자른다', () => {
+  it('lastTurnAt', () => {
+    const C = '11111111-1111-1111-1111-111111111111';
+    const r = readCleanupReport({ threads: [{ channelId: C, threadRootId: C, lastTurnAt: '2999-01-01T00:00:00Z' }] }, Date.parse('2026-10-06T00:00:00Z'));
+    expect(r!.threads[0]!.lastTurnAt).toBe('2026-10-06T00:00:00.000Z');
   });
 });
