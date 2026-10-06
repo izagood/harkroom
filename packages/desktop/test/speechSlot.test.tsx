@@ -188,7 +188,7 @@ describe('강조는 나를 막을 때만', () => {
 });
 
 // D안(designer 결정): 상태 리액션이 있는 루트에서는 요약 칸(사슬 줄·배지)을 그리지 않는다 —
-// 상태는 리액션 줄의 칩 하나가 말한다. 상태가 아직 없으면(배포 전·판정 전) 배지가 받친다.
+// 상태는 리액션 줄의 칩 하나가 말한다(2026-10-06 부터 서버가 단 진짜 리액션). 상태가 아직 없으면(배포 전·판정 전) 배지가 받친다.
 describe('상태 리액션이 있으면 요약 칸을 비운다', () => {
   const status = { status: 'my-turn', emoji: '🙋', accountId: BETA, reason: '어느 쪽?', updatedAt: new Date().toISOString() } as const;
 
@@ -196,7 +196,8 @@ describe('상태 리액션이 있으면 요약 칸을 비운다', () => {
     summary([link(BETA, ME)], { openAskAccountIds: [ME], statusReaction: status });
     expect(screen.queryByTestId('speech-slot')).toBeNull();
     expect(screen.queryByTestId('thread-state')).toBeNull();
-    expect(screen.getByTestId('status-reaction')).toBeTruthy();
+    // 상태는 리액션 줄의 칩이다(서버가 단 진짜 리액션 — 리액션이 아직 없으면 화면이 상태에서 붙인다).
+    expect(screen.getByTestId('reaction-🙋').dataset.status).toBe('my-turn');
     expect(screen.getByTestId('reply-summary-count')).toBeTruthy();
   });
 
