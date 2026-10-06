@@ -104,3 +104,73 @@ export function clampGraceDays(n: unknown): number {
   if (typeof n !== 'number' || !Number.isFinite(n)) return CLEANUP_GRACE_DEFAULT;
   return Math.min(CLEANUP_GRACE_MAX, Math.max(CLEANUP_GRACE_MIN, Math.round(n)));
 }
+
+// ── 러너 → 오퍼레이터 보고 ───────────────────────────────────────────────────
+//
+// 오퍼레이터는 러너의 상태 트리(`sessions.json` 이 사는 곳)를 **읽지도 쓰지도 않는다**(#431 D5 — writer 가 둘이 되면 조용한
+// lost update). 그래서 "이 worktree 는 어느 스레드 것인가"·"이 스레드의 마지막 턴"·"지금 도는 턴"은 러너가 relay 로
+// 알린다(`/agent/turn-slots` 와 같은 틀 — 오퍼레이터가 받아 서버로 넘기지 않는다).
+
+export const CLEANUP_REPORT_PATH = '/agent/cleanup-report';
+
+export interface CleanupThreadReport extends CleanupThreadRef {
+  /** 이 스레드의 턴이 만든 worktree 경로들(턴 앞뒤 `git worktree list` 비교, 또는 세션 기록의 `worktree add`). */
+  worktrees: string[];
+  /** 이 스레드의 마지막 턴 시각(ISO). 모르면 null. */
+  lastTurnAt: string | null;
+  /** 지금 이 스레드의 턴이 도는가. */
+  running: boolean;
+}
+
+export interface CleanupReport { threads: CleanupThreadReport[] }
+
+const UUIDISH = /^[0-9a-f-]{36}$/i;
+const MAX_REPORT_THREADS = 2000;
+const MAX_REPORT_WORKTREES = 50;
+
+/** 러너가 보낸 본문을 거른다. 모양이 틀린 줄은 버린다(통째로 거절하지 않는다 — 한 줄 때문에 나머지를 잃지 않게). */
+export function readCleanupReport(body: unknown): CleanupReport | null {
+  const b = body as { threads?: unknown } | null;
+  if (!b || !Array.isArray(b.threads)) return null;
+  const threads: CleanupThreadReport[] = [];
+  for (const t of b.threads.slice(0, MAX_REPORT_THREADS)) {
+    const x = t as Partial<CleanupThreadReport> | null;
+    if (!x || typeof x.channelId !== 'string' || !UUIDISH.test(x.channelId)) continue;
+    if (typeof x.threadRootId !== 'string' || !UUIDISH.test(x.threadRootId)) continue;
+    const worktrees = Array.isArray(x.worktrees)
+      ? x.worktrees.filter((w): w is string => typeof w === 'string' && w.startsWith('/') && w.length < 1024).slice(0, MAX_REPORT_WORKTREES)
+      : [];
+    const lastTurnAt = typeof x.lastTurnAt === 'string' && !Number.isNaN(Date.parse(x.lastTurnAt)) ? x.lastTurnAt : null;
+    threads.push({ channelId: x.channelId, threadRootId: x.threadRootId, worktrees, lastTurnAt, running: x.running === true });
+  }
+  return { threads };
+}
+
+/** `/tmp/x` 와 `/private/tmp/x` 는 같은 곳이다(macOS). 끝 슬래시도 뗀다. 경로 비교는 이 모양으로. */
+export function normalizeCleanupPath(p: string): string {
+  let s = p;
+  if (s.startsWith('/private/tmp/')) s = s.slice('/private'.length);
+  return s.replace(/\/+$/, '');
+}
+
+/**
+ * 세션 기록 글에서 `git worktree add` 의 대상 경로를 뽑는다(`-b x`·`--detach` 같은 플래그는 건너뛴다). 변수로 지은
+ * 경로(`$W`)처럼 글에 절대 경로가 안 드러나면 못 뽑는다 — 그것은 주인 모름으로 남는다(사람이 고른다).
+ */
+export function worktreeAddPaths(text: string, home: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/worktree add\b([^"\n]{0,400})/g)) {
+    const toks = m[1]!.replace(/\\[nt]/g, ' ').split(/\s+/).filter(Boolean);
+    for (let i = 0; i < toks.length; i++) {
+      const t = toks[i]!;
+      if (t === '-b' || t === '-B' || t === '--reason') { i++; continue; }
+      if (t.startsWith('-')) continue;
+      if (/^[;&|]/.test(t)) break;
+      const clean = t.replace(/[;&|)]+$/, '');
+      if (clean.startsWith('/')) out.push(normalizeCleanupPath(clean));
+      else if (clean.startsWith('~/')) out.push(normalizeCleanupPath(`${home}/${clean.slice(2)}`));
+      break;
+    }
+  }
+  return out;
+}

@@ -45,10 +45,13 @@ import { createRunnerLinkServer } from './runnerLink.js';
 import type { CommunityInstance } from './community.js';
 import { createTurnSecrets } from './turnSecrets.js';
 import { readConfig } from './config.js';
-import { createTurnMerge, GH_PATH } from './turnMerge.js';
+import { createTurnMerge, defaultExec, ghEnv, GH_PATH } from './turnMerge.js';
 import { createTurnApi } from './turnApi.js';
 import { createTurnSlots, MAX_TURNS_ENV, parseMaxTurns } from './turnSlots.js';
 import { createTurnUploads } from './turnUploads.js';
+import { cleanupLedgerPath } from './workspaceCleanup.js';
+import { cleanupOwnersPath, createCleanupOwners } from './workspaceCleanupOwners.js';
+import { createWorkspaceCleanup, GIT_PATH } from './workspaceCleanupService.js';
 
 /**
  * 채택한 러너의 생사를 확인하는 주기(`#431` 2-c).
@@ -242,6 +245,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     },
     log,
   });
+  // 작업 폴더 정리의 주인 장부 — 러너가 relay 로 "이 스레드가 만든 worktree·마지막 턴·도는 턴"을 알린다(스레드 9e909150).
+  const cleanupOwners = createCleanupOwners({ path: cleanupOwnersPath(appDataDir), log });
   // 앞 오퍼레이터가 남긴 턴 디렉터리는 이 프로세스가 모르는 임대의 것이다 — 기동 때 지운다.
   void turnSecrets.sweepAll().then((n) => { if (n) log(`turn-secrets: 앞 오퍼레이터가 남긴 턴 디렉터리 ${n}개를 지웠다`); });
   const turnSecretsTimer = setInterval(() => { void turnSecrets.sweepExpired(); }, 60_000);
@@ -264,6 +269,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       if (merged) return merged;
       const called = await turnApi.maybeHandle(runnerId, agentId, req);
       if (called) return called;
+      const reported = await cleanupOwners.maybeHandle(runnerId, agentId, req, kind);
+      if (reported) return reported;
       const uploaded = await turnUploads.maybeHandle(agentId, req);
       if (uploaded) return uploaded;
       const c = communities.find((x) => x.knowsAgent(agentId));
@@ -278,9 +285,9 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     // 같은 멘션을 둘이 집지 않는다 — 프로세스가 죽기를 기다리던 공백이 여기서 사라진다.
     // `registry` 는 아래에서 만들어지지만 이 콜백은 그 뒤에만 불린다(러너가 붙어야 온다).
     // relay 링크가 끊겼다 = 러너가 죽었거나 오퍼레이터를 놓았다 — 그 러너가 쥔 턴 자리를 돌려받는다.
-    onClose: (runnerId) => { turnSlots.releaseRunner(runnerId); },
+    onClose: (runnerId) => { turnSlots.releaseRunner(runnerId); cleanupOwners.releaseRunner(runnerId); },
     // relay 가 다시 붙었다 — 끊긴 사이 잃은 놓기 요청이 자리를 묶어 두지 않게 그 러너의 자리를 털어 낸다(L1).
-    onRelayAttach: (runnerId) => { turnSlots.releaseRunner(runnerId); },
+    onRelayAttach: (runnerId) => { turnSlots.releaseRunner(runnerId); cleanupOwners.releaseRunner(runnerId); },
     onNotice: (runnerId, agentId, notice) => {
       // 턴 임대를 맡긴다·놓는다(비밀 보관소). relay 소켓에서만 온다 — 브릿지의 통지는 링크가 버린다.
       if (notice.type === 'secret.lease') { turnSecrets.noteLease(runnerId, agentId, notice); return; }
@@ -525,6 +532,32 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     home: homedir(),
   });
 
+  // 작업 폴더 청소기(스레드 9e909150). 기동 때 한 번, 그 뒤 1시간마다 돈다. 설정이 꺼져 있으면(기본) 원장에 「주인 모름」만
+  // 보이고 아무것도 넣거나 지우지 않는다.
+  const operatorConfigPath = join(appDataDir, 'operator', 'operator.json');
+  const workspaceCleanup = createWorkspaceCleanup({
+    ledgerPath: cleanupLedgerPath(appDataDir),
+    configPath: operatorConfigPath,
+    owners: cleanupOwners,
+    agents: async () => Object.values((await readConfig(operatorConfigPath)).communities)
+      .flatMap((c) => Object.entries(c.agents).map(([agentId, a]) => ({ agentId, workingDir: a.workingDir ?? null }))),
+    forward: async (agentId, req) => {
+      const c = communities.find((x) => x.knowsAgent(agentId));
+      return c ? c.forward(agentId, req) : { type: 'http.response', id: req.id, status: 0, body: '이 에이전트를 아는 커뮤니티가 없다' };
+    },
+    exec: defaultExec,
+    gitPath: GIT_PATH,
+    ghPath: GH_PATH,
+    ghEnv: ghEnv(homedir(), null),
+    home: homedir(),
+    log,
+  });
+  const runCleanup = () => { void workspaceCleanup.sweep().catch((err) => log(`cleanup 실패: ${err instanceof Error ? err.message : String(err)}`)); };
+  const cleanupBoot = setTimeout(runCleanup, 60_000); // 기동 직후 러너 채택·커뮤니티 연결과 겹치지 않게 1분 뒤
+  cleanupBoot.unref?.();
+  const cleanupTimer = setInterval(runCleanup, 60 * 60_000);
+  cleanupTimer.unref?.();
+
   const server = new DaemonServer({
     token: '', // claim 이 만든 값으로 아래에서 바꾼다 — 그 전에는 아무도 못 붙는다.
     identity,
@@ -535,6 +568,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     localAgents,
     localMcp,
     localMerge,
+    workspaceCleanup,
     log,
     runnerLink,
   });
@@ -637,6 +671,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     async shutdown() {
       clearInterval(pollTimer);
       clearInterval(turnSecretsTimer);
+      clearTimeout(cleanupBoot);
+      clearInterval(cleanupTimer);
       usagePoller?.stop();
       // 서버 링크를 먼저 끊는다 — 러너는 데려가지 않는다(이 파일 머리 주석). 링크가 살아
       // 있으면 종료 중에 assign 이 와서 새 러너를 띄울 수 있다.

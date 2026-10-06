@@ -86,3 +86,106 @@ describe('removeRebuildable', () => {
     expect((await stat(join(root, 'src.ts'))).isFile()).toBe(true);
   });
 });
+
+import { parsePrList, parseWorktreePorcelain, githubSlug, isThreadDone } from '../src/workspaceCleanupScan.js';
+import { createCleanupOwners } from '../src/workspaceCleanupOwners.js';
+import { worktreeAddPaths, readCleanupReport, CLEANUP_REPORT_PATH } from '@harkroom/shared/workspaceCleanup';
+
+describe('관측 파서', () => {
+  it('worktree porcelain — 첫 묶음이 main, detached 는 branch null', () => {
+    const out = 'worktree /repo\nHEAD aaa\nbranch refs/heads/main\n\nworktree /tmp/wt-x\nHEAD bbb\ndetached\n\nworktree /tmp/wt-y\nHEAD ccc\nbranch refs/heads/feat/y\n';
+    expect(parseWorktreePorcelain(out)).toEqual([
+      { path: '/repo', head: 'aaa', branch: 'main', bare: false },
+      { path: '/tmp/wt-x', head: 'bbb', branch: null, bare: false },
+      { path: '/tmp/wt-y', head: 'ccc', branch: 'feat/y', bare: false },
+    ]);
+  });
+  it('PR 목록 — 하나라도 열려 있으면 open', () => {
+    expect(parsePrList('[{"number":3,"state":"MERGED","headRefOid":"x"},{"number":4,"state":"OPEN","headRefOid":"y"}]')).toEqual({ number: 4, state: 'open', headSha: 'y' });
+    expect(parsePrList('[]')).toBeNull();
+    expect(parsePrList('nope')).toBeNull();
+  });
+  it('github slug', () => {
+    expect(githubSlug('https://github.com/izagood/harkroom.git\n')).toBe('izagood/harkroom');
+    expect(githubSlug('git@github.com:izagood/harkroom.git')).toBe('izagood/harkroom');
+    expect(githubSlug('https://example.com/x/y')).toBeNull();
+  });
+  it('세션 기록의 worktree add — 플래그를 건너뛰고, 변수 경로는 못 뽑는다', () => {
+    expect(worktreeAddPaths('git -c core.hooksPath=/dev/null worktree add -q -b feat/x /tmp/wt-a origin/main', '/h')).toEqual(['/tmp/wt-a']);
+    expect(worktreeAddPaths('worktree add --detach /private/tmp/wt-b abc', '/h')).toEqual(['/tmp/wt-b']);
+    expect(worktreeAddPaths('worktree add ~/.harkroom-agent/wt/x', '/h')).toEqual(['/h/.harkroom-agent/wt/x']);
+    expect(worktreeAddPaths('worktree add -b x "$W" origin/main', '/h')).toEqual([]);
+  });
+  it('스레드 ✅ — 루트의 statusReaction.status 가 done 일 때만, 못 읽으면 false', async () => {
+    const ok = async () => ({ type: 'http.response' as const, id: '1', status: 200, body: JSON.stringify({ statusReaction: { status: 'done' } }) });
+    const notDone = async () => ({ type: 'http.response' as const, id: '1', status: 200, body: JSON.stringify({ statusReaction: { status: 'waiting' } }) });
+    const denied = async () => ({ type: 'http.response' as const, id: '1', status: 403, body: '{}' });
+    expect(await isThreadDone(ok, 'a', 'r')).toBe(true);
+    expect(await isThreadDone(notDone, 'a', 'r')).toBe(false);
+    expect(await isThreadDone(denied, 'a', 'r')).toBe(false);
+  });
+});
+
+describe('주인 장부(러너 보고)', () => {
+  const C = '11111111-1111-1111-1111-111111111111';
+  const R = '22222222-2222-2222-2222-222222222222';
+  const req = (body: unknown) => ({ type: 'http.forward' as const, id: 'q', method: 'POST', path: CLEANUP_REPORT_PATH, body: JSON.stringify(body) });
+
+  it('relay 로 온 보고만 받는다 — 브릿지(모델)는 403', async () => {
+    const d = await mkdtemp(join(tmpdir(), 'owners-'));
+    const o = createCleanupOwners({ path: join(d, 'owners.json') });
+    const body = { threads: [{ channelId: C, threadRootId: R, worktrees: ['/private/tmp/wt-a'], lastTurnAt: '2026-10-06T00:00:00Z', running: true }] };
+    expect((await o.maybeHandle('run1', 'agent1', req(body), 'bridge'))!).toMatchObject({ status: 403 });
+    expect((await o.maybeHandle('run1', 'agent1', req(body), 'relay'))!).toMatchObject({ status: 204 });
+    expect((await o.ownerOf()).get('/tmp/wt-a')).toMatchObject({ channelId: C, threadRootId: R, agentId: 'agent1' });
+    expect(o.running().has(`${C}/${R}`)).toBe(true);
+    o.releaseRunner('run1');
+    expect(o.running().size).toBe(0);
+    // 다시 떠도 파일에서 읽는다
+    const o2 = createCleanupOwners({ path: join(d, 'owners.json') });
+    expect((await o2.lastTurnAt()).get(`${C}/${R}`)).toBe('2026-10-06T00:00:00Z');
+  });
+  it('모양이 틀린 줄은 버린다', () => {
+    expect(readCleanupReport({ threads: [{ channelId: 'x', threadRootId: R }, { channelId: C, threadRootId: R, worktrees: ['rel/path', '/abs'] }] }))
+      .toEqual({ threads: [{ channelId: C, threadRootId: R, worktrees: ['/abs'], lastTurnAt: null, running: false }] });
+    expect(readCleanupReport(null)).toBeNull();
+  });
+  it('다른 경로는 건드리지 않는다', async () => {
+    const o = createCleanupOwners({ path: '/nonexistent/owners.json' });
+    expect(await o.maybeHandle('r', 'a', { type: 'http.forward', id: 'q', method: 'POST', path: '/agent/turn-slots', body: '{}' }, 'relay')).toBeNull();
+  });
+});
+
+import { createCleanupPorts } from '../src/workspaceCleanupService.js';
+
+describe('지우기 직전 검사', () => {
+  const base = {
+    path: '/tmp/wt-a', kind: 'worktree' as const, state: 'listed' as const, repo: '/repo', branch: 'b', headSha: 'h1',
+    thread: { channelId: 'c', threadRootId: 'r' }, pr: { number: 1, state: 'merged' as const, headSha: 'h9' },
+    lastModifiedAt: null, listedAt: null, deleteAfter: null, blockReason: null, actedBy: null, actedAt: null, sizeBefore: null, sizeNow: null,
+  };
+  const ports = (replies: Record<string, { code: number; stdout: string }>) => {
+    const calls: string[][] = [];
+    const exec = async (_f: string, args: string[]) => { calls.push(args); const k = args.slice(2, 4).join(' '); return { stderr: '', ...(replies[k] ?? { code: 1, stdout: '' }) }; };
+    return { calls, p: createCleanupPorts({ exec, gitPath: '/usr/bin/git', ghPath: '/gh', ghEnv: {}, home: '/h' }) };
+  };
+  it('도는 턴 → turn-running(git 을 부르지도 않는다)', async () => {
+    const { p, calls } = ports({});
+    expect(await p.check(base, new Set(['c/r']))).toBe('turn-running');
+    expect(calls).toEqual([]);
+  });
+  it('변경이 있으면 uncommitted', async () => {
+    expect(await ports({ 'status --porcelain': { code: 0, stdout: ' M a.ts\n' } }).p.check(base, new Set())).toBe('uncommitted');
+  });
+  it('원격에도 PR head 에도 없으면 unpushed, PR head 의 조상이면 통과', async () => {
+    expect(await ports({ 'status --porcelain': { code: 0, stdout: '' }, 'branch -r': { code: 0, stdout: '' } }).p.check(base, new Set())).toBe('unpushed');
+    expect(await ports({ 'status --porcelain': { code: 0, stdout: '' }, 'branch -r': { code: 0, stdout: '' }, 'merge-base --is-ancestor': { code: 0, stdout: '' } }).p.check(base, new Set())).toBeNull();
+    expect(await ports({ 'status --porcelain': { code: 0, stdout: '' } }).p.check({ ...base, pr: { ...base.pr, headSha: 'h1' } }, new Set())).toBeNull();
+  });
+  it('지우기는 --force 없이 worktree remove', async () => {
+    const { p, calls } = ports({ 'worktree remove': { code: 0, stdout: '' } });
+    await p.remove(base);
+    expect(calls[0]).toEqual(['-C', '/repo', 'worktree', 'remove', '/tmp/wt-a']);
+    expect(calls[1]).toEqual(['-C', '/repo', 'branch', '-D', 'b']);
+  });
+});

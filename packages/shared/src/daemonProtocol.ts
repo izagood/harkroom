@@ -130,6 +130,12 @@ export const REQUEST_TYPES = [
   // 의 로그인 이름뿐이고 **토큰은 오가지 않는다**. set 은 그 순간 목록에 있는 이름만 받는다(security C7).
   'operatorMergeGet',
   'operatorMergeSet',
+  // 작업 폴더 정리(스레드 9e909150). 원장은 이 기기의 것이다(`operator/src/workspaceCleanup.ts`). 사람의 손은 보존·되돌리기·
+  // 삭제 예정에 넣기 셋뿐이고, **바로 지우는 메서드는 없다**(D3·D5 결정) — 지우기는 청소기 회차만 한다.
+  'workspaceCleanupGet',
+  'workspaceCleanupSettingsSet',
+  'workspaceCleanupAct',
+  'workspaceCleanupSweep',
 ] as const;
 export type DaemonRequestType = (typeof REQUEST_TYPES)[number];
 
@@ -782,6 +788,37 @@ export function readOperatorMergeSetPayload(payload: unknown): { ghUser: string 
   if (p.ghUser === null) return { ghUser: null };
   if (typeof p.ghUser !== 'string' || !GH_LOGIN_RE.test(p.ghUser)) return daemonError('bad-payload', 'ghUser 는 GitHub 로그인 이름이어야 한다');
   return { ghUser: p.ghUser };
+}
+
+/** `workspaceCleanupSettingsSet` — 둘 다 선택이다. graceDays 는 1~30 으로 자른다. */
+export function readWorkspaceCleanupSettingsPayload(payload: unknown): { enabled?: boolean; graceDays?: number } | DaemonError {
+  const p = payload as { enabled?: unknown; graceDays?: unknown } | null;
+  if (!p || typeof p !== 'object') return daemonError('bad-payload', 'workspaceCleanupSettingsSet 에는 enabled 나 graceDays 가 필요하다');
+  const out: { enabled?: boolean; graceDays?: number } = {};
+  if (p.enabled !== undefined) {
+    if (typeof p.enabled !== 'boolean') return daemonError('bad-payload', 'enabled 는 boolean 이어야 한다');
+    out.enabled = p.enabled;
+  }
+  if (p.graceDays !== undefined) {
+    if (typeof p.graceDays !== 'number' || !Number.isInteger(p.graceDays)) return daemonError('bad-payload', 'graceDays 는 정수여야 한다');
+    out.graceDays = p.graceDays;
+  }
+  if (out.enabled === undefined && out.graceDays === undefined) return daemonError('bad-payload', 'enabled 나 graceDays 가 필요하다');
+  return out;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * `workspaceCleanupAct` — 항목은 원장의 경로로 가리키고(원장에 없는 경로는 오퍼레이터가 거절한다), `by` 는 누른 사람의
+ * 계정 id 다(화면의 「누가 보존」). 이름이 아니라 id 다 — 이름은 바뀐다.
+ */
+export function readWorkspaceCleanupActPayload(payload: unknown): { path: string; action: 'keep' | 'unkeep' | 'list'; by: string } | DaemonError {
+  const p = payload as { path?: unknown; action?: unknown; by?: unknown } | null;
+  if (!p || typeof p.path !== 'string' || !p.path.startsWith('/')) return daemonError('bad-payload', 'path 는 원장의 절대 경로여야 한다');
+  if (p.action !== 'keep' && p.action !== 'unkeep' && p.action !== 'list') return daemonError('bad-payload', 'action 은 keep·unkeep·list 중 하나다');
+  if (typeof p.by !== 'string' || !UUID_RE.test(p.by)) return daemonError('bad-payload', 'by 는 계정 id 여야 한다');
+  return { path: p.path, action: p.action, by: p.by };
 }
 
 export interface OperatorRegisterResult {
