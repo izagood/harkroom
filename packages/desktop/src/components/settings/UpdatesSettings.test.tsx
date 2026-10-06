@@ -186,3 +186,113 @@ describe('UpdatesSettings — 사이드바와 같은 답을 읽는다', () => {
     }
   });
 });
+
+/**
+ * **받아 둔 뒤에도 다시 묻는다**(#task 스레드 b77286c1). 0.3.184 를 찾아 [Restart to install] 이
+ * 선 뒤에는 [Check now] 가 사라져서, 그 사이 0.3.185 가 나와도 화면에서 다시 물을 길이 없었다.
+ */
+describe('UpdatesSettings — 새 버전을 안 뒤에도 다시 확인한다', () => {
+  it('설치 버튼과 함께 [Check now] 가 있고, 다시 물으면 더 새 판으로 바뀐다', async () => {
+    const check = vi.fn()
+      .mockResolvedValueOnce({ version: '9.9.9' })
+      .mockResolvedValueOnce({ version: '9.9.10' });
+    setAppUpdater(stub({ check }));
+    render(<UpdatesSettings />);
+    fireEvent.click(screen.getByRole('button', { name: /check now/i }));
+    await waitFor(() => screen.getByRole('button', { name: /restart to install/i }));
+
+    // 받아 둔 상태에서도 다시 물을 수 있다.
+    fireEvent.click(screen.getByRole('button', { name: /check now/i }));
+    await waitFor(() => expect(screen.getByTestId('updates-new-version').textContent).toContain('9.9.10'));
+    expect(check).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('button', { name: /restart to install/i })).toBeTruthy();
+  });
+
+  it('[Restart to install] 은 지금 표시된 판을 설치한다', async () => {
+    const downloadAndInstall = vi.fn(async () => {});
+    const check = vi.fn()
+      .mockResolvedValueOnce({ version: '9.9.9' })
+      .mockResolvedValueOnce({ version: '9.9.10' });
+    setAppUpdater(stub({ check, downloadAndInstall }));
+    render(<UpdatesSettings />);
+    fireEvent.click(screen.getByRole('button', { name: /check now/i }));
+    await waitFor(() => screen.getByRole('button', { name: /restart to install/i }));
+    fireEvent.click(screen.getByRole('button', { name: /check now/i }));
+    await waitFor(() => expect(screen.getByTestId('updates-new-version').textContent).toContain('9.9.10'));
+
+    fireEvent.click(screen.getByRole('button', { name: /restart to install/i }));
+    await waitFor(() => expect(screen.getByTestId('updates-new-version').textContent).toMatch(/9\.9\.10 · downloading/));
+    expect(downloadAndInstall).toHaveBeenCalledTimes(1);
+  });
+
+  it('"checked" 시각은 마지막으로 답을 받은 시각이다', async () => {
+    const first = new Date(2026, 9, 6, 7, 14).getTime();
+    const later = new Date(2026, 9, 6, 13, 20).getTime();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(first);
+    try {
+      setAppUpdater(stub({ check: vi.fn(async () => ({ version: '9.9.9' })) }));
+      render(<UpdatesSettings />);
+      fireEvent.click(screen.getByRole('button', { name: /check now/i }));
+      await waitFor(() => expect(screen.getByTestId('updates-new-version').textContent).toContain(new Date(first).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })));
+
+      now.mockReturnValue(later);
+      fireEvent.click(screen.getByRole('button', { name: /check now/i }));
+      const label = new Date(later).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      await waitFor(() => expect(screen.getByTestId('updates-new-version').textContent).toContain(`checked ${label}`));
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  /**
+   * 다시 물었다가 실패해도 앞에서 찾은 새 판과 설치 버튼을 지우지 않는다 — 전에는 주기 확인이
+   * 한 번 실패하는 것만으로 설치 버튼이 사라졌다. 실패는 곁에 원문 그대로 적는다(사유를 지어내지 않는다).
+   */
+  it('다시 묻기가 실패하면 받아 둔 판은 남고 실패를 곁에 적는다', async () => {
+    const check = vi.fn()
+      .mockResolvedValueOnce({ version: '9.9.9' })
+      .mockRejectedValueOnce(new Error('network unreachable'));
+    setAppUpdater(stub({ check }));
+    render(<UpdatesSettings />);
+    fireEvent.click(screen.getByRole('button', { name: /check now/i }));
+    await waitFor(() => screen.getByRole('button', { name: /restart to install/i }));
+
+    fireEvent.click(screen.getByRole('button', { name: /check now/i }));
+    await waitFor(() => expect(screen.getByTestId('updates-new-version').textContent).toContain('network unreachable'));
+    expect(screen.getByTestId('updates-new-version').textContent).toContain('9.9.9');
+    expect(screen.getByTestId('updates-new-version').textContent).toMatch(/re-check failed/);
+    expect(screen.getByRole('button', { name: /restart to install/i })).toBeTruthy();
+  });
+});
+
+/**
+ * **주기 확인이 잠든 사이 밀리지 않는다.** `setInterval` 은 노트북이 잠들거나 창이 가려지면
+ * 미뤄진다. 창이 다시 포커스를 얻을 때 마지막 물음이 한 주기보다 오래됐으면 그 자리에서 묻는다.
+ */
+describe('useUpdateCheck — 창이 돌아오면 밀린 주기를 따라잡는다', () => {
+  it('한 주기 안이면 묻지 않고, 지났으면 묻는다 — 받아 둔 상태에서도', async () => {
+    (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const t0 = Date.now();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(t0);
+    try {
+      const check = vi.fn(async () => ({ version: '9.9.9' }));
+      setAppUpdater(stub({ check }));
+      const { UpdateToast } = await import('../UpdateToast');
+      const { UPDATE_CHECK_INTERVAL_MS } = await import('../../lib/useUpdateCheck');
+      render(<UpdateToast placement="footer" />);
+      await screen.findByTestId('update-footer');
+      expect(check).toHaveBeenCalledTimes(1);
+
+      now.mockReturnValue(t0 + 60_000);
+      window.dispatchEvent(new Event('focus'));
+      expect(check).toHaveBeenCalledTimes(1);
+
+      now.mockReturnValue(t0 + UPDATE_CHECK_INTERVAL_MS + 1);
+      window.dispatchEvent(new Event('focus'));
+      await waitFor(() => expect(check).toHaveBeenCalledTimes(2));
+    } finally {
+      now.mockRestore();
+      delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
+  });
+});

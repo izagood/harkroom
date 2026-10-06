@@ -33,11 +33,15 @@ function checkedLabel(at: number): string {
 
 export function UpdatesSettings() {
   const t = useT();
-  const { status, checkedAt, checking, check, install } = useUpdateCheck();
+  const { status, checkedAt, checking, recheckFailure, check, install } = useUpdateCheck();
   const busy = checking || status.kind === 'installing';
 
   let newVersion: string;
-  if (status.kind === 'available') newVersion = `${status.version} · checked ${checkedLabel(checkedAt ?? Date.now())}`;
+  if (status.kind === 'available') {
+    newVersion = `${status.version} · checked ${checkedLabel(checkedAt ?? Date.now())}`;
+    // 새 버전을 안 뒤의 확인이 실패했으면 그것도 적는다 — "checked" 시각이 왜 멈췄는지 사람이 안다.
+    if (recheckFailure) newVersion += ` · re-check failed ${checkedLabel(recheckFailure.at)}: ${recheckFailure.message}`;
+  }
   else if (status.kind === 'installing') newVersion = `${status.version} · downloading and installing…`;
   else if (status.kind === 'uptodate') newVersion = `None — up to date · checked ${checkedLabel(checkedAt ?? Date.now())}`;
   // 실패는 실패라고 적는다. 원문을 붙여 사람이 원인을 직접 볼 수 있게 한다.
@@ -52,13 +56,15 @@ export function UpdatesSettings() {
         <ReadonlyRow label="Current version" value={__APP_VERSION__} />
         <ReadonlyRow label="New version" value={<span role="status" data-testid="updates-new-version">{newVersion}</span>} />
         <div className="flex items-center justify-end gap-2 px-4 py-3">
-          {status.kind === 'available' || status.kind === 'installing' ? (
+          {/* [Check now] 는 새 버전을 안 뒤에도 남긴다 — 0.3.184 를 받아 둔 사이 0.3.185 가 나왔을 수
+              있다. 다시 물어 더 새 판이 있으면 표시와 [Restart to install] 이 그 판을 가리킨다
+              (`appUpdater` 가 설치할 핸들을 마지막 확인의 것으로 바꾼다). */}
+          <Button disabled={busy} onClick={() => void check()}>
+            {checking ? 'Checking…' : 'Check now'}
+          </Button>
+          {(status.kind === 'available' || status.kind === 'installing') && (
             <Button variant="primary" disabled={busy} onClick={() => void install(status.version)}>
               {status.kind === 'installing' ? 'Installing…' : 'Restart to install'}
-            </Button>
-          ) : (
-            <Button disabled={busy} onClick={() => void check()}>
-              {checking ? 'Checking…' : 'Check now'}
             </Button>
           )}
         </div>
