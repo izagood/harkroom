@@ -64,6 +64,8 @@ describe('UpdatesSettings — 사유를 지어내지 않는다', () => {
     });
     // 플러그인이 준 원문을 그대로 보여 준다 — 우리가 원인을 해석하지 않는다.
     expect(screen.getByRole('status').textContent).toContain('network unreachable');
+    // 원문은 아랫줄에 따로 선다 — 처음부터 실패한 경우도 다시 묻기 실패와 같은 모양이다.
+    expect(screen.getByTestId('updates-failure').textContent).toBe('network unreachable');
     expect(screen.getByRole('status').textContent).not.toMatch(/up to date/i);
   });
 
@@ -260,7 +262,8 @@ describe('UpdatesSettings — 새 버전을 안 뒤에도 다시 확인한다', 
     fireEvent.click(screen.getByRole('button', { name: /check now/i }));
     await waitFor(() => expect(screen.getByTestId('updates-new-version').textContent).toContain('network unreachable'));
     expect(screen.getByTestId('updates-new-version').textContent).toContain('9.9.9');
-    expect(screen.getByTestId('updates-new-version').textContent).toMatch(/re-check failed/);
+    // 원문은 말줄임되는 첫 줄이 아니라 아랫줄에 따로 선다(designer, #1173).
+    expect(screen.getByTestId('updates-failure').textContent).toMatch(/^Re-check failed .*network unreachable$/);
     expect(screen.getByRole('button', { name: /restart to install/i })).toBeTruthy();
   });
 });
