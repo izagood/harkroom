@@ -15,6 +15,7 @@ import type { AccountView, AgentView, InboxEntry, MessageRow } from '@harkroom/s
 import type { RelayClient } from './relay.js';
 import { HARKROOM_ERROR_SOURCE } from './policy.js';
 import { VERSION } from './version.js';
+import { CLEANUP_REPORT_PATH, type CleanupReport, type CleanupReportReply } from '@harkroom/shared/workspaceCleanup';
 
 /** 이 클라이언트가 링크에서 쓰는 표면. `RelayClient` 가 그대로 맞는다 — 테스트는 가짜를 준다. */
 export type RunnerLink = Pick<RelayClient, 'request' | 'mcpTransport'>;
@@ -306,6 +307,25 @@ export class HarkroomAgentClient {
         body: JSON.stringify({ key }), contentType: 'application/json',
       });
     } catch { /* 러너가 죽으면 오퍼레이터가 링크 끊김으로 돌려받는다 */ }
+  }
+
+  /**
+   * 작업 폴더 정리 보고(`operator/src/workspaceCleanupOwners.ts`). 오퍼레이터가 서버로 넘기지 않고 직접 답한다. 답은 이 러너가 지울
+   * 스레드들이다. 옛 오퍼레이터(서버로 넘겨 404)·링크 오류면 null — 정리는 자원 정리라 못 하면 안 할 뿐이다.
+   */
+  async reportCleanup(report: CleanupReport): Promise<CleanupReportReply | null> {
+    try {
+      const res = await this.link.request({
+        type: 'http.forward', method: 'POST', path: CLEANUP_REPORT_PATH,
+        body: JSON.stringify(report), contentType: 'application/json',
+      });
+      if (res.status === 204) return { deleteThreads: [] };
+      if (res.status !== 200) return null;
+      const body = JSON.parse(res.body) as Partial<CleanupReportReply>;
+      return { deleteThreads: Array.isArray(body.deleteThreads) ? body.deleteThreads : [] };
+    } catch {
+      return null;
+    }
   }
 
   async reportActivity(): Promise<void> {

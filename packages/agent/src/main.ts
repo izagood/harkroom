@@ -19,7 +19,8 @@
 import { resolveTurnModel } from './threadModel.js';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { access, readdir } from 'node:fs/promises';
+import { access, readdir, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { loadConfig, runnerLabel } from './config.js';
 import { applySelfRename, HarkroomAgentClient } from './harkroom.js';
@@ -38,6 +39,7 @@ import { runnerExitPlan } from './exit.js';
 import { stopRequestedForRunner } from './stop.js';
 import { harnessLoginNotice } from './prompt.js';
 import { createRelayClient } from './relay.js';
+import { claudeProjectRootsUnder, collectBackfill, createCleanupReporter, deleteThread, gitWorktreePaths } from './cleanupReport.js';
 import { createInteractiveManager, type InteractiveManager } from './interactiveTurn.js';
 import { createAttentionLedger } from './attentionLedger.js';
 import { TurnRegistry } from './turnRegistry.js';
@@ -278,7 +280,7 @@ const [me, guide] = await (async () => {
 // 뿌리가 아직 없는 첫 기동이면 읽을 것이 없다 — 그때는 빈 목록이고 새 이름으로 만든다.
 const stateDirNames = await readdir(config.stateDir).catch(() => [] as string[]);
 const {
-  agentStateDir, legacyPath, sessionsPath, workspaceBaseDir, codexHomeDir, opencodeHomeDir, piHomeDir,
+  agentStateDir, legacyPath, sessionsPath, workspaceBaseDir, codexHomeDir, opencodeHomeDir, piHomeDir, cleanupBackfillPath,
 } = resolveAgentStateDir(config.stateDir, me.handle, me.id, config.agentInstance, stateDirNames);
 
 // 뿌리 이름이 id 하나라(#850) 사람이 눈으로 찾을 길을 따로 낸다: `by-name/<handle> -> ../<뿌리>`.
@@ -499,9 +501,47 @@ const secretLeases = createSecretLeases({
 // 둘을 가르는 값이라 기동마다 새로 짓는다(같은 에이전트 자격이라 계정 id 로는 못 가른다).
 const threadClaims = createThreadClaims({ client: harkroom, holder: randomUUID() });
 
+// 작업 폴더 정리(스레드 9e909150). 오퍼레이터는 이 상태 트리를 못 읽으므로 러너가 알리고, 이 트리 안의 지우기도 러너가 한다.
+// 턴의 기록 파일은 멘션 id 로 모은다 — 턴이 끝날 때 그 기록에서 `worktree add` 경로를 읽는다.
+const turnTranscripts = new Map<string, string[]>();
+const cleanupReporter = createCleanupReporter({
+  send: (report) => harkroom.reportCleanup(report),
+  listWorktrees: gitWorktreePaths,
+  home: homedir(),
+  deleteThread: (ref) => deleteThread({
+    workspaceBaseDir,
+    claudeProjectRoots: () => claudeProjectRootsUnder(claudeAccountsRoot()),
+    sessionOf: (key) => store.get(key),
+    forget: (key) => store.delete(key),
+  }, ref),
+  log: (line) => console.log(`[cleanup] ${line}`),
+});
+// 기동 보고는 한 번만 — 세션 기록 전체를 읽으므로 무겁다. 끝나면 표지를 남긴다. 늦게 돌려도 된다(턴을 막지 않는다).
+void access(cleanupBackfillPath).then(() => undefined, async () => {
+  const threads = await collectBackfill({
+    sessions: store.entries(), claudeProjectRoots: await claudeProjectRootsUnder(claudeAccountsRoot()), home: homedir(),
+  });
+  await cleanupReporter.backfill(threads);
+  await writeFile(cleanupBackfillPath, JSON.stringify({ at: new Date().toISOString(), threads: threads.length }), { mode: 0o600 });
+}).catch((err) => console.warn('[cleanup] 기동 보고 실패:', err instanceof Error ? err.message : err));
+// 한가한 러너도 지우기 요청을 받게 — 오퍼레이터 청소기 주기(1시간)의 절반.
+const cleanupTick = setInterval(() => { void cleanupReporter.tick().catch(() => {}); }, 30 * 60_000);
+cleanupTick.unref?.();
+
 const scheduler = createMentionScheduler({
   harkroom, registry, queue: mentionQueue, heldEntryIds, handoverDone, secretLeases, threadClaims,
   turnSlots: { acquire: (key) => harkroom.acquireTurnSlot(key), release: (key) => harkroom.releaseTurnSlot(key) },
+  turnWatch: {
+    started: async (key) => {
+      const def = await harkroom.definition().catch(() => null);
+      await cleanupReporter.turnStarted(key, { repo: def?.workingDir ?? null, workspaceDir: store.get(key)?.workspaceDir ?? null });
+    },
+    ended: async (key, mentionId) => {
+      const transcripts = turnTranscripts.get(mentionId) ?? [];
+      turnTranscripts.delete(mentionId);
+      await cleanupReporter.turnEnded(key, transcripts.filter((p) => p.endsWith('.jsonl')));
+    },
+  },
   // **턴마다** 축을 다시 읽는다 — 지운 계정은 빠지고 새 계정은 들어온다(`createLiveAccountLane`).
   accountLane: async () => (await liveLane.current()).lane,
   // 모델은 매 턴 정의에서 읽는다 — 모델별 주간 창(Opus 등)이 있으면 그것까지 본다. 못 읽으면
@@ -525,7 +565,12 @@ const scheduler = createMentionScheduler({
   buildTurnDeps: ({ ctx, mention, account, isLastAccount, onPromptDelivered }) => ({
     ...(onPromptDelivered ? { onPromptDelivered } : {}),
     // 비밀 보관소 D7 — 이 턴의 기록 파일을 멘션 장부에 적는다(멘션이 끝날 때 가린다).
-    noteTranscript: (cause: string, path: string) => secretLeases.noteTranscript(cause, path),
+    noteTranscript: (cause: string, path: string) => {
+      secretLeases.noteTranscript(cause, path);
+      const list = turnTranscripts.get(cause) ?? [];
+      if (!list.includes(path)) list.push(path);
+      turnTranscripts.set(cause, list);
+    },
     secretNeedles: (cause: string) => secretLeases.needles(cause),
     harkroom, memory: memoryCache, store, exec, runTurn: runPtyTurn, me, guide,
     channelName: ctx.channelName(mention.channelId),

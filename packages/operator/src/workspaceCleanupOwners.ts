@@ -22,6 +22,8 @@ export interface OwnerRecord extends CleanupThreadRef {
   agentId: string;
   worktrees: string[];
   lastTurnAt: string | null;
+  /** 러너 상태 트리 안의 그 스레드 작업 폴더. 러너가 지웠다고 알리면 null. */
+  workspaceDir?: string | null;
 }
 
 export interface CleanupOwners {
@@ -32,6 +34,12 @@ export interface CleanupOwners {
   ownerOf(): Promise<Map<string, OwnerRecord>>;
   lastTurnAt(): Promise<Map<string, string>>;
   running(): ReadonlySet<string>;
+  /** 스레드 → 주인 기록(7일 무턴 판정용). */
+  threads(): Promise<OwnerRecord[]>;
+  /** 이 스레드의 작업 폴더를 지워 달라고 그 러너의 다음 보고 답에 싣는다. */
+  requestDelete(ref: CleanupThreadRef): void;
+  /** 러너가 지웠다고 알린 스레드들(작업 폴더 경로와 함께) — 한 번 읽으면 비운다. */
+  drainDeleted(): { thread: CleanupThreadRef; path: string }[];
 }
 
 export function cleanupOwnersPath(appDataDir: string): string {
@@ -42,6 +50,9 @@ const key = (t: CleanupThreadRef) => `${t.channelId}/${t.threadRootId}`;
 
 export function createCleanupOwners(opts: { path: string; log?: (line: string) => void }): CleanupOwners {
   const runningBy = new Map<string, Set<string>>();
+  /** threadKey → 지워 달라고 한 스레드. 메모리에만 — 오퍼레이터가 다시 뜨면 다음 회차가 다시 고른다. */
+  const pendingDelete = new Map<string, CleanupThreadRef>();
+  let deletedConfirmed: { thread: CleanupThreadRef; path: string }[] = [];
   let cache: Record<string, OwnerRecord> | null = null;
   let chain: Promise<unknown> = Promise.resolve();
 
@@ -81,16 +92,35 @@ export function createCleanupOwners(opts: { path: string; log?: (line: string) =
           // 같은 스레드를 다른 에이전트가 알리면 덮지 않고 합친다 — 한 스레드에 에이전트가 여럿일 수 있다.
           const worktrees = [...new Set([...(prev?.worktrees ?? []), ...t.worktrees.map(normalizeCleanupPath)])].slice(-50);
           const lastTurnAt = [prev?.lastTurnAt, t.lastTurnAt].filter((x): x is string => !!x).sort().at(-1) ?? null;
-          all[k] = { channelId: t.channelId, threadRootId: t.threadRootId, agentId: prev?.agentId ?? agentId, worktrees, lastTurnAt };
+          // 작업 폴더는 **그 에이전트 것만** 받는다 — 지우기 요청은 이 값을 알린 에이전트의 러너에게만 간다.
+          const owner = prev?.agentId ?? agentId;
+          const workspaceDir = owner === agentId && t.workspaceDir ? t.workspaceDir : (prev?.workspaceDir ?? null);
+          all[k] = { channelId: t.channelId, threadRootId: t.threadRootId, agentId: owner, worktrees, lastTurnAt, workspaceDir };
+        }
+        for (const d of report.deleted ?? []) {
+          const k = key(d);
+          const prev = all[k];
+          // 지워 달라고 한 적 있는 것만 받는다 — 러너가 지어낸 "지웠다"로 남의 항목을 원장에서 빼지 못하게.
+          if (!prev || prev.agentId !== agentId || !pendingDelete.has(k)) continue;
+          pendingDelete.delete(k);
+          if (prev.workspaceDir) deletedConfirmed.push({ thread: d, path: prev.workspaceDir });
+          all[k] = { ...prev, workspaceDir: null };
         }
         cache = all;
         await save(all);
       });
       chain = write.catch((err) => opts.log?.(`cleanup 주인 장부 쓰기 실패: ${err instanceof Error ? err.message : String(err)}`));
       await chain;
-      return answer(req, 204, null);
+      const all = await load();
+      const deleteThreads = [...pendingDelete.entries()]
+        .filter(([k]) => all[k]?.agentId === agentId && !run.has(k))
+        .map(([, ref]) => ref);
+      return answer(req, 200, { deleteThreads });
     },
     releaseRunner(runnerId) { runningBy.delete(runnerId); },
+    async threads() { return Object.values(await load()); },
+    requestDelete(ref) { pendingDelete.set(key(ref), { channelId: ref.channelId, threadRootId: ref.threadRootId }); },
+    drainDeleted() { const out = deletedConfirmed; deletedConfirmed = []; return out; },
     async ownerOf() {
       const out = new Map<string, OwnerRecord>();
       for (const rec of Object.values(await load())) {
