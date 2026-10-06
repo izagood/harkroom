@@ -22,8 +22,12 @@ import { createAgentSecret, createLimiter, GENERATE_TYPES, rotateAgentSecret, ty
 export const SECRET_MAX_BYTES = 64 * 1024;
 
 const agentRefused = { error: { code: 'forbidden', message: 'agents cannot manage secrets' } };
-const disabled = {
+const storeOff = {
   error: { code: 'secret_store_disabled', message: 'HARKROOM_SECRET_KEYS_DIR is not set on the server; the secret store is off' },
+};
+/** 키는 걸렸는데 DB 의 키 확인값과 맞지 않아 꺼졌다. kid 이름은 싣지 않는다(서버 로그에만). */
+const keyMismatch = {
+  error: { code: 'secret_key_mismatch', message: 'the secret store key on the server does not match the key these secrets were sealed with; the secret store is off' },
 };
 const notFound = { error: { code: 'not_found', message: 'no such secret' } };
 const descriptionLeak = { error: { code: 'secret_in_description', message: 'the description looks like it contains a secret value' } };
@@ -68,7 +72,7 @@ const SECRET_COLS = `s.id, s.name, s.kind, s.filename, s.description, s.owner_ac
   v.version, v.size_bytes as "sizeBytes",
   (select count(*)::int from secret_grant g where g.secret_id = s.id) as "grantCount"`;
 const SECRET_FROM = `secret s left join lateral (
-    select version, size_bytes from secret_version
+    select version, size_bytes, split_part(sealed, '.', 2) as sealed_kid from secret_version
      where secret_id = s.id and revoked_at is null order by version desc limit 1) v on true`;
 
 async function getSecret(pool: Pool, id: string): Promise<SecretRow | null> {
@@ -94,9 +98,11 @@ function valueBytes(kind: 'text' | 'file', v: { value?: string; valueBase64?: st
 }
 
 export async function registerSecretRoutes(
-  app: FastifyInstance, pool: Pool, opts: { keyring: SecretKeyring | null; limiter?: RevealLimiter; createLimiter?: RevealLimiter },
+  app: FastifyInstance, pool: Pool,
+  opts: { keyring: SecretKeyring | null; keyMismatch?: boolean; limiter?: RevealLimiter; createLimiter?: RevealLimiter },
 ): Promise<void> {
   const { keyring } = opts;
+  const disabled = opts.keyMismatch ? keyMismatch : storeOff;
   const limiter = opts.limiter ?? new RevealLimiter();
   const makeLimiter = opts.createLimiter ?? createLimiter();
 
@@ -126,9 +132,16 @@ export async function registerSecretRoutes(
     if (!human(req, reply)) return reply;
     const me = req.account!;
     const r = await pool.query(
-      `select ${SECRET_COLS} from ${SECRET_FROM}
+      `select ${SECRET_COLS}, v.sealed_kid as "sealedKid" from ${SECRET_FROM}
         where $1::boolean or s.owner_account_id = $2 order by s.name`, [me.isAdmin, me.id]);
-    return { enabled: keyring !== null, secrets: r.rows as SecretRow[] };
+    // keyLost: 지금 값의 키(kid)가 이 서버의 키링에 없다 — 키를 잃었거나 바꿨으니 다시 넣어야 한다.
+    // kid 이름은 내보내지 않는다. 보관소가 꺼져 있으면(키 없음·키 어긋남) 가를 수 없으니 false 다.
+    const kids = new Set(keyring?.kids ?? []);
+    const secrets = (r.rows as (SecretRow & { sealedKid: string | null })[]).map(({ sealedKid, ...row }) => ({
+      ...row,
+      keyLost: keyring !== null && !!sealedKid && !kids.has(sealedKid),
+    }));
+    return { enabled: keyring !== null, keyMismatch: opts.keyMismatch === true, secrets };
   });
 
   app.post('/secrets', { preHandler: app.requireAccount }, async (req, reply) => {
