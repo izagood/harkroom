@@ -146,6 +146,9 @@ class _ThreadScreenState extends State<ThreadScreen> {
     // 자동·고정 멘션을 붙인 것이 **서버로 가는 본문**이다(채널 화면과 같다). 모델 지정도 이 본문으로
     // 센다 — 친 글로 세면 고정으로 부른 에이전트에게 고른 모델이 빠진다.
     final body = withStickyMentions(text, app.composerPrefix(widget.channelId, widget.rootId));
+    // 옛 답글 창에서 보내면 `send` 가 먼저 최신 묶음으로 옮긴다(m3). 목록이 통째로 바뀌어도 스크롤 위치는
+    // 그대로라 방금 보낸 글이 화면 밖일 수 있다 — 옮겨졌으면 맨 아래로 굴린다(designer nit).
+    final wasTailMissing = app.threadTailMissing.contains(widget.rootId);
     try {
       final went = await app.send(
         widget.channelId,
@@ -161,6 +164,9 @@ class _ThreadScreenState extends State<ThreadScreen> {
         app.keepStickyMentions(widget.rootId, text);
         // 이번만 뺀 자동 멘션은 이 글로 끝이다 — 다음 글에는 다시 붙는다.
         app.clearAutoSkips(widget.rootId);
+        if (wasTailMissing && !app.threadTailMissing.contains(widget.rootId) && mounted && _scroll.hasClients) {
+          _scroll.animateTo(0, duration: HarkroomMotion.base, curve: HarkroomMotion.ease);
+        }
       }
       if (!went && mounted) {
         if (_composer.text.isEmpty) _composer.text = text;
@@ -295,7 +301,17 @@ class _ThreadScreenState extends State<ThreadScreen> {
       // 링크·찾기로 받은 창 **아래**가 비었다(최신 답글이 안 실렸다) — 스레드가 여기서 끝난 것처럼 보이지 않게
       // 띠를 세운다. 누르면 최신 페이지로 간다(designer n1, #1191 후속 d1).
       if (load == LoadState.loaded && app.threadTailMissing.contains(widget.rootId))
-        ThreadLatestBand(label: t.threadLatestReplies, onTap: _jumpToLatest),
+        ThreadLatestBand(
+          state: app.jumpingToLatest.contains(widget.rootId)
+              ? ThreadLatestBandState.loading
+              : app.latestJumpFailed.contains(widget.rootId)
+                  ? ThreadLatestBandState.failed
+                  : ThreadLatestBandState.idle,
+          label: t.threadLatestReplies,
+          failedLabel: t.threadLatestLoadFailed,
+          retryLabel: t.commonRetry,
+          onTap: _jumpToLatest,
+        ),
       ...failed.map((item) => FailedSendRow(item: item)),
     ];
 
@@ -416,34 +432,81 @@ class ThreadRepliesDivider extends StatelessWidget {
   }
 }
 
+/// 「최신 답글로 ↓」 띠의 세 상태(designer m1·m2). 셋이 **같은 44 상자**에 서서 바뀌어도 목록이 움직이지 않는다
+/// ([FeedTopRow] 와 같은 규율).
+enum ThreadLatestBandState { idle, loading, failed }
+
 /// 창 아래의 「최신 답글로 ↓」 띠(#1191 후속 d1). [FeedTopRow] 와 같은 44 높이의 한 줄로, 눌러서 최신 페이지로 간다.
-/// 가운데 글자 하나만 — 사이에 몇 개가 빠졌는지는 모르므로 수는 말하지 않는다.
+/// 가운데 글자 하나만 — 사이에 몇 개가 빠졌는지는 모르므로 수는 말하지 않는다. 받는 동안은 스피너(탭 없음),
+/// 못 받았으면 「못 불러왔다 · 다시 시도」.
 class ThreadLatestBand extends StatelessWidget {
-  const ThreadLatestBand({super.key, required this.label, required this.onTap});
+  const ThreadLatestBand({
+    super.key,
+    required this.label,
+    required this.onTap,
+    this.state = ThreadLatestBandState.idle,
+    this.failedLabel = '',
+    this.retryLabel = '',
+  });
 
   final String label;
+  final String failedLabel;
+  final String retryLabel;
+  final ThreadLatestBandState state;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final k = context.tokens;
+    final muted = TextStyle(fontSize: 12, color: k.fgMuted);
+    final buttonStyle = TextButton.styleFrom(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      minimumSize: const Size(0, HarkroomSize.row),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      foregroundColor: k.fgMuted,
+    );
+    final Widget child = switch (state) {
+      ThreadLatestBandState.loading => const SizedBox(
+          key: Key('thread-latest-loading'),
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ThreadLatestBandState.failed => Row(
+          key: const Key('thread-latest-failed'),
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Flexible(child: Text(failedLabel, style: muted)),
+            const SizedBox(width: 6),
+            Text('·', style: muted),
+            const SizedBox(width: 6),
+            // 옛 답글 다시 시도 줄(`FeedTopRow.older-retry`)과 같은 모양 — 안쪽 여백 0 이라 가운뎃점 양옆이 같고,
+            // 색을 지정하지 않아 기본 강조색으로 "누를 수 있는 것"으로 읽힌다(designer).
+            TextButton(
+              key: const Key('thread-latest-retry'),
+              onPressed: onTap,
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(0, HarkroomSize.row),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(retryLabel),
+            ),
+          ],
+        ),
+      ThreadLatestBandState.idle => TextButton(
+          key: const Key('thread-latest-go'),
+          onPressed: onTap,
+          style: buttonStyle,
+          child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+        ),
+    };
     return SizedBox(
       key: const Key('thread-latest-band'),
       height: HarkroomSize.row,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter),
-        child: Center(
-          child: TextButton(
-            onPressed: onTap,
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              minimumSize: const Size(0, HarkroomSize.row),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              foregroundColor: k.fgMuted,
-            ),
-            child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-          ),
-        ),
+        child: Center(child: child),
       ),
     );
   }

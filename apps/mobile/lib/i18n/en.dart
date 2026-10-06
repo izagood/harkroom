@@ -501,6 +501,8 @@ class StringsEn implements Strings {
   String get threadRootMissing => 'Could not load the original message';
   @override
   String get threadLatestReplies => 'Latest replies ↓';
+  @override
+  String get threadLatestLoadFailed => "Couldn't load the latest replies";
 
   @override
   String get inboxLoadFailed => 'Could not load your inbox';

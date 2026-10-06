@@ -319,6 +319,14 @@ class AppState extends ChangeNotifier {
   /// 최신 페이지를 받으면([jumpToLatestReplies]·[catchUp]·창 없는 [openThread]) 지운다.
   final Set<String> threadTailMissing = {};
 
+  /// 스레드 루트 id → 「최신 답글로 ↓」를 눌러 최신 페이지를 **받는 중**(designer m1). 띠는 스피너로 바뀌고
+  /// 다시 눌리지 않는다. 겹쳐 부르면 한 번만 간다.
+  final Set<String> jumpingToLatest = {};
+
+  /// 스레드 루트 id → 「최신 답글로 ↓」가 **실패했다**(designer m2). 띠가 「못 불러왔다 · 다시 시도」로
+  /// 바뀐다. 다시 눌러 성공하거나 최신 페이지가 어떤 길로든 들어오면 지운다.
+  final Set<String> latestJumpFailed = {};
+
   /// 스레드 루트 id → 옛 답글을 못 받았다. 채널의 [olderFailed] 와 같이 스크롤로는 다시 부르지
   /// 않고 "다시 시도" 를 누를 때만 간다.
   final Set<String> olderThreadFailed = {};
@@ -1421,6 +1429,18 @@ class AppState extends ChangeNotifier {
     // 화면이 보내기 버튼을 잠그므로(`isUploading`) 여기 닿는 것은 버그다 — 그래도 글을
     // 잃지 않게 `false` 를 돌려 작성칸이 비우지 않게 한다.
     if (isUploading(key)) return false;
+    // 옛 답글 창에서 답을 보내면 **먼저 최신 묶음으로 옮긴다**(designer m3) — 그냥 보내면 내 글이 옛 창 끝에
+    // 붙고 그 아래에 「최신 답글로 ↓」가 남아, 방금 쓴 글이 마지막이 아닌 것처럼 보인다. 옮기기에 실패해도
+    // 글은 보낸다(글을 잃지 않는 쪽이 먼저다 — 띠는 「다시 시도」로 남는다).
+    //
+    // **기다리는 사이 세션이 바뀌면 보내지 않는다**(security F1). `_post` 는 그 시점의 `_api` 를 읽으므로,
+    // 기다리는 동안 커뮤니티를 바꾸면 A 의 본문·첨부가 B 서버로 간다. 세대가 다르면 `false` 로 돌려 작성칸이
+    // 글을 비우지 않게 한다 — 첨부도 그래서 기다린 뒤에 뗀다.
+    if (threadRootId != null && threadTailMissing.contains(threadRootId)) {
+      final gen = _generation;
+      await jumpToLatestReplies(channelId, threadRootId);
+      if (gen != _generation) return false;
+    }
     pending.remove(key);
     await _post(FailedSend(
       localId: 'local-${_localSeq++}',
@@ -1583,6 +1603,7 @@ class AppState extends ChangeNotifier {
   void _storeThreadPage(String rootId, List<MessageRow> page) {
     // 최신 페이지를 통째로 받았다 — 꼬리가 비어 있던 사실은 여기서 끝난다.
     threadTailMissing.remove(rootId);
+    latestJumpFailed.remove(rootId);
     final replies = <MessageRow>[];
     for (final m in page) {
       if (m.id == rootId) {
@@ -1721,20 +1742,32 @@ class AppState extends ChangeNotifier {
   /// 「최신 답글로 ↓」 띠([threadTailMissing]) — 창을 버리고 **최신 페이지로 간다**(처음 여는 것과 같은 조회).
   /// 창과 최신 사이를 이어 받지 않는 이유: 사이가 몇 쪽인지 모르고, 사람이 누른 뜻은 "지금 대화로"다.
   /// 옛 답글은 다시 위로 밀면 `before` 로 받는다. 실패하면 [failures] 에 적고 띠는 남긴다(다시 누를 수 있다).
-  Future<void> jumpToLatestReplies(String channelId, String rootId) async {
+  /// 받는 동안은 [jumpingToLatest] 에, 실패하면 [latestJumpFailed] 에 적는다(designer m1·m2). 받았으면 `true`.
+  Future<bool> jumpToLatestReplies(String channelId, String rootId) async {
+    if (jumpingToLatest.contains(rootId)) return false;
+    jumpingToLatest.add(rootId);
+    notifyListeners();
     final gen = _generation;
+    var ok = false;
     try {
       final page = await _api!.messages(channelId, thread: rootId, limit: _threadPageLimit);
-      if (gen != _generation) return;
+      if (gen != _generation) return false;
       _storeThreadPage(rootId, page.messages);
       threadHasMore[rootId] = page.hasMore;
       olderThreadFailed.remove(rootId);
       threadLoad[rootId] = LoadState.loaded;
+      ok = true;
     } on Object catch (e) {
-      if (gen != _generation) return;
+      if (gen != _generation) return false;
       failures[rootId] = LoadFailure.of(e);
+      latestJumpFailed.add(rootId);
+    } finally {
+      if (gen == _generation) {
+        jumpingToLatest.remove(rootId);
+        notifyListeners();
+      }
     }
-    notifyListeners();
+    return ok;
   }
 
   /// 스레드 루트 id → 에이전트 모델 지정(서버 079). 키가 없으면 아직 못 받았다.
@@ -1937,6 +1970,8 @@ class AppState extends ChangeNotifier {
     loadingOlderThread.clear();
     olderThreadFailed.clear();
     threadTailMissing.clear();
+    jumpingToLatest.clear();
+    latestJumpFailed.clear();
     channels.clear();
     accounts.clear();
     messages.clear();

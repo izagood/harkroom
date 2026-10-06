@@ -216,6 +216,9 @@ abstract class Strings {
   /// 링크·찾기로 옛 답글의 창을 받았는데 최신 답글이 빠져 있다 — 창 아래 띠. 누르면 최신 페이지로 간다.
   String get threadLatestReplies;
 
+  /// 「최신 답글로 ↓」를 눌렀는데 못 받았다 — 같은 줄에 「다시 시도」와 함께.
+  String get threadLatestLoadFailed;
+
   /// 인박스를 못 읽음.
   String get inboxLoadFailed;
 
@@ -920,6 +923,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'threadLoadFailed': s.threadLoadFailed,
       'threadRootMissing': s.threadRootMissing,
       'threadLatestReplies': s.threadLatestReplies,
+      'threadLatestLoadFailed': s.threadLatestLoadFailed,
       'inboxLoadFailed': s.inboxLoadFailed,
       'messagesEmptyHint': s.messagesEmptyHint,
       'channelStartLine': s.channelStartLine,
