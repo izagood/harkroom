@@ -1184,6 +1184,7 @@ export const en = {
   'agents.memory.picked': '{n} selected',
   'agents.memory.pickedHidden': 'Includes {n} not shown by the filter',
   'agents.memory.pointsToArchived': 'Points to {n} archived · Unarchive',
+  'agents.memory.pointsToArchivedShort': '↺ {n} archived',
   'agents.memory.unarchiveAction': 'Unarchive',
   'agents.memory.unarchivePicked': 'Unarchive {n}',
   'agents.memory.unarchiveSlug': 'Unarchive {slug}',

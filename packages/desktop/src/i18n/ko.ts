@@ -689,6 +689,7 @@ export const ko = {
   'agents.memory.picked': '{n}개 고름',
   'agents.memory.pickedHidden': '필터에 안 걸린 {n}개 포함',
   'agents.memory.pointsToArchived': '보관된 기억 {n}개 가리킴 · 되살리기',
+  'agents.memory.pointsToArchivedShort': '↺ 보관 {n}',
   'agents.memory.unarchiveAction': '되살리기',
   'agents.memory.unarchivePicked': '{n}개 되살리기',
   'agents.memory.unarchiveSlug': '{slug} 되살리기',

@@ -928,8 +928,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             onClick={() => setMemSelected((prev) => (prev === m.slug ? null : m.slug))}
           >
             <span className="flex min-w-0 flex-1 flex-col">
-            <span className="flex min-w-0 items-baseline gap-2">
-            <span className="min-w-0 truncate text-meta font-medium">{m.slug}</span>
+            {/* 꼬리표가 많아 넘치면 이 줄 안에서 잘린다 — 옆 버튼 위로 겹쳐 그리지 않게. */}
+            <span className="flex min-w-0 items-baseline gap-2 overflow-hidden">
+            {/* 두 칸일 때 왼쪽 칸이 좁아도 이름이 0 으로 접히지 않게 최소 폭을 둔다(꼬리표가 먼저 줄어든다). */}
+            <span className="min-w-[8rem] shrink truncate text-meta font-medium">{m.slug}</span>
             {/* 종류(M5): 주제가 아닌 것만 표를 단다 — 대부분인 주제에까지 달면 표가 소음이 된다. */}
             {m.kind && m.kind !== 'topic' && (
               <span data-testid="memory-kind" className="flex-none rounded-sm bg-surface-hover px-1 text-meta text-fg-subtle">
@@ -975,11 +977,13 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             <button
               data-testid="memory-points-archived"
               className="flex-none rounded-row border border-border px-1.5 text-meta text-fg-muted"
-              title={pointsToArchived.join(', ')}
+              title={`${t('agents.memory.pointsToArchived', { n: pointsToArchived.length })}: ${pointsToArchived.join(', ')}`}
+              aria-label={t('agents.memory.pointsToArchived', { n: pointsToArchived.length })}
               disabled={memBusy}
               onClick={() => memoryBatch('unarchive', pointsToArchived)}
             >
-              {t('agents.memory.pointsToArchived', { n: pointsToArchived.length })}
+              {/* 줄에는 짧게 — 긴 문구가 이름 자리를 먹는다. 전체 문구는 툴팁·aria 에. */}
+              {t('agents.memory.pointsToArchivedShort', { n: pointsToArchived.length })}
             </button>
           )}
           {/* 0 은 그리지 않는다 — 모든 줄에 「쓰임 0」이 서면 쓰인 줄이 묻힌다(#1196 n5 → #1209 nit 3). */}
