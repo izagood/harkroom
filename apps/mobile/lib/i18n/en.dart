@@ -499,6 +499,8 @@ class StringsEn implements Strings {
   String get threadLoadFailed => 'Could not load replies';
   @override
   String get threadRootMissing => 'Could not load the original message';
+  @override
+  String get threadLatestReplies => 'Latest replies ↓';
 
   @override
   String get inboxLoadFailed => 'Could not load your inbox';
