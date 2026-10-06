@@ -706,7 +706,7 @@ describe('정리 맡기기 (PR 5)', () => {
     expect((await screen.findByTestId('memory-notice')).textContent).toContain('@rusalka');
     expect(screen.queryByTestId('memory-cleanup-sheet')).toBeNull();
     // 같은 요청 두 번 방지(nit 4) · 답이 오는 DM 을 새 창으로(nit 2).
-    expect(screen.getByTestId('memory-cleanup-sent').textContent).toMatch(/^방금 보냄/);
+    expect(screen.getByTestId('memory-cleanup-sent').textContent).toMatch(/^보냄 · /);
     fireEvent.click(screen.getByTestId('memory-notice-open-dm'));
     expect(openWindow).toHaveBeenCalledWith({ kind: 'channel', channelId: 'dm-1' });
   });
@@ -730,7 +730,10 @@ describe('정리 맡기기 (PR 5)', () => {
 
     fireEvent.click(await screen.findByLabelText('mem/a-one 고르기'));
     fireEvent.click(screen.getByTestId('memory-cleanup-open'));
-    expect(screen.getByTestId('memory-cleanup-blocked')).toBeTruthy();
+    // 이유와 고칠 곳을 함께 말하고, 변수 바로 뒤에 조사를 붙이지 않는다(받침에 따라 틀린다).
+    expect(screen.getByTestId('memory-cleanup-blocked').textContent).toBe(
+      '@rusalka — 지금 꺼졌거나 오퍼레이터에 배정되지 않아 DM 을 받아도 턴이 뜨지 않습니다. 실행 탭에서 켜거나 오퍼레이터에 배정하세요',
+    );
     expect((screen.getByTestId('memory-cleanup-send') as HTMLButtonElement).disabled).toBe(true);
     expect(c.sendDm).not.toHaveBeenCalled();
   });

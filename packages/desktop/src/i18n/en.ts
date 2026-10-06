@@ -1142,7 +1142,7 @@ export const en = {
   'agents.memory.archivedHeading': 'Archived',
   'agents.memory.archivedNote': "Archived memories are left out of the agent's index and recall, and don't count toward the limit.",
   'agents.memory.archivedTag': 'Archived',
-  'agents.memory.cleanupBlocked': '@{handle} is off or not assigned to an operator, so a DM would not start a turn — sending is disabled',
+  'agents.memory.cleanupBlocked': '@{handle} — off or not assigned to an operator, so a DM would not start a turn. Turn it on or assign an operator in the Run tab',
   'agents.memory.cleanupOpenDm': 'Open DM',
   'agents.memory.cleanupSentAgo': 'Sent {ago}',
   'agents.memory.cleanupOpen': 'Ask @{handle} to tidy up',
