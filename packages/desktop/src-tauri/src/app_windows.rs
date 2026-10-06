@@ -29,11 +29,13 @@ pub const POPUP_PREFIX: &str = "win-";
 ///
 /// 키는 `[a-z0-9-]` 1~80자만 받는다 — 라벨 문법(영숫자·`-`·`/`·`:`·`_`)보다 좁게 잡아
 /// 이상한 키가 라벨을 깨거나 다른 창 라벨을 흉내 내지 못하게 한다.
+///
+/// **`#` 이 `%23` 으로 온다**(실측, Tauri 2.11.5·wry 0.55, 2026-10-06): WKWebView 가 넘기는
+/// `absoluteString` 이 `about:blank%23hk-win=…` 이라 `Url::fragment()` 가 비어 있다. 두 꼴을 다 받되
+/// 머리(`about:blank`) 뒤는 정확히 이 꼴이어야 한다.
 pub fn popup_label(url: &Url) -> Option<String> {
-    if url.scheme() != "about" || url.path() != "blank" || url.query().is_some() {
-        return None;
-    }
-    let key = url.fragment()?.strip_prefix("hk-win=")?;
+    let rest = url.as_str().strip_prefix("about:blank")?;
+    let key = rest.strip_prefix("#hk-win=").or_else(|| rest.strip_prefix("%23hk-win="))?;
     let ok = !key.is_empty()
         && key.len() <= 80
         && key.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
@@ -121,6 +123,8 @@ mod tests {
             Some("win-thread-0b7e2c1a-1111-4a4a-9c9c-123456789abc")
         );
         assert_eq!(label("about:blank#hk-win=channel-abc").as_deref(), Some("win-channel-abc"));
+        // WKWebView 가 실제로 넘기는 꼴
+        assert_eq!(label("about:blank%23hk-win=channel-abc").as_deref(), Some("win-channel-abc"));
     }
 
     #[test]
@@ -137,5 +141,8 @@ mod tests {
         assert_eq!(label("about:blank#hk-win=a:b"), None);
         assert_eq!(label(&format!("about:blank#hk-win={}", "a".repeat(81))), None);
         assert_eq!(label("about:srcdoc#hk-win=thread-x"), None);
+        assert_eq!(label("about:blank?x=1#hk-win=thread-x"), None);
+        assert_eq!(label("about:blank%23hk-win=thread-x%23hk-win=main"), None);
+        assert_eq!(label("about:blankx#hk-win=thread-x"), None);
     }
 }
