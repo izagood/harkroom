@@ -1596,7 +1596,10 @@ export const ko = {
 
   'speech.exchange.decided': '정했다',
   'speech.exchange.finished': '끝냈다',
-  'speech.exchange.undecided': '아직 정해진 것 없음',
+  'speech.exchange.running': '{handle} 작업 중',
+  'speech.exchange.runningFor': '{handle} 작업 중 {duration}',
+  'speech.exchange.runningMany': { other: '작업 중 {count}' },
+  'speech.exchange.attachments': { other: '첨부 {count}개' },
   'speech.exchange.count': { other: '{count}번 주고받음' },
   'speech.exchange.last': '마지막 {time}',
   'speech.exchange.collapse': '접기',

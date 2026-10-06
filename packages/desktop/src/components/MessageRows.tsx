@@ -5,7 +5,7 @@ import { MessageItem } from './MessageItem';
 import { ProgressRow } from './ProgressRow';
 import { AgentExchange } from './AgentExchange';
 import { dayLabel, localDayKey } from '../lib/day';
-import type { ExchangeSlot } from '../lib/agentExchange';
+import { exchangeRows, type ExchangeSlot } from '../lib/agentExchange';
 import type { SectionId } from './settings/sections';
 import type { Locale } from '../i18n';
 
@@ -51,11 +51,14 @@ function canVirtualize(): boolean {
 
 /** 자리의 첫 메시지 — 키·날짜·앵커의 기준이다(묶음도 목록에서는 한 자리다). */
 function slotHead(slot: ExchangeSlot) {
-  return slot.kind === 'message' ? slot.message : slot.messages[0]!;
+  if (slot.kind === 'message') return slot.message;
+  // 주고받기는 진행 묶음으로 시작할 수 있다 — 첫 **행**이 자리의 머리다.
+  return slot.kind === 'exchange' ? exchangeRows(slot)[0]! : slot.messages[0]!;
 }
 
 function slotHas(slot: ExchangeSlot, id: string): boolean {
-  return slot.kind === 'message' ? slot.message.id === id : slot.messages.some((m) => m.id === id);
+  if (slot.kind === 'message') return slot.message.id === id;
+  return (slot.kind === 'exchange' ? exchangeRows(slot) : slot.messages).some((m) => m.id === id);
 }
 
 interface RowsProps {
@@ -267,7 +270,7 @@ const SlotRow = memo(function SlotRow({ slot, newDay, divider, locale, index, me
       )}
       {slot.kind === 'progress' ? <ProgressRow messages={slot.messages} endedAt={slot.endedAt} />
         : slot.kind === 'exchange'
-          ? <AgentExchange messages={slot.messages} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />
+          ? <AgentExchange messages={slot.messages} items={slot.items} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />
           : <MessageItem message={m} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
     </div>
   );

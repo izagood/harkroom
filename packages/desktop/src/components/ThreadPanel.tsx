@@ -8,7 +8,7 @@ import { MessageItem } from './MessageItem';
 import { ProgressRow } from './ProgressRow';
 import { groupProgress } from '../lib/progressGroup';
 import { AgentExchange } from './AgentExchange';
-import { groupAgentExchanges } from '../lib/agentExchange';
+import { groupAgentExchanges, exchangeRows } from '../lib/agentExchange';
 import { ThreadStateBadge } from './ThreadStateBadge';
 import { threadState } from '../lib/threadState';
 import { WaitChainLine } from './WaitChain';
@@ -350,14 +350,15 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
         {/* 채널과 **같은 함수**로 접는다 — 두 곳이 다른 판정을 쓰면 같은 대화가 자리마다
             다르게 보인다(`lib/progressGroup`·`lib/agentExchange`). 순서도 채널과 같아야 한다:
             진행을 먼저 접고 그 위에 주고받기를 접는다. */}
-        {groupAgentExchanges(groupProgress(thread), isAgent).map((slot) => (
+        {groupAgentExchanges(groupProgress(thread), isAgent, threadRootId ?? undefined).map((slot) => (
           slot.kind === 'progress'
             ? <ProgressRow key={slot.messages[0]!.id} messages={slot.messages} endedAt={slot.endedAt} />
             : slot.kind === 'exchange'
               ? (
                 <AgentExchange
-                  key={slot.messages[0]!.id}
+                  key={exchangeRows(slot)[0]!.id}
                   messages={slot.messages}
+                  items={slot.items}
                   inThread
                   onOpenDirectory={onOpenDirectory}
                   onOpenSettings={onOpenSettings}
