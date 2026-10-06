@@ -219,6 +219,10 @@ abstract class Strings {
   /// 「최신 답글로 ↓」를 눌렀는데 못 받았다 — 같은 줄에 「다시 시도」와 함께.
   String get threadLatestLoadFailed;
 
+  /// 띠가 선 동안 소켓으로 온 새 답글이 있을 때의 띠 문구 **전체**(수 앞, 행동·화살표 끝). `{n}` 은 99 넘으면 「99+」.
+  /// 두 문구를 이어 붙이지 않는다 — 언어마다 순서가 다르다.
+  String get threadLatestNewReplies;
+
   /// 인박스를 못 읽음.
   String get inboxLoadFailed;
 
@@ -924,6 +928,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'threadRootMissing': s.threadRootMissing,
       'threadLatestReplies': s.threadLatestReplies,
       'threadLatestLoadFailed': s.threadLatestLoadFailed,
+      'threadLatestNewReplies': s.threadLatestNewReplies,
       'inboxLoadFailed': s.inboxLoadFailed,
       'messagesEmptyHint': s.messagesEmptyHint,
       'channelStartLine': s.channelStartLine,

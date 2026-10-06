@@ -503,6 +503,8 @@ class StringsEn implements Strings {
   String get threadLatestReplies => 'Latest replies ↓';
   @override
   String get threadLatestLoadFailed => "Couldn't load the latest replies";
+  @override
+  String get threadLatestNewReplies => '{n} new · Jump to latest ↓';
 
   @override
   String get inboxLoadFailed => 'Could not load your inbox';
