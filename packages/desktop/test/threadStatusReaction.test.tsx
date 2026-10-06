@@ -1,6 +1,6 @@
 // 스레드 상태 리액션 — 화면 쪽. 판정은 서버(shared/threadStatus.ts)가 하고 **진짜 리액션으로 단다**(server 108,
-// 2026-10-06). 여기서는 ① 서버가 단 리액션을 상태 칩으로 알아본다(보통 칩 모양·숫자) ② 남의 상태 칩은 눌러도
-// 안 달린다 ③ 🙋·🚨 만 색 테두리 ④ hover 이유 ⑤ 옛 서버면 상태에서 칩을 붙인다 ⑥ 끝남 ✅ 도 주인 이름의 상태 칩(B1)
+// 2026-10-06). 여기서는 ① 서버가 단 리액션을 상태 칩으로 알아본다(보통 칩 모양·숫자) ② 상태 칩도 보통 칩처럼
+// 눌러 내 것을 달고 뗀다 ③ 🙋·🚨 만 색 테두리 ④ hover 이유 + 같이 단 사람 둘째 줄 ⑤ 옛 서버면 상태에서 칩을 붙인다 ⑥ 끝남 ✅ 도 주인 이름의 상태 칩(B1)
 // ⑦ thread.status 반영 ⑧ 실시간 행이 배지 재료를 null 로 덮지 않음(0.3.107 배지 누락) 을 본다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
@@ -45,7 +45,7 @@ describe('상태 리액션 칩', () => {
     expect(screen.getAllByTestId(/^reaction-💬$/)).toHaveLength(1);
   });
 
-  it('남의 상태 칩은 눌러도 안 달린다 — 내가 같이 단 것은 뗄 수 있다', () => {
+  it('상태 칩도 보통 칩처럼 눌러 내 리액션을 달고 뗀다(designer, B1)', () => {
     const toggle = vi.fn(async () => {});
     const c = new Controller(fakeApi());
     (c as unknown as { toggleReaction: typeof toggle }).toggleReaction = toggle;
@@ -53,7 +53,8 @@ describe('상태 리액션 칩', () => {
     seed({ statusReaction: st('received', '👀'), reactions: [{ emoji: '👀', accountIds: ['bot'] }] });
     const { rerender } = render(<Reactions message={root()} />);
     fireEvent.click(screen.getByTestId('reaction-👀'));
-    expect(toggle).not.toHaveBeenCalled();
+    expect(toggle).toHaveBeenCalledWith('c1', 'r1', '👀', true);
+    expect(screen.getByTestId('reaction-👀').className).not.toContain('cursor-default');
     rerender(<Reactions message={{ ...root(), reactions: [{ emoji: '👀', accountIds: ['bot', 'u1'] }] }} />);
     fireEvent.click(screen.getByTestId('reaction-👀'));
     expect(toggle).toHaveBeenCalledWith('c1', 'r1', '👀', false);
@@ -76,6 +77,23 @@ describe('상태 리액션 칩', () => {
     fireEvent.mouseEnter(screen.getByTestId('reaction-🙋'));
     act(() => { vi.advanceTimersByTime(200); });
     expect(screen.getByTestId('reaction-tooltip').textContent).toContain('Your turn · harkbot asks · 수정안 둘 중 어느 것?');
+    // 주인 혼자 단 칩이면 둘째 줄은 없다.
+    expect(screen.queryByTestId('reaction-tooltip-also')).toBeNull();
+  });
+
+  it('같이 단 사람이 있으면 말풍선 둘째 줄과 aria-label 에 이름이 나온다(B1)', () => {
+    vi.useFakeTimers();
+    seed({ statusReaction: st('done', '✅'), reactions: [{ emoji: '✅', accountIds: ['bot', 'u2'] }] });
+    render(<Reactions message={root()} />);
+    const chip = screen.getByTestId('reaction-✅');
+    fireEvent.mouseEnter(chip);
+    act(() => { vi.advanceTimersByTime(200); });
+    const tip = screen.getByTestId('reaction-tooltip');
+    expect(tip.textContent).toContain('harkbot');
+    const also = screen.getByTestId('reaction-tooltip-also').textContent!;
+    expect(also).toContain('someone');
+    expect(also).not.toContain('harkbot');
+    expect(chip.getAttribute('aria-label')).toContain(also);
   });
 
   it('리액션이 아직 없으면(옛 서버·이벤트 찰나) 상태에서 칩을 붙인다, 끝남 ✅ 도', () => {

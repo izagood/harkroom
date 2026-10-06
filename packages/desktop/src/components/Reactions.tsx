@@ -330,8 +330,10 @@ function ReactionChip({ emoji, accountIds, nameOf, myId, onToggle, status }: {
   /**
    * 서버가 단 **상태 리액션** 칩이면 그 상태(`isStatusChip`). 보통 칩과 같은 모양·숫자로 그린다 — 모바일·웹과
    * 같게 보이려는 것이 이 모양의 이유다. 다른 셋:
-   * - 내가 단 것이 아니면 **눌러도 아무것도 안 한다** — 눌러서 같은 이모지를 달면 상태와 사람 리액션이 섞인다.
-   * - 말풍선은 누가 달았는지가 아니라 **상태 문장**(`statusSentence`: 상태 · 누구 · 이유)이다.
+   * - 누르면 보통 칩처럼 **내 리액션**을 달고 뗀다(designer, B1) — 사람이 끝남 ✅ 를 누르는 칩이 이것이다.
+   *   내 행은 `source=user` 로 따로 저장되고, 상태 행은 사람이 못 지운다(서버 `status_kept`).
+   * - 말풍선 첫 줄은 **상태 문장**(`statusSentence`: 상태 · 누구 · 이유), 둘째 줄은 주인 말고 같이 단 사람
+   *   (`reactionSentence`) — jaebin 이 B1 을 받아들인 조건이 "hover 하면 누가 남겼는지 보인다"다.
    * - 🙋·🚨 만 색 테두리(사람을 부르는 둘 — 앞판의 강조 예산 그대로).
    */
   status?: ThreadStatusReaction | null;
@@ -358,6 +360,9 @@ function ReactionChip({ emoji, accountIds, nameOf, myId, onToggle, status }: {
   // 한쪽만 고쳐지고, 그러면 눈으로 본 것과 읽힌 것이 다르다.
   const who = reactorNames(accountIds, nameOf, myId, t);
   const sentence = status ? statusSentence(status, accounts, t, locale) : null;
+  // 상태 칩에서 주인 말고 같이 단 사람 — 말풍선 둘째 줄과 aria-label 이 같이 읽는다.
+  const others = status ? accountIds.filter((id) => id !== status.accountId) : [];
+  const othersSentence = others.length ? reactionSentence(emoji, others, nameOf, myId, t) : null;
   const tone = status?.status === 'my-turn'
     ? 'border-state-turn'
     : status?.status === 'stuck' ? 'border-state-stuck' : null;
@@ -383,7 +388,9 @@ function ReactionChip({ emoji, accountIds, nameOf, myId, onToggle, status }: {
         onFocus={openSoon}
         onBlur={close}
         // 이모지 문자만으로는 스크린리더가 무엇인지 읽을 수 없다 — 누가 눌렀는지 함께 준다.
-        aria-label={sentence ? `${emoji} — ${t('threadStatus.aria', { sentence })}` : `${emoji} — ${who}`}
+        aria-label={sentence
+          ? `${emoji} — ${t('threadStatus.aria', { sentence })}${othersSentence ? `. ${othersSentence.sentence}` : ''}`
+          : `${emoji} — ${who}`}
         aria-pressed={mine}
         /*
           **내가 단 것은 선으로도 구별한다**(2026-09-09, 요청자 jaebin).
@@ -405,16 +412,15 @@ function ReactionChip({ emoji, accountIds, nameOf, myId, onToggle, status }: {
           mine
             ? 'border-accent-brand bg-surface-sunken font-medium text-fg'
             : `${tone ?? 'border-border'} bg-surface text-fg-muted`
-        }${status && !mine ? ' cursor-default' : ''}`}
-        // 상태 칩은 내 것만 뗀다 — 남의(상태 주인의) 칩을 눌러 같은 이모지를 다는 길을 막는다.
-        onClick={() => { if (!status || mine) onToggle(emoji, !mine); }}
+        }`}
+        onClick={() => onToggle(emoji, !mine)}
       >
         <span>{emoji}</span>
         <span>{accountIds.length}</span>
       </button>
       {anchor && (
         sentence
-          ? <ReactionTooltip emoji={emoji} text={sentence} anchor={anchor} />
+          ? <ReactionTooltip emoji={emoji} text={sentence} also={othersSentence} anchor={anchor} />
           : <ReactionTooltip emoji={emoji} who={{ accountIds, nameOf, myId }} anchor={anchor} />
       )}
     </>
@@ -447,12 +453,14 @@ const EDGE_GAP = 8;
  * - 스크린리더는 이 말풍선을 따로 읽지 않는다(`aria-hidden`) — 칩의 `aria-label` 이 같은 목록을
  *   이미 말한다. 둘 다 읽히면 같은 이름이 두 번 들린다.
  */
-function ReactionTooltip({ emoji, who, text, anchor }: {
+function ReactionTooltip({ emoji, who, text, also, anchor }: {
   emoji: string;
   /** 사람 칩: 누가 달았는지로 문장을 만든다. */
   who?: { accountIds: string[]; nameOf: (id: string) => string | null; myId: string | null };
   /** 상태 칩: 이미 만든 문장(`statusSentence`). */
   text?: string;
+  /** 상태 칩의 둘째 줄: 주인 말고 같이 단 사람(`reactionSentence`). 없으면 한 줄이다. */
+  also?: { hint: string | null; sentence: string } | null;
   anchor: DOMRect;
 }) {
   const t = useT();
@@ -493,6 +501,12 @@ function ReactionTooltip({ emoji, who, text, anchor }: {
         {hint && <span data-testid="reaction-tooltip-hint">{hint} </span>}
         {sentence}
       </p>
+      {also && (
+        <p className="text-center text-body break-keep break-words" data-testid="reaction-tooltip-also">
+          {also.hint && <span data-testid="reaction-tooltip-hint">{also.hint} </span>}
+          {also.sentence}
+        </p>
+      )}
       <span
         aria-hidden="true"
         className={`absolute h-3 w-3 -translate-x-1/2 rotate-45 bg-fg ${below ? '-top-1.5' : '-bottom-1.5'}`}
