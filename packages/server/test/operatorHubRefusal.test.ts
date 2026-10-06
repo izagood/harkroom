@@ -26,3 +26,18 @@ describe('OperatorHub.refusalOf', () => {
     expect(hub.refusalOf('a-2')).toBeNull();
   });
 });
+
+describe('OperatorHub.status — 박동(P2a)', () => {
+  it('마지막 박동을 받은 시각과 함께 든다. 틀린 박동은 앞의 값을 지우지 않고, 다시 붙으면 비운다', () => {
+    const hub = createOperatorHub();
+    hub.addOperator('op-1', socket());
+    expect(hub.status('op-1')).toBeNull();
+    hub.onOperatorMessage('op-1', JSON.stringify({ type: 'status', status: { turns: { running: 2, max: 6 } } }));
+    expect(hub.status('op-1')).toMatchObject({ turns: { running: 2, max: 6 }, receivedAt: expect.any(String) });
+    hub.onOperatorMessage('op-1', JSON.stringify({ type: 'status', status: { turns: {} } }));
+    expect(hub.status('op-1')).toMatchObject({ turns: { running: 2 } });
+    hub.addOperator('op-1', socket());
+    expect(hub.status('op-1')).toBeNull();
+    expect(hub.status('op-unknown')).toBeNull();
+  });
+});

@@ -13,7 +13,7 @@
  * 버린다: 구·신 세대가 섞여도 한쪽이 죽지 않는다(`daemonProtocol` 의 `unknown-request` 와
  * 같은 판단).
  */
-import type { AgentSessionView, OperatorCapabilities, RunnerCap } from './index.js';
+import type { AgentSessionView, OperatorCapabilities, OperatorCredentialState, OperatorStatus, RunnerCap } from './index.js';
 
 /** 오퍼레이터가 spawn 마다 만드는 러너 식별자. 데몬의 `incarnationId` 와 같은 것이다 — 이름만 통일한다. */
 export interface RunnerAnnounce { agentId: string; runnerId: string; pid: number }
@@ -61,6 +61,14 @@ export type OperatorToServerFrame =
    */
   | { type: 'capabilities'; capabilities: OperatorCapabilities }
   /**
+   * 박동(원격 호스트 관리 P2a, 스레드 3b0f0255) — 오퍼레이터가 30초마다 낸다. 서버는 **마지막 값만**
+   * 연결이 살아 있는 동안 든다(능력과 같은 판단: 꺼진 머신의 메모리·턴 수를 보이면 거짓이다).
+   * `machine` 은 머신 고유값(`/etc/machine-id`·IOPlatformUUID)의 sha256 hex 다 — **원래 값은 보내지
+   * 않는다.** 서버가 이것을 소유자 id 와 다시 섞어 저장하므로(`operator.machine_id`) 소유자가 다르면
+   * 같은 머신이어도 값이 갈린다. 받는 쪽 검증은 `parseOperatorStatus` 하나다.
+   */
+  | { type: 'status'; status: unknown; machine?: unknown }
+  /**
    * 러너가 링크에 붙을 때마다(재접속 포함) 자기 세션·능력을 다시 선언한다 — 옛 릴레이의
    * `announce` 그대로다(`runnerLink.ts`). 서버는 이 목록으로 그 러너의 세션을 **교체**한다.
    */
@@ -95,14 +103,14 @@ export type ServerToOperatorFrame =
 
 const OPERATOR_TYPES = new Set<OperatorToServerFrame['type']>([
   'hello', 'capabilities', 'runner.started', 'runner.exited', 'runner.announce', 'session.started', 'session.updated', 'session.ended',
-  'pty.output', 'pty.replay', 'interactive.opened', 'interactive.error', 'attention.required',
+  'pty.output', 'pty.replay', 'interactive.opened', 'interactive.error', 'attention.required', 'status',
 ]);
 const SERVER_TYPES = new Set<ServerToOperatorFrame['type']>([
   'assign', 'unassign', 'agent.restart', 'runner.kill', 'pty.replay.request', 'pty.input', 'pty.resize', 'viewer.count', 'session.cancel', 'interactive.open',
 ]);
 
 /** `hello` 와 배정 셋(`assign`·`unassign`·`agent.restart`)만 러너 밖의 말이다 — 나머지는 전부 `runnerId` 가 있어야 한다. */
-const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'assign', 'unassign', 'agent.restart']);
+const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'status', 'assign', 'unassign', 'agent.restart']);
 
 function parse(raw: string, known: Set<string>): Record<string, unknown> | null {
   let value: unknown;
@@ -129,4 +137,77 @@ export function parseOperatorFrame(raw: string): OperatorToServerFrame | null {
 
 export function parseServerFrame(raw: string): ServerToOperatorFrame | null {
   return parse(raw, SERVER_TYPES) as ServerToOperatorFrame | null;
+}
+
+/** 박동의 머신 값 — sha256 hex 64자. 그 밖은 버린다(원래 machine-id 를 그대로 보낸 옛·틀린 구현 포함). */
+export function isMachineDigest(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+}
+
+const CREDENTIAL_KINDS = new Set(['claude', 'codex', 'mcp', 'gh']);
+const CREDENTIAL_STATES = new Set<OperatorCredentialState>(['present', 'expired', 'missing']);
+const MAX_CREDENTIALS = 64;
+const MAX_STATUS_AGENTS = 256;
+
+const count = (v: unknown, max = Number.MAX_SAFE_INTEGER): number | null =>
+  typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= max ? v : null;
+const shortText = (v: unknown, max = 64): string | null =>
+  typeof v === 'string' && v.length > 0 && v.length <= max && !/[\u0000-\u001f]/.test(v) ? v : null;
+
+/**
+ * 박동 본문을 **허용한 칸만** 골라 새 객체로 만든다. 모르는 키는 버린다 — 오퍼레이터가 실수로 토큰·경로
+ * 같은 값을 실어도 서버가 들지 않고 화면에도 가지 않는다(H5: 자격 증명은 **상태만**, 값·만료 시각 없음).
+ * 필수는 `turns.running` 하나다. 나머지 칸은 틀리면 그 칸만 뗀다(박동 하나 때문에 상태 전체를 잃지 않게).
+ */
+export function parseOperatorStatus(value: unknown): OperatorStatus | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const v = value as Record<string, unknown>;
+  const turns = typeof v.turns === 'object' && v.turns !== null ? v.turns as Record<string, unknown> : null;
+  const running = count(turns?.running, 10_000);
+  if (running === null) return null;
+  const out: OperatorStatus = { turns: { running, max: count(turns?.max, 10_000) || null } };
+  const startedAt = shortText(v.startedAt, 40);
+  if (startedAt && !Number.isNaN(Date.parse(startedAt))) out.startedAt = new Date(startedAt).toISOString();
+  const bytes = (o: unknown): { totalBytes: number; freeBytes: number } | undefined => {
+    if (typeof o !== 'object' || o === null) return undefined;
+    const r = o as Record<string, unknown>;
+    const total = count(r.totalBytes);
+    const free = count(r.freeBytes);
+    return total !== null && free !== null && free <= total ? { totalBytes: total, freeBytes: free } : undefined;
+  };
+  const memory = bytes(v.memory);
+  if (memory) {
+    out.memory = memory;
+    const turnRss = count((v.memory as Record<string, unknown>).turnRssBytes);
+    if (turnRss !== null) out.memory.turnRssBytes = turnRss;
+  }
+  const disk = bytes(v.disk);
+  if (disk) out.disk = disk;
+  if (Array.isArray(v.runners)) {
+    const runners: { agentId: string; turns: number }[] = [];
+    for (const r of v.runners.slice(0, MAX_STATUS_AGENTS)) {
+      if (typeof r !== 'object' || r === null) continue;
+      const agentId = shortText((r as Record<string, unknown>).agentId);
+      const n = count((r as Record<string, unknown>).turns, 10_000);
+      if (agentId && n !== null) runners.push({ agentId, turns: n });
+    }
+    out.runners = runners;
+  }
+  if (Array.isArray(v.credentials)) {
+    const creds: NonNullable<OperatorStatus['credentials']> = [];
+    for (const c of v.credentials.slice(0, MAX_CREDENTIALS)) {
+      if (typeof c !== 'object' || c === null) continue;
+      const r = c as Record<string, unknown>;
+      const kind = typeof r.kind === 'string' && CREDENTIAL_KINDS.has(r.kind) ? r.kind as 'claude' | 'codex' | 'mcp' | 'gh' : null;
+      const state = typeof r.state === 'string' && CREDENTIAL_STATES.has(r.state as OperatorCredentialState) ? r.state as OperatorCredentialState : null;
+      const name = shortText(r.name);
+      if (!kind || !state || !name) continue;
+      const agentIds = Array.isArray(r.agentIds)
+        ? r.agentIds.map((a) => shortText(a)).filter((a): a is string => a !== null).slice(0, MAX_STATUS_AGENTS)
+        : [];
+      creds.push({ kind, name, state, agentIds });
+    }
+    out.credentials = creds;
+  }
+  return out;
 }

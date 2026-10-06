@@ -6,9 +6,9 @@
 // 러너 릴레이 허브(`relay.ts`)와 별개다. 단계 3 에서 그쪽 세션 맵이 이 허브 위로 올라온다 —
 // 그때까지 이 허브는 "누가 붙어 있고 무엇을 돌릴 수 있나"만 안다.
 import { EventEmitter } from 'node:events';
-import type { OperatorCapabilities } from '@harkroom/shared';
+import type { OperatorCapabilities, OperatorStatus } from '@harkroom/shared';
 import {
-  parseOperatorFrame, type OperatorToServerFrame, type ServerToOperatorFrame,
+  parseOperatorFrame, parseOperatorStatus, type OperatorToServerFrame, type ServerToOperatorFrame,
 } from '@harkroom/shared/operatorProtocol';
 import type { RelaySocket } from './relay.js';
 
@@ -17,6 +17,8 @@ interface LiveOperator {
   capabilities: OperatorCapabilities | null;
   /** runnerId → agentId. hello 의 announce 와 runner.started/exited 가 유지한다. */
   runners: Map<string, string>;
+  /** 마지막 박동(`status` 프레임). 허용한 칸만 남긴 값이다(`parseOperatorStatus`). */
+  status: (OperatorStatus & { receivedAt: string }) | null;
 }
 
 export interface OperatorHub {
@@ -30,6 +32,8 @@ export interface OperatorHub {
   onOperatorMessage(operatorId: string, raw: string): void;
   isOnline(operatorId: string): boolean;
   capabilities(operatorId: string): OperatorCapabilities | null;
+  /** 마지막 박동. 연결이 없거나 아직 박동이 없으면 null — 꺼진 머신의 숫자를 보이지 않는다. */
+  status(operatorId: string): (OperatorStatus & { receivedAt: string }) | null;
   /** 보냈는가까지다 — 오프라인이면 false. 도착은 프레임 왕복이 말한다. */
   send(operatorId: string, frame: ServerToOperatorFrame): boolean;
   /** 이 에이전트의 러너가 지금 어느 오퍼레이터에 살아 있나. 없으면 null. */
@@ -64,7 +68,7 @@ export function createOperatorHub(): OperatorHub {
         // 교체도 끊김이다 — 앞 소켓의 러너들은 새 hello 가 다시 알린다.
         bus.emit('close', operatorId);
       }
-      const entry: LiveOperator = { socket, capabilities: null, runners: new Map() };
+      const entry: LiveOperator = { socket, capabilities: null, runners: new Map(), status: null };
       live.set(operatorId, entry);
       return () => {
         // 이미 다른 소켓으로 교체됐다면 그쪽 등록을 지우지 않는다.
@@ -85,6 +89,11 @@ export function createOperatorHub(): OperatorHub {
       } else if (frame.type === 'capabilities') {
         // 앱이 오퍼레이터 로컬 설정을 고쳤다 — 러너 목록은 그대로, 능력만 바뀐다.
         entry.capabilities = frame.capabilities;
+      } else if (frame.type === 'status') {
+        // 틀린 박동은 버리고 앞의 값을 둔다 — 한 번의 실수로 화면이 "모름"으로 깜빡이지 않게.
+        const status = parseOperatorStatus(frame.status);
+        if (!status) return;
+        entry.status = { ...status, receivedAt: new Date().toISOString() };
       } else if (frame.type === 'runner.started') {
         entry.runners.set(frame.runnerId, frame.agentId);
         refusals.delete(frame.agentId);
@@ -102,6 +111,7 @@ export function createOperatorHub(): OperatorHub {
     isOnline: (operatorId) => live.has(operatorId),
     refusalOf: (agentId) => refusals.get(agentId) ?? null,
     capabilities: (operatorId) => live.get(operatorId)?.capabilities ?? null,
+    status: (operatorId) => live.get(operatorId)?.status ?? null,
 
     send(operatorId, frame) {
       const entry = live.get(operatorId);

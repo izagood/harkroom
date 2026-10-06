@@ -42,7 +42,11 @@ export type WorkspaceEvent =
   // 권한·오퍼레이터(스펙 2026-09-20). 모양은 `@harkroom/shared` 의 WsServerEvent 와 같다 —
   // 화면은 "다시 읽으라"는 신호로만 쓰고 본문을 싣지 않는다(권한 목록은 공격 표면의 지도다).
   | { type: 'grant.changed'; accountId: string; audience: 'all' | string[] }
-  | { type: 'operator.changed'; operatorId: string; audience: 'all' | string[] }
+  /**
+   * `codeId` 는 등록(claim)에서만 실린다 — 「연결 기다리는 중」 창이 **자기가 낸 등록 코드로** 붙은
+   * operator 를 알아보는 표(`POST /operators/register-codes` 의 응답과 같은 값). 소유자에게만 간다.
+   */
+  | { type: 'operator.changed'; operatorId: string; audience: 'all' | string[]; codeId?: string }
   | { type: 'agent_assignment.changed'; agentId: string; audience: 'all' }
   // 담기/해제/상태 변경(#219). 본인의 소켓에만 간다.
   | { type: 'saved.changed'; messageId: string; state: 'open' | 'done' | null; accountId: string }

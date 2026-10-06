@@ -3639,6 +3639,36 @@ export interface OperatorView {
    * **선택 필드**다: 이 열을 모르는 옛 서버는 키를 싣지 않는다(없음 = null 과 같다).
    */
   label?: string | null;
+  /**
+   * 같은 머신 묶음표(`operator.machine_id`, 마이그레이션 105). 오퍼레이터가 박동에 실은 머신 digest 를
+   * 서버가 **소유자 id 와 섞어** 만든 값이다 — 같은 소유자의 같은 머신이면 같고, 소유자가 다르면 같은
+   * 머신이어도 다르다. 화면이 한 VM 의 operator 들을 한 줄로 묶는 근거다. 저장된 사실이라 오프라인에도
+   * 남는다. **선택 필드**(옛 서버는 싣지 않는다), `null` 은 박동을 보낸 적 없음.
+   */
+  machineId?: string | null;
+  /**
+   * 마지막 박동(`status` 프레임) — **지금의 사실**이다. 연결이 끊기면 `null`. 서버가 받은 시각을
+   * `receivedAt` 에 붙인다. 선택 필드(옛 서버는 싣지 않는다).
+   */
+  status?: (OperatorStatus & { receivedAt: string }) | null;
+}
+
+export type OperatorCredentialState = 'present' | 'expired' | 'missing';
+
+/**
+ * 오퍼레이터 박동의 본문(원격 호스트 관리 P2a·H1·H5). 받는 쪽은 `parseOperatorStatus` 로 허용한 칸만
+ * 남긴다. **자격 증명은 상태만 싣는다** — 값·만료 시각·경로는 칸이 없다.
+ */
+export interface OperatorStatus {
+  startedAt?: string;
+  /** 지금 도는 턴 수와 동시 턴 상한(`HARKROOM_MAX_TURNS`, null = 상한 없음). */
+  turns: { running: number; max: number | null };
+  memory?: { totalBytes: number; freeBytes: number; turnRssBytes?: number };
+  /** 오퍼레이터 데이터 디렉터리가 놓인 디스크. */
+  disk?: { totalBytes: number; freeBytes: number };
+  /** 에이전트별 러너가 돌리는 턴 수. */
+  runners?: { agentId: string; turns: number }[];
+  credentials?: { kind: 'claude' | 'codex' | 'mcp' | 'gh'; name: string; state: OperatorCredentialState; agentIds: string[] }[];
 }
 
 /** 오퍼레이터가 `hello` 에 싣는 능력 — 연결이 살아 있는 동안만 서버가 든다. */
