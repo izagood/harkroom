@@ -1,4 +1,4 @@
-import { statusReactionEmoji, type MessageRow, type ThreadStatusReaction } from '@harkroom/shared';
+import { THREAD_STATUS_EMOJI, type MessageRow, type ThreadStatusReaction } from '@harkroom/shared';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useActiveStore } from '../state/communities';
@@ -242,11 +242,11 @@ export function Reactions({ message }: { message: MessageRow }) {
 /**
  * 이 칩이 **서버가 단 상태 리액션**인가(2026-10-06, jaebin) — 상태 이모지이고 그 주인 에이전트가 들어 있다.
  * 서버는 상태를 진짜 리액션으로 단다(server 108, `services/threadStatus.ts`) — 주인 에이전트 이름으로,
- * 끝남 ✅ 는 없이. 그래서 상태는 데스크톱·모바일·웹 모두 같은 리액션으로 보이고, 화면은 그 칩을 알아보기만 한다.
+ * 끝남 ✅ 까지(jaebin B1). 그래서 상태는 데스크톱·모바일·웹 모두 같은 리액션으로 보이고, 화면은 그 칩을 알아보기만 한다.
  */
 export function isStatusChip(r: MessageRow['reactions'][number], status: ThreadStatusReaction | null): boolean {
   if (!status?.accountId) return false;
-  return r.emoji === statusReactionEmoji(status.status) && r.accountIds.includes(status.accountId);
+  return r.emoji === THREAD_STATUS_EMOJI[status.status] && r.accountIds.includes(status.accountId);
 }
 
 /**
@@ -256,8 +256,8 @@ export function isStatusChip(r: MessageRow['reactions'][number], status: ThreadS
 export function withStatusReaction(
   reactions: MessageRow['reactions'], status: ThreadStatusReaction | null,
 ): MessageRow['reactions'] {
-  const emoji = status ? statusReactionEmoji(status.status) : null;
-  if (!status?.accountId || !emoji || reactions.some((r) => isStatusChip(r, status))) return reactions;
+  if (!status?.accountId || reactions.some((r) => isStatusChip(r, status))) return reactions;
+  const emoji = THREAD_STATUS_EMOJI[status.status];
   const same = reactions.find((r) => r.emoji === emoji);
   if (same) return reactions.map((r) => (r === same ? { emoji, accountIds: [status.accountId!, ...r.accountIds] } : r));
   return [{ emoji, accountIds: [status.accountId] }, ...reactions];

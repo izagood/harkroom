@@ -1,6 +1,6 @@
 // 스레드 상태 리액션 — 화면 쪽. 판정은 서버(shared/threadStatus.ts)가 하고 **진짜 리액션으로 단다**(server 108,
 // 2026-10-06). 여기서는 ① 서버가 단 리액션을 상태 칩으로 알아본다(보통 칩 모양·숫자) ② 남의 상태 칩은 눌러도
-// 안 달린다 ③ 🙋·🚨 만 색 테두리 ④ hover 이유 ⑤ 옛 서버면 상태에서 칩을 붙인다 ⑥ 끝남 ✅ 는 그리지 않는다
+// 안 달린다 ③ 🙋·🚨 만 색 테두리 ④ hover 이유 ⑤ 옛 서버면 상태에서 칩을 붙인다 ⑥ 끝남 ✅ 도 주인 이름의 상태 칩(B1)
 // ⑦ thread.status 반영 ⑧ 실시간 행이 배지 재료를 null 로 덮지 않음(0.3.107 배지 누락) 을 본다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
@@ -78,20 +78,20 @@ describe('상태 리액션 칩', () => {
     expect(screen.getByTestId('reaction-tooltip').textContent).toContain('Your turn · harkbot asks · 수정안 둘 중 어느 것?');
   });
 
-  it('리액션이 아직 없으면(옛 서버·이벤트 찰나) 상태에서 칩을 붙인다, 끝남 ✅ 는 붙이지 않는다', () => {
+  it('리액션이 아직 없으면(옛 서버·이벤트 찰나) 상태에서 칩을 붙인다, 끝남 ✅ 도', () => {
     expect(withStatusReaction([], st('running', '💬'))).toEqual([{ emoji: '💬', accountIds: ['bot'] }]);
     expect(withStatusReaction([{ emoji: '💬', accountIds: ['u2'] }], st('running', '💬')))
       .toEqual([{ emoji: '💬', accountIds: ['bot', 'u2'] }]);
     const already = [{ emoji: '💬', accountIds: ['bot'] }];
     expect(withStatusReaction(already, st('running', '💬'))).toBe(already);
-    expect(withStatusReaction([], st('done', '✅'))).toEqual([]);
+    expect(withStatusReaction([], st('done', '✅'))).toEqual([{ emoji: '✅', accountIds: ['bot'] }]);
   });
 
-  it('끝난 스레드는 사람 ✅ 만 — 상태 칩이 아니다', () => {
-    seed({ statusReaction: st('done', '✅'), reactions: [{ emoji: '✅', accountIds: ['u2'] }] });
+  it('끝난 스레드는 주인 ✅ 가 상태 칩 — 사람 ✅ 와 한 칩에 모여 숫자가 오른다(B1)', () => {
+    seed({ statusReaction: st('done', '✅'), reactions: [{ emoji: '✅', accountIds: ['bot', 'u2'] }] });
     render(<Reactions message={root()} />);
-    expect(screen.getByTestId('reaction-✅').dataset.status).toBeUndefined();
-    expect(screen.getByTestId('reaction-✅').textContent).toBe('✅1');
+    expect(screen.getByTestId('reaction-✅').dataset.status).toBe('done');
+    expect(screen.getByTestId('reaction-✅').textContent).toBe('✅2');
   });
 
   it('답글 행에는 상태를 붙이지 않는다', () => {
