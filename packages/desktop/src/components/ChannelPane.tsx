@@ -86,6 +86,16 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   const me = useActiveStore((s) => s.me);
   const channelMessages = useActiveStore((s) => (activeChannelId ? s.messages[activeChannelId] : undefined));
   const channelHasMore = useActiveStore((s) => (activeChannelId ? s.hasMore[activeChannelId] : undefined));
+  // 첫 페이지를 기다리는 동안은 빈 상태를 그리지 않는다(#1223 n1). 400ms 를 넘기면 한 줄만 말한다 —
+  // 대부분 그 전에 끝나므로 스피너·뼈대로 화면을 흔들지 않는다.
+  const firstPageLoading = useActiveStore((s) => (activeChannelId ? !!s.firstPageLoading[activeChannelId] : false));
+  const [slowFirstPage, setSlowFirstPage] = useState(false);
+  useEffect(() => {
+    setSlowFirstPage(false);
+    if (!firstPageLoading) return;
+    const id = setTimeout(() => setSlowFirstPage(true), 400);
+    return () => clearTimeout(id);
+  }, [firstPageLoading, activeChannelId]);
   const channelDividerSeq = useActiveStore((s) => (windowView.kind !== 'main' ? windowView.dividerSeq : activeChannelId ? s.dividerSeq[activeChannelId] : undefined));
   const channelPinsRaw = useActiveStore((s) => (activeChannelId ? s.pins[activeChannelId] : undefined));
   const runnerStates = useActiveStore((s) => s.runnerStates);
@@ -846,8 +856,13 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
           빈 상태는 **메시지가 없을 때만**이다. `hasMore` 가 참이면 과거가 서버에 더 있고 아직
           안 받아온 것뿐이라, 그때 "아직 메시지가 없다"를 그리면 거짓말이 된다(#234).
         */}
-        {roots.length === 0 && !channelHasMore && (
+        {roots.length === 0 && !channelHasMore && !firstPageLoading && (
           <ChannelEmptyState channel={channel} isArchived={isArchived} />
+        )}
+        {roots.length === 0 && firstPageLoading && slowFirstPage && (
+          <div className="px-4 py-10 text-center text-meta text-fg-subtle" role="status" data-testid="channel-loading">
+            {t('channel.loadingMessages')}
+          </div>
         )}
         {/* 줄들을 한 상자에 담는다 — 높이 변화를 지켜볼 대상이자, 붙잡을 후보의 범위다
             (`contentRef` 주석). 상자는 아무 모양도 주지 않으므로 목록의 배치는 그대로다. */}

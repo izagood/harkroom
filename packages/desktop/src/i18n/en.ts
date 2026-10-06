@@ -3609,6 +3609,7 @@ export const en = {
   'channel.doc.theirs': 'What is on the server now',
 
   'channel.empty.noMessages': 'No messages yet',
+  'channel.loadingMessages': 'Loading messages…',
   'channel.empty.noMessagesIn': 'No messages in #{name} yet',
   /**
    * **`답한다` 가 아니라 `inbox 로 들어간다`** 다 — 답이 오는지는 러너가 떠 있는가에

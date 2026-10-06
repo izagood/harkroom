@@ -385,6 +385,23 @@ export class Controller {
    * 버린다), 없거나 실패했으면 새로 묻는다.
    */
   private async firstPage(channelId: string): Promise<{ messages: MessageRow[]; hasMore: boolean }> {
+    this.setFirstPageLoading(channelId, true);
+    try {
+      return await this.fetchFirstPage(channelId);
+    } finally {
+      this.setFirstPageLoading(channelId, false);
+    }
+  }
+
+  private setFirstPageLoading(channelId: string, on: boolean): void {
+    const { firstPageLoading } = this.store.getState();
+    if (!!firstPageLoading[channelId] === on) return;
+    const next = { ...firstPageLoading };
+    if (on) next[channelId] = true; else delete next[channelId];
+    this.store.getState().set({ firstPageLoading: next });
+  }
+
+  private async fetchFirstPage(channelId: string): Promise<{ messages: MessageRow[]; hasMore: boolean }> {
     const prefetched = this.prefetchedPages.get(channelId);
     if (prefetched) {
       // 응답이 올 때까지 **지우지 않는다** — 기동의 복원과 사람의 클릭이 같은 응답에 합류해야

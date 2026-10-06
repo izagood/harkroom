@@ -242,6 +242,16 @@ export function Sidebar({
   onToggleCollapse: () => void;
 }) {
   const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, channelAutoMentions, messages, runnerStates, projectionStatus } = useActiveStore();
+  // 채널이 열리면(사이드바 밖에서 연 것 포함 — 재시작 뒤 복원·검색·링크) 레일의 활성 줄이 보이게 한다
+  // (#1223 n2). `nearest` 라 이미 보이면 움직이지 않는다. 접힌 섹션 안이면 줄이 없어 아무 일도 없다.
+  const channelRevealSeq = useActiveStore((s) => s.channelRevealSeq);
+  useEffect(() => {
+    if (!activeChannelId) return;
+    const row = Array.from(document.querySelectorAll<HTMLElement>('[data-channel-row]'))
+      .find((el) => el.dataset.channelRow === activeChannelId);
+    row?.scrollIntoView?.({ block: 'nearest' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 여는 순간에만 맞춘다
+  }, [channelRevealSeq]);
   const t = useT();
   // 새 창으로 띄운 채널·DM(사이드바 ⧉ 표시). 장부가 바뀔 때만 다시 센다.
   const appWindowEntries = useAppWindows((st) => st.entries);
@@ -711,7 +721,7 @@ export function Sidebar({
       ? t('sidebar.runner.state', { label: runnerStatusLabel(runner, t) })
       : t(PRESENCE_LABEL[dm.presence]);
     return (
-      <button key={dm.id} className={`${row(dm.id === activeChannelId)} ${reason ? 'flex-col items-start' : ''}`}
+      <button key={dm.id} className={`${row(dm.id === activeChannelId)} ${reason ? 'flex-col items-start' : ''}`} data-channel-row={dm.id}
         onClick={(e) => openChannelFrom(e, dm.id, () => void getController().openChannel(dm.id))}>
         <span className="flex min-w-0 items-center gap-1.5">
           {/*
@@ -825,7 +835,7 @@ export function Sidebar({
       );
     }
     const ChannelButton = (
-      <button key={ch.id} className={row(ch.id === activeChannelId)}
+      <button key={ch.id} className={row(ch.id === activeChannelId)} data-channel-row={ch.id}
         onClick={(e) => openChannelFrom(e, ch.id, () => void getController().openChannel(ch.id))}>
         {/* private 채널은 '#' 대신 자물쇠다. 여기 이 표시가 없으면 사용자는 자기가 쓰는
             글이 전원에게 가는지 멤버에게만 가는지 화면 어디에서도 알 수 없다. */}
