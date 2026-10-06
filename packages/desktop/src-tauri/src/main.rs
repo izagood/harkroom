@@ -686,6 +686,52 @@ async fn operator_merge_get(
     .await
 }
 
+#[tauri::command]
+async fn workspace_cleanup_get(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.workspace_cleanup_get()
+    })
+    .await
+}
+
+#[tauri::command]
+async fn workspace_cleanup_settings_set(
+    app: tauri::AppHandle,
+    enabled: Option<bool>,
+    grace_days: Option<u32>,
+) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.workspace_cleanup_settings_set(enabled, grace_days)
+    })
+    .await
+}
+
+/// 보존·되돌리기·삭제 예정에 넣기. 경로가 원장에 있는지·동작 이름은 오퍼레이터가 검사한다.
+#[tauri::command]
+async fn workspace_cleanup_act(
+    app: tauri::AppHandle,
+    path: String,
+    action: String,
+    by: String,
+) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.workspace_cleanup_act(&path, &action, &by)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn workspace_cleanup_sweep(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.workspace_cleanup_sweep()
+    })
+    .await
+}
+
 /// 머지 래퍼의 gh 계정을 고른다 — `gh_user` 가 None 이면 지운다. 검사는 오퍼레이터가 한다(security C7).
 #[tauri::command]
 async fn operator_merge_set(
@@ -916,6 +962,10 @@ fn main() {
             operator_mcp_remove,
             operator_merge_get,
             operator_merge_set,
+            workspace_cleanup_get,
+            workspace_cleanup_settings_set,
+            workspace_cleanup_act,
+            workspace_cleanup_sweep,
             operator_mcp_auth,
             operator_agent_remove,
         ])

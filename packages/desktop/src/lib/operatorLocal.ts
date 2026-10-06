@@ -4,6 +4,7 @@
  * `claudeAccounts.ts` 와 같은 경계다: 웹뷰가 넘기는 것은 URL·id·문자열뿐이고 Rust 커맨드가
  * 데몬에 전달한다.
  */
+import type { CleanupLedger, CleanupSettings } from '@harkroom/shared/workspaceCleanup';
 import type { OperatorAgentsListResult, OperatorLocalAgent, OperatorMcpAuthStartResult, OperatorMcpAuthState, OperatorMcpListResult, OperatorMcpRemoteDefinition, OperatorMergeState, OperatorRegisterResult } from '@harkroom/shared/daemonProtocol';
 
 interface TauriInternals { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> }
@@ -86,4 +87,31 @@ export function getLocalMerge(): Promise<OperatorMergeState> {
 /** `null` 은 비우기다 — 그 뒤로 래퍼는 머지하지 않는다(`no_gh_user`). */
 export function setLocalMergeGhUser(ghUser: string | null): Promise<OperatorMergeState> {
   return call('operator_merge_set', { ghUser }) as Promise<OperatorMergeState>;
+}
+
+// ── 작업 폴더 정리(스레드 9e909150) ──────────────────────────────────────────────
+// 원장은 오퍼레이터의 것이다(`operator/src/workspaceCleanup.ts`). 앱은 읽고, 설정을 바꾸고, 보존·되돌리기·삭제 예정에 넣기만
+// 한다 — **바로 지우는 길은 없다**(D3·D5).
+
+export interface WorkspaceCleanupView {
+  settings: CleanupSettings;
+  ledger: CleanupLedger;
+  running: boolean;
+}
+
+export function getWorkspaceCleanup(): Promise<WorkspaceCleanupView> {
+  return call('workspace_cleanup_get') as Promise<WorkspaceCleanupView>;
+}
+
+export function setWorkspaceCleanupSettings(next: { enabled?: boolean; graceDays?: number }): Promise<WorkspaceCleanupView> {
+  return call('workspace_cleanup_settings_set', { enabled: next.enabled ?? null, graceDays: next.graceDays ?? null }) as Promise<WorkspaceCleanupView>;
+}
+
+/** `by` 는 누른 사람의 계정 id 다(화면의 「누가 보존」). */
+export function actWorkspaceCleanup(path: string, action: 'keep' | 'unkeep' | 'list', by: string): Promise<WorkspaceCleanupView> {
+  return call('workspace_cleanup_act', { path, action, by }) as Promise<WorkspaceCleanupView>;
+}
+
+export function sweepWorkspaceCleanup(): Promise<WorkspaceCleanupView> {
+  return call('workspace_cleanup_sweep') as Promise<WorkspaceCleanupView>;
 }

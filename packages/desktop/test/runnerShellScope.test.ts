@@ -603,7 +603,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       expect(callers).toEqual([{ fn: 'daemon_command', file: 'daemon_client.rs' }]);
     });
 
-    it('`#[tauri::command]` 중 웹뷰가 채울 수 있는 파라미터를 받는 것은 시크릿 3종·daemon 2종·로컬 설정 6종뿐이다', () => {
+    it('`#[tauri::command]` 중 웹뷰가 채울 수 있는 파라미터를 받는 것은 시크릿 3종·daemon 2종·로컬 설정 6종·작업 폴더 정리 2종뿐이다', () => {
       const commands = [...mainRs.matchAll(
         /#\[tauri::command\]\s*\n\s*(?:async\s+)?fn\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)/g,
       )].map((m) => {
@@ -636,7 +636,14 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
           'daemon_kill_runner', 'daemon_spawn_runner',
           'operator_agent_remove', 'operator_agent_set', 'operator_mcp_auth', 'operator_mcp_remove', 'operator_mcp_set', 'operator_merge_set', 'operator_register',
           'secret_delete', 'secret_get', 'secret_set',
+          'workspace_cleanup_act', 'workspace_cleanup_settings_set',
         ]);
+      // 작업 폴더 정리(스레드 9e909150): 켜기·N일 값, 그리고 원장 경로·동작 이름·누른 사람 id 문자열뿐이다. 경로가 원장에
+      // 있는지·동작이 keep|unkeep|list 인지는 오퍼레이터가 본다(`readWorkspaceCleanupActPayload`) — 지우는 동작은 없다.
+      expect(commands.find((c) => c.fn === 'workspace_cleanup_settings_set')!.webviewParams.sort())
+        .toEqual(['enabled: Option<bool>', 'grace_days: Option<u32>']);
+      expect(commands.find((c) => c.fn === 'workspace_cleanup_act')!.webviewParams.sort())
+        .toEqual(['action: String', 'by: String', 'path: String']);
       // 미리보기 허용(#1069 A′): URL **문자열** 하나와, Tauri 가 채우는 웹뷰(라벨이 main 인지 본다)뿐이다.
       // 판정(http(s)·/preview/·90초·한 번)은 Rust `PreviewAllowance` 가 하고 그 단위 시험이 고정한다.
       const preview = commands.find((c) => c.fn === 'allow_preview_once')!;
