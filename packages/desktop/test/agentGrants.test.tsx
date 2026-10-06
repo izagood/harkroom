@@ -163,7 +163,8 @@ describe('AgentGrantsSection', () => {
     await screen.findByTestId('agent-grants-none');
     fireEvent.click(screen.getByText('+ 권한 주기'));
     fireEvent.click(screen.getByRole('radio', { name: '비밀 만들기' }));
-    expect(screen.getByTestId('agent-secret-create-add').textContent).toContain('만들 때마다 그 스레드에서 알림');
+    expect(screen.getByTestId('agent-secret-create-add').textContent).toContain('알림 줄이 남고');
+    expect(screen.getByTestId('agent-secret-create-add').textContent).not.toContain('알림을 받는다');
     fireEvent.click(screen.getByRole('button', { name: '허용' }));
     await waitFor(() => expect(c.putGrant).toHaveBeenCalledWith('agent-1', { capability: 'secret.create', scope: '', expiresAt: null }));
   });
@@ -172,8 +173,11 @@ describe('AgentGrantsSection', () => {
     const c = setup({ listGrants: vi.fn(async () => [{ ...grant(''), capability: 'secret.create' }]) });
     render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
     const row = await screen.findByTestId('agent-secret-create-grant');
-    expect(row.textContent).toContain('비밀 만들기');
+    // 줄 첫 칸은 상태다(designer n1) — 소제목이 이미 「비밀 만들기」다.
+    expect(row.textContent).toContain('허용됨');
+    expect(row.textContent).not.toContain('비밀 만들기');
     expect(row.textContent).toContain('준 사람: owner');
+    expect(row.textContent).toContain('만료 없음');
     fireEvent.click(within(row).getByRole('button', { name: '거두기' }));
     const dialog = screen.getByRole('dialog');
     expect(dialog.textContent).toContain('@alpha 의 비밀 만들기를 거둘까?');

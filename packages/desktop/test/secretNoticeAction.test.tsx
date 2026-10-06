@@ -26,7 +26,8 @@ describe('SecretNoticeAction', () => {
     const open = vi.fn();
     render(<SecretNoticeAction message={msg('owner-1')} onOpenSettings={open} />);
     fireEvent.click(screen.getByTestId('secret-notice-open'));
-    expect(open).toHaveBeenCalledWith('secrets');
+    // 그 비밀 줄로 가도록 secretId 를 targetId 로 넘긴다(designer n3).
+    expect(open).toHaveBeenCalledWith('secrets', 's1');
   });
 
   it('소유자가 아니면 아무것도 그리지 않는다', () => {

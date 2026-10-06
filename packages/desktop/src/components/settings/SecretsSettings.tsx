@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { ApiError, type SecretAccessView, type SecretGrantView, type SecretView } from '../../lib/api';
@@ -44,7 +44,7 @@ async function fileToBase64(f: File): Promise<string> {
   return btoa(bin);
 }
 
-export function SecretsSettings() {
+export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
   const t = useT();
   const locale = useLocale();
   const me = useActiveStore((s) => s.me);
@@ -59,6 +59,27 @@ export function SecretsSettings() {
     try { setState(await getController().listSecrets()); } catch { setState('error'); }
   }, []);
   useEffect(() => { void load(); }, [load]);
+
+  /**
+   * 알림 줄 [비밀 보기](designer n3)가 넘긴 비밀 id — 목록이 오면 그 줄로 스크롤하고 잠깐 강조한다. 한 targetId 에 한 번만
+   * (`AgentsSettings` 와 같은 이유: 목록은 다시 읽을 때마다 새 배열이다). 없는 id(지워졌거나 남의 것)면 아무것도 안 한다.
+   */
+  const [flash, setFlash] = useState<string | null>(null);
+  const jumpedFor = useRef<string | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLLIElement>());
+  useEffect(() => {
+    if (!targetId || jumpedFor.current === targetId || typeof state !== 'object') return;
+    jumpedFor.current = targetId;
+    if (!state.secrets.some((s) => s.id === targetId)) return;
+    rowRefs.current.get(targetId)?.scrollIntoView?.({ block: 'center' });
+    setFlash(targetId);
+  }, [targetId, state]);
+  // 강조 끄기는 따로 건다 — 위 효과는 목록을 다시 읽을 때마다 다시 돌아 그 정리가 타이머를 지우면 강조가 남는다.
+  useEffect(() => {
+    if (!flash) return;
+    const timer = setTimeout(() => setFlash(null), 2000);
+    return () => clearTimeout(timer);
+  }, [flash]);
 
   const explain = useExplain();
   const run = async (fn: () => Promise<void>): Promise<boolean> => {
@@ -104,7 +125,9 @@ export function SecretsSettings() {
               const open = panel?.id === s.id ? panel.kind : null;
               const toggle = (kind: NonNullable<Panel>['kind']) => { setError(null); setPanel(open === kind ? null : { id: s.id, kind }); };
               return (
-                <li key={s.id} className="rounded border border-border px-2 py-1 text-meta" data-testid={`secret-${s.name}`}>
+                <li key={s.id} ref={(el) => { if (el) rowRefs.current.set(s.id, el); else rowRefs.current.delete(s.id); }}
+                  className={`rounded border px-2 py-1 text-meta transition-colors ${flash === s.id ? 'border-accent bg-accent-surface' : 'border-border'}`}
+                  data-testid={`secret-${s.name}`} data-flash={flash === s.id || undefined}>
                   <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 ${expired ? 'text-fg-subtle' : 'text-fg'}`}>
                     <span className="font-mono font-medium">{s.name}</span>
                     <span className="rounded border border-border px-1 text-fg-muted">{s.kind === 'file' ? t('secrets.kindFile') : t('secrets.kindText')}</span>
@@ -399,7 +422,8 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
       {canGrant ? (
         <>
         {/* 에이전트가 값을 정한 비밀(security L2): 그 에이전트는 값을 안다 — 다른 에이전트에게 넓히기 전에 말한다. */}
-        {secret.valueSetByAgentId && (
+        {/* 안내는 에이전트를 고른 뒤에만(designer n2) — 폼 위에 세 줄이 겹치지 않게. */}
+        {secret.valueSetByAgentId && agentId && (
           <p className="mt-2 text-meta text-fg-subtle" data-testid="secret-adopt-note">{t('secrets.adoptNote', { handle: handle(secret.valueSetByAgentId) })}</p>
         )}
         {secret.valueSetByAgentId && agentId && agentId !== secret.valueSetByAgentId && (
