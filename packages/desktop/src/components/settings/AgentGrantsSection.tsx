@@ -25,6 +25,7 @@ import { ImmediateBadge } from './pendingEdits';
 import { MergeGhUserRow } from './MergeGhUserRow';
 
 const CAP = 'repo.merge' as const;
+const SECRET_CAP = 'secret.create' as const;
 type Expiry = 'none' | '7d' | '30d';
 
 /** `repo:<owner>/<name>` → `owner/name`. 서버가 소문자로 정규화해 돌려준다. */
@@ -66,7 +67,9 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   // API 호출(P4b): 같은 절에 소제목으로 나눈다(designer v3 ③). 연결 이름은 내 연결 목록에서 찾는다 — 없으면 id 앞부분.
   const [apiGrants, setApiGrants] = useState<GrantRow[]>([]);
   const [connectors, setConnectors] = useState<ApiConnectorView[]>([]);
-  const [addKind, setAddKind] = useState<'merge' | 'api'>('api');
+  const [addKind, setAddKind] = useState<'merge' | 'api' | 'secret'>('api');
+  // 비밀 만들기(서버 102, 스레드 1a08d0cf): scope '' 하나, 소유자만 준다. 기본은 꺼짐이다.
+  const [secretGrant, setSecretGrant] = useState<GrantRow | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -74,6 +77,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
       const rows = all.filter((g) => g.capability === CAP);
       setGrants(rows);
       setApiGrants(all.filter((g) => g.capability === 'api.call'));
+      setSecretGrant(all.find((g) => g.capability === SECRET_CAP && g.scope === '') ?? null);
       // 소유자가 볼 때만 알린다(#1146 security n2) — admin 이 남의 에이전트를 열어도 목록 카드에 그 숫자가 끼지 않게.
       if (canGrant) onCountChange?.(liveMergeGrantCount(rows));
     } catch { setGrants('error'); }
@@ -123,7 +127,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   // 비어 있으면 한 줄로 접는다(P1) — 설명 문단·빈 문장 없이 「PR 머지 · 머지 권한 없음 · [+ 권한 주기]」. 읽는 동안도
   // 같은 모양으로 그린다(#1146 designer b) — 권한 없는 에이전트를 열 때마다 절이 펼쳤다 줄어드는 흔들림을 없앤다.
   // API 호출 권한(#1144)이 하나라도 있으면 접지 않는다 — 그 줄들이 이 절에 산다.
-  const compact = (grants === 'loading' || (Array.isArray(grants) && rows.length === 0 && apiGrants.length === 0)) && !adding;
+  const compact = (grants === 'loading' || (Array.isArray(grants) && rows.length === 0 && apiGrants.length === 0 && !secretGrant)) && !adding;
   const otherDevice = assignedOperatorName
     ? t('agents.grants.ghUser.otherDevice', { host: assignedOperatorName })
     : t('agents.grants.ghUser.otherDeviceNoName');
@@ -202,6 +206,25 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
               );
             })}
           </ul>
+          {/* 비밀 만들기 줄이 있으면 그 블록이 「PR 머지」 소제목을 단다 — 두 번 서지 않게. */}
+          {!secretGrant && <div className="mt-2 text-meta font-medium text-fg-muted">{t('apiGrant.mergeHeading')}</div>}
+        </>
+      )}
+      {secretGrant && (
+        <>
+          <div className="mt-2 text-meta font-medium text-fg-muted">{t('agents.grants.secretCreateHeading')}</div>
+          <ul className="mt-1 space-y-1">
+            <li className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-row border border-border px-2 py-1 text-meta text-fg" data-testid="agent-secret-create-grant">
+              <span className="text-fg-muted">{t('agents.grants.secretCreate')}</span>
+              <span className="text-fg-subtle">
+                {t('agents.grants.by', { handle: accounts[secretGrant.grantedBy]?.handle ?? secretGrant.grantedBy, when: new Date(secretGrant.grantedAt).toLocaleDateString(locale) })}
+              </span>
+              {canRevoke && (
+                <button className="ml-auto rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:text-danger disabled:opacity-50" disabled={off}
+                  onClick={() => setRevoking(secretGrant)}>{t('agents.grants.revoke')}</button>
+              )}
+            </li>
+          </ul>
           <div className="mt-2 text-meta font-medium text-fg-muted">{t('apiGrant.mergeHeading')}</div>
         </>
       )}
@@ -272,6 +295,9 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
         <div role="radiogroup" aria-label={t('apiGrant.kind')} className="mt-2 flex gap-2 text-meta">
           <button type="button" role="radio" aria-checked={addKind === 'api'} className={`rounded px-2 py-1 ${addKind === 'api' ? 'bg-accent text-fg-on-strong' : 'border border-border text-fg'}`} onClick={() => setAddKind('api')}>{t('apiGrant.kindApi')}</button>
           <button type="button" role="radio" aria-checked={addKind === 'merge'} className={`rounded px-2 py-1 ${addKind === 'merge' ? 'bg-accent text-fg-on-strong' : 'border border-border text-fg'}`} onClick={() => setAddKind('merge')}>{t('apiGrant.kindMerge')}</button>
+          {!secretGrant && (
+            <button type="button" role="radio" aria-checked={addKind === 'secret'} className={`rounded px-2 py-1 ${addKind === 'secret' ? 'bg-accent text-fg-on-strong' : 'border border-border text-fg'}`} onClick={() => setAddKind('secret')}>{t('apiGrant.kindSecret')}</button>
+          )}
         </div>
       )}
       {canGrant && adding && addKind === 'api' && (
@@ -283,6 +309,26 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
             ? <p className="mt-2 text-meta text-fg-subtle" data-testid="api-grant-all-granted">{t('apiGrant.allGranted')}</p>
             : <ApiGrantForm agentId={agent.id} connectors={free} onCancel={() => setAdding(false)} onDone={async () => { setAdding(false); await load(); }} />;
         })()
+      )}
+      {canGrant && adding && addKind === 'secret' && !secretGrant && (
+        <div className="mt-2 rounded-row border border-border bg-surface-sunken p-2" data-testid="agent-secret-create-add">
+          <p className="text-meta text-fg">{t('agents.grants.secretCreateNote')}</p>
+          <div className="mt-2 flex gap-2">
+            <button
+              className="rounded-row border border-border bg-accent px-2 py-1 text-meta font-medium text-accent-fg disabled:opacity-50"
+              disabled={off}
+              onClick={() => void run(async () => {
+                await getController().putGrant(agent.id, { capability: SECRET_CAP, scope: '', expiresAt: null });
+                setAdding(false);
+              })}
+            >
+              {t('agents.grants.secretCreateConfirm')}
+            </button>
+            <button className="rounded-row border border-border px-2 py-1 text-meta text-fg hover:bg-surface disabled:opacity-50" disabled={off} onClick={() => setAdding(false)}>
+              {t('agents.grants.cancel')}
+            </button>
+          </div>
+        </div>
       )}
       {canGrant && adding && addKind === 'merge' && (
         <div className="mt-2 rounded-row border border-border bg-surface-sunken p-2" data-testid="agent-grants-add">
@@ -335,10 +381,14 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
 
       {revoking && (
         <ConfirmDialog
-          title={revoking.capability === 'api.call'
+          title={revoking.capability === SECRET_CAP
+            ? t('agents.grants.secretCreateRevokeTitle', { handle: agent.handle })
+            : revoking.capability === 'api.call'
             ? t('apiGrant.revokeTitle', { name: connectors.find((c) => `connector:${c.id}` === revoking.scope)?.name ?? '' })
             : t('agents.grants.revokeTitle', { repo: repoOf(revoking.scope) })}
-          detail={revoking.capability === 'api.call'
+          detail={revoking.capability === SECRET_CAP
+            ? t('agents.grants.secretCreateRevokeDetail')
+            : revoking.capability === 'api.call'
             ? t('apiGrant.revokeDetail', { handle: agent.handle })
             : t('agents.grants.revokeDetail', { handle: agent.handle, repo: repoOf(revoking.scope) })}
           confirmLabel={t('agents.grants.revoke')}

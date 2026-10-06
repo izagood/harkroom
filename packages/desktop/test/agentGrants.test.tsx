@@ -4,7 +4,7 @@
  * 소유자가 아니면 [권한 주기] 가 없는가, 거두기는 확인창을 거치는가, 서버 거절이 사람 말로 보이는가다.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import type { AgentView, GrantRow } from '@harkroom/shared';
 import { AgentGrantsSection } from '../src/components/settings/AgentGrantsSection';
 import { setController, type Controller } from '../src/state/controller';
@@ -154,6 +154,31 @@ describe('AgentGrantsSection', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'PR 머지' }));
     expect(screen.getByTestId('agent-grants-add')).toBeTruthy();
     expect(screen.getByTestId('agent-grants').textContent).toContain('부여가 곧 승인');
+  });
+
+  // 비밀 만들기(서버 102): capability secret.create · scope '' 하나. 기본 꺼짐, 소유자만 준다(서버 판정).
+  it('비밀 만들기: 소유자는 [+ 권한 주기] › 비밀 만들기 › [허용] 으로 secret.create 를 scope "" 로 준다', async () => {
+    const c = setup({ listGrants: vi.fn(async () => []) });
+    render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
+    await screen.findByTestId('agent-grants-none');
+    fireEvent.click(screen.getByText('+ 권한 주기'));
+    fireEvent.click(screen.getByRole('radio', { name: '비밀 만들기' }));
+    expect(screen.getByTestId('agent-secret-create-add').textContent).toContain('만들 때마다 그 스레드에서 알림');
+    fireEvent.click(screen.getByRole('button', { name: '허용' }));
+    await waitFor(() => expect(c.putGrant).toHaveBeenCalledWith('agent-1', { capability: 'secret.create', scope: '', expiresAt: null }));
+  });
+
+  it('비밀 만들기: 준 줄이 있으면 절이 펼쳐 그 줄을 그리고, 거두기는 확인창을 거쳐 secret.create·"" 로 지운다', async () => {
+    const c = setup({ listGrants: vi.fn(async () => [{ ...grant(''), capability: 'secret.create' }]) });
+    render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
+    const row = await screen.findByTestId('agent-secret-create-grant');
+    expect(row.textContent).toContain('비밀 만들기');
+    expect(row.textContent).toContain('준 사람: owner');
+    fireEvent.click(within(row).getByRole('button', { name: '거두기' }));
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.textContent).toContain('@alpha 의 비밀 만들기를 거둘까?');
+    fireEvent.click(within(dialog).getByRole('button', { name: '거두기' }));
+    await waitFor(() => expect(c.deleteGrant).toHaveBeenCalledWith('agent-1', 'secret.create', ''));
   });
 
   it('P1: 만료된 줄은 한 단 낮추고 [다시 7일]로 같은 scope 를 7일 다시 준다 — 소유자에게만', async () => {
