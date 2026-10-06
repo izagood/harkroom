@@ -114,8 +114,8 @@ export async function readThreadStatusFacts(
  * 지워진 루트에는 달지 않는다. 바뀐 행마다 `reaction.added`·`reaction.removed` 를 낸다 — 모든 화면이
  * 이미 듣는 이벤트라 따로 그릴 것이 없다.
  *
- * `thread_status` 가 안 바뀌어도 부른다: 손으로 단 것이 떼어진 뒤처럼 리액션만 어긋난 때 다시 맞는다.
- * 맞으면 아무 행도 안 바뀌고 이벤트도 없다.
+ * `thread_status` 가 안 바뀌어도 부른다: 손으로 단 것이 떼어진 뒤처럼 리액션만 어긋난 때 다시 맞는다
+ * (그 떼기는 watcher 가 `reaction.removed` 로 듣는다). 맞으면 아무 행도 안 바뀌고 이벤트도 없다.
  */
 async function syncStatusReaction(
   pool: Pool, channelId: string, rootId: string, decision: ThreadStatusDecision | null,
@@ -192,6 +192,8 @@ export async function refreshThreadStatus(
   return statusReaction;
 }
 
+const STATUS_EMOJIS: ReadonlySet<string> = new Set(Object.values(THREAD_STATUS_EMOJI));
+
 /** 이 이벤트가 어느 스레드 루트를 건드렸는가. 없으면 `null`. */
 export function rootOf(e: WorkspaceEvent): string | null {
   if (e.type === 'message.created' || e.type === 'message.updated') {
@@ -243,6 +245,10 @@ export function startThreadStatusWatcher(
     if (root) { schedule(root); return; }
     // 보고처 깨움이 걸렸다·떴다·접혔다 — 그 보고처 스레드의 머리 ⏳ 를 다시 판정한다(2026-10-06).
     if (e.type === 'thread.reportWakes.changed') { schedule(e.rootId); return; }
+    // 상태 이모지가 떼어졌다 — 주인 에이전트가 손으로 단 것(그래서 상태 행이 없던 것)을 떼면 상태
+    // 리액션이 비므로 다시 단다(#1227 security n1). 답글이면 판정이 루트가 아니라고 그냥 끝난다.
+    // 서버가 스스로 뗀 것도 여기로 오지만 다시 판정해 'unchanged' 로 끝난다(루프 없음).
+    if (e.type === 'reaction.removed' && STATUS_EMOJIS.has(e.emoji)) { schedule(e.messageId); return; }
     if (e.type === 'presence.changed') {
       // 그 에이전트가 주인인 스레드만 — 꺼지면 💬·👀 가 🚨 로, 켜지면 🚨 가 💬 로 돌아온다.
       void pool.query(

@@ -197,6 +197,27 @@ describe('스레드 상태 리액션', () => {
     expect(await src()).toHaveLength(2);
   });
 
+  it('주인이 손으로 단 상태 이모지를 떼면 watcher 가 상태 리액션을 다시 단다(security n1)', async () => {
+    const { addReaction, removeReaction } = await import('../src/services/reactions.js');
+    const { emitEvent } = await import('../src/events.js');
+    const presence = { online: () => [botId, bot2Id] } as unknown as Parameters<typeof startThreadStatusWatcher>[1];
+    const w = startThreadStatusWatcher(pool, presence, { debounceMs: 0 });
+    try {
+      const id = await seed(adminId, '부탁');
+      await seed(botId, '시작', { root: id, kind: 'progress' });
+      await refreshThreadStatus(pool, id, live());
+      await addReaction(pool, { channelId, messageId: id, accountId: botId, emoji: '💬' });
+      expect(await removeReaction(pool, { messageId: id, accountId: botId, emoji: '💬' })).toBe('removed');
+      const src = async () => (await pool.query(`select emoji, source from message_reaction where message_id = $1`, [id])).rows;
+      // 시험의 이빨: 떼기 직후에는 비어 있다 — 판정이 다시 돌아야 돌아온다.
+      expect(await src()).toEqual([]);
+      emitEvent({ type: 'reaction.removed', channelId, messageId: id, emoji: '💬', accountId: botId, audience: 'all' });
+      await new Promise((r) => setTimeout(r, 10));
+      await w.flush();
+      expect(await src()).toEqual([{ emoji: '💬', source: 'status' }]);
+    } finally { w.stop(); }
+  });
+
   it('REST 로 쓴 말이 버스를 지나 다시 판정되고 thread.status 이벤트가 나간다', async () => {
     const seen: WorkspaceEvent[] = [];
     const off = onEvent((e) => { if (e.type === 'thread.status') seen.push(e); });
