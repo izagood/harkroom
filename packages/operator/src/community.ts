@@ -9,7 +9,7 @@
  * 이 객체가 해석하는 프레임은 `assign`·`unassign` 둘뿐이다. 나머지(러너 프레임)는 단계 3 이
  * `onFrame` 으로 릴레이 다중화기에 넘긴다 — 여기서 해석하면 스펙 §8 근거 ②(어휘)가 깨진다.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
 import type { OperatorCapabilities, OperatorStatus } from '@harkroom/shared';
 import type { AgentDefinition, ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
@@ -180,7 +180,18 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
     const hb = deps.heartbeat;
     if (!hb) return;
     void Promise.all([hb.status(), hb.machine()])
-      .then(([status, machine]) => { link.send({ type: 'status', status, ...(machine ? { machine } : {}) }); })
+      .then(([status, machine]) => {
+        // 이 커뮤니티의 에이전트만 싣는다(security #1203 F1) — hello 가 `reconciler.announce()` 로 거르는 것과 같은
+        // 경계다. 재료는 오퍼레이터 전역이라 거르지 않으면 회사 서버에 개인 에이전트의 id·턴 수가 간다.
+        // 턴 합계·메모리·디스크는 머신의 값이라 그대로 둔다(상한은 커뮤니티 사이에 공유된다).
+        const own: OperatorStatus = status.runners
+          ? { ...status, runners: status.runners.filter((r) => r.agentId in agents) }
+          : status;
+        // 머신 값에 이 서버 주소를 섞는다(security #1203 n7) — 서버마다 값이 달라 두 서버의 관리자가 서로
+        // 대조해 같은 머신인지 알 수 없다. 한 서버 안(같은 소유자)의 묶음에는 지장이 없다.
+        const scoped = machine ? createHash('sha256').update(`${machine}\n${deps.baseUrl}`).digest('hex') : null;
+        link.send({ type: 'status', status: own, ...(scoped ? { machine: scoped } : {}) });
+      })
       .catch((err: unknown) => deps.log(`박동을 만들지 못했다: ${err instanceof Error ? err.message : String(err)}`));
   };
 

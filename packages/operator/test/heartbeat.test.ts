@@ -58,7 +58,9 @@ describe('community 박동', () => {
       await vi.advanceTimersByTimeAsync(0);
       const types = () => sent.map((d) => JSON.parse(d).type);
       expect(types()).toEqual(['hello', 'status']);
-      expect(JSON.parse(sent[1]!)).toEqual({ type: 'status', status: { turns: { running: 1, max: null } }, machine: 'f'.repeat(64) });
+      const first = JSON.parse(sent[1]!);
+      expect(first.status).toEqual({ turns: { running: 1, max: null } });
+      expect(first.machine).toMatch(/^[0-9a-f]{64}$/);
       await vi.advanceTimersByTimeAsync(1000);
       expect(types().filter((t) => t === 'status')).toHaveLength(2);
       c.stop();
@@ -72,5 +74,30 @@ describe('community 박동', () => {
     const dial: LinkDialer = (_u, _t, h) => { h.onOpen({ send: (d) => sent.push(d), close: () => {} }); };
     createCommunity({ baseUrl: 'https://example.com', token: 'hkop_x', agents: {}, reconciler, dial, schedule: () => {}, log: () => {} }).start();
     expect(sent.map((d) => JSON.parse(d).type)).toEqual(['hello']);
+  });
+});
+
+describe('박동의 커뮤니티 경계 — security #1203 F1·n7', () => {
+  it('커뮤니티 둘에 러너가 하나씩 있으면 각 박동에 자기 에이전트만 실린다. 머신 값은 서버마다 다르다', async () => {
+    const shared = {
+      status: async () => ({ turns: { running: 2, max: 6 }, runners: [{ agentId: 'work-a', turns: 1 }, { agentId: 'home-b', turns: 1 }] }),
+      machine: async () => 'e'.repeat(64),
+    };
+    const beatOf = async (baseUrl: string, agentId: string) => {
+      const sent: string[] = [];
+      const dial: LinkDialer = (_u, _t, h) => { h.onOpen({ send: (d) => sent.push(d), close: () => {} }); };
+      createCommunity({ baseUrl, token: 'hkop_x', agents: { [agentId]: {} }, reconciler, dial, schedule: () => {}, log: () => {}, heartbeat: shared }).start();
+      await new Promise((r) => setTimeout(r, 0));
+      return JSON.parse(sent.find((d) => JSON.parse(d).type === 'status')!);
+    };
+    const work = await beatOf('https://work.example.com', 'work-a');
+    const home = await beatOf('https://home.example.com', 'home-b');
+    expect(work.status.runners).toEqual([{ agentId: 'work-a', turns: 1 }]);
+    expect(home.status.runners).toEqual([{ agentId: 'home-b', turns: 1 }]);
+    expect(JSON.stringify(work)).not.toContain('home-b');
+    // 머신 전체 값은 그대로다.
+    expect(work.status.turns).toEqual({ running: 2, max: 6 });
+    expect(work.machine).not.toBe(home.machine);
+    expect(work.machine).not.toBe('e'.repeat(64));
   });
 });
