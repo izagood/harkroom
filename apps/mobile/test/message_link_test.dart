@@ -45,6 +45,8 @@ Map<String, Object?> _row(String id, int seq, {String? root, String body = '말'
 /// 남의 DM 이면 403.
 class _Server {
   final lookups = <String>[];
+  /// `/channels/c2/messages` 에 온 물음들 — 링크가 스레드를 **어느 창**으로 열었는지 본다.
+  final threadQueries = <Map<String, String>>[];
 
   MockClient get client => MockClient((req) async {
         final path = req.url.path;
@@ -76,8 +78,13 @@ class _Server {
         }
         if (path == '/channels/c2/messages') {
           final q = req.url.queryParameters;
+          threadQueries.add(q);
           if (q['thread'] == _root) {
-            return _json({'messages': [_row(_root, 3, body: '옛 원글'), _row(_reply, 9, root: _root, body: '답글')], 'hasMore': false});
+            // 긴 스레드 흉내: 최신 페이지에는 옛 답글(seq 9)이 없고, `around=9` 창에만 실린다.
+            if (q['around'] == '9') {
+              return _json({'messages': [_row(_root, 3, body: '옛 원글'), _row(_reply, 9, root: _root, body: '답글')], 'hasMore': false});
+            }
+            return _json({'messages': [_row(_root, 3, body: '옛 원글'), _row('late', 900, root: _root, body: '최신 답글')], 'hasMore': true});
           }
           return _json({'messages': <Object?>[], 'hasMore': false});
         }
@@ -173,14 +180,27 @@ void main() {
       final screen = tester.widget<ThreadScreen>(find.byType(ThreadScreen));
       expect(screen.channelId, 'c2');
       expect(screen.rootId, _root);
+      // **그 줄로 간다**(2026-10-06): 강조할 줄과 seq 를 넘기고, 스레드는 그 자리의 창으로 받는다 —
+      // 긴 스레드의 옛 답글은 최신 페이지에 없어 창 없이는 굴러갈 줄이 없다.
+      expect(screen.highlightId, _reply);
+      expect(screen.highlightSeq, 9);
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      expect(server.threadQueries.where((q) => q['thread'] == _root && q['around'] == '9'), isNotEmpty);
+      expect(app.threads[_root]!.map((m) => m.id), contains(_reply));
     });
 
-    testWidgets('최상위 글 링크 → 그 글을 루트로 한 스레드 화면', (tester) async {
-      final app = (await tester.runAsync(() => _boot(_Server())))!;
+    testWidgets('최상위 글 링크 → 그 글을 루트로 한 스레드 화면, 루트 자리의 창', (tester) async {
+      final server = _Server();
+      final app = (await tester.runAsync(() => _boot(server)))!;
       addTearDown(app.dispose);
       await _pump(tester, app, _linking(_root));
       await _tapLink(tester);
-      expect(tester.widget<ThreadScreen>(find.byType(ThreadScreen)).rootId, _root);
+      final screen = tester.widget<ThreadScreen>(find.byType(ThreadScreen));
+      expect(screen.rootId, _root);
+      expect(screen.highlightId, _root);
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      // 루트(seq 3)를 가운데 둔 창 — 스레드가 **처음부터** 보인다.
+      expect(server.threadQueries.where((q) => q['thread'] == _root && q['around'] == '3'), isNotEmpty);
     });
 
     for (final (id, text, retry) in [

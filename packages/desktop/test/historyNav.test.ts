@@ -81,3 +81,29 @@ describe('이력 탐색 (#187)', () => {
     expect(useAppStore.getState().historyIndex).toBe(2);
   });
 });
+
+/**
+ * 뒤로·앞으로 간 채널도 **읽음 처리**를 거친다(security F1, 2026-10-06). 증분 갈래(`pullSince`)로 빠지면서
+ * `settleReadPosition` 을 건너뛰어 배지가 남던 회귀 — 사람이 그 채널을 보고 있으므로 읽은 것이 맞다.
+ */
+describe('뒤로 가기도 읽음 처리를 거친다', () => {
+  it('열어 본 채널로 뒤로 가면 읽음 위치가 최신 seq 로 올라간다', async () => {
+    seed(['c1', 'c2'], ['c1', 'c2'], 1);
+    const markChannelRead = vi.fn(async () => undefined);
+    const messages = vi.fn(async (ch: string, o?: { since?: number }) => ({
+      messages: (o?.since ?? 0) > 0 ? [] : [{ id: `${ch}-m7`, channelId: ch, seq: 7, threadRootId: null, authorId: 'u2', body: '말', kind: 'user', meta: {}, createdAt: '2026-10-01T00:00:00.000Z', editedAt: null, reactions: [], attachments: [], replyCount: 0, activityCount: 0, lastReplyAt: null, participantIds: [], openAskHumanCount: 0, openAskAccountIds: [], openAskLinks: [], openGateAccountIds: [], failureCount: 0, unresolvedFailureCount: 0, lastKind: null, lastAuthorId: null, statusReaction: null, alsoInChannel: false, deletedAt: null }],
+      hasMore: false,
+    }));
+    const c = new Controller(fakeApi({ messages, markChannelRead } as never));
+    await c.openChannel('c1');
+    await c.openChannel('c2');
+    await vi.waitFor(() => expect(markChannelRead).toHaveBeenCalledWith('c2', 7));
+    // c1 을 다시 "안 읽음"으로 돌려 둔다 — 뒤로 가기가 읽음 처리를 하는지만 본다.
+    useAppStore.getState().set({ reads: { ...useAppStore.getState().reads, c1: { lastReadSeq: 0, unread: 1 } } });
+    markChannelRead.mockClear();
+    expect(await c.goBack()).toBe(true);
+    expect(useAppStore.getState().activeChannelId).toBe('c1');
+    await vi.waitFor(() => expect(markChannelRead).toHaveBeenCalledWith('c1', 7));
+    expect(useAppStore.getState().reads.c1).toEqual({ lastReadSeq: 7, unread: 0 });
+  });
+});

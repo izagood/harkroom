@@ -441,9 +441,19 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * 딸림값이 `roots.length` 뿐인 것은 예전과 같다(내용이 바뀌어도 스크롤을 건드릴 일은
    * 없다). 바닥 여부와 마지막 작성자는 이 렌더의 값을 클로저로 읽으므로 딸림값이 아니다.
    */
+  /**
+   * **직전 커밋의 마지막 뿌리.** "내가 쓴 것은 따라간다"는 **끝에 새로 붙은** 내 글에만 든다 — 줄 수는
+   * 과거 페이지(`loadOlder`)·점프 창·스레드 뿌리처럼 **위에** 붙어도 늘고, 그때 마지막 뿌리는 그대로
+   * 내 것이다. 그것까지 따라가면 위를 읽던 자리와 방금 점프한 자리가 바닥으로 끌려간다(2026-10-06,
+   * 링크 이동이 되끌림 — #task 처럼 마지막 최상위 글이 내 것인 채널에서 매번). 아래 효과보다 뒤에
+   * 적어야(같은 커밋에서 아래가 먼저 읽는다) 비교 대상이 직전 커밋의 값이다.
+   */
+  const lastRootIdRef = useRef<string | null>(null);
   useEffect(() => {
+    const last = roots[roots.length - 1];
+    const appendedMine = last !== undefined && last.id !== lastRootIdRef.current && last.authorId === me?.id;
     if (jumpedThisCommitRef.current) setJumpVisible(true);
-    else if (atBottomRef.current || roots[roots.length - 1]?.authorId === me?.id) {
+    else if (atBottomRef.current || appendedMine) {
       scrollToBottom();
       // 첫 페이지가 정착 창보다 늦게 올 수 있다(느린 서버·찬 채널). 도착한 줄과 **함께**
       // 자라는 그림·링크 카드가 같은 보정을 필요로 하므로 창을 다시 연다.
@@ -453,6 +463,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     else setJumpVisible(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roots.length]);
+  useEffect(() => { lastRootIdRef.current = roots[roots.length - 1]?.id ?? null; });
   // 점프 표식은 **그 커밋 한 번**만 산다 — 위 효과보다 뒤에 선언해야 같은 커밋에서 위가 먼저 읽는다.
   useEffect(() => { jumpedThisCommitRef.current = false; });
 
