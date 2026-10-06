@@ -260,14 +260,15 @@ export async function notifyOwner(
     const what = n.action === 'created' ? '만들었다' : `회전했다(판 ${n.version})`;
     const body = `🔑 ${who.agent} 가 비밀 \`${n.name}\` 을 ${what} · ${how} · 이 채널로 자기에게만 부여 · 설정 › 나 › 비밀과 API @${who.owner}`;
     const posted = await postMessage(pool, {
-      channelId: n.lease.channelId, threadRootId: n.lease.threadRootId, authorId: n.agentId, body, kind: 'system',
+      channelId: n.lease.channelId, threadRootId: n.lease.threadRootId, authorId: n.agentId, body, kind: 'system', serverNotice: true,
       causeMessageId: n.lease.causeMessageId,
       meta: { secretNotice: { action: n.action, secretId: n.secretId, name: n.name, version: n.version, via: n.via, agentId: n.agentId, ownerAccountId: n.lease.ownerId } },
     });
-    if (posted.failure) { console.error(`[secretCreate] 소유자 알림 실패: ${posted.failure}`); return null; }
+    // 실패를 찾을 수 있게 secretId·agentId 를 싣는다(security L2'). 이름·설명·값은 싣지 않는다.
+    if (posted.failure) { console.error(`[secretCreate] 소유자 알림 실패: ${posted.failure} secretId=${n.secretId} agentId=${n.agentId}`); return null; }
     return posted.message.id;
   } catch (e) {
-    console.error('[secretCreate] 소유자 알림 실패:', e instanceof Error ? e.message : e);
+    console.error(`[secretCreate] 소유자 알림 실패: secretId=${n.secretId} agentId=${n.agentId}`, e instanceof Error ? e.message : e);
     return null;
   }
 }

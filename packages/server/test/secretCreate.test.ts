@@ -250,6 +250,33 @@ describe('에이전트가 비밀을 만든다 (102)', () => {
     expect((await get(sibling)).json()).toEqual({ granted: false });
   });
 
+  it("L1': 알림 줄은 결과가 아니다 — 위임받은 스레드에서 만들어도 그 의무를 닫지 않는다", async () => {
+    await pool.query(`delete from secret where created_by_agent_id = $1 and name like 'fill-%'`, [agentId]);
+    const cause = await mention(ch, alice.accountId);
+    const team = (await pool.query(`insert into agent_team (name, created_by) values ('t', $1) returning id`, [alice.accountId])).rows[0].id;
+    const d = (await pool.query(
+      `insert into team_delegation (message_id, team_id, lead_account_id, channel_id, thread_root_id, deadline_at)
+       values ($1, $2, $3, $4, $1, now() + interval '1 hour') returning id`, [cause, team, sibling, ch])).rows[0].id;
+    await pool.query(`insert into team_delegation_item (delegation_id, delegate_account_id) values ($1, $2)`, [d, agentId]);
+    const res = await app.inject({ method: 'POST', url: '/agent/turn-leases', headers: asAgent(), payload: { causeMessageId: cause } });
+    const l = res.json().lease as { id: string; token: string };
+    expect((await create(l, 'in-delegation', { generate: { type: 'password' } })).statusCode).toBe(201);
+    const note = (await pool.query(`select id from message where meta->'secretNotice'->>'name' = 'in-delegation'`)).rows;
+    expect(note).toHaveLength(1);
+    const item = (await pool.query(`select outcome from team_delegation_item where delegation_id = $1`, [d])).rows[0];
+    expect(item.outcome).toBeNull();
+  });
+
+  it('L2 재료: GET /secrets 가 만든 에이전트·원인·값을 정한 에이전트를 싣는다 — 사람이 값을 바꾸면 valueSetByAgentId 는 null', async () => {
+    const list = async () => ((await app.inject({ method: 'GET', url: '/secrets', headers: auth(alice.token) })).json().secrets as Record<string, unknown>[]);
+    const made = (await list()).find((x) => x.name === 'db-pass')!;
+    expect(made).toMatchObject({ createdByAgentId: agentId, valueSetByAgentId: agentId });
+    expect(typeof made.createdCauseMessageId).toBe('string');
+    const put = await app.inject({ method: 'PUT', url: `/secrets/${made.id}/value`, headers: auth(alice.token), payload: { value: `own_${'v'.repeat(20)}` } });
+    expect(put.statusCode).toBe(200);
+    expect((await list()).find((x) => x.name === 'db-pass')).toMatchObject({ createdByAgentId: agentId, valueSetByAgentId: null });
+  });
+
   it('사람·PAT 은 이 길을 못 쓴다', async () => {
     const res = await app.inject({ method: 'POST', url: '/agent/secrets', headers: auth(alice.token), payload: {} });
     expect(res.statusCode).toBe(403);

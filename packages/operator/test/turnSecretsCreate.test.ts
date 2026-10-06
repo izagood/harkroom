@@ -95,6 +95,7 @@ describe('turnSecrets — 에이전트가 만든다', () => {
     const r = await run('secret.import', { name: 'db', path: 'key.bin', keepSource: true });
     expect(r.body.sourceDeleted).toBe(false);
     expect(existsSync(join(workspace, 'key.bin'))).toBe(true);
+    expect(r.body.note).toMatch(/delete it as soon as you are done/);
     expect(calls[0]!.body.source.import).toMatchObject({ kind: 'file', filename: 'key.bin' });
   });
 
@@ -128,6 +129,14 @@ describe('turnSecrets — 에이전트가 만든다', () => {
     expect(r.body.error.message).toMatch(/already a secret you were granted/);
     expect(existsSync(join(workspace, 'tok.txt'))).toBe(true);
     expect(leaseFiles()).toHaveLength(0);
+  });
+
+  it('n5: generate 에서 난 secret_in_body 는 설명에 값이 섞였다고 안내한다(import 문구가 아니다)', async () => {
+    reply = { status: 400, body: { error: { code: 'secret_in_body', message: 'refused' } } };
+    const r = await run('secret.generate', { name: 'db', type: 'password', description: 'x' });
+    expect(r.body.error.code).toBe('secret_in_body');
+    expect(r.body.error.message).toMatch(/description contains/);
+    expect(r.body.error.message).not.toMatch(/importing/);
   });
 
   it('서버 거절 코드는 그대로 전한다(value_is_mounted·adopted_by_owner…)', async () => {
