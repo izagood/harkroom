@@ -721,6 +721,11 @@ export class ApiClient {
     return this.req('DELETE', `/operators/${id}`);
   }
 
+  /** 사람이 붙이는 이름. `null`(또는 빈 값)이면 등록 때의 호스트명으로 돌아간다. */
+  renameOperator(id: string, label: string | null): Promise<OperatorView> {
+    return this.req('PATCH', `/operators/${id}`, { label });
+  }
+
   /** 에이전트를 오퍼레이터에 배정한다. 능력에 없으면 409 `not_capable`. */
   assignAgent(agentId: string, operatorId: string): Promise<AgentAssignmentView> {
     return this.req('PUT', `/accounts/agents/${agentId}/assignment`, { operatorId });

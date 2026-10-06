@@ -6,6 +6,7 @@ import { hasCapability } from '../../lib/capabilities';
 import { hasOperatorLocalSurface, listLocalAgents, registerLocalOperator } from '../../lib/operatorLocal';
 import type { SectionId } from './sections';
 import { SettingsGroup, SettingsPage } from './primitives';
+import { operatorNameOf } from '../../lib/operatorName';
 
 /**
  * 설정 › 이 기기 › **이 머신의 오퍼레이터**(UX ⑥b-2).
@@ -64,7 +65,7 @@ export function ThisOperatorSettings({ onOpenSection }: {
       if (!mine.operatorId) { setStatus({ kind: 'registered', name: null, online: null }); return; }
       const list = await getController().operators().catch(() => null);
       const op = list?.find((o) => o.id === mine.operatorId) ?? null;
-      setStatus({ kind: 'registered', name: op?.name ?? null, online: op ? op.online : null });
+      setStatus({ kind: 'registered', name: operatorNameOf(op) ?? null, online: op ? op.online : null });
     } catch {
       setStatus({ kind: 'unknown' });
     }
@@ -128,6 +129,16 @@ export function ThisOperatorSettings({ onOpenSection }: {
                     status.online === null ? null : status.online ? t('operators.online') : t('operators.offline'),
                   ].filter(Boolean).join(' · ')}
                 </span>
+                {/* 이름은 Operators 에서만 바꾼다(designer) — 같은 조작을 두 자리에 두지 않고 그리로 보낸다. */}
+                {status.kind === 'registered' && status.name && onOpenSection && (
+                  <button
+                    data-testid="this-operator-rename"
+                    className="rounded-row px-1 text-meta font-normal text-accent hover:bg-surface-sunken"
+                    onClick={() => onOpenSection('operators')}
+                  >
+                    {t('thisOperator.renameInList')}
+                  </button>
+                )}
               </p>
               <p className="mb-3 text-meta text-fg-muted">{t('operators.registerHereNote')}</p>
               {registered && (

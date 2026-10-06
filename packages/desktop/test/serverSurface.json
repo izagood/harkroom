@@ -90,6 +90,7 @@
   "PATCH /channels/sections/:p": "0.1.167",
   "PATCH /connectors/:p": "0.3.171",
   "PATCH /handle-groups/:p": "0.1.167",
+  "PATCH /operators/:p": "0.3.188",
   "PATCH /saved/:p": "0.1.167",
   "PATCH /secrets/:p": "0.3.95",
   "PATCH /teams/:p": "0.1.167",
