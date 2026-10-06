@@ -100,7 +100,7 @@ export async function recordBlocked(pool: Pool, b: BlockedInput): Promise<string
   const name = meta.connectorName ?? '(연결 없음)';
   const body = `🔒 ${handle} 의 API 호출이 막혔다 · ${name} \`${request}\` · ${reasonText[b.code] ?? b.code}`.replace(/@/g, '＠');
   const posted = await postMessage(pool, {
-    channelId: b.channelId, threadRootId: b.threadRootId, authorId: b.agentId, body, kind: 'system',
+    channelId: b.channelId, threadRootId: b.threadRootId, authorId: b.agentId, body, kind: 'system', serverNotice: true,
     meta: { blocked: meta },
   });
   return posted.failure ? null : posted.message.id;

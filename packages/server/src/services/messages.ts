@@ -118,6 +118,12 @@ export interface PostMessageInput {
    * 이 값이 있으면 사람 글이어도 이 깊이로 저장하고 상한을 판정한다. 없으면(사람·시계·외부 이벤트) 옛 셈이다.
    */
   chainDepth?: number | null;
+  /**
+   * 서버가 에이전트 이름으로 세운 **알림 줄**(API 막힘 카드·비밀 만들기 알림). 화면에는 답글처럼 보이지만 에이전트의
+   * 결과가 아니다 — 회신권(084)을 닫거나 쓰지 않고, 위임 의무(050)도 닫지 않는다(#1177 security L1': 위임받은 스레드에서
+   * 비밀을 만들면 결과 전에 팀장이 "답 왔음"으로 깼다). 머리 주인 `thread_reply`·DM 알림은 그대로다 — 사람이 볼 줄이다.
+   */
+  serverNotice?: boolean;
 }
 
 // 리액션을 COLS 에 넣는 이유: 메시지를 내주는 경로가 네 갈래(목록·POST·PATCH·idempotency
@@ -1259,7 +1265,9 @@ export async function postMessage(
       줄을 세운다 — 채널 전체가 서던 줄(풀 포화)은 되살리지 않는다.
       락 순서는 언제나 이것 → 채널 락이라 서로를 기다리며 막히지 않는다.
     */
-    if (authorIsAgent && input.threadRootId && countsAsReply(input.kind ?? 'user')) {
+    /** 에이전트의 결과로 세는가 — 회신권·위임 의무가 본다. 서버 알림 줄은 아니다(`serverNotice`). */
+    const isResult = countsAsReply(input.kind ?? 'user') && !input.serverNotice;
+    if (authorIsAgent && input.threadRootId && isResult) {
       await lockReplyGrantsFor(client, input.authorId, input.threadRootId);
     }
     const scannedDepth = await mentionDepthFor(client, {
@@ -1274,7 +1282,7 @@ export async function postMessage(
     const mentionDepth = chainBound ? Math.max(scannedDepth, input.chainDepth!) : scannedDepth;
     const calls = await resolveMentionCalls(client, {
       body: input.body, channelId: input.channelId, authorId: input.authorId, authorIsAgent, mentionDepth, chainBound,
-      replyGrantThreadId: countsAsReply(input.kind ?? 'user') ? input.threadRootId ?? null : null,
+      replyGrantThreadId: isResult ? input.threadRootId ?? null : null,
     });
 
     /**
@@ -1493,11 +1501,11 @@ export async function postMessage(
      * 두 곳에 살게 된다.
      */
     // 결과를 냈으면 이 스레드에서 받은 회신권을 닫는다(084) — 이 발화는 위에서 이미 게이트를 지났다.
-    if (input.threadRootId && isReply && authorIsAgent) {
+    if (input.threadRootId && isResult && authorIsAgent) {
       await closeReplyGrants(client, { granteeId: input.authorId, threadRootId: input.threadRootId });
     }
 
-    const wokeByDelegation = input.threadRootId
+    const wokeByDelegation = input.threadRootId && !input.serverNotice
       ? await closeDelegationsForReply(client, {
         threadRootId: input.threadRootId,
         authorId: input.authorId,

@@ -185,7 +185,7 @@ export function createTurnSecrets(deps: TurnSecretsDeps): TurnSecrets {
    * 서버 REST 를 임대와 함께 부른다. 거절 코드는 비밀이 아니다 — 그대로 전한다. 다만 leakGuard 의 `secret_in_body`(400)는
    * 들여오려는 값이 **이미 부여받은 비밀의 값**이라는 뜻이다(security n3) — 그 말로 바꿔 안내한다.
    */
-  const post = async (lease: Lease, path: string, body: Args): Promise<{ ok: true; json: Args } | { ok: false; out: Outcome }> => {
+  const post = async (lease: Lease, path: string, body: Args, importing: boolean): Promise<{ ok: true; json: Args } | { ok: false; out: Outcome }> => {
     const res = await deps.forward(lease.agentId, {
       type: 'http.forward', id: randomUUID(), method: 'POST', path,
       body: JSON.stringify({ leaseId: lease.leaseId, token: lease.token, ...body }), contentType: 'application/json',
@@ -196,7 +196,10 @@ export function createTurnSecrets(deps: TurnSecretsDeps): TurnSecrets {
     if (res.status === 200 || res.status === 201) return { ok: true, json };
     const code = json.error?.code ?? `http_${res.status}`;
     if (code === 'secret_in_body') {
-      return { ok: false, out: refuse('already_granted', 'this value is already a secret you were granted — use that secret by name (secret.list / secret.mount) instead of importing it. Delete the file; do not print it.') };
+      // 경로마다 문구를 가른다(security n5): 파일을 들여올 때는 그 값이 이미 가진 비밀이다. 아니면(generate) 설명에 값이 섞였다.
+      return importing
+        ? { ok: false, out: refuse('already_granted', 'this value is already a secret you were granted — use that secret by name (secret.list / secret.mount) instead of importing it. Delete the file; do not print it.') }
+        : { ok: false, out: refuse('secret_in_body', 'the description contains the value of a secret you were granted — describe the secret without its value.') };
     }
     if (code === 'operator_required' || res.status === 404) {
       return { ok: false, out: refuse('unsupported', 'the harkroom server does not support agent-created secrets yet') };
@@ -253,7 +256,7 @@ export function createTurnSecrets(deps: TurnSecretsDeps): TurnSecrets {
       name: a.name, ...(typeof a.description === 'string' ? { description: a.description } : {}),
       ...(a.expiresInDays !== undefined ? { expiresInDays: a.expiresInDays } : {}),
       source: { generate: { type: a.type, ...(a.length !== undefined ? { length: a.length } : {}) } },
-    });
+    }, false);
     if (!r.ok) return r.out;
     const secret = r.json.secret as { name: string; kind: string; version: number; expiresAt: string | null };
     const out: Args = { name: secret.name, kind: secret.kind, version: secret.version, expiresAt: secret.expiresAt, ...(r.json.publicKey ? { publicKey: r.json.publicKey } : {}) };
@@ -273,11 +276,13 @@ export function createTurnSecrets(deps: TurnSecretsDeps): TurnSecrets {
       name: a.name, ...(typeof a.description === 'string' ? { description: a.description } : {}),
       ...(a.expiresInDays !== undefined ? { expiresInDays: a.expiresInDays } : {}),
       source: src.source,
-    });
+    }, true);
     if (!r.ok) { src.value.fill(0); return r.out; }
     const secret = r.json.secret as { name: string; kind: string; version: number; expiresAt: string | null };
     const settled = await settleImport(lease, src, a.keepSource === true);
-    return { ok: true, value: { name: secret.name, kind: secret.kind, version: secret.version, expiresAt: secret.expiresAt, ...settled, note: NOTE } };
+    // 원본을 남겼으면 평문 파일이 워크스페이스에 있다(security n6) — 다 쓰면 지우라고 같이 말한다.
+    const note = settled.sourceDeleted ? NOTE : `${NOTE} The source file is still in the workspace (keepSource): delete it as soon as you are done and never commit it.`;
+    return { ok: true, value: { name: secret.name, kind: secret.kind, version: secret.version, expiresAt: secret.expiresAt, ...settled, note } };
   };
 
   const rotateValue = async (lease: Lease, a: Args, cwd: string | undefined): Promise<Outcome> => {
@@ -289,14 +294,14 @@ export function createTurnSecrets(deps: TurnSecretsDeps): TurnSecrets {
       if (!g || typeof g !== 'object' || typeof g.type !== 'string' || !GENERATE_TYPES.has(g.type)) {
         return refuse('bad_request', 'generate.type must be one of password, token_hex, token_base64url, ssh_ed25519');
       }
-      const r = await post(lease, '/agent/secrets/rotate', { name: a.name, source: { generate: { type: g.type, ...(g.length !== undefined ? { length: g.length } : {}) } } });
+      const r = await post(lease, '/agent/secrets/rotate', { name: a.name, source: { generate: { type: g.type, ...(g.length !== undefined ? { length: g.length } : {}) } } }, false);
       if (!r.ok) return r.out;
       const secret = r.json.secret as { name: string; version: number };
       return { ok: true, value: { name: secret.name, version: secret.version, ...(r.json.publicKey ? { publicKey: r.json.publicKey } : {}), note: NOTE } };
     }
     const src = await readSource(cwd, lease.agentId, a.path, undefined);
     if (!src.ok) return src.out;
-    const r = await post(lease, '/agent/secrets/rotate', { name: a.name, source: src.source });
+    const r = await post(lease, '/agent/secrets/rotate', { name: a.name, source: src.source }, true);
     if (!r.ok) { src.value.fill(0); return r.out; }
     const secret = r.json.secret as { name: string; version: number };
     const settled = await settleImport(lease, src, false);

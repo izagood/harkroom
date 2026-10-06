@@ -65,14 +65,23 @@ interface SecretRow {
   id: string; name: string; kind: 'text' | 'file'; filename: string | null; description: string;
   ownerAccountId: string; expiresAt: string | null; createdAt: string; updatedAt: string;
   version: number | null; sizeBytes: number | null; grantCount: number;
+  /** 에이전트가 만든 비밀이면 그 에이전트와 원인 글(102). 사람이 만들었으면 null. */
+  createdByAgentId: string | null; createdCauseMessageId: string | null;
+  /**
+   * 지금 값을 정한 것이 에이전트면 그 id(security L2 — 그 에이전트는 값을 안다: import·mount). 사람이 값을 바꾸면 null 이 된다.
+   * 화면은 이것으로 "값을 @x 가 정함" 배지를 달고, 다른 에이전트에게 넓혀 줄 때 경고한다.
+   */
+  valueSetByAgentId: string | null;
 }
 
 const SECRET_COLS = `s.id, s.name, s.kind, s.filename, s.description, s.owner_account_id as "ownerAccountId",
   s.expires_at as "expiresAt", s.created_at as "createdAt", s.updated_at as "updatedAt",
   v.version, v.size_bytes as "sizeBytes",
-  (select count(*)::int from secret_grant g where g.secret_id = s.id) as "grantCount"`;
+  (select count(*)::int from secret_grant g where g.secret_id = s.id) as "grantCount",
+  s.created_by_agent_id as "createdByAgentId", s.created_cause_message_id as "createdCauseMessageId",
+  (select a.id from account a where a.id = v.created_by and a.kind = 'agent') as "valueSetByAgentId"`;
 const SECRET_FROM = `secret s left join lateral (
-    select version, size_bytes, split_part(sealed, '.', 2) as sealed_kid from secret_version
+    select version, size_bytes, created_by, split_part(sealed, '.', 2) as sealed_kid from secret_version
      where secret_id = s.id and revoked_at is null order by version desc limit 1) v on true`;
 
 async function getSecret(pool: Pool, id: string): Promise<SecretRow | null> {
