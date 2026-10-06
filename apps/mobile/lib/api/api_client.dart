@@ -209,16 +209,20 @@ class ApiClient {
   /// 되돌려 주므로 받은 순서를 그대로 그리면 된다.
   /// [thread] 를 주면 **그 스레드의 답글**만 온다. 채널 목록에는 루트만 실리므로
   /// 답글은 스레드를 열 때 따로 읽는다.
+  /// [around] 는 **점프 창**이다 — 그 `seq` 를 가운데 두고 앞뒤 절반씩 온다(데스크톱의
+  /// 검색·링크 점프와 같은 인자). `before`·`since` 와는 서로 다른 방향이라 함께 주지 않는다.
   Future<MessagePage> messages(
     String channelId, {
     int? before,
     int? since,
+    int? around,
     int? limit,
     String? thread,
   }) async {
     final q = <String, String>{
       if (before != null) 'before': '$before',
       if (since != null) 'since': '$since',
+      if (around != null) 'around': '$around',
       if (limit != null) 'limit': '$limit',
       'thread': ?thread,
     };

@@ -62,6 +62,15 @@ class _Server {
           if (q['thread'] != 'root') return _json({'messages': <Object?>[], 'hasMore': false});
           asked.add(q);
           final limit = int.parse(q['limit'] ?? '200');
+          // 점프 창(`around`): 서버와 같이 그 seq 를 가운데 두고 앞뒤 절반씩, `hasMore` 는 늘 false.
+          if (q['around'] != null) {
+            final around = int.parse(q['around']!);
+            final half = (limit / 2).ceil();
+            final up = [for (var s = 1; s <= replies + 1; s++) if (s <= around) s];
+            final dn = [for (var s = 1; s <= replies + 1; s++) if (s > around) s];
+            final rows = [...(up.length > half ? up.sublist(up.length - half) : up), ...dn.take(half)];
+            return _json({'messages': rows.map(_row).toList(), 'hasMore': false});
+          }
           final before = oldServer || q['before'] == null ? null : int.parse(q['before']!);
           if (before != null && holdOlder != null) await holdOlder;
           if (before != null && failOlder) {
@@ -180,5 +189,56 @@ void main() {
     expect(app.threads['root'], isNull);
     expect(app.threadHasMore, isEmpty);
     expect(app.olderThreadFailed, isEmpty);
+  });
+
+  test('링크·찾기로 옛 답글에 갈 때는 그 자리의 창을 받아 합치고, 위로는 before 로 이어진다', () async {
+    final server = _Server(replies: 250);
+    final app = await _open(server);
+    addTearDown(app.dispose);
+    expect(app.threads['root']!.length, 100);
+    // 옛 답글 seq 120 — 최신 페이지(152..251)에 없다.
+    await app.openThread('c1', 'root', aroundSeq: 120);
+    expect(server.asked.last['around'], '120');
+    final seqs = app.threads['root']!.map((m) => m.seq).toList();
+    expect(seqs, contains(120));
+    // 창은 **합쳐진다** — 읽던 최신 쪽이 남는다.
+    expect(seqs, contains(251));
+    expect(seqs, equals([...seqs]..sort()));
+    expect(app.threadRoots['root'], isNotNull);
+    // 창 응답의 hasMore(false)를 믿지 않고 위로 밀면 before 로 확인한다.
+    expect(app.threadHasMore['root'], isTrue);
+    expect(await app.loadOlderThread('c1', 'root'), isTrue);
+    expect(server.asked.last['before'], seqs.first.toString());
+  });
+
+  test('이미 손에 든 줄이면 창을 받지 않고, 처음 여는 스레드는 창 한 번으로 연다', () async {
+    final server = _Server(replies: 250);
+    final app = await _open(server);
+    addTearDown(app.dispose);
+    final n = server.asked.length;
+    await app.openThread('c1', 'root', aroundSeq: 200);
+    expect(server.asked.length, n + 1);
+    expect(server.asked.last.containsKey('around'), isFalse);
+
+    final server2 = _Server(replies: 250);
+    final app2 = AppState(
+      sessions: SessionStore.inMemory(
+        seed: jsonEncode({
+          'active': 'me-1',
+          'communities': [
+            {'accountId': 'me-1', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'me'},
+          ],
+        }),
+      ),
+      apiFactory: (b, t) => ApiClient(baseUrl: b, token: t, httpClient: server2.client),
+      connector: (_) async => throw StateError('소켓 없음'),
+    );
+    addTearDown(app2.dispose);
+    await app2.boot();
+    await app2.openThread('c1', 'root', aroundSeq: 40);
+    expect(server2.asked.length, 1);
+    expect(server2.asked.single['around'], '40');
+    expect(app2.threads['root']!.map((m) => m.seq), contains(40));
+    expect(app2.threadLoad['root'], LoadState.loaded);
   });
 }

@@ -183,13 +183,18 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
     stickyRef.current = false;
   }, [highlightedId, highlightInThread]);
 
+  /** 직전 커밋의 마지막 답글 — 채널의 `lastRootIdRef` 와 같은 이유다(앞에 붙은 옛 답글은 "내 새 답글"이 아니다). */
+  const lastReplyIdRef = useRef<string | null>(null);
   useEffect(() => {
     // 줄 수가 는 까닭이 점프가 불러온 답글 페이지면 따라가지 않는다 — "내가 쓴 답글은 따라
     // 간다" 예외도 여기서는 뜻이 없다(마지막 답글이 내 것인 스레드에서 점프가 되끌려 갔다).
     if (jumpedThisCommitRef.current) return;
-    if (atBottomRef.current || thread[thread.length - 1]?.authorId === me?.id) scrollToBottom();
+    const last = thread[thread.length - 1];
+    const appendedMine = last !== undefined && last.id !== lastReplyIdRef.current && last.authorId === me?.id;
+    if (atBottomRef.current || appendedMine) scrollToBottom();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thread.length]);
+  useEffect(() => { lastReplyIdRef.current = thread[thread.length - 1]?.id ?? null; });
   // 점프 표식은 **그 커밋 한 번**만 산다 — 남겨 두면 다음에 내가 보낸 답글까지 안 따라간다.
   useEffect(() => { jumpedThisCommitRef.current = false; });
 

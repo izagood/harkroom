@@ -12,7 +12,11 @@ import 'thread_screen.dart';
 /// 가는 곳은 늘 **스레드 화면**이다 — 답글이면 그 스레드, 최상위 글이면 그 글을 루트로 한 스레드.
 /// 데스크톱은 최상위 글이면 채널 타임라인을 그 자리로 굴려 강조하지만, 모바일 채널 화면은 아직
 /// 특정 자리로 가는 길(around 창)이 없다 — 채널만 열면 옛 글은 화면 밖에 있고 사람은 링크가
-/// 안 된 줄 안다. 스레드 화면은 루트를 맨 위에 그리므로 그 글이 바로 보인다.
+/// 안 된 줄 안다.
+///
+/// **그 줄로 굴려 강조한다**(2026-10-06). 전에는 화면만 열었다 — 스레드 화면은 최신 답글에서 시작하므로
+/// 긴 스레드에서는 루트도 옛 답글도 화면 밖이었고, 옛 답글은 최신 페이지에 실리지도 않았다. 찾기 결과와
+/// 같은 길([openMessageRow])로 간다: 강조할 줄과 그 seq 를 넘겨 스레드를 그 자리의 창으로 받는다.
 ///
 /// 실패는 **반드시 보인다**(데스크톱 `openMessage` 와 같은 세 갈래·같은 말). 조용히 삼키면 사람은
 /// 링크가 죽었다고 본다. 이 링크에는 커뮤니티가 적혀 있지 않다(shared `parseMessagePermalink` 주석) —
@@ -47,7 +51,7 @@ Future<void> openMessageLink(BuildContext context, String messageId) async {
     return null;
   }();
   if (row == null || !context.mounted) return;
-  await _openRow(context, navigator, row);
+  await _openRow(context, navigator, row, highlight: true);
 }
 
 /// 이미 손에 든 메시지로 간다(찾기 결과). [openMessageLink] 와 **같은 곳**으로 가되 메시지를
@@ -66,6 +70,11 @@ Future<void> _openRow(BuildContext context, NavigatorState navigator, MessageRow
   await app.openChannel(row.channelId);
   if (!context.mounted) return;
   await navigator.push(MaterialPageRoute<void>(
-    builder: (_) => ThreadScreen(channelId: row.channelId, rootId: row.threadRootId ?? row.id, highlightId: highlight ? row.id : null),
+    builder: (_) => ThreadScreen(
+      channelId: row.channelId,
+      rootId: row.threadRootId ?? row.id,
+      highlightId: highlight ? row.id : null,
+      highlightSeq: highlight ? row.seq : null,
+    ),
   ));
 }

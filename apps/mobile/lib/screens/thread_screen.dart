@@ -32,14 +32,19 @@ class ThreadScreen extends StatefulWidget {
     required this.channelId,
     required this.rootId,
     this.highlightId,
+    this.highlightSeq,
     this.focusComposer = false,
   });
 
   final String channelId;
   final String rootId;
 
-  /// 열자마자 그 줄로 굴려 2초 강조할 메시지(찾기 결과). 루트여도 되고 답글이어도 된다.
+  /// 열자마자 그 줄로 굴려 2초 강조할 메시지(찾기 결과·링크). 루트여도 되고 답글이어도 된다.
   final String? highlightId;
+
+  /// [highlightId] 의 seq. 주면 스레드를 **그 자리를 가운데 둔 창**으로 받는다(`AppState.openThread`) —
+  /// 긴 스레드의 옛 답글은 최신 페이지에 없어 이것 없이는 굴러갈 줄이 없다.
+  final int? highlightSeq;
 
   /// 열자마자 작성칸에 포커스(키보드)를 준다 — 메시지 시트의 「스레드에서 답글」.
   final bool focusComposer;
@@ -113,8 +118,8 @@ class _ThreadScreenState extends State<ThreadScreen> {
     super.didChangeDependencies();
     if (_loaded) return;
     _loaded = true;
-    // 루트는 채널에서 이미 왔지만 답글은 여기서 처음 온다.
-    context.app.openThread(widget.channelId, widget.rootId);
+    // 루트는 채널에서 이미 왔지만 답글은 여기서 처음 온다. 갈 줄이 정해져 있으면 그 자리의 창을 받는다.
+    context.app.openThread(widget.channelId, widget.rootId, aroundSeq: widget.highlightSeq);
   }
 
   @override

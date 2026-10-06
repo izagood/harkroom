@@ -6,6 +6,7 @@ import { buildBoard, mineCount } from '../lib/inboxBoard';
 /** 보드 한 판의 재료 — `GET /inbox?threads=1` 의 응답(`ApiClient.inboxBoard`). */
 export interface InboxBoardData { entries: InboxEntry[]; threads: MessageRow[] | null; threadStates: InboxThreadState[] }
 import { ApiClient, ApiError, type PreviewTicket } from '../lib/api';
+import { addRange, coversSeq, type SeqRange } from '../lib/seqCoverage';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { silentNotifier, type NotificationTarget, type Notifier } from '../lib/notify';
@@ -86,6 +87,21 @@ export class Controller {
   private mineTick: ReturnType<typeof setInterval> | null = null;
   /** 히스토리를 이미 통째로 받은 채널. 이 집합에 없으면 openChannel이 증분이 아니라 전체를 받는다. */
   private loadedChannels = new Set<string>();
+  /**
+   * 채널마다 **받아 온 seq 구간**(`lib/seqCoverage`). `loadedChannels` 가 "한 번이라도 열었는가"라면
+   * 이것은 "어느 자리의 이웃이 실려 있는가"다 — 점프가 창을 받을지는 이것으로 정한다(`openMessage`).
+   */
+  private coverage = new Map<string, SeqRange[]>();
+
+  /** 받아 온 페이지가 말한 구간을 적는다. */
+  private addCoverage(channelId: string, lo: number, hi: number): void {
+    this.coverage.set(channelId, addRange(this.coverage.get(channelId) ?? [], { lo, hi }));
+  }
+
+  /** 그 seq 의 이웃을 받아 온 적이 있는가 — 스토어에 그 줄이 있다는 것과 다르다. */
+  private covers(channelId: string, seq: number): boolean {
+    return coversSeq(this.coverage.get(channelId) ?? [], seq);
+  }
   /** 이미 알린 inbox 항목. 같은 항목을 두 번 알리면 알림이 쓸모없어진다. */
   private announced = new Set<number>();
   /**
@@ -1020,6 +1036,9 @@ export class Controller {
     this.swallow(this.loadChannelAutoMentions(channelId));
     const page = await this.api.messages(channelId, { since, limit: since === 0 ? INITIAL_HISTORY_LIMIT : undefined });
     this.loadedChannels.add(channelId);
+    // 첫 페이지는 "가장 오래된 줄부터 최신까지"를 말한다 — 그 뒤 소켓으로 오는 새 글도 이 안이다.
+    // 증분(`since > 0`)은 이미 열린 위끝 안의 일이라 적을 것이 없다. 빈 페이지는 아무것도 말하지 않는다.
+    if (since === 0 && page.messages.length) this.addCoverage(channelId, Math.min(...page.messages.map((m) => m.seq)), Infinity);
     this.store.getState().upsertMessages(channelId, page.messages);
     // **증분 응답으로 `hasMore` 를 덮지 않는다.** 서버는 그 값을 `messages.length > 0 &&
     // hasOlderMessages(첫 행)` 로 계산하므로, 새 메시지가 없는 증분 페이지는 0 행이 되어
@@ -1249,7 +1268,13 @@ export class Controller {
     // 본문은 그대로 둔다 — 인박스를 훑으며 답글을 여는 기본 동작이 그것이다(#783, 그
     // 판정이 `Inbox.openEntry` 와 같은 술어여야 한다는 것도 거기 적혀 있다). 본문의 말이면
     // 목적지가 채널 타임라인이라, 인박스·관제탑이 서 있으면 방금 누른 것이 그 뒤에 숨는다.
-    const inStore = (): boolean => (this.store.getState().messages[target.channelId] ?? []).some((m) => m.id === target.id);
+    /**
+     * **"스토어에 있다"가 아니라 "이웃을 받아 왔다"로 판정한다**(2026-10-06, 링크 이동이 외톨이 줄로 감).
+     * 인박스로 연 스레드의 뿌리는 `openThread` 가 채널 목록에 홀로 넣고, 열어 본 적 없는 채널의 글은
+     * 소켓으로 홀로 쌓인다. 그 줄이 있다고 창을 건너뛰면 앞뒤 없는 자리로 점프해 목록 맨 위에 서고,
+     * 거기서 `loadOlder` 가 바로 돌아 화면이 되끌려 갔다. 판정의 정본은 받아 온 구간(`coverage`)이다.
+     */
+    const covered = (): boolean => this.covers(target.channelId, target.seq);
     /**
      * **채널 쪽 창이 필요한가**(2026-10-01, Saved 점프 C안). 채널에 안 올라온 답글은 채널
      * 목록에 줄이 없다 — 강조가 걸릴 DOM 은 스레드 패널뿐이고, 그 창은 아래 스레드 조회가
@@ -1257,7 +1282,7 @@ export class Controller {
      * `alsoInChannel` 답글은 채널에도 줄이 있으므로 지금처럼 받는다.
      */
     const wantsChannelWindow = !target.threadRootId || target.alsoInChannel;
-    const earlyAround = wantsChannelWindow && !inStore() && this.loadedChannels.has(target.channelId)
+    const earlyAround = wantsChannelWindow && !covered() && this.loadedChannels.has(target.channelId)
       ? this.api.messages(target.channelId, { around: target.seq })
       : null;
     const earlyThread = target.threadRootId
@@ -1279,13 +1304,17 @@ export class Controller {
      * 사이를 메우는 '여기부터 새 메시지' 구분선은 별개 과제다(`loadOlder` 로 위로 올라가면
      * 메워진다).
      */
-    if (wantsChannelWindow && !inStore()) {
+    if (wantsChannelWindow && !covered()) {
       try {
         const page = await (earlyAround ?? this.api.messages(target.channelId, { around: target.seq }));
         this.store.getState().upsertMessages(target.channelId, page.messages);
-        this.store.getState().set({
-          hasMore: { ...this.store.getState().hasMore, [target.channelId]: page.hasMore },
-        });
+        // 창이 말한 구간을 적는다 — 같은 자리로 다시 점프하면 창을 또 받지 않는다. 비어 왔으면
+        // (지워진 자리) 그 seq 하나만 적어 둔다.
+        const seqs = page.messages.map((m) => m.seq);
+        this.addCoverage(target.channelId, Math.min(target.seq, ...seqs), Math.max(target.seq, ...seqs));
+        // **`hasMore` 는 건드리지 않는다.** 서버는 around 창에 늘 `false` 를 준다("과거를 말할 자격이
+        // 없는 조회"). 그것을 쓰면 점프 직후 목록 위의 "이전 글 불러오기"가 사라지고 위로 올려도
+        // 과거가 이어지지 않는다 — `openChannel` 이 증분 응답을 버리는 것과 같은 이유다.
       } catch {
         // 창을 못 받아도 채널은 이미 열렸다. 강조만 안 걸릴 뿐이라 사람을 막지 않는다
         // (구 버전 서버는 `around` 를 모르고 400 을 준다).
@@ -1323,6 +1352,8 @@ export class Controller {
     const oldest = Math.min(...rows.map((m) => m.seq));
 
     const page = await this.api.messages(activeChannelId, { before: oldest });
+    // `before: X` 는 X 아래 전부를 물은 것이다 — 받은 줄의 seq 가 아니라 물은 범위를 적는다.
+    if (page.messages.length) this.addCoverage(activeChannelId, Math.min(...page.messages.map((m) => m.seq)), oldest - 1);
     this.store.getState().upsertMessages(activeChannelId, page.messages);
     this.store.getState().set({
       hasMore: { ...this.store.getState().hasMore, [activeChannelId]: page.hasMore },
@@ -2372,6 +2403,7 @@ export class Controller {
     this.swallow(this.loadChannelAutoMentions(channelId));
     const page = await this.api.messages(channelId, { since, limit: since === 0 ? INITIAL_HISTORY_LIMIT : undefined });
     this.loadedChannels.add(channelId);
+    if (since === 0 && page.messages.length) this.addCoverage(channelId, Math.min(...page.messages.map((m) => m.seq)), Infinity);
     store.upsertMessages(channelId, page.messages);
     // 증분 응답은 `hasMore` 를 말할 자격이 없다 — 근거는 `openChannel` 의 같은 자리.
     if (since === 0) {

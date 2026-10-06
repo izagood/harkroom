@@ -1585,6 +1585,19 @@ class AppState extends ChangeNotifier {
     threads[rootId] = replies..sort((a, b) => a.seq.compareTo(b.seq));
   }
 
+  /// 스레드 응답 한 페이지를 이미 있는 답글에 **합친다**(id 로 겹침 제거, seq 순). 점프 창용이다.
+  void _mergeThreadPage(String rootId, List<MessageRow> page) {
+    final byId = <String, MessageRow>{for (final m in threads[rootId] ?? const <MessageRow>[]) m.id: m};
+    for (final m in page) {
+      if (m.id == rootId) {
+        threadRoots[rootId] = m;
+      } else {
+        byId[m.id] = m;
+      }
+    }
+    threads[rootId] = byId.values.toList()..sort((a, b) => a.seq.compareTo(b.seq));
+  }
+
   /// 스레드를 연다.
   ///
   /// **첫 `await` 전에 `notifyListeners()` 를 부르지 않는다.** 이 함수를 부르는 자리는
@@ -1594,17 +1607,37 @@ class AppState extends ChangeNotifier {
   ///
   /// 알리지 않아도 손해가 없다: 화면은 `threads[rootId] ?? []` 를 읽으므로 빈 목록이
   /// 그려지고, 답글이 도착하면 아래에서 알린다.
-  Future<void> openThread(String channelId, String rootId) async {
+  ///
+  /// [aroundSeq] 를 주면(링크·찾기 결과로 **그 줄에** 가야 할 때) 최신 페이지 대신 **그 seq 를 가운데
+  /// 둔 창**을 받는다 — 긴 스레드의 옛 답글은 최신 페이지에 없어, 창 없이는 굴러갈 줄이 아예 없다
+  /// (2026-10-06, 링크 이동이 대상으로 안 감). 이미 그 줄이 손에 있으면(또는 스레드를 처음부터 다
+  /// 받았으면) 전처럼 최신 페이지를 받는다. 창은 **합친다**: 이미 받은 답글을 버리면 사람이 읽던 최신
+  /// 쪽이 사라진다.
+  Future<void> openThread(String channelId, String rootId, {int? aroundSeq}) async {
     threads.putIfAbsent(rootId, () => []);
     // 여기서 **알리지 않는다** — 화면이 `didChangeDependencies`(빌드 중)에서 부르므로 알리면
     // "빌드 중 setState" 가 된다. 아직 상태가 없으면 화면은 읽는 중으로 그린다.
     if (threadLoad[rootId] == LoadState.failed) threadLoad[rootId] = LoadState.loading;
     final gen = _generation;
+    final have = threads[rootId] ?? const <MessageRow>[];
+    final needsWindow = aroundSeq != null &&
+        !have.any((m) => m.seq == aroundSeq) &&
+        // 루트로 가는 길: 스레드를 처음부터 다 받았으면 루트는 이미 맨 위다.
+        !(threadRoots[rootId]?.seq == aroundSeq && threadLoad[rootId] == LoadState.loaded && threadHasMore[rootId] == false);
     try {
-      final page = await _api!.messages(channelId, thread: rootId, limit: 100);
+      final page = needsWindow
+          ? await _api!.messages(channelId, thread: rootId, around: aroundSeq, limit: 100)
+          : await _api!.messages(channelId, thread: rootId, limit: 100);
       if (gen != _generation) return;
-      _storeThreadPage(rootId, page.messages);
-      threadHasMore[rootId] = page.hasMore;
+      if (needsWindow) {
+        _mergeThreadPage(rootId, page.messages);
+        // 창 응답의 `hasMore` 는 서버가 늘 `false` 로 준다(과거를 말할 자격이 없는 조회). 답글이 하나라도
+        // 왔으면 "더 있을 수 있다"로 두고 위로 밀 때 `before` 로 확인한다 — 끝이면 그 답이 `false` 를 준다.
+        threadHasMore[rootId] = page.messages.any((m) => m.id != rootId);
+      } else {
+        _storeThreadPage(rootId, page.messages);
+        threadHasMore[rootId] = page.hasMore;
+      }
       olderThreadFailed.remove(rootId);
       threadLoad[rootId] = LoadState.loaded;
     } on Object catch (e) {
