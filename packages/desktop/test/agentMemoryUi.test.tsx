@@ -33,7 +33,12 @@ const mem = (slug: string, value: string, day = 3) => ({
   slug, value, updatedAt: new Date(Date.UTC(2026, 8, day)).toISOString(),
 });
 
-const fakeController = (memories: ReturnType<typeof mem>[]) => {
+/** 보관된 기억(서버 097) — 사람 목록 API 는 이것도 함께 준다. */
+const archived = (slug: string, value: string, day = 4) => ({
+  ...mem(slug, value), archivedAt: new Date(Date.UTC(2026, 8, day)).toISOString(),
+});
+
+const fakeController = (memories: (ReturnType<typeof mem> & { archivedAt?: string })[]) => {
   const c = {
     listAgents: vi.fn(async (): Promise<AgentView[]> => [agent('rusalka')]),
     listPats: vi.fn(async (): Promise<PatView[]> => []),
@@ -212,10 +217,74 @@ describe('한도', () => {
     expect(count.getAttribute('title')).toContain('한도에 가깝다');
   });
 
+  /**
+   * 사람 목록 API 는 보관된 것도 함께 준다. 서버 상한은 보관을 빼고 세므로, 섞어 세면
+   * `213 / 200` 처럼 있을 수 없는 숫자가 뜨고 사람은 무엇을 지워야 하는지 헤맨다.
+   */
+  it('숫자는 보관된 것을 빼고 센다 — 보관 수는 따로 말한다', async () => {
+    fakeController([
+      mem('core', '값'), mem('mem/a-one', '# 첫째'),
+      archived('mem/old-one', '# 옛것 하나'), archived('mem/old-two', '# 옛것 둘'),
+    ]);
+    await open();
+
+    const count = await screen.findByTestId('memory-count');
+    expect(count.textContent).toBe(`2 / ${MAX_MEMORY_ITEMS_PER_ACCOUNT} · 보관 2`);
+  });
+
+  it('보관된 것이 아무리 많아도 한도 경고를 켜지 않는다', async () => {
+    const lots = Array.from({ length: 190 }, (_, i) => archived(`mem/x${i}-y`, `# ${i}`));
+    fakeController([mem('mem/a-one', '# 첫째'), ...lots]);
+    await open();
+
+    const count = await screen.findByTestId('memory-count');
+    expect(count.className).not.toContain('text-warning');
+    expect(count.textContent).toContain(`1 / ${MAX_MEMORY_ITEMS_PER_ACCOUNT}`);
+  });
+
   it('여유가 있으면 경고색이 아니다', async () => {
     fakeController([mem('mem/a-one', '# 첫째')]);
     await open();
 
     expect((await screen.findByTestId('memory-count')).className).not.toContain('text-warning');
+  });
+});
+
+describe('보관된 기억', () => {
+  it('살아 있는 목록에 섞이지 않고 맨 아래 접힌 보관함에 선다', async () => {
+    fakeController([mem('mem/a-one', '# 첫째'), archived('mem/old-one', '# 옛것 하나')]);
+    await open();
+
+    expect(await screen.findByTestId('memory-row-mem/a-one')).toBeTruthy();
+    // 접혀 있다 — 보관한 줄은 아직 없다.
+    expect(screen.queryByTestId('memory-row-mem/old-one')).toBeNull();
+
+    const box = screen.getByTestId('memory-archived');
+    expect(within(box).getByText('보관함')).toBeTruthy();
+    fireEvent.click(within(box).getByRole('button', { name: '보관한 기억 펼치기' }));
+    const row = within(box).getByTestId('memory-row-mem/old-one');
+    expect(within(row).getByTestId('memory-archived-badge').textContent).toBe('보관됨');
+  });
+
+  it('검색하면 보관함도 걸린 것만 연 채로 보인다', async () => {
+    fakeController([
+      mem('mem/a-one', '# 첫째'),
+      archived('mem/old-one', '# 옛것 하나'), archived('mem/old-two', '# 다른 것'),
+    ]);
+    await open();
+
+    fireEvent.change(await screen.findByLabelText('slug·본문에서 찾기'), { target: { value: '옛것' } });
+    const box = screen.getByTestId('memory-archived');
+    expect(within(box).getByTestId('memory-row-mem/old-one')).toBeTruthy();
+    expect(within(box).queryByTestId('memory-row-mem/old-two')).toBeNull();
+  });
+
+  it('보관된 것이 없으면 보관함도 없다', async () => {
+    fakeController([mem('mem/a-one', '# 첫째')]);
+    await open();
+
+    expect(await screen.findByTestId('memory-row-mem/a-one')).toBeTruthy();
+    expect(screen.queryByTestId('memory-archived')).toBeNull();
+    expect(screen.queryByTestId('memory-archived-count')).toBeNull();
   });
 });
