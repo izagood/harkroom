@@ -121,6 +121,8 @@ export interface ServerDeps {
   secretKeyring?: SecretKeyring | null;
   /** reveal 속도 제한(테스트가 상한을 바꾼다). 생략하면 에이전트마다 10분에 30회. */
   secretRevealLimiter?: RevealLimiter;
+  /** 에이전트의 비밀 만들기·회전 속도(102). 시험이 넉넉한 것을 넣는다. */
+  secretCreateLimiter?: RevealLimiter;
   /** avcs 연결 상태 — /healthz 에서 쓴다. */
   getAvcsStatus?: () => { connected: boolean };
   /**
@@ -616,6 +618,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerSecretRoutes(app, deps.pool, {
     keyring: secretKeyring,
     limiter: deps.secretRevealLimiter,
+    createLimiter: deps.secretCreateLimiter,
   });
   await registerMergeRoutes(app, deps.pool);
   await registerMergeDenialRoutes(app, deps.pool);
