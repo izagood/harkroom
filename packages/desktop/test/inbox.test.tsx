@@ -268,6 +268,23 @@ describe('Inbox 상태 보드 (C안)', () => {
     expect((await screen.findByTestId('inbox-empty')).textContent).toBe('아직 올라온 일이 없다');
   });
 
+  /**
+   * 세 열은 **보드 자기 폭**으로 편다(designer #1219). 카드를 열면 옆에 스레드가 서서 보드가 좁아지는데,
+   * 창 폭(`lg:`)으로 펴면 그때도 세 열을 고집해 한 열이 70px 남짓이 된다. jsdom 은 폭을 못 재므로 클래스로 잰다.
+   */
+  it('세 열은 창 폭이 아니라 보드 폭(@container)으로 펼친다', async () => {
+    fakeController(async () => ({
+      entries: [entry(1, { threadRootId: 'r1', reason: 'thread_reply' })],
+      threads: [head('r1', { authorId: ME })],
+    }));
+    open();
+    await screen.findByTestId('inbox-lanes');
+    expect(screen.getByTestId('inbox-board').className.split(/\s+/)).toContain('@container');
+    const lanes = screen.getByTestId('inbox-lanes').className;
+    expect(lanes).toContain('@3xl:grid-cols-3');
+    expect(lanes).not.toMatch(/(^|\s)lg:/);
+  });
+
   it('옛 서버(머리 없음)에서도 보드가 선다', async () => {
     fakeController(async () => ({
       entries: [entry(1, { meta: askMeta({ kind: 'account', accountId: ME }) })],

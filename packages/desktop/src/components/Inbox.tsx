@@ -479,7 +479,7 @@ export function Inbox({ open, onClose }: Props) {
         저절로 옮긴다. 스크롤은 이 자리 하나가 진다 — 띠와 열이 따로 굴러가면 띠가 열을 가린다.
       */}
       {load.kind === 'ready' && cards.length > 0 && (
-        <div data-testid="inbox-board" className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2">
+        <div data-testid="inbox-board" className="@container flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2">
           {(() => {
             // 띠 — 오래 기다린 것부터(`buildBoard` 가 내 차례를 sinceAt 오름차순으로 준다).
             const shown = byColumn.mine.filter((c) => c.fold === null);
@@ -521,7 +521,10 @@ export function Inbox({ open, onClose }: Props) {
               </section>
             );
           })()}
-          <div className="flex flex-col gap-3 lg:grid lg:grid-cols-3 lg:items-start lg:gap-2">
+          {/* 세 열은 **보드 자기 폭**으로 편다(`@container` · designer #1219). 창 폭(`lg:`)으로 펴면 카드를
+              눌러 옆에 스레드가 선 — 이 화면의 기본 흐름 — 좁은 보드에서도 세 열을 고집해 한 열이 70px
+              남짓까지 줄었다. `@3xl`(48rem)은 한 열이 15rem 아래로 내려가지 않는 자리다. */}
+          <div data-testid="inbox-lanes" className="flex flex-col gap-3 @3xl:grid @3xl:grid-cols-3 @3xl:items-start @3xl:gap-2">
             {LANE_COLUMNS.map((col) => {
               const shown = byColumn[col].filter((c) => c.fold === null);
               return (
