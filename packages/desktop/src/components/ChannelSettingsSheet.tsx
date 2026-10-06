@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useAppWindows } from '../lib/appWindows';
 import { NOTIFY_LEVELS, notifyLevelOf, type NotifyLevel } from '@harkroom/shared';
 import { Overlay } from './Overlay';
 import { useActiveStore } from '../state/communities';
@@ -34,8 +35,15 @@ const TABS: Tab[] = ['info', 'members', 'notify', 'agents'];
  * - 나가기 전에 멤버 목록을 받아 **마지막 멤버면 한 번 묻는다**. 조회 실패를 빈 목록으로 삼키지 않는다.
  * - 보관·편집은 `channel.manage` 능력이 있을 때만 낸다(`hasCapability` — 서버 `PATCH /channels/:id` 의 그 능력과 같다).
  */
-export function ChannelSettingsSheet() {
+/**
+ * `onlyFor` 를 주면 **그 채널의 시트만** 그린다 — 채널 창이 자기 안에 띄울 때다(판 3 C2: 창에서 연 시트는 그 창에).
+ * 메인은 안 준다. 대신 그 채널이 새 창에 떠 있으면 메인은 그리지 않는다 — 같은 시트가 두 창에 뜨면 안 된다.
+ */
+export function ChannelSettingsSheet({ onlyFor }: { onlyFor?: string } = {}) {
   const t = useT();
+  const sheetId = useActiveStore((s) => s.channelSheetId);
+  const poppedOut = useAppWindows((s) => s.entries.some((e) => e.target.kind === 'channel' && e.target.channelId === sheetId));
+  const mine = onlyFor ? sheetId === onlyFor : !poppedOut;
   const channelId = useActiveStore((s) => s.channelSheetId);
   const channel = useActiveStore((s) => s.channels.find((c) => c.id === s.channelSheetId));
   const me = useActiveStore((s) => s.me);
@@ -67,7 +75,7 @@ export function ChannelSettingsSheet() {
     void leaveRef.current?.(false);
   }, [startLeave, channel]);
 
-  if (!channelId || !channel) return null;
+  if (!mine || !channelId || !channel) return null;
   const close = () => useActiveStore.getState().set({ channelSheetId: null, channelSheetTab: null });
   const canManage = hasCapability(me, 'channel.manage');
   const isArchived = channel.archivedAt != null;

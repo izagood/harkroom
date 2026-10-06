@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useHostDocument } from '../lib/hostDocument';
 import type { MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
@@ -50,6 +51,8 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
   /** 링크 만들기·복사 알림은 `MessageItem` 에 있다 — 이 버튼은 그것을 부르기만 한다. */
   onCopyLink: () => void;
 }) {
+  // 새 창 안이면 그 창의 문서를 듣는다(`lib/hostDocument`).
+  const hostDoc = useHostDocument();
   // 「스레드 열기」는 **이 창의** 자리로 간다(채널 창이면 자기 패널, W4 — `state/windowView`).
   const windowView = useWindowView();
   const t = useT();
@@ -78,11 +81,11 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
       if (rootRef.current?.contains(e.target as Node)) return;
       setPicking(false);
     };
-    document.addEventListener('keydown', onKey, true);
-    document.addEventListener('mousedown', onDown);
+    hostDoc.addEventListener('keydown', onKey, true);
+    hostDoc.addEventListener('mousedown', onDown);
     return () => {
-      document.removeEventListener('keydown', onKey, true);
-      document.removeEventListener('mousedown', onDown);
+      hostDoc.removeEventListener('keydown', onKey, true);
+      hostDoc.removeEventListener('mousedown', onDown);
     };
   }, [picking]);
 
@@ -96,7 +99,7 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
   const onArrow = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
     const slots = Array.from(rootRef.current?.querySelectorAll<HTMLElement>('[data-slot]') ?? []);
-    const at = slots.indexOf(document.activeElement as HTMLElement);
+    const at = slots.indexOf(hostDoc.activeElement as HTMLElement);
     if (at < 0 || slots.length === 0) return;
     e.preventDefault();
     const next = e.key === 'ArrowRight' ? (at + 1) % slots.length : (at - 1 + slots.length) % slots.length;

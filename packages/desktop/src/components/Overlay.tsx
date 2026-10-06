@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useHostDocument } from '../lib/hostDocument';
 
 /** 열려 있는 오버레이의 순서. 맨 뒤가 가장 나중에 열린 것이다. */
 const STACK: object[] = [];
@@ -55,6 +56,8 @@ export function Overlay({ label, onClose, children, className = 'w-[42rem]', ali
    */
   align?: 'start' | 'center';
 }) {
+  // 새 창 안이면 그 창의 문서를 듣는다(`lib/hostDocument`).
+  const hostDoc = useHostDocument();
   /**
    * **스택의 맨 위만 Esc·Tab 을 받는다.** `preventDefault` 로는 안 된다 — 같은 대상에 걸린
    * 형제 리스너는 그것과 무관하게 전부 돌기 때문이다(실측). 그래서 열린 순서를 모듈
@@ -65,19 +68,19 @@ export function Overlay({ label, onClose, children, className = 'w-[42rem]', ali
    */
   const [token] = useState(() => ({}));
   // 연 자리. 첫 렌더에서 잡는다(머리말 "모달이다" 3).
-  const [opener] = useState<Element | null>(() => (typeof document === 'undefined' ? null : document.activeElement));
+  const [opener] = useState<Element | null>(() => (typeof document === 'undefined' ? null : hostDoc.activeElement));
   const panelRef = useRef<HTMLDivElement>(null);
   const isTop = (): boolean => STACK[STACK.length - 1] === token;
 
   useEffect(() => {
     STACK.push(token);
     const panel = panelRef.current;
-    if (panel && !panel.contains(document.activeElement)) panel.focus();
+    if (panel && !panel.contains(hostDoc.activeElement)) panel.focus();
 
     const onTab = (e: KeyboardEvent): void => {
       if (e.key !== 'Tab' || !isTop() || !panel) return;
       const items = focusables(panel);
-      const active = document.activeElement;
+      const active = hostDoc.activeElement;
       if (items.length === 0) {
         e.preventDefault();
         panel.focus();
@@ -94,9 +97,9 @@ export function Overlay({ label, onClose, children, className = 'w-[42rem]', ali
         first.focus();
       }
     };
-    document.addEventListener('keydown', onTab);
+    hostDoc.addEventListener('keydown', onTab);
     return () => {
-      document.removeEventListener('keydown', onTab);
+      hostDoc.removeEventListener('keydown', onTab);
       const i = STACK.indexOf(token);
       if (i >= 0) STACK.splice(i, 1);
       // 연 자리가 아직 문서에 있을 때만 돌려준다 — 지워진 행으로 보내면 포커스가 허공에 뜬다.
@@ -113,8 +116,8 @@ export function Overlay({ label, onClose, children, className = 'w-[42rem]', ali
       e.preventDefault();
       onClose();
     };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    hostDoc.addEventListener('keydown', onKey);
+    return () => hostDoc.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onClose]);
 

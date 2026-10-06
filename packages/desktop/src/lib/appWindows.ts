@@ -220,14 +220,21 @@ export function persistAppWindows(): void {
   } catch { /* 저장소 막힘 */ }
 }
 
+const isSafeId = (v: unknown): v is string => typeof v === 'string' && /^[0-9A-Za-z-]{1,64}$/.test(v);
+
 export function loadSavedAppWindows(): SavedAppWindow[] {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]') as unknown;
     if (!Array.isArray(raw)) return [];
     return raw.filter((r): r is SavedAppWindow => {
       const t = (r as SavedAppWindow | null)?.target;
-      return !!t && typeof t.channelId === 'string'
-        && (t.kind === 'channel' || (t.kind === 'thread' && typeof (t as { rootId?: unknown }).rootId === 'string'));
+      /**
+       * 저장소는 **이 앱 밖에서도 고칠 수 있는 값**이다. 복원 목록의 id 는 uuid 꼴(`[0-9A-Za-z-]`)만 받는다 —
+       * 그 밖의 글자가 키로 흘러 들어가 `about:blank#hk-win=…` 를 다른 모양으로 만들지 못하게 여기서 한 번,
+       * 키를 지을 때(`appWindowKey`) 한 번, Rust 의 `popup_label` 에서 또 한 번 거른다.
+       */
+      return !!t && isSafeId(t.channelId)
+        && (t.kind === 'channel' || (t.kind === 'thread' && isSafeId((t as { rootId?: unknown }).rootId)));
     });
   } catch {
     return [];

@@ -10,7 +10,10 @@ import {
 import { displayBody } from '../lib/mention';
 import { ThreadPanel } from './ThreadPanel';
 import { ChannelPane } from './ChannelPane';
+import { ChannelSettingsSheet } from './ChannelSettingsSheet';
 import { useT } from '../i18n/useT';
+import { HostDocumentContext } from '../lib/hostDocument';
+import { isFileDrag } from '../lib/fileDrag';
 
 /**
  * 열린 새 창마다 **포털을 단다**(채널·스레드 새 창). 메인 창의 React 트리 안에 있으므로 스토어·
@@ -70,13 +73,17 @@ function AppWindowPortal({ entry }: { entry: AppWindowEntry }) {
     return () => obs.disconnect();
   }, [doc]);
 
+  useWindowGuards(entry.win);
+
   return createPortal(
+    <HostDocumentContext.Provider value={doc}>
     <div className="flex min-w-0 flex-1 flex-col">
       <WindowBar entry={entry} />
       {entry.target.kind === 'thread'
         ? <ThreadWindow entry={entry} channelId={entry.target.channelId} rootId={entry.target.rootId} />
         : <ChannelWindow entry={entry} channelId={entry.target.channelId} />}
-    </div>,
+    </div>
+    </HostDocumentContext.Provider>,
     root,
   );
 }
@@ -230,6 +237,41 @@ function ChannelWindow({ entry, channelId }: { entry: AppWindowEntry; channelId:
         <ChannelPane />
         {threadRootId && <ThreadPanel />}
       </div>
+      {/* 이 창에서 연 채널 설정 시트는 이 창에 뜬다(판 3 C2). 메인은 이 채널의 시트를 그리지 않는다. */}
+      <ChannelSettingsSheet onlyFor={channelId} />
     </WindowViewProvider>
   );
+}
+
+/**
+ * 메인 창에 걸린 창 단위 장치를 새 창에도 건다.
+ *
+ * - **파일 끌어 놓기 가드**(`useFileDropGuard` 와 같은 규칙): 작성창 밖에 떨어진 파일이 창을 그 파일로
+ *   갈아치우지 못하게 기본 동작만 걷는다. 작성창의 첨부 경로는 그대로 산다.
+ * - **앱 단축키는 메인이 받는다**: ⌘K(찾기)·⌘F·⌘[·⌘]·⌘\\·⌘,·⌘=/-/0 은 `Workspace`·`useZoom` 이 메인 문서에서
+ *   듣는다. 새 창에서 누르면 메인을 앞으로 가져와 같은 키를 메인 문서로 넘긴다 — 결과(찾기 팔레트 등)가
+ *   메인에 뜬다. 복사·붙여넣기·실행 취소처럼 글을 다루는 키는 넘기지 않는다.
+ */
+const FORWARDED_KEYS = new Set(['k', 'f', '[', ']', '\\', ',', '=', '-', '0']);
+function useWindowGuards(win: Window): void {
+  useEffect(() => {
+    const over = (e: DragEvent) => { if (isFileDrag(e.dataTransfer)) e.preventDefault(); };
+    const drop = (e: DragEvent) => { if (isFileDrag(e.dataTransfer)) e.preventDefault(); };
+    const key = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || !FORWARDED_KEYS.has(e.key.toLowerCase())) return;
+      e.preventDefault();
+      window.focus();
+      document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: e.key, code: e.code, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, bubbles: true, cancelable: true,
+      }));
+    };
+    win.addEventListener('dragover', over);
+    win.addEventListener('drop', drop);
+    win.addEventListener('keydown', key);
+    return () => {
+      win.removeEventListener('dragover', over);
+      win.removeEventListener('drop', drop);
+      win.removeEventListener('keydown', key);
+    };
+  }, [win]);
 }

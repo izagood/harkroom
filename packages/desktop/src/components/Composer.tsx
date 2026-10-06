@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
+import { useHostDocument } from '../lib/hostDocument';
 import { MAX_MESSAGE_BODY_CHARS, messagePermalink, parseMessagePermalink, type ScheduledMessageView } from '@harkroom/shared';
 import type { AgentModelPick, AttachmentRow } from '@harkroom/shared';
 import { getActiveStore, useActiveStore, useCommunityRegistry, type AppStore } from '../state/communities';
@@ -206,6 +207,8 @@ interface HeldMessage {
 export function Composer({
   onSend, placeholder, rows = 2, autoFocus, scopeKey = '', channelId, autoMentionChannelId,
 }: Props) {
+  // 새 창 안이면 그 창의 문서를 듣는다(`lib/hostDocument`).
+  const hostDoc = useHostDocument();
   const t = useT();
   const accounts = useActiveStore((s) => s.accounts);
   const groups = useActiveStore((s) => s.groups);
@@ -664,8 +667,8 @@ export function Composer({
       if (containerRef.current?.contains(target)) return;
       closeLists();
     };
-    document.addEventListener('mousedown', onMouseDown);
-    return () => document.removeEventListener('mousedown', onMouseDown);
+    hostDoc.addEventListener('mousedown', onMouseDown);
+    return () => hostDoc.removeEventListener('mousedown', onMouseDown);
   }, [open]);
 
   /**

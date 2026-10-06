@@ -155,4 +155,14 @@ describe('appWindows', () => {
     openAppWindow({ kind: 'channel', channelId: 'c9' }, { communityId: 'k2' });
     expect(loadSavedAppWindows().map((w) => w.communityId).sort()).toEqual(['k1', 'k2']);
   });
+
+  it('복원 목록은 키 검증을 다시 거친다 — 모양이 이상한 항목은 버린다', () => {
+    localStorage.setItem('harkroom.appWindows', JSON.stringify([
+      { target: { kind: 'thread', channelId: 'c1', rootId: '../main' }, communityId: null, pinned: false },
+      { target: { kind: 'channel', channelId: 'c1#hk-win=main' }, communityId: null, pinned: false },
+      { target: { kind: 'other', channelId: 'c1' }, communityId: null, pinned: false },
+      { target: { kind: 'channel', channelId: 'c-ok-1' }, communityId: null, pinned: false },
+    ]));
+    expect(loadSavedAppWindows().map((w) => w.target)).toEqual([{ kind: 'channel', channelId: 'c-ok-1' }]);
+  });
 });
