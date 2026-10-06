@@ -578,17 +578,13 @@ export const ko = {
   'agents.disable.headingDisabled': '비활성화된 에이전트',
   'agents.disable.headingEnabled': '에이전트 활성화',
   'agents.disable.noteDisabled':
-    '이 에이전트는 비활성화되어 있다. 다시 활성화하면 PAT 가 없다(재발급 필요)고 안내가 뜬다 — '
-    + '비활성화 시 모든 PAT 가 폐기되었기 때문이다.',
+    '이 에이전트는 비활성화되어 있다. 비활성화 때 모든 PAT 가 폐기됐다 — 다시 켤 때 PAT 는 필요 없다'
+    + '(오퍼레이터를 통해 접속한다).',
   'agents.disable.noteEnabled':
-    '에이전트를 비활성화하면 {strongRevoked}되고, 다시 활성화해도 PAT 는 복구되지 않아 '
-    + '{strongMint}해야 한다.',
-  'agents.disable.noteEnabledMint': '새로 발급',
+    '에이전트를 비활성화하면 {strongRevoked}된다. 다시 켤 때 PAT 는 필요 없다(오퍼레이터를 통해 접속한다).',
   'agents.disable.noteEnabledRevoked': '모든 PAT 가 폐기',
   'agents.disable.warning':
-    '{strongRevoked}되어 러너가 멈춘다. 다시 활성화해도 PAT 는 돌아오지 않으며, '
-    + '{strongMint}해야 한다.',
-  'agents.disable.warningMint': '새로 발급',
+    '{strongRevoked}되어 러너가 멈춘다. 다시 켤 때 PAT 는 필요 없다(오퍼레이터를 통해 접속한다).',
   'agents.disable.warningRevoked': '이 에이전트의 모든 PAT 가 폐기',
 
   'agents.delete.heading': '삭제',
@@ -706,21 +702,20 @@ export const ko = {
   'agents.memory.sortName': '이름순',
   'agents.memory.sortRecent': '수정순',
 
-  'agents.pat.copyToken': '토큰 복사',
-  'agents.pat.label': 'New PAT label',
-  'agents.pat.labelNote': '라벨은 살아 있는 토큰 안에서 유일하다. 폐기하면 같은 라벨을 다시 쓸 수 있다.',
+  'agents.pat.heading': '옛 러너 토큰 (PAT)',
+  'agents.pat.legacyNote':
+    '에이전트는 이제 오퍼레이터를 통해 접속한다 — 이 토큰을 쓰는 곳은 없지만 아직 유효하고 만료도 없다. '
+    + '폐기해 두는 것이 안전하다.',
   'agents.pat.listFailed': 'PAT 목록을 읽지 못했다',
-  'agents.pat.loading': 'PAT 를 읽고 있다…',
-  'agents.pat.mint': '+ New PAT',
-  'agents.pat.mintFailed': 'PAT 를 새로 발급하지 못했다',
-  'agents.pat.none': 'PAT 가 없다',
-  'agents.pat.noneNeedsMint': 'PAT 가 없다 — 새로 발급해야 한다(비활성화 시 전부 폐기됨)',
-  'agents.pat.revoke': 'Revoke',
-  'agents.pat.revokeCancel': 'Cancel',
-  'agents.pat.revokeConfirm': 'Really revoke',
-  'agents.pat.revoked': '(폐기됨)',
+  'agents.pat.revoke': '폐기',
+  'agents.pat.revokeAll': '모두 폐기 ({n})',
+  'agents.pat.revokeAllConfirm': '모두 폐기',
+  'agents.pat.revokeAllDetail':
+    '토큰마다 라벨로 폐기하고 감사 기록에 하나씩 남긴다. 아직 이 토큰을 들고 있는 것이 있으면 멈춘다. 되돌릴 수 없다.',
+  'agents.pat.revokeAllTitle': { one: '옛 토큰 {count}개를 폐기할까?', other: '옛 토큰 {count}개를 폐기할까?' },
+  'agents.pat.revokeCancel': '취소',
+  'agents.pat.revokeConfirm': '정말 폐기',
   'agents.pat.revokeFailed': 'PAT 를 폐기하지 못했다',
-  'agents.pat.shownOnce': '이 토큰은 지금만 보인다 — 서버가 해시만 보관하므로 다시 볼 수 없다',
 
   'agents.permissions.mentionAuto': 'auto — 멘션 턴에서 도구를 모두 허용',
   'agents.permissions.mentionNote': '사람이 터미널로 직접 조종할 때는 이 설정과 무관하게 하네스가 물어본다.',
@@ -760,10 +755,6 @@ export const ko = {
   'agents.run.model': '모델',
   'agents.run.effort': 'Effort',
 
-  'agents.runner.copied': '복사됨',
-  'agents.runner.copy': '복사',
-  'agents.runner.copyFailedManual': '클립보드를 쓸 수 없고 명령을 선택할 수도 없다 — 명령을 손으로 옮겨 적는다',
-  'agents.runner.copyFailedSelected': '클립보드를 쓸 수 없다 — 명령을 선택해 두었으니 ⌘C 로 복사한다',
   'agents.runner.daemonScope':
     'daemon 은 {strongOnlyOwn} 안다. 다른 머신이나 손으로 띄운 러너는 이 목록에 없어서 여기 '
     + '나타나지 않는다 — 그때는 서버에 붙어 있다는 사실만 사유로 붙고, 이 앱은 자기 러너를 그대로 띄운다.',
@@ -775,9 +766,6 @@ export const ko = {
     + '‘{label}’ 으로 표시한다 — 같은 에이전트에 러너가 둘이면 멘션을 두 러너가 나눠 집어 간다.',
   'agents.runner.ownedNoteDaemon': 'daemon 이 이미 들고 있는',
   'agents.runner.ownedNoteOwn': '내가 소유한',
-  'agents.runner.operatorTakesPat':
-    '배정된 오퍼레이터는 이 토큰을 서버에서 직접 받아 간다 — 어디에도 옮겨 적을 필요가 없다. '
-    + '러너를 손으로 띄울 때만 이 값이 필요하다.',
 
   'agents.stale.allCurrent': '도는 러너가 전부 자기 오퍼레이터와 같은 버전이다.',
   'agents.stale.here': { other: '이 머신의 러너 {count}대가 오퍼레이터보다 옛 번들이다 — 재기동하면 오퍼레이터의 번들로 다시 뜬다.' },

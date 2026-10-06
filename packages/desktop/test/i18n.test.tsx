@@ -935,33 +935,29 @@ describe('에이전트 설정 — 옮기면서 사실을 잃지 않는다', () =
     expect(ko['agents.detail.disconnected']).toContain('알 수 없다');
   });
 
-  it('PAT 0개 안내가 두 언어 모두 「왜 없어졌나」까지 말한다', () => {
-    // 켜진 에이전트의 0개는 러너가 못 뜬다는 뜻이고, 그 사유(비활성화가 전부 폐기했다)를
-    // 함께 말해야 사람이 "고장 났나"로 읽지 않는다.
-    expect(en['agents.pat.noneNeedsMint']).toContain('mint one');
-    expect(en['agents.pat.noneNeedsMint']).toContain('disabling revokes them all');
-    expect(ko['agents.pat.noneNeedsMint']).toContain('새로 발급');
-    expect(ko['agents.pat.noneNeedsMint']).toContain('전부 폐기');
-    // 꺼진 에이전트에서 0개는 **정상이다** — 그래서 재발급을 권하지 않는다.
-    expect(en['agents.pat.none']).not.toContain('mint');
-    expect(ko['agents.pat.none']).not.toContain('발급');
-  });
-
-  it('클립보드 실패가 두 언어 모두 「다음에 무엇을 하나」를 말한다', () => {
-    // 오류만 적고 끝내면 사람은 막힌다(`#177`).
-    expect(en['agents.runner.copyFailedSelected']).toContain('⌘C');
-    expect(ko['agents.runner.copyFailedSelected']).toContain('⌘C');
-    expect(en['agents.runner.copyFailedManual']).toContain('by hand');
-    expect(ko['agents.runner.copyFailedManual']).toContain('손으로');
+  it('옛 PAT 안내가 두 언어 모두 「안 쓰이지만 아직 유효하다」를 말한다', () => {
+    // 「안 쓰인다」만 말하면 남겨 둬도 되는 것으로 읽는다 — 만료가 없다는 것이 지우는 이유다.
+    expect(en['agents.pat.legacyNote']).toContain('never expire');
+    expect(ko['agents.pat.legacyNote']).toContain('만료도 없다');
   });
 
   /**
-   * **끄기 안내는 비대칭을 말한다** — 끄는 것은 되돌릴 수 있지만 PAT 는 안 돌아온다.
-   * 뒤엣것을 자르면 사람은 이것을 되돌릴 수 있는 조작으로만 읽는다.
+   * **끄기 안내는 「다시 켤 때 PAT 는 필요 없다」를 말한다**(결정 harkroom 스레드 c4f4dab4).
+   * 옛 문구는 「새로 발급해야 한다」고 시켰는데, 발급은 닫혔고(410) 러너는 오퍼레이터로 접속한다.
    */
-  it('비활성화 안내가 두 언어 모두 「PAT 는 안 돌아온다」를 말한다', () => {
-    expect(en['agents.disable.noteEnabled']).toContain('does not bring them back');
-    expect(ko['agents.disable.noteEnabled']).toContain('복구되지 않아');
+  it('비활성화 안내가 두 언어 모두 재발급을 시키지 않는다', () => {
+    for (const key of ['agents.disable.noteEnabled', 'agents.disable.warning'] as const) {
+      expect(en[key], key).toContain('does not need a PAT');
+      expect(en[key], key).not.toMatch(/mint/);
+      expect(ko[key], key).toContain('PAT 는 필요 없다');
+      expect(ko[key], key).not.toContain('발급');
+    }
+  });
+
+  it('옛 토큰 확인창 제목이 영어 단수를 맞게 쓴다', () => {
+    const tEn = translator('en');
+    expect(tEn('agents.pat.revokeAllTitle', { count: 1 })).toBe('Revoke the old token?');
+    expect(tEn('agents.pat.revokeAllTitle', { count: 3 })).toBe('Revoke 3 old tokens?');
   });
 
   /**
@@ -972,7 +968,7 @@ describe('에이전트 설정 — 옮기면서 사실을 잃지 않는다', () =
   it('제품 고유어는 두 언어에서 같은 글자다', () => {
     const pairs: [keyof typeof en, string][] = [
       ['agents.run.defaultsNotAdmin', 'admin'],
-      ['agents.pat.none', 'PAT'],
+      ['agents.pat.heading', 'PAT'],
       ['agents.run.harnessDefault', 'harness'],
       ['agents.runner.daemonScope', 'daemon'],
       ['agents.permissions.ownerNone', 'attach'],

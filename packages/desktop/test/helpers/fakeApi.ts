@@ -226,7 +226,6 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
       ({ agentId, operatorId, assignedBy: 'u1', assignedAt: new Date(0).toISOString() })),
     unassignAgent: vi.fn(async () => undefined),
     listPats: vi.fn(async () => []),
-    mintPat: vi.fn(async (_id: string, label: string) => `murp_${label}`),
     revokePat: vi.fn(async () => ({ revoked: 1 })),
     // #141: 터미널 패널이 부르는 표면. 베이스가 덮어야 패널을 띄우는 배선 테스트가
     // "못 물어봤다"(error) 화면 위에서 돌지 않고, "세션을 묻지 않았다" 도 단언할 수 있다.

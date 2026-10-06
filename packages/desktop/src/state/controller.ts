@@ -2117,10 +2117,6 @@ export class Controller {
     return this.api.revokePat(accountId, label);
   }
 
-  mintPat(accountId: string, label: string): Promise<string> {
-    return this.api.mintPat(accountId, label);
-  }
-
   /**
    * 핸들 집합 관리(#285). **모든 변경이 스토어의 `groups` 를 함께 고친다.**
    *

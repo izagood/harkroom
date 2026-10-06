@@ -415,11 +415,6 @@ export class ApiClient {
     return this.req('POST', '/accounts/agents', input);
   }
 
-  /** PAT 는 서버가 해시만 보관하므로 생성 직후 한 번만 볼 수 있다. */
-  async mintPat(accountId: string, label: string): Promise<string> {
-    return (await this.req<{ token: string }>('POST', `/accounts/${accountId}/pats`, { label })).token;
-  }
-
   async listPats(accountId: string): Promise<PatView[]> {
     const res = await this.req<{ pats: PatView[] }>('GET', `/accounts/${accountId}/pats`);
     return res.pats;

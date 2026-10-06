@@ -57,7 +57,6 @@ beforeEach(() => {
     updateAgent: vi.fn(),
     createAgent: vi.fn(),
     revokePat: vi.fn(),
-    mintPat: vi.fn(),
     createInvite: vi.fn(),
     loadOlder: vi.fn(),
   } as unknown as typeof mockController & { openChannel: ReturnType<typeof vi.fn>; openThread: ReturnType<typeof vi.fn>; openMessage: ReturnType<typeof vi.fn>; api: ReturnType<typeof fakeApi> };
