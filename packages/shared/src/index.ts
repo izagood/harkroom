@@ -247,6 +247,12 @@ export interface AgentView extends AccountView, AgentConfig {
    * 옛 서버(0.3.86 이전)는 이 필드를 주지 않는다 — 화면은 없으면 스위치를 그리지 않는다.
    */
   trustSiblings?: boolean;
+  /**
+   * 맥에서만 제대로 도는 에이전트(시뮬레이터·macOS 빌드·스크린샷, 마이그레이션 106). **표시용**이다 —
+   * 서버는 리눅스 오퍼레이터 배정을 막지 않고, 화면이 오퍼레이터 박동의 `platform` 과 견줘 경고한다.
+   * 옛 서버는 싣지 않는다(없음 = false).
+   */
+  requiresMacos?: boolean;
   /** 이 에이전트에 붙는 MCP 서버 **이름**들 — `mcp_server` 레지스트리의 부분집합(스펙 §6). 정의는 오퍼레이터 머신에 있다. */
   mcpServers: string[];
 }
@@ -3654,6 +3660,19 @@ export interface OperatorView {
 }
 
 export type OperatorCredentialState = 'present' | 'expired' | 'missing';
+/** 오퍼레이터가 도는 OS(`process.platform`). 화면이 「macOS 필요」 에이전트를 경고하는 근거다(P2b). */
+export type OperatorPlatform = 'darwin' | 'linux' | 'win32';
+/** 업그레이드 단계(P2b·H3). `failed` 는 받기·검증·풀기 실패, `rolled_back` 은 새 판이 박동을 못 내 되돌림. */
+export type OperatorUpgradeStage = 'download' | 'verify' | 'unpack' | 'restart' | 'healthy' | 'failed' | 'rolled_back';
+
+/** `GET /operators/:id/upgrades` 의 한 줄 — 최근 것부터 20줄. */
+export interface OperatorUpgradeEvent {
+  stage: OperatorUpgradeStage;
+  from: string | null;
+  to: string | null;
+  error: string | null;
+  at: string;
+}
 
 /**
  * 오퍼레이터 박동의 본문(원격 호스트 관리 P2a·H1·H5). 받는 쪽은 `parseOperatorStatus` 로 허용한 칸만
@@ -3661,6 +3680,7 @@ export type OperatorCredentialState = 'present' | 'expired' | 'missing';
  */
 export interface OperatorStatus {
   startedAt?: string;
+  platform?: OperatorPlatform;
   /** 지금 도는 턴 수와 동시 턴 상한(`HARKROOM_MAX_TURNS`, null = 상한 없음). */
   turns: { running: number; max: number | null };
   memory?: { totalBytes: number; freeBytes: number; turnRssBytes?: number };

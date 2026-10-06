@@ -11,8 +11,8 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import type { OperatorStatus, OperatorView } from '@harkroom/shared';
-import { isMachineDigest } from '@harkroom/shared/operatorProtocol';
+import type { OperatorStatus, OperatorUpgradeEvent, OperatorView } from '@harkroom/shared';
+import { isMachineDigest, parseUpgradeProgress } from '@harkroom/shared/operatorProtocol';
 import { newToken } from '../auth/tokens.js';
 import { can } from '../auth/permissions.js';
 import { actorOf, recordAudit } from '../audit.js';
@@ -22,6 +22,8 @@ import { createHeartbeat } from '../ws/heartbeat.js';
 import type { OperatorHub } from '../ws/operatorHub.js';
 
 const REGISTER_CODE_TTL_MS = 5 * 60_000;
+/** 오퍼레이터마다 남기는 업그레이드 이력 줄 수(H3). 화면은 최근 몇 번의 시도·되돌림만 보인다. */
+const UPGRADE_HISTORY_MAX = 20;
 /**
  * `replaces` 는 다시 등록하는 머신이 들고 있던 **옛 operatorId** 다(오퍼레이터 `register` 가
  * `operator.json` 에서 읽어 싣는다). 옛 서버는 zod 가 모르는 키를 걷어 내므로 그대로 무시한다.
@@ -164,6 +166,33 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
   const offStatusClose = deps.hub.onClose((operatorId) => { lastSignature.delete(operatorId); });
   app.addHook('onClose', async () => { offStatus(); offStatusClose(); });
 
+  /**
+   * 업그레이드 단계(P2b·H3). 한 줄씩 적고 오퍼레이터마다 최근 `UPGRADE_HISTORY_MAX` 줄만 남긴다.
+   * 단계마다 소유자에게 `operator.changed` — 화면의 「업그레이드 중」 단계 표시가 따라온다.
+   * 폐기된 오퍼레이터의 프레임은 적지 않는다(토큰 폐기와 소켓 끊김 사이의 틈).
+   */
+  const offUpgrade = deps.hub.onFrame((operatorId, frame) => {
+    if (frame.type !== 'upgrade.progress') return;
+    const ev = parseUpgradeProgress(frame);
+    if (!ev) return;
+    void (async () => {
+      const res = await pool.query<{ owner: string }>(
+        `with op as (select id, owner_account_id from operator where id = $1 and revoked_at is null),
+              ins as (insert into operator_upgrade (operator_id, stage, from_version, to_version, error)
+                      select id, $2, $3, $4, $5 from op returning operator_id)
+         select owner_account_id as owner from op where exists (select 1 from ins)`,
+        [operatorId, ev.stage, ev.from, ev.to, ev.error]);
+      const owner = res.rows[0]?.owner;
+      if (!owner) return;
+      await pool.query(
+        `delete from operator_upgrade where operator_id = $1
+            and id not in (select id from operator_upgrade where operator_id = $1 order by id desc limit $2)`,
+        [operatorId, UPGRADE_HISTORY_MAX]);
+      emitEvent({ type: 'operator.changed', operatorId, audience: [owner] });
+    })().catch((err: unknown) => app.log.warn({ err, operatorId }, 'operator 업그레이드 단계 기록 실패'));
+  });
+  app.addHook('onClose', async () => { offUpgrade(); });
+
   app.get('/operator', { websocket: true, preHandler: app.requireOperator }, (socket, req) => {
     const operatorId = req.operator!.id;
     const detach = deps.hub.addOperator(operatorId, socket);
@@ -293,6 +322,19 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
       const caps = presence.capabilities(id);
       // 오프라인이면 능력도 없다 — 저장하지 않으므로 "모른다"가 정확한 답이다.
       return caps ?? reply.code(404).send({ error: { code: 'offline', message: '오퍼레이터가 붙어 있지 않다' } });
+    });
+
+  /** 업그레이드 이력(H3) — 최근 것부터. 권한은 능력 조회와 같다(소유자 또는 `operator.manage`). */
+  app.get<{ Params: { id: string } }>(
+    '/operators/:id/upgrades',
+    { preHandler: app.requireCap('operator.manage', { kind: 'operator', param: 'id' }) },
+    async (req) => {
+      const { id } = idParam.parse(req.params);
+      const res = await pool.query<OperatorUpgradeEvent>(
+        `select stage, from_version as "from", to_version as "to", error, at
+           from operator_upgrade where operator_id = $1 order by id desc limit $2`,
+        [id, UPGRADE_HISTORY_MAX]);
+      return { upgrades: res.rows };
     });
 
   /**

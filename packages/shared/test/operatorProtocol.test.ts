@@ -4,7 +4,7 @@
 // 한쪽이 죽지 않는다.
 import { describe, it, expect } from 'vitest';
 import { OPERATOR_PROTOCOL_VERSION } from '../src/operatorEndpoint.js';
-import { isMachineDigest, parseOperatorFrame, parseOperatorStatus, parseServerFrame } from '../src/operatorProtocol.js';
+import { isMachineDigest, parseOperatorFrame, parseOperatorStatus, parseServerFrame, parseUpgradeProgress } from '../src/operatorProtocol.js';
 
 describe('operatorProtocol', () => {
   it('프로토콜 버전은 1 이다', () => {
@@ -83,5 +83,22 @@ describe('박동(status) — 원격 호스트 관리 P2a', () => {
     expect(isMachineDigest('a'.repeat(64))).toBe(true);
     expect(isMachineDigest('A'.repeat(64))).toBe(false);
     expect(isMachineDigest('3f2a9c0d4e5b6a7f8091a2b3c4d5e6f7')).toBe(false);
+  });
+});
+
+describe('업그레이드 단계 — P2b', () => {
+  it('upgrade.progress 는 runnerId 없이 받고, 단계는 enum 만', () => {
+    expect(parseOperatorFrame(JSON.stringify({ type: 'upgrade.progress', stage: 'verify' }))).toMatchObject({ type: 'upgrade.progress' });
+    expect(parseUpgradeProgress({ stage: 'verify', from: '0.3.1', to: '' })).toEqual({ stage: 'verify', from: '0.3.1', to: null, error: null });
+    expect(parseUpgradeProgress({ stage: 'rm -rf' })).toBeNull();
+  });
+  it('사유는 제어 문자를 걷고 300자에서 자른다', () => {
+    const r = parseUpgradeProgress({ stage: 'failed', error: `bad\n\tsig ${'x'.repeat(400)}` });
+    expect(r?.error?.startsWith('bad sig ')).toBe(true);
+    expect(r?.error).toHaveLength(300);
+  });
+  it('박동의 platform 은 알려진 값만', () => {
+    expect(parseOperatorStatus({ turns: { running: 0 }, platform: 'linux' })?.platform).toBe('linux');
+    expect(parseOperatorStatus({ turns: { running: 0 }, platform: 'plan9' })?.platform).toBeUndefined();
   });
 });

@@ -13,7 +13,9 @@
  * 버린다: 구·신 세대가 섞여도 한쪽이 죽지 않는다(`daemonProtocol` 의 `unknown-request` 와
  * 같은 판단).
  */
-import type { AgentSessionView, OperatorCapabilities, OperatorCredentialState, OperatorStatus, RunnerCap } from './index.js';
+import type {
+  AgentSessionView, OperatorCapabilities, OperatorCredentialState, OperatorPlatform, OperatorStatus, OperatorUpgradeStage, RunnerCap,
+} from './index.js';
 
 /** 오퍼레이터가 spawn 마다 만드는 러너 식별자. 데몬의 `incarnationId` 와 같은 것이다 — 이름만 통일한다. */
 export interface RunnerAnnounce { agentId: string; runnerId: string; pid: number }
@@ -69,6 +71,12 @@ export type OperatorToServerFrame =
    */
   | { type: 'status'; status: unknown; machine?: unknown }
   /**
+   * 업그레이드 단계(P2b·H3). 오퍼레이터가 단계를 넘을 때마다 낸다. 되돌림(`rolled_back`)은 boot 단계에서
+   * 일어나 그때 말할 프로세스가 없으므로, 다음에 붙은 오퍼레이터가 첫 박동 즈음 한 번 낸다. 검증은
+   * `parseUpgradeProgress` 하나다.
+   */
+  | { type: 'upgrade.progress'; stage: unknown; from?: unknown; to?: unknown; error?: unknown }
+  /**
    * 러너가 링크에 붙을 때마다(재접속 포함) 자기 세션·능력을 다시 선언한다 — 옛 릴레이의
    * `announce` 그대로다(`runnerLink.ts`). 서버는 이 목록으로 그 러너의 세션을 **교체**한다.
    */
@@ -103,14 +111,14 @@ export type ServerToOperatorFrame =
 
 const OPERATOR_TYPES = new Set<OperatorToServerFrame['type']>([
   'hello', 'capabilities', 'runner.started', 'runner.exited', 'runner.announce', 'session.started', 'session.updated', 'session.ended',
-  'pty.output', 'pty.replay', 'interactive.opened', 'interactive.error', 'attention.required', 'status',
+  'pty.output', 'pty.replay', 'interactive.opened', 'interactive.error', 'attention.required', 'status', 'upgrade.progress',
 ]);
 const SERVER_TYPES = new Set<ServerToOperatorFrame['type']>([
   'assign', 'unassign', 'agent.restart', 'runner.kill', 'pty.replay.request', 'pty.input', 'pty.resize', 'viewer.count', 'session.cancel', 'interactive.open',
 ]);
 
 /** `hello` 와 배정 셋(`assign`·`unassign`·`agent.restart`)만 러너 밖의 말이다 — 나머지는 전부 `runnerId` 가 있어야 한다. */
-const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'status', 'assign', 'unassign', 'agent.restart']);
+const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'status', 'upgrade.progress', 'assign', 'unassign', 'agent.restart']);
 
 function parse(raw: string, known: Set<string>): Record<string, unknown> | null {
   let value: unknown;
@@ -145,6 +153,7 @@ export function isMachineDigest(value: unknown): value is string {
 }
 
 const CREDENTIAL_KINDS = new Set(['claude', 'codex', 'mcp', 'gh']);
+const OPERATOR_PLATFORMS = new Set<string>(['darwin', 'linux', 'win32']);
 const CREDENTIAL_STATES = new Set<OperatorCredentialState>(['present', 'expired', 'missing']);
 const MAX_CREDENTIALS = 64;
 const MAX_STATUS_AGENTS = 256;
@@ -166,6 +175,7 @@ export function parseOperatorStatus(value: unknown): OperatorStatus | null {
   const running = count(turns?.running, 10_000);
   if (running === null) return null;
   const out: OperatorStatus = { turns: { running, max: count(turns?.max, 10_000) || null } };
+  if (typeof v.platform === 'string' && OPERATOR_PLATFORMS.has(v.platform)) out.platform = v.platform as OperatorPlatform;
   const startedAt = shortText(v.startedAt, 40);
   if (startedAt && !Number.isNaN(Date.parse(startedAt))) out.startedAt = new Date(startedAt).toISOString();
   const bytes = (o: unknown): { totalBytes: number; freeBytes: number } | undefined => {
@@ -210,4 +220,25 @@ export function parseOperatorStatus(value: unknown): OperatorStatus | null {
     out.credentials = creds;
   }
   return out;
+}
+
+const UPGRADE_STAGES = new Set<OperatorUpgradeStage>(['download', 'verify', 'unpack', 'restart', 'healthy', 'failed', 'rolled_back']);
+const UPGRADE_ERROR_MAX = 300;
+
+/**
+ * 업그레이드 단계 프레임의 본문. 단계는 enum, 판은 `isVersionString`, 사유는 제어 문자를 공백으로 바꿔
+ * 300자에서 자른다(화면 한 줄·감사가 아닌 이력이다). 단계가 틀리면 프레임 전체를 버린다.
+ */
+export function parseUpgradeProgress(frame: { stage?: unknown; from?: unknown; to?: unknown; error?: unknown }):
+  { stage: OperatorUpgradeStage; from: string | null; to: string | null; error: string | null } | null {
+  if (typeof frame.stage !== 'string' || !UPGRADE_STAGES.has(frame.stage as OperatorUpgradeStage)) return null;
+  const error = typeof frame.error === 'string' && frame.error.trim()
+    ? frame.error.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, UPGRADE_ERROR_MAX)
+    : null;
+  return {
+    stage: frame.stage as OperatorUpgradeStage,
+    from: isVersionString(frame.from) ? frame.from : null,
+    to: isVersionString(frame.to) ? frame.to : null,
+    error,
+  };
 }
