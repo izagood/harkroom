@@ -12,7 +12,7 @@ import { AccountGateRequeueError } from '../src/mentionTurn.js';
 import { TurnRegistry } from '../src/turnRegistry.js';
 import { MentionQueue } from '../src/mentionQueue.js';
 import type { InboxBatch } from '../src/harkroom.js';
-import type { MentionTurnResult } from '../src/mentionTurn.js';
+import type { MentionTarget, MentionTurnResult } from '../src/mentionTurn.js';
 import { PromptNotDeliveredError } from '../src/pty.js';
 
 const CH = 'ch-1';
@@ -640,6 +640,37 @@ describe('mentionScheduler 승인 관문', () => {
 // 서버가 `ask_answered` 로 깨워도, 러너가 그것을 평범한 멘션으로 다루면 **아무 일도
 // 일어나지 않는다**: 사람은 버튼만 눌렀지 새 메시지를 쓰지 않았으므로 델타가 비고,
 // 비면 하네스가 돌지 않는다(040 이 `wake` 를 따로 만든 이유와 같은 자리).
+describe('깨움 보고처·접힌 예약을 턴에 넘긴다 (2026-10-06)', () => {
+  it('wake 항목은 메시지 meta 의 reportTo 를, 부름 항목은 canceledWakes 를 대상에 싣는다', async () => {
+    const seen: MentionTarget[] = [];
+    const runTurn = (async (_d: unknown, t: MentionTarget) => { seen.push(t); return { stopRequestedAt: null }; }) as never;
+    const { scheduler } = harness({ runTurn });
+    const wake = batchOf([{ entryId: 1, messageId: 'w1', threadRootId: 'root-1', body: '#1174 CI 확인' }]);
+    (wake.entries[0] as { reason: string }).reason = 'wake';
+    (wake.messages[0] as { meta: unknown }).meta = { kind: 'wake', wake: { wakeAt: 'x', reason: '#1174 CI 확인', reportTo: { channelId: 'ch-9', threadRootId: 'task-root' } } };
+    const call = batchOf([{ entryId: 2, messageId: 'm2', threadRootId: 'root-2' }]);
+    (call.entries[0] as { canceledWakes?: unknown }).canceledWakes = [{ reason: '회수', wakeAt: '2026-10-06T02:00:00.000Z' }];
+
+    await scheduler.admit({ entries: [...wake.entries, ...call.entries], messages: [...wake.messages, ...call.messages] }, ctx);
+    await scheduler.drain();
+
+    expect(seen.find((t) => t.mentionId === 'w1')?.wake).toEqual({ reason: '#1174 CI 확인', reportTo: { channelId: 'ch-9', threadRootId: 'task-root' } });
+    expect(seen.find((t) => t.mentionId === 'm2')?.canceledWakes).toEqual([{ reason: '회수', wakeAt: '2026-10-06T02:00:00.000Z' }]);
+  });
+
+  it('옛 서버의 깨움(meta 에 reportTo 없음)은 지금처럼 사유만 싣는다', async () => {
+    const seen: MentionTarget[] = [];
+    const runTurn = (async (_d: unknown, t: MentionTarget) => { seen.push(t); return { stopRequestedAt: null }; }) as never;
+    const { scheduler } = harness({ runTurn });
+    const wake = batchOf([{ entryId: 1, messageId: 'w1', threadRootId: 'root-1', body: 'CI 확인' }]);
+    (wake.entries[0] as { reason: string }).reason = 'wake';
+    await scheduler.admit(wake, ctx);
+    await scheduler.drain();
+    expect(seen[0]?.wake).toEqual({ reason: 'CI 확인' });
+    expect(seen[0]?.canceledWakes).toBeUndefined();
+  });
+});
+
 describe('ask_answered 깨움', () => {
   const source = readFileSync(path.resolve(__dirname, '../src/mentionScheduler.ts'), 'utf8');
 

@@ -1756,19 +1756,42 @@ function buildMcpServer(
    * 판정해 `wake_limit` 으로 답한다 — 같은 거절이 아니다.
    */
   server.registerTool('turn.wake', {
-    description: '나를 나중에 다시 부른다(기다릴 것이 있을 때). 예약은 스레드에 대기 줄로 보인다',
+    description: '나를 나중에 다시 부른다(기다릴 것이 있을 때). 예약은 스레드에 대기 줄로 보인다. 결과를 다른 스레드에 보고하기로 했으면 reportTo 에 그 채널·스레드 id',
     inputSchema: {
       channelId: z.string().uuid(),
       threadRootId: z.string().uuid(),
       notBeforeSec: z.number().int().min(WAKE_MIN_SEC).max(WAKE_MAX_SEC),
       reason: z.string().min(1).max(200),
+      /**
+       * 결과를 **다른 스레드에** 보고하기로 약속했으면 그 스레드(2026-10-06, 선택). 깨어난 턴의 프롬프트에
+       * 그 약속이 실리고, 그 턴이 거기에 말하지 않고 끝나면 러너가 그 스레드에 경고를 남긴다. 옛 서버는
+       * 이 키를 모른다 — zod 가 모르는 키를 버리므로 예약은 되고 약속만 빠진다.
+       */
+      reportTo: z.object({ channelId: z.string().uuid(), threadRootId: z.string().uuid() }).optional(),
     },
-  }, async ({ channelId, threadRootId, notBeforeSec, reason }) => {
+  }, async ({ channelId, threadRootId, notBeforeSec, reason, reportTo }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this channel' } });
     }
+    // 보고처는 **내가 쓸 수 있는 스레드 머리**여야 한다 — 못 쓰는 곳을 약속으로 적어 두면 깨어난 턴이
+    // 보고하려다 거절당하고, 러너의 경고도 그 자리에 못 남는다. 앵커와 같으면 뜻이 없어 싣지 않는다.
+    let report: { channelId: string; threadRootId: string } | undefined;
+    if (reportTo && reportTo.threadRootId !== threadRootId) {
+      if (!(await assertChannelVisible(pool, reportTo.channelId, account.id))) {
+        return jsonResult({ error: { code: 'forbidden', message: 'reportTo: not a member of that channel' } });
+      }
+      const head = await pool.query(
+        `select 1 from message where id = $1 and channel_id = $2 and thread_root_id is null and deleted_at is null`,
+        [reportTo.threadRootId, reportTo.channelId],
+      );
+      if (!head.rowCount) {
+        return jsonResult({ error: { code: 'bad_report_to', message: 'reportTo.threadRootId 는 그 채널의 최상위 글(스레드 머리) id 여야 한다' } });
+      }
+      report = reportTo;
+    }
     const result = await scheduleWake(pool, {
       accountId: account.id, channelId, threadRootId, notBeforeSec, reason,
+      ...(report ? { reportTo: report } : {}),
     });
     if (result.refusal) return jsonResult({ error: result.refusal });
 

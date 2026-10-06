@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow } from '@harkroom/shared';
+import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow, type WakeReportTo } from '@harkroom/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { getMentionPolicy } from './mentionPolicy.js';
 import { preemptWakesForThread } from './agentWakes.js';
@@ -1484,7 +1484,7 @@ export async function postMessage(
      */
     const wokeByPost = input.threadRootId
       ? await preemptWakesForThread(client, {
-        threadRootId: input.threadRootId, authorId: input.authorId, notified,
+        threadRootId: input.threadRootId, authorId: input.authorId, notified, messageId: message.id,
       })
       : [];
 
@@ -2493,6 +2493,12 @@ export async function listBoardThreads(
   return { threads, truncated: extra.truncated };
 }
 
+function isReportTo(v: unknown): v is WakeReportTo {
+  if (!v || typeof v !== 'object') return false;
+  const o = v as Record<string, unknown>;
+  return typeof o.channelId === 'string' && typeof o.threadRootId === 'string';
+}
+
 export async function listInbox(
   pool: Pool, accountId: string, opts: { unreadOnly?: boolean },
 ): Promise<InboxEntry[]> {
@@ -2619,6 +2625,39 @@ export async function listInbox(
           deadlineAt: new Date(found.deadlineAt).toISOString(),
         };
       }
+    }
+  }
+
+  /**
+   * **이 부름이 접은 내 깨움**을 붙인다(107, 2026-10-06). 사람이 부르면 그 스레드의 대기 깨움이 접히는데
+   * (`preemptWakesForThread`), 부름으로 뜬 턴은 그것을 몰라 약속한 확인이 조용히 사라졌다. 러너가 이
+   * 목록으로 "접혔다 — 필요하면 다시 걸어라" 를 프롬프트에 싣는다.
+   *
+   * 사유는 깨움 메시지의 본문이다(`scheduleWake` 가 본문=사유로 게시한다). 내 깨움만 — 남의 것은
+   * 내 할 일이 아니다.
+   */
+  const callIds = [...new Set(rows.filter((r) => r.reason !== 'wake').map((r) => r.messageId))];
+  if (callIds.length) {
+    const folded = await pool.query<{ by: string; reason: string; wakeAt: string; reportTo: unknown }>(
+      `select w.canceled_by_message_id as by, wm.body as reason, w.wake_at as "wakeAt",
+              wm.meta->'wake'->'reportTo' as "reportTo"
+         from agent_wake w join message wm on wm.id = w.message_id
+        where w.account_id = $1 and w.canceled_by_message_id = any($2)
+        order by w.wake_at`,
+      [accountId, callIds],
+    );
+    const byCall = new Map<string, NonNullable<InboxEntry['canceledWakes']>>();
+    for (const r of folded.rows) {
+      const list = byCall.get(r.by) ?? [];
+      list.push({
+        reason: r.reason, wakeAt: new Date(r.wakeAt).toISOString(),
+        ...(isReportTo(r.reportTo) ? { reportTo: r.reportTo } : {}),
+      });
+      byCall.set(r.by, list);
+    }
+    for (const row of rows) {
+      const found = row.reason !== 'wake' ? byCall.get(row.messageId) : undefined;
+      if (found) row.canceledWakes = found;
     }
   }
 

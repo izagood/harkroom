@@ -71,6 +71,17 @@ export interface ScheduleWakeInput {
   notBeforeSec: number;
   /** 사람이 읽는 사유. 그대로 wake 메시지의 본문이 된다. */
   reason: string;
+  /**
+   * 깨어난 턴이 **결과를 보고하기로 약속한 다른 스레드**(2026-10-06, 선택).
+   *
+   * 왜 필요한가: 스레드마다 세션이 따로라, 깨어난 턴은 자기 앵커 스레드에만 답한다. 다른
+   * 스레드(#task 같은 보고처)에서 "13:21 에 확인한다" 고 약속하고 작업 스레드에 깨움을 걸면,
+   * 깨어난 턴은 그 약속을 모른다 — 받은 단서가 사유 한 줄뿐이다. 실측(10-06 task_manager):
+   * 다른 스레드에도 글을 쓴 깨움 턴 28건 중 깨어나서 그 스레드에 다시 쓴 것은 2건이었다.
+   *
+   * 앵커와 같은 스레드면 뜻이 없어 싣지 않는다(호출자가 거른다).
+   */
+  reportTo?: { channelId: string; threadRootId: string };
 }
 
 export type ScheduleWakeResult =
@@ -107,7 +118,15 @@ export async function scheduleWake(pool: Pool, input: ScheduleWakeInput): Promis
     kind: 'wake',
     // 시각은 **사실로** 싣는다. 서버가 "15:20 에 다시 봅니다" 로 구워 버리면 그 문자열은
     // 서버의 시간대에 고정되고, 다른 시간대에서 읽는 사람에게 거짓이 된다.
-    meta: { kind: 'wake', wake: { wakeAt: wakeAt.toISOString(), reason: input.reason } },
+    meta: {
+      kind: 'wake',
+      wake: {
+        wakeAt: wakeAt.toISOString(), reason: input.reason,
+        // 보고처는 **깨움 메시지에** 싣는다 — 러너는 inbox 항목이 가리키는 이 메시지에서 사유와 함께
+        // 그대로 되찾는다(앵커를 040 에 두 번 저장하지 않은 것과 같은 규칙). 새 컬럼이 필요 없다.
+        ...(input.reportTo ? { reportTo: input.reportTo } : {}),
+      },
+    },
   });
   if (posted.failure === 'bad_thread') {
     // 원인을 그대로 전한다 — 예전에는 상한(wake_limit)으로 바꿔 말해서 에이전트가 "너무 많이
@@ -157,7 +176,11 @@ export async function scheduleWake(pool: Pool, input: ScheduleWakeInput): Promis
  */
 export async function preemptWakesForThread(
   client: PoolClient,
-  args: { threadRootId: string; authorId: string; notified: Set<string> },
+  args: {
+    threadRootId: string; authorId: string; notified: Set<string>;
+    /** 이 발화 자신. 부름으로 접은 깨움에 남긴다(107) — 그 부름의 턴이 무엇이 접혔는지 안다. */
+    messageId: string;
+  },
 ): Promise<string[]> {
   // 판정은 계정 종류 하나다. 라우트가 아니라 여기서 보는 이유: 이 파일이 깨움 정책의
   // 자리이고, 표면이 늘 때(REST·MCP·투영) 각자 판정하면 갈라진다(모듈 주석).
@@ -184,7 +207,10 @@ export async function preemptWakesForThread(
   const woke: string[] = [];
   for (const row of due.rows) {
     if (args.notified.has(row.account_id)) {
-      await client.query(`update agent_wake set canceled_at = now() where id = $1`, [row.id]);
+      await client.query(
+        `update agent_wake set canceled_at = now(), canceled_by_message_id = $2 where id = $1`,
+        [row.id, args.messageId],
+      );
       continue;
     }
     // sweep 과 **같은 생 insert** 다(`insertInbox` 가 아니다) — 자기가 자기를 부르는
