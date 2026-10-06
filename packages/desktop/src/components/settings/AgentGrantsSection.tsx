@@ -214,10 +214,12 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
         <>
           <div className="mt-2 text-meta font-medium text-fg-muted">{t('agents.grants.secretCreateHeading')}</div>
           <ul className="mt-1 space-y-1">
-            <li className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-row border border-border px-2 py-1 text-meta text-fg" data-testid="agent-secret-create-grant">
-              <span className="text-fg-muted">{t('agents.grants.secretCreate')}</span>
+            {/* 소제목이 이미 「비밀 만들기」다 — 줄 첫 칸은 상태를 말한다(designer n1). 모서리는 바로 위 API 줄과 같은 rounded. */}
+            <li className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-border px-2 py-1 text-meta text-fg" data-testid="agent-secret-create-grant">
+              <span className="text-fg-muted">{t('agents.grants.secretCreateOn')}</span>
               <span className="text-fg-subtle">
                 {t('agents.grants.by', { handle: accounts[secretGrant.grantedBy]?.handle ?? secretGrant.grantedBy, when: new Date(secretGrant.grantedAt).toLocaleDateString(locale) })}
+                {' · '}{t('agents.grants.noExpiry')}
               </span>
               {canRevoke && (
                 <button className="ml-auto rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:text-danger disabled:opacity-50" disabled={off}

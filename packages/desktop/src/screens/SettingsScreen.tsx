@@ -128,7 +128,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
           {section === 'this-operator' && <ThisOperatorSettings onOpenSection={setSection} />}
           {section === 'skills' && <SkillsSettings targetId={targetId} />}
           {section === 'automations' && <AutomationsSettings />}
-          {section === 'secrets' && <SecretsSettings />}
+          {section === 'secrets' && <SecretsSettings targetId={targetId} />}
           {section === 'gallery' && <GallerySettings />}
         </main>
       </div>

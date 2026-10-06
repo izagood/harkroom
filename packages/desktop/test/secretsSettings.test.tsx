@@ -166,12 +166,38 @@ describe('SecretsSettings', () => {
     render(<SecretsSettings />);
     fireEvent.click(await screen.findByRole('button', { name: '받을 에이전트' }));
     await screen.findByTestId('secret-grant-alpha');
-    expect(screen.getByTestId('secret-adopt-note').textContent).toContain('@alpha 는 이 비밀을 더 이상 회전할 수 없다');
+    // 고르기 전에는 안내가 없다(designer n2 — 폼 위에 세 줄이 겹치지 않게).
+    expect(screen.queryByTestId('secret-adopt-note')).toBeNull();
     expect(screen.queryByTestId('secret-widen-warn')).toBeNull();
     fireEvent.change(screen.getByLabelText('에이전트'), { target: { value: 'agent-1' } });
+    expect(screen.getByTestId('secret-adopt-note').textContent).toContain('@alpha 는 이 비밀을 더 이상 회전할 수 없다');
     expect(screen.queryByTestId('secret-widen-warn')).toBeNull();
     fireEvent.change(screen.getByLabelText('에이전트'), { target: { value: 'agent-3' } });
-    expect(screen.getByTestId('secret-widen-warn').textContent).toContain('@alpha 는 값을 알고 있다');
+    expect(screen.getByTestId('secret-widen-warn').textContent).toBe('@alpha 가 정한 값이라 @alpha 도 알고 있다. 다른 에이전트에게 주기 전에 [값 바꾸기]를 권한다.');
+  });
+
+  it('n3: targetId 로 열면 그 비밀 줄로 스크롤하고 잠깐 강조한다 — 없는 id 면 아무것도 안 한다', async () => {
+    const scroll = vi.fn();
+    const orig = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scroll;
+    try {
+      setup({}, [secret('a'), secret('b')]);
+      render(<SecretsSettings targetId="id-b" />);
+      const b = await screen.findByTestId('secret-b');
+      await waitFor(() => expect(b.getAttribute('data-flash')).toBe('true'));
+      expect(scroll).toHaveBeenCalledTimes(1);
+      expect(scroll.mock.contexts[0]).toBe(b);
+      expect(screen.getByTestId('secret-a').getAttribute('data-flash')).toBeNull();
+      cleanup();
+      scroll.mockClear();
+      setup({}, [secret('a')]);
+      render(<SecretsSettings targetId="gone" />);
+      await screen.findByTestId('secret-a');
+      expect(scroll).not.toHaveBeenCalled();
+      expect(screen.getByTestId('secret-a').getAttribute('data-flash')).toBeNull();
+    } finally {
+      HTMLElement.prototype.scrollIntoView = orig;
+    }
   });
 
   it('가린 입력은 new-password 로 자동 채우기를 막는다', async () => {

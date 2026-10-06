@@ -10,13 +10,14 @@ import type { SectionId } from './settings/sections';
 export function SecretNoticeAction({ message, onOpenSettings }: { message: MessageRow; onOpenSettings?: (section?: SectionId, targetId?: string) => void }) {
   const t = useT();
   const myId = useActiveStore((s) => s.me?.id);
-  const n = message.meta.secretNotice as { ownerAccountId?: unknown } | undefined;
+  const n = message.meta.secretNotice as { ownerAccountId?: unknown; secretId?: unknown } | undefined;
   if (!onOpenSettings || !n || typeof n.ownerAccountId !== 'string' || n.ownerAccountId !== myId) return null;
   return (
     <button
       className="mt-1 rounded-card border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-hover"
       data-testid="secret-notice-open"
-      onClick={() => onOpenSettings('secrets')}
+      // 그 비밀 줄로 바로 간다(designer n3) — 비밀이 많으면 절만 열어서는 다시 찾아야 한다.
+      onClick={() => onOpenSettings('secrets', typeof n.secretId === 'string' ? n.secretId : undefined)}
     >
       {t('secrets.notice.open')}
     </button>
