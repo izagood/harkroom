@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { recordAudit } from '../audit.js';
+import type { RateLimiter, RateLimitRule } from '../rateLimit.js';
 import { assertChannelVisible } from '../services/channels.js';
 import { getMessageById } from '../services/messages.js';
 
@@ -18,7 +19,12 @@ import { getMessageById } from '../services/messages.js';
  * 푸시)을 만들지 않는다(`insertInbox`), 둘 사이에 새 DM 을 열 수 없다(`POST /dms`). 화면에서 글을 숨기는 것은
  * 앱이 이 목록으로 한다. 상대에게는 알리지 않는다.
  */
-export async function registerModerationRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
+/** 신고자별 상한 — 한 사람이 큐를 밀어 다른 신고를 가리지 못하게. */
+export const REPORT_RULE: RateLimitRule = { windowMs: 60 * 60_000, max: 30 };
+
+export async function registerModerationRoutes(
+  app: FastifyInstance, pool: Pool, opts: { limiter: RateLimiter },
+): Promise<void> {
   const idParam = z.object({ id: z.string().uuid() });
 
   app.post('/messages/:id/report', { preHandler: app.requireAccount }, async (req, reply) => {
@@ -39,15 +45,29 @@ export async function registerModerationRoutes(app: FastifyInstance, pool: Pool)
     if (message.authorId === me.id) {
       return reply.code(400).send({ error: { code: 'own_message', message: 'you cannot report your own message' } });
     }
+    const existing = await pool.query(
+      `select id, created_at as "createdAt" from message_report where message_id = $1 and reporter_id = $2`, [id, me.id]);
+    if (existing.rowCount) return reply.code(200).send({ report: existing.rows[0], duplicate: true });
+    const verdict = opts.limiter.hit(`report:${me.id}`, REPORT_RULE);
+    if (!verdict.allowed) {
+      return reply
+        .code(429)
+        .header('retry-after', String(Math.ceil(verdict.retryAfterMs / 1000)))
+        .send({ error: { code: 'rate_limited', message: 'too many reports, try again later' } });
+    }
+    // 본문은 신고한 순간의 것을 함께 남긴다(마이그레이션 109 주석).
     const res = await pool.query(
-      `insert into message_report (message_id, reporter_id, reason, note) values ($1, $2, $3, $4)
+      `insert into message_report (message_id, reporter_id, reason, note, body_snapshot, message_edited_at)
+       select $1, $2, $3, $4, m.body, m.edited_at from message m where m.id = $1 and m.deleted_at is null
        on conflict (message_id, reporter_id) do nothing
        returning id, created_at as "createdAt"`,
       [id, me.id, body.reason, body.note || null]);
     if (!res.rowCount) {
-      const existing = await pool.query(
+      // 사이에 지워졌거나 같은 사람의 동시 요청이 먼저 넣었다.
+      const raced = await pool.query(
         `select id, created_at as "createdAt" from message_report where message_id = $1 and reporter_id = $2`, [id, me.id]);
-      return reply.code(200).send({ report: existing.rows[0], duplicate: true });
+      if (raced.rowCount) return reply.code(200).send({ report: raced.rows[0], duplicate: true });
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such message' } });
     }
     await recordAudit(pool, {
       action: 'message.reported', actorId: me.id, actorHandle: me.handle, target: id, detail: { reason: body.reason },
@@ -55,23 +75,45 @@ export async function registerModerationRoutes(app: FastifyInstance, pool: Pool)
     return reply.code(201).send({ report: res.rows[0], duplicate: false });
   });
 
-  /** 관리자 큐. 기본은 처리 안 한 것, 오래된 순. 신고 대상 글의 본문을 함께 준다(관리자는 판단하려고 봐야 한다). */
+  /**
+   * 관리자 큐. 기본은 처리 안 한 것, 오래된 순. 신고 대상 글 **한 건**의 본문을 신고 당시 것과 지금 것으로
+   * 함께 준다(관리자는 판단하려고 봐야 한다 — 앞뒤 대화는 주지 않는다). 쪽 넘김은 `after`(앞 쪽의
+   * `nextAfter` = 마지막 신고 id)로 한다. 시각을 글자로 주고받지 않는 이유: JS Date 는 밀리초까지라
+   * Postgres 의 마이크로초가 잘려 경계 행이 다음 쪽에 또 나온다.
+   */
   app.get('/admin/reports', { preHandler: app.requireAdmin }, async (req) => {
-    const q = z.object({ status: z.enum(['open', 'resolved', 'all']).default('open') }).parse(req.query);
-    const where = q.status === 'open' ? 'where r.resolved_at is null'
-      : q.status === 'resolved' ? 'where r.resolved_at is not null' : '';
+    const q = z.object({
+      status: z.enum(['open', 'resolved', 'all']).default('open'),
+      limit: z.coerce.number().int().min(1).max(200).default(100),
+      after: z.string().uuid().optional(),
+    }).parse(req.query);
+    const conds: string[] = [];
+    const params: unknown[] = [];
+    if (q.status === 'open') conds.push('r.resolved_at is null');
+    if (q.status === 'resolved') conds.push('r.resolved_at is not null');
+    if (q.after) {
+      params.push(q.after);
+      conds.push(`(r.created_at, r.id) > (select c.created_at, c.id from message_report c where c.id = $${params.length})`);
+    }
+    params.push(q.limit + 1);
+    const where = conds.length ? `where ${conds.join(' and ')}` : '';
     const res = await pool.query(
       `select r.id, r.reason, r.note, r.created_at as "createdAt",
               r.resolved_at as "resolvedAt", r.resolved_by as "resolvedBy", r.resolution,
               r.reporter_id as "reporterId",
               m.id as "messageId", m.channel_id as "channelId", m.thread_root_id as "threadRootId",
-              m.author_id as "authorId", case when m.deleted_at is null then m.body end as body,
+              m.author_id as "authorId",
+              r.body_snapshot as "bodyAtReport", r.message_edited_at as "editedAtReport",
+              case when m.deleted_at is null then m.body end as body, m.edited_at as "editedAt",
               m.deleted_at is not null as "messageDeleted"
          from message_report r join message m on m.id = r.message_id
          ${where}
-        order by r.created_at asc
-        limit 200`);
-    return { reports: res.rows };
+        order by r.created_at asc, r.id asc
+        limit $${params.length}`, params);
+    const more = res.rows.length > q.limit;
+    const reports = more ? res.rows.slice(0, q.limit) : res.rows;
+    const last = reports[reports.length - 1];
+    return { reports, nextAfter: more && last ? last.id as string : null };
   });
 
   app.post('/admin/reports/:id/resolve', { preHandler: app.requireAdmin }, async (req, reply) => {

@@ -53,6 +53,52 @@ describe('신고', () => {
     expect(mine[0]).toMatchObject({ reason: 'abuse', note: '욕설', reporterId: a.accountId, authorId: b.accountId, body: '나쁜 글' });
   });
 
+  it('신고 당시 본문을 남긴다 — 작성자가 고치거나 지워도 관리자는 처음 것을 본다', async () => {
+    const a = await createMember(app, adminToken, 'reps1');
+    const b = await createMember(app, adminToken, 'reps2');
+    const dm = (await openDm(a.token, b.accountId)).json().id as string;
+    const id = await say(b.token, dm, '원래 글');
+    expect((await report(a.token, id)).statusCode).toBe(201);
+    const edited = await app.inject({
+      method: 'PATCH', url: `/channels/${dm}/messages/${id}`, headers: auth(b.token), payload: { body: '고친 글' },
+    });
+    expect(edited.statusCode).toBe(200);
+    const row = (await app.inject({ method: 'GET', url: '/admin/reports', headers: auth(adminToken) }))
+      .json().reports.find((r: { messageId: string }) => r.messageId === id);
+    expect(row).toMatchObject({ bodyAtReport: '원래 글', body: '고친 글', editedAtReport: null });
+    expect(row.editedAt).not.toBeNull();
+    const gone = await app.inject({ method: 'DELETE', url: `/channels/${dm}/messages/${id}`, headers: auth(b.token) });
+    expect(gone.statusCode).toBeLessThan(300);
+    const after = (await app.inject({ method: 'GET', url: '/admin/reports', headers: auth(adminToken) }))
+      .json().reports.find((r: { messageId: string }) => r.messageId === id);
+    expect(after).toMatchObject({ bodyAtReport: '원래 글', body: null, messageDeleted: true });
+  });
+
+  it('신고자마다 시간당 상한이 있고, 큐는 after 로 쪽을 넘긴다', async () => {
+    const a = await createMember(app, adminToken, 'reprate');
+    const b = await createMember(app, adminToken, 'reprate2');
+    const dm = (await openDm(a.token, b.accountId)).json().id as string;
+    let last = 0;
+    for (let i = 0; i < 31; i += 1) last = (await report(a.token, await say(b.token, dm, `글 ${i}`))).statusCode;
+    expect(last).toBe(429);
+
+    const seen = new Set<string>();
+    let after: string | null = null;
+    for (let page = 0; page < 100; page += 1) {
+      const url: string = `/admin/reports?status=all&limit=7${after ? `&after=${after}` : ''}`;
+      const res = await app.inject({ method: 'GET', url, headers: auth(adminToken) });
+      expect(res.statusCode).toBe(200);
+      for (const r of res.json().reports as { id: string }[]) {
+        expect(seen.has(r.id)).toBe(false);
+        seen.add(r.id);
+      }
+      after = res.json().nextAfter;
+      if (!after) break;
+    }
+    const total = await pool.query(`select count(*)::int as n from message_report`);
+    expect(seen.size).toBe(total.rows[0].n);
+  });
+
   it('볼 수 없는 메시지는 404, 내 글은 400, 사람이 아닌 것은 관리자 큐를 못 본다', async () => {
     const a = await createMember(app, adminToken, 'repc');
     const b = await createMember(app, adminToken, 'repd');
@@ -89,14 +135,28 @@ describe('차단', () => {
     const them = await createMember(app, adminToken, 'blkthem');
     const dm = (await openDm(them.token, me.accountId)).json().id as string;
     expect(await inboxRows(me.accountId, await say(them.token, dm, '전'))).toBe(1);
+    const pre = (await app.inject({
+      method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'blkpre', visibility: 'public' },
+    })).json().id as string;
+    for (const who of [me.accountId, them.accountId]) {
+      await app.inject({ method: 'POST', url: `/channels/${pre}/members`, headers: auth(adminToken), payload: { accountId: who } });
+    }
+    expect(await inboxRows(me.accountId, await say(them.token, pre, '@blkme 전'))).toBe(1);
 
     expect((await app.inject({ method: 'PUT', url: `/accounts/me/blocks/${them.accountId}`, headers: auth(me.token) })).statusCode).toBe(204);
     const list = (await app.inject({ method: 'GET', url: '/accounts/me/blocks', headers: auth(me.token) })).json().blocks;
     expect(list.map((b: { accountId: string }) => b.accountId)).toEqual([them.accountId]);
     expect(await inboxRows(me.accountId, await say(them.token, dm, '후'))).toBe(0);
+    // 멘션 길 — 둘 다 채널 멤버로 두고 잰다(아니면 차단이 없어도 0 이다).
     const chan = (await app.inject({
       method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'blkchan', visibility: 'public' },
     })).json().id as string;
+    for (const who of [me.accountId, them.accountId]) {
+      const added = await app.inject({
+        method: 'POST', url: `/channels/${chan}/members`, headers: auth(adminToken), payload: { accountId: who },
+      });
+      expect(added.statusCode).toBeLessThan(300);
+    }
     expect(await inboxRows(me.accountId, await say(them.token, chan, '@blkme 봐'))).toBe(0);
     // 차단은 한쪽만이다 — 내가 쓴 글은 상대에게 그대로 간다.
     expect(await inboxRows(them.accountId, await say(me.token, dm, '나는'))).toBe(1);

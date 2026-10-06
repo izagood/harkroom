@@ -77,7 +77,11 @@ export async function enqueueAskPush(pool: Pool | PoolClient, accountId: string,
     `insert into push_job (account_id, message_id, reason)
      select $1, $2, 'ask'
       where exists (select 1 from account where id = $1 and kind = 'human')
-        and exists (select 1 from push_device where account_id = $1)`,
+        and exists (select 1 from push_device where account_id = $1)
+        -- 차단(109) — inbox 를 거치지 않는 길이라 insertInbox 의 거름을 여기서도 건다.
+        and not exists (
+          select 1 from account_block b join message m on m.id = $2
+           where b.blocker_id = $1 and b.blocked_id = m.author_id)`,
     [accountId, messageId],
   );
 }
