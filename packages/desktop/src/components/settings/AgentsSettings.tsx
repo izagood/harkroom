@@ -720,6 +720,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    */
   const loadMemories = (a: AgentView, refresh = false) => {
     if (!canReadSecrets(a)) return;
+    // 다시 읽기는 **지금 보는 에이전트일 때만**이다. 옛 렌더의 `selected`(A)를 쥔 콜백이 B 로
+    // 바꾼 뒤에 불러도 화면을 A 로 되돌리지 못하게(#1196 security n1) — 되돌리면 A 의 줄이 B 칸에
+    // 그려지고, 그 줄의 보관·지우기가 B 의 같은 이름 slug 로 간다.
+    if (refresh && memAgentRef.current !== a.id) return;
     memAgentRef.current = a.id;
     const current = () => memAgentRef.current === a.id;
     if (!refresh) { setMemories(null); setMemAudit(null); }
@@ -800,6 +804,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       : getController().unarchiveAgentMemories(agent.id, slugs);
     void call
       .then((results: { slug: string; result: MemoryBatchResult }[]) => {
+        // 그 사이 다른 에이전트로 바꿨으면 결과를 지금 칸에 적지 않는다(security n1).
+        if (memAgentRef.current !== agent.id) return;
         const done = results.filter((r) => r.result === 'ok').map((r) => r.slug);
         const tooMany = results.filter((r) => r.result === 'too_many').length;
         const skipped = results.length - done.length - tooMany;
@@ -813,7 +819,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
         setMemNotice({ tone: tooMany || skipped ? 'warn' : 'ok', text: parts.join(' · ') });
         loadMemories(agent, true);
       })
-      .catch(() => setError(t('agents.memory.batchFailed')))
+      .catch(() => { if (memAgentRef.current === agent.id) setError(t('agents.memory.batchFailed')); })
       .finally(() => setMemBusy(false));
   };
 

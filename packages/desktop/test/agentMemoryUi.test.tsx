@@ -55,7 +55,7 @@ const fakeController = (memories: (ReturnType<typeof mem> & { archivedAt?: strin
     agentDefaults: vi.fn(async (): Promise<AgentDefaults> => (
       { harness: 'claude-code', model: null, effort: null }
     )),
-    agentMemory: vi.fn(async () => memories),
+    agentMemory: vi.fn(async (_id: string) => memories),
     agentMemoryAudit: vi.fn(async () => audit),
     agentMemoryRevisions: vi.fn(async () => []),
     archiveAgentMemories: vi.fn(async (_id: string, slugs: string[]) => slugs.map((slug) => ({ slug, result: 'ok' }))),
@@ -466,6 +466,32 @@ describe('정리할 것 (#1186 audit)', () => {
     expect(screen.queryByTestId('memory-picked-hidden')).toBeNull();
     fireEvent.change(screen.getByLabelText('slug·본문에서 찾기'), { target: { value: '둘째' } });
     expect(screen.getByTestId('memory-picked-hidden').textContent).toBe('필터에 안 걸린 1개 포함');
+  });
+
+  it('보관이 도는 중에 다른 에이전트로 바꾸면 늦은 결과가 그 칸을 덮지 않는다(security n1)', async () => {
+    const c = fakeController([]);
+    c.listAgents.mockResolvedValue([agent('rusalka'), agent('vodnik')]);
+    c.agentMemory.mockImplementation(async (id: string) => (
+      id === 'id-rusalka' ? [mem('mem/a-one', '# 루살카')] : [mem('mem/v-one', '# 보드닉')]) as never);
+    let release!: () => void;
+    c.archiveAgentMemories.mockImplementationOnce(() => new Promise((r) => {
+      release = () => r([{ slug: 'mem/a-one', result: 'ok' }]);
+    }) as never);
+    await open();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'mem/a-one 보관' }));
+    fireEvent.click(screen.getByTestId('agent-back'));
+    fireEvent.click(await screen.findByTestId('agent-card-vodnik'));
+    fireEvent.click(await screen.findByTestId('agent-tab-memory'));
+    expect(await screen.findByTestId('memory-row-mem/v-one')).toBeTruthy();
+
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+    // 루살카를 다시 읽지 않고, 보드닉 칸에 루살카의 줄·알림이 서지 않는다.
+    expect(c.agentMemory.mock.calls.filter(([id]) => id === 'id-rusalka')).toHaveLength(1);
+    expect(screen.getByTestId('memory-row-mem/v-one')).toBeTruthy();
+    expect(screen.queryByTestId('memory-row-mem/a-one')).toBeNull();
+    expect(screen.queryByTestId('memory-notice')).toBeNull();
   });
 });
 
