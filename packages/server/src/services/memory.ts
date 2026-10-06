@@ -409,12 +409,20 @@ function normalizeTerm(raw: string): string | null {
  */
 export const FOCUS_STOPWORDS: ReadonlySet<string> = new Set([
   '다시', '한번', '계속', '마저', '이어서', '이대', '그대', '그걸', '그거', '그것', '그렇게', '똑같이', '아까', '방금',
-  '좋아', '좋다', '괜찮', '고마워', '감사', '알겠', '그래', '해줘', '봐줘', 'ok', 'okay', 'go', 'again', 'continue',
+  '좋아', '좋다', '괜찮', '고마워', '알겠', '그래', '해줘', '봐줘', 'ok', 'okay', 'again', 'continue',
 ]);
 
-/** 후속 턴 새 말의 낱말(G). 이름 제외·recall 상투어에 더해 `FOCUS_STOPWORDS` 를 거른다. */
+/**
+ * 인사 꼴의 `감사…` — **정규화 전의 낱말**로 거른다(qa 후속 10-04). `감사` 를 `FOCUS_STOPWORDS` 에 두면 "감사 결과는?" 의 `감사`
+ * (audit)도 빠진다 — `normalizeTerm` 이 `감사해`·`감사합니다`·`감사는` 을 모두 `감사` 로 만들기 때문이다. 그래서 인사 꼴만
+ * 낱말 그대로 맞춘다. `go` 는 Go 언어 주제와 겹쳐 목록에서 뺐다.
+ */
+const THANKS_FORM = /^감사(?:해|해요|합니다|했어|했어요|드려요|드립니다|하다|요)$/u;
+
+/** 후속 턴 새 말의 낱말(G). 이름 제외·recall 상투어에 더해 `FOCUS_STOPWORDS`·인사 꼴 `감사…` 를 거른다. */
 export function focusTermsOf(focus: string, excluded: ReadonlySet<string>): string[] {
-  return searchTerms(focus, { exclude: new Set([...excluded, ...FOCUS_STOPWORDS]) });
+  const text = focus.split(/(\s+)/u).map((w) => (THANKS_FORM.test(w.replace(/[\p{P}\p{S}]+$/u, '')) ? ' ' : w)).join('');
+  return searchTerms(text, { exclude: new Set([...excluded, ...FOCUS_STOPWORDS]) });
 }
 
 /** focus 가 있을 때 낱말 상한 — 새 말 12개 + 루트 머리 몫(G). */
