@@ -17,7 +17,9 @@ import { emitEvent } from '../events.js';
 import {
   deleteMemory, listMemoryEntries, listMemoryRevisions, MAX_CORE_MEMORY_LENGTH, MAX_MEMORY_DESCRIPTION_LENGTH,
   isValidSlug, MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, MEMORY_SLUG_HINT, setMemory, clearMemoryFlag,
+  auditMemory, AUDIT_HUMAN_LIST_CAP,
 } from '../services/memory.js';
+import { archiveMemory, unarchiveMemory } from '../services/memoryCurate.js';
 import { getHandleGroupByHandle } from '../services/handleGroups.js';
 
 export interface AccountRouteDeps {
@@ -863,6 +865,73 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     const { id, slug } = z.object({ id: z.string().uuid(), slug: z.string().min(1).max(255) }).parse(req.params);
     if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
     return { revisions: await listMemoryRevisions(pool, id, slug) };
+  });
+
+  /**
+   * 정리 후보(Memory 탭 재설계 PR 2). 에이전트의 `memory.audit` 과 **같은 서비스**를 탄다 — 분류가
+   * 두 벌이면 사람 화면과 에이전트가 다른 것을 후보라 부른다. 다른 것은 목록 상한뿐이다: 에이전트는
+   * 30, 사람은 `AUDIT_HUMAN_LIST_CAP`(칩 숫자가 정확해야 한다 — 결정 4). 낡은 낱말(patterns)은 받지
+   * 않는다 — 그것은 정리 턴이 제 맥락으로 넣는 것이다.
+   */
+  app.get('/accounts/agents/:id/memory/audit', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
+    return { audit: await auditMemory(pool, id, [], { cap: AUDIT_HUMAN_LIST_CAP }) };
+  });
+
+  /**
+   * 보관·되살리기를 **여러 개 한 번에**(결정 2: 줄 기본 버튼이 Forget 에서 보관으로). 에이전트의
+   * `memory.archive`·`memory.unarchive` 와 같은 서비스다 — 보관 300 상한 밀어내기·되살릴 때 200 상한
+   * (`too_many`)이 한 벌이다.
+   *
+   * 한 slug 의 실패가 나머지를 막지 않는다 — 결과를 slug 마다 돌려준다. 되살리기는 앞에서부터
+   * 자리가 차면 뒤의 것이 `too_many` 가 된다. 감사에는 성공한 slug 만 남긴다(본문 없음 — 지우기와 같은 규칙).
+   */
+  const memorySlugsBody = z.object({
+    slugs: z.array(z.string().min(1).max(255)).min(1).max(MAX_MEMORY_ITEMS_PER_ACCOUNT),
+  });
+  type MemoryBatchResult = 'ok' | 'not_found' | 'invalid_slug' | 'core_not_archivable' | 'too_many';
+
+  app.post('/accounts/agents/:id/memory/archive', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const slugs = [...new Set(memorySlugsBody.parse(req.body).slugs)];
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
+    const results: { slug: string; result: MemoryBatchResult }[] = [];
+    for (const slug of slugs) {
+      if (!isValidSlug(slug)) { results.push({ slug, result: 'invalid_slug' }); continue; }
+      // core 는 매 턴 실리는 자리라 보관하지 않는다 — memory.archive 와 같은 규칙.
+      if (slug === 'core') { results.push({ slug, result: 'core_not_archivable' }); continue; }
+      const r = await archiveMemory(pool, id, slug);
+      // expect 를 주지 않으므로 conflict 는 오지 않는다.
+      results.push({ slug, result: r === 'not_found' ? 'not_found' : 'ok' });
+    }
+    const done = results.filter((r) => r.result === 'ok').map((r) => r.slug);
+    if (done.length) {
+      await recordAudit(pool, {
+        action: 'agent.memory.archived', actorId: req.account!.id, actorHandle: req.account!.handle,
+        target: id, detail: { slugs: done },
+      }, req);
+    }
+    return { results };
+  });
+
+  app.post('/accounts/agents/:id/memory/unarchive', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const slugs = [...new Set(memorySlugsBody.parse(req.body).slugs)];
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
+    const results: { slug: string; result: MemoryBatchResult }[] = [];
+    for (const slug of slugs) {
+      if (!isValidSlug(slug)) { results.push({ slug, result: 'invalid_slug' }); continue; }
+      results.push({ slug, result: await unarchiveMemory(pool, id, slug) });
+    }
+    const done = results.filter((r) => r.result === 'ok').map((r) => r.slug);
+    if (done.length) {
+      await recordAudit(pool, {
+        action: 'agent.memory.unarchived', actorId: req.account!.id, actorHandle: req.account!.handle,
+        target: id, detail: { slugs: done },
+      }, req);
+    }
+    return { results };
   });
 
   /**

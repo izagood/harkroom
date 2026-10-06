@@ -31,10 +31,14 @@ export interface MemoryEntry {
   flagReason: string | null;
   /** 보관된 기억(097)이면 그 시각. 목록·recall·검색·상한에서 빠지고 `memory.get`·사람 화면에서만 보인다. */
   archivedAt: Date | null;
+  /** 러너 recall 로 턴 프롬프트에 실린 횟수와 마지막 시각(096). 「쓰임」은 읽힘과 이것의 합이다(`auditMemory`). */
+  recallCount: number;
+  lastRecalledAt: Date | null;
 }
 
 const ENTRY_COLUMNS = `slug, value, updated_at as "updatedAt", description, created_at as "createdAt",
   read_count as "readCount", last_read_at as "lastReadAt", kind,
+  recall_count as "recallCount", last_recalled_at as "lastRecalledAt",
   flagged_at as "flaggedAt", flag_reason as "flagReason", archived_at as "archivedAt"`;
 
 /** 목록 한 줄 — 러너가 턴 프롬프트의 `<memory-index>` 에 싣는다(본문은 없다). */
@@ -697,6 +701,12 @@ export function isValidSlug(slug: string): boolean {
 export const AUDIT_STALE_DAYS = 30;
 export const AUDIT_NEVER_READ_GRACE_DAYS = 7;
 const AUDIT_LIST_CAP = 30;
+/**
+ * 사람 화면이 받는 목록 상한(Memory 탭 재설계 결정 4: 30개 자르기 없이 전부). 낱개 목록은 살아 있는
+ * 항목이 200 을 넘지 않으므로 사실상 전부이고, 짝 목록(similar·similarBody)·링크 목록은 이론상
+ * n² 이라 여기서 끊는다 — 응답 크기의 상한이다(security, PR 2). 끊기면 `truncated` 가 선다.
+ */
+export const AUDIT_HUMAN_LIST_CAP = MAX_MEMORY_ITEMS_PER_ACCOUNT;
 /** 이만큼 안 고친 기억은 낡았을 수 있다(C1). 읽힘과 무관한 축 — recall 이 안 세던 때의 read_count 왜곡을 피한다. */
 export const AUDIT_OLD_DAYS = 90;
 /** 본문 낱말 자카드가 이 이상이면 같은 주제를 두 번 적었을 가능성 — 합칠 후보(C1). */
@@ -798,8 +808,10 @@ function jaccard(a: Set<string>, b: Set<string>): number {
  * 수 있다. 목록마다 30개로 자른다 — 한 번에 다 고칠 필요가 없다.
  */
 export async function auditMemory(
-  pool: Pool, accountId: string, patterns: string[] = [],
+  pool: Pool, accountId: string, patterns: string[] = [], opts: { cap?: number } = {},
 ): Promise<MemoryAudit> {
+  // 에이전트(MCP)는 30 — 한 번에 다 고칠 필요가 없다. 사람 화면은 `AUDIT_HUMAN_LIST_CAP`.
+  const cap = opts.cap ?? AUDIT_LIST_CAP;
   const res = await pool.query(
     `select slug, value, description, kind, read_count, last_read_at, recall_count, last_recalled_at,
        created_at, updated_at, flagged_at, flag_reason
@@ -874,16 +886,16 @@ export async function auditMemory(
   audit.largest = judgedRows.map((r) => ({ slug: r.slug, chars: r.value.length }))
     .sort((a, b) => b.chars - a.chars).slice(0, AUDIT_LARGEST_CAP);
   audit.truncated = [audit.neverRead, audit.stale, audit.brokenLinks, audit.similar, audit.outdated,
-    audit.undescribed, audit.flagged, audit.similarBody, audit.sharedRefs, audit.old].some((l) => l.length > AUDIT_LIST_CAP);
-  audit.similarBody = audit.similarBody.slice(0, AUDIT_LIST_CAP);
-  audit.sharedRefs = audit.sharedRefs.slice(0, AUDIT_LIST_CAP);
-  audit.old = audit.old.slice(0, AUDIT_LIST_CAP);
-  audit.neverRead = audit.neverRead.slice(0, AUDIT_LIST_CAP);
-  audit.stale = audit.stale.slice(0, AUDIT_LIST_CAP);
-  audit.brokenLinks = audit.brokenLinks.slice(0, AUDIT_LIST_CAP);
-  audit.similar = audit.similar.slice(0, AUDIT_LIST_CAP);
-  audit.outdated = audit.outdated.slice(0, AUDIT_LIST_CAP);
-  audit.undescribed = audit.undescribed.slice(0, AUDIT_LIST_CAP);
-  audit.flagged = audit.flagged.slice(0, AUDIT_LIST_CAP);
+    audit.undescribed, audit.flagged, audit.similarBody, audit.sharedRefs, audit.old].some((l) => l.length > cap);
+  audit.similarBody = audit.similarBody.slice(0, cap);
+  audit.sharedRefs = audit.sharedRefs.slice(0, cap);
+  audit.old = audit.old.slice(0, cap);
+  audit.neverRead = audit.neverRead.slice(0, cap);
+  audit.stale = audit.stale.slice(0, cap);
+  audit.brokenLinks = audit.brokenLinks.slice(0, cap);
+  audit.similar = audit.similar.slice(0, cap);
+  audit.outdated = audit.outdated.slice(0, cap);
+  audit.undescribed = audit.undescribed.slice(0, cap);
+  audit.flagged = audit.flagged.slice(0, cap);
   return audit;
 }

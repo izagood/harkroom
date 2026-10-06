@@ -15,6 +15,9 @@ export type AuditAction =
   | 'agent.memory.deleted'
   | 'agent.memory.edited'
   | 'agent.memory.flag_cleared'
+  // Memory 탭 재설계 PR 2: 사람의 보관·되살리기(여러 개). detail 은 {slugs} 뿐 — 본문 없음.
+  | 'agent.memory.archived'
+  | 'agent.memory.unarchived'
   // #171: 새 에이전트의 기본값 변경. 이미 만들어진 에이전트는 바뀌지 않으므로, 이 기록은
   // '앞으로 만들 것의 서식이 언제 누구 손에 바뀌었나' 를 답한다.
   | 'agent.defaults.updated'

@@ -5,6 +5,7 @@ import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 import { setMemory, listMemory } from '../src/services/memory.js';
 import type { Pool } from 'pg';
+import { MAX_MEMORY_ITEMS_PER_ACCOUNT } from '@harkroom/shared';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -181,5 +182,116 @@ describe('에이전트 기억 편집 REST (M5)', () => {
       expect(r.json().error.code).toBe('not_found');
     }
     expect(await listMemory(pool, adminId)).toHaveLength(1);
+  });
+});
+
+describe('사람용 정리 API (Memory 탭 재설계 PR 2)', () => {
+  const owner = () => admin();
+
+  it('목록에 recall 열(recallCount·lastRecalledAt)이 실린다', async () => {
+    const { accountId: id } = await createAgent(app, adminToken, 'recallcolbot');
+    await setMemory(pool, id, 'mem/recalled', '실린 것');
+    await pool.query(
+      `update agent_memory set recall_count = 3, last_recalled_at = now() where account_id = $1 and slug = 'mem/recalled'`, [id],
+    );
+    const res = await app.inject({ method: 'GET', url: `/accounts/agents/${id}/memory`, headers: owner() });
+    const m = (res.json().memories as { slug: string; recallCount: number; lastRecalledAt: string | null }[])
+      .find((e) => e.slug === 'mem/recalled')!;
+    expect(m.recallCount).toBe(3);
+    expect(m.lastRecalledAt).not.toBeNull();
+  });
+
+  // 결정 4: 칩 숫자가 정확해야 한다 — 에이전트(MCP)의 30 자르기를 사람 화면에 쓰지 않는다.
+  it('GET …/memory/audit 는 30개에서 자르지 않는다', async () => {
+    const { accountId: id } = await createAgent(app, adminToken, 'auditallbot');
+    for (let i = 0; i < 40; i++) await setMemory(pool, id, `mem/no-desc-${i}`, `본문 ${i}`);
+    const res = await app.inject({ method: 'GET', url: `/accounts/agents/${id}/memory/audit`, headers: owner() });
+    expect(res.statusCode).toBe(200);
+    const audit = res.json().audit as { undescribed: string[]; truncated: boolean; items: { active: number } };
+    expect(audit.undescribed).toHaveLength(40);
+    expect(audit.truncated).toBe(false);
+    expect(audit.items.active).toBe(40);
+  });
+
+  it('보관은 여러 개를 한 번에, slug 마다 결과를 준다 — core·없는 것·틀린 이름은 막고 나머지는 한다', async () => {
+    const { accountId: id } = await createAgent(app, adminToken, 'archivebatchbot');
+    await setMemory(pool, id, 'core', '코어');
+    await setMemory(pool, id, 'mem/a', 'A');
+    await setMemory(pool, id, 'mem/b', 'B');
+    const res = await app.inject({
+      method: 'POST', url: `/accounts/agents/${id}/memory/archive`, headers: owner(),
+      payload: { slugs: ['mem/a', 'mem/b', 'mem/a', 'core', 'mem/missing', 'Bad Slug'] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().results).toEqual([
+      { slug: 'mem/a', result: 'ok' },
+      { slug: 'mem/b', result: 'ok' },
+      { slug: 'core', result: 'core_not_archivable' },
+      { slug: 'mem/missing', result: 'not_found' },
+      { slug: 'Bad Slug', result: 'invalid_slug' },
+    ]);
+    expect(await listMemory(pool, id)).toEqual(['core']);
+    // 감사에는 성공한 slug 만, 본문은 없다.
+    const audit = await pool.query(
+      `select detail from audit_log where action = 'agent.memory.archived' and target = $1 order by id desc limit 1`, [id],
+    );
+    expect(audit.rows[0].detail).toEqual({ slugs: ['mem/a', 'mem/b'] });
+
+    const back = await app.inject({
+      method: 'POST', url: `/accounts/agents/${id}/memory/unarchive`, headers: owner(), payload: { slugs: ['mem/a'] },
+    });
+    expect(back.json().results).toEqual([{ slug: 'mem/a', result: 'ok' }]);
+    expect(await listMemory(pool, id)).toEqual(['core', 'mem/a']);
+  });
+
+  it('되살리기는 살아 있는 것이 상한이면 too_many 다', async () => {
+    const { accountId: id } = await createAgent(app, adminToken, 'unarchivefullbot');
+    await setMemory(pool, id, 'mem/old', '옛것');
+    await app.inject({
+      method: 'POST', url: `/accounts/agents/${id}/memory/archive`, headers: owner(), payload: { slugs: ['mem/old'] },
+    });
+    await pool.query(
+      `insert into agent_memory (account_id, slug, value)
+       select $1, 'mem/fill-' || g, 'x' from generate_series(1, $2::int) g`,
+      [id, MAX_MEMORY_ITEMS_PER_ACCOUNT],
+    );
+    const res = await app.inject({
+      method: 'POST', url: `/accounts/agents/${id}/memory/unarchive`, headers: owner(), payload: { slugs: ['mem/old'] },
+    });
+    expect(res.json().results).toEqual([{ slug: 'mem/old', result: 'too_many' }]);
+  });
+
+  it('소유자·admin 이 아니면 audit·보관·되살리기 모두 403, 남의 기억은 그대로다', async () => {
+    const { accountId: id } = await createAgent(app, adminToken, 'guardedbot');
+    await setMemory(pool, id, 'mem/keep', '남는다');
+    const plain = { authorization: `Bearer ${plainToken}` };
+    const res = await Promise.all([
+      app.inject({ method: 'GET', url: `/accounts/agents/${id}/memory/audit`, headers: plain }),
+      app.inject({ method: 'POST', url: `/accounts/agents/${id}/memory/archive`, headers: plain, payload: { slugs: ['mem/keep'] } }),
+      app.inject({ method: 'POST', url: `/accounts/agents/${id}/memory/unarchive`, headers: plain, payload: { slugs: ['mem/keep'] } }),
+    ]);
+    for (const r of res) expect(r.statusCode).toBe(403);
+    expect(await listMemory(pool, id)).toEqual(['mem/keep']);
+  });
+
+  it('사람 계정 id 면 admin 이어도 404 다', async () => {
+    const res = await Promise.all([
+      app.inject({ method: 'GET', url: `/accounts/agents/${adminId}/memory/audit`, headers: admin() }),
+      app.inject({ method: 'POST', url: `/accounts/agents/${adminId}/memory/archive`, headers: admin(), payload: { slugs: ['mem/stray-old'] } }),
+      app.inject({ method: 'POST', url: `/accounts/agents/${adminId}/memory/unarchive`, headers: admin(), payload: { slugs: ['mem/stray-old'] } }),
+    ]);
+    for (const r of res) expect(r.statusCode).toBe(404);
+  });
+
+  it('slugs 는 1개 이상, 상한 이하여야 한다', async () => {
+    const empty = await app.inject({
+      method: 'POST', url: `/accounts/agents/${agentId}/memory/archive`, headers: admin(), payload: { slugs: [] },
+    });
+    expect(empty.statusCode).toBe(400);
+    const tooMany = await app.inject({
+      method: 'POST', url: `/accounts/agents/${agentId}/memory/archive`, headers: admin(),
+      payload: { slugs: Array.from({ length: MAX_MEMORY_ITEMS_PER_ACCOUNT + 1 }, (_, i) => `mem/x-${i}`) },
+    });
+    expect(tooMany.statusCode).toBe(400);
   });
 });
