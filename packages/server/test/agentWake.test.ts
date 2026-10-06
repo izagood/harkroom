@@ -308,9 +308,10 @@ describe('turn.wake — 에이전트가 자기를 나중에 깨운다', () => {
     await client.close();
     const entry = (polled.entries as { messageId: string; canceledWakes?: unknown }[]).find((e) => e.messageId === call);
     expect(entry?.canceledWakes).toEqual([{ reason: 'designer 안 회수', wakeAt: w.wake.wakeAt }]);
-    // 다른 부름 항목에는 키째 없다 — 항목 모양을 넓히지 않는다.
-    const others = (polled.entries as { messageId: string; canceledWakes?: unknown }[]).filter((e) => e.messageId !== call);
-    expect(others.every((e) => !('canceledWakes' in e))).toBe(true);
+    // 아무것도 접지 않은 부름(이 스레드를 연 글)에는 키째 없다 — 항목 모양을 넓히지 않는다.
+    const opener = (polled.entries as { messageId: string; canceledWakes?: unknown }[]).find((e) => e.messageId === threadRootId);
+    expect(opener).toBeDefined();
+    expect(opener && 'canceledWakes' in opener).toBe(false);
   });
 
   describe('보고처(reportTo, 2026-10-06)', () => {
