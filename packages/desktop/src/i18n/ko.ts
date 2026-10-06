@@ -64,7 +64,7 @@ export const ko = {
   'appearance.modeDark': '어둡게',
   'mcpServers.confirmTitle': "MCP 서버 '{name}'을 삭제할까?",
   'mcpServers.confirmDetail': '이 이름을 켜 둔 에이전트는 다음에 뜰 때부터 이 MCP 없이 돈다. 오퍼레이터 머신에 적힌 정의는 남는다.',
-  'operators.confirmTitle': "오퍼레이터 '{name}'을 삭제할까?",
+  'operators.confirmTitle': "'{name}' 오퍼레이터를 삭제할까?",
   'operators.confirmDetail': '이 머신은 다시 등록하기 전까지 에이전트를 돌리지 못한다. 되돌릴 수 없다.',
   'mcpServers.cancel': '취소',
   'operators.cancel': '취소',

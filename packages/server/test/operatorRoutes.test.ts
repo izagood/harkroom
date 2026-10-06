@@ -168,6 +168,15 @@ describe('이름 바꾸기 — label', () => {
     await app.inject({ method: 'DELETE', url: `/operators/${op.operatorId}`, headers: auth(memberToken) });
   });
 
+  it('이름은 앱과 같은 정리를 거친다 — 줄바꿈은 공백으로, 보이지 않는 글자는 지우고, 그것뿐이면 호스트명으로', async () => {
+    const op = await registerOperator(app, memberToken, 'tidy-mac');
+    const res = await rename(memberToken, op.operatorId, '회사\n\u200B맥북\u202E');
+    expect(res.statusCode).toBe(200);
+    expect(res.json().label).toBe('회사 맥북');
+    expect((await rename(memberToken, op.operatorId, '\u200B\u2066\u2069')).json().label).toBeNull();
+    await app.inject({ method: 'DELETE', url: `/operators/${op.operatorId}`, headers: auth(memberToken) });
+  });
+
   it('64자까지 받고 65자는 400, label 이 없으면 400', async () => {
     const op = await registerOperator(app, memberToken, 'len-mac');
     expect((await rename(memberToken, op.operatorId, 'a'.repeat(64))).statusCode).toBe(200);
