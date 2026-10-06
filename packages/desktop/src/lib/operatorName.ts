@@ -1,4 +1,6 @@
-import type { OperatorView } from '@harkroom/shared';
+import { normalizeOperatorLabel, type OperatorView } from '@harkroom/shared';
+
+export { OPERATOR_LABEL_MAX } from '@harkroom/shared';
 
 /**
  * 오퍼레이터를 사람에게 보일 이름 — 사람이 붙인 `label`, 없으면 등록 때의 호스트명(`name`).
@@ -6,7 +8,17 @@ import type { OperatorView } from '@harkroom/shared';
  * 이 기기·관문 터미널 문구). 한 자리라도 `name` 을 바로 읽으면 바꾼 이름이 거기서만 옛 이름으로 남는다.
  */
 export function operatorDisplayName(op: Pick<OperatorView, 'name' | 'label'>): string {
-  return op.label ?? op.name;
+  // 정리를 거쳐 그린다 — 정리가 들어오기 전에 저장된 이름에도 보이지 않는 글자가 남지 않게.
+  return normalizeOperatorLabel(op.label) ?? op.name;
+}
+
+/**
+ * 이름과 호스트명을 함께 — 「작업용 맥북 (jaebin-mbp)」. 지우기처럼 **어느 기계인지 틀리면 안 되는** 자리에 쓴다.
+ * 이름을 바꾸지 않았으면 호스트명 하나만.
+ */
+export function operatorFullName(op: Pick<OperatorView, 'name' | 'label'>): string {
+  const shown = operatorDisplayName(op);
+  return shown === op.name ? shown : `${shown} (${op.name})`;
 }
 
 /** 찾지 못했을 수도 있는 오퍼레이터의 이름 — 없으면 `undefined`(부르는 쪽이 「알 수 없는 오퍼레이터」로 물러난다). */
@@ -26,6 +38,3 @@ export function operatorPickerLabels(ops: readonly Pick<OperatorView, 'id' | 'na
     return [o.id, (counts.get(shown) ?? 0) > 1 && shown !== o.name ? `${shown} — ${o.name}` : shown];
   }));
 }
-
-/** 이름 상한 — 서버(`PATCH /operators/:id`)와 등록 이름 상한이 같다. */
-export const OPERATOR_LABEL_MAX = 64;

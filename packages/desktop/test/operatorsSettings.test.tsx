@@ -156,7 +156,8 @@ describe('오퍼레이터 이름 바꾸기', () => {
     expect(screen.getByTestId('operator-hostname-op-1').textContent).toContain('NO-202509-002.local');
     // 연결 상태는 목록을 읽은 때의 값을 지킨다(응답의 online 으로 덮지 않는다).
     expect(screen.getByTestId('operator-online-op-1').textContent).toContain('연결됨');
-    expect(screen.getByRole('button', { name: '회사 맥북 삭제' })).toBeTruthy();
+    // 지우기 버튼은 어느 기계인지 틀리지 않게 호스트명까지 읽힌다.
+    expect(screen.getByRole('button', { name: '회사 맥북 (NO-202509-002.local) 삭제' })).toBeTruthy();
   });
 
   it('Esc 는 요청 없이 닫고, 바뀐 것 없이 칸 밖을 눌러도 요청하지 않는다', async () => {
@@ -198,6 +199,53 @@ describe('오퍼레이터 이름 바꾸기', () => {
     expect(screen.getByTestId('operator-name-dup-op-2')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '저장' }));
     await waitFor(() => expect(c.renameOperator).toHaveBeenCalledWith('op-2', '맥북'));
+  });
+
+  it('보이지 않는 글자·탭·특수 공백은 서버와 같은 정리를 거쳐 보낸다 — 정리하면 같은 이름이면 요청하지 않는다', async () => {
+    const c = fakeController([op('op-1', 'box', { label: '맥북' })]);
+    render(<OperatorsSettings />);
+    fireEvent.click(await screen.findByTestId('operator-name-op-1'));
+    const input = screen.getByTestId('operator-name-input-op-1');
+    fireEvent.change(input, { target: { value: '맥\u200B북 ' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.queryByTestId('operator-name-input-op-1')).toBeNull();
+    expect(c.renameOperator).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('operator-name-op-1'));
+    fireEvent.change(screen.getByTestId('operator-name-input-op-1'), { target: { value: '회사\t\u00A0맥북\u202E' } });
+    fireEvent.keyDown(screen.getByTestId('operator-name-input-op-1'), { key: 'Enter' });
+    await waitFor(() => expect(c.renameOperator).toHaveBeenCalledWith('op-1', '회사 맥북'));
+  });
+
+  it('저장 전에 정리가 안 된 옛 이름도 보이지 않는 글자 없이 그린다', async () => {
+    fakeController([op('op-1', 'box', { label: '\u202E맥북\u200B' })]);
+    render(<OperatorsSettings />);
+    expect((await screen.findByTestId('operator-name-op-1')).textContent).toBe('맥북');
+  });
+
+  it('키보드는 연필에서만 멈춘다 — 이름 글자 버튼은 Tab 순서에서 빠진다', async () => {
+    fakeController([op('op-1', 'box')]);
+    render(<OperatorsSettings />);
+    expect((await screen.findByTestId('operator-name-op-1')).getAttribute('tabindex')).toBe('-1');
+    expect(screen.getByRole('button', { name: 'box 이름 바꾸기' }).getAttribute('tabindex')).toBeNull();
+  });
+
+  it('이름을 바꾼 줄을 지울 때 확인창 제목에 호스트명이 함께 선다 — 바꾸지 않은 줄은 호스트명 하나', async () => {
+    fakeController([op('op-1', 'jaebin-mbp', { label: '작업용 맥북' }), op('op-2', 'udc-vm')]);
+    render(<OperatorsSettings />);
+    fireEvent.click(await screen.findByRole('button', { name: '작업용 맥북 (jaebin-mbp) 삭제' }));
+    expect(screen.getByText("'작업용 맥북 (jaebin-mbp)' 오퍼레이터를 삭제할까?")).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
+    fireEvent.click(screen.getByRole('button', { name: 'udc-vm 삭제' }));
+    expect(screen.getByText("'udc-vm' 오퍼레이터를 삭제할까?")).toBeTruthy();
+  });
+
+  it('능력 줄은 항목 단위로만 접힌다', async () => {
+    fakeController([op('op-1', 'box', { online: true })]);
+    render(<OperatorsSettings />);
+    const caps = await screen.findByTestId('operator-caps-op-1');
+    const items = Array.from(caps.children);
+    expect(items.length).toBe(3); // 에이전트 수 + 하네스 둘
+    for (const el of items) expect(el.className).toContain('whitespace-nowrap');
   });
 
   it('저장에 실패하면 입력을 그대로 두고 빨간 줄로 알린다', async () => {

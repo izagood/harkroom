@@ -11,7 +11,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { createHash, createHmac, hkdfSync, randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import type { OperatorStatus, OperatorUpgradeEvent, OperatorView } from '@harkroom/shared';
+import { normalizeOperatorLabel, OPERATOR_LABEL_MAX, type OperatorStatus, type OperatorUpgradeEvent, type OperatorView } from '@harkroom/shared';
 import { isMachineDigest, parseUpgradeProgress } from '@harkroom/shared/operatorProtocol';
 import { newToken } from '../auth/tokens.js';
 import { can } from '../auth/permissions.js';
@@ -35,13 +35,14 @@ const claimBody = z.object({
 });
 const idParam = z.object({ id: z.string().uuid() });
 /**
- * 이름 바꾸기. `label` 은 앞뒤 공백을 자른 뒤 1~64자(등록 이름 상한과 같다). **비우거나 null 이면
+ * 이름 바꾸기. `label` 은 정리(앞뒤 공백·보이지 않는 글자)한 뒤 1~64자(등록 이름 상한과 같다). **비우거나 null 이면
  * 호스트명으로 되돌린다** — 화면의 「Use hostname」 과 빈 칸 저장이 같은 요청이다. 같은 이름이 있어도
  * 막지 않는다: 배정은 id 로 고르므로 겹쳐도 틀린 기계를 고르게 되지 않고, 화면이 경고만 띄운다.
  */
 const renameBody = z.object({
-  label: z.string().max(200).nullable().transform((v) => (v?.trim() ? v.trim() : null))
-    .refine((v) => v === null || v.length <= 64, { message: 'label 은 64자까지다' }),
+  // 정리(공백 접기·보이지 않는 글자 지우기·trim)는 앱과 같은 함수다 — `normalizeOperatorLabel`.
+  label: z.string().max(200).nullable().transform((v) => normalizeOperatorLabel(v))
+    .refine((v) => v === null || v.length <= OPERATOR_LABEL_MAX, { message: `label 은 ${OPERATOR_LABEL_MAX}자까지다` }),
 });
 
 const OP_COLS = `id, owner_account_id as "ownerAccountId", name, created_at as "createdAt",

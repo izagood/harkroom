@@ -7,7 +7,8 @@ import { ConfirmDialog } from '../ConfirmDialog';
 import { hasCapability } from '../../lib/capabilities';
 import { hasOperatorLocalSurface } from '../../lib/operatorLocal';
 import { SettingsGroup, SettingsPage } from './primitives';
-import { OPERATOR_LABEL_MAX, operatorDisplayName } from '../../lib/operatorName';
+import { OPERATOR_LABEL_MAX, operatorDisplayName, operatorFullName } from '../../lib/operatorName';
+import { normalizeOperatorLabel } from '@harkroom/shared';
 
 /**
  * 설정 › Operators — 스펙 2026-09-20 §3.
@@ -95,8 +96,9 @@ export function OperatorsSettings({ onOpenSection }: {
   const cancelRename = () => { setEditing(null); setRenameError(null); };
   const saveRename = async (op: OperatorView, raw: string) => {
     if (savingName) return;
-    const trimmed = raw.trim();
-    const label = trimmed && trimmed !== op.name ? trimmed : null;
+    // 서버와 같은 정리를 먼저 한다 — 그래야 "바뀐 것 없음" 판정이 서버가 저장할 값과 맞는다.
+    const tidy = normalizeOperatorLabel(raw);
+    const label = tidy && tidy !== op.name ? tidy : null;
     // 바뀐 것이 없으면 요청 없이 닫는다 — 칸 밖을 누를 때마다 감사가 쌓이지 않게.
     if (label === (op.label ?? null)) { cancelRename(); return; }
     setSavingName(true);
@@ -149,7 +151,7 @@ export function OperatorsSettings({ onOpenSection }: {
                     onBlur={() => { if (!renameError) void saveRename(op, editing.draft); }}
                   />
                   {(() => {
-                    const shown = editing.draft.trim();
+                    const shown = normalizeOperatorLabel(editing.draft) ?? '';
                     const dup = shown !== '' && operators.some((o) => o.id !== op.id && operatorDisplayName(o) === shown);
                     return dup ? <span className="mt-1 block text-meta text-warning" data-testid={`operator-name-dup-${op.id}`}>{t('operators.duplicateName')}</span> : null;
                   })()}
@@ -157,7 +159,7 @@ export function OperatorsSettings({ onOpenSection }: {
                     <button
                       type="button"
                       data-testid={`operator-use-hostname-${op.id}`}
-                      className="mt-1 block text-meta text-accent hover:underline"
+                      className="mt-1 block text-meta text-fg-muted hover:underline"
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => void saveRename(op, '')}
                     >
@@ -171,6 +173,8 @@ export function OperatorsSettings({ onOpenSection }: {
                   <button
                     type="button"
                     data-testid={`operator-name-${op.id}`}
+                    // 키보드는 연필에서만 멈춘다 — 같은 일을 하는 버튼 둘에 Tab 이 두 번 서지 않게(마우스로는 이름도 눌린다).
+                    tabIndex={-1}
                     className="min-w-0 truncate text-left font-medium text-fg"
                     onClick={() => startRename(op)}
                   >
@@ -208,18 +212,21 @@ export function OperatorsSettings({ onOpenSection }: {
               {/* 능력(스펙 §3): 이 머신이 돌릴 수 있는 에이전트 수와 하네스. 배정이 409 로 거절되는
                   두 이유(로컬 설정에 없다·하네스가 없다)를 사람이 여기서 미리 본다. */}
               {caps[op.id] && (
-                <span className="mt-0.5 block text-meta text-fg-subtle" data-testid={`operator-caps-${op.id}`}>
-                  {t('operators.capsAgents', { count: caps[op.id]!.agentIds.length })}
+                // 항목 단위로만 접는다 — 「로그인 안 / 됨」처럼 낱말 가운데서 줄이 바뀌지 않게.
+                <span className="mt-0.5 flex flex-wrap gap-x-2 text-meta text-fg-subtle" data-testid={`operator-caps-${op.id}`}>
+                  <span className="whitespace-nowrap">{t('operators.capsAgents', { count: caps[op.id]!.agentIds.length })}</span>
                   {Object.entries(caps[op.id]!.harnesses).map(([name, h]) => (
-                    <span key={name} className="ml-2">
+                    <span key={name} className="whitespace-nowrap">
                       {name}: {h.installed ? (h.loggedIn ? t('operators.harnessReady') : t('operators.harnessNotLoggedIn')) : t('operators.harnessMissing')}
                     </span>
                   ))}
                 </span>
               )}
             </span>
+            {/* 오른쪽 칸은 취소·저장 폭을 늘 비워 둔다 — 편집에 들어갈 때 왼쪽 글이 좁아져 다시 접히지 않게. */}
+            <span className="flex min-w-[7.5rem] shrink-0 justify-end gap-2">
             {editing?.id === op.id ? (
-              <span className="flex shrink-0 gap-2">
+              <>
                 {/* mousedown 을 막아 입력칸이 blur(=저장)되기 전에 이 버튼이 눌리게 한다. */}
                 <button
                   type="button"
@@ -238,22 +245,23 @@ export function OperatorsSettings({ onOpenSection }: {
                 >
                   {t('operators.save')}
                 </button>
-              </span>
+              </>
             ) : (
               <button
                 className="shrink-0 rounded-row border border-border px-2 py-1 text-meta text-fg hover:bg-surface-sunken"
-                aria-label={t('operators.revokeAction', { name: operatorDisplayName(op) })}
+                aria-label={t('operators.revokeAction', { name: operatorFullName(op) })}
                 onClick={() => { setRevokeError(null); setConfirming(op); }}
               >
                 {t('operators.revoke')}
               </button>
             )}
+            </span>
           </div>
         ))}
       </SettingsGroup>
       {confirming && (
         <ConfirmDialog
-          title={t('operators.confirmTitle', { name: operatorDisplayName(confirming) })}
+          title={t('operators.confirmTitle', { name: operatorFullName(confirming) })}
           detail={t('operators.confirmDetail')}
           confirmLabel={t('operators.revoke')}
           cancelLabel={t('operators.cancel')}
