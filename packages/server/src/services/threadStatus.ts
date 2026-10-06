@@ -67,6 +67,12 @@ select
      from agent_wake w join t on t.id = w.message_id
      where w.fired_at is null and w.canceled_at is null
      order by w.wake_at limit 1) as open_wake,
+  -- 이 스레드를 **보고처로 둔** 열린 깨움(2026-10-06). 앵커는 다른 스레드다. 열린 행에서 출발한다(agent_wake_due).
+  (select json_build_object('accountId', w.account_id, 'wakeAt', w.wake_at)
+     from agent_wake w join message wm on wm.id = w.message_id
+     where w.fired_at is null and w.canceled_at is null
+       and wm.meta->'wake'->'reportTo'->>'threadRootId' = $1::text
+     order by w.wake_at limit 1) as open_report_wake,
   -- 배달된 멘션 중 그 에이전트가 **그 뒤로 아무 말도 안 한** 것. 읽음(read_at)은 보지 않는다 —
   -- 러너가 턴을 시작하며 읽음으로 만든 뒤 첫 진행을 올리기 전까지 ✅ 로 깜빡이지 않게.
   (select json_build_object('agentId', i.account_id)
@@ -95,7 +101,7 @@ export async function readThreadStatusFacts(
         authorId: r.denied_mention.authorId,
         targets: (r.denied_mention.targets as unknown[]).filter((x): x is string => typeof x === 'string'),
       } : null,
-      agentWait: r.agent_wait, openWake: r.open_wake, pendingMention: r.pending_mention,
+      agentWait: r.agent_wait, openWake: r.open_wake, openReportWake: r.open_report_wake, pendingMention: r.pending_mention,
       last: r.last, agentInvolved: r.agent_involved === true,
     },
   };
@@ -192,6 +198,8 @@ export function startThreadStatusWatcher(
   const off = onEvent((e) => {
     const root = rootOf(e);
     if (root) { schedule(root); return; }
+    // 보고처 깨움이 걸렸다·떴다·접혔다 — 그 보고처 스레드의 머리 ⏳ 를 다시 판정한다(2026-10-06).
+    if (e.type === 'thread.reportWakes.changed') { schedule(e.rootId); return; }
     if (e.type === 'presence.changed') {
       // 그 에이전트가 주인인 스레드만 — 꺼지면 💬·👀 가 🚨 로, 켜지면 🚨 가 💬 로 돌아온다.
       void pool.query(

@@ -61,7 +61,9 @@ export type WorkspaceEvent =
   | { type: 'thread.status'; channelId: string; rootId: string;
       statusReaction: ThreadStatusReaction | null; audience: 'all' | string[] }
   | { type: 'thread.agent_model.changed'; channelId: string; threadRootId: string; agentId: string;
-      row: ThreadAgentModelView | null; audience: 'all' | string[] };
+      row: ThreadAgentModelView | null; audience: 'all' | string[] }
+  // 보고처 깨움이 걸렸다·떴다·접혔다(2026-10-06). 신호뿐 — 값은 GET 이 보는 사람 권한으로 거른다.
+  | { type: 'thread.reportWakes.changed'; channelId: string; rootId: string; audience: 'all' | string[] };
 
 const bus = new EventEmitter();
 bus.setMaxListeners(1000);

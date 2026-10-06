@@ -52,6 +52,11 @@ export interface ThreadStatusFacts {
   agentWait: { waiterId: string; blockedById: string | null } | null;
   /** 아직 울리지 않은 깨움 예약. */
   openWake: { accountId: string; wakeAt: string } | null;
+  /**
+   * 이 스레드를 **보고처로 둔** 아직 울리지 않은 깨움(2026-10-06). 앵커는 다른 스레드다 — 여기서 기다리는 사람에게
+   * "다른 곳에서 확인하고 여기 보고한다" 를 ⏳ 로 보인다. 옛 서버·시험 더블은 싣지 않는다(없으면 null 과 같다).
+   */
+  openReportWake?: { accountId: string; wakeAt: string } | null;
   /** 배달됐지만 아직 읽지 않은 에이전트 앞 멘션. */
   pendingMention: { agentId: string } | null;
   /** 스레드의 마지막 말. */
@@ -72,7 +77,7 @@ export interface ThreadStatusDecision {
  * 1. 🙋 사람에게 간 미답 물음 — 답 한 번으로 풀리므로 가장 세다(`threadState` 와 같은 이유)
  *    · 안 풀린 실패가 `account_gate` 면 그것도 🙋 다(그 터미널에서 한 번 답하면 풀린다)
  * 2. 🚨 안 풀린 실패 · 막힌 부름 · 마지막 말이 진행인데 그 에이전트가 죽었다
- * 3. ⏳ 에이전트를 기다리는 물음·위임 · 열린 깨움
+ * 3. ⏳ 에이전트를 기다리는 물음·위임 · 열린 깨움 · 이 스레드를 보고처로 둔 열린 깨움
  * 4. 💬 마지막 말이 진행이고 그 에이전트가 살아 있다(모르면 살아 있다고 둔다)
  * 5. 👀 배달됐지만 아직 아무 말 없는 멘션
  * 6. ✅ 그 외 — 에이전트가 낀 스레드에서 열린 것이 없다
@@ -94,6 +99,9 @@ export function decideThreadStatus(f: ThreadStatusFacts, live: ReadonlySet<strin
   }
   if (f.agentWait) return { status: 'waiting', accountId: f.agentWait.waiterId, reason: f.agentWait.blockedById };
   if (f.openWake) return { status: 'waiting', accountId: f.openWake.accountId, reason: f.openWake.wakeAt };
+  // 보고처 깨움은 열린 깨움 **바로 뒤**다(designer 10-06). 사유는 시각뿐 — 상태 행은 채널 청중 전원이 보므로
+  // 앵커의 사유·채널을 싣지 않는다(#1208 security n1).
+  if (f.openReportWake) return { status: 'waiting', accountId: f.openReportWake.accountId, reason: f.openReportWake.wakeAt };
   if (lastProgress) return { status: 'running', accountId: lastProgress, reason: null };
   if (f.pendingMention) return { status: 'received', accountId: f.pendingMention.agentId, reason: null };
   const lastAgent = f.last && f.last.authorIsAgent ? f.last.authorId : null;
