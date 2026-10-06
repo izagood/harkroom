@@ -360,6 +360,13 @@ void main() {
       expect(find.byKey(const Key('search-result-header')), findsOneWidget);
       expect(find.text(_t.searchCount.replaceFirst('{n}', '3')), findsOneWidget);
       expect(find.descendant(of: find.byKey(const Key('search-sort')), matching: find.text(_t.searchSortRelevance)), findsOneWidget);
+      // 단추: 누르는 칸 44 이상, 글자는 먹색(fg)·▾ 만 흐리게(designer #1175 nit ①②).
+      expect(tester.getSize(find.byKey(const Key('search-sort-button'))).height, greaterThanOrEqualTo(44));
+      final k = tester.element(find.byKey(const Key('search-sort-button'))).tokens;
+      final label = tester.widget<Text>(
+          find.descendant(of: find.byKey(const Key('search-sort')), matching: find.text(_t.searchSortRelevance)));
+      expect(label.style?.color, k.fg);
+      expect(tester.widget<Icon>(find.descendant(of: find.byKey(const Key('search-sort')), matching: find.byIcon(Icons.arrow_drop_down))).color, k.fgMuted);
       expect(find.byType(DayDivider), findsNothing, reason: '관련도순은 날짜가 섞여 묶지 않는다');
       expect(find.textContaining('14:30'), findsNothing, reason: '줄에는 날짜를 둔다');
     });
