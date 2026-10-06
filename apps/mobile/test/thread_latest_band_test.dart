@@ -226,4 +226,40 @@ void main() {
     expect(app.threads['root']!.last.id, 'mine');
     expect(find.byKey(const Key('thread-latest-band')), findsNothing);
   });
+
+  test('security F1: 최신 페이지를 기다리는 사이 커뮤니티를 바꾸면 보내지 않는다 — 다른 서버로 본문이 가지 않는다', () async {
+    final server = _Server(replies: 250);
+    final gate = Completer<void>();
+    final app = AppState(
+      sessions: SessionStore.inMemory(
+        seed: jsonEncode({
+          'active': 'me-1',
+          'communities': [
+            {'accountId': 'me-1', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'me'},
+            {'accountId': 'me-2', 'baseUrl': 'https://b.example.com', 'token': 'tok2', 'handle': 'me'},
+          ],
+        }),
+      ),
+      apiFactory: (b, t) => ApiClient(baseUrl: b, token: t, httpClient: server.client),
+      connector: (_) async => throw StateError('소켓 없음'),
+    );
+    addTearDown(app.dispose);
+    await app.boot();
+    await app.openThread('c1', 'root', aroundSeq: 40);
+    expect(app.threadTailMissing, contains('root'));
+    final other = app.communities.firstWhere((c) => c.key != app.activeKey).key;
+
+    server.holdLatest = gate.future;
+    final sending = app.send('c1', '비밀스러운 답', threadRootId: 'root');
+    await Future<void>.delayed(Duration.zero);
+    expect(app.jumpingToLatest, contains('root'));
+    // 기다리는 동안 B 로 옮긴다.
+    final switched = app.switchTo(other);
+    gate.complete();
+    expect(await sending, isFalse);
+    await switched;
+    // 어느 서버로도 POST 가 가지 않았다(두 커뮤니티가 같은 가짜 클라이언트를 쓰므로 한 목록이면 충분하다).
+    expect(server.posted, isEmpty);
+    expect(app.failedSends, isEmpty);
+  });
 }

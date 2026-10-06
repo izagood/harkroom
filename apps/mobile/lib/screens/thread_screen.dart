@@ -146,6 +146,9 @@ class _ThreadScreenState extends State<ThreadScreen> {
     // 자동·고정 멘션을 붙인 것이 **서버로 가는 본문**이다(채널 화면과 같다). 모델 지정도 이 본문으로
     // 센다 — 친 글로 세면 고정으로 부른 에이전트에게 고른 모델이 빠진다.
     final body = withStickyMentions(text, app.composerPrefix(widget.channelId, widget.rootId));
+    // 옛 답글 창에서 보내면 `send` 가 먼저 최신 묶음으로 옮긴다(m3). 목록이 통째로 바뀌어도 스크롤 위치는
+    // 그대로라 방금 보낸 글이 화면 밖일 수 있다 — 옮겨졌으면 맨 아래로 굴린다(designer nit).
+    final wasTailMissing = app.threadTailMissing.contains(widget.rootId);
     try {
       final went = await app.send(
         widget.channelId,
@@ -161,6 +164,9 @@ class _ThreadScreenState extends State<ThreadScreen> {
         app.keepStickyMentions(widget.rootId, text);
         // 이번만 뺀 자동 멘션은 이 글로 끝이다 — 다음 글에는 다시 붙는다.
         app.clearAutoSkips(widget.rootId);
+        if (wasTailMissing && !app.threadTailMissing.contains(widget.rootId) && mounted && _scroll.hasClients) {
+          _scroll.animateTo(0, duration: HarkroomMotion.base, curve: HarkroomMotion.ease);
+        }
       }
       if (!went && mounted) {
         if (_composer.text.isEmpty) _composer.text = text;
@@ -474,10 +480,16 @@ class ThreadLatestBand extends StatelessWidget {
             const SizedBox(width: 6),
             Text('·', style: muted),
             const SizedBox(width: 6),
+            // 옛 답글 다시 시도 줄(`FeedTopRow.older-retry`)과 같은 모양 — 안쪽 여백 0 이라 가운뎃점 양옆이 같고,
+            // 색을 지정하지 않아 기본 강조색으로 "누를 수 있는 것"으로 읽힌다(designer).
             TextButton(
               key: const Key('thread-latest-retry'),
               onPressed: onTap,
-              style: buttonStyle,
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(0, HarkroomSize.row),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
               child: Text(retryLabel),
             ),
           ],

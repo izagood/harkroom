@@ -1429,13 +1429,19 @@ class AppState extends ChangeNotifier {
     // 화면이 보내기 버튼을 잠그므로(`isUploading`) 여기 닿는 것은 버그다 — 그래도 글을
     // 잃지 않게 `false` 를 돌려 작성칸이 비우지 않게 한다.
     if (isUploading(key)) return false;
-    pending.remove(key);
     // 옛 답글 창에서 답을 보내면 **먼저 최신 묶음으로 옮긴다**(designer m3) — 그냥 보내면 내 글이 옛 창 끝에
     // 붙고 그 아래에 「최신 답글로 ↓」가 남아, 방금 쓴 글이 마지막이 아닌 것처럼 보인다. 옮기기에 실패해도
     // 글은 보낸다(글을 잃지 않는 쪽이 먼저다 — 띠는 「다시 시도」로 남는다).
+    //
+    // **기다리는 사이 세션이 바뀌면 보내지 않는다**(security F1). `_post` 는 그 시점의 `_api` 를 읽으므로,
+    // 기다리는 동안 커뮤니티를 바꾸면 A 의 본문·첨부가 B 서버로 간다. 세대가 다르면 `false` 로 돌려 작성칸이
+    // 글을 비우지 않게 한다 — 첨부도 그래서 기다린 뒤에 뗀다.
     if (threadRootId != null && threadTailMissing.contains(threadRootId)) {
+      final gen = _generation;
       await jumpToLatestReplies(channelId, threadRootId);
+      if (gen != _generation) return false;
     }
+    pending.remove(key);
     await _post(FailedSend(
       localId: 'local-${_localSeq++}',
       channelId: channelId,
