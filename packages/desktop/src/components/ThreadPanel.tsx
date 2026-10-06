@@ -59,6 +59,11 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
     setWidth(next);
     paneStorage.saveThreadWidth(next);
   }, []);
+  // 채널 창이면 폭은 **그 창의 것**이다(designer #1174) — 메인의 저장 폭을 읽지도 쓰지도 않는다.
+  const paneWidth = view.pane?.width ?? threadWidth;
+  const paneMin = view.pane?.min ?? MIN_THREAD_WIDTH;
+  const paneReserve = view.pane?.reserveLeft ?? reserveLeft;
+  const onPaneWidth = view.pane?.onWidth ?? setThreadWidth;
 
   const thread = useMemo(() => {
     if (!activeChannelId || !threadRootId) return [];
@@ -285,16 +290,16 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
       className={`relative flex flex-col bg-surface-raised ${fill ? 'min-w-0 flex-1' : 'border-l border-border'}`}
       /* 상한은 `paneMaxWidth` 가 적는다(그 함수의 주석) — 터미널과 **같은 결함**을 여기서도
          막는다: 넓은 창에서 고른 폭이 좁은 창에서 그대로 서면 대화가 폭 0 으로 밀린다. */
-      style={fill ? undefined : { width: threadWidth, minWidth: MIN_THREAD_WIDTH, maxWidth: paneMaxWidth(MIN_THREAD_WIDTH, reserveLeft) }}
+      style={fill ? undefined : { width: paneWidth, minWidth: paneMin, maxWidth: paneMaxWidth(paneMin, paneReserve) }}
     >
       {!fill && <PaneResizer
         label={t('thread.resizeHandle')}
-        width={threadWidth}
-        min={MIN_THREAD_WIDTH}
+        width={paneWidth}
+        min={paneMin}
         max={MAX_THREAD_WIDTH}
         /* 이 구분선 왼쪽에는 대화(또는 인박스) 하나만 있다. */
-        minRoomLeft={reserveLeft}
-        onWidth={setThreadWidth}
+        minRoomLeft={paneReserve}
+        onWidth={onPaneWidth}
       />}
       <header className="flex items-center border-b border-border px-4 py-2">
         <span className="font-semibold">{t('thread.title')}</span>

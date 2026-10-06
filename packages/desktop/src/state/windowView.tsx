@@ -24,6 +24,11 @@ export interface WindowView {
    * 새 창은 열 때의 읽음 위치를 얼려 여기에 싣는다.
    */
   dividerSeq?: number;
+  /**
+   * 스레드 패널 폭을 **이 창이** 쥘 때(채널 창, designer #1174). 없으면 메인처럼 `paneStorage` 를 쓴다.
+   * `reserveLeft` 는 채널 열에 남길 최소 폭이다.
+   */
+  pane?: { width: number; min: number; reserveLeft: number; onWidth(next: number): void };
   /** 이 창에서 스레드를 연다. 채널 창이면 자기 패널(W4), 메인이면 지금까지대로. */
   openThread(rootId: string, opts?: OpenThreadOpts): void;
   /** 이 창의 스레드를 닫는다. 스레드 창이면 창을 닫는다. */

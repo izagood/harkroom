@@ -52,6 +52,11 @@ export interface AppWindowEntry {
   communityId: string | null;
   /** 열 수 없는 스레드였다 — 복원 목록에서 뺀다(판 3 3b). 창은 빈 상태로 남아 사람에게 알린다. */
   gone?: boolean;
+  /**
+   * 채널 창의 스레드 패널 폭(designer #1174). **창마다 따로**다 — 메인의 저장 폭(`paneStorage`)은 읽지도
+   * 쓰지도 않는다. 없으면 창이 기본값(`channelWindowPaneDefault`)을 고른다.
+   */
+  paneWidth?: number;
 }
 
 /** 열 때 줄 수 있는 것(재시작 복원). */
@@ -59,6 +64,7 @@ export interface OpenOptions {
   communityId?: string | null;
   bounds?: WindowBounds;
   pinned?: boolean;
+  paneWidth?: number;
 }
 
 export interface WindowBounds { x: number; y: number; width: number; height: number }
@@ -114,7 +120,10 @@ export function openAppWindow(target: AppWindowTarget, opts: OpenOptions = {}): 
   const at = opts.bounds ? `,left=${Math.round(opts.bounds.x)},top=${Math.round(opts.bounds.y)}` : '';
   const win = opener.open(`about:blank#hk-win=${key}`, `hk-${key}`, `width=${Math.round(width)},height=${Math.round(height)}${at}`);
   if (!win) return { kind: 'blocked' };
-  const entry: AppWindowEntry = { key, target, win, pinned: false, communityId: opts.communityId ?? null };
+  const entry: AppWindowEntry = {
+    key, target, win, pinned: false, communityId: opts.communityId ?? null,
+    ...(opts.paneWidth ? { paneWidth: opts.paneWidth } : {}),
+  };
   adoptStyles(win.document);
   win.addEventListener('pagehide', () => {
     closeAppWindowEntry(key);
@@ -143,6 +152,31 @@ export function closeAppWindow(target: AppWindowTarget): void {
   if (!found) return;
   closeAppWindowEntry(found.key);
   found.win.close();
+  persistAppWindows();
+}
+
+// ── 채널 창의 스레드 패널 폭(designer #1174) ────────────────────────────────
+
+/** 채널 창에서 채널 열이 지켜야 할 최소 폭. 이보다 좁으면 이름줄·시각·툴바가 꺾이고 잘린다(첨부 6). */
+export const CHANNEL_WINDOW_MIN_CHANNEL = 420;
+/** 채널 창 안 스레드 패널의 최소 폭. 메인의 하한(400)보다 낮다 — 창이 작아서다. */
+export const CHANNEL_WINDOW_MIN_THREAD = 280;
+/** 기본 폭은 채널 열에 이만큼 남긴다: 820 창이면 패널 380 · 채널 440. */
+const CHANNEL_WINDOW_DEFAULT_ROOM = 440;
+
+/** 처음 연 채널 창의 패널 폭: `min(메인 저장 폭, 창 폭 − 440)`. 메인 저장 폭은 기본값의 재료로만 읽는다. */
+export function channelWindowPaneDefault(mainSaved: number, windowWidth: number): number {
+  return Math.max(CHANNEL_WINDOW_MIN_THREAD, Math.min(mainSaved, windowWidth - CHANNEL_WINDOW_DEFAULT_ROOM));
+}
+
+/** 지금 창 폭에서 실제로 그릴 폭 — 채널 열이 420 아래로 내려가지 않게 패널 쪽을 줄인다. */
+export function channelWindowPaneClamp(width: number, windowWidth: number): number {
+  return Math.max(CHANNEL_WINDOW_MIN_THREAD, Math.min(width, windowWidth - CHANNEL_WINDOW_MIN_CHANNEL));
+}
+
+export function setAppWindowPaneWidth(key: string, paneWidth: number): void {
+  const { entries } = useAppWindows.getState();
+  useAppWindows.setState({ entries: entries.map((e) => (e.key === key ? { ...e, paneWidth } : e)) });
   persistAppWindows();
 }
 
@@ -192,6 +226,7 @@ export interface SavedAppWindow {
   target: AppWindowTarget;
   communityId: string | null;
   pinned: boolean;
+  paneWidth?: number;
   bounds?: WindowBounds;
 }
 
@@ -205,14 +240,17 @@ function boundsOf(win: Window): WindowBounds | undefined {
  * 커뮤니티를 옮기며 닫은 창들이 목록에서 사라지면 돌아왔을 때 복원할 것이 없다.
  */
 let scope: string | null = null;
-export function setAppWindowScope(communityId: string | null): void { scope = communityId; }
+export function setAppWindowScope(communityId: string | null | undefined): void { scope = communityId ?? null; }
 
 /** 지금 열린 창들을 적어 둔다. 실패(저장소 막힘)는 조용히 넘긴다 — 복원은 편의다. */
 export function persistAppWindows(): void {
   const others = loadSavedAppWindows().filter((w) => w.communityId !== scope);
   const mine: SavedAppWindow[] = prune()
     .filter((e) => !e.gone && e.communityId === scope)
-    .map((e) => ({ target: e.target, communityId: e.communityId, pinned: e.pinned, bounds: boundsOf(e.win) }));
+    .map((e) => ({
+      target: e.target, communityId: e.communityId, pinned: e.pinned, bounds: boundsOf(e.win),
+      ...(e.paneWidth ? { paneWidth: e.paneWidth } : {}),
+    }));
   const saved = [...others, ...mine];
   try {
     if (saved.length) localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
@@ -248,7 +286,8 @@ export function loadSavedAppWindows(): SavedAppWindow[] {
 export function restoreAppWindows(communityId: string | null): number {
   let opened = 0;
   for (const s of loadSavedAppWindows().filter((w) => w.communityId === communityId).slice(0, MAX_APP_WINDOWS)) {
-    const r = openAppWindow(s.target, { communityId, bounds: s.bounds, pinned: s.pinned });
+    const paneWidth = typeof s.paneWidth === 'number' && Number.isFinite(s.paneWidth) ? s.paneWidth : undefined;
+    const r = openAppWindow(s.target, { communityId, bounds: s.bounds, pinned: s.pinned, paneWidth });
     if (r.kind === 'opened') opened++;
   }
   return opened;

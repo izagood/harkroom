@@ -73,7 +73,11 @@ pub fn build_main<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
             )
             .window_features(features)
             .title("Harkroom")
-            .min_inner_size(360.0, 420.0)
+            // 최소 크기는 판 3: 스레드 창 360×420, 채널 창 520×480.
+            .min_inner_size(
+                if label.starts_with("win-channel-") { 520.0 } else { 360.0 },
+                if label.starts_with("win-channel-") { 480.0 } else { 420.0 },
+            )
             .disable_drag_drop_handler()
             // 창 제목은 화면이 정한다(`#채널 · 루트 첫 줄`) — 포털 문서의 `document.title` 을 따른다.
             .on_document_title_changed(|window, title| {

@@ -4,7 +4,8 @@ import { useActiveStore, useCommunityRegistry } from '../state/communities';
 import { getController } from '../state/controller';
 import { WindowViewProvider, type WindowView } from '../state/windowView';
 import {
-  closeAppWindow, markAppWindowGone, persistAppWindows, restoreAppWindows, setAppWindowPinned, setAppWindowScope, syncRootAttributes,
+  closeAppWindow, markAppWindowGone, persistAppWindows, restoreAppWindows, setAppWindowPinned, setAppWindowScope, setAppWindowPaneWidth,
+  channelWindowPaneClamp, channelWindowPaneDefault, CHANNEL_WINDOW_MIN_CHANNEL, CHANNEL_WINDOW_MIN_THREAD, syncRootAttributes,
   useAppWindows, type AppWindowEntry,
 } from '../lib/appWindows';
 import { displayBody } from '../lib/mention';
@@ -13,6 +14,7 @@ import { ChannelPane } from './ChannelPane';
 import { ChannelSettingsSheet } from './ChannelSettingsSheet';
 import { useT } from '../i18n/useT';
 import { HostDocumentContext } from '../lib/hostDocument';
+import { paneStorage } from '../lib/prefs';
 import { isFileDrag } from '../lib/fileDrag';
 
 /**
@@ -189,7 +191,7 @@ function WindowBar({ entry }: { entry: AppWindowEntry }) {
         aria-pressed={entry.pinned}
         title={t(entry.pinned ? 'window.unpin' : 'window.pin')}
         aria-label={t(entry.pinned ? 'window.unpin' : 'window.pin')}
-        className={`rounded-row px-2 py-0.5 hover:bg-surface-sunken ${entry.pinned ? 'bg-surface-sunken text-fg' : 'text-fg-subtle'}`}
+        className={`rounded-row px-2 py-0.5 hover:bg-surface-sunken ${entry.pinned ? 'bg-surface-sunken text-fg' : 'text-fg-subtle grayscale opacity-60'}`}
         onClick={() => { void setAppWindowPinned(entry.key, !entry.pinned); }}
       >
         📌
@@ -217,11 +219,24 @@ function ChannelWindow({ entry, channelId }: { entry: AppWindowEntry; channelId:
   useWindowTitle(entry, channelId);
   useReadWhenFocused(entry, channelId);
 
+  // 패널 폭은 이 창의 것이다(designer #1174). 처음엔 `min(메인 저장 폭, 창 폭 − 440)`, 그 뒤로는 창 장부에.
+  const winWidth = useWindowWidth(entry.win);
+  const [paneWidth, setPaneWidth] = useState(
+    () => entry.paneWidth ?? channelWindowPaneDefault(paneStorage.loadThreadWidth(), entry.win.innerWidth),
+  );
+  const pane = useMemo(() => ({
+    width: channelWindowPaneClamp(paneWidth, winWidth),
+    min: CHANNEL_WINDOW_MIN_THREAD,
+    reserveLeft: CHANNEL_WINDOW_MIN_CHANNEL,
+    onWidth: (next: number) => { setPaneWidth(next); setAppWindowPaneWidth(entry.key, next); },
+  }), [paneWidth, winWidth, entry.key]);
+
   const view = useMemo<WindowView>(() => ({
     kind: 'channel',
     channelId,
     threadRootId,
     dividerSeq: divider,
+    pane,
     openThread: (rootId, opts) => {
       // 다른 채널의 스레드(링크·대기 줄)는 이 창의 패널이 그릴 수 없다 — 메인이 받는다.
       if (opts?.channelId && opts.channelId !== channelId) { void getController().openThread(rootId, opts); return; }
@@ -229,7 +244,7 @@ function ChannelWindow({ entry, channelId }: { entry: AppWindowEntry; channelId:
       void getController().loadThreadForWindow(channelId, rootId).then((ok) => { if (!ok) setThreadRootId(null); }).catch(() => undefined);
     },
     closeThread: () => setThreadRootId(null),
-  }), [channelId, threadRootId, divider]);
+  }), [channelId, threadRootId, divider, pane]);
 
   return (
     <WindowViewProvider value={view}>
@@ -274,4 +289,15 @@ function useWindowGuards(win: Window): void {
       win.removeEventListener('keydown', key);
     };
   }, [win]);
+}
+
+/** 창 폭(창을 줄이면 패널을 다시 잰다). */
+function useWindowWidth(win: Window): number {
+  const [w, setW] = useState(() => win.innerWidth);
+  useEffect(() => {
+    const on = () => setW(win.innerWidth);
+    win.addEventListener('resize', on);
+    return () => win.removeEventListener('resize', on);
+  }, [win]);
+  return w;
 }
