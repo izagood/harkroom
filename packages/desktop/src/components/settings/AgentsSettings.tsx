@@ -902,6 +902,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const memoryRow = (m: MemoryEntry, inGroup: boolean, inArchive = false) => {
     const open = memSelected === m.slug;
     const reasons = chipsFor(m.slug, memoryChips);
+    // 두 칸이면 왼쪽 칸이 ~30rem 이라 꼬리표는 하나만 — 반쯤 잘린 표는 없는 것보다 나쁘다. 나머지는 옆 상세의
+    // 「왜 후보인가」에 문장으로 다 나온다(#1209 designer).
+    const maxReasons = memWide ? 1 : MAX_ROW_REASONS;
     const pointsToArchived = memoryArchivedLinks.get(m.slug) ?? [];
     const usage = usageOf(m);
     const archiveKey = `archive:${m.slug}`;
@@ -953,18 +956,18 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             {/* 요약(에이전트가 쓴 한 줄)이 있으면 그것을, 없으면 첫 줄을 제목처럼 쓴다. 넘치면 잘린다. */}
             {/* 왜 정리 후보인가 — 칩과 같은 말. 칩을 누르지 않아도 줄에서 보인다. */}
             {/* 좁은 창에서 요약을 밀어내지 않게 둘까지만, 나머지는 「+n」(#1196 designer n3). */}
-            {reasons.slice(0, MAX_ROW_REASONS).map((r) => (
+            {reasons.slice(0, maxReasons).map((r) => (
               <span key={r} data-testid={`memory-reason-${r}`} className="flex-none rounded-sm bg-warning-surface px-1 text-meta text-warning">
                 {t(`agents.memory.chip.${r}`)}
               </span>
             ))}
-            {reasons.length > MAX_ROW_REASONS && (
+            {reasons.length > maxReasons && (
               <span
                 data-testid="memory-reason-more"
-                title={reasons.slice(MAX_ROW_REASONS).map((r) => t(`agents.memory.chip.${r}`)).join(', ')}
+                title={reasons.slice(maxReasons).map((r) => t(`agents.memory.chip.${r}`)).join(', ')}
                 className="flex-none rounded-sm bg-warning-surface px-1 text-meta text-warning"
               >
-                {`+${reasons.length - MAX_ROW_REASONS}`}
+                {`+${reasons.length - maxReasons}`}
               </span>
             )}
             </span>
@@ -1004,7 +1007,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           */}
           {inArchive ? (
             <button
-              className="flex-none rounded-row border border-border px-1.5 text-meta text-fg-muted"
+              className="flex-none rounded-row border border-border bg-surface px-1.5 text-meta text-fg-muted"
               aria-label={t('agents.memory.unarchiveSlug', { slug: m.slug })}
               disabled={memBusy}
               onClick={() => memoryBatch('unarchive', [m.slug])}
@@ -1029,7 +1032,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             </span>
           ) : (
             <button
-              className="flex-none rounded-row border border-border px-1.5 text-meta text-fg-muted"
+              className="flex-none rounded-row border border-border bg-surface px-1.5 text-meta text-fg-muted"
               aria-label={t('agents.memory.archiveSlug', { slug: m.slug })}
               disabled={memBusy}
               onClick={() => (memoryParts && archiveOverflow(memoryParts.archived.length, 1) > 0

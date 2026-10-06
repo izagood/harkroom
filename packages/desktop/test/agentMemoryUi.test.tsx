@@ -648,8 +648,14 @@ describe('종류별 묶음·목록/상세 두 칸 (PR 4)', () => {
     } as unknown as typeof ResizeObserver;
     Element.prototype.getBoundingClientRect = function () { return { width: MEMORY_TWO_PANE_MIN_PX } as DOMRect; };
     try {
+      audit = { ...emptyAudit(), flagged: [{ slug: 'mem/a-one', reason: null }], neverRead: ['mem/a-one'] };
       fakeController([mem('mem/a-one', '# 1\n알파')]);
       await open();
+      // 두 칸이면 꼬리표는 하나 + 「+n」(왼쪽 칸이 좁다, #1209 designer).
+      const row = screen.getByTestId('memory-row-mem/a-one');
+      await within(row).findByTestId('memory-reason-flagged');
+      expect(within(row).queryByTestId('memory-reason-neverRead')).toBeNull();
+      expect(within(row).getByTestId('memory-reason-more').textContent).toBe('+1');
       fireEvent.click(await screen.findByRole('button', { name: 'mem/a-one 펼치기' }));
       const pane = screen.getByTestId('memory-detail-pane');
       expect(screen.getByTestId('memory-row-mem/a-one').contains(pane)).toBe(false);
