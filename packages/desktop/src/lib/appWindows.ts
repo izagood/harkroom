@@ -46,7 +46,22 @@ export interface AppWindowEntry {
   key: string;
   target: AppWindowTarget;
   win: Window;
+  /** 📌 항상 위(W3 — 기본 끔, 창마다 켠다). */
+  pinned: boolean;
+  /** 이 창이 그리는 커뮤니티. 다른 커뮤니티로 옮기면 이 창은 그릴 스토어를 잃으므로 닫는다. */
+  communityId: string | null;
+  /** 열 수 없는 스레드였다 — 복원 목록에서 뺀다(판 3 3b). 창은 빈 상태로 남아 사람에게 알린다. */
+  gone?: boolean;
 }
+
+/** 열 때 줄 수 있는 것(재시작 복원). */
+export interface OpenOptions {
+  communityId?: string | null;
+  bounds?: WindowBounds;
+  pinned?: boolean;
+}
+
+export interface WindowBounds { x: number; y: number; width: number; height: number }
 
 interface AppWindowsState {
   /** 열린 순서대로. 사이드바 ⧉·재시작 복원이 이 목록을 본다. */
@@ -86,7 +101,7 @@ export function findAppWindow(target: AppWindowTarget): AppWindowEntry | undefin
  * 채널·스레드를 새 창으로 연다. 이미 띄운 것이면 그 창을 **앞으로** 가져오기만 한다(C4·3a).
  * 창 안에 무엇을 그릴지는 이 함수의 몫이 아니다 — 장부에 오르면 `AppWindowsHost` 가 포털을 단다.
  */
-export function openAppWindow(target: AppWindowTarget): OpenResult {
+export function openAppWindow(target: AppWindowTarget, opts: OpenOptions = {}): OpenResult {
   const existing = findAppWindow(target);
   if (existing) {
     existing.win.focus();
@@ -95,13 +110,25 @@ export function openAppWindow(target: AppWindowTarget): OpenResult {
   const live = prune();
   if (live.length >= MAX_APP_WINDOWS) return { kind: 'limit' };
   const key = appWindowKey(target);
-  const { width, height } = APP_WINDOW_SIZE[target.kind];
-  const win = opener.open(`about:blank#hk-win=${key}`, `hk-${key}`, `width=${width},height=${height}`);
+  const { width, height } = opts.bounds ?? APP_WINDOW_SIZE[target.kind];
+  const at = opts.bounds ? `,left=${Math.round(opts.bounds.x)},top=${Math.round(opts.bounds.y)}` : '';
+  const win = opener.open(`about:blank#hk-win=${key}`, `hk-${key}`, `width=${Math.round(width)},height=${Math.round(height)}${at}`);
   if (!win) return { kind: 'blocked' };
-  const entry: AppWindowEntry = { key, target, win };
+  const entry: AppWindowEntry = { key, target, win, pinned: false, communityId: opts.communityId ?? null };
   adoptStyles(win.document);
-  win.addEventListener('pagehide', () => closeAppWindowEntry(key));
+  win.addEventListener('pagehide', () => {
+    closeAppWindowEntry(key);
+    /**
+     * 장부에서는 바로 빼되 **저장은 조금 뒤에** 한다. 앱을 끌 때도 새 창들이 먼저 닫히며 이 이벤트를 쏘는데,
+     * 그때 바로 저장하면 복원할 목록이 비어 버린다(W2). 앱이 끝나는 중이면 이 타이머는 돌지 못한다 —
+     * 사람이 창 하나를 닫은 경우에만 목록에서 빠진다.
+     */
+    setTimeout(persistAppWindows, 500);
+  });
+  win.addEventListener('resize', () => persistAppWindows());
   useAppWindows.setState({ entries: [...live, entry] });
+  if (opts.pinned) void setAppWindowPinned(key, true);
+  persistAppWindows();
   return { kind: 'opened', entry };
 }
 
@@ -116,6 +143,108 @@ export function closeAppWindow(target: AppWindowTarget): void {
   if (!found) return;
   closeAppWindowEntry(found.key);
   found.win.close();
+  persistAppWindows();
+}
+
+/** 열 수 없는 스레드로 판명 — 복원 목록에서 뺀다(창은 빈 상태로 남는다). */
+export function markAppWindowGone(key: string): void {
+  const { entries } = useAppWindows.getState();
+  useAppWindows.setState({ entries: entries.map((e) => (e.key === key ? { ...e, gone: true } : e)) });
+  persistAppWindows();
+}
+
+// ── 📌 항상 위(W3) ───────────────────────────────────────────────────────────
+
+type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+let invokeOverride: Invoke | null = null;
+/** 시험용: Tauri IPC 자리를 바꿔 끼운다. */
+export function setAppWindowInvoke(next: Invoke | null): void { invokeOverride = next; }
+function tauriInvoke(): Invoke | null {
+  if (invokeOverride) return invokeOverride;
+  const invoke = (globalThis as { __TAURI_INTERNALS__?: { invoke?: Invoke } }).__TAURI_INTERNALS__?.invoke;
+  return typeof invoke === 'function' ? invoke : null;
+}
+
+/**
+ * 창을 항상 위로 둔다/푼다. 부르는 것은 **메인 웹뷰**다(새 창은 JS 를 돌리지 않는다) — 권한
+ * `core:window:allow-set-always-on-top` 도 메인 쪽 capabilities 에 있다. 라벨은 Rust 가 키로 지은
+ * `win-<key>`(`src-tauri/src/app_windows.rs`). `@tauri-apps/api` 를 들이지 않는 것은 `lib/badge.ts` 와 같은 규칙이다.
+ */
+export async function setAppWindowPinned(key: string, pinned: boolean): Promise<void> {
+  const invoke = tauriInvoke();
+  if (invoke) {
+    try {
+      await invoke('plugin:window|set_always_on_top', { label: `win-${key}`, value: pinned });
+    } catch {
+      return; // 창이 사라졌거나 권한이 없다 — 표시를 바꾸지 않는다(된 것처럼 보이면 안 된다).
+    }
+  }
+  const { entries } = useAppWindows.getState();
+  useAppWindows.setState({ entries: entries.map((e) => (e.key === key ? { ...e, pinned } : e)) });
+  persistAppWindows();
+}
+
+// ── 재시작 복원(W2) ─────────────────────────────────────────────────────────
+
+const STORAGE_KEY = 'harkroom.appWindows';
+
+export interface SavedAppWindow {
+  target: AppWindowTarget;
+  communityId: string | null;
+  pinned: boolean;
+  bounds?: WindowBounds;
+}
+
+function boundsOf(win: Window): WindowBounds | undefined {
+  const { screenX: x, screenY: y, innerWidth: width, innerHeight: height } = win;
+  return width > 0 && height > 0 ? { x, y, width, height } : undefined;
+}
+
+/**
+ * 지금 보고 있는 커뮤니티. 저장은 **이 커뮤니티 몫만 다시 쓰고** 다른 커뮤니티의 목록은 그대로 둔다 —
+ * 커뮤니티를 옮기며 닫은 창들이 목록에서 사라지면 돌아왔을 때 복원할 것이 없다.
+ */
+let scope: string | null = null;
+export function setAppWindowScope(communityId: string | null): void { scope = communityId; }
+
+/** 지금 열린 창들을 적어 둔다. 실패(저장소 막힘)는 조용히 넘긴다 — 복원은 편의다. */
+export function persistAppWindows(): void {
+  const others = loadSavedAppWindows().filter((w) => w.communityId !== scope);
+  const mine: SavedAppWindow[] = prune()
+    .filter((e) => !e.gone && e.communityId === scope)
+    .map((e) => ({ target: e.target, communityId: e.communityId, pinned: e.pinned, bounds: boundsOf(e.win) }));
+  const saved = [...others, ...mine];
+  try {
+    if (saved.length) localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+    else localStorage.removeItem(STORAGE_KEY);
+  } catch { /* 저장소 막힘 */ }
+}
+
+export function loadSavedAppWindows(): SavedAppWindow[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]') as unknown;
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((r): r is SavedAppWindow => {
+      const t = (r as SavedAppWindow | null)?.target;
+      return !!t && typeof t.channelId === 'string'
+        && (t.kind === 'channel' || (t.kind === 'thread' && typeof (t as { rootId?: unknown }).rootId === 'string'));
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 앱이 뜰 때 지난번 창을 다시 연다 — 같은 커뮤니티의 것만(다른 커뮤니티의 창은 그 커뮤니티를 열 때
+ * 연다). 합쳐 최대 8개(C6). 열 수 없는 스레드는 창이 빈 상태로 알린 뒤 목록에서 빠진다.
+ */
+export function restoreAppWindows(communityId: string | null): number {
+  let opened = 0;
+  for (const s of loadSavedAppWindows().filter((w) => w.communityId === communityId).slice(0, MAX_APP_WINDOWS)) {
+    const r = openAppWindow(s.target, { communityId, bounds: s.bounds, pinned: s.pinned });
+    if (r.kind === 'opened') opened++;
+  }
+  return opened;
 }
 
 /**
@@ -159,5 +288,8 @@ export function syncRootAttributes(doc: Document, source: Document = document): 
 /** 시험용: 장부를 비운다. */
 export function resetAppWindowsForTest(): void {
   useAppWindows.setState({ entries: [] });
+  invokeOverride = null;
+  scope = null;
+  try { localStorage.removeItem(STORAGE_KEY); } catch { /* */ }
   opener = { open: (url, name, features) => window.open(url, name, features) };
 }

@@ -466,6 +466,8 @@ export const en = {
   'window.loading': 'Loading…',
   'window.openChannel': 'Open channel in new window',
   'window.inWindow': 'Open in a separate window',
+  'window.pin': 'Keep on top',
+  'window.unpin': 'Stop keeping on top',
   'window.backToMain': 'Move back to main window',
   'reactions.pickTitle': 'Pick a reaction',
 

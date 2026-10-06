@@ -1,4 +1,4 @@
-import { getActiveStore } from '../state/communities';
+import { getActiveStore, useCommunityRegistry } from '../state/communities';
 import { getController } from '../state/controller';
 import { usePrefsStore } from '../state/prefsStore';
 import { detectLocale, isLocale, translator } from '../i18n';
@@ -12,7 +12,8 @@ import { MAX_APP_WINDOWS, findAppWindow, openAppWindow, type AppWindowTarget, ty
  * 것으로 읽는다. 앱 전체 통지 줄(`notice`)로 이유를 말한다.
  */
 export function openWindow(target: AppWindowTarget): OpenResult {
-  const result = openAppWindow(target);
+  // 창은 지금 커뮤니티의 스토어를 그린다 — 커뮤니티를 적어 두어야 옮길 때 닫고, 복원 때 고른다.
+  const result = openAppWindow(target, { communityId: useCommunityRegistry.getState().activeId });
   if (result.kind === 'limit' || result.kind === 'blocked') {
     const pref = usePrefsStore.getState().locale;
     const t = translator(isLocale(pref) ? pref : detectLocale());

@@ -1,9 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useActiveStore } from '../state/communities';
+import { useActiveStore, useCommunityRegistry } from '../state/communities';
 import { getController } from '../state/controller';
 import { WindowViewProvider, type WindowView } from '../state/windowView';
-import { closeAppWindow, syncRootAttributes, useAppWindows, type AppWindowEntry } from '../lib/appWindows';
+import {
+  closeAppWindow, markAppWindowGone, persistAppWindows, restoreAppWindows, setAppWindowPinned, setAppWindowScope, syncRootAttributes,
+  useAppWindows, type AppWindowEntry,
+} from '../lib/appWindows';
 import { displayBody } from '../lib/mention';
 import { ThreadPanel } from './ThreadPanel';
 import { ChannelPane } from './ChannelPane';
@@ -17,6 +20,30 @@ import { useT } from '../i18n/useT';
  */
 export function AppWindowsHost() {
   const entries = useAppWindows((s) => s.entries);
+  const communityId = useCommunityRegistry((s) => s.activeId);
+
+  /**
+   * 커뮤니티가 정해지면 그 커뮤니티의 지난 창을 복원한다(W2). 다른 커뮤니티로 옮기면 그 전 창들은
+   * **닫는다** — 창은 활성 커뮤니티의 스토어를 그리므로, 남겨 두면 남의 서버 대화가 엉뚱하게 비친다.
+   * 닫힌 창은 복원 목록에 남아 그 커뮤니티로 돌아올 때 다시 열린다.
+   */
+  useEffect(() => {
+    // 범위를 **먼저** 옮긴다 — 아래에서 닫는 옛 창들의 늦은 저장이 옛 커뮤니티 목록을 지우지 않게.
+    setAppWindowScope(communityId);
+    for (const e of useAppWindows.getState().entries) {
+      if (e.communityId !== communityId) { e.win.close(); }
+    }
+    restoreAppWindows(communityId);
+  }, [communityId]);
+
+  // 창을 옮기는 것에는 이벤트가 없다 — 열린 창이 있는 동안 위치를 가끔 적어 둔다(복원 자리).
+  const any = entries.length > 0;
+  useEffect(() => {
+    if (!any) return;
+    const id = setInterval(persistAppWindows, 10_000);
+    return () => clearInterval(id);
+  }, [any]);
+
   return <>{entries.map((e) => <AppWindowPortal key={e.key} entry={e} />)}</>;
 }
 
@@ -63,7 +90,7 @@ function ThreadWindow({ entry, channelId, rootId }: { entry: AppWindowEntry; cha
   useEffect(() => {
     let live = true;
     getController().loadThreadForWindow(channelId, rootId)
-      .then((ok) => { if (live) setState(ok ? 'ok' : 'gone'); })
+      .then((ok) => { if (live) setState(ok ? 'ok' : 'gone'); if (!ok) markAppWindowGone(entry.key); })
       .catch(() => { if (live) setState('gone'); });
     return () => { live = false; };
   }, [channelId, rootId]);
@@ -149,6 +176,17 @@ function WindowBar({ entry }: { entry: AppWindowEntry }) {
   };
   return (
     <div className="flex shrink-0 items-center justify-end gap-1 border-b border-border bg-surface px-2 py-1 text-meta">
+      {/* 📌 항상 위(W3): 기본 끔, 창마다 켠다. 켜진 것이 눈에 보여야 한다 — 눌린 모양과 aria-pressed. */}
+      <button
+        data-testid="window-pin"
+        aria-pressed={entry.pinned}
+        title={t(entry.pinned ? 'window.unpin' : 'window.pin')}
+        aria-label={t(entry.pinned ? 'window.unpin' : 'window.pin')}
+        className={`rounded-row px-2 py-0.5 hover:bg-surface-sunken ${entry.pinned ? 'bg-surface-sunken text-fg' : 'text-fg-subtle'}`}
+        onClick={() => { void setAppWindowPinned(entry.key, !entry.pinned); }}
+      >
+        📌
+      </button>
       <button
         data-testid="window-back-to-main"
         className="rounded-row px-2 py-0.5 text-fg-muted hover:bg-surface-sunken"

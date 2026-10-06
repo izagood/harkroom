@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
-  anyAppWindowFocused, appWindowKey, closeAppWindow, MAX_APP_WINDOWS, openAppWindow,
-  resetAppWindowsForTest, setWindowOpener, useAppWindows, type AppWindowTarget,
+  anyAppWindowFocused, appWindowKey, closeAppWindow, loadSavedAppWindows, markAppWindowGone, MAX_APP_WINDOWS,
+  openAppWindow, resetAppWindowsForTest, restoreAppWindows, setAppWindowInvoke, setAppWindowPinned, setAppWindowScope,
+  setWindowOpener, useAppWindows, type AppWindowTarget,
 } from '../src/lib/appWindows';
 
 /** 같은 출처 새 창의 흉내 — 실제 `window.open` 이 돌려주는 것처럼 자기 문서를 가진다. */
@@ -15,6 +16,7 @@ function fakeWin(focused = false) {
     focus: vi.fn(),
     close: vi.fn(() => { win.closed = true; listeners.pagehide?.(); }),
     addEventListener: (type: string, fn: () => void) => { listeners[type] = fn; },
+    screenX: 100, screenY: 50, innerWidth: 420, innerHeight: 680,
   };
   return win;
 }
@@ -93,5 +95,64 @@ describe('appWindows', () => {
     expect(w.document.documentElement.classList.contains('dark')).toBe(true);
     style.remove();
     document.documentElement.classList.remove('dark');
+  });
+
+  it('📌 은 메인 웹뷰에서 그 창 라벨로 항상 위를 건다(W3 — 기본 끔)', async () => {
+    const invoke = vi.fn(async () => undefined);
+    setAppWindowInvoke(invoke);
+    setWindowOpener({ open: () => fakeWin() as unknown as Window });
+    const r = openAppWindow(thread(ROOT));
+    expect(r.kind === 'opened' && r.entry.pinned).toBe(false);
+    await setAppWindowPinned(appWindowKey(thread(ROOT)), true);
+    expect(invoke).toHaveBeenCalledWith('plugin:window|set_always_on_top', {
+      label: 'win-thread-0b7e2c1a-1111-4a4a-9c9c-123456789abc', value: true,
+    });
+    expect(useAppWindows.getState().entries[0]!.pinned).toBe(true);
+  });
+
+  it('📌 가 실패하면 켜진 것처럼 보이지 않는다', async () => {
+    setAppWindowInvoke(vi.fn(async () => { throw new Error('denied'); }));
+    setWindowOpener({ open: () => fakeWin() as unknown as Window });
+    openAppWindow(thread(ROOT));
+    await setAppWindowPinned(appWindowKey(thread(ROOT)), true);
+    expect(useAppWindows.getState().entries[0]!.pinned).toBe(false);
+  });
+
+  it('재시작 복원(W2): 위치·크기·📌 를 적어 두고 같은 커뮤니티의 것만 다시 연다', async () => {
+    setAppWindowInvoke(vi.fn(async () => undefined));
+    setAppWindowScope('k1');
+    setWindowOpener({ open: () => fakeWin() as unknown as Window });
+    openAppWindow(thread(ROOT), { communityId: 'k1' });
+    openAppWindow({ kind: 'channel', channelId: 'c2' }, { communityId: 'k1' });
+    await setAppWindowPinned('channel-c2', true);
+    const saved = loadSavedAppWindows();
+    expect(saved.map((w) => w.target.kind)).toEqual(['thread', 'channel']);
+    expect(saved[1]).toMatchObject({ pinned: true, bounds: { x: 100, y: 50, width: 420, height: 680 } });
+
+    // 앱을 다시 띄운 것처럼 장부만 비운다(저장은 남는다).
+    useAppWindows.setState({ entries: [] });
+    const open = vi.fn(() => fakeWin() as unknown as Window);
+    setWindowOpener({ open });
+    expect(restoreAppWindows('k2')).toBe(0);
+    expect(restoreAppWindows('k1')).toBe(2);
+    expect(open).toHaveBeenLastCalledWith(expect.any(String), expect.any(String), 'width=420,height=680,left=100,top=50');
+    await vi.waitFor(() => expect(useAppWindows.getState().entries.find((e) => e.key === 'channel-c2')?.pinned).toBe(true));
+  });
+
+  it('열 수 없는 스레드는 복원 목록에서 뺀다', () => {
+    setWindowOpener({ open: () => fakeWin() as unknown as Window });
+    openAppWindow(thread(ROOT));
+    markAppWindowGone(appWindowKey(thread(ROOT)));
+    expect(loadSavedAppWindows()).toHaveLength(0);
+  });
+
+  it('다른 커뮤니티의 저장 목록은 지우지 않는다', () => {
+    setWindowOpener({ open: () => fakeWin() as unknown as Window });
+    setAppWindowScope('k1');
+    openAppWindow(thread(ROOT), { communityId: 'k1' });
+    setAppWindowScope('k2');
+    useAppWindows.setState({ entries: [] });
+    openAppWindow({ kind: 'channel', channelId: 'c9' }, { communityId: 'k2' });
+    expect(loadSavedAppWindows().map((w) => w.communityId).sort()).toEqual(['k1', 'k2']);
   });
 });

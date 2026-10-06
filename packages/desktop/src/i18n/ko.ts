@@ -203,6 +203,8 @@ export const ko = {
   'window.loading': '불러오는 중…',
   'window.openChannel': '채널을 새 창으로 열기',
   'window.inWindow': '새 창에 열림',
+  'window.pin': '항상 위에 두기',
+  'window.unpin': '항상 위 풀기',
   'window.backToMain': '메인 창으로 되돌리기',
   'reactions.pickTitle': '리액션 고르기',
 
