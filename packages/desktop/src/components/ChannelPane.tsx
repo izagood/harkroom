@@ -3,6 +3,7 @@ import { GalleryScopeContext } from './Attachments';
 import type { GalleryScope } from '../lib/imageGallery';
 import { getCommunityController, useActiveStore, useCommunityRegistry } from '../state/communities';
 import { useWindowView } from '../state/windowView';
+import { popOutChannel } from '../lib/windowActions';
 import { getController } from '../state/controller';
 import { MessageRows } from './MessageRows';
 import { groupProgress } from '../lib/progressGroup';
@@ -717,6 +718,18 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
         >
           {t('channel.header.search')}
         </button>
+        {/* ⧉ 채널을 새 창으로(판 3 C1, 채널 머리). 메인에만 있다 — 채널 창은 이미 창이다. 옮긴다(W1). */}
+        {windowView.kind === 'main' && (
+          <button
+            data-testid="channel-pop-out"
+            className="shrink-0 rounded-row px-2 text-fg-subtle hover:bg-surface-sunken"
+            title={t('window.popOut')}
+            aria-label={t('window.popOut')}
+            onClick={() => { void popOutChannel(activeChannelId); }}
+          >
+            ⧉
+          </button>
+        )}
       </header>
       {/* 메시지·문서·파일 탭(UX ①) — **머리 아래 한 줄**이다(designer 사양). 머리 안에 두면
           주제·저장소 꼬리표와 한 줄을 다툰다. 문서는 채널에 붙는다(#188) — DM 에는 없다.

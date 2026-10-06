@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
@@ -6,6 +6,7 @@ import { WindowViewProvider, type WindowView } from '../state/windowView';
 import { closeAppWindow, syncRootAttributes, useAppWindows, type AppWindowEntry } from '../lib/appWindows';
 import { displayBody } from '../lib/mention';
 import { ThreadPanel } from './ThreadPanel';
+import { ChannelPane } from './ChannelPane';
 import { useT } from '../i18n/useT';
 
 /**
@@ -43,9 +44,12 @@ function AppWindowPortal({ entry }: { entry: AppWindowEntry }) {
   }, [doc]);
 
   return createPortal(
-    entry.target.kind === 'thread'
-      ? <ThreadWindow entry={entry} channelId={entry.target.channelId} rootId={entry.target.rootId} />
-      : null,
+    <div className="flex min-w-0 flex-1 flex-col">
+      <WindowBar entry={entry} />
+      {entry.target.kind === 'thread'
+        ? <ThreadWindow entry={entry} channelId={entry.target.channelId} rootId={entry.target.rootId} />
+        : <ChannelWindow entry={entry} channelId={entry.target.channelId} />}
+    </div>,
     root,
   );
 }
@@ -128,4 +132,66 @@ function useReadWhenFocused(entry: AppWindowEntry, channelId: string, rootId?: s
     w.addEventListener('focus', mark);
     return () => w.removeEventListener('focus', mark);
   }, [entry, channelId, rootId, pending]);
+}
+
+/**
+ * 창 머리의 얇은 줄 — 「메인 창으로 되돌리기」(판 3 C4). 누르면 이 창을 닫고 메인이 같은 자리를 연다
+ * (채널 창이면 그 채널, 스레드 창이면 그 채널의 그 스레드). 📌 항상 위는 다음 단계에서 이 줄에 선다.
+ */
+function WindowBar({ entry }: { entry: AppWindowEntry }) {
+  const t = useT();
+  const back = () => {
+    const target = entry.target;
+    closeAppWindow(target);
+    const c = getController();
+    if (target.kind === 'thread') void c.openThread(target.rootId, { channelId: target.channelId });
+    else void c.openChannel(target.channelId);
+  };
+  return (
+    <div className="flex shrink-0 items-center justify-end gap-1 border-b border-border bg-surface px-2 py-1 text-meta">
+      <button
+        data-testid="window-back-to-main"
+        className="rounded-row px-2 py-0.5 text-fg-muted hover:bg-surface-sunken"
+        onClick={back}
+      >
+        ↩ {t('window.backToMain')}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * 채널 창(820×720): 메인의 채널 화면 그대로, 사이드바·레일 없이 **자기 스레드 패널**을 갖는다(W4).
+ * 「새 메시지」 구분선은 창을 연 시점의 읽음 위치로 얼린다(C5) — 메인의 구분선을 움직이지 않는다.
+ */
+function ChannelWindow({ entry, channelId }: { entry: AppWindowEntry; channelId: string }) {
+  const [threadRootId, setThreadRootId] = useState<string | null>(null);
+  const divider = useRef(useActiveStore.getState().reads[channelId]?.lastReadSeq ?? 0).current;
+  useEffect(() => { void getController().loadChannelForWindow(channelId).catch(() => undefined); }, [channelId]);
+
+  useWindowTitle(entry, channelId);
+  useReadWhenFocused(entry, channelId);
+
+  const view = useMemo<WindowView>(() => ({
+    kind: 'channel',
+    channelId,
+    threadRootId,
+    dividerSeq: divider,
+    openThread: (rootId, opts) => {
+      // 다른 채널의 스레드(링크·대기 줄)는 이 창의 패널이 그릴 수 없다 — 메인이 받는다.
+      if (opts?.channelId && opts.channelId !== channelId) { void getController().openThread(rootId, opts); return; }
+      setThreadRootId(rootId);
+      void getController().loadThreadForWindow(channelId, rootId).then((ok) => { if (!ok) setThreadRootId(null); }).catch(() => undefined);
+    },
+    closeThread: () => setThreadRootId(null),
+  }), [channelId, threadRootId, divider]);
+
+  return (
+    <WindowViewProvider value={view}>
+      <div className="flex min-h-0 min-w-0 flex-1">
+        <ChannelPane />
+        {threadRootId && <ThreadPanel />}
+      </div>
+    </WindowViewProvider>
+  );
 }

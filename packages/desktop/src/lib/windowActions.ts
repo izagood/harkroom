@@ -1,7 +1,8 @@
 import { getActiveStore } from '../state/communities';
+import { getController } from '../state/controller';
 import { usePrefsStore } from '../state/prefsStore';
 import { detectLocale, isLocale, translator } from '../i18n';
-import { MAX_APP_WINDOWS, openAppWindow, type AppWindowTarget, type OpenResult } from './appWindows';
+import { MAX_APP_WINDOWS, findAppWindow, openAppWindow, type AppWindowTarget, type OpenResult } from './appWindows';
 
 /**
  * 새 창을 여는 **손짓들이 모이는 곳**(패널 ⧉ · 메시지 ⋯ · ⌘-클릭 · ⌘⇧O · 사이드바).
@@ -44,4 +45,32 @@ export function openThreadFrom(
   }
   if (opts) view.openThread(rootId, opts);
   else view.openThread(rootId);
+}
+
+/**
+ * 채널을 새 창으로 뗀다. **옮긴다**(W1): 메인이 그 채널을 보고 있었으면 메인은 직전 자리(⌘[)로 가고,
+ * 갈 곳이 없으면 비운다(본문 자리는 인박스가 받는다). 같은 채널을 두 창이 동시에 보지 않게 하는 것이
+ * 읽음 위치를 하나로 두는 길이다(판 3 C5).
+ */
+export async function popOutChannel(channelId: string): Promise<OpenResult> {
+  const result = openWindow({ kind: 'channel', channelId });
+  if (result.kind !== 'opened' && result.kind !== 'focused') return result;
+  const store = getActiveStore();
+  if (store.getState().activeChannelId === channelId) {
+    const moved = await getController().goBack().catch(() => false);
+    if (!moved || store.getState().activeChannelId === channelId) {
+      store.getState().set({ activeChannelId: null, threadRootId: null, highlightedMessageId: null });
+    }
+  }
+  return result;
+}
+
+/**
+ * 사이드바·링크에서 채널을 누른 손짓 하나. ⌘-클릭이면 새 창, **이미 창으로 띄운 채널이면 그 창을 앞으로**
+ * (C4 — 메인에서 그 채널을 눌러도 같다), 아니면 메인에서 연다.
+ */
+export function openChannelFrom(e: { metaKey: boolean; ctrlKey: boolean }, channelId: string, openInMain: () => void): void {
+  if (wantsNewWindow(e)) { void popOutChannel(channelId); return; }
+  if (findAppWindow({ kind: 'channel', channelId })) { openAppWindow({ kind: 'channel', channelId }); return; }
+  openInMain();
 }

@@ -201,6 +201,8 @@ export const ko = {
   'window.blocked': '새 창을 열지 못했습니다.',
   'window.threadGone': '이 스레드는 없습니다 — 지워졌거나 더는 볼 수 없습니다.',
   'window.loading': '불러오는 중…',
+  'window.openChannel': '채널을 새 창으로 열기',
+  'window.inWindow': '새 창에 열림',
   'window.backToMain': '메인 창으로 되돌리기',
   'reactions.pickTitle': '리액션 고르기',
 

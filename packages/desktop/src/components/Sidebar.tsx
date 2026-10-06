@@ -1,6 +1,8 @@
 import { useMemo, useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
+import { openChannelFrom, popOutChannel } from '../lib/windowActions';
+import { useAppWindows } from '../lib/appWindows';
 import { sidebarStorage, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from '../lib/prefs';
 import { ApiError } from '../lib/api';
 // `isMacOS`·`MAC_TRAFFIC_LIGHT_PL` 이 여기 있었다 — 신호등 여백은 이제 레일이 진다(아래 주석).
@@ -241,6 +243,12 @@ export function Sidebar({
 }) {
   const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, channelAutoMentions, messages, runnerStates, projectionStatus } = useActiveStore();
   const t = useT();
+  // 새 창으로 띄운 채널·DM(사이드바 ⧉ 표시). 장부가 바뀔 때만 다시 센다.
+  const appWindowEntries = useAppWindows((st) => st.entries);
+  const poppedChannels = useMemo(
+    () => new Set(appWindowEntries.flatMap((e) => (e.target.kind === 'channel' ? [e.target.channelId] : []))),
+    [appWindowEntries],
+  );
   /*
    * macOS 신호등 여백(#270)이 여기 있었다. **더 이상 이 바가 창의 좌상단이 아니다** —
    * 레일이 항상 왼쪽에 서므로 좌상단은 레일이고, 여백은 레일이 진다(`Rail.tsx` 의
@@ -704,7 +712,7 @@ export function Sidebar({
       : t(PRESENCE_LABEL[dm.presence]);
     return (
       <button key={dm.id} className={`${row(dm.id === activeChannelId)} ${reason ? 'flex-col items-start' : ''}`}
-        onClick={() => void getController().openChannel(dm.id)}>
+        onClick={(e) => openChannelFrom(e, dm.id, () => void getController().openChannel(dm.id))}>
         <span className="flex min-w-0 items-center gap-1.5">
           {/*
             **상태를 말하는 칸은 이것 하나다.** `data-face` 로 시험이 판정을 읽는다 —
@@ -755,6 +763,9 @@ export function Sidebar({
           {/* 채널 행과 **같은 묶음**이다(위 주석) — DM 에는 미읽음 점이 없어 안이 하나뿐이지만,
               미는 마진의 자리를 두 곳이 다르게 두면 다음에 무언가를 더할 때 또 갈린다. */}
           <span className="ml-auto flex shrink-0 items-center gap-1">
+            {poppedChannels.has(dm.id) && (
+              <span data-testid={`channel-popped-${dm.id}`} className="text-meta text-fg-subtle" title={t('window.inWindow')} aria-label={t('window.inWindow')}>⧉</span>
+            )}
             <UnreadBadge channelId={dm.id} notifyLevel={dm.notifyLevel} />
           </span>
         </span>
@@ -815,7 +826,7 @@ export function Sidebar({
     }
     const ChannelButton = (
       <button key={ch.id} className={row(ch.id === activeChannelId)}
-        onClick={() => void getController().openChannel(ch.id)}>
+        onClick={(e) => openChannelFrom(e, ch.id, () => void getController().openChannel(ch.id))}>
         {/* private 채널은 '#' 대신 자물쇠다. 여기 이 표시가 없으면 사용자는 자기가 쓰는
             글이 전원에게 가는지 멤버에게만 가는지 화면 어디에서도 알 수 없다. */}
         {ch.visibility === 'private'
@@ -826,6 +837,10 @@ export function Sidebar({
         {/* 오른쪽 상태 묶음. `ml-auto` 는 **여기 한 번만** 있다 — 안의 둘이 각자 갖고
             있으면 남은 여백이 둘로 갈려 점이 줄 한가운데에 선다(`ChannelUnreadDot` 주석). */}
         <span className="ml-auto flex shrink-0 items-center gap-1">
+          {/* 새 창에 띄워 둔 채널(판 3 C4, 완료 조건 ⑤). 누르면 그 창이 앞으로 온다. */}
+          {poppedChannels.has(ch.id) && (
+            <span data-testid={`channel-popped-${ch.id}`} className="text-meta text-fg-subtle" title={t('window.inWindow')} aria-label={t('window.inWindow')}>⧉</span>
+          )}
           <ChannelUnreadDot channelId={ch.id} name={ch.name ?? ''} />
           <UnreadBadge channelId={ch.id} notifyLevel={notifyLevel} />
         </span>
@@ -864,6 +879,9 @@ export function Sidebar({
      */
     const menuGroups: MenuItem[][] = [
       [
+      // 맨 위는 「채널을 새 창으로 열기」(판 3 C1). 이미 띄웠으면 그 창을 앞으로 가져온다. 묶음을 새로
+      // 만들지 않고 첫 묶음(이 채널을 내 목록에서 다루기)의 머리에 둔다 — 다섯 묶음 사양(UX ⑦a)을 지킨다.
+      { label: t('window.openChannel'), onSelect: () => { void popOutChannel(ch.id); } },
       ...(lastSeq > 0 ? [{
         // 마지막 메시지부터 미읽음 — 결과는 미읽음 1, 즉 "이 채널 다시 보라"는 표시다.
         // 특정 메시지를 골라 그 지점부터 미읽음으로 만드는 것은 #179 다.
