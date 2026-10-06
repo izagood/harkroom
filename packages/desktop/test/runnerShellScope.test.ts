@@ -635,6 +635,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
           'codex_account_remove',
           'daemon_kill_runner', 'daemon_spawn_runner',
           'operator_agent_remove', 'operator_agent_set', 'operator_mcp_auth', 'operator_mcp_remove', 'operator_mcp_set', 'operator_merge_set', 'operator_register',
+          'reveal_saved_attachment', 'save_attachment',
           'secret_delete', 'secret_get', 'secret_set',
         ]);
       // 미리보기 허용(#1069 A′): URL **문자열** 하나와, Tauri 가 채우는 웹뷰(라벨이 main 인지 본다)뿐이다.
@@ -666,6 +667,13 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       // 인자·경로를 고를 자리가 없다.
       const mergeSet = commands.find((c) => c.fn === 'operator_merge_set')!;
       expect(mergeSet.webviewParams).toEqual(['gh_user: Option<String>']);
+      // 첨부 저장(2026-10-06): 웹뷰가 주는 것은 raw 본문(바이트)과 헤더의 이름 **제안**뿐이다 — 경로는 사람이
+      // 저장 창에서 고른다(`attachment_save.rs`). [Finder에서 보기]는 그 저장이 돌려준 **표(u64)** 만 받는다 —
+      // 웹뷰가 경로를 줄 자리가 없다.
+      const save = commands.find((c) => c.fn === 'save_attachment')!;
+      expect(save.webviewParams).toEqual(["request: tauri::ipc::Request<'_>"]);
+      const reveal = commands.find((c) => c.fn === 'reveal_saved_attachment')!;
+      expect(reveal.webviewParams).toEqual(['token: u64']);
       // `daemon_kill_runner` 가 받는 것은 **누구를·어느 세대를** 뿐이다 — 프로그램·인자·경로를
       // 다시 고를 수 있는 자리가 아니다.
       const kill = commands.find((c) => c.fn === 'daemon_kill_runner')!;

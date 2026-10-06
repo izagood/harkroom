@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { useHostDocument } from '../lib/hostDocument';
 import type { AttachmentRow } from '@harkroom/shared';
 import { getController } from '../state/controller';
+import { useActiveStore } from '../state/communities';
 import { Overlay } from './Overlay';
 import { useT } from '../i18n/useT';
 import { formatSize } from './Attachments';
@@ -52,6 +53,8 @@ export function ImageLightbox({ attachment, url, failed = false, onRetry, onClos
   // 새 창 안이면 그 창의 문서를 듣는다(`lib/hostDocument`).
   const hostDoc = useHostDocument();
   const t = useT();
+  // 저장 중(받는 중·저장 창)이면 [저장…]을 다시 못 누른다 — 카드와 같은 값을 본다.
+  const saving = useActiveStore((s) => s.attachmentSaving[attachment.id]);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
   const [fit, setFit] = useState(1);
@@ -266,9 +269,11 @@ export function ImageLightbox({ attachment, url, failed = false, onRetry, onClos
         <span className="shrink-0 text-fg-subtle">{formatSize(attachment.sizeBytes)}</span>
         {saveable && (
           <button
-            className="ml-auto shrink-0 rounded-row border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken"
+            className="ml-auto shrink-0 rounded-row border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken disabled:cursor-progress"
             onClick={() => void getController().saveAttachment(attachment)}
-          >{t('message.attachment.save')}</button>
+            disabled={!!saving}
+            aria-busy={saving ? true : undefined}
+          >{saving === 'fetching' ? t('message.attachment.saving') : t('message.attachment.save')}</button>
         )}
         <button
           className={`${saveable ? '' : 'ml-auto '}shrink-0 rounded-row px-2 text-fg-subtle hover:bg-surface-sunken`}

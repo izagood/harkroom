@@ -740,7 +740,7 @@ describe('첨부 이미지를 눌러 크게 보기', () => {
     const c = fakeController();
     fireEvent.click(await renderImage());
 
-    fireEvent.click(screen.getByRole('button', { name: '저장' }));
+    fireEvent.click(screen.getByRole('button', { name: '저장…' }));
 
     expect(c.saveAttachment).toHaveBeenCalledWith(expect.objectContaining({ id: 'a1' }));
   });

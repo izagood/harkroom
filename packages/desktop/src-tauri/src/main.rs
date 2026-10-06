@@ -9,6 +9,7 @@
 //! 조용히 성공한 척하면 프런트가 평문 경로로 내려갈 기회를 잃는다.
 
 mod app_windows;
+mod attachment_save;
 mod daemon_client;
 mod external_link;
 mod login_path;
@@ -846,6 +847,42 @@ fn allow_preview_once(
         .map_err(|e| e.to_string())
 }
 
+/// 첨부를 저장 창으로 저장한다(2026-10-06, jaebin 결정 95ab9c9b — `attachment_save.rs` 머리 주석).
+///
+/// 웹뷰가 넘기는 것은 **바이트(본문)와 이름 제안(헤더)** 뿐이다. 경로는 사람이 저장 창에서 고른다.
+/// 바이트를 JSON 숫자 배열로 받지 않으려고 raw 본문(`InvokeBody::Raw`)을 쓴다 — 수 MB 첨부가 수십 MB JSON 이 된다.
+/// 저장 창이 닫힐 때까지 기다리므로 블로킹 풀에서 돈다(메인 스레드에서 기다리면 창 자신이 굳는다).
+/// 취소하면 `None`.
+#[tauri::command]
+async fn save_attachment(
+    app: tauri::AppHandle,
+    request: tauri::ipc::Request<'_>,
+) -> Result<Option<attachment_save::Saved>, String> {
+    let name = request
+        .headers()
+        .get(attachment_save::FILENAME_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(attachment_save::percent_decode)
+        .unwrap_or_default();
+    let bytes = match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => bytes.clone(),
+        tauri::ipc::InvokeBody::Json(_) => return Err("저장할 바이트는 raw 본문으로 보내야 한다".into()),
+    };
+    tauri::async_runtime::spawn_blocking(move || attachment_save::save_with_dialog(&app, &name, &bytes))
+        .await
+        .map_err(|e| format!("저장 스레드가 끊겼다: {e}"))?
+}
+
+/// 방금 저장한 파일을 Finder 에서 집어 보여 준다. 웹뷰는 `save_attachment` 가 돌려준 **표**만 줄 수 있다 —
+/// 경로를 줄 자리가 없다.
+#[tauri::command]
+fn reveal_saved_attachment(
+    state: tauri::State<'_, attachment_save::SavedFiles>,
+    token: u64,
+) -> Result<(), String> {
+    attachment_save::reveal(&state, token)
+}
+
 fn main() {
     tauri::Builder::default()
         // 알림 표면. **발신은 `notification::notification_send` 가 한다** — 이 플러그인의
@@ -866,6 +903,9 @@ fn main() {
         // 돌고 있는 것이 갈린다.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // 첨부 저장 창. Rust 의 `save_attachment` 만 쓴다 — `dialog:*` 권한을 열지 않는다.
+        .plugin(tauri_plugin_dialog::init())
+        .manage(attachment_save::SavedFiles::default())
         .manage(daemon_client::DaemonState::new())
         // 알림 클릭을 받는 델리게이트를 세운다(`notification::install`). **기동 때 한 번**
         // 이어야 한다 — 첫 알림을 보낼 때 세우면 그 알림의 클릭을 놓칠 수 있다.
@@ -888,6 +928,8 @@ fn main() {
             notification::notification_send,
             app_version,
             concealed_clipboard::clipboard_write_concealed,
+            save_attachment,
+            reveal_saved_attachment,
             claude_accounts_list,
             claude_accounts_configure,
             claude_account_login_start,
