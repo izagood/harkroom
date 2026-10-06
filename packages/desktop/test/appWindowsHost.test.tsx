@@ -86,6 +86,24 @@ describe('스레드 창', () => {
     expect(within(popup.body).queryByTestId('thread-pop-out')).toBeNull();
   });
 
+  it('스레드 창의 패널은 창 높이에 묶인다 — 세로 칸에서 내용 높이로 자라면 목록이 스크롤되지 않는다', async () => {
+    // 2026-10-06 jaebin 실기: 스레드 창에서 스크롤이 안 됐다. 창에서는 패널이 세로(flex-col) 칸의 자식이라
+    // `min-h-0` 이 없으면 기본 최소 높이(내용 높이)로 자라고, 창 뿌리의 `overflow-hidden` 이 그것을 자른다
+    // (WebKit 실측: 680px 창에 스크롤 상자 5326px). jsdom 은 레이아웃을 안 재므로 그 줄을 지킨다.
+    fakeController();
+    render(<AppWindowsHost />);
+    act(() => { openAppWindow({ kind: 'thread', channelId: 'c1', rootId: 'm1' }); });
+    const popup = wins[0]!.document;
+    await waitFor(() => expect(popup.querySelector('[data-testid="thread-pane"]')).toBeTruthy());
+    const pane = popup.querySelector('[data-testid="thread-pane"]')!;
+    expect(pane.classList.contains('min-h-0')).toBe(true);
+    expect(pane.classList.contains('flex-1')).toBe(true);
+    // 그 위의 칸들도 창 높이 안에 있어야 한다: 뿌리는 창 높이·넘침 자름, 그 아래 세로 칸.
+    const root = popup.getElementById('hk-window-root')!;
+    expect(root.classList.contains('h-screen')).toBe(true);
+    expect(pane.parentElement?.classList.contains('flex-col')).toBe(true);
+  });
+
   it('없는 스레드면 빈 상태로 알린다', async () => {
     const c = fakeController();
     c.loadThreadForWindow.mockResolvedValue(false);
