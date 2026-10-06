@@ -1936,6 +1936,7 @@ class AppState extends ChangeNotifier {
     threadHasMore.clear();
     loadingOlderThread.clear();
     olderThreadFailed.clear();
+    threadTailMissing.clear();
     channels.clear();
     accounts.clear();
     messages.clear();
