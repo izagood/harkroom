@@ -2,8 +2,8 @@
 //
 // 접지 않으면 스레드는 **정확히 우리가 피하려던 그 로그**가 된다: forge ↔ codex 가 열 번
 // 주고받으면 그 열 번이 그대로 흐르고, 사람이 읽어야 할 말이 그 사이에 묻힌다.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
 import type { AskMeta, MessageRow, ReportMeta } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
@@ -705,5 +705,77 @@ describe('접힌 줄 — 도는 진행 칩·펼친 진행 줄 (판정 ③)', () 
     fireEvent.click(screen.getByTestId('agent-exchange-toggle'));
     expect(screen.getAllByTestId('progress-row')).toHaveLength(1);
     expect(screen.getByText('ws 는 내가 본다')).toBeTruthy();
+  });
+});
+
+describe('#1188 후속 — n1 1분 틱 · n2 표 행 · n3 en 문구 · n4 문장 중간 사람 멘션', () => {
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  it('n4. 문장 가운데서 사람을 부른 글도 펼친다 — 머리 멘션만 보는 것이 아니다', () => {
+    const out = slots([
+      msg('m1', 'c1', 1, 'a', FORGE),
+      msg('m2', 'c1', 2, 'b', CODEX),
+      msg('m3', 'c1', 3, `판정은 이렇다. 표는 그대로 두고 칩만 고친다. <@${ME_UUID}> 확인 부탁`, FORGE),
+      msg('m4', 'c1', 4, 'c', CODEX),
+      msg('m5', 'c1', 5, 'd', FORGE),
+    ]);
+    expect(out.map((s) => s.kind)).toEqual(['exchange', 'message', 'exchange']);
+    expect(out[1]).toMatchObject({ kind: 'message', message: { id: 'm3' } });
+  });
+
+  it('n2. 표 행이면 칸을 「 · 」 로 잇고, 구분 행은 건너뛴다', () => {
+    expect(firstLine('| 항목 | 상태 |\n|---|:--:|\n| head | OK |')).toBe('항목 · 상태');
+    expect(firstLine('@task_manager\n|:---|---:|\n| **n1** | 1분 틱 |')).toBe('n1 · 1분 틱');
+    expect(firstLine('|  | 빈 칸 |')).toBe('빈 칸');
+    // `|` 로 시작하지 않는 문장의 `|` 는 말의 일부다.
+    expect(firstLine('a | b 는 둘 중 하나')).toBe('a | b 는 둘 중 하나');
+    // 구분 행 판정도 긴 줄에서 금방 끝난다.
+    const started = performance.now();
+    firstLine(`${'|-'.repeat(4000)}\n${'| '.repeat(4000)}`);
+    expect(performance.now() - started).toBeLessThan(200);
+  });
+
+  it('n3. en 의 여럿 칩은 무엇이 몇인지 말한다 — 「2 agents working」', () => {
+    usePrefsStore.getState().setLocale('en');
+    const talk = [msg('m1', 'c1', 1, 'a', FORGE), msg('m2', 'c1', 2, 'b', CODEX)];
+    const running = (id: string, author: string) => ({
+      kind: 'progress' as const,
+      messages: [msg(id, 'c1', 3, '도는 중', author, { kind: 'progress' })],
+      endedAt: null,
+    });
+    render(<AgentExchange messages={talk} items={[
+      { kind: 'message', message: talk[0]! }, running('p1', CODEX), running('p2', FORGE),
+      { kind: 'message', message: talk[1]! },
+    ]} />);
+    expect(screen.getByTestId('exchange-running').textContent).toContain('2 agents working');
+  });
+
+  it('n1. 접힌 줄 칩의 「N분」은 1분마다 다시 그려지고, 도는 진행이 없으면 타이머가 없다', () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    vi.setSystemTime(new Date('2026-10-06T05:00:00.000Z'));
+    const talk = [msg('m1', 'c1', 1, 'a', FORGE), msg('m2', 'c1', 2, 'b', CODEX)];
+    const prog = (endedAt: string | null) => ({
+      kind: 'progress' as const,
+      messages: [msg('p1', 'c1', 3, '도는 중', CODEX, { kind: 'progress', createdAt: '2026-10-06T04:57:00.000Z' })],
+      endedAt,
+    });
+    const items = (endedAt: string | null) => [
+      { kind: 'message' as const, message: talk[0]! }, prog(endedAt), { kind: 'message' as const, message: talk[1]! },
+    ];
+
+    const { unmount } = render(<AgentExchange messages={talk} items={items(null)} />);
+    expect(screen.getByTestId('exchange-running').textContent).toMatch(/3분/);
+    expect(vi.getTimerCount()).toBe(1);
+    act(() => { vi.advanceTimersByTime(2 * 60_000); });
+    expect(screen.getByTestId('exchange-running').textContent).toMatch(/5분/);
+    unmount();
+    // 마지막 구독자가 떠나면 공유 타이머도 멈춘다.
+    expect(vi.getTimerCount()).toBe(0);
+
+    render(<AgentExchange messages={talk} items={items('2026-10-06T04:59:00.000Z')} />);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

@@ -9,6 +9,7 @@ import { elapsedMs } from '../lib/progressGroup';
 import { selectAccountNames } from '../lib/accountNames';
 import { displayBody } from '../lib/mention';
 import { durationLabel } from '../lib/time';
+import { useMinuteTick } from '../lib/useMinuteTick';
 import { MessageItem } from './MessageItem';
 import { ProgressRow } from './ProgressRow';
 import type { SectionId } from './settings/sections';
@@ -91,6 +92,8 @@ export function AgentExchange({ messages, items, onOpenDirectory, onOpenSettings
    * 답이고, 끝난 진행 줄 셋은 그 답에 보탤 것이 없다.
    */
   const running = slots.flatMap((it) => (it.kind === 'progress' && it.endedAt === null ? [it] : []));
+  // 칩의 「N분」도 `ProgressRow` 와 같은 틱으로 간다. 펼친 뒤에는 진행 줄이 스스로 구독한다.
+  useMinuteTick(!open && running.length > 0);
 
   function runningChip(first: MessageRow, handle: string): string {
     const ms = elapsedMs(first.createdAt, Date.now());
