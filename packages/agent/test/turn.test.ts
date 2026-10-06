@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, assertHarnessContract, buildTurnCommand, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
+import { GRANT_DELEGATE_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, assertHarnessContract, buildTurnCommand, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
 
 // harkroomUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
 // 실제로 주는 값(`http://localhost:3400` 류, `/mcp` 없음)과 맞춘다. 예전엔 여기 이미
@@ -941,6 +941,19 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
     expect(after(both, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator merge:*)', 'Bash(/opt/harkroom/harkroom-operator api:*)']);
     const ro = buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly', apiConnectors: ['lab-api'] }).args;
     expect(ro).not.toContain('--allowedTools');
+  });
+
+  it('다시 줄 수 있는 연결이 있을 때만 grant.delegate MCP 도구를 allow 한다(실측: 분류기가 [Permission Grant] 로 막는다)', () => {
+    const none = buildTurnCommand({ ...common, mode: 'mention', apiConnectors: ['lab-api'] }).args;
+    expect(after(none, '--allowedTools')).not.toContain(GRANT_DELEGATE_TOOL);
+    const deleg = buildTurnCommand({ ...common, mode: 'mention', apiConnectors: ['lab-api'], apiDelegatable: ['lab-api'] }).args;
+    expect(after(deleg, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator api:*)', 'mcp__harkroom__grant_delegate']);
+    expect(deleg.join(' ')).not.toContain('lab-api');
+    expect(deleg.join(' ')).not.toContain('grant_revoke');
+    const ro = buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly', apiConnectors: ['lab-api'], apiDelegatable: ['lab-api'] }).args;
+    expect(ro).not.toContain('--allowedTools');
+    const inter = buildTurnCommand({ ...common, mode: 'interactive', apiConnectors: ['lab-api'], apiDelegatable: ['lab-api'] }).args;
+    expect(inter).not.toContain('--allowedTools');
   });
 
   it('readonly(plan) 턴과 인터랙티브 턴은 argv 를 그대로 둔다 — --permission-mode 도 바뀌지 않는다', () => {
