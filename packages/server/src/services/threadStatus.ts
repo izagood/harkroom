@@ -1,7 +1,7 @@
 import type { Pool } from 'pg';
 import {
   decideThreadStatus, THREAD_STATUS_EMOJI,
-  type ThreadStatusFacts, type ThreadStatusReaction,
+  type ThreadStatusDecision, type ThreadStatusFacts, type ThreadStatusReaction,
 } from '@harkroom/shared';
 
 import { emitEvent, onEvent, type WorkspaceEvent } from '../events.js';
@@ -108,6 +108,48 @@ export async function readThreadStatusFacts(
 }
 
 /**
+ * 루트의 상태 리액션(`message_reaction.source = 'status'`, 108)을 판정에 맞춘다 — **한 문장**이다:
+ * 맞지 않는 상태 행을 떼고, 원하는 것이 없으면 단다. 사람·에이전트가 손으로 단 행(`user`)은 건드리지
+ * 않는다 — 같은 (계정, 이모지)가 이미 손으로 달려 있으면 상태 행은 새로 생기지 않는다(on conflict).
+ * 지워진 루트에는 달지 않는다. 바뀐 행마다 `reaction.added`·`reaction.removed` 를 낸다 — 모든 화면이
+ * 이미 듣는 이벤트라 따로 그릴 것이 없다.
+ *
+ * `thread_status` 가 안 바뀌어도 부른다: 손으로 단 것이 떼어진 뒤처럼 리액션만 어긋난 때 다시 맞는다
+ * (그 떼기는 watcher 가 `reaction.removed` 로 듣는다). 맞으면 아무 행도 안 바뀌고 이벤트도 없다.
+ */
+async function syncStatusReaction(
+  pool: Pool, channelId: string, rootId: string, decision: ThreadStatusDecision | null,
+): Promise<void> {
+  const emoji = decision ? THREAD_STATUS_EMOJI[decision.status] : null;
+  const accountId = decision?.accountId ?? null;
+  const res = await pool.query(
+    `with want as (select $2::uuid as account_id, $3::text as emoji where $2::uuid is not null and $3::text is not null),
+     del as (
+       delete from message_reaction r
+        where r.message_id = $1 and r.source = 'status'
+          and not exists (select 1 from want w where w.account_id = r.account_id and w.emoji = r.emoji)
+       returning r.account_id, r.emoji),
+     ins as (
+       insert into message_reaction (message_id, account_id, emoji, source)
+       select $1, w.account_id, w.emoji, 'status' from want w
+        where exists (select 1 from message m where m.id = $1 and m.deleted_at is null)
+       on conflict do nothing
+       returning account_id, emoji)
+     select 'removed' as op, account_id, emoji from del
+     union all select 'added' as op, account_id, emoji from ins`,
+    [rootId, accountId, emoji],
+  );
+  if (!res.rowCount) return;
+  const audience = await audienceFor(pool, channelId);
+  for (const r of res.rows) {
+    emitEvent({
+      type: r.op === 'added' ? 'reaction.added' : 'reaction.removed', channelId, messageId: rootId,
+      emoji: r.emoji as string, accountId: r.account_id as string, audience,
+    });
+  }
+}
+
+/**
  * 한 스레드를 다시 판정해 바뀌었으면 저장하고 알린다. 바뀌지 않았으면 아무것도 하지 않는다 —
  * 같은 상태로 이벤트를 다시 내면 화면이 이유 없이 다시 그린다.
  */
@@ -117,6 +159,7 @@ export async function refreshThreadStatus(
   const read = await readThreadStatusFacts(pool, rootId);
   if (!read) return 'unchanged';
   const decision = decideThreadStatus(read.facts, live);
+  await syncStatusReaction(pool, read.channelId, rootId, decision);
 
   if (!decision) {
     const del = await pool.query(`delete from thread_status where root_id = $1`, [rootId]);
@@ -148,6 +191,8 @@ export async function refreshThreadStatus(
     audience: await audienceFor(pool, read.channelId) });
   return statusReaction;
 }
+
+const STATUS_EMOJIS: ReadonlySet<string> = new Set(Object.values(THREAD_STATUS_EMOJI));
 
 /** 이 이벤트가 어느 스레드 루트를 건드렸는가. 없으면 `null`. */
 export function rootOf(e: WorkspaceEvent): string | null {
@@ -200,6 +245,10 @@ export function startThreadStatusWatcher(
     if (root) { schedule(root); return; }
     // 보고처 깨움이 걸렸다·떴다·접혔다 — 그 보고처 스레드의 머리 ⏳ 를 다시 판정한다(2026-10-06).
     if (e.type === 'thread.reportWakes.changed') { schedule(e.rootId); return; }
+    // 상태 이모지가 떼어졌다 — 주인 에이전트가 손으로 단 것(그래서 상태 행이 없던 것)을 떼면 상태
+    // 리액션이 비므로 다시 단다(#1227 security n1). 답글이면 판정이 루트가 아니라고 그냥 끝난다.
+    // 서버가 스스로 뗀 것도 여기로 오지만 다시 판정해 'unchanged' 로 끝난다(루프 없음).
+    if (e.type === 'reaction.removed' && STATUS_EMOJIS.has(e.emoji)) { schedule(e.messageId); return; }
     if (e.type === 'presence.changed') {
       // 그 에이전트가 주인인 스레드만 — 꺼지면 💬·👀 가 🚨 로, 켜지면 🚨 가 💬 로 돌아온다.
       void pool.query(

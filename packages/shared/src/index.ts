@@ -1208,9 +1208,10 @@ export interface MessageRow {
   /** 그 마지막 말의 저자. 생존을 물어볼 대상이다. */
   lastAuthorId: string | null;
   /**
-   * 스레드 상태 리액션(D안, `threadStatus.ts`). 루트에만, 언제나 하나. 사람 리액션(`reactions`)과
-   * 따로 실린다 — 화면은 맨 앞에 숫자 없이 그리고 누르면 토글되지 않는다. 답글 행·옛 서버는
-   * 키가 없거나 `null` 이다.
+   * 스레드 상태(D안, `threadStatus.ts`). 루트에만, 언제나 하나. 판정 결과 **데이터**다 — 화면에 보이는
+   * 것은 서버가 같은 상태를 `reactions` 에 진짜 리액션(주인 에이전트 이름, 끝남 ✅ 포함)으로 단 것이다
+   * (108). 화면은 이것으로 그 칩이 상태 리액션인지 가르고(누르면 토글되지 않음), 이유(`reason`)를 보인다.
+   * 답글 행·옛 서버는 키가 없거나 `null` 이다.
    */
   statusReaction?: import('./threadStatus.js').ThreadStatusReaction | null;
   /** 스레드 답을 채널에도 함께 올린다(#231). threadRootId 가 없으면 이 값은 항상 false 다. */
