@@ -61,7 +61,7 @@ class MessageTile extends StatelessWidget {
   /// [lit] — 누르는 중이거나 그 줄의 시트가 떠 있다. 칠하는 것은 **말 부분**(이름·본문)뿐이다:
   /// 줄 전체를 사각으로 덮으면 아바타·그림·리액션·답글 줄까지 회색 판 하나로 뭉개져, 어느
   /// 말을 집었는지가 오히려 흐려진다(jaebin, TestFlight IMG_4971). 본문 없는 글(첨부만)은
-  /// 첨부가 곧 말이라 첨부까지 감싼다.
+  /// 첨부가 곧 말이라 첨부까지 감싼다(카드가 없을 때만 — 순서는 언제나 카드 → 첨부).
   Widget _row(BuildContext context, bool lit) {
     final app = context.app;
     final t = context.t;
@@ -69,6 +69,9 @@ class MessageTile extends StatelessWidget {
     final author = app.accounts[message.authorId];
     final body = displayBody(message, app.accounts, unknownMention: t.mentionUnknown, unknownAccount: t.systemAccountUnknown).trim();
     final denied = _deniedHandles(message.meta);
+    // 본문 없는 글은 첨부가 곧 말이라 강조 안에 넣는다. 카드가 있으면 넣지 않는다 — 넣으면
+    // 카드 → 첨부 순서가 뒤집힌다(security n2).
+    final attachmentsInGlow = body.isEmpty && card == null;
 
     return Padding(
       key: Key('message-${message.id}'),
@@ -99,12 +102,12 @@ class MessageTile extends StatelessWidget {
                       if (body.isNotEmpty)
                         MarkdownBody(body, openMessage: (id) => openMessageLink(context, id)),
                       if (denied.isNotEmpty) _MentionDenied(handles: denied),
-                      if (body.isEmpty) AttachmentStrip(attachments: message.attachments, message: message),
+                      if (attachmentsInGlow) AttachmentStrip(attachments: message.attachments, message: message),
                     ],
                   ),
                 ),
                 if (card != null) Padding(padding: const EdgeInsets.only(top: 6), child: card),
-                if (body.isNotEmpty) AttachmentStrip(attachments: message.attachments, message: message),
+                if (!attachmentsInGlow) AttachmentStrip(attachments: message.attachments, message: message),
                 if (message.reactions.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 6),
