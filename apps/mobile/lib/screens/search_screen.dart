@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../api/api_client.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../mention/render.dart';
@@ -87,6 +88,10 @@ class _SearchScreenState extends State<SearchScreen> {
   bool _loadingMore = false;
   LoadFailure? _failure;
 
+  /// 지금 선 결과의 순서. 이어 받기([_more])는 이 순서로 묻는다 — 그 사이 메뉴를 바꿔도 새 요청이
+  /// [_req] 를 올리므로 옛 순서의 이어 받기는 버려진다.
+  SearchSort _shownSort = SearchSort.relevance;
+
   /// 마지막으로 보낸 요청의 번호. 답이 왔을 때 이 값이 아니면 늦은 답이다.
   int _req = 0;
 
@@ -102,7 +107,21 @@ class _SearchScreenState extends State<SearchScreen> {
     super.initState();
     _scroll.addListener(_onScroll);
     // 빌드 밖이라 구독하지 않고 읽는다.
-    AppScope.read(context).loadRecentSearches();
+    final app = AppScope.read(context);
+    app.loadRecentSearches();
+    app.loadSearchSort();
+  }
+
+  /// 순서를 바꾸면 기기에 기억하고 같은 검색어로 다시 찾는다([_run] 이 맨 위로 올린다).
+  void _setSort(SearchSort sort) {
+    final app = context.app;
+    if (sort == app.searchSort) return;
+    app.setSearchSort(sort);
+    final q = _input.text.trim();
+    if (q.length >= searchMinChars) {
+      _debounce?.cancel();
+      _run(q);
+    }
   }
 
   /// 최근 찾은 말을 누르면 그 말로 바로 찾는다.
@@ -153,11 +172,14 @@ class _SearchScreenState extends State<SearchScreen> {
       _failure = null;
     });
     final target = _target;
+    final sort = context.app.searchSort;
     try {
-      final page = await context.app.searchMessages(q, channelId: target.channelId, threadRootId: target.threadRootId);
+      final page =
+          await context.app.searchMessages(q, channelId: target.channelId, threadRootId: target.threadRootId, sort: sort);
       if (!mounted || req != _req || page == null) return;
       setState(() {
         _shown = q;
+        _shownSort = sort;
         _results = page.messages;
         _hasMore = page.hasMore;
         _loading = false;
@@ -187,7 +209,7 @@ class _SearchScreenState extends State<SearchScreen> {
     setState(() => _loadingMore = true);
     try {
       final page = await context.app.searchMessages(q,
-          channelId: target.channelId, threadRootId: target.threadRootId, offset: _results.length);
+          channelId: target.channelId, threadRootId: target.threadRootId, offset: _results.length, sort: _shownSort);
       if (!mounted || req != _req || page == null) return;
       // 그 사이 새 글이 들어오면 offset 이 한 칸 밀려 같은 행이 두 번 올 수 있다 — id 로 거른다.
       final seen = {for (final m in _results) m.id};
@@ -400,29 +422,50 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _resultList(BuildContext context, List<SearchShortcut> shortcuts) {
+    final t = context.t;
+    // 최신순일 때만 날짜로 묶는다 — 관련도순은 날짜가 섞여 있어 묶으면 같은 날이 여러 번 선다.
+    final byDay = _shownSort == SearchSort.recent;
+    final head = shortcuts.isEmpty ? 1 : 2;
     return ListView.separated(
       key: const Key('search-results'),
       controller: _scroll,
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.only(bottom: 24),
-      itemCount: _results.length + (_loadingMore ? 1 : 0) + (shortcuts.isEmpty ? 0 : 1),
-      separatorBuilder: (_, _) => Divider(height: 1, color: context.tokens.border),
+      itemCount: _results.length + (_loadingMore ? 1 : 0) + head,
+      separatorBuilder: (_, i) => i < head - 1 ? const SizedBox.shrink() : Divider(height: 1, color: context.tokens.border),
       itemBuilder: (context, i) {
         // 이름이 맞는 대화가 있으면 결과 위에 한 묶음으로.
         if (shortcuts.isNotEmpty) {
           if (i == 0) return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: _shortcutRows(context, shortcuts));
           i -= 1;
         }
+        // 결과 머리 줄: 「메시지 N개」 + 오른쪽 순서 메뉴. 칩 줄이 없는 「전체」 찾기에서도 같은 자리다.
+        if (i == 0) {
+          final n = _results.length;
+          return _SectionHeader(
+            key: const Key('search-result-header'),
+            label: (_hasMore ? t.searchCountMore : t.searchCount).replaceFirst('{n}', '$n'),
+            trailing: _SortMenu(current: context.app.searchSort, onSelected: _setSort),
+          );
+        }
+        i -= 1;
         if (i == _results.length) {
           return const Padding(
             padding: EdgeInsets.all(16),
             child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
           );
         }
-        return SearchResultTile(
-          message: _results[i],
+        final m = _results[i];
+        final tile = SearchResultTile(
+          message: m,
           query: _shown,
+          timeOnly: byDay,
           onOpened: () => context.app.rememberSearch(_shown),
+        );
+        if (!byDay || (i > 0 && sameLocalDay(_results[i - 1].createdAt, m.createdAt))) return tile;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [DayDivider(key: Key('search-day-${m.id}'), at: m.createdAt), tile],
         );
       },
     );
@@ -525,8 +568,65 @@ List<SearchShortcut> searchShortcuts(AppState app, String query) {
   return [...starts, ...contains].take(5).toList(growable: false);
 }
 
+/// 결과 머리 줄 오른쪽의 「관련도순 ▾」. 누르면 작은 메뉴(체크 + 한 줄 설명)가 뜬다(designer 찾기 정렬 안 A).
+/// 지금 순서를 글로 늘 보여 「날짜가 왜 섞였지?」 에 답한다.
+class _SortMenu extends StatelessWidget {
+  const _SortMenu({required this.current, required this.onSelected});
+
+  final SearchSort current;
+  final ValueChanged<SearchSort> onSelected;
+
+  static String label(Strings t, SearchSort s) => switch (s) {
+        SearchSort.relevance => t.searchSortRelevance,
+        SearchSort.recent => t.searchSortRecent,
+      };
+
+  static String hint(Strings t, SearchSort s) => switch (s) {
+        SearchSort.relevance => t.searchSortRelevanceHint,
+        SearchSort.recent => t.searchSortRecentHint,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final k = context.tokens;
+    return PopupMenuButton<SearchSort>(
+      key: const Key('search-sort'),
+      tooltip: t.searchSort,
+      initialValue: current,
+      onSelected: onSelected,
+      itemBuilder: (_) => [
+        for (final s in SearchSort.values)
+          PopupMenuItem<SearchSort>(
+            key: Key('search-sort-${s.name}'),
+            value: s,
+            child: Row(children: [
+              SizedBox(width: 24, child: s == current ? Icon(Icons.check, size: 18, color: k.fg) : null),
+              const SizedBox(width: 4),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(label(t, s), style: TextStyle(fontSize: 14, color: k.fg)),
+                  Text(hint(t, s), style: TextStyle(fontSize: 12, color: k.fgMuted)),
+                ],
+              ),
+            ]),
+          ),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Text(label(t, current), style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.fgMuted)),
+          Icon(Icons.arrow_drop_down, size: 18, color: k.fgMuted),
+        ]),
+      ),
+    );
+  }
+}
+
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.label, this.trailing});
+  const _SectionHeader({super.key, required this.label, this.trailing});
 
   final String label;
   final Widget? trailing;
@@ -571,10 +671,13 @@ class _ScopeChip extends StatelessWidget {
 
 /// 결과 한 줄: **어디(채널·스레드) · 누가 · 언제** + 본문 두 줄, 찾은 낱말 강조.
 class SearchResultTile extends StatelessWidget {
-  const SearchResultTile({super.key, required this.message, required this.query, this.onOpened});
+  const SearchResultTile({super.key, required this.message, required this.query, this.onOpened, this.timeOnly = false});
 
   final MessageRow message;
   final String query;
+
+  /// 날짜 머리로 묶인 목록(최신순)이면 줄에는 시각만 둔다 — 날짜는 머리가 이미 말했다.
+  final bool timeOnly;
 
   /// 눌러 열었을 때(최근 찾은 말에 넣는 자리).
   final VoidCallback? onOpened;
@@ -595,7 +698,7 @@ class SearchResultTile extends StatelessWidget {
       if (message.threadRootId != null) t.searchInThread,
     ].where((s) => s.isNotEmpty).join(' · ');
     final who = app.displayNameOf(message.authorId);
-    final when = dayLabel(t, message.createdAt);
+    final when = timeOnly ? clockLabel(message.createdAt) : dayLabel(t, message.createdAt);
     // 본문은 한 덩어리로 — 줄바꿈이 두 줄 칸을 첫 줄에서 다 먹지 않게.
     final full = displayBody(message, app.accounts, unknownMention: t.mentionUnknown, unknownAccount: t.systemAccountUnknown).replaceAll(RegExp(r'\s+'), ' ').trim();
     // 찾은 낱말이 두 줄 밖에 있으면 강조가 안 보여 왜 걸렸는지 모른다 — 첫 일치 앞에서 자른 발췌로 보인다.
@@ -722,4 +825,11 @@ List<InlineSpan> highlightSpans(String text, String query, TextStyle mark) {
     }
   }
   return spans;
+}
+
+/// 현지 시각 `HH:mm`. 최신순 결과 줄에서 날짜 머리 아래에 쓴다.
+String clockLabel(DateTime at) {
+  final l = at.toLocal();
+  String two(int v) => v.toString().padLeft(2, '0');
+  return '${two(l.hour)}:${two(l.minute)}';
 }

@@ -1267,6 +1267,29 @@ class AppState extends ChangeNotifier {
     return found;
   }
 
+  /// 찾기 결과 순서. 기본은 관련도(서버 기본과 같다), 마지막에 고른 것을 기기에 하나 기억한다.
+  SearchSort searchSort = SearchSort.relevance;
+  bool _searchSortLoaded = false;
+
+  /// 기억해 둔 순서를 한 번 읽는다. 그 사이 사람이 이미 골랐으면 읽은 값으로 덮지 않는다.
+  Future<void> loadSearchSort() async {
+    if (_searchSortLoaded) return;
+    _searchSortLoaded = true;
+    final raw = await _recentStore.loadSort();
+    final saved = SearchSort.values.where((s) => s.name == raw).firstOrNull;
+    if (saved == null || saved == searchSort) return;
+    searchSort = saved;
+    notifyListeners();
+  }
+
+  Future<void> setSearchSort(SearchSort sort) async {
+    _searchSortLoaded = true;
+    if (sort == searchSort) return;
+    searchSort = sort;
+    notifyListeners();
+    await _recentStore.saveSort(sort.name);
+  }
+
   /// 찾기 화면을 열 때 부른다. 커뮤니티가 바뀌었으면 그 커뮤니티 것으로 갈아 낀다.
   Future<void> loadRecentSearches() async {
     final key = activeKey;
@@ -1313,9 +1336,10 @@ class AppState extends ChangeNotifier {
 
   /// 메시지 찾기. 실패는 **던진다** — 할 말(연결·서버·권한)은 화면이 정한다([LoadFailure.of]).
   /// 그 사이 커뮤니티·계정이 바뀌었으면 `null` — 옛 서버의 결과를 새 커뮤니티 화면에 그리면 안 된다.
-  Future<MessagePage?> searchMessages(String query, {String? channelId, String? threadRootId, int offset = 0}) async {
+  Future<MessagePage?> searchMessages(String query,
+      {String? channelId, String? threadRootId, int offset = 0, SearchSort? sort}) async {
     final gen = _generation;
-    final page = await _api!.search(query, channelId: channelId, threadRootId: threadRootId, offset: offset);
+    final page = await _api!.search(query, channelId: channelId, threadRootId: threadRootId, offset: offset, sort: sort);
     if (gen != _generation) return null;
     return page;
   }

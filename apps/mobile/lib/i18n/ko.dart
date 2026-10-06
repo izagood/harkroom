@@ -752,6 +752,27 @@ class StringsKo implements Strings {
   String get searchShortcuts => '바로 가기';
 
   @override
+  String get searchCount => '메시지 {n}개';
+
+  @override
+  String get searchCountMore => '메시지 {n}개 이상';
+
+  @override
+  String get searchSort => '정렬';
+
+  @override
+  String get searchSortRelevance => '관련도순';
+
+  @override
+  String get searchSortRelevanceHint => '맞는 글 먼저';
+
+  @override
+  String get searchSortRecent => '최신순';
+
+  @override
+  String get searchSortRecentHint => '새 글 먼저';
+
+  @override
   String get inboxOtherCommunity => '{name} 에 나를 기다리는 것 {count}';
 
   @override

@@ -21,6 +21,12 @@ abstract class RecentSearchStore {
   /// 그 커뮤니티의 것을 지운다 — 로그아웃할 때. iOS 키체인은 앱을 지워도 남으므로 안 지우면 무엇을
   /// 찾았는지가 기기에 계속 남는다(security #1094 F1).
   Future<void> delete(String communityKey);
+
+  /// 마지막에 고른 찾기 순서(`relevance` | `recent`). **기기에 하나** — 커뮤니티·범위와 상관없다
+  /// (designer 찾기 정렬 안 A). 없거나 못 읽으면 null.
+  Future<String?> loadSort();
+
+  Future<void> saveSort(String sort);
 }
 
 class KeychainRecentSearchStore extends RecentSearchStore {
@@ -30,6 +36,26 @@ class KeychainRecentSearchStore extends RecentSearchStore {
   final _storage = const FlutterSecureStorage();
 
   String _key(String communityKey) => 'harkroom.search.recent.$communityKey';
+
+  static const _sortKey = 'harkroom.search.sort';
+
+  @override
+  Future<String?> loadSort() async {
+    try {
+      return await _storage.read(key: _sortKey, iOptions: _options);
+    } on Object {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> saveSort(String sort) async {
+    try {
+      await _storage.write(key: _sortKey, value: sort, iOptions: _options);
+    } on Object {
+      /* 최근 찾은 말과 같다 — 못 쓰면 다음에 기본값으로 연다 */
+    }
+  }
 
   @override
   Future<List<String>> load(String communityKey) async {
@@ -75,4 +101,12 @@ class MemoryRecentSearchStore extends RecentSearchStore {
 
   @override
   Future<void> delete(String communityKey) async => values.remove(communityKey);
+
+  String? sort;
+
+  @override
+  Future<String?> loadSort() async => sort;
+
+  @override
+  Future<void> saveSort(String sort) async => this.sort = sort;
 }
