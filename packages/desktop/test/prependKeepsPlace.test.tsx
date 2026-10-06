@@ -155,13 +155,14 @@ describe('앞에 붙는 줄은 「내 글 따라가기」가 아니다', () => {
     expect(v.top).toBe(100 + 100 * ROW_H);
   });
 
-  it('대조군: 끝에 새로 붙은 내 글은 여전히 따라 내려간다', async () => {
+  it('대조군: 끝에 새로 붙은 내 글(이 기기의 작성칸에서 보낸 것)은 여전히 따라 내려간다', async () => {
     open(latestEndingWithMine());
     await flush();
     act(() => { const s = useAppStore.getState(); s.upsertMessages('c1', rows(100, 'old', 500)); s.set({ highlightedMessageId: 'old50' }); });
     await flush();
     expect(view().bottomGap).toBeGreaterThan(0);
-    act(() => { useAppStore.getState().upsertMessages('c1', [msg('mine', 'c1', 2000, '내가 보냄', 'u1')]); });
+    // 작성칸에서 보낸 글은 컨트롤러가 응답 id 를 적어 둔다(`lib/ownSends.ts`, #1191 후속 d3) — 그 표식이 있어야 따라간다.
+    act(() => { const s = useAppStore.getState(); s.set({ ownSendIds: { mine: true } }); s.upsertMessages('c1', [msg('mine', 'c1', 2000, '내가 보냄', 'u1')]); });
     await flush();
     expect(view().bottomGap).toBe(0);
   });

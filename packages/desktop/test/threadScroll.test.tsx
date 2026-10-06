@@ -61,9 +61,14 @@ const lookUp = (el: HTMLElement) => {
   fireEvent.scroll(el);
 };
 
-/** 답글이 한 줄 도착한다. `author` 가 'u1' 이면 내가 쓴 것이다. */
-const arrive = (author: string) => {
+/**
+ * 답글이 한 줄 도착한다. `author` 가 'u1' 이면 내 이름의 글이다. `fromHere` 면 **이 기기의 작성칸에서 보낸**
+ * 것 — 컨트롤러 `reply` 가 응답 id 를 적어 두는 것(`lib/ownSends.ts`)을 흉내 낸다. 따라가는 것은 이것뿐이다
+ * (2026-10-06, #1191 후속 d3): 자동화·다른 기기가 내 이름으로 쓴 답글은 남의 답글과 같다.
+ */
+const arrive = (author: string, { fromHere = false } = {}) => {
   useAppStore.getState().set({
+    ...(fromHere ? { ownSendIds: { m3: true as const } } : {}),
     messages: { c1: [root(), reply('m2', 2, 'u2'), reply('m3', 3, author)] },
   });
 };
@@ -96,11 +101,31 @@ describe('스레드 스크롤', () => {
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' }));
   });
 
-  it('내가 쓴 답글은 위를 보고 있어도 따라 내려간다', async () => {
+  it('내가 작성칸에서 보낸 답글은 위를 보고 있어도 따라 내려간다', async () => {
     render(<ThreadPanel />);
     lookUp(screen.getByTestId('thread-scroll'));
 
     const scrollIntoView = spyScroll();
+    arrive('u1', { fromHere: true });
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' }));
+  });
+
+  it('내 이름이어도 이 기기에서 보낸 것이 아니면(자동화·다른 기기) 위를 읽는 화면을 옮기지 않는다', async () => {
+    render(<ThreadPanel />);
+    lookUp(screen.getByTestId('thread-scroll'));
+
+    const scrollIntoView = spyScroll();
+    arrive('u1');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it('응답보다 먼저 온 소켓 답글도 이 스레드에서 보내는 중이면 따라간다', async () => {
+    render(<ThreadPanel />);
+    lookUp(screen.getByTestId('thread-scroll'));
+
+    const scrollIntoView = spyScroll();
+    useAppStore.getState().set({ sendsInFlight: { m1: 1 } });
     arrive('u1');
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' }));
   });
