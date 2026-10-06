@@ -132,7 +132,7 @@ class ReactionRow {
 }
 
 /// 스레드 상태(서버 `statusReaction`, 루트에만). 서버는 이 상태를 루트의 **진짜 리액션**으로도 단다 —
-/// 주인 에이전트 이름으로, 끝남(done)은 없이(server 108, 2026-10-06). 화면은 이것으로 그 리액션 칸이
+/// 주인 에이전트 이름으로, 끝남(done) ✅ 까지(server 108, 2026-10-06, jaebin B1). 화면은 이것으로 그 리액션 칸이
 /// 상태 칸인지 알아볼 뿐이다 — 따로 그리지 않는다.
 class ThreadStatusMark {
   const ThreadStatusMark({required this.status, required this.emoji, required this.accountId, required this.reason});
@@ -143,9 +143,9 @@ class ThreadStatusMark {
   final String? accountId;
   final String? reason;
 
-  /// 이 리액션 칸이 서버가 단 상태 칸인가 — 상태 이모지이고 주인 에이전트가 들어 있다. 끝남은 달지 않는다.
+  /// 이 리액션 칸이 서버가 단 상태 칸인가 — 상태 이모지이고 주인 에이전트가 들어 있다.
   bool marks(ReactionRow r) =>
-      status != 'done' && accountId != null && r.emoji == emoji && r.accountIds.contains(accountId);
+      accountId != null && r.emoji == emoji && r.accountIds.contains(accountId);
 
   static ThreadStatusMark? fromJson(Object? j) {
     if (j is! Map) return null;

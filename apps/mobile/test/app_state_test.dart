@@ -326,9 +326,10 @@ void main() {
       expect(app.messages['c1']!.single.status, isNull);
     });
 
-    test('끝남(done)은 상태 칸이 아니다 — 사람 ✅ 는 보통 칸이다', () {
+    test('끝남(done) ✅ 도 주인이 들어 있으면 상태 칸이다 — 사람만 단 ✅ 는 보통 칸(B1)', () {
       const done = ThreadStatusMark(status: 'done', emoji: '✅', accountId: 'bot', reason: null);
-      expect(done.marks(const ReactionRow(emoji: '✅', accountIds: ['bot', 'a1'])), isFalse);
+      expect(done.marks(const ReactionRow(emoji: '✅', accountIds: ['bot', 'a1'])), isTrue);
+      expect(done.marks(const ReactionRow(emoji: '✅', accountIds: ['a1'])), isFalse);
       expect(ThreadStatusMark.fromJson('깨진 값'), isNull);
     });
   });
