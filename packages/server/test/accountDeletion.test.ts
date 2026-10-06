@@ -128,6 +128,44 @@ describe('DELETE /accounts/me', () => {
     expect((await del(adminToken, 'pw123456')).statusCode).toBe(409);
   });
 
+  it('deleted- 로 시작하는 이름은 사람·팀·집합 모두 쓸 수 없다', async () => {
+    const m = await createMember(app, adminToken, 'delsquat');
+    const res = await app.inject({
+      method: 'PATCH', url: '/accounts/me/handle', headers: auth(m.token), payload: { handle: 'deleted-1a2b3c4d' },
+    });
+    expect(res.statusCode).toBe(400);
+    const agent = await app.inject({
+      method: 'POST', url: '/accounts/agents', headers: auth(adminToken), payload: { handle: 'deleted-bot', displayName: 'x' },
+    });
+    expect(agent.statusCode).toBe(400);
+  });
+
+  it('지울 이름을 이미 누가 쓰고 있으면(접두를 막기 전 것) 더 긴 이름으로 물러서 지운다', async () => {
+    const m = await createMember(app, adminToken, 'delclash');
+    const squatter = await createMember(app, adminToken, 'delsquatter');
+    const short = `deleted-${m.accountId.replace(/-/g, '').slice(0, 8)}`;
+    await pool.query(`update account set handle = $2 where id = $1`, [squatter.accountId, short]);
+    expect((await del(m.token, 'pw123456')).statusCode).toBe(204);
+    const row = (await pool.query(`select handle from account where id = $1`, [m.accountId])).rows[0];
+    expect(row.handle).toBe(`deleted-${m.accountId.replace(/-/g, '').slice(0, 24)}`);
+  });
+
+  it('아직 나가지 않은 예약 메시지는 취소된다', async () => {
+    const m = await createMember(app, adminToken, 'delsched');
+    const dm = (await app.inject({
+      method: 'POST', url: '/dms', headers: auth(m.token), payload: { accountIds: [adminId] },
+    })).json().id as string;
+    const sched = await app.inject({
+      method: 'POST', url: `/channels/${dm}/scheduled`, headers: auth(m.token),
+      payload: { body: '나중에', sendAt: new Date(Date.now() + 3600_000).toISOString() },
+    });
+    expect(sched.statusCode).toBeLessThan(300);
+    expect((await del(m.token, 'pw123456')).statusCode).toBe(204);
+    const left = await pool.query(
+      `select count(*)::int as n from scheduled_message where author_id = $1 and canceled_at is null`, [m.accountId]);
+    expect(left.rows[0].n).toBe(0);
+  });
+
   it('에이전트(PAT)는 이 길로 자기를 지울 수 없다', async () => {
     const a = await createAgent(app, adminToken, 'delbot');
     expect((await del(a.pat, 'x')).statusCode).toBe(403);

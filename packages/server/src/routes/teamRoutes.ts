@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
+import { notReservedHandle } from '../services/reservedHandles.js';
 import { HANDLE_PATTERN, INVOKE_SCOPES } from '@harkroom/shared';
 import {
   listTeams, getTeam, getTeamByName, createTeam, updateTeamName, deleteTeam,
@@ -19,7 +20,7 @@ import { assertChannelVisible, channelMembershipGate } from '../services/channel
  * 리터럴로 다시 적으면 계정 쪽 문법이 바뀔 때 한쪽만 따라가고, `@foo` 가 어느 쪽으로
  * 갈리는지 알 수 없게 된다. 멘션 해석 자체는 이 작업의 범위가 아니고, 이름 예약만 한다.
  */
-const nameSchema = z.string().regex(new RegExp(`^${HANDLE_PATTERN}$`));
+const nameSchema = z.string().regex(new RegExp(`^${HANDLE_PATTERN}$`)).refine(...notReservedHandle);
 
 export async function registerTeamRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   const teamParam = z.object({ id: z.string().uuid() });

@@ -1,6 +1,7 @@
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { randomBytes } from 'node:crypto';
 import { revokeAllPats } from './agents.js';
+import { DELETED_HANDLE_PREFIX } from './reservedHandles.js';
 
 /**
  * 사람이 **자기 계정을 지운다**(`DELETE /accounts/me`). 되돌리는 길은 없다.
@@ -27,22 +28,37 @@ export type AccountDeletionBlock =
   | { code: 'last_admin' };
 
 export type AccountDeletionResult =
-  | { ok: true; handle: string; avatarStorageKey: string | null }
+  | { ok: true; handle: string; avatarStorageKey: string | null; revokedOperatorIds: string[] }
   | { ok: false; block: AccountDeletionBlock };
 
 export async function deleteHumanAccount(pool: Pool, accountId: string): Promise<AccountDeletionResult> {
   const client = await pool.connect();
   try {
     await client.query('begin');
-    // 같은 사람의 두 요청·관리자 둘의 동시 삭제가 서로의 판정을 못 보고 둘 다 지나가지 않게 잠근다.
-    const me = await client.query<{ handle: string; role: string; avatarStorageKey: string | null }>(
-      `select a.handle, a.role, att.storage_key as "avatarStorageKey"
+    const roleRow = await client.query<{ role: string }>(
+      `select role from account where id = $1 and kind = 'human' and deleted_at is null`, [accountId]);
+    const role = roleRow.rows[0]?.role;
+    if (!role) throw new Error('account not found');
+    if (role === 'owner' || role === 'admin') {
+      // 관리자 행을 **내 행까지 한 쿼리로, id 순서로** 잠근다. 두 관리자가 동시에 자기를 지울 때 각자 제 행을
+      // 먼저 잡고 상대를 기다리면 교착(500)이 된다 — 같은 순서로 잡으면 한쪽이 기다렸다가 409 를 받는다.
+      const admins = await client.query<{ id: string }>(
+        `select id from account
+          where kind = 'human' and role in ('owner', 'admin') and deleted_at is null and disabled_at is null
+          order by id for update`);
+      if (!admins.rows.some((r) => r.id !== accountId)) {
+        await client.query('rollback');
+        return { ok: false, block: { code: 'last_admin' } };
+      }
+    }
+    // 같은 사람의 두 요청이 서로의 판정을 못 보고 둘 다 지나가지 않게 잠근다.
+    const me = await client.query<{ avatarStorageKey: string | null }>(
+      `select att.storage_key as "avatarStorageKey"
          from account a left join attachment att on att.id = a.avatar_attachment_id
-        where a.id = $1 and a.kind = 'human' and a.deleted_at is null
+        where a.id = $1 and a.deleted_at is null
         for update of a`, [accountId]);
-    const row = me.rows[0];
-    if (!row) throw new Error('account not found');
-    const { handle, role, avatarStorageKey } = row;
+    if (!me.rowCount) throw new Error('account not found');
+    const avatarStorageKey = me.rows[0]?.avatarStorageKey ?? null;
 
     const owned = await client.query<{ id: string; handle: string }>(
       `select a.id, a.handle from agent_config c join account a on a.id = c.account_id
@@ -53,39 +69,55 @@ export async function deleteHumanAccount(pool: Pool, accountId: string): Promise
       return { ok: false, block: { code: 'owns_agents', agents: owned.rows } };
     }
 
-    if (role === 'owner' || role === 'admin') {
-      // 관리자 행들을 잠그고 센다 — 두 관리자가 동시에 자기를 지우면 한쪽만 지나가야 한다.
-      const others = await client.query(
-        `select 1 from account
-          where kind = 'human' and id <> $1 and role in ('owner', 'admin')
-            and deleted_at is null and disabled_at is null
-          for update`, [accountId]);
-      if (!others.rowCount) {
-        await client.query('rollback');
-        return { ok: false, block: { code: 'last_admin' } };
-      }
-    }
-
-    const short = accountId.replace(/-/g, '').slice(0, 8);
+    const handle = await freeDeletedHandle(client, accountId);
     await client.query(
       `update account
           set deleted_at = now(), disabled_at = coalesce(disabled_at, now()),
               handle = $2, display_name = $4, avatar_attachment_id = null,
               login_id = $3, password_hash = null
         where id = $1`,
-      [accountId, `deleted-${short}`, `deleted-${randomBytes(16).toString('hex')}`, DELETED_DISPLAY_NAME]);
+      [accountId, handle, `${DELETED_HANDLE_PREFIX}${randomBytes(16).toString('hex')}`, DELETED_DISPLAY_NAME]);
     await client.query(`delete from push_device where account_id = $1`, [accountId]);
     await client.query(`delete from session where account_id = $1`, [accountId]);
     await revokeAllPats(client, accountId);
     // 오퍼레이터 토큰은 주인 계정을 보지 않고 선다 — 여기서 폐기하지 않으면 지운 사람의 기기가 계속 붙는다.
+    // 붙어 있는 소켓은 붙을 때만 인증하므로 호출부가 커밋 뒤에 끊는다(`revokedOperatorIds`).
     await client.query(`delete from agent_assignment where operator_id in (select id from operator where owner_account_id = $1)`, [accountId]);
-    await client.query(`update operator set revoked_at = now() where owner_account_id = $1 and revoked_at is null`, [accountId]);
+    const ops = await client.query<{ id: string }>(
+      `update operator set revoked_at = now() where owner_account_id = $1 and revoked_at is null returning id`, [accountId]);
+    // 예약 메시지는 발송 때 작성자를 다시 보지 않는다 — 두면 지운 사람 이름으로 글이 나가고 멘션으로 에이전트까지 부른다.
+    await client.query(
+      `update scheduled_message set canceled_at = now()
+        where author_id = $1 and sent_message_id is null and failed_reason is null and canceled_at is null`, [accountId]);
+    // 자동화는 실행 때 owner_deleted 로 걸러지지만, 수신 키를 남기면 webhook 이 run 을 계속 쌓는다.
+    await client.query(
+      `update automation set deleted_at = now(), enabled = false, ingress_token_hash = null, ingress_secret_enc = null
+        where owner_id = $1 and deleted_at is null`, [accountId]);
+    // 그 사람 혼자의 자격증명(비밀·API 연결)은 대화 기록이 아니다 — 남길 이유가 없다(grant 는 cascade).
+    await client.query(`delete from api_connector where owner_account_id = $1`, [accountId]);
+    await client.query(`delete from secret where owner_account_id = $1`, [accountId]);
     await client.query('commit');
-    return { ok: true, handle, avatarStorageKey };
+    return { ok: true, handle, avatarStorageKey, revokedOperatorIds: ops.rows.map((r) => r.id) };
   } catch (err) {
     await client.query('rollback').catch(() => {});
     throw err;
   } finally {
     client.release();
   }
+}
+
+/**
+ * 지운 계정의 handle. 기본은 `deleted-<id 앞 8자>` 이고, 그 이름이 계정·팀·집합 어디에 있으면(접두를
+ * 막기 전에 만들어진 것) 더 긴 꼬리로 물러선다 — 삭제가 이름 하나 때문에 영영 막히면 안 된다.
+ */
+async function freeDeletedHandle(client: PoolClient, accountId: string): Promise<string> {
+  const hex = accountId.replace(/-/g, '');
+  for (const candidate of [`${DELETED_HANDLE_PREFIX}${hex.slice(0, 8)}`, `${DELETED_HANDLE_PREFIX}${hex.slice(0, 24)}`]) {
+    const taken = await client.query(
+      `select 1 from account where lower(handle) = lower($1) and id <> $2
+       union all select 1 from agent_team where lower(name) = lower($1)
+       union all select 1 from handle_group where lower(handle) = lower($1)`, [candidate, accountId]);
+    if (!taken.rowCount) return candidate;
+  }
+  return `${DELETED_HANDLE_PREFIX}${randomBytes(12).toString('hex')}`;
 }

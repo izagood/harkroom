@@ -6,6 +6,8 @@ import { recordAudit } from '../audit.js';
 import type { RateLimiter, RateLimitRule } from '../rateLimit.js';
 import type { StorageBackend } from '../storage/local.js';
 import { deleteHumanAccount } from '../services/accountDeletion.js';
+import { emitEvent } from '../events.js';
+import type { OperatorHub } from '../ws/operatorHub.js';
 
 /**
  * `DELETE /accounts/me` — 사람이 이 워크스페이스에서 자기 계정을 지운다(서비스 주석 참고).
@@ -18,7 +20,7 @@ export const ACCOUNT_DELETE_RULE: RateLimitRule = { windowMs: 15 * 60_000, max: 
 
 export async function registerAccountDeletionRoutes(
   app: FastifyInstance, pool: Pool, storage: StorageBackend,
-  opts: { limiter: RateLimiter },
+  opts: { limiter: RateLimiter; operatorHub: OperatorHub },
 ): Promise<void> {
   app.delete('/accounts/me', { preHandler: app.requireAccount }, async (req, reply) => {
     const me = req.account!;
@@ -51,6 +53,11 @@ export async function registerAccountDeletionRoutes(
       });
     }
     opts.limiter.reset(`accountDelete:${me.id}`);
+    // 폐기한 오퍼레이터의 소켓을 끊는다 — 오퍼레이터 소켓은 붙을 때만 인증한다(`DELETE /operators/:id` 와 같다).
+    for (const operatorId of result.revokedOperatorIds) {
+      opts.operatorHub.disconnect(operatorId, 4401, 'operator revoked');
+      emitEvent({ type: 'operator.changed', operatorId, audience: 'all' });
+    }
     if (result.avatarStorageKey) {
       await storage.remove(result.avatarStorageKey).catch((err) => req.log.warn({ err }, 'avatar file removal failed'));
     }

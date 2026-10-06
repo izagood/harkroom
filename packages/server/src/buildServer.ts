@@ -620,7 +620,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // 아바타는 같은 스토리지를 쓴다 — 파일 저장소를 하나로 유지하기 위해서다(avatarRoutes 주석).
   await registerAvatarRoutes(app, deps.pool, storage);
   // 계정 삭제는 아바타 파일까지 지운다 — 같은 스토리지를 받는다. 비밀번호 재확인 시도는 계정마다 센다.
-  await registerAccountDeletionRoutes(app, deps.pool, storage, { limiter });
+  await registerAccountDeletionRoutes(app, deps.pool, storage, { limiter, operatorHub });
   await registerWorkspaceRoutes(app, deps.pool, storage);
   await registerDirectoryRoutes(app, deps.pool, deps.projection);
   await registerCollabRoutes(app, deps.pool, deps.projection);
