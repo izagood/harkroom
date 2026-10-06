@@ -61,6 +61,12 @@ export interface CreateResult {
   url: string;
   /** **한 번만 나온다.** 위 `create` 주석 참고. */
   claimToken: string;
+  /**
+   * 비밀 보관소 복구 키. **한 번만 나오고, 저장하지 않는다**(`RecoveryKeyStep`). `claimToken` 과 달리
+   * `pendingWorkspace` 에도 넣지 않는다 — 그쪽은 이어받기 위해 남기지만, 이것은 만든 사람이 지금 받아 두는
+   * 것이다. 옛 gate 는 싣지 않는다(그때는 화면을 건너뛴다).
+   */
+  recoveryKey?: string;
 }
 
 export interface JobResult {

@@ -219,3 +219,96 @@ describe('ConnectScreen — 호스팅 워크스페이스 만들기', () => {
     expect(screen.queryByRole('button', { name: /Create a hosted community/ })).toBeNull();
   });
 });
+
+describe('ConnectScreen — 복구 키는 만든 직후 한 번만 (R1)', () => {
+  // 모양만 맞춘 가짜 키다. 글자 그대로 적으면 비밀 검사(gitleaks)가 진짜 키로 읽는다.
+  const KEY = ['hrk1', 'mine', 'k1', 'A'.repeat(43), 'abcd'].join('.');
+
+  function stubGate(withKey: boolean) {
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith('/api/workspaces')) {
+        return new Response(JSON.stringify({
+          jobId: 'job-k', name: 'mine', url: WS, claimToken: 'claim_k', ...(withKey ? { recoveryKey: KEY } : {}),
+        }), { status: 202 });
+      }
+      return new Response(JSON.stringify({ status: 'waiting_ready', done: false }), { status: 200 });
+    }));
+  }
+
+  it('보여 주고, 저장 확인 전에는 넘어가지 않고, 어디에도 남기지 않는다', async () => {
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((m) => vi.spyOn(console, m));
+    stubGate(true);
+    render(<ConnectScreen onConnected={vi.fn()} />);
+    fillCreateForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
+
+    expect((await screen.findByTestId('recovery-key-value')).textContent).toBe(KEY);
+    // 진행 화면·공용 버튼은 아직 없다 — 키를 받기 전에 넘어가지 않는다.
+    expect(screen.queryByRole('button', { name: 'Waiting…' })).toBeNull();
+    const cont = screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement;
+    expect(cont.disabled).toBe(true);
+
+    // 보관본은 클레임 토큰만 든다. 키는 localStorage 어디에도 없다.
+    expect(pendingWorkspace.read()?.claimToken).toBe('claim_k');
+    expect(JSON.stringify({ ...localStorage })).not.toContain('hrk1.');
+
+    fireEvent.click(screen.getByRole('checkbox'));
+    expect(cont.disabled).toBe(false);
+    fireEvent.click(cont);
+
+    expect(screen.queryByTestId('recovery-key-step')).toBeNull();
+    expect(document.body.textContent).not.toContain('hrk1.');
+    expect(await screen.findByRole('button', { name: 'Waiting…' })).toBeTruthy();
+    for (const s of spies) expect(JSON.stringify(s.mock.calls)).not.toContain('hrk1.');
+    for (const s of spies) s.mockRestore();
+  });
+
+  it('앱을 다시 열면 키는 다시 나오지 않는다(이어받기는 클레임 토큰만)', async () => {
+    stubGate(true);
+    render(<ConnectScreen onConnected={vi.fn()} />);
+    fillCreateForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
+    await screen.findByTestId('recovery-key-value');
+    cleanup();
+    render(<ConnectScreen onConnected={vi.fn()} />);
+    expect(await screen.findByText(WS)).toBeTruthy();
+    expect(screen.queryByTestId('recovery-key-step')).toBeNull();
+  });
+
+  it('옛 gate(키 없음)면 이 단계를 건너뛴다', async () => {
+    stubGate(false);
+    render(<ConnectScreen onConnected={vi.fn()} />);
+    fillCreateForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
+    expect(await screen.findByRole('button', { name: 'Waiting…' })).toBeTruthy();
+    expect(screen.queryByTestId('recovery-key-step')).toBeNull();
+  });
+
+  it('복사한 키는 60초 뒤 클립보드가 아직 그 값일 때만 지운다', async () => {
+    let clip = '';
+    const writeText = vi.fn(async (t: string) => { clip = t; });
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText, readText: async () => clip } });
+    stubGate(true);
+    render(<ConnectScreen onConnected={vi.fn()} />);
+    fillCreateForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
+    await screen.findByTestId('recovery-key-value');
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(clip).toBe(KEY);
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(clip).toBe(KEY);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(clip).toBe('');
+
+    // 그 사이 사람이 다른 것을 복사했으면 건드리지 않는다.
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+    await vi.advanceTimersByTimeAsync(0);
+    clip = 'something else';
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(clip).toBe('something else');
+  });
+});
