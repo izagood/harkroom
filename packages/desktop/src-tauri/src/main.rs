@@ -13,6 +13,7 @@ mod daemon_client;
 mod external_link;
 mod login_path;
 mod notification;
+mod concealed_clipboard;
 
 use std::collections::HashMap;
 
@@ -886,6 +887,7 @@ fn main() {
             login_path,
             notification::notification_send,
             app_version,
+            concealed_clipboard::clipboard_write_concealed,
             claude_accounts_list,
             claude_accounts_configure,
             claude_account_login_start,

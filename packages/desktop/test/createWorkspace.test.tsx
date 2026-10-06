@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { ConnectScreen } from '../src/screens/ConnectScreen';
 import { pendingWorkspace } from '../src/lib/gate';
+import { setConcealedClipboardInvoke } from '../src/lib/concealedClipboard';
 
 const GATE = 'https://gate.example.com';
 const WS = 'https://mine.example.com';
@@ -285,30 +286,67 @@ describe('ConnectScreen — 복구 키는 만든 직후 한 번만 (R1)', () => 
     expect(screen.queryByTestId('recovery-key-step')).toBeNull();
   });
 
-  it('복사한 키는 60초 뒤 클립보드가 아직 그 값일 때만 지운다', async () => {
-    let clip = '';
-    const writeText = vi.fn(async (t: string) => { clip = t; });
-    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText, readText: async () => clip } });
+  it('키 단계에는 빠져나가는 길이 Continue 하나다 — Discard·Cancel 이 없다', async () => {
+    // `add` 겹창에는 만들기 진입이 없어 키 단계에 닿지 않는다 — Cancel 숨김은 방어로만 두고, 여기서는 Discard 를 본다.
     stubGate(true);
     render(<ConnectScreen onConnected={vi.fn()} />);
     fillCreateForm();
     fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
     await screen.findByTestId('recovery-key-value');
+    expect(screen.queryByRole('button', { name: /Discard/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Back to sign in/ })).toBeNull();
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    // 키 단계를 지나면 원래대로 버릴 수 있다.
+    expect(await screen.findByRole('button', { name: /Discard/ })).toBeTruthy();
+  });
 
-    vi.useFakeTimers();
-    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(clip).toBe(KEY);
-    await vi.advanceTimersByTimeAsync(59_000);
-    expect(clip).toBe(KEY);
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(clip).toBe('');
+  it('복사는 Rust 명령(감춤 표지·60초 비우기)으로 하고, 웹뷰는 키를 들고 기다리지 않는다', async () => {
+    const calls: [string, Record<string, unknown> | undefined][] = [];
+    setConcealedClipboardInvoke(async (cmd, args) => { calls.push([cmd, args]); });
+    const writeText = vi.fn();
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    try {
+      stubGate(true);
+      render(<ConnectScreen onConnected={vi.fn()} />);
+      fillCreateForm();
+      fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
+      await screen.findByTestId('recovery-key-value');
+      fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+      expect(await screen.findByText(/cleared in 60 seconds/)).toBeTruthy();
+      expect(calls).toEqual([['clipboard_write_concealed', { text: KEY }]]);
+      expect(writeText).not.toHaveBeenCalled(); // 웹 클립보드로 따로 쓰지 않는다
+    } finally {
+      setConcealedClipboardInvoke(null);
+    }
+  });
 
-    // 그 사이 사람이 다른 것을 복사했으면 건드리지 않는다.
+  it('Rust 명령이 없으면 일반 복사로 물러나고 "비운다"고 약속하지 않는다', async () => {
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    stubGate(true);
+    render(<ConnectScreen onConnected={vi.fn()} />);
+    fillCreateForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
+    await screen.findByTestId('recovery-key-value');
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
-    await vi.advanceTimersByTimeAsync(0);
-    clip = 'something else';
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(clip).toBe('something else');
+    expect(await screen.findByText(/Clear your clipboard once you have saved it/)).toBeTruthy();
+    expect(writeText).toHaveBeenCalledWith(KEY);
+    expect(document.body.textContent).not.toMatch(/cleared in 60 seconds/);
+  });
+
+  it('파일로 저장하면 어디에 평문으로 남았는지 말한다', async () => {
+    const created = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:x');
+    const revoked = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    stubGate(true);
+    render(<ConnectScreen onConnected={vi.fn()} />);
+    fillCreateForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Create community' }));
+    await screen.findByTestId('recovery-key-value');
+    fireEvent.click(screen.getByRole('button', { name: 'Save to file' }));
+    expect(click).toHaveBeenCalled();
+    expect(screen.getByText(/Saved to Downloads as harkroom-recovery-key-mine\.txt/)).toBeTruthy();
+    click.mockRestore(); created.mockRestore(); revoked.mockRestore();
   });
 });

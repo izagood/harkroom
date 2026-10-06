@@ -442,6 +442,9 @@ export function ConnectScreen(props: ConnectScreenProps) {
             )}
           </div>
         ) : authMode === 'create' ? (
+          // 복구 키 단계에서는 빠져나가는 길이 Continue 하나다 — 여기서 버리면 다시 볼 수 없는 키가
+          // 클레임 보관본과 함께 사라진다(designer F1). 겹창의 Cancel 도 같은 이유로 숨긴다(아래).
+          recoveryKey ? null : (
           <button
             type="button"
             className="w-full text-meta text-fg-subtle underline"
@@ -454,6 +457,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
           >
             {pending ? 'Discard and go back to sign in' : 'Back to sign in'}
           </button>
+          )
         ) : (
           <button
             type="button"
@@ -463,7 +467,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
             Back to sign in
           </button>
         )}
-        {props.mode === 'add' && (
+        {props.mode === 'add' && !recoveryKey && (
           <button
             type="button"
             className="w-full rounded-row border border-border py-1.5 text-meta font-medium hover:bg-surface"
