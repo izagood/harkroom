@@ -3025,6 +3025,11 @@ export const en = {
   'inbox.board.empty.other': 'Nothing here',
   /** 처음부터 아무것도 없을 때(걸러 낸 것과 다르다). */
   'inbox.board.empty.all': 'No work here yet',
+  'inbox.board.scope.label': 'Show',
+  'inbox.board.scope.all': 'All channels',
+  'inbox.board.scope.opened': 'Started by me',
+  'inbox.board.scope.participated': 'Involved',
+  'inbox.board.scope.empty': 'Nothing in this view',
   /** "N일째" — 이 열에 들어오게 한 말부터 센다. */
   'inbox.board.days': '{count}d waiting',
   /** 카드에 쌓인 말의 수 — 같은 일에서 온 것이 여럿이면 한 장에 모인다는 표시. */

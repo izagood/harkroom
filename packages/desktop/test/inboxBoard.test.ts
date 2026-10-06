@@ -4,7 +4,7 @@
 // 순수 함수다. 화면이 그 결과를 그리는지는 `inbox.test.tsx` 가 잰다.
 import { describe, it, expect } from 'vitest';
 import type { InboxEntry, InboxThreadState, MessageRow } from '@harkroom/shared';
-import { buildBoard, oneSentence, daysWaiting, laterUntilLabel, RECENT_MS, type BoardInput } from '../src/lib/inboxBoard';
+import { buildBoard, filterBoard, oneSentence, daysWaiting, laterUntilLabel, RECENT_MS, type BoardInput } from '../src/lib/inboxBoard';
 import { msg } from './helpers/fakeApi';
 
 const ME = 'me';
@@ -361,5 +361,29 @@ describe('「내 작업」 S2 — inbox 밖의 머리는 항목 없는 카드다
   it('남이 연 스레드에서 내가 말만 얹었어도 🚨 은 기다림이다 — 나를 부르지 않았다', () => {
     const cards = board([], [head('r1', { statusReaction: sr('stuck') })]);
     expect(cards[0]!.column).toBe('blocked');
+  });
+});
+
+describe('「내 작업」 W2b — 필터는 서버가 준 머리 안에서만 거른다', () => {
+  const heads = [
+    head('opened', { authorId: ME }),
+    head('said', { participantIds: [BOT, ME] }),
+    head('other', { participantIds: [BOT] }),
+  ];
+  const cards = board(
+    [entry(1, { threadRootId: 'opened' }), entry(2, { threadRootId: 'said' }), entry(3, { threadRootId: 'other' }), entry(4, { threadRootId: 'gone' })],
+    null,
+  );
+  const ids = (scope: Parameters<typeof filterBoard>[2]) => filterBoard(cards, heads, scope, ME).map((c) => c.rootId).sort();
+
+  it('모든 채널은 그대로다 — 머리가 없는 카드도', () => {
+    expect(ids('all')).toEqual(['gone', 'opened', 'other', 'said']);
+  });
+  it('내가 연 것 ⊂ 참여한 것, 머리가 없으면 어느 쪽에도 안 든다', () => {
+    expect(ids('opened')).toEqual(['opened']);
+    expect(ids('participated')).toEqual(['opened', 'said']);
+  });
+  it('나를 모르면 걸러진 범위는 비어 있다', () => {
+    expect(filterBoard(cards, heads, 'opened', null)).toEqual([]);
   });
 });

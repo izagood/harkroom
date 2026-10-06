@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Identity } from './Identity';
 import type { InboxEntry, InboxThreadState, MessageRow } from '@harkroom/shared';
-import { buildBoard, daysWaiting, laterUntilLabel, mineCount, type BoardCard, type BoardColumn, type BoardFold } from '../lib/inboxBoard';
+import { buildBoard, daysWaiting, laterUntilLabel, mineCount, filterBoard, BOARD_SCOPES, type BoardCard, type BoardColumn, type BoardFold, type BoardScope } from '../lib/inboxBoard';
 import { bodyWithHandles } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
@@ -50,6 +50,12 @@ function tomorrowMorning(nowMs: number): string {
 const LANE_COLUMNS: readonly Exclude<BoardColumn, 'mine'>[] = ['active', 'blocked', 'done'];
 /** 띠에 펼쳐 두는 장수. 넘치면 "+N개 더" 로 접는다 — 띠가 화면을 다 먹으면 세 열이 사라진다. */
 const BAND_LIMIT = 5;
+
+const SCOPE_KEY = {
+  all: 'inbox.board.scope.all',
+  opened: 'inbox.board.scope.opened',
+  participated: 'inbox.board.scope.participated',
+} as const satisfies Record<BoardScope, string>;
 /**
  * 열 머리의 상태 이모지 — 채널의 스레드 상태 리액션(088)과 **같은 말**이다. 장식이라 읽지 않는다
  * (`aria-hidden`); 구획 이름은 글자 키가 진다.
@@ -239,11 +245,22 @@ export function Inbox({ open, onClose }: Props) {
     }),
     [entries, threads, threadStates, me, accounts],
   );
+  /**
+   * 필터(W2b). 서버가 준 머리 안에서만 거른다(`filterBoard`). **세 열에만 건다** — 🙋 내 차례 띠는
+   * 언제나 전체다(designer #1230): 이 화면이 놓치지 않게 하려는 단 하나가 필터로 숨으면 안 되고,
+   * 그래야 머리글의 「나를 기다리는 일 N」 = 띠 = 배지(`mineCount` 주석)가 늘 같다.
+   */
+  const [scope, setScope] = useState<BoardScope>('all');
+  const laneCards = useMemo(
+    () => filterBoard(cards.filter((c) => c.column !== 'mine'), threads, scope, me?.id ?? null),
+    [cards, threads, scope, me],
+  );
   const byColumn = useMemo(() => {
     const out: Record<BoardColumn, BoardCard[]> = { mine: [], blocked: [], active: [], done: [] };
-    for (const c of cards) out[c.column].push(c);
+    for (const c of cards) if (c.column === 'mine') out.mine.push(c);
+    for (const c of laneCards) out[c.column].push(c);
     return out;
-  }, [cards]);
+  }, [cards, laneCards]);
 
   /** 쓰다 만 초안. 보드 밖 한 줄이다 — 남이 나를 부른 것이 아니라 내가 쓰다 만 것이라 열이 없다. */
   const draftKeys = useMemo(
@@ -439,23 +456,45 @@ export function Inbox({ open, onClose }: Props) {
                  text-fg outline-none focus-visible:outline-solid focus-visible:outline-2
                  focus-visible:outline-accent focus-visible:-outline-offset-2"
     >
-      <div className="flex items-center gap-2 border-b border-border bg-surface-raised p-3">
-        <span className="font-semibold">{t('inbox.pane.title')}</span>
-        {/* **숫자는 내 차례 하나뿐이다** — 0 이 될 수 있는 수만 뜻이 있다. */}
-        {load.kind === 'ready' && (
-          <span data-testid="inbox-mine-count" className={`text-meta ${mine > 0 ? 'font-medium text-state-turn' : 'text-fg-subtle'}`}>
-            {t('inbox.board.mineCount', { count: mine })}
-          </span>
+      {/* 머리글은 두 줄이다 — 첫 줄 제목·수·✕, 둘째 줄 필터(designer #1230). 스레드를 열어 보드가
+          좁아지면 한 줄에 다 못 서서 알약이 세로로 쌓였다. 스크롤 밖이라 내려도 늘 보인다(n4: sticky). */}
+      <div className="flex flex-col gap-2 border-b border-border bg-surface-raised p-3">
+        <div className="flex items-center gap-2">
+          <span className="font-semibold">{t('inbox.pane.title')}</span>
+          {/* **숫자는 내 차례 하나뿐이다** — 0 이 될 수 있는 수만 뜻이 있다. */}
+          {load.kind === 'ready' && (
+            <span data-testid="inbox-mine-count" className={`text-meta ${mine > 0 ? 'font-medium text-state-turn' : 'text-fg-subtle'}`}>
+              {t('inbox.board.mineCount', { count: mine })}
+            </span>
+          )}
+          <button
+            onClick={onClose}
+            className="ml-auto rounded-row px-2 py-1 text-fg-muted hover:bg-surface-hover
+                       focus-visible:outline-solid focus-visible:outline-2
+                       focus-visible:outline-accent"
+            aria-label={t('inbox.pane.close')}
+          >
+            ✕
+          </button>
+        </div>
+        {/* 필터 — 머리글 둘째 줄. */}
+        {load.kind === 'ready' && cards.length > 0 && (
+          <div role="group" aria-label={t('inbox.board.scope.label')} data-testid="inbox-scope" className="flex flex-wrap items-center gap-1">
+            {BOARD_SCOPES.map((s) => (
+              <button
+                key={s}
+                type="button"
+                data-testid={`inbox-scope-${s}`}
+                aria-pressed={scope === s}
+                onClick={() => setScope(s)}
+                className={`rounded-full border px-2 py-0.5 text-meta focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-accent ${
+                  scope === s ? 'border-transparent bg-accent-surface text-accent' : 'border-border text-fg-muted hover:bg-surface-hover'}`}
+              >
+                {t(SCOPE_KEY[s])}
+              </button>
+            ))}
+          </div>
         )}
-        <button
-          onClick={onClose}
-          className="ml-auto rounded-row px-2 py-1 text-fg-muted hover:bg-surface-hover
-                     focus-visible:outline-solid focus-visible:outline-2
-                     focus-visible:outline-accent"
-          aria-label={t('inbox.pane.close')}
-        >
-          ✕
-        </button>
       </div>
       {/* 실패는 보드 위에 남긴다 — 조회 실패를 빈 보드로 삼키지 않는다. */}
       {load.kind === 'error' && (
@@ -522,46 +561,52 @@ export function Inbox({ open, onClose }: Props) {
             );
           })()}
           {/* 세 열은 **보드 자기 폭**으로 편다(`@container` · designer #1219). 창 폭(`lg:`)으로 펴면 카드를
-              눌러 옆에 스레드가 선 — 이 화면의 기본 흐름 — 좁은 보드에서도 세 열을 고집해 한 열이 70px
+              눌러 옆에 스레드가 서면 — 이 화면의 기본 흐름이다 — 좁은 보드에서도 세 열을 고집해 한 열이 70px
               남짓까지 줄었다. `@3xl`(48rem)은 한 열이 15rem 아래로 내려가지 않는 자리다. */}
-          <div data-testid="inbox-lanes" className="flex flex-col gap-3 @3xl:grid @3xl:grid-cols-3 @3xl:items-start @3xl:gap-2">
-            {LANE_COLUMNS.map((col) => {
-              const shown = byColumn[col].filter((c) => c.fold === null);
-              return (
-                <section
-                  key={col}
-                  data-testid={`inbox-col-${col}`}
-                  aria-label={t(COLUMN_KEY[col])}
-                  className="flex min-w-0 flex-col"
-                >
-                  {/* 이모지는 채널의 상태 리액션과 같은 말이다. 수는 띠 하나만 센다 — 다른 열은 줄지 않는 숫자다. */}
-                  <h3 className="flex items-baseline gap-1.5 px-1 pb-1 text-meta font-medium text-fg-subtle">
-                    <span aria-hidden="true">{COLUMN_EMOJI[col]}</span>
-                    <span>{t(COLUMN_KEY[col])}</span>
-                  </h3>
-                  <div className="flex flex-col gap-1.5">
-                    {shown.length === 0
-                      ? <p className="px-1 text-meta text-fg-subtle">{t('inbox.board.empty.other')}</p>
-                      : <ul className="flex flex-col gap-1.5">{shown.map(cardView)}</ul>}
-                    {/* 접힘 줄 — 열 맨 아래. 펼치면 같은 카드 모양으로 선다. testid 에 열을 넣는다 — 나중에는
-                        어느 열(과 띠)에서나 접히므로 열 없이 두면 한 화면에 같은 id 가 여럿 선다(security #1219). */}
-                    {COLUMN_FOLDS[col].map((fold) => {
-                      const folded = byColumn[col].filter((c) => c.fold === fold);
-                      if (folded.length === 0) return null;
-                      return (
-                        <details key={fold} data-testid={`inbox-fold-${col}-${fold}`} className="px-1">
-                          <summary className="cursor-pointer text-meta text-fg-subtle hover:text-fg-muted">
-                            {t(FOLD_KEY[fold], { count: folded.length })}
-                          </summary>
-                          <ul className="mt-1.5 flex flex-col gap-1.5">{folded.map(cardView)}</ul>
-                        </details>
-                      );
-                    })}
-                  </div>
-                </section>
-              );
-            })}
-          </div>
+          {/* 거른 세 열이 다 비었으면 세 열 자리에 한 줄로 말한다 — 빈 열 셋이 서면 다른 범위의 일까지
+              없다고 읽힌다. 띠는 거르지 않으므로 이 줄은 띠 아래다. */}
+          {scope !== 'all' && laneCards.length === 0 ? (
+            <p data-testid="inbox-scope-empty" className="px-1 text-meta text-fg-subtle">{t('inbox.board.scope.empty')}</p>
+          ) : (
+            <div data-testid="inbox-lanes" className="flex flex-col gap-3 @3xl:grid @3xl:grid-cols-3 @3xl:items-start @3xl:gap-2">
+              {LANE_COLUMNS.map((col) => {
+                const shown = byColumn[col].filter((c) => c.fold === null);
+                return (
+                  <section
+                    key={col}
+                    data-testid={`inbox-col-${col}`}
+                    aria-label={t(COLUMN_KEY[col])}
+                    className="flex min-w-0 flex-col"
+                  >
+                    {/* 이모지는 채널의 상태 리액션과 같은 말이다. 수는 띠 하나만 센다 — 다른 열은 줄지 않는 숫자다. */}
+                    <h3 className="flex items-baseline gap-1.5 px-1 pb-1 text-meta font-medium text-fg-subtle">
+                      <span aria-hidden="true">{COLUMN_EMOJI[col]}</span>
+                      <span>{t(COLUMN_KEY[col])}</span>
+                    </h3>
+                    <div className="flex flex-col gap-1.5">
+                      {shown.length === 0
+                        ? <p className="px-1 text-meta text-fg-subtle">{t('inbox.board.empty.other')}</p>
+                        : <ul className="flex flex-col gap-1.5">{shown.map(cardView)}</ul>}
+                      {/* 접힘 줄 — 열 맨 아래. 펼치면 같은 카드 모양으로 선다. testid 에 열을 넣는다 — 나중에는
+                          어느 열(과 띠)에서나 접히므로 열 없이 두면 한 화면에 같은 id 가 여럿 선다(security #1219). */}
+                      {COLUMN_FOLDS[col].map((fold) => {
+                        const folded = byColumn[col].filter((c) => c.fold === fold);
+                        if (folded.length === 0) return null;
+                        return (
+                          <details key={fold} data-testid={`inbox-fold-${col}-${fold}`} className="px-1">
+                            <summary className="cursor-pointer text-meta text-fg-subtle hover:text-fg-muted">
+                              {t(FOLD_KEY[fold], { count: folded.length })}
+                            </summary>
+                            <ul className="mt-1.5 flex flex-col gap-1.5">{folded.map(cardView)}</ul>
+                          </details>
+                        );
+                      })}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
       {/* 쓰다 만 초안 — 보드 밖 한 줄. 누르면 가장 최근 초안 자리로 간다. */}
