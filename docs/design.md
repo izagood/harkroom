@@ -415,7 +415,9 @@ Buzz 의 "Agent runtimes 탐지 + Install" 목록은 **의도적으로 베끼지
   서버 origin(`http://localhost:5173`).
   **Origin 헤더가 없는 요청은 허용한다** — Origin 은 브라우저만 보내고, 에이전트·CLI 는 보내지
   않는다. 부재를 거부하면 사람이 아닌 참여자가 전부 끊긴다.
-- 에이전트: admin이 발급하는 Bearer PAT(account 귀속). `DELETE /accounts/:id/pats/:label`로
+- 에이전트: 러너는 오퍼레이터 토큰(`hkop_`)+`X-Harkroom-Agent` 로 선다. 옛 Bearer PAT(account 귀속)는
+  인증만 남아 있고 발급(`POST /accounts/:id/pats`)은 410 이다 — `pat.last_used_at`(103)을 지켜본 뒤
+  인증도 걷어낸다. 남은 토큰은 `DELETE /accounts/:id/pats/:label`로
   폐기한다 — 라벨 단위이고, `pat.label`에 유일성이 없어 같은 라벨의 토큰이 여러 개면 전부
   폐기된다(폐기에서는 하나 남기는 것보다 하나 더 끊는 쪽이 안전하다).
 - **폐기가 실제 폐기가 된다.** `POST /auth/logout`은 그 세션 행만 지운다(이 토큰만 — 다른

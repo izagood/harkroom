@@ -1,4 +1,6 @@
 import type { FastifyInstance } from 'fastify';
+import { mintPat } from '../../src/services/pats.js';
+import { currentTestPool } from './testDb.js';
 
 export async function bootstrapAdmin(app: FastifyInstance): Promise<{ token: string; accountId: string }> {
   const boot = await app.inject({
@@ -43,6 +45,16 @@ export async function registerOperator(
   return { token: res.json().token as string, operatorId: res.json().operator.id as string };
 }
 
+/**
+ * 이미 있는 에이전트에 PAT 하나를 찍는다. 발급 라우트(`POST /accounts/:id/pats`)는 410 이라 서비스로
+ * 직접 넣는다 — viaPat 인증이 남아 있는 동안 "에이전트로 서는 요청"을 재는 테스트용이다.
+ */
+export async function agentPat(accountId: string, label = 'test'): Promise<string> {
+  const minted = await mintPat(currentTestPool(), accountId, label, { actorId: null, actorHandle: null });
+  if (!minted.ok) throw new Error(`agentPat: PAT 를 찍지 못했다(${minted.reason})`);
+  return minted.token;
+}
+
 export async function createAgent(
   app: FastifyInstance, adminToken: string, handle: string,
 ): Promise<{ accountId: string; pat: string }> {
@@ -52,9 +64,5 @@ export async function createAgent(
     payload: { handle, displayName: handle },
   });
   const accountId = created.json().id as string;
-  const patRes = await app.inject({
-    method: 'POST', url: `/accounts/${accountId}/pats`, headers: auth,
-    payload: { label: 'test' },
-  });
-  return { accountId, pat: patRes.json().token as string };
+  return { accountId, pat: await agentPat(accountId) };
 }

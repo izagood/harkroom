@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
-import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { agentPat, bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -132,13 +132,11 @@ describe('an agent reading its own definition', () => {
     const made = (await create({
       handle: 'selfread', displayName: 'SelfRead', instructions: '내 지시문', effort: 'high',
     })).json();
-    const patRes = await app.inject({
-      method: 'POST', url: `/accounts/${made.id}/pats`, headers: admin(), payload: { label: 'runner' },
-    });
+    const pat = await agentPat(made.id);
 
     const res = await app.inject({
       method: 'GET', url: '/agent/config',
-      headers: { authorization: `Bearer ${patRes.json().token}` },
+      headers: { authorization: `Bearer ${pat}` },
     });
 
     expect(res.statusCode).toBe(200);
@@ -176,13 +174,11 @@ describe('멘션 턴 권한과 러너 소유자', () => {
 
   it('GET /agent/config 가 mentionPermission 을 싣는다', async () => {
     const agent = (await create({ handle: 'permread', displayName: 'PermRead' })).json();
-    const patRes = await app.inject({
-      method: 'POST', url: `/accounts/${agent.id}/pats`, headers: admin(), payload: { label: 'runner' },
-    });
+    const pat = await agentPat(agent.id);
 
     const res = await app.inject({
       method: 'GET', url: '/agent/config',
-      headers: { authorization: `Bearer ${patRes.json().token}` },
+      headers: { authorization: `Bearer ${pat}` },
     });
 
     expect(res.statusCode).toBe(200);
@@ -257,10 +253,7 @@ describe('에이전트 비활성화', () => {
 
   it('비활성화하면 그 계정의 PAT 가 더 이상 통하지 않는다', async () => {
     const made = (await create({ handle: 'revoke', displayName: 'Revoke' })).json();
-    const patRes = await app.inject({
-      method: 'POST', url: `/accounts/${made.id}/pats`, headers: admin(), payload: { label: 'runner' },
-    });
-    const pat = patRes.json().token as string;
+    const pat = await agentPat(made.id);
 
     await patch(made.id, { disabled: true });
 
@@ -311,10 +304,7 @@ describe('에이전트 비활성화', () => {
 
   it('비활성화된 에이전트가 쓴 과거 메시지는 그대로 남는다', async () => {
     const made = (await create({ handle: 'history', displayName: 'History' })).json();
-    const patRes = await app.inject({
-      method: 'POST', url: `/accounts/${made.id}/pats`, headers: admin(), payload: { label: 'runner' },
-    });
-    const pat = patRes.json().token as string;
+    const pat = await agentPat(made.id);
 
     const channel = await app.inject({
       method: 'POST', url: '/channels', headers: admin(), payload: { name: 'test-history' },

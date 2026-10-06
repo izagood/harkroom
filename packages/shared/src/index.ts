@@ -293,6 +293,8 @@ export interface PatView {
   label: string;
   createdAt: string;
   revokedAt: string | null;
+  /** 마지막으로 인증에 쓰인 때(서버 103). 그 전 서버는 이 칸을 보내지 않는다. */
+  lastUsedAt?: string | null;
 }
 
 /**
