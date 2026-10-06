@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -22,6 +23,10 @@ class _Server {
   _Server({required this.replies});
   final int replies;
   final asked = <Map<String, String>>[];
+  /// 최신 페이지(thread, around·before 없음) 응답을 붙들어 둔다 / 실패시킨다.
+  Future<void>? holdLatest;
+  bool failLatest = false;
+  final posted = <Map<String, Object?>>[];
 
   Map<String, Object?> _row(int seq) => {
         'id': seq == 1 ? 'root' : 'r$seq',
@@ -45,10 +50,24 @@ class _Server {
         if (path.contains('/agent-models') || path.contains('/auto-mentions')) {
           return _json({'agentModels': <Object?>[], 'autoMentions': <Object?>[]});
         }
+        if (path == '/channels/c1/messages' && req.method == 'POST') {
+          final body = jsonDecode(req.body) as Map<String, Object?>;
+          posted.add(body);
+          return _json({
+            ..._row(replies + 2),
+            'id': 'mine',
+            'body': body['body'],
+            'authorId': 'me-1',
+          });
+        }
         if (path == '/channels/c1/messages') {
           final q = req.url.queryParameters;
           if (q['thread'] != 'root') return _json({'messages': <Object?>[], 'hasMore': false});
           asked.add(q);
+          if (q['around'] == null && q['before'] == null) {
+            if (holdLatest != null) await holdLatest;
+            if (failLatest) return _json({'error': {'code': 'internal', 'message': 'boom'}}, 500);
+          }
           final limit = int.parse(q['limit'] ?? '200');
           if (q['around'] != null) {
             final around = int.parse(q['around']!);
@@ -127,6 +146,84 @@ void main() {
     await _pump(tester, app);
     await _settle(tester);
     expect(app.threadLoad['root'], LoadState.loaded);
+    expect(find.byKey(const Key('thread-latest-band')), findsNothing);
+  });
+
+  Future<void> enterOld(WidgetTester tester, AppState app) async {
+    await _pump(tester, app, highlightId: 'r40', highlightSeq: 40);
+    await _settle(tester);
+    expect(app.threadTailMissing, contains('root'));
+    // 강조 줄 찾기(`_scrollToHit`)는 프레임마다 한 화면씩 위로 민다 — 다 끝나게 프레임을 준다. 안 주면 뒤의
+    // 재빌드마다 한 번 더 밀려 띠가 화면 밖으로 나간다(실기기에서는 사람이 누르기 전에 끝난다).
+    for (var i = 0; i < 40; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    tester.widget<ListView>(find.byKey(const Key('thread-feed'))).controller!.jumpTo(0);
+    await tester.pump();
+    expect(find.byKey(const Key('thread-latest-go')), findsOneWidget);
+  }
+
+  testWidgets('m1: 누르면 받는 동안 같은 44 상자에 스피너가 서고 다시 눌리지 않는다', (tester) async {
+    final server = _Server(replies: 250);
+    final gate = Completer<void>();
+    server.holdLatest = gate.future;
+    final app = (await tester.runAsync(() => _boot(server)))!;
+    addTearDown(app.dispose);
+    await enterOld(tester, app);
+    final before = server.asked.length;
+    await tester.tap(find.byKey(const Key('thread-latest-go')));
+    await tester.pump();
+    expect(app.jumpingToLatest, contains('root'));
+    expect(find.byKey(const Key('thread-latest-loading')), findsOneWidget);
+    expect(find.byKey(const Key('thread-latest-go')), findsNothing);
+    expect(tester.getSize(find.byKey(const Key('thread-latest-band'))).height, 44);
+    // 받는 중에 한 번 더 — 눌릴 버튼이 없고, 상태로 불러도 한 번만 간다.
+    await app.jumpToLatestReplies('c1', 'root');
+    expect(server.asked.length, before + 1);
+    gate.complete();
+    await _settle(tester);
+    expect(app.jumpingToLatest, isEmpty);
+    expect(app.threadTailMissing, isEmpty);
+    expect(find.byKey(const Key('thread-latest-band')), findsNothing);
+  });
+
+  testWidgets('m2: 못 받으면 띠가 「못 불러왔다 · 다시 시도」로 바뀌고, 다시 시도가 되면 걷힌다', (tester) async {
+    final server = _Server(replies: 250)..failLatest = true;
+    final app = (await tester.runAsync(() => _boot(server)))!;
+    addTearDown(app.dispose);
+    await enterOld(tester, app);
+    await tester.tap(find.byKey(const Key('thread-latest-go')));
+    await _settle(tester);
+    expect(app.latestJumpFailed, contains('root'));
+    expect(app.threadTailMissing, contains('root'));
+    expect(find.byKey(const Key('thread-latest-failed')), findsOneWidget);
+    expect(find.text(stringsFor('ko').threadLatestLoadFailed), findsOneWidget);
+    expect(tester.getSize(find.byKey(const Key('thread-latest-band'))).height, 44);
+    server.failLatest = false;
+    await tester.tap(find.byKey(const Key('thread-latest-retry')));
+    await _settle(tester);
+    expect(app.latestJumpFailed, isEmpty);
+    expect(app.threadTailMissing, isEmpty);
+    expect(find.byKey(const Key('thread-latest-band')), findsNothing);
+  });
+
+  testWidgets('m3: 옛 창에서 답을 보내면 먼저 최신 페이지를 받고 그 뒤에 보낸다 — 내 글이 최신 묶음 끝에 선다', (tester) async {
+    final server = _Server(replies: 250);
+    final app = (await tester.runAsync(() => _boot(server)))!;
+    addTearDown(app.dispose);
+    await enterOld(tester, app);
+    await tester.enterText(find.byKey(const Key('thread-composer')), '답');
+    await tester.tap(find.byKey(const Key('thread-send')));
+    await _settle(tester);
+    // 순서: 최신 페이지 조회(around·before 없음) → POST.
+    expect(server.asked.where((q) => q['around'] == null && q['before'] == null), isNotEmpty);
+    expect(server.posted, hasLength(1));
+    expect(app.threadTailMissing, isEmpty);
+    // 최신 묶음(152..251) 위에 내 글(252)이 마지막으로 선다. (시험 목록이 짧아 위로 `before` 한 쪽이 더 붙을 수 있다.)
+    final seqs = app.threads['root']!.map((m) => m.seq).toList();
+    expect(seqs, contains(152));
+    expect(seqs.last, 252);
+    expect(app.threads['root']!.last.id, 'mine');
     expect(find.byKey(const Key('thread-latest-band')), findsNothing);
   });
 }
