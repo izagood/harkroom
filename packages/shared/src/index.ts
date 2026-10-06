@@ -1898,6 +1898,28 @@ export interface InboxEntry {
    * 델타와 무관하게 "수정으로 추가된 멘션"으로 싣는다.
    */
   viaEdit?: true;
+  /**
+   * 이 부름이 **접은 내 깨움**(107, 2026-10-06). 사람이 스레드에서 부르면 그 스레드의 대기 깨움이 접힌다 —
+   * 러너가 이것을 프롬프트에 실어 "그 예약들은 이제 없다, 필요하면 다시 걸어라" 를 알린다. 없으면 키째 없다.
+   * 옛 서버는 싣지 않는다(그러면 지금처럼 모른다 — 더 나빠지지 않는다).
+   */
+  canceledWakes?: InboxCanceledWake[];
+}
+
+/** 깨움 메시지 `meta.wake.reportTo` — 깨어난 턴이 결과를 보고하기로 약속한 스레드(2026-10-06). */
+export interface WakeReportTo {
+  channelId: string;
+  threadRootId: string;
+}
+
+/** `InboxEntry.canceledWakes` 한 줄. */
+export interface InboxCanceledWake {
+  /** 걸 때 적은 사유(깨움 메시지 본문). */
+  reason: string;
+  /** 원래 깨어날 시각(ISO). */
+  wakeAt: string;
+  /** 그 깨움에 보고처가 있었으면 그 스레드 — 접혔으니 그 약속도 다시 챙겨야 한다. */
+  reportTo?: WakeReportTo;
 }
 
 /**
