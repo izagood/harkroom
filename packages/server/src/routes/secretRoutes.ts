@@ -5,6 +5,7 @@
 //   받은 에이전트만"이 에이전트 자신의 판단이 된다. 받는 길(reveal)은 다음 PR 에 따로 있다.
 // - **부여는 소유자만**(D4·M2). admin 이 부여할 수 있으면 admin 은 자기가 움직이는 에이전트에게
 //   주고 받아 가서 모든 값을 읽는다. admin 은 회수·삭제만 한다.
+// - 예외 하나: 에이전트가 **자기 소유자의 이름으로** 비밀을 만드는 길(`/agent/secrets`, 102) — 판정은 `secretCreate.ts`.
 // - **값은 한 번 들어오면 다시 나가지 않는다.** 응답·감사·오류 어디에도 값이나 그 해시를 싣지 않는다.
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -15,6 +16,7 @@ import { scanWrite } from '../services/contentScan.js';
 import type { SecretKeyring } from '../services/secretKeyring.js';
 import { needlesFor } from '../services/secretLeakGuard.js';
 import { endTurnLease, issueTurnLease, revealSecret, RevealLimiter } from '../services/secretAccess.js';
+import { createAgentSecret, createLimiter, GENERATE_TYPES, rotateAgentSecret, type CreateDenial, type CreateSource } from '../services/secretCreate.js';
 
 /** 계획 D6. 파일·텍스트 공통 상한(바이트). */
 export const SECRET_MAX_BYTES = 64 * 1024;
@@ -92,10 +94,11 @@ function valueBytes(kind: 'text' | 'file', v: { value?: string; valueBase64?: st
 }
 
 export async function registerSecretRoutes(
-  app: FastifyInstance, pool: Pool, opts: { keyring: SecretKeyring | null; limiter?: RevealLimiter },
+  app: FastifyInstance, pool: Pool, opts: { keyring: SecretKeyring | null; limiter?: RevealLimiter; createLimiter?: RevealLimiter },
 ): Promise<void> {
   const { keyring } = opts;
   const limiter = opts.limiter ?? new RevealLimiter();
+  const makeLimiter = opts.createLimiter ?? createLimiter();
 
   /** 사람만. 아니면 답을 보내고 false. */
   const human = (req: FastifyRequest, reply: FastifyReply): boolean => {
@@ -423,4 +426,74 @@ export async function registerSecretRoutes(
       valueBase64: r.value.toString('base64'),
     };
   });
+
+  // ─── 에이전트가 만든다(102) ─────────────────────────────────────────────────────────────
+  //
+  // 판정은 전부 `secretCreate.ts`(서버)다 — 오퍼레이터의 경로 검사는 실수 방지일 뿐이다(security F1). 오류 문장은
+  // 고정이고 zod 의 문장을 싣지 않는다 — 값 칸(`valueBase64`)이 오류에 되비치지 않게(L4).
+  const generateSpec = z.object({ type: z.enum(GENERATE_TYPES), length: z.number().int().optional() }).strict();
+  const sourceBody = z.union([
+    z.object({ generate: generateSpec }).strict(),
+    z.object({ import: z.object({
+      kind: z.enum(['text', 'file']), filename: z.string().regex(FILENAME).nullable().optional(),
+      valueBase64: z.string().max(Math.ceil(SECRET_MAX_BYTES / 3) * 4 + 4),
+    }).strict() }).strict(),
+  ]);
+  const leaseFields = { leaseId: z.string().uuid(), token: z.string().min(1).max(200) };
+  const agentCreateBody = z.object({
+    ...leaseFields, name: z.string().regex(NAME), description: z.string().max(500).default(''),
+    expiresInDays: z.number().int().min(1).max(365).optional(), source: sourceBody,
+  }).strict();
+  const agentRotateBody = z.object({ ...leaseFields, name: z.string().regex(NAME), source: sourceBody }).strict();
+  const badCreate = { error: { code: 'bad_request', message: 'leaseId, token, a valid name and one source ({generate:{type,length?}} or {import:{kind,filename?,valueBase64}}) are required' } };
+
+  const toSource = (src: z.infer<typeof sourceBody>): CreateSource | null => {
+    if ('generate' in src) return { generate: src.generate };
+    const b64 = src.import.valueBase64;
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(b64)) return null;
+    if (src.import.kind === 'file' && !src.import.filename) return null;
+    if (src.import.kind === 'text' && src.import.filename) return null;
+    return { import: { kind: src.import.kind, filename: src.import.filename ?? null, value: Buffer.from(b64, 'base64') } };
+  };
+  const createStatus = (code: CreateDenial): number => {
+    switch (code) {
+      case 'lease_invalid': case 'not_granted': case 'cause_not_owner': case 'owner_inactive': case 'grant_suspended': return 403;
+      case 'rate_limited': return 429;
+      case 'not_found': return 404;
+      case 'bad_value': case 'bad_length': case 'secret_in_description': case 'kind_mismatch': return 400;
+      default: return 409; // too_many · name_taken · value_is_mounted · adopted_by_owner · secret_expired
+    }
+  };
+
+  app.post('/agent/secrets', { preHandler: app.requireAccount }, async (req, reply) => {
+    const who = viaOperator(req, reply);
+    if (!who) return reply;
+    if (!keyring) return reply.code(409).send(disabled);
+    const parsed = agentCreateBody.safeParse(req.body ?? {});
+    const source = parsed.success ? toSource(parsed.data.source) : null;
+    if (!parsed.success || !source) return reply.code(400).send(badCreate);
+    const b = parsed.data;
+    const r = await createAgentSecret(pool, {
+      ...who, leaseId: b.leaseId, token: b.token, keyring, limiter: makeLimiter,
+      name: b.name, description: b.description, expiresInDays: b.expiresInDays, source,
+    });
+    void reply.header('cache-control', 'no-store');
+    if (!r.ok) return reply.code(createStatus(r.code)).send({ error: { code: r.code, message: `secret not created: ${r.code}` } });
+    return reply.code(201).send({ secret: { name: r.name, kind: r.kind, version: r.version, expiresAt: r.expiresAt }, publicKey: r.publicKey });
+  });
+
+  app.post('/agent/secrets/rotate', { preHandler: app.requireAccount }, async (req, reply) => {
+    const who = viaOperator(req, reply);
+    if (!who) return reply;
+    if (!keyring) return reply.code(409).send(disabled);
+    const parsed = agentRotateBody.safeParse(req.body ?? {});
+    const source = parsed.success ? toSource(parsed.data.source) : null;
+    if (!parsed.success || !source) return reply.code(400).send(badCreate);
+    const b = parsed.data;
+    const r = await rotateAgentSecret(pool, { ...who, leaseId: b.leaseId, token: b.token, keyring, limiter: makeLimiter, name: b.name, source });
+    void reply.header('cache-control', 'no-store');
+    if (!r.ok) return reply.code(createStatus(r.code)).send({ error: { code: r.code, message: `secret not rotated: ${r.code}` } });
+    return { secret: { name: r.name, kind: r.kind, version: r.version }, publicKey: r.publicKey };
+  });
+
 }

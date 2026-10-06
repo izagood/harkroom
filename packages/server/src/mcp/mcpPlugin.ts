@@ -1894,6 +1894,34 @@ function buildMcpServer(
   }));
 
   /**
+   * 에이전트가 비밀을 만든다(102). `secret.mount` 와 같은 모양 — 오퍼레이터가 가로채 턴 임대를 붙여
+   * `POST /agent/secrets`·`/agent/secrets/rotate` 로 보낸다. **값 칸은 없다** — 값은 서버가 만들거나(generate)
+   * 오퍼레이터가 턴 워크스페이스의 파일에서 읽는다(import). 서버까지 왔다는 것은 오퍼레이터를 거치지 않았다는 뜻이다.
+   */
+  const genSpec = z.object({ type: z.enum(['password', 'token_hex', 'token_base64url', 'ssh_ed25519']), length: z.number().int().optional() });
+  const operatorOnly = (tool: string) => async () => jsonResult({
+    error: { code: 'operator_required', message: `${tool} is handled by the harkroom operator; this runner is not connected through one that supports it` },
+  });
+  server.registerTool('secret.generate', {
+    description: '새 비밀을 서버가 만들어 보관소에 넣는다(값은 나에게 오지 않는다). type: password·token_hex·token_base64url·ssh_ed25519(공개키만 돌려준다). 나에게 이 채널로만 부여된다. 바로 써야 하면 mount:true(파일 경로를 준다). 소유자 글이 띄운 턴에서만, 소유자가 켠 에이전트만',
+    inputSchema: {
+      name: z.string().min(1).max(64), description: z.string().max(500).optional(), type: genSpec.shape.type,
+      length: z.number().int().optional(), expiresInDays: z.number().int().min(1).max(365).optional(), mount: z.boolean().optional(),
+    },
+  }, operatorOnly('secret.generate'));
+  server.registerTool('secret.import', {
+    description: '턴 워크스페이스 안의 파일 내용을 비밀로 등록한다(값을 인자로 주지 마라 — 출력은 `cmd > file` 로 받아 경로를 준다). 성공하면 원본 파일은 지운다(keepSource:true 면 남김). 이미 화면·문맥에 보인 값은 유출된 것이니 등록하지 말고 사람에게 회전을 부탁하라',
+    inputSchema: {
+      name: z.string().min(1).max(64), path: z.string().min(1).max(4096), kind: z.enum(['text', 'file']).optional(),
+      description: z.string().max(500).optional(), expiresInDays: z.number().int().min(1).max(365).optional(), keepSource: z.boolean().optional(),
+    },
+  }, operatorOnly('secret.import'));
+  server.registerTool('secret.rotate', {
+    description: '내가 만든 비밀의 값을 바꾼다(generate 또는 path 중 하나). 소유자가 값을 바꿨거나 다시 부여한 비밀은 못 바꾼다(adopted_by_owner)',
+    inputSchema: { name: z.string().min(1).max(64), generate: genSpec.optional(), path: z.string().min(1).max(4096).optional() },
+  }, operatorOnly('secret.rotate'));
+
+  /**
    * 파일 올리기(미리보기 PR ③). 실제 일은 오퍼레이터가 한다 — 브릿지가 넘긴 이 호출을 오퍼레이터가 가로채
    * 턴 워크스페이스 안의 파일을 읽어 `/uploads` 에 올리고 첨부 id 를 돌려준다(`operator/turnUploads.ts`).
    * 여기 등록하는 이유는 `tools/list` 에 보이게 하려는 것이다(`secret.mount` 와 같은 모양). 서버까지 왔다는

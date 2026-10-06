@@ -90,6 +90,19 @@ async function checkMergeGrant(
   }
   return { ok: true, scope: normalized };
 }
+/** `secret.create` 를 주는 사람은 그 에이전트의 소유자인 사람이다(102). admin 은 거두기만 한다. */
+async function secretCreateOwner(
+  pool: Pool, req: { account?: { id: string; kind: string } | null }, targetId: string,
+): Promise<{ ok: true } | { ok: false; status: 403 | 404; code: string; message: string }> {
+  if (!req.account || req.account.kind !== 'human') return { ok: false, status: 403, code: 'forbidden', message: 'secret.create 는 사람만 준다' };
+  const agent = await pool.query<{ ownerAccountId: string | null }>(
+    `select c.owner_account_id as "ownerAccountId" from agent_config c join account a on a.id = c.account_id
+      where c.account_id = $1 and a.kind = 'agent'`, [targetId]);
+  if (!agent.rowCount) return { ok: false, status: 404, code: 'not_found', message: 'secret.create 는 에이전트에게만 준다' };
+  if (agent.rows[0]!.ownerAccountId !== req.account.id) return { ok: false, status: 403, code: 'forbidden', message: 'secret.create 는 그 에이전트의 소유자만 준다' };
+  return { ok: true };
+}
+
 /** 쓰기 api.call 의 만료 상한. 화면이 「30일」을 고른 순간과 요청이 서버에 닿는 순간의 차이로 거절되지 않게 1분 여유를 둔다. */
 const WRITE_MAX_MS = 30 * 86_400_000 + 60_000;
 const roleBody = z.object({ role: z.enum(ROLES) });
@@ -139,6 +152,13 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
       const check = await checkMergeGrant(pool, req, id, scope);
       if (!check.ok) return reply.code(check.status).send({ error: { code: check.code, message: check.message } });
       scope = check.scope;
+    } else if (capability === 'secret.create') {
+      // 소유자만(repo.merge 와 같은 틀). 전역 하나 — 대상 한정 scope 는 뜻이 없다.
+      if (scope !== '' || allowAgentCause !== undefined) {
+        return reply.code(400).send({ error: { code: 'bad_scope', message: 'secret.create 의 scope 는 빈 값 하나다' } });
+      }
+      const owner = await secretCreateOwner(pool, req, id);
+      if (!owner.ok) return reply.code(owner.status).send({ error: { code: owner.code, message: owner.message } });
     } else {
       if (!req.account!.isAdmin) return reply.code(403).send({ error: { code: 'forbidden', message: 'grant 는 admin 만 준다' } });
       if (scope.startsWith('repo:') || scope.startsWith('connector:') || allowAgentCause !== undefined) {
