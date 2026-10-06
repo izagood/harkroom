@@ -276,6 +276,13 @@ export interface AppState {
    */
   notifiedGaps: Record<string, NotifiedSummary>;
   /**
+   * 이 기기의 작성칸에서 보낸 글(`lib/ownSends.ts`). 패널의 「내 글 따라가기」가 **이것만** 따라간다 —
+   * 자동화·다른 기기가 내 이름으로 쓴 글은 아니다. 화면 상태라 영속하지 않는다.
+   */
+  ownSendIds: Record<string, true>;
+  /** 자리(채널 id 또는 스레드 뿌리 id) → 보내는 중인 수. 응답보다 먼저 온 소켓 줄을 내 것으로 보는 근거다. */
+  sendsInFlight: Record<string, number>;
+  /**
    * 투영 고장 띠를 **어느 사정에 대해** 닫았는가(#488 A3-a). 닫지 않았으면 null 이다.
    *
    * 불리언이 아닌 이유: 투영이 꺼진 것을 닫아 뒀는데 그 뒤 투영이 **멈추면** 그것은
@@ -447,6 +454,7 @@ const initial = {
   projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, drafts: {}, stickyMentions: {}, uploads: {},
   history: [], historyIndex: -1, notice: null, notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,
+  ownSendIds: {}, sendsInFlight: {},
   highlightedMessageId: null, channelRevealSeq: 0,
   runnerStates: {}, daemonRunners: {}, appVersion: null, savedIds: [], savedCount: 0,
   linkPreviewReadyAt: {}, skillsRevision: 0, operatorsRevision: 0,

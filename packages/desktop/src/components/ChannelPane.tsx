@@ -15,6 +15,7 @@ import { ChannelDocPanel } from './ChannelDocPanel';
 import { ChannelEmptyState } from './ChannelEmptyState';
 import { RunnerStatusLine } from './RunnerStatus';
 import { distanceFromBottom, isNearBottom, isNearTop } from '../lib/stickyBottom';
+import { appendedFromHere } from '../lib/ownSends';
 import { anchoredScrollTop, needsAnchorFix, pickAnchor, type ScrollAnchor } from '../lib/scrollAnchor';
 import { useLocale, useT } from '../i18n/useT';
 import { displayBody } from '../lib/mention';
@@ -451,7 +452,9 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   const lastRootIdRef = useRef<string | null>(null);
   useEffect(() => {
     const last = roots[roots.length - 1];
-    const appendedMine = last !== undefined && last.id !== lastRootIdRef.current && last.authorId === me?.id;
+    // 「내 글」= **이 기기의 작성칸에서 보낸** 글(`lib/ownSends.ts`). 자동화·다른 기기가 내 이름으로 끝에 붙인
+    // 글은 남의 글과 같이 — 위를 읽던 사람을 끌어내리지 않는다(2026-10-06, #1191 후속).
+    const appendedMine = appendedFromHere(last, lastRootIdRef.current, me?.id, activeChannelId ?? '', useActiveStore.getState());
     if (jumpedThisCommitRef.current) setJumpVisible(true);
     else if (atBottomRef.current || appendedMine) {
       scrollToBottom();

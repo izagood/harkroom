@@ -150,7 +150,8 @@ describe('QA 재현: Saved → 스레드 답글 점프(원인 1)', () => {
       s.set({ highlightedMessageId: TARGET });
     });
     await settle();
-    act(() => { useAppStore.getState().upsertMessages('c1', [msg('mine', 'c1', 999, '내 답글', 'u1', { threadRootId: 'm1' })]); });
+    // 작성칸에서 보낸 답글은 컨트롤러가 응답 id 를 적어 둔다(`lib/ownSends.ts`) — 그 표식이 있어야 따라간다.
+    act(() => { const s = useAppStore.getState(); s.set({ ownSendIds: { mine: true } }); s.upsertMessages('c1', [msg('mine', 'c1', 999, '내 답글', 'u1', { threadRootId: 'm1' })]); });
     await settle();
     expect(box().scrollTop).toBe(maxTop(box()));
   });

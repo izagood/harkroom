@@ -20,6 +20,7 @@ import { PaneResizer } from './PaneResizer';
 import { paneStorage, paneMaxWidth, MIN_THREAD_WIDTH, MAX_THREAD_WIDTH, MIN_CHANNEL_WIDTH } from '../lib/prefs';
 import { TypingLine } from './TypingLine';
 import { isNearBottom } from '../lib/stickyBottom';
+import { appendedFromHere } from '../lib/ownSends';
 import type { SectionId } from './settings/sections';
 import { useT } from '../i18n/useT';
 
@@ -201,7 +202,8 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
     // 간다" 예외도 여기서는 뜻이 없다(마지막 답글이 내 것인 스레드에서 점프가 되끌려 갔다).
     if (jumpedThisCommitRef.current) return;
     const last = thread[thread.length - 1];
-    const appendedMine = last !== undefined && last.id !== lastReplyIdRef.current && last.authorId === me?.id;
+    // 「내 답글」= 이 기기의 작성칸에서 보낸 것만(`lib/ownSends.ts`, 자리 열쇠는 스레드 뿌리).
+    const appendedMine = appendedFromHere(last, lastReplyIdRef.current, me?.id, threadRootId ?? '', useActiveStore.getState());
     if (atBottomRef.current || appendedMine) scrollToBottom();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thread.length]);

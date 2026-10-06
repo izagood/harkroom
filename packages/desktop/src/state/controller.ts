@@ -13,6 +13,7 @@ import { silentNotifier, type NotificationTarget, type Notifier } from '../lib/n
 import { anyAppWindowFocused } from '../lib/appWindows';
 import { bodyRecipients, displayBody } from '../lib/mention';
 import { calledGroups, notifiedSummary, type NotifiedResult } from '../lib/notified';
+import { beginSend, endSend, markOwnSend, type OwnSendMarks } from '../lib/ownSends';
 import { RunnerLauncher, tauriDaemonObserver, tauriAppVersionReader, type AppVersionReader, type DaemonObserver } from '../lib/runnerLauncher';
 // 만들기 흐름이 러너를 띄우기 **전에** 풀 배정을 쓴다 — 근거는 `createAgent` 안에 있다.
 import { assignAgentPool } from '../lib/claudeAccounts';
@@ -1470,11 +1471,28 @@ export class Controller {
     const target = channelId ?? this.store.getState().activeChannelId;
     // 파일만 보내는 것은 자연스럽다 — 본문이 비었다고 막으면 첨부를 보낼 길이 없다.
     if (!target || (!body.trim() && !attachmentIds.length)) return;
-    const { message, notified } = await (agentModels.length
-      ? this.api.postMessage(target, body, undefined, crypto.randomUUID(), attachmentIds, undefined, agentModels)
-      : this.api.postMessage(target, body, undefined, crypto.randomUUID(), attachmentIds));
-    this.store.getState().upsertMessages(target, [message]);
-    this.recordNotifiedGap(message.id, body, notified);
+    // 이 기기에서 보내는 글임을 적는다(`lib/ownSends.ts`) — 패널의 「내 글 따라가기」는 이것만 따라간다.
+    this.setOwnSendMarks(beginSend(this.ownSendMarks(), target));
+    try {
+      const { message, notified } = await (agentModels.length
+        ? this.api.postMessage(target, body, undefined, crypto.randomUUID(), attachmentIds, undefined, agentModels)
+        : this.api.postMessage(target, body, undefined, crypto.randomUUID(), attachmentIds));
+      // 스토어에 넣기 **전에** id 를 적어야 같은 커밋에서 패널이 "이 기기 것"으로 읽는다.
+      this.setOwnSendMarks(markOwnSend(this.ownSendMarks(), message.id));
+      this.store.getState().upsertMessages(target, [message]);
+      this.recordNotifiedGap(message.id, body, notified);
+    } finally {
+      this.setOwnSendMarks(endSend(this.ownSendMarks(), target));
+    }
+  }
+
+  private ownSendMarks(): OwnSendMarks {
+    const { ownSendIds, sendsInFlight } = this.store.getState();
+    return { ownSendIds, sendsInFlight };
+  }
+
+  private setOwnSendMarks(marks: OwnSendMarks): void {
+    this.store.getState().set({ ownSendIds: marks.ownSendIds, sendsInFlight: marks.sendsInFlight });
   }
 
   /**
@@ -1530,10 +1548,18 @@ export class Controller {
     const target = channelId ?? state.activeChannelId;
     const root = threadRootId ?? state.threadRootId;
     if (!target || !root || (!body.trim() && !attachmentIds.length)) return;
-    const { message, notified } = await (agentModels.length
-      ? this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds, alsoInChannel, agentModels)
-      : this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds, alsoInChannel));
-    this.store.getState().upsertMessages(target, [message]);
+    // 자리 열쇠는 스레드 뿌리 — 채널 패널이 이 답글을 자기 보냄으로 읽지 않게(`alsoInChannel` 이어도).
+    this.setOwnSendMarks(beginSend(this.ownSendMarks(), root));
+    let message: MessageRow, notified: NotifiedResult;
+    try {
+      ({ message, notified } = await (agentModels.length
+        ? this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds, alsoInChannel, agentModels)
+        : this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds, alsoInChannel)));
+      this.setOwnSendMarks(markOwnSend(this.ownSendMarks(), message.id));
+      this.store.getState().upsertMessages(target, [message]);
+    } finally {
+      this.setOwnSendMarks(endSend(this.ownSendMarks(), root));
+    }
     // 스레드 답글도 집합을 부를 수 있다 — 채널 최상위만 재면 스레드에서 부른 집합의
     // 조용한 실패가 그대로 삼켜진다. 여기서 서버가 `thread_reply` 로 루트 작성자까지
     // 같은 `notified` 에 담는다는 사실이 셈을 **보수적으로** 만든다(`notifiedSummary` 주석).

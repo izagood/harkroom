@@ -123,11 +123,14 @@ describe('아래로 내려가기', () => {
     expect(screen.queryByTestId('channel-jump-to-bottom')).toBeNull();
   });
 
-  it('내가 쓴 것은 위를 보고 있어도 따라 내려간다', async () => {
+  it('내가 작성칸에서 보낸 것은 위를 보고 있어도 따라 내려간다', async () => {
     render(<ChannelPane />);
     lookUp(screen.getByTestId('channel-scroll'));
 
     const scrollIntoView = spyScroll();
+    // 작성칸에서 보낸 글은 컨트롤러가 응답 id 를 적어 둔다(`lib/ownSends.ts`, #1191 후속 d3) — 내 이름만으로는
+    // 따라가지 않는다(자동화·다른 기기, `followOwnSendsOnly.test.tsx`).
+    useAppStore.getState().set({ ownSendIds: { m2: true } });
     arrive('u1');
 
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());

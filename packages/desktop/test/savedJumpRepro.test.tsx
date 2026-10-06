@@ -177,7 +177,8 @@ describe('QA 재현: Saved → 옛 메시지 점프', () => {
     jumpWithAroundPage(rows(100, 'old', 500), 'old50');
     await flush();
     expect(view().bottomGap).toBeGreaterThan(0);
-    act(() => { useAppStore.getState().upsertMessages('c1', [msg('mine', 'c1', 2000, '내가 보냄', 'u1')]); });
+    // 작성칸에서 보낸 글은 컨트롤러가 응답 id 를 적어 둔다(`lib/ownSends.ts`) — 그 표식이 있어야 따라간다.
+    act(() => { const s = useAppStore.getState(); s.set({ ownSendIds: { mine: true } }); s.upsertMessages('c1', [msg('mine', 'c1', 2000, '내가 보냄', 'u1')]); });
     await flush();
     expect(view().bottomGap).toBe(0);
   });
