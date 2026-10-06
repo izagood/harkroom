@@ -241,4 +241,71 @@ void main() {
     expect(app2.threads['root']!.map((m) => m.seq), contains(40));
     expect(app2.threadLoad['root'], LoadState.loaded);
   });
+
+  test('창이 꽉 차고 손에 든 최신 쪽과 안 닿으면 「최신 답글 빠짐」이 서고, 최신으로 가면 걷힌다 (#1191 후속 d1)', () async {
+    final server = _Server(replies: 250);
+    final app = await _open(server);
+    addTearDown(app.dispose);
+    // 최신 페이지 152..251 을 들고 seq 40 의 창(1..90)을 받는다 — 아래쪽 50 줄이 꽉 찼고(더 있을 수 있다)
+    // 90 < 152 라 최신 쪽과 안 닿는다 → 빠짐. 위쪽이 39 줄뿐이라 창 전체는 100 이 안 되는데도 그렇다.
+    await app.openThread('c1', 'root', aroundSeq: 40);
+    expect(app.threadTailMissing, contains('root'));
+    // 이어서 seq 120 의 창(71..170): 아래쪽 꽉 찼지만 170 ≥ 152 라 최신 쪽과 맞닿는다 → 빠짐이 걷힌다.
+    await app.openThread('c1', 'root', aroundSeq: 120);
+    expect(app.threadTailMissing, isEmpty);
+    // 다시 멀리(seq 40 은 이미 손에 있어 창 없음) — 손에 없는 더 먼 자리는 없으니 새 앱으로 아래 시험이 본다.
+    await app.openThread('c1', 'root', aroundSeq: 40);
+    expect(app.threadTailMissing, isEmpty);
+    // 빠진 상태를 다시 만들어 최신으로 가는 길을 본다.
+    app.threadTailMissing.add('root');
+    var asked = server.asked.length;
+    await app.jumpToLatestReplies('c1', 'root');
+    expect(server.asked.length, asked + 1);
+    expect(server.asked.last.containsKey('around'), isFalse);
+    expect(server.asked.last.containsKey('before'), isFalse);
+    expect(app.threadTailMissing, isEmpty);
+    final seqs = app.threads['root']!.map((m) => m.seq).toList();
+    expect(seqs.first, 152);
+    expect(seqs.last, 251);
+    expect(app.threadHasMore['root'], isTrue);
+  });
+
+  test('처음 여는 스레드: 옛 답글 창이 꽉 차면 빠짐, 끝 가까운 창(모자람)은 최신까지 들어 있어 빠짐 아님', () async {
+    final server = _Server(replies: 250);
+    final app = AppState(
+      sessions: SessionStore.inMemory(
+        seed: jsonEncode({
+          'active': 'me-1',
+          'communities': [
+            {'accountId': 'me-1', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'me'},
+          ],
+        }),
+      ),
+      apiFactory: (b, t) => ApiClient(baseUrl: b, token: t, httpClient: server.client),
+      connector: (_) async => throw StateError('소켓 없음'),
+    );
+    addTearDown(app.dispose);
+    await app.boot();
+    await app.openThread('c1', 'root', aroundSeq: 40);
+    expect(app.threadTailMissing, contains('root'));
+
+    final server2 = _Server(replies: 250);
+    final app2 = AppState(
+      sessions: SessionStore.inMemory(
+        seed: jsonEncode({
+          'active': 'me-1',
+          'communities': [
+            {'accountId': 'me-1', 'baseUrl': 'https://h.example.com', 'token': 'tok', 'handle': 'me'},
+          ],
+        }),
+      ),
+      apiFactory: (b, t) => ApiClient(baseUrl: b, token: t, httpClient: server2.client),
+      connector: (_) async => throw StateError('소켓 없음'),
+    );
+    addTearDown(app2.dispose);
+    await app2.boot();
+    await app2.openThread('c1', 'root', aroundSeq: 240);
+    expect(app2.threads['root']!.map((m) => m.seq), contains(251));
+    expect(app2.threadTailMissing, isEmpty);
+  });
 }

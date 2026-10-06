@@ -171,6 +171,16 @@ class _ThreadScreenState extends State<ThreadScreen> {
     }
   }
 
+  /// 「최신 답글로 ↓」 — 최신 페이지를 받고 맨 아래(reverse 목록이라 0)로 간다. 받기 전에 굴리면 창 끝에 서고,
+  /// 받은 뒤 목록이 통째로 바뀌므로 그 뒤에 굴린다.
+  Future<void> _jumpToLatest() async {
+    final app = AppScope.read(context);
+    await app.jumpToLatestReplies(widget.channelId, widget.rootId);
+    if (!mounted || !_scroll.hasClients) return;
+    if (app.threadTailMissing.contains(widget.rootId)) return;
+    _scroll.animateTo(0, duration: HarkroomMotion.base, curve: HarkroomMotion.ease);
+  }
+
   /// 찾은 줄이면 강조로 감싼다.
   Widget _mark(String? id, Widget child) =>
       id != null && id == widget.highlightId ? HitFlash(key: _hitKey, child: child) : child;
@@ -282,6 +292,10 @@ class _ThreadScreenState extends State<ThreadScreen> {
       else
         ...replies.map((item) => buildFeedItem(context, item,
             mark: item is FeedMessage ? (row) => _mark(item.message.id, row) : null)),
+      // 링크·찾기로 받은 창 **아래**가 비었다(최신 답글이 안 실렸다) — 스레드가 여기서 끝난 것처럼 보이지 않게
+      // 띠를 세운다. 누르면 최신 페이지로 간다(designer n1, #1191 후속 d1).
+      if (load == LoadState.loaded && app.threadTailMissing.contains(widget.rootId))
+        ThreadLatestBand(label: t.threadLatestReplies, onTap: _jumpToLatest),
       ...failed.map((item) => FailedSendRow(item: item)),
     ];
 
@@ -397,6 +411,39 @@ class ThreadRepliesDivider extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(child: Divider(height: 1, color: k.border)),
         ],
+      ),
+    );
+  }
+}
+
+/// 창 아래의 「최신 답글로 ↓」 띠(#1191 후속 d1). [FeedTopRow] 와 같은 44 높이의 한 줄로, 눌러서 최신 페이지로 간다.
+/// 가운데 글자 하나만 — 사이에 몇 개가 빠졌는지는 모르므로 수는 말하지 않는다.
+class ThreadLatestBand extends StatelessWidget {
+  const ThreadLatestBand({super.key, required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    return SizedBox(
+      key: const Key('thread-latest-band'),
+      height: HarkroomSize.row,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter),
+        child: Center(
+          child: TextButton(
+            onPressed: onTap,
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              minimumSize: const Size(0, HarkroomSize.row),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              foregroundColor: k.fgMuted,
+            ),
+            child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+          ),
+        ),
       ),
     );
   }

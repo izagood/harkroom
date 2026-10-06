@@ -13,6 +13,7 @@
 library;
 
 
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import '../api/api_client.dart';
@@ -311,6 +312,12 @@ class AppState extends ChangeNotifier {
 
   /// 스레드 루트 id → 옛 답글을 받는 중. 겹쳐 받지 않는다.
   final Set<String> loadingOlderThread = {};
+
+  /// 스레드 루트 id → **최신 답글이 빠져 있다**(2026-10-06, #1191 후속 d1). 링크·찾기로 옛 답글의 창을
+  /// 받았는데 창이 꽉 차서(limit 만큼) 그 뒤의 답글이 더 있을 수 있고, 손에 든 최신 쪽과도 맞닿지 않은
+  /// 상태다. 화면은 창 아래에 「최신 답글로 ↓」 띠를 세운다 — 없으면 스레드가 거기서 끝난 것처럼 보인다.
+  /// 최신 페이지를 받으면([jumpToLatestReplies]·[catchUp]·창 없는 [openThread]) 지운다.
+  final Set<String> threadTailMissing = {};
 
   /// 스레드 루트 id → 옛 답글을 못 받았다. 채널의 [olderFailed] 와 같이 스크롤로는 다시 부르지
   /// 않고 "다시 시도" 를 누를 때만 간다.
@@ -1574,6 +1581,8 @@ class AppState extends ChangeNotifier {
 
   /// 스레드 응답 한 페이지를 루트([threadRoots])와 답글([threads])로 나눠 담는다.
   void _storeThreadPage(String rootId, List<MessageRow> page) {
+    // 최신 페이지를 통째로 받았다 — 꼬리가 비어 있던 사실은 여기서 끝난다.
+    threadTailMissing.remove(rootId);
     final replies = <MessageRow>[];
     for (final m in page) {
       if (m.id == rootId) {
@@ -1626,10 +1635,24 @@ class AppState extends ChangeNotifier {
         !(threadRoots[rootId]?.seq == aroundSeq && threadLoad[rootId] == LoadState.loaded && threadHasMore[rootId] == false);
     try {
       final page = needsWindow
-          ? await _api!.messages(channelId, thread: rootId, around: aroundSeq, limit: 100)
-          : await _api!.messages(channelId, thread: rootId, limit: 100);
+          ? await _api!.messages(channelId, thread: rootId, around: aroundSeq, limit: _threadPageLimit)
+          : await _api!.messages(channelId, thread: rootId, limit: _threadPageLimit);
       if (gen != _generation) return;
       if (needsWindow) {
+        // 창 **아래**가 비었는가. 서버는 `around` 아래쪽에 `ceil(limit/2)` 줄까지 준다(services/messages.ts) —
+        // 꼭 그만큼 왔으면 그 뒤가 더 있을 수 있고, 모자라면 `around` 뒤를 다 준 것이라 최신까지 들어 있다.
+        // 위쪽이 짧아 창 전체는 모자라도 아래쪽만 보면 된다. 손에 든 최신 쪽(이미 받은 답글 중 가장 오래된
+        // 것)과 맞닿으면 빈 자리가 없다.
+        final windowReplies = page.messages.where((m) => m.id != rootId);
+        final after = windowReplies.where((m) => m.seq > aroundSeq).length;
+        final windowMax = windowReplies.isEmpty ? null : windowReplies.map((m) => m.seq).reduce(max);
+        final heldMin = have.isEmpty ? null : have.map((m) => m.seq).reduce(min);
+        final tailCut = after >= (_threadPageLimit / 2).ceil();
+        if (tailCut && windowMax != null && (heldMin == null || windowMax < heldMin)) {
+          threadTailMissing.add(rootId);
+        } else {
+          threadTailMissing.remove(rootId);
+        }
         _mergeThreadPage(rootId, page.messages);
         // 창 응답의 `hasMore` 는 서버가 늘 `false` 로 준다(과거를 말할 자격이 없는 조회). 답글이 하나라도
         // 왔으면 "더 있을 수 있다"로 두고 위로 밀 때 `before` 로 확인한다 — 끝이면 그 답이 `false` 를 준다.
@@ -1690,6 +1713,28 @@ class AppState extends ChangeNotifier {
   Future<bool> retryOlderThread(String channelId, String rootId) {
     olderThreadFailed.remove(rootId);
     return loadOlderThread(channelId, rootId);
+  }
+
+  /// 스레드 한 페이지의 줄 수(첫 페이지·옛 페이지·점프 창 모두).
+  static const int _threadPageLimit = 100;
+
+  /// 「최신 답글로 ↓」 띠([threadTailMissing]) — 창을 버리고 **최신 페이지로 간다**(처음 여는 것과 같은 조회).
+  /// 창과 최신 사이를 이어 받지 않는 이유: 사이가 몇 쪽인지 모르고, 사람이 누른 뜻은 "지금 대화로"다.
+  /// 옛 답글은 다시 위로 밀면 `before` 로 받는다. 실패하면 [failures] 에 적고 띠는 남긴다(다시 누를 수 있다).
+  Future<void> jumpToLatestReplies(String channelId, String rootId) async {
+    final gen = _generation;
+    try {
+      final page = await _api!.messages(channelId, thread: rootId, limit: _threadPageLimit);
+      if (gen != _generation) return;
+      _storeThreadPage(rootId, page.messages);
+      threadHasMore[rootId] = page.hasMore;
+      olderThreadFailed.remove(rootId);
+      threadLoad[rootId] = LoadState.loaded;
+    } on Object catch (e) {
+      if (gen != _generation) return;
+      failures[rootId] = LoadFailure.of(e);
+    }
+    notifyListeners();
   }
 
   /// 스레드 루트 id → 에이전트 모델 지정(서버 079). 키가 없으면 아직 못 받았다.
@@ -1891,6 +1936,7 @@ class AppState extends ChangeNotifier {
     threadHasMore.clear();
     loadingOlderThread.clear();
     olderThreadFailed.clear();
+    threadTailMissing.clear();
     channels.clear();
     accounts.clear();
     messages.clear();
