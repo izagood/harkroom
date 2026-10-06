@@ -85,9 +85,9 @@ describe('#251 비활성화 컨트롤은 admin 에게만 보인다', () => {
 });
 
 describe('#251 끄기는 확인 단계를 거친다', () => {
-  // 회귀선 4. 확인 문구는 **두 사실**을 다 말해야 한다: PAT 가 전부 폐기된다,
-  // 다시 켜도 돌아오지 않아 새로 발급해야 한다. 하나만 있으면 운영자는 되돌릴 수 있다고
-  // 믿고 끈다. 그리고 확인 **전에는 요청이 나가지 않는다** — 나가면 확인 단계가 장식이다.
+  // 회귀선 4. 확인 문구는 **두 사실**을 다 말해야 한다: PAT 가 전부 폐기된다, 다시 켤 때
+  // PAT 는 필요 없다(옛 문구의 「새로 발급해야 한다」는 발급이 닫혀 틀린 지시다 — c4f4dab4).
+  // 그리고 확인 **전에는 요청이 나가지 않는다** — 나가면 확인 단계가 장식이다.
   it('첫 클릭은 요청을 보내지 않고 확인 문구를 띄운다', async () => {
     const c = fakeController([agent('rusalka')]);
     render(<AgentsSettings />);
@@ -102,7 +102,8 @@ describe('#251 끄기는 확인 단계를 거친다', () => {
     // 두 사실이 확인 단계의 문구 안에 있어야 한다.
     expect(box.textContent).toContain('PAT');
     expect(box.textContent).toContain('폐기');
-    expect(box.textContent).toContain('새로 발급');
+    expect(box.textContent).toContain('PAT 는 필요 없다');
+    expect(box.textContent).not.toContain('발급');
   });
 
   it('확인을 누르면 그때 비활성화 요청이 나간다', async () => {

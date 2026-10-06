@@ -566,17 +566,13 @@ export const ko = {
   'agents.disable.headingDisabled': '비활성화된 에이전트',
   'agents.disable.headingEnabled': '에이전트 활성화',
   'agents.disable.noteDisabled':
-    '이 에이전트는 비활성화되어 있다. 비활성화 때 모든 PAT 가 폐기됐다 — 다시 활성화해도 PAT 는 필요 없다'
-    + '(에이전트는 오퍼레이터로 선다).',
+    '이 에이전트는 비활성화되어 있다. 비활성화 때 모든 PAT 가 폐기됐다 — 다시 켤 때 PAT 는 필요 없다'
+    + '(오퍼레이터를 통해 접속한다).',
   'agents.disable.noteEnabled':
-    '에이전트를 비활성화하면 {strongRevoked}되고, 다시 활성화해도 PAT 는 복구되지 않아 '
-    + '{strongMint}해야 한다.',
-  'agents.disable.noteEnabledMint': '새로 발급',
+    '에이전트를 비활성화하면 {strongRevoked}된다. 다시 켤 때 PAT 는 필요 없다(오퍼레이터를 통해 접속한다).',
   'agents.disable.noteEnabledRevoked': '모든 PAT 가 폐기',
   'agents.disable.warning':
-    '{strongRevoked}되어 러너가 멈춘다. 다시 활성화해도 PAT 는 돌아오지 않으며, '
-    + '{strongMint}해야 한다.',
-  'agents.disable.warningMint': '새로 발급',
+    '{strongRevoked}되어 러너가 멈춘다. 다시 켤 때 PAT 는 필요 없다(오퍼레이터를 통해 접속한다).',
   'agents.disable.warningRevoked': '이 에이전트의 모든 PAT 가 폐기',
 
   'agents.delete.heading': '삭제',
@@ -656,16 +652,17 @@ export const ko = {
 
   'agents.pat.heading': '옛 러너 토큰 (PAT)',
   'agents.pat.legacyNote':
-    '에이전트는 이제 오퍼레이터로 서버에 선다 — 이 토큰을 쓰는 곳은 없지만 아직 유효하고 만료도 없다. 폐기하라.',
+    '에이전트는 이제 오퍼레이터를 통해 접속한다 — 이 토큰을 쓰는 곳은 없지만 아직 유효하고 만료도 없다. '
+    + '폐기해 두는 것이 안전하다.',
   'agents.pat.listFailed': 'PAT 목록을 읽지 못했다',
-  'agents.pat.revoke': 'Revoke',
+  'agents.pat.revoke': '폐기',
   'agents.pat.revokeAll': '모두 폐기 ({n})',
   'agents.pat.revokeAllConfirm': '모두 폐기',
   'agents.pat.revokeAllDetail':
     '토큰마다 라벨로 폐기하고 감사 기록에 하나씩 남긴다. 아직 이 토큰을 들고 있는 것이 있으면 멈춘다. 되돌릴 수 없다.',
-  'agents.pat.revokeAllTitle': '옛 토큰 {n}개를 폐기할까?',
-  'agents.pat.revokeCancel': 'Cancel',
-  'agents.pat.revokeConfirm': 'Really revoke',
+  'agents.pat.revokeAllTitle': { one: '옛 토큰 {count}개를 폐기할까?', other: '옛 토큰 {count}개를 폐기할까?' },
+  'agents.pat.revokeCancel': '취소',
+  'agents.pat.revokeConfirm': '정말 폐기',
   'agents.pat.revokeFailed': 'PAT 를 폐기하지 못했다',
 
   'agents.permissions.mentionAuto': 'auto — 멘션 턴에서 도구를 모두 허용',

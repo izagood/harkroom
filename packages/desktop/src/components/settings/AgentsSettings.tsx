@@ -1748,7 +1748,6 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       <p className="text-meta text-danger mb-2">
                         {emphasize(t('agents.disable.warning'), {
                           strongRevoked: t('agents.disable.warningRevoked'),
-                          strongMint: t('agents.disable.warningMint'),
                         })}
                       </p>
                       <div className="flex gap-1">
@@ -1773,7 +1772,6 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       <p className="text-meta text-fg-subtle mb-2">
                         {emphasize(t('agents.disable.noteEnabled'), {
                           strongRevoked: t('agents.disable.noteEnabledRevoked'),
-                          strongMint: t('agents.disable.noteEnabledMint'),
                         })}
                       </p>
                       <button
@@ -2696,7 +2694,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       )}
       {confirmingRevokeAll && selected && (
         <ConfirmDialog
-          title={t('agents.pat.revokeAllTitle', { n: String(livePats.length) })}
+          title={t('agents.pat.revokeAllTitle', { count: livePats.length })}
           detail={t('agents.pat.revokeAllDetail')}
           detailKind="note"
           confirmLabel={t('agents.pat.revokeAllConfirm')}

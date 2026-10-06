@@ -290,8 +290,8 @@ describe('AgentsSettings', () => {
       render(<AgentsSettings />);
       await openPermissions();
 
-      fireEvent.click((await screen.findAllByText('Revoke'))[0]!);
-      fireEvent.click(await screen.findByText('Really revoke'));
+      fireEvent.click((await screen.findAllByText('폐기'))[0]!);
+      fireEvent.click(await screen.findByText('정말 폐기'));
 
       await waitFor(() => expect(c.revokePat).toHaveBeenCalledWith('id-rusalka', 'runner'));
       expect(c.revokePat).toHaveBeenCalledTimes(1);
@@ -329,7 +329,7 @@ describe('AgentsSettings', () => {
 
       fireEvent.click(await screen.findByTestId('pat-revoke-all'));
       const dialog = await screen.findByRole('dialog');
-      const cancel = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === 'Cancel');
+      const cancel = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === '취소');
       fireEvent.click(cancel!);
 
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());

@@ -1041,7 +1041,7 @@ export const en = {
    */
   'agents.disable.noteDisabled':
     'This agent is disabled. Disabling revoked every PAT it had — enabling it again does not need one, '
-    + 'since agents sign in through their operator.',
+    + 'since agents connect through their operator.',
   /**
    * 끄기 전 안내. **되돌릴 수 없는 것이 무엇인지**를 말한다 — 끄는 것 자체는 되돌릴 수
    * 있지만 PAT 는 돌아오지 않는다(서버가 해시만 보관한다). 그 비대칭이 이 문장의 전부다.
@@ -1050,15 +1050,13 @@ export const en = {
    * 꾸밈이 아니라 문단에서 건져야 할 사실을 가리킨다(`AgentsSettings.emphasize` 머리말).
    */
   'agents.disable.noteEnabled':
-    'Disabling an agent {strongRevoked}, and enabling it again does not bring them back — '
-    + 'you have to {strongMint}.',
-  'agents.disable.noteEnabledMint': 'mint new ones',
+    'Disabling an agent {strongRevoked}. It does not need a PAT when you enable it again — '
+    + 'it connects through its operator.',
   'agents.disable.noteEnabledRevoked': 'revokes every PAT it has',
   /** 확인 단계. 위 안내와 달리 **지금 벌어질 일**을 현재형으로 말한다. */
   'agents.disable.warning':
-    '{strongRevoked} and its runner stops. Enabling it again does not bring the PATs back — '
-    + 'you have to {strongMint}.',
-  'agents.disable.warningMint': 'mint new ones',
+    '{strongRevoked} and its runner stops. It does not need a PAT when you enable it again — '
+    + 'it connects through its operator.',
   'agents.disable.warningRevoked': 'Every PAT of this agent is revoked',
 
   /**
@@ -1159,7 +1157,8 @@ export const en = {
    * 함께 말한다 — 앞엣것만 말하면 남겨 둬도 되는 것으로 읽는다.
    */
   'agents.pat.legacyNote':
-    'Agents now sign in through their operator, so nothing uses these tokens — but they stay valid and never expire. Revoke them.',
+    'Agents now connect through their operator, so nothing uses these tokens — but they stay valid and never expire. '
+    + 'It is safer to revoke them.',
   'agents.pat.listFailed': 'The PAT list could not be read',
   'agents.pat.revoke': 'Revoke',
   'agents.pat.revokeAll': 'Revoke all ({n})',
@@ -1167,7 +1166,7 @@ export const en = {
   /** 확인창 본문. 되돌릴 수 없다는 것과 감사에 하나씩 남는다는 것(security 조건 a)을 말한다. */
   'agents.pat.revokeAllDetail':
     'Each token is revoked by its label and recorded in the audit log. Anything still holding one of them stops working. This cannot be undone.',
-  'agents.pat.revokeAllTitle': 'Revoke {n} old tokens?',
+  'agents.pat.revokeAllTitle': { one: 'Revoke the old token?', other: 'Revoke {count} old tokens?' },
   'agents.pat.revokeCancel': 'Cancel',
   'agents.pat.revokeConfirm': 'Really revoke',
   'agents.pat.revokeFailed': 'The PAT was not revoked',

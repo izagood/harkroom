@@ -942,12 +942,22 @@ describe('에이전트 설정 — 옮기면서 사실을 잃지 않는다', () =
   });
 
   /**
-   * **끄기 안내는 비대칭을 말한다** — 끄는 것은 되돌릴 수 있지만 PAT 는 안 돌아온다.
-   * 뒤엣것을 자르면 사람은 이것을 되돌릴 수 있는 조작으로만 읽는다.
+   * **끄기 안내는 「다시 켤 때 PAT 는 필요 없다」를 말한다**(결정 harkroom 스레드 c4f4dab4).
+   * 옛 문구는 「새로 발급해야 한다」고 시켰는데, 발급은 닫혔고(410) 러너는 오퍼레이터로 접속한다.
    */
-  it('비활성화 안내가 두 언어 모두 「PAT 는 안 돌아온다」를 말한다', () => {
-    expect(en['agents.disable.noteEnabled']).toContain('does not bring them back');
-    expect(ko['agents.disable.noteEnabled']).toContain('복구되지 않아');
+  it('비활성화 안내가 두 언어 모두 재발급을 시키지 않는다', () => {
+    for (const key of ['agents.disable.noteEnabled', 'agents.disable.warning'] as const) {
+      expect(en[key], key).toContain('does not need a PAT');
+      expect(en[key], key).not.toMatch(/mint/);
+      expect(ko[key], key).toContain('PAT 는 필요 없다');
+      expect(ko[key], key).not.toContain('발급');
+    }
+  });
+
+  it('옛 토큰 확인창 제목이 영어 단수를 맞게 쓴다', () => {
+    const tEn = translator('en');
+    expect(tEn('agents.pat.revokeAllTitle', { count: 1 })).toBe('Revoke the old token?');
+    expect(tEn('agents.pat.revokeAllTitle', { count: 3 })).toBe('Revoke 3 old tokens?');
   });
 
   /**
