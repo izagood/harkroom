@@ -92,8 +92,9 @@ export async function prepareDenialCard(
     `select owner_account_id as "ownerAccountId" from agent_config where account_id = $1`, [d.agentId])).rows[0];
   const existing = (await pool.query<{ id: string }>(
     `select id from message
-      where meta->'mergeDenial'->>'key' = $1 and channel_id = $2 and coalesce(thread_root_id, id) = $3 and deleted_at is null
-      order by created_at limit 1`, [key, d.channelId, d.threadRootId])).rows[0];
+      where meta->'mergeDenial'->>'key' = $1 and channel_id = $2 and coalesce(thread_root_id, id) = $3 and author_id = $4
+        and deleted_at is null
+      order by created_at limit 1`, [key, d.channelId, d.threadRootId, d.agentId])).rows[0];
   const meta: MergeDenialMeta = {
     key, denialId: d.id, agentId: d.agentId, ownerAccountId: owner?.ownerAccountId ?? null,
     repo: d.scope.slice('repo:'.length), number: d.number, deployRepo: deployRepoScopes().has(d.scope),

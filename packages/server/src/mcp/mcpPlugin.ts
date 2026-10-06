@@ -779,6 +779,10 @@ function buildMcpServer(
     if (ids.size !== options.length) {
       return jsonResult({ error: { code: 'duplicate_option', message: 'option ids must be unique' } });
     }
+    // 머지 거절 카드는 사람 앞 원본만이다(C1) — 거울 검사보다 먼저 막아야 어느 쪽을 실어도 같은 코드로 거절된다(security n2).
+    if (mergeDenialId && (to || mirrorOf)) {
+      return jsonResult({ error: { code: 'merge_denial_audience', message: 'a merge-denial card is addressed to humans; omit `to` and `mirrorOf`' } });
+    }
     let audience: AskAudience = { kind: 'human' };
     if (to) {
       const handle = to.replace(/^@/, '').toLowerCase();

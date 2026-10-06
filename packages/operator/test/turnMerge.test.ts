@@ -51,12 +51,15 @@ describe('turnMerge', () => {
   let checkStatus: number | null;
   let pr: Record<string, unknown>;
   let mergeCode: number;
+  let mergeStderr: string;
+  let viewStderr: string | null;
+  let denialBody: Record<string, unknown>;
   let ghUser: string | undefined;
   let lease: { leaseId: string; token: string; agentId: string } | null;
   let tm: TurnMerge;
 
   beforeEach(() => {
-    forwards = []; execs = []; checkStatus = 200; mergeCode = 0; ghUser = 'izagood';
+    forwards = []; execs = []; checkStatus = 200; mergeCode = 0; mergeStderr = 'GraphQL: Base branch was modified'; viewStderr = null; denialBody = { error: { code: 'not_granted' } }; ghUser = 'izagood';
     lease = { leaseId: 'lease-1', token: 'tok-1', agentId: 'a1' };
     pr = { state: 'OPEN', isDraft: false, headRefOid: SHA, baseRefName: 'main', mergeStateStatus: 'CLEAN', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }, { state: 'SUCCESS' }] };
     tm = createTurnMerge({
@@ -70,7 +73,7 @@ describe('turnMerge', () => {
         if (req.path === '/agent/merge-checks') {
           return checkStatus === 200
             ? { type: 'http.response', id: req.id, status: 200, body: JSON.stringify({ allowed: true, grantedBy: 'owner-1', causeByHuman: true }) }
-            : { type: 'http.response', id: req.id, status: checkStatus, body: JSON.stringify({ error: { code: 'not_granted' } }) };
+            : { type: 'http.response', id: req.id, status: checkStatus, body: JSON.stringify(denialBody) };
         }
         return { type: 'http.response', id: req.id, status: 201, body: '{"messageId":"m1"}' };
       },
@@ -78,8 +81,8 @@ describe('turnMerge', () => {
         execs.push({ file, args, env });
         if (args[0] === 'auth') return ghUser === 'broken' ? { code: 1, stdout: '', stderr: 'no oauth token' } : { code: 0, stdout: 'tok-from-gh\n', stderr: '' };
         if (args[0] === 'pr' && args[1] === 'view' && args.includes('mergeCommit')) return { code: 0, stdout: JSON.stringify({ mergeCommit: { oid: MERGE_SHA } }), stderr: '' };
-        if (args[0] === 'pr' && args[1] === 'view') return { code: 0, stdout: JSON.stringify(pr), stderr: '' };
-        if (args[0] === 'pr' && args[1] === 'merge') return { code: mergeCode, stdout: '', stderr: mergeCode ? 'GraphQL: Base branch was modified' : '' };
+        if (args[0] === 'pr' && args[1] === 'view') return viewStderr ? { code: 1, stdout: '', stderr: viewStderr } : { code: 0, stdout: JSON.stringify(pr), stderr: '' };
+        if (args[0] === 'pr' && args[1] === 'merge') return { code: mergeCode, stdout: '', stderr: mergeCode ? mergeStderr : '' };
         return { code: 1, stdout: '', stderr: 'unexpected' };
       },
     });
@@ -115,6 +118,34 @@ describe('turnMerge', () => {
     expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('not_granted');
     expect(execs).toHaveLength(0);
     expect(results()).toHaveLength(0);
+  });
+
+  it('P4: 서버가 denialId 를 실은 거절이면 그대로 넘긴다 — 에이전트가 message.ask 의 mergeDenialId 로 카드를 세운다', async () => {
+    checkStatus = 403;
+    const id = '0f0e0d0c-0b0a-4908-8706-050403020100';
+    denialBody = { error: { code: 'not_granted', denialId: id } };
+    const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+    expect(r).toMatchObject({ isError: true, body: { error: { code: 'not_granted', denialId: id, message: expect.stringContaining('mergeDenialId') } } });
+    expect(execs).toHaveLength(0);
+    // uuid 가 아닌 값은 싣지 않는다 — 서버 본문을 그대로 비추지 않는다
+    denialBody = { error: { code: 'not_granted', denialId: 'x; rm -rf' } };
+    expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.denialId).toBeUndefined();
+  });
+
+  it('P4: gh 계정이 저장소에 닿지 못하면 no_repo_access — 원문은 보고에만, 에이전트 답에는 「사람이 머지」 문구만', async () => {
+    mergeCode = 1; mergeStderr = 'GraphQL: Resource not accessible by integration (mergePullRequest)';
+    const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+    expect(r.body.error.code).toBe('no_repo_access');
+    expect(JSON.stringify(r.body)).not.toContain('Resource not accessible');
+    expect(results()).toEqual([expect.objectContaining({ result: 'failed', error: expect.stringContaining('Resource not accessible') })]);
+
+    forwards = []; execs = []; mergeCode = 0; viewStderr = 'GraphQL: Could not resolve to a Repository with the name \'example/service\'.';
+    const v = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+    expect(v.body.error.code).toBe('no_repo_access');
+    expect(ghCalls()).not.toContain('pr merge');
+    // 저장소와 무관한 view 실패는 그대로 pr_not_found
+    forwards = []; viewStderr = 'no pull requests found for branch';
+    expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('pr_not_found');
   });
 
   it('서버에 닿지 않으면 unavailable — 머지하지 않는다(fail-closed)', async () => {
