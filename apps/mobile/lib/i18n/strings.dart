@@ -88,6 +88,15 @@ abstract class Strings {
   /// 안 읽음으로 표시했다는 짧은 확인.
   String get messageMarkedUnread;
 
+  // 스레드 상태 칸 길게 누르기 문장(상태 · 누구 · 이유) — 데스크톱 threadStatus.label.* 와 같은 낱말.
+  String get threadStatusReceived;
+  String get threadStatusRunning;
+  String get threadStatusWaiting;
+  String get threadStatusMyTurn;
+  String get threadStatusStuck;
+  String get threadStatusDone;
+  String get threadStatusSomeone;
+
   /// 시트(내 스레드 답글): 채널에도 올린다.
   String get messagePostToChannel;
 
@@ -951,6 +960,13 @@ Map<String, String> stringsToMap(Strings s) => {
       'messageCopyFailed': s.messageCopyFailed,
       'messageMarkUnread': s.messageMarkUnread,
       'messageMarkedUnread': s.messageMarkedUnread,
+      'threadStatusReceived': s.threadStatusReceived,
+      'threadStatusRunning': s.threadStatusRunning,
+      'threadStatusWaiting': s.threadStatusWaiting,
+      'threadStatusMyTurn': s.threadStatusMyTurn,
+      'threadStatusStuck': s.threadStatusStuck,
+      'threadStatusDone': s.threadStatusDone,
+      'threadStatusSomeone': s.threadStatusSomeone,
       'messagePostToChannel': s.messagePostToChannel,
       'messageRecallFromChannel': s.messageRecallFromChannel,
       'messagePostedToChannel': s.messagePostedToChannel,

@@ -303,6 +303,35 @@ void main() {
     test('모양이 깨진 델타는 무시한다', () {
       expect(() => app.applyEvent({'type': 'reaction.added'}), returnsNormally);
     });
+
+    test('thread.status 가 루트의 상태를 갈아 끼우고, 서버가 단 상태 칸을 알아본다(server 108)', () {
+      // 서버는 상태를 진짜 리액션으로 단다 — 칸은 리액션 델타로, 상태는 thread.status 로 온다.
+      app.applyEvent(delta('reaction.added', 'bot', '💬'));
+      app.applyEvent({
+        'type': 'thread.status',
+        'channelId': 'c1',
+        'rootId': 'm1',
+        'statusReaction': {'status': 'running', 'emoji': '💬', 'accountId': 'bot', 'reason': null, 'updatedAt': 'x'},
+      });
+      final m = app.messages['c1']!.single;
+      expect(m.status?.status, 'running');
+      expect(m.status!.marks(m.reactions.single), isTrue);
+      // 같은 이모지라도 주인이 없는 칸(사람만 단 것)은 상태 칸이 아니다.
+      expect(m.status!.marks(const ReactionRow(emoji: '💬', accountIds: ['a1'])), isFalse);
+      // 리액션 델타가 상태를 지우지 않는다.
+      app.applyEvent(delta('reaction.added', 'a1', '👍'));
+      expect(app.messages['c1']!.single.status?.status, 'running');
+
+      app.applyEvent({'type': 'thread.status', 'channelId': 'c1', 'rootId': 'm1', 'statusReaction': null});
+      expect(app.messages['c1']!.single.status, isNull);
+    });
+
+    test('끝남(done) ✅ 도 주인이 들어 있으면 상태 칸이다 — 사람만 단 ✅ 는 보통 칸(B1)', () {
+      const done = ThreadStatusMark(status: 'done', emoji: '✅', accountId: 'bot', reason: null);
+      expect(done.marks(const ReactionRow(emoji: '✅', accountIds: ['bot', 'a1'])), isTrue);
+      expect(done.marks(const ReactionRow(emoji: '✅', accountIds: ['a1'])), isFalse);
+      expect(ThreadStatusMark.fromJson('깨진 값'), isNull);
+    });
   });
 
   group('읽음', () {

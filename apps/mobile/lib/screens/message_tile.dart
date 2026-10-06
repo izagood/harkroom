@@ -206,6 +206,14 @@ class _Reactions extends StatelessWidget {
             backgroundColor:
                 mine != null && r.accountIds.contains(mine) ? theme.colorScheme.primaryContainer : null,
             label: Text('${r.emoji} ${r.accountIds.length}'),
+            // 서버가 단 스레드 상태 칸(👀💬⏳🙋🚨✅)이면 길게 눌러 "상태 · 누구 · 이유"를 본다(데스크톱과 같은 문장).
+            // 누르기는 보통 칸과 같다 — 내 리액션은 따로 저장되고 상태 행은 서버가 지킨다(status_kept, designer B1).
+            tooltip: message.status?.marks(r) == true
+                ? threadStatusSentence(message.status!, context.t, (id) {
+                    final a = app.accounts[id];
+                    return a == null ? null : (a.displayName.isNotEmpty ? a.displayName : a.handle);
+                  })
+                : null,
             onPressed: () async {
               Future<void> go() => app.toggleReaction(message.channelId, message.id, r.emoji);
               try {
@@ -904,4 +912,36 @@ class DayDivider extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 상태 칸 길게 누르기 문장 — **상태 · 누구 · 이유**(데스크톱 `statusSentence` 와 같은 순서). 이유는 80자에서
+/// 자른다. ⏳ 의 이유는 기다리는 상대의 id 나 깨움 시각(ISO)이라 이름·시각으로 바꾸고, 못 바꾸면 뺀다.
+String threadStatusSentence(ThreadStatusMark s, Strings t, String? Function(String id) nameOf) {
+  final label = switch (s.status) {
+    'received' => t.threadStatusReceived,
+    'running' => t.threadStatusRunning,
+    'waiting' => t.threadStatusWaiting,
+    'my-turn' => t.threadStatusMyTurn,
+    'stuck' => t.threadStatusStuck,
+    'done' => t.threadStatusDone,
+    _ => s.emoji,
+  };
+  final who = (s.accountId == null ? null : nameOf(s.accountId!)) ?? t.threadStatusSomeone;
+  final parts = [label, who];
+  final reason = s.reason;
+  if (reason != null && reason.isNotEmpty) {
+    if (s.status == 'waiting') {
+      final other = nameOf(reason);
+      final at = DateTime.tryParse(reason);
+      if (other != null) {
+        parts.add(other);
+      } else if (at != null) {
+        final l = at.toLocal();
+        parts.add('${l.hour.toString().padLeft(2, '0')}:${l.minute.toString().padLeft(2, '0')}');
+      }
+    } else if (s.status == 'my-turn' || s.status == 'stuck') {
+      parts.add(reason.length > 80 ? '${reason.substring(0, 80)}…' : reason);
+    }
+  }
+  return parts.join(' · ');
 }

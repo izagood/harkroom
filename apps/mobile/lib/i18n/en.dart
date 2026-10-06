@@ -474,6 +474,20 @@ class StringsEn implements Strings {
   @override
   String get messageMarkedUnread => 'Marked unread';
   @override
+  String get threadStatusReceived => 'Received';
+  @override
+  String get threadStatusRunning => 'Working';
+  @override
+  String get threadStatusWaiting => 'Waiting';
+  @override
+  String get threadStatusMyTurn => 'Your turn';
+  @override
+  String get threadStatusStuck => 'Stuck';
+  @override
+  String get threadStatusDone => 'Done';
+  @override
+  String get threadStatusSomeone => 'An agent';
+  @override
   String get messagePostToChannel => 'Post to channel';
   @override
   String get messageRecallFromChannel => 'Remove from channel';
