@@ -23,7 +23,7 @@ import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/re
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import {
-  setController, Controller, INITIAL_HISTORY_LIMIT, type Controller as C,
+  setController, Controller, FIRST_PAGE_LIMIT, INITIAL_HISTORY_LIMIT, type Controller as C,
 } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
 import { acc, chan, fakeApi, fakeWsFactory, msg, scheduledApiStub } from './helpers/fakeApi';
@@ -42,10 +42,13 @@ describe('채널 히스토리 창', () => {
     await c.start();
 
     await c.openChannel('c1');
-    expect(messages).toHaveBeenCalledWith('c1', { since: 0, limit: INITIAL_HISTORY_LIMIT });
+    // 첫 화면은 작게 받아 바로 그리고, 나머지는 첫 창(INITIAL_HISTORY_LIMIT)까지 뒤에서 채운다.
+    expect(messages).toHaveBeenNthCalledWith(1, 'c1', { since: 0, limit: FIRST_PAGE_LIMIT });
+    expect(messages).toHaveBeenNthCalledWith(2, 'c1', { before: 1, limit: INITIAL_HISTORY_LIMIT - FIRST_PAGE_LIMIT });
     // 값도 못 박는다: `toHaveBeenCalledWith` 는 `limit: undefined` 를 "없음"과 같게 보므로,
-    // 상한을 지운 판본에서도 위 한 줄만으로는 초록이 된다(서버 기본값은 200 이다).
+    // 상한을 지운 판본에서도 위 줄만으로는 초록이 된다(서버 기본값은 200 이다).
     expect(INITIAL_HISTORY_LIMIT).toBeGreaterThan(200);
+    expect(FIRST_PAGE_LIMIT).toBeLessThan(INITIAL_HISTORY_LIMIT);
 
     // 두 번째로 열면 증분이다 — 넓은 창은 "처음 열 때 며칠은 보인다"를 위한 것이고,
     // 새로 생긴 것만 받는 길에 붙이면 매번 500 행을 실어 오는 값만 든다. 증분은 서버 기본과 같은

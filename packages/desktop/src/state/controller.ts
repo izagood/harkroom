@@ -42,6 +42,16 @@ import { detectLocale, isLocale, translator, type Translate } from '../i18n';
 export const INITIAL_HISTORY_LIMIT = 500;
 
 /**
+ * 첫 창 가운데 **먼저** 받는 행 수(2026-10-06, jaebin: "보이는 채팅은 몇 개 안 되는데 왜 500개나 받아?").
+ *
+ * 500 은 "첫 화면에서 며칠은 보인다"를 위한 값이지 첫 화면을 그리는 데 드는 값이 아니다. 그래서
+ * 첫 화면은 이만큼만 받아 바로 그리고, 나머지(`INITIAL_HISTORY_LIMIT` 까지)는 뒤에서 이어 받는다
+ * (`startBackfill`). 숨은 행(답글·progress)이 섞여 최상위가 몇 줄 안 될 수 있지만, 뒤채움이 곧
+ * 위를 채운다 — 읽던 자리는 `ChannelPane` 의 앵커 복원이 지킨다.
+ */
+export const FIRST_PAGE_LIMIT = 50;
+
+/**
  * `openThread` 의 선택 인자들. **자리 인자였다가 묶었다** — `channelId` 를 더하면 넷이 되고,
  * 넷째 자리에 채널이 오는 호출은 읽는 사람이 무엇을 주는지 셀 수 없다. 이름으로 주면
  * `{ channelId }` 하나만 주는 흔한 경우가 짧아진다.
@@ -376,7 +386,7 @@ export class Controller {
   /** 첫 페이지를 미리 띄워 `prefetchedPages` 에 둔다. 실패는 `null` 로 접는다. */
   private prefetchPage(channelId: string): void {
     markBoot('messages:request');
-    const page = this.api.messages(channelId, { since: 0, limit: INITIAL_HISTORY_LIMIT })
+    const page = this.api.messages(channelId, { since: 0, limit: FIRST_PAGE_LIMIT })
       .then((p) => { markBoot('messages:response'); return p; })
       .catch(() => null);
     this.prefetchedPages.set(channelId, page);
@@ -413,9 +423,32 @@ export class Controller {
       if (page) return page;
     }
     markBoot('messages:request');
-    const page = await this.api.messages(channelId, { since: 0, limit: INITIAL_HISTORY_LIMIT });
+    const page = await this.api.messages(channelId, { since: 0, limit: FIRST_PAGE_LIMIT });
     markBoot('messages:response');
     return page;
+  }
+
+  /** 채널별 진행 중인 뒤채움. `loadOlder` 가 같은 구간을 두 번 묻지 않도록 여기에 합류한다. */
+  private backfills = new Map<string, Promise<void>>();
+
+  /**
+   * 첫 페이지 **아래**를 `INITIAL_HISTORY_LIMIT` 까지 뒤에서 이어 받는다(`FIRST_PAGE_LIMIT` 주석).
+   * `loadOlder` 와 같은 모양이다 — `before` 로 물은 범위를 받은 구간으로 적고, 그 응답의 `hasMore` 가
+   * 과거의 끝을 말한다. 실패하면 조용히 그친다: `hasMore` 가 참으로 남아 사람이 위로 올리면
+   * `loadOlder` 가 같은 자리를 다시 묻는다.
+   */
+  private startBackfill(channelId: string, first: { messages: MessageRow[]; hasMore: boolean }): void {
+    if (!first.hasMore || !first.messages.length || this.backfills.has(channelId)) return;
+    const oldest = Math.min(...first.messages.map((m) => m.seq));
+    const run = (async () => {
+      const page = await this.api.messages(channelId, { before: oldest, limit: INITIAL_HISTORY_LIMIT - FIRST_PAGE_LIMIT });
+      if (this.stopped) return;
+      if (page.messages.length) this.addCoverage(channelId, Math.min(...page.messages.map((m) => m.seq)), oldest - 1);
+      const store = this.store.getState();
+      store.upsertMessages(channelId, page.messages);
+      store.set({ hasMore: { ...this.store.getState().hasMore, [channelId]: page.hasMore } });
+    })().catch(() => {}).finally(() => { this.backfills.delete(channelId); });
+    this.backfills.set(channelId, run);
   }
 
   /**
@@ -1192,6 +1225,7 @@ export class Controller {
       });
     }
     markBoot('messages:applied');
+    if (since === 0) this.startBackfill(channelId, page);
     await this.catchUpAfterFirstPage(channelId);
     // 응답을 기다리는 사이 사람이 다른 채널로 갔으면 읽음 처리하지 않는다 — 한 줄도 못 본 채널을
     // 읽었다고 적게 된다. 기동 때 복원한 채널이 늦게 도착하는 경우가 가장 흔하다. 돌아오면
@@ -1495,6 +1529,9 @@ export class Controller {
     const { messages, hasMore } = this.store.getState();
     const activeChannelId = channelId ?? this.store.getState().activeChannelId;
     if (!activeChannelId || !hasMore[activeChannelId]) return;
+    // 첫 창의 뒤채움이 도는 중이면 그것이 곧 "더 오래된 것"이다 — 같은 구간을 또 묻지 않는다.
+    const backfill = this.backfills.get(activeChannelId);
+    if (backfill) { await backfill; return; }
     const rows = messages[activeChannelId] ?? [];
     if (!rows.length) return;
     const oldest = Math.min(...rows.map((m) => m.seq));
@@ -2667,6 +2704,7 @@ export class Controller {
       store.set({
         hasMore: { ...store.hasMore, [channelId]: page.hasMore },
       });
+      this.startBackfill(channelId, page);
     }
     await this.catchUpAfterFirstPage(channelId);
     this.settleReadPosition(channelId);

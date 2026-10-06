@@ -27,6 +27,9 @@ describe('링크 이동 — 외톨이 줄은 이웃을 받아 온다', () => {
       // 서버는 around 창의 hasMore 를 늘 false 로 준다 — 과거를 말할 자격이 없는 조회다.
       if (o?.around === 300) return { messages: window, hasMore: false };
       if (o?.since === 0) return { messages: latest, hasMore: true };
+      // 첫 창의 뒤채움(`before`) — 그보다 더 오래된 것도 남아 있다.
+      // 서버처럼 그 바로 아래 몇 줄만 준다(m300 까지는 닿지 않는다).
+      if (o?.before !== undefined) return { messages: [msg('m990', 'c1', 990, '조금 옛말', 'u2')], hasMore: true };
       return { messages: [], hasMore: false };
     });
     return { messages, api: fakeApi({ messages, message: vi.fn(async () => old) }) };
@@ -111,6 +114,10 @@ describe('받아 온 구간 — 채널 전환·재연결', () => {
       return { messages: [...up, ...dn], hasMore: false };
     }
     if (o?.since !== undefined && o.since > 0) return { messages: list.filter((m) => m.seq > o.since!).slice(0, limit), hasMore: false };
+    if (o?.before !== undefined) {
+      const older = list.filter((m) => m.seq < o.before!);
+      return { messages: older.slice(-limit), hasMore: older.length > limit };
+    }
     return { messages: list.slice(-limit), hasMore: list.length > limit };
   });
 
@@ -122,7 +129,8 @@ describe('받아 온 구간 — 채널 전환·재연결', () => {
     const c = new Controller(api, makeWs);
     await c.start();
     await c.openChannel('c1');
-    expect(useAppStore.getState().messages.c1!.length).toBe(500);
+    // 첫 화면 50행 + 뒤채움 450행 = 첫 창 500행.
+    await vi.waitFor(() => expect(useAppStore.getState().messages.c1!.length).toBe(500));
     // 끊긴 사이에 450개가 쌓였다.
     all.c1 = rows(1, 1460);
     messages.mockClear();
