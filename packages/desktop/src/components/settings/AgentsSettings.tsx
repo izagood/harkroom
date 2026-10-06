@@ -20,7 +20,7 @@ import { agoLabel } from '../../lib/time';
 // 기억 목록의 판정(접기·검색·묶기)은 `lib/` 한 벌이다 — 그 파일 머리말에 화면에서 떼어
 // 낸 이유가 있다. 회귀선은 `test/memoryList.test.ts`.
 import {
-  MAX_ARCHIVED_MEMORIES, archivedLinks, archiveOverflow, chipCount, chipsFor, cleanupChips, filterMemories, memoryRows, memorySummary,
+  MAX_ARCHIVED_MEMORIES, MAX_ROW_REASONS, archivedLinks, candidateReasons, memorySections, resolveWikiLink, archiveOverflow, chipCount, chipsFor, cleanupChips, filterMemories, memoryRows, memorySummary,
   splitArchived, splitCore, usageOf, usedWithin,
   type CleanupChip, type MemoryAudit, type MemoryBatchResult, type MemoryEntry, type MemorySort,
 } from '../../lib/memoryList';
@@ -40,6 +40,7 @@ import { AgentScopeSection } from './AgentScopeSection';
 import { AgentGrantsSection, liveMergeGrantCount } from './AgentGrantsSection';
 import { AgentPickableSection } from './AgentPickableSection';
 import { kindLabel, MemoryDetail } from './MemoryDetail';
+import { MemoryBody } from './MemoryBody';
 import { canSeeAgentConfig } from '../../lib/agentConfigGate';
 // 팀 묶음(`docs/desktop-agent-cards.html` 4단계). 카드가 `AgentGrid` 를 재사용하지 않은
 // 근거는 `TeamGrid` 머리 주석에 있다 — 요지는 `AgentGridPlace` 가 못 박은 것이다:
@@ -401,6 +402,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 것이고, 하나만 열리는 방식이면 다음을 열 때마다 앞의 것이 닫혀 비교가 끊긴다.
    */
   const [openSlugs, setOpenSlugs] = useState<string[]>([]);
+  /**
+   * 상세 칸에 연 기억 하나(Memory 탭 PR 4 — 목록/상세 두 칸). 여럿을 펼치던 앞판과 달리 하나다:
+   * 상세는 본문·이전 판·고치기를 담아 길어서, 둘을 나란히 펼치면 목록이 다시 무너진다.
+   * 에이전트를 바꾸면 비운다 — 같은 이름의 기억이 다른 에이전트에도 있을 수 있다.
+   */
+  const [memSelected, setMemSelected] = useState<string | null>(null);
   const [openGroups, setOpenGroups] = useState<string[]>([]);
   const [memQuery, setMemQuery] = useState('');
   const [memSort, setMemSort] = useState<MemorySort>('recent');
@@ -755,12 +762,19 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const memoryArchivedLinks = memAudit ? archivedLinks(memAudit, memoryArchivedSet) : new Map<string, string[]>();
   /** 칩이 눌려 있으면 그 후보만. 칩이 사라졌으면(정리돼 0) 거르지 않는다. */
   const memoryChipSet = memoryChips.find((c) => c.key === memChip)?.slugs ?? null;
-  const memoryVisible = memorySplit
-    ? memoryRows(
+  /** 종류별 칸(결정 1). 칸 안에서 접두어로 묶는다(lib `memorySections`). */
+  const memoryKindSections = memorySplit
+    ? memorySections(
       memoryChipSet ? memorySplit.rest.filter((m) => memoryChipSet.has(m.slug)) : memorySplit.rest,
       { query: memQuery, sort: memSort },
     )
     : [];
+  const memoryVisible = memoryKindSections.flatMap((sec) => sec.rows);
+  const memoryActiveSet = new Set(memoryParts?.active.map((m) => m.slug) ?? []);
+  /** 상세 칸의 기억. 보관·지우기로 사라졌으면 칸이 닫힌다(없는 것을 그리지 않는다). */
+  const memorySelectedEntry = memSelected && memoryAll
+    ? memoryAll.find((m) => m.slug === memSelected && m.slug !== 'core') ?? null
+    : null;
   const memoryPickedActive = memoryParts
     ? memoryParts.active.filter((m) => memPicked.includes(m.slug)).map((m) => m.slug) : [];
   const memoryPickedArchived = memoryParts
@@ -866,8 +880,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 지우기를 펼친 뒤에만 보이게 두지 않은 이유: 한도에 닿았을 때 사람이 하는 일이 바로
    * 훑으며 지우는 것이고, 그때마다 펼치게 만들면 접은 값이 도로 사라진다.
    */
-  const memoryRow = (m: MemoryEntry, agentId: string, inGroup: boolean, inArchive = false) => {
-    const open = openSlugs.includes(m.slug);
+  const memoryRow = (m: MemoryEntry, inGroup: boolean, inArchive = false) => {
+    const open = memSelected === m.slug;
     const reasons = chipsFor(m.slug, memoryChips);
     const pointsToArchived = memoryArchivedLinks.get(m.slug) ?? [];
     const usage = usageOf(m);
@@ -890,10 +904,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
             aria-expanded={open}
             aria-label={t(open ? 'agents.memory.collapse' : 'agents.memory.expand', { slug: m.slug })}
-            onClick={() => setOpenSlugs((prev) => toggleIn(prev, m.slug))}
+            onClick={() => setMemSelected((prev) => (prev === m.slug ? null : m.slug))}
           >
-            <span aria-hidden="true" className="flex-none text-meta text-fg-subtle">{open ? '▾' : '▸'}</span>
-            <span className="flex-none text-meta font-medium">{m.slug}</span>
+            <span className="flex min-w-0 flex-1 flex-col">
+            <span className="flex min-w-0 items-baseline gap-2">
+            <span aria-hidden="true" className="flex-none text-meta text-fg-subtle">{open ? '▸' : ''}</span>
+            <span className="min-w-0 truncate text-meta font-medium">{m.slug}</span>
             {/* 종류(M5): 주제가 아닌 것만 표를 단다 — 대부분인 주제에까지 달면 표가 소음이 된다. */}
             {m.kind && m.kind !== 'topic' && (
               <span data-testid="memory-kind" className="flex-none rounded-sm bg-surface-hover px-1 text-meta text-fg-subtle">
@@ -914,12 +930,25 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             )}
             {/* 요약(에이전트가 쓴 한 줄)이 있으면 그것을, 없으면 첫 줄을 제목처럼 쓴다. 넘치면 잘린다. */}
             {/* 왜 정리 후보인가 — 칩과 같은 말. 칩을 누르지 않아도 줄에서 보인다. */}
-            {reasons.map((r) => (
+            {/* 좁은 창에서 요약을 밀어내지 않게 둘까지만, 나머지는 「+n」(#1196 designer n3). */}
+            {reasons.slice(0, MAX_ROW_REASONS).map((r) => (
               <span key={r} data-testid={`memory-reason-${r}`} className="flex-none rounded-sm bg-warning-surface px-1 text-meta text-warning">
                 {t(`agents.memory.chip.${r}`)}
               </span>
             ))}
-            <span className="min-w-0 flex-1 truncate text-meta text-fg-subtle">{m.description || memorySummary(m.value)}</span>
+            {reasons.length > MAX_ROW_REASONS && (
+              <span
+                data-testid="memory-reason-more"
+                title={reasons.slice(MAX_ROW_REASONS).map((r) => t(`agents.memory.chip.${r}`)).join(', ')}
+                className="flex-none rounded-sm bg-warning-surface px-1 text-meta text-warning"
+              >
+                {`+${reasons.length - MAX_ROW_REASONS}`}
+              </span>
+            )}
+            </span>
+            {/* 두 줄 요약 — 한 줄에서 잘리면 무슨 기억인지 펼쳐야만 알았다. */}
+            <span data-testid="memory-summary" className="line-clamp-2 min-w-0 pl-4 text-meta text-fg-subtle">{m.description || memorySummary(m.value)}</span>
+            </span>
           </button>
           {/* 보관된 기억을 가리키는 [[링크]] 는 깨짐(빨강)이 아니다 — 되살릴지 정할 일이다. */}
           {pointsToArchived.length > 0 && (
@@ -934,7 +963,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             </button>
           )}
           {m.readCount !== undefined && (
-            <span data-testid="memory-usage" className="flex-none text-meta text-fg-subtle">
+            // 0 은 흐리게 — 모든 줄에 「쓰임 0」이 같은 진하기로 서면 쓰인 줄이 묻힌다(#1196 designer n5).
+            <span data-testid="memory-usage" data-zero={usage === 0 || undefined} className={`flex-none text-meta text-fg-subtle ${usage === 0 ? 'opacity-50' : ''}`}>
               {t('agents.memory.usage', { n: usage })}
             </span>
           )}
@@ -986,12 +1016,88 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             </button>
           )}
         </div>
-        {open && (
-          <div className={inGroup ? 'pl-4' : ''}>
-            <MemoryDetail agentId={agentId} entry={m} onChanged={() => { if (selected) loadMemories(selected, true); }} />
-            <div className="flex justify-end px-2 pb-1">{memoryDelete(m.slug, agentId)}</div>
-          </div>
+      </div>
+    );
+  };
+
+  /**
+   * 상세 칸(PR 4). 본문은 읽는 모양으로(`MemoryBody`), `[[링크]]` 는 그 기억을 이 칸에 연다.
+   * 「왜 후보인가」는 칩이 이름만 말하던 것의 근거다. 완전히 지우기는 여기에만 있다(결정 2).
+   * `key` 에 에이전트를 넣는다 — 같은 이름의 기억이 다른 에이전트에도 있을 때 앞 칸의 편집·판
+   * 상태가 넘어오지 않게(security: 두 칸 사이 상태 누수).
+   */
+  const memoryDetailPane = (m: MemoryEntry, agentId: string) => {
+    const why = memAudit ? candidateReasons(m.slug, memAudit, memoryArchivedSet) : [];
+    const openLink = (target: string) => {
+      const r = resolveWikiLink(target, memoryActiveSet, memoryArchivedSet);
+      if (!r.slug) return;
+      if (r.state === 'archived') setOpenGroups((prev) => (prev.includes(ARCHIVED_GROUP) ? prev : [...prev, ARCHIVED_GROUP]));
+      setMemSelected(r.slug);
+    };
+    const ago = (iso: string) => agoLabel(new Date(iso).getTime(), Date.now(), locale, t);
+    return (
+      <div key={`${agentId}:${m.slug}`} data-testid="memory-detail-pane" className="space-y-2 rounded-row border border-border p-2">
+        <div className="flex items-baseline gap-2">
+          <span className="min-w-0 flex-1 break-all text-meta font-medium">{m.slug}</span>
+          <span className="flex-none rounded-sm bg-surface-hover px-1 text-meta text-fg-subtle">{kindLabel(t, m.kind ?? 'topic')}</span>
+          {m.archivedAt && (
+            <span className="flex-none rounded-sm bg-surface-hover px-1 text-meta text-fg-subtle">{t('agents.memory.archivedTag')}</span>
+          )}
+          <button
+            className="flex-none text-meta text-fg-muted"
+            aria-label={t('agents.memory.closeDetail')}
+            onClick={() => setMemSelected(null)}
+          >
+            ✕
+          </button>
+        </div>
+        {why.length > 0 && (
+          <ul data-testid="memory-why" className="space-y-0.5 rounded-row bg-warning-surface p-1.5 text-meta text-warning">
+            {why.map((w) => (
+              <li key={w.key} data-testid={`memory-why-${w.key}`}>
+                {w.key === 'flagged' ? t('agents.memory.why.flagged', { reason: w.reason ?? '' })
+                  : w.key === 'stale' ? t('agents.memory.why.stale', { ago: ago(w.lastUsedAt) })
+                    : w.key === 'pairs' ? (
+                      <>
+                        {t('agents.memory.why.pairs')}{' '}
+                        {w.with.map((p, i) => (
+                          <Fragment key={p}>
+                            {i > 0 && ', '}
+                            <button className="underline decoration-dotted" onClick={() => setMemSelected(p)}>{p}</button>
+                          </Fragment>
+                        ))}
+                      </>
+                    )
+                      : w.key === 'brokenLinks' ? t('agents.memory.why.brokenLinks', { targets: w.targets.join(', ') })
+                        : t(`agents.memory.why.${w.key}`)}
+              </li>
+            ))}
+          </ul>
         )}
+        <MemoryDetail
+          agentId={agentId}
+          entry={m}
+          onChanged={() => { if (selected) loadMemories(selected, true); }}
+          body={(
+            <MemoryBody
+              value={m.value}
+              linkState={(target) => resolveWikiLink(target, memoryActiveSet, memoryArchivedSet).state}
+              onOpenLink={openLink}
+            />
+          )}
+        />
+        <div className="flex justify-end gap-1 px-2">
+          {m.archivedAt && (
+            <button
+              className="rounded-row border border-border px-1.5 text-meta text-fg-muted"
+              disabled={memBusy}
+              onClick={() => memoryBatch('unarchive', [m.slug])}
+            >
+              {t('agents.memory.unarchiveAction')}
+            </button>
+          )}
+          {memoryDelete(m.slug, agentId)}
+        </div>
       </div>
     );
   };
@@ -1074,6 +1180,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     setConfirmingDisable(false);
     // 앞 에이전트에서 펼쳐 둔 줄·검색어가 남으면 다음 에이전트의 목록이 남의 상태로 열린다.
     setOpenSlugs([]);
+    setMemSelected(null);
     setOpenGroups([]);
     setMemQuery('');
     setMemSort('recent');
@@ -2877,6 +2984,13 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       </div>
                     )}
 
+                    {/*
+                      목록/상세 두 칸(PR 4). 칸 폭은 설정 패널 폭을 따라야 하므로 창 폭이 아니라 컨테이너
+                      폭으로 가른다 — 좁으면 상세가 목록 위로 쌓인다(고른 것을 찾아 내려가지 않게).
+                    */}
+                    <div className="@container">
+                    <div className="flex flex-col-reverse gap-2 @3xl:grid @3xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] @3xl:items-start">
+                    <div className="min-w-0 space-y-2">
                     {/* 남은 것이 모두 보관됐어도 보관함을 찾을 수 있게 검색창은 둘 중 하나만 있어도 선다. */}
                     {memorySplit && (memorySplit.rest.length > 0 || memoryParts!.archived.length > 0) && (
                       <>
@@ -2919,11 +3033,18 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                                 : t('agents.memory.noMatch')}
                             </div>
                           )}
-                          {memoryVisible.map((row) => {
-                            if (row.kind === 'item') return memoryRow(row.item, selected.id, false);
-                            const openGroup = memorySearching || openGroups.includes(row.group.key);
+                          {memoryKindSections.map((sec) => (
+                            <div key={sec.kind} data-testid={`memory-section-${sec.kind}`} className="border-t border-border first:border-t-0">
+                              <div className="flex items-baseline gap-2 bg-surface-sunken px-2 py-0.5 text-meta font-medium text-fg-muted">
+                                <span>{t(`agents.memory.section.${sec.kind}`)}</span>
+                                <span className="ml-auto font-normal">{t('agents.memory.groupCount', { n: sec.count })}</span>
+                              </div>
+                          {sec.rows.map((row) => {
+                            if (row.kind === 'item') return memoryRow(row.item, false);
+                            const groupKey = `${sec.kind}:${row.group.key}`;
+                            const openGroup = memorySearching || openGroups.includes(groupKey);
                             return (
-                              <div key={row.group.key} className="border-t border-border first:border-t-0">
+                              <div key={groupKey} className="border-t border-border">
                                 <button
                                   data-testid={`memory-group-${row.group.key}`}
                                   className="flex w-full items-baseline gap-2 bg-surface-agent px-2 py-1 text-left text-fg-agent"
@@ -2932,7 +3053,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                                     openGroup ? 'agents.memory.groupCollapse' : 'agents.memory.groupExpand',
                                     { key: row.group.key },
                                   )}
-                                  onClick={() => setOpenGroups((prev) => toggleIn(prev, row.group.key))}
+                                  onClick={() => setOpenGroups((prev) => toggleIn(prev, groupKey))}
                                 >
                                   <span aria-hidden="true" className="flex-none text-meta">{openGroup ? '▾' : '▸'}</span>
                                   <span className="text-meta font-medium">{`${row.group.key}…`}</span>
@@ -2940,10 +3061,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                                     {t('agents.memory.groupCount', { n: row.group.items.length })}
                                   </span>
                                 </button>
-                                {openGroup && row.group.items.map((m) => memoryRow(m, selected.id, true))}
+                                {openGroup && row.group.items.map((m) => memoryRow(m, true))}
                               </div>
                             );
                           })}
+                            </div>
+                          ))}
                         </div>
                         )}
                       </>
@@ -2977,11 +3100,17 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                             <div className="border-t border-border px-2 py-1 text-meta text-fg-subtle">
                               {t('agents.memory.archivedNote')}
                             </div>
-                            {memoryArchived.map((m) => memoryRow(m, selected.id, true, true))}
+                            {memoryArchived.map((m) => memoryRow(m, true, true))}
                           </>
                         )}
                       </div>
                     )}
+                    </div>
+                    {memorySelectedEntry && (
+                      <div className="min-w-0 @3xl:sticky @3xl:top-0">{memoryDetailPane(memorySelectedEntry, selected.id)}</div>
+                    )}
+                    </div>
+                    </div>
                   </div>
                 </div>
               )}

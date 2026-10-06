@@ -5,7 +5,8 @@
 // 잰다. 화면이 이 결과를 그리는지는 `agentMemoryUi.test.tsx` 가 따로 본다.
 import { describe, it, expect } from 'vitest';
 import {
-  archiveOverflow, archivedLinks, chipCount, cleanupChips, usedWithin, type MemoryAudit,
+  archiveOverflow, archivedLinks, candidateReasons, chipCount, cleanupChips, memorySections, resolveWikiLink, usedWithin,
+  type MemoryAudit,
   filterMemories, memorySummary, memoryGroupKey, memoryRows, splitArchived, splitCore, MIN_GROUP_SIZE,
   type MemoryEntry,
 } from '../src/lib/memoryList';
@@ -240,3 +241,30 @@ describe('정리 칩 (#1186)', () => {
   });
 });
 
+
+describe('종류별 칸·왜 후보인가 (PR 4)', () => {
+  const e = (slug: string, kind?: 'topic' | 'procedure' | 'journal') => ({ slug, value: '', updatedAt: '2026-10-01T00:00:00.000Z', kind });
+  it('종류별로 나누고, 접두어 묶음은 칸을 넘지 않는다', () => {
+    const secs = memorySections([e('mem/pr-1', 'journal'), e('mem/pr-2', 'journal'), e('mem/pr-3', 'topic'), e('mem/pr-4', 'journal'), e('mem/x')]);
+    expect(secs.map((s) => [s.kind, s.count])).toEqual([['topic', 2], ['journal', 3]]);
+    expect(secs[1]!.rows).toHaveLength(1);
+    expect(secs[1]!.rows[0]!.kind).toBe('group');
+  });
+  it('[[x]] 는 x 와 mem/x 를 본다', () => {
+    expect(resolveWikiLink('a', new Set(['mem/a']), new Set())).toEqual({ slug: 'mem/a', state: 'active' });
+    expect(resolveWikiLink('mem/b', new Set(), new Set(['mem/b']))).toEqual({ slug: 'mem/b', state: 'archived' });
+    expect(resolveWikiLink('c', new Set(), new Set()).state).toBe('missing');
+  });
+  it('왜 후보인가는 짝 상대·깨진 대상을 모으고, 보관 대상과 core 는 뺀다', () => {
+    const audit = {
+      core: null, neverRead: [], stale: [], undescribed: ['core'], flagged: [], expiringJournal: [], truncated: false,
+      items: { active: 0, limit: 200, archived: 0 },
+      similar: [['a', 'b']] as [string, string][], similarBody: [{ pair: ['c', 'a'] as [string, string], similarity: 0.6 }],
+      brokenLinks: [{ slug: 'a', target: 'gone' }, { slug: 'a', target: 'old' }],
+    };
+    expect(candidateReasons('a', audit, new Set(['mem/old']))).toEqual([
+      { key: 'pairs', with: ['b', 'c'] }, { key: 'brokenLinks', targets: ['gone'] },
+    ]);
+    expect(candidateReasons('core', audit, new Set())).toEqual([]);
+  });
+});
