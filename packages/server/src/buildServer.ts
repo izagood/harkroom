@@ -637,7 +637,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
   await registerMergeRoutes(app, deps.pool);
   await registerMergeDenialRoutes(app, deps.pool);
-  await registerApiCallRoutes(app, deps.pool, { keyring: secretKeyring });
+  await registerApiCallRoutes(app, deps.pool, { keyring: secretKeyring, keyMismatch: secretKeyMismatch });
   await registerThreadClaimRoutes(app, deps.pool);
 
   // 오퍼레이터 신원과 채널(스펙 2026-09-20 §3·§4). 릴레이와 같은 이유로 registerWs·registerAuth

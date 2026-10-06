@@ -8,7 +8,13 @@ import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
-import { createSecretKeyring, loadSecretKeyring, parseKey } from '../src/services/secretKeyring.js';
+import { createSecretKeyring, keyCheckValue, loadSecretKeys, parseKey } from '../src/services/secretKeyring.js';
+
+/** 시험 전용 — 키 확인값(104) 대조 없이 디렉터리에서 키링을 만든다. 운영 경로는 verifySecretKeys 를 거친다. */
+const loadSecretKeyringForTest = (dir: string | undefined, kid: string | undefined) => {
+  const loaded = loadSecretKeys(dir, kid);
+  return loaded ? createSecretKeyring(loaded.keys, loaded.activeKid) : null;
+};
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 const keyA = randomBytes(32);
@@ -42,6 +48,15 @@ describe('v2 봉투 (085, 보안 검토 M3·M4)', () => {
     expect(rotated.open(sealed.replace('v2.k1.', 'v2.k2.'), aad)).toBeNull();
   });
 
+  /**
+   * 키 확인값(KCV)의 **고정 테스트 벡터.** harkroom-gate(`recoveryKey.ts`)도 같은 값을 시험한다 — 공식이
+   * 갈리면 복구 키로 다시 봉인한 맞는 키를 서버가 기동에서 막는다. 바꾸지 마라.
+   */
+  it('KCV 고정 벡터 — gate 와 같은 공식', () => {
+    const key = Buffer.from(Array.from({ length: 32 }, (_, i) => i));
+    expect(keyCheckValue(key).toString('hex')).toBe('dfbd9a484a80f25600a35a8a2704d755');
+  });
+
   it('키는 정확히 32바이트만 받는다 — 사람이 고른 문자열은 거절', () => {
     expect(parseKey(keyA.toString('base64'))).toEqual(keyA);
     expect(parseKey(`${keyA.toString('hex')}\n`)).toEqual(keyA);
@@ -53,13 +68,13 @@ describe('v2 봉투 (085, 보안 검토 M3·M4)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'hk-keys-'));
     writeFileSync(join(dir, 'k1'), keyA.toString('base64'));
     writeFileSync(join(dir, '..data'), 'not a key');
-    expect(loadSecretKeyring(dir, undefined)?.activeKid).toBe('k1');
+    expect(loadSecretKeyringForTest(dir, undefined)?.activeKid).toBe('k1');
     writeFileSync(join(dir, 'k2'), keyB.toString('hex'));
-    expect(() => loadSecretKeyring(dir, undefined)).toThrow(/HARKROOM_SECRET_KEY_ID/);
-    expect(loadSecretKeyring(dir, 'k2')?.activeKid).toBe('k2');
+    expect(() => loadSecretKeyringForTest(dir, undefined)).toThrow(/HARKROOM_SECRET_KEY_ID/);
+    expect(loadSecretKeyringForTest(dir, 'k2')?.activeKid).toBe('k2');
     writeFileSync(join(dir, 'bad'), 'short');
-    expect(() => loadSecretKeyring(dir, 'k2')).toThrow(/32바이트/);
-    expect(loadSecretKeyring(undefined, undefined)).toBeNull();
+    expect(() => loadSecretKeyringForTest(dir, 'k2')).toThrow(/32바이트/);
+    expect(loadSecretKeyringForTest(undefined, undefined)).toBeNull();
   });
 });
 
