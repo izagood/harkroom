@@ -163,7 +163,8 @@ export async function listChannels(pool: Pool, accountId: string, isAdmin = fals
   return res.rows;
 }
 
-export async function getOrCreateDm(pool: Pool, accountIds: string[]): Promise<ChannelRow> {
+/** 이 참여자 그대로인 DM 이 이미 있으면 그 id. */
+export async function findDm(pool: Pool, accountIds: string[]): Promise<string | null> {
   const members = [...new Set(accountIds)].sort();
   const existing = await pool.query(
     `select c.id from channel c
@@ -173,8 +174,14 @@ export async function getOrCreateDm(pool: Pool, accountIds: string[]): Promise<C
      having array_agg(m.account_id order by m.account_id) = $1::uuid[]`,
     [members],
   );
-  if (existing.rowCount) {
-    const res = await pool.query(`select ${COLS} from channel where id = $1`, [existing.rows[0].id]);
+  return existing.rows[0]?.id ?? null;
+}
+
+export async function getOrCreateDm(pool: Pool, accountIds: string[]): Promise<ChannelRow> {
+  const members = [...new Set(accountIds)].sort();
+  const existingId = await findDm(pool, members);
+  if (existingId) {
+    const res = await pool.query(`select ${COLS} from channel where id = $1`, [existingId]);
     return res.rows[0];
   }
   const client = await pool.connect();

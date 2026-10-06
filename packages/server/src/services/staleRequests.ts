@@ -176,6 +176,8 @@ export function createStaleRequestSweeper(pool: Pool, opts: {
           and i.created_at < now() - ($2::int * interval '1 millisecond')
           and i.account_id <> all($3)
           and m.deleted_at is null
+          -- 꺼 두거나 지운 에이전트에게는 "집을 러너가 없다"고 말하지 않는다 — 없는 것이 정상이다.
+          and a.disabled_at is null and a.deleted_at is null
         order by i.id
         limit 200`,
       [REQUEST_REASONS, staleAfterMs, online],

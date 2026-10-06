@@ -9,7 +9,7 @@ import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels
 import { emitEvent } from '../events.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
 import { getTeam, getTeamByName, listTeamMembers } from './teams.js';
-import { invokeFactsFor, mayInvoke, mayInvokeTeam, type InvokeVia } from './invokeGate.js';
+import { invokeFactsFor, mayInvoke, mayInvokeInDm, mayInvokeTeam, type InvokeVia } from './invokeGate.js';
 import { closeReplyGrants, openReplyGrants } from './replyGrants.js';
 import { enqueueInboxPush } from './push/pushJobs.js';
 import { displayBodySql } from './systemBody.js';
@@ -1470,8 +1470,15 @@ export async function postMessage(
         `select account_id from channel_member where channel_id = $1 and account_id <> $2`,
         [input.channelId, input.authorId],
       );
+      // 상대가 에이전트면 호출 게이트를 지난다(바로 위 스레드 답글과 같은 이유). 사람은 facts 에 없어 그대로 받는다.
+      const dmFacts = await invokeFactsFor(client, members.rows.map((r) => r.account_id));
       for (const row of members.rows) {
-        if (!notified.has(row.account_id)) await insertInbox(client, row.account_id, message.id, 'dm', notified);
+        if (notified.has(row.account_id)) continue;
+        const fact = dmFacts.get(row.account_id);
+        if (fact && !(await mayInvokeInDm(client, fact, {
+          callerId: input.authorId, channelId: input.channelId, replyGrantThreadId: input.threadRootId ?? null,
+        }))) continue;
+        await insertInbox(client, row.account_id, message.id, 'dm', notified);
       }
     }
 
