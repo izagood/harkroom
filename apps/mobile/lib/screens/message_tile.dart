@@ -55,10 +55,14 @@ class MessageTile extends StatelessWidget {
         // 시스템 글은 사람의 말이 아니라 스레드를 열 까닭이 없다 — 탭도 시트처럼 끈다(designer n2).
         onTap: message.kind == MessageKind.system ? null : onOpenThread,
         onReplyInThread: onReplyInThread,
-        child: _row(context),
+        builder: (context, lit) => _row(context, lit),
       );
 
-  Widget _row(BuildContext context) {
+  /// [lit] — 누르는 중이거나 그 줄의 시트가 떠 있다. 칠하는 것은 **말 부분**(이름·본문)뿐이다:
+  /// 줄 전체를 사각으로 덮으면 아바타·그림·리액션·답글 줄까지 회색 판 하나로 뭉개져, 어느
+  /// 말을 집었는지가 오히려 흐려진다(jaebin, TestFlight IMG_4971). 본문 없는 글(첨부만)은
+  /// 첨부가 곧 말이라 첨부까지 감싼다.
+  Widget _row(BuildContext context, bool lit) {
     final app = context.app;
     final t = context.t;
     final k = context.tokens;
@@ -84,13 +88,23 @@ class MessageTile extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (!continued) _Header(message: message, isAgent: author?.isAgent == true),
-                // 작은 마크다운(코드·목록·인용·굵게·링크). 모르는 것은 글자 그대로 둔다.
-                if (body.isNotEmpty)
-                  MarkdownBody(body, openMessage: (id) => openMessageLink(context, id)),
-                if (denied.isNotEmpty) _MentionDenied(handles: denied),
+                PressGlow(
+                  key: Key('message-glow-${message.id}'),
+                  lit: lit,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (!continued) _Header(message: message, isAgent: author?.isAgent == true),
+                      // 작은 마크다운(코드·목록·인용·굵게·링크). 모르는 것은 글자 그대로 둔다.
+                      if (body.isNotEmpty)
+                        MarkdownBody(body, openMessage: (id) => openMessageLink(context, id)),
+                      if (denied.isNotEmpty) _MentionDenied(handles: denied),
+                      if (body.isEmpty) AttachmentStrip(attachments: message.attachments, message: message),
+                    ],
+                  ),
+                ),
                 if (card != null) Padding(padding: const EdgeInsets.only(top: 6), child: card),
-                AttachmentStrip(attachments: message.attachments, message: message),
+                if (body.isNotEmpty) AttachmentStrip(attachments: message.attachments, message: message),
                 if (message.reactions.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 6),
@@ -215,14 +229,15 @@ class _Reactions extends StatelessWidget {
 /// 복사했든 붙여넣은 곳에서 그 메시지로 이동된다.
 String messagePermalink(String messageId) => 'harkroom://message/$messageId';
 
-/// 줄을 누르는 자리. 시트가 떠 있는 동안 그 줄을 옅게 칠한다 — 시트가 줄을 덮으면 어느
-/// 메시지의 메뉴인지 잊는다. VoiceOver 에는 같은 일을 사용자 지정 동작으로 건넨다(길게
-/// 누르기는 화면 읽기에서 찾기 어렵다).
+/// 줄을 누르는 자리. 누르는 중과 시트가 떠 있는 동안 그 줄의 말 부분을 옅게 칠한다 — 시트가
+/// 줄을 덮으면 어느 메시지의 메뉴인지 잊는다. 칠하는 범위는 [builder] 가 정한다([PressGlow]).
+/// 머티리얼 물결·사각 하이라이트는 끈다 — 줄 전체를 덮는 것이 바로 그 사각이었다.
+/// VoiceOver 에는 같은 일을 사용자 지정 동작으로 건넨다(길게 누르기는 화면 읽기에서 찾기 어렵다).
 class _Pressable extends StatefulWidget {
-  const _Pressable({required this.message, required this.child, this.onTap, this.onReplyInThread});
+  const _Pressable({required this.message, required this.builder, this.onTap, this.onReplyInThread});
 
   final MessageRow message;
-  final Widget child;
+  final Widget Function(BuildContext context, bool lit) builder;
   final VoidCallback? onTap;
   final VoidCallback? onReplyInThread;
 
@@ -232,6 +247,7 @@ class _Pressable extends StatefulWidget {
 
 class _PressableState extends State<_Pressable> {
   bool _open = false;
+  bool _down = false;
 
   Future<void> _sheet() async {
     setState(() => _open = true);
@@ -262,16 +278,63 @@ class _PressableState extends State<_Pressable> {
         if (can.delete) CustomSemanticsAction(label: t.messageDelete): () => act(MessageAction.delete),
       },
       child: Material(
-        color: _open ? context.tokens.surfaceHover : Colors.transparent,
+        type: MaterialType.transparency,
         child: InkWell(
           key: Key('message-press-${m.id}'),
           onTap: widget.onTap,
           onLongPress: _sheet,
-          child: widget.child,
+          onHighlightChanged: (down) => setState(() => _down = down),
+          splashFactory: NoSplash.splashFactory,
+          overlayColor: const WidgetStatePropertyAll(Colors.transparent),
+          child: widget.builder(context, _open || _down),
         ),
       ),
     );
   }
+}
+
+/// 눌린 메시지의 말 부분을 감싸는 둥근 면. **자리를 차지하지 않는다** — 면은 자식 둘레로
+/// [bleed] 만큼 넘쳐 그려지고 글자는 제자리에 있다(칠할 때마다 본문이 밀리면 누른 줄이 흔들린다).
+/// 색은 `surfaceHover`(밝은·다크 판이 각자 가진 「누르는 중」 면)이고 짧게 번진다.
+class PressGlow extends StatelessWidget {
+  const PressGlow({super.key, required this.lit, required this.child});
+
+  final bool lit;
+  final Widget child;
+
+  static const bleed = EdgeInsets.symmetric(horizontal: 8, vertical: 4);
+
+  @override
+  Widget build(BuildContext context) {
+    final color = context.tokens.surfaceHover;
+    return TweenAnimationBuilder<double>(
+      tween: Tween(end: lit ? 1 : 0),
+      duration: const Duration(milliseconds: 120),
+      builder: (context, v, child) => CustomPaint(
+        painter: v == 0 ? null : _GlowPainter(Color.lerp(color.withAlpha(0), color, v)!),
+        child: child,
+      ),
+      child: child,
+    );
+  }
+}
+
+class _GlowPainter extends CustomPainter {
+  const _GlowPainter(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = PressGlow.bleed.inflateRect(Offset.zero & size);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(HarkroomRadius.card)),
+      Paint()..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_GlowPainter old) => old.color != color;
 }
 
 /// 메시지 길게 누르기 시트: 리액션 줄 · 스레드에서 답글 · 링크 복사 · 본문 복사 · 여기부터 안 읽음 ·

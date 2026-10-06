@@ -12,6 +12,7 @@ import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_scope.dart';
 import 'package:harkroom/state/app_state.dart';
 import 'package:harkroom/theme.dart';
+import 'package:harkroom/ui/parts.dart';
 
 /// 메시지 길게 누르기 → 링크 복사 · 본문 복사.
 
@@ -19,7 +20,11 @@ const _a1 = '11111111-1111-1111-1111-111111111111';
 const _gone = '99999999-9999-9999-9999-999999999999';
 const _team = 'team:22222222-2222-2222-2222-222222222222';
 
-MessageRow _m(String id, {String body = '말', String? threadRootId, List<Map<String, Object?>> attachments = const []}) =>
+MessageRow _m(String id,
+        {String body = '말',
+        String? threadRootId,
+        List<Map<String, Object?>> attachments = const [],
+        List<Map<String, Object?>> reactions = const []}) =>
     MessageRow.fromJson({
       'id': id,
       'seq': 1,
@@ -30,6 +35,7 @@ MessageRow _m(String id, {String body = '말', String? threadRootId, List<Map<St
       'kind': 'user',
       'createdAt': DateTime.utc(2026, 10, 2).toIso8601String(),
       'attachments': attachments,
+      'reactions': reactions,
     });
 
 void main() {
@@ -199,18 +205,26 @@ void main() {
       expect(find.byKey(const Key('message-action-reply')), findsNothing);
     });
 
-    testWidgets('시트가 떠 있는 동안 누른 줄을 칠하고, 닫으면 지운다', (tester) async {
-      await pump(tester, _m('t5'), open: (_) {});
-      Color? fill() => tester
-          .widget<Material>(find.ancestor(of: find.byKey(const Key('message-press-t5')), matching: find.byType(Material)).first)
-          .color;
-      expect(fill(), Colors.transparent);
+    testWidgets('시트가 떠 있는 동안 누른 말 부분만 칠하고, 닫으면 지운다', (tester) async {
+      await pump(tester, _m('t5', reactions: const [{'emoji': '👀', 'accountIds': [_a1]}]), open: (_) {});
+      bool lit() => tester.widget<PressGlow>(find.byKey(const Key('message-glow-t5'))).lit;
+      expect(lit(), isFalse);
       await tester.longPress(find.byKey(const Key('message-press-t5')));
       await tester.pumpAndSettle();
-      expect(fill(), isNot(Colors.transparent));
+      expect(lit(), isTrue);
+      // 줄 전체 사각 음영이 없다 — 줄을 감싼 머티리얼은 투명이다(IMG_4971 의 회귀).
+      final row = tester.widget<Material>(
+          find.ancestor(of: find.byKey(const Key('message-press-t5')), matching: find.byType(Material)).first);
+      expect(row.type, MaterialType.transparency);
+      // 강조는 아바타·리액션 줄 밖이다 — 말 부분만.
+      final glow = tester.getRect(find.byKey(const Key('message-glow-t5')));
+      final avatar = tester.getRect(find.byType(HarkroomAvatar).first);
+      final react = tester.getRect(find.byKey(const Key('reaction-add-t5')));
+      expect(glow.left, greaterThan(avatar.right));
+      expect(glow.bottom, lessThanOrEqualTo(react.top));
       await tester.tapAt(const Offset(10, 10));
       await tester.pumpAndSettle();
-      expect(fill(), Colors.transparent);
+      expect(lit(), isFalse);
     });
 
     testWidgets('VoiceOver 사용자 지정 동작: 답글·링크·본문', (tester) async {
