@@ -15,6 +15,7 @@ import { Notice } from './Notice';
 import { PROJECTION_SECTION, ProjectionBanner } from './ProjectionBanner';
 import { ServerCompatBanner } from './ServerCompatBanner';
 import { UpdateToast } from './UpdateToast';
+import { SaveToast } from './SaveToast';
 import { ThreadPanel } from './ThreadPanel';
 import { openWindow, popOutChannel } from '../lib/windowActions';
 import { TerminalPanel } from './TerminalPanel';
@@ -365,6 +366,8 @@ export function Workspace({ onLogout, onOpenSettings }: {
         {/* 알림은 헤더 바로 아래, 대화 위에 둔다 — 채널 안에 그리면 채널을 못 연 실패를
             보여 줄 자리 자체가 없다. */}
         <Notice />
+        {/* 저장 성공은 아래쪽 토스트로 말한다 — Notice 는 실패 자리다(`SaveToast` 머리 주석). */}
+        <SaveToast />
         {/*
           투영 고장은 **여기**서 말한다(#488 A3-a). 전에는 사이드바 `ACTIVE WORK` 안에
           있었는데, 그 칸은 "지금 무슨 일이 벌어지는가"를 말하는 자리라 **고장이 일처럼**

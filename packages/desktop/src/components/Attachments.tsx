@@ -276,15 +276,37 @@ function Attachment({ attachment, message }: { attachment: AttachmentRow; messag
       </>
     );
   }
+  return <FileChip attachment={attachment} failed={failed} />;
+}
+
+/**
+ * 그림이 아닌 첨부의 카드. **누르면 무엇을 하는지 카드가 말한다**(designer 흐름 시안 b9e52c00): 오른쪽 끝의
+ * `저장…` — 말줄임표는 "저장할 곳을 묻는다"는 뜻이다(macOS 관례). 누르면 저장 창이 뜨고, [취소]하면 아무 일도 없다.
+ * 전에는 📎·이름·크기뿐이라 눌렀을 때 파일이 바로 생길 줄 몰랐다.
+ *
+ * 받는 동안(`받는 중…`)과 저장 창이 떠 있는 동안에는 `disabled`·`aria-busy` 다 — 두 번 누르면 두 번 받는다.
+ */
+function FileChip({ attachment, failed }: { attachment: AttachmentRow; failed: boolean }) {
+  const t = useT();
+  const saving = useActiveStore((s) => s.attachmentSaving[attachment.id]);
   return (
     <button
-      className="inline-flex items-center gap-2 rounded-row border border-border bg-surface px-2 py-1 text-body text-fg hover:bg-surface-sunken"
+      type="button"
+      className="inline-flex max-w-full items-center gap-2 rounded-row border border-border bg-surface px-2 py-1 text-body text-fg hover:bg-surface-sunken disabled:cursor-progress disabled:hover:bg-surface"
       onClick={() => void getController().saveAttachment(attachment)}
+      disabled={!!saving}
+      aria-busy={saving ? true : undefined}
+      aria-label={t('message.attachment.saveNamed', { filename: attachment.filename })}
+      title={t('message.attachment.saveNamed', { filename: attachment.filename })}
+      data-testid="attachment-file-chip"
     >
       <span aria-hidden>📎</span>
-      <span className="font-medium">{attachment.filename}</span>
-      <span className="text-fg-subtle">{formatSize(attachment.sizeBytes)}</span>
+      <span className="min-w-0 truncate font-medium">{attachment.filename}</span>
+      <span className="shrink-0 text-fg-subtle">{formatSize(attachment.sizeBytes)}</span>
       {failed && <span className="text-danger">{t('message.attachment.loadFailed')}</span>}
+      <span className="ml-1 shrink-0 text-meta text-fg-muted" aria-hidden data-testid="attachment-file-action">
+        {saving === 'fetching' ? t('message.attachment.saving') : t('message.attachment.save')}
+      </span>
     </button>
   );
 }

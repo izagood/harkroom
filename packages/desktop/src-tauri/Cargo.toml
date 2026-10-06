@@ -19,6 +19,10 @@ tauri-plugin-updater = "2"
 # 설치 직후 새 버전으로 다시 뜨는 표면. updater 와 한 벌이다 — 설치만 하고 재시작이
 # 없으면 디스크의 앱과 돌고 있는 앱이 갈린 채로 남는다.
 tauri-plugin-process = "2"
+# 첨부 저장 창(2026-10-06, jaebin 결정 95ab9c9b). **Rust 에서만 쓴다** — `attachment_save.rs` 가
+# `app.dialog()` 로 macOS 저장 창을 띄우고 고른 경로에 직접 쓴다. capabilities 에 `dialog:*` 를 열지 않으므로
+# 웹뷰는 이 플러그인의 명령을 부를 수 없다. 의존으로 따라오는 `tauri-plugin-fs` 는 등록하지 않는다.
+tauri-plugin-dialog = "2.7"
 # OS 키체인. Tauri 에 공식 플러그인이 없어 이 크레이트를 명령으로 노출한다(src/main.rs).
 # apple-native / windows-native / linux-native-sync-persistent 로 각 OS 의 기본 저장소를 쓴다.
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
@@ -39,7 +43,13 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
   "NSDictionary",
   "NSObject",
   "NSUserNotification",
+  "NSArray",
+  "NSURL",
 ] }
+# 첨부 저장 뒤 [Finder에서 보기] — `NSWorkspace activateFileViewerSelectingURLs:` 하나만 쓴다
+# (`attachment_save.rs`). `open -R` 처럼 프로세스를 띄우지 않으려고 직접 부른다. 새로 들인 것이 아니다 —
+# Tauri 가 이미 같은 버전을 끌고 있다.
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace"] }
 # **알림 발신에 쓰지 않는다.** `set_application` 하나만 쓴다 — 그것이 하는 일은
 # `NSBundle` 후킹이고, 번들 밖에서 뜬 개발 빌드가 알림을 띄울 수 있게 하는 유일한
 # 조건이다(같은 주석의 "남겨 둔 한 가지 이유").

@@ -9,6 +9,7 @@ import { ApiClient, ApiError, type PreviewTicket } from '../lib/api';
 import { addRange, coversSeq, type SeqRange } from '../lib/seqCoverage';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
+import { getFileSaver, type SaveResult } from '../lib/fileSaver';
 import { silentNotifier, type NotificationTarget, type Notifier } from '../lib/notify';
 import { anyAppWindowFocused } from '../lib/appWindows';
 import { bodyRecipients, displayBody } from '../lib/mention';
@@ -81,6 +82,8 @@ export class Controller {
   }
   private ws: WsHandle | null = null;
   private unreadFetchSeq = 0;
+  /** 저장 토스트의 표(`saveToast.id`). 같은 파일을 다시 저장해도 4초 타이머가 다시 돈다. */
+  private saveToastSeq = 0;
   /** 도는 중인 보드 조회 · 도는 동안 또 바뀌었나(`loadInboxBoard`). */
   private boardInFlight: Promise<InboxBoardData> | null = null;
   private boardDirty = false;
@@ -1683,32 +1686,59 @@ export class Controller {
   }
 
   /**
-   * 첨부를 사용자 디스크에 저장한다. objectURL + `download` 앵커를 쓴다 — 토큰을 URL 에
-   * 넣지 않으려면 바이트를 먼저 받아야 하고, 받은 다음에는 이것이 가장 단순한 저장 경로다.
-   * 실패하면 Notice 로 사람 앞에 세운다.
+   * 첨부를 사용자 디스크에 저장한다 — **사람이 저장 창에서 고른 자리에**(2026-10-06, jaebin 결정 95ab9c9b).
+   * 칩·확대 보기·미리보기 패널이 모두 이 함수를 부른다. 바이트를 먼저 받는 이유는 토큰을 URL 에 넣지 않기 위해서다.
+   *
+   * - 받는 동안·저장 창이 떠 있는 동안 `attachmentSaving` 에 올려 다시 누르지 못하게 한다.
+   * - [취소]는 실패가 아니다 — 조용히 끝난다.
+   * - 성공은 아래쪽 토스트(`saveToast`), 실패는 Notice 다. 브라우저(앵커)는 어디에 썼는지 모르므로 토스트가 없다.
    */
   async saveAttachment(attachment: AttachmentRow): Promise<void> {
-    let blob: Blob;
+    if (this.store.getState().attachmentSaving[attachment.id]) return;
+    const mark = (phase: 'fetching' | 'choosing' | null) => {
+      const next = { ...this.store.getState().attachmentSaving };
+      if (phase) next[attachment.id] = phase;
+      else delete next[attachment.id];
+      this.store.getState().set({ attachmentSaving: next });
+    };
+    mark('fetching');
     try {
-      blob = await this.fetchAttachment(attachment.id);
-    } catch (e) {
-      const t = this.t();
-      this.store.getState().set({
-        notice: t(e instanceof ApiError && e.code === 'attachment_missing'
-          ? 'attachment.missing'
-          : 'attachment.fetchFailed'),
-      });
-      return;
-    }
-    const url = URL.createObjectURL(blob);
-    try {
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = attachment.filename;
-      a.click();
+      let blob: Blob;
+      try {
+        blob = await this.fetchAttachment(attachment.id);
+      } catch (e) {
+        const t = this.t();
+        this.store.getState().set({
+          notice: t(e instanceof ApiError && e.code === 'attachment_missing'
+            ? 'attachment.missing'
+            : 'attachment.fetchFailed'),
+        });
+        return;
+      }
+      mark('choosing');
+      let result: SaveResult;
+      try {
+        result = await getFileSaver().save(blob, attachment.filename);
+      } catch {
+        this.store.getState().set({ notice: this.t()('attachment.saveFailed') });
+        return;
+      }
+      if (result.kind === 'saved' && result.folder !== null) {
+        this.store.getState().set({
+          saveToast: { id: ++this.saveToastSeq, name: result.name, folder: result.folder, token: result.token },
+        });
+      }
     } finally {
-      // 즉시 revoke 하면 브라우저가 저장을 시작하기 전에 사라질 수 있다.
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      mark(null);
+    }
+  }
+
+  /** 저장 토스트의 [Finder에서 보기]. 실패하면 Notice 로 말한다. */
+  async revealSavedAttachment(token: number): Promise<void> {
+    try {
+      await getFileSaver().reveal(token);
+    } catch {
+      this.store.getState().set({ notice: this.t()('attachment.revealFailed') });
     }
   }
 

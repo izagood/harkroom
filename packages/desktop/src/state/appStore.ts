@@ -259,6 +259,16 @@ export interface AppState {
    */
   notice: string | null;
   /**
+   * 저장 중인 첨부(키는 첨부 id). `fetching` 은 바이트를 받는 중, `choosing` 은 저장 창이 떠 있는 중이다.
+   * 칩·확대 보기·미리보기 패널이 같은 값을 보고 다시 누르지 못하게 막는다 — 두 번 누르면 두 번 받는다.
+   */
+  attachmentSaving: Record<string, 'fetching' | 'choosing'>;
+  /**
+   * 저장이 끝났다는 아래쪽 토스트(`SaveToast`). **성공만** 싣는다 — 실패는 `notice` 다.
+   * `id` 는 같은 파일을 두 번 저장해도 4초 타이머가 다시 돌게 하는 표다.
+   */
+  saveToast: { id: number; name: string; folder: string; token: number | null } | null;
+  /**
    * **조용한 실패로 끝난 집합 호출**(정본 문서: 집합 호출의 결과). messageId → 말할 한 줄.
    *
    * 왜 `MessageRow` 가 아니라 여기인가: 이 사실은 서버에서 **헤더로** 오고
@@ -453,7 +463,7 @@ const initial = {
   online: [], terminalTarget: null, channelSheetId: null, artifactPreview: null, artifactPreviewFrom: null, channelSheetTab: null, leases: [], connected: false, serverVersion: null, workspaceIconUrl: null,
   projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, drafts: {}, stickyMentions: {}, uploads: {},
-  history: [], historyIndex: -1, notice: null, notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,
+  history: [], historyIndex: -1, notice: null, attachmentSaving: {}, saveToast: null, notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,
   ownSendIds: {}, sendsInFlight: {},
   highlightedMessageId: null, channelRevealSeq: 0,
   runnerStates: {}, daemonRunners: {}, appVersion: null, savedIds: [], savedCount: 0,

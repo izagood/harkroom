@@ -74,6 +74,8 @@ export function ArtifactPanel({ fill = false }: {
   const hostDoc = useHostDocument();
   const t = useT();
   const attachment = useActiveStore((s) => s.artifactPreview);
+  // 저장 중(받는 중·저장 창)이면 [저장…]을 다시 못 누른다 — 카드와 같은 값을 본다.
+  const saving = useActiveStore((s) => (s.artifactPreview ? s.attachmentSaving[s.artifactPreview.id] : undefined));
   const [expanded, setExpanded] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
   const loads = useRef(0);
@@ -265,6 +267,7 @@ export function ArtifactPanel({ fill = false }: {
                 type="button"
                 className="rounded-row border border-border px-2 py-0.5 text-meta hover:bg-surface"
                 onClick={() => void getController().saveAttachment(attachment)}
+                disabled={!!saving}
                 data-testid="artifact-panel-download-body"
               >{t('artifact.panel.download')}</button>
             )}
@@ -294,6 +297,8 @@ export function ArtifactPanel({ fill = false }: {
           type="button"
           className={`${phase.kind === 'ready' ? '' : 'ml-auto '}rounded-sm px-1 hover:bg-surface-sunken`}
           onClick={() => void getController().saveAttachment(attachment)}
+          disabled={!!saving}
+          aria-busy={saving ? true : undefined}
           data-testid="artifact-panel-download"
         >{t('artifact.panel.download')}</button>
       </footer>
