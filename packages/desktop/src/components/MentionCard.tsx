@@ -5,6 +5,7 @@ import { useT } from '../i18n/useT';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { Identity } from './Identity';
+import { useHostDocument, useHostView } from '../lib/hostDocument';
 
 /**
  * 여럿을 부르는 멘션(`@팀`·`@집합`)에 마우스를 올리면 **누구를 부르는지** 보여 준다.
@@ -50,6 +51,9 @@ const EDGE_GAP = 8;
 export function MentionCard({ target, children }: { target: MentionCardTarget; children: ReactNode }) {
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
   const wrapRef = useRef<HTMLSpanElement>(null);
+  // 카드는 칩이 그려진 **그 창**의 body 에 띄운다 — 메인 `document.body` 에 띄우면 새 창에서 연 카드가
+  // 메인 창에 뜬다(좌표는 새 창 것이라 엉뚱한 자리다). 2026-10-06 F1.
+  const hostDoc = useHostDocument();
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clear = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
@@ -78,7 +82,7 @@ export function MentionCard({ target, children }: { target: MentionCardTarget; c
       {anchor &&
         createPortal(
           <CardBody target={target} anchor={anchor} onEnter={clear} onLeave={closeSoon} />,
-          document.body,
+          hostDoc.body,
         )}
     </span>
   );
@@ -88,6 +92,7 @@ function CardBody({
   target, anchor, onEnter, onLeave,
 }: { target: MentionCardTarget; anchor: DOMRect; onEnter: () => void; onLeave: () => void }) {
   const t = useT();
+  const view = useHostView();
   const accounts = useActiveStore((s) => s.accounts);
   const [roster, setRoster] = useState<Roster>({ state: 'loading' });
   const id = target.kind === 'team' ? target.team.id : target.group.id;
@@ -119,11 +124,12 @@ function CardBody({
   }, [id, target.kind, t]);
 
   // 아래에 자리가 없으면 위로 연다. 가로는 창 안으로 민다(`Menu` 의 `openAt` 과 같은 계산).
-  const below = anchor.bottom + 4 + CARD_MAX_HEIGHT <= window.innerHeight - EDGE_GAP;
-  const left = Math.max(EDGE_GAP, Math.min(anchor.left, window.innerWidth - CARD_WIDTH - EDGE_GAP));
+  // 창은 카드가 그려지는 창이다(`useHostView`) — 새 창이면 그 창의 크기.
+  const below = anchor.bottom + 4 + CARD_MAX_HEIGHT <= view.innerHeight - EDGE_GAP;
+  const left = Math.max(EDGE_GAP, Math.min(anchor.left, view.innerWidth - CARD_WIDTH - EDGE_GAP));
   const style = below
     ? { position: 'fixed' as const, left, top: anchor.bottom + 4, width: CARD_WIDTH }
-    : { position: 'fixed' as const, left, bottom: window.innerHeight - anchor.top + 4, width: CARD_WIDTH };
+    : { position: 'fixed' as const, left, bottom: view.innerHeight - anchor.top + 4, width: CARD_WIDTH };
 
   const name = target.kind === 'team' ? target.team.name : target.group.handle;
   const count = target.kind === 'team' ? target.team.memberCount : target.group.memberCount;

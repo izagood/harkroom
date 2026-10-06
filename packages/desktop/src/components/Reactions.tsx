@@ -9,6 +9,7 @@ import type { Translate } from '../i18n';
 import type { AccountNames } from '../lib/accountNames';
 import { reactionSentence, reactorNames } from '../lib/reactionNames';
 import { clipBounds, PLACEMENT_GAP } from './Menu';
+import { useHostDocument, viewOf } from '../lib/hostDocument';
 
 /**
  * 피커에 올려 둘 이모지. 전체 이모지 검색은 별개 작업이고, 실제로 쓰이는 것은 소수다 —
@@ -486,20 +487,24 @@ function ReactionTooltip({ emoji, who, text, anchor }: {
   const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   const [below, setBelow] = useState(false);
+  // 말풍선은 칩이 그려진 **그 창**에 띄우고 그 창 크기로 자른다 — 메인 `document.body`·`window` 를 쓰면
+  // 새 창에서 올린 칩의 말풍선이 메인 창에 뜬다(2026-10-06 F1).
+  const hostDoc = useHostDocument();
+  const view = viewOf(hostDoc);
   const { hint, sentence } = who
     ? reactionSentence(emoji, who.accountIds, who.nameOf, who.myId, t)
     : { hint: null, sentence: text ?? '' };
 
   useLayoutEffect(() => {
     const height = ref.current?.getBoundingClientRect().height ?? 0;
-    setBelow(anchor.top - TOOLTIP_GAP - height < EDGE_GAP && anchor.bottom + TOOLTIP_GAP + height <= window.innerHeight - EDGE_GAP);
+    setBelow(anchor.top - TOOLTIP_GAP - height < EDGE_GAP && anchor.bottom + TOOLTIP_GAP + height <= view.innerHeight - EDGE_GAP);
   }, [anchor]);
 
   const center = anchor.left + anchor.width / 2;
-  const left = Math.max(EDGE_GAP, Math.min(center - TOOLTIP_WIDTH / 2, window.innerWidth - TOOLTIP_WIDTH - EDGE_GAP));
+  const left = Math.max(EDGE_GAP, Math.min(center - TOOLTIP_WIDTH / 2, view.innerWidth - TOOLTIP_WIDTH - EDGE_GAP));
   const style = below
     ? { position: 'fixed' as const, left, top: anchor.bottom + TOOLTIP_GAP, width: TOOLTIP_WIDTH }
-    : { position: 'fixed' as const, left, bottom: window.innerHeight - anchor.top + TOOLTIP_GAP, width: TOOLTIP_WIDTH };
+    : { position: 'fixed' as const, left, bottom: view.innerHeight - anchor.top + TOOLTIP_GAP, width: TOOLTIP_WIDTH };
   // 꼬리는 칩 가운데에 — 풍선이 창 가장자리로 밀려도 가리키는 곳은 그대로다.
   const tailLeft = Math.max(12, Math.min(center - left, TOOLTIP_WIDTH - 12));
 
@@ -527,6 +532,6 @@ function ReactionTooltip({ emoji, who, text, anchor }: {
         style={{ left: tailLeft }}
       />
     </div>,
-    document.body,
+    hostDoc.body,
   );
 }

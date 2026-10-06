@@ -1,5 +1,5 @@
 import { Fragment, useState, useRef, useEffect, useCallback, useLayoutEffect, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import { useHostDocument } from '../lib/hostDocument';
+import { useHostDocument, viewOf } from '../lib/hostDocument';
 
 export interface MenuItem {
   label: string;
@@ -95,6 +95,8 @@ interface MenuProps {
 
 /** `absolute` 배치와 트리거 사이의 간격(`mt-1`/`mb-1`) — 뒤집을지 잴 때 함께 센다. */
 export const PLACEMENT_GAP = 4;
+/** 목록 밖으로 꺼낸 메뉴(`floatAt`)와 창 가장자리 사이 — 좌표로 연 메뉴의 `EDGE_GAP` 과 같다. */
+const FLOAT_EDGE_GAP = 8;
 
 /**
  * 메뉴가 실제로 잘리는 상자. 화면(뷰포트)과 **스크롤되는 조상들**의 교집합이다.
@@ -106,12 +108,16 @@ export const PLACEMENT_GAP = 4;
  *
  * 조상 하나에서 멈추지 않고 끝까지 올라가며 교집합을 좁힌다. 스크롤 상자 안에 스크롤
  * 상자가 있는 배치(스레드 패널 안의 목록)에서 바깥 상자가 더 좁을 수 있다.
+ *
+ * 뷰포트는 **그 요소가 그려지는 창**의 것이다(`viewOf`) — 새 창 안의 메뉴를 메인 창 높이로 자르면
+ * 작은 창에서 아래로 나간다.
  */
 export function clipBounds(el: HTMLElement): { top: number; bottom: number } {
+  const view = viewOf(el.ownerDocument);
   let top = 0;
-  let bottom = window.innerHeight;
+  let bottom = view.innerHeight;
   for (let p = el.parentElement; p; p = p.parentElement) {
-    const overflowY = getComputedStyle(p).overflowY;
+    const overflowY = view.getComputedStyle(p).overflowY;
     if (overflowY === 'visible' || overflowY === '') continue;
     const r = p.getBoundingClientRect();
     top = Math.max(top, r.top);
@@ -158,10 +164,21 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
    * 반대쪽으로 뒤집힌다.
    */
   const [resolvedPlacement, setResolvedPlacement] = useState(placement);
+  /**
+   * 위·아래 **어느 쪽도 잘리는 상자 안에 다 들어가지 않을 때** 메뉴를 띄울 창 좌표(`position: fixed`).
+   *
+   * 메뉴는 보통 트리거 옆의 `absolute` 라 스크롤 상자(메시지 목록) 안에 산다. 목록이 메뉴보다 낮으면
+   * 뒤집어도 잘린다 — 520×480 채널 창은 목록이 230px 남짓이라 맨 아래 글의 ⋯ 에서 Pin·Edit·Delete 를
+   * 누를 수 없었다(2026-10-06, designer #1224 수정 1). 그때만 목록 밖으로 꺼내 **그 창** 안으로 자른다.
+   * 들어가는 평소 경우는 예전 그대로 `absolute` 다 — 메인 창 동작을 바꾸지 않는다. 메뉴 안 스크롤
+   * (`max-height`)은 쓰지 않는다: 여덟 줄 메뉴가 세 줄짜리 스크롤 상자가 된다.
+   */
+  const [floatAt, setFloatAt] = useState<{ left: number; top: number } | null>(null);
 
   const close = useCallback(() => {
     setOpen(false);
     setOpenAt(null);
+    setFloatAt(null);
     triggerRef.current?.focus();
   }, []);
 
@@ -204,7 +221,8 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
     const trigger = triggerRef.current;
     if (!menu || !trigger) return;
 
-    const height = menu.getBoundingClientRect().height;
+    const menuRect = menu.getBoundingClientRect();
+    const height = menuRect.height;
     const triggerRect = trigger.getBoundingClientRect();
     const clip = clipBounds(menu);
     const roomBelow = clip.bottom - triggerRect.bottom - PLACEMENT_GAP;
@@ -215,6 +233,23 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
     const room = wantsBelow ? roomBelow : roomAbove;
     const other = wantsBelow ? roomAbove : roomBelow;
     setResolvedPlacement(height > room && other > room ? (wantsBelow ? 'top' : 'bottom') : placement);
+
+    // 어느 쪽도 다 안 들어가면 목록 밖으로 꺼낸다(`floatAt` 의 주석). 원하는 쪽에 창 자리가 있으면 그쪽에,
+    // 없으면 반대쪽에 두고, 끝으로 창 안으로 자른다 — 창보다 큰 메뉴는 위를 맞춘다(첫 항목부터 보이게).
+    if (height > roomBelow && height > roomAbove) {
+      const view = viewOf(hostDoc);
+      const below = triggerRect.bottom + PLACEMENT_GAP;
+      const above = triggerRect.top - PLACEMENT_GAP - height;
+      const fitsBelow = below + height <= view.innerHeight - FLOAT_EDGE_GAP;
+      const fitsAbove = above >= FLOAT_EDGE_GAP;
+      const top = wantsBelow ? (fitsBelow || !fitsAbove ? below : above) : (fitsAbove || !fitsBelow ? above : below);
+      setFloatAt({
+        top: Math.max(FLOAT_EDGE_GAP, Math.min(top, view.innerHeight - height - FLOAT_EDGE_GAP)),
+        left: Math.max(FLOAT_EDGE_GAP, Math.min(menuRect.left, view.innerWidth - menuRect.width - FLOAT_EDGE_GAP)),
+      });
+    } else {
+      setFloatAt(null);
+    }
     // 항목이 바뀌면 높이도 바뀐다 — 열려 있는 동안 항목이 바뀌는 소비자는 아직 없지만,
     // 길이를 의존성에 두면 그때 조용히 틀리지 않는다.
   }, [open, openAt, placement, items.length, header]);
@@ -290,8 +325,10 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
         // 머리가 있으면 그만큼 더 높다(약 44px). 좌표로 여는 소비자(#111)는 아직 머리를
         // 쓰지 않지만, 어림값을 항목 수에만 매어 두면 다음 소비자가 조용히 화면 밖으로 나간다.
         const height = items.length * 28 + items.filter((it, i) => i > 0 && it.separatorBefore).length * 9 + (header ? 44 : 0) + 8;
-        const x = Math.max(EDGE_GAP, Math.min(openAt.x, window.innerWidth - MENU_WIDTH - EDGE_GAP));
-        const y = Math.max(EDGE_GAP, Math.min(openAt.y, window.innerHeight - height - EDGE_GAP));
+        // 자르는 기준은 메뉴가 그려지는 창이다(`viewOf`) — 새 창이면 그 창의 크기.
+        const view = viewOf(hostDoc);
+        const x = Math.max(EDGE_GAP, Math.min(openAt.x, view.innerWidth - MENU_WIDTH - EDGE_GAP));
+        const y = Math.max(EDGE_GAP, Math.min(openAt.y, view.innerHeight - height - EDGE_GAP));
         return { position: 'fixed' as const, left: x, top: y };
       })()
     : undefined;
@@ -304,8 +341,8 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
           ref={menuRef}
           role="menu"
           onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } }}
-          className={`${openAt ? '' : `absolute ${resolvedPlacement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}`} z-10 min-w-32 rounded-card bg-surface-raised py-1 shadow-float ${className}`}
-          style={menuStyle}
+          className={`${openAt || floatAt ? '' : `absolute ${resolvedPlacement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}`} z-10 min-w-32 rounded-card bg-surface-raised py-1 shadow-float ${className}`}
+          style={menuStyle ?? (floatAt ? { position: 'fixed', left: floatAt.left, top: floatAt.top } : undefined)}
         >
           {/*
             머리와 항목은 **같은 가로 축**에 선다 — 둘 다 `px-3` 이다. 항목만 넓히면

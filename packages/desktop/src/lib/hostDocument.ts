@@ -13,3 +13,17 @@ export const HostDocumentContext = createContext<Document | null>(null);
 export function useHostDocument(): Document {
   return useContext(HostDocumentContext) ?? document;
 }
+
+/**
+ * 그 문서가 그려지는 **창**. 떠 있는 것(메뉴·카드·말풍선)을 창 안으로 자를 때 `window.innerWidth/Height` 대신
+ * 이것을 쓴다 — 전역 `window` 는 늘 메인 창이라, 작은 새 창에서 메인 크기로 자르면 창 밖으로 나간다
+ * (2026-10-06 F1). 창이 없는 문서(시험의 `createHTMLDocument`)면 메인 창이다.
+ */
+export function viewOf(doc: Document): Window {
+  return doc.defaultView ?? window;
+}
+
+/** 이 화면이 그려지는 창(`viewOf(useHostDocument())`). */
+export function useHostView(): Window {
+  return viewOf(useHostDocument());
+}
