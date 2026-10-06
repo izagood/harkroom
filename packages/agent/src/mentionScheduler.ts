@@ -246,6 +246,12 @@ function askAnsweredNote(mention: { body: string; meta?: unknown }): string {
 
 /** 끝났는데 읽음 처리가 안 된 entry 를 "다시 띄우지 않는다" 로 기억하는 상한(2026-10-02). */
 export const DONE_UNREAD_MAX_MS = 24 * 60 * 60 * 1000;
+/**
+ * 읽음 처리까지 **끝낸** entry 를 "다시 띄우지 않는다" 로 기억하는 시간(2026-10-06). 폴 묶음은 받은
+ * 뒤 `channels()`·`accounts()`·임대·자리를 기다리느라 수 초~수십 초 묵는다 — 그 사이 끝난 턴의 entry 가
+ * 묵은 묶음에 미읽음으로 남아 있으므로, 그보다 넉넉히 길면 된다. 그 뒤엔 inbox 가 다시 주지 않는다.
+ */
+export const RECENTLY_DONE_MS = 10 * 60 * 1000;
 /** 관문 때문에 접어 둔 멘션을 기다리는 상한. 그 뒤에는 읽음 처리한다(관문 통지는 이미 남았다). */
 export const GATE_WAIT_MAX_MS = 2 * 60 * 60 * 1000;
 /** 한 멘션을 관문 때문에 접어 다시 띄우는 횟수 상한(#1047 security F1 안전판). */
@@ -308,6 +314,19 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
   // 언제 끝냈는지 모르고, 24h 상한은 이 러너 기준으로 다시 세는 것이 안전하다(짧게 세면 다시 띄운다).
   for (const id of deps.handoverDone ?? []) doneUnread.set(id, now());
   /**
+   * **턴도 끝나고 읽음 처리도 된 entry** → 끝낸 시각(2026-10-06, wake 두 번 뜸).
+   *
+   * 왜 필요한가: 폴 루프는 `pollInbox` → `channels()` → `accounts()` → `admit` 순서라, 묶음을 받은 뒤
+   * admit 에 닿기까지 await 가 여럿이다. 도는 턴의 entry 는 아직 미읽음이라 그 묶음에 들어 있다. 그 사이
+   * 턴이 끝나면 `finish` 가 읽음 처리하고 `finally` 가 `inFlightEntries` 를 지운다 — 성공했으니
+   * `doneUnread` 에도 없다. 그래서 **묵은 묶음의 같은 entry 가 모든 관문을 지나 턴을 한 번 더 띄웠다.**
+   * 멘션은 델타가 비어 하네스를 안 돌려 안 보였고, 사유를 직접 싣는 wake·ask_answered 는 실제로 두 번
+   * 돌았다(task_manager 10-06: wake 턴 70건 중 9건, 간격 27~84초).
+   *
+   * 이 표에 있으면 이미 읽은 것이므로 읽음 처리도 다시 하지 않고 건너뛴다. `RECENTLY_DONE_MS` 뒤에 지운다.
+   */
+  const recentlyDone = new Map<number, number>();
+  /**
    * 끝난 entry 들을 **한 번의 호출로** 읽음 처리한다 — **던지지 않는다.** 실패하면 전부 `doneUnread` 에
    * 적고(이미 있던 것은 처음 적힌 시각을 지킨다) 다음 폴이 다시 시도한다. 호출자는 이 뒤에 회계
    * 정리(attempts·gateRequeues·임대 반납)를 그대로 이어 간다: 턴의 결말은 이미 났고, 읽음 처리는
@@ -319,7 +338,8 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
     if (ids.length === 0) return;
     try {
       await deps.harkroom.markRead([...ids]);
-      for (const id of ids) doneUnread.delete(id);
+      const at = now();
+      for (const id of ids) { doneUnread.delete(id); recentlyDone.set(id, at); }
     } catch (err) {
       const at = now();
       for (const id of ids) if (!doneUnread.has(id)) doneUnread.set(id, at);
@@ -335,6 +355,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
   const pruneDoneUnread = (): void => {
     const at = now();
     for (const [id, since] of doneUnread) if (at - since > DONE_UNREAD_MAX_MS) doneUnread.delete(id);
+    for (const [id, since] of recentlyDone) if (at - since > RECENTLY_DONE_MS) recentlyDone.delete(id);
   };
   /** 완료를 기다릴 수 있게 잡아 두는 프로미스. `drain` 이 이것을 본다. */
   const running = new Set<Promise<void>>();
@@ -725,6 +746,8 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         // 끝났는데 읽음 처리만 남은 entry(2026-10-02) — 턴을 띄우지 않고 읽음 처리만 다시 한다.
         // 상한 넘긴 것은 위 `pruneDoneUnread` 가 이미 지웠다.
         if (doneUnread.has(entry.id)) { out.skipped += 1; doneAgain.push(entry.id); continue; }
+        // 끝내고 읽음 처리까지 한 entry 가 묵은 묶음에 실려 다시 왔다(2026-10-06) — 아무것도 하지 않는다.
+        if (recentlyDone.has(entry.id)) { out.skipped += 1; continue; }
 
         if (inFlightEntries.has(entry.id)) { out.blocked += 1; continue; }
         // 앞 세대가 들고 있는 것은 **내 것이 아니다**(이관 중). 유예가 끝나면 이 집합이
