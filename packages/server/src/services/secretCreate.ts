@@ -1,6 +1,7 @@
 import { createHash, generateKeyPairSync, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import type { Pool } from 'pg';
 import { recordAudit } from '../audit.js';
+import { postMessage } from './messages.js';
 import { scanWrite } from './contentScan.js';
 import type { SecretKeyring } from './secretKeyring.js';
 import { needlesFor } from './secretLeakGuard.js';
@@ -143,7 +144,7 @@ export function causeByOwner(l: Pick<CreateLease, 'agentId' | 'ownerId' | 'cause
   return l.causeAskAuthorId === l.agentId && l.askAnsweredBy === l.ownerId && l.askAnswererKind === 'human';
 }
 
-async function hasCreateGrant(pool: Pool, agentId: string): Promise<boolean> {
+export async function hasCreateGrant(pool: Pool, agentId: string): Promise<boolean> {
   const r = await pool.query(
     `select 1 from account_grant
       where account_id = $1 and capability = 'secret.create' and scope = ''
@@ -232,6 +233,45 @@ async function logAccess(
     [s.id, s.name, version, lease.agentId, lease.operatorId, lease.id, lease.channelId, lease.threadRootId, result, now]);
 }
 
+async function countCreated(db: Pick<Pool, 'query'>, agentId: string): Promise<number> {
+  const r = await db.query<{ n: number }>(`select count(*)::int as n from secret where created_by_agent_id = $1`, [agentId]);
+  return r.rows[0]!.n;
+}
+
+/**
+ * 소유자에게 알린다(security n4 — "소유자가 안다"). 그 턴의 스레드에 서버가 시스템 줄을 세우고 소유자를 부른다 —
+ * 부름이라 소유자 인박스·푸시가 평범한 멘션과 같은 관문(`insertInbox`)으로 간다. 본문은 서버 값뿐이다: 에이전트
+ * handle·소유자 handle(계정 표), 비밀 이름(NAME 정규식을 지난 것), 종류·판. 설명은 싣지 않는다(에이전트가 쓴 글이다).
+ * 원인 글이 소유자 글이므로(F2) 소유자는 그 채널에 있다.
+ *
+ * 실패해도 만들기를 되돌리지 않는다 — 감사·접근 기록은 이미 남았고, 알림이 빠진 것은 로그로 본다.
+ */
+export async function notifyOwner(
+  pool: Pool,
+  n: { agentId: string; lease: Pick<CreateLease, 'ownerId' | 'channelId' | 'threadRootId' | 'causeMessageId'>; secretId: string; name: string; version: number; action: 'created' | 'rotated'; via: 'generate' | 'import'; type: string | null },
+): Promise<string | null> {
+  try {
+    if (!n.lease.ownerId) return null;
+    const who = (await pool.query<{ agent: string; owner: string }>(
+      `select a.handle as agent, o.handle as owner from account a, account o where a.id = $1 and o.id = $2`,
+      [n.agentId, n.lease.ownerId])).rows[0];
+    if (!who) return null;
+    const how = n.via === 'generate' ? `서버가 만든 값(${n.type})` : '값을 에이전트가 정함(import)';
+    const what = n.action === 'created' ? '만들었다' : `회전했다(판 ${n.version})`;
+    const body = `🔑 ${who.agent} 가 비밀 \`${n.name}\` 을 ${what} · ${how} · 이 채널로 자기에게만 부여 · 설정 › 나 › 비밀과 API @${who.owner}`;
+    const posted = await postMessage(pool, {
+      channelId: n.lease.channelId, threadRootId: n.lease.threadRootId, authorId: n.agentId, body, kind: 'system',
+      causeMessageId: n.lease.causeMessageId,
+      meta: { secretNotice: { action: n.action, secretId: n.secretId, name: n.name, version: n.version, via: n.via, agentId: n.agentId, ownerAccountId: n.lease.ownerId } },
+    });
+    if (posted.failure) { console.error(`[secretCreate] 소유자 알림 실패: ${posted.failure}`); return null; }
+    return posted.message.id;
+  } catch (e) {
+    console.error('[secretCreate] 소유자 알림 실패:', e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
 /**
  * 만들기(generate·import). 소유자 = 에이전트의 소유자, 부여 = 만든 에이전트 자신에게 **그 임대의 채널·오퍼레이터로**
  * 한 줄(null 채널은 없다 — security). 만료는 주지 않으면 90일(L5).
@@ -243,9 +283,8 @@ export async function createAgentSecret(
   const g = await gate(pool, args, 'create');
   if (!g.ok) return g;
   const { lease, now } = g;
-  const count = await pool.query<{ n: number }>(
-    `select count(*)::int as n from secret where created_by_agent_id = $1`, [args.agentId]);
-  if (count.rows[0]!.n >= AGENT_SECRET_MAX) return { ok: false, code: 'too_many' };
+  // 미리 한 번 센다 — 넘친 에이전트에게 값을 만들거나 봉투를 풀지 않으려고. 확정 판정은 아래 트랜잭션 안이다(n2).
+  if ((await countCreated(pool, args.agentId)) >= AGENT_SECRET_MAX) return { ok: false, code: 'too_many' };
   const v = await resolveValue(pool, args, lease, now, args.source, args.name);
   if (!v.ok) return v;
   if (descriptionLeaks(args.description, v.value)) return { ok: false, code: 'secret_in_description' };
@@ -256,6 +295,12 @@ export async function createAgentSecret(
   let id: string;
   try {
     await client.query('begin');
+    // 20개 상한을 동시 호출에도 지킨다(security n2) — 같은 에이전트의 만들기를 줄 세운 뒤 다시 센다.
+    await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [`secret.create:${args.agentId}`]);
+    if ((await countCreated(client, args.agentId)) >= AGENT_SECRET_MAX) {
+      await client.query('rollback');
+      return { ok: false, code: 'too_many' };
+    }
     const ins = await client.query<{ id: string }>(
       `insert into secret (name, kind, filename, description, owner_account_id, expires_at, created_by_agent_id, created_cause_message_id)
        values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
@@ -285,6 +330,7 @@ export async function createAgentSecret(
       causeMessageId: lease.causeMessageId, causeAuthorId: lease.causeAuthorId, channelId: lease.channelId, operatorId: lease.operatorId,
     },
   });
+  await notifyOwner(pool, { agentId: args.agentId, lease, secretId: id, name: args.name, version: 1, action: 'created', via: v.via, type: v.type });
   return { ok: true, secretId: id, name: args.name, kind: v.kind, version: 1, publicKey: v.publicKey, expiresAt: expiresAt.toISOString() };
 }
 
@@ -350,5 +396,6 @@ export async function rotateAgentSecret(
       causeMessageId: lease.causeMessageId, causeAuthorId: lease.causeAuthorId, channelId: lease.channelId, operatorId: lease.operatorId,
     },
   });
+  await notifyOwner(pool, { agentId: args.agentId, lease, secretId: s.id, name: s.name, version, action: 'rotated', via: v.via, type: v.type });
   return { ok: true, secretId: s.id, name: s.name, kind: s.kind, version, publicKey: v.publicKey, expiresAt: null };
 }

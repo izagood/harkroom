@@ -43,6 +43,7 @@ export interface MentionTurnHarkroom {
   definition(): Promise<AgentView>;
   /** 머지를 허락한 저장소(스레드 3deac356). 옵셔널 — 없는 표면(시험 더블)은 빈 목록과 같다. */
   mergeGrants?(): Promise<string[]>;
+  secretCreateGranted?(): Promise<boolean>;
   apiGrants?(): Promise<string[]>;
   apiGrantInfo?(): Promise<{ connectors: string[]; delegatable: string[] }>;
   /** 스레드 × 에이전트 모델 지정의 실효값(서버 079). 옛 서버를 흉내 내는 테스트 더블은 없어도 된다. */
@@ -927,8 +928,11 @@ export async function runMentionTurn(
     ? deps.harkroom.apiGrantInfo().catch(() => ({ connectors: [] as string[], delegatable: [] as string[] }))
     : deps.harkroom.apiGrants?.().then((connectors) => ({ connectors, delegatable: [] as string[] })).catch(() => undefined))) ?? { connectors: [], delegatable: [] };
   const apiConnectors = apiInfo.connectors;
+  // 비밀 만들기(스레드 1a08d0cf): 소유자가 켠 에이전트에게만 절을 쓴다. 판정은 서버가 매 호출 한다 — 이것은 안내다.
+  const secretCreate = (await deps.harkroom.secretCreateGranted?.().catch(() => false)) ?? false;
   const systemPrompt = buildSystemPrompt({
     handle: deps.me.handle,
+    secretCreate,
     merge: { operatorBin: deps.operatorBin, repos: mergeRepos },
     api: { operatorBin: deps.operatorBin, connectors: apiConnectors, delegatable: apiInfo.delegatable },
     channelName: deps.channelName,

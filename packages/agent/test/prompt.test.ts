@@ -518,6 +518,19 @@ describe('buildSystemPrompt', () => {
     expect(legacy).not.toContain('PR 머지');
   });
 
+  // 비밀 만들기(스레드 1a08d0cf, security n1): 서버는 "소유자 글이 띄운 턴"까지만 본다 — "소유자가 요청할 때만"은 프롬프트가 묶는다.
+  it('비밀 만들기 절: capability 가 있을 때만 — 소유자 요청일 때만·값을 찍지 말고 파일로·already_granted 안내', () => {
+    const common = { handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } as MemoryContext };
+    const on = buildSystemPrompt({ ...common, secretCreate: true });
+    expect(on).toContain('소유자가 그 비밀을 만들어 달라고 요청할 때만 만든다');
+    expect(on).toContain('`secret.generate`');
+    expect(on).toContain('`secret.import { name, path }`');
+    expect(on).toContain('`already_granted`');
+    expect(on).toContain('이미 화면·문맥에 보인 값은 유출된 것이다');
+    expect(buildSystemPrompt({ ...common, secretCreate: false })).not.toContain('secret.generate');
+    expect(buildSystemPrompt(common)).not.toContain('secret.generate');
+  });
+
   it('API 절(C안 P3): 연결이 있으면 래퍼 명령·명령 하나·키를 찾지 마라를, 없으면 사람에게 넘기라를 — 옛 호출부는 절이 없다', () => {
     const common = { handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } as MemoryContext };
     const granted = buildSystemPrompt({ ...common, api: { operatorBin: '/opt/harkroom/harkroom-operator', connectors: ['lab-api'] } });
