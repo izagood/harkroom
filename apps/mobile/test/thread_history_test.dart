@@ -349,6 +349,11 @@ void main() {
     expect(app.threads['root']!.firstWhere((m) => m.seq == 40).body, '고침');
     expect(app.threadTailNew['root'], hasLength(2));
 
+    // 세어 둔 새 답글이 지워지면 수에서도 빠진다.
+    app.applyEvent({'type': 'message.deleted', 'channelId': 'c1', 'messageId': 'r252'});
+    expect(app.threadTailNew['root'], {'r253'});
+    app.applyEvent(reply(252));
+
     // 최신으로 가면 수가 지워진다(서버 최신 페이지에 그 답글이 들어 있다).
     server.replies = 253;
     expect(await app.jumpToLatestReplies('c1', 'root'), isTrue);

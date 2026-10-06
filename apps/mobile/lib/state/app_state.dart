@@ -334,6 +334,11 @@ class AppState extends ChangeNotifier {
   /// ([_storeThreadPage]) 그 안에 들어 있으므로 지운다.
   final Map<String, Set<String>> threadTailNew = {};
 
+  /// 띠가 선 채로 **내가 보낸** 답글의 id(POST 응답에서 적는다). [threadTailNew] 에 세지 않고, 그 뒤 소켓으로
+  /// 다시 와도 세지 않는다 — "새 답글 n개" 는 남이 말한 수다. m3 가 최신으로 옮기기에 실패했을 때만 생기는
+  /// 자리이고, 띠가 「다시 시도」로 남아 있어 거기서 최신으로 가면 내 글이 보인다.
+  final Set<String> _ownTailSent = {};
+
   /// 스레드 루트 id → 옛 답글을 못 받았다. 채널의 [olderFailed] 와 같이 스크롤로는 다시 부르지
   /// 않고 "다시 시도" 를 누를 때만 간다.
   final Set<String> olderThreadFailed = {};
@@ -962,7 +967,9 @@ class AppState extends ChangeNotifier {
         } else if (threadTailMissing.contains(rootId)) {
           // 옛 답글 창을 보는 중이다 — 끝에 이어 붙이면 그 사이 답글이 빠진 채 새 답글이 선다. 붙이지 않고
           // 세기만 한다. 띠가 알리고, 최신 페이지로 가면 거기 들어 있다. `progress`·`wake` 는 답글로 안 센다.
-          if (message.kind != MessageKind.progress && message.kind != MessageKind.wake) {
+          if (message.kind != MessageKind.progress &&
+              message.kind != MessageKind.wake &&
+              !_ownTailSent.contains(message.id)) {
             threadTailNew.putIfAbsent(rootId, () => {}).add(message.id);
           }
         } else {
@@ -1274,6 +1281,11 @@ class AppState extends ChangeNotifier {
     for (final list in threads.values) {
       list.removeWhere((m) => m.id == messageId && m.channelId == channelId);
     }
+    // 띠가 세어 둔 새 답글이 지워졌으면 수에서도 뺀다.
+    for (final root in threadTailNew.keys.toList()) {
+      final set = threadTailNew[root]!..remove(messageId);
+      if (set.isEmpty) threadTailNew.remove(root);
+    }
     notifyListeners();
   }
 
@@ -1475,6 +1487,7 @@ class AppState extends ChangeNotifier {
   /// 보낸다. 실패하면 **던지지 않고** [failedSends] 에 남긴다 — 던지면 받을 사람이 없어
   /// 글이 조용히 사라졌다(지난 검토의 "조용한 실패").
   Future<void> _post(FailedSend item) async {
+    final gen = _generation;
     try {
       final sent = await _api!.postMessage(
         item.channelId,
@@ -1483,9 +1496,19 @@ class AppState extends ChangeNotifier {
         attachmentIds: item.attachmentIds,
         agentModels: item.agentModels,
       );
+      // 보내는 사이 세션이 바뀌었으면 이 답은 지금 화면의 것이 아니다 — 아무 데도 적지 않는다.
+      if (gen != _generation) return;
+      final root = item.threadRootId;
+      if (root != null && threadTailMissing.contains(root)) {
+        // 내 답글은 "새 답글 n개" 에 들지 않는다 — 소켓이 먼저 세어 뒀어도 뺀다.
+        _ownTailSent.add(sent.id);
+        threadTailNew[root]?.remove(sent.id);
+        if (threadTailNew[root]?.isEmpty ?? false) threadTailNew.remove(root);
+      }
       _removeFailed(item);
       _upsertMessage(sent);
     } on Object {
+      if (gen != _generation) return;
       final key = item.threadRootId ?? item.channelId;
       final list = failedSends.putIfAbsent(key, () => []);
       item.retrying = false;
@@ -1617,6 +1640,7 @@ class AppState extends ChangeNotifier {
     threadTailMissing.remove(rootId);
     latestJumpFailed.remove(rootId);
     threadTailNew.remove(rootId);
+    _ownTailSent.removeWhere((id) => page.any((m) => m.id == id));
     final replies = <MessageRow>[];
     for (final m in page) {
       if (m.id == rootId) {
@@ -1986,6 +2010,7 @@ class AppState extends ChangeNotifier {
     jumpingToLatest.clear();
     latestJumpFailed.clear();
     threadTailNew.clear();
+    _ownTailSent.clear();
     channels.clear();
     accounts.clear();
     messages.clear();

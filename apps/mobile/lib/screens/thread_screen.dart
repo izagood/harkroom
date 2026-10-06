@@ -307,11 +307,9 @@ class _ThreadScreenState extends State<ThreadScreen> {
               : app.latestJumpFailed.contains(widget.rootId)
                   ? ThreadLatestBandState.failed
                   : ThreadLatestBandState.idle,
-          // 띠가 선 동안 소켓으로 온 새 답글이 있으면 수를 덧붙인다 — 옛 창에 붙이지 않았으니 여기서 알려야 한다.
-          label: switch (app.threadTailNew[widget.rootId]?.length ?? 0) {
-            0 => t.threadLatestReplies,
-            final n => '${t.threadLatestReplies} · ${t.threadLatestNewReplies.replaceFirst('{n}', '$n')}',
-          },
+          // 띠가 선 동안 소켓으로 온 새 답글이 있으면 수를 앞세운 문구로 — 옛 창에 붙이지 않았으니 여기서 알려야 한다.
+          label: latestBandLabel(t, app.threadTailNew[widget.rootId]?.length ?? 0),
+          highlight: (app.threadTailNew[widget.rootId]?.length ?? 0) > 0,
           failedLabel: t.threadLatestLoadFailed,
           retryLabel: t.commonRetry,
           onTap: _jumpToLatest,
@@ -436,6 +434,12 @@ class ThreadRepliesDivider extends StatelessWidget {
   }
 }
 
+/// 띠의 대기 문구. 새 답글이 없으면 「최신 답글로 ↓」, 있으면 수를 앞세운 한 문구(「새 답글 n개 · 최신으로 ↓」).
+/// 99 를 넘으면 「99+」 — 수가 커지면 자리를 밀어내고, 그쯤이면 정확한 수는 뜻이 없다.
+String latestBandLabel(Strings t, int newCount) => newCount <= 0
+    ? t.threadLatestReplies
+    : t.threadLatestNewReplies.replaceFirst('{n}', newCount > 99 ? '99+' : '$newCount');
+
 /// 「최신 답글로 ↓」 띠의 세 상태(designer m1·m2). 셋이 **같은 44 상자**에 서서 바뀌어도 목록이 움직이지 않는다
 /// ([FeedTopRow] 와 같은 규율).
 enum ThreadLatestBandState { idle, loading, failed }
@@ -451,6 +455,7 @@ class ThreadLatestBand extends StatelessWidget {
     this.state = ThreadLatestBandState.idle,
     this.failedLabel = '',
     this.retryLabel = '',
+    this.highlight = false,
   });
 
   final String label;
@@ -458,6 +463,9 @@ class ThreadLatestBand extends StatelessWidget {
   final String retryLabel;
   final ThreadLatestBandState state;
   final VoidCallback onTap;
+
+  /// 새 답글이 있어 사건이 된 띠 — 대기 글자를 `accentText` 로. 크기·높이·모양은 그대로다(designer).
+  final bool highlight;
 
   @override
   Widget build(BuildContext context) {
@@ -501,7 +509,7 @@ class ThreadLatestBand extends StatelessWidget {
       ThreadLatestBandState.idle => TextButton(
           key: const Key('thread-latest-go'),
           onPressed: onTap,
-          style: buttonStyle,
+          style: highlight ? buttonStyle.copyWith(foregroundColor: WidgetStatePropertyAll(k.accentText)) : buttonStyle,
           child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
         ),
     };

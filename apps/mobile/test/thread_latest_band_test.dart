@@ -10,6 +10,7 @@ import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_scope.dart';
 import 'package:harkroom/state/app_state.dart';
 import 'package:harkroom/theme.dart';
+import 'package:harkroom/ui/tokens.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -274,11 +275,50 @@ void main() {
     });
     await tester.pump();
     expect(find.byKey(const Key('message-r252')), findsNothing);
-    final expected = '${stringsFor('ko').threadLatestReplies} · ${stringsFor('ko').threadLatestNewReplies.replaceFirst('{n}', '1')}';
+    final expected = stringsFor('ko').threadLatestNewReplies.replaceFirst('{n}', '1');
     expect(find.text(expected), findsOneWidget);
+    // 새 답글이 있으면 사건 — 대기 글자가 accentText 로(designer). 모양·높이는 그대로.
+    final go = tester.widget<TextButton>(find.byKey(const Key('thread-latest-go')));
+    final k = harkroomTheme(Brightness.light).extension<HarkroomTokens>()!;
+    expect(go.style!.foregroundColor!.resolve({}), k.accentText);
+    expect(tester.getSize(find.byKey(const Key('thread-latest-band'))).height, 44);
     await tester.tap(find.byKey(const Key('thread-latest-go')));
     await _settle(tester);
     expect(app.threadTailNew, isEmpty);
     expect(find.byKey(const Key('thread-latest-band')), findsNothing);
+  });
+
+  test('띠 문구: 0 이면 대기 문구, n 이면 수를 앞세운 한 문구, 99 넘으면 99+', () {
+    final t = stringsFor('ko');
+    expect(latestBandLabel(t, 0), t.threadLatestReplies);
+    expect(latestBandLabel(t, 3), '새 답글 3개 · 최신으로 ↓');
+    expect(latestBandLabel(t, 100), '새 답글 99+개 · 최신으로 ↓');
+    expect(latestBandLabel(stringsFor('en'), 2), '2 new · Jump to latest ↓');
+  });
+
+  testWidgets('띠가 선 채 내가 보낸 답글은 세지 않는다 — 소켓으로 다시 와도', (tester) async {
+    // 최신으로 옮기기가 실패해 띠가 남은 경우(m3 실패)에만 생기는 자리다.
+    final server = _Server(replies: 250)..failLatest = true;
+    final app = (await tester.runAsync(() => _boot(server)))!;
+    addTearDown(app.dispose);
+    await enterOld(tester, app);
+    await tester.enterText(find.byKey(const Key('thread-composer')), '내 답');
+    await tester.tap(find.byKey(const Key('thread-send')));
+    await _settle(tester);
+    expect(server.posted, hasLength(1));
+    expect(app.threadTailMissing, contains('root'));
+    expect(app.threadTailNew['root'] ?? const <String>{}, isEmpty);
+    // 소켓 에코
+    app.applyEvent({
+      'type': 'message.created',
+      'message': {'id': 'mine', 'seq': 252, 'channelId': 'c1', 'threadRootId': 'root', 'authorId': 'me-1', 'body': '내 답', 'kind': 'user'},
+    });
+    expect(app.threadTailNew['root'] ?? const <String>{}, isEmpty);
+    // 남의 답글은 센다.
+    app.applyEvent({
+      'type': 'message.created',
+      'message': {'id': 'r253', 'seq': 253, 'channelId': 'c1', 'threadRootId': 'root', 'authorId': 'a2', 'body': '남', 'kind': 'user'},
+    });
+    expect(app.threadTailNew['root'], {'r253'});
   });
 }
