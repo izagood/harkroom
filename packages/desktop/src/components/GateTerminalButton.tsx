@@ -3,6 +3,7 @@ import { listClaudeAccounts, openClaudeAccountTerminal } from '../lib/claudeAcco
 import { resolveGateTerminalTarget, type GateTerminalTarget } from '../lib/gateTerminal';
 import { hasOperatorLocalSurface, listLocalAgents } from '../lib/operatorLocal';
 import { getController } from '../state/controller';
+import { operatorNameOf } from '../lib/operatorName';
 import { useT } from '../i18n/useT';
 
 /**
@@ -86,7 +87,7 @@ export function useGateTerminalTarget(label: string, agentId: string): GateTermi
       if (agentIsLocal === false) {
         const agents = await Promise.resolve().then(() => getController().listAgents()).catch(() => null);
         const opId = agents?.find((a) => a.id === agentId)?.assignment?.operatorId ?? null;
-        if (opId) operatorName = (await Promise.resolve().then(() => getController().operators()).catch(() => null))?.find((o) => o.id === opId)?.name ?? null;
+        if (opId) operatorName = operatorNameOf((await Promise.resolve().then(() => getController().operators()).catch(() => null))?.find((o) => o.id === opId)) ?? null;
       }
       if (!alive) return;
       setTarget(resolveGateTerminalTarget({ label, agentId, hasLocalSurface, agentIsLocal, operatorName, snapshot, localPool }));

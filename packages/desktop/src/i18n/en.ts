@@ -232,6 +232,7 @@ export const en = {
   'thisOperator.replacedDone': 'Revoked the old registration. Moved {n} assignment(s) to the new one.',
   'thisOperator.replacedKept': 'The server did not revoke the old registration (older server). It stays as offline and its token is still valid — delete it from the operator list yourself. Assignments were not moved.',
   'thisOperator.openList': 'Open the operator list',
+  'thisOperator.renameInList': 'Rename it in Operators',
   'operators.openThisOperator': "Open this machine's operator",
   'settings.back': 'Back to app',
   'settings.group.me': 'You',
@@ -4073,6 +4074,13 @@ export const en = {
   'operators.revoke': 'Delete',
   'operators.revokeAction': 'Delete {name}',
   'operators.revokeFailed': 'The operator was not deleted',
+  'operators.renameAction': 'Rename {name}',
+  'operators.nameLabel': 'Operator name',
+  'operators.save': 'Save',
+  'operators.useHostname': 'Use hostname ({name})',
+  'operators.hostname': 'Hostname this operator registered with',
+  'operators.duplicateName': 'Another operator already has this name — it still saves.',
+  'operators.renameFailed': 'The name was not saved: {reason}',
   'operators.registerNote':
     'A registration code is valid for five minutes and works once. Run the command it prints on the machine, '
     + 'and that machine shows up here as an operator.',

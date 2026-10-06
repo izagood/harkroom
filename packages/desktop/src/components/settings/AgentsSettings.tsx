@@ -55,6 +55,7 @@ import { copyText } from '../../lib/clipboard';
 import { navKey } from './sections';
 import { AGENT_DETAIL_TABS, parseAgentTarget, type AgentDetailTab } from './agentDetailTabs';
 import { ConfirmDialog } from '../ConfirmDialog';
+import { operatorNameOf, operatorPickerLabels } from '../../lib/operatorName';
 import { ImmediateBadge, PendingEditsContext, setLeaveGuard, type PendingHandlers, type RegisterPending } from './pendingEdits';
 
 /** #177: 클립보드가 없거나 거부되면 **조용히 실패하지 않는다** — 화면에 있는 그 명령
@@ -1529,7 +1530,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   <span data-testid="agent-header-location" className="text-fg-subtle">
                     {t('agents.detail.runsOn', {
                       name: (Array.isArray(operators)
-                        ? operators.find((o) => o.id === selected.assignment!.operatorId)?.name
+                        ? operatorNameOf(operators.find((o) => o.id === selected.assignment!.operatorId))
                         : undefined) ?? t('agents.assignment.unknownOperator'),
                     })}
                   </span>
@@ -2167,7 +2168,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       const asg = selected.assignment;
                       if (!asg) return t('agents.assignment.none');
                       const op = Array.isArray(operators) ? operators.find((o) => o.id === asg.operatorId) : undefined;
-                      const name = op?.name ?? t('agents.assignment.unknownOperator');
+                      const name = operatorNameOf(op) ?? t('agents.assignment.unknownOperator');
                       return op && !op.online
                         ? t('agents.assignment.currentOffline', { name })
                         : t('agents.assignment.current', { name });
@@ -2217,9 +2218,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                         }}
                       >
                         <option value="">{t('agents.assignment.pick')}</option>
+                        {/* 보이는 이름이 겹칠 때만 「— 호스트명」(designer) — 같은 VM 의 work·personal 을 가른다. */}
                         {operators.map((o) => (
                           <option key={o.id} value={o.id}>
-                            {o.name}{o.online ? '' : ` (${t('operators.offline')})`}
+                            {operatorPickerLabels(operators).get(o.id)}{o.online ? '' : ` (${t('operators.offline')})`}
                           </option>
                         ))}
                       </select>
@@ -2344,7 +2346,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   canRevoke={isAdmin || isOwner}
                   disabled={busy}
                   localOperatorId={typeof localOperator === 'object' && localOperator !== null ? localOperator.operatorId : null}
-                  assignedOperatorName={Array.isArray(operators) ? operators.find((o) => o.id === selected.assignment?.operatorId)?.name ?? null : null}
+                  assignedOperatorName={Array.isArray(operators) ? operatorNameOf(operators.find((o) => o.id === selected.assignment?.operatorId)) ?? null : null}
                   onCountChange={(n) => setMergeCounts((prev) => (prev[selected.id] === n ? prev : { ...prev, [selected.id]: n }))}
                 />
               )}

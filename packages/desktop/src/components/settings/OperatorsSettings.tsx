@@ -7,6 +7,7 @@ import { ConfirmDialog } from '../ConfirmDialog';
 import { hasCapability } from '../../lib/capabilities';
 import { hasOperatorLocalSurface } from '../../lib/operatorLocal';
 import { SettingsGroup, SettingsPage } from './primitives';
+import { OPERATOR_LABEL_MAX, operatorDisplayName } from '../../lib/operatorName';
 
 /**
  * 설정 › Operators — 스펙 2026-09-20 §3.
@@ -81,6 +82,40 @@ export function OperatorsSettings({ onOpenSection }: {
   };
   const ago = useAgo();
 
+  /**
+   * 이름 바꾸기(스레드 e12e6780, designer 시안) — 이름 옆 연필이나 이름 글자를 누르면 그 자리가 입력칸이
+   * 된다. Enter·칸 밖 = 저장, Esc = 취소. 편집 중에는 Delete 자리에 Cancel·Save 가 선다(잘못 누르지 않게).
+   * 비우고 저장하면 호스트명으로 돌아간다. 같은 이름은 경고만 하고 막지 않는다(배정은 id 로 고른다).
+   * 권한은 Delete 와 같다 — 이 목록은 서버가 "소유자 또는 operator.manage" 로 이미 걸렀다.
+   */
+  const [editing, setEditing] = useState<{ id: string; draft: string } | null>(null);
+  const [savingName, setSavingName] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const startRename = (op: OperatorView) => { setRenameError(null); setEditing({ id: op.id, draft: operatorDisplayName(op) }); };
+  const cancelRename = () => { setEditing(null); setRenameError(null); };
+  const saveRename = async (op: OperatorView, raw: string) => {
+    if (savingName) return;
+    const trimmed = raw.trim();
+    const label = trimmed && trimmed !== op.name ? trimmed : null;
+    // 바뀐 것이 없으면 요청 없이 닫는다 — 칸 밖을 누를 때마다 감사가 쌓이지 않게.
+    if (label === (op.label ?? null)) { cancelRename(); return; }
+    setSavingName(true);
+    setRenameError(null);
+    try {
+      const updated = await getController().renameOperator(op.id, label);
+      // 응답을 그대로 앉힌다(online 은 목록을 읽은 때의 값을 지킨다) — 다시 읽지 않아도 새 이름이 선다.
+      setOperators((prev) => (Array.isArray(prev)
+        ? prev.map((x) => (x.id === op.id ? { ...x, ...updated, label: updated.label ?? null, online: x.online } : x))
+        : prev));
+      setEditing(null);
+    } catch (e) {
+      // 입력은 그대로 둔다 — 실패했다고 사람이 친 글자를 버리지 않는다.
+      setRenameError(t('operators.renameFailed', { reason: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      setSavingName(false);
+    }
+  };
+
   return (
     <SettingsPage section="operators" description={t('operators.description')}>
       <SettingsGroup>
@@ -92,8 +127,73 @@ export function OperatorsSettings({ onOpenSection }: {
         {Array.isArray(operators) && operators.map((op) => (
           <div key={op.id} className="flex items-center justify-between gap-4 px-4 py-3">
             <span className="min-w-0 flex-1">
-              <span className="block font-medium text-fg">{op.name}</span>
+              {editing?.id === op.id ? (
+                <span className="block">
+                  <input
+                    autoFocus
+                    data-testid={`operator-name-input-${op.id}`}
+                    aria-label={t('operators.nameLabel')}
+                    aria-invalid={renameError ? true : undefined}
+                    className="w-full max-w-sm rounded-row border border-accent bg-surface px-2 py-1 font-medium text-fg"
+                    maxLength={OPERATOR_LABEL_MAX}
+                    value={editing.draft}
+                    disabled={savingName}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onChange={(e) => { setRenameError(null); setEditing({ id: op.id, draft: e.target.value }); }}
+                    onKeyDown={(e) => {
+                      if (e.nativeEvent.isComposing) return; // 한글 조합 중 Enter 는 글자 확정이다
+                      if (e.key === 'Enter') { e.preventDefault(); void saveRename(op, editing.draft); }
+                      if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
+                    }}
+                    // 실패한 뒤의 blur 는 다시 저장하지 않는다 — 빨간 줄을 읽는 사이 같은 요청이 되풀이된다.
+                    onBlur={() => { if (!renameError) void saveRename(op, editing.draft); }}
+                  />
+                  {(() => {
+                    const shown = editing.draft.trim();
+                    const dup = shown !== '' && operators.some((o) => o.id !== op.id && operatorDisplayName(o) === shown);
+                    return dup ? <span className="mt-1 block text-meta text-warning" data-testid={`operator-name-dup-${op.id}`}>{t('operators.duplicateName')}</span> : null;
+                  })()}
+                  {op.label && (
+                    <button
+                      type="button"
+                      data-testid={`operator-use-hostname-${op.id}`}
+                      className="mt-1 block text-meta text-accent hover:underline"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => void saveRename(op, '')}
+                    >
+                      {t('operators.useHostname', { name: op.name })}
+                    </button>
+                  )}
+                  {renameError && <span role="alert" className="mt-1 block text-meta text-danger">{renameError}</span>}
+                </span>
+              ) : (
+                <span className="group flex min-w-0 items-center gap-1">
+                  <button
+                    type="button"
+                    data-testid={`operator-name-${op.id}`}
+                    className="min-w-0 truncate text-left font-medium text-fg"
+                    onClick={() => startRename(op)}
+                  >
+                    {operatorDisplayName(op)}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={t('operators.renameAction', { name: operatorDisplayName(op) })}
+                    title={t('operators.renameAction', { name: operatorDisplayName(op) })}
+                    className="shrink-0 rounded-row p-0.5 text-fg-subtle opacity-60 hover:bg-surface-sunken hover:opacity-100"
+                    onClick={() => startRename(op)}
+                  >
+                    <svg aria-hidden width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M11.5 2.5l2 2L6 12H4v-2z" />
+                    </svg>
+                  </button>
+                </span>
+              )}
               <span className="mt-0.5 block text-meta text-fg-subtle" data-testid={`operator-online-${op.id}`}>
+                {/* 이름을 바꾼 줄만 원래 호스트명을 앞에 둔다(designer) — 안 바꾼 줄은 이름이 곧 호스트명이다. */}
+                {op.label && (
+                  <span className="font-mono" title={t('operators.hostname')} data-testid={`operator-hostname-${op.id}`}>{`${op.name} · `}</span>
+                )}
                 {/* 연결은 **지금의 사실**이다(허브가 든다) — 저장된 값이 아니라 목록을 읽은
                     순간의 값이고, 끊긴 오퍼레이터의 배정은 서버가 오프라인으로 그린다. */}
                 <span className={`mr-1 inline-block h-2 w-2 rounded-full ${op.online ? 'bg-success' : 'bg-fg-subtle'}`} />
@@ -118,19 +218,42 @@ export function OperatorsSettings({ onOpenSection }: {
                 </span>
               )}
             </span>
-            <button
-              className="shrink-0 rounded-row border border-border px-2 py-1 text-meta text-fg hover:bg-surface-sunken"
-              aria-label={t('operators.revokeAction', { name: op.name })}
-              onClick={() => { setRevokeError(null); setConfirming(op); }}
-            >
-              {t('operators.revoke')}
-            </button>
+            {editing?.id === op.id ? (
+              <span className="flex shrink-0 gap-2">
+                {/* mousedown 을 막아 입력칸이 blur(=저장)되기 전에 이 버튼이 눌리게 한다. */}
+                <button
+                  type="button"
+                  className="rounded-row border border-border px-2 py-1 text-meta text-fg hover:bg-surface-sunken"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={cancelRename}
+                >
+                  {t('operators.cancel')}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-row bg-accent px-2 py-1 text-meta font-medium text-fg-on-strong disabled:opacity-50"
+                  disabled={savingName}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => void saveRename(op, editing.draft)}
+                >
+                  {t('operators.save')}
+                </button>
+              </span>
+            ) : (
+              <button
+                className="shrink-0 rounded-row border border-border px-2 py-1 text-meta text-fg hover:bg-surface-sunken"
+                aria-label={t('operators.revokeAction', { name: operatorDisplayName(op) })}
+                onClick={() => { setRevokeError(null); setConfirming(op); }}
+              >
+                {t('operators.revoke')}
+              </button>
+            )}
           </div>
         ))}
       </SettingsGroup>
       {confirming && (
         <ConfirmDialog
-          title={t('operators.confirmTitle', { name: confirming.name })}
+          title={t('operators.confirmTitle', { name: operatorDisplayName(confirming) })}
           detail={t('operators.confirmDetail')}
           confirmLabel={t('operators.revoke')}
           cancelLabel={t('operators.cancel')}

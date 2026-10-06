@@ -2543,6 +2543,10 @@ export class Controller {
     return this.api.revokeOperator(id);
   }
 
+  renameOperator(id: string, label: string | null): Promise<import('@harkroom/shared').OperatorView> {
+    return this.api.renameOperator(id, label);
+  }
+
   assignAgent(agentId: string, operatorId: string): Promise<import('@harkroom/shared').AgentAssignmentView> {
     return this.api.assignAgent(agentId, operatorId);
   }
