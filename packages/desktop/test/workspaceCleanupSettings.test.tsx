@@ -142,7 +142,10 @@ describe('작업 폴더 정리 화면', () => {
     render(<WorkspaceCleanupSettings now={NOW} />);
     const rows = await screen.findAllByTestId('cleanup-row');
     expect(rows.map((r) => r.getAttribute('data-tone'))).toEqual(['deferred', 'deleting']);
-    expect(screen.getAllByTestId('cleanup-due')[1]!.textContent).toContain('지우는 중');
+    expect(screen.getAllByTestId('cleanup-due')[1]!.textContent).toBe('지우는 중 · 30분 안');
+    expect(screen.getByTestId('cleanup-deleting-note').textContent).toContain('최대 30분');
+    // 미룸의 오른쪽 글은 「미룸」만 — 까닭은 이유 줄이 말한다(designer n2).
+    expect(screen.getAllByTestId('cleanup-due')[0]!.textContent).toBe('미룸');
     expect(screen.getByTestId('cleanup-reason').textContent).toContain('러너가 꺼져 있어');
     expect(screen.getByTestId('cleanup-reason').textContent).not.toContain('⚠');
     expect(screen.getByTestId('cleanup-owners-pending')).toBeTruthy();
@@ -164,6 +167,7 @@ describe('작업 폴더 정리 화면', () => {
     expect(dues.map((d) => d.textContent)).toEqual(['꺼짐 · 지우지 않음', '꺼짐 · 지우지 않음']);
     expect(screen.queryByTestId('cleanup-reason')).toBeNull();
     expect(document.body.textContent).not.toContain('지우는 중');
+    expect(screen.queryByTestId('cleanup-deleting-note')).toBeNull();
   });
   it('Tauri 표면이 없으면 안내만', () => {
     render(<WorkspaceCleanupSettings now={NOW} />);
