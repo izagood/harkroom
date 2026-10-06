@@ -11,6 +11,7 @@ import { setController, type Controller } from '../src/state/controller';
 import { AgentExchange } from '../src/components/AgentExchange';
 import {
   groupAgentExchanges, exchangeParticipants, exchangeConclusion, EXCHANGE_CONCLUSION_MAX,
+  exchangeLastLine, firstLine, type ExchangeSlot,
 } from '../src/lib/agentExchange';
 import { groupProgress } from '../src/lib/progressGroup';
 import { acc, msg } from './helpers/fakeApi';
@@ -121,14 +122,23 @@ describe('groupAgentExchanges — 무엇을 접는가', () => {
     expect(out.map((s) => s.kind)).toEqual(['message']);
   });
 
-  it('진행 묶음은 주고받기가 삼키지 않는다 — 두 규칙이 한 줄에 뭉치면 안 된다', () => {
+  /**
+   * 2026-10-06 에 뒤집혔다: 예전에는 진행 묶음이 구간을 **끊었고**, 그래서 한 스레드의
+   * 주고받기가 진행 줄이 끼는 자리마다 쪼개졌다. 이제 진행은 구간 **안에** 든다 — 접힌
+   * 줄 하나가 되고, 진행 묶음은 그 안에서 제 묶음(`items`)으로 남는다(두 규칙이 한 줄에
+   * 뭉치지는 않는다 — 펼치면 평소의 진행 줄로 선다).
+   */
+  it('진행 묶음은 구간을 끊지 않고 그 안에 제 묶음으로 든다', () => {
     const out = slots([
       msg('p1', 'c1', 1, '읽는다', FORGE, { kind: 'progress' }),
       msg('p2', 'c1', 2, '돌린다', FORGE, { kind: 'progress' }),
       msg('m1', 'c1', 3, 'ws 는 내가', FORGE),
       msg('m2', 'c1', 4, '스키마는 내가', CODEX),
     ]);
-    expect(out.map((s) => s.kind)).toEqual(['progress', 'exchange']);
+    expect(out.map((s) => s.kind)).toEqual(['exchange']);
+    const folded = out[0] as Extract<ExchangeSlot, { kind: 'exchange' }>;
+    expect(folded.items.map((it) => it.kind)).toEqual(['progress', 'message', 'message']);
+    expect(folded.messages.map((m) => m.id)).toEqual(['m1', 'm2']);
   });
 });
 
@@ -371,10 +381,16 @@ describe('AgentExchange — 접힌 한 줄', () => {
     expect(text.indexOf('옮겼다')).toBeLessThan(text.indexOf('4번 주고받음'));
   });
 
-  it('결론이 없으면 횟수로 떨어진다 — 정해진 것이 없다고 말하는 것이 정직하다', () => {
+  /**
+   * 2026-10-06(designer 판정 ②): 「아직 정해진 것 없음」 대신 **마지막 말의 첫 줄**을
+   * `handle: 첫 줄` 로 싣는다. 거의 모든 접힌 줄이 그 문구였다 — "열어야 하나"에 답하지 못했다.
+   */
+  it('결론이 없으면 마지막 말의 첫 줄을 handle 과 함께 싣는다', () => {
     render(<AgentExchange messages={three} />);
     expect(screen.queryByTestId('exchange-conclusion')).toBeNull();
-    expect(screen.getByText(/아직 정해진 것 없음/)).toBeTruthy();
+    expect(screen.queryByText(/아직 정해진 것 없음/)).toBeNull();
+    expect(screen.getByTestId('exchange-last-line').textContent).toBe('그럼 넘긴다');
+    expect(screen.getByTestId('agent-exchange-toggle').textContent).toContain('forge:');
     expect(screen.getByText(/3번 주고받음/)).toBeTruthy();
   });
 
@@ -482,5 +498,196 @@ describe('위임은 사람의 차례를 닫는다 (050)', () => {
     const ids = out.flatMap((s) => (s.kind === 'message' ? [s.message.id] : []));
     expect(ids).toContain('m5');
     expect(ids).toContain('m6');
+  });
+});
+
+/**
+ * **접힘 최소 수정안**(2026-10-06, jaebin 카드 55f552b9 · designer 판정 ①~③).
+ *
+ * 재현 스레드(PAT 칸 검토)는 저자가 전부 에이전트였다 — 사람이 #task 를 거쳐 맡겼다. 그래서
+ * 예외 ②가 한 번도 켜지지 않았고, 구간은 진행 줄이 끼는 자리마다 쪼개져 「A ↔ B · 아직
+ * 정해진 것 없음」 다섯 줄과 진행 줄 셋이 번갈아 섰다. 루트 질문은 첫 접힌 줄 안에 있었고,
+ * security 의 진행 줄은 결과가 남의 글 뒤에 와서 "작업 중 13분째"로 영영 남았다.
+ */
+describe('접힘 최소 수정안 — 재현 스레드 모양', () => {
+  const ROOT = 'root';
+  const TM = FORGE_UUID;
+  const SEC = CODEX;
+  const DES = SCRIBE;
+  const HR = 'a-harkroom';
+  const agents = new Set([TM, SEC, DES, HR]);
+  const isAgentHere = (id: string): boolean => agents.has(id);
+  const at = (min: number): string => new Date(Date.UTC(2026, 9, 6, 4, min)).toISOString();
+  const say = (id: string, min: number, body: string, author: string, extra: Partial<MessageRow> = {}) =>
+    msg(id, 'c1', min, body, author, { createdAt: at(min), ...extra });
+
+  it('1. 루트·사람을 부른 글은 펼치고, 그 사이 에이전트끼리는 진행·예약 줄까지 한 줄로 접는다', () => {
+    const thread = [
+      say(ROOT, 0, '@harkroom @security PAT 칸 검토해 달라', TM),
+      say('w1', 1, '답을 기다린다', SEC, { kind: 'wake' }),
+      say('p1', 2, '훑는 중', HR, { kind: 'progress' }),
+      say('m1', 4, '검토 답', HR),
+      say('m2', 5, '보안 판단', SEC),
+      say('p2', 6, '구현 중', HR, { kind: 'progress' }),
+      say('m3', 7, 'PR 열었다', HR),
+      say('p3', 8, '검토 시작', SEC, { kind: 'progress' }),
+      // 사람을 **본문 어디서든** 부른 글 — 판정 ① 그대로 펼친다.
+      say('cc', 9, `@task_manager <@${ME_UUID}> 디자인 판정`, DES),
+      say('m4', 10, '보안 OK', SEC),
+      say('m5', 11, '머지 카드 올린다', TM),
+    ];
+    const out = groupAgentExchanges(groupProgress(thread), isAgentHere, ROOT);
+    expect(out.map((s) => s.kind)).toEqual(['message', 'exchange', 'message', 'exchange']);
+    expect(out[0]).toMatchObject({ kind: 'message', message: { id: ROOT } });
+    expect(out[2]).toMatchObject({ kind: 'message', message: { id: 'cc' } });
+
+    const first = out[1] as Extract<ExchangeSlot, { kind: 'exchange' }>;
+    // 횟수·참여자는 **말만** 센다 — 예약 줄만 세운 순간은 참여가 아니다.
+    expect(first.messages.filter((m) => m.kind !== 'wake').map((m) => m.id)).toEqual(['m1', 'm2', 'm3']);
+    expect(exchangeParticipants(first.messages)).toEqual([HR, SEC]);
+    // 진행 셋은 구간 **안**에 제 묶음으로 남는다(펼치면 평소의 진행 줄).
+    expect(first.items.filter((it) => it.kind === 'progress')).toHaveLength(3);
+  });
+
+  it('1-b. 루트 id 를 주지 않으면(채널 목록) 루트도 예전처럼 구간에 든다', () => {
+    const out = groupAgentExchanges(groupProgress([
+      say(ROOT, 0, '질문', TM),
+      say('m1', 1, '답', HR),
+    ]), isAgentHere);
+    expect(out.map((s) => s.kind)).toEqual(['exchange']);
+  });
+
+  it('1-c. 말 하나와 진행만 있으면 접지 않는다 — 주고받기가 아니다', () => {
+    const out = groupAgentExchanges(groupProgress([
+      say(ROOT, 0, '질문', TM),
+      say('p1', 1, '훑는 중', HR, { kind: 'progress' }),
+      say('m1', 2, '답', HR),
+      say('w1', 3, '기다린다', SEC, { kind: 'wake' }),
+    ]), isAgentHere, ROOT);
+    expect(out.map((s) => s.kind)).toEqual(['message', 'progress', 'message', 'message']);
+  });
+
+  it('1-d. 목록 맨 끝에서 아직 도는 진행은 구간 밖에 선다 — 지금 보고 있는 자리다', () => {
+    const out = groupAgentExchanges(groupProgress([
+      say(ROOT, 0, '질문', TM),
+      say('m1', 1, '답', HR),
+      say('m2', 2, '받았다', TM),
+      say('p1', 3, '검토 중', SEC, { kind: 'progress' }),
+    ]), isAgentHere, ROOT);
+    expect(out.map((s) => s.kind)).toEqual(['message', 'exchange', 'progress']);
+  });
+
+  it('1-e. 예약 줄은 첫 답 장부를 쓰지 않는다 — 사람 뒤 그 에이전트의 진짜 답이 펼쳐진다', () => {
+    const out = groupAgentExchanges(groupProgress([
+      say('u1', 0, '검토해', ME),
+      say('w1', 1, '기다린다', SEC, { kind: 'wake' }),
+      say('m1', 2, '검토 답', SEC),
+    ]), isAgentHere);
+    const ids = out.flatMap((s) => (s.kind === 'message' ? [s.message.id] : []));
+    expect(ids).toContain('m1');
+  });
+
+  it('2. 결론이 없으면 마지막 말의 첫 줄을 뽑는다 — 머리 멘션·코드·인용·마크다운을 벗긴다', () => {
+    expect(firstLine('@task_manager @jaebin\n\n```\ncode\n```\n> 인용\n**#1179** 판정: [수정 한 곳](harkroom://message/x) 고치면 `OK`')).
+      toBe('#1179 판정: 수정 한 곳 고치면 OK');
+    expect(firstLine('## 제목 줄\n본문')).toBe('제목 줄');
+    expect(firstLine('- 첫   항목\n- 둘')).toBe('첫 항목');
+    expect(firstLine('---\n결과')).toBe('결과');
+    // 문장 가운데의 @handle 은 말의 일부다 — 머리만 뺀다.
+    expect(firstLine('@a 이건 @b 몫이다')).toBe('이건 @b 몫이다');
+
+    const display = (m: MessageRow): string => m.body;
+    const last = exchangeLastLine([
+      say('m1', 1, '앞 말', HR),
+      say('m2', 2, `@task_manager ${'가'.repeat(60)}`, SEC),
+      say('p1', 3, '진행', SEC, { kind: 'progress' }),
+      say('w1', 4, '예약', TM, { kind: 'wake' }),
+    ], display);
+    // 대상은 마지막 **말**(진행·예약 건너뜀), 40 자 + `…`.
+    expect(last).toEqual({ authorId: SEC, text: `${'가'.repeat(EXCHANGE_CONCLUSION_MAX)}…` });
+
+    // 본문이 없고 첨부만 있으면 첨부 개수, 그것도 없으면 칸을 비운다.
+    const att = { id: 'f', filename: 'a.png', sizeBytes: 1, contentType: 'image/png' };
+    expect(exchangeLastLine([say('m1', 1, '', HR, { attachments: [att, att] as MessageRow['attachments'] })], display))
+      .toEqual({ authorId: HR, attachments: 2 });
+    expect(exchangeLastLine([say('m1', 1, '   ', HR)], display)).toBeNull();
+  });
+
+  it('3. 다른 저자 글이 사이에 끼어도 같은 저자의 다음 말이 진행을 닫는다(거짓 running)', () => {
+    const slotsOut = groupProgress([
+      say('p1', 0, '검토 시작', SEC, { kind: 'progress' }),
+      say('d1', 1, '디자인 판정', DES),
+      say('t1', 2, '고맙다', TM),
+      say('s1', 3, '보안 OK', SEC),
+    ]);
+    expect(slotsOut[0]).toMatchObject({ kind: 'progress', endedAt: at(3) });
+  });
+
+  it('3-b. 사람의 발화는 남의 진행을 닫지 않는다 — 러너는 그 사이에도 돈다', () => {
+    const slotsOut = groupProgress([
+      say('p1', 0, '검토 시작', SEC, { kind: 'progress' }),
+      say('u1', 1, '어떻게 돼 가?', ME),
+    ]);
+    expect(slotsOut[0]).toMatchObject({ kind: 'progress', endedAt: null });
+  });
+
+  it('3-c. 같은 저자의 진행이 남의 글 너머에서 다시 시작되면 앞 묶음을 닫는다 — "작업 중"은 하나다', () => {
+    const slotsOut = groupProgress([
+      say('p1', 0, '하나', SEC, { kind: 'progress' }),
+      say('d1', 1, '끼어든 글', DES),
+      say('p2', 2, '둘', SEC, { kind: 'progress' }),
+    ]);
+    expect(slotsOut.filter((s) => s.kind === 'progress' && s.endedAt === null)).toHaveLength(1);
+  });
+});
+
+describe('접힌 줄 — 도는 진행 칩·펼친 진행 줄 (판정 ③)', () => {
+  beforeEach(() => {
+    useAppStore.getState().set({
+      me: acc(ME, 'me'),
+      accounts: { [ME]: acc(ME, 'me'), [FORGE]: acc(FORGE, 'forge', 'agent'), [CODEX]: acc(CODEX, 'codex', 'agent') },
+    });
+  });
+  afterEach(cleanup);
+
+  const talk = [
+    msg('m1', 'c1', 1, 'ws 는 내가 본다', FORGE),
+    msg('m2', 'c1', 2, '스키마는 내가', CODEX),
+  ];
+  const progress = (id: string, author: string, endedAt: string | null, startedMsAgo = 3 * 60_000) => ({
+    kind: 'progress' as const,
+    messages: [msg(id, 'c1', 3, '도는 중', author, {
+      kind: 'progress', createdAt: new Date(Date.now() - startedMsAgo).toISOString(),
+    })],
+    endedAt,
+  });
+  const asItems = (extra: ReturnType<typeof progress>[]) => [
+    { kind: 'message' as const, message: talk[0]! }, ...extra, { kind: 'message' as const, message: talk[1]! },
+  ];
+
+  it('도는 진행이 하나면 「handle 작업 중 N분」 칩, 끝난 진행은 흔적이 없다', () => {
+    render(<AgentExchange messages={talk} items={asItems([progress('p1', CODEX, null)])} />);
+    const chip = screen.getByTestId('exchange-running').textContent ?? '';
+    expect(chip).toContain('codex');
+    expect(chip).toContain('작업 중');
+    expect(chip).toMatch(/3분/);
+    // 횟수는 말만 — 진행은 세지 않는다.
+    expect(screen.getByText(/2번 주고받음/)).toBeTruthy();
+
+    cleanup();
+    render(<AgentExchange messages={talk} items={asItems([progress('p1', CODEX, new Date().toISOString())])} />);
+    expect(screen.queryByTestId('exchange-running')).toBeNull();
+  });
+
+  it('도는 진행이 여럿이면 「작업 중 2」 로 합친다', () => {
+    render(<AgentExchange messages={talk} items={asItems([progress('p1', CODEX, null), progress('p2', FORGE, null)])} />);
+    expect(screen.getByTestId('exchange-running').textContent).toContain('작업 중 2');
+  });
+
+  it('펼치면 진행은 원래 자리에 평소의 진행 줄로 선다', () => {
+    render(<AgentExchange messages={talk} items={asItems([progress('p1', CODEX, new Date().toISOString())])} />);
+    fireEvent.click(screen.getByTestId('agent-exchange-toggle'));
+    expect(screen.getAllByTestId('progress-row')).toHaveLength(1);
+    expect(screen.getByText('ws 는 내가 본다')).toBeTruthy();
   });
 });

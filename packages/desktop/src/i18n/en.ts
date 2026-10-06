@@ -3301,7 +3301,7 @@ export const en = {
   // | {n}줄 펼치기 · 접기 | `Show {count} lines` · `Collapse` | 펼침은 **몇 줄인지**를 말해야 열 이유가 되고(규칙 06 의 결), 접기는 수를 말할 이유가 없다 — 이미 보고 있다 |
   // | 확인한 것 · 바뀐 파일 · 남은 것 | `Checked` · `Files changed` · `Left to do` | **셋이 한 축에 선다** — 무엇을 했나 · 무엇이 바뀌었나 · 무엇이 남았나. `Remaining` 은 명사라 "남은 것이 있다"만 말하고 **누가 할 일인지**가 빠진다 |
   // | 정했다 · 끝냈다 | `Decided` · `Finished` | 접은 줄의 결론 머리. **위 `ask.decided` 와 같은 낱말이다** — 같은 사실을 두 자리가 다르게 부르면 어휘가 늘어난다(그 파일 주석이 한국어로 이미 그렇게 정했다) |
-  // | 아직 정해진 것 없음 | `Nothing decided yet` | **`yet` 이 진다** — 빼면 "아무것도 안 정해진다"는 판정이 되는데, 이 구간은 아직 도는 중일 수 있다 |
+  // | {handle} 작업 중 {duration} | `{handle} working {duration}` | 접힌 주고받기 안에서 아직 도는 진행의 칩(2026-10-06). `Working` 과 같은 낱말 — 옛 `Nothing decided yet` 자리는 마지막 말 첫 줄이 받았다 |
   // | {n}번 주고받음 | `{count} exchanges` | 복수형이 갈린다. 접힌 줄에서 **결론 뒤에 오는 부수적인 숫자**라 문장이 아니라 명사구다 |
   // | 마지막 {시각} | `last {time}` | 시각은 `toLocaleTimeString` 이 그 언어로 낸다 — 사전은 앞의 낱말만 진다(`lib/time.ts` 의 경계와 같은 규율) |
   //
@@ -3384,8 +3384,15 @@ export const en = {
    */
   'speech.exchange.decided': 'Decided',
   'speech.exchange.finished': 'Finished',
-  /** **`yet` 이 진다** — 빼면 판정이 되는데, 이 구간은 아직 도는 중일 수 있다. */
-  'speech.exchange.undecided': 'Nothing decided yet',
+  /** 접힌 구간 안에서 아직 도는 진행(2026-10-06). `ProgressRow` 의 `Working` 과 같은 낱말이다. */
+  'speech.exchange.running': '{handle} working',
+  'speech.exchange.runningFor': '{handle} working {duration}',
+  'speech.exchange.runningMany': { one: '{count} working', other: '{count} working' },
+  /** 결론도 본문도 없는 마지막 말 — 첨부만 있다. */
+  'speech.exchange.attachments': {
+    one: '{count} attachment',
+    other: '{count} attachments',
+  },
   'speech.exchange.count': {
     one: '{count} exchange',
     other: '{count} exchanges',

@@ -1272,8 +1272,9 @@ describe('여덟 가지 말 — 카드가 두 언어로 말한다', () => {
     });
     render(<AgentExchange messages={exchange} />);
     let line = screen.getByTestId('agent-exchange').textContent ?? '';
-    // **`yet` 이 진다** — 빼면 "아무것도 안 정해진다"는 판정이 된다.
-    expect(line).toContain('Nothing decided yet');
+    // 결론이 없으면 마지막 말의 첫 줄(2026-10-06) — 옛 `Nothing decided yet` 은 없다.
+    expect(line).not.toContain('Nothing decided yet');
+    expect(line).toContain('forge:');
     expect(line).toContain('3 exchanges');
     expect(line).toMatch(/last /);
     expect(line).not.toMatch(/[가-힣]/);
@@ -1286,7 +1287,7 @@ describe('여덟 가지 말 — 카드가 두 언어로 말한다', () => {
     });
     render(<AgentExchange messages={exchange} />);
     line = screen.getByTestId('agent-exchange').textContent ?? '';
-    expect(line).toContain('아직 정해진 것 없음');
+    expect(line).not.toContain('아직 정해진 것 없음');
     expect(line).toContain('3번 주고받음');
     expect(line).toContain('마지막');
   });

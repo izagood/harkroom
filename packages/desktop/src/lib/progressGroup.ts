@@ -44,14 +44,23 @@ export type Slot =
  */
 export function groupProgress(messages: MessageRow[]): Slot[] {
   const slots: Slot[] = [];
+  /**
+   * 저자별로 **아직 열린** 진행 묶음(2026-10-06, 거짓 running).
+   *
+   * 예전에는 바로 앞 자리만 보고 닫았다. 둘이 동시에 일하면 security 의 진행 뒤에 designer 의
+   * 글이 먼저 오고, security 의 결과는 그 뒤에 온다 — 바로 앞 자리가 남의 글이라 그 진행은
+   * 영영 닫히지 않고 "작업 중 · 13분째" 가 계속 자랐다. 닫는 기준은 그대로 **같은 저자의 다음
+   * 비진행 발화**이고, 사이에 남의 글이 끼어도 찾아간다.
+   */
+  const open = new Map<string, Extract<Slot, { kind: 'progress' }>>();
   for (const m of messages) {
     if (m.kind !== 'progress') {
-      // 이 발화가 **바로 앞 진행 묶음을 끝내는가**. 저자가 같아야 한다(`endedAt` 주석).
-      // 한 번만 찍는다 — 두 번째 발화가 시각을 덮으면 진행이 나중까지 이어진 것처럼 보인다.
-      const prev = slots[slots.length - 1];
-      if (prev?.kind === 'progress' && prev.endedAt === null
-          && prev.messages[0]!.authorId === m.authorId) {
+      // 이 발화가 **같은 저자의 열린 진행 묶음을 끝내는가**(`endedAt` 주석). 사람의 발화는
+      // 남의 묶음을 끝내지 않는다 — 저자가 같아야 한다. 한 번만 찍는다(닫으면 장부에서 뺀다).
+      const prev = open.get(m.authorId);
+      if (prev) {
         prev.endedAt = m.createdAt;
+        open.delete(m.authorId);
       }
       slots.push({ kind: 'message', message: m });
       continue;
@@ -60,7 +69,13 @@ export function groupProgress(messages: MessageRow[]): Slot[] {
     if (last?.kind === 'progress' && last.messages[0]!.authorId === m.authorId) {
       last.messages.push(m);
     } else {
-      slots.push({ kind: 'progress', messages: [m], endedAt: null });
+      // 같은 저자의 열린 묶음이 남의 글 너머에 있으면 **거기서 닫고** 새 묶음을 연다 — 한
+      // 저자에게 "작업 중" 줄이 둘 서면 어느 쪽이 지금인지 말할 수 없다.
+      const prev = open.get(m.authorId);
+      if (prev) prev.endedAt = m.createdAt;
+      const slot: Extract<Slot, { kind: 'progress' }> = { kind: 'progress', messages: [m], endedAt: null };
+      open.set(m.authorId, slot);
+      slots.push(slot);
     }
   }
   return slots;
