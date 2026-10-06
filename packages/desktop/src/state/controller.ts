@@ -1373,12 +1373,17 @@ export class Controller {
    * 않는다 — 메인이 같은 채널을 보고 있지 않은 한 그 값을 쓰는 곳은 없지만, 메인의 선을 창이
    * 움직이면 안 된다.
    */
-  markWindowRead(channelId: string): void {
+  /**
+   * `rootId` 를 주면 **스레드 창**이다(판 3 4a): 그 스레드의 인박스 항목만 읽음으로 하고 채널 읽음
+   * 위치는 건드리지 않는다 — 채널 위치는 그 채널을 보여 주는 창(메인·채널 창)의 몫이다.
+   */
+  markWindowRead(channelId: string, rootId?: string): void {
     const store = this.store.getState();
     const frozen = store.reads[channelId]?.lastReadSeq ?? 0;
-    const newest = Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq));
+    const newest = rootId ? 0 : Math.max(0, ...(store.messages[channelId] ?? []).map((m) => m.seq));
     const ids = store.unread
-      .filter((e) => e.channelId === channelId && !e.readAt)
+      .filter((e) => e.channelId === channelId && !e.readAt
+        && (!rootId || e.threadRootId === rootId || e.messageId === rootId))
       .map((e) => e.id);
     if (!ids.length && newest <= frozen) return;
     this.swallow((async () => {

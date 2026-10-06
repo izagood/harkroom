@@ -195,6 +195,13 @@ export const ko = {
   'thread.resizeHandle': '스레드 너비 조절',
   'thread.title': '스레드',
   'thread.empty': '아직 답글이 없습니다. 첫 답글로 스레드를 시작하세요.',
+  'window.openThread': '스레드를 새 창으로 열기',
+  'window.popOut': '새 창으로 열기',
+  'window.limit': '창이 이미 {count}개 열려 있습니다. 하나를 닫고 다시 여세요.',
+  'window.blocked': '새 창을 열지 못했습니다.',
+  'window.threadGone': '이 스레드는 없습니다 — 지워졌거나 더는 볼 수 없습니다.',
+  'window.loading': '불러오는 중…',
+  'window.backToMain': '메인 창으로 되돌리기',
   'reactions.pickTitle': '리액션 고르기',
 
   // ---------------------------------------------------------------------------

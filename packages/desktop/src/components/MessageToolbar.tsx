@@ -3,6 +3,7 @@ import type { MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { useWindowView } from '../state/windowView';
+import { openThreadFrom } from '../lib/windowActions';
 import { useT } from '../i18n/useT';
 import { Menu, type MenuItem } from './Menu';
 import { InlineReactionButtons, ReactionPickerPanel } from './Reactions';
@@ -185,7 +186,7 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
           className={slot}
           title={t('message.replyInThread')}
           aria-label={t('message.replyInThread')}
-          onClick={() => windowView.openThread(message.threadRootId ?? message.id)}
+          onClick={(e) => openThreadFrom(e, windowView, message.channelId, message.threadRootId ?? message.id)}
         >
           <ThreadIcon />
         </button>

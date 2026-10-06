@@ -16,6 +16,8 @@ import { PROJECTION_SECTION, ProjectionBanner } from './ProjectionBanner';
 import { ServerCompatBanner } from './ServerCompatBanner';
 import { UpdateToast } from './UpdateToast';
 import { ThreadPanel } from './ThreadPanel';
+import { AppWindowsHost } from './AppWindowsHost';
+import { openWindow } from '../lib/windowActions';
 import { TerminalPanel } from './TerminalPanel';
 import { ArtifactPanel } from './ArtifactPreview';
 import { previewLayout } from '../lib/previewLayout';
@@ -178,6 +180,19 @@ export function Workspace({ onLogout, onOpenSettings }: {
         return;
       }
 
+      /**
+       * ⌘⇧O — **포커스가 있는 쪽**을 새 창으로 뗀다(판 3). 스레드 패널이 열려 있으면 그 스레드를 옮긴다(W1:
+       * 창이 열리면 패널은 닫는다). ⌘K·⌘[·⌘]·⌘\\·⌘⇧M 과 겹치지 않는다.
+       */
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'o') {
+        const s = useActiveStore.getState();
+        if (s.threadRootId && s.activeChannelId) {
+          e.preventDefault();
+          const r = openWindow({ kind: 'thread', channelId: s.activeChannelId, rootId: s.threadRootId });
+          if (r.kind === 'opened' || r.kind === 'focused') getController().closeThread();
+          return;
+        }
+      }
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
         setSearchInitialScope('all');
@@ -346,6 +361,8 @@ export function Workspace({ onLogout, onOpenSettings }: {
         {/* 알림은 헤더 바로 아래, 대화 위에 둔다 — 채널 안에 그리면 채널을 못 연 실패를
             보여 줄 자리 자체가 없다. */}
         <Notice />
+        {/* 채널·스레드 새 창의 포털(`AppWindowsHost`). 메인 트리 안이라 스토어·연결이 하나다. */}
+        <AppWindowsHost />
         {/*
           투영 고장은 **여기**서 말한다(#488 A3-a). 전에는 사이드바 `ACTIVE WORK` 안에
           있었는데, 그 칸은 "지금 무슨 일이 벌어지는가"를 말하는 자리라 **고장이 일처럼**

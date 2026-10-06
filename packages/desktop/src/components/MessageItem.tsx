@@ -5,6 +5,7 @@ import { readAutomationMeta } from '../lib/automation';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { useWindowView } from '../state/windowView';
+import { openThreadFrom, openWindow } from '../lib/windowActions';
 import { AskCard } from './AskCard';
 import { ThreadStateBadge } from './ThreadStateBadge';
 import { threadStateFromFacts, isBlocking, threadStateLabel } from '../lib/threadState';
@@ -516,6 +517,11 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
     // 복사는 **권한 게이트가 없다**(#179) — 읽을 수 있으면 이미 본문을 눈으로 옮길 수 있다.
     // Edit·Delete 와 성격이 다르니 그 둘의 조건을 따라가지 않는다.
     { label: 'Copy text', onSelect: () => { void copyBody(); } },
+    // 스레드를 새 창으로(판 3 여는 곳 ②, 우클릭도 같은 메뉴다). 스레드 창 안에서는 뜻이 없어 뺀다.
+    ...(windowView.kind !== 'thread' ? [{
+      label: t('window.openThread'),
+      onSelect: () => { openWindow({ kind: 'thread', channelId: message.channelId, rootId: message.threadRootId ?? message.id }); },
+    }] : []),
     /**
      * 여기부터 안 읽음(#179). #154 의 `PUT /channels/:id/unread` 를 그대로 부른다.
      *
@@ -792,7 +798,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                 // 링크이지 나를 막는 말이 아니므로 색이 아니라 점선 밑줄이 링크임을 말한다.
                 className="mb-0.5 -mx-1 flex max-w-full items-baseline gap-1 rounded-sm px-1 py-0.5
                            text-meta text-fg-muted hover:bg-surface-hover"
-                onClick={() => windowView.openThread(message.threadRootId!)}
+                onClick={(e) => openThreadFrom(e, windowView, message.channelId, message.threadRootId!)}
                 // 미리보기는 화면에서 접히므로(`truncate`) 귀로 듣는 쪽에는 온전히 실어 준다.
                 aria-label={rootPreview ? `${t('message.threadOrigin')}: ${rootPreview}` : t('message.threadOrigin')}
               >
@@ -888,7 +894,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                 // 강조색 텍스트 링크로만 두고, 면은 hover 에서만 옅게 깔아 클릭 대상임을 알린다.
                 className="mt-0.5 self-start -mx-1 flex items-center gap-1.5 rounded-sm px-1 py-0.5
                            text-meta hover:bg-surface-hover"
-                onClick={() => windowView.openThread(message.threadRootId ?? message.id)}
+                onClick={(e) => openThreadFrom(e, windowView, message.channelId, message.threadRootId ?? message.id)}
                 /*
                   **상태를 라벨에도 싣는다.** `aria-label` 은 자식 글자를 **덮어쓰므로**,
                   뱃지가 화면에 보여도 이 문자열에 없으면 스크린리더에는 존재하지 않는다 —
@@ -1008,7 +1014,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                 className="mt-0.5 self-start -mx-1 rounded-sm px-1 py-0.5 text-meta font-medium
                            text-fg-muted underline decoration-dotted underline-offset-2
                            hover:bg-surface-hover"
-                onClick={() => windowView.openThread(message.threadRootId!, { focusMessageId: message.id })}
+                onClick={(e) => openThreadFrom(e, windowView, message.channelId, message.threadRootId!, { focusMessageId: message.id })}
               >
                 {t('message.recentReplies')}
               </button>
@@ -1093,7 +1099,7 @@ function DeletedMessageRow({ message, inThread }: { message: MessageRow; inThrea
             data-testid="deleted-message-replies"
             className="mt-0.5 -mx-1 rounded-sm px-1 py-0.5 text-meta font-medium text-fg-muted
                        underline decoration-dotted underline-offset-2 hover:bg-surface-hover"
-            onClick={() => windowView.openThread(message.id)}
+            onClick={(e) => openThreadFrom(e, windowView, message.channelId, message.id)}
           >
             {t('message.summary.replies', { count: replyCount })}
           </button>

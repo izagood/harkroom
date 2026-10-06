@@ -3,6 +3,7 @@ import { GalleryScopeContext } from './Attachments';
 import type { GalleryScope } from '../lib/imageGallery';
 import { getCommunityController, useActiveStore, useCommunityRegistry } from '../state/communities';
 import { useWindowView } from '../state/windowView';
+import { openWindow } from '../lib/windowActions';
 import { MessageItem } from './MessageItem';
 import { ProgressRow } from './ProgressRow';
 import { groupProgress } from '../lib/progressGroup';
@@ -38,6 +39,8 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
   // 보는 자리는 **이 창의 것**이다(새 창 — `state/windowView`). 메인이면 스토어 그대로다.
   const view = useWindowView();
   const { channelId: activeChannelId, threadRootId } = view;
+  // 스레드 창 안이면 패널이 창을 채운다 — 손잡이·왼쪽 선이 없고 ⧉ 도 없다(이미 창이다).
+  const fill = view.kind === 'thread';
   // 답글을 보낼 커뮤니티 — 보낸 순간의 것을 붙잡는다(PR #997, ChannelPane 과 같은 이유).
   const communityId = useCommunityRegistry((s) => s.activeId);
   /** 채널과 같은 판정을 쓴다 — 모르는 계정은 에이전트로 치지 않는다(`lib/agentExchange`). */
@@ -279,12 +282,12 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
       /* `ChannelPane` 과 같은 이유로 붙은 손잡이다(그 파일의 주석) — 인박스가 자리가 되면서
          한 줄의 형제가 셋이 되었고, 그 순서를 재는 회귀선이 생겼다. */
       data-testid="thread-pane"
-      className="relative flex flex-col border-l border-border bg-surface-raised"
+      className={`relative flex flex-col bg-surface-raised ${fill ? 'min-w-0 flex-1' : 'border-l border-border'}`}
       /* 상한은 `paneMaxWidth` 가 적는다(그 함수의 주석) — 터미널과 **같은 결함**을 여기서도
          막는다: 넓은 창에서 고른 폭이 좁은 창에서 그대로 서면 대화가 폭 0 으로 밀린다. */
-      style={{ width: threadWidth, minWidth: MIN_THREAD_WIDTH, maxWidth: paneMaxWidth(MIN_THREAD_WIDTH, reserveLeft) }}
+      style={fill ? undefined : { width: threadWidth, minWidth: MIN_THREAD_WIDTH, maxWidth: paneMaxWidth(MIN_THREAD_WIDTH, reserveLeft) }}
     >
-      <PaneResizer
+      {!fill && <PaneResizer
         label={t('thread.resizeHandle')}
         width={threadWidth}
         min={MIN_THREAD_WIDTH}
@@ -292,7 +295,7 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
         /* 이 구분선 왼쪽에는 대화(또는 인박스) 하나만 있다. */
         minRoomLeft={reserveLeft}
         onWidth={setThreadWidth}
-      />
+      />}
       <header className="flex items-center border-b border-border px-4 py-2">
         <span className="font-semibold">{t('thread.title')}</span>
         {/* `null` 은 '아직 아무 말도 못 봤다' — 그때는 배지를 그리지 않는다(`threadState`). */}
@@ -303,6 +306,22 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
           <ThreadModelCollapsed rootId={threadRootId} expanded={modelsOpen} onToggle={() => setModelsOpen((v) => !v)} />
           <ThreadParticipants messages={thread} live={live} />
         </div>
+        {/* ⧉ 새 창으로 떼어 낸다(판 3 주 진입점, × 왼쪽). **옮긴다**(W1): 창이 열리면 이 패널은 닫는다 —
+            그래야 패널에서 바로 다른 스레드를 연다. 초안은 키가 `thread:<뿌리>` 라 창으로 따라간다(③). */}
+        {!fill && activeChannelId && (
+          <button
+            data-testid="thread-pop-out"
+            className="ml-2 rounded-row px-2 text-fg-subtle hover:bg-surface-sunken"
+            title={t('window.openThread')}
+            aria-label={t('window.openThread')}
+            onClick={() => {
+              const r = openWindow({ kind: 'thread', channelId: activeChannelId, rootId: threadRootId });
+              if (r.kind === 'opened' || r.kind === 'focused') view.closeThread();
+            }}
+          >
+            ⧉
+          </button>
+        )}
         <button className="ml-2 rounded-row px-2 text-fg-subtle hover:bg-surface-sunken"
           onClick={() => view.closeThread()}>
           ×
