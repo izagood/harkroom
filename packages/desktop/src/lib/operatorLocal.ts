@@ -4,7 +4,7 @@
  * `claudeAccounts.ts` 와 같은 경계다: 웹뷰가 넘기는 것은 URL·id·문자열뿐이고 Rust 커맨드가
  * 데몬에 전달한다.
  */
-import type { CleanupLedger, CleanupSettings } from '@harkroom/shared/workspaceCleanup';
+import type { CleanupLedger, CleanupLive, CleanupSettings } from '@harkroom/shared/workspaceCleanup';
 import type { OperatorAgentsListResult, OperatorLocalAgent, OperatorMcpAuthStartResult, OperatorMcpAuthState, OperatorMcpListResult, OperatorMcpRemoteDefinition, OperatorMergeState, OperatorRegisterResult } from '@harkroom/shared/daemonProtocol';
 
 interface TauriInternals { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> }
@@ -97,6 +97,8 @@ export interface WorkspaceCleanupView {
   settings: CleanupSettings;
   ledger: CleanupLedger;
   running: boolean;
+  /** 원장 밖 그 순간 상태 — 이 필드 전의 오퍼레이터는 안 준다. */
+  live?: CleanupLive;
 }
 
 export function getWorkspaceCleanup(): Promise<WorkspaceCleanupView> {
